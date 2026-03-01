@@ -24,7 +24,16 @@ FTSeek 信号查询 CLI 工具
 import argparse
 import sys
 import os
+import logging
 from datetime import datetime, timedelta
+
+# 配置日志
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+logger = logging.getLogger(__name__)
 
 
 def parse_args():
@@ -127,21 +136,27 @@ def parse_args():
 def _validate_date_format(date_str: str, param_name: str) -> datetime:
     """验证日期格式并返回 datetime 对象"""
     try:
+        logger.debug(f"验证日期参数 {param_name}: {date_str}")
         return datetime.strptime(date_str, '%Y-%m-%d')
     except ValueError:
-        print(f"错误：无效的日期格式 '{date_str}'，应为 YYYY-MM-DD", file=sys.stderr)
+        logger.error(f"日期格式错误：'{date_str}'，应为 YYYY-MM-DD 格式")
+        print(f"错误：无效的日期格式 '{date_str}'，应为 YYYY-MM-DD 格式（例如：2026-03-01）", file=sys.stderr)
         sys.exit(1)
 
 
 def validate_args(args):
     """验证参数组合"""
+    logger.debug("开始验证命令行参数")
+    
     # 日报/周报模式必须指定 output
     if (args.daily_report or args.weekly_report) and not args.output:
+        logger.error("日报/周报模式未指定 --output 参数")
         print("错误：日报/周报模式必须指定 --output 参数", file=sys.stderr)
         sys.exit(1)
     
     # 不能同时指定日报和周报
     if args.daily_report and args.weekly_report:
+        logger.error("同时指定了 --daily-report 和 --weekly-report")
         print("错误：不能同时指定 --daily-report 和 --weekly-report", file=sys.stderr)
         sys.exit(1)
     
@@ -157,8 +172,11 @@ def validate_args(args):
     
     # 验证日期范围逻辑
     if from_dt and to_dt and from_dt > to_dt:
+        logger.error(f"日期范围错误：开始日期 ({args.from_date}) 晚于结束日期 ({args.to_date})")
         print("错误：开始日期不能晚于结束日期", file=sys.stderr)
         sys.exit(1)
+    
+    logger.debug("参数验证通过")
 
 
 def query_signals(args):
@@ -176,12 +194,17 @@ def query_signals(args):
         'ftseek.db'
     )
     
+    logger.info(f"数据库路径：{db_path}")
+    
     # 检查数据库是否存在
     if not os.path.exists(db_path):
+        logger.error(f"数据库文件不存在：{db_path}")
         print(f"错误：数据库文件不存在：{db_path}", file=sys.stderr)
+        print("提示：请确保数据库已初始化，或检查数据目录是否正确", file=sys.stderr)
         sys.exit(1)
     
     try:
+        logger.debug(f"连接数据库：{db_path}")
         with sqlite3.connect(str(db_path)) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
@@ -194,26 +217,31 @@ def query_signals(args):
             if args.stock:
                 conditions.append("code = ?")
                 params.append(args.stock)
+                logger.debug(f"添加股票过滤条件：code = {args.stock}")
             
             # 日期范围过滤
             if args.from_date:
                 conditions.append("date(created_at) >= date(?)")
                 params.append(args.from_date)
+                logger.debug(f"添加开始日期过滤：>= {args.from_date}")
             
             if args.to_date:
                 # 包含结束日期的整天
                 conditions.append("date(created_at) <= date(?)")
                 params.append(args.to_date)
+                logger.debug(f"添加结束日期过滤：<= {args.to_date}")
             
             # 状态过滤
             if args.status:
                 conditions.append("status = ?")
                 params.append(args.status)
+                logger.debug(f"添加状态过滤：status = {args.status}")
             
             # 策略名过滤
             if args.strategy:
                 conditions.append("strategy = ?")
                 params.append(args.strategy)
+                logger.debug(f"添加策略过滤：strategy = {args.strategy}")
             
             # 构建完整 SQL
             where_clause = ""
@@ -230,6 +258,7 @@ def query_signals(args):
                 LIMIT ?
             """
             params.append(args.limit)
+            logger.debug(f"执行 SQL 查询，限制条数：{args.limit}")
             
             # 执行查询
             cursor.execute(sql, params)
@@ -241,10 +270,21 @@ def query_signals(args):
                 signal = {key: row[key] for key in row.keys()}
                 signals.append(signal)
             
+            logger.info(f"查询成功，返回 {len(signals)} 条信号")
             return signals
         
+    except sqlite3.DatabaseError as e:
+        logger.error(f"数据库错误：{e}")
+        print(f"错误：数据库操作失败 - {e}", file=sys.stderr)
+        print("提示：数据库文件可能已损坏或权限不足", file=sys.stderr)
+        sys.exit(1)
     except sqlite3.Error as e:
-        print(f"数据库错误：{e}", file=sys.stderr)
+        logger.error(f"SQLite 错误：{e}")
+        print(f"错误：数据库连接失败 - {e}", file=sys.stderr)
+        sys.exit(1)
+    except Exception as e:
+        logger.error(f"未知错误：{e}", exc_info=True)
+        print(f"错误：查询过程中发生未知错误 - {e}", file=sys.stderr)
         sys.exit(1)
 
 
@@ -260,15 +300,20 @@ def output_table(signals, output_file=None):
     
     # 处理空数据
     if not signals:
+        logger.info("查询结果为空，无数据显示")
         print("无数据")
         return
+    
+    logger.debug(f"以表格格式输出 {len(signals)} 条信号")
     
     # 尝试导入 tabulate
     try:
         from tabulate import tabulate
         use_tabulate = True
+        logger.debug("使用 tabulate 库格式化输出")
     except ImportError:
         use_tabulate = False
+        logger.warning("tabulate 库未安装，使用简单表格格式")
     
     # 准备表格数据
     # 表头（使用中文）
