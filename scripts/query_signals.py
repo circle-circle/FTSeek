@@ -251,20 +251,116 @@ def query_signals(args):
 def output_table(signals, output_file=None):
     """
     以表格格式输出信号
+    
+    尝试使用 tabulate 库美化输出，如果不可用则降级为简单表格
+    显示关键字段：id, code, action, price, confidence, status, created_at
     """
+    # 定义要显示的关键字段
+    display_fields = ['id', 'code', 'action', 'price', 'confidence', 'status', 'created_at']
+    
+    # 处理空数据
     if not signals:
-        print("未找到信号数据")
+        print("无数据")
         return
     
-    # 简单输出（Task 3 将实现美化表格）
-    table_lines = []
-    for signal in signals:
-        table_lines.append(str(signal))
-    table_str = '\n'.join(table_lines)
+    # 尝试导入 tabulate
+    try:
+        from tabulate import tabulate
+        use_tabulate = True
+    except ImportError:
+        use_tabulate = False
     
+    # 准备表格数据
+    # 表头（使用中文）
+    headers_map = {
+        'id': 'ID',
+        'code': '股票代码',
+        'action': '操作',
+        'price': '价格',
+        'confidence': '置信度',
+        'status': '状态',
+        'created_at': '创建时间'
+    }
+    
+    if use_tabulate:
+        # 使用 tabulate 美化输出
+        headers = [headers_map[field] for field in display_fields]
+        table_data = []
+        
+        for signal in signals:
+            row = []
+            for field in display_fields:
+                value = signal.get(field, '')
+                # 格式化价格（保留 2 位小数）
+                if field == 'price' and value is not None:
+                    value = f"{value:.2f}"
+                # 格式化置信度（保留 2 位小数）
+                elif field == 'confidence' and value is not None:
+                    value = f"{value:.2f}"
+                # 处理 None 值
+                elif value is None:
+                    value = ''
+                row.append(str(value))
+            table_data.append(row)
+        
+        # 生成表格（使用 grid 格式，支持中文）
+        table_str = tabulate(table_data, headers=headers, tablefmt='grid')
+    else:
+        # 降级为简单表格
+        # 计算每列的最大宽度
+        col_widths = {}
+        for field in display_fields:
+            # 表头宽度
+            max_width = len(headers_map[field])
+            # 数据宽度
+            for signal in signals:
+                value = signal.get(field, '')
+                if field == 'price' and value is not None:
+                    value = f"{value:.2f}"
+                elif field == 'confidence' and value is not None:
+                    value = f"{value:.2f}"
+                elif value is None:
+                    value = ''
+                max_width = max(max_width, len(str(value)))
+            col_widths[field] = max_width
+        
+        # 构建表格
+        lines = []
+        
+        # 表头
+        header_parts = []
+        for field in display_fields:
+            header_parts.append(headers_map[field].ljust(col_widths[field]))
+        lines.append('  '.join(header_parts))
+        
+        # 分隔线
+        separator_parts = []
+        for field in display_fields:
+            separator_parts.append('-' * col_widths[field])
+        lines.append('  '.join(separator_parts))
+        
+        # 数据行
+        for signal in signals:
+            row_parts = []
+            for field in display_fields:
+                value = signal.get(field, '')
+                if field == 'price' and value is not None:
+                    value = f"{value:.2f}"
+                elif field == 'confidence' and value is not None:
+                    value = f"{value:.2f}"
+                elif value is None:
+                    value = ''
+                row_parts.append(str(value).ljust(col_widths[field]))
+            lines.append('  '.join(row_parts))
+        
+        table_str = '\n'.join(lines)
+    
+    # 输出
     if output_file:
         with open(output_file, 'w', encoding='utf-8') as f:
             f.write(table_str)
+            f.write('\n')
+        print(f"已写入 {len(signals)} 条信号到 {output_file}")
     else:
         print(table_str)
 
