@@ -402,10 +402,16 @@ def output_table(signals, output_file=None):
     
     # 输出
     if output_file:
-        with open(output_file, 'w', encoding='utf-8') as f:
-            f.write(table_str)
-            f.write('\n')
-        print(f"已写入 {len(signals)} 条信号到 {output_file}")
+        try:
+            with open(output_file, 'w', encoding='utf-8') as f:
+                f.write(table_str)
+                f.write('\n')
+            logger.info(f"已写入 {len(signals)} 条信号到文件：{output_file}")
+            print(f"已写入 {len(signals)} 条信号到 {output_file}")
+        except IOError as e:
+            logger.error(f"写入文件失败：{e}")
+            print(f"错误：无法写入文件 {output_file} - {e}", file=sys.stderr)
+            sys.exit(1)
     else:
         print(table_str)
 
@@ -416,12 +422,16 @@ def output_json(signals, output_file=None):
     """
     import json
     
+    logger.debug(f"以 JSON 格式输出 {len(signals)} 条信号")
+    
     if output_file:
         try:
             with open(output_file, 'w', encoding='utf-8') as f:
                 json.dump(signals, f, ensure_ascii=False, indent=2)
+            logger.info(f"已写入 {len(signals)} 条信号到文件：{output_file}")
             print(f"已写入 {len(signals)} 条信号到 {output_file}")
         except IOError as e:
+            logger.error(f"写入 JSON 文件失败：{e}")
             print(f"错误：无法写入文件：{e}", file=sys.stderr)
             sys.exit(1)
     else:
@@ -435,8 +445,11 @@ def output_csv(signals, output_file=None):
     import csv
     
     if not signals:
+        logger.info("CSV 输出：未找到信号数据")
         print("未找到信号数据")
         return
+    
+    logger.debug(f"以 CSV 格式输出 {len(signals)} 条信号")
     
     # 定义字段 - 包含所有可能的字段
     fieldnames = ['id', 'code', 'name', 'action', 'price', 'quantity', 'strategy',
@@ -449,8 +462,10 @@ def output_csv(signals, output_file=None):
                 writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction='ignore')
                 writer.writeheader()
                 writer.writerows(signals)
+            logger.info(f"已写入 {len(signals)} 条信号到 CSV 文件：{output_file}")
             print(f"已写入 {len(signals)} 条信号到 {output_file}")
         except IOError as e:
+            logger.error(f"写入 CSV 文件失败：{e}")
             print(f"错误：无法写入文件：{e}", file=sys.stderr)
             sys.exit(1)
     else:
@@ -465,13 +480,17 @@ def generate_report(args, signals):
     """
     from datetime import datetime
     
+    logger.info("生成报告模式")
+    
     # 计算日期范围
     if args.daily_report:
         from_date = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
         report_type = 'daily'
+        logger.info("生成日报统计")
     else:  # weekly
         from_date = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
         report_type = 'weekly'
+        logger.info("生成周报统计")
     
     # 统计信息
     stats = {
@@ -487,6 +506,8 @@ def generate_report(args, signals):
         if confidences:
             stats['avg_confidence'] = sum(confidences) / len(confidences)
     
+    logger.info(f"报告统计：总计 {stats['total']} 条信号，平均置信度 {stats['avg_confidence']:.2f}")
+    
     report = {
         'type': report_type,
         'from_date': from_date,
@@ -501,33 +522,49 @@ def generate_report(args, signals):
 
 def main():
     """主函数"""
-    args = parse_args()
-    validate_args(args)
+    logger.info("=== FTSeek 信号查询工具启动 ===")
+    logger.debug(f"命令行参数：{sys.argv[1:]}")
     
-    # 处理报告模式
-    if args.daily_report or args.weekly_report:
-        # 自动设置日期范围
-        if args.daily_report:
-            args.from_date = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
+    try:
+        args = parse_args()
+        validate_args(args)
+        
+        # 处理报告模式
+        if args.daily_report or args.weekly_report:
+            # 自动设置日期范围
+            if args.daily_report:
+                args.from_date = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
+            else:
+                args.from_date = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
+            args.to_date = datetime.now().strftime('%Y-%m-%d')
+        
+        # 查询数据
+        signals = query_signals(args)
+        
+        # 生成报告（如果是报告模式）
+        if args.daily_report or args.weekly_report:
+            report = generate_report(args, signals)
+            output_json([report], args.output)
         else:
-            args.from_date = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
-        args.to_date = datetime.now().strftime('%Y-%m-%d')
-    
-    # 查询数据
-    signals = query_signals(args)
-    
-    # 生成报告（如果是报告模式）
-    if args.daily_report or args.weekly_report:
-        report = generate_report(args, signals)
-        output_json([report], args.output)
-    else:
-        # 根据格式输出
-        if args.format == 'table':
-            output_table(signals, args.output)
-        elif args.format == 'json':
-            output_json(signals, args.output)
-        elif args.format == 'csv':
-            output_csv(signals, args.output)
+            # 根据格式输出
+            if args.format == 'table':
+                output_table(signals, args.output)
+            elif args.format == 'json':
+                output_json(signals, args.output)
+            elif args.format == 'csv':
+                output_csv(signals, args.output)
+        
+        logger.info("=== 查询完成 ===")
+        
+    except KeyboardInterrupt:
+        logger.warning("用户中断操作")
+        print("\n操作已取消", file=sys.stderr)
+        sys.exit(130)
+    except Exception as e:
+        logger.error(f"未捕获的异常：{e}", exc_info=True)
+        print(f"错误：程序执行失败 - {e}", file=sys.stderr)
+        print("提示：请检查日志获取详细信息", file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == '__main__':
