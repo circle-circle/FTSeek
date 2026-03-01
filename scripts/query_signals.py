@@ -150,6 +150,14 @@ def validate_args(args):
         except ValueError:
             print(f"错误：无效的日期格式 '{args.to_date}'，应为 YYYY-MM-DD", file=sys.stderr)
             sys.exit(1)
+    
+    # 验证日期范围逻辑
+    if args.from_date and args.to_date:
+        from_dt = datetime.strptime(args.from_date, '%Y-%m-%d')
+        to_dt = datetime.strptime(args.to_date, '%Y-%m-%d')
+        if from_dt > to_dt:
+            print("错误：开始日期不能晚于结束日期", file=sys.stderr)
+            sys.exit(1)
 
 
 def query_signals(args):
@@ -187,9 +195,13 @@ def output_json(signals, output_file=None):
     import json
     
     if output_file:
-        with open(output_file, 'w', encoding='utf-8') as f:
-            json.dump(signals, f, ensure_ascii=False, indent=2)
-        print(f"已写入 {len(signals)} 条信号到 {output_file}")
+        try:
+            with open(output_file, 'w', encoding='utf-8') as f:
+                json.dump(signals, f, ensure_ascii=False, indent=2)
+            print(f"已写入 {len(signals)} 条信号到 {output_file}")
+        except IOError as e:
+            print(f"错误：无法写入文件：{e}", file=sys.stderr)
+            sys.exit(1)
     else:
         print(json.dumps(signals, ensure_ascii=False, indent=2))
 
@@ -210,11 +222,15 @@ def output_csv(signals, output_file=None):
     fieldnames = ['id', 'code', 'action', 'price', 'confidence', 'status', 'created_at']
     
     if output_file:
-        with open(output_file, 'w', newline='', encoding='utf-8') as f:
-            writer = csv.DictWriter(f, fieldnames=fieldnames)
-            writer.writeheader()
-            writer.writerows(signals)
-        print(f"已写入 {len(signals)} 条信号到 {output_file}")
+        try:
+            with open(output_file, 'w', newline='', encoding='utf-8') as f:
+                writer = csv.DictWriter(f, fieldnames=fieldnames)
+                writer.writeheader()
+                writer.writerows(signals)
+            print(f"已写入 {len(signals)} 条信号到 {output_file}")
+        except IOError as e:
+            print(f"错误：无法写入文件：{e}", file=sys.stderr)
+            sys.exit(1)
     else:
         writer = csv.DictWriter(sys.stdout, fieldnames=fieldnames)
         writer.writeheader()

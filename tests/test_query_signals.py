@@ -141,6 +141,38 @@ def test_report_modes():
     print("✓ test_report_modes 通过")
 
 
+def test_json_output_content():
+    """测试 JSON 输出格式正确"""
+    result = subprocess.run(
+        ['python3.8', '/opt/ftseek/FTSeek/scripts/query_signals.py',
+         '--format', 'json', '--limit', '5'],
+        capture_output=True,
+        text=True
+    )
+    assert result.returncode == 0, f"JSON 输出应该成功，stderr: {result.stderr}"
+    
+    import json
+    data = json.loads(result.stdout)
+    assert isinstance(data, list), f"JSON 输出应该是列表类型，实际是 {type(data)}"
+    
+    print("✓ test_json_output_content 通过")
+
+
+def test_daily_report_requires_output():
+    """测试日报模式必须指定 --output"""
+    result = subprocess.run(
+        ['python3.8', '/opt/ftseek/FTSeek/scripts/query_signals.py',
+         '--daily-report'],
+        capture_output=True,
+        text=True
+    )
+    assert result.returncode != 0, "日报模式不指定 --output 应该报错"
+    assert "必须指定" in result.stderr or "output" in result.stderr.lower(), \
+        f"错误信息应该包含'必须指定'或'output'，实际：{result.stderr}"
+    
+    print("✓ test_daily_report_requires_output 通过")
+
+
 if __name__ == '__main__':
     print("运行 query_signals.py 参数解析测试...\n")
     
@@ -153,6 +185,8 @@ if __name__ == '__main__':
         test_format_options,
         test_limit_parameter,
         test_report_modes,
+        test_json_output_content,
+        test_daily_report_requires_output,
     ]
     
     failed = 0
