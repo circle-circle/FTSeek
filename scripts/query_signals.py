@@ -124,6 +124,15 @@ def parse_args():
     return parser.parse_args()
 
 
+def _validate_date_format(date_str: str, param_name: str) -> datetime:
+    """验证日期格式并返回 datetime 对象"""
+    try:
+        return datetime.strptime(date_str, '%Y-%m-%d')
+    except ValueError:
+        print(f"错误：无效的日期格式 '{date_str}'，应为 YYYY-MM-DD", file=sys.stderr)
+        sys.exit(1)
+
+
 def validate_args(args):
     """验证参数组合"""
     # 日报/周报模式必须指定 output
@@ -137,27 +146,19 @@ def validate_args(args):
         sys.exit(1)
     
     # 验证日期格式
+    from_dt = None
+    to_dt = None
+    
     if args.from_date:
-        try:
-            datetime.strptime(args.from_date, '%Y-%m-%d')
-        except ValueError:
-            print(f"错误：无效的日期格式 '{args.from_date}'，应为 YYYY-MM-DD", file=sys.stderr)
-            sys.exit(1)
+        from_dt = _validate_date_format(args.from_date, 'from_date')
     
     if args.to_date:
-        try:
-            datetime.strptime(args.to_date, '%Y-%m-%d')
-        except ValueError:
-            print(f"错误：无效的日期格式 '{args.to_date}'，应为 YYYY-MM-DD", file=sys.stderr)
-            sys.exit(1)
+        to_dt = _validate_date_format(args.to_date, 'to_date')
     
     # 验证日期范围逻辑
-    if args.from_date and args.to_date:
-        from_dt = datetime.strptime(args.from_date, '%Y-%m-%d')
-        to_dt = datetime.strptime(args.to_date, '%Y-%m-%d')
-        if from_dt > to_dt:
-            print("错误：开始日期不能晚于结束日期", file=sys.stderr)
-            sys.exit(1)
+    if from_dt and to_dt and from_dt > to_dt:
+        print("错误：开始日期不能晚于结束日期", file=sys.stderr)
+        sys.exit(1)
 
 
 def query_signals(args):
@@ -181,67 +182,66 @@ def query_signals(args):
         sys.exit(1)
     
     try:
-        conn = sqlite3.connect(db_path)
-        conn.row_factory = sqlite3.Row  # 返回字典形式的行
-        cursor = conn.cursor()
-        
-        # 构建 WHERE 子句
-        conditions = []
-        params = []
-        
-        # 股票代码过滤
-        if args.stock:
-            conditions.append("code = ?")
-            params.append(args.stock)
-        
-        # 日期范围过滤
-        if args.from_date:
-            conditions.append("date(created_at) >= date(?)")
-            params.append(args.from_date)
-        
-        if args.to_date:
-            # 包含结束日期的整天
-            conditions.append("date(created_at) <= date(?)")
-            params.append(args.to_date)
-        
-        # 状态过滤
-        if args.status:
-            conditions.append("status = ?")
-            params.append(args.status)
-        
-        # 策略名过滤
-        if args.strategy:
-            conditions.append("strategy = ?")
-            params.append(args.strategy)
-        
-        # 构建完整 SQL
-        where_clause = ""
-        if conditions:
-            where_clause = "WHERE " + " AND ".join(conditions)
-        
-        sql = f"""
-            SELECT id, code, name, action, price, quantity, strategy,
-                   technical_score, sentiment_score, confidence, reason,
-                   created_at, expire_at, confirmed_at, executed_at, status
-            FROM signals
-            {where_clause}
-            ORDER BY created_at DESC
-            LIMIT ?
-        """
-        params.append(args.limit)
-        
-        # 执行查询
-        cursor.execute(sql, params)
-        rows = cursor.fetchall()
-        
-        # 转换为字典列表
-        signals = []
-        for row in rows:
-            signal = {key: row[key] for key in row.keys()}
-            signals.append(signal)
-        
-        conn.close()
-        return signals
+        with sqlite3.connect(str(db_path)) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            
+            # 构建 WHERE 子句
+            conditions = []
+            params = []
+            
+            # 股票代码过滤
+            if args.stock:
+                conditions.append("code = ?")
+                params.append(args.stock)
+            
+            # 日期范围过滤
+            if args.from_date:
+                conditions.append("date(created_at) >= date(?)")
+                params.append(args.from_date)
+            
+            if args.to_date:
+                # 包含结束日期的整天
+                conditions.append("date(created_at) <= date(?)")
+                params.append(args.to_date)
+            
+            # 状态过滤
+            if args.status:
+                conditions.append("status = ?")
+                params.append(args.status)
+            
+            # 策略名过滤
+            if args.strategy:
+                conditions.append("strategy = ?")
+                params.append(args.strategy)
+            
+            # 构建完整 SQL
+            where_clause = ""
+            if conditions:
+                where_clause = "WHERE " + " AND ".join(conditions)
+            
+            sql = f"""
+                SELECT id, code, name, action, price, quantity, strategy,
+                       technical_score, sentiment_score, confidence, reason,
+                       created_at, expire_at, confirmed_at, executed_at, status
+                FROM signals
+                {where_clause}
+                ORDER BY created_at DESC
+                LIMIT ?
+            """
+            params.append(args.limit)
+            
+            # 执行查询
+            cursor.execute(sql, params)
+            rows = cursor.fetchall()
+            
+            # 转换为字典列表
+            signals = []
+            for row in rows:
+                signal = {key: row[key] for key in row.keys()}
+                signals.append(signal)
+            
+            return signals
         
     except sqlite3.Error as e:
         print(f"数据库错误：{e}", file=sys.stderr)
@@ -251,23 +251,27 @@ def query_signals(args):
 def output_table(signals, output_file=None):
     """
     以表格格式输出信号
-    
-    TODO: Task 3 实现表格输出
     """
     if not signals:
         print("未找到信号数据")
         return
     
     # 简单输出（Task 3 将实现美化表格）
+    table_lines = []
     for signal in signals:
-        print(signal)
+        table_lines.append(str(signal))
+    table_str = '\n'.join(table_lines)
+    
+    if output_file:
+        with open(output_file, 'w', encoding='utf-8') as f:
+            f.write(table_str)
+    else:
+        print(table_str)
 
 
 def output_json(signals, output_file=None):
     """
     以 JSON 格式输出信号
-    
-    TODO: Task 4 实现 JSON 输出
     """
     import json
     
@@ -286,8 +290,6 @@ def output_json(signals, output_file=None):
 def output_csv(signals, output_file=None):
     """
     以 CSV 格式输出信号
-    
-    TODO: Task 5 实现 CSV 输出
     """
     import csv
     
@@ -295,13 +297,15 @@ def output_csv(signals, output_file=None):
         print("未找到信号数据")
         return
     
-    # 定义字段
-    fieldnames = ['id', 'code', 'action', 'price', 'confidence', 'status', 'created_at']
+    # 定义字段 - 包含所有可能的字段
+    fieldnames = ['id', 'code', 'name', 'action', 'price', 'quantity', 'strategy',
+                  'technical_score', 'sentiment_score', 'confidence', 'reason',
+                  'created_at', 'expire_at', 'confirmed_at', 'executed_at', 'status']
     
     if output_file:
         try:
             with open(output_file, 'w', newline='', encoding='utf-8') as f:
-                writer = csv.DictWriter(f, fieldnames=fieldnames)
+                writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction='ignore')
                 writer.writeheader()
                 writer.writerows(signals)
             print(f"已写入 {len(signals)} 条信号到 {output_file}")
@@ -309,7 +313,7 @@ def output_csv(signals, output_file=None):
             print(f"错误：无法写入文件：{e}", file=sys.stderr)
             sys.exit(1)
     else:
-        writer = csv.DictWriter(sys.stdout, fieldnames=fieldnames)
+        writer = csv.DictWriter(sys.stdout, fieldnames=fieldnames, extrasaction='ignore')
         writer.writeheader()
         writer.writerows(signals)
 
@@ -317,8 +321,6 @@ def output_csv(signals, output_file=None):
 def generate_report(args, signals):
     """
     生成日报/周报统计信息
-    
-    TODO: Task 6 完善报告功能
     """
     from datetime import datetime
     
