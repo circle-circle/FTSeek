@@ -164,11 +164,88 @@ def query_signals(args):
     """
     查询信号数据
     
-    TODO: Task 2 实现数据库查询逻辑
-    目前返回空列表作为占位
+    根据参数动态构建 SQL WHERE 子句，支持多条件组合查询
     """
-    # 这里将在 Task 2 中实现数据库查询
-    return []
+    import sqlite3
+    
+    # 数据库路径
+    db_path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        'data',
+        'ftseek.db'
+    )
+    
+    # 检查数据库是否存在
+    if not os.path.exists(db_path):
+        print(f"错误：数据库文件不存在：{db_path}", file=sys.stderr)
+        sys.exit(1)
+    
+    try:
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row  # 返回字典形式的行
+        cursor = conn.cursor()
+        
+        # 构建 WHERE 子句
+        conditions = []
+        params = []
+        
+        # 股票代码过滤
+        if args.stock:
+            conditions.append("code = ?")
+            params.append(args.stock)
+        
+        # 日期范围过滤
+        if args.from_date:
+            conditions.append("date(created_at) >= date(?)")
+            params.append(args.from_date)
+        
+        if args.to_date:
+            # 包含结束日期的整天
+            conditions.append("date(created_at) <= date(?)")
+            params.append(args.to_date)
+        
+        # 状态过滤
+        if args.status:
+            conditions.append("status = ?")
+            params.append(args.status)
+        
+        # 策略名过滤
+        if args.strategy:
+            conditions.append("strategy = ?")
+            params.append(args.strategy)
+        
+        # 构建完整 SQL
+        where_clause = ""
+        if conditions:
+            where_clause = "WHERE " + " AND ".join(conditions)
+        
+        sql = f"""
+            SELECT id, code, name, action, price, quantity, strategy,
+                   technical_score, sentiment_score, confidence, reason,
+                   created_at, expire_at, confirmed_at, executed_at, status
+            FROM signals
+            {where_clause}
+            ORDER BY created_at DESC
+            LIMIT ?
+        """
+        params.append(args.limit)
+        
+        # 执行查询
+        cursor.execute(sql, params)
+        rows = cursor.fetchall()
+        
+        # 转换为字典列表
+        signals = []
+        for row in rows:
+            signal = {key: row[key] for key in row.keys()}
+            signals.append(signal)
+        
+        conn.close()
+        return signals
+        
+    except sqlite3.Error as e:
+        print(f"数据库错误：{e}", file=sys.stderr)
+        sys.exit(1)
 
 
 def output_table(signals, output_file=None):
