@@ -1,6 +1,6 @@
-# FTSeek V3 - 智能量化交易系统
+# FTSeek V4 - 智能量化交易系统
 
-> 🤖 基于富途牛牛的自动化量化交易平台 | V3.0.0
+> 🤖 基于富途牛牛的自动化量化交易平台 | V4.0.0
 
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -11,6 +11,7 @@
 - [简介](#简介)
 - [核心特性](#核心特性)
 - [快速开始](#快速开始)
+- [统一决策引擎 (V4 新增)](#统一决策引擎-v4 新增)
 - [系统架构](#系统架构)
 - [策略引擎](#策略引擎)
 - [风控系统](#风控系统)
@@ -106,11 +107,71 @@ python3 scripts/init_db.py
 
 详细指南请查看 [QUICKSTART_V3.md](QUICKSTART_V3.md)
 
+## 🎯 统一决策引擎 (V4 新增)
+
+> V4 版本新增统一决策引擎，提供智能化交易决策和自动执行能力
+
+### 核心功能
+
+| 功能 | 说明 |
+|------|------|
+| **信号限流** | 每只股票最多 2 个信号/小时，避免过度交易 |
+| **模拟交易** | 纸面交易验证策略有效性，零风险测试 |
+| **自动止盈止损** | 收益≥5% 自动止盈，亏损≥3% 自动止损 |
+| **市场时段管理** | 港股/美股独立运行，自动识别交易时段 |
+| **定时报告** | 日报/周报自动推送，交易汇总一目了然 |
+
+### 交易模式
+
+| 模式 | 说明 | 适用场景 |
+|------|------|----------|
+| **PAPER** | 模拟模式，所有交易为纸面交易 | 策略验证、新手入门 |
+| **HYBRID** | 混合模式，高置信度走实盘 | 渐进式实盘 |
+| **LIVE** | 实盘模式，真实交易 | 策略成熟稳定 |
+| **DISABLED** | 禁用模式，暂停交易 | 市场异常、系统维护 |
+
+### 快速部署
+
+```bash
+# 一键部署统一决策引擎
+bash scripts/deploy_trading_engine.sh
+
+# 验证部署
+curl http://localhost:8900/api/v2/health
+```
+
+### API 端点
+
+```bash
+# 查询持仓
+curl -H "X-API-Key: your-key" http://localhost:8900/api/v2/positions
+
+# 查询绩效
+curl -H "X-API-Key: your-key" "http://localhost:8900/api/v2/performance?code=0700.HK"
+
+# 切换模式
+curl -X POST -H "X-API-Key: your-key" \
+  -H "Content-Type: application/json" \
+  -d '{"mode": "PAPER"}' \
+  http://localhost:8900/api/v2/mode/0700.HK
+
+# 手动平仓
+curl -X POST -H "X-API-Key: your-key" \
+  -H "Content-Type: application/json" \
+  -d '{}' \
+  http://localhost:8900/api/v2/manual_exit/0700.HK
+```
+
+### 文档
+
+- 📘 [用户指南](docs/trading_decision_user_guide.md) - 功能介绍、API 使用、常见问题
+- 🔧 [运维指南](docs/trading_decision_ops_guide.md) - 系统架构、监控、故障排查
+
 ## 🏗️ 系统架构
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│                    FTSeek V3                         │
+│                    FTSeek V4                         │
 ├─────────────────────────────────────────────────────┤
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  │
 │  │  策略引擎   │  │  风控系统   │  │  交易执行   │  │
@@ -119,6 +180,12 @@ python3 scripts/init_db.py
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  │
 │  │  新闻分析   │  │  报告生成   │  │  钉钉推送   │  │
 │  │   News      │  │  Reporter   │  │  DingTalk   │  │
+│  └─────────────┘  └─────────────┘  └─────────────┘  │
+├─────────────────────────────────────────────────────┤
+│              统一决策引擎 (V4 新增)                   │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  │
+│  │  信号限流   │  │  模拟交易   │  │  止盈止损   │  │
+│  │ RateLimiter │  │PaperTrader  │  │ExitManager  │  │
 │  └─────────────┘  └─────────────┘  └─────────────┘  │
 ├─────────────────────────────────────────────────────┤
 │                   富途牛牛 API                        │
@@ -212,6 +279,15 @@ risk_management:
 
 ## 📚 文档
 
+### V4 统一决策引擎
+
+| 文档 | 说明 |
+|------|------|
+| [docs/trading_decision_user_guide.md](docs/trading_decision_user_guide.md) | 用户指南 - 功能介绍、API 使用 |
+| [docs/trading_decision_ops_guide.md](docs/trading_decision_ops_guide.md) | 运维指南 - 监控、故障排查 |
+
+### 核心文档
+
 | 文档 | 说明 |
 |------|------|
 | [QUICKSTART_V3.md](QUICKSTART_V3.md) | 快速启动指南 |
@@ -295,4 +371,4 @@ MIT License - 详见 [LICENSE](LICENSE) 文件
 
 ---
 
-*最后更新：2026-03-01 | 版本：V3.0.0*
+*最后更新：2026-03-12 | 版本：V4.0.0*
