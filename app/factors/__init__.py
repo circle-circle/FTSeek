@@ -7,12 +7,13 @@ from .base import BaseFactor, FactorResult
 from .config import FactorConfig, DEFAULT_FACTOR_WEIGHTS
 from .capital_flow import CapitalFlowFactors
 from .sentiment import SentimentFactors, sentiment_score
+from .sentiment_ai import AISentimentFactor
 from .esg import ESGFactors
 from .preprocessing import FactorPreprocessor
 
 __all__ = [
     'BaseFactor', 'FactorResult', 'FactorConfig',
-    'CapitalFlowFactors', 'SentimentFactors', 'ESGFactors',
+    'CapitalFlowFactors', 'SentimentFactors', 'AISentimentFactor', 'ESGFactors',
     'FactorPreprocessor', 'sentiment_score',
     'DEFAULT_FACTOR_WEIGHTS'
 ]
