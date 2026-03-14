@@ -1,12 +1,11 @@
 """
 AI 增强情绪因子
 
-使用 AI API 进行情绪分析，替代简单词典法
+使用 AI API 进行情绪分析，自动从新闻采集器获取新闻
 """
 import logging
 from typing import Optional, Dict, List
 from .base import BaseFactor, FactorResult
-from app.ai.base import AIService
 
 logger = logging.getLogger("ftseek.factors.sentiment_ai")
 
@@ -18,53 +17,93 @@ class AISentimentFactor(BaseFactor):
     
     def __init__(self, config: dict = None):
         super().__init__(config)
-        self.ai_service = AIService(provider=config.get('provider', 'bailian') if config else 'bailian')
-        self.cache = {}
+        self.auto_fetch_news = config.get('auto_fetch_news', True) if config else True
+        self.lookback_hours = config.get('lookback_hours', 24) if config else 24
+        self.max_news = config.get('max_news', 10) if config else 10
     
     def calculate(self, code: str, data: Dict) -> Optional[FactorResult]:
         """计算 AI 情绪因子"""
+        # 1. 自动获取新闻 (如果启用)
+        if self.auto_fetch_news and not data.get('news'):
+            try:
+                from app.factors.news_integration import get_news_sentiment_analyzer
+                analyzer = get_news_sentiment_analyzer()
+                news_result = analyzer.analyze_stock(
+                    code=code,
+                    lookback_hours=self.lookback_hours,
+                    max_news=self.max_news
+                )
+                
+                # 使用分析结果
+                if news_result['news_count'] > 0:
+                    logger.info(f"自动获取新闻：{code} - {news_result['news_count']} 条")
+                    return FactorResult(
+                        code=code,
+                        factor_name='sentiment_ai',
+                        value=news_result['sentiment_score'],
+                        timestamp=news_result['analyzed_at'],
+                        metadata={
+                            'news_count': news_result['news_count'],
+                            'positive_count': news_result['positive_count'],
+                            'negative_count': news_result['negative_count'],
+                            'neutral_count': news_result['neutral_count'],
+                            'ai_provider': news_result['ai_provider'],
+                            'cache_hit': news_result['cache_hit'],
+                            'auto_fetched': True
+                        }
+                    )
+            except Exception as e:
+                logger.warning(f"自动获取新闻失败：{e}，使用备用方案")
+        
+        # 2. 使用传入的新闻数据 (备用方案)
         news_list = data.get('news', [])
         social_posts = data.get('social', [])
         
         if not news_list and not social_posts:
+            logger.debug(f"无新闻数据：{code}")
             return FactorResult(
                 code=code,
                 factor_name='sentiment_ai',
                 value=0.0,
                 timestamp=data.get('timestamp', ''),
-                metadata={'news_count': 0, 'social_count': 0, 'ai_provider': self.ai_service.provider.name}
+                metadata={'news_count': 0, 'social_count': 0, 'auto_fetched': False}
             )
         
-        # 分析新闻情绪
+        # 3. AI 情绪分析
+        from app.ai import AIService
+        ai_service = AIService()
+        
         news_scores = []
-        for news in news_list[:10]:  # 限制最多 10 条
+        for news in news_list[:self.max_news]:
             text = f"{news.get('title', '')} {news.get('content', '')}"
-            cache_key = f"sentiment_{hash(text)}"
             
-            if cache_key in self.cache:
+            # 检查缓存
+            cache_key = f"sentiment_{hash(text)}"
+            if hasattr(self, 'cache') and cache_key in self.cache:
                 score = self.cache[cache_key]
             else:
-                response = self.ai_service.analyze_sentiment(text)
+                response = ai_service.analyze_sentiment(text)
                 if response.success:
                     score = response.data.get('sentiment_score', 0.0)
-                    self.cache[cache_key] = score
+                    if hasattr(self, 'cache'):
+                        self.cache[cache_key] = score
                 else:
                     score = 0.0
             
             news_scores.append(score)
         
-        # 分析社交情绪
+        # 社交情绪
         social_scores = []
-        for post in social_posts[:20]:  # 限制最多 20 条
+        for post in social_posts[:self.max_news * 2]:
             cache_key = f"sentiment_{hash(post)}"
-            
-            if cache_key in self.cache:
+            if hasattr(self, 'cache') and cache_key in self.cache:
                 score = self.cache[cache_key]
             else:
-                response = self.ai_service.analyze_sentiment(post)
+                response = ai_service.analyze_sentiment(post)
                 if response.success:
                     score = response.data.get('sentiment_score', 0.0)
-                    self.cache[cache_key] = score
+                    if hasattr(self, 'cache'):
+                        self.cache[cache_key] = score
                 else:
                     score = 0.0
             
@@ -86,7 +125,8 @@ class AISentimentFactor(BaseFactor):
                 'social_sentiment': social_avg,
                 'news_count': len(news_scores),
                 'social_count': len(social_scores),
-                'ai_provider': self.ai_service.provider.name,
-                'cache_size': len(self.cache)
+                'ai_provider': 'bailian',
+                'cache_size': len(getattr(self, 'cache', {})),
+                'auto_fetched': False
             }
         )
