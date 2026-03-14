@@ -1,0 +1,1981 @@
+2026-03-01 11:05:14,611 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-01 11:05:14,611 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送开始
+2026-03-01 11:05:14,611 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-01 11:05:14,612 [INFO] ftseek.scripts.risk_monitor: 初始化组件...
+2026-03-01 11:05:14,618 [INFO] ftseek.storage.database: 数据库表结构初始化完成
+2026-03-01 11:05:14,619 [INFO] ftseek.storage.database: 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-01 11:05:14,619 [INFO] ftseek.scripts.risk_monitor: 数据库已初始化
+2026-03-01 11:05:14,627 [INFO] ftseek.risk.manager: 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-01 11:05:14,627 [INFO] ftseek.risk.manager: 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-01 11:05:14,627 [INFO] ftseek.scripts.risk_monitor: 风控管理器已初始化 | 模式=paper
+2026-03-01 11:05:14,627 [INFO] ftseek.scripts.risk_monitor: 钉钉推送已初始化
+2026-03-01 11:05:14,627 [INFO] ftseek.risk.monitor: 风险监控器已初始化
+2026-03-01 11:05:14,627 [INFO] ftseek.scripts.risk_monitor: 风险监控器已初始化
+2026-03-01 11:05:14,628 [INFO] ftseek.scripts.risk_monitor: 监控数据已收集:
+2026-03-01 11:05:14,628 [INFO] ftseek.scripts.risk_monitor:   账户总值：HK$1,000,000.00
+2026-03-01 11:05:14,628 [INFO] ftseek.scripts.risk_monitor:   持仓市值：HK$0.00
+2026-03-01 11:05:14,628 [INFO] ftseek.scripts.risk_monitor:   今日盈亏：HK$+0.00
+2026-03-01 11:05:14,628 [INFO] ftseek.scripts.risk_monitor:   风控状态：✅ 正常
+2026-03-01 11:05:14,628 [INFO] ftseek.scripts.risk_monitor: 测试模式：不实际推送
+2026-03-01 11:05:14,628 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-01 11:05:14,628 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送结束
+2026-03-01 11:05:14,629 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-01 11:05:30,393 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-01 11:05:30,393 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送开始
+2026-03-01 11:05:30,393 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-01 11:05:30,393 [INFO] ftseek.scripts.risk_monitor: 初始化组件...
+2026-03-01 11:05:30,397 [INFO] ftseek.storage.database: 数据库表结构初始化完成
+2026-03-01 11:05:30,398 [INFO] ftseek.storage.database: 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-01 11:05:30,398 [INFO] ftseek.scripts.risk_monitor: 数据库已初始化
+2026-03-01 11:05:30,403 [INFO] ftseek.risk.manager: 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-01 11:05:30,403 [INFO] ftseek.risk.manager: 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-01 11:05:30,403 [INFO] ftseek.scripts.risk_monitor: 风控管理器已初始化 | 模式=paper
+2026-03-01 11:05:30,404 [INFO] ftseek.scripts.risk_monitor: 钉钉推送已初始化
+2026-03-01 11:05:30,404 [INFO] ftseek.risk.monitor: 风险监控器已初始化
+2026-03-01 11:05:30,404 [INFO] ftseek.scripts.risk_monitor: 风险监控器已初始化
+2026-03-01 11:05:30,404 [INFO] ftseek.scripts.risk_monitor: 监控数据已收集:
+2026-03-01 11:05:30,404 [INFO] ftseek.scripts.risk_monitor:   账户总值：HK$1,000,000.00
+2026-03-01 11:05:30,405 [INFO] ftseek.scripts.risk_monitor:   持仓市值：HK$0.00
+2026-03-01 11:05:30,405 [INFO] ftseek.scripts.risk_monitor:   今日盈亏：HK$+0.00
+2026-03-01 11:05:30,405 [INFO] ftseek.scripts.risk_monitor:   风控状态：✅ 正常
+2026-03-01 11:05:30,447 [ERROR] ftseek.notifier.dingtalk: 钉钉推送失败: {'errcode': 300005, 'errmsg': 'token is not exist'}
+2026-03-01 11:05:30,448 [ERROR] ftseek.risk.monitor: 风险监控面板推送失败
+2026-03-01 11:05:30,448 [ERROR] ftseek.scripts.risk_monitor: ❌ 风险监控推送失败
+2026-03-01 11:05:30,448 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-01 11:05:30,448 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送结束
+2026-03-01 11:05:30,448 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-02 09:54:54,963 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-02 09:54:54,963 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送开始
+2026-03-02 09:54:54,963 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-02 09:54:54,963 [INFO] ftseek.scripts.risk_monitor: 初始化组件...
+2026-03-02 09:54:54,965 [INFO] ftseek.storage.database: 数据库表结构初始化完成
+2026-03-02 09:54:54,965 [INFO] ftseek.storage.database: 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-02 09:54:54,965 [INFO] ftseek.scripts.risk_monitor: 数据库已初始化
+2026-03-02 09:54:54,970 [INFO] ftseek.risk.manager: 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-02 09:54:54,971 [INFO] ftseek.risk.manager: 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-02 09:54:54,971 [INFO] ftseek.scripts.risk_monitor: 风控管理器已初始化 | 模式=paper
+2026-03-02 09:54:54,971 [INFO] ftseek.scripts.risk_monitor: 钉钉推送已初始化
+2026-03-02 09:54:54,971 [INFO] ftseek.risk.monitor: 风险监控器已初始化
+2026-03-02 09:54:54,971 [INFO] ftseek.scripts.risk_monitor: 风险监控器已初始化
+2026-03-02 09:54:54,971 [INFO] ftseek.scripts.risk_monitor: 当前时间 09:54 不是推送时间，下次推送：[10, 12, 14, 16]点
+2026-03-02 09:54:54,971 [INFO] ftseek.scripts.risk_monitor: 未到推送时间，退出
+2026-03-02 10:00:01,585 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-02 10:00:01,585 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-02 10:00:01,585 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送开始
+2026-03-02 10:00:01,585 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送开始
+2026-03-02 10:00:01,585 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-02 10:00:01,585 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-02 10:00:01,586 [INFO] ftseek.scripts.risk_monitor: 初始化组件...
+2026-03-02 10:00:01,586 [INFO] ftseek.scripts.risk_monitor: 初始化组件...
+2026-03-02 10:00:01,588 [INFO] ftseek.storage.database: 数据库表结构初始化完成
+2026-03-02 10:00:01,588 [INFO] ftseek.storage.database: 数据库表结构初始化完成
+2026-03-02 10:00:01,589 [INFO] ftseek.storage.database: 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-02 10:00:01,589 [INFO] ftseek.storage.database: 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-02 10:00:01,589 [INFO] ftseek.scripts.risk_monitor: 数据库已初始化
+2026-03-02 10:00:01,589 [INFO] ftseek.scripts.risk_monitor: 数据库已初始化
+2026-03-02 10:00:01,598 [INFO] ftseek.risk.manager: 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-02 10:00:01,598 [INFO] ftseek.risk.manager: 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-02 10:00:01,599 [INFO] ftseek.risk.manager: 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-02 10:00:01,599 [INFO] ftseek.risk.manager: 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-02 10:00:01,599 [INFO] ftseek.scripts.risk_monitor: 风控管理器已初始化 | 模式=paper
+2026-03-02 10:00:01,599 [INFO] ftseek.scripts.risk_monitor: 风控管理器已初始化 | 模式=paper
+2026-03-02 10:00:01,599 [INFO] ftseek.scripts.risk_monitor: 钉钉推送已初始化
+2026-03-02 10:00:01,599 [INFO] ftseek.scripts.risk_monitor: 钉钉推送已初始化
+2026-03-02 10:00:01,599 [INFO] ftseek.risk.monitor: 风险监控器已初始化
+2026-03-02 10:00:01,599 [INFO] ftseek.risk.monitor: 风险监控器已初始化
+2026-03-02 10:00:01,600 [INFO] ftseek.scripts.risk_monitor: 风险监控器已初始化
+2026-03-02 10:00:01,600 [INFO] ftseek.scripts.risk_monitor: 风险监控器已初始化
+2026-03-02 10:00:01,600 [INFO] ftseek.scripts.risk_monitor: 监控数据已收集:
+2026-03-02 10:00:01,600 [INFO] ftseek.scripts.risk_monitor: 监控数据已收集:
+2026-03-02 10:00:01,600 [INFO] ftseek.scripts.risk_monitor:   账户总值：HK$1,000,000.00
+2026-03-02 10:00:01,600 [INFO] ftseek.scripts.risk_monitor:   账户总值：HK$1,000,000.00
+2026-03-02 10:00:01,600 [INFO] ftseek.scripts.risk_monitor:   持仓市值：HK$0.00
+2026-03-02 10:00:01,600 [INFO] ftseek.scripts.risk_monitor:   持仓市值：HK$0.00
+2026-03-02 10:00:01,600 [INFO] ftseek.scripts.risk_monitor:   今日盈亏：HK$+0.00
+2026-03-02 10:00:01,600 [INFO] ftseek.scripts.risk_monitor:   今日盈亏：HK$+0.00
+2026-03-02 10:00:01,600 [INFO] ftseek.scripts.risk_monitor:   风控状态：✅ 正常
+2026-03-02 10:00:01,600 [INFO] ftseek.scripts.risk_monitor:   风控状态：✅ 正常
+2026-03-02 10:00:01,679 [INFO] ftseek.notifier.dingtalk: 钉钉风险监控推送成功：10:00
+2026-03-02 10:00:01,679 [INFO] ftseek.notifier.dingtalk: 钉钉风险监控推送成功：10:00
+2026-03-02 10:00:01,680 [INFO] ftseek.risk.monitor: 风险监控面板已推送：10:00
+2026-03-02 10:00:01,680 [INFO] ftseek.risk.monitor: 风险监控面板已推送：10:00
+2026-03-02 10:00:01,680 [INFO] ftseek.scripts.risk_monitor: ✅ 风险监控推送成功
+2026-03-02 10:00:01,680 [INFO] ftseek.scripts.risk_monitor: ✅ 风险监控推送成功
+2026-03-02 10:00:01,680 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-02 10:00:01,680 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-02 10:00:01,680 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送结束
+2026-03-02 10:00:01,680 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送结束
+2026-03-02 10:00:01,680 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-02 10:00:01,680 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-02 12:00:02,401 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-02 12:00:02,401 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-02 12:00:02,401 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送开始
+2026-03-02 12:00:02,401 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送开始
+2026-03-02 12:00:02,401 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-02 12:00:02,401 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-02 12:00:02,401 [INFO] ftseek.scripts.risk_monitor: 初始化组件...
+2026-03-02 12:00:02,401 [INFO] ftseek.scripts.risk_monitor: 初始化组件...
+2026-03-02 12:00:02,414 [INFO] ftseek.storage.database: 数据库表结构初始化完成
+2026-03-02 12:00:02,414 [INFO] ftseek.storage.database: 数据库表结构初始化完成
+2026-03-02 12:00:02,414 [INFO] ftseek.storage.database: 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-02 12:00:02,414 [INFO] ftseek.storage.database: 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-02 12:00:02,415 [INFO] ftseek.scripts.risk_monitor: 数据库已初始化
+2026-03-02 12:00:02,415 [INFO] ftseek.scripts.risk_monitor: 数据库已初始化
+2026-03-02 12:00:02,439 [INFO] ftseek.risk.manager: 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-02 12:00:02,439 [INFO] ftseek.risk.manager: 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-02 12:00:02,439 [INFO] ftseek.risk.manager: 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-02 12:00:02,439 [INFO] ftseek.risk.manager: 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-02 12:00:02,439 [INFO] ftseek.scripts.risk_monitor: 风控管理器已初始化 | 模式=paper
+2026-03-02 12:00:02,439 [INFO] ftseek.scripts.risk_monitor: 风控管理器已初始化 | 模式=paper
+2026-03-02 12:00:02,439 [INFO] ftseek.scripts.risk_monitor: 钉钉推送已初始化
+2026-03-02 12:00:02,439 [INFO] ftseek.scripts.risk_monitor: 钉钉推送已初始化
+2026-03-02 12:00:02,439 [INFO] ftseek.risk.monitor: 风险监控器已初始化
+2026-03-02 12:00:02,439 [INFO] ftseek.risk.monitor: 风险监控器已初始化
+2026-03-02 12:00:02,439 [INFO] ftseek.scripts.risk_monitor: 风险监控器已初始化
+2026-03-02 12:00:02,439 [INFO] ftseek.scripts.risk_monitor: 风险监控器已初始化
+2026-03-02 12:00:02,440 [INFO] ftseek.scripts.risk_monitor: 监控数据已收集:
+2026-03-02 12:00:02,440 [INFO] ftseek.scripts.risk_monitor: 监控数据已收集:
+2026-03-02 12:00:02,440 [INFO] ftseek.scripts.risk_monitor:   账户总值：HK$1,000,000.00
+2026-03-02 12:00:02,440 [INFO] ftseek.scripts.risk_monitor:   账户总值：HK$1,000,000.00
+2026-03-02 12:00:02,440 [INFO] ftseek.scripts.risk_monitor:   持仓市值：HK$0.00
+2026-03-02 12:00:02,440 [INFO] ftseek.scripts.risk_monitor:   持仓市值：HK$0.00
+2026-03-02 12:00:02,440 [INFO] ftseek.scripts.risk_monitor:   今日盈亏：HK$+0.00
+2026-03-02 12:00:02,440 [INFO] ftseek.scripts.risk_monitor:   今日盈亏：HK$+0.00
+2026-03-02 12:00:02,440 [INFO] ftseek.scripts.risk_monitor:   风控状态：✅ 正常
+2026-03-02 12:00:02,440 [INFO] ftseek.scripts.risk_monitor:   风控状态：✅ 正常
+2026-03-02 12:00:02,596 [INFO] ftseek.notifier.dingtalk: 钉钉风险监控推送成功：12:00
+2026-03-02 12:00:02,596 [INFO] ftseek.notifier.dingtalk: 钉钉风险监控推送成功：12:00
+2026-03-02 12:00:02,596 [INFO] ftseek.risk.monitor: 风险监控面板已推送：12:00
+2026-03-02 12:00:02,596 [INFO] ftseek.risk.monitor: 风险监控面板已推送：12:00
+2026-03-02 12:00:02,596 [INFO] ftseek.scripts.risk_monitor: ✅ 风险监控推送成功
+2026-03-02 12:00:02,596 [INFO] ftseek.scripts.risk_monitor: ✅ 风险监控推送成功
+2026-03-02 12:00:02,596 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-02 12:00:02,596 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-02 12:00:02,596 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送结束
+2026-03-02 12:00:02,596 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送结束
+2026-03-02 12:00:02,597 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-02 12:00:02,597 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-02 14:00:02,512 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-02 14:00:02,512 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-02 14:00:02,515 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送开始
+2026-03-02 14:00:02,515 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送开始
+2026-03-02 14:00:02,515 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-02 14:00:02,515 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-02 14:00:02,516 [INFO] ftseek.scripts.risk_monitor: 初始化组件...
+2026-03-02 14:00:02,516 [INFO] ftseek.scripts.risk_monitor: 初始化组件...
+2026-03-02 14:00:02,521 [INFO] ftseek.storage.database: 数据库表结构初始化完成
+2026-03-02 14:00:02,521 [INFO] ftseek.storage.database: 数据库表结构初始化完成
+2026-03-02 14:00:02,522 [INFO] ftseek.storage.database: 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-02 14:00:02,522 [INFO] ftseek.storage.database: 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-02 14:00:02,522 [INFO] ftseek.scripts.risk_monitor: 数据库已初始化
+2026-03-02 14:00:02,522 [INFO] ftseek.scripts.risk_monitor: 数据库已初始化
+2026-03-02 14:00:02,540 [INFO] ftseek.risk.manager: 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-02 14:00:02,540 [INFO] ftseek.risk.manager: 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-02 14:00:02,540 [INFO] ftseek.risk.manager: 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-02 14:00:02,540 [INFO] ftseek.risk.manager: 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-02 14:00:02,540 [INFO] ftseek.scripts.risk_monitor: 风控管理器已初始化 | 模式=paper
+2026-03-02 14:00:02,540 [INFO] ftseek.scripts.risk_monitor: 风控管理器已初始化 | 模式=paper
+2026-03-02 14:00:02,540 [INFO] ftseek.scripts.risk_monitor: 钉钉推送已初始化
+2026-03-02 14:00:02,540 [INFO] ftseek.scripts.risk_monitor: 钉钉推送已初始化
+2026-03-02 14:00:02,541 [INFO] ftseek.risk.monitor: 风险监控器已初始化
+2026-03-02 14:00:02,541 [INFO] ftseek.risk.monitor: 风险监控器已初始化
+2026-03-02 14:00:02,541 [INFO] ftseek.scripts.risk_monitor: 风险监控器已初始化
+2026-03-02 14:00:02,541 [INFO] ftseek.scripts.risk_monitor: 风险监控器已初始化
+2026-03-02 14:00:02,541 [INFO] ftseek.scripts.risk_monitor: 监控数据已收集:
+2026-03-02 14:00:02,541 [INFO] ftseek.scripts.risk_monitor: 监控数据已收集:
+2026-03-02 14:00:02,541 [INFO] ftseek.scripts.risk_monitor:   账户总值：HK$1,000,000.00
+2026-03-02 14:00:02,541 [INFO] ftseek.scripts.risk_monitor:   账户总值：HK$1,000,000.00
+2026-03-02 14:00:02,541 [INFO] ftseek.scripts.risk_monitor:   持仓市值：HK$0.00
+2026-03-02 14:00:02,541 [INFO] ftseek.scripts.risk_monitor:   持仓市值：HK$0.00
+2026-03-02 14:00:02,541 [INFO] ftseek.scripts.risk_monitor:   今日盈亏：HK$+0.00
+2026-03-02 14:00:02,541 [INFO] ftseek.scripts.risk_monitor:   今日盈亏：HK$+0.00
+2026-03-02 14:00:02,541 [INFO] ftseek.scripts.risk_monitor:   风控状态：✅ 正常
+2026-03-02 14:00:02,541 [INFO] ftseek.scripts.risk_monitor:   风控状态：✅ 正常
+2026-03-02 14:00:02,617 [INFO] ftseek.notifier.dingtalk: 钉钉风险监控推送成功：14:00
+2026-03-02 14:00:02,617 [INFO] ftseek.notifier.dingtalk: 钉钉风险监控推送成功：14:00
+2026-03-02 14:00:02,617 [INFO] ftseek.risk.monitor: 风险监控面板已推送：14:00
+2026-03-02 14:00:02,617 [INFO] ftseek.risk.monitor: 风险监控面板已推送：14:00
+2026-03-02 14:00:02,617 [INFO] ftseek.scripts.risk_monitor: ✅ 风险监控推送成功
+2026-03-02 14:00:02,617 [INFO] ftseek.scripts.risk_monitor: ✅ 风险监控推送成功
+2026-03-02 14:00:02,618 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-02 14:00:02,618 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-02 14:00:02,618 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送结束
+2026-03-02 14:00:02,618 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送结束
+2026-03-02 14:00:02,618 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-02 14:00:02,618 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-02 16:00:01,600 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-02 16:00:01,600 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-02 16:00:01,601 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送开始
+2026-03-02 16:00:01,601 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送开始
+2026-03-02 16:00:01,601 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-02 16:00:01,601 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-02 16:00:01,601 [INFO] ftseek.scripts.risk_monitor: 初始化组件...
+2026-03-02 16:00:01,601 [INFO] ftseek.scripts.risk_monitor: 初始化组件...
+2026-03-02 16:00:01,603 [INFO] ftseek.storage.database: 数据库表结构初始化完成
+2026-03-02 16:00:01,603 [INFO] ftseek.storage.database: 数据库表结构初始化完成
+2026-03-02 16:00:01,603 [INFO] ftseek.storage.database: 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-02 16:00:01,603 [INFO] ftseek.storage.database: 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-02 16:00:01,603 [INFO] ftseek.scripts.risk_monitor: 数据库已初始化
+2026-03-02 16:00:01,603 [INFO] ftseek.scripts.risk_monitor: 数据库已初始化
+2026-03-02 16:00:01,617 [INFO] ftseek.risk.manager: 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-02 16:00:01,617 [INFO] ftseek.risk.manager: 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-02 16:00:01,617 [INFO] ftseek.risk.manager: 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-02 16:00:01,617 [INFO] ftseek.risk.manager: 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-02 16:00:01,617 [INFO] ftseek.scripts.risk_monitor: 风控管理器已初始化 | 模式=paper
+2026-03-02 16:00:01,617 [INFO] ftseek.scripts.risk_monitor: 风控管理器已初始化 | 模式=paper
+2026-03-02 16:00:01,617 [INFO] ftseek.scripts.risk_monitor: 钉钉推送已初始化
+2026-03-02 16:00:01,617 [INFO] ftseek.scripts.risk_monitor: 钉钉推送已初始化
+2026-03-02 16:00:01,617 [INFO] ftseek.risk.monitor: 风险监控器已初始化
+2026-03-02 16:00:01,617 [INFO] ftseek.risk.monitor: 风险监控器已初始化
+2026-03-02 16:00:01,617 [INFO] ftseek.scripts.risk_monitor: 风险监控器已初始化
+2026-03-02 16:00:01,617 [INFO] ftseek.scripts.risk_monitor: 风险监控器已初始化
+2026-03-02 16:00:01,618 [INFO] ftseek.scripts.risk_monitor: 监控数据已收集:
+2026-03-02 16:00:01,618 [INFO] ftseek.scripts.risk_monitor: 监控数据已收集:
+2026-03-02 16:00:01,618 [INFO] ftseek.scripts.risk_monitor:   账户总值：HK$1,000,000.00
+2026-03-02 16:00:01,618 [INFO] ftseek.scripts.risk_monitor:   账户总值：HK$1,000,000.00
+2026-03-02 16:00:01,618 [INFO] ftseek.scripts.risk_monitor:   持仓市值：HK$0.00
+2026-03-02 16:00:01,618 [INFO] ftseek.scripts.risk_monitor:   持仓市值：HK$0.00
+2026-03-02 16:00:01,618 [INFO] ftseek.scripts.risk_monitor:   今日盈亏：HK$+0.00
+2026-03-02 16:00:01,618 [INFO] ftseek.scripts.risk_monitor:   今日盈亏：HK$+0.00
+2026-03-02 16:00:01,618 [INFO] ftseek.scripts.risk_monitor:   风控状态：✅ 正常
+2026-03-02 16:00:01,618 [INFO] ftseek.scripts.risk_monitor:   风控状态：✅ 正常
+2026-03-02 16:00:01,706 [INFO] ftseek.notifier.dingtalk: 钉钉风险监控推送成功：16:00
+2026-03-02 16:00:01,706 [INFO] ftseek.notifier.dingtalk: 钉钉风险监控推送成功：16:00
+2026-03-02 16:00:01,707 [INFO] ftseek.risk.monitor: 风险监控面板已推送：16:00
+2026-03-02 16:00:01,707 [INFO] ftseek.risk.monitor: 风险监控面板已推送：16:00
+2026-03-02 16:00:01,707 [INFO] ftseek.scripts.risk_monitor: ✅ 风险监控推送成功
+2026-03-02 16:00:01,707 [INFO] ftseek.scripts.risk_monitor: ✅ 风险监控推送成功
+2026-03-02 16:00:01,707 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-02 16:00:01,707 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-02 16:00:01,707 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送结束
+2026-03-02 16:00:01,707 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送结束
+2026-03-02 16:00:01,707 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-02 16:00:01,707 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-03 10:00:02,200 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-03 10:00:02,200 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-03 10:00:02,214 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送开始
+2026-03-03 10:00:02,214 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送开始
+2026-03-03 10:00:02,214 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-03 10:00:02,214 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-03 10:00:02,214 [INFO] ftseek.scripts.risk_monitor: 初始化组件...
+2026-03-03 10:00:02,214 [INFO] ftseek.scripts.risk_monitor: 初始化组件...
+2026-03-03 10:00:02,217 [INFO] ftseek.storage.database: 数据库表结构初始化完成
+2026-03-03 10:00:02,217 [INFO] ftseek.storage.database: 数据库表结构初始化完成
+2026-03-03 10:00:02,217 [INFO] ftseek.storage.database: 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-03 10:00:02,217 [INFO] ftseek.storage.database: 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-03 10:00:02,218 [INFO] ftseek.scripts.risk_monitor: 数据库已初始化
+2026-03-03 10:00:02,218 [INFO] ftseek.scripts.risk_monitor: 数据库已初始化
+2026-03-03 10:00:02,234 [INFO] ftseek.risk.manager: 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-03 10:00:02,234 [INFO] ftseek.risk.manager: 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-03 10:00:02,234 [INFO] ftseek.risk.manager: 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-03 10:00:02,234 [INFO] ftseek.risk.manager: 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-03 10:00:02,235 [INFO] ftseek.scripts.risk_monitor: 风控管理器已初始化 | 模式=paper
+2026-03-03 10:00:02,235 [INFO] ftseek.scripts.risk_monitor: 风控管理器已初始化 | 模式=paper
+2026-03-03 10:00:02,235 [INFO] ftseek.scripts.risk_monitor: 钉钉推送已初始化
+2026-03-03 10:00:02,235 [INFO] ftseek.scripts.risk_monitor: 钉钉推送已初始化
+2026-03-03 10:00:02,235 [INFO] ftseek.risk.monitor: 风险监控器已初始化
+2026-03-03 10:00:02,235 [INFO] ftseek.risk.monitor: 风险监控器已初始化
+2026-03-03 10:00:02,235 [INFO] ftseek.scripts.risk_monitor: 风险监控器已初始化
+2026-03-03 10:00:02,235 [INFO] ftseek.scripts.risk_monitor: 风险监控器已初始化
+2026-03-03 10:00:02,235 [INFO] ftseek.scripts.risk_monitor: 监控数据已收集:
+2026-03-03 10:00:02,235 [INFO] ftseek.scripts.risk_monitor: 监控数据已收集:
+2026-03-03 10:00:02,235 [INFO] ftseek.scripts.risk_monitor:   账户总值：HK$1,000,000.00
+2026-03-03 10:00:02,235 [INFO] ftseek.scripts.risk_monitor:   账户总值：HK$1,000,000.00
+2026-03-03 10:00:02,235 [INFO] ftseek.scripts.risk_monitor:   持仓市值：HK$0.00
+2026-03-03 10:00:02,235 [INFO] ftseek.scripts.risk_monitor:   持仓市值：HK$0.00
+2026-03-03 10:00:02,236 [INFO] ftseek.scripts.risk_monitor:   今日盈亏：HK$+0.00
+2026-03-03 10:00:02,236 [INFO] ftseek.scripts.risk_monitor:   今日盈亏：HK$+0.00
+2026-03-03 10:00:02,236 [INFO] ftseek.scripts.risk_monitor:   风控状态：✅ 正常
+2026-03-03 10:00:02,236 [INFO] ftseek.scripts.risk_monitor:   风控状态：✅ 正常
+2026-03-03 10:00:02,331 [INFO] ftseek.notifier.dingtalk: 钉钉风险监控推送成功：10:00
+2026-03-03 10:00:02,331 [INFO] ftseek.notifier.dingtalk: 钉钉风险监控推送成功：10:00
+2026-03-03 10:00:02,331 [INFO] ftseek.risk.monitor: 风险监控面板已推送：10:00
+2026-03-03 10:00:02,331 [INFO] ftseek.risk.monitor: 风险监控面板已推送：10:00
+2026-03-03 10:00:02,332 [INFO] ftseek.scripts.risk_monitor: ✅ 风险监控推送成功
+2026-03-03 10:00:02,332 [INFO] ftseek.scripts.risk_monitor: ✅ 风险监控推送成功
+2026-03-03 10:00:02,332 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-03 10:00:02,332 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-03 10:00:02,332 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送结束
+2026-03-03 10:00:02,332 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送结束
+2026-03-03 10:00:02,332 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-03 10:00:02,332 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-03 12:00:01,801 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-03 12:00:01,801 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-03 12:00:01,803 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送开始
+2026-03-03 12:00:01,803 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送开始
+2026-03-03 12:00:01,803 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-03 12:00:01,803 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-03 12:00:01,804 [INFO] ftseek.scripts.risk_monitor: 初始化组件...
+2026-03-03 12:00:01,804 [INFO] ftseek.scripts.risk_monitor: 初始化组件...
+2026-03-03 12:00:01,806 [INFO] ftseek.storage.database: 数据库表结构初始化完成
+2026-03-03 12:00:01,806 [INFO] ftseek.storage.database: 数据库表结构初始化完成
+2026-03-03 12:00:01,807 [INFO] ftseek.storage.database: 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-03 12:00:01,807 [INFO] ftseek.storage.database: 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-03 12:00:01,807 [INFO] ftseek.scripts.risk_monitor: 数据库已初始化
+2026-03-03 12:00:01,807 [INFO] ftseek.scripts.risk_monitor: 数据库已初始化
+2026-03-03 12:00:01,822 [INFO] ftseek.risk.manager: 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-03 12:00:01,822 [INFO] ftseek.risk.manager: 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-03 12:00:01,823 [INFO] ftseek.risk.manager: 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-03 12:00:01,823 [INFO] ftseek.risk.manager: 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-03 12:00:01,823 [INFO] ftseek.scripts.risk_monitor: 风控管理器已初始化 | 模式=paper
+2026-03-03 12:00:01,823 [INFO] ftseek.scripts.risk_monitor: 风控管理器已初始化 | 模式=paper
+2026-03-03 12:00:01,823 [INFO] ftseek.scripts.risk_monitor: 钉钉推送已初始化
+2026-03-03 12:00:01,823 [INFO] ftseek.scripts.risk_monitor: 钉钉推送已初始化
+2026-03-03 12:00:01,823 [INFO] ftseek.risk.monitor: 风险监控器已初始化
+2026-03-03 12:00:01,823 [INFO] ftseek.risk.monitor: 风险监控器已初始化
+2026-03-03 12:00:01,823 [INFO] ftseek.scripts.risk_monitor: 风险监控器已初始化
+2026-03-03 12:00:01,823 [INFO] ftseek.scripts.risk_monitor: 风险监控器已初始化
+2026-03-03 12:00:01,824 [INFO] ftseek.scripts.risk_monitor: 监控数据已收集:
+2026-03-03 12:00:01,824 [INFO] ftseek.scripts.risk_monitor: 监控数据已收集:
+2026-03-03 12:00:01,824 [INFO] ftseek.scripts.risk_monitor:   账户总值：HK$1,000,000.00
+2026-03-03 12:00:01,824 [INFO] ftseek.scripts.risk_monitor:   账户总值：HK$1,000,000.00
+2026-03-03 12:00:01,824 [INFO] ftseek.scripts.risk_monitor:   持仓市值：HK$0.00
+2026-03-03 12:00:01,824 [INFO] ftseek.scripts.risk_monitor:   持仓市值：HK$0.00
+2026-03-03 12:00:01,824 [INFO] ftseek.scripts.risk_monitor:   今日盈亏：HK$+0.00
+2026-03-03 12:00:01,824 [INFO] ftseek.scripts.risk_monitor:   今日盈亏：HK$+0.00
+2026-03-03 12:00:01,824 [INFO] ftseek.scripts.risk_monitor:   风控状态：✅ 正常
+2026-03-03 12:00:01,824 [INFO] ftseek.scripts.risk_monitor:   风控状态：✅ 正常
+2026-03-03 12:00:01,937 [INFO] ftseek.notifier.dingtalk: 钉钉风险监控推送成功：12:00
+2026-03-03 12:00:01,937 [INFO] ftseek.notifier.dingtalk: 钉钉风险监控推送成功：12:00
+2026-03-03 12:00:01,937 [INFO] ftseek.risk.monitor: 风险监控面板已推送：12:00
+2026-03-03 12:00:01,937 [INFO] ftseek.risk.monitor: 风险监控面板已推送：12:00
+2026-03-03 12:00:01,937 [INFO] ftseek.scripts.risk_monitor: ✅ 风险监控推送成功
+2026-03-03 12:00:01,937 [INFO] ftseek.scripts.risk_monitor: ✅ 风险监控推送成功
+2026-03-03 12:00:01,938 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-03 12:00:01,938 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-03 12:00:01,938 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送结束
+2026-03-03 12:00:01,938 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送结束
+2026-03-03 12:00:01,938 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-03 12:00:01,938 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-03 14:00:01,681 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-03 14:00:01,681 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-03 14:00:01,682 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送开始
+2026-03-03 14:00:01,682 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送开始
+2026-03-03 14:00:01,682 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-03 14:00:01,682 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-03 14:00:01,682 [INFO] ftseek.scripts.risk_monitor: 初始化组件...
+2026-03-03 14:00:01,682 [INFO] ftseek.scripts.risk_monitor: 初始化组件...
+2026-03-03 14:00:01,684 [INFO] ftseek.storage.database: 数据库表结构初始化完成
+2026-03-03 14:00:01,684 [INFO] ftseek.storage.database: 数据库表结构初始化完成
+2026-03-03 14:00:01,685 [INFO] ftseek.storage.database: 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-03 14:00:01,685 [INFO] ftseek.storage.database: 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-03 14:00:01,685 [INFO] ftseek.scripts.risk_monitor: 数据库已初始化
+2026-03-03 14:00:01,685 [INFO] ftseek.scripts.risk_monitor: 数据库已初始化
+2026-03-03 14:00:01,700 [INFO] ftseek.risk.manager: 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-03 14:00:01,700 [INFO] ftseek.risk.manager: 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-03 14:00:01,700 [INFO] ftseek.risk.manager: 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-03 14:00:01,700 [INFO] ftseek.risk.manager: 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-03 14:00:01,700 [INFO] ftseek.scripts.risk_monitor: 风控管理器已初始化 | 模式=paper
+2026-03-03 14:00:01,700 [INFO] ftseek.scripts.risk_monitor: 风控管理器已初始化 | 模式=paper
+2026-03-03 14:00:01,701 [INFO] ftseek.scripts.risk_monitor: 钉钉推送已初始化
+2026-03-03 14:00:01,701 [INFO] ftseek.scripts.risk_monitor: 钉钉推送已初始化
+2026-03-03 14:00:01,701 [INFO] ftseek.risk.monitor: 风险监控器已初始化
+2026-03-03 14:00:01,701 [INFO] ftseek.risk.monitor: 风险监控器已初始化
+2026-03-03 14:00:01,701 [INFO] ftseek.scripts.risk_monitor: 风险监控器已初始化
+2026-03-03 14:00:01,701 [INFO] ftseek.scripts.risk_monitor: 风险监控器已初始化
+2026-03-03 14:00:01,701 [INFO] ftseek.scripts.risk_monitor: 监控数据已收集:
+2026-03-03 14:00:01,701 [INFO] ftseek.scripts.risk_monitor: 监控数据已收集:
+2026-03-03 14:00:01,701 [INFO] ftseek.scripts.risk_monitor:   账户总值：HK$1,000,000.00
+2026-03-03 14:00:01,701 [INFO] ftseek.scripts.risk_monitor:   账户总值：HK$1,000,000.00
+2026-03-03 14:00:01,702 [INFO] ftseek.scripts.risk_monitor:   持仓市值：HK$0.00
+2026-03-03 14:00:01,702 [INFO] ftseek.scripts.risk_monitor:   持仓市值：HK$0.00
+2026-03-03 14:00:01,702 [INFO] ftseek.scripts.risk_monitor:   今日盈亏：HK$+0.00
+2026-03-03 14:00:01,702 [INFO] ftseek.scripts.risk_monitor:   今日盈亏：HK$+0.00
+2026-03-03 14:00:01,702 [INFO] ftseek.scripts.risk_monitor:   风控状态：✅ 正常
+2026-03-03 14:00:01,702 [INFO] ftseek.scripts.risk_monitor:   风控状态：✅ 正常
+2026-03-03 14:00:01,788 [INFO] ftseek.notifier.dingtalk: 钉钉风险监控推送成功：14:00
+2026-03-03 14:00:01,788 [INFO] ftseek.notifier.dingtalk: 钉钉风险监控推送成功：14:00
+2026-03-03 14:00:01,789 [INFO] ftseek.risk.monitor: 风险监控面板已推送：14:00
+2026-03-03 14:00:01,789 [INFO] ftseek.risk.monitor: 风险监控面板已推送：14:00
+2026-03-03 14:00:01,789 [INFO] ftseek.scripts.risk_monitor: ✅ 风险监控推送成功
+2026-03-03 14:00:01,789 [INFO] ftseek.scripts.risk_monitor: ✅ 风险监控推送成功
+2026-03-03 14:00:01,789 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-03 14:00:01,789 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-03 14:00:01,789 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送结束
+2026-03-03 14:00:01,789 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送结束
+2026-03-03 14:00:01,789 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-03 14:00:01,789 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-03 16:00:02,234 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-03 16:00:02,234 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-03 16:00:02,234 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送开始
+2026-03-03 16:00:02,234 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送开始
+2026-03-03 16:00:02,234 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-03 16:00:02,234 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-03 16:00:02,234 [INFO] ftseek.scripts.risk_monitor: 初始化组件...
+2026-03-03 16:00:02,234 [INFO] ftseek.scripts.risk_monitor: 初始化组件...
+2026-03-03 16:00:02,237 [INFO] ftseek.storage.database: 数据库表结构初始化完成
+2026-03-03 16:00:02,237 [INFO] ftseek.storage.database: 数据库表结构初始化完成
+2026-03-03 16:00:02,237 [INFO] ftseek.storage.database: 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-03 16:00:02,237 [INFO] ftseek.storage.database: 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-03 16:00:02,237 [INFO] ftseek.scripts.risk_monitor: 数据库已初始化
+2026-03-03 16:00:02,237 [INFO] ftseek.scripts.risk_monitor: 数据库已初始化
+2026-03-03 16:00:02,249 [INFO] ftseek.risk.manager: 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-03 16:00:02,249 [INFO] ftseek.risk.manager: 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-03 16:00:02,249 [INFO] ftseek.risk.manager: 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-03 16:00:02,249 [INFO] ftseek.risk.manager: 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-03 16:00:02,249 [INFO] ftseek.scripts.risk_monitor: 风控管理器已初始化 | 模式=paper
+2026-03-03 16:00:02,249 [INFO] ftseek.scripts.risk_monitor: 风控管理器已初始化 | 模式=paper
+2026-03-03 16:00:02,249 [INFO] ftseek.scripts.risk_monitor: 钉钉推送已初始化
+2026-03-03 16:00:02,249 [INFO] ftseek.scripts.risk_monitor: 钉钉推送已初始化
+2026-03-03 16:00:02,250 [INFO] ftseek.risk.monitor: 风险监控器已初始化
+2026-03-03 16:00:02,250 [INFO] ftseek.risk.monitor: 风险监控器已初始化
+2026-03-03 16:00:02,250 [INFO] ftseek.scripts.risk_monitor: 风险监控器已初始化
+2026-03-03 16:00:02,250 [INFO] ftseek.scripts.risk_monitor: 风险监控器已初始化
+2026-03-03 16:00:02,250 [INFO] ftseek.scripts.risk_monitor: 监控数据已收集:
+2026-03-03 16:00:02,250 [INFO] ftseek.scripts.risk_monitor: 监控数据已收集:
+2026-03-03 16:00:02,250 [INFO] ftseek.scripts.risk_monitor:   账户总值：HK$1,000,000.00
+2026-03-03 16:00:02,250 [INFO] ftseek.scripts.risk_monitor:   账户总值：HK$1,000,000.00
+2026-03-03 16:00:02,250 [INFO] ftseek.scripts.risk_monitor:   持仓市值：HK$0.00
+2026-03-03 16:00:02,250 [INFO] ftseek.scripts.risk_monitor:   持仓市值：HK$0.00
+2026-03-03 16:00:02,250 [INFO] ftseek.scripts.risk_monitor:   今日盈亏：HK$+0.00
+2026-03-03 16:00:02,250 [INFO] ftseek.scripts.risk_monitor:   今日盈亏：HK$+0.00
+2026-03-03 16:00:02,250 [INFO] ftseek.scripts.risk_monitor:   风控状态：✅ 正常
+2026-03-03 16:00:02,250 [INFO] ftseek.scripts.risk_monitor:   风控状态：✅ 正常
+2026-03-03 16:00:02,351 [INFO] ftseek.notifier.dingtalk: 钉钉风险监控推送成功：16:00
+2026-03-03 16:00:02,351 [INFO] ftseek.notifier.dingtalk: 钉钉风险监控推送成功：16:00
+2026-03-03 16:00:02,351 [INFO] ftseek.risk.monitor: 风险监控面板已推送：16:00
+2026-03-03 16:00:02,351 [INFO] ftseek.risk.monitor: 风险监控面板已推送：16:00
+2026-03-03 16:00:02,351 [INFO] ftseek.scripts.risk_monitor: ✅ 风险监控推送成功
+2026-03-03 16:00:02,351 [INFO] ftseek.scripts.risk_monitor: ✅ 风险监控推送成功
+2026-03-03 16:00:02,351 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-03 16:00:02,351 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-03 16:00:02,351 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送结束
+2026-03-03 16:00:02,351 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送结束
+2026-03-03 16:00:02,351 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-03 16:00:02,351 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-04 10:00:01,963 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-04 10:00:01,963 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-04 10:00:01,978 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送开始
+2026-03-04 10:00:01,978 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送开始
+2026-03-04 10:00:01,978 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-04 10:00:01,978 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-04 10:00:01,979 [INFO] ftseek.scripts.risk_monitor: 初始化组件...
+2026-03-04 10:00:01,979 [INFO] ftseek.scripts.risk_monitor: 初始化组件...
+2026-03-04 10:00:01,981 [INFO] ftseek.storage.database: 数据库表结构初始化完成
+2026-03-04 10:00:01,981 [INFO] ftseek.storage.database: 数据库表结构初始化完成
+2026-03-04 10:00:01,981 [INFO] ftseek.storage.database: 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-04 10:00:01,981 [INFO] ftseek.storage.database: 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-04 10:00:01,981 [INFO] ftseek.scripts.risk_monitor: 数据库已初始化
+2026-03-04 10:00:01,981 [INFO] ftseek.scripts.risk_monitor: 数据库已初始化
+2026-03-04 10:00:02,007 [INFO] ftseek.risk.manager: 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-04 10:00:02,007 [INFO] ftseek.risk.manager: 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-04 10:00:02,007 [INFO] ftseek.risk.manager: 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-04 10:00:02,007 [INFO] ftseek.risk.manager: 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-04 10:00:02,008 [INFO] ftseek.scripts.risk_monitor: 风控管理器已初始化 | 模式=paper
+2026-03-04 10:00:02,008 [INFO] ftseek.scripts.risk_monitor: 风控管理器已初始化 | 模式=paper
+2026-03-04 10:00:02,008 [INFO] ftseek.scripts.risk_monitor: 钉钉推送已初始化
+2026-03-04 10:00:02,008 [INFO] ftseek.scripts.risk_monitor: 钉钉推送已初始化
+2026-03-04 10:00:02,008 [INFO] ftseek.risk.monitor: 风险监控器已初始化
+2026-03-04 10:00:02,008 [INFO] ftseek.risk.monitor: 风险监控器已初始化
+2026-03-04 10:00:02,008 [INFO] ftseek.scripts.risk_monitor: 风险监控器已初始化
+2026-03-04 10:00:02,008 [INFO] ftseek.scripts.risk_monitor: 风险监控器已初始化
+2026-03-04 10:00:02,008 [INFO] ftseek.scripts.risk_monitor: 监控数据已收集:
+2026-03-04 10:00:02,008 [INFO] ftseek.scripts.risk_monitor: 监控数据已收集:
+2026-03-04 10:00:02,008 [INFO] ftseek.scripts.risk_monitor:   账户总值：HK$1,000,000.00
+2026-03-04 10:00:02,008 [INFO] ftseek.scripts.risk_monitor:   账户总值：HK$1,000,000.00
+2026-03-04 10:00:02,008 [INFO] ftseek.scripts.risk_monitor:   持仓市值：HK$0.00
+2026-03-04 10:00:02,008 [INFO] ftseek.scripts.risk_monitor:   持仓市值：HK$0.00
+2026-03-04 10:00:02,008 [INFO] ftseek.scripts.risk_monitor:   今日盈亏：HK$+0.00
+2026-03-04 10:00:02,008 [INFO] ftseek.scripts.risk_monitor:   今日盈亏：HK$+0.00
+2026-03-04 10:00:02,008 [INFO] ftseek.scripts.risk_monitor:   风控状态：✅ 正常
+2026-03-04 10:00:02,008 [INFO] ftseek.scripts.risk_monitor:   风控状态：✅ 正常
+2026-03-04 10:00:02,119 [INFO] ftseek.notifier.dingtalk: 钉钉风险监控推送成功：10:00
+2026-03-04 10:00:02,119 [INFO] ftseek.notifier.dingtalk: 钉钉风险监控推送成功：10:00
+2026-03-04 10:00:02,120 [INFO] ftseek.risk.monitor: 风险监控面板已推送：10:00
+2026-03-04 10:00:02,120 [INFO] ftseek.risk.monitor: 风险监控面板已推送：10:00
+2026-03-04 10:00:02,120 [INFO] ftseek.scripts.risk_monitor: ✅ 风险监控推送成功
+2026-03-04 10:00:02,120 [INFO] ftseek.scripts.risk_monitor: ✅ 风险监控推送成功
+2026-03-04 10:00:02,120 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-04 10:00:02,120 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-04 10:00:02,120 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送结束
+2026-03-04 10:00:02,120 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送结束
+2026-03-04 10:00:02,120 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-04 10:00:02,120 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-04 12:00:02,222 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-04 12:00:02,222 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-04 12:00:02,224 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送开始
+2026-03-04 12:00:02,224 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送开始
+2026-03-04 12:00:02,224 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-04 12:00:02,224 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-04 12:00:02,224 [INFO] ftseek.scripts.risk_monitor: 初始化组件...
+2026-03-04 12:00:02,224 [INFO] ftseek.scripts.risk_monitor: 初始化组件...
+2026-03-04 12:00:02,226 [INFO] ftseek.storage.database: 数据库表结构初始化完成
+2026-03-04 12:00:02,226 [INFO] ftseek.storage.database: 数据库表结构初始化完成
+2026-03-04 12:00:02,227 [INFO] ftseek.storage.database: 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-04 12:00:02,227 [INFO] ftseek.storage.database: 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-04 12:00:02,227 [INFO] ftseek.scripts.risk_monitor: 数据库已初始化
+2026-03-04 12:00:02,227 [INFO] ftseek.scripts.risk_monitor: 数据库已初始化
+2026-03-04 12:00:02,242 [INFO] ftseek.risk.manager: 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-04 12:00:02,242 [INFO] ftseek.risk.manager: 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-04 12:00:02,242 [INFO] ftseek.risk.manager: 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-04 12:00:02,242 [INFO] ftseek.risk.manager: 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-04 12:00:02,242 [INFO] ftseek.scripts.risk_monitor: 风控管理器已初始化 | 模式=paper
+2026-03-04 12:00:02,242 [INFO] ftseek.scripts.risk_monitor: 风控管理器已初始化 | 模式=paper
+2026-03-04 12:00:02,243 [INFO] ftseek.scripts.risk_monitor: 钉钉推送已初始化
+2026-03-04 12:00:02,243 [INFO] ftseek.scripts.risk_monitor: 钉钉推送已初始化
+2026-03-04 12:00:02,243 [INFO] ftseek.risk.monitor: 风险监控器已初始化
+2026-03-04 12:00:02,243 [INFO] ftseek.risk.monitor: 风险监控器已初始化
+2026-03-04 12:00:02,243 [INFO] ftseek.scripts.risk_monitor: 风险监控器已初始化
+2026-03-04 12:00:02,243 [INFO] ftseek.scripts.risk_monitor: 风险监控器已初始化
+2026-03-04 12:00:02,243 [INFO] ftseek.scripts.risk_monitor: 监控数据已收集:
+2026-03-04 12:00:02,243 [INFO] ftseek.scripts.risk_monitor: 监控数据已收集:
+2026-03-04 12:00:02,243 [INFO] ftseek.scripts.risk_monitor:   账户总值：HK$1,000,000.00
+2026-03-04 12:00:02,243 [INFO] ftseek.scripts.risk_monitor:   账户总值：HK$1,000,000.00
+2026-03-04 12:00:02,243 [INFO] ftseek.scripts.risk_monitor:   持仓市值：HK$0.00
+2026-03-04 12:00:02,243 [INFO] ftseek.scripts.risk_monitor:   持仓市值：HK$0.00
+2026-03-04 12:00:02,243 [INFO] ftseek.scripts.risk_monitor:   今日盈亏：HK$+0.00
+2026-03-04 12:00:02,243 [INFO] ftseek.scripts.risk_monitor:   今日盈亏：HK$+0.00
+2026-03-04 12:00:02,243 [INFO] ftseek.scripts.risk_monitor:   风控状态：✅ 正常
+2026-03-04 12:00:02,243 [INFO] ftseek.scripts.risk_monitor:   风控状态：✅ 正常
+2026-03-04 12:00:02,333 [INFO] ftseek.notifier.dingtalk: 钉钉风险监控推送成功：12:00
+2026-03-04 12:00:02,333 [INFO] ftseek.notifier.dingtalk: 钉钉风险监控推送成功：12:00
+2026-03-04 12:00:02,333 [INFO] ftseek.risk.monitor: 风险监控面板已推送：12:00
+2026-03-04 12:00:02,333 [INFO] ftseek.risk.monitor: 风险监控面板已推送：12:00
+2026-03-04 12:00:02,333 [INFO] ftseek.scripts.risk_monitor: ✅ 风险监控推送成功
+2026-03-04 12:00:02,333 [INFO] ftseek.scripts.risk_monitor: ✅ 风险监控推送成功
+2026-03-04 12:00:02,333 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-04 12:00:02,333 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-04 12:00:02,333 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送结束
+2026-03-04 12:00:02,333 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送结束
+2026-03-04 12:00:02,334 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-04 12:00:02,334 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-04 14:00:02,428 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-04 14:00:02,428 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-04 14:00:02,430 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送开始
+2026-03-04 14:00:02,430 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送开始
+2026-03-04 14:00:02,430 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-04 14:00:02,430 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-04 14:00:02,430 [INFO] ftseek.scripts.risk_monitor: 初始化组件...
+2026-03-04 14:00:02,430 [INFO] ftseek.scripts.risk_monitor: 初始化组件...
+2026-03-04 14:00:02,434 [INFO] ftseek.storage.database: 数据库表结构初始化完成
+2026-03-04 14:00:02,434 [INFO] ftseek.storage.database: 数据库表结构初始化完成
+2026-03-04 14:00:02,436 [INFO] ftseek.storage.database: 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-04 14:00:02,436 [INFO] ftseek.storage.database: 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-04 14:00:02,436 [INFO] ftseek.scripts.risk_monitor: 数据库已初始化
+2026-03-04 14:00:02,436 [INFO] ftseek.scripts.risk_monitor: 数据库已初始化
+2026-03-04 14:00:02,458 [INFO] ftseek.risk.manager: 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-04 14:00:02,458 [INFO] ftseek.risk.manager: 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-04 14:00:02,458 [INFO] ftseek.risk.manager: 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-04 14:00:02,458 [INFO] ftseek.risk.manager: 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-04 14:00:02,459 [INFO] ftseek.scripts.risk_monitor: 风控管理器已初始化 | 模式=paper
+2026-03-04 14:00:02,459 [INFO] ftseek.scripts.risk_monitor: 风控管理器已初始化 | 模式=paper
+2026-03-04 14:00:02,459 [INFO] ftseek.scripts.risk_monitor: 钉钉推送已初始化
+2026-03-04 14:00:02,459 [INFO] ftseek.scripts.risk_monitor: 钉钉推送已初始化
+2026-03-04 14:00:02,459 [INFO] ftseek.risk.monitor: 风险监控器已初始化
+2026-03-04 14:00:02,459 [INFO] ftseek.risk.monitor: 风险监控器已初始化
+2026-03-04 14:00:02,459 [INFO] ftseek.scripts.risk_monitor: 风险监控器已初始化
+2026-03-04 14:00:02,459 [INFO] ftseek.scripts.risk_monitor: 风险监控器已初始化
+2026-03-04 14:00:02,459 [INFO] ftseek.scripts.risk_monitor: 监控数据已收集:
+2026-03-04 14:00:02,459 [INFO] ftseek.scripts.risk_monitor: 监控数据已收集:
+2026-03-04 14:00:02,459 [INFO] ftseek.scripts.risk_monitor:   账户总值：HK$1,000,000.00
+2026-03-04 14:00:02,459 [INFO] ftseek.scripts.risk_monitor:   账户总值：HK$1,000,000.00
+2026-03-04 14:00:02,459 [INFO] ftseek.scripts.risk_monitor:   持仓市值：HK$0.00
+2026-03-04 14:00:02,459 [INFO] ftseek.scripts.risk_monitor:   持仓市值：HK$0.00
+2026-03-04 14:00:02,459 [INFO] ftseek.scripts.risk_monitor:   今日盈亏：HK$+0.00
+2026-03-04 14:00:02,459 [INFO] ftseek.scripts.risk_monitor:   今日盈亏：HK$+0.00
+2026-03-04 14:00:02,459 [INFO] ftseek.scripts.risk_monitor:   风控状态：✅ 正常
+2026-03-04 14:00:02,459 [INFO] ftseek.scripts.risk_monitor:   风控状态：✅ 正常
+2026-03-04 14:00:02,551 [INFO] ftseek.notifier.dingtalk: 钉钉风险监控推送成功：14:00
+2026-03-04 14:00:02,551 [INFO] ftseek.notifier.dingtalk: 钉钉风险监控推送成功：14:00
+2026-03-04 14:00:02,551 [INFO] ftseek.risk.monitor: 风险监控面板已推送：14:00
+2026-03-04 14:00:02,551 [INFO] ftseek.risk.monitor: 风险监控面板已推送：14:00
+2026-03-04 14:00:02,551 [INFO] ftseek.scripts.risk_monitor: ✅ 风险监控推送成功
+2026-03-04 14:00:02,551 [INFO] ftseek.scripts.risk_monitor: ✅ 风险监控推送成功
+2026-03-04 14:00:02,551 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-04 14:00:02,551 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-04 14:00:02,551 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送结束
+2026-03-04 14:00:02,551 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送结束
+2026-03-04 14:00:02,551 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-04 14:00:02,551 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-04 16:00:01,716 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-04 16:00:01,716 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-04 16:00:01,717 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送开始
+2026-03-04 16:00:01,717 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送开始
+2026-03-04 16:00:01,717 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-04 16:00:01,717 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-04 16:00:01,717 [INFO] ftseek.scripts.risk_monitor: 初始化组件...
+2026-03-04 16:00:01,717 [INFO] ftseek.scripts.risk_monitor: 初始化组件...
+2026-03-04 16:00:01,719 [INFO] ftseek.storage.database: 数据库表结构初始化完成
+2026-03-04 16:00:01,719 [INFO] ftseek.storage.database: 数据库表结构初始化完成
+2026-03-04 16:00:01,720 [INFO] ftseek.storage.database: 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-04 16:00:01,720 [INFO] ftseek.storage.database: 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-04 16:00:01,720 [INFO] ftseek.scripts.risk_monitor: 数据库已初始化
+2026-03-04 16:00:01,720 [INFO] ftseek.scripts.risk_monitor: 数据库已初始化
+2026-03-04 16:00:01,731 [INFO] ftseek.risk.manager: 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-04 16:00:01,731 [INFO] ftseek.risk.manager: 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-04 16:00:01,732 [INFO] ftseek.risk.manager: 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-04 16:00:01,732 [INFO] ftseek.risk.manager: 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-04 16:00:01,732 [INFO] ftseek.scripts.risk_monitor: 风控管理器已初始化 | 模式=paper
+2026-03-04 16:00:01,732 [INFO] ftseek.scripts.risk_monitor: 风控管理器已初始化 | 模式=paper
+2026-03-04 16:00:01,732 [INFO] ftseek.scripts.risk_monitor: 钉钉推送已初始化
+2026-03-04 16:00:01,732 [INFO] ftseek.scripts.risk_monitor: 钉钉推送已初始化
+2026-03-04 16:00:01,732 [INFO] ftseek.risk.monitor: 风险监控器已初始化
+2026-03-04 16:00:01,732 [INFO] ftseek.risk.monitor: 风险监控器已初始化
+2026-03-04 16:00:01,732 [INFO] ftseek.scripts.risk_monitor: 风险监控器已初始化
+2026-03-04 16:00:01,732 [INFO] ftseek.scripts.risk_monitor: 风险监控器已初始化
+2026-03-04 16:00:01,732 [INFO] ftseek.scripts.risk_monitor: 监控数据已收集:
+2026-03-04 16:00:01,732 [INFO] ftseek.scripts.risk_monitor: 监控数据已收集:
+2026-03-04 16:00:01,732 [INFO] ftseek.scripts.risk_monitor:   账户总值：HK$1,000,000.00
+2026-03-04 16:00:01,732 [INFO] ftseek.scripts.risk_monitor:   账户总值：HK$1,000,000.00
+2026-03-04 16:00:01,732 [INFO] ftseek.scripts.risk_monitor:   持仓市值：HK$0.00
+2026-03-04 16:00:01,732 [INFO] ftseek.scripts.risk_monitor:   持仓市值：HK$0.00
+2026-03-04 16:00:01,732 [INFO] ftseek.scripts.risk_monitor:   今日盈亏：HK$+0.00
+2026-03-04 16:00:01,732 [INFO] ftseek.scripts.risk_monitor:   今日盈亏：HK$+0.00
+2026-03-04 16:00:01,732 [INFO] ftseek.scripts.risk_monitor:   风控状态：✅ 正常
+2026-03-04 16:00:01,732 [INFO] ftseek.scripts.risk_monitor:   风控状态：✅ 正常
+2026-03-04 16:00:01,857 [INFO] ftseek.notifier.dingtalk: 钉钉风险监控推送成功：16:00
+2026-03-04 16:00:01,857 [INFO] ftseek.notifier.dingtalk: 钉钉风险监控推送成功：16:00
+2026-03-04 16:00:01,857 [INFO] ftseek.risk.monitor: 风险监控面板已推送：16:00
+2026-03-04 16:00:01,857 [INFO] ftseek.risk.monitor: 风险监控面板已推送：16:00
+2026-03-04 16:00:01,857 [INFO] ftseek.scripts.risk_monitor: ✅ 风险监控推送成功
+2026-03-04 16:00:01,857 [INFO] ftseek.scripts.risk_monitor: ✅ 风险监控推送成功
+2026-03-04 16:00:01,858 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-04 16:00:01,858 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-04 16:00:01,858 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送结束
+2026-03-04 16:00:01,858 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送结束
+2026-03-04 16:00:01,858 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-04 16:00:01,858 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-05 10:00:01,982 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-05 10:00:01,982 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-05 10:00:01,983 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送开始
+2026-03-05 10:00:01,983 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送开始
+2026-03-05 10:00:01,983 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-05 10:00:01,983 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-05 10:00:01,983 [INFO] ftseek.scripts.risk_monitor: 初始化组件...
+2026-03-05 10:00:01,983 [INFO] ftseek.scripts.risk_monitor: 初始化组件...
+2026-03-05 10:00:01,988 [INFO] ftseek.storage.database: 数据库表结构初始化完成
+2026-03-05 10:00:01,988 [INFO] ftseek.storage.database: 数据库表结构初始化完成
+2026-03-05 10:00:01,988 [INFO] ftseek.storage.database: 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-05 10:00:01,988 [INFO] ftseek.storage.database: 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-05 10:00:01,988 [INFO] ftseek.scripts.risk_monitor: 数据库已初始化
+2026-03-05 10:00:01,988 [INFO] ftseek.scripts.risk_monitor: 数据库已初始化
+2026-03-05 10:00:01,997 [INFO] ftseek.risk.manager: 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-05 10:00:01,997 [INFO] ftseek.risk.manager: 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-05 10:00:01,997 [INFO] ftseek.risk.manager: 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-05 10:00:01,997 [INFO] ftseek.risk.manager: 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-05 10:00:01,997 [INFO] ftseek.scripts.risk_monitor: 风控管理器已初始化 | 模式=paper
+2026-03-05 10:00:01,997 [INFO] ftseek.scripts.risk_monitor: 风控管理器已初始化 | 模式=paper
+2026-03-05 10:00:01,997 [INFO] ftseek.scripts.risk_monitor: 钉钉推送已初始化
+2026-03-05 10:00:01,997 [INFO] ftseek.scripts.risk_monitor: 钉钉推送已初始化
+2026-03-05 10:00:01,997 [INFO] ftseek.risk.monitor: 风险监控器已初始化
+2026-03-05 10:00:01,997 [INFO] ftseek.risk.monitor: 风险监控器已初始化
+2026-03-05 10:00:01,998 [INFO] ftseek.scripts.risk_monitor: 风险监控器已初始化
+2026-03-05 10:00:01,998 [INFO] ftseek.scripts.risk_monitor: 风险监控器已初始化
+2026-03-05 10:00:01,998 [INFO] ftseek.scripts.risk_monitor: 监控数据已收集:
+2026-03-05 10:00:01,998 [INFO] ftseek.scripts.risk_monitor: 监控数据已收集:
+2026-03-05 10:00:01,998 [INFO] ftseek.scripts.risk_monitor:   账户总值：HK$1,000,000.00
+2026-03-05 10:00:01,998 [INFO] ftseek.scripts.risk_monitor:   账户总值：HK$1,000,000.00
+2026-03-05 10:00:01,998 [INFO] ftseek.scripts.risk_monitor:   持仓市值：HK$0.00
+2026-03-05 10:00:01,998 [INFO] ftseek.scripts.risk_monitor:   持仓市值：HK$0.00
+2026-03-05 10:00:01,998 [INFO] ftseek.scripts.risk_monitor:   今日盈亏：HK$+0.00
+2026-03-05 10:00:01,998 [INFO] ftseek.scripts.risk_monitor:   今日盈亏：HK$+0.00
+2026-03-05 10:00:01,998 [INFO] ftseek.scripts.risk_monitor:   风控状态：✅ 正常
+2026-03-05 10:00:01,998 [INFO] ftseek.scripts.risk_monitor:   风控状态：✅ 正常
+2026-03-05 10:00:02,108 [INFO] ftseek.notifier.dingtalk: 钉钉风险监控推送成功：10:00
+2026-03-05 10:00:02,108 [INFO] ftseek.notifier.dingtalk: 钉钉风险监控推送成功：10:00
+2026-03-05 10:00:02,108 [INFO] ftseek.risk.monitor: 风险监控面板已推送：10:00
+2026-03-05 10:00:02,108 [INFO] ftseek.risk.monitor: 风险监控面板已推送：10:00
+2026-03-05 10:00:02,108 [INFO] ftseek.scripts.risk_monitor: ✅ 风险监控推送成功
+2026-03-05 10:00:02,108 [INFO] ftseek.scripts.risk_monitor: ✅ 风险监控推送成功
+2026-03-05 10:00:02,108 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-05 10:00:02,108 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-05 10:00:02,108 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送结束
+2026-03-05 10:00:02,108 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送结束
+2026-03-05 10:00:02,108 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-05 10:00:02,108 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-05 12:00:02,167 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-05 12:00:02,167 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-05 12:00:02,168 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送开始
+2026-03-05 12:00:02,168 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送开始
+2026-03-05 12:00:02,168 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-05 12:00:02,168 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-05 12:00:02,168 [INFO] ftseek.scripts.risk_monitor: 初始化组件...
+2026-03-05 12:00:02,168 [INFO] ftseek.scripts.risk_monitor: 初始化组件...
+2026-03-05 12:00:02,170 [INFO] ftseek.storage.database: 数据库表结构初始化完成
+2026-03-05 12:00:02,170 [INFO] ftseek.storage.database: 数据库表结构初始化完成
+2026-03-05 12:00:02,170 [INFO] ftseek.storage.database: 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-05 12:00:02,170 [INFO] ftseek.storage.database: 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-05 12:00:02,171 [INFO] ftseek.scripts.risk_monitor: 数据库已初始化
+2026-03-05 12:00:02,171 [INFO] ftseek.scripts.risk_monitor: 数据库已初始化
+2026-03-05 12:00:02,182 [INFO] ftseek.risk.manager: 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-05 12:00:02,182 [INFO] ftseek.risk.manager: 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-05 12:00:02,183 [INFO] ftseek.risk.manager: 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-05 12:00:02,183 [INFO] ftseek.risk.manager: 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-05 12:00:02,183 [INFO] ftseek.scripts.risk_monitor: 风控管理器已初始化 | 模式=paper
+2026-03-05 12:00:02,183 [INFO] ftseek.scripts.risk_monitor: 风控管理器已初始化 | 模式=paper
+2026-03-05 12:00:02,183 [INFO] ftseek.scripts.risk_monitor: 钉钉推送已初始化
+2026-03-05 12:00:02,183 [INFO] ftseek.scripts.risk_monitor: 钉钉推送已初始化
+2026-03-05 12:00:02,183 [INFO] ftseek.risk.monitor: 风险监控器已初始化
+2026-03-05 12:00:02,183 [INFO] ftseek.risk.monitor: 风险监控器已初始化
+2026-03-05 12:00:02,183 [INFO] ftseek.scripts.risk_monitor: 风险监控器已初始化
+2026-03-05 12:00:02,183 [INFO] ftseek.scripts.risk_monitor: 风险监控器已初始化
+2026-03-05 12:00:02,183 [INFO] ftseek.scripts.risk_monitor: 监控数据已收集:
+2026-03-05 12:00:02,183 [INFO] ftseek.scripts.risk_monitor: 监控数据已收集:
+2026-03-05 12:00:02,183 [INFO] ftseek.scripts.risk_monitor:   账户总值：HK$1,000,000.00
+2026-03-05 12:00:02,183 [INFO] ftseek.scripts.risk_monitor:   账户总值：HK$1,000,000.00
+2026-03-05 12:00:02,184 [INFO] ftseek.scripts.risk_monitor:   持仓市值：HK$0.00
+2026-03-05 12:00:02,184 [INFO] ftseek.scripts.risk_monitor:   持仓市值：HK$0.00
+2026-03-05 12:00:02,184 [INFO] ftseek.scripts.risk_monitor:   今日盈亏：HK$+0.00
+2026-03-05 12:00:02,184 [INFO] ftseek.scripts.risk_monitor:   今日盈亏：HK$+0.00
+2026-03-05 12:00:02,184 [INFO] ftseek.scripts.risk_monitor:   风控状态：✅ 正常
+2026-03-05 12:00:02,184 [INFO] ftseek.scripts.risk_monitor:   风控状态：✅ 正常
+2026-03-05 12:00:02,288 [INFO] ftseek.notifier.dingtalk: 钉钉风险监控推送成功：12:00
+2026-03-05 12:00:02,288 [INFO] ftseek.notifier.dingtalk: 钉钉风险监控推送成功：12:00
+2026-03-05 12:00:02,288 [INFO] ftseek.risk.monitor: 风险监控面板已推送：12:00
+2026-03-05 12:00:02,288 [INFO] ftseek.risk.monitor: 风险监控面板已推送：12:00
+2026-03-05 12:00:02,288 [INFO] ftseek.scripts.risk_monitor: ✅ 风险监控推送成功
+2026-03-05 12:00:02,288 [INFO] ftseek.scripts.risk_monitor: ✅ 风险监控推送成功
+2026-03-05 12:00:02,288 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-05 12:00:02,288 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-05 12:00:02,288 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送结束
+2026-03-05 12:00:02,288 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送结束
+2026-03-05 12:00:02,288 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-05 12:00:02,288 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-05 14:00:01,996 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-05 14:00:01,996 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-05 14:00:01,999 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送开始
+2026-03-05 14:00:01,999 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送开始
+2026-03-05 14:00:01,999 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-05 14:00:01,999 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-05 14:00:01,999 [INFO] ftseek.scripts.risk_monitor: 初始化组件...
+2026-03-05 14:00:01,999 [INFO] ftseek.scripts.risk_monitor: 初始化组件...
+2026-03-05 14:00:02,001 [INFO] ftseek.storage.database: 数据库表结构初始化完成
+2026-03-05 14:00:02,001 [INFO] ftseek.storage.database: 数据库表结构初始化完成
+2026-03-05 14:00:02,002 [INFO] ftseek.storage.database: 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-05 14:00:02,002 [INFO] ftseek.storage.database: 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-05 14:00:02,002 [INFO] ftseek.scripts.risk_monitor: 数据库已初始化
+2026-03-05 14:00:02,002 [INFO] ftseek.scripts.risk_monitor: 数据库已初始化
+2026-03-05 14:00:02,012 [INFO] ftseek.risk.manager: 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-05 14:00:02,012 [INFO] ftseek.risk.manager: 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-05 14:00:02,013 [INFO] ftseek.risk.manager: 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-05 14:00:02,013 [INFO] ftseek.risk.manager: 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-05 14:00:02,013 [INFO] ftseek.scripts.risk_monitor: 风控管理器已初始化 | 模式=paper
+2026-03-05 14:00:02,013 [INFO] ftseek.scripts.risk_monitor: 风控管理器已初始化 | 模式=paper
+2026-03-05 14:00:02,013 [INFO] ftseek.scripts.risk_monitor: 钉钉推送已初始化
+2026-03-05 14:00:02,013 [INFO] ftseek.scripts.risk_monitor: 钉钉推送已初始化
+2026-03-05 14:00:02,013 [INFO] ftseek.risk.monitor: 风险监控器已初始化
+2026-03-05 14:00:02,013 [INFO] ftseek.risk.monitor: 风险监控器已初始化
+2026-03-05 14:00:02,013 [INFO] ftseek.scripts.risk_monitor: 风险监控器已初始化
+2026-03-05 14:00:02,013 [INFO] ftseek.scripts.risk_monitor: 风险监控器已初始化
+2026-03-05 14:00:02,013 [INFO] ftseek.scripts.risk_monitor: 监控数据已收集:
+2026-03-05 14:00:02,013 [INFO] ftseek.scripts.risk_monitor: 监控数据已收集:
+2026-03-05 14:00:02,013 [INFO] ftseek.scripts.risk_monitor:   账户总值：HK$1,000,000.00
+2026-03-05 14:00:02,013 [INFO] ftseek.scripts.risk_monitor:   账户总值：HK$1,000,000.00
+2026-03-05 14:00:02,013 [INFO] ftseek.scripts.risk_monitor:   持仓市值：HK$0.00
+2026-03-05 14:00:02,013 [INFO] ftseek.scripts.risk_monitor:   持仓市值：HK$0.00
+2026-03-05 14:00:02,013 [INFO] ftseek.scripts.risk_monitor:   今日盈亏：HK$+0.00
+2026-03-05 14:00:02,013 [INFO] ftseek.scripts.risk_monitor:   今日盈亏：HK$+0.00
+2026-03-05 14:00:02,013 [INFO] ftseek.scripts.risk_monitor:   风控状态：✅ 正常
+2026-03-05 14:00:02,013 [INFO] ftseek.scripts.risk_monitor:   风控状态：✅ 正常
+2026-03-05 14:00:02,102 [INFO] ftseek.notifier.dingtalk: 钉钉风险监控推送成功：14:00
+2026-03-05 14:00:02,102 [INFO] ftseek.notifier.dingtalk: 钉钉风险监控推送成功：14:00
+2026-03-05 14:00:02,103 [INFO] ftseek.risk.monitor: 风险监控面板已推送：14:00
+2026-03-05 14:00:02,103 [INFO] ftseek.risk.monitor: 风险监控面板已推送：14:00
+2026-03-05 14:00:02,103 [INFO] ftseek.scripts.risk_monitor: ✅ 风险监控推送成功
+2026-03-05 14:00:02,103 [INFO] ftseek.scripts.risk_monitor: ✅ 风险监控推送成功
+2026-03-05 14:00:02,103 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-05 14:00:02,103 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-05 14:00:02,103 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送结束
+2026-03-05 14:00:02,103 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送结束
+2026-03-05 14:00:02,103 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-05 14:00:02,103 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-05 16:00:01,652 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-05 16:00:01,652 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-05 16:00:01,653 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送开始
+2026-03-05 16:00:01,653 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送开始
+2026-03-05 16:00:01,653 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-05 16:00:01,653 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-05 16:00:01,653 [INFO] ftseek.scripts.risk_monitor: 初始化组件...
+2026-03-05 16:00:01,653 [INFO] ftseek.scripts.risk_monitor: 初始化组件...
+2026-03-05 16:00:01,666 [INFO] ftseek.storage.database: 数据库表结构初始化完成
+2026-03-05 16:00:01,666 [INFO] ftseek.storage.database: 数据库表结构初始化完成
+2026-03-05 16:00:01,666 [INFO] ftseek.storage.database: 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-05 16:00:01,666 [INFO] ftseek.storage.database: 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-05 16:00:01,667 [INFO] ftseek.scripts.risk_monitor: 数据库已初始化
+2026-03-05 16:00:01,667 [INFO] ftseek.scripts.risk_monitor: 数据库已初始化
+2026-03-05 16:00:01,676 [INFO] ftseek.risk.manager: 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-05 16:00:01,676 [INFO] ftseek.risk.manager: 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-05 16:00:01,676 [INFO] ftseek.risk.manager: 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-05 16:00:01,676 [INFO] ftseek.risk.manager: 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-05 16:00:01,676 [INFO] ftseek.scripts.risk_monitor: 风控管理器已初始化 | 模式=paper
+2026-03-05 16:00:01,676 [INFO] ftseek.scripts.risk_monitor: 风控管理器已初始化 | 模式=paper
+2026-03-05 16:00:01,677 [INFO] ftseek.scripts.risk_monitor: 钉钉推送已初始化
+2026-03-05 16:00:01,677 [INFO] ftseek.scripts.risk_monitor: 钉钉推送已初始化
+2026-03-05 16:00:01,677 [INFO] ftseek.risk.monitor: 风险监控器已初始化
+2026-03-05 16:00:01,677 [INFO] ftseek.risk.monitor: 风险监控器已初始化
+2026-03-05 16:00:01,677 [INFO] ftseek.scripts.risk_monitor: 风险监控器已初始化
+2026-03-05 16:00:01,677 [INFO] ftseek.scripts.risk_monitor: 风险监控器已初始化
+2026-03-05 16:00:01,678 [INFO] ftseek.scripts.risk_monitor: 监控数据已收集:
+2026-03-05 16:00:01,678 [INFO] ftseek.scripts.risk_monitor: 监控数据已收集:
+2026-03-05 16:00:01,678 [INFO] ftseek.scripts.risk_monitor:   账户总值：HK$1,000,000.00
+2026-03-05 16:00:01,678 [INFO] ftseek.scripts.risk_monitor:   账户总值：HK$1,000,000.00
+2026-03-05 16:00:01,678 [INFO] ftseek.scripts.risk_monitor:   持仓市值：HK$0.00
+2026-03-05 16:00:01,678 [INFO] ftseek.scripts.risk_monitor:   持仓市值：HK$0.00
+2026-03-05 16:00:01,678 [INFO] ftseek.scripts.risk_monitor:   今日盈亏：HK$+0.00
+2026-03-05 16:00:01,678 [INFO] ftseek.scripts.risk_monitor:   今日盈亏：HK$+0.00
+2026-03-05 16:00:01,678 [INFO] ftseek.scripts.risk_monitor:   风控状态：✅ 正常
+2026-03-05 16:00:01,678 [INFO] ftseek.scripts.risk_monitor:   风控状态：✅ 正常
+2026-03-05 16:00:01,747 [INFO] ftseek.notifier.dingtalk: 钉钉风险监控推送成功：16:00
+2026-03-05 16:00:01,747 [INFO] ftseek.notifier.dingtalk: 钉钉风险监控推送成功：16:00
+2026-03-05 16:00:01,747 [INFO] ftseek.risk.monitor: 风险监控面板已推送：16:00
+2026-03-05 16:00:01,747 [INFO] ftseek.risk.monitor: 风险监控面板已推送：16:00
+2026-03-05 16:00:01,747 [INFO] ftseek.scripts.risk_monitor: ✅ 风险监控推送成功
+2026-03-05 16:00:01,747 [INFO] ftseek.scripts.risk_monitor: ✅ 风险监控推送成功
+2026-03-05 16:00:01,747 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-05 16:00:01,747 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-05 16:00:01,747 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送结束
+2026-03-05 16:00:01,747 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送结束
+2026-03-05 16:00:01,748 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-05 16:00:01,748 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-06 10:00:01,842 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-06 10:00:01,842 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-06 10:00:01,844 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送开始
+2026-03-06 10:00:01,844 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送开始
+2026-03-06 10:00:01,844 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-06 10:00:01,844 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-06 10:00:01,845 [INFO] ftseek.scripts.risk_monitor: 初始化组件...
+2026-03-06 10:00:01,845 [INFO] ftseek.scripts.risk_monitor: 初始化组件...
+2026-03-06 10:00:01,848 [INFO] ftseek.storage.database: 数据库表结构初始化完成
+2026-03-06 10:00:01,848 [INFO] ftseek.storage.database: 数据库表结构初始化完成
+2026-03-06 10:00:01,849 [INFO] ftseek.storage.database: 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-06 10:00:01,849 [INFO] ftseek.storage.database: 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-06 10:00:01,849 [INFO] ftseek.scripts.risk_monitor: 数据库已初始化
+2026-03-06 10:00:01,849 [INFO] ftseek.scripts.risk_monitor: 数据库已初始化
+2026-03-06 10:00:01,866 [INFO] ftseek.risk.manager: 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-06 10:00:01,866 [INFO] ftseek.risk.manager: 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-06 10:00:01,866 [INFO] ftseek.risk.manager: 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-06 10:00:01,866 [INFO] ftseek.risk.manager: 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-06 10:00:01,866 [INFO] ftseek.scripts.risk_monitor: 风控管理器已初始化 | 模式=paper
+2026-03-06 10:00:01,866 [INFO] ftseek.scripts.risk_monitor: 风控管理器已初始化 | 模式=paper
+2026-03-06 10:00:01,866 [INFO] ftseek.scripts.risk_monitor: 钉钉推送已初始化
+2026-03-06 10:00:01,866 [INFO] ftseek.scripts.risk_monitor: 钉钉推送已初始化
+2026-03-06 10:00:01,866 [INFO] ftseek.risk.monitor: 风险监控器已初始化
+2026-03-06 10:00:01,866 [INFO] ftseek.risk.monitor: 风险监控器已初始化
+2026-03-06 10:00:01,867 [INFO] ftseek.scripts.risk_monitor: 风险监控器已初始化
+2026-03-06 10:00:01,867 [INFO] ftseek.scripts.risk_monitor: 风险监控器已初始化
+2026-03-06 10:00:01,867 [INFO] ftseek.scripts.risk_monitor: 监控数据已收集:
+2026-03-06 10:00:01,867 [INFO] ftseek.scripts.risk_monitor: 监控数据已收集:
+2026-03-06 10:00:01,867 [INFO] ftseek.scripts.risk_monitor:   账户总值：HK$1,000,000.00
+2026-03-06 10:00:01,867 [INFO] ftseek.scripts.risk_monitor:   账户总值：HK$1,000,000.00
+2026-03-06 10:00:01,867 [INFO] ftseek.scripts.risk_monitor:   持仓市值：HK$0.00
+2026-03-06 10:00:01,867 [INFO] ftseek.scripts.risk_monitor:   持仓市值：HK$0.00
+2026-03-06 10:00:01,867 [INFO] ftseek.scripts.risk_monitor:   今日盈亏：HK$+0.00
+2026-03-06 10:00:01,867 [INFO] ftseek.scripts.risk_monitor:   今日盈亏：HK$+0.00
+2026-03-06 10:00:01,867 [INFO] ftseek.scripts.risk_monitor:   风控状态：✅ 正常
+2026-03-06 10:00:01,867 [INFO] ftseek.scripts.risk_monitor:   风控状态：✅ 正常
+2026-03-06 10:00:01,984 [INFO] ftseek.notifier.dingtalk: 钉钉风险监控推送成功：10:00
+2026-03-06 10:00:01,984 [INFO] ftseek.notifier.dingtalk: 钉钉风险监控推送成功：10:00
+2026-03-06 10:00:01,985 [INFO] ftseek.risk.monitor: 风险监控面板已推送：10:00
+2026-03-06 10:00:01,985 [INFO] ftseek.risk.monitor: 风险监控面板已推送：10:00
+2026-03-06 10:00:01,985 [INFO] ftseek.scripts.risk_monitor: ✅ 风险监控推送成功
+2026-03-06 10:00:01,985 [INFO] ftseek.scripts.risk_monitor: ✅ 风险监控推送成功
+2026-03-06 10:00:01,985 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-06 10:00:01,985 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-06 10:00:01,985 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送结束
+2026-03-06 10:00:01,985 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送结束
+2026-03-06 10:00:01,985 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-06 10:00:01,985 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-06 12:00:01,745 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-06 12:00:01,745 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-06 12:00:01,745 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送开始
+2026-03-06 12:00:01,745 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送开始
+2026-03-06 12:00:01,745 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-06 12:00:01,745 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-06 12:00:01,745 [INFO] ftseek.scripts.risk_monitor: 初始化组件...
+2026-03-06 12:00:01,745 [INFO] ftseek.scripts.risk_monitor: 初始化组件...
+2026-03-06 12:00:01,748 [INFO] ftseek.storage.database: 数据库表结构初始化完成
+2026-03-06 12:00:01,748 [INFO] ftseek.storage.database: 数据库表结构初始化完成
+2026-03-06 12:00:01,748 [INFO] ftseek.storage.database: 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-06 12:00:01,748 [INFO] ftseek.storage.database: 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-06 12:00:01,748 [INFO] ftseek.scripts.risk_monitor: 数据库已初始化
+2026-03-06 12:00:01,748 [INFO] ftseek.scripts.risk_monitor: 数据库已初始化
+2026-03-06 12:00:01,759 [INFO] ftseek.risk.manager: 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-06 12:00:01,759 [INFO] ftseek.risk.manager: 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-06 12:00:01,760 [INFO] ftseek.risk.manager: 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-06 12:00:01,760 [INFO] ftseek.risk.manager: 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-06 12:00:01,760 [INFO] ftseek.scripts.risk_monitor: 风控管理器已初始化 | 模式=paper
+2026-03-06 12:00:01,760 [INFO] ftseek.scripts.risk_monitor: 风控管理器已初始化 | 模式=paper
+2026-03-06 12:00:01,760 [INFO] ftseek.scripts.risk_monitor: 钉钉推送已初始化
+2026-03-06 12:00:01,760 [INFO] ftseek.scripts.risk_monitor: 钉钉推送已初始化
+2026-03-06 12:00:01,760 [INFO] ftseek.risk.monitor: 风险监控器已初始化
+2026-03-06 12:00:01,760 [INFO] ftseek.risk.monitor: 风险监控器已初始化
+2026-03-06 12:00:01,760 [INFO] ftseek.scripts.risk_monitor: 风险监控器已初始化
+2026-03-06 12:00:01,760 [INFO] ftseek.scripts.risk_monitor: 风险监控器已初始化
+2026-03-06 12:00:01,760 [INFO] ftseek.scripts.risk_monitor: 监控数据已收集:
+2026-03-06 12:00:01,760 [INFO] ftseek.scripts.risk_monitor: 监控数据已收集:
+2026-03-06 12:00:01,760 [INFO] ftseek.scripts.risk_monitor:   账户总值：HK$1,000,000.00
+2026-03-06 12:00:01,760 [INFO] ftseek.scripts.risk_monitor:   账户总值：HK$1,000,000.00
+2026-03-06 12:00:01,760 [INFO] ftseek.scripts.risk_monitor:   持仓市值：HK$0.00
+2026-03-06 12:00:01,760 [INFO] ftseek.scripts.risk_monitor:   持仓市值：HK$0.00
+2026-03-06 12:00:01,760 [INFO] ftseek.scripts.risk_monitor:   今日盈亏：HK$+0.00
+2026-03-06 12:00:01,760 [INFO] ftseek.scripts.risk_monitor:   今日盈亏：HK$+0.00
+2026-03-06 12:00:01,760 [INFO] ftseek.scripts.risk_monitor:   风控状态：✅ 正常
+2026-03-06 12:00:01,760 [INFO] ftseek.scripts.risk_monitor:   风控状态：✅ 正常
+2026-03-06 12:00:01,841 [INFO] ftseek.notifier.dingtalk: 钉钉风险监控推送成功：12:00
+2026-03-06 12:00:01,841 [INFO] ftseek.notifier.dingtalk: 钉钉风险监控推送成功：12:00
+2026-03-06 12:00:01,841 [INFO] ftseek.risk.monitor: 风险监控面板已推送：12:00
+2026-03-06 12:00:01,841 [INFO] ftseek.risk.monitor: 风险监控面板已推送：12:00
+2026-03-06 12:00:01,842 [INFO] ftseek.scripts.risk_monitor: ✅ 风险监控推送成功
+2026-03-06 12:00:01,842 [INFO] ftseek.scripts.risk_monitor: ✅ 风险监控推送成功
+2026-03-06 12:00:01,842 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-06 12:00:01,842 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-06 12:00:01,842 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送结束
+2026-03-06 12:00:01,842 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送结束
+2026-03-06 12:00:01,842 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-06 12:00:01,842 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-06 14:00:02,406 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-06 14:00:02,406 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-06 14:00:02,406 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送开始
+2026-03-06 14:00:02,406 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送开始
+2026-03-06 14:00:02,407 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-06 14:00:02,407 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-06 14:00:02,407 [INFO] ftseek.scripts.risk_monitor: 初始化组件...
+2026-03-06 14:00:02,407 [INFO] ftseek.scripts.risk_monitor: 初始化组件...
+2026-03-06 14:00:02,409 [INFO] ftseek.storage.database: 数据库表结构初始化完成
+2026-03-06 14:00:02,409 [INFO] ftseek.storage.database: 数据库表结构初始化完成
+2026-03-06 14:00:02,409 [INFO] ftseek.storage.database: 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-06 14:00:02,409 [INFO] ftseek.storage.database: 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-06 14:00:02,409 [INFO] ftseek.scripts.risk_monitor: 数据库已初始化
+2026-03-06 14:00:02,409 [INFO] ftseek.scripts.risk_monitor: 数据库已初始化
+2026-03-06 14:00:02,420 [INFO] ftseek.risk.manager: 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-06 14:00:02,420 [INFO] ftseek.risk.manager: 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-06 14:00:02,420 [INFO] ftseek.risk.manager: 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-06 14:00:02,420 [INFO] ftseek.risk.manager: 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-06 14:00:02,420 [INFO] ftseek.scripts.risk_monitor: 风控管理器已初始化 | 模式=paper
+2026-03-06 14:00:02,420 [INFO] ftseek.scripts.risk_monitor: 风控管理器已初始化 | 模式=paper
+2026-03-06 14:00:02,421 [INFO] ftseek.scripts.risk_monitor: 钉钉推送已初始化
+2026-03-06 14:00:02,421 [INFO] ftseek.scripts.risk_monitor: 钉钉推送已初始化
+2026-03-06 14:00:02,421 [INFO] ftseek.risk.monitor: 风险监控器已初始化
+2026-03-06 14:00:02,421 [INFO] ftseek.risk.monitor: 风险监控器已初始化
+2026-03-06 14:00:02,421 [INFO] ftseek.scripts.risk_monitor: 风险监控器已初始化
+2026-03-06 14:00:02,421 [INFO] ftseek.scripts.risk_monitor: 风险监控器已初始化
+2026-03-06 14:00:02,421 [INFO] ftseek.scripts.risk_monitor: 监控数据已收集:
+2026-03-06 14:00:02,421 [INFO] ftseek.scripts.risk_monitor: 监控数据已收集:
+2026-03-06 14:00:02,421 [INFO] ftseek.scripts.risk_monitor:   账户总值：HK$1,000,000.00
+2026-03-06 14:00:02,421 [INFO] ftseek.scripts.risk_monitor:   账户总值：HK$1,000,000.00
+2026-03-06 14:00:02,421 [INFO] ftseek.scripts.risk_monitor:   持仓市值：HK$0.00
+2026-03-06 14:00:02,421 [INFO] ftseek.scripts.risk_monitor:   持仓市值：HK$0.00
+2026-03-06 14:00:02,421 [INFO] ftseek.scripts.risk_monitor:   今日盈亏：HK$+0.00
+2026-03-06 14:00:02,421 [INFO] ftseek.scripts.risk_monitor:   今日盈亏：HK$+0.00
+2026-03-06 14:00:02,421 [INFO] ftseek.scripts.risk_monitor:   风控状态：✅ 正常
+2026-03-06 14:00:02,421 [INFO] ftseek.scripts.risk_monitor:   风控状态：✅ 正常
+2026-03-06 14:00:02,498 [INFO] ftseek.notifier.dingtalk: 钉钉风险监控推送成功：14:00
+2026-03-06 14:00:02,498 [INFO] ftseek.notifier.dingtalk: 钉钉风险监控推送成功：14:00
+2026-03-06 14:00:02,498 [INFO] ftseek.risk.monitor: 风险监控面板已推送：14:00
+2026-03-06 14:00:02,498 [INFO] ftseek.risk.monitor: 风险监控面板已推送：14:00
+2026-03-06 14:00:02,498 [INFO] ftseek.scripts.risk_monitor: ✅ 风险监控推送成功
+2026-03-06 14:00:02,498 [INFO] ftseek.scripts.risk_monitor: ✅ 风险监控推送成功
+2026-03-06 14:00:02,499 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-06 14:00:02,499 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-06 14:00:02,499 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送结束
+2026-03-06 14:00:02,499 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送结束
+2026-03-06 14:00:02,499 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-06 14:00:02,499 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-06 16:00:01,951 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-06 16:00:01,951 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-06 16:00:01,952 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送开始
+2026-03-06 16:00:01,952 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送开始
+2026-03-06 16:00:01,952 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-06 16:00:01,952 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-06 16:00:01,952 [INFO] ftseek.scripts.risk_monitor: 初始化组件...
+2026-03-06 16:00:01,952 [INFO] ftseek.scripts.risk_monitor: 初始化组件...
+2026-03-06 16:00:01,955 [INFO] ftseek.storage.database: 数据库表结构初始化完成
+2026-03-06 16:00:01,955 [INFO] ftseek.storage.database: 数据库表结构初始化完成
+2026-03-06 16:00:01,955 [INFO] ftseek.storage.database: 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-06 16:00:01,955 [INFO] ftseek.storage.database: 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-06 16:00:01,956 [INFO] ftseek.scripts.risk_monitor: 数据库已初始化
+2026-03-06 16:00:01,956 [INFO] ftseek.scripts.risk_monitor: 数据库已初始化
+2026-03-06 16:00:01,968 [INFO] ftseek.risk.manager: 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-06 16:00:01,968 [INFO] ftseek.risk.manager: 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-06 16:00:01,968 [INFO] ftseek.risk.manager: 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-06 16:00:01,968 [INFO] ftseek.risk.manager: 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-06 16:00:01,968 [INFO] ftseek.scripts.risk_monitor: 风控管理器已初始化 | 模式=paper
+2026-03-06 16:00:01,968 [INFO] ftseek.scripts.risk_monitor: 风控管理器已初始化 | 模式=paper
+2026-03-06 16:00:01,968 [INFO] ftseek.scripts.risk_monitor: 钉钉推送已初始化
+2026-03-06 16:00:01,968 [INFO] ftseek.scripts.risk_monitor: 钉钉推送已初始化
+2026-03-06 16:00:01,968 [INFO] ftseek.risk.monitor: 风险监控器已初始化
+2026-03-06 16:00:01,968 [INFO] ftseek.risk.monitor: 风险监控器已初始化
+2026-03-06 16:00:01,969 [INFO] ftseek.scripts.risk_monitor: 风险监控器已初始化
+2026-03-06 16:00:01,969 [INFO] ftseek.scripts.risk_monitor: 风险监控器已初始化
+2026-03-06 16:00:01,969 [INFO] ftseek.scripts.risk_monitor: 监控数据已收集:
+2026-03-06 16:00:01,969 [INFO] ftseek.scripts.risk_monitor: 监控数据已收集:
+2026-03-06 16:00:01,969 [INFO] ftseek.scripts.risk_monitor:   账户总值：HK$1,000,000.00
+2026-03-06 16:00:01,969 [INFO] ftseek.scripts.risk_monitor:   账户总值：HK$1,000,000.00
+2026-03-06 16:00:01,969 [INFO] ftseek.scripts.risk_monitor:   持仓市值：HK$0.00
+2026-03-06 16:00:01,969 [INFO] ftseek.scripts.risk_monitor:   持仓市值：HK$0.00
+2026-03-06 16:00:01,969 [INFO] ftseek.scripts.risk_monitor:   今日盈亏：HK$+0.00
+2026-03-06 16:00:01,969 [INFO] ftseek.scripts.risk_monitor:   今日盈亏：HK$+0.00
+2026-03-06 16:00:01,969 [INFO] ftseek.scripts.risk_monitor:   风控状态：✅ 正常
+2026-03-06 16:00:01,969 [INFO] ftseek.scripts.risk_monitor:   风控状态：✅ 正常
+2026-03-06 16:00:02,046 [INFO] ftseek.notifier.dingtalk: 钉钉风险监控推送成功：16:00
+2026-03-06 16:00:02,046 [INFO] ftseek.notifier.dingtalk: 钉钉风险监控推送成功：16:00
+2026-03-06 16:00:02,046 [INFO] ftseek.risk.monitor: 风险监控面板已推送：16:00
+2026-03-06 16:00:02,046 [INFO] ftseek.risk.monitor: 风险监控面板已推送：16:00
+2026-03-06 16:00:02,046 [INFO] ftseek.scripts.risk_monitor: ✅ 风险监控推送成功
+2026-03-06 16:00:02,046 [INFO] ftseek.scripts.risk_monitor: ✅ 风险监控推送成功
+2026-03-06 16:00:02,046 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-06 16:00:02,046 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-06 16:00:02,047 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送结束
+2026-03-06 16:00:02,047 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送结束
+2026-03-06 16:00:02,047 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-06 16:00:02,047 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-09 10:00:02,331 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-09 10:00:02,331 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-09 10:00:02,332 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送开始
+2026-03-09 10:00:02,332 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送开始
+2026-03-09 10:00:02,332 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-09 10:00:02,332 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-09 10:00:02,332 [INFO] ftseek.scripts.risk_monitor: 初始化组件...
+2026-03-09 10:00:02,332 [INFO] ftseek.scripts.risk_monitor: 初始化组件...
+2026-03-09 10:00:02,334 [INFO] ftseek.storage.database: 数据库表结构初始化完成
+2026-03-09 10:00:02,334 [INFO] ftseek.storage.database: 数据库表结构初始化完成
+2026-03-09 10:00:02,335 [INFO] ftseek.storage.database: 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-09 10:00:02,335 [INFO] ftseek.storage.database: 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-09 10:00:02,335 [INFO] ftseek.scripts.risk_monitor: 数据库已初始化
+2026-03-09 10:00:02,335 [INFO] ftseek.scripts.risk_monitor: 数据库已初始化
+2026-03-09 10:00:02,343 [INFO] ftseek.risk.manager: 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-09 10:00:02,343 [INFO] ftseek.risk.manager: 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-09 10:00:02,344 [INFO] ftseek.risk.manager: 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-09 10:00:02,344 [INFO] ftseek.risk.manager: 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-09 10:00:02,344 [INFO] ftseek.scripts.risk_monitor: 风控管理器已初始化 | 模式=paper
+2026-03-09 10:00:02,344 [INFO] ftseek.scripts.risk_monitor: 风控管理器已初始化 | 模式=paper
+2026-03-09 10:00:02,344 [INFO] ftseek.scripts.risk_monitor: 钉钉推送已初始化
+2026-03-09 10:00:02,344 [INFO] ftseek.scripts.risk_monitor: 钉钉推送已初始化
+2026-03-09 10:00:02,344 [INFO] ftseek.risk.monitor: 风险监控器已初始化
+2026-03-09 10:00:02,344 [INFO] ftseek.risk.monitor: 风险监控器已初始化
+2026-03-09 10:00:02,344 [INFO] ftseek.scripts.risk_monitor: 风险监控器已初始化
+2026-03-09 10:00:02,344 [INFO] ftseek.scripts.risk_monitor: 风险监控器已初始化
+2026-03-09 10:00:02,344 [INFO] ftseek.scripts.risk_monitor: 监控数据已收集:
+2026-03-09 10:00:02,344 [INFO] ftseek.scripts.risk_monitor: 监控数据已收集:
+2026-03-09 10:00:02,344 [INFO] ftseek.scripts.risk_monitor:   账户总值：HK$1,000,000.00
+2026-03-09 10:00:02,344 [INFO] ftseek.scripts.risk_monitor:   账户总值：HK$1,000,000.00
+2026-03-09 10:00:02,344 [INFO] ftseek.scripts.risk_monitor:   持仓市值：HK$0.00
+2026-03-09 10:00:02,344 [INFO] ftseek.scripts.risk_monitor:   持仓市值：HK$0.00
+2026-03-09 10:00:02,344 [INFO] ftseek.scripts.risk_monitor:   今日盈亏：HK$+0.00
+2026-03-09 10:00:02,344 [INFO] ftseek.scripts.risk_monitor:   今日盈亏：HK$+0.00
+2026-03-09 10:00:02,345 [INFO] ftseek.scripts.risk_monitor:   风控状态：✅ 正常
+2026-03-09 10:00:02,345 [INFO] ftseek.scripts.risk_monitor:   风控状态：✅ 正常
+2026-03-09 10:00:02,427 [INFO] ftseek.notifier.dingtalk: 钉钉风险监控推送成功：10:00
+2026-03-09 10:00:02,427 [INFO] ftseek.notifier.dingtalk: 钉钉风险监控推送成功：10:00
+2026-03-09 10:00:02,427 [INFO] ftseek.risk.monitor: 风险监控面板已推送：10:00
+2026-03-09 10:00:02,427 [INFO] ftseek.risk.monitor: 风险监控面板已推送：10:00
+2026-03-09 10:00:02,428 [INFO] ftseek.scripts.risk_monitor: ✅ 风险监控推送成功
+2026-03-09 10:00:02,428 [INFO] ftseek.scripts.risk_monitor: ✅ 风险监控推送成功
+2026-03-09 10:00:02,428 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-09 10:00:02,428 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-09 10:00:02,428 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送结束
+2026-03-09 10:00:02,428 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送结束
+2026-03-09 10:00:02,428 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-09 10:00:02,428 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-09 12:00:01,960 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-09 12:00:01,960 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-09 12:00:01,965 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送开始
+2026-03-09 12:00:01,965 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送开始
+2026-03-09 12:00:01,965 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-09 12:00:01,965 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-09 12:00:01,965 [INFO] ftseek.scripts.risk_monitor: 初始化组件...
+2026-03-09 12:00:01,965 [INFO] ftseek.scripts.risk_monitor: 初始化组件...
+2026-03-09 12:00:01,969 [INFO] ftseek.storage.database: 数据库表结构初始化完成
+2026-03-09 12:00:01,969 [INFO] ftseek.storage.database: 数据库表结构初始化完成
+2026-03-09 12:00:01,969 [INFO] ftseek.storage.database: 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-09 12:00:01,969 [INFO] ftseek.storage.database: 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-09 12:00:01,970 [INFO] ftseek.scripts.risk_monitor: 数据库已初始化
+2026-03-09 12:00:01,970 [INFO] ftseek.scripts.risk_monitor: 数据库已初始化
+2026-03-09 12:00:01,983 [INFO] ftseek.risk.manager: 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-09 12:00:01,983 [INFO] ftseek.risk.manager: 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-09 12:00:01,983 [INFO] ftseek.risk.manager: 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-09 12:00:01,983 [INFO] ftseek.risk.manager: 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-09 12:00:01,983 [INFO] ftseek.scripts.risk_monitor: 风控管理器已初始化 | 模式=paper
+2026-03-09 12:00:01,983 [INFO] ftseek.scripts.risk_monitor: 风控管理器已初始化 | 模式=paper
+2026-03-09 12:00:01,983 [INFO] ftseek.scripts.risk_monitor: 钉钉推送已初始化
+2026-03-09 12:00:01,983 [INFO] ftseek.scripts.risk_monitor: 钉钉推送已初始化
+2026-03-09 12:00:01,983 [INFO] ftseek.risk.monitor: 风险监控器已初始化
+2026-03-09 12:00:01,983 [INFO] ftseek.risk.monitor: 风险监控器已初始化
+2026-03-09 12:00:01,983 [INFO] ftseek.scripts.risk_monitor: 风险监控器已初始化
+2026-03-09 12:00:01,983 [INFO] ftseek.scripts.risk_monitor: 风险监控器已初始化
+2026-03-09 12:00:01,984 [INFO] ftseek.scripts.risk_monitor: 监控数据已收集:
+2026-03-09 12:00:01,984 [INFO] ftseek.scripts.risk_monitor: 监控数据已收集:
+2026-03-09 12:00:01,984 [INFO] ftseek.scripts.risk_monitor:   账户总值：HK$1,000,000.00
+2026-03-09 12:00:01,984 [INFO] ftseek.scripts.risk_monitor:   账户总值：HK$1,000,000.00
+2026-03-09 12:00:01,984 [INFO] ftseek.scripts.risk_monitor:   持仓市值：HK$0.00
+2026-03-09 12:00:01,984 [INFO] ftseek.scripts.risk_monitor:   持仓市值：HK$0.00
+2026-03-09 12:00:01,984 [INFO] ftseek.scripts.risk_monitor:   今日盈亏：HK$+0.00
+2026-03-09 12:00:01,984 [INFO] ftseek.scripts.risk_monitor:   今日盈亏：HK$+0.00
+2026-03-09 12:00:01,984 [INFO] ftseek.scripts.risk_monitor:   风控状态：✅ 正常
+2026-03-09 12:00:01,984 [INFO] ftseek.scripts.risk_monitor:   风控状态：✅ 正常
+2026-03-09 12:00:02,052 [INFO] ftseek.notifier.dingtalk: 钉钉风险监控推送成功：12:00
+2026-03-09 12:00:02,052 [INFO] ftseek.notifier.dingtalk: 钉钉风险监控推送成功：12:00
+2026-03-09 12:00:02,052 [INFO] ftseek.risk.monitor: 风险监控面板已推送：12:00
+2026-03-09 12:00:02,052 [INFO] ftseek.risk.monitor: 风险监控面板已推送：12:00
+2026-03-09 12:00:02,052 [INFO] ftseek.scripts.risk_monitor: ✅ 风险监控推送成功
+2026-03-09 12:00:02,052 [INFO] ftseek.scripts.risk_monitor: ✅ 风险监控推送成功
+2026-03-09 12:00:02,052 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-09 12:00:02,052 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-09 12:00:02,052 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送结束
+2026-03-09 12:00:02,052 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送结束
+2026-03-09 12:00:02,052 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-09 12:00:02,052 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-09 14:00:01,814 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-09 14:00:01,814 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-09 14:00:01,814 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送开始
+2026-03-09 14:00:01,814 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送开始
+2026-03-09 14:00:01,814 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-09 14:00:01,814 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-09 14:00:01,814 [INFO] ftseek.scripts.risk_monitor: 初始化组件...
+2026-03-09 14:00:01,814 [INFO] ftseek.scripts.risk_monitor: 初始化组件...
+2026-03-09 14:00:01,816 [INFO] ftseek.storage.database: 数据库表结构初始化完成
+2026-03-09 14:00:01,816 [INFO] ftseek.storage.database: 数据库表结构初始化完成
+2026-03-09 14:00:01,833 [INFO] ftseek.storage.database: 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-09 14:00:01,833 [INFO] ftseek.storage.database: 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-09 14:00:01,834 [INFO] ftseek.scripts.risk_monitor: 数据库已初始化
+2026-03-09 14:00:01,834 [INFO] ftseek.scripts.risk_monitor: 数据库已初始化
+2026-03-09 14:00:01,841 [INFO] ftseek.risk.manager: 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-09 14:00:01,841 [INFO] ftseek.risk.manager: 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-09 14:00:01,841 [INFO] ftseek.risk.manager: 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-09 14:00:01,841 [INFO] ftseek.risk.manager: 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-09 14:00:01,841 [INFO] ftseek.scripts.risk_monitor: 风控管理器已初始化 | 模式=paper
+2026-03-09 14:00:01,841 [INFO] ftseek.scripts.risk_monitor: 风控管理器已初始化 | 模式=paper
+2026-03-09 14:00:01,841 [INFO] ftseek.scripts.risk_monitor: 钉钉推送已初始化
+2026-03-09 14:00:01,841 [INFO] ftseek.scripts.risk_monitor: 钉钉推送已初始化
+2026-03-09 14:00:01,841 [INFO] ftseek.risk.monitor: 风险监控器已初始化
+2026-03-09 14:00:01,841 [INFO] ftseek.risk.monitor: 风险监控器已初始化
+2026-03-09 14:00:01,842 [INFO] ftseek.scripts.risk_monitor: 风险监控器已初始化
+2026-03-09 14:00:01,842 [INFO] ftseek.scripts.risk_monitor: 风险监控器已初始化
+2026-03-09 14:00:01,842 [INFO] ftseek.scripts.risk_monitor: 监控数据已收集:
+2026-03-09 14:00:01,842 [INFO] ftseek.scripts.risk_monitor: 监控数据已收集:
+2026-03-09 14:00:01,842 [INFO] ftseek.scripts.risk_monitor:   账户总值：HK$1,000,000.00
+2026-03-09 14:00:01,842 [INFO] ftseek.scripts.risk_monitor:   账户总值：HK$1,000,000.00
+2026-03-09 14:00:01,842 [INFO] ftseek.scripts.risk_monitor:   持仓市值：HK$0.00
+2026-03-09 14:00:01,842 [INFO] ftseek.scripts.risk_monitor:   持仓市值：HK$0.00
+2026-03-09 14:00:01,842 [INFO] ftseek.scripts.risk_monitor:   今日盈亏：HK$+0.00
+2026-03-09 14:00:01,842 [INFO] ftseek.scripts.risk_monitor:   今日盈亏：HK$+0.00
+2026-03-09 14:00:01,842 [INFO] ftseek.scripts.risk_monitor:   风控状态：✅ 正常
+2026-03-09 14:00:01,842 [INFO] ftseek.scripts.risk_monitor:   风控状态：✅ 正常
+2026-03-09 14:00:01,950 [INFO] ftseek.notifier.dingtalk: 钉钉风险监控推送成功：14:00
+2026-03-09 14:00:01,950 [INFO] ftseek.notifier.dingtalk: 钉钉风险监控推送成功：14:00
+2026-03-09 14:00:01,950 [INFO] ftseek.risk.monitor: 风险监控面板已推送：14:00
+2026-03-09 14:00:01,950 [INFO] ftseek.risk.monitor: 风险监控面板已推送：14:00
+2026-03-09 14:00:01,950 [INFO] ftseek.scripts.risk_monitor: ✅ 风险监控推送成功
+2026-03-09 14:00:01,950 [INFO] ftseek.scripts.risk_monitor: ✅ 风险监控推送成功
+2026-03-09 14:00:01,950 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-09 14:00:01,950 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-09 14:00:01,951 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送结束
+2026-03-09 14:00:01,951 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送结束
+2026-03-09 14:00:01,951 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-09 14:00:01,951 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-09 16:00:01,646 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-09 16:00:01,646 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-09 16:00:01,648 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送开始
+2026-03-09 16:00:01,648 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送开始
+2026-03-09 16:00:01,648 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-09 16:00:01,648 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-09 16:00:01,648 [INFO] ftseek.scripts.risk_monitor: 初始化组件...
+2026-03-09 16:00:01,648 [INFO] ftseek.scripts.risk_monitor: 初始化组件...
+2026-03-09 16:00:01,650 [INFO] ftseek.storage.database: 数据库表结构初始化完成
+2026-03-09 16:00:01,650 [INFO] ftseek.storage.database: 数据库表结构初始化完成
+2026-03-09 16:00:01,651 [INFO] ftseek.storage.database: 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-09 16:00:01,651 [INFO] ftseek.storage.database: 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-09 16:00:01,651 [INFO] ftseek.scripts.risk_monitor: 数据库已初始化
+2026-03-09 16:00:01,651 [INFO] ftseek.scripts.risk_monitor: 数据库已初始化
+2026-03-09 16:00:01,662 [INFO] ftseek.risk.manager: 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-09 16:00:01,662 [INFO] ftseek.risk.manager: 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-09 16:00:01,663 [INFO] ftseek.risk.manager: 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-09 16:00:01,663 [INFO] ftseek.risk.manager: 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-09 16:00:01,663 [INFO] ftseek.scripts.risk_monitor: 风控管理器已初始化 | 模式=paper
+2026-03-09 16:00:01,663 [INFO] ftseek.scripts.risk_monitor: 风控管理器已初始化 | 模式=paper
+2026-03-09 16:00:01,663 [INFO] ftseek.scripts.risk_monitor: 钉钉推送已初始化
+2026-03-09 16:00:01,663 [INFO] ftseek.scripts.risk_monitor: 钉钉推送已初始化
+2026-03-09 16:00:01,663 [INFO] ftseek.risk.monitor: 风险监控器已初始化
+2026-03-09 16:00:01,663 [INFO] ftseek.risk.monitor: 风险监控器已初始化
+2026-03-09 16:00:01,663 [INFO] ftseek.scripts.risk_monitor: 风险监控器已初始化
+2026-03-09 16:00:01,663 [INFO] ftseek.scripts.risk_monitor: 风险监控器已初始化
+2026-03-09 16:00:01,663 [INFO] ftseek.scripts.risk_monitor: 监控数据已收集:
+2026-03-09 16:00:01,663 [INFO] ftseek.scripts.risk_monitor: 监控数据已收集:
+2026-03-09 16:00:01,663 [INFO] ftseek.scripts.risk_monitor:   账户总值：HK$1,000,000.00
+2026-03-09 16:00:01,663 [INFO] ftseek.scripts.risk_monitor:   账户总值：HK$1,000,000.00
+2026-03-09 16:00:01,663 [INFO] ftseek.scripts.risk_monitor:   持仓市值：HK$0.00
+2026-03-09 16:00:01,663 [INFO] ftseek.scripts.risk_monitor:   持仓市值：HK$0.00
+2026-03-09 16:00:01,663 [INFO] ftseek.scripts.risk_monitor:   今日盈亏：HK$+0.00
+2026-03-09 16:00:01,663 [INFO] ftseek.scripts.risk_monitor:   今日盈亏：HK$+0.00
+2026-03-09 16:00:01,664 [INFO] ftseek.scripts.risk_monitor:   风控状态：✅ 正常
+2026-03-09 16:00:01,664 [INFO] ftseek.scripts.risk_monitor:   风控状态：✅ 正常
+2026-03-09 16:00:01,736 [INFO] ftseek.notifier.dingtalk: 钉钉风险监控推送成功：16:00
+2026-03-09 16:00:01,736 [INFO] ftseek.notifier.dingtalk: 钉钉风险监控推送成功：16:00
+2026-03-09 16:00:01,736 [INFO] ftseek.risk.monitor: 风险监控面板已推送：16:00
+2026-03-09 16:00:01,736 [INFO] ftseek.risk.monitor: 风险监控面板已推送：16:00
+2026-03-09 16:00:01,737 [INFO] ftseek.scripts.risk_monitor: ✅ 风险监控推送成功
+2026-03-09 16:00:01,737 [INFO] ftseek.scripts.risk_monitor: ✅ 风险监控推送成功
+2026-03-09 16:00:01,737 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-09 16:00:01,737 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-09 16:00:01,737 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送结束
+2026-03-09 16:00:01,737 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送结束
+2026-03-09 16:00:01,737 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-09 16:00:01,737 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-10 10:00:01,683 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-10 10:00:01,683 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-10 10:00:01,685 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送开始
+2026-03-10 10:00:01,685 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送开始
+2026-03-10 10:00:01,685 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-10 10:00:01,685 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-10 10:00:01,685 [INFO] ftseek.scripts.risk_monitor: 初始化组件...
+2026-03-10 10:00:01,685 [INFO] ftseek.scripts.risk_monitor: 初始化组件...
+2026-03-10 10:00:01,687 [INFO] ftseek.storage.database: 数据库表结构初始化完成
+2026-03-10 10:00:01,687 [INFO] ftseek.storage.database: 数据库表结构初始化完成
+2026-03-10 10:00:01,687 [INFO] ftseek.storage.database: 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-10 10:00:01,687 [INFO] ftseek.storage.database: 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-10 10:00:01,687 [INFO] ftseek.scripts.risk_monitor: 数据库已初始化
+2026-03-10 10:00:01,687 [INFO] ftseek.scripts.risk_monitor: 数据库已初始化
+2026-03-10 10:00:01,696 [INFO] ftseek.risk.manager: 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-10 10:00:01,696 [INFO] ftseek.risk.manager: 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-10 10:00:01,697 [INFO] ftseek.risk.manager: 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-10 10:00:01,697 [INFO] ftseek.risk.manager: 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-10 10:00:01,697 [INFO] ftseek.scripts.risk_monitor: 风控管理器已初始化 | 模式=paper
+2026-03-10 10:00:01,697 [INFO] ftseek.scripts.risk_monitor: 风控管理器已初始化 | 模式=paper
+2026-03-10 10:00:01,697 [INFO] ftseek.scripts.risk_monitor: 钉钉推送已初始化
+2026-03-10 10:00:01,697 [INFO] ftseek.scripts.risk_monitor: 钉钉推送已初始化
+2026-03-10 10:00:01,697 [INFO] ftseek.risk.monitor: 风险监控器已初始化
+2026-03-10 10:00:01,697 [INFO] ftseek.risk.monitor: 风险监控器已初始化
+2026-03-10 10:00:01,697 [INFO] ftseek.scripts.risk_monitor: 风险监控器已初始化
+2026-03-10 10:00:01,697 [INFO] ftseek.scripts.risk_monitor: 风险监控器已初始化
+2026-03-10 10:00:01,697 [INFO] ftseek.scripts.risk_monitor: 监控数据已收集:
+2026-03-10 10:00:01,697 [INFO] ftseek.scripts.risk_monitor: 监控数据已收集:
+2026-03-10 10:00:01,697 [INFO] ftseek.scripts.risk_monitor:   账户总值：HK$1,000,000.00
+2026-03-10 10:00:01,697 [INFO] ftseek.scripts.risk_monitor:   账户总值：HK$1,000,000.00
+2026-03-10 10:00:01,697 [INFO] ftseek.scripts.risk_monitor:   持仓市值：HK$0.00
+2026-03-10 10:00:01,697 [INFO] ftseek.scripts.risk_monitor:   持仓市值：HK$0.00
+2026-03-10 10:00:01,697 [INFO] ftseek.scripts.risk_monitor:   今日盈亏：HK$+0.00
+2026-03-10 10:00:01,697 [INFO] ftseek.scripts.risk_monitor:   今日盈亏：HK$+0.00
+2026-03-10 10:00:01,698 [INFO] ftseek.scripts.risk_monitor:   风控状态：✅ 正常
+2026-03-10 10:00:01,698 [INFO] ftseek.scripts.risk_monitor:   风控状态：✅ 正常
+2026-03-10 10:00:01,781 [INFO] ftseek.notifier.dingtalk: 钉钉风险监控推送成功：10:00
+2026-03-10 10:00:01,781 [INFO] ftseek.notifier.dingtalk: 钉钉风险监控推送成功：10:00
+2026-03-10 10:00:01,782 [INFO] ftseek.risk.monitor: 风险监控面板已推送：10:00
+2026-03-10 10:00:01,782 [INFO] ftseek.risk.monitor: 风险监控面板已推送：10:00
+2026-03-10 10:00:01,782 [INFO] ftseek.scripts.risk_monitor: ✅ 风险监控推送成功
+2026-03-10 10:00:01,782 [INFO] ftseek.scripts.risk_monitor: ✅ 风险监控推送成功
+2026-03-10 10:00:01,782 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-10 10:00:01,782 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-10 10:00:01,782 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送结束
+2026-03-10 10:00:01,782 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送结束
+2026-03-10 10:00:01,782 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-10 10:00:01,782 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-10 12:00:02,291 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-10 12:00:02,291 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-10 12:00:02,292 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送开始
+2026-03-10 12:00:02,292 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送开始
+2026-03-10 12:00:02,292 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-10 12:00:02,292 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-10 12:00:02,292 [INFO] ftseek.scripts.risk_monitor: 初始化组件...
+2026-03-10 12:00:02,292 [INFO] ftseek.scripts.risk_monitor: 初始化组件...
+2026-03-10 12:00:02,294 [INFO] ftseek.storage.database: 数据库表结构初始化完成
+2026-03-10 12:00:02,294 [INFO] ftseek.storage.database: 数据库表结构初始化完成
+2026-03-10 12:00:02,295 [INFO] ftseek.storage.database: 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-10 12:00:02,295 [INFO] ftseek.storage.database: 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-10 12:00:02,295 [INFO] ftseek.scripts.risk_monitor: 数据库已初始化
+2026-03-10 12:00:02,295 [INFO] ftseek.scripts.risk_monitor: 数据库已初始化
+2026-03-10 12:00:02,304 [INFO] ftseek.risk.manager: 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-10 12:00:02,304 [INFO] ftseek.risk.manager: 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-10 12:00:02,304 [INFO] ftseek.risk.manager: 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-10 12:00:02,304 [INFO] ftseek.risk.manager: 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-10 12:00:02,304 [INFO] ftseek.scripts.risk_monitor: 风控管理器已初始化 | 模式=paper
+2026-03-10 12:00:02,304 [INFO] ftseek.scripts.risk_monitor: 风控管理器已初始化 | 模式=paper
+2026-03-10 12:00:02,304 [INFO] ftseek.scripts.risk_monitor: 钉钉推送已初始化
+2026-03-10 12:00:02,304 [INFO] ftseek.scripts.risk_monitor: 钉钉推送已初始化
+2026-03-10 12:00:02,304 [INFO] ftseek.risk.monitor: 风险监控器已初始化
+2026-03-10 12:00:02,304 [INFO] ftseek.risk.monitor: 风险监控器已初始化
+2026-03-10 12:00:02,304 [INFO] ftseek.scripts.risk_monitor: 风险监控器已初始化
+2026-03-10 12:00:02,304 [INFO] ftseek.scripts.risk_monitor: 风险监控器已初始化
+2026-03-10 12:00:02,305 [INFO] ftseek.scripts.risk_monitor: 监控数据已收集:
+2026-03-10 12:00:02,305 [INFO] ftseek.scripts.risk_monitor: 监控数据已收集:
+2026-03-10 12:00:02,305 [INFO] ftseek.scripts.risk_monitor:   账户总值：HK$1,000,000.00
+2026-03-10 12:00:02,305 [INFO] ftseek.scripts.risk_monitor:   账户总值：HK$1,000,000.00
+2026-03-10 12:00:02,305 [INFO] ftseek.scripts.risk_monitor:   持仓市值：HK$0.00
+2026-03-10 12:00:02,305 [INFO] ftseek.scripts.risk_monitor:   持仓市值：HK$0.00
+2026-03-10 12:00:02,305 [INFO] ftseek.scripts.risk_monitor:   今日盈亏：HK$+0.00
+2026-03-10 12:00:02,305 [INFO] ftseek.scripts.risk_monitor:   今日盈亏：HK$+0.00
+2026-03-10 12:00:02,305 [INFO] ftseek.scripts.risk_monitor:   风控状态：✅ 正常
+2026-03-10 12:00:02,305 [INFO] ftseek.scripts.risk_monitor:   风控状态：✅ 正常
+2026-03-10 12:00:02,406 [INFO] ftseek.notifier.dingtalk: 钉钉风险监控推送成功：12:00
+2026-03-10 12:00:02,406 [INFO] ftseek.notifier.dingtalk: 钉钉风险监控推送成功：12:00
+2026-03-10 12:00:02,406 [INFO] ftseek.risk.monitor: 风险监控面板已推送：12:00
+2026-03-10 12:00:02,406 [INFO] ftseek.risk.monitor: 风险监控面板已推送：12:00
+2026-03-10 12:00:02,406 [INFO] ftseek.scripts.risk_monitor: ✅ 风险监控推送成功
+2026-03-10 12:00:02,406 [INFO] ftseek.scripts.risk_monitor: ✅ 风险监控推送成功
+2026-03-10 12:00:02,406 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-10 12:00:02,406 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-10 12:00:02,406 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送结束
+2026-03-10 12:00:02,406 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送结束
+2026-03-10 12:00:02,406 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-10 12:00:02,406 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-10 14:00:02,550 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-10 14:00:02,550 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-10 14:00:02,554 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送开始
+2026-03-10 14:00:02,554 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送开始
+2026-03-10 14:00:02,554 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-10 14:00:02,554 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-10 14:00:02,554 [INFO] ftseek.scripts.risk_monitor: 初始化组件...
+2026-03-10 14:00:02,554 [INFO] ftseek.scripts.risk_monitor: 初始化组件...
+2026-03-10 14:00:02,556 [INFO] ftseek.storage.database: 数据库表结构初始化完成
+2026-03-10 14:00:02,556 [INFO] ftseek.storage.database: 数据库表结构初始化完成
+2026-03-10 14:00:02,557 [INFO] ftseek.storage.database: 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-10 14:00:02,557 [INFO] ftseek.storage.database: 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-10 14:00:02,557 [INFO] ftseek.scripts.risk_monitor: 数据库已初始化
+2026-03-10 14:00:02,557 [INFO] ftseek.scripts.risk_monitor: 数据库已初始化
+2026-03-10 14:00:02,565 [INFO] ftseek.risk.manager: 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-10 14:00:02,565 [INFO] ftseek.risk.manager: 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-10 14:00:02,565 [INFO] ftseek.risk.manager: 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-10 14:00:02,565 [INFO] ftseek.risk.manager: 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-10 14:00:02,565 [INFO] ftseek.scripts.risk_monitor: 风控管理器已初始化 | 模式=paper
+2026-03-10 14:00:02,565 [INFO] ftseek.scripts.risk_monitor: 风控管理器已初始化 | 模式=paper
+2026-03-10 14:00:02,566 [INFO] ftseek.scripts.risk_monitor: 钉钉推送已初始化
+2026-03-10 14:00:02,566 [INFO] ftseek.scripts.risk_monitor: 钉钉推送已初始化
+2026-03-10 14:00:02,566 [INFO] ftseek.risk.monitor: 风险监控器已初始化
+2026-03-10 14:00:02,566 [INFO] ftseek.risk.monitor: 风险监控器已初始化
+2026-03-10 14:00:02,566 [INFO] ftseek.scripts.risk_monitor: 风险监控器已初始化
+2026-03-10 14:00:02,566 [INFO] ftseek.scripts.risk_monitor: 风险监控器已初始化
+2026-03-10 14:00:02,566 [INFO] ftseek.scripts.risk_monitor: 监控数据已收集:
+2026-03-10 14:00:02,566 [INFO] ftseek.scripts.risk_monitor: 监控数据已收集:
+2026-03-10 14:00:02,566 [INFO] ftseek.scripts.risk_monitor:   账户总值：HK$1,000,000.00
+2026-03-10 14:00:02,566 [INFO] ftseek.scripts.risk_monitor:   账户总值：HK$1,000,000.00
+2026-03-10 14:00:02,566 [INFO] ftseek.scripts.risk_monitor:   持仓市值：HK$0.00
+2026-03-10 14:00:02,566 [INFO] ftseek.scripts.risk_monitor:   持仓市值：HK$0.00
+2026-03-10 14:00:02,566 [INFO] ftseek.scripts.risk_monitor:   今日盈亏：HK$+0.00
+2026-03-10 14:00:02,566 [INFO] ftseek.scripts.risk_monitor:   今日盈亏：HK$+0.00
+2026-03-10 14:00:02,566 [INFO] ftseek.scripts.risk_monitor:   风控状态：✅ 正常
+2026-03-10 14:00:02,566 [INFO] ftseek.scripts.risk_monitor:   风控状态：✅ 正常
+2026-03-10 14:00:02,641 [INFO] ftseek.notifier.dingtalk: 钉钉风险监控推送成功：14:00
+2026-03-10 14:00:02,641 [INFO] ftseek.notifier.dingtalk: 钉钉风险监控推送成功：14:00
+2026-03-10 14:00:02,641 [INFO] ftseek.risk.monitor: 风险监控面板已推送：14:00
+2026-03-10 14:00:02,641 [INFO] ftseek.risk.monitor: 风险监控面板已推送：14:00
+2026-03-10 14:00:02,641 [INFO] ftseek.scripts.risk_monitor: ✅ 风险监控推送成功
+2026-03-10 14:00:02,641 [INFO] ftseek.scripts.risk_monitor: ✅ 风险监控推送成功
+2026-03-10 14:00:02,641 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-10 14:00:02,641 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-10 14:00:02,641 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送结束
+2026-03-10 14:00:02,641 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送结束
+2026-03-10 14:00:02,641 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-10 14:00:02,641 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-10 16:00:01,708 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-10 16:00:01,708 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-10 16:00:01,709 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送开始
+2026-03-10 16:00:01,709 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送开始
+2026-03-10 16:00:01,709 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-10 16:00:01,709 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-10 16:00:01,709 [INFO] ftseek.scripts.risk_monitor: 初始化组件...
+2026-03-10 16:00:01,709 [INFO] ftseek.scripts.risk_monitor: 初始化组件...
+2026-03-10 16:00:01,716 [INFO] ftseek.storage.database: 数据库表结构初始化完成
+2026-03-10 16:00:01,716 [INFO] ftseek.storage.database: 数据库表结构初始化完成
+2026-03-10 16:00:01,717 [INFO] ftseek.storage.database: 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-10 16:00:01,717 [INFO] ftseek.storage.database: 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-10 16:00:01,717 [INFO] ftseek.scripts.risk_monitor: 数据库已初始化
+2026-03-10 16:00:01,717 [INFO] ftseek.scripts.risk_monitor: 数据库已初始化
+2026-03-10 16:00:01,724 [INFO] ftseek.risk.manager: 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-10 16:00:01,724 [INFO] ftseek.risk.manager: 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-10 16:00:01,724 [INFO] ftseek.risk.manager: 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-10 16:00:01,724 [INFO] ftseek.risk.manager: 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-10 16:00:01,724 [INFO] ftseek.scripts.risk_monitor: 风控管理器已初始化 | 模式=paper
+2026-03-10 16:00:01,724 [INFO] ftseek.scripts.risk_monitor: 风控管理器已初始化 | 模式=paper
+2026-03-10 16:00:01,724 [INFO] ftseek.scripts.risk_monitor: 钉钉推送已初始化
+2026-03-10 16:00:01,724 [INFO] ftseek.scripts.risk_monitor: 钉钉推送已初始化
+2026-03-10 16:00:01,724 [INFO] ftseek.risk.monitor: 风险监控器已初始化
+2026-03-10 16:00:01,724 [INFO] ftseek.risk.monitor: 风险监控器已初始化
+2026-03-10 16:00:01,724 [INFO] ftseek.scripts.risk_monitor: 风险监控器已初始化
+2026-03-10 16:00:01,724 [INFO] ftseek.scripts.risk_monitor: 风险监控器已初始化
+2026-03-10 16:00:01,725 [INFO] ftseek.scripts.risk_monitor: 监控数据已收集:
+2026-03-10 16:00:01,725 [INFO] ftseek.scripts.risk_monitor: 监控数据已收集:
+2026-03-10 16:00:01,725 [INFO] ftseek.scripts.risk_monitor:   账户总值：HK$1,000,000.00
+2026-03-10 16:00:01,725 [INFO] ftseek.scripts.risk_monitor:   账户总值：HK$1,000,000.00
+2026-03-10 16:00:01,725 [INFO] ftseek.scripts.risk_monitor:   持仓市值：HK$0.00
+2026-03-10 16:00:01,725 [INFO] ftseek.scripts.risk_monitor:   持仓市值：HK$0.00
+2026-03-10 16:00:01,725 [INFO] ftseek.scripts.risk_monitor:   今日盈亏：HK$+0.00
+2026-03-10 16:00:01,725 [INFO] ftseek.scripts.risk_monitor:   今日盈亏：HK$+0.00
+2026-03-10 16:00:01,725 [INFO] ftseek.scripts.risk_monitor:   风控状态：✅ 正常
+2026-03-10 16:00:01,725 [INFO] ftseek.scripts.risk_monitor:   风控状态：✅ 正常
+2026-03-10 16:00:01,794 [INFO] ftseek.notifier.dingtalk: 钉钉风险监控推送成功：16:00
+2026-03-10 16:00:01,794 [INFO] ftseek.notifier.dingtalk: 钉钉风险监控推送成功：16:00
+2026-03-10 16:00:01,794 [INFO] ftseek.risk.monitor: 风险监控面板已推送：16:00
+2026-03-10 16:00:01,794 [INFO] ftseek.risk.monitor: 风险监控面板已推送：16:00
+2026-03-10 16:00:01,795 [INFO] ftseek.scripts.risk_monitor: ✅ 风险监控推送成功
+2026-03-10 16:00:01,795 [INFO] ftseek.scripts.risk_monitor: ✅ 风险监控推送成功
+2026-03-10 16:00:01,795 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-10 16:00:01,795 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-10 16:00:01,795 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送结束
+2026-03-10 16:00:01,795 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送结束
+2026-03-10 16:00:01,795 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-10 16:00:01,795 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-11 10:00:02,504 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-11 10:00:02,504 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-11 10:00:02,531 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送开始
+2026-03-11 10:00:02,531 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送开始
+2026-03-11 10:00:02,531 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-11 10:00:02,531 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-11 10:00:02,531 [INFO] ftseek.scripts.risk_monitor: 初始化组件...
+2026-03-11 10:00:02,531 [INFO] ftseek.scripts.risk_monitor: 初始化组件...
+2026-03-11 10:00:02,533 [INFO] ftseek.storage.database: 数据库表结构初始化完成
+2026-03-11 10:00:02,533 [INFO] ftseek.storage.database: 数据库表结构初始化完成
+2026-03-11 10:00:02,534 [INFO] ftseek.storage.database: 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-11 10:00:02,534 [INFO] ftseek.storage.database: 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-11 10:00:02,534 [INFO] ftseek.scripts.risk_monitor: 数据库已初始化
+2026-03-11 10:00:02,534 [INFO] ftseek.scripts.risk_monitor: 数据库已初始化
+2026-03-11 10:00:02,570 [INFO] ftseek.risk.manager: 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-11 10:00:02,570 [INFO] ftseek.risk.manager: 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-11 10:00:02,570 [INFO] ftseek.risk.manager: 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-11 10:00:02,570 [INFO] ftseek.risk.manager: 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-11 10:00:02,570 [INFO] ftseek.scripts.risk_monitor: 风控管理器已初始化 | 模式=paper
+2026-03-11 10:00:02,570 [INFO] ftseek.scripts.risk_monitor: 风控管理器已初始化 | 模式=paper
+2026-03-11 10:00:02,570 [INFO] ftseek.scripts.risk_monitor: 钉钉推送已初始化
+2026-03-11 10:00:02,570 [INFO] ftseek.scripts.risk_monitor: 钉钉推送已初始化
+2026-03-11 10:00:02,570 [INFO] ftseek.risk.monitor: 风险监控器已初始化
+2026-03-11 10:00:02,570 [INFO] ftseek.risk.monitor: 风险监控器已初始化
+2026-03-11 10:00:02,570 [INFO] ftseek.scripts.risk_monitor: 风险监控器已初始化
+2026-03-11 10:00:02,570 [INFO] ftseek.scripts.risk_monitor: 风险监控器已初始化
+2026-03-11 10:00:02,571 [INFO] ftseek.scripts.risk_monitor: 监控数据已收集:
+2026-03-11 10:00:02,571 [INFO] ftseek.scripts.risk_monitor: 监控数据已收集:
+2026-03-11 10:00:02,571 [INFO] ftseek.scripts.risk_monitor:   账户总值：HK$1,000,000.00
+2026-03-11 10:00:02,571 [INFO] ftseek.scripts.risk_monitor:   账户总值：HK$1,000,000.00
+2026-03-11 10:00:02,571 [INFO] ftseek.scripts.risk_monitor:   持仓市值：HK$0.00
+2026-03-11 10:00:02,571 [INFO] ftseek.scripts.risk_monitor:   持仓市值：HK$0.00
+2026-03-11 10:00:02,571 [INFO] ftseek.scripts.risk_monitor:   今日盈亏：HK$+0.00
+2026-03-11 10:00:02,571 [INFO] ftseek.scripts.risk_monitor:   今日盈亏：HK$+0.00
+2026-03-11 10:00:02,571 [INFO] ftseek.scripts.risk_monitor:   风控状态：✅ 正常
+2026-03-11 10:00:02,571 [INFO] ftseek.scripts.risk_monitor:   风控状态：✅ 正常
+2026-03-11 10:00:02,655 [INFO] ftseek.notifier.dingtalk: 钉钉风险监控推送成功：10:00
+2026-03-11 10:00:02,655 [INFO] ftseek.notifier.dingtalk: 钉钉风险监控推送成功：10:00
+2026-03-11 10:00:02,655 [INFO] ftseek.risk.monitor: 风险监控面板已推送：10:00
+2026-03-11 10:00:02,655 [INFO] ftseek.risk.monitor: 风险监控面板已推送：10:00
+2026-03-11 10:00:02,655 [INFO] ftseek.scripts.risk_monitor: ✅ 风险监控推送成功
+2026-03-11 10:00:02,655 [INFO] ftseek.scripts.risk_monitor: ✅ 风险监控推送成功
+2026-03-11 10:00:02,655 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-11 10:00:02,655 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-11 10:00:02,655 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送结束
+2026-03-11 10:00:02,655 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送结束
+2026-03-11 10:00:02,656 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-11 10:00:02,656 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-11 12:00:02,132 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-11 12:00:02,132 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-11 12:00:02,134 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送开始
+2026-03-11 12:00:02,134 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送开始
+2026-03-11 12:00:02,134 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-11 12:00:02,134 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-11 12:00:02,134 [INFO] ftseek.scripts.risk_monitor: 初始化组件...
+2026-03-11 12:00:02,134 [INFO] ftseek.scripts.risk_monitor: 初始化组件...
+2026-03-11 12:00:02,136 [INFO] ftseek.storage.database: 数据库表结构初始化完成
+2026-03-11 12:00:02,136 [INFO] ftseek.storage.database: 数据库表结构初始化完成
+2026-03-11 12:00:02,137 [INFO] ftseek.storage.database: 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-11 12:00:02,137 [INFO] ftseek.storage.database: 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-11 12:00:02,137 [INFO] ftseek.scripts.risk_monitor: 数据库已初始化
+2026-03-11 12:00:02,137 [INFO] ftseek.scripts.risk_monitor: 数据库已初始化
+2026-03-11 12:00:02,147 [INFO] ftseek.risk.manager: 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-11 12:00:02,147 [INFO] ftseek.risk.manager: 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-11 12:00:02,147 [INFO] ftseek.risk.manager: 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-11 12:00:02,147 [INFO] ftseek.risk.manager: 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-11 12:00:02,148 [INFO] ftseek.scripts.risk_monitor: 风控管理器已初始化 | 模式=paper
+2026-03-11 12:00:02,148 [INFO] ftseek.scripts.risk_monitor: 风控管理器已初始化 | 模式=paper
+2026-03-11 12:00:02,148 [INFO] ftseek.scripts.risk_monitor: 钉钉推送已初始化
+2026-03-11 12:00:02,148 [INFO] ftseek.scripts.risk_monitor: 钉钉推送已初始化
+2026-03-11 12:00:02,148 [INFO] ftseek.risk.monitor: 风险监控器已初始化
+2026-03-11 12:00:02,148 [INFO] ftseek.risk.monitor: 风险监控器已初始化
+2026-03-11 12:00:02,148 [INFO] ftseek.scripts.risk_monitor: 风险监控器已初始化
+2026-03-11 12:00:02,148 [INFO] ftseek.scripts.risk_monitor: 风险监控器已初始化
+2026-03-11 12:00:02,148 [INFO] ftseek.scripts.risk_monitor: 监控数据已收集:
+2026-03-11 12:00:02,148 [INFO] ftseek.scripts.risk_monitor: 监控数据已收集:
+2026-03-11 12:00:02,148 [INFO] ftseek.scripts.risk_monitor:   账户总值：HK$1,000,000.00
+2026-03-11 12:00:02,148 [INFO] ftseek.scripts.risk_monitor:   账户总值：HK$1,000,000.00
+2026-03-11 12:00:02,148 [INFO] ftseek.scripts.risk_monitor:   持仓市值：HK$0.00
+2026-03-11 12:00:02,148 [INFO] ftseek.scripts.risk_monitor:   持仓市值：HK$0.00
+2026-03-11 12:00:02,148 [INFO] ftseek.scripts.risk_monitor:   今日盈亏：HK$+0.00
+2026-03-11 12:00:02,148 [INFO] ftseek.scripts.risk_monitor:   今日盈亏：HK$+0.00
+2026-03-11 12:00:02,148 [INFO] ftseek.scripts.risk_monitor:   风控状态：✅ 正常
+2026-03-11 12:00:02,148 [INFO] ftseek.scripts.risk_monitor:   风控状态：✅ 正常
+2026-03-11 12:00:02,227 [INFO] ftseek.notifier.dingtalk: 钉钉风险监控推送成功：12:00
+2026-03-11 12:00:02,227 [INFO] ftseek.notifier.dingtalk: 钉钉风险监控推送成功：12:00
+2026-03-11 12:00:02,227 [INFO] ftseek.risk.monitor: 风险监控面板已推送：12:00
+2026-03-11 12:00:02,227 [INFO] ftseek.risk.monitor: 风险监控面板已推送：12:00
+2026-03-11 12:00:02,227 [INFO] ftseek.scripts.risk_monitor: ✅ 风险监控推送成功
+2026-03-11 12:00:02,227 [INFO] ftseek.scripts.risk_monitor: ✅ 风险监控推送成功
+2026-03-11 12:00:02,227 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-11 12:00:02,227 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-11 12:00:02,227 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送结束
+2026-03-11 12:00:02,227 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送结束
+2026-03-11 12:00:02,227 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-11 12:00:02,227 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-11 14:00:01,997 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-11 14:00:01,997 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-11 14:00:01,997 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送开始
+2026-03-11 14:00:01,997 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送开始
+2026-03-11 14:00:01,997 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-11 14:00:01,997 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-11 14:00:01,997 [INFO] ftseek.scripts.risk_monitor: 初始化组件...
+2026-03-11 14:00:01,997 [INFO] ftseek.scripts.risk_monitor: 初始化组件...
+2026-03-11 14:00:01,999 [INFO] ftseek.storage.database: 数据库表结构初始化完成
+2026-03-11 14:00:01,999 [INFO] ftseek.storage.database: 数据库表结构初始化完成
+2026-03-11 14:00:02,000 [INFO] ftseek.storage.database: 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-11 14:00:02,000 [INFO] ftseek.storage.database: 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-11 14:00:02,000 [INFO] ftseek.scripts.risk_monitor: 数据库已初始化
+2026-03-11 14:00:02,000 [INFO] ftseek.scripts.risk_monitor: 数据库已初始化
+2026-03-11 14:00:02,007 [INFO] ftseek.risk.manager: 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-11 14:00:02,007 [INFO] ftseek.risk.manager: 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-11 14:00:02,007 [INFO] ftseek.risk.manager: 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-11 14:00:02,007 [INFO] ftseek.risk.manager: 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-11 14:00:02,007 [INFO] ftseek.scripts.risk_monitor: 风控管理器已初始化 | 模式=paper
+2026-03-11 14:00:02,007 [INFO] ftseek.scripts.risk_monitor: 风控管理器已初始化 | 模式=paper
+2026-03-11 14:00:02,007 [INFO] ftseek.scripts.risk_monitor: 钉钉推送已初始化
+2026-03-11 14:00:02,007 [INFO] ftseek.scripts.risk_monitor: 钉钉推送已初始化
+2026-03-11 14:00:02,008 [INFO] ftseek.risk.monitor: 风险监控器已初始化
+2026-03-11 14:00:02,008 [INFO] ftseek.risk.monitor: 风险监控器已初始化
+2026-03-11 14:00:02,008 [INFO] ftseek.scripts.risk_monitor: 风险监控器已初始化
+2026-03-11 14:00:02,008 [INFO] ftseek.scripts.risk_monitor: 风险监控器已初始化
+2026-03-11 14:00:02,008 [INFO] ftseek.scripts.risk_monitor: 监控数据已收集:
+2026-03-11 14:00:02,008 [INFO] ftseek.scripts.risk_monitor: 监控数据已收集:
+2026-03-11 14:00:02,008 [INFO] ftseek.scripts.risk_monitor:   账户总值：HK$1,000,000.00
+2026-03-11 14:00:02,008 [INFO] ftseek.scripts.risk_monitor:   账户总值：HK$1,000,000.00
+2026-03-11 14:00:02,008 [INFO] ftseek.scripts.risk_monitor:   持仓市值：HK$0.00
+2026-03-11 14:00:02,008 [INFO] ftseek.scripts.risk_monitor:   持仓市值：HK$0.00
+2026-03-11 14:00:02,008 [INFO] ftseek.scripts.risk_monitor:   今日盈亏：HK$+0.00
+2026-03-11 14:00:02,008 [INFO] ftseek.scripts.risk_monitor:   今日盈亏：HK$+0.00
+2026-03-11 14:00:02,008 [INFO] ftseek.scripts.risk_monitor:   风控状态：✅ 正常
+2026-03-11 14:00:02,008 [INFO] ftseek.scripts.risk_monitor:   风控状态：✅ 正常
+2026-03-11 14:00:02,087 [INFO] ftseek.notifier.dingtalk: 钉钉风险监控推送成功：14:00
+2026-03-11 14:00:02,087 [INFO] ftseek.notifier.dingtalk: 钉钉风险监控推送成功：14:00
+2026-03-11 14:00:02,087 [INFO] ftseek.risk.monitor: 风险监控面板已推送：14:00
+2026-03-11 14:00:02,087 [INFO] ftseek.risk.monitor: 风险监控面板已推送：14:00
+2026-03-11 14:00:02,087 [INFO] ftseek.scripts.risk_monitor: ✅ 风险监控推送成功
+2026-03-11 14:00:02,087 [INFO] ftseek.scripts.risk_monitor: ✅ 风险监控推送成功
+2026-03-11 14:00:02,087 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-11 14:00:02,087 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-11 14:00:02,087 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送结束
+2026-03-11 14:00:02,087 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送结束
+2026-03-11 14:00:02,087 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-11 14:00:02,087 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-11 16:00:01,512 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-11 16:00:01,512 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-11 16:00:01,512 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送开始
+2026-03-11 16:00:01,512 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送开始
+2026-03-11 16:00:01,512 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-11 16:00:01,512 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-11 16:00:01,512 [INFO] ftseek.scripts.risk_monitor: 初始化组件...
+2026-03-11 16:00:01,512 [INFO] ftseek.scripts.risk_monitor: 初始化组件...
+2026-03-11 16:00:01,514 [INFO] ftseek.storage.database: 数据库表结构初始化完成
+2026-03-11 16:00:01,514 [INFO] ftseek.storage.database: 数据库表结构初始化完成
+2026-03-11 16:00:01,514 [INFO] ftseek.storage.database: 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-11 16:00:01,514 [INFO] ftseek.storage.database: 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-11 16:00:01,514 [INFO] ftseek.scripts.risk_monitor: 数据库已初始化
+2026-03-11 16:00:01,514 [INFO] ftseek.scripts.risk_monitor: 数据库已初始化
+2026-03-11 16:00:01,523 [INFO] ftseek.risk.manager: 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-11 16:00:01,523 [INFO] ftseek.risk.manager: 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-11 16:00:01,523 [INFO] ftseek.risk.manager: 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-11 16:00:01,523 [INFO] ftseek.risk.manager: 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-11 16:00:01,523 [INFO] ftseek.scripts.risk_monitor: 风控管理器已初始化 | 模式=paper
+2026-03-11 16:00:01,523 [INFO] ftseek.scripts.risk_monitor: 风控管理器已初始化 | 模式=paper
+2026-03-11 16:00:01,523 [INFO] ftseek.scripts.risk_monitor: 钉钉推送已初始化
+2026-03-11 16:00:01,523 [INFO] ftseek.scripts.risk_monitor: 钉钉推送已初始化
+2026-03-11 16:00:01,524 [INFO] ftseek.risk.monitor: 风险监控器已初始化
+2026-03-11 16:00:01,524 [INFO] ftseek.risk.monitor: 风险监控器已初始化
+2026-03-11 16:00:01,524 [INFO] ftseek.scripts.risk_monitor: 风险监控器已初始化
+2026-03-11 16:00:01,524 [INFO] ftseek.scripts.risk_monitor: 风险监控器已初始化
+2026-03-11 16:00:01,524 [INFO] ftseek.scripts.risk_monitor: 监控数据已收集:
+2026-03-11 16:00:01,524 [INFO] ftseek.scripts.risk_monitor: 监控数据已收集:
+2026-03-11 16:00:01,524 [INFO] ftseek.scripts.risk_monitor:   账户总值：HK$1,000,000.00
+2026-03-11 16:00:01,524 [INFO] ftseek.scripts.risk_monitor:   账户总值：HK$1,000,000.00
+2026-03-11 16:00:01,524 [INFO] ftseek.scripts.risk_monitor:   持仓市值：HK$0.00
+2026-03-11 16:00:01,524 [INFO] ftseek.scripts.risk_monitor:   持仓市值：HK$0.00
+2026-03-11 16:00:01,524 [INFO] ftseek.scripts.risk_monitor:   今日盈亏：HK$+0.00
+2026-03-11 16:00:01,524 [INFO] ftseek.scripts.risk_monitor:   今日盈亏：HK$+0.00
+2026-03-11 16:00:01,524 [INFO] ftseek.scripts.risk_monitor:   风控状态：✅ 正常
+2026-03-11 16:00:01,524 [INFO] ftseek.scripts.risk_monitor:   风控状态：✅ 正常
+2026-03-11 16:00:01,605 [INFO] ftseek.notifier.dingtalk: 钉钉风险监控推送成功：16:00
+2026-03-11 16:00:01,605 [INFO] ftseek.notifier.dingtalk: 钉钉风险监控推送成功：16:00
+2026-03-11 16:00:01,605 [INFO] ftseek.risk.monitor: 风险监控面板已推送：16:00
+2026-03-11 16:00:01,605 [INFO] ftseek.risk.monitor: 风险监控面板已推送：16:00
+2026-03-11 16:00:01,605 [INFO] ftseek.scripts.risk_monitor: ✅ 风险监控推送成功
+2026-03-11 16:00:01,605 [INFO] ftseek.scripts.risk_monitor: ✅ 风险监控推送成功
+2026-03-11 16:00:01,605 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-11 16:00:01,605 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-11 16:00:01,605 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送结束
+2026-03-11 16:00:01,605 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送结束
+2026-03-11 16:00:01,605 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-11 16:00:01,605 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-12 10:00:02,393 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-12 10:00:02,393 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-12 10:00:02,394 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送开始
+2026-03-12 10:00:02,394 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送开始
+2026-03-12 10:00:02,394 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-12 10:00:02,394 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-12 10:00:02,394 [INFO] ftseek.scripts.risk_monitor: 初始化组件...
+2026-03-12 10:00:02,394 [INFO] ftseek.scripts.risk_monitor: 初始化组件...
+2026-03-12 10:00:02,396 [INFO] ftseek.storage.database: 数据库表结构初始化完成
+2026-03-12 10:00:02,396 [INFO] ftseek.storage.database: 数据库表结构初始化完成
+2026-03-12 10:00:02,396 [INFO] ftseek.storage.database: 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-12 10:00:02,396 [INFO] ftseek.storage.database: 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-12 10:00:02,396 [INFO] ftseek.scripts.risk_monitor: 数据库已初始化
+2026-03-12 10:00:02,396 [INFO] ftseek.scripts.risk_monitor: 数据库已初始化
+2026-03-12 10:00:02,423 [INFO] ftseek.risk.manager: 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-12 10:00:02,423 [INFO] ftseek.risk.manager: 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-12 10:00:02,423 [INFO] ftseek.risk.manager: 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-12 10:00:02,423 [INFO] ftseek.risk.manager: 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-12 10:00:02,424 [INFO] ftseek.scripts.risk_monitor: 风控管理器已初始化 | 模式=paper
+2026-03-12 10:00:02,424 [INFO] ftseek.scripts.risk_monitor: 风控管理器已初始化 | 模式=paper
+2026-03-12 10:00:02,424 [INFO] ftseek.scripts.risk_monitor: 钉钉推送已初始化
+2026-03-12 10:00:02,424 [INFO] ftseek.scripts.risk_monitor: 钉钉推送已初始化
+2026-03-12 10:00:02,424 [INFO] ftseek.risk.monitor: 风险监控器已初始化
+2026-03-12 10:00:02,424 [INFO] ftseek.risk.monitor: 风险监控器已初始化
+2026-03-12 10:00:02,424 [INFO] ftseek.scripts.risk_monitor: 风险监控器已初始化
+2026-03-12 10:00:02,424 [INFO] ftseek.scripts.risk_monitor: 风险监控器已初始化
+2026-03-12 10:00:02,424 [INFO] ftseek.scripts.risk_monitor: 监控数据已收集:
+2026-03-12 10:00:02,424 [INFO] ftseek.scripts.risk_monitor: 监控数据已收集:
+2026-03-12 10:00:02,424 [INFO] ftseek.scripts.risk_monitor:   账户总值：HK$1,000,000.00
+2026-03-12 10:00:02,424 [INFO] ftseek.scripts.risk_monitor:   账户总值：HK$1,000,000.00
+2026-03-12 10:00:02,424 [INFO] ftseek.scripts.risk_monitor:   持仓市值：HK$0.00
+2026-03-12 10:00:02,424 [INFO] ftseek.scripts.risk_monitor:   持仓市值：HK$0.00
+2026-03-12 10:00:02,424 [INFO] ftseek.scripts.risk_monitor:   今日盈亏：HK$+0.00
+2026-03-12 10:00:02,424 [INFO] ftseek.scripts.risk_monitor:   今日盈亏：HK$+0.00
+2026-03-12 10:00:02,424 [INFO] ftseek.scripts.risk_monitor:   风控状态：✅ 正常
+2026-03-12 10:00:02,424 [INFO] ftseek.scripts.risk_monitor:   风控状态：✅ 正常
+2026-03-12 10:00:02,518 [INFO] ftseek.notifier.dingtalk: 钉钉风险监控推送成功：10:00
+2026-03-12 10:00:02,518 [INFO] ftseek.notifier.dingtalk: 钉钉风险监控推送成功：10:00
+2026-03-12 10:00:02,519 [INFO] ftseek.risk.monitor: 风险监控面板已推送：10:00
+2026-03-12 10:00:02,519 [INFO] ftseek.risk.monitor: 风险监控面板已推送：10:00
+2026-03-12 10:00:02,519 [INFO] ftseek.scripts.risk_monitor: ✅ 风险监控推送成功
+2026-03-12 10:00:02,519 [INFO] ftseek.scripts.risk_monitor: ✅ 风险监控推送成功
+2026-03-12 10:00:02,519 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-12 10:00:02,519 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-12 10:00:02,519 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送结束
+2026-03-12 10:00:02,519 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送结束
+2026-03-12 10:00:02,519 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-12 10:00:02,519 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-12 12:00:02,051 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-12 12:00:02,051 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-12 12:00:02,055 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送开始
+2026-03-12 12:00:02,055 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送开始
+2026-03-12 12:00:02,055 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-12 12:00:02,055 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-12 12:00:02,055 [INFO] ftseek.scripts.risk_monitor: 初始化组件...
+2026-03-12 12:00:02,055 [INFO] ftseek.scripts.risk_monitor: 初始化组件...
+2026-03-12 12:00:02,057 [INFO] ftseek.storage.database: 数据库表结构初始化完成
+2026-03-12 12:00:02,057 [INFO] ftseek.storage.database: 数据库表结构初始化完成
+2026-03-12 12:00:02,057 [INFO] ftseek.storage.database: 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-12 12:00:02,057 [INFO] ftseek.storage.database: 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-12 12:00:02,057 [INFO] ftseek.scripts.risk_monitor: 数据库已初始化
+2026-03-12 12:00:02,057 [INFO] ftseek.scripts.risk_monitor: 数据库已初始化
+2026-03-12 12:00:02,078 [INFO] ftseek.risk.manager: 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-12 12:00:02,078 [INFO] ftseek.risk.manager: 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-12 12:00:02,080 [INFO] ftseek.risk.manager: 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-12 12:00:02,080 [INFO] ftseek.risk.manager: 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-12 12:00:02,080 [INFO] ftseek.scripts.risk_monitor: 风控管理器已初始化 | 模式=paper
+2026-03-12 12:00:02,080 [INFO] ftseek.scripts.risk_monitor: 风控管理器已初始化 | 模式=paper
+2026-03-12 12:00:02,080 [INFO] ftseek.scripts.risk_monitor: 钉钉推送已初始化
+2026-03-12 12:00:02,080 [INFO] ftseek.scripts.risk_monitor: 钉钉推送已初始化
+2026-03-12 12:00:02,080 [INFO] ftseek.risk.monitor: 风险监控器已初始化
+2026-03-12 12:00:02,080 [INFO] ftseek.risk.monitor: 风险监控器已初始化
+2026-03-12 12:00:02,080 [INFO] ftseek.scripts.risk_monitor: 风险监控器已初始化
+2026-03-12 12:00:02,080 [INFO] ftseek.scripts.risk_monitor: 风险监控器已初始化
+2026-03-12 12:00:02,081 [INFO] ftseek.scripts.risk_monitor: 监控数据已收集:
+2026-03-12 12:00:02,081 [INFO] ftseek.scripts.risk_monitor: 监控数据已收集:
+2026-03-12 12:00:02,081 [INFO] ftseek.scripts.risk_monitor:   账户总值：HK$1,000,000.00
+2026-03-12 12:00:02,081 [INFO] ftseek.scripts.risk_monitor:   账户总值：HK$1,000,000.00
+2026-03-12 12:00:02,081 [INFO] ftseek.scripts.risk_monitor:   持仓市值：HK$0.00
+2026-03-12 12:00:02,081 [INFO] ftseek.scripts.risk_monitor:   持仓市值：HK$0.00
+2026-03-12 12:00:02,081 [INFO] ftseek.scripts.risk_monitor:   今日盈亏：HK$+0.00
+2026-03-12 12:00:02,081 [INFO] ftseek.scripts.risk_monitor:   今日盈亏：HK$+0.00
+2026-03-12 12:00:02,081 [INFO] ftseek.scripts.risk_monitor:   风控状态：✅ 正常
+2026-03-12 12:00:02,081 [INFO] ftseek.scripts.risk_monitor:   风控状态：✅ 正常
+2026-03-12 12:00:02,176 [INFO] ftseek.notifier.dingtalk: 钉钉风险监控推送成功：12:00
+2026-03-12 12:00:02,176 [INFO] ftseek.notifier.dingtalk: 钉钉风险监控推送成功：12:00
+2026-03-12 12:00:02,176 [INFO] ftseek.risk.monitor: 风险监控面板已推送：12:00
+2026-03-12 12:00:02,176 [INFO] ftseek.risk.monitor: 风险监控面板已推送：12:00
+2026-03-12 12:00:02,176 [INFO] ftseek.scripts.risk_monitor: ✅ 风险监控推送成功
+2026-03-12 12:00:02,176 [INFO] ftseek.scripts.risk_monitor: ✅ 风险监控推送成功
+2026-03-12 12:00:02,176 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-12 12:00:02,176 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-12 12:00:02,176 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送结束
+2026-03-12 12:00:02,176 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送结束
+2026-03-12 12:00:02,176 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-12 12:00:02,176 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-12 14:00:01,748 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-12 14:00:01,748 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-12 14:00:01,748 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送开始
+2026-03-12 14:00:01,748 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送开始
+2026-03-12 14:00:01,748 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-12 14:00:01,748 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-12 14:00:01,748 [INFO] ftseek.scripts.risk_monitor: 初始化组件...
+2026-03-12 14:00:01,748 [INFO] ftseek.scripts.risk_monitor: 初始化组件...
+2026-03-12 14:00:01,750 [INFO] ftseek.storage.database: 数据库表结构初始化完成
+2026-03-12 14:00:01,750 [INFO] ftseek.storage.database: 数据库表结构初始化完成
+2026-03-12 14:00:01,751 [INFO] ftseek.storage.database: 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-12 14:00:01,751 [INFO] ftseek.storage.database: 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-12 14:00:01,751 [INFO] ftseek.scripts.risk_monitor: 数据库已初始化
+2026-03-12 14:00:01,751 [INFO] ftseek.scripts.risk_monitor: 数据库已初始化
+2026-03-12 14:00:01,758 [INFO] ftseek.risk.manager: 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-12 14:00:01,758 [INFO] ftseek.risk.manager: 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-12 14:00:01,758 [INFO] ftseek.risk.manager: 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-12 14:00:01,758 [INFO] ftseek.risk.manager: 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-12 14:00:01,758 [INFO] ftseek.scripts.risk_monitor: 风控管理器已初始化 | 模式=paper
+2026-03-12 14:00:01,758 [INFO] ftseek.scripts.risk_monitor: 风控管理器已初始化 | 模式=paper
+2026-03-12 14:00:01,758 [INFO] ftseek.scripts.risk_monitor: 钉钉推送已初始化
+2026-03-12 14:00:01,758 [INFO] ftseek.scripts.risk_monitor: 钉钉推送已初始化
+2026-03-12 14:00:01,758 [INFO] ftseek.risk.monitor: 风险监控器已初始化
+2026-03-12 14:00:01,758 [INFO] ftseek.risk.monitor: 风险监控器已初始化
+2026-03-12 14:00:01,759 [INFO] ftseek.scripts.risk_monitor: 风险监控器已初始化
+2026-03-12 14:00:01,759 [INFO] ftseek.scripts.risk_monitor: 风险监控器已初始化
+2026-03-12 14:00:01,759 [INFO] ftseek.scripts.risk_monitor: 监控数据已收集:
+2026-03-12 14:00:01,759 [INFO] ftseek.scripts.risk_monitor: 监控数据已收集:
+2026-03-12 14:00:01,759 [INFO] ftseek.scripts.risk_monitor:   账户总值：HK$1,000,000.00
+2026-03-12 14:00:01,759 [INFO] ftseek.scripts.risk_monitor:   账户总值：HK$1,000,000.00
+2026-03-12 14:00:01,759 [INFO] ftseek.scripts.risk_monitor:   持仓市值：HK$0.00
+2026-03-12 14:00:01,759 [INFO] ftseek.scripts.risk_monitor:   持仓市值：HK$0.00
+2026-03-12 14:00:01,759 [INFO] ftseek.scripts.risk_monitor:   今日盈亏：HK$+0.00
+2026-03-12 14:00:01,759 [INFO] ftseek.scripts.risk_monitor:   今日盈亏：HK$+0.00
+2026-03-12 14:00:01,759 [INFO] ftseek.scripts.risk_monitor:   风控状态：✅ 正常
+2026-03-12 14:00:01,759 [INFO] ftseek.scripts.risk_monitor:   风控状态：✅ 正常
+2026-03-12 14:00:01,835 [INFO] ftseek.notifier.dingtalk: 钉钉风险监控推送成功：14:00
+2026-03-12 14:00:01,835 [INFO] ftseek.notifier.dingtalk: 钉钉风险监控推送成功：14:00
+2026-03-12 14:00:01,835 [INFO] ftseek.risk.monitor: 风险监控面板已推送：14:00
+2026-03-12 14:00:01,835 [INFO] ftseek.risk.monitor: 风险监控面板已推送：14:00
+2026-03-12 14:00:01,836 [INFO] ftseek.scripts.risk_monitor: ✅ 风险监控推送成功
+2026-03-12 14:00:01,836 [INFO] ftseek.scripts.risk_monitor: ✅ 风险监控推送成功
+2026-03-12 14:00:01,836 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-12 14:00:01,836 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-12 14:00:01,836 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送结束
+2026-03-12 14:00:01,836 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送结束
+2026-03-12 14:00:01,836 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-12 14:00:01,836 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-12 16:00:02,287 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-12 16:00:02,287 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-12 16:00:02,288 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送开始
+2026-03-12 16:00:02,288 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送开始
+2026-03-12 16:00:02,288 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-12 16:00:02,288 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-12 16:00:02,289 [INFO] ftseek.scripts.risk_monitor: 初始化组件...
+2026-03-12 16:00:02,289 [INFO] ftseek.scripts.risk_monitor: 初始化组件...
+2026-03-12 16:00:02,291 [INFO] ftseek.storage.database: 数据库表结构初始化完成
+2026-03-12 16:00:02,291 [INFO] ftseek.storage.database: 数据库表结构初始化完成
+2026-03-12 16:00:02,291 [INFO] ftseek.storage.database: 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-12 16:00:02,291 [INFO] ftseek.storage.database: 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-12 16:00:02,291 [INFO] ftseek.scripts.risk_monitor: 数据库已初始化
+2026-03-12 16:00:02,291 [INFO] ftseek.scripts.risk_monitor: 数据库已初始化
+2026-03-12 16:00:02,300 [INFO] ftseek.risk.manager: 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-12 16:00:02,300 [INFO] ftseek.risk.manager: 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-12 16:00:02,300 [INFO] ftseek.risk.manager: 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-12 16:00:02,300 [INFO] ftseek.risk.manager: 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-12 16:00:02,300 [INFO] ftseek.scripts.risk_monitor: 风控管理器已初始化 | 模式=paper
+2026-03-12 16:00:02,300 [INFO] ftseek.scripts.risk_monitor: 风控管理器已初始化 | 模式=paper
+2026-03-12 16:00:02,300 [INFO] ftseek.scripts.risk_monitor: 钉钉推送已初始化
+2026-03-12 16:00:02,300 [INFO] ftseek.scripts.risk_monitor: 钉钉推送已初始化
+2026-03-12 16:00:02,301 [INFO] ftseek.risk.monitor: 风险监控器已初始化
+2026-03-12 16:00:02,301 [INFO] ftseek.risk.monitor: 风险监控器已初始化
+2026-03-12 16:00:02,301 [INFO] ftseek.scripts.risk_monitor: 风险监控器已初始化
+2026-03-12 16:00:02,301 [INFO] ftseek.scripts.risk_monitor: 风险监控器已初始化
+2026-03-12 16:00:02,301 [INFO] ftseek.scripts.risk_monitor: 监控数据已收集:
+2026-03-12 16:00:02,301 [INFO] ftseek.scripts.risk_monitor: 监控数据已收集:
+2026-03-12 16:00:02,301 [INFO] ftseek.scripts.risk_monitor:   账户总值：HK$1,000,000.00
+2026-03-12 16:00:02,301 [INFO] ftseek.scripts.risk_monitor:   账户总值：HK$1,000,000.00
+2026-03-12 16:00:02,301 [INFO] ftseek.scripts.risk_monitor:   持仓市值：HK$0.00
+2026-03-12 16:00:02,301 [INFO] ftseek.scripts.risk_monitor:   持仓市值：HK$0.00
+2026-03-12 16:00:02,301 [INFO] ftseek.scripts.risk_monitor:   今日盈亏：HK$+0.00
+2026-03-12 16:00:02,301 [INFO] ftseek.scripts.risk_monitor:   今日盈亏：HK$+0.00
+2026-03-12 16:00:02,301 [INFO] ftseek.scripts.risk_monitor:   风控状态：✅ 正常
+2026-03-12 16:00:02,301 [INFO] ftseek.scripts.risk_monitor:   风控状态：✅ 正常
+2026-03-12 16:00:02,376 [INFO] ftseek.notifier.dingtalk: 钉钉风险监控推送成功：16:00
+2026-03-12 16:00:02,376 [INFO] ftseek.notifier.dingtalk: 钉钉风险监控推送成功：16:00
+2026-03-12 16:00:02,376 [INFO] ftseek.risk.monitor: 风险监控面板已推送：16:00
+2026-03-12 16:00:02,376 [INFO] ftseek.risk.monitor: 风险监控面板已推送：16:00
+2026-03-12 16:00:02,376 [INFO] ftseek.scripts.risk_monitor: ✅ 风险监控推送成功
+2026-03-12 16:00:02,376 [INFO] ftseek.scripts.risk_monitor: ✅ 风险监控推送成功
+2026-03-12 16:00:02,376 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-12 16:00:02,376 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-12 16:00:02,376 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送结束
+2026-03-12 16:00:02,376 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送结束
+2026-03-12 16:00:02,376 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-12 16:00:02,376 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-13 10:00:02,382 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-13 10:00:02,382 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-13 10:00:02,382 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送开始
+2026-03-13 10:00:02,382 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送开始
+2026-03-13 10:00:02,382 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-13 10:00:02,382 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-13 10:00:02,382 [INFO] ftseek.scripts.risk_monitor: 初始化组件...
+2026-03-13 10:00:02,382 [INFO] ftseek.scripts.risk_monitor: 初始化组件...
+2026-03-13 10:00:02,384 [INFO] ftseek.storage.database: 数据库表结构初始化完成
+2026-03-13 10:00:02,384 [INFO] ftseek.storage.database: 数据库表结构初始化完成
+2026-03-13 10:00:02,385 [INFO] ftseek.storage.database: 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-13 10:00:02,385 [INFO] ftseek.storage.database: 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-13 10:00:02,385 [INFO] ftseek.scripts.risk_monitor: 数据库已初始化
+2026-03-13 10:00:02,385 [INFO] ftseek.scripts.risk_monitor: 数据库已初始化
+2026-03-13 10:00:02,392 [INFO] ftseek.risk.manager: 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-13 10:00:02,392 [INFO] ftseek.risk.manager: 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-13 10:00:02,393 [INFO] ftseek.risk.manager: 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-13 10:00:02,393 [INFO] ftseek.risk.manager: 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-13 10:00:02,393 [INFO] ftseek.scripts.risk_monitor: 风控管理器已初始化 | 模式=paper
+2026-03-13 10:00:02,393 [INFO] ftseek.scripts.risk_monitor: 风控管理器已初始化 | 模式=paper
+2026-03-13 10:00:02,393 [INFO] ftseek.scripts.risk_monitor: 钉钉推送已初始化
+2026-03-13 10:00:02,393 [INFO] ftseek.scripts.risk_monitor: 钉钉推送已初始化
+2026-03-13 10:00:02,393 [INFO] ftseek.risk.monitor: 风险监控器已初始化
+2026-03-13 10:00:02,393 [INFO] ftseek.risk.monitor: 风险监控器已初始化
+2026-03-13 10:00:02,393 [INFO] ftseek.scripts.risk_monitor: 风险监控器已初始化
+2026-03-13 10:00:02,393 [INFO] ftseek.scripts.risk_monitor: 风险监控器已初始化
+2026-03-13 10:00:02,394 [INFO] ftseek.scripts.risk_monitor: 监控数据已收集:
+2026-03-13 10:00:02,394 [INFO] ftseek.scripts.risk_monitor: 监控数据已收集:
+2026-03-13 10:00:02,394 [INFO] ftseek.scripts.risk_monitor:   账户总值：HK$1,000,000.00
+2026-03-13 10:00:02,394 [INFO] ftseek.scripts.risk_monitor:   账户总值：HK$1,000,000.00
+2026-03-13 10:00:02,394 [INFO] ftseek.scripts.risk_monitor:   持仓市值：HK$0.00
+2026-03-13 10:00:02,394 [INFO] ftseek.scripts.risk_monitor:   持仓市值：HK$0.00
+2026-03-13 10:00:02,394 [INFO] ftseek.scripts.risk_monitor:   今日盈亏：HK$+0.00
+2026-03-13 10:00:02,394 [INFO] ftseek.scripts.risk_monitor:   今日盈亏：HK$+0.00
+2026-03-13 10:00:02,394 [INFO] ftseek.scripts.risk_monitor:   风控状态：✅ 正常
+2026-03-13 10:00:02,394 [INFO] ftseek.scripts.risk_monitor:   风控状态：✅ 正常
+2026-03-13 10:00:02,472 [INFO] ftseek.notifier.dingtalk: 钉钉风险监控推送成功：10:00
+2026-03-13 10:00:02,472 [INFO] ftseek.notifier.dingtalk: 钉钉风险监控推送成功：10:00
+2026-03-13 10:00:02,472 [INFO] ftseek.risk.monitor: 风险监控面板已推送：10:00
+2026-03-13 10:00:02,472 [INFO] ftseek.risk.monitor: 风险监控面板已推送：10:00
+2026-03-13 10:00:02,472 [INFO] ftseek.scripts.risk_monitor: ✅ 风险监控推送成功
+2026-03-13 10:00:02,472 [INFO] ftseek.scripts.risk_monitor: ✅ 风险监控推送成功
+2026-03-13 10:00:02,472 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-13 10:00:02,472 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-13 10:00:02,472 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送结束
+2026-03-13 10:00:02,472 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送结束
+2026-03-13 10:00:02,472 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-13 10:00:02,472 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-13 12:00:01,882 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-13 12:00:01,882 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-13 12:00:01,883 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送开始
+2026-03-13 12:00:01,883 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送开始
+2026-03-13 12:00:01,883 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-13 12:00:01,883 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-13 12:00:01,883 [INFO] ftseek.scripts.risk_monitor: 初始化组件...
+2026-03-13 12:00:01,883 [INFO] ftseek.scripts.risk_monitor: 初始化组件...
+2026-03-13 12:00:01,886 [INFO] ftseek.storage.database: 数据库表结构初始化完成
+2026-03-13 12:00:01,886 [INFO] ftseek.storage.database: 数据库表结构初始化完成
+2026-03-13 12:00:01,886 [INFO] ftseek.storage.database: 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-13 12:00:01,886 [INFO] ftseek.storage.database: 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-13 12:00:01,887 [INFO] ftseek.scripts.risk_monitor: 数据库已初始化
+2026-03-13 12:00:01,887 [INFO] ftseek.scripts.risk_monitor: 数据库已初始化
+2026-03-13 12:00:01,894 [INFO] ftseek.risk.manager: 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-13 12:00:01,894 [INFO] ftseek.risk.manager: 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-13 12:00:01,894 [INFO] ftseek.risk.manager: 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-13 12:00:01,894 [INFO] ftseek.risk.manager: 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-13 12:00:01,894 [INFO] ftseek.scripts.risk_monitor: 风控管理器已初始化 | 模式=paper
+2026-03-13 12:00:01,894 [INFO] ftseek.scripts.risk_monitor: 风控管理器已初始化 | 模式=paper
+2026-03-13 12:00:01,894 [INFO] ftseek.scripts.risk_monitor: 钉钉推送已初始化
+2026-03-13 12:00:01,894 [INFO] ftseek.scripts.risk_monitor: 钉钉推送已初始化
+2026-03-13 12:00:01,895 [INFO] ftseek.risk.monitor: 风险监控器已初始化
+2026-03-13 12:00:01,895 [INFO] ftseek.risk.monitor: 风险监控器已初始化
+2026-03-13 12:00:01,895 [INFO] ftseek.scripts.risk_monitor: 风险监控器已初始化
+2026-03-13 12:00:01,895 [INFO] ftseek.scripts.risk_monitor: 风险监控器已初始化
+2026-03-13 12:00:01,895 [INFO] ftseek.scripts.risk_monitor: 监控数据已收集:
+2026-03-13 12:00:01,895 [INFO] ftseek.scripts.risk_monitor: 监控数据已收集:
+2026-03-13 12:00:01,895 [INFO] ftseek.scripts.risk_monitor:   账户总值：HK$1,000,000.00
+2026-03-13 12:00:01,895 [INFO] ftseek.scripts.risk_monitor:   账户总值：HK$1,000,000.00
+2026-03-13 12:00:01,895 [INFO] ftseek.scripts.risk_monitor:   持仓市值：HK$0.00
+2026-03-13 12:00:01,895 [INFO] ftseek.scripts.risk_monitor:   持仓市值：HK$0.00
+2026-03-13 12:00:01,895 [INFO] ftseek.scripts.risk_monitor:   今日盈亏：HK$+0.00
+2026-03-13 12:00:01,895 [INFO] ftseek.scripts.risk_monitor:   今日盈亏：HK$+0.00
+2026-03-13 12:00:01,895 [INFO] ftseek.scripts.risk_monitor:   风控状态：✅ 正常
+2026-03-13 12:00:01,895 [INFO] ftseek.scripts.risk_monitor:   风控状态：✅ 正常
+2026-03-13 12:00:01,993 [INFO] ftseek.notifier.dingtalk: 钉钉风险监控推送成功：12:00
+2026-03-13 12:00:01,993 [INFO] ftseek.notifier.dingtalk: 钉钉风险监控推送成功：12:00
+2026-03-13 12:00:01,994 [INFO] ftseek.risk.monitor: 风险监控面板已推送：12:00
+2026-03-13 12:00:01,994 [INFO] ftseek.risk.monitor: 风险监控面板已推送：12:00
+2026-03-13 12:00:01,994 [INFO] ftseek.scripts.risk_monitor: ✅ 风险监控推送成功
+2026-03-13 12:00:01,994 [INFO] ftseek.scripts.risk_monitor: ✅ 风险监控推送成功
+2026-03-13 12:00:01,994 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-13 12:00:01,994 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-13 12:00:01,995 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送结束
+2026-03-13 12:00:01,995 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送结束
+2026-03-13 12:00:01,995 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-13 12:00:01,995 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-13 14:00:01,955 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-13 14:00:01,955 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-13 14:00:01,955 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送开始
+2026-03-13 14:00:01,955 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送开始
+2026-03-13 14:00:01,955 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-13 14:00:01,955 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-13 14:00:01,955 [INFO] ftseek.scripts.risk_monitor: 初始化组件...
+2026-03-13 14:00:01,955 [INFO] ftseek.scripts.risk_monitor: 初始化组件...
+2026-03-13 14:00:01,958 [INFO] ftseek.storage.database: 数据库表结构初始化完成
+2026-03-13 14:00:01,958 [INFO] ftseek.storage.database: 数据库表结构初始化完成
+2026-03-13 14:00:01,958 [INFO] ftseek.storage.database: 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-13 14:00:01,958 [INFO] ftseek.storage.database: 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-13 14:00:01,958 [INFO] ftseek.scripts.risk_monitor: 数据库已初始化
+2026-03-13 14:00:01,958 [INFO] ftseek.scripts.risk_monitor: 数据库已初始化
+2026-03-13 14:00:01,967 [INFO] ftseek.risk.manager: 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-13 14:00:01,967 [INFO] ftseek.risk.manager: 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-13 14:00:01,967 [INFO] ftseek.risk.manager: 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-13 14:00:01,967 [INFO] ftseek.risk.manager: 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-13 14:00:01,967 [INFO] ftseek.scripts.risk_monitor: 风控管理器已初始化 | 模式=paper
+2026-03-13 14:00:01,967 [INFO] ftseek.scripts.risk_monitor: 风控管理器已初始化 | 模式=paper
+2026-03-13 14:00:01,967 [INFO] ftseek.scripts.risk_monitor: 钉钉推送已初始化
+2026-03-13 14:00:01,967 [INFO] ftseek.scripts.risk_monitor: 钉钉推送已初始化
+2026-03-13 14:00:01,967 [INFO] ftseek.risk.monitor: 风险监控器已初始化
+2026-03-13 14:00:01,967 [INFO] ftseek.risk.monitor: 风险监控器已初始化
+2026-03-13 14:00:01,968 [INFO] ftseek.scripts.risk_monitor: 风险监控器已初始化
+2026-03-13 14:00:01,968 [INFO] ftseek.scripts.risk_monitor: 风险监控器已初始化
+2026-03-13 14:00:01,968 [INFO] ftseek.scripts.risk_monitor: 监控数据已收集:
+2026-03-13 14:00:01,968 [INFO] ftseek.scripts.risk_monitor: 监控数据已收集:
+2026-03-13 14:00:01,968 [INFO] ftseek.scripts.risk_monitor:   账户总值：HK$1,000,000.00
+2026-03-13 14:00:01,968 [INFO] ftseek.scripts.risk_monitor:   账户总值：HK$1,000,000.00
+2026-03-13 14:00:01,968 [INFO] ftseek.scripts.risk_monitor:   持仓市值：HK$0.00
+2026-03-13 14:00:01,968 [INFO] ftseek.scripts.risk_monitor:   持仓市值：HK$0.00
+2026-03-13 14:00:01,968 [INFO] ftseek.scripts.risk_monitor:   今日盈亏：HK$+0.00
+2026-03-13 14:00:01,968 [INFO] ftseek.scripts.risk_monitor:   今日盈亏：HK$+0.00
+2026-03-13 14:00:01,968 [INFO] ftseek.scripts.risk_monitor:   风控状态：✅ 正常
+2026-03-13 14:00:01,968 [INFO] ftseek.scripts.risk_monitor:   风控状态：✅ 正常
+2026-03-13 14:00:02,056 [INFO] ftseek.notifier.dingtalk: 钉钉风险监控推送成功：14:00
+2026-03-13 14:00:02,056 [INFO] ftseek.notifier.dingtalk: 钉钉风险监控推送成功：14:00
+2026-03-13 14:00:02,057 [INFO] ftseek.risk.monitor: 风险监控面板已推送：14:00
+2026-03-13 14:00:02,057 [INFO] ftseek.risk.monitor: 风险监控面板已推送：14:00
+2026-03-13 14:00:02,057 [INFO] ftseek.scripts.risk_monitor: ✅ 风险监控推送成功
+2026-03-13 14:00:02,057 [INFO] ftseek.scripts.risk_monitor: ✅ 风险监控推送成功
+2026-03-13 14:00:02,057 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-13 14:00:02,057 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-13 14:00:02,057 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送结束
+2026-03-13 14:00:02,057 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送结束
+2026-03-13 14:00:02,057 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-13 14:00:02,057 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-13 16:00:02,234 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-13 16:00:02,234 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-13 16:00:02,235 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送开始
+2026-03-13 16:00:02,235 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送开始
+2026-03-13 16:00:02,235 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-13 16:00:02,235 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-13 16:00:02,235 [INFO] ftseek.scripts.risk_monitor: 初始化组件...
+2026-03-13 16:00:02,235 [INFO] ftseek.scripts.risk_monitor: 初始化组件...
+2026-03-13 16:00:02,237 [INFO] ftseek.storage.database: 数据库表结构初始化完成
+2026-03-13 16:00:02,237 [INFO] ftseek.storage.database: 数据库表结构初始化完成
+2026-03-13 16:00:02,238 [INFO] ftseek.storage.database: 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-13 16:00:02,238 [INFO] ftseek.storage.database: 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-13 16:00:02,238 [INFO] ftseek.scripts.risk_monitor: 数据库已初始化
+2026-03-13 16:00:02,238 [INFO] ftseek.scripts.risk_monitor: 数据库已初始化
+2026-03-13 16:00:02,249 [INFO] ftseek.risk.manager: 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-13 16:00:02,249 [INFO] ftseek.risk.manager: 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-13 16:00:02,250 [INFO] ftseek.risk.manager: 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-13 16:00:02,250 [INFO] ftseek.risk.manager: 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-13 16:00:02,250 [INFO] ftseek.scripts.risk_monitor: 风控管理器已初始化 | 模式=paper
+2026-03-13 16:00:02,250 [INFO] ftseek.scripts.risk_monitor: 风控管理器已初始化 | 模式=paper
+2026-03-13 16:00:02,250 [INFO] ftseek.scripts.risk_monitor: 钉钉推送已初始化
+2026-03-13 16:00:02,250 [INFO] ftseek.scripts.risk_monitor: 钉钉推送已初始化
+2026-03-13 16:00:02,250 [INFO] ftseek.risk.monitor: 风险监控器已初始化
+2026-03-13 16:00:02,250 [INFO] ftseek.risk.monitor: 风险监控器已初始化
+2026-03-13 16:00:02,250 [INFO] ftseek.scripts.risk_monitor: 风险监控器已初始化
+2026-03-13 16:00:02,250 [INFO] ftseek.scripts.risk_monitor: 风险监控器已初始化
+2026-03-13 16:00:02,250 [INFO] ftseek.scripts.risk_monitor: 监控数据已收集:
+2026-03-13 16:00:02,250 [INFO] ftseek.scripts.risk_monitor: 监控数据已收集:
+2026-03-13 16:00:02,250 [INFO] ftseek.scripts.risk_monitor:   账户总值：HK$1,000,000.00
+2026-03-13 16:00:02,250 [INFO] ftseek.scripts.risk_monitor:   账户总值：HK$1,000,000.00
+2026-03-13 16:00:02,251 [INFO] ftseek.scripts.risk_monitor:   持仓市值：HK$0.00
+2026-03-13 16:00:02,251 [INFO] ftseek.scripts.risk_monitor:   持仓市值：HK$0.00
+2026-03-13 16:00:02,251 [INFO] ftseek.scripts.risk_monitor:   今日盈亏：HK$+0.00
+2026-03-13 16:00:02,251 [INFO] ftseek.scripts.risk_monitor:   今日盈亏：HK$+0.00
+2026-03-13 16:00:02,251 [INFO] ftseek.scripts.risk_monitor:   风控状态：✅ 正常
+2026-03-13 16:00:02,251 [INFO] ftseek.scripts.risk_monitor:   风控状态：✅ 正常
+2026-03-13 16:00:02,350 [INFO] ftseek.notifier.dingtalk: 钉钉风险监控推送成功：16:00
+2026-03-13 16:00:02,350 [INFO] ftseek.notifier.dingtalk: 钉钉风险监控推送成功：16:00
+2026-03-13 16:00:02,350 [INFO] ftseek.risk.monitor: 风险监控面板已推送：16:00
+2026-03-13 16:00:02,350 [INFO] ftseek.risk.monitor: 风险监控面板已推送：16:00
+2026-03-13 16:00:02,350 [INFO] ftseek.scripts.risk_monitor: ✅ 风险监控推送成功
+2026-03-13 16:00:02,350 [INFO] ftseek.scripts.risk_monitor: ✅ 风险监控推送成功
+2026-03-13 16:00:02,350 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-13 16:00:02,350 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-13 16:00:02,350 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送结束
+2026-03-13 16:00:02,350 [INFO] ftseek.scripts.risk_monitor: FTSeek 风险监控推送结束
+2026-03-13 16:00:02,351 [INFO] ftseek.scripts.risk_monitor: ============================================================
+2026-03-13 16:00:02,351 [INFO] ftseek.scripts.risk_monitor: ============================================================

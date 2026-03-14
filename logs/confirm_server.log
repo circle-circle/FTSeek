@@ -1,0 +1,42 @@
+Traceback (most recent call last):
+  File "scripts/confirm_webhook_server.py", line 101, in <module>
+    run_server(args.port)
+  File "scripts/confirm_webhook_server.py", line 88, in run_server
+    server = HTTPServer(('0.0.0.0', port), ConfirmHandler)
+  File "/usr/lib64/python3.6/socketserver.py", line 456, in __init__
+    self.server_bind()
+  File "/usr/lib64/python3.6/http/server.py", line 136, in server_bind
+    socketserver.TCPServer.server_bind(self)
+  File "/usr/lib64/python3.6/socketserver.py", line 470, in server_bind
+    self.socket.bind(self.server_address)
+OSError: [Errno 98] Address already in use
+2026-03-02 14:09:16,026 - ftseek.webhook - INFO - Webhook 服务器已启动，监听端口 8899
+2026-03-02 14:09:16,026 - ftseek.webhook - INFO - 确认 URL: http://<服务器 IP>:8899/confirm?signal_id=xxx&action=BUY
+2026-03-02 14:09:16,026 - ftseek.webhook - INFO - 健康检查：http://localhost:8899/health
+2026-03-02 14:09:16,749 - ftseek.webhook - INFO - 127.0.0.1 - "GET /health HTTP/1.1" 200 -
+2026-03-02 14:41:19,288 - ftseek.webhook - INFO - Webhook 服务器已启动，监听端口 8899
+2026-03-02 14:41:19,288 - ftseek.webhook - INFO - 确认 URL: http://<服务器 IP>:8899/confirm?signal_id=xxx&action=BUY
+2026-03-02 14:41:19,288 - ftseek.webhook - INFO - 健康检查：http://localhost:8899/health
+2026-03-02 14:41:22,038 - ftseek.webhook - INFO - 127.0.0.1 - "GET /health HTTP/1.1" 200 -
+2026-03-02 14:43:29,689 - ftseek.webhook - INFO - 收到确认请求：cfc415f1197c BUY paper
+2026-03-02 14:43:29,690 - ftseek.storage.database - INFO - 数据库表结构初始化完成
+2026-03-02 14:43:29,691 - ftseek.storage.database - INFO - 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-02 14:43:29,691 - ftseek.performance.tracker - INFO - PerformanceTracker initialized with db: /opt/ftseek/FTSeek/data/ftseek.db
+2026-03-02 14:43:29,692 - ftseek.executor - INFO - 收到执行请求：cfc415f1197c BUY
+2026-03-02 14:43:29,692 - ftseek.executor - INFO - 执行买入：HK.00700 x 100 @ 514.0
+2026-03-02 14:43:29,765 - ftseek.executor - INFO - 执行结果推送成功
+2026-03-02 14:43:29,765 - ftseek.webhook - INFO - 39.97.58.4 - "GET /confirm?signal_id=cfc415f1197c&action=BUY&mode=paper HTTP/1.1" 200 -
+2026-03-02 14:43:45,361 - ftseek.webhook - INFO - 收到确认请求：cfc415f1197c BUY paper
+2026-03-02 14:43:45,362 - ftseek.storage.database - INFO - 数据库表结构初始化完成
+2026-03-02 14:43:45,362 - ftseek.storage.database - INFO - 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-02 14:43:45,363 - ftseek.performance.tracker - INFO - PerformanceTracker initialized with db: /opt/ftseek/FTSeek/data/ftseek.db
+2026-03-02 14:43:45,363 - ftseek.executor - INFO - 收到执行请求：cfc415f1197c BUY
+2026-03-02 14:43:45,363 - ftseek.executor - WARNING - 信号状态不正确：executed
+2026-03-02 14:43:45,363 - ftseek.webhook - INFO - 140.205.11.228 - "GET /confirm?signal_id=cfc415f1197c&action=BUY&mode=paper HTTP/1.1" 400 -
+2026-03-02 14:44:01,659 - ftseek.webhook - INFO - 收到确认请求：cfc415f1197c BUY paper
+2026-03-02 14:44:01,660 - ftseek.storage.database - INFO - 数据库表结构初始化完成
+2026-03-02 14:44:01,660 - ftseek.storage.database - INFO - 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-02 14:44:01,660 - ftseek.performance.tracker - INFO - PerformanceTracker initialized with db: /opt/ftseek/FTSeek/data/ftseek.db
+2026-03-02 14:44:01,660 - ftseek.executor - INFO - 收到执行请求：cfc415f1197c BUY
+2026-03-02 14:44:01,661 - ftseek.executor - WARNING - 信号状态不正确：executed
+2026-03-02 14:44:01,661 - ftseek.webhook - INFO - 140.205.11.228 - "GET /confirm?signal_id=cfc415f1197c&action=BUY&mode=paper HTTP/1.1" 400 -

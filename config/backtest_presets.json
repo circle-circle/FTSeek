@@ -1,0 +1,65 @@
+{
+  "_comment": "FTSeek 回测预设配置",
+  "_version": "2.0",
+  
+  "presets": {
+    "3_months": {
+      "name": "季度回测",
+      "days": 90,
+      "description": "最近 3 个月数据，适合短期策略验证"
+    },
+    "6_months": {
+      "name": "半年回测",
+      "days": 180,
+      "description": "最近 6 个月数据，适合中期策略验证"
+    },
+    "1_year": {
+      "name": "年度回测",
+      "days": 365,
+      "description": "最近 1 年数据，适合长期策略验证"
+    },
+    "2_years": {
+      "name": "两年回测",
+      "days": 730,
+      "description": "最近 2 年数据，覆盖完整市场周期"
+    },
+    "max": {
+      "name": "最大周期",
+      "days": 1000,
+      "description": "可用数据的全部历史"
+    }
+  },
+  
+  "default_preset": "6_months",
+  
+  "custom": {
+    "enabled": true,
+    "min_days": 30,
+    "max_days": 1000
+  },
+  
+  "metrics": {
+    "required": [
+      "total_return",
+      "win_rate",
+      "profit_factor",
+      "max_drawdown",
+      "sharpe_ratio"
+    ],
+    "optional": [
+      "sortino_ratio",
+      "calmar_ratio",
+      "avg_trade_duration",
+      "consecutive_wins",
+      "consecutive_losses"
+    ]
+  },
+  
+  "target": {
+    "win_rate": 0.60,
+    "profit_factor": 1.5,
+    "max_drawdown": 0.15,
+    "sharpe_ratio": 1.0,
+    "description": "模拟盘连续两个月胜率超过 60%"
+  }
+}

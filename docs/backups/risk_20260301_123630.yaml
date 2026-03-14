@@ -1,0 +1,46 @@
+# FTSeek v3.0 风控配置
+
+# 交易模式
+trading:
+  mode: "paper"             # paper=模拟，real=实盘
+  paper_initial_cash: 1000000  # 100 万港币
+  currency: "HKD"
+
+# 五层风控阈值
+risk_limits:
+  # 信号级
+  min_confidence: 0.60
+  
+  # 订单级
+  max_single_position: 0.20
+  max_single_loss: 0.10
+  
+  # 仓位级
+  max_total_position: 0.80
+  max_daily_trades: 10
+  max_daily_loss: 0.05
+  max_weekly_loss: 0.10
+  
+  # 账户级
+  max_drawdown: 0.15
+  consecutive_loss_limit: 5
+  
+  # 策略级
+  strategy_min_trades: 20
+  strategy_min_winrate: 0.40
+
+# 预警配置
+alerts:
+  dingtalk_webhook: "${DINGTALK_WEBHOOK_URL}"
+  dingtalk_secret: "${DINGTALK_SECRET}"
+  alert_contacts:
+    - name: "管理员"
+      phone: "${ADMIN_PHONE}"
+      email: "${ADMIN_EMAIL}"
+
+# 定时推送
+schedule:
+  daily_stats_time: "16:30"    # 收盘统计
+  weekly_report_time: "09:00"  # 周报 (周一)
+  monthly_report_time: "09:00" # 月报 (每月 1 日)
+  risk_monitor_interval: 120   # 风险监控间隔 (分钟)

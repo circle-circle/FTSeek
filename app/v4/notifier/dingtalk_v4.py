@@ -406,6 +406,12 @@ class DingTalkNotifierV4:
                         "text": message
                     }
                 }
+            elif msg_type == "actionCard":
+                # actionCard 卡片直接传递
+                payload = message
+            elif msg_type == "interactive":
+                # interactive 卡片直接传递 card 字典
+                payload = message
             else:
                 payload = {
                     "msgtype": "text",

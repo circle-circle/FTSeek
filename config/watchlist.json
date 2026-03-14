@@ -1,0 +1,47 @@
+{
+  "_comment": "FTSeek 监控股票列表配置",
+  "_version": "2.1",
+  "_updated": "2026-03-13 09:45",
+  "_note": "仅跟踪腾讯控股 (HK.00700) 模拟交易",
+  
+  "hk_stocks": [
+    {
+      "code": "HK.00700",
+      "name": "腾讯控股",
+      "enabled": true,
+      "notes": "科技龙头 - 唯一跟踪标的"
+    },
+    {
+      "code": "HK.09988",
+      "name": "阿里巴巴",
+      "enabled": false,
+      "notes": "已暂停"
+    },
+    {
+      "code": "HK.09992",
+      "name": "泡泡玛特",
+      "enabled": false,
+      "notes": "已暂停"
+    },
+    {
+      "code": "HK.03690",
+      "name": "美团-W",
+      "enabled": false,
+      "notes": "已暂停"
+    },
+    {
+      "code": "HK.01810",
+      "name": "小米集团",
+      "enabled": false,
+      "notes": "已暂停"
+    }
+  ],
+  
+  "us_stocks": [],
+  
+  "_usage": {
+    "add_stock": "在对应数组中添加新对象，包含 code/name/enabled 字段",
+    "remove_stock": "将 enabled 设为 false 或直接删除对象",
+    "reload": "修改后重启 FTSeek 或调用/api/config/reload 接口"
+  }
+}

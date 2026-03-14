@@ -1,0 +1,848 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FTSeek 实时风险监控大屏 - 专业版</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #0c1b33 0%, #1a2f5c 50%, #0f2444 100%);
+            color: #fff;
+            min-height: 100vh;
+            padding: 20px;
+            overflow-x: hidden;
+        }
+
+        /* 背景动画 */
+        body::before {
+            content: '';
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: 
+                radial-gradient(circle at 20% 80%, rgba(102, 126, 234, 0.1) 0%, transparent 50%),
+                radial-gradient(circle at 80% 20%, rgba(118, 75, 162, 0.1) 0%, transparent 50%);
+            z-index: -1;
+            animation: bgPulse 10s ease-in-out infinite;
+        }
+
+        @keyframes bgPulse {
+            0%, 100% { opacity: 0.5; }
+            50% { opacity: 1; }
+        }
+
+        .container {
+            max-width: 1600px;
+            margin: 0 auto;
+        }
+
+        /* 头部 */
+        header {
+            text-align: center;
+            margin-bottom: 25px;
+            padding: 25px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 20px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+        }
+
+        h1 {
+            font-size: 2.8em;
+            margin-bottom: 10px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            text-shadow: 0 0 30px rgba(102, 126, 234, 0.5);
+            animation: titleGlow 3s ease-in-out infinite;
+        }
+
+        @keyframes titleGlow {
+            0%, 100% { filter: brightness(1); }
+            50% { filter: brightness(1.2); }
+        }
+
+        .header-info {
+            display: flex;
+            justify-content: center;
+            gap: 30px;
+            margin-top: 15px;
+            flex-wrap: wrap;
+        }
+
+        .header-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            background: rgba(255, 255, 255, 0.1);
+            padding: 8px 20px;
+            border-radius: 25px;
+            font-size: 0.95em;
+        }
+
+        .live-dot {
+            width: 10px;
+            height: 10px;
+            background: #4CAF50;
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.5; transform: scale(1.2); }
+        }
+
+        /* 主网格 */
+        .dashboard-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            grid-template-rows: auto auto;
+            gap: 20px;
+            margin-bottom: 25px;
+        }
+
+        .card {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 20px;
+            padding: 25px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 3px;
+            background: linear-gradient(90deg, #667eea, #764ba2);
+        }
+
+        .card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 20px 40px rgba(102, 126, 234, 0.3);
+            border-color: rgba(102, 126, 234, 0.3);
+        }
+
+        .card-title {
+            font-size: 1.2em;
+            margin-bottom: 20px;
+            color: #a0d2eb;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .card-title-icon {
+            font-size: 1.5em;
+        }
+
+        /* 风险评分卡片 */
+        .risk-score-card {
+            grid-column: span 1;
+            text-align: center;
+        }
+
+        .risk-score-display {
+            position: relative;
+            width: 200px;
+            height: 200px;
+            margin: 20px auto;
+        }
+
+        .risk-score-value {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 3.5em;
+            font-weight: bold;
+            text-shadow: 0 0 20px rgba(102, 126, 234, 0.8);
+        }
+
+        .risk-level-badge {
+            display: inline-block;
+            padding: 8px 25px;
+            border-radius: 25px;
+            font-size: 1.1em;
+            font-weight: bold;
+            margin-top: 15px;
+            animation: badgeGlow 2s ease-in-out infinite;
+        }
+
+        @keyframes badgeGlow {
+            0%, 100% { box-shadow: 0 0 10px currentColor; }
+            50% { box-shadow: 0 0 20px currentColor; }
+        }
+
+        /* 指标卡片 */
+        .metrics-card {
+            grid-column: span 2;
+        }
+
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 15px;
+        }
+
+        .metric-box {
+            background: rgba(255, 255, 255, 0.05);
+            padding: 20px;
+            border-radius: 15px;
+            text-align: center;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            transition: all 0.3s ease;
+        }
+
+        .metric-box:hover {
+            background: rgba(255, 255, 255, 0.08);
+            border-color: rgba(102, 126, 234, 0.3);
+        }
+
+        .metric-value {
+            font-size: 2em;
+            font-weight: bold;
+            margin-bottom: 8px;
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .metric-label {
+            font-size: 0.9em;
+            color: #a0d2eb;
+        }
+
+        .metric-trend {
+            font-size: 0.85em;
+            margin-top: 5px;
+        }
+
+        .trend-up { color: #4CAF50; }
+        .trend-down { color: #f44336; }
+
+        /* 图表容器 */
+        .chart-container {
+            position: relative;
+            height: 250px;
+            margin-top: 15px;
+        }
+
+        /* 持仓卡片 */
+        .positions-card {
+            grid-column: span 1;
+            grid-row: span 2;
+        }
+
+        .position-item {
+            background: rgba(255, 255, 255, 0.05);
+            padding: 15px;
+            border-radius: 12px;
+            margin-bottom: 12px;
+            border-left: 4px solid #4CAF50;
+            transition: all 0.3s ease;
+        }
+
+        .position-item:hover {
+            background: rgba(255, 255, 255, 0.08);
+            transform: translateX(5px);
+        }
+
+        .position-item.HIGH {
+            border-left-color: #f44336;
+            background: rgba(244, 67, 54, 0.1);
+        }
+
+        .position-item.MEDIUM {
+            border-left-color: #ff9800;
+            background: rgba(255, 152, 0, 0.1);
+        }
+
+        .position-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+
+        .position-code {
+            font-size: 1.1em;
+            font-weight: bold;
+            color: #fff;
+        }
+
+        .position-risk-badge {
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 0.8em;
+            font-weight: bold;
+        }
+
+        .position-details {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 8px;
+            font-size: 0.85em;
+        }
+
+        .position-detail-item {
+            text-align: center;
+        }
+
+        .position-detail-label {
+            color: #a0d2eb;
+            font-size: 0.8em;
+            margin-bottom: 3px;
+        }
+
+        .position-detail-value {
+            font-weight: bold;
+        }
+
+        /* 警报卡片 */
+        .alerts-card {
+            grid-column: span 2;
+        }
+
+        .alert-item {
+            background: rgba(255, 255, 255, 0.05);
+            padding: 15px;
+            border-radius: 12px;
+            margin-bottom: 10px;
+            border-left: 4px solid #2196F3;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            transition: all 0.3s ease;
+        }
+
+        .alert-item:hover {
+            background: rgba(255, 255, 255, 0.08);
+            transform: translateX(5px);
+        }
+
+        .alert-item.CRITICAL {
+            border-left-color: #f44336;
+            background: rgba(244, 67, 54, 0.15);
+            animation: alertFlash 2s infinite;
+        }
+
+        .alert-item.WARNING {
+            border-left-color: #ff9800;
+            background: rgba(255, 152, 0, 0.1);
+        }
+
+        @keyframes alertFlash {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
+        }
+
+        .alert-content {
+            flex: 1;
+        }
+
+        .alert-level-badge {
+            display: inline-block;
+            padding: 3px 10px;
+            border-radius: 8px;
+            font-size: 0.75em;
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+
+        .alert-message {
+            font-size: 0.95em;
+        }
+
+        .alert-time {
+            font-size: 0.8em;
+            color: #a0d2eb;
+            margin-top: 5px;
+        }
+
+        /* 摘要卡片 */
+        .summary-card {
+            grid-column: span 2;
+        }
+
+        .summary-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 15px;
+        }
+
+        .summary-item {
+            text-align: center;
+            padding: 15px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 12px;
+        }
+
+        .summary-value {
+            font-size: 1.8em;
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+
+        .summary-label {
+            font-size: 0.85em;
+            color: #a0d2eb;
+        }
+
+        /* 刷新按钮 */
+        .refresh-btn {
+            position: fixed;
+            bottom: 30px;
+            right: 30px;
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            border: none;
+            color: white;
+            font-size: 1.5em;
+            cursor: pointer;
+            box-shadow: 0 5px 20px rgba(102, 126, 234, 0.5);
+            transition: all 0.3s ease;
+            z-index: 1000;
+        }
+
+        .refresh-btn:hover {
+            transform: scale(1.1) rotate(180deg);
+            box-shadow: 0 10px 30px rgba(102, 126, 234, 0.8);
+        }
+
+        .refresh-btn:active {
+            transform: scale(0.95);
+        }
+
+        /* 自动刷新提示 */
+        .auto-refresh-indicator {
+            position: fixed;
+            bottom: 30px;
+            left: 30px;
+            background: rgba(255, 255, 255, 0.1);
+            padding: 12px 25px;
+            border-radius: 25px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        /* 加载动画 */
+        .loading {
+            text-align: center;
+            padding: 60px;
+            font-size: 1.5em;
+            color: #a0d2eb;
+        }
+
+        .loading-spinner {
+            display: inline-block;
+            width: 50px;
+            height: 50px;
+            border: 4px solid rgba(102, 126, 234, 0.3);
+            border-top-color: #667eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-bottom: 20px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* 响应式 */
+        @media (max-width: 1400px) {
+            .dashboard-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            .risk-score-card,
+            .positions-card {
+                grid-column: span 1;
+            }
+
+            .metrics-card,
+            .alerts-card,
+            .summary-card {
+                grid-column: span 2;
+            }
+        }
+
+        @media (max-width: 768px) {
+            .dashboard-grid {
+                grid-template-columns: 1fr;
+            }
+
+            h1 {
+                font-size: 1.8em;
+            }
+
+            .metrics-grid,
+            .summary-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🛡️ FTSeek 实时风险监控大屏</h1>
+            <div class="header-info">
+                <div class="header-item">
+                    <span class="live-dot"></span>
+                    <span>实时数据</span>
+                </div>
+                <div class="header-item">
+                    <span>🔄</span>
+                    <span>5 秒自动刷新</span>
+                </div>
+                <div class="header-item">
+                    <span>📊</span>
+                    <span id="last-update">--:--:--</span>
+                </div>
+            </div>
+        </header>
+
+        <div id="dashboard-content">
+            <div class="loading">
+                <div class="loading-spinner"></div>
+                <div>加载数据中...</div>
+            </div>
+        </div>
+
+        <button class="refresh-btn" onclick="loadDashboard()" title="立即刷新">
+            🔄
+        </button>
+
+        <div class="auto-refresh-indicator">
+            <span>🔄</span>
+            <span>自动刷新：<strong id="countdown">5</strong>s</span>
+        </div>
+    </div>
+
+    <script>
+        const TOKEN = '5a8f072c2cba9db1579dd829214a38112fdcddefe089d4ba58e05742097dd272';
+        const API_BASE = '/api/risk';
+        let countdown = 5;
+        let riskChart = null;
+
+        function getRiskLevel(score) {
+            if (score >= 80) return { level: 'CRITICAL', color: '#fd1d1d', bg: 'rgba(253, 29, 29, 0.3)' };
+            if (score >= 60) return { level: 'HIGH', color: '#ff416c', bg: 'rgba(255, 65, 108, 0.3)' };
+            if (score >= 40) return { level: 'MEDIUM', color: '#f5576c', bg: 'rgba(245, 87, 108, 0.3)' };
+            return { level: 'LOW', color: '#38ef7d', bg: 'rgba(56, 239, 125, 0.3)' };
+        }
+
+        async function loadDashboard() {
+            try {
+                const response = await fetch(`${API_BASE}/dashboard?token=${TOKEN}`);
+                const data = await response.json();
+
+                if (data.status === 'ok') {
+                    renderDashboard(data.dashboard);
+                    updateLastUpdateTime();
+                } else {
+                    document.getElementById('dashboard-content').innerHTML = 
+                        `<div class="loading">❌ ${data.message || '加载失败'}</div>`;
+                }
+            } catch (error) {
+                console.error('加载失败:', error);
+                document.getElementById('dashboard-content').innerHTML = 
+                    `<div class="loading">❌ 加载失败：${error.message}</div>`;
+            }
+        }
+
+        function renderDashboard(dashboard) {
+            const riskInfo = getRiskLevel(dashboard.risk_score);
+
+            const html = `
+                <div class="dashboard-grid">
+                    <!-- 风险评分 -->
+                    <div class="card risk-score-card">
+                        <div class="card-title">
+                            <span class="card-title-icon">📊</span>
+                            综合风险评分
+                        </div>
+                        <div class="risk-score-display">
+                            <canvas id="riskGauge"></canvas>
+                            <div class="risk-score-value" style="color: ${riskInfo.color}">
+                                ${dashboard.risk_score.toFixed(1)}
+                            </div>
+                        </div>
+                        <div class="risk-level-badge" style="background: ${riskInfo.bg}; color: ${riskInfo.color}">
+                            ${riskInfo.level}
+                        </div>
+                    </div>
+
+                    <!-- 核心指标 -->
+                    <div class="card metrics-card">
+                        <div class="card-title">
+                            <span class="card-title-icon">📈</span>
+                            核心指标
+                        </div>
+                        <div class="metrics-grid">
+                            <div class="metric-box">
+                                <div class="metric-value">¥${(dashboard.metrics.total_capital / 10000).toFixed(0)}万</div>
+                                <div class="metric-label">总资金</div>
+                            </div>
+                            <div class="metric-box">
+                                <div class="metric-value">${dashboard.metrics.total_exposure}</div>
+                                <div class="metric-label">总仓位</div>
+                                <div class="metric-trend trend-up">↑ 正常</div>
+                            </div>
+                            <div class="metric-box">
+                                <div class="metric-value" style="color: ${parseFloat(dashboard.metrics.current_drawdown) > 0.05 ? '#f44336' : '#4CAF50'}">
+                                    ${dashboard.metrics.current_drawdown}
+                                </div>
+                                <div class="metric-label">当前回撤</div>
+                            </div>
+                            <div class="metric-box">
+                                <div class="metric-value">${dashboard.metrics.win_rate}</div>
+                                <div class="metric-label">胜率</div>
+                            </div>
+                        </div>
+                        <div class="chart-container">
+                            <canvas id="metricsChart"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- 持仓风险 -->
+                    <div class="card positions-card">
+                        <div class="card-title">
+                            <span class="card-title-icon">💼</span>
+                            持仓风险
+                        </div>
+                        ${renderPositions(dashboard.positions)}
+                    </div>
+
+                    <!-- 最近警报 -->
+                    <div class="card alerts-card">
+                        <div class="card-title">
+                            <span class="card-title-icon">🚨</span>
+                            最近警报
+                        </div>
+                        ${renderAlerts(dashboard.recent_alerts)}
+                    </div>
+
+                    <!-- 风险摘要 -->
+                    <div class="card summary-card">
+                        <div class="card-title">
+                            <span class="card-title-icon">📋</span>
+                            风险摘要
+                        </div>
+                        <div class="summary-grid">
+                            <div class="summary-item">
+                                <div class="summary-value">${dashboard.summary.total_positions}</div>
+                                <div class="summary-label">总持仓数</div>
+                            </div>
+                            <div class="summary-item">
+                                <div class="summary-value" style="color: ${dashboard.summary.high_risk_positions > 0 ? '#f44336' : '#4CAF50'}">
+                                    ${dashboard.summary.high_risk_positions}
+                                </div>
+                                <div class="summary-label">高风险持仓</div>
+                            </div>
+                            <div class="summary-item">
+                                <div class="summary-value">${dashboard.summary.total_alerts_today}</div>
+                                <div class="summary-label">今日警报</div>
+                            </div>
+                            <div class="summary-item">
+                                <div class="summary-value">${dashboard.metrics.unrealized_pnl}</div>
+                                <div class="summary-label">未实现盈亏</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            document.getElementById('dashboard-content').innerHTML = html;
+
+            // 渲染图表
+            setTimeout(() => {
+                renderRiskGauge(dashboard.risk_score);
+                renderMetricsChart(dashboard);
+            }, 100);
+        }
+
+        function renderPositions(positions) {
+            if (!positions || Object.keys(positions).length === 0) {
+                return '<div style="text-align: center; padding: 40px; color: #a0d2eb;">无持仓</div>';
+            }
+
+            return Object.entries(positions).map(([code, risk]) => {
+                const riskColor = risk.risk_level === 'HIGH' ? '#f44336' : 
+                                 risk.risk_level === 'MEDIUM' ? '#ff9800' : '#4CAF50';
+                
+                return `
+                    <div class="position-item ${risk.risk_level}">
+                        <div class="position-header">
+                            <span class="position-code">${code}</span>
+                            <span class="position-risk-badge" style="background: ${riskColor}">
+                                ${risk.risk_level}
+                            </span>
+                        </div>
+                        <div class="position-details">
+                            <div class="position-detail-item">
+                                <div class="position-detail-label">市值</div>
+                                <div class="position-detail-value">¥${(risk.market_value / 10000).toFixed(1)}万</div>
+                            </div>
+                            <div class="position-detail-item">
+                                <div class="position-detail-label">盈亏</div>
+                                <div class="position-detail-value" style="color: ${parseFloat(risk.unrealized_pnl_percent) >= 0 ? '#4CAF50' : '#f44336'}">
+                                    ${risk.unrealized_pnl_percent}
+                                </div>
+                            </div>
+                            <div class="position-detail-item">
+                                <div class="position-detail-label">止损距离</div>
+                                <div class="position-detail-value" style="color: ${risk.stop_loss_distance < 0.02 ? '#f44336' : '#4CAF50'}">
+                                    ${risk.stop_loss_distance}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function renderAlerts(alerts) {
+            if (!alerts || alerts.length === 0) {
+                return '<div style="text-align: center; padding: 40px; color: #a0d2eb;">无警报</div>';
+            }
+
+            return alerts.map(alert => {
+                const alertColor = alert.level === 'CRITICAL' ? '#f44336' : 
+                                  alert.level === 'WARNING' ? '#ff9800' : '#2196F3';
+                
+                return `
+                    <div class="alert-item ${alert.level}">
+                        <div class="alert-content">
+                            <span class="alert-level-badge" style="background: ${alertColor}">${alert.level}</span>
+                            <div class="alert-message">${alert.message}</div>
+                            <div class="alert-time">${alert.timestamp}</div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function renderRiskGauge(score) {
+            const ctx = document.getElementById('riskGauge').getContext('2d');
+            const riskInfo = getRiskLevel(score);
+
+            if (riskChart) riskChart.destroy();
+
+            riskChart = new Chart(ctx, {
+                type: 'doughnut',
+                data: {
+                    labels: ['风险', '安全'],
+                    datasets: [{
+                        data: [score, 100 - score],
+                        backgroundColor: [riskInfo.color, 'rgba(255, 255, 255, 0.1)'],
+                        borderWidth: 0,
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    cutout: '75%',
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: { enabled: false }
+                    }
+                }
+            });
+        }
+
+        function renderMetricsChart(dashboard) {
+            const ctx = document.getElementById('metricsChart').getContext('2d');
+            
+            new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: ['总仓位', '回撤', '胜率', '高风险持仓'],
+                    datasets: [{
+                        label: '风险指标',
+                        data: [
+                            parseFloat(dashboard.metrics.total_exposure) || 0,
+                            (parseFloat(dashboard.metrics.current_drawdown) || 0) * 100,
+                            parseFloat(dashboard.metrics.win_rate) || 0,
+                            dashboard.summary.high_risk_positions * 10
+                        ],
+                        backgroundColor: [
+                            'rgba(102, 126, 234, 0.8)',
+                            'rgba(244, 67, 54, 0.8)',
+                            'rgba(76, 175, 80, 0.8)',
+                            'rgba(255, 152, 0, 0.8)'
+                        ],
+                        borderRadius: 8,
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            grid: { color: 'rgba(255, 255, 255, 0.1)' },
+                            ticks: { color: '#a0d2eb' }
+                        },
+                        x: {
+                            grid: { display: false },
+                            ticks: { color: '#a0d2eb' }
+                        }
+                    }
+                }
+            });
+        }
+
+        function updateLastUpdateTime() {
+            const now = new Date();
+            const timeStr = now.toLocaleTimeString('zh-CN', { hour12: false });
+            document.getElementById('last-update').textContent = timeStr;
+        }
+
+        function startAutoRefresh() {
+            setInterval(() => {
+                countdown--;
+                document.getElementById('countdown').textContent = countdown;
+                
+                if (countdown <= 0) {
+                    countdown = 5;
+                    loadDashboard();
+                }
+            }, 1000);
+        }
+
+        // 初始化
+        document.addEventListener('DOMContentLoaded', () => {
+            loadDashboard();
+            startAutoRefresh();
+        });
+    </script>
+</body>
+</html>

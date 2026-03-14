@@ -1,0 +1,16 @@
+[Unit]
+Description=Futu OpenD Gateway
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/ftseek/Futu_OpenD_9.6.5618_Centos7/Futu_OpenD_9.6.5618_Centos7
+ExecStart=/opt/ftseek/Futu_OpenD_9.6.5618_Centos7/Futu_OpenD_9.6.5618_Centos7/FutuOpenD
+Restart=on-failure
+RestartSec=15
+StandardOutput=append:/opt/ftseek/logs/opend.log
+StandardError=append:/opt/ftseek/logs/opend-error.log
+
+[Install]
+WantedBy=multi-user.target

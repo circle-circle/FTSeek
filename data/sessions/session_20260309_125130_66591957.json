@@ -1,0 +1,21 @@
+{
+  "session_id": "session_20260309_125130_66591957",
+  "created_at": "2026-03-09T12:51:30.265038",
+  "last_active": "2026-03-09T12:51:30.295692",
+  "status": "active",
+  "context": {
+    "config": {},
+    "trading_state": {
+      "daily_trades": 0,
+      "daily_pnl": 0.0,
+      "positions": []
+    },
+    "pending_confirmations": [],
+    "market_condition": "unknown",
+    "auto_restore_test": "value_123"
+  },
+  "metadata": {
+    "version": "4.3.0",
+    "user_id": "default_user"
+  }
+}

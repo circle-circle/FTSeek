@@ -1,0 +1,1070 @@
+{
+  "session_20260309_125031_4d782362": {
+    "session_id": "session_20260309_125031_4d782362",
+    "created_at": "2026-03-09T12:50:31.477394",
+    "last_active": "2026-03-09T12:50:31.479070",
+    "status": "ended",
+    "context": {
+      "config": {},
+      "trading_state": {
+        "daily_trades": 0,
+        "daily_pnl": 0.0,
+        "positions": []
+      },
+      "pending_confirmations": [],
+      "market_condition": "unknown"
+    },
+    "metadata": {
+      "version": "4.3.0",
+      "user_id": "default_user"
+    }
+  },
+  "session_20260309_125031_ba4e5456": {
+    "session_id": "session_20260309_125031_ba4e5456",
+    "created_at": "2026-03-09T12:50:31.487109",
+    "last_active": "2026-03-09T12:50:31.488796",
+    "status": "ended",
+    "context": {
+      "config": {},
+      "trading_state": {
+        "daily_trades": 0,
+        "daily_pnl": 0.0,
+        "positions": []
+      },
+      "pending_confirmations": [],
+      "market_condition": "unknown"
+    },
+    "metadata": {
+      "version": "4.3.0",
+      "user_id": "default_user"
+    }
+  },
+  "session_20260309_125031_3182d57b": {
+    "session_id": "session_20260309_125031_3182d57b",
+    "created_at": "2026-03-09T12:50:31.491098",
+    "last_active": "2026-03-09T12:50:31.493144",
+    "status": "ended",
+    "context": {
+      "config": {},
+      "trading_state": {
+        "daily_trades": 0,
+        "daily_pnl": 0.0,
+        "positions": []
+      },
+      "pending_confirmations": [],
+      "market_condition": "unknown"
+    },
+    "metadata": {
+      "version": "4.3.0",
+      "user_id": "default_user"
+    }
+  },
+  "session_20260309_125031_251348d9": {
+    "session_id": "session_20260309_125031_251348d9",
+    "created_at": "2026-03-09T12:50:31.499444",
+    "last_active": "2026-03-09T12:50:31.557818",
+    "status": "active",
+    "context": {
+      "config": {
+        "max_trades": 10
+      },
+      "trading_state": {
+        "daily_pnl": 1500.0
+      },
+      "pending_confirmations": [
+        "trade_001"
+      ],
+      "market_condition": "unknown"
+    },
+    "metadata": {
+      "version": "4.3.0",
+      "user_id": "default_user"
+    }
+  },
+  "session_20260309_125031_30694ea5": {
+    "session_id": "session_20260309_125031_30694ea5",
+    "created_at": "2026-03-09T12:50:31.514068",
+    "last_active": "2026-03-09T12:50:31.518502",
+    "status": "ended",
+    "context": {
+      "config": {},
+      "trading_state": {
+        "daily_trades": 0,
+        "daily_pnl": 0.0,
+        "positions": []
+      },
+      "pending_confirmations": [],
+      "market_condition": "unknown",
+      "auto_restore_test": "value_123"
+    },
+    "metadata": {
+      "version": "4.3.0",
+      "user_id": "default_user"
+    }
+  },
+  "session_20260309_125031_ac9a1dbd": {
+    "session_id": "session_20260309_125031_ac9a1dbd",
+    "created_at": "2026-03-09T12:50:31.564207",
+    "last_active": "2026-03-09T12:50:31.567273",
+    "status": "active",
+    "context": {
+      "config": {},
+      "trading_state": {
+        "daily_trades": 0,
+        "daily_pnl": 0.0,
+        "positions": []
+      },
+      "pending_confirmations": [],
+      "market_condition": "unknown",
+      "string_key": "string_value",
+      "int_key": 42,
+      "float_key": 3.14,
+      "bool_key": true,
+      "list_key": [
+        1,
+        2,
+        3
+      ],
+      "dict_key": {
+        "nested": "value"
+      }
+    },
+    "metadata": {
+      "version": "4.3.0",
+      "user_id": "default_user"
+    }
+  },
+  "session_20260309_125031_867c12ea": {
+    "session_id": "session_20260309_125031_867c12ea",
+    "created_at": "2026-03-09T12:50:31.572479",
+    "last_active": "2026-03-09T12:50:31.578261",
+    "status": "active",
+    "context": {
+      "config": {},
+      "trading_state": {
+        "daily_trades": 0,
+        "daily_pnl": 0.0,
+        "positions": []
+      },
+      "pending_confirmations": [],
+      "market_condition": "unknown"
+    },
+    "metadata": {
+      "version": "4.3.0",
+      "user_id": "default_user"
+    }
+  },
+  "session_20260309_125031_85a064fe": {
+    "session_id": "session_20260309_125031_85a064fe",
+    "created_at": "2026-03-09T12:50:31.583448",
+    "last_active": "2026-03-09T12:50:31.590861",
+    "status": "ended",
+    "context": {
+      "config": {},
+      "trading_state": {
+        "daily_trades": 0,
+        "daily_pnl": 0.0,
+        "positions": []
+      },
+      "pending_confirmations": [],
+      "market_condition": "unknown",
+      "test": "value"
+    },
+    "metadata": {
+      "version": "4.3.0",
+      "user_id": "default_user"
+    }
+  },
+  "session_20260309_125031_4ce07a40": {
+    "session_id": "session_20260309_125031_4ce07a40",
+    "created_at": "2026-03-09T12:50:31.598087",
+    "last_active": "2026-03-09T12:50:31.607236",
+    "status": "active",
+    "context": {
+      "config": {},
+      "trading_state": {
+        "daily_trades": 0,
+        "daily_pnl": 0.0,
+        "positions": []
+      },
+      "pending_confirmations": [],
+      "market_condition": "unknown",
+      "session": "first"
+    },
+    "metadata": {
+      "version": "4.3.0",
+      "user_id": "default_user"
+    }
+  },
+  "session_20260309_125031_ac79be9c": {
+    "session_id": "session_20260309_125031_ac79be9c",
+    "created_at": "2026-03-09T12:50:31.603303",
+    "last_active": "2026-03-09T12:50:31.612536",
+    "status": "ended",
+    "context": {
+      "config": {},
+      "trading_state": {
+        "daily_trades": 0,
+        "daily_pnl": 0.0,
+        "positions": []
+      },
+      "pending_confirmations": [],
+      "market_condition": "unknown",
+      "session": "second"
+    },
+    "metadata": {
+      "version": "4.3.0",
+      "user_id": "default_user"
+    }
+  },
+  "session_20260309_125031_1cedd1e9": {
+    "session_id": "session_20260309_125031_1cedd1e9",
+    "created_at": "2026-03-09T12:50:31.619167",
+    "last_active": "2026-03-09T12:50:31.623659",
+    "status": "ended",
+    "context": {
+      "config": {},
+      "trading_state": {
+        "daily_trades": 0,
+        "daily_pnl": 0.0,
+        "positions": []
+      },
+      "pending_confirmations": [],
+      "market_condition": "unknown",
+      "integration_test": "state_manager"
+    },
+    "metadata": {
+      "version": "4.3.0",
+      "user_id": "default_user"
+    }
+  },
+  "session_20260309_125031_4d8986db": {
+    "session_id": "session_20260309_125031_4d8986db",
+    "created_at": "2026-03-09T12:50:31.631228",
+    "last_active": "2026-03-09T12:50:31.639041",
+    "status": "ended",
+    "context": {
+      "config": {},
+      "trading_state": {
+        "daily_trades": 0,
+        "daily_pnl": 0.0,
+        "positions": []
+      },
+      "pending_confirmations": [],
+      "market_condition": "unknown"
+    },
+    "metadata": {
+      "version": "4.3.0",
+      "user_id": "default_user"
+    }
+  },
+  "session_20260309_125031_a6760d71": {
+    "session_id": "session_20260309_125031_a6760d71",
+    "created_at": "2026-03-09T12:50:31.648526",
+    "last_active": "2026-03-09T12:50:31.652978",
+    "status": "ended",
+    "context": {
+      "config": {},
+      "trading_state": {
+        "daily_trades": 0,
+        "daily_pnl": 0.0,
+        "positions": []
+      },
+      "pending_confirmations": [],
+      "market_condition": "unknown"
+    },
+    "metadata": {
+      "version": "4.3.0",
+      "user_id": "default_user"
+    }
+  },
+  "session_20260309_125031_cfe2a3a7": {
+    "session_id": "session_20260309_125031_cfe2a3a7",
+    "created_at": "2026-03-09T12:50:31.660738",
+    "last_active": "2026-03-09T12:50:31.666843",
+    "status": "ended",
+    "context": {
+      "config": {},
+      "trading_state": {
+        "daily_trades": 0,
+        "daily_pnl": 0.0,
+        "positions": []
+      },
+      "pending_confirmations": [],
+      "market_condition": "unknown",
+      "thread0_0": "value0",
+      "thread0_1": "value0",
+      "thread0_2": "value0",
+      "thread0_3": "value0",
+      "thread0_4": "value0",
+      "thread0_5": "value0",
+      "thread0_6": "value0",
+      "thread0_7": "value0",
+      "thread0_8": "value0",
+      "thread0_9": "value0",
+      "thread1_0": "value1",
+      "thread1_1": "value1",
+      "thread1_2": "value1",
+      "thread1_3": "value1",
+      "thread1_4": "value1",
+      "thread1_5": "value1",
+      "thread1_6": "value1",
+      "thread1_7": "value1",
+      "thread1_8": "value1",
+      "thread1_9": "value1",
+      "thread2_0": "value2",
+      "thread2_1": "value2",
+      "thread2_2": "value2",
+      "thread2_3": "value2",
+      "thread2_4": "value2",
+      "thread2_5": "value2",
+      "thread2_6": "value2",
+      "thread2_7": "value2",
+      "thread2_8": "value2",
+      "thread2_9": "value2",
+      "thread3_0": "value3",
+      "thread3_1": "value3",
+      "thread3_2": "value3",
+      "thread3_3": "value3",
+      "thread3_4": "value3",
+      "thread3_5": "value3",
+      "thread3_6": "value3",
+      "thread3_7": "value3",
+      "thread3_8": "value3",
+      "thread3_9": "value3",
+      "thread4_0": "value4",
+      "thread4_1": "value4",
+      "thread4_2": "value4",
+      "thread4_3": "value4",
+      "thread4_4": "value4",
+      "thread4_5": "value4",
+      "thread4_6": "value4",
+      "thread4_7": "value4",
+      "thread4_8": "value4",
+      "thread4_9": "value4"
+    },
+    "metadata": {
+      "version": "4.3.0",
+      "user_id": "default_user"
+    }
+  },
+  "session_20260309_125040_da8e760b": {
+    "session_id": "session_20260309_125040_da8e760b",
+    "created_at": "2026-03-09T12:50:40.704291",
+    "last_active": "2026-03-09T12:50:40.708177",
+    "status": "ended",
+    "context": {
+      "config": {},
+      "trading_state": {
+        "daily_trades": 0,
+        "daily_pnl": 0.0,
+        "positions": []
+      },
+      "pending_confirmations": [],
+      "market_condition": "unknown"
+    },
+    "metadata": {
+      "version": "4.3.0",
+      "user_id": "default_user"
+    }
+  },
+  "session_20260309_125040_0aa5ae67": {
+    "session_id": "session_20260309_125040_0aa5ae67",
+    "created_at": "2026-03-09T12:50:40.716885",
+    "last_active": "2026-03-09T12:50:40.721007",
+    "status": "ended",
+    "context": {
+      "config": {},
+      "trading_state": {
+        "daily_trades": 0,
+        "daily_pnl": 0.0,
+        "positions": []
+      },
+      "pending_confirmations": [],
+      "market_condition": "unknown"
+    },
+    "metadata": {
+      "version": "4.3.0",
+      "user_id": "default_user"
+    }
+  },
+  "session_20260309_125040_90445fd9": {
+    "session_id": "session_20260309_125040_90445fd9",
+    "created_at": "2026-03-09T12:50:40.725523",
+    "last_active": "2026-03-09T12:50:40.729748",
+    "status": "ended",
+    "context": {
+      "config": {},
+      "trading_state": {
+        "daily_trades": 0,
+        "daily_pnl": 0.0,
+        "positions": []
+      },
+      "pending_confirmations": [],
+      "market_condition": "unknown"
+    },
+    "metadata": {
+      "version": "4.3.0",
+      "user_id": "default_user"
+    }
+  },
+  "session_20260309_125040_9f992d97": {
+    "session_id": "session_20260309_125040_9f992d97",
+    "created_at": "2026-03-09T12:50:40.738247",
+    "last_active": "2026-03-09T12:50:40.749919",
+    "status": "active",
+    "context": {
+      "config": {
+        "max_trades": 10
+      },
+      "trading_state": {
+        "daily_pnl": 1500.0
+      },
+      "pending_confirmations": [
+        "trade_001"
+      ],
+      "market_condition": "unknown"
+    },
+    "metadata": {
+      "version": "4.3.0",
+      "user_id": "default_user"
+    }
+  },
+  "session_20260309_125040_3d1f639c": {
+    "session_id": "session_20260309_125040_3d1f639c",
+    "created_at": "2026-03-09T12:50:40.759707",
+    "last_active": "2026-03-09T12:50:40.782971",
+    "status": "active",
+    "context": {
+      "config": {},
+      "trading_state": {
+        "daily_trades": 0,
+        "daily_pnl": 0.0,
+        "positions": []
+      },
+      "pending_confirmations": [],
+      "market_condition": "unknown",
+      "auto_restore_test": "value_123"
+    },
+    "metadata": {
+      "version": "4.3.0",
+      "user_id": "default_user"
+    }
+  },
+  "session_20260309_125040_102411b9": {
+    "session_id": "session_20260309_125040_102411b9",
+    "created_at": "2026-03-09T12:50:40.789345",
+    "last_active": "2026-03-09T12:50:40.793990",
+    "status": "active",
+    "context": {
+      "config": {},
+      "trading_state": {
+        "daily_trades": 0,
+        "daily_pnl": 0.0,
+        "positions": []
+      },
+      "pending_confirmations": [],
+      "market_condition": "unknown",
+      "string_key": "string_value",
+      "int_key": 42,
+      "float_key": 3.14,
+      "bool_key": true,
+      "list_key": [
+        1,
+        2,
+        3
+      ],
+      "dict_key": {
+        "nested": "value"
+      }
+    },
+    "metadata": {
+      "version": "4.3.0",
+      "user_id": "default_user"
+    }
+  },
+  "session_20260309_125040_297b4e30": {
+    "session_id": "session_20260309_125040_297b4e30",
+    "created_at": "2026-03-09T12:50:40.799859",
+    "last_active": "2026-03-09T12:50:40.805228",
+    "status": "active",
+    "context": {
+      "config": {},
+      "trading_state": {
+        "daily_trades": 0,
+        "daily_pnl": 0.0,
+        "positions": []
+      },
+      "pending_confirmations": [],
+      "market_condition": "unknown"
+    },
+    "metadata": {
+      "version": "4.3.0",
+      "user_id": "default_user"
+    }
+  },
+  "session_20260309_125040_d265b3b1": {
+    "session_id": "session_20260309_125040_d265b3b1",
+    "created_at": "2026-03-09T12:50:40.812955",
+    "last_active": "2026-03-09T12:50:40.819265",
+    "status": "ended",
+    "context": {
+      "config": {},
+      "trading_state": {
+        "daily_trades": 0,
+        "daily_pnl": 0.0,
+        "positions": []
+      },
+      "pending_confirmations": [],
+      "market_condition": "unknown",
+      "test": "value"
+    },
+    "metadata": {
+      "version": "4.3.0",
+      "user_id": "default_user"
+    }
+  },
+  "session_20260309_125040_7f3ec945": {
+    "session_id": "session_20260309_125040_7f3ec945",
+    "created_at": "2026-03-09T12:50:40.828207",
+    "last_active": "2026-03-09T12:50:40.842490",
+    "status": "active",
+    "context": {
+      "config": {},
+      "trading_state": {
+        "daily_trades": 0,
+        "daily_pnl": 0.0,
+        "positions": []
+      },
+      "pending_confirmations": [],
+      "market_condition": "unknown",
+      "session": "first"
+    },
+    "metadata": {
+      "version": "4.3.0",
+      "user_id": "default_user"
+    }
+  },
+  "session_20260309_125040_5be34f28": {
+    "session_id": "session_20260309_125040_5be34f28",
+    "created_at": "2026-03-09T12:50:40.836070",
+    "last_active": "2026-03-09T12:50:40.851467",
+    "status": "ended",
+    "context": {
+      "config": {},
+      "trading_state": {
+        "daily_trades": 0,
+        "daily_pnl": 0.0,
+        "positions": []
+      },
+      "pending_confirmations": [],
+      "market_condition": "unknown",
+      "session": "second"
+    },
+    "metadata": {
+      "version": "4.3.0",
+      "user_id": "default_user"
+    }
+  },
+  "session_20260309_125040_e2d26b90": {
+    "session_id": "session_20260309_125040_e2d26b90",
+    "created_at": "2026-03-09T12:50:40.860511",
+    "last_active": "2026-03-09T12:50:40.870269",
+    "status": "ended",
+    "context": {
+      "config": {},
+      "trading_state": {
+        "daily_trades": 0,
+        "daily_pnl": 0.0,
+        "positions": []
+      },
+      "pending_confirmations": [],
+      "market_condition": "unknown",
+      "integration_test": "state_manager"
+    },
+    "metadata": {
+      "version": "4.3.0",
+      "user_id": "default_user"
+    }
+  },
+  "session_20260309_125040_26b2c55c": {
+    "session_id": "session_20260309_125040_26b2c55c",
+    "created_at": "2026-03-09T12:50:40.883759",
+    "last_active": "2026-03-09T12:50:40.898759",
+    "status": "ended",
+    "context": {
+      "config": {},
+      "trading_state": {
+        "daily_trades": 0,
+        "daily_pnl": 0.0,
+        "positions": []
+      },
+      "pending_confirmations": [],
+      "market_condition": "unknown"
+    },
+    "metadata": {
+      "version": "4.3.0",
+      "user_id": "default_user"
+    }
+  },
+  "session_20260309_125040_12760dc1": {
+    "session_id": "session_20260309_125040_12760dc1",
+    "created_at": "2026-03-09T12:50:40.909331",
+    "last_active": "2026-03-09T12:50:40.914635",
+    "status": "ended",
+    "context": {
+      "config": {},
+      "trading_state": {
+        "daily_trades": 0,
+        "daily_pnl": 0.0,
+        "positions": []
+      },
+      "pending_confirmations": [],
+      "market_condition": "unknown"
+    },
+    "metadata": {
+      "version": "4.3.0",
+      "user_id": "default_user"
+    }
+  },
+  "session_20260309_125040_2be38fa9": {
+    "session_id": "session_20260309_125040_2be38fa9",
+    "created_at": "2026-03-09T12:50:40.924089",
+    "last_active": "2026-03-09T12:50:40.931061",
+    "status": "ended",
+    "context": {
+      "config": {},
+      "trading_state": {
+        "daily_trades": 0,
+        "daily_pnl": 0.0,
+        "positions": []
+      },
+      "pending_confirmations": [],
+      "market_condition": "unknown",
+      "thread0_0": "value0",
+      "thread0_1": "value0",
+      "thread0_2": "value0",
+      "thread0_3": "value0",
+      "thread0_4": "value0",
+      "thread0_5": "value0",
+      "thread0_6": "value0",
+      "thread0_7": "value0",
+      "thread0_8": "value0",
+      "thread0_9": "value0",
+      "thread1_0": "value1",
+      "thread1_1": "value1",
+      "thread1_2": "value1",
+      "thread1_3": "value1",
+      "thread1_4": "value1",
+      "thread1_5": "value1",
+      "thread1_6": "value1",
+      "thread1_7": "value1",
+      "thread1_8": "value1",
+      "thread1_9": "value1",
+      "thread2_0": "value2",
+      "thread2_1": "value2",
+      "thread2_2": "value2",
+      "thread2_3": "value2",
+      "thread2_4": "value2",
+      "thread2_5": "value2",
+      "thread2_6": "value2",
+      "thread2_7": "value2",
+      "thread2_8": "value2",
+      "thread2_9": "value2",
+      "thread3_0": "value3",
+      "thread3_1": "value3",
+      "thread3_2": "value3",
+      "thread3_3": "value3",
+      "thread3_4": "value3",
+      "thread3_5": "value3",
+      "thread3_6": "value3",
+      "thread3_7": "value3",
+      "thread3_8": "value3",
+      "thread3_9": "value3",
+      "thread4_0": "value4",
+      "thread4_1": "value4",
+      "thread4_2": "value4",
+      "thread4_3": "value4",
+      "thread4_4": "value4",
+      "thread4_5": "value4",
+      "thread4_6": "value4",
+      "thread4_7": "value4",
+      "thread4_8": "value4",
+      "thread4_9": "value4"
+    },
+    "metadata": {
+      "version": "4.3.0",
+      "user_id": "default_user"
+    }
+  },
+  "session_20260309_125044_a6cfa1ff": {
+    "session_id": "session_20260309_125044_a6cfa1ff",
+    "created_at": "2026-03-09T12:50:44.047039",
+    "last_active": "2026-03-09T12:50:44.069439",
+    "status": "active",
+    "context": {
+      "config": {},
+      "trading_state": {
+        "daily_trades": 0,
+        "daily_pnl": 0.0,
+        "positions": []
+      },
+      "pending_confirmations": [],
+      "market_condition": "unknown",
+      "test_key": "test_value"
+    },
+    "metadata": {
+      "version": "4.3.0",
+      "user_id": "default_user"
+    }
+  },
+  "session_20260309_125130_c458c80e": {
+    "session_id": "session_20260309_125130_c458c80e",
+    "created_at": "2026-03-09T12:51:30.192319",
+    "last_active": "2026-03-09T12:51:30.198514",
+    "status": "ended",
+    "context": {
+      "config": {},
+      "trading_state": {
+        "daily_trades": 0,
+        "daily_pnl": 0.0,
+        "positions": []
+      },
+      "pending_confirmations": [],
+      "market_condition": "unknown"
+    },
+    "metadata": {
+      "version": "4.3.0",
+      "user_id": "default_user"
+    }
+  },
+  "session_20260309_125130_440c4aa5": {
+    "session_id": "session_20260309_125130_440c4aa5",
+    "created_at": "2026-03-09T12:51:30.208651",
+    "last_active": "2026-03-09T12:51:30.215035",
+    "status": "ended",
+    "context": {
+      "config": {},
+      "trading_state": {
+        "daily_trades": 0,
+        "daily_pnl": 0.0,
+        "positions": []
+      },
+      "pending_confirmations": [],
+      "market_condition": "unknown"
+    },
+    "metadata": {
+      "version": "4.3.0",
+      "user_id": "default_user"
+    }
+  },
+  "session_20260309_125130_0657d7ec": {
+    "session_id": "session_20260309_125130_0657d7ec",
+    "created_at": "2026-03-09T12:51:30.221834",
+    "last_active": "2026-03-09T12:51:30.228239",
+    "status": "ended",
+    "context": {
+      "config": {},
+      "trading_state": {
+        "daily_trades": 0,
+        "daily_pnl": 0.0,
+        "positions": []
+      },
+      "pending_confirmations": [],
+      "market_condition": "unknown"
+    },
+    "metadata": {
+      "version": "4.3.0",
+      "user_id": "default_user"
+    }
+  },
+  "session_20260309_125130_47b57144": {
+    "session_id": "session_20260309_125130_47b57144",
+    "created_at": "2026-03-09T12:51:30.238735",
+    "last_active": "2026-03-09T12:51:30.256095",
+    "status": "active",
+    "context": {
+      "config": {
+        "max_trades": 10
+      },
+      "trading_state": {
+        "daily_pnl": 1500.0
+      },
+      "pending_confirmations": [
+        "trade_001"
+      ],
+      "market_condition": "unknown"
+    },
+    "metadata": {
+      "version": "4.3.0",
+      "user_id": "default_user"
+    }
+  },
+  "session_20260309_125130_66591957": {
+    "session_id": "session_20260309_125130_66591957",
+    "created_at": "2026-03-09T12:51:30.265038",
+    "last_active": "2026-03-09T12:51:30.295692",
+    "status": "active",
+    "context": {
+      "config": {},
+      "trading_state": {
+        "daily_trades": 0,
+        "daily_pnl": 0.0,
+        "positions": []
+      },
+      "pending_confirmations": [],
+      "market_condition": "unknown",
+      "auto_restore_test": "value_123"
+    },
+    "metadata": {
+      "version": "4.3.0",
+      "user_id": "default_user"
+    }
+  },
+  "session_20260309_125130_952de9d4": {
+    "session_id": "session_20260309_125130_952de9d4",
+    "created_at": "2026-03-09T12:51:30.302487",
+    "last_active": "2026-03-09T12:51:30.309996",
+    "status": "active",
+    "context": {
+      "config": {},
+      "trading_state": {
+        "daily_trades": 0,
+        "daily_pnl": 0.0,
+        "positions": []
+      },
+      "pending_confirmations": [],
+      "market_condition": "unknown",
+      "string_key": "string_value",
+      "int_key": 42,
+      "float_key": 3.14,
+      "bool_key": true,
+      "list_key": [
+        1,
+        2,
+        3
+      ],
+      "dict_key": {
+        "nested": "value"
+      }
+    },
+    "metadata": {
+      "version": "4.3.0",
+      "user_id": "default_user"
+    }
+  },
+  "session_20260309_125130_4438277e": {
+    "session_id": "session_20260309_125130_4438277e",
+    "created_at": "2026-03-09T12:51:30.315901",
+    "last_active": "2026-03-09T12:51:30.323310",
+    "status": "active",
+    "context": {
+      "config": {},
+      "trading_state": {
+        "daily_trades": 0,
+        "daily_pnl": 0.0,
+        "positions": []
+      },
+      "pending_confirmations": [],
+      "market_condition": "unknown"
+    },
+    "metadata": {
+      "version": "4.3.0",
+      "user_id": "default_user"
+    }
+  },
+  "session_20260309_125130_1816dc9e": {
+    "session_id": "session_20260309_125130_1816dc9e",
+    "created_at": "2026-03-09T12:51:30.328919",
+    "last_active": "2026-03-09T12:51:30.337993",
+    "status": "ended",
+    "context": {
+      "config": {},
+      "trading_state": {
+        "daily_trades": 0,
+        "daily_pnl": 0.0,
+        "positions": []
+      },
+      "pending_confirmations": [],
+      "market_condition": "unknown",
+      "test": "value"
+    },
+    "metadata": {
+      "version": "4.3.0",
+      "user_id": "default_user"
+    }
+  },
+  "session_20260309_125130_49fdd850": {
+    "session_id": "session_20260309_125130_49fdd850",
+    "created_at": "2026-03-09T12:51:30.348890",
+    "last_active": "2026-03-09T12:51:30.370502",
+    "status": "active",
+    "context": {
+      "config": {},
+      "trading_state": {
+        "daily_trades": 0,
+        "daily_pnl": 0.0,
+        "positions": []
+      },
+      "pending_confirmations": [],
+      "market_condition": "unknown",
+      "session": "first"
+    },
+    "metadata": {
+      "version": "4.3.0",
+      "user_id": "default_user"
+    }
+  },
+  "session_20260309_125130_49e776c1": {
+    "session_id": "session_20260309_125130_49e776c1",
+    "created_at": "2026-03-09T12:51:30.359751",
+    "last_active": "2026-03-09T12:51:30.383589",
+    "status": "ended",
+    "context": {
+      "config": {},
+      "trading_state": {
+        "daily_trades": 0,
+        "daily_pnl": 0.0,
+        "positions": []
+      },
+      "pending_confirmations": [],
+      "market_condition": "unknown",
+      "session": "second"
+    },
+    "metadata": {
+      "version": "4.3.0",
+      "user_id": "default_user"
+    }
+  },
+  "session_20260309_125130_7862233a": {
+    "session_id": "session_20260309_125130_7862233a",
+    "created_at": "2026-03-09T12:51:30.395421",
+    "last_active": "2026-03-09T12:51:30.406147",
+    "status": "ended",
+    "context": {
+      "config": {},
+      "trading_state": {
+        "daily_trades": 0,
+        "daily_pnl": 0.0,
+        "positions": []
+      },
+      "pending_confirmations": [],
+      "market_condition": "unknown",
+      "integration_test": "state_manager"
+    },
+    "metadata": {
+      "version": "4.3.0",
+      "user_id": "default_user"
+    }
+  },
+  "session_20260309_125130_0571613e": {
+    "session_id": "session_20260309_125130_0571613e",
+    "created_at": "2026-03-09T12:51:30.417370",
+    "last_active": "2026-03-09T12:51:30.427644",
+    "status": "ended",
+    "context": {
+      "config": {},
+      "trading_state": {
+        "daily_trades": 0,
+        "daily_pnl": 0.0,
+        "positions": []
+      },
+      "pending_confirmations": [],
+      "market_condition": "unknown"
+    },
+    "metadata": {
+      "version": "4.3.0",
+      "user_id": "default_user"
+    }
+  },
+  "session_20260309_125130_1bbb2c67": {
+    "session_id": "session_20260309_125130_1bbb2c67",
+    "created_at": "2026-03-09T12:51:30.439933",
+    "last_active": "2026-03-09T12:51:30.447641",
+    "status": "ended",
+    "context": {
+      "config": {},
+      "trading_state": {
+        "daily_trades": 0,
+        "daily_pnl": 0.0,
+        "positions": []
+      },
+      "pending_confirmations": [],
+      "market_condition": "unknown"
+    },
+    "metadata": {
+      "version": "4.3.0",
+      "user_id": "default_user"
+    }
+  },
+  "session_20260309_125130_36b6ce43": {
+    "session_id": "session_20260309_125130_36b6ce43",
+    "created_at": "2026-03-09T12:51:30.458313",
+    "last_active": "2026-03-09T12:51:30.467496",
+    "status": "ended",
+    "context": {
+      "config": {},
+      "trading_state": {
+        "daily_trades": 0,
+        "daily_pnl": 0.0,
+        "positions": []
+      },
+      "pending_confirmations": [],
+      "market_condition": "unknown",
+      "thread0_0": "value0",
+      "thread0_1": "value0",
+      "thread0_2": "value0",
+      "thread0_3": "value0",
+      "thread0_4": "value0",
+      "thread0_5": "value0",
+      "thread0_6": "value0",
+      "thread0_7": "value0",
+      "thread0_8": "value0",
+      "thread0_9": "value0",
+      "thread1_0": "value1",
+      "thread1_1": "value1",
+      "thread1_2": "value1",
+      "thread1_3": "value1",
+      "thread1_4": "value1",
+      "thread1_5": "value1",
+      "thread1_6": "value1",
+      "thread1_7": "value1",
+      "thread1_8": "value1",
+      "thread1_9": "value1",
+      "thread2_0": "value2",
+      "thread2_1": "value2",
+      "thread2_2": "value2",
+      "thread2_3": "value2",
+      "thread2_4": "value2",
+      "thread2_5": "value2",
+      "thread2_6": "value2",
+      "thread2_7": "value2",
+      "thread2_8": "value2",
+      "thread2_9": "value2",
+      "thread3_0": "value3",
+      "thread3_1": "value3",
+      "thread3_2": "value3",
+      "thread3_3": "value3",
+      "thread3_4": "value3",
+      "thread3_5": "value3",
+      "thread3_6": "value3",
+      "thread3_7": "value3",
+      "thread3_8": "value3",
+      "thread3_9": "value3",
+      "thread4_0": "value4",
+      "thread4_1": "value4",
+      "thread4_2": "value4",
+      "thread4_3": "value4",
+      "thread4_4": "value4",
+      "thread4_5": "value4",
+      "thread4_6": "value4",
+      "thread4_7": "value4",
+      "thread4_8": "value4",
+      "thread4_9": "value4"
+    },
+    "metadata": {
+      "version": "4.3.0",
+      "user_id": "default_user"
+    }
+  }
+}

@@ -1,0 +1,24 @@
+[Unit]
+Description=FTSeek Risk Monitor - 2-Hour Risk Monitoring Push
+Documentation=file:///opt/ftseek/FTSeek/docs/plans/2026-03-01-ftseek-v3-refactor-plan.md
+After=network.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/ftseek/FTSeek
+Environment="PATH=/usr/local/bin:/usr/bin:/bin"
+Environment="PYTHONPATH=/opt/ftseek/FTSeek"
+Environment="API_TOKEN=${API_TOKEN}"
+Environment="DINGTALK_WEBHOOK_URL=${DINGTALK_WEBHOOK_URL}"
+Environment="DINGTALK_SECRET=${DINGTALK_SECRET}"
+ExecStart=/usr/bin/python3 /opt/ftseek/FTSeek/scripts/risk_monitor.py
+StandardOutput=append:/opt/ftseek/FTSeek/logs/risk_monitor.log
+StandardError=append:/opt/ftseek/FTSeek/logs/risk_monitor.log
+
+# 安全设置
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/opt/ftseek/FTSeek/logs /opt/ftseek/FTSeek/data
+
+[Install]
+WantedBy=multi-user.target

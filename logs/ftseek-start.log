@@ -1,0 +1,44 @@
+2026-02-24 16:48:37,584 [ftseek.main] INFO: ============================================================
+2026-02-24 16:48:37,584 [ftseek.main] INFO: FTSeek 启动中...
+2026-02-24 16:48:37,584 [ftseek.main] INFO: 交易环境: 模拟
+2026-02-24 16:48:37,584 [ftseek.main] INFO: 监控标的: ['HK.00700', 'HK.09988', 'HK.03690', 'HK.01810', 'HK.09618']
+2026-02-24 16:48:37,584 [ftseek.main] INFO: ============================================================
+2026-02-24 16:48:37,594 [ftseek.main] INFO: OpenD 已在运行
+2026-02-24 16:48:37,594 [ftseek.main] INFO: 策略已加载: price_break
+2026-02-24 16:48:38,150 | 7704 | 139847255400768 | [open_context_base.py:409] _init_connect_sync: New connect ready: conn=7431983383277698002(1) context=<futu.quote.open_quote_context.OpenQuoteContext object at 0x7f30aa5a28b0>
+2026-02-24 16:48:38,150 [ftseek.subscriber] INFO: 行情上下文已创建
+2026-02-24 16:48:38,155 [ftseek.subscriber] INFO: 订阅成功: HK.00700 -> QUOTE
+2026-02-24 16:48:38,158 [ftseek.subscriber] INFO: 订阅成功: HK.00700 -> K_1M
+2026-02-24 16:48:38,161 [ftseek.subscriber] INFO: 订阅成功: HK.09988 -> QUOTE
+2026-02-24 16:48:38,165 [ftseek.subscriber] INFO: 订阅成功: HK.09988 -> K_1M
+2026-02-24 16:48:38,168 [ftseek.subscriber] INFO: 订阅成功: HK.03690 -> QUOTE
+2026-02-24 16:48:38,171 [ftseek.subscriber] INFO: 订阅成功: HK.03690 -> K_1M
+2026-02-24 16:48:38,174 [ftseek.subscriber] INFO: 订阅成功: HK.01810 -> QUOTE
+2026-02-24 16:48:38,177 [ftseek.subscriber] INFO: 订阅成功: HK.01810 -> K_1M
+2026-02-24 16:48:38,180 [ftseek.subscriber] INFO: 订阅成功: HK.09618 -> QUOTE
+2026-02-24 16:48:38,183 [ftseek.subscriber] INFO: 订阅成功: HK.09618 -> K_1M
+2026-02-24 16:48:38,183 [ftseek.subscriber] INFO: 行情回调 handler 已设置
+2026-02-24 16:48:38,183 [ftseek.subscriber] INFO: 数据订阅已启动，等待行情推送...
+2026-02-24 16:48:38,221 [ftseek.main] INFO: API 服务已启动: http://0.0.0.0:8899
+INFO:     Started server process [7704]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+ERROR:    [Errno 98] error while attempting to bind on address ('0.0.0.0', 8899): address already in use
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+2026-02-24 16:48:38,500 [ftseek.strategy.price_break] INFO: [HK.01810] 跌破下限 50.0, 当前价 35.74
+2026-02-24 16:48:38,500 [ftseek.signal_store] INFO: 信号入库: 48f9aa4f1b6e -> HK.01810 SELL
+2026-02-24 16:48:38,500 [ftseek.notifier.dingtalk] WARNING: 钉钉 Webhook URL 未配置，跳过推送
+2026-02-24 16:48:38,500 [ftseek.subscriber] INFO: 信号已推送: 48f9aa4f1b6e -> HK.01810 SELL
+2026-02-24 16:48:38,504 [ftseek.strategy.price_break] INFO: [HK.03690] 跌破下限 380.0, 当前价 81.4
+2026-02-24 16:48:38,504 [ftseek.signal_store] INFO: 信号入库: 64224c67d646 -> HK.03690 SELL
+2026-02-24 16:48:38,504 [ftseek.notifier.dingtalk] WARNING: 钉钉 Webhook URL 未配置，跳过推送
+2026-02-24 16:48:38,504 [ftseek.subscriber] INFO: 信号已推送: 64224c67d646 -> HK.03690 SELL
+2026-02-24 16:48:38,507 [ftseek.strategy.price_break] INFO: [HK.09988] 突破上限 140.0, 当前价 148.0
+2026-02-24 16:48:38,507 [ftseek.signal_store] INFO: 信号入库: 0425d93d451b -> HK.09988 BUY
+2026-02-24 16:48:38,507 [ftseek.notifier.dingtalk] WARNING: 钉钉 Webhook URL 未配置，跳过推送
+2026-02-24 16:48:38,507 [ftseek.subscriber] INFO: 信号已推送: 0425d93d451b -> HK.09988 BUY
+2026-02-24 16:48:38,511 [ftseek.strategy.price_break] INFO: [HK.09618] 跌破下限 155.0, 当前价 106.3
+2026-02-24 16:48:38,511 [ftseek.signal_store] INFO: 信号入库: b860f92653d6 -> HK.09618 SELL
+2026-02-24 16:48:38,511 [ftseek.notifier.dingtalk] WARNING: 钉钉 Webhook URL 未配置，跳过推送
+2026-02-24 16:48:38,511 [ftseek.subscriber] INFO: 信号已推送: b860f92653d6 -> HK.09618 SELL

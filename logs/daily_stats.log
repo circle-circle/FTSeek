@@ -1,0 +1,241 @@
+2026-03-01 11:06:46,203 - ftseek.scripts.daily_stats - INFO - ==================================================
+2026-03-01 11:06:46,203 - ftseek.scripts.daily_stats - INFO - 开始执行收盘统计推送
+2026-03-01 11:06:46,205 - ftseek.storage.database - INFO - 数据库表结构初始化完成
+2026-03-01 11:06:46,206 - ftseek.storage.database - INFO - 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-01 11:06:46,213 - ftseek.risk.manager - INFO - 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-01 11:06:46,214 - ftseek.risk.manager - INFO - 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-01 11:06:46,216 - ftseek.storage.database - ERROR - 数据库操作失败：unsupported operand type(s) for +: 'NoneType' and 'NoneType'
+2026-03-01 11:06:46,216 - ftseek.reporters.daily_stats - WARNING - 获取今日统计失败：unsupported operand type(s) for +: 'NoneType' and 'NoneType'
+2026-03-01 11:06:46,217 - ftseek.storage.database - ERROR - 数据库操作失败：unsupported operand type(s) for +: 'NoneType' and 'NoneType'
+2026-03-01 11:06:46,218 - ftseek.reporters.daily_stats - WARNING - 获取本周统计失败：unsupported operand type(s) for +: 'NoneType' and 'NoneType'
+2026-03-01 11:06:46,219 - ftseek.reporters.daily_stats - ERROR - 发送收盘统计报告异常：'DingTalkNotifier' object has no attribute 'send_markdown'
+Traceback (most recent call last):
+  File "/opt/ftseek/FTSeek/app/reporters/daily_stats.py", line 307, in send_report
+    success = self.notifier.send_markdown(
+AttributeError: 'DingTalkNotifier' object has no attribute 'send_markdown'
+2026-03-01 11:06:46,221 - ftseek.scripts.daily_stats - ERROR - 收盘统计推送失败 ✗
+2026-03-01 11:07:07,057 - ftseek.scripts.daily_stats - INFO - ==================================================
+2026-03-01 11:07:07,057 - ftseek.scripts.daily_stats - INFO - 开始执行收盘统计推送
+2026-03-01 11:07:07,059 - ftseek.storage.database - INFO - 数据库表结构初始化完成
+2026-03-01 11:07:07,059 - ftseek.storage.database - INFO - 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-01 11:07:07,067 - ftseek.risk.manager - INFO - 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-01 11:07:07,068 - ftseek.risk.manager - INFO - 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-01 11:07:07,069 - ftseek.storage.database - ERROR - 数据库操作失败：unsupported operand type(s) for +: 'NoneType' and 'NoneType'
+2026-03-01 11:07:07,070 - ftseek.reporters.daily_stats - WARNING - 获取今日统计失败：unsupported operand type(s) for +: 'NoneType' and 'NoneType'
+2026-03-01 11:07:07,071 - ftseek.storage.database - ERROR - 数据库操作失败：unsupported operand type(s) for +: 'NoneType' and 'NoneType'
+2026-03-01 11:07:07,072 - ftseek.reporters.daily_stats - WARNING - 获取本周统计失败：unsupported operand type(s) for +: 'NoneType' and 'NoneType'
+2026-03-01 11:07:07,074 - ftseek.reporters.daily_stats - ERROR - 收盘统计推送失败：2026-03-01
+2026-03-01 11:07:07,074 - ftseek.scripts.daily_stats - ERROR - 收盘统计推送失败 ✗
+2026-03-01 11:07:58,850 - ftseek.scripts.daily_stats - INFO - ==================================================
+2026-03-01 11:07:58,851 - ftseek.scripts.daily_stats - INFO - 开始执行收盘统计推送
+2026-03-01 11:07:58,856 - ftseek.storage.database - INFO - 数据库表结构初始化完成
+2026-03-01 11:07:58,856 - ftseek.storage.database - INFO - 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-01 11:07:58,865 - ftseek.risk.manager - INFO - 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-01 11:07:58,866 - ftseek.risk.manager - INFO - 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-01 11:07:58,869 - ftseek.reporters.daily_stats - ERROR - 收盘统计推送失败：2026-03-01
+2026-03-01 11:07:58,870 - ftseek.scripts.daily_stats - ERROR - 收盘统计推送失败 ✗
+2026-03-01 11:08:20,222 - ftseek.scripts.daily_stats - INFO - ==================================================
+2026-03-01 11:08:20,222 - ftseek.scripts.daily_stats - INFO - 开始执行收盘统计推送
+2026-03-01 11:08:20,222 - ftseek.scripts.daily_stats - WARNING - ⚠️  DINGTALK_WEBHOOK_URL 未配置，跳过推送
+2026-03-01 11:08:20,222 - ftseek.scripts.daily_stats - INFO - 生成收盘统计预览:
+2026-03-01 11:08:20,224 - ftseek.storage.database - INFO - 数据库表结构初始化完成
+2026-03-01 11:08:20,225 - ftseek.storage.database - INFO - 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-01 11:08:20,232 - ftseek.risk.manager - INFO - 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-01 11:08:20,233 - ftseek.risk.manager - INFO - 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-01 11:09:20,707 - ftseek.scripts.daily_stats - INFO - ==================================================
+2026-03-01 11:09:20,707 - ftseek.scripts.daily_stats - INFO - 开始执行收盘统计推送
+2026-03-01 11:09:20,708 - ftseek.scripts.daily_stats - WARNING - ⚠️  DINGTALK_WEBHOOK_URL 未配置，跳过推送
+2026-03-01 11:09:20,708 - ftseek.scripts.daily_stats - INFO - 生成收盘统计预览:
+2026-03-01 11:09:20,710 - ftseek.storage.database - INFO - 数据库表结构初始化完成
+2026-03-01 11:09:20,710 - ftseek.storage.database - INFO - 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-01 11:09:20,715 - ftseek.risk.manager - INFO - 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-01 11:09:20,716 - ftseek.risk.manager - INFO - 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-02 09:55:04,968 - ftseek.scripts.daily_stats - INFO - ==================================================
+2026-03-02 09:55:04,969 - ftseek.scripts.daily_stats - INFO - 开始执行收盘统计推送
+2026-03-02 09:55:04,970 - ftseek.storage.database - INFO - 数据库表结构初始化完成
+2026-03-02 09:55:04,971 - ftseek.storage.database - INFO - 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-02 09:55:04,976 - ftseek.risk.manager - INFO - 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-02 09:55:04,976 - ftseek.risk.manager - INFO - 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-02 09:55:05,043 - ftseek.notifier.dingtalk - INFO - 钉钉收盘统计推送成功：2026-03-02
+2026-03-02 09:55:05,043 - ftseek.reporters.daily_stats - INFO - 收盘统计推送成功：2026-03-02
+2026-03-02 09:55:05,044 - ftseek.scripts.daily_stats - INFO - 收盘统计推送完成 ✓
+2026-03-02 16:30:02,457 - ftseek.scripts.daily_stats - INFO - ==================================================
+2026-03-02 16:30:02,457 - ftseek.scripts.daily_stats - INFO - ==================================================
+2026-03-02 16:30:02,458 - ftseek.scripts.daily_stats - INFO - 开始执行收盘统计推送
+2026-03-02 16:30:02,458 - ftseek.scripts.daily_stats - INFO - 开始执行收盘统计推送
+2026-03-02 16:30:02,460 - ftseek.storage.database - INFO - 数据库表结构初始化完成
+2026-03-02 16:30:02,460 - ftseek.storage.database - INFO - 数据库表结构初始化完成
+2026-03-02 16:30:02,461 - ftseek.storage.database - INFO - 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-02 16:30:02,461 - ftseek.storage.database - INFO - 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-02 16:30:02,470 - ftseek.risk.manager - INFO - 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-02 16:30:02,470 - ftseek.risk.manager - INFO - 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-02 16:30:02,470 - ftseek.risk.manager - INFO - 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-02 16:30:02,470 - ftseek.risk.manager - INFO - 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-02 16:30:02,539 - ftseek.notifier.dingtalk - INFO - 钉钉收盘统计推送成功：2026-03-02
+2026-03-02 16:30:02,539 - ftseek.notifier.dingtalk - INFO - 钉钉收盘统计推送成功：2026-03-02
+2026-03-02 16:30:02,539 - ftseek.reporters.daily_stats - INFO - 收盘统计推送成功：2026-03-02
+2026-03-02 16:30:02,539 - ftseek.reporters.daily_stats - INFO - 收盘统计推送成功：2026-03-02
+2026-03-02 16:30:02,540 - ftseek.scripts.daily_stats - INFO - 收盘统计推送完成 ✓
+2026-03-02 16:30:02,540 - ftseek.scripts.daily_stats - INFO - 收盘统计推送完成 ✓
+2026-03-03 16:30:02,978 - ftseek.scripts.daily_stats - INFO - ==================================================
+2026-03-03 16:30:02,978 - ftseek.scripts.daily_stats - INFO - ==================================================
+2026-03-03 16:30:02,980 - ftseek.scripts.daily_stats - INFO - 开始执行收盘统计推送
+2026-03-03 16:30:02,980 - ftseek.scripts.daily_stats - INFO - 开始执行收盘统计推送
+2026-03-03 16:30:02,982 - ftseek.storage.database - INFO - 数据库表结构初始化完成
+2026-03-03 16:30:02,982 - ftseek.storage.database - INFO - 数据库表结构初始化完成
+2026-03-03 16:30:02,982 - ftseek.storage.database - INFO - 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-03 16:30:02,982 - ftseek.storage.database - INFO - 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-03 16:30:02,991 - ftseek.risk.manager - INFO - 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-03 16:30:02,991 - ftseek.risk.manager - INFO - 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-03 16:30:02,992 - ftseek.risk.manager - INFO - 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-03 16:30:02,992 - ftseek.risk.manager - INFO - 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-03 16:30:03,078 - ftseek.notifier.dingtalk - INFO - 钉钉收盘统计推送成功：2026-03-03
+2026-03-03 16:30:03,078 - ftseek.notifier.dingtalk - INFO - 钉钉收盘统计推送成功：2026-03-03
+2026-03-03 16:30:03,079 - ftseek.reporters.daily_stats - INFO - 收盘统计推送成功：2026-03-03
+2026-03-03 16:30:03,079 - ftseek.reporters.daily_stats - INFO - 收盘统计推送成功：2026-03-03
+2026-03-03 16:30:03,079 - ftseek.scripts.daily_stats - INFO - 收盘统计推送完成 ✓
+2026-03-03 16:30:03,079 - ftseek.scripts.daily_stats - INFO - 收盘统计推送完成 ✓
+2026-03-04 16:30:02,340 - ftseek.scripts.daily_stats - INFO - ==================================================
+2026-03-04 16:30:02,340 - ftseek.scripts.daily_stats - INFO - ==================================================
+2026-03-04 16:30:02,342 - ftseek.scripts.daily_stats - INFO - 开始执行收盘统计推送
+2026-03-04 16:30:02,342 - ftseek.scripts.daily_stats - INFO - 开始执行收盘统计推送
+2026-03-04 16:30:02,344 - ftseek.storage.database - INFO - 数据库表结构初始化完成
+2026-03-04 16:30:02,344 - ftseek.storage.database - INFO - 数据库表结构初始化完成
+2026-03-04 16:30:02,344 - ftseek.storage.database - INFO - 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-04 16:30:02,344 - ftseek.storage.database - INFO - 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-04 16:30:02,353 - ftseek.risk.manager - INFO - 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-04 16:30:02,353 - ftseek.risk.manager - INFO - 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-04 16:30:02,354 - ftseek.risk.manager - INFO - 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-04 16:30:02,354 - ftseek.risk.manager - INFO - 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-04 16:30:02,436 - ftseek.notifier.dingtalk - INFO - 钉钉收盘统计推送成功：2026-03-04
+2026-03-04 16:30:02,436 - ftseek.notifier.dingtalk - INFO - 钉钉收盘统计推送成功：2026-03-04
+2026-03-04 16:30:02,437 - ftseek.reporters.daily_stats - INFO - 收盘统计推送成功：2026-03-04
+2026-03-04 16:30:02,437 - ftseek.reporters.daily_stats - INFO - 收盘统计推送成功：2026-03-04
+2026-03-04 16:30:02,437 - ftseek.scripts.daily_stats - INFO - 收盘统计推送完成 ✓
+2026-03-04 16:30:02,437 - ftseek.scripts.daily_stats - INFO - 收盘统计推送完成 ✓
+2026-03-05 16:30:02,780 - ftseek.scripts.daily_stats - INFO - ==================================================
+2026-03-05 16:30:02,780 - ftseek.scripts.daily_stats - INFO - ==================================================
+2026-03-05 16:30:02,781 - ftseek.scripts.daily_stats - INFO - 开始执行收盘统计推送
+2026-03-05 16:30:02,781 - ftseek.scripts.daily_stats - INFO - 开始执行收盘统计推送
+2026-03-05 16:30:02,783 - ftseek.storage.database - INFO - 数据库表结构初始化完成
+2026-03-05 16:30:02,783 - ftseek.storage.database - INFO - 数据库表结构初始化完成
+2026-03-05 16:30:02,783 - ftseek.storage.database - INFO - 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-05 16:30:02,783 - ftseek.storage.database - INFO - 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-05 16:30:02,791 - ftseek.risk.manager - INFO - 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-05 16:30:02,791 - ftseek.risk.manager - INFO - 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-05 16:30:02,792 - ftseek.risk.manager - INFO - 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-05 16:30:02,792 - ftseek.risk.manager - INFO - 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-05 16:30:02,874 - ftseek.notifier.dingtalk - INFO - 钉钉收盘统计推送成功：2026-03-05
+2026-03-05 16:30:02,874 - ftseek.notifier.dingtalk - INFO - 钉钉收盘统计推送成功：2026-03-05
+2026-03-05 16:30:02,874 - ftseek.reporters.daily_stats - INFO - 收盘统计推送成功：2026-03-05
+2026-03-05 16:30:02,874 - ftseek.reporters.daily_stats - INFO - 收盘统计推送成功：2026-03-05
+2026-03-05 16:30:02,874 - ftseek.scripts.daily_stats - INFO - 收盘统计推送完成 ✓
+2026-03-05 16:30:02,874 - ftseek.scripts.daily_stats - INFO - 收盘统计推送完成 ✓
+2026-03-06 16:30:02,210 - ftseek.scripts.daily_stats - INFO - ==================================================
+2026-03-06 16:30:02,210 - ftseek.scripts.daily_stats - INFO - ==================================================
+2026-03-06 16:30:02,221 - ftseek.scripts.daily_stats - INFO - 开始执行收盘统计推送
+2026-03-06 16:30:02,221 - ftseek.scripts.daily_stats - INFO - 开始执行收盘统计推送
+2026-03-06 16:30:02,225 - ftseek.storage.database - INFO - 数据库表结构初始化完成
+2026-03-06 16:30:02,225 - ftseek.storage.database - INFO - 数据库表结构初始化完成
+2026-03-06 16:30:02,225 - ftseek.storage.database - INFO - 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-06 16:30:02,225 - ftseek.storage.database - INFO - 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-06 16:30:02,247 - ftseek.risk.manager - INFO - 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-06 16:30:02,247 - ftseek.risk.manager - INFO - 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-06 16:30:02,247 - ftseek.risk.manager - INFO - 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-06 16:30:02,247 - ftseek.risk.manager - INFO - 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-06 16:30:02,338 - ftseek.notifier.dingtalk - INFO - 钉钉收盘统计推送成功：2026-03-06
+2026-03-06 16:30:02,338 - ftseek.notifier.dingtalk - INFO - 钉钉收盘统计推送成功：2026-03-06
+2026-03-06 16:30:02,338 - ftseek.reporters.daily_stats - INFO - 收盘统计推送成功：2026-03-06
+2026-03-06 16:30:02,338 - ftseek.reporters.daily_stats - INFO - 收盘统计推送成功：2026-03-06
+2026-03-06 16:30:02,338 - ftseek.scripts.daily_stats - INFO - 收盘统计推送完成 ✓
+2026-03-06 16:30:02,338 - ftseek.scripts.daily_stats - INFO - 收盘统计推送完成 ✓
+2026-03-09 16:30:02,755 - ftseek.scripts.daily_stats - INFO - ==================================================
+2026-03-09 16:30:02,755 - ftseek.scripts.daily_stats - INFO - ==================================================
+2026-03-09 16:30:02,756 - ftseek.scripts.daily_stats - INFO - 开始执行收盘统计推送
+2026-03-09 16:30:02,756 - ftseek.scripts.daily_stats - INFO - 开始执行收盘统计推送
+2026-03-09 16:30:02,758 - ftseek.storage.database - INFO - 数据库表结构初始化完成
+2026-03-09 16:30:02,758 - ftseek.storage.database - INFO - 数据库表结构初始化完成
+2026-03-09 16:30:02,759 - ftseek.storage.database - INFO - 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-09 16:30:02,759 - ftseek.storage.database - INFO - 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-09 16:30:02,766 - ftseek.risk.manager - INFO - 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-09 16:30:02,766 - ftseek.risk.manager - INFO - 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-09 16:30:02,766 - ftseek.risk.manager - INFO - 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-09 16:30:02,766 - ftseek.risk.manager - INFO - 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-09 16:30:02,851 - ftseek.notifier.dingtalk - INFO - 钉钉收盘统计推送成功：2026-03-09
+2026-03-09 16:30:02,851 - ftseek.notifier.dingtalk - INFO - 钉钉收盘统计推送成功：2026-03-09
+2026-03-09 16:30:02,851 - ftseek.reporters.daily_stats - INFO - 收盘统计推送成功：2026-03-09
+2026-03-09 16:30:02,851 - ftseek.reporters.daily_stats - INFO - 收盘统计推送成功：2026-03-09
+2026-03-09 16:30:02,851 - ftseek.scripts.daily_stats - INFO - 收盘统计推送完成 ✓
+2026-03-09 16:30:02,851 - ftseek.scripts.daily_stats - INFO - 收盘统计推送完成 ✓
+2026-03-10 16:30:02,958 - ftseek.scripts.daily_stats - INFO - ==================================================
+2026-03-10 16:30:02,958 - ftseek.scripts.daily_stats - INFO - ==================================================
+2026-03-10 16:30:02,960 - ftseek.scripts.daily_stats - INFO - 开始执行收盘统计推送
+2026-03-10 16:30:02,960 - ftseek.scripts.daily_stats - INFO - 开始执行收盘统计推送
+2026-03-10 16:30:02,963 - ftseek.storage.database - INFO - 数据库表结构初始化完成
+2026-03-10 16:30:02,963 - ftseek.storage.database - INFO - 数据库表结构初始化完成
+2026-03-10 16:30:02,963 - ftseek.storage.database - INFO - 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-10 16:30:02,963 - ftseek.storage.database - INFO - 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-10 16:30:02,971 - ftseek.risk.manager - INFO - 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-10 16:30:02,971 - ftseek.risk.manager - INFO - 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-10 16:30:02,971 - ftseek.risk.manager - INFO - 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-10 16:30:02,971 - ftseek.risk.manager - INFO - 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-10 16:30:03,062 - ftseek.notifier.dingtalk - INFO - 钉钉收盘统计推送成功：2026-03-10
+2026-03-10 16:30:03,062 - ftseek.notifier.dingtalk - INFO - 钉钉收盘统计推送成功：2026-03-10
+2026-03-10 16:30:03,062 - ftseek.reporters.daily_stats - INFO - 收盘统计推送成功：2026-03-10
+2026-03-10 16:30:03,062 - ftseek.reporters.daily_stats - INFO - 收盘统计推送成功：2026-03-10
+2026-03-10 16:30:03,062 - ftseek.scripts.daily_stats - INFO - 收盘统计推送完成 ✓
+2026-03-10 16:30:03,062 - ftseek.scripts.daily_stats - INFO - 收盘统计推送完成 ✓
+2026-03-11 16:30:02,490 - ftseek.scripts.daily_stats - INFO - ==================================================
+2026-03-11 16:30:02,490 - ftseek.scripts.daily_stats - INFO - ==================================================
+2026-03-11 16:30:02,492 - ftseek.scripts.daily_stats - INFO - 开始执行收盘统计推送
+2026-03-11 16:30:02,492 - ftseek.scripts.daily_stats - INFO - 开始执行收盘统计推送
+2026-03-11 16:30:02,494 - ftseek.storage.database - INFO - 数据库表结构初始化完成
+2026-03-11 16:30:02,494 - ftseek.storage.database - INFO - 数据库表结构初始化完成
+2026-03-11 16:30:02,494 - ftseek.storage.database - INFO - 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-11 16:30:02,494 - ftseek.storage.database - INFO - 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-11 16:30:02,503 - ftseek.risk.manager - INFO - 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-11 16:30:02,503 - ftseek.risk.manager - INFO - 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-11 16:30:02,503 - ftseek.risk.manager - INFO - 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-11 16:30:02,503 - ftseek.risk.manager - INFO - 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-11 16:30:02,579 - ftseek.notifier.dingtalk - INFO - 钉钉收盘统计推送成功：2026-03-11
+2026-03-11 16:30:02,579 - ftseek.notifier.dingtalk - INFO - 钉钉收盘统计推送成功：2026-03-11
+2026-03-11 16:30:02,580 - ftseek.reporters.daily_stats - INFO - 收盘统计推送成功：2026-03-11
+2026-03-11 16:30:02,580 - ftseek.reporters.daily_stats - INFO - 收盘统计推送成功：2026-03-11
+2026-03-11 16:30:02,580 - ftseek.scripts.daily_stats - INFO - 收盘统计推送完成 ✓
+2026-03-11 16:30:02,580 - ftseek.scripts.daily_stats - INFO - 收盘统计推送完成 ✓
+2026-03-12 16:30:02,684 - ftseek.scripts.daily_stats - INFO - ==================================================
+2026-03-12 16:30:02,684 - ftseek.scripts.daily_stats - INFO - ==================================================
+2026-03-12 16:30:02,698 - ftseek.scripts.daily_stats - INFO - 开始执行收盘统计推送
+2026-03-12 16:30:02,698 - ftseek.scripts.daily_stats - INFO - 开始执行收盘统计推送
+2026-03-12 16:30:02,701 - ftseek.storage.database - INFO - 数据库表结构初始化完成
+2026-03-12 16:30:02,701 - ftseek.storage.database - INFO - 数据库表结构初始化完成
+2026-03-12 16:30:02,702 - ftseek.storage.database - INFO - 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-12 16:30:02,702 - ftseek.storage.database - INFO - 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-12 16:30:02,709 - ftseek.risk.manager - INFO - 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-12 16:30:02,709 - ftseek.risk.manager - INFO - 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-12 16:30:02,709 - ftseek.risk.manager - INFO - 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-12 16:30:02,709 - ftseek.risk.manager - INFO - 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-12 16:30:02,802 - ftseek.notifier.dingtalk - INFO - 钉钉收盘统计推送成功：2026-03-12
+2026-03-12 16:30:02,802 - ftseek.notifier.dingtalk - INFO - 钉钉收盘统计推送成功：2026-03-12
+2026-03-12 16:30:02,802 - ftseek.reporters.daily_stats - INFO - 收盘统计推送成功：2026-03-12
+2026-03-12 16:30:02,802 - ftseek.reporters.daily_stats - INFO - 收盘统计推送成功：2026-03-12
+2026-03-12 16:30:02,802 - ftseek.scripts.daily_stats - INFO - 收盘统计推送完成 ✓
+2026-03-12 16:30:02,802 - ftseek.scripts.daily_stats - INFO - 收盘统计推送完成 ✓
+2026-03-13 16:30:02,790 - ftseek.scripts.daily_stats - INFO - ==================================================
+2026-03-13 16:30:02,790 - ftseek.scripts.daily_stats - INFO - ==================================================
+2026-03-13 16:30:02,792 - ftseek.scripts.daily_stats - INFO - 开始执行收盘统计推送
+2026-03-13 16:30:02,792 - ftseek.scripts.daily_stats - INFO - 开始执行收盘统计推送
+2026-03-13 16:30:02,796 - ftseek.storage.database - INFO - 数据库表结构初始化完成
+2026-03-13 16:30:02,796 - ftseek.storage.database - INFO - 数据库表结构初始化完成
+2026-03-13 16:30:02,797 - ftseek.storage.database - INFO - 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-13 16:30:02,797 - ftseek.storage.database - INFO - 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-13 16:30:02,843 - ftseek.risk.manager - INFO - 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-13 16:30:02,843 - ftseek.risk.manager - INFO - 风控配置已加载：/opt/ftseek/FTSeek/config/risk_config.yaml
+2026-03-13 16:30:02,843 - ftseek.risk.manager - INFO - 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-13 16:30:02,843 - ftseek.risk.manager - INFO - 风控管理器已初始化 | 模式=paper | 资金=1,000,000
+2026-03-13 16:30:02,926 - ftseek.notifier.dingtalk - INFO - 钉钉收盘统计推送成功：2026-03-13
+2026-03-13 16:30:02,926 - ftseek.notifier.dingtalk - INFO - 钉钉收盘统计推送成功：2026-03-13
+2026-03-13 16:30:02,926 - ftseek.reporters.daily_stats - INFO - 收盘统计推送成功：2026-03-13
+2026-03-13 16:30:02,926 - ftseek.reporters.daily_stats - INFO - 收盘统计推送成功：2026-03-13
+2026-03-13 16:30:02,926 - ftseek.scripts.daily_stats - INFO - 收盘统计推送完成 ✓
+2026-03-13 16:30:02,926 - ftseek.scripts.daily_stats - INFO - 收盘统计推送完成 ✓

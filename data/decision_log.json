@@ -1,0 +1,97 @@
+{
+  "version": "4.3.0",
+  "last_updated": "2026-03-09T14:45:27.979544",
+  "entry_count": 11,
+  "entries": [
+    {
+      "id": "9fa80b4e-38b1-4f64-80c4-610c4e3a4b32",
+      "timestamp": "2026-03-09T14:45:27.899734",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260309_144527_2f6aa137",
+      "data": {}
+    },
+    {
+      "id": "cc0a4658-b1b6-4a36-985b-66cb7b3035f5",
+      "timestamp": "2026-03-09T14:45:27.903801",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260309_144527_f288ecfd",
+      "data": {}
+    },
+    {
+      "id": "ef2f3e05-36a1-4265-8ea7-af652a04ef16",
+      "timestamp": "2026-03-09T14:45:27.910324",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260309_144527_06bc1dce",
+      "data": {}
+    },
+    {
+      "id": "be29fc3f-7c8f-4efd-b49b-dc83a32233bd",
+      "timestamp": "2026-03-09T14:45:27.935099",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260309_144527_2ad2df2f",
+      "data": {}
+    },
+    {
+      "id": "456a8bb7-bace-4e87-b9b7-8ac09977f68b",
+      "timestamp": "2026-03-09T14:45:27.945740",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260309_144527_42c4e367",
+      "data": {}
+    },
+    {
+      "id": "0d469b3f-b4f1-4205-b329-c1ce3ecff54b",
+      "timestamp": "2026-03-09T14:45:27.949869",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260309_144527_ead53612",
+      "data": {}
+    },
+    {
+      "id": "a9eee0be-1af1-40c6-a152-86d4c4c89973",
+      "timestamp": "2026-03-09T14:45:27.956714",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260309_144527_2f92ba25",
+      "data": {}
+    },
+    {
+      "id": "e9b6cd87-621e-4aad-9975-09e6dd891861",
+      "timestamp": "2026-03-09T14:45:27.960424",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260309_144527_16d645a1",
+      "data": {}
+    },
+    {
+      "id": "e7d43359-3e07-4b78-b3f8-e881f577ebb5",
+      "timestamp": "2026-03-09T14:45:27.967907",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260309_144527_09802797",
+      "data": {}
+    },
+    {
+      "id": "a772267d-ee40-4f7b-9f18-00eff9e4f302",
+      "timestamp": "2026-03-09T14:45:27.975689",
+      "type": "config_change",
+      "key": "test.key",
+      "old_value": null,
+      "new_value": "value",
+      "reason": ""
+    },
+    {
+      "id": "e89d23c3-2c73-4826-b74b-41967b34a811",
+      "timestamp": "2026-03-09T14:45:27.979511",
+      "type": "config_change",
+      "key": "test.key",
+      "old_value": null,
+      "new_value": "value",
+      "reason": ""
+    }
+  ]
+}

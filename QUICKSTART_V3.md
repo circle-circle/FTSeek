@@ -156,6 +156,24 @@ python3 scripts/generate_weekly_report.py
 python3 scripts/generate_monthly_report.py
 ```
 
+### 新闻相关
+
+```bash
+# 测试新闻源
+python3 scripts/test_news_sources.py
+
+# 手动运行新闻汇总
+python3 scripts/news_digest.py
+
+# 查看新闻推送日志
+tail -f logs/news_digest.log
+
+# 运行新闻相关测试
+python3 tests/test_news_sources.py
+python3 tests/test_news_classifier.py
+python3 tests/test_push_enhancement.py
+```
+
 ### 监控相关
 
 ```bash
@@ -168,6 +186,47 @@ tail -f logs/strategy_signals.log
 # 查看交易日志
 tail -f logs/trades.log
 ```
+
+## 📰 新闻增强功能
+
+FTSeek V3.0 新增了多源新闻采集和智能推送功能。
+
+### 功能特性
+
+- **多源新闻抓取**: 支持新浪财经、腾讯财经、央视新闻、路透社、港交所、东方财富网
+- **智能分类**: 自动将新闻分类为宏观经济、行业政策、公司经营、地缘政治、自然灾害
+- **影响评估**: 评估新闻对股票的影响程度和情绪评分
+- **定时推送**: 交易日每小时推送新闻汇总
+
+### 配置新闻推送
+
+```bash
+# 确保钉钉推送已配置
+export DINGTALK_WEBHOOK_URL=你的 webhook
+export DINGTALK_SECRET=你的加签密钥
+
+# 手动测试新闻汇总
+cd /opt/ftseek/FTSeek
+export $(cat .env | grep -v '^#' | xargs)
+python3 scripts/news_digest.py
+```
+
+### 查看定时任务
+
+```bash
+# 查看新闻汇总定时任务
+crontab -l | grep news_digest
+
+# 输出示例:
+# 0 10-15 * * 1-5 cd /opt/ftseek/FTSeek && export $(cat .env | grep -v '^#' | xargs) && python3 scripts/news_digest.py >> logs/news_digest.log 2>&1
+```
+
+### 更多文档
+
+- [新闻增强功能详解](docs/NEWS_ENHANCEMENT.md)
+- [推送格式增强](docs/PUSH_ENHANCEMENT.md)
+
+---
 
 ## 📱 钉钉推送配置
 
@@ -272,6 +331,8 @@ export API_TOKEN=$(python3 -c 'import secrets; print(secrets.token_hex(32))')
 - [升级指南](docs/UPGRADE_TO_V3.md) - 从 V2 升级到 V3
 - [风控配置](docs/RISK_CONFIG.md) - 风控系统详解
 - [策略配置](docs/STRATEGY_CONFIG.md) - 三策略引擎详解
+- [新闻增强功能](docs/NEWS_ENHANCEMENT.md) - 多源新闻采集与推送
+- [推送格式增强](docs/PUSH_ENHANCEMENT.md) - 信号和新闻推送格式
 - [README](README.md) - 项目总览
 
 ## 🎯 下一步
@@ -285,4 +346,4 @@ export API_TOKEN=$(python3 -c 'import secrets; print(secrets.token_hex(32))')
 
 ---
 
-*最后更新：2026-03-01 | 版本：V3.0.0*
+*最后更新：2026-03-01 14:55 | 版本：V3.0.0*

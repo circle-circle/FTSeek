@@ -1,0 +1,46 @@
+#!/usr/bin/expect -f
+# OpenD 启动 + 自动输入验证码
+# 用法: ./start_opend.exp <验证码>
+
+set timeout 120
+set code [lindex $argv 0]
+
+if {$code eq ""} {
+    puts "用法: ./start_opend.exp <验证码>"
+    exit 1
+}
+
+cd /opt/ftseek/Futu_OpenD_9.6.5618_Centos7/Futu_OpenD_9.6.5618_Centos7
+
+spawn ./FutuOpenD
+
+# 等待出现验证码输入提示
+expect {
+    -re "input_phone_verify_code.*code=" {
+        sleep 2
+        send "input_phone_verify_code -code=$code\r"
+        puts "\n>>> 验证码已发送: $code"
+    }
+    timeout {
+        puts "\n>>> 超时，未检测到验证码提示"
+        exit 1
+    }
+}
+
+# 等待登录结果
+expect {
+    -re "Ready|login_succ|ProgramStatusType_Ready" {
+        puts "\n>>> OpenD 登录成功!"
+    }
+    -re "NeedPhoneVerifyCode|req_phone_verify_code" {
+        puts "\n>>> 验证码可能已过期或错误，请重新获取"
+        exit 1
+    }
+    timeout {
+        puts "\n>>> 等待登录结果超时"
+    }
+}
+
+# 保持运行
+set timeout -1
+expect eof

@@ -1,0 +1,91 @@
+# FTSeek V4 配置文件
+# version: 4.3.0
+
+version: 4.3.0
+environment: production
+
+# ============================================================================
+# 交易配置
+# ============================================================================
+trading:
+  mode: paper  # paper (模拟盘) | real (实盘)
+  max_daily_trades: 10
+  max_single_position: 0.20  # 单股最大仓位 20%
+  max_total_position: 0.60   # 总仓位最大 60%
+  max_daily_loss: 0.03       # 日亏损限制 3%
+  default_position_size: 0.10
+
+# ============================================================================
+# 通知配置
+# ============================================================================
+notification:
+  dingtalk:
+    enabled: true
+    mode: enterprise  # enterprise (企业应用) | webhook (机器人)
+    timeout: 600      # 确认超时 10 分钟
+    webhook_url: "${DINGTALK_WEBHOOK_URL}"
+    secret: "${DINGTALK_SECRET}"
+    app_key: "${DINGTALK_APP_KEY}"
+    app_secret: "${DINGTALK_APP_SECRET}"
+    agent_id: "${DINGTALK_AGENT_ID}"
+
+# ============================================================================
+# 功能开关
+# ============================================================================
+features:
+  four_step_confirmation: true  # 四步确认
+  auto_confirm: true            # 超时自动确认
+  smart_push: true              # 智能推送决策
+  state_persistence: true       # 状态持久化
+  decision_logging: true        # 决策日志
+  session_management: true      # 会话管理
+
+# ============================================================================
+# 四步确认配置
+# ============================================================================
+four_step:
+  min_signal_score: 0.50        # Step 1 最小信号评分
+  min_confidence: 0.60          # Step 2 最小置信度
+  manual_confirm_min_confidence: 0.75  # 人工确认最小置信度
+  auto_confirm_timeout: 600     # 自动确认超时 (秒)
+
+# ============================================================================
+# 智能推送配置
+# ============================================================================
+smart_push:
+  manual_confirm_min_confidence: 0.75
+  manual_confirm_min_score: 0.70
+  momentum_threshold: 0.70
+  pattern_threshold: 0.65
+  auto_execute_min_confidence: 0.60
+
+# ============================================================================
+# 状态持久化配置
+# ============================================================================
+persistence:
+  state_file: data/state_snapshot.json
+  decision_log_file: data/decision_log.json
+  sessions_dir: data/sessions
+  auto_snapshot_interval: 300   # 自动快照间隔 (秒)
+  max_decision_log_entries: 10000
+  session_expiry_hours: 24
+
+# ============================================================================
+# 富途 OpenD 配置
+# ============================================================================
+futu:
+  host: 127.0.0.1
+  port: 11111
+  trade_env: 1  # 1=模拟盘，0=实盘
+  login_account: "${FUTU_LOGIN_ACCOUNT}"
+  trade_password_md5: "${FUTU_TRD_PWD_MD5}"
+
+# ============================================================================
+# 日志配置
+# ============================================================================
+logging:
+  level: INFO
+  format: "%(asctime)s [%(name)s] %(levelname)s: %(message)s"
+  file: logs/ftseek.log
+  max_size_mb: 100
+  backup_count: 10

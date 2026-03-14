@@ -1,0 +1,813 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FTSeek 专业量化监控终端</title>
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        :root {
+            --bg-primary: #0a0e1a;
+            --bg-secondary: #111827;
+            --bg-card: #1a1f2e;
+            --border-color: #2d3748;
+            --text-primary: #f7fafc;
+            --text-secondary: #a0aec0;
+            --accent-blue: #3b82f6;
+            --accent-green: #10b981;
+            --accent-red: #ef4444;
+            --accent-yellow: #f59e0b;
+            --accent-purple: #8b5cf6;
+        }
+        body {
+            font-family: 'SF Pro Display', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+        }
+        header {
+            background: var(--bg-secondary);
+            border-bottom: 1px solid var(--border-color);
+            padding: 12px 30px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+        .logo {
+            font-size: 1.5em;
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .live-indicator {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 12px;
+            background: rgba(16, 185, 129, 0.1);
+            border: 1px solid rgba(16, 185, 129, 0.3);
+            border-radius: 20px;
+            color: var(--accent-green);
+            font-size: 0.85em;
+        }
+        .live-dot {
+            width: 8px;
+            height: 8px;
+            background: var(--accent-green);
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.4; }
+        }
+        .container {
+            max-width: 1920px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .kpi-grid {
+            display: grid;
+            grid-template-columns: repeat(6, 1fr);
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+        .kpi-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 18px;
+            transition: all 0.3s ease;
+        }
+        .kpi-card:hover {
+            border-color: var(--accent-blue);
+            transform: translateY(-2px);
+        }
+        .kpi-label {
+            font-size: 0.8em;
+            color: var(--text-secondary);
+            margin-bottom: 8px;
+            text-transform: uppercase;
+        }
+        .kpi-value {
+            font-size: 1.6em;
+            font-weight: 700;
+            margin-bottom: 6px;
+        }
+        .kpi-benchmark {
+            font-size: 0.75em;
+            color: var(--text-secondary);
+        }
+        .kpi-good { color: var(--accent-green); }
+        .kpi-warning { color: var(--accent-yellow); }
+        .kpi-bad { color: var(--accent-red); }
+        .card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+        .card-title {
+            font-size: 1.1em;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .card-badge {
+            padding: 4px 10px;
+            border-radius: 6px;
+            font-size: 0.75em;
+            font-weight: 600;
+            background: rgba(59, 130, 246, 0.1);
+            color: var(--accent-blue);
+        }
+        .chart-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+        .chart-container {
+            height: 280px;
+        }
+        .strategy-list {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+        .strategy-item {
+            display: grid;
+            grid-template-columns: 100px 1fr 80px 80px;
+            gap: 15px;
+            align-items: center;
+            padding: 12px;
+            background: var(--bg-secondary);
+            border-radius: 8px;
+        }
+        .strategy-bar {
+            height: 8px;
+            background: var(--bg-secondary);
+            border-radius: 4px;
+            overflow: hidden;
+        }
+        .strategy-bar-fill {
+            height: 100%;
+            border-radius: 4px;
+            transition: width 0.5s ease;
+        }
+        .strategy-metric {
+            font-size: 0.85em;
+            text-align: right;
+        }
+        .regime-display {
+            text-align: center;
+            padding: 20px;
+        }
+        .regime-type {
+            font-size: 1.8em;
+            font-weight: 700;
+            margin-bottom: 10px;
+            background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .regime-indicators {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+            margin-top: 20px;
+        }
+        .regime-indicator-label {
+            font-size: 0.8em;
+            color: var(--text-secondary);
+            margin-bottom: 5px;
+        }
+        .regime-indicator-bar {
+            height: 6px;
+            background: var(--bg-secondary);
+            border-radius: 3px;
+            overflow: hidden;
+        }
+        .regime-indicator-fill {
+            height: 100%;
+            background: linear-gradient(90deg, var(--accent-blue), var(--accent-purple));
+            border-radius: 3px;
+        }
+        .risk-metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(5, 1fr);
+            gap: 15px;
+        }
+        .risk-metric-box {
+            text-align: center;
+            padding: 15px;
+            background: var(--bg-secondary);
+            border-radius: 10px;
+        }
+        .risk-metric-label {
+            font-size: 0.75em;
+            color: var(--text-secondary);
+            margin-bottom: 8px;
+            text-transform: uppercase;
+        }
+        .risk-metric-value {
+            font-size: 1.4em;
+            font-weight: 700;
+            margin-bottom: 5px;
+        }
+        .risk-metric-status {
+            font-size: 0.7em;
+            padding: 3px 8px;
+            border-radius: 4px;
+            display: inline-block;
+        }
+        .status-good {
+            background: rgba(16, 185, 129, 0.15);
+            color: var(--accent-green);
+        }
+        .positions-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.9em;
+        }
+        .positions-table th {
+            text-align: left;
+            padding: 12px 8px;
+            color: var(--text-secondary);
+            font-weight: 600;
+            font-size: 0.8em;
+            text-transform: uppercase;
+            border-bottom: 1px solid var(--border-color);
+        }
+        .positions-table td {
+            padding: 14px 8px;
+            border-bottom: 1px solid rgba(45, 55, 72, 0.5);
+        }
+        .positions-table tr:hover {
+            background: rgba(59, 130, 246, 0.05);
+        }
+        .risk-badge {
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-size: 0.75em;
+            font-weight: 600;
+        }
+        .risk-low { background: rgba(16, 185, 129, 0.15); color: var(--accent-green); }
+        .risk-medium { background: rgba(245, 158, 11, 0.15); color: var(--accent-yellow); }
+        .risk-high { background: rgba(239, 68, 68, 0.15); color: var(--accent-red); }
+        .signal-feed {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .signal-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 12px;
+            background: var(--bg-secondary);
+            border-radius: 6px;
+            font-size: 0.85em;
+        }
+        .signal-action {
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 0.75em;
+            font-weight: 600;
+        }
+        .signal-buy { background: rgba(16, 185, 129, 0.15); color: var(--accent-green); }
+        .signal-sell { background: rgba(239, 68, 68, 0.15); color: var(--accent-red); }
+        .strength-bar {
+            width: 60px;
+            height: 4px;
+            background: var(--bg-card);
+            border-radius: 2px;
+            overflow: hidden;
+        }
+        .strength-fill {
+            height: 100%;
+            background: linear-gradient(90deg, var(--accent-yellow), var(--accent-green));
+            border-radius: 2px;
+        }
+        .loading {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 200px;
+            color: var(--text-secondary);
+        }
+        .loading-spinner {
+            width: 40px;
+            height: 40px;
+            border: 3px solid var(--border-color);
+            border-top-color: var(--accent-blue);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-right: 15px;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        @media (max-width: 1600px) {
+            .kpi-grid { grid-template-columns: repeat(3, 1fr); }
+            .risk-metrics-grid { grid-template-columns: repeat(3, 1fr); }
+        }
+        @media (max-width: 1024px) {
+            .kpi-grid { grid-template-columns: repeat(2, 1fr); }
+            .chart-row { grid-template-columns: 1fr; }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="logo">🤖 FTSeek 专业量化监控终端</div>
+        <div style="display: flex; align-items: center; gap: 20px;">
+            <div class="live-indicator">
+                <span class="live-dot"></span>
+                <span>LIVE</span>
+            </div>
+            <span id="current-time">--:--:--</span>
+        </div>
+    </header>
+
+    <div class="container">
+        <!-- 核心 KPI -->
+        <div class="kpi-grid" id="kpi-grid">
+            <div class="kpi-card">
+                <div class="kpi-label">总收益率</div>
+                <div class="kpi-value kpi-good" id="kpi-total-return">--</div>
+                <div class="kpi-benchmark">基准 +18.2%</div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-label">夏普比率</div>
+                <div class="kpi-value" id="kpi-sharpe">--</div>
+                <div class="kpi-benchmark">>1.5 为优</div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-label">索提诺比率</div>
+                <div class="kpi-value" id="kpi-sortino">--</div>
+                <div class="kpi-benchmark">>2.0 为优</div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-label">最大回撤</div>
+                <div class="kpi-value" id="kpi-max-dd">--</div>
+                <div class="kpi-benchmark"><15% 为优</div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-label">VaR 95%</div>
+                <div class="kpi-value" id="kpi-var">--</div>
+                <div class="kpi-benchmark"><3% 为优</div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-label">盈利因子</div>
+                <div class="kpi-value" id="kpi-profit-factor">--</div>
+                <div class="kpi-benchmark">>1.5 为优</div>
+            </div>
+        </div>
+
+        <!-- 资金曲线 & 回撤曲线 -->
+        <div class="card">
+            <div class="card-header">
+                <div class="card-title">📈 资金曲线 & 回撤分析</div>
+                <div class="card-badge">近 90 天</div>
+            </div>
+            <div class="chart-row">
+                <div class="chart-container" id="equityChart"></div>
+                <div class="chart-container" id="drawdownChart"></div>
+            </div>
+        </div>
+
+        <!-- 策略表现 & 市场状态 -->
+        <div class="chart-row">
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-title">📊 策略表现对比 (MTD)</div>
+                    <div class="card-badge">本月</div>
+                </div>
+                <div class="strategy-list" id="strategy-list">
+                    <div class="loading">
+                        <div class="loading-spinner"></div>
+                        <span>加载策略数据...</span>
+                    </div>
+                </div>
+            </div>
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-title">🌊 市场状态识别</div>
+                    <div class="card-badge">实时</div>
+                </div>
+                <div class="regime-display" id="regime-display">
+                    <div class="loading">
+                        <div class="loading-spinner"></div>
+                        <span>加载市场状态...</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 持仓风险 & 组合风险 -->
+        <div class="chart-row">
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-title">💼 持仓风险</div>
+                    <div class="card-badge">4 持仓</div>
+                </div>
+                <table class="positions-table">
+                    <thead>
+                        <tr><th>代码</th><th>市值</th><th>盈亏</th><th>止损距</th><th>风险</th></tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td class="position-code">HK.00700</td>
+                            <td>¥456K</td>
+                            <td class="position-pnl kpi-good">+8.2%</td>
+                            <td>2.1%</td>
+                            <td><span class="risk-badge risk-low">低</span></td>
+                        </tr>
+                        <tr>
+                            <td class="position-code">HK.09988</td>
+                            <td>¥234K</td>
+                            <td class="position-pnl kpi-bad">-3.4%</td>
+                            <td class="kpi-warning">1.5%</td>
+                            <td><span class="risk-badge risk-medium">中</span></td>
+                        </tr>
+                        <tr>
+                            <td class="position-code">US.AAPL</td>
+                            <td>¥345K</td>
+                            <td class="position-pnl kpi-good">+12.5%</td>
+                            <td>4.2%</td>
+                            <td><span class="risk-badge risk-low">低</span></td>
+                        </tr>
+                        <tr>
+                            <td class="position-code">US.TSLA</td>
+                            <td>¥189K</td>
+                            <td class="position-pnl kpi-bad">-8.1%</td>
+                            <td class="kpi-bad">0.8%</td>
+                            <td><span class="risk-badge risk-high">高</span></td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-title">⚠️ 组合风险指标</div>
+                    <div class="card-badge">实时</div>
+                </div>
+                <div class="risk-metrics-grid" id="risk-metrics">
+                    <div class="risk-metric-box">
+                        <div class="risk-metric-label">CVaR 95%</div>
+                        <div class="risk-metric-value kpi-good" id="risk-cvar">--</div>
+                        <div class="risk-metric-status status-good"><5% 优</div>
+                    </div>
+                    <div class="risk-metric-box">
+                        <div class="risk-metric-label">组合 Beta</div>
+                        <div class="risk-metric-value" id="risk-beta">--</div>
+                        <div class="risk-metric-status status-good"><1.5 优</div>
+                    </div>
+                    <div class="risk-metric-box">
+                        <div class="risk-metric-label">集中度</div>
+                        <div class="risk-metric-value" id="risk-concentration">--</div>
+                        <div class="risk-metric-status status-good"><50% 优</div>
+                    </div>
+                    <div class="risk-metric-box">
+                        <div class="risk-metric-label">相关性</div>
+                        <div class="risk-metric-value" id="risk-correlation">--</div>
+                        <div class="risk-metric-status" style="background:rgba(245,158,11,0.15);color:#f59e0b;">>0.7 警戒</div>
+                    </div>
+                    <div class="risk-metric-box">
+                        <div class="risk-metric-label">流动性</div>
+                        <div class="risk-metric-value kpi-good" id="risk-liquidity">良好</div>
+                        <div class="risk-metric-status status-good">>20% 优</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 实时信号流 -->
+        <div class="card">
+            <div class="card-header">
+                <div class="card-title">⚡ 实时信号流</div>
+                <div class="card-badge">最近 10 条</div>
+            </div>
+            <div class="signal-feed" id="signal-feed">
+                <div class="loading">
+                    <div class="loading-spinner"></div>
+                    <span>加载信号...</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const TOKEN = '5a8f072c2cba9db1579dd829214a38112fdcddefe089d4ba58e05742097dd272';
+        const API_BASE = '/api/risk';
+        let equityChart, drawdownChart;
+
+        // 更新时间
+        function updateTime() {
+            const now = new Date();
+            document.getElementById('current-time').textContent = now.toLocaleTimeString('zh-CN', { hour12: false });
+        }
+        setInterval(updateTime, 1000);
+        updateTime();
+
+        // 加载仪表板数据
+        async function loadDashboard() {
+            try {
+                const response = await fetch(`${API_BASE}/dashboard?token=${TOKEN}`);
+                const data = await response.json();
+                
+                if (data.status === 'ok') {
+                    updateKPIs(data.performance);
+                    updateStrategyComparison(data.strategies);
+                    updateMarketRegime(data.market_regime);
+                    updatePortfolioRisk(data.portfolio_risk);
+                }
+            } catch (error) {
+                console.error('加载仪表板失败:', error);
+            }
+        }
+
+        // 更新 KPI
+        function updateKPIs(performance) {
+            if (!performance) return;
+            
+            const kpiMap = {
+                'total_return': { id: 'kpi-total-return', class: performance.total_return >= 0 ? 'kpi-good' : 'kpi-bad' },
+                'sharpe_ratio': { id: 'kpi-sharpe' },
+                'sortino_ratio': { id: 'kpi-sortino' },
+                'max_drawdown': { id: 'kpi-max-dd', class: Math.abs(performance.max_drawdown) < 0.15 ? 'kpi-good' : 'kpi-bad' },
+                'var_95': { id: 'kpi-var', class: performance.var_95 < 0.03 ? 'kpi-good' : 'kpi-warning' },
+                'profit_factor': { id: 'kpi-profit-factor', class: performance.profit_factor >= 1.5 ? 'kpi-good' : 'kpi-warning' }
+            };
+            
+            for (const [key, config] of Object.entries(kpiMap)) {
+                const el = document.getElementById(config.id);
+                if (el) {
+                    let value = performance[key];
+                    if (typeof value === 'string') {
+                        el.textContent = value;
+                    } else if (key.includes('return') || key.includes('drawdown') || key.includes('var')) {
+                        el.textContent = (value * 100).toFixed(2) + '%';
+                        if (config.class) el.className = `kpi-value ${config.class}`;
+                    } else {
+                        el.textContent = value.toFixed(2);
+                    }
+                }
+            }
+        }
+
+        // 更新策略对比
+        function updateStrategyComparison(strategies) {
+            const container = document.getElementById('strategy-list');
+            if (!container || !strategies) return;
+            
+            const html = strategies.map(s => {
+                const width = Math.min(s.return * 300, 100);
+                const sharpeClass = s.sharpe >= 1.5 ? 'kpi-good' : s.sharpe >= 1.0 ? 'kpi-warning' : 'kpi-bad';
+                const returnClass = s.return >= 0.1 ? 'kpi-good' : s.return >= 0.05 ? 'kpi-warning' : 'kpi-bad';
+                
+                return `
+                    <div class="strategy-item">
+                        <div class="strategy-name">${s.name}</div>
+                        <div class="strategy-bar">
+                            <div class="strategy-bar-fill" style="width: ${width}%; background: linear-gradient(90deg, #3b82f6, ${s.sharpe >= 1.5 ? '#10b981' : '#ef4444'});"></div>
+                        </div>
+                        <div class="strategy-metric ${returnClass}">${(s.return * 100).toFixed(1)}%</div>
+                        <div class="strategy-metric ${sharpeClass}">Sharpe ${s.sharpe.toFixed(2)}</div>
+                    </div>
+                `;
+            }).join('');
+            
+            container.innerHTML = html;
+        }
+
+        // 更新市场状态
+        function updateMarketRegime(regime) {
+            const container = document.getElementById('regime-display');
+            if (!container || !regime) return;
+            
+            const typeText = regime.type.replace(/_/g, ' ');
+            const confidence = (regime.confidence * 100).toFixed(0);
+            
+            container.innerHTML = `
+                <div class="regime-type">${typeText}</div>
+                <div class="regime-confidence">置信度 ${confidence}%</div>
+                <div class="regime-indicators">
+                    <div class="regime-indicator">
+                        <div class="regime-indicator-label">ADX 趋势强度</div>
+                        <div class="regime-indicator-bar">
+                            <div class="regime-indicator-fill" style="width: ${Math.min(regime.indicators.adx / 50 * 100, 100)}%"></div>
+                        </div>
+                        <div class="regime-indicator-value">${regime.indicators.adx}</div>
+                    </div>
+                    <div class="regime-indicator">
+                        <div class="regime-indicator-label">价格/MA 比率</div>
+                        <div class="regime-indicator-bar">
+                            <div class="regime-indicator-fill" style="width: ${Math.min((regime.indicators.price_vs_ma - 0.9) / 0.2 * 100, 100)}%"></div>
+                        </div>
+                        <div class="regime-indicator-value">${regime.indicators.price_vs_ma.toFixed(2)}</div>
+                    </div>
+                    <div class="regime-indicator">
+                        <div class="regime-indicator-label">ATR 波动率</div>
+                        <div class="regime-indicator-bar">
+                            <div class="regime-indicator-fill" style="width: ${Math.min(regime.indicators.atr_percent / 0.05 * 100, 100)}%"></div>
+                        </div>
+                        <div class="regime-indicator-value">${(regime.indicators.atr_percent * 100).toFixed(2)}%</div>
+                    </div>
+                    <div class="regime-indicator">
+                        <div class="regime-indicator-label">布林带宽度</div>
+                        <div class="regime-indicator-bar">
+                            <div class="regime-indicator-fill" style="width: ${Math.min(regime.indicators.bollinger_width / 0.3 * 100, 100)}%"></div>
+                        </div>
+                        <div class="regime-indicator-value">${regime.indicators.bollinger_width.toFixed(2)}</div>
+                    </div>
+                </div>
+            `;
+        }
+
+        // 更新组合风险
+        function updatePortfolioRisk(risk) {
+            if (!risk) return;
+            
+            const el = document.getElementById('risk-cvar');
+            if (el) el.textContent = risk.cvar_95 || '--';
+            
+            const betaEl = document.getElementById('risk-beta');
+            if (betaEl) betaEl.textContent = risk.beta || '--';
+        }
+
+        // 加载资金曲线
+        async function loadEquityCurve() {
+            try {
+                const response = await fetch(`${API_BASE}/metrics/equity_curve?days=90&token=${TOKEN}`);
+                const data = await response.json();
+                
+                if (data.status === 'ok') {
+                    renderEquityChart(data.data);
+                }
+            } catch (error) {
+                console.error('加载资金曲线失败:', error);
+            }
+        }
+
+        // 加载回撤曲线
+        async function loadDrawdownCurve() {
+            try {
+                const response = await fetch(`${API_BASE}/metrics/drawdown_curve?days=90&token=${TOKEN}`);
+                const data = await response.json();
+                
+                if (data.status === 'ok') {
+                    renderDrawdownChart(data.data);
+                }
+            } catch (error) {
+                console.error('加载回撤曲线失败:', error);
+            }
+        }
+
+        // 渲染资金曲线
+        function renderEquityChart(data) {
+            if (!equityChart) {
+                equityChart = echarts.init(document.getElementById('equityChart'));
+            }
+            
+            const option = {
+                backgroundColor: 'transparent',
+                title: { text: '资金曲线', textStyle: { color: '#a0aec0', fontSize: 12 } },
+                tooltip: { trigger: 'axis' },
+                grid: { top: 40, right: 20, bottom: 30, left: 50 },
+                xAxis: {
+                    type: 'category',
+                    data: data.map(item => item.date),
+                    axisLine: { lineStyle: { color: '#2d3748' } },
+                    axisLabel: { color: '#a0aec0' }
+                },
+                yAxis: {
+                    type: 'value',
+                    axisLine: { lineStyle: { color: '#2d3748' } },
+                    axisLabel: { color: '#a0aec0' },
+                    splitLine: { lineStyle: { color: '#2d3748', type: 'dashed' } }
+                },
+                series: [{
+                    type: 'line',
+                    data: data.map(item => item.value),
+                    smooth: true,
+                    symbol: 'none',
+                    lineStyle: { color: '#10b981', width: 2 },
+                    areaStyle: {
+                        color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                            { offset: 0, color: 'rgba(16, 185, 129, 0.3)' },
+                            { offset: 1, color: 'rgba(16, 185, 129, 0.05)' }
+                        ])
+                    }
+                }]
+            };
+            
+            equityChart.setOption(option);
+        }
+
+        // 渲染回撤曲线
+        function renderDrawdownChart(data) {
+            if (!drawdownChart) {
+                drawdownChart = echarts.init(document.getElementById('drawdownChart'));
+            }
+            
+            const option = {
+                backgroundColor: 'transparent',
+                title: { text: '回撤曲线', textStyle: { color: '#a0aec0', fontSize: 12 } },
+                tooltip: { trigger: 'axis' },
+                grid: { top: 40, right: 20, bottom: 30, left: 50 },
+                xAxis: {
+                    type: 'category',
+                    data: data.map(item => item.date),
+                    axisLine: { lineStyle: { color: '#2d3748' } },
+                    axisLabel: { color: '#a0aec0' }
+                },
+                yAxis: {
+                    type: 'value',
+                    axisLine: { lineStyle: { color: '#2d3748' } },
+                    axisLabel: { color: '#a0aec0' },
+                    splitLine: { lineStyle: { color: '#2d3748', type: 'dashed' } }
+                },
+                series: [{
+                    type: 'line',
+                    data: data.map(item => item.drawdown * 100),
+                    smooth: true,
+                    symbol: 'none',
+                    lineStyle: { color: '#ef4444', width: 2 },
+                    areaStyle: {
+                        color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                            { offset: 0, color: 'rgba(239, 68, 68, 0.3)' },
+                            { offset: 1, color: 'rgba(239, 68, 68, 0.05)' }
+                        ])
+                    }
+                }]
+            };
+            
+            drawdownChart.setOption(option);
+        }
+
+        // 加载模拟信号
+        function loadSignals() {
+            const signals = [
+                { code: 'HK.00700', action: 'BUY', strength: 0.85 },
+                { code: 'HK.09988', action: 'SELL', strength: 0.72 },
+                { code: 'US.AAPL', action: 'BUY', strength: 0.91 },
+                { code: 'US.TSLA', action: 'SELL', strength: 0.68 },
+                { code: 'HK.09992', action: 'BUY', strength: 0.77 },
+            ];
+            
+            const container = document.getElementById('signal-feed');
+            const html = signals.map(s => `
+                <div class="signal-item">
+                    <div class="signal-left">
+                        <span class="signal-code">${s.code}</span>
+                        <span class="signal-action ${s.action === 'BUY' ? 'signal-buy' : 'signal-sell'}">${s.action}</span>
+                    </div>
+                    <div class="signal-strength">
+                        <div class="strength-bar">
+                            <div class="strength-fill" style="width: ${s.strength * 100}%"></div>
+                        </div>
+                        <span>${s.strength.toFixed(2)}</span>
+                    </div>
+                </div>
+            `).join('');
+            
+            container.innerHTML = html;
+        }
+
+        // 自动刷新
+        function startAutoRefresh() {
+            setInterval(() => {
+                loadDashboard();
+                loadEquityCurve();
+                loadDrawdownCurve();
+            }, 5000); // 5 秒刷新
+        }
+
+        // 初始化
+        document.addEventListener('DOMContentLoaded', () => {
+            loadDashboard();
+            loadEquityCurve();
+            loadDrawdownCurve();
+            loadSignals();
+            startAutoRefresh();
+            
+            window.addEventListener('resize', () => {
+                if (equityChart) equityChart.resize();
+                if (drawdownChart) drawdownChart.resize();
+            });
+        });
+    </script>
+</body>
+</html>

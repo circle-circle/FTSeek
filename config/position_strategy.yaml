@@ -1,0 +1,32 @@
+# FTSeek 持仓管理策略配置
+
+# 仓位管理
+position:
+  initial_ratio: 0.50        # 首次开仓比例 (50%)
+  max_position_ratio: 0.20   # 单股最大仓位 (20%)
+  total_max_ratio: 0.80      # 总仓位上限 (80%)
+
+# 金字塔加仓
+pyramid:
+  enabled: true
+  level1:
+    price_increase: 0.05     # 价格上涨 5%
+    ratio: 0.30              # 加仓 30%
+    min_confidence: 0.70     # 最小置信度 70%
+  level2:
+    price_increase: 0.10     # 价格上涨 10%
+    ratio: 0.20              # 加仓 20%
+    min_confidence: 0.70
+
+# 出仓策略
+exit:
+  stop_loss: -0.05           # 止损 -5%
+  take_profit: 0.15          # 止盈 +15%
+  take_profit_ratio: 0.50    # 止盈平仓比例 (50%)
+
+# 交易间隔
+cooldown:
+  hours: 4                   # 冷却时间 4 小时
+  max_trades_per_day: 3      # 单股日交易上限
+  min_confidence: 0.60       # 最小信号置信度
+  add_position_confidence: 0.70  # 加仓最小置信度

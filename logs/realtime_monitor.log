@@ -1,0 +1,19 @@
+2026-03-02 13:22:46,163 - ftseek.storage.database - INFO - 数据库表结构初始化完成
+2026-03-02 13:22:46,163 - ftseek.storage.database - INFO - 数据库已初始化：/opt/ftseek/FTSeek/data/ftseek.db
+2026-03-02 13:22:46,163 - ftseek.realtime - INFO - ✓ 均线交叉策略已加载
+2026-03-02 13:22:46,164 - ftseek.realtime - INFO - ✓ RSI 反弹策略已加载
+2026-03-02 13:22:46,164 - ftseek.realtime - INFO - ✓ MACD 策略已加载
+2026-03-02 13:22:46,164 - ftseek.realtime - INFO - 共加载 3 个策略
+2026-03-02 13:22:46,164 - ftseek.realtime - INFO - ============================================================
+2026-03-02 13:22:46,164 - ftseek.realtime - INFO - 🎯 FTSeek 实时行情监控启动
+2026-03-02 13:22:46,164 - ftseek.realtime - INFO - ============================================================
+2026-03-02 13:22:46,164 - ftseek.realtime - INFO - 关注股票：5 只
+2026-03-02 13:22:46,164 - ftseek.realtime - INFO - 策略数量：3 个
+2026-03-02 13:22:46,165 - ftseek.realtime - INFO - 交易模式：模拟
+2026-03-02 13:22:46,165 - ftseek.realtime - INFO - 推送冷却：300秒
+2026-03-02 13:22:46,165 - ftseek.realtime - INFO - ============================================================
+2026-03-02 13:22:47,102 | 254656 | 139751347960704 | [open_context_base.py:409] _init_connect_sync: New connect ready: conn=7434105906421452622(1) context=<futu.quote.open_quote_context.OpenQuoteContext object at 0x7f1a56ad7ef0>
+2026-03-02 13:22:47,102 - ftseek.realtime - INFO - 行情上下文已创建 (127.0.0.1:11111)
+2026-03-02 13:22:47,102 - ftseek.realtime - INFO - 开始订阅 5 只股票的 1 分钟 K 线
+2026-03-02 13:22:47,117 - ftseek.realtime - INFO - ✓ 成功订阅 5 只股票
+2026-03-02 13:22:47,117 - ftseek.realtime - INFO - 行情订阅已启动，等待数据...

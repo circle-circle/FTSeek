@@ -1,0 +1,142 @@
+# FTSeek v3.0 策略配置 (双向交易版)
+# 更新时间：2026-03-01 12:30
+# 配置：方案 B + 双向交易 + 保守风控
+
+strategies:
+  # 融合策略 v2 - 主力策略
+  fusion_v2:
+    enabled: true
+    weight: 0.5
+    direction: both           # both/long_only/short_only
+    parameters:
+      technical_weight: 0.6
+      sentiment_weight: 0.4
+      
+      # 买入阈值 (做多)
+      buy_threshold: 0.60     # 综合评分≥0.60 买入
+      rsi_oversold: 30        # RSI<30 超卖
+      macd_bullish: true      # MACD 金叉或 DIF>0
+      volume_min: 1.2         # 成交量≥1.2 倍均量
+      sentiment_min: 0.3      # 情绪评分≥0.3 利好
+      
+      # 卖出阈值 (做空)
+      sell_threshold: 0.40    # 综合评分≤0.40 卖出/做空
+      rsi_overbought: 70      # RSI>70 超买
+      macd_bearish: true      # MACD 死叉或 DIF<0
+      sentiment_max: -0.3     # 情绪评分≤-0.3 利空
+      
+      # 置信度
+      min_confidence: 0.50    # 最低置信度 50%
+      threshold_strong: 0.75  # 强烈推荐
+      threshold_recommended: 0.60  # 推荐
+    
+    # 技术指标参数
+    indicators:
+      rsi_period: 14
+      macd_fast: 12
+      macd_slow: 26
+      macd_signal: 9
+      ma_fast: 10
+      ma_slow: 30
+      bb_period: 20
+      bb_std: 2.0
+  
+  # 均线交叉策略
+  ma_cross:
+    enabled: true
+    weight: 0.3
+    direction: both
+    parameters:
+      fast_ma: 5
+      slow_ma: 20
+      volume_filter: 1.5      # 成交量≥1.5 倍均量
+      min_confidence: 0.50
+      
+      # 做多：MA5 上穿 MA20
+      # 做空：MA5 下穿 MA20
+  
+  # RSI 反弹策略
+  rsi_rebound:
+    enabled: true
+    weight: 0.2
+    direction: both
+    parameters:
+      rsi_period: 14
+      oversold: 25            # RSI<25 做多
+      overbought: 75          # RSI>75 做空
+      max_holding_days: 3
+      min_confidence: 0.50
+
+# 全局配置
+global:
+  default_quantity: 100       # 默认交易数量
+  signal_expire_seconds: 900  # 信号有效期 15 分钟
+  max_daily_signals: 20       # 每日最大信号数
+  per_stock_daily_limit: 3    # 单只股票每日信号限制
+  
+  # 做空配置
+  short_selling:
+    enabled: true             # 开启做空功能
+    allowed_stocks:           # 可做空股票列表 (富途支持)
+      - HK.00700              # 腾讯控股
+      - HK.09988              # 阿里巴巴
+      - HK.09992              # 泡泡玛特
+      - HK.03690              # 美团
+      - HK.09618              # 京东
+      - HK.02015              # 理想汽车
+      - HK.09868              # 小鹏汽车
+      - HK.09888              # 百度
+    margin_ratio: 0.50        # 保证金比例 50%
+    interest_rate: 0.10       # 融券年利率 10%
+
+# 风控配置 (保守)
+risk_management:
+  # 仓位控制
+  max_single_position: 0.20   # 单股仓位≤20%
+  max_total_position: 0.60    # 总仓位≤60%
+  max_daily_trades: 8         # 单日交易≤8 次
+  
+  # 止损止盈
+  stop_loss: 0.05             # 止损 5%
+  take_profit: 0.10           # 止盈 10%
+  trailing_stop: true         # 启用移动止盈
+  trailing_percent: 0.03      # 移动止盈 3%
+  
+  # 账户风控
+  max_daily_loss: 0.03        # 日亏损≤3%
+  max_weekly_loss: 0.08       # 周亏损≤8%
+  max_drawdown: 0.15          # 总回撤≤15%
+  consecutive_loss_limit: 5   # 连续亏损 5 次暂停
+  
+  # 策略风控
+  strategy_min_trades: 20     # 至少 20 次交易评估
+  strategy_min_winrate: 0.40  # 胜率<40% 停用
+  
+  # 做空专项风控
+  short_specific:
+    max_short_position: 0.30  # 做空仓位≤30%
+    max_short_single: 0.15    # 单只做空≤15%
+    forced_cover_loss: 0.08   # 做空止损 8%
+    margin_call_ratio: 0.30   # 保证金预警 30%
+
+# 收益目标 (方案 B)
+targets:
+  daily_target: 0.015         # 日收益目标 1.5%
+  weekly_target: 0.08         # 周收益目标 8%
+  monthly_target: 0.35        # 月收益目标 35%
+  max_drawdown: 0.15          # 最大回撤 15%
+
+# 推送配置
+notifications:
+  dingtalk_enabled: true
+  signal_push: true           # 买卖信号推送
+  risk_alert: true            # 风险预警
+  daily_stats: true           # 收盘统计
+  weekly_report: true         # 周报 (周六)
+  monthly_report: true        # 月报
+
+# 数据库配置
+database:
+  path: data/ftseek.db
+  backup_enabled: true
+  backup_time: "17:30"

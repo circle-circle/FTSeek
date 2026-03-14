@@ -1,0 +1,88 @@
+{
+  "timestamp": "2026-03-09T08:17:23.451702",
+  "total": 16,
+  "passed": 15,
+  "failed": 1,
+  "items": [
+    {
+      "name": "OpenD 服务",
+      "success": true,
+      "msg": "active"
+    },
+    {
+      "name": "回调服务器",
+      "success": true,
+      "msg": "healthy"
+    },
+    {
+      "name": "OpenD 端口 (11111)",
+      "success": true,
+      "msg": "正常"
+    },
+    {
+      "name": "回调端口 (8901)",
+      "success": true,
+      "msg": "正常"
+    },
+    {
+      "name": "SDK 导入",
+      "success": true,
+      "msg": ""
+    },
+    {
+      "name": "行情连接",
+      "success": true,
+      "msg": ""
+    },
+    {
+      "name": "股票报价",
+      "success": true,
+      "msg": "腾讯：519.00港元"
+    },
+    {
+      "name": "交易连接",
+      "success": true,
+      "msg": ""
+    },
+    {
+      "name": "交易解锁",
+      "success": false,
+      "msg": "交易密码输入错误，您还有9次机会"
+    },
+    {
+      "name": "强制模拟盘",
+      "success": true,
+      "msg": "已启用"
+    },
+    {
+      "name": "实盘锁定",
+      "success": true,
+      "msg": "已锁定"
+    },
+    {
+      "name": "交易环境",
+      "success": true,
+      "msg": "模拟盘"
+    },
+    {
+      "name": "钉钉 Webhook",
+      "success": true,
+      "msg": "已配置"
+    },
+    {
+      "name": "钉钉 Secret",
+      "success": true,
+      "msg": "已配置"
+    },
+    {
+      "name": "推送测试",
+      "success": true,
+      "msg": "成功"
+    },
+    {
+      "name": "交易时间",
+      "success": true,
+      "msg": "休市但可提前准备"
+    }
+  ]
+}

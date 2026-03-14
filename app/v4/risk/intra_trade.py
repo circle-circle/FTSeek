@@ -465,3 +465,75 @@ def get_intra_trade_risk() -> IntraTradeRisk:
     if intra_trade_risk is None:
         intra_trade_risk = IntraTradeRisk()
     return intra_trade_risk
+
+
+# ============================================================
+#  隔夜持仓确认集成
+# ============================================================
+
+def check_overnight_hold(
+    code: str,
+    position: Dict[str, Any],
+    market_data: Dict[str, Any],
+    news_sentiment: Dict[str, Any],
+    notifier: Any = None
+) -> Optional[str]:
+    """
+    检查并推送隔夜持仓确认
+    
+    Args:
+        code: 股票代码
+        position: 持仓信息
+        market_data: 市场数据
+        news_sentiment: 新闻情绪
+        notifier: 钉钉通知器
+        
+    Returns:
+        用户决策 ("hold"/"close"/None)
+    """
+    from app.v4.risk.overnight_hold import get_overnight_hold_evaluator
+    from app.v4.risk.overnight_hold_action import get_overnight_hold_card
+    
+    evaluator = get_overnight_hold_evaluator()
+    card_generator = get_overnight_hold_card()
+    
+    # 评估是否适合隔夜
+    request = evaluator.evaluate(code, position, market_data, news_sentiment)
+    
+    if not request:
+        return None
+    
+    # 生成卡片
+    card = card_generator.generate_action_card(request.to_dict())
+    text_backup = card_generator.generate_text_backup(request.to_dict())
+    
+    # 发送推送
+    if notifier:
+        # 优先发送交互式卡片
+        result = notifier.send(card, msg_type="interactive")
+        if not result.get("success"):
+            # 降级为文本
+            notifier.send(text_backup, msg_type="markdown")
+    
+    # 等待回复 (轮询检查)
+    import time
+    wait_start = time.time()
+    while time.time() - wait_start < 600:  # 10 分钟
+        # 检查用户回复
+        expired = evaluator.check_expired()
+        for req in expired:
+            if req.code == code:
+                return "auto_close"  # 自动平仓
+        
+        # 检查待处理请求
+        if code in evaluator.pending_requests:
+            req = evaluator.pending_requests[code]
+            if req.confirmed:
+                if req.user_response == "保留":
+                    return "hold"
+                elif req.user_response == "平仓":
+                    return "close"
+        
+        time.sleep(30)  # 每 30 秒检查一次
+    
+    return "auto_close"  # 超时自动平仓

@@ -1,0 +1,66 @@
+[Unit]
+Description=FTSeek 富途自动化交易系统
+After=network.target
+Wants=opend.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/ftseek/FTSeek
+
+# ============================================================
+#  🔐 安全配置：环境变量
+# ============================================================
+# 请修改以下配置后使用：
+# 1. 生成 API Token: python3 -c "import secrets; print(secrets.token_hex(32))"
+# 2. 编辑此文件，填入你的 Token 和钉钉配置
+# 3. 重新加载：systemctl daemon-reload && systemctl restart ftseek
+
+# API 鉴权 Token (必须修改)
+Environment="API_TOKEN=5a8f072c2cba9db1579dd829214a38112fdcddefe089d4ba58e05742097dd272"
+
+# 钉钉推送配置 (请修改为你的配置)
+Environment="DINGTALK_WEBHOOK_URL=https://oapi.dingtalk.com/robot/send?access_token=cddea8919223640d4f3bd59e507373cae0df476df5f541fcca5c8921eab73121"
+Environment="DINGTALK_SECRET=SEC177f5321e91e689a1a2134e4414ae49e7b7f2cddc63775613effbf371f388f78"
+
+# 交易环境：0=真实，1=模拟
+Environment="TRADE_ENV=1"
+
+# 外部访问地址 (修改为你的公网 IP)
+Environment="CALLBACK_EXTERNAL_URL=http://aitz.cc:8899"
+
+# ============================================================
+#  可选配置 (通常无需修改)
+# ============================================================
+Environment="OPEND_HOST=127.0.0.1"
+Environment="OPEND_PORT=11111"
+Environment="CALLBACK_HOST=0.0.0.0"
+Environment="CALLBACK_PORT=8899"
+Environment="LOG_LEVEL=INFO"
+Environment="FTSEEK_DEV_MODE=false"
+
+# 监控标的
+Environment="WATCH_LIST_HK=[\"HK.00700\",\"HK.09988\",\"HK.09992\"]"
+Environment="WATCH_LIST_US=[\"US.AAPL\",\"US.TSLA\",\"US.NVDA\",\"US.MSFT\",\"US.AMZN\"]"
+
+# 执行命令
+ExecStart=/usr/bin/python3.8 -m app.main
+Restart=on-failure
+RestartSec=10
+
+# 日志输出
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ftseek
+
+# 安全增强
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/opt/ftseek/FTSeek/logs /opt/ftseek/FTSeek/data
+
+# 资源限制
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
