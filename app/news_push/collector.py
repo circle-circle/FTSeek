@@ -591,3 +591,9 @@ if __name__ == "__main__":
         print(f"  情绪：{news.sentiment_score:+.2f}")
     
     collector.close()
+
+
+# 别名函数
+def get_news_collector(config: Dict = None) -> NewsCollector:
+    """获取新闻采集器单例 (别名)"""
+    return get_collector(config)
