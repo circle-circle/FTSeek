@@ -23,6 +23,14 @@ RSS_FEEDS = {
         "https://feeds.a.dj.com/rss/RSSMarketsMain.xml",
     ],
     
+    # 港股/大中华财经 (最高优先级)
+    "hk_finance": [
+        "https://www.hkex.com.hk/chi/news/rss/announcement.xml",  # 港交所公告
+        "http://stock.10jqka.com.cn/roll_news/rss/",  # 同花顺滚动新闻
+        "https://finance.qq.com/rss/stocknews.xml",  # 腾讯财经
+        "http://app.huaxue100.com/rss/stock.xml",  # 东方财富
+    ],
+    
     # 快讯类 (最高优先级)
     "flash": [
         "https://www.cls.cn/api/telegraph",  # 财联社电报
@@ -46,12 +54,16 @@ RSS_FEEDS = {
 SOURCE_PRIORITY = {
     "cls": 1,           # 财联社 (最高)
     "blockbeats": 2,    # BlockBeats
+    "hkex": 1,          # 港交所 (最高)
+    "10jqka": 2,        # 同花顺
+    "tencent": 2,       # 腾讯财经
+    "eastmoney": 2,     # 东方财富
     "wallstreetcn": 3,  # 华尔街见闻
     "sina": 4,          # 新浪财经
     "cnbc": 5,          # CNBC
     "sec": 2,           # SEC 公告
     "fed": 3,           # 美联储
-    "hkex": 2,          # 港交所
+    "hkex_news": 2,     # 港交所新闻
 }
 
 # 分类开关
@@ -90,15 +102,21 @@ PUSH_KEYWORDS = {
 # 股票代码监控列表
 WATCH_STOCKS = json.loads(os.getenv("NEWS_WATCH_STOCKS", """
 [
-    {"code": "HK.00700", "name": "腾讯控股", "enabled": true},
-    {"code": "HK.09988", "name": "阿里巴巴", "enabled": true},
-    {"code": "HK.09992", "name": "泡泡玛特", "enabled": true},
-    {"code": "US.AAPL", "name": "苹果", "enabled": true},
-    {"code": "US.TSLA", "name": "特斯拉", "enabled": true},
-    {"code": "US.NVDA", "name": "英伟达", "enabled": true},
-    {"code": "US.MSFT", "name": "微软", "enabled": true}
+    {"code": "HK.00700", "name": "腾讯控股", "enabled": true, "aliases": ["腾讯", "00700", "Tencent", "马化腾", "微信"]},
+    {"code": "HK.09988", "name": "阿里巴巴", "enabled": true, "aliases": ["阿里", "09988", "Alibaba", "马云", "淘宝"]},
+    {"code": "HK.09992", "name": "泡泡玛特", "enabled": true, "aliases": ["泡泡玛特", "09992", "POP MART"]},
+    {"code": "US.AAPL", "name": "苹果", "enabled": true, "aliases": ["苹果", "AAPL", "iPhone", "Mac"]},
+    {"code": "US.TSLA", "name": "特斯拉", "enabled": true, "aliases": ["特斯拉", "TSLA", "Elon Musk", "马斯克"]},
+    {"code": "US.NVDA", "name": "英伟达", "enabled": true, "aliases": ["英伟达", "NVDA", "NVIDIA", "黄仁勋"]},
+    {"code": "US.MSFT", "name": "微软", "enabled": true, "aliases": ["微软", "MSFT", "Microsoft", "Windows", "Office"]}
 ]
 """))
+
+# 股票别名映射 (用于新闻匹配)
+STOCK_ALIASES = {}
+for stock in WATCH_STOCKS:
+    if stock.get('enabled', True):
+        STOCK_ALIASES[stock['code']] = stock.get('aliases', []) + [stock['name'], stock['code']]
 
 # 股票代码别名映射 (用于新闻内容匹配)
 STOCK_ALIASES = {
