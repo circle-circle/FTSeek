@@ -62,8 +62,13 @@ class AIService:
             from .providers.bailian import BailianProvider
             return BailianProvider()
         elif name == 'qwen':
-            from .providers.qwen import QwenProvider
-            return QwenProvider()
+            try:
+                from .providers.qwen import QwenProvider
+                return QwenProvider()
+            except ImportError:
+                logger.warning(f"Provider '{name}' 未实现，回退到 bailian")
+                from .providers.bailian import BailianProvider
+                return BailianProvider()
         else:
             from .providers.bailian import BailianProvider
             return BailianProvider()

@@ -90,10 +90,8 @@ class BailianProvider(BaseProvider):
         
         if response.success:
             try:
-                # 解析分数
                 score_str = response.data['text'].strip()
                 score = float(score_str)
-                # 确保在 [-1, 1] 范围
                 score = max(-1.0, min(1.0, score))
                 response.data['sentiment_score'] = score
             except:
@@ -107,7 +105,6 @@ class BailianProvider(BaseProvider):
         response = self.chat(prompt, max_tokens=300)
         
         if response.success:
-            # 解析预测结果
             response.data['prediction'] = self._parse_prediction(response.data['text'])
         
         return response
@@ -170,5 +167,4 @@ class BailianProvider(BaseProvider):
     
     def _calculate_cost(self, tokens: int) -> float:
         """计算成本 (参考定价)"""
-        # Qwen-plus: ¥0.01/1K tokens
         return tokens * 0.01 / 1000

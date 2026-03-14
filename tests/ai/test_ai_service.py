@@ -8,7 +8,6 @@ import os
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-# 设置测试 API Key (如未配置)
 if not os.getenv('BAILIAN_API_KEY'):
     os.environ['BAILIAN_API_KEY'] = 'test_key'
 
@@ -61,7 +60,7 @@ class TestBailianProvider:
     def test_cost_calculation(self):
         provider = BailianProvider()
         cost = provider._calculate_cost(1000)
-        assert cost == 0.01  # ¥0.01/1K tokens
+        assert cost == 0.01
 
 
 class TestAIService:
