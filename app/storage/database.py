@@ -17,6 +17,32 @@ from contextlib import contextmanager
 from app import config
 
 logger = logging.getLogger("ftseek.storage.database")
+logger.propagate = False  # 防止日志重复
+
+
+def get_sqlite_connection(db_path: str, timeout: float = 30.0):
+    """
+    获取 SQLite 连接（统一配置）
+    
+    2026-04-08: 解决 database is locked 问题
+    
+    Args:
+        db_path: 数据库文件路径
+        timeout: 连接超时时间（秒）
+    
+    Returns:
+        sqlite3.Connection
+    """
+    conn = sqlite3.connect(db_path, timeout=timeout)
+    conn.row_factory = sqlite3.Row
+    
+    # 启用 WAL 模式（更好的并发性能）
+    cursor = conn.cursor()
+    cursor.execute("PRAGMA journal_mode=WAL")
+    cursor.execute(f"PRAGMA busy_timeout={int(timeout * 1000)}")  # 毫秒
+    cursor.execute("PRAGMA synchronous=NORMAL")  # 平衡性能和安全
+    
+    return conn
 
 
 class Database:
@@ -43,8 +69,16 @@ class Database:
     @contextmanager
     def get_connection(self):
         """获取数据库连接上下文管理器"""
-        conn = sqlite3.connect(str(self.db_path))
+        # 2026-04-08 修复: 添加 timeout 和 WAL 模式，解决 database is locked
+        conn = sqlite3.connect(str(self.db_path), timeout=30.0)
         conn.row_factory = sqlite3.Row  # 返回字典式行
+        
+        # 启用 WAL 模式 (更好的并发性能)
+        cursor = conn.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA busy_timeout=30000")  # 30 秒等待
+        cursor.execute("PRAGMA synchronous=NORMAL")  # 平衡性能和安全
+        
         try:
             yield conn
             conn.commit()
@@ -59,7 +93,7 @@ class Database:
         """初始化数据库表结构"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
-            
+
             # 信号记录表 (永久)
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS signals (
@@ -275,6 +309,64 @@ class Database:
                 ON performance_summary(created_at)
             """)
             
+            # 信号质量记录表 (P1-1 新增 - 永久保存)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS signal_outcomes (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    code TEXT NOT NULL,
+                    action TEXT NOT NULL,
+                    strategy TEXT NOT NULL,
+                    entry_price REAL NOT NULL,
+                    exit_price REAL NOT NULL,
+                    pnl_pct REAL NOT NULL,
+                    holding_periods INTEGER DEFAULT 0,
+                    market_regime TEXT NOT NULL,
+                    scenario TEXT,                    -- Phase 1: 场景标签
+                    adx_value REAL DEFAULT 0.0,
+                    mtf_alignment REAL DEFAULT 0.0,
+                    sentiment_score REAL DEFAULT 0.0,
+                    consensus_score REAL DEFAULT 0.0,
+                    quality_score REAL DEFAULT 1.0,
+                    max_drawdown REAL DEFAULT 0.0,
+                    max_profit REAL DEFAULT 0.0,
+                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_signal_outcomes_code 
+                ON signal_outcomes(code)
+            """)
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_signal_outcomes_strategy 
+                ON signal_outcomes(strategy)
+            """)
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_signal_outcomes_timestamp 
+                ON signal_outcomes(timestamp)
+            """)
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_signal_outcomes_market_regime
+                ON signal_outcomes(market_regime)
+            """)
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_signal_outcomes_scenario
+                ON signal_outcomes(scenario)
+            """)
+
+            # Phase 1 迁移：为现有 signal_outcomes 表添加 scenario 列
+            try:
+                cursor.execute("""
+                    ALTER TABLE signal_outcomes
+                    ADD COLUMN scenario TEXT
+                """)
+                logger.info("数据库迁移：signal_outcomes 表已添加 scenario 列")
+            except sqlite3.OperationalError as e:
+                if "duplicate column" in str(e).lower():
+                    logger.debug("数据库迁移：scenario 列已存在，跳过")
+                else:
+                    logger.warning(f"数据库迁移失败：{e}")
+
             logger.info("数据库表结构初始化完成")
     
     # ==================== 信号操作 ====================
@@ -810,6 +902,278 @@ class Database:
                     'profit_factor': profit_factor
                 }
             }
+    
+    # ==================== 信号质量记录操作 (P1-1 新增) ====================
+    
+    def save_signal_outcome(self, outcome_data: Dict[str, Any]) -> bool:
+        """
+        保存信号质量记录 (P1-1 新增)
+
+        Args:
+            outcome_data: SignalOutcome 数据字典，包含以下字段:
+                - code: 股票代码
+                - action: 'BUY' / 'SELL'
+                - strategy: 策略名称
+                - entry_price: 入场价
+                - exit_price: 出场价
+                - pnl_pct: 盈亏百分比
+                - holding_periods: 持仓周期数
+                - market_regime: 市场状态
+                - scenario: 场景标签 (Phase 1 新增)
+                - adx_value: ADX 值
+                - mtf_alignment: 多周期对齐度
+                - sentiment_score: 情绪得分
+                - consensus_score: 共识得分
+                - quality_score: 质量分
+                - max_drawdown: 最大回撤
+                - max_profit: 最大浮盈
+        """
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO signal_outcomes
+                (code, action, strategy, entry_price, exit_price, pnl_pct,
+                 holding_periods, market_regime, scenario, adx_value, mtf_alignment,
+                 sentiment_score, consensus_score, quality_score,
+                 max_drawdown, max_profit, timestamp)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                outcome_data.get('code'),
+                outcome_data.get('action'),
+                outcome_data.get('strategy'),
+                outcome_data.get('entry_price', 0.0),
+                outcome_data.get('exit_price', 0.0),
+                outcome_data.get('pnl_pct', 0.0),
+                outcome_data.get('holding_periods', 0),
+                outcome_data.get('market_regime', 'neutral'),
+                outcome_data.get('scenario'),  # Phase 1: 场景标签
+                outcome_data.get('adx_value', 0.0),
+                outcome_data.get('mtf_alignment', 0.0),
+                outcome_data.get('sentiment_score', 0.0),
+                outcome_data.get('consensus_score', 0.0),
+                outcome_data.get('quality_score', 1.0),
+                outcome_data.get('max_drawdown', 0.0),
+                outcome_data.get('max_profit', 0.0),
+                outcome_data.get('timestamp', datetime.now().isoformat())
+            ))
+        return True
+    
+    def get_signal_outcomes_by_code(self, code: str, days: int = 90, 
+                                    limit: int = None) -> List[Dict]:
+        """
+        获取某股票的信号质量记录
+        
+        Args:
+            code: 股票代码
+            days: 查询天数范围
+            limit: 限制返回数量
+        
+        Returns:
+            SignalOutcome 记录列表
+        """
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cutoff = (datetime.now() - timedelta(days=days)).isoformat()
+            
+            query = """
+                SELECT * FROM signal_outcomes 
+                WHERE code = ? AND timestamp > ?
+                ORDER BY timestamp DESC
+            """
+            params = [code, cutoff]
+            
+            if limit:
+                query += " LIMIT ?"
+                params.append(limit)
+            
+            cursor.execute(query, params)
+            return [dict(row) for row in cursor.fetchall()]
+    
+    def get_signal_outcomes_by_strategy(self, strategy: str, days: int = 90,
+                                        limit: int = None) -> List[Dict]:
+        """
+        获取某策略的信号质量记录
+        
+        Args:
+            strategy: 策略名称
+            days: 查询天数范围
+            limit: 限制返回数量
+        
+        Returns:
+            SignalOutcome 记录列表
+        """
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cutoff = (datetime.now() - timedelta(days=days)).isoformat()
+            
+            query = """
+                SELECT * FROM signal_outcomes 
+                WHERE strategy = ? AND timestamp > ?
+                ORDER BY timestamp DESC
+            """
+            params = [strategy, cutoff]
+            
+            if limit:
+                query += " LIMIT ?"
+                params.append(limit)
+            
+            cursor.execute(query, params)
+            return [dict(row) for row in cursor.fetchall()]
+    
+    def get_signal_outcomes_by_regime(self, market_regime: str, days: int = 90,
+                                      limit: int = None) -> List[Dict]:
+        """
+        获取某市场状态下的信号质量记录
+
+        Args:
+            market_regime: 市场状态 (trending/ranging/neutral)
+            days: 查询天数范围
+            limit: 限制返回数量
+
+        Returns:
+            SignalOutcome 记录列表
+        """
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cutoff = (datetime.now() - timedelta(days=days)).isoformat()
+
+            query = """
+                SELECT * FROM signal_outcomes
+                WHERE market_regime = ? AND timestamp > ?
+                ORDER BY timestamp DESC
+            """
+            params = [market_regime, cutoff]
+
+            if limit:
+                query += " LIMIT ?"
+                params.append(limit)
+
+            cursor.execute(query, params)
+            return [dict(row) for row in cursor.fetchall()]
+
+    def get_signal_outcomes_by_scenario(self, scenario: str, days: int = 90,
+                                        limit: int = None) -> List[Dict]:
+        """
+        获取某场景下的信号质量记录 (Phase 1 新增)
+
+        Args:
+            scenario: 场景标签 (trend_strong, range_bound, etc.)
+            days: 查询天数范围
+            limit: 限制返回数量
+
+        Returns:
+            SignalOutcome 记录列表
+        """
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cutoff = (datetime.now() - timedelta(days=days)).isoformat()
+
+            query = """
+                SELECT * FROM signal_outcomes
+                WHERE scenario = ? AND timestamp > ?
+                ORDER BY timestamp DESC
+            """
+            params = [scenario, cutoff]
+
+            if limit:
+                query += " LIMIT ?"
+                params.append(limit)
+
+            cursor.execute(query, params)
+            return [dict(row) for row in cursor.fetchall()]
+    
+    def get_signal_outcomes_summary(self, days: int = 90, 
+                                    group_by: str = None) -> Dict:
+        """
+        获取信号质量统计摘要
+        
+        Args:
+            days: 查询天数范围
+            group_by: 分组字段 ('strategy', 'market_regime', 'code', None)
+        
+        Returns:
+            统计摘要字典
+        """
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cutoff = (datetime.now() - timedelta(days=days)).isoformat()
+            
+            if group_by:
+                # 分组统计
+                cursor.execute(f"""
+                    SELECT 
+                        {group_by},
+                        COUNT(*) as total_trades,
+                        SUM(CASE WHEN pnl_pct > 0 THEN 1 ELSE 0 END) as winning_trades,
+                        SUM(CASE WHEN pnl_pct < 0 THEN 1 ELSE 0 END) as losing_trades,
+                        AVG(pnl_pct) as avg_pnl_pct,
+                        SUM(pnl_pct) as total_pnl_pct,
+                        AVG(adx_value) as avg_adx,
+                        AVG(mtf_alignment) as avg_mtf_alignment,
+                        AVG(sentiment_score) as avg_sentiment,
+                        AVG(consensus_score) as avg_consensus,
+                        AVG(max_drawdown) as avg_max_drawdown,
+                        AVG(max_profit) as avg_max_profit
+                    FROM signal_outcomes 
+                    WHERE timestamp > ?
+                    GROUP BY {group_by}
+                    ORDER BY total_trades DESC
+                """, (cutoff,))
+            else:
+                # 总体统计
+                cursor.execute("""
+                    SELECT 
+                        COUNT(*) as total_trades,
+                        SUM(CASE WHEN pnl_pct > 0 THEN 1 ELSE 0 END) as winning_trades,
+                        SUM(CASE WHEN pnl_pct < 0 THEN 1 ELSE 0 END) as losing_trades,
+                        AVG(pnl_pct) as avg_pnl_pct,
+                        SUM(pnl_pct) as total_pnl_pct,
+                        AVG(adx_value) as avg_adx,
+                        AVG(mtf_alignment) as avg_mtf_alignment,
+                        AVG(sentiment_score) as avg_sentiment,
+                        AVG(consensus_score) as avg_consensus,
+                        AVG(max_drawdown) as avg_max_drawdown,
+                        AVG(max_profit) as avg_max_profit
+                    FROM signal_outcomes 
+                    WHERE timestamp > ?
+                """, (cutoff,))
+            
+            rows = cursor.fetchall()
+            
+            if group_by:
+                results = []
+                for row in rows:
+                    d = dict(row)
+                    total = d.get('winning_trades', 0) + d.get('losing_trades', 0)
+                    d['win_rate'] = d.get('winning_trades', 0) / total if total > 0 else 0
+                    results.append(d)
+                return {'grouped_by': group_by, 'data': results}
+            else:
+                result = dict(rows[0]) if rows else {}
+                total = result.get('winning_trades', 0) + result.get('losing_trades', 0)
+                result['win_rate'] = result.get('winning_trades', 0) / total if total > 0 else 0
+                return result
+    
+    def cleanup_old_signal_outcomes(self, keep_days: int = 365) -> int:
+        """
+        清理旧的信号质量记录
+        
+        Args:
+            keep_days: 保留天数
+        
+        Returns:
+            删除的记录数
+        """
+        cutoff = (datetime.now() - timedelta(days=keep_days)).isoformat()
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                DELETE FROM signal_outcomes WHERE timestamp < ?
+            """, (cutoff,))
+            deleted = cursor.rowcount
+            if deleted > 0:
+                logger.info(f"清理了 {deleted} 条旧信号质量记录")
+        return deleted
 
 
 # 全局单例

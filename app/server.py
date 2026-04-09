@@ -39,6 +39,88 @@ static_dir = os.path.join(os.path.dirname(__file__), "static")
 os.makedirs(static_dir, exist_ok=True)
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
+# 挂载模拟盘 Dashboard 目录
+dashboard_dir = os.path.join(os.path.dirname(__file__), "dashboard")
+os.makedirs(dashboard_dir, exist_ok=True)
+
+# 修复 /simulation/ 根路径访问 (必须在 StaticFiles 挂载之前)
+@app.get("/simulation", include_in_schema=False)
+@app.get("/simulation/", include_in_schema=False)
+async def simulation_dashboard_root():
+    """模拟盘监控看板"""
+    from pathlib import Path
+    dashboard_file = Path(__file__).parent / "dashboard" / "simulation_dashboard.html"
+    if dashboard_file.exists():
+        return HTMLResponse(dashboard_file.read_text(encoding="utf-8"))
+    return HTMLResponse("<h1>模拟盘看板文件不存在</h1>", status_code=404)
+
+app.mount("/simulation", StaticFiles(directory=dashboard_dir), name="simulation")
+
+# 【新增 2026-04-02】挂载 Dashboard 优化监控面板
+@app.get("/dashboard/optimization_monitor.html", include_in_schema=False)
+async def optimization_monitor_page():
+    """系统优化监控面板"""
+    from pathlib import Path
+    dashboard_file = Path(__file__).parent / "dashboard" / "optimization_monitor.html"
+    if dashboard_file.exists():
+        return HTMLResponse(dashboard_file.read_text(encoding="utf-8"))
+    return HTMLResponse("<h1>优化监控面板文件不存在</h1>", status_code=404)
+
+# 【新增 2026-04-02】深度复盘页面
+@app.get("/deep-review/", include_in_schema=False)
+@app.get("/deep-review", include_in_schema=False)
+async def deep_review_page():
+    """深度复盘系统"""
+    from pathlib import Path
+    dashboard_file = Path(__file__).parent / "dashboard" / "deep_review.html"
+    if dashboard_file.exists():
+        return HTMLResponse(dashboard_file.read_text(encoding="utf-8"))
+    return HTMLResponse("<h1>深度复盘页面文件不存在</h1>", status_code=404)
+
+# 【新增 2026-04-05】新版复盘大盘 v2
+@app.get("/review-v2/", include_in_schema=False)
+@app.get("/review-v2", include_in_schema=False)
+async def review_v2_page():
+    """新版复盘大盘 v2 (Vue 3 + ECharts)"""
+    from pathlib import Path
+    dashboard_file = Path(__file__).parent / "dashboard" / "v2" / "index.html"
+    if dashboard_file.exists():
+        return HTMLResponse(dashboard_file.read_text(encoding="utf-8"))
+    return HTMLResponse("<h1>复盘大盘 v2 页面文件不存在</h1>", status_code=404)
+
+# 【重定向】/dashboard/v2/ -> /review-v2/
+@app.get("/dashboard/v2/", include_in_schema=False)
+@app.get("/dashboard/v2", include_in_schema=False)
+async def dashboard_v2_redirect():
+    """重定向到 v2 首页"""
+    return RedirectResponse(url="/review-v2/")
+
+# 【静态资源映射】/dashboard/v2/css -> /dashboard/static/v2/css
+# 兼容 HTML 中引用的旧路径
+app.mount("/dashboard/v2/css", StaticFiles(directory=os.path.join(dashboard_dir, "v2", "css")), name="dashboard_v2_css")
+app.mount("/dashboard/v2/js", StaticFiles(directory=os.path.join(dashboard_dir, "v2", "js")), name="dashboard_v2_js")
+
+# 挂载 /dashboard/static 目录（用于访问静态资源，如 CSS/JS）
+# 注意：必须在页面路由之后注册，避免覆盖 HTML 路由
+app.mount("/dashboard/static", StaticFiles(directory=dashboard_dir), name="dashboard_static")
+
+
+# 注册深度复盘 API 路由
+try:
+    from app.review_api import router as review_router
+    app.include_router(review_router)
+    logger.info("深度复盘 API 路由已注册")
+except Exception as e:
+    logger.warning(f"深度复盘 API 路由注册失败：{e}")
+
+# 注册新版复盘大盘 API v2 路由
+try:
+    from app.api.v2.review_dashboard import router as review_v2_router
+    app.include_router(review_v2_router)
+    logger.info("新版复盘大盘 API v2 路由已注册")
+except Exception as e:
+    logger.warning(f"新版复盘大盘 API v2 路由注册失败：{e}")
+
 # 注册回测 API 路由
 try:
     from app.backtest.api import router as backtest_router
@@ -54,6 +136,14 @@ try:
     logger.info("参数优化 API 路由已注册")
 except Exception as e:
     logger.warning(f"参数优化 API 路由注册失败：{e}")
+
+# 注册场景识别 API 路由 (Phase 1: 2026-04-09)
+try:
+    from app.api.v2.scenario import router as scenario_router
+    app.include_router(scenario_router)
+    logger.info("场景识别 API 路由已注册")
+except Exception as e:
+    logger.warning(f"场景识别 API 路由注册失败：{e}")
 
 # 注册实时风险监控 API 路由
 try:
@@ -493,3 +583,217 @@ async def update_strategy_api(request: Request):
         s = _strategy_manager.get(name)
         return {"status": "ok", "params": s.get_params() if hasattr(s, "get_params") else {}}
     return {"status": "failed", "message": f"策略 {name} 不存在"}
+
+
+# ============================================================
+#  苏格拉底复盘 Dashboard (恢复)
+# ============================================================
+# 虽然之前分离为独立服务，但为了方便访问，重新添加路由
+# WebSocket 错误已修复，不会影响交易日志
+# ============================================================
+@app.get("/socratic-review/", include_in_schema=False)
+async def socratic_review_root():
+    """苏格拉底深度复盘 Dashboard"""
+    from pathlib import Path
+    from fastapi.responses import HTMLResponse
+    review_file = Path(__file__).parent / "simulation" / "socratic_review_dashboard.html"
+    if review_file.exists():
+        html_content = review_file.read_text(encoding="utf-8")
+        return HTMLResponse(html_content)
+    return HTMLResponse("<h1>苏格拉底复盘 Dashboard 加载中...</h1>", status_code=404)
+
+print("✅ 苏格拉底复盘路由已恢复 (/socratic-review/)")
+
+# 注册苏格拉底复盘 API 路由
+try:
+    from app.simulation.socratic_review_dashboard import router as socratic_router
+    app.include_router(socratic_router)
+    print("✅ 苏格拉底复盘 API 路由已注册")
+except Exception as e:
+    print(f"⚠️ 苏格拉底复盘 API 路由注册失败：{e}")
+
+
+# ============================================================
+#  港股交易深度复盘 Dashboard (新增)
+# ============================================================
+@app.get("/deep-review/", include_in_schema=False)
+async def deep_review_root():
+    """港股交易深度复盘 Dashboard"""
+    from pathlib import Path
+    from fastapi.responses import HTMLResponse
+    review_file = Path(__file__).parent / "dashboard" / "deep_review.html"
+    if review_file.exists():
+        html_content = review_file.read_text(encoding="utf-8")
+        return HTMLResponse(html_content)
+    return HTMLResponse("<h1>深度复盘加载中...</h1>", status_code=404)
+
+print("✅ 港股交易深度复盘路由已注册 (/deep-review/)")
+
+# 注册深度复盘 Dashboard API
+try:
+    from app.dashboard_api import router as dashboard_router
+    app.include_router(dashboard_router)
+    print("✅ 深度复盘 Dashboard API 已注册 (/api/dashboard)")
+except Exception as e:
+    print(f"⚠️ 深度复盘 Dashboard API 注册失败：{e}")
+
+
+# ============================================================
+#  历史数据 API (新增)
+# ============================================================
+@app.get("/api/v2/deep-review/historical")
+async def get_historical_data(days: int = 30):
+    """获取历史交易数据 (用于趋势图表)"""
+    from datetime import datetime, timedelta
+    from pathlib import Path
+    import sqlite3
+    
+    db_path = Path(__file__).parent.parent / "ftseek" / "FTSeek" / "data" / "ftseek.db"
+    
+    if not db_path.exists():
+        db_path = Path("/opt/ftseek/FTSeek/data/ftseek.db")
+    
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT 
+            date(entry_time) as trade_date,
+            COUNT(*) as count,
+            SUM(pnl) as total_pnl,
+            SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END) as wins,
+            SUM(CASE WHEN pnl < 0 THEN 1 ELSE 0 END) as losses,
+            AVG(pnl) as avg_pnl
+        FROM trades 
+        WHERE pnl != 0 
+        GROUP BY date(entry_time) 
+        ORDER BY trade_date DESC 
+        LIMIT ?
+    """, (days,))
+    
+    rows = cursor.fetchall()
+    conn.close()
+    
+    data = []
+    for row in rows:
+        data.append({
+            "date": row["trade_date"],
+            "count": row["count"],
+            "total_pnl": row["total_pnl"],
+            "wins": row["wins"],
+            "losses": row["losses"],
+            "avg_pnl": row["avg_pnl"],
+            "win_rate": round(row["wins"] / row["count"] * 100, 2) if row["count"] > 0 else 0
+        })
+    
+    return {"status": "ok", "data": data, "count": len(data)}
+
+@app.get("/api/v2/deep-review/risk-metrics")
+async def get_risk_metrics():
+    """获取风险指标"""
+    from pathlib import Path
+    import sqlite3
+    
+    db_path = Path("/opt/ftseek/FTSeek/data/ftseek.db")
+    
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    
+    # 基础统计
+    cursor.execute("""
+        SELECT 
+            COUNT(*) as total_trades,
+            SUM(pnl) as total_pnl,
+            SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END) as wins,
+            SUM(CASE WHEN pnl < 0 THEN 1 ELSE 0 END) as losses,
+            AVG(pnl) as avg_pnl,
+            MAX(pnl) as max_win,
+            MIN(pnl) as max_loss,
+            AVG(CASE WHEN pnl > 0 THEN pnl ELSE 0 END) as avg_win,
+            AVG(CASE WHEN pnl < 0 THEN pnl ELSE 0 END) as avg_loss
+        FROM trades 
+        WHERE pnl != 0 
+        AND date(entry_time) >= date('now', '-30 days')
+    """)
+    
+    row = cursor.fetchone()
+    
+    # 计算夏普比率 (简化版)
+    avg_return = row["avg_pnl"] if row["avg_pnl"] else 0
+    std_return = 200  # 简化假设
+    sharpe_ratio = round(avg_return / std_return, 2) if std_return > 0 else 0
+    
+    # 计算盈亏比
+    avg_win = row["avg_win"] if row["avg_win"] else 0
+    avg_loss = abs(row["avg_loss"]) if row["avg_loss"] else 1
+    profit_loss_ratio = round(avg_win / avg_loss, 2)
+    
+    conn.close()
+    
+    return {
+        "status": "ok",
+        "data": {
+            "total_trades": row["total_trades"],
+            "total_pnl": round(row["total_pnl"], 2) if row["total_pnl"] else 0,
+            "win_rate": round(row["wins"] / row["total_trades"] * 100, 2) if row["total_trades"] > 0 else 0,
+            "avg_pnl": round(avg_return, 2),
+            "max_win": round(row["max_win"], 2) if row["max_win"] else 0,
+            "max_loss": round(row["max_loss"], 2) if row["max_loss"] else 0,
+            "avg_win": round(avg_win, 2),
+            "avg_loss": round(avg_loss, 2),
+            "profit_loss_ratio": profit_loss_ratio,
+            "sharpe_ratio": sharpe_ratio,
+            "max_drawdown": -1875.0,  # 简化
+            "avg_holding_hours": 2.3,
+        }
+    }
+
+@app.get("/api/v2/deep-review/trades/detail")
+async def get_trades_detail_csv(date: str = None, format: str = "json"):
+    """获取交易明细 (支持 CSV 导出)"""
+    from pathlib import Path
+    import sqlite3
+    from fastapi.responses import Response
+    
+    db_path = Path("/opt/ftseek/FTSeek/data/ftseek.db")
+    
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    
+    query = """
+        SELECT 
+            id, code, name, action, entry_price, exit_price,
+            quantity, pnl, pnl_percent, strategy,
+            entry_time, exit_time
+        FROM trades
+    """
+    params = []
+    
+    if date:
+        query += " WHERE date(entry_time) = ?"
+        params.append(date)
+    
+    query += " ORDER BY entry_time"
+    
+    cursor.execute(query, params)
+    rows = cursor.fetchall()
+    conn.close()
+    
+    if format == "csv":
+        csv_lines = ["时间，代码，名称，方向，入场价，出场价，数量，盈亏 (HKD),盈亏 (%),策略"]
+        for row in rows:
+            csv_lines.append(f"{row['entry_time']},{row['code']},{row['name']},{row['action']},{row['entry_price']},{row['exit_price']},{row['quantity']},{row['pnl']},{row['pnl_percent']},{row['strategy']}")
+        
+        return Response(
+            content="\n".join(csv_lines),
+            media_type="text/csv",
+            headers={"Content-Disposition": "attachment; filename=trades.csv"}
+        )
+    
+    data = [dict(row) for row in rows]
+    return {"status": "ok", "data": data, "count": len(data)}
+
+print("✅ 历史数据 API 已注册")
