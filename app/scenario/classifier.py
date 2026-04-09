@@ -27,6 +27,7 @@ from app.strategy.market_regime import (
     TrendDirection, VolatilityState
 )
 from .features import FeatureExtractor, Features
+from .multi_timeframe import MultiTimeframeFeatureExtractor, MultiTimeframeFeatures
 
 logger = logging.getLogger("ftseek.scenario.classifier")
 logger.propagate = False
@@ -145,6 +146,9 @@ class ScenarioClassifier:
         # 特征提取器
         self.feature_extractor = FeatureExtractor(config)
 
+        # 多周期特征提取器 (Phase 2 新增)
+        self.multi_tf_extractor = MultiTimeframeFeatureExtractor(config)
+
         # 场景记忆缓存 {code: (scenario, timestamp, confirm_count)}
         self._scenario_cache: Dict[str, Tuple[ScenarioType, float, int]] = {}
 
@@ -160,14 +164,16 @@ class ScenarioClassifier:
             f"置信度阈值={self.CONFIDENCE_THRESHOLD:.2f}"
         )
 
-    def classify(self, code: str, klines: List[Dict], news_data: Dict = None) -> ScenarioOutput:
+    def classify(self, code: str, klines: List[Dict], news_data: Dict = None,
+                 multi_timeframe_klines: Dict[str, List[Dict]] = None) -> ScenarioOutput:
         """
         场景分类主入口
 
         Args:
             code: 股票代码
-            klines: K 线数据列表
+            klines: K 线数据列表 (主周期)
             news_data: 新闻数据 (可选)
+            multi_timeframe_klines: 多周期 K 线数据 {timeframe: [klines]} (可选)
 
         Returns:
             ScenarioOutput: 场景分类结果
@@ -202,21 +208,43 @@ class ScenarioClassifier:
         # 2. 提取细粒度特征 (复用已计算的特征)
         features = features_early
 
-        # 3. 规则引擎初判
+        # 3. 多周期特征分析 (Phase 2 新增)
+        multi_tf_features = None
+        confidence_boost = 1.0
+        if multi_timeframe_klines:
+            multi_tf_features = self.multi_tf_extractor.extract(code, multi_timeframe_klines)
+            confidence_boost = multi_tf_features.confidence_boost
+            logger.debug(f"[{code}] 多周期置信度提升：{confidence_boost:.2f}x")
+
+        # 4. 规则引擎初判
         candidate_scenario, confidence = self._rule_engine(macro_regime, features, news_data)
 
-        # 4. 场景记忆平滑 (防抖动)
+        # 5. 多周期置信度调整 (Phase 2)
+        if multi_tf_features:
+            adjusted_confidence = min(0.95, confidence * confidence_boost)
+            logger.debug(f"[{code}] 置信度调整：{confidence:.2f} -> {adjusted_confidence:.2f}")
+            confidence = adjusted_confidence
+
+            # 多周期共振检测：提升趋势类场景置信度
+            if multi_tf_features.resonance_detected and candidate_scenario in [
+                ScenarioType.TREND_STRONG, ScenarioType.TREND_START,
+                ScenarioType.TREND_EXHAUST
+            ]:
+                confidence = min(0.95, confidence + 0.1)
+                logger.info(f"[{code}] 多周期共振 detected → 置信度 +0.1")
+
+        # 6. 场景记忆平滑 (防抖动)
         smoothed_scenario = self._apply_scenario_memory(code, candidate_scenario, confidence)
 
-        # 5. 置信度阈值检查
+        # 7. 置信度阈值检查
         if confidence < self.CONFIDENCE_THRESHOLD:
             logger.debug(f"{code} 置信度{confidence:.2f} < {self.CONFIDENCE_THRESHOLD}, 返回 UNKNOWN")
             return self._unknown_scenario(code, features, macro_regime)
 
-        # 6. 记录场景切换历史
+        # 8. 记录场景切换历史
         self._record_scenario_change(code, smoothed_scenario)
 
-        # 7. 输出结果
+        # 9. 输出结果
         output = ScenarioOutput(
             scenario_type=smoothed_scenario,
             confidence=confidence,
@@ -229,6 +257,9 @@ class ScenarioClassifier:
                 "volatility_state": macro_regime.volatility_state.value,
                 "price_vs_ma": macro_regime.price_vs_ma,
                 "bb_width": macro_regime.bb_width,
+                "multi_timeframe": multi_tf_features.to_dict() if multi_tf_features else None,
+                "confidence_boost": confidence_boost,
+                "resonance": multi_tf_features.resonance_detected if multi_tf_features else False,
             }
         )
 
