@@ -182,7 +182,7 @@ take_profit:
 
 # 信号冷却配置
 signal_cooldown:
-  default_seconds: 120              # 默认冷却 120 秒
+  default_seconds: 120              # Pipeline冷却期 120 秒 (CooldownCheck使用)
   high_confidence_seconds: 90       # 高置信度冷却 90 秒
   after_loss_seconds: 180           # 亏损后冷却 180 秒
 
@@ -245,7 +245,7 @@ strategy:
     signal_cooldown: 10             # 极短时间去重窗口（秒），冷却期已移至Pipeline
     max_pending: 50                 # 最大待处理队列长度
     min_confidence: 0.35            # 最低置信度阈值
-    max_positions: 4                # 最大持仓数量
+    max_positions: null             # 最大持仓数量 (null=动态计算)
 
   # 置信度调整器配置 (2026-04-09 新增)
   confidence_adjuster:

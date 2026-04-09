@@ -115,7 +115,7 @@ except Exception as e:
 try:
     from app.decision_buffer import init_decision_buffer
     decision_buffer = init_decision_buffer(
-        signal_cooldown=120,        # 信号冷却期（秒）
+        signal_cooldown=10,         # 信号冷却期（秒）- 2026-04-09优化：120→10，冷却期已移至Pipeline
         max_pending=50,             # 最大待处理队列长度 (2026-04-08 优化: 10→30)
         min_confidence=0.35,        # 最低置信度阈值
     )
