@@ -109,10 +109,10 @@ class VoiceEngine:
         self.confident_words = ["强烈", "明确", "确定", "必须", "果断"]
         self.cautious_words = ["注意", "谨慎", "观察", "等待", "风险"]
         self.urgent_words = ["紧急", "立即", "快速", "机会", "！"]
-        
+
         self.logger = logging.getLogger("ftseek.v4.voice_engine")
-logger.propagate = False  # 防止日志重复
-    
+        self.logger.propagate = False  # 防止日志重复
+
     def generate(self, msg: SignalMessage) -> str:
         """
         生成消息

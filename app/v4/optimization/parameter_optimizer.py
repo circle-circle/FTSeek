@@ -80,8 +80,8 @@ class GridSearch:
     def __init__(self):
         self.param_grid: Dict[str, ParameterRange] = {}
         self.logger = logging.getLogger("ftseek.v4.grid_search")
-logger.propagate = False  # 防止日志重复
-    
+        self.logger.propagate = False  # 防止日志重复
+
     def add_parameter(self, param_range: ParameterRange):
         """添加参数范围"""
         self.param_grid[param_range.name] = param_range
@@ -135,8 +135,8 @@ class ParameterOptimizer:
         self.best_result: Optional[OptimizationResult] = None
         
         self.logger = logging.getLogger("ftseek.v4.parameter_optimizer")
-logger.propagate = False  # 防止日志重复
-    
+        self.logger.propagate = False  # 防止日志重复
+
     def add_parameter_range(
         self,
         name: str,

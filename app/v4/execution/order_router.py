@@ -131,10 +131,10 @@ class OrderRouter:
         
         # 富途客户端 (延迟初始化)
         self.futu_client = None
-        
+
         self.logger = logging.getLogger("ftseek.v4.order_router")
-logger.propagate = False  # 防止日志重复
-    
+        self.logger.propagate = False  # 防止日志重复
+
     def _init_futu_client(self):
         """初始化富途客户端"""
         try:

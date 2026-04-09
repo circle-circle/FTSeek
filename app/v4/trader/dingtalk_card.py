@@ -17,8 +17,8 @@ class TradeSignalCard:
     
     def __init__(self):
         self.logger = logging.getLogger("ftseek.v4.trade_signal_card")
-logger.propagate = False  # 防止日志重复
-    
+        self.logger.propagate = False  # 防止日志重复
+
     def generate_card(
         self,
         code: str,

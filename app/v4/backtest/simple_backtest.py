@@ -174,10 +174,10 @@ class SimpleBacktest:
         self.signals: List[Dict[str, Any]] = []
         self.trades: List[Trade] = []
         self.capital_curve: List[float] = [initial_capital]
-        
+
         self.logger = logging.getLogger("ftseek.v4.simple_backtest")
-logger.propagate = False  # 防止日志重复
-    
+        self.logger.propagate = False  # 防止日志重复
+
     def add_signal(self, signal: Dict[str, Any]):
         """
         添加信号

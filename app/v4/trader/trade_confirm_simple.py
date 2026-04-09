@@ -72,8 +72,8 @@ class TradeConfirmManager:
         self.pending_requests: Dict[str, TradeConfirmRequest] = {}
         self.execute_callback: Optional[Callable] = None
         self.logger = logging.getLogger("ftseek.v4.trade_confirm_manager")
-logger.propagate = False  # 防止日志重复
-    
+        self.logger.propagate = False  # 防止日志重复
+
     def set_execute_callback(self, callback: Callable):
         """设置执行回调"""
         self.execute_callback = callback

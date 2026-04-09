@@ -40,8 +40,8 @@ class DingTalkCallbackHandler:
         self.callback_handler = callback_handler
         self.pending_decisions: Dict[str, Dict[str, Any]] = {}
         self.logger = logging.getLogger("ftseek.v4.dingtalk_callback")
-logger.propagate = False  # 防止日志重复
-    
+        self.logger.propagate = False  # 防止日志重复
+
     def verify_signature(
         self,
         signature: str,

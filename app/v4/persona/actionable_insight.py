@@ -139,10 +139,10 @@ class ActionableInsight:
             "可能", "也许", "大概", "或许", "考虑", "关注",
             "看看", "观察", "等待", "试试", "应该"
         ]
-        
+
         self.logger = logging.getLogger("ftseek.v4.actionable_insight")
-logger.propagate = False  # 防止日志重复
-    
+        self.logger.propagate = False  # 防止日志重复
+
     def validate(self, rec: TradeRecommendation) -> Tuple[bool, List[str]]:
         """
         验证推荐

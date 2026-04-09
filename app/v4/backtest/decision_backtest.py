@@ -143,8 +143,8 @@ class DecisionBacktest:
         """
         self.config = config
         self.logger = logging.getLogger("ftseek.v4.decision_backtest")
-logger.propagate = False  # 防止日志重复
-        
+        self.logger.propagate = False  # 防止日志重复
+
         # 回测状态
         self.capital = config.initial_capital
         self.position: Optional[Dict[str, Any]] = None

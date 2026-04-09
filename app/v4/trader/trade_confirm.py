@@ -78,8 +78,8 @@ class TradeConfirmCard:
     
     def __init__(self):
         self.logger = logging.getLogger("ftseek.v4.trade_confirm_card")
-logger.propagate = False  # 防止日志重复
-    
+        self.logger.propagate = False  # 防止日志重复
+
     def generate_action_card(
         self,
         request: TradeConfirmRequest
@@ -230,8 +230,8 @@ class TradeConfirmManager:
         self.card_generator = TradeConfirmCard()
         self.execute_callback: Optional[Callable[[TradeConfirmRequest], bool]] = None
         self.logger = logging.getLogger("ftseek.v4.trade_confirm_manager")
-logger.propagate = False  # 防止日志重复
-    
+        self.logger.propagate = False  # 防止日志重复
+
     def set_execute_callback(
         self,
         callback: Callable[[TradeConfirmRequest], bool]

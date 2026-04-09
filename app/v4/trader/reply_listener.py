@@ -40,8 +40,8 @@ class ReplyListener:
         self.pending_confirmations: Dict[str, Dict[str, Any]] = {}
         self.received_replies: List[ReplyMessage] = []
         self.logger = logging.getLogger("ftseek.v4.reply_listener")
-logger.propagate = False  # 防止日志重复
-        
+        self.logger.propagate = False  # 防止日志重复
+
         # 关键词匹配规则
         self.confirm_patterns = [
             r'确认.*买入',

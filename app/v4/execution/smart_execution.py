@@ -137,8 +137,8 @@ class VwapExecution:
     def __init__(self):
         self.strategy_name = "VWAP"
         self.logger = logging.getLogger("ftseek.v4.vwap_execution")
-logger.propagate = False  # 防止日志重复
-    
+        self.logger.propagate = False  # 防止日志重复
+
     def calculate_slices(
         self,
         total_quantity: int,
@@ -195,8 +195,8 @@ class TwapExecution:
     def __init__(self):
         self.strategy_name = "TWAP"
         self.logger = logging.getLogger("ftseek.v4.twap_execution")
-logger.propagate = False  # 防止日志重复
-    
+        self.logger.propagate = False  # 防止日志重复
+
     def calculate_slices(
         self,
         total_quantity: int,
@@ -263,8 +263,8 @@ class MarketImpactModel:
         self.alpha = alpha
         self.beta = beta
         self.logger = logging.getLogger("ftseek.v4.market_impact")
-logger.propagate = False  # 防止日志重复
-    
+        self.logger.propagate = False  # 防止日志重复
+
     def estimate_impact(
         self,
         quantity: int,
@@ -353,8 +353,8 @@ class SmartExecution:
         self.active_executions: Dict[str, "SmartExecution"] = {}
         
         self.logger = logging.getLogger("ftseek.v4.smart_execution")
-logger.propagate = False  # 防止日志重复
-    
+        self.logger.propagate = False  # 防止日志重复
+
     def start_execution(
         self,
         code: str,

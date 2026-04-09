@@ -53,8 +53,8 @@ class PositionManager:
     def __init__(self):
         self.positions: Dict[str, Position] = {}
         self.logger = logging.getLogger("ftseek.v4.position_manager")
-logger.propagate = False  # 防止日志重复
-    
+        self.logger.propagate = False  # 防止日志重复
+
     def add_position(self, code: str, direction: str, quantity: int, 
                      entry_price: float, current_price: float):
         """添加/更新持仓"""
