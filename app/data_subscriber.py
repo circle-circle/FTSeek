@@ -1596,19 +1596,27 @@ class DataSubscriber:
                 )
                 # 平仓成功后，记录交易结果供自适应权重学习
                 if trade_result.pnl is not None:
+                    # 获取当前场景 (Phase 1: 场景识别结果记录)
+                    current_scenario = None
+                    if hasattr(self, '_scenario_cache') and code in self._scenario_cache:
+                        scenario_obj = self._scenario_cache[code]
+                        if scenario_obj:
+                            current_scenario = scenario_obj.value if hasattr(scenario_obj, 'value') else str(scenario_obj)
+
                     self._adaptive_weight_manager.record_trade(
                         agree_strategies=result.agree_strategies,
                         pnl=trade_result.pnl,
                         market_regime=result.market_regime,
-                        scenario=getattr(result, 'scenario', None),
+                        scenario=current_scenario,
                         adx_value=result.adx_value or 0.0,
                     )
-                    # Task1: 同步更新共识引擎信号质量分
+                    # Task1: 同步更新共识引擎信号质量分 (传入 scenario)
                     self._consensus.record_signal_outcome(
                         code=code,
                         action=result.action,
                         pnl=trade_result.pnl,
                         market_regime=result.market_regime,
+                        scenario=current_scenario,  # Phase 1: 传入场景标签
                         adx_value=result.adx_value or 0.0,
                     )
         except Exception as e:
@@ -1843,13 +1851,22 @@ class DataSubscriber:
             self._trailing_stop_cache.pop(code, None)
             self._peak_price_cache.pop(code, None)
             # 记录到信号质量管理（止损路径）
+            # 记录到信号质量管理（未知路径，传入 scenario）
             try:
+                # 获取当前场景
+                current_scenario = None
+                if hasattr(self, '_scenario_cache') and code in self._scenario_cache:
+                    scenario_obj = self._scenario_cache[code]
+                    current_scenario = scenario_obj.value if hasattr(scenario_obj, 'value') else str(scenario_obj)
+
                 self._consensus.record_signal_outcome(
                     code=code,
                     action=position.action,
                     pnl=trade_result.pnl or 0.0,
+                    scenario=current_scenario,  # Phase 1: 传入场景标签
                 )
             except Exception as _e:
+                logger.debug(f"[信号质量] {path_type}记录异常：{_e}")
                 logger.debug(f"[信号质量] 止损记录异常: {_e}")
             # 推送止损通知
             try:
@@ -1959,13 +1976,22 @@ class DataSubscriber:
             self._trailing_stop_cache.pop(code, None)
             self._peak_price_cache.pop(code, None)
             # 记录到信号质量管理（止盈路径）
+            # 记录到信号质量管理（未知路径，传入 scenario）
             try:
+                # 获取当前场景
+                current_scenario = None
+                if hasattr(self, '_scenario_cache') and code in self._scenario_cache:
+                    scenario_obj = self._scenario_cache[code]
+                    current_scenario = scenario_obj.value if hasattr(scenario_obj, 'value') else str(scenario_obj)
+
                 self._consensus.record_signal_outcome(
                     code=code,
                     action=position.action,
                     pnl=trade_result.pnl or 0.0,
+                    scenario=current_scenario,  # Phase 1: 传入场景标签
                 )
             except Exception as _e:
+                logger.debug(f"[信号质量] {path_type}记录异常：{_e}")
                 logger.debug(f"[信号质量] 止盈记录异常: {_e}")
             # 推送止盈通知
             try:
@@ -2116,13 +2142,22 @@ class DataSubscriber:
                 f"入场价={position.entry_price} | 出场价={current_price} | 盈亏={trade_result.pnl:.2f}"
             )
             # 记录到信号质量管理（分批止盈路径）
+            # 记录到信号质量管理（未知路径，传入 scenario）
             try:
+                # 获取当前场景
+                current_scenario = None
+                if hasattr(self, '_scenario_cache') and code in self._scenario_cache:
+                    scenario_obj = self._scenario_cache[code]
+                    current_scenario = scenario_obj.value if hasattr(scenario_obj, 'value') else str(scenario_obj)
+
                 self._consensus.record_signal_outcome(
                     code=code,
                     action=position.action,
                     pnl=trade_result.pnl or 0.0,
+                    scenario=current_scenario,  # Phase 1: 传入场景标签
                 )
             except Exception as _e:
+                logger.debug(f"[信号质量] {path_type}记录异常：{_e}")
                 logger.debug(f"[信号质量] 分批止盈记录异常: {_e}")
             # 回填 signal_tracker pnl（2026-03-24 修复：健康看板策略层数据）
             try:
