@@ -466,38 +466,52 @@ class DataSubscriber:
         # Phase 1: 场景分类（2026-04-09）
         if self._scenario_classifier is not None:
             try:
-                # 获取 K 线数据用于场景分类
-                kline_data = list(self._kline_buffers[code].close)[-100:] if code in self._kline_buffers else []
-                if len(kline_data) >= 30:
-                    # 准备 K 线数据格式
-                    klines_for_scenario = []
-                    for i, close_price in enumerate(kline_data):
-                        klines_for_scenario.append({
-                            'open': close_price * 0.99,
-                            'high': close_price * 1.01,
-                            'low': close_price * 0.98,
-                            'close': close_price,
-                            'volume': 1000000,
-                        })
-                    
-                    # 执行场景分类
-                    scenario_result = self._scenario_classifier.classify(code, klines_for_scenario)
-                    
-                    # 场景记忆平滑
-                    if self._scenario_memory is not None:
-                        smoothed_scenario = self._scenario_memory.update(
-                            code,
-                            scenario_result.scenario_type,
-                            scenario_result.confidence
-                        )
-                        
-                        # 注入场景到共识引擎
-                        self._consensus.update_scenario(code, smoothed_scenario)
+                # 获取 K 线数据用于场景分类（使用真实的 OHLCV 数据）
+                if code not in self._kline_buffers:
+                    return
+                buf = self._kline_buffers[code]
+                if buf.size < 30:
+                    return
 
-                        logger.info(
-                            f"[场景分类] {code} {smoothed_scenario.value} | "
-                            f"置信度={scenario_result.confidence:.2f}"
-                        )
+                # 准备 K 线数据格式（使用真实数据）
+                klines_for_scenario = []
+                closes = list(buf.close)
+                highs = list(buf.high)
+                lows = list(buf.low)
+                opens = list(buf.open)
+                volumes = list(buf.volume)
+
+                n = min(100, len(closes))
+                for i in range(-n, 0):
+                    klines_for_scenario.append({
+                        'open': opens[i],
+                        'high': highs[i],
+                        'low': lows[i],
+                        'close': closes[i],
+                        'volume': volumes[i],
+                    })
+
+                if not klines_for_scenario:
+                    return
+
+                # 执行场景分类
+                scenario_result = self._scenario_classifier.classify(code, klines_for_scenario)
+
+                # 场景记忆平滑
+                if self._scenario_memory is not None:
+                    smoothed_scenario = self._scenario_memory.update(
+                        code,
+                        scenario_result.scenario_type,
+                        scenario_result.confidence
+                    )
+
+                    # 注入场景到共识引擎
+                    self._consensus.update_scenario(code, smoothed_scenario)
+
+                    logger.info(
+                        f"[场景分类] {code} {smoothed_scenario.value} | "
+                        f"置信度={scenario_result.confidence:.2f}"
+                    )
             except Exception as _e:
                 logger.debug(f"[场景分类] {code} 分类异常：{_e}")
     
@@ -1069,7 +1083,18 @@ class DataSubscriber:
         return round(resonance, 3)
     
     def _get_dynamic_stop_params(self, code: str) -> dict:
-        """根据多周期趋势动态调整止损止盈参数（2026-03-25 升级：七周期加权融合）
+        """根据多周期趋势和场景类型动态调整止损止盈参数（2026-04-09 升级：场景感知风控）
+
+        核心逻辑:
+        1. 七周期加权计算基础趋势状态
+        2. 根据场景类型调整止损止盈系数
+
+        场景调整规则 (P1-3 新增):
+        - GAP_EVENT/NEWS_DRIVEN: 收紧止损至 0.7x (事件波动大)
+        - TREND_STRONG: 放宽止损至 1.3x, 提高止盈至 1.5x (顺势让利润奔跑)
+        - RANGE_BOUND: 收紧止损至 0.8x, 止盈 0.9x (震荡市快进快出)
+        - VOL_EXPANSION: 放宽止损至 1.2x (波动扩张需要更大容忍度)
+        - TREND_EXHAUST/REVERSAL_SETUP: 收紧止损至 0.85x (反转风险高)
 
         七周期加权公式（大周期定方向，小周期定时机）：
           K_DAY×0.35 + K_60M×0.25 + K_30M×0.15 + K_15M×0.10
@@ -1082,18 +1107,21 @@ class DataSubscriber:
           - weak_down  : 止损-4%，止盈+5%
           - neutral    : 止损-3.5%，止盈+5%
 
-        返回: {
+        返回：{
             "stop_loss_pct": float,     # 止损比例（负数）
             "take_profit_pct": float,   # 止盈比例（正数）
             "breakeven_trigger": float, # 保本触发点
             "trail_atr_mult": float,    # 追踪止盈 ATR 倍数
             "regime": str,              # 综合判断的趋势状态
+            "scenario_adjustment": str, # 场景调整说明
         }
         """
+        from app.scenario.classifier import ScenarioType
+
+        # 1. 七周期加权（大周期定方向，小周期定时机）- 基础参数
         trends = self._multi_timeframe_trends[code]
         score_map = {"up": 1, "down": -1, "neutral": 0}
 
-        # 七周期加权（大周期定方向，小周期定时机）
         weights = {
             "K_DAY": 0.35, "K_60M": 0.25, "K_30M": 0.15,
             "K_15M": 0.10, "K_5M": 0.07,  "K_3M": 0.05, "K_1M": 0.03,
@@ -1103,8 +1131,9 @@ class DataSubscriber:
             for k, w in weights.items()
         )
 
+        # 2. 根据七周期加权结果获取基础参数
         if combined >= 0.55:         # 强上升（大多数周期共振做多）
-            return {
+            base_params = {
                 "stop_loss_pct":    -0.06,   # -6%（顺势放宽，让利润奔跑）
                 "take_profit_pct":   0.08,   # +8%
                 "breakeven_trigger": 0.025,  # +2.5% 触发保本
@@ -1112,7 +1141,7 @@ class DataSubscriber:
                 "regime": "strong_up",
             }
         elif combined >= 0.20:       # 弱上升
-            return {
+            base_params = {
                 "stop_loss_pct":    -0.045,  # -4.5%
                 "take_profit_pct":   0.06,   # +6%
                 "breakeven_trigger": 0.020,  # +2%
@@ -1120,7 +1149,7 @@ class DataSubscriber:
                 "regime": "weak_up",
             }
         elif combined <= -0.55:      # 强下跌（多周期共振做空）
-            return {
+            base_params = {
                 "stop_loss_pct":    -0.03,   # -3%（做空快进快出，止损紧）
                 "take_profit_pct":   0.045,  # +4.5%
                 "breakeven_trigger": 0.018,  # +1.8%
@@ -1128,7 +1157,7 @@ class DataSubscriber:
                 "regime": "strong_down",
             }
         elif combined <= -0.20:      # 弱下跌
-            return {
+            base_params = {
                 "stop_loss_pct":    -0.04,   # -4%
                 "take_profit_pct":   0.05,   # +5%
                 "breakeven_trigger": 0.020,  # +2%
@@ -1136,13 +1165,78 @@ class DataSubscriber:
                 "regime": "weak_down",
             }
         else:                        # 震荡 / 中性
-            return {
+            base_params = {
                 "stop_loss_pct":    -0.035,  # -3.5%（与 yaml default 对齐）
                 "take_profit_pct":   0.05,   # +5%
                 "breakeven_trigger": 0.018,  # +1.8%
                 "trail_atr_mult":    1.6,
                 "regime": "neutral",
             }
+
+        # 3. P1-3: 场景类型调整（2026-04-09 新增）
+        scenario_adjustment = {
+            "stop_loss_factor": 1.0,
+            "take_profit_factor": 1.0,
+            "trail_factor": 1.0,
+            "scenario": "none",
+        }
+
+        if self._scenario_memory:
+            current_scenario = self._scenario_memory.get_current_scenario(code)
+            if current_scenario:
+                scenario_adjustment["scenario"] = current_scenario.value
+
+                # 事件类场景：收紧止损（高波动）
+                if current_scenario in [ScenarioType.GAP_EVENT, ScenarioType.NEWS_DRIVEN]:
+                    scenario_adjustment["stop_loss_factor"] = 0.7
+                    scenario_adjustment["take_profit_factor"] = 1.2
+                    scenario_adjustment["trail_factor"] = 0.8
+
+                # 强趋势：放宽止损，提高止盈（让利润奔跑）
+                elif current_scenario == ScenarioType.TREND_STRONG:
+                    scenario_adjustment["stop_loss_factor"] = 1.3
+                    scenario_adjustment["take_profit_factor"] = 1.5
+                    scenario_adjustment["trail_factor"] = 1.2
+
+                # 震荡市：收紧止损止盈（快进快出）
+                elif current_scenario == ScenarioType.RANGE_BOUND:
+                    scenario_adjustment["stop_loss_factor"] = 0.8
+                    scenario_adjustment["take_profit_factor"] = 0.9
+                    scenario_adjustment["trail_factor"] = 1.0
+
+                # 波动扩张：放宽止损
+                elif current_scenario == ScenarioType.VOL_EXPANSION:
+                    scenario_adjustment["stop_loss_factor"] = 1.2
+                    scenario_adjustment["take_profit_factor"] = 1.1
+                    scenario_adjustment["trail_factor"] = 1.1
+
+                # 趋势衰竭/反转：收紧止损（反转风险高）
+                elif current_scenario in [ScenarioType.TREND_EXHAUST, ScenarioType.REVERSAL_SETUP]:
+                    scenario_adjustment["stop_loss_factor"] = 0.85
+                    scenario_adjustment["take_profit_factor"] = 1.0
+                    scenario_adjustment["trail_factor"] = 0.9
+
+                logger.info(
+                    f"[场景风控] {code} 场景={current_scenario.value} | "
+                    f"止损系数={scenario_adjustment['stop_loss_factor']:.2f}, "
+                    f"止盈系数={scenario_adjustment['take_profit_factor']:.2f}"
+                )
+
+        # 4. 应用场景调整
+        adjusted_params = {
+            "stop_loss_pct": base_params["stop_loss_pct"] * scenario_adjustment["stop_loss_factor"],
+            "take_profit_pct": base_params["take_profit_pct"] * scenario_adjustment["take_profit_factor"],
+            "breakeven_trigger": base_params["breakeven_trigger"],
+            "trail_atr_mult": base_params["trail_atr_mult"] * scenario_adjustment["trail_factor"],
+            "regime": base_params["regime"],
+            "scenario_adjustment": (
+                f"{scenario_adjustment['scenario']} "
+                f"(sl={scenario_adjustment['stop_loss_factor']:.2f}, "
+                f"tp={scenario_adjustment['take_profit_factor']:.2f})"
+            ),
+        }
+
+        return adjusted_params
 
     # ----------------------------------------------------------
     #  新闻情绪仓位加成 (Task4)
@@ -2528,7 +2622,52 @@ class DataSubscriber:
                     
                     # 更新 ADX (每根 K 线)
                     update_adx(code, kline)
-                    
+
+                    # P0-2: 场景识别在多周期 K 线触发（2026-04-09 修复）
+                    # 使用 5M/15M 中周期 K 线进行场景识别，减少 1M 噪声
+                    if k_type in ("K_5M", "K_15M") and subscriber._scenario_classifier is not None:
+                        try:
+                            buf = subscriber._kline_buffers[code]
+                            if buf.size >= 30:
+                                # 准备真实 K 线数据
+                                klines_for_scenario = []
+                                closes = list(buf.close)
+                                highs = list(buf.high)
+                                lows = list(buf.low)
+                                opens = list(buf.open)
+                                volumes = list(buf.volume)
+
+                                n = min(100, len(closes))
+                                for i in range(-n, 0):
+                                    klines_for_scenario.append({
+                                        'open': opens[i],
+                                        'high': highs[i],
+                                        'low': lows[i],
+                                        'close': closes[i],
+                                        'volume': volumes[i],
+                                    })
+
+                                if klines_for_scenario:
+                                    scenario_result = subscriber._scenario_classifier.classify(code, klines_for_scenario)
+
+                                    # 场景记忆平滑
+                                    if subscriber._scenario_memory is not None:
+                                        smoothed_scenario = subscriber._scenario_memory.update(
+                                            code,
+                                            scenario_result.scenario_type,
+                                            scenario_result.confidence
+                                        )
+
+                                        # 注入场景到共识引擎
+                                        subscriber._consensus.update_scenario(code, smoothed_scenario)
+
+                                        logger.info(
+                                            f"[场景分类/多周期] {code} {k_type} {smoothed_scenario.value} | "
+                                            f"置信度={scenario_result.confidence:.2f}"
+                                        )
+                        except Exception as _scen_e:
+                            logger.debug(f"[场景分类/多周期] {code} {k_type} 异常：{_scen_e}")
+
                     # 策略计算 (仅在 K_1M 上触发，避免重复)
                     if k_type == "K_1M":
                         for strategy in strategies:

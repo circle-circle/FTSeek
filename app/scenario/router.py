@@ -66,6 +66,7 @@ class ScenarioRouter:
     """
 
     # 默认场景→策略映射表
+    # 更新于 2026-04-09: 仅使用已实现的策略
     DEFAULT_ROUTING_CONFIG: Dict[ScenarioType, Dict] = {
         # --- 趋势类场景 ---
         ScenarioType.TREND_STRONG: {
@@ -76,75 +77,82 @@ class ScenarioRouter:
             "priority_boost": {"supertrend": 1.5},
         },
         ScenarioType.TREND_START: {
-            "primary": ["123_rule", "confluence_v2"],
-            "secondary": ["turtle", "enhanced_confluence"],
+            # 123_rule → confluence_v2, turtle → supertrend
+            "primary": ["confluence_v2", "supertrend"],
+            "secondary": ["enhanced_confluence"],
             "suppressed": ["rsi"],
             "risk_template": "trend_following",
-            "priority_boost": {"123_rule": 1.5},
+            "priority_boost": {"confluence_v2": 1.5},
         },
         ScenarioType.TREND_EXHAUST: {
-            "primary": ["td_range", "123_rule"],
-            "secondary": ["confluence_v2"],
-            "suppressed": ["supertrend", "turtle"],
+            # td_range → confluence_v2, 123_rule → supertrend
+            "primary": ["confluence_v2", "supertrend"],
+            "secondary": ["enhanced_confluence"],
+            "suppressed": ["rsi", "bollinger"],
             "risk_template": "reversal",
-            "priority_boost": {"td_range": 1.5},
+            "priority_boost": {"confluence_v2": 1.5},
         },
 
         # --- 震荡类场景 ---
         ScenarioType.RANGE_BOUND: {
             "primary": ["rsi", "bollinger"],
             "secondary": ["confluence_v2", "open_close_effect"],
-            "suppressed": ["supertrend", "turtle"],
+            "suppressed": ["supertrend", "enhanced_confluence"],
             "risk_template": "mean_reversion",
             "priority_boost": {"rsi": 1.5, "bollinger": 1.5},
         },
 
         # --- 波动类场景 ---
         ScenarioType.VOL_EXPANSION: {
-            "primary": ["volatility_breakout", "confluence_v2"],
-            "secondary": ["event_driven", "123_rule"],
-            "suppressed": ["mean_reversion_strategies"],
+            # volatility_breakout → confluence_v2
+            "primary": ["confluence_v2", "supertrend"],
+            "secondary": ["event_driven", "enhanced_confluence"],
+            "suppressed": ["rsi", "bollinger"],
             "risk_template": "breakout",
-            "priority_boost": {"volatility_breakout": 1.5},
+            "priority_boost": {"confluence_v2": 1.5},
         },
         ScenarioType.VOL_CONTRACTION: {
-            "primary": ["bollinger", "range_bound_strategy"],
+            # range_bound_strategy → rsi + bollinger
+            "primary": ["bollinger", "rsi"],
             "secondary": ["confluence_v2"],
-            "suppressed": ["breakout_strategies"],
+            "suppressed": ["supertrend"],
             "risk_template": "low_volatility",
             "priority_boost": {"bollinger": 1.3},
         },
 
         # --- 事件类场景 ---
         ScenarioType.GAP_EVENT: {
-            "primary": ["event_driven", "gap_trading"],
-            "secondary": ["sentiment_ai", "confluence_v2"],
-            "suppressed": ["all_technical_indicators"],
+            # gap_trading → event_driven
+            "primary": ["event_driven", "sentiment_ai"],
+            "secondary": ["confluence_v2"],
+            "suppressed": ["rsi", "bollinger", "macd"],
             "risk_template": "event_driven",
-            "priority_boost": {"event_driven": 2.0, "gap_trading": 2.0},
+            "priority_boost": {"event_driven": 2.0},
         },
         ScenarioType.NEWS_DRIVEN: {
             "primary": ["sentiment_ai", "event_driven"],
             "secondary": ["confluence_v2"],
-            "suppressed": ["pure_technical_strategies"],
+            "suppressed": ["rsi", "bollinger", "macd"],
             "risk_template": "event_driven",
             "priority_boost": {"sentiment_ai": 2.0},
         },
 
         # --- 反转/突破类场景 ---
         ScenarioType.REVERSAL_SETUP: {
-            "primary": ["123_rule", "rsi_divergence"],
+            # 123_rule → supertrend, rsi_divergence → rsi
+            "primary": ["supertrend", "rsi"],
             "secondary": ["confluence_v2", "sentiment_ai"],
-            "suppressed": ["trend_following_strategies"],
+            "suppressed": ["bollinger"],
             "risk_template": "reversal",
-            "priority_boost": {"123_rule": 1.5},
+            "priority_boost": {"supertrend": 1.5},
         },
         ScenarioType.BREAKOUT_SETUP: {
-            "primary": ["turtle", "bollinger_breakout"],
-            "secondary": ["confluence_v2", "volume_breakout"],
-            "suppressed": ["mean_reversion_strategies"],
+            # turtle → supertrend, bollinger_breakout → bollinger
+            "primary": ["supertrend", "bollinger"],
+            "secondary": ["confluence_v2", "enhanced_confluence"],
+            "suppressed": ["rsi"],
             "risk_template": "breakout",
-            "priority_boost": {"turtle": 1.5},
+            "priority_boost": {"supertrend": 1.5},
         },
 
         # --- 默认场景 ---
@@ -163,12 +171,36 @@ class ScenarioRouter:
     SUPPRESSED_WEIGHT = 0.3   # 抑制策略权重
 
     # 策略白名单 (系统中已实现的策略)
+    # 更新于 2026-04-09: 仅包含实际实现的策略
     AVAILABLE_STRATEGIES = {
-        "confluence_v2", "supertrend", "rsi", "bollinger", "macd",
-        "event_driven", "sentiment_ai", "123_rule", "turtle", "td_range",
-        "enhanced_confluence", "gap_trading", "volatility_breakout",
-        "bollinger_breakout", "volume_breakout", "range_bound_strategy",
-        "rsi_divergence", "open_close_effect",
+        # === 核心策略 ===
+        "confluence_v2",       # 主力融合策略
+        "supertrend",          # 趋势跟踪
+        "sentiment_ai",        # AI 情绪
+        "event_driven",        # 事件驱动
+        "enhanced_confluence", # 技术增强
+
+        # === 辅助策略 ===
+        "rsi",                 # RSI (包含在 confluence_v2 中)
+        "bollinger",           # 布林带 (包含在 confluence_v2 中)
+        "macd",                # MACD (包含在 confluence_v2 中)
+        "open_close_effect",   # 开盘/收盘效应
+
+        # === 特殊标记占位符 (会在_expand_special_markers 中展开) ===
+        # 注意：以下是占位符，不是实际策略
+        "123_rule",            # → 占位符，实际使用 confluence_v2 替代
+        "turtle",              # → 占位符，实际使用 supertrend 替代
+        "td_range",            # → 占位符，实际使用 confluence_v2 替代
+        "gap_trading",         # → 占位符，实际使用 event_driven 替代
+        "volatility_breakout", # → 占位符，实际使用 confluence_v2 替代
+        "bollinger_breakout",  # → 占位符，实际使用 bollinger 替代
+        "volume_breakout",     # → 占位符，实际使用 enhanced_confluence 替代
+        "range_bound_strategy",# → 占位符，实际使用 rsi/bollinger 替代
+        "rsi_divergence",      # → 占位符，实际使用 rsi 替代
+        "mean_reversion_strategies",  # → 特殊标记
+        "trend_following_strategies", # → 特殊标记
+        "breakout_strategies",        # → 特殊标记
+        "all_technical_indicators",   # → 特殊标记
     }
 
     def __init__(self, config: Dict = None):
@@ -281,25 +313,57 @@ class ScenarioRouter:
 
     def _expand_special_markers(self, strategies: List[str]) -> List[str]:
         """
-        展开特殊标记 (如 "all_technical_indicators")
+        展开特殊标记和占位符策略
 
         Args:
-            strategies: 策略列表 (可能包含特殊标记)
+            strategies: 策略列表 (可能包含特殊标记或占位符)
 
         Returns:
             展开后的策略列表
+
+        占位符映射 (2026-04-09):
+        - 123_rule → supertrend
+        - turtle → supertrend
+        - td_range → confluence_v2
+        - gap_trading → event_driven
+        - volatility_breakout → confluence_v2
+        - bollinger_breakout → bollinger
+        - volume_breakout → enhanced_confluence
+        - range_bound_strategy → rsi
+        - rsi_divergence → rsi
         """
         expanded = []
+
+        # 占位符映射表 (未实现的策略→已实现的策略)
+        placeholder_map = {
+            "123_rule": "supertrend",
+            "turtle": "supertrend",
+            "td_range": "confluence_v2",
+            "gap_trading": "event_driven",
+            "volatility_breakout": "confluence_v2",
+            "bollinger_breakout": "bollinger",
+            "volume_breakout": "enhanced_confluence",
+            "range_bound_strategy": "rsi",
+            "rsi_divergence": "rsi",
+        }
+
+        # 特殊标记展开
         special_markers = {
             "all_technical_indicators": ["rsi", "bollinger", "macd", "supertrend"],
-            "mean_reversion_strategies": ["rsi", "bollinger", "range_bound_strategy"],
-            "trend_following_strategies": ["supertrend", "turtle", "123_rule"],
-            "breakout_strategies": ["turtle", "bollinger_breakout", "volatility_breakout"],
+            "mean_reversion_strategies": ["rsi", "bollinger"],
+            "trend_following_strategies": ["supertrend", "confluence_v2"],
+            "breakout_strategies": ["supertrend", "confluence_v2", "bollinger"],
+            "pure_technical_strategies": ["rsi", "bollinger", "macd", "supertrend"],
         }
 
         for s in strategies:
-            if s in special_markers:
+            # 1. 检查是否是占位符
+            if s in placeholder_map:
+                expanded.append(placeholder_map[s])
+            # 2. 检查是否是特殊标记
+            elif s in special_markers:
                 expanded.extend(special_markers[s])
+            # 3. 检查是否是已实现策略
             elif s in self.AVAILABLE_STRATEGIES:
                 expanded.append(s)
             else:

@@ -673,19 +673,28 @@ class ConsensusEngine:
                 # 归一化技术项到 0.0 ~ 1.0 (除以 0.7)
                 technical_part = min(1.0, technical_confidence / 0.7) * 0.5
                 
-                # 情绪项(50%): BULLISH + 资金流入 = 加分
-                # 资金情绪项: -1 ~ 1 → 0 ~ 1 (取正数部分)
+                # 情绪项 (50%): BULLISH + 资金流入 = 加分
+                # 资金情绪项：-1 ~ 1 → 0 ~ 1 (取正数部分)
                 sentiment_part = max(0, capital_sentiment) * 0.5
-                
-                # 最终置信度 = 技术项(50%) + 情绪项(50%)
-                base_confidence = technical_part + sentiment_part
+
+                # P1-4: 场景置信度纳入共识公式（2026-04-09 新增）
+                # 获取场景置信度（场景确认计数 / 确认窗口）
+                scenario_confidence = 0.5  # 默认中性
+                if hasattr(self, '_scenario_memory') and self._scenario_memory is not None:
+                    confirm_count = self._scenario_memory.get_confirm_count(code)
+                    scenario_confidence = confirm_count / self._scenario_memory.CONFIRM_WINDOW
+                    scenario_confidence = max(0.3, min(1.0, scenario_confidence))  # 限制在 0.3-1.0
+
+                # 最终置信度 = 技术项 (35%) + 情绪项 (35%) + 场景项 (30%)
+                base_confidence = technical_part * 0.7 + sentiment_part * 0.7 + scenario_confidence * 0.3
                 confidence = min(1.0, base_confidence)
 
                 logger.info(
                     f"[共识] {code} BUY 置信度计算 | 技术项={technical_part:.2f} | "
-                    f"情绪项={sentiment_part:.2f} | 资金流={capital_sentiment:.2f} | "
-                    f"最终={confidence:.2f}"
+                    f"情绪项={sentiment_part:.2f} | 场景项={scenario_confidence:.2f} | "
+                    f"资金流={capital_sentiment:.2f} | 最终={confidence:.2f}"
                 )
+
                 
                 result = ConsensusResult(
                     confidence=round(confidence, 2),
@@ -716,19 +725,27 @@ class ConsensusEngine:
                 
                 # P1-1: 修复置信度公式（SELL 对称版本 - 简化为加权平均）
                 # 技术项(50%): 分数项 + 共识项
-                score_part = min(1.0, abs(score) / self.threshold) * 0.45
-                # 共识项: 同向票数/全部投票数（动态分母）
-                unique_votes_sell = bullish_votes + bearish_votes
-                consensus_part = min(1.0, len(bearish_votes) / max(1, len(unique_votes_sell))) * 0.25
-                # 技术合计 = 分数项 + 共识项 (45% + 25% = 70%)
-                # 按 0.5/0.5 比例重新归一化：技术权重 = 0.5
-                technical_confidence = score_part + consensus_part  # 0.0 ~ 0.7
-                technical_part = min(1.0, technical_confidence / 0.7) * 0.5
-                
-                # 情绪项(50%): SELL + 负情绪 = 加分
+                # 情绪项 (50%): SELL + 负情绪 = 加分
                 sentiment_part = max(0, -capital_sentiment) * 0.5
-                
-                # 最终置信度 = 技术项(50%) + 情绪项(50%)
+
+                # P1-4: 场景置信度纳入共识公式（2026-04-09 新增）
+                # 获取场景置信度（场景确认计数 / 确认窗口）
+                scenario_confidence = 0.5  # 默认中性
+                if hasattr(self, '_scenario_memory') and self._scenario_memory is not None:
+                    confirm_count = self._scenario_memory.get_confirm_count(code)
+                    scenario_confidence = confirm_count / self._scenario_memory.CONFIRM_WINDOW
+                    scenario_confidence = max(0.3, min(1.0, scenario_confidence))  # 限制在 0.3-1.0
+
+                # 最终置信度 = 技术项 (35%) + 情绪项 (35%) + 场景项 (30%)
+                base_confidence = technical_part * 0.7 + sentiment_part * 0.7 + scenario_confidence * 0.3
+                confidence = min(1.0, base_confidence)
+
+                logger.info(
+                    f"[共识] {code} SELL 置信度计算 | 技术项={technical_part:.2f} | "
+                    f"情绪项={sentiment_part:.2f} | 场景项={scenario_confidence:.2f} | "
+                    f"资金流={capital_sentiment:.2f} | 最终={confidence:.2f}"
+                )
+
                 base_confidence = technical_part + sentiment_part
                 confidence = min(1.0, base_confidence)
 
