@@ -463,58 +463,9 @@ class DataSubscriber:
         except Exception as _e:
             logger.debug(f"[市场状态] {code} 检测异常: {_e}")
 
-        # Phase 1: 场景分类（2026-04-09）
-        if self._scenario_classifier is not None:
-            try:
-                # 获取 K 线数据用于场景分类（使用真实的 OHLCV 数据）
-                if code not in self._kline_buffers:
-                    return
-                buf = self._kline_buffers[code]
-                if buf.size < 30:
-                    return
+        # 注意：场景识别已移至 MyKlineHandler 中在 K_5M/K_15M 触发（新问题 3 修复）
+        # 理由：1M 噪声大，应使用中周期 K 线进行场景识别
 
-                # 准备 K 线数据格式（使用真实数据）
-                klines_for_scenario = []
-                closes = list(buf.close)
-                highs = list(buf.high)
-                lows = list(buf.low)
-                opens = list(buf.open)
-                volumes = list(buf.volume)
-
-                n = min(100, len(closes))
-                for i in range(-n, 0):
-                    klines_for_scenario.append({
-                        'open': opens[i],
-                        'high': highs[i],
-                        'low': lows[i],
-                        'close': closes[i],
-                        'volume': volumes[i],
-                    })
-
-                if not klines_for_scenario:
-                    return
-
-                # 执行场景分类
-                scenario_result = self._scenario_classifier.classify(code, klines_for_scenario)
-
-                # 场景记忆平滑
-                if self._scenario_memory is not None:
-                    smoothed_scenario = self._scenario_memory.update(
-                        code,
-                        scenario_result.scenario_type,
-                        scenario_result.confidence
-                    )
-
-                    # 注入场景到共识引擎
-                    self._consensus.update_scenario(code, smoothed_scenario)
-
-                    logger.info(
-                        f"[场景分类] {code} {smoothed_scenario.value} | "
-                        f"置信度={scenario_result.confidence:.2f}"
-                    )
-            except Exception as _e:
-                logger.debug(f"[场景分类] {code} 分类异常：{_e}")
-    
     # ----------------------------------------------------------
     #  ATR 波动率计算 (港股适配用)
     # ----------------------------------------------------------

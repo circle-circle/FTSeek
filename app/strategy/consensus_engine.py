@@ -677,16 +677,25 @@ class ConsensusEngine:
                 # 资金情绪项：-1 ~ 1 → 0 ~ 1 (取正数部分)
                 sentiment_part = max(0, capital_sentiment) * 0.5
 
-                # P1-4: 场景置信度纳入共识公式（2026-04-09 新增）
-                # 获取场景置信度（场景确认计数 / 确认窗口）
+                # P1-4: 场景置信度纳入共识公式（2026-04-09 新增/2026-04-09 修复）
+                # 从 _scenario_cache 获取场景对象（新问题 2 修复）
                 scenario_confidence = 0.5  # 默认中性
-                if hasattr(self, '_scenario_memory') and self._scenario_memory is not None:
-                    confirm_count = self._scenario_memory.get_confirm_count(code)
-                    scenario_confidence = confirm_count / self._scenario_memory.CONFIRM_WINDOW
+                scenario_obj = self._scenario_cache.get(code)
+                if scenario_obj:
+                    # 场景对象可能有 confidence 属性或 confirm_count 属性
+                    if hasattr(scenario_obj, 'confidence'):
+                        scenario_confidence = scenario_obj.confidence
+                    elif hasattr(scenario_obj, 'confirm_count'):
+                        scenario_confidence = scenario_obj.confirm_count / 3.0  # CONFIRM_WINDOW=3
                     scenario_confidence = max(0.3, min(1.0, scenario_confidence))  # 限制在 0.3-1.0
 
-                # 最终置信度 = 技术项 (35%) + 情绪项 (35%) + 场景项 (30%)
-                base_confidence = technical_part * 0.7 + sentiment_part * 0.7 + scenario_confidence * 0.3
+                # 新问题 4 修复：正确的权重分配（总和=1.0）
+                # 技术项 (40%) + 情绪项 (30%) + 场景项 (30%)
+                base_confidence = (
+                    technical_part * 0.4 +
+                    sentiment_part * 0.3 +
+                    scenario_confidence * 0.3
+                )
                 confidence = min(1.0, base_confidence)
 
                 logger.info(
@@ -728,16 +737,25 @@ class ConsensusEngine:
                 # 情绪项 (50%): SELL + 负情绪 = 加分
                 sentiment_part = max(0, -capital_sentiment) * 0.5
 
-                # P1-4: 场景置信度纳入共识公式（2026-04-09 新增）
-                # 获取场景置信度（场景确认计数 / 确认窗口）
+                # P1-4: 场景置信度纳入共识公式（2026-04-09 新增/2026-04-09 修复）
+                # 从 _scenario_cache 获取场景对象（新问题 2 修复）
                 scenario_confidence = 0.5  # 默认中性
-                if hasattr(self, '_scenario_memory') and self._scenario_memory is not None:
-                    confirm_count = self._scenario_memory.get_confirm_count(code)
-                    scenario_confidence = confirm_count / self._scenario_memory.CONFIRM_WINDOW
+                scenario_obj = self._scenario_cache.get(code)
+                if scenario_obj:
+                    # 场景对象可能有 confidence 属性或 confirm_count 属性
+                    if hasattr(scenario_obj, 'confidence'):
+                        scenario_confidence = scenario_obj.confidence
+                    elif hasattr(scenario_obj, 'confirm_count'):
+                        scenario_confidence = scenario_obj.confirm_count / 3.0  # CONFIRM_WINDOW=3
                     scenario_confidence = max(0.3, min(1.0, scenario_confidence))  # 限制在 0.3-1.0
 
-                # 最终置信度 = 技术项 (35%) + 情绪项 (35%) + 场景项 (30%)
-                base_confidence = technical_part * 0.7 + sentiment_part * 0.7 + scenario_confidence * 0.3
+                # 新问题 4 修复：正确的权重分配（总和=1.0）
+                # 技术项 (40%) + 情绪项 (30%) + 场景项 (30%)
+                base_confidence = (
+                    technical_part * 0.4 +
+                    sentiment_part * 0.3 +
+                    scenario_confidence * 0.3
+                )
                 confidence = min(1.0, base_confidence)
 
                 logger.info(
@@ -746,15 +764,6 @@ class ConsensusEngine:
                     f"资金流={capital_sentiment:.2f} | 最终={confidence:.2f}"
                 )
 
-                base_confidence = technical_part + sentiment_part
-                confidence = min(1.0, base_confidence)
-
-                logger.info(
-                    f"[共识] {code} SELL 置信度计算 | 技术项={technical_part:.2f} | "
-                    f"情绪项={sentiment_part:.2f} | 资金流={capital_sentiment:.2f} | "
-                    f"最终={confidence:.2f}"
-                )
-                
                 result = ConsensusResult(
                     confidence=round(confidence, 2),
                     code=code,
