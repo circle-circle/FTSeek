@@ -8,6 +8,7 @@ from typing import Optional, Dict, List
 from .base import BaseFactor, FactorResult
 
 logger = logging.getLogger("ftseek.factors.sentiment_ai")
+logger.propagate = False  # 防止日志重复
 
 
 class AISentimentFactor(BaseFactor):

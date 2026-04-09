@@ -1,0 +1,120 @@
+{
+    "_updated": "2026-03-31 10:55",
+    "_note": "期权交易专用配置 - 针对期权特性优化",
+    "_options_specific": {
+        "note": "期权与正股的关键区别：1)时间价值衰减 2)高杠杆 3)波动率敏感 4)流动性较低",
+        "expiry_date": "2026-04-29",
+        "days_to_expiry": 29
+    },
+    "enabled_strategies": {
+        "_note": "期权策略：趋势跟随为主，减少震荡策略",
+        "primary": "supertrend",
+        "secondary": "confluence_v2",
+        "disabled": [
+            "rsi",
+            "macd", 
+            "bollinger",
+            "confluence",
+            "price_break",
+            "sentiment_ai"
+        ]
+    },
+    "ai_weight": 0.0,
+    "ai_min_accuracy": 0.5,
+    "base_position": 0.05,
+    "min_position": 0.03,
+    "max_position": 0.08,
+    "max_daily_loss": 0.02,
+    "max_drawdown": 0.08,
+    "consecutive_loss_limit": 2,
+    "min_signal_confidence": 0.60,
+    "trading_mode": "simulate",
+    "manual_confirm_for_live": true,
+    "max_open_positions": 1,
+    "long_signals": {
+        "_note": "期权做多：趋势确认，高置信度",
+        "supertrend_multiplier": 2.5,
+        "min_confidence": 0.65,
+        "volume_confirm": 2.0,
+        "trend_confirm": true
+    },
+    "fusion": {
+        "technical_weight": 0.85,
+        "sentiment_weight": 0.15,
+        "ai_weight": 0.0
+    },
+    "consensus": {
+        "_note": "期权：提高阈值，减少信号频率",
+        "threshold": 1.5,
+        "min_strategies": 2,
+        "window_seconds": 120,
+        "adx_trend": 25,
+        "adx_range": 20
+    },
+    "strategy_weights": {
+        "_note": "期权权重：趋势策略优先",
+        "supertrend": 1.5,
+        "confluence_v2": 1.0
+    },
+    "position": {
+        "initial_ratio": 0.2,
+        "max_position_ratio": 0.06,
+        "dynamic_sizing": true,
+        "vol_adjustment": true
+    },
+    "risk_limits": {
+        "min_confidence": 0.60,
+        "max_single_position": 0.06,
+        "max_daily_trades": 2,
+        "signal_cooldown_seconds": 300
+    },
+    "trend_filter": {
+        "enabled": true,
+        "use_multi_timeframe": true,
+        "ma_period_short": 5,
+        "ma_period_long": 20,
+        "prevent_buy_in_downtrend": true,
+        "prevent_short_in_uptrend": true,
+        "min_adx_for_trend": 25,
+        "require_both_timeframes": true
+    },
+    "stop_loss_percent": 0.20,
+    "take_profit_percent": 0.40,
+    "breakeven_trigger": 0.10,
+    "trailing_stop": {
+        "enabled": true,
+        "activation_percent": 0.15,
+        "trail_percent": 0.08
+    },
+    "time_exit": {
+        "_note": "期权时间止损：控制时间价值衰减",
+        "max_holding_hours": 24,
+        "warning_hours": 18,
+        "force_close_near_expiry": true,
+        "days_before_expiry_close": 3
+    },
+    "loss_pause": {
+        "enabled": true,
+        "consecutive_losses": 2,
+        "pause_minutes": 120
+    },
+    "short_selling_enabled": false,
+    "circuit_breaker": {
+        "daily_loss_limit": -2000,
+        "pause_on_triggered": true
+    },
+    "options_risk": {
+        "_note": "期权特有风险控制",
+        "min_open_interest": 10,
+        "min_volume": 5,
+        "max_spread_percent": 0.05,
+        "avoid_near_expiry": true,
+        "days_to_expiry_warning": 7,
+        "close_all_before_expiry": 3
+    },
+    "simulate_account": {
+        "acc_id": "8246818",
+        "acc_type": "MARGIN",
+        "market": "HK_OPTIONS"
+    }
+}

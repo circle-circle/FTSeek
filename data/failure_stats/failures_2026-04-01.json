@@ -1,0 +1,205 @@
+[
+  {
+    "timestamp": "2026-04-01T10:25:50.492075",
+    "code": "HK.00981",
+    "reason": "price_check",
+    "category": "other",
+    "message": "价格检查: 价格 52.25 接近日内低点 51.90 (距离 0.67% < 1.0%)，禁止杀跌卖出"
+  },
+  {
+    "timestamp": "2026-04-01T10:30:51.780276",
+    "code": "HK.00981",
+    "reason": "price_check",
+    "category": "other",
+    "message": "价格检查: 价格 52.17 接近日内低点 51.90 (距离 0.53% < 1.0%)，禁止杀跌卖出"
+  },
+  {
+    "timestamp": "2026-04-01T11:01:57.021400",
+    "code": "HK.09992",
+    "reason": "price_check",
+    "category": "other",
+    "message": "价格检查: 价格 148.20 接近日内高点 149.40 (距离 0.80% < 1.0%)，禁止追高买入"
+  },
+  {
+    "timestamp": "2026-04-01T11:16:09.886347",
+    "code": "HK.09992",
+    "reason": "other",
+    "category": "other",
+    "message": "下单失败：暂不支持卖空"
+  },
+  {
+    "timestamp": "2026-04-01T11:18:30.227795",
+    "code": "HK.09992",
+    "reason": "price_check",
+    "category": "other",
+    "message": "价格检查: 价格 148.10 接近日内高点 149.40 (距离 0.87% < 1.0%)，禁止追高买入"
+  },
+  {
+    "timestamp": "2026-04-01T11:34:13.637791",
+    "code": "HK.00981",
+    "reason": "other",
+    "category": "other",
+    "message": "下单失败：暂不支持卖空"
+  },
+  {
+    "timestamp": "2026-04-01T11:41:13.658393",
+    "code": "HK.09992",
+    "reason": "price_check",
+    "category": "other",
+    "message": "价格检查: 价格 149.55 接近日内高点 150.00 (距离 0.30% < 1.0%)，禁止追高买入"
+  },
+  {
+    "timestamp": "2026-04-01T11:45:31.836577",
+    "code": "HK.09992",
+    "reason": "price_check",
+    "category": "other",
+    "message": "价格检查: 价格 149.80 接近日内高点 150.00 (距离 0.13% < 1.0%)，禁止追高买入"
+  },
+  {
+    "timestamp": "2026-04-01T13:04:22.972148",
+    "code": "HK.09992",
+    "reason": "other",
+    "category": "other",
+    "message": "下单失败：暂不支持卖空"
+  },
+  {
+    "timestamp": "2026-04-01T13:38:00.676293",
+    "code": "HK.00981",
+    "reason": "price_check",
+    "category": "other",
+    "message": "价格检查: 价格 53.12 接近日内高点 53.65 (距离 0.98% < 1.0%)，禁止追高买入"
+  },
+  {
+    "timestamp": "2026-04-01T13:40:09.930084",
+    "code": "HK.09992",
+    "reason": "price_check",
+    "category": "other",
+    "message": "价格检查: 价格 149.85 接近日内高点 150.20 (距离 0.23% < 1.0%)，禁止追高买入"
+  },
+  {
+    "timestamp": "2026-04-01T13:51:30.707755",
+    "code": "HK.09992",
+    "reason": "other",
+    "category": "other",
+    "message": "下单失败：暂不支持卖空"
+  },
+  {
+    "timestamp": "2026-04-01T13:54:51.550415",
+    "code": "HK.09992",
+    "reason": "other",
+    "category": "other",
+    "message": "下单失败：暂不支持卖空"
+  },
+  {
+    "timestamp": "2026-04-01T13:58:19.292725",
+    "code": "HK.09992",
+    "reason": "price_check",
+    "category": "other",
+    "message": "价格检查: 价格 148.75 接近日内高点 150.20 (距离 0.97% < 1.0%)，禁止追高买入"
+  },
+  {
+    "timestamp": "2026-04-01T13:59:27.519796",
+    "code": "HK.09992",
+    "reason": "other",
+    "category": "other",
+    "message": "下单失败：暂不支持卖空"
+  },
+  {
+    "timestamp": "2026-04-01T14:09:27.868988",
+    "code": "HK.00981",
+    "reason": "other",
+    "category": "other",
+    "message": "下单失败：暂不支持卖空"
+  },
+  {
+    "timestamp": "2026-04-01T14:27:50.947313",
+    "code": "HK.09992",
+    "reason": "price_check",
+    "category": "other",
+    "message": "价格检查: 价格 148.95 接近日内高点 150.20 (距离 0.83% < 1.0%)，禁止追高买入"
+  },
+  {
+    "timestamp": "2026-04-01T14:30:19.724962",
+    "code": "HK.09992",
+    "reason": "other",
+    "category": "other",
+    "message": "下单失败：暂不支持卖空"
+  },
+  {
+    "timestamp": "2026-04-01T14:31:10.293360",
+    "code": "HK.09992",
+    "reason": "price_check",
+    "category": "other",
+    "message": "价格检查: 价格 149.25 接近日内高点 150.20 (距离 0.63% < 1.0%)，禁止追高买入"
+  },
+  {
+    "timestamp": "2026-04-01T14:33:15.038795",
+    "code": "HK.09992",
+    "reason": "other",
+    "category": "other",
+    "message": "下单失败：暂不支持卖空"
+  },
+  {
+    "timestamp": "2026-04-01T14:40:01.530109",
+    "code": "HK.09992",
+    "reason": "other",
+    "category": "other",
+    "message": "下单失败：暂不支持卖空"
+  },
+  {
+    "timestamp": "2026-04-01T14:41:51.847960",
+    "code": "HK.00981",
+    "reason": "price_check",
+    "category": "other",
+    "message": "价格检查: 价格 53.27 接近日内高点 53.65 (距离 0.70% < 1.0%)，禁止追高买入"
+  },
+  {
+    "timestamp": "2026-04-01T15:05:13.340817",
+    "code": "HK.00981",
+    "reason": "price_check",
+    "category": "other",
+    "message": "价格检查: 价格 53.23 接近日内高点 53.65 (距离 0.79% < 1.0%)，禁止追高买入"
+  },
+  {
+    "timestamp": "2026-04-01T15:16:19.477572",
+    "code": "HK.00981",
+    "reason": "price_check",
+    "category": "other",
+    "message": "价格检查: 价格 53.12 接近日内高点 53.65 (距离 0.98% < 1.0%)，禁止追高买入"
+  },
+  {
+    "timestamp": "2026-04-01T15:24:57.628567",
+    "code": "HK.00981",
+    "reason": "other",
+    "category": "other",
+    "message": "下单失败：暂不支持卖空"
+  },
+  {
+    "timestamp": "2026-04-01T15:28:32.766762",
+    "code": "HK.00981",
+    "reason": "price_check",
+    "category": "other",
+    "message": "价格检查: 价格 53.25 接近日内高点 53.65 (距离 0.75% < 1.0%)，禁止追高买入"
+  },
+  {
+    "timestamp": "2026-04-01T15:31:03.389443",
+    "code": "HK.00981",
+    "reason": "other",
+    "category": "other",
+    "message": "下单失败：暂不支持卖空"
+  },
+  {
+    "timestamp": "2026-04-01T15:36:47.710470",
+    "code": "HK.00981",
+    "reason": "other",
+    "category": "other",
+    "message": "下单失败：暂不支持卖空"
+  },
+  {
+    "timestamp": "2026-04-01T15:38:17.910919",
+    "code": "HK.00981",
+    "reason": "price_check",
+    "category": "other",
+    "message": "价格检查: 价格 53.33 接近日内高点 53.65 (距离 0.61% < 1.0%)，禁止追高买入"
+  }
+]

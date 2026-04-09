@@ -19,6 +19,7 @@ from datetime import datetime
 from enum import Enum
 
 logger = logging.getLogger("ftseek.v4.four_step_confirmation")
+logger.propagate = False  # 防止日志重复
 
 
 class StepStatus(str, Enum):
@@ -158,6 +159,7 @@ class FourStepConfirmation:
         """初始化四步确认系统"""
         self.config = {**self.DEFAULT_CONFIG, **(config or {})}
         self.logger = logging.getLogger("ftseek.v4.four_step_confirmation")
+logger.propagate = False  # 防止日志重复
         
         # 风控状态
         self.daily_trades = 0

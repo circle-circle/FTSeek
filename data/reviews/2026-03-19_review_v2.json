@@ -1,0 +1,1154 @@
+{
+  "date": "2026-03-19",
+  "generated_at": "2026-03-19T17:42:53.630211",
+  "trades": {
+    "all": [
+      {
+        "id": 4,
+        "code": "HK.03690",
+        "action": "BUY",
+        "quantity": 100,
+        "entry_price": 81.0,
+        "entry_time": "2026-03-19 10:16:34",
+        "stop_loss": 76.14,
+        "take_profit": 85.05,
+        "status": "OPEN",
+        "exit_price": null,
+        "realized_pnl": null,
+        "exit_time": null,
+        "highest_price": null,
+        "lowest_price": null,
+        "signal_id": null,
+        "strategy": null
+      },
+      {
+        "id": 5,
+        "code": "HK.03690",
+        "action": "BUY",
+        "quantity": 200,
+        "entry_price": 81.0,
+        "entry_time": "2026-03-19 10:18:10",
+        "stop_loss": 76.14,
+        "take_profit": 85.05,
+        "status": "OPEN",
+        "exit_price": null,
+        "realized_pnl": null,
+        "exit_time": null,
+        "highest_price": null,
+        "lowest_price": null,
+        "signal_id": null,
+        "strategy": null
+      },
+      {
+        "id": 6,
+        "code": "HK.03690",
+        "action": "BUY",
+        "quantity": 200,
+        "entry_price": 81.05,
+        "entry_time": "2026-03-19 10:24:01",
+        "stop_loss": 76.187,
+        "take_profit": 85.1025,
+        "status": "OPEN",
+        "exit_price": null,
+        "realized_pnl": null,
+        "exit_time": null,
+        "highest_price": null,
+        "lowest_price": null,
+        "signal_id": null,
+        "strategy": null
+      },
+      {
+        "id": 7,
+        "code": "HK.03690",
+        "action": "BUY",
+        "quantity": 200,
+        "entry_price": 81.2,
+        "entry_time": "2026-03-19 10:24:37",
+        "stop_loss": 76.328,
+        "take_profit": 85.26,
+        "status": "OPEN",
+        "exit_price": null,
+        "realized_pnl": null,
+        "exit_time": null,
+        "highest_price": null,
+        "lowest_price": null,
+        "signal_id": null,
+        "strategy": null
+      }
+    ],
+    "opened": [
+      {
+        "id": 4,
+        "code": "HK.03690",
+        "action": "BUY",
+        "quantity": 100,
+        "entry_price": 81.0,
+        "entry_time": "2026-03-19 10:16:34",
+        "stop_loss": 76.14,
+        "take_profit": 85.05,
+        "status": "OPEN",
+        "exit_price": null,
+        "realized_pnl": null,
+        "exit_time": null,
+        "highest_price": null,
+        "lowest_price": null
+      },
+      {
+        "id": 5,
+        "code": "HK.03690",
+        "action": "BUY",
+        "quantity": 200,
+        "entry_price": 81.0,
+        "entry_time": "2026-03-19 10:18:10",
+        "stop_loss": 76.14,
+        "take_profit": 85.05,
+        "status": "OPEN",
+        "exit_price": null,
+        "realized_pnl": null,
+        "exit_time": null,
+        "highest_price": null,
+        "lowest_price": null
+      },
+      {
+        "id": 6,
+        "code": "HK.03690",
+        "action": "BUY",
+        "quantity": 200,
+        "entry_price": 81.05,
+        "entry_time": "2026-03-19 10:24:01",
+        "stop_loss": 76.187,
+        "take_profit": 85.1025,
+        "status": "OPEN",
+        "exit_price": null,
+        "realized_pnl": null,
+        "exit_time": null,
+        "highest_price": null,
+        "lowest_price": null
+      },
+      {
+        "id": 7,
+        "code": "HK.03690",
+        "action": "BUY",
+        "quantity": 200,
+        "entry_price": 81.2,
+        "entry_time": "2026-03-19 10:24:37",
+        "stop_loss": 76.328,
+        "take_profit": 85.26,
+        "status": "OPEN",
+        "exit_price": null,
+        "realized_pnl": null,
+        "exit_time": null,
+        "highest_price": null,
+        "lowest_price": null
+      }
+    ],
+    "closed": []
+  },
+  "signals": {
+    "list": [
+      {
+        "id": "35750a6e-bed1-4a8e-b325-e58f69352007",
+        "code": "HK.00981",
+        "strategy": "共识(price_break)",
+        "action": "SELL",
+        "price": 59.85,
+        "quantity": 200,
+        "confidence": 0.69,
+        "consensus_score": -0.5,
+        "strategies": [
+          "price_break"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": null,
+        "pnl": null,
+        "market_regime": "neutral",
+        "created_at": "2026-03-19T09:49:07.632683"
+      },
+      {
+        "id": "ab2abe17-e718-4697-8870-33a8e45e0c9b",
+        "code": "HK.00981",
+        "strategy": "共识(price_break)",
+        "action": "SELL",
+        "price": 60.1,
+        "quantity": 200,
+        "confidence": 0.69,
+        "consensus_score": -0.5,
+        "strategies": [
+          "price_break"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "[HK] 开仓交易执行异常：'str' object has no attribute 'value'",
+        "pnl": null,
+        "market_regime": "neutral",
+        "created_at": "2026-03-19T09:52:45.902748"
+      },
+      {
+        "id": "515fed67-208f-41f0-9db2-16dde681c79c",
+        "code": "HK.09992",
+        "strategy": "共识(price_break)",
+        "action": "BUY",
+        "price": 218.0,
+        "quantity": 200,
+        "confidence": 0.69,
+        "consensus_score": 0.5,
+        "strategies": [
+          "price_break"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "[HK] 开仓交易执行异常：'str' object has no attribute 'value'",
+        "pnl": null,
+        "market_regime": "neutral",
+        "created_at": "2026-03-19T09:52:46.159941"
+      },
+      {
+        "id": "96dfcf35-b3b1-427a-934c-1eac0c5e8202",
+        "code": "HK.09992",
+        "strategy": "共识(price_break)",
+        "action": "BUY",
+        "price": 218.0,
+        "quantity": 200,
+        "confidence": 0.69,
+        "consensus_score": 0.5,
+        "strategies": [
+          "price_break"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "[HK] 开仓交易执行异常：'str' object has no attribute 'value'",
+        "pnl": null,
+        "market_regime": "neutral",
+        "created_at": "2026-03-19T09:56:37.481486"
+      },
+      {
+        "id": "6d1f1a41-c4ca-433e-bb53-8dac18e4f1ba",
+        "code": "HK.03690",
+        "strategy": "共识(price_break)",
+        "action": "BUY",
+        "price": 81.0,
+        "quantity": 200,
+        "confidence": 0.69,
+        "consensus_score": 0.5,
+        "strategies": [
+          "price_break"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": null,
+        "pnl": null,
+        "market_regime": "neutral",
+        "created_at": "2026-03-19T10:12:11.601302"
+      },
+      {
+        "id": "d6aa44ac-da91-4d14-b430-5b5a097f8276",
+        "code": "HK.03690",
+        "strategy": "共识(price_break)",
+        "action": "BUY",
+        "price": 81.0,
+        "quantity": 200,
+        "confidence": 0.69,
+        "consensus_score": 0.5,
+        "strategies": [
+          "price_break"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": null,
+        "pnl": null,
+        "market_regime": "neutral",
+        "created_at": "2026-03-19T10:16:34.622936"
+      },
+      {
+        "id": "2139efc9-cbb2-41ef-969e-3621a359075e",
+        "code": "HK.09992",
+        "strategy": "共识(price_break)",
+        "action": "BUY",
+        "price": 218.0,
+        "quantity": 200,
+        "confidence": 0.69,
+        "consensus_score": 0.5,
+        "strategies": [
+          "price_break"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "[HK] 开仓交易执行异常：'str' object has no attribute 'value'",
+        "pnl": null,
+        "market_regime": "neutral",
+        "created_at": "2026-03-19T10:16:48.304336"
+      },
+      {
+        "id": "8bc058f1-6664-495f-b60c-648fdb8b8a3b",
+        "code": "HK.03690",
+        "strategy": "共识(price_break)",
+        "action": "BUY",
+        "price": 81.0,
+        "quantity": 200,
+        "confidence": 0.69,
+        "consensus_score": 0.5,
+        "strategies": [
+          "price_break"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": null,
+        "pnl": null,
+        "market_regime": "neutral",
+        "created_at": "2026-03-19T10:18:10.565768"
+      },
+      {
+        "id": "8b3c031b-4018-4fad-b176-001171996337",
+        "code": "HK.00981",
+        "strategy": "共识(price_break)",
+        "action": "SELL",
+        "price": 59.8,
+        "quantity": 200,
+        "confidence": 0.69,
+        "consensus_score": -0.5,
+        "strategies": [
+          "price_break"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "[HK] 开仓交易执行异常：name 'TrdSide' is not defined",
+        "pnl": null,
+        "market_regime": "neutral",
+        "created_at": "2026-03-19T10:23:39.970049"
+      },
+      {
+        "id": "5cc05e76-ee7e-4b72-9064-f20d891e27f3",
+        "code": "HK.03690",
+        "strategy": "共识(price_break)",
+        "action": "BUY",
+        "price": 81.05,
+        "quantity": 200,
+        "confidence": 0.69,
+        "consensus_score": 0.5,
+        "strategies": [
+          "price_break"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": null,
+        "pnl": null,
+        "market_regime": "neutral",
+        "created_at": "2026-03-19T10:24:01.577088"
+      },
+      {
+        "id": "c2817668-8e98-4592-8e2a-1d9606d41022",
+        "code": "HK.09992",
+        "strategy": "共识(price_break)",
+        "action": "BUY",
+        "price": 218.8,
+        "quantity": 200,
+        "confidence": 0.69,
+        "consensus_score": 0.5,
+        "strategies": [
+          "price_break"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "[HK] 开仓交易执行异常：name 'TrdSide' is not defined",
+        "pnl": null,
+        "market_regime": "neutral",
+        "created_at": "2026-03-19T10:24:04.637194"
+      },
+      {
+        "id": "f147b620-07d6-4ff8-b05c-81fa858f66ba",
+        "code": "HK.09992",
+        "strategy": "共识(price_break)",
+        "action": "BUY",
+        "price": 218.0,
+        "quantity": 200,
+        "confidence": 0.69,
+        "consensus_score": 0.5,
+        "strategies": [
+          "price_break"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "[HK] 开仓交易执行异常：name 'TrdSide' is not defined",
+        "pnl": null,
+        "market_regime": "neutral",
+        "created_at": "2026-03-19T10:26:47.059177"
+      },
+      {
+        "id": "b7f8fee6-29eb-4a0b-96c6-3c2cf4d5265b",
+        "code": "HK.00981",
+        "strategy": "共识(price_break)",
+        "action": "SELL",
+        "price": 60.1,
+        "quantity": 200,
+        "confidence": 0.69,
+        "consensus_score": -0.5,
+        "strategies": [
+          "price_break"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "[HK] 开仓交易执行异常：name 'TrdSide' is not defined",
+        "pnl": null,
+        "market_regime": "neutral",
+        "created_at": "2026-03-19T10:29:53.428869"
+      },
+      {
+        "id": "eee99d78-049e-4ffd-be7c-80e4fdbfe313",
+        "code": "HK.00981",
+        "strategy": "共识(price_break)",
+        "action": "SELL",
+        "price": 60.1,
+        "quantity": 200,
+        "confidence": 0.69,
+        "consensus_score": -0.5,
+        "strategies": [
+          "price_break"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "[HK] 开仓交易执行异常：name 'TrdSide' is not defined",
+        "pnl": null,
+        "market_regime": "neutral",
+        "created_at": "2026-03-19T10:30:59.595431"
+      },
+      {
+        "id": "977bff34-9abf-48ec-967a-5d388d121ee9",
+        "code": "HK.00981",
+        "strategy": "共识(price_break)",
+        "action": "BUY",
+        "price": 60.5,
+        "quantity": 200,
+        "confidence": 0.69,
+        "consensus_score": 0.5,
+        "strategies": [
+          "price_break"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "[HK] 开仓交易执行异常：name 'TrdSide' is not defined",
+        "pnl": null,
+        "market_regime": "neutral",
+        "created_at": "2026-03-19T10:43:06.521806"
+      },
+      {
+        "id": "f829be81-eb4c-41e8-aca3-998c301ef2c3",
+        "code": "HK.00981",
+        "strategy": "共识(price_break)",
+        "action": "BUY",
+        "price": 60.5,
+        "quantity": 200,
+        "confidence": 0.69,
+        "consensus_score": 0.5,
+        "strategies": [
+          "price_break"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "[HK] 开仓交易执行异常：name 'TrdSide' is not defined",
+        "pnl": null,
+        "market_regime": "neutral",
+        "created_at": "2026-03-19T10:44:11.927309"
+      },
+      {
+        "id": "3f25668d-678f-4986-9913-5acdaae62a31",
+        "code": "HK.09992",
+        "strategy": "共识(price_break)",
+        "action": "SELL",
+        "price": 217.0,
+        "quantity": 200,
+        "confidence": 0.69,
+        "consensus_score": -0.5,
+        "strategies": [
+          "price_break"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "[HK] 开仓交易执行异常：name 'TrdSide' is not defined",
+        "pnl": null,
+        "market_regime": "neutral",
+        "created_at": "2026-03-19T11:08:31.605888"
+      },
+      {
+        "id": "96f24b17-41bd-4e2f-9461-b0578fa874de",
+        "code": "HK.09992",
+        "strategy": "共识(price_break)",
+        "action": "SELL",
+        "price": 217.0,
+        "quantity": 200,
+        "confidence": 0.69,
+        "consensus_score": -0.5,
+        "strategies": [
+          "price_break"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "[HK] 开仓交易执行异常：name 'TrdSide' is not defined",
+        "pnl": null,
+        "market_regime": "neutral",
+        "created_at": "2026-03-19T11:09:32.516489"
+      },
+      {
+        "id": "d8c906e2-43ef-497f-97b8-f83acc9ec8a1",
+        "code": "HK.09992",
+        "strategy": "共识(price_break)",
+        "action": "SELL",
+        "price": 217.0,
+        "quantity": 200,
+        "confidence": 0.69,
+        "consensus_score": -0.5,
+        "strategies": [
+          "price_break"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "[HK] 开仓交易执行异常：name 'TrdSide' is not defined",
+        "pnl": null,
+        "market_regime": "neutral",
+        "created_at": "2026-03-19T11:10:53.831470"
+      },
+      {
+        "id": "c0987812-911d-4612-9cda-2f7bee8222a1",
+        "code": "HK.09992",
+        "strategy": "共识(price_break)",
+        "action": "SELL",
+        "price": 217.0,
+        "quantity": 200,
+        "confidence": 0.69,
+        "consensus_score": -0.5,
+        "strategies": [
+          "price_break"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "[HK] 开仓交易执行异常：name 'TrdSide' is not defined",
+        "pnl": null,
+        "market_regime": "neutral",
+        "created_at": "2026-03-19T11:22:45.307213"
+      },
+      {
+        "id": "3c9bea99-96b6-4115-8ba2-4e4dc762a4b7",
+        "code": "HK.09992",
+        "strategy": "共识(price_break)",
+        "action": "SELL",
+        "price": 217.0,
+        "quantity": 200,
+        "confidence": 0.69,
+        "consensus_score": -0.5,
+        "strategies": [
+          "price_break"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "[HK] 开仓交易执行异常：name 'TrdSide' is not defined",
+        "pnl": null,
+        "market_regime": "neutral",
+        "created_at": "2026-03-19T13:06:39.178667"
+      },
+      {
+        "id": "4a76473f-2538-47b9-a24e-0dc5b53f6617",
+        "code": "HK.09992",
+        "strategy": "共识(price_break)",
+        "action": "SELL",
+        "price": 216.2,
+        "quantity": 200,
+        "confidence": 0.54,
+        "consensus_score": -0.5,
+        "strategies": [
+          "price_break"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "[HK] 开仓交易执行异常：name 'TrdSide' is not defined",
+        "pnl": null,
+        "market_regime": "neutral",
+        "created_at": "2026-03-19T13:21:23.819286"
+      },
+      {
+        "id": "56b3facd-e37c-4a2c-81e6-4e39960394b0",
+        "code": "HK.09992",
+        "strategy": "共识(price_break)",
+        "action": "SELL",
+        "price": 216.2,
+        "quantity": 200,
+        "confidence": 0.54,
+        "consensus_score": -0.5,
+        "strategies": [
+          "price_break"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "[HK] 开仓交易执行异常：name 'TrdSide' is not defined",
+        "pnl": null,
+        "market_regime": "neutral",
+        "created_at": "2026-03-19T13:24:13.632228"
+      },
+      {
+        "id": "5a138a66-0c3a-4794-b12d-75a185f29b97",
+        "code": "HK.09992",
+        "strategy": "共识(price_break)",
+        "action": "SELL",
+        "price": 216.4,
+        "quantity": 200,
+        "confidence": 0.54,
+        "consensus_score": -0.5,
+        "strategies": [
+          "price_break"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "[HK] 开仓交易执行异常：'OrderRetryManager' object has no attribute 'RetryReason'",
+        "pnl": null,
+        "market_regime": "neutral",
+        "created_at": "2026-03-19T13:31:36.116029"
+      },
+      {
+        "id": "9212f5c0-f86f-4f1f-95ef-47cd6c934fb1",
+        "code": "HK.00981",
+        "strategy": "共识(price_break)",
+        "action": "SELL",
+        "price": 59.45,
+        "quantity": 200,
+        "confidence": 0.84,
+        "consensus_score": -0.5,
+        "strategies": [
+          "price_break"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "[HK] 开仓交易执行异常：'OrderRetryManager' object has no attribute 'RetryReason'",
+        "pnl": null,
+        "market_regime": "neutral",
+        "created_at": "2026-03-19T13:31:37.701567"
+      },
+      {
+        "id": "ad3110fd-7291-4b0d-975f-e484b32e2d4a",
+        "code": "HK.09992",
+        "strategy": "共识(price_break)",
+        "action": "SELL",
+        "price": 216.6,
+        "quantity": 200,
+        "confidence": 0.54,
+        "consensus_score": -0.5,
+        "strategies": [
+          "price_break"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "[HK] 开仓交易执行异常：'OrderRetryManager' object has no attribute 'RetryReason'",
+        "pnl": null,
+        "market_regime": "neutral",
+        "created_at": "2026-03-19T13:35:41.343628"
+      },
+      {
+        "id": "cc91f408-e546-4b5b-8de6-fad899ba79db",
+        "code": "HK.00981",
+        "strategy": "共识(price_break)",
+        "action": "SELL",
+        "price": 59.5,
+        "quantity": 200,
+        "confidence": 0.84,
+        "consensus_score": -0.5,
+        "strategies": [
+          "price_break"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "[HK] 开仓交易执行异常：'OrderRetryManager' object has no attribute 'RetryReason'",
+        "pnl": null,
+        "market_regime": "neutral",
+        "created_at": "2026-03-19T13:35:44.464225"
+      },
+      {
+        "id": "cfa9314f-2ba0-41cf-8c4a-6267168843cf",
+        "code": "HK.00981",
+        "strategy": "共识(price_break)",
+        "action": "SELL",
+        "price": 59.5,
+        "quantity": 200,
+        "confidence": 0.84,
+        "consensus_score": -0.5,
+        "strategies": [
+          "price_break"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "[HK] 开仓交易执行异常：'OrderRetryManager' object has no attribute 'RetryReason'",
+        "pnl": null,
+        "market_regime": "neutral",
+        "created_at": "2026-03-19T13:36:49.094850"
+      },
+      {
+        "id": "4b6f27ec-8f2f-4cb3-b4ba-19e12653fe8c",
+        "code": "HK.03690",
+        "strategy": "共识(price_break)",
+        "action": "SELL",
+        "price": 80.0,
+        "quantity": 200,
+        "confidence": 0.54,
+        "consensus_score": -0.5,
+        "strategies": [
+          "price_break"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": null,
+        "pnl": null,
+        "market_regime": "neutral",
+        "created_at": "2026-03-19T13:50:24.888138"
+      },
+      {
+        "id": "d3255ec1-78de-4857-aca4-b8bf56365780",
+        "code": "HK.00981",
+        "strategy": "共识(price_break)",
+        "action": "SELL",
+        "price": 59.5,
+        "quantity": 200,
+        "confidence": 0.84,
+        "consensus_score": -0.5,
+        "strategies": [
+          "price_break"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "[HK] 开仓交易执行异常：'OrderRetryManager' object has no attribute 'RetryReason'",
+        "pnl": null,
+        "market_regime": "neutral",
+        "created_at": "2026-03-19T13:52:40.585772"
+      },
+      {
+        "id": "2b10dcab-31ac-4d4d-9dc1-58f101bf7715",
+        "code": "HK.00981",
+        "strategy": "共识(price_break)",
+        "action": "BUY",
+        "price": 60.5,
+        "quantity": 200,
+        "confidence": 0.69,
+        "consensus_score": 0.5,
+        "strategies": [
+          "price_break"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "[HK] 开仓交易执行异常：'OrderRetryManager' object has no attribute 'RetryReason'",
+        "pnl": null,
+        "market_regime": "neutral",
+        "created_at": "2026-03-19T14:05:24.241709"
+      },
+      {
+        "id": "282f4fa6-3a3b-4428-ac66-0107448953a8",
+        "code": "HK.00981",
+        "strategy": "共识(price_break)",
+        "action": "BUY",
+        "price": 60.5,
+        "quantity": 200,
+        "confidence": 0.69,
+        "consensus_score": 0.5,
+        "strategies": [
+          "price_break"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "[HK] 开仓交易执行异常：'OrderRetryManager' object has no attribute 'RetryReason'",
+        "pnl": null,
+        "market_regime": "neutral",
+        "created_at": "2026-03-19T14:15:41.952596"
+      },
+      {
+        "id": "6fb3adf6-c8e7-4905-8e9b-958b355104e1",
+        "code": "HK.00981",
+        "strategy": "共识(price_break)",
+        "action": "BUY",
+        "price": 60.7,
+        "quantity": 200,
+        "confidence": 0.69,
+        "consensus_score": 0.5,
+        "strategies": [
+          "price_break"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "[HK] 开仓下单失败：下单接口价格参数精度不符合规范，请前往https://openapi.futunn.com/futu-api-doc/trade/place-order.html查看参数填写规范。",
+        "pnl": null,
+        "market_regime": "neutral",
+        "created_at": "2026-03-19T14:20:18.873617"
+      },
+      {
+        "id": "eb2a17ab-44ec-442e-9567-f9d5e26d9413",
+        "code": "HK.09992",
+        "strategy": "共识(price_break)",
+        "action": "SELL",
+        "price": 215.2,
+        "quantity": 200,
+        "confidence": 0.66,
+        "consensus_score": -0.5,
+        "strategies": [
+          "price_break"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "[HK] 开仓下单失败：下单接口价格参数精度不符合规范，请前往https://openapi.futunn.com/futu-api-doc/trade/place-order.html查看参数填写规范。",
+        "pnl": null,
+        "market_regime": "neutral",
+        "created_at": "2026-03-19T14:20:46.454968"
+      },
+      {
+        "id": "caf244e4-878e-444b-a628-d62a03727744",
+        "code": "HK.00981",
+        "strategy": "共识(price_break)",
+        "action": "BUY",
+        "price": 60.9,
+        "quantity": 200,
+        "confidence": 0.69,
+        "consensus_score": 0.5,
+        "strategies": [
+          "price_break"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "[HK] 开仓下单失败：下单接口价格参数精度不符合规范，请前往https://openapi.futunn.com/futu-api-doc/trade/place-order.html查看参数填写规范。",
+        "pnl": null,
+        "market_regime": "neutral",
+        "created_at": "2026-03-19T14:24:20.714623"
+      },
+      {
+        "id": "e42c0a2b-f56a-4ddc-8c0c-8387800e7748",
+        "code": "HK.09992",
+        "strategy": "共识(price_break)",
+        "action": "SELL",
+        "price": 215.2,
+        "quantity": 200,
+        "confidence": 0.67,
+        "consensus_score": -0.5,
+        "strategies": [
+          "price_break"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "[HK] 开仓下单失败：您所下订单包含不足1手数量的碎股",
+        "pnl": null,
+        "market_regime": "neutral",
+        "created_at": "2026-03-19T14:24:42.567349"
+      },
+      {
+        "id": "c9eba452-f825-4d39-aa40-4ae94f72ca39",
+        "code": "HK.00981",
+        "strategy": "共识(price_break)",
+        "action": "BUY",
+        "price": 60.7,
+        "quantity": 200,
+        "confidence": 0.69,
+        "consensus_score": 0.5,
+        "strategies": [
+          "price_break"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "[HK] 开仓下单失败：下单接口价格参数精度不符合规范，请前往https://openapi.futunn.com/futu-api-doc/trade/place-order.html查看参数填写规范。",
+        "pnl": null,
+        "market_regime": "neutral",
+        "created_at": "2026-03-19T14:26:27.162808"
+      },
+      {
+        "id": "71543775-4377-4b43-9c4d-5e4936a20faa",
+        "code": "HK.09992",
+        "strategy": "共识(price_break)",
+        "action": "SELL",
+        "price": 214.8,
+        "quantity": 200,
+        "confidence": 0.69,
+        "consensus_score": -0.5,
+        "strategies": [
+          "price_break"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "[HK] 开仓下单失败：您所下订单包含不足1手数量的碎股",
+        "pnl": null,
+        "market_regime": "neutral",
+        "created_at": "2026-03-19T14:26:45.249553"
+      },
+      {
+        "id": "755a064e-af1e-42b3-ae15-d4b0c766d31c",
+        "code": "HK.00981",
+        "strategy": "共识(price_break)",
+        "action": "BUY",
+        "price": 60.5,
+        "quantity": 200,
+        "confidence": 0.69,
+        "consensus_score": 0.5,
+        "strategies": [
+          "price_break"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "[HK] 开仓下单失败：下单接口价格参数精度不符合规范，请前往https://openapi.futunn.com/futu-api-doc/trade/place-order.html查看参数填写规范。",
+        "pnl": null,
+        "market_regime": "neutral",
+        "created_at": "2026-03-19T14:33:37.480873"
+      },
+      {
+        "id": "43312293-16a2-4fc3-81b7-fc6e43cde649",
+        "code": "HK.00981",
+        "strategy": "共识(price_break)",
+        "action": "BUY",
+        "price": 60.5,
+        "quantity": 200,
+        "confidence": 0.69,
+        "consensus_score": 0.5,
+        "strategies": [
+          "price_break"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "[HK] 开仓下单失败：下单接口价格参数精度不符合规范，请前往https://openapi.futunn.com/futu-api-doc/trade/place-order.html查看参数填写规范。",
+        "pnl": null,
+        "market_regime": "neutral",
+        "created_at": "2026-03-19T16:02:08.133678"
+      },
+      {
+        "id": "1ba3b082-6b28-4bb6-9b44-145b22e5926e",
+        "code": "HK.09992",
+        "strategy": "共识(price_break)",
+        "action": "SELL",
+        "price": 214.0,
+        "quantity": 200,
+        "confidence": 0.6,
+        "consensus_score": -0.5,
+        "strategies": [
+          "price_break"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "[HK] 开仓下单失败：您所下订单包含不足1手数量的碎股",
+        "pnl": null,
+        "market_regime": "neutral",
+        "created_at": "2026-03-19T16:08:46.879538"
+      },
+      {
+        "id": "d07f9f75-c4b9-466e-8120-65a521c92c1f",
+        "code": "HK.09992",
+        "strategy": "共识(price_break)",
+        "action": "SELL",
+        "price": 212.8,
+        "quantity": 200,
+        "confidence": 0.6,
+        "consensus_score": -0.5,
+        "strategies": [
+          "price_break"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "[HK] 开仓下单失败：您所下订单包含不足1手数量的碎股",
+        "pnl": null,
+        "market_regime": "neutral",
+        "created_at": "2026-03-19T16:10:49.632851"
+      },
+      {
+        "id": "c762bf02-391b-4cd9-8ee6-e29de503eb4f",
+        "code": "HK.09992",
+        "strategy": "共识(price_break)",
+        "action": "SELL",
+        "price": 212.8,
+        "quantity": 200,
+        "confidence": 0.6,
+        "consensus_score": -0.5,
+        "strategies": [
+          "price_break"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "[HK] 开仓下单失败：您所下订单包含不足1手数量的碎股",
+        "pnl": null,
+        "market_regime": "neutral",
+        "created_at": "2026-03-19T16:15:28.004552"
+      },
+      {
+        "id": "19e38eaf-4e40-4bf7-a164-4bdc84357be5",
+        "code": "HK.09992",
+        "strategy": "共识(price_break)",
+        "action": "SELL",
+        "price": 212.8,
+        "quantity": 200,
+        "confidence": 0.6,
+        "consensus_score": -0.5,
+        "strategies": [
+          "price_break"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "[HK] 开仓下单失败：您所下订单包含不足1手数量的碎股",
+        "pnl": null,
+        "market_regime": "neutral",
+        "created_at": "2026-03-19T16:52:59.579027"
+      }
+    ],
+    "stats": {
+      "total": 44,
+      "executed": 0,
+      "rejected": 38,
+      "pending": 6,
+      "by_strategy": {
+        "共识(price_break)": 44
+      },
+      "by_code": {
+        "HK.00981": 18,
+        "HK.09992": 21,
+        "HK.03690": 5
+      },
+      "by_confidence": {
+        "high": 4,
+        "medium": 40,
+        "low": 0
+      },
+      "reject_reasons": {
+        "代码错误": 4,
+        "其他": 28,
+        "碎股限制": 6
+      }
+    }
+  },
+  "positions": [
+    {
+      "id": 4,
+      "code": "HK.03690",
+      "action": "BUY",
+      "quantity": 100,
+      "entry_price": 81.0,
+      "entry_time": "2026-03-19 10:16:34",
+      "stop_loss": 76.14,
+      "take_profit": 85.05,
+      "status": "OPEN",
+      "highest_price": null,
+      "lowest_price": null,
+      "unrealized_pnl": -200.0
+    },
+    {
+      "id": 5,
+      "code": "HK.03690",
+      "action": "BUY",
+      "quantity": 200,
+      "entry_price": 81.0,
+      "entry_time": "2026-03-19 10:18:10",
+      "stop_loss": 76.14,
+      "take_profit": 85.05,
+      "status": "OPEN",
+      "highest_price": null,
+      "lowest_price": null,
+      "unrealized_pnl": -200.0
+    },
+    {
+      "id": 6,
+      "code": "HK.03690",
+      "action": "BUY",
+      "quantity": 200,
+      "entry_price": 81.05,
+      "entry_time": "2026-03-19 10:24:01",
+      "stop_loss": 76.187,
+      "take_profit": 85.1025,
+      "status": "OPEN",
+      "highest_price": null,
+      "lowest_price": null,
+      "unrealized_pnl": -200.0
+    },
+    {
+      "id": 7,
+      "code": "HK.03690",
+      "action": "BUY",
+      "quantity": 200,
+      "entry_price": 81.2,
+      "entry_time": "2026-03-19 10:24:37",
+      "stop_loss": 76.328,
+      "take_profit": 85.26,
+      "status": "OPEN",
+      "highest_price": null,
+      "lowest_price": null,
+      "unrealized_pnl": -200.0
+    }
+  ],
+  "pnl_metrics": {
+    "total_trades": 4,
+    "total_volume": 56750.0,
+    "buy_count": 4,
+    "sell_count": 0,
+    "closed_trades": 0,
+    "open_positions": 4,
+    "position_value": 56750.0,
+    "unrealized_pnl": -800.0,
+    "total_realized_pnl": 0,
+    "win_count": 0,
+    "loss_count": 0,
+    "win_rate": 0,
+    "total_win": 0,
+    "total_loss": 0,
+    "avg_win": 0,
+    "avg_loss": 0,
+    "profit_factor": 0,
+    "by_code": {
+      "HK.03690": {
+        "count": 4,
+        "volume": 56750.0,
+        "buy": 4,
+        "sell": 0,
+        "realized_pnl": 0,
+        "win_count": 0,
+        "loss_count": 0
+      }
+    }
+  },
+  "strategy_config": {
+    "_updated": "2026-03-18 13:58",
+    "_note": "测试阶段 - 临时降低阈值测试信号触发",
+    "ai_weight": 0.15,
+    "ai_min_accuracy": 0.5,
+    "ai_disable_threshold": 0.45,
+    "base_position": 0.1,
+    "min_position": 0.05,
+    "max_position": 0.25,
+    "max_daily_loss": 0.05,
+    "max_drawdown": 0.15,
+    "consecutive_loss_limit": 5,
+    "fusion_v2_enabled": true,
+    "fusion_v3_enabled": true,
+    "min_signal_confidence": 0.4,
+    "trading_mode": "simulate",
+    "manual_confirm_for_live": true,
+    "ai_signal_boost": 1.1,
+    "short_signals": {
+      "rsi_overbought": 60,
+      "macd_histogram_threshold": 0.0008,
+      "supertrend_multiplier": 2.5,
+      "min_confidence": 0.55,
+      "short_bias_factor": 1.0
+    },
+    "long_signals": {
+      "rsi_oversold": 35,
+      "macd_histogram_threshold": 0.001,
+      "supertrend_multiplier": 3.0,
+      "min_confidence": 0.45
+    },
+    "fusion": {
+      "technical_weight": 0.6,
+      "sentiment_weight": 0.25,
+      "ai_weight": 0.15
+    },
+    "consensus": {
+      "threshold": 0.4,
+      "adx_trend": 25,
+      "adx_range": 20,
+      "short_bias_factor": 1.0
+    },
+    "position": {
+      "initial_ratio": 0.4,
+      "max_position_ratio": 0.15,
+      "dynamic_sizing": true,
+      "vol_adjustment": true
+    },
+    "risk_limits": {
+      "min_confidence": 0.35,
+      "max_single_position": 0.15,
+      "max_daily_trades": 10,
+      "signal_cooldown_seconds": 60
+    }
+  }
+}

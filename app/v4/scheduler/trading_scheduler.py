@@ -27,6 +27,7 @@ from app.v4.core.decision_engine import DecisionEngine
 
 
 logger = logging.getLogger("ftseek.v4.trading_scheduler")
+logger.propagate = False  # 防止日志重复
 
 
 class TradingScheduler:

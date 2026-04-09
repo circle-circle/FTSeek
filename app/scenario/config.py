@@ -1,14 +1,21 @@
 """
 场景路由配置 (Scenario Routing Configuration)
 
-定义 5 个核心场景的策略映射表 (Phase 1 最小可行方案)
+定义场景的策略映射表
 
-核心场景:
+核心场景 (Phase 1):
 1. TREND_STRONG - 强趋势
 2. RANGE_BOUND - 震荡市
 3. GAP_EVENT - 跳空事件
 4. VOL_EXPANSION - 波动扩张
 5. REVERSAL_SETUP - 反转预备
+
+扩展场景 (Phase 2):
+6. NEWS_DRIVEN - 新闻驱动
+7. TREND_START - 趋势启动
+8. TREND_EXHAUST - 趋势衰竭
+9. VOL_CONTRACTION - 波动收缩
+10. BREAKOUT_SETUP - 突破预备
 """
 from typing import Dict, List, Any
 
@@ -65,6 +72,56 @@ CORE_SCENARIO_ROUTING: Dict[str, Dict[str, Any]] = {
         "risk_template": "reversal",
         "priority_boost": {"123_rule": 1.5},
         "description": "超买/超卖 + 动量衰竭",
+    },
+
+    # --- 6. 新闻驱动场景 (Phase 2 新增) ---
+    "NEWS_DRIVEN": {
+        "primary": ["sentiment_ai", "event_driven"],
+        "secondary": ["confluence_v2", "gap_trading"],
+        "suppressed": ["pure_technical_indicators", "turtle"],
+        "risk_template": "news_following",
+        "priority_boost": {"sentiment_ai": 2.0, "event_driven": 1.5},
+        "description": "新闻情绪得分 > 阈值",
+    },
+
+    # --- 7. 趋势启动场景 (Phase 2 新增) ---
+    "TREND_START": {
+        "primary": ["turtle", "123_rule"],
+        "secondary": ["confluence_v2", "macd"],
+        "suppressed": ["rsi", "mean_reversion_strategies"],
+        "risk_template": "trend_entry",
+        "priority_boost": {"turtle": 1.5, "macd": 1.3},
+        "description": "ADX 20-30, 趋势初期",
+    },
+
+    # --- 8. 趋势衰竭场景 (Phase 2 新增) ---
+    "TREND_EXHAUST": {
+        "primary": ["rsi_divergence", "123_rule"],
+        "secondary": ["confluence_v2"],
+        "suppressed": ["turtle", "supertrend"],
+        "risk_template": "trend_exit",
+        "priority_boost": {"rsi_divergence": 1.5},
+        "description": "ADX > 40, 动量背离",
+    },
+
+    # --- 9. 波动收缩场景 (Phase 2 新增) ---
+    "VOL_CONTRACTION": {
+        "primary": ["bollinger", "rsi"],
+        "secondary": ["confluence_v2"],
+        "suppressed": ["volatility_breakout"],
+        "risk_template": "low_volatility",
+        "priority_boost": {"bollinger": 1.3},
+        "description": "ATR 百分位下降",
+    },
+
+    # --- 10. 突破预备场景 (Phase 2 新增) ---
+    "BREAKOUT_SETUP": {
+        "primary": ["volatility_breakout", "123_rule"],
+        "secondary": ["confluence_v2", "supertrend"],
+        "suppressed": ["mean_reversion_strategies"],
+        "risk_template": "breakout_prepare",
+        "priority_boost": {"volatility_breakout": 1.5},
+        "description": "布林带收窄 + 低波动",
     },
 }
 

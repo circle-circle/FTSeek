@@ -14,6 +14,7 @@ from datetime import datetime
 import math
 
 logger = logging.getLogger("ftseek.v4.simple_backtest")
+logger.propagate = False  # 防止日志重复
 
 
 @dataclass
@@ -175,6 +176,7 @@ class SimpleBacktest:
         self.capital_curve: List[float] = [initial_capital]
         
         self.logger = logging.getLogger("ftseek.v4.simple_backtest")
+logger.propagate = False  # 防止日志重复
     
     def add_signal(self, signal: Dict[str, Any]):
         """

@@ -90,23 +90,25 @@ class OpenDExecutor:
             是否成功
         """
         try:
-            from futu import OpenSecTradeContext, Config
+            from futu import OpenSecTradeContext
             from futu.common.constant import TrdEnv, TrdMarket
             
-            # 配置
-            Config.set_host(self.host, self.port)
-            
             # 交易上下文 (使用证券交易上下文，支持港股/美股/A 股)
-            trd_env = TrdEnv.SIMULATE if self.simulate else TrdEnv.REAL
-            self.client = OpenSecTradeContext(trd_env=trd_env, host=self.host, port=self.port)
+            self.client = OpenSecTradeContext(host=self.host, port=self.port)
             
-            # 解锁交易 (模拟盘不需要密码)
-            password = '' if self.simulate else self.trade_password
-            ret, msg = self.client.unlock_trade(password=password)
-            if ret == 0:
-                self.logger.info(f"交易解锁成功 (模拟盘：{self.simulate})")
+            # 解锁交易 (模拟盘跳过密码验证)
+            if self.simulate:
+                self.logger.info("模拟盘模式，跳过交易密码验证")
+                self.logger.info(f"OpenD 连接成功，模式：模拟")
+                return True
             else:
-                self.logger.error(f"交易解锁失败：{msg}")
+                password = self.trade_password
+                ret, msg = self.client.unlock_trade(password=password)
+                if ret == 0:
+                    self.logger.info(f"交易解锁成功 (实盘)")
+                else:
+                    self.logger.error(f"交易解锁失败：{msg}")
+                    return False
             
             self.logger.info(f"OpenD 连接成功，模式：{'模拟' if self.simulate else '真实'}")
             return True

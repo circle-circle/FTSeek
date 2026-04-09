@@ -1,0 +1,98 @@
+[
+  {
+    "timestamp": "2026-03-26T21:00:02.511534",
+    "futu_positions": {
+      "HK.00981": {
+        "qty": 1000.0,
+        "can_sell": 1000.0,
+        "cost_price": 55.95,
+        "market_val": 56500.0,
+        "pl_val": 550.0
+      },
+      "HK.03690": {
+        "qty": 200.0,
+        "can_sell": 200.0,
+        "cost_price": 86.9,
+        "market_val": 18000.0,
+        "pl_val": 620.0
+      }
+    },
+    "db_positions": {
+      "HK.00981": {
+        "qty": 1000.0,
+        "avg_price": 55.95
+      },
+      "HK.03690": {
+        "qty": 200.0,
+        "avg_price": 86.9
+      }
+    },
+    "diff": [],
+    "is_sync": true,
+    "message": "✅ 数据库与富途持仓一致"
+  },
+  {
+    "timestamp": "2026-03-26T22:00:02.542305",
+    "futu_positions": {
+      "HK.00981": {
+        "qty": 1000.0,
+        "can_sell": 1000.0,
+        "cost_price": 55.95,
+        "market_val": 56500.0,
+        "pl_val": 550.0
+      },
+      "HK.03690": {
+        "qty": 200.0,
+        "can_sell": 200.0,
+        "cost_price": 86.9,
+        "market_val": 18000.0,
+        "pl_val": 620.0
+      }
+    },
+    "db_positions": {
+      "HK.00981": {
+        "qty": 1000.0,
+        "avg_price": 55.95
+      },
+      "HK.03690": {
+        "qty": 200.0,
+        "avg_price": 86.9
+      }
+    },
+    "diff": [],
+    "is_sync": true,
+    "message": "✅ 数据库与富途持仓一致"
+  },
+  {
+    "timestamp": "2026-03-26T23:00:02.579668",
+    "futu_positions": {
+      "HK.00981": {
+        "qty": 1000.0,
+        "can_sell": 1000.0,
+        "cost_price": 55.95,
+        "market_val": 56500.0,
+        "pl_val": 550.0
+      },
+      "HK.03690": {
+        "qty": 200.0,
+        "can_sell": 200.0,
+        "cost_price": 86.9,
+        "market_val": 18000.0,
+        "pl_val": 620.0
+      }
+    },
+    "db_positions": {
+      "HK.00981": {
+        "qty": 1000.0,
+        "avg_price": 55.95
+      },
+      "HK.03690": {
+        "qty": 200.0,
+        "avg_price": 86.9
+      }
+    },
+    "diff": [],
+    "is_sync": true,
+    "message": "✅ 数据库与富途持仓一致"
+  }
+]

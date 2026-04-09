@@ -1,0 +1,79 @@
+{
+  "executed_at": "2026-04-05T23:59:27.231913",
+  "completed_at": "2026-04-05T23:59:27.532840",
+  "total_tests": 10,
+  "passed": 10,
+  "failed": 0,
+  "results": [
+    {
+      "name": "逻辑验证 - TradeChain 数据结构",
+      "passed": true,
+      "duration_ms": 180.37,
+      "error": "",
+      "details": "测试通过"
+    },
+    {
+      "name": "逻辑验证 - TradeChainRecorder",
+      "passed": true,
+      "duration_ms": 7.48,
+      "error": "",
+      "details": "测试通过"
+    },
+    {
+      "name": "逻辑验证 - StrategyAttribution",
+      "passed": true,
+      "duration_ms": 6.02,
+      "error": "",
+      "details": "测试通过"
+    },
+    {
+      "name": "逻辑验证 - SignalCorrelation",
+      "passed": true,
+      "duration_ms": 1.49,
+      "error": "",
+      "details": "测试通过"
+    },
+    {
+      "name": "逻辑验证 - OptimizationAdvisor",
+      "passed": true,
+      "duration_ms": 1.55,
+      "error": "",
+      "details": "测试通过"
+    },
+    {
+      "name": "逻辑验证 - ConfigHotReload",
+      "passed": true,
+      "duration_ms": 97.3,
+      "error": "",
+      "details": "测试通过"
+    },
+    {
+      "name": "链路验证 - 端到端链路",
+      "passed": true,
+      "duration_ms": 3.78,
+      "error": "",
+      "details": "测试通过"
+    },
+    {
+      "name": "链路验证 - 统计链路",
+      "passed": true,
+      "duration_ms": 0.06,
+      "error": "",
+      "details": "测试通过"
+    },
+    {
+      "name": "性能验证 - start_chain",
+      "passed": true,
+      "duration_ms": 1.19,
+      "error": "",
+      "details": "测试通过"
+    },
+    {
+      "name": "性能验证 - full_report",
+      "passed": true,
+      "duration_ms": 0.41,
+      "error": "",
+      "details": "测试通过"
+    }
+  ]
+}

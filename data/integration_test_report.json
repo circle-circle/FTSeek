@@ -1,0 +1,115 @@
+{
+  "timestamp": "2026-03-17T15:30:36.868431",
+  "tests": [
+    {
+      "name": "模块导入：恒指数据",
+      "passed": true,
+      "message": ""
+    },
+    {
+      "name": "模块导入：参数加载器",
+      "passed": true,
+      "message": ""
+    },
+    {
+      "name": "模块导入：信号追踪器",
+      "passed": true,
+      "message": ""
+    },
+    {
+      "name": "模块导入：动态阈值",
+      "passed": true,
+      "message": ""
+    },
+    {
+      "name": "模块导入：智能路由",
+      "passed": true,
+      "message": ""
+    },
+    {
+      "name": "模块导入：订单重试",
+      "passed": true,
+      "message": ""
+    },
+    {
+      "name": "模块导入：熔断器",
+      "passed": true,
+      "message": ""
+    },
+    {
+      "name": "模块导入：失败追踪",
+      "passed": true,
+      "message": ""
+    },
+    {
+      "name": "市场状态参数配置",
+      "passed": true,
+      "message": "加载10个状态"
+    },
+    {
+      "name": "告警阈值配置",
+      "passed": true,
+      "message": "加载5个阈值"
+    },
+    {
+      "name": "动态阈值配置",
+      "passed": true,
+      "message": "文件不存在 (首次运行会创建)"
+    },
+    {
+      "name": "信号追踪链路",
+      "passed": true,
+      "message": "记录2个信号"
+    },
+    {
+      "name": "智能订单路由",
+      "passed": true,
+      "message": "正常→市价单，大额→限价单"
+    },
+    {
+      "name": "熔断器链路",
+      "passed": true,
+      "message": "连续拒绝触发熔断"
+    },
+    {
+      "name": "失败追踪链路",
+      "passed": true,
+      "message": "记录2次失败"
+    },
+    {
+      "name": "动态参数加载",
+      "passed": true,
+      "message": "状态参数正确"
+    },
+    {
+      "name": "动态阈值管理",
+      "passed": true,
+      "message": "当前阈值：0.50"
+    },
+    {
+      "name": "数据目录结构",
+      "passed": true,
+      "message": "所有目录存在"
+    },
+    {
+      "name": "FTSeek 服务进程",
+      "passed": true,
+      "message": "PID: 61475"
+    },
+    {
+      "name": "健康检查端点",
+      "passed": true,
+      "message": "/health → 200 OK"
+    },
+    {
+      "name": "日志文件",
+      "passed": true,
+      "message": "大小：13977.5KB"
+    }
+  ],
+  "passed": 21,
+  "failed": 0,
+  "warnings": 0,
+  "pass_rate": 100.0,
+  "overall_status": "优秀"
+}

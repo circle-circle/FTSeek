@@ -10,6 +10,7 @@ from typing import Optional, Dict, Any
 from functools import wraps
 
 logger = logging.getLogger("ftseek.ai.cache")
+logger.propagate = False  # 防止日志重复
 
 
 class AICache:

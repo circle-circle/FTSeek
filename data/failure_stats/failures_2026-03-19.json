@@ -1,0 +1,268 @@
+[
+  {
+    "timestamp": "2026-03-19T09:52:46.003416",
+    "code": "HK.00981",
+    "reason": "other",
+    "category": "other",
+    "message": "执行异常：'str' object has no attribute 'value'"
+  },
+  {
+    "timestamp": "2026-03-19T09:52:46.241543",
+    "code": "HK.09992",
+    "reason": "other",
+    "category": "other",
+    "message": "执行异常：'str' object has no attribute 'value'"
+  },
+  {
+    "timestamp": "2026-03-19T09:56:37.589486",
+    "code": "HK.09992",
+    "reason": "other",
+    "category": "other",
+    "message": "执行异常：'str' object has no attribute 'value'"
+  },
+  {
+    "timestamp": "2026-03-19T10:16:48.390359",
+    "code": "HK.09992",
+    "reason": "other",
+    "category": "other",
+    "message": "执行异常：'str' object has no attribute 'value'"
+  },
+  {
+    "timestamp": "2026-03-19T10:23:40.066927",
+    "code": "HK.00981",
+    "reason": "other",
+    "category": "other",
+    "message": "执行异常：name 'TrdSide' is not defined"
+  },
+  {
+    "timestamp": "2026-03-19T10:24:04.734250",
+    "code": "HK.09992",
+    "reason": "other",
+    "category": "other",
+    "message": "执行异常：name 'TrdSide' is not defined"
+  },
+  {
+    "timestamp": "2026-03-19T10:26:47.155648",
+    "code": "HK.09992",
+    "reason": "other",
+    "category": "other",
+    "message": "执行异常：name 'TrdSide' is not defined"
+  },
+  {
+    "timestamp": "2026-03-19T10:29:53.524097",
+    "code": "HK.00981",
+    "reason": "other",
+    "category": "other",
+    "message": "执行异常：name 'TrdSide' is not defined"
+  },
+  {
+    "timestamp": "2026-03-19T10:30:59.693631",
+    "code": "HK.00981",
+    "reason": "other",
+    "category": "other",
+    "message": "执行异常：name 'TrdSide' is not defined"
+  },
+  {
+    "timestamp": "2026-03-19T10:43:06.628308",
+    "code": "HK.00981",
+    "reason": "other",
+    "category": "other",
+    "message": "执行异常：name 'TrdSide' is not defined"
+  },
+  {
+    "timestamp": "2026-03-19T10:44:12.023514",
+    "code": "HK.00981",
+    "reason": "other",
+    "category": "other",
+    "message": "执行异常：name 'TrdSide' is not defined"
+  },
+  {
+    "timestamp": "2026-03-19T11:08:31.700276",
+    "code": "HK.09992",
+    "reason": "other",
+    "category": "other",
+    "message": "执行异常：name 'TrdSide' is not defined"
+  },
+  {
+    "timestamp": "2026-03-19T11:09:32.618920",
+    "code": "HK.09992",
+    "reason": "other",
+    "category": "other",
+    "message": "执行异常：name 'TrdSide' is not defined"
+  },
+  {
+    "timestamp": "2026-03-19T11:10:53.909871",
+    "code": "HK.09992",
+    "reason": "other",
+    "category": "other",
+    "message": "执行异常：name 'TrdSide' is not defined"
+  },
+  {
+    "timestamp": "2026-03-19T11:22:45.395016",
+    "code": "HK.09992",
+    "reason": "other",
+    "category": "other",
+    "message": "执行异常：name 'TrdSide' is not defined"
+  },
+  {
+    "timestamp": "2026-03-19T13:06:39.255029",
+    "code": "HK.09992",
+    "reason": "other",
+    "category": "other",
+    "message": "执行异常：name 'TrdSide' is not defined"
+  },
+  {
+    "timestamp": "2026-03-19T13:21:23.906388",
+    "code": "HK.09992",
+    "reason": "other",
+    "category": "other",
+    "message": "执行异常：name 'TrdSide' is not defined"
+  },
+  {
+    "timestamp": "2026-03-19T13:24:13.724512",
+    "code": "HK.09992",
+    "reason": "other",
+    "category": "other",
+    "message": "执行异常：name 'TrdSide' is not defined"
+  },
+  {
+    "timestamp": "2026-03-19T13:31:36.204843",
+    "code": "HK.09992",
+    "reason": "other",
+    "category": "other",
+    "message": "执行异常：'OrderRetryManager' object has no attribute 'RetryReason'"
+  },
+  {
+    "timestamp": "2026-03-19T13:31:37.774286",
+    "code": "HK.00981",
+    "reason": "other",
+    "category": "other",
+    "message": "执行异常：'OrderRetryManager' object has no attribute 'RetryReason'"
+  },
+  {
+    "timestamp": "2026-03-19T13:35:41.425370",
+    "code": "HK.09992",
+    "reason": "other",
+    "category": "other",
+    "message": "执行异常：'OrderRetryManager' object has no attribute 'RetryReason'"
+  },
+  {
+    "timestamp": "2026-03-19T13:35:44.537047",
+    "code": "HK.00981",
+    "reason": "other",
+    "category": "other",
+    "message": "执行异常：'OrderRetryManager' object has no attribute 'RetryReason'"
+  },
+  {
+    "timestamp": "2026-03-19T13:36:49.171004",
+    "code": "HK.00981",
+    "reason": "other",
+    "category": "other",
+    "message": "执行异常：'OrderRetryManager' object has no attribute 'RetryReason'"
+  },
+  {
+    "timestamp": "2026-03-19T13:52:40.655116",
+    "code": "HK.00981",
+    "reason": "other",
+    "category": "other",
+    "message": "执行异常：'OrderRetryManager' object has no attribute 'RetryReason'"
+  },
+  {
+    "timestamp": "2026-03-19T14:05:24.316966",
+    "code": "HK.00981",
+    "reason": "other",
+    "category": "other",
+    "message": "执行异常：'OrderRetryManager' object has no attribute 'RetryReason'"
+  },
+  {
+    "timestamp": "2026-03-19T14:15:42.029910",
+    "code": "HK.00981",
+    "reason": "other",
+    "category": "other",
+    "message": "执行异常：'OrderRetryManager' object has no attribute 'RetryReason'"
+  },
+  {
+    "timestamp": "2026-03-19T14:20:18.964705",
+    "code": "HK.00981",
+    "reason": "other",
+    "category": "other",
+    "message": "下单失败：下单接口价格参数精度不符合规范，请前往https://openapi.futunn.com/futu-api-doc/trade/place-order.html查看参数填写规范。"
+  },
+  {
+    "timestamp": "2026-03-19T14:20:46.534947",
+    "code": "HK.09992",
+    "reason": "other",
+    "category": "other",
+    "message": "下单失败：下单接口价格参数精度不符合规范，请前往https://openapi.futunn.com/futu-api-doc/trade/place-order.html查看参数填写规范。"
+  },
+  {
+    "timestamp": "2026-03-19T14:24:20.817288",
+    "code": "HK.00981",
+    "reason": "other",
+    "category": "other",
+    "message": "下单失败：下单接口价格参数精度不符合规范，请前往https://openapi.futunn.com/futu-api-doc/trade/place-order.html查看参数填写规范。"
+  },
+  {
+    "timestamp": "2026-03-19T14:24:42.715560",
+    "code": "HK.09992",
+    "reason": "other",
+    "category": "other",
+    "message": "下单失败：您所下订单包含不足1手数量的碎股"
+  },
+  {
+    "timestamp": "2026-03-19T14:26:27.285753",
+    "code": "HK.00981",
+    "reason": "other",
+    "category": "other",
+    "message": "下单失败：下单接口价格参数精度不符合规范，请前往https://openapi.futunn.com/futu-api-doc/trade/place-order.html查看参数填写规范。"
+  },
+  {
+    "timestamp": "2026-03-19T14:26:45.398284",
+    "code": "HK.09992",
+    "reason": "other",
+    "category": "other",
+    "message": "下单失败：您所下订单包含不足1手数量的碎股"
+  },
+  {
+    "timestamp": "2026-03-19T14:33:37.582458",
+    "code": "HK.00981",
+    "reason": "other",
+    "category": "other",
+    "message": "下单失败：下单接口价格参数精度不符合规范，请前往https://openapi.futunn.com/futu-api-doc/trade/place-order.html查看参数填写规范。"
+  },
+  {
+    "timestamp": "2026-03-19T16:02:08.233452",
+    "code": "HK.00981",
+    "reason": "other",
+    "category": "other",
+    "message": "下单失败：下单接口价格参数精度不符合规范，请前往https://openapi.futunn.com/futu-api-doc/trade/place-order.html查看参数填写规范。"
+  },
+  {
+    "timestamp": "2026-03-19T16:08:47.038508",
+    "code": "HK.09992",
+    "reason": "other",
+    "category": "other",
+    "message": "下单失败：您所下订单包含不足1手数量的碎股"
+  },
+  {
+    "timestamp": "2026-03-19T16:10:49.794500",
+    "code": "HK.09992",
+    "reason": "other",
+    "category": "other",
+    "message": "下单失败：您所下订单包含不足1手数量的碎股"
+  },
+  {
+    "timestamp": "2026-03-19T16:15:28.160626",
+    "code": "HK.09992",
+    "reason": "other",
+    "category": "other",
+    "message": "下单失败：您所下订单包含不足1手数量的碎股"
+  },
+  {
+    "timestamp": "2026-03-19T16:52:59.740530",
+    "code": "HK.09992",
+    "reason": "other",
+    "category": "other",
+    "message": "下单失败：您所下订单包含不足1手数量的碎股"
+  }
+]

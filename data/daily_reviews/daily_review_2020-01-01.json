@@ -1,0 +1,22 @@
+{
+  "report_type": "daily",
+  "report_date": "2020-01-01",
+  "generated_at": "2026-03-28T22:30:19.478342",
+  "account_type": "all",
+  "summary": {
+    "total_trades": 0,
+    "closed_trades": 0,
+    "total_pnl": 0,
+    "win_rate": 0,
+    "avg_pnl": 0
+  },
+  "decision_analysis": {},
+  "timing_analysis": {},
+  "position_analysis": {},
+  "risk_analysis": {},
+  "psychology_analysis": {},
+  "key_learnings": [],
+  "improvement_suggestions": [],
+  "best_trade": null,
+  "worst_trade": null
+}

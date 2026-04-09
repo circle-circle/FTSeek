@@ -57,10 +57,11 @@ def parse_datetime(dt_string: str) -> datetime:
         if '+' in dt_string or (dt_string.count('-') > 2):
             dt_string = re.split(r'[+-]', dt_string)[0]
         return datetime.strptime(dt_string[:19], '%Y-%m-%dT%H:%M:%S')
-    except:
-        raise ValueError(f"无法解析日期时间：{dt_string}")
+    except (ValueError, AttributeError) as e:
+        raise ValueError(f"无法解析日期时间：{dt_string}") from e
 
 logger = logging.getLogger("ftseek.v4.models")
+logger.propagate = False  # 防止日志重复
 
 
 class TradingMode(str, Enum):
@@ -95,7 +96,8 @@ class TradingModeModel:
 class PaperPosition:
     """模拟持仓数据模型"""
     def __init__(self, id: int, code: str, quantity: int, avg_cost: float,
-                 entry_time: datetime, created_at: datetime, updated_at: datetime):
+                 entry_time: datetime, created_at: datetime, updated_at: datetime,
+                 direction: str = "long"):
         self.id = id
         self.code = code
         self.quantity = quantity
@@ -103,9 +105,10 @@ class PaperPosition:
         self.entry_time = entry_time
         self.created_at = created_at
         self.updated_at = updated_at
+        self.direction = direction  # "long" 多头 / "short" 空头
     
     def __repr__(self):
-        return f"PaperPosition(code={self.code}, quantity={self.quantity}, avg_cost={self.avg_cost})"
+        return f"PaperPosition(code={self.code}, quantity={self.quantity}, avg_cost={self.avg_cost}, direction={self.direction})"
 
 
 class PaperTrade:
@@ -228,10 +231,17 @@ class TradingDatabase:
                     quantity INTEGER NOT NULL,
                     avg_cost REAL NOT NULL,
                     entry_time DATETIME NOT NULL,
+                    direction TEXT NOT NULL DEFAULT 'long',
                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
                 )
             """)
+            # 安全迁移：如旧表没有 direction 字段则补充
+            try:
+                cursor.execute("ALTER TABLE paper_positions ADD COLUMN direction TEXT NOT NULL DEFAULT 'long'")
+                logger.info("paper_positions 表已迁移：新增 direction 字段")
+            except Exception:
+                pass  # 字段已存在，忽略
             cursor.execute("""
                 CREATE INDEX IF NOT EXISTS idx_paper_positions_code 
                 ON paper_positions(code)
@@ -373,16 +383,16 @@ class TradingDatabase:
     # ==================== Paper Positions 操作 ====================
     
     def create_paper_position(self, code: str, quantity: int, avg_cost: float,
-                             entry_time: datetime) -> PaperPosition:
+                             entry_time: datetime, direction: str = "long") -> PaperPosition:
         """创建模拟持仓记录"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             now = datetime.now().isoformat()
             entry_str = entry_time.isoformat() if entry_time else now
             cursor.execute("""
-                INSERT INTO paper_positions (code, quantity, avg_cost, entry_time, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?)
-            """, (code, quantity, avg_cost, entry_str, now, now))
+                INSERT INTO paper_positions (code, quantity, avg_cost, entry_time, direction, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (code, quantity, avg_cost, entry_str, direction, now, now))
             
             cursor.execute("SELECT * FROM paper_positions WHERE id = ?", (cursor.lastrowid,))
             row = cursor.fetchone()
@@ -420,11 +430,17 @@ class TradingDatabase:
                 return self._row_to_position(row)
         return None
     
-    def get_position_by_code(self, code: str) -> Optional[PaperPosition]:
-        """按代码获取持仓"""
+    def get_position_by_code(self, code: str, direction: str = None) -> Optional[PaperPosition]:
+        """按代码获取持仓，可指定方向（long/short）"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT * FROM paper_positions WHERE code = ?", (code,))
+            if direction:
+                cursor.execute(
+                    "SELECT * FROM paper_positions WHERE code = ? AND direction = ?",
+                    (code, direction)
+                )
+            else:
+                cursor.execute("SELECT * FROM paper_positions WHERE code = ?", (code,))
             row = cursor.fetchone()
             return self._row_to_position(row) if row else None
     
@@ -451,7 +467,8 @@ class TradingDatabase:
             avg_cost=row['avg_cost'],
             entry_time=parse_datetime(row['entry_time']),
             created_at=parse_datetime(row['created_at']),
-            updated_at=parse_datetime(row['updated_at'])
+            updated_at=parse_datetime(row['updated_at']),
+            direction=row['direction'] if 'direction' in row.keys() else 'long'
         )
     
     # ==================== Paper Trades 操作 ====================

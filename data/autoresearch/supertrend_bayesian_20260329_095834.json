@@ -1,0 +1,30 @@
+{
+  "strategy_name": "supertrend",
+  "params": {
+    "atr_period": 12,
+    "base_multiplier": 2.7334577461215566,
+    "range_adjust_factor": 1.4606804464794279
+  },
+  "win_rate": 0.6140821862184037,
+  "total_return": 0.2909562966821924,
+  "sharpe_ratio": 1.4880380442650338,
+  "max_drawdown": 0.13835220748653754,
+  "total_trades": 84,
+  "overfitting_score": 0.14544745937103004,
+  "train_metrics": {
+    "win_rate": 0.6140821862184037,
+    "sharpe_ratio": 1.4880380442650338,
+    "total_return": 0.2909562966821924,
+    "max_drawdown": 0.13835220748653754
+  },
+  "test_metrics": {
+    "win_rate": 0.5909397548545257,
+    "sharpe_ratio": 1.2716066912792483,
+    "total_return": 0.2721646432726212,
+    "max_drawdown": 0.15331746392341927
+  },
+  "search_method": "bayesian",
+  "search_iterations": 20,
+  "search_time": 168.13241920845374,
+  "timestamp": "2026-03-29T09:58:34.351072"
+}

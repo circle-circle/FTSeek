@@ -1,0 +1,75 @@
+# FTSeek v4.0 期权风控配置
+# 更新: 2026-03-31 - 期权专用参数
+
+# 交易模式 (期权模拟交易)
+trading:
+  mode: "paper"
+  paper_initial_cash: 1000000
+  currency: "HKD"
+  test_mode: true
+  force_simulate_account: true
+  simulate_account_id: "8246818"
+  market_type: "HK_OPTIONS"
+
+# 期权风控阈值
+risk_limits:
+  # 信号级 - 提高门槛
+  min_confidence: 0.60
+  
+  # 订单级 - 收紧仓位
+  max_single_position: 0.06
+  max_single_loss: 0.20        # 期权波动大，止损20%
+  trailing_percent: 0.08        # 移动止损 8%
+  max_holding_hours: 24         # 最大持仓 24 小时（时间价值）
+  atr_multiplier: 2.5
+  
+  # 仓位级
+  max_total_position: 0.50
+  max_daily_trades: 2
+  max_daily_loss: 0.02
+  max_weekly_loss: 0.05
+  
+  # 账户级
+  max_drawdown: 0.08
+  consecutive_loss_limit: 2
+  
+  # 策略级
+  strategy_min_trades: 10
+  strategy_min_winrate: 0.50
+
+# 期权特有配置
+options_specific:
+  days_to_expiry: 29            # 当前期权到期天数
+  close_before_expiry_days: 3   # 到期前3天强制平仓
+  min_open_interest: 10         # 最小持仓量
+  min_volume: 5                 # 最小成交量
+  max_bid_ask_spread: 0.05      # 最大买卖价差 5%
+  avoid_near_expiry: true       # 避免临近到期
+
+# 信号冷却配置
+signal_cooldown:
+  default_seconds: 300          # 5分钟冷却
+  high_confidence_seconds: 180
+  after_loss_seconds: 600       # 亏损后10分钟冷却
+
+# 止盈止损配置
+take_profit:
+  fixed_percent: 0.40           # 固定止盈 40%
+  trailing_percent: 0.08        # 移动止盈 8%
+  time_limit_hours: 24          # 时间止盈 24小时
+  activation_percent: 0.15      # 移动止盈激活点 15%
+
+stop_loss:
+  fixed_percent: 0.20           # 固定止损 20%
+  trailing_percent: 0.08        # 移动止损 8%
+  breakeven_trigger: 0.10       # 保本触发 10%
+
+# 预警配置
+alerts:
+  dingtalk_webhook: "${DINGTALK_WEBHOOK_URL}"
+  dingtalk_secret: "${DINGTALK_SECRET}"
+
+# 定时推送
+schedule:
+  daily_stats_time: "16:30"
+  risk_monitor_interval: 180    # 3分钟检查一次

@@ -1,0 +1,8 @@
+{
+  "success": false,
+  "timestamp": "2026-03-31T19:55:15.270033",
+  "positions_synced": 5,
+  "trades_synced": 0,
+  "discrepancies": [],
+  "error": "'position_side'"
+}

@@ -20,6 +20,7 @@ from app.storage.database import get_database
 from app.risk.metrics_calculator import MetricsCalculator
 
 logger = logging.getLogger("ftseek.reporters.monthly")
+logger.propagate = False  # 防止日志重复
 
 
 @dataclass

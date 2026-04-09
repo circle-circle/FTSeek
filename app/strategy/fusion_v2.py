@@ -22,6 +22,7 @@ from app.limiter.rate_limiter import get_rate_limiter
 from app.storage.database import get_database
 
 logger = logging.getLogger("ftseek.strategy.fusion_v2")
+logger.propagate = False  # 防止日志重复
 
 
 class FusionV2Strategy(BaseStrategy):

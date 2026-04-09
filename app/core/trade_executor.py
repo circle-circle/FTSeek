@@ -27,6 +27,7 @@ from app.notifier.dingtalk import DingTalkNotifier
 from app import config
 
 logger = logging.getLogger("ftseek.core.trade_executor")
+logger.propagate = False  # 防止日志重复
 
 
 class SignalStatus(str, Enum):
@@ -724,7 +725,8 @@ class TradeExecutor:
         if signal_data.get('expire_at'):
             try:
                 expire_at = datetime.fromisoformat(signal_data['expire_at']).timestamp()
-            except:
+            except (ValueError, TypeError) as e:
+                logger.debug(f"解析 expire_at 失败：{e}")
                 pass
         
         return Signal(

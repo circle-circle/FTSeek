@@ -21,6 +21,7 @@ from datetime import datetime
 from enum import Enum
 
 logger = logging.getLogger("ftseek.v4.smart_push")
+logger.propagate = False  # 防止日志重复
 
 
 class PushDecision(str, Enum):
@@ -104,6 +105,7 @@ class SmartPushDecision:
         """初始化智能推送决策系统"""
         self.config = {**self.DEFAULT_CONFIG, **(config or {})}
         self.logger = logging.getLogger("ftseek.v4.smart_push")
+logger.propagate = False  # 防止日志重复
     
     def evaluate_momentum(
         self,

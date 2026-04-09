@@ -15,6 +15,7 @@ from datetime import datetime, timedelta
 import threading
 
 logger = logging.getLogger("ftseek.v4.overnight_hold")
+logger.propagate = False  # 防止日志重复
 
 
 @dataclass
@@ -68,6 +69,7 @@ class OvernightHoldEvaluator:
     def __init__(self):
         self.pending_requests: Dict[str, HoldRequest] = {}
         self.logger = logging.getLogger("ftseek.v4.overnight_hold")
+logger.propagate = False  # 防止日志重复
         
         # 评估条件阈值
         self.min_profit_pct = 0.05  # 最小盈利 5%

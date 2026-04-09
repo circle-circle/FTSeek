@@ -20,6 +20,7 @@ from app.news_push.config import (
 from app.news_push.collector import NewsItem
 
 logger = logging.getLogger("ftseek.news_push.rule_engine")
+logger.propagate = False  # 防止日志重复
 
 
 @dataclass

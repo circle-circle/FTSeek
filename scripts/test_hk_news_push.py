@@ -43,28 +43,34 @@ print("-"*70)
 
 try:
     import feedparser
+    import requests
     
-    # 港股新闻源列表
+    # 港股新闻源列表 (2026-03-15 更新)
     hk_feeds = [
-        ("港交所公告", "https://www.hkex.com.hk/chi/news/rss/announcement.xml"),
-        ("同花顺滚动", "http://stock.10jqka.com.cn/roll_news/rss/"),
-        ("腾讯财经", "https://finance.qq.com/rss/stocknews.xml"),
+        ("新浪财经港股", "https://feeds.mix.sina.com.cn/api/roll/get?page=1&page_size=20&cid=10"),
+        ("CNBC 港股", "https://www.cnbc.com/id/100003114/device/rss/rss.html"),
+        ("华尔街日报", "https://feeds.a.dj.com/rss/RSSMarketsMain.xml"),
+        ("美联储", "https://www.federalreserve.gov/feeds/press_all.xml"),
     ]
     
     all_hk_news = []
     
     for name, url in hk_feeds:
         try:
-            feed = feedparser.parse(url)  # 移除 timeout 参数
-            if feed.entries:
-                print(f"✅ {name}: 获取 {len(feed.entries)} 条")
-                for entry in feed.entries[:5]:  # 每个源取前 5 条
-                    all_hk_news.append({
-                        'title': entry.title[:100] if entry.title else '无标题',
-                        'source': name,
-                        'published': entry.get('published', '未知时间'),
-                        'link': entry.get('link', '')[:100]
-                    })
+            r = requests.get(url, timeout=5, headers={'User-Agent': 'Mozilla/5.0'})
+            if r.status_code == 200:
+                feed = feedparser.parse(r.text)
+                if feed.entries:
+                    print(f"✅ {name}: 获取 {len(feed.entries)} 条")
+                    for entry in feed.entries[:5]:  # 每个源取前 5 条
+                        all_hk_news.append({
+                            'title': entry.title[:100] if entry.title else '无标题',
+                            'source': name,
+                            'published': entry.get('published', '未知时间'),
+                            'link': entry.get('link', '')[:100]
+                        })
+            else:
+                print(f"⚠️ {name}: HTTP {r.status_code}")
         except Exception as e:
             print(f"⚠️ {name}: 获取失败 - {e}")
     

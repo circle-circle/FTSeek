@@ -1,0 +1,105 @@
+# 市场状态识别参数配置 (Market Regime Recognition Parameters)
+# 用于识别当前市场状态，调整策略参数
+# 创建日期：2026-04-08
+
+# ============================================================
+# 市场状态定义
+# ============================================================
+# trending: 趋势市场 (ADX > 25)
+# ranging: 震荡市场 (ADX < 20)
+# neutral: 中性市场 (ADX 20-25)
+# volatile: 高波动市场 (ATR > 阈值)
+
+regime_recognition:
+  # ADX 阈值
+  adx_trending_threshold: 25.0      # 趋势市场 ADX 下限
+  adx_ranging_threshold: 20.0       # 震荡市场 ADX 上限
+
+  # ATR 阈值 (相对值，相对于价格)
+  atr_volatile_threshold: 0.035     # 高波动市场 ATR/价格 阈值
+
+  # 均线排列确认
+  ma_trend_confirmation: true       # 是否需要均线排列确认趋势
+  ma_alignment_periods: [5, 20, 60] # 用于确认的均线周期
+
+# ============================================================
+# 各市场状态下的策略参数
+# ============================================================
+regime_params:
+  trending:
+    # 趋势市场参数
+    strategy_weights:
+      confluence_v2: 0.4
+      supertrend: 0.4
+      momentum: 0.2
+
+    # 放宽止盈止损，让利润奔跑
+    stop_loss_pct: -4.0
+    take_profit_pct: 8.0
+    trailing_stop_enabled: true
+
+    # 提高置信度阈值
+    min_confidence: 0.55
+
+  ranging:
+    # 震荡市场参数
+    strategy_weights:
+      confluence_v2: 0.3
+      rsi: 0.4
+      bollinger: 0.3
+
+    # 收紧止盈止损
+    stop_loss_pct: -2.5
+    take_profit_pct: 4.0
+    trailing_stop_enabled: false
+
+    # 降低置信度阈值，增加交易机会
+    min_confidence: 0.50
+
+  neutral:
+    # 中性市场参数
+    strategy_weights:
+      confluence_v2: 0.5
+      supertrend: 0.3
+      sentiment_ai: 0.2
+
+    # 标准止盈止损
+    stop_loss_pct: -3.0
+    take_profit_pct: 5.0
+    trailing_stop_enabled: true
+
+    min_confidence: 0.60
+
+  volatile:
+    # 高波动市场参数 - 谨慎交易
+    strategy_weights:
+      confluence_v2: 0.6
+      risk_management: 0.4
+
+    # 放宽止损，防止被洗出
+    stop_loss_pct: -5.0
+    take_profit_pct: 10.0
+    trailing_stop_enabled: true
+    trailing_stop_pct: 3.0
+
+    # 提高置信度阈值
+    min_confidence: 0.70
+
+    # 降低仓位
+    position_size_multiplier: 0.5
+
+# ============================================================
+# 市场状态转换滞后 (防止频繁切换)
+# ============================================================
+regime_transition:
+  min_periods_in_regime: 3          # 至少连续 N 个周期才确认状态转换
+  cooldown_after_switch: 5          # 切换后的冷却期 (周期数)
+
+# ============================================================
+# 监控标的
+# ============================================================
+# 用于市场状态识别的基准标的
+benchmark_symbols:
+  - "HK.00700"  # 腾讯控股
+  - "HK.09988"  # 阿里巴巴
+  - "HK.03690"  # 美团

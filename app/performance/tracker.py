@@ -16,6 +16,7 @@ from dataclasses import dataclass
 import logging
 
 logger = logging.getLogger("ftseek.performance.tracker")
+logger.propagate = False  # 防止日志重复
 
 
 class PerformanceTracker:

@@ -18,6 +18,7 @@ import json
 import logging
 
 logger = logging.getLogger("ftseek.backtest.engine")
+logger.propagate = False  # 防止日志重复
 
 
 @dataclass

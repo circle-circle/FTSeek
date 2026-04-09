@@ -1,0 +1,17 @@
+[
+  {
+    "prediction_id": "e5a0101c",
+    "code": "HK.00700",
+    "timestamp": "2026-03-14T20:26:41.969378",
+    "prediction_direction": "上涨",
+    "prediction_confidence": 85,
+    "ai_score": 0.85,
+    "actual_direction": "上涨",
+    "max_gain": 0.05,
+    "max_loss": -0.02,
+    "final_return": 0.03,
+    "holding_period": 3,
+    "direction_correct": true,
+    "confidence_calibrated": true
+  }
+]

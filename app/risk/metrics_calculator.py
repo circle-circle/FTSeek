@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
 logger = logging.getLogger("ftseek.metrics")
+logger.propagate = False  # 防止日志重复
 
 
 @dataclass

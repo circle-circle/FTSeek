@@ -1,0 +1,151 @@
+{
+  "version": "1.0.0",
+  "updated_at": "2026-04-08T07:44:00+08:00",
+  "description": "新闻源配置 - 主源 + 3 个备用源",
+  
+  "sources": {
+    "jinshi": {
+      "name": "金十数据",
+      "priority": 1,
+      "enabled": true,
+      "api": {
+        "base_url": "https://api.jin10.com/v1",
+        "news_endpoint": "/news",
+        "calendar_endpoint": "/calendar",
+        "headers": {
+          "Accept": "application/json",
+          "User-Agent": "FTSeek/1.0"
+        },
+        "timeout_seconds": 10,
+        "retry_count": 3,
+        "retry_delay_seconds": 2
+      },
+      "rate_limit": {
+        "requests_per_minute": 60,
+        "requests_per_hour": 1000
+      }
+    },
+    "sina": {
+      "name": "新浪财经",
+      "priority": 2,
+      "enabled": true,
+      "api": {
+        "base_url": "https://finance.sina.com.cn",
+        "news_endpoint": "/stock/yanbao/",
+        "search_endpoint": "/api/stock/search",
+        "headers": {
+          "Accept": "application/json, text/html",
+          "User-Agent": "Mozilla/5.0 (compatible; FTSeek/1.0)"
+        },
+        "timeout_seconds": 10,
+        "retry_count": 3,
+        "retry_delay_seconds": 2
+      },
+      "rate_limit": {
+        "requests_per_minute": 30,
+        "requests_per_hour": 500
+      }
+    },
+    "tencent": {
+      "name": "腾讯财经",
+      "priority": 3,
+      "enabled": true,
+      "api": {
+        "base_url": "https://stockapp.finance.qq.com",
+        "news_endpoint": "/mstats/",
+        "search_endpoint": "/api/search",
+        "headers": {
+          "Accept": "application/json, text/html",
+          "User-Agent": "Mozilla/5.0 (compatible; FTSeek/1.0)"
+        },
+        "timeout_seconds": 10,
+        "retry_count": 3,
+        "retry_delay_seconds": 2
+      },
+      "rate_limit": {
+        "requests_per_minute": 30,
+        "requests_per_hour": 500
+      }
+    },
+    "cls": {
+      "name": "财联社",
+      "priority": 4,
+      "enabled": true,
+      "api": {
+        "base_url": "https://www.cls.cn",
+        "news_endpoint": "/api/roll/get",
+        "telegraph_endpoint": "/telegraph",
+        "headers": {
+          "Accept": "application/json",
+          "User-Agent": "Mozilla/5.0 (compatible; FTSeek/1.0)",
+          "Referer": "https://www.cls.cn"
+        },
+        "timeout_seconds": 10,
+        "retry_count": 3,
+        "retry_delay_seconds": 2
+      },
+      "rate_limit": {
+        "requests_per_minute": 30,
+        "requests_per_hour": 500
+      }
+    }
+  },
+  
+  "fallback_strategy": {
+    "enabled": true,
+    "max_fallback_depth": 3,
+    "description": "主源失败时自动切换到备用源，最多 3 层降级",
+    "switch_threshold": {
+      "consecutive_failures": 2,
+      "time_window_seconds": 300
+    }
+  },
+  
+  "health_check": {
+    "enabled": true,
+    "interval_seconds": 300,
+    "timeout_seconds": 10,
+    "alert_threshold": {
+      "consecutive_failures": 2,
+      "sources_unavailable": 3
+    }
+  },
+  
+  "degradation_policy": {
+    "enabled": true,
+    "description": "全部新闻源失败时的降级策略 (2026-04-08 启用)",
+    "triggers": {
+      "all_sources_failed": true,
+      "consecutive_failures": 2
+    },
+    "actions": {
+      "news_weight": 0.0,
+      "technical_weight": 0.60,
+      "cash_weight": 0.40
+    },
+    "status": "active"
+  },
+  
+  "alert": {
+    "enabled": true,
+    "provider": "feishu",
+    "webhook_env_var": "FEISHU_WEBHOOK_URL",
+    "triggers": {
+      "source_failure": true,
+      "all_sources_failure": true,
+      "degradation_activated": true
+    },
+    "notification": {
+      "consecutive_failures_threshold": 2,
+      "cooldown_minutes": 15
+    }
+  },
+  
+  "logging": {
+    "level": "INFO",
+    "file": "/opt/ftseek/FTSeek/logs/news_monitor.log",
+    "max_size_mb": 50,
+    "backup_count": 5,
+    "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  }
+}

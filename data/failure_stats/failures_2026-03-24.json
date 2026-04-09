@@ -1,0 +1,37 @@
+[
+  {
+    "timestamp": "2026-03-24T11:32:10.887333",
+    "code": "HK.00981",
+    "reason": "risk",
+    "category": "risk_reject",
+    "message": "风控检查失败：confidence"
+  },
+  {
+    "timestamp": "2026-03-24T13:44:08.228663",
+    "code": "HK.03690",
+    "reason": "other",
+    "category": "other",
+    "message": "下单失败：暂不支持卖空"
+  },
+  {
+    "timestamp": "2026-03-24T13:55:28.712246",
+    "code": "HK.00981",
+    "reason": "other",
+    "category": "other",
+    "message": "下单失败：暂不支持卖空"
+  },
+  {
+    "timestamp": "2026-03-24T13:57:34.657117",
+    "code": "HK.00981",
+    "reason": "risk",
+    "category": "risk_reject",
+    "message": "风控检查失败：confidence"
+  },
+  {
+    "timestamp": "2026-03-24T14:00:11.671410",
+    "code": "HK.09992",
+    "reason": "risk",
+    "category": "risk_reject",
+    "message": "风控检查失败：confidence"
+  }
+]

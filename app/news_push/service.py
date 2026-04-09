@@ -76,10 +76,11 @@ class NewsPushService:
     """
     新闻推送服务
     """
-    
+
     def __init__(self):
         self.logger = logging.getLogger("ftseek.news_push.service")
-        
+        self.logger.propagate = False  # 防止日志重复
+
         # 初始化组件
         self.collector = get_collector()
         self.rule_engine = get_rule_engine()

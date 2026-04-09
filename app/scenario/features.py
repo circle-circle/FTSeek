@@ -64,6 +64,7 @@ class EventFeatures:
     gap_pct: float = 0.0          # 跳空百分比
     news_score: float = 0.0       # 新闻情绪得分
     has_announcement: bool = False # 是否有公告
+    metadata: Dict[str, Any] = field(default_factory=dict)  # 额外元数据
 
 
 @dataclass
@@ -295,7 +296,7 @@ class FeatureExtractor:
         """提取事件特征"""
         # 跳空百分比 (当前开盘 vs 前一收盘)
         if len(opens) >= 2:
-            gap_pct = (opens[-1] - closes[-2]) / closes[-2] * 100 if closes[-2] else 0.0
+            gap_pct = (opens[-1] - closes[-2]) / closes[-2] if closes[-2] else 0.0
         else:
             gap_pct = 0.0
 
@@ -303,10 +304,20 @@ class FeatureExtractor:
         news_score = news_data.get('sentiment_score', 0.0) if news_data else 0.0
         has_announcement = news_data.get('has_announcement', False) if news_data else False
 
+        # 新闻强度 (0-1): 绝对值归一化
+        news_intensity = min(1.0, abs(news_score)) if news_score else 0.0
+
+        # 突发新闻标志：高强度新闻
+        breaking_news = news_intensity >= 0.7
+
         return EventFeatures(
             gap_pct=gap_pct,
             news_score=news_score,
             has_announcement=has_announcement,
+            metadata={
+                'news_intensity': news_intensity,
+                'breaking_news': breaking_news,
+            }
         )
 
     def _extract_position_features(self, highs: List[float], lows: List[float],

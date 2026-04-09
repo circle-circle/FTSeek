@@ -16,6 +16,7 @@ from collections import defaultdict
 import math
 
 logger = logging.getLogger("ftseek.v4.post_trade_risk")
+logger.propagate = False  # 防止日志重复
 
 
 @dataclass
@@ -143,6 +144,7 @@ class PerformanceTracker:
         self.returns: List[float] = []
         
         self.logger = logging.getLogger("ftseek.v4.performance_tracker")
+logger.propagate = False  # 防止日志重复
     
     def add_trade(self, trade: TradeRecord):
         """添加交易记录"""
@@ -322,6 +324,7 @@ class PostTradeRisk:
         self.performance_tracker = PerformanceTracker(initial_capital)
         
         self.logger = logging.getLogger("ftseek.v4.post_trade_risk")
+logger.propagate = False  # 防止日志重复
     
     def record_trade(self, trade: TradeRecord):
         """记录交易"""

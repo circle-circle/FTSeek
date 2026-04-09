@@ -8,6 +8,7 @@ from typing import Dict, List, Callable, Optional
 from datetime import datetime
 
 logger = logging.getLogger("ftseek.data.realtime_subscriber")
+logger.propagate = False  # 防止日志重复
 
 # 导入富途 API
 try:

@@ -1,0 +1,964 @@
+[
+  {
+    "timestamp": "2026-03-25T00:00:02.087759",
+    "date": "2026-03-25",
+    "trading_status": {
+      "is_trading_day": true,
+      "is_trading_time": false,
+      "period": "开盘前",
+      "current_time": "00:00:02",
+      "date": "2026-03-25"
+    },
+    "checks": {
+      "execution_rate": {
+        "status": "no_signals",
+        "message": "今日无信号"
+      },
+      "reject_reasons": {
+        "status": "ok",
+        "reasons": {}
+      },
+      "positions": {
+        "status": "ok",
+        "count": 3,
+        "positions": [
+          {
+            "code": "HK.09992",
+            "action": "BUY",
+            "quantity": 200,
+            "entry_price": 218.2,
+            "entry_time": "2026-03-24 15:14:33",
+            "stop_loss": 211.654,
+            "take_profit": 231.292
+          },
+          {
+            "code": "HK.03690",
+            "action": "BUY",
+            "quantity": 100,
+            "entry_price": 78.65,
+            "entry_time": "2026-03-24 15:25:33",
+            "stop_loss": 76.2905,
+            "take_profit": 83.369
+          },
+          {
+            "code": "HK.00981",
+            "action": "BUY",
+            "quantity": 500,
+            "entry_price": 54.95,
+            "entry_time": "2026-03-24 15:26:32",
+            "stop_loss": 53.3015,
+            "take_profit": 58.247
+          }
+        ]
+      },
+      "circuit_breaker": {
+        "status": "ok",
+        "is_paused": false,
+        "reject_count": 0
+      }
+    },
+    "overall_status": "ok"
+  },
+  {
+    "timestamp": "2026-03-25T01:00:02.265318",
+    "date": "2026-03-25",
+    "trading_status": {
+      "is_trading_day": true,
+      "is_trading_time": false,
+      "period": "开盘前",
+      "current_time": "01:00:02",
+      "date": "2026-03-25"
+    },
+    "checks": {
+      "execution_rate": {
+        "status": "no_signals",
+        "message": "今日无信号"
+      },
+      "reject_reasons": {
+        "status": "ok",
+        "reasons": {}
+      },
+      "positions": {
+        "status": "ok",
+        "count": 3,
+        "positions": [
+          {
+            "code": "HK.09992",
+            "action": "BUY",
+            "quantity": 200,
+            "entry_price": 218.2,
+            "entry_time": "2026-03-24 15:14:33",
+            "stop_loss": 211.654,
+            "take_profit": 231.292
+          },
+          {
+            "code": "HK.03690",
+            "action": "BUY",
+            "quantity": 100,
+            "entry_price": 78.65,
+            "entry_time": "2026-03-24 15:25:33",
+            "stop_loss": 76.2905,
+            "take_profit": 83.369
+          },
+          {
+            "code": "HK.00981",
+            "action": "BUY",
+            "quantity": 500,
+            "entry_price": 54.95,
+            "entry_time": "2026-03-24 15:26:32",
+            "stop_loss": 53.3015,
+            "take_profit": 58.247
+          }
+        ]
+      },
+      "circuit_breaker": {
+        "status": "ok",
+        "is_paused": false,
+        "reject_count": 0
+      }
+    },
+    "overall_status": "ok"
+  },
+  {
+    "timestamp": "2026-03-25T02:00:02.951860",
+    "date": "2026-03-25",
+    "trading_status": {
+      "is_trading_day": true,
+      "is_trading_time": false,
+      "period": "开盘前",
+      "current_time": "02:00:02",
+      "date": "2026-03-25"
+    },
+    "checks": {
+      "execution_rate": {
+        "status": "no_signals",
+        "message": "今日无信号"
+      },
+      "reject_reasons": {
+        "status": "ok",
+        "reasons": {}
+      },
+      "positions": {
+        "status": "ok",
+        "count": 3,
+        "positions": [
+          {
+            "code": "HK.09992",
+            "action": "BUY",
+            "quantity": 200,
+            "entry_price": 218.2,
+            "entry_time": "2026-03-24 15:14:33",
+            "stop_loss": 211.654,
+            "take_profit": 231.292
+          },
+          {
+            "code": "HK.03690",
+            "action": "BUY",
+            "quantity": 100,
+            "entry_price": 78.65,
+            "entry_time": "2026-03-24 15:25:33",
+            "stop_loss": 76.2905,
+            "take_profit": 83.369
+          },
+          {
+            "code": "HK.00981",
+            "action": "BUY",
+            "quantity": 500,
+            "entry_price": 54.95,
+            "entry_time": "2026-03-24 15:26:32",
+            "stop_loss": 53.3015,
+            "take_profit": 58.247
+          }
+        ]
+      },
+      "circuit_breaker": {
+        "status": "ok",
+        "is_paused": false,
+        "reject_count": 0
+      }
+    },
+    "overall_status": "ok"
+  },
+  {
+    "timestamp": "2026-03-25T03:00:02.639545",
+    "date": "2026-03-25",
+    "trading_status": {
+      "is_trading_day": true,
+      "is_trading_time": false,
+      "period": "开盘前",
+      "current_time": "03:00:02",
+      "date": "2026-03-25"
+    },
+    "checks": {
+      "execution_rate": {
+        "status": "no_signals",
+        "message": "今日无信号"
+      },
+      "reject_reasons": {
+        "status": "ok",
+        "reasons": {}
+      },
+      "positions": {
+        "status": "ok",
+        "count": 3,
+        "positions": [
+          {
+            "code": "HK.09992",
+            "action": "BUY",
+            "quantity": 200,
+            "entry_price": 218.2,
+            "entry_time": "2026-03-24 15:14:33",
+            "stop_loss": 211.654,
+            "take_profit": 231.292
+          },
+          {
+            "code": "HK.03690",
+            "action": "BUY",
+            "quantity": 100,
+            "entry_price": 78.65,
+            "entry_time": "2026-03-24 15:25:33",
+            "stop_loss": 76.2905,
+            "take_profit": 83.369
+          },
+          {
+            "code": "HK.00981",
+            "action": "BUY",
+            "quantity": 500,
+            "entry_price": 54.95,
+            "entry_time": "2026-03-24 15:26:32",
+            "stop_loss": 53.3015,
+            "take_profit": 58.247
+          }
+        ]
+      },
+      "circuit_breaker": {
+        "status": "ok",
+        "is_paused": false,
+        "reject_count": 0
+      }
+    },
+    "overall_status": "ok"
+  },
+  {
+    "timestamp": "2026-03-25T04:00:02.423475",
+    "date": "2026-03-25",
+    "trading_status": {
+      "is_trading_day": true,
+      "is_trading_time": false,
+      "period": "开盘前",
+      "current_time": "04:00:02",
+      "date": "2026-03-25"
+    },
+    "checks": {
+      "execution_rate": {
+        "status": "no_signals",
+        "message": "今日无信号"
+      },
+      "reject_reasons": {
+        "status": "ok",
+        "reasons": {}
+      },
+      "positions": {
+        "status": "ok",
+        "count": 3,
+        "positions": [
+          {
+            "code": "HK.09992",
+            "action": "BUY",
+            "quantity": 200,
+            "entry_price": 218.2,
+            "entry_time": "2026-03-24 15:14:33",
+            "stop_loss": 211.654,
+            "take_profit": 231.292
+          },
+          {
+            "code": "HK.03690",
+            "action": "BUY",
+            "quantity": 100,
+            "entry_price": 78.65,
+            "entry_time": "2026-03-24 15:25:33",
+            "stop_loss": 76.2905,
+            "take_profit": 83.369
+          },
+          {
+            "code": "HK.00981",
+            "action": "BUY",
+            "quantity": 500,
+            "entry_price": 54.95,
+            "entry_time": "2026-03-24 15:26:32",
+            "stop_loss": 53.3015,
+            "take_profit": 58.247
+          }
+        ]
+      },
+      "circuit_breaker": {
+        "status": "ok",
+        "is_paused": false,
+        "reject_count": 0
+      }
+    },
+    "overall_status": "ok"
+  },
+  {
+    "timestamp": "2026-03-25T05:00:02.358114",
+    "date": "2026-03-25",
+    "trading_status": {
+      "is_trading_day": true,
+      "is_trading_time": false,
+      "period": "开盘前",
+      "current_time": "05:00:02",
+      "date": "2026-03-25"
+    },
+    "checks": {
+      "execution_rate": {
+        "status": "no_signals",
+        "message": "今日无信号"
+      },
+      "reject_reasons": {
+        "status": "ok",
+        "reasons": {}
+      },
+      "positions": {
+        "status": "ok",
+        "count": 3,
+        "positions": [
+          {
+            "code": "HK.09992",
+            "action": "BUY",
+            "quantity": 200,
+            "entry_price": 218.2,
+            "entry_time": "2026-03-24 15:14:33",
+            "stop_loss": 211.654,
+            "take_profit": 231.292
+          },
+          {
+            "code": "HK.03690",
+            "action": "BUY",
+            "quantity": 100,
+            "entry_price": 78.65,
+            "entry_time": "2026-03-24 15:25:33",
+            "stop_loss": 76.2905,
+            "take_profit": 83.369
+          },
+          {
+            "code": "HK.00981",
+            "action": "BUY",
+            "quantity": 500,
+            "entry_price": 54.95,
+            "entry_time": "2026-03-24 15:26:32",
+            "stop_loss": 53.3015,
+            "take_profit": 58.247
+          }
+        ]
+      },
+      "circuit_breaker": {
+        "status": "ok",
+        "is_paused": false,
+        "reject_count": 0
+      }
+    },
+    "overall_status": "ok"
+  },
+  {
+    "timestamp": "2026-03-25T06:00:02.162613",
+    "date": "2026-03-25",
+    "trading_status": {
+      "is_trading_day": true,
+      "is_trading_time": false,
+      "period": "开盘前",
+      "current_time": "06:00:02",
+      "date": "2026-03-25"
+    },
+    "checks": {
+      "execution_rate": {
+        "status": "no_signals",
+        "message": "今日无信号"
+      },
+      "reject_reasons": {
+        "status": "ok",
+        "reasons": {}
+      },
+      "positions": {
+        "status": "ok",
+        "count": 3,
+        "positions": [
+          {
+            "code": "HK.09992",
+            "action": "BUY",
+            "quantity": 200,
+            "entry_price": 218.2,
+            "entry_time": "2026-03-24 15:14:33",
+            "stop_loss": 211.654,
+            "take_profit": 231.292
+          },
+          {
+            "code": "HK.03690",
+            "action": "BUY",
+            "quantity": 100,
+            "entry_price": 78.65,
+            "entry_time": "2026-03-24 15:25:33",
+            "stop_loss": 76.2905,
+            "take_profit": 83.369
+          },
+          {
+            "code": "HK.00981",
+            "action": "BUY",
+            "quantity": 500,
+            "entry_price": 54.95,
+            "entry_time": "2026-03-24 15:26:32",
+            "stop_loss": 53.3015,
+            "take_profit": 58.247
+          }
+        ]
+      },
+      "circuit_breaker": {
+        "status": "ok",
+        "is_paused": false,
+        "reject_count": 0
+      }
+    },
+    "overall_status": "ok"
+  },
+  {
+    "timestamp": "2026-03-25T07:00:01.719004",
+    "date": "2026-03-25",
+    "trading_status": {
+      "is_trading_day": true,
+      "is_trading_time": false,
+      "period": "开盘前",
+      "current_time": "07:00:01",
+      "date": "2026-03-25"
+    },
+    "checks": {
+      "execution_rate": {
+        "status": "no_signals",
+        "message": "今日无信号"
+      },
+      "reject_reasons": {
+        "status": "ok",
+        "reasons": {}
+      },
+      "positions": {
+        "status": "ok",
+        "count": 3,
+        "positions": [
+          {
+            "code": "HK.09992",
+            "action": "BUY",
+            "quantity": 200,
+            "entry_price": 218.2,
+            "entry_time": "2026-03-24 15:14:33",
+            "stop_loss": 211.654,
+            "take_profit": 231.292
+          },
+          {
+            "code": "HK.03690",
+            "action": "BUY",
+            "quantity": 100,
+            "entry_price": 78.65,
+            "entry_time": "2026-03-24 15:25:33",
+            "stop_loss": 76.2905,
+            "take_profit": 83.369
+          },
+          {
+            "code": "HK.00981",
+            "action": "BUY",
+            "quantity": 500,
+            "entry_price": 54.95,
+            "entry_time": "2026-03-24 15:26:32",
+            "stop_loss": 53.3015,
+            "take_profit": 58.247
+          }
+        ]
+      },
+      "circuit_breaker": {
+        "status": "ok",
+        "is_paused": false,
+        "reject_count": 0
+      }
+    },
+    "overall_status": "ok"
+  },
+  {
+    "timestamp": "2026-03-25T08:00:02.001057",
+    "date": "2026-03-25",
+    "trading_status": {
+      "is_trading_day": true,
+      "is_trading_time": false,
+      "period": "开盘前",
+      "current_time": "08:00:02",
+      "date": "2026-03-25"
+    },
+    "checks": {
+      "execution_rate": {
+        "status": "no_signals",
+        "message": "今日无信号"
+      },
+      "reject_reasons": {
+        "status": "ok",
+        "reasons": {}
+      },
+      "positions": {
+        "status": "ok",
+        "count": 3,
+        "positions": [
+          {
+            "code": "HK.09992",
+            "action": "BUY",
+            "quantity": 200,
+            "entry_price": 218.2,
+            "entry_time": "2026-03-24 15:14:33",
+            "stop_loss": 211.654,
+            "take_profit": 231.292
+          },
+          {
+            "code": "HK.03690",
+            "action": "BUY",
+            "quantity": 100,
+            "entry_price": 78.65,
+            "entry_time": "2026-03-24 15:25:33",
+            "stop_loss": 76.2905,
+            "take_profit": 83.369
+          },
+          {
+            "code": "HK.00981",
+            "action": "BUY",
+            "quantity": 500,
+            "entry_price": 54.95,
+            "entry_time": "2026-03-24 15:26:32",
+            "stop_loss": 53.3015,
+            "take_profit": 58.247
+          }
+        ]
+      },
+      "circuit_breaker": {
+        "status": "ok",
+        "is_paused": false,
+        "reject_count": 0
+      }
+    },
+    "overall_status": "ok"
+  },
+  {
+    "timestamp": "2026-03-25T09:00:02.643801",
+    "date": "2026-03-25",
+    "trading_status": {
+      "is_trading_day": true,
+      "is_trading_time": false,
+      "period": "开盘前",
+      "current_time": "09:00:02",
+      "date": "2026-03-25"
+    },
+    "checks": {
+      "execution_rate": {
+        "status": "no_signals",
+        "message": "今日无信号"
+      },
+      "reject_reasons": {
+        "status": "ok",
+        "reasons": {}
+      },
+      "positions": {
+        "status": "ok",
+        "count": 3,
+        "positions": [
+          {
+            "code": "HK.09992",
+            "action": "BUY",
+            "quantity": 200,
+            "entry_price": 218.2,
+            "entry_time": "2026-03-24 15:14:33",
+            "stop_loss": 211.654,
+            "take_profit": 231.292
+          },
+          {
+            "code": "HK.03690",
+            "action": "BUY",
+            "quantity": 100,
+            "entry_price": 78.65,
+            "entry_time": "2026-03-24 15:25:33",
+            "stop_loss": 76.2905,
+            "take_profit": 83.369
+          },
+          {
+            "code": "HK.00981",
+            "action": "BUY",
+            "quantity": 500,
+            "entry_price": 54.95,
+            "entry_time": "2026-03-24 15:26:32",
+            "stop_loss": 53.3015,
+            "take_profit": 58.247
+          }
+        ]
+      },
+      "circuit_breaker": {
+        "status": "ok",
+        "is_paused": false,
+        "reject_count": 0
+      }
+    },
+    "overall_status": "ok"
+  },
+  {
+    "timestamp": "2026-03-25T10:00:02.998734",
+    "date": "2026-03-25",
+    "trading_status": {
+      "is_trading_day": true,
+      "is_trading_time": true,
+      "period": "上午盘",
+      "current_time": "10:00:02",
+      "date": "2026-03-25"
+    },
+    "checks": {
+      "execution_rate": {
+        "status": "alert",
+        "total": 14,
+        "executed": 2,
+        "rejected": 10,
+        "pending": 2,
+        "execution_rate": 14.285714285714285
+      },
+      "reject_reasons": {
+        "status": "ok",
+        "reasons": {
+          "其他": 10
+        },
+        "code_errors": 0
+      },
+      "positions": {
+        "status": "ok",
+        "count": 3,
+        "positions": [
+          {
+            "code": "HK.09992",
+            "action": "BUY",
+            "quantity": 400,
+            "entry_price": 221.0,
+            "entry_time": "2026-03-25 09:46:03",
+            "stop_loss": 214.37,
+            "take_profit": 234.26
+          },
+          {
+            "code": "HK.03690",
+            "action": "BUY",
+            "quantity": 100,
+            "entry_price": 80.06666666666666,
+            "entry_time": "2026-03-25 09:49:53",
+            "stop_loss": 77.35240666666665,
+            "take_profit": 85.18292666666667
+          },
+          {
+            "code": "HK.00981",
+            "action": "BUY",
+            "quantity": 500,
+            "entry_price": 56.8375,
+            "entry_time": "2026-03-25 09:51:36",
+            "stop_loss": 54.91070875,
+            "take_profit": 60.46941625
+          }
+        ]
+      },
+      "circuit_breaker": {
+        "status": "ok",
+        "is_paused": false,
+        "reject_count": 0
+      }
+    },
+    "overall_status": "alert"
+  },
+  {
+    "timestamp": "2026-03-25T16:00:03.731810",
+    "date": "2026-03-25",
+    "trading_status": {
+      "is_trading_day": true,
+      "is_trading_time": true,
+      "period": "收盘后检查窗口",
+      "current_time": "16:00:03",
+      "date": "2026-03-25"
+    },
+    "checks": {
+      "execution_rate": {
+        "status": "alert",
+        "total": 145,
+        "executed": 18,
+        "rejected": 81,
+        "pending": 46,
+        "execution_rate": 12.413793103448276
+      },
+      "reject_reasons": {
+        "status": "ok",
+        "reasons": {
+          "其他": 72,
+          "碎股限制": 9
+        },
+        "code_errors": 0
+      },
+      "positions": {
+        "status": "ok",
+        "count": 2,
+        "positions": [
+          {
+            "code": "HK.03690",
+            "action": "BUY",
+            "quantity": 200,
+            "entry_price": 86.9,
+            "entry_time": "2026-03-25 14:24:24",
+            "stop_loss": 86.9,
+            "take_profit": 92.114
+          },
+          {
+            "code": "HK.00981",
+            "action": "BUY",
+            "quantity": 1000,
+            "entry_price": 55.95,
+            "entry_time": "2026-03-25 15:18:54",
+            "stop_loss": 54.2715,
+            "take_profit": 59.307
+          }
+        ]
+      },
+      "circuit_breaker": {
+        "status": "ok",
+        "is_paused": false,
+        "reject_count": 0
+      }
+    },
+    "overall_status": "alert"
+  },
+  {
+    "timestamp": "2026-03-25T17:00:01.967362",
+    "date": "2026-03-25",
+    "trading_status": {
+      "is_trading_day": true,
+      "is_trading_time": false,
+      "period": "收盘后",
+      "current_time": "17:00:01",
+      "date": "2026-03-25"
+    },
+    "checks": {
+      "execution_rate": {
+        "status": "alert",
+        "total": 145,
+        "executed": 18,
+        "rejected": 81,
+        "pending": 46,
+        "execution_rate": 12.413793103448276
+      },
+      "reject_reasons": {
+        "status": "ok",
+        "reasons": {
+          "其他": 72,
+          "碎股限制": 9
+        },
+        "code_errors": 0
+      },
+      "positions": {
+        "status": "ok",
+        "count": 2,
+        "positions": [
+          {
+            "code": "HK.03690",
+            "action": "BUY",
+            "quantity": 200,
+            "entry_price": 86.9,
+            "entry_time": "2026-03-25 14:24:24",
+            "stop_loss": 86.9,
+            "take_profit": 92.114
+          },
+          {
+            "code": "HK.00981",
+            "action": "BUY",
+            "quantity": 1000,
+            "entry_price": 55.95,
+            "entry_time": "2026-03-25 15:18:54",
+            "stop_loss": 54.2715,
+            "take_profit": 59.307
+          }
+        ]
+      },
+      "circuit_breaker": {
+        "status": "ok",
+        "is_paused": false,
+        "reject_count": 0
+      }
+    },
+    "overall_status": "alert"
+  },
+  {
+    "timestamp": "2026-03-25T19:00:01.830220",
+    "date": "2026-03-25",
+    "trading_status": {
+      "is_trading_day": true,
+      "is_trading_time": false,
+      "period": "收盘后",
+      "current_time": "19:00:01",
+      "date": "2026-03-25"
+    },
+    "checks": {
+      "execution_rate": {
+        "status": "alert",
+        "total": 145,
+        "executed": 18,
+        "rejected": 81,
+        "pending": 46,
+        "execution_rate": 12.413793103448276
+      },
+      "reject_reasons": {
+        "status": "ok",
+        "reasons": {
+          "其他": 72,
+          "碎股限制": 9
+        },
+        "code_errors": 0
+      },
+      "positions": {
+        "status": "ok",
+        "count": 2,
+        "positions": [
+          {
+            "code": "HK.03690",
+            "action": "BUY",
+            "quantity": 200,
+            "entry_price": 86.9,
+            "entry_time": "2026-03-25 14:24:24",
+            "stop_loss": 84.293,
+            "take_profit": 92.114
+          },
+          {
+            "code": "HK.00981",
+            "action": "BUY",
+            "quantity": 1000,
+            "entry_price": 55.95,
+            "entry_time": "2026-03-25 15:18:54",
+            "stop_loss": 54.2715,
+            "take_profit": 59.307
+          }
+        ]
+      },
+      "circuit_breaker": {
+        "status": "ok",
+        "is_paused": false,
+        "reject_count": 0
+      }
+    },
+    "overall_status": "alert"
+  },
+  {
+    "timestamp": "2026-03-25T20:00:02.105426",
+    "date": "2026-03-25",
+    "trading_status": {
+      "is_trading_day": true,
+      "is_trading_time": false,
+      "period": "收盘后",
+      "current_time": "20:00:02",
+      "date": "2026-03-25"
+    },
+    "checks": {
+      "execution_rate": {
+        "status": "alert",
+        "total": 145,
+        "executed": 18,
+        "rejected": 81,
+        "pending": 46,
+        "execution_rate": 12.413793103448276
+      },
+      "reject_reasons": {
+        "status": "ok",
+        "reasons": {
+          "其他": 72,
+          "碎股限制": 9
+        },
+        "code_errors": 0
+      },
+      "positions": {
+        "status": "ok",
+        "count": 2,
+        "positions": [
+          {
+            "code": "HK.03690",
+            "action": "BUY",
+            "quantity": 200,
+            "entry_price": 86.9,
+            "entry_time": "2026-03-25 14:24:24",
+            "stop_loss": 84.293,
+            "take_profit": 92.114
+          },
+          {
+            "code": "HK.00981",
+            "action": "BUY",
+            "quantity": 1000,
+            "entry_price": 55.95,
+            "entry_time": "2026-03-25 15:18:54",
+            "stop_loss": 54.2715,
+            "take_profit": 59.307
+          }
+        ]
+      },
+      "circuit_breaker": {
+        "status": "ok",
+        "is_paused": false,
+        "reject_count": 0
+      }
+    },
+    "overall_status": "alert"
+  },
+  {
+    "timestamp": "2026-03-25T21:00:02.271927",
+    "date": "2026-03-25",
+    "trading_status": {
+      "is_trading_day": true,
+      "is_trading_time": false,
+      "period": "收盘后",
+      "current_time": "21:00:02",
+      "date": "2026-03-25"
+    },
+    "checks": {
+      "execution_rate": {
+        "status": "alert",
+        "total": 145,
+        "executed": 18,
+        "rejected": 81,
+        "pending": 46,
+        "execution_rate": 12.413793103448276
+      },
+      "reject_reasons": {
+        "status": "ok",
+        "reasons": {
+          "其他": 72,
+          "碎股限制": 9
+        },
+        "code_errors": 0
+      },
+      "positions": {
+        "status": "ok",
+        "count": 2,
+        "positions": [
+          {
+            "code": "HK.03690",
+            "action": "BUY",
+            "quantity": 200,
+            "entry_price": 86.9,
+            "entry_time": "2026-03-25 14:24:24",
+            "stop_loss": 84.293,
+            "take_profit": 92.114
+          },
+          {
+            "code": "HK.00981",
+            "action": "BUY",
+            "quantity": 1000,
+            "entry_price": 55.95,
+            "entry_time": "2026-03-25 15:18:54",
+            "stop_loss": 54.2715,
+            "take_profit": 59.307
+          }
+        ]
+      },
+      "circuit_breaker": {
+        "status": "ok",
+        "is_paused": false,
+        "reject_count": 0
+      }
+    },
+    "overall_status": "alert"
+  }
+]

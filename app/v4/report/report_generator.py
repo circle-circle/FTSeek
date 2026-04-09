@@ -22,6 +22,7 @@ from pathlib import Path
 import requests
 
 logger = logging.getLogger("ftseek.v4.report_generator")
+logger.propagate = False  # 防止日志重复
 
 # futu_cp2 交易日志路径
 FUTU_CP2_TRADE_JOURNAL = Path("/opt/futu_cp2/data/trade_journal.json")

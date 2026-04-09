@@ -1,0 +1,62 @@
+[
+  {
+    "signal_id": "9f42e78f-e908-48a9-95b7-4fa7ba4cfdd9",
+    "code": "HK.09992",
+    "timestamp": "2026-03-17T06:55:49.160710",
+    "strategy": "test_strategy",
+    "action": "BUY",
+    "confidence": 0.65,
+    "consensus_score": 2.42,
+    "strategies": [
+      "macd",
+      "confluence"
+    ],
+    "signal_price": 95.5,
+    "quantity": 200,
+    "executed": true,
+    "execution_price": 95.6,
+    "execution_time": "2026-03-17T06:55:49.161503",
+    "reject_reason": null,
+    "exit_price": null,
+    "exit_time": null,
+    "pnl": null,
+    "pnl_pct": null,
+    "holding_period_minutes": null,
+    "profitable": null,
+    "confidence_correct": null,
+    "market_regime": "weak_trend_up",
+    "adx": 22.5,
+    "created_at": "2026-03-17T06:55:49.160754",
+    "updated_at": "2026-03-17T06:55:49.161514"
+  },
+  {
+    "signal_id": "56646cfc-667c-416e-ad72-6238b3eb9b1e",
+    "code": "HK.09992",
+    "timestamp": "2026-03-17T15:30:37.030352",
+    "strategy": "test_strategy",
+    "action": "BUY",
+    "confidence": 0.65,
+    "consensus_score": 2.42,
+    "strategies": [
+      "macd",
+      "confluence"
+    ],
+    "signal_price": 95.5,
+    "quantity": 200,
+    "executed": true,
+    "execution_price": 95.6,
+    "execution_time": "2026-03-17T15:30:37.031779",
+    "reject_reason": null,
+    "exit_price": null,
+    "exit_time": null,
+    "pnl": null,
+    "pnl_pct": null,
+    "holding_period_minutes": null,
+    "profitable": null,
+    "confidence_correct": null,
+    "market_regime": "weak_trend_up",
+    "adx": 22.5,
+    "created_at": "2026-03-17T15:30:37.030387",
+    "updated_at": "2026-03-17T15:30:37.031807"
+  }
+]

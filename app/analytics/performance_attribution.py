@@ -11,6 +11,7 @@ from typing import Dict, List
 from collections import defaultdict
 
 logger = logging.getLogger("ftseek.analytics.performance_attribution")
+logger.propagate = False  # 防止日志重复
 
 # 从交易记录目录加载数据
 TRADE_RECORDS_DIR = Path('/opt/ftseek/FTSeek/data/trade_records')

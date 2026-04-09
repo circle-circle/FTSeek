@@ -25,6 +25,7 @@ from app.news_push.collector import NewsItem
 from app.news_push.qwen_analyzer import AnalysisResult
 
 logger = logging.getLogger("ftseek.news_push.notifier")
+logger.propagate = False  # 防止日志重复
 
 
 class NewsNotifier:
@@ -156,7 +157,7 @@ class NewsNotifier:
             try:
                 dt = datetime.fromisoformat(pub_time.replace('Z', '+00:00'))
                 time_str = dt.strftime('%H:%M')
-            except:
+            except (ValueError, AttributeError):
                 time_str = pub_time[:16] if len(pub_time) > 16 else pub_time
         else:
             time_str = datetime.now().strftime('%H:%M')

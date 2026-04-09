@@ -1,0 +1,18 @@
+{
+  "date": "2026-03-25",
+  "trades": {
+    "total": 17,
+    "closed": 15,
+    "winning": 2,
+    "losing": 10,
+    "win_rate": 13.333333333333334,
+    "total_pnl": -47889.59
+  },
+  "signals": {
+    "total": 145,
+    "executed": 18,
+    "rejected": 81,
+    "execution_rate": 12.413793103448276,
+    "avg_confidence": 0.5888275862068963
+  }
+}

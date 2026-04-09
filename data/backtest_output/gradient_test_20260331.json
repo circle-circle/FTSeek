@@ -1,0 +1,102 @@
+{
+  "test_date": "2026-03-31T07:36:38.883050",
+  "backtest_config": {
+    "start_date": "2023-01-01",
+    "end_date": "2026-03-31",
+    "initial_capital": 1000000.0,
+    "commission_rate": 0.0003,
+    "slippage_rate": 0.001
+  },
+  "test_groups": [
+    {
+      "group": "A1",
+      "min_confidence": 0.45,
+      "max_single_position": 0.18,
+      "max_total_position": 0.75,
+      "description": "保守平衡"
+    },
+    {
+      "group": "A2",
+      "min_confidence": 0.5,
+      "max_single_position": 0.18,
+      "max_total_position": 0.75,
+      "description": "中等过滤"
+    },
+    {
+      "group": "A3",
+      "min_confidence": 0.55,
+      "max_single_position": 0.2,
+      "max_total_position": 0.8,
+      "description": "适度宽松"
+    },
+    {
+      "group": "A4",
+      "min_confidence": 0.6,
+      "max_single_position": 0.2,
+      "max_total_position": 0.8,
+      "description": "严格过滤"
+    }
+  ],
+  "results": [
+    {
+      "group": "A1",
+      "annual_return": 0.18251076451424453,
+      "max_drawdown": 0.9198730429319074,
+      "sharpe_ratio": 0.5861621177922353,
+      "win_rate": 0.38461538461538464,
+      "total_trades": 117,
+      "avg_holding_period": 50.675213675213676,
+      "total_return": 0.7243149129919236,
+      "calmar_ratio": 0.1984086455371371,
+      "profit_factor": 1.8257669980267086
+    },
+    {
+      "group": "A2",
+      "annual_return": 0.2617040165232851,
+      "max_drawdown": 0.9314114145802139,
+      "sharpe_ratio": 1.0344813555016334,
+      "win_rate": 0.3939393939393939,
+      "total_trades": 99,
+      "avg_holding_period": 59.78787878787879,
+      "total_return": 1.1286870994581562,
+      "calmar_ratio": 0.28097574544030557,
+      "profit_factor": 1.9128820466239158
+    },
+    {
+      "group": "A3",
+      "annual_return": 0.3761535128767366,
+      "max_drawdown": 0.5532492109836104,
+      "sharpe_ratio": 1.9685394213671488,
+      "win_rate": 0.40540540540540543,
+      "total_trades": 74,
+      "avg_holding_period": 80.43243243243244,
+      "total_return": 1.8227172027374694,
+      "calmar_ratio": 0.6798988690973116,
+      "profit_factor": 2.2015707191255878
+    },
+    {
+      "group": "A4",
+      "annual_return": 0.237396988543217,
+      "max_drawdown": 0.6740518708812582,
+      "sharpe_ratio": 1.3228462735180118,
+      "win_rate": 0.4406779661016949,
+      "total_trades": 59,
+      "avg_holding_period": 104.50847457627118,
+      "total_return": 0.9982711941988759,
+      "calmar_ratio": 0.35219394648789154,
+      "profit_factor": 1.6249185246743034
+    }
+  ],
+  "best_group": {
+    "group": "A3",
+    "annual_return": 0.3761535128767366,
+    "max_drawdown": 0.5532492109836104,
+    "sharpe_ratio": 1.9685394213671488,
+    "win_rate": 0.40540540540540543,
+    "total_trades": 74,
+    "avg_holding_period": 80.43243243243244,
+    "total_return": 1.8227172027374694,
+    "calmar_ratio": 0.6798988690973116,
+    "profit_factor": 2.2015707191255878
+  }
+}

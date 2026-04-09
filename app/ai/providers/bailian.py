@@ -2,14 +2,26 @@
 Bailian (百炼) AI Provider
 
 使用阿里云百炼平台的大模型 API
+支持 OpenAI 兼容格式 (2026-03-17 更新)
 """
 import os
 import json
 import logging
 from typing import Dict, Any
+from pathlib import Path
 from ..base import BaseProvider, AIResponse
 
 logger = logging.getLogger("ftseek.ai.bailian")
+logger.propagate = False  # 防止日志重复
+
+# 加载 .env 文件 (2026-03-17 修复)
+try:
+    from dotenv import load_dotenv
+    env_path = Path(__file__).resolve().parent.parent.parent.parent / '.env'
+    if env_path.exists():
+        load_dotenv(env_path)
+except ImportError:
+    pass
 
 
 class BailianProvider(BaseProvider):
@@ -19,36 +31,54 @@ class BailianProvider(BaseProvider):
     
     def __init__(self, config: dict = None):
         self.api_key = os.getenv('BAILIAN_API_KEY', '')
-        self.endpoint = os.getenv('BAILIAN_ENDPOINT', 'dashscope.aliyuncs.com')
         self.model = os.getenv('BAILIAN_MODEL', 'qwen-plus')
         self.timeout = int(os.getenv('BAILIAN_TIMEOUT', '30'))
         
+        # 修复 URL 构建 (2026-04-08)
+        # 如果 endpoint 已包含 https://，直接使用；否则添加
+        endpoint_raw = os.getenv('BAILIAN_ENDPOINT', 'dashscope.aliyuncs.com')
+        if endpoint_raw.startswith('https://') or endpoint_raw.startswith('http://'):
+            # 已包含完整 URL，清理末尾斜杠
+            self.endpoint = endpoint_raw.rstrip('/')
+        else:
+            # 不包含协议，保持原样让 chat() 方法添加
+            self.endpoint = endpoint_raw
+        
         if not self.api_key:
             logger.warning("BAILIAN_API_KEY 未配置，AI 功能将不可用")
+        else:
+            logger.info(f"百炼 Provider 已初始化: endpoint={self.endpoint}, model={self.model}")
     
     def chat(self, prompt: str, **kwargs) -> AIResponse:
-        """发送聊天请求"""
+        """发送聊天请求 (使用 OpenAI 兼容格式)"""
         try:
             import requests
             
-            url = f"https://{self.endpoint}/api/v1/services/aigc/text-generation/generation"
+            # 使用 OpenAI 兼容端点 (修复: endpoint 可能已包含完整 URL)
+            if self.endpoint.startswith('https://') or self.endpoint.startswith('http://'):
+                url = self.endpoint
+                # 如果 URL 不包含 compatible-mode，自动添加
+                if '/compatible-mode' not in url:
+                    url = url.rstrip('/') + '/compatible-mode/v1/chat/completions'
+                # 如果 URL 不包含 chat/completions，添加
+                elif '/chat/completions' not in url:
+                    url = url.rstrip('/') + '/chat/completions'
+            else:
+                url = f"https://{self.endpoint}/compatible-mode/v1/chat/completions"
             
             headers = {
                 'Authorization': f'Bearer {self.api_key}',
                 'Content-Type': 'application/json'
             }
             
+            # OpenAI 兼容格式
             payload = {
                 'model': self.model,
-                'input': {
-                    'messages': [
-                        {'role': 'user', 'content': prompt}
-                    ]
-                },
-                'parameters': {
-                    'temperature': kwargs.get('temperature', 0.1),
-                    'max_tokens': kwargs.get('max_tokens', 500)
-                }
+                'messages': [
+                    {'role': 'user', 'content': prompt}
+                ],
+                'temperature': kwargs.get('temperature', 0.1),
+                'max_tokens': kwargs.get('max_tokens', 500)
             }
             
             response = requests.post(url, json=payload, headers=headers, timeout=self.timeout)
@@ -56,10 +86,10 @@ class BailianProvider(BaseProvider):
             
             result = response.json()
             
-            # 解析响应
-            if 'output' in result and 'text' in result['output']:
-                text = result['output']['text']
-                tokens = result.get('usage', {}).get('output_tokens', 0)
+            # OpenAI 兼容响应格式
+            if 'choices' in result and len(result['choices']) > 0:
+                text = result['choices'][0]['message']['content']
+                tokens = result.get('usage', {}).get('completion_tokens', 0)
                 
                 return AIResponse.success_response(
                     data={'text': text, 'raw': result},
@@ -94,7 +124,7 @@ class BailianProvider(BaseProvider):
                 score = float(score_str)
                 score = max(-1.0, min(1.0, score))
                 response.data['sentiment_score'] = score
-            except:
+            except (ValueError, KeyError, TypeError):
                 response.data['sentiment_score'] = 0.0
         
         return response
@@ -158,7 +188,7 @@ class BailianProvider(BaseProvider):
                 try:
                     conf = int(''.join(filter(str.isdigit, line)))
                     result['confidence'] = min(100, max(0, conf))
-                except:
+                except (ValueError, TypeError):
                     pass
             elif '理由' in line:
                 result['reason'] = line.split('理由')[-1].strip(':')

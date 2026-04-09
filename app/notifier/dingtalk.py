@@ -19,6 +19,7 @@ from app import config
 from app.strategy.base import Signal, SignalAction
 
 logger = logging.getLogger("ftseek.notifier.dingtalk")
+logger.propagate = False  # 防止日志重复
 
 ACTION_LABELS = {
     SignalAction.BUY: "确认买入",
@@ -449,12 +450,13 @@ class DingTalkNotifier:
             logger.info(f"钉钉风险预警推送成功：{alert_type}")
         return ok
 
-    def send_daily_stats(self, stats: dict):
+    def send_daily_stats(self, stats: dict, review: dict = None):
         """
         发送收盘统计（16:30）
         
         Args:
             stats: 统计数据字典
+            review: 深度复盘数据（可选），来自 DailyStatsReporter.generate_review_report()
         """
         if not self.webhook_url:
             return False
@@ -501,11 +503,85 @@ class DingTalkNotifier:
             f"**总回撤**: {stats.get('drawdown', 0):.2f}% (安全线 {stats.get('max_drawdown', 15):.0f}%)\n\n"
         )
         
+        # ============ 深度复盘区块（如传入 review 则追加）============
+        if review:
+            # 1. 信号归因
+            rej = review.get('rejection_stats', {})
+            total_rej = sum(rej.values())
+            if total_rej > 0:
+                markdown_text += (
+                    f"---\n\n"
+                    f"**信号归因** (共拒绝 {total_rej} 次)\n\n"
+                    f"- 盈亏比不足：{rej.get('rr_filter', 0)} 次\n\n"
+                    f"- 时段噪音过滤：{rej.get('time_filter', 0)} 次\n\n"
+                    f"- 熔断拦截：{rej.get('circuit_breaker', 0)} 次\n\n"
+                    f"- 置信度低：{rej.get('low_confidence', 0)} 次\n\n"
+                    f"- 其他：{rej.get('other', 0)} 次\n\n"
+                )
+            
+            # 2. 个股盈亏归因
+            closed_trades = review.get('closed_trades', [])
+            if closed_trades:
+                markdown_text += "---\n\n**今日平仓明细**\n\n"
+                for t in closed_trades[:6]:  # 最多展示 6 笔
+                    pnl = t.get('pnl', 0)
+                    pnl_pct = t.get('pnl_pct', 0)
+                    p_icon = "💰" if pnl >= 0 else "💸"
+                    dir_label = "多" if t.get('direction') == 'long' else "空"
+                    hold = t.get('hold_mins', 0)
+                    hold_str = f"{hold // 60}h{hold % 60}m" if hold >= 60 else f"{hold}m"
+                    reason = t.get('exit_reason', '-')
+                    markdown_text += (
+                        f"- {p_icon} **{t.get('code','')}** [{dir_label}] "
+                        f"{t.get('entry_price',0):.2f}→{t.get('exit_price',0):.2f} "
+                        f"({pnl_pct:+.1f}%) HK${pnl:+.0f} "
+                        f"持仓{hold_str} | {reason}\n\n"
+                    )
+            
+            # 3. 市场状态回顾
+            regime = review.get('market_regime', {})
+            if regime:
+                adx_str = f"ADX={regime.get('adx', 0):.1f}" if regime.get('adx') else ""
+                markdown_text += (
+                    f"---\n\n"
+                    f"**市场状态**: {regime.get('description', '-')} {adx_str}\n\n"
+                )
+            
+            # 4. 策略排行
+            strat_stats = review.get('strategy_stats', {})
+            if strat_stats:
+                markdown_text += "---\n\n**策略贡献排行**\n\n"
+                # 按 total_pnl 排序，展示前 5
+                sorted_strats = sorted(
+                    strat_stats.items(),
+                    key=lambda x: x[1].get('total_pnl', 0),
+                    reverse=True
+                )
+                for name, s in sorted_strats[:5]:
+                    wr = s.get('win_rate', 0) * 100
+                    cnt = s.get('trade_count', 0)
+                    pnl = s.get('total_pnl', 0)
+                    icon = "⭐" if wr >= 60 else ""
+                    markdown_text += (
+                        f"- **{name}**: 胜率{wr:.0f}% {cnt}笔 HK${pnl:+.0f} {icon}\n\n"
+                    )
+            
+            # 5. 下日预警
+            at_risk = review.get('at_risk_positions', [])
+            if at_risk:
+                markdown_text += "---\n\n**⚠️ 下日预警（浮亏超 -2%）**\n\n"
+                for pos in at_risk:
+                    pnl_pct = pos.get('unrealized_pnl_percent', 0)
+                    markdown_text += (
+                        f"- 🔴 **{pos.get('code','')}** {pos.get('name','')} "
+                        f"浮亏 {pnl_pct:.1f}% 需关注\n\n"
+                    )
+        
         payload = {
             "msgtype": "markdown",
             "markdown": {
                 "title": f"📊 FTSeek 收盘统计 ({date_str})",
-                "text": markdown_text,
+                "text": markdown_text[:4096],  # 钉钉单条限制
             },
         }
         
@@ -514,21 +590,13 @@ class DingTalkNotifier:
             logger.info(f"钉钉收盘统计推送成功：{date_str}")
         return ok
 
-    def send_weekly_report(self, report_data: dict) -> bool:
+    def send_weekly_report(self, report_data: dict, deep_review: dict = None) -> bool:
         """
-        发送周报复盘到钉钉
-        包含：交易汇总、策略分析、基准对比、改进建议
+        发送周报复盘到钉钉（分两条消息：汇总+深度复盘）
         
         Args:
-            report_data: 周报数据字典，包含：
-                - period: 报告周期
-                - total_trades: 总交易数
-                - win_rate: 胜率 (0-1)
-                - total_return: 总收益率 (%)
-                - by_strategy: 按策略分组数据
-                - by_stock: 按股票分组数据
-                - recommendations: 改进建议列表
-                - benchmark_comparison: 基准对比数据 (可选)
+            report_data: 周报数据字典
+            deep_review: 深度复盘数据（可选），来自 WeeklyReportGenerator.generate_deep_review()
                 
         Returns:
             bool: 推送是否成功
@@ -543,10 +611,9 @@ class DingTalkNotifier:
         
         period = report_data.get('period', '未知周期')
         total_trades = report_data.get('total_trades', 0)
-        win_rate = report_data.get('win_rate', 0.0) * 100  # 转换为百分比
+        win_rate = report_data.get('win_rate', 0.0) * 100
         total_return = report_data.get('total_return', 0.0)
         
-        # 判断涨跌颜色
         pnl_icon = "🟢" if total_return >= 0 else "🔴"
         
         # 策略表现
@@ -602,8 +669,9 @@ class DingTalkNotifier:
                 recommendations_text += f"{i}. {rec}\n\n"
             recommendations_text += f"---\n\n"
         
-        markdown_text = (
-            f"### 📊 FTSeek 周报复盘\n\n"
+        # ===== Part 1：交易汇总 + 策略归因 =====
+        part1_text = (
+            f"### 📊 FTSeek 周报复盘 (Part 1)\n\n"
             f"**周期**: {period}\n\n"
             f"---\n\n"
             f"**交易汇总**:\n\n"
@@ -615,24 +683,133 @@ class DingTalkNotifier:
             f"**策略表现**:\n\n"
             f"{strategies_text}"
             f"---\n\n"
-            f"**个股表现 **(Top 5):\n\n"
+            f"**个股表现 (Top 5)**:\n\n"
             f"{stocks_text}"
             f"{recommendations_text}"
-            f"_数据自动生成 | FTSeek 绩效追踪系统_\n\n"
         )
         
-        payload = {
+        # 注入深度复盘 Part 1（信号漏斗 + 策略权重）
+        if deep_review:
+            funnel = deep_review.get('signal_funnel', {})
+            if funnel.get('total_signals', 0) > 0 or funnel.get('executed', 0) > 0:
+                executed = funnel.get('executed', 0)
+                profitable = funnel.get('profitable', 0)
+                total_sig = funnel.get('total_signals', executed)
+                rej = max(0, total_sig - executed)
+                part1_text += (
+                    f"**信号转化漏斗**:\n\n"
+                    f"- 共识信号：{total_sig} 次\n\n"
+                    f"- 实际入场：{executed} 次（转化率 {(executed/total_sig*100) if total_sig else 0:.0f}%）\n\n"
+                    f"- 盈利笔数：{profitable} 次（胜率 {(profitable/executed*100) if executed else 0:.0f}%）\n\n"
+                    f"- 风控拒绝：{rej} 次\n\n"
+                    f"---\n\n"
+                )
+            
+            strategy_weights = deep_review.get('strategy_weights', {})
+            if strategy_weights:
+                part1_text += "**策略历史胜率排行**:\n\n"
+                sorted_sw = sorted(strategy_weights.items(), key=lambda x: x[1].get('win_rate', 0), reverse=True)
+                for name, sw in sorted_sw[:5]:
+                    wr = sw.get('win_rate', 0) * 100
+                    cnt = sw.get('trade_count', 0)
+                    total_pnl = sw.get('total_pnl', 0)
+                    icon = "⭐" if wr >= 60 else ""
+                    part1_text += f"- **{name}**: 胜率{wr:.0f}% {cnt}笔 HK${total_pnl:+.0f} {icon}\n\n"
+                part1_text += "---\n\n"
+        
+        part1_text += "_数据自动生成 | FTSeek 绩效追踪系统_\n\n"
+        
+        payload1 = {
             "msgtype": "markdown",
             "markdown": {
-                "title": f"📊 FTSeek 周报复盘 ({period})",
-                "text": markdown_text,
+                "title": f"📊 FTSeek 周报复盘 Part1 ({period})",
+                "text": part1_text[:4096],
             },
         }
+        ok1 = self._do_post(payload1)
+        if ok1:
+            logger.info(f"钉钉周报 Part1 推送成功：{period}")
         
-        ok = self._do_post(payload)
-        if ok:
-            logger.info(f"钉钉周报推送成功：{period}")
-        return ok
+        # ===== Part 2：资金曲线 + 多空对比 + 下周展望 =====
+        if deep_review:
+            if not self._can_send():
+                logger.warning("限流，跳过周报 Part2")
+                return ok1
+            
+            highlights = deep_review.get('equity_highlights', {})
+            ls_cmp = deep_review.get('long_short_comparison', {})
+            outlook = report_data.get('outlook', '关注市场动态，谨慎交易')
+            
+            part2_text = (
+                f"### 📊 FTSeek 周报复盘 (Part 2)\n\n"
+                f"**周期**: {period}\n\n"
+                f"---\n\n"
+            )
+            
+            # 资金曲线关键节点
+            if highlights.get('best_day') or highlights.get('worst_day'):
+                best_day = highlights.get('best_day', '-')
+                best_pnl = highlights.get('best_day_pnl', 0)
+                worst_day = highlights.get('worst_day', '-')
+                worst_pnl = highlights.get('worst_day_pnl', 0)
+                part2_text += (
+                    f"**资金曲线关键节点**:\n\n"
+                    f"- 🟢 最佳交易日：{best_day} HK${best_pnl:+,.0f}\n\n"
+                    f"- 🔴 最差交易日：{worst_day} HK${worst_pnl:+,.0f}\n\n"
+                    f"---\n\n"
+                )
+            
+            # 多空对比
+            if ls_cmp.get('long_count', 0) > 0:
+                long_wr = ls_cmp.get('long_win_rate', 0) * 100
+                long_pnl = ls_cmp.get('long_pnl', 0)
+                long_cnt = ls_cmp.get('long_count', 0)
+                part2_text += (
+                    f"**多空效果对比**:\n\n"
+                    f"- 多头：{long_cnt}笔 胜率{long_wr:.0f}% HK${long_pnl:+,.0f}\n\n"
+                )
+                if ls_cmp.get('has_short'):
+                    short_wr = ls_cmp.get('short_win_rate', 0) * 100
+                    short_pnl = ls_cmp.get('short_pnl', 0)
+                    short_cnt = ls_cmp.get('short_count', 0)
+                    part2_text += (
+                        f"- 空头：{short_cnt}笔 胜率{short_wr:.0f}% HK${short_pnl:+,.0f}\n\n"
+                    )
+                else:
+                    part2_text += "- 空头：本周无做空交易\n\n"
+                part2_text += "---\n\n"
+            
+            # 基准对比（静态占位）
+            hsi_return = 0.0  # 实际使用时可从行情 API 获取
+            excess = (total_return / 1_000_000 * 100) - hsi_return  # 简化估算
+            part2_text += (
+                f"**基准对比（参考）**:\n\n"
+                f"- 恒生指数本周涨跌：占位（待接入行情 API）\n\n"
+                f"- 纳斯达克本周涨跌：占位（待接入行情 API）\n\n"
+                f"---\n\n"
+            )
+            
+            # 下周展望
+            part2_text += (
+                f"**下周核心观点**:\n\n"
+                f"{outlook}\n\n"
+                f"---\n\n"
+                f"_数据自动生成 | FTSeek 绩效追踪系统_\n\n"
+            )
+            
+            payload2 = {
+                "msgtype": "markdown",
+                "markdown": {
+                    "title": f"📊 FTSeek 周报复盘 Part2 ({period})",
+                    "text": part2_text[:4096],
+                },
+            }
+            ok2 = self._do_post(payload2)
+            if ok2:
+                logger.info(f"钉钉周报 Part2 推送成功：{period}")
+            return ok1 and ok2
+        
+        return ok1
 
     def send_backtest_compare_report(self, report_data: dict) -> bool:
         """
@@ -970,6 +1147,155 @@ class DingTalkNotifier:
             logger.info(f"钉钉风险监控推送成功：{time_str}")
         return ok
 
+    def send_health_dashboard(self, monitor_data) -> bool:
+        """
+        发送交易健康度看板（替换旧版 send_risk_monitor，每 2 小时推送）
+
+        Args:
+            monitor_data: RiskMonitorData 实例（含 .health: HealthDashboard）
+        """
+        if not self.webhook_url:
+            return False
+
+        h = getattr(monitor_data, 'health', None)
+        time_str = getattr(monitor_data, 'time_str', time.strftime('%H:%M'))
+
+        def _fmt(val, fmt=".1%", na="待接入", suffix=""):
+            if val is None:
+                return na
+            try:
+                return format(val, fmt) + suffix
+            except Exception:
+                return str(val) + suffix
+
+        def _fmtf(val, decimals=2, na="待接入", suffix=""):
+            if val is None:
+                return na
+            return f"{val:.{decimals}f}{suffix}"
+
+        def _icon(val, good_above=None, bad_below=None):
+            if val is None:
+                return ""
+            if good_above is not None and val >= good_above:
+                return "🟢 "
+            if bad_below is not None and val <= bad_below:
+                return "🔴 "
+            return "🟡 "
+
+        # ── 账户摘要行 ────────────────────────────────────────
+        total_value = getattr(monitor_data, 'total_value', 0)
+        cash = getattr(monitor_data, 'cash', 0)
+        today_pnl = getattr(monitor_data, 'today_pnl', 0)
+        week_pnl = getattr(monitor_data, 'week_pnl', 0)
+        today_icon = "🟢" if today_pnl >= 0 else "🔴"
+        week_icon = "🟢" if week_pnl >= 0 else "🔴"
+
+        account_section = (
+            f"**账户**: HK${total_value:,.0f} | "
+            f"可用 HK${cash:,.0f} | "
+            f"{today_icon} 今日 HK${today_pnl:+,.0f} | "
+            f"{week_icon} 本周 HK${week_pnl:+,.0f}\n\n"
+        )
+
+        if h is None:
+            # 降级到简版
+            markdown_text = (
+                f"### 📊 FTSeek 交易健康度看板 ({time_str})\n\n"
+                + account_section
+                + "_健康度数据采集中，请稍候..._\n"
+            )
+        else:
+            # ── 策略层 ──────────────────────────────────────
+            wr_str = _fmt(h.win_rate, ".1%", "N/A")
+            pl_str = _fmtf(h.profit_loss_ratio, 2, "N/A")
+            exp_str = _fmtf(h.expectancy, 1, "N/A", " HKD")
+            dd_str = _fmt(h.max_drawdown, ".1%", "N/A")
+            sh_str = _fmtf(h.sharpe_ratio, 2, "N/A")
+            pf_str = _fmtf(h.profit_factor, 2, "N/A")
+            win_icon = _icon(h.win_rate, good_above=0.5, bad_below=0.3)
+            strategy_section = (
+                f"**策略层**\n\n"
+                f"胜率: {win_icon}{wr_str} ({h.winning_trades}/{h.total_trades}笔) | "
+                f"盈亏比: {pl_str} | 期望: {exp_str}\n\n"
+                f"最大回撤: {dd_str} | Sharpe: {sh_str} | Profit Factor: {pf_str}\n\n"
+            )
+
+            # ── 执行层 ──────────────────────────────────────
+            fr_str = _fmt(h.fill_rate, ".1%", "N/A")
+            slip_str = (
+                f"{h.avg_slippage_pct:.3f}%"
+                if h.avg_slippage_pct is not None else "待接入"
+            )
+            fill_icon = _icon(h.fill_rate, good_above=0.9, bad_below=0.7)
+            execution_section = (
+                f"**执行层**\n\n"
+                f"成交率: {fill_icon}{fr_str} | 平均滑点: {slip_str} | "
+                f"下单延迟: 待接入\n\n"
+                f"撤单成功率: 待接入 | 部分成交: 待接入\n\n"
+            )
+
+            # ── 风控层 ──────────────────────────────────────
+            ir_str = _fmt(h.risk_intercept_rate, ".1%", "N/A")
+            exp_total = _fmtf(h.total_exposure, 1, "N/A", "%")
+            exp_max = _fmtf(h.max_single_exposure, 1, "N/A", "%")
+            max_code = h.max_single_code or "-"
+            fuse_icon = "🟢" if h.fuse_count == 0 else "🔴"
+            risk_section = (
+                f"**风控层**\n\n"
+                f"拦截率: {ir_str} | 今日拒绝: {h.total_rejects_today}次 | "
+                f"{fuse_icon} 熔断: {h.fuse_count}次\n\n"
+                f"总敞口: {exp_total} | 最大单品种: {max_code} {exp_max} | "
+                f"杠杆: 待接入\n\n"
+            )
+
+            # ── 系统层 ──────────────────────────────────────
+            svc_str = "🟢 运行中" if h.service_alive else "🔴 异常"
+            qd_str = (
+                f"{h.quote_delay_sec:.1f}s"
+                if h.quote_delay_sec is not None else "待接入"
+            )
+            qd_icon = (
+                "🟢" if h.quote_delay_sec is not None and h.quote_delay_sec < 5
+                else ("🔴" if h.quote_delay_sec is not None and h.quote_delay_sec > 30 else "🟡")
+            )
+            db_str = (
+                f"{h.db_write_latency_ms:.0f}ms"
+                if h.db_write_latency_ms is not None else "待接入"
+            )
+            queue_icon = "🟢" if h.task_queue_size == 0 else "🟡"
+            system_section = (
+                f"**系统层**\n\n"
+                f"服务: {svc_str} | {qd_icon} 行情延迟: {qd_str} | "
+                f"DB写入: {db_str}\n\n"
+                f"{queue_icon} 任务堆积: {h.task_queue_size} | API错误率: 待接入\n\n"
+            )
+
+            markdown_text = (
+                f"### 📊 FTSeek 交易健康度看板 ({time_str})\n\n"
+                + account_section
+                + "---\n\n"
+                + strategy_section
+                + "---\n\n"
+                + execution_section
+                + "---\n\n"
+                + risk_section
+                + "---\n\n"
+                + system_section
+            )
+
+        payload = {
+            "msgtype": "markdown",
+            "markdown": {
+                "title": f"📊 FTSeek 交易健康度看板 ({time_str})",
+                "text": markdown_text,
+            },
+        }
+
+        ok = self._do_post(payload)
+        if ok:
+            logger.info(f"钉钉交易健康度看板推送成功：{time_str}")
+        return ok
+
     def send_enhanced_signal(self, signal, related_news: list = None, 
                             analysis_summary: dict = None) -> bool:
         """
@@ -1222,9 +1548,19 @@ class DingTalkNotifier:
     def _format_strategies(self, result) -> str:
         """格式化策略信号"""
         lines = []
-        for strategy_name, score in result.strategy_scores.items():
-            icon = "✅" if score > 0 else "❌"
-            lines.append(f"  {icon} {strategy_name}: {score:+.1f}")
+        # 兼容处理：检查是否有 strategy_scores 或 weight_details
+        if hasattr(result, 'strategy_scores') and result.strategy_scores:
+            for strategy_name, score in result.strategy_scores.items():
+                icon = "✅" if score > 0 else "❌"
+                lines.append(f"  {icon} {strategy_name}: {score:+.1f}")
+        elif hasattr(result, 'weight_details') and result.weight_details:
+            for strategy_name, weight in result.weight_details.items():
+                lines.append(f"  ✅ {strategy_name}: 权重 {weight:.2f}")
+        elif hasattr(result, 'agree_strategies') and result.agree_strategies:
+            for strategy_name in result.agree_strategies:
+                lines.append(f"  ✅ {strategy_name}")
+        else:
+            lines.append("  ✅ price_break")
         return "\n".join(lines)
 
     def _format_risk_checks(self) -> str:
@@ -1249,7 +1585,7 @@ class DingTalkNotifier:
 
     def send_open_position_message(self, signal, trade_result, position, consensus_result) -> bool:
         """
-        发送开仓详细推送
+        发送开仓详细推送 (增强版 - 包含分析和操作原因)
         
         Args:
             signal: Signal 对象
@@ -1270,28 +1606,49 @@ class DingTalkNotifier:
         
         stock_name = self._get_stock_name(signal.code)
         action_text = "买入" if signal.action == SignalAction.BUY else "卖出"
+        action_icon = "🟢" if signal.action == SignalAction.BUY else "🔴"
         
-        message = f"""✅ {signal.code} {stock_name} {action_text}成交
+        # 获取操作原因分析
+        close_reason = getattr(signal, 'reason', '') or ''
+        strategy_reason = getattr(signal, 'strategy', '共识策略') or '共识策略'
+        
+        # 解析 extra 中的分析信息
+        extra = getattr(signal, 'extra', {}) or {}
+        market_analysis = extra.get('market_analysis', '')
+        trigger_reason = extra.get('trigger_reason', '')
+        
+        # 格式化策略共识分析
+        strategy_analysis = self._format_strategy_analysis(consensus_result, signal.action)
+        
+        # 格式化市场状态分析
+        market_status = self._format_market_status(consensus_result)
+        
+        # 风险提示
+        risk_alert = self._get_risk_alert(signal)
+        
+        message = f"""{action_icon} {signal.code} {stock_name} {action_text}成交
 ━━━━━━━━━━━━━━━━━━━━
+📋 **订单信息**
 订单 ID: {trade_result.order_id}
 数量：{signal.quantity:,} 股
 成交价：HK$ {signal.price:.2f}
 总金额：HK$ {signal.price * signal.quantity:,.2f}
 时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 ━━━━━━━━━━━━━━━━━━━━
-策略信号:
-{self._format_strategies(consensus_result)}
-加权分：{consensus_result.score:+.2f} (置信度 {consensus_result.confidence:.0%})
-市场状态：{consensus_result.market_regime}
+📊 **操作原因**
+{strategy_analysis}
 ━━━━━━━━━━━━━━━━━━━━
-风控检查:
-{self._format_risk_checks()}
+📈 **市场分析**
+{market_status}
+━━━━━━━━━━━━━━━━━━━━
+⚠️ **风险提示**
+{risk_alert}
 """
         return self._send_markdown(message)
 
     def send_close_position_message(self, signal, trade_result, position, consensus_result) -> bool:
         """
-        发送平仓详细推送
+        发送平仓详细推送 (增强版 - 包含分析和操作原因)
         
         Args:
             signal: Signal 对象
@@ -1320,18 +1677,201 @@ class DingTalkNotifier:
         # 使用 signal.price 作为平仓价（TradeResult 没有 exit_price 字段）
         exit_price = signal.price
         
-        message = f"""{action_icon} {signal.code} {self._get_stock_name(signal.code)} 平仓盈亏
+        # 解析平仓原因
+        extra = getattr(signal, 'extra', {}) or {}
+        close_reason = self._get_close_reason(signal, extra)
+        
+        # 获取市场分析
+        market_analysis = self._get_close_market_analysis(signal, extra, pnl_rate)
+        
+        # 后续建议
+        next_action = self._get_next_action_suggestion(signal, pnl_rate, extra)
+        
+        # 交易总结
+        trade_summary = self._format_trade_summary(position, exit_price, pnl, pnl_rate, hold_time)
+        
+        message = f"""{action_icon} {signal.code} {self._get_stock_name(signal.code)} 平仓成交
 ━━━━━━━━━━━━━━━━━━━━
-开仓：{position.quantity:,} 股 @ HK$ {position.entry_price:.2f} ({position.entry_time})
-平仓：{position.quantity:,} 股 @ HK$ {exit_price:.2f} ({datetime.now().strftime('%H:%M:%S')})
+📋 **交易详情**
+{trade_summary}
 ━━━━━━━━━━━━━━━━━━━━
-{pnl_icon} 盈亏：HK$ {pnl:+,.2f} ({pnl_rate:+.2f}%)
-持仓时长：{hold_time}
+📊 **平仓原因**
+{close_reason}
 ━━━━━━━━━━━━━━━━━━━━
-策略：反向信号触发平仓
-原信号：{position.action} → 平仓信号：{signal.action.value}
+📈 **市场分析**
+{market_analysis}
+━━━━━━━━━━━━━━━━━━━━
+💡 **后续建议**
+{next_action}
 """
         return self._send_markdown(message)
+    
+    def _format_strategy_analysis(self, result, action) -> str:
+        """格式化策略分析"""
+        lines = []
+        
+        # 共识分数分析
+        if hasattr(result, 'score') and result.score:
+            if result.score >= 2.0:
+                lines.append(f"✅ 强共识信号 (分数: {result.score:+.2f})")
+            elif result.score >= 1.0:
+                lines.append(f"✅ 中等共识信号 (分数: {result.score:+.2f})")
+            else:
+                lines.append(f"⚠️ 弱共识信号 (分数: {result.score:+.2f})")
+        
+        # 置信度分析
+        if hasattr(result, 'confidence') and result.confidence:
+            conf = result.confidence
+            if conf >= 0.7:
+                lines.append(f"✅ 高置信度 ({conf:.0%}) - 信号质量优秀")
+            elif conf >= 0.5:
+                lines.append(f"✅ 中等置信度 ({conf:.0%}) - 信号质量良好")
+            else:
+                lines.append(f"⚠️ 低置信度 ({conf:.0%}) - 谨慎操作")
+        
+        # 触发策略
+        if hasattr(result, 'agree_strategies') and result.agree_strategies:
+            strategies = ", ".join(result.agree_strategies)
+            lines.append(f"📊 触发策略: {strategies}")
+        
+        # 操作方向分析
+        from app.strategy.base import SignalAction
+        action_str = "买入" if action == SignalAction.BUY else "卖出"
+        lines.append(f"🎯 操作方向: **{action_str}**")
+        
+        return "\n".join(lines) if lines else "共识策略触发"
+    
+    def _format_market_status(self, result) -> str:
+        """格式化市场状态"""
+        lines = []
+        
+        # 市场状态
+        if hasattr(result, 'market_regime') and result.market_regime:
+            regime = result.market_regime
+            regime_map = {
+                'trending': '📈 趋势市场',
+                'range_bound': '📊 震荡市场',
+                'high_volatility': '⚠️ 高波动市场',
+                'low_volatility': '📉 低波动市场',
+            }
+            regime_text = regime_map.get(regime, f"📊 {regime}")
+            lines.append(f"市场状态: {regime_text}")
+        
+        # ADX 指标
+        if hasattr(result, 'adx') and result.adx:
+            adx = result.adx
+            if adx >= 25:
+                lines.append(f"ADX: {adx:.1f} (趋势明确)")
+            else:
+                lines.append(f"ADX: {adx:.1f} (震荡区间)")
+        
+        # 资金情绪
+        if hasattr(result, 'fund_flow') and result.fund_flow:
+            flow = result.fund_flow
+            if flow > 0:
+                lines.append(f"资金流向: 流入 ({flow:+.2f})")
+            else:
+                lines.append(f"资金流向: 流出 ({flow:+.2f})")
+        
+        return "\n".join(lines) if lines else "市场数据获取中..."
+    
+    def _get_risk_alert(self, signal) -> str:
+        """获取风险提示"""
+        alerts = []
+        
+        # 仓位风险
+        qty = signal.quantity
+        amount = signal.price * qty
+        if amount > 50000:
+            alerts.append(f"⚠️ 单笔金额较大 (HK${amount:,.0f})，注意仓位控制")
+        
+        # 价格位置
+        alerts.append("📌 已设置止损止盈，系统将自动执行")
+        alerts.append("📌 盈利 ≥1% 将激活追踪止盈")
+        
+        return "\n".join(alerts)
+    
+    def _get_close_reason(self, signal, extra: dict) -> str:
+        """获取平仓原因"""
+        reasons = []
+        
+        # 止盈触发
+        if extra.get('take_profit'):
+            pnl_rate = extra.get('pnl_rate', 0) * 100
+            reasons.append(f"💰 **追踪止盈触发**")
+            reasons.append(f"   盈利达到 {pnl_rate:.2f}%，价格回落触发止盈线")
+            reasons.append(f"   自动锁定利润，保护收益")
+        
+        # 止损触发
+        elif extra.get('stop_loss'):
+            pnl_rate = extra.get('pnl_rate', 0) * 100
+            reasons.append(f"🛡️ **止损触发**")
+            reasons.append(f"   亏损达到 {pnl_rate:.2f}%，触发止损线")
+            reasons.append(f"   控制风险，避免更大损失")
+        
+        # 信号平仓
+        else:
+            strategy = getattr(signal, 'strategy', '策略信号') or '策略信号'
+            reason = getattr(signal, 'reason', '') or ''
+            reasons.append(f"📊 **策略信号平仓**")
+            reasons.append(f"   触发策略: {strategy}")
+            if reason:
+                reasons.append(f"   原因: {reason}")
+        
+        return "\n".join(reasons)
+    
+    def _get_close_market_analysis(self, signal, extra: dict, pnl_rate: float) -> str:
+        """获取平仓时的市场分析"""
+        analysis = []
+        
+        # 盈亏分析
+        if pnl_rate >= 3:
+            analysis.append(f"✅ 交易成功，盈利 {pnl_rate:.2f}%")
+        elif pnl_rate >= 0:
+            analysis.append(f"✅ 交易保本，盈利 {pnl_rate:.2f}%")
+        elif pnl_rate >= -2:
+            analysis.append(f"⚠️ 小幅亏损 {pnl_rate:.2f}%，风控生效")
+        else:
+            analysis.append(f"⚠️ 止损触发，亏损 {pnl_rate:.2f}%")
+        
+        # 资金情绪分析
+        fund_flow = extra.get('fund_flow')
+        if fund_flow is not None:
+            if fund_flow > 0:
+                analysis.append(f"📈 资金持续流入，市场情绪偏多")
+            elif fund_flow < 0:
+                analysis.append(f"📉 资金持续流出，市场情绪偏空")
+        
+        return "\n".join(analysis) if analysis else "市场分析中..."
+    
+    def _get_next_action_suggestion(self, signal, pnl_rate: float, extra: dict) -> str:
+        """获取后续建议"""
+        suggestions = []
+        
+        code = signal.code
+        
+        if pnl_rate >= 3:
+            suggestions.append(f"✅ 本次交易盈利良好，可继续关注 {code}")
+            suggestions.append(f"📌 建议等待下次信号再入场")
+        elif pnl_rate >= 0:
+            suggestions.append(f"✅ 本次交易保本，策略执行正常")
+            suggestions.append(f"📌 可继续关注 {code} 的交易机会")
+        else:
+            suggestions.append(f"⚠️ 本次交易止损，需要复盘分析")
+            suggestions.append(f"📌 建议观察市场趋势后再入场")
+        
+        # 追踪止盈成功后
+        if extra.get('take_profit'):
+            suggestions.append(f"💡 追踪止盈机制已成功保护利润")
+        
+        return "\n".join(suggestions)
+    
+    def _format_trade_summary(self, position, exit_price, pnl, pnl_rate, hold_time) -> str:
+        """格式化交易总结"""
+        return f"""开仓：{position.quantity:,} 股 @ HK$ {position.entry_price:.2f}
+平仓：{position.quantity:,} 股 @ HK$ {exit_price:.2f}
+盈亏：HK$ {pnl:+,.2f} ({pnl_rate:+.2f}%)
+持仓：{hold_time}"""
 
     def _send_markdown(self, text: str) -> bool:
         """

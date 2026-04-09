@@ -23,6 +23,7 @@ from app.strategy.base import SignalAction
 
 
 logger = logging.getLogger("ftseek.v4.rate_limiter")
+logger.propagate = False  # 防止日志重复
 
 
 @dataclass

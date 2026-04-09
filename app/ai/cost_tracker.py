@@ -10,6 +10,7 @@ from typing import Dict
 from dataclasses import dataclass, field
 
 logger = logging.getLogger("ftseek.ai.cost_tracker")
+logger.propagate = False  # 防止日志重复
 
 
 @dataclass

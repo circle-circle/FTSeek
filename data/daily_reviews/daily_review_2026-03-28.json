@@ -1,0 +1,77 @@
+{
+  "report_type": "daily",
+  "report_date": "2026-03-28",
+  "generated_at": "2026-03-28T22:30:19.475104",
+  "account_type": "all",
+  "summary": {
+    "total_trades": 55,
+    "closed_trades": 45,
+    "winning_trades": 27,
+    "losing_trades": 18,
+    "breakeven_trades": 0,
+    "total_pnl": 15750.0,
+    "win_rate": 0.6,
+    "avg_pnl": 350.0,
+    "avg_holding_period": 0.0
+  },
+  "decision_analysis": {
+    "decision_reason_distribution": {
+      "technical": 27,
+      "impulse": 18
+    },
+    "avg_decision_confidence": 6.4,
+    "avg_decision_quality": 5.0,
+    "impulse_trade_count": 18,
+    "impulse_trade_ratio": 0.4,
+    "decision_quality_issues": []
+  },
+  "timing_analysis": {
+    "avg_entry_timing_score": 5.0,
+    "avg_exit_timing_score": 5.8,
+    "timing_score_gap": -0.8,
+    "poor_entry_count": 0,
+    "poor_exit_count": 18,
+    "timing_notes": []
+  },
+  "position_analysis": {
+    "avg_position_size": 0.1,
+    "avg_position_adjustments": 0.0,
+    "oversized_position_count": 0,
+    "frequent_adjustment_count": 0,
+    "position_notes": []
+  },
+  "risk_analysis": {
+    "stop_loss_planned_count": 0,
+    "stop_loss_executed_count": 0,
+    "stop_loss_execution_rate": 1.0,
+    "stop_loss_adjusted_count": 0,
+    "avg_risk_reward_ratio": 0.0,
+    "risk_notes": []
+  },
+  "psychology_analysis": {
+    "emotion_distribution": {
+      "calm": 45
+    },
+    "avg_emotion_intensity": 3.0,
+    "avg_confidence_entry": 6.4,
+    "avg_confidence_exit": 5.0,
+    "confidence_change": -1.4,
+    "psychological_notes": []
+  },
+  "key_learnings": [],
+  "improvement_suggestions": [],
+  "best_trade": {
+    "trade_id": "ac551404",
+    "code": "00700.HK",
+    "pnl": 1950.0,
+    "pnl_percent": 0.0512,
+    "highlight": "严格执行策略"
+  },
+  "worst_trade": {
+    "trade_id": "7e4b091d",
+    "code": "00700.HK",
+    "pnl": -2050.0,
+    "pnl_percent": -0.0539,
+    "issue": "需要复盘分析"
+  }
+}

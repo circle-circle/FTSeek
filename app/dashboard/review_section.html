@@ -1,0 +1,174 @@
+<!-- FTSeek 复盘数据展示模块 -->
+<!-- 将此内容插入到 simulation_dashboard.html 的 .container 内 -->
+
+<div class="review-section">
+  <!-- 复盘 KPI 卡片 -->
+  <div class="card" style="margin-bottom: 20px;">
+    <div class="card-header">
+      <div class="card-title">
+        <span>📊 深度复盘总览</span>
+        <span id="review-data-note" style="font-size: 0.85em; color: var(--text-secondary); margin-left: 10px;"></span>
+      </div>
+      <button class="refresh-btn" onclick="loadReviewData()">刷新</button>
+    </div>
+    
+    <div class="kpi-grid" style="grid-template-columns: repeat(4, 1fr);">
+      <div class="kpi-card">
+        <div class="kpi-label">总收益</div>
+        <div class="kpi-value" id="review-total-pnl">-</div>
+        <div class="kpi-sub">已平仓交易累计</div>
+      </div>
+      
+      <div class="kpi-card">
+        <div class="kpi-label">胜率</div>
+        <div class="kpi-value" id="review-win-rate">-</div>
+        <div class="kpi-sub">盈利交易占比</div>
+      </div>
+      
+      <div class="kpi-card">
+        <div class="kpi-label">最大回撤</div>
+        <div class="kpi-value" id="review-max-drawdown">-</div>
+        <div class="kpi-sub">历史最大亏损幅度</div>
+      </div>
+      
+      <div class="kpi-card">
+        <div class="kpi-label">交易笔数</div>
+        <div class="kpi-value" id="review-total-trades">-</div>
+        <div class="kpi-sub">已平仓交易总数</div>
+      </div>
+    </div>
+  </div>
+  
+  <!-- 图表区域 -->
+  <div class="main-grid">
+    <!-- 收益曲线 -->
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">📈 累计收益曲线</div>
+      </div>
+      <div id="review-pnl-chart" style="height: 300px;"></div>
+    </div>
+    
+    <!-- 胜率分布 -->
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">🎯 胜率分布</div>
+      </div>
+      <div id="review-winrate-chart" style="height: 300px;"></div>
+    </div>
+  </div>
+  
+  <!-- 收益统计表格 -->
+  <div class="card" style="margin-top: 20px;">
+    <div class="card-header">
+      <div class="card-title">💰 策略收益统计</div>
+    </div>
+    <div style="overflow-x: auto;">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>策略/标的</th>
+            <th>交易笔数</th>
+            <th>胜率</th>
+            <th>总收益</th>
+            <th>平均收益</th>
+          </tr>
+        </thead>
+        <tbody id="review-pnl-table-body">
+          <tr>
+            <td colspan="5" class="empty-state">加载中...</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+  
+  <!-- 改进建议 -->
+  <div class="card" style="margin-top: 20px;">
+    <div class="card-header">
+      <div class="card-title">💡 改进建议</div>
+    </div>
+    <div id="review-suggestions">
+      <div class="empty-state">加载中...</div>
+    </div>
+  </div>
+</div>
+
+<style>
+/* 复盘模块样式 */
+.review-section {
+  margin-top: 20px;
+}
+
+.suggestion-item {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 15px;
+  margin-bottom: 10px;
+  transition: all 0.2s ease;
+}
+
+.suggestion-item:hover {
+  border-color: var(--accent-blue);
+}
+
+.suggestion-category {
+  font-size: 0.85em;
+  color: var(--accent-blue);
+  font-weight: 600;
+  margin-bottom: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.suggestion-issue {
+  font-size: 0.95em;
+  color: var(--text-secondary);
+  margin-bottom: 8px;
+}
+
+.suggestion-text {
+  font-size: 0.9em;
+  color: var(--text-primary);
+  line-height: 1.5;
+}
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9em;
+}
+
+.data-table thead {
+  background: var(--bg-secondary);
+}
+
+.data-table th {
+  padding: 12px 15px;
+  text-align: left;
+  font-weight: 600;
+  color: var(--text-secondary);
+  border-bottom: 2px solid var(--border-color);
+}
+
+.data-table td {
+  padding: 12px 15px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.data-table tbody tr:hover {
+  background: rgba(59, 130, 246, 0.05);
+}
+
+.empty-state {
+  text-align: center;
+  padding: 40px 20px;
+  color: var(--text-secondary);
+}
+
+.empty-state-icon {
+  font-size: 2em;
+  margin-bottom: 10px;
+}
+</style>

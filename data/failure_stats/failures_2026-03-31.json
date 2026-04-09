@@ -1,0 +1,149 @@
+[
+  {
+    "timestamp": "2026-03-31T09:58:56.191097",
+    "code": "HK.00981",
+    "reason": "other",
+    "category": "other",
+    "message": "下单失败：ERROR. Nonexisting acc_id 8246815!"
+  },
+  {
+    "timestamp": "2026-03-31T10:14:01.995475",
+    "code": "HK.00981",
+    "reason": "other",
+    "category": "other",
+    "message": "下单失败：暂不支持卖空"
+  },
+  {
+    "timestamp": "2026-03-31T10:17:22.858391",
+    "code": "HK.00981",
+    "reason": "price_check",
+    "category": "other",
+    "message": "价格检查: 价格 52.75 接近日内高点 52.90 (距离 0.28% < 1.0%)，禁止追高买入"
+  },
+  {
+    "timestamp": "2026-03-31T10:20:16.259108",
+    "code": "HK.00981",
+    "reason": "other",
+    "category": "other",
+    "message": "下单失败：暂不支持卖空"
+  },
+  {
+    "timestamp": "2026-03-31T11:14:26.175346",
+    "code": "HK.09992",
+    "reason": "price_check",
+    "category": "other",
+    "message": "价格检查: 价格 141.95 接近日内低点 141.40 (距离 0.39% < 1.0%)，禁止杀跌卖出"
+  },
+  {
+    "timestamp": "2026-03-31T11:15:31.589311",
+    "code": "HK.00981",
+    "reason": "price_check",
+    "category": "other",
+    "message": "价格检查: 价格 51.08 接近日内低点 50.80 (距离 0.54% < 1.0%)，禁止杀跌卖出"
+  },
+  {
+    "timestamp": "2026-03-31T11:17:19.293502",
+    "code": "HK.09992",
+    "reason": "trend_filter",
+    "category": "other",
+    "message": "趋势过滤: strong_down 趋势中禁止买入 ADX=89.7 | 日K:strong_down | 日内:weak_down | ✓双重确认下跌 | 🚫禁止买入"
+  },
+  {
+    "timestamp": "2026-03-31T11:17:48.585981",
+    "code": "HK.00981",
+    "reason": "price_check",
+    "category": "other",
+    "message": "价格检查: 价格 51.00 接近日内低点 50.80 (距离 0.39% < 1.0%)，禁止杀跌卖出"
+  },
+  {
+    "timestamp": "2026-03-31T11:28:53.240456",
+    "code": "HK.00981",
+    "reason": "price_check",
+    "category": "other",
+    "message": "价格检查: 价格 50.75 接近日内低点 50.70 (距离 0.10% < 1.0%)，禁止杀跌卖出"
+  },
+  {
+    "timestamp": "2026-03-31T13:06:41.604259",
+    "code": "HK.09992",
+    "reason": "trend_filter",
+    "category": "other",
+    "message": "趋势过滤: strong_down 趋势中禁止买入 ADX=24.1 | 日K:strong_down | 日内:strong_down | ✓双重确认下跌 | 🚫禁止买入"
+  },
+  {
+    "timestamp": "2026-03-31T14:11:21.330182",
+    "code": "HK.00981",
+    "reason": "price_check",
+    "category": "other",
+    "message": "价格检查: 价格 50.17 接近日内低点 50.15 (距离 0.05% < 1.0%)，禁止杀跌卖出"
+  },
+  {
+    "timestamp": "2026-03-31T14:20:59.734161",
+    "code": "HK.00981",
+    "reason": "price_check",
+    "category": "other",
+    "message": "价格检查: 价格 50.05 接近日内低点 50.00 (距离 0.10% < 1.0%)，禁止杀跌卖出"
+  },
+  {
+    "timestamp": "2026-03-31T14:25:32.758630",
+    "code": "HK.00981",
+    "reason": "trend_filter",
+    "category": "other",
+    "message": "趋势过滤: strong_down 趋势中禁止买入 ADX=96.9 | 日K:strong_down | 日内:weak_down | ✓双重确认下跌 | 🚫禁止买入"
+  },
+  {
+    "timestamp": "2026-03-31T14:38:42.690947",
+    "code": "HK.00981",
+    "reason": "price_check",
+    "category": "other",
+    "message": "价格检查: 价格 50.10 接近日内低点 50.00 (距离 0.20% < 1.0%)，禁止杀跌卖出"
+  },
+  {
+    "timestamp": "2026-03-31T14:51:18.093600",
+    "code": "HK.00981",
+    "reason": "trend_filter",
+    "category": "other",
+    "message": "趋势过滤: strong_down 趋势中禁止买入 ADX=94.6 | 日K:strong_down | 日内:weak_down | ✓双重确认下跌 | 🚫禁止买入"
+  },
+  {
+    "timestamp": "2026-03-31T14:57:37.040552",
+    "code": "HK.00981",
+    "reason": "trend_filter",
+    "category": "other",
+    "message": "趋势过滤: strong_down 趋势中禁止买入 ADX=56.6 | 日K:strong_down | 日内:weak_down | ✓双重确认下跌 | 🚫禁止买入"
+  },
+  {
+    "timestamp": "2026-03-31T15:01:04.760457",
+    "code": "HK.00981",
+    "reason": "price_check",
+    "category": "other",
+    "message": "价格检查: 价格 50.50 接近日内低点 50.00 (距离 0.99% < 1.0%)，禁止杀跌卖出"
+  },
+  {
+    "timestamp": "2026-03-31T15:02:20.630496",
+    "code": "HK.00981",
+    "reason": "trend_filter",
+    "category": "other",
+    "message": "趋势过滤: strong_down 趋势中禁止买入 ADX=87.6 | 日K:strong_down | 日内:weak_down | ✓双重确认下跌 | 🚫禁止买入"
+  },
+  {
+    "timestamp": "2026-03-31T15:09:42.604626",
+    "code": "HK.00981",
+    "reason": "price_check",
+    "category": "other",
+    "message": "价格检查: 价格 50.45 接近日内低点 50.00 (距离 0.89% < 1.0%)，禁止杀跌卖出"
+  },
+  {
+    "timestamp": "2026-03-31T15:32:50.117278",
+    "code": "HK.00981",
+    "reason": "price_check",
+    "category": "other",
+    "message": "价格检查: 价格 50.15 接近日内低点 50.00 (距离 0.30% < 1.0%)，禁止杀跌卖出"
+  },
+  {
+    "timestamp": "2026-03-31T15:36:00.422389",
+    "code": "HK.00981",
+    "reason": "trend_filter",
+    "category": "other",
+    "message": "趋势过滤: strong_down 趋势中禁止买入 ADX=95.8 | 日K:strong_down | 日内:weak_down | ✓双重确认下跌 | 🚫禁止买入"
+  }
+]

@@ -1,0 +1,211 @@
+# FTSeek 股票池配置
+# 分层管理 + 板块归类
+
+version: "2.0"
+updated: "2026-04-09"
+
+# ==================== 股票分层配置 ====================
+tiers:
+  tier1:
+    name: "核心股票"
+    description: "高流动性 + 明确催化剂 + 技术形态好"
+    weight: 0.50  # 总仓位 50%
+    criteria:
+      min_daily_volume: 100000000  # 日成交额>1 亿
+      min_market_cap: 50000000000  # 市值>500 亿
+      require_catalyst: true
+    stocks:
+      # 港股科技龙头
+      - "HK.00700"  # 腾讯控股
+      - "HK.03690"  # 美团
+      - "HK.09988"  # 阿里巴巴
+      - "HK.09618"  # 京东集团
+      # 美股科技龙头
+      - "US.AAPL"   # 苹果
+      - "US.MSFT"   # 微软
+      - "US.NVDA"   # 英伟达
+      - "US.GOOG"   # 谷歌
+
+  tier2:
+    name: "观察股票"
+    description: "中等流动性 + 技术形态"
+    weight: 0.30  # 总仓位 30%
+    criteria:
+      min_daily_volume: 50000000  # 日成交额>5000 万
+      min_market_cap: 10000000000  # 市值>100 亿
+    stocks:
+      # 港股二线科技
+      - "HK.01810"  # 小米集团
+      - "HK.01024"  # 快手
+      - "HK.09999"  # 网易
+      # 新能源汽车
+      - "HK.09866"  # 蔚来
+      - "HK.02015"  # 理想汽车
+      - "HK.09868"  # 小鹏汽车
+      # 美股中概
+      - "US.BABA"   # 阿里 (美股)
+      - "US.JD"     # 京东 (美股)
+
+  tier3:
+    name: "机会股票"
+    description: "事件驱动/突发催化"
+    weight: 0.20  # 总仓位 20%
+    criteria:
+      require_event: true  # 需要有催化事件
+    stocks: []  # 动态添加
+
+# ==================== 板块归类 ====================
+sectors:
+  technology:
+    name: "科技"
+    description: "互联网/软件/硬件"
+    stocks:
+      - "HK.00700"  # 腾讯
+      - "HK.03690"  # 美团
+      - "HK.09988"  # 阿里
+      - "HK.09618"  # 京东
+      - "HK.01810"  # 小米
+      - "HK.01024"  # 快手
+      - "HK.09999"  # 网易
+      - "US.AAPL"   # 苹果
+      - "US.MSFT"   # 微软
+      - "US.NVDA"   # 英伟达
+      - "US.GOOG"   # 谷歌
+      - "US.META"   # Meta
+      - "US.AMZN"   # 亚马逊
+    correlation_group: "tech_global"
+
+  finance:
+    name: "金融"
+    description: "银行/保险/券商"
+    stocks:
+      - "HK.00005"  # 汇丰控股
+      - "HK.02318"  # 中国平安
+      - "HK.03968"  # 招商银行
+      - "HK.03988"  # 中国银行
+      - "HK.00939"  # 建设银行
+      - "HK.01398"  # 工商银行
+    correlation_group: "hk_finance"
+
+  ev_auto:
+    name: "新能源汽车"
+    description: "电动车/自动驾驶"
+    stocks:
+      - "HK.09866"  # 蔚来
+      - "HK.02015"  # 理想汽车
+      - "HK.09868"  # 小鹏汽车
+      - "HK.01211"  # 比亚迪股份
+      - "US.TSLA"   # 特斯拉
+    correlation_group: "ev_global"
+
+  energy:
+    name: "能源"
+    description: "石油/天然气/煤炭"
+    stocks:
+      - "HK.00857"  # 中石油
+      - "HK.00386"  # 中石化
+      - "HK.00883"  # 中海油
+      - "US.XOM"    # 埃克森美孚
+      - "US.CVX"   # 雪佛龙
+    correlation_group: "energy_global"
+
+  telecom:
+    name: "电信"
+    description: "电信运营商"
+    stocks:
+      - "HK.00941"  # 中国移动
+      - "HK.00728"  # 中国电信
+      - "HK.00762"  # 中国联通
+    correlation_group: "hk_telecom"
+
+  consumer:
+    name: "消费"
+    description: "消费/零售/餐饮"
+    stocks:
+      - "HK.02020"  # 安踏体育
+      - "HK.01876"  # 百威亚太
+      - "US.NKE"    # 耐克
+      - "US.SBUX"   # 星巴克
+    correlation_group: "consumer_global"
+
+  healthcare:
+    name: "医疗健康"
+    description: "医药/医疗器械/医疗服务"
+    stocks:
+      - "HK.06618"  # 京东健康
+      - "HK.00241"  # 阿里健康
+      - "US.JNJ"    # 强生
+      - "US.PFE"    # 辉瑞
+    correlation_group: "healthcare_global"
+
+  gaming:
+    name: "博彩"
+    description: "澳门博彩"
+    stocks:
+      - "HK.01928"  # 金沙中国
+      - "HK.00027"  # 银河娱乐
+      - "HK.01128"  # 永利澳门
+    correlation_group: "macau_gaming"
+
+# ==================== 跨市场映射 ====================
+# 注意：这里与 config/hk_us_mapping.json 联动
+cross_market:
+  enabled: true
+  correlation_threshold: 0.6  # 相关性<0.6 不启用
+  us_to_hk:
+    "TCEHY": "HK.00700"
+    "BABA": "HK.09988"
+    "JD": "HK.09618"
+    "BIDU": "HK.09888"
+    "MPNGY": "HK.03690"
+    "NTES": "HK.09999"
+    "XIACY": "HK.01810"
+    "KSHGY": "HK.01024"
+    "NIO": "HK.09866"
+    "LI": "HK.02015"
+    "XPEV": "HK.09868"
+    "BYDDY": "HK.01211"
+  hk_to_us:
+    "HK.00700": "TCEHY"
+    "HK.09988": "BABA"
+    "HK.09618": "JD"
+    "HK.09888": "BIDU"
+    "HK.03690": "MPNGY"
+    "HK.09999": "NTES"
+    "HK.01810": "XIACY"
+    "HK.01024": "KSHGY"
+    "HK.09866": "NIO"
+    "HK.02015": "LI"
+    "HK.09868": "XPEV"
+    "HK.01211": "BYDDY"
+
+# ==================== 权重分配规则 ====================
+weight_rules:
+  # 单只股票上限
+  single_stock_max: 0.20  # 20%
+
+  # 单个板块上限
+  sector_max: 0.35  # 35%
+
+  # 跨市场相关性调整
+  correlation_adjustment:
+    high_corr_threshold: 0.7  # 相关系数>0.7 视为高度相关
+    cluster_max: 0.35  # 高度相关集群上限 35%
+
+# ==================== 动态调整规则 ====================
+dynamic_adjustment:
+  # Tier 晋升条件
+  promote_to_tier1:
+    min_consecutive_wins: 3  # 连续 3 次盈利
+    min_win_rate: 0.65       # 胜率>65%
+    min_avg_return: 0.02     # 平均收益>2%
+
+  # Tier 降级条件
+  demote_to_tier2:
+    max_consecutive_losses: 3  # 连续 3 次亏损
+    max_drawdown: 0.15         # 回撤>15%
+
+  # 移除条件
+  remove_from_pool:
+    max_consecutive_losses: 5
+    min_daily_volume: 10000000  # 日成交额<1000 万

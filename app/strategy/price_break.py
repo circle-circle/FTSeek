@@ -8,6 +8,7 @@ from .base import BaseStrategy, Signal, SignalAction
 from app import config
 
 logger = logging.getLogger("ftseek.strategy.price_break")
+logger.propagate = False  # 防止日志重复
 
 
 class PriceBreakStrategy(BaseStrategy):
@@ -23,7 +24,8 @@ class PriceBreakStrategy(BaseStrategy):
         """根据市场返回合适的下单数量"""
         if code.startswith("US."):
             return config.DEFAULT_ORDER_QTY_US
-        return config.DEFAULT_ORDER_QTY_HK
+        # 港股：使用每手股数
+        return config.get_lot_size(code)
 
     def _get_currency(self, code: str) -> str:
         return "$" if code.startswith("US.") else "HK$"

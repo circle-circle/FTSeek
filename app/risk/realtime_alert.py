@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 logger = logging.getLogger("ftseek.risk.realtime_alert")
+logger.propagate = False  # 防止日志重复
 
 
 @dataclass

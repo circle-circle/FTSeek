@@ -11,6 +11,7 @@ from .indicators import IndicatorBuffer, rsi
 from app import config
 
 logger = logging.getLogger("ftseek.strategy.rsi")
+logger.propagate = False  # 防止日志重复
 
 
 class RSIStrategy(BaseStrategy):
@@ -19,8 +20,15 @@ class RSIStrategy(BaseStrategy):
     def __init__(self, cfg: dict = None):
         super().__init__(cfg or config.STRATEGIES.get("rsi", {}))
         self.period = self.config.get("period", 14)
-        self.overbought = self.config.get("overbought", 70)
+        
+        # 做空优化 (2026-03-15): 从 70 降至 65，更早发现超买
+        self.overbought = self.config.get("overbought", 65)
         self.oversold = self.config.get("oversold", 30)
+        
+        # 分离做多/做空参数
+        self.long_oversold = self.config.get("long_oversold", self.oversold)
+        self.short_overbought = self.config.get("short_overbought", self.overbought)
+        
         self.exit_overbought = self.config.get("exit_overbought", 50)
         self.exit_oversold = self.config.get("exit_oversold", 50)
         self._buffers = defaultdict(lambda: IndicatorBuffer())

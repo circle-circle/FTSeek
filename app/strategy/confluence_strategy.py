@@ -17,6 +17,7 @@ from .indicators import (
 from app import config
 
 logger = logging.getLogger("ftseek.strategy.confluence")
+logger.propagate = False  # 防止日志重复
 
 
 class ConfluenceStrategy(BaseStrategy):

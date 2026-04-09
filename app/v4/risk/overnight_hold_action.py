@@ -13,6 +13,7 @@ from typing import Dict, Optional, Any
 from datetime import datetime
 
 logger = logging.getLogger("ftseek.v4.overnight_hold_action")
+logger.propagate = False  # 防止日志重复
 
 
 class OvernightHoldCard:
@@ -20,6 +21,7 @@ class OvernightHoldCard:
     
     def __init__(self):
         self.logger = logging.getLogger("ftseek.v4.overnight_hold_card")
+logger.propagate = False  # 防止日志重复
     
     def generate_action_card(
         self,

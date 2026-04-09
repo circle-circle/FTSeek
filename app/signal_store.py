@@ -12,6 +12,7 @@ from app import config
 from app.strategy.base import Signal
 
 logger = logging.getLogger("ftseek.signal_store")
+logger.propagate = False
 
 
 class SignalStore:

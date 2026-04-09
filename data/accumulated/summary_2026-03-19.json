@@ -1,0 +1,29 @@
+{
+  "date": "2026-03-19",
+  "trades": {
+    "total": 5,
+    "closed": 5,
+    "winning": 0,
+    "losing": 5,
+    "win_rate": 0.0,
+    "total_pnl": -1000.0
+  },
+  "signals": {
+    "total": 44,
+    "executed": 0,
+    "rejected": 38,
+    "execution_rate": 0.0,
+    "avg_confidence": 0.68
+  },
+  "fixes_applied": [
+    "TrdSide 导入修复",
+    "RetryReason 导入修复",
+    "价格精度处理",
+    "碎股配置修正",
+    ".value 兼容处理"
+  ],
+  "expected_improvement": {
+    "execution_rate": "0% -> 86%+",
+    "code_errors": "38 -> 0"
+  }
+}

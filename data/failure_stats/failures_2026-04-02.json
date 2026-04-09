@@ -1,0 +1,373 @@
+[
+  {
+    "timestamp": "2026-04-02T09:50:27.873110",
+    "code": "HK.01093",
+    "reason": "other",
+    "category": "other",
+    "message": "下单失败：价格不能为负数或 0"
+  },
+  {
+    "timestamp": "2026-04-02T09:51:32.564285",
+    "code": "HK.01024",
+    "reason": "price_check",
+    "category": "other",
+    "message": "价格检查: 价格 45.11 接近日内低点 45.08 (距离 0.07% < 1.0%)，禁止杀跌卖出"
+  },
+  {
+    "timestamp": "2026-04-02T09:52:29.704505",
+    "code": "HK.01347",
+    "reason": "position_limit",
+    "category": "order_limit",
+    "message": "已达最大持仓数 (4/4)，拒绝开仓"
+  },
+  {
+    "timestamp": "2026-04-02T09:52:45.195208",
+    "code": "HK.00175",
+    "reason": "position_limit",
+    "category": "order_limit",
+    "message": "已达最大持仓数 (4/4)，拒绝开仓"
+  },
+  {
+    "timestamp": "2026-04-02T09:57:46.803958",
+    "code": "HK.00175",
+    "reason": "position_limit",
+    "category": "order_limit",
+    "message": "已达最大持仓数 (4/4)，拒绝开仓"
+  },
+  {
+    "timestamp": "2026-04-02T10:22:28.049634",
+    "code": "HK.01378",
+    "reason": "position_limit",
+    "category": "order_limit",
+    "message": "已达最大持仓数 (4/4)，拒绝开仓"
+  },
+  {
+    "timestamp": "2026-04-02T10:32:44.257556",
+    "code": "HK.01093",
+    "reason": "position_limit",
+    "category": "order_limit",
+    "message": "已达最大持仓数 (4/4)，拒绝开仓"
+  },
+  {
+    "timestamp": "2026-04-02T10:43:58.277675",
+    "code": "HK.00175",
+    "reason": "trend_filter",
+    "category": "other",
+    "message": "趋势过滤: strong_up 趋势中禁止做空 ADX=93.8 | 日K:strong_up | 日内:strong_up | ✓双重确认上涨 | 🚫禁止做空"
+  },
+  {
+    "timestamp": "2026-04-02T10:55:00.712851",
+    "code": "HK.01024",
+    "reason": "price_check",
+    "category": "other",
+    "message": "价格检查: 价格 44.87 接近日内低点 44.84 (距离 0.07% < 1.0%)，禁止杀跌卖出"
+  },
+  {
+    "timestamp": "2026-04-02T11:06:50.520129",
+    "code": "HK.01378",
+    "reason": "other",
+    "category": "other",
+    "message": "下单失败：价格不能为负数或 0"
+  },
+  {
+    "timestamp": "2026-04-02T11:17:56.118068",
+    "code": "HK.00981",
+    "reason": "price_check",
+    "category": "other",
+    "message": "价格检查: 价格 51.00 接近日内低点 50.85 (距离 0.29% < 1.0%)，禁止杀跌卖出"
+  },
+  {
+    "timestamp": "2026-04-02T11:28:18.904240",
+    "code": "HK.01347",
+    "reason": "price_check",
+    "category": "other",
+    "message": "价格检查: 价格 79.97 接近日内低点 79.55 (距离 0.53% < 1.0%)，禁止杀跌卖出"
+  },
+  {
+    "timestamp": "2026-04-02T11:40:57.828020",
+    "code": "HK.01024",
+    "reason": "price_check",
+    "category": "other",
+    "message": "价格检查: 价格 44.92 接近日内低点 44.80 (距离 0.27% < 1.0%)，禁止杀跌卖出"
+  },
+  {
+    "timestamp": "2026-04-02T11:51:36.881126",
+    "code": "HK.00175",
+    "reason": "price_check",
+    "category": "other",
+    "message": "价格检查: 价格 23.19 接近日内高点 23.30 (距离 0.47% < 1.0%)，禁止追高买入"
+  },
+  {
+    "timestamp": "2026-04-02T13:01:09.508324",
+    "code": "HK.00981",
+    "reason": "price_check",
+    "category": "other",
+    "message": "价格检查: 价格 50.17 接近日内低点 50.05 (距离 0.25% < 1.0%)，禁止杀跌卖出"
+  },
+  {
+    "timestamp": "2026-04-02T13:01:09.776293",
+    "code": "HK.00175",
+    "reason": "trend_filter",
+    "category": "other",
+    "message": "趋势过滤: strong_up 趋势中禁止做空 ADX=68.6 | 日K:strong_up | 日内:strong_up | ✓双重确认上涨 | 🚫禁止做空"
+  },
+  {
+    "timestamp": "2026-04-02T13:01:11.069162",
+    "code": "HK.01378",
+    "reason": "other",
+    "category": "other",
+    "message": "下单失败：价格不能为负数或 0"
+  },
+  {
+    "timestamp": "2026-04-02T13:12:08.935416",
+    "code": "HK.01378",
+    "reason": "other",
+    "category": "other",
+    "message": "下单失败：价格不能为负数或 0"
+  },
+  {
+    "timestamp": "2026-04-02T13:23:41.495485",
+    "code": "HK.01024",
+    "reason": "trend_filter",
+    "category": "other",
+    "message": "趋势过滤: strong_down 趋势中禁止买入 ADX=96.3 | 日K:strong_down | 日内:weak_down | ✓双重确认下跌 | 🚫禁止买入"
+  },
+  {
+    "timestamp": "2026-04-02T13:23:41.629966",
+    "code": "HK.01347",
+    "reason": "trend_filter",
+    "category": "other",
+    "message": "趋势过滤: strong_down 趋势中禁止买入 ADX=98.4 | 日K:strong_down | 日内:weak_down | ✓双重确认下跌 | 🚫禁止买入"
+  },
+  {
+    "timestamp": "2026-04-02T13:44:48.169140",
+    "code": "HK.01378",
+    "reason": "other",
+    "category": "other",
+    "message": "下单失败：价格不能为负数或 0"
+  },
+  {
+    "timestamp": "2026-04-02T13:53:17.526327",
+    "code": "HK.01093",
+    "reason": "price_check",
+    "category": "other",
+    "message": "价格检查: 价格 9.59 接近日内低点 9.49 (距离 0.99% < 1.0%)，禁止杀跌卖出"
+  },
+  {
+    "timestamp": "2026-04-02T13:53:35.375570",
+    "code": "HK.01347",
+    "reason": "price_check",
+    "category": "other",
+    "message": "价格检查: 价格 78.93 接近日内低点 78.85 (距离 0.10% < 1.0%)，禁止杀跌卖出"
+  },
+  {
+    "timestamp": "2026-04-02T13:56:27.894443",
+    "code": "HK.01024",
+    "reason": "price_check",
+    "category": "other",
+    "message": "价格检查: 价格 44.66 接近日内低点 44.62 (距离 0.09% < 1.0%)，禁止杀跌卖出"
+  },
+  {
+    "timestamp": "2026-04-02T13:56:47.573511",
+    "code": "HK.00175",
+    "reason": "trend_filter",
+    "category": "other",
+    "message": "趋势过滤: strong_up 趋势中禁止做空 ADX=76.6 | 日K:strong_up | 日内:strong_up | ✓双重确认上涨 | 🚫禁止做空"
+  },
+  {
+    "timestamp": "2026-04-02T13:58:43.152651",
+    "code": "HK.01347",
+    "reason": "price_check",
+    "category": "other",
+    "message": "价格检查: 价格 78.55 接近日内低点 78.50 (距离 0.06% < 1.0%)，禁止杀跌卖出"
+  },
+  {
+    "timestamp": "2026-04-02T13:59:42.087512",
+    "code": "HK.03690",
+    "reason": "other",
+    "category": "other",
+    "message": "下单失败：暂不支持卖空"
+  },
+  {
+    "timestamp": "2026-04-02T14:01:02.757343",
+    "code": "HK.01093",
+    "reason": "price_check",
+    "category": "other",
+    "message": "价格检查: 价格 9.57 接近日内低点 9.49 (距离 0.78% < 1.0%)，禁止杀跌卖出"
+  },
+  {
+    "timestamp": "2026-04-02T14:01:11.310099",
+    "code": "HK.01378",
+    "reason": "other",
+    "category": "other",
+    "message": "下单失败：价格不能为负数或 0"
+  },
+  {
+    "timestamp": "2026-04-02T14:11:30.025197",
+    "code": "HK.00981",
+    "reason": "price_check",
+    "category": "other",
+    "message": "价格检查: 价格 50.33 接近日内低点 50.05 (距离 0.55% < 1.0%)，禁止杀跌卖出"
+  },
+  {
+    "timestamp": "2026-04-02T14:11:44.733730",
+    "code": "HK.01347",
+    "reason": "price_check",
+    "category": "other",
+    "message": "价格检查: 价格 78.90 接近日内低点 78.40 (距离 0.63% < 1.0%)，禁止杀跌卖出"
+  },
+  {
+    "timestamp": "2026-04-02T14:11:45.792540",
+    "code": "HK.01378",
+    "reason": "other",
+    "category": "other",
+    "message": "下单失败：您所下订单包含不足1手数量的碎股"
+  },
+  {
+    "timestamp": "2026-04-02T14:12:42.883731",
+    "code": "HK.01024",
+    "reason": "price_check",
+    "category": "other",
+    "message": "价格检查: 价格 44.64 接近日内低点 44.60 (距离 0.09% < 1.0%)，禁止杀跌卖出"
+  },
+  {
+    "timestamp": "2026-04-02T14:13:39.197061",
+    "code": "HK.01024",
+    "reason": "trend_filter",
+    "category": "other",
+    "message": "趋势过滤: strong_down 趋势中禁止买入 ADX=88.5 | 日K:strong_down | 日内:strong_down | ✓双重确认下跌 | 🚫禁止买入"
+  },
+  {
+    "timestamp": "2026-04-02T14:24:00.227186",
+    "code": "HK.03690",
+    "reason": "other",
+    "category": "other",
+    "message": "下单失败：暂不支持卖空"
+  },
+  {
+    "timestamp": "2026-04-02T14:24:24.036845",
+    "code": "HK.01378",
+    "reason": "other",
+    "category": "other",
+    "message": "下单失败：您所下订单包含不足1手数量的碎股"
+  },
+  {
+    "timestamp": "2026-04-02T14:24:46.921619",
+    "code": "HK.09992",
+    "reason": "price_check",
+    "category": "other",
+    "message": "价格检查: 价格 141.30 接近日内低点 141.20 (距离 0.07% < 1.0%)，禁止杀跌卖出"
+  },
+  {
+    "timestamp": "2026-04-02T14:25:32.474488",
+    "code": "HK.01378",
+    "reason": "other",
+    "category": "other",
+    "message": "下单失败：价格不能为负数或 0"
+  },
+  {
+    "timestamp": "2026-04-02T14:25:59.814540",
+    "code": "HK.00175",
+    "reason": "price_check",
+    "category": "other",
+    "message": "价格检查: 价格 23.38 接近日内高点 23.48 (距离 0.43% < 1.0%)，禁止追高买入"
+  },
+  {
+    "timestamp": "2026-04-02T14:28:42.363363",
+    "code": "HK.01024",
+    "reason": "price_check",
+    "category": "other",
+    "message": "价格检查: 价格 44.81 接近日内低点 44.60 (距离 0.47% < 1.0%)，禁止杀跌卖出"
+  },
+  {
+    "timestamp": "2026-04-02T14:44:59.212395",
+    "code": "HK.03690",
+    "reason": "other",
+    "category": "other",
+    "message": "下单失败：暂不支持卖空"
+  },
+  {
+    "timestamp": "2026-04-02T14:46:54.249230",
+    "code": "HK.00175",
+    "reason": "price_check",
+    "category": "other",
+    "message": "价格检查: 价格 23.46 接近日内高点 23.48 (距离 0.09% < 1.0%)，禁止追高买入"
+  },
+  {
+    "timestamp": "2026-04-02T14:46:54.270280",
+    "code": "HK.09992",
+    "reason": "price_check",
+    "category": "other",
+    "message": "价格检查: 价格 140.90 接近日内低点 140.70 (距离 0.14% < 1.0%)，禁止杀跌卖出"
+  },
+  {
+    "timestamp": "2026-04-02T14:51:15.043018",
+    "code": "HK.01024",
+    "reason": "trend_filter",
+    "category": "other",
+    "message": "趋势过滤: strong_down 趋势中禁止买入 ADX=100.0 | 日K:strong_down | 日内:strong_down | ✓双重确认下跌 | 🚫禁止买入"
+  },
+  {
+    "timestamp": "2026-04-02T14:54:38.073289",
+    "code": "HK.09992",
+    "reason": "trend_filter",
+    "category": "other",
+    "message": "趋势过滤: strong_down 趋势中禁止买入 ADX=95.0 | 日K:strong_down | 日内:strong_down | ✓双重确认下跌 | 🚫禁止买入"
+  },
+  {
+    "timestamp": "2026-04-02T14:56:52.238871",
+    "code": "HK.09992",
+    "reason": "price_check",
+    "category": "other",
+    "message": "价格检查: 价格 141.40 接近日内低点 140.70 (距离 0.50% < 1.0%)，禁止杀跌卖出"
+  },
+  {
+    "timestamp": "2026-04-02T15:09:28.210382",
+    "code": "HK.01024",
+    "reason": "position_limit",
+    "category": "order_limit",
+    "message": "已达最大持仓数 (4/4)，拒绝开仓"
+  },
+  {
+    "timestamp": "2026-04-02T15:22:14.875406",
+    "code": "HK.09992",
+    "reason": "position_limit",
+    "category": "order_limit",
+    "message": "已达最大持仓数 (4/4)，拒绝开仓"
+  },
+  {
+    "timestamp": "2026-04-02T15:24:37.229117",
+    "code": "HK.03690",
+    "reason": "position_limit",
+    "category": "order_limit",
+    "message": "已达最大持仓数 (4/4)，拒绝开仓"
+  },
+  {
+    "timestamp": "2026-04-02T15:29:16.936344",
+    "code": "HK.00175",
+    "reason": "position_limit",
+    "category": "order_limit",
+    "message": "已达最大持仓数 (4/4)，拒绝开仓"
+  },
+  {
+    "timestamp": "2026-04-02T15:31:45.530932",
+    "code": "HK.01093",
+    "reason": "position_limit",
+    "category": "order_limit",
+    "message": "已达最大持仓数 (4/4)，拒绝开仓"
+  },
+  {
+    "timestamp": "2026-04-02T15:31:47.070047",
+    "code": "HK.01024",
+    "reason": "position_limit",
+    "category": "order_limit",
+    "message": "已达最大持仓数 (4/4)，拒绝开仓"
+  },
+  {
+    "timestamp": "2026-04-02T15:33:08.380422",
+    "code": "HK.00175",
+    "reason": "trend_filter",
+    "category": "other",
+    "message": "趋势过滤: strong_up 趋势中禁止做空 ADX=73.3 | 日K:strong_up | 日内:strong_up | ✓双重确认上涨 | 🚫禁止做空"
+  }
+]

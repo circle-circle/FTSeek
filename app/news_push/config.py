@@ -9,45 +9,63 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 CONFIG_DIR = BASE_DIR / "news_push" / "config"
 CONFIG_DIR.mkdir(exist_ok=True)
 
+# 加载 .env 文件（确保 QWEN_ENABLED 等环境变量被读取）
+try:
+    from dotenv import load_dotenv as _load_dotenv
+    _env_path = BASE_DIR.parent / '.env'
+    if _env_path.exists():
+        _load_dotenv(_env_path)
+except ImportError:
+    pass
+
 # ============================================================
-#  新闻源配置
+#  新闻源配置（2026-03-23 更新：替换失效源，补充可访问源）
+#
+#  实测状态：
+#   ✅ CNBC (Markets/Asia/Finance), WSJ (Markets/Intl), FED, AAStocks EN
+#   ❌ Reuters (网络不可达), HKEX RSS (404已下线), SCMP (网络不可达)
+#   ❌ Sina 港股 (404), Eastmoney (无响应)
 # ============================================================
 
-# RSS 源列表 (来自 Situation-aggregation-monitoring)
+# RSS 源列表
 RSS_FEEDS = {
-    # 财经类 (高优先级)
+    # 财经类 (高优先级) - 国际
     "finance": [
-        "https://feed.mix.sina.com.cn/api/roll/get?page=1&page_size=20",
-        "https://api-one.wallstcn.com/apiv1/contents?limit=20&category=global",
-        "https://www.cnbc.com/id/100003114/device/rss/rss.html",
-        "https://feeds.a.dj.com/rss/RSSMarketsMain.xml",
+        "https://www.cnbc.com/id/100003114/device/rss/rss.html",  # CNBC Markets ✅
+        "https://www.cnbc.com/id/10000664/device/rss/rss.html",   # CNBC Finance ✅
+        "https://feeds.a.dj.com/rss/RSSMarketsMain.xml",          # WSJ Markets ✅
+        "https://feeds.a.dj.com/rss/RSSWorldNews.xml",            # WSJ World ✅
     ],
-    
-    # 港股/大中华财经 (最高优先级)
-    "hk_finance": [
-        "https://www.hkex.com.hk/chi/news/rss/announcement.xml",  # 港交所公告
-        "http://stock.10jqka.com.cn/roll_news/rss/",  # 同花顺滚动新闻
-        "https://finance.qq.com/rss/stocknews.xml",  # 腾讯财经
-        "http://app.huaxue100.com/rss/stock.xml",  # 东方财富
-    ],
-    
-    # 快讯类 (最高优先级)
-    "flash": [
-        "https://www.cls.cn/api/telegraph",  # 财联社电报
-        "https://www.blockbeats.com/api/news/flash",  # BlockBeats 快讯
-    ],
-    
+
     # 宏观/政策类
     "macro": [
-        "https://www.federalreserve.gov/feeds/press.xml",
-        "https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&output=atom",
+        "https://www.federalreserve.gov/feeds/press_all.xml",     # 美联储 ✅
     ],
-    
+
+    # 快讯类（原路透社已不可达，改用 CNBC Asia）
+    "flash": [
+        "https://www.cnbc.com/id/100727362/device/rss/rss.html",  # CNBC Asia ✅
+        # Reuters 已从大陆服务器不可访问，已移除
+        # "https://feeds.reuters.com/reuters/businessNews",  # ❌ 网络不可达
+        # "https://feeds.reuters.com/reuters/topNews",       # ❌ 网络不可达
+    ],
+
+    # 港股专项（原 HKEX RSS 已下线，改用 AAStocks）
+    "hk_stocks": [
+        "https://www.aastocks.com/en/stocks/news/aafn-news-headline.aspx",  # AAStocks ✅
+        # HKEX RSS 已 404，已移除
+        # "https://www.hkex.com.hk/chi/newsconsul/hkexnews/listco/rss/listcorss_c.xml",  # ❌ 404
+        # "https://rss.scmp.com/rss/13",          # ❌ 网络不可达
+    ],
+
+    # 港股财经（原东方财富/新浪港股无响应，暂时禁用）
+    "hk_finance": [
+        # "https://feed.eastmoney.com/news/1,10001,ajaxformat.html",  # ❌ 无响应
+        # "https://rss.sina.com.cn/finance/hkstock/hkstocknews.xml",  # ❌ 404
+    ],
+
     # 科技类 (默认关闭)
-    "tech": [
-        "https://news.ycombinator.com/rss",
-        "https://arstechnica.com/feed/",
-    ],
+    "tech": [],
 }
 
 # 来源优先级 (数字越小优先级越高)
@@ -59,11 +77,16 @@ SOURCE_PRIORITY = {
     "tencent": 2,       # 腾讯财经
     "eastmoney": 2,     # 东方财富
     "wallstreetcn": 3,  # 华尔街见闻
-    "sina": 4,          # 新浪财经
-    "cnbc": 5,          # CNBC
+    "sina": 3,          # 新浪财经
+    "reuters": 3,       # 路透社（当前不可达，保留配置）
+    "scmp": 3,          # 南华早报（当前不可达，保留配置）
+    "aastocks": 2,      # 阿斯达克（港股专项，提升至2）
+    "cnbc": 4,          # CNBC（通用）
+    "cnbc_asia": 3,     # CNBC Asia（亚太专项，高于通用）
     "sec": 2,           # SEC 公告
     "fed": 3,           # 美联储
     "hkex_news": 2,     # 港交所新闻
+    "wsj": 4,           # 华尔街日报
 }
 
 # 分类开关
@@ -71,6 +94,8 @@ CATEGORY_ENABLED = {
     "finance": True,    # 财经类推送
     "flash": True,      # 快讯推送
     "macro": True,      # 宏观政策
+    "hk_stocks": True,  # 港股专项 (开启)
+    "hk_finance": True, # 港股财经 (开启)
     "tech": False,      # 科技类 (默认不推送)
     "crypto": False,    # 加密货币 (默认不推送)
 }
@@ -83,19 +108,24 @@ CATEGORY_ENABLED = {
 PUSH_KEYWORDS = {
     # 必须包含的关键词 (任一匹配即推送)
     "must_include": [
-        "财报", "业绩", "盈利", "亏损", "营收", "净利润",
-        "收购", "重组", "合并", "分拆", "IPO",
-        "增持", "减持", "回购", "分红",
+        # 中文财报/业绩
+        "财报", "业绩", "盈利", "亏损", "营收", "净利润", "利润",
+        "收购", "重组", "合并", "分拆", "IPO", "上市",
+        "增持", "减持", "回购", "分红", "派息",
         "监管", "调查", "诉讼", "处罚",
         "突破", "新高", "新低", "暴涨", "暴跌",
+        "港交所", "公告", "停牌", "复牌",
+        # 港股专项
+        "美团", "泡泡玛特", "中芯", "腾讯", "阿里",
+        # 英文
         "earnings", "revenue", "profit", "loss",
-        "acquisition", "merger", "IPO", "buyback",
+        "acquisition", "merger", "buyback",
+        "Meituan", "SMIC", "semiconductor",
     ],
     
     # 必须排除的关键词 (任一匹配即过滤)
     "must_exclude": [
-        "广告", "推广", "赞助", "合作",
-        "广告", "营销", "宣传",
+        "广告", "推广", "赞助", "营销", "宣传",
     ],
 }
 
@@ -120,13 +150,21 @@ for stock in WATCH_STOCKS:
 
 # 股票代码别名映射 (用于新闻内容匹配)
 STOCK_ALIASES = {
-    "HK.00700": ["腾讯", "Tencent", "0700", "00700.HK"],
-    "HK.09988": ["阿里", "Alibaba", "9988", "09988.HK", "阿里巴巴"],
-    "HK.09992": ["泡泡玛特", "Pop Mart", "9992"],
-    "US.AAPL": ["苹果", "Apple", "AAPL"],
-    "US.TSLA": ["特斯拉", "Tesla", "TSLA"],
-    "US.NVDA": ["英伟达", "NVIDIA", "NVDA", "伟达"],
-    "US.MSFT": ["微软", "Microsoft", "MSFT"],
+    # 港股 - 交易标的
+    "HK.03690": ["美团", "Meituan", "3690", "03690", "03690.HK", "外卖", "美团点评"],
+    "HK.09992": ["泡泡玛特", "Pop Mart", "POPMART", "9992", "09992", "09992.HK"],
+    "HK.00981": ["中芯国际", "SMIC", "981", "00981", "00981.HK", "中芯"],
+    "HK.09660": ["万物云", "万物", "9660", "09660", "09660.HK"],
+    "HK.02318": ["中国平安", "平安", "2318", "02318", "02318.HK", "Ping An"],
+    "HK.00700": ["腾讯", "Tencent", "0700", "00700", "00700.HK", "腾讯控股", "微信", "WeChat"],
+    "HK.09988": ["阿里", "Alibaba", "9988", "09988", "09988.HK", "阿里巴巴", "淘宝"],
+    "HK.01810": ["小米", "Xiaomi", "1810", "01810", "01810.HK"],
+    "HK.00388": ["港交所", "HKEx", "388", "00388", "00388.HK"],
+    # 美股
+    "US.AAPL": ["苹果", "Apple", "AAPL", "iPhone", "Mac"],
+    "US.TSLA": ["特斯拉", "Tesla", "TSLA", "Elon Musk", "马斯克"],
+    "US.NVDA": ["英伟达", "NVIDIA", "NVDA", "黄仁勋"],
+    "US.MSFT": ["微软", "Microsoft", "MSFT", "Windows", "Office"],
 }
 
 # ============================================================
@@ -169,15 +207,22 @@ PUSH_TIME_WINDOW = {
 }
 
 # ============================================================
-#  缓存配置
+#  缓存配置 (2026-03-17 优化：缩短 TTL 提升时效性)
 # ============================================================
 
 CACHE_DIR = BASE_DIR / "data" / "news_cache"
 CACHE_DIR.mkdir(exist_ok=True)
 
 CACHE_CONFIG = {
-    "ttl_seconds": int(os.getenv("NEWS_CACHE_TTL", "3600")),  # 缓存 1 小时
+    "ttl_seconds": int(os.getenv("NEWS_CACHE_TTL", "300")),  # 缓存 5 分钟 (原 1 小时)
     "max_items": int(os.getenv("NEWS_CACHE_MAX", "1000")),    # 最多缓存 1000 条
+}
+
+# 新闻采集间隔配置 (新增 2026-03-17)
+COLLECTION_INTERVAL = {
+    "fast_mode": 60,       # 快速模式: 1 分钟采集一次 (交易时段)
+    "normal_mode": 300,    # 正常模式: 5 分钟采集一次
+    "slow_mode": 900,      # 慢速模式: 15 分钟采集一次 (非交易时段)
 }
 
 # ============================================================

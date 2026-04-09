@@ -1,0 +1,233 @@
+[
+  {
+    "timestamp": "2026-03-20T08:51:36.155380",
+    "code": "HK.09992",
+    "reason": "other",
+    "category": "other",
+    "message": "下单失败：您所下订单包含不足1手数量的碎股"
+  },
+  {
+    "timestamp": "2026-03-20T09:01:00.758500",
+    "code": "HK.00981",
+    "reason": "other",
+    "category": "other",
+    "message": "下单失败：您所下订单包含不足1手数量的碎股"
+  },
+  {
+    "timestamp": "2026-03-20T09:12:04.013717",
+    "code": "HK.09992",
+    "reason": "other",
+    "category": "other",
+    "message": "下单失败：您所下订单包含不足1手数量的碎股"
+  },
+  {
+    "timestamp": "2026-03-20T09:31:58.271045",
+    "code": "HK.09992",
+    "reason": "other",
+    "category": "other",
+    "message": "下单失败：您所下订单包含不足1手数量的碎股"
+  },
+  {
+    "timestamp": "2026-03-20T09:33:14.083353",
+    "code": "HK.09992",
+    "reason": "other",
+    "category": "other",
+    "message": "下单失败：您所下订单包含不足1手数量的碎股"
+  },
+  {
+    "timestamp": "2026-03-20T09:38:13.415704",
+    "code": "HK.09992",
+    "reason": "other",
+    "category": "other",
+    "message": "下单失败：您所下订单包含不足1手数量的碎股"
+  },
+  {
+    "timestamp": "2026-03-20T09:51:02.918249",
+    "code": "HK.00981",
+    "reason": "other",
+    "category": "other",
+    "message": "下单失败：您所下订单包含不足1手数量的碎股"
+  },
+  {
+    "timestamp": "2026-03-20T10:00:07.911598",
+    "code": "HK.00981",
+    "reason": "other",
+    "category": "other",
+    "message": "下单失败：您所下订单包含不足1手数量的碎股"
+  },
+  {
+    "timestamp": "2026-03-20T10:02:06.365466",
+    "code": "HK.00981",
+    "reason": "other",
+    "category": "other",
+    "message": "下单失败：您所下订单包含不足1手数量的碎股"
+  },
+  {
+    "timestamp": "2026-03-20T10:04:58.220941",
+    "code": "HK.00981",
+    "reason": "other",
+    "category": "other",
+    "message": "下单失败：您所下订单包含不足1手数量的碎股"
+  },
+  {
+    "timestamp": "2026-03-20T10:34:23.992564",
+    "code": "HK.00981",
+    "reason": "other",
+    "category": "other",
+    "message": "下单失败：您所下订单包含不足1手数量的碎股"
+  },
+  {
+    "timestamp": "2026-03-20T10:34:48.504654",
+    "code": "HK.09992",
+    "reason": "other",
+    "category": "other",
+    "message": "下单失败：您所下订单包含不足1手数量的碎股"
+  },
+  {
+    "timestamp": "2026-03-20T10:51:40.473442",
+    "code": "HK.00981",
+    "reason": "other",
+    "category": "other",
+    "message": "下单失败：您所下订单包含不足1手数量的碎股"
+  },
+  {
+    "timestamp": "2026-03-20T10:52:01.498574",
+    "code": "HK.03690",
+    "reason": "other",
+    "category": "other",
+    "message": "下单失败：价格不能为负数或 0"
+  },
+  {
+    "timestamp": "2026-03-20T10:52:04.714603",
+    "code": "HK.09992",
+    "reason": "other",
+    "category": "other",
+    "message": "下单失败：您所下订单包含不足1手数量的碎股"
+  },
+  {
+    "timestamp": "2026-03-20T11:06:53.821522",
+    "code": "HK.00981",
+    "reason": "other",
+    "category": "other",
+    "message": "下单失败：价格不能为负数或 0"
+  },
+  {
+    "timestamp": "2026-03-20T11:07:12.074201",
+    "code": "HK.09992",
+    "reason": "other",
+    "category": "other",
+    "message": "下单失败：价格不能为负数或 0"
+  },
+  {
+    "timestamp": "2026-03-20T11:07:15.204273",
+    "code": "HK.03690",
+    "reason": "other",
+    "category": "other",
+    "message": "下单失败：价格不能为负数或 0"
+  },
+  {
+    "timestamp": "2026-03-20T13:39:07.864524",
+    "code": "HK.00981",
+    "reason": "other",
+    "category": "other",
+    "message": "下单失败：价格不能为负数或 0"
+  },
+  {
+    "timestamp": "2026-03-20T13:39:28.852982",
+    "code": "HK.03690",
+    "reason": "other",
+    "category": "other",
+    "message": "下单失败：价格不能为负数或 0"
+  },
+  {
+    "timestamp": "2026-03-20T13:39:31.932638",
+    "code": "HK.09992",
+    "reason": "other",
+    "category": "other",
+    "message": "下单失败：价格不能为负数或 0"
+  },
+  {
+    "timestamp": "2026-03-20T14:04:05.948515",
+    "code": "HK.00981",
+    "reason": "other",
+    "category": "other",
+    "message": "下单失败：价格不能为负数或 0"
+  },
+  {
+    "timestamp": "2026-03-20T14:04:27.266132",
+    "code": "HK.03690",
+    "reason": "other",
+    "category": "other",
+    "message": "下单失败：价格不能为负数或 0"
+  },
+  {
+    "timestamp": "2026-03-20T14:04:30.740455",
+    "code": "HK.09992",
+    "reason": "other",
+    "category": "other",
+    "message": "下单失败：价格不能为负数或 0"
+  },
+  {
+    "timestamp": "2026-03-20T14:06:31.642837",
+    "code": "HK.00981",
+    "reason": "other",
+    "category": "other",
+    "message": "下单失败：暂不支持卖空"
+  },
+  {
+    "timestamp": "2026-03-20T14:06:50.890144",
+    "code": "HK.03690",
+    "reason": "other",
+    "category": "other",
+    "message": "下单失败：暂不支持卖空"
+  },
+  {
+    "timestamp": "2026-03-20T14:06:53.933808",
+    "code": "HK.09992",
+    "reason": "other",
+    "category": "other",
+    "message": "下单失败：暂不支持卖空"
+  },
+  {
+    "timestamp": "2026-03-20T14:10:03.737981",
+    "code": "HK.00981",
+    "reason": "other",
+    "category": "other",
+    "message": "下单失败：暂不支持卖空"
+  },
+  {
+    "timestamp": "2026-03-20T14:10:26.155406",
+    "code": "HK.03690",
+    "reason": "other",
+    "category": "other",
+    "message": "下单失败：暂不支持卖空"
+  },
+  {
+    "timestamp": "2026-03-20T14:10:29.355748",
+    "code": "HK.09992",
+    "reason": "other",
+    "category": "other",
+    "message": "下单失败：暂不支持卖空"
+  },
+  {
+    "timestamp": "2026-03-20T19:02:21.476697",
+    "code": "HK.00981",
+    "reason": "other",
+    "category": "other",
+    "message": "下单失败：暂不支持卖空"
+  },
+  {
+    "timestamp": "2026-03-20T19:02:44.987988",
+    "code": "HK.03690",
+    "reason": "other",
+    "category": "other",
+    "message": "下单失败：暂不支持卖空"
+  },
+  {
+    "timestamp": "2026-03-20T19:02:48.080450",
+    "code": "HK.09992",
+    "reason": "other",
+    "category": "other",
+    "message": "下单失败：暂不支持卖空"
+  }
+]

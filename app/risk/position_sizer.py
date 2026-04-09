@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from enum import Enum
 
 logger = logging.getLogger("ftseek.risk.position_sizer")
+logger.propagate = False  # 防止日志重复
 
 
 class PositionSizingMethod(Enum):

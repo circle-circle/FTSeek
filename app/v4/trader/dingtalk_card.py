@@ -9,6 +9,7 @@ from typing import Dict, Optional, Any
 from datetime import datetime
 
 logger = logging.getLogger("ftseek.v4.dingtalk_card")
+logger.propagate = False  # 防止日志重复
 
 
 class TradeSignalCard:
@@ -16,6 +17,7 @@ class TradeSignalCard:
     
     def __init__(self):
         self.logger = logging.getLogger("ftseek.v4.trade_signal_card")
+logger.propagate = False  # 防止日志重复
     
     def generate_card(
         self,

@@ -8,6 +8,7 @@ from .base import BaseStrategy, Signal, SignalAction
 from app import config
 
 logger = logging.getLogger("ftseek.strategy.price_break")
+logger.propagate = False
 
 
 class PriceBreakStrategy(BaseStrategy):

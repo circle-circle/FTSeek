@@ -8,6 +8,7 @@ from typing import Optional, Dict
 from .base import BaseFactor, FactorResult
 
 logger = logging.getLogger("ftseek.factors.capital_flow")
+logger.propagate = False  # 防止日志重复
 
 
 class CapitalFlowFactors(BaseFactor):

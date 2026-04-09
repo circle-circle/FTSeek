@@ -1,0 +1,737 @@
+[
+  {
+    "timestamp": "2026-03-23T00:00:02.982761",
+    "futu_positions": {},
+    "db_positions": {},
+    "diff": [],
+    "is_sync": true,
+    "message": "✅ 数据库与富途持仓一致"
+  },
+  {
+    "timestamp": "2026-03-23T01:00:02.862674",
+    "futu_positions": {},
+    "db_positions": {},
+    "diff": [],
+    "is_sync": true,
+    "message": "✅ 数据库与富途持仓一致"
+  },
+  {
+    "timestamp": "2026-03-23T02:00:02.700178",
+    "futu_positions": {},
+    "db_positions": {},
+    "diff": [],
+    "is_sync": true,
+    "message": "✅ 数据库与富途持仓一致"
+  },
+  {
+    "timestamp": "2026-03-23T03:00:02.539075",
+    "futu_positions": {},
+    "db_positions": {},
+    "diff": [],
+    "is_sync": true,
+    "message": "✅ 数据库与富途持仓一致"
+  },
+  {
+    "timestamp": "2026-03-23T04:00:02.344883",
+    "futu_positions": {},
+    "db_positions": {},
+    "diff": [],
+    "is_sync": true,
+    "message": "✅ 数据库与富途持仓一致"
+  },
+  {
+    "timestamp": "2026-03-23T05:00:03.154942",
+    "futu_positions": {},
+    "db_positions": {},
+    "diff": [],
+    "is_sync": true,
+    "message": "✅ 数据库与富途持仓一致"
+  },
+  {
+    "timestamp": "2026-03-23T06:00:03.079049",
+    "futu_positions": {},
+    "db_positions": {},
+    "diff": [],
+    "is_sync": true,
+    "message": "✅ 数据库与富途持仓一致"
+  },
+  {
+    "timestamp": "2026-03-23T07:00:02.913511",
+    "futu_positions": {},
+    "db_positions": {},
+    "diff": [],
+    "is_sync": true,
+    "message": "✅ 数据库与富途持仓一致"
+  },
+  {
+    "timestamp": "2026-03-23T08:00:02.801571",
+    "futu_positions": {},
+    "db_positions": {},
+    "diff": [],
+    "is_sync": true,
+    "message": "✅ 数据库与富途持仓一致"
+  },
+  {
+    "timestamp": "2026-03-23T09:00:04.057242",
+    "futu_positions": {},
+    "db_positions": {},
+    "diff": [],
+    "is_sync": true,
+    "message": "✅ 数据库与富途持仓一致"
+  },
+  {
+    "timestamp": "2026-03-23T10:00:04.785023",
+    "futu_positions": {},
+    "db_positions": {},
+    "diff": [],
+    "is_sync": true,
+    "message": "✅ 数据库与富途持仓一致"
+  },
+  {
+    "timestamp": "2026-03-23T11:00:03.025754",
+    "futu_positions": {},
+    "db_positions": {},
+    "diff": [],
+    "is_sync": true,
+    "message": "✅ 数据库与富途持仓一致"
+  },
+  {
+    "timestamp": "2026-03-23T12:00:03.212469",
+    "futu_positions": {},
+    "db_positions": {},
+    "diff": [],
+    "is_sync": true,
+    "message": "✅ 数据库与富途持仓一致"
+  },
+  {
+    "timestamp": "2026-03-23T13:00:03.816227",
+    "futu_positions": {},
+    "db_positions": {},
+    "diff": [],
+    "is_sync": true,
+    "message": "✅ 数据库与富途持仓一致"
+  },
+  {
+    "timestamp": "2026-03-23T14:00:04.232909",
+    "futu_positions": {
+      "HK.00981": {
+        "qty": 0.0,
+        "can_sell": 0.0,
+        "cost_price": 0.0,
+        "market_val": 0.0,
+        "pl_val": -150.0
+      },
+      "HK.09992": {
+        "qty": 0.0,
+        "can_sell": 0.0,
+        "cost_price": 0.0,
+        "market_val": 0.0,
+        "pl_val": -80.0
+      },
+      "HK.03690": {
+        "qty": 0.0,
+        "can_sell": 0.0,
+        "cost_price": 0.0,
+        "market_val": 0.0,
+        "pl_val": -5.0
+      }
+    },
+    "db_positions": {},
+    "diff": [],
+    "is_sync": true,
+    "message": "✅ 数据库与富途持仓一致"
+  },
+  {
+    "timestamp": "2026-03-23T15:00:02.167002",
+    "futu_positions": {
+      "HK.09992": {
+        "qty": 0.0,
+        "can_sell": 0.0,
+        "cost_price": 0.0,
+        "market_val": 0.0,
+        "pl_val": -160.0
+      },
+      "HK.00981": {
+        "qty": 0.0,
+        "can_sell": 0.0,
+        "cost_price": 0.0,
+        "market_val": 0.0,
+        "pl_val": -150.0
+      },
+      "HK.03690": {
+        "qty": 0.0,
+        "can_sell": 0.0,
+        "cost_price": 0.0,
+        "market_val": 0.0,
+        "pl_val": -10.0
+      }
+    },
+    "db_positions": {
+      "HK.00981": {
+        "qty": 5000.0,
+        "avg_price": 53.37050000000001
+      },
+      "HK.03690": {
+        "qty": 200.0,
+        "avg_price": 76.2
+      },
+      "HK.09992": {
+        "qty": 1000.0,
+        "avg_price": 199.2277777777778
+      }
+    },
+    "diff": [
+      {
+        "code": "HK.09992",
+        "futu_qty": 0.0,
+        "db_qty": 1000.0,
+        "diff": -1000.0
+      },
+      {
+        "code": "HK.03690",
+        "futu_qty": 0.0,
+        "db_qty": 200.0,
+        "diff": -200.0
+      },
+      {
+        "code": "HK.00981",
+        "futu_qty": 0.0,
+        "db_qty": 5000.0,
+        "diff": -5000.0
+      }
+    ],
+    "is_sync": false,
+    "message": "⚠️ 发现 3 处差异"
+  },
+  {
+    "timestamp": "2026-03-23T16:00:03.606302",
+    "futu_positions": {
+      "HK.00981": {
+        "qty": 0.0,
+        "can_sell": 0.0,
+        "cost_price": 0.0,
+        "market_val": 0.0,
+        "pl_val": -150.0
+      },
+      "HK.09992": {
+        "qty": 0.0,
+        "can_sell": 0.0,
+        "cost_price": 0.0,
+        "market_val": 0.0,
+        "pl_val": -160.0
+      },
+      "HK.03690": {
+        "qty": 0.0,
+        "can_sell": 0.0,
+        "cost_price": 0.0,
+        "market_val": 0.0,
+        "pl_val": -10.0
+      }
+    },
+    "db_positions": {
+      "HK.00981": {
+        "qty": 5500.0,
+        "avg_price": 53.481818
+      },
+      "HK.03690": {
+        "qty": 200.0,
+        "avg_price": 76.4
+      },
+      "HK.09992": {
+        "qty": 1600.0,
+        "avg_price": 200.15
+      }
+    },
+    "diff": [
+      {
+        "code": "HK.03690",
+        "futu_qty": 0.0,
+        "db_qty": 200.0,
+        "diff": -200.0
+      },
+      {
+        "code": "HK.09992",
+        "futu_qty": 0.0,
+        "db_qty": 1600.0,
+        "diff": -1600.0
+      },
+      {
+        "code": "HK.00981",
+        "futu_qty": 0.0,
+        "db_qty": 5500.0,
+        "diff": -5500.0
+      }
+    ],
+    "is_sync": false,
+    "message": "⚠️ 发现 3 处差异"
+  },
+  {
+    "timestamp": "2026-03-23T17:00:03.802216",
+    "futu_positions": {
+      "HK.00981": {
+        "qty": 0.0,
+        "can_sell": 0.0,
+        "cost_price": 0.0,
+        "market_val": 0.0,
+        "pl_val": -150.0
+      },
+      "HK.09992": {
+        "qty": 0.0,
+        "can_sell": 0.0,
+        "cost_price": 0.0,
+        "market_val": 0.0,
+        "pl_val": -160.0
+      },
+      "HK.03690": {
+        "qty": 0.0,
+        "can_sell": 0.0,
+        "cost_price": 0.0,
+        "market_val": 0.0,
+        "pl_val": -10.0
+      }
+    },
+    "db_positions": {
+      "HK.00981": {
+        "qty": 5500.0,
+        "avg_price": 53.481818181818184
+      },
+      "HK.03690": {
+        "qty": 200.0,
+        "avg_price": 76.4
+      },
+      "HK.09992": {
+        "qty": 1600.0,
+        "avg_price": 200.15
+      }
+    },
+    "diff": [
+      {
+        "code": "HK.09992",
+        "futu_qty": 0.0,
+        "db_qty": 1600.0,
+        "diff": -1600.0
+      },
+      {
+        "code": "HK.00981",
+        "futu_qty": 0.0,
+        "db_qty": 5500.0,
+        "diff": -5500.0
+      },
+      {
+        "code": "HK.03690",
+        "futu_qty": 0.0,
+        "db_qty": 200.0,
+        "diff": -200.0
+      }
+    ],
+    "is_sync": false,
+    "message": "⚠️ 发现 3 处差异"
+  },
+  {
+    "timestamp": "2026-03-23T18:00:04.127625",
+    "futu_positions": {
+      "HK.00981": {
+        "qty": 0.0,
+        "can_sell": 0.0,
+        "cost_price": 0.0,
+        "market_val": 0.0,
+        "pl_val": -150.0
+      },
+      "HK.09992": {
+        "qty": 0.0,
+        "can_sell": 0.0,
+        "cost_price": 0.0,
+        "market_val": 0.0,
+        "pl_val": -160.0
+      },
+      "HK.03690": {
+        "qty": 0.0,
+        "can_sell": 0.0,
+        "cost_price": 0.0,
+        "market_val": 0.0,
+        "pl_val": -10.0
+      }
+    },
+    "db_positions": {
+      "HK.00981": {
+        "qty": 5500.0,
+        "avg_price": 53.481818181818184
+      },
+      "HK.03690": {
+        "qty": 200.0,
+        "avg_price": 76.4
+      },
+      "HK.09992": {
+        "qty": 1600.0,
+        "avg_price": 200.15
+      }
+    },
+    "diff": [
+      {
+        "code": "HK.09992",
+        "futu_qty": 0.0,
+        "db_qty": 1600.0,
+        "diff": -1600.0
+      },
+      {
+        "code": "HK.03690",
+        "futu_qty": 0.0,
+        "db_qty": 200.0,
+        "diff": -200.0
+      },
+      {
+        "code": "HK.00981",
+        "futu_qty": 0.0,
+        "db_qty": 5500.0,
+        "diff": -5500.0
+      }
+    ],
+    "is_sync": false,
+    "message": "⚠️ 发现 3 处差异"
+  },
+  {
+    "timestamp": "2026-03-23T19:00:03.424247",
+    "futu_positions": {
+      "HK.00981": {
+        "qty": 0.0,
+        "can_sell": 0.0,
+        "cost_price": 0.0,
+        "market_val": 0.0,
+        "pl_val": -150.0
+      },
+      "HK.09992": {
+        "qty": 0.0,
+        "can_sell": 0.0,
+        "cost_price": 0.0,
+        "market_val": 0.0,
+        "pl_val": -160.0
+      },
+      "HK.03690": {
+        "qty": 0.0,
+        "can_sell": 0.0,
+        "cost_price": 0.0,
+        "market_val": 0.0,
+        "pl_val": -10.0
+      }
+    },
+    "db_positions": {
+      "HK.00981": {
+        "qty": 5500.0,
+        "avg_price": 53.481818181818184
+      },
+      "HK.03690": {
+        "qty": 200.0,
+        "avg_price": 76.4
+      },
+      "HK.09992": {
+        "qty": 1600.0,
+        "avg_price": 200.15
+      }
+    },
+    "diff": [
+      {
+        "code": "HK.03690",
+        "futu_qty": 0.0,
+        "db_qty": 200.0,
+        "diff": -200.0
+      },
+      {
+        "code": "HK.00981",
+        "futu_qty": 0.0,
+        "db_qty": 5500.0,
+        "diff": -5500.0
+      },
+      {
+        "code": "HK.09992",
+        "futu_qty": 0.0,
+        "db_qty": 1600.0,
+        "diff": -1600.0
+      }
+    ],
+    "is_sync": false,
+    "message": "⚠️ 发现 3 处差异"
+  },
+  {
+    "timestamp": "2026-03-23T20:00:03.106617",
+    "futu_positions": {
+      "HK.00981": {
+        "qty": 0.0,
+        "can_sell": 0.0,
+        "cost_price": 0.0,
+        "market_val": 0.0,
+        "pl_val": -150.0
+      },
+      "HK.09992": {
+        "qty": 0.0,
+        "can_sell": 0.0,
+        "cost_price": 0.0,
+        "market_val": 0.0,
+        "pl_val": -160.0
+      },
+      "HK.03690": {
+        "qty": 0.0,
+        "can_sell": 0.0,
+        "cost_price": 0.0,
+        "market_val": 0.0,
+        "pl_val": -10.0
+      }
+    },
+    "db_positions": {
+      "HK.00981": {
+        "qty": 5500.0,
+        "avg_price": 53.481818181818184
+      },
+      "HK.03690": {
+        "qty": 200.0,
+        "avg_price": 76.4
+      },
+      "HK.09992": {
+        "qty": 1600.0,
+        "avg_price": 200.15
+      }
+    },
+    "diff": [
+      {
+        "code": "HK.00981",
+        "futu_qty": 0.0,
+        "db_qty": 5500.0,
+        "diff": -5500.0
+      },
+      {
+        "code": "HK.03690",
+        "futu_qty": 0.0,
+        "db_qty": 200.0,
+        "diff": -200.0
+      },
+      {
+        "code": "HK.09992",
+        "futu_qty": 0.0,
+        "db_qty": 1600.0,
+        "diff": -1600.0
+      }
+    ],
+    "is_sync": false,
+    "message": "⚠️ 发现 3 处差异"
+  },
+  {
+    "timestamp": "2026-03-23T21:00:02.841078",
+    "futu_positions": {
+      "HK.00981": {
+        "qty": 0.0,
+        "can_sell": 0.0,
+        "cost_price": 0.0,
+        "market_val": 0.0,
+        "pl_val": -150.0
+      },
+      "HK.09992": {
+        "qty": 0.0,
+        "can_sell": 0.0,
+        "cost_price": 0.0,
+        "market_val": 0.0,
+        "pl_val": -160.0
+      },
+      "HK.03690": {
+        "qty": 0.0,
+        "can_sell": 0.0,
+        "cost_price": 0.0,
+        "market_val": 0.0,
+        "pl_val": -10.0
+      }
+    },
+    "db_positions": {
+      "HK.00981": {
+        "qty": 5500.0,
+        "avg_price": 53.481818181818184
+      },
+      "HK.03690": {
+        "qty": 200.0,
+        "avg_price": 76.4
+      },
+      "HK.09992": {
+        "qty": 1600.0,
+        "avg_price": 200.15
+      }
+    },
+    "diff": [
+      {
+        "code": "HK.09992",
+        "futu_qty": 0.0,
+        "db_qty": 1600.0,
+        "diff": -1600.0
+      },
+      {
+        "code": "HK.03690",
+        "futu_qty": 0.0,
+        "db_qty": 200.0,
+        "diff": -200.0
+      },
+      {
+        "code": "HK.00981",
+        "futu_qty": 0.0,
+        "db_qty": 5500.0,
+        "diff": -5500.0
+      }
+    ],
+    "is_sync": false,
+    "message": "⚠️ 发现 3 处差异"
+  },
+  {
+    "timestamp": "2026-03-23T21:03:20.966302",
+    "futu_positions": {
+      "HK.00981": {
+        "qty": 0.0,
+        "can_sell": 0.0,
+        "cost_price": 0.0,
+        "market_val": 0.0,
+        "pl_val": -150.0
+      },
+      "HK.09992": {
+        "qty": 0.0,
+        "can_sell": 0.0,
+        "cost_price": 0.0,
+        "market_val": 0.0,
+        "pl_val": -160.0
+      },
+      "HK.03690": {
+        "qty": 0.0,
+        "can_sell": 0.0,
+        "cost_price": 0.0,
+        "market_val": 0.0,
+        "pl_val": -10.0
+      }
+    },
+    "db_positions": {},
+    "diff": [],
+    "is_sync": true,
+    "message": "✅ 数据库与富途持仓一致"
+  },
+  {
+    "timestamp": "2026-03-23T21:07:08.616786",
+    "futu_positions": {
+      "HK.00981": {
+        "qty": 5500.0,
+        "can_sell": 5500.0,
+        "cost_price": 53.481818181818184,
+        "market_val": 297825.0,
+        "pl_val": 3675.0
+      },
+      "HK.09992": {
+        "qty": 1600.0,
+        "can_sell": 1600.0,
+        "cost_price": 200.15,
+        "market_val": 323520.0,
+        "pl_val": 3280.0
+      },
+      "HK.03690": {
+        "qty": 200.0,
+        "can_sell": 200.0,
+        "cost_price": 76.4,
+        "market_val": 15310.0,
+        "pl_val": 30.0
+      }
+    },
+    "db_positions": {
+      "HK.00981": {
+        "qty": 5500.0,
+        "avg_price": 53.481818
+      },
+      "HK.03690": {
+        "qty": 200.0,
+        "avg_price": 76.4
+      },
+      "HK.09992": {
+        "qty": 1600.0,
+        "avg_price": 200.15
+      }
+    },
+    "diff": [],
+    "is_sync": true,
+    "message": "✅ 数据库与富途持仓一致"
+  },
+  {
+    "timestamp": "2026-03-23T22:00:02.489865",
+    "futu_positions": {
+      "HK.00981": {
+        "qty": 5500.0,
+        "can_sell": 5500.0,
+        "cost_price": 53.481818181818184,
+        "market_val": 297825.0,
+        "pl_val": 3675.0
+      },
+      "HK.09992": {
+        "qty": 1600.0,
+        "can_sell": 1600.0,
+        "cost_price": 200.15,
+        "market_val": 323520.0,
+        "pl_val": 3280.0
+      },
+      "HK.03690": {
+        "qty": 200.0,
+        "can_sell": 200.0,
+        "cost_price": 76.4,
+        "market_val": 15310.0,
+        "pl_val": 30.0
+      }
+    },
+    "db_positions": {
+      "HK.00981": {
+        "qty": 5500.0,
+        "avg_price": 53.481818
+      },
+      "HK.03690": {
+        "qty": 200.0,
+        "avg_price": 76.4
+      },
+      "HK.09992": {
+        "qty": 1600.0,
+        "avg_price": 200.15
+      }
+    },
+    "diff": [],
+    "is_sync": true,
+    "message": "✅ 数据库与富途持仓一致"
+  },
+  {
+    "timestamp": "2026-03-23T23:00:02.983262",
+    "futu_positions": {
+      "HK.00981": {
+        "qty": 5500.0,
+        "can_sell": 5500.0,
+        "cost_price": 53.481818181818184,
+        "market_val": 297825.0,
+        "pl_val": 3675.0
+      },
+      "HK.09992": {
+        "qty": 1600.0,
+        "can_sell": 1600.0,
+        "cost_price": 200.15,
+        "market_val": 323520.0,
+        "pl_val": 3280.0
+      },
+      "HK.03690": {
+        "qty": 200.0,
+        "can_sell": 200.0,
+        "cost_price": 76.4,
+        "market_val": 15310.0,
+        "pl_val": 30.0
+      }
+    },
+    "db_positions": {
+      "HK.00981": {
+        "qty": 5500.0,
+        "avg_price": 53.481818
+      },
+      "HK.03690": {
+        "qty": 200.0,
+        "avg_price": 76.4
+      },
+      "HK.09992": {
+        "qty": 1600.0,
+        "avg_price": 200.15
+      }
+    },
+    "diff": [],
+    "is_sync": true,
+    "message": "✅ 数据库与富途持仓一致"
+  }
+]

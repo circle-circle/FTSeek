@@ -9,6 +9,7 @@ from typing import Optional
 from .base import Signal, SignalAction
 
 logger = logging.getLogger("ftseek.strategy.tradingview")
+logger.propagate = False  # 防止日志重复
 
 # TradingView ticker -> FTSeek code 映射
 TICKER_MAP = {
@@ -97,7 +98,7 @@ def parse_tradingview_webhook(payload: dict) -> Optional[Signal]:
                     if "@" in text:
                         try:
                             price = float(text.split("@")[1].strip())
-                        except:
+                        except (ValueError, IndexError):
                             pass
 
         if not ticker:

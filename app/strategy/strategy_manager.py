@@ -8,6 +8,7 @@ from typing import Dict, List, Optional
 from .base import BaseStrategy
 
 logger = logging.getLogger("ftseek.strategy.manager")
+logger.propagate = False  # 防止日志重复
 
 
 class StrategyManager:
@@ -127,7 +128,8 @@ class StrategyManager:
                     # 尝试类型转换
                     try:
                         v = json.loads(v)
-                    except:
+                    except (json.JSONDecodeError, ValueError) as e:
+                        logger.debug(f"解析参数值 {v} 失败：{e}")
                         pass
                     params[k] = v
             if params and self.update_strategy(name, params):

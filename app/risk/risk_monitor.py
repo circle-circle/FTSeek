@@ -2,11 +2,11 @@
 风险监控面板模块 (Risk Monitor) - FTSeek v3.0
 
 功能：
-- 每 2 小时推送风险监控面板
-- 监控账户总值/可用现金/持仓市值
-- 监控今日/本周/总回撤
-- 监控持仓数量/今日交易次数/连续亏损次数
-- 监控风控状态
+- 每 2 小时推送交易健康度看板（替换旧版风险监控）
+- 策略层：胜率/盈亏比/期望/回撤/Sharpe/Profit Factor
+- 执行层：成交率/滑点/延迟等
+- 风控层：熔断/拦截率/敞口
+- 系统层：存活/行情延迟/DB延迟/队列
 
 推送频率：交易日每 2 小时 (10:00/12:00/14:00/16:00)
 """
@@ -17,6 +17,7 @@ from datetime import datetime, timedelta
 from dataclasses import dataclass, field
 
 logger = logging.getLogger("ftseek.risk.monitor")
+logger.propagate = False  # 防止日志重复
 
 
 @dataclass
@@ -52,6 +53,9 @@ class RiskMonitorData:
     # 详细持仓列表
     positions: List[Dict] = field(default_factory=list)
     
+    # 健康度看板（新增，Task3 中由 dingtalk 直接渲染）
+    health: Any = None  # HealthDashboard 实例（避免循环导入，用 Any）
+    
     def to_dict(self) -> Dict:
         """转换为字典"""
         return {
@@ -83,18 +87,25 @@ class RiskMonitor:
     负责收集和推送风险监控面板数据
     """
 
-    def __init__(self, risk_manager=None, database=None, dingtalk_notifier=None):
+    def __init__(self, risk_manager=None, database=None, dingtalk_notifier=None,
+                 circuit_breaker=None, subscriber_ref=None, executor_ref=None):
         """
         初始化风险监控器
         
         Args:
-            risk_manager: 风控管理器实例
-            database: 数据库实例
+            risk_manager:      风控管理器实例
+            database:          数据库实例（保留兼容）
             dingtalk_notifier: 钉钉推送实例
+            circuit_breaker:   熔断器实例（风控层）
+            subscriber_ref:    DataSubscriber 实例（行情延迟）
+            executor_ref:      TradeExecutor 实例（执行层/滑点）
         """
         self.risk_manager = risk_manager
         self.database = database
         self.dingtalk_notifier = dingtalk_notifier
+        self.circuit_breaker = circuit_breaker
+        self.subscriber_ref = subscriber_ref
+        self.executor_ref = executor_ref
         
         # 推送时间配置 (交易日)
         self.push_times = ["10:00", "12:00", "14:00", "16:00"]
@@ -167,6 +178,19 @@ class RiskMonitor:
             logger.warning("风控管理器未初始化，返回空监控数据")
             data.risk_status = "⚠️ 未初始化"
         
+        # 采集健康度看板（新增）
+        try:
+            from app.risk.health_dashboard import HealthDashboardCollector
+            collector = HealthDashboardCollector(
+                risk_manager=self.risk_manager,
+                circuit_breaker=self.circuit_breaker,
+                subscriber_ref=self.subscriber_ref,
+                executor_ref=self.executor_ref,
+            )
+            data.health = collector.collect()
+        except Exception as e:
+            logger.warning(f"健康度看板采集失败: {e}")
+        
         return data
 
     def _get_position_details(self) -> List[Dict]:
@@ -219,23 +243,27 @@ class RiskMonitor:
 
     def push_monitor(self) -> bool:
         """
-        推送风险监控面板
+        推送交易健康度看板（每2小时）
         
         Returns:
             bool: 是否成功推送
         """
         try:
-            # 收集监控数据
+            # 收集监控数据（含健康度看板）
             data = self.collect_monitor_data()
             
-            # 推送到钉钉
             if self.dingtalk_notifier:
-                success = self.dingtalk_notifier.send_risk_monitor(data.to_dict())
+                # 优先使用新版健康度看板推送
+                if data.health is not None and hasattr(self.dingtalk_notifier, 'send_health_dashboard'):
+                    success = self.dingtalk_notifier.send_health_dashboard(data)
+                else:
+                    # 降级到旧版风险监控推送
+                    success = self.dingtalk_notifier.send_risk_monitor(data.to_dict())
                 if success:
-                    logger.info(f"风险监控面板已推送：{data.time_str}")
+                    logger.info(f"交易健康度看板已推送：{data.time_str}")
                     return True
                 else:
-                    logger.error("风险监控面板推送失败")
+                    logger.error("交易健康度看板推送失败")
                     return False
             else:
                 # 无钉钉推送时，打印日志
@@ -243,7 +271,7 @@ class RiskMonitor:
                 return True
                 
         except Exception as e:
-            logger.error(f"推送风险监控面板异常：{e}", exc_info=True)
+            logger.error(f"推送交易健康度看板异常：{e}", exc_info=True)
             return False
 
     def _print_monitor_data(self, data: RiskMonitorData):
@@ -303,16 +331,20 @@ class RiskMonitor:
 risk_monitor: Optional[RiskMonitor] = None
 
 
-def get_risk_monitor(risk_manager=None, database=None, dingtalk_notifier=None) -> RiskMonitor:
+def get_risk_monitor(risk_manager=None, database=None, dingtalk_notifier=None,
+                     circuit_breaker=None, subscriber_ref=None, executor_ref=None) -> RiskMonitor:
     """获取风险监控器单例"""
     global risk_monitor
     if risk_monitor is None:
-        risk_monitor = RiskMonitor(risk_manager, database, dingtalk_notifier)
+        risk_monitor = RiskMonitor(risk_manager, database, dingtalk_notifier,
+                                   circuit_breaker, subscriber_ref, executor_ref)
     return risk_monitor
 
 
-def init_risk_monitor(risk_manager=None, database=None, dingtalk_notifier=None) -> RiskMonitor:
-    """初始化风险监控器"""
+def init_risk_monitor(risk_manager=None, database=None, dingtalk_notifier=None,
+                      circuit_breaker=None, subscriber_ref=None, executor_ref=None) -> RiskMonitor:
+    """初始化风险监控器（强制重新创建）"""
     global risk_monitor
-    risk_monitor = RiskMonitor(risk_manager, database, dingtalk_notifier)
+    risk_monitor = RiskMonitor(risk_manager, database, dingtalk_notifier,
+                               circuit_breaker, subscriber_ref, executor_ref)
     return risk_monitor

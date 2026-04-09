@@ -1,46 +1,178 @@
-# FTSeek v3.0 风控配置
+# 风险管理配置 (Risk Management Configuration)
+# 创建日期：2026-04-08
 
-# 交易模式
-trading:
-  mode: "paper"             # paper=模拟，real=实盘
-  paper_initial_cash: 1000000  # 100 万港币
-  currency: "HKD"
+# ============================================================
+# 仓位管理
+# ============================================================
+position_management:
+  # 最大持仓数
+  max_open_positions: 4
 
-# 五层风控阈值
-risk_limits:
-  # 信号级
+  # 单只股票最大仓位 (占总资金比例)
+  max_position_per_stock_pct: 0.20
+
+  # 总仓位上限 (占总资金比例)
+  max_total_exposure_pct: 0.80
+
+  # 最小交易金额 (港元)
+  min_trade_amount: 1000
+
+  # 碎股处理
+  allow_odd_lot: false
+  odd_lot_threshold: 100  # 少于 100 股视为碎股
+
+# ============================================================
+# 止损配置
+# ============================================================
+stop_loss:
+  # 固定止损百分比
+  fixed_stop_loss_pct: -3.0
+
+  # ATR 止损倍数
+  atr_stop_loss_multiplier: 2.5
+
+  # SuperTrend 止损
+  supertrend_period: 10
+  supertrend_multiplier: 3.0
+
+  # 移动止损 (追踪止损)
+  trailing_stop:
+    enabled: true
+    trigger_pct: 2.5      # 盈利达到 2.5% 后启动追踪止损
+    trail_pct: 1.5        # 追踪止损回调幅度
+
+  # 日内止损
+  intraday_stop_loss_pct: -1.5
+
+  # 时间止损 (持仓超过 N 小时自动平仓)
+  time_stop_hours: 48
+
+# ============================================================
+# 止盈配置
+# ============================================================
+take_profit:
+  # 固定止盈百分比
+  fixed_take_profit_pct: 4.0
+
+  # 分批止盈
+  partial_take_profit:
+    enabled: true
+    levels:
+      - trigger_pct: 2.0    # 盈利 2% 时
+        close_pct: 0.5      # 平仓 50%
+      - trigger_pct: 4.0    # 盈利 4% 时
+        close_pct: 0.5      # 平仓剩余 50%
+
+  # 移动止盈
+  trailing_take_profit:
+    enabled: true
+    trigger_pct: 2.5        # 盈利达到 2.5% 后启动
+    trail_pct: 1.0          # 回调 1% 止盈
+
+# ============================================================
+# 风险控制
+# ============================================================
+risk_control:
+  # 最大日亏损 (达到后停止当日交易)
+  max_daily_loss_pct: 5.0
+
+  # 最大总回撤 (达到后停止所有交易)
+  max_max_drawdown_pct: 15.0
+
+  # 单笔最大亏损
+  max_loss_per_trade_pct: 2.0
+
+  # 连续亏损限制
+  max_consecutive_losses: 3
+  cooldown_after_max_losses: 120  # 冷却时间 (秒)
+
+  # 信号冷却时间 (同一股票)
+  signal_cooldown_seconds: 120
+
+  # 置信度阈值
   min_confidence: 0.60
-  
-  # 订单级
-  max_single_position: 0.20
-  max_single_loss: 0.10
-  
-  # 仓位级
-  max_total_position: 0.80
-  max_daily_trades: 10
-  max_daily_loss: 0.05
-  max_weekly_loss: 0.10
-  
-  # 账户级
-  max_drawdown: 0.15
-  consecutive_loss_limit: 5
-  
-  # 策略级
-  strategy_min_trades: 20
-  strategy_min_winrate: 0.40
 
-# 预警配置
-alerts:
-  dingtalk_webhook: "${DINGTALK_WEBHOOK_URL}"
-  dingtalk_secret: "${DINGTALK_SECRET}"
-  alert_contacts:
-    - name: "管理员"
-      phone: "${ADMIN_PHONE}"
-      email: "${ADMIN_EMAIL}"
+# ============================================================
+# 价格检查
+# ============================================================
+price_check:
+  # 追高禁止阈值
+  chase_reject_threshold: 0.05    # 涨幅超过 5% 禁止买入
 
-# 定时推送
-schedule:
-  daily_stats_time: "16:30"    # 收盘统计
-  weekly_report_time: "09:00"  # 周报 (周一)
-  monthly_report_time: "09:00" # 月报 (每月 1 日)
-  risk_monitor_interval: 120   # 风险监控间隔 (分钟)
+  # 追高警告阈值
+  chase_warning_threshold: 0.03   # 涨幅超过 3% 发出警告
+
+  # 杀跌警告阈值
+  panic_warning_threshold: 0.03   # 跌幅超过 3% 发出警告
+
+  # 高点买入禁止阈值
+  high_buy_threshold: 0.01        # 价格距日内高点 1% 内禁止买入
+
+  # 低点卖出禁止阈值
+  low_sell_threshold: 0.01        # 价格距日内低点 1% 内禁止卖出
+
+  # ADX 极端值阈值
+  adx_extreme_threshold: 60.0     # ADX 超过 60 表示趋势极端
+
+# ============================================================
+# 突发新闻止盈配置 (2026-04-08 新增)
+# 用于快速突发事件获利，落袋为安
+# ============================================================
+breaking_news_exit:
+  enabled: true
+  # 快速止盈：盈利 2% 即走（原固定止盈 4%）
+  take_profit_pct: 2.0
+  # 紧密追踪止损：回调 0.5% 即止盈（原 1.5%）
+  trailing_stop_pct: 0.5
+  # 最长持仓时间：30 分钟（防止盈利回吐）
+  max_holding_minutes: 30
+  # 止损也收紧：-2% 止损（原 -3%）
+  stop_loss_pct: -2.0
+  # 新闻情绪阈值：低于此值的新闻不触发快速止盈
+  min_sentiment_score: 0.5
+
+# ============================================================
+# 卖空配置
+# ============================================================
+short_selling:
+  # 卖空功能开关 (2026-04-08: 模拟盘禁用)
+  enabled: false
+
+  # 卖空限制
+  max_short_position_pct: 0.0     # 卖空仓位上限 (0=禁止)
+
+  # 卖空成本检查
+  check_borrow_cost: true
+  max_borrow_cost_pct: 0.05       # 最大借券成本
+
+# ============================================================
+# 熔断器配置 (2026-04-09 优化)
+# ============================================================
+circuit_breaker:
+  # 连续拒绝次数触发熔断
+  reject_limit: 5
+  
+  # 熔断暂停时间 (秒)
+  pause_duration: 600            # 10 分钟
+  
+  # 最大回撤触发熔断
+  max_drawdown_trigger: 0.15     # 15%
+
+# ============================================================
+# 执行质量
+# ============================================================
+execution_quality:
+  # 最大滑点容忍度
+  max_slippage_pct: 0.005         # 0.5%
+
+  # 订单重试配置
+  order_retry:
+    max_retries: 3
+    base_offset_pct: 0.002        # 基础调整幅度
+    step_offset_pct: 0.001        # 每级调整幅度
+
+  # 执行超时 (秒)
+  execution_timeout_seconds: 30
+
+  # 失败率告警阈值
+  reject_rate_alert_threshold: 0.10  # 10%

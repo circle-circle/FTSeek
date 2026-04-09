@@ -1,0 +1,205 @@
+[
+  {
+    "timestamp": "2026-03-27T10:05:14.256486",
+    "code": "HK.09992",
+    "reason": "position_limit",
+    "category": "order_limit",
+    "message": "已达最大持仓数 (2/2)，拒绝开仓"
+  },
+  {
+    "timestamp": "2026-03-27T10:10:16.157453",
+    "code": "HK.09992",
+    "reason": "position_limit",
+    "category": "order_limit",
+    "message": "已达最大持仓数 (2/2)，拒绝开仓"
+  },
+  {
+    "timestamp": "2026-03-27T10:18:00.877994",
+    "code": "HK.09992",
+    "reason": "position_limit",
+    "category": "order_limit",
+    "message": "已达最大持仓数 (2/2)，拒绝开仓"
+  },
+  {
+    "timestamp": "2026-03-27T10:50:36.815283",
+    "code": "HK.03690",
+    "reason": "position_limit",
+    "category": "order_limit",
+    "message": "已达最大持仓数 (2/2)，拒绝开仓"
+  },
+  {
+    "timestamp": "2026-03-27T10:59:00.836508",
+    "code": "HK.03690",
+    "reason": "position_limit",
+    "category": "order_limit",
+    "message": "已达最大持仓数 (2/2)，拒绝开仓"
+  },
+  {
+    "timestamp": "2026-03-27T11:02:01.291711",
+    "code": "HK.09992",
+    "reason": "position_limit",
+    "category": "order_limit",
+    "message": "已达最大持仓数 (2/2)，拒绝开仓"
+  },
+  {
+    "timestamp": "2026-03-27T11:02:53.697221",
+    "code": "HK.09992",
+    "reason": "position_limit",
+    "category": "order_limit",
+    "message": "已达最大持仓数 (2/2)，拒绝开仓"
+  },
+  {
+    "timestamp": "2026-03-27T11:15:52.654937",
+    "code": "HK.09992",
+    "reason": "position_limit",
+    "category": "order_limit",
+    "message": "已达最大持仓数 (2/2)，拒绝开仓"
+  },
+  {
+    "timestamp": "2026-03-27T11:26:30.069690",
+    "code": "HK.09992",
+    "reason": "position_limit",
+    "category": "order_limit",
+    "message": "已达最大持仓数 (2/2)，拒绝开仓"
+  },
+  {
+    "timestamp": "2026-03-27T11:38:01.079881",
+    "code": "HK.09992",
+    "reason": "position_limit",
+    "category": "order_limit",
+    "message": "已达最大持仓数 (2/2)，拒绝开仓"
+  },
+  {
+    "timestamp": "2026-03-27T13:11:36.334478",
+    "code": "HK.03690",
+    "reason": "other",
+    "category": "other",
+    "message": "下单失败：暂不支持卖空"
+  },
+  {
+    "timestamp": "2026-03-27T13:14:34.634982",
+    "code": "HK.09992",
+    "reason": "position_limit",
+    "category": "order_limit",
+    "message": "已达最大持仓数 (2/2)，拒绝开仓"
+  },
+  {
+    "timestamp": "2026-03-27T13:30:22.112037",
+    "code": "HK.09992",
+    "reason": "other",
+    "category": "other",
+    "message": "下单失败：暂不支持卖空"
+  },
+  {
+    "timestamp": "2026-03-27T13:30:34.049505",
+    "code": "HK.00981",
+    "reason": "other",
+    "category": "other",
+    "message": "下单失败：持仓不足"
+  },
+  {
+    "timestamp": "2026-03-27T13:46:53.184829",
+    "code": "HK.03690",
+    "reason": "position_limit",
+    "category": "order_limit",
+    "message": "已达最大持仓数 (2/2)，拒绝开仓"
+  },
+  {
+    "timestamp": "2026-03-27T13:56:00.485762",
+    "code": "HK.09992",
+    "reason": "trend_filter",
+    "category": "other",
+    "message": "日K数据获取失败"
+  },
+  {
+    "timestamp": "2026-03-27T13:58:19.377801",
+    "code": "HK.09992",
+    "reason": "trend_filter",
+    "category": "other",
+    "message": "日K数据获取失败"
+  },
+  {
+    "timestamp": "2026-03-27T13:58:19.396702",
+    "code": "HK.00981",
+    "reason": "trend_filter",
+    "category": "other",
+    "message": "日K数据获取失败"
+  },
+  {
+    "timestamp": "2026-03-27T14:02:20.556046",
+    "code": "HK.00981",
+    "reason": "trend_filter",
+    "category": "other",
+    "message": "日K数据获取失败"
+  },
+  {
+    "timestamp": "2026-03-27T14:02:36.665030",
+    "code": "HK.09992",
+    "reason": "trend_filter",
+    "category": "other",
+    "message": "日K数据获取失败"
+  },
+  {
+    "timestamp": "2026-03-27T14:15:29.672282",
+    "code": "HK.00981",
+    "reason": "trend_filter",
+    "category": "other",
+    "message": "趋势过滤: strong_down 趋势中禁止买入 ADX=100.0 | 日K:strong_down | 日内:weak_down | ✓双重确认下跌 | 🚫禁止买入"
+  },
+  {
+    "timestamp": "2026-03-27T14:27:12.481216",
+    "code": "HK.00981",
+    "reason": "position_limit",
+    "category": "order_limit",
+    "message": "已达最大持仓数 (2/2)，拒绝开仓"
+  },
+  {
+    "timestamp": "2026-03-27T14:46:50.416816",
+    "code": "HK.09992",
+    "reason": "price_check",
+    "category": "other",
+    "message": "价格检查: 价格 151.30 接近日内低点 150.00 (距离 0.86% < 1.0%)，禁止杀跌卖出"
+  },
+  {
+    "timestamp": "2026-03-27T15:06:05.935915",
+    "code": "HK.09992",
+    "reason": "price_check",
+    "category": "other",
+    "message": "价格检查: 价格 149.75 接近日内低点 149.50 (距离 0.17% < 1.0%)，禁止杀跌卖出"
+  },
+  {
+    "timestamp": "2026-03-27T15:14:19.789466",
+    "code": "HK.09992",
+    "reason": "price_check",
+    "category": "other",
+    "message": "价格检查: 价格 150.10 接近日内低点 149.30 (距离 0.53% < 1.0%)，禁止杀跌卖出"
+  },
+  {
+    "timestamp": "2026-03-27T15:22:16.039166",
+    "code": "HK.09992",
+    "reason": "trend_filter",
+    "category": "other",
+    "message": "趋势过滤: strong_down 趋势中禁止买入 ADX=69.7 | 日K:strong_down | 日内:weak_down | ✓双重确认下跌 | 🚫禁止买入"
+  },
+  {
+    "timestamp": "2026-03-27T15:23:13.359091",
+    "code": "HK.03690",
+    "reason": "risk",
+    "category": "risk_reject",
+    "message": "风控检查失败：confidence"
+  },
+  {
+    "timestamp": "2026-03-27T15:27:08.096465",
+    "code": "HK.09992",
+    "reason": "price_check",
+    "category": "other",
+    "message": "价格检查: 价格 150.15 接近日内低点 149.30 (距离 0.57% < 1.0%)，禁止杀跌卖出"
+  },
+  {
+    "timestamp": "2026-03-27T15:42:33.456194",
+    "code": "HK.00981",
+    "reason": "trend_filter",
+    "category": "other",
+    "message": "趋势过滤: strong_down 趋势中禁止买入 ADX=89.0 | 日K:strong_down | 日内:weak_down | ✓双重确认下跌 | 🚫禁止买入"
+  }
+]

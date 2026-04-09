@@ -1,0 +1,381 @@
+[
+  {
+    "trade_id": "TC-DEMO001",
+    "code": "HK.00700",
+    "created_at": "2026-04-05T23:16:49.648884",
+    "updated_at": "2026-04-05T23:16:49.651310",
+    "is_closed": true,
+    "is_profitable": true,
+    "days_ago": 0,
+    "signal": {
+      "signal_id": "SIG001",
+      "signal_time": "2026-04-05T23:16:49.648980",
+      "signal_score": 0.75,
+      "signal_confidence": 0.8,
+      "consensus_passed": true,
+      "consensus_weights": {
+        "confluence_v2": 1.5,
+        "supertrend": 1.0
+      },
+      "risk_check_passed": true,
+      "risk_reason": "",
+      "market_regime": "trending_up",
+      "volatility_atr": 0.0,
+      "ai_sentiment_score": 0.0
+    },
+    "decision": {
+      "decision_reason": "confluence",
+      "decision_confidence": 8,
+      "position_planned": 0.2,
+      "position_adjusted": 0.2,
+      "position_adjust_reason": "",
+      "weight_config_snapshot": {},
+      "account_state": {}
+    },
+    "execution": {
+      "order_time": "2026-04-05T23:16:49.650060",
+      "expected_price": 350.0,
+      "actual_fill_price": 350.5,
+      "slippage_bps": 14.29,
+      "execution_latency_ms": 100,
+      "fill_reason": "market",
+      "commission": 0.0,
+      "stamp_duty": 0.0,
+      "transaction_fee": 0.0,
+      "total_cost": 5.0
+    },
+    "result": {
+      "exit_time": "2026-04-05T23:16:49.651265",
+      "exit_price": 360.0,
+      "exit_reason": "take_profit",
+      "holding_period_minutes": 0,
+      "max_profit_during": 1200.0,
+      "max_loss_during": 200.0,
+      "pnl": 950.0,
+      "pnl_after_fee": 945.0,
+      "pnl_percent": 0.0271,
+      "risk_reward_actual": 190.0,
+      "max_drawdown_during": 200.0
+    }
+  },
+  {
+    "trade_id": "PHASE1-TEST-001",
+    "code": "00700.HK",
+    "created_at": "2026-04-05T23:23:03.143132",
+    "updated_at": "2026-04-05T23:23:03.146547",
+    "is_closed": true,
+    "is_profitable": true,
+    "days_ago": 0,
+    "signal": {
+      "signal_id": "SIG-PHASE1-001",
+      "signal_time": "2026-04-05T23:23:03.143163",
+      "signal_score": 0.82,
+      "signal_confidence": 0.85,
+      "consensus_passed": true,
+      "consensus_weights": {
+        "technical": 0.4,
+        "sentiment": 0.3,
+        "ai": 0.3
+      },
+      "risk_check_passed": false,
+      "risk_reason": "",
+      "market_regime": "trending_up",
+      "volatility_atr": 0.025,
+      "ai_sentiment_score": 0.78
+    },
+    "decision": {
+      "decision_reason": "confluence",
+      "decision_confidence": 8,
+      "position_planned": 0.2,
+      "position_adjusted": 0.2,
+      "position_adjust_reason": "",
+      "weight_config_snapshot": {},
+      "account_state": {}
+    },
+    "execution": {
+      "order_time": "2026-04-05T23:23:03.144220",
+      "expected_price": 380.0,
+      "actual_fill_price": 380.5,
+      "slippage_bps": 13.16,
+      "execution_latency_ms": 100,
+      "fill_reason": "market",
+      "commission": 0.0,
+      "stamp_duty": 0.0,
+      "transaction_fee": 0.0,
+      "total_cost": 5.5
+    },
+    "result": {
+      "exit_time": "2026-04-05T23:23:03.146505",
+      "exit_price": 395.0,
+      "exit_reason": "take_profit",
+      "holding_period_minutes": 0,
+      "max_profit_during": 0.0,
+      "max_loss_during": 0.0,
+      "pnl": 1500.0,
+      "pnl_after_fee": 1494.5,
+      "pnl_percent": 3.95,
+      "risk_reward_actual": 272.72727272727275,
+      "max_drawdown_during": 0.0
+    }
+  },
+  {
+    "trade_id": "PHASE1-TEST-002",
+    "code": "00700.HK",
+    "created_at": "2026-04-05T23:23:57.971559",
+    "updated_at": "2026-04-05T23:23:57.980633",
+    "is_closed": true,
+    "is_profitable": true,
+    "days_ago": 0,
+    "signal": {
+      "signal_id": "SIG-PHASE1-002",
+      "signal_time": "2026-04-05T23:23:57.971598",
+      "signal_score": 0.82,
+      "signal_confidence": 0.85,
+      "consensus_passed": true,
+      "consensus_weights": {
+        "technical": 0.4,
+        "sentiment": 0.3,
+        "ai": 0.3
+      },
+      "risk_check_passed": false,
+      "risk_reason": "",
+      "market_regime": "trending_up",
+      "volatility_atr": 0.025,
+      "ai_sentiment_score": 0.78
+    },
+    "decision": {
+      "decision_reason": "confluence",
+      "decision_confidence": 8,
+      "position_planned": 0.2,
+      "position_adjusted": 0.2,
+      "position_adjust_reason": "",
+      "weight_config_snapshot": {},
+      "account_state": {}
+    },
+    "execution": {
+      "order_time": "2026-04-05T23:23:57.972925",
+      "expected_price": 380.0,
+      "actual_fill_price": 380.5,
+      "slippage_bps": 13.16,
+      "execution_latency_ms": 100,
+      "fill_reason": "market",
+      "commission": 0.0,
+      "stamp_duty": 0.0,
+      "transaction_fee": 0.0,
+      "total_cost": 5.5
+    },
+    "result": {
+      "exit_time": "2026-04-05T23:23:57.980595",
+      "exit_price": 395.0,
+      "exit_reason": "take_profit",
+      "holding_period_minutes": 0,
+      "max_profit_during": 0.0,
+      "max_loss_during": 0.0,
+      "pnl": 1500.0,
+      "pnl_after_fee": 1494.5,
+      "pnl_percent": 3.95,
+      "risk_reward_actual": 272.72727272727275,
+      "max_drawdown_during": 0.0
+    }
+  },
+  {
+    "trade_id": "VERIFY-REC-001",
+    "code": "00700.HK",
+    "created_at": "2026-04-05T23:59:27.416384",
+    "updated_at": "2026-04-05T23:59:27.418762",
+    "is_closed": true,
+    "is_profitable": true,
+    "days_ago": 0,
+    "signal": {
+      "signal_id": "SIG-V-001",
+      "signal_time": "2026-04-05T23:59:27.416402",
+      "signal_score": 0.82,
+      "signal_confidence": 0.85,
+      "consensus_passed": true,
+      "consensus_weights": {},
+      "risk_check_passed": false,
+      "risk_reason": "",
+      "market_regime": "trending_up",
+      "volatility_atr": 0.0,
+      "ai_sentiment_score": 0.0
+    },
+    "decision": {
+      "decision_reason": "confluence",
+      "decision_confidence": 8,
+      "position_planned": 0.2,
+      "position_adjusted": 0.0,
+      "position_adjust_reason": "",
+      "weight_config_snapshot": {},
+      "account_state": {}
+    },
+    "execution": {
+      "order_time": "2026-04-05T23:59:27.417508",
+      "expected_price": 380.0,
+      "actual_fill_price": 380.5,
+      "slippage_bps": 13.16,
+      "execution_latency_ms": 100,
+      "fill_reason": "market",
+      "commission": 0.0,
+      "stamp_duty": 0.0,
+      "transaction_fee": 0.0,
+      "total_cost": 5.5
+    },
+    "result": {
+      "exit_time": "2026-04-05T23:59:27.418747",
+      "exit_price": 395.0,
+      "exit_reason": "take_profit",
+      "holding_period_minutes": 0,
+      "max_profit_during": 0.0,
+      "max_loss_during": 0.0,
+      "pnl": 1500.0,
+      "pnl_after_fee": 1494.5,
+      "pnl_percent": 3.95,
+      "risk_reward_actual": 272.72727272727275,
+      "max_drawdown_during": 0.0
+    }
+  },
+  {
+    "trade_id": "E2E-001",
+    "code": "00700.HK",
+    "created_at": "2026-04-05T23:59:27.527059",
+    "updated_at": "2026-04-05T23:59:27.529629",
+    "is_closed": true,
+    "is_profitable": true,
+    "days_ago": 0,
+    "signal": {
+      "signal_id": "SIG-E2E-001",
+      "signal_time": "2026-04-05T23:59:27.527071",
+      "signal_score": 0.75,
+      "signal_confidence": 0.8,
+      "consensus_passed": true,
+      "consensus_weights": {},
+      "risk_check_passed": false,
+      "risk_reason": "",
+      "market_regime": "trending_up",
+      "volatility_atr": 0.0,
+      "ai_sentiment_score": 0.0
+    },
+    "decision": {
+      "decision_reason": "confluence",
+      "decision_confidence": 8,
+      "position_planned": 0.2,
+      "position_adjusted": 0.0,
+      "position_adjust_reason": "",
+      "weight_config_snapshot": {},
+      "account_state": {}
+    },
+    "execution": {
+      "order_time": "2026-04-05T23:59:27.528304",
+      "expected_price": 380.0,
+      "actual_fill_price": 380.5,
+      "slippage_bps": 13.16,
+      "execution_latency_ms": 0,
+      "fill_reason": "market",
+      "commission": 0.0,
+      "stamp_duty": 0.0,
+      "transaction_fee": 0.0,
+      "total_cost": 5.5
+    },
+    "result": {
+      "exit_time": "2026-04-05T23:59:27.529597",
+      "exit_price": 395.0,
+      "exit_reason": "take_profit",
+      "holding_period_minutes": 0,
+      "max_profit_during": 0.0,
+      "max_loss_during": 0.0,
+      "pnl": 1500.0,
+      "pnl_after_fee": 1494.5,
+      "pnl_percent": 3.95,
+      "risk_reward_actual": 272.72727272727275,
+      "max_drawdown_during": 0.0
+    }
+  },
+  {
+    "trade_id": "PERF-1775403399",
+    "code": "00700.HK",
+    "created_at": "2026-04-05T23:36:39.260267",
+    "updated_at": "2026-04-05T23:36:39.260267",
+    "is_closed": false,
+    "is_profitable": false,
+    "days_ago": 0,
+    "signal": {
+      "signal_id": "",
+      "signal_time": "2026-04-05T23:36:39.260273",
+      "signal_score": 0.75,
+      "signal_confidence": 0.8,
+      "consensus_passed": false,
+      "consensus_weights": {},
+      "risk_check_passed": false,
+      "risk_reason": "",
+      "market_regime": "",
+      "volatility_atr": 0.0,
+      "ai_sentiment_score": 0.0
+    },
+    "decision": {
+      "decision_reason": "confluence",
+      "decision_confidence": 8,
+      "position_planned": 0.0,
+      "position_adjusted": 0.0,
+      "position_adjust_reason": "",
+      "weight_config_snapshot": {},
+      "account_state": {}
+    },
+    "execution": {
+      "order_time": "",
+      "expected_price": 0.0,
+      "actual_fill_price": 0.0,
+      "slippage_bps": 0.0,
+      "execution_latency_ms": 0,
+      "fill_reason": "",
+      "commission": 0.0,
+      "stamp_duty": 0.0,
+      "transaction_fee": 0.0,
+      "total_cost": 0.0
+    },
+    "result": null
+  },
+  {
+    "trade_id": "PERF-1775404767",
+    "code": "00700.HK",
+    "created_at": "2026-04-05T23:59:27.531072",
+    "updated_at": "2026-04-05T23:59:27.531072",
+    "is_closed": false,
+    "is_profitable": false,
+    "days_ago": 0,
+    "signal": {
+      "signal_id": "",
+      "signal_time": "2026-04-05T23:59:27.531077",
+      "signal_score": 0.75,
+      "signal_confidence": 0.8,
+      "consensus_passed": false,
+      "consensus_weights": {},
+      "risk_check_passed": false,
+      "risk_reason": "",
+      "market_regime": "",
+      "volatility_atr": 0.0,
+      "ai_sentiment_score": 0.0
+    },
+    "decision": {
+      "decision_reason": "confluence",
+      "decision_confidence": 8,
+      "position_planned": 0.0,
+      "position_adjusted": 0.0,
+      "position_adjust_reason": "",
+      "weight_config_snapshot": {},
+      "account_state": {}
+    },
+    "execution": {
+      "order_time": "",
+      "expected_price": 0.0,
+      "actual_fill_price": 0.0,
+      "slippage_bps": 0.0,
+      "execution_latency_ms": 0,
+      "fill_reason": "",
+      "commission": 0.0,
+      "stamp_duty": 0.0,
+      "transaction_fee": 0.0,
+      "total_cost": 0.0
+    },
+    "result": null
+  }
+]

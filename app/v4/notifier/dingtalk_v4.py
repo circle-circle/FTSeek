@@ -20,6 +20,7 @@ from enum import Enum
 import requests
 
 logger = logging.getLogger("ftseek.v4.dingtalk_notifier")
+logger.propagate = False  # 防止日志重复
 
 
 class PushType(str, Enum):
@@ -162,7 +163,8 @@ class DingTalkNotifierV4:
         }
         
         self.logger = logging.getLogger("ftseek.v4.dingtalk_notifier")
-    
+        self.logger.propagate = False  # 防止日志重复
+
     def format_premarket_watchlist(self, watchlist: List[WatchlistItem]) -> str:
         """
         格式化盘前观察列表

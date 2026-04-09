@@ -7,6 +7,7 @@ from typing import Optional, Dict, Any
 import logging
 
 logger = logging.getLogger("ftseek.ai")
+logger.propagate = False  # 防止日志重复
 
 
 @dataclass

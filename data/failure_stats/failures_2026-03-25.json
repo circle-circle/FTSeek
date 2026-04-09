@@ -1,0 +1,79 @@
+[
+  {
+    "timestamp": "2026-03-25T09:47:35.392271",
+    "code": "HK.03690",
+    "reason": "other",
+    "category": "other",
+    "message": "下单失败：暂不支持卖空"
+  },
+  {
+    "timestamp": "2026-03-25T13:39:36.486767",
+    "code": "HK.00981",
+    "reason": "other",
+    "category": "other",
+    "message": "下单失败：暂不支持卖空"
+  },
+  {
+    "timestamp": "2026-03-25T14:20:31.385371",
+    "code": "HK.03690",
+    "reason": "other",
+    "category": "other",
+    "message": "下单失败：下单频率太高，请求失败，每30秒最多15次。"
+  },
+  {
+    "timestamp": "2026-03-25T14:32:26.074472",
+    "code": "HK.09992",
+    "reason": "position_limit",
+    "category": "order_limit",
+    "message": "已达最大持仓数 (2/2)，拒绝开仓"
+  },
+  {
+    "timestamp": "2026-03-25T14:41:26.860982",
+    "code": "HK.09992",
+    "reason": "position_limit",
+    "category": "order_limit",
+    "message": "已达最大持仓数 (2/2)，拒绝开仓"
+  },
+  {
+    "timestamp": "2026-03-25T15:10:14.344331",
+    "code": "HK.09992",
+    "reason": "position_limit",
+    "category": "order_limit",
+    "message": "已达最大持仓数 (2/2)，拒绝开仓"
+  },
+  {
+    "timestamp": "2026-03-25T15:23:40.319284",
+    "code": "HK.09992",
+    "reason": "position_limit",
+    "category": "order_limit",
+    "message": "已达最大持仓数 (2/2)，拒绝开仓"
+  },
+  {
+    "timestamp": "2026-03-25T15:30:38.423920",
+    "code": "HK.09992",
+    "reason": "position_limit",
+    "category": "order_limit",
+    "message": "已达最大持仓数 (2/2)，拒绝开仓"
+  },
+  {
+    "timestamp": "2026-03-25T15:31:22.458290",
+    "code": "HK.09992",
+    "reason": "position_limit",
+    "category": "order_limit",
+    "message": "已达最大持仓数 (2/2)，拒绝开仓"
+  },
+  {
+    "timestamp": "2026-03-25T15:38:25.368927",
+    "code": "HK.09992",
+    "reason": "position_limit",
+    "category": "order_limit",
+    "message": "已达最大持仓数 (2/2)，拒绝开仓"
+  },
+  {
+    "timestamp": "2026-03-25T15:43:28.553618",
+    "code": "HK.09992",
+    "reason": "position_limit",
+    "category": "order_limit",
+    "message": "已达最大持仓数 (2/2)，拒绝开仓"
+  }
+]

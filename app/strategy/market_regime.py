@@ -21,6 +21,7 @@ from collections import deque
 from .indicators import adx, atr, sma, ema, bollinger_bands
 
 logger = logging.getLogger("ftseek.strategy.market_regime")
+logger.propagate = False  # 防止日志重复
 
 
 class TrendDirection(Enum):
@@ -179,11 +180,25 @@ class MarketRegimeDetector:
         current_price = closes[-1]
         price_vs_ma = (current_price - ma_value) / ma_value
 
+        # ADX 极强（>50）时，放宽 MA 偏离阈值，避免高波动期间误判为 neutral
+        # ADX=90+ 代表极强趋势，价格偏离哪怕只有 0.5% 也应被识别为趋势
+        if adx_value >= 50:
+            ma_offset = 0.005  # ADX 极强：偏离 0.5% 即为趋势
+        elif adx_value >= self.ADX_STRONG_THRESHOLD:
+            ma_offset = 0.02   # ADX 强：偏离 2% 为趋势
+        else:
+            ma_offset = 0.0    # ADX 弱：任何方向均可
+
+        # 同时计算近期价格动量（最近5根K线趋势）
+        recent_slope = 0.0
+        if len(closes) >= 5:
+            recent_slope = (closes[-1] - closes[-5]) / closes[-5] if closes[-5] else 0
+
         # 根据 ADX 和价格相对 MA 位置判断
         if adx_value >= self.ADX_STRONG_THRESHOLD:
-            if price_vs_ma > 0.02:  # 价格在 MA 上方 2%
+            if price_vs_ma > ma_offset or (adx_value >= 50 and recent_slope > 0):
                 return TrendDirection.STRONG_UP
-            elif price_vs_ma < -0.02:
+            elif price_vs_ma < -ma_offset or (adx_value >= 50 and recent_slope < 0):
                 return TrendDirection.STRONG_DOWN
         elif adx_value >= self.ADX_WEAK_THRESHOLD:
             if price_vs_ma > 0:
@@ -247,7 +262,19 @@ class MarketRegimeDetector:
         price_vs_ma = (closes[-1] - ma_value) / ma_value if ma_value else 0
 
         # 判断市场体制类型
-        if volatility_state == VolatilityState.HIGH:
+        # 修复：ADX 极强（>50）时，趋势判断优先级高于波动率判断
+        # 避免 ADX=96 + neutral 组合被误标为 high_volatility/range_bound
+        if adx_value >= 50 and trend_direction != TrendDirection.NEUTRAL:
+            # 极强趋势，忽略波动率状态，直接输出趋势类型
+            if trend_direction == TrendDirection.STRONG_UP:
+                regime_type = MarketRegimeType.STRONG_TREND_UP
+            elif trend_direction == TrendDirection.WEAK_UP:
+                regime_type = MarketRegimeType.WEAK_TREND_UP
+            elif trend_direction == TrendDirection.STRONG_DOWN:
+                regime_type = MarketRegimeType.STRONG_TREND_DOWN
+            else:
+                regime_type = MarketRegimeType.WEAK_TREND_DOWN
+        elif volatility_state == VolatilityState.HIGH:
             regime_type = MarketRegimeType.HIGH_VOLATILITY
         elif volatility_state == VolatilityState.LOW:
             regime_type = MarketRegimeType.LOW_VOLATILITY

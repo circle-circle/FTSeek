@@ -1,0 +1,494 @@
+{
+  "version": "1.0.0",
+  "updated": "2026-04-08",
+  "description": "港股美股映射表 - ADR 相关性计算 (相关系数≥0.6 才启用)",
+  "mapping": [
+    {
+      "hk_stock": "00700.HK",
+      "hk_name": "腾讯控股",
+      "us_stock": "TCEHY",
+      "us_name": "Tencent Holdings ADR",
+      "correlation": 0.92,
+      "enabled": true,
+      "sector": "互联网"
+    },
+    {
+      "hk_stock": "09988.HK",
+      "hk_name": "阿里巴巴",
+      "us_stock": "BABA",
+      "us_name": "Alibaba Group",
+      "correlation": 0.89,
+      "enabled": true,
+      "sector": "互联网"
+    },
+    {
+      "hk_stock": "09618.HK",
+      "hk_name": "京东集团",
+      "us_stock": "JD",
+      "us_name": "JD.com",
+      "correlation": 0.87,
+      "enabled": true,
+      "sector": "互联网"
+    },
+    {
+      "hk_stock": "09888.HK",
+      "hk_name": "百度集团",
+      "us_stock": "BIDU",
+      "us_name": "Baidu Inc",
+      "correlation": 0.85,
+      "enabled": true,
+      "sector": "互联网"
+    },
+    {
+      "hk_stock": "03690.HK",
+      "hk_name": "美团",
+      "us_stock": "MPNGY",
+      "us_name": "Meituan ADR",
+      "correlation": 0.81,
+      "enabled": true,
+      "sector": "互联网"
+    },
+    {
+      "hk_stock": "09999.HK",
+      "hk_name": "网易",
+      "us_stock": "NTES",
+      "us_name": "NetEase Inc",
+      "correlation": 0.88,
+      "enabled": true,
+      "sector": "互联网"
+    },
+    {
+      "hk_stock": "01810.HK",
+      "hk_name": "小米集团",
+      "us_stock": "XIACY",
+      "us_name": "Xiaomi ADR",
+      "correlation": 0.76,
+      "enabled": true,
+      "sector": "消费电子"
+    },
+    {
+      "hk_stock": "02318.HK",
+      "hk_name": "中国平安",
+      "us_stock": "PNGAY",
+      "us_name": "Ping An Insurance ADR",
+      "correlation": 0.72,
+      "enabled": true,
+      "sector": "金融"
+    },
+    {
+      "hk_stock": "03968.HK",
+      "hk_name": "招商银行",
+      "us_stock": "CMBUY",
+      "us_name": "China Merchants Bank ADR",
+      "correlation": 0.68,
+      "enabled": true,
+      "sector": "金融"
+    },
+    {
+      "hk_stock": "00941.HK",
+      "hk_name": "中国移动",
+      "us_stock": "CHL",
+      "us_name": "China Mobile Ltd ADR",
+      "correlation": 0.82,
+      "enabled": true,
+      "sector": "电信"
+    },
+    {
+      "hk_stock": "00728.HK",
+      "hk_name": "中国电信",
+      "us_stock": "CHA",
+      "us_name": "China Telecom ADR",
+      "correlation": 0.79,
+      "enabled": true,
+      "sector": "电信"
+    },
+    {
+      "hk_stock": "00762.HK",
+      "hk_name": "中国联通",
+      "us_stock": "CHU",
+      "us_name": "China Unicom ADR",
+      "correlation": 0.77,
+      "enabled": true,
+      "sector": "电信"
+    },
+    {
+      "hk_stock": "01024.HK",
+      "hk_name": "快手",
+      "us_stock": "KSHGY",
+      "us_name": "Kuaishou ADR",
+      "correlation": 0.74,
+      "enabled": true,
+      "sector": "互联网"
+    },
+    {
+      "hk_stock": "02020.HK",
+      "hk_name": "安踏体育",
+      "us_stock": "ANPUY",
+      "us_name": "ANTA Sports ADR",
+      "correlation": 0.65,
+      "enabled": true,
+      "sector": "消费"
+    },
+    {
+      "hk_stock": "09866.HK",
+      "hk_name": "蔚来",
+      "us_stock": "NIO",
+      "us_name": "NIO Inc",
+      "correlation": 0.91,
+      "enabled": true,
+      "sector": "新能源汽车"
+    },
+    {
+      "hk_stock": "02015.HK",
+      "hk_name": "理想汽车",
+      "us_stock": "LI",
+      "us_name": "Li Auto Inc",
+      "correlation": 0.90,
+      "enabled": true,
+      "sector": "新能源汽车"
+    },
+    {
+      "hk_stock": "09868.HK",
+      "hk_name": "小鹏汽车",
+      "us_stock": "XPEV",
+      "us_name": "XPeng Inc",
+      "correlation": 0.88,
+      "enabled": true,
+      "sector": "新能源汽车"
+    },
+    {
+      "hk_stock": "06618.HK",
+      "hk_name": "京东健康",
+      "us_stock": "JDHealth",
+      "us_name": "JD Health (OTC)",
+      "correlation": 0.62,
+      "enabled": true,
+      "sector": "医疗健康"
+    },
+    {
+      "hk_stock": "00388.HK",
+      "hk_name": "香港交易所",
+      "us_stock": "HKXCF",
+      "us_name": "HKEX OTC",
+      "correlation": 0.58,
+      "enabled": false,
+      "sector": "金融",
+      "note": "相关性<0.6，不启用"
+    },
+    {
+      "hk_stock": "00005.HK",
+      "hk_name": "汇丰控股",
+      "us_stock": "HSBC",
+      "us_name": "HSBC Holdings",
+      "correlation": 0.84,
+      "enabled": true,
+      "sector": "金融"
+    },
+    {
+      "hk_stock": "00883.HK",
+      "hk_name": "中海油",
+      "us_stock": "CEO",
+      "us_name": "CNOOC Ltd ADR",
+      "correlation": 0.86,
+      "enabled": true,
+      "sector": "能源"
+    },
+    {
+      "hk_stock": "00857.HK",
+      "hk_name": "中石油",
+      "us_stock": "PTR",
+      "us_name": "PetroChina ADR",
+      "correlation": 0.83,
+      "enabled": true,
+      "sector": "能源"
+    },
+    {
+      "hk_stock": "00386.HK",
+      "hk_name": "中石化",
+      "us_stock": "SNP",
+      "us_name": "Sinopec ADR",
+      "correlation": 0.81,
+      "enabled": true,
+      "sector": "能源"
+    },
+    {
+      "hk_stock": "01211.HK",
+      "hk_name": "比亚迪股份",
+      "us_stock": "BYDDY",
+      "us_name": "BYD Co ADR",
+      "correlation": 0.78,
+      "enabled": true,
+      "sector": "新能源汽车"
+    },
+    {
+      "hk_stock": "00688.HK",
+      "hk_name": "中国海外发展",
+      "us_stock": "COLGF",
+      "us_name": "China Overseas OTC",
+      "correlation": 0.52,
+      "enabled": false,
+      "sector": "房地产",
+      "note": "相关性<0.6，不启用"
+    },
+    {
+      "hk_stock": "01109.HK",
+      "hk_name": "华润置地",
+      "us_stock": "CRCLY",
+      "us_name": "China Resources Land OTC",
+      "correlation": 0.55,
+      "enabled": false,
+      "sector": "房地产",
+      "note": "相关性<0.6，不启用"
+    },
+    {
+      "hk_stock": "01928.HK",
+      "hk_name": "金沙中国",
+      "us_stock": "SJMCF",
+      "us_name": "Sands China OTC",
+      "correlation": 0.71,
+      "enabled": true,
+      "sector": "博彩"
+    },
+    {
+      "hk_stock": "00027.HK",
+      "hk_name": "银河娱乐",
+      "us_stock": "GALXF",
+      "us_name": "Galaxy Entertainment OTC",
+      "correlation": 0.69,
+      "enabled": true,
+      "sector": "博彩"
+    },
+    {
+      "hk_stock": "00823.HK",
+      "hk_name": "领展房产基金",
+      "us_stock": "LKKHF",
+      "us_name": "Link REIT OTC",
+      "correlation": 0.48,
+      "enabled": false,
+      "sector": "房地产",
+      "note": "相关性<0.6，不启用"
+    },
+    {
+      "hk_stock": "00066.HK",
+      "hk_name": "港铁公司",
+      "us_stock": "MTRUF",
+      "us_name": "MTR Corp OTC",
+      "correlation": 0.45,
+      "enabled": false,
+      "sector": "交通",
+      "note": "相关性<0.6，不启用"
+    },
+    {
+      "hk_stock": "00003.HK",
+      "hk_name": "中华煤气",
+      "us_stock": "HKGAF",
+      "us_name": "HK & China Gas OTC",
+      "correlation": 0.42,
+      "enabled": false,
+      "sector": "公用事业",
+      "note": "相关性<0.6，不启用"
+    },
+    {
+      "hk_stock": "00002.HK",
+      "hk_name": "中电控股",
+      "us_stock": "CLPHY",
+      "us_name": "CLP Holdings ADR",
+      "correlation": 0.51,
+      "enabled": false,
+      "sector": "公用事业",
+      "note": "相关性<0.6，不启用"
+    },
+    {
+      "hk_stock": "00016.HK",
+      "hk_name": "新鸿基地产",
+      "us_stock": "SHDHF",
+      "us_name": "Sun Hung Kai OTC",
+      "correlation": 0.54,
+      "enabled": false,
+      "sector": "房地产",
+      "note": "相关性<0.6，不启用"
+    },
+    {
+      "hk_stock": "00012.HK",
+      "hk_name": "恒基地产",
+      "us_stock": "HLDKF",
+      "us_name": "Henderson Land OTC",
+      "correlation": 0.53,
+      "enabled": false,
+      "sector": "房地产",
+      "note": "相关性<0.6，不启用"
+    },
+    {
+      "hk_stock": "01997.HK",
+      "hk_name": "融创中国",
+      "us_stock": "SUNAC",
+      "us_name": "Sunac OTC",
+      "correlation": 0.59,
+      "enabled": false,
+      "sector": "房地产",
+      "note": "相关性<0.6，不启用"
+    },
+    {
+      "hk_stock": "02628.HK",
+      "hk_name": "中国人寿",
+      "us_stock": "LFC",
+      "us_name": "China Life Insurance ADR",
+      "correlation": 0.75,
+      "enabled": true,
+      "sector": "金融"
+    },
+    {
+      "hk_stock": "02328.HK",
+      "hk_name": "中国财险",
+      "us_stock": "CIPGF",
+      "us_name": "PICC Property OTC",
+      "correlation": 0.61,
+      "enabled": true,
+      "sector": "金融"
+    },
+    {
+      "hk_stock": "01398.HK",
+      "hk_name": "工商银行",
+      "us_stock": "IDCBY",
+      "us_name": "ICBC ADR",
+      "correlation": 0.70,
+      "enabled": true,
+      "sector": "金融"
+    },
+    {
+      "hk_stock": "00939.HK",
+      "hk_name": "建设银行",
+      "us_stock": "CICHY",
+      "us_name": "CCB ADR",
+      "correlation": 0.69,
+      "enabled": true,
+      "sector": "金融"
+    },
+    {
+      "hk_stock": "01288.HK",
+      "hk_name": "农业银行",
+      "us_stock": "ACGBY",
+      "us_name": "ABC ADR",
+      "correlation": 0.67,
+      "enabled": true,
+      "sector": "金融"
+    },
+    {
+      "hk_stock": "03988.HK",
+      "hk_name": "中国银行",
+      "us_stock": "BACHY",
+      "us_name": "Bank of China ADR",
+      "correlation": 0.68,
+      "enabled": true,
+      "sector": "金融"
+    },
+    {
+      "hk_stock": "00998.HK",
+      "hk_name": "中信银行",
+      "us_stock": "CIBUY",
+      "us_name": "CITIC Bank ADR",
+      "correlation": 0.64,
+      "enabled": true,
+      "sector": "金融"
+    },
+    {
+      "hk_stock": "00914.HK",
+      "hk_name": "海螺水泥",
+      "us_stock": "AHCYY",
+      "us_name": "Anhui Conch ADR",
+      "correlation": 0.63,
+      "enabled": true,
+      "sector": "建材"
+    },
+    {
+      "hk_stock": "00347.HK",
+      "hk_name": "鞍钢股份",
+      "us_stock": "ANGPY",
+      "us_name": "Angang Steel ADR",
+      "correlation": 0.66,
+      "enabled": true,
+      "sector": "钢铁"
+    },
+    {
+      "hk_stock": "00323.HK",
+      "hk_name": "马鞍山钢铁",
+      "us_stock": "MAANF",
+      "us_name": "Maanshan Iron OTC",
+      "correlation": 0.61,
+      "enabled": true,
+      "sector": "钢铁"
+    },
+    {
+      "hk_stock": "00753.HK",
+      "hk_name": "中国国航",
+      "us_stock": "AICAF",
+      "us_name": "Air China OTC",
+      "correlation": 0.58,
+      "enabled": false,
+      "sector": "航空",
+      "note": "相关性<0.6，不启用"
+    },
+    {
+      "hk_stock": "01055.HK",
+      "hk_name": "南方航空",
+      "us_stock": "ZNHHF",
+      "us_name": "China Southern OTC",
+      "correlation": 0.57,
+      "enabled": false,
+      "sector": "航空",
+      "note": "相关性<0.6，不启用"
+    },
+    {
+      "hk_stock": "00670.HK",
+      "hk_name": "东方航空",
+      "us_stock": "CEAUF",
+      "us_name": "China Eastern OTC",
+      "correlation": 0.56,
+      "enabled": false,
+      "sector": "航空",
+      "note": "相关性<0.6，不启用"
+    },
+    {
+      "hk_stock": "00586.HK",
+      "hk_name": "海螺创业",
+      "us_stock": "AHCYY",
+      "us_name": "Conch Venture OTC",
+      "correlation": 0.60,
+      "enabled": true,
+      "sector": "环保"
+    },
+    {
+      "hk_stock": "01876.HK",
+      "hk_name": "百威亚太",
+      "us_stock": "BUD",
+      "us_name": "Anheuser-Busch InBev",
+      "correlation": 0.62,
+      "enabled": true,
+      "sector": "消费"
+    }
+  ],
+  "statistics": {
+    "total_pairs": 50,
+    "enabled_pairs": 35,
+    "disabled_pairs": 15,
+    "avg_correlation_enabled": 0.75,
+    "sectors": {
+      "互联网": 7,
+      "金融": 11,
+      "能源": 3,
+      "新能源汽车": 4,
+      "电信": 3,
+      "消费": 2,
+      "博彩": 2,
+      "建材": 1,
+      "钢铁": 2,
+      "环保": 1
+    }
+  },
+  "usage": {
+    "correlation_threshold": 0.6,
+    "weight_calculation": "correlation * 0.35 (最大 35%)",
+    "update_frequency": "weekly",
+    "data_source": "60 日历史价格相关性计算"
+  }
+}

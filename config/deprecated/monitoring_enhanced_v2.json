@@ -1,0 +1,59 @@
+{
+  "name": "实时监控增强配置 (v2.0)",
+  "version": "2.0.0",
+  "updated_at": "2026-04-01",
+  
+  "monitoring": {
+    "check_interval_seconds": 30,
+    "night_interval_seconds": 60,
+    "description": "P0 优化：从 5 分钟 (300 秒) 缩短至 30 秒"
+  },
+  
+  "stop_loss_take_profit": {
+    "default_stop_loss": -0.08,
+    "default_take_profit": 0.15,
+    "trailing_stop": {
+      "enabled": true,
+      "trigger_percent": 0.10,
+      "pullback_percent": 0.05
+    }
+  },
+  
+  "alerts": {
+    "rate_limit_seconds": 300,
+    "description": "同类告警冷却时间，避免告警风暴",
+    
+    "distance_alerts": {
+      "stop_loss_distance_threshold": 0.02,
+      "take_profit_distance_threshold": 0.02,
+      "description": "距离止损/止盈 2% 时发送提醒"
+    },
+    
+    "volatility_alert": {
+      "enabled": true,
+      "threshold": 0.05,
+      "window_seconds": 60,
+      "description": "1 分钟内波动超过 5% 时告警"
+    }
+  },
+  
+  "notification": {
+    "dingtalk_enabled": true,
+    "push_on_trigger": true,
+    "push_daily_summary": true,
+    "alert_confirmation": {
+      "enabled": true,
+      "timeout_seconds": 300,
+      "description": "告警确认后停止推送 (5 分钟超时)"
+    }
+  },
+  
+  "验收标准": {
+    "监控间隔": "30 秒",
+    "持仓扫描": "所有 US.* 持仓",
+    "止损止盈触发": "准确执行",
+    "告警推送": "正常工作",
+    "频率限制": "同类告警 5 分钟冷却",
+    "波动告警": "±5% 触发"
+  }
+}

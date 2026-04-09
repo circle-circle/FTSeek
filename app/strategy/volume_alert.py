@@ -9,6 +9,7 @@ from .base import BaseStrategy, Signal, SignalAction
 from app import config
 
 logger = logging.getLogger("ftseek.strategy.volume_alert")
+logger.propagate = False  # 防止日志重复
 
 
 class VolumeAlertStrategy(BaseStrategy):

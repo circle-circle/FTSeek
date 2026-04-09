@@ -24,8 +24,24 @@ import logging
 from pathlib import Path
 
 from app.v4.models.trading_models import TradingDatabase, PaperPosition as DBPaperPosition, PaperTrade as DBPaperTrade
+from app.ftlogging.simulation_logger import get_simulation_logger
 
 logger = logging.getLogger("ftseek.v4.trader.paper_trader")
+logger.propagate = False  # 防止日志重复
+
+# 模拟盘日志记录器
+_sim_logger = None
+
+
+def _get_sim_logger():
+    """延迟加载模拟盘日志记录器"""
+    global _sim_logger
+    if _sim_logger is None:
+        try:
+            _sim_logger = get_simulation_logger()
+        except Exception as e:
+            logger.warning(f"初始化模拟盘日志记录器失败：{e}")
+    return _sim_logger
 
 
 @dataclass
@@ -39,6 +55,7 @@ class PaperPosition:
         avg_cost: 平均成本 (含滑点)
         current_price: 当前价格
         entry_time: 首次建仓时间
+        direction: 持仓方向 "long"=多头 / "short"=空头
         unrealized_pnl: 未实现盈亏
         unrealized_return: 未实现收益率 (%)
     """
@@ -47,12 +64,16 @@ class PaperPosition:
     avg_cost: float
     current_price: float = 0.0
     entry_time: datetime = field(default_factory=datetime.now)
+    direction: str = "long"  # "long" 多头 / "short" 空头
     
     @property
     def unrealized_pnl(self) -> float:
         """计算未实现盈亏"""
         if self.current_price == 0:
             return 0.0
+        if self.direction == "short":
+            # 空头盈亏：成本 - 当前价（价格下跌才赚钱）
+            return (self.avg_cost - self.current_price) * self.quantity
         return (self.current_price - self.avg_cost) * self.quantity
     
     @property
@@ -73,6 +94,7 @@ class PaperPosition:
             "avg_cost": self.avg_cost,
             "current_price": self.current_price,
             "entry_time": self.entry_time.isoformat() if self.entry_time else None,
+            "direction": self.direction,
             "unrealized_pnl": self.unrealized_pnl,
             "unrealized_return": self.unrealized_return,
         }
@@ -156,6 +178,9 @@ class PaperTradingEngine:
             self.db = None
             self._owns_session = False
         
+        # 初始化模拟盘日志记录器
+        self.sim_logger = _get_sim_logger()
+        
         logger.info(f"PaperTradingEngine 初始化完成，滑点：{slippage*100:.2f}%")
     
     def __del__(self):
@@ -163,7 +188,7 @@ class PaperTradingEngine:
         if self._owns_session and hasattr(self, 'db_session') and self.db_session:
             try:
                 self.db_session.close()
-            except:
+            except (AttributeError, Exception):
                 pass
     
     def buy(self, code: str, quantity: int, market_price: float, 
@@ -195,7 +220,18 @@ class PaperTradingEngine:
         exec_price = market_price * (1 + self.slippage)
         
         # 获取现有持仓
-        db_position = self.db.get_position_by_code(code)
+        db_position = self.db.get_position_by_code(code, direction="long")
+        
+        # 记录订单创建
+        order_id = None
+        if self.sim_logger:
+            order_id = self.sim_logger.log_order_created(
+                code=code,
+                action="BUY",
+                quantity=quantity,
+                price=exec_price,
+                order_type="MARKET"
+            )
         
         if db_position:
             # 已有持仓，计算新的平均成本
@@ -211,15 +247,38 @@ class PaperTradingEngine:
                 avg_cost=new_avg_cost
             )
             logger.info(f"加仓 {code}: {quantity}股 @ {exec_price:.3f}, 新平均成本：{new_avg_cost:.3f}")
+            
+            # 记录持仓变化
+            if self.sim_logger:
+                self.sim_logger.log_position_change(
+                    code=code,
+                    change_type="ADD",
+                    quantity=quantity,
+                    avg_cost=new_avg_cost,
+                    current_quantity=total_quantity,
+                    unrealized_pnl=0.0
+                )
         else:
-            # 新建持仓
+            # 新建多头持仓
             self.db.create_paper_position(
                 code=code,
                 quantity=quantity,
                 avg_cost=exec_price,
-                entry_time=timestamp
+                entry_time=timestamp,
+                direction="long"
             )
             logger.info(f"建仓 {code}: {quantity}股 @ {exec_price:.3f}")
+            
+            # 记录持仓变化
+            if self.sim_logger:
+                self.sim_logger.log_position_change(
+                    code=code,
+                    change_type="OPEN",
+                    quantity=quantity,
+                    avg_cost=exec_price,
+                    current_quantity=quantity,
+                    unrealized_pnl=0.0
+                )
         
         # 记录交易
         db_trade = self.db.create_paper_trade(
@@ -230,6 +289,17 @@ class PaperTradingEngine:
             timestamp=timestamp,
             pnl=0.0
         )
+        
+        # 记录成交
+        if self.sim_logger:
+            self.sim_logger.log_order_filled(
+                order_id=order_id or "",
+                code=code,
+                action="BUY",
+                filled_quantity=quantity,
+                filled_price=exec_price,
+                commission=0.0
+            )
         
         return PaperTrade(
             code=code,
@@ -267,7 +337,7 @@ class PaperTradingEngine:
         timestamp = timestamp or datetime.now()
         
         # 获取现有持仓
-        db_position = self.db.get_position_by_code(code)
+        db_position = self.db.get_position_by_code(code, direction="long")
         
         if not db_position:
             raise ValueError(f"无持仓可卖：{code}")
@@ -287,13 +357,36 @@ class PaperTradingEngine:
         cost_basis = db_position.avg_cost * quantity
         return_pct = (pnl / cost_basis * 100) if cost_basis > 0 else 0.0
         
+        # 记录订单创建
+        order_id = None
+        if self.sim_logger:
+            order_id = self.sim_logger.log_order_created(
+                code=code,
+                action="SELL",
+                quantity=quantity,
+                price=exec_price,
+                order_type="MARKET"
+            )
+        
         # 更新持仓
         new_quantity = db_position.quantity - quantity
+        change_type = "CLOSE" if new_quantity == 0 else "REDUCE"
         
         if new_quantity == 0:
             # 清空持仓
             self.db.delete_paper_position(db_position.id)
             logger.info(f"清仓 {code}: {quantity}股 @ {exec_price:.3f}, 盈亏：{pnl:.2f}")
+            
+            # 记录持仓变化
+            if self.sim_logger:
+                self.sim_logger.log_position_change(
+                    code=code,
+                    change_type=change_type,
+                    quantity=quantity,
+                    avg_cost=db_position.avg_cost,
+                    current_quantity=0,
+                    unrealized_pnl=pnl
+                )
         else:
             # 部分卖出，平均成本不变
             self.db.update_paper_position(
@@ -301,6 +394,17 @@ class PaperTradingEngine:
                 quantity=new_quantity
             )
             logger.info(f"减仓 {code}: {quantity}股 @ {exec_price:.3f}, 剩余：{new_quantity}股")
+            
+            # 记录持仓变化
+            if self.sim_logger:
+                self.sim_logger.log_position_change(
+                    code=code,
+                    change_type=change_type,
+                    quantity=quantity,
+                    avg_cost=db_position.avg_cost,
+                    current_quantity=new_quantity,
+                    unrealized_pnl=0.0
+                )
         
         # 记录交易
         db_trade = self.db.create_paper_trade(
@@ -312,6 +416,17 @@ class PaperTradingEngine:
             pnl=pnl
         )
         
+        # 记录成交
+        if self.sim_logger:
+            self.sim_logger.log_order_filled(
+                order_id=order_id or "",
+                code=code,
+                action="SELL",
+                filled_quantity=quantity,
+                filled_price=exec_price,
+                commission=0.0
+            )
+        
         return PaperTrade(
             code=code,
             action="SELL",
@@ -322,17 +437,18 @@ class PaperTradingEngine:
             return_pct=return_pct
         )
     
-    def get_position(self, code: str) -> Optional[PaperPosition]:
+    def get_position(self, code: str, direction: str = None) -> Optional[PaperPosition]:
         """
         获取单个持仓
         
         Args:
             code: 股票代码
+            direction: 持仓方向 "long"/"short"，None 时返回第一条匹配
             
         Returns:
             PaperPosition: 持仓信息，无持仓返回 None
         """
-        db_position = self.db.get_position_by_code(code)
+        db_position = self.db.get_position_by_code(code, direction=direction)
         
         if not db_position:
             return None
@@ -345,7 +461,8 @@ class PaperTradingEngine:
             quantity=db_position.quantity,
             avg_cost=db_position.avg_cost,
             current_price=current_price,
-            entry_time=db_position.entry_time
+            entry_time=db_position.entry_time,
+            direction=db_position.direction
         )
     
     def get_all_positions(self) -> List[PaperPosition]:
@@ -363,7 +480,8 @@ class PaperTradingEngine:
                 quantity=p.quantity,
                 avg_cost=p.avg_cost,
                 current_price=self._current_prices.get(p.code, 0.0),
-                entry_time=p.entry_time
+                entry_time=p.entry_time,
+                direction=p.direction
             )
             for p in db_positions
         ]
@@ -446,6 +564,269 @@ class PaperTradingEngine:
             )
             for t in db_trades
         ]
+    
+    def short(self, code: str, quantity: int, market_price: float,
+              timestamp: datetime = None) -> PaperTrade:
+        """
+        做空股票（卖空建仓）
+        
+        Args:
+            code: 股票代码
+            quantity: 做空数量
+            market_price: 当前市价
+            timestamp: 交易时间（默认当前时间）
+            
+        Returns:
+            PaperTrade: 交易记录
+        """
+        if quantity <= 0:
+            raise ValueError(f"做空数量必须大于 0: {quantity}")
+        if market_price <= 0:
+            raise ValueError(f"价格必须大于 0: {market_price}")
+        
+        timestamp = timestamp or datetime.now()
+        
+        # 空头成交价：市价下浮滑点（以较低价卖出，模拟最差成交）
+        exec_price = market_price * (1 - self.slippage)
+        
+        # 记录订单创建
+        order_id = None
+        if self.sim_logger:
+            order_id = self.sim_logger.log_order_created(
+                code=code,
+                action="SHORT",
+                quantity=quantity,
+                price=exec_price,
+                order_type="MARKET"
+            )
+        
+        # 获取现有空头持仓
+        db_position = self.db.get_position_by_code(code, direction="short")
+        
+        if db_position:
+            # 已有空头持仓，计算新均价
+            old_cost = db_position.avg_cost * db_position.quantity
+            new_cost = exec_price * quantity
+            total_quantity = db_position.quantity + quantity
+            new_avg_cost = (old_cost + new_cost) / total_quantity
+            self.db.update_paper_position(
+                position_id=db_position.id,
+                quantity=total_quantity,
+                avg_cost=new_avg_cost
+            )
+            logger.info(f"加空 {code}: {quantity}股 @ {exec_price:.3f}, 新均价：{new_avg_cost:.3f}")
+            
+            # 记录持仓变化
+            if self.sim_logger:
+                self.sim_logger.log_position_change(
+                    code=code,
+                    change_type="ADD",
+                    quantity=quantity,
+                    avg_cost=new_avg_cost,
+                    current_quantity=total_quantity,
+                    unrealized_pnl=0.0
+                )
+        else:
+            # 新建空头持仓
+            self.db.create_paper_position(
+                code=code,
+                quantity=quantity,
+                avg_cost=exec_price,
+                entry_time=timestamp,
+                direction="short"
+            )
+            logger.info(f"建空 {code}: {quantity}股 @ {exec_price:.3f}")
+            
+            # 记录持仓变化
+            if self.sim_logger:
+                self.sim_logger.log_position_change(
+                    code=code,
+                    change_type="OPEN",
+                    quantity=quantity,
+                    avg_cost=exec_price,
+                    current_quantity=quantity,
+                    unrealized_pnl=0.0
+                )
+        
+        # 记录交易（action=SHORT 区分多头 BUY）
+        self.db.create_paper_trade(
+            code=code,
+            action="SHORT",
+            quantity=quantity,
+            price=exec_price,
+            timestamp=timestamp,
+            pnl=0.0
+        )
+        
+        # 记录成交
+        if self.sim_logger:
+            self.sim_logger.log_order_filled(
+                order_id=order_id or "",
+                code=code,
+                action="SHORT",
+                filled_quantity=quantity,
+                filled_price=exec_price,
+                commission=0.0
+            )
+        
+        # 钉钉推送：建空通知
+        try:
+            from app.notifier.dingtalk import DingTalkNotifier
+            notifier = DingTalkNotifier()
+            notifier.send_text(
+                f"[模拟盘] 📉 建空成功\n"
+                f"标的：{code}\n"
+                f"数量：{quantity} 股\n"
+                f"成交价：{exec_price:.3f}\n"
+                f"时间：{timestamp.strftime('%Y-%m-%d %H:%M:%S')}"
+            )
+        except Exception as e:
+            logger.debug(f"建空钉钉推送失败（不影响交易）：{e}")
+        
+        return PaperTrade(
+            code=code,
+            action="SHORT",
+            quantity=quantity,
+            price=exec_price,
+            timestamp=timestamp,
+            pnl=0.0,
+            return_pct=0.0
+        )
+    
+    def cover(self, code: str, quantity: int, market_price: float,
+              timestamp: datetime = None) -> PaperTrade:
+        """
+        平空仓（买入回补）
+        
+        Args:
+            code: 股票代码
+            quantity: 回补数量
+            market_price: 当前市价
+            timestamp: 交易时间（默认当前时间）
+            
+        Returns:
+            PaperTrade: 交易记录，含空头盈亏
+        """
+        if quantity <= 0:
+            raise ValueError(f"回补数量必须大于 0: {quantity}")
+        if market_price <= 0:
+            raise ValueError(f"价格必须大于 0: {market_price}")
+        
+        timestamp = timestamp or datetime.now()
+        
+        # 获取现有空头持仓
+        db_position = self.db.get_position_by_code(code, direction="short")
+        
+        if not db_position:
+            raise ValueError(f"无空头持仓可回补：{code}")
+        
+        if quantity > db_position.quantity:
+            raise ValueError(
+                f"回补数量 ({quantity}) 超过空头持仓 ({db_position.quantity}): {code}"
+            )
+        
+        # 平空成交价：市价上浮滑点（以较高价买回，模拟最差成交）
+        exec_price = market_price * (1 + self.slippage)
+        
+        # 空头盈亏：开仓价 - 平仓价，价格下跌则盈利
+        pnl = (db_position.avg_cost - exec_price) * quantity
+        
+        # 收益率
+        cost_basis = db_position.avg_cost * quantity
+        return_pct = (pnl / cost_basis * 100) if cost_basis > 0 else 0.0
+        
+        # 记录订单创建
+        order_id = None
+        if self.sim_logger:
+            order_id = self.sim_logger.log_order_created(
+                code=code,
+                action="COVER",
+                quantity=quantity,
+                price=exec_price,
+                order_type="MARKET"
+            )
+        
+        new_quantity = db_position.quantity - quantity
+        change_type = "CLOSE" if new_quantity == 0 else "REDUCE"
+        
+        if new_quantity == 0:
+            self.db.delete_paper_position(db_position.id)
+            logger.info(f"平空 {code}: {quantity}股 @ {exec_price:.3f}, 盈亏：{pnl:+.2f}")
+            
+            # 记录持仓变化
+            if self.sim_logger:
+                self.sim_logger.log_position_change(
+                    code=code,
+                    change_type=change_type,
+                    quantity=quantity,
+                    avg_cost=db_position.avg_cost,
+                    current_quantity=0,
+                    unrealized_pnl=pnl
+                )
+        else:
+            self.db.update_paper_position(
+                position_id=db_position.id,
+                quantity=new_quantity
+            )
+            logger.info(f"减空 {code}: {quantity}股 @ {exec_price:.3f}, 剩余：{new_quantity}股")
+            
+            # 记录持仓变化
+            if self.sim_logger:
+                self.sim_logger.log_position_change(
+                    code=code,
+                    change_type=change_type,
+                    quantity=quantity,
+                    avg_cost=db_position.avg_cost,
+                    current_quantity=new_quantity,
+                    unrealized_pnl=0.0
+                )
+        
+        # 记录交易（action=COVER 区分多头 SELL）
+        self.db.create_paper_trade(
+            code=code,
+            action="COVER",
+            quantity=quantity,
+            price=exec_price,
+            timestamp=timestamp,
+            pnl=pnl
+        )
+        
+        # 记录成交
+        if self.sim_logger:
+            self.sim_logger.log_order_filled(
+                order_id=order_id or "",
+                code=code,
+                action="COVER",
+                filled_quantity=quantity,
+                filled_price=exec_price,
+                commission=0.0
+            )
+        
+        # 钉钉推送：平空通知
+        try:
+            from app.notifier.dingtalk import DingTalkNotifier
+            notifier = DingTalkNotifier()
+            pnl_icon = "💰" if pnl >= 0 else "💸"
+            notifier.send_text(
+                f"[模拟盘] {pnl_icon} 平空成功\n"
+                f"标的：{code}\n"
+                f"数量：{quantity} 股\n"
+                f"成交价：{exec_price:.3f}\n"
+                f"空头盈亏：HK${pnl:+,.2f} ({return_pct:+.2f}%)\n"
+                f"时间：{timestamp.strftime('%Y-%m-%d %H:%M:%S')}"
+            )
+        except Exception as e:
+            logger.debug(f"平空钉钉推送失败（不影响交易）：{e}")
+        
+        return PaperTrade(
+            code=code,
+            action="COVER",
+            quantity=quantity,
+            price=exec_price,
+            timestamp=timestamp,
+            pnl=pnl,
+            return_pct=return_pct
+        )
     
     def close(self):
         """关闭数据库连接"""

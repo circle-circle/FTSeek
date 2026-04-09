@@ -1,0 +1,712 @@
+{
+  "download_time": "2026-03-31T07:46:01.603891",
+  "date_range": {
+    "start": "2023-01-01",
+    "end": "2026-03-31"
+  },
+  "total_stocks": 26,
+  "success_day": 25,
+  "success_60m": 25,
+  "validation_details": [
+    {
+      "code": "HK.00700",
+      "ktype": "DAY",
+      "total_records": 794,
+      "date_range": {
+        "start": "2023-01-03 00:00:00",
+        "end": "2026-03-30 00:00:00"
+      },
+      "missing_days": 0,
+      "price_anomalies": 0,
+      "valid": true,
+      "issues": []
+    },
+    {
+      "code": "HK.00700",
+      "ktype": "60M",
+      "total_records": 3000,
+      "date_range": {
+        "start": "2023-01-03 10:30:00",
+        "end": "2025-01-20 12:00:00"
+      },
+      "missing_days": 0,
+      "price_anomalies": 0,
+      "valid": true,
+      "issues": [
+        "发现 4 条零成交量记录"
+      ]
+    },
+    {
+      "code": "HK.09988",
+      "ktype": "DAY",
+      "total_records": 794,
+      "date_range": {
+        "start": "2023-01-03 00:00:00",
+        "end": "2026-03-30 00:00:00"
+      },
+      "missing_days": 0,
+      "price_anomalies": 0,
+      "valid": true,
+      "issues": []
+    },
+    {
+      "code": "HK.09988",
+      "ktype": "60M",
+      "total_records": 3000,
+      "date_range": {
+        "start": "2023-01-03 10:30:00",
+        "end": "2025-01-20 12:00:00"
+      },
+      "missing_days": 0,
+      "price_anomalies": 0,
+      "valid": true,
+      "issues": [
+        "发现 4 条零成交量记录"
+      ]
+    },
+    {
+      "code": "HK.09992",
+      "ktype": "DAY",
+      "total_records": 794,
+      "date_range": {
+        "start": "2023-01-03 00:00:00",
+        "end": "2026-03-30 00:00:00"
+      },
+      "missing_days": 0,
+      "price_anomalies": 0,
+      "valid": true,
+      "issues": []
+    },
+    {
+      "code": "HK.09992",
+      "ktype": "60M",
+      "total_records": 3000,
+      "date_range": {
+        "start": "2023-01-03 10:30:00",
+        "end": "2025-01-20 12:00:00"
+      },
+      "missing_days": 0,
+      "price_anomalies": 0,
+      "valid": true,
+      "issues": [
+        "发现 4 条零成交量记录"
+      ]
+    },
+    {
+      "code": "HK.03690",
+      "ktype": "DAY",
+      "total_records": 794,
+      "date_range": {
+        "start": "2023-01-03 00:00:00",
+        "end": "2026-03-30 00:00:00"
+      },
+      "missing_days": 0,
+      "price_anomalies": 0,
+      "valid": true,
+      "issues": []
+    },
+    {
+      "code": "HK.03690",
+      "ktype": "60M",
+      "total_records": 3000,
+      "date_range": {
+        "start": "2023-01-03 10:30:00",
+        "end": "2025-01-20 12:00:00"
+      },
+      "missing_days": 0,
+      "price_anomalies": 0,
+      "valid": true,
+      "issues": [
+        "发现 4 条零成交量记录"
+      ]
+    },
+    {
+      "code": "HK.00981",
+      "ktype": "DAY",
+      "total_records": 794,
+      "date_range": {
+        "start": "2023-01-03 00:00:00",
+        "end": "2026-03-30 00:00:00"
+      },
+      "missing_days": 0,
+      "price_anomalies": 0,
+      "valid": true,
+      "issues": []
+    },
+    {
+      "code": "HK.00981",
+      "ktype": "60M",
+      "total_records": 3000,
+      "date_range": {
+        "start": "2023-01-03 10:30:00",
+        "end": "2025-01-20 12:00:00"
+      },
+      "missing_days": 0,
+      "price_anomalies": 0,
+      "valid": true,
+      "issues": [
+        "发现 4 条零成交量记录"
+      ]
+    },
+    {
+      "code": "HK.01810",
+      "ktype": "DAY",
+      "total_records": 794,
+      "date_range": {
+        "start": "2023-01-03 00:00:00",
+        "end": "2026-03-30 00:00:00"
+      },
+      "missing_days": 0,
+      "price_anomalies": 0,
+      "valid": true,
+      "issues": []
+    },
+    {
+      "code": "HK.01810",
+      "ktype": "60M",
+      "total_records": 3000,
+      "date_range": {
+        "start": "2023-01-03 10:30:00",
+        "end": "2025-01-20 12:00:00"
+      },
+      "missing_days": 0,
+      "price_anomalies": 0,
+      "valid": true,
+      "issues": [
+        "发现 4 条零成交量记录"
+      ]
+    },
+    {
+      "code": "HK.01024",
+      "ktype": "DAY",
+      "total_records": 794,
+      "date_range": {
+        "start": "2023-01-03 00:00:00",
+        "end": "2026-03-30 00:00:00"
+      },
+      "missing_days": 0,
+      "price_anomalies": 0,
+      "valid": true,
+      "issues": []
+    },
+    {
+      "code": "HK.01024",
+      "ktype": "60M",
+      "total_records": 3000,
+      "date_range": {
+        "start": "2023-01-03 10:30:00",
+        "end": "2025-01-20 12:00:00"
+      },
+      "missing_days": 0,
+      "price_anomalies": 0,
+      "valid": true,
+      "issues": [
+        "发现 4 条零成交量记录"
+      ]
+    },
+    {
+      "code": "HK.09618",
+      "ktype": "DAY",
+      "total_records": 794,
+      "date_range": {
+        "start": "2023-01-03 00:00:00",
+        "end": "2026-03-30 00:00:00"
+      },
+      "missing_days": 0,
+      "price_anomalies": 0,
+      "valid": true,
+      "issues": []
+    },
+    {
+      "code": "HK.09618",
+      "ktype": "60M",
+      "total_records": 3000,
+      "date_range": {
+        "start": "2023-01-03 10:30:00",
+        "end": "2025-01-20 12:00:00"
+      },
+      "missing_days": 0,
+      "price_anomalies": 0,
+      "valid": true,
+      "issues": [
+        "发现 4 条零成交量记录"
+      ]
+    },
+    {
+      "code": "HK.00005",
+      "ktype": "DAY",
+      "total_records": 794,
+      "date_range": {
+        "start": "2023-01-03 00:00:00",
+        "end": "2026-03-30 00:00:00"
+      },
+      "missing_days": 0,
+      "price_anomalies": 0,
+      "valid": true,
+      "issues": []
+    },
+    {
+      "code": "HK.00005",
+      "ktype": "60M",
+      "total_records": 3000,
+      "date_range": {
+        "start": "2023-01-03 10:30:00",
+        "end": "2025-01-20 12:00:00"
+      },
+      "missing_days": 0,
+      "price_anomalies": 0,
+      "valid": true,
+      "issues": [
+        "发现 4 条零成交量记录"
+      ]
+    },
+    {
+      "code": "HK.00003",
+      "ktype": "DAY",
+      "total_records": 794,
+      "date_range": {
+        "start": "2023-01-03 00:00:00",
+        "end": "2026-03-30 00:00:00"
+      },
+      "missing_days": 0,
+      "price_anomalies": 0,
+      "valid": true,
+      "issues": []
+    },
+    {
+      "code": "HK.00003",
+      "ktype": "60M",
+      "total_records": 3000,
+      "date_range": {
+        "start": "2023-01-03 10:30:00",
+        "end": "2025-01-20 12:00:00"
+      },
+      "missing_days": 0,
+      "price_anomalies": 0,
+      "valid": true,
+      "issues": [
+        "发现 4 条零成交量记录"
+      ]
+    },
+    {
+      "code": "HK.00001",
+      "ktype": "DAY",
+      "total_records": 794,
+      "date_range": {
+        "start": "2023-01-03 00:00:00",
+        "end": "2026-03-30 00:00:00"
+      },
+      "missing_days": 0,
+      "price_anomalies": 0,
+      "valid": true,
+      "issues": []
+    },
+    {
+      "code": "HK.00001",
+      "ktype": "60M",
+      "total_records": 3000,
+      "date_range": {
+        "start": "2023-01-03 10:30:00",
+        "end": "2025-01-20 12:00:00"
+      },
+      "missing_days": 0,
+      "price_anomalies": 0,
+      "valid": true,
+      "issues": [
+        "发现 4 条零成交量记录"
+      ]
+    },
+    {
+      "code": "HK.00002",
+      "ktype": "DAY",
+      "total_records": 794,
+      "date_range": {
+        "start": "2023-01-03 00:00:00",
+        "end": "2026-03-30 00:00:00"
+      },
+      "missing_days": 0,
+      "price_anomalies": 0,
+      "valid": true,
+      "issues": []
+    },
+    {
+      "code": "HK.00002",
+      "ktype": "60M",
+      "total_records": 3000,
+      "date_range": {
+        "start": "2023-01-03 10:30:00",
+        "end": "2025-01-20 12:00:00"
+      },
+      "missing_days": 0,
+      "price_anomalies": 0,
+      "valid": true,
+      "issues": [
+        "发现 4 条零成交量记录"
+      ]
+    },
+    {
+      "code": "HK.00006",
+      "ktype": "DAY",
+      "total_records": 794,
+      "date_range": {
+        "start": "2023-01-03 00:00:00",
+        "end": "2026-03-30 00:00:00"
+      },
+      "missing_days": 0,
+      "price_anomalies": 0,
+      "valid": true,
+      "issues": []
+    },
+    {
+      "code": "HK.00006",
+      "ktype": "60M",
+      "total_records": 3000,
+      "date_range": {
+        "start": "2023-01-03 10:30:00",
+        "end": "2025-01-20 12:00:00"
+      },
+      "missing_days": 0,
+      "price_anomalies": 0,
+      "valid": true,
+      "issues": [
+        "发现 4 条零成交量记录"
+      ]
+    },
+    {
+      "code": "HK.00012",
+      "ktype": "DAY",
+      "total_records": 794,
+      "date_range": {
+        "start": "2023-01-03 00:00:00",
+        "end": "2026-03-30 00:00:00"
+      },
+      "missing_days": 0,
+      "price_anomalies": 0,
+      "valid": true,
+      "issues": []
+    },
+    {
+      "code": "HK.00012",
+      "ktype": "60M",
+      "total_records": 3000,
+      "date_range": {
+        "start": "2023-01-03 10:30:00",
+        "end": "2025-01-20 12:00:00"
+      },
+      "missing_days": 0,
+      "price_anomalies": 0,
+      "valid": true,
+      "issues": [
+        "发现 5 条零成交量记录"
+      ]
+    },
+    {
+      "code": "HK.00016",
+      "ktype": "DAY",
+      "total_records": 794,
+      "date_range": {
+        "start": "2023-01-03 00:00:00",
+        "end": "2026-03-30 00:00:00"
+      },
+      "missing_days": 0,
+      "price_anomalies": 0,
+      "valid": true,
+      "issues": []
+    },
+    {
+      "code": "HK.00016",
+      "ktype": "60M",
+      "total_records": 3000,
+      "date_range": {
+        "start": "2023-01-03 10:30:00",
+        "end": "2025-01-20 12:00:00"
+      },
+      "missing_days": 0,
+      "price_anomalies": 0,
+      "valid": true,
+      "issues": [
+        "发现 4 条零成交量记录"
+      ]
+    },
+    {
+      "code": "HK.00175",
+      "ktype": "DAY",
+      "total_records": 794,
+      "date_range": {
+        "start": "2023-01-03 00:00:00",
+        "end": "2026-03-30 00:00:00"
+      },
+      "missing_days": 0,
+      "price_anomalies": 0,
+      "valid": true,
+      "issues": []
+    },
+    {
+      "code": "HK.00175",
+      "ktype": "60M",
+      "total_records": 3000,
+      "date_range": {
+        "start": "2023-01-03 10:30:00",
+        "end": "2025-01-20 12:00:00"
+      },
+      "missing_days": 0,
+      "price_anomalies": 0,
+      "valid": true,
+      "issues": [
+        "发现 4 条零成交量记录"
+      ]
+    },
+    {
+      "code": "HK.00669",
+      "ktype": "DAY",
+      "total_records": 794,
+      "date_range": {
+        "start": "2023-01-03 00:00:00",
+        "end": "2026-03-30 00:00:00"
+      },
+      "missing_days": 0,
+      "price_anomalies": 0,
+      "valid": true,
+      "issues": []
+    },
+    {
+      "code": "HK.00669",
+      "ktype": "60M",
+      "total_records": 3000,
+      "date_range": {
+        "start": "2023-01-03 10:30:00",
+        "end": "2025-01-20 12:00:00"
+      },
+      "missing_days": 0,
+      "price_anomalies": 0,
+      "valid": true,
+      "issues": [
+        "发现 5 条零成交量记录"
+      ]
+    },
+    {
+      "code": "HK.00883",
+      "ktype": "DAY",
+      "total_records": 794,
+      "date_range": {
+        "start": "2023-01-03 00:00:00",
+        "end": "2026-03-30 00:00:00"
+      },
+      "missing_days": 0,
+      "price_anomalies": 0,
+      "valid": true,
+      "issues": []
+    },
+    {
+      "code": "HK.00883",
+      "ktype": "60M",
+      "total_records": 3000,
+      "date_range": {
+        "start": "2023-01-03 10:30:00",
+        "end": "2025-01-20 12:00:00"
+      },
+      "missing_days": 0,
+      "price_anomalies": 0,
+      "valid": true,
+      "issues": [
+        "发现 4 条零成交量记录"
+      ]
+    },
+    {
+      "code": "HK.00941",
+      "ktype": "DAY",
+      "total_records": 794,
+      "date_range": {
+        "start": "2023-01-03 00:00:00",
+        "end": "2026-03-30 00:00:00"
+      },
+      "missing_days": 0,
+      "price_anomalies": 0,
+      "valid": true,
+      "issues": []
+    },
+    {
+      "code": "HK.00941",
+      "ktype": "60M",
+      "total_records": 3000,
+      "date_range": {
+        "start": "2023-01-03 10:30:00",
+        "end": "2025-01-20 12:00:00"
+      },
+      "missing_days": 0,
+      "price_anomalies": 0,
+      "valid": true,
+      "issues": [
+        "发现 4 条零成交量记录"
+      ]
+    },
+    {
+      "code": "HK.01928",
+      "ktype": "DAY",
+      "total_records": 794,
+      "date_range": {
+        "start": "2023-01-03 00:00:00",
+        "end": "2026-03-30 00:00:00"
+      },
+      "missing_days": 0,
+      "price_anomalies": 0,
+      "valid": true,
+      "issues": []
+    },
+    {
+      "code": "HK.01928",
+      "ktype": "60M",
+      "total_records": 3000,
+      "date_range": {
+        "start": "2023-01-03 10:30:00",
+        "end": "2025-01-20 12:00:00"
+      },
+      "missing_days": 0,
+      "price_anomalies": 0,
+      "valid": true,
+      "issues": [
+        "发现 4 条零成交量记录"
+      ]
+    },
+    {
+      "code": "HK.00027",
+      "ktype": "DAY",
+      "total_records": 794,
+      "date_range": {
+        "start": "2023-01-03 00:00:00",
+        "end": "2026-03-30 00:00:00"
+      },
+      "missing_days": 0,
+      "price_anomalies": 0,
+      "valid": true,
+      "issues": []
+    },
+    {
+      "code": "HK.00027",
+      "ktype": "60M",
+      "total_records": 3000,
+      "date_range": {
+        "start": "2023-01-03 10:30:00",
+        "end": "2025-01-20 12:00:00"
+      },
+      "missing_days": 0,
+      "price_anomalies": 0,
+      "valid": true,
+      "issues": [
+        "发现 4 条零成交量记录"
+      ]
+    },
+    {
+      "code": "HK.00267",
+      "ktype": "DAY",
+      "total_records": 794,
+      "date_range": {
+        "start": "2023-01-03 00:00:00",
+        "end": "2026-03-30 00:00:00"
+      },
+      "missing_days": 0,
+      "price_anomalies": 0,
+      "valid": true,
+      "issues": []
+    },
+    {
+      "code": "HK.00267",
+      "ktype": "60M",
+      "total_records": 3000,
+      "date_range": {
+        "start": "2023-01-03 10:30:00",
+        "end": "2025-01-20 12:00:00"
+      },
+      "missing_days": 0,
+      "price_anomalies": 0,
+      "valid": true,
+      "issues": [
+        "发现 4 条零成交量记录"
+      ]
+    },
+    {
+      "code": "HK.00388",
+      "ktype": "DAY",
+      "total_records": 794,
+      "date_range": {
+        "start": "2023-01-03 00:00:00",
+        "end": "2026-03-30 00:00:00"
+      },
+      "missing_days": 0,
+      "price_anomalies": 0,
+      "valid": true,
+      "issues": []
+    },
+    {
+      "code": "HK.00388",
+      "ktype": "60M",
+      "total_records": 3000,
+      "date_range": {
+        "start": "2023-01-03 10:30:00",
+        "end": "2025-01-20 12:00:00"
+      },
+      "missing_days": 0,
+      "price_anomalies": 0,
+      "valid": true,
+      "issues": [
+        "发现 4 条零成交量记录"
+      ]
+    },
+    {
+      "code": "HK.00857",
+      "ktype": "DAY",
+      "total_records": 794,
+      "date_range": {
+        "start": "2023-01-03 00:00:00",
+        "end": "2026-03-30 00:00:00"
+      },
+      "missing_days": 0,
+      "price_anomalies": 0,
+      "valid": true,
+      "issues": []
+    },
+    {
+      "code": "HK.00857",
+      "ktype": "60M",
+      "total_records": 3000,
+      "date_range": {
+        "start": "2023-01-03 10:30:00",
+        "end": "2025-01-20 12:00:00"
+      },
+      "missing_days": 0,
+      "price_anomalies": 0,
+      "valid": true,
+      "issues": [
+        "发现 4 条零成交量记录"
+      ]
+    },
+    {
+      "code": "HK.00386",
+      "ktype": "DAY",
+      "total_records": 794,
+      "date_range": {
+        "start": "2023-01-03 00:00:00",
+        "end": "2026-03-30 00:00:00"
+      },
+      "missing_days": 0,
+      "price_anomalies": 0,
+      "valid": true,
+      "issues": []
+    },
+    {
+      "code": "HK.00386",
+      "ktype": "60M",
+      "total_records": 3000,
+      "date_range": {
+        "start": "2023-01-03 10:30:00",
+        "end": "2025-01-20 12:00:00"
+      },
+      "missing_days": 0,
+      "price_anomalies": 0,
+      "valid": true,
+      "issues": [
+        "发现 4 条零成交量记录"
+      ]
+    }
+  ]
+}

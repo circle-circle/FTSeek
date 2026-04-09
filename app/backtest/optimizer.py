@@ -14,6 +14,7 @@ import logging
 from scipy.optimize import minimize
 
 logger = logging.getLogger("ftseek.backtest.optimizer")
+logger.propagate = False  # 防止日志重复
 
 
 @dataclass

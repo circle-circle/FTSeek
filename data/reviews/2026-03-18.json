@@ -1,0 +1,30 @@
+{
+  "date": "2026-03-18",
+  "signal_analysis": {
+    "total": 0,
+    "executed": 0,
+    "rejected": 0,
+    "execution_rate": 0,
+    "avg_confidence": 0,
+    "strategy_distribution": {},
+    "action_distribution": {
+      "BUY": 0,
+      "SELL": 0
+    }
+  },
+  "trade_analysis": {
+    "total": 0,
+    "closed": 0,
+    "open": 0,
+    "winning": 0,
+    "losing": 0,
+    "win_rate": 0,
+    "total_pnl": 0,
+    "avg_pnl_percent": 0,
+    "avg_holding_period": 0
+  },
+  "suggestions": [
+    "📉 今日无信号，检查策略是否正常触发"
+  ],
+  "generated_at": "2026-03-18T16:51:45.168524"
+}

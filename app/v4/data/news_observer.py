@@ -15,6 +15,7 @@ from datetime import datetime, timedelta
 import hashlib
 
 logger = logging.getLogger("ftseek.v4.news_observer")
+logger.propagate = False  # 防止日志重复
 
 
 @dataclass
@@ -52,6 +53,7 @@ class NewsObserver:
             "risk": ["调查", "诉讼", "处罚", "监管"],
         }
         self.logger = logging.getLogger("ftseek.v4.news_observer")
+logger.propagate = False  # 防止日志重复
     
     def check_before_trade(self, code: str) -> Dict[str, Any]:
         """

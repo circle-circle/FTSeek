@@ -12,13 +12,14 @@ FTSeek 周报生成器
 """
 import logging
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
 from dataclasses import dataclass, field
 
 from app.storage.database import get_database
 from app.risk.metrics_calculator import MetricsCalculator
 
 logger = logging.getLogger("ftseek.reporters.weekly")
+logger.propagate = False  # 防止日志重复
 
 
 @dataclass
@@ -293,28 +294,163 @@ class WeeklyReportGenerator:
     
     def _generate_outlook(self, report: WeeklyReport) -> str:
         """
-        生成下周展望
-        
-        Args:
-            report: 周报数据
-            
-        Returns:
-            展望文本
+        生成下周展望（结合 AdaptiveWeightManager 权重数据）
         """
-        # 基于本周表现给出建议
         if report.total_trades == 0:
             return "上周无交易，本周关注市场机会"
         
+        # 基础判断
         if report.pnl > 0 and report.win_rate >= 0.6:
-            return "本周表现优异，继续保持当前策略，注意止盈止损"
+            base = "本周表现优异，继续保持当前策略，注意止盈止损"
         elif report.pnl > 0 and report.win_rate < 0.6:
-            return "本周盈利但胜率偏低，建议优化入场时机"
+            base = "本周盈利但胜率偏低，建议优化入场时机"
         elif report.pnl < 0 and report.win_rate >= 0.5:
-            return "本周胜率尚可但亏损，注意单笔亏损控制"
+            base = "本周胜率尚可但亏损，注意单笔亏损控制"
         elif report.pnl < 0 and report.win_rate < 0.5:
-            return "本周表现不佳，建议复盘策略，谨慎交易"
+            base = "本周表现不佳，建议复盘策略，谨慎交易"
         else:
-            return "关注市场动态，谨慎交易"
+            base = "关注市场动态，谨慎交易"
+        
+        # 尝试追加高权重策略建议
+        try:
+            from app.data_subscriber import _data_subscriber_instance
+            if _data_subscriber_instance and hasattr(_data_subscriber_instance, '_adaptive_weight_manager'):
+                mgr = _data_subscriber_instance._adaptive_weight_manager
+                stats = mgr.get_strategy_stats() or {}
+                # 找胜率最高的策略
+                top = sorted(stats.items(), key=lambda x: x[1].get('win_rate', 0), reverse=True)
+                if top:
+                    top_name, top_data = top[0]
+                    wr = top_data.get('win_rate', 0) * 100
+                    if wr >= 60:
+                        base += f"；下周重点关注 [{top_name}] 策略（当前历史胜率 {wr:.0f}%）"
+        except Exception:
+            pass
+        
+        return base
+
+    def get_signal_funnel(self) -> dict:
+        """
+        获取本周信号转化漏斗：总信号 → 入场 → 盈利
+        """
+        funnel = {'total_signals': 0, 'executed': 0, 'profitable': 0}
+        try:
+            from app.signal_store import get_signal_store
+            start_dt, end_dt = self.get_previous_week_range()
+            store = get_signal_store()
+            # 尝试按周统计
+            if hasattr(store, 'count_by_period'):
+                total = store.count_by_period(
+                    start_dt.strftime('%Y-%m-%d'),
+                    end_dt.strftime('%Y-%m-%d')
+                )
+                funnel['total_signals'] = total or 0
+        except Exception as e:
+            logger.debug(f"获取信号漏斗失败：{e}")
+        
+        try:
+            start_dt, end_dt = self.get_previous_week_range()
+            trades = self.db.get_trades_by_period(
+                start_dt.isoformat(), end_dt.isoformat()
+            )
+            closed = [t for t in trades if t.get('status') == 'closed']
+            funnel['executed'] = len(closed)
+            funnel['profitable'] = sum(1 for t in closed if t.get('pnl', 0) > 0)
+        except Exception as e:
+            logger.debug(f"获取执行数量失败：{e}")
+        
+        return funnel
+
+    def get_long_short_comparison(self) -> dict:
+        """
+        本周多头 vs 空头效果对比
+        """
+        result = {
+            'has_short': False,
+            'long_win_rate': 0.0, 'long_count': 0, 'long_pnl': 0.0,
+            'short_win_rate': 0.0, 'short_count': 0, 'short_pnl': 0.0,
+        }
+        try:
+            start_dt, end_dt = self.get_previous_week_range()
+            trades = self.db.get_trades_by_period(
+                start_dt.isoformat(), end_dt.isoformat()
+            )
+            closed = [t for t in trades if t.get('status') == 'closed']
+            
+            longs = [t for t in closed if t.get('direction', 'long') == 'long']
+            shorts = [t for t in closed if t.get('direction', 'long') == 'short']
+            
+            if longs:
+                result['long_count'] = len(longs)
+                result['long_pnl'] = sum(t.get('pnl', 0) for t in longs)
+                result['long_win_rate'] = sum(1 for t in longs if t.get('pnl', 0) > 0) / len(longs)
+            
+            if shorts:
+                result['has_short'] = True
+                result['short_count'] = len(shorts)
+                result['short_pnl'] = sum(t.get('pnl', 0) for t in shorts)
+                result['short_win_rate'] = sum(1 for t in shorts if t.get('pnl', 0) > 0) / len(shorts)
+        except Exception as e:
+            logger.debug(f"获取多空对比失败：{e}")
+        return result
+
+    def get_equity_curve_highlights(self) -> dict:
+        """
+        资金曲线关键节点：最大盈利日 / 最大亏损日
+        """
+        highlights = {
+            'best_day': None, 'best_day_pnl': 0.0,
+            'worst_day': None, 'worst_day_pnl': 0.0,
+        }
+        try:
+            start_dt, end_dt = self.get_previous_week_range()
+            trades = self.db.get_trades_by_period(
+                start_dt.isoformat(), end_dt.isoformat()
+            )
+            closed = [t for t in trades if t.get('status') == 'closed']
+            
+            # 按日期聚合盈亏
+            daily_pnl: Dict[str, float] = {}
+            for t in closed:
+                date_key = str(t.get('exit_time', t.get('entry_time', '')))[:10]
+                if not date_key or date_key == 'None':
+                    continue
+                daily_pnl[date_key] = daily_pnl.get(date_key, 0.0) + t.get('pnl', 0)
+            
+            if daily_pnl:
+                best_day = max(daily_pnl, key=daily_pnl.get)
+                worst_day = min(daily_pnl, key=daily_pnl.get)
+                highlights['best_day'] = best_day
+                highlights['best_day_pnl'] = daily_pnl[best_day]
+                highlights['worst_day'] = worst_day
+                highlights['worst_day_pnl'] = daily_pnl[worst_day]
+        except Exception as e:
+            logger.debug(f"获取资金曲线节点失败：{e}")
+        return highlights
+
+    def get_strategy_weight_changes(self) -> dict:
+        """
+        获取策略权重变化（来自 AdaptiveWeightManager）
+        """
+        try:
+            from app.data_subscriber import _data_subscriber_instance
+            if _data_subscriber_instance and hasattr(_data_subscriber_instance, '_adaptive_weight_manager'):
+                mgr = _data_subscriber_instance._adaptive_weight_manager
+                return mgr.get_strategy_stats() or {}
+        except Exception as e:
+            logger.debug(f"获取策略权重变化失败：{e}")
+        return {}
+
+    def generate_deep_review(self, report: WeeklyReport) -> dict:
+        """
+        生成深度复盘附加数据
+        """
+        return {
+            'signal_funnel': self.get_signal_funnel(),
+            'long_short_comparison': self.get_long_short_comparison(),
+            'equity_highlights': self.get_equity_curve_highlights(),
+            'strategy_weights': self.get_strategy_weight_changes(),
+        }
 
 
 # 全局单例

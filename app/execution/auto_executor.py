@@ -7,12 +7,14 @@ import logging
 from typing import Dict, Optional
 from datetime import datetime
 from dataclasses import dataclass
+import re
 
 logger = logging.getLogger("ftseek.execution.auto_executor")
+logger.propagate = False  # 防止日志重复
 
 # 导入富途 API (如果可用)
 try:
-    from futu import OpenTradeContext, TrdEnv, TrdSide, OrderType
+    from futu import OpenSecTradeContext as OpenTradeContext, TrdEnv, TrdSide, OrderType
     FUTU_AVAILABLE = True
 except ImportError:
     FUTU_AVAILABLE = False
@@ -20,6 +22,29 @@ except ImportError:
 
 from app.storage.trade_recorder import get_trade_recorder
 from app.risk.realtime_alert import get_realtime_risk_monitor
+
+
+def _is_option(code: str) -> bool:
+    """判断是否为期权代码"""
+    parts = code.split('.')
+    if len(parts) < 2:
+        return False
+    symbol = parts[-1]
+    if re.search(r'\d{6}[CP]', symbol):
+        return True
+    if ('C' in symbol or 'P' in symbol) and len(symbol) > 10:
+        return True
+    return False
+
+
+def _get_account_for_code(code: str, trd_env) -> Optional[int]:
+    """根据证券类型自动选择账户"""
+    if trd_env != TrdEnv.SIMULATE:
+        return None
+    if _is_option(code):
+        return 8246818  # 期权账户
+    else:
+        return 18820895  # 正股账户
 
 
 @dataclass
@@ -61,8 +86,7 @@ class AutoTradeExecutor:
         self.trade_ctx = OpenTradeContext(
             host='127.0.0.1',
             port=11111,
-            trd_env=TrdEnv.SIMULATE if self.simulate else TrdEnv.REAL,
-            pwd=trade_password
+            filter_trdmarket=None,
         )
         
         logger.info(f"富途交易上下文已连接 (环境：{'模拟' if self.simulate else '实盘'})")
@@ -189,6 +213,10 @@ class AutoTradeExecutor:
             
             # 设置订单参数
             trd_side = TrdSide.BUY if action == 'BUY' else TrdSide.SELL
+            trd_env = TrdEnv.SIMULATE if self.simulate else TrdEnv.REAL
+            
+            # 根据证券类型自动选择账户 (2026-03-31: 期权/正股双账户支持)
+            acc_id = _get_account_for_code(code, trd_env)
             
             # 提交订单
             ret_code, ret_data = self.trade_ctx.place_order(
@@ -197,7 +225,8 @@ class AutoTradeExecutor:
                 code=stock_code,
                 trd_side=trd_side,
                 order_type=OrderType.NORMAL,
-                trd_env=TrdEnv.SIMULATE if self.simulate else TrdEnv.REAL
+                trd_env=trd_env,
+                acc_id=acc_id,
             )
             
             if ret_code == 0:

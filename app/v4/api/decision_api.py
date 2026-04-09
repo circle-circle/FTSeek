@@ -20,9 +20,13 @@ from app.v4.core.decision_engine import DecisionEngine
 from app.performance.tracker import PerformanceTracker
 
 logger = logging.getLogger("ftseek.api.decision")
+logger.propagate = False  # 防止日志重复
 
 # API Key 配置 (从环境变量读取)
-API_KEY = os.getenv('API_KEY') or os.getenv('API_TOKEN', 'dev-key-change-in-production')
+# ⚠️ 安全：生产环境必须设置 API_KEY 或 API_TOKEN 环境变量
+API_KEY = os.getenv('API_KEY') or os.getenv('API_TOKEN')
+if not API_KEY:
+    raise RuntimeError("API_KEY or API_TOKEN environment variable must be set")
 
 # Flask 应用
 app = Flask(__name__)
@@ -62,11 +66,21 @@ def get_decision_engine() -> Optional[DecisionEngine]:
         # 尝试从 DecisionEngine 获取单例实例
         if hasattr(DecisionEngine, 'get_instance'):
             return DecisionEngine.get_instance()
-        
+
         # 如果没有单例，创建新实例
         from app import config
+
+        # 导入市场数据提供者 (用于 RSI/MACD 计算)
+        try:
+            from app.v4.core.market_data_provider import futu_market_data_provider
+            market_data_provider = futu_market_data_provider
+            logger.info("已加载 Futu OpenD 市场数据提供者")
+        except Exception as e:
+            logger.warning(f"市场数据提供者加载失败：{e}，将使用默认指标值")
+            market_data_provider = None
+
         db_path = getattr(config, 'DB_PATH', '/opt/ftseek/FTSeek/data/ftseek.db')
-        
+
         engine = DecisionEngine(
             db_path=db_path,
             config={
@@ -77,7 +91,8 @@ def get_decision_engine() -> Optional[DecisionEngine]:
                 'stop_loss': 0.03,
                 'timeout_hours': 24,
             },
-            dingtalk_webhook=getattr(config, 'DINGTALK_WEBHOOK', None)
+            dingtalk_webhook=getattr(config, 'DINGTALK_WEBHOOK', None),
+            market_data_provider=market_data_provider  # 2026-04-09 新增：RSI/MACD 数据源
         )
         return engine
     except Exception as e:

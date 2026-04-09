@@ -1,0 +1,1679 @@
+{
+  "date": "2026-04-09",
+  "generated_at": "2026-04-09T16:30:02.552802",
+  "trades": {
+    "all": [
+      {
+        "id": 1,
+        "code": "HK.01093",
+        "action": "BUY",
+        "quantity": 2000,
+        "entry_price": 9.155000000000001,
+        "entry_time": "2026-04-09 15:42:10",
+        "stop_loss": 8.6057,
+        "take_profit": 9.8874,
+        "status": "OPEN",
+        "exit_price": null,
+        "realized_pnl": null,
+        "exit_time": null,
+        "highest_price": null,
+        "lowest_price": null,
+        "signal_id": "f03c74def357",
+        "strategy": "共识(supertrend + confluence_v2)"
+      }
+    ],
+    "opened": [
+      {
+        "id": 1,
+        "code": "HK.01093",
+        "action": "BUY",
+        "quantity": 2000,
+        "entry_price": 9.155000000000001,
+        "entry_time": "2026-04-09 15:42:10",
+        "stop_loss": 8.6057,
+        "take_profit": 9.8874,
+        "status": "OPEN",
+        "exit_price": null,
+        "realized_pnl": null,
+        "exit_time": null,
+        "highest_price": null,
+        "lowest_price": null
+      }
+    ],
+    "closed": []
+  },
+  "signals": {
+    "list": [
+      {
+        "id": "c9adcde2-88fd-4137-9f76-d0a22b3e26d7",
+        "code": "HK.01347",
+        "strategy": "共识(confluence_v2+supertrend)",
+        "action": "BUY",
+        "price": 88.65,
+        "quantity": 100,
+        "confidence": 0.56,
+        "consensus_score": 3.0,
+        "strategies": [
+          "confluence_v2",
+          "supertrend"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "existing_position",
+        "pnl": null,
+        "market_regime": "trending",
+        "created_at": "2026-04-09T09:46:19.545586"
+      },
+      {
+        "id": "7c900635-8079-4d9a-80cb-a68484bd08fd",
+        "code": "HK.03690",
+        "strategy": "共识(confluence_v2+supertrend)",
+        "action": "BUY",
+        "price": 87.3,
+        "quantity": 100,
+        "confidence": 0.74,
+        "consensus_score": 3.0,
+        "strategies": [
+          "confluence_v2",
+          "supertrend"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "existing_position",
+        "pnl": null,
+        "market_regime": "trending",
+        "created_at": "2026-04-09T09:46:25.082323"
+      },
+      {
+        "id": "5c7c95a8-dc5a-45e1-bd95-f488a99fbfb1",
+        "code": "HK.01024",
+        "strategy": "共识(confluence_v2+supertrend)",
+        "action": "BUY",
+        "price": 45.22,
+        "quantity": 100,
+        "confidence": 0.56,
+        "consensus_score": 3.0,
+        "strategies": [
+          "confluence_v2",
+          "supertrend"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "existing_position",
+        "pnl": null,
+        "market_regime": "trending",
+        "created_at": "2026-04-09T09:46:36.608570"
+      },
+      {
+        "id": "426c466c-ea48-416b-a06b-f1b8298dba2a",
+        "code": "HK.00981",
+        "strategy": "共识(confluence_v2+supertrend)",
+        "action": "BUY",
+        "price": 55.1,
+        "quantity": 100,
+        "confidence": 0.63,
+        "consensus_score": 3.0,
+        "strategies": [
+          "confluence_v2",
+          "supertrend"
+        ],
+        "executed": true,
+        "execution_price": 55.1,
+        "reject_reason": null,
+        "pnl": null,
+        "market_regime": "trending",
+        "created_at": "2026-04-09T09:48:33.224273"
+      },
+      {
+        "id": "f39628bf-4db3-411b-b3c5-3a6977097f61",
+        "code": "HK.09992",
+        "strategy": "共识(confluence_v2+supertrend)",
+        "action": "BUY",
+        "price": 152.8,
+        "quantity": 100,
+        "confidence": 1.0,
+        "consensus_score": 3.0,
+        "strategies": [
+          "confluence_v2",
+          "supertrend"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "已达最大持仓数 (4/4)，拒绝开仓",
+        "pnl": null,
+        "market_regime": "trending",
+        "created_at": "2026-04-09T10:01:14.487556"
+      },
+      {
+        "id": "463eeff3-b9f7-4af7-ad80-3be6dd0974f8",
+        "code": "HK.00175",
+        "strategy": "共识(confluence_v2+supertrend)",
+        "action": "BUY",
+        "price": 24.950000000000003,
+        "quantity": 100,
+        "confidence": 1.0,
+        "consensus_score": 3.0,
+        "strategies": [
+          "confluence_v2",
+          "supertrend"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "已达最大持仓数 (4/4)，拒绝开仓",
+        "pnl": null,
+        "market_regime": "trending",
+        "created_at": "2026-04-09T10:06:56.112472"
+      },
+      {
+        "id": "56d544d8-c086-4a62-8c36-fca11512246a",
+        "code": "HK.03690",
+        "strategy": "共识(confluence_v2+supertrend)",
+        "action": "BUY",
+        "price": 87.725,
+        "quantity": 100,
+        "confidence": 1.0,
+        "consensus_score": 3.0,
+        "strategies": [
+          "confluence_v2",
+          "supertrend"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "existing_position",
+        "pnl": null,
+        "market_regime": "trending",
+        "created_at": "2026-04-09T10:09:49.837087"
+      },
+      {
+        "id": "13de827d-0c84-4b73-9b5d-c8222754e1d0",
+        "code": "HK.01024",
+        "strategy": "共识(confluence_v2+supertrend)",
+        "action": "BUY",
+        "price": 45.17,
+        "quantity": 100,
+        "confidence": 0.68,
+        "consensus_score": 3.0,
+        "strategies": [
+          "confluence_v2",
+          "supertrend"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "existing_position",
+        "pnl": null,
+        "market_regime": "trending",
+        "created_at": "2026-04-09T10:10:59.096578"
+      },
+      {
+        "id": "48ef24a1-af98-4df0-b513-1fcd9e32d101",
+        "code": "HK.00981",
+        "strategy": "共识(confluence_v2+supertrend)",
+        "action": "BUY",
+        "price": 56.45,
+        "quantity": 100,
+        "confidence": 0.84,
+        "consensus_score": 3.0,
+        "strategies": [
+          "confluence_v2",
+          "supertrend"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "existing_position",
+        "pnl": null,
+        "market_regime": "trending",
+        "created_at": "2026-04-09T10:17:14.254616"
+      },
+      {
+        "id": "e7ec5580-66d7-4c83-937f-d999d25538a4",
+        "code": "HK.00175",
+        "strategy": "共识(confluence_v2+supertrend)",
+        "action": "BUY",
+        "price": 24.740000000000002,
+        "quantity": 100,
+        "confidence": 0.92,
+        "consensus_score": 3.0,
+        "strategies": [
+          "confluence_v2",
+          "supertrend"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "已达最大持仓数 (4/4)，拒绝开仓",
+        "pnl": null,
+        "market_regime": "trending",
+        "created_at": "2026-04-09T10:18:54.400143"
+      },
+      {
+        "id": "e81132bc-b6ad-4611-a364-bd354d590bae",
+        "code": "HK.01378",
+        "strategy": "共识(confluence_v2+supertrend)",
+        "action": "BUY",
+        "price": 38.5,
+        "quantity": 100,
+        "confidence": 1.0,
+        "consensus_score": 3.0,
+        "strategies": [
+          "confluence_v2",
+          "supertrend"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "已达最大持仓数 (4/4)，拒绝开仓",
+        "pnl": null,
+        "market_regime": "trending",
+        "created_at": "2026-04-09T10:22:39.679529"
+      },
+      {
+        "id": "ea9e8d82-6600-4280-bd4e-c219c386c3d5",
+        "code": "HK.01347",
+        "strategy": "共识(confluence_v2+supertrend)",
+        "action": "BUY",
+        "price": 92.825,
+        "quantity": 100,
+        "confidence": 0.86,
+        "consensus_score": 3.0,
+        "strategies": [
+          "confluence_v2",
+          "supertrend"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "existing_position",
+        "pnl": null,
+        "market_regime": "trending",
+        "created_at": "2026-04-09T10:29:47.375156"
+      },
+      {
+        "id": "ab0723ce-4428-464e-bd37-16d4998790c5",
+        "code": "HK.00175",
+        "strategy": "共识(confluence_v2+supertrend)",
+        "action": "BUY",
+        "price": 24.93,
+        "quantity": 100,
+        "confidence": 0.83,
+        "consensus_score": 3.0,
+        "strategies": [
+          "confluence_v2",
+          "supertrend"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "已达最大持仓数 (4/4)，拒绝开仓",
+        "pnl": null,
+        "market_regime": "trending",
+        "created_at": "2026-04-09T10:33:27.445397"
+      },
+      {
+        "id": "8b13cd5f-103d-4185-bb2a-b9a5a4db7e9b",
+        "code": "HK.01024",
+        "strategy": "共识(confluence_v2+supertrend)",
+        "action": "BUY",
+        "price": 45.08,
+        "quantity": 100,
+        "confidence": 0.88,
+        "consensus_score": 3.0,
+        "strategies": [
+          "confluence_v2",
+          "supertrend"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "existing_position",
+        "pnl": null,
+        "market_regime": "trending",
+        "created_at": "2026-04-09T10:43:47.400579"
+      },
+      {
+        "id": "197c047a-7647-4689-8ad9-992b2f22a67a",
+        "code": "HK.01347",
+        "strategy": "共识(confluence_v2+supertrend)",
+        "action": "BUY",
+        "price": 93.725,
+        "quantity": 100,
+        "confidence": 0.9,
+        "consensus_score": 3.0,
+        "strategies": [
+          "confluence_v2",
+          "supertrend"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "existing_position",
+        "pnl": null,
+        "market_regime": "trending",
+        "created_at": "2026-04-09T10:49:59.449816"
+      },
+      {
+        "id": "1414909d-e6dd-4d51-b957-c05bc6b8dc8c",
+        "code": "HK.01378",
+        "strategy": "共识(confluence_v2+supertrend)",
+        "action": "BUY",
+        "price": 38.64,
+        "quantity": 100,
+        "confidence": 1.0,
+        "consensus_score": 3.0,
+        "strategies": [
+          "confluence_v2",
+          "supertrend"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "已达最大持仓数 (4/4)，拒绝开仓",
+        "pnl": null,
+        "market_regime": "trending",
+        "created_at": "2026-04-09T10:50:22.957413"
+      },
+      {
+        "id": "3f5f2e6c-fff8-4b02-b882-4765883287a5",
+        "code": "HK.03690",
+        "strategy": "共识(confluence_v2+supertrend)",
+        "action": "BUY",
+        "price": 87.975,
+        "quantity": 100,
+        "confidence": 0.71,
+        "consensus_score": 3.0,
+        "strategies": [
+          "confluence_v2",
+          "supertrend"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "existing_position",
+        "pnl": null,
+        "market_regime": "trending",
+        "created_at": "2026-04-09T11:06:00.915017"
+      },
+      {
+        "id": "95aa4285-7d82-4b38-aa71-e8fe58b28690",
+        "code": "HK.00981",
+        "strategy": "共识(confluence_v2+supertrend)",
+        "action": "BUY",
+        "price": 56.55,
+        "quantity": 100,
+        "confidence": 0.9,
+        "consensus_score": 3.0,
+        "strategies": [
+          "confluence_v2",
+          "supertrend"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "existing_position",
+        "pnl": null,
+        "market_regime": "trending",
+        "created_at": "2026-04-09T11:06:02.661855"
+      },
+      {
+        "id": "45942205-9ae2-47ab-91c9-4817e1bbd7d8",
+        "code": "HK.00175",
+        "strategy": "共识(confluence_v2+supertrend)",
+        "action": "BUY",
+        "price": 24.740000000000002,
+        "quantity": 100,
+        "confidence": 0.92,
+        "consensus_score": 3.0,
+        "strategies": [
+          "confluence_v2",
+          "supertrend"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "已达最大持仓数 (4/4)，拒绝开仓",
+        "pnl": null,
+        "market_regime": "trending",
+        "created_at": "2026-04-09T11:06:25.870718"
+      },
+      {
+        "id": "70b108b7-cf80-4c4d-8308-8f0e05987092",
+        "code": "HK.03690",
+        "strategy": "共识(supertrend+confluence_v2)",
+        "action": "BUY",
+        "price": 88.05,
+        "quantity": 100,
+        "confidence": 0.65,
+        "consensus_score": 3.0,
+        "strategies": [
+          "supertrend",
+          "confluence_v2"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "existing_position",
+        "pnl": null,
+        "market_regime": "trending",
+        "created_at": "2026-04-09T11:18:25.202171"
+      },
+      {
+        "id": "3485133d-9412-4f28-b331-7546343699fc",
+        "code": "HK.03690",
+        "strategy": "共识(confluence_v2+supertrend)",
+        "action": "BUY",
+        "price": 88.125,
+        "quantity": 100,
+        "confidence": 0.64,
+        "consensus_score": 3.0,
+        "strategies": [
+          "confluence_v2",
+          "supertrend"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "existing_position",
+        "pnl": null,
+        "market_regime": "trending",
+        "created_at": "2026-04-09T11:28:15.610628"
+      },
+      {
+        "id": "9d7944f9-8ff5-4095-8769-14c2040c1ccf",
+        "code": "HK.01024",
+        "strategy": "共识(confluence_v2+supertrend)",
+        "action": "BUY",
+        "price": 45.0,
+        "quantity": 100,
+        "confidence": 0.64,
+        "consensus_score": 3.0,
+        "strategies": [
+          "confluence_v2",
+          "supertrend"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "existing_position",
+        "pnl": null,
+        "market_regime": "trending",
+        "created_at": "2026-04-09T11:28:28.790009"
+      },
+      {
+        "id": "0a1a3286-2aba-4b4e-8333-fbd08b8ea57a",
+        "code": "HK.00981",
+        "strategy": "共识(confluence_v2+supertrend)",
+        "action": "BUY",
+        "price": 56.025,
+        "quantity": 100,
+        "confidence": 0.68,
+        "consensus_score": 3.0,
+        "strategies": [
+          "confluence_v2",
+          "supertrend"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "existing_position",
+        "pnl": null,
+        "market_regime": "trending",
+        "created_at": "2026-04-09T11:29:57.185486"
+      },
+      {
+        "id": "4f348609-cfc9-46dd-b2e6-c24b59aadde3",
+        "code": "HK.01347",
+        "strategy": "共识(confluence_v2+supertrend)",
+        "action": "BUY",
+        "price": 91.92500000000001,
+        "quantity": 100,
+        "confidence": 0.8,
+        "consensus_score": 3.0,
+        "strategies": [
+          "confluence_v2",
+          "supertrend"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "existing_position",
+        "pnl": null,
+        "market_regime": "trending",
+        "created_at": "2026-04-09T11:31:11.402280"
+      },
+      {
+        "id": "5d63dc3f-6490-42e0-b937-c8ffb72884b6",
+        "code": "HK.01347",
+        "strategy": "共识(confluence_v2+supertrend)",
+        "action": "BUY",
+        "price": 92.05,
+        "quantity": 100,
+        "confidence": 0.41,
+        "consensus_score": 3.0,
+        "strategies": [
+          "confluence_v2",
+          "supertrend"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "existing_position",
+        "pnl": null,
+        "market_regime": "trending",
+        "created_at": "2026-04-09T11:35:23.456651"
+      },
+      {
+        "id": "2f29c0a6-417f-401e-a0c3-725c3680fa70",
+        "code": "HK.03690",
+        "strategy": "共识(confluence_v2+supertrend)",
+        "action": "BUY",
+        "price": 88.65,
+        "quantity": 100,
+        "confidence": 0.7,
+        "consensus_score": 3.0,
+        "strategies": [
+          "confluence_v2",
+          "supertrend"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "existing_position",
+        "pnl": null,
+        "market_regime": "trending",
+        "created_at": "2026-04-09T11:38:50.570436"
+      },
+      {
+        "id": "a7d2f44b-ea02-4e1f-adde-a19a7079a7dd",
+        "code": "HK.00981",
+        "strategy": "共识(confluence_v2+supertrend)",
+        "action": "BUY",
+        "price": 56.05,
+        "quantity": 100,
+        "confidence": 0.57,
+        "consensus_score": 3.0,
+        "strategies": [
+          "confluence_v2",
+          "supertrend"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "existing_position",
+        "pnl": null,
+        "market_regime": "trending",
+        "created_at": "2026-04-09T11:48:35.521627"
+      },
+      {
+        "id": "3d0d99b6-ed46-4adb-b6d7-098cc44a2f47",
+        "code": "HK.01347",
+        "strategy": "共识(confluence_v2+supertrend)",
+        "action": "BUY",
+        "price": 91.85,
+        "quantity": 100,
+        "confidence": 0.77,
+        "consensus_score": 3.0,
+        "strategies": [
+          "confluence_v2",
+          "supertrend"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "existing_position",
+        "pnl": null,
+        "market_regime": "trending",
+        "created_at": "2026-04-09T11:51:39.903785"
+      },
+      {
+        "id": "e7fa3496-62e2-43db-a032-845e1224b46b",
+        "code": "HK.01024",
+        "strategy": "共识(confluence_v2+supertrend)",
+        "action": "BUY",
+        "price": 45.05,
+        "quantity": 100,
+        "confidence": 0.76,
+        "consensus_score": 3.0,
+        "strategies": [
+          "confluence_v2",
+          "supertrend"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "existing_position",
+        "pnl": null,
+        "market_regime": "trending",
+        "created_at": "2026-04-09T13:02:10.340015"
+      },
+      {
+        "id": "cb161e4b-12cb-458f-bd3e-48d1a9956399",
+        "code": "HK.03690",
+        "strategy": "共识(confluence_v2+supertrend)",
+        "action": "BUY",
+        "price": 88.775,
+        "quantity": 100,
+        "confidence": 0.68,
+        "consensus_score": 3.0,
+        "strategies": [
+          "confluence_v2",
+          "supertrend"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "existing_position",
+        "pnl": null,
+        "market_regime": "trending",
+        "created_at": "2026-04-09T13:14:29.143953"
+      },
+      {
+        "id": "43ca485d-0a19-450c-867d-d5f95abd4886",
+        "code": "HK.01347",
+        "strategy": "共识(confluence_v2+supertrend)",
+        "action": "BUY",
+        "price": 90.75,
+        "quantity": 100,
+        "confidence": 0.56,
+        "consensus_score": 3.0,
+        "strategies": [
+          "confluence_v2",
+          "supertrend"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "existing_position",
+        "pnl": null,
+        "market_regime": "trending",
+        "created_at": "2026-04-09T13:18:11.261421"
+      },
+      {
+        "id": "e8d08ac7-ed16-4b77-9c89-1e4eee527deb",
+        "code": "HK.00981",
+        "strategy": "共识(confluence_v2+supertrend)",
+        "action": "BUY",
+        "price": 55.775,
+        "quantity": 100,
+        "confidence": 0.5,
+        "consensus_score": 3.0,
+        "strategies": [
+          "confluence_v2",
+          "supertrend"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "existing_position",
+        "pnl": null,
+        "market_regime": "trending",
+        "created_at": "2026-04-09T13:18:41.679335"
+      },
+      {
+        "id": "7e0a8c81-c151-49a6-aadc-cbf6c65dd839",
+        "code": "HK.03690",
+        "strategy": "共识(confluence_v2+supertrend)",
+        "action": "BUY",
+        "price": 88.875,
+        "quantity": 100,
+        "confidence": 0.66,
+        "consensus_score": 3.0,
+        "strategies": [
+          "confluence_v2",
+          "supertrend"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "existing_position",
+        "pnl": null,
+        "market_regime": "trending",
+        "created_at": "2026-04-09T13:22:28.436655"
+      },
+      {
+        "id": "6ebb19c7-fdb5-4fa9-bffa-99467cd0a801",
+        "code": "HK.01024",
+        "strategy": "共识(confluence_v2+supertrend)",
+        "action": "BUY",
+        "price": 44.86,
+        "quantity": 100,
+        "confidence": 0.59,
+        "consensus_score": 3.0,
+        "strategies": [
+          "confluence_v2",
+          "supertrend"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "existing_position",
+        "pnl": null,
+        "market_regime": "trending",
+        "created_at": "2026-04-09T13:22:35.116247"
+      },
+      {
+        "id": "66c9cccf-9a76-4c89-9aaf-4552abc4e96b",
+        "code": "HK.03690",
+        "strategy": "共识(confluence_v2+supertrend)",
+        "action": "BUY",
+        "price": 89.25,
+        "quantity": 100,
+        "confidence": 0.76,
+        "consensus_score": 3.0,
+        "strategies": [
+          "confluence_v2",
+          "supertrend"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "existing_position",
+        "pnl": null,
+        "market_regime": "trending",
+        "created_at": "2026-04-09T13:30:34.137660"
+      },
+      {
+        "id": "b5543457-0d6c-47ab-9505-8e752f06ba28",
+        "code": "HK.03690",
+        "strategy": "共识(confluence_v2+supertrend)",
+        "action": "BUY",
+        "price": 89.375,
+        "quantity": 100,
+        "confidence": 0.8,
+        "consensus_score": 3.0,
+        "strategies": [
+          "confluence_v2",
+          "supertrend"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "existing_position",
+        "pnl": null,
+        "market_regime": "trending",
+        "created_at": "2026-04-09T13:36:35.536303"
+      },
+      {
+        "id": "592e2357-4566-45b8-8a5a-dc4cb13befdc",
+        "code": "HK.00981",
+        "strategy": "共识(confluence_v2+supertrend)",
+        "action": "BUY",
+        "price": 56.349999999999994,
+        "quantity": 100,
+        "confidence": 0.5,
+        "consensus_score": 3.0,
+        "strategies": [
+          "confluence_v2",
+          "supertrend"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "existing_position",
+        "pnl": null,
+        "market_regime": "trending",
+        "created_at": "2026-04-09T13:39:03.162516"
+      },
+      {
+        "id": "ddc7403d-92bf-4394-a750-bc3fbe5cb370",
+        "code": "HK.00981",
+        "strategy": "共识(confluence_v2+supertrend)",
+        "action": "BUY",
+        "price": 56.35,
+        "quantity": 100,
+        "confidence": 0.5,
+        "consensus_score": 3.0,
+        "strategies": [
+          "confluence_v2",
+          "supertrend"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "existing_position",
+        "pnl": null,
+        "market_regime": "trending",
+        "created_at": "2026-04-09T13:45:43.393323"
+      },
+      {
+        "id": "a6e0d87d-549d-43db-8ff2-c06b7e703908",
+        "code": "HK.00981",
+        "strategy": "共识(confluence_v2+supertrend)",
+        "action": "BUY",
+        "price": 56.125,
+        "quantity": 100,
+        "confidence": 0.5,
+        "consensus_score": 3.0,
+        "strategies": [
+          "confluence_v2",
+          "supertrend"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "existing_position",
+        "pnl": null,
+        "market_regime": "trending",
+        "created_at": "2026-04-09T13:54:12.780573"
+      },
+      {
+        "id": "64e7312c-0025-4945-8c61-bd645ac1fa90",
+        "code": "HK.01024",
+        "strategy": "共识(confluence_v2+supertrend)",
+        "action": "BUY",
+        "price": 45.05,
+        "quantity": 100,
+        "confidence": 0.69,
+        "consensus_score": 3.0,
+        "strategies": [
+          "confluence_v2",
+          "supertrend"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "existing_position",
+        "pnl": null,
+        "market_regime": "trending",
+        "created_at": "2026-04-09T13:57:04.021575"
+      },
+      {
+        "id": "a40677f7-4bb1-4043-b4ca-a01b19ce70f7",
+        "code": "HK.01024",
+        "strategy": "共识(supertrend+confluence_v2)",
+        "action": "BUY",
+        "price": 45.07,
+        "quantity": 100,
+        "confidence": 0.77,
+        "consensus_score": 3.0,
+        "strategies": [
+          "supertrend",
+          "confluence_v2"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "existing_position",
+        "pnl": null,
+        "market_regime": "trending",
+        "created_at": "2026-04-09T14:02:22.609997"
+      },
+      {
+        "id": "8294bf56-57d7-455b-9bbf-109f909218fb",
+        "code": "HK.01347",
+        "strategy": "共识(supertrend+confluence_v2)",
+        "action": "BUY",
+        "price": 91.175,
+        "quantity": 100,
+        "confidence": 0.5,
+        "consensus_score": 3.0,
+        "strategies": [
+          "supertrend",
+          "confluence_v2"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "existing_position",
+        "pnl": null,
+        "market_regime": "trending",
+        "created_at": "2026-04-09T14:02:32.069960"
+      },
+      {
+        "id": "8dcecd8f-a3f7-4548-8751-cdae412bb657",
+        "code": "HK.00981",
+        "strategy": "共识(confluence_v2+supertrend)",
+        "action": "BUY",
+        "price": 56.325,
+        "quantity": 100,
+        "confidence": 0.5,
+        "consensus_score": 3.0,
+        "strategies": [
+          "confluence_v2",
+          "supertrend"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "existing_position",
+        "pnl": null,
+        "market_regime": "trending",
+        "created_at": "2026-04-09T14:08:08.777529"
+      },
+      {
+        "id": "3cb85e9c-2f8f-4465-83cd-faeefb4a7e43",
+        "code": "HK.03690",
+        "strategy": "共识(confluence_v2+supertrend)",
+        "action": "BUY",
+        "price": 89.07499999999999,
+        "quantity": 100,
+        "confidence": 0.71,
+        "consensus_score": 3.0,
+        "strategies": [
+          "confluence_v2",
+          "supertrend"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "existing_position",
+        "pnl": null,
+        "market_regime": "trending",
+        "created_at": "2026-04-09T14:11:26.480854"
+      },
+      {
+        "id": "7a1fec25-8b8c-43be-887d-e3905e39d4c5",
+        "code": "HK.00981",
+        "strategy": "共识(confluence_v2+supertrend)",
+        "action": "BUY",
+        "price": 56.35,
+        "quantity": 100,
+        "confidence": 0.5,
+        "consensus_score": 3.0,
+        "strategies": [
+          "confluence_v2",
+          "supertrend"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "existing_position",
+        "pnl": null,
+        "market_regime": "trending",
+        "created_at": "2026-04-09T14:13:32.537699"
+      },
+      {
+        "id": "4ba03b42-d301-4d8f-8dd4-fc7bf71d2fb5",
+        "code": "HK.01347",
+        "strategy": "共识(confluence_v2+supertrend)",
+        "action": "BUY",
+        "price": 91.4,
+        "quantity": 100,
+        "confidence": 0.51,
+        "consensus_score": 3.0,
+        "strategies": [
+          "confluence_v2",
+          "supertrend"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "existing_position",
+        "pnl": null,
+        "market_regime": "trending",
+        "created_at": "2026-04-09T14:14:01.240854"
+      },
+      {
+        "id": "58a26231-71af-4480-a978-4118c67c7a8b",
+        "code": "HK.01024",
+        "strategy": "共识(confluence_v2+supertrend)",
+        "action": "BUY",
+        "price": 45.14,
+        "quantity": 100,
+        "confidence": 0.82,
+        "consensus_score": 3.0,
+        "strategies": [
+          "confluence_v2",
+          "supertrend"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "existing_position",
+        "pnl": null,
+        "market_regime": "trending",
+        "created_at": "2026-04-09T14:22:06.716640"
+      },
+      {
+        "id": "58c4940b-17ad-464e-8510-0f4b6a28c488",
+        "code": "HK.01347",
+        "strategy": "共识(confluence_v2+supertrend)",
+        "action": "BUY",
+        "price": 91.15,
+        "quantity": 100,
+        "confidence": 0.5,
+        "consensus_score": 3.0,
+        "strategies": [
+          "confluence_v2",
+          "supertrend"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "existing_position",
+        "pnl": null,
+        "market_regime": "trending",
+        "created_at": "2026-04-09T14:22:22.563321"
+      },
+      {
+        "id": "13346abb-bc16-423a-bd9b-1066edae8aaa",
+        "code": "HK.00981",
+        "strategy": "共识(confluence_v2+supertrend)",
+        "action": "BUY",
+        "price": 56.175,
+        "quantity": 100,
+        "confidence": 0.5,
+        "consensus_score": 3.0,
+        "strategies": [
+          "confluence_v2",
+          "supertrend"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "existing_position",
+        "pnl": null,
+        "market_regime": "trending",
+        "created_at": "2026-04-09T14:22:23.393407"
+      },
+      {
+        "id": "bea769bf-a5c7-47ff-8d38-f4bc40f7104a",
+        "code": "HK.03690",
+        "strategy": "共识(confluence_v2+supertrend)",
+        "action": "BUY",
+        "price": 88.82499999999999,
+        "quantity": 100,
+        "confidence": 0.6,
+        "consensus_score": 3.0,
+        "strategies": [
+          "confluence_v2",
+          "supertrend"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "existing_position",
+        "pnl": null,
+        "market_regime": "trending",
+        "created_at": "2026-04-09T14:23:41.319222"
+      },
+      {
+        "id": "fc9cf1eb-9ead-4f80-aa4f-7c8063769fc9",
+        "code": "HK.01024",
+        "strategy": "共识(confluence_v2+supertrend)",
+        "action": "BUY",
+        "price": 45.14,
+        "quantity": 100,
+        "confidence": 0.85,
+        "consensus_score": 3.0,
+        "strategies": [
+          "confluence_v2",
+          "supertrend"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "existing_position",
+        "pnl": null,
+        "market_regime": "trending",
+        "created_at": "2026-04-09T14:28:01.372633"
+      },
+      {
+        "id": "c00215e5-60f5-4fd7-96a6-62a6cc6638ad",
+        "code": "HK.03690",
+        "strategy": "共识(confluence_v2+supertrend)",
+        "action": "BUY",
+        "price": 88.85,
+        "quantity": 100,
+        "confidence": 0.62,
+        "consensus_score": 3.0,
+        "strategies": [
+          "confluence_v2",
+          "supertrend"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "existing_position",
+        "pnl": null,
+        "market_regime": "trending",
+        "created_at": "2026-04-09T14:29:57.252058"
+      },
+      {
+        "id": "02ce1131-bc29-4291-9d3b-e35adec901d3",
+        "code": "HK.01024",
+        "strategy": "共识(confluence_v2+supertrend)",
+        "action": "BUY",
+        "price": 45.17,
+        "quantity": 100,
+        "confidence": 0.43,
+        "consensus_score": 3.0,
+        "strategies": [
+          "confluence_v2",
+          "supertrend"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "existing_position",
+        "pnl": null,
+        "market_regime": "trending",
+        "created_at": "2026-04-09T14:32:31.845761"
+      },
+      {
+        "id": "d4010033-cc55-4fb2-886d-22d8e8f901d0",
+        "code": "HK.00981",
+        "strategy": "共识(confluence_v2+supertrend)",
+        "action": "BUY",
+        "price": 56.125,
+        "quantity": 100,
+        "confidence": 0.5,
+        "consensus_score": 3.0,
+        "strategies": [
+          "confluence_v2",
+          "supertrend"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "existing_position",
+        "pnl": null,
+        "market_regime": "trending",
+        "created_at": "2026-04-09T14:43:45.522148"
+      },
+      {
+        "id": "b739c058-4bc3-4fe6-935c-5c2ea13001a7",
+        "code": "HK.01347",
+        "strategy": "共识(supertrend+confluence_v2)",
+        "action": "BUY",
+        "price": 91.0,
+        "quantity": 100,
+        "confidence": 0.5,
+        "consensus_score": 3.0,
+        "strategies": [
+          "supertrend",
+          "confluence_v2"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "existing_position",
+        "pnl": null,
+        "market_regime": "trending",
+        "created_at": "2026-04-09T14:52:21.117247"
+      },
+      {
+        "id": "4a0f5764-288d-4eab-bb9a-c87b72b1eac5",
+        "code": "HK.00981",
+        "strategy": "共识(confluence_v2+supertrend)",
+        "action": "BUY",
+        "price": 56.15,
+        "quantity": 100,
+        "confidence": 0.5,
+        "consensus_score": 3.0,
+        "strategies": [
+          "confluence_v2",
+          "supertrend"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "existing_position",
+        "pnl": null,
+        "market_regime": "trending",
+        "created_at": "2026-04-09T14:52:21.629217"
+      },
+      {
+        "id": "f9de83bb-5452-42fa-aaef-801cfecb5389",
+        "code": "HK.03690",
+        "strategy": "共识(confluence_v2+supertrend)",
+        "action": "BUY",
+        "price": 88.725,
+        "quantity": 100,
+        "confidence": 0.56,
+        "consensus_score": 3.0,
+        "strategies": [
+          "confluence_v2",
+          "supertrend"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "existing_position",
+        "pnl": null,
+        "market_regime": "trending",
+        "created_at": "2026-04-09T14:56:00.896701"
+      },
+      {
+        "id": "13d7dfbf-1421-4ccf-86e2-44569a9a7d80",
+        "code": "HK.03690",
+        "strategy": "共识(confluence_v2+supertrend)",
+        "action": "BUY",
+        "price": 88.775,
+        "quantity": 100,
+        "confidence": 0.58,
+        "consensus_score": 3.0,
+        "strategies": [
+          "confluence_v2",
+          "supertrend"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "existing_position",
+        "pnl": null,
+        "market_regime": "trending",
+        "created_at": "2026-04-09T15:00:52.865499"
+      },
+      {
+        "id": "a0670ace-c23e-427f-92dc-504caf86f030",
+        "code": "HK.01024",
+        "strategy": "共识(confluence_v2+supertrend)",
+        "action": "BUY",
+        "price": 45.15,
+        "quantity": 100,
+        "confidence": 0.88,
+        "consensus_score": 3.0,
+        "strategies": [
+          "confluence_v2",
+          "supertrend"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "existing_position",
+        "pnl": null,
+        "market_regime": "trending",
+        "created_at": "2026-04-09T15:01:03.935709"
+      },
+      {
+        "id": "56a56aed-8261-44f3-8718-5ba96d374569",
+        "code": "HK.01347",
+        "strategy": "共识(supertrend+confluence_v2)",
+        "action": "BUY",
+        "price": 91.1,
+        "quantity": 100,
+        "confidence": 0.5,
+        "consensus_score": 3.0,
+        "strategies": [
+          "supertrend",
+          "confluence_v2"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "existing_position",
+        "pnl": null,
+        "market_regime": "trending",
+        "created_at": "2026-04-09T15:01:39.448714"
+      },
+      {
+        "id": "0058d784-a0f2-41d2-ac88-55dbc19b030b",
+        "code": "HK.01347",
+        "strategy": "共识(confluence_v2+supertrend)",
+        "action": "BUY",
+        "price": 91.0,
+        "quantity": 100,
+        "confidence": 0.5,
+        "consensus_score": 3.0,
+        "strategies": [
+          "confluence_v2",
+          "supertrend"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "existing_position",
+        "pnl": null,
+        "market_regime": "trending",
+        "created_at": "2026-04-09T15:12:56.572861"
+      },
+      {
+        "id": "5d179def-1315-4099-805c-866d687c4443",
+        "code": "HK.00981",
+        "strategy": "共识(confluence_v2+supertrend)",
+        "action": "BUY",
+        "price": 56.1,
+        "quantity": 100,
+        "confidence": 0.5,
+        "consensus_score": 3.0,
+        "strategies": [
+          "confluence_v2",
+          "supertrend"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "existing_position",
+        "pnl": null,
+        "market_regime": "trending",
+        "created_at": "2026-04-09T15:12:59.506683"
+      },
+      {
+        "id": "89756b3d-4d99-4d31-a21e-e99c46e0444f",
+        "code": "HK.01347",
+        "strategy": "共识(confluence_v2+supertrend)",
+        "action": "BUY",
+        "price": 90.6,
+        "quantity": 100,
+        "confidence": 0.5,
+        "consensus_score": 3.0,
+        "strategies": [
+          "confluence_v2",
+          "supertrend"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "existing_position",
+        "pnl": null,
+        "market_regime": "trending",
+        "created_at": "2026-04-09T15:20:55.178216"
+      },
+      {
+        "id": "81cd8df2-be45-4ed3-80a0-8f8e0d39fc14",
+        "code": "HK.01024",
+        "strategy": "共识(confluence_v2+supertrend)",
+        "action": "BUY",
+        "price": 44.94,
+        "quantity": 100,
+        "confidence": 0.78,
+        "consensus_score": 3.0,
+        "strategies": [
+          "confluence_v2",
+          "supertrend"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "existing_position",
+        "pnl": null,
+        "market_regime": "trending",
+        "created_at": "2026-04-09T15:22:25.180705"
+      },
+      {
+        "id": "50c90573-5f60-4cce-a9d8-179d2adcdd10",
+        "code": "HK.00981",
+        "strategy": "共识(confluence_v2+supertrend)",
+        "action": "BUY",
+        "price": 55.95,
+        "quantity": 100,
+        "confidence": 0.5,
+        "consensus_score": 3.0,
+        "strategies": [
+          "confluence_v2",
+          "supertrend"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "existing_position",
+        "pnl": null,
+        "market_regime": "trending",
+        "created_at": "2026-04-09T15:25:40.539175"
+      },
+      {
+        "id": "91476c06-5d8b-4ca0-9c43-088eba78f6c5",
+        "code": "HK.01024",
+        "strategy": "共识(confluence_v2+supertrend)",
+        "action": "BUY",
+        "price": 44.94,
+        "quantity": 100,
+        "confidence": 0.83,
+        "consensus_score": 3.0,
+        "strategies": [
+          "confluence_v2",
+          "supertrend"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "existing_position",
+        "pnl": null,
+        "market_regime": "trending",
+        "created_at": "2026-04-09T15:30:32.051321"
+      },
+      {
+        "id": "d0ad8442-c4f6-467b-8b7c-91ba061ed0e1",
+        "code": "HK.01347",
+        "strategy": "共识(confluence_v2+supertrend)",
+        "action": "BUY",
+        "price": 90.6,
+        "quantity": 100,
+        "confidence": 0.5,
+        "consensus_score": 3.0,
+        "strategies": [
+          "confluence_v2",
+          "supertrend"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "existing_position",
+        "pnl": null,
+        "market_regime": "trending",
+        "created_at": "2026-04-09T15:31:44.146109"
+      },
+      {
+        "id": "20360274-4139-456c-a6d8-b7bff436e6ab",
+        "code": "HK.03690",
+        "strategy": "共识(confluence_v2+supertrend)",
+        "action": "BUY",
+        "price": 87.9,
+        "quantity": 100,
+        "confidence": 0.5,
+        "consensus_score": 3.0,
+        "strategies": [
+          "confluence_v2",
+          "supertrend"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "existing_position",
+        "pnl": null,
+        "market_regime": "trending",
+        "created_at": "2026-04-09T15:37:58.025340"
+      },
+      {
+        "id": "3ae4d897-6f7e-4415-b131-0ed68df9ee80",
+        "code": "HK.01024",
+        "strategy": "共识(confluence_v2+supertrend)",
+        "action": "BUY",
+        "price": 45.0,
+        "quantity": 100,
+        "confidence": 0.91,
+        "consensus_score": 3.0,
+        "strategies": [
+          "confluence_v2",
+          "supertrend"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "existing_position",
+        "pnl": null,
+        "market_regime": "trending",
+        "created_at": "2026-04-09T15:38:41.281643"
+      },
+      {
+        "id": "2841b978-d54f-45f3-a372-3d3f1fc2e053",
+        "code": "HK.00981",
+        "strategy": "共识(confluence_v2+supertrend)",
+        "action": "BUY",
+        "price": 55.675,
+        "quantity": 100,
+        "confidence": 0.5,
+        "consensus_score": 3.0,
+        "strategies": [
+          "confluence_v2",
+          "supertrend"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "existing_position",
+        "pnl": null,
+        "market_regime": "trending",
+        "created_at": "2026-04-09T15:38:45.695281"
+      },
+      {
+        "id": "3787a186-a777-42a2-af9c-1a2052c98754",
+        "code": "HK.01347",
+        "strategy": "共识(confluence_v2+supertrend)",
+        "action": "BUY",
+        "price": 90.45,
+        "quantity": 100,
+        "confidence": 0.5,
+        "consensus_score": 3.0,
+        "strategies": [
+          "confluence_v2",
+          "supertrend"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "existing_position",
+        "pnl": null,
+        "market_regime": "trending",
+        "created_at": "2026-04-09T15:39:16.205550"
+      },
+      {
+        "id": "6f2c24fd-a08e-4f1a-b856-89b7d4b69d1f",
+        "code": "HK.01378",
+        "strategy": "共识(confluence_v2+supertrend)",
+        "action": "BUY",
+        "price": 39.05,
+        "quantity": 100,
+        "confidence": 0.87,
+        "consensus_score": 3.0,
+        "strategies": [
+          "confluence_v2",
+          "supertrend"
+        ],
+        "executed": false,
+        "execution_price": null,
+        "reject_reason": "价格检查: 价格 39.05 接近日内高点 39.36 (距离 0.79% < 1.0%)，禁止追高买入",
+        "pnl": null,
+        "market_regime": "trending",
+        "created_at": "2026-04-09T15:41:10.978091"
+      },
+      {
+        "id": "b2535ffa-6ba8-4523-bcc3-b73b40c859be",
+        "code": "HK.01093",
+        "strategy": "共识(supertrend+confluence_v2)",
+        "action": "BUY",
+        "price": 9.155000000000001,
+        "quantity": 100,
+        "confidence": 0.63,
+        "consensus_score": 3.0,
+        "strategies": [
+          "supertrend",
+          "confluence_v2"
+        ],
+        "executed": true,
+        "execution_price": 9.155000000000001,
+        "reject_reason": null,
+        "pnl": null,
+        "market_regime": "trending",
+        "created_at": "2026-04-09T15:41:56.059621"
+      }
+    ],
+    "stats": {
+      "total": 73,
+      "executed": 2,
+      "rejected": 71,
+      "pending": 0,
+      "by_strategy": {
+        "共识(confluence_v2+supertrend)": 67,
+        "共识(supertrend+confluence_v2)": 6
+      },
+      "by_code": {
+        "HK.01347": 16,
+        "HK.03690": 16,
+        "HK.01024": 15,
+        "HK.00981": 17,
+        "HK.09992": 1,
+        "HK.00175": 4,
+        "HK.01378": 3,
+        "HK.01093": 1
+      },
+      "by_confidence": {
+        "high": 30,
+        "medium": 41,
+        "low": 2
+      },
+      "reject_reasons": {
+        "其他": 71
+      }
+    }
+  },
+  "positions": [
+    {
+      "id": 1,
+      "code": "HK.01093",
+      "action": "BUY",
+      "quantity": 2000,
+      "entry_price": 9.155000000000001,
+      "entry_time": "2026-04-09 15:42:10",
+      "stop_loss": 8.6057,
+      "take_profit": 9.8874,
+      "status": "OPEN",
+      "highest_price": null,
+      "lowest_price": null,
+      "unrealized_pnl": null
+    }
+  ],
+  "pnl_metrics": {
+    "total_trades": 1,
+    "total_volume": 18310.000000000004,
+    "buy_count": 1,
+    "sell_count": 0,
+    "closed_trades": 0,
+    "open_positions": 1,
+    "position_value": 18310.000000000004,
+    "unrealized_pnl": 0,
+    "total_realized_pnl": 0,
+    "win_count": 0,
+    "loss_count": 0,
+    "win_rate": 0,
+    "total_win": 0,
+    "total_loss": 0,
+    "avg_win": 0,
+    "avg_loss": 0,
+    "profit_factor": 0,
+    "by_code": {
+      "HK.01093": {
+        "count": 1,
+        "volume": 18310.000000000004,
+        "buy": 1,
+        "sell": 0,
+        "realized_pnl": 0,
+        "win_count": 0,
+        "loss_count": 0
+      }
+    }
+  },
+  "strategy_config": {
+    "_comment": "策略参数配置 (Strategy Parameters) - 创建日期：2026-04-08",
+    "global": {
+      "enabled": true,
+      "debug_mode": false,
+      "min_confidence": 0.6,
+      "signal_cooldown_seconds": 120
+    },
+    "stop_loss": {
+      "stop_loss_pct": -3.0,
+      "intraday_stop_loss_pct": -1.5,
+      "atr_stop_loss_multiplier": 2.5,
+      "supertrend_period": 10,
+      "supertrend_multiplier": 3.0
+    },
+    "take_profit": {
+      "take_profit_pct": 4.0,
+      "partial_tp1_pct": 2.0,
+      "partial_tp2_pct": 4.0,
+      "trailing_tp_trigger_pct": 2.5,
+      "trailing_tp_pct": 1.5
+    },
+    "position_sizing": {
+      "default_position_pct": 0.1,
+      "max_position_per_stock_pct": 0.2,
+      "max_total_exposure_pct": 0.8,
+      "min_trade_amount": 1000
+    },
+    "risk_limits": {
+      "max_daily_loss_pct": 5.0,
+      "max_drawdown_pct": 15.0,
+      "max_loss_per_trade_pct": 2.0,
+      "max_consecutive_losses": 3,
+      "max_open_positions": 4
+    },
+    "confluence_v2": {
+      "enabled": true,
+      "weight": 0.4,
+      "min_technical_score": 0.6,
+      "rsi_period": 14,
+      "rsi_oversold": 30,
+      "rsi_overbought": 70,
+      "macd_fast": 12,
+      "macd_slow": 26,
+      "macd_signal": 9,
+      "bb_period": 20,
+      "bb_std": 2.0,
+      "ma_periods": [
+        5,
+        20,
+        60
+      ],
+      "volume_ma_period": 20,
+      "volume_ratio_threshold": 1.5
+    },
+    "supertrend": {
+      "enabled": true,
+      "weight": 0.3,
+      "period": 10,
+      "multiplier": 3.0,
+      "min_confidence": 0.55
+    },
+    "sentiment_ai": {
+      "enabled": true,
+      "weight": 0.2,
+      "min_sentiment_score": 0.5,
+      "news_lookback_hours": 24,
+      "use_qwen_api": false,
+      "qwen_api_key_env": "QWEN_API_KEY"
+    },
+    "open_close_effect": {
+      "enabled": true,
+      "weight": 0.1,
+      "lookback_days": 5,
+      "min_edge_pct": 0.5
+    },
+    "price_check": {
+      "enabled": true,
+      "chase_reject_threshold": 0.05,
+      "chase_warning_threshold": 0.03,
+      "panic_warning_threshold": 0.03,
+      "high_buy_threshold": 0.01,
+      "low_sell_threshold": 0.01,
+      "adx_extreme_threshold": 60.0
+    },
+    "market_regime": {
+      "enabled": true,
+      "adx_trending_threshold": 25.0,
+      "adx_ranging_threshold": 20.0,
+      "atr_volatile_threshold": 0.035
+    },
+    "short_selling": {
+      "enabled": false,
+      "comment": "2026-04-08: 模拟盘禁用卖空，待实盘后启用"
+    }
+  }
+}

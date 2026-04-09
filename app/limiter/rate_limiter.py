@@ -1,168 +1,185 @@
 """
-频率限制器模块
+FTSeek 频率限制器 (由 news_push/rate_limiter.py 移植)
 
-限制规则:
-- 单股票每日最多 3 次信号
-- 全局每日最多 20 次信号
-- 每日零点自动重置
+功能:
+- per_stock_limit: 每只股票每日最大交易次数
+- global_limit: 全局每日最大交易次数
+
+使用内存存储 (线程安全)
 """
+import time
+import threading
 import logging
-from typing import Tuple, Optional
+from collections import defaultdict
 from datetime import datetime, timedelta
+from typing import Dict, Optional
 from dataclasses import dataclass
 
-from app.storage.database import get_database
-
 logger = logging.getLogger("ftseek.limiter.rate_limiter")
+logger.propagate = False
 
 
 @dataclass
 class RateLimitResult:
-    """限频结果"""
-    allowed: bool               # 是否允许
-    reason: str                 # 原因
-    current_count: int          # 当前计数
-    limit: int                  # 限制值
-    reset_at: str               # 重置时间
+    """限流检查结果"""
+    allowed: bool
+    reason: str
 
 
 class RateLimiter:
     """
-    频率限制器
+    交易频率限制器
     
-    配置:
-    - per_stock_daily_limit: 单股票每日最多信号数
-    - global_daily_limit: 全局每日最多信号数
+    功能:
+    - per_stock_limit: 每只股票每日最大交易次数
+    - global_limit: 全局每日最大交易次数
     """
     
-    def __init__(self, 
-                 per_stock_daily_limit: int = 3,
-                 global_daily_limit: int = 20):
+    def __init__(self, per_stock_limit: int = 3, global_limit: int = 20):
         """
-        初始化限频器
+        初始化限流器
         
         Args:
-            per_stock_daily_limit: 单股票每日限制 (默认 3)
-            global_daily_limit: 全局每日限制 (默认 20)
+            per_stock_limit: 每只股票每日最大交易次数，默认 3
+            global_limit: 全局每日最大交易次数，默认 20
         """
-        self.per_stock_daily_limit = per_stock_daily_limit
-        self.global_daily_limit = global_daily_limit
-        self.db = get_database()
+        self.per_stock_limit = per_stock_limit
+        self.global_limit = global_limit
         
-        logger.info(f"限频器初始化：单股{per_stock_daily_limit}次/日，"
-                   f"全局{global_daily_limit}次/日")
+        # 存储每只股票的交易次数：{code: {date: count}}
+        self._stock_trades: Dict[str, Dict[str, int]] = defaultdict(lambda: defaultdict(int))
+        # 存储全局交易次数：{date: count}
+        self._global_trades: Dict[str, int] = defaultdict(int)
+        
+        # 线程锁 (保证并发安全)
+        self._lock = threading.RLock()
+        
+        logger.info(
+            f"RateLimiter 初始化：per_stock_limit={per_stock_limit}, "
+            f"global_limit={global_limit}"
+        )
     
-    def check(self, code: str, action: str = None) -> RateLimitResult:
+    def check(self, code: str, timestamp: Optional[float] = None) -> RateLimitResult:
         """
-        检查是否允许发送信号
+        检查交易是否被允许
         
         Args:
             code: 股票代码
-            action: 信号方向 (BUY/SELL)
-            
+            timestamp: 时间戳 (None 表示当前时间)
+        
         Returns:
-            RateLimitResult
+            RateLimitResult: 检查结果
         """
-        # 检查单股限制
-        stock_count = self.db.get_rate_limit_count(code, action)
-        if stock_count >= self.per_stock_daily_limit:
-            return RateLimitResult(
-                allowed=False,
-                reason=f"单股票已达日限制 ({stock_count}/{self.per_stock_daily_limit})",
-                current_count=stock_count,
-                limit=self.per_stock_daily_limit,
-                reset_at=self._get_next_reset_time()
-            )
-        
-        # 检查全局限制
-        global_count = self.db.get_global_daily_count()
-        if global_count >= self.global_daily_limit:
-            return RateLimitResult(
-                allowed=False,
-                reason=f"全局已达日限制 ({global_count}/{self.global_daily_limit})",
-                current_count=global_count,
-                limit=self.global_daily_limit,
-                reset_at=self._get_next_reset_time()
-            )
-        
-        # 通过检查，增加计数
-        new_count = self.db.increment_rate_limit(code, action)
-        
-        logger.info(f"限频检查通过：{code} {action or 'ANY'} "
-                   f"(单股:{new_count}/{self.per_stock_daily_limit}, "
-                   f"全局:{global_count + 1}/{self.global_daily_limit})")
-        
-        return RateLimitResult(
-            allowed=True,
-            reason="通过",
-            current_count=new_count,
-            limit=self.per_stock_daily_limit,
-            reset_at=self._get_next_reset_time()
-        )
+        with self._lock:
+            if timestamp is None:
+                timestamp = time.time()
+            
+            # 获取当日日期字符串 (YYYY-MM-DD)
+            today = datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d")
+            
+            # 检查全局限制
+            global_count = self._global_trades.get(today, 0)
+            if global_count >= self.global_limit:
+                return RateLimitResult(
+                    allowed=False,
+                    reason=f"全局交易次数超限：{global_count}/{self.global_limit}"
+                )
+            
+            # 检查个股限制
+            stock_count = self._stock_trades[code].get(today, 0)
+            if stock_count >= self.per_stock_limit:
+                return RateLimitResult(
+                    allowed=False,
+                    reason=f"{code} 交易次数超限：{stock_count}/{self.per_stock_limit}"
+                )
+            
+            return RateLimitResult(allowed=True, reason="检查通过")
     
-    def get_stock_remaining(self, code: str, action: str = None) -> int:
-        """获取单股票剩余次数"""
-        current = self.db.get_rate_limit_count(code, action)
-        return max(0, self.per_stock_daily_limit - current)
-    
-    def get_global_remaining(self) -> int:
-        """获取全局剩余次数"""
-        current = self.db.get_global_daily_count()
-        return max(0, self.global_daily_limit - current)
-    
-    def get_status(self, code: str = None) -> dict:
+    def record_trade(self, code: str, timestamp: Optional[float] = None) -> None:
         """
-        获取限频状态
+        记录交易 (在交易成功执行后调用)
         
         Args:
-            code: 可选，指定股票代码
-            
-        Returns:
-            状态字典
+            code: 股票代码
+            timestamp: 时间戳 (None 表示当前时间)
         """
-        status = {
-            'global': {
-                'current': self.db.get_global_daily_count(),
-                'limit': self.global_daily_limit,
-                'remaining': self.get_global_remaining()
-            },
-            'reset_at': self._get_next_reset_time()
-        }
+        with self._lock:
+            if timestamp is None:
+                timestamp = time.time()
+            
+            # 获取当日日期字符串 (YYYY-MM-DD)
+            today = datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d")
+            
+            # 记录个股交易
+            self._stock_trades[code][today] += 1
+            
+            # 记录全局交易
+            self._global_trades[today] += 1
+            
+            logger.debug(f"交易已记录：{code} (今日累计: {self._stock_trades[code][today]})")
+    
+    def get_status(self, code: str, timestamp: Optional[float] = None) -> Dict:
+        """
+        获取限流状态详情
         
-        if code:
-            stock_count = self.db.get_rate_limit_count(code, None)
-            status['stock'] = {
+        Args:
+            code: 股票代码
+            timestamp: 时间戳 (None 表示当前时间)
+        
+        Returns:
+            dict: 状态信息
+        """
+        with self._lock:
+            if timestamp is None:
+                timestamp = time.time()
+            
+            today = datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d")
+            
+            stock_count = self._stock_trades[code].get(today, 0)
+            global_count = self._global_trades.get(today, 0)
+            
+            return {
                 'code': code,
-                'current': stock_count,
-                'limit': self.per_stock_daily_limit,
-                'remaining': self.get_stock_remaining(code)
+                'today': today,
+                'stock_count': stock_count,
+                'stock_remaining': max(0, self.per_stock_limit - stock_count),
+                'global_count': global_count,
+                'global_remaining': max(0, self.global_limit - global_count),
+                'can_trade': stock_count < self.per_stock_limit and global_count < self.global_limit
             }
-        
-        return status
     
-    def _get_next_reset_time(self) -> str:
-        """获取下次重置时间 (次日零点)"""
-        tomorrow = datetime.now().date() + timedelta(days=1)
-        return tomorrow.strftime('%Y-%m-%d 00:00:00')
-    
-    def reset(self, code: str = None):
+    def reset(self, code: str = None, timestamp: Optional[float] = None) -> None:
         """
-        重置计数器
+        重置限流状态
         
         Args:
-            code: 可选，指定股票代码，不传则重置全局
+            code: 股票代码 (None 表示重置全部)
+            timestamp: 时间戳 (None 表示当前时间)
         """
-        # 实际使用中一般不需要手动重置，由每日自动清理
-        logger.warning(f"手动重置限频器：{code or '全局'}")
+        with self._lock:
+            if timestamp is None:
+                timestamp = time.time()
+            
+            today = datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d")
+            
+            if code:
+                # 重置个股
+                if code in self._stock_trades:
+                    self._stock_trades[code].pop(today, None)
+                    logger.debug(f"限流状态已重置：{code}")
+            else:
+                # 重置全部
+                self._stock_trades.clear()
+                self._global_trades.clear()
+                logger.info("全部限流状态已重置")
 
 
-# 全局单例
+# 单例
 _rate_limiter: Optional[RateLimiter] = None
 
 
-def get_rate_limiter(per_stock_limit: int = 3, 
-                    global_limit: int = 20) -> RateLimiter:
-    """获取限频器单例"""
+def get_rate_limiter(per_stock_limit: int = 3, global_limit: int = 20) -> RateLimiter:
+    """获取频率限制器单例"""
     global _rate_limiter
     if _rate_limiter is None:
         _rate_limiter = RateLimiter(per_stock_limit, global_limit)

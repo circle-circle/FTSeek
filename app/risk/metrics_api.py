@@ -14,6 +14,7 @@ from app.risk.metrics_calculator import MetricsCalculator, PerformanceMetrics, P
 from app.backtest.data_loader import generate_sample_data
 
 logger = logging.getLogger("ftseek.api.metrics")
+logger.propagate = False  # 防止日志重复
 
 router = APIRouter(tags=["量化指标"])
 

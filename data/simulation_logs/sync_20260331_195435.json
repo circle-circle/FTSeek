@@ -1,0 +1,8 @@
+{
+  "success": false,
+  "timestamp": "2026-03-31T19:54:35.224311",
+  "positions_synced": 5,
+  "trades_synced": 0,
+  "discrepancies": [],
+  "error": "history_order_list_query() got an unexpected keyword argument 'market'"
+}

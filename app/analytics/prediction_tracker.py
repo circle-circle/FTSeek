@@ -11,6 +11,7 @@ from typing import Dict, List, Optional
 from dataclasses import dataclass, asdict
 
 logger = logging.getLogger("ftseek.analytics.prediction_tracker")
+logger.propagate = False  # 防止日志重复
 
 # 预测追踪存储目录
 PREDICTION_TRACKING_DIR = Path('/opt/ftseek/FTSeek/data/prediction_tracking')

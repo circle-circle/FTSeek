@@ -30,6 +30,7 @@ from app.strategy.base import Signal, SignalAction, BaseStrategy
 from app.storage.database import get_database
 
 logger = logging.getLogger("ftseek.signal.fusion_engine")
+logger.propagate = False  # 防止日志重复
 
 
 # ==================== 数据模型 ====================

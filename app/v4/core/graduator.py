@@ -23,6 +23,7 @@ from app.v4.models.trading_models import TradingDatabase, TradingMode
 from app.v4.notifier.dingtalk_v4 import DingTalkNotifierV4
 
 logger = logging.getLogger("ftseek.v4.graduator")
+logger.propagate = False  # 防止日志重复
 
 
 class SuggestionType(str, Enum):

@@ -9,6 +9,7 @@ from .base import BaseFactor, FactorResult
 from app.ai.base import AIService
 
 logger = logging.getLogger("ftseek.factors.market_prediction_ai")
+logger.propagate = False  # 防止日志重复
 
 
 class AIPredictionFactor(BaseFactor):

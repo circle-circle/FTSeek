@@ -1,0 +1,177 @@
+[
+  {
+    "timestamp": "2026-03-30T09:50:09.694332",
+    "code": "HK.09992",
+    "reason": "trend_filter",
+    "category": "other",
+    "message": "趋势过滤: strong_down 趋势中禁止买入 ADX=31.4 | 日K:strong_down | 日内:weak_down | ✓双重确认下跌 | 🚫禁止买入"
+  },
+  {
+    "timestamp": "2026-03-30T09:50:23.171496",
+    "code": "HK.00981",
+    "reason": "trend_filter",
+    "category": "other",
+    "message": "趋势过滤: strong_down 趋势中禁止买入 ADX=95.2 | 日K:strong_down | 日内:weak_down | ✓双重确认下跌 | 🚫禁止买入"
+  },
+  {
+    "timestamp": "2026-03-30T09:53:22.161439",
+    "code": "HK.00981",
+    "reason": "price_check",
+    "category": "other",
+    "message": "价格检查: 价格 50.30 接近日内低点 50.15 (距离 0.30% < 1.0%)，禁止杀跌卖出"
+  },
+  {
+    "timestamp": "2026-03-30T09:57:16.495970",
+    "code": "HK.09992",
+    "reason": "trend_filter",
+    "category": "other",
+    "message": "趋势过滤: strong_down 趋势中禁止买入 ADX=98.3 | 日K:strong_down | 日内:weak_down | ✓双重确认下跌 | 🚫禁止买入"
+  },
+  {
+    "timestamp": "2026-03-30T09:57:41.324191",
+    "code": "HK.00981",
+    "reason": "trend_filter",
+    "category": "other",
+    "message": "趋势过滤: strong_down 趋势中禁止买入 ADX=100.0 | 日K:strong_down | 日内:weak_down | ✓双重确认下跌 | 🚫禁止买入"
+  },
+  {
+    "timestamp": "2026-03-30T10:08:37.739025",
+    "code": "HK.00981",
+    "reason": "trend_filter",
+    "category": "other",
+    "message": "趋势过滤: strong_down 趋势中禁止买入 ADX=100.0 | 日K:strong_down | 日内:weak_down | ✓双重确认下跌 | 🚫禁止买入"
+  },
+  {
+    "timestamp": "2026-03-30T10:19:18.203063",
+    "code": "HK.09992",
+    "reason": "trend_filter",
+    "category": "other",
+    "message": "趋势过滤: strong_down 趋势中禁止买入 ADX=99.2 | 日K:strong_down | 日内:weak_down | ✓双重确认下跌 | 🚫禁止买入"
+  },
+  {
+    "timestamp": "2026-03-30T10:32:13.697293",
+    "code": "HK.00981",
+    "reason": "price_check",
+    "category": "other",
+    "message": "价格检查: 价格 49.51 接近日内低点 49.44 (距离 0.14% < 1.0%)，禁止杀跌卖出"
+  },
+  {
+    "timestamp": "2026-03-30T10:47:19.542182",
+    "code": "HK.00981",
+    "reason": "trend_filter",
+    "category": "other",
+    "message": "趋势过滤: strong_down 趋势中禁止买入 ADX=22.2 | 日K:strong_down | 日内:weak_down | ✓双重确认下跌 | 🚫禁止买入"
+  },
+  {
+    "timestamp": "2026-03-30T11:00:20.609508",
+    "code": "HK.00981",
+    "reason": "trend_filter",
+    "category": "other",
+    "message": "趋势过滤: strong_down 趋势中禁止买入 ADX=22.1 | 日K:strong_down | 日内:weak_down | ✓双重确认下跌 | 🚫禁止买入"
+  },
+  {
+    "timestamp": "2026-03-30T11:18:42.089501",
+    "code": "HK.00981",
+    "reason": "trend_filter",
+    "category": "other",
+    "message": "趋势过滤: strong_down 趋势中禁止买入 ADX=97.3 | 日K:strong_down | 日内:weak_down | ✓双重确认下跌 | 🚫禁止买入"
+  },
+  {
+    "timestamp": "2026-03-30T11:23:27.420396",
+    "code": "HK.00981",
+    "reason": "trend_filter",
+    "category": "other",
+    "message": "趋势过滤: strong_down 趋势中禁止买入 ADX=100.0 | 日K:strong_down | 日内:weak_down | ✓双重确认下跌 | 🚫禁止买入"
+  },
+  {
+    "timestamp": "2026-03-30T11:28:07.817435",
+    "code": "HK.09992",
+    "reason": "price_check",
+    "category": "other",
+    "message": "价格检查: 价格 148.95 接近日内高点 149.20 (距离 0.17% < 1.0%)，禁止追高买入"
+  },
+  {
+    "timestamp": "2026-03-30T11:30:59.619734",
+    "code": "HK.03690",
+    "reason": "price_check",
+    "category": "other",
+    "message": "价格检查: 价格 85.22 接近日内高点 86.00 (距离 0.90% < 1.0%)，禁止追高买入"
+  },
+  {
+    "timestamp": "2026-03-30T11:53:52.061567",
+    "code": "HK.00981",
+    "reason": "trend_filter",
+    "category": "other",
+    "message": "趋势过滤: strong_down 趋势中禁止买入 ADX=69.9 | 日K:strong_down | 日内:weak_down | ✓双重确认下跌 | 🚫禁止买入"
+  },
+  {
+    "timestamp": "2026-03-30T13:09:52.912762",
+    "code": "HK.00981",
+    "reason": "price_check",
+    "category": "other",
+    "message": "价格检查: 价格 51.38 接近日内高点 51.70 (距离 0.63% < 1.0%)，禁止追高买入"
+  },
+  {
+    "timestamp": "2026-03-30T13:16:37.477837",
+    "code": "HK.00981",
+    "reason": "price_check",
+    "category": "other",
+    "message": "价格检查: 价格 51.50 接近日内高点 51.70 (距离 0.39% < 1.0%)，禁止追高买入"
+  },
+  {
+    "timestamp": "2026-03-30T13:29:55.102832",
+    "code": "HK.00981",
+    "reason": "trend_filter",
+    "category": "other",
+    "message": "趋势过滤: strong_down 趋势中禁止买入 ADX=39.6 | 日K:strong_down | 日内:strong_down | ✓双重确认下跌 | 🚫禁止买入"
+  },
+  {
+    "timestamp": "2026-03-30T14:21:50.671136",
+    "code": "HK.00981",
+    "reason": "trend_filter",
+    "category": "other",
+    "message": "趋势过滤: strong_down 趋势中禁止买入 ADX=29.3 | 日K:strong_down | 日内:strong_down | ✓双重确认下跌 | 🚫禁止买入"
+  },
+  {
+    "timestamp": "2026-03-30T14:43:35.206439",
+    "code": "HK.09992",
+    "reason": "trend_filter",
+    "category": "other",
+    "message": "趋势过滤: strong_down 趋势中禁止买入 ADX=75.7 | 日K:strong_down | 日内:weak_down | ✓双重确认下跌 | 🚫禁止买入"
+  },
+  {
+    "timestamp": "2026-03-30T14:59:15.917467",
+    "code": "HK.00981",
+    "reason": "trend_filter",
+    "category": "other",
+    "message": "趋势过滤: strong_down 趋势中禁止买入 ADX=45.7 | 日K:strong_down | 日内:strong_down | ✓双重确认下跌 | 🚫禁止买入"
+  },
+  {
+    "timestamp": "2026-03-30T15:04:41.385352",
+    "code": "HK.00981",
+    "reason": "trend_filter",
+    "category": "other",
+    "message": "趋势过滤: strong_down 趋势中禁止买入 ADX=92.6 | 日K:strong_down | 日内:weak_down | ✓双重确认下跌 | 🚫禁止买入"
+  },
+  {
+    "timestamp": "2026-03-30T15:07:03.526014",
+    "code": "HK.00981",
+    "reason": "trend_filter",
+    "category": "other",
+    "message": "趋势过滤: strong_down 趋势中禁止买入 ADX=100.0 | 日K:strong_down | 日内:weak_down | ✓双重确认下跌 | 🚫禁止买入"
+  },
+  {
+    "timestamp": "2026-03-30T15:29:48.012774",
+    "code": "HK.00981",
+    "reason": "trend_filter",
+    "category": "other",
+    "message": "趋势过滤: strong_down 趋势中禁止买入 ADX=61.0 | 日K:strong_down | 日内:weak_down | ✓双重确认下跌 | 🚫禁止买入"
+  },
+  {
+    "timestamp": "2026-03-30T15:42:41.131478",
+    "code": "HK.00981",
+    "reason": "trend_filter",
+    "category": "other",
+    "message": "趋势过滤: strong_down 趋势中禁止买入 ADX=98.2 | 日K:strong_down | 日内:weak_down | ✓双重确认下跌 | 🚫禁止买入"
+  }
+]

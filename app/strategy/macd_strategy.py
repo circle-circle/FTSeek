@@ -11,6 +11,7 @@ from .indicators import IndicatorBuffer, macd
 from app import config
 
 logger = logging.getLogger("ftseek.strategy.macd")
+logger.propagate = False  # 防止日志重复
 
 
 class MACDStrategy(BaseStrategy):

@@ -21,6 +21,7 @@ from app.core.state_manager import StateManager
 from app.core.decision_log import DecisionLog
 
 logger = logging.getLogger("ftseek.core.session_context")
+logger.propagate = False  # 防止日志重复
 
 
 class SessionContext:
@@ -199,7 +200,8 @@ class SessionContext:
             try:
                 with open(session_file, 'r', encoding='utf-8') as f:
                     return json.load(f)
-            except:
+            except (json.JSONDecodeError, IOError) as e:
+                logger.debug(f"读取会话文件 {session_id} 失败：{e}")
                 pass
         return None
     
@@ -219,9 +221,11 @@ class SessionContext:
                                 'last_active': data.get('last_active', ''),
                                 'status': data.get('status', 'unknown')
                             })
-                    except:
+                    except (json.JSONDecodeError, IOError) as e:
+                        logger.debug(f"读取会话文件 {filename} 失败：{e}")
                         pass
-        except:
+        except OSError as e:
+            logger.debug(f"扫描会话目录失败：{e}")
             pass
         
         # 按最后活跃时间排序

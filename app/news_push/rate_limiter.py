@@ -21,6 +21,7 @@ from dataclasses import dataclass, asdict
 from app.news_push.config import RATE_LIMIT, PUSH_TIME_WINDOW, DATA_DIR
 
 logger = logging.getLogger("ftseek.news_push.rate_limiter")
+logger.propagate = False  # 防止日志重复
 
 
 @dataclass

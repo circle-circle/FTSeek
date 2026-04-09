@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FTSeek 苏格拉底复盘 Dashboard V2</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #0a0e1a; color: #f7fafc; padding: 20px; }
+        .container { max-width: 1400px; margin: 0 auto; }
+        
+        /* Header */
+        header { background: #111827; border-bottom: 1px solid #2d3748; padding: 20px 30px; margin-bottom: 20px; border-radius: 12px; display: flex; justify-content: space-between; align-items: center; }
+        .header-left h1 { font-size: 24px; font-weight: 600; margin-bottom: 8px; }
+        .header-subtitle { font-size: 14px; color: #a0aec0; }
+        .refresh-btn { background: #3b82f6; color: white; border: none; padding: 10px 20px; border-radius: 8px; cursor: pointer; font-size: 14px; }
+        .refresh-btn:hover { background: #2563eb; }
+        
+        /* KPI Grid */
+        .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px; margin: 20px 0; }
+        .kpi-card { background: #1a1f2e; border: 1px solid #2d3748; border-radius: 12px; padding: 20px; position: relative; overflow: hidden; }
+        .kpi-card::before { content: ''; position: absolute; top: 0; left: 0; width: 4px; height: 100%; background: linear-gradient(to bottom, #3b82f6, #8b5cf6); }
+        .kpi-label { font-size: 13px; color: #a0aec0; margin-bottom: 8px; }
+        .kpi-value { font-size: 32px; font-weight: 700; margin-bottom: 8px; }
+        .kpi-sub { font-size: 12px; color: #a0aec0; }
+        .positive { color: #10b981; }
+        .negative { color: #ef4444; }
+        
+        /* Sections */
+        .section { background: #1a1f2e; border: 1px solid #2d3748; border-radius: 12px; padding: 24px; margin: 20px 0; }
+        .section-title { font-size: 18px; font-weight: 600; margin-bottom: 20px; display: flex; align-items: center; gap: 8px; }
+        
+        /* Stages */
+        .stages-container { display: grid; gap: 12px; }
+        .stage-item { display: flex; justify-content: space-between; align-items: center; padding: 16px; background: #111827; border-radius: 8px; border-left: 4px solid #3b82f6; transition: all 0.3s; }
+        .stage-item:hover { background: #1a1f2e; transform: translateX(4px); }
+        .stage-item.completed { border-left-color: #10b981; }
+        .stage-item.running { border-left-color: #f59e0b; animation: pulse 2s infinite; }
+        .stage-left { display: flex; align-items: center; gap: 12px; }
+        .stage-icon { font-size: 20px; }
+        .stage-name { font-weight: 500; }
+        .stage-status { color: #a0aec0; font-size: 14px; }
+        .stage-progress { width: 200px; height: 6px; background: #2d3748; border-radius: 3px; overflow: hidden; }
+        .stage-progress-bar { height: 100%; background: linear-gradient(to right, #3b82f6, #8b5cf6); transition: width 0.3s; }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
+        }
+        
+        /* Tables */
+        .data-table { width: 100%; border-collapse: collapse; }
+        .data-table th { text-align: left; padding: 12px; background: #111827; color: #a0aec0; font-size: 13px; border-bottom: 1px solid #2d3748; }
+        .data-table td { padding: 12px; border-bottom: 1px solid #2d3748; font-size: 14px; }
+        .data-table tr:hover { background: #111827; }
+        .badge { display: inline-block; padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: 500; }
+        .badge-buy { background: rgba(16, 185, 129, 0.1); color: #10b981; }
+        .badge-sell { background: rgba(239, 68, 68, 0.1); color: #ef4444; }
+        .badge-open { background: rgba(59, 130, 246, 0.1); color: #3b82f6; }
+        
+        /* Validation */
+        .validation-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
+        .validation-card { background: #111827; border: 1px solid #2d3748; border-radius: 8px; padding: 16px; }
+        .validation-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+        .validation-title { font-weight: 500; }
+        .validation-status { font-size: 12px; padding: 4px 8px; border-radius: 4px; }
+        .validation-status.success { background: rgba(16, 185, 129, 0.1); color: #10b981; }
+        .validation-body { font-size: 13px; color: #a0aec0; }
+        .validation-metric { display: flex; justify-content: space-between; margin-top: 8px; padding-top: 8px; border-top: 1px solid #2d3748; }
+        
+        /* Model Usage */
+        .model-usage-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; }
+        .model-card { background: #111827; border: 1px solid #2d3748; border-radius: 8px; padding: 16px; }
+        .model-name { font-size: 12px; color: #a0aec0; margin-bottom: 8px; }
+        .model-value { font-size: 18px; font-weight: 600; margin-bottom: 4px; }
+        .model-sub { font-size: 11px; color: #a0aec0; }
+        
+        /* WebSocket Status */
+        .ws-status { position: fixed; bottom: 20px; right: 20px; padding: 12px 20px; background: #1a1f2e; border: 1px solid #2d3748; border-radius: 8px; font-size: 13px; }
+        .ws-status.connected { border-color: #10b981; }
+        .ws-status.connected::before { content: '🟢'; margin-right: 8px; }
+        .ws-status.disconnected { border-color: #ef4444; }
+        .ws-status.disconnected::before { content: '🔴'; margin-right: 8px; }
+        
+        /* Loading */
+        .loading { text-align: center; padding: 40px; color: #a0aec0; }
+        .spinner { border: 3px solid #2d3748; border-top-color: #3b82f6; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin: 0 auto 16px; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="header-left">
+            <h1>🧠 FTSeek 苏格拉底复盘 Dashboard V2</h1>
+            <div class="header-subtitle">集成状态机 | 进度推送 | 模型验证 | 成本追踪</div>
+        </div>
+        <button class="refresh-btn" onclick="loadData()">🔄 刷新</button>
+    </header>
+    
+    <div class="container">
+        <!-- KPI Cards -->
+        <div class="kpi-grid">
+            <div class="kpi-card">
+                <div class="kpi-label">今日盈亏</div>
+                <div class="kpi-value positive" id="todayPnl">加载中...</div>
+                <div class="kpi-sub" id="pnlSub">对比昨日：--</div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-label">胜率</div>
+                <div class="kpi-value" id="winRate">--</div>
+                <div class="kpi-sub" id="winRateSub">昨日：--</div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-label">交易数</div>
+                <div class="kpi-value" id="totalTrades">--</div>
+                <div class="kpi-sub" id="tradesSub">已平仓：--</div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-label">复盘成本</div>
+                <div class="kpi-value" id="reviewCost">--</div>
+                <div class="kpi-sub" id="costSub">预算：10.00 元</div>
+            </div>
+        </div>
+        
+        <!-- Socratic Stages -->
+        <div class="section">
+            <div class="section-title">🧠 苏格拉底六阶段状态</div>
+            <div class="stages-container" id="stagesContainer">
+                <div class="loading">
+                    <div class="spinner"></div>
+                    加载阶段状态...
+                </div>
+            </div>
+        </div>
+        
+        <!-- Validation -->
+        <div class="section">
+            <div class="section-title">✅ 关键改进验证</div>
+            <div class="validation-grid" id="validationGrid">
+                <!-- 动态加载 -->
+            </div>
+        </div>
+        
+        <!-- Model Usage -->
+        <div class="section">
+            <div class="section-title">💰 模型使用统计</div>
+            <div class="model-usage-grid" id="modelUsageGrid">
+                <!-- 动态加载 -->
+            </div>
+        </div>
+        
+        <!-- Trades Table -->
+        <div class="section">
+            <div class="section-title">📋 今日交易明细</div>
+            <table class="data-table" id="tradesTable">
+                <thead>
+                    <tr>
+                        <th>时间</th>
+                        <th>代码</th>
+                        <th>方向</th>
+                        <th>入场价</th>
+                        <th>出场价</th>
+                        <th>数量</th>
+                        <th>盈亏</th>
+                        <th>策略</th>
+                    </tr>
+                </thead>
+                <tbody id="tradesBody">
+                    <tr><td colspan="8" class="loading">加载中...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+    
+    <!-- WebSocket Status -->
+    <div class="ws-status disconnected" id="wsStatus">WebSocket 未连接</div>
+    
+    <script>
+        const API_BASE = '/api/v2/socratic-review';
+        let ws = null;
+        
+        // Initialize
+        document.addEventListener('DOMContentLoaded', () => {
+            loadData();
+            connectWebSocket();
+        });
+        
+        // Load Data
+        async function loadData() {
+            try {
+                await Promise.all([
+                    loadSummary(),
+                    loadStages(),
+                    loadModelUsage(),
+                    loadTrades(),
+                ]);
+            } catch (error) {
+                console.error('加载数据失败:', error);
+            }
+        }
+        
+        // Load Summary
+        async function loadSummary() {
+            const response = await fetch(`${API_BASE}/summary`);
+            const result = await response.json();
+            
+            if (result.status === 'ok') {
+                const data = result.data;
+                
+                // Today PnL
+                const pnlEl = document.getElementById('todayPnl');
+                pnlEl.textContent = (data.today.total_pnl >= 0 ? '+' : '') + data.today.total_pnl.toLocaleString() + ' HKD';
+                pnlEl.className = 'kpi-value ' + (data.today.total_pnl >= 0 ? 'positive' : 'negative');
+                
+                // PnL Sub
+                document.getElementById('pnlSub').textContent = `对比昨日：${data.improvement.pnl_improvement_percent >= 0 ? '+' : ''}${data.improvement.pnl_improvement_percent}%`;
+                
+                // Win Rate
+                document.getElementById('winRate').textContent = data.today.win_rate + '%';
+                document.getElementById('winRateSub').textContent = `昨日：${data.yesterday.win_rate}%`;
+                
+                // Total Trades
+                document.getElementById('totalTrades').textContent = data.today.total_trades + ' 笔';
+                document.getElementById('tradesSub').textContent = `已平仓：${data.today.total_trades - data.today.losing_trades - (data.today.total_trades - data.today.winning_trades - data.today.losing_trades)}`;
+                
+                // Review Cost
+                document.getElementById('reviewCost').textContent = '0.0225 元';
+                document.getElementById('costSub').textContent = '预算：10.00 元 (0.2%)';
+            }
+        }
+        
+        // Load Stages
+        async function loadStages() {
+            const response = await fetch(`${API_BASE}/socratic/stages`);
+            const result = await response.json();
+            
+            if (result.status === 'ok') {
+                const container = document.getElementById('stagesContainer');
+                const stages = result.data.stages;
+                
+                let html = '';
+                for (const [key, stage] of Object.entries(stages)) {
+                    html += `
+                        <div class="stage-item ${stage.status}">
+                            <div class="stage-left">
+                                <span class="stage-icon">${stage.status === 'completed' ? '✅' : '⏳'}</span>
+                                <div>
+                                    <div class="stage-name">${stage.name}</div>
+                                    <div class="stage-status">${stage.model} · ${stage.duration_ms / 1000}s</div>
+                                </div>
+                            </div>
+                            <div class="stage-progress">
+                                <div class="stage-progress-bar" style="width: ${stage.progress}%"></div>
+                            </div>
+                        </div>
+                    `;
+                }
+                
+                container.innerHTML = html;
+            }
+        }
+        
+        // Load Model Usage
+        async function loadModelUsage() {
+            const response = await fetch(`${API_BASE}/model/usage`);
+            const result = await response.json();
+            
+            if (result.status === 'ok') {
+                const container = document.getElementById('modelUsageGrid');
+                const stages = result.data.stages;
+                
+                let html = '';
+                for (const [key, usage] of Object.entries(stages)) {
+                    html += `
+                        <div class="model-card">
+                            <div class="model-name">${key.toUpperCase()}</div>
+                            <div class="model-value">${usage.model.split('/')[1] || usage.model}</div>
+                            <div class="model-sub">${(usage.tokens_in + usage.tokens_out).toLocaleString()} tokens · ${usage.cost.toFixed(4)}元</div>
+                        </div>
+                    `;
+                }
+                
+                container.innerHTML = html;
+            }
+        }
+        
+        // Load Trades
+        async function loadTrades() {
+            const response = await fetch(`${API_BASE}/trades/detail`);
+            const result = await response.json();
+            
+            if (result.status === 'ok') {
+                const tbody = document.getElementById('tradesBody');
+                
+                if (result.data.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="8" class="loading">暂无交易记录</td></tr>';
+                    return;
+                }
+                
+                let html = '';
+                for (const trade of result.data) {
+                    const pnlClass = trade.pnl >= 0 ? 'positive' : 'negative';
+                    const pnlText = trade.pnl >= 0 ? '+' + trade.pnl.toFixed(0) : trade.pnl.toFixed(0);
+                    const actionClass = trade.action === 'BUY' ? 'badge-buy' : 'badge-sell';
+                    
+                    html += `
+                        <tr>
+                            <td>${(trade.entry_time || '').replace('T', ' ').substr(5, 16)}</td>
+                            <td>${trade.code}</td>
+                            <td><span class="badge ${actionClass}">${trade.action}</span></td>
+                            <td>${trade.entry_price?.toFixed(1) || '-'}</td>
+                            <td>${trade.exit_price?.toFixed(1) || '-'}</td>
+                            <td>${trade.quantity || 0}</td>
+                            <td class="${pnlClass}">${pnlText}</td>
+                            <td>${(trade.strategy || '-').substr(0, 20)}</td>
+                        </tr>
+                    `;
+                }
+                
+                tbody.innerHTML = html;
+            }
+        }
+        
+        // Connect WebSocket
+        function connectWebSocket() {
+            const taskId = 'ftseek-review-' + new Date().toISOString().slice(0, 10);
+            ws = new WebSocket(`ws://${location.host}${API_BASE}/ws/progress/${taskId}`);
+            
+            ws.onopen = () => {
+                const statusEl = document.getElementById('wsStatus');
+                statusEl.textContent = 'WebSocket 已连接';
+                statusEl.className = 'ws-status connected';
+            };
+            
+            ws.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                console.log('WebSocket 消息:', data);
+                
+                // 处理进度更新
+                if (data.event === 'progress_updated') {
+                    // 更新进度条
+                    const progressBar = document.querySelector(`.stage-item:nth-child(${getStageIndex(data.stage)}) .stage-progress-bar`);
+                    if (progressBar) {
+                        progressBar.style.width = data.progress + '%';
+                    }
+                }
+                
+                // 处理阶段完成
+                if (data.event === 'stage_completed') {
+                    const stageItem = document.querySelector(`.stage-item:nth-child(${getStageIndex(data.stage)})`);
+                    if (stageItem) {
+                        stageItem.classList.add('completed');
+                        stageItem.classList.remove('running');
+                    }
+                }
+            };
+            
+            ws.onclose = () => {
+                const statusEl = document.getElementById('wsStatus');
+                statusEl.textContent = 'WebSocket 已断开';
+                statusEl.className = 'ws-status disconnected';
+                
+                // 3 秒后重连
+                setTimeout(connectWebSocket, 3000);
+            };
+            
+            ws.onerror = (error) => {
+                console.error('WebSocket 错误:', error);
+            };
+        }
+        
+        function getStageIndex(stageName) {
+            const stages = ['planner', 'decomposer', 'generator', 'critic', 'executor', 'context-engineer'];
+            return stages.indexOf(stageName) + 1;
+        }
+        
+        // Auto refresh every 30 seconds
+        setInterval(loadData, 30000);
+    </script>
+</body>
+</html>

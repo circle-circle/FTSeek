@@ -8,6 +8,7 @@ from typing import Dict, Optional
 from datetime import datetime, timedelta
 
 logger = logging.getLogger("ftseek.risk.dynamic_position_sizer")
+logger.propagate = False  # 防止日志重复
 
 
 class DynamicPositionSizer:
@@ -21,6 +22,9 @@ class DynamicPositionSizer:
         
         # 近期交易记录 (用于计算胜率)
         self.recent_trades = []
+        
+        # Task3: 延迟加载 DrawdownController，避免循环导入
+        self._drawdown_ctrl = None
     
     def add_trade_result(self, pnl: float, timestamp: str):
         """添加交易结果"""
@@ -87,6 +91,12 @@ class DynamicPositionSizer:
         elif volatility > 0.03:  # 日波动 > 3%
             position *= 0.85
         
+        # 6. Task3: 回撤保护系数
+        drawdown_mult = self._get_drawdown_multiplier()
+        position *= drawdown_mult
+        if drawdown_mult < 1.0:
+            logger.info(f"[回撤保护] 系数={drawdown_mult:.1f}x, 仓位调整至 {position:.2%}")
+        
         # 限制在最小和最大仓位之间
         position = max(self.min_position, min(self.max_position, position))
         
@@ -106,6 +116,31 @@ class DynamicPositionSizer:
         
         winning_trades = [t for t in self.recent_trades if t['pnl'] > 0]
         return len(winning_trades) / len(self.recent_trades)
+    
+    def _get_drawdown_multiplier(self) -> float:
+        """Task3: 根据当前回撤深度返回仓位系数
+        
+        回撤 0-3%  → 1.0x（正常）
+        回撤 3-5%  → 0.7x（轻度保护）
+        回撤 5-10% → 0.4x（重度保护）
+        回撤 >=10% → 0.0x（停止交易）
+        """
+        try:
+            if self._drawdown_ctrl is None:
+                from app.risk.drawdown_control import DrawdownController
+                self._drawdown_ctrl = DrawdownController()
+            dd = self._drawdown_ctrl.current_drawdown
+            if dd >= 0.10:
+                return 0.0   # 停止交易
+            elif dd >= 0.05:
+                return 0.4   # 回撤 5-10%，仓位×0.4
+            elif dd >= 0.03:
+                return 0.7   # 回撤 3-5%，仓位×0.7
+            else:
+                return 1.0   # 正常
+        except Exception as e:
+            logger.debug(f"[回撤保护] 获取回撤系数异常: {e}")
+            return 1.0
     
     def get_position_explanation(self,
                                 signal_confidence: float,

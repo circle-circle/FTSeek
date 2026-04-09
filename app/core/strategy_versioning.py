@@ -11,6 +11,7 @@ from typing import Dict, List, Optional
 from dataclasses import dataclass, asdict
 
 logger = logging.getLogger("ftseek.core.strategy_versioning")
+logger.propagate = False  # 防止日志重复
 
 # 版本历史存储
 VERSIONS_FILE = Path('/opt/ftseek/FTSeek/data/strategy_versions.json')

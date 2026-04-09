@@ -16,6 +16,7 @@ from enum import Enum
 import uuid
 
 logger = logging.getLogger("ftseek.v4.order_router")
+logger.propagate = False  # 防止日志重复
 
 
 class OrderSide(str, Enum):
@@ -132,18 +133,19 @@ class OrderRouter:
         self.futu_client = None
         
         self.logger = logging.getLogger("ftseek.v4.order_router")
+logger.propagate = False  # 防止日志重复
     
     def _init_futu_client(self):
         """初始化富途客户端"""
         try:
-            from futu import OpenQuoteContext, OpenTradeContext, Config
+            from futu import OpenQuoteContext, OpenSecTradeContext, SysConfig
             from futu.common.constant import TrdEnv
             
-            # 配置
-            Config.set_host(self.futu_host, self.futu_port)
+            # 配置（v10 使用 SysConfig，Config 已废弃）
+            # SysConfig 无需显式 set_host，直接在构造函数传参即可
             
             # 交易上下文 (模拟环境)
-            self.futu_client = OpenTradeContext(
+            self.futu_client = OpenSecTradeContext(
                 trd_env=TrdEnv.SIMULATE,
                 host=self.futu_host,
                 port=self.futu_port

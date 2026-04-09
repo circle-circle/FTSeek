@@ -1,0 +1,170 @@
+[
+  {
+    "timestamp": "2026-03-19T17:50:20.537111",
+    "futu_positions": {
+      "HK.03690": {
+        "qty": 700.0,
+        "can_sell": 700.0,
+        "cost_price": 82.00714285714285,
+        "market_val": 56490.0,
+        "pl_val": -915.0
+      }
+    },
+    "db_positions": {
+      "HK.03690": {
+        "qty": 700.0,
+        "avg_price": 81.0625
+      }
+    },
+    "diff": [],
+    "is_sync": true,
+    "message": "✅ 数据库与富途持仓一致"
+  },
+  {
+    "timestamp": "2026-03-19T18:00:02.990800",
+    "futu_positions": {
+      "HK.03690": {
+        "qty": 700.0,
+        "can_sell": 700.0,
+        "cost_price": 82.00714285714285,
+        "market_val": 56490.0,
+        "pl_val": -915.0
+      }
+    },
+    "db_positions": {
+      "HK.03690": {
+        "qty": 700.0,
+        "avg_price": 81.0625
+      }
+    },
+    "diff": [],
+    "is_sync": true,
+    "message": "✅ 数据库与富途持仓一致"
+  },
+  {
+    "timestamp": "2026-03-19T18:14:57.250705",
+    "futu_positions": {
+      "HK.03690": {
+        "qty": 700.0,
+        "can_sell": 700.0,
+        "cost_price": 82.00714285714285,
+        "market_val": 56490.0,
+        "pl_val": -915.0
+      }
+    },
+    "db_positions": {
+      "HK.03690": {
+        "qty": 700.0,
+        "avg_price": 81.0625
+      }
+    },
+    "diff": [],
+    "is_sync": true,
+    "message": "✅ 数据库与富途持仓一致"
+  },
+  {
+    "timestamp": "2026-03-19T19:00:03.184916",
+    "futu_positions": {
+      "HK.03690": {
+        "qty": 700.0,
+        "can_sell": 700.0,
+        "cost_price": 82.00714285714285,
+        "market_val": 56490.0,
+        "pl_val": -915.0
+      }
+    },
+    "db_positions": {
+      "HK.03690": {
+        "qty": 700.0,
+        "avg_price": 81.0625
+      }
+    },
+    "diff": [],
+    "is_sync": true,
+    "message": "✅ 数据库与富途持仓一致"
+  },
+  {
+    "timestamp": "2026-03-19T20:00:03.229285",
+    "futu_positions": {
+      "HK.03690": {
+        "qty": 700.0,
+        "can_sell": 700.0,
+        "cost_price": 82.00714285714285,
+        "market_val": 56490.0,
+        "pl_val": -915.0
+      }
+    },
+    "db_positions": {
+      "HK.03690": {
+        "qty": 700.0,
+        "avg_price": 81.0625
+      }
+    },
+    "diff": [],
+    "is_sync": true,
+    "message": "✅ 数据库与富途持仓一致"
+  },
+  {
+    "timestamp": "2026-03-19T21:00:03.204114",
+    "futu_positions": {
+      "HK.03690": {
+        "qty": 700.0,
+        "can_sell": 700.0,
+        "cost_price": 82.00714285714285,
+        "market_val": 56490.0,
+        "pl_val": -915.0
+      }
+    },
+    "db_positions": {
+      "HK.03690": {
+        "qty": 700.0,
+        "avg_price": 81.0625
+      }
+    },
+    "diff": [],
+    "is_sync": true,
+    "message": "✅ 数据库与富途持仓一致"
+  },
+  {
+    "timestamp": "2026-03-19T22:00:03.100905",
+    "futu_positions": {
+      "HK.03690": {
+        "qty": 700.0,
+        "can_sell": 700.0,
+        "cost_price": 82.00714285714285,
+        "market_val": 56490.0,
+        "pl_val": -915.0
+      }
+    },
+    "db_positions": {
+      "HK.03690": {
+        "qty": 700.0,
+        "avg_price": 81.0625
+      }
+    },
+    "diff": [],
+    "is_sync": true,
+    "message": "✅ 数据库与富途持仓一致"
+  },
+  {
+    "timestamp": "2026-03-19T23:00:03.031395",
+    "futu_positions": {
+      "HK.03690": {
+        "qty": 700.0,
+        "can_sell": 700.0,
+        "cost_price": 82.00714285714285,
+        "market_val": 56490.0,
+        "pl_val": -915.0
+      }
+    },
+    "db_positions": {
+      "HK.03690": {
+        "qty": 700.0,
+        "avg_price": 81.0625
+      }
+    },
+    "diff": [],
+    "is_sync": true,
+    "message": "✅ 数据库与富途持仓一致"
+  }
+]

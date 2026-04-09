@@ -25,6 +25,7 @@ import json
 from app.storage.database import get_database
 
 logger = logging.getLogger("ftseek.performance.stats")
+logger.propagate = False  # 防止日志重复
 
 
 @dataclass

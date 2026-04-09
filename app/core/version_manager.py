@@ -19,6 +19,7 @@ from app.core.state_manager import StateManager
 from app.core.decision_log import DecisionLog
 
 logger = logging.getLogger("ftseek.core.version_manager")
+logger.propagate = False  # 防止日志重复
 
 
 class VersionManager:
@@ -96,9 +97,11 @@ class VersionManager:
                                 'created_at': data.get('created_at', ''),
                                 'file': filename
                             })
-                    except:
+                    except (json.JSONDecodeError, IOError) as e:
+                        logger.debug(f"读取版本文件 {filename} 失败：{e}")
                         pass
-        except:
+        except OSError as e:
+            logger.debug(f"扫描版本目录失败：{e}")
             pass
         
         versions.sort(key=lambda x: x['version'], reverse=True)

@@ -8,6 +8,7 @@ from typing import Optional, Dict, List
 from .base import BaseFactor, FactorResult
 
 logger = logging.getLogger("ftseek.factors.sentiment")
+logger.propagate = False  # 防止日志重复
 
 POSITIVE_WORDS = {
     '增长', '上涨', '突破', '利好', '超预期', '盈利', '复苏', '强劲',

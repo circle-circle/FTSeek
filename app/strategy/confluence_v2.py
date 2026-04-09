@@ -21,6 +21,7 @@ from .market_regime import market_regime_detector, MarketRegimeType
 from app import config
 
 logger = logging.getLogger("ftseek.strategy.confluence")
+logger.propagate = False  # 防止日志重复
 
 
 class ConfluenceStrategyV2(BaseStrategy):
@@ -28,7 +29,7 @@ class ConfluenceStrategyV2(BaseStrategy):
     name = "confluence_v2"
 
     def __init__(self, cfg: dict = None):
-        super().__init__(cfg or config.STRATEGIES.get("confluence", {}))
+        super().__init__(cfg or config.STRATEGIES.get("confluence_v2", {}))
         
         # 基础参数
         self.min_factors = self.config.get("min_factors", 3)
@@ -58,16 +59,16 @@ class ConfluenceStrategyV2(BaseStrategy):
         # 市场状态相关的动态权重
         self.regime_weights = {
             MarketRegimeType.STRONG_TREND_UP: {
-                "supertrend": 1.5, "macd": 1.3, "rsi": 0.7, "bollinger": 0.8,
+                "supertrend": 0.8, "macd": 1.3, "rsi": 0.7, "bollinger": 0.8,
             },
             MarketRegimeType.STRONG_TREND_DOWN: {
-                "supertrend": 1.5, "macd": 1.3, "rsi": 0.7, "bollinger": 0.8,
+                "supertrend": 0.8, "macd": 1.3, "rsi": 0.7, "bollinger": 0.8,
             },
             MarketRegimeType.RANGE_BOUND: {
-                "rsi": 1.5, "bollinger": 1.5, "supertrend": 0.6, "macd": 0.7,
+                "rsi": 1.5, "bollinger": 1.5, "supertrend": 0.3, "macd": 0.7,
             },
             MarketRegimeType.HIGH_VOLATILITY: {
-                "bollinger": 1.3, "supertrend": 0.8, "rsi": 0.9,
+                "bollinger": 1.3, "supertrend": 0.4, "rsi": 0.9,
             },
             MarketRegimeType.LOW_VOLATILITY: {
                 "bollinger": 1.2,  # 布林带收窄可能突破
@@ -123,15 +124,65 @@ class ConfluenceStrategyV2(BaseStrategy):
             return None
 
     def _get_factor_weight(self, factor: str, regime) -> float:
-        """获取因子权重 (考虑市场状态)"""
+        """获取因子权重 (考虑市场状态 + 信号质量)"""
         base_weight = 1.0
-        
+
         if not self.use_dynamic_weights or regime is None:
-            return base_weight
-        
-        # 根据市场状态获取权重
-        regime_weight_map = self.regime_weights.get(regime.regime_type, {})
-        return regime_weight_map.get(factor, base_weight)
+            base_weight = 1.0
+        else:
+            # 根据市场状态获取权重
+            regime_weight_map = self.regime_weights.get(regime.regime_type, {})
+            base_weight = regime_weight_map.get(factor, base_weight)
+
+        # 信号质量调整：基于因子历史胜率动态加权/减权
+        quality_factor = self._get_factor_quality_score(factor)
+        return base_weight * quality_factor
+
+    def _get_factor_quality_score(self, factor: str) -> float:
+        """
+        基于因子过去 30 次信号的胜率调整权重
+
+        Args:
+            factor: 因子名称
+
+        Returns:
+            float: 质量系数 (0.6-1.4)
+                   - 胜率>60%: 1.0-1.4 加权
+                   - 胜率<40%: 0.6-1.0 减权
+                   - 40%-60%: 1.0 保持
+        """
+        try:
+            from app.storage.database import get_database
+            db = get_database()
+
+            # 获取该因子参与的历史信号 (过去 90 天)
+            outcomes = db.get_signal_outcomes_by_strategy(factor, days=90, limit=30)
+
+            if not outcomes or len(outcomes) < 3:
+                # 数据不足，返回默认值
+                return 1.0
+
+            # 计算胜率
+            wins = sum(1 for o in outcomes if o.get('pnl_pct', 0) > 0)
+            win_rate = wins / len(outcomes)
+
+            # 根据胜率调整权重
+            if win_rate > 0.6:
+                # 胜率>60%: 加权，最高 1.4
+                quality = 1.0 + min(0.4, (win_rate - 0.6) * 2)
+                logger.debug(f"[因子质量] {factor} 胜率={win_rate:.1%} → 权重系数={quality:.2f}")
+            elif win_rate < 0.4:
+                # 胜率<40%: 减权，最低 0.6
+                quality = 1.0 - min(0.4, (0.4 - win_rate) * 2)
+                logger.debug(f"[因子质量] {factor} 胜率={win_rate:.1%} → 权重系数={quality:.2f} ⚠️")
+            else:
+                quality = 1.0
+
+            return quality
+
+        except Exception as e:
+            logger.debug(f"[因子质量] 计算失败 {factor}: {e}")
+            return 1.0
 
     def _evaluate_factors(self, code: str, kline: dict, regime) -> Dict[str, Dict]:
         """
@@ -283,12 +334,55 @@ class ConfluenceStrategyV2(BaseStrategy):
         if not factors:
             return None
 
-        # 计算加权得分
+        # =====================================================================
+        # P1-1: 因子相关性调整 (2026-04-06 新增)
+        # 高度相关的因子同时确认时，第二个因子权重打折
+        # =====================================================================
+        adjusted_factors = {}
+        for factor_name, factor_data in factors.items():
+            weight = factor_data["weight"]
+            direction = factor_data["direction"]
+
+            # 检查是否有相关因子同向确认
+            correlation_discount = 1.0
+
+            # RSI + Bollinger 同时确认 → Bollinger 权重打 7 折 (振荡器类高度相关)
+            if factor_name == "bollinger" and "rsi" in factors:
+                if factors["rsi"]["direction"] == direction:
+                    correlation_discount = 0.7
+                    logger.debug(f"[因子相关性] {code} RSI+Bollinger 同向，Bollinger 权重打 7 折")
+
+            # MACD + MA Cross 同时确认 → MA Cross 权重打 7 折 (趋势类高度相关)
+            if factor_name == "ma_cross" and "macd" in factors:
+                if factors["macd"]["direction"] == direction:
+                    correlation_discount = 0.7
+                    logger.debug(f"[因子相关性] {code} MACD+MA Cross 同向，MA Cross 权重打 7 折")
+
+            # SuperTrend + Bollinger 同时确认 → SuperTrend 权重打 8 折 (波动率类相关)
+            if factor_name == "supertrend" and "bollinger" in factors:
+                if factors["bollinger"]["direction"] == direction:
+                    correlation_discount = 0.8
+                    logger.debug(f"[因子相关性] {code} SuperTrend+Bollinger 同向，SuperTrend 权重打 8 折")
+
+            adjusted_factors[factor_name] = {
+                **factor_data,
+                "weight": weight * correlation_discount,
+                "original_weight": weight,
+                "discount": correlation_discount,
+            }
+
+        # 使用调整后的因子计算得分
         bullish_score = sum(
-            f["weight"] for f in factors.values() if f["direction"] > 0
+            f["weight"] for f in adjusted_factors.values() if f["direction"] > 0
         )
         bearish_score = sum(
-            f["weight"] for f in factors.values() if f["direction"] < 0
+            f["weight"] for f in adjusted_factors.values() if f["direction"] < 0
+        )
+
+        logger.info(
+            f"[{code}] 因子得分调整 | 原始多={sum(factors[f]['weight'] for f in factors if factors[f]['direction']>0):.1f} "
+            f"→ 调整后={bullish_score:.1f} | 原始空={sum(factors[f]['weight'] for f in factors if factors[f]['direction']<0):.1f} "
+            f"→ 调整后={bearish_score:.1f}"
         )
 
         close = kline.get("close", 0)
@@ -300,13 +394,38 @@ class ConfluenceStrategyV2(BaseStrategy):
         lows = list(buf.low)
         adx_val = adx(highs, lows, closes, 14)
         
-        # 根据市场状态调整最小因子数
+        # =====================================================================
+        # P1-2: 动态最小因子数 (2026-04-06 新增)
+        # 根据波动率和 ADX 动态调整，高波动/低 ADX 时要求更多因子确认
+        # =====================================================================
         effective_min_factors = self.min_factors
+
+        # 1. 根据 ADX 调整
+        if adx_val is not None:
+            if adx_val < 20:
+                # ADX < 20: 市场无明确趋势，要求更多因子
+                effective_min_factors = max(3, self.min_factors + 1)
+                logger.debug(f"[动态因子] {code} ADX={adx_val:.1f}<20，最小因子数提升至{effective_min_factors}")
+            elif adx_val > 40:
+                # ADX > 40: 强趋势，可以降低要求
+                effective_min_factors = max(2, self.min_factors - 1)
+                logger.debug(f"[动态因子] {code} ADX={adx_val:.1f}>40，最小因子数降低至{effective_min_factors}")
+
+        # 2. 根据市场波动率调整 (从 regime 获取)
         if regime and self.use_market_regime:
-            if regime.regime_type == MarketRegimeType.RANGE_BOUND:
-                effective_min_factors = max(2, self.min_factors - 1)  # 震荡市降低要求
+            if regime.regime_type == MarketRegimeType.HIGH_VOLATILITY:
+                # 高波动率：要求更多因子确认
+                effective_min_factors = max(4, effective_min_factors + 1)
+                logger.info(f"[动态因子] {code} 高波动率，最小因子数提升至{effective_min_factors}")
+            elif regime.regime_type == MarketRegimeType.RANGE_BOUND:
+                # 震荡市：降低要求
+                effective_min_factors = max(2, effective_min_factors - 1)
+                logger.debug(f"[动态因子] {code} 震荡市，最小因子数降低至{effective_min_factors}")
             elif regime.regime_type in (MarketRegimeType.STRONG_TREND_UP, MarketRegimeType.STRONG_TREND_DOWN):
-                effective_min_factors = self.min_factors  # 趋势市保持标准
+                # 强趋势：保持标准或降低
+                if adx_val and adx_val > 30:
+                    effective_min_factors = max(2, effective_min_factors - 1)
+                    logger.debug(f"[动态因子] {code} 强趋势+ADX={adx_val:.1f}，最小因子数降低至{effective_min_factors}")
         
         # 生成信号
         if bullish_score >= effective_min_factors and (adx_val is None or adx_val >= self.adx_threshold):

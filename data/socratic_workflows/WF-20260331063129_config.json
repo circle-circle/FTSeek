@@ -1,0 +1,129 @@
+{
+  "workflow_id": "WF-20260331063129",
+  "model_config": {
+    "planner": {
+      "model": "bailian/qwen3.5-plus",
+      "timeout": 120,
+      "description": "苏格拉底追问专家"
+    },
+    "decomposer": {
+      "model": "deepseek/deepseek-reasoner",
+      "timeout": 180,
+      "description": "第一性原理拆解专家"
+    },
+    "generator": {
+      "model": "bailian/qwen3-coder-next",
+      "timeout": 120,
+      "description": "方案生成专家 (代码生成优化版)"
+    },
+    "critic": {
+      "model": "bailian/MiniMax-M2.5",
+      "timeout": 90,
+      "description": "对抗审查专家"
+    },
+    "executor": {
+      "model": "bailian/qwen3.5-plus",
+      "timeout": 60,
+      "description": "奥卡姆执行专家"
+    },
+    "context_engineer": {
+      "model": "bailian/glm-5",
+      "timeout": 60,
+      "description": "复盘压缩专家"
+    }
+  },
+  "results": {
+    "planner": {
+      "call_info": {
+        "role": "planner",
+        "model": "bailian/qwen3.5-plus",
+        "stage": "socratic",
+        "timestamp": "2026-03-31T06:31:29.405492",
+        "prompt_length": 262
+      },
+      "spawn_params": {
+        "runtime": "subagent",
+        "model": "bailian/qwen3.5-plus",
+        "task": "# 角色: Planner (苏格拉底追问专家)\n# 模型: bailian/qwen3.5-plus\n\n## 职责\n- 追问澄清需求\n- 识别未知项\n- 设定验收标准\n\n## 禁止\n- 不提供答案\n- 不生成方案\n\n## 输出JSON格式\n{\"knowns\": [], \"unknowns\": [], \"questions\": [], \"acceptance_criteria\": {}, \"boundary_constraints\": {}}\n\n## 用户请求\n优化FTSeek策略胜率到55%以上\n\n请输出追问清单。\n",
+        "mode": "run",
+        "timeoutSeconds": 120
+      }
+    },
+    "decomposer": {
+      "call_info": {
+        "role": "decomposer",
+        "model": "deepseek/deepseek-reasoner",
+        "stage": "first_principles",
+        "timestamp": "2026-03-31T06:31:29.405554"
+      },
+      "spawn_params": {
+        "runtime": "subagent",
+        "model": "deepseek/deepseek-reasoner",
+        "task": "# 角色: Decomposer (第一性原理拆解专家)\n# 模型: deepseek/deepseek-reasoner\n\n## 职责\n- 拆解问题本质\n- 因果链分析\n- 创建可验证子任务\n\n## 禁止\n- 不执行子任务\n- 不简化方案\n\n## 输入\n{\n  \"knowns\": [],\n  \"unknowns\": []\n}\n\n## 输出JSON格式\n{\"essence\": \"\", \"causality_chain\": {}, \"subtasks\": [], \"verification\": {}}\n\n请输出拆解结果。\n",
+        "mode": "run",
+        "timeoutSeconds": 180
+      }
+    },
+    "generator": {
+      "call_info": {
+        "role": "generator",
+        "model": "bailian/qwen3-coder-next",
+        "stage": "generation",
+        "timestamp": "2026-03-31T06:31:29.405588"
+      },
+      "spawn_params": {
+        "runtime": "subagent",
+        "model": "bailian/qwen3-coder-next",
+        "task": "# 角色: Generator (方案生成专家)\n# 模型: bailian/qwen3-coder-next\n\n## 职责\n- 生成多个候选方案(2-3个)\n- 自我评估\n\n## 禁止\n- 不选择方案\n- 不审批方案\n\n## 输入\n{\n  \"essence\": \"\",\n  \"subtasks\": []\n}\n\n## 输出JSON格式\n{\"solutions\": [{\"id\": \"\", \"name\": \"\", \"self_assessment\": {}}]}\n\n请输出候选方案。\n",
+        "mode": "run",
+        "timeoutSeconds": 120
+      }
+    },
+    "critic": {
+      "call_info": {
+        "role": "critic",
+        "model": "bailian/MiniMax-M2.5",
+        "stage": "adversarial_review",
+        "timestamp": "2026-03-31T06:31:29.405635"
+      },
+      "spawn_params": {
+        "runtime": "subagent",
+        "model": "bailian/MiniMax-M2.5",
+        "task": "# 角色: Critic (对抗审查专家)\n# 模型: bailian/MiniMax-M2.5\n\n## 职责\n- 严格审查\n- Few-shot校准\n- **否决权**\n\n## 评估维度(权重)\n- 效果性 30% (最低60分)\n- 风险性 25% (最低70分)\n- 复杂度 20% (最低50分)\n- 代码质量 15% (最低70分)\n- 逻辑一致性 10% (最低65分)\n\n## 输入\n候选方案: {\n  \"solutions\": []\n}\n边界约束: {\n  \"hard\": {},\n  \"soft\": {}\n}\n\n## 输出JSON格式\n{\"reviews\": [], \"decisions\": [], \"approved_solutions\": [], \"feedbacks\": []}\n\n请输出审查结果。\n",
+        "mode": "run",
+        "timeoutSeconds": 90
+      }
+    },
+    "executor": {
+      "call_info": {
+        "role": "executor",
+        "model": "bailian/qwen3.5-plus",
+        "stage": "occam_execution",
+        "timestamp": "2026-03-31T06:31:29.405658"
+      },
+      "spawn_params": {
+        "runtime": "subagent",
+        "model": "bailian/qwen3.5-plus",
+        "task": "# 角色: Executor (奥卡姆执行专家)\n# 模型: bailian/qwen3.5-plus\n\n## 职责\n- 选择最简方案\n- 执行已审批方案\n- 备份回滚\n\n## 禁止\n- 不执行未审批方案\n- 不新增功能\n\n## 输入\n审批方案: []\n\n## 输出JSON格式\n{\"status\": \"\", \"selected_solution\": {}, \"execution_log\": [], \"verification\": {}}\n\n请输出执行结果。\n",
+        "mode": "run",
+        "timeoutSeconds": 60
+      }
+    },
+    "context_engineer": {
+      "call_info": {
+        "role": "context_engineer",
+        "model": "bailian/glm-5",
+        "stage": "compression",
+        "timestamp": "2026-03-31T06:31:29.405801"
+      },
+      "spawn_params": {
+        "runtime": "subagent",
+        "model": "bailian/glm-5",
+        "task": "# 角色: Context Engineer (复盘压缩专家)\n# 模型: bailian/glm-5\n\n## 职责\n- 压缩上下文\n- 保留事实(不篡改)\n- 提取教训\n\n## 禁止\n- 不篡改事实\n- 不伪造信息\n\n## 输入\n{\n  \"workflow_id\": \"WF-20260331063129\",\n  \"results\": {\n    \"planner\": {\n      \"call_info\": {\n        \"role\": \"planner\",\n        \"model\": \"bailian/qwen3.5-plus\",\n        \"stage\": \"socratic\",\n        \"timestamp\": \"2026-03-31T06:31:29.405492\",\n        \"prompt_length\": 262\n      },\n      \"spawn_params\": {\n        \"runtime\": \"subagent\",\n        \"model\": \"bailian/qwen3.5-plus\",\n        \"task\": \"# 角色: Planner (苏格拉底追问专家)\\n# 模型: bailian/qwen3.5-plus\\n\\n## 职责\\n- 追问澄清需求\\n- 识别未知项\\n- 设定验收标准\\n\\n## 禁止\\n- 不提供答案\\n- 不生成方案\\n\\n## 输出JSON格式\\n{\\\"knowns\\\": [], \\\"unknowns\\\": [], \\\"questions\\\": [], \\\"acceptance_criteria\\\": {}, \\\"boundary_constraints\\\": {}}\\n\\n## 用户请求\\n优化FTSeek策略胜率到55%以上\\n\\n请输出追问清单。\\n\",\n        \"mode\": \"run\",\n        \"timeoutSeconds\": 120\n      }\n    },\n    \"decomposer\": {\n      \"call_info\": {\n        \"role\": \"decomposer\",\n        \"model\": \"deepseek/deepseek-reasoner\",\n        \"stage\": \"first_principles\",\n        \"timestamp\": \"2026-03-31T06:31:29.405554\"\n      },\n      \"spawn_params\": {\n        \"runtime\": \"subagent\",\n        \"model\": \"deepseek/deepseek-reasoner\",\n        \"task\": \"# 角色: Decomposer (第一性原理拆解专家)\\n# 模型: deepseek/deepseek-reasoner\\n\\n## 职责\\n- 拆解问题本质\\n- 因果链分析\\n- 创建可验证子任务\\n\\n## 禁止\\n- 不执行子任务\\n- 不简化方案\\n\\n## 输入\\n{\\n  \\\"knowns\\\": [],\\n  \\\"unknowns\\\": []\\n}\\n\\n## 输出JSON格式\\n{\\\"essence\\\": \\\"\\\", \\\"causality_chain\\\": {}, \\\"subtasks\\\": [], \\\"verification\\\": {}}\\n\\n请输出拆解结果。\\n\",\n        \"mode\": \"run\",\n        \"timeoutSeconds\": 180\n      }\n    },\n    \"generator\": {\n      \"call_info\": {\n        \"role\": \"generator\",\n        \"model\": \"bailian/qwen3-coder-next\",\n        \"stage\": \"generation\",\n        \"timestamp\": \"2026-03-31T06:31:29.405588\"\n      },\n      \"spawn_params\": {\n        \"runtime\": \"subagent\",\n        \"model\": \"bailian/qwen3-coder-next\",\n        \"task\": \"# 角色: Generator (方案生成专家)\\n# 模型: bailian/qwen3-coder-next\\n\\n## 职责\\n- 生成多个候选方案(2-3个)\\n- 自我评估\\n\\n## 禁止\\n- 不选择方案\\n- 不审批方案\\n\\n## 输入\\n{\\n  \\\"essence\\\": \\\"\\\",\\n  \\\"subtasks\\\": []\\n}\\n\\n## 输出JSON格式\\n{\\\"solutions\\\": [{\\\"id\\\": \\\"\\\", \\\"name\\\": \\\"\\\", \\\"self_assessment\\\": {}}]}\\n\\n请输出候选方案。\\n\",\n        \"mode\": \"run\",\n        \"timeoutSeconds\": 120\n      }\n    },\n    \"critic\": {\n      \"call_info\": {\n        \"role\": \"critic\",\n        \"model\": \"bailian/MiniMax-M2.5\",\n        \"stage\": \"adversarial_review\",\n        \"timestamp\": \"2026-03-31T06:31:29.405635\"\n      },\n      \"spawn_params\": {\n        \"runtime\": \"subagent\",\n        \"model\": \"bailian/MiniMax-M2.5\",\n        \"task\": \"# 角色: Critic (对抗审查专家)\\n# 模型: bailian/MiniMax-M2.5\\n\\n## 职责\\n- 严格审查\\n- Few-shot校准\\n- **否决权**\\n\\n## 评估维度(权重)\\n- 效果性 30% (最低60分)\\n- 风险性 25% (最低70分)\\n- 复杂度 20% (最低50分)\\n- 代码质量 15% (最低70分)\\n- 逻辑一致性 10% (最低65分)\\n\\n## 输入\\n候选方案: {\\n  \\\"solutions\\\": []\\n}\\n边界约束: {\\n  \\\"hard\\\": {},\\n  \\\"soft\\\": {}\\n}\\n\\n## 输出JSON格式\\n{\\\"reviews\\\": [], \\\"decisions\\\": [], \\\"approved_solutions\\\": [], \\\"feedbacks\\\": []}\\n\\n请输出审查结果。\\n\",\n        \"mode\": \"run\",\n        \"timeoutSeconds\": 90\n      }\n    },\n    \"executor\": {\n      \"call_info\": {\n        \"role\": \"executor\",\n        \"model\": \"bailian/qwen3.5-plus\",\n        \"stage\": \"occam_execution\",\n        \"timestamp\": \"2026-03-31T06:31:29.405658\"\n      },\n      \"spawn_params\": {\n        \"runtime\": \"subagent\",\n        \"model\": \"bailian/qwen3.5-plus\",\n        \"task\": \"# 角色: Executor (奥卡姆执行专家)\\n# 模型: bailian/qwen3.5-plus\\n\\n## 职责\\n- 选择最简方案\\n- 执行已审批方案\\n- 备份回滚\\n\\n## 禁止\\n- 不执行未审批方案\\n- 不新增功能\\n\\n## 输入\\n审批方案: []\\n\\n## 输出JSON格式\\n{\\\"status\\\": \\\"\\\", \\\"selected_solution\\\": {}, \\\"execution_log\\\": [], \\\"verification\\\": {}}\\n\\n请输出执行结果。\\n\",\n        \"mode\": \"run\",\n        \"timeoutSeconds\": 60\n      }\n    }\n  }\n}\n\n## 输出JSON格式\n{\"facts_preserved\": [], \"lessons_extracted\": [], \"compression_ratio\": 0.7, \"integrity_check\": {}}\n\n请输出压缩结果。\n",
+        "mode": "run",
+        "timeoutSeconds": 60
+      }
+    }
+  },
+  "timestamp": "2026-03-31T06:31:29.405857"
+}

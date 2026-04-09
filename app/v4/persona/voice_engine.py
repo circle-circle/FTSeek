@@ -15,6 +15,7 @@ from datetime import datetime
 from enum import Enum
 
 logger = logging.getLogger("ftseek.v4.voice_engine")
+logger.propagate = False  # 防止日志重复
 
 
 class MessageTone(str, Enum):
@@ -110,6 +111,7 @@ class VoiceEngine:
         self.urgent_words = ["紧急", "立即", "快速", "机会", "！"]
         
         self.logger = logging.getLogger("ftseek.v4.voice_engine")
+logger.propagate = False  # 防止日志重复
     
     def generate(self, msg: SignalMessage) -> str:
         """

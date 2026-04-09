@@ -1,7 +1,10 @@
 """
-新闻数据集成模块
+新闻数据集成模块 (Phase 3 增强版)
 
-自动从新闻采集器获取新闻，供 AI 分析使用
+功能增强:
+- 动态缓存 TTL (基于市场波动率)
+- 情绪得分衰减
+- 突发新闻快速通道
 """
 import logging
 from typing import Dict, List, Optional
@@ -9,6 +12,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 logger = logging.getLogger("ftseek.factors.news_integration")
+logger.propagate = False  # 防止日志重复
 
 # 导入新闻采集器
 try:
@@ -21,21 +25,73 @@ except ImportError:
 # 导入 AI 服务
 from app.ai import AIService
 
+# 导入衰减计算器
+try:
+    from app.factors.sentiment_decay import get_decay_calculator, SentimentDecay
+    DECAY_AVAILABLE = True
+except ImportError:
+    DECAY_AVAILABLE = False
+    logger.warning("情绪衰减模块未安装，使用固定 TTL")
+
+# 导入 VIX 监控器
+try:
+    from app.risk.vix_monitor import get_vix_monitor
+    VIX_AVAILABLE = True
+except ImportError:
+    VIX_AVAILABLE = False
+    logger.warning("VIX 监控器未安装，使用固定 TTL")
+
 
 class NewsSentimentAnalyzer:
-    """新闻情绪分析器"""
+    """新闻情绪分析器 (Phase 3 增强版)"""
     
     def __init__(self):
+        # 初始化 VIX 监控器
+        self.vix_monitor = None
+        if VIX_AVAILABLE:
+            try:
+                self.vix_monitor = get_vix_monitor()
+                logger.info("VIX 监控器已集成")
+            except Exception as e:
+                logger.warning(f"VIX 监控器初始化失败：{e}")
+        
+        # 初始化新闻采集器 (传入 VIX 监控器)
         if NEWS_COLLECTOR_AVAILABLE:
-            self.collector = get_news_collector()
+            self.collector = get_news_collector(vix_monitor=self.vix_monitor)
         else:
             self.collector = None
         
         self.ai = AIService()
-        self.cache = {}
-        self.cache_ttl = 1800  # 30 分钟缓存
         
-        logger.info("新闻情绪分析器已初始化")
+        # 缓存配置 (动态 TTL)
+        self.cache = {}
+        self.base_cache_ttl = 1800  # 基础 30 分钟
+        
+        # 情绪衰减计算器
+        self.decay_calculator = None
+        if DECAY_AVAILABLE:
+            try:
+                self.decay_calculator = get_decay_calculator(
+                    mode="exponential",
+                    half_life_minutes=30  # 半衰期 30 分钟
+                )
+                logger.info("情绪衰减计算器已集成")
+            except Exception as e:
+                logger.warning(f"情绪衰减计算器初始化失败：{e}")
+        
+        logger.info("新闻情绪分析器已初始化 (Phase 3 增强版)")
+    
+    def _get_dynamic_ttl(self) -> int:
+        """
+        获取动态缓存 TTL
+
+        Returns:
+            TTL (秒)
+        """
+        if self.vix_monitor:
+            multiplier = self.vix_monitor.get_cache_ttl_multiplier()
+            return int(self.base_cache_ttl * multiplier)
+        return self.base_cache_ttl
     
     def analyze_stock(self, 
                      code: str, 
@@ -43,30 +99,35 @@ class NewsSentimentAnalyzer:
                      max_news: int = 20) -> Dict:
         """
         分析股票情绪
-        
+
         Args:
             code: 股票代码 (HK.00700)
             lookback_hours: 回溯时间 (小时)
             max_news: 最多分析新闻数
-        
+
         Returns:
             {
                 'sentiment_score': 0.75,  # -1 到 1
+                'decayed_score': 0.65,    # 衰减后得分
                 'news_count': 10,
                 'positive_count': 8,
                 'negative_count': 2,
                 'neutral_count': 0,
                 'top_news': [...],
                 'ai_provider': 'bailian',
-                'cache_hit': False
+                'cache_hit': False,
+                'avg_age_minutes': 45,     # 新闻平均年龄
+                'volatility_state': 'normal'  # 市场波动状态
             }
         """
-        # 检查缓存
+        # 检查缓存 (使用动态 TTL)
         cache_key = f"{code}_{lookback_hours}"
+        current_ttl = self._get_dynamic_ttl()
+        
         if cache_key in self.cache:
             cached_result, timestamp = self.cache[cache_key]
-            if (datetime.now() - timestamp).total_seconds() < self.cache_ttl:
-                logger.debug(f"使用缓存情绪分析：{code}")
+            if (datetime.now() - timestamp).total_seconds() < current_ttl:
+                logger.debug(f"使用缓存情绪分析：{code} (TTL={current_ttl}s)")
                 cached_result['cache_hit'] = True
                 return cached_result
         
@@ -81,24 +142,32 @@ class NewsSentimentAnalyzer:
             logger.warning(f"未获取到新闻：{code}")
             result = {
                 'sentiment_score': 0.0,
+                'decayed_score': 0.0,
                 'news_count': 0,
                 'positive_count': 0,
                 'negative_count': 0,
                 'neutral_count': 0,
                 'top_news': [],
                 'ai_provider': 'bailian',
-                'cache_hit': False
+                'cache_hit': False,
+                'avg_age_minutes': 0,
+                'volatility_state': self._get_volatility_state(),
             }
             self.cache[cache_key] = (result, datetime.now())
             return result
         
-        # 2. AI 情绪分析
+        # 2. AI 情绪分析 + 衰减计算
         scores = []
+        decayed_scores = []
         analyzed_news = []
+        ages = []
         
         for news in news_list[:max_news]:
             # 构建分析文本
-            text = f"{news.get('title', '')} {news.get('summary', '')} {news.get('content', '')}"
+            title = getattr(news, 'title', '') or getattr(news, 'title', '')
+            summary = getattr(news, 'summary', '') or getattr(news, 'content', '')
+            content = getattr(news, 'content', '')
+            text = f"{title} {summary} {content}"
             
             if not text.strip():
                 continue
@@ -116,19 +185,35 @@ class NewsSentimentAnalyzer:
                     # 缓存结果
                     self.cache[news_cache_key] = (score, datetime.now())
                 else:
-                    logger.warning(f"AI 分析失败：{news.get('title', '')[:50]}")
+                    logger.warning(f"AI 分析失败：{title[:50]}")
                     score = 0.0
             
             scores.append(score)
             
+            # 计算衰减后得分
+            news_age = getattr(news, 'age_minutes', 0)
+            ages.append(news_age)
+            
+            if self.decay_calculator:
+                decayed_score = self.decay_calculator.decay_score(score, news_age)
+            else:
+                # 简化衰减：每分钟 2% 衰减
+                decay_factor = max(0.1, 1.0 - (news_age * 0.02))
+                decayed_score = score * decay_factor
+            
+            decayed_scores.append(decayed_score)
+            
             # 记录分析结果
             analyzed_news.append({
-                'title': news.get('title', '')[:100],
-                'summary': news.get('summary', '')[:200],
-                'source': news.get('source', ''),
-                'published_at': news.get('published_at', ''),
+                'title': title[:100],
+                'summary': summary[:200],
+                'source': getattr(news, 'source', ''),
+                'published_at': getattr(news, 'published_at', ''),
                 'sentiment_score': score,
-                'url': news.get('url', '')
+                'decayed_score': decayed_score,
+                'age_minutes': news_age,
+                'is_breaking': getattr(news, 'is_breaking', False),
+                'url': getattr(news, 'url', '')
             })
         
         # 3. 统计结果
@@ -136,33 +221,87 @@ class NewsSentimentAnalyzer:
         negative_count = sum(1 for s in scores if s < -0.2)
         neutral_count = len(scores) - positive_count - negative_count
         
+        # 计算平均分 (原始和衰减后)
+        avg_score = sum(scores) / len(scores) if scores else 0.0
+        avg_decayed_score = sum(decayed_scores) / len(decayed_scores) if decayed_scores else 0.0
+        avg_age = sum(ages) / len(ages) if ages else 0
+        
+        # 按衰减后得分排序，取 top 5
+        analyzed_news.sort(key=lambda x: x['decayed_score'], reverse=True)
+        
         result = {
-            'sentiment_score': sum(scores) / len(scores) if scores else 0.0,
+            'sentiment_score': round(avg_score, 4),
+            'decayed_score': round(avg_decayed_score, 4),
             'news_count': len(scores),
             'positive_count': positive_count,
             'negative_count': negative_count,
             'neutral_count': neutral_count,
-            'top_news': analyzed_news[:5],  # 只返回前 5 条
+            'top_news': analyzed_news[:5],
             'ai_provider': 'bailian',
             'cache_hit': False,
             'lookback_hours': lookback_hours,
-            'analyzed_at': datetime.now().isoformat()
+            'analyzed_at': datetime.now().isoformat(),
+            'avg_age_minutes': avg_age,
+            'volatility_state': self._get_volatility_state(),
+            'cache_ttl': current_ttl,
         }
         
         # 缓存结果
         self.cache[cache_key] = (result, datetime.now())
         
-        logger.info(f"新闻情绪分析完成：{code} - {len(scores)} 条新闻，得分 {result['sentiment_score']:.2f}")
+        logger.info(
+            f"新闻情绪分析完成：{code} - {len(scores)}条新闻，"
+            f"原始得分 {avg_score:.2f}, 衰减后 {avg_decayed_score:.2f}"
+        )
         
         return result
     
+    def _get_volatility_state(self) -> str:
+        """获取市场波动状态"""
+        if self.vix_monitor:
+            state = self.vix_monitor.get_state()
+            return state.state
+        return "unknown"
+    
+    def _parse_published_at(self, published_at_str: str) -> 'datetime':
+        """解析新闻发布时间，统一转换为本地 naive datetime"""
+        if not published_at_str:
+            return None
+        try:
+            s = published_at_str.strip()
+            # RSS GMT 格式
+            if 'GMT' in s or (', ' in s and len(s) > 20):
+                from email.utils import parsedate_to_datetime
+                import calendar
+                try:
+                    dt_aware = parsedate_to_datetime(s)
+                    utc_ts = calendar.timegm(dt_aware.utctimetuple())
+                    return datetime.fromtimestamp(utc_ts)
+                except Exception:
+                    pass
+            # 带时区 ISO 格式
+            if '+' in s or s.endswith('Z'):
+                s2 = s.replace('Z', '+00:00')
+                try:
+                    from dateutil.parser import parse as _parse
+                    import calendar
+                    dt_aware = _parse(s2)
+                    utc_ts = calendar.timegm(dt_aware.utctimetuple())
+                    return datetime.fromtimestamp(utc_ts)
+                except Exception:
+                    return datetime.fromisoformat(s2.split('+')[0].rstrip('Z'))
+            # 纯 ISO
+            return datetime.fromisoformat(s)
+        except Exception as e:
+            logger.debug(f"时间解析失败：{published_at_str!r} - {e}")
+            return None
+
     def _fetch_news(self, code: str, lookback_hours: int) -> List[Dict]:
         """获取新闻"""
         if not self.collector:
             return []
         
         try:
-            # 从新闻采集器获取
             cutoff_time = datetime.now() - timedelta(hours=lookback_hours)
             
             # 获取所有新闻
@@ -172,19 +311,34 @@ class NewsSentimentAnalyzer:
             filtered_news = []
             for news in all_news:
                 try:
-                    published_at = datetime.fromisoformat(news.get('published_at', ''))
-                    if published_at >= cutoff_time:
+                    published_at_str = getattr(news, 'published_at', '')
+                    if published_at_str:
+                        published_at = self._parse_published_at(published_at_str)
+                        if published_at is None or published_at >= cutoff_time:
+                            filtered_news.append(news)
+                    else:
+                        # 无时间信息，保留新闻
                         filtered_news.append(news)
-                except:
-                    # 时间解析失败，保留新闻
+                except Exception as e:
+                    logger.debug(f"时间过滤失败：{e}")
                     filtered_news.append(news)
             
             # 按优先级排序
-            filtered_news.sort(key=lambda x: x.get('priority', 5))
+            filtered_news.sort(key=lambda x: getattr(x, 'priority', 5))
             
-            logger.info(f"获取新闻：{code} - {len(filtered_news)} 条 (最近{lookback_hours}小时)")
+            # 突发新闻快速通道：优先返回
+            breaking_news = [n for n in filtered_news if getattr(n, 'is_breaking', False)]
+            normal_news = [n for n in filtered_news if not getattr(n, 'is_breaking', False)]
             
-            return filtered_news
+            # 突发新闻排在前面
+            result_news = breaking_news[:5] + normal_news[:15]
+            
+            logger.info(
+                f"获取新闻：{code} - {len(result_news)} 条 "
+                f"(突发{len(breaking_news)}条，最近{lookback_hours}小时)"
+            )
+            
+            return result_news
         
         except Exception as e:
             logger.error(f"获取新闻失败：{e}")
@@ -193,34 +347,38 @@ class NewsSentimentAnalyzer:
     def get_sentiment_trend(self, code: str, days: int = 7) -> Dict:
         """
         获取情绪趋势
-        
+
         Args:
             code: 股票代码
             days: 天数
-        
+
         Returns:
             {
                 'trend': 'improving' | 'worsening' | 'stable',
                 'daily_scores': [...],
-                'avg_score': 0.5
+                'avg_score': 0.5,
+                'daily_decayed_scores': [...]  # 新增：衰减后得分趋势
             }
         """
         daily_scores = []
+        daily_decayed_scores = []
         
         for i in range(days):
             date = datetime.now() - timedelta(days=i)
-            # 这里应该从历史数据中获取
-            # 简化实现：使用当前分析
             result = self.analyze_stock(code, lookback_hours=24)
             daily_scores.append({
                 'date': date.strftime('%Y-%m-%d'),
                 'score': result['sentiment_score']
             })
+            daily_decayed_scores.append({
+                'date': date.strftime('%Y-%m-%d'),
+                'decayed_score': result.get('decayed_score', result['sentiment_score'])
+            })
         
-        # 计算趋势
-        if len(daily_scores) >= 2:
-            recent_avg = sum(s['score'] for s in daily_scores[:3]) / 3
-            older_avg = sum(s['score'] for s in daily_scores[3:]) / max(1, len(daily_scores) - 3)
+        # 计算趋势 (使用衰减后得分)
+        if len(daily_decayed_scores) >= 2:
+            recent_avg = sum(s['decayed_score'] for s in daily_decayed_scores[:3]) / 3
+            older_avg = sum(s['decayed_score'] for s in daily_decayed_scores[3:]) / max(1, len(daily_decayed_scores) - 3)
             
             if recent_avg > older_avg + 0.1:
                 trend = 'improving'
@@ -234,7 +392,8 @@ class NewsSentimentAnalyzer:
         return {
             'trend': trend,
             'daily_scores': daily_scores,
-            'avg_score': sum(s['score'] for s in daily_scores) / len(daily_scores) if daily_scores else 0
+            'daily_decayed_scores': daily_decayed_scores,
+            'avg_score': sum(s['score'] for s in daily_scores) / len(daily_scores) if daily_scores else 0,
         }
     
     def clear_cache(self):
@@ -274,14 +433,19 @@ if __name__ == '__main__':
     
     result = analyzer.analyze_stock(code, lookback_hours=hours)
     
-    print(f"情绪得分：{result['sentiment_score']:.2f}")
+    print(f"原始情绪得分：{result['sentiment_score']:.2f}")
+    print(f"衰减后得分：{result.get('decayed_score', 'N/A')}")
     print(f"新闻数量：{result['news_count']}")
     print(f"正面：{result['positive_count']} | 负面：{result['negative_count']} | 中性：{result['neutral_count']}")
+    print(f"平均年龄：{result['avg_age_minutes']}分钟")
+    print(f"市场波动状态：{result['volatility_state']}")
+    print(f"缓存 TTL: {result['cache_ttl']}秒")
     print()
     
     if result['top_news']:
-        print("Top 新闻:")
+        print("Top 新闻 (按衰减后得分排序):")
         for i, news in enumerate(result['top_news'], 1):
-            sentiment_emoji = '🟢' if news['sentiment_score'] > 0.2 else '🔴' if news['sentiment_score'] < -0.2 else '⚪'
+            sentiment_emoji = '🟢' if news['decayed_score'] > 0.2 else '🔴' if news['decayed_score'] < -0.2 else '⚪'
             print(f"  {i}. {sentiment_emoji} {news['title'][:80]}...")
-            print(f"     得分：{news['sentiment_score']:.2f} | 来源：{news['source']}")
+            print(f"     原始得分：{news['sentiment_score']:.2f} | 衰减后：{news['decayed_score']:.2f}")
+            print(f"     来源：{news['source']} | 年龄：{news['age_minutes']}分钟 | 突发：{'是' if news['is_breaking'] else '否'}")

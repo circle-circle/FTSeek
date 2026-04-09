@@ -21,6 +21,7 @@ from enum import Enum
 import logging
 
 logger = logging.getLogger("ftseek.core.decision_log")
+logger.propagate = False  # 防止日志重复
 
 
 class DecisionType(str, Enum):
@@ -99,9 +100,30 @@ class DecisionLog:
         confidence: float,
         decision: str,
         context: Optional[Dict] = None,
-        result: Optional[str] = None
+        result: Optional[str] = None,
+        market_regime: Optional[str] = None,  # 新增：市场状态
+        risk_check_result: Optional[Dict] = None,  # 新增：风控检查结果
+        strategy: Optional[str] = None,  # 新增：策略名称
+        signal_id: Optional[str] = None  # 新增：信号 ID
     ) -> Dict:
-        """记录交易决策"""
+        """
+        记录交易决策 (增强版)
+
+        Args:
+            symbol: 股票代码
+            action: 买卖方向 (BUY/SELL)
+            confidence: 置信度 (0-1)
+            decision: 决策结果 (execute/reject/defer)
+            context: 上下文信息 (技术指标、情绪得分等)
+            result: 执行结果 (pending/success/failed)
+            market_regime: 市场状态 (strong_trend_up/range_bound/strong_trend_down 等)
+            risk_check_result: 风控检查结果 {'signal_check': True, 'order_check': True, ...}
+            strategy: 策略名称 (confluence_v2/supertrend 等)
+            signal_id: 信号 ID
+
+        Returns:
+            日志条目字典
+        """
         entry = self._create_entry(
             DecisionType.TRADE_DECISION,
             symbol=symbol,
@@ -109,16 +131,20 @@ class DecisionLog:
             confidence=confidence,
             decision=decision,
             result=result or 'pending',
+            strategy=strategy,
+            signal_id=signal_id,
+            market_regime=market_regime,
+            risk_check_result=risk_check_result or {},
             context=context or {}
         )
-        
+
         with self._lock:
             self._entries.append(entry)
             if len(self._entries) > self.max_entries:
                 self._entries = self._entries[-self.max_entries:]
             self._save()
-        
-        logger.info(f"Trade decision logged: {symbol} {action} - {decision}")
+
+        logger.info(f"Trade decision logged: {symbol} {action} - {decision} (regime={market_regime})")
         return entry
     
     def log_config_change(

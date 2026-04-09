@@ -1,7 +1,7 @@
 {
   "version": "4.3.0",
-  "last_updated": "2026-03-09T14:45:27.979544",
-  "entry_count": 11,
+  "last_updated": "2026-03-31T07:28:27.989130",
+  "entry_count": 14,
   "entries": [
     {
       "id": "9fa80b4e-38b1-4f64-80c4-610c4e3a4b32",
@@ -92,6 +92,41 @@
       "old_value": null,
       "new_value": "value",
       "reason": ""
+    },
+    {
+      "id": "test-entry-2026-03-31-071500",
+      "timestamp": "2026-03-31T07:15:00.000000",
+      "type": "system_event",
+      "event": "decision_log_verification",
+      "message": "决策日志系统验证通过 - P0 紧急修复任务",
+      "data": {
+        "task": "context-engineer P0 修复",
+        "verified_by": "subagent",
+        "status": "success"
+      }
+    },
+    {
+      "id": "70dc7a02-b010-4362-bea9-485c055ceba6",
+      "timestamp": "2026-03-31T07:28:27.988207",
+      "type": "config_change",
+      "key": "test.initialization",
+      "old_value": null,
+      "new_value": "2026-03-31_P0_fix",
+      "reason": "Self-Improvement 系统初始化测试"
+    },
+    {
+      "id": "f75234d8-7a43-4d98-a12d-ba40b27194fc",
+      "timestamp": "2026-03-31T07:28:27.989088",
+      "type": "system_event",
+      "event": "p0_fix_started",
+      "message": "P0 紧急修复任务启动",
+      "data": {
+        "tasks": [
+          "learning_system",
+          "decision_log",
+          "memory_compression"
+        ]
+      }
     }
   ]
 }

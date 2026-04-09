@@ -1,0 +1,128 @@
+{
+  "workflow_id": "WF-20260407170753",
+  "timestamp": "2026-04-07T17:07:53.703407",
+  "model_config": {
+    "planner": {
+      "model": "bailian/qwen3.5-plus",
+      "timeout": 120,
+      "description": "苏格拉底追问专家 - 只追问不回答",
+      "forbidden_actions": [
+        "provide_answers",
+        "generate_solutions"
+      ]
+    },
+    "decomposer": {
+      "model": "deepseek/deepseek-reasoner",
+      "timeout": 180,
+      "description": "第一性原理拆解专家 - 只拆解不执行",
+      "forbidden_actions": [
+        "execute_subtasks",
+        "simplify_solution"
+      ]
+    },
+    "generator": {
+      "model": "bailian/qwen3.5-plus",
+      "timeout": 120,
+      "description": "方案生成专家 - 生成候选不选择",
+      "forbidden_actions": [
+        "select_solution",
+        "approve_solution"
+      ]
+    },
+    "critic": {
+      "model": "bailian/MiniMax-M2.5",
+      "timeout": 90,
+      "description": "对抗审查专家 - 有否决权不修改",
+      "forbidden_actions": [
+        "modify_solution",
+        "execute_solution"
+      ],
+      "veto_power": true
+    },
+    "executor": {
+      "model": "bailian/qwen3.5-plus",
+      "timeout": 60,
+      "description": "奥卡姆执行专家 - 只执行已审批方案",
+      "forbidden_actions": [
+        "execute_unapproved",
+        "add_new_features"
+      ]
+    },
+    "context_engineer": {
+      "model": "bailian/glm-5",
+      "timeout": 60,
+      "description": "复盘压缩专家 - 不篡改事实",
+      "forbidden_actions": [
+        "modify_facts",
+        "fabricate_information"
+      ]
+    }
+  },
+  "trace_log": [
+    {
+      "trace_id": "TRACE-socratic-20260407170753-70300",
+      "workflow_id": "WF-20260407170753",
+      "stage": "socratic",
+      "role": "planner",
+      "action": "ask_questions",
+      "input_data": {
+        "request": "优化策略胜率到55%"
+      },
+      "output_data": {},
+      "status": "in_progress",
+      "timestamp": "2026-04-07T17:07:53.703015"
+    },
+    {
+      "trace_id": "TRACE-first_principles-20260407170753-70319",
+      "workflow_id": "WF-20260407170753",
+      "stage": "first_principles",
+      "role": "decomposer",
+      "action": "decompose_problem",
+      "input_data": {
+        "knowns": [],
+        "unknowns": []
+      },
+      "output_data": {},
+      "status": "in_progress",
+      "timestamp": "2026-04-07T17:07:53.703205"
+    },
+    {
+      "trace_id": "TRACE-generation-20260407170753-70324",
+      "workflow_id": "WF-20260407170753",
+      "stage": "generation",
+      "role": "generator",
+      "action": "generate_candidates",
+      "input_data": {
+        "subtasks": []
+      },
+      "output_data": {},
+      "status": "in_progress",
+      "timestamp": "2026-04-07T17:07:53.703253"
+    },
+    {
+      "trace_id": "TRACE-adversarial_review-20260407170753-70329",
+      "workflow_id": "WF-20260407170753",
+      "stage": "adversarial_review",
+      "role": "critic",
+      "action": "review_solution",
+      "input_data": {
+        "solutions": []
+      },
+      "output_data": {},
+      "status": "in_progress",
+      "timestamp": "2026-04-07T17:07:53.703304"
+    },
+    {
+      "trace_id": "TRACE-occam_execution-20260407170753-70333",
+      "workflow_id": "WF-20260407170753",
+      "stage": "occam_execution",
+      "role": "executor",
+      "action": "validate_execution",
+      "input_data": {},
+      "output_data": {},
+      "status": "blocked",
+      "timestamp": "2026-04-07T17:07:53.703342"
+    }
+  ],
+  "results": {}
+}

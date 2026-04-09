@@ -14,6 +14,7 @@ from datetime import datetime
 from enum import Enum
 
 logger = logging.getLogger("ftseek.v4.actionable_insight")
+logger.propagate = False  # 防止日志重复
 
 
 class InsightQuality(str, Enum):
@@ -140,6 +141,7 @@ class ActionableInsight:
         ]
         
         self.logger = logging.getLogger("ftseek.v4.actionable_insight")
+logger.propagate = False  # 防止日志重复
     
     def validate(self, rec: TradeRecommendation) -> Tuple[bool, List[str]]:
         """

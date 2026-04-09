@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 from typing import Dict, List
 
 logger = logging.getLogger("ftseek.reports.weekly_review")
+logger.propagate = False  # 防止日志重复
 
 # 报告存储目录
 REPORTS_DIR = Path('/opt/ftseek/FTSeek/data/reports')

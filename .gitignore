@@ -1,0 +1,98 @@
+# 敏感文件
+.env
+.env.local
+.env.*.local
+
+# 密钥和证书
+*.pem
+*.key
+*.crt
+*.p12
+
+# 备份文件
+*.bak
+*.backup
+*.backup.*
+*.bak.*
+backups/
+
+# 日志文件
+*.log
+logs/
+tmp_logs/
+
+# 数据库文件
+*.db
+*.sqlite
+*.sqlite3
+data/*.db
+data/*.sqlite
+
+# 运行时文件
+*.pid
+*.pid.lock
+*.sock
+*.swp
+*.swo
+*~
+
+# Python 缓存
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# 虚拟环境
+venv/
+env/
+ENV/
+.venv
+
+# IDE 配置
+.idea/
+.vscode/
+*.iml
+.project
+.pydevproject
+.settings/
+
+# 测试覆盖
+htmlcov/
+.coverage
+.coverage.*
+.coveragerc
+.pytest_cache/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# OS 文件
+.DS_Store
+Thumbs.db
+
+# 临时文件
+tmp/
+temp/
+*.tmp
+*.temp
+
+# 证书和授权
+credentials.json
+credentials.yaml
+service_account*.json
+oauth-*.json

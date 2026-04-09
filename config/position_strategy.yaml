@@ -1,32 +1,118 @@
-# FTSeek 持仓管理策略配置
+# 仓位策略配置 (Position Strategy Configuration)
+# 创建日期：2026-04-08
 
-# 仓位管理
-position:
-  initial_ratio: 0.50        # 首次开仓比例 (50%)
-  max_position_ratio: 0.20   # 单股最大仓位 (20%)
-  total_max_ratio: 0.80      # 总仓位上限 (80%)
+# ============================================================
+# 仓位计算策略
+# ============================================================
+position_sizing:
+  # 策略选择：fixed / kelly / fixed_risk / volatility / sharpe
+  strategy: fixed_risk
 
-# 金字塔加仓
-pyramid:
-  enabled: true
-  level1:
-    price_increase: 0.05     # 价格上涨 5%
-    ratio: 0.30              # 加仓 30%
-    min_confidence: 0.70     # 最小置信度 70%
-  level2:
-    price_increase: 0.10     # 价格上涨 10%
-    ratio: 0.20              # 加仓 20%
-    min_confidence: 0.70
+  # 固定仓位策略
+  fixed:
+    position_size_pct: 0.10     # 每笔交易占总资金 10%
 
-# 出仓策略
-exit:
-  stop_loss: -0.05           # 止损 -5%
-  take_profit: 0.15          # 止盈 +15%
-  take_profit_ratio: 0.50    # 止盈平仓比例 (50%)
+  # 凯利公式策略
+  kelly:
+    use_half_kelly: true        # 使用半凯利 (更保守)
+    max_position_pct: 0.25      # 最大仓位限制
+    min_position_pct: 0.05      # 最小仓位限制
 
-# 交易间隔
-cooldown:
-  hours: 4                   # 冷却时间 4 小时
-  max_trades_per_day: 3      # 单股日交易上限
-  min_confidence: 0.60       # 最小信号置信度
-  add_position_confidence: 0.70  # 加仓最小置信度
+  # 固定风险策略 (推荐)
+  fixed_risk:
+    risk_per_trade_pct: 0.02    # 每笔交易风险 2%
+    use_stop_loss: true         # 基于止损计算仓位
+
+  # 波动率调整策略
+  volatility:
+    target_volatility: 0.02     # 目标日波动率 2%
+    lookback_periods: 20        # 波动率计算周期
+    max_position_pct: 0.20      # 最大仓位
+    min_position_pct: 0.05      # 最小仓位
+
+  # 夏普比率调整策略
+  sharpe:
+    lookback_trades: 20         # 回溯交易次数
+    target_sharpe: 1.5          # 目标夏普比率
+    max_position_pct: 0.20
+    min_position_pct: 0.05
+
+# ============================================================
+# 仓位调整规则
+# ============================================================
+position_adjustment:
+  # 连续盈利后加仓
+  scale_up_after_wins:
+    enabled: true
+    consecutive_wins: 3
+    increase_pct: 0.05          # 增加 5% 仓位
+    max_position_pct: 0.25
+
+  # 连续亏损后减仓
+  scale_down_after_losses:
+    enabled: true
+    consecutive_losses: 2
+    decrease_pct: 0.05          # 减少 5% 仓位
+    min_position_pct: 0.05
+
+  # 根据市场波动调整
+  volatility_adjustment:
+    enabled: true
+    high_volatility_multiplier: 0.7   # 高波动时仓位 x0.7
+    low_volatility_multiplier: 1.2    # 低波动时仓位 x1.2
+
+# ============================================================
+# 持仓管理
+# ============================================================
+holding_management:
+  # 最大持仓时间 (小时)
+  max_holding_hours: 48
+
+  # 最小持仓时间 (避免频繁交易)
+  min_holding_minutes: 30
+
+  # 持仓期间检查频率 (分钟)
+  monitoring_interval_minutes: 5
+
+  # 自动止盈止损检查
+  auto_exit_check:
+    enabled: true
+    check_interval_seconds: 30
+
+# ============================================================
+# 股票池管理
+# ============================================================
+stock_pool:
+  # 核心监控股票
+  core_watchlist:
+    - "HK.09992"  # 泡泡玛特
+    - "HK.00981"  # 中芯国际
+    - "HK.03690"  # 美团
+    - "HK.01024"  # 快手
+    - "HK.01347"  # HUA HONG SEMI
+    - "HK.01093"  # 药明生物
+    - "HK.00175"  # 吉利汽车
+    - "HK.01378"  # 中国宏桥
+
+  # 港股通标的 (可选)
+  stock_connect_eligible: true
+
+  # 流动性要求
+  liquidity_requirements:
+    min_avg_turnover: 10000000    # 日均成交额 1000 万
+    min_market_cap: 5000000000    # 最小市值 50 亿
+
+# ============================================================
+# 行业分散化
+# ============================================================
+diversification:
+  # 单行业最大仓位
+  max_sector_exposure_pct: 0.40
+
+  # 行业定义
+  sectors:
+    technology: ["HK.09992", "HK.00981", "HK.03690", "HK.01024", "HK.01347"]
+    healthcare: ["HK.01093"]
+    consumer: ["HK.09992"]
+    auto: ["HK.00175"]
+    materials: ["HK.01378"]

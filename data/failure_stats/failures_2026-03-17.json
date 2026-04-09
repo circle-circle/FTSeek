@@ -1,0 +1,170 @@
+[
+  {
+    "timestamp": "2026-03-17T06:55:49.271342",
+    "code": "HK.09992",
+    "reason": "cooldown",
+    "category": "cooldown_skip",
+    "message": "测试冷却跳过"
+  },
+  {
+    "timestamp": "2026-03-17T06:55:49.272105",
+    "code": "HK.09992",
+    "reason": "confidence",
+    "category": "confidence_reject",
+    "message": "测试置信度不足"
+  },
+  {
+    "timestamp": "2026-03-17T07:23:08.501596",
+    "code": "HK.09992",
+    "reason": "risk",
+    "category": "risk_reject",
+    "message": "风控失败：['confidence']"
+  },
+  {
+    "timestamp": "2026-03-17T07:23:08.595543",
+    "code": "HK.09992",
+    "reason": "cooldown",
+    "category": "cooldown_skip",
+    "message": "冷却跳过"
+  },
+  {
+    "timestamp": "2026-03-17T07:23:08.597107",
+    "code": "HK.09992",
+    "reason": "confidence",
+    "category": "confidence_reject",
+    "message": "置信度不足"
+  },
+  {
+    "timestamp": "2026-03-17T07:23:08.597753",
+    "code": "HK.09992",
+    "reason": "limit",
+    "category": "order_limit",
+    "message": "订单超限"
+  },
+  {
+    "timestamp": "2026-03-17T07:23:08.598442",
+    "code": "HK.09992",
+    "reason": "risk",
+    "category": "risk_reject",
+    "message": "风控拒绝"
+  },
+  {
+    "timestamp": "2026-03-17T07:28:50.716711",
+    "code": "HK.09992",
+    "reason": "risk",
+    "category": "risk_reject",
+    "message": "风控失败：['confidence']"
+  },
+  {
+    "timestamp": "2026-03-17T07:28:50.809978",
+    "code": "HK.09992",
+    "reason": "cooldown",
+    "category": "cooldown_skip",
+    "message": "冷却跳过"
+  },
+  {
+    "timestamp": "2026-03-17T07:28:50.810792",
+    "code": "HK.09992",
+    "reason": "confidence",
+    "category": "confidence_reject",
+    "message": "置信度不足"
+  },
+  {
+    "timestamp": "2026-03-17T07:28:50.811577",
+    "code": "HK.09992",
+    "reason": "limit",
+    "category": "order_limit",
+    "message": "订单超限"
+  },
+  {
+    "timestamp": "2026-03-17T07:28:50.812431",
+    "code": "HK.09992",
+    "reason": "risk",
+    "category": "risk_reject",
+    "message": "风控拒绝"
+  },
+  {
+    "timestamp": "2026-03-17T07:28:58.797361",
+    "code": "HK.09992",
+    "reason": "risk",
+    "category": "risk_reject",
+    "message": "风控失败：['confidence']"
+  },
+  {
+    "timestamp": "2026-03-17T07:28:58.892693",
+    "code": "HK.09992",
+    "reason": "cooldown",
+    "category": "cooldown_skip",
+    "message": "冷却跳过"
+  },
+  {
+    "timestamp": "2026-03-17T07:28:58.893634",
+    "code": "HK.09992",
+    "reason": "confidence",
+    "category": "confidence_reject",
+    "message": "置信度不足"
+  },
+  {
+    "timestamp": "2026-03-17T07:28:58.894445",
+    "code": "HK.09992",
+    "reason": "limit",
+    "category": "order_limit",
+    "message": "订单超限"
+  },
+  {
+    "timestamp": "2026-03-17T07:28:58.895390",
+    "code": "HK.09992",
+    "reason": "risk",
+    "category": "risk_reject",
+    "message": "风控拒绝"
+  },
+  {
+    "timestamp": "2026-03-17T07:29:14.678273",
+    "code": "HK.09992",
+    "reason": "risk",
+    "category": "risk_reject",
+    "message": "风控失败：['confidence']"
+  },
+  {
+    "timestamp": "2026-03-17T07:29:14.774865",
+    "code": "HK.09992",
+    "reason": "cooldown",
+    "category": "cooldown_skip",
+    "message": "冷却跳过"
+  },
+  {
+    "timestamp": "2026-03-17T07:29:14.776259",
+    "code": "HK.09992",
+    "reason": "confidence",
+    "category": "confidence_reject",
+    "message": "置信度不足"
+  },
+  {
+    "timestamp": "2026-03-17T07:29:14.777315",
+    "code": "HK.09992",
+    "reason": "limit",
+    "category": "order_limit",
+    "message": "订单超限"
+  },
+  {
+    "timestamp": "2026-03-17T07:29:14.778281",
+    "code": "HK.09992",
+    "reason": "risk",
+    "category": "risk_reject",
+    "message": "风控拒绝"
+  },
+  {
+    "timestamp": "2026-03-17T15:30:37.253193",
+    "code": "HK.09992",
+    "reason": "cooldown",
+    "category": "cooldown_skip",
+    "message": "测试冷却跳过"
+  },
+  {
+    "timestamp": "2026-03-17T15:30:37.254785",
+    "code": "HK.09992",
+    "reason": "confidence",
+    "category": "confidence_reject",
+    "message": "测试置信度不足"
+  }
+]

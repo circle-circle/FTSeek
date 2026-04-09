@@ -1,0 +1,51 @@
+{
+  "backtest_date": "2026-03-31T12:16:19.379818",
+  "total_records": 131,
+  "groups": {
+    "unknown": {
+      "group": "unknown",
+      "total_trades": 130,
+      "winning": 58,
+      "losing": 72,
+      "win_rate": 0.4462,
+      "total_pnl": -34500.0,
+      "avg_pnl": -265.38,
+      "avg_win": 1950.0,
+      "avg_loss": -2050.0,
+      "profit_factor": 0.7663,
+      "avg_confidence": 0.0,
+      "confidence_buckets": {}
+    },
+    "uptrend": {
+      "group": "uptrend",
+      "total_trades": 1,
+      "winning": 1,
+      "losing": 0,
+      "win_rate": 1.0,
+      "total_pnl": 1500.0,
+      "avg_pnl": 1500.0,
+      "avg_win": 1500.0,
+      "avg_loss": 0,
+      "profit_factor": "inf",
+      "avg_confidence": 0.0,
+      "confidence_buckets": {}
+    }
+  },
+  "summary": {
+    "group": "all",
+    "total_trades": 131,
+    "winning": 59,
+    "losing": 72,
+    "win_rate": 0.4504,
+    "total_pnl": -33000.0,
+    "avg_pnl": -251.91,
+    "avg_win": 1942.37,
+    "avg_loss": -2050.0,
+    "profit_factor": 0.7764,
+    "avg_confidence": 0.0,
+    "confidence_buckets": {}
+  },
+  "recommendations": [
+    "最佳市场状态：uptrend (总盈亏 HK$1500.00)"
+  ]
+}

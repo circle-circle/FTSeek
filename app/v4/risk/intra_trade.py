@@ -15,6 +15,7 @@ from collections import deque
 from datetime import datetime
 
 logger = logging.getLogger("ftseek.v4.intra_trade_risk")
+logger.propagate = False  # 防止日志重复
 
 
 @dataclass
@@ -108,6 +109,7 @@ class PositionMonitor:
     def __init__(self):
         self.positions: Dict[str, PositionData] = {}
         self.logger = logging.getLogger("ftseek.v4.position_monitor")
+logger.propagate = False  # 防止日志重复
     
     def add_position(self, code: str, position_data: Dict[str, Any]):
         """添加仓位"""
@@ -234,6 +236,7 @@ class IntraTradeRisk:
         self.position_monitor = PositionMonitor()
         
         self.logger = logging.getLogger("ftseek.v4.intra_trade_risk")
+logger.propagate = False  # 防止日志重复
     
     def set_entry_price(self, price: float, direction: str = "BUY"):
         """设置入场价格"""

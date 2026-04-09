@@ -1,5 +1,7 @@
 """
-AutoExitManager - 自动退出管理器
+AutoExitManager - 自动退出管理器 [已废弃 - DEPRECATED]
+
+⚠️ 此文件已废弃，请使用 exit_manager_adapter.py
 
 功能:
 - 动态止盈止损决策
@@ -19,6 +21,14 @@ AutoExitManager - 自动退出管理器
 - 优先级：止盈 > 止损 > Trailing > 超时
 - 支持动态调整阈值
 - Trailing Stop 可选启用
+
+废弃原因:
+- 与 DynamicExitManager 功能重复
+- 使用 exit_manager_adapter.py 替代，统一退出策略
+- 保持此文件用于向后兼容，新代码请使用 adapter
+
+迁移指南:
+from app.v4.core.exit_manager_adapter import AutoExitManager, ExitDecision
 """
 from datetime import datetime
 from typing import Optional, Dict
@@ -28,6 +38,7 @@ import logging
 from app.v4.trader.paper_trader import PaperPosition
 
 logger = logging.getLogger("ftseek.v4.core.exit_manager")
+logger.propagate = False  # 防止日志重复
 
 
 @dataclass

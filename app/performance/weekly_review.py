@@ -15,6 +15,7 @@ from datetime import datetime, timedelta
 import logging
 
 logger = logging.getLogger("ftseek.performance.weekly_review")
+logger.propagate = False  # 防止日志重复
 
 
 class WeeklyReviewer:

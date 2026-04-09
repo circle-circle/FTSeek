@@ -1,0 +1,68 @@
+{
+  "_comment": "FTSeek 策略参数配置 - 2026-03-19 优化",
+  "_updated": "2026-03-19 17:25",
+  
+  "strategies": {
+    "price_break": {
+      "lookback": 20,
+      "breakout_pct": 0.02,
+      "_notes": "价格突破策略 - 20日高低点突破"
+    },
+    "rsi": {
+      "period": 14,
+      "oversold": 30,
+      "overbought": 70,
+      "_notes": "RSI策略 - 标准14日RSI"
+    },
+    "ma_cross": {
+      "fast_period": 10,
+      "slow_period": 30,
+      "_notes": "均线交叉 - 10日/30日金叉死叉"
+    }
+  },
+  
+  "consensus": {
+    "threshold": 0.4,
+    "window_seconds": 60,
+    "adx_trend": 25,
+    "adx_range": 20,
+    "_notes": "共识引擎参数 - 阈值已降低以测试"
+  },
+  
+  "risk": {
+    "stop_loss_pct": -3.0,
+    "take_profit_pct": 4.0,
+    "partial_tp1_pct": 2.0,
+    "partial_tp2_pct": 4.0,
+    "trailing_tp_trigger_pct": 2.5,
+    "intraday_stop_pct": -1.5,
+    "max_holding_hours": 24,
+    "max_position_ratio": 0.2,
+    "max_positions": 3,
+    "_notes": "风控参数 - 测试阶段保守配置"
+  },
+  
+  "lot_sizes": {
+    "HK.00700": 100,
+    "HK.09988": 100,
+    "HK.03690": 100,
+    "HK.09992": 200,
+    "HK.00981": 500,
+    "HK.01810": 200,
+    "_notes": "每手股数配置 - 从富途API获取"
+  },
+  
+  "weights": {
+    "supertrend": 1.0,
+    "macd": 0.8,
+    "ma_cross": 0.6,
+    "rsi": 0.8,
+    "bollinger": 0.8,
+    "price_break": 0.5,
+    "volume_alert": 0.4,
+    "confluence": 1.2,
+    "fusion_v2": 1.0,
+    "sentiment_ai": 0.9,
+    "_notes": "策略权重 - 可根据回测结果调整"
+  }
+}

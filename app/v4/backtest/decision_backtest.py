@@ -26,6 +26,7 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger("ftseek.v4.decision_backtest")
+logger.propagate = False  # 防止日志重复
 
 
 @dataclass
@@ -142,6 +143,7 @@ class DecisionBacktest:
         """
         self.config = config
         self.logger = logging.getLogger("ftseek.v4.decision_backtest")
+logger.propagate = False  # 防止日志重复
         
         # 回测状态
         self.capital = config.initial_capital

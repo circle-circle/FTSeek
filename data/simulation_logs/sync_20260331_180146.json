@@ -1,0 +1,8 @@
+{
+  "success": false,
+  "timestamp": "2026-03-31T18:01:46.551132",
+  "positions_synced": 0,
+  "trades_synced": 0,
+  "discrepancies": [],
+  "error": "无法连接富途 OpenD (交易)"
+}

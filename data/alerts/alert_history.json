@@ -1,0 +1,8 @@
+[
+  {
+    "id": "6d368b27a0ad",
+    "rule_name": "high_cpu_usage",
+    "metric": "system_cpu_percent",
+    "value": 95.0,
+    "threshold": 90.0,
+    "level": 

@@ -1,0 +1,42 @@
+{
+  "actual": {
+    "name": "actual_trades",
+    "total_trades": 5,
+    "winning_trades": 5,
+    "losing_trades": 0,
+    "win_rate": 1.0,
+    "total_pnl": 6950.0,
+    "avg_pnl": 1390.0,
+    "sharpe_ratio": 5.65,
+    "max_drawdown": 0,
+    "avg_holding_minutes": 0.0,
+    "avg_slippage_bps": 13.39
+  },
+  "estimated_optimized": {
+    "name": "estimated_optimized",
+    "total_trades": 5,
+    "winning_trades": 5,
+    "losing_trades": 0,
+    "win_rate": 1.05,
+    "total_pnl": 7645.0,
+    "avg_pnl": 1529.0,
+    "sharpe_ratio": 6.22,
+    "max_drawdown": 0.1,
+    "avg_holding_minutes": 0.0,
+    "avg_slippage_bps": 12.72
+  },
+  "improvement_opportunities": [
+    {
+      "type": "upweight",
+      "target": "confluence",
+      "current_win_rate": 1.0,
+      "expected_improvement": "增加盈利交易"
+    }
+  ],
+  "summary": {
+    "win_rate_improvement": "+5.0%",
+    "sharpe_improvement": "+10.0%",
+    "drawdown_reduction": "N/A (无回撤数据)",
+    "pnl_improvement": "+10.0%"
+  }
+}

@@ -13,6 +13,7 @@ from typing import Dict, List
 from dataclasses import dataclass, field
 
 logger = logging.getLogger("ftseek.ai.signal_monitor")
+logger.propagate = False  # 防止日志重复
 
 # 监控数据目录
 MONITOR_DIR = Path('/opt/ftseek/FTSeek/data/ai_monitor')

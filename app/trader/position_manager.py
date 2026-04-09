@@ -6,16 +6,20 @@
 """
 
 import sqlite3
+import logging
 from dataclasses import dataclass
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta
 import os
 import yaml
 
+logger = logging.getLogger("ftseek.position_manager")
+logger.propagate = False  # 防止日志重复
+
 
 @dataclass
 class Position:
-    """持仓数据模型"""
+    """持仓数据模型 (2026-03-17 新增止盈止损字段)"""
     id: int
     code: str
     action: str  # BUY/SELL
@@ -27,6 +31,10 @@ class Position:
     status: str = 'OPEN'
     exit_price: Optional[float] = None
     realized_pnl: Optional[float] = None
+    stop_loss: Optional[float] = None  # 止损价
+    take_profit: Optional[float] = None  # 止盈价
+    highest_price: Optional[float] = None  # 最高价 (用于移动止盈)
+    lowest_price: Optional[float] = None  # 最低价 (用于做空移动止盈)
 
 
 class PositionManager:
@@ -122,7 +130,7 @@ class PositionManager:
         return conn
     
     def _ensure_table(self):
-        """确保 positions 表存在"""
+        """确保 positions 表存在 (2026-03-17 新增止盈止损字段)"""
         conn = self._get_connection()
         try:
             cursor = conn.cursor()
@@ -139,12 +147,51 @@ class PositionManager:
                     status TEXT DEFAULT 'OPEN',
                     exit_price REAL,
                     realized_pnl REAL,
-                    exit_time TEXT
+                    exit_time TEXT,
+                    stop_loss REAL,
+                    take_profit REAL,
+                    highest_price REAL,
+                    lowest_price REAL
                 )
             ''')
             conn.commit()
+            
+            # 确保旧数据库添加新字段
+            self._ensure_exit_columns(conn)
         finally:
             conn.close()
+    
+    def _ensure_exit_columns(self, conn):
+        """
+        确保 positions 表有止盈止损字段 (2026-03-17 新增)
+        
+        Args:
+            conn: 数据库连接
+        """
+        cursor = conn.cursor()
+        
+        # 检查字段是否存在
+        cursor.execute("PRAGMA table_info(positions)")
+        columns = [row[1] for row in cursor.fetchall()]
+        
+        # 添加缺失字段
+        if 'stop_loss' not in columns:
+            cursor.execute('ALTER TABLE positions ADD COLUMN stop_loss REAL')
+            logger.info("添加 stop_loss 字段到 positions 表")
+        
+        if 'take_profit' not in columns:
+            cursor.execute('ALTER TABLE positions ADD COLUMN take_profit REAL')
+            logger.info("添加 take_profit 字段到 positions 表")
+        
+        if 'highest_price' not in columns:
+            cursor.execute('ALTER TABLE positions ADD COLUMN highest_price REAL')
+            logger.info("添加 highest_price 字段到 positions 表")
+        
+        if 'lowest_price' not in columns:
+            cursor.execute('ALTER TABLE positions ADD COLUMN lowest_price REAL')
+            logger.info("添加 lowest_price 字段到 positions 表")
+        
+        conn.commit()
     
     def get_position(self, code: str) -> Optional[Position]:
         """
@@ -193,10 +240,31 @@ class PositionManager:
         finally:
             conn.close()
     
-    def create_position(self, code: str, action: str, quantity: int, 
-                       entry_price: float, entry_time: str) -> int:
+    def get_open_positions_count(self) -> int:
         """
-        创建持仓记录
+        获取当前持仓数量 (2026-03-25 新增)
+        
+        Returns:
+            当前 OPEN 状态的持仓数量
+        """
+        conn = self._get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT COUNT(*) FROM positions 
+                WHERE status = 'OPEN'
+            ''')
+            count = cursor.fetchone()[0]
+            return count
+        finally:
+            conn.close()
+    
+    def create_position(self, code: str, action: str, quantity: int, 
+                       entry_price: float, entry_time: str,
+                       stop_loss: float = None, take_profit: float = None,
+                       signal_id: str = None, strategy: str = None) -> int:
+        """
+        创建持仓记录 (支持止盈止损 + 信号关联 - 2026-03-19 更新)
         
         Args:
             code: 股票代码
@@ -204,6 +272,10 @@ class PositionManager:
             quantity: 数量
             entry_price: 开仓价格
             entry_time: 开仓时间
+            stop_loss: 止损价 (可选)
+            take_profit: 止盈价 (可选)
+            signal_id: 关联的信号ID (可选)
+            strategy: 策略名称 (可选)
             
         Returns:
             新建持仓的 ID
@@ -211,15 +283,36 @@ class PositionManager:
         conn = self._get_connection()
         try:
             cursor = conn.cursor()
+            
+            # 检查表是否有止盈止损字段，没有则添加
+            self._ensure_exit_columns(conn)
+            
+            # 检查表是否有 signal_id 和 strategy 字段，没有则添加
+            self._ensure_signal_columns(conn)
+            
             cursor.execute('''
                 INSERT INTO positions 
-                (code, action, quantity, entry_price, entry_time, status)
-                VALUES (?, ?, ?, ?, ?, 'OPEN')
-            ''', (code, action, quantity, entry_price, entry_time))
+                (code, action, quantity, entry_price, entry_time, status, stop_loss, take_profit, signal_id, strategy)
+                VALUES (?, ?, ?, ?, ?, 'OPEN', ?, ?, ?, ?)
+            ''', (code, action, quantity, entry_price, entry_time, stop_loss, take_profit, signal_id, strategy))
             conn.commit()
             return cursor.lastrowid
         finally:
             conn.close()
+    
+    def _ensure_signal_columns(self, conn):
+        """确保 signal_id 和 strategy 字段存在"""
+        cursor = conn.cursor()
+        cursor.execute("PRAGMA table_info(positions)")
+        columns = [row[1] for row in cursor.fetchall()]
+        
+        if 'signal_id' not in columns:
+            cursor.execute("ALTER TABLE positions ADD COLUMN signal_id TEXT")
+            logger.info("已添加 signal_id 字段")
+        
+        if 'strategy' not in columns:
+            cursor.execute("ALTER TABLE positions ADD COLUMN strategy TEXT")
+            logger.info("已添加 strategy 字段")
     
     def update_price(self, code: str, price: float):
         """
@@ -244,108 +337,185 @@ class PositionManager:
         conn = self._get_connection()
         try:
             cursor = conn.cursor()
+            # 用 id 精确定位，避免批量更新同品种所有 OPEN 仓
             cursor.execute('''
                 UPDATE positions 
                 SET current_price = ?, unrealized_pnl = ?
-                WHERE code = ? AND status = 'OPEN'
-            ''', (price, unrealized_pnl, code))
+                WHERE id = ?
+            ''', (price, unrealized_pnl, position.id))
             conn.commit()
         finally:
             conn.close()
     
     def close_position(self, code: str, exit_price: float, exit_time: str) -> float:
         """
-        平仓并返回已实现盈亏
-        
+        平仓并返回已实现盈亏（已扣除交易费用）
+
+        注意：只关闭 get_position() 取到的第一条 OPEN 记录（按 id 定位），
+        避免批量关闭导致同品种多仓叠加问题。
+
         Args:
             code: 股票代码
             exit_price: 平仓价格
             exit_time: 平仓时间
-            
+
         Returns:
             已实现盈亏 (正=盈利，负=亏损)
         """
         position = self.get_position(code)
         if position is None:
             return 0.0
-        
-        # 计算已实现盈亏
-        realized_pnl = self.calculate_pnl(
+
+        # 计算毛盈亏
+        gross_pnl = self.calculate_pnl(
             entry_price=position.entry_price,
             exit_price=exit_price,
             quantity=position.quantity,
             action=position.action
         )
-        
+
+        # 2026-04-08: 扣除交易费用，计算净盈亏（与富途 App 保持一致）
+        try:
+            from app.trader.cost_calculator import get_cost_calculator
+            calculator = get_cost_calculator()
+
+            # 判断港股/美股
+            is_hk_stock = code.startswith("HK.")
+
+            if is_hk_stock:
+                # 港股：计算往返费用
+                cost_info = calculator.calculate_round_trip_cost(
+                    position.entry_price,
+                    exit_price,
+                    position.quantity
+                )
+                total_fees = cost_info['total_cost']
+            else:
+                # 美股：简化费用估算（佣金 + 监管费 + 清算费）
+                trade_value = abs(gross_pnl) + position.entry_price * position.quantity
+                total_fees = max(1.0, trade_value * 0.001)  # 约 0.1% 费用
+
+            # 净盈亏 = 毛盈亏 - 交易费用
+            # 注意：费用总是正数，从盈亏中扣除
+            if position.action == 'BUY':
+                # 做多：费用减少盈利或增加亏损
+                net_pnl = gross_pnl - total_fees
+            else:
+                # 做空：费用同样减少盈利或增加亏损
+                net_pnl = gross_pnl - total_fees
+
+            logger.info(
+                f"[平仓盈亏] {code} 毛盈亏={gross_pnl:.2f}, 费用={total_fees:.2f}, "
+                f"净盈亏={net_pnl:.2f}"
+            )
+        except Exception as e:
+            logger.warning(f"[平仓费用] {code} 费用计算失败，使用毛盈亏：{e}")
+            net_pnl = gross_pnl
+
         conn = self._get_connection()
         try:
             cursor = conn.cursor()
+            # 用 id 精确定位，避免同品种多条 OPEN 记录时批量关闭
             cursor.execute('''
-                UPDATE positions 
+                UPDATE positions
                 SET status = 'CLOSED',
                     exit_price = ?,
                     exit_time = ?,
                     realized_pnl = ?,
                     current_price = ?,
                     unrealized_pnl = ?
-                WHERE code = ? AND status = 'OPEN'
-            ''', (exit_price, exit_time, realized_pnl, exit_price, realized_pnl, code))
+                WHERE id = ?
+            ''', (exit_price, exit_time, net_pnl, exit_price, net_pnl, position.id))
             conn.commit()
         finally:
             conn.close()
-        
-        return realized_pnl
+
+        return net_pnl
     
     def partial_close_position(self, code: str, close_qty: int, exit_price: float, exit_time: str) -> float:
         """
-        部分平仓并返回已实现盈亏
-        
+        部分平仓并返回已实现盈亏（已扣除交易费用）
+
         Args:
             code: 股票代码
             close_qty: 平仓数量
             exit_price: 平仓价格
             exit_time: 平仓时间
-            
+
         Returns:
             已实现盈亏 (正=盈利，负=亏损)
         """
         position = self.get_position(code)
         if position is None:
             return 0.0
-        
+
         if close_qty >= position.quantity:
             # 如果平仓数量 >= 持仓数量，则全部平仓
             return self.close_position(code, exit_price, exit_time)
-        
-        # 计算已实现盈亏 (按平仓数量计算)
-        realized_pnl = self.calculate_pnl(
+
+        # 计算毛盈亏 (按平仓数量计算)
+        gross_pnl = self.calculate_pnl(
             entry_price=position.entry_price,
             exit_price=exit_price,
             quantity=close_qty,
             action=position.action
         )
-        
+
+        # 2026-04-08: 扣除交易费用，计算净盈亏（与 close_position 保持一致）
+        try:
+            from app.trader.cost_calculator import get_cost_calculator
+            calculator = get_cost_calculator()
+
+            # 判断港股/美股
+            is_hk_stock = code.startswith("HK.")
+
+            if is_hk_stock:
+                # 港股：按平仓比例计算费用
+                # 往返费用基于平仓部分的买卖金额
+                cost_info = calculator.calculate_round_trip_cost(
+                    position.entry_price,
+                    exit_price,
+                    close_qty
+                )
+                total_fees = cost_info['total_cost']
+            else:
+                # 美股：简化费用估算
+                trade_value = abs(gross_pnl) + position.entry_price * close_qty
+                total_fees = max(1.0, trade_value * 0.001)  # 约 0.1% 费用
+
+            # 净盈亏 = 毛盈亏 - 交易费用
+            net_pnl = gross_pnl - total_fees
+
+            logger.info(
+                f"[部分平仓盈亏] {code} 平仓{close_qty}股 毛盈亏={gross_pnl:.2f}, "
+                f"费用={total_fees:.2f}, 净盈亏={net_pnl:.2f}"
+            )
+        except Exception as e:
+            logger.warning(f"[部分平仓费用] {code} 费用计算失败，使用毛盈亏：{e}")
+            net_pnl = gross_pnl
+
         # 更新持仓：减少数量，保持 OPEN 状态
         new_quantity = position.quantity - close_qty
-        
+
         conn = self._get_connection()
         try:
             cursor = conn.cursor()
+            # 用 id 精确定位，避免同品种多条 OPEN 记录时批量更新
             cursor.execute('''
-                UPDATE positions 
+                UPDATE positions
                 SET quantity = ?,
                     current_price = ?,
                     unrealized_pnl = ?,
                     exit_price = ?,
                     exit_time = ?,
                     realized_pnl = COALESCE(realized_pnl, 0) + ?
-                WHERE code = ? AND status = 'OPEN'
-            ''', (new_quantity, exit_price, realized_pnl, exit_price, exit_time, realized_pnl, code))
+                WHERE id = ?
+            ''', (new_quantity, exit_price, net_pnl, exit_price, exit_time, net_pnl, position.id))
             conn.commit()
         finally:
             conn.close()
-        
-        return realized_pnl
+
+        return net_pnl
     
     def calculate_pnl(self, entry_price: float, exit_price: float,
                       quantity: int, action: str) -> float:
@@ -372,7 +542,9 @@ class PositionManager:
     
     def check_stop_loss(self, code: str, current_price: float) -> bool:
         """
-        检查是否触发止损 (-5%)
+        检查是否触发止损
+        
+        优先使用持仓记录中的止损价；若未设置，才使用默认百分比。
         
         Args:
             code: 股票代码
@@ -385,13 +557,28 @@ class PositionManager:
         if position is None:
             return False
         
+        # 使用持仓记录中的止损价（优先）
+        if position.stop_loss and position.stop_loss > 0:
+            # 止损价已设置：只有当前价跌破止损价才触发
+            return current_price <= position.stop_loss
+        
+        # 未设置止损价时，用动态配置的百分比
+        try:
+            from app.risk.dynamic_exit_manager import dynamic_exit_manager as _dem
+            stop_pct = abs(_dem.current_params.get('stop_loss', 0.03))
+        except Exception:
+            stop_pct = 0.03  # 默认止损 3%
         avg_cost = position.entry_price
+        if avg_cost <= 0:
+            return False
         pnl_rate = (current_price - avg_cost) / avg_cost
-        return pnl_rate <= -0.05
+        return pnl_rate <= -stop_pct
     
     def check_take_profit(self, code: str, current_price: float) -> bool:
         """
-        检查是否触发止盈 (+15%)
+        检查是否触发止盈
+        
+        优先使用持仓记录中的止盈价；若未设置，才使用默认百分比。
         
         Args:
             code: 股票代码
@@ -404,9 +591,151 @@ class PositionManager:
         if position is None:
             return False
         
+        # 使用持仓记录中的止盈价（优先）
+        if position.take_profit and position.take_profit > 0:
+            # 止盈价已设置：只有当前价达到止盈价才触发
+            return current_price >= position.take_profit
+        
+        # 未设置止盈价时，用动态配置的百分比
+        try:
+            from app.risk.dynamic_exit_manager import dynamic_exit_manager as _dem
+            take_pct = abs(_dem.current_params.get('take_profit', 0.06))
+        except Exception:
+            take_pct = 0.06  # 默认止盈 6%
+        avg_cost = position.entry_price
+        if avg_cost <= 0:
+            return False
+        pnl_rate = (current_price - avg_cost) / avg_cost
+        return pnl_rate >= take_pct
+    
+    def check_breakeven_stop(self, code: str, current_price: float) -> bool:
+        """
+        检查是否需要启用保本止损
+        
+        保本止损逻辑：
+        - 盈利达到 +2% 后，将止损上移到成本价
+        
+        Args:
+            code: 股票代码
+            current_price: 当前价格
+            
+        Returns:
+            True 如果应该启用保本止损
+        """
+        position = self.get_position(code)
+        if position is None:
+            return False
+        
         avg_cost = position.entry_price
         pnl_rate = (current_price - avg_cost) / avg_cost
-        return pnl_rate >= 0.15
+        
+        # 盈利 2% 后启用保本止损
+        if pnl_rate >= 0.02:
+            # 检查止损是否已在成本价之上
+            if position.stop_loss and position.stop_loss < avg_cost:
+                return True
+        
+        return False
+    
+    def check_partial_take_profit(self, code: str, current_price: float) -> float:
+        """
+        检查是否触发分批止盈（旧逻辑兜底，Task2 的 check_exit_priority 为主）
+        
+        分批止盈逻辑：
+        - 若已设置止盈价，直接跳过（交由 check_take_profit 处理）
+        - 否则：+3% 时平仓 40%，+6% 时平仓剩余
+        
+        Args:
+            code: 股票代码
+            current_price: 当前价格
+            
+        Returns:
+            平仓比例 (0 = 不平仓, 0.5 = 平一半, 1.0 = 全平)
+        """
+        position = self.get_position(code)
+        if position is None:
+            return 0.0
+        
+        # 已设置止盈价时：由 check_take_profit 统一处理，此处跳过
+        if position.take_profit and position.take_profit > 0:
+            return 0.0
+        
+        avg_cost = position.entry_price
+        if avg_cost <= 0:
+            return 0.0
+        pnl_rate = (current_price - avg_cost) / avg_cost
+        
+        # 从动态配置读取止盈目标，没有则使用默认 6%
+        try:
+            from app.risk.dynamic_exit_manager import dynamic_exit_manager as _dem
+            take_pct = abs(_dem.current_params.get('take_profit', 0.06))
+        except Exception:
+            take_pct = 0.06
+
+        # 达到止盈目标全平
+        if pnl_rate >= take_pct:
+            return 1.0
+        
+        # 达到一半止盈距离时，平仓 40%
+        if pnl_rate >= take_pct / 2:
+            return 0.4
+        
+        return 0.0
+    
+    def update_breakeven_stop(self, code: str):
+        """
+        更新止损到成本价（保本止损）
+        
+        Args:
+            code: 股票代码
+        """
+        position = self.get_position(code)
+        if position is None:
+            return
+        
+        avg_cost = position.entry_price
+        
+        conn = self._get_connection()
+        try:
+            cursor = conn.cursor()
+            # 用 id 精确定位，避免批量更新同品种所有 OPEN 仓
+            cursor.execute('''
+                UPDATE positions 
+                SET stop_loss = ?
+                WHERE id = ?
+            ''', (avg_cost, position.id))
+            conn.commit()
+            logger.info(f"[保本止损] {code} 止损已上移到成本价 {avg_cost:.2f}")
+        finally:
+            conn.close()
+
+    def update_stop_loss_take_profit(self, code: str, stop_loss: float, take_profit: float):
+        """动态更新持仓的止损价和止盈价（开仓后立即调用，写入 DB）
+
+        Args:
+            code:        股票代码
+            stop_loss:   新止损价（绝对价格，做多时低于成本，做空时高于成本）
+            take_profit: 新止盈价（绝对价格）
+        """
+        position = self.get_position(code)
+        if position is None:
+            logger.debug(f"[动态止损] {code} 无持仓，跳过止损更新")
+            return
+
+        conn = self._get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute('''
+                UPDATE positions
+                SET stop_loss = ?, take_profit = ?
+                WHERE id = ?
+            ''', (stop_loss, take_profit, position.id))
+            conn.commit()
+            logger.info(
+                f"[动态止损写入] {code} 止损={stop_loss:.4f} 止盈={take_profit:.4f}"
+            )
+        finally:
+            conn.close()
     
     def calculate_stop_loss_price(self, avg_cost: float) -> float:
         """
@@ -433,23 +762,160 @@ class PositionManager:
         return round(avg_cost * (1 + 0.15), 2)
     
     def _row_to_position(self, row: sqlite3.Row) -> Position:
-        """将数据库行转换为 Position 对象"""
+        """将数据库行转换为 Position 对象 (2026-03-17 新增止盈止损字段)
+        
+        DB 列顺序（PRAGMA table_info positions）:
+          0=id, 1=code, 2=action, 3=quantity, 4=entry_price, 5=entry_time,
+          6=current_price, 7=unrealized_pnl, 8=status, 9=exit_price,
+          10=realized_pnl, 11=exit_time, 12=stop_loss, 13=take_profit,
+          14=highest_price, 15=lowest_price, 16=signal_id, 17=strategy
+        """
+        # 优先用字典访问（更安全，不受列顺序影响）
+        try:
+            keys = row.keys()
+        except Exception:
+            keys = []
+
+        def _get(key, idx, default=None):
+            if keys and key in keys:
+                val = row[key]
+            elif len(row) > idx:
+                val = row[idx]
+            else:
+                val = default
+            # 数字字段：若值为字符串则返回 None（防止 exit_time 等文本字段错位）
+            return val
+
+        def _float(key, idx, default=None):
+            v = _get(key, idx, default)
+            if v is None:
+                return None
+            try:
+                return float(v)
+            except (TypeError, ValueError):
+                return None
+
         return Position(
-            id=row['id'],
-            code=row['code'],
-            action=row['action'],
-            quantity=row['quantity'],
-            entry_price=row['entry_price'],
-            entry_time=row['entry_time'],
-            current_price=row['current_price'],
-            unrealized_pnl=row['unrealized_pnl'],
-            status=row['status'],
-            exit_price=row['exit_price'],
-            realized_pnl=row['realized_pnl']
+            id=row[0],
+            code=row[1],
+            action=row[2],
+            quantity=row[3],
+            entry_price=row[4],
+            entry_time=row[5],
+            current_price=row[6],
+            unrealized_pnl=row[7],
+            status=row[8],
+            exit_price=row[9],
+            realized_pnl=row[10],
+            # 正确的列索引：exit_time=11，stop_loss=12，take_profit=13
+            stop_loss=_float('stop_loss', 12),
+            take_profit=_float('take_profit', 13),
+            highest_price=_float('highest_price', 14),
+            lowest_price=_float('lowest_price', 15),
         )
     
-    # ==================== 金字塔加仓相关方法 ====================
-    
+    # ==================== 顺势加仓方法 ====================
+
+    def _ensure_is_add_column(self, conn):
+        """确保 positions 表有 is_add 字段（标记该仓位是加仓而非初始开仓）"""
+        cursor = conn.cursor()
+        cursor.execute("PRAGMA table_info(positions)")
+        columns = [row[1] for row in cursor.fetchall()]
+        if 'is_add' not in columns:
+            cursor.execute("ALTER TABLE positions ADD COLUMN is_add INTEGER DEFAULT 0")
+            logger.info("已添加 is_add 字段到 positions 表")
+        conn.commit()
+
+    def add_to_position(self, code: str, add_qty: int, add_price: float,
+                        add_time: str, signal_id: str = None) -> Optional[int]:
+        """
+        顺势加仓：更新现有 OPEN 持仓的数量和加权均价，并按新均价重算止盈止损。
+        返回 position.id，失败返回 None。
+        """
+        position = self.get_position(code)
+        if position is None:
+            return None
+
+        old_qty = position.quantity
+        old_price = position.entry_price
+        new_qty = old_qty + add_qty
+        new_avg_price = round((old_price * old_qty + add_price * add_qty) / new_qty, 4)
+
+        # 按新均价重算止盈止损（从动态配置读取，失败则用默认值）
+        try:
+            from app.risk.dynamic_exit_manager import dynamic_exit_manager as _dem
+            stop_pct = abs(_dem.current_params.get('stop_loss', 0.03))
+            take_pct = abs(_dem.current_params.get('take_profit', 0.045))
+        except Exception:
+            stop_pct, take_pct = 0.03, 0.045
+
+        if position.action == 'BUY':
+            new_stop_loss = round(new_avg_price * (1 - stop_pct), 4)
+            new_take_profit = round(new_avg_price * (1 + take_pct), 4)
+        else:  # SELL（做空）
+            new_stop_loss = round(new_avg_price * (1 + stop_pct), 4)
+            new_take_profit = round(new_avg_price * (1 - take_pct), 4)
+
+        conn = self._get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute('''
+                UPDATE positions
+                SET quantity = ?, entry_price = ?, stop_loss = ?, take_profit = ?
+                WHERE id = ?
+            ''', (new_qty, new_avg_price, new_stop_loss, new_take_profit, position.id))
+            conn.commit()
+            logger.info(
+                f"[加仓] {code} qty {old_qty}→{new_qty} | "
+                f"均价 {old_price:.4f}→{new_avg_price} | "
+                f"止损={new_stop_loss} 止盈={new_take_profit}"
+            )
+            return position.id
+        finally:
+            conn.close()
+
+    def get_today_add_count(self, code: str) -> int:
+        """
+        查询今日对该品种的加仓次数（查 positions 表中 is_add=1 且今日开仓的记录）
+        """
+        conn = self._get_connection()
+        try:
+            self._ensure_is_add_column(conn)
+            cursor = conn.cursor()
+            today = datetime.now().strftime('%Y-%m-%d')
+            cursor.execute('''
+                SELECT COUNT(*) FROM positions
+                WHERE code = ? AND is_add = 1 AND date(entry_time) = date(?)
+            ''', (code, today))
+            result = cursor.fetchone()
+            return result[0] if result else 0
+        finally:
+            conn.close()
+
+    def record_add_position(self, code: str, add_qty: int, add_price: float,
+                            add_time: str, signal_id: str = None) -> int:
+        """
+        在 positions 表中新建一条 is_add=1 的加仓记录（用于统计加仓次数）
+        返回新建记录的 id
+        """
+        conn = self._get_connection()
+        try:
+            self._ensure_is_add_column(conn)
+            self._ensure_signal_columns(conn)
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT INTO positions
+                (code, action, quantity, entry_price, entry_time, status, is_add, signal_id)
+                VALUES (?, (SELECT action FROM positions WHERE code=? AND status='OPEN' LIMIT 1),
+                        ?, ?, ?, 'CLOSED', 1, ?)
+            ''', (code, code, add_qty, add_price, add_time, signal_id))
+            conn.commit()
+            return cursor.lastrowid
+        finally:
+            conn.close()
+
+    # ==================== 金字塔加仓相关方法（旧，保留备用）====================
+
     def can_add_position(self, code: str, signal_confidence: float) -> bool:
         """
         检查是否可以加仓

@@ -19,6 +19,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 logger = logging.getLogger("ftseek.risk.manager")
+logger.propagate = False  # 防止日志重复
 
 
 @dataclass
@@ -191,6 +192,9 @@ class RiskManager:
         
         # 策略统计 {strategy_name: {trades, wins, losses}}
         self.strategy_stats = {}
+
+        # Phase 3: 波动率适配器 (延迟初始化)
+        self._vol_adapter = None
         
         logger.info(f"风控管理器已初始化 | 模式={self.config.trading_mode} | 资金={self.config.initial_cash:,.0f}")
 
@@ -236,7 +240,7 @@ class RiskManager:
                 self.week_start = self._get_week_start()
 
     # ==================== 交易前风控检查 ====================
-    
+
     def check_before_trade(self, signal: Any) -> RiskCheckResult:
         """
         交易前风控检查
@@ -258,6 +262,11 @@ class RiskManager:
                 'drawdown': self._check_drawdown(),
                 'confidence': self._check_confidence(confidence)
             }
+
+            # Phase 3: 波动率覆盖检查
+            vol_override = self._check_volatility_override(signal, confidence)
+            if vol_override:
+                checks["volatility_override"] = vol_override
             
             passed = all(checks.values())
             
@@ -287,12 +296,30 @@ class RiskManager:
             positions = self.account.get("positions", {})
             total_capital = self.account.get("total_capital", self.config.initial_cash)
             
-            # 获取当前价格 (从持仓或信号)
+            # 2026-03-27 修复: 从富途获取实时价格
             current_price = 0.0
+            
+            # 方式1: 尝试从本地持仓获取
             if code in positions:
                 current_price = positions[code].get('current_price', positions[code].get('entry_price', 0))
             
-            # 如果无法获取价格，保守估计 (假设通过)
+            # 方式2: 如果本地无价格，从富途获取
+            if current_price <= 0:
+                try:
+                    from futu import OpenQuoteContext, RET_OK
+                    from app import config as app_config
+                    
+                    quote_ctx = OpenQuoteContext(host=app_config.OPEND_HOST, port=app_config.OPEND_PORT)
+                    ret, data = quote_ctx.get_market_snapshot([code])
+                    quote_ctx.close()
+                    
+                    if ret == RET_OK and len(data) > 0:
+                        current_price = float(data.iloc[0].get('last_price', 0))
+                        logger.debug(f"从富途获取 {code} 实时价格: {current_price}")
+                except Exception as e:
+                    logger.warning(f"获取 {code} 实时价格失败: {e}")
+            
+            # 如果仍无法获取价格，保守估计 (假设通过)
             if current_price <= 0:
                 logger.warning(f"无法获取 {code} 当前价格，跳过仓位检查")
                 return True
@@ -401,6 +428,46 @@ class RiskManager:
 
     # ==================== 五层风控检查 ====================
     
+    def _check_volatility_override(self, signal, confidence: float) -> Dict:
+        """
+        Phase 3: 波动率覆盖检查
+
+        Args:
+            signal: 交易信号
+            confidence: 置信度
+
+        Returns:
+            覆盖详情
+        """
+        try:
+            # 延迟加载波动率适配器
+            if self._vol_adapter is None:
+                from app.risk.volatility_risk_adapter import get_volatility_risk_adapter
+                self._vol_adapter = get_volatility_risk_adapter()
+
+            # 获取信号方向
+            action = getattr(signal, 'action', 'BUY')
+            if hasattr(action, 'value'):
+                action = action.value
+
+            # 执行覆盖检查
+            passed, override = self._vol_adapter.check_volatility_override(
+                signal_code=getattr(signal, 'code', 'unknown'),
+                action=action,
+                original_confidence=confidence,
+            )
+
+            # 记录结果
+            if override.get('position_override'):
+                logger.info(
+                    f"[波动率覆盖] {signal.code} 仓位限制调整为 {override['position_override']:.0%}"
+                )
+
+            return override
+
+        except Exception as e:
+            logger.debug(f"波动率覆盖检查失败：{e}")
+            return {}
     def check_signal(self, signal: Any) -> bool:
         """
         信号级检查 - 置信度过滤
@@ -933,3 +1000,294 @@ def get_risk_manager(config_path: Optional[str] = None) -> RiskManager:
     if risk_manager is None:
         risk_manager = RiskManager(config_path)
     return risk_manager
+
+
+# ============================================================
+# 止损类型枚举 (2026-03-27 新增 - 强化止损)
+# ============================================================
+
+from enum import Enum
+
+class StopLossType(Enum):
+    """止损类型"""
+    FIXED_PERCENT = "fixed_percent"      # 固定百分比止损
+    SUPERTREND = "supertrend"            # SuperTrend 止损
+    TRAILING = "trailing"                # 移动止损
+    TIME_BASED = "time_based"            # 时间止损
+    ATR_BASED = "atr_based"              # ATR 止损
+
+
+# ============================================================
+# 止损检查函数 (2026-03-27 新增 - 强化止损执行)
+# ============================================================
+
+def check_stop_loss_enhanced(position, current_price, config):
+    """
+    强化止损检查
+    
+    Args:
+        position: 持仓信息 {code, entry_price, quantity, stop_loss_level, ...}
+        current_price: 当前价格
+        config: 配置字典 {max_single_loss, trailing_percent, ...}
+    
+    Returns:
+        (是否触发止损，触发原因)
+    """
+    if not position:
+        return False, "无持仓"
+    
+    stop_loss_level = position.get('stop_loss_level')
+    entry_price = position.get('entry_price', 0)
+    
+    if not stop_loss_level or not entry_price:
+        # 如果没有设置止损位，使用默认固定百分比止损
+        default_stop_price = entry_price * (1 - config.get('max_single_loss', 0.05))
+        if current_price <= default_stop_price:
+            return True, f"价格触及默认止损位 {default_stop_price:.2f} (-{config.get('max_single_loss', 0.05)*100:.1f}%)"
+        return False, ""
+    
+    stop_type = stop_loss_level.get('type', StopLossType.FIXED_PERCENT.value)
+    
+    # 1. 固定百分比止损
+    if stop_type == StopLossType.FIXED_PERCENT.value:
+        stop_price = entry_price * (1 - config.get('max_single_loss', 0.05))
+        if current_price <= stop_price:
+            return True, f"价格触及固定止损位 {stop_price:.2f} (-{config.get('max_single_loss', 0.05)*100:.1f}%)"
+    
+    # 2. SuperTrend 止损
+    elif stop_type == StopLossType.SUPERTREND.value:
+        super_trend = stop_loss_level.get('value', 0)
+        if super_trend > 0 and current_price <= super_trend:
+            return True, f"价格触及 SuperTrend 止损位 {super_trend:.2f}"
+    
+    # 3. 移动止损
+    elif stop_type == StopLossType.TRAILING.value:
+        trailing_percent = config.get('trailing_percent', 0.03)
+        highest_price = position.get('highest_price', entry_price)
+        trailing_stop = highest_price * (1 - trailing_percent)
+        if current_price <= trailing_stop:
+            return True, f"价格触及移动止损位 {trailing_stop:.2f} (从最高点回撤{trailing_percent*100:.1f}%)"
+    
+    # 4. 时间止损
+    elif stop_type == StopLossType.TIME_BASED.value:
+        entry_time = position.get('entry_time')
+        max_holding_hours = config.get('max_holding_hours', 72)
+        if entry_time:
+            from datetime import datetime
+            entry_dt = datetime.fromisoformat(entry_time) if isinstance(entry_time, str) else entry_time
+            holding_hours = (datetime.now() - entry_dt).total_seconds() / 3600
+            if holding_hours > max_holding_hours:
+                return True, f"持仓时间超过{max_holding_hours}小时 ({holding_hours:.1f}小时)"
+    
+    # 5. ATR 止损
+    elif stop_type == StopLossType.ATR_BASED.value:
+        atr_value = stop_loss_level.get('value', 0)
+        atr_multiplier = config.get('atr_multiplier', 2.0)
+        atr_stop = entry_price - (atr_multiplier * atr_value)
+        if current_price <= atr_stop:
+            return True, f"价格触及 ATR 止损位 {atr_stop:.2f} (ATR×{atr_multiplier})"
+    
+    return False, ""
+
+
+def update_stop_loss_level(position, current_price, config):
+    """
+    动态更新止损位
+    
+    Args:
+        position: 持仓信息
+        current_price: 当前价格
+        config: 配置字典
+    
+    Returns:
+        更新后的止损位信息
+    """
+    stop_loss_level = position.get('stop_loss_level', {})
+    stop_type = stop_loss_level.get('type', StopLossType.FIXED_PERCENT.value)
+    
+    # 移动止损需要动态更新
+    if stop_type == StopLossType.TRAILING.value:
+        highest_price = position.get('highest_price', current_price)
+        if current_price > highest_price:
+            position['highest_price'] = current_price
+            trailing_percent = config.get('trailing_percent', 0.03)
+            stop_loss_level['value'] = current_price * (1 - trailing_percent)
+    
+    return stop_loss_level
+
+
+
+# ============================================================
+# 动态止盈策略 (2026-03-27 新增 - 专家团决策)
+# ============================================================
+
+class TrailingTakeProfit:
+    """
+    移动止盈计算器
+    
+    功能:
+    - 跟踪价格峰值
+    - 动态调整止盈位
+    - 支持多种止盈类型
+    """
+    
+    def __init__(self, trailing_percent=0.03, time_limit_hours=72):
+        """
+        初始化移动止盈
+        
+        Args:
+            trailing_percent: 移动止盈百分比 (默认 3%)
+            time_limit_hours: 时间止盈限制 (默认 72 小时)
+        """
+        self.trailing_percent = trailing_percent
+        self.time_limit_hours = time_limit_hours
+        self.peak_price = 0.0
+        self.entry_time = None
+    
+    def update_peak(self, current_price: float):
+        """
+        更新价格峰值
+        
+        Args:
+            current_price: 当前价格
+        """
+        if current_price > self.peak_price:
+            self.peak_price = current_price
+    
+    def calculate_trailing_stop(self, entry_price: float) -> float:
+        """
+        计算移动止盈位
+        
+        Args:
+            entry_price: 入场价格
+        
+        Returns:
+            移动止盈价格
+        """
+        if self.peak_price == 0.0:
+            # 没有峰值数据，使用入场价
+            return entry_price * (1 + self.trailing_percent)
+        
+        # 从峰值回撤 trailing_percent
+        return self.peak_price * (1 - self.trailing_percent)
+    
+    def check_time_exit(self, entry_time_str: str) -> bool:
+        """
+        检查时间止盈
+        
+        Args:
+            entry_time_str: 入场时间字符串 (ISO 格式)
+        
+        Returns:
+            是否触发时间止盈
+        """
+        if not entry_time_str:
+            return False
+        
+        try:
+            from datetime import datetime
+            entry_time = datetime.fromisoformat(entry_time_str)
+            holding_hours = (datetime.now() - entry_time).total_seconds() / 3600
+            
+            if holding_hours >= self.time_limit_hours:
+                return True
+        except Exception as e:
+            logger.debug(f"时间止盈检查失败：{e}")
+        
+        return False
+    
+    def check_condition_exit(self, rsi: float = None, macd_signal: str = None) -> bool:
+        """
+        检查条件止盈
+        
+        Args:
+            rsi: RSI 指标值
+            macd_signal: MACD 信号 ('buy', 'sell', 'neutral')
+        
+        Returns:
+            是否触发条件止盈
+        """
+        # RSI 超买 (>70) 触发止盈
+        if rsi and rsi > 70:
+            return True
+        
+        # MACD 死叉触发止盈
+        if macd_signal == 'sell':
+            return True
+        
+        return False
+    
+    def reset(self):
+        """重置止盈计算器"""
+        self.peak_price = 0.0
+        self.entry_time = None
+
+
+class DynamicTakeProfitManager:
+    """
+    动态止盈管理器
+    
+    功能:
+    - 管理多个持仓的止盈
+    - 支持多种止盈类型
+    - 自动更新止盈位
+    """
+    
+    def __init__(self):
+        self.calculators = {}  # code -> TrailingTakeProfit
+    
+    def get_calculator(self, code: str) -> TrailingTakeProfit:
+        """获取或创建止盈计算器"""
+        if code not in self.calculators:
+            self.calculators[code] = TrailingTakeProfit()
+        return self.calculators[code]
+    
+    def update_price(self, code: str, price: float):
+        """更新价格"""
+        calculator = self.get_calculator(code)
+        calculator.update_peak(price)
+    
+    def check_exit(self, code: str, current_price: float, entry_price: float, 
+                   entry_time: str = None, rsi: float = None, 
+                   macd_signal: str = None) -> tuple:
+        """
+        检查是否应该止盈
+        
+        Args:
+            code: 股票代码
+            current_price: 当前价格
+            entry_price: 入场价格
+            entry_time: 入场时间
+            rsi: RSI 指标
+            macd_signal: MACD 信号
+        
+        Returns:
+            (是否止盈，止盈原因，止盈类型)
+        """
+        calculator = self.get_calculator(code)
+        
+        # 1. 移动止盈检查
+        trailing_stop = calculator.calculate_trailing_stop(entry_price)
+        if current_price <= trailing_stop:
+            return (True, f"移动止盈触发 (止盈位:{trailing_stop:.2f})", "trailing")
+        
+        # 2. 时间止盈检查
+        if calculator.check_time_exit(entry_time):
+            return (True, f"时间止盈触发 (持仓>{calculator.time_limit_hours}小时)", "time")
+        
+        # 3. 条件止盈检查
+        if calculator.check_condition_exit(rsi, macd_signal):
+            reason = []
+            if rsi and rsi > 70:
+                reason.append(f"RSI 超买 ({rsi:.1f})")
+            if macd_signal == 'sell':
+                reason.append("MACD 死叉")
+            return (True, f"条件止盈触发 ({', '.join(reason)})", "condition")
+        
+        return (False, "", "none")
+    
+    def remove(self, code: str):
+        """移除持仓止盈计算器"""
+        if code in self.calculators:
+            del self.calculators[code]
+

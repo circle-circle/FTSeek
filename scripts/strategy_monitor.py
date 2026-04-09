@@ -99,7 +99,7 @@ def get_kline_data(code: str, kline_type: str = '1M', count: int = 100) -> List[
         kl_type = kl_type_map.get(kline_type, KLType.K_DAY)
         
         # 获取历史 K 线
-        ret, data, page_req_key = quote_ctx.request_history_klines(
+        ret, data, page_req_key = quote_ctx.request_history_kline(
             code=code,
             ktype=kl_type,
             autype='AQF',  # 前复权

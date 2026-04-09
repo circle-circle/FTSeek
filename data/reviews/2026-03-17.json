@@ -1,0 +1,32 @@
+{
+  "date": "2026-03-17",
+  "signal_analysis": {
+    "total": 2,
+    "executed": 2,
+    "rejected": 0,
+    "execution_rate": 100.0,
+    "avg_confidence": 0.65,
+    "strategy_distribution": {
+      "test_strategy": 2
+    },
+    "action_distribution": {
+      "BUY": 2,
+      "SELL": 0
+    }
+  },
+  "trade_analysis": {
+    "total": 0,
+    "closed": 0,
+    "open": 0,
+    "winning": 0,
+    "losing": 0,
+    "win_rate": 0,
+    "total_pnl": 0,
+    "avg_pnl_percent": 0,
+    "avg_holding_period": 0
+  },
+  "suggestions": [
+    "✅ 执行率很高，注意是否风控过于宽松"
+  ],
+  "generated_at": "2026-03-18T10:28:17.388628"
+}

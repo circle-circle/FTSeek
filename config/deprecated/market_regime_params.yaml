@@ -1,0 +1,118 @@
+# FTSeek 市场状态参数配置
+# 根据不同市场状态动态调整交易参数
+
+default: &default
+  signal_cooldown: 120          # 信号冷却时间 (秒)
+  min_confidence: 0.50          # 最低置信度阈值
+  max_single_position: 0.20     # 单一股票最大仓位 (20%)
+  max_total_position: 0.80      # 总仓位上限 (80%)
+  max_daily_trades: 10          # 每日交易次数上限
+  description: "默认参数"
+
+# ============================================================
+#  趋势市场参数
+# ============================================================
+
+strong_trend_up:
+  <<: *default
+  signal_cooldown: 60           # 缩短冷却，快速跟进
+  min_confidence: 0.45          # 降低阈值，抓住机会
+  max_single_position: 0.25     # 提高仓位
+  max_total_position: 0.90
+  max_daily_trades: 15
+  description: "强上涨趋势 - 积极交易"
+  characteristics:
+    - ADX > 30
+    - 价格在 MA50 上方 2%
+    - 恒指涨幅 > 1%
+
+weak_trend_up:
+  <<: *default
+  signal_cooldown: 90
+  min_confidence: 0.50
+  max_single_position: 0.20
+  max_total_position: 0.80
+  description: "弱上涨趋势 - 正常交易"
+  characteristics:
+    - ADX 20-30
+    - 价格在 MA50 上方
+
+range_bound:
+  <<: *default
+  signal_cooldown: 180          # 延长冷却，避免频繁交易
+  min_confidence: 0.60          # 提高阈值，等待高质量信号
+  max_single_position: 0.15     # 降低仓位
+  max_total_position: 0.60
+  max_daily_trades: 6
+  description: "震荡市 - 谨慎交易"
+  characteristics:
+    - ADX < 20
+    - 布林带收窄
+
+weak_trend_down:
+  <<: *default
+  signal_cooldown: 240
+  min_confidence: 0.65
+  max_single_position: 0.10
+  max_total_position: 0.40
+  max_daily_trades: 4
+  description: "弱下跌趋势 - 防守"
+  characteristics:
+    - ADX 20-30
+    - 价格在 MA50 下方
+
+strong_trend_down:
+  <<: *default
+  signal_cooldown: 300
+  min_confidence: 0.70
+  max_single_position: 0.05     # 极低仓位
+  max_total_position: 0.20
+  max_daily_trades: 2
+  description: "强下跌趋势 - 极度谨慎"
+  characteristics:
+    - ADX > 30
+    - 价格在 MA50 下方 2%
+    - 恒指跌幅 > 1%
+
+# ============================================================
+#  波动率参数
+# ============================================================
+
+high_volatility:
+  <<: *default
+  signal_cooldown: 300          # 大幅延长冷却
+  min_confidence: 0.70          # 大幅提高阈值
+  max_single_position: 0.10
+  max_total_position: 0.40
+  description: "高波动 - 降低仓位，等待稳定"
+  characteristics:
+    - ATR 百分位 > 80%
+    - 布林带宽度 > 5%
+
+low_volatility:
+  <<: *default
+  signal_cooldown: 90
+  min_confidence: 0.50
+  max_single_position: 0.20
+  max_total_position: 0.80
+  description: "低波动 - 等待突破"
+  characteristics:
+    - ATR 百分位 < 20%
+    - 布林带宽度 < 2%
+
+# ============================================================
+#  特殊场景参数
+# ============================================================
+
+pre_ipo_earnings:
+  <<: *default
+  signal_cooldown: 600          # 极长冷却
+  min_confidence: 0.80          # 极高阈值
+  max_single_position: 0.05
+  description: "财报发布前 - 极度谨慎"
+  
+market_holiday:
+  <<: *default
+  signal_cooldown: 600
+  min_confidence: 0.75
+  description: "节假日前后 - 流动性低"

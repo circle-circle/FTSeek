@@ -8,6 +8,7 @@ from typing import Optional, Dict
 from .base import BaseStrategy, Signal, SignalAction
 
 logger = logging.getLogger("ftseek.strategy.fusion_v3")
+logger.propagate = False  # 防止日志重复
 
 
 class FusionV3Strategy(BaseStrategy):

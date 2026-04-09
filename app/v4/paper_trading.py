@@ -15,6 +15,7 @@ from datetime import datetime, timedelta
 import math
 
 logger = logging.getLogger("ftseek.v4.paper_trading")
+logger.propagate = False  # 防止日志重复
 
 
 @dataclass
@@ -194,6 +195,7 @@ class PaperTradingEngine:
         self.target_win_rate = 0.55
         
         self.logger = logging.getLogger("ftseek.v4.paper_trading")
+logger.propagate = False  # 防止日志重复
         self.logger.info(f"模拟盘引擎初始化：{account_id}, 初始资金={initial_capital}")
     
     def set_validation_criteria(

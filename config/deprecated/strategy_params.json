@@ -1,0 +1,131 @@
+{
+  "_updated": "2026-03-27 08:45",
+  "_note": "2026-03-27 策略优化: 去冗余, 精简策略组合, 调整共识阈值",
+  "enabled_strategies": {
+    "_note": "精简后的策略组合 (3个核心策略)",
+    "primary": "confluence_v2",
+    "trend": "supertrend",
+    "sentiment": "sentiment_ai",
+    "disabled": [
+      "rsi",
+      "macd",
+      "bollinger",
+      "confluence",
+      "price_break"
+    ]
+  },
+  "ai_weight": 0.15,
+  "ai_min_accuracy": 0.5,
+  "ai_disable_threshold": 0.45,
+  "base_position": 0.1,
+  "min_position": 0.05,
+  "max_position": 0.15,
+  "max_daily_loss": 0.03,
+  "max_drawdown": 0.1,
+  "consecutive_loss_limit": 3,
+  "fusion_v2_enabled": true,
+  "fusion_v3_enabled": true,
+  "min_signal_confidence": 0.5,
+  "trading_mode": "simulate",
+  "manual_confirm_for_live": true,
+  "ai_signal_boost": 1.1,
+  "max_open_positions": 2,
+  "short_signals": {
+    "_note": "做空风控增强: 提高门槛",
+    "rsi_overbought": 60,
+    "macd_histogram_threshold": 0.0005,
+    "supertrend_multiplier": 2.0,
+    "min_confidence": 1.0,
+    "short_bias_factor": 0.0,
+    "volume_confirm": 1.5,
+    "trend_confirm": true
+  },
+  "long_signals": {
+    "rsi_oversold": 35,
+    "macd_histogram_threshold": 0.001,
+    "supertrend_multiplier": 2.5,
+    "min_confidence": 0.55
+  },
+  "fusion": {
+    "technical_weight": 0.6,
+    "sentiment_weight": 0.25,
+    "ai_weight": 0.15
+  },
+  "consensus": {
+    "_note": "优化: 减少策略数后调整阈值",
+    "threshold": 1.1,
+    "min_strategies": 2,
+    "window_seconds": 90,
+    "adx_trend": 25,
+    "adx_range": 20,
+    "short_bias_factor": 1.0
+  },
+  "strategy_weights": {
+    "_note": "精简后的策略权重",
+    "confluence_v2": 1.5,
+    "supertrend": 1.0,
+    "sentiment_ai": 0.8
+  },
+  "position": {
+    "initial_ratio": 0.3,
+    "max_position_ratio": 0.12,
+    "dynamic_sizing": true,
+    "vol_adjustment": true
+  },
+  "risk_limits": {
+    "min_confidence": 0.5,
+    "max_single_position": 0.12,
+    "max_daily_trades": 3,
+    "signal_cooldown_seconds": 210
+  },
+  "trend_filter": {
+    "enabled": true,
+    "use_multi_timeframe": true,
+    "ma_period_short": 5,
+    "ma_period_long": 20,
+    "ma_period_intraday": 10,
+    "prevent_buy_in_downtrend": true,
+    "prevent_short_in_uptrend": true,
+    "min_adx_for_trend": 20,
+    "require_both_timeframes": true
+  },
+  "stop_loss_percent": 0.025,
+  "take_profit_percent": 0.034999999999999996,
+  "breakeven_trigger": 0.015,
+  "loss_pause": {
+    "enabled": true,
+    "consecutive_losses": 3,
+    "pause_minutes": 60
+  },
+  "short_selling_enabled": false,
+  "circuit_breaker": {
+    "daily_loss_limit": -3000,
+    "pause_on_triggered": true
+  },
+  "us_account": {
+    "acc_id": "8246818",
+    "acc_type": "MARGIN",
+    "enabled": true,
+    "detected_at": "2026-03-27T08:45:00"
+  },
+  "confluence_v2": {
+    "enabled": true
+  },
+  "exit": {
+    "stop_loss": -0.02
+  },
+  "strategy": {
+    "None": {
+      "weight": 0.15
+    },
+    "共识(confluence + confluence_v2 + macd + supertrend)": {
+      "weight": 0.15
+    },
+    "共识(confluence_v2 + supertrend)": {
+      "weight": 0.15
+    },
+    "共识(price_break)": {
+      "weight": 0.15
+    }
+  }
+}

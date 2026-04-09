@@ -31,6 +31,7 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger("ftseek.v4.db_migrate")
+logger.propagate = False  # 防止日志重复
 
 
 def run_migration(db_path: str = None) -> bool:

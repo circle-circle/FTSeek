@@ -20,6 +20,7 @@ from app.core.state_manager import StateManager
 from app.core.decision_log import DecisionLog
 
 logger = logging.getLogger("ftseek.core.config_manager")
+logger.propagate = False  # 防止日志重复
 
 
 class ConfigManager:

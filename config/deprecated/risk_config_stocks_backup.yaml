@@ -1,0 +1,66 @@
+# FTSeek v3.0 风控配置
+# 更新: 2026-03-23 - 统一配置参数
+
+# 交易模式 (测试阶段强制模拟)
+trading:
+  mode: "paper"             # paper=模拟，real=实盘
+  paper_initial_cash: 1000000  # 100 万港币
+  currency: "HKD"
+  test_mode: true
+  force_simulate_account: true
+  simulate_account_id: "8246818"
+
+# 五层风控阈值 (统一配置)
+risk_limits:
+  # 信号级
+  min_confidence: 0.45        # 回测验证最优值
+  
+  # 订单级
+  max_single_position: 0.18   # 回测验证最优值
+  max_single_loss: 0.05        # 单笔最大亏损 5%
+  trailing_percent: 0.03       # 移动止损 3%
+  max_holding_hours: 72        # 最大持仓 72 小时
+  atr_multiplier: 2.0          # ATR 乘数
+  
+  # 仓位级
+  max_total_position: 0.75    # 回测验证最优值
+  max_daily_trades: 5
+  max_daily_loss: 0.03
+  max_weekly_loss: 0.08
+  
+  # 账户级
+  max_drawdown: 0.12
+  consecutive_loss_limit: 3
+  
+  # 策略级
+  strategy_min_trades: 20
+  strategy_min_winrate: 0.45
+
+# 信号冷却配置 (统一为120秒)
+signal_cooldown:
+  default_seconds: 120
+  high_confidence_seconds: 90
+  after_loss_seconds: 180
+
+# 预警配置
+# 动态止盈配置
+take_profit:
+  trailing_percent: 0.03       # 移动止盈 3%
+  time_limit_hours: 72         # 时间止盈 72 小时
+  rsi_overbought: 70           # RSI 超买阈值
+  macd_dead_cross: true        # MACD 死叉止盈
+
+alerts:
+  dingtalk_webhook: "${DINGTALK_WEBHOOK_URL}"
+  dingtalk_secret: "${DINGTALK_SECRET}"
+  alert_contacts:
+    - name: "管理员"
+      phone: "${ADMIN_PHONE}"
+      email: "${ADMIN_EMAIL}"
+
+# 定时推送
+schedule:
+  daily_stats_time: "16:30"
+  weekly_report_time: "09:00"
+  monthly_report_time: "09:00"
+  risk_monitor_interval: 120

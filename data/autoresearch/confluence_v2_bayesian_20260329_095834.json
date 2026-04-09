@@ -1,0 +1,36 @@
+{
+  "strategy_name": "confluence_v2",
+  "params": {
+    "min_factors": 4,
+    "rsi_period": 20,
+    "rsi_overbought": 69,
+    "rsi_oversold": 28,
+    "macd_fast": 13,
+    "macd_slow": 30,
+    "bb_period": 18,
+    "bb_std": 2.3163671517978974,
+    "st_multiplier": 3.3442374459347843
+  },
+  "win_rate": 0.675269946055364,
+  "total_return": 0.32095620574669836,
+  "sharpe_ratio": 1.7701302163447203,
+  "max_drawdown": 0.10995237270533012,
+  "total_trades": 137,
+  "overfitting_score": 0.08368390446951925,
+  "train_metrics": {
+    "win_rate": 0.675269946055364,
+    "sharpe_ratio": 1.7701302163447203,
+    "total_return": 0.32095620574669836,
+    "max_drawdown": 0.10995237270533012
+  },
+  "test_metrics": {
+    "win_rate": 0.6694471910113032,
+    "sharpe_ratio": 1.6219988084215193,
+    "total_return": 0.28416115488057736,
+    "max_drawdown": 0.12844839411612494
+  },
+  "search_method": "bayesian",
+  "search_iterations": 20,
+  "search_time": 135.53794024351504,
+  "timestamp": "2026-03-29T09:58:34.350319"
+}

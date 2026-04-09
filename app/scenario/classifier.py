@@ -172,14 +172,35 @@ class ScenarioClassifier:
         Returns:
             ScenarioOutput: 场景分类结果
         """
+        # 0. 事件类场景优先检测 (Phase 2: 无需依赖宏观状态)
+        features_early = self.feature_extractor.extract(code, klines, news_data)
+
+        # 跳空事件检测 (最高优先级)
+        if abs(features_early.event.gap_pct) >= self.GAP_THRESHOLD:
+            confidence = min(0.95, 0.7 + abs(features_early.event.gap_pct) * 0.5)
+            if features_early.volume.volume_ratio > 1.5:
+                confidence = min(0.95, confidence + 0.1)
+            logger.info(f"[{code}] 跳空事件检测：{features_early.event.gap_pct*100:.1f}%")
+            return self._create_output(code, ScenarioType.GAP_EVENT, confidence, features_early)
+
+        # 新闻驱动检测 (高优先级)
+        news_score = features_early.event.news_score
+        news_intensity = features_early.event.metadata.get('news_intensity', 0.0)
+        if news_score != 0.0 and news_intensity >= 0.5:
+            news_confidence = min(0.9, 0.6 + news_intensity * 0.3)
+            if features_early.event.metadata.get('breaking_news', False):
+                news_confidence = min(0.95, news_confidence + 0.1)
+            logger.info(f"[{code}] 新闻驱动检测：score={news_score:.2f}")
+            return self._create_output(code, ScenarioType.NEWS_DRIVEN, news_confidence, features_early)
+
         # 1. 获取宏观市场状态
         macro_regime = self.regime_detector.detect(code)
         if macro_regime is None:
             logger.debug(f"{code} 宏观市场状态数据不足")
-            return self._unknown_scenario(code)
+            return self._unknown_scenario(code, features_early)
 
-        # 2. 提取细粒度特征
-        features = self.feature_extractor.extract(code, klines, news_data)
+        # 2. 提取细粒度特征 (复用已计算的特征)
+        features = features_early
 
         # 3. 规则引擎初判
         candidate_scenario, confidence = self._rule_engine(macro_regime, features, news_data)
@@ -232,14 +253,42 @@ class ScenarioClassifier:
         candidates: List[Tuple[ScenarioType, float]] = []
 
         # --- 事件类场景优先 (最高优先级) ---
-        # 1. 跳空事件检测
-        if features.event.gap_pct >= self.GAP_THRESHOLD:
-            confidence = min(0.95, 0.7 + features.event.gap_pct * 10)
+        # 1. 跳空事件检测 (Phase 2: 增强实现)
+        gap_threshold = self.GAP_THRESHOLD  # 2% 跳空
+        if abs(features.event.gap_pct) >= gap_threshold:
+            # 基础置信度：0.7 + 跳空幅度加成
+            confidence = min(0.95, 0.7 + abs(features.event.gap_pct) * 0.5)
+
+            # 跳空 + 高成交量 = 更高置信度
+            if features.volume.volume_ratio > 1.5:
+                confidence = min(0.95, confidence + 0.1)
+
+            # 跳空方向判断
+            if features.event.gap_pct > 0:
+                logger.info(f"向上跳空：{features.event.gap_pct*100:.1f}%")
+            else:
+                logger.info(f"向下跳空：{features.event.gap_pct*100:.1f}%")
+
             candidates.append((ScenarioType.GAP_EVENT, confidence))
 
-        # 2. 新闻驱动检测
-        if news_data and news_data.get('sentiment_score', 0) != 0:
-            news_confidence = min(0.9, 0.6 + abs(news_data.get('sentiment_score', 0)) * 0.3)
+        # 2. 新闻驱动检测 (Phase 2: 增强实现)
+        news_score = features.event.news_score
+        news_intensity = features.event.metadata.get('news_intensity', 0.0)
+        breaking_news = features.event.metadata.get('breaking_news', False)
+
+        if news_score != 0.0:
+            # 基础置信度：0.6 + 新闻强度加成
+            news_confidence = min(0.9, 0.6 + news_intensity * 0.3)
+
+            # 突发新闻额外加成
+            if breaking_news:
+                news_confidence = min(0.95, news_confidence + 0.1)
+
+            # 新闻 + 跳空 = 事件共振
+            if abs(features.event.gap_pct) >= gap_threshold * 0.5:
+                news_confidence = min(0.95, news_confidence + 0.1)
+                logger.info(f"新闻驱动 + 跳空共振：news_score={news_score:.2f}")
+
             candidates.append((ScenarioType.NEWS_DRIVEN, news_confidence))
 
         # --- 趋势类场景 ---
@@ -406,6 +455,36 @@ class ScenarioClassifier:
         # 保留最近 100 条记录
         if len(self._scenario_history[code]) > 100:
             self._scenario_history[code] = self._scenario_history[code][-100:]
+
+    def _create_output(self, code: str, scenario: ScenarioType, confidence: float,
+                       features: Features) -> ScenarioOutput:
+        """
+        创建场景输出 (用于事件类场景直接返回)
+
+        Args:
+            code: 股票代码
+            scenario: 场景类型
+            confidence: 置信度
+            features: 特征集合
+
+        Returns:
+            ScenarioOutput: 场景分类结果
+        """
+        # 应用场景记忆平滑
+        smoothed_scenario = self._apply_scenario_memory(code, scenario, confidence)
+
+        # 记录场景切换历史
+        self._record_scenario_change(code, smoothed_scenario)
+
+        return ScenarioOutput(
+            scenario_type=smoothed_scenario,
+            confidence=confidence,
+            macro_regime=MarketRegimeType.RANGE_BOUND,  # 默认宏观状态
+            adx_value=0.0,
+            atr_percentile=50.0,
+            features=features,
+            metadata={"direct_detection": True, "reason": "event_driven_scenario"}
+        )
 
     def _unknown_scenario(self, code: str, features: Features = None,
                           regime: MarketRegime = None) -> ScenarioOutput:

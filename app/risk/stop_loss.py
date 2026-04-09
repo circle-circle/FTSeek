@@ -8,13 +8,15 @@
 - 移动止损
 - 时间止损
 - 分级止损
+- 突发新闻快速止盈 (2026-04-08 新增)
 """
 import logging
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Dict
 from dataclasses import dataclass
 from enum import Enum
 
 logger = logging.getLogger("ftseek.risk.stop_loss")
+logger.propagate = False  # 防止日志重复
 
 
 class StopLossType(Enum):
@@ -25,6 +27,7 @@ class StopLossType(Enum):
     TRAILING = "trailing"                # 移动止损
     TIME = "time"                        # 时间止损
     TIERED = "tiered"                    # 分级止损
+    BREAKING_NEWS = "breaking_news"      # 突发新闻快速止盈 (2026-04-08)
 
 
 @dataclass
@@ -43,7 +46,7 @@ class StopLossLevel:
 class StopLossCalculator:
     """
     止损计算器
-    
+
     根据入场价和策略参数计算止损位
     """
 
@@ -53,24 +56,41 @@ class StopLossCalculator:
         atr_multiplier: float = 2.0,         # ATR 乘数
         trailing_percent: float = 0.03,      # 移动止损百分比
         max_holding_periods: int = 20,       # 最大持仓周期
+        # 2026-04-08 新增：突发新闻快速止盈参数
+        breaking_news_take_profit: float = 0.02,  # 快速止盈 2%
+        breaking_news_trailing: float = 0.005,    # 追踪止盈 0.5%
+        breaking_news_stop_loss: float = 0.02,    # 快速止损 2%
+        breaking_news_max_minutes: int = 30,      # 最长持仓 30 分钟
     ):
         """
         初始化止损计算器
-        
+
         Args:
             default_stop_percent: 默认止损百分比
             atr_multiplier: ATR 止损乘数
             trailing_percent: 移动止损百分比
             max_holding_periods: 最大持仓周期 (时间止损)
+            breaking_news_take_profit: 突发新闻快速止盈百分比
+            breaking_news_trailing: 突发新闻追踪止盈百分比
+            breaking_news_stop_loss: 突发新闻快速止损百分比
+            breaking_news_max_minutes: 突发新闻最长持仓时间 (分钟)
         """
         self.default_stop_percent = default_stop_percent
         self.atr_multiplier = atr_multiplier
         self.trailing_percent = trailing_percent
         self.max_holding_periods = max_holding_periods
 
+        # 2026-04-08 新增：突发新闻快速止盈参数
+        self.breaking_news_take_profit = breaking_news_take_profit
+        self.breaking_news_trailing = breaking_news_trailing
+        self.breaking_news_stop_loss = breaking_news_stop_loss
+        self.breaking_news_max_minutes = breaking_news_max_minutes
+
         logger.info(
             f"止损计算器已初始化 | 默认止损={default_stop_percent:.1%} | "
-            f"ATR 乘数={atr_multiplier}"
+            f"ATR 乘数={atr_multiplier} | "
+            f"突发新闻止盈={breaking_news_take_profit:.1%} | "
+            f"突发新闻追踪={breaking_news_trailing:.1%}"
         )
 
     def calculate(
@@ -84,10 +104,11 @@ class StopLossCalculator:
         lowest_price: Optional[float] = None,
         entry_time: Optional[str] = None,
         current_time: Optional[str] = None,
+        breaking_news_config: Optional[Dict] = None,
     ) -> StopLossLevel:
         """
         计算止损位
-        
+
         Args:
             entry_price: 入场价格
             direction: 交易方向 ("BUY" or "SELL")
@@ -98,10 +119,15 @@ class StopLossCalculator:
             lowest_price: 最低价 (用于移动止损)
             entry_time: 入场时间
             current_time: 当前时间
-            
+            breaking_news_config: 突发新闻配置 (可选，包含 is_breaking, sentiment_score 等)
+
         Returns:
             StopLossLevel 止损水平
         """
+        # 2026-04-08 新增：突发新闻快速止盈检查
+        if breaking_news_config and breaking_news_config.get('is_breaking', False):
+            return self._breaking_news_exit(entry_price, direction, breaking_news_config)
+
         if method == StopLossType.FIXED_PERCENT:
             return self._fixed_percent(entry_price, direction)
         elif method == StopLossType.ATR:
@@ -241,6 +267,167 @@ class StopLossCalculator:
         stop_level.type = "time"
         stop_level.notes = f"最大持仓={self.max_holding_periods}周期"
         return stop_level
+
+    def _breaking_news_exit(
+        self,
+        entry_price: float,
+        direction: str,
+        breaking_news_config: Optional[Dict] = None,
+    ) -> StopLossLevel:
+        """
+        突发新闻快速止盈（2026-04-08 新增）
+
+        逻辑:
+        1. 快速止盈：盈利 2% 即走（原 4%）
+        2. 紧密追踪：回调 0.5% 即止盈（原 1.5%）
+        3. 快速止损：-2% 止损（原 -3%）
+        4. 时间退出：30 分钟内未止盈则平仓
+
+        Args:
+            entry_price: 入场价格
+            direction: 交易方向 ("BUY" or "SELL")
+            breaking_news_config: 突发新闻配置
+                - is_breaking: 是否突发新闻
+                - sentiment_score: 情绪得分
+                - news_age_minutes: 新闻年龄
+
+        Returns:
+            StopLossLevel 止损/止盈水平
+        """
+        # 获取配置（支持动态覆盖）
+        take_profit_pct = self.breaking_news_take_profit
+        trailing_pct = self.breaking_news_trailing
+        stop_loss_pct = self.breaking_news_stop_loss
+        max_minutes = self.breaking_news_max_minutes
+
+        # 根据情绪得分调整参数（情绪越强，止盈越紧）
+        if breaking_news_config:
+            sentiment = breaking_news_config.get('sentiment_score', 0.5)
+            if sentiment > 0.8:
+                # 极强情绪：更紧止盈（1.5%）
+                take_profit_pct = 0.015
+                trailing_pct = 0.003
+            elif sentiment > 0.6:
+                # 强情绪：标准止盈（2%）
+                take_profit_pct = 0.02
+                trailing_pct = 0.005
+            else:
+                # 一般情绪：放宽止盈（3%）
+                take_profit_pct = 0.03
+                trailing_pct = 0.01
+
+        if direction == "BUY":
+            # 做多：止盈在上，止损在下
+            take_profit_price = entry_price * (1 + take_profit_pct)
+            stop_loss_price = entry_price * (1 - stop_loss_pct)
+            # 初始追踪止损设在入场价
+            trailing_stop_price = entry_price
+        else:  # SELL
+            # 做空：止盈在下，止损在上
+            take_profit_price = entry_price * (1 - take_profit_pct)
+            stop_loss_price = entry_price * (1 + stop_loss_pct)
+            trailing_stop_price = entry_price
+
+        return StopLossLevel(
+            price=stop_loss_price,  # 初始返回止损价
+            type="breaking_news",
+            distance=abs(entry_price - stop_loss_price),
+            distance_percent=stop_loss_pct,
+            notes=(
+                f"突发新闻快速止盈 | "
+                f"止盈={take_profit_price:.2f} (+{take_profit_pct:.1%}) | "
+                f"追踪={trailing_pct:.1%} | "
+                f"止损={stop_loss_price:.2f} (-{stop_loss_pct:.1%}) | "
+                f"最长持仓={max_minutes}分钟"
+            ),
+            # 扩展字段：存储止盈和追踪信息
+            triggered=False,
+        )
+
+    def check_breaking_news_exit(
+        self,
+        stop_level: StopLossLevel,
+        current_price: float,
+        direction: str,
+        entry_time: Optional[str] = None,
+        current_time: Optional[str] = None,
+    ) -> Tuple[bool, str]:
+        """
+        检查突发新闻止盈/止损是否触发（2026-04-08 新增）
+
+        Args:
+            stop_level: 止损水平（包含止盈信息）
+            current_price: 当前价格
+            direction: 交易方向
+            entry_time: 入场时间
+            current_time: 当前时间
+
+        Returns:
+            (已触发，触发原因)
+        """
+        if stop_level.type != "breaking_news":
+            return False, ""
+
+        # 解析 notes 获取止盈价
+        notes = stop_level.notes
+        take_profit_price = None
+        try:
+            for part in notes.split(" | "):
+                if part.startswith("止盈="):
+                    take_profit_price = float(part.split("=")[1].split(" ")[0])
+                    break
+        except Exception:
+            pass
+
+        if take_profit_price is None:
+            return False, ""
+
+        reason = ""
+        triggered = False
+
+        if direction == "BUY":
+            # 做多：达到止盈价 → 触发
+            if current_price >= take_profit_price:
+                triggered = True
+                reason = f"达到止盈价 {take_profit_price:.2f}"
+                stop_level.trigger_price = current_price
+            # 跌破止损价 → 触发
+            elif current_price <= stop_level.price:
+                triggered = True
+                reason = f"跌破止损价 {stop_level.price:.2f}"
+                stop_level.trigger_price = current_price
+        else:  # SELL
+            # 做空：达到止盈价 → 触发
+            if current_price <= take_profit_price:
+                triggered = True
+                reason = f"达到止盈价 {take_profit_price:.2f}"
+                stop_level.trigger_price = current_price
+            # 突破止损价 → 触发
+            elif current_price >= stop_level.price:
+                triggered = True
+                reason = f"突破止损价 {stop_level.price:.2f}"
+                stop_level.trigger_price = current_price
+
+        # 时间退出检查
+        if not triggered and entry_time and current_time:
+            try:
+                from datetime import datetime
+                entry_dt = datetime.fromisoformat(entry_time)
+                current_dt = datetime.fromisoformat(current_time)
+                holding_minutes = (current_dt - entry_dt).total_seconds() / 60
+
+                if holding_minutes >= self.breaking_news_max_minutes:
+                    triggered = True
+                    reason = f"持仓超时 {holding_minutes:.0f}分钟 >= {self.breaking_news_max_minutes}分钟"
+                    stop_level.trigger_price = current_price
+            except Exception as e:
+                logger.debug(f"时间检查失败：{e}")
+
+        if triggered:
+            stop_level.triggered = True
+            stop_level.trigger_time = current_time
+
+        return triggered, reason
 
     def check_stop_loss(
         self,

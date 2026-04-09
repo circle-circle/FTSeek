@@ -17,6 +17,7 @@ from app.risk.realtime_monitor import RiskAlert
 from app import config
 
 logger = logging.getLogger("ftseek.risk.dingtalk_alert")
+logger.propagate = False  # 防止日志重复
 
 
 @dataclass

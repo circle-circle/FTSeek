@@ -11,6 +11,7 @@ from .indicators import IndicatorBuffer, bollinger_bands, bollinger_pctb
 from app import config
 
 logger = logging.getLogger("ftseek.strategy.bollinger")
+logger.propagate = False  # 防止日志重复
 
 
 class BollingerStrategy(BaseStrategy):

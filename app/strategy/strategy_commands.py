@@ -7,6 +7,7 @@ import requests
 from typing import Optional
 
 logger = logging.getLogger("openclaw-dingtalk-bridge.strategy_cmd")
+logger.propagate = False  # 防止日志重复
 
 FTSEEK_API_BASE = "http://127.0.0.1:8899"
 FTSEEK_API_TOKEN = "ftseek_secret_token_change_me"

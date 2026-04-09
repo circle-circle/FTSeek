@@ -26,6 +26,7 @@ from datetime import datetime
 import logging
 
 logger = logging.getLogger("ftseek.core.state_manager")
+logger.propagate = False  # 防止日志重复
 
 
 class StateManager:

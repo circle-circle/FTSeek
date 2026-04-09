@@ -28,6 +28,7 @@ except ImportError:
 from app.news_push.config import QWEN_CONFIG, CACHE_DIR
 
 logger = logging.getLogger("ftseek.news_push.qwen_analyzer")
+logger.propagate = False  # 防止日志重复
 
 
 @dataclass
@@ -134,7 +135,7 @@ class QwenAnalyzer:
     
     def _call_qwen_api(self, prompt: str) -> Optional[str]:
         """
-        调用 Qwen API
+        调用百炼 Qwen API (OpenAI 兼容格式)
         
         Returns:
             API 响应文本
@@ -143,41 +144,48 @@ class QwenAnalyzer:
             logger.error("缺少 requests 库")
             return None
         
+        # 百炼 API 使用 OpenAI 兼容格式
+        # endpoint 格式: https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions
+        url = self.endpoint
+        if '/compatible-mode' not in url:
+            # 自动转换为兼容模式 URL
+            if url.endswith('/api/v1'):
+                url = url.replace('/api/v1', '/compatible-mode/v1')
+            elif not url.endswith('/chat/completions'):
+                url = url.rstrip('/') + '/compatible-mode/v1/chat/completions'
+        
         headers = {
             'Authorization': f'Bearer {self.api_key}',
             'Content-Type': 'application/json'
         }
         
+        # OpenAI 兼容格式
         payload = {
             'model': self.model,
-            'input': {
-                'messages': [
-                    {
-                        'role': 'system',
-                        'content': '你是一名专业的金融分析师，擅长分析新闻对股市的影响。请输出严格的 JSON 格式。'
-                    },
-                    {
-                        'role': 'user',
-                        'content': prompt
-                    }
-                ]
-            },
-            'parameters': {
-                'max_tokens': self.max_tokens,
-                'temperature': self.temperature,
-                'result_format': 'message'
-            }
+            'messages': [
+                {
+                    'role': 'system',
+                    'content': '你是一名专业的金融分析师，擅长分析新闻对股市的影响。请输出严格的 JSON 格式。'
+                },
+                {
+                    'role': 'user',
+                    'content': prompt
+                }
+            ],
+            'max_tokens': self.max_tokens,
+            'temperature': self.temperature
         }
         
         try:
-            resp = requests.post(self.endpoint, json=payload, headers=headers, timeout=30)
+            resp = requests.post(url, json=payload, headers=headers, timeout=30)
             
             if resp.status_code == 200:
                 result = resp.json()
-                content = result.get('output', {}).get('choices', [{}])[0].get('message', {}).get('content', '')
+                # OpenAI 兼容格式响应
+                content = result.get('choices', [{}])[0].get('message', {}).get('content', '')
                 return content
             else:
-                logger.error(f"Qwen API 请求失败：{resp.status_code} - {resp.text}")
+                logger.error(f"Qwen API 请求失败：{resp.status_code} - {resp.text[:200]}")
                 return None
                 
         except Exception as e:

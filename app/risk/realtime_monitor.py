@@ -18,6 +18,7 @@ from collections import deque
 import json
 
 logger = logging.getLogger("ftseek.risk.realtime_monitor")
+logger.propagate = False  # 防止日志重复
 
 
 @dataclass

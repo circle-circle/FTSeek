@@ -1,0 +1,30 @@
+{
+  "strategy_name": "sentiment_ai",
+  "params": {
+    "lookback_hours": 12,
+    "max_news": 5,
+    "sentiment_threshold": 0.31067755289268134
+  },
+  "win_rate": 0.7262469722541288,
+  "total_return": 0.33724624074411375,
+  "sharpe_ratio": 1.215931932002694,
+  "max_drawdown": 0.17905555101297793,
+  "total_trades": 52,
+  "overfitting_score": 0.12383269481975882,
+  "train_metrics": {
+    "win_rate": 0.7262469722541288,
+    "sharpe_ratio": 1.215931932002694,
+    "total_return": 0.33724624074411375,
+    "max_drawdown": 0.17905555101297793
+  },
+  "test_metrics": {
+    "win_rate": 0.6998619066135502,
+    "sharpe_ratio": 1.0653598041454047,
+    "total_return": 0.28688009609691945,
+    "max_drawdown": 0.1864320358544468
+  },
+  "search_method": "bayesian",
+  "search_iterations": 20,
+  "search_time": 295.8543553987635,
+  "timestamp": "2026-03-29T10:00:40.862326"
+}

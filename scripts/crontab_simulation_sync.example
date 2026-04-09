@@ -1,0 +1,19 @@
+# FTSeek 模拟盘数据同步 crontab 配置示例
+# 
+# 使用方法:
+# 1. 复制此文件：cp crontab_simulation_sync.example /tmp/sim_sync_cron
+# 2. 编辑配置 (如需要)
+# 3. 安装 crontab: crontab /tmp/sim_sync_cron
+# 4. 验证：crontab -l
+
+# 环境变量
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+PYTHONPATH=/opt/ftseek/FTSeek
+
+# 模拟盘数据同步
+# 交易时间每 30 分钟同步一次 (周一至周五 09:30-16:00)
+*/30 9-16 * * 1-5 cd /opt/ftseek/FTSeek && python3 scripts/simulation_sync_cron.py >> logs/simulation_sync.log 2>&1
+
+# 收盘后完整同步 (周一至周五 16:30)
+30 16 * * 1-5 cd /opt/ftseek/FTSeek && python3 scripts/simulation_sync_cron.py >> logs/simulation_sync.log 2>&1

@@ -1,0 +1,2757 @@
+[
+  {
+    "features": {
+      "confidence": 0.9,
+      "consensus_score": 3.44,
+      "strategies_count": 4,
+      "market_regime": "trending",
+      "adx": 54.9
+    },
+    "label": {
+      "executed": true,
+      "profitable": false
+    },
+    "metadata": {
+      "signal_id": "5aec3824-21cc-4e13-8fe0-d413d2535233",
+      "code": "HK.09992",
+      "date": "2026-03-25",
+      "action": "BUY"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.8,
+      "consensus_score": -3.86,
+      "strategies_count": 5,
+      "market_regime": "trending",
+      "adx": 93.2
+    },
+    "label": {
+      "executed": true,
+      "profitable": true
+    },
+    "metadata": {
+      "signal_id": "279338b9-820d-4616-834a-8582b50a9fe2",
+      "code": "HK.00981",
+      "date": "2026-03-25",
+      "action": "SELL"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.68,
+      "consensus_score": -1.92,
+      "strategies_count": 3,
+      "market_regime": "trending",
+      "adx": 27.1
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "71ac8920-e33c-4f16-986a-969b9b5372ae",
+      "code": "HK.03690",
+      "date": "2026-03-25",
+      "action": "SELL"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.85,
+      "consensus_score": 2.38,
+      "strategies_count": 3,
+      "market_regime": "trending",
+      "adx": 32.8
+    },
+    "label": {
+      "executed": true,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "eca8d7c7-ef67-40fc-b3cd-995426db9cb8",
+      "code": "HK.03690",
+      "date": "2026-03-25",
+      "action": "BUY"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.87,
+      "consensus_score": 3.44,
+      "strategies_count": 4,
+      "market_regime": "trending",
+      "adx": 60.9
+    },
+    "label": {
+      "executed": true,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "b77b5ba2-9130-4d2f-8c75-88139abb66a6",
+      "code": "HK.00981",
+      "date": "2026-03-25",
+      "action": "BUY"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.9,
+      "consensus_score": 3.44,
+      "strategies_count": 4,
+      "market_regime": "trending",
+      "adx": 70.4
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "9c30b493-3166-401b-b8d0-0c91e908a05a",
+      "code": "HK.09992",
+      "date": "2026-03-25",
+      "action": "BUY"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.88,
+      "consensus_score": 3.44,
+      "strategies_count": 4,
+      "market_regime": "trending",
+      "adx": 90.8
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "357f00cc-6b57-4f05-9f34-cf2e80795d3f",
+      "code": "HK.00981",
+      "date": "2026-03-25",
+      "action": "BUY"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.47,
+      "consensus_score": 2.42,
+      "strategies_count": 3,
+      "market_regime": "trending",
+      "adx": 44.1
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "be2c5d81-a3cb-4ee5-8c51-2033a5086361",
+      "code": "HK.09992",
+      "date": "2026-03-25",
+      "action": "BUY"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.75,
+      "consensus_score": -1.96,
+      "strategies_count": 5,
+      "market_regime": "trending",
+      "adx": 92.9
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "a664efdc-6349-460d-83bd-c16737894941",
+      "code": "HK.03690",
+      "date": "2026-03-25",
+      "action": "SELL"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.47,
+      "consensus_score": 1.88,
+      "strategies_count": 4,
+      "market_regime": "trending",
+      "adx": 72.6
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "71538e78-9e87-46f6-a198-21f049e3a826",
+      "code": "HK.09992",
+      "date": "2026-03-25",
+      "action": "BUY"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.82,
+      "consensus_score": 3.44,
+      "strategies_count": 4,
+      "market_regime": "trending",
+      "adx": 99.8
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "a2660657-ef3b-4fa5-aece-13992a4a5580",
+      "code": "HK.03690",
+      "date": "2026-03-25",
+      "action": "BUY"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.65,
+      "consensus_score": -1.04,
+      "strategies_count": 3,
+      "market_regime": "trending",
+      "adx": 66.5
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "7c4fa690-52b7-4c5e-bdc5-b5dc0c5bfabd",
+      "code": "HK.00981",
+      "date": "2026-03-25",
+      "action": "SELL"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.7,
+      "consensus_score": -2.02,
+      "strategies_count": 4,
+      "market_regime": "trending",
+      "adx": 65.9
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "61a35dae-8d6e-469e-a776-d323d1c7ba5b",
+      "code": "HK.03690",
+      "date": "2026-03-25",
+      "action": "SELL"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.35,
+      "consensus_score": -1.38,
+      "strategies_count": 4,
+      "market_regime": "trending",
+      "adx": 72.2
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "559bc90a-cdae-47ef-8ef6-90dcc3ac449a",
+      "code": "HK.03690",
+      "date": "2026-03-25",
+      "action": "SELL"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.37,
+      "consensus_score": -1.88,
+      "strategies_count": 4,
+      "market_regime": "trending",
+      "adx": 82.8
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "6975e5c7-a6cb-4187-946e-6b785ec4e8b8",
+      "code": "HK.00981",
+      "date": "2026-03-25",
+      "action": "SELL"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.68,
+      "consensus_score": -1.94,
+      "strategies_count": 3,
+      "market_regime": "trending",
+      "adx": 74.6
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "76cc017d-c838-4da3-9f36-3516ceb53ea2",
+      "code": "HK.09992",
+      "date": "2026-03-25",
+      "action": "SELL"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.36,
+      "consensus_score": -2.42,
+      "strategies_count": 3,
+      "market_regime": "trending",
+      "adx": 97.4
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "20ce6594-7806-4f83-ab04-d41fd478aa8f",
+      "code": "HK.09992",
+      "date": "2026-03-25",
+      "action": "SELL"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.74,
+      "consensus_score": -3.92,
+      "strategies_count": 4,
+      "market_regime": "trending",
+      "adx": 26.4
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "f588c04c-dd33-4e60-b9ad-947f2cc2b590",
+      "code": "HK.00981",
+      "date": "2026-03-25",
+      "action": "SELL"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.7,
+      "consensus_score": -3.44,
+      "strategies_count": 4,
+      "market_regime": "trending",
+      "adx": 93.5
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "633106a5-1d03-49b4-84eb-d531d8ff569a",
+      "code": "HK.03690",
+      "date": "2026-03-25",
+      "action": "SELL"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.78,
+      "consensus_score": 3.44,
+      "strategies_count": 4,
+      "market_regime": "trending",
+      "adx": 95.4
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "5e50d181-5d05-4f9b-98ed-bc77ebeed001",
+      "code": "HK.03690",
+      "date": "2026-03-25",
+      "action": "BUY"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.7,
+      "consensus_score": -3.44,
+      "strategies_count": 4,
+      "market_regime": "trending",
+      "adx": 94.1
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "eb76c2d4-ed22-4fd3-b632-9d657541c62e",
+      "code": "HK.00981",
+      "date": "2026-03-25",
+      "action": "SELL"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.7,
+      "consensus_score": -3.44,
+      "strategies_count": 4,
+      "market_regime": "trending",
+      "adx": 84.5
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "ac7fccae-33d2-4af8-8aba-17399ac8161c",
+      "code": "HK.03690",
+      "date": "2026-03-25",
+      "action": "SELL"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.95,
+      "consensus_score": 1.96,
+      "strategies_count": 5,
+      "market_regime": "trending",
+      "adx": 80.9
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "af9bd12b-055c-405b-9409-468ebcf1dbbd",
+      "code": "HK.09992",
+      "date": "2026-03-25",
+      "action": "BUY"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.37,
+      "consensus_score": -1.46,
+      "strategies_count": 4,
+      "market_regime": "trending",
+      "adx": 41.2
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "7da8fb95-4a73-4296-8c45-7094616ed1c6",
+      "code": "HK.00981",
+      "date": "2026-03-25",
+      "action": "SELL"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.8,
+      "consensus_score": 3.44,
+      "strategies_count": 4,
+      "market_regime": "trending",
+      "adx": 60.7
+    },
+    "label": {
+      "executed": true,
+      "profitable": true
+    },
+    "metadata": {
+      "signal_id": "b911eff8-7d5c-43c1-8511-05d6a0e695dd",
+      "code": "HK.03690",
+      "date": "2026-03-25",
+      "action": "BUY"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.47,
+      "consensus_score": 2.36,
+      "strategies_count": 5,
+      "market_regime": "trending",
+      "adx": 50.0
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "84867aca-dcdd-446b-b5ab-a246253d8b1e",
+      "code": "HK.09992",
+      "date": "2026-03-25",
+      "action": "BUY"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.45,
+      "consensus_score": 2.36,
+      "strategies_count": 5,
+      "market_regime": "trending",
+      "adx": 68.7
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "05bb710b-df02-41e2-a94e-f7c9efb66201",
+      "code": "HK.03690",
+      "date": "2026-03-25",
+      "action": "BUY"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.7,
+      "consensus_score": -2.44,
+      "strategies_count": 4,
+      "market_regime": "trending",
+      "adx": 100.0
+    },
+    "label": {
+      "executed": true,
+      "profitable": false
+    },
+    "metadata": {
+      "signal_id": "95251b1a-26a4-4e22-bf5c-197c2aac30ef",
+      "code": "HK.09992",
+      "date": "2026-03-25",
+      "action": "SELL"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.74,
+      "consensus_score": -2.9,
+      "strategies_count": 4,
+      "market_regime": "trending",
+      "adx": 67.6
+    },
+    "label": {
+      "executed": true,
+      "profitable": false
+    },
+    "metadata": {
+      "signal_id": "71c7e468-0ab7-41b6-8af4-09ca484c933f",
+      "code": "HK.03690",
+      "date": "2026-03-25",
+      "action": "SELL"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.4,
+      "consensus_score": -3.38,
+      "strategies_count": 4,
+      "market_regime": "ranging",
+      "adx": 6.6
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "1f468642-67bc-4dde-920a-921771a99d48",
+      "code": "HK.03690",
+      "date": "2026-03-25",
+      "action": "SELL"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.74,
+      "consensus_score": -3.92,
+      "strategies_count": 4,
+      "market_regime": "trending",
+      "adx": 36.7
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "00e337c1-46a6-4eb9-af0c-dafdaa52a756",
+      "code": "HK.00981",
+      "date": "2026-03-25",
+      "action": "SELL"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.93,
+      "consensus_score": 1.38,
+      "strategies_count": 3,
+      "market_regime": "trending",
+      "adx": 58.7
+    },
+    "label": {
+      "executed": true,
+      "profitable": false
+    },
+    "metadata": {
+      "signal_id": "dc615f54-e34c-4135-a41e-63dead9f0680",
+      "code": "HK.09992",
+      "date": "2026-03-25",
+      "action": "BUY"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.34,
+      "consensus_score": -1.52,
+      "strategies_count": 3,
+      "market_regime": "trending",
+      "adx": 61.8
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "89663b16-2e0e-4f74-af75-d4b668455669",
+      "code": "HK.03690",
+      "date": "2026-03-25",
+      "action": "SELL"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.45,
+      "consensus_score": 1.22,
+      "strategies_count": 2,
+      "market_regime": "trending",
+      "adx": 31.3
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "1660c708-a16c-44de-9708-aded2a44f264",
+      "code": "HK.09992",
+      "date": "2026-03-25",
+      "action": "BUY"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.81,
+      "consensus_score": 1.94,
+      "strategies_count": 3,
+      "market_regime": "trending",
+      "adx": 59.9
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "3c6f0659-2199-47ce-93a4-73cc2f98fa0b",
+      "code": "HK.00981",
+      "date": "2026-03-25",
+      "action": "BUY"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.74,
+      "consensus_score": -2.86,
+      "strategies_count": 4,
+      "market_regime": "trending",
+      "adx": 81.5
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "9166efaa-eb6b-4a89-bc22-8ee1091f0c47",
+      "code": "HK.09992",
+      "date": "2026-03-25",
+      "action": "SELL"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.72,
+      "consensus_score": -2.42,
+      "strategies_count": 3,
+      "market_regime": "ranging",
+      "adx": 19.0
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "1a69267c-cd4d-4dda-84be-3105b0c54fbe",
+      "code": "HK.00981",
+      "date": "2026-03-25",
+      "action": "SELL"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.72,
+      "consensus_score": -0.98,
+      "strategies_count": 3,
+      "market_regime": "ranging",
+      "adx": 8.7
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "704e743d-341c-4377-9c50-a3e3e12a7fc3",
+      "code": "HK.03690",
+      "date": "2026-03-25",
+      "action": "SELL"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.4,
+      "consensus_score": -2.9,
+      "strategies_count": 3,
+      "market_regime": "trending",
+      "adx": 34.9
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "6514c9f1-1aa8-4e62-8922-d0bc8cf53315",
+      "code": "HK.00981",
+      "date": "2026-03-25",
+      "action": "SELL"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.34,
+      "consensus_score": -2.24,
+      "strategies_count": 3,
+      "market_regime": "trending",
+      "adx": 54.2
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "8955bb00-f87c-43b6-95fe-75ff868ef386",
+      "code": "HK.09992",
+      "date": "2026-03-25",
+      "action": "SELL"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.87,
+      "consensus_score": 2.38,
+      "strategies_count": 3,
+      "market_regime": "trending",
+      "adx": 49.5
+    },
+    "label": {
+      "executed": true,
+      "profitable": false
+    },
+    "metadata": {
+      "signal_id": "a412d56b-14bc-4274-94c3-13a4a3adddd0",
+      "code": "HK.03690",
+      "date": "2026-03-25",
+      "action": "BUY"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.36,
+      "consensus_score": -0.98,
+      "strategies_count": 3,
+      "market_regime": "trending",
+      "adx": 56.8
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "d2262ce6-5da5-4894-b07c-b63002d7dca5",
+      "code": "HK.09992",
+      "date": "2026-03-25",
+      "action": "SELL"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.72,
+      "consensus_score": -2.42,
+      "strategies_count": 3,
+      "market_regime": "trending",
+      "adx": 75.9
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "5563ca6b-d0a3-4ccb-9cb0-210ef96464c4",
+      "code": "HK.03690",
+      "date": "2026-03-25",
+      "action": "SELL"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.87,
+      "consensus_score": 3.92,
+      "strategies_count": 4,
+      "market_regime": "trending",
+      "adx": 56.8
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "303ed252-3e8c-42c7-a573-8caa987b800b",
+      "code": "HK.03690",
+      "date": "2026-03-25",
+      "action": "BUY"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.93,
+      "consensus_score": 2.42,
+      "strategies_count": 3,
+      "market_regime": "trending",
+      "adx": 38.1
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "95073eb0-0fd4-4236-9ca0-624b68273691",
+      "code": "HK.09992",
+      "date": "2026-03-25",
+      "action": "BUY"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.8,
+      "consensus_score": -3.38,
+      "strategies_count": 4,
+      "market_regime": "trending",
+      "adx": 54.6
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "0bf785d9-ed46-4318-b23f-29ffbd015e8b",
+      "code": "HK.00981",
+      "date": "2026-03-25",
+      "action": "SELL"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.5,
+      "consensus_score": 2.9,
+      "strategies_count": 3,
+      "market_regime": "trending",
+      "adx": 53.4
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "6d4c64b2-1c89-457a-bb49-1e47863433f1",
+      "code": "HK.09992",
+      "date": "2026-03-25",
+      "action": "BUY"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.35,
+      "consensus_score": -2.0,
+      "strategies_count": 4,
+      "market_regime": "trending",
+      "adx": 32.5
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "933935df-35c4-4a27-999a-7a9ffc1372eb",
+      "code": "HK.03690",
+      "date": "2026-03-25",
+      "action": "SELL"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.42,
+      "consensus_score": 0.74,
+      "strategies_count": 2,
+      "market_regime": "trending",
+      "adx": 62.7
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "a5c03254-be0f-4c98-ac2c-f1766724670e",
+      "code": "HK.09992",
+      "date": "2026-03-25",
+      "action": "BUY"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.36,
+      "consensus_score": 1.9,
+      "strategies_count": 2,
+      "market_regime": "trending",
+      "adx": 60.5
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "63e80f11-fe89-4083-b7c6-2131d8ba0344",
+      "code": "HK.00981",
+      "date": "2026-03-25",
+      "action": "BUY"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.36,
+      "consensus_score": -2.3,
+      "strategies_count": 3,
+      "market_regime": "neutral",
+      "adx": 20.3
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "f924b92f-2a2b-45d6-aeac-759a550aa027",
+      "code": "HK.09992",
+      "date": "2026-03-25",
+      "action": "SELL"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.35,
+      "consensus_score": -3.44,
+      "strategies_count": 4,
+      "market_regime": "trending",
+      "adx": 75.2
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "c6c60e6c-887f-41d8-bb64-fa12dcda39af",
+      "code": "HK.09992",
+      "date": "2026-03-25",
+      "action": "SELL"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.41,
+      "consensus_score": 1.7,
+      "strategies_count": 2,
+      "market_regime": "trending",
+      "adx": 69.0
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "c5d636fa-13fc-4a52-8f48-d83ad1b10330",
+      "code": "HK.00981",
+      "date": "2026-03-25",
+      "action": "BUY"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.36,
+      "consensus_score": -2.42,
+      "strategies_count": 3,
+      "market_regime": "trending",
+      "adx": 45.7
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "66ffde5e-ee31-4430-bb5a-630b12e1e179",
+      "code": "HK.03690",
+      "date": "2026-03-25",
+      "action": "SELL"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.33,
+      "consensus_score": 0.74,
+      "strategies_count": 2,
+      "market_regime": "trending",
+      "adx": 65.8
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "6dfb8463-9f1a-4867-8ba1-9e337f34e2f8",
+      "code": "HK.00981",
+      "date": "2026-03-25",
+      "action": "BUY"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.67,
+      "consensus_score": -2.94,
+      "strategies_count": 4,
+      "market_regime": "trending",
+      "adx": 47.0
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "901b2791-6b14-4b0b-94f9-625a214d44bf",
+      "code": "HK.09992",
+      "date": "2026-03-25",
+      "action": "SELL"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.4,
+      "consensus_score": -2.9,
+      "strategies_count": 3,
+      "market_regime": "trending",
+      "adx": 35.6
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "84e09881-d4c2-44f1-aaa3-af9cf40ec28d",
+      "code": "HK.09992",
+      "date": "2026-03-25",
+      "action": "SELL"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.36,
+      "consensus_score": -2.42,
+      "strategies_count": 3,
+      "market_regime": "trending",
+      "adx": 34.2
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "b3af5fb8-a294-4917-83ec-7f9cf0345e3d",
+      "code": "HK.03690",
+      "date": "2026-03-25",
+      "action": "SELL"
+    }
+  },
+  {
+    "features": {
+      "confidence": 1.0,
+      "consensus_score": 2.18,
+      "strategies_count": 3,
+      "market_regime": "trending",
+      "adx": 54.6
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "9b2af14c-fd3f-4d2a-8900-df464aaa5b87",
+      "code": "HK.09992",
+      "date": "2026-03-25",
+      "action": "BUY"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.7,
+      "consensus_score": -2.22,
+      "strategies_count": 2,
+      "market_regime": "trending",
+      "adx": 68.1
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "538bac12-a707-4854-86e6-2c02c4ffbf9f",
+      "code": "HK.09992",
+      "date": "2026-03-25",
+      "action": "SELL"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.93,
+      "consensus_score": 2.42,
+      "strategies_count": 3,
+      "market_regime": "trending",
+      "adx": 32.6
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "6945c216-e910-48a9-914a-9ff250b84ad3",
+      "code": "HK.09992",
+      "date": "2026-03-25",
+      "action": "BUY"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.72,
+      "consensus_score": -1.22,
+      "strategies_count": 2,
+      "market_regime": "ranging",
+      "adx": 11.5
+    },
+    "label": {
+      "executed": true,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "fc2704b8-411b-4417-9b2b-1fc5862742d3",
+      "code": "HK.03690",
+      "date": "2026-03-25",
+      "action": "SELL"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.47,
+      "consensus_score": 0.98,
+      "strategies_count": 3,
+      "market_regime": "trending",
+      "adx": 28.0
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "4b63ec6f-9991-4d90-b29c-e53a0674c893",
+      "code": "HK.09992",
+      "date": "2026-03-25",
+      "action": "BUY"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.37,
+      "consensus_score": -3.63,
+      "strategies_count": 3,
+      "market_regime": "trending",
+      "adx": 82.9
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "2ec08b5a-217c-4f44-9097-ed8de59368d1",
+      "code": "HK.03690",
+      "date": "2026-03-25",
+      "action": "SELL"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.35,
+      "consensus_score": -2.91,
+      "strategies_count": 3,
+      "market_regime": "trending",
+      "adx": 99.6
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "9ca7fb45-7282-4127-a1e5-483d90cb9c24",
+      "code": "HK.03690",
+      "date": "2026-03-25",
+      "action": "SELL"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.47,
+      "consensus_score": 0.98,
+      "strategies_count": 3,
+      "market_regime": "trending",
+      "adx": 42.9
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "49be36f8-6e91-4c0a-98fe-27caada627c0",
+      "code": "HK.09992",
+      "date": "2026-03-25",
+      "action": "BUY"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.45,
+      "consensus_score": 1.22,
+      "strategies_count": 2,
+      "market_regime": "ranging",
+      "adx": 14.9
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "1487a832-c680-4ae1-b832-c53e64a14f9c",
+      "code": "HK.09992",
+      "date": "2026-03-25",
+      "action": "BUY"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.68,
+      "consensus_score": -2.24,
+      "strategies_count": 3,
+      "market_regime": "trending",
+      "adx": 61.8
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "def79c2d-1996-4c47-a190-46c8a5b283b9",
+      "code": "HK.09992",
+      "date": "2026-03-25",
+      "action": "SELL"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.91,
+      "consensus_score": 3.94,
+      "strategies_count": 5,
+      "market_regime": "trending",
+      "adx": 71.6
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "339d12f3-b766-43d2-a717-f2a341bea7be",
+      "code": "HK.09992",
+      "date": "2026-03-25",
+      "action": "BUY"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.65,
+      "consensus_score": -1.56,
+      "strategies_count": 3,
+      "market_regime": "trending",
+      "adx": 88.6
+    },
+    "label": {
+      "executed": true,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "94739692-aac7-4563-80f2-fd0a4810b51f",
+      "code": "HK.03690",
+      "date": "2026-03-25",
+      "action": "SELL"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.7,
+      "consensus_score": -3.44,
+      "strategies_count": 4,
+      "market_regime": "trending",
+      "adx": 82.8
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "2b67e31b-bfc2-411e-9902-baf56efc5c6e",
+      "code": "HK.09992",
+      "date": "2026-03-25",
+      "action": "SELL"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.33,
+      "consensus_score": 2.42,
+      "strategies_count": 3,
+      "market_regime": "trending",
+      "adx": 52.3
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "e4362785-9629-49b8-a453-210c3b2e72a6",
+      "code": "HK.00981",
+      "date": "2026-03-25",
+      "action": "BUY"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.72,
+      "consensus_score": -1.04,
+      "strategies_count": 3,
+      "market_regime": "trending",
+      "adx": 54.6
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "2df72914-6df2-483f-9738-72cec4d333a4",
+      "code": "HK.00981",
+      "date": "2026-03-25",
+      "action": "SELL"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.3,
+      "consensus_score": -1.94,
+      "strategies_count": 3,
+      "market_regime": "trending",
+      "adx": 61.9
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "ae6e0c5c-a818-4e30-a3cf-70f93f7f9874",
+      "code": "HK.00981",
+      "date": "2026-03-25",
+      "action": "SELL"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.34,
+      "consensus_score": -2.42,
+      "strategies_count": 3,
+      "market_regime": "trending",
+      "adx": 52.7
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "d1781c6c-1e16-418d-aeb6-acab44c09ac8",
+      "code": "HK.00981",
+      "date": "2026-03-25",
+      "action": "SELL"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.38,
+      "consensus_score": -2.42,
+      "strategies_count": 3,
+      "market_regime": "trending",
+      "adx": 51.9
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "42eca7b6-1724-41f6-a7af-991722f08ee3",
+      "code": "HK.00981",
+      "date": "2026-03-25",
+      "action": "SELL"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.64,
+      "consensus_score": 2.38,
+      "strategies_count": 3,
+      "market_regime": "trending",
+      "adx": 87.0
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "05587871-9495-446d-a448-8b3037d6347d",
+      "code": "HK.00981",
+      "date": "2026-03-25",
+      "action": "BUY"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.42,
+      "consensus_score": 1.2,
+      "strategies_count": 1,
+      "market_regime": "trending",
+      "adx": 75.8
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "d34f64d0-2936-41c2-8cf9-52f3fe03718e",
+      "code": "HK.00981",
+      "date": "2026-03-25",
+      "action": "BUY"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.4,
+      "consensus_score": 2.72,
+      "strategies_count": 3,
+      "market_regime": "trending",
+      "adx": 60.4
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "cf95883a-bc7a-43b7-8b89-3b3adab50b34",
+      "code": "HK.00981",
+      "date": "2026-03-25",
+      "action": "BUY"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.88,
+      "consensus_score": 2.9,
+      "strategies_count": 4,
+      "market_regime": "trending",
+      "adx": 99.3
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "79f4a0f7-9f19-45d7-b95f-d20e0c343ef9",
+      "code": "HK.03690",
+      "date": "2026-03-25",
+      "action": "BUY"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.62,
+      "consensus_score": -0.5,
+      "strategies_count": 2,
+      "market_regime": "trending",
+      "adx": 78.5
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "cba1316a-6185-4990-a348-25c530260609",
+      "code": "HK.00981",
+      "date": "2026-03-25",
+      "action": "SELL"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.48,
+      "consensus_score": 3.4,
+      "strategies_count": 5,
+      "market_regime": "trending",
+      "adx": 100.0
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "fab4f039-3255-4b56-8369-d16af4057f54",
+      "code": "HK.03690",
+      "date": "2026-03-25",
+      "action": "BUY"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.31,
+      "consensus_score": -0.5,
+      "strategies_count": 2,
+      "market_regime": "trending",
+      "adx": 79.2
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "fa7e4818-17ff-4df5-bec5-e754c070bf29",
+      "code": "HK.00981",
+      "date": "2026-03-25",
+      "action": "SELL"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.3,
+      "consensus_score": -0.88,
+      "strategies_count": 3,
+      "market_regime": "trending",
+      "adx": 57.5
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "61f321cb-15e0-4625-abff-1ef1f2f7f5ca",
+      "code": "HK.00981",
+      "date": "2026-03-25",
+      "action": "SELL"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.3,
+      "consensus_score": -0.46,
+      "strategies_count": 3,
+      "market_regime": "trending",
+      "adx": 45.0
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "d3ddeb3e-58e9-4b2f-85be-db316ab52f66",
+      "code": "HK.00981",
+      "date": "2026-03-25",
+      "action": "SELL"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.34,
+      "consensus_score": -0.5,
+      "strategies_count": 3,
+      "market_regime": "trending",
+      "adx": 76.9
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "8cccc766-b1a1-490d-abbe-cabfa6d98d3e",
+      "code": "HK.00981",
+      "date": "2026-03-25",
+      "action": "SELL"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.35,
+      "consensus_score": -5.36,
+      "strategies_count": 6,
+      "market_regime": "trending",
+      "adx": 75.1
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "e0af4bfd-4275-4aa0-bce7-cd2bc844a78f",
+      "code": "HK.00981",
+      "date": "2026-03-25",
+      "action": "SELL"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.71,
+      "consensus_score": 4.4,
+      "strategies_count": 4,
+      "market_regime": "trending",
+      "adx": 63.0
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "bfd47a68-09c3-4e73-9f9b-92611b114c83",
+      "code": "HK.00981",
+      "date": "2026-03-25",
+      "action": "BUY"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.65,
+      "consensus_score": -3.92,
+      "strategies_count": 4,
+      "market_regime": "trending",
+      "adx": 58.3
+    },
+    "label": {
+      "executed": true,
+      "profitable": false
+    },
+    "metadata": {
+      "signal_id": "5cc3e711-3697-4363-b41a-e67b41f659a7",
+      "code": "HK.00981",
+      "date": "2026-03-25",
+      "action": "SELL"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.6,
+      "consensus_score": 1.04,
+      "strategies_count": 3,
+      "market_regime": "trending",
+      "adx": 31.8
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "5fba2cfb-9930-4b3d-aa61-9550f4cc4564",
+      "code": "HK.00981",
+      "date": "2026-03-25",
+      "action": "BUY"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.65,
+      "consensus_score": -0.46,
+      "strategies_count": 3,
+      "market_regime": "trending",
+      "adx": 34.7
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "2b80892b-9b5f-41dd-9a62-b46f6e22e7a7",
+      "code": "HK.00981",
+      "date": "2026-03-25",
+      "action": "SELL"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.17,
+      "consensus_score": -3.44,
+      "strategies_count": 4,
+      "market_regime": "trending",
+      "adx": 29.9
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "b67febc3-6a64-499e-b5eb-6263c1b75050",
+      "code": "HK.00981",
+      "date": "2026-03-25",
+      "action": "SELL"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.32,
+      "consensus_score": -2.42,
+      "strategies_count": 3,
+      "market_regime": "trending",
+      "adx": 87.9
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "e3e02a9d-2420-4531-bd48-4f133d8e41fb",
+      "code": "HK.00981",
+      "date": "2026-03-25",
+      "action": "SELL"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.78,
+      "consensus_score": -0.98,
+      "strategies_count": 3,
+      "market_regime": "trending",
+      "adx": 100.0
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "365af3e5-ea4f-4b3d-8589-7b3eff6f8911",
+      "code": "HK.00981",
+      "date": "2026-03-25",
+      "action": "SELL"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.69,
+      "consensus_score": 2.38,
+      "strategies_count": 3,
+      "market_regime": "trending",
+      "adx": 100.0
+    },
+    "label": {
+      "executed": true,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "26e99374-f949-467e-99f6-60664f1ae994",
+      "code": "HK.00981",
+      "date": "2026-03-25",
+      "action": "BUY"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.74,
+      "consensus_score": -1.52,
+      "strategies_count": 3,
+      "market_regime": "trending",
+      "adx": 100.0
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "e06772bf-5215-490f-86f7-9b4f013aea68",
+      "code": "HK.00981",
+      "date": "2026-03-25",
+      "action": "SELL"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.31,
+      "consensus_score": -1.36,
+      "strategies_count": 4,
+      "market_regime": "trending",
+      "adx": 100.0
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "3c8f5e84-3641-403b-8f2f-ed55d2bee4b5",
+      "code": "HK.00981",
+      "date": "2026-03-25",
+      "action": "SELL"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.72,
+      "consensus_score": 1.94,
+      "strategies_count": 3,
+      "market_regime": "trending",
+      "adx": 100.0
+    },
+    "label": {
+      "executed": true,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "deebca2a-bf57-4b80-8dbc-7517d59eca11",
+      "code": "HK.00981",
+      "date": "2026-03-25",
+      "action": "BUY"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.4,
+      "consensus_score": 0.5,
+      "strategies_count": 2,
+      "market_regime": "trending",
+      "adx": 96.6
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "64fa1714-d8ae-476d-b724-ee93b3eaea21",
+      "code": "HK.00981",
+      "date": "2026-03-25",
+      "action": "BUY"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.69,
+      "consensus_score": -1.36,
+      "strategies_count": 4,
+      "market_regime": "trending",
+      "adx": 97.3
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "f44da467-d9f9-49ee-a950-842713449ce9",
+      "code": "HK.00981",
+      "date": "2026-03-25",
+      "action": "SELL"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.34,
+      "consensus_score": 1.22,
+      "strategies_count": 2,
+      "market_regime": "trending",
+      "adx": 96.8
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "65535b7e-bb35-450c-b6ca-6bdc4b4ff38c",
+      "code": "HK.00981",
+      "date": "2026-03-25",
+      "action": "BUY"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.92,
+      "consensus_score": 4.36,
+      "strategies_count": 6,
+      "market_regime": "trending",
+      "adx": 100.0
+    },
+    "label": {
+      "executed": true,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "9c632a5e-bc0f-4a5e-b1a2-29cf01d08d32",
+      "code": "HK.03690",
+      "date": "2026-03-25",
+      "action": "BUY"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.77,
+      "consensus_score": -2.0,
+      "strategies_count": 2,
+      "market_regime": "trending",
+      "adx": 99.3
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "7a259f46-370f-4066-aef9-6ce9bc010dab",
+      "code": "HK.00981",
+      "date": "2026-03-25",
+      "action": "SELL"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.74,
+      "consensus_score": 1.7,
+      "strategies_count": 2,
+      "market_regime": "trending",
+      "adx": 94.1
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "eeac26e1-d0db-4fee-a15f-80e42b6702c4",
+      "code": "HK.00981",
+      "date": "2026-03-25",
+      "action": "BUY"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.64,
+      "consensus_score": -2.42,
+      "strategies_count": 3,
+      "market_regime": "trending",
+      "adx": 100.0
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "8b5160e2-9d0b-498b-b671-b6abc61e5266",
+      "code": "HK.00981",
+      "date": "2026-03-25",
+      "action": "SELL"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.69,
+      "consensus_score": -3.44,
+      "strategies_count": 4,
+      "market_regime": "trending",
+      "adx": 100.0
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "32e6be8f-5390-47a2-934e-4c35d00bee05",
+      "code": "HK.09992",
+      "date": "2026-03-25",
+      "action": "SELL"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.3,
+      "consensus_score": -2.24,
+      "strategies_count": 3,
+      "market_regime": "trending",
+      "adx": 99.9
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "4f6155c9-9080-42fb-82da-60f7a9567243",
+      "code": "HK.00981",
+      "date": "2026-03-25",
+      "action": "SELL"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.32,
+      "consensus_score": -2.42,
+      "strategies_count": 3,
+      "market_regime": "trending",
+      "adx": 76.5
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "a6533f41-ed4f-4c80-a20c-ed527280167e",
+      "code": "HK.00981",
+      "date": "2026-03-25",
+      "action": "SELL"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.38,
+      "consensus_score": -2.42,
+      "strategies_count": 3,
+      "market_regime": "trending",
+      "adx": 81.8
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "1e433c2b-4fdb-4c0a-a7df-94bceb995f75",
+      "code": "HK.00981",
+      "date": "2026-03-25",
+      "action": "SELL"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.69,
+      "consensus_score": -1.98,
+      "strategies_count": 4,
+      "market_regime": "trending",
+      "adx": 100.0
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "1dd035e1-4efb-49f1-93b7-38232c07ea0f",
+      "code": "HK.03690",
+      "date": "2026-03-25",
+      "action": "SELL"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.69,
+      "consensus_score": -1.52,
+      "strategies_count": 2,
+      "market_regime": "trending",
+      "adx": 99.7
+    },
+    "label": {
+      "executed": true,
+      "profitable": false
+    },
+    "metadata": {
+      "signal_id": "901abdb2-3690-4a4a-923c-80bcf555b3ce",
+      "code": "HK.00981",
+      "date": "2026-03-25",
+      "action": "SELL"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.77,
+      "consensus_score": 3.44,
+      "strategies_count": 4,
+      "market_regime": "trending",
+      "adx": 94.6
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "77e28728-74b3-4dd3-80e0-76cff81a8645",
+      "code": "HK.03690",
+      "date": "2026-03-25",
+      "action": "BUY"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.75,
+      "consensus_score": 3.92,
+      "strategies_count": 4,
+      "market_regime": "trending",
+      "adx": 83.5
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "71e158c8-daf2-4d82-8b9b-68c1c9d5f890",
+      "code": "HK.00981",
+      "date": "2026-03-25",
+      "action": "BUY"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.43,
+      "consensus_score": 2.42,
+      "strategies_count": 3,
+      "market_regime": "trending",
+      "adx": 97.1
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "2195610e-0906-4cc8-a497-a7c82f4b0f05",
+      "code": "HK.03690",
+      "date": "2026-03-25",
+      "action": "BUY"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.44,
+      "consensus_score": 2.42,
+      "strategies_count": 3,
+      "market_regime": "trending",
+      "adx": 80.4
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "4f829d04-e5d7-4b75-a7d5-c071ee98ec29",
+      "code": "HK.00981",
+      "date": "2026-03-25",
+      "action": "BUY"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.43,
+      "consensus_score": 1.22,
+      "strategies_count": 2,
+      "market_regime": "trending",
+      "adx": 78.9
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "c0fc06e1-eecb-4453-aa3b-a1dd6173f8c5",
+      "code": "HK.00981",
+      "date": "2026-03-25",
+      "action": "BUY"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.93,
+      "consensus_score": 2.9,
+      "strategies_count": 3,
+      "market_regime": "trending",
+      "adx": 52.2
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "9c59c192-0263-47cd-af2d-d02f706dd684",
+      "code": "HK.00981",
+      "date": "2026-03-25",
+      "action": "BUY"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.39,
+      "consensus_score": 2.36,
+      "strategies_count": 5,
+      "market_regime": "trending",
+      "adx": 75.1
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "4d40ff3a-786a-4b22-9abf-cc409c0feaf2",
+      "code": "HK.00981",
+      "date": "2026-03-25",
+      "action": "BUY"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.41,
+      "consensus_score": 2.9,
+      "strategies_count": 3,
+      "market_regime": "trending",
+      "adx": 69.9
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "1fbbc110-c380-4970-ad3b-b8ebee38ed8d",
+      "code": "HK.00981",
+      "date": "2026-03-25",
+      "action": "BUY"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.6,
+      "consensus_score": -1.48,
+      "strategies_count": 3,
+      "market_regime": "trending",
+      "adx": 69.1
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "84c8fc28-e6ad-495b-b460-e1d17bf85d78",
+      "code": "HK.00981",
+      "date": "2026-03-25",
+      "action": "SELL"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.35,
+      "consensus_score": -0.98,
+      "strategies_count": 3,
+      "market_regime": "trending",
+      "adx": 100.0
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "427bae1e-e597-489d-9d1f-ddb92e87eed6",
+      "code": "HK.00981",
+      "date": "2026-03-25",
+      "action": "SELL"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.44,
+      "consensus_score": -0.5,
+      "strategies_count": 1,
+      "market_regime": "trending",
+      "adx": 100.0
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "4d4e8dfd-fb74-4952-84d1-6d9dba444e56",
+      "code": "HK.00981",
+      "date": "2026-03-25",
+      "action": "SELL"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.84,
+      "consensus_score": 3.4,
+      "strategies_count": 4,
+      "market_regime": "trending",
+      "adx": 100.0
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "93f620da-87a4-4995-85d2-433631906e51",
+      "code": "HK.09992",
+      "date": "2026-03-25",
+      "action": "BUY"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.72,
+      "consensus_score": 0.48,
+      "strategies_count": 2,
+      "market_regime": "trending",
+      "adx": 100.0
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "9e16b426-8c9a-44fa-9e22-a085f09a981d",
+      "code": "HK.00981",
+      "date": "2026-03-25",
+      "action": "BUY"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.43,
+      "consensus_score": 1.7,
+      "strategies_count": 2,
+      "market_regime": "trending",
+      "adx": 100.0
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "83510152-7903-40f6-b27a-e2a72f363e56",
+      "code": "HK.00981",
+      "date": "2026-03-25",
+      "action": "BUY"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.72,
+      "consensus_score": -1.42,
+      "strategies_count": 2,
+      "market_regime": "trending",
+      "adx": 100.0
+    },
+    "label": {
+      "executed": true,
+      "profitable": false
+    },
+    "metadata": {
+      "signal_id": "029ed08c-4c40-4a6a-9b97-0cbdf0819207",
+      "code": "HK.00981",
+      "date": "2026-03-25",
+      "action": "SELL"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.8,
+      "consensus_score": 2.42,
+      "strategies_count": 3,
+      "market_regime": "trending",
+      "adx": 96.1
+    },
+    "label": {
+      "executed": true,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "b871f0da-97d1-4136-b1f7-315b230a10c4",
+      "code": "HK.00981",
+      "date": "2026-03-25",
+      "action": "BUY"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.45,
+      "consensus_score": 0.5,
+      "strategies_count": 2,
+      "market_regime": "trending",
+      "adx": 89.6
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "eebb17f2-093b-4860-833c-3336962ee6f5",
+      "code": "HK.00981",
+      "date": "2026-03-25",
+      "action": "BUY"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.38,
+      "consensus_score": 2.42,
+      "strategies_count": 3,
+      "market_regime": "trending",
+      "adx": 96.5
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "82377487-77d7-4b69-b925-7064466827ce",
+      "code": "HK.00981",
+      "date": "2026-03-25",
+      "action": "BUY"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.75,
+      "consensus_score": -3.38,
+      "strategies_count": 4,
+      "market_regime": "trending",
+      "adx": 95.8
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "c26deff5-5783-4c69-898d-9ce2214140f7",
+      "code": "HK.09992",
+      "date": "2026-03-25",
+      "action": "SELL"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.77,
+      "consensus_score": -0.98,
+      "strategies_count": 2,
+      "market_regime": "trending",
+      "adx": 53.6
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "db8531cc-1a61-4cab-ad05-32cab6afe42c",
+      "code": "HK.00981",
+      "date": "2026-03-25",
+      "action": "SELL"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.28,
+      "consensus_score": -1.7,
+      "strategies_count": 3,
+      "market_regime": "trending",
+      "adx": 55.3
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "f770954b-83fa-49f7-af0a-7c4f7513deff",
+      "code": "HK.00981",
+      "date": "2026-03-25",
+      "action": "SELL"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.38,
+      "consensus_score": -3.92,
+      "strategies_count": 4,
+      "market_regime": "trending",
+      "adx": 48.6
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "e67e6b7b-bab0-4c04-8535-49eee4112b6a",
+      "code": "HK.00981",
+      "date": "2026-03-25",
+      "action": "SELL"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.42,
+      "consensus_score": 1.68,
+      "strategies_count": 2,
+      "market_regime": "trending",
+      "adx": 99.5
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "3dfe66bb-edfa-40f6-9720-222d291c226a",
+      "code": "HK.09992",
+      "date": "2026-03-25",
+      "action": "BUY"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.64,
+      "consensus_score": -2.42,
+      "strategies_count": 3,
+      "market_regime": "trending",
+      "adx": 98.8
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "010393c0-724b-44ff-b0f7-8a076bd89687",
+      "code": "HK.09992",
+      "date": "2026-03-25",
+      "action": "SELL"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.74,
+      "consensus_score": -0.5,
+      "strategies_count": 3,
+      "market_regime": "trending",
+      "adx": 75.1
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "4063ad8a-bc16-4d60-a85a-5609a75ad3ff",
+      "code": "HK.00981",
+      "date": "2026-03-25",
+      "action": "SELL"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.85,
+      "consensus_score": 0.5,
+      "strategies_count": 2,
+      "market_regime": "trending",
+      "adx": 55.5
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "aaeef003-d97e-45da-a792-8ad84ced92f6",
+      "code": "HK.00981",
+      "date": "2026-03-25",
+      "action": "BUY"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.71,
+      "consensus_score": -3.92,
+      "strategies_count": 4,
+      "market_regime": "trending",
+      "adx": 70.2
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "eec72a3a-7afe-4643-89b1-2f1495ca4012",
+      "code": "HK.00981",
+      "date": "2026-03-25",
+      "action": "SELL"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.85,
+      "consensus_score": 2.4,
+      "strategies_count": 2,
+      "market_regime": "trending",
+      "adx": 62.2
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "8ba95238-fe93-4060-af53-22086804908e",
+      "code": "HK.00981",
+      "date": "2026-03-25",
+      "action": "BUY"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.79,
+      "consensus_score": -2.42,
+      "strategies_count": 3,
+      "market_regime": "trending",
+      "adx": 100.0
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "6d64766c-a563-459c-b099-6aad76148a43",
+      "code": "HK.09992",
+      "date": "2026-03-25",
+      "action": "SELL"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.62,
+      "consensus_score": -1.22,
+      "strategies_count": 2,
+      "market_regime": "trending",
+      "adx": 54.5
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "310fefb8-7a7a-4972-9d95-78dd87927030",
+      "code": "HK.00981",
+      "date": "2026-03-25",
+      "action": "SELL"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.32,
+      "consensus_score": -2.42,
+      "strategies_count": 3,
+      "market_regime": "trending",
+      "adx": 100.0
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "7bf5e0fd-0e10-4207-b68d-25c440c1b460",
+      "code": "HK.09992",
+      "date": "2026-03-25",
+      "action": "SELL"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.4,
+      "consensus_score": -2.42,
+      "strategies_count": 3,
+      "market_regime": "trending",
+      "adx": 100.0
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "32b1e0ac-1bc4-4304-8c3a-5f9af758c5b4",
+      "code": "HK.09992",
+      "date": "2026-03-25",
+      "action": "SELL"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.8,
+      "consensus_score": -3.92,
+      "strategies_count": 4,
+      "market_regime": "trending",
+      "adx": 59.6
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "f3b54a0c-1fd6-43a6-9d98-a4be153bc335",
+      "code": "HK.00981",
+      "date": "2026-03-25",
+      "action": "SELL"
+    }
+  },
+  {
+    "features": {
+      "confidence": 0.75,
+      "consensus_score": 0.46,
+      "strategies_count": 3,
+      "market_regime": "trending",
+      "adx": 100.0
+    },
+    "label": {
+      "executed": false,
+      "profitable": null
+    },
+    "metadata": {
+      "signal_id": "f67427d0-c28e-4cc5-95ac-a7857c9d9938",
+      "code": "HK.09992",
+      "date": "2026-03-25",
+      "action": "BUY"
+    }
+  }
+]

@@ -14,6 +14,7 @@ def get_realtime_monitor():
     return realtime_monitor
 
 logger = logging.getLogger("ftseek.risk.api")
+logger.propagate = False  # 防止日志重复
 
 router = APIRouter(prefix="/api/risk", tags=["risk"])
 
