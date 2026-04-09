@@ -18,6 +18,10 @@ from .multi_timeframe import (
     TimeframeFeatures,
     get_multi_timeframe_extractor,
 )
+from .log import (
+    ScenarioLogManager,
+    get_scenario_log_manager,
+)
 from .config import (
     CORE_SCENARIO_ROUTING,
     DEFAULT_WEIGHT_CONFIG,
@@ -41,12 +45,14 @@ __all__ = [
     "MultiTimeframeFeatureExtractor",
     "MultiTimeframeFeatures",
     "TimeframeFeatures",
+    "ScenarioLogManager",
     # 单例获取函数
     "get_scenario_classifier",
     "get_scenario_router",
     "get_scenario_memory",
     "get_feature_extractor",
     "get_multi_timeframe_extractor",
+    "get_scenario_log_manager",
     # 配置
     "CORE_SCENARIO_ROUTING",
     "DEFAULT_WEIGHT_CONFIG",

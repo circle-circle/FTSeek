@@ -145,6 +145,14 @@ try:
 except Exception as e:
     logger.warning(f"场景识别 API 路由注册失败：{e}")
 
+# 注册场景日志 API 路由 (Phase 2: 2026-04-09)
+try:
+    from app.api.v2.scenario_log import router as scenario_log_router
+    app.include_router(scenario_log_router)
+    logger.info("场景日志 API 路由已注册")
+except Exception as e:
+    logger.warning(f"场景日志 API 路由注册失败：{e}")
+
 # 注册实时风险监控 API 路由
 try:
     from app.risk.api import router as risk_router

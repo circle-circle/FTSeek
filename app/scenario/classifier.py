@@ -28,6 +28,7 @@ from app.strategy.market_regime import (
 )
 from .features import FeatureExtractor, Features
 from .multi_timeframe import MultiTimeframeFeatureExtractor, MultiTimeframeFeatures
+from .log import get_scenario_log_manager
 
 logger = logging.getLogger("ftseek.scenario.classifier")
 logger.propagate = False
@@ -149,6 +150,9 @@ class ScenarioClassifier:
         # 多周期特征提取器 (Phase 2 新增)
         self.multi_tf_extractor = MultiTimeframeFeatureExtractor(config)
 
+        # 场景日志管理器 (Phase 2 新增)
+        self.log_manager = get_scenario_log_manager()
+
         # 场景记忆缓存 {code: (scenario, timestamp, confirm_count)}
         self._scenario_cache: Dict[str, Tuple[ScenarioType, float, int]] = {}
 
@@ -241,10 +245,26 @@ class ScenarioClassifier:
             logger.debug(f"{code} 置信度{confidence:.2f} < {self.CONFIDENCE_THRESHOLD}, 返回 UNKNOWN")
             return self._unknown_scenario(code, features, macro_regime)
 
-        # 8. 记录场景切换历史
+        # 8. 记录场景切换历史 (内存 + 数据库)
         self._record_scenario_change(code, smoothed_scenario)
 
-        # 9. 输出结果
+        # 9. 记录到数据库 (Phase 2 新增)
+        try:
+            mtf_dict = multi_tf_features.to_dict() if multi_tf_features else {}
+            self.log_manager.log_scenario_change(
+                code=code,
+                scenario=smoothed_scenario.value,
+                confidence=confidence,
+                adx_value=macro_regime.adx_value,
+                macro_regime=macro_regime.regime_type.value,
+                mtf_alignment=mtf_dict.get('trend_alignment', 0),
+                multi_timeframe=mtf_dict,
+                triggered_by='auto'
+            )
+        except Exception as e:
+            logger.debug(f"记录场景日志失败：{e}")
+
+        # 10. 输出结果
         output = ScenarioOutput(
             scenario_type=smoothed_scenario,
             confidence=confidence,
