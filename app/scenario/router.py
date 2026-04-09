@@ -67,26 +67,25 @@ class ScenarioRouter:
 
     # 默认场景→策略映射表
     # 更新于 2026-04-09: 仅使用已实现的策略
+    # 更新于 2026-04-09 (修复双重投票): supertrend → confluence_v2
     DEFAULT_ROUTING_CONFIG: Dict[ScenarioType, Dict] = {
         # --- 趋势类场景 ---
         ScenarioType.TREND_STRONG: {
-            "primary": ["supertrend", "confluence_v2"],
+            "primary": ["confluence_v2"],  # supertrend 已合并到 confluence_v2
             "secondary": ["enhanced_confluence", "macd"],
             "suppressed": ["rsi", "bollinger"],
             "risk_template": "trend_following",
-            "priority_boost": {"supertrend": 1.5},
+            "priority_boost": {"confluence_v2": 1.5},
         },
         ScenarioType.TREND_START: {
-            # 123_rule → confluence_v2, turtle → supertrend
-            "primary": ["confluence_v2", "supertrend"],
+            "primary": ["confluence_v2"],  # supertrend 已合并到 confluence_v2
             "secondary": ["enhanced_confluence"],
             "suppressed": ["rsi"],
             "risk_template": "trend_following",
             "priority_boost": {"confluence_v2": 1.5},
         },
         ScenarioType.TREND_EXHAUST: {
-            # td_range → confluence_v2, 123_rule → supertrend
-            "primary": ["confluence_v2", "supertrend"],
+            "primary": ["confluence_v2"],  # supertrend 已合并到 confluence_v2
             "secondary": ["enhanced_confluence"],
             "suppressed": ["rsi", "bollinger"],
             "risk_template": "reversal",
@@ -97,25 +96,23 @@ class ScenarioRouter:
         ScenarioType.RANGE_BOUND: {
             "primary": ["rsi", "bollinger"],
             "secondary": ["confluence_v2", "open_close_effect"],
-            "suppressed": ["supertrend", "enhanced_confluence"],
+            "suppressed": ["enhanced_confluence"],  # supertrend 已移除
             "risk_template": "mean_reversion",
             "priority_boost": {"rsi": 1.5, "bollinger": 1.5},
         },
 
         # --- 波动类场景 ---
         ScenarioType.VOL_EXPANSION: {
-            # volatility_breakout → confluence_v2
-            "primary": ["confluence_v2", "supertrend"],
+            "primary": ["confluence_v2"],  # supertrend 已合并到 confluence_v2
             "secondary": ["event_driven", "enhanced_confluence"],
             "suppressed": ["rsi", "bollinger"],
             "risk_template": "breakout",
             "priority_boost": {"confluence_v2": 1.5},
         },
         ScenarioType.VOL_CONTRACTION: {
-            # range_bound_strategy → rsi + bollinger
             "primary": ["bollinger", "rsi"],
             "secondary": ["confluence_v2"],
-            "suppressed": ["supertrend"],
+            "suppressed": [],  # supertrend 已移除
             "risk_template": "low_volatility",
             "priority_boost": {"bollinger": 1.3},
         },
@@ -139,26 +136,24 @@ class ScenarioRouter:
 
         # --- 反转/突破类场景 ---
         ScenarioType.REVERSAL_SETUP: {
-            # 123_rule → supertrend, rsi_divergence → rsi
-            "primary": ["supertrend", "rsi"],
+            "primary": ["rsi"],  # supertrend 已合并到 confluence_v2
             "secondary": ["confluence_v2", "sentiment_ai"],
             "suppressed": ["bollinger"],
             "risk_template": "reversal",
-            "priority_boost": {"supertrend": 1.5},
+            "priority_boost": {"rsi": 1.5},
         },
         ScenarioType.BREAKOUT_SETUP: {
-            # turtle → supertrend, bollinger_breakout → bollinger
-            "primary": ["supertrend", "bollinger"],
+            "primary": ["bollinger"],  # supertrend 已合并到 confluence_v2
             "secondary": ["confluence_v2", "enhanced_confluence"],
             "suppressed": ["rsi"],
             "risk_template": "breakout",
-            "priority_boost": {"supertrend": 1.5},
+            "priority_boost": {"bollinger": 1.5},
         },
 
         # --- 默认场景 ---
         ScenarioType.UNKNOWN: {
             "primary": ["confluence_v2"],
-            "secondary": ["supertrend", "rsi"],
+            "secondary": ["rsi"],  # supertrend 已合并到 confluence_v2
             "suppressed": [],
             "risk_template": "default",
             "priority_boost": {},
@@ -172,10 +167,10 @@ class ScenarioRouter:
 
     # 策略白名单 (系统中已实现的策略)
     # 更新于 2026-04-09: 仅包含实际实现的策略
+    # 更新于 2026-04-09 (修复双重投票): 移除 supertrend (已包含在 confluence_v2 中)
     AVAILABLE_STRATEGIES = {
         # === 核心策略 ===
-        "confluence_v2",       # 主力融合策略
-        "supertrend",          # 趋势跟踪
+        "confluence_v2",       # 主力融合策略 (包含 SuperTrend 因子)
         "sentiment_ai",        # AI 情绪
         "event_driven",        # 事件驱动
         "enhanced_confluence", # 技术增强
@@ -189,7 +184,7 @@ class ScenarioRouter:
         # === 特殊标记占位符 (会在_expand_special_markers 中展开) ===
         # 注意：以下是占位符，不是实际策略
         "123_rule",            # → 占位符，实际使用 confluence_v2 替代
-        "turtle",              # → 占位符，实际使用 supertrend 替代
+        "turtle",              # → 占位符，实际使用 confluence_v2 替代 (原 supertrend)
         "td_range",            # → 占位符，实际使用 confluence_v2 替代
         "gap_trading",         # → 占位符，实际使用 event_driven 替代
         "volatility_breakout", # → 占位符，实际使用 confluence_v2 替代

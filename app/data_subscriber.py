@@ -145,7 +145,9 @@ class DataSubscriber:
         try:
             from app.strategy.layered_integration import get_layered_strategy_manager
             self.layered_manager = get_layered_strategy_manager()
-            logger.info("分层策略管理器已集成到数据订阅器")
+            # 注入K线缓存引用，解决技术增强层K线数据为空的问题
+            self.layered_manager._kline_cache = self._kline_buffers_by_period
+            logger.info("分层策略管理器已集成到数据订阅器 (K线缓存已注入)")
         except Exception as e:
             logger.warning(f"分层策略管理器集成失败：{e}")
 
@@ -247,6 +249,54 @@ class DataSubscriber:
                 logger.error(f"创建行情上下文失败：{e}")
                 raise
         return self._quote_ctx
+
+    # ============================================================
+    #  事件驱动入口（供 news_push/collector 调用）
+    # ============================================================
+    def on_news_event(self, news_list: list):
+        """
+        新闻事件入口 - 供新闻采集器调用，触发事件驱动策略
+
+        Args:
+            news_list: 新闻列表 [{'id', 'title', 'content', 'source', 'related_stocks'}]
+        """
+        if not self.layered_manager:
+            return
+
+        try:
+            layered_signals = self.layered_manager.process_news(news_list)
+            if layered_signals:
+                for ls in layered_signals:
+                    # 将事件驱动信号直接送入共识引擎
+                    self._consensus.submit(ls.signal)
+                    logger.info(
+                        f"[事件驱动] {ls.signal.code} 信号已提交共识 | "
+                        f"优先级={ls.priority} | 置信度={ls.confidence:.2f}"
+                    )
+        except Exception as e:
+            logger.warning(f"[事件驱动] 处理新闻事件失败: {e}")
+
+    def on_us_overnight_data(self, us_data: list):
+        """
+        美股隔夜数据入口 - 供 FTSeek-US 或外部数据源调用，触发跨市场套利策略
+
+        Args:
+            us_data: 美股隔夜数据列表 [{'code', 'name', 'close_price', 'change_pct'}]
+        """
+        if not self.layered_manager:
+            return
+
+        try:
+            layered_signals = self.layered_manager.analyze_us_overnight(us_data)
+            if layered_signals:
+                for ls in layered_signals:
+                    self._consensus.submit(ls.signal)
+                    logger.info(
+                        f"[跨市场套利] {ls.signal.code} 信号已提交共识 | "
+                        f"优先级={ls.priority} | 置信度={ls.confidence:.2f}"
+                    )
+        except Exception as e:
+            logger.warning(f"[跨市场套利] 处理美股数据失败: {e}")
 
     def _get_current_cooldown(self) -> int:
         """获取当前冷却时间 (支持动态更新)"""
@@ -1265,163 +1315,36 @@ class DataSubscriber:
             lock.release()
 
     def _on_consensus_inner(self, result: ConsensusResult):
-        """_on_consensus 实际逻辑（已由外层持有 code 锁）- 集成决策缓冲层"""
+        """_on_consensus 实际逻辑（已由外层持有 code 锁）- 2026-04-09 重构: 风控Pipeline化"""
         code = result.code
-        trace_id = getattr(result, 'trace_id', 'N/A')  # 【新增 2026-04-02】获取trace_id
-        
-        # 【新增 2026-04-02】决策缓冲层检查 - 四层引擎架构核心
+        trace_id = getattr(result, 'trace_id', 'N/A')
+
+        # ============================================================
+        #  Phase 1: 风控 Pipeline 检查（替代原来分散的 20+ 项 if-return）
+        # ============================================================
+        from app.risk.risk_pipeline import SignalContext, init_risk_pipeline
+
+        # 先确定交易类型（Pipeline 部分检查需要）
+        position = self.position_manager.get_position(code)
+        trade_type = self._determine_trade_type(position, result.action)
+
+        ctx = SignalContext(
+            consensus_result=result,
+            trace_id=trace_id,
+            trade_type=trade_type,
+        )
+
+        # 初始化/获取 Pipeline（首次调用时注入 subscriber 依赖）
         try:
-            from app.decision_buffer import get_decision_buffer, DecisionStatus
-            decision_buffer = get_decision_buffer()
-            decision = decision_buffer.process_signal(result)
-            
-            if decision.status != DecisionStatus.APPROVED:
-                logger.info(
-                    f"[决策缓冲] [{trace_id}] {code} 信号被拒绝: {decision.rejection_reason} "
-                    f"(分数={result.score:+.2f}, 置信度={result.confidence:.2f})"
-                )
-                return
-            else:
-                logger.debug(
-                    f"[决策缓冲] [{trace_id}] {code} 信号已批准 "
-                    f"(决策ID={decision.decision_id[:8]}...)"
-                )
-        except Exception as e:
-            # 决策缓冲层异常不应阻断交易，降级到原有逻辑
-            logger.warning(f"[决策缓冲] 检查异常，降级到原有逻辑: {e}")
+            pipeline = init_risk_pipeline(deps={"subscriber": self})
+        except Exception:
+            from app.risk.risk_pipeline import get_risk_pipeline
+            pipeline = get_risk_pipeline(deps={"subscriber": self})
 
-        #【新增 2026-04-06】质量管理器检查 + 仓位调整
-        quality_boost = 1.0  # 默认仓位系数
-        if result.action == SignalAction.BUY and self.quality_scorer:
-            qr = self._check_quality_and_valuation(code, result.price)
-            if qr is None or qr.get('reject'):
-                logger.info(f"[质量检查] {code} 被拒绝: {qr.get('reason', '未知原因') if qr else '检查失败'}")
-                return
-            # 断点4修复: 质量等级影响仓位 (2026-04-06)
-            # Class A: 仓位加成 1.3x, Class B: 1.0x, Class C: 0.7x
-            quality_class = qr.get('quality_class', 'CLASS_C')
-            if quality_class == 'CLASS_A':
-                quality_boost = 1.3
-                logger.info(f"[质量仓位] {code} A级优质股，仓位加成 1.3x")
-            elif quality_class == 'CLASS_B':
-                quality_boost = 1.0
-            elif quality_class == 'CLASS_C':
-                quality_boost = 0.7
-                logger.info(f"[质量仓位] {code} C级普通股，仓位折扣 0.7x")
-        
-        # 2026-03-20 新增: 港股交易时间检查 + 开收盘噪音时段过滤
-        if not self._is_high_quality_trading_hours():
-            # 区分是完全非交易时间还是噪音时段
-            if not self._is_trading_hours():
-                logger.debug(f"[共识] {code} 非交易时间，跳过推送")
-            else:
-                logger.info(f"[共识] {code} 开/收盘噪音时段（信号质量差），跳过推送")
-            return
-        
-        # 熔断检查 (新增 2026-03-17)
-        if self.circuit_breaker.is_paused():
-            logger.warning(f"[共识] {code} 熔断器已触发，暂停交易")
-            return
-        
-        # 2026-03-25 新增: ADX-趋势一致性防守检查
-        # 当 ADX 极高（>50）但 MarketRegime 仍返回 neutral/range_bound/high_volatility，
-        # 说明 MarketRegime 如尚未组回马脚，居安勿动开仓
-        if result.action in (SignalAction.BUY, SignalAction.SELL):
-            _adx_val = getattr(result, 'adx_value', 0) or 0
-            _regime_str = getattr(result, 'market_regime', '') or ''
-            _regime_unclear = _regime_str in ('range_bound', 'high_volatility', 'neutral', '')
-            if _adx_val >= 50 and _regime_unclear:
-                logger.warning(
-                    f"[ADX趋势约束] {code} ADX={_adx_val:.1f} 极高但市场状态={_regime_str!r}，"
-                    f"趋势方向不明，拒绝开仓 ({result.action.value if hasattr(result.action,'value') else result.action})"
-                )
-                return
+        # 执行 Pipeline
+        pipeline_result = pipeline.evaluate(ctx)
 
-        # 2026-03-25: 多周期趋势过滤 + MTF对齐度同步至共识引擎
-        action_str = result.action.value if hasattr(result.action, 'value') else str(result.action)
-        mtf_confirmed, mtf_boost, mtf_reason = self._get_multi_timeframe_signal(code, action_str)
-        
-        # 同步 MTF 对齐分数至共识引擎缓存（用于置信度计算）
-        try:
-            buy_score, _  = self._get_mtf_alignment_score(code, "BUY")
-            sell_score, _ = self._get_mtf_alignment_score(code, "SELL")
-            self._consensus.update_mtf_alignment(code, buy_score, sell_score)
-        except Exception as _mtf_e:
-            logger.debug(f"[MTF缓存同步] {code} 失败: {_mtf_e}")
-        
-        if not mtf_confirmed:
-            logger.info(f"[多周期过滤] {code} {action_str} 被拒绝: {mtf_reason}")
-            return
-        
-        # 多周期置信度调整日志
-        if mtf_boost != 0:
-            logger.info(f"[多周期调整] {code} 置信度调整 {mtf_boost:+.1%}: {mtf_reason}")
-
-        # 追踪止盈冷却期：触发追踪止盈后15分钟内禁止同标的重新开仓（2026-03-24新增）
-        _trailing_cooldown_reject = False
-        if result.action in (SignalAction.BUY, SignalAction.SELL):
-            trailing_exit_ts = self._trailing_exit_time.get(code, 0)
-            elapsed = time.time() - trailing_exit_ts
-            TRAILING_COOLDOWN_SEC = 15 * 60  # 15 分钟
-            if elapsed < TRAILING_COOLDOWN_SEC:
-                remain_min = (TRAILING_COOLDOWN_SEC - elapsed) / 60
-                logger.info(
-                    f"[追踪冷却] {code} 追踪止盈后冷却中，剩余 {remain_min:.1f}min，跳过开仓"
-                )
-                _trailing_cooldown_reject = True
-
-        # 弱信号过滤：共识分数绝对值 < 1.2 的开仓信号直接拒绝（2026-03-24新增）
-        _weak_signal_reject = False
-        if result.action in (SignalAction.BUY, SignalAction.SELL):
-            score_abs = abs(result.score) if hasattr(result, 'score') else 999
-            if score_abs < 1.2:
-                logger.info(
-                    f"[弱信号过滤] {code} 共识分数={result.score:.2f} < 1.2，跳过开仓 "
-                    f"(同向策略: {'+'.join(result.agree_strategies)})"
-                )
-                _weak_signal_reject = True
-
-        # P2-2: 跨标的相关性控制
-        # 若已有 ≥2 个不同标的处于 OPEN 状态，对新开仓信号仓位施加分散折扣 0.7x
-        _concentration_discount = 1.0
-        if result.action in (SignalAction.BUY, SignalAction.SELL):
-            try:
-                open_positions = self.position_manager.get_all_positions()
-                open_codes = {p.code for p in open_positions if p.code != code}
-                if len(open_codes) >= 2:
-                    logger.info(
-                        f"[相关性控制] {code} 当前已有 {len(open_codes)} 个其他标的持仓 "
-                        f"({', '.join(sorted(open_codes))})，注入分散折扣 0.7x"
-                    )
-                    _concentration_discount = 0.7
-            except Exception as _e:
-                logger.debug(f"[相关性控制] 检查异常: {_e}")
-
-        # ----------------------------------------------------------------
-        # 盈亏比预检（不使用 signal_id，仅 return，真正记录在 record_signal 之后）
-        # default: 止损3% / 止盈4.5% → R:R=1.5，门槛设为1.2（略留安全边际）
-        # ----------------------------------------------------------------
-        _rr_reject_reason = None
-        try:
-            from app.risk.dynamic_exit_manager import dynamic_exit_manager as _dem
-            stop_pct = abs(_dem.current_params.get('stop_loss', -0.03))
-            take_pct = abs(_dem.current_params.get('take_profit', 0.045))
-            if stop_pct > 0:
-                rr_ratio = take_pct / stop_pct
-                # 最低门槛：1.2:1（确保止盈大于止损，有正期望值空间）
-                min_rr = 1.2
-                if rr_ratio < min_rr:
-                    logger.info(
-                        f"[盈亏比] {code} R:R={rr_ratio:.2f}:1 < {min_rr}:1，跳过信号 "
-                        f"(止盈={take_pct:.1%} / 止损={stop_pct:.1%})"
-                    )
-                    _rr_reject_reason = f'R:R={rr_ratio:.2f}:1 < {min_rr}:1'
-                else:
-                    logger.debug(f"[盈亏比] {code} R:R={rr_ratio:.2f}:1 ✓ (止盈={take_pct:.1%}/止损={stop_pct:.1%})")
-        except Exception as e:
-            logger.debug(f"[盈亏比] 检查失败，跳过: {e}")
-        
-        # 记录信号 (2026-03-17 新增)
+        # 记录信号（无论通过与否，都需记录以支持健康看板）
         base_signal = result.votes[0].signal
         action_str = result.action.value if hasattr(result.action, 'value') else str(result.action)
         signal_id = signal_tracker.record_signal(
@@ -1435,33 +1358,32 @@ class DataSubscriber:
             strategies=result.agree_strategies,
             market_regime=result.market_regime,
             adx=result.adx_value,
-            trace_id=trace_id,  # 【新增 2026-04-02】记录trace_id
+            trace_id=trace_id,
         )
         logger.debug(f"[{trace_id}] [{code}] 信号记录：{signal_id[:8]}... | 置信度={result.confidence:.2f}")
 
-        # 盈亏比拒绝处理（2026-03-24 修复：需在 record_signal 之后才有 signal_id）
-        if _rr_reject_reason:
-            signal_tracker.record_execution(signal_id, executed=False, reject_reason=_rr_reject_reason)
-            return
-
-        # 追踪冷却 / 弱信号拒绝：记录到 signal_tracker 后再 return（2026-03-24 修复：健康看板风控层数据）
-        if _trailing_cooldown_reject:
-            signal_tracker.record_execution(signal_id, executed=False, reject_reason='trailing_cooldown')
-            return
-        if _weak_signal_reject:
-            signal_tracker.record_execution(signal_id, executed=False, reject_reason='weak_signal')
-            return
-
-        if not self._is_cooled_down(code):
-            logger.info(
-                f"[共识] {code} 冷却中，跳过推送 "
-                f"(分数={result.score:+.2f}, {', '.join(result.agree_strategies)})"
+        # Pipeline 未通过，记录拒绝原因
+        if not pipeline_result.passed:
+            signal_tracker.record_execution(
+                signal_id, executed=False,
+                reject_reason=pipeline_result.reject_code
             )
-            # 记录拒绝原因
-            signal_tracker.record_execution(signal_id, executed=False, reject_reason='cooldown')
+            logger.info(
+                f"[风控Pipeline] [{trace_id}] {code} 被 [{pipeline_result.reject_check}] 拒绝: "
+                f"{pipeline_result.reject_reason}"
+            )
             return
 
-        base_signal = result.votes[0].signal
+        # ============================================================
+        #  Phase 2: 执行层（Pipeline 通过后的业务逻辑）
+        # ============================================================
+        # 从 SignalContext 中提取 Pipeline 计算的各种系数
+        quality_boost = ctx.quality_boost
+        _concentration_discount = ctx.concentration_discount
+        mtf_confirmed = ctx.mtf_confirmed
+        mtf_boost = ctx.mtf_boost
+        mtf_reason = ctx.mtf_reason
+
         strategies_str = " + ".join(result.agree_strategies)
         n_agree = len(result.agree_strategies)
 
@@ -1471,10 +1393,6 @@ class DataSubscriber:
             for v in result.votes
         )
 
-        # ----------------------------------------------------------------
-        # 置信度：直接使用共识引擎精确计算的结果，不再重复计算
-        # consensus_engine 已综合了: 分数/策略数量/资金流向/市场状态
-        # ----------------------------------------------------------------
         confidence = result.confidence
 
         consensus_signal = Signal(
@@ -1496,54 +1414,25 @@ class DataSubscriber:
                 "strategies": result.agree_strategies,
                 "oppose": result.oppose_strategies,
                 "weights": result.weight_details,
-                "confidence": round(confidence, 2),  # 添加置信度字段
-                "quality_boost": quality_boost,  # 断点4修复: 质量仓位系数 (2026-04-06)
+                "confidence": round(confidence, 2),
+                "quality_boost": quality_boost,
             },
         )
 
-        # 2026-03-13: 添加 watchlist 过滤，仅推送启用的股票
-        import json
-        try:
-            watchlist_path = "/opt/ftseek/FTSeek/config/watchlist.json"
-            with open(watchlist_path, 'r') as f:
-                watchlist = json.load(f)
-            enabled_codes = set()
-            for stock in watchlist.get('hk_stocks', []):
-                if stock.get('enabled', False):
-                    enabled_codes.add(stock['code'])
-            for stock in watchlist.get('us_stocks', []):
-                if stock.get('enabled', False):
-                    enabled_codes.add(stock['code'])
-            
-            if code not in enabled_codes:
-                logger.debug(f"[跳过推送] {code} 不在启用列表中")
-                return  # 跳过未启用股票的推送
-        except Exception as e:
-            logger.warning(f"watchlist 过滤异常：{e}")
-
-        # 2026-03-15: 应用港股特性适配
+        # 港股特性适配（Pipeline 中只做了基础过滤，这里做实际适配）
         if code.startswith("HK."):
             atr_pct = self._get_atr_percent(code)
             consensus_signal = self.hk_adapter.process_signal(consensus_signal, atr_pct)
             if consensus_signal is None:
                 logger.info(f"[港股适配] {code} 信号被过滤 (T+0 冲突/置信度不足/流动性限制)")
+                signal_tracker.record_execution(signal_id, executed=False, reject_reason='hk_adapter')
                 return
-        
-        # 2026-03-13: 修改逻辑 - 先判断持仓，再执行交易和推送
-        # 1. 检查持仓
-        position = self.position_manager.get_position(code)
-        
-        # 2026-03-24 修复：切换到CASH账户(8246815)后，无持仓时的SELL信号将自动建立空头
-        # 富途CASH账户规则：无持仓提交SELL → 自动卖空建仓；空仓时提交BUY → 自动平空回补
-        # 原来过滤无持仓SELL的逻辑已移除，改为此说明注释
+
+        # 空头建仓说明
         if position is None and result.action == SignalAction.SELL:
             logger.info(f"[空头建仓] {code} 无持仓，SELL信号将建立空头 (CASH账户自动卖空)")
 
-        
-        # 2. 判断交易类型
-        trade_type = self._determine_trade_type(position, result.action)
-
-        # 2026-03-23: 已有同向持仓时，尝试顺势加仓（满足条件才加，否则拒绝）
+        # 已有同向持仓时，尝试顺势加仓
         if trade_type == 'HOLD':
             added = self._try_add_position(code, position, result, consensus_signal, signal_id)
             if not added:
@@ -1555,38 +1444,7 @@ class DataSubscriber:
                 signal_tracker.record_execution(signal_id, executed=False, reject_reason='existing_position')
             return
 
-        # 2026-03-23: 最小持仓时间保护
-        # 持仓时间不足 MIN_HOLD_MINUTES 时，禁止由反向策略信号触发平仓（交由止盈止损逻辑处理）
-        # 例外：亏损超过止损阈值时允许提前平仓（由止盈止损逻辑处理，此处直接拦截策略信号平仓）
-        MIN_HOLD_MINUTES = 30
-        if trade_type == 'CLOSE' and position is not None:
-            try:
-                from datetime import datetime as _dt
-                entry_time_str = getattr(position, 'entry_time', None)
-                if entry_time_str:
-                    if isinstance(entry_time_str, str):
-                        et = _dt.fromisoformat(entry_time_str)
-                    else:
-                        et = entry_time_str
-                    hold_minutes = ((_dt.now() - et).total_seconds()) / 60
-                    if hold_minutes < MIN_HOLD_MINUTES:
-                        pnl_rate = (result.price - position.entry_price) / position.entry_price if position.entry_price > 0 else 0
-                        # 未达止损线时，禁止反向信号平仓
-                        try:
-                            from app.risk.dynamic_exit_manager import dynamic_exit_manager as _dem
-                            stop_pct = abs(_dem.get_stop_loss())  # 正数，如 0.03
-                        except Exception:
-                            stop_pct = 0.03
-                        if pnl_rate > -stop_pct:
-                            logger.info(
-                                f"[最小持仓保护] {code} 持仓仅 {hold_minutes:.1f}min < {MIN_HOLD_MINUTES}min，"
-                                f"拒绝反向信号平仓 (pnl={pnl_rate:.2%}, 止损线=-{stop_pct:.0%})"
-                            )
-                            return
-            except Exception as _e:
-                logger.debug(f"[最小持仓保护] 检查异常: {_e}")
-
-        # Task4 + P2-2: 新闻情绪倍率 × 分散折扣，合并注入 extra['news_boost']
+        # 新闻情绪倍率 x 分散折扣
         news_boost = self._get_news_sentiment_boost(code, result.action)
         combined_boost = news_boost * _concentration_discount
         if combined_boost != 1.0:
@@ -1598,9 +1456,8 @@ class DataSubscriber:
                 consensus_signal,
                 extra={**(consensus_signal.extra or {}), 'news_boost': combined_boost}
             )
-        
-        # 2026-03-25 修复: 开仓原子锁 - 防止 quote/kline 两个 handler 同时触发导致同标的重复开仓
-        # 同一标的在 5 秒内不允许重复开仓
+
+        # 开仓原子锁 - 防止 quote/kline 两个 handler 同时触发导致同标的重复开仓
         if trade_type == 'OPEN':
             _open_cooldown_sec = 5.0
             with self._open_lock:
@@ -1615,6 +1472,11 @@ class DataSubscriber:
                     return
                 # 预占时间戳，阻止并发仓
                 self._open_position_ts[code] = _now_ts
+
+
+
+        
+
 
         # 3. 执行交易
         trade_result = self.trade_executor.execute(consensus_signal, trade_type)
@@ -1737,12 +1599,17 @@ class DataSubscriber:
                     self._adaptive_weight_manager.record_trade(
                         agree_strategies=result.agree_strategies,
                         pnl=trade_result.pnl,
+                        market_regime=result.market_regime,
+                        scenario=getattr(result, 'scenario', None),
+                        adx_value=result.adx_value or 0.0,
                     )
                     # Task1: 同步更新共识引擎信号质量分
                     self._consensus.record_signal_outcome(
                         code=code,
                         action=result.action,
                         pnl=trade_result.pnl,
+                        market_regime=result.market_regime,
+                        adx_value=result.adx_value or 0.0,
                     )
         except Exception as e:
             logger.error(f"推送通知失败: {e}")

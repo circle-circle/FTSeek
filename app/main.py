@@ -29,7 +29,8 @@ try:
     futu_logger.setLevel(stdlib_logging.CRITICAL)
     futu_logger.handlers = []
 except Exception as e:
-    logger.warning(f"Futu 日志配置失败：{e}")
+    # 注意：此时 logger 尚未初始化，使用 print 输出
+    print(f"[FTSeek] Futu 日志配置失败：{e}")
 
 from app import config
 from app.strategy import STRATEGY_REGISTRY

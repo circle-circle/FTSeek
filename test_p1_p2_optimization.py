@@ -316,9 +316,10 @@ def test_config():
     # 测试 1: 统一配置文件加载
     print("\n1. 测试统一配置文件加载...")
     try:
-        from config.config_manager import ConfigManager
-        config_manager = ConfigManager()
-        config = config_manager.get_all()
+        from config.config_center import get_config_center
+        config_center = get_config_center()
+        config_center.load()
+        config = config_center.get_dict()
         assert config is not None
         assert 'version' in config
         print(f"   ✅ 统一配置文件加载正常 (version={config['version']})")
@@ -326,13 +327,13 @@ def test_config():
     except Exception as e:
         print(f"   ❌ 统一配置文件加载失败：{e}")
         results['tests'].append({'name': '统一配置文件加载', 'status': 'fail', 'error': str(e)})
-    
+
     # 测试 2: 配置分层访问
     print("\n2. 测试配置分层访问...")
     try:
-        strategy_config = config_manager.get_strategy_config()
-        risk_config = config_manager.get_risk_config()
-        trading_config = config_manager.get_trading_config()
+        strategy_config = config_center.get('strategy')
+        risk_config = config_center.get('risk_limits')
+        trading_config = config_center.get('trading')
         assert strategy_config is not None
         assert risk_config is not None
         assert trading_config is not None
@@ -341,13 +342,13 @@ def test_config():
     except Exception as e:
         print(f"   ❌ 配置分层访问失败：{e}")
         results['tests'].append({'name': '配置分层访问', 'status': 'fail', 'error': str(e)})
-    
+
     # 测试 3: 配置键路径访问
     print("\n3. 测试配置键路径访问...")
     try:
-        version = config_manager.get('version')
-        trading_mode = config_manager.get('trading.mode')
-        futu_host = config_manager.get('futu.host')
+        version = config_center.get('version')
+        trading_mode = config_center.get('trading.mode')
+        futu_host = config_center.get('futu.host')
         assert version is not None
         assert trading_mode is not None
         assert futu_host is not None
@@ -356,11 +357,11 @@ def test_config():
     except Exception as e:
         print(f"   ❌ 配置键路径访问失败：{e}")
         results['tests'].append({'name': '配置键路径访问', 'status': 'fail', 'error': str(e)})
-    
+
     # 测试 4: 日志配置验证
     print("\n4. 测试日志配置验证...")
     try:
-        logging_config = config_manager.get('logging')
+        logging_config = config_center.get('logging')
         assert logging_config is not None
         assert 'level' in logging_config
         assert 'max_size_mb' in logging_config
@@ -369,11 +370,11 @@ def test_config():
     except Exception as e:
         print(f"   ❌ 日志配置验证失败：{e}")
         results['tests'].append({'name': '日志配置验证', 'status': 'fail', 'error': str(e)})
-    
+
     # 测试 5: 监控配置验证
     print("\n5. 测试监控配置验证...")
     try:
-        monitoring_config = config_manager.get('monitoring')
+        monitoring_config = config_center.get('monitoring')
         assert monitoring_config is not None
         assert 'metrics' in monitoring_config
         assert 'alerts' in monitoring_config

@@ -26,11 +26,11 @@ from typing import Dict, List, Any
 CORE_SCENARIO_ROUTING: Dict[str, Dict[str, Any]] = {
     # --- 1. 强趋势场景 ---
     "TREND_STRONG": {
-        "primary": ["supertrend", "confluence_v2"],
+        "primary": ["confluence_v2"],  # supertrend 已移除 (2026-04-09)，其因子已包含在 confluence_v2 中
         "secondary": ["enhanced_confluence", "macd"],
         "suppressed": ["rsi", "bollinger"],
         "risk_template": "trend_following",
-        "priority_boost": {"supertrend": 1.5, "confluence_v2": 1.3},
+        "priority_boost": {"confluence_v2": 1.3},
         "description": "ADX > 30, 明确趋势方向",
     },
 
@@ -38,7 +38,7 @@ CORE_SCENARIO_ROUTING: Dict[str, Dict[str, Any]] = {
     "RANGE_BOUND": {
         "primary": ["rsi", "bollinger"],
         "secondary": ["confluence_v2", "open_close_effect"],
-        "suppressed": ["supertrend", "turtle"],
+        "suppressed": ["turtle"],  # supertrend 已移除 (2026-04-09)
         "risk_template": "mean_reversion",
         "priority_boost": {"rsi": 1.5, "bollinger": 1.5},
         "description": "ADX < 20, 价格区间震荡",
@@ -98,7 +98,7 @@ CORE_SCENARIO_ROUTING: Dict[str, Dict[str, Any]] = {
     "TREND_EXHAUST": {
         "primary": ["rsi_divergence", "123_rule"],
         "secondary": ["confluence_v2"],
-        "suppressed": ["turtle", "supertrend"],
+        "suppressed": ["turtle"],  # supertrend 已移除 (2026-04-09)
         "risk_template": "trend_exit",
         "priority_boost": {"rsi_divergence": 1.5},
         "description": "ADX > 40, 动量背离",
@@ -117,7 +117,7 @@ CORE_SCENARIO_ROUTING: Dict[str, Dict[str, Any]] = {
     # --- 10. 突破预备场景 (Phase 2 新增) ---
     "BREAKOUT_SETUP": {
         "primary": ["volatility_breakout", "123_rule"],
-        "secondary": ["confluence_v2", "supertrend"],
+        "secondary": ["confluence_v2"],  # supertrend 已移除 (2026-04-09)
         "suppressed": ["mean_reversion_strategies"],
         "risk_template": "breakout_prepare",
         "priority_boost": {"volatility_breakout": 1.5},
@@ -174,7 +174,7 @@ def get_scenario_config(scenario_name: str) -> Dict[str, Any]:
         scenario_name,
         {
             "primary": ["confluence_v2"],
-            "secondary": ["supertrend", "rsi"],
+            "secondary": ["confluence_v2", "rsi"],  # supertrend 已移除 (2026-04-09)
             "suppressed": [],
             "risk_template": "default",
             "priority_boost": {},

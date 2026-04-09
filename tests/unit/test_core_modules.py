@@ -1,11 +1,11 @@
 """
-FTSeek V4 Core Module Tests
+FTSeek Core Module Tests
 
 测试所有核心模块：
 - StateManager
 - DecisionLog
 - SessionContext
-- ConfigManager
+- ConfigContainer
 - VersionManager
 """
 
@@ -21,7 +21,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 from app.core.state_manager import StateManager
 from app.core.decision_log import DecisionLog, DecisionType
 from app.core.session_context import SessionContext
-from app.core.config_manager import ConfigManager
+from app.core.config_container import ConfigContainer
 from app.core.version_manager import VersionManager
 
 
@@ -169,32 +169,27 @@ class TestSessionContext:
         assert len(sessions) >= 2
 
 
-class TestConfigManager:
-    """测试 ConfigManager"""
-    
-    def setup_method(self):
-        self.test_dir = tempfile.mkdtemp()
-        self.test_file = os.path.join(self.test_dir, 'test_config.yaml')
-        self.config = ConfigManager(self.test_file)
-    
-    def teardown_method(self):
-        if os.path.exists(self.test_dir):
-            shutil.rmtree(self.test_dir)
-    
-    def test_config_get_set(self):
-        """测试配置读写"""
-        self.config.set('test.key', 'value')
-        assert self.config.get('test.key') == 'value'
-    
-    def test_config_reload(self):
-        """测试热重载"""
-        self.config.set('test.key', 'value')
-        self.config.save()
-        assert self.config.reload()
-    
-    def test_config_validate(self):
-        """测试配置验证"""
-        assert self.config.validate()
+class TestConfigContainer:
+    """测试 ConfigContainer"""
+
+    def test_config_container_init(self):
+        """测试 ConfigContainer 初始化"""
+        config = ConfigContainer()
+        assert config.paths is not None
+        assert config.opend is not None
+
+    def test_config_container_get(self):
+        """测试从配置中心获取配置"""
+        config = ConfigContainer()
+        # 测试从 config.yaml 获取配置
+        mode = config.get('trading.mode')
+        assert mode is not None
+
+    def test_config_container_paths(self):
+        """测试路径配置"""
+        config = ConfigContainer()
+        assert config.paths.data_dir is not None
+        assert config.paths.log_dir is not None
 
 
 class TestVersionManager:

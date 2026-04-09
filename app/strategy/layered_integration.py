@@ -291,11 +291,22 @@ class LayeredStrategyManager:
         """
         获取多周期 K 线数据
 
-        实际应从 DataSubscriber 的缓存中获取
-        这里简化实现，从缓存读取
+        从 DataSubscriber 注入的 K 线缓存中获取（2026-04-09 优化）
+        缓存结构: {code: {k_type: IndicatorBuffer}}
         """
-        # 简化实现：从缓存获取
-        return self._kline_cache.get(code, {})
+        kline_cache = self._kline_cache.get(code, {})
+        result = {}
+        # 将 IndicatorBuffer 转换为 List 格式供技术增强层使用
+        for k_type, buf in kline_cache.items():
+            try:
+                if hasattr(buf, 'close') and buf.size > 0:
+                    # 将缓冲区数据转为简单列表格式
+                    result[k_type] = [{
+                        'close': c, 'high': h, 'low': l,
+                    } for c, h, l in zip(buf.close, buf.high, buf.low)]
+            except Exception:
+                pass
+        return result
 
     def update_kline_cache(self, code: str, kline_type: str, kline: Dict):
         """

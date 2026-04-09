@@ -131,8 +131,7 @@ class ConfigCenter:
     # 配置文件加载顺序 (优先级从低到高)
     # 后面的配置文件会覆盖前面的配置
     CONFIG_FILES = [
-        "unified_config.yaml",      # 旧版主配置 (基础)
-        "config.yaml",              # 统一配置文件 (v2.0 - 最高优先级)
+        "config.yaml",              # 统一配置文件 (v2.0 - 主配置)
         "alert_rules.yaml",         # 告警规则
         "trading_rules_20260402.yaml",  # 交易规则
     ]

@@ -357,13 +357,17 @@ class DecisionBuffer:
             
         except Exception as e:
             logger.warning(f"[决策缓冲] 持仓状态检查异常: {e}")
-            # 检查异常不应阻断信号，返回 None 让后续流程处理
+            # 安全第一：持仓状态无法确认时，拒绝信号，避免超出持仓上限
+            return f"持仓状态检查异常，安全拒绝: {e}"
         
         return None
     
     def _check_duplicate(self, record: DecisionRecord) -> Optional[str]:
         """
-        信号去重检查
+        信号去重检查（2026-04-09 优化：冷却期已移至风控Pipeline）
+        
+        此处只做"极短时间内（10s）同标的同策略同方向"去重，
+        冷却期（120s）由 Pipeline 的 CooldownCheck 统一管理。
         
         Returns:
             拒绝原因 或 None
@@ -375,15 +379,15 @@ class DecisionBuffer:
             if code in self._signal_cooldowns:
                 last_action, last_ts = self._signal_cooldowns[code]
                 
-                # 同标的同方向，检查冷却期
+                # 同标的同方向，10秒内视为重复（防止极短时间重复信号）
                 if last_action == action:
                     elapsed = time.time() - last_ts
-                    if elapsed < self.signal_cooldown:
-                        remaining = self.signal_cooldown - elapsed
+                    if elapsed < 10:  # 从 120s 改为 10s，只防极短时间重复
+                        remaining = 10 - elapsed
                         return (
-                            f"信号冷却中: {code} {action} | "
+                            f"极短时间重复信号: {code} {action} | "
                             f"上次触发={elapsed:.0f}秒前 | "
-                            f"剩余冷却={remaining:.0f}秒"
+                            f"剩余={remaining:.0f}秒"
                         )
         
         return None

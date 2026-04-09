@@ -20,10 +20,10 @@ from .tech_enhancer import EnhancedConfluenceStrategy  # 新增：增强融合�
 # 策略注册表：name -> class
 # 优化于 2026-03-27: 去冗余，精简策略组合
 # 更新于 2026-04-09: 新增三层策略架构 (事件驱动/跨市场套利/技术增强)
+# 更新于 2026-04-09: 修复双重投票问题 - supertrend 移至禁用（已包含在 confluence_v2 中）
 #
 # 启用的策略 (推荐组合):
 #   - confluence_v2: 主力融合策略 (RSI+MACD+BB+SuperTrend+MA+Volume)
-#   - supertrend: 趋势跟踪主力
 #   - sentiment_ai: AI 情绪辅助
 #   - open_close_effect: 开盘/收盘效应 (增强信号频率)
 #   - event_driven: 事件驱动 (突发新闻→LLM 分析→高优先级信号)
@@ -32,6 +32,7 @@ from .tech_enhancer import EnhancedConfluenceStrategy  # 新增：增强融合�
 #
 # 禁用的策略 (原因):
 #   - rsi, macd, bollinger: 已包含在 confluence_v2 中，避免双重投票
+#   - supertrend: 已包含在 confluence_v2 中，避免双重投票 (2026-04-09 修复)
 #   - confluence (V1): 被 confluence_v2 替代
 #   - price_break: 信号频率不匹配
 #   - ma_cross, volume_alert: 非核心策略
@@ -39,20 +40,20 @@ from .tech_enhancer import EnhancedConfluenceStrategy  # 新增：增强融合�
 STRATEGY_REGISTRY = {
     # === 启用策略 ===
     "confluence_v2": ConfluenceStrategyV2,  # 主力：多因子融合 + 市场状态感知
-    "supertrend": SuperTrendStrategy,        # 趋势：趋势跟踪
     "sentiment_ai": SentimentStrategy,       # 情绪：AI 辅助确认
     "open_close_effect": OpenCloseEffectStrategy,  # 开盘/收盘效应
     "event_driven": EventDrivenStrategy,     # 事件驱动：突发新闻分析
     "cross_market_arbitrage": CrossMarketArbitrage,  # 跨市场：美港股套利
     "enhanced_confluence": EnhancedConfluenceStrategy,  # 技术增强：多周期共振 + 积小胜
     # === 禁用策略 (保留类定义，但不在注册表中) ===
-    # "price_break": PriceBreakStrategy,      # 禁用：信号频率不匹配
-    # "ma_cross": MACrossStrategy,            # 禁用：非核心
-    # "volume_alert": VolumeAlertStrategy,    # 禁用：非核心
-    # "rsi": RSIStrategy,                     # 禁用：已包含在 confluence_v2
-    # "macd": MACDStrategy,                   # 禁用：已包含在 confluence_v2
-    # "bollinger": BollingerStrategy,         # 禁用：已包含在 confluence_v2
-    # "confluence": ConfluenceStrategy,       # 禁用：被 confluence_v2 替代
+    # "supertrend": SuperTrendStrategy,     # 禁用：已包含在 confluence_v2 (2026-04-09)
+    # "price_break": PriceBreakStrategy,    # 禁用：信号频率不匹配
+    # "ma_cross": MACrossStrategy,          # 禁用：非核心
+    # "volume_alert": VolumeAlertStrategy,  # 禁用：非核心
+    # "rsi": RSIStrategy,                   # 禁用：已包含在 confluence_v2
+    # "macd": MACDStrategy,                 # 禁用：已包含在 confluence_v2
+    # "bollinger": BollingerStrategy,       # 禁用：已包含在 confluence_v2
+    # "confluence": ConfluenceStrategy,     # 禁用：被 confluence_v2 替代
 }
 
 # 延迟加载 fusion_v2

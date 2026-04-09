@@ -40,6 +40,10 @@ from app.strategy.base import Signal, SignalAction
 logger = logging.getLogger("ftseek.consensus")
 logger.propagate = False  # 防止日志重复
 
+# 混合架构开关
+HYBRID_WEIGHT_ENABLED = True  # 启用混合权重架构
+WEIGHT_ENGINE_PATH = "/opt/ftseek/FTSeek/strategies/weight_engine.py"
+
 
 # ============================================================
 #  信号质量记录结构（增强版）
@@ -125,9 +129,9 @@ class Vote:
     timestamp: float = field(default_factory=time.time)
 
 
-@dataclass
+@dataclass(frozen=True)
 class ConsensusResult:
-    """加权共识结果"""
+    """加权共识结果（frozen - 并发安全，禁止字段重赋值）"""
     code: str
     action: SignalAction
     price: float
@@ -136,13 +140,27 @@ class ConsensusResult:
     market_regime: str         # "trending" / "ranging" / "neutral"
     scenario: str                  # 场景标签 (Phase 1 新增)
     adx_value: Optional[float]
-    agree_strategies: List[str]       # 同向策略
-    oppose_strategies: List[str]      # 反向策略
-    weight_details: Dict[str, float]  # {策略: 实际权重}
-    reasons: List[str]
-    votes: List[Vote]
+    agree_strategies: Tuple[str, ...]       # 同向策略
+    oppose_strategies: Tuple[str, ...]      # 反向策略
+    weight_details: Dict[str, float]        # {策略: 实际权重}
+    reasons: Tuple[str, ...]
+    votes: Tuple[Vote, ...]
     confidence: float = 0.0    # 置信度 (0-1, 用于风控检查)
     trace_id: str = ""         # 【新增 2026-04-02】决策链路追踪ID
+
+    def __post_init__(self):
+        """frozen dataclass 深度不可变：List→Tuple, Dict→MappingProxyType"""
+        from types import MappingProxyType
+        if not isinstance(self.agree_strategies, tuple):
+            object.__setattr__(self, 'agree_strategies', tuple(self.agree_strategies))
+        if not isinstance(self.oppose_strategies, tuple):
+            object.__setattr__(self, 'oppose_strategies', tuple(self.oppose_strategies))
+        if not isinstance(self.reasons, tuple):
+            object.__setattr__(self, 'reasons', tuple(self.reasons))
+        if not isinstance(self.votes, tuple):
+            object.__setattr__(self, 'votes', tuple(self.votes))
+        if not isinstance(self.weight_details, MappingProxyType):
+            object.__setattr__(self, 'weight_details', MappingProxyType(self.weight_details))
 
 
 class ConsensusEngine:
@@ -211,6 +229,17 @@ class ConsensusEngine:
         # code -> ScenarioType 场景缓存（由 DataSubscriber 注入）
         self._scenario_cache: Dict[str, Any] = {}
 
+        # 混合架构集成：WeightEngine（2026-04-09）
+        self._weight_engine = None
+        if HYBRID_WEIGHT_ENABLED:
+            try:
+                # 延迟初始化 WeightEngine
+                self._init_weight_engine()
+                logger.info("[混合权重] WeightEngine 已启用")
+            except Exception as e:
+                logger.warning(f"[混合权重] WeightEngine 初始化失败：{e}")
+                self._weight_engine = None
+
         logger.info(
             f"加权共识引擎初始化: 窗口={self.window}s, 阈值={self.threshold}, "
             f"最少策略={self.min_strategies}, ADX趋势>{self.adx_trend}, ADX震荡<{self.adx_range}, "
@@ -255,6 +284,236 @@ class ConsensusEngine:
         """
         self._scenario_router = router
         logger.info("[场景路由] 场景路由器已设置")
+
+    def _init_weight_engine(self):
+        """
+        初始化 WeightEngine（混合架构集成，2026-04-09）
+
+        WeightEngine 负责：
+        1. 新闻权重计算 (0-40%)
+        2. 港股美股跟随权重 (0-35%)
+        3. 技术指标权重 (25-100%)
+        """
+        try:
+            import importlib.util
+            spec = importlib.util.spec_from_file_location(
+                "weight_engine",
+                WEIGHT_ENGINE_PATH
+            )
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+
+            # 实例化 WeightEngine
+            self._weight_engine = module.WeightEngine()
+            logger.debug("[混合权重] WeightEngine 初始化成功")
+        except Exception as e:
+            logger.warning(f"[混合权重] WeightEngine 初始化失败：{e}")
+            self._weight_engine = None
+
+    def _get_hybrid_weight(
+        self,
+        strategy: str,
+        regime: str,
+        code: str = None
+    ) -> Tuple[float, Dict[str, Any]]:
+        """
+        混合权重计算（2026-04-09 新增）
+
+        整合 WeightCalculator 和 WeightEngine:
+        - WeightCalculator: 基于策略胜率/市场状态的权重
+        - WeightEngine: 基于新闻因子/HK-US 相关性的权重调整
+
+        Args:
+            strategy: 策略名称
+            regime: 市场状态 ("trending" / "ranging" / "neutral")
+            code: 股票代码
+
+        Returns:
+            Tuple[float, Dict]: (最终权重，权重详情)
+        """
+        weight_details = {
+            'base_weight': 0.0,
+            'market_adjustment': 1.0,
+            'scenario_weight': 1.0,
+            'news_multiplier': 1.0,
+            'hybrid_adjustment': 1.0,
+        }
+
+        # 1. 基础权重（来自 base_weights）
+        base = self.base_weights.get(strategy, 0.5)
+        weight_details['base_weight'] = base
+
+        # 2. 市场状态调整
+        market_adjustment = 1.0
+        if regime == "trending":
+            if strategy in TREND_STRATEGIES:
+                market_adjustment = TREND_BOOST
+            elif strategy in OSCILLATOR_STRATEGIES:
+                market_adjustment = TREND_DECAY
+            elif strategy in MTF_STRATEGIES:
+                market_adjustment = MTF_TREND_BOOST
+        elif regime == "ranging":
+            if strategy in OSCILLATOR_STRATEGIES:
+                market_adjustment = RANGE_BOOST
+            elif strategy in TREND_STRATEGIES:
+                market_adjustment = RANGE_DECAY
+            elif strategy in MTF_STRATEGIES:
+                market_adjustment = MTF_RANGE_DECAY
+
+        weight_details['market_adjustment'] = market_adjustment
+
+        # 3. 场景权重（Phase 1）
+        scenario_weight = 1.0
+        if code and self._scenario_router is not None:
+            try:
+                current_scenario = self._scenario_cache.get(code)
+                if current_scenario:
+                    route_result = self._scenario_router.route(current_scenario)
+                    scenario_weight = route_result.active_strategies.get(strategy, 1.0)
+                    logger.debug(
+                        f"[场景权重] {code} {current_scenario.value} {strategy} "
+                        f"权重={scenario_weight:.2f}"
+                    )
+            except Exception as _e:
+                logger.debug(f"[场景权重] {code} {strategy} 计算异常：{_e}")
+
+        weight_details['scenario_weight'] = scenario_weight
+
+        # 4. 突发新闻权重倍增（情绪策略）
+        news_multiplier = 1.0
+        if strategy in SENTIMENT_STRATEGIES and code:
+            has_breaking = self._check_breaking_news(code)
+            if has_breaking:
+                news_multiplier = BREAKING_NEWS_MULTIPLIER
+                logger.info(
+                    f"[突发新闻权重] {code} {strategy} 权重倍增 ×{BREAKING_NEWS_MULTIPLIER:.1f}"
+                )
+
+        weight_details['news_multiplier'] = news_multiplier
+
+        # 5. 混合架构调整：WeightEngine 因子调整（2026-04-09）
+        hybrid_adjustment = 1.0
+        if HYBRID_WEIGHT_ENABLED and self._weight_engine is not None and code:
+            try:
+                # 从 WeightEngine 获取新闻因子和 HK/US 因子
+                # 注意：这里使用简化的同步调用，实际可能需要异步
+                news_factor = self._get_news_factor(code)
+                hk_us_factor = self._get_hk_us_factor(code)
+
+                # 根据新闻重要性调整权重
+                if news_factor:
+                    if news_factor.get('importance') == 'major':
+                        # 重大新闻：提高所有策略权重 20%
+                        hybrid_adjustment *= 1.2
+                        logger.debug(f"[混合权重] {code} 重大新闻 → +20%")
+                    elif news_factor.get('importance') == 'normal':
+                        # 一般新闻：提高 10%
+                        hybrid_adjustment *= 1.1
+                        logger.debug(f"[混合权重] {code} 一般新闻 → +10%")
+
+                # 根据 HK/US 相关性调整权重
+                if hk_us_factor and hk_us_factor.get('enabled'):
+                    correlation = hk_us_factor.get('correlation', 0)
+                    if correlation >= 0.8:
+                        # 高相关性：提高权重 15%
+                        hybrid_adjustment *= 1.15
+                        logger.debug(f"[混合权重] {code} 高相关性 (corr={correlation:.2f}) → +15%")
+                    elif correlation >= 0.6:
+                        # 中相关性：提高权重 5%
+                        hybrid_adjustment *= 1.05
+                        logger.debug(f"[混合权重] {code} 中相关性 (corr={correlation:.2f}) → +5%")
+
+            except Exception as e:
+                logger.debug(f"[混合权重] {code} {strategy} 计算异常：{e}")
+
+        weight_details['hybrid_adjustment'] = hybrid_adjustment
+
+        # 计算最终权重
+        final_weight = (
+            base
+            * market_adjustment
+            * scenario_weight
+            * news_multiplier
+            * hybrid_adjustment
+        )
+
+        logger.debug(
+            f"[混合权重] {code} {strategy}: "
+            f"{base:.2f} × {market_adjustment:.2f} × {scenario_weight:.2f} × "
+            f"{news_multiplier:.2f} × {hybrid_adjustment:.2f} = {final_weight:.2f}"
+        )
+
+        return final_weight, weight_details
+
+    def _get_news_factor(self, code: str) -> Optional[Dict]:
+        """
+        获取新闻因子（WeightEngine 集成）
+
+        Args:
+            code: 股票代码
+
+        Returns:
+            Optional[Dict]: 新闻因子详情
+        """
+        if not self._weight_engine:
+            return None
+
+        try:
+            # 异步调用 WeightEngine
+            import asyncio
+            loop = asyncio.get_event_loop()
+            news_agg = loop.run_until_complete(
+                self._weight_engine.news_monitor.get_aggregation(code)
+            )
+
+            news_items = [n.to_dict() for n in news_agg.news_items]
+            sources = list(set(n.source for n in news_agg.news_items))
+
+            # 计算新闻权重和因子
+            weight, news_factor = self._weight_engine.calculate_news_weight(news_items, sources)
+
+            return {
+                'news_count': news_factor.news_count,
+                'major_news_count': news_factor.major_news_count,
+                'importance': news_factor.importance.value if hasattr(news_factor.importance, 'value') else news_factor.importance,
+                'sentiment': news_factor.sentiment,
+                'confidence': news_factor.confidence,
+            }
+        except Exception as e:
+            logger.debug(f"[新闻因子] {code} 获取失败：{e}")
+            return None
+
+    def _get_hk_us_factor(self, code: str) -> Optional[Dict]:
+        """
+        获取港股美股因子（WeightEngine 集成）
+
+        Args:
+            code: 港股股票代码
+
+        Returns:
+            Optional[Dict]: HK/US 因子详情
+        """
+        if not self._weight_engine:
+            return None
+
+        try:
+            # 获取 HK/US 配对
+            pair = self._weight_engine.get_hk_us_pair(code)
+            if not pair:
+                return None
+
+            us_stock = pair['us_stock']
+            correlation = self._weight_engine.calculate_correlation(code, us_stock)
+
+            return {
+                'hk_stock': code,
+                'us_stock': us_stock,
+                'correlation': correlation,
+                'enabled': correlation >= self._weight_engine.config.correlation_threshold,
+            }
+        except Exception as e:
+            logger.debug(f"[HK/US 因子] {code} 获取失败：{e}")
+            return None
 
     def update_mtf_alignment(self, code: str, buy_score: float, sell_score: float):
         """
@@ -373,8 +632,27 @@ class ConsensusEngine:
             return "ranging", adx_val
         return "neutral", adx_val
 
-    def _calc_weight(self, strategy: str, regime: str, code: str = None) -> float:
-        """计算某策略在当前市场状态下的实际权重（支持突发新闻权重倍增 + 场景路由）"""
+    def _calc_weight(self, strategy: str, regime: str, code: str = None) -> Tuple[float, Dict]:
+        """
+        计算某策略在当前市场状态下的实际权重（混合架构，2026-04-09）
+
+        整合 WeightCalculator 和 WeightEngine:
+        - WeightCalculator: 基于策略胜率/市场状态的权重
+        - WeightEngine: 基于新闻因子/HK-US 相关性的权重调整
+
+        Args:
+            strategy: 策略名称
+            regime: 市场状态 ("trending" / "ranging" / "neutral")
+            code: 股票代码
+
+        Returns:
+            Tuple[float, Dict]: (最终权重，权重详情)
+        """
+        # 使用混合权重计算（如果启用）
+        if HYBRID_WEIGHT_ENABLED and self._weight_engine is not None:
+            return self._get_hybrid_weight(strategy, regime, code)
+
+        # 降级到原有逻辑（兼容模式）
         base = self.base_weights.get(strategy, 0.5)
 
         # ============================================================
@@ -429,7 +707,17 @@ class ConsensusEngine:
 
         # 最终权重 = 基准 × 市场调整 × 场景权重 × 新闻倍增
         final_weight = base * market_adjustment * scenario_weight * news_multiplier
-        return final_weight
+
+        # 返回兼容格式
+        weight_details = {
+            'base_weight': base,
+            'market_adjustment': market_adjustment,
+            'scenario_weight': scenario_weight,
+            'news_multiplier': news_multiplier,
+            'hybrid_adjustment': 1.0,
+        }
+
+        return final_weight, weight_details
     
     def _get_capital_flow_sentiment(self, code: str) -> float:
         """
@@ -508,8 +796,8 @@ class ConsensusEngine:
 
         except Exception as e:
             logger.debug(f"[突发新闻检测] {code} 检查失败：{e}")
-            # 检测失败时，假设有突发新闻（宁可错杀，不可放过）
-            return True
+            # 安全策略：检测失败时不假设有突发新闻，避免误增权重
+            return False
 
     # ----------------------------------------------------------
     #  投票
@@ -595,7 +883,7 @@ class ConsensusEngine:
         bearish_votes = []
 
         for v in unique_votes:
-            w = self._calc_weight(v.strategy, regime, code)
+            w, w_details = self._calc_weight(v.strategy, regime, code)
             weight_details[v.strategy] = round(w, 2)
 
             if v.action == SignalAction.BUY:
@@ -782,10 +1070,14 @@ class ConsensusEngine:
             )
 
         if result:
-            # -------------------------------------------------------
-            # 多周期对齐验证（Task1 新增）
-            # 短期信号方向与日线趋势反向时，置信度降权 50%
-            # -------------------------------------------------------
+            # ============================================================
+            # 置信度调整器 - 统一管理（2026-04-09 新增）
+            # 用加法替代乘法，避免指数衰减
+            # ============================================================
+            from app.strategy.confidence_adjuster import ConfidenceAdjuster
+            adjuster = ConfidenceAdjuster(result.confidence)
+            
+            # 多周期反向降权
             daily_trend = self._daily_trend_cache.get(code, "neutral")
             if daily_trend != "neutral":
                 is_counter_trend = (
@@ -793,45 +1085,54 @@ class ConsensusEngine:
                     (result.action == SignalAction.SELL and daily_trend == "up")
                 )
                 if is_counter_trend:
-                    penalized_conf = round(result.confidence * 0.5, 2)
-                    result = dataclasses.replace(result, confidence=penalized_conf)
-                    logger.info(
-                        f"[多周期] {code} 短期 {result.action.value} 与日线 {daily_trend} 反向，"
-                        f"置信度降权 → {penalized_conf}"
+                    adjuster.apply_preset(
+                        "counter_trend",
+                        f"短期 {result.action.value} 与日线 {daily_trend} 反向"
                     )
 
-            # -------------------------------------------------------
-            # 同方向重复信号去重（Task1 新增）
-            # 若当前方向与上一次相同且间隔 < 300s，视为重复，置信度 × 0.5
-            # -------------------------------------------------------
+            # 同方向重复信号降权
             action_str = result.action.value
             last_action_info = self._last_signal_action.get(code)
             if last_action_info:
                 last_action, last_ts = last_action_info
                 if last_action == action_str and (time.time() - last_ts) < 300:
-                    penalized_conf = round(result.confidence * 0.5, 2)
-                    result = dataclasses.replace(result, confidence=penalized_conf)
-                    logger.info(
-                        f"[去重] {code} 300s内同方向({action_str})重复信号，置信度降权 → {penalized_conf}"
+                    adjuster.apply_preset(
+                        "duplicate_signal",
+                        f"300s内同方向({action_str})重复信号"
                     )
             self._last_signal_action[code] = (action_str, time.time())
 
-            # -------------------------------------------------------
-            # 信号质量降权（Task1 新增）
-            # 历史胜率×盈亏比得出 quality_score，低质量直接拒绝
-            # -------------------------------------------------------
+            # 信号质量降权
             quality = self._quality_score.get(code, 1.0)
             if quality < 0.4:
                 logger.info(
                     f"[信号质量] {code} 质量分={quality:.2f} < 0.4，拒绝低质量信号"
                 )
                 return
-            if quality != 1.0:
-                # 用 quality 比例调整 score（不改变方向，只影响最终权重感知）
+            if quality < 0.5:
+                adjuster.apply_preset(
+                    "quality_very_low",
+                    f"质量分={quality:.2f}"
+                )
+            elif quality < 1.0:
+                # 用质量分比例调整 score（不改变方向，只影响最终权重感知）
                 adjusted_score = round(result.score * quality, 2)
                 result = dataclasses.replace(result, score=adjusted_score)
+                adjuster.apply_preset(
+                    "quality_low",
+                    f"质量分={quality:.2f}，分数调整 {result.score:.2f}→{adjusted_score:.2f}"
+                )
+
+            # 应用最终置信度
+            conf_result = adjuster.get_result()
+            result = dataclasses.replace(result, confidence=conf_result.final_confidence)
+            
+            # 记录审计日志
+            if conf_result.adjustments:
                 logger.info(
-                    f"[信号质量] {code} 质量分={quality:.2f}，分数调整 {result.score:.2f}→{adjusted_score:.2f}"
+                    f"[置信度调整] {code} raw={conf_result.raw_confidence:.3f} → "
+                    f"final={conf_result.final_confidence:.3f} | "
+                    f"调整: {', '.join(f'{a.name}({a.value:+.3f})' for a in conf_result.adjustments)}"
                 )
 
             logger.info(
@@ -989,7 +1290,7 @@ class ConsensusEngine:
             "weights": {
                 s: {
                     "base": self.base_weights.get(s, 0.5),
-                    "adjusted": round(self._calc_weight(s, regime, code), 2),
+                    "adjusted": round(self._calc_weight(s, regime, code)[0], 2),
                     "type": "趋势" if s in TREND_STRATEGIES
                             else "震荡" if s in OSCILLATOR_STRATEGIES
                             else "综合" if s in HYBRID_STRATEGIES

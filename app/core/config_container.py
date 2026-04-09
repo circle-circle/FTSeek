@@ -5,20 +5,28 @@
 1. 替代分散在各模块的全局变量
 2. 提供依赖注入支持
 3. 添加访问控制和类型注解
-4. 支持配置热重载
+4. 与 ConfigCenter 集成 (config/config.yaml 为唯一配置源)
 
 使用示例:
     from app.core.config_container import ConfigContainer
-    
+
     config = ConfigContainer()
     paths = config.paths
     thresholds = config.risk.thresholds
+
+架构说明 (2026-04-09 收敛后):
+  - .env → 敏感环境变量
+  - config/config.yaml → 唯一配置源 (通过 ConfigCenter 加载)
+  - ConfigContainer → 依赖注入容器 (包装 ConfigCenter 提供点式访问)
 """
 import os
 import json
 from pathlib import Path
 from typing import Dict, List, Any, Optional
 from dataclasses import dataclass, field
+
+# 导入 ConfigCenter 作为配置数据源
+from config.config_center import get_config_center
 
 
 # ============================================================
@@ -517,6 +525,21 @@ class ConfigContainer:
         
         # 缓存已加载的配置路径
         self._loaded_paths: set = set()
+
+        # 配置中心 (2026-04-09 收敛后的唯一配置源)
+        self._config_center = None
+
+    def _get_config_center(self):
+        """延迟加载配置中心"""
+        if self._config_center is None:
+            from config.config_center import get_config_center
+            self._config_center = get_config_center()
+        return self._config_center
+
+    def get(self, key: str, default: Any = None) -> Any:
+        """从配置中心获取配置值"""
+        config_center = self._get_config_center()
+        return config_center.get(key, default)
     
     def get_path(self, name: str) -> Path:
         """

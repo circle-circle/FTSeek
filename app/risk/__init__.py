@@ -2,6 +2,8 @@
 风险管理模块 - FTSeek v3.0
 
 提供五层风控检查、仓位管理、止损策略、实时监控功能
+
+重构于 2026-04-09: 删除冗余文件 (checkers.py, metrics.py, execution.py, dynamic_exit_refactored.py, risk_monitor.py)
 """
 from .risk_manager import (
     RiskManager,
@@ -13,38 +15,7 @@ from .risk_manager import (
     risk_manager,
 )
 from .realtime_monitor import init_realtime_monitor
-from .checkers import (
-    RiskCheckEngine,
-    PositionChecker,
-    TradeLimitChecker,
-    DrawdownChecker,
-    ConsecutiveLossChecker,
-    ConfidenceChecker,
-    create_check_engine,
-)
-from .metrics import (
-    RiskConfig as NewRiskConfig,
-    RiskLimit as NewRiskLimit,
-    RiskMetrics as NewRiskMetrics,
-    CheckResult as NewCheckResult,
-    RiskCheckResult,
-    StopLossType,
-    create_risk_config,
-    create_risk_metrics,
-    create_risk_limits,
-)
-from .execution import (
-    StopLossExecutor,
-    TakeProfitExecutor,
-    BreakevenExecutor,
-    PositionSizer,
-    EmergencyLiquidator,
-    create_stop_loss_executor,
-    create_take_profit_executor,
-    create_breakeven_executor,
-    create_position_sizer,
-    create_emergency_liquidator,
-)
+
 # Phase 3: 波动率监控器
 from .vix_monitor import (
     VIXMonitor,
@@ -58,7 +29,7 @@ from .risk_state import (
 )
 
 __all__ = [
-    # 原有导出 (向后兼容)
+    # 核心风控
     "RiskManager",
     "RiskConfig",
     "RiskLimit",
@@ -66,34 +37,10 @@ __all__ = [
     "CheckResult",
     "get_risk_manager",
     "risk_manager",
+
+    # 实时监控
     "init_realtime_monitor",
-    # 新模块导出
-    "RiskCheckEngine",
-    "PositionChecker",
-    "TradeLimitChecker",
-    "DrawdownChecker",
-    "ConsecutiveLossChecker",
-    "ConfidenceChecker",
-    "create_check_engine",
-    "NewRiskConfig",
-    "NewRiskLimit",
-    "NewRiskMetrics",
-    "NewCheckResult",
-    "RiskCheckResult",
-    "StopLossType",
-    "create_risk_config",
-    "create_risk_metrics",
-    "create_risk_limits",
-    "StopLossExecutor",
-    "TakeProfitExecutor",
-    "BreakevenExecutor",
-    "PositionSizer",
-    "EmergencyLiquidator",
-    "create_stop_loss_executor",
-    "create_take_profit_executor",
-    "create_breakeven_executor",
-    "create_position_sizer",
-    "create_emergency_liquidator",
+
     # Phase 3 新增
     "VIXMonitor",
     "VolatilityState",
