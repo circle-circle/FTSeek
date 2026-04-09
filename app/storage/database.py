@@ -367,6 +367,19 @@ class Database:
                 else:
                     logger.warning(f"数据库迁移失败：{e}")
 
+            # Phase 3 迁移：添加 confidence 和 mtf_alignment 列
+            try:
+                cursor.execute("""
+                    ALTER TABLE signal_outcomes
+                    ADD COLUMN confidence REAL DEFAULT 0.5
+                """)
+                logger.info("数据库迁移：signal_outcomes 表已添加 confidence 列")
+            except sqlite3.OperationalError as e:
+                if "duplicate column" in str(e).lower():
+                    logger.debug("数据库迁移：confidence 列已存在，跳过")
+                else:
+                    logger.warning(f"数据库迁移失败：{e}")
+
             logger.info("数据库表结构初始化完成")
     
     # ==================== 信号操作 ====================
