@@ -623,31 +623,10 @@ async def update_strategy_api(request: Request):
 # 虽然之前分离为独立服务，但为了方便访问，重新添加路由
 # WebSocket 错误已修复，不会影响交易日志
 # ============================================================
-@app.get("/socratic-review/", include_in_schema=False)
-async def socratic_review_root():
-    """苏格拉底深度复盘 Dashboard"""
-    from pathlib import Path
-    from fastapi.responses import HTMLResponse
-    review_file = Path(__file__).parent / "simulation" / "socratic_review_dashboard.html"
-    if review_file.exists():
-        html_content = review_file.read_text(encoding="utf-8")
-        return HTMLResponse(html_content)
-    return HTMLResponse("<h1>苏格拉底复盘 Dashboard 加载中...</h1>", status_code=404)
-
-print("✅ 苏格拉底复盘路由已恢复 (/socratic-review/)")
-
-# 注册苏格拉底复盘 API 路由
-try:
-    from app.simulation.socratic_review_dashboard import router as socratic_router
-    app.include_router(socratic_router)
-    print("✅ 苏格拉底复盘 API 路由已注册")
-except Exception as e:
-    print(f"⚠️ 苏格拉底复盘 API 路由注册失败：{e}")
 
 
 # ============================================================
 #  Legacy Deep Review APIs Removed
-#  Migrated to: app/simulation/socratic_review_dashboard.py
 # ============================================================
 
 # ============================================================
