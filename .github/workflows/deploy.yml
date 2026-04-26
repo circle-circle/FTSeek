@@ -1,0 +1,86 @@
+# FTSeek CD Pipeline — Phase 2: 自动化部署
+# 触发：GitHub Release 创建 或 手动触发 (workflow_dispatch)
+# 流程：SSH 到服务器 → 运行 deploy.sh → 验证结果
+
+name: FTDeploy
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      project:
+        description: '部署项目'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - ftseek
+          - ftseek-us
+      skip_verify:
+        description: '跳过交易时段检查 (yes/no)'
+        required: false
+        default: 'no'
+        type: choice
+        options:
+          - no
+          - yes
+
+jobs:
+  deploy:
+    name: 部署到服务器
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: 设置部署参数
+        id: params
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "project=${{ github.event.inputs.project }}" >> $GITHUB_OUTPUT
+            echo "skip_verify=${{ github.event.inputs.skip_verify }}" >> $GITHUB_OUTPUT
+          else
+            echo "project=all" >> $GITHUB_OUTPUT
+            echo "skip_verify=no" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: 部署到服务器 (SSH)
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.SERVER_PORT || 22 }}
+          script: |
+            echo "=========================================="
+            echo "  FTSeek 自动化部署 (GitHub Actions)"
+            echo "  版本: ${{ github.ref_name }}"
+            echo "  项目: ${{ steps.params.outputs.project }}"
+            echo "=========================================="
+            
+            cd /opt/ftseek/FTSeek
+            
+            # 运行部署脚本
+            bash scripts/deploy.sh ${{ steps.params.outputs.project }} ${{ steps.params.outputs.skip_verify }}
+            
+            # 输出结果
+            echo ""
+            echo "=========================================="
+            echo "  部署完成"
+            echo "  当前版本: $(git log --oneline -1)"
+            echo "=========================================="
+            
+      - name: 部署结果通知
+        if: always()
+        run: |
+          echo "部署状态: ${{ job.status }}"
+          echo "版本: ${{ github.ref_name }}"
+          echo "项目: ${{ steps.params.outputs.project }}"
+          
+          # 如果部署失败，在 GitHub Actions 中标记失败
+          if [ "${{ job.status }}" = "failure" ]; then
+            echo "❌ 部署失败，请检查服务器日志"
+            exit 1
+          fi

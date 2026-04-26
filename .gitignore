@@ -22,10 +22,9 @@ logs/
 tmp_logs/
 
 # 数据库文件
-*.db
-*.sqlite
-*.sqlite3
 data/*.db
+data/*.db-shm
+data/*.db-wal
 data/*.sqlite
 
 # 运行时文件
@@ -96,3 +95,63 @@ credentials.json
 credentials.yaml
 service_account*.json
 oauth-*.json
+
+# ========================================
+# 运行时数据 (不应提交到仓库)
+# ========================================
+
+# 运行时 JSON 数据
+data/*.json
+data/*.lock
+!data/backtest_presets.json
+
+# 运行时目录
+data/sessions/
+data/signal_records/
+data/trade_records/
+data/trade_chains/
+data/earnings_cache/
+data/futu_flash/
+data/llm_scores/
+data/rsshub_multi_source/
+data/failure_stats/
+data/backups/
+data/reviews/
+data/daily_reviews/
+
+# 新闻缓存
+app/data/news_cache/
+
+# 部署配置
+config/backup_*/
+config/opend.service
+config/ftseek_crontab.txt
+
+# 根目录临时文件
+# 根目录报告文件 (通过下面单独列出)
+deep_scan.py
+deep_scan_results.json
+ftseek_info.txt
+ftseek_route.txt
+CLAUDE.md
+.hermes/
+
+# 脚本输出和临时文件
+scripts/deprecated/
+scripts/auto_audit/
+
+# 测试报告
+tests/test_reports/
+
+# 示例和演示
+examples/CROSS_MARKET_INTEGRATION_REPORT.md
+
+# 文档生成物 (保留 docs/ 目录下的)
+ARCHITECTURE_AUDIT_REPORT.md
+ATTRIBUTION_SYSTEM_REVIEW.md
+INTEGRATION_COMPLETE_REPORT.md
+P0_P1_FIX_REPORT.md
+PHASE1_README.md
+REVIEW_INTEGRATION_PLAN.md
+SYSTEM_INTEGRITY_REVIEW.md
+TRADE_EVIDENCE_CHAIN_REPORT.md
