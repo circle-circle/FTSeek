@@ -68,10 +68,10 @@ RSS_FEEDS = {
     # 主节点: rsshub.rssforever.com (经常超时)
     # 备用 1: rsshub.ktachibana.party
     # 备用 2: rss.shab.fun
-    "futu_flash": [
+    # futu_flash 已合并到 rsshub_multi_source_cron，此配置保留兼容但不使用
+    "rsshub_unified": [
         "https://rsshub.rssforever.com/futunn/live",
         "https://rsshub.ktachibana.party/futunn/live",
-        # "https://rss.shab.fun/futunn/live",  # ❌ 已失效 (DNS 解析失败)
     ],
 
     # 科技类 (默认关闭)
@@ -107,7 +107,7 @@ CATEGORY_ENABLED = {
     "macro": True,      # 宏观政策
     "hk_stocks": True,  # 港股专项 (开启)
     "hk_finance": False, # 港股财经 (禁用，源已失效)
-    "futu_flash": True, # 富途快讯 (开启) - 2026-04-12 新增
+    "futu_flash": False, # 富途快讯 (已合并到统一管线，禁用独立推送)
     "tech": False,      # 科技类 (默认不推送)
     "crypto": False,    # 加密货币 (默认不推送)
 }

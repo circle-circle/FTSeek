@@ -309,8 +309,8 @@ class FastTrackProcessor:
         初始化处理器
 
         Args:
-            dingtalk_webhook: 已废弃，优先使用全局 notifier
-            dingtalk_secret: 已废弃，优先使用全局 notifier
+            dingtalk_webhook: retained for backward compat, prefer global notifier
+            dingtalk_secret: retained for backward compat, prefer global notifier
             notifier: DingTalkNotifier 实例 (复用已有通知器)
         """
         # 2026-04-13 修复: 优先使用统一 notifier
@@ -324,8 +324,8 @@ class FastTrackProcessor:
                 logger.warning(f"获取全局 notifier 失败: {e}")
                 self.notifier = None
         
-        self.dingtalk_webhook = dingtalk_webhook  # 已废弃
-        self.dingtalk_secret = dingtalk_secret    # 已废弃
+        self.dingtalk_webhook = dingtalk_webhook  # retained for backward compat, not used
+        self.dingtalk_secret = dingtalk_secret    # retained for backward compat, not used
 
         # 推送限流
         self._last_push_time: Dict[str, datetime] = {}

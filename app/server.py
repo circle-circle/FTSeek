@@ -153,7 +153,7 @@ try:
 except Exception as e:
     logger.warning(f"实时风险监控 API 路由注册失败：{e}")
 
-# 注册专业量化指标 API 路由 (已废弃/暂未实现)
+# 注册专业量化指标 API 路由 (暂未实现)
 # try:
 #     from app.risk.metrics_api import router as metrics_router
 #     app.include_router(metrics_router, prefix="/api/risk")
@@ -489,7 +489,7 @@ async def health(token: str = Query(default=None)):
 async def news_event(news_data: dict):
     """
     P0 (2026-04-16): 新闻事件注入接口
-    供 futu_flash_cron 等外部采集器调用，将新闻注入事件驱动管线
+    供 rsshub_multi_source_cron 等外部采集器调用，将新闻注入事件驱动管线
     """
     news_list = news_data.get('news_list', [])
     if not news_list:

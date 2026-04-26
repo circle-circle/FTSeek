@@ -165,7 +165,7 @@ class RiskManager:
         初始化风控管理器
         
         Args:
-            config_path: 已废弃，配置从 config_center 读取
+            config_path: retained for backward compat, config loaded from config_center
             initial_capital: 初始资金 (可选，覆盖配置)
             risk_per_trade: 每笔交易风险 (可选)
             limits: 风险限制 (向后兼容，覆盖配置)
