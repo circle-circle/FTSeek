@@ -14,7 +14,8 @@ import logging
 import time
 from typing import Optional, Dict, List
 from datetime import datetime, timedelta
-from .base import BaseStrategy, Signal, SignalAction
+from app.strategy.base import BaseStrategy, Signal, SignalAction
+from app.strategy.consensus_types import SignalSource
 
 logger = logging.getLogger("ftseek.strategy.sentiment")
 logger.propagate = False  # 防止日志重复
@@ -166,16 +167,36 @@ class SentimentStrategy(BaseStrategy):
             return None
     
     def on_quote(self, code: str, quote: dict) -> Optional[Signal]:
-        """行情回调 - 检查情绪并生成信号"""
+        """
+        行情回调 - 仅使用缓存情绪数据，不触发 LLM 调用
+        
+        P0 修复 (2026-04-14): 之前在缓存未命中时调用 analyze_sentiment()
+        触发 LLM API 调用，导致 17 秒超时，阻塞线程池。
+        情绪分析应只在 on_kline (低频 K 线事件) 中触发。
+        """
         if not self.enabled:
+            return None
+        
+        # P0 修复: 只使用缓存，不触发新分析
+        cache_key = code
+        if cache_key in self._sentiment_cache:
+            cached_result, timestamp = self._sentiment_cache[cache_key]
+            if (datetime.now() - timestamp).total_seconds() < self._cache_ttl:
+                # 缓存有效，继续检查
+                pass
+            else:
+                # 缓存过期，不触发新分析，直接跳过
+                return None
+        else:
+            # 无缓存，不触发分析，直接跳过
             return None
         
         # 检查冷却
         if not self._is_cooled_down(code):
             return None
         
-        # 分析情绪
-        sentiment_result = self.analyze_sentiment(code)
+        # 使用缓存的情绪数据
+        sentiment_result = self._sentiment_cache[cache_key][0]
         if sentiment_result is None or sentiment_result.get('news_count', 0) == 0:
             return None
         
@@ -222,6 +243,7 @@ class SentimentStrategy(BaseStrategy):
             quantity=200,
             reason=reason,
             strategy=self.name,
+            source=SignalSource.EVENT,  # Phase 2: 标记为事件驱动
             extra={
                 'sentiment_score': score,
                 'weighted_score': score,

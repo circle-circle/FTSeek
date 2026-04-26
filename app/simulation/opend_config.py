@@ -6,7 +6,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Optional, Tuple
 
-OPEND_CONFIG_PATH = Path("/opt/ftseek/Futu_OpenD_10.1.6108_Centos7/Futu_OpenD_10.1.6108_Centos7/FutuOpenD.xml")
+OPEND_CONFIG_PATH = Path("/opt/ftseek/Futu_OpenD_10.3.6308_Centos7/Futu_OpenD_10.3.6308_Centos7/FutuOpenD.xml")
 
 def get_opend_config() -> Tuple[str, int, Optional[str], Optional[str]]:
     """

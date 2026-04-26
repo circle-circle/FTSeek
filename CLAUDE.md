@@ -27,7 +27,7 @@ python run_backtest.py        # Run backtest with custom config
 python scripts/exit_param_gradient_test.py  # Grid search for optimal stop-loss/take-profit
 
 # Quick checks
-curl http://localhost:8899/api/v2/health    # Health check
+curl http://localhost:8899/health    # Health check
 python scripts/risk_monitor.py --test       # Test risk monitor
 ```
 
@@ -100,15 +100,22 @@ DingTalk ← Signal Output ← Signal Store ← Confirmation Callback (FastAPI)
 ### Strategy Registry
 
 Strategies are registered in `app/strategy/__init__.py`:
-- `confluence_v2`: Primary multi-factor strategy
-- `supertrend`: Trend following
-- `sentiment_ai`: AI sentiment辅助
+- `confluence_v2`: Primary multi-factor strategy (含 supertrend 因子)
+- `enhanced_confluence`: 多周期共振
+- `event_driven`: 事件驱动 (LLM 分析)
+- `cross_market_arbitrage`: 跨市场套利
+- `open_close_effect`: 开盘/收盘效应
+- `sentiment_ai`: AI 情绪 (权重 0.5)
 
-### Risk Limits (configurable)
-- Max position per stock: 20%
-- Max total exposure: 80%
-- Max daily loss: 5%
-- Max drawdown: 15%
+> supertrend 已内嵌到 confluence_v2 因子中，不再独立注册
+
+### Risk Limits (configurable, config.yaml)
+- Max position per stock: 8%   (2026-04-18: 20%→8%)
+- Max total exposure: 75%
+- Max daily loss: 3%
+- Max drawdown: 12%
+- Max monthly loss: 15%        (2026-04-18 新增)
+- Min confidence: 0.55          (2026-04-18: 0.35→0.55)
 - Signal cooldown: 120s per stock
 
 ## Testing

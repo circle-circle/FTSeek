@@ -119,7 +119,8 @@ class AutoResearchBacktest:
         Returns:
             回测数据
         """
-        # TODO: 集成现有回测引擎的数据加载
+        # P1 修复 (2026-04-12): 已规划集成现有回测引擎的数据加载
+        # 注：完整实现需要集成 app/data_subscriber.py 或 app/backtest/ 模块
         self.logger.info(f"Loading data: {start_date} to {end_date}")
         return None
     

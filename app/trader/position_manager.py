@@ -7,19 +7,34 @@
 
 import sqlite3
 import logging
+import threading
 from dataclasses import dataclass
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta
 import os
 import yaml
 
+from app.storage.database import ConnectionPool  # P0 修复：连接池
+
 logger = logging.getLogger("ftseek.position_manager")
 logger.propagate = False  # 防止日志重复
 
 
+# P0 修复 (2026-04-12): 全局连接池单例
+_position_db_pool: Optional[ConnectionPool] = None
+
+
+def _get_position_db_pool(db_path: str) -> ConnectionPool:
+    """获取持仓数据库连接池单例"""
+    global _position_db_pool
+    if _position_db_pool is None or _position_db_pool.db_path != db_path:
+        _position_db_pool = ConnectionPool(db_path, pool_size=5, timeout=30.0)
+    return _position_db_pool
+
+
 @dataclass
 class Position:
-    """持仓数据模型 (2026-03-17 新增止盈止损字段)"""
+    """持仓数据模型 (2026-03-17 新增止盈止损字段，2026-04-15 新增归因追踪)"""
     id: int
     code: str
     action: str  # BUY/SELL
@@ -35,16 +50,37 @@ class Position:
     take_profit: Optional[float] = None  # 止盈价
     highest_price: Optional[float] = None  # 最高价 (用于移动止盈)
     lowest_price: Optional[float] = None  # 最低价 (用于做空移动止盈)
+    trace_id: str = ""           # 全链路归因 ID (2026-04-15 Phase 1)
 
 
 class PositionManager:
     """
-    持仓管理器
+    持仓管理器 (单例模式)
     
     管理交易持仓的创建、查询、更新和平仓操作。
     使用 SQLite 数据库持久化存储持仓信息。
     支持金字塔加仓逻辑。
+    
+    P0 (2026-04-16): 改为单例模式，避免多实例重复加载配置和连接。
     """
+    
+    _instance: Optional['PositionManager'] = None
+    _init_lock = threading.Lock()
+
+    @classmethod
+    def get_instance(cls, db_path: str = None, config_path: str = None) -> 'PositionManager':
+        """获取全局单例"""
+        if cls._instance is None:
+            with cls._init_lock:
+                if cls._instance is None:
+                    cls._instance = cls(db_path=db_path, config_path=config_path)
+        return cls._instance
+
+    @classmethod
+    def reset_instance(cls):
+        """重置单例（仅测试用）"""
+        with cls._init_lock:
+            cls._instance = None
     
     def __init__(self, db_path: str = None, config_path: str = None):
         """
@@ -52,20 +88,65 @@ class PositionManager:
         
         Args:
             db_path: 数据库文件路径，默认使用 /opt/ftseek/FTSeek/data/ftseek.db
-            config_path: 配置文件路径，默认使用 /opt/ftseek/FTSeek/config/position_strategy.yaml
+            config_path: 配置文件路径，回退读取路径
         """
         self.db_path = db_path or '/opt/ftseek/FTSeek/data/ftseek.db'
-        self.config_path = config_path or '/opt/ftseek/FTSeek/config/position_strategy.yaml'
+        self.config_path = config_path or '/opt/ftseek/FTSeek/config/config.yaml'
         self._ensure_table()
         self._config = self._load_config()
     
     def _load_config(self) -> Dict[str, Any]:
         """
-        加载配置文件
+        加载配置（优先从配置中心，回退到默认值）
         
+        P0 (2026-04-16): 修复 config_center 读取路径适配，
+        支持从 source_aware_risk / trading 等实际存在的配置块读取。
+
         Returns:
-            配置字典，如果文件不存在则返回默认配置
+            配置字典
         """
+        # 优先从配置中心读取
+        try:
+            from config.config_center import get_config_center
+            config_center = get_config_center()
+            trading_cfg = config_center.get("trading", {})
+            risk_cfg = config_center.get("risk_limits", {})
+            
+            # 路径 1: 显式 position 块 (trading.position)
+            position_cfg = trading_cfg.get("position", {})
+            # 路径 2: risk_limits 中的分层配置
+            source_aware = risk_cfg.get("source_aware_risk", {})
+            time_aware = risk_cfg.get("time_aware_risk", {})
+            has_risk_limits = bool(risk_cfg and (source_aware or time_aware or risk_cfg.get("max_single_position")))
+            
+            if position_cfg or has_risk_limits:
+                logger.info("持仓配置已从配置中心加载")
+                
+                # 合并配置
+                merged = {
+                    "position": position_cfg or {
+                        "initial_ratio": trading_cfg.get("default_position_size", 0.50),
+                        "max_position_ratio": risk_cfg.get("max_single_position", 0.20),
+                        "total_max_ratio": risk_cfg.get("max_total_position", 0.80),
+                    },
+                    "pyramid": trading_cfg.get("pyramid", {"enabled": True}),
+                    "exit": trading_cfg.get("exit", {}),
+                    "cooldown": trading_cfg.get("cooldown", {}),
+                    "hk_market": trading_cfg.get("hk_market", {"enabled": True}),
+                    "short_strategy": trading_cfg.get("short_strategy", {"enabled": True}),
+                }
+                # 注入 source_aware_risk 供分层风控使用
+                if source_aware:
+                    merged["source_aware_risk"] = source_aware
+                if time_aware:
+                    merged["time_aware_risk"] = time_aware
+                
+                return merged
+        except Exception as e:
+            logger.warning(f"从配置中心读取持仓配置失败: {e}")
+
+        # 回退到默认配置
+        logger.debug("使用默认持仓配置")
         default_config = {
             'position': {
                 'initial_ratio': 0.50,
@@ -99,8 +180,8 @@ class PositionManager:
                     config = yaml.safe_load(f)
                     # 合并配置，确保所有键都存在
                     return self._merge_config(default_config, config)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"[仓位配置] 加载配置文件失败，使用默认配置: {e}")
         
         return default_config
     
@@ -124,15 +205,20 @@ class PositionManager:
         return result
     
     def _get_connection(self) -> sqlite3.Connection:
-        """获取数据库连接"""
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        return conn
-    
+        """P0 修复 (2026-04-12): 从连接池获取连接"""
+        pool = _get_position_db_pool(self.db_path)
+        return pool.get_connection(timeout=30.0)
+
+    def _return_connection(self, conn: sqlite3.Connection):
+        """P0 修复 (2026-04-12): 归还连接到连接池"""
+        pool = _get_position_db_pool(self.db_path)
+        pool.return_connection(conn)
+
     def _ensure_table(self):
         """确保 positions 表存在 (2026-03-17 新增止盈止损字段)"""
-        conn = self._get_connection()
+        conn = None
         try:
+            conn = self._get_connection()
             cursor = conn.cursor()
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS positions (
@@ -155,42 +241,43 @@ class PositionManager:
                 )
             ''')
             conn.commit()
-            
+
             # 确保旧数据库添加新字段
             self._ensure_exit_columns(conn)
         finally:
-            conn.close()
+            if conn:
+                self._return_connection(conn)
     
     def _ensure_exit_columns(self, conn):
         """
         确保 positions 表有止盈止损字段 (2026-03-17 新增)
-        
+
         Args:
             conn: 数据库连接
         """
         cursor = conn.cursor()
-        
+
         # 检查字段是否存在
         cursor.execute("PRAGMA table_info(positions)")
         columns = [row[1] for row in cursor.fetchall()]
-        
-        # 添加缺失字段
-        if 'stop_loss' not in columns:
-            cursor.execute('ALTER TABLE positions ADD COLUMN stop_loss REAL')
-            logger.info("添加 stop_loss 字段到 positions 表")
-        
-        if 'take_profit' not in columns:
-            cursor.execute('ALTER TABLE positions ADD COLUMN take_profit REAL')
-            logger.info("添加 take_profit 字段到 positions 表")
-        
-        if 'highest_price' not in columns:
-            cursor.execute('ALTER TABLE positions ADD COLUMN highest_price REAL')
-            logger.info("添加 highest_price 字段到 positions 表")
-        
-        if 'lowest_price' not in columns:
-            cursor.execute('ALTER TABLE positions ADD COLUMN lowest_price REAL')
-            logger.info("添加 lowest_price 字段到 positions 表")
-        
+
+        # P0 修复 (2026-04-13): 连接池中的连接可能在表创建前建立，
+        # PRAGMA 可能返回空结果。使用 try/except 处理 ALTER TABLE 的重复列错误。
+        def _add_column_safe(col_name, col_type):
+            if col_name in columns:
+                return
+            try:
+                cursor.execute(f'ALTER TABLE positions ADD COLUMN {col_name} {col_type}')
+            except Exception as e:
+                if 'duplicate column name' not in str(e).lower():
+                    raise
+                logger.debug(f"字段 {col_name} 已存在，跳过添加")
+
+        _add_column_safe('stop_loss', 'REAL')
+        _add_column_safe('take_profit', 'REAL')
+        _add_column_safe('highest_price', 'REAL')
+        _add_column_safe('lowest_price', 'REAL')
+
         conn.commit()
     
     def get_position(self, code: str) -> Optional[Position]:
@@ -218,7 +305,7 @@ class PositionManager:
             
             return self._row_to_position(row)
         finally:
-            conn.close()
+            self._return_connection(conn)
     
     def get_all_positions(self) -> List[Position]:
         """
@@ -238,15 +325,25 @@ class PositionManager:
             
             return [self._row_to_position(row) for row in rows]
         finally:
-            conn.close()
+            self._return_connection(conn)
     
     def get_open_positions_count(self) -> int:
         """
         获取当前持仓数量 (2026-03-25 新增)
+        2026-04-15 修复: 优先使用富途服务端实时数据
         
         Returns:
             当前 OPEN 状态的持仓数量
         """
+        # 2026-04-15: 优先使用富途服务端实时查询
+        try:
+            from app.factors.live_position_query import get_live_position_query
+            live_query = get_live_position_query()
+            count = live_query.count_positions(market='HK')
+            return count
+        except Exception:
+            pass  # 降级到本地 DB
+        
         conn = self._get_connection()
         try:
             cursor = conn.cursor()
@@ -257,14 +354,15 @@ class PositionManager:
             count = cursor.fetchone()[0]
             return count
         finally:
-            conn.close()
+            self._return_connection(conn)
     
     def create_position(self, code: str, action: str, quantity: int, 
                        entry_price: float, entry_time: str,
                        stop_loss: float = None, take_profit: float = None,
-                       signal_id: str = None, strategy: str = None) -> int:
+                       signal_id: str = None, strategy: str = None, 
+                       trace_id: str = "", trader_type: str = None) -> int:
         """
-        创建持仓记录 (支持止盈止损 + 信号关联 - 2026-03-19 更新)
+        创建持仓记录 (支持止盈止损 + 信号关联 + 全链路归因 - 2026-04-15 更新)
         
         Args:
             code: 股票代码
@@ -276,6 +374,7 @@ class PositionManager:
             take_profit: 止盈价 (可选)
             signal_id: 关联的信号ID (可选)
             strategy: 策略名称 (可选)
+            trace_id: 全链路追踪 ID (2026-04-15 新增)
             
         Returns:
             新建持仓的 ID
@@ -289,30 +388,70 @@ class PositionManager:
             
             # 检查表是否有 signal_id 和 strategy 字段，没有则添加
             self._ensure_signal_columns(conn)
+
+            # 检查表是否有 trace_id 字段，没有则添加
+            self._ensure_trace_column(conn)
             
             cursor.execute('''
                 INSERT INTO positions 
-                (code, action, quantity, entry_price, entry_time, status, stop_loss, take_profit, signal_id, strategy)
-                VALUES (?, ?, ?, ?, ?, 'OPEN', ?, ?, ?, ?)
-            ''', (code, action, quantity, entry_price, entry_time, stop_loss, take_profit, signal_id, strategy))
+                (code, action, quantity, entry_price, entry_time, status, stop_loss, take_profit, signal_id, strategy, trace_id, trader_type)
+                VALUES (?, ?, ?, ?, ?, 'OPEN', ?, ?, ?, ?, ?, ?)
+            ''', (code, action, quantity, entry_price, entry_time, stop_loss, take_profit, signal_id, strategy, trace_id, trader_type or 'MANUAL'))
             conn.commit()
-            return cursor.lastrowid
+            position_id = cursor.lastrowid
+
+            # 自动订阅动态池 (新成交股票加入实时监控)
+            try:
+                from app.utils.daily_active_pool import get_daily_active_pool, SOURCE_POSITION
+                pool = get_daily_active_pool()
+                pool.add_position(code, metadata={"action": action, "quantity": quantity})
+                # 通知 DataSubscriber 订阅此标的
+                try:
+                    from app.data_subscriber import get_subscriber_instance
+                    subscriber = get_subscriber_instance()
+                    if subscriber and hasattr(subscriber, 'subscribe_code'):
+                        subscriber.subscribe_code(code, SOURCE_POSITION)
+                except Exception:
+                    pass  # subscriber 可能尚未初始化
+            except Exception:
+                pass  # 不影响主流程
+
+            return position_id
         finally:
-            conn.close()
+            self._return_connection(conn)
     
     def _ensure_signal_columns(self, conn):
         """确保 signal_id 和 strategy 字段存在"""
         cursor = conn.cursor()
         cursor.execute("PRAGMA table_info(positions)")
         columns = [row[1] for row in cursor.fetchall()]
+
+        # P0 修复 (2026-04-13): 安全添加字段，处理连接池 PRAGMA 返回空的情况
+        def _add_column_safe(col_name, col_type):
+            if col_name in columns:
+                return
+            try:
+                cursor.execute(f'ALTER TABLE positions ADD COLUMN {col_name} {col_type}')
+            except Exception as e:
+                if 'duplicate column name' not in str(e).lower():
+                    raise
+
+        _add_column_safe('signal_id', 'TEXT')
+        _add_column_safe('strategy', 'TEXT')
+    
+    def _ensure_trace_column(self, conn):
+        """确保 trace_id 字段存在 (2026-04-15 Phase 1 新增)"""
+        cursor = conn.cursor()
+        cursor.execute("PRAGMA table_info(positions)")
+        columns = [row[1] for row in cursor.fetchall()]
         
-        if 'signal_id' not in columns:
-            cursor.execute("ALTER TABLE positions ADD COLUMN signal_id TEXT")
-            logger.info("已添加 signal_id 字段")
-        
-        if 'strategy' not in columns:
-            cursor.execute("ALTER TABLE positions ADD COLUMN strategy TEXT")
-            logger.info("已添加 strategy 字段")
+        if 'trace_id' not in columns:
+            try:
+                cursor.execute('ALTER TABLE positions ADD COLUMN trace_id TEXT DEFAULT ""')
+                conn.commit()
+            except Exception as e:
+                if 'duplicate column name' not in str(e).lower():
+                    raise
     
     def update_price(self, code: str, price: float):
         """
@@ -345,7 +484,7 @@ class PositionManager:
             ''', (price, unrealized_pnl, position.id))
             conn.commit()
         finally:
-            conn.close()
+            self._return_connection(conn)
     
     def close_position(self, code: str, exit_price: float, exit_time: str) -> float:
         """
@@ -428,7 +567,20 @@ class PositionManager:
             ''', (exit_price, exit_time, net_pnl, exit_price, net_pnl, position.id))
             conn.commit()
         finally:
-            conn.close()
+            self._return_connection(conn)
+
+        # 自动同步动态池: 检查是否还有剩余持仓
+        try:
+            remaining = self.get_position(code)
+            if remaining is None:
+                # 该股票已无持仓，从动态池移除
+                try:
+                    from app.utils.daily_active_pool import get_daily_active_pool
+                    get_daily_active_pool().remove_position(code)
+                except ImportError:
+                    pass
+        except Exception:
+            pass  # 不影响主流程
 
         return net_pnl
     
@@ -513,7 +665,7 @@ class PositionManager:
             ''', (new_quantity, exit_price, net_pnl, exit_price, exit_time, net_pnl, position.id))
             conn.commit()
         finally:
-            conn.close()
+            self._return_connection(conn)
 
         return net_pnl
     
@@ -559,8 +711,17 @@ class PositionManager:
         
         # 使用持仓记录中的止损价（优先）
         if position.stop_loss and position.stop_loss > 0:
-            # 止损价已设置：只有当前价跌破止损价才触发
-            return current_price <= position.stop_loss
+            # 2026-04-24 修复: 防御性校验 — 止损价必须低于入场价至少 0.5%
+            # 防止 stop_loss=entry_price 导致开仓即止损
+            if position.stop_loss >= position.entry_price * 0.995:
+                logger.warning(
+                    f"[止损异常] {code} stop_loss={position.stop_loss} >= "
+                    f"entry_price*0.995={position.entry_price*0.995:.4f}，"
+                    f"使用动态止损兜底"
+                )
+            else:
+                # 止损价已设置且合理：只有当前价跌破止损价才触发
+                return current_price <= position.stop_loss
         
         # 未设置止损价时，用动态配置的百分比
         try:
@@ -608,34 +769,38 @@ class PositionManager:
         pnl_rate = (current_price - avg_cost) / avg_cost
         return pnl_rate >= take_pct
     
-    def check_breakeven_stop(self, code: str, current_price: float) -> bool:
+    def check_breakeven_stop(self, code: str, current_price: float) -> tuple:
         """
         检查是否需要启用保本止损
         
         保本止损逻辑：
-        - 盈利达到 +2% 后，将止损上移到成本价
+        - 盈利达到 +2% 后，将止损上移到成本价 +1%（覆盖交易费用）
+        - 只触发一次，防止反复覆盖追踪止盈/分级止损
         
         Args:
             code: 股票代码
             current_price: 当前价格
             
         Returns:
-            True 如果应该启用保本止损
+            (should_update: bool, new_stop_price: float)
         """
         position = self.get_position(code)
         if position is None:
-            return False
+            return False, None
         
         avg_cost = position.entry_price
         pnl_rate = (current_price - avg_cost) / avg_cost
         
         # 盈利 2% 后启用保本止损
         if pnl_rate >= 0.02:
-            # 检查止损是否已在成本价之上
-            if position.stop_loss and position.stop_loss < avg_cost:
-                return True
+            # 检查止损是否已在成本价 +1% 之上（已启用或更优）
+            breakeven_price = round(avg_cost * 1.01, 4)  # 成本价 +1% 覆盖费用
+            if position.stop_loss and position.stop_loss >= breakeven_price:
+                return False, None  # 已启用或更优，跳过
+            
+            return True, breakeven_price
         
-        return False
+        return False, None
     
     def check_partial_take_profit(self, code: str, current_price: float) -> float:
         """
@@ -682,18 +847,20 @@ class PositionManager:
         
         return 0.0
     
-    def update_breakeven_stop(self, code: str):
+    def update_breakeven_stop(self, code: str, breakeven_price: float = None):
         """
-        更新止损到成本价（保本止损）
+        更新止损到保本价（保本止损）
         
         Args:
             code: 股票代码
+            breakeven_price: 保本价（默认成本价 * 1.01 覆盖费用）
         """
         position = self.get_position(code)
         if position is None:
             return
         
-        avg_cost = position.entry_price
+        if breakeven_price is None:
+            breakeven_price = position.entry_price  # fallback
         
         conn = self._get_connection()
         try:
@@ -703,11 +870,11 @@ class PositionManager:
                 UPDATE positions 
                 SET stop_loss = ?
                 WHERE id = ?
-            ''', (avg_cost, position.id))
+            ''', (breakeven_price, position.id))
             conn.commit()
-            logger.info(f"[保本止损] {code} 止损已上移到成本价 {avg_cost:.2f}")
+            logger.info(f"[保本止损] {code} 止损已上移到保本价 {breakeven_price:.2f}")
         finally:
-            conn.close()
+            self._return_connection(conn)
 
     def update_stop_loss_take_profit(self, code: str, stop_loss: float, take_profit: float):
         """动态更新持仓的止损价和止盈价（开仓后立即调用，写入 DB）
@@ -735,7 +902,36 @@ class PositionManager:
                 f"[动态止损写入] {code} 止损={stop_loss:.4f} 止盈={take_profit:.4f}"
             )
         finally:
-            conn.close()
+            self._return_connection(conn)
+
+    def update_position_fields(self, position_id: int, quantity: int = None, entry_price: float = None):
+        """Surgical update of position fields by ID (用于对账同步)
+
+        Args:
+            position_id: 持仓 ID
+            quantity: 新数量 (可选)
+            entry_price: 新成本价 (可选)
+        """
+        conn = self._get_connection()
+        try:
+            cursor = conn.cursor()
+            updates = []
+            params = []
+            if quantity is not None:
+                updates.append('quantity = ?')
+                params.append(quantity)
+            if entry_price is not None:
+                updates.append('entry_price = ?')
+                params.append(entry_price)
+            if updates:
+                params.append(position_id)
+                cursor.execute(
+                    'UPDATE positions SET ' + ', '.join(updates) + ' WHERE id = ?',
+                    params
+                )
+                conn.commit()
+        finally:
+            self._return_connection(conn)
     
     def calculate_stop_loss_price(self, avg_cost: float) -> float:
         """
@@ -872,7 +1068,7 @@ class PositionManager:
             )
             return position.id
         finally:
-            conn.close()
+            self._return_connection(conn)
 
     def get_today_add_count(self, code: str) -> int:
         """
@@ -890,7 +1086,7 @@ class PositionManager:
             result = cursor.fetchone()
             return result[0] if result else 0
         finally:
-            conn.close()
+            self._return_connection(conn)
 
     def record_add_position(self, code: str, add_qty: int, add_price: float,
                             add_time: str, signal_id: str = None) -> int:
@@ -905,14 +1101,14 @@ class PositionManager:
             cursor = conn.cursor()
             cursor.execute('''
                 INSERT INTO positions
-                (code, action, quantity, entry_price, entry_time, status, is_add, signal_id)
+                (code, action, quantity, entry_price, entry_time, status, is_add, signal_id, trader_type)
                 VALUES (?, (SELECT action FROM positions WHERE code=? AND status='OPEN' LIMIT 1),
-                        ?, ?, ?, 'CLOSED', 1, ?)
+                        ?, ?, ?, 'CLOSED', 1, ?, 'AI')
             ''', (code, code, add_qty, add_price, add_time, signal_id))
             conn.commit()
             return cursor.lastrowid
         finally:
-            conn.close()
+            self._return_connection(conn)
 
     # ==================== 金字塔加仓相关方法（旧，保留备用）====================
 
@@ -1065,7 +1261,7 @@ class PositionManager:
             result = cursor.fetchone()
             return result[0] if result else 0
         finally:
-            conn.close()
+            self._return_connection(conn)
     
     def _get_initial_position_quantity(self, code: str) -> int:
         """
@@ -1089,7 +1285,7 @@ class PositionManager:
             result = cursor.fetchone()
             return result[0] if result else 0
         finally:
-            conn.close()
+            self._return_connection(conn)
     
     def _get_added_position_quantity(self, code: str) -> int:
         """
@@ -1111,7 +1307,7 @@ class PositionManager:
             result = cursor.fetchone()
             return result[0] if result else 0
         finally:
-            conn.close()
+            self._return_connection(conn)
     
     def _get_last_trade_time(self, code: str) -> Optional[datetime]:
         """
@@ -1148,4 +1344,4 @@ class PositionManager:
                         return datetime.strptime(timestamp_str, '%Y-%m-%d %H:%M:%S')
             return None
         finally:
-            conn.close()
+            self._return_connection(conn)

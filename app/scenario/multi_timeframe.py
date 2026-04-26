@@ -19,7 +19,7 @@ from datetime import datetime
 from app.strategy.indicators import sma, ema, adx
 
 logger = logging.getLogger("ftseek.scenario.multi_timeframe")
-logger.propagate = False
+# 2026-04-10: propagate=True (默认), 通过 ftseek 父级 logger 输出
 
 
 @dataclass

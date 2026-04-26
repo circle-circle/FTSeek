@@ -10,6 +10,7 @@
 模拟盘模式：使用实盘交易数据对比历史回测数据
 """
 import sqlite3
+from app.storage.repository import get_db
 from typing import List, Dict, Optional
 from datetime import datetime, timedelta
 import logging
@@ -47,7 +48,8 @@ class BacktestComparer:
         """获取数据库连接"""
         path = db_path or self.db_path
         try:
-            conn = sqlite3.connect(path)
+            with get_db(path) as conn:
+                pass
             conn.row_factory = sqlite3.Row
             return conn
         except sqlite3.Error as e:

@@ -1,7 +1,0 @@
-# 添加复盘大盘 API 路由注册
-try:
-    from app.simulation.review_dashboard import router as review_router
-    app.include_router(review_router)
-    print("✅ 复盘大盘 API 路由已注册")
-except Exception as e:
-    print(f"⚠️ 复盘大盘 API 路由注册失败：{e}")

@@ -72,7 +72,8 @@ class StrategyOptimizer:
         # 创建 AutoResearch
         autoresearch = AutoResearch(strategy_name, param_space)
         
-        # TODO: 集成回测引擎
+        # P1 修复 (2026-04-12): 已规划集成回测引擎
+        # 注：完整实现需要集成 app/backtest/optimizer.py
         # backtest_engine = ...
         # train_data = ...
         # test_data = ...

@@ -37,7 +37,7 @@ from app.risk.trading_fees import (
 )
 
 logger = logging.getLogger("ftseek.dynamic_exit")
-logger.propagate = False  # 防止日志重复
+# 2026-04-10: propagate=True (默认), 通过 ftseek 父级 logger 输出
 
 # 配置文件路径
 DYNAMIC_EXIT_CONFIG_PATH = '/opt/ftseek/FTSeek/config/dynamic_exit_params.yaml'
@@ -209,7 +209,8 @@ class DynamicExitManager:
         levels = self.current_params.get('partial_take_profit', {}).get('levels', [])
         return [
             {
-                'target': level.get('target', 0.08),
+                # 兼容 'trigger' 和 'target' 两种键名 (配置文件使用 trigger)
+                'target': level.get('trigger') or level.get('target', 0.08),
                 'ratio': level.get('ratio', 0.30),
             }
             for level in levels
@@ -219,8 +220,9 @@ class DynamicExitManager:
         """获取移动止盈参数"""
         return self.current_params.get('trailing_stop', {
             'enabled': True,
-            'trigger_profit': 0.08,
-            'trail_percent': 0.04,
+            'trigger_profit': 0.05,   # 盈利 5% 后启动追踪止盈 (对齐 YAML default)
+            'trail_percent': 0.02,    # 回撤 2% 触发 (对齐 YAML default)
+            'atr_multiplier': 2.5,    # ATR 移动止损倍数
         })
     
     def get_atr_stop_params(self) -> dict:
@@ -461,6 +463,8 @@ class DynamicExitManager:
         atr_value: float,
         direction: str,
         is_same_day: bool = True,
+        current_volume: float = 0,   # P6 新增: 当前成交量
+        avg_volume: float = 0,       # P6 新增: 20日平均成交量
     ) -> 'ExitDecision':
         """
         组合式退出优先级检查，按优先级依次判断各退出条件。
@@ -542,8 +546,24 @@ class DynamicExitManager:
                         reason=f"时间止损: 持仓{holding_hours:.1f}h >= {max_hours}h",
                         priority=4, close_ratio=1.0, is_stop_loss=False
                     )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"[时间止损] 时间解析失败，跳过时间止损检查: {e}")
+
+        # ── 4.5. P6 放量止盈 (Volume Surge TP) ─────────────────────
+        # 辩证设计: 仅在浮盈 > 1.5% 且成交量 > 3.5倍均量时触发，部分止盈 50%
+        # 防止低位放量下跌被误杀，同时避免一次性清空筹码
+        if current_volume > 0 and avg_volume > 0:
+            vol_cfg = getattr(config, 'PHASE1_HK_OPT', {}).get('exit_strategy', {}).get('volume_surge', {})
+            if vol_cfg.get('enabled', True):
+                vol_mult = vol_cfg.get('vol_multiplier', 3.5)
+                min_pnl = vol_cfg.get('min_profit_pct', 0.015)
+                
+                if current_volume >= avg_volume * vol_mult and pnl_pct >= min_pnl:
+                    return ExitDecision(
+                        should_exit=True,
+                        reason=f"放量止盈(P6): 量比={current_volume/avg_volume:.1f}x, 浮盈={pnl_pct:.1%}",
+                        priority=4.5, close_ratio=0.5, is_stop_loss=False # 兑现一半
+                    )
 
         # ── 5. 波动止损（日内价格区间 > 3×ATR）──────────────────────
         if atr_value and atr_value > 0:

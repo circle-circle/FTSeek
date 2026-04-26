@@ -4,6 +4,8 @@
 """
 import logging
 import sqlite3
+from app.storage.repository import get_db
+
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any
 from fastapi import APIRouter, Query, HTTPException
@@ -25,11 +27,9 @@ def get_db_connection():
     if not DB_PATH.exists():
         logger.warning(f"模拟盘数据库不存在：{DB_PATH}")
         return None
-    
     conn = sqlite3.connect(str(DB_PATH))
     conn.row_factory = sqlite3.Row
     return conn
-
 
 def _check_token(token: str):
     """Token 校验"""

@@ -42,6 +42,9 @@ from app.news_push.breaking_news import (
     FastTrackProcessor,
     BreakingNewsAlert,
 )
+# Phase 4: 新闻汇总与盘中更新 (2026-04-13 新增)
+from app.news_push.news_summarizer import get_summarizer, NewsSummarizer
+from app.news_push.intraday_updater import get_intraday_updater, IntradayNewsUpdater
 
 __all__ = [
     # 采集
@@ -67,6 +70,10 @@ __all__ = [
     'get_breaking_news_detector', 'BreakingNewsDetector',
     'get_fast_track_processor', 'FastTrackProcessor',
     'BreakingNewsAlert',
+    
+    # Phase 4 新增 (2026-04-13)
+    'get_summarizer', 'NewsSummarizer',
+    'get_intraday_updater', 'IntradayNewsUpdater',
 ]
 
 __version__ = '1.1.0'  # Phase 3 版本

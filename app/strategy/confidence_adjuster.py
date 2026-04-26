@@ -100,9 +100,11 @@ class ConfidenceAdjuster:
     MAX_TOTAL_BOOST = 0.20      # 累计最大增强
     
     # 预定义的调整值（统一管理，避免各处硬编码不同数值）
+    # 2026-04-13 修复：单策略信号置信度约 0.35-0.41，原 -0.08 会压到门槛以下
+    # 导致 duplicate_signal → 置信度<0.35 → 拒绝 → 连续拒绝 → 熔断器触发 的恶性循环
     PRESETS = {
         "counter_trend": -0.10,         # 多周期反向降权
-        "duplicate_signal": -0.08,      # 300s内同方向重复
+        "duplicate_signal": -0.04,      # 300s内同方向重复 (原-0.08, 降低避免压垮单策略信号)
         "quality_low": -0.05,           # 质量分低于1.0
         "quality_very_low": -0.10,      # 质量分低于0.5
         "mtf_aligned": 0.05,            # 多周期对齐增强
@@ -198,6 +200,6 @@ class ConfidenceAdjuster:
         """获取最终置信度值"""
         return round(self.current_confidence, 3)
     
-    def should_reject(self, min_confidence: float = 0.35) -> bool:
+    def should_reject(self, min_confidence: float = 0.35) -> bool:  # 2026-04-24 统一
         """检查最终置信度是否低于最低阈值"""
         return self.current_confidence < min_confidence

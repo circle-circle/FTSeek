@@ -20,8 +20,8 @@ WorkingDirectory=/opt/ftseek/FTSeek
 Environment="API_TOKEN=5a8f072c2cba9db1579dd829214a38112fdcddefe089d4ba58e05742097dd272"
 
 # 钉钉推送配置 (请修改为你的配置)
-Environment="DINGTALK_WEBHOOK_URL=https://oapi.dingtalk.com/robot/send?access_token=cddea8919223640d4f3bd59e507373cae0df476df5f541fcca5c8921eab73121"
-Environment="DINGTALK_SECRET=SEC177f5321e91e689a1a2134e4414ae49e7b7f2cddc63775613effbf371f388f78"
+Environment="DINGTALK_WEBHOOK_URL=https://oapi.dingtalk.com/robot/send?access_token=1ed4994e8ecd1f87adaaa93860038f4ab48c249f4dac173f87edf46dfb0718a5"
+Environment="DINGTALK_SECRET=SECc80ac7ce590d8f51d4a8c2c674afa0574c9d2a50b15c4906ebf1b40144c04eac"
 
 # 交易环境：0=真实，1=模拟
 Environment="TRADE_ENV=1"

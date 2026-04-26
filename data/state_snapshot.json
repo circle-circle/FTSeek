@@ -1,6 +1,6 @@
 {
   "version": "4.3.0",
-  "last_updated": "2026-04-09T20:28:44.320418",
+  "last_updated": "2026-04-19T23:04:26.397142",
   "config": {},
   "trading_state": {},
   "session_context": {
@@ -1202,7 +1202,7 @@
     ]
   },
   "checkpoints": [],
-  "current_session": "session_20260409_202844_929b72de",
+  "current_session": "session_20260419_230426_d016f97e",
   "session_session_20260309_144527_2f6aa137": {
     "created_at": "2026-03-09T14:45:27.896715",
     "last_active": "2026-03-09T14:45:27.896722",
@@ -1672,6 +1672,2526 @@
   "session_session_20260409_202844_929b72de": {
     "created_at": "2026-04-09T20:28:44.246510",
     "last_active": "2026-04-09T20:28:44.319736",
+    "status": "active",
+    "data": {
+      "session": 2
+    }
+  },
+  "session_session_20260411_100024_baba08c8": {
+    "created_at": "2026-04-11T10:00:24.743043",
+    "last_active": "2026-04-11T10:00:24.743055",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260411_100024_0d8f1b63": {
+    "created_at": "2026-04-11T10:00:24.752984",
+    "last_active": "2026-04-11T10:00:24.752996",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260411_100024_b2580824": {
+    "created_at": "2026-04-11T10:00:24.764692",
+    "last_active": "2026-04-11T10:00:24.764704",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260411_100024_69bfabe1": {
+    "created_at": "2026-04-11T10:00:24.774344",
+    "last_active": "2026-04-11T10:00:24.780873",
+    "status": "active",
+    "data": {
+      "test_key": "test_value"
+    }
+  },
+  "session_session_20260411_100024_f3ba1140": {
+    "created_at": "2026-04-11T10:00:24.793430",
+    "last_active": "2026-04-11T10:00:24.793441",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260411_100024_99689bd2": {
+    "created_at": "2026-04-11T10:00:24.801646",
+    "last_active": "2026-04-11T10:00:24.801655",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260411_100024_2203b0a2": {
+    "created_at": "2026-04-11T10:00:24.816794",
+    "last_active": "2026-04-11T10:00:24.816806",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260411_100024_bfe0c245": {
+    "created_at": "2026-04-11T10:00:24.825391",
+    "last_active": "2026-04-11T10:00:24.832944",
+    "status": "active",
+    "data": {
+      "session": 1
+    }
+  },
+  "session_session_20260411_100024_24d8af5e": {
+    "created_at": "2026-04-11T10:00:24.839084",
+    "last_active": "2026-04-11T10:00:24.845121",
+    "status": "active",
+    "data": {
+      "session": 2
+    }
+  },
+  "session_session_20260411_100025_4e497b25": {
+    "created_at": "2026-04-11T10:00:25.200715",
+    "last_active": "2026-04-11T10:00:25.200727",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260411_100025_d0408ac9": {
+    "created_at": "2026-04-11T10:00:25.210672",
+    "last_active": "2026-04-11T10:00:25.210697",
+    "status": "ended",
+    "data": {},
+    "ended_at": "2026-04-11T10:00:25.219061"
+  },
+  "session_session_20260411_100025_88f65638": {
+    "created_at": "2026-04-11T10:00:25.231753",
+    "last_active": "2026-04-11T10:00:25.231792",
+    "status": "ended",
+    "data": {},
+    "ended_at": "2026-04-11T10:00:25.238319"
+  },
+  "session_session_20260411_100025_ac6713a7": {
+    "created_at": "2026-04-11T10:00:25.245967",
+    "last_active": "2026-04-11T10:00:25.245996",
+    "status": "ended",
+    "data": {},
+    "ended_at": "2026-04-11T10:00:25.253678"
+  },
+  "session_session_20260411_100025_9151e9cb": {
+    "created_at": "2026-04-11T10:00:25.270805",
+    "last_active": "2026-04-11T10:00:25.277216",
+    "status": "active",
+    "data": {
+      "config": {
+        "max_trades": 10
+      },
+      "trading_state": {
+        "daily_pnl": 1500.0
+      },
+      "pending_confirmations": [
+        "trade_001"
+      ]
+    }
+  },
+  "session_session_20260411_100025_2ecf221d": {
+    "created_at": "2026-04-11T10:00:25.323612",
+    "last_active": "2026-04-11T10:00:25.332019",
+    "status": "ended",
+    "data": {
+      "auto_restore_test": "value_123"
+    },
+    "ended_at": "2026-04-11T10:00:25.336998"
+  },
+  "session_session_20260411_100025_521e34dc": {
+    "created_at": "2026-04-11T10:00:25.388150",
+    "last_active": "2026-04-11T10:00:25.388161",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260411_100025_9bcd704f": {
+    "created_at": "2026-04-11T10:00:25.396076",
+    "last_active": "2026-04-11T10:00:25.396089",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260411_100025_56f2cdcd": {
+    "created_at": "2026-04-11T10:00:25.409368",
+    "last_active": "2026-04-11T10:00:25.409395",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260411_100025_3a720402": {
+    "created_at": "2026-04-11T10:00:25.424642",
+    "last_active": "2026-04-11T10:00:25.432542",
+    "status": "ended",
+    "data": {
+      "test": "value"
+    },
+    "ended_at": "2026-04-11T10:00:25.437440"
+  },
+  "session_session_20260411_100025_9b1e0781": {
+    "created_at": "2026-04-11T10:00:25.464357",
+    "last_active": "2026-04-11T10:00:25.473423",
+    "status": "active",
+    "data": {
+      "session": "first"
+    }
+  },
+  "session_session_20260411_100025_baae1187": {
+    "created_at": "2026-04-11T10:00:25.480127",
+    "last_active": "2026-04-11T10:00:25.488831",
+    "status": "ended",
+    "data": {
+      "session": "second"
+    },
+    "ended_at": "2026-04-11T10:00:25.503054"
+  },
+  "session_session_20260411_100025_6f80576e": {
+    "created_at": "2026-04-11T10:00:25.518030",
+    "last_active": "2026-04-11T10:00:25.524626",
+    "status": "active",
+    "data": {
+      "integration_test": "state_manager"
+    }
+  },
+  "session_session_20260411_100025_9a0cdeef": {
+    "created_at": "2026-04-11T10:00:25.671827",
+    "last_active": "2026-04-11T10:00:25.671838",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260411_100025_573eaedd": {
+    "created_at": "2026-04-11T10:00:25.693914",
+    "last_active": "2026-04-11T10:00:25.693924",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260411_100025_e8cd09c0": {
+    "created_at": "2026-04-11T10:00:25.717176",
+    "last_active": "2026-04-11T10:00:25.726252",
+    "status": "ended",
+    "data": {
+      "thread0_0": "value0",
+      "thread0_1": "value0",
+      "thread0_2": "value0",
+      "thread0_3": "value0",
+      "thread0_4": "value0",
+      "thread0_5": "value0",
+      "thread0_6": "value0",
+      "thread0_7": "value0",
+      "thread0_8": "value0",
+      "thread0_9": "value0",
+      "thread1_0": "value1",
+      "thread1_1": "value1",
+      "thread1_2": "value1",
+      "thread1_3": "value1",
+      "thread1_4": "value1",
+      "thread1_5": "value1",
+      "thread1_6": "value1",
+      "thread1_7": "value1",
+      "thread1_8": "value1",
+      "thread1_9": "value1",
+      "thread2_0": "value2",
+      "thread2_1": "value2",
+      "thread2_2": "value2",
+      "thread2_3": "value2",
+      "thread2_4": "value2",
+      "thread2_5": "value2",
+      "thread2_6": "value2",
+      "thread2_7": "value2",
+      "thread2_8": "value2",
+      "thread2_9": "value2",
+      "thread3_0": "value3",
+      "thread3_1": "value3",
+      "thread3_2": "value3",
+      "thread3_3": "value3",
+      "thread3_4": "value3",
+      "thread3_5": "value3",
+      "thread3_6": "value3",
+      "thread3_7": "value3",
+      "thread3_8": "value3",
+      "thread3_9": "value3",
+      "thread4_0": "value4",
+      "thread4_1": "value4",
+      "thread4_2": "value4",
+      "thread4_3": "value4",
+      "thread4_4": "value4",
+      "thread4_5": "value4",
+      "thread4_6": "value4",
+      "thread4_7": "value4",
+      "thread4_8": "value4",
+      "thread4_9": "value4"
+    },
+    "ended_at": "2026-04-11T10:00:25.726350"
+  },
+  "session_session_20260411_100035_8b42dd9c": {
+    "created_at": "2026-04-11T10:00:35.257481",
+    "last_active": "2026-04-11T10:00:35.257500",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260411_100035_c0419bbd": {
+    "created_at": "2026-04-11T10:00:35.271331",
+    "last_active": "2026-04-11T10:00:35.271346",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260411_100035_1a0d63fc": {
+    "created_at": "2026-04-11T10:00:35.291014",
+    "last_active": "2026-04-11T10:00:35.291036",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260411_100035_b09780ce": {
+    "created_at": "2026-04-11T10:00:35.316418",
+    "last_active": "2026-04-11T10:00:35.329961",
+    "status": "active",
+    "data": {
+      "test_key": "test_value"
+    }
+  },
+  "session_session_20260411_100035_6c991204": {
+    "created_at": "2026-04-11T10:00:35.349305",
+    "last_active": "2026-04-11T10:00:35.349326",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260411_100035_2959273d": {
+    "created_at": "2026-04-11T10:00:35.363436",
+    "last_active": "2026-04-11T10:00:35.363449",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260411_100035_2c1a8e69": {
+    "created_at": "2026-04-11T10:00:35.391437",
+    "last_active": "2026-04-11T10:00:35.391461",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260411_100035_b15d5ec0": {
+    "created_at": "2026-04-11T10:00:35.406811",
+    "last_active": "2026-04-11T10:00:35.421976",
+    "status": "active",
+    "data": {
+      "session": 1
+    }
+  },
+  "session_session_20260411_100035_20ee7f74": {
+    "created_at": "2026-04-11T10:00:35.457504",
+    "last_active": "2026-04-11T10:00:35.482284",
+    "status": "active",
+    "data": {
+      "session": 2
+    }
+  },
+  "session_session_20260411_100035_7fafe284": {
+    "created_at": "2026-04-11T10:00:35.923282",
+    "last_active": "2026-04-11T10:00:35.923293",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260411_100035_94f07db8": {
+    "created_at": "2026-04-11T10:00:35.932784",
+    "last_active": "2026-04-11T10:00:35.932817",
+    "status": "ended",
+    "data": {},
+    "ended_at": "2026-04-11T10:00:35.940966"
+  },
+  "session_session_20260411_100035_c8e9c142": {
+    "created_at": "2026-04-11T10:00:35.954387",
+    "last_active": "2026-04-11T10:00:35.954397",
+    "status": "ended",
+    "data": {},
+    "ended_at": "2026-04-11T10:00:35.963616"
+  },
+  "session_session_20260411_100035_71662675": {
+    "created_at": "2026-04-11T10:00:35.972175",
+    "last_active": "2026-04-11T10:00:35.972184",
+    "status": "ended",
+    "data": {},
+    "ended_at": "2026-04-11T10:00:35.980767"
+  },
+  "session_session_20260411_100035_9801d0ca": {
+    "created_at": "2026-04-11T10:00:35.994869",
+    "last_active": "2026-04-11T10:00:36.005055",
+    "status": "active",
+    "data": {
+      "config": {
+        "max_trades": 10
+      },
+      "trading_state": {
+        "daily_pnl": 1500.0
+      },
+      "pending_confirmations": [
+        "trade_001"
+      ]
+    }
+  },
+  "session_session_20260411_100036_716dfd0a": {
+    "created_at": "2026-04-11T10:00:36.039683",
+    "last_active": "2026-04-11T10:00:36.049431",
+    "status": "ended",
+    "data": {
+      "auto_restore_test": "value_123"
+    },
+    "ended_at": "2026-04-11T10:00:36.056161"
+  },
+  "session_session_20260411_100036_fa11ec5b": {
+    "created_at": "2026-04-11T10:00:36.231451",
+    "last_active": "2026-04-11T10:00:36.231471",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260411_100036_c0c9caf3": {
+    "created_at": "2026-04-11T10:00:36.243795",
+    "last_active": "2026-04-11T10:00:36.243813",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260411_100036_2c27ca8d": {
+    "created_at": "2026-04-11T10:00:36.262367",
+    "last_active": "2026-04-11T10:00:36.262377",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260411_100036_87f95c7d": {
+    "created_at": "2026-04-11T10:00:36.277346",
+    "last_active": "2026-04-11T10:00:36.286155",
+    "status": "ended",
+    "data": {
+      "test": "value"
+    },
+    "ended_at": "2026-04-11T10:00:36.292983"
+  },
+  "session_session_20260411_100036_9a829fe8": {
+    "created_at": "2026-04-11T10:00:36.324733",
+    "last_active": "2026-04-11T10:00:36.336765",
+    "status": "active",
+    "data": {
+      "session": "first"
+    }
+  },
+  "session_session_20260411_100036_53e0e4e5": {
+    "created_at": "2026-04-11T10:00:36.348490",
+    "last_active": "2026-04-11T10:00:36.358413",
+    "status": "ended",
+    "data": {
+      "session": "second"
+    },
+    "ended_at": "2026-04-11T10:00:36.374397"
+  },
+  "session_session_20260411_100036_da2e269c": {
+    "created_at": "2026-04-11T10:00:36.389636",
+    "last_active": "2026-04-11T10:00:36.399291",
+    "status": "active",
+    "data": {
+      "integration_test": "state_manager"
+    }
+  },
+  "session_session_20260411_100036_3e28db32": {
+    "created_at": "2026-04-11T10:00:36.421081",
+    "last_active": "2026-04-11T10:00:36.421107",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260411_100036_6448e98a": {
+    "created_at": "2026-04-11T10:00:36.449020",
+    "last_active": "2026-04-11T10:00:36.449040",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260411_100036_51beccdd": {
+    "created_at": "2026-04-11T10:00:36.473891",
+    "last_active": "2026-04-11T10:00:36.485172",
+    "status": "ended",
+    "data": {
+      "thread0_0": "value0",
+      "thread0_1": "value0",
+      "thread0_2": "value0",
+      "thread0_3": "value0",
+      "thread0_4": "value0",
+      "thread0_5": "value0",
+      "thread0_6": "value0",
+      "thread0_7": "value0",
+      "thread0_8": "value0",
+      "thread0_9": "value0",
+      "thread1_0": "value1",
+      "thread1_1": "value1",
+      "thread1_2": "value1",
+      "thread1_3": "value1",
+      "thread1_4": "value1",
+      "thread1_5": "value1",
+      "thread1_6": "value1",
+      "thread1_7": "value1",
+      "thread1_8": "value1",
+      "thread1_9": "value1",
+      "thread2_0": "value2",
+      "thread2_1": "value2",
+      "thread2_2": "value2",
+      "thread2_3": "value2",
+      "thread2_4": "value2",
+      "thread2_5": "value2",
+      "thread2_6": "value2",
+      "thread2_7": "value2",
+      "thread2_8": "value2",
+      "thread2_9": "value2",
+      "thread3_0": "value3",
+      "thread3_1": "value3",
+      "thread3_2": "value3",
+      "thread3_3": "value3",
+      "thread3_4": "value3",
+      "thread3_5": "value3",
+      "thread3_6": "value3",
+      "thread3_7": "value3",
+      "thread3_8": "value3",
+      "thread3_9": "value3",
+      "thread4_0": "value4",
+      "thread4_1": "value4",
+      "thread4_2": "value4",
+      "thread4_3": "value4",
+      "thread4_4": "value4",
+      "thread4_5": "value4",
+      "thread4_6": "value4",
+      "thread4_7": "value4",
+      "thread4_8": "value4",
+      "thread4_9": "value4"
+    },
+    "ended_at": "2026-04-11T10:00:36.485291"
+  },
+  "session_session_20260411_132525_2448ed1e": {
+    "created_at": "2026-04-11T13:25:25.925888",
+    "last_active": "2026-04-11T13:25:25.926003",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260411_132525_e503860e": {
+    "created_at": "2026-04-11T13:25:25.936960",
+    "last_active": "2026-04-11T13:25:25.936971",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260411_132525_a29042a4": {
+    "created_at": "2026-04-11T13:25:25.951786",
+    "last_active": "2026-04-11T13:25:25.951798",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260411_132525_c6a758a4": {
+    "created_at": "2026-04-11T13:25:25.961893",
+    "last_active": "2026-04-11T13:25:25.970067",
+    "status": "active",
+    "data": {
+      "test_key": "test_value"
+    }
+  },
+  "session_session_20260411_132525_3baca015": {
+    "created_at": "2026-04-11T13:25:25.986447",
+    "last_active": "2026-04-11T13:25:25.986471",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260411_132525_da012ec1": {
+    "created_at": "2026-04-11T13:25:25.997680",
+    "last_active": "2026-04-11T13:25:25.997689",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260411_132526_998bfafe": {
+    "created_at": "2026-04-11T13:25:26.015777",
+    "last_active": "2026-04-11T13:25:26.015804",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260411_132526_6093b081": {
+    "created_at": "2026-04-11T13:25:26.027479",
+    "last_active": "2026-04-11T13:25:26.036352",
+    "status": "active",
+    "data": {
+      "session": 1
+    }
+  },
+  "session_session_20260411_132526_8205cf31": {
+    "created_at": "2026-04-11T13:25:26.045422",
+    "last_active": "2026-04-11T13:25:26.059011",
+    "status": "active",
+    "data": {
+      "session": 2
+    }
+  },
+  "session_session_20260411_132526_2f0a6bb2": {
+    "created_at": "2026-04-11T13:25:26.531235",
+    "last_active": "2026-04-11T13:25:26.531287",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260411_132526_3a4c1bfb": {
+    "created_at": "2026-04-11T13:25:26.540561",
+    "last_active": "2026-04-11T13:25:26.540571",
+    "status": "ended",
+    "data": {},
+    "ended_at": "2026-04-11T13:25:26.549755"
+  },
+  "session_session_20260411_132526_b2fdc4ac": {
+    "created_at": "2026-04-11T13:25:26.564645",
+    "last_active": "2026-04-11T13:25:26.564657",
+    "status": "ended",
+    "data": {},
+    "ended_at": "2026-04-11T13:25:26.574422"
+  },
+  "session_session_20260411_132526_8a60476e": {
+    "created_at": "2026-04-11T13:25:26.584815",
+    "last_active": "2026-04-11T13:25:26.584830",
+    "status": "ended",
+    "data": {},
+    "ended_at": "2026-04-11T13:25:26.593640"
+  },
+  "session_session_20260411_132526_3ab246be": {
+    "created_at": "2026-04-11T13:25:26.611653",
+    "last_active": "2026-04-11T13:25:26.631212",
+    "status": "active",
+    "data": {
+      "config": {
+        "max_trades": 10
+      },
+      "trading_state": {
+        "daily_pnl": 1500.0
+      },
+      "pending_confirmations": [
+        "trade_001"
+      ]
+    }
+  },
+  "session_session_20260411_132526_fe5cdcff": {
+    "created_at": "2026-04-11T13:25:26.681990",
+    "last_active": "2026-04-11T13:25:26.692762",
+    "status": "ended",
+    "data": {
+      "auto_restore_test": "value_123"
+    },
+    "ended_at": "2026-04-11T13:25:26.698470"
+  },
+  "session_session_20260411_132526_53ec2621": {
+    "created_at": "2026-04-11T13:25:26.750954",
+    "last_active": "2026-04-11T13:25:26.750965",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260411_132526_cc42dd8d": {
+    "created_at": "2026-04-11T13:25:26.761637",
+    "last_active": "2026-04-11T13:25:26.761657",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260411_132526_88cae73e": {
+    "created_at": "2026-04-11T13:25:26.781828",
+    "last_active": "2026-04-11T13:25:26.781852",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260411_132526_5972f8e9": {
+    "created_at": "2026-04-11T13:25:26.797166",
+    "last_active": "2026-04-11T13:25:26.809485",
+    "status": "ended",
+    "data": {
+      "test": "value"
+    },
+    "ended_at": "2026-04-11T13:25:26.817000"
+  },
+  "session_session_20260411_132526_7ec6708f": {
+    "created_at": "2026-04-11T13:25:26.848585",
+    "last_active": "2026-04-11T13:25:26.862268",
+    "status": "active",
+    "data": {
+      "session": "first"
+    }
+  },
+  "session_session_20260411_132526_904ef042": {
+    "created_at": "2026-04-11T13:25:26.871532",
+    "last_active": "2026-04-11T13:25:26.880621",
+    "status": "ended",
+    "data": {
+      "session": "second"
+    },
+    "ended_at": "2026-04-11T13:25:26.895671"
+  },
+  "session_session_20260411_132526_d0809445": {
+    "created_at": "2026-04-11T13:25:26.915097",
+    "last_active": "2026-04-11T13:25:26.924826",
+    "status": "active",
+    "data": {
+      "integration_test": "state_manager"
+    }
+  },
+  "session_session_20260411_132526_90996efd": {
+    "created_at": "2026-04-11T13:25:26.943222",
+    "last_active": "2026-04-11T13:25:26.943233",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260411_132526_355bc556": {
+    "created_at": "2026-04-11T13:25:26.972097",
+    "last_active": "2026-04-11T13:25:26.972174",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260411_132526_e406af6f": {
+    "created_at": "2026-04-11T13:25:26.996715",
+    "last_active": "2026-04-11T13:25:27.011316",
+    "status": "ended",
+    "data": {
+      "thread0_0": "value0",
+      "thread0_1": "value0",
+      "thread0_2": "value0",
+      "thread0_3": "value0",
+      "thread0_4": "value0",
+      "thread0_5": "value0",
+      "thread0_6": "value0",
+      "thread0_7": "value0",
+      "thread0_8": "value0",
+      "thread0_9": "value0",
+      "thread1_0": "value1",
+      "thread1_1": "value1",
+      "thread1_2": "value1",
+      "thread1_3": "value1",
+      "thread1_4": "value1",
+      "thread1_5": "value1",
+      "thread1_6": "value1",
+      "thread1_7": "value1",
+      "thread1_8": "value1",
+      "thread1_9": "value1",
+      "thread2_0": "value2",
+      "thread2_1": "value2",
+      "thread2_2": "value2",
+      "thread2_3": "value2",
+      "thread2_4": "value2",
+      "thread2_5": "value2",
+      "thread2_6": "value2",
+      "thread2_7": "value2",
+      "thread2_8": "value2",
+      "thread2_9": "value2",
+      "thread3_0": "value3",
+      "thread3_1": "value3",
+      "thread3_2": "value3",
+      "thread3_3": "value3",
+      "thread3_4": "value3",
+      "thread3_5": "value3",
+      "thread3_6": "value3",
+      "thread3_7": "value3",
+      "thread3_8": "value3",
+      "thread3_9": "value3",
+      "thread4_0": "value4",
+      "thread4_1": "value4",
+      "thread4_2": "value4",
+      "thread4_3": "value4",
+      "thread4_4": "value4",
+      "thread4_5": "value4",
+      "thread4_6": "value4",
+      "thread4_7": "value4",
+      "thread4_8": "value4",
+      "thread4_9": "value4"
+    },
+    "ended_at": "2026-04-11T13:25:27.011383"
+  },
+  "session_session_20260411_144743_e5a25b0e": {
+    "created_at": "2026-04-11T14:47:43.254439",
+    "last_active": "2026-04-11T14:47:43.254457",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260411_144743_7f1821e6": {
+    "created_at": "2026-04-11T14:47:43.267789",
+    "last_active": "2026-04-11T14:47:43.267798",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260411_144743_7cbe807c": {
+    "created_at": "2026-04-11T14:47:43.284387",
+    "last_active": "2026-04-11T14:47:43.284410",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260411_144743_c5a6ce5e": {
+    "created_at": "2026-04-11T14:47:43.296033",
+    "last_active": "2026-04-11T14:47:43.306416",
+    "status": "active",
+    "data": {
+      "test_key": "test_value"
+    }
+  },
+  "session_session_20260411_144743_ad7e3da9": {
+    "created_at": "2026-04-11T14:47:43.326637",
+    "last_active": "2026-04-11T14:47:43.326649",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260411_144743_e2a2b93c": {
+    "created_at": "2026-04-11T14:47:43.339417",
+    "last_active": "2026-04-11T14:47:43.339440",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260411_144743_1399b3a3": {
+    "created_at": "2026-04-11T14:47:43.355468",
+    "last_active": "2026-04-11T14:47:43.355479",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260411_144743_039e6aa2": {
+    "created_at": "2026-04-11T14:47:43.366436",
+    "last_active": "2026-04-11T14:47:43.378072",
+    "status": "active",
+    "data": {
+      "session": 1
+    }
+  },
+  "session_session_20260411_144743_559aedf3": {
+    "created_at": "2026-04-11T14:47:43.387725",
+    "last_active": "2026-04-11T14:47:43.399060",
+    "status": "active",
+    "data": {
+      "session": 2
+    }
+  },
+  "session_session_20260411_144743_b9069c07": {
+    "created_at": "2026-04-11T14:47:43.808202",
+    "last_active": "2026-04-11T14:47:43.808227",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260411_144743_8bfcdd45": {
+    "created_at": "2026-04-11T14:47:43.829104",
+    "last_active": "2026-04-11T14:47:43.829136",
+    "status": "ended",
+    "data": {},
+    "ended_at": "2026-04-11T14:47:43.850826"
+  },
+  "session_session_20260411_144743_dfdd6340": {
+    "created_at": "2026-04-11T14:47:43.884102",
+    "last_active": "2026-04-11T14:47:43.884138",
+    "status": "ended",
+    "data": {},
+    "ended_at": "2026-04-11T14:47:43.901277"
+  },
+  "session_session_20260411_144743_6eaa1106": {
+    "created_at": "2026-04-11T14:47:43.926674",
+    "last_active": "2026-04-11T14:47:43.926726",
+    "status": "ended",
+    "data": {},
+    "ended_at": "2026-04-11T14:47:43.944032"
+  },
+  "session_session_20260411_144743_f4816dd2": {
+    "created_at": "2026-04-11T14:47:43.974536",
+    "last_active": "2026-04-11T14:47:43.997482",
+    "status": "active",
+    "data": {
+      "config": {
+        "max_trades": 10
+      },
+      "trading_state": {
+        "daily_pnl": 1500.0
+      },
+      "pending_confirmations": [
+        "trade_001"
+      ]
+    }
+  },
+  "session_session_20260411_144744_97e157ce": {
+    "created_at": "2026-04-11T14:47:44.070308",
+    "last_active": "2026-04-11T14:47:44.080623",
+    "status": "ended",
+    "data": {
+      "auto_restore_test": "value_123"
+    },
+    "ended_at": "2026-04-11T14:47:44.086854"
+  },
+  "session_session_20260411_144744_50f2c5ca": {
+    "created_at": "2026-04-11T14:47:44.135368",
+    "last_active": "2026-04-11T14:47:44.135379",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260411_144744_c32d5b6a": {
+    "created_at": "2026-04-11T14:47:44.144879",
+    "last_active": "2026-04-11T14:47:44.144897",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260411_144744_b5553204": {
+    "created_at": "2026-04-11T14:47:44.162284",
+    "last_active": "2026-04-11T14:47:44.162294",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260411_144744_9e1ba7af": {
+    "created_at": "2026-04-11T14:47:44.193170",
+    "last_active": "2026-04-11T14:47:44.203768",
+    "status": "ended",
+    "data": {
+      "test": "value"
+    },
+    "ended_at": "2026-04-11T14:47:44.211869"
+  },
+  "session_session_20260411_144744_bf1f0b3e": {
+    "created_at": "2026-04-11T14:47:44.387454",
+    "last_active": "2026-04-11T14:47:44.399175",
+    "status": "active",
+    "data": {
+      "session": "first"
+    }
+  },
+  "session_session_20260411_144744_4ba31b19": {
+    "created_at": "2026-04-11T14:47:44.408085",
+    "last_active": "2026-04-11T14:47:44.419741",
+    "status": "ended",
+    "data": {
+      "session": "second"
+    },
+    "ended_at": "2026-04-11T14:47:44.437312"
+  },
+  "session_session_20260411_144744_0e4e05ea": {
+    "created_at": "2026-04-11T14:47:44.456656",
+    "last_active": "2026-04-11T14:47:44.468184",
+    "status": "active",
+    "data": {
+      "integration_test": "state_manager"
+    }
+  },
+  "session_session_20260411_144744_226f7844": {
+    "created_at": "2026-04-11T14:47:44.489518",
+    "last_active": "2026-04-11T14:47:44.489529",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260411_144744_7a0c8086": {
+    "created_at": "2026-04-11T14:47:44.517496",
+    "last_active": "2026-04-11T14:47:44.517509",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260411_144744_810d3815": {
+    "created_at": "2026-04-11T14:47:44.541038",
+    "last_active": "2026-04-11T14:47:44.554433",
+    "status": "ended",
+    "data": {
+      "thread0_0": "value0",
+      "thread0_1": "value0",
+      "thread0_2": "value0",
+      "thread0_3": "value0",
+      "thread0_4": "value0",
+      "thread0_5": "value0",
+      "thread0_6": "value0",
+      "thread0_7": "value0",
+      "thread0_8": "value0",
+      "thread0_9": "value0",
+      "thread1_0": "value1",
+      "thread1_1": "value1",
+      "thread1_2": "value1",
+      "thread1_3": "value1",
+      "thread1_4": "value1",
+      "thread1_5": "value1",
+      "thread1_6": "value1",
+      "thread1_7": "value1",
+      "thread1_8": "value1",
+      "thread1_9": "value1",
+      "thread2_0": "value2",
+      "thread2_1": "value2",
+      "thread2_2": "value2",
+      "thread2_3": "value2",
+      "thread2_4": "value2",
+      "thread2_5": "value2",
+      "thread2_6": "value2",
+      "thread2_7": "value2",
+      "thread2_8": "value2",
+      "thread2_9": "value2",
+      "thread3_0": "value3",
+      "thread3_1": "value3",
+      "thread3_2": "value3",
+      "thread3_3": "value3",
+      "thread3_4": "value3",
+      "thread3_5": "value3",
+      "thread3_6": "value3",
+      "thread3_7": "value3",
+      "thread3_8": "value3",
+      "thread3_9": "value3",
+      "thread4_0": "value4",
+      "thread4_1": "value4",
+      "thread4_2": "value4",
+      "thread4_3": "value4",
+      "thread4_4": "value4",
+      "thread4_5": "value4",
+      "thread4_6": "value4",
+      "thread4_7": "value4",
+      "thread4_8": "value4",
+      "thread4_9": "value4"
+    },
+    "ended_at": "2026-04-11T14:47:44.554503"
+  },
+  "session_session_20260411_144802_0ec0a952": {
+    "created_at": "2026-04-11T14:48:02.159161",
+    "last_active": "2026-04-11T14:48:02.159171",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260411_144802_99f3f7de": {
+    "created_at": "2026-04-11T14:48:02.172268",
+    "last_active": "2026-04-11T14:48:02.172278",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260411_144802_fea9d879": {
+    "created_at": "2026-04-11T14:48:02.189574",
+    "last_active": "2026-04-11T14:48:02.189588",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260411_144802_2667ce7c": {
+    "created_at": "2026-04-11T14:48:02.202399",
+    "last_active": "2026-04-11T14:48:02.214285",
+    "status": "active",
+    "data": {
+      "test_key": "test_value"
+    }
+  },
+  "session_session_20260411_144802_39425fbc": {
+    "created_at": "2026-04-11T14:48:02.231142",
+    "last_active": "2026-04-11T14:48:02.231151",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260411_144802_a60fb0a9": {
+    "created_at": "2026-04-11T14:48:02.244175",
+    "last_active": "2026-04-11T14:48:02.244185",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260411_144802_d47afb50": {
+    "created_at": "2026-04-11T14:48:02.265683",
+    "last_active": "2026-04-11T14:48:02.265694",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260411_144802_ba6dd128": {
+    "created_at": "2026-04-11T14:48:02.278298",
+    "last_active": "2026-04-11T14:48:02.289360",
+    "status": "active",
+    "data": {
+      "session": 1
+    }
+  },
+  "session_session_20260411_144802_2846e80c": {
+    "created_at": "2026-04-11T14:48:02.298824",
+    "last_active": "2026-04-11T14:48:02.312511",
+    "status": "active",
+    "data": {
+      "session": 2
+    }
+  },
+  "session_session_20260411_144802_22042ed2": {
+    "created_at": "2026-04-11T14:48:02.697803",
+    "last_active": "2026-04-11T14:48:02.697829",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260411_144802_42d0af52": {
+    "created_at": "2026-04-11T14:48:02.710702",
+    "last_active": "2026-04-11T14:48:02.710713",
+    "status": "ended",
+    "data": {},
+    "ended_at": "2026-04-11T14:48:02.722194"
+  },
+  "session_session_20260411_144802_fffa5ef7": {
+    "created_at": "2026-04-11T14:48:02.739468",
+    "last_active": "2026-04-11T14:48:02.739477",
+    "status": "ended",
+    "data": {},
+    "ended_at": "2026-04-11T14:48:02.756747"
+  },
+  "session_session_20260411_144802_86c1540f": {
+    "created_at": "2026-04-11T14:48:02.768417",
+    "last_active": "2026-04-11T14:48:02.768431",
+    "status": "ended",
+    "data": {},
+    "ended_at": "2026-04-11T14:48:02.780220"
+  },
+  "session_session_20260411_144802_a0007428": {
+    "created_at": "2026-04-11T14:48:02.797655",
+    "last_active": "2026-04-11T14:48:02.808030",
+    "status": "active",
+    "data": {
+      "config": {
+        "max_trades": 10
+      },
+      "trading_state": {
+        "daily_pnl": 1500.0
+      },
+      "pending_confirmations": [
+        "trade_001"
+      ]
+    }
+  },
+  "session_session_20260411_144802_5bce2f91": {
+    "created_at": "2026-04-11T14:48:02.848611",
+    "last_active": "2026-04-11T14:48:02.865469",
+    "status": "ended",
+    "data": {
+      "auto_restore_test": "value_123"
+    },
+    "ended_at": "2026-04-11T14:48:02.877031"
+  },
+  "session_session_20260411_144802_0d314d48": {
+    "created_at": "2026-04-11T14:48:02.932499",
+    "last_active": "2026-04-11T14:48:02.932532",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260411_144802_6a275c67": {
+    "created_at": "2026-04-11T14:48:02.943745",
+    "last_active": "2026-04-11T14:48:02.943755",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260411_144802_8113ff34": {
+    "created_at": "2026-04-11T14:48:02.963404",
+    "last_active": "2026-04-11T14:48:02.963414",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260411_144802_258f96d1": {
+    "created_at": "2026-04-11T14:48:02.983644",
+    "last_active": "2026-04-11T14:48:02.995918",
+    "status": "ended",
+    "data": {
+      "test": "value"
+    },
+    "ended_at": "2026-04-11T14:48:03.004196"
+  },
+  "session_session_20260411_144803_b3a2e3d1": {
+    "created_at": "2026-04-11T14:48:03.039947",
+    "last_active": "2026-04-11T14:48:03.053076",
+    "status": "active",
+    "data": {
+      "session": "first"
+    }
+  },
+  "session_session_20260411_144803_f49d1b37": {
+    "created_at": "2026-04-11T14:48:03.063785",
+    "last_active": "2026-04-11T14:48:03.074461",
+    "status": "ended",
+    "data": {
+      "session": "second"
+    },
+    "ended_at": "2026-04-11T14:48:03.095632"
+  },
+  "session_session_20260411_144803_1cc08621": {
+    "created_at": "2026-04-11T14:48:03.113738",
+    "last_active": "2026-04-11T14:48:03.126399",
+    "status": "active",
+    "data": {
+      "integration_test": "state_manager"
+    }
+  },
+  "session_session_20260411_144803_b8c7fdff": {
+    "created_at": "2026-04-11T14:48:03.146089",
+    "last_active": "2026-04-11T14:48:03.146109",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260411_144803_c47a6258": {
+    "created_at": "2026-04-11T14:48:03.302605",
+    "last_active": "2026-04-11T14:48:03.302627",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260411_144803_b0bd1385": {
+    "created_at": "2026-04-11T14:48:03.332666",
+    "last_active": "2026-04-11T14:48:03.347663",
+    "status": "ended",
+    "data": {
+      "thread0_0": "value0",
+      "thread0_1": "value0",
+      "thread0_2": "value0",
+      "thread0_3": "value0",
+      "thread0_4": "value0",
+      "thread0_5": "value0",
+      "thread0_6": "value0",
+      "thread0_7": "value0",
+      "thread0_8": "value0",
+      "thread0_9": "value0",
+      "thread1_0": "value1",
+      "thread1_1": "value1",
+      "thread1_2": "value1",
+      "thread1_3": "value1",
+      "thread1_4": "value1",
+      "thread1_5": "value1",
+      "thread1_6": "value1",
+      "thread1_7": "value1",
+      "thread1_8": "value1",
+      "thread1_9": "value1",
+      "thread2_0": "value2",
+      "thread2_1": "value2",
+      "thread2_2": "value2",
+      "thread2_3": "value2",
+      "thread2_4": "value2",
+      "thread2_5": "value2",
+      "thread2_6": "value2",
+      "thread2_7": "value2",
+      "thread2_8": "value2",
+      "thread2_9": "value2",
+      "thread3_0": "value3",
+      "thread3_1": "value3",
+      "thread3_2": "value3",
+      "thread3_3": "value3",
+      "thread3_4": "value3",
+      "thread3_5": "value3",
+      "thread3_6": "value3",
+      "thread3_7": "value3",
+      "thread3_8": "value3",
+      "thread3_9": "value3",
+      "thread4_0": "value4",
+      "thread4_1": "value4",
+      "thread4_2": "value4",
+      "thread4_3": "value4",
+      "thread4_4": "value4",
+      "thread4_5": "value4",
+      "thread4_6": "value4",
+      "thread4_7": "value4",
+      "thread4_8": "value4",
+      "thread4_9": "value4"
+    },
+    "ended_at": "2026-04-11T14:48:03.347724"
+  },
+  "session_session_20260411_221936_7fb6b790": {
+    "created_at": "2026-04-11T22:19:36.863253",
+    "last_active": "2026-04-11T22:19:36.863277",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260411_221936_01271ab0": {
+    "created_at": "2026-04-11T22:19:36.877350",
+    "last_active": "2026-04-11T22:19:36.877359",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260411_221936_e0904a72": {
+    "created_at": "2026-04-11T22:19:36.899413",
+    "last_active": "2026-04-11T22:19:36.899427",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260411_221936_f10c0b85": {
+    "created_at": "2026-04-11T22:19:36.913814",
+    "last_active": "2026-04-11T22:19:36.926803",
+    "status": "active",
+    "data": {
+      "test_key": "test_value"
+    }
+  },
+  "session_session_20260411_221936_7395e6fe": {
+    "created_at": "2026-04-11T22:19:36.942706",
+    "last_active": "2026-04-11T22:19:36.942715",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260411_221936_9abb09db": {
+    "created_at": "2026-04-11T22:19:36.957424",
+    "last_active": "2026-04-11T22:19:36.957432",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260411_221936_7e8973c8": {
+    "created_at": "2026-04-11T22:19:36.977115",
+    "last_active": "2026-04-11T22:19:36.977124",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260411_221936_b34a9bac": {
+    "created_at": "2026-04-11T22:19:36.990825",
+    "last_active": "2026-04-11T22:19:37.003608",
+    "status": "active",
+    "data": {
+      "session": 1
+    }
+  },
+  "session_session_20260411_221937_b0814a59": {
+    "created_at": "2026-04-11T22:19:37.016533",
+    "last_active": "2026-04-11T22:19:37.030889",
+    "status": "active",
+    "data": {
+      "session": 2
+    }
+  },
+  "session_session_20260411_221937_ba509442": {
+    "created_at": "2026-04-11T22:19:37.376426",
+    "last_active": "2026-04-11T22:19:37.376435",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260411_221937_3833fc63": {
+    "created_at": "2026-04-11T22:19:37.389755",
+    "last_active": "2026-04-11T22:19:37.389773",
+    "status": "ended",
+    "data": {},
+    "ended_at": "2026-04-11T22:19:37.401863"
+  },
+  "session_session_20260411_221937_3006a1ac": {
+    "created_at": "2026-04-11T22:19:37.420779",
+    "last_active": "2026-04-11T22:19:37.420791",
+    "status": "ended",
+    "data": {},
+    "ended_at": "2026-04-11T22:19:37.432002"
+  },
+  "session_session_20260411_221937_a3a2d0b5": {
+    "created_at": "2026-04-11T22:19:37.443514",
+    "last_active": "2026-04-11T22:19:37.443524",
+    "status": "ended",
+    "data": {},
+    "ended_at": "2026-04-11T22:19:37.459950"
+  },
+  "session_session_20260411_221937_f58beecb": {
+    "created_at": "2026-04-11T22:19:37.501189",
+    "last_active": "2026-04-11T22:19:37.525984",
+    "status": "active",
+    "data": {
+      "config": {
+        "max_trades": 10
+      },
+      "trading_state": {
+        "daily_pnl": 1500.0
+      },
+      "pending_confirmations": [
+        "trade_001"
+      ]
+    }
+  },
+  "session_session_20260411_221937_0117045c": {
+    "created_at": "2026-04-11T22:19:37.628752",
+    "last_active": "2026-04-11T22:19:37.650990",
+    "status": "ended",
+    "data": {
+      "auto_restore_test": "value_123"
+    },
+    "ended_at": "2026-04-11T22:19:37.663554"
+  },
+  "session_session_20260411_221937_53a94dcc": {
+    "created_at": "2026-04-11T22:19:37.759710",
+    "last_active": "2026-04-11T22:19:37.759725",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260411_221937_3c6ca697": {
+    "created_at": "2026-04-11T22:19:37.782787",
+    "last_active": "2026-04-11T22:19:37.782823",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260411_221937_350031d9": {
+    "created_at": "2026-04-11T22:19:37.849132",
+    "last_active": "2026-04-11T22:19:37.849148",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260411_221937_929f2f6e": {
+    "created_at": "2026-04-11T22:19:37.883594",
+    "last_active": "2026-04-11T22:19:37.904745",
+    "status": "ended",
+    "data": {
+      "test": "value"
+    },
+    "ended_at": "2026-04-11T22:19:37.926860"
+  },
+  "session_session_20260411_221937_713e8d0b": {
+    "created_at": "2026-04-11T22:19:37.995119",
+    "last_active": "2026-04-11T22:19:38.017831",
+    "status": "active",
+    "data": {
+      "session": "first"
+    }
+  },
+  "session_session_20260411_221938_11fb3607": {
+    "created_at": "2026-04-11T22:19:38.043593",
+    "last_active": "2026-04-11T22:19:38.069729",
+    "status": "ended",
+    "data": {
+      "session": "second"
+    },
+    "ended_at": "2026-04-11T22:19:38.115745"
+  },
+  "session_session_20260411_221938_5093616e": {
+    "created_at": "2026-04-11T22:19:38.159253",
+    "last_active": "2026-04-11T22:19:38.184523",
+    "status": "active",
+    "data": {
+      "integration_test": "state_manager"
+    }
+  },
+  "session_session_20260411_221938_4e97b1b7": {
+    "created_at": "2026-04-11T22:19:38.231332",
+    "last_active": "2026-04-11T22:19:38.231350",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260411_221938_16223778": {
+    "created_at": "2026-04-11T22:19:38.290663",
+    "last_active": "2026-04-11T22:19:38.290686",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260411_221938_54cfc9cb": {
+    "created_at": "2026-04-11T22:19:38.360723",
+    "last_active": "2026-04-11T22:19:38.389738",
+    "status": "ended",
+    "data": {
+      "thread0_0": "value0",
+      "thread0_1": "value0",
+      "thread0_2": "value0",
+      "thread0_3": "value0",
+      "thread0_4": "value0",
+      "thread0_5": "value0",
+      "thread0_6": "value0",
+      "thread0_7": "value0",
+      "thread0_8": "value0",
+      "thread0_9": "value0",
+      "thread1_0": "value1",
+      "thread1_1": "value1",
+      "thread1_2": "value1",
+      "thread1_3": "value1",
+      "thread1_4": "value1",
+      "thread1_5": "value1",
+      "thread1_6": "value1",
+      "thread1_7": "value1",
+      "thread1_8": "value1",
+      "thread1_9": "value1",
+      "thread2_0": "value2",
+      "thread2_1": "value2",
+      "thread2_2": "value2",
+      "thread2_3": "value2",
+      "thread2_4": "value2",
+      "thread2_5": "value2",
+      "thread2_6": "value2",
+      "thread2_7": "value2",
+      "thread2_8": "value2",
+      "thread2_9": "value2",
+      "thread3_0": "value3",
+      "thread3_1": "value3",
+      "thread3_2": "value3",
+      "thread3_3": "value3",
+      "thread3_4": "value3",
+      "thread3_5": "value3",
+      "thread3_6": "value3",
+      "thread3_7": "value3",
+      "thread3_8": "value3",
+      "thread3_9": "value3",
+      "thread4_0": "value4",
+      "thread4_1": "value4",
+      "thread4_2": "value4",
+      "thread4_3": "value4",
+      "thread4_4": "value4",
+      "thread4_5": "value4",
+      "thread4_6": "value4",
+      "thread4_7": "value4",
+      "thread4_8": "value4",
+      "thread4_9": "value4"
+    },
+    "ended_at": "2026-04-11T22:19:38.389957"
+  },
+  "session_session_20260411_221959_406a35c3": {
+    "created_at": "2026-04-11T22:19:59.686688",
+    "last_active": "2026-04-11T22:19:59.686712",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260411_221959_20f1789f": {
+    "created_at": "2026-04-11T22:19:59.704439",
+    "last_active": "2026-04-11T22:19:59.704449",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260411_221959_817b4bf1": {
+    "created_at": "2026-04-11T22:19:59.728445",
+    "last_active": "2026-04-11T22:19:59.728463",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260411_221959_11b2cdda": {
+    "created_at": "2026-04-11T22:19:59.742972",
+    "last_active": "2026-04-11T22:19:59.757802",
+    "status": "active",
+    "data": {
+      "test_key": "test_value"
+    }
+  },
+  "session_session_20260411_221959_3c358beb": {
+    "created_at": "2026-04-11T22:19:59.779088",
+    "last_active": "2026-04-11T22:19:59.779114",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260411_221959_ca46ada7": {
+    "created_at": "2026-04-11T22:19:59.793264",
+    "last_active": "2026-04-11T22:19:59.793289",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260411_221959_d93f7948": {
+    "created_at": "2026-04-11T22:19:59.819822",
+    "last_active": "2026-04-11T22:19:59.819843",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260411_221959_17c9a87e": {
+    "created_at": "2026-04-11T22:19:59.836024",
+    "last_active": "2026-04-11T22:19:59.852847",
+    "status": "active",
+    "data": {
+      "session": 1
+    }
+  },
+  "session_session_20260411_221959_42363f18": {
+    "created_at": "2026-04-11T22:19:59.865872",
+    "last_active": "2026-04-11T22:19:59.879121",
+    "status": "active",
+    "data": {
+      "session": 2
+    }
+  },
+  "session_session_20260411_222000_d085c065": {
+    "created_at": "2026-04-11T22:20:00.294483",
+    "last_active": "2026-04-11T22:20:00.294510",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260411_222000_581b3d83": {
+    "created_at": "2026-04-11T22:20:00.309445",
+    "last_active": "2026-04-11T22:20:00.309474",
+    "status": "ended",
+    "data": {},
+    "ended_at": "2026-04-11T22:20:00.323301"
+  },
+  "session_session_20260411_222000_4a7f87f0": {
+    "created_at": "2026-04-11T22:20:00.344431",
+    "last_active": "2026-04-11T22:20:00.344442",
+    "status": "ended",
+    "data": {},
+    "ended_at": "2026-04-11T22:20:00.358346"
+  },
+  "session_session_20260411_222000_5576c659": {
+    "created_at": "2026-04-11T22:20:00.371454",
+    "last_active": "2026-04-11T22:20:00.371470",
+    "status": "ended",
+    "data": {},
+    "ended_at": "2026-04-11T22:20:00.384324"
+  },
+  "session_session_20260411_222000_bd33db2c": {
+    "created_at": "2026-04-11T22:20:00.403453",
+    "last_active": "2026-04-11T22:20:00.417618",
+    "status": "active",
+    "data": {
+      "config": {
+        "max_trades": 10
+      },
+      "trading_state": {
+        "daily_pnl": 1500.0
+      },
+      "pending_confirmations": [
+        "trade_001"
+      ]
+    }
+  },
+  "session_session_20260411_222000_9f0bd1c6": {
+    "created_at": "2026-04-11T22:20:00.460980",
+    "last_active": "2026-04-11T22:20:00.474932",
+    "status": "ended",
+    "data": {
+      "auto_restore_test": "value_123"
+    },
+    "ended_at": "2026-04-11T22:20:00.484868"
+  },
+  "session_session_20260411_222000_9c6553ba": {
+    "created_at": "2026-04-11T22:20:00.542406",
+    "last_active": "2026-04-11T22:20:00.542424",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260411_222000_46ec5b61": {
+    "created_at": "2026-04-11T22:20:00.557840",
+    "last_active": "2026-04-11T22:20:00.557865",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260411_222000_226ed28c": {
+    "created_at": "2026-04-11T22:20:00.577671",
+    "last_active": "2026-04-11T22:20:00.577681",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260411_222000_660013ad": {
+    "created_at": "2026-04-11T22:20:00.603534",
+    "last_active": "2026-04-11T22:20:00.620988",
+    "status": "ended",
+    "data": {
+      "test": "value"
+    },
+    "ended_at": "2026-04-11T22:20:00.631095"
+  },
+  "session_session_20260411_222000_a939a467": {
+    "created_at": "2026-04-11T22:20:00.665665",
+    "last_active": "2026-04-11T22:20:00.678244",
+    "status": "active",
+    "data": {
+      "session": "first"
+    }
+  },
+  "session_session_20260411_222000_7a2dfb68": {
+    "created_at": "2026-04-11T22:20:00.689780",
+    "last_active": "2026-04-11T22:20:00.704814",
+    "status": "ended",
+    "data": {
+      "session": "second"
+    },
+    "ended_at": "2026-04-11T22:20:00.734047"
+  },
+  "session_session_20260411_222000_2c54d496": {
+    "created_at": "2026-04-11T22:20:00.764456",
+    "last_active": "2026-04-11T22:20:00.785373",
+    "status": "active",
+    "data": {
+      "integration_test": "state_manager"
+    }
+  },
+  "session_session_20260411_222000_113f46e1": {
+    "created_at": "2026-04-11T22:20:00.812380",
+    "last_active": "2026-04-11T22:20:00.812393",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260411_222000_7e474873": {
+    "created_at": "2026-04-11T22:20:00.852530",
+    "last_active": "2026-04-11T22:20:00.852720",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260411_222000_937b41d2": {
+    "created_at": "2026-04-11T22:20:00.915765",
+    "last_active": "2026-04-11T22:20:00.933227",
+    "status": "ended",
+    "data": {
+      "thread0_0": "value0",
+      "thread0_1": "value0",
+      "thread0_2": "value0",
+      "thread0_3": "value0",
+      "thread0_4": "value0",
+      "thread0_5": "value0",
+      "thread0_6": "value0",
+      "thread0_7": "value0",
+      "thread0_8": "value0",
+      "thread0_9": "value0",
+      "thread1_0": "value1",
+      "thread1_1": "value1",
+      "thread1_2": "value1",
+      "thread1_3": "value1",
+      "thread1_4": "value1",
+      "thread1_5": "value1",
+      "thread1_6": "value1",
+      "thread1_7": "value1",
+      "thread1_8": "value1",
+      "thread1_9": "value1",
+      "thread2_0": "value2",
+      "thread2_1": "value2",
+      "thread2_2": "value2",
+      "thread2_3": "value2",
+      "thread2_4": "value2",
+      "thread2_5": "value2",
+      "thread2_6": "value2",
+      "thread2_7": "value2",
+      "thread2_8": "value2",
+      "thread2_9": "value2",
+      "thread3_0": "value3",
+      "thread3_1": "value3",
+      "thread3_2": "value3",
+      "thread3_3": "value3",
+      "thread3_4": "value3",
+      "thread3_5": "value3",
+      "thread3_6": "value3",
+      "thread3_7": "value3",
+      "thread3_8": "value3",
+      "thread3_9": "value3",
+      "thread4_0": "value4",
+      "thread4_1": "value4",
+      "thread4_2": "value4",
+      "thread4_3": "value4",
+      "thread4_4": "value4",
+      "thread4_5": "value4",
+      "thread4_6": "value4",
+      "thread4_7": "value4",
+      "thread4_8": "value4",
+      "thread4_9": "value4"
+    },
+    "ended_at": "2026-04-11T22:20:00.933636"
+  },
+  "session_session_20260412_204257_c75609bd": {
+    "created_at": "2026-04-12T20:42:57.015573",
+    "last_active": "2026-04-12T20:42:57.015584",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260412_204257_1be33dff": {
+    "created_at": "2026-04-12T20:42:57.027119",
+    "last_active": "2026-04-12T20:42:57.027128",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260412_204257_729632a1": {
+    "created_at": "2026-04-12T20:42:57.043191",
+    "last_active": "2026-04-12T20:42:57.043201",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260412_204257_bc6ec356": {
+    "created_at": "2026-04-12T20:42:57.063178",
+    "last_active": "2026-04-12T20:42:57.073834",
+    "status": "active",
+    "data": {
+      "test_key": "test_value"
+    }
+  },
+  "session_session_20260412_204257_9127a5af": {
+    "created_at": "2026-04-12T20:42:57.091131",
+    "last_active": "2026-04-12T20:42:57.091143",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260412_204257_4dcd74c6": {
+    "created_at": "2026-04-12T20:42:57.105907",
+    "last_active": "2026-04-12T20:42:57.105916",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260412_204257_10b29600": {
+    "created_at": "2026-04-12T20:42:57.131457",
+    "last_active": "2026-04-12T20:42:57.131469",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260412_204257_8ce67fa0": {
+    "created_at": "2026-04-12T20:42:57.143727",
+    "last_active": "2026-04-12T20:42:57.154534",
+    "status": "active",
+    "data": {
+      "session": 1
+    }
+  },
+  "session_session_20260412_204257_2d78f473": {
+    "created_at": "2026-04-12T20:42:57.163949",
+    "last_active": "2026-04-12T20:42:57.176230",
+    "status": "active",
+    "data": {
+      "session": 2
+    }
+  },
+  "session_session_20260412_210018_0152643d": {
+    "created_at": "2026-04-12T21:00:18.054435",
+    "last_active": "2026-04-12T21:00:18.054455",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260412_210018_f0199170": {
+    "created_at": "2026-04-12T21:00:18.067777",
+    "last_active": "2026-04-12T21:00:18.067802",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260412_210018_f44f8628": {
+    "created_at": "2026-04-12T21:00:18.085881",
+    "last_active": "2026-04-12T21:00:18.085892",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260412_210018_f16821c2": {
+    "created_at": "2026-04-12T21:00:18.099229",
+    "last_active": "2026-04-12T21:00:18.113149",
+    "status": "active",
+    "data": {
+      "test_key": "test_value"
+    }
+  },
+  "session_session_20260412_210018_870e3214": {
+    "created_at": "2026-04-12T21:00:18.133063",
+    "last_active": "2026-04-12T21:00:18.133077",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260412_210018_d6c5d46d": {
+    "created_at": "2026-04-12T21:00:18.147224",
+    "last_active": "2026-04-12T21:00:18.147236",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260412_210018_72145c66": {
+    "created_at": "2026-04-12T21:00:18.165973",
+    "last_active": "2026-04-12T21:00:18.165985",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260412_210018_2fc03d1a": {
+    "created_at": "2026-04-12T21:00:18.179172",
+    "last_active": "2026-04-12T21:00:18.191184",
+    "status": "active",
+    "data": {
+      "session": 1
+    }
+  },
+  "session_session_20260412_210018_f3e36f2e": {
+    "created_at": "2026-04-12T21:00:18.201080",
+    "last_active": "2026-04-12T21:00:18.214172",
+    "status": "active",
+    "data": {
+      "session": 2
+    }
+  },
+  "session_session_20260412_210018_afc6edc0": {
+    "created_at": "2026-04-12T21:00:18.547570",
+    "last_active": "2026-04-12T21:00:18.547582",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260412_210018_d55df7c1": {
+    "created_at": "2026-04-12T21:00:18.558495",
+    "last_active": "2026-04-12T21:00:18.558506",
+    "status": "ended",
+    "data": {},
+    "ended_at": "2026-04-12T21:00:18.570476"
+  },
+  "session_session_20260412_210018_f9d3ada6": {
+    "created_at": "2026-04-12T21:00:18.588564",
+    "last_active": "2026-04-12T21:00:18.588593",
+    "status": "ended",
+    "data": {},
+    "ended_at": "2026-04-12T21:00:18.600730"
+  },
+  "session_session_20260412_210018_826faf1b": {
+    "created_at": "2026-04-12T21:00:18.613432",
+    "last_active": "2026-04-12T21:00:18.613442",
+    "status": "ended",
+    "data": {},
+    "ended_at": "2026-04-12T21:00:18.626088"
+  },
+  "session_session_20260412_210018_254fd468": {
+    "created_at": "2026-04-12T21:00:18.645072",
+    "last_active": "2026-04-12T21:00:18.657650",
+    "status": "active",
+    "data": {
+      "config": {
+        "max_trades": 10
+      },
+      "trading_state": {
+        "daily_pnl": 1500.0
+      },
+      "pending_confirmations": [
+        "trade_001"
+      ]
+    }
+  },
+  "session_session_20260412_210018_b0c2b843": {
+    "created_at": "2026-04-12T21:00:18.706527",
+    "last_active": "2026-04-12T21:00:18.718643",
+    "status": "ended",
+    "data": {
+      "auto_restore_test": "value_123"
+    },
+    "ended_at": "2026-04-12T21:00:18.726202"
+  },
+  "session_session_20260412_210018_9287de33": {
+    "created_at": "2026-04-12T21:00:18.775242",
+    "last_active": "2026-04-12T21:00:18.775256",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260412_210018_6f95319e": {
+    "created_at": "2026-04-12T21:00:18.788061",
+    "last_active": "2026-04-12T21:00:18.788073",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260412_210018_ef9dbef8": {
+    "created_at": "2026-04-12T21:00:18.808215",
+    "last_active": "2026-04-12T21:00:18.808227",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260412_210018_12d65142": {
+    "created_at": "2026-04-12T21:00:18.827058",
+    "last_active": "2026-04-12T21:00:18.839756",
+    "status": "ended",
+    "data": {
+      "test": "value"
+    },
+    "ended_at": "2026-04-12T21:00:18.847475"
+  },
+  "session_session_20260412_210018_7d334494": {
+    "created_at": "2026-04-12T21:00:18.881423",
+    "last_active": "2026-04-12T21:00:18.895686",
+    "status": "active",
+    "data": {
+      "session": "first"
+    }
+  },
+  "session_session_20260412_210018_6f1c1515": {
+    "created_at": "2026-04-12T21:00:18.909664",
+    "last_active": "2026-04-12T21:00:18.926605",
+    "status": "ended",
+    "data": {
+      "session": "second"
+    },
+    "ended_at": "2026-04-12T21:00:18.954449"
+  },
+  "session_session_20260412_210018_d04a00e0": {
+    "created_at": "2026-04-12T21:00:18.974943",
+    "last_active": "2026-04-12T21:00:18.995419",
+    "status": "active",
+    "data": {
+      "integration_test": "state_manager"
+    }
+  },
+  "session_session_20260412_210019_57fef466": {
+    "created_at": "2026-04-12T21:00:19.017344",
+    "last_active": "2026-04-12T21:00:19.017356",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260412_210019_2c17be97": {
+    "created_at": "2026-04-12T21:00:19.045618",
+    "last_active": "2026-04-12T21:00:19.045630",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260412_210019_a6803a31": {
+    "created_at": "2026-04-12T21:00:19.071446",
+    "last_active": "2026-04-12T21:00:19.085186",
+    "status": "ended",
+    "data": {
+      "thread0_0": "value0",
+      "thread0_1": "value0",
+      "thread0_2": "value0",
+      "thread0_3": "value0",
+      "thread0_4": "value0",
+      "thread0_5": "value0",
+      "thread0_6": "value0",
+      "thread0_7": "value0",
+      "thread0_8": "value0",
+      "thread0_9": "value0",
+      "thread1_0": "value1",
+      "thread1_1": "value1",
+      "thread1_2": "value1",
+      "thread1_3": "value1",
+      "thread1_4": "value1",
+      "thread1_5": "value1",
+      "thread1_6": "value1",
+      "thread1_7": "value1",
+      "thread1_8": "value1",
+      "thread1_9": "value1",
+      "thread2_0": "value2",
+      "thread2_1": "value2",
+      "thread2_2": "value2",
+      "thread2_3": "value2",
+      "thread2_4": "value2",
+      "thread2_5": "value2",
+      "thread2_6": "value2",
+      "thread2_7": "value2",
+      "thread2_8": "value2",
+      "thread2_9": "value2",
+      "thread3_0": "value3",
+      "thread3_1": "value3",
+      "thread3_2": "value3",
+      "thread3_3": "value3",
+      "thread3_4": "value3",
+      "thread3_5": "value3",
+      "thread3_6": "value3",
+      "thread3_7": "value3",
+      "thread3_8": "value3",
+      "thread3_9": "value3",
+      "thread4_0": "value4",
+      "thread4_1": "value4",
+      "thread4_2": "value4",
+      "thread4_3": "value4",
+      "thread4_4": "value4",
+      "thread4_5": "value4",
+      "thread4_6": "value4",
+      "thread4_7": "value4",
+      "thread4_8": "value4",
+      "thread4_9": "value4"
+    },
+    "ended_at": "2026-04-12T21:00:19.085248"
+  },
+  "session_session_20260412_220027_29e6c2ce": {
+    "created_at": "2026-04-12T22:00:27.377541",
+    "last_active": "2026-04-12T22:00:27.377556",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260412_220027_eb9a0647": {
+    "created_at": "2026-04-12T22:00:27.403297",
+    "last_active": "2026-04-12T22:00:27.403326",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260412_220027_e290b12d": {
+    "created_at": "2026-04-12T22:00:27.439158",
+    "last_active": "2026-04-12T22:00:27.439182",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260412_220027_cc4a09ea": {
+    "created_at": "2026-04-12T22:00:27.467087",
+    "last_active": "2026-04-12T22:00:27.491387",
+    "status": "active",
+    "data": {
+      "test_key": "test_value"
+    }
+  },
+  "session_session_20260412_220027_eac786c6": {
+    "created_at": "2026-04-12T22:00:27.516991",
+    "last_active": "2026-04-12T22:00:27.517004",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260412_220027_27b7d2f0": {
+    "created_at": "2026-04-12T22:00:27.532599",
+    "last_active": "2026-04-12T22:00:27.532609",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260412_220027_3e54be53": {
+    "created_at": "2026-04-12T22:00:27.554840",
+    "last_active": "2026-04-12T22:00:27.554854",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260412_220027_88d20dbb": {
+    "created_at": "2026-04-12T22:00:27.575023",
+    "last_active": "2026-04-12T22:00:27.587957",
+    "status": "active",
+    "data": {
+      "session": 1
+    }
+  },
+  "session_session_20260412_220027_96245e8f": {
+    "created_at": "2026-04-12T22:00:27.612898",
+    "last_active": "2026-04-12T22:00:27.626438",
+    "status": "active",
+    "data": {
+      "session": 2
+    }
+  },
+  "session_session_20260412_220027_b9a32db4": {
+    "created_at": "2026-04-12T22:00:27.992550",
+    "last_active": "2026-04-12T22:00:27.992562",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260412_220028_e46001dc": {
+    "created_at": "2026-04-12T22:00:28.009051",
+    "last_active": "2026-04-12T22:00:28.009066",
+    "status": "ended",
+    "data": {},
+    "ended_at": "2026-04-12T22:00:28.035198"
+  },
+  "session_session_20260412_220028_36dcd64b": {
+    "created_at": "2026-04-12T22:00:28.053882",
+    "last_active": "2026-04-12T22:00:28.053894",
+    "status": "ended",
+    "data": {},
+    "ended_at": "2026-04-12T22:00:28.065934"
+  },
+  "session_session_20260412_220028_95da18e7": {
+    "created_at": "2026-04-12T22:00:28.078042",
+    "last_active": "2026-04-12T22:00:28.078053",
+    "status": "ended",
+    "data": {},
+    "ended_at": "2026-04-12T22:00:28.097162"
+  },
+  "session_session_20260412_220028_c0656170": {
+    "created_at": "2026-04-12T22:00:28.117311",
+    "last_active": "2026-04-12T22:00:28.131884",
+    "status": "active",
+    "data": {
+      "config": {
+        "max_trades": 10
+      },
+      "trading_state": {
+        "daily_pnl": 1500.0
+      },
+      "pending_confirmations": [
+        "trade_001"
+      ]
+    }
+  },
+  "session_session_20260412_220028_fe735f94": {
+    "created_at": "2026-04-12T22:00:28.202372",
+    "last_active": "2026-04-12T22:00:28.223927",
+    "status": "ended",
+    "data": {
+      "auto_restore_test": "value_123"
+    },
+    "ended_at": "2026-04-12T22:00:28.237667"
+  },
+  "session_session_20260412_220028_0bb300f2": {
+    "created_at": "2026-04-12T22:00:28.299239",
+    "last_active": "2026-04-12T22:00:28.299259",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260412_220028_174c315a": {
+    "created_at": "2026-04-12T22:00:28.312437",
+    "last_active": "2026-04-12T22:00:28.312463",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260412_220028_37d62de5": {
+    "created_at": "2026-04-12T22:00:28.335011",
+    "last_active": "2026-04-12T22:00:28.335024",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260412_220028_8cb1ff56": {
+    "created_at": "2026-04-12T22:00:28.358601",
+    "last_active": "2026-04-12T22:00:28.374910",
+    "status": "ended",
+    "data": {
+      "test": "value"
+    },
+    "ended_at": "2026-04-12T22:00:28.382894"
+  },
+  "session_session_20260412_220028_1bfbc627": {
+    "created_at": "2026-04-12T22:00:28.440223",
+    "last_active": "2026-04-12T22:00:28.453621",
+    "status": "active",
+    "data": {
+      "session": "first"
+    }
+  },
+  "session_session_20260412_220028_c2473ff6": {
+    "created_at": "2026-04-12T22:00:28.465181",
+    "last_active": "2026-04-12T22:00:28.478826",
+    "status": "ended",
+    "data": {
+      "session": "second"
+    },
+    "ended_at": "2026-04-12T22:00:28.500821"
+  },
+  "session_session_20260412_220028_8bdf1fd7": {
+    "created_at": "2026-04-12T22:00:28.527509",
+    "last_active": "2026-04-12T22:00:28.539927",
+    "status": "active",
+    "data": {
+      "integration_test": "state_manager"
+    }
+  },
+  "session_session_20260412_220028_144743bb": {
+    "created_at": "2026-04-12T22:00:28.571606",
+    "last_active": "2026-04-12T22:00:28.571631",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260412_220028_6123efc6": {
+    "created_at": "2026-04-12T22:00:28.621811",
+    "last_active": "2026-04-12T22:00:28.621836",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260412_220028_5814f393": {
+    "created_at": "2026-04-12T22:00:28.657367",
+    "last_active": "2026-04-12T22:00:28.673950",
+    "status": "ended",
+    "data": {
+      "thread0_0": "value0",
+      "thread0_1": "value0",
+      "thread0_2": "value0",
+      "thread0_3": "value0",
+      "thread0_4": "value0",
+      "thread0_5": "value0",
+      "thread0_6": "value0",
+      "thread0_7": "value0",
+      "thread0_8": "value0",
+      "thread0_9": "value0",
+      "thread1_0": "value1",
+      "thread1_1": "value1",
+      "thread1_2": "value1",
+      "thread1_3": "value1",
+      "thread1_4": "value1",
+      "thread1_5": "value1",
+      "thread1_6": "value1",
+      "thread1_7": "value1",
+      "thread1_8": "value1",
+      "thread1_9": "value1",
+      "thread2_0": "value2",
+      "thread2_1": "value2",
+      "thread2_2": "value2",
+      "thread2_3": "value2",
+      "thread2_4": "value2",
+      "thread2_5": "value2",
+      "thread2_6": "value2",
+      "thread2_7": "value2",
+      "thread2_8": "value2",
+      "thread2_9": "value2",
+      "thread3_0": "value3",
+      "thread3_1": "value3",
+      "thread3_2": "value3",
+      "thread3_3": "value3",
+      "thread3_4": "value3",
+      "thread3_5": "value3",
+      "thread3_6": "value3",
+      "thread3_7": "value3",
+      "thread3_8": "value3",
+      "thread3_9": "value3",
+      "thread4_0": "value4",
+      "thread4_1": "value4",
+      "thread4_2": "value4",
+      "thread4_3": "value4",
+      "thread4_4": "value4",
+      "thread4_5": "value4",
+      "thread4_6": "value4",
+      "thread4_7": "value4",
+      "thread4_8": "value4",
+      "thread4_9": "value4"
+    },
+    "ended_at": "2026-04-12T22:00:28.674007"
+  },
+  "session_session_20260419_122759_01c45736": {
+    "created_at": "2026-04-19T12:27:59.002107",
+    "last_active": "2026-04-19T12:27:59.002117",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260419_122759_59b87aab": {
+    "created_at": "2026-04-19T12:27:59.014904",
+    "last_active": "2026-04-19T12:27:59.014933",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260419_122759_4838055c": {
+    "created_at": "2026-04-19T12:27:59.031044",
+    "last_active": "2026-04-19T12:27:59.031055",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260419_122759_3f395464": {
+    "created_at": "2026-04-19T12:27:59.046266",
+    "last_active": "2026-04-19T12:27:59.057818",
+    "status": "active",
+    "data": {
+      "test_key": "test_value"
+    }
+  },
+  "session_session_20260419_122759_90fddeb9": {
+    "created_at": "2026-04-19T12:27:59.075162",
+    "last_active": "2026-04-19T12:27:59.075174",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260419_122759_cf593031": {
+    "created_at": "2026-04-19T12:27:59.085958",
+    "last_active": "2026-04-19T12:27:59.085973",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260419_122759_98c498e1": {
+    "created_at": "2026-04-19T12:27:59.106652",
+    "last_active": "2026-04-19T12:27:59.106665",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260419_122759_8f5828a2": {
+    "created_at": "2026-04-19T12:27:59.120499",
+    "last_active": "2026-04-19T12:27:59.129665",
+    "status": "active",
+    "data": {
+      "session": 1
+    }
+  },
+  "session_session_20260419_122759_e8a1a129": {
+    "created_at": "2026-04-19T12:27:59.138307",
+    "last_active": "2026-04-19T12:27:59.147310",
+    "status": "active",
+    "data": {
+      "session": 2
+    }
+  },
+  "session_session_20260419_122759_bcb2bc35": {
+    "created_at": "2026-04-19T12:27:59.539249",
+    "last_active": "2026-04-19T12:27:59.539259",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260419_122759_40a67604": {
+    "created_at": "2026-04-19T12:27:59.548776",
+    "last_active": "2026-04-19T12:27:59.548787",
+    "status": "ended",
+    "data": {},
+    "ended_at": "2026-04-19T12:27:59.559250"
+  },
+  "session_session_20260419_122759_05e453ed": {
+    "created_at": "2026-04-19T12:27:59.576995",
+    "last_active": "2026-04-19T12:27:59.577015",
+    "status": "ended",
+    "data": {},
+    "ended_at": "2026-04-19T12:27:59.590556"
+  },
+  "session_session_20260419_122759_8132b5af": {
+    "created_at": "2026-04-19T12:27:59.600978",
+    "last_active": "2026-04-19T12:27:59.600988",
+    "status": "ended",
+    "data": {},
+    "ended_at": "2026-04-19T12:27:59.610328"
+  },
+  "session_session_20260419_122759_556ae9b5": {
+    "created_at": "2026-04-19T12:27:59.625895",
+    "last_active": "2026-04-19T12:27:59.635525",
+    "status": "active",
+    "data": {
+      "config": {
+        "max_trades": 10
+      },
+      "trading_state": {
+        "daily_pnl": 1500.0
+      },
+      "pending_confirmations": [
+        "trade_001"
+      ]
+    }
+  },
+  "session_session_20260419_122759_fed30467": {
+    "created_at": "2026-04-19T12:27:59.683689",
+    "last_active": "2026-04-19T12:27:59.695585",
+    "status": "ended",
+    "data": {
+      "auto_restore_test": "value_123"
+    },
+    "ended_at": "2026-04-19T12:27:59.701313"
+  },
+  "session_session_20260419_122759_14db8a02": {
+    "created_at": "2026-04-19T12:27:59.745831",
+    "last_active": "2026-04-19T12:27:59.745844",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260419_122759_9b73698a": {
+    "created_at": "2026-04-19T12:27:59.755985",
+    "last_active": "2026-04-19T12:27:59.755998",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260419_122759_35158697": {
+    "created_at": "2026-04-19T12:27:59.771986",
+    "last_active": "2026-04-19T12:27:59.772006",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260419_122759_058aadf6": {
+    "created_at": "2026-04-19T12:27:59.790829",
+    "last_active": "2026-04-19T12:27:59.802517",
+    "status": "ended",
+    "data": {
+      "test": "value"
+    },
+    "ended_at": "2026-04-19T12:27:59.807916"
+  },
+  "session_session_20260419_122759_184cd499": {
+    "created_at": "2026-04-19T12:27:59.835674",
+    "last_active": "2026-04-19T12:27:59.846586",
+    "status": "active",
+    "data": {
+      "session": "first"
+    }
+  },
+  "session_session_20260419_122759_d4ed1b10": {
+    "created_at": "2026-04-19T12:27:59.857755",
+    "last_active": "2026-04-19T12:27:59.867926",
+    "status": "ended",
+    "data": {
+      "session": "second"
+    },
+    "ended_at": "2026-04-19T12:27:59.886655"
+  },
+  "session_session_20260419_122759_b1daf0d7": {
+    "created_at": "2026-04-19T12:27:59.905032",
+    "last_active": "2026-04-19T12:27:59.914690",
+    "status": "active",
+    "data": {
+      "integration_test": "state_manager"
+    }
+  },
+  "session_session_20260419_122759_e73bc6ca": {
+    "created_at": "2026-04-19T12:27:59.932296",
+    "last_active": "2026-04-19T12:27:59.932307",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260419_122759_a35b77cc": {
+    "created_at": "2026-04-19T12:27:59.956145",
+    "last_active": "2026-04-19T12:27:59.956161",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260419_122759_158059c6": {
+    "created_at": "2026-04-19T12:27:59.981271",
+    "last_active": "2026-04-19T12:27:59.994656",
+    "status": "ended",
+    "data": {
+      "thread0_0": "value0",
+      "thread0_1": "value0",
+      "thread0_2": "value0",
+      "thread0_3": "value0",
+      "thread0_4": "value0",
+      "thread0_5": "value0",
+      "thread0_6": "value0",
+      "thread0_7": "value0",
+      "thread0_8": "value0",
+      "thread0_9": "value0",
+      "thread1_0": "value1",
+      "thread1_1": "value1",
+      "thread1_2": "value1",
+      "thread1_3": "value1",
+      "thread1_4": "value1",
+      "thread1_5": "value1",
+      "thread1_6": "value1",
+      "thread1_7": "value1",
+      "thread1_8": "value1",
+      "thread1_9": "value1",
+      "thread2_0": "value2",
+      "thread2_1": "value2",
+      "thread2_2": "value2",
+      "thread2_3": "value2",
+      "thread2_4": "value2",
+      "thread2_5": "value2",
+      "thread2_6": "value2",
+      "thread2_7": "value2",
+      "thread2_8": "value2",
+      "thread2_9": "value2",
+      "thread3_0": "value3",
+      "thread3_1": "value3",
+      "thread3_2": "value3",
+      "thread3_3": "value3",
+      "thread3_4": "value3",
+      "thread3_5": "value3",
+      "thread3_6": "value3",
+      "thread3_7": "value3",
+      "thread3_8": "value3",
+      "thread3_9": "value3",
+      "thread4_0": "value4",
+      "thread4_1": "value4",
+      "thread4_2": "value4",
+      "thread4_3": "value4",
+      "thread4_4": "value4",
+      "thread4_5": "value4",
+      "thread4_6": "value4",
+      "thread4_7": "value4",
+      "thread4_8": "value4",
+      "thread4_9": "value4"
+    },
+    "ended_at": "2026-04-19T12:27:59.994749"
+  },
+  "session_session_20260419_184249_f336037d": {
+    "created_at": "2026-04-19T18:42:49.462496",
+    "last_active": "2026-04-19T18:42:49.462507",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260419_184249_56785ce3": {
+    "created_at": "2026-04-19T18:42:49.472783",
+    "last_active": "2026-04-19T18:42:49.472809",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260419_184249_4888ff37": {
+    "created_at": "2026-04-19T18:42:49.487407",
+    "last_active": "2026-04-19T18:42:49.487432",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260419_184249_608f67b7": {
+    "created_at": "2026-04-19T18:42:49.497304",
+    "last_active": "2026-04-19T18:42:49.506668",
+    "status": "active",
+    "data": {
+      "test_key": "test_value"
+    }
+  },
+  "session_session_20260419_184249_d459d417": {
+    "created_at": "2026-04-19T18:42:49.524510",
+    "last_active": "2026-04-19T18:42:49.524520",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260419_184249_4e45da70": {
+    "created_at": "2026-04-19T18:42:49.534520",
+    "last_active": "2026-04-19T18:42:49.534530",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260419_184249_67cf1ec1": {
+    "created_at": "2026-04-19T18:42:49.550584",
+    "last_active": "2026-04-19T18:42:49.550594",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260419_184249_8ecd10c2": {
+    "created_at": "2026-04-19T18:42:49.560876",
+    "last_active": "2026-04-19T18:42:49.570121",
+    "status": "active",
+    "data": {
+      "session": 1
+    }
+  },
+  "session_session_20260419_184249_31d7e7ad": {
+    "created_at": "2026-04-19T18:42:49.579283",
+    "last_active": "2026-04-19T18:42:49.588654",
+    "status": "active",
+    "data": {
+      "session": 2
+    }
+  },
+  "session_session_20260419_230426_9a207211": {
+    "created_at": "2026-04-19T23:04:26.236873",
+    "last_active": "2026-04-19T23:04:26.236892",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260419_230426_9eb20b06": {
+    "created_at": "2026-04-19T23:04:26.248660",
+    "last_active": "2026-04-19T23:04:26.248670",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260419_230426_0283cbb2": {
+    "created_at": "2026-04-19T23:04:26.280089",
+    "last_active": "2026-04-19T23:04:26.280099",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260419_230426_0a89988e": {
+    "created_at": "2026-04-19T23:04:26.293977",
+    "last_active": "2026-04-19T23:04:26.304422",
+    "status": "active",
+    "data": {
+      "test_key": "test_value"
+    }
+  },
+  "session_session_20260419_230426_a2f11065": {
+    "created_at": "2026-04-19T23:04:26.320626",
+    "last_active": "2026-04-19T23:04:26.320637",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260419_230426_e6867fda": {
+    "created_at": "2026-04-19T23:04:26.334910",
+    "last_active": "2026-04-19T23:04:26.334923",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260419_230426_d2cc991e": {
+    "created_at": "2026-04-19T23:04:26.351931",
+    "last_active": "2026-04-19T23:04:26.351941",
+    "status": "active",
+    "data": {}
+  },
+  "session_session_20260419_230426_fd31becb": {
+    "created_at": "2026-04-19T23:04:26.365616",
+    "last_active": "2026-04-19T23:04:26.376616",
+    "status": "active",
+    "data": {
+      "session": 1
+    }
+  },
+  "session_session_20260419_230426_d016f97e": {
+    "created_at": "2026-04-19T23:04:26.386604",
+    "last_active": "2026-04-19T23:04:26.396615",
     "status": "active",
     "data": {
       "session": 2

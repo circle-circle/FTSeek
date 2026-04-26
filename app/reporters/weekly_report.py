@@ -11,6 +11,7 @@ FTSeek 周报生成器
 推送时间：周一 09:00
 """
 import logging
+from app.storage.repository import get_db
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any, Tuple
 from dataclasses import dataclass, field
@@ -430,16 +431,100 @@ class WeeklyReportGenerator:
 
     def get_strategy_weight_changes(self) -> dict:
         """
-        获取策略权重变化（来自 AdaptiveWeightManager）
+        获取策略权重演化数据（含上周快照对比）
+
+        返回:
+            {
+                strategy_name: {
+                    'current_weight': float,
+                    'prev_weight': float | None,
+                    'weight_delta': float,
+                    'direction': 'up' | 'down' | 'stable',
+                    'confidence': float,
+                    'trades': int,
+                    'win_rate': float,
+                    'total_pnl': float,
+                    'wr_short': float | None,
+                    'wr_long': float | None,
+                    'advice': str | None,
+                },
+                ...
+            }
         """
+        result = {}
         try:
             from app.data_subscriber import _data_subscriber_instance
-            if _data_subscriber_instance and hasattr(_data_subscriber_instance, '_adaptive_weight_manager'):
-                mgr = _data_subscriber_instance._adaptive_weight_manager
-                return mgr.get_strategy_stats() or {}
+            if not (_data_subscriber_instance
+                    and hasattr(_data_subscriber_instance, '_adaptive_weight_manager')):
+                return result
+            mgr = _data_subscriber_instance._adaptive_weight_manager
+            stats = mgr.get_strategy_stats() or {}
+
+            # 读取数据库中的权重快照作为“上周”参考
+            prev_weights = {}
+            try:
+                import sqlite3
+                from app.storage.database import get_database
+                db = get_database()
+                db_path = getattr(db, 'db_path', None) or getattr(db, '_db_path', None)
+                if db_path:
+                    with get_db(db_path) as conn:
+                        pass
+                    c = conn.cursor()
+                    # 尝试从快照表获取上周数据
+                    for table in ('weight_snapshots', 'adaptive_weight_snapshots'):
+                        try:
+                            c.execute(
+                                f"SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+                                (table,))
+                            if c.fetchone():
+                                c.execute(f"SELECT strategy, weight FROM {table}")
+                                for row in c.fetchall():
+                                    prev_weights[row[0]] = row[1]
+                                break
+                        except Exception:
+                            continue
+                    conn.close()
+            except Exception:
+                pass
+
+            for name, s in stats.items():
+                current_w = s.get('current_weight', 0.0)
+                prev_w = prev_weights.get(name)
+                delta = (current_w - prev_w) if prev_w is not None else 0.0
+                if abs(delta) < 0.01:
+                    direction = 'stable'
+                elif delta > 0:
+                    direction = 'up'
+                else:
+                    direction = 'down'
+
+                confidence = s.get('confidence', 0.0)
+                wr = s.get('win_rate', 0.0)
+
+                # 生成建议
+                advice = None
+                if confidence < 0.5:
+                    advice = f"数据不足({s.get('trades',0)}笔)，权重尚不可靠"
+                elif direction == 'down' and wr < 0.45:
+                    advice = "短期表现弱于长期，关注是否持续恶化"
+                elif direction == 'up' and wr >= 0.6:
+                    advice = "表现优异，可继续依赖"
+
+                result[name] = {
+                    'current_weight': current_w,
+                    'prev_weight': prev_w,
+                    'weight_delta': round(delta, 3),
+                    'direction': direction,
+                    'confidence': confidence,
+                    'trades': s.get('trades', 0),
+                    'win_rate': wr,
+                    'total_pnl': s.get('total_pnl', 0.0),
+                    'advice': advice,
+                }
         except Exception as e:
-            logger.debug(f"获取策略权重变化失败：{e}")
-        return {}
+            logger.debug(f"获取策略权重演化失败：{e}")
+        return result
 
     def generate_deep_review(self, report: WeeklyReport) -> dict:
         """
@@ -450,6 +535,7 @@ class WeeklyReportGenerator:
             'long_short_comparison': self.get_long_short_comparison(),
             'equity_highlights': self.get_equity_curve_highlights(),
             'strategy_weights': self.get_strategy_weight_changes(),
+            'weight_evolution': self.get_strategy_weight_changes(),
         }
 
 

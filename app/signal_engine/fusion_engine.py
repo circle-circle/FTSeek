@@ -28,6 +28,7 @@ from app.strategy.base import Signal, SignalAction, BaseStrategy
 # 新闻模块已移除 (2026-03-02)
 # from app.data.news_fetcher import NewsItem, get_sync_news_fetcher
 from app.storage.database import get_database
+from app.core.config_defaults import CFG
 
 logger = logging.getLogger("ftseek.signal.fusion_engine")
 logger.propagate = False  # 防止日志重复
@@ -107,7 +108,7 @@ class FusionResult:
     extra: Dict = field(default_factory=dict)
     
     def to_signal(self, expire_seconds: int = 900) -> Signal:
-        """转换为 Signal 对象"""
+        """转换为 Signal 对象 (2026-04-15 新增: 全链路 TraceID 注入)"""
         # 根据方向概率确定动作
         if self.direction == "BUY":
             action = SignalAction.BUY
@@ -116,6 +117,11 @@ class FusionResult:
         else:
             action = SignalAction.ALERT
         
+        # 生成 TraceID: TRD-YYYYMMDD-XXXX (Unique per signal generation)
+        import uuid
+        from datetime import datetime as _dt
+        trace_id = f"TRD-{_dt.now().strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}"
+        
         signal = Signal(
             code=self.code,
             name=self.name,
@@ -123,6 +129,7 @@ class FusionResult:
             price=self.price,
             quantity=self.quantity,
             strategy=self.strategy,
+            trace_id=trace_id,
             reason=self._generate_reason(),
             extra={
                 'direction': self.direction,
@@ -335,14 +342,15 @@ class SentimentAnalysisModule:
     
     def __init__(self, config: Dict = None):
         self.config = config or {}
-        self.news_fetcher = get_sync_news_fetcher(
-            timeout=self.config.get('timeout', 10)
-        )
+        # 新闻模块已移除 (2026-03-02)
+        # self.news_fetcher = get_sync_news_fetcher(
+        #     timeout=self.config.get('timeout', 10)
+        # )
         self.db = get_database()
         self.min_news_count = self.config.get('min_news_count', 1)
         self.lookback_days = self.config.get('lookback_days', 3)
         
-        logger.info(f"情绪分析模块初始化")
+        logger.info(f"情绪分析模块初始化 (新闻功能已禁用)")
     
     def calculate(self, code: str) -> SentimentScore:
         """
@@ -357,28 +365,27 @@ class SentimentAnalysisModule:
         ss = SentimentScore()
         
         try:
-            # 获取新闻
-            news_list = self.news_fetcher.fetch(code, sources=['sina'])
+            # 新闻模块已移除 (2026-03-02) - 返回默认情绪评分
+            ss.score = 0.0
+            ss.confidence = 0.0
+            ss.news_count = 0
+            return ss
             
-            if not news_list:
-                ss.score = 0.0
-                ss.confidence = 0.0
-                ss.news_count = 0
-                return ss
-            
-            ss.news_count = len(news_list)
-            
-            # 计算加权平均情绪得分
-            total_score = 0.0
-            total_weight = 0.0
-            
-            for i, news in enumerate(news_list[:20]):
-                weight = 1.0 / (i + 1)  # 越新权重越高
-                total_score += news.sentiment_score * weight
-                total_weight += weight
-                
-                # 保存到数据库
-                self.db.save_news(news.to_dict())
+            # 以下代码已禁用
+            # news_list = self.news_fetcher.fetch(code, sources=['sina'])
+            # if not news_list:
+            #     ss.score = 0.0
+            #     ss.confidence = 0.0
+            #     ss.news_count = 0
+            #     return ss
+            # ss.news_count = len(news_list)
+            # total_score = 0.0
+            # total_weight = 0.0
+            # for i, news in enumerate(news_list[:20]):
+            #     weight = 1.0 / (i + 1)
+            #     total_score += news.sentiment_score * weight
+            #     total_weight += weight
+            #     self.db.save_news(news.to_dict())
             
             if total_weight > 0:
                 ss.score = total_score / total_weight
@@ -406,12 +413,23 @@ class SentimentAnalysisModule:
         
         return ss
     
-    def _calc_confidence(self, news_list: List[NewsItem]) -> float:
-        """计算置信度 (基于新闻数量和一致性)"""
+    def _calc_confidence(self, news_list: List[Dict]) -> float:
+        """计算置信度 (基于新闻数量和一致性)
+        
+        P1 修复 (2026-04-17): NewsItem 已移除，改用 Dict 类型
+        """
         if len(news_list) < 2:
             return 0.3
         
-        scores = [n.sentiment_score for n in news_list[:20]]
+        # 兼容 Dict 和 NewsItem 两种格式
+        scores = []
+        for n in news_list[:20]:
+            if isinstance(n, dict):
+                scores.append(n.get('sentiment_score', 0))
+            else:
+                scores.append(getattr(n, 'sentiment_score', 0))
+        if not scores:
+            return 0.3
         avg = sum(scores) / len(scores)
         
         # 一致性 (标准差)
@@ -423,11 +441,14 @@ class SentimentAnalysisModule:
         
         return (consistency + quantity_factor) / 2.0
     
-    def _extract_keywords(self, news_list: List[NewsItem]) -> List[str]:
-        """提取关键词"""
+    def _extract_keywords(self, news_list: List[Dict]) -> List[str]:
+        """提取关键词 (兼容 Dict 格式)"""
         all_keywords = []
         for news in news_list[:10]:
-            all_keywords.extend(news.keywords)
+            if isinstance(news, dict):
+                all_keywords.extend(news.get('keywords', []))
+            else:
+                all_keywords.extend(getattr(news, 'keywords', []))
         return list(set(all_keywords))[:10]
 
 
@@ -518,7 +539,7 @@ class SignalOutputModule:
     
     def __init__(self, config: Dict = None):
         self.config = config or {}
-        self.min_confidence = self.config.get('min_confidence', 0.4)
+        self.min_confidence = self.config.get('min_confidence', CFG.MIN_CONFIDENCE)  # 2026-04-24 统一: 从 CFG 读取，不再硬编码
         self.min_signal_level = self.config.get('min_signal_level', 'neutral')
         
         self.level_priority = {

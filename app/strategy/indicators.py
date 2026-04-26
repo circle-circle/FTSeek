@@ -3,12 +3,13 @@
 提供 TradingView 风格的技术指标计算，供所有策略模块复用
 """
 import math
+import threading
 from collections import deque
 from typing import List, Optional, Tuple
 
 
 class IndicatorBuffer:
-    """滑动窗口指标缓冲区，自动管理历史数据"""
+    """滑动窗口指标缓冲区，自动管理历史数据 (线程安全: 2026-04-19)"""
 
     def __init__(self, maxlen: int = 500):
         self.close = deque(maxlen=maxlen)
@@ -16,13 +17,15 @@ class IndicatorBuffer:
         self.low = deque(maxlen=maxlen)
         self.volume = deque(maxlen=maxlen)
         self.open = deque(maxlen=maxlen)
+        self._lock = threading.Lock()  # P1 2026-04-19: 线程安全锁
 
     def push(self, o: float, h: float, l: float, c: float, v: float = 0):
-        self.open.append(o)
-        self.high.append(h)
-        self.low.append(l)
-        self.close.append(c)
-        self.volume.append(v)
+        with self._lock:
+            self.open.append(o)
+            self.high.append(h)
+            self.low.append(l)
+            self.close.append(c)
+            self.volume.append(v)
 
     def push_kline(self, kline: dict):
         self.push(
@@ -33,9 +36,21 @@ class IndicatorBuffer:
             v=kline.get("volume", 0),
         )
 
+    def snapshot(self) -> dict:
+        """线程安全地获取当前缓冲区快照"""
+        with self._lock:
+            return {
+                "open": list(self.open),
+                "high": list(self.high),
+                "low": list(self.low),
+                "close": list(self.close),
+                "volume": list(self.volume),
+            }
+
     @property
     def size(self) -> int:
-        return len(self.close)
+        with self._lock:
+            return len(self.close)
 
 
 # ============================================================
@@ -405,3 +420,72 @@ def adx(highs: list, lows: list, closes: list, period: int = 14) -> Optional[flo
         adx_val = (adx_val * (period - 1) + dx_values[i]) / period
 
     return adx_val
+
+
+# ============================================================
+#  P1 修复: 增量缓存集成 (2026-04-11)
+# ============================================================
+
+def rsi_incremental(
+    code: str,
+    close: float,
+    period: int = 14,
+    historical_closes: Optional[list] = None
+) -> Optional[float]:
+    """
+    RSI 增量计算 (P1 优化)
+    
+    首次调用需要历史数据初始化，后续只需传入最新收盘价
+    性能: O(1) vs O(n) 传统计算
+    
+    Args:
+        code: 股票代码
+        close: 最新收盘价
+        period: RSI 周期
+        historical_closes: 历史收盘价序列 (仅首次需要)
+    
+    Returns:
+        RSI 值 (0-100) 或 None (数据不足)
+    """
+    from app.strategy.indicator_cache import indicator_cache
+    
+    state = indicator_cache.get_or_create(code)
+    
+    if not state.rsi_initialized:
+        if historical_closes is None:
+            return None
+        return indicator_cache.initialize_rsi(code, historical_closes, period)
+    else:
+        return indicator_cache.update_rsi(code, close, period, state)
+
+
+def macd_incremental(
+    code: str,
+    close: float,
+    fast: int = 12,
+    slow: int = 26,
+    signal: int = 9,
+    historical_closes: Optional[list] = None
+) -> Optional[Tuple[float, float, float]]:
+    """
+    MACD 增量计算 (P1 优化)
+    
+    Args:
+        code: 股票代码
+        close: 最新收盘价
+        fast/signal/slow: MACD 参数
+        historical_closes: 历史收盘价序列 (仅首次需要)
+    
+    Returns:
+        (macd_line, signal_line, histogram) 或 None
+    """
+    from app.strategy.indicator_cache import indicator_cache
+    
+    state = indicator_cache.get_or_create(code)
+    
+    if state.ema_fast is None:
+        if historical_closes is None:
+            return None
+        return indicator_cache.initialize_macd(code, historical_closes, fast, slow, signal)
+    else:
+        return indicator_cache.update_macd(code, close, fast, slow, signal, state)

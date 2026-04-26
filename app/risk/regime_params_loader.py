@@ -90,10 +90,10 @@ class RegimeParamsLoader:
         # 返回标准化参数
         return {
             'signal_cooldown': params.get('signal_cooldown', 120),
-            'min_confidence': params.get('min_confidence', 0.50),
-            'max_single_position': params.get('max_single_position', 0.20),
-            'max_total_position': params.get('max_total_position', 0.80),
-            'max_daily_trades': params.get('max_daily_trades', 10),
+            'min_confidence': params.get('min_confidence', 0.35),  # 2026-04-24 统一
+            'max_single_position': params.get('max_single_position', 0.08),  # 2026-04-18 对齐 config.yaml (0.08)
+            'max_total_position': params.get('max_total_position', 0.75),
+            'max_daily_trades': params.get('max_daily_trades', 5),
             'description': params.get('description', f'状态：{regime_type}'),
             'regime_type': regime_type,
         }
@@ -145,10 +145,10 @@ class RegimeParamsLoader:
         default = self.config.get('default', {})
         return {
             'signal_cooldown': default.get('signal_cooldown', 120),
-            'min_confidence': default.get('min_confidence', 0.50),
-            'max_single_position': default.get('max_single_position', 0.20),
-            'max_total_position': default.get('max_total_position', 0.80),
-            'max_daily_trades': default.get('max_daily_trades', 10),
+            'min_confidence': default.get('min_confidence', 0.35),  # 2026-04-22: 0.55→0.35
+            'max_single_position': default.get('max_single_position', 0.08),  # 2026-04-18 对齐 config.yaml (0.08)
+            'max_total_position': default.get('max_total_position', 0.75),
+            'max_daily_trades': default.get('max_daily_trades', 5),
             'description': '默认参数',
         }
     

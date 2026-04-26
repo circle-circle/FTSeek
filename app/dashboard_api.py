@@ -3,6 +3,7 @@ FTSeek 深度复盘 Dashboard API
 提供交易数据、策略分析、收益趋势、成长趋势等数据接口
 """
 from fastapi import APIRouter, Query, HTTPException
+from app.storage.repository import get_db
 from typing import Optional, List, Dict, Any
 from datetime import datetime, timedelta
 import sqlite3
@@ -19,7 +20,6 @@ def get_db_connection():
     conn = sqlite3.connect(str(DB_PATH))
     conn.row_factory = sqlite3.Row
     return conn
-
 
 @router.get("/kpi")
 async def get_kpi(
@@ -90,11 +90,46 @@ async def get_kpi(
         # 计算盈亏比
         profit_loss_ratio = avg_win / avg_loss if avg_loss > 0 else 0
         
-        # 夏普比率 (简化计算，使用日收益率标准差)
-        sharpe_ratio = 0.82  # TODO: 实际计算
-        
-        # 最大回撤 (简化)
-        max_drawdown = -0.05  # TODO: 实际计算
+        # 夏普比率 (基于DB查询日收益率)
+        sharpe_ratio = 0.0
+        max_drawdown = 0.0
+        try:
+            cursor.execute("""
+                SELECT 
+                    date(exit_time) as trade_date,
+                    SUM(pnl) as daily_pnl,
+                    SUM(CASE WHEN pnl > 0 THEN pnl ELSE 0 END) as daily_win,
+                    SUM(CASE WHEN pnl < 0 THEN pnl ELSE 0 END) as daily_loss
+                FROM trades
+                WHERE datetime(exit_time) >= datetime(?)
+                  AND pnl != 0
+                GROUP BY date(exit_time)
+                ORDER BY trade_date
+            """, (start_date.isoformat(),))
+            daily_rows = cursor.fetchall()
+            
+            if len(daily_rows) > 1:
+                import statistics
+                daily_pnl_values = [r['daily_pnl'] for r in daily_rows]
+                mean_return = statistics.mean(daily_pnl_values)
+                std_return = statistics.stdev(daily_pnl_values)
+                if std_return > 0:
+                    sharpe_ratio = round(mean_return / std_return * (252 ** 0.5), 4)
+                
+                # 最大回撤 (基于累计盈亏曲线)
+                cumulative = 0
+                peak = 0
+                for r in daily_rows:
+                    cumulative += r['daily_pnl']
+                    if cumulative > peak:
+                        peak = cumulative
+                    drawdown = (cumulative - peak) / max(peak, 1) if peak > 0 else 0
+                    if drawdown < max_drawdown:
+                        max_drawdown = drawdown
+                max_drawdown = round(max_drawdown, 4)
+        except Exception:
+            sharpe_ratio = 0.0
+            max_drawdown = 0.0
         
         result = {
             "pnl": total_pnl,
@@ -347,14 +382,15 @@ async def get_trades(
         # 计算持仓时长
         try:
             entry = datetime.fromisoformat(row['entry_time'])
-            exit = datetime.fromisoformat(row['exit_time'])
-            delta = exit - entry
+            exit_dt = datetime.fromisoformat(row['exit_time'])
+            delta = exit_dt - entry
             hours = delta.total_seconds() / 3600
             if hours < 24:
                 holding_period = f"{int(hours)}h"
             else:
                 holding_period = f"{int(hours / 24)}d"
-        except:
+        except (ValueError, TypeError, AttributeError) as e:
+            logger.debug(f"持仓时长计算失败：{e}")
             holding_period = "N/A"
         
         trades.append({
@@ -423,8 +459,25 @@ async def get_signal_quality():
             "strategy": row['strategy']
         })
     
-    # 计算相关性 (简化)
-    correlation = 0.65  # TODO: 实际计算皮尔逊相关系数
+    # 计算皮尔逊相关系数 (置信度 vs 收益)
+    if len(signals) >= 2:
+        import statistics
+        confidences = [s['confidence'] for s in signals]
+        pnls = [s['pnl'] for s in signals]
+        try:
+            mean_conf = statistics.mean(confidences)
+            mean_pnl = statistics.mean(pnls)
+            std_conf = statistics.stdev(confidences)
+            std_pnl = statistics.stdev(pnls)
+            if std_conf > 0 and std_pnl > 0:
+                covariance = sum((c - mean_conf) * (p - mean_pnl) for c, p in zip(confidences, pnls)) / (len(signals) - 1)
+                correlation = round(covariance / (std_conf * std_pnl), 4)
+            else:
+                correlation = 0.0
+        except (statistics.StatisticsError, ZeroDivisionError):
+            correlation = 0.0
+    else:
+        correlation = 0.0  # 数据不足
     
     conn.close()
     
@@ -500,9 +553,10 @@ async def get_growth_trend():
     # 本周 vs 上周
     this_week = get_period_stats(0)
     last_week = get_period_stats(7)
-    
+
     # 本月 vs 上月 (简化为 30 天)
-    this_month = get_period_stats(0)  # TODO: 实际按月计算
+    # 注：完整实现需要按日历月计算
+    this_month = get_period_stats(0)
     last_month = get_period_stats(30)
     
     conn.close()

@@ -29,7 +29,7 @@ class DynamicThresholdManager:
     """动态阈值管理器"""
     
     def __init__(self):
-        self.current_threshold = 0.50  # 默认 min_confidence
+        self.current_threshold = 0.35  # 2026-04-22: 0.55→0.35 实测信号均值0.36
         self.last_adjustment = None
         self.adjustment_history: List[Dict] = []
         self._load_config()
@@ -41,7 +41,7 @@ class DynamicThresholdManager:
             if os.path.exists(THRESHOLD_CONFIG_PATH):
                 with open(THRESHOLD_CONFIG_PATH, 'r', encoding='utf-8') as f:
                     config = json.load(f)
-                    self.current_threshold = config.get('current_threshold', 0.50)
+                    self.current_threshold = config.get('current_threshold', 0.55)  # 2026-04-16 对齐 config.yaml
                     self.last_adjustment = config.get('last_adjustment')
                     logger.info(f"加载动态阈值配置：{self.current_threshold}")
         except Exception as e:

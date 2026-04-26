@@ -33,7 +33,7 @@ def main():
     try:
         with open(SIGNAL_PATH, 'r') as f:
             signals = json.load(f)
-    except:
+    except Exception:
         signals = []
     
     # 2. 统计信号

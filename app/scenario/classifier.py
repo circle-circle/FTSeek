@@ -31,7 +31,7 @@ from .multi_timeframe import MultiTimeframeFeatureExtractor, MultiTimeframeFeatu
 from .log import get_scenario_log_manager
 
 logger = logging.getLogger("ftseek.scenario.classifier")
-logger.propagate = False
+# 2026-04-10: propagate=True (默认), 通过 ftseek 父级 logger 输出
 
 
 class ScenarioType(Enum):
@@ -56,6 +56,9 @@ class ScenarioType(Enum):
     REVERSAL_SETUP = "reversal_setup"   # 反转预备
     BREAKOUT_SETUP = "breakout_setup"   # 突破预备
 
+    # 灰区: 信号冲突/不确定，启用防守模式（落袋为安）
+    GRAY_ZONE = "gray_zone"
+
     # 默认
     UNKNOWN = "unknown"
 
@@ -71,6 +74,8 @@ class ScenarioOutput:
     features: Optional[Features] = None
     timestamp: float = field(default_factory=time.time)
     metadata: Dict[str, Any] = field(default_factory=dict)
+    tags: List[str] = field(default_factory=list)  # 辅助标签 (2026-04-13 新增)
+    gray_zone_source: str = ""  # 灰区触发源 (conflict/low_conf)
 
     def to_dict(self) -> Dict:
         return {
@@ -81,6 +86,8 @@ class ScenarioOutput:
             "atr_percentile": round(self.atr_percentile, 2),
             "timestamp": self.timestamp,
             "metadata": self.metadata,
+            "tags": self.tags,
+            "gray_zone_source": self.gray_zone_source,
         }
 
 
@@ -141,6 +148,15 @@ class ScenarioClassifier:
         self.COOL_DOWN_MINUTES = self.config.get('cool_down_minutes', 2)
         self.CONFIDENCE_THRESHOLD = self.config.get('confidence_threshold', 0.65)
 
+        # 灰区检测参数
+        self.GRAY_ZONE_CONFLICT_GAP = self.config.get('gray_zone_conflict_gap', 0.10)
+        self.GRAY_ZONE_MIN_CONFIDENCE = self.config.get('gray_zone_min_confidence', 0.45)
+        # 高优先级场景绕过灰区的最低置信度门槛 (2026-04-11 防守一致性修复)
+        # 低于此门槛的GAP_EVENT/NEWS_DRIVEN不走快速通道，而是进入完整候选池
+        self.GRAY_ZONE_HIGH_PRIORITY_BYPASS_MIN = self.config.get(
+            'gray_zone_high_priority_bypass_min', 0.65
+        )
+
         # 宏观市场状态检测器 (复用现有能力)
         self.regime_detector = MarketRegimeDetector(config)
 
@@ -153,8 +169,7 @@ class ScenarioClassifier:
         # 场景日志管理器 (Phase 2 新增)
         self.log_manager = get_scenario_log_manager()
 
-        # 场景记忆缓存 {code: (scenario, timestamp, confirm_count)}
-        self._scenario_cache: Dict[str, Tuple[ScenarioType, float, int]] = {}
+        # 2026-04-10: _scenario_cache 已移除，平滑逻辑统一由 ScenarioMemory 负责
 
         # 场景切换历史 {code: [(scenario, timestamp), ...]}
         self._scenario_history: Dict[str, List[Tuple[ScenarioType, float]]] = {}
@@ -186,14 +201,25 @@ class ScenarioClassifier:
         features_early = self.feature_extractor.extract(code, klines, news_data)
 
         # 跳空事件检测 (最高优先级)
+        # 2026-04-11 灰区防守一致性修复：置信度 >= bypass_min 才走快速通道绕过灰区检测
+        # 置信度不足时进入完整候选池，让灰区检测有机会生效
         if abs(features_early.event.gap_pct) >= self.GAP_THRESHOLD:
             confidence = min(0.95, 0.7 + abs(features_early.event.gap_pct) * 0.5)
             if features_early.volume.volume_ratio > 1.5:
                 confidence = min(0.95, confidence + 0.1)
             logger.info(f"[{code}] 跳空事件检测：{features_early.event.gap_pct*100:.1f}%")
-            return self._create_output(code, ScenarioType.GAP_EVENT, confidence, features_early)
+            if confidence >= self.GRAY_ZONE_HIGH_PRIORITY_BYPASS_MIN:
+                # 置信度足够高 → 快速通道，允许直接绕过灰区检测
+                return self._create_output(code, ScenarioType.GAP_EVENT, confidence, features_early)
+            else:
+                # 置信度不足 → 记录并继续完整流程（灰区检测将在后续运行）
+                logger.info(
+                    f"[{code}] 跳空事件置信度={confidence:.2f} < 灰区绕过门槛"
+                    f"={self.GRAY_ZONE_HIGH_PRIORITY_BYPASS_MIN:.2f}，进入候选池"
+                )
 
         # 新闻驱动检测 (高优先级)
+        # 2026-04-11 灰区防守一致性修复：同上，置信度不足时不直接返回
         news_score = features_early.event.news_score
         news_intensity = features_early.event.metadata.get('news_intensity', 0.0)
         if news_score != 0.0 and news_intensity >= 0.5:
@@ -201,7 +227,15 @@ class ScenarioClassifier:
             if features_early.event.metadata.get('breaking_news', False):
                 news_confidence = min(0.95, news_confidence + 0.1)
             logger.info(f"[{code}] 新闻驱动检测：score={news_score:.2f}")
-            return self._create_output(code, ScenarioType.NEWS_DRIVEN, news_confidence, features_early)
+            if news_confidence >= self.GRAY_ZONE_HIGH_PRIORITY_BYPASS_MIN:
+                # 置信度足够高 → 快速通道，允许直接绕过灰区检测
+                return self._create_output(code, ScenarioType.NEWS_DRIVEN, news_confidence, features_early)
+            else:
+                # 置信度不足 → 记录并继续完整流程
+                logger.info(
+                    f"[{code}] 新闻驱动置信度={news_confidence:.2f} < 灰区绕过门槛"
+                    f"={self.GRAY_ZONE_HIGH_PRIORITY_BYPASS_MIN:.2f}，进入候选池"
+                )
 
         # 1. 获取宏观市场状态
         macro_regime = self.regime_detector.detect(code)
@@ -221,7 +255,7 @@ class ScenarioClassifier:
             logger.debug(f"[{code}] 多周期置信度提升：{confidence_boost:.2f}x")
 
         # 4. 规则引擎初判
-        candidate_scenario, confidence = self._rule_engine(macro_regime, features, news_data)
+        candidate_scenario, confidence, gz_source = self._rule_engine(macro_regime, features, news_data)
 
         # 5. 多周期置信度调整 (Phase 2)
         if multi_tf_features:
@@ -237,8 +271,8 @@ class ScenarioClassifier:
                 confidence = min(0.95, confidence + 0.1)
                 logger.info(f"[{code}] 多周期共振 detected → 置信度 +0.1")
 
-        # 6. 场景记忆平滑 (防抖动)
-        smoothed_scenario = self._apply_scenario_memory(code, candidate_scenario, confidence)
+        # 6. 场景由 ScenarioMemory 负责平滑 (2026-04-10: 移除双重平滑)
+        smoothed_scenario = candidate_scenario
 
         # 7. 置信度阈值检查
         if confidence < self.CONFIDENCE_THRESHOLD:
@@ -264,7 +298,25 @@ class ScenarioClassifier:
         except Exception as e:
             logger.debug(f"记录场景日志失败：{e}")
 
-        # 10. 输出结果
+        # 10. 场景辅助标签收集 (2026-04-13 新增: 场景标签叠加)
+        tags = []
+        try:
+            # 波动叠加: 任何场景下 ATR 扩张都可以叠加
+            if features.volatility.atr_ratio >= (1 + self.ATR_EXPANSION_THRESHOLD):
+                tags.append("vol_expanding")
+            # 反转预备叠加: 趋势+超买/超卖
+            if features.position.rsi > 70 or features.position.rsi < 30:
+                tags.append("reversal_risk")
+            # 均值回归叠加: 价格远离均线
+            if abs(features.position.price_vs_ma) > 0.03:
+                tags.append("mean_reversion")
+            # 多周期分歧
+            if multi_tf_features and multi_tf_features.alignment_score < 0.3:
+                tags.append("mtf_divergent")
+        except Exception as e:
+            logger.debug(f"[{code}] 标签收集异常: {e}")
+
+        # 11. 输出结果
         output = ScenarioOutput(
             scenario_type=smoothed_scenario,
             confidence=confidence,
@@ -280,7 +332,9 @@ class ScenarioClassifier:
                 "multi_timeframe": multi_tf_features.to_dict() if multi_tf_features else None,
                 "confidence_boost": confidence_boost,
                 "resonance": multi_tf_features.resonance_detected if multi_tf_features else False,
-            }
+            },
+            gray_zone_source=gz_source,
+            tags=tags,
         )
 
         logger.info(
@@ -293,12 +347,12 @@ class ScenarioClassifier:
         return output
 
     def _rule_engine(self, regime: MarketRegime, features: Features,
-                     news_data: Dict = None) -> Tuple[ScenarioType, float]:
+                     news_data: Dict = None) -> Tuple[ScenarioType, float, str]:
         """
         规则引擎：基于宏观状态和特征进行场景分类
 
         Returns:
-            (scenario_type, confidence)
+            (scenario_type, confidence, gray_zone_source)
         """
         # 场景候选池
         candidates: List[Tuple[ScenarioType, float]] = []
@@ -334,6 +388,13 @@ class ScenarioClassifier:
             # 突发新闻额外加成
             if breaking_news:
                 news_confidence = min(0.95, news_confidence + 0.1)
+
+            # 事件强度分级 (2026-04-13 新增: CRITICAL 级别直接高置信度)
+            event_impact = features.event.metadata.get('impact_level', '')
+            if event_impact == 'critical':
+                news_confidence = max(news_confidence, 0.85)
+            elif event_impact == 'high':
+                news_confidence = max(news_confidence, 0.75)
 
             # 新闻 + 跳空 = 事件共振
             if abs(features.event.gap_pct) >= gap_threshold * 0.5:
@@ -394,7 +455,31 @@ class ScenarioClassifier:
         candidates.sort(key=lambda x: x[1], reverse=True)
         best_scenario, best_confidence = candidates[0]
 
-        return best_scenario, best_confidence
+        # ============================================================
+        # 灰区检测 (2026-04-11 新增)
+        # 有候选但不确定 -> GRAY_ZONE，启用落袋为安防守模式
+        # ============================================================
+
+        # 灰区检测1: 候选冲突 (top2 置信度差距 < 阈值，两者都有一定可信度)
+        if len(candidates) >= 2:
+            gap = candidates[0][1] - candidates[1][1]
+            if gap < self.GRAY_ZONE_CONFLICT_GAP and candidates[1][1] >= 0.55:
+                logger.info(
+                    f"[灰区] 候选冲突: {candidates[0][0].value}={candidates[0][1]:.2f} "
+                    f"vs {candidates[1][0].value}={candidates[1][1]:.2f} (gap={gap:.2f})"
+                )
+                return ScenarioType.GRAY_ZONE, best_confidence, 'conflict'
+
+        # 灰区检测2: 低置信度带 (有候选但不够确信)
+        if best_confidence < self.CONFIDENCE_THRESHOLD:
+            if best_confidence >= self.GRAY_ZONE_MIN_CONFIDENCE:
+                logger.info(
+                    f"[灰区] 低置信度: {best_scenario.value}={best_confidence:.2f} "
+                    f"(阈值={self.CONFIDENCE_THRESHOLD}, 灰区下限={self.GRAY_ZONE_MIN_CONFIDENCE})"
+                )
+                return ScenarioType.GRAY_ZONE, best_confidence, 'low_conf'
+
+        return best_scenario, best_confidence, ''
 
     def _check_divergence(self, regime: MarketRegime, features: Features) -> bool:
         """检查 ADX-价格背离 (趋势衰竭信号)"""
@@ -440,61 +525,8 @@ class ScenarioClassifier:
 
         return False
 
-    def _apply_scenario_memory(self, code: str, scenario: ScenarioType,
-                                confidence: float) -> ScenarioType:
-        """
-        应用场景记忆平滑 (防抖动)
-
-        逻辑:
-        1. 场景确认：新场景需连续出现 CONFIRM_WINDOW 次才生效
-        2. 冷却时间：场景切换后需等待 COOL_DOWN_MINUTES 分钟
-        3. 优先级覆盖：高优先级场景 (如 GAP_EVENT) 可跳过确认
-        """
-        current_time = time.time()
-        cached = self._scenario_cache.get(code)
-
-        # 高优先级场景直接生效 (不等待确认)
-        if scenario in (ScenarioType.GAP_EVENT, ScenarioType.NEWS_DRIVEN):
-            return scenario
-
-        if cached is None:
-            # 首次分类，直接返回
-            self._scenario_cache[code] = (scenario, current_time, 1)
-            return scenario
-
-        cached_scenario, cached_time, confirm_count = cached
-
-        # 场景相同，增加确认计数
-        if scenario == cached_scenario:
-            new_count = min(confirm_count + 1, self.CONFIRM_WINDOW)
-            self._scenario_cache[code] = (scenario, cached_time, new_count)
-            return scenario
-
-        # 场景不同，检查冷却时间
-        elapsed_minutes = (current_time - cached_time) / 60
-        if elapsed_minutes < self.COOL_DOWN_MINUTES:
-            logger.debug(
-                f"{code} 场景切换冷却中：{cached_scenario.value} → {scenario.value} "
-                f"(已过{elapsed_minutes:.1f}min < {self.COOL_DOWN_MINUTES}min)"
-            )
-            return cached_scenario
-
-        # 检查确认计数
-        if confirm_count >= self.CONFIRM_WINDOW:
-            # 新场景确认完成，切换
-            logger.info(
-                f"{code} 场景切换：{cached_scenario.value} → {scenario.value} "
-                f"(确认{confirm_count}次)"
-            )
-            self._scenario_cache[code] = (scenario, current_time, 1)
-            return scenario
-        else:
-            # 确认计数不足，保持原场景
-            logger.debug(
-                f"{code} 场景确认中：{scenario.value} (计数{confirm_count}/{self.CONFIRM_WINDOW})"
-            )
-            self._scenario_cache[code] = (scenario, cached_time, confirm_count + 1)
-            return cached_scenario
+    # 2026-04-10: _apply_scenario_memory() 已移除
+    # 平滑逻辑统一由 ScenarioMemory 状态机负责，消除双重平滑问题
 
     def _record_scenario_change(self, code: str, scenario: ScenarioType):
         """记录场景切换历史"""
@@ -521,8 +553,8 @@ class ScenarioClassifier:
         Returns:
             ScenarioOutput: 场景分类结果
         """
-        # 应用场景记忆平滑
-        smoothed_scenario = self._apply_scenario_memory(code, scenario, confidence)
+        # 2026-04-10: 平滑由 ScenarioMemory 负责，直接使用原始场景
+        smoothed_scenario = scenario
 
         # 记录场景切换历史
         self._record_scenario_change(code, smoothed_scenario)
@@ -561,10 +593,8 @@ class ScenarioClassifier:
     def clear_cache(self, code: str = None):
         """清除缓存"""
         if code:
-            self._scenario_cache.pop(code, None)
             self._scenario_history.pop(code, None)
         else:
-            self._scenario_cache.clear()
             self._scenario_history.clear()
 
 

@@ -2,6 +2,8 @@
 钉钉风险警报通知
 
 将风险警报实时推送到钉钉群
+
+2026-04-13 修复: 统一推送入口，使用全局 notifier 共享 webhook/限流。
 """
 import logging
 import requests
@@ -292,7 +294,17 @@ class DingTalkAlertSender:
         return self.send_markdown(title, text, "INFO")
 
     def _send(self, payload: dict) -> bool:
-        """发送消息到钉钉"""
+        """发送消息到钉钉 - 2026-04-13: 使用全局 notifier 统一限流"""
+        # 优先使用全局 notifier
+        try:
+            from app.notifier import get_dingtalk_notifier
+            global_notifier = get_dingtalk_notifier()
+            if global_notifier.webhook_url:
+                return global_notifier._do_post(payload)
+        except Exception as e:
+            logger.warning(f"获取全局 notifier 失败，回退到直接发送: {e}")
+        
+        # 后备: 直接 POST
         try:
             url = self._sign_url()
             response = requests.post(url, json=payload, timeout=10)

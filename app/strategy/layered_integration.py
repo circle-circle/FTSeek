@@ -303,9 +303,9 @@ class LayeredStrategyManager:
                     # 将缓冲区数据转为简单列表格式
                     result[k_type] = [{
                         'close': c, 'high': h, 'low': l,
-                    } for c, h, l in zip(buf.close, buf.high, buf.low)]
-            except Exception:
-                pass
+                    } for c, h, l in zip(list(buf.close), list(buf.high), list(buf.low))]
+            except Exception as e:
+                logger.debug(f"[K线转换] {k_type} 缓冲区转换失败，跳过: {e}")
         return result
 
     def update_kline_cache(self, code: str, kline_type: str, kline: Dict):
@@ -321,12 +321,12 @@ class LayeredStrategyManager:
             self._kline_cache[code] = {}
 
         if kline_type not in self._kline_cache[code]:
-            self._kline_cache[code][kline_type] = []
+            # 从 data_subscriber 注入的是 IndicatorBuffer 对象
+            from app.strategy.indicators import IndicatorBuffer
+            self._kline_cache[code][kline_type] = IndicatorBuffer(maxlen=200)
 
-        # 添加到滑动窗口 (保留最近 100 条)
-        self._kline_cache[code][kline_type].append(kline)
-        if len(self._kline_cache[code][kline_type]) > 100:
-            self._kline_cache[code][kline_type] = self._kline_cache[code][kline_type][-100:]
+        # 调用 IndicatorBuffer 的 push_kline 方法
+        self._kline_cache[code][kline_type].push_kline(kline)
 
     # ========== 冷却管理 ==========
 

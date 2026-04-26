@@ -23,7 +23,7 @@ FTSeek 交易后评估系统
 
 import json
 import logging
-import sqlite3
+from app.storage.repository import get_db
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -136,7 +136,7 @@ class TradeEvaluator:
     
     def _init_db(self):
         """初始化数据库表"""
-        with sqlite3.connect(self.db_path) as conn:
+        with get_db(self.db_path) as conn:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS trade_evaluations (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -231,7 +231,7 @@ class TradeEvaluator:
         trade_id = trade_info.get('trade_id') or f"T{datetime.now().strftime('%Y%m%d%H%M%S')}"
         
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with get_db(self.db_path) as conn:
                 conn.execute("""
                     INSERT OR REPLACE INTO trade_evaluations (
                         trade_id, code, action, entry_time, entry_price,
@@ -276,7 +276,7 @@ class TradeEvaluator:
             timestamp: 时间戳
         """
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with get_db(self.db_path) as conn:
                 # 获取原记录
                 cursor = conn.execute(
                     "SELECT entry_price, entry_time, high_after_entry, low_after_entry FROM trade_evaluations WHERE trade_id = ?",
@@ -353,7 +353,7 @@ class TradeEvaluator:
             realized_pnl: 已实现盈亏
         """
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with get_db(self.db_path) as conn:
                 # 获取原记录
                 cursor = conn.execute(
                     "SELECT entry_price, quantity FROM trade_evaluations WHERE trade_id = ?",
@@ -400,7 +400,7 @@ class TradeEvaluator:
             trade_id: 交易ID
         """
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with get_db(self.db_path) as conn:
                 cursor = conn.execute(
                     "SELECT * FROM trade_evaluations WHERE trade_id = ?",
                     (trade_id,)
@@ -584,7 +584,7 @@ class TradeEvaluator:
     def get_trade_evaluation(self, trade_id: str) -> Optional[Dict]:
         """获取单笔交易评估"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with get_db(self.db_path) as conn:
                 cursor = conn.execute(
                     "SELECT * FROM trade_evaluations WHERE trade_id = ?",
                     (trade_id,)
@@ -610,7 +610,7 @@ class TradeEvaluator:
             评估记录列表
         """
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with get_db(self.db_path) as conn:
                 since = (datetime.now() - timedelta(days=days)).isoformat()
                 
                 if code:
@@ -651,7 +651,7 @@ class TradeEvaluator:
             
             week_end = (datetime.fromisoformat(week_start) + timedelta(days=7)).isoformat()
             
-            with sqlite3.connect(self.db_path) as conn:
+            with get_db(self.db_path) as conn:
                 cursor = conn.execute("""
                     SELECT 
                         COUNT(*) as total_trades,
@@ -727,7 +727,7 @@ class TradeEvaluator:
             month_start = f"{month}-01"
             month_end = f"{month}-32"  # SQLite会自动处理
             
-            with sqlite3.connect(self.db_path) as conn:
+            with get_db(self.db_path) as conn:
                 # 基础统计
                 cursor = conn.execute("""
                     SELECT 

@@ -64,6 +64,16 @@ RSS_FEEDS = {
         # "https://rss.sina.com.cn/finance/hkstock/hkstocknews.xml",  # ❌ 404
     ],
 
+    # 富途快讯 (RSSHub) - 2026-04-18 增加备用节点
+    # 主节点: rsshub.rssforever.com (经常超时)
+    # 备用 1: rsshub.ktachibana.party
+    # 备用 2: rss.shab.fun
+    "futu_flash": [
+        "https://rsshub.rssforever.com/futunn/live",
+        "https://rsshub.ktachibana.party/futunn/live",
+        # "https://rss.shab.fun/futunn/live",  # ❌ 已失效 (DNS 解析失败)
+    ],
+
     # 科技类 (默认关闭)
     "tech": [],
 }
@@ -87,6 +97,7 @@ SOURCE_PRIORITY = {
     "fed": 3,           # 美联储
     "hkex_news": 2,     # 港交所新闻
     "wsj": 4,           # 华尔街日报
+    "futu_rsshub": 2,   # 富途快讯 (RSSHub) - 2026-04-12 新增，高优先级
 }
 
 # 分类开关
@@ -95,7 +106,8 @@ CATEGORY_ENABLED = {
     "flash": True,      # 快讯推送
     "macro": True,      # 宏观政策
     "hk_stocks": True,  # 港股专项 (开启)
-    "hk_finance": True, # 港股财经 (开启)
+    "hk_finance": False, # 港股财经 (禁用，源已失效)
+    "futu_flash": True, # 富途快讯 (开启) - 2026-04-12 新增
     "tech": False,      # 科技类 (默认不推送)
     "crypto": False,    # 加密货币 (默认不推送)
 }
@@ -150,21 +162,62 @@ for stock in WATCH_STOCKS:
 
 # 股票代码别名映射 (用于新闻内容匹配)
 STOCK_ALIASES = {
-    # 港股 - 交易标的
-    "HK.03690": ["美团", "Meituan", "3690", "03690", "03690.HK", "外卖", "美团点评"],
-    "HK.09992": ["泡泡玛特", "Pop Mart", "POPMART", "9992", "09992", "09992.HK"],
-    "HK.00981": ["中芯国际", "SMIC", "981", "00981", "00981.HK", "中芯"],
-    "HK.09660": ["万物云", "万物", "9660", "09660", "09660.HK"],
-    "HK.02318": ["中国平安", "平安", "2318", "02318", "02318.HK", "Ping An"],
+    # ─── 港股 - 互联网/电商 (6只) ───
     "HK.00700": ["腾讯", "Tencent", "0700", "00700", "00700.HK", "腾讯控股", "微信", "WeChat"],
-    "HK.09988": ["阿里", "Alibaba", "9988", "09988", "09988.HK", "阿里巴巴", "淘宝"],
-    "HK.01810": ["小米", "Xiaomi", "1810", "01810", "01810.HK"],
-    "HK.00388": ["港交所", "HKEx", "388", "00388", "00388.HK"],
-    # 美股
+    "HK.09988": ["阿里", "Alibaba", "9988", "09988", "09988.HK", "阿里巴巴", "淘宝", "BABA"],
+    "HK.03690": ["美团", "Meituan", "3690", "03690", "03690.HK", "外卖", "美团点评", "王兴"],
+    "HK.09618": ["京东", "JD", "9618", "09618", "09618.HK", "京东集团", "刘强东"],
+    "HK.01024": ["快手", "Kuaishou", "1024", "01024", "01024.HK", "快手科技", "Kwai"],
+    "HK.09888": ["百度", "Baidu", "9888", "09888", "09888.HK", "百度集团", "李彦宏", "文心一言"],
+
+    # ─── 港股 - 半导体/芯片 (3只) ───
+    "HK.00981": ["中芯国际", "SMIC", "981", "00981", "00981.HK", "中芯", "中芯半导体"],
+    "HK.01347": ["华虹半导体", "Hua Hong", "1347", "01347", "01347.HK", "华虹", "华虹宏力"],
+    "HK.02382": ["舜宇光学", "Sunny Optical", "2382", "02382", "02382.HK", "舜宇", "舜宇科技"],
+
+    # ─── 港股 - 新能源车/汽车 (4只) ───
+    "HK.01810": ["小米", "Xiaomi", "1810", "01810", "01810.HK", "小米集团", "雷军", "小米汽车"],
+    "HK.01211": ["比亚迪", "BYD", "1211", "01211", "01211.HK", "比亚迪股份", "王传福"],
+    "HK.02015": ["理想汽车", "Li Auto", "2015", "02015", "02015.HK", "理想", "李想"],
+    "HK.09868": ["小鹏汽车", "Xpeng", "9868", "09868", "09868.HK", "小鹏", "何小鹏"],
+
+    # ─── 港股 - 金融/保险 (4只) ───
+    "HK.02318": ["中国平安", "Ping An", "2318", "02318", "02318.HK", "平安", "平安保险", "马明哲"],
+    "HK.01299": ["友邦保险", "AIA", "1299", "01299", "01299.HK", "友邦", "AIA集团"],
+    "HK.00388": ["港交所", "HKEx", "388", "00388", "00388.HK", "香港交易所", "HKEX", "陈翊庭"],
+    "HK.00939": ["建设银行", "CCB", "939", "00939", "00939.HK", "建行", "建设银行", "CCB"],
+
+    # ─── 港股 - 医药/生物 (3只) ───
+    "HK.02269": ["药明生物", "WuXi Biologics", "2269", "02269", "02269.HK", "药明", "WuXi"],
+    "HK.01801": ["信达生物", "Innovent", "1801", "01801", "01801.HK", "信达", "Innovent Bio"],
+    "HK.06618": ["京东健康", "JD Health", "6618", "06618", "06618.HK", "京东健康"],
+
+    # ─── 港股 - 消费/零售 (4只) ───
+    "HK.09992": ["泡泡玛特", "Pop Mart", "9992", "09992", "09992.HK", "POPMART", "泡泡"],
+    "HK.02020": ["安踏", "ANTA", "2020", "02020", "02020.HK", "安踏体育", "丁世忠"],
+    "HK.01876": ["百威亚太", "Budweiser APAC", "1876", "01876", "01876.HK", "百威", "百威啤酒"],
+    "HK.09926": ["康方生物", "Akeso", "9926", "09926", "09926.HK", "康方", "Akeso Bio"],
+
+    # ─── 港股 - 能源/资源 (3只) ───
+    "HK.00883": ["中海油", "CNOOC", "883", "00883", "00883.HK", "中国海洋石油", "CNOOC"],
+    "HK.00857": ["中石油", "PetroChina", "857", "00857", "00857.HK", "中国石油", "CNPC"],
+    "HK.01378": ["中国宏桥", "China Hongqiao", "1378", "01378", "01378.HK", "宏桥", "中国铝"],
+
+    # ─── 港股 - AI/游戏/旅游 (3只) ───
+    "HK.00772": ["阅文集团", "China Literature", "772", "00772", "00772.HK", "阅文", "ChinaLit", "起点"],
+    "HK.09961": ["携程", "Trip.com", "9961", "09961", "09961.HK", "携程集团", "梁建章", "Trip"],
+    "HK.00708": ["恒大汽车", "Evergrande Auto", "708", "00708", "00708.HK", "恒驰", "恒大汽车"],
+
+    # ─── 美股 (跨市场映射) ───
     "US.AAPL": ["苹果", "Apple", "AAPL", "iPhone", "Mac"],
     "US.TSLA": ["特斯拉", "Tesla", "TSLA", "Elon Musk", "马斯克"],
     "US.NVDA": ["英伟达", "NVIDIA", "NVDA", "黄仁勋"],
     "US.MSFT": ["微软", "Microsoft", "MSFT", "Windows", "Office"],
+    "US.BABA": ["阿里巴巴", "BABA", "Alibaba US", "阿里巴巴美股"],
+    "US.TCEHY": ["腾讯", "TCEHY", "Tencent ADR", "腾讯美股"],
+    "US.JD": ["京东", "JD", "JD.com", "京东美股"],
+    "US.NIO": ["蔚来", "NIO", "蔚来汽车", "李斌"],
+    "US.LI": ["理想", "LI", "Li Auto US", "理想美股"],
 }
 
 # ============================================================
@@ -193,11 +246,34 @@ QWEN_CONFIG = {
 }
 
 # ============================================================
-#  钉钉推送配置
+#  钉钉推送配置 (统一配置源 2026-04-13 修复)
+#  
+#  P2 修复: 优先使用 app/config.py 的统一配置源，避免多套配置不一致
+#  如果 app/config.py 不可用，回退到环境变量
 # ============================================================
 
-DINGTALK_WEBHOOK_URL = os.getenv("DINGTALK_WEBHOOK_URL", "")
-DINGTALK_SECRET = os.getenv("DINGTALK_SECRET", "")
+def _get_dingtalk_webhook():
+    """统一获取钉钉 Webhook URL"""
+    try:
+        from app import config as main_config
+        if getattr(main_config, 'DINGTALK_WEBHOOK_URL', ''):
+            return main_config.DINGTALK_WEBHOOK_URL
+    except Exception:
+        pass
+    return os.getenv("DINGTALK_WEBHOOK_URL", "")
+
+def _get_dingtalk_secret():
+    """统一获取钉钉 Secret"""
+    try:
+        from app import config as main_config
+        if getattr(main_config, 'DINGTALK_SECRET', ''):
+            return main_config.DINGTALK_SECRET
+    except Exception:
+        pass
+    return os.getenv("DINGTALK_SECRET", "")
+
+DINGTALK_WEBHOOK_URL = _get_dingtalk_webhook()
+DINGTALK_SECRET = _get_dingtalk_secret()
 
 # 推送时间控制 (避免打扰)
 PUSH_TIME_WINDOW = {

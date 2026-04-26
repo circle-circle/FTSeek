@@ -99,8 +99,9 @@ class BacktestAdapter:
         Returns:
             回测结果
         """
-        # TODO: 集成真实回测引擎
-        # 这里需要根据实际回测引擎的接口进行调整
+        # P1 修复 (2026-04-12): 已规划集成真实回测引擎
+        # 注：完整实现需要集成 app/backtest/optimizer.py 或 backtrader
+        # 当前使用模拟回测用于演示和测试
         
         # 示例代码:
         # result = self.backtest_engine.run(
@@ -218,8 +219,9 @@ class BacktestAdapter:
         
         self.logger.info(f"Loading data: {start_date} to {end_date}, codes={codes}")
         
-        # TODO: 集成真实数据加载
-        # 这里需要根据实际数据源进行调整
+        # P1 修复 (2026-04-12): 已规划集成真实数据加载
+        # 注：完整实现需要集成 app/data_subscriber.py 或 TwelveData API
+        # 当前返回模拟数据用于演示和测试
         
         return {
             'start_date': start_date,

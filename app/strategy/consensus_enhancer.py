@@ -46,7 +46,7 @@ class ConsensusEnhancer:
         self.config = config or {}
 
         # 质量阈值 (Phase 1)
-        self.quality_threshold = self.config.get('quality_threshold', 0.50)
+        self.quality_threshold = self.config.get('quality_threshold', 0.30)  # 2026-04-14 对齐 config.yaml
         self.high_quality_threshold = self.config.get('high_quality_threshold', 0.75)
 
         # 时效性配置 (Phase 3)

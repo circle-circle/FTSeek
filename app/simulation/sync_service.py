@@ -4,6 +4,8 @@
 """
 import logging
 import sqlite3
+from app.storage.repository import get_db
+
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional, List, Dict
@@ -24,7 +26,6 @@ def get_db_connection():
     conn = sqlite3.connect(str(DB_PATH))
     conn.row_factory = sqlite3.Row
     return conn
-
 def sync_today_trades():
     """从富途同步今日交易数据"""
     logger.info("开始同步今日富途交易数据...")
@@ -145,14 +146,32 @@ def is_trading_day():
     """判断是否为交易日"""
     from datetime import datetime
     today = datetime.now()
-    
+
     # 周末不是交易日
     if today.weekday() >= 5:
         return False
-    
-    # TODO: 添加港股节假日判断
-    # 这里可以添加具体的港股节假日列表
-    
+
+    # P1 修复 (2026-04-12): 添加港股节假日判断
+    # 注：完整节假日列表需要每年更新，当前使用简化判断
+    hk_holidays_2026 = [
+        "2026-01-01",  # 元旦
+        "2026-02-18",  # 农历年初一
+        "2026-02-19",  # 农历年初二
+        "2026-02-20",  # 农历年初三
+        "2026-04-03",  # 清明节
+        "2026-04-06",  # 复活节后周一
+        "2026-05-01",  # 劳动节
+        "2026-05-25",  # 端午节
+        "2026-07-01",  # 香港特区成立日
+        "2026-09-07",  # 中秋节
+        "2026-10-01",  # 国庆节
+        "2026-10-26",  # 重阳节
+        "2026-12-25",  # 圣诞节
+        "2026-12-26",  # 节礼日
+    ]
+    if today.strftime("%Y-%m-%d") in hk_holidays_2026:
+        return False
+
     return True
 
 def sync_if_trading_day():

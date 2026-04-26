@@ -1,4 +1,8 @@
-#!/usr/bin/env python3
+"""
+DEPRECATED: 此模块已废弃, 请使用 app/backtest/backtest_engine.py
+根目录下的 backtest/backtest_engine.py 已被 app/backtest/backtest_engine.py 替代.
+脚本 scripts/run_realdata_backtest.py 仍引用此模块, 后续将迁移.
+"""
 """
 FTSeek 回测引擎 V2
 
@@ -146,7 +150,7 @@ class DataLoader:
             if len(df) > 0:
                 df.columns = ['time', 'open', 'close', 'high', 'low', 'volume', 'amount']
                 return df
-        except:
+        except Exception as e:
             pass
         finally:
             conn.close()

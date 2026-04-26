@@ -11,7 +11,7 @@ Phase 2 新增:
 from .classifier import ScenarioClassifier, ScenarioOutput, ScenarioType, get_scenario_classifier
 from .router import ScenarioRouter, RouteResult, get_scenario_router
 from .features import FeatureExtractor, Features, get_feature_extractor
-from .memory import ScenarioMemory, get_scenario_memory
+from .memory import ScenarioMemory, ScenarioPhase, ScenarioUpdateResult, get_scenario_memory
 from .multi_timeframe import (
     MultiTimeframeFeatureExtractor,
     MultiTimeframeFeatures,
@@ -41,6 +41,8 @@ __all__ = [
     "FeatureExtractor",
     "Features",
     "ScenarioMemory",
+    "ScenarioPhase",
+    "ScenarioUpdateResult",
     # Phase 2 新增
     "MultiTimeframeFeatureExtractor",
     "MultiTimeframeFeatures",

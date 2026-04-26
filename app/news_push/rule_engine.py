@@ -134,11 +134,11 @@ class RuleEngine:
                 matched_keywords=matched
             )
         
-        # 没有匹配关键词，但也不在排除列表中
+        # 硬性条件：必须匹配至少一个关键词
         return RuleResult(
-            passed=True,
-            reason="无关键词匹配 (但未被排除)",
-            score=0.3
+            passed=False,
+            reason="未匹配任何推送关键词",
+            score=0.0
         )
     
     def check_stock_match(self, news: NewsItem) -> RuleResult:

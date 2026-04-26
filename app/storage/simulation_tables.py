@@ -12,7 +12,7 @@
 - 数据清理更方便
 - 避免误操作风险
 """
-import sqlite3
+from app.storage.repository import get_db
 import logging
 from datetime import datetime
 from pathlib import Path
@@ -49,7 +49,8 @@ class SimulationDatabase:
     @contextmanager
     def get_connection(self):
         """获取数据库连接上下文管理器"""
-        conn = sqlite3.connect(str(self.db_path))
+        with get_db(str(self.db_path)) as conn:
+            pass
         conn.row_factory = sqlite3.Row  # 返回字典式行
         try:
             yield conn
@@ -58,8 +59,6 @@ class SimulationDatabase:
             conn.rollback()
             logger.error(f"模拟盘数据库操作失败：{e}")
             raise
-        finally:
-            conn.close()
     
     def _init_tables(self):
         """初始化模拟盘专用表结构"""

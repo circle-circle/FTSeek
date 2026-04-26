@@ -25,11 +25,21 @@ from dataclasses import dataclass, field
 from enum import Enum
 from collections import deque
 
+from app.utils.session_detector import SessionDetector
 from app.strategy.consensus_engine import ConsensusResult
+
+# 初始化全局时段检测器 (延迟加载)
+_session_detector: Optional[SessionDetector] = None
+
+def get_session_detector(time_aware_config: Dict = None) -> SessionDetector:
+    global _session_detector
+    if _session_detector is None and time_aware_config:
+        _session_detector = SessionDetector(time_aware_config)
+    return _session_detector
 from app.strategy.base import SignalAction
 
 logger = logging.getLogger("ftseek.decision_buffer")
-logger.propagate = False  # 防止日志重复
+# 2026-04-10 修复: 移除 propagate=False，让日志通过 ftseek 父级 logger 输出
 
 
 # ============================================================
@@ -50,11 +60,12 @@ class DecisionStatus(str, Enum):
 # ============================================================
 @dataclass
 class DecisionRecord:
-    """决策记录（用于审计和回溯）"""
+    """决策记录（用于审计和回溯，2026-04-15 新增归因追踪）"""
     decision_id: str
     code: str
     action: SignalAction
     consensus_result: ConsensusResult
+    trace_id: str = ""           # 全链路归因 ID (Phase 1)
     status: DecisionStatus = DecisionStatus.PENDING
     rejection_reason: str = ""
     created_at: float = field(default_factory=time.time)
@@ -100,15 +111,22 @@ class DecisionBuffer:
 
     def __init__(
         self,
-        signal_cooldown: int = 10,         # 信号冷却期（秒）
-        max_pending: int = 10,             # 最大待处理队列长度
-        min_confidence: float = 0.35,      # 最低置信度阈值
-        max_positions: Optional[int] = None,  # 最大持仓数量（None=根据股票池动态计算）
-        dynamic_position_mode: bool = True,   # 动态仓位模式
+        signal_cooldown: int = 120,           # 2026-04-16 对齐 config.yaml (120s)
+        max_pending: int = 500,               # 2026-04-22: 200→500 防止队列溢出
+        min_confidence: float = 0.35,         # 2026-04-24 统一: 对齐 risk_limits.min_confidence
+        max_positions: Optional[int] = None,
+        dynamic_position_mode: bool = True,
+        source_risk_config: Optional[Dict] = None,
+        time_aware_config: Optional[Dict] = None,
     ):
         self.signal_cooldown = signal_cooldown
         self.max_pending = max_pending
         self.min_confidence = min_confidence
+        self.dynamic_position_mode = dynamic_position_mode
+        self.source_risk_config = source_risk_config
+        
+        # Phase 2: 初始化时段检测器
+        self.session_detector = get_session_detector(time_aware_config)
 
         # 2026-04-09 动态仓位模式：
         # - 模拟交易 (TRADE_ENV=1): max_positions = 股票池数量，充分验证加仓/平仓
@@ -122,7 +140,7 @@ class DecisionBuffer:
             self.max_positions = self._calculate_dynamic_max_positions()
         else:
             # 回退到默认值
-            self.max_positions = 4
+            self.max_positions = 12  # 2026-04-16 对齐 config.yaml (12)
 
         # 决策队列（按置信度排序）
         self._pending_queue: List[DecisionRecord] = []
@@ -144,11 +162,27 @@ class DecisionBuffer:
         }
         self._stats_lock = threading.Lock()
 
+        # LLM 决策复核
+        self._llm_analyst = None
+        self._llm_review_enabled = False
+        self._llm_review_min_confidence = 0.80  # 触发复核的最低置信度
+        self._llm_review_min_position = 0.08    # 触发复核的最低仓位比例(8%)
+
         logger.info(
             f"决策缓冲层已初始化：冷却期={signal_cooldown}s, "
             f"最大队列={max_pending}, 最低置信度={min_confidence}, "
             f"max_positions={self.max_positions} (dynamic={dynamic_position_mode})"
         )
+
+    def init_llm_review(self, llm_analyst, min_confidence: float = 0.80, min_position: float = 0.08):
+        """注入 LLM 市场研判引擎用于决策复核"""
+        from app.ai.llm_market_analyst import LLMMarketAnalyst
+        if isinstance(llm_analyst, LLMMarketAnalyst) and llm_analyst.enabled:
+            self._llm_analyst = llm_analyst
+            self._llm_review_min_confidence = min_confidence
+            self._llm_review_min_position = min_position
+            self._llm_review_enabled = True
+            logger.info(f"决策缓冲LLM复核已启用: min_conf={min_confidence}, min_pos={min_position}")
 
     def _calculate_dynamic_max_positions(self) -> int:
         """
@@ -164,9 +198,9 @@ class DecisionBuffer:
         """
         try:
             # 导入配置
-            from app.config import WATCH_LIST, TRADE_ENV, MAX_OPEN_POSITIONS
+            from app.config import WATCH_LIST_HK, TRADE_ENV, MAX_OPEN_POSITIONS
 
-            watchlist_size = len(WATCH_LIST)
+            watchlist_size = len(WATCH_LIST_HK)
 
             if TRADE_ENV == 1:
                 # 模拟交易：允许满仓测试，充分验证加仓/平仓功能
@@ -189,10 +223,10 @@ class DecisionBuffer:
 
         except ImportError as e:
             logger.warning(f"[动态仓位] 无法导入配置，使用默认值 4: {e}")
-            return 4
+            return 12  # 2026-04-16 对齐 config.yaml (12)
         except Exception as e:
             logger.warning(f"[动态仓位] 计算失败，使用默认值 4: {e}")
-            return 4
+            return 12  # 2026-04-16 对齐 config.yaml (12)
 
     def process_signal(self, consensus_result: ConsensusResult) -> DecisionRecord:
         """
@@ -211,12 +245,16 @@ class DecisionBuffer:
         # 生成决策 ID
         decision_id = f"{code}_{action.value}_{int(time.time())}"
 
-        # 创建决策记录
+        # 获取 trace_id（2026-04-10 新增：贯穿链路追踪，Phase 1 写入记录）
+        trace_id = getattr(consensus_result, 'trace_id', 'N/A')
+
+        # 创建决策记录 (包含 TraceID)
         record = DecisionRecord(
             decision_id=decision_id,
             code=code,
             action=action,
             consensus_result=consensus_result,
+            trace_id=trace_id,
         )
 
         # 更新统计
@@ -224,7 +262,7 @@ class DecisionBuffer:
             self._stats["total_received"] += 1
 
         logger.info(
-            f"[决策缓冲] 收到信号：{code} {action.value} | "
+            f"[决策缓冲] [{trace_id}] 收到信号：{code} {action.value} | "
             f"分数={consensus_result.score:+.2f} | 置信度={confidence:.2f}"
         )
 
@@ -243,23 +281,65 @@ class DecisionBuffer:
         if rejection_reason:
             return self._reject(record, rejection_reason)
 
-        # ── 第 3 步：置信度检查 ────────────────────────────────────
-        if confidence < self.min_confidence:
+        # ── 第 3 步：置信度检查 (Phase 2: 来源感知 + 时段感知) ──────────────────────────
+        # 获取信号来源
+        signal_source = getattr(record.consensus_result, 'source', 'TECHNICAL')
+        if hasattr(signal_source, 'value'):
+            signal_source = signal_source.value
+        else:
+            signal_source = str(signal_source).lower()
+
+        # 获取当前时段配置
+        current_session_config = {}
+        if self.session_detector:
+            current_session_config = self.session_detector.get_current_config()
+            session_name = self.session_detector.get_current_session().name
+            logger.debug(f"[Session-Detector] 当前时段: {session_name}")
+
+        # 优先级：时段配置 > 来源配置 > 默认配置
+        min_conf = self.min_confidence
+        
+        # 1. 应用来源配置
+        source_risk = getattr(self, 'source_risk_config', None)
+        if source_risk and isinstance(source_risk, dict):
+            source_cfg = source_risk.get(signal_source, source_risk.get('technical', {}))
+            source_conf = source_cfg.get('min_confidence')
+            if source_conf is not None:
+                min_conf = source_conf
+
+        # 2. 应用时段配置 (覆盖)
+        session_conf = current_session_config.get('min_confidence')
+        if session_conf is not None:
+            min_conf = session_conf
+            logger.debug(f"[Session-Confidence] 覆盖为 {min_conf} (时段: {session_name})")
+
+        if confidence < min_conf:
             return self._reject(
                 record,
-                f"置信度过低：{confidence:.2f} < {self.min_confidence}"
+                f"置信度过低：{confidence:.2f} < {min_conf} (来源={signal_source}, 时段={session_name})"
             )
 
         # ── 第 4 步：加入待处理队列 ────────────────────────────────
         with self._queue_lock:
             if len(self._pending_queue) >= self.max_pending:
-                # 队列已满，按置信度排序，移除最低的
-                self._pending_queue.sort(key=lambda r: r.consensus_result.confidence)
-                removed = self._pending_queue.pop(0)  # 移除置信度最低的
+                # 队列已满，智能淘汰：综合置信度+时效性
+                import time as _time
+                now = _time.time()
+                
+                def _eviction_score(r):
+                    """越低越应该被淘汰: 置信度权重70% + 时效性权重30%"""
+                    age = now - r.created_at
+                    age_factor = max(0, 1 - age / 300)  # 5分钟后时效性归零
+                    return r.consensus_result.confidence * 0.7 + age_factor * 0.3
+                
+                # 按淘汰分数排序，移除最低分
+                self._pending_queue.sort(key=_eviction_score)
+                removed = self._pending_queue.pop(0)
                 self._reject(removed, "队列已满，被更高优先级信号替换")
-                logger.warning(
-                    f"[决策缓冲] 队列已满，移除低优先级信号："
-                    f"{removed.code} {removed.action.value}"
+                logger.debug(
+                    f"[决策缓冲] 队列已满，智能淘汰低优先级信号："
+                    f"{removed.code} {removed.action.value} "
+                    f"(置信度={removed.consensus_result.confidence:.2f}, 年龄={now - removed.created_at:.0f}s)"
                 )
 
             # 插入新信号（按置信度降序）
@@ -272,10 +352,20 @@ class DecisionBuffer:
             # 队列使用率告警
             usage_rate = len(self._pending_queue) / self.max_pending
             if usage_rate >= 0.8:
-                logger.warning(
+                logger.debug(
                     f"[决策缓冲] ⚠️ 队列拥堵告警：{len(self._pending_queue)}/{self.max_pending} "
                     f"({usage_rate:.0%})"
                 )
+
+        # ── 第 5 步：LLM 决策复核（仅对高置信度信号）─────────────────
+        if not self._check_llm_review(record):
+            # 先从队列中移除已加入的 record
+            with self._queue_lock:
+                try:
+                    self._pending_queue.remove(record)
+                except ValueError:
+                    pass
+            return self._reject(record, record.rejection_reason or "LLM复核不通过")
 
         # 标记为已批准
         record.status = DecisionStatus.APPROVED
@@ -292,8 +382,24 @@ class DecisionBuffer:
         # 添加到历史
         self._decision_history.append(record)
 
+        # --- Phase 2 Attribution Hook (Approval) ---
+        try:
+            from app.attribution.chain import record_approval
+            record_approval(
+                trace_id=trace_id,
+                code=code,
+                action=action.value,
+                market_regime="unknown", # Will be enriched later by executor
+                scores={
+                    "consensus": confidence,
+                    "source": record.consensus_result.source.value if hasattr(record.consensus_result.source, 'value') else "unknown"
+                }
+            )
+        except Exception as e:
+            logger.debug(f"归因记录失败 (Approve): {e}")
+
         logger.info(
-            f"[决策缓冲] ✅ 批准信号：{code} {action.value} | "
+            f"[决策缓冲] [{trace_id}] ✅ 批准信号：{code} {action.value} | "
             f"置信度={confidence:.2f} | 队列长度={len(self._pending_queue)}"
         )
 
@@ -307,6 +413,19 @@ class DecisionBuffer:
             DecisionRecord 或 None
         """
         with self._queue_lock:
+            if not self._pending_queue:
+                return None
+
+            # 清理过期信号（5分钟）
+            import time as _time
+            now = _time.time()
+            expired = [r for r in self._pending_queue if now - r.created_at > 300]
+            for r in expired:
+                self._pending_queue.remove(r)
+                self._reject(r, "信号过期（>5分钟），自动清除")
+            if expired:
+                logger.info(f"[决策缓冲] 清理 {len(expired)} 个过期信号")
+
             if not self._pending_queue:
                 return None
 
@@ -347,6 +466,81 @@ class DecisionBuffer:
 
         logger.warning(f"[决策缓冲] 未找到决策记录：{decision_id}")
 
+    def _check_llm_review(self, record: DecisionRecord) -> bool:
+        """LLM 决策复核 — 同步非阻塞，仅对高置信度信号生效
+
+        Returns:
+            True: 通过复核（或不需要复核）
+            False: 复核建议拒绝
+        """
+        if not self._llm_review_enabled or not self._llm_analyst:
+            return True
+
+        consensus_result = record.consensus_result
+        if not consensus_result:
+            return True
+
+        confidence = getattr(consensus_result, 'confidence', 0)
+        # 只对高置信度信号做复核（这些信号可能直接大仓位执行）
+        needs_review = confidence >= self._llm_review_min_confidence
+
+        if not needs_review:
+            return True
+
+        # 获取 LLM 缓存的研判结果（同步、非阻塞）
+        try:
+            code = record.code
+            assessment = self._llm_analyst.get_cached_assessment(code)
+
+            if not assessment or not assessment.is_valid():
+                # 无缓存结果，不阻塞，放行
+                logger.debug(f"LLM复核: {code} 无缓存研判，放行")
+                return True
+
+            # 检查方向冲突
+            action = record.action
+            action_str = str(action.value).upper() if action else ''
+
+            is_buy = 'BUY' in action_str
+            llm_direction = assessment.direction
+
+            # 严重冲突：信号买入但LLM强烈看空（或反之）
+            severe_conflict = False
+            if is_buy and llm_direction in ('STRONG_SELL', 'SELL'):
+                severe_conflict = True
+            elif not is_buy and llm_direction in ('STRONG_BUY', 'BUY'):
+                severe_conflict = True
+
+            if severe_conflict and assessment.confidence_level in ('HIGH', 'MEDIUM'):
+                # LLM 中高置信度地反对该方向
+                logger.warning(
+                    f"LLM复核拒绝: {code} action={action_str} "
+                    f"vs LLM={llm_direction}({assessment.confidence_level}) "
+                    f"reason={assessment.reasoning}"
+                )
+                record.rejection_reason = (
+                    f"LLM复核冲突: 信号{action_str} vs LLM{llm_direction}"
+                    f"({assessment.confidence_level})"
+                )
+                return False
+
+            # 风险标记检查
+            if assessment.risk_flags:
+                critical_flags = [
+                    f for f in assessment.risk_flags
+                    if 'critical' in f.lower() or 'halt' in f.lower()
+                ]
+                if critical_flags:
+                    logger.warning(f"LLM复核: {code} 存在关键风险标记: {critical_flags}")
+                    # 关键风险但不直接拒绝，只记录
+
+            logger.debug(f"LLM复核通过: {code} action={action_str} LLM={llm_direction}")
+            return True
+
+        except Exception as e:
+            logger.warning(f"LLM复核异常(降级放行): {e}")
+            return True
+
     def _check_basic(self, record: DecisionRecord) -> Optional[str]:
         """
         基础检查
@@ -384,7 +578,7 @@ class DecisionBuffer:
         try:
             # 导入持仓管理器
             from app.trader.position_manager import PositionManager
-            pm = PositionManager()
+            pm = PositionManager.get_instance()
 
             # 获取当前持仓
             positions = pm.get_all_positions()
@@ -453,9 +647,11 @@ class DecisionBuffer:
         return None
 
     def _reject(self, record: DecisionRecord, reason: str) -> DecisionRecord:
-        """拒绝信号"""
+        """拒绝信号 (2026-04-15 Phase 2: 增加归因记录)"""
         record.status = DecisionStatus.REJECTED
         record.rejection_reason = reason
+        
+        trace_id = getattr(record, 'trace_id', 'N/A')
 
         # 更新统计
         with self._stats_lock:
@@ -469,8 +665,18 @@ class DecisionBuffer:
         # 添加到历史
         self._decision_history.append(record)
 
+        # --- Phase 2 Attribution Hook ---
+        try:
+            from app.attribution import record_rejection
+            record_rejection(trace_id, record.code, reason, {
+                "confidence": record.consensus_result.confidence,
+                "source": record.consensus_result.source.value if hasattr(record.consensus_result.source, 'value') else str(record.consensus_result.source)
+            })
+        except Exception as e:
+            logger.debug(f"归因记录失败 (Reject): {e}")
+
         logger.warning(
-            f"[决策缓冲] ❌ 拒绝信号：{record.code} {record.action.value} | "
+            f"[决策缓冲] [{trace_id}] ❌ 拒绝信号：{record.code} {record.action.value} | "
             f"原因：{reason}"
         )
 
@@ -538,6 +744,8 @@ def init_decision_buffer(
     min_confidence: Optional[float] = None,
     max_positions: Optional[int] = None,  # 支持动态计算
     dynamic_position_mode: Optional[bool] = None,    # 启用动态仓位模式
+    source_risk_config: Optional[Dict] = None,       # Phase 2: 来源感知配置
+    time_aware_config: Optional[Dict] = None,        # Phase 2: 分时段配置
 ) -> DecisionBuffer:
     """
     初始化决策缓冲层
@@ -557,11 +765,11 @@ def init_decision_buffer(
         config_center = get_config_center()
 
         if signal_cooldown is None:
-            signal_cooldown = int(config_center.get('strategy.decision_buffer.signal_cooldown', 10))
+            signal_cooldown = int(config_center.get('strategy.decision_buffer.signal_cooldown', 120))
         if max_pending is None:
-            max_pending = int(config_center.get('strategy.decision_buffer.max_pending', 50))
+            max_pending = int(config_center.get('strategy.decision_buffer.max_pending', 500))  # 2026-04-22: 200→500
         if min_confidence is None:
-            min_confidence = float(config_center.get('strategy.decision_buffer.min_confidence', 0.35))
+            min_confidence = float(config_center.get('strategy.decision_buffer.min_confidence', 0.35))  # 2026-04-24 统一
         if max_positions is None:
             max_positions_cfg = config_center.get('strategy.decision_buffer.max_positions')
             # null 或 None 表示动态计算
@@ -580,7 +788,14 @@ def init_decision_buffer(
             min_confidence=min_confidence,
             max_positions=max_positions,
             dynamic_position_mode=dynamic_position_mode,
+            source_risk_config=source_risk_config,
+            time_aware_config=time_aware_config,
         )
+        # Phase 2: 注入来源风控配置
+        if source_risk_config:
+            _decision_buffer.source_risk_config = source_risk_config
+            logger.info(f"决策缓冲层已启用来源感知风控")
+        
         logger.info(
             f"决策缓冲层全局单例已初始化："
             f"signal_cooldown={signal_cooldown}s, "

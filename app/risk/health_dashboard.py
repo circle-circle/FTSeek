@@ -8,6 +8,7 @@
   - 系统层：API错误率/行情延迟/DB写入延迟/任务堆积/服务存活状态
 """
 import os
+from app.storage.repository import get_db
 import time
 import sqlite3
 import logging
@@ -276,14 +277,12 @@ class HealthDashboardCollector:
 
     def _collect_exposure_from_db(self, dash: HealthDashboard):
         """从 positions 表采集当前持仓敞口（回退方案）"""
-        conn = sqlite3.connect(self._db_path, timeout=3)
-        try:
+        with get_db(self._db_path, timeout=3) as conn:
             cur = conn.cursor()
             cur.execute(
                 "SELECT code, quantity, entry_price FROM positions WHERE status='OPEN'"
             )
             rows = cur.fetchall()
-        finally:
             conn.close()
 
         if not rows:
@@ -317,7 +316,8 @@ class HealthDashboardCollector:
 
         # DB 写入延迟：测量一次简单写操作耗时
         try:
-            conn = sqlite3.connect(self._db_path, timeout=3)
+            with get_db(self._db_path, timeout=3) as conn:
+                pass
             t0 = time.perf_counter()
             conn.execute(
                 "CREATE TABLE IF NOT EXISTS _health_ping (ts INTEGER)"

@@ -8,6 +8,7 @@
 - 波动率联动响应
 """
 import logging
+import uuid
 from typing import Dict, List, Optional, Tuple
 from datetime import datetime, timedelta
 from dataclasses import dataclass, field
@@ -55,6 +56,11 @@ class BreakingNewsAlert:
     sentiment_score: float = 0.0
     is_pushed: bool = False
     push_time: Optional[str] = None
+    trace_id: str = ""                # TraceID，继承自 NewsItem 或自动生成
+    
+    def __post_init__(self):
+        if not self.trace_id:
+            self.trace_id = f"BRK-{uuid.uuid4().hex[:12].upper()}"
     
     def to_dict(self) -> Dict:
         return {
@@ -70,6 +76,7 @@ class BreakingNewsAlert:
             'sentiment_score': self.sentiment_score,
             'is_pushed': self.is_pushed,
             'push_time': self.push_time,
+            'trace_id': self.trace_id,
         }
 
 
@@ -148,7 +155,7 @@ class BreakingNewsDetector:
         # 计算严重程度
         severity = self._calculate_severity(matched_keywords, priority)
         
-        # 创建警报
+        # 创建警报，继承 NewsItem 的 trace_id
         alert = BreakingNewsAlert(
             news_id=news_id or self._generate_id(title),
             title=title,
@@ -159,6 +166,7 @@ class BreakingNewsDetector:
             related_stocks=related_stocks,
             keywords=matched_keywords,
             sentiment_score=getattr(news_item, 'sentiment_score', 0.0),
+            trace_id=getattr(news_item, 'trace_id', '') or f"BRK-{uuid.uuid4().hex[:12].upper()}",
         )
         
         # 记录
@@ -167,7 +175,7 @@ class BreakingNewsDetector:
         self._total_detected += 1
         
         logger.info(
-            f"检测到突发新闻：{title[:50]}... | "
+            f"[{alert.trace_id}] 检测到突发新闻：{title[:50]}... | "
             f"优先级：{priority} | 严重程度：{severity} | "
             f"相关股票：{related_stocks}"
         )
@@ -288,35 +296,50 @@ class BreakingNewsDetector:
 class FastTrackProcessor:
     """
     快速通道处理器
+
+    处理突发新闻的快速推送。
     
-    处理突发新闻的快速推送
+    2026-04-13 修复: 统一推送入口，关闭直接推送旁路，所有推送通过全局 notifier。
     """
-    
+
     def __init__(self, dingtalk_webhook: str = None,
-                 dingtalk_secret: str = None):
+                 dingtalk_secret: str = None,
+                 notifier=None):
         """
         初始化处理器
-        
+
         Args:
-            dingtalk_webhook: 钉钉 webhook URL
-            dingtalk_secret: 钉钉密钥
+            dingtalk_webhook: 已废弃，优先使用全局 notifier
+            dingtalk_secret: 已废弃，优先使用全局 notifier
+            notifier: DingTalkNotifier 实例 (复用已有通知器)
         """
-        self.dingtalk_webhook = dingtalk_webhook
-        self.dingtalk_secret = dingtalk_secret
+        # 2026-04-13 修复: 优先使用统一 notifier
+        if notifier is not None:
+            self.notifier = notifier
+        else:
+            try:
+                from app.notifier import get_dingtalk_notifier
+                self.notifier = get_dingtalk_notifier()
+            except Exception as e:
+                logger.warning(f"获取全局 notifier 失败: {e}")
+                self.notifier = None
         
+        self.dingtalk_webhook = dingtalk_webhook  # 已废弃
+        self.dingtalk_secret = dingtalk_secret    # 已废弃
+
         # 推送限流
         self._last_push_time: Dict[str, datetime] = {}
         self.push_cooldown = 60  # 同一股票 60 秒冷却
-        
-        logger.info("快速通道处理器已初始化")
-    
+
+        logger.info("快速通道处理器已初始化 (使用统一 notifier)")
+
     def process(self, alert: BreakingNewsAlert) -> bool:
         """
         处理突发新闻警报
-        
+
         Args:
             alert: 突发新闻警报
-        
+
         Returns:
             是否推送成功
         """
@@ -326,84 +349,67 @@ class FastTrackProcessor:
                 if (datetime.now() - self._last_push_time[stock]).total_seconds() < self.push_cooldown:
                     logger.debug(f"冷却中，跳过推送：{stock}")
                     return False
-        
+
         # 推送
         success = self._push(alert)
-        
+
         if success:
             # 记录推送时间
             for stock in alert.related_stocks:
                 self._last_push_time[stock] = datetime.now()
             alert.is_pushed = True
             alert.push_time = datetime.now().isoformat()
-        
+
         return success
-    
+
     def _push(self, alert: BreakingNewsAlert) -> bool:
-        """推送到钉钉"""
-        if not self.dingtalk_webhook:
-            logger.warning("未配置钉钉 webhook，跳过推送")
+        """推送到钉钉 - 2026-04-13: 只通过统一 notifier 推送"""
+        if not self.notifier:
+            logger.warning("未配置 notifier，跳过推送")
             return False
-        
+
         try:
-            import requests
-            
-            # 构建消息
-            severity_colors = {
-                'critical': '#FF0000',  # 红色
-                'high': '#FF8C00',      # 橙色
-                'normal': '#FFA500',    # 金色
-            }
-            
-            severity_titles = {
-                'critical': '🚨 重大突发',
-                'high': '⚡ 高优先级',
-                'normal': '📰 突发新闻',
-            }
-            
-            markdown = f"""{severity_titles.get(alert.severity, '📰 突发新闻')}
-
-**{alert.title}**
-
-来源：{alert.source}
-时间：{alert.detected_at}
-相关股票：{', '.join(alert.related_stocks) if alert.related_stocks else '未匹配'}
-关键词：{', '.join(alert.keywords[:5])}
-情绪：{alert.sentiment_score:+.2f}
-
-[查看详情]({alert.news_id})
-"""
-            
-            payload = {
-                'msgtype': 'markdown',
-                'markdown': {
-                    'title': f"{severity_titles.get(alert.severity, '突发')}：{alert.title[:50]}",
-                    'text': markdown
-                }
-            }
-            
-            # 发送请求
-            resp = requests.post(
-                self.dingtalk_webhook,
-                json=payload,
-                timeout=10
-            )
-            
-            if resp.status_code == 200:
-                result = resp.json()
-                if result.get('errcode') == 0:
-                    logger.info(f"突发新闻推送成功：{alert.title[:50]}...")
-                    return True
-                else:
-                    logger.error(f"推送失败：{result}")
-                    return False
-            else:
-                logger.error(f"推送失败：{resp.status_code}")
-                return False
-                
+            return self._push_via_notifier(alert)
         except Exception as e:
             logger.error(f"推送异常：{e}")
             return False
+
+    def _push_via_notifier(self, alert: BreakingNewsAlert) -> bool:
+        """通过统一通知器推送 (使用统一 Markdown 格式)"""
+        severity_titles = {
+            'critical': '🚨 重大突发',
+            'high': '⚡ 高优先级',
+            'normal': '📰 突发新闻',
+        }
+
+        title = f"{severity_titles.get(alert.severity, '📰 突发新闻')}: {alert.title[:50]}"
+
+        stock_info = ', '.join(alert.related_stocks) if alert.related_stocks else '未匹配'
+        keywords = ', '.join(alert.keywords[:5])
+
+        markdown = f"### {title}\n\n"
+        markdown += f"**来源**: {alert.source}  \n"
+        markdown += f"**时间**: {alert.detected_at}  \n"
+        markdown += f"**相关股票**: {stock_info}  \n"
+        markdown += f"**关键词**: {keywords}  \n"
+        markdown += f"**情绪**: {alert.sentiment_score:+.2f}  \n\n"
+
+        if alert.content:
+            content_preview = alert.content[:200]
+            if len(alert.content) > 200:
+                content_preview += "..."
+            markdown += f"📝 {content_preview}\n\n"
+
+        markdown += "---\n"
+        markdown += f"🤖 FTSeek 突发新闻 | {datetime.now().strftime('%H:%M')}"
+
+        return self.notifier._do_post({
+            'msgtype': 'markdown',
+            'markdown': {
+                'title': title[:50],
+                'text': markdown
+            }
+        })
 
 
 # 全局单例

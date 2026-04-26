@@ -28,7 +28,7 @@ from app.strategy.base import SignalAction
 from app.strategy.consensus_engine import ConsensusResult
 
 logger = logging.getLogger("ftseek.risk_pipeline")
-logger.propagate = False
+# 2026-04-10 修复: 移除 propagate=False，让日志通过 ftseek 父级 logger 输出
 
 
 # ============================================================
@@ -239,7 +239,7 @@ class TradingHoursCheck(RiskCheck):
 
 
 class CircuitBreakerCheck(RiskCheck):
-    """熔断器检查"""
+    """熔断器检查 (包含硬编码熔断守卫)"""
     
     @property
     def name(self) -> str:
@@ -250,6 +250,7 @@ class CircuitBreakerCheck(RiskCheck):
         if not subscriber:
             return CheckResult(passed=True, check_name=self.name)
         
+        # 1. 原有熔断器检查
         if subscriber.circuit_breaker.is_paused():
             return CheckResult(
                 passed=False,
@@ -257,6 +258,26 @@ class CircuitBreakerCheck(RiskCheck):
                 reason="熔断器已触发，暂停交易",
                 reject_code="circuit_breaker",
             )
+        
+        # 2. 硬编码熔断守卫 (2026-04-24 新增)
+        if hasattr(subscriber.circuit_breaker, 'hard_stop_guard'):
+            # 尝试获取当前净值 (如果 subscriber 提供的话)
+            equity = None
+            if hasattr(subscriber, 'get_current_equity'):
+                try:
+                    equity = subscriber.get_current_equity()
+                except Exception:
+                    pass
+            
+            # 执行硬编码检查
+            allowed, reason = subscriber.circuit_breaker.hard_stop_guard.check(equity)
+            if not allowed:
+                return CheckResult(
+                    passed=False,
+                    check_name="hard_stop_guard",
+                    reason=reason,
+                    reject_code="hard_stop_guard",
+                )
         
         return CheckResult(passed=True, check_name=self.name)
 
@@ -473,35 +494,28 @@ class CooldownCheck(RiskCheck):
 
 
 class WatchlistCheck(RiskCheck):
-    """Watchlist 过滤"""
-    
+    """Watchlist 过滤 (2026-04-13 统一配置)"""
+
     @property
     def name(self) -> str:
         return "watchlist"
-    
+
     def check(self, ctx: SignalContext, deps: Dict) -> CheckResult:
         try:
-            watchlist_path = "/opt/ftseek/FTSeek/config/watchlist.json"
-            with open(watchlist_path, 'r') as f:
-                watchlist = json.load(f)
-            enabled_codes = set()
-            for stock in watchlist.get('hk_stocks', []):
-                if stock.get('enabled', False):
-                    enabled_codes.add(stock['code'])
-            for stock in watchlist.get('us_stocks', []):
-                if stock.get('enabled', False):
-                    enabled_codes.add(stock['code'])
-            
+            # 从统一配置获取 watchlist (优先级: watchlist.json → app.config.WATCH_LIST_HK)
+            from app.config import WATCH_LIST_HK
+            enabled_codes = set(WATCH_LIST_HK)
+
             if ctx.code not in enabled_codes:
                 return CheckResult(
                     passed=False,
                     check_name=self.name,
-                    reason=f"{ctx.code} 不在启用列表中",
+                    reason=f"{ctx.code} 不在监控列表中 ({len(enabled_codes)} 只)",
                     reject_code="watchlist",
                 )
         except Exception as e:
             logger.warning(f"watchlist 过滤异常：{e}")
-        
+
         return CheckResult(passed=True, check_name=self.name)
 
 

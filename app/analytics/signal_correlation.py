@@ -89,7 +89,7 @@ class SignalQualityCorrelation:
                     data = json.load(f)
                     self.chains.extend(data)
             except Exception as e:
-                logger.error(f"加载 TradeChain 文件失败 {file}: {e}")
+                logger.debug(f"跳过 TradeChain 文件 {file}: {e}")
 
         logger.info(f"加载 TradeChain: {len(self.chains)} 条")
 

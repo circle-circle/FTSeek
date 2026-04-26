@@ -28,10 +28,11 @@ from enum import Enum
 logger = logging.getLogger("ftseek.core.config_hot_reload")
 logger.propagate = False
 
-# 配置文件路径
+# 配置文件路径 - 2026-04-26 迁移：unified_config.yaml 为 SSOT
+# 保留此文件用于向后兼容，但优先从 config_center 读取
 CONFIG_DIR = Path('/opt/ftseek/FTSeek/config')
 CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-CONFIG_FILE = CONFIG_DIR / 'strategy_params.json'
+CONFIG_FILE = CONFIG_DIR / 'unified_config.yaml'  # SSOT v4.0
 BACKUP_DIR = CONFIG_DIR / 'backups'
 BACKUP_DIR.mkdir(parents=True, exist_ok=True)
 SHADOW_DIR = CONFIG_DIR / 'shadow'
@@ -137,15 +138,15 @@ class StrategyParamsManager:
             # 风控相关
             'base_position': 0.10,
             'min_position': 0.05,
-            'max_position': 0.30,
-            'max_daily_loss': 0.05,
-            'max_drawdown': 0.15,
-            'consecutive_loss_limit': 5,
+            'max_position': 0.08,             # 2026-04-18 对齐 config.yaml (0.08)
+            'max_daily_loss': 0.03,     # 2026-04-16 对齐 config.yaml (0.03)
+            'max_drawdown': 0.12,       # 2026-04-16 对齐 config.yaml (0.12)
+            'consecutive_loss_limit': 3, # 2026-04-16 对齐 config.yaml (3)
 
             # 策略相关
             'fusion_v2_enabled': True,
             'fusion_v3_enabled': True,
-            'min_signal_confidence': 0.4,
+            'min_signal_confidence': 0.55,  # 2026-04-18 对齐 config.yaml (0.55)
 
             # 交易模式
             'trading_mode': 'simulate',
@@ -295,21 +296,21 @@ class ConfigHotReloader:
                 'trail_distance': 0.02,
             },
             'position_limits': {
-                'single_position_max': 0.20,
-                'total_exposure_max': 0.80,
+                'single_position_max': 0.08,  # 2026-04-18 对齐 config.yaml (0.08)
+                'total_exposure_max': 0.75,   # 2026-04-16 对齐 config.yaml
             },
             'signal_thresholds': {
-                'min_confidence': 0.5,
+                'min_confidence': 0.35,  # 2026-04-24 统一: 0.55→0.35 对齐 risk_limits.min_confidence
                 'min_score': 0.4,
             },
             'risk_limits': {
-                'max_daily_loss': 0.05,
-                'max_drawdown': 0.15,
+                'max_daily_loss': 0.03,  # 2026-04-16 对齐 config.yaml
+                'max_drawdown': 0.12,    # 2026-04-16 对齐 config.yaml
             },
             'strategy_weights': {
-                'technical': 0.4,
-                'sentiment': 0.3,
-                'ai': 0.3,
+                'technical': 0.6,     # 2026-04-16 对齐 config.yaml strategy.fusion.technical_weight
+                'sentiment': 0.25,    # 2026-04-16 对齐 config.yaml strategy.fusion.sentiment_weight
+                'ai': 0.15,           # 2026-04-16 对齐 config.yaml strategy.fusion.ai_weight
             },
         }
 
@@ -432,7 +433,7 @@ class ConfigHotReloader:
 
         elif rec_type == 'recalibrate':
             if 'signal_thresholds' in self.current_config:
-                self.current_config['signal_thresholds']['min_confidence'] = 0.6
+                self.current_config['signal_thresholds']['min_confidence'] = 0.35  # 2026-04-24 统一
 
         elif rec_type == 'adjust_execution':
             if 'execution' not in self.current_config:

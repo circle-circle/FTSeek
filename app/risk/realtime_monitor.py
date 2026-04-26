@@ -201,6 +201,31 @@ class RealtimeRiskMonitor:
                     threshold=self.large_loss_threshold,
                 )
             
+            # 时间止损检查 (Phase 2 新增)
+            # 如果持仓超过 45 分钟且利润微薄 (< 0.5%)，触发时间止损
+            # 注意：realtime_monitor 是分钟级/秒级循环，这里需要 access to entry_time
+            entry_time_str = position.get('entry_time')
+            if entry_time_str:
+                try:
+                    from datetime import datetime
+                    entry_time = datetime.fromisoformat(entry_time_str) if isinstance(entry_time_str, str) else entry_time
+                    minutes_held = (datetime.now() - entry_time).total_seconds() / 60
+                    
+                    # 45 分钟时间止损逻辑
+                    if minutes_held > 45 and pnl_percent < 0.005:
+                        self._send_alert(
+                            level="CRITICAL",
+                            type="TIME_STOP_TRIGGERED",
+                            message=f"{code} 时间止损！持仓 {int(minutes_held)} 分钟，利润 {pnl_percent:.2%}",
+                            code=code,
+                            value=minutes_held,
+                            threshold=45,
+                        )
+                        # 这里应该触发平仓逻辑，通常需要回调 risk_manager
+                        # 暂时仅记录告警，具体平仓由外部循环处理或在此处调用 risk_manager
+                except Exception as e:
+                    logger.error(f"[实时监控] {code} 风险评估异常: {e}")
+            
             # 更新持仓风险
             market_value = position["quantity"] * current_price
             self._position_risks[code] = PositionRisk(
@@ -214,8 +239,17 @@ class RealtimeRiskMonitor:
                 stop_loss_price=stop_loss,
                 stop_loss_distance=stop_distance,
                 risk_level=risk_level,
-                days_held=1,  # TODO: 计算实际持仓天数
+                days_held=self._calculate_days_held(position.get('entry_time')),
             )
+
+    def _calculate_days_held(self, entry_time_str: str) -> int:
+        """计算持仓天数"""
+        try:
+            from datetime import datetime
+            entry_time = datetime.fromisoformat(entry_time_str) if isinstance(entry_time_str, str) else entry_time
+            return (datetime.now() - entry_time).days
+        except Exception:
+            return 1
 
     def _check_portfolio_risks(self):
         """检查组合风险"""
@@ -259,9 +293,22 @@ class RealtimeRiskMonitor:
 
     def _check_market_risks(self):
         """检查市场风险"""
-        # TODO: 集成市场状态识别
-        # 如果市场状态是高波动，发送预警
-        pass
+        # P1 修复 (2026-04-12): 集成市场状态识别
+        try:
+            from app.strategy.market_regime import MarketRegimeDetector
+            regime_detector = MarketRegimeDetector()
+            regime = regime_detector.detect()
+
+            if regime == 'high_volatility':
+                self._send_alert(
+                    level="WARNING",
+                    type="HIGH_VOLATILITY",
+                    message="市场状态：高波动，建议降低仓位",
+                    value=regime,
+                    threshold=0,
+                )
+        except Exception as e:
+            logger.debug(f"市场状态检查失败：{e}")
 
     def _send_alert(
         self,

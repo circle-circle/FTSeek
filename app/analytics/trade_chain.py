@@ -175,6 +175,8 @@ class TradeChain:
     """
     trade_id: str = ""
     code: str = ""
+    action: str = ""                # BUY/SELL
+    quantity: int = 0               # 数量
     created_at: str = ""
     updated_at: str = ""
 
@@ -193,6 +195,8 @@ class TradeChain:
         return {
             "trade_id": self.trade_id,
             "code": self.code,
+            "action": self.action,
+            "quantity": self.quantity,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "is_closed": self.is_closed,
@@ -210,6 +214,8 @@ class TradeChain:
         chain = cls()
         chain.trade_id = data.get('trade_id', '')
         chain.code = data.get('code', '')
+        chain.action = data.get('action', '')
+        chain.quantity = data.get('quantity', 0)
         chain.created_at = data.get('created_at', '')
         chain.updated_at = data.get('updated_at', '')
         chain.is_closed = data.get('is_closed', False)

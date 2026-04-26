@@ -7,6 +7,7 @@
 3. 场景绩效分析
 """
 import sqlite3
+from app.storage.repository import get_db
 import logging
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -14,7 +15,7 @@ from typing import Optional, List, Dict, Any
 from contextlib import contextmanager
 
 logger = logging.getLogger("ftseek.scenario.log")
-logger.propagate = False
+# 2026-04-10: propagate=True (默认), 通过 ftseek 父级 logger 输出
 
 
 class ScenarioLogManager:
@@ -50,23 +51,18 @@ class ScenarioLogManager:
     @contextmanager
     def get_connection(self):
         """获取数据库连接上下文管理器"""
-        conn = sqlite3.connect(str(self.db_path), timeout=30.0)
-        conn.row_factory = sqlite3.Row
-
-        cursor = conn.cursor()
-        cursor.execute("PRAGMA journal_mode=WAL")
-        cursor.execute("PRAGMA busy_timeout=30000")
-        cursor.execute("PRAGMA synchronous=NORMAL")
-
-        try:
-            yield conn
-            conn.commit()
-        except Exception as e:
-            conn.rollback()
-            logger.error(f"数据库操作失败：{e}")
-            raise
-        finally:
-            conn.close()
+        with get_db(str(self.db_path)) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute("PRAGMA journal_mode=WAL")
+            cursor.execute("PRAGMA busy_timeout=30000")
+            try:
+                yield conn
+                conn.commit()
+            except Exception as e:
+                conn.rollback()
+                logger.error(f"数据库操作失败：{e}")
+                raise
 
     def _init_tables(self):
         """初始化数据库表结构"""
@@ -214,10 +210,11 @@ class ScenarioLogManager:
                 row_dict = dict(row)
                 # 解析 JSON 字段
                 if row_dict.get('multi_timeframe'):
-                    import json
+                    import json as _json
                     try:
-                        row_dict['multi_timeframe'] = json.loads(row_dict['multi_timeframe'])
-                    except:
+                        row_dict['multi_timeframe'] = _json.loads(row_dict['multi_timeframe'])
+                    except (_json.JSONDecodeError, TypeError, KeyError) as e:
+                        logger.debug(f"解析 multi_timeframe JSON 失败：{e}")
                         row_dict['multi_timeframe'] = {}
                 results.append(row_dict)
 

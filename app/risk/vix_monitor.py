@@ -11,11 +11,11 @@ from typing import Dict, Optional, Tuple
 from datetime import datetime, timedelta
 from dataclasses import dataclass
 from pathlib import Path
-import sqlite3
+from app.storage.repository import get_db
 import numpy as np
 
 logger = logging.getLogger("ftseek.risk.vix_monitor")
-logger.propagate = False
+# 2026-04-10: propagate=True (默认), 通过 ftseek 父级 logger 输出
 
 
 # 波动率状态定义
@@ -92,8 +92,7 @@ class VIXMonitor:
 
     def _init_db(self):
         """初始化数据库表"""
-        conn = sqlite3.connect(self.db_path)
-        try:
+        with get_db(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS vix_state (
@@ -112,13 +111,9 @@ class VIXMonitor:
             ''')
 
             conn.commit()
-        finally:
-            conn.close()
-
     def _load_state(self):
         """从数据库加载最新状态"""
-        conn = sqlite3.connect(self.db_path)
-        try:
+        with get_db(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute('''
                 SELECT vix_value, atr_percentile, historical_vol, state, created_at
@@ -138,9 +133,6 @@ class VIXMonitor:
                 )
             else:
                 self._cache['latest'] = VolatilityState()
-        finally:
-            conn.close()
-
     def update_vix(self, vix_value: float) -> VolatilityState:
         """
         更新 VIX 值
@@ -267,8 +259,7 @@ class VIXMonitor:
 
     def _save_state(self, state: VolatilityState):
         """保存状态到数据库"""
-        conn = sqlite3.connect(self.db_path)
-        try:
+        with get_db(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute('''
                 INSERT INTO vix_state (vix_value, atr_percentile, historical_vol, state)
@@ -280,9 +271,6 @@ class VIXMonitor:
                 state.state,
             ))
             conn.commit()
-        finally:
-            conn.close()
-
     def get_state(self) -> VolatilityState:
         """获取最新波动率状态"""
         if 'latest' not in self._cache:
@@ -323,8 +311,7 @@ class VIXMonitor:
         Returns:
             [(vix, state), ...]
         """
-        conn = sqlite3.connect(self.db_path)
-        try:
+        with get_db(self.db_path) as conn:
             cursor = conn.cursor()
             cutoff = (datetime.now() - timedelta(hours=hours)).isoformat()
 
@@ -341,9 +328,6 @@ class VIXMonitor:
             ]
 
             return history
-        finally:
-            conn.close()
-
     def get_statistics(self) -> Dict:
         """获取统计信息"""
         state = self.get_state()

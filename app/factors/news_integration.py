@@ -14,6 +14,14 @@ from pathlib import Path
 logger = logging.getLogger("ftseek.factors.news_integration")
 logger.propagate = False  # 防止日志重复
 
+# 导入 trace_id 工具
+try:
+    from app.core.logging_config import get_trace_id
+    TRACE_AVAILABLE = True
+except ImportError:
+    TRACE_AVAILABLE = False
+    def get_trace_id(): return None
+
 # 导入新闻采集器
 try:
     from app.news_push.collector import get_news_collector, NewsItem
@@ -79,8 +87,29 @@ class NewsSentimentAnalyzer:
             except Exception as e:
                 logger.warning(f"情绪衰减计算器初始化失败：{e}")
         
+        # LLM 深度分析增强（延迟注入）
+        self._llm_analyst = None
+        self._llm_news_enabled = False
+
         logger.info("新闻情绪分析器已初始化 (Phase 3 增强版)")
     
+    def init_llm_enhancement(self, llm_analyst) -> None:
+        """注入 LLM 市场研判引擎（由外部调用）
+
+        Args:
+            llm_analyst: LLMMarketAnalyst 实例
+        """
+        try:
+            from app.ai.llm_market_analyst import LLMMarketAnalyst
+            if isinstance(llm_analyst, LLMMarketAnalyst) and llm_analyst.enabled:
+                self._llm_analyst = llm_analyst
+                self._llm_news_enabled = True
+                logger.info("新闻分析LLM增强已启用")
+            else:
+                logger.info("LLM研判引擎未启用或类型不匹配，新闻LLM增强保持关闭")
+        except Exception as e:
+            logger.warning(f"init_llm_enhancement 失败: {e}")
+
     def _get_dynamic_ttl(self) -> int:
         """
         获取动态缓存 TTL
@@ -96,7 +125,8 @@ class NewsSentimentAnalyzer:
     def analyze_stock(self, 
                      code: str, 
                      lookback_hours: int = 24,
-                     max_news: int = 20) -> Dict:
+                     max_news: int = 20,
+                     trace_id: str = None) -> Dict:
         """
         分析股票情绪
 
@@ -104,6 +134,7 @@ class NewsSentimentAnalyzer:
             code: 股票代码 (HK.00700)
             lookback_hours: 回溯时间 (小时)
             max_news: 最多分析新闻数
+            trace_id: 上游传入的 trace_id（若空则尝试从上下文获取或自动生成）
 
         Returns:
             {
@@ -120,6 +151,14 @@ class NewsSentimentAnalyzer:
                 'volatility_state': 'normal'  # 市场波动状态
             }
         """
+        # 处理 trace_id：优先使用传入的，其次从线程上下文获取，最后自动生成
+        import uuid
+        effective_trace_id = trace_id or (get_trace_id() if TRACE_AVAILABLE else None)
+        if not effective_trace_id:
+            effective_trace_id = f"NEWS-ANA-{uuid.uuid4().hex[:10].upper()}"
+            logger.warning(
+                f"[{effective_trace_id}] analyze_stock({code}) 未收到上游 trace_id，已自动生成"
+            )
         # 检查缓存 (使用动态 TTL)
         cache_key = f"{code}_{lookback_hours}"
         current_ttl = self._get_dynamic_ttl()
@@ -139,7 +178,7 @@ class NewsSentimentAnalyzer:
             logger.warning("新闻采集器不可用，使用空新闻列表")
         
         if not news_list:
-            logger.warning(f"未获取到新闻：{code}")
+            logger.warning(f"[{effective_trace_id}] 未获取到新闻：{code}")
             result = {
                 'sentiment_score': 0.0,
                 'decayed_score': 0.0,
@@ -152,6 +191,7 @@ class NewsSentimentAnalyzer:
                 'cache_hit': False,
                 'avg_age_minutes': 0,
                 'volatility_state': self._get_volatility_state(),
+                'trace_id': effective_trace_id,
             }
             self.cache[cache_key] = (result, datetime.now())
             return result
@@ -244,13 +284,30 @@ class NewsSentimentAnalyzer:
             'avg_age_minutes': avg_age,
             'volatility_state': self._get_volatility_state(),
             'cache_ttl': current_ttl,
+            'trace_id': effective_trace_id,
         }
         
+        # LLM 新闻深度分析增强（同步降级模式）
+        if self._llm_news_enabled and self._llm_analyst:
+            try:
+                llm_result = self._call_llm_news_enhancement_sync(
+                    code=code,
+                    news_list=news_list[:max_news],
+                    sentiment_score=avg_score,
+                    trace_id=effective_trace_id,
+                )
+                if llm_result:
+                    result['llm_enhancement'] = llm_result
+            except Exception as e:
+                logger.warning(
+                    f"[{effective_trace_id}] LLM新闻增强失败(降级跳过): {e}"
+                )
+
         # 缓存结果
         self.cache[cache_key] = (result, datetime.now())
         
         logger.info(
-            f"新闻情绪分析完成：{code} - {len(scores)}条新闻，"
+            f"[{effective_trace_id}] 新闻情绪分析完成：{code} - {len(scores)}条新闻，"
             f"原始得分 {avg_score:.2f}, 衰减后 {avg_decayed_score:.2f}"
         )
         
@@ -262,6 +319,116 @@ class NewsSentimentAnalyzer:
             state = self.vix_monitor.get_state()
             return state.state
         return "unknown"
+
+    def _call_llm_news_enhancement_sync(self, code, news_list, sentiment_score, trace_id):
+        """同步包装器 - 在同步上下文中调用异步 LLM 分析（真正超时控制）"""
+        import concurrent.futures
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        try:
+            future = executor.submit(
+                asyncio.run,
+                self._call_llm_news_enhancement(code, news_list, sentiment_score, trace_id)
+            )
+            try:
+                return future.result(timeout=15)
+            except concurrent.futures.TimeoutError:
+                logger.warning(f"[{trace_id}] LLM新闻增强超时(>=15s)，降级跳过")
+                future.cancel()
+                return None
+        except Exception as e:
+            logger.warning(f"[{trace_id}] LLM同步调用失败: {e}")
+            return None
+        finally:
+            executor.shutdown(wait=False)
+
+    async def _call_llm_news_enhancement(
+        self,
+        code: str,
+        news_list: list,
+        sentiment_score: float,
+        trace_id: str,
+    ):
+        """调用 LLM 进行新闻深度分析
+
+        Args:
+            code: 股票代码
+            news_list: 新闻列表（dict 或 NewsItem dataclass 均可）
+            sentiment_score: 已计算的情绪分值
+            trace_id: 链路追踪 ID
+
+        Returns:
+            dict 或 None
+        """
+        from app.ai.llm_market_analyst import NewsContext
+
+        headlines = []
+        summary_parts = []
+        has_breaking = False
+        ages = []
+
+        for news in news_list[:10]:
+            if isinstance(news, dict):
+                title = news.get('title', '')
+                content = news.get('content', '') or news.get('summary', '')
+                importance = news.get('importance', '')
+                age = news.get('age_minutes', 30)
+                is_breaking = news.get('is_breaking', False)
+            else:
+                title = getattr(news, 'title', '')
+                content = getattr(news, 'content', '') or getattr(news, 'summary', '')
+                importance = getattr(news, 'importance', '')
+                age = getattr(news, 'age_minutes', 30)
+                is_breaking = getattr(news, 'is_breaking', False)
+
+            if not title:
+                continue
+
+            headlines.append(title)
+            snippet = str(content)[:200] if content else ''
+            if snippet:
+                summary_parts.append(f"{title}: {snippet}")
+            if importance in ('BREAKING', 'breaking', 'critical') or is_breaking:
+                has_breaking = True
+            ages.append(age)
+
+        if not headlines:
+            return None
+
+        news_context = NewsContext(
+            headlines=headlines,
+            sentiment_score=sentiment_score,
+            news_count=len(news_list),
+            top_news_summary="\n".join(summary_parts[:5]),
+            avg_age_minutes=sum(ages) / len(ages) if ages else 30,
+            has_breaking=has_breaking,
+        )
+
+        assessment = await self._llm_analyst.analyze(
+            code=code,
+            news_context=news_context,
+            trigger_type="NEWS_ONLY",
+        )
+
+        result = {
+            'llm_direction': assessment.direction,
+            'llm_confidence': assessment.confidence_level,
+            'llm_confidence_value': assessment.confidence_value,
+            'llm_timing': assessment.recommended_timing,
+            'llm_key_factors': assessment.key_factors,
+            'llm_risk_flags': assessment.risk_flags,
+            'llm_reasoning': assessment.reasoning,
+        }
+
+        if assessment.news_impact:
+            result['llm_news_severity'] = assessment.news_impact.severity
+            result['llm_news_duration_minutes'] = assessment.news_impact.duration_minutes
+            result['llm_affected_codes'] = assessment.news_impact.affected_codes
+
+        logger.info(
+            f"[{trace_id}] LLM新闻增强: {code} direction={assessment.direction} "
+            f"confidence={assessment.confidence_level}"
+        )
+        return result
     
     def _parse_published_at(self, published_at_str: str) -> 'datetime':
         """解析新闻发布时间，统一转换为本地 naive datetime"""

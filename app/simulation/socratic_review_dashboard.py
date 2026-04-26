@@ -17,10 +17,12 @@ FTSeek 港股模拟交易深度复盘 Dashboard V2
 """
 
 from fastapi import APIRouter, WebSocket, HTTPException, Query
+import sqlite3
+from app.storage.repository import get_db
 from fastapi.responses import HTMLResponse, JSONResponse
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timedelta
-import sqlite3
+
 import json
 import asyncio
 from pathlib import Path
@@ -40,7 +42,6 @@ def get_db_connection(db_path: Path) -> sqlite3.Connection:
     conn = sqlite3.connect(str(db_path))
     conn.row_factory = sqlite3.Row
     return conn
-
 
 @router.get("/dashboard", response_class=HTMLResponse)
 async def get_dashboard():
@@ -494,14 +495,16 @@ async def websocket_progress(websocket: WebSocket, task_id: str):
                 "event": "error",
                 "error": str(e),
             })
-        except:
+        except (ConnectionError, RuntimeError) as ws_err:
+            logger.debug(f"WebSocket 发送错误失败：{ws_err}")
             pass  # 如果连接已断开，忽略发送错误
     finally:
         try:
             # 只在连接未关闭时关闭
             if websocket.client_state.name not in ['DISCONNECTED', 'CLOSED']:
                 await websocket.close()
-        except:
+        except (ConnectionError, RuntimeError) as ws_err:
+            logger.debug(f"WebSocket 关闭失败：{ws_err}")
             pass  # 忽略关闭错误
 
 
@@ -530,7 +533,12 @@ async def archive_to_memory(
     - memory_path: MEMORY.md 路径 (可选)
     """
     if not memory_path:
-        memory_path = "/root/.openclaw/workspace-planner/MEMORY.md"
+        # 【P0 修复 2026-04-26】移除硬编码路径，改为环境变量读取
+        memory_path = os.path.join(
+            os.getenv("FTSEEK_OPENCLAW_DIR", os.path.expanduser("~/.openclaw")),
+            "workspace-planner",
+            "MEMORY.md"
+        )
     
     memory_entry = f"""
 ## {summary.get('date', datetime.now().strftime('%Y-%m-%d'))} | FTSeek 港股复盘

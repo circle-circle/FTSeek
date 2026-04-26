@@ -3,6 +3,7 @@
 与 FTSeek 主交易服务隔离，避免 WebSocket 错误影响交易日志
 """
 import asyncio
+from app.storage.repository import get_db
 import logging
 from pathlib import Path
 from fastapi import FastAPI, WebSocket, HTTPException, Query
@@ -36,7 +37,6 @@ def get_db_connection(db_path: Path):
     conn = sqlite3.connect(str(db_path))
     conn.row_factory = sqlite3.Row
     return conn
-
 
 @app.get("/health")
 async def health_check():
@@ -112,8 +112,8 @@ async def websocket_progress(websocket: WebSocket, task_id: str = Query(...)):
                 "event": "review_completed",
                 "task_id": task_id,
             })
-        except:
-            pass
+        except Exception as e:
+            logger.debug(f"[WebSocket] 发送 review_completed 事件失败 (WebSocket 可能已断开): {e}")
             
     except Exception as e:
         logger.error(f"WebSocket 异常：{e}", exc_info=True)

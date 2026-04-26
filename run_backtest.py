@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
 """
+DEPRECATED: 此脚本已废弃, 请使用以下方式运行回测:
+  python -m app.backtest.backtest_engine  (编程方式)
+  python app/autoresearch/backtest_adapter.py  (自动研究方式)
+  python scripts/run_realdata_backtest.py  (真实数据回测)
+"""
+"""
 FTSeek 策略回测试验
 使用历史信号数据进行回测分析
 """

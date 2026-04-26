@@ -8,14 +8,14 @@
 """
 
 import logging
-import sqlite3
+from app.storage.repository import get_db
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 from datetime import datetime, timedelta
 from pathlib import Path
 
 logger = logging.getLogger("ftseek.risk.risk_state")
-logger.propagate = False
+# 2026-04-10: propagate=True (默认), 通过 ftseek 父级 logger 输出
 
 
 @dataclass
@@ -110,8 +110,7 @@ class RiskStateManager:
 
     def _init_db(self):
         """初始化数据库表"""
-        conn = sqlite3.connect(self.db_path)
-        try:
+        with get_db(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS risk_state (
@@ -140,13 +139,9 @@ class RiskStateManager:
 
             # 加载缓存
             self._load_cache()
-        finally:
-            conn.close()
-
     def _load_cache(self):
         """从数据库加载缓存"""
-        conn = sqlite3.connect(self.db_path)
-        try:
+        with get_db(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute('''
                 SELECT code, last_reject_time, reject_reason, reject_count_1h,
@@ -167,9 +162,6 @@ class RiskStateManager:
                     total_rejects=row[7] or 0,
                     last_check_time=self._parse_time(row[8]),
                 )
-        finally:
-            conn.close()
-
     def _parse_time(self, value) -> Optional[datetime]:
         """解析时间字符串"""
         if value is None:
@@ -256,8 +248,7 @@ class RiskStateManager:
 
     def _save_state(self, state: RiskState):
         """保存状态到数据库"""
-        conn = sqlite3.connect(self.db_path)
-        try:
+        with get_db(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute('''
                 INSERT OR REPLACE INTO risk_state
@@ -276,9 +267,6 @@ class RiskStateManager:
                 state.last_check_time.isoformat() if state.last_check_time else None,
             ))
             conn.commit()
-        finally:
-            conn.close()
-
     def get_risk_score(self, code: str) -> float:
         """
         获取标的风险评分
@@ -311,8 +299,7 @@ class RiskStateManager:
         Returns:
             清理的记录数
         """
-        conn = sqlite3.connect(self.db_path)
-        try:
+        with get_db(self.db_path) as conn:
             cursor = conn.cursor()
             cutoff = (datetime.now() - timedelta(hours=hours)).isoformat()
 
@@ -327,9 +314,6 @@ class RiskStateManager:
 
             logger.info(f"已清理 {cleared} 条记录的 1 小时计数")
             return cleared
-        finally:
-            conn.close()
-
     def get_statistics(self) -> Dict:
         """
         获取统计信息

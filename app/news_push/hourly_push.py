@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-新闻定时推送脚本 - FTSeek-US
+新闻定时推送脚本 - FTSeek (增强版 2026-04-12)
 
 功能:
-- 每小时推送一次精选新闻
-- 过滤持仓股相关新闻
-- 集成到 crontab 定时任务
+- 每小时推送一次事件聚类摘要
+- 使用 Pipeline 组件: NewsCleaner → EventClusterer → 事件包推送
+- 替代旧版逐条推送模式
 
 使用方法:
   1. 配置环境变量 DINGTALK_WEBHOOK_URL
@@ -23,52 +23,73 @@ import requests
 # 添加项目路径
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from app.news_push.collector import NewsCollector
+from app.news_push.collector import NewsCollector, get_collector
 from app.news_push.rule_engine import RuleEngine
-from app.news_push.notifier import DingTalkNotifier
+from app.news_push.notifier import NewsNotifier, get_notifier
 from app.news_push.config import (
     WATCH_STOCKS,
     PUSH_TIME_WINDOW,
     RATE_LIMIT,
 )
 
+# Pipeline 组件
+from app.pipeline.news_cleaner import NewsCleaner as PipelineNewsCleaner
+from app.pipeline.event_clusterer import EventClusterer as PipelineEventClusterer
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger("ftseek.news.hourly_push")
-logger.propagate = False  # 防止日志重复
+logger.propagate = False
 
 
 class HourlyNewsPush:
     """
-    每小时新闻推送服务
+    每小时新闻推送服务 (增强版: 清洗→聚类→事件包)
     """
 
     def __init__(self):
         """初始化新闻推送服务"""
-        self.collector = NewsCollector()
+        self.collector = get_collector()
         self.rule_engine = RuleEngine()
-        self.dingtalk_webhook = os.getenv("DINGTALK_WEBHOOK_URL", "")
-        
+
+        # Pipeline 组件
+        self.news_cleaner = PipelineNewsCleaner(config={
+            "dedup_threshold": 0.85,
+            "min_content_length": 8,
+            "filter_clickbait": True,
+        })
+        self.event_clusterer = PipelineEventClusterer(config={
+            "time_window_minutes": 120,
+            "max_clusters": 8,
+            "theme_generation": "rule",
+        })
+
+        # 钉钉通知器
+        self.notifier = get_notifier()
+
+        # 已推送的事件包 ID (防重复)
+        self._pushed_clusters: set = set()
+
         # 推送限制
         self.max_per_hour = RATE_LIMIT.get("max_per_hour", 5)
         self.pushed_count = 0
-        
-        logger.info("每小时新闻推送服务已初始化")
+
+        logger.info("每小时新闻推送服务已初始化 (增强版: 清洗+聚类)")
 
     def is_within_push_window(self) -> bool:
         """检查是否在推送时间窗口内"""
         now = datetime.now()
         start_hour = PUSH_TIME_WINDOW.get("start_hour", 9)
         end_hour = PUSH_TIME_WINDOW.get("end_hour", 22)
-        
+
         # 周末不推送 (除非配置允许)
         if not PUSH_TIME_WINDOW.get("weekend_push", False):
             if now.weekday() >= 5:  # 5=周六，6=周日
                 logger.info("周末，跳过推送")
                 return False
-        
+
         # 检查小时
         if start_hour <= now.hour < end_hour:
             return True
@@ -76,148 +97,105 @@ class HourlyNewsPush:
             logger.info(f"当前时间 {now.hour}:00 不在推送窗口 [{start_hour}:00-{end_hour}:00]")
             return False
 
-    def collect_news(self, limit: int = 20) -> List[Dict]:
-        """
-        收集新闻
-        
-        Args:
-            limit: 最多收集的新闻数量
-        
-        Returns:
-            新闻列表
-        """
-        try:
-            news_list = self.collector.collect_all(limit=limit)
-            logger.info(f"收集到 {len(news_list)} 条新闻")
-            return news_list
-        except Exception as e:
-            logger.error(f"收集新闻失败：{e}")
-            return []
+    def collect_and_push(self):
+        """执行一次采集和推送 (增强版流程)"""
+        logger.info("开始执行新闻推送任务")
 
-    def filter_news(self, news_list: List[Dict]) -> List[Dict]:
-        """
-        过滤新闻 (规则引擎 + 持仓股过滤)
-        
-        Args:
-            news_list: 原始新闻列表
-        
-        Returns:
-            过滤后的新闻列表
-        """
-        filtered = []
-        
-        for news in news_list:
-            # 规则引擎过滤
-            if not self.rule_engine.should_push(news):
-                continue
-            
-            # 持仓股关键词匹配 (优先推送)
-            title = news.get("title", "")
-            content = news.get("content", "")
-            text = f"{title} {content}"
-            
-            is_stock_news = False
-            for stock in WATCH_STOCKS:
-                if not stock.get("enabled", False):
-                    continue
-                aliases = [stock["name"]]
-                # 简单匹配
-                for alias in aliases:
-                    if alias in text:
-                        news["matched_stock"] = stock
-                        is_stock_news = True
-                        break
-                if is_stock_news:
-                    break
-            
-            filtered.append(news)
-        
-        logger.info(f"过滤后剩余 {len(filtered)} 条新闻")
-        return filtered
-
-    def push_news(self, news_list: List[Dict]):
-        """
-        推送新闻到钉钉
-        
-        Args:
-            news_list: 新闻列表
-        """
-        if not self.dingtalk_webhook:
-            logger.warning("未配置钉钉 Webhook，跳过推送")
-            return
-        
+        # Stage 1: 采集新闻
+        news_list = self.collector.fetch_all()
         if not news_list:
-            logger.info("无新闻需要推送")
+            logger.info("📭 无新新闻")
             return
-        
-        # 限制推送数量
-        news_to_push = news_list[:self.max_per_hour]
-        
-        # 构建 Markdown 消息
-        markdown_lines = [f"## 📰 财经快讯 - {datetime.now().strftime('%m-%d %H:00')}"]
-        markdown_lines.append("")
-        
-        for i, news in enumerate(news_to_push, 1):
-            title = news.get("title", "")
-            summary = news.get("summary", news.get("content", ""))[:100]
-            source = news.get("source", "")
-            url = news.get("url", "")
-            
-            # 持仓股新闻标记
-            stock_marker = ""
-            if "matched_stock" in news:
-                stock = news["matched_stock"]
-                stock_marker = f" 🎯 **[{stock['name']}]**"
-            
-            markdown_lines.append(f"**{i}. {title}**{stock_marker}")
-            markdown_lines.append(f"   {summary}...")
-            markdown_lines.append(f"   _来源：{source}_")
-            markdown_lines.append("")
-        
-        markdown_lines.append("---")
-        markdown_lines.append(f"*FTSeek-US 新闻推送系统*")
-        markdown_lines.append(f"*推送时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*")
-        
-        markdown_text = "\n".join(markdown_lines)
-        
+
+        logger.info(f"📥 采集到 {len(news_list)} 条新闻")
+
+        # Stage 2: 清洗 (模糊去重 + 质量评分)
+        cleaned = self.news_cleaner.clean(news_list)
+        logger.info(f"🧹 清洗完成: {len(news_list)} → {len(cleaned)} 条")
+
+        if not cleaned:
+            logger.info("🚫 清洗后无有效新闻")
+            return
+
+        # Stage 3: 规则引擎过滤
+        news_dicts = []
+        for n in cleaned:
+            nd = {
+                'id': n.id,
+                'title': n.title,
+                'content': n.content,
+                'source': n.source,
+                'published_at': n.published_at,
+                'related_stocks': n.related_stocks,
+            }
+            news_dicts.append(nd)
+
+        filtered_pairs = self.rule_engine.batch_evaluate(news_dicts)
+        filtered_news = []
+        news_by_id = {n.id: n for n in cleaned}
+
+        for nd, rule_result in filtered_pairs:
+            news_id = nd.get('id', '') if isinstance(nd, dict) else getattr(nd, 'id', '')
+            if news_id in news_by_id:
+                news_by_id[news_id]._rule_result = rule_result
+                filtered_news.append(news_by_id[news_id])
+
+        logger.info(f"✅ 通过过滤：{len(filtered_news)} 条")
+
+        if not filtered_news:
+            logger.info("🚫 所有新闻被规则过滤")
+            return
+
+        # Stage 4: 事件聚类
+        clusters = self.event_clusterer.cluster(filtered_news)
+        logger.info(f"🔗 聚类完成: {len(clusters)} 个事件")
+
+        # Stage 5: 事件包推送
+        pushed_count = 0
+        for cluster in clusters:
+            if cluster.id in self._pushed_clusters:
+                logger.debug(f"⏭️ 事件已推送过，跳过: {cluster.theme[:30]}")
+                continue
+
+            if not self.notifier._can_send():
+                logger.debug("⏸️ 限流，跳过事件包")
+                continue
+
+            markdown = self.notifier._build_event_pack_markdown(cluster)
+            title = f"📦 {cluster.theme[:30]}"
+
+            ok = self._send_markdown(title, markdown)
+            if ok:
+                self._pushed_clusters.add(cluster.id)
+                pushed_count += 1
+                self.pushed_count += 1
+                logger.info(f"✅ 事件包已推送: {cluster.theme[:40]} ({len(cluster.articles)} 条聚合)")
+
+        logger.info(f"📊 本次周期：采集={len(news_list)}, 清洗={len(cleaned)}, 聚类={len(clusters)}, 推送={pushed_count}")
+        logger.info("新闻推送任务完成")
+
+    def _send_markdown(self, title: str, text: str) -> bool:
+        """发送 Markdown 消息到钉钉"""
+        if not self.notifier.webhook_url:
+            return False
+        if not self.notifier._can_send():
+            return False
+
         payload = {
-            "msgtype": "markdown",
-            "markdown": {
-                "title": f"财经快讯 - {datetime.now().strftime('%m-%d %H:00')}",
-                "text": markdown_text,
-            },
+            'msgtype': 'markdown',
+            'markdown': {
+                'title': title,
+                'text': text
+            }
         }
-        
-        try:
-            response = requests.post(
-                self.dingtalk_webhook,
-                json=payload,
-                headers={"Content-Type": "application/json"},
-                timeout=10,
-            )
-            response.raise_for_status()
-            logger.info(f"新闻推送成功 | 数量={len(news_to_push)}")
-        except Exception as e:
-            logger.error(f"新闻推送失败：{e}")
+        return self.notifier._do_post(payload)
 
     def run(self):
         """执行一次新闻推送"""
-        logger.info("开始执行新闻推送任务")
-        
-        # 检查时间窗口
         if not self.is_within_push_window():
             return
-        
-        # 收集新闻
-        news_list = self.collect_news(limit=30)
-        
-        # 过滤新闻
-        filtered_news = self.filter_news(news_list)
-        
-        # 推送新闻
-        self.push_news(filtered_news)
-        
-        logger.info("新闻推送任务完成")
+
+        self.collect_and_push()
 
 
 def main():

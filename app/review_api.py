@@ -4,6 +4,7 @@ FTSeek 深度复盘 API
 支持按周期、时间范围、策略等多维度筛选
 """
 from fastapi import APIRouter, Query, HTTPException
+from app.storage.repository import get_db
 from typing import Optional, List, Dict, Any
 from datetime import datetime, timedelta
 import sqlite3
@@ -20,7 +21,6 @@ def get_db_connection():
     conn = sqlite3.connect(str(DB_PATH))
     conn.row_factory = sqlite3.Row
     return conn
-
 
 @router.get("/trades")
 async def get_trades(

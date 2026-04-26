@@ -16,10 +16,11 @@ import yaml
 from typing import Dict, List, Optional, Any, Tuple
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from app.utils.session_detector import SessionDetector
 from pathlib import Path
 
 logger = logging.getLogger("ftseek.risk.manager")
-logger.propagate = False  # 防止日志重复
+# 2026-04-10: propagate=True (默认), 通过 ftseek 父级 logger 输出
 
 
 @dataclass
@@ -47,25 +48,45 @@ class RiskConfig:
     initial_cash: float = 1000000.0
     
     # 信号级
-    min_confidence: float = 0.60
+    # 2026-04-13 修复：从 0.60 降至 0.35，与 decision_buffer 保持一致
+    # 单策略信号置信度约 0.35-0.55，过高门槛会误杀所有有效信号
+    min_confidence: float = 0.35          # 2026-04-24 统一: 对齐 risk_limits.min_confidence
     
     # 订单级
-    max_single_position: float = 0.20
-    max_single_loss: float = 0.10
+    max_single_position: float = 0.08      # 2026-04-18: 0.18→0.08 统一
+    max_single_loss: float = 0.05           # 2026-04-16 对齐 config.yaml (0.05)
     
     # 仓位级
-    max_total_position: float = 0.80
-    max_daily_trades: int = 10
-    max_daily_loss: float = 0.05
-    max_weekly_loss: float = 0.10
+    max_total_position: float = 0.75       # 2026-04-15: 0.80→0.75, 对齐 config.yaml
+    max_daily_trades: int = 5             # 2026-04-15: 10→5, 对齐 config.yaml
+    max_daily_loss: float = 0.03          # 2026-04-15: 0.05→0.03, 对齐 config.yaml
+    max_weekly_loss: float = 0.08         # 2026-04-15: 0.10→0.08, 对齐 config.yaml
     
     # 账户级
-    max_drawdown: float = 0.15
-    consecutive_loss_limit: int = 5
+    max_drawdown: float = 0.12            # 2026-04-15: 0.15→0.12, 对齐 config.yaml
+    max_monthly_loss: float = 0.15        # 2026-04-26 P0 修复: config.yaml 已新增但 RiskConfig 未读取
+    consecutive_loss_limit: int = 3       # 2026-04-15: 5→3, 对齐 config.yaml
+
+    # 2026-04-26 P0 修复: 分层风控子树“读取闭环”
+    # 原实现在 from_yaml 中未读取 source_aware_risk / time_aware_risk，
+    # 导致配置中的分层阈值对 RiskManager 完全失效。
+    source_aware_risk: Dict = field(default_factory=dict)
+    time_aware_risk: Dict = field(default_factory=dict)
+    
+    # 止损止盈 (2026-04-16 修复: 缺失字段导致配置加载失败)
+    stop_loss_pct: float = 0.03           # 2026-04-16 对齐 config.yaml stop_loss.default_percent (3%)
+    take_profit_pct: float = 0.10         # 个股止盈百分比 (10%)
+    trailing_stop_enabled: bool = True    # 是否启用追踪止损
+    take_profit_partial: bool = True      # 是否启用分批止盈
+    take_profit_partial_ratio: float = 0.50  # 分批止盈比例 (50%)
+    
+    # 熔断器
+    daily_loss_limit: float = 0.03        # 日亏损限制 (3%)
+    pause_duration: int = 3600            # 熔断暂停时长 (秒)
     
     # 策略级
     strategy_min_trades: int = 20
-    strategy_min_winrate: float = 0.40
+    strategy_min_winrate: float = 0.45      # 2026-04-16 对齐 config.yaml (0.45)
     
     # 预警配置
     dingtalk_webhook: str = ""
@@ -102,17 +123,24 @@ class RiskConfig:
             return cls(
                 trading_mode=trading.get("mode", "paper"),
                 initial_cash=trading.get("paper_initial_cash", 1000000.0),
-                min_confidence=risk_limits.get("min_confidence", 0.60),
-                max_single_position=risk_limits.get("max_single_position", 0.20),
-                max_single_loss=risk_limits.get("max_single_loss", 0.10),
-                max_total_position=risk_limits.get("max_total_position", 0.80),
-                max_daily_trades=risk_limits.get("max_daily_trades", 10),
-                max_daily_loss=risk_limits.get("max_daily_loss", 0.05),
-                max_weekly_loss=risk_limits.get("max_weekly_loss", 0.10),
-                max_drawdown=risk_limits.get("max_drawdown", 0.15),
-                consecutive_loss_limit=risk_limits.get("consecutive_loss_limit", 5),
+                min_confidence=risk_limits.get("min_confidence", 0.35),  # 2026-04-24 统一: 0.55→0.35
+                max_single_position=risk_limits.get("max_single_position", 0.18),
+                max_single_loss=risk_limits.get("max_single_loss", 0.05),
+                max_total_position=risk_limits.get("max_total_position", 0.75),
+                max_daily_trades=risk_limits.get("max_daily_trades", 5),
+                max_daily_loss=risk_limits.get("max_daily_loss", 0.03),
+                max_weekly_loss=risk_limits.get("max_weekly_loss", 0.08),
+                max_drawdown=risk_limits.get("max_drawdown", 0.12),
+                # 2026-04-26 P0 修复: 读取 config.yaml 已新增的 max_monthly_loss
+                max_monthly_loss=risk_limits.get("max_monthly_loss", 0.15),
+                consecutive_loss_limit=risk_limits.get("consecutive_loss_limit", 3),
+                stop_loss_pct=risk_limits.get("stop_loss_pct", 0.03),
+                take_profit_pct=risk_limits.get("take_profit_pct", 0.10),
                 strategy_min_trades=risk_limits.get("strategy_min_trades", 20),
-                strategy_min_winrate=risk_limits.get("strategy_min_winrate", 0.40),
+                strategy_min_winrate=risk_limits.get("strategy_min_winrate", 0.45),
+                # 2026-04-26 P0 修复: 同步读取分层风控子树（以前用户配置完全被忽视）
+                source_aware_risk=risk_limits.get("source_aware_risk", {}) or {},
+                time_aware_risk=risk_limits.get("time_aware_risk", {}) or {},
                 dingtalk_webhook=alerts.get("dingtalk_webhook", ""),
                 dingtalk_secret=alerts.get("dingtalk_secret", ""),
             )
@@ -131,36 +159,58 @@ class RiskManager:
     def __init__(self, config_path: Optional[str] = None, 
                  initial_capital: Optional[float] = None,
                  risk_per_trade: float = 0.02,
-                 limits: Optional[RiskConfig] = None):
+                 limits: Optional[RiskConfig] = None,
+                 time_aware_config: Optional[Dict] = None): # Phase 2
         """
         初始化风控管理器
         
         Args:
-            config_path: 配置文件路径，默认使用 config/risk_config.yaml
+            config_path: 已废弃，配置从 config_center 读取
             initial_capital: 初始资金 (可选，覆盖配置)
             risk_per_trade: 每笔交易风险 (可选)
             limits: 风险限制 (向后兼容，覆盖配置)
         """
-        # 确定配置文件路径
-        if config_path is None:
-            # 尝试从常见路径加载
-            possible_paths = [
-                "/opt/ftseek/FTSeek/config/risk_config.yaml",
-                "config/risk_config.yaml",
-                os.path.join(os.path.dirname(__file__), "../../config/risk_config.yaml"),
-            ]
-            for path in possible_paths:
-                if os.path.exists(path):
-                    config_path = path
-                    break
-        
-        # 加载配置
-        if config_path and os.path.exists(config_path):
-            self.config = RiskConfig.from_yaml(config_path)
-            logger.info(f"风控配置已加载：{config_path}")
-        else:
+        # 优先从配置中心读取
+        try:
+            from config.config_center import get_config_center
+            config_center = get_config_center()
+            risk_limits = config_center.get("risk_limits", {})
+            stop_loss_cfg = config_center.get("stop_loss", {})
+            take_profit_cfg = config_center.get("take_profit", {})
+            circuit_breaker_cfg = config_center.get("circuit_breaker", {})
+            
+            if risk_limits or stop_loss_cfg or circuit_breaker_cfg:
+                self.config = RiskConfig(
+                    min_confidence=risk_limits.get("min_confidence", 0.35),  # 2026-04-24 统一: 0.55→0.35
+                    max_single_position=risk_limits.get("max_single_position", 0.18),
+                    max_total_position=risk_limits.get("max_total_position", 0.75),
+                    max_drawdown=risk_limits.get("max_drawdown", 0.12),
+                    # 2026-04-26 P0 修复: 配置中心分支也需读取新增字段，
+                    # 否则通过 config_center 加载时依然会丢失
+                    max_monthly_loss=risk_limits.get("max_monthly_loss", 0.15),
+                    source_aware_risk=risk_limits.get("source_aware_risk", {}) or {},
+                    time_aware_risk=risk_limits.get("time_aware_risk", {}) or {},
+                    stop_loss_pct=stop_loss_cfg.get("default_percent", 0.03),
+                    take_profit_pct=take_profit_cfg.get("default_percent", 0.10),
+                    trailing_stop_enabled=stop_loss_cfg.get("trailing_enabled", True),
+                    take_profit_partial=take_profit_cfg.get("partial_enabled", True),
+                    take_profit_partial_ratio=take_profit_cfg.get("partial_ratio", 0.50),
+                    daily_loss_limit=circuit_breaker_cfg.get("daily_loss_limit", 0.03),
+                    consecutive_loss_limit=circuit_breaker_cfg.get("consecutive_loss_limit", 3),
+                    pause_duration=circuit_breaker_cfg.get("pause_duration", 3600),
+                )
+                logger.info("风控配置已从配置中心加载")
+            else:
+                self.config = RiskConfig()
+                logger.warning("配置中心无风控配置，使用默认值")
+        except Exception as e:
+            logger.error(f"风控配置加载失败: {e}, 使用默认值")
             self.config = RiskConfig()
-            logger.warning("未找到风控配置文件，使用默认配置")
+
+        # 🚨 熔断器状态
+        self._daily_pnl = 0.0
+        self._consecutive_losses = 0
+        self._is_broken = False
         
         # 向后兼容：limits 参数覆盖配置
         if limits is not None:
@@ -184,6 +234,11 @@ class RiskManager:
         self.today_date = datetime.now().strftime("%Y-%m-%d")
         self.weekly_pnl = 0.0
         self.week_start = self._get_week_start()
+        
+        # Phase 2: 初始化时段检测器
+        self.session_detector = None
+        if time_aware_config:
+            self.session_detector = SessionDetector(time_aware_config)
         
         # 系统统计
         self.consecutive_losses = 0
@@ -242,12 +297,15 @@ class RiskManager:
     # ==================== 交易前风控检查 ====================
 
     def check_before_trade(self, signal: Any) -> RiskCheckResult:
-        """
-        交易前风控检查
-        :param signal: 交易信号
-        :return: RiskCheckResult {passed: bool, details: dict, timestamp: datetime}
-        """
+        """交易前风控检查 (Phase 2: 引入来源感知风控 + 硬编码熔断)"""
         try:
+            # 🚨 硬编码熔断：不依赖任何配置或 LLM
+            if self._is_daily_circuit_broken():
+                return RiskCheckResult(
+                    passed=False,
+                    details={"reason": "CIRCUIT_BREAKER_HIT", "message": "今日回撤超限或连续亏损过多，熔断生效"}
+                )
+
             # 获取置信度 (从 signal 属性或 extra 字段)
             confidence = getattr(signal, 'confidence', None)
             if confidence is None and hasattr(signal, 'extra'):
@@ -255,13 +313,59 @@ class RiskManager:
             if confidence is None:
                 confidence = 0.0
             
+            # Phase 2: 获取信号来源
+            signal_source = getattr(signal, 'source', 'TECHNICAL')
+            if hasattr(signal_source, 'value'):
+                signal_source = signal_source.value # Enum -> String
+            else:
+                signal_source = str(signal_source).lower()
+            
+            # 检查配置中是否存在该来源的特定风控策略
+            source_risk = getattr(self.config, 'source_aware_risk', None)
+            if source_risk and isinstance(source_risk, dict):
+                source_config = source_risk.get(signal_source, source_risk.get('technical', {}))
+                source_min_conf = source_config.get('min_confidence', self.config.min_confidence)
+                source_max_pos = source_config.get('max_position', self.config.max_single_position)
+            else:
+                source_config = {}
+                source_min_conf = self.config.min_confidence
+                source_max_pos = self.config.max_single_position
+            
+            # Phase 2: 获取时段配置 (覆盖来源配置)
+            time_aware_min_conf = source_min_conf
+            time_aware_max_pos = source_max_pos
+            
+            if self.session_detector:
+                session_config = self.session_detector.get_current_config()
+                session_name = self.session_detector.get_current_session().name
+                
+                session_conf = session_config.get('min_confidence')
+                if session_conf is not None:
+                    # P0 2026-04-19: 时段门槛不应低于来源门槛的 70%，防止风控形同虚设
+                    floor = source_min_conf * 0.70
+                    time_aware_min_conf = max(session_conf, floor)
+                    if session_conf < floor:
+                        logger.warning(
+                            f"[Time-Aware Risk] 时段门槛({session_conf:.2f}) < 来源门槛70%({floor:.2f})，"
+                            f"已调整为 {time_aware_min_conf:.2f}"
+                        )
+                
+                session_pos = session_config.get('max_position')
+                if session_pos is not None:
+                    time_aware_max_pos = session_pos
+                
+                logger.debug(f"[Time-Aware Risk] 时段={session_name}, 门槛={time_aware_min_conf}")
+
+            # 覆盖信号级检查的配置
             checks = {
-                'position_limit': self._check_position_limit(signal.code, signal.quantity),
+                'position_limit': self._check_position_limit(signal.code, signal.quantity, limit=time_aware_max_pos),
                 'daily_trades': self._check_daily_trades(),
                 'daily_loss': self._check_daily_loss(),
+                'monthly_loss': self._check_monthly_loss(),  # P0 修复: 增加月度亏损拦截
                 'drawdown': self._check_drawdown(),
-                'confidence': self._check_confidence(confidence)
+                'confidence': self._check_confidence(confidence, min_confidence=time_aware_min_conf)
             }
+            logger.debug(f"[Source-Aware Risk] 来源={signal_source}, 最终门槛={time_aware_min_conf}")
 
             # Phase 3: 波动率覆盖检查
             vol_override = self._check_volatility_override(signal, confidence)
@@ -284,13 +388,15 @@ class RiskManager:
                 timestamp=datetime.now()
             )
     
-    def _check_position_limit(self, code: str, quantity: int) -> bool:
+    def _check_position_limit(self, code: str, quantity: int, limit: float = None) -> bool:
         """
         检查仓位限制 (单股<20%)
         :param code: 标的代码
         :param quantity: 交易数量
+        :param limit: 动态最大仓位比例 (来源于来源感知配置)
         :return: 是否通过检查
         """
+        max_single_position = limit if limit is not None else self.config.max_single_position
         try:
             # 获取当前持仓
             positions = self.account.get("positions", {})
@@ -303,19 +409,28 @@ class RiskManager:
             if code in positions:
                 current_price = positions[code].get('current_price', positions[code].get('entry_price', 0))
             
-            # 方式2: 如果本地无价格，从富途获取
+            # 方式2: 如果本地无价格，从富途获取 (2026-04-20: 接入全局限流器)
             if current_price <= 0:
                 try:
                     from futu import OpenQuoteContext, RET_OK
                     from app import config as app_config
+                    from app.utils.futu_limiter import get_global_limiter
+                    
+                    limiter = get_global_limiter()
+                    if not limiter.acquire(timeout=10):
+                        logger.warning(f"[限流] 获取 {code} 价格被拒绝")
+                        return True  # 保守通过
                     
                     quote_ctx = OpenQuoteContext(host=app_config.OPEND_HOST, port=app_config.OPEND_PORT)
-                    ret, data = quote_ctx.get_market_snapshot([code])
-                    quote_ctx.close()
-                    
-                    if ret == RET_OK and len(data) > 0:
-                        current_price = float(data.iloc[0].get('last_price', 0))
-                        logger.debug(f"从富途获取 {code} 实时价格: {current_price}")
+                    try:
+                        ret, data = quote_ctx.get_market_snapshot([code])
+                        limiter.record()
+                        
+                        if ret == RET_OK and len(data) > 0:
+                            current_price = float(data.iloc[0].get('last_price', 0))
+                            logger.debug(f"从富途获取 {code} 实时价格: {current_price}")
+                    finally:
+                        quote_ctx.close()
                 except Exception as e:
                     logger.warning(f"获取 {code} 实时价格失败: {e}")
             
@@ -336,11 +451,11 @@ class RiskManager:
             total_position_value = existing_position_value + new_position_value
             position_ratio = total_position_value / total_capital if total_capital > 0 else 1.0
             
-            # 检查是否超过单标的限制
-            if position_ratio > self.config.max_single_position:
+            # 检查是否超过单标的限制 (支持动态 limit)
+            if position_ratio > max_single_position:
                 logger.warning(
                     f"仓位限制检查失败：{code} 仓位 {position_ratio:.1%} "
-                    f"超过限制 {self.config.max_single_position:.1%}"
+                    f"超过限制 {max_single_position:.1%}"
                 )
                 return False
             
@@ -384,6 +499,21 @@ class RiskManager:
             logger.error(f"_check_daily_loss 异常：{e}")
             return False
     
+    def _check_monthly_loss(self) -> bool:
+        """P0 修复: 检查月度亏损 (<15%)"""
+        try:
+            # 尝试从 stats 获取月度 PnL，若无则回退到 0
+            monthly_pnl = getattr(self, 'monthly_pnl', 0.0)
+            limit = getattr(self.config, 'max_monthly_loss', 0.15)
+            
+            if monthly_pnl < -limit:
+                logger.critical(f"🚨 月度熔断！当月亏损 {monthly_pnl:.2%} 超过限制 {-limit:.2%}")
+                return False
+            return True
+        except Exception as e:
+            logger.error(f"_check_monthly_loss 异常：{e}")
+            return False # 安全起见，异常时拦截
+    
     def _check_drawdown(self) -> bool:
         """
         检查回撤 (<15%)
@@ -408,14 +538,16 @@ class RiskManager:
             logger.error(f"_check_drawdown 异常：{e}")
             return False
     
-    def _check_confidence(self, confidence: float) -> bool:
+    def _check_confidence(self, confidence: float, min_confidence: float = None) -> bool:
         """
-        检查置信度 (>60%)
+        检查置信度
         :param confidence: 置信度 (0-1)
+        :param min_confidence: 动态门槛 (来源于来源感知配置)
         :return: 是否通过检查
         """
         try:
-            passed = confidence >= self.config.min_confidence
+            threshold = min_confidence if min_confidence is not None else self.config.min_confidence
+            passed = confidence >= threshold
             
             if not passed:
                 logger.warning(
@@ -892,6 +1024,79 @@ class RiskManager:
             }
         }
     
+    def validate_config_consistency(self) -> Tuple[bool, List[str]]:
+        """
+        启动时配置一致性校验 - 校验 trading 与 risk_limits 关键参数是否一致
+
+        Returns:
+            (passed, warnings): 是否通过及不一致项警告列表
+        """
+        warnings_list = []
+        all_passed = True
+
+        try:
+            import yaml as _yaml
+            import os as _os
+            # 尝试加载主配置文件来比对 trading 层
+            config_paths = [
+                "/opt/ftseek/FTSeek/config/config.yaml",
+                "config/config.yaml",
+                _os.path.join(_os.path.dirname(__file__), "../../config/config.yaml"),
+            ]
+            raw_config = None
+            for path in config_paths:
+                if _os.path.exists(path):
+                    with open(path, 'r', encoding='utf-8') as f:
+                        raw_config = _yaml.safe_load(f)
+                    break
+
+            if raw_config is None:
+                logger.warning("validate_config_consistency: 未找到配置文件，跳过校验")
+                return True, []
+
+            trading = raw_config.get("trading", {})
+            risk_limits = raw_config.get("risk_limits", {})
+
+            # 校验项: (trading键, risk_limits键, 描述)
+            checks = [
+                ("min_signal_confidence", "min_confidence",    "置信度阈值"),
+                ("max_total_position",    "max_total_position", "总仓位上限"),
+                ("max_daily_trades",      "max_daily_trades",   "日最大交易次数"),
+                ("max_single_position",   "max_single_position","单标的最大仓位"),
+            ]
+
+            for trading_key, risk_key, desc in checks:
+                t_val = trading.get(trading_key)
+                r_val = risk_limits.get(risk_key)
+                if t_val is None or r_val is None:
+                    continue
+                if abs(float(t_val) - float(r_val)) > 1e-9:
+                    msg = (
+                        f"配置不一致[{desc}]: "
+                        f"trading.{trading_key}={t_val} vs "
+                        f"risk_limits.{risk_key}={r_val}"
+                    )
+                    warnings_list.append(msg)
+                    logger.warning(f"[validate_config_consistency] {msg}")
+                    all_passed = False
+
+            if all_passed:
+                logger.info(
+                    "[validate_config_consistency] trading 与 risk_limits "
+                    "关键参数一致性校验通过"
+                )
+            else:
+                logger.error(
+                    f"[validate_config_consistency] 发现 {len(warnings_list)} 处配置不一致，"
+                    f"请检查 config/config.yaml"
+                )
+
+        except Exception as e:
+            logger.warning(f"validate_config_consistency 异常：{e}")
+            return True, []
+
+        return all_passed, warnings_list
+
     def get_closed_trades_today(self) -> List[Dict]:
         """
         获取今日已平仓交易列表
@@ -917,9 +1122,9 @@ class RiskManager:
         # 如果没有内部历史，尝试从 OpenD API 获取
         if not today_trades:
             try:
-                from app.v4.trader.opend_executor import get_opend_executor
-                executor = get_opend_executor(simulate=True)
-                
+                from app.trader.executor import TradeExecutor
+                executor = TradeExecutor()
+
                 if executor.client:
                     ret_code, ret_data = executor.client.get_history_order_list(
                         filter_orders_by_status=[1, 2],  # 已成交
@@ -951,18 +1156,20 @@ class RiskManager:
 @dataclass
 class RiskLimit:
     """风险限制 (向后兼容旧 API)"""
-    max_position_percent: float = 0.20      # 单标的最大仓位
-    max_total_exposure: float = 0.80        # 总仓位上限
-    max_daily_loss: float = 0.05            # 日亏损限制
-    max_drawdown: float = 0.15              # 最大回撤限制
+    max_position_percent: float = 0.18      # 2026-04-16 对齐 config.yaml
+    max_total_exposure: float = 0.75        # 2026-04-16 对齐 config.yaml
+    max_daily_loss: float = 0.03          # 2026-04-15: 0.05→0.03, 对齐 config.yaml            # 日亏损限制
+    max_drawdown: float = 0.12            # 2026-04-15: 0.15→0.12, 对齐 config.yaml              # 最大回撤限制
     max_var_percent: float = 0.03           # 最大 VaR
     max_correlated_exposure: float = 0.40   # 高相关标的合计上限
-    max_trades_per_day: int = 10            # 每日最大交易次数
-    max_single_loss: float = 0.10           # 单笔最大止损
-    max_weekly_loss: float = 0.10           # 周亏损限制
-    consecutive_loss_limit: int = 5         # 连续亏损限制
-    strategy_min_winrate: float = 0.40      # 策略最低胜率
-    min_confidence: float = 0.60            # 最小置信度
+    max_trades_per_day: int = 5             # 2026-04-16 对齐 config.yaml (5)
+    max_single_loss: float = 0.05           # 2026-04-16 对齐 config.yaml (0.05)
+    max_weekly_loss: float = 0.08         # 2026-04-15: 0.10→0.08, 对齐 config.yaml           # 周亏损限制
+    consecutive_loss_limit: int = 3       # 2026-04-15: 5→3, 对齐 config.yaml         # 连续亏损限制
+    strategy_min_winrate: float = 0.45      # 2026-04-16 对齐 config.yaml (0.45)
+    # 2026-04-13 修复：从 0.60 降至 0.35，与 decision_buffer 保持一致
+    # 单策略信号置信度约 0.35-0.55，过高门槛会误杀所有有效信号
+    min_confidence: float = 0.35          # 2026-04-24 统一: 对齐 risk_limits.min_confidence            # 最小置信度
 
 
 @dataclass
@@ -993,12 +1200,10 @@ class RiskMetrics:
 # 全局单例
 risk_manager: Optional[RiskManager] = None
 
-
-def get_risk_manager(config_path: Optional[str] = None) -> RiskManager:
-    """获取风控管理器单例"""
+def get_risk_manager(config_path: Optional[str] = None, time_aware_config: Optional[Dict] = None) -> RiskManager:
     global risk_manager
     if risk_manager is None:
-        risk_manager = RiskManager(config_path)
+        risk_manager = RiskManager(config_path=config_path, time_aware_config=time_aware_config)
     return risk_manager
 
 

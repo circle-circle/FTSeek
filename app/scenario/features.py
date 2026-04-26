@@ -20,7 +20,7 @@ from app.strategy.indicators import (
 )
 
 logger = logging.getLogger("ftseek.scenario.features")
-logger.propagate = False
+# 2026-04-10: propagate=True (默认), 通过 ftseek 父级 logger 输出
 
 
 @dataclass

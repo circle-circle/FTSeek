@@ -23,6 +23,7 @@ futu_logger.propagate = False
 import logging
 import threading
 import time
+import queue
 from datetime import datetime
 from collections import defaultdict
 from typing import List, Dict, Tuple, Optional
@@ -43,7 +44,9 @@ from app.risk.circuit_breaker import CircuitBreaker  # 新增: 熔断器
 from app.analytics.trade_evaluation import get_evaluator  # 新增: 交易评估器
 
 logger = logging.getLogger("ftseek.subscriber")
-logger.propagate = False  # 防止日志重复
+# 2026-04-21 修复: 移除 propagate=False，允许日志传播到 ftseek 父级 logger
+# 之前 propagate=False 导致所有 INFO 日志被静默丢弃（日志黑洞）
+logger.propagate = True
 
 # 推送冷却 (同标的达成共识后冷却) - 支持动态更新
 SIGNAL_COOLDOWN = int(getattr(config, "SIGNAL_COOLDOWN", 120))
@@ -58,23 +61,21 @@ CONSENSUS_ADX_RANGE = float(getattr(config, "CONSENSUS_ADX_RANGE", 20))
 ADX_PERIOD = 14
 
 
-class QuoteHandler:
-    def __init__(self, strategies, notifier):
-        self.strategies = strategies
-        self.notifier = notifier
-
-    def on_recv_rsp(self, rsp_pb):
-        pass
-
-
 class DataSubscriber:
     """富途行情订阅管理器 (加权共识模式)"""
 
-    def __init__(self, strategies: List[BaseStrategy], notifier: DingTalkNotifier):
+    def __init__(self, strategies: List[BaseStrategy], notifier: DingTalkNotifier, 
+                 llm_analyst=None, trade_executor=None):
         self.strategies = strategies
         self.notifier = notifier
         self._quote_ctx = None
         self._running = False
+        self._subscribed = False  # 动态订阅状态标记 (True=已订阅, False=已退订)
+
+        # 【2026-04-21 修复】接受 llm_analyst 和 trade_executor 参数
+        # llm_analyst: LLM市场研判引擎 (由 main.py 注入)
+        # trade_executor: 统一交易执行器 (消除双实例导致的风控状态不一致)
+        self._llm_analyst = llm_analyst
 
         # 推送冷却: code -> last_push_time
         self._cooldown: Dict[str, float] = {}
@@ -113,6 +114,17 @@ class DataSubscriber:
         # K 线缓冲: 为每个 code 维护滑动窗口, 用于计算 ADX
         self._kline_buffers: Dict[str, IndicatorBuffer] = defaultdict(lambda: IndicatorBuffer(maxlen=200))
 
+        # 【P0 2026-04-21 修复】异步行情处理队列
+        # 回调线程（futu SDK CallbackExecutor）中不能做耗时操作（DB查询/交易执行/策略计算），
+        # 否则会导致回调线程阻塞，后续所有行情回调堆积在队列中无法消费。
+        # 修复方案：handler 只更新心跳 + 入队，由独立工作线程处理重型逻辑。
+        # P0 2026-04-23: 降低队列上限防止内存爆炸 (20000→5000, 50000→10000)
+        self._quote_queue: queue.Queue = queue.Queue(maxsize=5000)
+        self._kline_queue: queue.Queue = queue.Queue(maxsize=10000)
+        self._quote_worker: Optional[threading.Thread] = None
+        self._kline_worker: Optional[threading.Thread] = None
+        self._worker_running = False
+
         # 多周期趋势缓存 (2026-03-25 新增)
         # 结构: {code: {"K_1M": trend, "K_3M": trend, ...}}
         # trend: "up" / "down" / "neutral"
@@ -137,8 +149,20 @@ class DataSubscriber:
         })
 
         # 交易执行器和持仓管理器
-        self.trade_executor = TradeExecutor()
+        # 【2026-04-21 修复】优先使用注入的 trade_executor，避免双实例
+        if trade_executor is not None:
+            self.trade_executor = trade_executor
+        else:
+            self.trade_executor = TradeExecutor()
         self.position_manager = PositionManager()
+
+        # 如果有 LLM 分析师，注入到共识引擎
+        if self._llm_analyst is not None:
+            try:
+                self._consensus.set_llm_analyst(self._llm_analyst)
+                logger.info("LLM分析师已注入到共识引擎")
+            except Exception as e:
+                logger.warning(f"LLM分析师注入共识引擎失败: {e}")
 
         # 【新增 2026-04-09】分层策略管理器集成
         self.layered_manager = None
@@ -213,8 +237,8 @@ class DataSubscriber:
         
         # 熔断器 (新增 2026-03-17)
         self.circuit_breaker = CircuitBreaker(
-            reject_limit=5,       # 连续拒绝 5 次触发熔断
-            pause_duration=600,   # 熔断后暂停 10 分钟
+            reject_limit=8,       # 2026-04-22: 5→8 减少误触发
+            pause_duration=300,   # 2026-04-22: 600→300 缩短熔断时间到5分钟
             drawdown_limit=0.15,  # 最大回撤 15%
         )
         logger.info("熔断器已初始化")
@@ -307,6 +331,35 @@ class DataSubscriber:
         # 从参数加载器获取当前冷却时间
         current_params = self.params_loader.get_current_params()
         return current_params.get('signal_cooldown', SIGNAL_COOLDOWN)
+
+    def _get_adaptive_cooldown(self, code: str, last_trade_pnl: float = None) -> int:
+        """P4 fix (2026-04-26): 自适应冷却 — 基于波动率、市场状态、交易结果。
+
+        - 高ATR: 冷却×1.5; 低ATR: 冷却×0.7
+        - 亏损后: 冷却×2.0 (防止情绪化追单)
+        - 盈利后: 冷却×0.7 (趋势可能延续, 允许更快再入场)
+        - 最终钳位: [60, 600] 秒
+        """
+        base = self._get_current_cooldown()
+
+        # 波动率调整
+        try:
+            atr_pct = self._get_atr_percent(code)
+            if atr_pct > 0.04:
+                base = int(base * 1.5)
+            elif atr_pct < 0.01:
+                base = int(base * 0.7)
+        except Exception:
+            pass
+
+        # 交易结果调整
+        if last_trade_pnl is not None:
+            if last_trade_pnl < 0:
+                base = int(base * 2.0)
+            elif last_trade_pnl > 0:
+                base = int(base * 0.7)
+
+        return max(60, min(base, 600))
     
     def _update_regime_params(self):
         """更新市场状态参数"""
@@ -1300,6 +1353,23 @@ class DataSubscriber:
     # ----------------------------------------------------------
     #  共识达成回调
     # ----------------------------------------------------------
+
+    def _get_mtf_alignment_score(self, code: str, action) -> float:
+        """Return 0-1: weighted fraction of timeframes agreeing with signal direction.
+        
+        Weights favour longer timeframes: 1M=0.05, 3M=0.08, 5M=0.10,
+        15M=0.15, 30M=0.17, 60M=0.20, DAY=0.25.
+        """
+        from app.strategy.base import SignalAction
+        target = "up" if (action.value if hasattr(action, "value") else str(action)) == "BUY" else "down"
+        trends = self._multi_timeframe_trends.get(code, {})
+        if not trends:
+            return 0.5  # no data, neutral
+        weights = {"K_1M": 0.05, "K_3M": 0.08, "K_5M": 0.10,
+                   "K_15M": 0.15, "K_30M": 0.17, "K_60M": 0.20, "K_DAY": 0.25}
+        score = sum(w for k, w in weights.items() if trends.get(k) == target)
+        return score
+
     def _on_consensus(self, result: ConsensusResult):
         """推送共识信号 (修改版) - 接入决策缓冲层"""
         code = result.code
@@ -1377,6 +1447,16 @@ class DataSubscriber:
         # ============================================================
         #  Phase 2: 执行层（Pipeline 通过后的业务逻辑）
         # ============================================================
+        # 多周期趋势对齐度检查 (P2 fix 2026-04-26)
+        mtf_alignment = self._get_mtf_alignment_score(code, result.action)
+        if mtf_alignment < 0.35:
+            logger.info(
+                f"[MTF拒绝] {code} 多周期对齐度={mtf_alignment:.0%} < 35%, 拒绝信号"
+            )
+            signal_tracker.record_execution(
+                signal_id, executed=False, reject_reason='mtf_unaligned'
+            )
+            return
         # 从 SignalContext 中提取 Pipeline 计算的各种系数
         quality_boost = ctx.quality_boost
         _concentration_discount = ctx.concentration_discount
@@ -1622,10 +1702,15 @@ class DataSubscriber:
         except Exception as e:
             logger.error(f"推送通知失败: {e}")
         
-        # 7. 更新冷却时间 - 2026-03-17 优化：推送成功后才更新冷却
+        # 7. 更新冷却时间 - P4 fix: 使用自适应冷却
         with self._cooldown_lock:
+            last_pnl = trade_result.pnl if trade_result and trade_result.pnl is not None else None
+            adaptive_cd = self._get_adaptive_cooldown(code, last_pnl)
             self._cooldown[code] = time.time()
-            logger.debug(f"[{code}] 冷却时间已更新，当前冷却={self._get_current_cooldown()}秒")
+            logger.debug(
+                f"[{code}] 自适应冷却={adaptive_cd}s "
+                f"(pnl={last_pnl}, regime={self._current_regime})"
+            )
 
     def _determine_trade_type(self, position, action: SignalAction) -> str:
         """判断是开仓、平仓还是持仓不动
@@ -1797,6 +1882,15 @@ class DataSubscriber:
             )
             return  # 仍在冷却中
         
+        # P0 修复 (2026-04-23): 跳过已标记为 BAD_ORDER 的标的
+        bad_orders = getattr(self, '_bad_orders', {})
+        if code in bad_orders:
+            bo = bad_orders[code]
+            logger.debug(
+                f"[止损跳过] {code} 已标记为 BAD_ORDER (失败{bo['fail_count']}次: {bo['error'][:60]})"
+            )
+            return
+        
         # 设置冷却时间戳（无论成功与否，都先记录，防止频繁触发）
         self._stop_loss_cooldown[code] = now
         
@@ -1836,90 +1930,111 @@ class DataSubscriber:
         
         logger.info(f"[止损尝试] {code} | 数量={close_qty}股 | 每手={lot_size}股")
         
-        # 执行平仓
-        trade_result = self.trade_executor.execute(stop_loss_signal, 'CLOSE')
+        # P0 修复 (2026-04-23): 验证 Futu 实际持仓，避免幽灵仓导致无效下单
+        # position_sync 的 _futu_positions 缓存是 Futu 真实持仓的唯一可信源
+        # 2026-04-24 修复: 模拟盘 (TRADE_ENV=1) 不应验证 Futu 实际持仓，
+        # 本地 DB 就是唯一真实源。Futu 模拟盘无实际成交，验证永远失败。
+        try:
+            if config.TRADE_ENV == 1:
+                logger.debug(f"[止损验证] {code} 模拟盘跳过 Futu 持仓验证 (TRADE_ENV=1)")
+            else:
+                from app.trader.position_sync import get_position_sync
+                ps = get_position_sync()
+                futu_pos = ps._futu_positions.get(code)
+                if futu_pos is None or futu_pos.quantity <= 0:
+                    # Futu 无此持仓 → 本地是幽灵仓，直接清理，不尝试下单
+                    logger.warning(
+                        f"[止损跳过] {code} Futu 无实际持仓 (本地有 {close_qty}股)，"
+                        f"判定为幽灵仓，直接清理不执行下单"
+                    )
+                    try:
+                        self.position_manager.close_position(code, position.entry_price, datetime.now().isoformat())
+                        logger.info(f"[持仓修复] {code} 幽灵仓已清理")
+                    except Exception as _e:
+                        logger.error(f"[持仓修复] {code} 清理失败: {_e}")
+                    self._stop_loss_fail_count.pop(code, None)
+                    self._stop_loss_cooldown.pop(code, None)
+                    self._trailing_stop_cache.pop(code, None)
+                    self._peak_price_cache.pop(code, None)
+                    return
+        except Exception as _e:
+            logger.debug(f"[止损Futu验证] {code} 检查异常 (降级放行): {_e}")
         
-        if trade_result.success:
-            logger.info(
-                f"[止损成功] {code} | 入场价={position.entry_price} | "
-                f"出场价={current_price} | 盈亏={trade_result.pnl:.2f}"
-            )
-            # 止损成功后重置失败计数和冷却
-            self._stop_loss_fail_count.pop(code, None)
-            self._stop_loss_cooldown.pop(code, None)
-            # 清理追踪止盈缓存
-            self._trailing_stop_cache.pop(code, None)
-            self._peak_price_cache.pop(code, None)
-            # 记录到信号质量管理（止损路径）
-            # 记录到信号质量管理（未知路径，传入 scenario）
-            try:
-                # 获取当前场景
-                current_scenario = None
-                if hasattr(self, '_scenario_cache') and code in self._scenario_cache:
-                    scenario_obj = self._scenario_cache[code]
-                    current_scenario = scenario_obj.value if hasattr(scenario_obj, 'value') else str(scenario_obj)
-
-                self._consensus.record_signal_outcome(
-                    code=code,
-                    action=position.action,
-                    pnl=trade_result.pnl or 0.0,
-                    scenario=current_scenario,  # Phase 1: 传入场景标签
-                )
-            except Exception as _e:
-                logger.debug(f"[信号质量] {path_type}记录异常：{_e}")
-                logger.debug(f"[信号质量] 止损记录异常: {_e}")
-            # 推送止损通知
-            try:
-                self.notifier.send_close_position_message(
-                    signal=stop_loss_signal,
-                    trade_result=trade_result,
-                    position=position,
-                    consensus_result=None
-                )
-            except Exception as e:
-                logger.warning(f"[止损推送失败] {code}: {e}")
-            # 记录交易评估 (新增)
-            try:
-                evaluator = get_evaluator()
-                trade_id = f"SL-{code}-{datetime.now().strftime('%Y%m%d%H%M%S')}"
-                evaluator.record_trade({
-                    'trade_id': trade_id,
-                    'code': code,
-                    'action': position.action,
-                    'entry_time': position.entry_time,
-                    'entry_price': position.entry_price,
-                    'quantity': close_qty,
-                    'trigger_strategy': '止损',
-                    'trigger_reason': f"亏损 {((current_price - position.entry_price) / position.entry_price * 100):.2f}%"
-                })
-                evaluator.record_exit(trade_id, current_price, datetime.now().isoformat(), trade_result.pnl)
-            except Exception as e:
-                logger.debug(f"[止损评估记录失败] {code}: {e}")
-            # 回填 signal_tracker pnl（2026-03-24 修复：健康看板策略层数据）
-            try:
-                signal_tracker.record_exit_by_code(
-                    code=code,
-                    exit_price=current_price,
-                    pnl=trade_result.pnl or 0.0,
-                    exit_reason='stop_loss',
-                )
-            except Exception as e:
-                logger.debug(f"[signal_tracker] 止损回填失败: {e}")
-        else:
-            error_msg = trade_result.message
-            logger.error(f"[止损失败] {code}: {error_msg}")
-            # 止损执行失败后递增计数
-            self._stop_loss_fail_count[code] = self._stop_loss_fail_count.get(code, 0) + 1
-            fail_count = self._stop_loss_fail_count[code]
+        # P0 修复 (2026-04-23): 止损执行放入后台线程，不阻塞 Worker
+        # 避免 Futu API 慢响应/失败时阻塞整个行情处理管线
+        threading.Thread(
+            target=self._do_execute_stop_loss,
+            args=(code, stop_loss_signal, 'CLOSE'),
+            daemon=True,
+            name=f"StopLoss_{code}",
+        ).start()
+    
+    def _do_execute_stop_loss(self, code: str, signal, trade_type: str):
+        """在后台线程中执行止损平仓 (P0 修复: 不阻塞 Worker)"""
+        try:
+            position = self.position_manager.get_position(code)
+            if position is None:
+                logger.debug(f"[止损跳过] {code} 持仓已不存在")
+                return
             
-            # 失败达5次时记录严重警告并发送钉钉通知
-            if fail_count >= 5:
-                logger.error(f"[止损严重警告] {code} 连续{fail_count}次止损失败，请立即检查！最后错误: {error_msg}")
+            trade_result = self.trade_executor.execute(signal, trade_type)
+            current_price = signal.price
+            
+            if trade_result.success:
+                logger.info(
+                    f"[止损成功] {code} | 入场价={position.entry_price} | "
+                    f"出场价={current_price} | 盈亏={trade_result.pnl:.2f}"
+                )
+                self._stop_loss_fail_count.pop(code, None)
+                self._stop_loss_cooldown.pop(code, None)
+                self._trailing_stop_cache.pop(code, None)
+                self._peak_price_cache.pop(code, None)
                 try:
-                    from app.notification import send_dingtalk_message
-                    send_dingtalk_message(f"⚠️ 止损严重警告: {code} 连续{fail_count}次止损失败，请立即人工干预！")
-                except Exception:
-                    pass
+                    current_scenario = None
+                    if hasattr(self, '_scenario_cache') and code in self._scenario_cache:
+                        scenario_obj = self._scenario_cache[code]
+                        current_scenario = scenario_obj.value if hasattr(scenario_obj, 'value') else str(scenario_obj)
+                    self._consensus.record_signal_outcome(
+                        code=code, action=position.action,
+                        pnl=trade_result.pnl or 0.0, scenario=current_scenario,
+                    )
+                except Exception as _e:
+                    logger.debug(f"[信号质量] 止损记录异常: {_e}")
+                try:
+                    self.notifier.send_close_position_message(
+                        signal=signal, trade_result=trade_result,
+                        position=position, consensus_result=None
+                    )
+                except Exception as e:
+                    logger.warning(f"[止损推送失败] {code}: {e}")
+            else:
+                error_msg = trade_result.message
+                logger.error(f"[止损失败] {code}: {error_msg}")
+                self._stop_loss_fail_count[code] = self._stop_loss_fail_count.get(code, 0) + 1
+                fail_count = self._stop_loss_fail_count[code]
+                
+                if fail_count >= 5:
+                    if not hasattr(self, '_bad_orders'):
+                        self._bad_orders = {}
+                    self._bad_orders[code] = {
+                        'error': error_msg, 'fail_count': fail_count,
+                        'last_fail_time': time.time(),
+                        'position_id': getattr(position, 'id', 'unknown'),
+                    }
+                    logger.error(
+                        f"[止损严重警告] {code} 连续{fail_count}次止损失败，"
+                        f"已标记为 BAD_ORDER 并停止重试！最后错误: {error_msg}"
+                    )
+                    try:
+                        from app.notification import send_dingtalk_message
+                        send_dingtalk_message(
+                            f"🚨 P0 止损严重警告: {code} 连续{fail_count}次止损失败，"
+                            f"已停止自动重试！错误: {error_msg}\n请立即人工平仓！"
+                        )
+                    except Exception:
+                        pass
+        except Exception as e:
+            logger.error(f"[止损后台执行异常] {code}: {e}")
 
     def _execute_take_profit(self, code: str, current_price: float):
         """
@@ -1964,6 +2079,28 @@ class DataSubscriber:
         
         logger.info(f"[止盈尝试] {code} | 数量={close_qty}股 | 每手={lot_size}股")
         
+        # P0 修复 (2026-04-23): 同样验证 Futu 实际持仓
+        # 2026-04-24 修复: 模拟盘 (TRADE_ENV=1) 跳过 Futu 持仓验证
+        try:
+            if config.TRADE_ENV == 1:
+                logger.debug(f"[止盈验证] {code} 模拟盘跳过 Futu 持仓验证 (TRADE_ENV=1)")
+            else:
+                from app.trader.position_sync import get_position_sync
+                ps = get_position_sync()
+                futu_pos = ps._futu_positions.get(code)
+                if futu_pos is None or futu_pos.quantity <= 0:
+                    logger.warning(
+                        f"[止盈跳过] {code} Futu 无实际持仓，判定为幽灵仓，直接清理"
+                    )
+                    try:
+                        position_manager.close_position(code, position.entry_price, datetime.now().isoformat())
+                        logger.info(f"[持仓修复] {code} 幽灵仓已清理")
+                    except Exception as _e:
+                        logger.error(f"[持仓修复] {code} 清理失败: {_e}")
+                    return
+        except Exception as _e:
+            logger.debug(f"[止盈Futu验证] {code} 检查异常 (降级放行): {_e}")
+        
         # 执行平仓
         trade_result = self.trade_executor.execute(take_profit_signal, 'CLOSE')
         
@@ -1991,7 +2128,7 @@ class DataSubscriber:
                     scenario=current_scenario,  # Phase 1: 传入场景标签
                 )
             except Exception as _e:
-                logger.debug(f"[信号质量] {path_type}记录异常：{_e}")
+                logger.debug(f"[信号质量] 记录异常：{_e}")
                 logger.debug(f"[信号质量] 止盈记录异常: {_e}")
             # 推送止盈通知
             try:
@@ -2157,7 +2294,7 @@ class DataSubscriber:
                     scenario=current_scenario,  # Phase 1: 传入场景标签
                 )
             except Exception as _e:
-                logger.debug(f"[信号质量] {path_type}记录异常：{_e}")
+                logger.debug(f"[信号质量] 记录异常：{_e}")
                 logger.debug(f"[信号质量] 分批止盈记录异常: {_e}")
             # 回填 signal_tracker pnl（2026-03-24 修复：健康看板策略层数据）
             try:
@@ -2195,6 +2332,413 @@ class DataSubscriber:
                 logger.error(f"[分批止盈兜底失败] {code}: {retry_result.message}")
 
 
+    # ----------------------------------------------------------
+    #  【P0 2026-04-21 修复】异步行情处理工作线程
+    #  将耗时的止损/止盈/策略计算从回调线程移到后台线程，
+    #  防止阻塞 futu SDK 的 CallbackExecutor 导致回调堆积。
+    # ----------------------------------------------------------
+    def _start_workers(self):
+        """启动异步处理工作线程"""
+        self._worker_running = True
+        self._quote_worker = threading.Thread(
+            target=self._quote_worker_loop, daemon=True, name="QuoteWorker"
+        )
+        self._quote_worker.start()
+        self._kline_worker = threading.Thread(
+            target=self._kline_worker_loop, daemon=True, name="KlineWorker"
+        )
+        self._kline_worker.start()
+        logger.info("异步行情处理工作线程已启动")
+
+    def _stop_workers(self):
+        """停止异步处理工作线程"""
+        self._worker_running = False
+        # Send sentinel values to unblock queue.get()
+        try:
+            self._quote_queue.put_nowait(None)
+        except queue.Full:
+            pass
+        try:
+            self._kline_queue.put_nowait(None)
+        except queue.Full:
+            pass
+
+    def _quote_worker_loop(self):
+        """Quote 数据处理工作循环"""
+        logger.info("[QuoteWorker] 启动")
+        while self._worker_running:
+            try:
+                item = self._quote_queue.get(timeout=2)
+            except queue.Empty:
+                continue
+            if item is None:
+                break
+            try:
+                code, quote = item
+                self._process_quote_data(code, quote)
+            except Exception as e:
+                logger.error(f"[QuoteWorker] 处理异常: {e}", exc_info=True)
+        logger.info("[QuoteWorker] 退出")
+
+    def _kline_worker_loop(self):
+        """K 线数据处理工作循环"""
+        logger.info("[KlineWorker] 启动")
+        while self._worker_running:
+            try:
+                item = self._kline_queue.get(timeout=2)
+            except queue.Empty:
+                continue
+            if item is None:
+                break
+            try:
+                code, kline, k_type = item
+                self._process_kline_data(code, kline, k_type)
+            except Exception as e:
+                logger.error(f"[KlineWorker] 处理异常: {e}", exc_info=True)
+        logger.info("[KlineWorker] 退出")
+
+    def _process_quote_data(self, code: str, quote: dict):
+        """处理单个 Quote 数据（在工作线程中运行）"""
+        current_price = quote.get('last_price', 0) or quote.get('last_done', 0)
+        if current_price <= 0:
+            return
+
+        pos_now = self.position_manager.get_position(code)
+
+        # 2026-04-22 修复：同步更新 DB 中的 current_price
+        if pos_now:
+            self.position_manager.update_price(code, current_price)
+
+        # 更新峰值价格缓存
+        if pos_now:
+            if code not in self._peak_price_cache:
+                self._peak_price_cache[code] = current_price
+            else:
+                if pos_now.action == 'BUY':
+                    self._peak_price_cache[code] = max(
+                        self._peak_price_cache[code], current_price
+                    )
+                else:
+                    self._peak_price_cache[code] = min(
+                        self._peak_price_cache[code], current_price
+                    )
+        else:
+            self._peak_price_cache.pop(code, None)
+
+        # P7 fix (2026-04-26): 持仓漂移检测 — 浮亏超3%时触发策略权重惩罚
+        if pos_now:
+            try:
+                pnl_pct = (current_price - pos_now.entry_price) / pos_now.entry_price
+                if pos_now.action == 'SELL':
+                    pnl_pct = -pnl_pct
+                if pnl_pct < -0.03:
+                    scaled = -0.05 * (abs(pnl_pct) / 0.03)
+                    self._adaptive_weight_manager.apply_drift_penalty(code, scaled)
+            except Exception as _dp_e:
+                logger.debug(f"[漂移检测] {code} 异常: {_dp_e}")
+
+        # 组合式退出引擎检查
+        if pos_now:
+            try:
+                from app.risk.dynamic_exit_manager import dynamic_exit_manager as _dem_exit
+                exit_decision = _dem_exit.check_exit_priority(
+                    code=code,
+                    entry_price=pos_now.entry_price,
+                    current_price=current_price,
+                    peak_price=self._peak_price_cache.get(code, current_price),
+                    entry_time=getattr(pos_now, 'entry_time', None),
+                    atr_value=self._get_atr(code),
+                    direction=pos_now.action,
+                )
+                if exit_decision.should_exit:
+                    logger.info(
+                        f"[组合退出-P{exit_decision.priority}] {code} "
+                        f"{exit_decision.reason} | ratio={exit_decision.close_ratio:.0%}"
+                    )
+                    if exit_decision.close_ratio < 1.0:
+                        self._execute_partial_take_profit(code, current_price, exit_decision.close_ratio)
+                    elif exit_decision.is_stop_loss:
+                        self._execute_stop_loss(code, current_price)
+                        self._trailing_stop_cache.pop(code, None)
+                        self._peak_price_cache.pop(code, None)
+                    else:
+                        self._execute_take_profit(code, current_price)
+                        self._trailing_stop_cache.pop(code, None)
+                        self._peak_price_cache.pop(code, None)
+                    return
+            except Exception as e:
+                logger.debug(f"[组合退出] {code} 检查异常: {e}")
+
+        # P6 fix (2026-04-26): 时间止损 — 持仓超时且不赚不亏时强制退出
+        if pos_now:
+            try:
+                from app.risk.dynamic_exit_manager import dynamic_exit_manager as _dem_exit
+                time_stop_cfg = _dem_exit.current_params.get('time_stop', {})
+                if time_stop_cfg.get('enabled', False):
+                    max_hold_minutes = time_stop_cfg.get('max_hold_minutes', 480)
+                    entry_time_str = getattr(pos_now, 'entry_time', None)
+                    if entry_time_str:
+                        from datetime import datetime as _dt_exit
+                        et = _dt_exit.fromisoformat(entry_time_str.replace(' ', 'T')) if isinstance(entry_time_str, str) else entry_time_str
+                        hold_minutes = (_dt_exit.now() - et).total_seconds() / 60
+                        pnl_pct = (current_price - pos_now.entry_price) / pos_now.entry_price
+                        if pos_now.action == 'SELL':
+                            pnl_pct = -pnl_pct
+                        if hold_minutes > max_hold_minutes and abs(pnl_pct) < 0.01:
+                            logger.info(
+                                f"[时间止损] {code} 持仓 {hold_minutes:.0f} 分钟 "
+                                f"超限({max_hold_minutes}分钟) 且盈亏={pnl_pct:.2%}, 强制平仓"
+                            )
+                            self._execute_take_profit(code, current_price)
+                            self._trailing_stop_cache.pop(code, None)
+                            self._peak_price_cache.pop(code, None)
+                            return
+            except Exception as _ts_e:
+                logger.debug(f"[时间止损] {code} 检查异常: {_ts_e}")
+
+        # P6 fix (2026-04-26): 成交量异常退出 — 放量滞涨/放量跌破时部分止盈
+        if pos_now and self._kline_buffers[code].size >= 25:
+            try:
+                vols = list(self._kline_buffers[code].volume)
+                if len(vols) >= 20:
+                    avg_vol_20 = sum(vols[-21:-1]) / 20  # exclude current bar
+                    current_vol = vols[-1]
+                    pnl_pct = (current_price - pos_now.entry_price) / pos_now.entry_price
+                    if pos_now.action == 'SELL':
+                        pnl_pct = -pnl_pct
+                    if current_vol > avg_vol_20 * 3.0 and pnl_pct > 0.03:
+                        logger.info(
+                            f"[放量止盈] {code} 量比={current_vol/avg_vol_20:.1f}x "
+                            f"盈亏={pnl_pct:.2%}, 部分止盈50%"
+                        )
+                        self._execute_partial_take_profit(code, current_price, 0.5)
+            except Exception as _ve:
+                logger.debug(f"[放量检查] {code} 异常: {_ve}")
+
+        # 保本止损
+        if self.position_manager.check_breakeven_stop(code, current_price):
+            self.position_manager.update_breakeven_stop(code)
+
+        # 分批止盈
+        partial_ratio = self.position_manager.check_partial_take_profit(code, current_price)
+        if partial_ratio > 0:
+            logger.info(f"[分批止盈] {code} 当前价={current_price} 平仓比例={partial_ratio:.0%}")
+            self._execute_partial_take_profit(code, current_price, partial_ratio)
+            if partial_ratio >= 1.0:
+                return
+
+        # 止损
+        if self.position_manager.check_stop_loss(code, current_price):
+            # 2026-04-24 修复: 开仓后60秒内禁止止损，防止 stop_loss=entry_price 异常
+            # 和 Futu 模拟盘延迟成交导致的假止损
+            pos_now = self.position_manager.get_position(code)
+            if pos_now and pos_now.entry_time:
+                try:
+                    from datetime import datetime
+                    entry_dt = datetime.fromisoformat(pos_now.entry_time.replace(' ', 'T'))
+                    elapsed = (datetime.now() - entry_dt).total_seconds()
+                    if elapsed < 60:
+                        logger.warning(
+                            f"[止损跳过] {code} 开仓仅 {elapsed:.0f} 秒，"
+                            f"跳过止损检查 (防止 stop_loss 异常导致的秒级平仓)"
+                        )
+                    else:
+                        logger.info(f"[止损触发] {code} 当前价={current_price}")
+                        self._execute_stop_loss(code, current_price)
+                        return
+                except Exception:
+                    logger.info(f"[止损触发] {code} 当前价={current_price}")
+                    self._execute_stop_loss(code, current_price)
+                    return
+            else:
+                logger.info(f"[止损触发] {code} 当前价={current_price}")
+                self._execute_stop_loss(code, current_price)
+                return
+
+        # 软止损预警
+        if pos_now and pos_now.stop_loss and pos_now.stop_loss > 0:
+            pnl_rate = (current_price - pos_now.entry_price) / pos_now.entry_price
+            stop_rate = (pos_now.stop_loss - pos_now.entry_price) / pos_now.entry_price
+            soft_threshold = stop_rate * 0.8
+            if pnl_rate <= soft_threshold and pnl_rate > stop_rate:
+                last_warning = self.soft_stop_warnings.get(code, 0)
+                if time.time() - last_warning >= 300:
+                    distance_to_stop = abs(pnl_rate - stop_rate)
+                    logger.warning(
+                        f"[软止损预警] {code} 亏损 {abs(pnl_rate):.2%} "
+                        f"接近止损线 {abs(stop_rate):.2%}，距离 {distance_to_stop:.2%}"
+                    )
+                    self.soft_stop_warnings[code] = time.time()
+
+        # 止盈
+        if self.position_manager.check_take_profit(code, current_price):
+            logger.info(f"[止盈触发] {code} 当前价={current_price}")
+            self._execute_take_profit(code, current_price)
+            return
+
+        # 策略计算 - 只调用 on_quote 策略
+        for strategy in self.strategies:
+            if strategy.name in ('price_break', 'fusion_v3'):
+                try:
+                    sig = strategy.on_quote(code, quote)
+                    if sig:
+                        self._process_signal(sig)
+                except Exception as e:
+                    logger.debug(f"[策略 on_quote] {code} {strategy.name} 异常: {e}")
+
+    def _process_kline_data(self, code: str, kline: dict, k_type: str):
+        """处理单个 K 线数据（在工作线程中运行）"""
+        # 多周期趋势更新
+        self._update_multi_timeframe_trend(code, k_type, kline)
+
+        # 更新 K 线 buffer
+        self._kline_buffers[code].push_kline(kline)
+
+        # 分层策略管理器
+        if self.layered_manager:
+            try:
+                self.layered_manager.update_kline_cache(code, k_type, kline)
+            except Exception as e:
+                logger.debug(f"[分层策略] K线缓存更新异常: {e}")
+
+        # MarketRegimeDetector 接入多周期数据
+        if k_type in ("K_15M", "K_30M", "K_60M"):
+            try:
+                self._regime_detector.update_data(code, kline)
+            except Exception as e:
+                logger.debug(f"[regime多周期] {code} {k_type} 更新失败: {e}")
+
+        # 止盈止损检查
+        current_price = kline.get('close', 0)
+        if current_price > 0:
+            pos_now = self.position_manager.get_position(code)
+            self._update_trailing_stop(code, current_price, pos_now)
+            trail_price = self._trailing_stop_cache.get(code, 0)
+            if pos_now and trail_price > 0:
+                triggered = (
+                    (pos_now.action == 'BUY' and current_price < trail_price) or
+                    (pos_now.action == 'SELL' and current_price > trail_price)
+                )
+                if triggered:
+                    pnl_rate = (current_price - pos_now.entry_price) / pos_now.entry_price
+                    if pos_now.action == 'SELL':
+                        pnl_rate = -pnl_rate
+                    if pnl_rate > 0:
+                        logger.info(
+                            f"[追踪止盈触发] {code} 价格={current_price} "
+                            f"穿越追踪线={trail_price:.3f} | 盈利={pnl_rate:.2%}"
+                        )
+                        self._execute_partial_take_profit(code, current_price, ratio=0.6)
+                        self.position_manager.update_breakeven_stop(code)
+                        logger.info(
+                            f"[追踪止盈] {code} 已平仓60%锁利，剩余40%保本止损已激活"
+                        )
+                        self._trailing_stop_cache.pop(code, None)
+                        self._peak_price_cache.pop(code, None)
+                        self._trailing_exit_time[code] = time.time()
+                    return
+
+            # 保本止损
+            if self.position_manager.check_breakeven_stop(code, current_price):
+                self.position_manager.update_breakeven_stop(code)
+
+            # 分批止盈
+            partial_ratio = self.position_manager.check_partial_take_profit(code, current_price)
+            if partial_ratio > 0:
+                logger.info(f"[分批止盈] {code} 当前价={current_price} 平仓比例={partial_ratio:.0%}")
+                self._execute_partial_take_profit(code, current_price, partial_ratio)
+                if partial_ratio >= 1.0:
+                    return
+
+            # 止损
+            if self.position_manager.check_stop_loss(code, current_price):
+                if pos_now and pos_now.entry_time:
+                    try:
+                        from datetime import datetime
+                        entry_dt = datetime.fromisoformat(pos_now.entry_time.replace(' ', 'T'))
+                        elapsed = (datetime.now() - entry_dt).total_seconds()
+                        if elapsed < 60:
+                            logger.warning(
+                                f"[止损跳过] {code} 开仓仅 {elapsed:.0f} 秒，跳过"
+                            )
+                        else:
+                            logger.info(f"[止损触发] {code} 当前价={current_price}")
+                            self._execute_stop_loss(code, current_price)
+                            return
+                    except Exception:
+                        logger.info(f"[止损触发] {code} 当前价={current_price}")
+                        self._execute_stop_loss(code, current_price)
+                        return
+                else:
+                    logger.info(f"[止损触发] {code} 当前价={current_price}")
+                    self._execute_stop_loss(code, current_price)
+                    return
+
+            # 软止损预警
+            if pos_now and pos_now.stop_loss and pos_now.stop_loss > 0:
+                pnl_rate = (current_price - pos_now.entry_price) / pos_now.entry_price
+                stop_rate = (pos_now.stop_loss - pos_now.entry_price) / pos_now.entry_price
+                soft_threshold = stop_rate * 0.8
+                if pnl_rate <= soft_threshold and pnl_rate > stop_rate:
+                    last_warning = self.soft_stop_warnings.get(code, 0)
+                    if time.time() - last_warning >= 300:
+                        distance_to_stop = abs(pnl_rate - stop_rate)
+                        logger.warning(
+                            f"[软止损预警] {code} 亏损 {abs(pnl_rate):.2%} "
+                            f"接近止损线 {abs(stop_rate):.2%}，距离 {distance_to_stop:.2%}"
+                        )
+                        self.soft_stop_warnings[code] = time.time()
+
+            # 止盈
+            if self.position_manager.check_take_profit(code, current_price):
+                logger.info(f"[止盈触发] {code} 当前价={current_price}")
+                self._execute_take_profit(code, current_price)
+                return
+
+        # 更新 ADX
+        self._update_adx(code, kline)
+
+        # 场景识别（多周期）
+        if k_type in ("K_5M", "K_15M") and self._scenario_classifier is not None:
+            try:
+                buf = self._kline_buffers[code]
+                if buf.size >= 30:
+                    klines_for_scenario = []
+                    closes = list(buf.close)
+                    highs = list(buf.high)
+                    lows = list(buf.low)
+                    opens = list(buf.open)
+                    volumes = list(buf.volume)
+                    n = min(100, len(closes))
+                    for i in range(-n, 0):
+                        klines_for_scenario.append({
+                            'open': opens[i], 'high': highs[i],
+                            'low': lows[i], 'close': closes[i], 'volume': volumes[i],
+                        })
+                    if klines_for_scenario:
+                        scenario_result = self._scenario_classifier.classify(code, klines_for_scenario)
+                        if self._scenario_memory is not None:
+                            smoothed_scenario = self._scenario_memory.update(
+                                code, scenario_result.scenario_type, scenario_result.confidence
+                            )
+                            self._consensus.update_scenario(code, smoothed_scenario)
+                            logger.info(
+                                f"[场景分类/多周期] {code} {k_type} {smoothed_scenario.value} | "
+                                f"置信度={scenario_result.confidence:.2f}"
+                            )
+            except Exception as e:
+                logger.debug(f"[场景分类/多周期] {code} {k_type} 异常：{e}")
+
+        # 策略计算（仅 K_1M）
+        if k_type == "K_1M":
+            for strategy in self.strategies:
+                try:
+                    sig = strategy.on_kline(code, kline, k_type)
+                    if sig:
+                        self._process_signal(sig)
+                except Exception as e:
+                    logger.debug(f"[策略 on_kline] {code} {strategy.name} 异常: {e}")
+
     def _process_signal(self, signal: Signal):
         if signal is None:
             return
@@ -2203,7 +2747,13 @@ class DataSubscriber:
     # ----------------------------------------------------------
     #  行情订阅
     # ----------------------------------------------------------
-    def subscribe(self):
+    def subscribe(self, codes=None):
+        """
+        行情订阅 - 2026-04-22 升级为动态池驱动
+        
+        Args:
+            codes: 可选，显式指定订阅列表。None 时从动态池获取。
+        """
         from futu import SubType
 
         ctx = self._get_quote_ctx()
@@ -2211,7 +2761,7 @@ class DataSubscriber:
         sub_type_map = {
             "QUOTE":  SubType.QUOTE,
             "K_1M":   SubType.K_1M,
-            "K_3M":   SubType.K_3M,   # 2026-03-25 新增：3分钟K线
+            "K_3M":   SubType.K_3M,
             "K_5M":   SubType.K_5M,
             "K_15M":  SubType.K_15M,
             "K_30M":  SubType.K_30M,
@@ -2219,319 +2769,144 @@ class DataSubscriber:
             "K_DAY":  SubType.K_DAY,
         }
 
+        # 获取订阅标的列表
+        if codes is None:
+            subscribe_list = self._get_subscribe_codes()
+        else:
+            subscribe_list = codes
+        
+        # 过滤港股
+        subscribe_list = [c for c in subscribe_list if c.startswith("HK.")]
+        
         sub_types = [sub_type_map[st] for st in config.SUBSCRIBE_TYPES if st in sub_type_map]
         if not sub_types:
             sub_types = [SubType.QUOTE]
 
-        for code in config.WATCH_LIST:
+        logger.info(f"开始订阅 {len(subscribe_list)} 只港股标的, 类型={[str(s) for s in sub_types]}")
+        success_count = 0
+        fail_count = 0
+        for code in subscribe_list:
             for st in sub_types:
                 ret, msg = ctx.subscribe([code], [st])
                 if ret == 0:
-                    logger.info(f"订阅成功: {code} -> {st}")
+                    success_count += 1
+                    logger.debug(f"订阅成功: {code} -> {st}")
                 else:
+                    fail_count += 1
                     if "无权限" in str(msg) or "no permission" in str(msg).lower():
                         logger.warning(f"订阅跳过(无权限): {code} -> {st} | {msg}")
                     else:
                         logger.error(f"订阅失败: {code} -> {st}: {msg}")
+        logger.info(f"订阅完成: 成功={success_count}, 失败={fail_count}, 总计={success_count+fail_count}")
+        self._subscribed = True
+
+    def unsubscribe_all(self):
+        """
+        取消所有港股行情订阅 (2026-04-23 新增)
+        用于港股收盘后释放富途 OpenD 槽位。
+        """
+        from futu import SubType
+
+        if not self._quote_ctx:
+            logger.debug("[动态订阅] 无活跃连接，无需退订")
+            return
+
+        # 获取当前订阅的代码列表
+        try:
+            codes = self._get_subscribe_codes()
+            codes = [c for c in codes if c.startswith("HK.")]
+        except Exception as e:
+            logger.warning(f"[动态订阅] 获取代码列表失败: {e}")
+            codes = getattr(config, 'WATCH_LIST_HK', [])
+
+        if not codes:
+            logger.debug("[动态订阅] 无代码，无需退订")
+            return
+
+        sub_type_map = {
+            "QUOTE":  SubType.QUOTE,
+            "K_1M":   SubType.K_1M,
+            "K_3M":   SubType.K_3M,
+            "K_5M":   SubType.K_5M,
+            "K_15M":  SubType.K_15M,
+            "K_30M":  SubType.K_30M,
+            "K_60M":  SubType.K_60M,
+            "K_DAY":  SubType.K_DAY,
+        }
+        sub_types = [sub_type_map[st] for st in config.SUBSCRIBE_TYPES if st in sub_type_map]
+        if not sub_types:
+            sub_types = [SubType.QUOTE]
+
+        logger.info(f"开始退订 {len(codes)} 只港股标的 (收盘释放槽位)...")
+        success_count = 0
+        fail_count = 0
+
+        for code in codes:
+            for st in sub_types:
+                try:
+                    ret, msg = self._quote_ctx.unsubscribe([code], [st])
+                    if ret == 0:
+                        success_count += 1
+                    else:
+                        fail_count += 1
+                except Exception as e:
+                    fail_count += 1
+                    logger.warning(f"[退订] {code} {st} 异常: {e}")
+
+        self._subscribed = False
+        logger.info(f"[动态订阅] 退订完成: 成功={success_count}, 失败={fail_count} | 槽位已释放")
 
     def _setup_handlers(self):
         from futu import StockQuoteHandlerBase, CurKlineHandlerBase
 
-        strategies = self.strategies
-        process_signal = self._process_signal
-        update_adx = self._update_adx
-
-        # 将所有需要从 DataSubscriber 访问的属性通过闭包变量传入
-        # 内部类中 self 指 handler 实例，必须用闭包引用 DataSubscriber
-        subscriber = self  # 闭包捕获 DataSubscriber 实例
+        # 【P0 2026-04-21 修复】轻量化 handler — 只更新心跳 + 入队
+        # 重型逻辑（止损/止盈/策略计算）移到独立工作线程，
+        # 防止阻塞 futu SDK 的 CallbackExecutor 导致回调堆积。
+        subscriber = self
 
         class MyQuoteHandler(StockQuoteHandlerBase):
             def on_recv_rsp(self, rsp_str):
-                ret, data = super().on_recv_rsp(rsp_str)
-                if ret != 0:
-                    return
-                for _, row in data.iterrows():
-                    code = row.get("code", "")
-                    quote = row.to_dict()
-                    
-                    # 更新行情心跳时间（断线检测用）—— 必须写到 subscriber，不是 handler self
-                    subscriber._last_quote_time = time.time()
-                    
-                    # 2026-03-19: 增强止盈止损检查 (保本止损 + 分批止盈)
-                    current_price = quote.get('last_done', 0)
-                    if current_price > 0:
-                        pos_now = subscriber.position_manager.get_position(code)
-
-                        # 更新峰值价格缓存（Task2: 用于移动止损）
-                        if pos_now:
-                            if code not in subscriber._peak_price_cache:
-                                subscriber._peak_price_cache[code] = current_price
-                            else:
-                                if pos_now.action == 'BUY':
-                                    subscriber._peak_price_cache[code] = max(
-                                        subscriber._peak_price_cache[code], current_price
-                                    )
-                                else:
-                                    subscriber._peak_price_cache[code] = min(
-                                        subscriber._peak_price_cache[code], current_price
-                                    )
-                        else:
-                            # 无持仓时清理峰值缓存
-                            subscriber._peak_price_cache.pop(code, None)
-
-                        # Task2: 使用组合式退出引擎（优先级检查）
-                        if pos_now:
-                            from app.risk.dynamic_exit_manager import dynamic_exit_manager as _dem_exit
-                            exit_decision = _dem_exit.check_exit_priority(
-                                code=code,
-                                entry_price=pos_now.entry_price,
-                                current_price=current_price,
-                                peak_price=subscriber._peak_price_cache.get(code, current_price),
-                                entry_time=getattr(pos_now, 'entry_time', None),
-                                atr_value=subscriber._get_atr(code),
-                                direction=pos_now.action,
-                            )
-                            if exit_decision.should_exit:
-                                logger.info(
-                                    f"[组合退出-P{exit_decision.priority}] {code} "
-                                    f"{exit_decision.reason} | ratio={exit_decision.close_ratio:.0%}"
-                                )
-                                if exit_decision.close_ratio < 1.0:
-                                    subscriber._execute_partial_take_profit(code, current_price, exit_decision.close_ratio)
-                                elif exit_decision.is_stop_loss:
-                                    subscriber._execute_stop_loss(code, current_price)
-                                    subscriber._trailing_stop_cache.pop(code, None)
-                                    subscriber._peak_price_cache.pop(code, None)
-                                else:
-                                    subscriber._execute_take_profit(code, current_price)
-                                    subscriber._trailing_stop_cache.pop(code, None)
-                                    subscriber._peak_price_cache.pop(code, None)
-                                continue
-
-                        # 旧逻辑兜底：保本止损（position_manager 层面）
-                        if subscriber.position_manager.check_breakeven_stop(code, current_price):
-                            subscriber.position_manager.update_breakeven_stop(code)
-                        
-                        # 2. 检查分批止盈
-                        partial_ratio = subscriber.position_manager.check_partial_take_profit(code, current_price)
-                        if partial_ratio > 0:
-                            logger.info(f"[分批止盈] {code} 当前价={current_price} 平仓比例={partial_ratio:.0%}")
-                            subscriber._execute_partial_take_profit(code, current_price, partial_ratio)
-                            if partial_ratio >= 1.0:
-                                continue  # 全部平仓后跳过策略计算
-                        
-                        # 3. 检查止损
-                        if subscriber.position_manager.check_stop_loss(code, current_price):
-                            logger.info(f"[止损触发] {code} 当前价={current_price}")
-                            subscriber._execute_stop_loss(code, current_price)
-                            continue  # 触发止损后跳过策略计算
-                        
-                        # 3.5 软止损预警 (2026-03-25 新增，2026-04-07 优化：添加冷却机制)
-                        # 当亏损达到止损线的 80% 时发送预警，冷却时间 5 分钟
-                        if pos_now and pos_now.stop_loss and pos_now.stop_loss > 0:
-                            pnl_rate = (current_price - pos_now.entry_price) / pos_now.entry_price
-                            stop_rate = (pos_now.stop_loss - pos_now.entry_price) / pos_now.entry_price
-                            soft_threshold = stop_rate * 0.8  # 80% 止损距离
-                            
-                            if pnl_rate <= soft_threshold and pnl_rate > stop_rate:
-                                # 检查冷却时间 (5 分钟)
-                                last_warning = subscriber.soft_stop_warnings.get(code, 0)
-                                if time.time() - last_warning < 300:  # 300 秒=5 分钟
-                                    pass  # 冷却期内，跳过预警
-                                else:
-                                    # 还未触及止损，但已接近
-                                    distance_to_stop = abs(pnl_rate - stop_rate)
-                                    logger.warning(
-                                        f"[软止损预警] {code} 亏损 {abs(pnl_rate):.2%} "
-                                        f"接近止损线 {abs(stop_rate):.2%}，距离 {distance_to_stop:.2%}"
-                                    )
-                                    subscriber.soft_stop_warnings[code] = time.time()
-                        
-                        # 4. 检查止盈
-                        if subscriber.position_manager.check_take_profit(code, current_price):
-                            logger.info(f"[止盈触发] {code} 当前价={current_price}")
-                            subscriber._execute_take_profit(code, current_price)
-                            continue  # 触发止盈后跳过策略计算
-                    
-                    # 策略计算 - 只调用 on_quote 策略
-                    # 注意: on_quote 用于快速响应策略（如 price_break）
-                    # 大多数技术分析策略在 on_kline 中计算
-                    for strategy in strategies:
-                        # 只调用专门实现了 on_quote 的策略
-                        # 避免与 on_kline 重复计算
-                        if strategy.name in ('price_break', 'fusion_v3'):
-                            sig = strategy.on_quote(code, quote)
-                            if sig:
-                                process_signal(sig)
+                # 心跳更新（必须在回调线程中快速执行）
+                subscriber._last_quote_time = time.time()
+                try:
+                    ret, data = super().on_recv_rsp(rsp_str)
+                    if ret != 0:
+                        return
+                    for _, row in data.iterrows():
+                        code = row.get("code", "")
+                        quote = row.to_dict()
+                        try:
+                            subscriber._quote_queue.put_nowait((code, quote))
+                        except queue.Full:
+                            logger.warning(f"[QuoteHandler] 队列已满，丢弃 {code} 行情")
+                except Exception as e:
+                    logger.error(f"[QUOTE回调异常] {e}", exc_info=True)
 
         class MyKlineHandler(CurKlineHandlerBase):
             def on_recv_rsp(self, rsp_str):
-                ret, data = super().on_recv_rsp(rsp_str)
-                if ret != 0:
-                    return
-                for _, row in data.iterrows():
-                    code = row.get("code", "")
-                    kline = row.to_dict()
-                    k_type = kline.get("k_type", "K_1M")
-                    
-                    # 2026-03-25: 多周期趋势更新
-                    subscriber._update_multi_timeframe_trend(code, k_type, kline)
-                    
-                    # 同时更新原有的 kline buffer (用于 ADX 等指标计算)
-                    subscriber._kline_buffers[code].push_kline(kline)
-
-                    # 【新增 2026-04-09】分层策略管理器 - 更新技术增强层 K 线缓存
-                    if subscriber.layered_manager:
-                        subscriber.layered_manager.update_kline_cache(code, k_type, kline)
-
-                    # 2026-03-25: MarketRegimeDetector 接入多周期数据
-                    # 优先使用 15M/30M/60M 的稳健中周期数据判断市场状态；1M 作为实时补充
-                    if k_type in ("K_15M", "K_30M", "K_60M"):
+                # 心跳更新
+                subscriber._last_quote_time = time.time()
+                try:
+                    ret, data = super().on_recv_rsp(rsp_str)
+                    if ret != 0:
+                        return
+                    for _, row in data.iterrows():
+                        code = row.get("code", "")
+                        kline = row.to_dict()
+                        k_type = kline.get("k_type", "K_1M")
                         try:
-                            subscriber._regime_detector.update_data(code, kline)
-                        except Exception as _re:
-                            logger.debug(f"[regime多周期] {code} {k_type} 更新失败: {_re}")
-                    elif k_type == "K_1M":
-                        pass  # 1M 由 _update_adx 中的 regime_detector.update_data 负责
-                    
-                    # 2026-03-19: 增强止盈止损检查 (保本止损 + 分批止盈)
-                    current_price = kline.get('close', 0)
-                    if current_price > 0:
-                        # 0b. Task2: 追踪止盈检查（K线粒度）- 2026-03-24 优化
-                        # 追踪止盈改为部分平仓60%+保本止损，留40%跟趋势
-                        pos_now = subscriber.position_manager.get_position(code)
-                        subscriber._update_trailing_stop(code, current_price, pos_now)
-                        trail_price = subscriber._trailing_stop_cache.get(code, 0)
-                        if pos_now and trail_price > 0:
-                            triggered = (
-                                (pos_now.action == 'BUY' and current_price < trail_price) or
-                                (pos_now.action == 'SELL' and current_price > trail_price)
-                            )
-                            if triggered:
-                                # 验证：只有盈利时才执行追踪止盈（避免亏损时误触发）
-                                pnl_rate = (current_price - pos_now.entry_price) / pos_now.entry_price
-                                if pos_now.action == 'SELL':
-                                    pnl_rate = -pnl_rate
-                                
-                                if pnl_rate > 0:
-                                    logger.info(
-                                        f"[追踪止盈触发] {code} 价格={current_price} "
-                                        f"穿越追踪线={trail_price:.3f} | 盈利={pnl_rate:.2%}"
-                                    )
-                                    # 部分平仓 60%，留40%跟趋势
-                                    subscriber._execute_partial_take_profit(code, current_price, ratio=0.6)
-                                    # 剩余仓位保本止损：止损上移到成本价
-                                    subscriber.position_manager.update_breakeven_stop(code)
-                                    logger.info(
-                                        f"[追踪止盈] {code} 已平仓60%锁利，剩余40%保本止损已激活"
-                                    )
-                                    # 清理追踪缓存（等待下次重新激活）
-                                    subscriber._trailing_stop_cache.pop(code, None)
-                                    subscriber._peak_price_cache.pop(code, None)
-                                    # 设置本次追踪止盈触发时间（用于冷却期）
-                                    subscriber._trailing_exit_time[code] = time.time()
-                                else:
-                                    logger.debug(
-                                        f"[追踪止盈跳过] {code} 未盈利({pnl_rate:.2%})，跳过"
-                                    )
-                                continue
-
-                        # 1. 检查保本止损 (盈利2%后)
-                        if subscriber.position_manager.check_breakeven_stop(code, current_price):
-                            subscriber.position_manager.update_breakeven_stop(code)
-                        
-                        # 2. 检查分批止盈
-                        partial_ratio = subscriber.position_manager.check_partial_take_profit(code, current_price)
-                        if partial_ratio > 0:
-                            logger.info(f"[分批止盈] {code} 当前价={current_price} 平仓比例={partial_ratio:.0%}")
-                            subscriber._execute_partial_take_profit(code, current_price, partial_ratio)
-                            if partial_ratio >= 1.0:
-                                continue  # 全部平仓后跳过策略计算
-                        
-                        # 3. 检查止损
-                        if subscriber.position_manager.check_stop_loss(code, current_price):
-                            logger.info(f"[止损触发] {code} 当前价={current_price}")
-                            subscriber._execute_stop_loss(code, current_price)
-                            continue  # 触发止损后跳过策略计算
-                        
-                        # 3.5 软止损预警 (2026-03-25 新增)
-                        if pos_now and pos_now.stop_loss and pos_now.stop_loss > 0:
-                            pnl_rate = (current_price - pos_now.entry_price) / pos_now.entry_price
-                            stop_rate = (pos_now.stop_loss - pos_now.entry_price) / pos_now.entry_price
-                            soft_threshold = stop_rate * 0.8
-                            
-                            if pnl_rate <= soft_threshold and pnl_rate > stop_rate:
-                                distance_to_stop = abs(pnl_rate - stop_rate)
-                                logger.warning(
-                                    f"[软止损预警] {code} 亏损 {abs(pnl_rate):.2%} "
-                                    f"接近止损线 {abs(stop_rate):.2%}，距离 {distance_to_stop:.2%}"
-                                )
-                        
-                        # 4. 检查止盈
-                        if subscriber.position_manager.check_take_profit(code, current_price):
-                            logger.info(f"[止盈触发] {code} 当前价={current_price}")
-                            subscriber._execute_take_profit(code, current_price)
-                            continue  # 触发止盈后跳过策略计算
-                    
-                    # 更新 ADX (每根 K 线)
-                    update_adx(code, kline)
-
-                    # P0-2: 场景识别在多周期 K 线触发（2026-04-09 修复）
-                    # 使用 5M/15M 中周期 K 线进行场景识别，减少 1M 噪声
-                    if k_type in ("K_5M", "K_15M") and subscriber._scenario_classifier is not None:
-                        try:
-                            buf = subscriber._kline_buffers[code]
-                            if buf.size >= 30:
-                                # 准备真实 K 线数据
-                                klines_for_scenario = []
-                                closes = list(buf.close)
-                                highs = list(buf.high)
-                                lows = list(buf.low)
-                                opens = list(buf.open)
-                                volumes = list(buf.volume)
-
-                                n = min(100, len(closes))
-                                for i in range(-n, 0):
-                                    klines_for_scenario.append({
-                                        'open': opens[i],
-                                        'high': highs[i],
-                                        'low': lows[i],
-                                        'close': closes[i],
-                                        'volume': volumes[i],
-                                    })
-
-                                if klines_for_scenario:
-                                    scenario_result = subscriber._scenario_classifier.classify(code, klines_for_scenario)
-
-                                    # 场景记忆平滑
-                                    if subscriber._scenario_memory is not None:
-                                        smoothed_scenario = subscriber._scenario_memory.update(
-                                            code,
-                                            scenario_result.scenario_type,
-                                            scenario_result.confidence
-                                        )
-
-                                        # 注入场景到共识引擎
-                                        subscriber._consensus.update_scenario(code, smoothed_scenario)
-
-                                        logger.info(
-                                            f"[场景分类/多周期] {code} {k_type} {smoothed_scenario.value} | "
-                                            f"置信度={scenario_result.confidence:.2f}"
-                                        )
-                        except Exception as _scen_e:
-                            logger.debug(f"[场景分类/多周期] {code} {k_type} 异常：{_scen_e}")
-
-                    # 策略计算 (仅在 K_1M 上触发，避免重复)
-                    if k_type == "K_1M":
-                        for strategy in strategies:
-                            sig = strategy.on_kline(code, kline, k_type)
-                            if sig:
-                                process_signal(sig)
+                            subscriber._kline_queue.put_nowait((code, kline, k_type))
+                        except queue.Full:
+                            logger.warning(f"[KlineHandler] 队列已满，丢弃 {code} {k_type}")
+                except Exception as e:
+                    logger.error(f"[KLINE回调异常] {e}", exc_info=True)
 
         ctx = self._get_quote_ctx()
-        ctx.set_handler(MyQuoteHandler())
-        ctx.set_handler(MyKlineHandler())
-        logger.info("行情回调 handler 已设置")
+        self._quote_handler = MyQuoteHandler()
+        self._kline_handler = MyKlineHandler()
+        ctx.set_handler(self._quote_handler)
+        ctx.set_handler(self._kline_handler)
+        logger.info("行情回调 handler 已设置 (quote + kline，异步处理模式)")
 
     def _reconnect(self):
         """
@@ -2583,7 +2958,7 @@ class DataSubscriber:
             max_retries = 5
             for attempt in range(1, max_retries + 1):
                 try:
-                    self.subscribe()        # 内部调用 _get_quote_ctx 重新建连
+                    self.subscribe()        # 内部会设置 _subscribed = True
                     self._setup_handlers()
                     self._last_quote_time = time.time()
                     logger.info(f"[重连] 第 {attempt} 次重连成功，行情已恢复")
@@ -2608,6 +2983,7 @@ class DataSubscriber:
         try:
             self.subscribe()
             self._setup_handlers()
+            self._start_workers()  # P0: 启动异步处理工作线程
             logger.info(
                 f"数据订阅已启动 | 共识窗口={CONSENSUS_WINDOW}s | "
                 f"触发阈值={CONSENSUS_THRESHOLD} | "
@@ -2621,13 +2997,64 @@ class DataSubscriber:
         def cleanup_loop():
             # 心跳检测：连续超过 180 秒无行情数据，判定断线并重连
             HEARTBEAT_TIMEOUT = 180  # 秒
+            queue_check_counter = 0
+            sync_counter = 0  # 订阅同步计数器
             while self._running:
                 time.sleep(60)
                 signal_store.cleanup_expired()
                 self._cleanup_cooldown()
+                
+                # [旁路新闻信号] 仅在交易时段注入，非交易时间跳过 (2026-04-25 P1)
+                if self._is_trading_hours():
+                    self._poll_news_signals(signal_store)
+
+                # ============================================================
+                # 【动态订阅管理】2026-04-23 新增：根据交易时段自动订阅/退订
+                # ============================================================
+                is_market_open = self._is_trading_hours()
+                
+                if is_market_open and not self._subscribed:
+                    # 进入交易时段且未订阅 → 重新订阅
+                    logger.info("[动态订阅] 检测到交易时段，启动订阅...")
+                    try:
+                        self.subscribe()
+                    except Exception as e:
+                        logger.error(f"[动态订阅] 订阅失败: {e}")
+                        
+                elif not is_market_open and self._subscribed:
+                    # 离开交易时段且已订阅 → 退订释放槽位
+                    logger.info("[动态订阅] 检测到非交易时段，退订释放槽位...")
+                    try:
+                        self.unsubscribe_all()
+                    except Exception as e:
+                        logger.error(f"[动态订阅] 退订失败: {e}")
+
+                # 每 10 分钟同步一次订阅与动态池 (仅交易时段)
+                sync_counter += 1
+                if sync_counter >= 10 and is_market_open:
+                    sync_counter = 0
+                    try:
+                        self._sync_subscription()
+                    except Exception as e:
+                        logger.warning(f"[订阅同步] 异常: {e}")
+
+                # 每 5 分钟检查一次队列深度 (仅交易时段)
+                queue_check_counter += 1
+                if queue_check_counter >= 5:
+                    queue_check_counter = 0
+                    if is_market_open:
+                        q_depth = self._quote_queue.qsize()
+                        k_depth = self._kline_queue.qsize()
+                        if q_depth > 0 or k_depth > 0:
+                            logger.warning(
+                                f"[队列监控] 交易时段队列堆积: "
+                                f"quote_queue={q_depth} | kline_queue={k_depth}"
+                            )
+                        else:
+                            logger.debug(f"[队列监控] 队列正常 (quote=0, kline=0)")
 
                 # 仅在交易时段内做心跳检测（非交易时段本来就没有行情）
-                if self._is_trading_hours():
+                if is_market_open:
                     elapsed = time.time() - self._last_quote_time
                     if elapsed > HEARTBEAT_TIMEOUT:
                         logger.warning(
@@ -2753,18 +3180,109 @@ class DataSubscriber:
             logger.warning(f"[基本面数据] {code} 获取失败：{e}")
             return None
 
+    def _get_subscribe_codes(self) -> List[str]:
+        """
+        获取需要订阅的标的列表 (2026-04-22 新增)
+        从动态池获取，空池时回退到静态 watchlist
+        """
+        try:
+            from app.utils.daily_active_pool import get_daily_active_pool
+            pool = get_daily_active_pool(market_prefix="HK.")
+            active_codes = pool.get_active_codes()
+            
+            # 过滤港股
+            active_codes = [c for c in active_codes if c.startswith("HK.")]
+            
+            if active_codes:
+                breakdown = pool.get_source_breakdown()
+                logger.info(
+                    f"[动态池订阅] 从动态池获取 {len(active_codes)} 只港股标的 | "
+                    f"来源: {breakdown}"
+                )
+                return active_codes
+        except Exception as e:
+            logger.warning(f"[动态池订阅] 获取失败: {e}，回退到静态 watchlist")
+        
+        # 空池回退: 使用配置中的静态 watchlist
+        fallback = getattr(config, 'WATCH_LIST_SUBSCRIBE', config.WATCH_LIST_HK)
+        logger.warning(f"[动态池订阅] 动态池为空，回退到静态 watchlist ({len(fallback)} 只)")
+        return fallback
+
+    def _sync_subscription(self):
+        """
+        同步订阅与动态池 (2026-04-22 新增)
+        定时调用，当动态池变化时调整订阅
+        """
+        try:
+            if not self._quote_ctx or not self._running:
+                return
+            
+            from app.utils.daily_active_pool import get_daily_active_pool
+            from futu import SubType
+            
+            pool = get_daily_active_pool(market_prefix="HK.")
+            active_codes = [c for c in pool.get_active_codes() if c.startswith("HK.")]
+            
+            if not active_codes:
+                logger.debug("[订阅同步] 动态池为空，跳过")
+                return
+            
+            # 简化策略: 持仓股 (POSITION) 用全类型，其他仅 QUOTE
+            position_codes = set()
+            other_codes = set()
+            
+            entries = pool.get_entries()
+            for entry in entries:
+                if not entry.code.startswith("HK."):
+                    continue
+                if entry.is_expired():
+                    continue
+                if entry.source == "POSITION":
+                    position_codes.add(entry.code)
+                else:
+                    other_codes.add(entry.code)
+            
+            # 订阅持仓股 (全类型)
+            for code in position_codes:
+                for st_name in config.SUBSCRIBE_TYPES:
+                    try:
+                        st = getattr(SubType, st_name, None)
+                        if st:
+                            self._quote_ctx.subscribe(code, [st])
+                    except Exception as e:
+                        logger.debug(f"[订阅同步] {code} {st_name} 失败: {e}")
+            
+            # 订阅其他标的 (仅 QUOTE)
+            for code in other_codes:
+                try:
+                    self._quote_ctx.subscribe(code, [SubType.QUOTE])
+                except Exception as e:
+                    logger.debug(f"[订阅同步] {code} QUOTE 失败: {e}")
+            
+            total = len(position_codes) + len(other_codes)
+            logger.info(
+                f"[订阅同步] 完成 | 持仓={len(position_codes)} (全类型) | "
+                f"其他={len(other_codes)} (仅QUOTE) | 总计={total}"
+            )
+            
+        except Exception as e:
+            logger.warning(f"[订阅同步] 失败: {e}")
+
     def _resubscribe(self):
         """
         重新订阅行情 (不创建新连接) - 2026-03-27 新增
+        2026-04-22 升级: 使用动态池替代静态 watchlist
         """
         try:
             if self._quote_ctx is None:
                 logger.error("[重新订阅] 行情上下文为 None")
                 return
             
-            # 重新订阅股票
             from futu import SubType
-            codes = config.WATCH_LIST
+            codes = self._get_subscribe_codes()
+            # 过滤港股
+            codes = [c for c in codes if c.startswith("HK.")]
+            
             for code in codes:
                 try:
                     # 订阅报价
@@ -2775,15 +3293,81 @@ class DataSubscriber:
                 except Exception as e:
                     logger.warning(f"[重新订阅] {code} 订阅失败：{e}")
             
-            logger.info("[重新订阅] 完成")
+            logger.info(f"[重新订阅] 完成 ({len(codes)} 只标的)")
             
         except Exception as e:
             logger.error(f"[重新订阅] 失败：{e}")
 
+    def _poll_news_signals(self, signal_store):
+        """
+        [旁路] 读取新闻监听器注入的信号 (2026-04-24 新增)
+        零侵入现有代码，仅从共享 SQLite 表读取并注入 signal_store
+        """
+        try:
+            import sqlite3
+            import time as _time
+            from app.storage.repository import get_db as _pool_get_db  # B3-13 连接池
+            db_path = '/opt/ftseek/FTSeek/data/news_signals.db'
+            with _pool_get_db(db_path) as conn:
+                cursor = conn.execute("""
+                    SELECT id, code, action, confidence, priority, reason 
+                    FROM news_signals 
+                    WHERE consumed = 0 AND priority >= 3
+                    ORDER BY priority DESC, created_at DESC
+                    LIMIT 3
+                """)
+                
+                injected = 0
+                # [P2 修复] 冷却集合：本轮已注入的 (code, action)，防止同批重复
+                _injected_this_round = set()
+                
+                for row in cursor.fetchall():
+                    sid, code, action, conf, priority, reason = row
+                    
+                    # 港股系统只接收港股信号 (HK.)，过滤 US.* (美股由 FTSeek-US 处理)
+                    if not code.startswith("HK."):
+                        # 标记为非港股信号为已消费，避免堆积
+                        conn.execute("UPDATE news_signals SET consumed = 1 WHERE id = ?", (sid,))
+                        continue
+                    
+                    # [P2 修复] 同批去重：同一 code+action 本轮只注入一次
+                    dedup_key = (code, action)
+                    if dedup_key in _injected_this_round:
+                        conn.execute("UPDATE news_signals SET consumed = 1 WHERE id = ?", (sid,))
+                        continue
+                    
+                    from app.strategy.base import Signal, SignalAction
+                    # 将置信度融入 reason 字符串
+                    full_reason = f"{reason} (置信度: {conf:.0%})"
+                    
+                    signal = Signal(
+                        code=code,
+                        action=SignalAction.BUY if action == "BUY" else SignalAction.SELL,
+                        price=0.0,
+                        quantity=0,
+                        reason=full_reason,
+                        strategy="news_event",
+                        priority=priority,
+                        timestamp=_time.time()
+                    )
+                    
+                    signal_store.add(signal)
+                    logger.info(f"📡 [旁路] 新闻信号已注入主系统: {code} {action} (conf={conf:.2f})")
+                    
+                    conn.execute("UPDATE news_signals SET consumed = 1 WHERE id = ?", (sid,))
+                    _injected_this_round.add(dedup_key)
+                    injected += 1
+                
+                # B3-13：commit/close 由 with 块收尾自动处理
+            if injected > 0:
+                logger.info(f"📡 [旁路] 本轮注入 {injected} 个新闻信号")
+        except Exception as e:
+            logger.debug(f"[旁路] 新闻信号轮询失败: {e}")
 
 
     def stop(self):
         self._running = False
+        self._stop_workers()  # P0: 停止异步处理工作线程
         if self._quote_ctx:
             self._quote_ctx.close()
             self._quote_ctx = None

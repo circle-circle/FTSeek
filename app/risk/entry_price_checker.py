@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from datetime import datetime, date
 
 logger = logging.getLogger("ftseek.entry_price_checker")
-logger.propagate = False  # 防止日志重复
+# 2026-04-10: propagate=True (默认), 通过 ftseek 父级 logger 输出
 
 
 @dataclass
@@ -49,14 +49,14 @@ class EntryPriceChecker:
         """
         self.config = config or {}
         
-        # 高点买入禁止阈值: 价格在日内高点 1% 内禁止买入
-        self.high_buy_threshold = self.config.get('high_buy_threshold', 0.01)
-        # 低点卖出禁止阈值: 价格在日内低点 1% 内禁止卖出
-        self.low_sell_threshold = self.config.get('low_sell_threshold', 0.01)
-        # 警告阈值: 价格在日内高点 2% 内发出警告
-        self.high_buy_warning = self.config.get('high_buy_warning', 0.02)
-        # 警告阈值: 价格在日内低点 2% 内发出警告
-        self.low_sell_warning = self.config.get('low_sell_warning', 0.02)
+        # 高点买入禁止阈值: 价格在日内高点 0.5% 内禁止买入 (2026-04-17: 2%→0.5%, 上涨行情中2%拦截所有突破信号)
+        self.high_buy_threshold = self.config.get('high_buy_threshold', 0.005)
+        # 低点卖出禁止阈值: 价格在日内低点 2% 内禁止卖出 (2026-04-15: 1%→2%)
+        self.low_sell_threshold = self.config.get('low_sell_threshold', 0.02)
+        # 警告阈值: 价格在日内高点 3% 内发出警告 (2026-04-15: 2%→3%)
+        self.high_buy_warning = self.config.get('high_buy_warning', 0.03)
+        # 警告阈值: 价格在日内低点 3% 内发出警告 (2026-04-15: 2%→3%)
+        self.low_sell_warning = self.config.get('low_sell_warning', 0.03)
         # 追高阈值: 价格涨幅超过此值时警告 (相对于开盘价)
         self.chase_threshold = self.config.get('chase_threshold', 0.03)
         # 杀跌阈值: 价格跌幅超过此值时警告 (相对于开盘价)

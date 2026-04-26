@@ -9,6 +9,7 @@ FTSeek 收盘统计报告生成器
 - 风控状态
 """
 import logging
+from app.storage.repository import get_db
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass
@@ -71,7 +72,8 @@ class DailyStatsReporter:
                 db_path = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'ftseek.db')
                 db_path = os.path.abspath(db_path)
 
-            conn = sqlite3.connect(db_path)
+            with get_db(db_path) as conn:
+                pass
             c = conn.cursor()
 
             # 今日已平仓记录（realized_pnl 已写入，is_add=0 排除加仓流水）
@@ -131,7 +133,8 @@ class DailyStatsReporter:
                     os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'ftseek.db')
                 )
 
-            conn = sqlite3.connect(db_path)
+            with get_db(db_path) as conn:
+                pass
             c = conn.cursor()
             c.execute(
                 """SELECT COALESCE(SUM(realized_pnl), 0)
@@ -167,7 +170,8 @@ class DailyStatsReporter:
                     os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'ftseek.db')
                 )
 
-            conn = sqlite3.connect(db_path)
+            with get_db(db_path) as conn:
+                pass
             c = conn.cursor()
             c.execute(
                 """SELECT code, action, quantity, entry_price, stop_loss, take_profit
@@ -524,10 +528,160 @@ class DailyStatsReporter:
             logger.debug(f"获取风险持仓失败：{e}")
         return at_risk
 
+    def get_weight_convergence(self) -> dict:
+        """
+        获取策略权重收敛状态（贝叶斯置信度追踪）
+
+        返回:
+            {
+                'strategies': {name: {confidence, trades, win_rate, current_weight}, ...},
+                'converged_count': int,
+                'total_enabled': int,
+                'overall_convergence': float,  # 已收敛策略占比
+                'ready': bool,  # 总体是否就绪 (>=80% 策略收敛)
+            }
+        """
+        result = {
+            'strategies': {},
+            'converged_count': 0,
+            'total_enabled': 0,
+            'overall_convergence': 0.0,
+            'ready': False,
+        }
+        try:
+            from app.data_subscriber import _data_subscriber_instance
+            if _data_subscriber_instance and hasattr(_data_subscriber_instance, '_adaptive_weight_manager'):
+                mgr = _data_subscriber_instance._adaptive_weight_manager
+                stats = mgr.get_strategy_stats() or {}
+                # 获取启用策略列表
+                enabled = []
+                try:
+                    enabled_cfg = getattr(config, 'ENABLED_STRATEGIES', None)
+                    if enabled_cfg and isinstance(enabled_cfg, dict):
+                        enabled = list(enabled_cfg.values())
+                    elif enabled_cfg and isinstance(enabled_cfg, (list, tuple)):
+                        enabled = list(enabled_cfg)
+                except Exception:
+                    pass
+                # 如果无法获取启用列表，用已有统计的策略
+                all_strategies = set(stats.keys())
+                if enabled:
+                    all_strategies = all_strategies | set(enabled)
+
+                converged = 0
+                for name in all_strategies:
+                    s = stats.get(name, {})
+                    conf = s.get('confidence', 0.0)
+                    result['strategies'][name] = {
+                        'confidence': conf,
+                        'trades': s.get('trades', 0),
+                        'win_rate': s.get('win_rate', 0.0),
+                        'current_weight': s.get('current_weight', 0.0),
+                        'total_pnl': s.get('total_pnl', 0.0),
+                    }
+                    if conf >= 0.8:
+                        converged += 1
+
+                total = len(all_strategies) or 1
+                result['converged_count'] = converged
+                result['total_enabled'] = len(all_strategies)
+                result['overall_convergence'] = converged / total
+                result['ready'] = result['overall_convergence'] >= 0.8
+        except Exception as e:
+            logger.debug(f"获取权重收敛状态失败：{e}")
+        return result
+
+    def get_execution_quality(self) -> dict:
+        """
+        计算信号执行率和退出原因分布
+
+        返回:
+            {
+                'execution_rate': float,
+                'executed': int,
+                'total_signals': int,
+                'exit_distribution': {reason: count, ...},
+                'exit_distribution_pct': {reason: pct, ...},
+                'health_warnings': [str, ...],
+            }
+        """
+        import sqlite3
+        result = {
+            'execution_rate': 0.0,
+            'executed': 0,
+            'total_signals': 0,
+            'exit_distribution': {},
+            'exit_distribution_pct': {},
+            'health_warnings': [],
+        }
+        today = datetime.now().strftime("%Y-%m-%d")
+
+        # 1. 执行率
+        try:
+            today_stats = self.get_today_stats()
+            executed = today_stats.get('executed_signals', 0)
+            total_signals = today_stats.get('total_signals', 0)
+            result['executed'] = executed
+            result['total_signals'] = total_signals
+            if total_signals > 0:
+                result['execution_rate'] = executed / total_signals
+                if result['execution_rate'] < 0.2:
+                    result['health_warnings'].append(
+                        f"信号执行率过低 ({result['execution_rate']:.0%})，风控可能过于严格")
+                elif result['execution_rate'] > 0.7:
+                    result['health_warnings'].append(
+                        f"信号执行率过高 ({result['execution_rate']:.0%})，风控可能过于宽松")
+        except Exception:
+            pass
+
+        # 2. 退出原因分布 (近30笔)
+        try:
+            db_path = getattr(self.db, 'db_path', None) or getattr(self.db, '_db_path', None)
+            if db_path is None:
+                import os
+                db_path = os.path.abspath(
+                    os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'ftseek.db'))
+
+            with get_db(db_path) as conn:
+                pass
+            c = conn.cursor()
+            # 查询近30笔已平仓交易的退出原因
+            c.execute(
+                """SELECT COALESCE(exit_reason, 'unknown'), COUNT(*)
+                   FROM (
+                       SELECT exit_reason FROM positions
+                       WHERE status = 'CLOSED'
+                       AND (is_add IS NULL OR is_add = 0)
+                       ORDER BY exit_time DESC LIMIT 30
+                   ) sub
+                   GROUP BY COALESCE(exit_reason, 'unknown')"""
+            )
+            rows = c.fetchall()
+            conn.close()
+
+            total_exits = sum(r[1] for r in rows) or 1
+            for reason, count in rows:
+                result['exit_distribution'][reason] = count
+                result['exit_distribution_pct'][reason] = count / total_exits
+
+            # 健康预警
+            sl_pct = result['exit_distribution_pct'].get('stop_loss', 0)
+            te_pct = result['exit_distribution_pct'].get('time_exit', 0)
+            if sl_pct > 0.4:
+                result['health_warnings'].append(
+                    f"止损占比过高 ({sl_pct:.0%})，入场点可能需要优化")
+            if te_pct > 0.2:
+                result['health_warnings'].append(
+                    f"时间退出占比过高 ({te_pct:.0%})，策略可能不适合短线")
+        except Exception as e:
+            logger.debug(f"获取退出分布失败：{e}")
+
+        return result
+
     def generate_review_report(self) -> dict:
         """
         生成深度复盘报告数据
-        包含：信号归因、个股盈亏、市场状态、策略排行、预警持仓
+        包含：信号归因、个股盈亏、市场状态、策略排行、预警持仓、权重收敛、执行质量
         """
         return {
             'rejection_stats': self.get_signal_rejection_stats(),
@@ -535,6 +689,8 @@ class DailyStatsReporter:
             'market_regime': self.get_market_regime_summary(),
             'strategy_stats': self.get_strategy_stats_today(),
             'at_risk_positions': self.get_at_risk_positions(),
+            'weight_convergence': self.get_weight_convergence(),
+            'execution_quality': self.get_execution_quality(),
         }
 
 

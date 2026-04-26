@@ -1,18 +1,10 @@
 """
-融合策略 v2.1 - 模块化版本
-
-基于模块化融合引擎:
-- 技术指标模块 (可替换)
-- 情绪分析模块 (可替换)
-- 信号融合模块 (可替换)
-- 信号输出模块 (可替换)
-
-信号展现:
-- 方向：BUY / SELL / NEUTRAL
-- 概率：买入概率% / 卖出概率%
-- 置信度：0-100%
-- 等级：strong / recommended / neutral / weak
+DEPRECATED: 此模块未在生产中使用.
+FusionV2Strategy - 动态加载但无调用方.
+保留仅为向后兼容, 将在未来版本移除.
+请使用 app/strategy/confluence_v2.py 或 app/strategy/layered_integration.py
 """
+
 import logging
 from typing import Optional, Dict
 

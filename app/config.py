@@ -39,7 +39,7 @@ LOG_DIR.mkdir(exist_ok=True)
 # ============================================================
 OPEND_HOST = os.getenv("OPEND_HOST", "127.0.0.1")
 OPEND_PORT = int(os.getenv("OPEND_PORT", "11111"))
-OPEND_DIR = os.getenv("OPEND_DIR", "/opt/ftseek/Futu_OpenD_10.1.6108_Centos7/Futu_OpenD_10.1.6108_Centos7")
+OPEND_DIR = os.getenv("OPEND_DIR", "/opt/ftseek/Futu_OpenD_10.3.6308_Centos7/Futu_OpenD_10.3.6308_Centos7")
 
 # 富途账号
 FUTU_LOGIN_ACCOUNT = os.getenv("FUTU_LOGIN_ACCOUNT", "")
@@ -98,17 +98,112 @@ if not API_TOKEN:
         )
 
 # ============================================================
-#  监控标的 & 市场配置 (从环境变量读取)
+#  监控标的 & 市场配置 (统一优先级链 2026-04-13)
+#
+#  优先级 (从高到低):
+#   1. 环境变量 WATCH_LIST_HK (运维覆盖/紧急切换)
+#   2. config.yaml via config_center (单一事实源)
+#   3. 最小 fallback (3 只核心股，防止配置失效时系统裸奔)
 # ============================================================
-WATCH_LIST_HK = json.loads(os.getenv("WATCH_LIST_HK", '["HK.09992", "HK.00981", "HK.03690", "HK.00700", "HK.09888", "HK.01024", "HK.09988", "HK.01810", "HK.02318", "HK.09618"]'))
-WATCH_LIST_US = json.loads(os.getenv("WATCH_LIST_US", '[]'))
+
+def _load_watch_list_hk() -> list:
+    """按优先级链加载港股监控名单"""
+    # 1. 环境变量覆盖 (运维/紧急切换)
+    env_val = os.getenv("WATCH_LIST_HK")
+    if env_val and env_val.strip():
+        try:
+            lst = json.loads(env_val)
+            if isinstance(lst, list) and len(lst) > 0:
+                logging.getLogger("ftseek.config").info(
+                    f"[watchlist] 从环境变量加载 {len(lst)} 只港股"
+                )
+                return lst
+        except json.JSONDecodeError as e:
+            logging.getLogger("ftseek.config").warning(
+                f"[watchlist] 环境变量 WATCH_LIST_HK 解析失败: {e}"
+            )
+
+    # 2. 从 config.yaml 读取 (config_center 已在文件顶部初始化)
+    try:
+        yaml_list = config_center.get("trading.watch_list_hk")
+        if isinstance(yaml_list, list) and len(yaml_list) > 0:
+            logging.getLogger("ftseek.config").info(
+                f"[watchlist] 从 config.yaml 加载 {len(yaml_list)} 只港股"
+            )
+            return yaml_list
+    except Exception as e:
+        logging.getLogger("ftseek.config").warning(
+            f"[watchlist] config_center 读取失败: {e}"
+        )
+
+    # 3. 最小 fallback (核心股，防止配置全部失效)
+    logging.getLogger("ftseek.config").warning(
+        "[watchlist] 无法从环境变量或 config.yaml 加载，使用最小 fallback (3 只)"
+    )
+    return ["HK.00700", "HK.09988", "HK.03690"]
+
+
+def _load_watch_list_us() -> list:
+    """按优先级链加载美股监控名单"""
+    env_val = os.getenv("WATCH_LIST_US")
+    if env_val and env_val.strip():
+        try:
+            lst = json.loads(env_val)
+            if isinstance(lst, list) and len(lst) > 0:
+                logging.getLogger("ftseek.config").info(
+                    f"[watchlist-us] 从环境变量加载 {len(lst)} 只美股"
+                )
+                return lst
+        except json.JSONDecodeError:
+            pass
+
+    try:
+        yaml_list = config_center.get("trading.watch_list_us")
+        if isinstance(yaml_list, list) and len(yaml_list) > 0:
+            logging.getLogger("ftseek.config").info(
+                f"[watchlist-us] 从 config.yaml 加载 {len(yaml_list)} 只美股"
+            )
+            return yaml_list
+    except Exception as e:
+        logging.getLogger("ftseek.config").warning(
+            f"[watchlist-us] config_center 读取失败: {e}"
+        )
+
+    logging.getLogger("ftseek.config").warning(
+        "[watchlist-us] 无法加载美股名单，跨市场功能将受限"
+    )
+    return []  # 美股默认空列表
+
+
+WATCH_LIST_HK = _load_watch_list_hk()
+WATCH_LIST_US = _load_watch_list_us()
 WATCH_LIST = WATCH_LIST_HK + WATCH_LIST_US
 
-_subscribe_types_str = os.getenv("SUBSCRIBE_TYPES", 'QUOTE,K_1M,K_3M,K_5M,K_15M,K_30M,K_60M,K_DAY')
-if _subscribe_types_str.startswith('['):
+# 港股订阅名单: 仅用于港股交易时段实时行情订阅
+# 美股不订阅实时行情，仅用于盘前分析和跨市场映射参考
+WATCH_LIST_SUBSCRIBE = WATCH_LIST_HK  # 港股时段只订阅港股
+
+# 2026-04-13 扩容优化: 30只股票时减少订阅类型以适配富途100限制
+# 2026-04-19 扩容调整: 港股扩至47只 → 订阅类型减至2种 (QUOTE+K_1M) → 47×2=94 < 100
+# 原配置: QUOTE,K_1M,K_3M,K_5M,K_15M,K_30M,K_60M,K_DAY (8种)
+# 2026-04-13: QUOTE,K_1M,K_5M (3种) -> 30x3=90 < 100
+# 2026-04-19: QUOTE,K_1M (2种) -> 47x2=94 < 100 (去掉K_5M，盘中策略用技术指标缓存)
+_subscribe_types_str = os.getenv("SUBSCRIBE_TYPES", "QUOTE,K_1M")
+if _subscribe_types_str.startswith("["):
     SUBSCRIBE_TYPES = json.loads(_subscribe_types_str)
 else:
-    SUBSCRIBE_TYPES = [s.strip() for s in _subscribe_types_str.split(',')]
+    SUBSCRIBE_TYPES = [s.strip() for s in _subscribe_types_str.split(",")]
+
+# 订阅槽位校验 — 仅基于港股名单 (美股不参与实时订阅)
+_SUBSCRIPTION_SLOTS = len(WATCH_LIST_SUBSCRIBE) * len(SUBSCRIBE_TYPES)
+_MAX_FUTU_SLOTS = 100
+if _SUBSCRIPTION_SLOTS > _MAX_FUTU_SLOTS:
+    import warnings
+    warnings.warn(
+        f"[安全警告] 订阅槽位 {_SUBSCRIPTION_SLOTS} 超过富途限制 {_MAX_FUTU_SLOTS}! "
+        f"({len(WATCH_LIST_SUBSCRIBE)} 只港股 × {len(SUBSCRIBE_TYPES)} 种 = {_SUBSCRIPTION_SLOTS})。"
+        f"请减少 SUBSCRIBE_TYPES 或 WATCH_LIST_HK。"
+    )
 
 # ============================================================
 #  策略配置 (从配置中心读取)
@@ -167,17 +262,17 @@ def get_lot_size(code: str) -> int:
 # ============================================================
 #  日志配置
 # ============================================================
-LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")  # 默认 INFO，由 RotatingFileHandler 控制大小 (50MB)
 
 # ============================================================
 #  共识引擎配置 (从配置中心读取)
 # ============================================================
-CONSENSUS_WINDOW = int(config_center.get('strategy.consensus.window_seconds', 60))
-CONSENSUS_THRESHOLD = float(config_center.get('strategy.consensus.threshold', 0.6))
+CONSENSUS_WINDOW = int(config_center.get('strategy.consensus.window_seconds', 90))
+CONSENSUS_THRESHOLD = float(config_center.get('strategy.consensus.threshold', 1.5))
 CONSENSUS_ADX_TREND = float(config_center.get('strategy.consensus.adx_trend', 25))
 CONSENSUS_ADX_RANGE = float(config_center.get('strategy.consensus.adx_range', 20))
 SIGNAL_COOLDOWN = int(config_center.get('strategy.cooldown.signal_cooldown', 120))
-MAX_OPEN_POSITIONS = int(config_center.get('trading.max_open_positions', 4))
+MAX_OPEN_POSITIONS = int(config_center.get('trading.max_open_positions', 12))
 
 SHORT_SELLING_ENABLED_VAL = config_center.get('trading.short_selling_enabled', 'false')
 SHORT_SELLING_ENABLED = str(SHORT_SELLING_ENABLED_VAL).lower() in ('true', '1', 'yes')
@@ -198,3 +293,53 @@ EXECUTION_MONITOR_REJECT_RATE_ALERT = float(config_center.get('trading.execution
 #  TradingView Webhook 配置
 # ============================================================
 TRADINGVIEW_WEBHOOK_TOKEN = os.getenv("TRADINGVIEW_WEBHOOK_TOKEN", API_TOKEN)
+
+
+# ============================================================
+#  配置校验 (启动时检查)
+# ============================================================
+
+def validate_dingtalk_config() -> list:
+    """校验钉钉推送配置一致性。
+
+    Returns:
+        问题列表，空列表表示一切正常。
+    """
+    issues = []
+    
+    # 检查主配置
+    if not DINGTALK_WEBHOOK_URL:
+        issues.append(
+            "[钉钉配置] DINGTALK_WEBHOOK_URL 未设置，所有推送将被跳过"
+        )
+    
+    # 检查新闻推送配置是否一致
+    try:
+        from app.news_push.config import DINGTALK_WEBHOOK_URL as news_url
+        if news_url and DINGTALK_WEBHOOK_URL:
+            if news_url != DINGTALK_WEBHOOK_URL:
+                issues.append(
+                    f"[钉钉配置] Webhook URL 不一致: "
+                    f"app/config={DINGTALK_WEBHOOK_URL[:30]}... "
+                    f"news_push/config={news_url[:30]}..."
+                )
+    except ImportError:
+        pass  # 新闻模块未加载，跳过
+    
+    # 检查全局 notifier 是否正常初始化
+    try:
+        from app.notifier import get_dingtalk_notifier
+        notifier = get_dingtalk_notifier()
+        if notifier.webhook_url and DINGTALK_WEBHOOK_URL:
+            if notifier.webhook_url != DINGTALK_WEBHOOK_URL:
+                issues.append(
+                    f"[钉钉配置] 全局 notifier Webhook 与 app/config 不一致"
+                )
+        elif not notifier.webhook_url and DINGTALK_WEBHOOK_URL:
+            issues.append(
+                "[钉钉配置] 全局 notifier 未正确获取 Webhook URL"
+            )
+    except Exception as e:
+        issues.append(f"[钉钉配置] 全局 notifier 初始化失败: {e}")
+    
+    return issues

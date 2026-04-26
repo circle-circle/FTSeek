@@ -11,7 +11,7 @@
 7. best_worst_trades (最佳/最差交易表)
 8. sim_vs_real_comparison (模拟 vs 实盘对比表)
 """
-import sqlite3
+from app.storage.repository import get_db
 import logging
 from datetime import datetime
 from pathlib import Path
@@ -48,7 +48,8 @@ class ReviewDatabase:
     @contextmanager
     def get_connection(self):
         """获取数据库连接上下文管理器"""
-        conn = sqlite3.connect(str(self.db_path))
+        with get_db(str(self.db_path)) as conn:
+            pass
         conn.row_factory = sqlite3.Row  # 返回字典式行
         try:
             yield conn
@@ -57,8 +58,6 @@ class ReviewDatabase:
             conn.rollback()
             logger.error(f"数据库操作失败：{e}")
             raise
-        finally:
-            conn.close()
     
     def _init_tables(self):
         """初始化 8 张复盘表"""

@@ -307,7 +307,7 @@ class SignalMonitor:
             try:
                 with open(monitor_file, 'r') as f:
                     existing = json.load(f)
-            except:
+            except Exception as e:
                 pass
         
         existing.append(results)

@@ -10,6 +10,7 @@
 import os
 import sys
 import time
+import uuid
 import hashlib
 import json
 import logging
@@ -62,11 +63,20 @@ class NewsItem:
     decay_factor: float = 1.0         # 衰减因子
     age_minutes: int = 0              # 发布时间距今 (分钟)
     
+    # 链路追踪
+    trace_id: str = ""                # TraceID，贯穿新闻信号全链路
+
+    # Pipeline 新增属性 (2026-04-12)
+    quality_score: float = 0.0        # 新闻质量评分 (0.0-1.0)
+
     def __post_init__(self):
         if not self.fetched_at:
             self.fetched_at = datetime.now().isoformat()
         if not self.id:
             self.id = self._generate_id()
+        # 生成 trace_id（新闻信号链路追踪）
+        if not self.trace_id:
+            self.trace_id = f"NEWS-{uuid.uuid4().hex[:12].upper()}"
         # 检测是否为突发新闻
         if not self.is_breaking:
             self.is_breaking = self._check_breaking()
@@ -76,7 +86,8 @@ class NewsItem:
                 pub_time = datetime.fromisoformat(self.published_at.replace('Z', '+00:00'))
                 now = datetime.now(pub_time.tzinfo) if pub_time.tzinfo else datetime.now()
                 self.age_minutes = int((now - pub_time).total_seconds() / 60)
-            except:
+            except (ValueError, TypeError, AttributeError) as e:
+                logger.debug(f"新闻年龄计算失败：{e}")
                 self.age_minutes = 0
     
     def _generate_id(self) -> str:
@@ -617,6 +628,8 @@ class NewsCollector:
                     source = 'eastmoney'
                 elif 'aastocks' in feed_url:
                     source = 'aastocks'
+                elif 'rsshub' in feed_url and 'futunn' in feed_url:
+                    source = 'futu_rsshub'  # 富途快讯 (RSSHub) - 2026-04-12
 
                 news_list = self._parse_rss_feed(feed_url, category, source)
                 all_news.extend(news_list)
@@ -668,6 +681,14 @@ class NewsCollector:
 
         for source, count in sorted(by_source.items(), key=lambda x: x[1], reverse=True):
             logger.info(f"   {source}: {count} 条")
+
+        # 输出前 3 条 trace_id 为采样日志
+        for news in unique_news[:3]:
+            logger.debug(
+                f"[{news.trace_id}] 新闻采集：{news.title[:40]}... "
+                f"| 源:{news.source} | 优先级:{news.priority} "
+                f"| 突发:{'yes' if news.is_breaking else 'no'}"
+            )
 
         return unique_news
 

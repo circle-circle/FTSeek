@@ -337,3 +337,258 @@ def generate_daily_review(date: str = None, account_type: str = None) -> Dict:
     """生成每日复盘报告"""
     generator = DailyReviewGenerator()
     return generator.generate(date, account_type)
+
+
+def _get_today_trades(date: str, market: str = "hk") -> List[Dict]:
+    """获取今日交易记录 (按市场分离)"""
+    try:
+        import sqlite3
+        # 港股和美股使用不同的数据库
+        if market.lower() == "us":
+            db_path = '/opt/ftseek/FTSeek/data/ftseek_us.db'
+        else:
+            db_path = '/opt/ftseek/FTSeek/data/ftseek.db'
+        
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT code, action, entry_price, entry_time, realized_pnl, status
+            FROM positions 
+            WHERE entry_time LIKE ?
+        """, (f"{date}%",))
+        rows = cursor.fetchall()
+        conn.close()
+        return [dict(row) for row in rows]
+    except Exception as e:
+        logger.warning(f"获取 {market} 交易记录失败: {e}")
+        return []
+
+
+def _get_today_battle_plan(market: str = "hk") -> Dict:
+    """获取今日作战计划 (按市场分离)"""
+    try:
+        if market.lower() == "us":
+            plan_file = '/opt/ftseek/FTSeek/data/daily_battle_plan_us.json'
+        else:
+            plan_file = '/opt/ftseek/FTSeek/data/daily_battle_plan.json'
+        
+        if os.path.exists(plan_file):
+            with open(plan_file, 'r', encoding='utf-8') as f:
+                return json.load(f)
+    except Exception as e:
+        logger.warning(f"获取 {market} 作战计划失败: {e}")
+    return {}
+
+
+def run_post_market_review():
+    """
+    盘后复盘入口 (16:30触发)
+    
+    可被crontab或状态机调用
+    
+    功能:
+    1. 生成信号漏斗报告 (今日所有信号 + 拦截原因)
+    2. 调用AttributionEngine生成归因复盘报告
+    3. 合并报告推送钉钉
+    4. 保存报告
+    
+    Returns:
+        复盘报告字典
+    """
+    from datetime import datetime
+    today = datetime.now().strftime('%Y-%m-%d')
+    logger.info("[盘后复盘] 开始生成收盘报告...")
+    
+    try:
+        # ── 1. Agent 盘后归因 (新增 - 2026-04-24) ──
+        agent_report = {}
+        try:
+            from app.llm.agent_bridge import get_ftseek_agent_bridge
+            
+            # 港股 Agent
+            hk_bridge = get_ftseek_agent_bridge("hk")
+            hk_trades = _get_today_trades(today, market="hk")
+            hk_plan = _get_today_battle_plan(market="hk")
+            agent_report["hk"] = hk_bridge.generate_eod_review(hk_trades, hk_plan)
+            
+            # 美股 Agent
+            us_bridge = get_ftseek_agent_bridge("us")
+            us_trades = _get_today_trades(today, market="us")
+            us_plan = _get_today_battle_plan(market="us")
+            agent_report["us"] = us_bridge.generate_eod_review(us_trades, us_plan)
+            
+            logger.info("[盘后复盘] Agent 归因报告已生成 (双市场独立)")
+        except Exception as e:
+            logger.warning(f"[盘后复盘] Agent 归因失败: {e}")
+            agent_report = {"error": str(e)}
+        
+        # ── 2. 计划对比 ──
+        try:
+            from app.review.plan_vs_actual import generate_plan_vs_actual_report
+            plan_vs_actual_md = generate_plan_vs_actual_report(today)
+            logger.info("[盘后复盘] 计划对比报告已生成")
+        except Exception as e:
+            logger.warning(f"[盘后复盘] 计划对比生成失败: {e}")
+            plan_vs_actual_md = f"## 📊 FTSeek 计划复盘 | {today}\n\n### ❌ 报告生成失败: {e}"
+        
+        # ── 2. 信号漏斗 ──
+        try:
+            from app.review.signal_funnel import format_full_daily_report
+            full_report_md = format_full_daily_report(today)
+            logger.info("[盘后复盘] 信号漏斗报告已生成")
+        except Exception as e:
+            logger.warning(f"[盘后复盘] 信号漏斗生成失败: {e}")
+            full_report_md = f"## 📊 FTSeek 收盘报告 | {today}\n\n### ❌ 信号漏斗读取失败: {e}"
+        
+        # ── 2. 归因引擎 (原有逻辑) ──
+        try:
+            from app.evidence.attribution_engine import AttributionEngine
+            from app.storage.database import get_database
+            
+            try:
+                db = get_database()
+            except Exception as e:
+                logger.warning(f"[盘后复盘] 数据库初始化失败: {e}")
+                db = None
+            
+            engine = AttributionEngine(db=db, enable_llm_attribution=True)
+            report = engine.generate_post_market_review()
+            
+            # 追加归因内容到完整报告
+            attribution_md = _format_review_to_markdown(report)
+            full_report_md = plan_vs_actual_md + "\n---\n" + full_report_md + "\n---\n" + attribution_md
+            
+            logger.info(
+                f"[盘后复盘] 完成 | "
+                f"交易{report['summary']['total_trades']}笔 | "
+                f"胜率{report['summary']['win_rate']:.0%} | "
+                f"盈亏{report['summary']['total_pnl']:+.2f}"
+            )
+        except Exception as e:
+            logger.warning(f"[盘后复盘] 归因引擎失败 (继续推送计划对比和信号漏斗): {e}")
+            # 归因失败时，仍然保留计划对比报告
+            full_report_md = plan_vs_actual_md + "\n---\n" + full_report_md
+        
+        # ── 3. 推送钉钉 ──
+        try:
+            from app.notifier.dingtalk import get_dingtalk_notifier
+            notifier = get_dingtalk_notifier()
+            if notifier:
+                # 钉钉 Markdown 消息有长度限制 (~20000 chars)
+                # 如果超长则截断
+                max_len = 18000
+                if len(full_report_md) > max_len:
+                    full_report_md = full_report_md[:max_len] + "\n\n_... 报告过长已截断，请查看本地日志获取完整内容。_"
+                
+                notifier.send_text(full_report_md)
+                logger.info("[盘后复盘] 已推送钉钉")
+            else:
+                logger.warning("[盘后复盘] 钉钉通知器未初始化，跳过推送")
+        except Exception as e:
+            logger.error(f"[盘后复盘] 钉钉推送失败: {e}", exc_info=True)
+        
+        return report if 'report' in locals() else {'error': str(e) if 'e' in locals() else 'attribution_failed'}
+        
+    except Exception as e:
+        logger.error(f"[盘后复盘] 生成失败: {e}", exc_info=True)
+        raise
+
+
+def _format_review_to_markdown(report: Dict) -> str:
+    """将复盘报告转换为Markdown格式"""
+    summary = report['summary']
+    total_trades = summary['total_trades']
+    
+    # 根据交易数量调整标题
+    if total_trades == 0:
+        title = "## 📊 盘后归因复盘 (今日无交易)\n"
+    else:
+        title = "## 📊 盘后归因复盘\n"
+    
+    lines = [
+        title,
+        f"**日期**: {report['date']}",
+        f"**总交易**: {total_trades}笔",
+    ]
+    
+    # 有交易时才显示胜率和盈亏
+    if total_trades > 0:
+        win_rate = summary['win_rate']
+        total_pnl = summary['total_pnl']
+        total_pnl_percent = summary['total_pnl_percent']
+        
+        # 胜率图标
+        win_icon = "✅" if win_rate >= 0.6 else "⚠️" if win_rate >= 0.5 else "❌"
+        # 盈亏图标
+        pnl_icon = "📈" if total_pnl > 0 else "📉" if total_pnl < 0 else "➡️"
+        
+        lines.append(f"**胜率**: {win_icon} {win_rate:.0%}")
+        lines.append(f"**总盈亏**: {pnl_icon} {total_pnl:+.2f} ({total_pnl_percent:+.2%})")
+    else:
+        lines.append("**胜率**: - (无交易)")
+        lines.append("**总盈亏**: 0.00 (0.00%)")
+    
+    lines.append("")  # 空行
+    
+    # 策略表现 (有交易时)
+    if total_trades > 0 and report.get('strategy_performance'):
+        lines.append("### 📈 策略表现")
+        for strategy, perf in report['strategy_performance'].items():
+            trades = perf['trades']
+            win_rate = perf['win_rate']
+            avg_pnl = perf['avg_pnl']
+            
+            # 策略图标
+            icon = "✅" if win_rate >= 0.6 else "⚠️" if win_rate >= 0.5 else "❌"
+            
+            lines.append(
+                f"{icon} **{strategy}**: "
+                f"{trades}笔 | "
+                f"胜率{win_rate:.0%} | "
+                f"平均{avg_pnl:+.2f}"
+            )
+        lines.append("")  # 空行
+    
+    # 优化建议 (始终显示)
+    if report.get('optimization_suggestions'):
+        lines.append("### 💡 优化建议")
+        for i, suggestion in enumerate(report['optimization_suggestions'][:5], 1):
+            lines.append(f"{i}. {suggestion}")
+        lines.append("")  # 空行
+    
+    # 无交易时的特殊提示
+    if total_trades == 0 and not report.get('optimization_suggestions'):
+        lines.append("### 💡 提示")
+        lines.append("今日无交易，建议检查市场信号和策略参数\n")
+    
+    # 交易明细 (有交易时，最多显示5笔)
+    if total_trades > 0 and report.get('trades'):
+        lines.append("### 📝 交易明细 (最多5笔)")
+        for i, trade in enumerate(report['trades'][:5], 1):
+            symbol = trade.get('symbol', 'unknown')
+            action = trade.get('action', 'UNKNOWN')
+            result = trade.get('result', 'unknown')
+            pnl = trade.get('pnl', 0.0)
+            
+            # 交易图标
+            icon = "✅" if result == 'win' else "❌"
+            action_icon = "🟢" if 'BUY' in action else "🔴"
+            
+            lesson = trade.get('lesson', '')
+            
+            lines.append(
+                f"{icon} {action_icon} **{symbol}** {action} | "
+                f"盈亏: {pnl:+.2f}"
+            )
+            if lesson:
+                lines.append(f"   _{lesson}_")
+        
+        if total_trades > 5:
+            lines.append(f"\n_... 及其他 {total_trades - 5} 笔交易_")
+        
+        lines.append("")  # 空行
+    
+    lines.append(f"_生成时间: {report['generated_at']}_")
+    
+    return "\n".join(lines)

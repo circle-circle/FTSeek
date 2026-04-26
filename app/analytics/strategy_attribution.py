@@ -131,7 +131,7 @@ class StrategyAttribution:
                     data = json.load(f)
                     self.chains.extend(data)
             except Exception as e:
-                logger.error(f"加载 TradeChain 文件失败 {file}: {e}")
+                logger.debug(f"跳过 TradeChain 文件 {file}: {e}")
 
         logger.info(f"加载 TradeChain: {len(self.chains)} 条")
 
@@ -202,7 +202,8 @@ class StrategyAttribution:
                 try:
                     sharpe = statistics.mean(data['pnls']) / (statistics.stdev(data['pnls']) + 0.001)
                     m.sharpe_ratio = sharpe
-                except:
+                except (statistics.StatisticsError, ZeroDivisionError, KeyError) as e:
+                    logger.debug(f"Sharpe 比率计算失败：{e}")
                     m.sharpe_ratio = 0.0
 
             # 平均持仓时间

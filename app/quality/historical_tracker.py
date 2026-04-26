@@ -9,13 +9,14 @@
 
 import logging
 import sqlite3
+from app.storage.repository import get_db
 from dataclasses import dataclass
 from typing import Dict, List, Optional
 from datetime import datetime, timedelta
 from pathlib import Path
 
 logger = logging.getLogger("ftseek.quality.historical_tracker")
-logger.propagate = False
+# 2026-04-10: propagate=True (默认), 通过 ftseek 父级 logger 输出
 
 
 @dataclass
@@ -86,8 +87,7 @@ class HistoricalTracker:
 
     def _init_db(self):
         """初始化数据库表"""
-        conn = sqlite3.connect(self.db_path)
-        try:
+        with get_db(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS signal_outcomes (
@@ -116,10 +116,6 @@ class HistoricalTracker:
             cursor.execute('''
                 CREATE INDEX IF NOT EXISTS idx_entry_time ON signal_outcomes(entry_time)
             ''')
-
-            conn.commit()
-        finally:
-            conn.close()
 
     def record_outcome(
         self,
@@ -178,17 +174,13 @@ class HistoricalTracker:
             self._cache[strategy] = self._cache[strategy][-self._cache_max_size:]
 
         # 写入数据库
-        conn = sqlite3.connect(self.db_path)
-        try:
+        with get_db(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute('''
                 INSERT INTO signal_outcomes
                 (code, strategy, signal_id, pnl_pct, quality_score, action, entry_time, exit_time, market_regime, holding_periods)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (code, strategy, signal_id, pnl_pct, quality_score, action, entry_time, exit_time, market_regime, holding_periods))
-            conn.commit()
-        finally:
-            conn.close()
 
         # 使统计缓存失效
         self._stats_cache.pop(strategy, None)
@@ -246,8 +238,7 @@ class HistoricalTracker:
         """
         stats = StrategyStats(strategy_name=strategy)
 
-        conn = sqlite3.connect(self.db_path)
-        try:
+        with get_db(self.db_path) as conn:
             cursor = conn.cursor()
 
             # 获取所有信号
@@ -304,7 +295,6 @@ class HistoricalTracker:
 
             stats.quality_weighted_winrate = weighted_sum / quality_sum if quality_sum > 0 else 0.5
 
-        finally:
             conn.close()
 
         return stats
@@ -320,8 +310,7 @@ class HistoricalTracker:
         Returns:
             信号结果列表
         """
-        conn = sqlite3.connect(self.db_path)
-        try:
+        with get_db(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute('''
                 SELECT code, strategy, signal_id, pnl_pct, quality_score, action,
@@ -348,7 +337,6 @@ class HistoricalTracker:
                 )
                 for r in rows
             ]
-        finally:
             conn.close()
 
     def clear_old_data(self, days: int = 90) -> int:
@@ -361,8 +349,7 @@ class HistoricalTracker:
         Returns:
             删除的记录数
         """
-        conn = sqlite3.connect(self.db_path)
-        try:
+        with get_db(self.db_path) as conn:
             cursor = conn.cursor()
             cutoff = (datetime.now() - timedelta(days=days)).isoformat()
             cursor.execute('''
@@ -372,5 +359,4 @@ class HistoricalTracker:
             conn.commit()
             logger.info(f"已清理 {deleted} 条 {days} 天前的数据")
             return deleted
-        finally:
             conn.close()

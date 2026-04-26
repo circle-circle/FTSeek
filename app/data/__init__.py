@@ -1,16 +1,12 @@
 """
-数据订阅模块
+数据模块
 
-注意：实际实现位于 app/data_subscriber.py
-本模块仅提供兼容性导入
+提供数据相关子模块的访问入口
 """
-from app.data_subscriber import (
-    DataSubscriber,
-    create_subscriber,
-    # 其他需要导出的内容
-)
+# 注意：移除循环导入，DataSubscriber 应直接从 app.data_subscriber 导入
+# from app.data_subscriber import DataSubscriber, create_subscriber
 
 __all__ = [
-    'DataSubscriber',
-    'create_subscriber',
+    # 'DataSubscriber',
+    # 'create_subscriber',
 ]

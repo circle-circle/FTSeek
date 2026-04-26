@@ -887,6 +887,220 @@ class AttributionEngine:
 
     # ==================== 策略权重建议 ====================
 
+
+
+    # ============================================================
+    #  Merged from strategy_attribution.py - 策略维度归因分析
+    # ============================================================
+
+    def analyze_strategy_by_regime_cross(self, start_date: str = None, end_date: str = None,
+                                         days: int = 30) -> Dict[Tuple[str, str], Dict]:
+        """
+        策略×市场状态交叉分析 (from strategy_attribution.py)
+        
+        Returns:
+            Dict[Tuple[str, str], Dict]: (策略，市场状态) -> 指标
+        """
+        if not start_date:
+            start_date = (datetime.now() - timedelta(days=days)).isoformat()
+        if not end_date:
+            end_date = datetime.now().isoformat()
+
+        results = {}
+        
+        with get_sqlite_connection(str(self.db_path)) as conn:
+            cursor = conn.cursor()
+            
+            # 从 trade_chains 获取数据
+            cursor.execute("""
+                SELECT 
+                    json_extract(decision_layer, '\$.decision_reason') as strategy,
+                    json_extract(signal_layer, '\$.market_regime') as regime,
+                    COUNT(*) as total_trades,
+                    SUM(CASE WHEN json_extract(result_layer, '\$.pnl') > 0 THEN 1 ELSE 0 END) as winning_trades,
+                    SUM(COALESCE(json_extract(result_layer, '\$.pnl'), 0)) as total_pnl
+                FROM trade_chains
+                WHERE is_closed = 1 AND created_at BETWEEN ? AND ?
+                GROUP BY strategy, regime
+                ORDER BY total_trades DESC
+            """, (start_date, end_date))
+            
+            for row in cursor.fetchall():
+                strategy = row[0] or 'unknown'
+                regime = row[1] or 'unknown'
+                total_trades = row[2] or 0
+                winning_trades = row[3] or 0
+                total_pnl = row[4] or 0
+                
+                win_rate = winning_trades / total_trades if total_trades > 0 else 0
+                avg_pnl = total_pnl / total_trades if total_trades > 0 else 0
+                
+                key = (strategy, regime)
+                results[key] = {
+                    'strategy': strategy,
+                    'regime': regime,
+                    'total_trades': total_trades,
+                    'winning_trades': winning_trades,
+                    'total_pnl': round(total_pnl, 2),
+                    'win_rate': round(win_rate, 4),
+                    'avg_pnl': round(avg_pnl, 2),
+                }
+        
+        return results
+
+    def identify_noise_signals(self, min_freq: int = 3, max_win_rate: float = 0.35,
+                               days: int = 90) -> List[Dict]:
+        """
+        识别高噪声信号 (from strategy_attribution.py)
+        
+        标准:
+        - 信号频率 >= min_freq
+        - 胜率 <= max_win_rate
+        
+        Returns:
+            List[Dict]: 噪声信号列表
+        """
+        cutoff = (datetime.now() - timedelta(days=days)).isoformat()
+        
+        with get_sqlite_connection(str(self.db_path)) as conn:
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT 
+                    json_extract(decision_layer, '\$.decision_reason') as signal,
+                    COUNT(*) as total,
+                    SUM(CASE WHEN json_extract(result_layer, '\$.pnl') > 0 THEN 1 ELSE 0 END) as wins,
+                    SUM(COALESCE(json_extract(result_layer, '\$.pnl'), 0)) as total_pnl
+                FROM trade_chains
+                WHERE is_closed = 1 AND created_at > ?
+                GROUP BY signal
+                HAVING total >= ?
+            """, (cutoff, min_freq))
+            
+            noise_signals = []
+            for row in cursor.fetchall():
+                signal = row[0] or 'unknown'
+                total = row[1] or 0
+                wins = row[2] or 0
+                total_pnl = row[3] or 0
+                
+                win_rate = wins / total if total > 0 else 0
+                
+                if win_rate <= max_win_rate:
+                    noise_signals.append({
+                        'signal': signal,
+                        'total_trades': total,
+                        'win_rate': round(win_rate, 4),
+                        'total_pnl': round(total_pnl, 2),
+                        'avg_pnl': round(total_pnl / total, 2) if total > 0 else 0,
+                        'reason': f'高频低胜率 (win_rate={win_rate:.0%})',
+                    })
+            
+            return sorted(noise_signals, key=lambda x: x['total_pnl'])
+
+    def identify_overfit_signals(self, days: int = 90) -> List[Dict]:
+        """
+        识别过拟合信号 (from strategy_attribution.py)
+        
+        标准:
+        - 在特定市场状态过度集中 (>80%)
+        - 在其他市场状态表现显著下降
+        
+        Returns:
+            List[Dict]: 过拟合信号列表
+        """
+        cutoff = (datetime.now() - timedelta(days=days)).isoformat()
+        
+        with get_sqlite_connection(str(self.db_path)) as conn:
+            cursor = conn.cursor()
+            
+            # 获取策略×市场状态交叉统计
+            cursor.execute("""
+                SELECT 
+                    json_extract(decision_layer, '\$.decision_reason') as strategy,
+                    json_extract(signal_layer, '\$.market_regime') as regime,
+                    COUNT(*) as count,
+                    SUM(COALESCE(json_extract(result_layer, '\$.pnl'), 0)) as pnl
+                FROM trade_chains
+                WHERE is_closed = 1 AND created_at > ?
+                GROUP BY strategy, regime
+            """, (cutoff,))
+            
+            # 按策略分组
+            strategy_data = {}
+            for row in cursor.fetchall():
+                strategy = row[0] or 'unknown'
+                regime = row[1] or 'unknown'
+                count = row[2] or 0
+                pnl = row[3] or 0
+                
+                if strategy not in strategy_data:
+                    strategy_data[strategy] = {'total': 0, 'regimes': {}}
+                strategy_data[strategy]['total'] += count
+                strategy_data[strategy]['regimes'][regime] = {'count': count, 'pnl': pnl}
+            
+            overfit_signals = []
+            for strategy, data in strategy_data.items():
+                if data['total'] < 5:  # 样本太少，跳过
+                    continue
+                
+                # 找出集中度最高的市场状态
+                max_regime = max(data['regimes'].items(), key=lambda x: x[1]['count'])
+                max_ratio = max_regime[1]['count'] / data['total']
+                
+                if max_ratio > 0.8:
+                    concentrated_pnl = max_regime[1]['pnl']
+                    other_pnl = sum(r['pnl'] for r, v in data['regimes'].items() if r != max_regime[0])
+                    other_count = data['total'] - max_regime[1]['count']
+                    
+                    overfit_signals.append({
+                        'signal': strategy,
+                        'concentrated_regime': max_regime[0],
+                        'concentration_ratio': round(max_ratio, 4),
+                        'trades_in_regime': max_regime[1]['count'],
+                        'total_trades': data['total'],
+                        'avg_pnl_in_regime': round(concentrated_pnl / max_regime[1]['count'], 2) if max_regime[1]['count'] > 0 else 0,
+                        'avg_pnl_other': round(other_pnl / other_count, 2) if other_count > 0 else 0,
+                        'reason': f'过度集中于{max_regime[0]} ({max_ratio:.0%})',
+                    })
+            
+            return sorted(overfit_signals, key=lambda x: x['concentration_ratio'], reverse=True)
+
+    def get_full_attribution_report(self, period: str = "30d") -> Dict:
+        """
+        获取完整归因报告 (整合所有分析维度)
+        
+        Returns:
+            Dict: 包含所有维度的分析报告
+        """
+        days_map = {'7d': 7, '30d': 30, '90d': 90}
+        days = days_map.get(period, 30)
+        
+        start_date = (datetime.now() - timedelta(days=days)).isoformat()
+        end_date = datetime.now().isoformat()
+        
+        # 获取统计
+        stats = self.get_trade_chain_statistics(start_date, end_date)
+        
+        return {
+            'generated_at': datetime.now().isoformat(),
+            'period': period,
+            'start_date': start_date,
+            'end_date': end_date,
+            'total_trades': stats.get('total_trades', 0),
+            'closed_trades': stats.get('closed_trades', 0),
+            'winning_trades': stats.get('winning_trades', 0),
+            'win_rate': stats.get('winning_trades', 0) / max(stats.get('closed_trades', 1), 1),
+            'total_pnl': stats.get('total_pnl', 0),
+            'avg_pnl': stats.get('avg_pnl', 0),
+            'avg_slippage_bps': stats.get('avg_slippage_bps', 0),
+            'avg_latency_ms': stats.get('avg_latency_ms', 0),
+            'by_strategy': {s['strategy_name']: s.to_dict() for s in self.analyze_strategy_performance(start_date, end_date)},
+            'by_market_regime': {r['regime_name']: r.to_dict() for r in self.analyze_market_regime_performance(start_date, end_date)},
+            'strategy_regime_cross': self.analyze_strategy_by_regime_cross(start_date, end_date),
+            'noise_signals': self.identify_noise_signals(days=days),
+            'overfit_signals': self.identify_overfit_signals(days=days),
+        }
     def get_weight_recommendations(
         self,
         days: int = 30

@@ -41,6 +41,7 @@ class NewsSource(Enum):
     SINA = "sina"        # 新浪财经 (备用 1)
     TENCENT = "tencent"  # 腾讯财经 (备用 2)
     CLS = "cls"          # 财联社 (备用 3)
+    FUTU_RSSHUB = "futu_rsshub"  # 富途快讯 (RSSHub) - 2026-04-12 新增
 
 
 class NewsSentiment(Enum):
@@ -165,7 +166,8 @@ class NewsMonitor:
         NewsSource.JINSHI: 1,
         NewsSource.SINA: 2,
         NewsSource.TENCENT: 3,
-        NewsSource.CLS: 4
+        NewsSource.CLS: 4,
+        NewsSource.FUTU_RSSHUB: 2,  # 富途快讯 - 优先级仅次于金十
     }
     
     def __init__(self, config_path: Optional[str] = None):
@@ -335,7 +337,7 @@ class NewsMonitor:
                                 publish_time = datetime.fromisoformat(
                                     item['time'].replace('Z', '+00:00')
                                 )
-                            except:
+                            except Exception as e:
                                 pass
                         
                         # 提取相关股票 (简单关键词匹配)
@@ -466,7 +468,7 @@ class NewsMonitor:
                         if 'ctime' in item:
                             try:
                                 publish_time = datetime.fromtimestamp(item['ctime'])
-                            except:
+                            except Exception as e:
                                 pass
                         
                         stocks = self._extract_stocks_from_text(f"{title} {content}", stock)
@@ -493,6 +495,94 @@ class NewsMonitor:
         
         if news_list:
             self._record_source_success(NewsSource.CLS)
+        
+        return news_list
+    
+    async def _fetch_futu_rsshub_news(self, stock: str) -> List[NewsItem]:
+        """
+        抓取富途快讯 (通过 RSSHub)
+        
+        RSSHub 路由: https://rsshub.rssforever.com/futunn/live
+        数据源: 富途牛牛 news.futunn.com
+        
+        2026-04-12 新增 - 最优雅的富途快讯获取方式
+        """
+        news_list = []
+        
+        try:
+            import feedparser
+            
+            # RSSHub 富途快讯路由
+            rss_url = "https://rsshub.rssforever.com/futunn/live"
+            
+            logger.debug(f"Fetching Futu news from RSSHub: {rss_url}")
+            
+            # 解析 RSS
+            feed = feedparser.parse(rss_url)
+            
+            if not feed.entries:
+                logger.warning("RSSHub returned empty feed")
+                return []
+            
+            for entry in feed.entries[:20]:
+                title = entry.title if hasattr(entry, 'title') else ''
+                link = entry.link if hasattr(entry, 'link') else ''
+                summary = entry.summary if hasattr(entry, 'summary') else ''
+                published = entry.published if hasattr(entry, 'published') else ''
+                
+                if not title:
+                    continue
+                
+                # 解析发布时间
+                try:
+                    from email.utils import parsedate_to_datetime
+                    publish_time = parsedate_to_datetime(published)
+                except Exception as e:
+                    publish_time = datetime.now()
+                
+                # 提取相关股票
+                stocks = self._extract_stocks_from_text(f"{title} {summary}", stock)
+                
+                # 富途快讯是全市场快讯，不过滤股票（除非明确指定）
+                # 如果指定了股票，只保留相关新闻
+                # if stock and not stocks:
+                #     continue
+                
+                # 改为：保留所有快讯，标记相关性
+                
+                # 创建新闻项
+                news = NewsItem(
+                    id=self._generate_news_id(title, 'futu_rsshub', publish_time),
+                    title=title,
+                    content=summary or title,
+                    source=NewsSource.FUTU_RSSHUB,
+                    publish_time=publish_time,
+                    stocks=stocks,
+                    raw_url=link,
+                )
+                
+                # 分类重要性
+                news.importance = self._classify_importance(title, summary)
+                
+                # 情感分析
+                sentiment, score = self._analyze_sentiment_keywords(title, summary)
+                news.sentiment = sentiment
+                news.sentiment_score = score
+                
+                news_list.append(news)
+            
+            logger.debug(f"Fetched {len(news_list)} news from Futu RSSHub")
+            
+        except ImportError:
+            logger.warning("feedparser not installed for Futu RSSHub")
+            logger.info("Install: pip install feedparser")
+            
+        except Exception as e:
+            logger.warning(f"Failed to fetch Futu RSSHub news: {e}")
+            self._record_source_failure(NewsSource.FUTU_RSSHUB)
+        
+        if news_list:
+            self._record_source_success(NewsSource.FUTU_RSSHUB)
         
         return news_list
     
@@ -602,6 +692,8 @@ class NewsMonitor:
                 task = self._fetch_tencent_news(stock)
             elif source == NewsSource.CLS:
                 task = self._fetch_cls_news(stock)
+            elif source == NewsSource.FUTU_RSSHUB:
+                task = self._fetch_futu_rsshub_news(stock)
             else:
                 continue
             
@@ -632,6 +724,8 @@ class NewsMonitor:
                         news = await self._fetch_tencent_news(stock)
                     elif source == NewsSource.CLS:
                         news = await self._fetch_cls_news(stock)
+                    elif source == NewsSource.FUTU_RSSHUB:
+                        news = await self._fetch_futu_rsshub_news(stock)
                     else:
                         continue
                     
@@ -645,7 +739,7 @@ class NewsMonitor:
         # 检查最少新闻源数量
         min_sources = self.config.get('min_sources', 2)
         if len(sources_used) < min_sources and len(sources_used) > 0:
-            logger.warning(f"Only {len(sources_used)} news sources available (min: {min_sources})")
+            logger.debug(f"Only {len(sources_used)} news sources available (min: {min_sources})")
         
         # 情感分析和置信度计算
         for news in all_news:

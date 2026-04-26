@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from app import config
-from app.strategy.base import Signal, SignalAction
+from app.strategy.base import Signal, SignalAction, TradeTier
 from app.trader.position_manager import PositionManager
 from app.risk.risk_manager import get_risk_manager
 from app.risk.dynamic_exit_manager import dynamic_exit_manager
@@ -23,10 +23,33 @@ from app.risk.trend_filter import get_trend_filter
 from app.risk.dynamic_position_sizer import get_dynamic_position_sizer
 # P1-3: 执行质量监控器 (2026-04-06 新增)
 from app.execution.execution_monitor import get_execution_monitor
-# 新闻增强模块 (2026-04-08 新增)
-from app.trader.news_enhancer import get_news_enhancer, check_news_block
+from app.storage.database import ConnectionPool  # P0 修复：连接池
+# P0 清理 (2026-04-26): 移除废弃的外部脚本依赖
 # 归因系统 (2026-04-09 新增)
 from app.analytics.strategy_health import get_strategy_health_tracker, TradeRecord as HealthTradeRecord
+
+# P0 修复 (2026-04-12): 全局连接池，避免频繁创建/销毁连接
+_trade_db_pool: Optional[ConnectionPool] = None
+# 全局执行器实例 (供 BattlePlan 等外部模块调用)
+_executor_instance: Optional['TradeExecutor'] = None
+
+
+def _get_trade_db_pool() -> ConnectionPool:
+    """获取交易数据库连接池单例"""
+    global _trade_db_pool
+    if _trade_db_pool is None:
+        DB_PATH = str(config.DATA_DIR / "ftseek.db")
+        _trade_db_pool = ConnectionPool(DB_PATH, pool_size=5, timeout=30.0)
+    return _trade_db_pool
+
+def get_executor() -> Optional['TradeExecutor']:
+    """获取全局交易执行器实例"""
+    return _executor_instance
+
+def set_executor_instance(executor: 'TradeExecutor'):
+    """设置全局交易执行器实例"""
+    global _executor_instance
+    _executor_instance = executor
 
 # 富途常量 - 提前导入避免运行时错误
 try:
@@ -37,13 +60,37 @@ except ImportError:
     TrdEnv = None
 
 # 账户选择逻辑导入（用于港股多账户支持）
+# 【P0 修复 2026-04-26】原实现硬编码外部路径，现已改为环境变量/配置中心读取
+# 一旦该路径被重建或部署至其他账户家目录，模块即导入失败且 bare except 吞掉 → 账户选择静默降级。
+# 改为：env var FTSEEK_OPENCLAW_SKILLS_DIR > config.yaml: openclaw.skills_dir > 历史 fallback。
 try:
     import sys
     import os
-    sys.path.insert(0, '/root/.openclaw/skills/openapi/scripts')
-    from common import select_account_for_code
-    ACCOUNT_SELECTION_AVAILABLE = True
-    print("[账户选择] 模块加载成功")
+
+    def _resolve_openclaw_skills_dir() -> Optional[str]:
+        # P0 清理 (2026-04-26): 彻底移除硬编码 fallback，强制使用环境变量或配置中心
+        env_v = os.getenv("FTSEEK_OPENCLAW_SKILLS_DIR")
+        if env_v and os.path.isdir(env_v):
+            return env_v
+        try:
+            from config.config_center import get_config_center as _gcc
+            _v = _gcc().get("openclaw.skills_dir")
+            if _v and os.path.isdir(str(_v)):
+                return str(_v)
+        except Exception:
+            pass
+        return None
+
+    _openclaw_dir = _resolve_openclaw_skills_dir()
+    if _openclaw_dir:
+        if _openclaw_dir not in sys.path:
+            sys.path.insert(0, _openclaw_dir)
+        from common import select_account_for_code
+        ACCOUNT_SELECTION_AVAILABLE = True
+        print(f"[账户选择] 模块加载成功 (skills_dir={_openclaw_dir})")
+    else:
+        ACCOUNT_SELECTION_AVAILABLE = False
+        print("[账户选择] skills_dir 未配置且 fallback 路径不存在，将使用默认账户")
 except Exception as e:
     ACCOUNT_SELECTION_AVAILABLE = False
     print(f"[账户选择] 模块加载失败，将使用默认账户：{e}")
@@ -126,59 +173,113 @@ def _is_option(code: str) -> bool:
     return False
 
 
+def _resolve_account_ids() -> Dict[str, int]:
+    """
+    解析账户 ID 来源，优先级：env var > config.yaml > 安全 fallback。
+
+    【P0 修复 2026-04-26】原实现在 _get_account_for_code 内硬编码账户号，
+    一旦换账户或切环境（线下模拟/线上模拟）需改源码。
+    今改为：
+      ① 环境变量 FTSEEK_HK_CASH_ACCOUNT_ID / FTSEEK_HK_OPTION_ACCOUNT_ID / FTSEEK_US_ACCOUNT_ID（最优先）
+      ② config.yaml: futu.simulate_account_id / futu.margin_account_id
+      ③ Fallback：保持历史值避免破坏现产环境（Batch 5 核实后可在单独 commit 中移除）
+    """
+    def _to_int(v, default):
+        try:
+            return int(str(v).strip())
+        except Exception:
+            return default
+
+    hk_cash_env = os.getenv("FTSEEK_HK_CASH_ACCOUNT_ID") or os.getenv("FTSEEK_HK_ACCOUNT_ID")
+    hk_opt_env = os.getenv("FTSEEK_HK_OPTION_ACCOUNT_ID")
+    us_env = os.getenv("FTSEEK_US_ACCOUNT_ID")
+
+    hk_cash_yaml = None
+    hk_opt_yaml = None
+    us_yaml = None
+    try:
+        from config.config_center import get_config_center as _gcc
+        _cc = _gcc()
+        hk_cash_yaml = _cc.get("futu.simulate_account_id")
+        hk_opt_yaml = _cc.get("futu.margin_account_id")
+        us_yaml = _cc.get("futu.us_account_id")  # 新增可选
+    except Exception as _e:
+        logger.debug(f"[账户解析] config_center 读取失败: {_e}")
+
+    return {
+        "hk_cash": _to_int(hk_cash_env or hk_cash_yaml, 18820895),
+        "hk_option": _to_int(hk_opt_env or hk_opt_yaml, 8246818),
+        "us": _to_int(us_env or us_yaml, 0),  # 0 表示未配置
+    }
+
+
+# 模块级缓存（避免每次下单都读一遍）
+_ACCOUNT_IDS_CACHE: Optional[Dict[str, int]] = None
+
+
 def _get_account_for_code(code: str, trd_env) -> Optional[int]:
     """
     根据证券代码自动选择账户
-    
-    港股期权: 8246818 (MARGIN)
-    港股正股: 18820895 (CASH)
-    美股: 暂不支持
-    
+
+    【P0 修复 2026-04-26】账户 ID 由 _resolve_account_ids() 统一解析，
+    优先级：env > config.yaml > 历史 fallback。
+
     Args:
         code: 证券代码
         trd_env: 交易环境
-        
+
     Returns:
         账户ID，实盘返回None
     """
     from futu import TrdEnv
-    
+
     # 实盘不指定账户
     if trd_env != TrdEnv.SIMULATE:
         return None
-    
+
+    global _ACCOUNT_IDS_CACHE
+    if _ACCOUNT_IDS_CACHE is None:
+        _ACCOUNT_IDS_CACHE = _resolve_account_ids()
+
     market = _detect_market(code)
-    
+
     if market == "HK":
         if _is_option(code):
-            # 港股期权账户
-            logger.info(f"[账户选择] {code} -> 期权账户 8246818")
-            return 8246818
+            _aid = _ACCOUNT_IDS_CACHE["hk_option"]
+            logger.info(f"[账户选择] {code} -> 港股期权账户 {_aid}")
+            return _aid
         else:
-            # 港股正股账户
-            logger.info(f"[账户选择] {code} -> 正股账户 18820895")
-            return 18820895
+            _aid = _ACCOUNT_IDS_CACHE["hk_cash"]
+            logger.info(f"[账户选择] {code} -> 港股正股账户 {_aid}")
+            return _aid
     elif market == "US":
-        # 美股暂不支持
-        logger.warning(f"[账户选择] {code} -> 美股暂不支持")
+        _aid = _ACCOUNT_IDS_CACHE.get("us", 0)
+        if _aid and _aid > 0:
+            logger.info(f"[账户选择] {code} -> 美股账户 {_aid}")
+            return _aid
+        logger.warning(f"[账户选择] {code} -> 美股账户未配置 (设置 FTSEEK_US_ACCOUNT_ID 或 config.futu.us_account_id)")
         return None
-    
+
     return None
 
 
 class TradeExecutor:
     """富途交易执行器 (港股 + 美股双市场)"""
 
-    def __init__(self):
+    def __init__(self, exit_manager=None):
         self._trd_ctx_hk = None
         self._trd_ctx_us = None
-        self.position_manager = PositionManager()
+        self.position_manager = PositionManager.get_instance()
         self.risk_manager = get_risk_manager()
+        self.exit_manager = exit_manager # Phase 1: 注入离场管理器
         # 幂等锁：防止网络抖动/重复回调导致重复下单
         self._order_lock = threading.Lock()
         self._pending_signals: Dict[str, float] = {}  # signal_hash → timestamp, TTL 30s
         # 滑点记录：(signal_price, dealt_avg_price, code)，最多保留 200 条，供健康度看板读取
         self._slippage_records: List[tuple] = []
+        
+        # 每手股数动态缓存 (code → lot_size), 避免重复 Futu API 调用
+        self._lot_size_cache: Dict[str, int] = {}
         
         # S3: 水位管理单例注入 (2026-04-06)
         # 资金来源: app.main.py 中初始化，initial_capital=1000000 (100万)
@@ -232,6 +333,42 @@ class TradeExecutor:
                 )
                 logger.info(f"港股交易上下文已创建，环境：{'模拟' if config.TRADE_ENV == 1 else '真实'}")
             return self._trd_ctx_hk
+
+    def _get_lot_size(self, code: str) -> int:
+        """
+        通过 Futu API 动态获取港股每手股数 (带缓存)
+        
+        2026-04-24: 解决硬编码 DEFAULT_ORDER_QTY_BY_CODE 不覆盖所有股票导致碎股下单失败的问题
+        """
+        if code in self._lot_size_cache:
+            return self._lot_size_cache[code]
+        
+        try:
+            from futu import OpenQuoteContext, RET_OK
+            
+            quote_ctx = OpenQuoteContext(host=config.OPEND_HOST, port=config.OPEND_PORT)
+            ret, data = quote_ctx.get_market_snapshot([code])
+            quote_ctx.close()
+            
+            if ret == RET_OK and len(data) > 0:
+                lot_size = int(data.iloc[0].get('lot_size', 0))
+                if lot_size > 0:
+                    logger.info(f"[每手股数] {code} → {lot_size} (Futu API 动态获取)")
+                    self._lot_size_cache[code] = lot_size
+                    return lot_size
+            
+            # API 返回无效值，走降级逻辑
+            logger.warning(f"[每手股数] {code} Futu API 返回无效 lot_size，使用配置默认值")
+            
+        except Exception as e:
+            logger.warning(f"[每手股数] {code} Futu API 查询失败: {e}，使用配置默认值")
+        
+        # 降级: 硬编码配置 > 全局默认值
+        from app.config import DEFAULT_ORDER_QTY_BY_CODE
+        lot_size = DEFAULT_ORDER_QTY_BY_CODE.get(code, config.DEFAULT_ORDER_QTY_HK)
+        logger.info(f"[每手股数] {code} → {lot_size} (降级: 配置默认)")
+        self._lot_size_cache[code] = lot_size
+        return lot_size
 
     def _get_qty(self, signal: Signal) -> int:
         """根据市场、股票和动态仓位计算下单数量 (避免碎股)"""
@@ -316,11 +453,38 @@ class TradeExecutor:
             except Exception as e:
                 logger.warning(f"[水位管理] 获取水位限制失败，跳过: {e}")
         
+        # P5 fix (2026-04-26): Kelly 公式仓位计算 — 基于策略历史胜率/盈亏比
+        try:
+            from app.strategy.consensus_engine import _adaptive_weight_manager
+            if hasattr(_adaptive_weight_manager, 'get_kelly_stats'):
+                agree_strategies = list(extra.get('strategies', [])) if extra else []
+                if not agree_strategies and hasattr(signal, 'strategy'):
+                    s = signal.strategy if isinstance(signal.strategy, str) else str(signal.strategy)
+                    agree_strategies = [s]
+                mr = extra.get('market_regime', '') if extra else ''
+                kelly_stats = _adaptive_weight_manager.get_kelly_stats(agree_strategies, mr)
+                if kelly_stats and kelly_stats['half_kelly'] > 0:
+                    kelly_ratio = kelly_stats['half_kelly']
+                    if position_ratio is not None:
+                        # Blend: 60% Kelly + 40% heuristic
+                        position_ratio = kelly_ratio * 0.6 + position_ratio * 0.4
+                    else:
+                        position_ratio = kelly_ratio
+                    logger.info(
+                        f"[Kelly仓位] {signal.code} 策略={agree_strategies} "
+                        f"胜率={kelly_stats['win_rate']:.0%} "
+                        f"盈亏比={kelly_stats['reward_risk']:.1f} "
+                        f"Kelly={kelly_stats['kelly_fraction']:.1%} "
+                        f"半Kelly={kelly_ratio:.1%} "
+                        f"(样本={kelly_stats['total_trades']}笔)"
+                    )
+        except Exception as _kelly_e:
+            logger.debug(f"[Kelly仓位] 计算跳过: {_kelly_e}")
+
         # 港股：根据股票配置每手股数
         if market == "HK":
-            from app.config import DEFAULT_ORDER_QTY_BY_CODE
-            # 基础每手股数
-            base_qty = DEFAULT_ORDER_QTY_BY_CODE.get(signal.code) or config.DEFAULT_ORDER_QTY_HK
+            # 基础每手股数 (动态获取)
+            base_qty = self._get_lot_size(signal.code)
 
             # 如果动态仓位计算成功，按比例调整倍数（以 0.10 基准比例对应 1 手）
             if position_ratio is not None:
@@ -359,28 +523,58 @@ class TradeExecutor:
                     )
                 return qty
 
-            # 优先使用信号中的数量
+            # 优先使用信号中的数量 (2026-04-15 修复: 增加整手校验)
             if signal.quantity and signal.quantity > 0:
-                return signal.quantity
+                # 检查是否为整手倍数
+                if signal.quantity % base_qty == 0:
+                    return signal.quantity
+                else:
+                    # 不是整手倍数，向下对齐
+                    aligned_qty = (signal.quantity // base_qty) * base_qty
+                    if aligned_qty >= base_qty:
+                        logger.warning(
+                            f"[碎股防护] {signal.code} signal.quantity={signal.quantity} 非整手倍数，"
+                            f"向下对齐到 {aligned_qty} (每手 {base_qty} 股)"
+                        )
+                        return aligned_qty
+                    else:
+                        logger.warning(
+                            f"[碎股防护] {signal.code} signal.quantity={signal.quantity} 不足 1 手，"
+                            f"使用基础数量 {base_qty}"
+                        )
+                        return base_qty
 
             return base_qty
 
-        # 美股
-        if position_ratio is not None:
-            base_qty = config.DEFAULT_ORDER_QTY_US
-            base_ratio = 0.10
-            multiplier = max(1, round(position_ratio / base_ratio))
-            qty = base_qty * multiplier
-            logger.info(
-                f"[动态仓位] {signal.code}(US) 置信度={confidence:.2f} "
-                f"仓位={position_ratio:.1%} 最终={qty}"
-            )
-            return qty
+        # ============================================================
+        # 美股 (US) - 最小交易单位 1 股，无碎股问题
+        # ============================================================
+        if market == "US":
+            # 美股最小交易单位: 1 股
+            US_MIN_QTY = 1
+            
+            if position_ratio is not None:
+                base_qty = config.DEFAULT_ORDER_QTY_US  # 默认 1 股
+                base_ratio = 0.10  # 基础仓位对应 1 股
+                multiplier = max(1, round(position_ratio / base_ratio))
+                qty = max(US_MIN_QTY, base_qty * multiplier)
+                logger.info(
+                    f"[动态仓位] {signal.code}(US) 置信度={confidence:.2f} "
+                    f"市场={market_regime} 仓位={position_ratio:.1%} "
+                    f"基础={base_qty} 倍数={multiplier}x 最终={qty} (美股最小单位: 1股)"
+                )
+                return qty
 
-        if signal.quantity and signal.quantity > 0:
-            return signal.quantity
+            # 优先使用信号中的数量 (2026-04-15 修复: 确保 >= 1)
+            if signal.quantity and signal.quantity > 0:
+                qty = max(US_MIN_QTY, int(signal.quantity))
+                if qty != signal.quantity:
+                    logger.warning(
+                        f"[美股数量修正] {signal.code} signal.quantity={signal.quantity} → {qty} (最小 1 股)"
+                    )
+                return qty
 
-        return config.DEFAULT_ORDER_QTY_US
+            return config.DEFAULT_ORDER_QTY_US  # 默认 1 股
     
     def _execute_order_with_retry(self, trd_ctx, code: str, price: float, qty: int,
                                   trd_side, order_type, trd_env, signal) -> tuple:
@@ -472,6 +666,34 @@ class TradeExecutor:
         if signal.action == SignalAction.ALERT:
             return TradeResult(success=False, message="ALERT 类型信号不执行交易")
 
+        # Phase 3: 交易分层 - Tier2/Tier3 影子盘拦截
+        if signal.tier != TradeTier.TIER_TREND:
+            try:
+                from app.executor.shadow_executor import ShadowExecutor, ShadowTradeRecord
+                executor = ShadowExecutor.get_instance()
+                
+                # 默认短线参数
+                stop_loss = signal.tier_stop_loss if signal.tier_stop_loss > 0 else 0.015
+                take_profit = signal.tier_take_profit if signal.tier_take_profit > 0 else 0.03
+                max_hold = signal.tier_max_hold_minutes if signal.tier_max_hold_minutes > 0 else 120
+                
+                record = ShadowTradeRecord(
+                    trace_id=signal.trace_id,
+                    code=signal.code,
+                    price=signal.price,
+                    qty=signal.quantity,
+                    tier_stop_loss=stop_loss,
+                    tier_take_profit=take_profit,
+                    max_hold_min=max_hold
+                )
+                executor.add_trade(record)
+                
+                logger.info(f"[影子盘] Tier2 信号已拦截并模拟入场: {signal.code} @ {signal.price:.2f}")
+                return TradeResult(success=True, message="shadow_tier2_executed", trade_type='SHADOW')
+            except Exception as e:
+                logger.error(f"[影子盘] 模拟执行失败: {e}")
+                return TradeResult(success=False, message=f"shadow_executor_error: {e}")
+
         # 熔断器检查 (2026-03-17 新增)
         if not circuit_breaker.can_trade():
             failure_tracker.record_failure(signal.code, 'circuit_breaker', '熔断暂停中')
@@ -488,30 +710,34 @@ class TradeExecutor:
                 'strategy': signal.strategy if hasattr(signal, 'strategy') else 'unknown'
             }
             
-            # 检查是否应该阻止交易
-            block_reason = check_news_block(signal_dict)
-            if block_reason:
-                logger.warning(f"[新闻阻止] {signal.code} 阻止交易: {block_reason}")
-                failure_tracker.record_failure(signal.code, 'news_block', block_reason)
-                return TradeResult(success=False, message=f"新闻阻止: {block_reason}")
+            # P0 清理 (2026-04-26): 移除废弃的新闻增强逻辑
+            # 该模块依赖的外部脚本已不可用，且已有降级处理，此处直接移除死代码
+            # 原逻辑: check_news_block -> 阻止交易 / enhance_signal -> 调整置信度
             
-            # 获取新闻增强器并增强信号
-            try:
-                news_enhancer = get_news_enhancer()
-                enhanced_signal = news_enhancer.enhance_signal(signal_dict)
+            # 原 L711: Phase 3 新增：性能衰减检查 (Performance Decay)
+        # 根据近期策略胜率动态调整信号强度，防止“连败”期间继续重仓
+        try:
+            from app.utils.performance_decay import get_decay_factor
+            import os
+            # 获取 DB 路径 (executor.py 在 app/trader/，需上移 2 级到项目根目录)
+            db_path = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'ftseek.db')
+            
+            strategy = signal.strategy if hasattr(signal, 'strategy') else 'unknown'
+            decay = get_decay_factor(db_path, strategy, lookback_days=5)
+            
+            if decay < 1.0:
+                # 应用衰减到信号置信度/数量
+                original_conf = signal.confidence if hasattr(signal, 'confidence') else 0.5
+                signal.confidence = max(0.1, original_conf * decay)
+                logger.warning(f"📉 [性能衰减] 策略 {strategy} 近期表现不佳 -> 信号降权 (x{decay})")
                 
-                if enhanced_signal.get('news_enhanced'):
-                    # 更新信号置信度
-                    original_conf = signal.confidence if hasattr(signal, 'confidence') else 0.5
-                    new_conf = enhanced_signal.get('confidence', original_conf)
-                    
-                    logger.info(f"[新闻增强] {signal.code} 置信度调整: {original_conf:.2f} → {new_conf:.2f}")
-                    
-                    # 如果置信度被大幅降低，记录但继续执行
-                    if new_conf < 0.3:
-                        logger.warning(f"[新闻增强] {signal.code} 置信度过低 ({new_conf:.2f})，建议人工审核")
-            except Exception as e:
-                logger.warning(f"[新闻增强] 检查失败，继续执行: {e}")
+                # 如果衰减后置信度过低，直接拦截
+                if signal.confidence < 0.3:
+                    logger.warning(f"🚫 [性能衰减] {signal.code} 信号降权后过低 ({signal.confidence:.2f})，自动拦截")
+                    failure_tracker.record_failure(signal.code, 'performance_decay', '信号降权后置信度过低')
+                    return TradeResult(success=False, message="性能衰减拦截")
+        except Exception as e:
+            logger.debug(f"[性能衰减] 检查失败 (不影响主流程): {e}")
 
         # 幂等检查：防止同一信号（code+方向+价格档位）在30s内重复下单
         # 2026-03-27 修复: 平仓/止损/止盈信号无条件跳过幂等检查，风控信号必须立即执行
@@ -541,10 +767,7 @@ class TradeExecutor:
                 logger.info(f"[风控信号] {signal.code} {signal.strategy} 跳过幂等检查，立即执行")
 
         # 自动识别开仓/平仓 (2026-03-20 新增)
-        # 如果有多头持仓且信号是 SELL，应该是平仓
-        # 如果有空头持仓且信号是 BUY，应该是平仓
-        # 2026-03-27 修复: 无持仓时不允许做空开仓 (模拟账户不支持)
-        # 2026-04-09 优化: 已有持仓时的 BUY 信号处理
+        # 2026-04-15 优化: 增强补仓规则 (金字塔 + 行业集中度 + LLM信号)
         if trade_type == 'AUTO':
             position = self.position_manager.get_position(signal.code)
             if position and position.status == 'OPEN':
@@ -555,40 +778,84 @@ class TradeExecutor:
                     trade_type = 'CLOSE'
                     logger.info(f"[自动识别] {signal.code} 空头持仓存在，BUY 信号转为平仓")
                 elif position.action == 'BUY' and signal.action == SignalAction.BUY:
-                    # 2026-04-09 新增: 已有多头持仓时的 BUY 信号处理
-                    # 检查是否应该加仓或止盈
+                    # 2026-04-15 优化: 增强补仓规则
                     current_price = signal.price
                     entry_price = position.entry_price
-                    pnl_pct = (current_price - entry_price) / entry_price if entry_price > 0 else 0
+                    pnl_pct = (current_price - entry_price) / entry_price * 100 if entry_price > 0 else 0
                     
-                    # 如果持仓盈利，优先考虑止盈而非加仓
-                    if pnl_pct >= 0.03:  # 盈利 3% 以上
+                    # 读取补仓配置
+                    profit_threshold = getattr(config, 'ADD_POSITION_PROFIT_THRESHOLD', 5.0)
+                    loss_threshold = getattr(config, 'ADD_POSITION_LOSS_THRESHOLD', -2.0)
+                    max_add = getattr(config, 'MAX_ADD_PER_POSITION', 2)
+                    
+                    # 检查补仓次数
+                    try:
+                        add_count = self.position_manager.get_today_add_count(signal.code)
+                    except Exception:
+                        add_count = 0
+                    
+                    # 规则 1: 亏损超过阈值 → 拒绝补仓 (止损优先)
+                    if pnl_pct <= loss_threshold:
                         logger.info(
-                            f"[持仓优化] {signal.code} 已有盈利 ({pnl_pct:+.1%})，"
-                            f"BUY信号转为部分止盈检查"
-                        )
-                        # 不自动转为止盈，让止盈引擎处理
-                        # 但拒绝加仓信号
-                        return TradeResult(
-                            success=False, 
-                            message=f"existing_position_profitable ({pnl_pct:+.1%})"
-                        )
-                    elif pnl_pct <= -0.02:  # 亏损 2% 以上
-                        # 亏损时不加仓，让止损引擎处理
-                        logger.info(
-                            f"[持仓优化] {signal.code} 已有亏损 ({pnl_pct:+.1%})，"
-                            f"拒绝加仓，由止损引擎处理"
+                            f"[补仓拒绝] {signal.code} 亏损 {pnl_pct:+.1f}% < {loss_threshold}%，"
+                            f"由止损引擎处理"
                         )
                         return TradeResult(
                             success=False,
-                            message=f"existing_position_loss ({pnl_pct:+.1%})"
+                            message=f"loss_too_deep ({pnl_pct:+.1f}%)"
                         )
-                    else:
-                        # 盈亏不大，允许加仓逻辑（但需要持仓数检查）
-                        trade_type = 'OPEN'
-                        logger.info(
-                            f"[持仓优化] {signal.code} 盈亏不大 ({pnl_pct:+.1%})，允许加仓检查"
+                    
+                    # 规则 2: 盈利超过阈值 → 谨慎补仓 (需强信号)
+                    if pnl_pct >= profit_threshold:
+                        # 检查是否为 LLM 强信号 (STRONG_BUY + HIGH confidence)
+                        is_strong = (
+                            signal.extra.get('llm_direction') == 'STRONG_BUY' and
+                            signal.extra.get('llm_confidence') == 'HIGH'
+                        ) if signal.extra else False
+                        
+                        if is_strong:
+                            logger.info(
+                                f"[补仓谨慎] {signal.code} 盈利 {pnl_pct:+.1f}% >= {profit_threshold}%，"
+                                f"但 LLM 强信号确认，允许金字塔补仓"
+                            )
+                        else:
+                            logger.info(
+                                f"[补仓拒绝] {signal.code} 盈利 {pnl_pct:+.1f}% >= {profit_threshold}%，"
+                                f"非 LLM 强信号，优先止盈"
+                            )
+                            return TradeResult(
+                                success=False,
+                                message=f"profit_too_high_no_strong_signal ({pnl_pct:+.1f}%)"
+                            )
+                    
+                    # 规则 3: 补仓次数检查
+                    if add_count >= max_add:
+                        logger.warning(
+                            f"[补仓拒绝] {signal.code} 今日已补仓 {add_count}/{max_add} 次"
                         )
+                        return TradeResult(
+                            success=False,
+                            message=f"add_position_limit_reached ({add_count}/{max_add})"
+                        )
+                    
+                    # 规则 4: 行业集中度检查 (新增)
+                    try:
+                        sector_ok, sector_reason = self._check_sector_concentration(signal.code)
+                        if not sector_ok:
+                            logger.warning(f"[行业集中度] {signal.code} {sector_reason}")
+                            return TradeResult(success=False, message=sector_reason)
+                    except Exception as e:
+                        logger.debug(f"行业集中度检查失败 (非阻塞): {e}")
+                    
+                    # 通过所有检查 → 允许补仓 (金字塔量)
+                    trade_type = 'ADD'
+                    add_multipliers = getattr(config, 'MAX_ADD_MULTIPLIER', [1.0, 0.5, 0.25])
+                    multiplier = add_multipliers[min(add_count, len(add_multipliers)-1)]
+                    logger.info(
+                        f"[补仓批准] {signal.code} 盈亏 {pnl_pct:+.1f}% | "
+                        f"补仓次数 {add_count}/{max_add} | "
+                        f"金字塔系数 {multiplier}"
+                    )
                 else:
                     trade_type = 'OPEN'
             else:
@@ -601,123 +868,155 @@ class TradeExecutor:
         # 风控检查 (仅开仓需要)
         if trade_type == 'OPEN':
             # 2026-03-25 新增: 最大持仓数检查
-            max_open_positions = getattr(config, 'MAX_OPEN_POSITIONS', 3)  # 默认3个
-            current_open_positions = self.position_manager.get_open_positions_count()
+            # 2026-04-15 修复: 以富途服务端实时数据为准，不再依赖本地 DB
+            max_open_positions = getattr(config, 'MAX_OPEN_POSITIONS', 12)  # 2026-04-15 调整
+            
+            # 优先使用富途服务端实时查询
+            try:
+                from app.factors.live_position_query import get_live_position_query
+                live_query = get_live_position_query()
+                current_open_positions = live_query.count_positions(market='HK')
+                data_source = "futu_server (实时)"
+            except Exception as e:
+                logger.warning(f"富途实时查询失败，降级到本地 DB: {e}")
+                current_open_positions = self.position_manager.get_open_positions_count()
+                data_source = "local_db (降级)"
+            
             if current_open_positions >= max_open_positions:
-                msg = f"已达最大持仓数 ({current_open_positions}/{max_open_positions})，拒绝开仓"
+                msg = f"已达最大持仓数 ({current_open_positions}/{max_open_positions})，拒绝开仓 [{data_source}]"
                 logger.warning(f"[持仓限制] {signal.code} {msg}")
                 failure_tracker.record_failure(signal.code, 'position_limit', msg)
                 return TradeResult(success=False, message=msg)
             
-            # 趋势过滤检查 V2 (2026-03-21 增强: 多周期确认)
-            try:
-                from futu import OpenQuoteContext, KLType, SubType, RET_OK
-                quote_ctx = OpenQuoteContext(host=config.OPEND_HOST, port=config.OPEND_PORT)
-                
-                # 2026-03-27 修复: 先订阅 K 线数据才能获取
-                # 订阅日K和60分钟K
-                sub_types = [SubType.K_DAY, SubType.K_60M]
-                ret_sub, msg_sub = quote_ctx.subscribe(signal.code, sub_types)
-                if ret_sub != RET_OK:
-                    logger.warning(f"[趋势过滤] 订阅K线失败: {msg_sub}，尝试直接获取")
-                
-                # 获取日K数据
-                ret_daily, data_daily = quote_ctx.get_cur_kline(signal.code, 30, KLType.K_DAY)
-                # 获取60分钟K线数据 (用于多周期确认)
-                ret_60min, data_60min = quote_ctx.get_cur_kline(signal.code, 50, KLType.K_60M)
-                
-                if ret_daily == 0:
-                    closes = data_daily['close'].values.tolist()
-                    intraday_closes = None
+            # 趋势过滤检查 V2 (2026-03-21 增强: 多周期确认) (2026-04-20: 接入全局限流器)
+            # 2026-04-24 修复: 仅 OPEN 需要趋势过滤；ADD/CLOSE 是已有持仓管理，趋势检查应在开仓时已完成
+            # 避免已有持仓因短期波动被 ADD 信号拒绝，导致无法加仓
+            if trade_type == 'OPEN':
+                try:
+                    from futu import OpenQuoteContext, KLType, SubType, RET_OK
+                    from app.utils.futu_limiter import get_global_limiter
+                    limiter = get_global_limiter()
+
+                    quote_ctx = OpenQuoteContext(host=config.OPEND_HOST, port=config.OPEND_PORT)
                     
-                    if ret_60min == 0:
-                        intraday_closes = data_60min['close'].values.tolist()
-                        logger.debug(f"[趋势过滤] 获取日K {len(closes)}条, 60分钟K {len(intraday_closes)}条")
+                    # 订阅日K和60分钟K
+                    sub_types = [SubType.K_DAY, SubType.K_60M]
+                    ret_sub, msg_sub = quote_ctx.subscribe(signal.code, sub_types)
+                    if ret_sub != RET_OK:
+                        logger.warning(f"[趋势过滤] 订阅K线失败: {msg_sub}，尝试直接获取")
+                    
+                    # 获取日K数据
+                    if not limiter.acquire(timeout=10):
+                        ret_daily = -1
+                        data_daily = None
                     else:
-                        logger.warning(f"[趋势过滤] 60分钟K获取失败，仅使用日K")
+                        ret_daily, data_daily = quote_ctx.get_cur_kline(signal.code, 30, KLType.K_DAY)
+                        limiter.record()
+
+                    # 获取60分钟K线数据
+                    if not limiter.acquire(timeout=10):
+                        ret_60min = -1
+                        data_60min = None
+                    else:
+                        ret_60min, data_60min = quote_ctx.get_cur_kline(signal.code, 50, KLType.K_60M)
+                        limiter.record()
                     
-                    # 重置趋势过滤器以加载新配置
-                    from app.risk.trend_filter import reset_trend_filter, get_trend_filter
-                    reset_trend_filter()
-                    trend_filter = get_trend_filter()
-                    
-                    # 从信号extra中获取ADX值 (2026-03-25 新增)
-                    adx_value = None
-                    if hasattr(signal, 'extra') and signal.extra:
-                        adx_value = signal.extra.get('adx')
-                    
-                    # 多周期趋势分析 (增强版：支持ADX + 多周期确认)
-                    trend_info = trend_filter.analyze_trend(
-                        closes, 
-                        intraday_closes=intraday_closes,
-                        adx=adx_value,
-                        code=signal.code
-                    )
-                    
-                    action_str = signal.action.value if hasattr(signal.action, 'value') else str(signal.action)
-                    should_trade, reason = trend_filter.should_trade(action_str, trend_info)
-                    
-                    if not should_trade:
-                        quote_ctx.close()
-                        failure_tracker.record_failure(signal.code, 'trend_filter', reason)
-                        logger.warning(f"[趋势过滤] {signal.code} 交易被阻止: {reason}")
-                        return TradeResult(success=False, message=reason)
-                    
-                    logger.info(f"[趋势过滤] {signal.code} {trend_info.trend.value} | {reason}")
-                    
-                    # 2026-03-25 V3 新增: 多周期趋势确认
-                    if not trend_info.multi_timeframe_confirmed:
-                        logger.warning(f"[多周期趋势] {signal.code} 日线与60分钟线趋势冲突，建议观望")
-                        # 不强制禁止，但记录警告
-                    
-                    # 2026-03-25 新增: 入场价格检查
-                    try:
-                        from app.risk.entry_price_checker import get_entry_price_checker
-                        price_checker = get_entry_price_checker()
+                    if ret_daily == 0:
+                        closes = data_daily['close'].values.tolist()
+                        intraday_closes = None
                         
-                        # 获取日内数据
-                        from futu import KLType
-                        ret_snap, snap_data = quote_ctx.get_market_snapshot([signal.code])
-                        if ret_snap == 0 and len(snap_data) > 0:
-                            day_high = float(snap_data.iloc[0].get('high_price', 0))
-                            day_low = float(snap_data.iloc[0].get('low_price', 0))
-                            day_open = float(snap_data.iloc[0].get('open_price', 0))
+                        if ret_60min == 0:
+                            intraday_closes = data_60min['close'].values.tolist()
+                            logger.debug(f"[趋势过滤] 获取日K {len(closes)}条, 60分钟K {len(intraday_closes)}条")
+                        else:
+                            logger.warning(f"[趋势过滤] 60分钟K获取失败，仅使用日K")
+                        
+                        # 重置趋势过滤器以加载新配置
+                        from app.risk.trend_filter import reset_trend_filter, get_trend_filter
+                        reset_trend_filter()
+                        trend_filter = get_trend_filter()
+                        
+                        # 从信号extra中获取ADX值 (2026-03-25 新增)
+                        adx_value = None
+                        if hasattr(signal, 'extra') and signal.extra:
+                            adx_value = signal.extra.get('adx')
+                        
+                        # 多周期趋势分析 (增强版：支持ADX + 多周期确认)
+                        trend_info = trend_filter.analyze_trend(
+                            closes, 
+                            intraday_closes=intraday_closes,
+                            adx=adx_value,
+                            code=signal.code
+                        )
+                        
+                        action_str = signal.action.value if hasattr(signal.action, 'value') else str(signal.action)
+                        should_trade, reason = trend_filter.should_trade(action_str, trend_info)
+                        
+                        if not should_trade:
+                            quote_ctx.close()
+                            failure_tracker.record_failure(signal.code, 'trend_filter', reason)
+                            logger.warning(f"[趋势过滤] {signal.code} 交易被阻止: {reason}")
+                            return TradeResult(success=False, message=reason)
+                        
+                        logger.info(f"[趋势过滤] {signal.code} {trend_info.trend.value} | {reason}")
+                        
+                        # 2026-03-25 V3 新增: 多周期趋势确认
+                        if not trend_info.multi_timeframe_confirmed:
+                            logger.warning(f"[多周期趋势] {signal.code} 日线与60分钟线趋势冲突，建议观望")
+                            # 不强制禁止，但记录警告
+                        
+                        # 2026-03-25 新增: 入场价格检查
+                        try:
+                            from app.risk.entry_price_checker import get_entry_price_checker
+                            price_checker = get_entry_price_checker()
                             
-                            if day_high > 0 and day_low > 0:
-                                price_result = price_checker.check_entry_price(
-                                    code=signal.code,
-                                    action=signal.action.value if hasattr(signal.action, 'value') else str(signal.action),
-                                    current_price=signal.price,
-                                    day_high=day_high,
-                                    day_low=day_low,
-                                    day_open=day_open
-                                )
+                            # 获取日内数据
+                            from futu import KLType
+                            if limiter.acquire(timeout=10):
+                                ret_snap, snap_data = quote_ctx.get_market_snapshot([signal.code])
+                                limiter.record()
+                            else:
+                                ret_snap, snap_data = -1, None
+                            if ret_snap == 0 and len(snap_data) > 0:
+                                day_high = float(snap_data.iloc[0].get('high_price', 0))
+                                day_low = float(snap_data.iloc[0].get('low_price', 0))
+                                day_open = float(snap_data.iloc[0].get('open_price', 0))
                                 
-                                if not price_result.allowed:
-                                    quote_ctx.close()
-                                    failure_tracker.record_failure(signal.code, 'price_check', price_result.reason)
-                                    logger.warning(f"[价格检查] {signal.code} {price_result.reason}")
-                                    return TradeResult(success=False, message=price_result.reason)
-                                
-                                if price_result.warning:
-                                    logger.warning(f"[价格检查] {signal.code} {price_result.warning}")
-                                else:
-                                    logger.info(f"[价格检查] {signal.code} {price_result.reason}")
-                    except Exception as e:
-                        logger.warning(f"[价格检查] 检查失败，跳过: {e}")
-                    
-                else:
-                    # 2026-03-27 修复: 日K获取失败时应拒绝交易，而非跳过检查
-                    logger.warning(f"[趋势过滤] {signal.code} 日K获取失败，拒绝交易以确保安全")
+                                if day_high > 0 and day_low > 0:
+                                    price_result = price_checker.check_entry_price(
+                                        code=signal.code,
+                                        action=signal.action.value if hasattr(signal.action, 'value') else str(signal.action),
+                                        current_price=signal.price,
+                                        day_high=day_high,
+                                        day_low=day_low,
+                                        day_open=day_open
+                                    )
+                                    
+                                    if not price_result.allowed:
+                                        quote_ctx.close()
+                                        failure_tracker.record_failure(signal.code, 'price_check', price_result.reason)
+                                        logger.warning(f"[价格检查] {signal.code} {price_result.reason}")
+                                        return TradeResult(success=False, message=price_result.reason)
+                                    
+                                    if price_result.warning:
+                                        logger.warning(f"[价格检查] {signal.code} {price_result.warning}")
+                                    else:
+                                        logger.info(f"[价格检查] {signal.code} {price_result.reason}")
+                        except Exception as e:
+                            logger.warning(f"[价格检查] 检查失败，跳过: {e}")
+                        
+                    else:
+                        # 2026-03-27 修复: 日K获取失败时应拒绝交易，而非跳过检查
+                        logger.warning(f"[趋势过滤] {signal.code} 日K获取失败，拒绝交易以确保安全")
+                        quote_ctx.close()
+                        failure_tracker.record_failure(signal.code, 'trend_filter', '日K数据获取失败')
+                        return TradeResult(success=False, message="趋势过滤数据获取失败，拒绝交易")
                     quote_ctx.close()
-                    failure_tracker.record_failure(signal.code, 'trend_filter', '日K数据获取失败')
-                    return TradeResult(success=False, message="趋势过滤数据获取失败，拒绝交易")
-                quote_ctx.close()
-            except Exception as e:
-                # 2026-03-27 修复: 异常时拒绝交易，而非跳过
-                logger.warning(f"[趋势过滤] {signal.code} 检查失败: {e}，拒绝交易")
-                failure_tracker.record_failure(signal.code, 'trend_filter', str(e))
-                return TradeResult(success=False, message=f"趋势过滤检查失败: {e}")
+                except Exception as e:
+                    # 2026-03-27 修复: 异常时拒绝交易，而非跳过
+                    logger.warning(f"[趋势过滤] {signal.code} 检查失败: {e}，拒绝交易")
+                    failure_tracker.record_failure(signal.code, 'trend_filter', str(e))
+                    return TradeResult(success=False, message=f"趋势过滤检查失败: {e}")
             
             risk_result = self.risk_manager.check_before_trade(signal)
             
@@ -734,18 +1033,69 @@ class TradeExecutor:
             
             logger.debug(f"风控检查通过：{risk_result.details}")
 
+        # 2026-04-15 新增: 仓位资金安全水位检查 (仅开仓/补仓)
+        if trade_type in ('OPEN', 'ADD'):
+            try:
+                sizing_ok, sizing_reason = self._check_position_sizing(signal, trade_type)
+                if not sizing_ok:
+                    logger.warning(f"[资金安全] {signal.code} {sizing_reason}")
+                    failure_tracker.record_failure(signal.code, 'position_sizing', sizing_reason)
+                    return TradeResult(success=False, message=sizing_reason)
+            except Exception as e:
+                logger.debug(f"仓位资金检查失败 (非阻塞): {e}")
+
         if trade_type == 'OPEN':
             return self._execute_open(signal)
+        elif trade_type == 'ADD':
+            return self._execute_add_position(signal)
         else:
             return self._execute_close(signal)
 
     def _execute_open(self, signal: Signal) -> TradeResult:
         """
         执行开仓交易
-        1. 富途下单
-        2. 下单成功后创建持仓记录
-        3. 返回 position_id
+        Phase 2: 增加作战计划门禁检查
+        1. 检查是否符合今日作战计划
+        2. 富途下单
+        3. 下单成功后创建持仓记录
+        4. 返回 position_id
         """
+        # 🔴 Phase 2: 离场冷却期检查 (防震荡反复打脸)
+        try:
+            from app.trade_exit_manager import TradeExitManager
+            exit_mgr = TradeExitManager()
+            if exit_mgr.is_in_cooldown(signal.code):
+                logger.warning(f"⛔ [冷却期] 拒绝开仓 {signal.code}: 处于离场冷却期，禁止追入")
+                return TradeResult(success=False, message="处于离场冷却期")
+        except Exception as e:
+            logger.warning(f"⚠️ 冷却期检查异常 (放行): {e}")
+
+        # 🔴 Phase HK-1: 全局风险状态机门禁检查 (最高优先级)
+        try:
+            from app.pipeline.risk_state_machine import RiskStateMachine, RiskAction
+            sm = RiskStateMachine()
+            if not sm.is_trade_allowed(RiskAction.OPEN):
+                current_state = sm.get_state().value
+                logger.warning(f"🚫 [全局风控拦截] 拒绝开仓 {signal.code}: 系统处于 {current_state} 状态")
+                return TradeResult(success=False, message=f"全局风控拦截: {current_state}")
+        except Exception as e:
+            logger.error(f"⚠️ [全局风控] 检查异常 (放行): {e}")
+
+        # Phase 2: 作战计划门禁检查
+        try:
+            from app.pipeline.battle_plan import BattlePlanManager
+            plan_mgr = BattlePlanManager()
+            # 判断交易方向
+            direction = "BUY" if signal.action == SignalAction.BUY else "SELL"
+            allowed, reason = plan_mgr.check_open_trade(signal.code, direction)
+            if not allowed:
+                logger.warning(f"🚫 [作战计划门禁] 拒绝开仓 {signal.code}: {reason}")
+                return TradeResult(success=False, message=f"计划拦截: {reason}")
+            else:
+                logger.debug(f"✅ [作战计划门禁] 允许开仓 {signal.code}: {reason}")
+        except Exception as e:
+            logger.error(f"⚠️ [作战计划门禁] 检查异常 (放行): {e}")
+
         market = _detect_market(signal.code)
         currency = "US$" if market == "US" else "HK$"
 
@@ -786,16 +1136,25 @@ class TradeExecutor:
                 if signal.action == SignalAction.SELL:
                     # 做空开仓：获取当前买一价作为限价
                     from futu import OpenQuoteContext
+                    from app.utils.futu_limiter import get_global_limiter
+                    limiter = get_global_limiter()
+
                     quote_ctx = OpenQuoteContext(host=config.OPEND_HOST, port=config.OPEND_PORT)
-                    ret, snapshot = quote_ctx.get_market_snapshot([signal.code])
-                    if ret == 0 and len(snapshot) > 0:
-                        price = snapshot.iloc[0]['bid_price']  # 买一价
-                        order_type = OrderType.NORMAL  # 改用限价单
-                        logger.info(f"[做空开仓] 使用买一价 {price:.2f} 作为限价")
-                    else:
-                        price = signal.price  # 回退到信号价格
-                        order_type = OrderType.NORMAL
-                    quote_ctx.close()
+                    try:
+                        if limiter.acquire(timeout=10):
+                            ret, snapshot = quote_ctx.get_market_snapshot([signal.code])
+                            limiter.record()
+                        else:
+                            ret, snapshot = -1, None
+                        if ret == 0 and len(snapshot) > 0:
+                            price = snapshot.iloc[0]['bid_price']  # 买一价
+                            order_type = OrderType.NORMAL  # 改用限价单
+                            logger.info(f"[做空开仓] 使用买一价 {price:.2f} 作为限价")
+                        else:
+                            price = signal.price  # 回退到信号价格
+                            order_type = OrderType.NORMAL
+                    finally:
+                        quote_ctx.close()
                 else:
                     order_type = OrderType.MARKET
                     price = 0
@@ -818,6 +1177,44 @@ class TradeExecutor:
                 circuit_breaker.record_reject('订单金额超限')
                 return TradeResult(success=False, message=msg)
 
+            # P3 优化 (2026-04-26): 港股盘口价差预检 + 智能定价
+            # 辩证设计: 阈值可配置，定价改为主动吃单 (Bid+1Tick/Ask-1Tick) 而非死板的中位数
+            if order_type == OrderType.MARKET and market == "HK":
+                cfg = getattr(config, 'PHASE1_HK_OPT', {}).get('spread_check', {})
+                if cfg.get('enabled', True):
+                    max_spread = cfg.get('max_spread_pct', 0.012) # 默认 1.2%
+                    try:
+                        from futu import OpenQuoteContext
+                        _spread_ctx = OpenQuoteContext(host=config.OPEND_HOST, port=config.OPEND_PORT)
+                        try:
+                            _sr, _ob = _spread_ctx.get_order_book(signal.code, num=1)
+                            if _sr == 0 and _ob is not None and len(_ob.get('Bid', [])) > 0 and len(_ob.get('Ask', [])) > 0:
+                                _bid = _ob['Bid'][0][0]
+                                _ask = _ob['Ask'][0][0]
+                                if _bid > 0 and _ask > 0:
+                                    _spread_pct = (_ask - _bid) / ((_bid + _ask) / 2)
+                                    if _spread_pct > max_spread:
+                                        # 智能限价逻辑
+                                        _mid = (_bid + _ask) / 2
+                                        # 港交所报价单位阶梯
+                                        _tick = 0.01 if _mid < 0.5 else (0.05 if _mid < 2.0 else 0.1)
+                                        
+                                        if signal.action == SignalAction.BUY:
+                                            smart_price = _bid + _tick # 主动买一价
+                                        else:
+                                            smart_price = _ask - _tick # 主动卖一价
+                                            
+                                        logger.warning(
+                                            f"[价差过大] {signal.code} 价差={_spread_pct:.2%} > {max_spread:.1%}, "
+                                            f"转智能限价: {smart_price:.3f}"
+                                        )
+                                        order_type = OrderType.NORMAL
+                                        price = smart_price
+                        finally:
+                            _spread_ctx.close()
+                    except Exception as _sp_e:
+                        logger.debug(f"[价差检查] {signal.code} 异常(降级放行): {_sp_e}")
+
             logger.info(
                 f"准备下单：[{market}] {signal.code} {trd_side} "
                 f"qty={qty} type={order_type} price={price}"
@@ -839,21 +1236,37 @@ class TradeExecutor:
                 order_id = str(data.iloc[0]["order_id"]) if len(data) > 0 else "unknown"
                 
                 # ----------------------------------------------------------------
+                # P0 修复 (2026-04-26): 订单状态确认
+                # 原逻辑假设 ret==0 即成交，实际可能因资金不足/风控被拒。
+                # 若未真正成交，不应创建持仓，防止产生幽灵仓。
+                # ----------------------------------------------------------------
+                
                 # 获取真实成交价：市价单下单后查询实际成交均价
                 # 避免使用 signal.price（多个K线的均值）作为 entry_price，
                 # 否则止损止盈价基准不准确，导致开仓后立刻亏损平仓
                 # ----------------------------------------------------------------
                 actual_entry_price = signal.price  # 默认值
+                order_status = "UNKNOWN"
+                is_filled = False
+                
                 try:
                     import time as _time
                     _time.sleep(0.3)  # 等待成交数据落盘
                     ret_order, order_data = trd_ctx.order_list_query(order_id=order_id, trd_env=trd_env)
                     if ret_order == 0 and len(order_data) > 0:
+                        order_status = order_data.iloc[0].get('order_status', '')
                         dealt_avg = float(order_data.iloc[0].get('dealt_avg_price', 0))
+                        dealt_qty = float(order_data.iloc[0].get('qty', 0))
+                        
+                        # 检查订单状态：拒绝 FAILED 或 CANCELLED 的订单，防止创建幽灵仓
+                        # Futu 状态: SUBMITTING, SUBMITTED, WAITING, FULLY_DEALT, PART_DEALT, CANCELLING, PART_CANCELLED, CANCELLED, FAILED
+                        if order_status in ['FAILED', 'CANCELLED', 'DELETED']:
+                            logger.error(f"🚨 [订单失败] {signal.code} Status={order_status}, 拒绝创建持仓")
+                            return TradeResult(success=False, message=f"Order {order_status}")
+
                         if dealt_avg > 0:
                             actual_entry_price = dealt_avg
-                            logger.info(f"[真实成交价] {signal.code} dealt_avg_price={dealt_avg:.4f} (原信号均价={signal.price:.4f})")
-                            # 记录滑点数据供健康度看板使用（最多保留200条）
+                            logger.info(f"[真实成交价] {signal.code} dealt_avg_price={dealt_avg:.4f}")
                             if signal.price > 0:
                                 self._slippage_records.append((signal.price, dealt_avg, signal.code))
                                 if len(self._slippage_records) > 200:
@@ -861,17 +1274,34 @@ class TradeExecutor:
                         else:
                             # 市价单尚未完全成交时，用快照最新价兜底
                             try:
-                                ret_s, snap = trd_ctx.get_market_snapshot([signal.code])
+                                from app.utils.futu_limiter import get_global_limiter
+                                _limiter = get_global_limiter()
+                                if _limiter.acquire(timeout=5):
+                                    ret_s, snap = trd_ctx.get_market_snapshot([signal.code])
+                                    _limiter.record()
+                                else:
+                                    ret_s, snap = -1, None
                                 if ret_s == 0 and len(snap) > 0:
                                     last_price = float(snap.iloc[0].get('last_price', 0))
                                     if last_price > 0:
                                         actual_entry_price = last_price
                                         logger.info(f"[成交价兜底] {signal.code} last_price={last_price:.4f}")
-                            except Exception:
-                                pass
+                            except Exception as e:
+                                logger.debug(f"[成交价兜底] 快照查询异常: {e}，使用信号价格兜底")
                 except Exception as ep:
                     logger.warning(f"[成交价查询失败] {signal.code}: {ep}，使用信号价格 {signal.price:.4f}")
                 
+                # --- Phase 2 Attribution Hook (Execution Result) ---
+                try:
+                    from app.attribution.chain import update_execution_result
+                    signal_price = signal.price if signal.price > 0 else actual_entry_price
+                    slippage = actual_entry_price - signal_price
+                    trace_id = getattr(signal, 'trace_id', '')
+                    if trace_id:
+                        update_execution_result(trace_id, actual_entry_price, slippage)
+                except Exception as e:
+                    logger.debug(f"归因记录失败 (Execution): {e}")
+
                 # 获取动态止盈止损参数 (2026-03-17 新增)
                 stop_loss = dynamic_exit_manager.get_stop_loss()
                 take_profit = dynamic_exit_manager.get_take_profit()
@@ -887,6 +1317,16 @@ class TradeExecutor:
                 take_profit_price = dynamic_exit_manager.get_take_profit_price_with_fees(
                     actual_entry_price, qty, DEFAULT_FEES
                 )
+                
+                # 2026-04-24 修复: 防御性校验 — 止损价绝不能等于或高于入场价
+                # 防止因竞态/DB异常导致 stop_loss=entry_price 引发秒级止损
+                if stop_price >= actual_entry_price:
+                    logger.critical(
+                        f"🚨 [止损价异常] {signal.code} stop_price={stop_price:.4f} >= "
+                        f"entry_price={actual_entry_price:.4f}，强制使用 -3% 止损"
+                    )
+                    stop_price = round(actual_entry_price * (1 - 0.03), 4)
+                    take_profit_price = round(actual_entry_price * (1 + 0.10), 4)
                 
                 # 如果是做空，反转止盈止损方向
                 if signal.action == SignalAction.SELL:
@@ -917,7 +1357,123 @@ class TradeExecutor:
                         take_profit=take_profit_price,
                         signal_id=getattr(signal, 'id', None),
                         strategy=getattr(signal, 'strategy', None),
+                        trace_id=getattr(signal, 'trace_id', ''),  # Phase 1: 全链路归因 ID
                     )
+
+                    # 🔴 【P0 修复 2026-04-26】开仓后强制校验保护单
+                    # 原逻辑依赖 TradeExitManager.register_protection (mock 永远返回 True)，兜底永远不触发。
+                    # 新逻辑：回读 DB 中刚创建的 position.stop_loss，验证其非零且方向合理；
+                    # 失败 → 4 步兜底（重试 / HALT / 远价人工止损 / 红色告警）。
+                    _protection_ok = False
+                    _stop_loss_db = 0.0
+                    try:
+                        _pos = self.position_manager.get_position(position_id) if position_id else None
+                        _stop_loss_db = float(getattr(_pos, 'stop_loss', 0) or 0) if _pos else 0.0
+                        if signal.action == SignalAction.BUY:
+                            _protection_ok = 0 < _stop_loss_db < actual_entry_price
+                        else:  # SELL
+                            _protection_ok = _stop_loss_db > actual_entry_price
+                    except Exception as _e_check:
+                        logger.warning(f"[保护校验] {signal.code} 回读 DB 失败: {_e_check}")
+                        _protection_ok = False
+
+                    if not _protection_ok:
+                        # ① 重试 3 次（0.5s / 1s / 2s 指数退避），每次重写 stop_loss
+                        import time as _time
+                        for _attempt in range(3):
+                            _backoff = 0.5 * (2 ** _attempt)
+                            logger.warning(
+                                f"⚠️ [保护校验] {signal.code} 第{_attempt+1}/3 次重试 (等待{_backoff}s, stop_loss_db={_stop_loss_db:.4f})"
+                            )
+                            _time.sleep(_backoff)
+                            try:
+                                # 重写止损字段
+                                self.position_manager.update_stop_loss_take_profit(
+                                    signal.code,
+                                    stop_loss=stop_price,
+                                    take_profit=take_profit_price,
+                                )
+                                _pos2 = self.position_manager.get_position(position_id)
+                                _sl2 = float(getattr(_pos2, 'stop_loss', 0) or 0) if _pos2 else 0.0
+                                if signal.action == SignalAction.BUY:
+                                    _ok = 0 < _sl2 < actual_entry_price
+                                else:
+                                    _ok = _sl2 > actual_entry_price
+                                if _ok:
+                                    _protection_ok = True
+                                    _stop_loss_db = _sl2
+                                    logger.info(
+                                        f"✅ [保护校验] {signal.code} 重试成功于第{_attempt+1}次, stop_loss={_sl2:.4f}"
+                                    )
+                                    break
+                            except Exception as _e_retry:
+                                logger.error(f"[保护校验] 重试异常: {_e_retry}")
+
+                    if not _protection_ok:
+                        logger.critical(
+                            f"🚨 [P3] 保护校验持续失败! {signal.code} qty={qty} "
+                            f"entry={actual_entry_price:.4f} stop_loss_db={_stop_loss_db:.4f} — 启动全局 HALT + 人工止损"
+                        )
+                        # ② 切 HALT（阻止后续新开仓再次裸仓）
+                        try:
+                            from app.pipeline.risk_state_machine import RiskStateMachine, RiskState
+                            RiskStateMachine().set_state(
+                                RiskState.HALT,
+                                reason=f"protection_check_failed code={signal.code}",
+                                source="TradeExecutor.protection_check"
+                            )
+                        except Exception as _e_rsm:
+                            logger.error(f"[保护校验] HALT 切换失败: {_e_rsm}")
+
+                        # ③ 同步挂远价限价卖单作人工止损 (entry -3%, 不立即成交，留人工处置窗口)
+                        try:
+                            from futu import OrderType as _OT, TrdSide as _TS
+                            _emerg_price = round(actual_entry_price * (1 - 0.03), 4)
+                            _side = _TS.SELL if signal.action == SignalAction.BUY else _TS.BUY
+                            _ret_e, _data_e = trd_ctx.place_order(
+                                price=_emerg_price,
+                                qty=qty,
+                                code=signal.code,
+                                trd_side=_side,
+                                order_type=_OT.NORMAL,
+                                trd_env=trd_env,
+                                remark="emergency_stop_due_to_protection_failure",
+                            )
+                            if _ret_e == 0:
+                                logger.warning(
+                                    f"🔴 [人工止损] {signal.code} 已挂远价限价卖单 @ {_emerg_price:.4f}—等待运维接手"
+                                )
+                            else:
+                                logger.error(f"❌ [人工止损] 挂单失败: {_data_e}")
+                        except Exception as _e_emerg:
+                            logger.error(f"❌ [人工止损] 挂单异常: {_e_emerg}")
+
+                        # ④ 红色钉钉告警
+                        try:
+                            from app.notifier import get_dingtalk_notifier
+                            get_dingtalk_notifier().send_text(
+                                f"🚨🚨🚨 [FTSeek P0] 保护校验持续失败\n"
+                                f"标的: {signal.code}\n数量: {qty}\n开仓价: {actual_entry_price:.4f}\n"
+                                f"stop_loss_db: {_stop_loss_db:.4f}\n"
+                                f"已做: 切 HALT + 挂远价人工止损 (价格 -3%)\n"
+                                f"请运维立即登录富途确认持仓与订单状态"
+                            )
+                        except Exception as _e_dt:
+                            logger.error(f"[人工止损] 钉钉告警失败: {_e_dt}")
+
+                    # --- Phase 2 Attribution Hook (Slippage) ---
+                    try:
+                        from app.attribution import record_entry
+                        record_entry(
+                            trace_id=getattr(signal, 'trace_id', ''),
+                            code=signal.code,
+                            signal_price=signal.price,
+                            actual_price=actual_entry_price,
+                            context={"strategy": getattr(signal, 'strategy', ''), "order_type": order_type.value}
+                        )
+                    except Exception as e:
+                        logger.debug(f"归因记录失败 (Entry): {e}")
+                        
                     trade_type_label = 'OPEN'
                 else:
                     # 加仓：position_id 指向已有持仓（get_position 取第一条 OPEN）
@@ -1021,6 +1577,242 @@ class TradeExecutor:
             circuit_breaker.record_reject('执行异常')
             return TradeResult(success=False, message=msg)
 
+    def _execute_add_position(self, signal: Signal) -> TradeResult:
+        """
+        执行补仓交易 (2026-04-15 新增)
+        1. 获取现有持仓
+        2. 计算金字塔补仓数量
+        3. 富途下单
+        4. 更新持仓均价 (add_to_position)
+        """
+        market = _detect_market(signal.code)
+        currency = "US$" if market == "US" else "HK$"
+
+        # P3 修复 (2026-04-15): 记录执行质量监控开始
+        exec_monitor = get_execution_monitor()
+        order_type_str = "LIMIT"
+        record_id = exec_monitor.record_start(
+            code=signal.code,
+            signal_price=signal.price,
+            quantity=signal.quantity,
+            order_type=order_type_str,
+        )
+
+        try:
+            # 1. 获取现有持仓
+            position = self.position_manager.get_position(signal.code)
+            if position is None:
+                return TradeResult(success=False, message=f"补仓失败: 未找到 {signal.code} 持仓")
+
+            # 2. 计算金字塔补仓数量
+            add_count = self.position_manager.get_today_add_count(signal.code)
+            add_multipliers = getattr(config, 'MAX_ADD_MULTIPLIER', [1.0, 0.5, 0.25])
+            multiplier = add_multipliers[min(add_count, len(add_multipliers)-1)]
+            base_qty = position.quantity
+            add_qty = max(int(base_qty * multiplier), 100)  # 最小100股
+
+            # 对齐到整手
+            lot_size = config.HK_LOT_SIZES.get(signal.code, 100) if market == "HK" else 1
+            add_qty = (add_qty // lot_size) * lot_size
+            if add_qty < lot_size:
+                add_qty = lot_size
+
+            logger.info(
+                f"[补仓下单] {signal.code} | 现有 {base_qty} 股 | "
+                f"补仓 {add_qty} 股 (系数 {multiplier}) | "
+                f"价格 {signal.price}"
+            )
+
+            # 3. 富途下单
+            trd_ctx = self._get_trd_ctx(market)
+            trd_env = TrdEnv.SIMULATE if config.TRADE_ENV == 1 else TrdEnv.REAL
+
+            ret, data = trd_ctx.place_order(
+                price=signal.price,
+                qty=add_qty,
+                code=signal.code,
+                trd_side=TrdSide.BUY,
+                order_type=OrderType.NORMAL,
+                trd_env=trd_env,
+            )
+
+            if ret != 0:
+                msg = f"补仓下单失败: {data}"
+                logger.error(f"[补仓失败] {signal.code} {msg}")
+                return TradeResult(success=False, message=msg)
+
+            order_id = str(data.get('order_id', '')) if isinstance(data, dict) else ''
+            if not order_id and hasattr(data, 'order_id'):
+                order_id = str(data.order_id)
+
+            # 4. 更新持仓均价
+            from datetime import datetime
+            add_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            position_id = self.position_manager.add_to_position(
+                code=signal.code,
+                add_qty=add_qty,
+                add_price=signal.price,
+                add_time=add_time,
+                signal_id=signal.id,
+            )
+
+            logger.info(
+                f"✅ 补仓成功: {signal.code} +{add_qty}股 @ {signal.price} | "
+                f"订单 {order_id} | 持仓ID {position_id}"
+            )
+
+            # P3 修复 (2026-04-15): 记录执行质量监控 - 成交
+            exec_monitor.record_fill(
+                record_id=record_id,
+                fill_price=signal.price,
+                retry_count=0,
+            )
+
+            return TradeResult(
+                success=True,
+                order_id=order_id,
+                position_id=position_id,
+                trade_type='ADD',
+                message=f"补仓成功 +{add_qty}股",
+            )
+
+        except Exception as e:
+            msg = f"[{market}] 补仓交易执行异常: {e}"
+            logger.error(msg, exc_info=True)
+            # P3 修复: 记录拒绝
+            try:
+                exec_monitor.record_reject(record_id=record_id, reason=str(e))
+            except Exception:
+                pass
+            return TradeResult(success=False, message=msg)
+
+    def _check_sector_concentration(self, code: str) -> tuple:
+        """
+        检查行业集中度 (2026-04-15 新增)
+
+        Returns:
+            (ok: bool, reason: str)
+        """
+        from app.factors.live_position_query import get_live_position_query
+        live_query = get_live_position_query(force_refresh=True)
+        active = live_query.get_active_positions(market='HK')
+
+        if not active:
+            return True, "无持仓"
+
+        # 行业映射 (基于持仓分析)
+        sector_map = {
+            'HK.09618': '互联网', 'HK.03690': '互联网', 'HK.01024': '互联网',
+            'HK.00981': '半导体', 'HK.01347': '半导体',
+            'HK.01378': '周期', 'HK.09868': '汽车', 'HK.09992': '消费',
+            'HK.01093': '医药', 'US.GOOG': '科技', 'US.JD': '互联网',
+            'US.MU': '半导体',
+        }
+
+        # 新股票的行业
+        new_sector = sector_map.get(code, '未知')
+
+        # 统计各行业持仓数
+        sector_count = {}
+        for p in active:
+            s = sector_map.get(p.code, '未知')
+            sector_count[s] = sector_count.get(s, 0) + 1
+
+        # 检查新股票所属行业
+        current_count = sector_count.get(new_sector, 0)
+        max_per_sector = getattr(config, 'MAX_POSITIONS_PER_SECTOR', 4)
+        sector_block = getattr(config, 'SECTOR_BLOCK_THRESHOLD', 40.0)
+
+        if current_count >= max_per_sector:
+            return False, f"行业 {new_sector} 已达上限 ({current_count}/{max_per_sector})"
+
+        # 检查行业占比
+        total = len(active)
+        if total > 0 and (current_count / total * 100) >= sector_block:
+            return False, f"行业 {new_sector} 集中度 {(current_count/total*100):.0f}% >= {sector_block}%"
+
+        return True, f"行业 {new_sector} 当前 {current_count} 只"
+
+    def _check_position_sizing(self, signal: Signal, trade_type: str) -> tuple:
+        """
+        检查仓位资金安全水位 (2026-04-15 新增)
+
+        Returns:
+            (ok: bool, reason: str)
+        """
+        from app.factors.position_sizing import get_position_sizing_manager
+        from app.factors.live_position_query import get_live_position_query
+
+        manager = get_position_sizing_manager()
+        live_query = get_live_position_query()
+
+        # 获取总资金和持仓
+        max_drawdown = getattr(config, 'MAX_PORTFOLIO_DRAWDOWN', 15.0)
+        daily_max = getattr(config, 'MAX_DAILY_LOSS_PCT', 3.0)
+        min_cash = getattr(config, 'MIN_CASH_RESERVE_PCT', 10.0)
+
+        # 估算总资金 (持仓市值 + 假设的现金)
+        active = live_query.get_active_positions()
+        total_mv = sum(p.market_val for p in active)
+        # 假设当前已投入 total_mv，总资金估算为 total_mv / (1 - min_cash/100)
+        total_capital = total_mv / (1 - min_cash / 100) if total_mv > 0 else 300000
+
+        # 构建持仓列表
+        positions_data = []
+        for p in active:
+            positions_data.append({
+                'code': p.code,
+                'market_val': p.market_val,
+                'pl_val': p.pl_val,
+                'pl_pct': p.pl_ratio,
+            })
+
+        # 风险评估
+        report = manager.assess_portfolio_risk(
+            total_capital=total_capital,
+            current_positions=positions_data,
+        )
+
+        # 1. 熔断检查
+        if report.drawdown_violation:
+            return False, (
+                f"资金回撤 {report.drawdown_pct:.1f}% ≥ {max_drawdown}%，"
+                f"触发清仓熔断，禁止所有交易"
+            )
+
+        # 2. 每日亏损检查
+        if report.daily_loss_violation:
+            return False, (
+                f"今日亏损 {abs(report.daily_loss_pct):.1f}% ≥ {daily_max}%，"
+                f"暂停当日交易"
+            )
+
+        # 3. 现金缓冲 (禁止新开仓) - 2026-04-15 修复: 边界值不应拦截
+        if report.cash_violation and report.cash_pct < min_cash - 0.5:  # 留0.5%容差
+            return False, (
+                f"现金缓冲 {report.cash_pct:.1f}% < {min_cash}%，"
+                f"禁止新开仓"
+            )
+
+        # 4. 单股违规
+        for v in report.position_violations:
+            if v['code'] == signal.code:
+                return False, (
+                    f"{signal.code} 占比 {v['pct']:.1f}% 已达上限 "
+                    f"{v['limit']:.0f}%，禁止继续买入"
+                )
+
+        # 5. 行业违规
+        sector = manager.get_sector(signal.code)
+        for v in report.sector_violations:
+            if v['sector'] == sector:
+                return False, (
+                    f"行业 {sector} 占比 {v['pct']:.1f}% 已达上限 "
+                    f"{v['limit']:.0f}%，禁止该行业新开仓"
+                )
+
+        return True, "资金安全水位正常"
+
     def _execute_close(self, signal: Signal) -> TradeResult:
         """
         执行平仓交易
@@ -1034,6 +1826,16 @@ class TradeExecutor:
         """
         market = _detect_market(signal.code)
         currency = "US$" if market == "US" else "HK$"
+
+        # P3 修复 (2026-04-15): 记录执行质量监控开始
+        exec_monitor = get_execution_monitor()
+        order_type_str = config.DEFAULT_ORDER_TYPE
+        record_id = exec_monitor.record_start(
+            code=signal.code,
+            signal_price=signal.price,
+            quantity=0,  # 平仓数量从持仓获取
+            order_type=order_type_str,
+        )
 
         try:
             # 1. 获取持仓
@@ -1070,6 +1872,16 @@ class TradeExecutor:
                     return TradeResult(success=False, message=msg)
                 if qty < original_qty:
                     logger.warning(f"[碎股处理] {signal.code} 持仓 {original_qty} 股，调整为整手 {qty} 股 (每手 {lot_size} 股)，剩余 {original_qty - qty} 股碎股暂无法平仓")
+            elif market == "US":
+                # 美股最小交易单位 1 股，向下取整到整数
+                original_qty = qty
+                qty = int(qty)
+                if qty < 1:
+                    msg = f"[{market}] 平仓失败：持仓 {original_qty} 股不足 1 股，无法平仓"
+                    logger.error(msg)
+                    return TradeResult(success=False, message=msg)
+                if qty != original_qty:
+                    logger.debug(f"[美股平仓] {signal.code} 持仓 {original_qty} 股，取整为 {qty} 股")
 
             if config.DEFAULT_ORDER_TYPE == "MARKET":
                 order_type = OrderType.MARKET
@@ -1155,7 +1967,8 @@ class TradeExecutor:
                         alt_acc = int(config.SIMULATE_ACCOUNT_ID)
                         if alt_acc not in alternative_acc_ids:
                             alternative_acc_ids.insert(0, alt_acc)
-                    except: pass
+                    except Exception as e:
+                        logger.debug(f"[备选账户] 解析 SIMULATE_ACCOUNT_ID 失败: {e}")
                     
                     switched = False
                     for alt_acc_id in alternative_acc_ids:
@@ -1224,11 +2037,29 @@ class TradeExecutor:
                 
                 # 更新持仓状态并计算盈亏
                 exit_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                
+                # --- Phase 2 Attribution Hook (Exit) ---
+                # 获取持仓中的 trace_id
+                pos_trace_id = getattr(position, 'trace_id', '') or 'N/A'
+                
                 pnl = self.position_manager.close_position(
                     code=signal.code,
                     exit_price=actual_exit_price,
                     exit_time=exit_time
                 )
+                
+                # 记录平仓归因
+                try:
+                    from app.attribution import record_exit
+                    record_exit(
+                        trace_id=pos_trace_id,
+                        code=signal.code,
+                        exit_price=actual_exit_price,
+                        pnl=pnl,
+                        context={"exit_time": exit_time}
+                    )
+                except Exception as e:
+                    logger.debug(f"归因记录失败 (Exit): {e}")
                 
                 # P0 修复：同步更新 trades 表 (确保与 positions 表一致)
                 try:
@@ -1258,10 +2089,51 @@ class TradeExecutor:
                 msg = f"[{market}] 平仓下单成功，order_id={order_id}, pnl={pnl:.2f}"
                 logger.info(msg)
 
-                # P0 修复：记录平仓成交到数据库
+                # P3 修复 (2026-04-15): 记录执行质量监控 - 成交
+                exec_monitor.record_fill(
+                    record_id=record_id,
+                    fill_price=actual_exit_price,
+                    retry_count=0,
+                )
+
+                # P0+P4 修复 (2026-04-15): 记录平仓成交到数据库 (status=CLOSED)
                 try:
-                    self.record_trade_to_db(order_id, signal, actual_exit_price, pnl)
-                    logger.info(f"✅ 平仓成交已记录到数据库")
+                    self.record_trade_to_db(order_id, signal, actual_exit_price, pnl, status='CLOSED')
+                    logger.info(f"✅ 平仓成交已记录到数据库 (status=CLOSED)")
+                    
+                    # ── Phase 2: 更新归因记录 (Attribution Update) ──
+                    try:
+                        from app.attribution.chain import update_trade_attribution_result
+                        exit_reason = signal.extra.get('exit_reason', signal.reason) if hasattr(signal, 'extra') and signal.extra else signal.reason
+                        holding_hours = (datetime.now() - signal.timestamp).total_seconds() / 3600 if hasattr(signal, 'timestamp') else 0
+                        
+                        update_trade_attribution_result(
+                            trace_id=signal.trace_id,
+                            code=signal.code,
+                            pnl=pnl,
+                            exit_reason=exit_reason,
+                            holding_hours=holding_hours,
+                            signal_strength=signal.score if hasattr(signal, 'score') else 0,
+                            signal_confidence=signal.confidence if hasattr(signal, 'confidence') else 0,
+                        )
+                        logger.debug(f"✅ 归因记录已更新: {signal.trace_id}")
+                        
+                        # ── Phase 3: 记录退出事件 (WAL) ──
+                        from app.core.event_log import log_event
+                        log_event(
+                            trace_id=signal.trace_id,
+                            event_type="EXIT",
+                            symbol=signal.code,
+                            data={
+                                "exit_price": actual_exit_price,
+                                "pnl": pnl,
+                                "reason": exit_reason,
+                                "holding_hours": holding_hours,
+                            }
+                        )
+                    except Exception as e:
+                        logger.debug(f"归因/日志更新异常: {e}")
+                        
                 except Exception as e:
                     logger.error(f"❌ 记录平仓成交失败：{e}")
 
@@ -1318,11 +2190,18 @@ class TradeExecutor:
             else:
                 msg = f"[{market}] 平仓下单失败：{data}"
                 logger.error(msg)
+                # P3 修复: 记录拒绝
+                exec_monitor.record_reject(record_id=record_id, reason=str(data))
                 return TradeResult(success=False, message=msg)
 
         except Exception as e:
             msg = f"[{market}] 平仓交易执行异常：{e}"
             logger.error(msg, exc_info=True)
+            # P3 修复: 记录拒绝
+            try:
+                exec_monitor.record_reject(record_id=record_id, reason=str(e))
+            except Exception:
+                pass
             return TradeResult(success=False, message=msg)
 
     def execute_partial_close(self, signal: Signal, close_ratio: float = 0.5) -> TradeResult:
@@ -1477,25 +2356,53 @@ class TradeExecutor:
             price: 成交价 (可选)
             pnl: 盈亏 (平仓时使用)
         """
-        import sqlite3
         from datetime import datetime
         from app import config
-        
+        from app.storage.database import ConnectionPool  # P0 修复：连接池
+
         DB_PATH = str(config.DATA_DIR / "ftseek.db")
-        
+
         try:
-            conn = sqlite3.connect(DB_PATH)
+            # P0 修复 (2026-04-12): 使用连接池替代直接 sqlite3.connect
+            pool = _get_trade_db_pool()
+            conn = pool.get_connection(timeout=30.0)
             cursor = conn.cursor()
             
             # 生成唯一 ID
             trade_id = f"trade_{order_id}"
             
             # 检查是否已存在
-            cursor.execute("SELECT id FROM trades WHERE id = ?", (trade_id,))
-            if cursor.fetchone():
-                logger.info(f"⏭️  成交已存在：{trade_id}")
-                conn.close()
-                return
+            cursor.execute("SELECT id, status FROM trades WHERE id = ?", (trade_id,))
+            existing = cursor.fetchone()
+            if existing:
+                existing_status = existing[1] if len(existing) > 1 else 'OPEN'
+                # 如果是平仓操作且已有OPEN记录，更新状态而非跳过
+                if status == 'CLOSED' and existing_status == 'OPEN':
+                    # 先查询现有记录的 entry_price 和 quantity 用于计算 pnl_percent
+                    cursor.execute("SELECT entry_price, quantity FROM trades WHERE id = ?", (trade_id,))
+                    row = cursor.fetchone()
+                    _ep = row[0] if row and row[0] and row[0] > 0 else 0
+                    _qty = row[1] if row and row[1] else 1
+                    _pnl_pct = pnl / (_ep * _qty) if _ep > 0 and _qty > 0 else 0
+                    _exit_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    cursor.execute("""
+                        UPDATE trades SET
+                            exit_price = ?,
+                            pnl = ?,
+                            exit_time = ?,
+                            exit_reason = ?,
+                            status = 'CLOSED',
+                            pnl_percent = ?
+                        WHERE id = ?
+                    """, (price, pnl, _exit_time, 'normal_close', _pnl_pct, trade_id))
+                    conn.commit()
+                    logger.info(f"✅ [数据库] 交易记录已更新为CLOSED：{trade_id}, pnl={pnl:.2f}, pnl%={_pnl_pct:.2%}")
+                    pool.return_connection(conn)
+                    return
+                else:
+                    logger.info(f"⏭️  成交已存在：{trade_id} (status={existing_status})")
+                    conn.close()
+                    return
             
             # 准备数据
             code = signal.code
@@ -1536,12 +2443,18 @@ class TradeExecutor:
             ))
             
             conn.commit()
-            conn.close()
-            
+            pool.return_connection(conn)  # P0 修复：归还连接到连接池
+
             logger.info(f"✅ [数据库] 成交记录成功：{code} {action} {quantity}股 @ {entry_price}")
-            
+
         except Exception as e:
             logger.error(f"❌ [数据库] 记录成交失败：{e}", exc_info=True)
+            # P0 修复：异常时也要归还连接
+            try:
+                pool.return_connection(conn)
+            except Exception as _e:
+                logger.debug(f'交易记录保存失败: {_e}')
+
             raise
 
 

@@ -78,6 +78,18 @@ class ConfluenceStrategyV2(BaseStrategy):
         # 内部状态
         self._buffers = defaultdict(lambda: IndicatorBuffer())
         self._prev_state: Dict[str, Dict] = defaultdict(dict)
+
+        # 因子信号历史缓存 {code: {factor: [+1/-1/0, ...]}}
+        # 保留最近 50 个信号方向，用于动态相关性计算
+        self._factor_signal_history: Dict[str, Dict[str, list]] = defaultdict(
+            lambda: defaultdict(list)
+        )
+        # 相关性结果缓存 {code: {(f1,f2): (correlation, kline_count)}}
+        # kline_count 用于判断缓存是否过期（每 20 根 K 线刷新）
+        self._correlation_cache: Dict[str, Dict] = defaultdict(dict)
+        self._kline_count: Dict[str, int] = defaultdict(int)
+        self._correlation_refresh_interval = self.config.get("correlation_refresh_interval", 20)
+        self._signal_history_maxlen = self.config.get("signal_history_maxlen", 50)
         
         logger.info(
             f"Confluence V2 已初始化 | 市场状态={self.use_market_regime} | "
@@ -137,6 +149,131 @@ class ConfluenceStrategyV2(BaseStrategy):
         # 信号质量调整：基于因子历史胜率动态加权/减权
         quality_factor = self._get_factor_quality_score(factor)
         return base_weight * quality_factor
+
+    # =========================================================================
+    # 动态相关性计算 (2026-04-11 新增，替代硬编码折扣)
+    # =========================================================================
+
+    def _compute_factor_correlation(self, factor1_signals: list, factor2_signals: list,
+                                     lookback: int = 20) -> Optional[float]:
+        """
+        计算两个因子历史信号的皮尔逊相关系数（不依赖 numpy，手动计算）
+
+        Args:
+            factor1_signals: 因子1 信号历史列表 (+1/-1/0)
+            factor2_signals: 因子2 信号历史列表 (+1/-1/0)
+            lookback: 用于计算的最近 N 个信号，默认 20
+
+        Returns:
+            float [-1, 1]: 相关系数；None 表示样本不足
+        """
+        if len(factor1_signals) < lookback or len(factor2_signals) < lookback:
+            return None  # 样本不足，调用方降级为硬编码折扣
+
+        seq1 = factor1_signals[-lookback:]
+        seq2 = factor2_signals[-lookback:]
+        n = len(seq1)
+
+        mean1 = sum(seq1) / n
+        mean2 = sum(seq2) / n
+        cov = sum((a - mean1) * (b - mean2) for a, b in zip(seq1, seq2)) / n
+        std1 = (sum((a - mean1) ** 2 for a in seq1) / n) ** 0.5
+        std2 = (sum((b - mean2) ** 2 for b in seq2) / n) ** 0.5
+
+        if std1 == 0 or std2 == 0:
+            return 0.0  # 方差为0意味着信号恒定，无法判断相关性
+        return cov / (std1 * std2)
+
+    def _get_correlation_discount(self, correlation: Optional[float], fallback: float = 0.7) -> float:
+        """
+        根据相关系数返回折扣系数。
+
+        映射规则（绝对值）:
+          >= 0.80 → 0.50  高度相关，大幅折扣
+          >= 0.60 → 0.70  中等相关（与原硬编码值一致）
+          >= 0.40 → 0.85  弱相关，轻微折扣
+          <  0.40 → 0.95  几乎无关，几乎不折扣
+
+        Args:
+            correlation: 皮尔逊相关系数；None 时返回 fallback
+            fallback: 样本不足时使用的默认折扣（保持原行为）
+
+        Returns:
+            float: 折扣系数
+        """
+        if correlation is None:
+            return fallback
+        abs_corr = abs(correlation)
+        if abs_corr >= 0.80:
+            return 0.50
+        elif abs_corr >= 0.60:
+            return 0.70
+        elif abs_corr >= 0.40:
+            return 0.85
+        else:
+            return 0.95
+
+    def _update_factor_signal_history(self, code: str, factors: Dict[str, Dict]) -> None:
+        """
+        将本轮各因子的方向记录到信号历史缓存。
+        未出现的因子记录 0（无方向），保持各序列长度一致。
+
+        Args:
+            code: 股票代码
+            factors: _evaluate_factors 返回的因子字典
+        """
+        all_tracked = ["rsi", "macd", "bollinger", "supertrend", "ma_cross", "volume"]
+        hist = self._factor_signal_history[code]
+        maxlen = self._signal_history_maxlen
+
+        for factor in all_tracked:
+            direction = factors.get(factor, {}).get("direction", 0)
+            hist[factor].append(direction)
+            if len(hist[factor]) > maxlen:
+                hist[factor] = hist[factor][-maxlen:]
+
+    def _get_dynamic_discount(self, code: str, factor_name: str, peer_factor: str,
+                               fallback: float = 0.7) -> float:
+        """
+        获取两个因子之间的动态折扣系数，优先使用缓存。
+
+        Args:
+            code: 股票代码
+            factor_name: 需要被折扣的因子
+            peer_factor: 同向触发折扣的对照因子
+            fallback: 样本不足时的默认折扣
+
+        Returns:
+            float: 折扣系数
+        """
+        cache_key = (factor_name, peer_factor)
+        cache = self._correlation_cache[code]
+        current_count = self._kline_count[code]
+
+        # 检查缓存是否有效（未超过刷新间隔）
+        if cache_key in cache:
+            cached_corr, cached_at = cache[cache_key]
+            if current_count - cached_at < self._correlation_refresh_interval:
+                return self._get_correlation_discount(cached_corr, fallback)
+
+        # 缓存过期或不存在，重新计算
+        hist = self._factor_signal_history[code]
+        seq1 = hist.get(factor_name, [])
+        seq2 = hist.get(peer_factor, [])
+        correlation = self._compute_factor_correlation(seq1, seq2)
+
+        # 更新缓存
+        cache[cache_key] = (correlation, current_count)
+
+        discount = self._get_correlation_discount(correlation, fallback)
+        if correlation is not None:
+            logger.debug(
+                f"[动态相关性] {code} {factor_name}↔{peer_factor} "
+                f"corr={correlation:.3f} → 折扣={discount:.2f}"
+            )
+        return discount
+
+    # =========================================================================
 
     def _get_factor_quality_score(self, factor: str) -> float:
         """
@@ -306,6 +443,9 @@ class ConfluenceStrategyV2(BaseStrategy):
                 weight = self._get_factor_weight("volume", regime)
                 factors["volume"] = {"direction": direction, "weight": weight, "reason": reason}
 
+        # 记录本轮因子信号方向到历史缓存
+        self._update_factor_signal_history(code, factors)
+
         return factors
 
     def on_kline(self, code: str, kline: dict, kline_type: str) -> Optional[Signal]:
@@ -314,6 +454,7 @@ class ConfluenceStrategyV2(BaseStrategy):
 
         buf = self._buffers[code]
         buf.push_kline(kline)
+        self._kline_count[code] += 1
 
         # 检查数据是否足够
         min_periods = max(
@@ -346,23 +487,38 @@ class ConfluenceStrategyV2(BaseStrategy):
             # 检查是否有相关因子同向确认
             correlation_discount = 1.0
 
-            # RSI + Bollinger 同时确认 → Bollinger 权重打 7 折 (振荡器类高度相关)
+            # RSI + Bollinger 同时确认 → Bollinger 权重动态折扣 (振荡器类高度相关)
             if factor_name == "bollinger" and "rsi" in factors:
                 if factors["rsi"]["direction"] == direction:
-                    correlation_discount = 0.7
-                    logger.debug(f"[因子相关性] {code} RSI+Bollinger 同向，Bollinger 权重打 7 折")
+                    correlation_discount = self._get_dynamic_discount(
+                        code, "bollinger", "rsi", fallback=0.7
+                    )
+                    logger.debug(
+                        f"[因子相关性] {code} RSI+Bollinger 同向，"
+                        f"Bollinger 权重折扣={correlation_discount:.2f}"
+                    )
 
-            # MACD + MA Cross 同时确认 → MA Cross 权重打 7 折 (趋势类高度相关)
+            # MACD + MA Cross 同时确认 → MA Cross 权重动态折扣 (趋势类高度相关)
             if factor_name == "ma_cross" and "macd" in factors:
                 if factors["macd"]["direction"] == direction:
-                    correlation_discount = 0.7
-                    logger.debug(f"[因子相关性] {code} MACD+MA Cross 同向，MA Cross 权重打 7 折")
+                    correlation_discount = self._get_dynamic_discount(
+                        code, "ma_cross", "macd", fallback=0.7
+                    )
+                    logger.debug(
+                        f"[因子相关性] {code} MACD+MA Cross 同向，"
+                        f"MA Cross 权重折扣={correlation_discount:.2f}"
+                    )
 
-            # SuperTrend + Bollinger 同时确认 → SuperTrend 权重打 8 折 (波动率类相关)
+            # SuperTrend + Bollinger 同时确认 → SuperTrend 权重动态折扣 (波动率类相关)
             if factor_name == "supertrend" and "bollinger" in factors:
                 if factors["bollinger"]["direction"] == direction:
-                    correlation_discount = 0.8
-                    logger.debug(f"[因子相关性] {code} SuperTrend+Bollinger 同向，SuperTrend 权重打 8 折")
+                    correlation_discount = self._get_dynamic_discount(
+                        code, "supertrend", "bollinger", fallback=0.8
+                    )
+                    logger.debug(
+                        f"[因子相关性] {code} SuperTrend+Bollinger 同向，"
+                        f"SuperTrend 权重折扣={correlation_discount:.2f}"
+                    )
 
             adjusted_factors[factor_name] = {
                 **factor_data,
@@ -378,6 +534,10 @@ class ConfluenceStrategyV2(BaseStrategy):
         bearish_score = sum(
             f["weight"] for f in adjusted_factors.values() if f["direction"] < 0
         )
+
+        # 计算平均相关性折扣 (流入共识引擎置信度调节)
+        discounts = [f.get("discount", 1.0) for f in adjusted_factors.values()]
+        avg_correlation_discount = sum(discounts) / len(discounts) if discounts else 1.0
 
         logger.info(
             f"[{code}] 因子得分调整 | 原始多={sum(factors[f]['weight'] for f in factors if factors[f]['direction']>0):.1f} "
@@ -427,8 +587,10 @@ class ConfluenceStrategyV2(BaseStrategy):
                     effective_min_factors = max(2, effective_min_factors - 1)
                     logger.debug(f"[动态因子] {code} 强趋势+ADX={adx_val:.1f}，最小因子数降低至{effective_min_factors}")
         
-        # 生成信号
-        if bullish_score >= effective_min_factors and (adx_val is None or adx_val >= self.adx_threshold):
+        # P0 修复: 移除硬编码 ADX 门槛 (默认 25)，改为动态因子数调整 (逻辑见上方)
+        # 原逻辑: ADX < 25 直接拦截，导致震荡市 60% 信号丢失
+        # 新逻辑: 允许低 ADX 信号通过，但上方逻辑已要求更多因子共振，实现动态过滤
+        if bullish_score >= effective_min_factors:
             bullish_factors = [k for k, v in factors.items() if v["direction"] > 0]
             factor_details = "\n".join(
                 f"  - {k}: {v['reason']} (权重{v['weight']:.1f})"
@@ -451,6 +613,8 @@ class ConfluenceStrategyV2(BaseStrategy):
                     "bearish_score": bearish_score,
                     "adx": round(adx_val, 1) if adx_val else None,
                     "market_regime": regime.regime_type.value if regime else None,
+                    "conviction": min(1.5, max(0.3, bullish_score / max(1, effective_min_factors + 1))),
+                    "avg_correlation_discount": round(avg_correlation_discount, 3),
                 },
             )
 
@@ -477,6 +641,8 @@ class ConfluenceStrategyV2(BaseStrategy):
                     "bearish_score": bearish_score,
                     "adx": round(adx_val, 1) if adx_val else None,
                     "market_regime": regime.regime_type.value if regime else None,
+                    "conviction": min(1.5, max(0.3, bullish_score / max(1, effective_min_factors + 1))),
+                    "avg_correlation_discount": round(avg_correlation_discount, 3),
                 },
             )
 

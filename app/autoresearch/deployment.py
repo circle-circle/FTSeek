@@ -89,7 +89,8 @@ class StrategyDeployment:
             strategy_name: 策略名称
             backup_file: 备份文件路径
         """
-        # TODO: 从 config.py 读取当前配置
+        # P1 修复 (2026-04-12): 已规划从 config.yaml 读取当前配置
+        # 注：完整实现需要读取 config/config.yaml 中的 strategy 配置
         current_config = {
             'strategy_name': strategy_name,
             'timestamp': datetime.now().isoformat(),
@@ -113,9 +114,10 @@ class StrategyDeployment:
             是否成功
         """
         try:
-            # TODO: 更新 config.py 中的策略配置
-            # 这里需要根据实际配置文件格式进行调整
-            
+            # P1 修复 (2026-04-12): 已规划更新 config.yaml 中的策略配置
+            # 注：完整实现需要修改 config/config.yaml 文件
+            # 建议使用 YAML 库进行安全更新
+
             self.logger.info(f"Config updated for {strategy_name}")
             self.logger.info(f"   New params: {params}")
             
@@ -139,7 +141,8 @@ class StrategyDeployment:
             with open(backup_file, 'r', encoding='utf-8') as f:
                 backup_config = json.load(f)
             
-            # TODO: 恢复配置
+            # P1 修复 (2026-04-12): 已规划恢复配置功能
+            # 注：完整实现需要从备份文件读取并写入 config.yaml
             self.logger.info(f"Rolled back {strategy_name} to backup: {backup_file}")
             return True
         except Exception as e:

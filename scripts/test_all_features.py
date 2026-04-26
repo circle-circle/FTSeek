@@ -50,7 +50,7 @@ import requests
 try:
     response = requests.get("http://localhost:8888/health", timeout=5)
     test_result("HTTP 健康检查", response.status_code == 200)
-except:
+except Exception:
     test_result("HTTP 健康检查", False)
 
 # 检查 cron 配置

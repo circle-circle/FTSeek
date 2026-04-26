@@ -262,7 +262,7 @@ class WeightEngine:
         
         # 检查新闻源数量
         if len(sources) < self.config.min_news_sources:
-            logger.warning(f"Only {len(sources)} news sources (min: {self.config.min_news_sources})")
+            logger.debug(f"Only {len(sources)} news sources (min: {self.config.min_news_sources})")
         
         # 统计重大新闻
         major_count = 0

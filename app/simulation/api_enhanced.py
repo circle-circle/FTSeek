@@ -2,9 +2,11 @@
 模拟盘增强 API - 支持美股/港股区分和交易 - 信号 - 策略联动
 """
 from fastapi import APIRouter, Query, HTTPException
+import sqlite3
+from app.storage.repository import get_db
 from typing import List, Dict, Any, Optional
 from datetime import datetime
-import sqlite3
+
 from pathlib import Path
 
 router = APIRouter()
@@ -16,7 +18,6 @@ def get_db_connection():
     conn = sqlite3.connect(str(DB_PATH))
     conn.row_factory = sqlite3.Row
     return conn
-
 @router.get("/positions")
 async def get_positions(market: Optional[str] = None):
     """

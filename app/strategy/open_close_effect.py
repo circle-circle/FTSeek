@@ -159,8 +159,11 @@ class OpenCloseEffectStrategy(BaseStrategy):
         self._close_array[code][:n] = close_list
         self._volume_array[code][:n] = volume_list
 
-        # 解析时间
-        kline_time = datetime.strptime(kline['time'], '%Y-%m-%d %H:%M:%S')
+        # 解析时间 (Futu 字段名：time_key)
+        kline_time_str = kline.get('time_key', '')
+        if not kline_time_str:
+            return None
+        kline_time = datetime.strptime(kline_time_str, '%Y-%m-%d %H:%M:%S')
 
         # 1. 检查开盘突破
         if self._is_opening_window(kline_time):

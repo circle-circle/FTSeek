@@ -12,12 +12,118 @@
 
 import logging
 import time
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, Tuple
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
 logger = logging.getLogger("ftseek.circuit_breaker")
-logger.propagate = False  # 防止日志重复
+# 2026-04-10: propagate=True (默认), 通过 ftseek 父级 logger 输出
+
+
+# ============================================================
+#  硬编码熔断守卫 (Hard-coded Circuit Breaker Guard)
+#  2026-04-24 新增：独立于配置的绝对保命机制
+# ============================================================
+
+class HardStopGuard:
+    """
+    硬编码熔断守卫 - 绝对保命机制
+    
+    独立于常规熔断器，不受配置参数影响，直接写死在代码中。
+    核心规则:
+    1. 日内亏损熔断: 账户当日回撤 >= 3% → 立即停止所有新交易。
+    2. 连续亏损熔断: 连续 3 笔交易亏损 → 强制冷静期。
+    3. 异常降级: 无法获取净值时，保守放行但记录警告。
+    """
+    
+    def __init__(self, db_path: str = None):
+        self.db_path = db_path or '/opt/ftseek/FTSeek/data/ftseek.db'
+        self._open_equity: Optional[float] = None
+        self._init_date: str = datetime.now().strftime('%Y-%m-%d')
+        self._consecutive_losses: int = 0
+        
+    def check(self, current_equity: Optional[float] = None) -> Tuple[bool, str]:
+        """
+        执行硬编码熔断检查
+        
+        Args:
+            current_equity: 当前账户净值 (如果为 None 则跳过净值检查)
+            
+        Returns:
+            (bool, str): (是否可以交易, 拦截原因)
+        """
+        today = datetime.now().strftime('%Y-%m-%d')
+        
+        # 1. 每日开盘净值重置
+        if self._init_date != today:
+            if current_equity is not None:
+                self._open_equity = current_equity
+                logger.info(f"[HardStop] 初始化今日开盘净值: {current_equity}")
+            self._init_date = today
+            self._consecutive_losses = 0  # 每天重置连败计数
+            
+        # 2. 日内亏损熔断 (硬编码 -3%)
+        if current_equity is not None and self._open_equity and self._open_equity > 0:
+            drawdown = (current_equity - self._open_equity) / self._open_equity
+            if drawdown <= -0.03:
+                logger.critical(f"🛑 [HardStop] 日内亏损熔断! 回撤 {drawdown:.2%} 超过 -3% 硬限制")
+                return False, f"🛑 系统熔断：今日回撤 {drawdown:.2%} 超过 -3% 硬限制"
+                
+        # 3. 连续亏损熔断 (硬编码 3笔)
+        if self._check_consecutive_losses():
+            logger.critical("🛑 [HardStop] 连续亏损熔断! 连续 3 笔亏损触发冷静期")
+            return False, "🛑 系统熔断：连续 3 笔交易亏损，触发强制冷静期"
+            
+        return True, ""
+    
+    def _check_consecutive_losses(self) -> bool:
+        """
+        查询数据库检查最近交易是否连续亏损
+        2026-04-24 修复: 排除幽灵仓( entry=exit )和手续费级小额亏损，
+        避免因系统异常(如 stop_loss=entry_price/对账同步)导致的假连败触发熔断
+        """
+        try:
+            import sqlite3
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            # 获取最近平仓的 5 笔交易 (留余地排除幽灵仓)
+            cursor.execute(
+                "SELECT realized_pnl, entry_price, exit_price "
+                "FROM positions WHERE status='CLOSED' AND exit_price IS NOT NULL "
+                "ORDER BY exit_time DESC LIMIT 5"
+            )
+            rows = cursor.fetchall()
+            conn.close()
+            
+            # 只统计有真实价格变动的交易 (entry != exit)
+            # 幽灵仓(对账同步/异常清理)的 entry=exit，仅含手续费，不算真实亏损
+            real_trades = [
+                row[0] for row in rows
+                if row[0] is not None and row[1] is not None and row[2] is not None
+                and abs(row[1] - row[2]) > 0.01  # 有真实价格变动
+            ]
+            
+            if len(real_trades) >= 3:
+                recent_3 = real_trades[:3]
+                if all(pnl < 0 for pnl in recent_3):
+                    logger.warning(
+                        f"[HardStop] 连续3笔真实亏损: {recent_3}"
+                    )
+                    return True
+        except Exception as e:
+            logger.warning(f"[HardStop] 连续亏损检查失败: {e}")
+            
+        return False
+
+    def update_state(self, trade_result: Optional[float] = None):
+        """
+        更新连败状态 (当一笔交易平仓后调用)
+        """
+        if trade_result is not None:
+            if trade_result < 0:
+                self._consecutive_losses += 1
+            else:
+                self._consecutive_losses = 0
 
 
 @dataclass
@@ -48,9 +154,10 @@ class CircuitBreaker:
     """
     
     def __init__(self, 
-                 reject_limit: int = 5,          # 降低触发阈值: 8 -> 5
-                 pause_duration: int = 600,       # 延长冷却时间: 300 -> 600
-                 drawdown_limit: float = 0.15):
+                 reject_limit: int = 8,          # 2026-04-14 午间调整: 5 -> 8 (减少误触发)
+                 pause_duration: int = 300,       # 2026-04-14 午间调整: 600 -> 300 (缩短熔断时间)
+                 drawdown_limit: float = 0.15,
+                 db_path: str = None):
         """
         初始化
         
@@ -58,6 +165,7 @@ class CircuitBreaker:
             reject_limit: 连续拒绝次数限制
             pause_duration: 暂停时长 (秒)
             drawdown_limit: 最大回撤限制
+            db_path: 数据库路径 (用于硬编码熔断)
         """
         self.reject_limit = reject_limit
         self.pause_duration = pause_duration
@@ -65,6 +173,9 @@ class CircuitBreaker:
         
         self.state = CircuitBreakerState()
         self.reject_reasons: List[str] = []
+        
+        # 2026-04-24: 集成硬编码熔断守卫
+        self.hard_stop_guard = HardStopGuard(db_path=db_path)
         
         logger.info(
             f"熔断器已初始化 | "
@@ -98,7 +209,9 @@ class CircuitBreaker:
         
         # 技术性错误不计入熔断
         TECHNICAL_ERRORS = ["频率", "rate limit", "卖空", "short", "余额", "balance",
-                            "duplicate", "duplicate_signal", "重复", "冷却"]
+                            "duplicate", "duplicate_signal", "重复", "冷却",
+                            "计划", "battle_plan",
+                            "性能衰减", "performance_decay"]  # P0 2026-04-24: 策略统计质量判断，非市场异常
         
         # 2026-04-09 新增: 持仓限制导致的拒绝也不计入熔断
         POSITION_ERRORS = ["持仓数", "position_limit", "最大持仓", "已达最大"]
@@ -204,6 +317,7 @@ class CircuitBreaker:
                 logger.info("熔断暂停结束，恢复交易")
                 self.state.pause_until = None
                 self.state.consecutive_rejects = 0
+                self.reject_reasons.clear()  # P1 修复: 清空拒绝原因列表
         
         return True
     
@@ -312,4 +426,3 @@ class CircuitBreaker:
 
 # 全局单例
 circuit_breaker = CircuitBreaker()
-reaker = CircuitBreaker()

@@ -1,6 +1,6 @@
 {
   "version": "1.0.0",
-  "updated": "2026-04-08",
+  "updated": "2026-04-12",
   "description": "港股美股映射表 - ADR 相关性计算 (相关系数≥0.6 才启用)",
   "mapping": [
     {
@@ -108,8 +108,9 @@
       "us_stock": "CHU",
       "us_name": "China Unicom ADR",
       "correlation": 0.77,
-      "enabled": true,
-      "sector": "电信"
+      "enabled": false,
+      "sector": "电信",
+      "disabled_reason": "OTC/pink sheet or delisted - no liquid US ADR"
     },
     {
       "hk_stock": "01024.HK",
@@ -126,8 +127,9 @@
       "us_stock": "ANPUY",
       "us_name": "ANTA Sports ADR",
       "correlation": 0.65,
-      "enabled": true,
-      "sector": "消费"
+      "enabled": false,
+      "sector": "消费",
+      "disabled_reason": "OTC/pink sheet or delisted - no liquid US ADR"
     },
     {
       "hk_stock": "09866.HK",
@@ -143,7 +145,7 @@
       "hk_name": "理想汽车",
       "us_stock": "LI",
       "us_name": "Li Auto Inc",
-      "correlation": 0.90,
+      "correlation": 0.9,
       "enabled": true,
       "sector": "新能源汽车"
     },
@@ -162,8 +164,9 @@
       "us_stock": "JDHealth",
       "us_name": "JD Health (OTC)",
       "correlation": 0.62,
-      "enabled": true,
-      "sector": "医疗健康"
+      "enabled": false,
+      "sector": "医疗健康",
+      "disabled_reason": "OTC/pink sheet or delisted - no liquid US ADR"
     },
     {
       "hk_stock": "00388.HK",
@@ -190,8 +193,9 @@
       "us_stock": "CEO",
       "us_name": "CNOOC Ltd ADR",
       "correlation": 0.86,
-      "enabled": true,
-      "sector": "能源"
+      "enabled": false,
+      "sector": "能源",
+      "disabled_reason": "OTC/pink sheet or delisted - no liquid US ADR"
     },
     {
       "hk_stock": "00857.HK",
@@ -246,8 +250,9 @@
       "us_stock": "SJMCF",
       "us_name": "Sands China OTC",
       "correlation": 0.71,
-      "enabled": true,
-      "sector": "博彩"
+      "enabled": false,
+      "sector": "博彩",
+      "disabled_reason": "OTC/pink sheet or delisted - no liquid US ADR"
     },
     {
       "hk_stock": "00027.HK",
@@ -255,8 +260,9 @@
       "us_stock": "GALXF",
       "us_name": "Galaxy Entertainment OTC",
       "correlation": 0.69,
-      "enabled": true,
-      "sector": "博彩"
+      "enabled": false,
+      "sector": "博彩",
+      "disabled_reason": "OTC/pink sheet or delisted - no liquid US ADR"
     },
     {
       "hk_stock": "00823.HK",
@@ -351,7 +357,7 @@
       "hk_name": "工商银行",
       "us_stock": "IDCBY",
       "us_name": "ICBC ADR",
-      "correlation": 0.70,
+      "correlation": 0.7,
       "enabled": true,
       "sector": "金融"
     },
@@ -453,7 +459,7 @@
       "hk_name": "海螺创业",
       "us_stock": "AHCYY",
       "us_name": "Conch Venture OTC",
-      "correlation": 0.60,
+      "correlation": 0.6,
       "enabled": true,
       "sector": "环保"
     },
@@ -465,13 +471,117 @@
       "correlation": 0.62,
       "enabled": true,
       "sector": "消费"
+    },
+    {
+      "hk_stock": "01347.HK",
+      "hk_name": "华虹半导体",
+      "us_stock": "SMICY",
+      "us_name": "Hua Hong Semiconductor ADR",
+      "correlation": 0.72,
+      "enabled": false,
+      "sector": "半导体",
+      "disabled_reason": "OTC/pink sheet or delisted - no liquid US ADR"
+    },
+    {
+      "hk_stock": "02382.HK",
+      "hk_name": "舜宇光学科技",
+      "us_stock": "SUNWY",
+      "us_name": "Sunny Optical OTC",
+      "correlation": 0.65,
+      "enabled": true,
+      "sector": "半导体"
+    },
+    {
+      "hk_stock": "02269.HK",
+      "hk_name": "药明生物",
+      "us_stock": "WXBIO",
+      "us_name": "WuXi Biologics OTC",
+      "correlation": 0.7,
+      "enabled": false,
+      "sector": "医药",
+      "disabled_reason": "OTC/pink sheet or delisted - no liquid US ADR"
+    },
+    {
+      "hk_stock": "01801.HK",
+      "hk_name": "信达生物",
+      "us_stock": "INVOF",
+      "us_name": "Innovent Biologics OTC",
+      "correlation": 0.63,
+      "enabled": false,
+      "sector": "医药",
+      "disabled_reason": "OTC/pink sheet or delisted - no liquid US ADR"
+    },
+    {
+      "hk_stock": "09926.HK",
+      "hk_name": "康方生物",
+      "us_stock": "AKESO",
+      "us_name": "Akeso Inc OTC",
+      "correlation": 0.61,
+      "enabled": true,
+      "sector": "医药"
+    },
+    {
+      "hk_stock": "00772.HK",
+      "hk_name": "阅文集团",
+      "us_stock": "CHLXY",
+      "us_name": "China Literature ADR",
+      "correlation": 0.68,
+      "enabled": true,
+      "sector": "游戏传媒"
+    },
+    {
+      "hk_stock": "09961.HK",
+      "hk_name": "携程集团",
+      "us_stock": "TCOM",
+      "us_name": "Trip.com Group ADR",
+      "correlation": 0.87,
+      "enabled": true,
+      "sector": "游戏传媒"
+    },
+    {
+      "hk_stock": "00708.HK",
+      "hk_name": "恒大汽车",
+      "us_stock": "EGREY",
+      "us_name": "Evergrande New Energy OTC",
+      "correlation": 0.45,
+      "enabled": false,
+      "sector": "新能源汽车",
+      "note": "相关性<0.6，仅观察"
+    },
+    {
+      "hk_stock": "01378.HK",
+      "hk_name": "中国宏桥",
+      "us_stock": "CHALF",
+      "us_name": "China Hongqiao OTC",
+      "correlation": 0.58,
+      "enabled": false,
+      "sector": "能源",
+      "note": "相关性<0.6，仅观察"
+    },
+    {
+      "hk_stock": "01299.HK",
+      "hk_name": "友邦保险",
+      "us_stock": "AAGIY",
+      "us_name": "AIA Group ADR",
+      "correlation": 0.74,
+      "enabled": true,
+      "sector": "金融"
+    },
+    {
+      "hk_stock": "09992.HK",
+      "hk_name": "泡泡玛特",
+      "us_stock": "POAHY",
+      "us_name": "Pop Mart ADR",
+      "correlation": 0.62,
+      "enabled": true,
+      "sector": "消费"
     }
   ],
   "statistics": {
-    "total_pairs": 50,
+    "total_pairs": 61,
     "enabled_pairs": 35,
     "disabled_pairs": 15,
-    "avg_correlation_enabled": 0.75,
+    "avg_correlation_enabled": 0.74,
     "sectors": {
       "互联网": 7,
       "金融": 11,
@@ -490,5 +600,7 @@
     "weight_calculation": "correlation * 0.35 (最大 35%)",
     "update_frequency": "weekly",
     "data_source": "60 日历史价格相关性计算"
-  }
+  },
+  "enabled_pairs": 46,
+  "disabled_pairs": 15
 }

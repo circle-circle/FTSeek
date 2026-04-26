@@ -12,6 +12,7 @@ MemoryCompressionEngine - 记忆压缩引擎
 """
 
 import json
+from app.storage.repository import get_db
 import os
 import sqlite3
 from typing import Any, Dict, List, Optional, Tuple
@@ -59,7 +60,8 @@ class MemoryCompressionEngine:
     def _connect(self) -> sqlite3.Connection:
         """获取数据库连接"""
         if self._conn is None:
-            self._conn = sqlite3.connect(self.db_path)
+            with get_db(self.db_path) as conn:
+                pass
             self._conn.row_factory = sqlite3.Row
         return self._conn
     

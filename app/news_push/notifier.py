@@ -6,7 +6,9 @@
 - Markdown 格式消息
 - 来源标识和优先级
 - 股票关联显示
-- 推送限流集成
+- 推送限流集成 (使用全局统一 notifier，共享限流计数器)
+
+2026-04-13 修复: 统一推送入口，所有模块共享同一个钉钉 webhook 和限流器。
 """
 import time
 import hmac
@@ -23,6 +25,9 @@ from collections import deque
 from app.news_push.config import DINGTALK_WEBHOOK_URL, DINGTALK_SECRET
 from app.news_push.collector import NewsItem
 from app.news_push.qwen_analyzer import AnalysisResult
+
+# 延迟导入 EventCluster (避免循环依赖)
+# from app.pipeline.event_clusterer import EventCluster
 
 logger = logging.getLogger("ftseek.news_push.notifier")
 logger.propagate = False  # 防止日志重复
@@ -61,10 +66,15 @@ class NewsNotifier:
     }
     
     def __init__(self, webhook_url: str = None, secret: str = None):
-        self.webhook_url = webhook_url or DINGTALK_WEBHOOK_URL
-        self.secret = secret or DINGTALK_SECRET
+        # 2026-04-13 修复: 使用全局 notifier 确保共享 webhook/secret/限流
+        from app.notifier import get_dingtalk_notifier
+        self._global = get_dingtalk_notifier()
         
-        # 限流
+        # 兼容旧接口: 仍然保存 webhook_url 和 secret 属性
+        self.webhook_url = self._global.webhook_url
+        self.secret = self._global.secret
+        
+        # 保留旧的限流器作为后备（当全局 notifier 未配置时）
         self._send_times: deque = deque(maxlen=60)
         self._lock = threading.Lock()
         
@@ -72,7 +82,7 @@ class NewsNotifier:
         self.max_per_minute = 18
         
         if self.webhook_url:
-            logger.info(f"✅ 新闻推送器已初始化")
+            logger.info(f"[新闻推送器] 已绑定全局通知器")
         else:
             logger.warning("⚠️  钉钉 Webhook URL 未配置")
     
@@ -93,7 +103,12 @@ class NewsNotifier:
         return f"{self.webhook_url}&timestamp={timestamp}&sign={sign}"
     
     def _can_send(self) -> bool:
-        """检查限流"""
+        """检查限流 - 优先使用全局 notifier 的限流"""
+        # 优先使用全局 notifier 的限流
+        if self._global and self._global.webhook_url:
+            return self._global._can_send()
+        
+        # 后备: 使用本地限流
         now = time.time()
         with self._lock:
             while self._send_times and now - self._send_times[0] > 60:
@@ -101,18 +116,27 @@ class NewsNotifier:
             return len(self._send_times) < self.max_per_minute
     
     def _record_send(self):
-        """记录发送"""
+        """记录发送 - 全局和本地都记录"""
+        if self._global:
+            self._global._record_send()
         with self._lock:
             self._send_times.append(time.time())
     
     def _do_post(self, payload: dict) -> bool:
-        """执行 POST"""
+        """执行 POST - 使用全局 notifier 的推送能力"""
+        # 优先使用全局 notifier
+        if self._global and self._global.webhook_url:
+            return self._global._do_post(payload)
+        
+        # 后备: 直接 POST（兼容旧模式，仅当全局 notifier 未配置时）
+        if not self.webhook_url:
+            logger.error("钉钉 Webhook URL 未配置")
+            return False
         try:
             import requests
             url = self._sign_url()
             resp = requests.post(url, json=payload, timeout=10)
             result = resp.json()
-            
             if result.get('errcode') == 0:
                 self._record_send()
                 return True
@@ -254,6 +278,116 @@ class NewsNotifier:
         
         return "\n".join(lines)
     
+    def _build_event_pack_markdown(self, cluster) -> str:
+        """
+        构建事件包 Markdown 消息 (用于钉钉推送)
+
+        将一个 EventCluster (多条相关新闻聚合) 格式化为可读的事件摘要。
+
+        Args:
+            cluster: EventCluster 对象 (from app.pipeline.event_clusterer)
+
+        Returns:
+            Markdown 文本
+        """
+        # 分类中文映射
+        CATEGORY_MAP = {
+            'earnings': '财报',
+            'ma': '并购/收购',
+            'regulation': '监管/政策',
+            'product': '新产品/技术',
+            'macro': '宏观经济',
+            'geopolitical': '地缘政治',
+            'analyst': '分析师评级',
+            'market_move': '市场波动',
+        }
+        category_cn = CATEGORY_MAP.get(cluster.category, cluster.category)
+
+        # 情绪共识
+        sentiment = cluster.sentiment_consensus
+        if sentiment > 0.2:
+            sentiment_label = "偏正面"
+            sentiment_icon = "🟢"
+        elif sentiment < -0.2:
+            sentiment_label = "偏负面"
+            sentiment_icon = "🔴"
+        else:
+            sentiment_label = "中性"
+            sentiment_icon = "🟡"
+
+        # 时间跨度
+        if cluster.time_span_minutes > 0:
+            time_info = f"时间跨度: {cluster.time_span_minutes} 分钟"
+        else:
+            time_info = ""
+
+        # 来源数
+        source_info = f"({cluster.source_count} 个来源)" if cluster.source_count > 1 else ""
+
+        # ── 构建消息体 ──────────────────────────────────────────
+        lines = [
+            f"### 📦 事件摘要 | {category_cn} {source_info}",
+            "",
+            f"**{cluster.theme}**",
+            "",
+        ]
+
+        # 基本信息行
+        info_parts = [
+            f"{sentiment_icon} 情绪: {sentiment_label} ({sentiment:+.2f})",
+        ]
+        if cluster.related_stocks:
+            info_parts.append(f"📈 相关标的: {', '.join(cluster.related_stocks[:5])}")
+        if time_info:
+            info_parts.append(f"⏱️ {time_info}")
+        if cluster.is_breaking:
+            info_parts.append("🚨 突发")
+
+        lines.extend(info_parts)
+        lines.append("")
+        lines.append("---")
+        lines.append("")
+
+        # 新闻条目列表
+        lines.append(f"**相关新闻 ({len(cluster.articles)} 条):**")
+        lines.append("")
+
+        for i, article in enumerate(cluster.articles[:8], 1):
+            # 获取文章属性
+            title = getattr(article, 'title', '无标题')
+            source = getattr(article, 'source', 'unknown')
+            source_icon = self.SOURCE_ICONS.get(source, '📰')
+            source_name = {
+                'cls': '财联社',
+                'blockbeats': 'BlockBeats',
+                'wallstreetcn': '华尔街见闻',
+                'sina': '新浪财经',
+                'cnbc': 'CNBC',
+                'sec': 'SEC',
+                'fed': '美联储',
+                'hkex': '港交所',
+            }.get(source, source)
+
+            sentiment_score = getattr(article, 'sentiment_score', 0.0)
+            if sentiment_score > 0.1:
+                s_icon = "🟢"
+            elif sentiment_score < -0.1:
+                s_icon = "🔴"
+            else:
+                s_icon = "⚪"
+
+            lines.append(f"{i}. {source_icon} {s_icon} [{source_name}] {title}")
+
+        if len(cluster.articles) > 8:
+            lines.append(f"... 以及 {len(cluster.articles) - 8} 条相关报道")
+
+        # 底部标注
+        lines.append("")
+        lines.append("---")
+        lines.append(f"🤖 FTSeek 事件聚合 | {datetime.now().strftime('%H:%M')}")
+
+        return "\n".join(lines)
+
     def send_news(self, news: NewsItem, 
                  analysis: AnalysisResult = None) -> bool:
         """

@@ -124,7 +124,7 @@ class OpenDConfig:
         return cls(
             host=os.getenv("OPEND_HOST", "127.0.0.1"),
             port=int(os.getenv("OPEND_PORT", "11111")),
-            dir=os.getenv("OPEND_DIR", "/opt/ftseek/Futu_OpenD_10.1.6108_Centos7/Futu_OpenD_10.1.6108_Centos7"),
+            dir=os.getenv("OPEND_DIR", "/opt/ftseek/Futu_OpenD_10.3.6308_Centos7/Futu_OpenD_10.3.6308_Centos7"),
             login_account=os.getenv("FUTU_LOGIN_ACCOUNT", ""),
             login_pwd=os.getenv("FUTU_LOGIN_PWD", ""),
             trade_env=trade_env,
@@ -186,13 +186,30 @@ class RiskConfig:
 @dataclass
 class ConsensusConfig:
     """共识引擎配置"""
-    signal_cooldown: int = 120
-    consensus_window: int = 60
-    consensus_threshold: float = 0.6
-    consensus_adx_trend: float = 25.0
-    consensus_adx_range: float = 20.0
+    signal_cooldown: int = 120              # 2026-04-16 对齐 config.yaml (120s)
+    consensus_window: int = 90              # 2026-04-15: 60→90, 对齐 config.yaml
+    consensus_threshold: float = 1.5        # 2026-04-15: 0.6→1.5, 对齐 config.yaml
     adx_period: int = 14
-    max_open_positions: int = 4
+    adx_trend: float = 25.0                 # ADX 高于此值 = 趋势市
+    adx_range: float = 20.0                 # ADX 低于此值 = 震荡市
+    max_open_positions: int = 12            # 2026-04-16 对齐 config.yaml (12)
+    max_positions_per_sector: int = 4       # 2026-04-15 新增: 单行业最大持仓数
+    max_add_per_position: int = 2          # 2026-04-15 新增: 单股最大补仓次数
+    max_add_multiplier: list = field(default_factory=lambda: [1.0, 0.5, 0.25])  # 金字塔补仓比例
+    add_position_profit_threshold: float = 5.0   # 2026-04-15 新增: 盈利补仓阈值 (%)
+    add_position_loss_threshold: float = -2.0    # 2026-04-15 新增: 亏损补仓阈值 (%)
+    sector_alert_threshold: float = 30.0         # 2026-04-15 新增: 行业集中度告警 (%)
+    sector_block_threshold: float = 40.0         # 2026-04-15 新增: 行业集中度拦截 (%)
+    position_idle_hours: int = 48                # 2026-04-15 新增: 持仓超时巡检阈值
+    
+    # 2026-04-15 新增: 资金安全水位配置 (基准: 不破产)
+    max_position_pct: float = 10.0          # 单股最大占总资金 % (黑天鹅 -50% 时仅损 5%)
+    max_sector_pct: float = 25.0            # 单行业最大占总资金 % (行业 -40% 时仅损 10%)
+    min_cash_reserve_pct: float = 10.0      # 最低现金缓冲 % (防极端行情)
+    max_portfolio_drawdown: float = 0.12    # 2026-04-16 对齐 config.yaml (0.12 = 12%)
+    max_daily_loss_pct: float = 3.0         # 每日最大亏损 % (触发当日停交易)
+    stop_loss_pct: float = 0.03             # 2026-04-16 对齐 config.yaml stop_loss.default_percent (3%)
+    take_profit_pct: float = 0.10           # 2026-04-16 对齐 config.yaml take_profit.default_percent (10%)
     
     # 策略分类
     trend_strategies: set = field(default_factory=lambda: {"supertrend", "macd", "ma_cross"})
@@ -215,12 +232,26 @@ class ConsensusConfig:
         """从环境变量创建共识配置"""
         return cls(
             signal_cooldown=int(os.getenv("SIGNAL_COOLDOWN", "120")),
-            consensus_window=int(os.getenv("CONSENSUS_WINDOW", "60")),
-            consensus_threshold=float(os.getenv("CONSENSUS_THRESHOLD", "0.6")),
-            consensus_adx_trend=float(os.getenv("CONSENSUS_ADX_TREND", "25")),
-            consensus_adx_range=float(os.getenv("CONSENSUS_ADX_RANGE", "20")),
+            consensus_window=int(os.getenv("CONSENSUS_WINDOW", "90")),  # 2026-04-15: 60→90
+            consensus_threshold=float(os.getenv("CONSENSUS_THRESHOLD", "1.5")),  # 2026-04-15: 0.6→1.5
+            adx_trend=float(os.getenv("CONSENSUS_ADX_TREND", "25")),
+            adx_range=float(os.getenv("CONSENSUS_ADX_RANGE", "20")),
             adx_period=int(os.getenv("ADX_PERIOD", "14")),
-            max_open_positions=int(os.getenv("MAX_OPEN_POSITIONS", "4")),
+            max_open_positions=int(os.getenv("MAX_OPEN_POSITIONS", "20")),
+            max_positions_per_sector=int(os.getenv("MAX_POSITIONS_PER_SECTOR", "4")),
+            max_add_per_position=int(os.getenv("MAX_ADD_PER_POSITION", "2")),
+            add_position_profit_threshold=float(os.getenv("ADD_POSITION_PROFIT_THRESHOLD", "5.0")),
+            add_position_loss_threshold=float(os.getenv("ADD_POSITION_LOSS_THRESHOLD", "-2.0")),
+            sector_alert_threshold=float(os.getenv("SECTOR_ALERT_THRESHOLD", "30.0")),
+            sector_block_threshold=float(os.getenv("SECTOR_BLOCK_THRESHOLD", "40.0")),
+            position_idle_hours=int(os.getenv("POSITION_IDLE_HOURS", "48")),
+            max_position_pct=float(os.getenv("MAX_POSITION_PCT", "10.0")),
+            max_sector_pct=float(os.getenv("MAX_SECTOR_PCT", "25.0")),
+            min_cash_reserve_pct=float(os.getenv("MIN_CASH_RESERVE_PCT", "10.0")),
+            max_portfolio_drawdown=float(os.getenv("MAX_PORTFOLIO_DRAWDOWN", "0.12")),
+            max_daily_loss_pct=float(os.getenv("MAX_DAILY_LOSS_PCT", "3.0")),
+            stop_loss_pct=float(os.getenv("STOP_LOSS_PCT", "0.03")),
+            take_profit_pct=float(os.getenv("TAKE_PROFIT_PCT", "0.10")),
         )
 
 
@@ -237,15 +268,10 @@ class TradeConfig:
     default_order_type: str = "MARKET"
     max_order_amount: float = 120000.0
     
-    # 港股每手股数
-    hk_lot_sizes: Dict[str, int] = field(default_factory=lambda: {
-        'HK.00700': 100,
-        'HK.09988': 100,
-        'HK.03690': 100,
-        'HK.09992': 200,
-        'HK.00981': 500,
-        'HK.01810': 200,
-    })
+    # 港股每手股数 (P0 修复 2026-04-26: 从 LotSizeManager 动态获取)
+    # 注: 这里保留空字典作为 fallback，实际值由 LotSizeManager 提供
+    # LotSizeManager 优先级: Futu API → 缓存文件 → 配置文件 → 默认值
+    _lot_size_manager: Optional['LotSizeManager'] = field(default=None, repr=False)
     
     # 默认下单数量 (按股票配置)
     default_order_qty_by_code: Dict[str, int] = field(default_factory=lambda: {
@@ -272,7 +298,7 @@ class TradeConfig:
     @classmethod
     def from_env(cls) -> 'TradeConfig':
         """从环境变量创建交易配置"""
-        watch_list_hk = json.loads(os.getenv("WATCH_LIST_HK", '["HK.09992", "HK.00981", "HK.03690", "HK.00700", "HK.09888", "HK.01024", "HK.09988", "HK.01810", "HK.02318", "HK.09618"]'))
+        watch_list_hk = json.loads(os.getenv("WATCH_LIST_HK", '["HK.09992", "HK.00981", "HK.03690", "HK.01024", "HK.01347", "HK.01093", "HK.00175", "HK.01378"]'))
         watch_list_us = json.loads(os.getenv("WATCH_LIST_US", '[]'))
         
         _subscribe_types_str = os.getenv("SUBSCRIBE_TYPES", 'QUOTE,K_1M,K_3M,K_5M,K_15M,K_30M,K_60M,K_DAY')
@@ -294,8 +320,14 @@ class TradeConfig:
         )
     
     def get_lot_size(self, code: str) -> int:
-        """获取股票每手股数"""
-        return self.hk_lot_sizes.get(code, 100)
+        """获取股票每手股数 (P0 修复: 使用 LotSizeManager)"""
+        try:
+            from app.execution.lot_size_manager import get_lot_size_manager
+            lsm = get_lot_size_manager()
+            return lsm.get_lot_size(code)
+        except Exception:
+            # 终极降级
+            return 100
     
     def get_order_qty(self, code: str) -> int:
         """获取股票默认下单数量"""

@@ -22,9 +22,10 @@ from typing import Dict, List, Optional, Set, Any
 from enum import Enum
 
 from .classifier import ScenarioType
+from .memory import ScenarioPhase
 
 logger = logging.getLogger("ftseek.scenario.router")
-logger.propagate = False
+# 2026-04-10 修复: 移除 propagate=False，让日志通过 ftseek 父级 logger 输出
 
 
 class StrategyRole(Enum):
@@ -158,6 +159,19 @@ class ScenarioRouter:
             "risk_template": "default",
             "priority_boost": {},
         },
+
+        # --- 灰区: 落袋为安防守模式 ---
+        ScenarioType.GRAY_ZONE: {
+            "primary": [],                     # 无主策略 (不鼓励新开仓)
+            "secondary": ["confluence_v2"],    # 仅保留核心策略作为辅助
+            "suppressed": [
+                "event_driven", "sentiment_ai",
+                "cross_market_arbitrage", "enhanced_confluence",
+                "open_close_effect",
+            ],
+            "risk_template": "defensive",      # 防守型风控模板
+            "priority_boost": {},              # 无优先级提升
+        },
     }
 
     # 默认权重倍数
@@ -183,8 +197,8 @@ class ScenarioRouter:
 
         # === 特殊标记占位符 (会在_expand_special_markers 中展开) ===
         # 注意：以下是占位符，不是实际策略
-        "123_rule",            # → 占位符，实际使用 confluence_v2 替代
-        "turtle",              # → 占位符，实际使用 confluence_v2 替代 (原 supertrend)
+        "123_rule",            # → 占位符，实际使用 confluence_v2 替代 (2026-04-11 更正)
+        "turtle",              # → 占位符，实际使用 confluence_v2 替代 (2026-04-11 更正)
         "td_range",            # → 占位符，实际使用 confluence_v2 替代
         "gap_trading",         # → 占位符，实际使用 event_driven 替代
         "volatility_breakout", # → 占位符，实际使用 confluence_v2 替代
@@ -237,12 +251,13 @@ class ScenarioRouter:
 
         return merged_config
 
-    def route(self, scenario: ScenarioType) -> RouteResult:
+    def route(self, scenario: ScenarioType, phase: ScenarioPhase = None) -> RouteResult:
         """
         根据场景类型返回策略路由结果
 
         Args:
             scenario: 场景类型
+            phase: 场景生命周期阶段 (2026-04-10 新增)
 
         Returns:
             RouteResult: 路由结果
@@ -296,6 +311,17 @@ class ScenarioRouter:
             }
         )
 
+        # 2026-04-10: 阶段感知权重降级
+        # DECAYING 阶段主策略权重降为 SECONDARY_WEIGHT，降低场景驱动偏移
+        if phase == ScenarioPhase.DECAYING:
+            for s in primary:
+                active_strategies[s] = self.SECONDARY_WEIGHT
+            result.metadata['phase_adjusted'] = True
+            logger.info(
+                f"[路由] {scenario.value} DECAYING降级 → "
+                f"主策略权重={self.SECONDARY_WEIGHT}"
+            )
+
         logger.info(
             f"[路由] {scenario.value} → "
             f"主策略={primary} | "
@@ -330,9 +356,11 @@ class ScenarioRouter:
         expanded = []
 
         # 占位符映射表 (未实现的策略→已实现的策略)
+        # 2026-04-11: 修复 123_rule/turtle 映射目标
+        # supertrend 已合并到 confluence_v2 中，映射目标同步更新
         placeholder_map = {
-            "123_rule": "supertrend",
-            "turtle": "supertrend",
+            "123_rule": "confluence_v2",   # 原映射 supertrend，已更正 (2026-04-11)
+            "turtle": "confluence_v2",     # 原映射 supertrend，已更正 (2026-04-11)
             "td_range": "confluence_v2",
             "gap_trading": "event_driven",
             "volatility_breakout": "confluence_v2",
@@ -343,12 +371,13 @@ class ScenarioRouter:
         }
 
         # 特殊标记展开
+        # 2026-04-11: supertrend 已移除，替换为 confluence_v2
         special_markers = {
-            "all_technical_indicators": ["rsi", "bollinger", "macd", "supertrend"],
+            "all_technical_indicators": ["rsi", "bollinger", "macd", "confluence_v2"],
             "mean_reversion_strategies": ["rsi", "bollinger"],
-            "trend_following_strategies": ["supertrend", "confluence_v2"],
-            "breakout_strategies": ["supertrend", "confluence_v2", "bollinger"],
-            "pure_technical_strategies": ["rsi", "bollinger", "macd", "supertrend"],
+            "trend_following_strategies": ["confluence_v2"],
+            "breakout_strategies": ["confluence_v2", "bollinger"],
+            "pure_technical_strategies": ["rsi", "bollinger", "macd", "confluence_v2"],
         }
 
         for s in strategies:

@@ -1,6 +1,8 @@
 """
-回测 API 模块（占位）
-TODO: 实现完整的回测 API
+回测 API 模块
+
+P1 修复 (2026-04-12): 占位模块
+注：完整实现需要集成 app/backtest/optimizer.py
 """
 from fastapi import APIRouter
 

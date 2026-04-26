@@ -11,7 +11,7 @@ import logging
 from typing import Dict, Optional
 
 logger = logging.getLogger("ftseek.quality.regime_adapter")
-logger.propagate = False
+# 2026-04-10: propagate=True (默认), 通过 ftseek 父级 logger 输出
 
 
 # 策略类型定义
@@ -238,7 +238,7 @@ class RegimeAdapter:
 
         if fit_score is None:
             # 未知市场状态，返回默认值
-            fit_score = strategy_regimes.get("default", 0.60)
+            fit_score = strategy_regimes.get("default", 0.30)  # 2026-04-14 对齐 config.yaml
 
         return fit_score
 

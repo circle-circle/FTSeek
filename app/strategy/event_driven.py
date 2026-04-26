@@ -45,9 +45,10 @@ class EventType(str, Enum):
 
 class EventImpact(str, Enum):
     """事件影响程度"""
-    HIGH = "high"       # 高影响
-    MEDIUM = "medium"   # 中影响
-    LOW = "low"         # 低影响
+    CRITICAL = "critical"   # 极高影响 (重大政策/突发灾难/退市风险)
+    HIGH = "high"           # 高影响
+    MEDIUM = "medium"       # 中影响
+    LOW = "low"             # 低影响
 
 
 @dataclass
@@ -216,7 +217,11 @@ class QwenEventAnalyzer:
 请详细分析:
 1. 情绪倾向 (正面/负面/中性) 及打分 (-1 到 1)
 2. 影响范围 (个股/行业/大盘)
-3. 影响程度 (高/中/低)
+3. 影响程度 (critical/高/中/低)
+   - critical: 重大政策变化/突发安全事件/退市风险/被做空机构狙击
+   - high: 财报大幅超预期/重大并购/大额回购
+   - medium: 分析师评级调整/新产品发布/管理层变动
+   - low: 常规公告/市场评论/行业一般新闻
 4. 建议操作 (买入/卖出/观望)
 5. 时效性 (日内/1-3 天/1 周以上)
 6. 置信度 (0-100%)
@@ -227,7 +232,7 @@ class QwenEventAnalyzer:
     "sentiment": "positive/negative/neutral",
     "sentiment_score": 0.75,
     "impact_scope": "stock/industry/market",
-    "impact_level": "high/medium/low",
+    "impact_level": "critical/high/medium/low",
     "action": "buy/sell/hold",
     "time_horizon": "intraday/1-3days/1week+",
     "confidence": 85,

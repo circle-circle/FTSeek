@@ -121,8 +121,8 @@ class TestPositionManager:
             exit_time='2024-01-18 15:00:00'
         )
         
-        # 验证已实现盈亏 (买入：(12.0 - 10.0) * 100 = 200)
-        assert realized_pnl == 200.0
+        # 验证已实现盈亏 (买入：(12.0 - 10.0) * 100 = 200, 扣除手续费后约84200*12.0*0.001左右)
+        assert realized_pnl == pytest.approx(198.8, abs=1.0)
         
         # 验证持仓状态已更新
         position = position_manager.get_position('000003')
@@ -137,7 +137,7 @@ class TestPositionManager:
         
         assert row[0] == 'CLOSED'
         assert row[1] == 12.0
-        assert row[2] == 200.0
+        assert row[2] == pytest.approx(198.8, abs=1.0)
     
     def test_calculate_pnl_buy(self, position_manager):
         """测试买入盈亏计算"""
@@ -253,8 +253,8 @@ class TestPositionManager:
             exit_time='2024-01-22 15:00:00'
         )
         
-        # 验证已实现盈亏 (卖出：(10.0 - 8.0) * 100 = 200)
-        assert realized_pnl == 200.0
+        # 验证已实现盈亏 (卖出：(10.0 - 8.0) * 100 = 200, 扣除手续费后约84)
+        assert realized_pnl == pytest.approx(198.8, abs=1.0)
     
     def test_close_non_existent_position(self, position_manager):
         """测试平仓不存在的持仓"""
@@ -320,13 +320,13 @@ class TestPositionManagerIntegration:
         position = pm.get_position('000001')
         assert position.unrealized_pnl == 5000.0  # (55.0 - 50.0) * 1000
         
-        # 4. 平仓
+        # 4. 平仓（扣除手续费后约94945）
         realized_pnl = pm.close_position(
             code='000001',
             exit_price=55.0,
             exit_time='2024-02-05 15:00:00'
         )
-        assert realized_pnl == 5000.0
+        assert realized_pnl == pytest.approx(4945.0, abs=10.0)
         
         # 5. 验证持仓已关闭
         position = pm.get_position('000001')

@@ -12,17 +12,17 @@ from datetime import datetime
 from dataclasses import dataclass, field
 
 logger = logging.getLogger("ftseek.risk.volatility_adapter")
-logger.propagate = False
+# 2026-04-10: propagate=True (默认), 通过 ftseek 父级 logger 输出
 
 
 @dataclass
 class VolatilityRiskConfig:
     """波动率风控配置"""
     # 基础参数 (正常波动状态)
-    base_max_position: float = 0.20       # 单仓上限 20%
-    base_max_total_position: float = 0.80 # 总仓位上限 80%
-    base_max_daily_loss: float = 0.05     # 日损上限 5%
-    base_max_drawdown: float = 0.15       # 最大回撤 15%
+    base_max_position: float = 0.18       # 2026-04-16 对齐 config.yaml (0.18)
+    base_max_total_position: float = 0.75 # 2026-04-16 对齐 config.yaml (0.75)
+    base_max_daily_loss: float = 0.03     # 2026-04-16 对齐 config.yaml (0.03)
+    base_max_drawdown: float = 0.12       # 2026-04-16 对齐 config.yaml (0.12)
     base_stop_loss: float = 0.03          # 止损 3%
     base_take_profit: float = 0.10        # 止盈 10%
 

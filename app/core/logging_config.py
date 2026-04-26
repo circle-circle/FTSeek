@@ -36,7 +36,7 @@ from dataclasses import dataclass, field
 class LoggingConfig:
     """日志配置"""
     log_dir: Path = field(default_factory=lambda: Path('/opt/ftseek/FTSeek/logs'))
-    level: str = "INFO"
+    level: str = "INFO"  # 默认 INFO，由 RotatingFileHandler 控制大小 (50MB)
     max_size_mb: int = 50  # 按大小轮转：50MB
     backup_count_size: int = 5  # 按大小轮转备份数
     backup_count_daily: int = 30  # 按天轮转备份数

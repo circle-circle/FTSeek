@@ -52,7 +52,12 @@ class ContextEngineer(Agent):
             )
 
         super().__init__(config)
-        self.memory_path = "/root/.openclaw/workspace-planner/MEMORY.md"
+        # 【P0 修复 2026-04-26】移除硬编码路径，改为环境变量读取
+        self.memory_path = os.path.join(
+            os.getenv("FTSEEK_OPENCLAW_DIR", os.path.expanduser("~/.openclaw")),
+            "workspace-planner",
+            "MEMORY.md"
+        )
 
     async def execute(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
         """

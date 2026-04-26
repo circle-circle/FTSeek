@@ -10,6 +10,7 @@
 模拟盘模式：只读现有 signals 表，不修改数据库
 """
 import sqlite3
+from app.storage.repository import get_db
 from typing import List, Dict, Optional
 from datetime import datetime, timedelta
 from dataclasses import dataclass
@@ -46,7 +47,8 @@ class PerformanceTracker:
     def _get_connection(self) -> sqlite3.Connection:
         """获取数据库连接"""
         try:
-            conn = sqlite3.connect(self.db_path)
+            with get_db(self.db_path) as conn:
+                pass
             conn.row_factory = sqlite3.Row
             return conn
         except sqlite3.Error as e:

@@ -2,6 +2,11 @@
 AI 增强情绪因子
 
 使用 AI API 进行情绪分析，自动从新闻采集器获取新闻
+
+P1 修复 (2026-04-11):
+- 集成批量处理器，减少API调用次数
+- 支持异步批量分析，降低延迟
+- 提高缓存命中率
 """
 import logging
 from typing import Optional, Dict, List
@@ -70,44 +75,30 @@ class AISentimentFactor(BaseFactor):
                 metadata={'news_count': 0, 'social_count': 0, 'auto_fetched': False}
             )
         
-        # 3. AI 情绪分析
-        from app.ai import AIService
-        ai_service = AIService()
+        # 3. AI 情绪分析 (P1 修复: 使用批量处理器)
+        from app.factors.news_batch_processor import news_batch_processor, NewsItem
         
         news_scores = []
         for news in news_list[:self.max_news]:
             text = f"{news.get('title', '')} {news.get('content', '')}"
             
-            # 检查缓存
-            cache_key = f"sentiment_{hash(text)}"
-            if hasattr(self, 'cache') and cache_key in self.cache:
-                score = self.cache[cache_key]
-            else:
-                response = ai_service.analyze_sentiment(text)
-                if response.success:
-                    score = response.data.get('sentiment_score', 0.0)
-                    if hasattr(self, 'cache'):
-                        self.cache[cache_key] = score
-                else:
-                    score = 0.0
-            
+            # P1 修复: 优先使用批量处理器
+            score = news_batch_processor.analyze_single(
+                code=code,
+                title=news.get('title', ''),
+                content=news.get('content', '')
+            )
             news_scores.append(score)
         
-        # 社交情绪
+        # 社交情绪 (保持原有逻辑)
         social_scores = []
         for post in social_posts[:self.max_news * 2]:
-            cache_key = f"sentiment_{hash(post)}"
-            if hasattr(self, 'cache') and cache_key in self.cache:
-                score = self.cache[cache_key]
-            else:
-                response = ai_service.analyze_sentiment(post)
-                if response.success:
-                    score = response.data.get('sentiment_score', 0.0)
-                    if hasattr(self, 'cache'):
-                        self.cache[cache_key] = score
-                else:
-                    score = 0.0
-            
+            # 社交内容也使用批量处理器
+            score = news_batch_processor.analyze_single(
+                code=code,
+                title="Social Post",
+                content=post
+            )
             social_scores.append(score)
         
         # 综合评分 (新闻 60% + 社交 40%)
@@ -127,7 +118,7 @@ class AISentimentFactor(BaseFactor):
                 'news_count': len(news_scores),
                 'social_count': len(social_scores),
                 'ai_provider': 'bailian',
-                'cache_size': len(getattr(self, 'cache', {})),
+                'batch_processor_stats': news_batch_processor.get_stats(),
                 'auto_fetched': False
             }
         )

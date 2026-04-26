@@ -314,13 +314,15 @@ class HKSpecificAdapter:
         """获取最小置信度要求"""
         tier = self.get_liquidity_tier(code)
         
+        # 2026-04-13 修复：降至 0.30 确保单策略强信号能稳定通过
+        # 单策略场景下置信度公式产出约 0.35，留 0.05 余量
         tier_configs = {
-            LiquidityTier.TIER1: 0.40,  # 2026-03-19: 降低至 0.40 便于触发
-            LiquidityTier.TIER2: 0.40,  # 2026-03-19: 降低至 0.40 便于触发
-            LiquidityTier.TIER3: 0.40   # 2026-03-19: 降低至 0.40 便于触发
+            LiquidityTier.TIER1: 0.30,
+            LiquidityTier.TIER2: 0.30,
+            LiquidityTier.TIER3: 0.30
         }
         
-        return tier_configs.get(tier, 0.65)
+        return tier_configs.get(tier, 0.30)
     
     # ==================== 汇率对冲 ====================
     
@@ -395,9 +397,11 @@ class HKSpecificAdapter:
         """
         code = signal.code
         
-        # Step 1: T+0 检查
-        if not self.allow_intraday_reversal(code, signal):
-            logger.info(f"[港股适配] {code} 日内交易冲突，过滤信号")
+        # Step 1: T+0 检查（港股支持 T+0 回转交易）
+        t0_allowed = self.allow_intraday_reversal(code, signal)
+        logger.info(f"[港股适配] {code} T+0 检查: t0_trading={self.config.t0_trading}, allowed={t0_allowed}")
+        if not t0_allowed:
+            logger.info(f"[港股适配] {code} T+0 日内交易冲突，过滤信号")
             return None
         
         # Step 2: 流动性调整
@@ -406,9 +410,10 @@ class HKSpecificAdapter:
         
         # Step 3: 最小置信度检查
         min_conf = self.get_min_confidence(code)
-        if signal.extra.get('confidence', 0) < min_conf:
-            logger.info(f"[港股适配] {code} 置信度 {signal.extra.get('confidence', 0):.2f} "
-                       f"< {min_conf}，过滤信号")
+        sig_conf = signal.extra.get('confidence', 0)
+        logger.info(f"[港股适配] {code} 置信度检查: conf={sig_conf:.2f}, min={min_conf:.2f}")
+        if sig_conf < min_conf:
+            logger.info(f"[港股适配] {code} 置信度不足 {sig_conf:.2f} < {min_conf}，过滤信号")
             return None
         
         # Step 4: 做空信号处理
@@ -421,7 +426,7 @@ class HKSpecificAdapter:
         
         action_str = signal.action.value if hasattr(signal.action, 'value') else str(signal.action)
         logger.info(f"[港股适配] {code} 信号处理完成：{action_str} "
-                   f"_qty={signal.quantity} _conf={signal.extra.get('confidence', 'N/A')}")
+                   f"_qty={signal.quantity} _conf={sig_conf:.2f} (门槛={min_conf:.2f})")
         
         return signal
 

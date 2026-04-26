@@ -1,0 +1,1049 @@
+# ============================================================================
+# FTSeek 统一配置文件 (Unified Config) — SSOT (Single Source of Truth)
+# ============================================================================
+# 版本: 4.0.0 (2026-04-26)
+# 说明: 唯一配置数据源。取代 config.yaml (v2.0) 的所有内容。
+# 原则: 环境变量 > unified_config.yaml > 代码默认值
+# 新增/修改参数后必须同步更新: config_validator.py, config_audit.py
+# ============================================================================
+
+version: 4.0.0
+updated: '2026-04-26'
+description: FTSeek 港股交易系统 - 统一配置 SSOT (Single Source of Truth)
+base:
+  project_name: FTSeek
+  version: 3.0.0
+  market: HK
+  currency: HKD
+  timezone: Asia/Hong_Kong
+  trade_env: paper
+  environment: production
+  log_level: INFO
+  debug_mode: false
+futu:
+  host: 127.0.0.1
+  port: 11111
+  opend_dir: /opt/ftseek/Futu_OpenD_10.3.6308_Centos7/Futu_OpenD_10.3.6308_Centos7
+  login_account: ${FUTU_LOGIN_ACCOUNT}
+  login_password: ${FUTU_LOGIN_PWD}
+  trade_env: 1
+  force_simulate: true
+  simulate_account_id: '18820895'
+  margin_account_id: '8246818'
+  us_account_id: 0
+  allow_real_trading: false
+opend:
+  host: ${OPEND_HOST:127.0.0.1}
+  port: 11111
+  quote_ctx: true
+  trade_ctx: true
+openclaw:
+  skills_dir: /root/.openclaw/skills/openapi/scripts
+trading:
+  mode: paper
+  currency: HKD
+  watch_list_hk:
+  - HK.00700
+  - HK.09988
+  - HK.03690
+  - HK.09618
+  - HK.01024
+  - HK.09888
+  - HK.00981
+  - HK.01347
+  - HK.01810
+  - HK.01211
+  - HK.02015
+  - HK.09868
+  - HK.02318
+  - HK.00388
+  - HK.01299
+  - HK.02269
+  - HK.09992
+  - HK.02020
+  - HK.00883
+  - HK.00941
+  - HK.09999
+  watch_list_us:
+  - US.SPY
+  - US.QQQ
+  - US.BABA
+  - US.JD
+  - US.PDD
+  - US.NTES
+  - US.BIDU
+  - US.AAPL
+  - US.MSFT
+  - US.NVDA
+  - US.AMZN
+  - US.META
+  - US.TSLA
+  - US.AMD
+  - US.AVGO
+  - US.TSM
+  - US.NIO
+  - US.JPM
+  - US.LLY
+  - US.WMT
+  max_open_positions: 20
+  default_position_size: 0.1
+  manual_confirm_for_live: true
+  short_selling_enabled: false
+  short_gate:
+    enabled: false
+    min_confidence: 0.7
+    min_relevance: 0.75
+    min_logic_chain_steps: 3
+    require_second_order: true
+    require_risk_path: true
+    require_invalidating_factors: true
+    require_market_downtrend: true
+    auto_execute_confidence: 0.85
+    auto_execute_relevance: 0.85
+    cooldown_seconds: 600
+    max_position_ratio: 0.05
+  order:
+    default_order_qty_by_code:
+      HK.00700: 100
+      HK.09988: 100
+      HK.03690: 100
+      HK.09618: 100
+      HK.01024: 100
+      HK.09888: 100
+      HK.00981: 500
+      HK.01347: 1000
+      HK.02382: 200
+      HK.01810: 200
+      HK.01211: 500
+      HK.02015: 100
+      HK.09868: 100
+      HK.02318: 500
+      HK.01299: 200
+      HK.00388: 100
+      HK.00941: 500
+      HK.02269: 500
+      HK.01801: 1000
+      HK.06618: 100
+      HK.09992: 200
+      HK.02020: 100
+      HK.01928: 400
+      HK.09926: 500
+      HK.00883: 1000
+      HK.00857: 2000
+      HK.02899: 2000
+      HK.00772: 1000
+      HK.09961: 100
+      HK.09999: 100
+    hk_lot_sizes:
+      HK.00700: 100
+      HK.09988: 100
+      HK.03690: 100
+      HK.09618: 100
+      HK.01024: 100
+      HK.09888: 100
+      HK.00981: 500
+      HK.01347: 1000
+      HK.02382: 200
+      HK.01810: 200
+      HK.01211: 500
+      HK.02015: 100
+      HK.09868: 100
+      HK.02318: 500
+      HK.01299: 200
+      HK.00388: 100
+      HK.00941: 500
+      HK.02269: 500
+      HK.01801: 1000
+      HK.06618: 100
+      HK.09992: 200
+      HK.02020: 100
+      HK.01928: 400
+      HK.09926: 500
+      HK.00883: 1000
+      HK.00857: 2000
+      HK.02899: 2000
+      HK.00772: 1000
+      HK.09961: 100
+      HK.09999: 100
+    default_order_qty_hk: 100
+    default_order_qty_us: 1
+    default_order_qty: 100
+    default_order_type: MARKET
+    max_order_amount: 120000.0
+  execution:
+    max_slippage_pct: 0.005
+    order_retry_base_offset: 0.002
+    execution_monitor_slippage_alert: 0.01
+    execution_monitor_reject_rate_alert: 0.1
+stock_pool:
+  tiers:
+    tier1:
+      name: 核心股票
+      stocks:
+      - HK.00700
+      - HK.03690
+      - HK.09988
+      weight: 0.5
+    tier2:
+      name: 观察股票
+      stocks:
+      - HK.09618
+      - HK.01810
+      weight: 0.3
+    tier3:
+      name: 机会股票
+      stocks: []
+      weight: 0.2
+  lot_sizes:
+    HK.00700: 100
+    HK.09988: 100
+    HK.03690: 100
+    HK.09992: 200
+    HK.00981: 500
+    HK.01810: 200
+    HK.00005: 400
+    HK.00941: 500
+    HK.02318: 500
+    HK.09618: 100
+    HK.01024: 100
+    HK.09999: 100
+    HK.02015: 100
+    HK.09868: 100
+    HK.02020: 100
+    HK.02269: 100
+watchlist:
+  hk_stocks: []
+  us_stocks: []
+  options: []
+risk_limits:
+  min_confidence: 0.35
+  source_aware_risk:
+    technical:
+      min_confidence: 0.35
+      max_position: 0.08
+    event:
+      min_confidence: 0.4
+      max_position: 0.05
+    hybrid:
+      min_confidence: 0.35
+      max_position: 0.08
+    cross_market:
+      min_confidence: 0.35
+      max_position: 0.08
+  time_aware_risk:
+    opening:
+      start: 09:30
+      end: '10:00'
+      min_confidence: 0.35
+      max_position: 0.05
+    mid_day:
+      start: '12:00'
+      end: '13:00'
+      min_confidence: 0.35
+      max_position: 0.08
+    afternoon:
+      start: '10:00'
+      end: '12:00'
+      min_confidence: 0.35
+      max_position: 0.1
+    closing:
+      start: '13:00'
+      end: '16:00'
+      min_confidence: 0.35
+      max_position: 0.08
+  max_single_position: 0.08
+  max_single_loss: 0.05
+  max_total_position: 0.75
+  max_daily_trades: 5
+  max_daily_loss: 0.03
+  max_weekly_loss: 0.08
+  max_drawdown: 0.12
+  max_monthly_loss: 0.15
+  consecutive_loss_limit: 3
+  strategy_min_trades: 20
+  strategy_min_winrate: 0.45
+  max_position_pct: 0.08
+  max_total_exposure: 0.75
+  max_positions: 5
+  max_daily_loss_pct: 0.03
+  max_drawdown_pct: 0.12
+  max_monthly_loss_pct: 0.15
+  signal_cooldown_sec: 120
+  news_signal_cooldown_sec: 60
+  circuit_breaker:
+    max_reject_count: 8
+    pause_duration_sec: 300
+    daily_loss_halt: 0.03
+    consecutive_loss_halt: 3
+  max_position_size: 0.2
+  fusion_v2:
+    enabled: false
+    technical_weight: 0.5
+    sentiment_weight: 0.5
+    min_confidence: 0.35
+    signal_level_threshold: recommended
+    per_stock_daily_limit: 2
+    global_daily_limit: 20
+    sentiment_threshold: 0.31
+    sentiment_lookback_hours: 12
+    sentiment_max_news: 5
+    rsi_period: 14
+    rsi_overbought: 70
+    rsi_oversold: 30
+    macd_fast: 12
+    macd_slow: 26
+    macd_signal: 9
+    ma_fast_period: 10
+    ma_slow_period: 30
+    bb_period: 20
+    bb_std: 2.0
+    stop_loss_atr_multiplier: 2.5
+    take_profit_rr_ratio: 2.0
+  sentiment_ai:
+    enabled: true
+    positive_threshold: 0.4
+    negative_threshold: -0.4
+    cooldown_seconds: 7200
+    lookback_hours: 24
+    max_news: 20
+  open_close_effect:
+    enabled: true
+    open_breakout_threshold: 0.02
+    open_volume_ratio: 1.5
+    open_window_minutes: 30
+    close_trend_threshold: 0.015
+    close_window_minutes: 30
+circuit_breaker:
+  daily_loss_limit: -3000
+  pause_on_triggered: true
+loss_pause:
+  enabled: true
+  consecutive_losses: 3
+  pause_minutes: 60
+stop_loss:
+  default_percent: 0.03
+  trailing_percent: 0.02
+  max_holding_hours: 48
+  atr_multiplier: 2.5
+take_profit:
+  default_percent: 0.1
+  trailing_percent: 0.02
+  time_limit_hours: 48
+  rsi_overbought: 70
+  macd_dead_cross: true
+  breakeven:
+    enabled: true
+    trigger_profit: 0.03
+    stop_level: 0.01
+dynamic_exit:
+  regimes:
+    high_volatility:
+      stop_loss_atr_mult: 2.5
+      take_profit_atr_mult: 3.0
+    medium_volatility:
+      stop_loss_atr_mult: 2.0
+      take_profit_atr_mult: 2.5
+    low_volatility:
+      stop_loss_atr_mult: 1.5
+      take_profit_atr_mult: 2.0
+  strong_trend_up:
+    stop_loss: -0.06
+    take_profit: 0.08
+    trailing_stop:
+      enabled: true
+      trigger_profit: 0.06
+      trail_percent: 0.04
+    atr_stop:
+      multiplier: 2.8
+      preferred_kline: K_60M
+    time_stop:
+      max_holding_hours: 120
+  range_bound:
+    stop_loss: -0.035
+    take_profit: 0.05
+    trailing_stop:
+      enabled: true
+      trigger_profit: 0.025
+      trail_percent: 0.018
+    atr_stop:
+      multiplier: 1.6
+      preferred_kline: K_30M
+    time_stop:
+      max_holding_hours: 36
+  strong_trend_down:
+    stop_loss: -0.03
+    take_profit: 0.045
+    trailing_stop:
+      enabled: true
+      trigger_profit: 0.02
+      trail_percent: 0.015
+    atr_stop:
+      multiplier: 1.4
+      preferred_kline: K_15M
+    time_stop:
+      max_holding_hours: 24
+  high_volatility:
+    stop_loss: -0.07
+    take_profit: 0.09
+    trailing_stop:
+      enabled: true
+      trigger_profit: 0.05
+      trail_percent: 0.045
+    atr_stop:
+      multiplier: 3.2
+      preferred_kline: K_60M
+    time_stop:
+      max_holding_hours: 96
+  default:
+    stop_loss: -0.035
+    take_profit: 0.05
+    trailing_stop:
+      enabled: true
+      trigger_profit: 0.025
+      trail_percent: 0.015
+    atr_stop:
+      multiplier: 2.0
+      preferred_kline: K_30M
+    time_stop:
+      max_holding_hours: 48
+exit:
+  hk:
+    atr_multiplier: 3.0
+    stop_pct: 0.03
+    crash_guard_pct: 0.08
+  us:
+    atr_multiplier: 1.5
+    stop_pct: 0.015
+    time_stop_minutes: 30
+signal_cooldown:
+  default_seconds: 120
+  high_confidence_seconds: 90
+  after_loss_seconds: 180
+signal_fusion:
+  hk:
+    policy_weight: 0.4
+    technical_weight: 0.3
+    flow_weight: 0.3
+    policy_veto:
+      enabled: true
+      threshold: 0.8
+      veto_actions:
+      - BUY
+  us:
+    technical_weight: 0.5
+    news_weight: 0.2
+    macro_weight: 0.3
+    macro_resonance:
+      enabled: true
+      alignment_bonus: 1.2
+      divergence_penalty: 0.8
+      trend_proxy: SPY
+strategy:
+  enabled:
+    primary: confluence_v2
+    trend: none
+    sentiment: sentiment_ai
+    open_close: open_close_effect
+  consensus:
+    threshold: 1.5
+    window_sec: 60
+    adx_trend: 25
+    adx_range: 20
+    min_strategies: 2
+    window_seconds: 90
+    short_bias_factor: 1.0
+    divergence_threshold: 0.5
+    divergence_score_decay: 0.5
+    divergence_trigger_gray: true
+    adaptive_short_window: 20
+    adaptive_medium_window: 60
+    adaptive_long_window: 200
+    adaptive_short_weight: 0.3
+    adaptive_medium_weight: 0.5
+    adaptive_long_weight: 0.2
+    adaptive_long_term_disable_threshold: 0.3
+    scenario_consecutive_fail_limit: 3
+    scenario_fail_penalty: -0.1
+  weights:
+    confluence_v2: 1.5
+    sentiment_ai: 0.5
+    supertrend: 0.0
+    price_break: 0.1
+    event_driven: 1.2
+    cross_market_arbitrage: 1.0
+    enhanced_confluence: 1.3
+    open_close_effect: 0.8
+  weight_engine_path: /opt/ftseek/FTSeek/strategies/weight_engine.py
+  disabled:
+  - rsi
+  - macd
+  - bollinger
+  - confluence
+  - price_break
+  signal_fusion:
+    technical_weight: 0.3
+    sentiment_weight: 0.2
+    macro_weight: 0.1
+    policy_weight: 0.4
+    veto_policy_negative: true
+  cooldown:
+    signal_cooldown: 120
+  decision_buffer:
+    signal_cooldown: 120
+    max_pending: 500
+    min_confidence: 0.35
+    max_positions: null
+  confidence_adjuster:
+    min_confidence: 0.35
+    max_single_penalty: 0.15
+    max_total_penalty: 0.4
+    max_single_boost: 0.1
+    max_total_boost: 0.2
+  subscribe_types:
+  - QUOTE
+  - K_1M
+  - K_3M
+  - K_5M
+  - K_15M
+  - K_30M
+  - K_60M
+  - K_DAY
+  ai:
+    weight: 0.15
+    min_accuracy: 0.5
+    disable_threshold: 0.45
+    signal_boost: 1.1
+  fusion:
+    technical_weight: 0.6
+    sentiment_weight: 0.25
+    ai_weight: 0.15
+  trend_filter:
+    enabled: true
+    use_multi_timeframe: true
+    ma_period_short: 5
+    ma_period_long: 20
+    prevent_buy_in_downtrend: true
+    prevent_short_in_uptrend: true
+  long_signals:
+    rsi_oversold: 35
+    macd_histogram_threshold: 0.001
+    supertrend_multiplier: 2.5
+    min_confidence: 0.35
+  short_signals:
+    rsi_overbought: 60
+    macd_histogram_threshold: 0.0005
+    supertrend_multiplier: 2.0
+    min_confidence: 1.0
+    volume_confirm: 1.5
+    trend_confirm: true
+  price_break:
+    enabled: false
+    thresholds:
+      HK.09992:
+        upper: 219.0
+        lower: 217.0
+      HK.00981:
+        upper: 60.5
+        lower: 59.5
+      HK.03690:
+        upper: 82.0
+        lower: 80.0
+      HK.00700:
+        upper: 540.0
+        lower: 500.0
+      HK.09988:
+        upper: 155.0
+        lower: 140.0
+      US.AAPL:
+        upper: 260.0
+        lower: 230.0
+      US.TSLA:
+        upper: 380.0
+        lower: 320.0
+      US.NVDA:
+        upper: 145.0
+        lower: 120.0
+      US.MSFT:
+        upper: 430.0
+        lower: 390.0
+      US.AMZN:
+        upper: 235.0
+        lower: 210.0
+  volume_alert:
+    enabled: false
+    volume_ratio_threshold: 2.0
+    lookback_periods: 20
+  rsi:
+    enabled: false
+    period: 14
+    overbought: 70
+    oversold: 30
+  macd:
+    enabled: false
+    fast_period: 12
+    slow_period: 26
+    signal_period: 9
+    signal_mode: histogram
+  bollinger:
+    enabled: false
+    period: 20
+    std_dev: 2.0
+    mode: reversion
+  supertrend:
+    enabled: true
+    atr_period: 10
+    multiplier: 2.0
+  confluence:
+    enabled: false
+    min_factors: 3
+    enabled_factors:
+    - rsi
+    - macd
+    - bollinger
+    - supertrend
+    - ma_cross
+    - volume
+    rsi_period: 14
+    rsi_overbought: 70
+    rsi_oversold: 30
+    macd_fast: 12
+    macd_slow: 26
+    macd_signal: 9
+    bb_period: 20
+    bb_std: 2.0
+    st_period: 10
+    st_multiplier: 3.0
+    ma_fast: 10
+    ma_slow: 30
+    vol_ratio: 1.5
+    adx_threshold: 25
+  confluence_v2:
+    enabled: true
+    min_factors: 3
+    enabled_factors:
+    - rsi
+    - macd
+    - bollinger
+    - supertrend
+    - ma_cross
+    - volume
+    use_market_regime: true
+    use_dynamic_weights: true
+    rsi_period: 14
+    rsi_overbought: 70
+    rsi_oversold: 30
+    macd_fast: 12
+    macd_slow: 26
+    macd_signal: 9
+    bb_period: 20
+    bb_std: 2.0
+    st_period: 10
+    st_multiplier: 2.5
+    ma_fast: 10
+    ma_slow: 30
+    vol_ratio: 1.5
+    adx_threshold: 25
+    stop_loss_pct: 0.05
+    take_profit_pct: 0.1
+    use_atr_stop: true
+    atr_multiplier: 2.0
+    max_holding_periods: 15
+    order_type: market
+    retry_count: 3
+features:
+  four_step_confirmation: true
+  auto_confirm: true
+  smart_push: true
+  state_persistence: true
+  decision_logging: true
+  session_management: true
+  config_hot_reload: true
+four_step:
+  min_signal_score: 0.5
+  min_confidence: 0.6
+  manual_confirm_min_confidence: 0.75
+  auto_confirm_timeout: 600
+smart_push:
+  manual_confirm_min_confidence: 0.75
+  manual_confirm_min_score: 0.7
+  momentum_threshold: 0.7
+  pattern_threshold: 0.65
+  auto_execute_min_confidence: 0.6
+premarket_pipeline:
+  enabled: true
+  schedule:
+    times:
+    - 08:30
+    - 09:00
+    timezone: Asia/Hong_Kong
+  cleaner:
+    dedup_threshold: 0.85
+    min_content_length: 8
+    max_content_length: 2000
+    filter_clickbait: true
+  clusterer:
+    time_window_minutes: 120
+    max_clusters: 10
+    theme_generation: rule
+  relevance:
+    weights:
+      stock: 0.4
+      policy: 0.2
+      earnings: 0.2
+      urgency: 0.2
+    min_overall_score: 0.2
+  pack_builder:
+    max_articles_per_pack: 5
+    include_market_context: true
+  analyst:
+    fast_model: qwen3.6-flash
+    deep_model: qwen3.6-plus
+    deep_threshold: 0.5
+    timeout: 60
+    deep_timeout: 120
+    max_retries: 2
+    enable_thinking: true
+    batch_size: 3
+  router:
+    auto_execute_threshold: 0.75
+    review_threshold: 0.55
+  dingtalk:
+    send_summary: true
+    send_review_cards: true
+    max_cards_per_run: 5
+data_sources:
+  futu:
+    host: ${OPEND_HOST:127.0.0.1}
+    port: 11111
+    subscribe_types:
+    - QUOTE
+    - K_1M
+    - K_3M
+    - K_5M
+    - K_15M
+    - K_30M
+    - K_60M
+    - K_DAY
+  rsshub:
+    enabled: true
+    instances:
+    - https://rsshub.rssforever.com
+    - https://rsshub.ktachibana.party
+    - https://rsshub.moeyy.cn
+    fetch_interval_sec: 180
+llm:
+  provider: qwen
+  model: qwen-plus
+  api_key: ${QWEN_API_KEY}
+  endpoint: ${QWEN_ENDPOINT}
+  timeout_sec: 30
+  max_tokens: 2000
+  temperature: 0.1
+ai:
+  provider: bailian
+  api_key: ${BAILIAN_API_KEY}
+  endpoint: ${BAILIAN_ENDPOINT}
+  model: ${BAILIAN_MODEL}
+  timeout: 30
+  daily_budget: 50
+  monthly_budget: 1500
+  cache:
+    enabled: true
+    ttl: 3600
+    max_size: 1000
+  rate_limit:
+    requests_per_minute: 10
+quality_scorer:
+  enabled: true
+  weights:
+    roe: 0.3
+    debt: 0.2
+    cashflow: 0.2
+    margin: 0.15
+    growth: 0.15
+  class_thresholds:
+    class_a: 80
+    class_b: 60
+    class_c: 40
+  position_limits:
+    class_a: 0.3
+    class_b: 0.2
+    class_c: 0.1
+    junk: 0.0
+holding_period:
+  enabled: true
+  max_holding_hours:
+    class_a: null
+    class_b: 168
+    class_c: 48
+    junk: 24
+  review_intervals:
+    class_a: 24
+    class_b: 12
+    class_c: 6
+    junk: 4
+water_level:
+  enabled: true
+  initial_capital: 1000000
+  levels:
+    green:
+      min_ratio: 0.95
+      max_single_position: 0.08
+      max_daily_trades: 5
+      risk_per_trade: 0.02
+      quality_min_class: C
+      leverage_factor: 1.0
+    yellow:
+      min_ratio: 0.85
+      max_total_position: 0.6
+      max_daily_trades: 3
+      risk_per_trade: 0.015
+      max_daily_loss: 0.02
+      quality_min_class: B
+      leverage_factor: 0.75
+    orange:
+      min_ratio: 0.75
+      max_single_position: 0.08
+      max_total_position: 0.4
+      max_daily_trades: 1
+      risk_per_trade: 0.01
+      max_daily_loss: 0.01
+      quality_min_class: A
+      leverage_factor: 0.5
+    red:
+      min_ratio: 0.0
+      max_single_position: 0.0
+      max_total_position: 0.0
+      max_daily_trades: 0
+      risk_per_trade: 0.0
+      max_daily_loss: 0.0
+      quality_min_class: JUNK
+      leverage_factor: 0.0
+      action: LIQUIDATE
+profit_loss:
+  enabled: true
+  partial_take_profit:
+    enabled: true
+    level_1:
+      trigger: 0.05
+      ratio: 0.25
+    level_2:
+      trigger: 0.1
+      ratio: 0.25
+    trend_exit:
+      enabled: true
+      signals:
+      - supertrend_turn
+      - macd_dead_cross
+      ratio: 0.5
+    valuation_exit:
+      enabled: true
+      pe_percentile: 0.8
+  dynamic_stop_loss:
+    initial_stop:
+      percent: 0.03
+    breakeven:
+      trigger_profit: 0.03
+      stop_level: 0.01
+    trailing:
+      trigger_profit: 0.05
+      trail_percent: 0.03
+    tiered_stops:
+    - profit_level: 0.1
+      stop_level: 0.05
+    - profit_level: 0.2
+      stop_level: 0.12
+    - profit_level: 0.3
+      stop_level: 0.2
+  exit_by_quality:
+    class_a:
+      valuation_exit: true
+      trend_exit: true
+      fixed_exit: false
+      trailing_type: supertrend
+      initial_stop: 0.05
+    class_b:
+      partial_exit: true
+      trend_exit: true
+      fixed_target: 0.15
+      trailing_type: percentage
+      trail_percent: 0.05
+    class_c:
+      fixed_exit: true
+      fixed_target: 0.1
+      trailing_type: breakeven
+    junk:
+      fixed_exit: true
+      fixed_target: 0.05
+      initial_stop: 0.02
+notification:
+  dingtalk:
+    enabled: true
+    mode: enterprise
+    webhook_url: ${DINGTALK_WEBHOOK_URL}
+    secret: ${DINGTALK_SECRET}
+    app_key: ${DINGTALK_APP_KEY}
+    app_secret: ${DINGTALK_APP_SECRET}
+    agent_id: ${DINGTALK_AGENT_ID}
+    timeout: 600
+    push_on_signal: true
+    push_on_execution: true
+    push_on_error: true
+  alerts:
+    contacts:
+    - name: 管理员
+      phone: ${ADMIN_PHONE}
+      email: ${ADMIN_EMAIL}
+schedule:
+  daily_stats_time: '16:30'
+  weekly_report_time: 09:00
+  monthly_report_time: 09:00
+  risk_monitor_interval: 120
+monitoring:
+  metrics:
+    enabled: true
+    collect_interval: 10
+    storage_dir: data/metrics
+    retention_hours: 24
+    core_metrics:
+    - system_cpu_percent
+    - system_memory_percent
+    - system_disk_percent
+    - opend_connection_status
+    - trade_success_rate
+    - signal_count
+  alerts:
+    enabled: true
+    rules_config: config/alert_rules.yaml
+    storage_dir: data/alerts
+    default_cooldown: 3600
+  health_check:
+    enabled: true
+    port: 8899
+    endpoints:
+    - /health
+    - /health/live
+    - /health/ready
+    - /health/status
+    - /health/metrics
+server:
+  callback_host: 0.0.0.0
+  callback_port: 8899
+  callback_external_url: http://39.97.58.4:8899
+  api_token: ${API_TOKEN}
+  tradingview_webhook_token: ${TRADINGVIEW_WEBHOOK_TOKEN}
+  rate_limit:
+    max_requests: 30
+    window_seconds: 60
+  signal_expire_seconds: 300
+persistence:
+  state_file: data/state_snapshot.json
+  decision_log_file: data/decision_log.json
+  sessions_dir: data/sessions
+  auto_snapshot_interval: 300
+  max_decision_log_entries: 10000
+  session_expiry_hours: 24
+database:
+  type: sqlite
+  path: data/ftseek.db
+  pool:
+    enabled: false
+    max_connections: 10
+    timeout: 30
+  backup:
+    enabled: true
+    interval_hours: 24
+    retention_days: 30
+    backup_dir: data/backups
+backtest:
+  presets_file: config/backtest_presets.json
+  default:
+    initial_capital: 1000000
+    commission_rate: 0.0003
+    slippage: 0.001
+    start_date: '2025-01-01'
+    end_date: '2025-12-31'
+logging:
+  level: INFO
+  format: '%(asctime)s [%(name)s] [%(trace_id)s] %(levelname)s: %(message)s'
+  propagate: true
+  dir: logs
+  files:
+    main: ftseek.log
+    error: ftseek_error.log
+    warning: ftseek_warning.log
+    trade: trades.log
+    risk: risk.log
+  max_size_mb: 50
+  backup_count_size: 5
+  backup_count_daily: 30
+  enable_json_format: false
+  enable_trace_id: true
+  console_output: true
+trading_costs:
+  commission_rate: 0.0003
+  min_commission: 15.0
+  stamp_duty: 0.0013
+  trading_fee: 5.0e-06
+  clearing_fee: 2.0e-06
+  platform_fee: 15.0
+markets:
+  hk:
+    market_type: hk
+    currency: HKD
+    trading_hours:
+      open: 09:30
+      close: '16:00'
+      lunch_break_start: '12:00'
+      lunch_break_end: '13:00'
+    check_interval: 300
+    night_interval: 900
+  us:
+    market_type: us
+    currency: USD
+    trading_hours:
+      open: '21:30'
+      close: 04:00
+    check_interval: 300
+    night_interval: 900
+migration:
+  note: 本配置文件已整合所有分散配置
+  merged_files:
+  - risk_config.yaml
+  - strategy_params.json
+  - dynamic_exit_params.yaml
+  - position_strategy.yaml
+  - app_config.yaml
+  - system_config.yaml
+  deprecated_after: '2026-04-30'
+  action: 移至 config/deprecated/ 目录
+alerts:
+  dingtalk:
+    enabled: true
+    webhook: ${DINGTALK_WEBHOOK_URL}
+    secret: ${DINGTALK_SECRET}
+  feishu:
+    enabled: true
+    webhook: ${FEISHU_WEBHOOK_URL}
+    secret: ${FEISHU_SECRET}
+  rules:
+  - id: daily_loss
+    condition: daily_loss_pct > 0.03
+    action: halt_trading
+    notify: true
+    level: P0
+  - id: max_drawdown
+    condition: drawdown_pct > 0.12
+    action: close_all
+    notify: true
+    level: P0
+  - id: circuit_breaker
+    condition: reject_count > 8
+    action: pause_trading
+    notify: true
+    level: P1
+market_regime:
+  adx_thresholds:
+    trend: 25
+    range: 20
+  regime_check_interval_sec: 300

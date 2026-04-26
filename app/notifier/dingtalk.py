@@ -49,6 +49,48 @@ class DingTalkNotifier:
         # 被丢弃的信号摘要 (定期合并推送)
         self._dropped: list = []
         self._drop_flush_timer: Optional[threading.Timer] = None
+        # 缓存 watchlist (2026-04-13 统一配置)
+        self._watchlist_cache: set = set()
+        self._watchlist_cache_time: float = 0
+        self._watchlist_cache_ttl: float = 60  # 60 秒刷新
+
+    def _get_enabled_watchlist(self) -> set:
+        """获取启用的 watchlist 股票代码集合 (2026-04-13 统一配置)
+
+        优先级:
+        1. watchlist.json 中 enabled=True 的股票 (保留精细控制)
+        2. app.config.WATCH_LIST (统一配置，fallback)
+        """
+        now = time.time()
+        if now - self._watchlist_cache_time < self._watchlist_cache_ttl:
+            return self._watchlist_cache
+
+        try:
+            import json
+            watchlist_path = "/opt/ftseek/FTSeek/config/watchlist.json"
+            import os as _os
+            if _os.path.exists(watchlist_path):
+                with open(watchlist_path, 'r') as f:
+                    watchlist = json.load(f)
+                enabled = set()
+                for stock in watchlist.get('hk_stocks', []):
+                    if stock.get('enabled', False):
+                        enabled.add(stock['code'])
+                for stock in watchlist.get('us_stocks', []):
+                    if stock.get('enabled', False):
+                        enabled.add(stock['code'])
+                if enabled:
+                    self._watchlist_cache = enabled
+                    self._watchlist_cache_time = now
+                    return enabled
+        except Exception:
+            pass
+
+        # Fallback: 从统一配置 WATCH_LIST_HK 获取 (仅港股)
+        enabled = set(config.WATCH_LIST_HK)
+        self._watchlist_cache = enabled
+        self._watchlist_cache_time = now
+        return enabled
 
     def _sign_url(self) -> str:
         """加签方式鉴权"""
@@ -148,20 +190,10 @@ class DingTalkNotifier:
         
         ⚠️ 2026-03-13: 添加 watchlist 过滤，只推送启用的股票
         """
-        # 加载 watchlist 配置，过滤未启用的股票
+        # 加载 watchlist 配置，过滤未启用的股票 (2026-04-13 统一配置)
         try:
-            import json
-            watchlist_path = "/opt/ftseek/FTSeek/config/watchlist.json"
-            with open(watchlist_path, 'r') as f:
-                watchlist = json.load(f)
-            enabled_codes = set()
-            for stock in watchlist.get('hk_stocks', []):
-                if stock.get('enabled', False):
-                    enabled_codes.add(stock['code'])
-            for stock in watchlist.get('us_stocks', []):
-                if stock.get('enabled', False):
-                    enabled_codes.add(stock['code'])
-            
+            enabled_codes = self._get_enabled_watchlist()
+
             # 如果股票代码不在启用列表中，跳过推送
             if signal.code not in enabled_codes:
                 logger.debug(f"跳过未启用股票推送：{signal.code}")
@@ -227,21 +259,20 @@ class DingTalkNotifier:
                 oppose_lines = "\n\n" + "\n\n".join(f"❌ ~~{s}~~ (权重 {weights.get(s, '?')})" for s in oppose)
 
             markdown_text = (
-                f"### {title}\n\n"
+                f"### [FTSeek] {title} | 🇭🇰 港股\n\n"
+                f"**📍 标的**: {signal.code} {signal.name}\n\n"
+                f"**📊 方向**: **{direction}**\n\n"
+                f"**📈 触发均价**: {currency}{signal.price:.2f}\n\n"
+                f"**📦 数量**: {signal.quantity} 股\n\n"
                 f"---\n\n"
-                f"**标的**: {signal.code} {signal.name}\n\n"
-                f"**方向**: **{direction}**\n\n"
-                f"**触发均价**: {currency}{signal.price:.2f}\n\n"
-                f"**数量**: {signal.quantity} 股\n\n"
+                f"**🧮 加权评分**: **{score:+.2f}** (阈值 ±{threshold})\n\n"
+                f"**🌍 市场状态**: {regime_label} ({adx_str})\n\n"
                 f"---\n\n"
-                f"**加权评分**: **{score:+.2f}** (阈值 ±{threshold})\n\n"
-                f"**市场状态**: {regime_label} ({adx_str})\n\n"
-                f"---\n\n"
-                f"**同向策略 ({n_agree}/{n_total})**\n\n"
+                f"**👥 同向策略 ({n_agree}/{n_total})**\n\n"
                 f"{agree_lines}"
                 f"{oppose_lines}\n\n"
                 f"---\n\n"
-                f"**各策略依据**:\n\n"
+                f"**📝 各策略依据**:\n\n"
                 f"{signal.reason}\n\n"
                 f"---\n\n"
                 f"⏰ 有效期 {config.SIGNAL_EXPIRE_SECONDS // 60} 分钟"
@@ -293,6 +324,49 @@ class DingTalkNotifier:
             "msgtype": "text",
             "text": {"content": content},
             "at": {"isAtAll": at_all},
+        }
+        return self._do_post(payload)
+
+    def send_event_impact_alert(self, event_name: str, news_title: str, 
+                                logic: str, impact_stocks: dict, 
+                                source: str = "", publish_time: str = ""):
+        """发送事件联想预警 (2026-04-13 新增)
+        
+        Args:
+            event_name: 事件名称 (e.g., "地缘冲突与能源")
+            news_title: 触发新闻标题
+            logic: 影响逻辑 (e.g., "停火 -> 油价跌 -> 利空")
+            impact_stocks: 影响股票字典 {code: name}
+            source: 新闻来源
+            publish_time: 发布时间
+        """
+        if not self.webhook_url:
+            return False
+        if not self._can_send():
+            logger.warning(f"限流跳过事件预警: {event_name}")
+            return False
+
+        stocks_text = "\n".join([f"- **{name} ({code})**" for code, name in impact_stocks.items()])
+
+        text = f"""### 🔥 宏观事件预警 | {event_name}
+
+**事件**: {news_title}
+**逻辑**: {logic}
+
+**🎯 关联标的预警**:
+{stocks_text}
+
+---
+来源: {source}
+时间: {publish_time[:19] if publish_time else datetime.now().strftime('%Y-%m-%d %H:%M')}
+⚠️ 此为 AI 联想分析，仅供参考
+"""
+        payload = {
+            "msgtype": "markdown",
+            "markdown": {
+                "title": f"宏观事件预警 | {event_name}",
+                "text": text,
+            },
         }
         return self._do_post(payload)
 
@@ -392,7 +466,7 @@ class DingTalkNotifier:
         
         alert_label = alert_labels.get(alert_type, "⚪ 风险预警")
         
-        lines = [f"### {alert_label}\n\n"]
+        lines = [f"### [FTSeek] {alert_label} | 🇭🇰 港股\n\n"]
         
         # 根据预警类型添加详情
         if alert_type == "signal":
@@ -576,6 +650,68 @@ class DingTalkNotifier:
                         f"- 🔴 **{pos.get('code','')}** {pos.get('name','')} "
                         f"浮亏 {pnl_pct:.1f}% 需关注\n\n"
                     )
+
+            # 6. 权重收敛仪表板
+            wc = review.get('weight_convergence', {})
+            wc_strategies = wc.get('strategies', {})
+            if wc_strategies:
+                convergence_pct = wc.get('overall_convergence', 0) * 100
+                converged = wc.get('converged_count', 0)
+                total_en = wc.get('total_enabled', 0)
+                ready_icon = "✅" if wc.get('ready') else "⏳"
+                markdown_text += (
+                    f"---\n\n"
+                    f"**📈 权重收敛** {ready_icon}\n\n"
+                )
+                # 按置信度降序排列
+                sorted_wc = sorted(
+                    wc_strategies.items(),
+                    key=lambda x: x[1].get('confidence', 0),
+                    reverse=True
+                )
+                for name, s in sorted_wc:
+                    conf = s.get('confidence', 0) * 100
+                    trades = s.get('trades', 0)
+                    wr = s.get('win_rate', 0) * 100
+                    w = s.get('current_weight', 0)
+                    bar = "█" * int(conf / 10) + "░" * (10 - int(conf / 10))
+                    markdown_text += (
+                        f"- **{name}**: {bar} {conf:.0f}% ({trades}/20笔) "
+                        f"权重{w:.2f} 胜率{wr:.0f}%\n\n"
+                    )
+                markdown_text += (
+                    f"\n整体收敛: {converged}/{total_en} 策略已收敛 "
+                    f"({convergence_pct:.0f}%) "
+                    f"{'[就绪]' if wc.get('ready') else '[未就绪]'}\n\n"
+                )
+
+            # 7. 执行质量
+            eq = review.get('execution_quality', {})
+            exec_rate = eq.get('execution_rate', 0)
+            if eq.get('total_signals', 0) > 0 or eq.get('exit_distribution'):
+                markdown_text += "---\n\n**🎯 执行质量**\n\n"
+                if eq.get('total_signals', 0) > 0:
+                    rate_label = "健康" if 0.2 <= exec_rate <= 0.7 else "异常"
+                    markdown_text += (
+                        f"- 信号执行率: {exec_rate:.0%} "
+                        f"({eq.get('executed',0)}/{eq.get('total_signals',0)}) "
+                        f"[{rate_label}]\n\n"
+                    )
+                exit_dist = eq.get('exit_distribution_pct', {})
+                if exit_dist:
+                    parts = []
+                    label_map = {
+                        'stop_loss': '止损', 'take_profit': '止盈',
+                        'trailing_stop': '追踪', 'time_exit': '时间',
+                        'risk_control': '风控', 'partial_take_profit': '分批止盈',
+                    }
+                    for reason, pct in sorted(exit_dist.items(), key=lambda x: -x[1]):
+                        label = label_map.get(reason, reason)
+                        parts.append(f"{label} {pct:.0%}")
+                    markdown_text += f"- 退出分布: {' | '.join(parts)}\n\n"
+                warnings = eq.get('health_warnings', [])
+                for w in warnings:
+                    markdown_text += f"- ⚠️ {w}\n\n"
         
         payload = {
             "msgtype": "markdown",
@@ -794,8 +930,37 @@ class DingTalkNotifier:
                 f"**下周核心观点**:\n\n"
                 f"{outlook}\n\n"
                 f"---\n\n"
-                f"_数据自动生成 | FTSeek 绩效追踪系统_\n\n"
             )
+
+            # 策略权重演化
+            weight_evo = deep_review.get('weight_evolution', {})
+            if weight_evo:
+                part2_text += "**📈 策略权重演化**\n\n"
+                dir_icons = {'up': '⬆️上升', 'down': '⬇️下降', 'stable': '➖持平'}
+                for name, evo in sorted(weight_evo.items(),
+                                        key=lambda x: abs(x[1].get('weight_delta', 0)),
+                                        reverse=True):
+                    cw = evo.get('current_weight', 0)
+                    pw = evo.get('prev_weight')
+                    direction = dir_icons.get(evo.get('direction', 'stable'), '➖')
+                    conf = evo.get('confidence', 0) * 100
+                    wr = evo.get('win_rate', 0) * 100
+                    if pw is not None:
+                        part2_text += (
+                            f"- **{name}**: {pw:.2f} → {cw:.2f} [{direction}] "
+                            f"置信度{conf:.0f}% 胜率{wr:.0f}%\n\n"
+                        )
+                    else:
+                        part2_text += (
+                            f"- **{name}**: {cw:.2f} [{direction}] "
+                            f"置信度{conf:.0f}% 胜率{wr:.0f}%\n\n"
+                        )
+                    advice = evo.get('advice')
+                    if advice:
+                        part2_text += f"  → {advice}\n\n"
+                part2_text += "---\n\n"
+
+            part2_text += "_数据自动生成 | FTSeek 绩效追踪系统_\n\n"
             
             payload2 = {
                 "msgtype": "markdown",
@@ -1895,5 +2060,661 @@ class DingTalkNotifier:
         if ok:
             logger.info(f"钉钉 Markdown 推送成功")
         return ok
+    
+    # ============================================================
+    #  跨市场套利专用推送 (Task 5)
+    # ============================================================
+    
+    def send_cross_market_plan(self, metadata_dict: dict, signal_id: str, llm_assessment: dict = None) -> bool:
+        """
+        发送跨市场套利计划卡片 (09:10 推送)
+        
+        Args:
+            metadata_dict: CrossMarketMetadata.to_dict()
+            signal_id: 信号 ID
+            llm_assessment: 可选的LLM预分析结果 dict
+        
+        Returns:
+            是否发送成功
+        """
+        if not self.webhook_url:
+            logger.warning("钉钉 Webhook URL 未配置，跳过跨市场推送")
+            return False
+        
+        from app.strategy.cross_market import CrossMarketMetadata
+        metadata = CrossMarketMetadata.from_dict(metadata_dict)
+        
+        # 构建 Markdown 文本
+        markdown_text = (
+            f"### 📊 跨市场套利计划 (盘前)\n\n"
+            f"---\n\n"
+            f"**联动方向**: {metadata.lead_market}({metadata.lead_code}) → {metadata.lag_market}({metadata.lag_code})\n\n"
+            f"**历史相关性**: {metadata.correlation:.2f}\n\n"
+            f"**预期方向**: {'做多' if metadata_dict.get('side', 'long') == 'long' else '做空'}\n\n"
+            f"---\n\n"
+            f"### 📈 评分详情\n\n"
+            f"- **Lead-Lag 强度**: {metadata.lead_lag_strength:.2f}\n\n"
+            f"- **套利窗口分**: {metadata.arb_window_score:.2f}\n\n"
+            f"- **综合得分**: **{metadata.arb_total_score:.2f}**\n\n"
+            f"- **决策建议**: {metadata.arb_decision.upper()}\n\n"
+            f"- **事件强度**: {metadata.event_impact}\n\n"
+        )
+        
+        # 【新增 2026-04-12】LLM预分析结果
+        if llm_assessment:
+            direction_map = {
+                "STRONG_BUY": "🔴强烈看多",
+                "BUY": "🔴看多",
+                "NEUTRAL": "⚪中性",
+                "SELL": "🟢看空",
+                "STRONG_SELL": "🟢强烈看空",
+            }
+            confidence_map = {"HIGH": "高", "MEDIUM": "中", "LOW": "低"}
+            
+            direction = llm_assessment.get("direction", "NEUTRAL")
+            confidence = llm_assessment.get("confidence_level", "LOW")
+            reasoning = llm_assessment.get("reasoning", "")
+            key_factors = llm_assessment.get("key_factors", [])
+            
+            markdown_text += (
+                f"---\n\n"
+                f"### 🤖 LLM预分析 (qwen3.5-plus)\n\n"
+                f"**研判方向**: {direction_map.get(direction, direction)}\n\n"
+                f"**置信度**: {confidence_map.get(confidence, confidence)}\n\n"
+                f"**仓位建议**: {llm_assessment.get('position_tier', 'SKIP')}\n\n"
+                f"**执行时机**: {llm_assessment.get('recommended_timing', 'SKIP')}\n\n"
+            )
+            
+            if key_factors:
+                markdown_text += f"**关键因素**:\n\n"
+                for i, factor in enumerate(key_factors[:3], 1):
+                    markdown_text += f"{i}. {factor}\n\n"
+            
+            if reasoning:
+                markdown_text += f"**分析逻辑**: {reasoning[:150]}\n\n"
+            
+            # 跨市场洞察
+            cm_insight = llm_assessment.get("cross_market_insight", "")
+            if cm_insight:
+                markdown_text += f"**跨市场洞察**: {cm_insight[:120]}\n\n"
+            
+            markdown_text += f"---\n\n"
+        
+        markdown_text += (
+            f"### ⏰ 执行计划\n\n"
+            f"- **推送时间**: {metadata.push_time}\n\n"
+            f"- **计划执行**: 09:30 开盘\n\n"
+            f"- **默认行为**: <font color=\"#FFA500\">无人阻止则自动执行</font>\n\n"
+            f"- **否决窗口**: 09:10 - 09:25 (15分钟)\n\n"
+            f"- **倒计时**: 09:25 最后5分钟提醒\n\n"
+            f"---\n\n"
+            f"### 💡 风控参数\n\n"
+            f"- **仓位**: {metadata.risk_params['max_position_pct']:.0%}\n\n"
+            f"- **止损**: {metadata.risk_params['stop_loss_pct']:.0%}\n\n"
+            f"- **止盈**: {metadata.risk_params['take_profit_pct']:.0%}\n\n"
+            f"- **最长持有**: {metadata.risk_params['max_holding_minutes']}分钟\n\n"
+            f"- **滑点上限**: {metadata.risk_params['max_slippage_pct']:.1%}\n\n"
+            f"---\n\n"
+            f"### ⚠️ 操作说明\n\n"
+            f"如需**阻止执行**,请点击下方按钮:\n\n"
+            f"- 否决后该信号将不会执行\n\n"
+            f"- 可填写否决理由 (用于复盘)\n\n"
+        )
+        
+        # 构建 ActionCard
+        reject_url = (
+            f"{config.CALLBACK_EXTERNAL_URL}/api/v2/cross_market/reject"
+            f"?signal_id={signal_id}&token={config.API_TOKEN}"
+        )
+        
+        payload = {
+            "msgtype": "actionCard",
+            "actionCard": {
+                "title": f"📊 跨市场套利计划 - {metadata.lag_code}",
+                "text": markdown_text,
+                "btnOrientation": "1",  # 按钮竖排
+                "btns": [
+                    {
+                        "title": "❌ 阻止执行",
+                        "actionURL": reject_url
+                    },
+                ],
+            },
+        }
+        
+        ok = self._do_post(payload)
+        if ok:
+            logger.info(
+                f"[跨市场推送] 计划卡片发送成功: {metadata.lag_code} "
+                f"(评分={metadata.arb_total_score:.2f}, LLM={'有' if llm_assessment else '无'})"
+            )
+        return ok
+    
+    def send_cross_market_countdown(self, metadata_dict: dict, signal_id: str) -> bool:
+        """
+        发送倒计时5分钟提醒卡片 (09:25 推送)
+        
+        Args:
+            metadata_dict: CrossMarketMetadata.to_dict()
+            signal_id: 信号 ID
+        
+        Returns:
+            是否发送成功
+        """
+        if not self.webhook_url:
+            return False
+        
+        from app.strategy.cross_market import CrossMarketMetadata
+        metadata = CrossMarketMetadata.from_dict(metadata_dict)
+        
+        markdown_text = (
+            f"### ⏰ 最后5分钟倒计时\n\n"
+            f"---\n\n"
+            f"**标的**: {metadata.lag_code}\n\n"
+            f"**方向**: {'做多' if metadata_dict.get('side', 'long') == 'long' else '做空'}\n\n"
+            f"**综合评分**: {metadata.arb_total_score:.2f}\n\n"
+            f"**联动**: {metadata.lead_code}({metadata.lead_change_pct:+.1%}) → {metadata.lag_code}\n\n"
+            f"---\n\n"
+            f"⚠️ **5分钟后 (09:30) 将自动执行**\n\n"
+            f"如仍需阻止,请立即点击下方按钮:\n\n"
+        )
+        
+        reject_url = (
+            f"{config.CALLBACK_EXTERNAL_URL}/api/v2/cross_market/reject"
+            f"?signal_id={signal_id}&token={config.API_TOKEN}"
+        )
+        
+        payload = {
+            "msgtype": "actionCard",
+            "actionCard": {
+                "title": f"⏰ 倒计时5分钟 - {metadata.lag_code}",
+                "text": markdown_text,
+                "btnOrientation": "1",
+                "btns": [
+                    {
+                        "title": "❌ 立即阻止",
+                        "actionURL": reject_url
+                    },
+                ],
+            },
+        }
+        
+        ok = self._do_post(payload)
+        if ok:
+            logger.info(f"[跨市场推送] 倒计时卡片发送成功: {metadata.lag_code}")
+        return ok
+    
+    def send_cross_market_reject_confirm(self, metadata_dict: dict, user_id: str, comment: str) -> bool:
+        """
+        发送否决确认消息
+        
+        Args:
+            metadata_dict: CrossMarketMetadata.to_dict()
+            user_id: 操作人
+            comment: 否决理由
+        
+        Returns:
+            是否发送成功
+        """
+        if not self.webhook_url:
+            return False
+        
+        from app.strategy.cross_market import CrossMarketMetadata
+        metadata = CrossMarketMetadata.from_dict(metadata_dict)
+        
+        markdown_text = (
+            f"### ✅ 已阻止执行\n\n"
+            f"---\n\n"
+            f"**标的**: {metadata.lag_code}\n\n"
+            f"**操作人**: {user_id}\n\n"
+            f"**理由**: {comment or '未填写'}\n\n"
+            f"**评分**: {metadata.arb_total_score:.2f} (原决策: {metadata.arb_decision})\n\n"
+            f"---\n\n"
+            f"该信号将不会在 09:30 执行\n\n"
+        )
+        
+        payload = {
+            "msgtype": "markdown",
+            "markdown": {
+                "title": f"✅ 已阻止 - {metadata.lag_code}",
+                "text": markdown_text,
+            },
+        }
+        
+        ok = self._do_post(payload)
+        if ok:
+            logger.info(
+                f"[跨市场推送] 否决确认发送成功: {metadata.lag_code} "
+                f"(操作人: {user_id})"
+            )
+        return ok
+    
+    def send_cross_market_execution_result(self, metadata_dict: dict, success: bool, detail: str = "") -> bool:
+        """
+        发送执行结果通知
+        
+        Args:
+            metadata_dict: CrossMarketMetadata.to_dict()
+            success: 是否执行成功
+            detail: 详细信息 (成交价/滑点等)
+        
+        Returns:
+            是否发送成功
+        """
+        if not self.webhook_url:
+            return False
+        
+        from app.strategy.cross_market import CrossMarketMetadata
+        metadata = CrossMarketMetadata.from_dict(metadata_dict)
+        
+        if success:
+            markdown_text = (
+                f"### ✅ 跨市场套利执行成功\n\n"
+                f"---\n\n"
+                f"**标的**: {metadata.lag_code}\n\n"
+                f"**方向**: {'做多' if metadata_dict.get('side', 'long') == 'long' else '做空'}\n\n"
+                f"**评分**: {metadata.arb_total_score:.2f}\n\n"
+                f"---\n\n"
+                f"{detail}\n\n"
+                f"---\n\n"
+                f"⏰ **退出时间**: {metadata.risk_params['force_exit_time']} (强制平仓)\n\n"
+            )
+            title = f"✅ 执行成功 - {metadata.lag_code}"
+        else:
+            markdown_text = (
+                f"### ❌ 跨市场套利执行失败\n\n"
+                f"---\n\n"
+                f"**标的**: {metadata.lag_code}\n\n"
+                f"**评分**: {metadata.arb_total_score:.2f}\n\n"
+                f"---\n\n"
+                f"**失败原因**: {detail}\n\n"
+            )
+            title = f"❌ 执行失败 - {metadata.lag_code}"
+        
+        payload = {
+            "msgtype": "markdown",
+            "markdown": {
+                "title": title,
+                "text": markdown_text,
+            },
+        }
+        
+        ok = self._do_post(payload)
+        if ok:
+            logger.info(f"[跨市场推送] 执行结果发送成功: {metadata.lag_code}")
+        return ok
+
+    def send_llm_assessment(self, code: str, assessment_data: dict,
+                             accuracy_stats: dict = None) -> bool:
+        """推送 LLM 市场研判综合结果到钉钉（Task8 新增 2026-04-11，增强版 2026-04-12）
+
+        Args:
+            code: 标的代码 (如 "HK.00700")
+            assessment_data: LLM 研判结果 dict，包含：
+                - direction: STRONG_BUY/BUY/NEUTRAL/SELL/STRONG_SELL
+                - confidence_level: HIGH/MEDIUM/LOW
+                - position_tier: FULL/HALF/LIGHT/SKIP
+                - recommended_timing: IMMEDIATE/WAIT_CONFIRM/WAIT_PULLBACK/SKIP
+                - key_factors: List[str]
+                - risk_flags: List[str]
+                - reasoning: str
+                - news_impact: Optional[dict]
+                - cross_market_insight: Optional[str]
+            accuracy_stats: 可选的 LLM 准确率统计 dict
+        """
+        if not self.webhook_url:
+            logger.warning("钉钉 Webhook URL 未配置，跳过 LLM 研判推送")
+            return False
+
+        if not self._can_send():
+            logger.debug(f"[限流] LLM 研判推送被限流: {code}")
+            return False
+
+        direction_map = {
+            "STRONG_BUY": "强烈看多",
+            "BUY": "看多",
+            "NEUTRAL": "中性",
+            "SELL": "看空",
+            "STRONG_SELL": "强烈看空",
+        }
+        confidence_map = {
+            "HIGH": "高",
+            "MEDIUM": "中",
+            "LOW": "低",
+        }
+        timing_map = {
+            "IMMEDIATE": "立即",
+            "WAIT_CONFIRM": "等待确认",
+            "WAIT_PULLBACK": "等待回调",
+            "SKIP": "观望",
+        }
+
+        direction = assessment_data.get("direction", "NEUTRAL")
+        confidence = assessment_data.get("confidence_level", "LOW")
+
+        # 选择标题图标（港股：红涨绿跌）
+        if direction in ("STRONG_BUY", "BUY"):
+            icon = "🔴"
+        elif direction in ("STRONG_SELL", "SELL"):
+            icon = "🟢"
+        else:
+            icon = "⚪"
+
+        title = f"{icon} LLM研判 {code} {direction_map.get(direction, direction)}"
+
+        lines = [
+            f"### {title}",
+            "",
+            f"**标的**: {code}",
+            f"**研判方向**: {direction_map.get(direction, direction)} ({direction})",
+            f"**置信度**: {confidence_map.get(confidence, confidence)}",
+            f"**仓位建议**: {assessment_data.get('position_tier', 'SKIP')}",
+            f"**执行时机**: {timing_map.get(assessment_data.get('recommended_timing', 'SKIP'), '观望')}",
+            "",
+        ]
+
+        # 【增强 2026-04-12】买卖逻辑详解
+        direction_score = assessment_data.get("direction_score", 0)
+        confidence_value = assessment_data.get("confidence_value", 0)
+        position_ratio = assessment_data.get("position_ratio", 0)
+        
+        # 买卖逻辑说明
+        if direction in ("STRONG_BUY", "BUY"):
+            logic_icon = "📈"
+            logic_title = "做多逻辑"
+            if direction_score >= 0.8:
+                strength_desc = "极强"
+            elif direction_score >= 0.5:
+                strength_desc = "较强"
+            else:
+                strength_desc = "一般"
+            
+            lines.append(f"### {logic_icon} {logic_title}")
+            lines.append("")
+            lines.append(f"- **信号强度**: {strength_desc} (得分{direction_score:.2f})")
+            lines.append(f"- **置信水平**: {confidence_value:.0%}")
+            lines.append(f"- **建议仓位**: {position_ratio:.0%}")
+            lines.append("")
+            lines.append(f"**核心观点**:")
+            lines.append(f"LLM分析认为{code}当前具备做多机会，主要基于以下因素的综合判断：")
+            lines.append("")
+        elif direction in ("STRONG_SELL", "SELL"):
+            logic_icon = "📉"
+            logic_title = "做空逻辑"
+            if direction_score <= -0.8:
+                strength_desc = "极强"
+            elif direction_score <= -0.5:
+                strength_desc = "较强"
+            else:
+                strength_desc = "一般"
+            
+            lines.append(f"### {logic_icon} {logic_title}")
+            lines.append("")
+            lines.append(f"- **信号强度**: {strength_desc} (得分{direction_score:.2f})")
+            lines.append(f"- **置信水平**: {confidence_value:.0%}")
+            lines.append(f"- **建议仓位**: {position_ratio:.0%}")
+            lines.append("")
+            lines.append(f"**核心观点**:")
+            lines.append(f"LLM分析认为{code}当前存在下行风险，主要基于以下因素的综合判断：")
+            lines.append("")
+        else:
+            lines.append(f"### ⚪ 中性观望")
+            lines.append("")
+            lines.append(f"LLM分析认为{code}当前无明显方向性信号，建议观望等待更明确的机会。")
+            lines.append("")
+
+        # 关键因素（最多5条，带编号）
+        factors = assessment_data.get("key_factors", [])
+        if factors:
+            lines.append(f"**关键驱动因素**:")
+            for i, f in enumerate(factors[:5], 1):
+                # 为每条因素添加图标
+                if any(keyword in f.upper() for keyword in ["财报", "盈利", "业绩", "收入"]):
+                    factor_icon = "💰"
+                elif any(keyword in f.upper() for keyword in ["政策", "监管", "法规"]):
+                    factor_icon = "📋"
+                elif any(keyword in f.upper() for keyword in ["技术", "突破", "支撑", "阻力"]):
+                    factor_icon = "📊"
+                elif any(keyword in f.upper() for keyword in ["市场", "情绪", "资金"]):
+                    factor_icon = "🌊"
+                else:
+                    factor_icon = "📌"
+                
+                lines.append(f"  {i}. {factor_icon} {f}")
+            lines.append("")
+
+        # 风险标记
+        risk_flags = assessment_data.get("risk_flags", [])
+        if risk_flags:
+            lines.append(f"### ⚠️ 风险提示")
+            lines.append("")
+            for flag in risk_flags[:3]:
+                if "volatility" in flag.lower():
+                    risk_icon = "🌪️"
+                elif "liquidity" in flag.lower():
+                    risk_icon = "💧"
+                else:
+                    risk_icon = "⚠️"
+                lines.append(f"- {risk_icon} {flag}")
+            lines.append("")
+
+        # 新闻影响
+        news_impact = assessment_data.get("news_impact")
+        if news_impact and isinstance(news_impact, dict):
+            severity = news_impact.get("severity", "normal")
+            duration = news_impact.get("duration_minutes", 0)
+            affected = news_impact.get("affected_codes", [])
+            
+            lines.append(f"### 📰 新闻影响")
+            lines.append("")
+            lines.append(f"- **影响程度**: {severity}")
+            lines.append(f"- **预计持续**: {duration}分钟")
+            if affected:
+                lines.append(f"- **影响标的**: {', '.join(affected[:5])}")
+            lines.append("")
+
+        # 跨市场洞察
+        cm_insight = assessment_data.get("cross_market_insight")
+        if cm_insight:
+            lines.append(f"### 🌐 跨市场洞察")
+            lines.append("")
+            lines.append(f"{cm_insight[:200]}")
+            lines.append("")
+
+        # 推理摘要（扩展到200字）
+        reasoning = assessment_data.get("reasoning", "")
+        if reasoning:
+            lines.append(f"### 🧠 分析推理")
+            lines.append("")
+            lines.append(f"{reasoning[:200]}")
+            lines.append("")
+
+        # LLM 准确率统计（如果有足够样本）
+        if accuracy_stats and accuracy_stats.get("total_samples", 0) > 0:
+            total = accuracy_stats["total_samples"]
+            acc = accuracy_stats.get("accuracy", 0)
+            weight = accuracy_stats.get("current_weight", 0.15)
+            correct = accuracy_stats.get("correct", 0)
+            lines.append("---")
+            lines.append("")
+            lines.append(f"**LLM历史表现**: 准确率 {acc:.0%} ({correct}/{total})")
+            lines.append(f"**当前权重**: {weight:.2f}")
+            lines.append("")
+
+        lines.append("---")
+        lines.append("*FTSeek LLM研判 (qwen3.5-plus) | 开盘前定时分析*")
+
+        markdown_text = "\n".join(lines)
+
+        payload = {
+            "msgtype": "markdown",
+            "markdown": {
+                "title": title,
+                "text": markdown_text,
+            },
+        }
+
+        ok = self._do_post(payload)
+        if ok:
+            logger.info(f"[LLM研判推送] {code} {direction} 发送成功")
+        return ok
+
+    def send_premarket_report(self, assessments: list, pipeline_stats: dict = None) -> bool:
+        """推送盘前 Pipeline 执行汇总报告
+
+        Args:
+            assessments: List of PreMarketAssessment dicts
+            pipeline_stats: Pipeline execution statistics
+        """
+        if not self.webhook_url:
+            logger.warning("钉钉 Webhook URL 未配置，跳过盘前报告推送")
+            return False
+
+        if not self._can_send():
+            logger.debug("[限流] 盘前报告推送被限流")
+            return False
+
+        lines = [
+            "### 盘前交易分析报告",
+            "",
+        ]
+
+        if pipeline_stats:
+            lines.append(
+                f"**执行统计**: {pipeline_stats.get('raw_news_count', 0)} 条新闻 → "
+                f"{pipeline_stats.get('cleaned_news_count', 0)} 清洗后 → "
+                f"{pipeline_stats.get('cluster_count', 0)} 个事件"
+            )
+            lines.append(
+                f"**LLM 分析**: {pipeline_stats.get('assessment_count', 0)} 个 | "
+                f"自动执行: {pipeline_stats.get('auto_signals', 0)} | "
+                f"待确认: {pipeline_stats.get('review_cards', 0)} | "
+                f"观察: {pipeline_stats.get('observe_only', 0)}"
+            )
+            lines.append("")
+
+        if not assessments:
+            lines.append("**今日无重要交易信号，建议观望为主。**")
+        else:
+            for a in assessments:
+                direction = a.get("direction", "WATCH")
+                direction_map = {
+                    "BUY": "买入", "SELL": "卖出", "NEUTRAL": "中性",
+                    "WATCH": "观望", "NO_TRADE": "不交易",
+                }
+                conf = a.get("confidence", 0)
+                conf_icon = "🟢" if conf >= 0.75 else "🟡" if conf >= 0.55 else "⚪"
+                symbols = ", ".join(a.get("focus_symbols", []) or [])
+                recommendation = a.get("recommendation", "")[:60]
+
+                lines.append(
+                    f"**{conf_icon} {direction_map.get(direction, direction)}** "
+                    f"{symbols}"
+                )
+                lines.append(
+                    f"  置信度: {conf:.0%} | 相关性: {a.get('relevance_score', 0):.0%} | "
+                    f"仓位: {a.get('position_ratio', 0):.0%}"
+                )
+                if recommendation:
+                    lines.append(f"  建议: {recommendation}")
+                lines.append("")
+
+        lines.append("---")
+        lines.append("*FTSeek 盘前 Pipeline | qwen-plus/qwen-max 混合模型*")
+
+        markdown_text = "\n".join(lines)
+        payload = {
+            "msgtype": "markdown",
+            "markdown": {
+                "title": "盘前交易分析报告",
+                "text": markdown_text,
+            },
+        }
+
+        ok = self._do_post(payload)
+        if ok:
+            logger.info(f"[盘前报告推送] 已发送 {len(assessments)} 个评估结果")
+        return ok
+
+    def send_review_action_card(self, card_data: dict) -> bool:
+        """推送盘前分析人工确认 ActionCard
+
+        Args:
+            card_data: 包含 title, text, assessment_id 等字段的字典
+        """
+        if not self.webhook_url:
+            logger.warning("钉钉 Webhook URL 未配置，跳过 ActionCard 推送")
+            return False
+
+        if not self._can_send():
+            logger.debug("[限流] ActionCard 推送被限流")
+            return False
+
+        title = card_data.get("title", "盘前分析确认")
+        text = card_data.get("text", "")
+        assessment_id = card_data.get("assessment_id", "")
+
+        # 使用 Markdown 消息模拟 ActionCard (钉钉 ActionCard 需要企业内部应用)
+        # 添加确认/延迟/忽略的操作指引
+        action_text = (
+            f"\n---\n"
+            f"**操作指引**: 请联系系统管理员通过 API 确认执行\n"
+            f"`POST /api/v2/premarket/assessments/{assessment_id}/approve`"
+        )
+
+        markdown_text = text + action_text
+        payload = {
+            "msgtype": "markdown",
+            "markdown": {
+                "title": title,
+                "text": markdown_text,
+            },
+        }
+
+        ok = self._do_post(payload)
+        if ok:
+            logger.info(f"[盘前ActionCard] 已发送确认卡片: {assessment_id}")
+        return ok
+
+
+# ============================================================
+#  全局单例 (所有模块统一使用此入口)
+# ============================================================
+
+_global_notifier: Optional[DingTalkNotifier] = None
+_notifier_lock = threading.Lock()
+
+
+def get_dingtalk_notifier() -> DingTalkNotifier:
+    """获取全局唯一的钉钉通知器实例。
+
+    所有模块（交易信号、新闻推送、风险警报、跨市场套利等）
+    都必须通过此函数获取 notifier，确保：
+    1. 共享同一个 webhook URL 和 secret
+    2. 共享同一个限流计数器 (_can_send)
+    3. 避免重复初始化导致的多头推送
+    """
+    global _global_notifier
+    if _global_notifier is None:
+        with _notifier_lock:
+            if _global_notifier is None:
+                _global_notifier = DingTalkNotifier()
+                if _global_notifier.webhook_url:
+                    logger.info(
+                        "[全局通知器] 已初始化: webhook=%s...",
+                        _global_notifier.webhook_url[:50],
+                    )
+                else:
+                    logger.warning(
+                        "[全局通知器] DINGTALK_WEBHOOK_URL 未配置，所有推送将被跳过"
+                    )
+    return _global_notifier
+
+
+def reset_dingtalk_notifier() -> None:
+    """重置全局通知器（仅用于测试）"""
+    global _global_notifier
+    with _notifier_lock:
+        _global_notifier = None
 
 

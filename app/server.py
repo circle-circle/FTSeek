@@ -16,6 +16,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from app import config
 from app.signal_store import signal_store
+from app.storage.repository import get_db
 from app.trader.executor import TradeExecutor
 from app.notifier.dingtalk import DingTalkNotifier
 
@@ -66,16 +67,6 @@ async def optimization_monitor_page():
         return HTMLResponse(dashboard_file.read_text(encoding="utf-8"))
     return HTMLResponse("<h1>优化监控面板文件不存在</h1>", status_code=404)
 
-# 【新增 2026-04-02】深度复盘页面
-@app.get("/deep-review/", include_in_schema=False)
-@app.get("/deep-review", include_in_schema=False)
-async def deep_review_page():
-    """深度复盘系统"""
-    from pathlib import Path
-    dashboard_file = Path(__file__).parent / "dashboard" / "deep_review.html"
-    if dashboard_file.exists():
-        return HTMLResponse(dashboard_file.read_text(encoding="utf-8"))
-    return HTMLResponse("<h1>深度复盘页面文件不存在</h1>", status_code=404)
 
 # 【新增 2026-04-05】新版复盘大盘 v2
 @app.get("/review-v2/", include_in_schema=False)
@@ -105,13 +96,6 @@ app.mount("/dashboard/v2/js", StaticFiles(directory=os.path.join(dashboard_dir, 
 app.mount("/dashboard/static", StaticFiles(directory=dashboard_dir), name="dashboard_static")
 
 
-# 注册深度复盘 API 路由
-try:
-    from app.review_api import router as review_router
-    app.include_router(review_router)
-    logger.info("深度复盘 API 路由已注册")
-except Exception as e:
-    logger.warning(f"深度复盘 API 路由注册失败：{e}")
 
 # 注册新版复盘大盘 API v2 路由
 try:
@@ -169,13 +153,13 @@ try:
 except Exception as e:
     logger.warning(f"实时风险监控 API 路由注册失败：{e}")
 
-# 注册专业量化指标 API 路由
-try:
-    from app.risk.metrics_api import router as metrics_router
-    app.include_router(metrics_router, prefix="/api/risk")
-    logger.info("专业量化指标 API 路由已注册")
-except Exception as e:
-    logger.warning(f"专业量化指标 API 路由注册失败：{e}")
+# 注册专业量化指标 API 路由 (已废弃/暂未实现)
+# try:
+#     from app.risk.metrics_api import router as metrics_router
+#     app.include_router(metrics_router, prefix="/api/risk")
+#     logger.info("专业量化指标 API 路由已注册")
+# except Exception as e:
+#     logger.warning(f"专业量化指标 API 路由注册失败：{e}")
 
 # 注册认证 API 路由
 try:
@@ -188,6 +172,7 @@ except Exception as e:
 # 全局实例 (在 main.py 启动时注入)
 _executor: Optional[TradeExecutor] = None
 _notifier: Optional[DingTalkNotifier] = None
+_subscriber = None  # P0 (2026-04-16): DataSubscriber 引用，供新闻事件注入使用
 
 
 def set_executor(executor: TradeExecutor):
@@ -198,6 +183,16 @@ def set_executor(executor: TradeExecutor):
 def set_notifier(notifier: DingTalkNotifier):
     global _notifier
     _notifier = notifier
+
+
+def set_subscriber(subscriber):
+    """设置全局 DataSubscriber 实例"""
+    global _subscriber
+    _subscriber = subscriber
+
+def get_subscriber_instance():
+    """获取全局 DataSubscriber 实例"""
+    return _subscriber
 
 
 # ============================================================
@@ -407,7 +402,7 @@ async def status(token: str = Query(...)):
         "status": "running",
         "pending_signals": len(pending),
         "trade_env": "模拟" if config.TRADE_ENV == 1 else "真实",
-        "watch_list": config.WATCH_LIST,
+        "watch_list": config.WATCH_LIST_HK,
         "timestamp": time.time(),
     }
 
@@ -488,6 +483,27 @@ async def health(token: str = Query(default=None)):
         except HTTPException:
             return {"status": "unauthorized"}
     return {"status": "ok"}
+
+
+@app.post("/api/news/event")
+async def news_event(news_data: dict):
+    """
+    P0 (2026-04-16): 新闻事件注入接口
+    供 futu_flash_cron 等外部采集器调用，将新闻注入事件驱动管线
+    """
+    news_list = news_data.get('news_list', [])
+    if not news_list:
+        return {"status": "error", "message": "no news"}
+    
+    # 注入到 DataSubscriber 的事件驱动入口
+    try:
+        if _subscriber and hasattr(_subscriber, 'on_news_event'):
+            _subscriber.on_news_event(news_list)
+            return {"status": "ok", "injected": len(news_list)}
+        else:
+            return {"status": "error", "message": "subscriber not available"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)[:100]}
 
 
 @app.get("/")
@@ -630,186 +646,64 @@ except Exception as e:
 
 
 # ============================================================
-#  港股交易深度复盘 Dashboard (新增)
+#  Legacy Deep Review APIs Removed
+#  Migrated to: app/simulation/socratic_review_dashboard.py
 # ============================================================
-@app.get("/deep-review/", include_in_schema=False)
-async def deep_review_root():
-    """港股交易深度复盘 Dashboard"""
-    from pathlib import Path
-    from fastapi.responses import HTMLResponse
-    review_file = Path(__file__).parent / "dashboard" / "deep_review.html"
-    if review_file.exists():
-        html_content = review_file.read_text(encoding="utf-8")
-        return HTMLResponse(html_content)
-    return HTMLResponse("<h1>深度复盘加载中...</h1>", status_code=404)
-
-print("✅ 港股交易深度复盘路由已注册 (/deep-review/)")
-
-# 注册深度复盘 Dashboard API
-try:
-    from app.dashboard_api import router as dashboard_router
-    app.include_router(dashboard_router)
-    print("✅ 深度复盘 Dashboard API 已注册 (/api/dashboard)")
-except Exception as e:
-    print(f"⚠️ 深度复盘 Dashboard API 注册失败：{e}")
-
 
 # ============================================================
-#  历史数据 API (新增)
+# Phase 1: 归因链路回溯查询 API
 # ============================================================
-@app.get("/api/v2/deep-review/historical")
-async def get_historical_data(days: int = 30):
-    """获取历史交易数据 (用于趋势图表)"""
-    from datetime import datetime, timedelta
-    from pathlib import Path
-    import sqlite3
-    
-    db_path = Path(__file__).parent.parent / "ftseek" / "FTSeek" / "data" / "ftseek.db"
-    
-    if not db_path.exists():
-        db_path = Path("/opt/ftseek/FTSeek/data/ftseek.db")
-    
-    conn = sqlite3.connect(str(db_path))
-    conn.row_factory = sqlite3.Row
-    
-    cursor = conn.cursor()
-    cursor.execute("""
-        SELECT 
-            date(entry_time) as trade_date,
-            COUNT(*) as count,
-            SUM(pnl) as total_pnl,
-            SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END) as wins,
-            SUM(CASE WHEN pnl < 0 THEN 1 ELSE 0 END) as losses,
-            AVG(pnl) as avg_pnl
-        FROM trades 
-        WHERE pnl != 0 
-        GROUP BY date(entry_time) 
-        ORDER BY trade_date DESC 
-        LIMIT ?
-    """, (days,))
-    
-    rows = cursor.fetchall()
-    conn.close()
-    
-    data = []
-    for row in rows:
-        data.append({
-            "date": row["trade_date"],
-            "count": row["count"],
-            "total_pnl": row["total_pnl"],
-            "wins": row["wins"],
-            "losses": row["losses"],
-            "avg_pnl": row["avg_pnl"],
-            "win_rate": round(row["wins"] / row["count"] * 100, 2) if row["count"] > 0 else 0
-        })
-    
-    return {"status": "ok", "data": data, "count": len(data)}
 
-@app.get("/api/v2/deep-review/risk-metrics")
-async def get_risk_metrics():
-    """获取风险指标"""
-    from pathlib import Path
-    import sqlite3
-    
-    db_path = Path("/opt/ftseek/FTSeek/data/ftseek.db")
-    
-    conn = sqlite3.connect(str(db_path))
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
-    
-    # 基础统计
-    cursor.execute("""
-        SELECT 
-            COUNT(*) as total_trades,
-            SUM(pnl) as total_pnl,
-            SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END) as wins,
-            SUM(CASE WHEN pnl < 0 THEN 1 ELSE 0 END) as losses,
-            AVG(pnl) as avg_pnl,
-            MAX(pnl) as max_win,
-            MIN(pnl) as max_loss,
-            AVG(CASE WHEN pnl > 0 THEN pnl ELSE 0 END) as avg_win,
-            AVG(CASE WHEN pnl < 0 THEN pnl ELSE 0 END) as avg_loss
-        FROM trades 
-        WHERE pnl != 0 
-        AND date(entry_time) >= date('now', '-30 days')
-    """)
-    
-    row = cursor.fetchone()
-    
-    # 计算夏普比率 (简化版)
-    avg_return = row["avg_pnl"] if row["avg_pnl"] else 0
-    std_return = 200  # 简化假设
-    sharpe_ratio = round(avg_return / std_return, 2) if std_return > 0 else 0
-    
-    # 计算盈亏比
-    avg_win = row["avg_win"] if row["avg_win"] else 0
-    avg_loss = abs(row["avg_loss"]) if row["avg_loss"] else 1
-    profit_loss_ratio = round(avg_win / avg_loss, 2)
-    
-    conn.close()
-    
-    return {
-        "status": "ok",
-        "data": {
-            "total_trades": row["total_trades"],
-            "total_pnl": round(row["total_pnl"], 2) if row["total_pnl"] else 0,
-            "win_rate": round(row["wins"] / row["total_trades"] * 100, 2) if row["total_trades"] > 0 else 0,
-            "avg_pnl": round(avg_return, 2),
-            "max_win": round(row["max_win"], 2) if row["max_win"] else 0,
-            "max_loss": round(row["max_loss"], 2) if row["max_loss"] else 0,
-            "avg_win": round(avg_win, 2),
-            "avg_loss": round(avg_loss, 2),
-            "profit_loss_ratio": profit_loss_ratio,
-            "sharpe_ratio": sharpe_ratio,
-            "max_drawdown": -1875.0,  # 简化
-            "avg_holding_hours": 2.3,
-        }
-    }
-
-@app.get("/api/v2/deep-review/trades/detail")
-async def get_trades_detail_csv(date: str = None, format: str = "json"):
-    """获取交易明细 (支持 CSV 导出)"""
-    from pathlib import Path
-    import sqlite3
-    from fastapi.responses import Response
-    
-    db_path = Path("/opt/ftseek/FTSeek/data/ftseek.db")
-    
-    conn = sqlite3.connect(str(db_path))
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
-    
-    query = """
-        SELECT 
-            id, code, name, action, entry_price, exit_price,
-            quantity, pnl, pnl_percent, strategy,
-            entry_time, exit_time
-        FROM trades
+@app.get("/api/attribution/chain/{trace_id}")
+async def get_attribution_chain(trace_id: str):
     """
-    params = []
-    
-    if date:
-        query += " WHERE date(entry_time) = ?"
-        params.append(date)
-    
-    query += " ORDER BY entry_time"
-    
-    cursor.execute(query, params)
-    rows = cursor.fetchall()
-    conn.close()
-    
-    if format == "csv":
-        csv_lines = ["时间，代码，名称，方向，入场价，出场价，数量，盈亏 (HKD),盈亏 (%),策略"]
-        for row in rows:
-            csv_lines.append(f"{row['entry_time']},{row['code']},{row['name']},{row['action']},{row['entry_price']},{row['exit_price']},{row['quantity']},{row['pnl']},{row['pnl_percent']},{row['strategy']}")
-        
-        return Response(
-            content="\n".join(csv_lines),
-            media_type="text/csv",
-            headers={"Content-Disposition": "attachment; filename=trades.csv"}
-        )
-    
-    data = [dict(row) for row in rows]
-    return {"status": "ok", "data": data, "count": len(data)}
+    获取指定 trace_id 的完整证据链。
+    返回: position + trade_chain + attribution + feedback
+    """
+    from app.evidence.attribution_chain_fix import AttributionQueryEngine
+    engine = AttributionQueryEngine()
+    chain = engine.get_full_chain(trace_id)
+    if not chain:
+        raise HTTPException(status_code=404, detail=f"Trace ID {trace_id} 未找到")
+    return chain
 
-print("✅ 历史数据 API 已注册")
+
+@app.get("/api/attribution/trades")
+async def query_attribution_trades(
+    code: str = Query(None, description="股票代码"),
+    strategy: str = Query(None, description="策略名称"),
+    start_time: str = Query(None, description="开始时间 (ISO)"),
+    end_time: str = Query(None, description="结束时间 (ISO)"),
+    pnl_min: float = Query(None, description="最小盈亏"),
+    pnl_max: float = Query(None, description="最大盈亏"),
+    limit: int = Query(50, description="返回数量"),
+):
+    """
+    查询交易列表，支持多维度过滤。
+    """
+    from app.evidence.attribution_chain_fix import AttributionQueryEngine
+    engine = AttributionQueryEngine()
+    trades = engine.query_trades(
+        start_time=start_time,
+        end_time=end_time,
+        code=code,
+        strategy=strategy,
+        pnl_min=pnl_min,
+        pnl_max=pnl_max,
+        limit=limit,
+    )
+    return {"count": len(trades), "trades": trades}
+
+
+@app.get("/api/attribution/summary")
+async def get_attribution_summary(days: int = Query(30, description="统计天数")):
+    """
+    获取归因统计摘要。
+    """
+    from app.evidence.attribution_chain_fix import AttributionQueryEngine
+    engine = AttributionQueryEngine()
+    summary = engine.get_attribution_summary(days=days)
+    return summary
+
+
+print("✅ 归因链路回溯查询 API 已注册 (/api/attribution/*)")

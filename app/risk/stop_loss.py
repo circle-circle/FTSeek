@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from enum import Enum
 
 logger = logging.getLogger("ftseek.risk.stop_loss")
-logger.propagate = False  # 防止日志重复
+# 2026-04-10: propagate=True (默认), 通过 ftseek 父级 logger 输出
 
 
 class StopLossType(Enum):
@@ -52,7 +52,7 @@ class StopLossCalculator:
 
     def __init__(
         self,
-        default_stop_percent: float = 0.05,  # 默认 5% 止损
+        default_stop_percent: float = 0.03,  # 2026-04-16 对齐 config.yaml stop_loss.default_percent (3%)
         atr_multiplier: float = 2.0,         # ATR 乘数
         trailing_percent: float = 0.03,      # 移动止损百分比
         max_holding_periods: int = 20,       # 最大持仓周期
@@ -376,8 +376,8 @@ class StopLossCalculator:
                 if part.startswith("止盈="):
                     take_profit_price = float(part.split("=")[1].split(" ")[0])
                     break
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"[解析止盈价] notes内容无法解析，跳过止盈检查: {e}")
 
         if take_profit_price is None:
             return False, ""

@@ -17,6 +17,27 @@ import uuid
 logger = logging.getLogger("ftseek.storage.trade_recorder")
 logger.propagate = False
 
+
+def _make_json_serializable(obj: Any) -> Any:
+    """
+    递归转换对象为 JSON 可序列化格式
+    
+    处理 mappingproxy 和其他不可序列化类型
+    """
+    if isinstance(obj, dict):
+        return {k: _make_json_serializable(v) for k, v in obj.items()}
+    elif isinstance(obj, (list, tuple)):
+        return [_make_json_serializable(item) for item in obj]
+    elif type(obj).__name__ == 'mappingproxy':
+        return {k: _make_json_serializable(v) for k, v in obj.items()}
+    elif hasattr(obj, '__dict__'):
+        return _make_json_serializable(obj.__dict__)
+    elif isinstance(obj, (datetime,)):
+        return obj.isoformat()
+    else:
+        return obj
+
+
 # 交易记录存储目录
 TRADE_RECORDS_DIR = Path('/opt/ftseek/FTSeek/data/trade_records')
 TRADE_RECORDS_DIR.mkdir(parents=True, exist_ok=True)
@@ -602,7 +623,7 @@ class TradeChainRecorder:
                         chain = TradeChain.from_dict(item)
                         self.chains[chain.trade_id] = chain
             except Exception as e:
-                logger.error(f"加载 TradeChain 文件失败 {file}: {e}")
+                logger.debug(f"跳过 TradeChain 文件 {file}: {e}")
 
         logger.info(f"加载 TradeChain: {len(self.chains)} 条")
 
@@ -610,7 +631,9 @@ class TradeChainRecorder:
                     trade_id: str,
                     code: str,
                     signal_data: Dict[str, Any],
-                    decision_data: Dict[str, Any]) -> TradeChain:
+                    decision_data: Dict[str, Any],
+                    action: str = 'BUY',
+                    quantity: int = 0) -> TradeChain:
         """
         启动交易链路 (信号产生 + 决策完成时调用)
 
@@ -627,6 +650,8 @@ class TradeChainRecorder:
                 - position_planned, position_adjusted
                 - position_adjust_reason, weight_config_snapshot
                 - account_state
+            action: BUY/SELL
+            quantity: 数量
 
         Returns:
             TradeChain: 交易链路
@@ -634,6 +659,8 @@ class TradeChainRecorder:
         chain = TradeChain()
         chain.trade_id = trade_id
         chain.code = code
+        chain.action = action
+        chain.quantity = quantity
         chain.created_at = datetime.now().isoformat()
         chain.updated_at = chain.created_at
 
@@ -666,7 +693,7 @@ class TradeChainRecorder:
         self.chains[trade_id] = chain
         self._save_chain(chain)
 
-        logger.info(f"启动 TradeChain: {trade_id} - {code}")
+        logger.info(f"启动 TradeChain: {trade_id} - {code} - {action}")
         return chain
 
     def record_execution(self,
@@ -780,18 +807,28 @@ class TradeChainRecorder:
         return chain
 
     def _save_chain(self, chain: TradeChain, max_retries: int = 3):
-        """保存单个交易链路（带重试机制）"""
-        # 按日期保存到不同文件
+        """保存单个交易链路（带重试机制）- 同时保存到文件和数据库"""
+        import tempfile
+        import shutil
+
+        # 保存到文件 (向后兼容)
         for attempt in range(max_retries):
             try:
                 date_str = chain.created_at[:10]  # YYYY-MM-DD
                 file_path = TRADE_CHAIN_DIR / f'{date_str}.json'
 
-                # 加载当日数据
+                # 加载当日数据（带损坏恢复）
                 chains_data = []
                 if file_path.exists():
-                    with open(file_path, 'r', encoding='utf-8') as f:
-                        chains_data = json.load(f)
+                    try:
+                        with open(file_path, 'r', encoding='utf-8') as f:
+                            chains_data = json.load(f)
+                    except json.JSONDecodeError:
+                        # 文件损坏，备份并重置
+                        backup_path = file_path.with_suffix('.json.corrupt')
+                        shutil.copy2(file_path, backup_path)
+                        logger.warning(f"TradeChain 文件损坏，已备份到 {backup_path}")
+                        chains_data = []
 
                 # 更新或添加
                 found = False
@@ -804,18 +841,27 @@ class TradeChainRecorder:
                 if not found:
                     chains_data.append(chain.to_dict())
 
-                # 保存
-                with open(file_path, 'w', encoding='utf-8') as f:
-                    json.dump(chains_data, f, indent=2, ensure_ascii=False)
+                # 原子写入：先写临时文件，再重命名
+                tmp_fd, tmp_path = tempfile.mkstemp(dir=TRADE_CHAIN_DIR, suffix='.tmp')
+                try:
+                    # 转换不可序列化对象 (mappingproxy 等)
+                    chains_data_clean = _make_json_serializable(chains_data)
+                    with os.fdopen(tmp_fd, 'w', encoding='utf-8') as tmp_f:
+                        json.dump(chains_data_clean, tmp_f, indent=2, ensure_ascii=False)
+                    shutil.move(tmp_path, str(file_path))
+                except Exception:
+                    # 清理临时文件
+                    if os.path.exists(tmp_path):
+                        os.unlink(tmp_path)
+                    raise
 
-                return  # 成功保存，退出
+                break  # 成功保存到文件，退出重试循环
 
             except json.JSONDecodeError as e:
-                # JSON 解析错误（可能是并发写入导致），重试
                 logger.warning(f"保存 TradeChain JSON 解析失败 (尝试 {attempt+1}/{max_retries}): {e}")
                 if attempt < max_retries - 1:
                     import time
-                    time.sleep(0.1 * (attempt + 1))  # 指数退避
+                    time.sleep(0.1 * (attempt + 1))
                 else:
                     logger.error(f"保存 TradeChain 失败（重试{max_retries}次后）: {e}")
             except Exception as e:
@@ -825,6 +871,53 @@ class TradeChainRecorder:
                     time.sleep(0.1 * (attempt + 1))
                 else:
                     logger.error(f"保存 TradeChain 失败（重试{max_retries}次后）: {e}")
+
+        # 同时保存到数据库 (UTR 统一模型)
+        self._save_chain_to_db(chain)
+
+
+    def _save_chain_to_db(self, chain: TradeChain) -> bool:
+        """
+        保存 TradeChain 到数据库 (UTR 统一模型)
+
+        Args:
+            chain: TradeChain 对象
+
+        Returns:
+            是否成功
+        """
+        try:
+            from app.storage.database import get_database
+            import json
+
+            db = get_database()
+
+            # 转换为 UTR 格式的字典
+            utr_data = {
+                'trade_id': chain.trade_id,
+                'code': chain.code,
+                'action': 'BUY',  # 需要从外部传入，这里默认
+                'quantity': 100,  # 需要从外部传入
+                'account_type': 'real',
+                'strategy': chain.decision.decision_reason if chain.decision else '',
+                'status': 'closed' if chain.is_closed else 'open',
+                'is_closed': chain.is_closed,
+                'is_profitable': chain.is_profitable,
+                'days_ago': chain.days_ago,
+                'created_at': chain.created_at,
+                'updated_at': chain.updated_at,
+                # 四层数据转换为 JSON 字符串 (先清理不可序列化对象)
+                'signal_layer': json.dumps(_make_json_serializable(chain.signal.to_dict() if chain.signal else {}), ensure_ascii=False),
+                'decision_layer': json.dumps(_make_json_serializable(chain.decision.to_dict() if chain.decision else {}), ensure_ascii=False),
+                'execution_layer': json.dumps(_make_json_serializable(chain.execution.to_dict() if chain.execution else {}), ensure_ascii=False),
+                'result_layer': json.dumps(_make_json_serializable(chain.result.to_dict() if chain.result else None), ensure_ascii=False) if chain.result else None,
+            }
+
+            return db.save_trade_chain(utr_data)
+
+        except Exception as e:
+            logger.error(f"保存到数据库失败：{e}")
+            return False
 
     def get_chain(self, trade_id: str) -> Optional[TradeChain]:
         """根据 ID 获取交易链路"""

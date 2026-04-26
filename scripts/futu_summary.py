@@ -53,8 +53,8 @@ for idx, row in acc_data.iterrows():
             buys = len(deals[deals['side'] == 'BUY'])
             sells = len(deals[deals['side'] == 'SELL'])
             print(f"    买入：{buys} | 卖出：{sells}")
-    except:
-        pass
+    except Exception:
+        pass  # get_history_deal_list failed
     
     print()
 

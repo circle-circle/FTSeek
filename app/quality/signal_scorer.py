@@ -14,7 +14,7 @@ from datetime import datetime
 from enum import Enum
 
 logger = logging.getLogger("ftseek.quality.scorer")
-logger.propagate = False
+# 2026-04-10: propagate=True (默认), 通过 ftseek 父级 logger 输出
 
 
 class QualityLevel(Enum):

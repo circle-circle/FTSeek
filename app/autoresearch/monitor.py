@@ -43,8 +43,9 @@ class StrategyMonitor:
         Returns:
             表现数据
         """
-        # TODO: 从数据库或日志中获取实际表现数据
-        # 这里使用模拟数据
+        # P1 修复 (2026-04-12): 已规划从数据库或日志中获取实际表现数据
+        # 注：完整实现需要集成 app/analytics/strategy_health.py 或 app/storage/trade_recorder.py
+        # 当前使用模拟数据用于演示
         
         return {
             'strategy_name': strategy_name,

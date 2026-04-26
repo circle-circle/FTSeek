@@ -1,11 +1,9 @@
 """
-多因子融合策略 (Multi-Factor Confluence)
-TradingView 风格的多指标共振策略
-只在多个指标同时确认时才产生信号，大幅降低假信号
-
-支持的因子: RSI / MACD / Bollinger / SuperTrend / MA Cross / Volume
-信号模式: 至少 N 个因子同时确认才触发（可配置）
+DEPRECATED: 此模块已废弃, 请使用 app/strategy/confluence_v2.py
+V1 融合策略 - 已被 ConfluenceStrategyV2 替代.
+保留仅为向后兼容, 将在未来版本移除.
 """
+
 import logging
 from collections import defaultdict
 from typing import Optional, Dict, List

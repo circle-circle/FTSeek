@@ -52,20 +52,22 @@ else
         echo "✅ 旧进程已清理"
     fi
     
-    # 设置环境变量
+    # 设置环境变量 - 从 .env 统一加载，避免硬编码导致与 config.yaml 不一致
     export PYTHONPATH=/opt/ftseek/FTSeek:$PYTHONPATH
-    export API_TOKEN=test123
-    export FTSEEK_DEV_MODE=1
-    export DINGTALK_WEBHOOK_URL='https://oapi.dingtalk.com/robot/send?access_token=cddea8919223640d4f3bd59e507373cae0df476df5f541fcca5c8921eab73121'
-    export DINGTALK_SECRET='SEC177f5321e91e689a1a2134e4414ae49e7b7f2cddc63775613effbf371f388f78'
-    export CALLBACK_EXTERNAL_URL=http://39.97.58.4:8899
-    export TRADE_ENV=1
-    export OPEND_HOST=127.0.0.1
-    export OPEND_PORT=11111
-    export WATCH_LIST_HK='["HK.09992", "HK.00981", "HK.03690"]'
-    export CONSENSUS_THRESHOLD=0.4
-    export SIGNAL_COOLDOWN=60
-    export DEFAULT_ORDER_QTY_HK=100
+    
+    # 加载 .env 配置 (敏感信息和运行时参数统一由 .env + config.yaml 管理)
+    ENV_FILE="/opt/ftseek/FTSeek/.env"
+    if [ -f "$ENV_FILE" ]; then
+        echo ">>> 从 $ENV_FILE 加载环境变量..."
+        set -a
+        source "$ENV_FILE"
+        set +a
+    else
+        echo "⚠️ .env 文件不存在: $ENV_FILE，使用最小默认配置"
+        export TRADE_ENV=1
+        export OPEND_HOST=127.0.0.1
+        export OPEND_PORT=11111
+    fi
     
     # 启动主程序
     nohup python3.8 app/main.py > logs/ftseek.log 2>&1 &

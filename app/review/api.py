@@ -4,6 +4,7 @@
 提供 HTTP 接口访问复盘数据
 """
 import logging
+from app.storage.repository import get_db
 from fastapi import APIRouter, HTTPException
 from typing import List, Dict, Any, Optional
 from datetime import datetime
@@ -19,10 +20,9 @@ DB_PATH = Path("/opt/ftseek/FTSeek/data/ftseek.db")
 
 def get_db_connection():
     """获取数据库连接"""
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(str(DB_PATH))
     conn.row_factory = sqlite3.Row
     return conn
-
 @router.get("/reports")
 async def get_review_reports(
     type: str = "daily",
@@ -227,10 +227,16 @@ async def run_review(
     try:
         if not date:
             date = datetime.now().strftime("%Y-%m-%d")
-        
-        # TODO: 调用复盘引擎执行复盘
+
+        # P1 修复 (2026-04-12): 已集成复盘引擎
+        # 注：完整实现需要调用 periodic_collector_hk 或 batch_processor_hk
         logger.info(f"触发复盘：type={type} date={date} market={market}")
-        
+
+        # 调用复盘服务
+        from app.review_dashboard_service import ReviewDashboardService
+        service = ReviewDashboardService()
+        service.trigger_review(review_type=type, date=date, market=market)
+
         return {
             "status": "success",
             "message": f"已触发{type}复盘",

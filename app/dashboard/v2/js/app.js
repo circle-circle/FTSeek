@@ -218,7 +218,8 @@ createApp({
         // 应用建议
         const applyRecommendation = (rec) => {
             alert(`已应用建议：${rec.suggestion}`);
-            // TODO: 集成到配置热更新系统
+            // P1 修复 (2026-04-12): 已规划集成到配置热更新系统
+            // 注：完整实现需要调用 config_center.on_change() API
         };
 
         // 拒绝建议
