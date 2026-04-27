@@ -708,6 +708,41 @@ def main():
     except Exception as _sync_e:
         logger.warning(f"持仓同步器启动失败（将继续运行）: {_sync_e}")
 
+    # 2.5.5) SL 合理性检查 — 修复 SL=entry 或明显不合理的止损价
+    # 【2026-04-27 新增】防止手动交易或历史数据导致止损失效
+    try:
+        from app.risk.dynamic_exit_manager import dynamic_exit_manager as _dem_sl
+        for _pos in executor.position_manager.get_all_positions():
+            if _pos.status != 'OPEN':
+                continue
+            if _pos.stop_loss is None or _pos.stop_loss <= 0:
+                # 未设置止损 → 使用默认值
+                _stop_pct = abs(_dem_sl.current_params.get('stop_loss', 0.03))
+                _new_sl = round(_pos.entry_price * (1 - _stop_pct), 4) if _pos.action == 'BUY' else round(_pos.entry_price * (1 + _stop_pct), 4)
+                executor.position_manager.update_stop_loss_take_profit(_pos.code, _new_sl, _pos.take_profit or 0)
+                logger.warning(f"[SL修复] {_pos.code} 止损未设置 → {_new_sl} (默认{_stop_pct:.0%})")
+            elif _pos.stop_loss == _pos.entry_price:
+                # SL=entry → 使用默认值
+                _stop_pct = abs(_dem_sl.current_params.get('stop_loss', 0.03))
+                _new_sl = round(_pos.entry_price * (1 - _stop_pct), 4) if _pos.action == 'BUY' else round(_pos.entry_price * (1 + _stop_pct), 4)
+                executor.position_manager.update_stop_loss_take_profit(_pos.code, _new_sl, _pos.take_profit or 0)
+                logger.warning(f"[SL修复] {_pos.code} SL=entry({_pos.entry_price}) → {_new_sl} (默认{_stop_pct:.0%})")
+            elif _pos.action == 'BUY' and _pos.stop_loss >= _pos.entry_price:
+                # 做多但 SL >= entry → 明显错误
+                _stop_pct = abs(_dem_sl.current_params.get('stop_loss', 0.03))
+                _new_sl = round(_pos.entry_price * (1 - _stop_pct), 4)
+                executor.position_manager.update_stop_loss_take_profit(_pos.code, _new_sl, _pos.take_profit or 0)
+                logger.warning(f"[SL修复] {_pos.code} SL({_pos.stop_loss})>=entry({_pos.entry_price}) → {_new_sl}")
+            elif _pos.action == 'SELL' and _pos.stop_loss <= _pos.entry_price:
+                # 做空但 SL <= entry → 明显错误
+                _stop_pct = abs(_dem_sl.current_params.get('stop_loss', 0.03))
+                _new_sl = round(_pos.entry_price * (1 + _stop_pct), 4)
+                executor.position_manager.update_stop_loss_take_profit(_pos.code, _new_sl, _pos.take_profit or 0)
+                logger.warning(f"[SL修复] {_pos.code} SELL SL({_pos.stop_loss})<=entry({_pos.entry_price}) → {_new_sl}")
+        logger.info("✅ SL 合理性检查完成")
+    except Exception as _sl_e:
+        logger.warning(f"SL 合理性检查失败（将继续运行）: {_sl_e}")
+
     # 初始化风险监控
     from app.risk.realtime_monitor import init_realtime_monitor
     from app.risk.dingtalk_alert import init_dingtalk_alert

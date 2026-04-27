@@ -51,6 +51,9 @@ class Position:
     highest_price: Optional[float] = None  # 最高价 (用于移动止盈)
     lowest_price: Optional[float] = None  # 最低价 (用于做空移动止盈)
     trace_id: str = ""           # 全链路归因 ID (2026-04-15 Phase 1)
+    # Phase 1: 退出状态机
+    exit_state: Optional[str] = None
+    state_updated_at: Optional[str] = None
 
 
 class PositionManager:
@@ -566,6 +569,37 @@ class PositionManager:
                 WHERE id = ?
             ''', (exit_price, exit_time, net_pnl, exit_price, net_pnl, position.id))
             conn.commit()
+
+            # P1 2026-04-27: 同步关闭 trades 表中对应的 OPEN 记录
+            try:
+                _trade_updates = 0
+                if position.signal_id:
+                    # 优先用 signal_id 精确匹配
+                    cursor.execute(
+                        "UPDATE trades SET status='CLOSED', exit_price=?, exit_time=?, "
+                        "pnl=?, pnl_percent=?, exit_reason='position_closed' "
+                        "WHERE signal_id=? AND status='OPEN'",
+                        (exit_price, exit_time, net_pnl,
+                         net_pnl / (position.entry_price * position.quantity) if position.entry_price > 0 else 0,
+                         position.signal_id)
+                    )
+                    _trade_updates = cursor.rowcount
+                if _trade_updates == 0:
+                    # fallback: 用 code 匹配最近的 OPEN trade
+                    cursor.execute(
+                        "UPDATE trades SET status='CLOSED', exit_price=?, exit_time=?, "
+                        "pnl=?, pnl_percent=?, exit_reason='position_closed' "
+                        "WHERE code=? AND status='OPEN' "
+                        "AND id = (SELECT id FROM trades WHERE code=? AND status='OPEN' ORDER BY id DESC LIMIT 1)",
+                        (exit_price, exit_time, net_pnl,
+                         net_pnl / (position.entry_price * position.quantity) if position.entry_price > 0 else 0,
+                         code, code)
+                    )
+                    _trade_updates = cursor.rowcount
+                if _trade_updates > 0:
+                    logger.info(f"[平仓同步] {code} 已同步关闭 {_trade_updates} 条 trade 记录")
+            except Exception as _trade_sync_e:
+                logger.warning(f"[平仓同步] {code} trades 表同步失败: {_trade_sync_e}")
         finally:
             self._return_connection(conn)
 
@@ -711,14 +745,36 @@ class PositionManager:
         
         # 使用持仓记录中的止损价（优先）
         if position.stop_loss and position.stop_loss > 0:
+            # 获取方向 (BUY/SELL) 用于计算
+            direction = position.action
+            
             # 2026-04-24 修复: 防御性校验 — 止损价必须低于入场价至少 0.5%
             # 防止 stop_loss=entry_price 导致开仓即止损
             if position.stop_loss >= position.entry_price * 0.995:
+                # P0 修复 (2026-04-27): 计算合理的止损价并更新 DB，防止循环警告
+                
+                try:
+                    from app.risk.dynamic_exit_manager import dynamic_exit_manager as _dem
+                    stop_pct = abs(_dem.current_params.get('stop_loss', 0.03))
+                except Exception:
+                    stop_pct = 0.03
+                
+                avg_cost = position.entry_price
+                # 做多: Entry * (1 - pct), 做空: Entry * (1 + pct)
+                if direction == 'BUY':
+                    dynamic_sl = avg_cost * (1 - stop_pct)
+                else:
+                    dynamic_sl = avg_cost * (1 + stop_pct)
+
                 logger.warning(
                     f"[止损异常] {code} stop_loss={position.stop_loss} >= "
                     f"entry_price*0.995={position.entry_price*0.995:.4f}，"
-                    f"使用动态止损兜底"
+                    f"使用动态止损兜底并更新 DB -> {dynamic_sl:.4f}"
                 )
+                
+                # 立即更新 DB，防止下一次 tick 再次进入此分支
+                self.update_stop_loss_take_profit(code, dynamic_sl, position.take_profit)
+                return current_price <= dynamic_sl
             else:
                 # 止损价已设置且合理：只有当前价跌破止损价才触发
                 return current_price <= position.stop_loss
@@ -791,10 +847,20 @@ class PositionManager:
         avg_cost = position.entry_price
         pnl_rate = (current_price - avg_cost) / avg_cost
         
-        # 盈利 2% 后启用保本止损
-        if pnl_rate >= 0.02:
-            # 检查止损是否已在成本价 +1% 之上（已启用或更优）
-            breakeven_price = round(avg_cost * 1.01, 4)  # 成本价 +1% 覆盖费用
+        # P1 修复: 从配置读取保本触发阈值，而非硬编码 2%
+        try:
+            from app.risk.dynamic_exit_manager import dynamic_exit_manager as _dem
+            be_params = _dem.get_breakeven_stop_params()
+            trigger_profit = be_params.get('trigger_profit', 0.03) # 默认 3%
+            fee_buffer = be_params.get('fee_buffer', 0.015)        # 默认 1.5%
+        except Exception:
+            trigger_profit = 0.02
+            fee_buffer = 0.01
+        
+        # 盈利达到阈值后启用保本止损
+        if pnl_rate >= trigger_profit:
+            # 检查止损是否已在成本价 + buffer 之上（已启用或更优）
+            breakeven_price = round(avg_cost * (1 + fee_buffer), 4)
             if position.stop_loss and position.stop_loss >= breakeven_price:
                 return False, None  # 已启用或更优，跳过
             
@@ -873,6 +939,32 @@ class PositionManager:
             ''', (breakeven_price, position.id))
             conn.commit()
             logger.info(f"[保本止损] {code} 止损已上移到保本价 {breakeven_price:.2f}")
+        finally:
+            self._return_connection(conn)
+
+    def update_exit_state(self, code: str, new_state: str, reason: str = ""):
+        """更新持仓的退出状态 (Phase 1: 状态机支持)
+
+        Args:
+            code: 股票代码
+            new_state: 新状态 (INIT/BE_READY/BE_ACTIVE/TRAIL/PARTIAL/EXIT)
+            reason: 状态转移原因
+        """
+        from datetime import datetime
+        position = self.get_position(code)
+        if position is None:
+            return
+
+        conn = self._get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute('''
+                UPDATE positions
+                SET exit_state = ?, state_updated_at = ?
+                WHERE id = ?
+            ''', (new_state, datetime.now().isoformat(), position.id))
+            conn.commit()
+            logger.info(f"[状态机] {code} -> {new_state} ({reason})")
         finally:
             self._return_connection(conn)
 
@@ -1008,6 +1100,8 @@ class PositionManager:
             take_profit=_float('take_profit', 13),
             highest_price=_float('highest_price', 14),
             lowest_price=_float('lowest_price', 15),
+            exit_state=_get('exit_state', 27, 'INIT'),
+            state_updated_at=_get('state_updated_at', 28),
         )
     
     # ==================== 顺势加仓方法 ====================
