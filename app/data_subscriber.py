@@ -26,7 +26,7 @@ import time
 import queue
 from datetime import datetime
 from collections import defaultdict
-from typing import List, Dict, Tuple, Optional
+from typing import List, Dict, Tuple, Optional, Any
 
 from app import config
 from app.strategy.base import BaseStrategy, Signal, SignalAction
@@ -57,8 +57,23 @@ CONSENSUS_THRESHOLD = float(getattr(config, "CONSENSUS_THRESHOLD", 1.5))
 CONSENSUS_ADX_TREND = float(getattr(config, "CONSENSUS_ADX_TREND", 25))
 CONSENSUS_ADX_RANGE = float(getattr(config, "CONSENSUS_ADX_RANGE", 20))
 
-# ADX 计算周期
-ADX_PERIOD = 14
+# ============================================================
+#  配置读取辅助 (P1-2 2026-04-28)
+# ============================================================
+_dsub_cfg: Dict[str, Any] = {}
+
+def _dsub(key: str, default: Any) -> Any:
+    """读取 data_subscriber 硬编码阈值配置"""
+    if key not in _dsub_cfg:
+        try:
+            from config.config_center import get_config_center
+            _dsub_cfg[key] = get_config_center().get(f"hardcoded_thresholds.data_subscriber.{key}", default)
+        except Exception:
+            _dsub_cfg[key] = default
+    return _dsub_cfg[key]
+
+# ADX 计算周期 (已从配置中心读取，模块级保留 fallback)
+ADX_PERIOD = int(_dsub("adx_period", 14))
 
 
 class DataSubscriber:
@@ -513,6 +528,36 @@ class DataSubscriber:
 
         return True
     
+    def _get_trading_period_info(self) -> Dict[str, any]:
+        """
+        P2 2026-04-27: 返回当前交易时段信息 (分时段质量门)
+        
+        Returns:
+            {
+                'period': 'open_noise' | 'main' | 'close_noise' | 'out_of_hours',
+                'description': str,
+            }
+        """
+        now = datetime.now()
+        if now.weekday() >= 5:
+            return {'period': 'out_of_hours', 'description': '周末非交易时段'}
+        
+        current_time = now.hour * 60 + now.minute
+        
+        # 上午交易: 09:30-12:00
+        if 570 <= current_time < 720:
+            if current_time < 578:  # 09:30-09:38 (从 15 分钟缩短到 8 分钟)
+                return {'period': 'open_noise', 'description': '开盘噪音段 (09:30-09:38)'}
+            return {'period': 'main', 'description': '主交易段 (上午)'}
+        
+        # 下午交易: 13:00-16:00
+        if 780 <= current_time < 960:
+            if current_time >= 945:  # 15:45-16:00 收盘撮合
+                return {'period': 'close_noise', 'description': '收盘撮合段 (15:45-16:00)'}
+            return {'period': 'main', 'description': '主交易段 (下午)'}
+        
+        return {'period': 'out_of_hours', 'description': '非交易时段'}
+    
     def _is_cooled_down(self, code: str) -> bool:
         """检查是否冷却完成 - 2026-03-17 优化：只在推送成功后才更新冷却时间"""
         now = time.time()
@@ -704,24 +749,24 @@ class DataSubscriber:
                 trail_atr_mult = 2.0
             trail_gap = current_price * atr_pct * trail_atr_mult
 
+            _trail_atr_mult = float(_dsub("trailing_stop_atr_mult", 3.0))
+            _trail_activate = float(_dsub("trailing_stop_activate_pct", 0.02))
+
             if position.action == 'BUY':
                 pnl_pct = (current_price - entry) / entry
-                # 激活阈值提高到 2%，避免小波动就激活
-                if pnl_pct >= 0.02:
-                    # trail_gap 扩大到 3×ATR，给价格足够呼吸空间
-                    new_trail = current_price - trail_gap * 1.5  # trail_gap已经是2×ATR，再×1.5=3×ATR
+                if pnl_pct >= _trail_activate:
+                    new_trail = current_price - trail_gap * (_trail_atr_mult / 2.0)
                     old_trail = self._trailing_stop_cache.get(code, 0.0)
                     if new_trail > old_trail:
                         self._trailing_stop_cache[code] = new_trail
                         logger.debug(
                             f"[追踪止盈] {code} trail_stop={new_trail:.3f} "
-                            f"(pnl={pnl_pct:.2%}, ATR%={atr_pct:.2%}, gap={trail_gap*1.5:.3f})"
+                            f"(pnl={pnl_pct:.2%}, ATR%={atr_pct:.2%}, gap={trail_gap*(_trail_atr_mult/2.0):.3f})"
                         )
             elif position.action == 'SELL':
                 pnl_pct = (entry - current_price) / entry
-                # 激活阈值提高到 2%
-                if pnl_pct >= 0.02:
-                    new_trail = current_price + trail_gap * 1.5
+                if pnl_pct >= _trail_activate:
+                    new_trail = current_price + trail_gap * (_trail_atr_mult / 2.0)
                     old_trail = self._trailing_stop_cache.get(code, float('inf'))
                     if new_trail < old_trail:
                         self._trailing_stop_cache[code] = new_trail
@@ -960,14 +1005,15 @@ class DataSubscriber:
           K_3M   = 0.08  (3分钟，超短期)
           K_1M   = 0.05  (1分钟，噪声较大，权重最低)
         """
+        _mtf_w = _dsub("mtf_weights", {})
         PERIOD_WEIGHTS = {
-            "K_DAY": 0.30,
-            "K_60M": 0.20,
-            "K_30M": 0.15,
-            "K_15M": 0.12,
-            "K_5M":  0.10,
-            "K_3M":  0.08,
-            "K_1M":  0.05,
+            "K_DAY": float(_mtf_w.get("K_DAY", 0.30)),
+            "K_60M": float(_mtf_w.get("K_60M", 0.20)),
+            "K_30M": float(_mtf_w.get("K_30M", 0.15)),
+            "K_15M": float(_mtf_w.get("K_15M", 0.12)),
+            "K_5M":  float(_mtf_w.get("K_5M", 0.10)),
+            "K_3M":  float(_mtf_w.get("K_3M", 0.08)),
+            "K_1M":  float(_mtf_w.get("K_1M", 0.05)),
         }
         trends = self._multi_timeframe_trends[code]
         is_buy = (action == "BUY")
@@ -1050,19 +1096,20 @@ class DataSubscriber:
         resonance_score = self._calculate_mtf_resonance(code, action)
         
         # 分档映射为置信度调整量
+        _mtf_b = _dsub("mtf_boost", {})
         if single_against:
             # 仅日线反向：限制最高加成，施加基础惩罚
-            boost = -0.08 + mtf_score * 0.05
+            boost = float(_mtf_b.get("conflict", -0.08)) + mtf_score * 0.05
         elif mtf_score >= 0.70:
-            boost = 0.20   # 强共振
+            boost = float(_mtf_b.get("strong_resonance", 0.20))
         elif mtf_score >= 0.55:
-            boost = 0.12   # 较强共振
+            boost = float(_mtf_b.get("medium_resonance", 0.12))
         elif mtf_score >= 0.40:
-            boost = 0.05   # 弱共振
+            boost = float(_mtf_b.get("weak_resonance", 0.05))
         elif mtf_score >= 0.20:
-            boost = 0.0    # 中性
+            boost = float(_mtf_b.get("neutral", 0.0))
         else:
-            boost = -0.08  # 周期冲突
+            boost = float(_mtf_b.get("conflict", -0.08))
         
         up_count = sum(1 for t in trends.values() if t == "up")
         down_count = sum(1 for t in trends.values() if t == "down")
@@ -1354,21 +1401,10 @@ class DataSubscriber:
     #  共识达成回调
     # ----------------------------------------------------------
 
-    def _get_mtf_alignment_score(self, code: str, action) -> float:
-        """Return 0-1: weighted fraction of timeframes agreeing with signal direction.
-        
-        Weights favour longer timeframes: 1M=0.05, 3M=0.08, 5M=0.10,
-        15M=0.15, 30M=0.17, 60M=0.20, DAY=0.25.
-        """
-        from app.strategy.base import SignalAction
-        target = "up" if (action.value if hasattr(action, "value") else str(action)) == "BUY" else "down"
-        trends = self._multi_timeframe_trends.get(code, {})
-        if not trends:
-            return 0.5  # no data, neutral
-        weights = {"K_1M": 0.05, "K_3M": 0.08, "K_5M": 0.10,
-                   "K_15M": 0.15, "K_30M": 0.17, "K_60M": 0.20, "K_DAY": 0.25}
-        score = sum(w for k, w in weights.items() if trends.get(k) == target)
-        return score
+    # 2026-04-27 P0 修复: 删除此重复定义。_get_mtf_alignment_score 已在 L949 定义
+    # 返回 (score, detail) 元组，被 _get_multi_timeframe_signal (L1046) 依赖解包。
+    # 原 L1357 的 float 返回值覆盖了 L949 的 tuple 返回值 → cannot unpack non-iterable float object
+    # → MultiTimeframeCheck 全部异常 → Pipeline 全部拒绝 → 零成交
 
     def _on_consensus(self, result: ConsensusResult):
         """推送共识信号 (修改版) - 接入决策缓冲层"""
@@ -1403,6 +1439,9 @@ class DataSubscriber:
             trace_id=trace_id,
             trade_type=trade_type,
         )
+
+        # P1 2026-04-27: 预加载统一数据快照，Pipeline 各检查复用
+        ctx.preload_snapshots(self)
 
         # 初始化/获取 Pipeline（首次调用时注入 subscriber 依赖）
         try:
@@ -1448,7 +1487,7 @@ class DataSubscriber:
         #  Phase 2: 执行层（Pipeline 通过后的业务逻辑）
         # ============================================================
         # 多周期趋势对齐度检查 (P2 fix 2026-04-26)
-        mtf_alignment = self._get_mtf_alignment_score(code, result.action)
+        mtf_alignment, mtf_detail = self._get_mtf_alignment_score(code, result.action)
         if mtf_alignment < 0.35:
             logger.info(
                 f"[MTF拒绝] {code} 多周期对齐度={mtf_alignment:.0%} < 35%, 拒绝信号"
@@ -2278,6 +2317,38 @@ class DataSubscriber:
                 f"[分批止盈成功] {code} | 平仓{close_qty}股({ratio:.0%}) | "
                 f"入场价={position.entry_price} | 出场价={current_price} | 盈亏={trade_result.pnl:.2f}"
             )
+            
+            # P1 修复: 分批止盈后，立即更新剩余仓位的止损价到保本价
+            # 防止剩余利润回撤，实现"无风险持仓"
+            remaining_qty = total_qty - close_qty
+            if remaining_qty > 0:
+                # 计算保本止损价 (Entry + 1.5% buffer to cover fees/slippage)
+                # 这里复用状态机的逻辑
+                try:
+                    from app.risk.dynamic_exit_manager import dynamic_exit_manager as _dem
+                    # 如果配置了 breakeven_stop 的 buffer，优先使用
+                    be_cfg = _dem.get_breakeven_stop_params()
+                    fee_buffer = be_cfg.get('fee_buffer', 0.015) # 默认 1.5%
+                except Exception:
+                    fee_buffer = 0.015
+
+                if position.action == 'BUY':
+                    new_sl = position.entry_price * (1 + fee_buffer)
+                else:
+                    new_sl = position.entry_price * (1 - fee_buffer)
+                
+                # 只有当新止损优于旧止损时才更新 (例如在盈利状态下，新止损应高于原止损)
+                # 做多时: 新 SL (Entry*1.015) > 原 SL (Entry*0.97) -> 更新
+                if position.action == 'BUY' and new_sl > position.stop_loss:
+                    self.position_manager.update_stop_loss_take_profit(code, new_sl, position.take_profit)
+                    logger.info(
+                        f"[风控升级] {code} 分批止盈后止损上移至 {new_sl:.2f} (保本+{fee_buffer:.1%})"
+                    )
+                elif position.action == 'SELL' and new_sl < position.stop_loss:
+                    self.position_manager.update_stop_loss_take_profit(code, new_sl, position.take_profit)
+                    logger.info(
+                        f"[风控升级] {code} 分批止盈后止损下移至 {new_sl:.2f} (保本-{fee_buffer:.1%})"
+                    )
             # 记录到信号质量管理（分批止盈路径）
             # 记录到信号质量管理（未知路径，传入 scenario）
             try:
@@ -2441,6 +2512,8 @@ class DataSubscriber:
         if pos_now:
             try:
                 from app.risk.dynamic_exit_manager import dynamic_exit_manager as _dem_exit
+                # Phase 1: 传入当前退出状态
+                exit_state = getattr(pos_now, 'exit_state', None)
                 exit_decision = _dem_exit.check_exit_priority(
                     code=code,
                     entry_price=pos_now.entry_price,
@@ -2449,7 +2522,25 @@ class DataSubscriber:
                     entry_time=getattr(pos_now, 'entry_time', None),
                     atr_value=self._get_atr(code),
                     direction=pos_now.action,
+                    current_state=exit_state,
                 )
+                
+                # P0 修复: 处理状态转移 + 止损价更新 (打通 BE_READY -> BE_ACTIVE 链路)
+                if exit_decision.new_state:
+                    self.position_manager.update_exit_state(
+                        code, exit_decision.new_state, reason=exit_decision.reason
+                    )
+                
+                # P0 修复: 如果状态机指定了新的止损价 (如保本上移), 立即更新 DB
+                # 这是解决"状态机只写状态不写价格"的关键修复
+                if exit_decision.new_stop_loss:
+                    self.position_manager.update_stop_loss_take_profit(
+                        code, exit_decision.new_stop_loss, pos_now.take_profit
+                    )
+                    logger.info(
+                        f"[状态机] {code} 止损价更新: {pos_now.stop_loss:.2f} -> {exit_decision.new_stop_loss:.2f}"
+                    )
+                
                 if exit_decision.should_exit:
                     logger.info(
                         f"[组合退出-P{exit_decision.priority}] {code} "
@@ -2515,35 +2606,55 @@ class DataSubscriber:
             except Exception as _ve:
                 logger.debug(f"[放量检查] {code} 异常: {_ve}")
 
-        # 保本止损
-        if self.position_manager.check_breakeven_stop(code, current_price):
-            self.position_manager.update_breakeven_stop(code)
+        # =================================================================
+        #  P0 修复: 禁用重复的旧逻辑，防止与状态机冲突
+        # 状态机 (check_exit_priority) 现已全权处理:
+        # 1. 保本止损 (Breakeven Stop)
+        # 2. 分批止盈 (Partial Take Profit)
+        # =================================================================
+        
+        # 旧逻辑: 保本止损 (已移至状态机)
+        # if self.position_manager.check_breakeven_stop(code, current_price):
+        #     self.position_manager.update_breakeven_stop(code)
 
-        # 分批止盈
-        partial_ratio = self.position_manager.check_partial_take_profit(code, current_price)
-        if partial_ratio > 0:
-            logger.info(f"[分批止盈] {code} 当前价={current_price} 平仓比例={partial_ratio:.0%}")
-            self._execute_partial_take_profit(code, current_price, partial_ratio)
-            if partial_ratio >= 1.0:
-                return
+        # 旧逻辑: 分批止盈 (已移至状态机)
+        # partial_ratio = self.position_manager.check_partial_take_profit(code, current_price)
+        # if partial_ratio > 0:
+        #     logger.info(f"[分批止盈] {code} 当前价={current_price} 平仓比例={partial_ratio:.0%}")
+        #     self._execute_partial_take_profit(code, current_price, partial_ratio)
+        #     if partial_ratio >= 1.0:
+        #         return
 
-        # 止损
+        # 止损 (保留作为最后一道防线，处理硬止损)
         if self.position_manager.check_stop_loss(code, current_price):
-            # 2026-04-24 修复: 开仓后60秒内禁止止损，防止 stop_loss=entry_price 异常
-            # 和 Futu 模拟盘延迟成交导致的假止损
+            # Phase 1: 开仓60秒保护 (硬风险白名单机制)
+            # 允许硬风险 (ATR/结构/日内) 绕过保护，拦截软止损和震荡止损
             pos_now = self.position_manager.get_position(code)
             if pos_now and pos_now.entry_time:
                 try:
                     from datetime import datetime
                     entry_dt = datetime.fromisoformat(pos_now.entry_time.replace(' ', 'T'))
                     elapsed = (datetime.now() - entry_dt).total_seconds()
-                    if elapsed < 60:
+                    
+                    # 硬风险白名单: 如果是硬止损 (is_stop_loss=True)，直接放行
+                    # 检查逻辑: 价格是否跌破了硬止损线 (结构止损/ATR止损)
+                    is_hard_risk = False
+                    try:
+                        from app.risk.dynamic_exit_manager import dynamic_exit_manager as _dem_hr
+                        struct_stop = abs(_dem_hr.get_stop_loss())
+                        pnl_rate = (current_price - pos_now.entry_price) / pos_now.entry_price
+                        # 如果亏损超过了结构止损的一定比例 (比如 80%)，视为硬风险
+                        if pnl_rate <= -struct_stop * 0.8:
+                            is_hard_risk = True
+                    except: pass
+
+                    if elapsed < 60 and not is_hard_risk:
                         logger.warning(
                             f"[止损跳过] {code} 开仓仅 {elapsed:.0f} 秒，"
-                            f"跳过止损检查 (防止 stop_loss 异常导致的秒级平仓)"
+                            f"跳过非硬风险止损 (防止秒级平仓)"
                         )
                     else:
-                        logger.info(f"[止损触发] {code} 当前价={current_price}")
+                        logger.info(f"[止损触发] {code} 当前价={current_price} {'(硬风险放行)' if is_hard_risk else ''}")
                         self._execute_stop_loss(code, current_price)
                         return
                 except Exception:
@@ -2588,6 +2699,9 @@ class DataSubscriber:
 
     def _process_kline_data(self, code: str, kline: dict, k_type: str):
         """处理单个 K 线数据（在工作线程中运行）"""
+        # 提取当前价格 (用于止损/止盈检查)
+        current_price = kline.get('close', 0) or kline.get('last_price', 0)
+        
         # 多周期趋势更新
         self._update_multi_timeframe_trend(code, k_type, kline)
 
@@ -2608,61 +2722,52 @@ class DataSubscriber:
             except Exception as e:
                 logger.debug(f"[regime多周期] {code} {k_type} 更新失败: {e}")
 
-        # 止盈止损检查
-        current_price = kline.get('close', 0)
+        # =================================================================
+        #  P0 修复: 禁用重复的旧追踪止盈/保本/分批逻辑，防止与状态机冲突
+        # 状态机 (check_exit_priority) 现已全权处理所有退出逻辑
+        # =================================================================
+        
+        # 旧逻辑: 独立追踪止盈 (已移至状态机)
+        # if current_price > 0:
+        #     pos_now = self.position_manager.get_position(code)
+        #     self._update_trailing_stop(code, current_price, pos_now)
+        #     trail_price = self._trailing_stop_cache.get(code, 0)
+        #     ...
+
+        # 旧逻辑: 保本止损 (已移至状态机)
+        # if self.position_manager.check_breakeven_stop(code, current_price):
+        #     self.position_manager.update_breakeven_stop(code)
+
+        # 旧逻辑: 分批止盈 (已移至状态机)
+        # partial_ratio = self.position_manager.check_partial_take_profit(code, current_price)
+        # if partial_ratio > 0: ...
+
+        # 硬止损 (保留作为最后一道防线)
+        # 注意: check_stop_loss 会检查 DB 中的 stop_loss 值，
+        # 如果状态机更新了 stop_loss (如保本上移)，这里也会生效。
         if current_price > 0:
             pos_now = self.position_manager.get_position(code)
-            self._update_trailing_stop(code, current_price, pos_now)
-            trail_price = self._trailing_stop_cache.get(code, 0)
-            if pos_now and trail_price > 0:
-                triggered = (
-                    (pos_now.action == 'BUY' and current_price < trail_price) or
-                    (pos_now.action == 'SELL' and current_price > trail_price)
-                )
-                if triggered:
-                    pnl_rate = (current_price - pos_now.entry_price) / pos_now.entry_price
-                    if pos_now.action == 'SELL':
-                        pnl_rate = -pnl_rate
-                    if pnl_rate > 0:
-                        logger.info(
-                            f"[追踪止盈触发] {code} 价格={current_price} "
-                            f"穿越追踪线={trail_price:.3f} | 盈利={pnl_rate:.2%}"
-                        )
-                        self._execute_partial_take_profit(code, current_price, ratio=0.6)
-                        self.position_manager.update_breakeven_stop(code)
-                        logger.info(
-                            f"[追踪止盈] {code} 已平仓60%锁利，剩余40%保本止损已激活"
-                        )
-                        self._trailing_stop_cache.pop(code, None)
-                        self._peak_price_cache.pop(code, None)
-                        self._trailing_exit_time[code] = time.time()
-                    return
-
-            # 保本止损
-            if self.position_manager.check_breakeven_stop(code, current_price):
-                self.position_manager.update_breakeven_stop(code)
-
-            # 分批止盈
-            partial_ratio = self.position_manager.check_partial_take_profit(code, current_price)
-            if partial_ratio > 0:
-                logger.info(f"[分批止盈] {code} 当前价={current_price} 平仓比例={partial_ratio:.0%}")
-                self._execute_partial_take_profit(code, current_price, partial_ratio)
-                if partial_ratio >= 1.0:
-                    return
-
-            # 止损
-            if self.position_manager.check_stop_loss(code, current_price):
+            if pos_now and self.position_manager.check_stop_loss(code, current_price):
+                # Phase 1: 硬风险白名单机制 (同上)
                 if pos_now and pos_now.entry_time:
                     try:
                         from datetime import datetime
                         entry_dt = datetime.fromisoformat(pos_now.entry_time.replace(' ', 'T'))
                         elapsed = (datetime.now() - entry_dt).total_seconds()
-                        if elapsed < 60:
-                            logger.warning(
-                                f"[止损跳过] {code} 开仓仅 {elapsed:.0f} 秒，跳过"
-                            )
+                        
+                        is_hard_risk = False
+                        try:
+                            from app.risk.dynamic_exit_manager import dynamic_exit_manager as _dem_hr
+                            struct_stop = abs(_dem_hr.get_stop_loss())
+                            pnl_rate = (current_price - pos_now.entry_price) / pos_now.entry_price
+                            if pnl_rate <= -struct_stop * 0.8:
+                                is_hard_risk = True
+                        except: pass
+
+                        if elapsed < 60 and not is_hard_risk:
+                            logger.warning(f"[止损跳过] {code} 开仓仅 {elapsed:.0f} 秒，跳过非硬风险")
                         else:
-                            logger.info(f"[止损触发] {code} 当前价={current_price}")
+                            logger.info(f"[止损触发] {code} 当前价={current_price} {'(硬风险)' if is_hard_risk else ''}")
                             self._execute_stop_loss(code, current_price)
                             return
                     except Exception:
@@ -2799,6 +2904,105 @@ class DataSubscriber:
                         logger.error(f"订阅失败: {code} -> {st}: {msg}")
         logger.info(f"订阅完成: 成功={success_count}, 失败={fail_count}, 总计={success_count+fail_count}")
         self._subscribed = True
+        
+        # Phase 1: 启动预热 — 从 Futu 拉取历史 K 线填充 MTF 缓存
+        # 解决重启后 MTF 对齐度为 0 导致无法交易的问题
+        self._warm_up_buffers()
+
+
+    def _warm_up_buffers(self):
+        """
+        Phase 1: 启动预热 (Warm-up) — 从 Futu 拉取历史 K 线填充 MTF 缓存
+        
+        目标:
+            系统重启或隔夜后，内存中的 K 线 Buffer 为空。
+            本方法会拉取最近 3 天的 K 线数据并推入 Buffer，
+            从而立即初始化多周期趋势 (_multi_timeframe_trends)。
+        
+        策略:
+            1. 获取 Watchlist
+            2. 对每个标的请求 K_60M 和 K_DAY (最影响 MTF 对齐度)
+            3. 少量 K_1M (辅助短期趋势)
+            4. 限制并发和频率，防止触发 OpenD Limit
+        """
+        import time
+        from datetime import datetime, timedelta
+        from futu import KLType, SubType
+        
+        watchlist = getattr(config, 'WATCH_LIST_HK', [])
+        if not watchlist:
+            logger.warning("[预热] 无 Watchlist，跳过预热")
+            return
+
+        logger.info(f"[预热] 开始拉取 {len(watchlist)} 只股票历史数据...")
+        
+        # 定义需要的 K 线类型和数量
+        # 重点关注长周期，因为它们恢复最慢
+        warmup_targets = [
+            (KLType.K_60M, 50),  # ~3天数据
+            (KLType.K_DAY, 30),  # ~1个月数据
+            (KLType.K_15M, 100), # 辅助
+        ]
+        
+        success_count = 0
+        fail_count = 0
+
+        for code in watchlist:
+            try:
+                for ktype, count in warmup_targets:
+                    end_time = datetime.now().strftime('%Y-%m-%d')
+                    start_time = (datetime.now() - timedelta(days=10)).strftime('%Y-%m-%d')
+                    
+                    ret, data, _ = self._quote_ctx.request_history_kline(
+                        code, start=start_time, end=end_time, ktype=ktype, autype='qfq'
+                    )
+                    if ret == 0 and data is not None and not data.empty:
+                        # 将数据推入 Buffer
+                        # 注意: request_history_kline 返回的是 DataFrame
+                        # _process_kline_data 需要 dict 格式，但这里我们直接填充 buffer
+                        
+                        # Determine the correct key for the buffer
+                        key = ktype.name if hasattr(ktype, 'name') else str(ktype)
+                        if key.startswith('KLType.'):
+                            key = key.split('.')[-1]
+                        
+                        buffer = self._kline_buffers_by_period[code][key]
+                        
+                        for _, row in data.iterrows():
+                            # 构造 kline dict 以复用 push_kline 逻辑
+                            kline = {
+                                'time_key': row['time_key'],
+                                'open': row['open'],
+                                'high': row['high'],
+                                'low': row['low'],
+                                'close': row['close'],
+                                'volume': row['volume'],
+                            }
+                            buffer.push_kline(kline)
+                            
+                        # 触发趋势更新
+                        # 手动调用一次更新，使用最后一条数据
+                        last_row = data.iloc[-1]
+                        kline_last = {
+                            'time_key': last_row['time_key'],
+                            'open': last_row['open'],
+                            'high': last_row['high'],
+                            'low': last_row['low'],
+                            'close': last_row['close'],
+                            'volume': last_row['volume'],
+                        }
+                        self._update_multi_timeframe_trend(code, key, kline_last)
+                        
+                        success_count += 1
+                    
+                    time.sleep(0.1) # 简单限流
+            except Exception as e:
+                fail_count += 1
+                logger.warning(f"[预热] {code} 失败: {e}")
+
+        logger.info(f"[预热] 完成: 成功填充 {success_count} 组数据, {fail_count} 组失败")
+        logger.info("[预热] MTF 缓存已初始化，策略可随时响应")
+
 
     def unsubscribe_all(self):
         """
