@@ -85,18 +85,32 @@ class ConfigProxy:
         
         raise AttributeError(f"配置项不存在: {key}")
     
-    def get(self, key: str, default: Any = None) -> Any:
-        """获取配置值，支持点式路径"""
-        keys = key.split(".")
-        value = self._data
+    def get(self, path: str, default: Any = None) -> Any:
+        """
+        获取配置值，支持嵌套路径 (e.g., 'risk.max_position_size').
+        自动处理常见的路径别名以兼容旧代码.
+        """
+        # P0 修复: 路径别名映射 (兼容旧代码调用)
+        path_aliases = {
+            'risk.max_position_size': 'risk_limits.max_position_size',
+            'risk.max_total_position': 'risk_limits.max_total_position',
+            'risk.max_drawdown': 'risk_limits.max_drawdown',
+            'risk.max_daily_loss': 'risk_limits.max_daily_loss',
+            'risk.max_positions': 'risk_limits.max_positions',
+            'strategy.signal_cooldown': 'strategy.cooldown.signal_cooldown',
+            'trading.market_open': 'trading_hours.market_open',
+            'trading.market_close': 'trading_hours.market_close',
+        }
+        path = path_aliases.get(path, path)
         
-        for k in keys:
-            if isinstance(value, dict) and k in value:
-                value = value[k]
+        keys = path.split('.')
+        val = self._data
+        for key in keys:
+            if isinstance(val, dict) and key in val:
+                val = val[key]
             else:
                 return default
-        
-        return value
+        return val
     
     def to_dict(self) -> Dict[str, Any]:
         """转换为字典"""
@@ -137,7 +151,7 @@ class ConfigCenter:
         "trading_rules_20260402.yaml",  # 2026-04-16: 已整合到 config.yaml
     ]
 
-    def __init__(self, config_dir: str = None):
+    def __init__(self, config_dir: Optional[str] = None):
         """
         初始化配置中心
 
@@ -322,14 +336,14 @@ class ConfigCenter:
         if self._proxy is None:
             self.load()
         
-        return self._proxy.get(key, default)
+        return self._proxy.get(key, default) if self._proxy else default
 
     def to_dict(self) -> Dict[str, Any]:
         """获取完整配置字典"""
         if self._proxy is None:
             self.load()
         
-        return self._proxy.to_dict()
+        return self._proxy.to_dict() if self._proxy else {}
 
     # ==================== 热重载 ====================
 
@@ -518,7 +532,7 @@ _config_center: Optional[ConfigCenter] = None
 _config_lock = threading.Lock()
 
 
-def get_config_center(config_dir: str = None) -> ConfigCenter:
+def get_config_center(config_dir: Optional[str] = None) -> ConfigCenter:
     """获取配置中心单例"""
     global _config_center
     
