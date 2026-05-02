@@ -1,0 +1,101 @@
+{
+  "spearman_matrix": {
+    "rsi": {
+      "rsi": 1.0,
+      "macd": -0.4938,
+      "bollinger": 0.4684,
+      "supertrend": 0.0,
+      "ma_cross": -0.5091,
+      "volume": -0.0265
+    },
+    "macd": {
+      "rsi": -0.4938,
+      "macd": 1.0,
+      "bollinger": -0.4543,
+      "supertrend": 0.0,
+      "ma_cross": 0.7845,
+      "volume": 0.04
+    },
+    "bollinger": {
+      "rsi": 0.4684,
+      "macd": -0.4543,
+      "bollinger": 1.0,
+      "supertrend": 0.0,
+      "ma_cross": -0.3363,
+      "volume": -0.1885
+    },
+    "supertrend": {
+      "rsi": 0.0,
+      "macd": 0.0,
+      "bollinger": 0.0,
+      "supertrend": 0.0,
+      "ma_cross": 0.0,
+      "volume": 0.0
+    },
+    "ma_cross": {
+      "rsi": -0.5091,
+      "macd": 0.7845,
+      "bollinger": -0.3363,
+      "supertrend": 0.0,
+      "ma_cross": 1.0,
+      "volume": -0.0129
+    },
+    "volume": {
+      "rsi": -0.0265,
+      "macd": 0.04,
+      "bollinger": -0.1885,
+      "supertrend": 0.0,
+      "ma_cross": -0.0129,
+      "volume": 1.0
+    }
+  },
+  "high_corr_pairs": [
+    {
+      "f1": "rsi",
+      "f2": "macd",
+      "corr": -0.4938
+    },
+    {
+      "f1": "rsi",
+      "f2": "bollinger",
+      "corr": 0.4684
+    },
+    {
+      "f1": "rsi",
+      "f2": "ma_cross",
+      "corr": -0.5091
+    },
+    {
+      "f1": "macd",
+      "f2": "bollinger",
+      "corr": -0.4543
+    },
+    {
+      "f1": "macd",
+      "f2": "ma_cross",
+      "corr": 0.7845
+    },
+    {
+      "f1": "bollinger",
+      "f2": "ma_cross",
+      "corr": -0.3363
+    }
+  ],
+  "factor_independence": {
+    "macd": 0.3545,
+    "ma_cross": 0.3286,
+    "rsi": 0.2996,
+    "bollinger": 0.2895,
+    "volume": 0.0536,
+    "supertrend": 0.0
+  },
+  "independent_factor_count": 0,
+  "eigenvalues": [
+    0.6066,
+    0.4624,
+    0.3912,
+    0.3461,
+    0.314,
+    0.2896
+  ]
+}

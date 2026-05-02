@@ -3,12 +3,32 @@
 """
 时段检测器 (Session Detector) - Phase 2
 
-用于判断当前时间处于哪个市场阶段，并提供分时段风控参数。
-支持多时段配置，默认回退到 STANDARD 模式。
+⚠️  DEPRECATED — 2026-05-02
+    This module is superseded by `app.shared.market_hours` (MarketType,
+    MarketPhase, get_market_phase, is_trading_hours, etc.).
+
+    Migration guide:
+    - SessionDetector.get_current_config() → get_session_config(MarketType.HK)
+    - SessionDetector.get_current_session() → get_market_phase(MarketType.HK)
+    - MarketSession.is_active() → is_trading_hours(MarketType.HK)
+
+    This module will be removed in a future release.
+    Keep for backward compatibility during migration.
 """
 
+import warnings
+import logging
 from datetime import datetime, time
 from typing import Dict, Optional, Tuple
+
+# Emit deprecation warning on import (logging.warning — visible in prod, unlike DeprecationWarning)
+_logger = logging.getLogger("ftseek.session_detector")
+_logger.warning(
+    "⚠️  session_detector is DEPRECATED. "
+    "Use app.shared.market_hours (get_market_phase, is_trading_hours, etc.) instead. "
+    "This module will be removed in a future release."
+)
+
 
 class MarketSession:
     """市场时段定义"""
@@ -34,12 +54,20 @@ class MarketSession:
 class SessionDetector:
     """
     时段检测器
+
+    ⚠️  DEPRECATED — use app.shared.market_hours instead.
     """
     def __init__(self, time_aware_config: Dict):
         """
         初始化时段检测器
         :param time_aware_config: 配置字典，例如 { 'opening': { 'start': '09:30', ... } }
         """
+        warnings.warn(
+            "SessionDetector is deprecated. "
+            "Use get_session_config(MarketType.HK) from app.shared.market_hours instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self.sessions = []
         
         # 默认时段：标准模式 (兜底)

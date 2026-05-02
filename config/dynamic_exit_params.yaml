@@ -1,0 +1,411 @@
+# FTSeek 动态止盈止损配置 v2.1
+# 2026-04-30: 幻方经验二次校准 — 1.5% 对称盈亏比 + ATR multiplier 收紧
+#
+# 核心原则:
+#   1. 止损 = N × ATR(20), 不是固定百分比
+#   2. 日内盈亏比 1:1.5~2.0 (止损 1.5% ↔ 止盈 2-3%), 追求高频小胜
+#   3. 分批止盈 L1 在 1.5% (1-1.5x ATR 高频触发), L2 在 3% (趋势行情)
+#   4. 保本触发下降到 1.5% (更早锁定利润)
+#   5. 做空需额外覆盖借券成本
+
+# ============================================================================
+# 默认参数 (无市场状态识别时使用)
+# ============================================================================
+default:
+  # ── ATR 动态止损 (替代固定 stop_loss) ──
+  atr_dynamic_stop:
+    enabled: true
+    multiplier: 1.8            # P0 2026-04-30: 2.0→1.8, 港股日内波动 2-4%, 1.8x 更贴近实际
+    min_stop_pct: 0.012        # P0 2026-04-30: 0.01→0.012, 防止 ATR 极小时止损太紧
+    max_stop_pct: 0.05         # P0 2026-04-30: 0.06→0.05
+  # ── 固定止盈 ──
+  take_profit: 0.04            # P0 2026-04-30: 5%→4%, 12只持仓浮盈<0.1%说明5%不易触及
+  # ── 分批止盈 (1.5% 对称盈亏比) ──
+  partial_take_profit:
+    enabled: true
+    levels:
+      - trigger: 0.015         # P0 2026-04-30: +1.5% 平 40% (高频触发, 与日内止损 1.5% 对称)
+        ratio: 0.4
+      - trigger: 0.03          # +3% 平 30% (中等行情)
+        ratio: 0.3
+      - trigger: 0.05          # +5% 平剩余 30%
+        ratio: 0.3
+  # ── 移动止损 (ATR 自适应) ──
+  trailing_stop:
+    enabled: true
+    trigger_profit: 0.025      # P0 2026-04-30: 0.03→0.025, 盈利 2.5% 后启动追踪
+    trail_atr_mult: 1.5        # 回撤 1.5x ATR 退出
+    trail_percent_fallback: 0.015  # ATR 不可用时的 fallback: 1.5%
+  # ── ATR 硬止损 ──
+  atr_stop:
+    enabled: true
+    hard_multiplier: 1.5       # 1.5x ATR (硬风险, 立即执行)
+    max_multiplier: 3.0        # 3x ATR (放宽极限)
+  # ── 保本止损 ──
+  breakeven_stop:
+    enabled: true
+    trigger_profit: 0.015      # P0 2026-04-30: 0.02→0.015, 盈利 1.5% 后保本 (与日内止损对称)
+    buffer_pct: 0.006          # P0 2026-04-30: 0.008→0.006, 保本缓冲 0.6% (覆盖手续费)
+  # ── 日内止损 ──
+  intraday_stop:
+    enabled: true
+    stop_percent: 0.015        # P0 2026-04-30: 0.02→0.015, 对称盈亏比 1.5%止损↔1.5%L1止盈
+    session_end_force: false
+  # ── 时间止损 ──
+  time_stop:
+    enabled: true
+    max_holding_hours: 36      # P0 2026-04-30: 48→36, 缩短无效持仓周期
+    flat_timeout_minutes: 120  # P0 2026-04-30: 180→120, 2小时不赚不亏则退出
+  # ── 放量止盈 ──
+  volume_surge:
+    enabled: true
+    vol_multiplier: 3.0        # 3x 量比
+    min_profit_pct: 0.015      # 浮盈 >1.5%
+  # ── 午休防护 ──
+  lunch_break_protection:
+    enabled: true
+    warning_minutes_before: 5  # 午休前 5 分钟检查
+    min_profit_to_hold: 0.015  # 午休持仓需浮盈 >1.5% (覆盖跳空风险)
+    force_exit_below: 0.005    # 浮盈 <0.5% 时强制退出
+
+# ============================================================================
+# 强上涨趋势 (ADX > 30, 价格 > MA30)
+# 策略：让利润奔跑，放宽 ATR 倍数
+# ============================================================================
+strong_trend_up:
+  atr_dynamic_stop:
+    enabled: true
+    multiplier: 2.5            # 放宽到 2.5x ATR
+    min_stop_pct: 0.02
+    max_stop_pct: 0.10
+  take_profit: 0.12            # 12% 止盈 (趋势中可持续放大)
+  partial_take_profit:
+    enabled: true
+    levels:
+      - trigger: 0.04
+        ratio: 0.2
+      - trigger: 0.08
+        ratio: 0.3
+      - trigger: 0.12
+        ratio: 0.3
+  trailing_stop:
+    enabled: true
+    trigger_profit: 0.05
+    trail_atr_mult: 2.0
+    trail_percent_fallback: 0.03
+  atr_stop:
+    enabled: true
+    hard_multiplier: 1.5
+    max_multiplier: 4.0
+  breakeven_stop:
+    enabled: true
+    trigger_profit: 0.04
+    buffer_pct: 0.01
+  intraday_stop:
+    enabled: true
+    stop_percent: 0.04
+  time_stop:
+    enabled: true
+    max_holding_hours: 120
+    flat_timeout_minutes: 480
+  volume_surge:
+    enabled: true
+    vol_multiplier: 3.5
+    min_profit_pct: 0.02
+  lunch_break_protection:
+    enabled: true
+    warning_minutes_before: 5
+    min_profit_to_hold: 0.02
+    force_exit_below: 0.008
+
+# ============================================================================
+# 弱上涨趋势 (ADX 20-30, 价格 > MA30)
+# ============================================================================
+weak_trend_up:
+  atr_dynamic_stop:
+    enabled: true
+    multiplier: 2.0
+    min_stop_pct: 0.015
+    max_stop_pct: 0.07
+  take_profit: 0.08
+  partial_take_profit:
+    enabled: true
+    levels:
+      - trigger: 0.03
+        ratio: 0.3
+      - trigger: 0.06
+        ratio: 0.3
+      - trigger: 0.08
+        ratio: 0.4
+  trailing_stop:
+    enabled: true
+    trigger_profit: 0.04
+    trail_atr_mult: 1.5
+    trail_percent_fallback: 0.02
+  atr_stop:
+    enabled: true
+    hard_multiplier: 1.5
+    max_multiplier: 3.0
+  breakeven_stop:
+    enabled: true
+    trigger_profit: 0.03
+    buffer_pct: 0.008
+  intraday_stop:
+    enabled: true
+    stop_percent: 0.03
+  time_stop:
+    enabled: true
+    max_holding_hours: 72
+    flat_timeout_minutes: 240
+  volume_surge:
+    enabled: true
+    vol_multiplier: 3.0
+    min_profit_pct: 0.015
+  lunch_break_protection:
+    enabled: true
+    warning_minutes_before: 5
+    min_profit_to_hold: 0.015
+    force_exit_below: 0.005
+
+# ============================================================================
+# 震荡市 (ADX < 20)
+# 策略：收紧止盈止损，快速进出，保本为王
+# ============================================================================
+range_bound:
+  atr_dynamic_stop:
+    enabled: true
+    multiplier: 1.5            # 收紧到 1.5x ATR
+    min_stop_pct: 0.01
+    max_stop_pct: 0.04
+  take_profit: 0.04            # 4% 止盈 (震荡市不求大)
+  partial_take_profit:
+    enabled: true
+    levels:
+      - trigger: 0.015         # +1.5% 平 40% (高频触发)
+        ratio: 0.4
+      - trigger: 0.03          # +3% 平 40%
+        ratio: 0.4
+      - trigger: 0.04
+        ratio: 0.2
+  trailing_stop:
+    enabled: false             # 震荡市不启用移动止盈 (容易被回撤洗出)
+  atr_stop:
+    enabled: true
+    hard_multiplier: 1.0       # 收紧到 1x ATR
+    max_multiplier: 2.0
+  breakeven_stop:
+    enabled: true
+    trigger_profit: 0.015      # 盈利 1.5% 后保本 (更早锁定)
+    buffer_pct: 0.006
+  intraday_stop:
+    enabled: true
+    stop_percent: 0.015        # 日内 1.5% 止损 (更敏感)
+  time_stop:
+    enabled: true
+    max_holding_hours: 24
+    flat_timeout_minutes: 120
+  volume_surge:
+    enabled: true
+    vol_multiplier: 2.5
+    min_profit_pct: 0.01
+  lunch_break_protection:
+    enabled: true
+    warning_minutes_before: 5
+    min_profit_to_hold: 0.012
+    force_exit_below: 0.003
+
+# ============================================================================
+# 弱下跌趋势 (ADX 20-30, 价格 < MA30)
+# 策略：谨慎做多，收紧止盈止损
+# ============================================================================
+weak_trend_down:
+  atr_dynamic_stop:
+    enabled: true
+    multiplier: 1.8
+    min_stop_pct: 0.01
+    max_stop_pct: 0.05
+  take_profit: 0.06
+  partial_take_profit:
+    enabled: true
+    levels:
+      - trigger: 0.02
+        ratio: 0.4
+      - trigger: 0.04
+        ratio: 0.3
+      - trigger: 0.06
+        ratio: 0.3
+  trailing_stop:
+    enabled: false
+  atr_stop:
+    enabled: true
+    hard_multiplier: 1.5
+    max_multiplier: 2.5
+  breakeven_stop:
+    enabled: true
+    trigger_profit: 0.02
+    buffer_pct: 0.008
+  intraday_stop:
+    enabled: true
+    stop_percent: 0.02
+  time_stop:
+    enabled: true
+    max_holding_hours: 36
+    flat_timeout_minutes: 150
+  volume_surge:
+    enabled: true
+    vol_multiplier: 3.0
+    min_profit_pct: 0.015
+  lunch_break_protection:
+    enabled: true
+    warning_minutes_before: 5
+    min_profit_to_hold: 0.012
+    force_exit_below: 0.005
+
+# ============================================================================
+# 强下跌趋势 (ADX > 30, 价格 < MA30)
+# 策略：做多禁入，做空为主。做空参数独立配置
+# ============================================================================
+strong_trend_down:
+  atr_dynamic_stop:
+    enabled: true
+    multiplier: 1.5            # 做多收紧
+    min_stop_pct: 0.01
+    max_stop_pct: 0.04
+  take_profit: 0.04
+  partial_take_profit:
+    enabled: false             # 下跌趋势不分批止盈 (快进快出)
+  trailing_stop:
+    enabled: false
+  atr_stop:
+    enabled: true
+    hard_multiplier: 1.0
+    max_multiplier: 2.0
+  breakeven_stop:
+    enabled: true
+    trigger_profit: 0.015
+    buffer_pct: 0.006
+  intraday_stop:
+    enabled: true
+    stop_percent: 0.015
+  time_stop:
+    enabled: true
+    max_holding_hours: 16
+    flat_timeout_minutes: 90
+  volume_surge:
+    enabled: true
+    vol_multiplier: 2.5
+    min_profit_pct: 0.01
+  lunch_break_protection:
+    enabled: true
+    warning_minutes_before: 5
+    min_profit_to_hold: 0.01
+    force_exit_below: 0.003
+  # ── 做空专用参数 (强下跌趋势中启用) ──
+  short_enabled: true
+  short_atr_stop:
+    multiplier: 2.0            # 做空 ATR 止损 (放宽, 避免被反弹洗出)
+    min_stop_pct: 0.015
+    max_stop_pct: 0.08
+  short_take_profit: 0.06      # 做空止盈 6%
+  short_borrow_cost_annual: 0.03   # 借券年化成本 3% (计入止盈)
+  short_expected_holding_days: 3
+
+# ============================================================================
+# 高波动市场 (ATR% > 4%)
+# 策略：大幅放宽 ATR 倍数，防止频繁触发
+# ============================================================================
+high_volatility:
+  atr_dynamic_stop:
+    enabled: true
+    multiplier: 3.0            # 大幅放宽到 3x ATR
+    min_stop_pct: 0.03
+    max_stop_pct: 0.15
+  take_profit: 0.15
+  partial_take_profit:
+    enabled: true
+    levels:
+      - trigger: 0.05
+        ratio: 0.2
+      - trigger: 0.10
+        ratio: 0.3
+      - trigger: 0.15
+        ratio: 0.3
+  trailing_stop:
+    enabled: true
+    trigger_profit: 0.06
+    trail_atr_mult: 2.5
+    trail_percent_fallback: 0.05
+  atr_stop:
+    enabled: true
+    hard_multiplier: 1.5
+    max_multiplier: 5.0
+  breakeven_stop:
+    enabled: true
+    trigger_profit: 0.05
+    buffer_pct: 0.015
+  intraday_stop:
+    enabled: true
+    stop_percent: 0.05
+  time_stop:
+    enabled: true
+    max_holding_hours: 72
+    flat_timeout_minutes: 360
+  volume_surge:
+    enabled: true
+    vol_multiplier: 4.0
+    min_profit_pct: 0.03
+  lunch_break_protection:
+    enabled: true
+    warning_minutes_before: 5
+    min_profit_to_hold: 0.03
+    force_exit_below: 0.01
+
+# ============================================================================
+# 低波动市场 (ATR% < 1%)
+# 策略：收紧止损，等待突破
+# ============================================================================
+low_volatility:
+  atr_dynamic_stop:
+    enabled: true
+    multiplier: 1.5
+    min_stop_pct: 0.008        # ATR 极小时放宽最小止损
+    max_stop_pct: 0.04
+  take_profit: 0.06
+  partial_take_profit:
+    enabled: true
+    levels:
+      - trigger: 0.02
+        ratio: 0.3
+      - trigger: 0.04
+        ratio: 0.3
+      - trigger: 0.06
+        ratio: 0.4
+  trailing_stop:
+    enabled: true
+    trigger_profit: 0.03
+    trail_atr_mult: 1.5
+    trail_percent_fallback: 0.015
+  atr_stop:
+    enabled: true
+    hard_multiplier: 1.5
+    max_multiplier: 2.5
+  breakeven_stop:
+    enabled: true
+    trigger_profit: 0.025
+    buffer_pct: 0.008
+  intraday_stop:
+    enabled: true
+    stop_percent: 0.02
+  time_stop:
+    enabled: true
+    max_holding_hours: 60
+    flat_timeout_minutes: 240
+  volume_surge:
+    enabled: true
+    vol_multiplier: 2.5
+    min_profit_pct: 0.012
+  lunch_break_protection:
+    enabled: true
+    warning_minutes_before: 5
+    min_profit_to_hold: 0.012
+    force_exit_below: 0.005

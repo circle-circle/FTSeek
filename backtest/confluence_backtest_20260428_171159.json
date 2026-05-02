@@ -1,0 +1,25 @@
+{
+  "period": {
+    "start": "N/A",
+    "end": "N/A"
+  },
+  "capital": {
+    "initial": 1000000,
+    "final": 1000000,
+    "total_return_pct": 0.0
+  },
+  "risk": {
+    "sharpe_ratio": 0,
+    "max_drawdown_pct": 0
+  },
+  "trades": {
+    "total": 0,
+    "wins": 0,
+    "losses": 0,
+    "win_rate": 0,
+    "avg_win_pct": 0,
+    "avg_loss_pct": 0,
+    "profit_factor": Infinity
+  },
+  "trade_details": []
+}

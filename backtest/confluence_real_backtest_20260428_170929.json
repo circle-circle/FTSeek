@@ -1,0 +1,104 @@
+{
+  "period": {
+    "start": "2026-01-01",
+    "end": "2026-03-31"
+  },
+  "capital": {
+    "initial": 1000000,
+    "final": 1015373.32,
+    "total_return_pct": 0.0154
+  },
+  "risk": {
+    "sharpe_ratio": 1.538,
+    "max_drawdown_pct": 0.0074
+  },
+  "trades": {
+    "total": 6,
+    "wins": 3,
+    "losses": 3,
+    "win_rate": 0.5,
+    "avg_win_pct": 0.1197,
+    "avg_loss_pct": -0.0407,
+    "profit_factor": 2.937
+  },
+  "trade_details": [
+    {
+      "code": "HK.03690",
+      "entry_date": "2026-01-01",
+      "exit_date": "2026-01-06",
+      "entry_price": 160.66,
+      "exit_price": 155.09,
+      "qty": 497,
+      "pnl_pct": -0.0347,
+      "pnl_abs": -2968.7,
+      "exit_reason": "stop_loss",
+      "max_profit": 0.0,
+      "max_loss": -0.0347
+    },
+    {
+      "code": "HK.09988",
+      "entry_date": "2026-01-06",
+      "exit_date": "2026-02-04",
+      "entry_price": 61.69,
+      "exit_price": 69.93,
+      "qty": 1193,
+      "pnl_pct": 0.1336,
+      "pnl_abs": 9613.41,
+      "exit_reason": "take_profit",
+      "max_profit": 0.1336,
+      "max_loss": 0.0
+    },
+    {
+      "code": "HK.03690",
+      "entry_date": "2026-01-16",
+      "exit_date": "2026-02-25",
+      "entry_price": 166.29,
+      "exit_price": 186.42,
+      "qty": 444,
+      "pnl_pct": 0.1211,
+      "pnl_abs": 8722.52,
+      "exit_reason": "take_profit",
+      "max_profit": 0.1211,
+      "max_loss": 0.0
+    },
+    {
+      "code": "HK.09988",
+      "entry_date": "2026-02-09",
+      "exit_date": "2026-03-10",
+      "entry_price": 69.26,
+      "exit_price": 76.49,
+      "qty": 1077,
+      "pnl_pct": 0.1044,
+      "pnl_abs": 7572.52,
+      "exit_reason": "take_profit",
+      "max_profit": 0.1044,
+      "max_loss": -0.0052
+    },
+    {
+      "code": "HK.03690",
+      "entry_date": "2026-03-10",
+      "exit_date": "2026-03-20",
+      "entry_price": 188.55,
+      "exit_price": 180.35,
+      "qty": 398,
+      "pnl_pct": -0.0435,
+      "pnl_abs": -3450.23,
+      "exit_reason": "stop_loss",
+      "max_profit": 0.0217,
+      "max_loss": -0.0435
+    },
+    {
+      "code": "HK.09988",
+      "entry_date": "2026-03-13",
+      "exit_date": "2026-03-31",
+      "entry_price": 80.1,
+      "exit_price": 76.57,
+      "qty": 946,
+      "pnl_pct": -0.0441,
+      "pnl_abs": -3527.71,
+      "exit_reason": "stop_loss",
+      "max_profit": 0.0447,
+      "max_loss": -0.0441
+    }
+  ]
+}

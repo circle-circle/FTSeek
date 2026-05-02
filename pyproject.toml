@@ -1,0 +1,134 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ftseek"
+version = "3.0.0"
+description = "FTSeek quantitative trading system for HK/US stock markets"
+requires-python = ">=3.8"
+
+[tool.mypy]
+python_version = "3.8"
+# 全局基础检查（非严格模式，避免历史模块的噪音污染核心模块）
+warn_return_any = false
+warn_unused_configs = true
+check_untyped_defs = false
+disallow_untyped_decorators = false
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+warn_unreachable = false
+strict_equality = false
+show_error_codes = true
+show_column_numbers = true
+
+# 允许缺少 stub 的第三方库
+ignore_missing_imports = true
+
+# 排除测试和文档
+exclude = [
+    "^tests/",
+    "^docs/",
+    "^scripts/",
+]
+
+# ============================================
+# 核心交易链路：严格模式（逐步扩展）
+# ============================================
+[[tool.mypy.overrides]]
+module = [
+    "app.strategy.base",
+    "app.risk.risk_pipeline",
+    "app.trader.executor",
+]
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+warn_return_any = true
+strict_equality = true
+
+# ============================================
+# 待修复核心模块（当前放宽，修复后移至上方）
+# ============================================
+[[tool.mypy.overrides]]
+module = [
+    "app.strategy.confluence_v2",
+    "app.risk.risk_manager",
+    "app.trader.position_manager",
+    "app.signal_store",
+    "app.decision_buffer",
+]
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+
+# ============================================
+# 历史遗留模块：完全忽略（核心模块修复完成后逐步移除）
+# ============================================
+[[tool.mypy.overrides]]
+module = [
+    "app.auth.*",
+    "app.data.*",
+    "app.factors.*",
+    "app.analytics.*",
+    "app.execution.*",
+    "app.ai.*",
+    "app.scenario.*",
+    "app.self_healing.*",
+    "app.pipeline.*",
+    "app.news_push.*",
+    "app.backtest.*",
+    "app.reporters.*",
+    "app.utils.*",
+    "app.logs.*",
+    "app.storage.*",
+    "app.notifier.*",
+    "app.config.*",
+    "app.core.*",
+    "app.compliance.*",
+    "app.harness.*",
+    "app.llm.*",
+    "app.market_profile.*",
+    "app.price_break.*",
+    "app.signal_engine.*",
+    "app.simulation.*",
+    "app.dashboard_api.*",
+    "app.review.*",
+    "app.review_api.*",
+    "app.review_dashboard_service.*",
+    "app.trade_exit_manager.*",
+    "app.callback_server.*",
+    "app.news_collector.*",
+    "app.news_v2.*",
+    "app.server.*",
+    "app.main",
+    "app.data_subscriber",
+    "app.strategy.indicators",
+    "app.strategy.consensus_engine",
+    "app.strategy.consensus_types",
+    "app.strategy.hk_specific",
+    "app.strategy.market_regime",
+    "app.risk.*",
+]
+ignore_errors = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
+python_classes = "Test*"
+python_functions = "test_*"
+addopts = "-v --tb=short"
+
+[tool.black]
+line-length = 120
+target-version = ['py38']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+    \.git
+  | \.venv
+  | venv
+  | __pycache__
+  | build
+  | dist
+)/
+'''
