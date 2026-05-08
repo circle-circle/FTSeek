@@ -602,6 +602,8 @@ class ConfluenceStrategyV2(BaseStrategy):
                 f"市场={regime.regime_type.value if regime else 'N/A'}"
             )
             
+            raw_conviction = min(1.5, max(0.3, bullish_score / max(1, effective_min_factors + 1)))
+            adjusted_conviction = self._apply_ashare_linkage(raw_conviction, code, action_is_buy=True)
             return Signal(
                 code=code, name=kline.get("name", code),
                 action=SignalAction.BUY, price=close, quantity=qty,
@@ -613,7 +615,7 @@ class ConfluenceStrategyV2(BaseStrategy):
                     "bearish_score": bearish_score,
                     "adx": round(adx_val, 1) if adx_val else None,
                     "market_regime": regime.regime_type.value if regime else None,
-                    "conviction": min(1.5, max(0.3, bullish_score / max(1, effective_min_factors + 1))),
+                    "conviction": adjusted_conviction,
                     "avg_correlation_discount": round(avg_correlation_discount, 3),
                 },
             )
@@ -630,6 +632,8 @@ class ConfluenceStrategyV2(BaseStrategy):
                 f"市场={regime.regime_type.value if regime else 'N/A'}"
             )
             
+            raw_conviction = min(1.5, max(0.3, bullish_score / max(1, effective_min_factors + 1)))
+            adjusted_conviction = self._apply_ashare_linkage(raw_conviction, code, action_is_buy=False)
             return Signal(
                 code=code, name=kline.get("name", code),
                 action=SignalAction.SELL, price=close, quantity=qty,
@@ -641,9 +645,49 @@ class ConfluenceStrategyV2(BaseStrategy):
                     "bearish_score": bearish_score,
                     "adx": round(adx_val, 1) if adx_val else None,
                     "market_regime": regime.regime_type.value if regime else None,
-                    "conviction": min(1.5, max(0.3, bullish_score / max(1, effective_min_factors + 1))),
+                    "conviction": adjusted_conviction,
                     "avg_correlation_discount": round(avg_correlation_discount, 3),
                 },
             )
 
         return None
+
+    def _apply_ashare_linkage(self, conviction: float, code: str, action_is_buy: bool) -> float:
+        """A股联动调整 — 低耦合装饰器模式 (2026-05-04 新增)
+        
+        根据南向资金流向调整信号 conviction 分数。
+        - 大额流入(>50亿) → 上调买入 conviction
+        - 大额流出(<-30亿) → 下调买入 conviction
+        - 大额流出(<-50亿) → 上调卖出 conviction
+        - 大额流入(>30亿) → 下调卖出 conviction
+        
+        Args:
+            conviction: 原始 conviction 分数
+            code: 股票代码 (用于日志)
+            action_is_buy: 是否买入信号
+            
+        Returns:
+            float: 调整后的 conviction 分数
+        """
+        try:
+            from app.factors.hk_market_data import get_hk_market_data
+            market_data = get_hk_market_data()
+            if not market_data or not market_data.southbound_flow_valid:
+                return conviction
+            sb_net = market_data.southbound_net
+            adjustment = 0.0
+            if action_is_buy:
+                if sb_net > 50: adjustment = 0.10
+                elif sb_net < -30: adjustment = -0.10
+            else:
+                if sb_net < -50: adjustment = 0.10
+                elif sb_net > 30: adjustment = -0.10
+            if adjustment != 0.0:
+                logger.info(
+                    f"[A股联动] {code} {'买入' if action_is_buy else '卖出'} conviction "
+                    f"{conviction:.2f} → {conviction + adjustment:.2f} (南向={sb_net:+.0f}亿)"
+                )
+            return conviction + adjustment
+        except Exception as e:
+            logger.debug(f"[A股联动] 调整失败: {e}")
+            return conviction

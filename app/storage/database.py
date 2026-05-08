@@ -1126,7 +1126,7 @@ class Database:
             cursor.execute("""
                 UPDATE trades 
                 SET exit_price = ?, pnl = ?, pnl_percent = ?, 
-                    exit_reason = ?, exit_time = ?, status = 'closed'
+                    exit_reason = ?, exit_time = ?, status = 'CLOSED'
                 WHERE id = ?
             """, (exit_price, pnl, pnl_percent, exit_reason, 
                   datetime.now().isoformat(), trade_id))
@@ -1138,7 +1138,7 @@ class Database:
             cursor = conn.cursor()
             cursor.execute("""
                 SELECT * FROM trades 
-                WHERE status = 'open'
+                WHERE UPPER(status) = 'OPEN'
                 ORDER BY entry_time DESC
             """)
             return [dict(row) for row in cursor.fetchall()]

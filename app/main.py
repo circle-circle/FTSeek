@@ -39,7 +39,7 @@ from app.strategy.strategy_manager import strategy_manager
 from app.notifier.dingtalk import DingTalkNotifier
 from app.trader.executor import TradeExecutor
 from app.data_subscriber import DataSubscriber
-from app.server import app as fastapi_app, set_executor, set_notifier, set_strategy_manager, set_subscriber
+from app.server import app as fastapi_app, set_executor, set_notifier, set_strategy_manager, set_subscriber, set_harness_pilot
 
 # ============================================================
 #  模块化说明：复盘 Dashboard 已分离为独立服务
@@ -129,18 +129,23 @@ try:
         logger.info("配置热重载已启用 (每 60 秒检查变更, 变更回调已注册)")
 
     logger.info(f"配置中心已初始化 | {config_center.get_validation_summary()}")
-    
-    # P1 2026-04-19: 配置一致性审计 — 检测 unified_config.yaml / 环境变量 / 代码默认值之间的漂移
+
+    # P1 2026-04-19 / SSOT v4.1 2026-05-06: 配置一致性审计 — 检测漂移并阻止启动
     try:
-        from app.core.config_audit import print_config_audit
-        from config import config_center as _cc  # unified_config.yaml 已加载到 ConfigCenter
+        from app.core.config_audit import print_config_audit, ConfigAuditError
         import app.config as _config_module
-        # 获取 unified_config.yaml 的原始数据 (2026-04-26: SSOT 已迁移)
-        _yaml_data = config_center._configs.get('unified_config.yaml',
-            config_center._configs.get('config.yaml', {}))
-        print_config_audit(_yaml_data, _config_module)
+        _yaml_data = config_center._data  # ConfigCenter 已合并的 YAML 数据
+        _blocking = print_config_audit(_yaml_data, _config_module, strict=True)
+        if _blocking == 0:
+            logger.info("✅ 配置一致性审计通过")
+    except ConfigAuditError as _cae:
+        logger.critical(f"🚨 配置一致性审计 BLOCKING 错误 — 系统拒绝启动!")
+        for _err in _cae.errors:
+            logger.critical(f"   {_err}")
+        logger.critical("请修复 unified_config.yaml 与 config_defaults.py 之间的不一致，然后重启。")
+        sys.exit(1)
     except Exception as _ca_e:
-        logger.debug(f"配置一致性审计失败: {_ca_e}")
+        logger.warning(f"配置一致性审计执行异常: {_ca_e}")
 except Exception as e:
     logger.critical(f"🔴 配置中心初始化失败: {e} — 核心模块不可用，系统无法安全启动")
     logger.critical("请检查 config/unified_config.yaml 格式是否正确，或 config_center.py 是否正常")
@@ -163,10 +168,10 @@ try:
         _source_risk = config_center.get('risk_limits.source_aware_risk', {})
         _time_aware = config_center.get('risk_limits.time_aware_risk', {})
         # P1 修复 (2026-04-18): 更新 risk_manager 的 time_aware_config
-        if _time_aware and hasattr(risk_manager, 'session_detector'):
-            from app.utils.session_detector import SessionDetector
-            risk_manager.session_detector = SessionDetector(_time_aware)
-            logger.info('risk_manager time_aware_config 已更新')
+        # 2026-05-06: SessionDetector 已废弃，迁移到 app.shared.market_hours
+        if _time_aware:
+            risk_manager._time_aware_enabled = True
+            logger.info('risk_manager time_aware_config 已启用 (via market_hours)')
     except Exception as _e:
         logger.warning(f'配置中心读取风控配置失败: {_e}')
         
@@ -299,7 +304,9 @@ try:
     # 初始化各管理器
     quality_scorer = get_quality_scorer()
     holding_period_manager = get_holding_period_manager()
-    water_level_manager = get_water_level_manager(initial_capital=1000000)  # 100 万初始资金
+    # SSOT: Capital Adaptive
+    initial_capital = config_center.get('capital.fixed_amount', 1000000)
+    water_level_manager = get_water_level_manager(initial_capital=initial_capital)
     profit_loss_manager = get_profit_loss_manager(water_level_manager=water_level_manager)
     valuation_calculator = get_valuation_calculator()
 
@@ -599,6 +606,14 @@ def _sync_positions_from_futu(executor):
 #  主逻辑
 # ============================================================
 def main():
+    # Fix UnboundLocalError: Initialize variables for finally block
+    us_monitor = None
+    subscriber = None
+    cross_market_scheduler = None
+    premarket_scheduler = None
+    hermes_processor = None
+    hermes_thread = None
+
     logger.info("=" * 60)
     logger.info("FTSeek 启动中...")
     logger.info(f"交易环境: {'模拟' if config.TRADE_ENV == 1 else '真实'}")
@@ -637,7 +652,7 @@ def main():
     from app.utils.daily_active_pool import get_daily_active_pool
     active_pool = get_daily_active_pool(market_prefix="HK.")
     active_pool.initialize()
-    
+
     # 注入持仓到动态池 (P0/P1 修复: 过滤市场 + 补充 metadata)
     try:
         db_positions = executor.position_manager.get_all_positions()
@@ -645,7 +660,7 @@ def main():
             # P0: 仅注入港股持仓
             hk_positions = [p for p in db_positions if p.code.startswith("HK.")]
             us_positions = [p for p in db_positions if p.code.startswith("US.")]
-            
+
             # P1: 构建 metadata 映射
             position_map = {}
             for p in hk_positions:
@@ -653,12 +668,12 @@ def main():
                     "action": p.action,
                     "quantity": p.quantity,
                 }
-            
+
             active_pool.inject_positions(
                 [p.code for p in hk_positions],
                 position_map=position_map
             )
-            
+
             if us_positions:
                 logger.warning(
                     f"🚫 启动时发现 {len(us_positions)} 只美股持仓，"
@@ -703,10 +718,40 @@ def main():
     # 后台线程每 30 秒对比 Futu 持仓与本地 DB，自动修复幽灵仓/遗漏仓
     try:
         from app.trader.position_sync import start_position_sync
-        start_position_sync(sync_interval=30)
-        logger.info("✅ 持仓同步器已启动 (30s 间隔, 自动修复 drift)")
+        start_position_sync(sync_interval=30, market='HK')
+        # start_position_sync(sync_interval=30, market='US')  # 临时禁用，防止启动阻塞
+        logger.info("✅ 持仓同步器已启动 (HK 市场, 30s 间隔, 自动修复 drift)")
     except Exception as _sync_e:
         logger.warning(f"持仓同步器启动失败（将继续运行）: {_sync_e}")
+
+    # 2.6) 启动 Hermes Agent 处理器 (持久化后台线程)
+    try:
+        from app.llm.agent_processor import HermesAgentProcessor
+        from app.llm.hermes_tools import ToolDependencies
+
+        hermes_deps = ToolDependencies(
+            db_path="data/ftseek.db",
+            memory_dir=os.path.expanduser("~/.hermes/ftseek/memory"),
+            notifier=notifier,
+            config_center=config_center,
+        )
+        hermes_processor = HermesAgentProcessor(
+            llm_config=config_center.get('hermes_agent', {}).get('llm', {}),
+            deps=hermes_deps,
+            polling_interval=config_center.get('hermes_agent', {}).get('polling', {}).get('interval_seconds', 5),
+        )
+        import threading
+        hermes_thread = threading.Thread(
+            target=hermes_processor.run_forever,
+            name="hermes-agent-processor",
+            daemon=True,
+        )
+        hermes_thread.start()
+        logger.info("Hermes Agent 处理器已启动 (后台线程)")
+    except Exception as _he:
+        logger.warning(f"Hermes Agent 处理器启动失败 (将继续运行): {_he}")
+        hermes_processor = None
+        hermes_thread = None
 
     # 2.5.5) SL 合理性检查 — 修复 SL=entry 或明显不合理的止损价
     # 【2026-04-27 新增】防止手动交易或历史数据导致止损失效
@@ -870,14 +915,15 @@ def main():
         cross_market_scheduler = None
     
     # 【新增 2026-04-12 Phase 1.3】初始化美股隔夜监控器
-    try:
-        from app.strategy.us_overnight_monitor import init_monitor
-        us_monitor = init_monitor(notifier)
-        us_monitor.start()
-        logger.info("美股隔夜监控器已启动 (21:00-06:00)")
-    except Exception as e:
-        logger.warning(f"美股隔夜监控器初始化失败：{e}")
-        us_monitor = None
+    if config_center.get('base.market', 'HK') != 'HK':
+        try:
+            from app.strategy.us_overnight_monitor import init_monitor
+            us_monitor = init_monitor(notifier)
+            us_monitor.start()
+            logger.info("美股隔夜监控器已启动 (21:00-06:00)")
+        except Exception as e:
+            logger.warning(f"美股隔夜监控器初始化失败：{e}")
+            us_monitor = None
 
     # 【新增 2026-04-12】初始化盘前 Pipeline 调度器 (新闻→事件包→LLM分析→交易路由)
     premarket_scheduler = None
@@ -903,6 +949,44 @@ def main():
     except Exception as e:
         logger.warning(f"盘前 Pipeline 调度器初始化失败：{e}")
         premarket_scheduler = None
+
+    # ── P2 2026-05-06: 盘后 EOD 复盘调度 — 已迁移到 Hermes cronjob (16:30 HKT) ──
+    # APScheduler 的 16:15 任务与 Hermes cronjob 16:30 重复，已禁用
+    eod_scheduler = None
+    logger.info("盘后 EOD 复盘调度已迁移到 Hermes cronjob (16:30 HKT)")
+
+    # ── P2 2026-05-06: 午间轻量归因调度 — 已迁移到 Hermes cronjob (12:15 HKT) ──
+    # APScheduler 的 12:15 任务与 Hermes cronjob 12:15 完全重复，已禁用
+    midday_scheduler = None
+    logger.info("午间轻量归因调度已迁移到 Hermes cronjob (12:15 HKT)")
+
+    # ── 午间作战计划刷新调度器 (12:00 HKT) — job 在 subscriber 就绪后添加
+    midday_refresher_scheduler = None
+    try:
+        from apscheduler.schedulers.background import BackgroundScheduler as _BS2
+        from app.pipeline.midday_plan_refresher import MiddayPlanRefresher
+        midday_refresher_scheduler = _BS2(timezone='Asia/Hong_Kong')
+        midday_refresher_scheduler.start()
+        logger.info("午间作战计划刷新调度器已创建 (job 待 subscriber 就绪)")
+    except Exception as e:
+        logger.warning(f"午间作战计划刷新调度器创建失败: {e}")
+
+    # ── 新增 (2026-05-06): 盘前多模型辩论调度 (08:20 HKT) ──
+    premarket_debate_scheduler = None
+    try:
+        from apscheduler.schedulers.background import BackgroundScheduler as _BS3
+        from app.pipeline.premarket_debate_scheduler import PremarketDebateScheduler
+        premarket_debate_scheduler = _BS3(timezone='Asia/Hong_Kong')
+        debate_instance = PremarketDebateScheduler(enabled=True)
+        premarket_debate_scheduler.add_job(
+            debate_instance.run, 'cron',
+            hour=8, minute=20, day_of_week='mon-fri',
+            id='hk-premarket-debate',
+        )
+        premarket_debate_scheduler.start()
+        logger.info("✅ 盘前多模型辩论调度已启动 (08:20 HKT, Mon-Fri)")
+    except Exception as e:
+        logger.warning(f"盘前多模型辩论调度启动失败: {e}")
 
     # ── 新增：盘前计划执行器调度 ──
     battle_plan_service = None
@@ -970,11 +1054,30 @@ def main():
             logger.info("DataSubscriber 创建成功，正在启动订阅...")
             subscriber.start()
             logger.info("DataSubscriber.start() 完成")
+
+            # 注入 quote_ctx 到 Hermes Agent (subscriber 就绪后)
+            if hermes_processor and getattr(subscriber, '_quote_ctx', None):
+                hermes_processor.deps.quote_ctx = subscriber._quote_ctx
+                logger.info("Hermes Agent quote_ctx 已注入")
         except Exception as e:
             logger.error(f"数据订阅启动失败: {e}")
             logger.info("将以纯 API 模式运行")
 
+    # 午间作战计划刷新调度 (12:00 HKT) — subscriber 就绪后启动
+    if subscriber and getattr(subscriber, '_quote_ctx', None):
+        try:
+            from app.pipeline.midday_plan_refresher import MiddayPlanRefresher
+            refresher = MiddayPlanRefresher(subscriber=subscriber, quote_ctx=subscriber._quote_ctx)
+            midday_refresher_scheduler.add_job(
+                refresher.run, 'cron', hour=12, minute=0, day_of_week='mon-fri',
+                id='hk-midday-plan-refresh'
+            )
+            logger.info("午间作战计划刷新已激活 (12:00 HKT, Mon-Fri)")
+        except Exception as e:
+            logger.warning(f"午间作战计划刷新激活失败: {e}")
+
     # 初始化交易健康度看板监控器（注入执行层/系统层依赖）
+    _harness_pilot = None
     try:
         from app.risk.risk_monitor import init_risk_monitor
         from app.risk.circuit_breaker import circuit_breaker as _cb
@@ -988,6 +1091,58 @@ def main():
         logger.info("交易健康度看板监控器已初始化")
     except Exception as _e:
         logger.warning(f"交易健康度看板监控器初始化失败: {_e}")
+
+    # 【Harness Pilot 2026-05-02】启动 Harness 整车平台试点
+    # 包裹现有系统，提供盘后复盘/风控检查等非交易工作流
+    # 不触碰交易路径，独立 event loop 运行
+    try:
+        from app.harness_pilot import HarnessPilot
+        _harness_pilot = HarnessPilot(
+            data_subscriber=subscriber,
+            risk_manager=risk_manager,
+            notifier=notifier,
+        )
+        _harness_pilot.start()
+        set_harness_pilot(_harness_pilot)
+        logger.info("HarnessPilot 已启动（盘后复盘/风控检查后台协调器）")
+
+        # 周末元分析调度: 从 HarnessPilot 内部调度迁移至 APScheduler 统一管理
+        try:
+            from apscheduler.schedulers.background import BackgroundScheduler as _BS_Weekly
+            _weekly_meta_scheduler = _BS_Weekly(timezone='Asia/Hong_Kong')
+            _weekly_meta_scheduler.add_job(
+                _harness_pilot.run_weekly_meta_sync,
+                'cron', day_of_week='sat', hour=10, minute=0,
+                id='weekly-meta-analysis',
+            )
+            _weekly_meta_scheduler.start()
+            logger.info("周末元分析调度已迁移至 APScheduler (周六 10:00 HKT)")
+        except Exception as _e:
+            logger.warning(f"周末元分析调度迁移失败: {_e}")
+    except Exception as _e:
+        logger.warning(f"HarnessPilot 启动失败: {_e}（不影响交易系统运行）")
+
+    # 【Domain Events 2026-05-04】注册领域事件插件 (Obsidian 知识库)
+    try:
+        from app.core.domain_events import get_event_bus
+        from app.plugins.obsidian_plugin import ObsidianPlugin
+        _plugin_enabled = getattr(config, "OBSIDIAN_PLUGIN_ENABLED", True)
+        _obsidian_plugin = ObsidianPlugin(enabled=_plugin_enabled)
+        _obsidian_plugin.register(get_event_bus())
+        logger.info(f"ObsidianPlugin 已注册 (enabled={_plugin_enabled})")
+    except Exception as _e:
+        logger.debug(f"ObsidianPlugin 注册跳过: {_e}")
+
+    # 【RiskOfficer 2026-05-05】注册自适应风控插件 (事件驱动反馈回路)
+    try:
+        from app.plugins.risk_officer_plugin import RiskOfficerPlugin
+        _risk_officer_plugin = RiskOfficerPlugin(enabled=True)
+        _risk_officer_plugin.register(get_event_bus())
+        if risk_manager is not None:
+            _risk_officer_plugin.set_risk_manager(risk_manager)
+        logger.info("RiskOfficerPlugin 已注册 (自适应风控)")
+    except Exception as _e:
+        logger.debug(f"RiskOfficerPlugin 注册跳过: {_e}")
 
     # 5) 发送启动通知
     strategy_summary = "\n".join(
@@ -1044,11 +1199,36 @@ def main():
         if us_monitor:
             us_monitor.stop()
             logger.info("美股隔夜监控器已停止")
+        
+        # P2 2026-05-06: eod_scheduler/midday_scheduler 已迁移到 Hermes cronjob，不再需要停止
+
+        # 停止午间作战计划刷新调度
+        if midday_refresher_scheduler:
+            midday_refresher_scheduler.shutdown(wait=False)
+            logger.info("午间作战计划刷新调度已停止")
+
+        # 停止盘前多模型辩论调度 (2026-05-06 新增)
+        if premarket_debate_scheduler:
+            premarket_debate_scheduler.shutdown(wait=False)
+            logger.info("盘前多模型辩论调度已停止")
 
         # 停止盘前 Pipeline 调度器 (2026-04-12)
         if premarket_scheduler:
             premarket_scheduler.stop()
             logger.info("盘前 Pipeline 调度器已停止")
+
+        # 停止 Hermes Agent 处理器
+        if hermes_processor:
+            hermes_processor.stop()
+            logger.info("Hermes Agent 处理器已停止")
+        if hermes_thread:
+            hermes_thread.join(timeout=5)
+            logger.info("Hermes Agent 线程已退出")
+
+        # 停止 HarnessPilot (2026-05-04)
+        if _harness_pilot:
+            _harness_pilot.stop()
+            logger.info("HarnessPilot 已停止")
 
         executor.close()
         opend.stop()

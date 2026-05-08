@@ -1,7 +1,14 @@
 """
-Risk-Evaluator (风险评估器)
+Risk-Evaluator (风险评估器) — ⚠️ DEPRECATED 2026-05-02
 
-负责风险评估、审批控制和熔断管理。
+此模块已废弃。RiskManager (app/risk/risk_manager.py) 是风控唯一 SSOT。
+所有风控评估应通过 RiskAdapter → RiskManager 进行。
+
+RiskOfficer 保留仅为向后兼容，不应在 new code 中使用。
+阈值已与 RiskManager 对齐 (unified_config.yaml)，但此模块将在 Phase 4 中移除。
+
+SSOT: app/risk/risk_manager.py (配置驱动，与 unified_config.yaml 同步)
+替代: app/harness/adapters/risk_adapter.py
 """
 
 import logging
@@ -63,13 +70,14 @@ class RiskOfficer(Agent):
 
         super().__init__(config)
 
-        # 风险阈值配置
+        # 【2026-05-02 对齐 RiskManager SSOT】阈值从 RiskManager (unified_config.yaml) 同步
+        # ⚠️ DEPRECATED: 此模块将在 Phase 4 移除，使用 RiskAdapter → RiskManager
         self.risk_limits = {
-            "max_single_position": 0.2,  # 单笔最大仓位 20%
-            "max_total_position": 0.5,   # 总仓位最大 50%
-            "max_daily_trades": 10,      # 每日最大交易次数
-            "max_drawdown": 0.15,        # 最大回撤 15%
-            "min_confidence": 0.3,       # 最低置信度 30%
+            "max_single_position": 0.08,  # 对齐 RiskManager (2026-04-18: 0.18→0.08)
+            "max_total_position": 0.75,   # 对齐 RiskManager (2026-04-15: 0.80→0.75)
+            "max_daily_trades": 5,        # 对齐 RiskManager (2026-04-15: 10→5)
+            "max_drawdown": 0.12,         # 对齐 RiskManager (2026-04-15: 0.15→0.12)
+            "min_confidence": 0.35,       # 对齐 RiskManager (2026-04-24 统一)
         }
 
     async def execute(self, input_data: Dict[str, Any]) -> Dict[str, Any]:

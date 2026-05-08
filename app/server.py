@@ -9,6 +9,7 @@ import hashlib
 import secrets
 from collections import defaultdict
 from dataclasses import asdict
+from datetime import datetime
 from typing import Optional
 
 from fastapi import FastAPI, Query, HTTPException, Request
@@ -173,6 +174,7 @@ except Exception as e:
 _executor: Optional[TradeExecutor] = None
 _notifier: Optional[DingTalkNotifier] = None
 _subscriber = None  # P0 (2026-04-16): DataSubscriber 引用，供新闻事件注入使用
+_harness_pilot = None  # P1 (2026-05-04): HarnessPilot 引用，供复盘 API 调用
 
 
 def set_executor(executor: TradeExecutor):
@@ -193,6 +195,11 @@ def set_subscriber(subscriber):
 def get_subscriber_instance():
     """获取全局 DataSubscriber 实例"""
     return _subscriber
+
+def set_harness_pilot(pilot):
+    """设置全局 HarnessPilot 实例"""
+    global _harness_pilot
+    _harness_pilot = pilot
 
 
 # ============================================================
@@ -473,16 +480,121 @@ async def account_info(token: str = Query(...)):
 
 
 @app.get("/health")
-async def health(token: str = Query(default=None)):
-    """健康检查 (不泄露内部版本号，可选 Token 鉴权)"""
-    # 如果提供了 token 则校验，允许无 token 的简单健康检查
-    # 监控系统可以选择配置 token 来增强安全性
+async def health(token: str = Query(default=None), deep: bool = Query(default=False)):
+    """健康检查 — deep=true 时检查关键依赖 (OpenD/DB/风控/队列)"""
     if token:
         try:
             _check_token(token)
         except HTTPException:
             return {"status": "unauthorized"}
-    return {"status": "ok"}
+    
+    result = {"status": "ok", "timestamp": __import__("time").time()}
+    
+    if not deep:
+        return result
+    
+    # === 深度健康检查 ===
+    checks = {}
+    overall_ok = True
+    
+    # 1. DataSubscriber 状态
+    if _subscriber is not None:
+        sub = _subscriber
+        checks["subscriber"] = "connected"
+        # 队列深度
+        quote_q = getattr(sub, "_quote_queue", None)
+        kline_q = getattr(sub, "_kline_queue", None)
+        checks["quote_queue_depth"] = quote_q.qsize() if quote_q else "N/A"
+        checks["kline_queue_depth"] = kline_q.qsize() if kline_q else "N/A"
+        # 队列过载告警
+        if quote_q and quote_q.qsize() > 4000:
+            checks["quote_queue_warning"] = "near capacity (5000)"
+            overall_ok = False
+        if kline_q and kline_q.qsize() > 8000:
+            checks["kline_queue_warning"] = "near capacity (10000)"
+            overall_ok = False
+    else:
+        checks["subscriber"] = "not_initialized"
+        overall_ok = False
+    
+    # 2. TradeExecutor 状态
+    checks["executor"] = "initialized" if _executor is not None else "not_initialized"
+    if _executor is None:
+        overall_ok = False
+    
+    # 3. 风险状态机
+    try:
+        from app.pipeline.risk_state_machine import RiskStateMachine
+        rsm = RiskStateMachine()
+        checks["risk_state"] = rsm.get_state().value
+        if rsm.get_state().value == "HALT":
+            overall_ok = False
+    except Exception as e:
+        checks["risk_state"] = f"error: {str(e)}"
+        overall_ok = False
+    
+    # 4. 数据库可访问性
+    try:
+        import sqlite3
+        import os
+        db_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "ftseek.db")
+        conn = sqlite3.connect(db_path, timeout=5)
+        conn.execute("SELECT 1")
+        conn.close()
+        checks["database"] = "ok"
+    except Exception as e:
+        checks["database"] = f"error: {str(e)}"
+        overall_ok = False
+    
+    # 5. 内存使用
+    try:
+        import os as _os
+        with open(f"/proc/{_os.getpid()}/status") as f:
+            for line in f:
+                if line.startswith("VmRSS:"):
+                    checks["memory_rss"] = line.strip()
+                    break
+    except Exception:
+        checks["memory_rss"] = "unavailable"
+    
+    result["status"] = "healthy" if overall_ok else "degraded"
+    result["checks"] = checks
+    return result
+
+
+@app.post("/api/killswitch/activate")
+async def killswitch_activate(payload: dict):
+    """
+    P0-fix 2026-05-02: Kill Switch 激活端点 (HK 本地版，无跨项目依赖)
+    用法: curl -X POST http://localhost:8899/api/killswitch/activate -d '{"reason": "手动触发"}'
+    """
+    reason = payload.get("reason", "API trigger")
+    # HK Kill Switch — 使用本地 circuit_breaker
+    try:
+        from app.risk.circuit_breaker import circuit_breaker as _cb
+        if payload.get("action") == "deactivate":
+            _cb._halted = False
+            _cb._halt_reason = ""
+            return {"status": "ok", "message": "Kill Switch deactivated", "target": "HK"}
+        _cb._halted = True
+        _cb._halt_reason = reason
+        return {"status": "ok", "message": f"Kill Switch activated: {reason}", "target": "HK"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)[:200]}
+
+
+@app.get("/api/killswitch/status")
+async def killswitch_status():
+    """Kill Switch 状态查询 (HK 本地版)"""
+    hk_active = False
+    hk_reason = ""
+    try:
+        from app.risk.circuit_breaker import circuit_breaker as _cb
+        hk_active = getattr(_cb, '_halted', False)
+        hk_reason = getattr(_cb, '_halt_reason', '')
+    except Exception:
+        pass
+    return {"hk_active": hk_active, "hk_reason": hk_reason}
 
 
 @app.post("/api/news/event")
@@ -686,3 +798,90 @@ async def get_attribution_summary(days: int = Query(30, description="统计天�
 
 
 print("✅ 归因链路回溯查询 API 已注册 (/api/attribution/*)")
+
+# ============================================================
+#  Harness API 端点 (2026-05-04)
+# ============================================================
+
+@app.post("/api/harness/daily-review")
+async def harness_daily_review(payload: dict):
+    """手动触发日度复盘"""
+    date = payload.get("date", datetime.now().strftime("%Y-%m-%d"))
+    market = payload.get("market", "HK")
+    if not _harness_pilot:
+        return {"status": "error", "message": "HarnessPilot not initialized"}
+    result = _harness_pilot.run_daily_review(date=date, market=market)
+    return result
+
+
+@app.post("/api/harness/midday-review")
+async def harness_midday_review(payload: dict):
+    """手动触发午间复盘"""
+    date = payload.get("date", datetime.now().strftime("%Y-%m-%d"))
+    if not _harness_pilot:
+        return {"status": "error", "message": "HarnessPilot not initialized"}
+    result = _harness_pilot._execute_midday_review(date)
+    return result
+
+
+@app.get("/api/harness/status")
+async def harness_status():
+    """获取 Harness 状态"""
+    if not _harness_pilot:
+        return {"status": "not_initialized"}
+    coordinator = _harness_pilot._coordinator
+    return {
+        "status": "running" if _harness_pilot._running else "stopped",
+        "enabled": _harness_pilot._enabled,
+        "agents": coordinator.list_agents() if coordinator else [],
+        "workflows": coordinator.list_workflows() if coordinator else [],
+        "midday_triggered": _harness_pilot._midday_triggered_date,
+        "eod_triggered": _harness_pilot._eod_triggered_date,
+    }
+
+
+@app.get("/api/harness/lessons")
+async def harness_lessons(
+    symbol: str = Query(None, description="股票代码"),
+    days: int = Query(30, description="查询天数"),
+    limit: int = Query(50, description="返回数量"),
+):
+    """查询教训库"""
+    import sqlite3
+    lessons_db = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "data", "hk_lessons.db"
+    )
+    if not os.path.exists(lessons_db):
+        return {"count": 0, "lessons": []}
+
+    conn = sqlite3.connect(lessons_db)
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+
+    query = "SELECT * FROM lessons WHERE 1=1"
+    params = []
+    if symbol:
+        query += " AND symbol = ?"
+        params.append(symbol)
+    if days:
+        query += f" AND trade_date >= date('now', '-{days} days')"
+    query += " ORDER BY trade_date DESC LIMIT ?"
+    params.append(limit)
+
+    cur.execute(query, params)
+    rows = [dict(r) for r in cur.fetchall()]
+    conn.close()
+    return {"count": len(rows), "lessons": rows}
+
+
+@app.post("/api/harness/risk-check")
+async def harness_risk_check(payload: dict):
+    """手动触发风控检查"""
+    if not _harness_pilot:
+        return {"status": "error", "message": "HarnessPilot not initialized"}
+    result = _harness_pilot.run_risk_check(payload.get("portfolio"))
+    return result
+
+
+print("✅ Harness API 端点已注册 (/api/harness/*)")

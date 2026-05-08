@@ -257,7 +257,7 @@ class ConfigHotReloader:
     """
 
     def __init__(self, config_path: str = None):
-        self.config_path = config_path or CONFIG_DIR / 'dynamic_exit_params.yaml'
+        self.config_path = config_path or CONFIG_DIR / 'unified_config.yaml'  # SSOT
         self.current_config: Dict = {}
         self.version_history: List[ConfigVersion] = []
         self.active_version_id: str = "initial"
@@ -274,7 +274,9 @@ class ConfigHotReloader:
         else:
             try:
                 with open(self.config_path, 'r', encoding='utf-8') as f:
-                    self.current_config = yaml.safe_load(f) or {}
+                    full_config = yaml.safe_load(f) or {}
+                # SSOT: 提取 dynamic_exit_params
+                self.current_config = full_config.get('dynamic_exit_params', full_config)
             except Exception as e:
                 logger.error(f"加载配置失败：{e}，使用默认配置")
                 self.current_config = self._create_default_config()

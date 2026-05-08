@@ -1,0 +1,2 @@
+# Debate
+consensus: bullish

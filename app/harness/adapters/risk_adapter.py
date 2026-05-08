@@ -87,14 +87,40 @@ class RiskAdapter(BaseAdapter):
             return self._fallback_assessment(input_data)
 
     async def _assess(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
-        """风险评估"""
+        """风险评估 — 映射到 RiskManager.check_system() + get_risk_metrics()"""
         portfolio = input_data.get("portfolio", {})
 
         try:
-            assessment = await self._risk_manager.assess_portfolio(portfolio)
+            # RiskManager 是同步的，不是 async
+            check_result = self._risk_manager.check_system()
+            metrics = self._risk_manager.get_risk_metrics()
+
+            # 映射 RiskManager 的 CheckResult 到 adapter 格式
+            overall_risk = "LOW"
+            if not check_result.passed:
+                if any(v > 0.8 for v in [
+                    metrics.get("daily_loss_ratio", 0),
+                    metrics.get("drawdown_ratio", 0),
+                ]):
+                    overall_risk = "CRITICAL"
+                else:
+                    overall_risk = "HIGH"
+
             return {
                 "task": "assess",
-                "assessment": assessment,
+                "assessment": {
+                    "overall_risk": overall_risk,
+                    "passed": check_result.passed,
+                    "checks": {
+                        "system_check": {
+                            "passed": check_result.passed,
+                            "reason": check_result.reason,
+                            "level": check_result.level,
+                            "details": check_result.details,
+                        },
+                    },
+                    "metrics": metrics,
+                },
                 "adapter": "risk",
             }
         except Exception as e:
@@ -102,14 +128,30 @@ class RiskAdapter(BaseAdapter):
             return self._fallback_assessment(input_data)
 
     async def _check_limits(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
-        """检查限制"""
+        """检查限制 — 映射到 RiskManager.check_position() + check_account()"""
         position = input_data.get("position", {})
 
         try:
-            result = await self._risk_manager.check_position_limits(position)
+            # RiskManager 是同步的，不是 async
+            pos_result = self._risk_manager.check_position()
+            acct_result = self._risk_manager.check_account()
+
             return {
                 "task": "check",
-                "result": result,
+                "result": {
+                    "position_check": {
+                        "passed": pos_result.passed,
+                        "reason": pos_result.reason,
+                        "level": pos_result.level,
+                        "details": pos_result.details,
+                    },
+                    "account_check": {
+                        "passed": acct_result.passed,
+                        "reason": acct_result.reason,
+                        "level": acct_result.level,
+                        "details": acct_result.details,
+                    },
+                },
                 "adapter": "risk",
             }
         except Exception as e:
@@ -117,14 +159,23 @@ class RiskAdapter(BaseAdapter):
             return {"error": str(e), "task": "check"}
 
     async def _monitor(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
-        """风险监控"""
+        """风险监控 — 映射到 RiskManager.check_system() + get_closed_trades_today()"""
         positions = input_data.get("positions", [])
 
         try:
-            monitoring = await self._risk_manager.monitor_positions(positions)
+            # RiskManager 是同步的，不是 async
+            sys_result = self._risk_manager.check_system()
+            metrics = self._risk_manager.get_risk_metrics()
+            today_trades = self._risk_manager.get_closed_trades_today()
+
             return {
                 "task": "monitor",
-                "monitoring": monitoring,
+                "monitoring": {
+                    "system_status": "PASS" if sys_result.passed else "FAIL",
+                    "today_trade_count": len(today_trades),
+                    "today_trades": today_trades[:10],  # 限制返回数量
+                    "metrics": metrics,
+                },
                 "adapter": "risk",
             }
         except Exception as e:
@@ -132,15 +183,16 @@ class RiskAdapter(BaseAdapter):
             return {"error": str(e), "task": "monitor"}
 
     def _fallback_assessment(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
-        """降级评估"""
+        """降级评估 — fail-closed: RiskManager 不可用时返回 CRITICAL 而非 MEDIUM"""
         return {
             "task": input_data.get("task", "assess"),
             "assessment": {
-                "overall_risk": "MEDIUM",
-                "market_risk": "LOW",
-                "position_risk": "LOW",
-                "liquidity_risk": "LOW",
-                "note": "Fallback assessment (risk manager not available)",
+                "overall_risk": "CRITICAL",
+                "market_risk": "HIGH",
+                "position_risk": "HIGH",
+                "liquidity_risk": "HIGH",
+                "note": "FAIL-CLOSED: RiskManager unavailable — rejecting all trades until restored",
+                "fail_closed": True,
             },
             "adapter": "risk",
             "fallback": True,

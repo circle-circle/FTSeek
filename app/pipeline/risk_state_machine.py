@@ -111,7 +111,8 @@ class RiskStateMachine:
                      self._state = RiskState.CAUTION
 
         except Exception as e:
-            logger.error(f"状态恢复失败: {e}")
+            logger.error(f"状态恢复失败: {e} — 保持 NORMAL 状态继续启动")
+            logger.warning("⚠️ 风险审计日志恢复失败，请手动检查 data/risk_audit.json 文件完整性")
 
     def get_state(self) -> RiskState:
         """获取当前状态"""
@@ -160,6 +161,12 @@ class RiskStateMachine:
             if time.time() - self._state_change_time > 1800:
                 self.set_state(RiskState.CAUTION, "Auto Recovery: Cooldown passed", "System")
                 logger.info("✅ 状态自动恢复至 CAUTION (观察中)")
+        elif self._state == RiskState.HALT:
+            # HALT 状态需要更长冷却期 (2小时) + 正常交易时间检查
+            elapsed = time.time() - self._state_change_time
+            if elapsed > 7200:  # 2 hours
+                logger.info(f"🔄 HALT 状态冷却期已过 ({elapsed:.0f}s > 7200s)，尝试恢复至 RISK_OFF 观察")
+                self.set_state(RiskState.RISK_OFF, "Auto Recovery: HALT cooldown expired", "System")
 
     def _audit_log(self, old_state: str, new_state: str, reason: str, source: str):
         """写入审计日志"""

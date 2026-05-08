@@ -11,6 +11,7 @@
 import os
 import sys
 import json
+import re
 import yaml
 from pathlib import Path
 from datetime import datetime
@@ -22,25 +23,26 @@ PROJECTS = {
 }
 
 # 需要审计的关键配置项映射 (yaml_key, env_var, code_default, description)
+# SSOT v4.1 (2026-05-06): 所有 code_default 对齐 config_defaults.py 和 unified_config.yaml
 AUDIT_ITEMS = {
     "FTSeek": [
         # 信号/策略配置
         ("strategy.cooldown.signal_cooldown", "SIGNAL_COOLDOWN", 120, "信号冷却时间(秒)"),
-        ("strategy.consensus.window_seconds", "CONSENSUS_WINDOW", 60, "共识窗口(秒)"),
-        ("strategy.consensus.threshold", "CONSENSUS_THRESHOLD", 1.5, "共识阈值"),
+        ("strategy.consensus.window_seconds", "CONSENSUS_WINDOW", 90, "共识窗口(秒)"),
+        ("strategy.consensus.threshold", "CONSENSUS_THRESHOLD", 1.0, "共识阈值"),
         ("strategy.consensus.adx_trend", "CONSENSUS_ADX_TREND", 25, "ADX趋势阈值"),
         ("strategy.consensus.adx_range", "CONSENSUS_ADX_RANGE", 20, "ADX范围阈值"),
         # 交易配置
-        ("trading.max_open_positions", "MAX_OPEN_POSITIONS", 4, "最大持仓数"),
+        ("trading.max_open_positions", "MAX_OPEN_POSITIONS", 20, "最大持仓数"),
         ("trading.trade_env", "TRADE_ENV", 1, "交易环境(0=实盘,1=模拟)"),
         # 风控配置
-        ("risk_limits.min_confidence", "MIN_CONFIDENCE", 0.55, "最小置信度"),
+        ("risk_limits.min_confidence", "MIN_CONFIDENCE", 0.35, "最小置信度"),
         ("risk_limits.max_single_position", "MAX_SINGLE_POSITION", 0.08, "单标的最大仓位"),
         ("risk_limits.max_total_position", "MAX_TOTAL_POSITION", 0.75, "总仓位上限"),
         ("risk_limits.max_daily_loss", "MAX_DAILY_LOSS", 0.03, "日最大亏损"),
         ("risk_limits.max_drawdown", "MAX_DRAWDOWN", 0.12, "最大回撤"),
         # 止损/止盈
-        ("stop_loss.default_percent", "DEFAULT_STOP_LOSS", 0.05, "默认止损比例"),
+        ("stop_loss.default_percent", "DEFAULT_STOP_LOSS", 0.03, "默认止损比例"),
         ("take_profit.default_percent", "DEFAULT_TAKE_PROFIT", 0.10, "默认止盈比例"),
         # OpenD 配置
         ("opend.host", "OPEND_HOST", "127.0.0.1", "OpenD 主机"),
@@ -86,6 +88,19 @@ def get_nested(d: dict, key_path: str, default=None):
             current = current[key]
         else:
             return default
+    return _resolve_env_placeholder(current)
+
+
+def _resolve_env_placeholder(value):
+    """解析 YAML 中的 ${VAR:default} 占位符"""
+    if isinstance(value, str):
+        pattern = r'\$\{(\w+):([^}]*)\}'
+        def _replacer(m):
+            var_name = m.group(1)
+            fallback = m.group(2)
+            return os.environ.get(var_name, fallback)
+        return re.sub(pattern, _replacer, value)
+    return value
     return current
 
 
@@ -134,9 +149,9 @@ def audit_project(project_name: str, project_path: str) -> dict:
     
     base_path = Path(project_path)
     
-    # 1. 加载 YAML 配置
+    # 1. 加载 YAML 配置 (unified_config.yaml 为 SSOT)
     yaml_config = {}
-    yaml_paths = ["config/config.yaml", "config/unified_config.yaml", "config.yaml"]
+    yaml_paths = ["config/unified_config.yaml", "config/config.yaml", "config.yaml"]
     yaml_file = None
     for yp in yaml_paths:
         p = base_path / yp

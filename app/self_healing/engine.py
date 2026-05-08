@@ -48,6 +48,42 @@ import logging
 import subprocess
 from typing import Optional, Callable, Dict, Any, List, Tuple
 from datetime import datetime, timedelta
+
+# 核心补充 2: 快速修复模式库
+class RepairPatternDB:
+    """基于历史修复记录的快速匹配"""
+    def __init__(self, history_path: str = "/opt/ftseek/FTSeek/data/self_healing_history.json"):
+        self.history_path = history_path
+        self.cache = self._load_cache()
+    
+    def _load_cache(self) -> Dict:
+        if not os.path.exists(self.history_path): return {}
+        try:
+            with open(self.history_path) as f:
+                data = json.load(f)
+            # 建立 issue_name -> 最近一次成功修复的映射
+            cache = {}
+            for r in data.get("reports", []):
+                if r.get("fix_success") and r.get("issue_name"):
+                    cache[r["issue_name"]] = r
+            return cache
+        except: return {}
+
+    def fast_match(self, issue_name: str) -> Optional[Dict]:
+        return self.cache.get(issue_name)
+
+pattern_db = RepairPatternDB()
+
+# 核心补充 3: 交易时段感知
+def is_critical_trading_period() -> bool:
+    from datetime import time as dtime
+    now = datetime.now()
+    t = now.time()
+    # 港股: 09:30-10:00 (开盘), 16:00-16:10 (收盘)
+    return (
+        (dtime(9, 30) <= t <= dtime(10, 0)) or 
+        (dtime(16, 0) <= t <= dtime(16, 10))
+    )
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from collections import Counter, defaultdict
@@ -580,18 +616,31 @@ class SelfHealingEngine:
             diagnosed_at=now,
         )
         
+        # 核心补充 2: 快速修复模式匹配
+        fast_match = pattern_db.fast_match(check_name)
+        
         # 2. 诊断
         try:
-            diagnosis = handler.diagnose(issue_text, check_name)
-            report.root_cause = diagnosis.root_cause
-            report.diagnosis_confidence = diagnosis.confidence
-            logger.info(f"[自愈/诊断] {check_name}: {diagnosis.root_cause} (置信度={diagnosis.confidence})")
+            if fast_match and fast_match.get("diagnosis"):
+                # 直接复用已知诊断，跳过 LLM
+                report.root_cause = fast_match["diagnosis"]
+                report.diagnosis_confidence = "high"
+                logger.info(f"[自愈/快速匹配] {check_name}: 复用已知诊断")
+            else:
+                diagnosis = handler.diagnose(issue_text, check_name)
+                report.root_cause = diagnosis.root_cause
+                report.diagnosis_confidence = diagnosis.confidence
+                logger.info(f"[自愈/诊断] {check_name}: {diagnosis.root_cause} (置信度={diagnosis.confidence})")
         except Exception as e:
             report.root_cause = f"诊断失败: {str(e)[:100]}"
             report.diagnosis_confidence = "low"
         
-        # 3. 修复
-        if handler.auto_fix and handler.fix_fn:
+        # 3. 修复 (核心补充 3: 交易时段感知自愈)
+        is_critical = is_critical_trading_period()
+        # 关键时段降低自动修复门槛
+        effective_auto_fix = handler.auto_fix or (is_critical and handler.category == "data")
+        
+        if effective_auto_fix and handler.fix_fn:
             try:
                 fix_result = handler.fix()
                 report.fix_attempted = True

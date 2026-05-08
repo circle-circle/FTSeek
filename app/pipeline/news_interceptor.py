@@ -93,11 +93,11 @@ class EmergencyNewsInterceptor:
         """获取 LLM 客户端"""
         if self._client is None:
             try:
-                from openai import AsyncOpenAI
-                self._client = AsyncOpenAI(
-                    api_key=self._api_key,
-                    base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
-                )
+                from app.core.unified_llm_factory import get_llm_client
+                self._client = get_llm_client()
+                if not self._client:
+                    logger.error("Unified LLM Client not available")
+                    return None
             except ImportError:
                 logger.error("openai 包未安装，无法调用 LLM")
                 return None
@@ -122,12 +122,17 @@ class EmergencyNewsInterceptor:
         # 1. 建立持仓索引 (Symbol -> Info)
         pos_map = {}
         for p in positions:
-            code = getattr(p, 'code', None) or p.get('code')
+            code = getattr(p, 'code', None)
             if code:
+                # P0 Fix 2026-05-03: Handle both dict and object types safely
+                qty = getattr(p, 'quantity', 0) or (p.get('quantity', 0) if isinstance(p, dict) else 0)
+                avg_price = getattr(p, 'avg_price', 0) or (p.get('avg_price', 0) if isinstance(p, dict) else 0)
+                if not avg_price: avg_price = getattr(p, 'cost_price', 0) or (p.get('cost_price', 0) if isinstance(p, dict) else 0)
+                
                 pos_map[code] = {
                     'code': code,
-                    'qty': getattr(p, 'quantity', 0) or p.get('quantity', 0) or p.get('size', 0),
-                    'avg_price': getattr(p, 'avg_price', 0) or p.get('avg_price', 0) or getattr(p, 'cost_price', 0) or p.get('cost_price', 0)
+                    'qty': qty,
+                    'avg_price': avg_price
                 }
 
         for item in news_items:
@@ -178,45 +183,33 @@ class EmergencyNewsInterceptor:
         return results
 
     async def _assess_risk(self, symbol: str, headline: str, content: str, pos_info: Dict) -> Optional[InterceptorResult]:
-        """调用 LLM 研判风险"""
+        """调用 LLM 研判风险 — P2 2026-05-06 使用 agent_bridge (替代直接 LLM 调用)"""
         try:
-            client = await self._get_llm_client()
-            if not client:
-                return None
+            from app.llm.agent_bridge import get_ftseek_agent_bridge
+            bridge = get_ftseek_agent_bridge("hk")
+            result = bridge.analyze_news_risk(symbol, headline, content, pos_info)
 
-            prompt = INTERCEPTOR_PROMPT.format(
-                headline=headline,
-                content=content,
-                symbol=symbol,
-                qty=pos_info.get('qty', 0),
-                cost=pos_info.get('avg_price', 0)
-            )
-            
-            response = await client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": "你是一个风控官。只输出 JSON，不要输出任何其他文字。"},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.1
-            )
-            
-            response_text = response.choices[0].message.content
-            # 解析 JSON
-            json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
-            if json_match:
-                data = json.loads(json_match.group())
+            if result and result.get("status") != "fallback":
                 return InterceptorResult(
-                    action=data.get("action", "HOLD"),
-                    confidence=data.get("confidence", 0.0),
-                    reason=data.get("reason", ""),
+                    action=result.get("action", "HOLD"),
+                    confidence=result.get("confidence", 0.0),
+                    reason=result.get("reason", ""),
                     news_headline=headline
                 )
-            return None
-            
+
+            # 降级: 保守持有
+            logger.warning(f"[Interceptor] 降级为 HOLD: {symbol}")
+            return InterceptorResult(
+                action="HOLD", confidence=0.0, reason="LLM 不可用，保守持有",
+                news_headline=headline
+            )
+
         except Exception as e:
-            logger.error(f"[Interceptor] LLM 研判失败 {symbol}: {e}")
-            return None
+            logger.error(f"[Interceptor] 研判失败 {symbol}: {e}")
+            return InterceptorResult(
+                action="HOLD", confidence=0.0, reason=f"异常: {e}",
+                news_headline=headline
+            )
 
     async def _execute_emergency_exit(self, symbol: str, reason: str):
         """执行紧急清仓"""

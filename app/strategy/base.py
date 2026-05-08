@@ -6,7 +6,7 @@ import uuid
 import time
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Optional
+from typing import Optional, List
 
 
 class SignalAction(str, Enum):
@@ -21,6 +21,48 @@ class TradeTier(str, Enum):
     TIER_SCALP = "SCALP"           # 超短打板 (逐笔Tick, <30分钟)
 
 from app.strategy.consensus_types import SignalSource
+
+
+# ============================================================
+#  策略元数据 (Strategy Metadata)
+#  用于因子投票策略的声明式注册
+# ============================================================
+
+class FactorType(str, Enum):
+    """因子类型"""
+    MOMENTUM = "MOMENTUM"              # 动量型 (趋势跟随)
+    MEAN_REVERSION = "MEAN_REVERSION"  # 均值回归型 (超买超卖)
+    VOLATILITY = "VOLATILITY"          # 波动率型
+    VOLUME = "VOLUME"                  # 成交量型
+    SENTIMENT = "SENTIMENT"            # 情绪型
+    EVENT_DRIVEN = "EVENT_DRIVEN"      # 事件驱动型
+
+
+class TimeHorizon(str, Enum):
+    """时间周期"""
+    SCALP = "SCALP"           # 超短线 (<30min)
+    INTRADAY = "INTRADAY"     # 日内 (30min-4h)
+    SWING = "SWING"           # 波段 (1-5天)
+    POSITION = "POSITION"     # 持仓 (5-30天)
+
+
+class RiskLevel(str, Enum):
+    """风险等级"""
+    LOW = "LOW"               # 低风险
+    MODERATE = "MODERATE"     # 中等风险
+    HIGH = "HIGH"             # 高风险
+
+
+@dataclass
+class StrategyMetadata:
+    """策略元数据 — 声明式注册用"""
+    factor_type: FactorType = FactorType.MOMENTUM
+    horizon: TimeHorizon = TimeHorizon.SWING
+    regime_affinity: List[str] = field(default_factory=list)  # ["trending", "ranging"]
+    risk_level: RiskLevel = RiskLevel.MODERATE
+    required_klines: int = 20
+    description: str = ""
+
 
 @dataclass
 class Signal:

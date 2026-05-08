@@ -49,8 +49,9 @@ class EntryPriceChecker:
         """
         self.config = config or {}
         
-        # 高点买入禁止阈值: 价格在日内高点 0.5% 内禁止买入 (2026-04-17: 2%→0.5%, 上涨行情中2%拦截所有突破信号)
-        self.high_buy_threshold = self.config.get('high_buy_threshold', 0.005)
+        # 高点买入禁止阈值: 价格在日内高点 X% 内禁止买入
+        # P0 修复 (2026-05-06): 临时从 0.5% 放宽到 1.0%，避免正常突破信号被拦截
+        self.high_buy_threshold = self.config.get('high_buy_threshold', 0.01)
         # 低点卖出禁止阈值: 价格在日内低点 2% 内禁止卖出 (2026-04-15: 1%→2%)
         self.low_sell_threshold = self.config.get('low_sell_threshold', 0.02)
         # 警告阈值: 价格在日内高点 3% 内发出警告 (2026-04-15: 2%→3%)
@@ -159,14 +160,23 @@ class EntryPriceChecker:
         
         # ==================== 买入检查 ====================
         if action_upper == 'BUY':
-            # 检查1: 价格接近当日高点
+            # 检查1: 价格接近当日高点 (分级阈值 + 突破允许模式)
             distance_to_high = (high - current_price) / high if high > 0 else 0
             
-            if distance_to_high <= self.high_buy_threshold:
-                # 价格在日内高点 1% 内，禁止买入
+            # 2026-05-07 辩论修复: 分级阈值
+            # - 距离 < 0.3%: 禁止 (极端追高)
+            # - 0.3% <= 距离 < 1.0%: 警告但允许 (可能是突破)
+            # - 1.0% <= 距离 < 3.0%: 正常警告
+            # - 距离 >= 3.0%: 正常买入
+            HIGH_BUY_BLOCK = self.config.get('high_buy_block', 0.003)     # 0.3% 禁止区
+            HIGH_BUY_WARN = self.config.get('high_buy_warn', 0.01)        # 1.0% 警告区
+            HIGH_BUY_SOFT = self.config.get('high_buy_soft', 0.03)        # 3.0% 软警告区
+            
+            if distance_to_high <= HIGH_BUY_BLOCK:
+                # 价格极度接近高点 (<0.3%)，禁止买入 (防止瞬间追高)
                 reason = (
-                    f"价格检查: 价格 {current_price:.2f} 接近日内高点 {high:.2f} "
-                    f"(距离 {distance_to_high:.2%} < {self.high_buy_threshold:.1%})，禁止追高买入"
+                    f"价格检查: 价格 {current_price:.2f} 极度接近日内高点 {high:.2f} "
+                    f"(距离 {distance_to_high:.2%} < {HIGH_BUY_BLOCK:.1%})，禁止追高买入"
                 )
                 logger.warning(f"[价格检查] {code} {reason}")
                 return PriceCheckResult(
@@ -179,13 +189,31 @@ class EntryPriceChecker:
                     position_in_range=position_in_range
                 )
             
-            # 检查2: 价格涨幅过大 (追高警告)
-            if change_pct > self.chase_threshold:
+            if distance_to_high <= HIGH_BUY_WARN:
+                # 价格在0.3%-1.0%之间，警告但允许 (可能是突破信号)
                 warning = (
-                    f"价格检查: 价格已涨 {change_pct:.2%}，可能追高，建议谨慎"
+                    f"价格检查: 价格 {current_price:.2f} 接近日内高点 {high:.2f} "
+                    f"(距离 {distance_to_high:.2%})，可能是突破信号，允许但需谨慎"
                 )
-                logger.warning(f"[价格检查] {code} {warning}")
-                # 只发警告，不禁止
+                logger.info(f"[价格检查] {code} {warning}")
+                # 允许买入，但发出警告
+                return PriceCheckResult(
+                    allowed=True,
+                    reason=f"价格接近高点但允许 (突破模式)",
+                    current_price=current_price,
+                    day_high=high,
+                    day_low=low,
+                    day_open=open_price,
+                    position_in_range=position_in_range,
+                    warning=warning
+                )
+            
+            # 检查2: 价格接近高点警告区 (必须在追高涨幅检查之前)
+            if distance_to_high <= HIGH_BUY_SOFT:
+                warning = (
+                    f"价格检查: 价格距日内高点 {distance_to_high:.2%}，注意追高风险"
+                )
+                logger.info(f"[价格检查] {code} {warning}")
                 return PriceCheckResult(
                     allowed=True,
                     reason=f"价格在合理范围 (位置: {position_in_range:.0%})",
@@ -196,13 +224,14 @@ class EntryPriceChecker:
                     position_in_range=position_in_range,
                     warning=warning
                 )
-            
-            # 检查3: 价格接近高点警告区
-            if distance_to_high <= self.high_buy_warning:
+
+            # 检查3: 价格涨幅过大 (追高警告)
+            if change_pct > self.chase_threshold:
                 warning = (
-                    f"价格检查: 价格距日内高点仅 {distance_to_high:.2%}，注意追高风险"
+                    f"价格检查: 价格已涨 {change_pct:.2%}，可能追高，建议谨慎"
                 )
-                logger.info(f"[价格检查] {code} {warning}")
+                logger.warning(f"[价格检查] {code} {warning}")
+                # 只发警告，不禁止
                 return PriceCheckResult(
                     allowed=True,
                     reason=f"价格在合理范围 (位置: {position_in_range:.0%})",
@@ -270,9 +299,17 @@ _entry_price_checker: Optional[EntryPriceChecker] = None
 
 
 def get_entry_price_checker(config: dict = None) -> EntryPriceChecker:
-    """获取入场价格检查器实例"""
+    """获取入场价格检查器实例 (SSOT: 优先从 unified_config.yaml 读取)"""
     global _entry_price_checker
     if _entry_price_checker is None:
+        # P1+P2 修复 (2026-05-07): 从 ConfigCenter 读取配置，对齐 SSOT
+        if config is None:
+            try:
+                from config.config_center import get_config_center
+                config_center = get_config_center()
+                config = config_center.get('entry_price_checker', {})
+            except Exception:
+                config = {}
         _entry_price_checker = EntryPriceChecker(config)
     return _entry_price_checker
 

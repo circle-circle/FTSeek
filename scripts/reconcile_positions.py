@@ -19,7 +19,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 try:
-    from futu import OpenHKTradeContext, OpenUSTradeContext, TrdEnv
+    from futu import OpenSecTradeContext, TrdEnv, TrdMarket
     FUTU_AVAILABLE = True
 except ImportError:
     FUTU_AVAILABLE = False
@@ -65,6 +65,29 @@ def find_signal_id(cursor, code, price):
         logger.debug(f"匹配信号失败: {e}")
     return None
 
+def _check_trading_time(market: str) -> bool:
+    """检查当前是否在指定市场的交易时间内"""
+    from datetime import datetime
+    now = datetime.now()
+    month = now.month
+    is_dst = 3 <= month <= 10
+    weekday = now.weekday()
+    current_minutes = now.hour * 60 + now.minute
+    
+    if market == "HK":
+        if weekday >= 5: return False
+        # 09:00 - 16:15
+        return (9 * 60 <= current_minutes < 12 * 60) or (13 * 60 <= current_minutes < 16 * 60 + 15)
+    else:
+        # US Market (CST): DST 21:00-05:30, Standard 22:00-06:00
+        if weekday == 5: return False # Saturday
+        if is_dst:
+            start, end = 21 * 60, 5 * 60 + 30
+        else:
+            start, end = 22 * 60, 6 * 60
+        # Cross midnight
+        return current_minutes >= start or current_minutes < end
+
 def run_reconciliation(market_filter='HK'):
     """执行持仓对账
     
@@ -73,6 +96,16 @@ def run_reconciliation(market_filter='HK'):
                        默认 'HK' 以匹配 FTSeek 港股项目定位
     """
     logger.info(f"🚀 开始持仓对账 (market_filter={market_filter})...")
+    
+    # 交易时间门控：非交易时间跳过查询，防止 Futu 返回空数据导致误杀持仓
+    if market_filter == 'US':
+        if not _check_trading_time("US"):
+            logger.info("⏰ 美股非交易时间，跳过美股对账 (防止数据误判)")
+            return
+    elif market_filter == 'HK':
+        if not _check_trading_time("HK"):
+            logger.info("⏰ 港股非交易时间，跳过港股对账")
+            return
     
     # 1. 获取富途实时持仓
     server_positions = {} # key: code -> info
@@ -86,7 +119,7 @@ def run_reconciliation(market_filter='HK'):
     hk_positions = 0
     try:
         logger.info("📡 查询港股持仓...")
-        hk_ctx = OpenHKTradeContext(OPEND_HOST, OPEND_PORT)
+        hk_ctx = OpenSecTradeContext(host=OPEND_HOST, port=OPEND_PORT, filter_trdmarket=TrdMarket.HK)
         ret, data = hk_ctx.position_list_query(trd_env=TrdEnv.SIMULATE)
         if ret == 0:
             for _, row in data.iterrows():
@@ -109,7 +142,7 @@ def run_reconciliation(market_filter='HK'):
     us_positions = 0
     try:
         logger.info("📡 查询美股持仓...")
-        us_ctx = OpenUSTradeContext(OPEND_HOST, OPEND_PORT)
+        us_ctx = OpenSecTradeContext(host=OPEND_HOST, port=OPEND_PORT, filter_trdmarket=TrdMarket.US)
         ret, data = us_ctx.position_list_query(trd_env=TrdEnv.SIMULATE)
         if ret == 0:
             for _, row in data.iterrows():

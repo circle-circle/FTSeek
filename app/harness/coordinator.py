@@ -41,6 +41,11 @@ class TaskResult:
     execution_time: float = 0.0
     agent_name: Optional[str] = None
 
+    def get(self, key: str, default: Any = None) -> Any:
+        if isinstance(self.data, dict) and key in self.data:
+            return self.data[key]
+        return default
+
 
 @dataclass
 class WorkflowContext:

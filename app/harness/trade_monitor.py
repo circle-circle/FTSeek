@@ -1,7 +1,13 @@
 """
-Trade-Monitor (交易监控器)
+Trade-Monitor (交易监控器) — 2026-05-02 合并 CollectorAdapter
 
-负责实时交易监控、数据收集和告警。
+职责:
+- 数据采集: 委托给 CollectorAdapter (PeriodicTradeCollector)
+- 实时监控: 持仓跌幅、日亏损检测
+- 异常告警: 回撤、交易频率、持仓异常
+
+数据源架构:
+  TradeMonitor → CollectorAdapter → PeriodicTradeCollector → Futu API + DB
 """
 
 import logging
@@ -58,9 +64,23 @@ class TradeMonitor(Agent):
             "alert_thresholds": {
                 "position_drop": 0.1,  # 持仓跌幅 10%
                 "daily_loss": 0.05,    # 日亏损 5%
-                "trade_frequency": 10,  # 交易频率
+                "trade_frequency": 5,  # 对齐 RiskManager max_daily_trades
             },
         }
+
+        # 【2026-05-02 合并 CollectorAdapter】数据采集委托给 CollectorAdapter
+        self._collector_adapter = None
+
+    async def _load_collector(self) -> None:
+        """加载 CollectorAdapter 作为数据源"""
+        try:
+            from app.harness.adapters.collector_adapter import CollectorAdapter
+            self._collector_adapter = CollectorAdapter()
+            await self._collector_adapter._load_module("app.review.periodic_collector_hk")
+            self.logger.info("CollectorAdapter loaded as TradeMonitor data source")
+        except ImportError as e:
+            self.logger.warning(f"CollectorAdapter load failed: {e}")
+            self._collector_adapter = None
 
     async def execute(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -90,7 +110,7 @@ class TradeMonitor(Agent):
 
     async def _collect_data(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
         """
-        收集交易数据
+        收集交易数据 — 委托给 CollectorAdapter
 
         Args:
             input_data: 输入数据
@@ -99,22 +119,29 @@ class TradeMonitor(Agent):
             收集结果
         """
         market = input_data.get("market", "HK")
-        start_time = input_data.get("start_time")
-        end_time = input_data.get("end_time", datetime.now().isoformat())
 
         self.logger.info(f"Collecting data for {market} market")
 
-        # 简化实现：返回示例数据
-        trades = self._fetch_trades(market, start_time, end_time)
+        # 委托给 CollectorAdapter (2026-05-02 合并)
+        if self._collector_adapter and self._collector_adapter._collector:
+            try:
+                result = await self._collector_adapter._adapt_execute({
+                    "task": "collect",
+                    "market": market,
+                })
+                return result
+            except Exception as e:
+                self.logger.warning(f"CollectorAdapter failed, falling back: {e}")
 
+        # Fallback: 返回空数据
         return {
             "task": "collect",
             "market": market,
-            "start_time": start_time,
-            "end_time": end_time,
-            "trades": trades,
-            "trade_count": len(trades),
+            "trades": [],
+            "trade_count": 0,
             "collection_time": datetime.now().isoformat(),
+            "adapter": "trade-monitor",
+            "fallback": True,
         }
 
     async def _monitor_realtime(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -220,20 +247,6 @@ class TradeMonitor(Agent):
             "collection_interval": self.monitoring_config["collection_interval"],
             "alert_thresholds": self.monitoring_config["alert_thresholds"],
         }
-
-    def _fetch_trades(self, market: str, start_time: Optional[str], end_time: str) -> List[Dict]:
-        """获取交易数据 (简化实现)"""
-        # 实际应该从数据库或 API 获取
-        return [
-            {
-                "stock": "HK.09992",
-                "direction": "LONG",
-                "entry_price": 15.5,
-                "current_price": 15.8,
-                "pnl": 0.019,
-                "entry_time": "2026-03-29T09:35:00",
-            }
-        ]
 
     def _get_highest_alert_level(self, alerts: List[Dict]) -> str:
         """获取最高告警级别"""

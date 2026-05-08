@@ -326,7 +326,7 @@ class NewsSentimentAnalyzer:
         executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
         try:
             future = executor.submit(
-                asyncio.run,
+                self._run_async_with_new_loop,
                 self._call_llm_news_enhancement(code, news_list, sentiment_score, trace_id)
             )
             try:
@@ -340,6 +340,15 @@ class NewsSentimentAnalyzer:
             return None
         finally:
             executor.shutdown(wait=False)
+
+    def _run_async_with_new_loop(self, coro):
+        """P0 修复: 在新事件循环中运行协程，避免 Event loop is closed"""
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            return loop.run_until_complete(coro)
+        finally:
+            loop.close()
 
     async def _call_llm_news_enhancement(
         self,

@@ -441,34 +441,44 @@ class PreMarketAnalyst:
         ]
 
     def _load_feedback_context(self) -> str:
-        """加载昨日复盘反馈 (Phase 5)"""
+        """加载历史教训 + 昨日复盘反馈 (增强版)
+
+        Phase 5 升级: 注入 Agent 记忆 + Lessons DB (港股记忆闭环)
+        """
         try:
-            # 路径: data/daily_review_report.json
-            report_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'data', 'daily_review_report.json')
+            # 1. 优先: Agent 记忆注入 (lessons_db + hk.json, Token 预算控制)
+            from app.review.hk_memory_injector import get_hk_memory_injector
+            injector = get_hk_memory_injector()
+            memory_context = injector.inject()
+
+            # 2. 追加: 昨日复盘报告 (原有逻辑, 保留向后兼容)
+            report_path = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+                'data', 'daily_review_report.json'
+            )
+            report_context = ""
             if os.path.exists(report_path):
                 with open(report_path, 'r') as f:
                     report = json.load(f)
-                
                 hit_rate = report.get('hit_rate', 0)
                 total = report.get('total_targets', 0)
                 hits = report.get('hits', 0)
                 details = report.get('details', [])
-                
-                # 构建反馈文本
-                feedback = f"昨日预测命中率: {hit_rate:.0%} ({hits}/{total})。\n"
-                feedback += "复盘案例:\n"
-                # 取最近 3 个案例
+                report_context = f"昨日预测命中率: {hit_rate:.0%} ({hits}/{total})。\n复盘案例:\n"
                 for d in details[:3]:
                     sym = d.get('symbol', '')
                     logic = d.get('logic', '')
                     reason = d.get('reason', '')
                     is_hit = d.get('is_hit', False)
-                    feedback += f"- {'✅' if is_hit else '❌'} {sym}: {logic} -> {reason}\n"
-                return feedback
-            return "无历史复盘数据，请基于当前信息独立推理。"
+                    report_context += f"- {'✅' if is_hit else '❌'} {sym}: {logic} -> {reason}\n"
+
+            if report_context:
+                return f"{memory_context}\n\n【昨日复盘统计】\n{report_context}"
+            return memory_context
+
         except Exception as e:
-            logger.warning(f"加载复盘反馈失败: {e}")
-            return "复盘数据加载异常，请忽略。"
+            logger.warning(f"加载反馈上下文失败: {e}")
+            return "历史教训加载异常，请基于当前信息独立推理。"
 
     def _get_us_market_context(self) -> str:
         """获取美股市场上下文 (带缓存)"""
@@ -637,6 +647,12 @@ class PreMarketAnalyst:
     async def _call_llm(self, messages: List[Dict], model: str, timeout: int) -> Optional[str]:
         """调用 DashScope API (带自动降级)"""
         for attempt in range(self.max_retries + 1):
+            # P1 修复 (2026-05-06): 重试间添加延迟，让瞬态错误有时间自愈
+            if attempt > 0:
+                delay = 2 ** attempt  # 指数退避: 2s, 4s
+                logger.warning(f"[PreMarketAnalyst] 重试等待 {delay}s (attempt={attempt})")
+                await asyncio.sleep(delay)
+            
             current_model = model
             
             # 自动降级：如果主模型失败，切换到备用模型
@@ -645,17 +661,12 @@ class PreMarketAnalyst:
                 logger.warning(f"[PreMarketAnalyst] ⚡ 降级到备用模型 {current_model}")
             
             try:
-                from openai import AsyncOpenAI
-
-                api_key = os.environ.get("BAILIAN_API_KEY", "")
-                if not api_key:
-                    logger.error("BAILIAN_API_KEY 未配置")
+                from app.core.unified_llm_factory import get_llm_client
+                
+                client = get_llm_client(self.config)
+                if not client:
+                    logger.error("Unified LLM Client not available")
                     return None
-
-                client = AsyncOpenAI(
-                    api_key=api_key,
-                    base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
-                )
 
                 extra_body: Dict[str, Any] = {}
                 if self.enable_thinking:
@@ -670,11 +681,10 @@ class PreMarketAnalyst:
                     timeout=timeout,
                 )
                 result = response.choices[0].message.content
-                # 显式关闭 httpx 连接，防止 Event loop is closed 报错
-                try:
-                    await client.close()
-                except RuntimeError:
-                    pass  # Event loop 已关闭，忽略
+                # ⚠️ P0 修复 (2026-05-06): 禁止关闭全局单例 client
+                # get_llm_client() 返回全局单例 AsyncOpenAI，close() 会销毁底层 httpx 连接
+                # 但单例引用仍存在，后续调用会返回已关闭的 client → 所有 LLM 调用失败
+                # 正确做法：不关闭 client，由 unified_llm_factory 管理生命周期
                 return result
 
             except ImportError:

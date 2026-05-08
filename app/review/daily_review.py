@@ -4,16 +4,25 @@
 生成每日交易复盘报告，包含 6 大维度分析
 """
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Any, Optional
 from pathlib import Path
 import json
+import sqlite3
 
 from app.storage.trade_recorder import get_trade_recorder
 from app.storage.review_tables import get_review_database
 
 logger = logging.getLogger("ftseek.review.daily")
 logger.propagate = False
+
+# ET timezone for US market date calculations
+ET_TZ = timezone(timedelta(hours=-4))  # EDT (UTC-4)
+
+
+def _get_et_date() -> str:
+    """Get current date in ET timezone"""
+    return datetime.now(ET_TZ).strftime('%Y-%m-%d')
 
 
 class DailyReviewGenerator:
@@ -39,7 +48,7 @@ class DailyReviewGenerator:
             复盘报告字典
         """
         if date is None:
-            date = datetime.now().strftime('%Y-%m-%d')
+            date = _get_et_date()
         
         logger.info(f"生成每日复盘报告：{date}")
         
@@ -340,15 +349,23 @@ def generate_daily_review(date: str = None, account_type: str = None) -> Dict:
 
 
 def _get_today_trades(date: str, market: str = "hk") -> List[Dict]:
-    """获取今日交易记录 (按市场分离)"""
+    """获取今日交易记录 (按市场分离)
+    
+    美股使用 ET 日期，同时查询 positions + trade_records 表
+    (trade_records 包含 scalping 交易)
+    """
     try:
-        import sqlite3
-        # 港股和美股使用不同的数据库
+        # 美股使用 ET 日期
         if market.lower() == "us":
+            target_date = _get_et_date()
             db_path = '/opt/ftseek/FTSeek/data/ftseek_us.db'
         else:
+            target_date = date
             db_path = '/opt/ftseek/FTSeek/data/ftseek.db'
         
+        trades = []
+        
+        # 1. 从 positions 表获取持仓交易
         conn = sqlite3.connect(db_path)
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
@@ -356,10 +373,31 @@ def _get_today_trades(date: str, market: str = "hk") -> List[Dict]:
             SELECT code, action, entry_price, entry_time, realized_pnl, status
             FROM positions 
             WHERE entry_time LIKE ?
-        """, (f"{date}%",))
+        """, (f"{target_date}%",))
         rows = cursor.fetchall()
+        trades.extend([dict(row) for row in rows])
+        
+        # 2. 从 trade_records 表获取 scalping 交易 (仅美股)
+        if market.lower() == "us":
+            try:
+                cursor.execute("""
+                    SELECT symbol as code, side as action, entry_price, 
+                           created_at as entry_time, realized_pnl, status,
+                           source_type
+                    FROM trade_records 
+                    WHERE date(trade_date) = ?
+                """, (target_date,))
+                scalping_rows = cursor.fetchall()
+                for row in scalping_rows:
+                    d = dict(row)
+                    d['is_scalping'] = d.pop('source_type', '') == 'SCALPING'
+                    trades.append(d)
+            except Exception as e:
+                logger.warning(f"查询 trade_records 失败: {e}")
+        
         conn.close()
-        return [dict(row) for row in rows]
+        logger.info(f"[{market}] 获取 {len(trades)} 条交易记录 (date={target_date})")
+        return trades
     except Exception as e:
         logger.warning(f"获取 {market} 交易记录失败: {e}")
         return []
@@ -397,8 +435,9 @@ def run_post_market_review():
         复盘报告字典
     """
     from datetime import datetime
-    today = datetime.now().strftime('%Y-%m-%d')
-    logger.info("[盘后复盘] 开始生成收盘报告...")
+    # 美股盘后复盘使用 ET 日期
+    today = _get_et_date()
+    logger.info(f"[盘后复盘] 开始生成收盘报告 (ET date: {today})...")
     
     try:
         # ── 1. Agent 盘后归因 (新增 - 2026-04-24) ──

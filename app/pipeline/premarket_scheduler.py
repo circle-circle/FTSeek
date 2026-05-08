@@ -201,34 +201,95 @@ class PreMarketScheduler:
             return None
 
     def _send_summary_report(self, result: Any):
-        """发送 Pipeline 执行汇总报告到 DingTalk 并生成盘前作战计划"""
+        """发送 Pipeline 执行汇总报告到 DingTalk/飞书 并生成盘前作战计划"""
         try:
-            from app.notifier.dingtalk import DingTalkNotifier
-
-            # 尝试获取 notifier
-            notifier = None
+            # 发送管线执行摘要
+            summary = self._format_summary(result)
+            _send_pipeline_notification(summary, result)
+            debate_synthesis = None
             try:
-                from app.main import get_notifier
-                notifier = get_notifier()
-            except Exception:
-                pass
+                from app.agents.debate.debate_orchestrator import run_debate_sync
+                from app.review.hk_memory_injector import get_hk_memory_injector
 
-            if notifier and result and hasattr(notifier, "send_text"):
-                summary = self._format_summary(result)
-                notifier.send_text(summary, title="盘前Pipeline执行报告")
-            else:
+                injector = get_hk_memory_injector()
+
+                # P0 修复 (2026-05-05): PipelineResult 没有 event_packs/market_context/price_context 属性
+                # 应该使用 result.assessments (LLM 分析结果) 作为辩论的主要输入
+                assessments = getattr(result, 'assessments', []) or []
+                event_packs = getattr(result, 'event_packs', None) or getattr(result, 'raw_news', [])
+
+                # 构建上下文用于智能注入 — 优先使用 assessments
+                if assessments:
+                    context = _build_context_from_assessments(assessments)
+                else:
+                    context = _build_injection_context(event_packs if isinstance(event_packs, list) else [])
+                feedback = injector.inject(context) if injector else ""
+                market_ctx = getattr(result, 'market_context', '') or ''
+                price_data = getattr(result, 'price_context', '') or ''
+
+                logger.info("[PreMarketScheduler] 启动多Agent辩论...")
+
+                # ── 双轨: 尝试 Hermes Agent 队列 ──
+                _hermes_debate_result = None
+                try:
+                    cfg = self.pipeline_config.get('hermes_agent', {}) if self.pipeline_config else {}
+                    premarket_hermes = cfg.get('premarket_enabled', False)
+                    if not premarket_hermes:
+                        from app.core.config_container import get_config_center
+                        cc = get_config_center()
+                        premarket_hermes = cc.get('hermes_agent', {}).get('premarket_enabled', False) if cc else False
+
+                    if premarket_hermes:
+                        from app.llm.agent_bridge import get_ftseek_agent_bridge
+                        bridge = get_ftseek_agent_bridge("hk")
+                        h_payload = {
+                            "market_context": str(market_ctx),
+                            "feedback_context": feedback,
+                            "price_data": str(price_data),
+                            "event_packs_count": len(event_packs) if isinstance(event_packs, list) else 0,
+                        }
+                        h_rid = bridge.enqueue_task("battle_plan", h_payload)
+                        if h_rid:
+                            logger.info("[PreMarketScheduler] Hermes 任务已入队: %s", h_rid)
+                            _hermes_debate_result = bridge.wait_for_queue_result(h_rid, timeout=120)
+                            if _hermes_debate_result:
+                                logger.info("[PreMarketScheduler] Hermes 辩论完成: bias=%s",
+                                           _hermes_debate_result.get('overall_bias', '?'))
+                except Exception as _he:
+                    logger.warning("[PreMarketScheduler] Hermes 路径异常 (降级): %s", _he)
+
+                # 原有辩论 (Hermes 失败/未启用时的主路径)
+                # P0 修复 (2026-05-05): 传入 assessments 而非空 event_packs
+                if _hermes_debate_result is None:
+                    debate_synthesis = run_debate_sync(
+                        assessments=assessments if assessments else [],
+                        market_context=str(market_ctx),
+                        feedback_context=feedback,
+                        price_data=str(price_data),
+                    )
+                else:
+                    # 将 Hermes dict 结果适配为 DebateSynthesis 兼容对象
+                    debate_synthesis = _hermes_to_debate_synthesis(_hermes_debate_result)
                 logger.info(
-                    f"[PreMarketScheduler] Pipeline 汇总: "
-                    f"新闻={result.raw_news_count}->{result.cleaned_news_count}, "
-                    f"聚类={result.cluster_count}, "
-                    f"分析={result.assessment_count}, "
-                    f"路由: auto={result.auto_signals} review={result.review_cards} observe={result.observe_only}"
+                    f"[PreMarketScheduler] 辩论完成: "
+                    f"共识={debate_synthesis.consensus_direction} "
+                    f"conviction={debate_synthesis.conviction:.2f}"
                 )
-            
+                # 推送辩论摘要到钉钉/飞书
+                _send_debate_notification(debate_synthesis)
+            except Exception as e:
+                logger.warning(f"[PreMarketScheduler] 辩论执行失败 (非阻塞): {e}")
+
             # 🚀 自动生成盘前作战计划 (Battle Plan)
             if result and hasattr(result, "assessments") and result.assessments:
                 from app.pipeline.battle_plan_generator import BattlePlanGenerator
                 generator = BattlePlanGenerator()
+
+                # P2 2026-05-06: 先加载多模型辩论结果 (08:20 调度器输出)
+                generator.load_premarket_debate()
+
+                if debate_synthesis:
+                    generator.set_debate_synthesis(debate_synthesis)
                 generator.generate_from_assessments(result.assessments)
 
         except Exception as e:
@@ -268,3 +329,223 @@ class PreMarketScheduler:
                 )
 
         return "\n".join(lines)
+
+
+def _build_context_from_assessments(assessments: List) -> Dict:
+    """从 LLM 分析结果构建辩论上下文 (P0 fix 2026-05-05)"""
+    sectors = set()
+    symbols = set()
+    directions = {"BUY": 0, "SELL": 0, "NO_TRADE": 0}
+    high_conf = []
+    key_events = []
+    invalidating = []
+
+    for a in assessments:
+        d = getattr(a, "direction", "NO_TRADE") or "NO_TRADE"
+        directions[d] = directions.get(d, 0) + 1
+
+        conf = getattr(a, "confidence", 0) or 0
+        syms = getattr(a, "focus_symbols", []) or []
+        for s in syms:
+            symbols.add(s)
+            if conf >= 0.6:
+                high_conf.append({"symbol": s, "direction": d, "confidence": conf,
+                                  "reason": getattr(a, "second_order_insight", "")[:100]})
+
+        events = getattr(a, "key_events", []) or []
+        key_events.extend(events[:3])
+
+        inv = getattr(a, "invalidating_factors", []) or []
+        invalidating.extend(inv[:2])
+
+        scene = getattr(a, "primary_scene", "") or ""
+        if scene:
+            sectors.add(scene)
+
+    return {
+        "sectors": list(sectors),
+        "symbols": list(symbols),
+        "directions": directions,
+        "high_confidence_targets": high_conf[:10],
+        "key_events": list(set(key_events))[:10],
+        "invalidating_factors": list(set(invalidating))[:5],
+        "total_assessments": len(assessments),
+    }
+
+
+def _build_injection_context(event_packs: List) -> Dict:
+    """从事件包提取上下文 (sectors, symbols, keywords)"""
+    sectors = set()
+    symbols = set()
+    keywords = set()
+
+    for pack in (event_packs or [])[:20]:
+        industry = getattr(pack, "industry", "") or ""
+        if industry:
+            sectors.add(industry)
+
+        focus = getattr(pack, "focus_symbols", []) or []
+        for s in focus:
+            symbols.add(s)
+
+        title = getattr(pack, "title", "") or getattr(pack, "headline", "") or ""
+        body = getattr(pack, "content", "") or getattr(pack, "summary", "") or ""
+        # 提取关键词
+        for text in [title, body]:
+            for kw in ["科技", "医药", "地产", "金融", "能源", "消费", "互联网",
+                       "利率", "政策", "关税", "南向", "外资", "盈利", "估值",
+                       "加息", "降息", "通胀", "GDP", "PMI"]:
+                if kw in str(text):
+                    keywords.add(kw.lower())
+
+    return {
+        "sectors": list(sectors),
+        "symbols": list(symbols),
+        "keywords": list(keywords),
+    }
+
+
+def _send_pipeline_notification(summary: str, result: Any) -> None:
+    """推送盘前管线执行摘要到钉钉/飞书"""
+    try:
+        from app.notifier.unified import get_unified_notifier
+        notifier = get_unified_notifier()
+        if notifier:
+            notifier.send_text(summary)
+            logger.info("[管线通知] 已推送到钉钉/飞书")
+    except Exception as e:
+        logger.warning(f"[管线通知] 推送失败 (非阻塞): {e}")
+
+
+def _send_debate_notification(synthesis) -> None:
+    """推送辩论摘要到钉钉/飞书"""
+    try:
+        from app.notifier.unified import get_unified_notifier
+
+        direction = synthesis.consensus_direction
+        conviction = synthesis.conviction
+        quality = synthesis.debate_quality_score
+        risk = synthesis.risk_consensus
+
+        dir_emoji = "🟢" if direction == "BUY" else "🔴" if direction == "SELL" else "⚪"
+        risk_emoji = "🟢" if risk == "LOW" else "🟡" if risk == "MEDIUM" else "🔴"
+
+        lines = [
+            "🧠 **多Agent辩论完成**",
+            "",
+            f"共识方向: {dir_emoji} **{direction}** (conviction={conviction:.2f})",
+            f"风险共识: {risk_emoji} **{risk}**",
+            f"辩论质量: **{quality:.2f}**",
+            "",
+        ]
+
+        # 各Agent最终观点
+        opinions = synthesis.agent_opinions
+        if opinions:
+            lines.append("**Agent 观点:**")
+            for op in opinions:
+                name = op.get("agent", "?")
+                d = op.get("direction", "?")
+                conf = op.get("confidence", 0)
+                symbols = op.get("top_symbols", [])[:3]
+                sym_str = ", ".join(s.replace("HK.", "") for s in symbols) if symbols else "—"
+                agree = op.get("agree_with", [])
+                disagree = op.get("disagree_with", [])
+
+                lines.append(f"- **{name}**: {d} (conf={conf:.2f}) → {sym_str}")
+                if agree:
+                    lines.append(f"  - 同意: {'; '.join(agree[:2])}")
+                if disagree:
+                    lines.append(f"  - 反对: {'; '.join(disagree[:2])}")
+
+        # 核心分歧
+        if synthesis.disagreement_flags:
+            lines.extend([
+                "",
+                "**⚡ 核心分歧:**",
+            ])
+            for flag in synthesis.disagreement_flags[:3]:
+                lines.append(f"- {flag}")
+
+        # 推荐标的
+        if synthesis.merged_symbols:
+            lines.extend([
+                "",
+                "**推荐标的:**",
+            ])
+            for s in synthesis.merged_symbols[:5]:
+                sym = s.get("symbol", "").replace("HK.", "")
+                sup = s.get("support", "")
+                conc = s.get("concern", "")
+                lines.append(f"- {sym}: {sup}" + (f" (⚠️{conc})" if conc else ""))
+
+        # 辩论总结
+        if synthesis.summary:
+            lines.extend([
+                "",
+                f"> {synthesis.summary[:200]}",
+            ])
+
+        lines.extend([
+            "",
+            "---",
+            "*辩论结果已注入作战计划 · 盘前自动触发*",
+        ])
+
+        notifier = get_unified_notifier()
+        if notifier:
+            notifier.send_text("\n".join(lines))
+            logger.info("[辩论通知] 已推送到钉钉/飞书")
+        else:
+            logger.warning("[辩论通知] notifier 不可用，跳过推送")
+
+        # 领域事件 — 辩论合成
+        from app.core.domain_events import get_event_bus, DomainEvent, EventType, PlanDebatePayload
+        from datetime import date
+        debate_md = "\n".join(lines)
+        get_event_bus().emit(DomainEvent(
+            type=EventType.PLAN_DEBATE,
+            data=PlanDebatePayload(
+                date=str(date.today()),
+                markdown=debate_md,
+            )
+        ))
+        logger.info("[辩论] 领域事件已发射")
+    except Exception as e:
+        logger.warning(f"[辩论通知] 推送失败 (非阻塞): {e}")
+
+
+def _hermes_to_debate_synthesis(hermes_result: Dict) -> Any:
+    """将 Hermes Agent 的 battle_plan 结果适配为 DebateSynthesis 兼容对象"""
+    from collections import namedtuple
+    Synthesis = namedtuple("HermesDebateSynthesis", [
+        "consensus_direction", "conviction", "debate_quality_score",
+        "risk_consensus", "agent_opinions", "disagreement_flags",
+        "merged_symbols", "summary",
+    ])
+
+    bias = hermes_result.get("overall_bias", "NEUTRAL")
+    targets = hermes_result.get("targets", [])
+    confidence = max((t.get("confidence", 0.5) for t in targets), default=0.5) if targets else 0.5
+    warnings = hermes_result.get("risk_warnings", [])
+
+    merged = [
+        {
+            "symbol": t.get("symbol", ""),
+            "direction": t.get("direction", "LONG"),
+            "support": t.get("rationale", ""),
+            "concern": "; ".join(warnings[:2]) if warnings else "",
+        }
+        for t in targets[:5]
+    ]
+
+    return Synthesis(
+        consensus_direction=bias,
+        conviction=confidence,
+        debate_quality_score=0.7,
+        risk_consensus="MEDIUM" if warnings else "LOW",
+        agent_opinions=[{"agent": "HermesAgent", "direction": bias, "confidence": confidence}],
+        disagreement_flags=warnings[:3],
+        merged_symbols=merged,
+        summary=hermes_result.get("summary", ""),
+    )

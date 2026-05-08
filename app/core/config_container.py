@@ -18,6 +18,11 @@
   - .env → 敏感环境变量
   - config/config.yaml → 唯一配置源 (通过 ConfigCenter 加载)
   - ConfigContainer → 依赖注入容器 (包装 ConfigCenter 提供点式访问)
+
+SSOT v4.1 (2026-05-06):
+  - 所有 from_env() 必须通过 _cc_get() 从 ConfigCenter 读取
+  - 所有 fallback 必须来自 config_defaults.CFG
+  - 禁止直接 os.getenv() + 硬编码数值作为业务配置默认值
 """
 import os
 import json
@@ -27,6 +32,24 @@ from dataclasses import dataclass, field
 
 # 导入 ConfigCenter 作为配置数据源
 from config.config_center import get_config_center
+
+# 导入唯一默认值源
+try:
+    from app.core.config_defaults import CFG
+except ImportError:
+    CFG = None
+
+
+def _cc_get(cc, key: str, cfg_attr: str, fallback: Any) -> Any:
+    """从 ConfigCenter 获取配置值，逐级回退：ConfigCenter → CFG → 硬回退"""
+    val = cc.get(key)
+    if val is not None:
+        return val
+    if CFG is not None:
+        cfg_val = getattr(CFG, cfg_attr, None)
+        if cfg_val is not None:
+            return cfg_val
+    return fallback
 
 
 # ============================================================
@@ -164,15 +187,16 @@ class RiskConfig:
     default_stamp_duty: float = 0.001
     
     @classmethod
-    def from_env(cls, paths: PathConfig) -> 'RiskConfig':
-        """从环境变量创建风控配置"""
+    def from_env(cls, paths: 'PathConfig') -> 'RiskConfig':
+        """从 ConfigCenter 创建风控配置 (SSOT v4.1)"""
+        cc = get_config_center()
         return cls(
-            drop_warning_threshold=float(os.getenv("DROP_WARNING_THRESHOLD", "-0.05")),
-            drop_critical_threshold=float(os.getenv("DROP_CRITICAL_THRESHOLD", "-0.08")),
-            vix_warning_threshold=float(os.getenv("VIX_WARNING_THRESHOLD", "30.0")),
-            vix_critical_threshold=float(os.getenv("VIX_CRITICAL_THRESHOLD", "40.0")),
-            vix_cache_ttl_seconds=int(os.getenv("VIX_CACHE_TTL_SECONDS", "600")),
-            dynamic_exit_config_path=str(paths.config_dir / "dynamic_exit_params.yaml"),
+            drop_warning_threshold=float(_cc_get(cc, 'risk_limits.drop_warning_threshold', 'DROP_WARNING_THRESHOLD', -0.05)),
+            drop_critical_threshold=float(_cc_get(cc, 'risk_limits.drop_critical_threshold', 'DROP_CRITICAL_THRESHOLD', -0.08)),
+            vix_warning_threshold=float(_cc_get(cc, 'risk_limits.vix_warning_threshold', 'VIX_WARNING_THRESHOLD', 30.0)),
+            vix_critical_threshold=float(_cc_get(cc, 'risk_limits.vix_critical_threshold', 'VIX_CRITICAL_THRESHOLD', 40.0)),
+            vix_cache_ttl_seconds=int(_cc_get(cc, 'risk_limits.vix_cache_ttl_seconds', 'VIX_CACHE_TTL_SECONDS', 600)),
+            dynamic_exit_config_path=str(paths.config_dir / "unified_config.yaml"),
             threshold_config_path=str(paths.config_dir / "dynamic_threshold.json"),
             threshold_history_path=str(paths.data_dir / "threshold_history.json"),
             params_config_path=str(paths.config_dir / "market_regime_params.yaml"),
@@ -188,11 +212,11 @@ class ConsensusConfig:
     """共识引擎配置"""
     signal_cooldown: int = 120              # 2026-04-16 对齐 config.yaml (120s)
     consensus_window: int = 90              # 2026-04-15: 60→90, 对齐 config.yaml
-    consensus_threshold: float = 1.5        # 2026-04-15: 0.6→1.5, 对齐 config.yaml
+    consensus_threshold: float = 1.0        # 2026-05-06: 1.5→1.0, 对齐 unified_config.yaml
     adx_period: int = 14
     adx_trend: float = 25.0                 # ADX 高于此值 = 趋势市
     adx_range: float = 20.0                 # ADX 低于此值 = 震荡市
-    max_open_positions: int = 12            # 2026-04-16 对齐 config.yaml (12)
+    max_open_positions: int = 20            # 对齐 YAML trading.max_open_positions (20)
     max_positions_per_sector: int = 4       # 2026-04-15 新增: 单行业最大持仓数
     max_add_per_position: int = 2          # 2026-04-15 新增: 单股最大补仓次数
     max_add_multiplier: list = field(default_factory=lambda: [1.0, 0.5, 0.25])  # 金字塔补仓比例
@@ -229,29 +253,30 @@ class ConsensusConfig:
     
     @classmethod
     def from_env(cls) -> 'ConsensusConfig':
-        """从环境变量创建共识配置"""
+        """从 ConfigCenter 创建共识配置 (SSOT v4.1)"""
+        cc = get_config_center()
         return cls(
-            signal_cooldown=int(os.getenv("SIGNAL_COOLDOWN", "120")),
-            consensus_window=int(os.getenv("CONSENSUS_WINDOW", "90")),  # 2026-04-15: 60→90
-            consensus_threshold=float(os.getenv("CONSENSUS_THRESHOLD", "1.5")),  # 2026-04-15: 0.6→1.5
-            adx_trend=float(os.getenv("CONSENSUS_ADX_TREND", "25")),
-            adx_range=float(os.getenv("CONSENSUS_ADX_RANGE", "20")),
-            adx_period=int(os.getenv("ADX_PERIOD", "14")),
-            max_open_positions=int(os.getenv("MAX_OPEN_POSITIONS", "20")),
-            max_positions_per_sector=int(os.getenv("MAX_POSITIONS_PER_SECTOR", "4")),
-            max_add_per_position=int(os.getenv("MAX_ADD_PER_POSITION", "2")),
-            add_position_profit_threshold=float(os.getenv("ADD_POSITION_PROFIT_THRESHOLD", "5.0")),
-            add_position_loss_threshold=float(os.getenv("ADD_POSITION_LOSS_THRESHOLD", "-2.0")),
-            sector_alert_threshold=float(os.getenv("SECTOR_ALERT_THRESHOLD", "30.0")),
-            sector_block_threshold=float(os.getenv("SECTOR_BLOCK_THRESHOLD", "40.0")),
-            position_idle_hours=int(os.getenv("POSITION_IDLE_HOURS", "48")),
-            max_position_pct=float(os.getenv("MAX_POSITION_PCT", "10.0")),
-            max_sector_pct=float(os.getenv("MAX_SECTOR_PCT", "25.0")),
-            min_cash_reserve_pct=float(os.getenv("MIN_CASH_RESERVE_PCT", "10.0")),
-            max_portfolio_drawdown=float(os.getenv("MAX_PORTFOLIO_DRAWDOWN", "0.12")),
-            max_daily_loss_pct=float(os.getenv("MAX_DAILY_LOSS_PCT", "3.0")),
-            stop_loss_pct=float(os.getenv("STOP_LOSS_PCT", "0.03")),
-            take_profit_pct=float(os.getenv("TAKE_PROFIT_PCT", "0.10")),
+            signal_cooldown=int(_cc_get(cc, 'strategy.cooldown.signal_cooldown', 'SIGNAL_COOLDOWN', 120)),
+            consensus_window=int(_cc_get(cc, 'strategy.consensus.window_seconds', 'CONSENSUS_WINDOW', 90)),
+            consensus_threshold=float(_cc_get(cc, 'strategy.consensus.threshold', 'CONSENSUS_THRESHOLD', 1.0)),
+            adx_trend=float(_cc_get(cc, 'strategy.consensus.adx_trend', 'CONSENSUS_ADX_TREND', 25)),
+            adx_range=float(_cc_get(cc, 'strategy.consensus.adx_range', 'CONSENSUS_ADX_RANGE', 20)),
+            adx_period=int(_cc_get(cc, 'strategy.consensus.adx_period', 'ADX_PERIOD', 14)),
+            max_open_positions=int(_cc_get(cc, 'trading.max_open_positions', 'MAX_OPEN_POSITIONS', 20)),
+            max_positions_per_sector=int(_cc_get(cc, 'strategy.consensus.max_positions_per_sector', 'MAX_POSITIONS_PER_SECTOR', 4)),
+            max_add_per_position=int(_cc_get(cc, 'strategy.consensus.max_add_per_position', 'MAX_ADD_PER_POSITION', 2)),
+            add_position_profit_threshold=float(_cc_get(cc, 'strategy.consensus.add_position_profit_threshold', 'ADD_POSITION_PROFIT_THRESHOLD', 5.0)),
+            add_position_loss_threshold=float(_cc_get(cc, 'strategy.consensus.add_position_loss_threshold', 'ADD_POSITION_LOSS_THRESHOLD', -2.0)),
+            sector_alert_threshold=float(_cc_get(cc, 'strategy.consensus.sector_alert_threshold', 'SECTOR_ALERT_THRESHOLD', 30.0)),
+            sector_block_threshold=float(_cc_get(cc, 'strategy.consensus.sector_block_threshold', 'SECTOR_BLOCK_THRESHOLD', 40.0)),
+            position_idle_hours=int(_cc_get(cc, 'strategy.consensus.position_idle_hours', 'POSITION_IDLE_HOURS', 48)),
+            max_position_pct=float(_cc_get(cc, 'strategy.consensus.max_position_pct', 'MAX_POSITION_PCT', 10.0)),
+            max_sector_pct=float(_cc_get(cc, 'strategy.consensus.max_sector_pct', 'MAX_SECTOR_PCT', 25.0)),
+            min_cash_reserve_pct=float(_cc_get(cc, 'strategy.consensus.min_cash_reserve_pct', 'MIN_CASH_RESERVE_PCT', 10.0)),
+            max_portfolio_drawdown=float(_cc_get(cc, 'risk_limits.max_drawdown', 'MAX_DRAWDOWN', 0.12)),
+            max_daily_loss_pct=float(_cc_get(cc, 'risk_limits.max_daily_loss_pct', 'MAX_DAILY_LOSS_PCT', 3.0)),
+            stop_loss_pct=float(_cc_get(cc, 'stop_loss.default_percent', 'DEFAULT_STOP_LOSS_PCT', 0.03)),
+            take_profit_pct=float(_cc_get(cc, 'take_profit.default_percent', 'DEFAULT_TAKE_PROFIT_PCT', 0.10)),
         )
 
 
@@ -266,7 +291,7 @@ class TradeConfig:
     default_order_qty_us: int = 1
     default_order_qty: int = 100
     default_order_type: str = "MARKET"
-    max_order_amount: float = 120000.0
+    max_order_amount: float = None  # SSOT: Derived from capital + max_order_pct
     
     # 港股每手股数 (P0 修复 2026-04-26: 从 LotSizeManager 动态获取)
     # 注: 这里保留空字典作为 fallback，实际值由 LotSizeManager 提供
@@ -284,7 +309,11 @@ class TradeConfig:
     })
     
     # 监控标的
-    watch_list_hk: List[str] = field(default_factory=lambda: ["HK.09992", "HK.00981", "HK.03690"])
+    watch_list_hk: List[str] = field(default_factory=lambda: [
+        "HK.00700", "HK.09988", "HK.03690", "HK.00981", "HK.01347",
+        "HK.01810", "HK.01211", "HK.00388", "HK.02269", "HK.09992",
+        "HK.02020", "HK.00941"
+    ])
     watch_list_us: List[str] = field(default_factory=list)
     
     # 订阅类型
@@ -297,22 +326,42 @@ class TradeConfig:
     
     @classmethod
     def from_env(cls) -> 'TradeConfig':
-        """从环境变量创建交易配置"""
-        watch_list_hk = json.loads(os.getenv("WATCH_LIST_HK", '["HK.09992", "HK.00981", "HK.03690", "HK.01024", "HK.01347", "HK.01093", "HK.00175", "HK.01378"]'))
-        watch_list_us = json.loads(os.getenv("WATCH_LIST_US", '[]'))
-        
-        _subscribe_types_str = os.getenv("SUBSCRIBE_TYPES", 'QUOTE,K_1M,K_3M,K_5M,K_15M,K_30M,K_60M,K_DAY')
-        if _subscribe_types_str.startswith('['):
-            subscribe_types = json.loads(_subscribe_types_str)
+        """从 ConfigCenter 创建交易配置 (SSOT v4.1)"""
+        cc = get_config_center()
+        # watch_list 优先从 ConfigCenter / YAML 读取
+        yaml_wl = cc.get('trading.watch_list_hk')
+        if yaml_wl and isinstance(yaml_wl, list):
+            watch_list_hk = yaml_wl
         else:
-            subscribe_types = [s.strip() for s in _subscribe_types_str.split(',')]
-        
+            env_wl = os.getenv("WATCH_LIST_HK")
+            if env_wl:
+                watch_list_hk = json.loads(env_wl)
+            else:
+                watch_list_hk = [
+                    "HK.00700", "HK.09988", "HK.03690", "HK.00981", "HK.01347",
+                    "HK.01810", "HK.01211", "HK.00388", "HK.02269", "HK.09992",
+                    "HK.02020", "HK.00941"
+                ]
+
+        watch_list_us_raw = cc.get('trading.watch_list_us')
+        watch_list_us = watch_list_us_raw if isinstance(watch_list_us_raw, list) else json.loads(os.getenv("WATCH_LIST_US", '[]'))
+
+        sub_types_raw = cc.get('futu.subscribe_types')
+        if sub_types_raw and isinstance(sub_types_raw, list):
+            subscribe_types = sub_types_raw
+        else:
+            _subscribe_types_str = os.getenv("SUBSCRIBE_TYPES", 'QUOTE,K_1M,K_3M,K_5M,K_15M,K_30M,K_60M,K_DAY')
+            if _subscribe_types_str.startswith('['):
+                subscribe_types = json.loads(_subscribe_types_str)
+            else:
+                subscribe_types = [s.strip() for s in _subscribe_types_str.split(',')]
+
         return cls(
-            default_order_qty_hk=int(os.getenv("DEFAULT_ORDER_QTY_HK", "100")),
-            default_order_qty_us=int(os.getenv("DEFAULT_ORDER_QTY_US", "1")),
-            default_order_qty=int(os.getenv("DEFAULT_ORDER_QTY", "100")),
-            default_order_type=os.getenv("DEFAULT_ORDER_TYPE", "MARKET"),
-            max_order_amount=float(os.getenv("MAX_ORDER_AMOUNT", "120000.0")),
+            default_order_qty_hk=int(_cc_get(cc, 'trading.order.default_order_qty_hk', 'DEFAULT_ORDER_QTY_HK', 100)),
+            default_order_qty_us=int(_cc_get(cc, 'trading.order.default_order_qty_us', 'DEFAULT_ORDER_QTY_US', 1)),
+            default_order_qty=int(_cc_get(cc, 'trading.order.default_order_qty', 'DEFAULT_ORDER_QTY', 100)),
+            default_order_type=str(_cc_get(cc, 'trading.order.default_order_type', 'DEFAULT_ORDER_TYPE', "MARKET")),
+            max_order_amount=None,
             watch_list_hk=watch_list_hk,
             watch_list_us=watch_list_us,
             subscribe_types=subscribe_types,

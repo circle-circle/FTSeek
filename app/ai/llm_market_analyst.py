@@ -284,7 +284,10 @@ class LLMMarketAnalyst:
         """
         import os
         try:
-            from openai import AsyncOpenAI
+            from app.core.unified_llm_factory import get_llm_client
+            oai_client = get_llm_client()
+            if not oai_client:
+                raise ValueError("Unified LLM Client not available")
         except ImportError:
             logger.warning("openai 包未安装，降级到 ExpertTeam LLMClient（不支持 enable_thinking）")
             client = self._get_llm_client()
@@ -293,15 +296,6 @@ class LLMMarketAnalyst:
                 timeout=timeout,
             )
             return resp.content
-
-        api_key = os.environ.get("BAILIAN_API_KEY", "")
-        if not api_key:
-            raise ValueError("BAILIAN_API_KEY 未配置")
-
-        oai_client = AsyncOpenAI(
-            api_key=api_key,
-            base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
-        )
 
         # qwen3.5-plus 的实际模型名（与 ExpertTeam MODEL_CONFIGS 对齐）
         model_name = "qwen-plus"
@@ -427,15 +421,35 @@ class LLMMarketAnalyst:
             self._stats["fallback_count"] += 1
             return self._make_fallback(f"Prompt构建失败: {e}")
 
-        # 3. 调用 LLM
+        # 3. 调用 LLM (通过 agent_bridge — P2 2026-05-06)
         start_time = time.time()
         try:
             timeout = self.urgent_timeout if urgent else self.timeout
-            messages = [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ]
-            raw_content = await self._call_llm(messages, timeout)
+
+            # 构建市场数据上下文
+            market_data = {
+                "code": code,
+                "trigger_type": trigger_type,
+                "technical": str(technical_snapshot)[:1000] if technical_snapshot else "",
+                "cross_market": str(cross_market_context)[:1000] if cross_market_context else "",
+                "news": str(news_context)[:1000] if news_context else "",
+            }
+
+            # 通过 agent_bridge 调用 (带重试+降级)
+            from app.llm.agent_bridge import get_ftseek_agent_bridge
+            bridge = get_ftseek_agent_bridge("hk")
+            result = bridge.analyze_market(code, market_data, news_context)
+
+            if result and result.get("status") != "fallback":
+                raw_content = json.dumps(result, ensure_ascii=False)
+            else:
+                # 降级: 使用原 _call_llm 作为 fallback
+                messages = [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ]
+                raw_content = await self._call_llm(messages, timeout)
+
             latency_ms = (time.time() - start_time) * 1000
             self._stats["llm_calls"] += 1
             self._update_avg_latency(latency_ms)

@@ -313,6 +313,27 @@ class DecisionBuffer:
             min_conf = session_conf
             logger.debug(f"[Session-Confidence] 覆盖为 {min_conf} (时段: {session_name})")
 
+        # ── 第 3.5 步：A股联动置信度调整 (2026-05-04 新增) ──────
+        try:
+            from app.factors.hk_market_data import get_hk_market_data
+            market_data = get_hk_market_data()
+            if market_data and market_data.southbound_flow_valid:
+                sb_net = market_data.southbound_net
+                action_val = str(record.consensus_result.action.value) if hasattr(record.consensus_result.action, 'value') else str(record.consensus_result.action)
+                if action_val == 'BUY':
+                    if sb_net > 80:
+                        min_conf *= 0.9  # 大额流入 → 降低门槛
+                    elif sb_net < -50:
+                        min_conf *= 1.2  # 大额流出 → 提高门槛
+                elif action_val == 'SELL':
+                    if sb_net < -80:
+                        min_conf *= 0.9
+                    elif sb_net > 50:
+                        min_conf *= 1.2
+                logger.debug(f"[A股联动] 置信度门槛调整后: {min_conf:.3f} (南向={sb_net:+.0f}亿)")
+        except Exception:
+            pass  # 降级放行，不影响主流程
+
         if confidence < min_conf:
             return self._reject(
                 record,

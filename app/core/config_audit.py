@@ -178,20 +178,45 @@ def _parse_env_value(env_name: str, value: str) -> Any:
     return value
 
 
-def print_config_audit(config_yaml: Dict[str, Any], config_module) -> None:
-    """打印配置审计报告到日志"""
+def print_config_audit(config_yaml: Dict[str, Any], config_module, strict: bool = False) -> int:
+    """
+    打印配置审计报告到日志。
+
+    Args:
+        strict: 如果为 True，BLOCKING 错误会 raise ConfigAuditError 而非仅日志。
+
+    Returns:
+        BLOCKING 错误数量。
+
+    Raises:
+        ConfigAuditError: 仅在 strict=True 且发现 BLOCKING 错误时。
+    """
     warnings = audit_config_consistency(config_yaml, config_module)
-    
+
     if not warnings:
         logger.info("✅ 配置一致性审计通过 — 无漂移检测")
+        return 0
     else:
         blocking = [w for w in warnings if "[BLOCKING]" in w]
         if blocking:
             logger.critical(f"🚨 配置一致性审计发现 {len(blocking)} 个 BLOCKING 错误!")
             for w in blocking:
                 logger.critical(f"  {w}")
+            if strict:
+                raise ConfigAuditError(
+                    f"配置一致性审计: {len(blocking)} 个 BLOCKING 错误",
+                    blocking
+                )
             logger.critical("⛔ 系统启动失败! 请先修复 BLOCKING 配置冲突!")
         else:
             logger.warning(f"⚠️ 配置一致性审计发现 {len(warnings)} 个警告")
             for w in warnings:
                 logger.warning(f"  {w}")
+        return len(blocking)
+
+
+class ConfigAuditError(Exception):
+    """配置审计失败异常"""
+    def __init__(self, message: str, errors: list):
+        super().__init__(message)
+        self.errors = errors

@@ -32,6 +32,12 @@ except ImportError:
     CONFIG_CENTER_AVAILABLE = False
     print("[警告] 配置中心不可用，将使用旧版配置加载")
 
+# 导入唯一默认值源 (SSOT v4.1)
+try:
+    from app.core.config_defaults import CFG
+except ImportError:
+    CFG = None  # 测试环境可能不可用
+
 # 基础路径
 BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = BASE_DIR / "data"
@@ -143,7 +149,7 @@ TRADINGVIEW_WEBHOOK_TOKEN = os.getenv("TRADINGVIEW_WEBHOOK_TOKEN", API_TOKEN)
 # ============================================================
 import json
 
-_watch_list_hk = os.getenv("WATCH_LIST_HK", '["HK.09992", "HK.00981", "HK.03690", "HK.00700", "HK.09888", "HK.01024", "HK.09988", "HK.01810", "HK.02318", "HK.09618"]')
+_watch_list_hk = os.getenv("WATCH_LIST_HK", '["HK.00700", "HK.09988", "HK.03690", "HK.00981", "HK.01347", "HK.01810", "HK.01211", "HK.00388", "HK.02269", "HK.09992", "HK.02020", "HK.00941"]')
 WATCH_LIST_HK = json.loads(_watch_list_hk) if _watch_list_hk else []
 WATCH_LIST_US = json.loads(os.getenv("WATCH_LIST_US", '[]'))
 WATCH_LIST = WATCH_LIST_HK + WATCH_LIST_US
@@ -154,6 +160,26 @@ if _subscribe_types_str.startswith('['):
     SUBSCRIBE_TYPES = json.loads(_subscribe_types_str)
 else:
     SUBSCRIBE_TYPES = [s.strip() for s in _subscribe_types_str.split(',')]
+
+# ============================================================
+#  SSOT 辅助函数 — 所有 fallback 值统一从 CFG 获取
+# ============================================================
+def _cfg(attr: str, fallback=None):
+    """从 CFG (config_defaults) 获取默认值，不可用时使用硬回退"""
+    if CFG is not None:
+        return getattr(CFG, attr, fallback)
+    return fallback
+
+def _risk_fallback():
+    """风控配置终极回退 (仅 CFG 不可用时)"""
+    return {
+        'max_drawdown': _cfg('MAX_DRAWDOWN', 0.12),
+        'max_daily_trades': _cfg('MAX_DAILY_TRADES', 5),
+        'max_single_position': _cfg('MAX_SINGLE_POSITION', 0.08),
+        'max_total_position': _cfg('MAX_TOTAL_POSITION', 0.75),
+        'min_confidence': _cfg('MIN_CONFIDENCE', 0.35),
+        'consecutive_loss_limit': _cfg('CONSECUTIVE_LOSS_LIMIT', 3),
+    }
 
 # ============================================================
 #  策略配置 (兼容旧接口)
@@ -228,43 +254,26 @@ STRATEGIES = _get_strategy_config()
 # ============================================================
 #  交易配置
 # ============================================================
-HK_LOT_SIZES = {
-    # 核心科技
-    'HK.00700': 100,    # 腾讯
-    'HK.09988': 100,    # 阿里巴巴
-    'HK.03690': 100,    # 美团
-    'HK.09618': 500,    # 京东物流
-    'HK.01024': 100,    # 快手
-    'HK.09888': 100,    # 百度
-    'HK.00981': 500,    # 中芯国际
-    'HK.01347': 1000,   # 华虹半导体
-    'HK.09868': 100,    # 小鹏汽车
-    'HK.02015': 100,    # 理想汽车
-    # 金融/地产
-    'HK.00388': 100,    # 港交所
-    'HK.00939': 1000,   # 建设银行
-    'HK.02318': 500,    # 中国平安
-    'HK.01299': 200,    # 友邦保险
-    'HK.06618': 100,    # 京东健康
-    # 制造/消费
-    'HK.02382': 200,    # 舜宇光学
-    'HK.01211': 500,    # 比亚迪
-    'HK.01810': 200,    # 小米
-    'HK.02020': 100,    # 安踏体育
-    'HK.09926': 200,    # 泡泡玛特
-    'HK.09992': 200,    # 名创优品
-    'HK.00883': 1000,   # 中海油
-    'HK.00857': 2000,   # 中石油
-    'HK.01378': 500,    # 中国有色矿业
-    # 医药/生物
-    'HK.02269': 500,    # 药明生物
-    'HK.01801': 500,    # 信达生物
-    'HK.01876': 500,    # 百威亚太
-    # 其他
-    'HK.00772': 100,    # 阅文集团
-    'HK.09961': 100,    # 携程
-    'HK.00708': 5000,   # 恒大汽车
-}
+# SSOT v4.1: 从 ConfigCenter 读取，回退到 CFG-aligned 字典
+def _get_hk_lot_sizes():
+    center = get_center()
+    if center:
+        yaml_lots = center.get('trading.order.hk_lot_sizes')
+        if yaml_lots and isinstance(yaml_lots, dict):
+            return yaml_lots
+    # 终极回退 (与 unified_config.yaml 保持同步)
+    return {
+        'HK.00700': 100, 'HK.09988': 100, 'HK.03690': 100, 'HK.09618': 500,
+        'HK.01024': 100, 'HK.09888': 100, 'HK.00981': 500, 'HK.01347': 1000,
+        'HK.09868': 100, 'HK.02015': 100, 'HK.00388': 100, 'HK.00939': 1000,
+        'HK.02318': 500, 'HK.01299': 200, 'HK.06618': 100, 'HK.02382': 200,
+        'HK.01211': 500, 'HK.01810': 200, 'HK.02020': 100, 'HK.09926': 500,
+        'HK.09992': 200, 'HK.00883': 1000, 'HK.00857': 2000, 'HK.01378': 500,
+        'HK.02269': 500, 'HK.01801': 500, 'HK.01876': 500, 'HK.09961': 100,
+        'HK.00941': 500, 'HK.00772': 1000, 'HK.02899': 2000, 'HK.09999': 100,
+    }
+
+HK_LOT_SIZES = _get_hk_lot_sizes()
 
 DEFAULT_ORDER_QTY_BY_CODE = HK_LOT_SIZES.copy()
 DEFAULT_ORDER_QTY_HK = int(os.getenv("DEFAULT_ORDER_QTY_HK", "100"))
@@ -290,34 +299,27 @@ def _get_risk_config():
         try:
             risk_limits = center.get('risk_limits', {})
             return {
-                'max_drawdown': risk_limits.get('max_drawdown', 0.15),
-                'max_daily_trades': risk_limits.get('max_daily_trades', 10),
-                'max_single_position': risk_limits.get('max_single_position', 0.20),
-                'max_total_position': risk_limits.get('max_total_position', 0.80),
-                'min_confidence': risk_limits.get('min_confidence', 0.60),
-                'consecutive_loss_limit': risk_limits.get('consecutive_loss_limit', 5),
+                'max_drawdown': risk_limits.get('max_drawdown', _cfg('MAX_DRAWDOWN', 0.12)),
+                'max_daily_trades': risk_limits.get('max_daily_trades', _cfg('MAX_DAILY_TRADES', 5)),
+                'max_single_position': risk_limits.get('max_single_position', _cfg('MAX_SINGLE_POSITION', 0.08)),
+                'max_total_position': risk_limits.get('max_total_position', _cfg('MAX_TOTAL_POSITION', 0.75)),
+                'min_confidence': risk_limits.get('min_confidence', _cfg('MIN_CONFIDENCE', 0.35)),
+                'consecutive_loss_limit': risk_limits.get('consecutive_loss_limit', _cfg('CONSECUTIVE_LOSS_LIMIT', 3)),
             }
         except Exception:
             pass
 
-    return {
-        'max_drawdown': 0.15,
-        'max_daily_trades': 10,
-        'max_single_position': 0.20,
-        'max_total_position': 0.80,
-        'min_confidence': 0.60,
-        'consecutive_loss_limit': 5,
-    }
+    return _risk_fallback()
 
 RISK_CONFIG = _get_risk_config()
 
 # 共识引擎配置
-CONSENSUS_WINDOW = int(os.getenv("CONSENSUS_WINDOW", "60"))
-CONSENSUS_THRESHOLD = float(os.getenv("CONSENSUS_THRESHOLD", "0.6"))
-CONSENSUS_ADX_TREND = float(os.getenv("CONSENSUS_ADX_TREND", "25"))
-CONSENSUS_ADX_RANGE = float(os.getenv("CONSENSUS_ADX_RANGE", "20"))
-SIGNAL_COOLDOWN = int(os.getenv("SIGNAL_COOLDOWN", "120"))
-MAX_OPEN_POSITIONS = int(os.getenv("MAX_OPEN_POSITIONS", "4"))
+CONSENSUS_WINDOW = int(os.getenv("CONSENSUS_WINDOW", str(_cfg('CONSENSUS_WINDOW', 90))))
+CONSENSUS_THRESHOLD = float(os.getenv("CONSENSUS_THRESHOLD", str(_cfg('CONSENSUS_THRESHOLD', 1.0))))
+CONSENSUS_ADX_TREND = float(os.getenv("CONSENSUS_ADX_TREND", str(_cfg('CONSENSUS_ADX_TREND', 25))))
+CONSENSUS_ADX_RANGE = float(os.getenv("CONSENSUS_ADX_RANGE", str(_cfg('CONSENSUS_ADX_RANGE', 20))))
+SIGNAL_COOLDOWN = int(os.getenv("SIGNAL_COOLDOWN", str(_cfg('SIGNAL_COOLDOWN', 120))))
+MAX_OPEN_POSITIONS = int(os.getenv("MAX_OPEN_POSITIONS", "20"))  # 对齐 YAML trading.max_open_positions (20)
 SHORT_SELLING_ENABLED = os.getenv('SHORT_SELLING_ENABLED', 'false').lower() in ('true', '1', 'yes')
 
 # ============================================================

@@ -1,7 +1,7 @@
 {
   "version": "4.3.0",
-  "last_updated": "2026-04-19T23:04:26.391940",
-  "entry_count": 465,
+  "last_updated": "2026-05-05T14:29:58.000011",
+  "entry_count": 676,
   "entries": [
     {
       "id": "9fa80b4e-38b1-4f64-80c4-610c4e3a4b32",
@@ -4158,6 +4158,2226 @@
       "type": "system_event",
       "event": "session_started",
       "message": "New session started: session_20260419_230426_d016f97e",
+      "data": {}
+    },
+    {
+      "id": "09b859e6-d274-4896-98c9-6d44a720f961",
+      "timestamp": "2026-05-05T11:20:47.049715",
+      "type": "trade_decision",
+      "symbol": "HK.00700",
+      "action": "CLOSE",
+      "confidence": 0.85,
+      "decision": "attributed",
+      "result": "closed",
+      "strategy": "test",
+      "signal_id": "TRC-TEST-005",
+      "market_regime": null,
+      "risk_check_result": {},
+      "context": {
+        "pnl": 2.5,
+        "overall_score": 85,
+        "direction_correct": true,
+        "exit_reason": "take_profit"
+      }
+    },
+    {
+      "id": "6b78d3c7-21c9-4445-9e61-019c3de827b2",
+      "timestamp": "2026-05-05T11:20:47.063881",
+      "type": "trade_decision",
+      "symbol": "HK.00700",
+      "action": "BUY",
+      "confidence": 0,
+      "decision": "reject",
+      "result": "risk_rejected",
+      "strategy": "test",
+      "signal_id": "TRC-TEST-003",
+      "market_regime": null,
+      "risk_check_result": {},
+      "context": {
+        "reject_reason": "test_reject"
+      }
+    },
+    {
+      "id": "9dc8054b-e4af-4807-b475-e8ed5d0c193e",
+      "timestamp": "2026-05-05T11:20:47.078891",
+      "type": "trade_decision",
+      "symbol": "HK.00700",
+      "action": "BUY",
+      "confidence": 0.8,
+      "decision": "generated",
+      "result": "pending",
+      "strategy": "test",
+      "signal_id": "TRC-TEST-002",
+      "market_regime": "",
+      "risk_check_result": {},
+      "context": {}
+    },
+    {
+      "id": "cfcd013a-bc94-4b11-abbe-24e45e5afa36",
+      "timestamp": "2026-05-05T11:20:47.099006",
+      "type": "trade_decision",
+      "symbol": "HK.00700",
+      "action": "BUY",
+      "confidence": 0.85,
+      "decision": "executed",
+      "result": "success",
+      "strategy": "test",
+      "signal_id": "TRC-TEST-004",
+      "market_regime": null,
+      "risk_check_result": {},
+      "context": {
+        "price": 300.0,
+        "quantity": 100,
+        "market_regime": ""
+      }
+    },
+    {
+      "id": "9c806f0b-9060-4312-b177-75dc30674327",
+      "timestamp": "2026-05-05T11:20:47.110214",
+      "type": "trade_decision",
+      "symbol": "HK.00700",
+      "action": "BUY",
+      "confidence": 0.75,
+      "decision": "generated",
+      "result": "pending",
+      "strategy": "confluence_v2",
+      "signal_id": "TRC-INTEGRATION-20260505112047",
+      "market_regime": "",
+      "risk_check_result": {},
+      "context": {}
+    },
+    {
+      "id": "8e98bc5b-8255-41bd-8c1b-76c878800fc2",
+      "timestamp": "2026-05-05T11:20:47.118788",
+      "type": "trade_decision",
+      "symbol": "HK.00700",
+      "action": "BUY",
+      "confidence": 0.75,
+      "decision": "execute",
+      "result": "risk_passed",
+      "strategy": "confluence_v2",
+      "signal_id": "TRC-INTEGRATION-20260505112047",
+      "market_regime": null,
+      "risk_check_result": {},
+      "context": {}
+    },
+    {
+      "id": "a1d82c7d-c671-4043-a50d-26ca12bad60b",
+      "timestamp": "2026-05-05T11:20:47.127021",
+      "type": "trade_decision",
+      "symbol": "HK.00700",
+      "action": "BUY",
+      "confidence": 0.75,
+      "decision": "executed",
+      "result": "success",
+      "strategy": "confluence_v2",
+      "signal_id": "TRC-INTEGRATION-20260505112047",
+      "market_regime": null,
+      "risk_check_result": {},
+      "context": {
+        "price": 300.0,
+        "quantity": 100,
+        "market_regime": ""
+      }
+    },
+    {
+      "id": "cf524cf5-4bc4-4cd0-9087-f64d52e3ba7b",
+      "timestamp": "2026-05-05T11:20:47.141728",
+      "type": "trade_decision",
+      "symbol": "HK.00700",
+      "action": "CLOSE",
+      "confidence": 0.88,
+      "decision": "attributed",
+      "result": "closed",
+      "strategy": "confluence_v2",
+      "signal_id": "TRC-INTEGRATION-20260505112047",
+      "market_regime": null,
+      "risk_check_result": {},
+      "context": {
+        "pnl": 3.5,
+        "overall_score": 88,
+        "direction_correct": true,
+        "exit_reason": "trailing_stop"
+      }
+    },
+    {
+      "id": "f494ee73-7097-4ff5-a79a-7e83485cc8d3",
+      "timestamp": "2026-05-05T11:20:54.740745",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_112054_5053954a",
+      "data": {}
+    },
+    {
+      "id": "50d62a51-a80b-4cc7-83c5-5a8665d51672",
+      "timestamp": "2026-05-05T11:20:54.754054",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_112054_96319d7a",
+      "data": {}
+    },
+    {
+      "id": "de5e0e11-d338-4df9-8c9b-83ca6a93a187",
+      "timestamp": "2026-05-05T11:20:54.766590",
+      "type": "system_event",
+      "event": "session_ended",
+      "message": "Session ended: session_20260505_112054_96319d7a",
+      "data": {}
+    },
+    {
+      "id": "89f0362b-e996-4546-b6e9-24cc73430d16",
+      "timestamp": "2026-05-05T11:20:54.894342",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_112054_33e100c5",
+      "data": {}
+    },
+    {
+      "id": "c93b3aab-d783-4b4b-8b51-8ee1456fff83",
+      "timestamp": "2026-05-05T11:20:54.908960",
+      "type": "system_event",
+      "event": "session_ended",
+      "message": "Session ended: session_20260505_112054_33e100c5",
+      "data": {}
+    },
+    {
+      "id": "c3c05327-6886-4ba2-9e36-622b2c1eb888",
+      "timestamp": "2026-05-05T11:20:54.926557",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_112054_5d2b6a98",
+      "data": {}
+    },
+    {
+      "id": "37c66060-8360-4ea6-b3b0-8755928adc1a",
+      "timestamp": "2026-05-05T11:20:54.942482",
+      "type": "system_event",
+      "event": "session_ended",
+      "message": "Session ended: session_20260505_112054_5d2b6a98",
+      "data": {}
+    },
+    {
+      "id": "2a098550-ddc6-4cd2-bad7-00741fe87c55",
+      "timestamp": "2026-05-05T11:20:54.965685",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_112054_5eaad57b",
+      "data": {}
+    },
+    {
+      "id": "7bf79c47-2aa5-4854-8235-c98f505afde4",
+      "timestamp": "2026-05-05T11:20:55.018256",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_112055_20d07cde",
+      "data": {}
+    },
+    {
+      "id": "2c102d3f-6bd8-4122-9e5a-631328765c77",
+      "timestamp": "2026-05-05T11:20:55.038921",
+      "type": "system_event",
+      "event": "session_ended",
+      "message": "Session ended: session_20260505_112055_20d07cde",
+      "data": {}
+    },
+    {
+      "id": "2caddb03-75e6-4ecd-9966-fa2675e30a52",
+      "timestamp": "2026-05-05T11:20:55.092741",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_112055_6ace0cb5",
+      "data": {}
+    },
+    {
+      "id": "cf2210ce-a4d8-4296-87bf-9a4b317c0984",
+      "timestamp": "2026-05-05T11:20:55.116612",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_112055_507421d3",
+      "data": {}
+    },
+    {
+      "id": "06d80a3c-0bdf-442c-8a1e-33c91e085164",
+      "timestamp": "2026-05-05T11:20:55.135953",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_112055_6d419b6c",
+      "data": {}
+    },
+    {
+      "id": "dbd7ab84-baeb-4dd2-adef-b69501132d52",
+      "timestamp": "2026-05-05T11:20:55.156957",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_112055_5c725ced",
+      "data": {}
+    },
+    {
+      "id": "307cf697-ad94-4dc4-961b-fa58b81faa9b",
+      "timestamp": "2026-05-05T11:20:55.178670",
+      "type": "system_event",
+      "event": "session_ended",
+      "message": "Session ended: session_20260505_112055_5c725ced",
+      "data": {}
+    },
+    {
+      "id": "b50f6e86-af22-4c08-905a-954c971a00ba",
+      "timestamp": "2026-05-05T11:20:55.210376",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_112055_6196c7f1",
+      "data": {}
+    },
+    {
+      "id": "7a966b15-3cae-4045-a630-30e1809919ca",
+      "timestamp": "2026-05-05T11:20:55.236322",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_112055_5cfe9a5d",
+      "data": {}
+    },
+    {
+      "id": "fa7e2df1-ddab-4239-88b7-6cef38e70a38",
+      "timestamp": "2026-05-05T11:20:55.271491",
+      "type": "system_event",
+      "event": "session_ended",
+      "message": "Session ended: session_20260505_112055_5cfe9a5d",
+      "data": {}
+    },
+    {
+      "id": "d9d11d72-1139-4741-b1fa-b1d0e0a183b7",
+      "timestamp": "2026-05-05T11:20:55.291747",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_112055_75a40984",
+      "data": {}
+    },
+    {
+      "id": "d048a962-cc9a-4a1d-a8ba-fb4af3afb18c",
+      "timestamp": "2026-05-05T11:20:55.327511",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_112055_52585804",
+      "data": {}
+    },
+    {
+      "id": "6ec9976c-69ce-4de1-9cae-07818bb80d2f",
+      "timestamp": "2026-05-05T11:20:55.371555",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_112055_ad559443",
+      "data": {}
+    },
+    {
+      "id": "9911350b-b52b-4fce-aeb9-adbacae5932e",
+      "timestamp": "2026-05-05T11:20:55.412762",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_112055_33564231",
+      "data": {}
+    },
+    {
+      "id": "d342d856-eb4a-4ad3-9e3d-97adf51cc5d4",
+      "timestamp": "2026-05-05T11:20:55.427641",
+      "type": "system_event",
+      "event": "session_ended",
+      "message": "Session ended: session_20260505_112055_33564231",
+      "data": {}
+    },
+    {
+      "id": "114266a6-3439-4909-bcc4-2bc22512cacf",
+      "timestamp": "2026-05-05T11:21:39.615823",
+      "type": "trade_decision",
+      "symbol": "HK.00700",
+      "action": "CLOSE",
+      "confidence": 0.85,
+      "decision": "attributed",
+      "result": "closed",
+      "strategy": "test",
+      "signal_id": "TRC-TEST-005",
+      "market_regime": null,
+      "risk_check_result": {},
+      "context": {
+        "pnl": 2.5,
+        "overall_score": 85,
+        "direction_correct": true,
+        "exit_reason": "take_profit"
+      }
+    },
+    {
+      "id": "3b9e4fc7-2d4b-45aa-9465-3f81c56a492f",
+      "timestamp": "2026-05-05T11:21:39.627748",
+      "type": "trade_decision",
+      "symbol": "HK.00700",
+      "action": "BUY",
+      "confidence": 0,
+      "decision": "reject",
+      "result": "risk_rejected",
+      "strategy": "test",
+      "signal_id": "TRC-TEST-003",
+      "market_regime": null,
+      "risk_check_result": {},
+      "context": {
+        "reject_reason": "test_reject"
+      }
+    },
+    {
+      "id": "a48d951a-ed61-49ee-8961-4b5f5e065da8",
+      "timestamp": "2026-05-05T11:21:39.639059",
+      "type": "trade_decision",
+      "symbol": "HK.00700",
+      "action": "BUY",
+      "confidence": 0.8,
+      "decision": "generated",
+      "result": "pending",
+      "strategy": "test",
+      "signal_id": "TRC-TEST-002",
+      "market_regime": "",
+      "risk_check_result": {},
+      "context": {}
+    },
+    {
+      "id": "ba0a85ea-5a70-4d48-895a-54e128f15a6d",
+      "timestamp": "2026-05-05T11:21:39.650926",
+      "type": "trade_decision",
+      "symbol": "HK.00700",
+      "action": "BUY",
+      "confidence": 0.85,
+      "decision": "executed",
+      "result": "success",
+      "strategy": "test",
+      "signal_id": "TRC-TEST-004",
+      "market_regime": null,
+      "risk_check_result": {},
+      "context": {
+        "price": 300.0,
+        "quantity": 100,
+        "market_regime": ""
+      }
+    },
+    {
+      "id": "5648674f-c4ac-4f38-9880-726bcd49a194",
+      "timestamp": "2026-05-05T11:21:39.662509",
+      "type": "trade_decision",
+      "symbol": "HK.00700",
+      "action": "BUY",
+      "confidence": 0.75,
+      "decision": "generated",
+      "result": "pending",
+      "strategy": "confluence_v2",
+      "signal_id": "TRC-INTEGRATION-20260505112139",
+      "market_regime": "",
+      "risk_check_result": {},
+      "context": {}
+    },
+    {
+      "id": "c1c22d28-5749-418d-b56f-452ded666456",
+      "timestamp": "2026-05-05T11:21:39.669256",
+      "type": "trade_decision",
+      "symbol": "HK.00700",
+      "action": "BUY",
+      "confidence": 0.75,
+      "decision": "execute",
+      "result": "risk_passed",
+      "strategy": "confluence_v2",
+      "signal_id": "TRC-INTEGRATION-20260505112139",
+      "market_regime": null,
+      "risk_check_result": {},
+      "context": {}
+    },
+    {
+      "id": "57767d56-5f41-4a22-86b0-7c0d4c46f1d9",
+      "timestamp": "2026-05-05T11:21:39.676700",
+      "type": "trade_decision",
+      "symbol": "HK.00700",
+      "action": "BUY",
+      "confidence": 0.75,
+      "decision": "executed",
+      "result": "success",
+      "strategy": "confluence_v2",
+      "signal_id": "TRC-INTEGRATION-20260505112139",
+      "market_regime": null,
+      "risk_check_result": {},
+      "context": {
+        "price": 300.0,
+        "quantity": 100,
+        "market_regime": ""
+      }
+    },
+    {
+      "id": "041de9f5-5e9b-401b-9c77-b5f3071ce25c",
+      "timestamp": "2026-05-05T11:21:39.684439",
+      "type": "trade_decision",
+      "symbol": "HK.00700",
+      "action": "CLOSE",
+      "confidence": 0.88,
+      "decision": "attributed",
+      "result": "closed",
+      "strategy": "confluence_v2",
+      "signal_id": "TRC-INTEGRATION-20260505112139",
+      "market_regime": null,
+      "risk_check_result": {},
+      "context": {
+        "pnl": 3.5,
+        "overall_score": 88,
+        "direction_correct": true,
+        "exit_reason": "trailing_stop"
+      }
+    },
+    {
+      "id": "8c10887f-e0ec-4754-9a5b-9f631a22bf7a",
+      "timestamp": "2026-05-05T11:21:50.225234",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_112150_20867527",
+      "data": {}
+    },
+    {
+      "id": "ff2c8383-4fcd-4e30-867a-57973a961a62",
+      "timestamp": "2026-05-05T11:21:50.239188",
+      "type": "system_event",
+      "event": "session_ended",
+      "message": "Session ended: session_20260505_112150_20867527",
+      "data": {}
+    },
+    {
+      "id": "cd63684b-b3cc-4e10-aa73-9545251b55d6",
+      "timestamp": "2026-05-05T11:21:50.266374",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_112150_a7c5046b",
+      "data": {}
+    },
+    {
+      "id": "2433b6db-cbe3-4dfb-85a6-d2e00a126448",
+      "timestamp": "2026-05-05T11:21:50.280714",
+      "type": "system_event",
+      "event": "session_ended",
+      "message": "Session ended: session_20260505_112150_a7c5046b",
+      "data": {}
+    },
+    {
+      "id": "390e9866-ca8f-43fa-9834-350ffa467f74",
+      "timestamp": "2026-05-05T11:21:50.298243",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_112150_a9ed4a3e",
+      "data": {}
+    },
+    {
+      "id": "85064f95-551f-4199-a012-35fa53526722",
+      "timestamp": "2026-05-05T11:21:50.315258",
+      "type": "system_event",
+      "event": "session_ended",
+      "message": "Session ended: session_20260505_112150_a9ed4a3e",
+      "data": {}
+    },
+    {
+      "id": "e2c45f8e-c34d-4d8c-9359-5d2bce0cd798",
+      "timestamp": "2026-05-05T11:21:50.351564",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_112150_67859602",
+      "data": {}
+    },
+    {
+      "id": "ecab8013-e478-4d3d-b2cf-396121a04a89",
+      "timestamp": "2026-05-05T11:21:50.416382",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_112150_5e4113d9",
+      "data": {}
+    },
+    {
+      "id": "4a8625a0-2032-46a8-8930-c2db831b96bd",
+      "timestamp": "2026-05-05T11:21:50.437974",
+      "type": "system_event",
+      "event": "session_ended",
+      "message": "Session ended: session_20260505_112150_5e4113d9",
+      "data": {}
+    },
+    {
+      "id": "f79efb7c-11fa-443b-b62b-b83499876dd8",
+      "timestamp": "2026-05-05T11:21:50.501576",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_112150_2869dfe5",
+      "data": {}
+    },
+    {
+      "id": "63e609dd-887b-4b96-9cf3-7d85eb47f662",
+      "timestamp": "2026-05-05T11:21:50.514442",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_112150_f2974ab4",
+      "data": {}
+    },
+    {
+      "id": "4ce225a5-733d-42e8-b31b-2576faa1062c",
+      "timestamp": "2026-05-05T11:21:50.540448",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_112150_2296b9c9",
+      "data": {}
+    },
+    {
+      "id": "7121ee72-affd-4169-8161-3f291371cec5",
+      "timestamp": "2026-05-05T11:21:50.561502",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_112150_04bbc556",
+      "data": {}
+    },
+    {
+      "id": "69ca5fb2-1c06-4213-9f69-350415d71699",
+      "timestamp": "2026-05-05T11:21:50.582967",
+      "type": "system_event",
+      "event": "session_ended",
+      "message": "Session ended: session_20260505_112150_04bbc556",
+      "data": {}
+    },
+    {
+      "id": "74a151a8-9016-4146-bf03-ea6bf3dd6c16",
+      "timestamp": "2026-05-05T11:21:50.616411",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_112150_935149f6",
+      "data": {}
+    },
+    {
+      "id": "d8225261-6e21-4b1f-8852-9951a32ba3d7",
+      "timestamp": "2026-05-05T11:21:50.641003",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_112150_246fd735",
+      "data": {}
+    },
+    {
+      "id": "27f03213-356d-41c7-b8f1-f81f89014e96",
+      "timestamp": "2026-05-05T11:21:50.683733",
+      "type": "system_event",
+      "event": "session_ended",
+      "message": "Session ended: session_20260505_112150_246fd735",
+      "data": {}
+    },
+    {
+      "id": "d9dddfd7-826b-49da-b85f-976d26b854ce",
+      "timestamp": "2026-05-05T11:21:50.705307",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_112150_8d38286c",
+      "data": {}
+    },
+    {
+      "id": "e10dec1e-1922-4ba5-9b53-ef67431d58db",
+      "timestamp": "2026-05-05T11:21:50.739340",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_112150_e54092db",
+      "data": {}
+    },
+    {
+      "id": "d54f7c35-535a-4958-805a-c956de500680",
+      "timestamp": "2026-05-05T11:21:50.773140",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_112150_9b54df06",
+      "data": {}
+    },
+    {
+      "id": "1be4e2fd-1be5-44f2-9782-2809a0191372",
+      "timestamp": "2026-05-05T11:21:50.805918",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_112150_c223f5f2",
+      "data": {}
+    },
+    {
+      "id": "3684f269-aca9-427e-9322-a54b77cda00f",
+      "timestamp": "2026-05-05T11:21:50.821504",
+      "type": "system_event",
+      "event": "session_ended",
+      "message": "Session ended: session_20260505_112150_c223f5f2",
+      "data": {}
+    },
+    {
+      "id": "76e4bd4b-af5c-443f-8e4b-35bb98ad3518",
+      "timestamp": "2026-05-05T12:18:28.799395",
+      "type": "trade_decision",
+      "symbol": "HK.00700",
+      "action": "CLOSE",
+      "confidence": 0.85,
+      "decision": "attributed",
+      "result": "closed",
+      "strategy": "test",
+      "signal_id": "TRC-TEST-005",
+      "market_regime": null,
+      "risk_check_result": {},
+      "context": {
+        "pnl": 2.5,
+        "overall_score": 85,
+        "direction_correct": true,
+        "exit_reason": "take_profit"
+      }
+    },
+    {
+      "id": "761d7488-7428-4d1a-92f6-4d477c55e1a6",
+      "timestamp": "2026-05-05T12:18:28.817582",
+      "type": "trade_decision",
+      "symbol": "HK.00700",
+      "action": "BUY",
+      "confidence": 0,
+      "decision": "reject",
+      "result": "risk_rejected",
+      "strategy": "test",
+      "signal_id": "TRC-TEST-003",
+      "market_regime": null,
+      "risk_check_result": {},
+      "context": {
+        "reject_reason": "test_reject"
+      }
+    },
+    {
+      "id": "1fbfafa3-f2ce-43d3-bb3d-4147f465523f",
+      "timestamp": "2026-05-05T12:18:28.831958",
+      "type": "trade_decision",
+      "symbol": "HK.00700",
+      "action": "BUY",
+      "confidence": 0.8,
+      "decision": "generated",
+      "result": "pending",
+      "strategy": "test",
+      "signal_id": "TRC-TEST-002",
+      "market_regime": "",
+      "risk_check_result": {},
+      "context": {}
+    },
+    {
+      "id": "45d173b6-e99a-4a9a-bec6-43f922025e24",
+      "timestamp": "2026-05-05T12:18:28.844595",
+      "type": "trade_decision",
+      "symbol": "HK.00700",
+      "action": "BUY",
+      "confidence": 0.85,
+      "decision": "executed",
+      "result": "success",
+      "strategy": "test",
+      "signal_id": "TRC-TEST-004",
+      "market_regime": null,
+      "risk_check_result": {},
+      "context": {
+        "price": 300.0,
+        "quantity": 100,
+        "market_regime": ""
+      }
+    },
+    {
+      "id": "e31a09cc-3fc9-4ac7-8a83-132a9c6b8fd2",
+      "timestamp": "2026-05-05T12:18:28.856984",
+      "type": "trade_decision",
+      "symbol": "HK.00700",
+      "action": "BUY",
+      "confidence": 0.75,
+      "decision": "generated",
+      "result": "pending",
+      "strategy": "confluence_v2",
+      "signal_id": "TRC-INTEGRATION-20260505121828",
+      "market_regime": "",
+      "risk_check_result": {},
+      "context": {}
+    },
+    {
+      "id": "b5401f04-8b39-42ee-bf7d-468dd4a4ecbd",
+      "timestamp": "2026-05-05T12:18:28.864134",
+      "type": "trade_decision",
+      "symbol": "HK.00700",
+      "action": "BUY",
+      "confidence": 0.75,
+      "decision": "execute",
+      "result": "risk_passed",
+      "strategy": "confluence_v2",
+      "signal_id": "TRC-INTEGRATION-20260505121828",
+      "market_regime": null,
+      "risk_check_result": {},
+      "context": {}
+    },
+    {
+      "id": "8daaa81a-e118-47d5-a891-1139ec50c389",
+      "timestamp": "2026-05-05T12:18:28.872138",
+      "type": "trade_decision",
+      "symbol": "HK.00700",
+      "action": "BUY",
+      "confidence": 0.75,
+      "decision": "executed",
+      "result": "success",
+      "strategy": "confluence_v2",
+      "signal_id": "TRC-INTEGRATION-20260505121828",
+      "market_regime": null,
+      "risk_check_result": {},
+      "context": {
+        "price": 300.0,
+        "quantity": 100,
+        "market_regime": ""
+      }
+    },
+    {
+      "id": "8e76b233-ee55-4ed8-bcc2-13bcb8d8913c",
+      "timestamp": "2026-05-05T12:18:28.880678",
+      "type": "trade_decision",
+      "symbol": "HK.00700",
+      "action": "CLOSE",
+      "confidence": 0.88,
+      "decision": "attributed",
+      "result": "closed",
+      "strategy": "confluence_v2",
+      "signal_id": "TRC-INTEGRATION-20260505121828",
+      "market_regime": null,
+      "risk_check_result": {},
+      "context": {
+        "pnl": 3.5,
+        "overall_score": 88,
+        "direction_correct": true,
+        "exit_reason": "trailing_stop"
+      }
+    },
+    {
+      "id": "37626a5c-0636-4b52-98ed-ae132a13e082",
+      "timestamp": "2026-05-05T12:18:41.402261",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_121841_44a3dc4c",
+      "data": {}
+    },
+    {
+      "id": "8d4714e9-4200-48bf-bf38-ec364ad0d5fe",
+      "timestamp": "2026-05-05T12:18:41.416685",
+      "type": "system_event",
+      "event": "session_ended",
+      "message": "Session ended: session_20260505_121841_44a3dc4c",
+      "data": {}
+    },
+    {
+      "id": "5bdae170-4ebf-4d35-b359-dfa6e495d3d5",
+      "timestamp": "2026-05-05T12:18:41.438214",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_121841_a6c9b878",
+      "data": {}
+    },
+    {
+      "id": "c777c406-7513-4b66-989c-c23ac420cfe6",
+      "timestamp": "2026-05-05T12:18:41.452328",
+      "type": "system_event",
+      "event": "session_ended",
+      "message": "Session ended: session_20260505_121841_a6c9b878",
+      "data": {}
+    },
+    {
+      "id": "fa3e04ce-be44-4bb9-acc1-bf73833df510",
+      "timestamp": "2026-05-05T12:18:41.466369",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_121841_f769dc2e",
+      "data": {}
+    },
+    {
+      "id": "222b250a-42fa-4f37-b86b-c529c3413c0c",
+      "timestamp": "2026-05-05T12:18:41.480874",
+      "type": "system_event",
+      "event": "session_ended",
+      "message": "Session ended: session_20260505_121841_f769dc2e",
+      "data": {}
+    },
+    {
+      "id": "cd0651ce-125e-419a-a58a-d16de3d8fa2f",
+      "timestamp": "2026-05-05T12:18:41.502828",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_121841_f2213aef",
+      "data": {}
+    },
+    {
+      "id": "762ed2eb-9a88-42e7-b38b-aa964440a83e",
+      "timestamp": "2026-05-05T12:18:41.562374",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_121841_3a690513",
+      "data": {}
+    },
+    {
+      "id": "18761b33-037f-4a06-baf8-45fbd39d3841",
+      "timestamp": "2026-05-05T12:18:41.584574",
+      "type": "system_event",
+      "event": "session_ended",
+      "message": "Session ended: session_20260505_121841_3a690513",
+      "data": {}
+    },
+    {
+      "id": "8efa8b83-3fd0-4abb-9855-184b51fd26e9",
+      "timestamp": "2026-05-05T12:18:41.633143",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_121841_b4dab037",
+      "data": {}
+    },
+    {
+      "id": "0ed4b300-5343-44ff-a542-8107fc3c0cc9",
+      "timestamp": "2026-05-05T12:18:41.647221",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_121841_e39f4a46",
+      "data": {}
+    },
+    {
+      "id": "0409bf40-a1ee-4c1d-83ed-19e69a9e80d8",
+      "timestamp": "2026-05-05T12:18:41.668810",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_121841_c7607138",
+      "data": {}
+    },
+    {
+      "id": "0fccdeaf-45cc-471e-9381-bb63c1a67760",
+      "timestamp": "2026-05-05T12:18:41.690288",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_121841_1234cb44",
+      "data": {}
+    },
+    {
+      "id": "0a9bf78b-d9fc-415e-9998-fcf339bd8c42",
+      "timestamp": "2026-05-05T12:18:41.711790",
+      "type": "system_event",
+      "event": "session_ended",
+      "message": "Session ended: session_20260505_121841_1234cb44",
+      "data": {}
+    },
+    {
+      "id": "4f883cac-1c25-4d2d-9748-85cee00f2a8f",
+      "timestamp": "2026-05-05T12:18:41.742994",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_121841_0207adb3",
+      "data": {}
+    },
+    {
+      "id": "42703958-36f5-4675-85e0-d2f1434fef6e",
+      "timestamp": "2026-05-05T12:18:41.770643",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_121841_775fb362",
+      "data": {}
+    },
+    {
+      "id": "c95d8351-06cf-40bb-9849-0e236d03e09b",
+      "timestamp": "2026-05-05T12:18:41.808755",
+      "type": "system_event",
+      "event": "session_ended",
+      "message": "Session ended: session_20260505_121841_775fb362",
+      "data": {}
+    },
+    {
+      "id": "3314b118-b603-47c0-a321-9df77b8a65ee",
+      "timestamp": "2026-05-05T12:18:41.843867",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_121841_2069367d",
+      "data": {}
+    },
+    {
+      "id": "62470935-5774-4de3-a160-36936a39e1c0",
+      "timestamp": "2026-05-05T12:18:41.886853",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_121841_62b2aba0",
+      "data": {}
+    },
+    {
+      "id": "ea579ed3-9d3f-4b64-a1b9-3271664a3f62",
+      "timestamp": "2026-05-05T12:18:41.918987",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_121841_291f874a",
+      "data": {}
+    },
+    {
+      "id": "b04210b8-b53e-4f41-9d69-a184620b57a4",
+      "timestamp": "2026-05-05T12:18:41.949437",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_121841_1da585eb",
+      "data": {}
+    },
+    {
+      "id": "7704b157-374c-444a-952f-a3a74563ca5d",
+      "timestamp": "2026-05-05T12:18:41.966721",
+      "type": "system_event",
+      "event": "session_ended",
+      "message": "Session ended: session_20260505_121841_1da585eb",
+      "data": {}
+    },
+    {
+      "id": "49f06178-c113-4781-9d3f-722603ff41e7",
+      "timestamp": "2026-05-05T12:18:53.973576",
+      "type": "trade_decision",
+      "symbol": "HK.00700",
+      "action": "CLOSE",
+      "confidence": 0.85,
+      "decision": "attributed",
+      "result": "closed",
+      "strategy": "test",
+      "signal_id": "TRC-TEST-005",
+      "market_regime": null,
+      "risk_check_result": {},
+      "context": {
+        "pnl": 2.5,
+        "overall_score": 85,
+        "direction_correct": true,
+        "exit_reason": "take_profit"
+      }
+    },
+    {
+      "id": "4eac41dd-d445-449d-bba2-617a01037898",
+      "timestamp": "2026-05-05T12:18:53.986210",
+      "type": "trade_decision",
+      "symbol": "HK.00700",
+      "action": "BUY",
+      "confidence": 0,
+      "decision": "reject",
+      "result": "risk_rejected",
+      "strategy": "test",
+      "signal_id": "TRC-TEST-003",
+      "market_regime": null,
+      "risk_check_result": {},
+      "context": {
+        "reject_reason": "test_reject"
+      }
+    },
+    {
+      "id": "6ed58a53-a411-44c6-af58-77df70dc92d7",
+      "timestamp": "2026-05-05T12:18:53.998656",
+      "type": "trade_decision",
+      "symbol": "HK.00700",
+      "action": "BUY",
+      "confidence": 0.8,
+      "decision": "generated",
+      "result": "pending",
+      "strategy": "test",
+      "signal_id": "TRC-TEST-002",
+      "market_regime": "",
+      "risk_check_result": {},
+      "context": {}
+    },
+    {
+      "id": "65aa4551-8940-4c22-bad8-5fc4a06b21cc",
+      "timestamp": "2026-05-05T12:18:54.011500",
+      "type": "trade_decision",
+      "symbol": "HK.00700",
+      "action": "BUY",
+      "confidence": 0.85,
+      "decision": "executed",
+      "result": "success",
+      "strategy": "test",
+      "signal_id": "TRC-TEST-004",
+      "market_regime": null,
+      "risk_check_result": {},
+      "context": {
+        "price": 300.0,
+        "quantity": 100,
+        "market_regime": ""
+      }
+    },
+    {
+      "id": "9afc95d1-177e-4bb5-a656-e4c3d6ea8eee",
+      "timestamp": "2026-05-05T12:18:54.024660",
+      "type": "trade_decision",
+      "symbol": "HK.00700",
+      "action": "BUY",
+      "confidence": 0.75,
+      "decision": "generated",
+      "result": "pending",
+      "strategy": "confluence_v2",
+      "signal_id": "TRC-INTEGRATION-20260505121854",
+      "market_regime": "",
+      "risk_check_result": {},
+      "context": {}
+    },
+    {
+      "id": "f451a670-9e70-4848-afd3-22e2ebfce04b",
+      "timestamp": "2026-05-05T12:18:54.032890",
+      "type": "trade_decision",
+      "symbol": "HK.00700",
+      "action": "BUY",
+      "confidence": 0.75,
+      "decision": "execute",
+      "result": "risk_passed",
+      "strategy": "confluence_v2",
+      "signal_id": "TRC-INTEGRATION-20260505121854",
+      "market_regime": null,
+      "risk_check_result": {},
+      "context": {}
+    },
+    {
+      "id": "69dc56ab-bf4e-44c6-9c18-af64c6068ef0",
+      "timestamp": "2026-05-05T12:18:54.041330",
+      "type": "trade_decision",
+      "symbol": "HK.00700",
+      "action": "BUY",
+      "confidence": 0.75,
+      "decision": "executed",
+      "result": "success",
+      "strategy": "confluence_v2",
+      "signal_id": "TRC-INTEGRATION-20260505121854",
+      "market_regime": null,
+      "risk_check_result": {},
+      "context": {
+        "price": 300.0,
+        "quantity": 100,
+        "market_regime": ""
+      }
+    },
+    {
+      "id": "6f6ba3ee-451c-4635-ab87-5de62fe93b10",
+      "timestamp": "2026-05-05T12:18:54.049919",
+      "type": "trade_decision",
+      "symbol": "HK.00700",
+      "action": "CLOSE",
+      "confidence": 0.88,
+      "decision": "attributed",
+      "result": "closed",
+      "strategy": "confluence_v2",
+      "signal_id": "TRC-INTEGRATION-20260505121854",
+      "market_regime": null,
+      "risk_check_result": {},
+      "context": {
+        "pnl": 3.5,
+        "overall_score": 88,
+        "direction_correct": true,
+        "exit_reason": "trailing_stop"
+      }
+    },
+    {
+      "id": "07121670-301d-4978-a5e2-90b60b909333",
+      "timestamp": "2026-05-05T12:19:09.500279",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_121909_0ad86b41",
+      "data": {}
+    },
+    {
+      "id": "2ae1b7f9-9fea-4ced-acb6-9a204cd34b0f",
+      "timestamp": "2026-05-05T12:19:09.516339",
+      "type": "system_event",
+      "event": "session_ended",
+      "message": "Session ended: session_20260505_121909_0ad86b41",
+      "data": {}
+    },
+    {
+      "id": "cf19b947-1782-49fd-b4ee-2d591cb26c9a",
+      "timestamp": "2026-05-05T12:19:09.542294",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_121909_54f9a250",
+      "data": {}
+    },
+    {
+      "id": "28058d1c-a3e7-42d4-bfa8-b721560f00fb",
+      "timestamp": "2026-05-05T12:19:09.557758",
+      "type": "system_event",
+      "event": "session_ended",
+      "message": "Session ended: session_20260505_121909_54f9a250",
+      "data": {}
+    },
+    {
+      "id": "495747d5-fa4b-4ebe-b8c4-b03df4709d6f",
+      "timestamp": "2026-05-05T12:19:09.576016",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_121909_e6adc091",
+      "data": {}
+    },
+    {
+      "id": "638bd36d-bd6a-44d3-99b7-30ea77a13c48",
+      "timestamp": "2026-05-05T12:19:09.593209",
+      "type": "system_event",
+      "event": "session_ended",
+      "message": "Session ended: session_20260505_121909_e6adc091",
+      "data": {}
+    },
+    {
+      "id": "b37f1fe8-87b9-479d-81bc-652ad6bc6062",
+      "timestamp": "2026-05-05T12:19:09.615479",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_121909_d23b4989",
+      "data": {}
+    },
+    {
+      "id": "c790cf29-0f72-4ea0-89e2-93e3216e5de1",
+      "timestamp": "2026-05-05T12:19:09.764973",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_121909_baed4f56",
+      "data": {}
+    },
+    {
+      "id": "2a47d0bb-2d55-4ba0-9b14-d25c14dc72eb",
+      "timestamp": "2026-05-05T12:19:09.787703",
+      "type": "system_event",
+      "event": "session_ended",
+      "message": "Session ended: session_20260505_121909_baed4f56",
+      "data": {}
+    },
+    {
+      "id": "9602d4e0-8a9f-4b69-99d7-facf7bb2d826",
+      "timestamp": "2026-05-05T12:19:09.856452",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_121909_818ef193",
+      "data": {}
+    },
+    {
+      "id": "6a27c388-b24c-4eb6-9459-4ed4f9d8843b",
+      "timestamp": "2026-05-05T12:19:09.873650",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_121909_8229f47c",
+      "data": {}
+    },
+    {
+      "id": "ef1e1929-f5cb-4995-ab5e-6014ad8e7aa1",
+      "timestamp": "2026-05-05T12:19:09.897826",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_121909_994e0fd6",
+      "data": {}
+    },
+    {
+      "id": "ccf930b7-01db-487e-88f7-8f8ad1ed7013",
+      "timestamp": "2026-05-05T12:19:09.923758",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_121909_bd739a38",
+      "data": {}
+    },
+    {
+      "id": "d1e7d904-51d9-4c44-ae8e-08fb7433d40c",
+      "timestamp": "2026-05-05T12:19:09.952491",
+      "type": "system_event",
+      "event": "session_ended",
+      "message": "Session ended: session_20260505_121909_bd739a38",
+      "data": {}
+    },
+    {
+      "id": "995ed3fd-d2b2-4ab0-a9d9-2e10e486d3fb",
+      "timestamp": "2026-05-05T12:19:09.990598",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_121909_9ec41496",
+      "data": {}
+    },
+    {
+      "id": "3bf8d9af-1a2d-4425-ad11-fa91f212b330",
+      "timestamp": "2026-05-05T12:19:10.019332",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_121910_55986449",
+      "data": {}
+    },
+    {
+      "id": "2fd31164-e1ed-4830-8d44-d456b4ac2314",
+      "timestamp": "2026-05-05T12:19:10.068880",
+      "type": "system_event",
+      "event": "session_ended",
+      "message": "Session ended: session_20260505_121910_55986449",
+      "data": {}
+    },
+    {
+      "id": "c45b70e0-5963-4193-9ef5-05fac2236e30",
+      "timestamp": "2026-05-05T12:19:10.094581",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_121910_d9f4fbc8",
+      "data": {}
+    },
+    {
+      "id": "f9e72ff4-b359-4888-ac30-7d171610f54f",
+      "timestamp": "2026-05-05T12:19:10.138352",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_121910_7e3ca6f6",
+      "data": {}
+    },
+    {
+      "id": "28d6ae31-9602-4e51-84b7-a378aa70419b",
+      "timestamp": "2026-05-05T12:19:10.171751",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_121910_4dce155c",
+      "data": {}
+    },
+    {
+      "id": "76b950eb-17c8-4982-bb47-8b29e999e49b",
+      "timestamp": "2026-05-05T12:19:10.204981",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_121910_081b832f",
+      "data": {}
+    },
+    {
+      "id": "d6e1227a-af1f-4a39-9f52-742fc82d1efe",
+      "timestamp": "2026-05-05T12:19:10.221227",
+      "type": "system_event",
+      "event": "session_ended",
+      "message": "Session ended: session_20260505_121910_081b832f",
+      "data": {}
+    },
+    {
+      "id": "84fc22d6-7e2f-4728-877c-3d5c1d8eb275",
+      "timestamp": "2026-05-05T12:33:25.569672",
+      "type": "trade_decision",
+      "symbol": "HK.00700",
+      "action": "CLOSE",
+      "confidence": 0.85,
+      "decision": "attributed",
+      "result": "closed",
+      "strategy": "test",
+      "signal_id": "TRC-TEST-005",
+      "market_regime": null,
+      "risk_check_result": {},
+      "context": {
+        "pnl": 2.5,
+        "overall_score": 85,
+        "direction_correct": true,
+        "exit_reason": "take_profit"
+      }
+    },
+    {
+      "id": "85b711f8-48ee-4610-916c-af2e09c19f70",
+      "timestamp": "2026-05-05T12:33:25.582092",
+      "type": "trade_decision",
+      "symbol": "HK.00700",
+      "action": "BUY",
+      "confidence": 0,
+      "decision": "reject",
+      "result": "risk_rejected",
+      "strategy": "test",
+      "signal_id": "TRC-TEST-003",
+      "market_regime": null,
+      "risk_check_result": {},
+      "context": {
+        "reject_reason": "test_reject"
+      }
+    },
+    {
+      "id": "a9745dde-a3c7-4b07-861e-27d4855f6e4b",
+      "timestamp": "2026-05-05T12:33:25.611408",
+      "type": "trade_decision",
+      "symbol": "HK.00700",
+      "action": "BUY",
+      "confidence": 0.8,
+      "decision": "generated",
+      "result": "pending",
+      "strategy": "test",
+      "signal_id": "TRC-TEST-002",
+      "market_regime": "",
+      "risk_check_result": {},
+      "context": {}
+    },
+    {
+      "id": "7ce95c30-71b2-48ae-8c83-1668de6ab297",
+      "timestamp": "2026-05-05T12:33:25.624347",
+      "type": "trade_decision",
+      "symbol": "HK.00700",
+      "action": "BUY",
+      "confidence": 0.85,
+      "decision": "executed",
+      "result": "success",
+      "strategy": "test",
+      "signal_id": "TRC-TEST-004",
+      "market_regime": null,
+      "risk_check_result": {},
+      "context": {
+        "price": 300.0,
+        "quantity": 100,
+        "market_regime": ""
+      }
+    },
+    {
+      "id": "58eaa507-6618-4766-b904-8d98d763a810",
+      "timestamp": "2026-05-05T12:33:25.637356",
+      "type": "trade_decision",
+      "symbol": "HK.00700",
+      "action": "BUY",
+      "confidence": 0.75,
+      "decision": "generated",
+      "result": "pending",
+      "strategy": "confluence_v2",
+      "signal_id": "TRC-INTEGRATION-20260505123325",
+      "market_regime": "",
+      "risk_check_result": {},
+      "context": {}
+    },
+    {
+      "id": "e031974a-09e1-4501-92c4-2994e8943481",
+      "timestamp": "2026-05-05T12:33:25.645320",
+      "type": "trade_decision",
+      "symbol": "HK.00700",
+      "action": "BUY",
+      "confidence": 0.75,
+      "decision": "execute",
+      "result": "risk_passed",
+      "strategy": "confluence_v2",
+      "signal_id": "TRC-INTEGRATION-20260505123325",
+      "market_regime": null,
+      "risk_check_result": {},
+      "context": {}
+    },
+    {
+      "id": "aaae8024-646c-4b18-916d-633c2c251581",
+      "timestamp": "2026-05-05T12:33:25.654192",
+      "type": "trade_decision",
+      "symbol": "HK.00700",
+      "action": "BUY",
+      "confidence": 0.75,
+      "decision": "executed",
+      "result": "success",
+      "strategy": "confluence_v2",
+      "signal_id": "TRC-INTEGRATION-20260505123325",
+      "market_regime": null,
+      "risk_check_result": {},
+      "context": {
+        "price": 300.0,
+        "quantity": 100,
+        "market_regime": ""
+      }
+    },
+    {
+      "id": "c50b9b3a-770c-4570-824b-773f55903adb",
+      "timestamp": "2026-05-05T12:33:25.671254",
+      "type": "trade_decision",
+      "symbol": "HK.00700",
+      "action": "CLOSE",
+      "confidence": 0.88,
+      "decision": "attributed",
+      "result": "closed",
+      "strategy": "confluence_v2",
+      "signal_id": "TRC-INTEGRATION-20260505123325",
+      "market_regime": null,
+      "risk_check_result": {},
+      "context": {
+        "pnl": 3.5,
+        "overall_score": 88,
+        "direction_correct": true,
+        "exit_reason": "trailing_stop"
+      }
+    },
+    {
+      "id": "6b167233-f7a2-445c-ae1b-265ae335de12",
+      "timestamp": "2026-05-05T12:33:44.715960",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_123344_152be584",
+      "data": {}
+    },
+    {
+      "id": "22a79570-1a3c-4796-ac27-688fffc8e96d",
+      "timestamp": "2026-05-05T12:33:44.733065",
+      "type": "system_event",
+      "event": "session_ended",
+      "message": "Session ended: session_20260505_123344_152be584",
+      "data": {}
+    },
+    {
+      "id": "265c683f-f0e3-463f-bcdd-a92e1c798310",
+      "timestamp": "2026-05-05T12:33:44.756915",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_123344_cee0419d",
+      "data": {}
+    },
+    {
+      "id": "25b65fa5-8607-4ea2-ae6e-0d587226dc14",
+      "timestamp": "2026-05-05T12:33:44.771974",
+      "type": "system_event",
+      "event": "session_ended",
+      "message": "Session ended: session_20260505_123344_cee0419d",
+      "data": {}
+    },
+    {
+      "id": "c22ea537-c4d9-43f9-a846-25048355a1ef",
+      "timestamp": "2026-05-05T12:33:44.787485",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_123344_fabcc03f",
+      "data": {}
+    },
+    {
+      "id": "7ad42630-07a0-4992-9385-b895ac611632",
+      "timestamp": "2026-05-05T12:33:44.802588",
+      "type": "system_event",
+      "event": "session_ended",
+      "message": "Session ended: session_20260505_123344_fabcc03f",
+      "data": {}
+    },
+    {
+      "id": "c3c891e9-cb92-4700-87b6-4677eb86bbaf",
+      "timestamp": "2026-05-05T12:33:44.825551",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_123344_3be9d10c",
+      "data": {}
+    },
+    {
+      "id": "76be2a5f-41e4-44a7-b10a-6fc3b9a6c642",
+      "timestamp": "2026-05-05T12:33:44.887828",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_123344_a7e02aba",
+      "data": {}
+    },
+    {
+      "id": "1c19272c-f3d5-4e32-81ec-0f96421e161b",
+      "timestamp": "2026-05-05T12:33:44.911388",
+      "type": "system_event",
+      "event": "session_ended",
+      "message": "Session ended: session_20260505_123344_a7e02aba",
+      "data": {}
+    },
+    {
+      "id": "f080ace8-e3d1-45cb-869e-5dc2347301ef",
+      "timestamp": "2026-05-05T12:33:44.963835",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_123344_110aab99",
+      "data": {}
+    },
+    {
+      "id": "f210c539-0a41-420a-ac3e-032da7f05d88",
+      "timestamp": "2026-05-05T12:33:44.979312",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_123344_43fe442a",
+      "data": {}
+    },
+    {
+      "id": "4945e13b-412b-4ccf-b4d8-9adb7c98b58c",
+      "timestamp": "2026-05-05T12:33:45.005104",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_123344_afaa8cde",
+      "data": {}
+    },
+    {
+      "id": "ca43c9a4-9f13-4f09-a0aa-23ca630733bd",
+      "timestamp": "2026-05-05T12:33:45.038929",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_123345_1869145c",
+      "data": {}
+    },
+    {
+      "id": "74709435-8ffe-40d7-a841-20c797871c0d",
+      "timestamp": "2026-05-05T12:33:45.064348",
+      "type": "system_event",
+      "event": "session_ended",
+      "message": "Session ended: session_20260505_123345_1869145c",
+      "data": {}
+    },
+    {
+      "id": "d5ac018b-f222-48f5-8724-8764cc9378cc",
+      "timestamp": "2026-05-05T12:33:45.107253",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_123345_27629f7e",
+      "data": {}
+    },
+    {
+      "id": "18f64e94-e947-4b33-a537-2376874ee8fd",
+      "timestamp": "2026-05-05T12:33:45.231292",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_123345_bda566ea",
+      "data": {}
+    },
+    {
+      "id": "2a4b072d-e2c3-4abb-9afa-d1f7f2876ff5",
+      "timestamp": "2026-05-05T12:33:45.270540",
+      "type": "system_event",
+      "event": "session_ended",
+      "message": "Session ended: session_20260505_123345_bda566ea",
+      "data": {}
+    },
+    {
+      "id": "6e077575-ee41-40bb-9e86-20f4887f53f8",
+      "timestamp": "2026-05-05T12:33:45.294652",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_123345_2ba16a20",
+      "data": {}
+    },
+    {
+      "id": "798ecc1f-eec3-467b-b975-76f7d91cc939",
+      "timestamp": "2026-05-05T12:33:45.332129",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_123345_22d6c6ef",
+      "data": {}
+    },
+    {
+      "id": "f7330e27-1dae-42dc-965c-3bb2ff5d3b9e",
+      "timestamp": "2026-05-05T12:33:45.365752",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_123345_c98ab419",
+      "data": {}
+    },
+    {
+      "id": "ad26ddf9-c072-48e3-9045-bee1341cd226",
+      "timestamp": "2026-05-05T12:33:45.398247",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_123345_17a30c43",
+      "data": {}
+    },
+    {
+      "id": "d8e3a1f7-8c69-40ab-bb71-277963f956c1",
+      "timestamp": "2026-05-05T12:33:45.415104",
+      "type": "system_event",
+      "event": "session_ended",
+      "message": "Session ended: session_20260505_123345_17a30c43",
+      "data": {}
+    },
+    {
+      "id": "b3eecc4e-a0ca-4c79-979f-fd477bbba8ed",
+      "timestamp": "2026-05-05T13:19:02.663528",
+      "type": "trade_decision",
+      "symbol": "HK.00700",
+      "action": "CLOSE",
+      "confidence": 0.85,
+      "decision": "attributed",
+      "result": "closed",
+      "strategy": "test",
+      "signal_id": "TRC-TEST-005",
+      "market_regime": null,
+      "risk_check_result": {},
+      "context": {
+        "pnl": 2.5,
+        "overall_score": 85,
+        "direction_correct": true,
+        "exit_reason": "take_profit"
+      }
+    },
+    {
+      "id": "7286ae26-8206-464b-95db-61ff674d2400",
+      "timestamp": "2026-05-05T13:19:02.678023",
+      "type": "trade_decision",
+      "symbol": "HK.00700",
+      "action": "BUY",
+      "confidence": 0,
+      "decision": "reject",
+      "result": "risk_rejected",
+      "strategy": "test",
+      "signal_id": "TRC-TEST-003",
+      "market_regime": null,
+      "risk_check_result": {},
+      "context": {
+        "reject_reason": "test_reject"
+      }
+    },
+    {
+      "id": "f12f10e4-b2d6-4688-baaf-5281933377a8",
+      "timestamp": "2026-05-05T13:19:02.694065",
+      "type": "trade_decision",
+      "symbol": "HK.00700",
+      "action": "BUY",
+      "confidence": 0.8,
+      "decision": "generated",
+      "result": "pending",
+      "strategy": "test",
+      "signal_id": "TRC-TEST-002",
+      "market_regime": "",
+      "risk_check_result": {},
+      "context": {}
+    },
+    {
+      "id": "1afe2f91-ccf5-4d90-92e9-a466d3cb1b78",
+      "timestamp": "2026-05-05T13:19:02.709299",
+      "type": "trade_decision",
+      "symbol": "HK.00700",
+      "action": "BUY",
+      "confidence": 0.85,
+      "decision": "executed",
+      "result": "success",
+      "strategy": "test",
+      "signal_id": "TRC-TEST-004",
+      "market_regime": null,
+      "risk_check_result": {},
+      "context": {
+        "price": 300.0,
+        "quantity": 100,
+        "market_regime": ""
+      }
+    },
+    {
+      "id": "e2d807b0-f22f-4cec-b720-a0062b480c66",
+      "timestamp": "2026-05-05T13:19:02.723626",
+      "type": "trade_decision",
+      "symbol": "HK.00700",
+      "action": "BUY",
+      "confidence": 0.75,
+      "decision": "generated",
+      "result": "pending",
+      "strategy": "confluence_v2",
+      "signal_id": "TRC-INTEGRATION-20260505131902",
+      "market_regime": "",
+      "risk_check_result": {},
+      "context": {}
+    },
+    {
+      "id": "a30dc380-2340-4050-ac5a-0d571b5d799c",
+      "timestamp": "2026-05-05T13:19:02.733151",
+      "type": "trade_decision",
+      "symbol": "HK.00700",
+      "action": "BUY",
+      "confidence": 0.75,
+      "decision": "execute",
+      "result": "risk_passed",
+      "strategy": "confluence_v2",
+      "signal_id": "TRC-INTEGRATION-20260505131902",
+      "market_regime": null,
+      "risk_check_result": {},
+      "context": {}
+    },
+    {
+      "id": "7b996dce-8ef4-4b58-b289-c19bd9c117f7",
+      "timestamp": "2026-05-05T13:19:02.742584",
+      "type": "trade_decision",
+      "symbol": "HK.00700",
+      "action": "BUY",
+      "confidence": 0.75,
+      "decision": "executed",
+      "result": "success",
+      "strategy": "confluence_v2",
+      "signal_id": "TRC-INTEGRATION-20260505131902",
+      "market_regime": null,
+      "risk_check_result": {},
+      "context": {
+        "price": 300.0,
+        "quantity": 100,
+        "market_regime": ""
+      }
+    },
+    {
+      "id": "d678583f-24ed-4027-bdfb-610787f45201",
+      "timestamp": "2026-05-05T13:19:02.752154",
+      "type": "trade_decision",
+      "symbol": "HK.00700",
+      "action": "CLOSE",
+      "confidence": 0.88,
+      "decision": "attributed",
+      "result": "closed",
+      "strategy": "confluence_v2",
+      "signal_id": "TRC-INTEGRATION-20260505131902",
+      "market_regime": null,
+      "risk_check_result": {},
+      "context": {
+        "pnl": 3.5,
+        "overall_score": 88,
+        "direction_correct": true,
+        "exit_reason": "trailing_stop"
+      }
+    },
+    {
+      "id": "045dfd1f-f7fb-492d-98d6-8005273a2c76",
+      "timestamp": "2026-05-05T13:19:26.187885",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_131926_cf55eaec",
+      "data": {}
+    },
+    {
+      "id": "22df35cc-b9c3-46f2-9536-6ba5d8e85e5e",
+      "timestamp": "2026-05-05T13:19:26.206328",
+      "type": "system_event",
+      "event": "session_ended",
+      "message": "Session ended: session_20260505_131926_cf55eaec",
+      "data": {}
+    },
+    {
+      "id": "e6cc2408-47d4-488d-8fe5-f7ef1f1c6157",
+      "timestamp": "2026-05-05T13:19:26.236473",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_131926_caa8230c",
+      "data": {}
+    },
+    {
+      "id": "c977197f-de1c-4a42-a6c2-c1ac9928d501",
+      "timestamp": "2026-05-05T13:19:26.254819",
+      "type": "system_event",
+      "event": "session_ended",
+      "message": "Session ended: session_20260505_131926_caa8230c",
+      "data": {}
+    },
+    {
+      "id": "63bf5738-617b-4033-8338-4354d59ae927",
+      "timestamp": "2026-05-05T13:19:26.272908",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_131926_dbd4c6b4",
+      "data": {}
+    },
+    {
+      "id": "f58635f4-f515-4b5a-b593-7a7743a029e9",
+      "timestamp": "2026-05-05T13:19:26.291439",
+      "type": "system_event",
+      "event": "session_ended",
+      "message": "Session ended: session_20260505_131926_dbd4c6b4",
+      "data": {}
+    },
+    {
+      "id": "11773060-bc7e-4d54-b5af-3db9b3c15f91",
+      "timestamp": "2026-05-05T13:19:26.319533",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_131926_eac22d33",
+      "data": {}
+    },
+    {
+      "id": "ca1a2388-6d6b-4390-8e04-6351b99eb877",
+      "timestamp": "2026-05-05T13:19:26.390519",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_131926_22f02aa6",
+      "data": {}
+    },
+    {
+      "id": "a037053c-7311-4085-8a8d-9649a955f001",
+      "timestamp": "2026-05-05T13:19:26.424877",
+      "type": "system_event",
+      "event": "session_ended",
+      "message": "Session ended: session_20260505_131926_22f02aa6",
+      "data": {}
+    },
+    {
+      "id": "e6cb85da-e856-4997-b8ce-27ac40c3c02c",
+      "timestamp": "2026-05-05T13:19:26.483211",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_131926_fe7572be",
+      "data": {}
+    },
+    {
+      "id": "0e26cc58-2631-4e47-a47c-cd2ff6fedf44",
+      "timestamp": "2026-05-05T13:19:26.501566",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_131926_e5a41dc8",
+      "data": {}
+    },
+    {
+      "id": "bd6a5ed0-9c20-43e7-9564-36f28cee4a46",
+      "timestamp": "2026-05-05T13:19:26.529409",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_131926_ec17641e",
+      "data": {}
+    },
+    {
+      "id": "9d3bdefd-7591-40f6-b972-a0aec686d3f9",
+      "timestamp": "2026-05-05T13:19:26.557997",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_131926_ffbc11d6",
+      "data": {}
+    },
+    {
+      "id": "200a4762-e0b3-4ebf-96c6-e3662d010b17",
+      "timestamp": "2026-05-05T13:19:26.588521",
+      "type": "system_event",
+      "event": "session_ended",
+      "message": "Session ended: session_20260505_131926_ffbc11d6",
+      "data": {}
+    },
+    {
+      "id": "5e7e549b-570e-4a57-99ba-83d52465fe3c",
+      "timestamp": "2026-05-05T13:19:26.728481",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_131926_1f0d1ecf",
+      "data": {}
+    },
+    {
+      "id": "65992d60-d1a2-4b9f-87b6-2c5d6166f742",
+      "timestamp": "2026-05-05T13:19:26.761387",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_131926_0bcba4d4",
+      "data": {}
+    },
+    {
+      "id": "704d40ea-c332-41de-9a33-6b2cd508dc21",
+      "timestamp": "2026-05-05T13:19:26.811837",
+      "type": "system_event",
+      "event": "session_ended",
+      "message": "Session ended: session_20260505_131926_0bcba4d4",
+      "data": {}
+    },
+    {
+      "id": "f8d79d22-e9af-489d-b73e-2246a0b8d58b",
+      "timestamp": "2026-05-05T13:19:26.839939",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_131926_ce46033f",
+      "data": {}
+    },
+    {
+      "id": "69bf15e5-5c3b-40ef-bd3b-5e0798cfb9b2",
+      "timestamp": "2026-05-05T13:19:26.882730",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_131926_33fcb85b",
+      "data": {}
+    },
+    {
+      "id": "f0dc8bf9-391d-4d1e-a461-d2ec62319ca0",
+      "timestamp": "2026-05-05T13:19:26.927811",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_131926_94c86fd5",
+      "data": {}
+    },
+    {
+      "id": "a643c0b6-fca6-4c81-b1d7-b2ac58221cd6",
+      "timestamp": "2026-05-05T13:19:26.971750",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_131926_da0cae09",
+      "data": {}
+    },
+    {
+      "id": "dd9338f5-ab38-4e37-a945-ab18253323aa",
+      "timestamp": "2026-05-05T13:19:26.992763",
+      "type": "system_event",
+      "event": "session_ended",
+      "message": "Session ended: session_20260505_131926_da0cae09",
+      "data": {}
+    },
+    {
+      "id": "5c62aabc-5040-49e0-9403-3048335a95aa",
+      "timestamp": "2026-05-05T14:29:31.374559",
+      "type": "trade_decision",
+      "symbol": "HK.00700",
+      "action": "CLOSE",
+      "confidence": 0.85,
+      "decision": "attributed",
+      "result": "closed",
+      "strategy": "test",
+      "signal_id": "TRC-TEST-005",
+      "market_regime": null,
+      "risk_check_result": {},
+      "context": {
+        "pnl": 2.5,
+        "overall_score": 85,
+        "direction_correct": true,
+        "exit_reason": "take_profit"
+      }
+    },
+    {
+      "id": "88054448-0b92-42c5-ae14-8bb48c280094",
+      "timestamp": "2026-05-05T14:29:31.389690",
+      "type": "trade_decision",
+      "symbol": "HK.00700",
+      "action": "BUY",
+      "confidence": 0,
+      "decision": "reject",
+      "result": "risk_rejected",
+      "strategy": "test",
+      "signal_id": "TRC-TEST-003",
+      "market_regime": null,
+      "risk_check_result": {},
+      "context": {
+        "reject_reason": "test_reject"
+      }
+    },
+    {
+      "id": "65827d11-f205-4a61-823b-29130e3e51d9",
+      "timestamp": "2026-05-05T14:29:31.404244",
+      "type": "trade_decision",
+      "symbol": "HK.00700",
+      "action": "BUY",
+      "confidence": 0.8,
+      "decision": "generated",
+      "result": "pending",
+      "strategy": "test",
+      "signal_id": "TRC-TEST-002",
+      "market_regime": "",
+      "risk_check_result": {},
+      "context": {}
+    },
+    {
+      "id": "7d47d7e2-bb61-46ee-ac6e-6a6bab3f5cb3",
+      "timestamp": "2026-05-05T14:29:31.419216",
+      "type": "trade_decision",
+      "symbol": "HK.00700",
+      "action": "BUY",
+      "confidence": 0.85,
+      "decision": "executed",
+      "result": "success",
+      "strategy": "test",
+      "signal_id": "TRC-TEST-004",
+      "market_regime": null,
+      "risk_check_result": {},
+      "context": {
+        "price": 300.0,
+        "quantity": 100,
+        "market_regime": ""
+      }
+    },
+    {
+      "id": "c3c0296a-5019-4ecb-af6a-3f1b710b06f4",
+      "timestamp": "2026-05-05T14:29:31.434537",
+      "type": "trade_decision",
+      "symbol": "HK.00700",
+      "action": "BUY",
+      "confidence": 0.75,
+      "decision": "generated",
+      "result": "pending",
+      "strategy": "confluence_v2",
+      "signal_id": "TRC-INTEGRATION-20260505142931",
+      "market_regime": "",
+      "risk_check_result": {},
+      "context": {}
+    },
+    {
+      "id": "c580c385-e34b-4bba-b13d-4bca56e03c47",
+      "timestamp": "2026-05-05T14:29:31.446048",
+      "type": "trade_decision",
+      "symbol": "HK.00700",
+      "action": "BUY",
+      "confidence": 0.75,
+      "decision": "execute",
+      "result": "risk_passed",
+      "strategy": "confluence_v2",
+      "signal_id": "TRC-INTEGRATION-20260505142931",
+      "market_regime": null,
+      "risk_check_result": {},
+      "context": {}
+    },
+    {
+      "id": "a5462afc-c8b8-4303-ab27-8a9f8263ba87",
+      "timestamp": "2026-05-05T14:29:31.456590",
+      "type": "trade_decision",
+      "symbol": "HK.00700",
+      "action": "BUY",
+      "confidence": 0.75,
+      "decision": "executed",
+      "result": "success",
+      "strategy": "confluence_v2",
+      "signal_id": "TRC-INTEGRATION-20260505142931",
+      "market_regime": null,
+      "risk_check_result": {},
+      "context": {
+        "price": 300.0,
+        "quantity": 100,
+        "market_regime": ""
+      }
+    },
+    {
+      "id": "bef19f35-034d-4cb9-95e0-3742d2d779c5",
+      "timestamp": "2026-05-05T14:29:31.466809",
+      "type": "trade_decision",
+      "symbol": "HK.00700",
+      "action": "CLOSE",
+      "confidence": 0.88,
+      "decision": "attributed",
+      "result": "closed",
+      "strategy": "confluence_v2",
+      "signal_id": "TRC-INTEGRATION-20260505142931",
+      "market_regime": null,
+      "risk_check_result": {},
+      "context": {
+        "pnl": 3.5,
+        "overall_score": 88,
+        "direction_correct": true,
+        "exit_reason": "trailing_stop"
+      }
+    },
+    {
+      "id": "9d51df00-8da9-48fb-bae3-112715203d46",
+      "timestamp": "2026-05-05T14:29:57.232736",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_142957_bdabb330",
+      "data": {}
+    },
+    {
+      "id": "beb77752-5972-4785-abce-804931e52c97",
+      "timestamp": "2026-05-05T14:29:57.251943",
+      "type": "system_event",
+      "event": "session_ended",
+      "message": "Session ended: session_20260505_142957_bdabb330",
+      "data": {}
+    },
+    {
+      "id": "eb3957dc-f557-4bb2-bcb7-78c4a2c96764",
+      "timestamp": "2026-05-05T14:29:57.288156",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_142957_30037391",
+      "data": {}
+    },
+    {
+      "id": "a0d31148-117a-4466-8037-36a1579943f0",
+      "timestamp": "2026-05-05T14:29:57.305309",
+      "type": "system_event",
+      "event": "session_ended",
+      "message": "Session ended: session_20260505_142957_30037391",
+      "data": {}
+    },
+    {
+      "id": "f76c15f9-0f5b-4f2f-8ce0-18d138deade2",
+      "timestamp": "2026-05-05T14:29:57.323134",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_142957_712889b0",
+      "data": {}
+    },
+    {
+      "id": "24fd11b0-6dde-4e6f-8c32-e8e786d819e7",
+      "timestamp": "2026-05-05T14:29:57.342798",
+      "type": "system_event",
+      "event": "session_ended",
+      "message": "Session ended: session_20260505_142957_712889b0",
+      "data": {}
+    },
+    {
+      "id": "66186649-7a4a-4091-ad89-01a6f252b12e",
+      "timestamp": "2026-05-05T14:29:57.368527",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_142957_c29aac79",
+      "data": {}
+    },
+    {
+      "id": "ae5a73a3-c7e1-456e-b3f8-d0c240655b17",
+      "timestamp": "2026-05-05T14:29:57.437478",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_142957_9e859d3f",
+      "data": {}
+    },
+    {
+      "id": "87cb7ecc-764a-4065-b900-1e75fe2836d5",
+      "timestamp": "2026-05-05T14:29:57.467081",
+      "type": "system_event",
+      "event": "session_ended",
+      "message": "Session ended: session_20260505_142957_9e859d3f",
+      "data": {}
+    },
+    {
+      "id": "d4c97718-71f8-4cd3-8c2e-492bb62829aa",
+      "timestamp": "2026-05-05T14:29:57.523562",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_142957_4bf6465c",
+      "data": {}
+    },
+    {
+      "id": "91c3e660-4911-4c5b-abea-b52c18d898ca",
+      "timestamp": "2026-05-05T14:29:57.541227",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_142957_29c3dedf",
+      "data": {}
+    },
+    {
+      "id": "dee7e947-131f-432c-97f2-a8a8f43c8552",
+      "timestamp": "2026-05-05T14:29:57.569384",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_142957_23aeb87d",
+      "data": {}
+    },
+    {
+      "id": "ca232989-0a37-4823-9fcf-b417ba9a3396",
+      "timestamp": "2026-05-05T14:29:57.595296",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_142957_c07b2008",
+      "data": {}
+    },
+    {
+      "id": "16ba8ba8-c5a3-414f-aff9-b549a0ee0a52",
+      "timestamp": "2026-05-05T14:29:57.623618",
+      "type": "system_event",
+      "event": "session_ended",
+      "message": "Session ended: session_20260505_142957_c07b2008",
+      "data": {}
+    },
+    {
+      "id": "80c830da-7f38-4ea0-8e25-887086de51ad",
+      "timestamp": "2026-05-05T14:29:57.757717",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_142957_e65f6dec",
+      "data": {}
+    },
+    {
+      "id": "cd271acb-d53f-4f21-b535-8358ce585366",
+      "timestamp": "2026-05-05T14:29:57.790250",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_142957_e0eca6db",
+      "data": {}
+    },
+    {
+      "id": "0bff14da-ef65-4612-ba60-b68fa7719c81",
+      "timestamp": "2026-05-05T14:29:57.835771",
+      "type": "system_event",
+      "event": "session_ended",
+      "message": "Session ended: session_20260505_142957_e0eca6db",
+      "data": {}
+    },
+    {
+      "id": "f3030175-7440-4bd9-997d-eaf96ad71e8f",
+      "timestamp": "2026-05-05T14:29:57.863626",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_142957_0b71e4d0",
+      "data": {}
+    },
+    {
+      "id": "4476c013-4aad-4f2b-a6c5-4022c644d283",
+      "timestamp": "2026-05-05T14:29:57.906465",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_142957_aad9ca02",
+      "data": {}
+    },
+    {
+      "id": "e87cbeed-832a-4c61-b296-e6167805b989",
+      "timestamp": "2026-05-05T14:29:57.941996",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_142957_5cb91c56",
+      "data": {}
+    },
+    {
+      "id": "5e310316-ade9-4fc3-870c-a3958c263383",
+      "timestamp": "2026-05-05T14:29:57.980585",
+      "type": "system_event",
+      "event": "session_started",
+      "message": "New session started: session_20260505_142957_23a09773",
+      "data": {}
+    },
+    {
+      "id": "7fa52305-a747-4176-ae9a-44b02be8575d",
+      "timestamp": "2026-05-05T14:29:57.999973",
+      "type": "system_event",
+      "event": "session_ended",
+      "message": "Session ended: session_20260505_142957_23a09773",
       "data": {}
     }
   ]

@@ -1,3 +1,5 @@
+from config.config_center import get_config_center
+config_center = get_config_center()
 #!/usr/bin/env python3
 """
 美股隔夜监控器 (轻量版)
@@ -109,11 +111,11 @@ class USOvernightMonitor:
                 else:
                     logger.debug(f"[美股监控] 非运行时段 ({now.hour}:00)，跳过")
                 
-                time.sleep(300)  # 5分钟检查一次
+                time.sleep(config_center.get('markets.us.night_interval', 900))  # 5分钟检查一次
                 
             except Exception as e:
                 logger.error(f"[美股监控] 异常: {e}", exc_info=True)
-                time.sleep(60)
+                time.sleep(config_center.get('markets.us.check_interval', 300))
     
     def _check_us_market(self):
         """检查美股数据"""

@@ -1,15 +1,17 @@
-"""
-定期交易收集器模块
+"""定期交易收集器模块 - 已增强为真实DB数据源 (2026-05-04)
 
-负责每 30 分钟从富途 API 批量获取交易数据并存储到数据库。
+
+负责从 ftseek.db / execution.db / consensus_audit.db 读取真实交易数据。
+保留 Futu API 客户端作为可选实时数据源。
 支持港股 (HK) 和美股 (US) 市场。
 
-Author: strategy-gen (Harness Multi-Agent System)
-Version: 1.0
-Date: 2026-03-28
+数据来源优先级：真实 DB → Futu API → Mock Fallback
 """
 
+import json
 import logging
+import os
+import sqlite3
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any
 try:
@@ -21,6 +23,11 @@ from enum import Enum
 import uuid
 
 logger = logging.getLogger(__name__)
+
+# 真实数据库路径 (从环境变量读取)
+FTSEEK_DB = os.environ.get("FTSEEK_DB_PATH", "data/ftseek.db")
+EXECUTION_DB = os.environ.get("FTSEEK_EXECUTION_DB_PATH", "data/execution.db")
+CONSENSUS_AUDIT_DB = os.environ.get("FTSEEK_CONSENSUS_AUDIT_DB_PATH", "data/consensus_audit.db")
 
 
 class MarketStatus(Enum):
@@ -254,30 +261,36 @@ class DatabaseManager:
 
 class PeriodicTradeCollector:
     """
-    定期交易收集器
-    
-    每 30 分钟从富途 API 批量获取交易数据并存储到数据库。
-    
+    定期交易收集器 - 增强版 (2026-05-04)
+
+    优先从真实数据库读取交易/持仓/执行数据，Futu API 为可选实时补充。
+
     使用示例:
-        collector = PeriodicTradeCollector()
+        collector = PeriodicTradeCollector(use_real_db=True)
         count = collector.collect_trades(market='HK')
     """
-    
+
     def __init__(
         self,
         futu_api: Optional[FutuAPIClient] = None,
         db_manager: Optional[DatabaseManager] = None,
         market_checker: Optional[MarketTimeChecker] = None,
-        collection_interval_minutes: int = 30
+        collection_interval_minutes: int = 30,
+        use_real_db: bool = True,
     ):
         self.futu_api = futu_api or FutuAPIClient()
         self.db_manager = db_manager or DatabaseManager()
         self.market_checker = market_checker or MarketTimeChecker()
         self.collection_interval_minutes = collection_interval_minutes
+        self.use_real_db = use_real_db
         self.timezone = ZoneInfo('Asia/Shanghai')
         self.logger = logging.getLogger(f"{__name__}.PeriodicTradeCollector")
-    
-    def collect_trades(self, market: str = 'HK') -> int:
+
+    def collect_trades(self, market: str = 'HK', date: Optional[str] = None) -> int:
+        """收集交易数据 - 优先从真实 DB 读取"""
+        if self.use_real_db:
+            return self.collect_from_database(market, date)
+
         job_id = self._create_job_log(market, JobType.PERIODIC)
         
         try:
@@ -311,6 +324,153 @@ class PeriodicTradeCollector:
             self.db_manager.update_job_log(job_id, JobStatus.FAILED, 0, str(e))
             raise
     
+    def collect_from_database(self, market: str = 'HK', date: Optional[str] = None) -> int:
+        """从真实数据库读取交易数据 (SSOT)
+
+        Args:
+            market: HK / US
+            date: YYYY-MM-DD，默认今天
+
+        Returns:
+            收集到的交易记录数量
+        """
+        if date is None:
+            date = datetime.now(self.timezone).strftime("%Y-%m-%d")
+
+        all_trades = []
+        db_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__)))), FTSEEK_DB)
+
+        try:
+            # 1) 读取 ftseek.db → trades 表
+            if os.path.exists(db_path):
+                conn = sqlite3.connect(db_path)
+                conn.row_factory = sqlite3.Row
+                cur = conn.cursor()
+                cur.execute(
+                    "SELECT * FROM trades WHERE date(entry_time) = ? OR date(exit_time) = ?",
+                    (date, date)
+                )
+                for row in cur.fetchall():
+                    all_trades.append({
+                        "source": "ftseek.trades",
+                        "trade_id": str(row["id"]) if "id" in row.keys() else "",
+                        "code": row["code"] if "code" in row.keys() else "",
+                        "direction": row["action"] if "action" in row.keys() else "",
+                        "entry_price": row["entry_price"] if "entry_price" in row.keys() else 0,
+                        "exit_price": row["exit_price"] if "exit_price" in row.keys() else None,
+                        "quantity": row["quantity"] if "quantity" in row.keys() else 0,
+                        "pnl": row["pnl"] if "pnl" in row.keys() else 0,
+                        "pnl_percent": row["pnl_percent"] if "pnl_percent" in row.keys() else 0,
+                        "strategy": row["strategy"] if "strategy" in row.keys() else "",
+                        "entry_time": row["entry_time"] if "entry_time" in row.keys() else None,
+                        "exit_time": row["exit_time"] if "exit_time" in row.keys() else None,
+                        "exit_reason": row["exit_reason"] if "exit_reason" in row.keys() else "",
+                        "status": row["status"] if "status" in row.keys() else "",
+                    })
+                conn.close()
+                self.logger.info(f"[RealDB] ftseek.db trades: {len(all_trades)} records for {date}")
+
+            # 2) 读取 ftseek.db → positions (CLOSED)
+            if os.path.exists(db_path):
+                conn = sqlite3.connect(db_path)
+                conn.row_factory = sqlite3.Row
+                cur = conn.cursor()
+                cur.execute(
+                    "SELECT * FROM positions WHERE status = 'CLOSED' AND date(exit_time) = ?",
+                    (date,)
+                )
+                for row in cur.fetchall():
+                    all_trades.append({
+                        "source": "ftseek.positions",
+                        "trade_id": f"POS_{row['id']}",
+                        "code": row["code"] if "code" in row.keys() else "",
+                        "direction": row["action"] if "action" in row.keys() else "",
+                        "entry_price": row["entry_price"] if "entry_price" in row.keys() else 0,
+                        "exit_price": row["exit_price"] if "exit_price" in row.keys() else 0,
+                        "quantity": row["quantity"] if "quantity" in row.keys() else 0,
+                        "pnl": row["realized_pnl"] if "realized_pnl" in row.keys() else 0,
+                        "pnl_percent": row["pl_ratio"] if "pl_ratio" in row.keys() else 0,
+                        "strategy": row["strategy"] if "strategy" in row.keys() else "",
+                        "entry_time": row["entry_time"] if "entry_time" in row.keys() else None,
+                        "exit_time": row["exit_time"] if "exit_time" in row.keys() else None,
+                        "exit_reason": "",
+                        "status": "CLOSED",
+                    })
+                conn.close()
+                pos_count = sum(1 for t in all_trades if t["source"] == "ftseek.positions")
+                self.logger.info(f"[RealDB] ftseek.db positions (CLOSED): {pos_count} records")
+
+            # 3) 读取 execution.db → execution_records
+            exec_db_path = os.path.join(os.path.dirname(db_path), "execution.db")
+            if os.path.exists(exec_db_path):
+                conn = sqlite3.connect(exec_db_path)
+                conn.row_factory = sqlite3.Row
+                cur = conn.cursor()
+                cur.execute(
+                    "SELECT * FROM execution_records WHERE date(fill_time) = ?",
+                    (date,)
+                )
+                exec_records = []
+                for row in cur.fetchall():
+                    exec_records.append({
+                        "code": row["code"] if "code" in row.keys() else "",
+                        "signal_time": row["signal_time"] if "signal_time" in row.keys() else None,
+                        "fill_time": row["fill_time"] if "fill_time" in row.keys() else None,
+                        "signal_price": row["signal_price"] if "signal_price" in row.keys() else 0,
+                        "fill_price": row["fill_price"] if "fill_price" in row.keys() else 0,
+                        "quantity": row["quantity"] if "quantity" in row.keys() else 0,
+                        "slippage": row["slippage"] if "slippage" in row.keys() else 0,
+                        "execution_latency_ms": row["execution_latency_ms"] if "execution_latency_ms" in row.keys() else 0,
+                        "status": row["status"] if "status" in row.keys() else "",
+                    })
+                conn.close()
+                self.logger.info(f"[RealDB] execution.db: {len(exec_records)} records for {date}")
+
+            # 4) 过滤 market
+            if market.upper() == 'HK':
+                all_trades = [t for t in all_trades if t.get("code", "").startswith("HK.")]
+            elif market.upper() == 'US':
+                all_trades = [t for t in all_trades if t.get("code", "").startswith("US.")]
+
+            self._last_collected_trades = all_trades
+            self._last_collected_executions = exec_records if 'exec_records' in dir() else []
+            self.logger.info(
+                f"[RealDB] Total collected for {market}/{date}: {len(all_trades)} trades, "
+                f"{len(exec_records) if 'exec_records' in dir() else 0} executions"
+            )
+            return len(all_trades)
+
+        except Exception as e:
+            self.logger.error(f"[RealDB] Database read failed: {e}", exc_info=True)
+            # Fallback to Futu API mock
+            self.logger.warning("[RealDB] Falling back to Futu API mock")
+            return self._collect_via_futu_api(market)
+
+    def _collect_via_futu_api(self, market: str) -> int:
+        """Futu API fallback 收集"""
+        job_id = self._create_job_log(market, JobType.PERIODIC)
+        try:
+            end_time = datetime.now(self.timezone)
+            start_time = end_time - timedelta(minutes=self.collection_interval_minutes)
+            trade_data = self.futu_api.fetch_trade_list(market, start_time, end_time)
+            trades = self._convert_to_trade_records(trade_data, market)
+            stored_count = self.db_manager.store_trades(trades, market) if trades else 0
+            self.db_manager.update_job_log(job_id, JobStatus.COMPLETED, stored_count)
+            return stored_count
+        except Exception as e:
+            self.logger.error(f"Futu API collection failed: {e}")
+            self.db_manager.update_job_log(job_id, JobStatus.FAILED, 0, str(e))
+            return 0
+
+    def get_last_trades(self) -> List[Dict]:
+        """获取最后一次收集的交易数据"""
+        return getattr(self, '_last_collected_trades', [])
+
+    def get_last_executions(self) -> List[Dict]:
+        """获取最后一次收集的执行数据"""
+        return getattr(self, '_last_collected_executions', [])
+
     def _create_job_log(self, market: str, job_type: JobType) -> str:
         job_id = f"JOB_{market}_{uuid.uuid4().hex[:12]}"
         job_log = CollectionJobLog(

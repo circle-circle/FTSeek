@@ -309,7 +309,30 @@ class PositionManager:
             return self._row_to_position(row)
         finally:
             self._return_connection(conn)
-    
+
+    def get_position_by_id(self, position_id: int) -> Optional[Position]:
+        """按 position_id 精确查询持仓（用于保护校验等按 ID 回读场景）
+
+        Args:
+            position_id: 持仓记录 ID
+
+        Returns:
+            Position 对象，如果不存在则返回 None
+        """
+        conn = self._get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                'SELECT * FROM positions WHERE id = ? LIMIT 1',
+                (position_id,)
+            )
+            row = cursor.fetchone()
+            if row is None:
+                return None
+            return self._row_to_position(row)
+        finally:
+            self._return_connection(conn)
+
     def get_all_positions(self) -> List[Position]:
         """
         获取所有持仓
@@ -394,6 +417,16 @@ class PositionManager:
 
             # 检查表是否有 trace_id 字段，没有则添加
             self._ensure_trace_column(conn)
+            
+            # P0 根治 (2026-05-06): 创建前检查是否已有同名标的的OPEN持仓，防止重复创建
+            cursor.execute("SELECT id, quantity, entry_price FROM positions WHERE code = ? AND status = 'OPEN' LIMIT 1", (code,))
+            existing = cursor.fetchone()
+            if existing:
+                logger.warning(
+                    f"[防呆] {code} 已存在 OPEN 持仓 (ID={existing[0]}, qty={existing[1]}), "
+                    f"拒绝重复创建。如需加仓请使用 update_position_fields"
+                )
+                return existing[0]  # 返回已有持仓ID，避免调用方报错
             
             cursor.execute('''
                 INSERT INTO positions 

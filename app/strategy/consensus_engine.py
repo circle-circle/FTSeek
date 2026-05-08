@@ -20,8 +20,8 @@
   20 ≤ ADX ≤ 25      → 使用基准权重
 
 可配置项 (config.py):
-  CONSENSUS_WINDOW     = 60     # 共识窗口秒数
-  CONSENSUS_THRESHOLD  = 1.5    # 触发阈值 (加权分>=此值才推送)
+  CONSENSUS_WINDOW     = 90     # 共识窗口秒数 (SSOT: config_center)
+  CONSENSUS_THRESHOLD  = 1.0    # 触发阈值 (加权分>=此值才推送, SSOT: config_center)
   CONSENSUS_ADX_TREND  = 25     # ADX 高于此值判定为趋势
   CONSENSUS_ADX_RANGE  = 20     # ADX 低于此值判定为震荡
 
@@ -138,10 +138,10 @@ class SignalOutcome:
 # ============================================================
 #  策略分类与基准权重
 # ============================================================
-# 趋势型策略: 在趋势行情中表现更好
-TREND_STRATEGIES = {"supertrend", "macd", "ma_cross"}
-# 震荡型策略: 在盘整行情中表现更好
-OSCILLATOR_STRATEGIES = {"rsi", "bollinger"}
+# 趋势型策略 (MOMENTUM factors): 在趋势行情中表现更好
+TREND_STRATEGIES = {"st_factor", "macd_factor", "ma_cross_factor", "vol_factor"}
+# 震荡型策略 (MEAN_REVERSION factors): 在盘整行情中表现更好
+OSCILLATOR_STRATEGIES = {"rsi_factor", "bb_factor"}
 # 综合型策略: 本身已做多因子融合, 任何行情都有参考价値
 HYBRID_STRATEGIES = {"confluence", "fusion_v2", "fusion_v3", "enhanced_confluence"}
 # 情绪型策略: 基于新闻和情绪分析 (新增 2026-03-17)
@@ -154,6 +154,43 @@ ARBITRAGE_STRATEGIES = {"cross_market_arbitrage"}
 TIMEBASED_STRATEGIES = {"open_close_effect"}
 # 其他 (price_break, volume_alert 等)
 OTHER_STRATEGIES = set()
+
+# ============================================================
+#  P1 优化 2026-05-04: 因子家族 (共线性惩罚)
+# ============================================================
+# 同族因子共享投票权重上限，防止高相关性因子绑架共识
+FACTOR_FAMILIES = {
+    "MOMENTUM":       {"macd_factor", "st_factor", "ma_cross_factor", "vol_factor"},
+    "MEAN_REVERSION": {"rsi_factor", "bb_factor"},
+}
+# 每个家族的最大总权重贡献 (防止同族多因子叠加)
+FAMILY_MAX_WEIGHT = {
+    "MOMENTUM":       1.8,  # MACD + ST + MA_Cross + Vol → 上限 1.8
+    "MEAN_REVERSION": 1.5,  # RSI + BB → 上限 1.5
+}
+
+# ============================================================
+#  P1 优化 2026-05-04: 自适应阈值
+#  P0 修复 2026-05-06 09:52: 临时关闭，解决信号无法触发问题
+# ============================================================
+ADAPTIVE_THRESHOLD_ENABLED = False  # 临时关闭
+ADAPTIVE_THRESHOLD_WINDOW = 200        # 滚动窗口大小
+ADAPTIVE_THRESHOLD_PERCENTILE = 75     # 取前 25% 的信号
+ADAPTIVE_THRESHOLD_MIN = 0.8           # 自适应阈值下界
+ADAPTIVE_THRESHOLD_MAX = 2.5           # 自适应阈值上界
+
+# ============================================================
+#  P1 优化 2026-05-04: 时段分段参数
+# ============================================================
+SESSION_PARAMS_ENABLED = True
+# (window_multiplier, threshold_multiplier): 相对于基准 window/threshold
+SESSION_CONFIG = {
+    "market_open":  (0.5, 1.30),   # 09:30-10:00 窗口减半(45s), 阈值+30%
+    "afternoon":    (0.8, 1.00),   # 13:00-15:00 A股联动段, 窗口略缩, 阈值不变
+    "midday":       (0.5, 1.20),   # 12:00-13:00 午间休市, 低流动性, 阈值+20%
+    "market_close": (0.5, 0.90),   # 15:00-16:00 尾盘冲刺, 趋势明确, 阈值-10%
+    "regular":      (1.0, 1.00),   # 10:00-12:00 上午盘中, 正常参数
+}
 
 # 基准权重 (可通过 config 覆盖)
 # 优化于 2026-03-27: 精简策略组合，只保留核心3个策略
@@ -169,6 +206,13 @@ DEFAULT_BASE_WEIGHTS = {
     "open_close_effect":      0.8,   # 开盘/收盘效应：辅助信号
     # 新增 (2026-04-12)
     "premarket_analyst":     1.0,   # 盘前LLM分析：独立研判信号
+    # 因子投票策略 (2026-05-03 透明化架构 → P0 修复 2026-05-04)
+    "rsi_factor":        1.0,   # RSI 超买超卖 — MEAN_REVERSION
+    "bb_factor":         1.0,   # 布林带极值 — MEAN_REVERSION
+    "macd_factor":       1.0,   # MACD 动量 — MOMENTUM
+    "st_factor":         1.0,   # SuperTrend 趋势 — MOMENTUM
+    "ma_cross_factor":   0.8,   # 均线交叉 — MOMENTUM (信号频率低)
+    "vol_factor":        0.6,   # 放量确认 — 噪音大，低基权
 }
 
 # 市场状态增益/衰减系数
@@ -304,6 +348,15 @@ class ConsensusEngine:
         self._quality_score: Dict[str, float] = {}
         # code -> (action_str, timestamp)  上一次触发信号的方向+时间
         self._last_signal_action: Dict[str, Tuple[str, float]] = {}
+        # P1 优化 2026-05-04: 自适应阈值 — 滚动分数历史
+        self._score_history: deque = deque(maxlen=ADAPTIVE_THRESHOLD_WINDOW)
+        # P1 优化 2026-05-04: 每日触发防重
+        self._midday_triggered_date: Optional[str] = None
+        self._eod_triggered_date: Optional[str] = None
+        # P1 优化 2026-05-04: PnL 反馈闭环 — 策略级追踪
+        self._strategy_outcomes: Dict[str, deque] = defaultdict(lambda: deque(maxlen=30))
+        self._strategy_trades_since_update = 0
+        self._pnl_update_interval = 10  # 每 10 笔交易更新一次策略权重
 
         # Phase 1+3: 共识增强器 (延迟初始化)
         self._enhancer = None
@@ -1005,6 +1058,14 @@ class ConsensusEngine:
         # 兼容旧版：仍保留简单记录
         self._signal_history[code].append((action_str, pnl))
 
+        # ── P1 优化 2026-05-04: PnL 反馈闭环 — 策略级追踪 ──
+        if strategy and strategy != "unknown":
+            self._strategy_outcomes[strategy].append(pnl)
+            self._strategy_trades_since_update += 1
+            if self._strategy_trades_since_update >= self._pnl_update_interval:
+                self._apply_pnl_weight_update()
+                self._strategy_trades_since_update = 0
+
         records = list(self._signal_history[code])
         wins = [r[1] for r in records if r[1] > 0]
         losses = [abs(r[1]) for r in records if r[1] < 0]
@@ -1335,8 +1396,134 @@ class ConsensusEngine:
                 return max(0.3, min(float(c), 1.5))
         return 1.0
 
+    # ─────────────────────────────────────────────────────────
+    #  P1 优化 2026-05-04: 时段参数 + 因子族 + 时间衰减 + 自适应阈值
+    # ─────────────────────────────────────────────────────────
+
+    def _get_session_params(self) -> Tuple[float, float]:
+        """根据当前 HK 时间返回 (window_multiplier, threshold_multiplier)
+        P1 2026-05-04: 增加 afternoon 时段 (13:00-15:00)，与 TimeGate 对齐
+        """
+        if not SESSION_PARAMS_ENABLED:
+            return 1.0, 1.0
+        try:
+            import pytz
+            from datetime import datetime
+            hkt = pytz.timezone("Asia/Hong_Kong")
+            now = datetime.now(hkt)
+            hm = now.hour * 60 + now.minute  # 分钟数
+
+            # 开盘: 09:30-10:00
+            if 570 <= hm < 600:
+                return SESSION_CONFIG["market_open"]
+            # 午间休市: 12:00-13:00
+            elif 720 <= hm < 780:
+                return SESSION_CONFIG["midday"]
+            # 下午盘 A股联动: 13:00-15:00
+            elif 780 <= hm < 900:
+                return SESSION_CONFIG["afternoon"]
+            # 尾盘冲刺: 15:00-16:00
+            elif 900 <= hm < 960:
+                return SESSION_CONFIG["market_close"]
+            # 上午盘中: 10:00-12:00
+            return SESSION_CONFIG["regular"]
+        except Exception:
+            return 1.0, 1.0
+
+    def _apply_factor_family_cap(
+        self, votes: list, weight_details: dict, score: float
+    ) -> float:
+        """因子族共线性惩罚: 每族总权重不得超过 FAMILY_MAX_WEIGHT"""
+        for family_name, family_members in FACTOR_FAMILIES.items():
+            family_total = 0.0
+            family_votes = []
+            for v in votes:
+                if v.strategy in family_members:
+                    w = weight_details.get(v.strategy, 0.5)
+                    family_total += w
+                    family_votes.append((v, w))
+            cap = FAMILY_MAX_WEIGHT.get(family_name, 2.0)
+            if family_total > cap and len(family_votes) > 1:
+                # 族内等比缩放
+                scale = cap / family_total
+                penalty = family_total - cap
+                for v, w in family_votes:
+                    old_w = weight_details[v.strategy]
+                    new_w = old_w * scale
+                    weight_details[v.strategy] = round(new_w, 2)
+                # 从 score 中扣除超额部分 (只影响同方向)
+                for v, w in family_votes:
+                    if v.action == SignalAction.BUY:
+                        score -= w * (1 - scale)
+                    elif v.action == SignalAction.SELL:
+                        score += w * (1 - scale)
+                logger.debug(
+                    f"[因子族/{family_name}] 总权重{family_total:.2f}>{cap:.2f}, "
+                    f"缩放至×{scale:.2f}, 惩罚={penalty:.2f}"
+                )
+        return score
+
+    def _compute_adaptive_threshold(self) -> float:
+        """基于滚动分数历史的 percentile 阈值"""
+        if not ADAPTIVE_THRESHOLD_ENABLED or len(self._score_history) < 20:
+            return self.threshold
+        import numpy as np
+        scores = np.array(list(self._score_history))
+        pct_val = float(np.percentile(scores, ADAPTIVE_THRESHOLD_PERCENTILE))
+        adaptive = max(ADAPTIVE_THRESHOLD_MIN, min(ADAPTIVE_THRESHOLD_MAX, pct_val))
+        logger.debug(
+            f"[自适应阈值] percentile={ADAPTIVE_THRESHOLD_PERCENTILE} → "
+            f"{pct_val:.2f}, 限制后={adaptive:.2f} (离散阈值={self.threshold})"
+        )
+        return adaptive
+
+    def _apply_pnl_weight_update(self):
+        """P1 优化: 基于策略实际 PnL 的贝叶斯权重更新
+
+        每 N 笔交易后，根据各策略近期表现调整 base_weights。
+        使用贝叶斯平滑: new_weight = prior * (1 - α) + observed * α
+        胜率越高的策略权重逐步提升，持续亏损的策略权重衰减。
+        """
+        alpha = 0.15  # 学习率: 每次更新最多调整 15%
+        min_weight = 0.3
+        max_weight = 2.0
+
+        updated = []
+        for strategy, outcomes in self._strategy_outcomes.items():
+            if len(outcomes) < 3:
+                continue
+            records = list(outcomes)
+            wins = [r for r in records if r > 0]
+            losses = [r for r in records if r < 0]
+            win_rate = len(wins) / len(records) if records else 0.5
+            avg_win = sum(wins) / len(wins) if wins else 0.0
+            avg_loss = abs(sum(losses) / len(losses)) if losses else 1.0
+            profit_factor = avg_win / avg_loss if avg_loss > 0 else 1.0
+
+            # 综合表现分: 胜率 × 盈亏比, 归一化到 0.5~2.0
+            performance = win_rate * profit_factor
+            performance = max(0.5, min(2.0, performance))
+
+            prior = self.base_weights.get(strategy, 1.0)
+            new_weight = prior * (1 - alpha) + prior * performance * alpha
+            new_weight = max(min_weight, min(max_weight, new_weight))
+            old_weight = self.base_weights.get(strategy, prior)
+            self.base_weights[strategy] = round(new_weight, 2)
+
+            if abs(new_weight - old_weight) > 0.01:
+                updated.append(
+                    f"{strategy}: {old_weight:.2f}→{new_weight:.2f} "
+                    f"(wr={win_rate:.0%} pf={profit_factor:.2f})"
+                )
+
+        if updated:
+            logger.info(
+                f"[PnL反馈] 策略权重更新 (α={alpha}, N={self._pnl_update_interval}笔): "
+                + " | ".join(updated)
+            )
+
     def _evaluate(self, code: str):
-        """窗口到期, 加权评分"""
+        """窗口到期, 加权评分 (v3: 时间衰减 + 因子族惩罚 + 自适应阈值 + 时段参数)"""
         with self._lock:
             votes = self._ballots.pop(code, [])
             self._eval_schedule.pop(code, None)  # P2: 清理调度记录
@@ -1344,32 +1531,50 @@ class ConsensusEngine:
         if not votes:
             return
 
-        # 去重: 同策略只取最后一票
-        latest = {}
+        # ── P1 优化: 时间衰减去重 (替代简单取最后一票) ──
+        # 窗口内越靠近末端的票权重越高，max() 取最新一票但标记衰减因子
+        t_now = time.time()
+        window_end = t_now
+        # 找到窗口内每策略的所有票，按时间衰减取加权方向
+        strategy_decayed_votes = {}
         for v in votes:
-            latest[v.strategy] = v
-        unique_votes = list(latest.values())
+            age = t_now - v.timestamp
+            decay = max(0.3, 1.0 - age / max(1, self.window))
+            if v.strategy not in strategy_decayed_votes:
+                strategy_decayed_votes[v.strategy] = {
+                    "latest_vote": v,
+                    "decay": decay,
+                    "all_directions": set(),
+                }
+            else:
+                # 取最新票，保留最大衰减
+                existing = strategy_decayed_votes[v.strategy]
+                if v.timestamp > existing["latest_vote"].timestamp:
+                    existing["latest_vote"] = v
+                    existing["decay"] = decay
+            strategy_decayed_votes[v.strategy]["all_directions"].add(v.action.value)
+
+        # 构建去重后的 vote 列表 (带衰减因子)
+        unique_votes = []
+        time_decay_map = {}  # strategy -> decay_factor
+        for strategy, data in strategy_decayed_votes.items():
+            unique_votes.append(data["latest_vote"])
+            time_decay_map[strategy] = data["decay"]
 
         # -------------------------------------------------------
         # 信号一致性检查：策略是否在窗口内频繁反转
-        # 如果超过 50% 的策略出现过 BUY→SELL 或 SELL→BUY 反转，
-        # 说明行情不明朗，放弃本窗口信号
-        #
-        # 2026-03-25 优化：confluence/confluence_v2 属于同一因子族，
-        # 合并为单个逻辑策略计票，避免同因子占 2 票导致阈值过低虚假触发
         # -------------------------------------------------------
         flip_count = 0
         strategy_directions: Dict[str, set] = defaultdict(set)
         for v in votes:
-            # 简化：V1已禁用，不再需要家族合并
             logical_strat = v.strategy
             strategy_directions[logical_strat].add(v.action.value)
         for strat, directions in strategy_directions.items():
-            if len(directions) > 1:  # 同一策略在窗口内既投 BUY 又投 SELL
+            if len(directions) > 1:
                 flip_count += 1
         total_strategies = len(strategy_directions)
-        # 混乱阈值：从 50% 提升至 60%，减少误判（信号稍微不一致时不急于放弃）
-        CHAOS_THRESHOLD = 0.6
+        # P1 优化: 放宽混乱阈值至 70% (vol_factor 已有冷却，减少误判)
+        CHAOS_THRESHOLD = 0.7
         if total_strategies > 0 and flip_count / total_strategies > CHAOS_THRESHOLD:
             logger.info(
                 f"[共识] {code} ⚠️ 信号混乱（{flip_count}/{total_strategies} 策略反转），放弃本窗口"
@@ -1378,7 +1583,10 @@ class ConsensusEngine:
 
         regime, adx_val = self._get_market_regime(code)
 
-        # 加权评分
+        # ── P1 优化: 时段参数 ──
+        sess_win_mult, sess_thr_mult = self._get_session_params()
+
+        # 加权评分 (带时间衰减)
         score = 0.0
         weight_details = {}
         bullish_votes = []
@@ -1387,7 +1595,8 @@ class ConsensusEngine:
         for v in unique_votes:
             w, w_details = self._calc_weight(v.strategy, regime, code)
             conviction = self._get_vote_conviction(v)
-            adjusted_w = w * conviction
+            decay = time_decay_map.get(v.strategy, 1.0)
+            adjusted_w = w * conviction * decay
             weight_details[v.strategy] = round(adjusted_w, 2)
 
             if v.action == SignalAction.BUY:
@@ -1397,6 +1606,9 @@ class ConsensusEngine:
                 score -= adjusted_w
                 bearish_votes.append(v)
             # ALERT 不计分
+
+        # ── P1 优化: 因子族共线性惩罚 ──
+        score = self._apply_factor_family_cap(unique_votes, weight_details, score)
 
         # Phase 2: 分层共识计算 (结构共识 vs 事件共识)
         structural_votes = []
@@ -1412,11 +1624,12 @@ class ConsensusEngine:
         structural_bullish = []
         structural_bearish = []
         structural_strategies = []
-        
+
         for v in structural_votes:
             w, _ = self._calc_weight(v.strategy, regime, code)
             conviction = self._get_vote_conviction(v)
-            cw = w * conviction
+            decay = time_decay_map.get(v.strategy, 1.0)
+            cw = w * conviction * decay
             if v.action == SignalAction.BUY:
                 structural_score += cw
                 structural_bullish.append(v)
@@ -1429,41 +1642,36 @@ class ConsensusEngine:
         event_score = 0.0
         event_strategies = []
         if event_votes:
-            # 简化逻辑：每个事件信号权重 0.55，避免喧宾夺主
-            event_score = (len([v for v in event_votes if v.action == SignalAction.BUY]) - 
+            event_score = (len([v for v in event_votes if v.action == SignalAction.BUY]) -
                            len([v for v in event_votes if v.action == SignalAction.SELL])) * 0.55
             event_strategies = [v.strategy for v in event_votes]
 
         # --- 融合逻辑 ---
-        # 1. 基础分数 = 结构分数
         fusion_score = structural_score
-        
-        # 2. 冲突检测与惩罚
         is_conflict = False
         conflict_details = ""
-        
+
         if event_score != 0:
-            # 检查方向是否一致 (正数表示买，负数表示卖)
             tech_dir = 1 if structural_score >= 0 else -1
             evt_dir = 1 if event_score >= 0 else -1
-            
+
             if structural_score != 0 and tech_dir != evt_dir:
                 is_conflict = True
                 conflict_details = f"结构分={structural_score:+.2f} vs 事件分={event_score:+.2f}"
-                # 冲突惩罚：降低总分 20%
                 fusion_score *= 0.8
                 logger.info(f"[共识/分层] {code} ⚠️ 结构与事件冲突：{conflict_details}")
             else:
-                # 共振增强：加入部分事件分数
                 fusion_score += event_score * 0.3
-        
-        # 3. 更新全局使用的 score 和 votes 列表 (保持向后兼容)
+
         score = fusion_score
-        # 注意：为了兼容性，unique_votes 不变，但后续计算票数时逻辑已隐含在 score 中
+
+        # ── P1 优化: 记录分数到滚动历史 ──
+        self._score_history.append(abs(score))
 
         adx_str = f"ADX={adx_val:.1f}" if adx_val else "ADX=N/A"
+        session_label = "开盘" if sess_thr_mult > 1.0 else "收盘" if sess_thr_mult < 1.0 else "常规"
         logger.info(
-            f"[共识] {code} 评估完毕 | 市场={regime}({adx_str}) | "
+            f"[共识] {code} 评估完毕 | 市场={regime}({adx_str}) | 时段={session_label} | "
             f"融合分={score:+.2f} (技术分={structural_score:+.2f}, 事件分={event_score:+.2f}) | "
             f"权重={weight_details}"
         )
@@ -1472,7 +1680,7 @@ class ConsensusEngine:
         bullish_count = sum(1 for v in unique_votes if v.action == SignalAction.BUY)
         bearish_count = sum(1 for v in unique_votes if v.action == SignalAction.SELL)
 
-        # 策略分歧度度量: 当不同策略 BUY/SELL 严重分歧时，降级为灰区信号
+        # 策略分歧度度量
         divergence = 0.0
         if bullish_count > 0 and bearish_count > 0:
             divergence = min(bullish_count, bearish_count) / max(bullish_count, bearish_count)
@@ -1485,27 +1693,40 @@ class ConsensusEngine:
                     f"score {score:+.2f} 衰减至 {score * (1 - divergence * decay_factor):+.2f}"
                 )
                 score *= (1 - divergence * decay_factor)
-                # 高分歧注入灰区场景
-                trigger_gray = DIVERGENCE_GRAY_ZONE
-                if trigger_gray:
+                if DIVERGENCE_GRAY_ZONE:
                     from app.scenario.classifier import ScenarioType
                     self._scenario_cache[code] = ScenarioType.GRAY_ZONE
 
-        MIN_AGREE_VOTES = 1  # 2026-04-13 修复：降低至 1，允许 confluence_v2 单策略触发信号
+        MIN_AGREE_VOTES = 1
 
-        # 在触发BUY信号之前检查同向票数
-        if score >= self.threshold:
+        # ── P1 优化: 动态阈值 (HealingGate + Adaptive + Session) ──
+        adaptive_thr = self._compute_adaptive_threshold()
+        dynamic_threshold = adaptive_thr * sess_thr_mult
+
+        # Healing Gate: 自愈系统恢复中提高门槛 (叠加在自适应+时段之上)
+        try:
+            from app.self_healing.health_gate import get_health_gate
+            constraints = get_health_gate().get_trading_constraints()
+            if constraints["status"] == "RECOVERING":
+                dynamic_threshold *= (1.0 / constraints.get("position_size_multiplier", 0.5))
+                logger.warning(f"[HealingGate] 系统恢复中: 阈值提升至 {dynamic_threshold:.2f}")
+        except Exception:
+            pass
+
+        # 检查同向票数
+        if score >= dynamic_threshold:
             if bullish_count < MIN_AGREE_VOTES:
                 logger.info(
-                    f"[同向票数不足] {code} score={score:.2f}>=阈值 但同向票数{bullish_count}<{MIN_AGREE_VOTES}，跳过"
+                    f"[同向票数不足] {code} score={score:.2f}>=阈值{dynamic_threshold:.2f} "
+                    f"但同向票数{bullish_count}<{MIN_AGREE_VOTES}，跳过"
                 )
                 score = 0
 
-        # 在触发SELL信号之前检查同向票数
-        if score <= -self.threshold:
+        if score <= -dynamic_threshold:
             if bearish_count < MIN_AGREE_VOTES:
                 logger.info(
-                    f"[同向票数不足] {code} score={score:.2f}<=负阈值 但同向票数{bearish_count}<{MIN_AGREE_VOTES}，跳过"
+                    f"[同向票数不足] {code} score={score:.2f}<=负阈值{dynamic_threshold:.2f} "
+                    f"但同向票数{bearish_count}<{MIN_AGREE_VOTES}，跳过"
                 )
                 score = 0
 
@@ -1524,7 +1745,7 @@ class ConsensusEngine:
                 return False
             return True
 
-        if score >= self.threshold:
+        if score >= dynamic_threshold:
             # 检查策略数量
             if not check_min_strategies(bullish_votes, "BUY"):
                 pass  # 不触发信号
@@ -1691,7 +1912,7 @@ class ConsensusEngine:
                     extra=_buy_extra,
                 )
 
-        elif score <= -self.threshold:
+        elif score <= -dynamic_threshold:
             # 检查策略数量
             if not check_min_strategies(bearish_votes, "SELL"):
                 pass  # 不触发信号

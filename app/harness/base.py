@@ -49,6 +49,12 @@ class AgentResult:
     retry_count: int = 0  # 实际重试次数
     metadata: Dict[str, Any] = field(default_factory=dict)  # 元数据
 
+    def get(self, key: str, default: Any = None) -> Any:
+        """兼容字典风格的访问"""
+        if self.data and key in self.data:
+            return self.data[key]
+        return default
+
 
 class Agent(ABC):
     """

@@ -102,7 +102,7 @@ class DailyActivePool:
     """每日动态交易池 v2 (线程安全单例)"""
 
     _instance = None
-    _lock = threading.Lock()
+    _lock = threading.RLock()
 
     def __new__(cls, *args, **kwargs):
         if cls._instance is None:
@@ -121,7 +121,7 @@ class DailyActivePool:
 
         # 按来源分层的条目存储
         self._entries: Dict[str, PoolEntry] = {}  # code -> PoolEntry
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self._max_pool_size = DEFAULT_MAX_POOL_SIZE
 
         # P0 修复: 路径计算错误 - 使用项目根目录而非 app/ 目录
@@ -163,7 +163,7 @@ class DailyActivePool:
 
     def _reconcile_positions(self):
         """P3 修复: 启动时对账 — 验证 POSITION 条目与实际持仓的一致性
-        
+
         注意: 对账需要在 main.py 中传入实际持仓列表后调用。
         这里只做基本的格式和状态验证。
         """
@@ -356,17 +356,18 @@ class DailyActivePool:
 
     def inject_positions(self, positions: List[str], position_map: Optional[Dict[str, Dict]] = None):
         """批量注入持仓 (启动时使用)
-        
-        P0 修复: 增加市场前缀过滤
-        P1 修复: 支持 position_map 传入 metadata (如 action/quantity)
-        
-        Args:
-            positions: 股票代码列表
-            position_map: {code: {"action": "BUY", "quantity": 200}} metadata 映射
+
+        先清空池中所有旧 POSITION 条目，再写入当前实际持仓，
+        确保残留 POSITION 不会因竞争窗口持久化到磁盘。
         """
         count = 0
         skipped = 0
         with self._lock:
+            # 先清除所有旧 POSITION 条目，以 DB 真实持仓为准
+            stale = [code for code, e in self._entries.items() if e.source == SOURCE_POSITION]
+            for code in stale:
+                del self._entries[code]
+
             for code in positions:
                 # P0: 过滤非本市场标的
                 if not code.startswith(self._market_prefix):
@@ -389,29 +390,43 @@ class DailyActivePool:
             logger.info(f"💼 批量注入: 全部跳过 (无 {self._market_prefix} 持仓)")
 
     def inject_plan_targets(self, plan: dict):
-        """注入盘前计划目标 (启动时使用)"""
+        """注入盘前计划目标 (启动时使用)
+
+        过滤规则: 跳过 key_trigger 包含分析失败/异常的条目 (LLM 降级产物，无参考价值)
+        """
         if not plan or "targets" not in plan:
             return
         count = 0
+        skipped = 0
         with self._lock:
             for target in plan["targets"]:
                 symbol = target.get("symbol")
-                if symbol and symbol not in self._entries:
-                    self._entries[symbol] = PoolEntry(
-                        code=symbol,
-                        source=SOURCE_PLAN,
-                        added_at=_now_iso(),
-                        expires_at=_make_expiry(TTL_PLAN_HOURS),
-                        metadata={
-                            "direction": target.get("direction", "ANY"),
-                            "logic": target.get("logic", ""),
-                            "max_position_pct": target.get("max_position_pct", 0.05)
-                        }
-                    )
-                    count += 1
+                if not symbol or not symbol.startswith(self._market_prefix) or symbol in self._entries:
+                    continue
+
+                key_trigger = target.get("key_trigger", "")
+                if any(kw in key_trigger for kw in ("分析失败", "分析异常")):
+                    logger.warning(f"⏭️ 跳过 PLAN 目标 {symbol}: 盘前分析失败 ({key_trigger[:80]}...)")
+                    skipped += 1
+                    continue
+
+                self._entries[symbol] = PoolEntry(
+                    code=symbol,
+                    source=SOURCE_PLAN,
+                    added_at=_now_iso(),
+                    expires_at=_make_expiry(TTL_PLAN_HOURS),
+                    metadata={
+                        "direction": target.get("direction", "ANY"),
+                        "logic": target.get("logic", ""),
+                        "max_position_pct": target.get("max_position_pct", 0.05)
+                    }
+                )
+                count += 1
         if count > 0:
             self.save()
             logger.info(f"📝 批量注入盘前计划: {count} 只")
+        if skipped > 0:
+            logger.info(f"📝 盘前计划跳过 {skipped} 只 (分析失败)")
 
     # ─── 查询 ───────────────────────────────────────────────
 

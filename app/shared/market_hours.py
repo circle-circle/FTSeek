@@ -110,16 +110,25 @@ def _get_timezone(market: MarketType) -> pytz.BaseTzInfo:
     return pytz.timezone(tz_name)
 
 
+# Module-level cache for session boundaries (Bug #1 fix)
+_session_cache: Dict[MarketType, Optional[Dict]] = {MarketType.HK: None, MarketType.US: None}
+
+
 def _get_session_boundaries(market: MarketType) -> Dict:
     """
     Get session boundary times for a market.
 
     Tries config_center first, falls back to hardcoded defaults.
+    Results are cached at module level to avoid repeated config_center lookups.
     This implements the HYBRID timezone strategy (Round 2 verdict).
 
     Returns:
         Dict of session_name -> {"start": time, "end": time}
     """
+    # Return cached result if available (Bug #1: caching fix)
+    if _session_cache[market] is not None:
+        return _session_cache[market]
+
     # Try config_center first
     try:
         from config.config_center import get_config_center
@@ -135,11 +144,14 @@ def _get_session_boundaries(market: MarketType) -> Dict:
                         "end": _parse_time(bounds["end"]),
                     }
             if sessions:
+                _session_cache[market] = sessions  # Cache it
                 return sessions
     except Exception:
         pass
 
-    return _DEFAULT_SESSIONS[market]
+    result = _DEFAULT_SESSIONS[market]
+    _session_cache[market] = result  # Cache the fallback too
+    return result
 
 
 def _parse_time(val) -> time:
@@ -321,11 +333,14 @@ def is_trading_day(market: MarketType, d: Optional[date] = None) -> bool:
         cal = get_holiday_calendar()
         market_str = "HK" if market == MarketType.HK else "US"
         return cal.is_trading_day(market_str, d)
-    except Exception as e:
-        # Fallback: if holiday_calendar unavailable, assume it's a trading day
-        # (better than blocking all trading)
-        logger.warning(f"holiday_calendar unavailable, assuming trading day: {e}")
+    except ImportError:
+        # Module not installed — fail-open (safe: better to allow trading than block)
+        logger.warning("holiday_calendar not available, assuming trading day")
         return True
+    except Exception as e:
+        # Runtime error (MemoryError, etc.) — fail-closed (safe: prevent trading on unknown day)
+        logger.error(f"holiday_calendar runtime error, blocking trading day: {e}")
+        return False
 
 
 def get_session_config(market: MarketType) -> Dict:

@@ -32,8 +32,14 @@ from .macd_strategy import MACDStrategy
 from .bollinger_strategy import BollingerStrategy
 from .supertrend_strategy import SuperTrendStrategy
 
+# 透明化因子策略 (2026-05-03 新增)
+from .factor_votes import (
+    RSIFactorStrategy, MACDFactorStrategy, BBFactorStrategy,
+    SuperTrendFactorStrategy, MACrossFactorStrategy, VolumeAmplifierStrategy
+)
+
 # 融合策略
-from .confluence_strategy import ConfluenceStrategy
+# from .confluence_strategy import ConfluenceStrategy  # P0 Fix 2026-05-03: Removed missing V1 import
 from .confluence_v2 import ConfluenceStrategyV2
 
 # AI/情绪策略
@@ -64,13 +70,20 @@ from .tech_enhancer import EnhancedConfluenceStrategy
 #   ma_cross, volume_alert - 非核心策略
 
 STRATEGY_REGISTRY = {
-    # === 启用策略 ===
-    "confluence_v2": ConfluenceStrategyV2,
+    # === 启用策略 (透明化因子共识架构) ===
+    "rsi_factor": RSIFactorStrategy,
+    "macd_factor": MACDFactorStrategy,
+    "bb_factor": BBFactorStrategy,
+    "st_factor": SuperTrendFactorStrategy,
+    "ma_cross_factor": MACrossFactorStrategy,
+    "vol_factor": VolumeAmplifierStrategy,
+    # 辅助策略
     "sentiment_ai": SentimentStrategy,
     "open_close_effect": OpenCloseEffectStrategy,
     "event_driven": EventDrivenStrategy,
     "cross_market_arbitrage": CrossMarketArbitrage,
-    "enhanced_confluence": EnhancedConfluenceStrategy,
+    # 废弃/降级策略
+    # "confluence_v2": ConfluenceStrategyV2,  # P0 Fix 2026-05-03: 降级为透明化架构
 }
 
 # 延迟加载 fusion_v2 (避免循环依赖)

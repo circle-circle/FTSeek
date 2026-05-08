@@ -5,7 +5,7 @@
 
 功能:
 1. 根据市场状态动态调整止盈止损参数
-2. 加载 dynamic_exit_params.yaml 配置
+2. 加载 unified_config.yaml (SSOT) 配置
 3. 提供参数查询接口
 4. 支持运行时切换
 5. 考虑交易费用调整止盈止损 (2026-03-24 新增)
@@ -40,7 +40,7 @@ logger = logging.getLogger("ftseek.dynamic_exit")
 # 2026-04-10: propagate=True (默认), 通过 ftseek 父级 logger 输出
 
 # 配置文件路径
-DYNAMIC_EXIT_CONFIG_PATH = '/opt/ftseek/FTSeek/config/dynamic_exit_params.yaml'
+DYNAMIC_EXIT_CONFIG_PATH = '/opt/ftseek/FTSeek/config/unified_config.yaml'  # SSOT
 
 
 @dataclass
@@ -51,6 +51,9 @@ class ExitDecision:
     priority: int = 99       # 优先级，越小越紧急
     close_ratio: float = 1.0 # 平仓比例 (1.0=全平, 0.3=30%)
     is_stop_loss: bool = False
+    # 状态机新增字段
+    new_state: str = None    # 新退出状态 (如 'BE_ACTIVE', 'TRAILING')
+    new_stop_loss: float = None  # 新止损价 (如保本上移后的止损)
 
 
 class DynamicExitManager:
@@ -68,18 +71,24 @@ class DynamicExitManager:
         self.current_regime = 'default'
         self.current_params = {}
         self._load_config()
-        
+
+        # P3 修复 (2026-05-06): 保本止损日志去抖 — 每个持仓 60s 内只记录一次
+        self._breakeven_log_cache: Dict[str, float] = {}  # code → last_log_time
+
         logger.info(f"动态止盈止损管理器已初始化")
     
     def _load_config(self):
-        """加载配置文件"""
+        """加载统一配置 (SSOT: unified_config.yaml)"""
         try:
             if not os.path.exists(self.config_path):
                 logger.warning(f"配置文件不存在：{self.config_path}")
                 return
             
             with open(self.config_path, 'r', encoding='utf-8') as f:
-                self.config = yaml.safe_load(f)
+                full_config = yaml.safe_load(f)
+            
+            # SSOT 兼容: 从 unified_config 提取 dynamic_exit_params
+            self.config = full_config.get('dynamic_exit_params', full_config)
             
             logger.info(f"动态止盈配置已加载：{len(self.config)}个状态")
             
@@ -225,6 +234,12 @@ class DynamicExitManager:
             'atr_multiplier': 2.5,    # ATR 移动止损倍数
         })
     
+    def get_market_params(self, market: str = 'hk') -> Dict:
+        """获取指定市场的退出参数"""
+        if market.lower() == 'us' and 'us' in self.config:
+            return self.config['us']
+        return self.config.get('default', {})
+
     def get_atr_stop_params(self) -> dict:
         """获取 ATR 止损参数"""
         return self.current_params.get('atr_stop', {
@@ -281,7 +296,8 @@ class DynamicExitManager:
             'session_end_force': False,
         })
     
-    def check_breakeven_stop(self, entry_price: float, current_price: float, peak_price: float) -> tuple:
+    def check_breakeven_stop(self, entry_price: float, current_price: float, peak_price: float,
+                             trigger_override: float = None) -> tuple:
         """
         检查是否触发保本止损 (新增 2026-03-17)
         
@@ -289,6 +305,7 @@ class DynamicExitManager:
             entry_price: 入场价
             current_price: 当前价
             peak_price: 持仓期间最高价
+            trigger_override: 时段覆写的触发阈值 (TimeGate)
         
         Returns:
             (should_update: bool, new_stop_price: float)
@@ -298,7 +315,7 @@ class DynamicExitManager:
         if not params.get('enabled', True):
             return False, None
         
-        trigger_profit = params.get('trigger_profit', 0.03)
+        trigger_profit = trigger_override if trigger_override is not None else params.get('trigger_profit', 0.03)
         stop_level = params.get('stop_level', 0.00)
         
         # 计算当前收益率 (使用最高价判断)
@@ -310,16 +327,23 @@ class DynamicExitManager:
         # 如果曾盈利超过触发阈值，止损上移到成本价
         if peak_return >= trigger_profit:
             new_stop_price = entry_price * (1 + stop_level)
-            logger.info(
-                f"保本止损激活: 最高收益={peak_return:.1%} >= 触发线={trigger_profit:.1%}, "
-                f"止损上移到 {stop_level:.1%} (成本价: {new_stop_price:.2f})"
-            )
+            # P3 修复 (2026-05-06): 日志去抖 — 同一标的 60s 内只记录一次
+            code = getattr(self, '_last_code', 'unknown')
+            now = time.time()
+            last_log = self._breakeven_log_cache.get(code, 0)
+            if now - last_log >= 60:
+                logger.info(
+                    f"保本止损激活: 最高收益={peak_return:.1%} >= 触发线={trigger_profit:.1%}, "
+                    f"止损上移到 {stop_level:.1%} (成本价: {new_stop_price:.2f})"
+                )
+                self._breakeven_log_cache[code] = now
             return True, new_stop_price
         
         return False, None
     
     def check_intraday_stop(self, entry_price: float, current_price: float, 
-                            entry_time, is_same_day: bool = True) -> tuple:
+                            entry_time, is_same_day: bool = True,
+                            stop_override: float = None) -> tuple:
         """
         检查是否触发日内止损 (新增 2026-03-17)
         
@@ -328,6 +352,7 @@ class DynamicExitManager:
             current_price: 当前价
             entry_time: 入场时间
             is_same_day: 是否当日买入
+            stop_override: 时段覆写的止损百分比 (TimeGate)
         
         Returns:
             (should_exit: bool, reason: str)
@@ -341,7 +366,7 @@ class DynamicExitManager:
         if not is_same_day:
             return False, None
         
-        stop_percent = params.get('stop_percent', 0.02)
+        stop_percent = stop_override if stop_override is not None else params.get('stop_percent', 0.02)
         
         # 计算收益率
         if entry_price <= 0:
@@ -475,6 +500,7 @@ class DynamicExitManager:
           2. 结构止损          (固定百分比 stop_loss)
           3. 日内止损          (T+0 当日更敏感止损)
           4. 时间止损          (持仓超过 max_holding_hours)
+          4.5. 盘末退出         (距收盘 <=15min: 亏损全平/微利减半/≥0.5ATR过夜)
           5. 波动止损          (日内涨跌区间 > 3×ATR)
           6. 保本止损          (盈利触发后上移止损)
           7. 移动止损          (盈利>trigger_profit 后, 距峰值>trail 触发)
@@ -495,6 +521,8 @@ class DynamicExitManager:
         Returns:
             ExitDecision
         """
+        # P3 修复 (2026-05-06): 传递 code 给保本止损去抖逻辑
+        self._last_code = code
         if entry_price <= 0 or current_price <= 0:
             return ExitDecision(should_exit=False)
 
@@ -503,8 +531,11 @@ class DynamicExitManager:
             pnl_pct = -pnl_pct  # 空头盈亏方向反转
 
         # ── 1. ATR 硬止损 ──────────────────────────────────────────
+        # P1 修复 (2026-05-04): 接入 TimeGate 时段参数覆写
+        from app.strategy.time_gate import get_exit_param
         if atr_value and atr_value > 0:
-            atr_stop_dist = 1.5 * atr_value / entry_price
+            atr_mult = get_exit_param("atr_hard_mult", default=1.5, entry_time=entry_time)
+            atr_stop_dist = atr_mult * atr_value / entry_price
             if pnl_pct <= -atr_stop_dist:
                 return ExitDecision(
                     should_exit=True, reason=f"ATR硬止损(1.5x): 亏损={pnl_pct:.1%}",
@@ -520,8 +551,11 @@ class DynamicExitManager:
             )
 
         # ── 3. 日内止损（T+0 当日更敏感）────────────────────────────
+        # P1 修复 (2026-05-04): 接入 TimeGate 时段参数覆写
+        intraday_pct = get_exit_param("intraday_stop_pct", default=0.02, entry_time=entry_time)
         intraday_exit, intraday_reason = self.check_intraday_stop(
-            entry_price, current_price, entry_time, is_same_day
+            entry_price, current_price, entry_time, is_same_day,
+            stop_override=intraday_pct
         )
         if intraday_exit:
             return ExitDecision(
@@ -539,15 +573,50 @@ class DynamicExitManager:
                 else:
                     et = entry_time
                 holding_hours = (datetime.now() - et).total_seconds() / 3600
-                max_hours = time_params.get('max_holding_hours', 72)
+                # P1 修复 (2026-05-04): 接入 TimeGate 时段参数覆写
+                max_hours = get_exit_param("max_holding_hours", default=time_params.get('max_holding_hours', 72), entry_time=entry_time)
                 if holding_hours >= max_hours:
                     return ExitDecision(
                         should_exit=True,
                         reason=f"时间止损: 持仓{holding_hours:.1f}h >= {max_hours}h",
                         priority=4, close_ratio=1.0, is_stop_loss=False
                     )
-            except Exception as e:
-                logger.warning(f"[时间止损] 时间解析失败，跳过时间止损检查: {e}")
+            except Exception:
+                pass
+
+        # ── 4.5. 盘末退出 (Pre-Close Exit) — P1 2026-05-06 ──────────
+        # 港股 15:45 收盘撮合前分层退出，避免隔夜跳空风险
+        # 规则: 亏损全平 / 0~0.5ATR 微利减半 / ≥0.5ATR 保留
+        if getattr(self, '_pre_close_exit_enabled', True):
+            try:
+                window_min = getattr(self, '_pre_close_window_minutes', 15)
+                from datetime import datetime
+                now = datetime.now()
+                hk_close = now.replace(hour=16, minute=0, second=0, microsecond=0)
+                minutes_to_close = (hk_close - now).total_seconds() / 60.0
+
+                if 0 < minutes_to_close <= window_min and atr_value and atr_value > 0:
+                    # 计算盈利距入场价 (ATR 口径)
+                    profit_atr = (current_price - entry_price) / atr_value if direction == 'BUY' \
+                        else (entry_price - current_price) / atr_value
+
+                    if profit_atr < 0:
+                        # 亏损 → 全平
+                        return ExitDecision(
+                            should_exit=True,
+                            reason=f"盘末退出: 亏损 {profit_atr:.1f}ATR, 不持有亏损过夜",
+                            priority=4.5, close_ratio=1.0, is_stop_loss=True
+                        )
+                    elif profit_atr < 0.5:
+                        # 微利 (0~0.5 ATR) → 减半
+                        return ExitDecision(
+                            should_exit=True,
+                            reason=f"盘末退出: 微利 {profit_atr:.1f}ATR, 减半降低隔夜风险",
+                            priority=4.5, close_ratio=0.5, is_stop_loss=False
+                        )
+                    # ≥0.5 ATR → 保留过夜, 不触发
+            except Exception:
+                pass
 
         # ── 4.5. P6 放量止盈 (Volume Surge TP) ─────────────────────
         # 辩证设计: 仅在浮盈 > 1.5% 且成交量 > 3.5倍均量时触发，部分止盈 50%
@@ -576,8 +645,10 @@ class DynamicExitManager:
                 )
 
         # ── 6. 保本止损（盈利触发后上移止损）────────────────────────
+        # P1 修复 (2026-05-04): 接入 TimeGate 时段参数覆写
+        be_trigger = get_exit_param("breakeven_trigger", default=0.015, entry_time=entry_time)
         breakeven_triggered, breakeven_price = self.check_breakeven_stop(
-            entry_price, current_price, peak_price
+            entry_price, current_price, peak_price, trigger_override=be_trigger
         )
         if breakeven_triggered and current_price <= breakeven_price:
             return ExitDecision(
@@ -593,10 +664,11 @@ class DynamicExitManager:
             trigger = trail_params.get('trigger_profit', 0.08)
             trail_pct = trail_params.get('trail_percent', 0.04)
 
-            # P0-2 优化：ATR 移动止损优先 (从 2×提升至 2.5×)
+            # P0-2 优化：ATR 移动止损优先 (从 2x提升至 2.5x)
+            # P1 修复 (2026-05-04): 接入 TimeGate 时段参数覆写
             if atr_value and atr_value > 0:
-                atr_multiplier = trail_params.get('atr_multiplier', 2.5)
-                trail_dist = atr_multiplier * atr_value / entry_price
+                trail_mult = get_exit_param("trailing_atr_mult", default=trail_params.get('atr_multiplier', 2.5), entry_time=entry_time)
+                trail_dist = trail_mult * atr_value / entry_price
             else:
                 trail_dist = trail_pct
 
@@ -613,10 +685,12 @@ class DynamicExitManager:
                     )
 
         # ── 8-10. 分批止盈 & 固定止盈 ─────────────────────────────
+        # P1 修复 (2026-05-04): 接入 TimeGate 时段参数覆写
+        tp_mult = get_exit_param("take_profit_atr_mult", default=1.0, entry_time=entry_time)
         partial_levels = self.get_partial_take_profit_levels()
         if partial_levels:
             for idx, level in enumerate(sorted(partial_levels, key=lambda x: x['target'])):
-                target = level['target']
+                target = level['target'] * tp_mult  # 时段调整止盈目标
                 ratio = level['ratio']
                 if pnl_pct >= target:
                     priority = 8 + idx
@@ -627,7 +701,7 @@ class DynamicExitManager:
                     )
 
         # 固定止盈（全平）
-        take_profit = self.get_take_profit()
+        take_profit = self.get_take_profit() * tp_mult  # 时段调整
         if pnl_pct >= take_profit:
             return ExitDecision(
                 should_exit=True, reason=f"固定止盈: +{pnl_pct:.1%}",

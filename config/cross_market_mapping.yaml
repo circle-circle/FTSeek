@@ -1,0 +1,9 @@
+# 跨市场映射配置 (Cross-Market Mapping)
+# 用于美股->港股的联动分析
+mapping:
+  US.AAPL:
+    hk_tier1: ["HK.02018", "HK.01810"]
+  US.TSLA:
+    hk_tier1: ["HK.02333", "HK.01810"]
+  US.NVDA:
+    hk_tier1: ["HK.02269", "HK.01810"]

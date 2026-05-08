@@ -72,6 +72,17 @@ if not DINGTALK_SECRET:
     DINGTALK_SECRET = os.getenv("DINGTALK_SECRET_DEFAULT", "")
 
 # ============================================================
+#  飞书推送配置 (必须通过环境变量)
+# ============================================================
+FEISHU_WEBHOOK_URL = os.getenv("FEISHU_WEBHOOK_URL")
+FEISHU_SECRET = os.getenv("FEISHU_SECRET")
+
+if not FEISHU_WEBHOOK_URL:
+    FEISHU_WEBHOOK_URL = os.getenv("FEISHU_WEBHOOK_URL_DEFAULT", "")
+if not FEISHU_SECRET:
+    FEISHU_SECRET = os.getenv("FEISHU_SECRET_DEFAULT", "")
+
+# ============================================================
 #  FastAPI 确认回调服务
 # ============================================================
 CALLBACK_HOST = os.getenv("CALLBACK_HOST", "0.0.0.0")
@@ -176,7 +187,8 @@ def _load_watch_list_us() -> list:
 
 
 WATCH_LIST_HK = _load_watch_list_hk()
-WATCH_LIST_US = _load_watch_list_us()
+# SSOT: Market-independent loading
+WATCH_LIST_US = _load_watch_list_us() if config_center.get('base.market', 'HK') != 'HK' else []
 WATCH_LIST = WATCH_LIST_HK + WATCH_LIST_US
 
 # 港股订阅名单: 仅用于港股交易时段实时行情订阅
@@ -233,19 +245,11 @@ STRATEGIES = _load_strategies_from_config()
 #  交易配置 (从配置中心读取)
 # ============================================================
 HK_LOT_SIZES_CFG = config_center.get('trading.order.hk_lot_sizes')
-HK_LOT_SIZES = HK_LOT_SIZES_CFG.to_dict() if HK_LOT_SIZES_CFG and hasattr(HK_LOT_SIZES_CFG, 'to_dict') else {
-    'HK.00700': 100, 'HK.09988': 100, 'HK.03690': 100, 'HK.09992': 200,
-    'HK.00981': 500, 'HK.01810': 200, 'HK.01024': 100, 'HK.01347': 1000,
-    'HK.01093': 2000, 'HK.00175': 1000, 'HK.01378': 500,
-}
+# ConfigCenter.get() 直接返回 YAML dict，无需 to_dict() 转换
+HK_LOT_SIZES = HK_LOT_SIZES_CFG if isinstance(HK_LOT_SIZES_CFG, dict) else {}
 
 DEFAULT_ORDER_QTY_BY_CODE_CFG = config_center.get('trading.order.default_order_qty_by_code')
-DEFAULT_ORDER_QTY_BY_CODE = DEFAULT_ORDER_QTY_BY_CODE_CFG.to_dict() if DEFAULT_ORDER_QTY_BY_CODE_CFG and hasattr(DEFAULT_ORDER_QTY_BY_CODE_CFG, 'to_dict') else {
-    'HK.00700': 100, 'HK.09988': 100, 'HK.03690': 100, 'HK.09992': 200,
-    'HK.00981': 500, 'HK.01810': 200, 'HK.01024': 100, 'HK.09888': 100,
-    'HK.02318': 500, 'HK.09618': 100, 'HK.01347': 1000, 'HK.01093': 2000,
-    'HK.00175': 1000, 'HK.01378': 500,
-}
+DEFAULT_ORDER_QTY_BY_CODE = DEFAULT_ORDER_QTY_BY_CODE_CFG if isinstance(DEFAULT_ORDER_QTY_BY_CODE_CFG, dict) else {}
 
 DEFAULT_ORDER_QTY_HK = int(config_center.get('trading.order.default_order_qty_hk', 100))
 DEFAULT_ORDER_QTY_US = int(config_center.get('trading.order.default_order_qty_us', 1))
@@ -268,11 +272,11 @@ LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")  # 默认 INFO，由 RotatingFileHand
 #  共识引擎配置 (从配置中心读取)
 # ============================================================
 CONSENSUS_WINDOW = int(config_center.get('strategy.consensus.window_seconds', 90))
-CONSENSUS_THRESHOLD = float(config_center.get('strategy.consensus.threshold', 1.5))
+CONSENSUS_THRESHOLD = float(config_center.get('strategy.consensus.threshold', 1.0))  # 2026-05-06: 对齐 unified_config.yaml
 CONSENSUS_ADX_TREND = float(config_center.get('strategy.consensus.adx_trend', 25))
 CONSENSUS_ADX_RANGE = float(config_center.get('strategy.consensus.adx_range', 20))
 SIGNAL_COOLDOWN = int(config_center.get('strategy.cooldown.signal_cooldown', 120))
-MAX_OPEN_POSITIONS = int(config_center.get('trading.max_open_positions', 12))
+MAX_OPEN_POSITIONS = int(config_center.get('trading.max_open_positions', 20))
 
 SHORT_SELLING_ENABLED_VAL = config_center.get('trading.short_selling_enabled', 'false')
 SHORT_SELLING_ENABLED = str(SHORT_SELLING_ENABLED_VAL).lower() in ('true', '1', 'yes')

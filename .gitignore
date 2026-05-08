@@ -2,6 +2,7 @@
 .env
 .env.local
 .env.*.local
+.env.*
 
 # 密钥和证书
 *.pem
@@ -26,6 +27,10 @@ data/*.db
 data/*.db-shm
 data/*.db-wal
 data/*.sqlite
+app/data/*.db
+app/data/*.db-shm
+app/data/*.db-wal
+app/data/*.sqlite
 
 # 运行时文件
 *.pid

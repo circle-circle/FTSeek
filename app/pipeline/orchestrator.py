@@ -302,6 +302,9 @@ class PreMarketPipeline:
             logger.info("[Pipeline] Stage 5: 无事件包，跳过分析")
             return []
 
+        # 防御: 港股 Pipeline 过滤美股标的 (防止跨市场污染)
+        packs = self._filter_hk_packs(packs)
+
         logger.info(f"[Pipeline] Stage 5: LLM 分析 ({len(packs)} 个包)")
         assessments = await self._analyst.analyze_batch(packs)
         
@@ -310,6 +313,23 @@ class PreMarketPipeline:
             plan = self._analyst.generate_battle_plan_json(assessments)
             logger.info(f"[Pipeline] 作战计划已生成: {len(plan['targets'])} 个目标, 基调={plan['overall_bias']}")
             self._last_battle_plan = plan
+            
+            # 领域事件 — 盘前计划生成
+            from app.core.domain_events import get_event_bus, DomainEvent, EventType, PlanPremarketPayload
+            target_symbols = [t.get('symbol', '') for t in plan.get('targets', [])]
+            get_event_bus().emit(DomainEvent(
+                type=EventType.PLAN_PREMARKET,
+                data=PlanPremarketPayload(
+                    date=plan.get('date', datetime.now().strftime("%Y-%m-%d")),
+                    market='HK',
+                    targets=target_symbols,
+                    restricted=[t.get('symbol', '') for t in plan.get('restricted', [])],
+                    overall_bias=plan.get('overall_bias', '中性'),
+                    regime=plan.get('market_regime', 'unknown'),
+                    generated_at=plan.get('generated_at', ''),
+                )
+            ))
+            logger.info(f"[Pipeline] 盘前计划领域事件已发射")
         except Exception as e:
             logger.warning(f"[Pipeline] 生成作战计划失败: {e}")
             
@@ -383,3 +403,34 @@ class PreMarketPipeline:
                 )
         except Exception as e:
             logger.error(f"[Pipeline] ActionCard 发送失败: {e}")
+
+    # ------------------------------------------------------------------
+    #  跨市场防御
+    # ------------------------------------------------------------------
+
+    def _filter_hk_packs(self, packs: List[Any]) -> List[Any]:
+        """港股 Pipeline 防御: 过滤纯美股标的的事件包"""
+        filtered = []
+        skipped = 0
+        for pack in packs:
+            focus = getattr(pack, "focus_symbols", []) or []
+            # 仅保留含港股标的的事件包
+            hk_symbols = [s for s in focus if s.startswith("HK.")]
+            if hk_symbols:
+                # 更新 focus_symbols 仅保留港股
+                pack.focus_symbols = hk_symbols
+                filtered.append(pack)
+            else:
+                skipped += 1
+                # 记录被过滤的美股事件包
+                theme = getattr(pack, "theme", "")
+                us_only = [s for s in focus if s.startswith("US.")]
+                if us_only:
+                    logger.info(
+                        f"[Pipeline] 过滤纯美股事件包: {theme} -> {us_only[:3]}"
+                    )
+
+        if skipped:
+            logger.info(f"[Pipeline] 跨市场过滤: 跳过 {skipped} 个纯美股事件包")
+
+        return filtered

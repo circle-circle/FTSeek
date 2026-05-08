@@ -269,8 +269,14 @@ class CircuitBreakerCheck(RiskCheck):
                 except Exception:
                     pass
             
-            # 执行硬编码检查
-            allowed, reason = subscriber.circuit_breaker.hard_stop_guard.check(equity)
+            # 执行硬编码检查 (适配三元组返回值)
+            check_result = subscriber.circuit_breaker.hard_stop_guard.check(equity)
+            if isinstance(check_result, tuple) and len(check_result) == 3:
+                allowed, reason, position_multiplier = check_result
+            else:
+                allowed, reason = check_result
+                position_multiplier = 1.0
+            
             if not allowed:
                 return CheckResult(
                     passed=False,
@@ -278,6 +284,8 @@ class CircuitBreakerCheck(RiskCheck):
                     reason=reason,
                     reject_code="hard_stop_guard",
                 )
+            elif position_multiplier < 1.0:
+                logger.info(f"[风控Pipeline] 智能熔断仓位调整: {position_multiplier:.0%}")
         
         return CheckResult(passed=True, check_name=self.name)
 
@@ -589,15 +597,44 @@ class MinHoldTimeCheck(RiskCheck):
 
 
 class OpenDedupCheck(RiskCheck):
-    """开仓原子锁去重"""
+    """开仓原子锁去重 — 防止同一标的在短时间内重复开仓"""
     
     @property
     def name(self) -> str:
         return "open_dedup"
     
     def check(self, ctx: SignalContext, deps: Dict) -> CheckResult:
-        # 注意：开仓去重需要预占时间戳，这里只做检查
-        # 实际预占在 _on_consensus_inner 的执行段完成
+        # 仅对开仓信号做去重检查
+        if ctx.action not in (SignalAction.BUY, SignalAction.SELL):
+            return CheckResult(passed=True, check_name=self.name)
+        
+        subscriber = deps.get("subscriber")
+        if subscriber is None:
+            logger.debug("[开仓去重] subscriber 未注入，跳过检查")
+            return CheckResult(passed=True, check_name=self.name)
+        
+        try:
+            open_ts_map = getattr(subscriber, '_open_position_ts', None)
+            if open_ts_map is None:
+                return CheckResult(passed=True, check_name=self.name)
+            
+            import time
+            last_ts = open_ts_map.get(ctx.code, 0)
+            if last_ts == 0:
+                return CheckResult(passed=True, check_name=self.name)
+            
+            _open_cooldown_sec = 5.0  # 与 _on_consensus_inner 保持一致
+            elapsed = time.time() - last_ts
+            if elapsed < _open_cooldown_sec:
+                return CheckResult(
+                    passed=False,
+                    check_name=self.name,
+                    reason=f"{ctx.code} {_open_cooldown_sec:.0f}s 内已开仓 (距上次 {elapsed:.1f}s)",
+                    reject_code="open_dedup",
+                )
+        except Exception as e:
+            logger.debug(f"[开仓去重] 检查异常: {e}")
+        
         return CheckResult(passed=True, check_name=self.name)
 
 

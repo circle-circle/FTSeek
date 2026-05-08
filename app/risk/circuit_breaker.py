@@ -25,68 +25,177 @@ logger = logging.getLogger("ftseek.circuit_breaker")
 #  2026-04-24 新增：独立于配置的绝对保命机制
 # ============================================================
 
-class HardStopGuard:
+class SmartStopGuard:
     """
-    硬编码熔断守卫 - 绝对保命机制
+    智能熔断守卫 (Smart Stop Guard) - 分阶段动态熔断机制
     
-    独立于常规熔断器，不受配置参数影响，直接写死在代码中。
-    核心规则:
-    1. 日内亏损熔断: 账户当日回撤 >= 3% → 立即停止所有新交易。
-    2. 连续亏损熔断: 连续 3 笔交易亏损 → 强制冷静期。
-    3. 异常降级: 无法获取净值时，保守放行但记录警告。
+    2026-05-07 升级: 替代原 HardStopGuard 的一刀切熔断
+    
+    核心规则 (3 阶段):
+    阶段 0 (正常): 无连续亏损，仓位 100%
+    阶段 1 (警告): 连续 2 笔亏损，仓位降至 50%，不拦截信号
+    阶段 2 (限制): 连续 3 笔亏损，仅放行高置信度信号 (≥0.8)，仓位 50%
+    阶段 3 (熔断): 连续 5 笔亏损 OR 回撤>3%，暂停 60 分钟，后降为阶段 2
+    
+    恢复条件:
+    - 任意时间窗口内出现 1 笔盈利 → 重置阶段 0
+    - 每日 00:00 重置所有状态
+    - 冷却期结束后自动降为阶段 2
     """
+    
+    # 阶段定义
+    STAGE_NORMAL = 0    # 正常交易
+    STAGE_WARNING = 1   # 警告 (仓位减半)
+    STAGE_RESTRICT = 2  # 限制 (仅高置信度)
+    STAGE_CIRCUIT = 3   # 熔断 (暂停)
+    
+    # 阈值配置 (基于富途港股真实手续费)
+    # 最低交易 (小米 200 股 @30) 往返成本 ~15 HKD
+    # 一般交易 (腾讯 100 股 @460) 往返成本 ~81 HKD
+    MIN_LOSS_AMOUNT = 15.0     # 忽略 < 15 元的小额亏损 (覆盖最低手续费)
+    CONFIDENCE_THRESHOLD = 0.8 # 阶段 2 放行阈值
+    COOLDOWN_SECONDS = 3600    # 熔断冷却期 60 分钟
+    DRAWDOWN_LIMIT = 0.03      # 日内回撤硬限制 3%
     
     def __init__(self, db_path: str = None):
         self.db_path = db_path or '/opt/ftseek/FTSeek/data/ftseek.db'
         self._open_equity: Optional[float] = None
         self._init_date: str = datetime.now().strftime('%Y-%m-%d')
+        
+        # 阶段状态
+        self._stage: int = self.STAGE_NORMAL
         self._consecutive_losses: int = 0
+        self._cooldown_until: float = 0.0
         
-    def check(self, current_equity: Optional[float] = None) -> Tuple[bool, str]:
-        """
-        执行硬编码熔断检查
+        # 初始化状态表
+        self._init_state_table()
+        self._load_state()
         
-        Args:
-            current_equity: 当前账户净值 (如果为 None 则跳过净值检查)
-            
-        Returns:
-            (bool, str): (是否可以交易, 拦截原因)
-        """
-        today = datetime.now().strftime('%Y-%m-%d')
-        
-        # 1. 每日开盘净值重置
-        if self._init_date != today:
-            if current_equity is not None:
-                self._open_equity = current_equity
-                logger.info(f"[HardStop] 初始化今日开盘净值: {current_equity}")
-            self._init_date = today
-            self._consecutive_losses = 0  # 每天重置连败计数
-            
-        # 2. 日内亏损熔断 (硬编码 -3%)
-        if current_equity is not None and self._open_equity and self._open_equity > 0:
-            drawdown = (current_equity - self._open_equity) / self._open_equity
-            if drawdown <= -0.03:
-                logger.critical(f"🛑 [HardStop] 日内亏损熔断! 回撤 {drawdown:.2%} 超过 -3% 硬限制")
-                return False, f"🛑 系统熔断：今日回撤 {drawdown:.2%} 超过 -3% 硬限制"
-                
-        # 3. 连续亏损熔断 (硬编码 3笔)
-        if self._check_consecutive_losses():
-            logger.critical("🛑 [HardStop] 连续亏损熔断! 连续 3 笔亏损触发冷静期")
-            return False, "🛑 系统熔断：连续 3 笔交易亏损，触发强制冷静期"
-            
-        return True, ""
+    def _init_state_table(self):
+        """创建持久化状态表"""
+        try:
+            import sqlite3
+            conn = sqlite3.connect(self.db_path)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS smart_stop_state (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL,
+                    updated_at TEXT DEFAULT (datetime('now'))
+                )
+            """)
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            logger.warning(f"[SmartStop] 状态表初始化失败: {e}")
     
-    def _check_consecutive_losses(self) -> bool:
-        """
-        查询数据库检查最近交易是否连续亏损
-        2026-04-24 修复: 排除幽灵仓( entry=exit )和手续费级小额亏损，
-        避免因系统异常(如 stop_loss=entry_price/对账同步)导致的假连败触发熔断
-        """
+    def _load_state(self):
+        """从数据库加载状态"""
         try:
             import sqlite3
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
-            # 获取最近平仓的 5 笔交易 (留余地排除幽灵仓)
+            
+            today = datetime.now().strftime('%Y-%m-%d')
+            cursor.execute("SELECT key, value FROM smart_stop_state WHERE key IN ('stage', 'consecutive_losses', 'cooldown_until', 'init_date')")
+            for row in cursor.fetchall():
+                key, value = row
+                if key == 'stage':
+                    self._stage = int(value)
+                elif key == 'consecutive_losses':
+                    self._consecutive_losses = int(value)
+                elif key == 'cooldown_until':
+                    self._cooldown_until = float(value)
+                elif key == 'init_date':
+                    if value != today:
+                        # 新的一天，重置状态
+                        self._reset_daily()
+            
+            conn.close()
+        except Exception as e:
+            logger.warning(f"[SmartStop] 状态加载失败: {e}")
+    
+    def _save_state(self):
+        """保存状态到数据库"""
+        try:
+            import sqlite3
+            conn = sqlite3.connect(self.db_path)
+            conn.execute("INSERT OR REPLACE INTO smart_stop_state (key, value) VALUES ('stage', ?)", (str(self._stage),))
+            conn.execute("INSERT OR REPLACE INTO smart_stop_state (key, value) VALUES ('consecutive_losses', ?)", (str(self._consecutive_losses),))
+            conn.execute("INSERT OR REPLACE INTO smart_stop_state (key, value) VALUES ('cooldown_until', ?)", (str(self._cooldown_until),))
+            conn.execute("INSERT OR REPLACE INTO smart_stop_state (key, value) VALUES ('init_date', ?)", (self._init_date,))
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            logger.warning(f"[SmartStop] 状态保存失败: {e}")
+    
+    def _reset_daily(self):
+        """每日重置"""
+        logger.info("[SmartStop] 新的一天，重置所有状态")
+        self._init_date = datetime.now().strftime('%Y-%m-%d')
+        self._stage = self.STAGE_NORMAL
+        self._consecutive_losses = 0
+        self._cooldown_until = 0.0
+        self._open_equity = None
+        self._save_state()
+    
+    def check(self, current_equity: Optional[float] = None, signal_confidence: float = 0.0) -> Tuple[bool, str, float]:
+        """
+        智能熔断检查
+        
+        Args:
+            current_equity: 当前账户净值
+            signal_confidence: 信号置信度 (0.0-1.0)
+            
+        Returns:
+            (allowed, reason, position_multiplier)
+        """
+        today = datetime.now().strftime('%Y-%m-%d')
+        if self._init_date != today:
+            self._reset_daily()
+        
+        # 更新连败状态
+        self._update_loss_state()
+        
+        # 日内亏损熔断 (硬限制)
+        if current_equity is not None and self._open_equity and self._open_equity > 0:
+            drawdown = (current_equity - self._open_equity) / self._open_equity
+            if drawdown <= -self.DRAWDOWN_LIMIT:
+                logger.critical(f"🛑 [SmartStop] 日内亏损熔断! 回撤 {drawdown:.2%} 超过 {self.DRAWDOWN_LIMIT:.0%} 硬限制")
+                self._stage = self.STAGE_CIRCUIT
+                self._cooldown_until = time.time() + self.COOLDOWN_SECONDS
+                self._save_state()
+                return False, f"🛑 系统熔断：今日回撤 {drawdown:.2%} 超过硬限制", 0.0
+        
+        # 阶段 3: 熔断
+        if self._stage == self.STAGE_CIRCUIT:
+            if time.time() < self._cooldown_until:
+                remaining = int(self._cooldown_until - time.time())
+                return False, f"🛑 熔断冷却中 (剩余 {remaining//60} 分钟)", 0.0
+            else:
+                logger.info("[SmartStop] 熔断冷却结束，降为限制模式")
+                self._stage = self.STAGE_RESTRICT
+                self._save_state()
+        
+        # 阶段 2: 限制
+        if self._stage == self.STAGE_RESTRICT:
+            if signal_confidence >= self.CONFIDENCE_THRESHOLD:
+                return True, "🔶 限制模式 (高置信度放行)", 0.5
+            else:
+                return False, f"🔶 限制模式 (置信度 {signal_confidence:.2f} < {self.CONFIDENCE_THRESHOLD})", 0.0
+        
+        # 阶段 1: 警告
+        if self._stage == self.STAGE_WARNING:
+            return True, "⚠️ 警告模式 (仓位减半)", 0.5
+        
+        # 阶段 0: 正常
+        return True, "✅ 正常模式", 1.0
+    
+    def _update_loss_state(self):
+        """检查数据库更新连败状态"""
+        try:
+            import sqlite3
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
             cursor.execute(
                 "SELECT realized_pnl, entry_price, exit_price "
                 "FROM positions WHERE status='CLOSED' AND exit_price IS NOT NULL "
@@ -95,35 +204,62 @@ class HardStopGuard:
             rows = cursor.fetchall()
             conn.close()
             
-            # 只统计有真实价格变动的交易 (entry != exit)
-            # 幽灵仓(对账同步/异常清理)的 entry=exit，仅含手续费，不算真实亏损
+            # 过滤有真实价格变动的交易
             real_trades = [
                 row[0] for row in rows
                 if row[0] is not None and row[1] is not None and row[2] is not None
-                and abs(row[1] - row[2]) > 0.01  # 有真实价格变动
+                and abs(row[1] - row[2]) > 0.01
             ]
             
-            if len(real_trades) >= 3:
-                recent_3 = real_trades[:3]
-                if all(pnl < 0 for pnl in recent_3):
-                    logger.warning(
-                        f"[HardStop] 连续3笔真实亏损: {recent_3}"
-                    )
-                    return True
-        except Exception as e:
-            logger.warning(f"[HardStop] 连续亏损检查失败: {e}")
+            if not real_trades:
+                return
             
-        return False
+            # 重置条件: 出现盈利
+            if any(pnl > 0 for pnl in real_trades[:3]):
+                if self._consecutive_losses > 0:
+                    logger.info(f"[SmartStop] 出现盈利，重置连败状态 (原 {self._consecutive_losses} 笔)")
+                self._consecutive_losses = 0
+                self._stage = self.STAGE_NORMAL  # 完全恢复正常模式
+                self._save_state()
+                return
+            
+            # 计算连续亏损 (忽略小额)
+            significant_losses = [
+                pnl for pnl in real_trades 
+                if pnl < -self.MIN_LOSS_AMOUNT
+            ]
+            self._consecutive_losses = len(significant_losses[:5])
+            
+            # 阶段升级逻辑
+            if self._consecutive_losses >= 5 and self._stage < self.STAGE_CIRCUIT:
+                self._stage = self.STAGE_CIRCUIT
+                self._cooldown_until = time.time() + self.COOLDOWN_SECONDS
+                logger.critical(f"🛑 [SmartStop] 连续 {self._consecutive_losses} 笔亏损 → 阶段 3 (熔断)")
+            elif self._consecutive_losses >= 3 and self._stage < self.STAGE_RESTRICT:
+                self._stage = self.STAGE_RESTRICT
+                logger.warning(f"🔶 [SmartStop] 连续 {self._consecutive_losses} 笔亏损 → 阶段 2 (限制)")
+            elif self._consecutive_losses >= 2 and self._stage < self.STAGE_WARNING:
+                self._stage = self.STAGE_WARNING
+                logger.info(f"⚠️ [SmartStop] 连续 {self._consecutive_losses} 笔亏损 → 阶段 1 (警告)")
+            
+            self._save_state()
+            
+        except Exception as e:
+            logger.warning(f"[SmartStop] 连败状态更新失败: {e}")
 
     def update_state(self, trade_result: Optional[float] = None):
-        """
-        更新连败状态 (当一笔交易平仓后调用)
-        """
+        """向后兼容: 更新连败状态 (当一笔交易平仓后调用)"""
         if trade_result is not None:
             if trade_result < 0:
                 self._consecutive_losses += 1
             else:
                 self._consecutive_losses = 0
+                self._stage = self.STAGE_NORMAL
+            self._save_state()
+
+
+# 向后兼容别名
+HardStopGuard = SmartStopGuard
 
 
 @dataclass
@@ -174,6 +310,10 @@ class CircuitBreaker:
         self.state = CircuitBreakerState()
         self.reject_reasons: List[str] = []
         
+        # Kill switch (手动紧急熔断)
+        self._halted: bool = False
+        self._halt_reason: str = ""
+        
         # 2026-04-24: 集成硬编码熔断守卫
         self.hard_stop_guard = HardStopGuard(db_path=db_path)
         
@@ -216,9 +356,13 @@ class CircuitBreaker:
         # 2026-04-09 新增: 持仓限制导致的拒绝也不计入熔断
         POSITION_ERRORS = ["持仓数", "position_limit", "最大持仓", "已达最大"]
         
+        # 2026-05-07 P0 辩论修复: 价格检查拒绝不计入熔断 (避免级联放大)
+        PRICE_CHECK_ERRORS = ["价格检查", "price_check", "追高", "追低", "接近日内高", "接近日内低"]
+        
         reason_lower = reason.lower() if reason else ""
         is_technical = any(kw in reason_lower for kw in TECHNICAL_ERRORS)
         is_position_limit = any(kw in reason_lower for kw in POSITION_ERRORS)
+        is_price_check = any(kw in reason_lower for kw in PRICE_CHECK_ERRORS)
         
         if is_technical:
             # 技术性错误：记录但不触发熔断
@@ -229,6 +373,13 @@ class CircuitBreaker:
         if is_position_limit:
             # 持仓限制：记录但不触发熔断（这是正常风控行为）
             logger.info(f"[熔断器] 持仓限制拒绝，不计入熔断: {reason}")
+            self.state.total_rejects_today += 1
+            return
+        
+        if is_price_check:
+            # 2026-05-07 P0: 价格检查拒绝不计入熔断 (避免级联放大)
+            # 价格检查是正常的风控行为，不应导致交易暂停
+            logger.info(f"[熔断器] 价格检查拒绝，不计入熔断: {reason}")
             self.state.total_rejects_today += 1
             return
         
@@ -323,12 +474,16 @@ class CircuitBreaker:
     
     def is_paused(self) -> bool:
         """
-        判断是否处于熔断暂停状态
+        判断是否处于熔断暂停状态 (含手动 kill switch)
         
         Returns:
             bool: 是否暂停中
         """
         self._check_date_reset()
+        
+        # Kill switch 优先检查
+        if self._halted:
+            return True
         
         if self.state.pause_until and time.time() < self.state.pause_until:
             return True

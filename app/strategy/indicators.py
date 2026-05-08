@@ -489,3 +489,62 @@ def macd_incremental(
         return indicator_cache.initialize_macd(code, historical_closes, fast, slow, signal)
     else:
         return indicator_cache.update_macd(code, close, fast, slow, signal, state)
+
+
+# ============================================================
+#  波动率自适应 (用于布林带 σ 动态调整)
+# ============================================================
+
+def volatility_factor(
+    highs: list, lows: list, closes: list, period: int = 20
+) -> Optional[float]:
+    """计算波动率因子 (平均真实波幅 / 收盘价)
+
+    Args:
+        highs: 最高价序列
+        lows: 最低价序列
+        closes: 收盘价序列
+        period: 计算窗口
+
+    Returns:
+        波动率因子 (ATRP)，None 如果数据不足
+    """
+    if len(highs) < period + 1 or len(closes) < period:
+        return None
+
+    true_ranges = []
+    for i in range(-period, 0):
+        h = highs[i]
+        l = lows[i]
+        c_prev = closes[i - 1] if i > -len(closes) else closes[i]
+        tr = max(h - l, abs(h - c_prev), abs(l - c_prev))
+        true_ranges.append(tr)
+
+    atr = sum(true_ranges) / period
+    avg_close = sum(closes[-period:]) / period
+
+    if avg_close <= 0:
+        return None
+
+    return atr / avg_close
+
+
+def volatility_adaptive_multiplier(
+    current_vf: float, baseline_vf: float, alpha: float = 1.5
+) -> float:
+    """根据波动率动态调整布林带 σ 倍数
+
+    Args:
+        current_vf: 当前波动率因子
+        baseline_vf: 基准波动率因子 (中位数)
+        alpha: 调节系数 (1.0=不调节, >1.0=高波动时放宽)
+
+    Returns:
+        σ 倍数调整系数
+    """
+    if baseline_vf <= 0 or current_vf <= 0:
+        return 1.0
+
+    ratio = current_vf / baseline_vf
+    # 高波动时放宽布林带 (增大 σ), 低波动时收紧
+    return max(0.5, min(3.0, 1.0 + alpha * (ratio - 1.0)))

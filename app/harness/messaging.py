@@ -5,11 +5,14 @@ Harness 消息传递模块
 """
 
 import asyncio
+import logging
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from typing import Any, Callable, Dict, List, Optional, Set
+
+logger = logging.getLogger("harness.messaging")
 
 __all__ = [
     "MessageType",
@@ -173,7 +176,7 @@ class MessageChannel:
                     callback(message)
             except Exception as e:
                 # 记录错误但不影响其他订阅者
-                print(f"Error notifying subscriber {subscriber_id}: {e}")
+                logger.error(f"Error notifying subscriber {subscriber_id}: {e}", exc_info=True)
 
     async def get(self, timeout: Optional[float] = None) -> Message:
         """
@@ -253,7 +256,7 @@ class MessageBus:
                 else:
                     callback(message)
             except Exception as e:
-                print(f"Error notifying global subscriber {subscriber_id}: {e}")
+                logger.error(f"Error notifying global subscriber {subscriber_id}: {e}", exc_info=True)
 
         # 发布到指定通道
         if channel and channel in self._channels:

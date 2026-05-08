@@ -1,0 +1,6 @@
+# 美股数据源配置
+sources:
+  - name: yahoo_finance
+    enabled: true
+  - name: alpha_vantage
+    enabled: false

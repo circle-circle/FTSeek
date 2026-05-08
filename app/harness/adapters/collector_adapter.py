@@ -5,6 +5,7 @@ Collector Adapter - 数据收集模块适配器
 """
 
 import logging
+from datetime import datetime
 from typing import Any, Dict, Optional
 
 from ..base import AgentConfig
@@ -47,9 +48,8 @@ class CollectorAdapter(BaseAdapter):
         """加载定期收集器模块"""
         try:
             from app.review.periodic_collector_hk import PeriodicTradeCollector
-            # 需要 db_session 和 futu_client，这里简化处理
-            self._collector = None  # 实际使用时需要传入依赖
-            self.logger.info("PeriodicTradeCollector module loaded")
+            self._collector = PeriodicTradeCollector(use_real_db=True)
+            self.logger.info("PeriodicTradeCollector loaded (real DB data source)")
             return self._collector
         except ImportError as e:
             self.logger.warning(f"Failed to load PeriodicTradeCollector: {e}")
@@ -83,17 +83,27 @@ class CollectorAdapter(BaseAdapter):
             return self._fallback_collect(market)
 
     async def _collect(self, market: str) -> Dict[str, Any]:
-        """收集交易数据"""
-        # 简化实现，实际应该调用 collector.collect_trades()
-        return {
-            "task": "collect",
-            "market": market,
-            "trades": [],
-            "trade_count": 0,
-            "collection_time": "2026-03-29T09:00:00",
-            "adapter": "collector",
-            "note": "Placeholder - actual implementation requires db_session and futu_client",
-        }
+        """收集交易数据 — 从真实 DB 读取"""
+        if not self._collector:
+            return self._fallback_collect(market)
+
+        try:
+            date_str = datetime.now().strftime("%Y-%m-%d")
+            count = self._collector.collect_from_database(market=market, date=date_str)
+            trades = self._collector.get_last_trades()
+            return {
+                "task": "collect",
+                "market": market,
+                "date": date_str,
+                "trade_count": count,
+                "trades": trades,
+                "collection_time": datetime.now().isoformat(),
+                "adapter": "collector",
+                "source": "real_db",
+            }
+        except Exception as e:
+            self.logger.error(f"Collect failed: {e}")
+            return self._fallback_collect(market)
 
     async def _get_status(self) -> Dict[str, Any]:
         """获取收集状态"""

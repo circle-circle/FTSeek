@@ -67,13 +67,24 @@ class SmartOrder:
 class SmartOrderRouter:
     """智能订单路由器"""
     
-    def __init__(self, max_order_amount: float = 120000.0):
+    def __init__(self, max_order_amount: float = None):
         """
         初始化
         
         Args:
-            max_order_amount: 最大订单金额 (HKD)
+            max_order_amount: 最大订单金额 (HKD). If None, derived from capital + pct config.
         """
+        if max_order_amount is None:
+            try:
+                from config.config_center import get_config_center
+                config_center = get_config_center()
+                # SSOT Capital Adaptive
+                capital = config_center.get('capital.fixed_amount', 1000000)
+                order_pct = config_center.get('trading.order.max_order_pct', 0.12)
+                max_order_amount = capital * order_pct
+            except:
+                max_order_amount = 120000.0  # Fallback
+        
         self.max_order_amount = max_order_amount
         logger.info(f"智能订单路由器已初始化 | 最大订单金额：HK${max_order_amount:,.0f}")
     

@@ -23,6 +23,8 @@ from typing import Dict, List, Optional, Any
 from datetime import datetime
 from pathlib import Path
 
+from .hermes_queue import HermesQueue
+
 logger = logging.getLogger("ftseek.llm.agent_bridge")
 
 # 文件系统协议目录
@@ -49,17 +51,20 @@ class FTSeekAgentBridge:
     - 降级优先 > 阻塞等待 (Hermes 不可用时不影响交易)
     """
     
-    def __init__(self, market: str = "hk"):
+    def __init__(self, market: str = "hk", use_queue: bool = True):
         """
         初始化 Agent 桥接
-        
+
         Args:
             market: 市场标识 "hk" (港股) 或 "us" (美股)
+            use_queue: 是否使用 hermes_queue.db (持久化任务队列), 默认 True
         """
         self.market = market.lower()
+        self.use_queue = use_queue
         self._memory_file = os.path.join(MEMORY_DIR, f"{self.market}.json")
         self._memory = self._load_memory()
         self._hermes_available = True  # Hermes 可用性标志
+        self._queue = HermesQueue() if use_queue else None
         
     def _load_memory(self) -> Dict:
         """加载指定市场的交易记忆"""
@@ -283,49 +288,131 @@ class FTSeekAgentBridge:
         
         logger.info(f"📤 请求已写入: {request_file}")
         
-        # 等待响应
-        response = self._wait_for_response(request_id, timeout=60)
+        # 等待响应 (EOD 归因需要更长时间)
+        response = self._wait_for_response(request_id, timeout=120)
         
         # 更新记忆
         if response and response.get("memory_updates"):
             self._update_memory(response["memory_updates"])
         
         return response
-    
+
+    # ─── 队列传输层 (新增) ───────────────────────────────────────
+
+    def enqueue_task(self, request_type: str, payload: Dict = None,
+                     market: str = None) -> Optional[str]:
+        """将任务写入 hermes_queue.db 持久化队列。
+
+        Args:
+            request_type: battle_plan / midday_adjust / eod_review
+            payload: 业务上下文数据
+            market: 市场 (默认使用实例 market)
+
+        Returns:
+            request_id 字符串，或 None (入队失败)
+        """
+        if not self._queue:
+            logger.warning("[%s] 队列不可用，回退到文件协议", self.market)
+            return None
+
+        mkt = market or self.market
+        request_id = f"{request_type}_{mkt}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        ok = self._queue.enqueue(request_id, request_type, mkt, payload or {})
+        return request_id if ok else None
+
+    def wait_for_queue_result(self, request_id: str, timeout: int = 120) -> Optional[Dict]:
+        """等待队列任务完成 (通过 HermesQueue)"""
+        if not self._queue:
+            return None
+        return self._queue.wait_for_completion(request_id, timeout=timeout)
+
+    def generate_midday_adjustment(self, morning_summary: Dict = None,
+                                    ashare_data: List[Dict] = None,
+                                    volume_leaders: List[Dict] = None,
+                                    positions: List[Dict] = None) -> Dict:
+        """午间作战计划调整 — 通过 Hermes Agent 分析上午数据"""
+        logger.info("[%s] 午间调整 — 通过 Hermes Agent", self.market)
+
+        payload = {
+            "trades_context": json.dumps(morning_summary or {}, ensure_ascii=False),
+            "ashare_data": json.dumps(ashare_data or [], ensure_ascii=False),
+            "volume_leaders": json.dumps(volume_leaders or [], ensure_ascii=False),
+            "positions": json.dumps(positions or [], ensure_ascii=False),
+        }
+
+        if self.use_queue and self._queue:
+            request_id = self.enqueue_task("midday_adjust", payload)
+            if request_id:
+                logger.info("[%s] 午间任务已入队: %s", self.market, request_id)
+                result = self.wait_for_queue_result(request_id, timeout=120)
+                if result:
+                    return result
+                logger.warning("[%s] 午间任务队列超时，回退文件协议", self.market)
+
+        # 回退: 文件协议
+        request_id = f"midday_{self.market}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        request_file = os.path.join(REQUESTS_DIR, f"{request_id}.json")
+        memory_text = self._format_memory_for_prompt()
+
+        request = {
+            "id": request_id,
+            "type": "midday_adjust",
+            "market": self.market,
+            "timestamp": datetime.now().isoformat(),
+            "context": {
+                "memory": memory_text,
+                **payload,
+            },
+        }
+        with open(request_file, "w", encoding="utf-8") as f:
+            json.dump(request, f, ensure_ascii=False, indent=2)
+        logger.info("午间请求已写入: %s", request_file)
+        return self._wait_for_response(request_id, timeout=120)
+
     def _wait_for_response(self, request_id: str, timeout: int = 60) -> Dict:
         """
         等待 Hermes 响应 (带降级机制)
-        
+
         降级策略:
-        1. 首次超时 → 标记 Hermes 不可用
-        2. 后续请求 → 直接返回 fallback，不等待
-        3. 连续 5 次失败 → 禁用该市场 Agent 调用
+        1. 队列可用 → 优先队列轮询
+        2. 队列超时/不可用 → 回退文件协议
+        3. 文件协议超时 → 标记不可用，返回 fallback
         """
-        # 如果 Hermes 已标记不可用，直接返回 fallback
         if not self._hermes_available:
             logger.warning(f"[{self.market}] Hermes 不可用，使用降级响应")
             return self._fallback_response(request_id)
-        
+
+        # 如果队列可用，也通过队列轮询
+        if self._queue:
+            queue_result = self._queue.wait_for_completion(request_id, timeout=min(timeout, 30))
+            if queue_result:
+                self._hermes_available = True
+                return queue_result
+
+        # 文件协议轮询
         response_file = os.path.join(RESPONSES_DIR, f"{request_id}.json")
         start_time = time.time()
-        
+
         while time.time() - start_time < timeout:
             if os.path.exists(response_file):
                 try:
                     with open(response_file, 'r', encoding='utf-8') as f:
                         response = json.load(f)
                     logger.info(f"✅ [{self.market}] 收到响应: {request_id}")
-                    # 重置可用性
                     self._hermes_available = True
                     # 清理请求文件
                     request_file = os.path.join(REQUESTS_DIR, f"{request_id}.json")
                     if os.path.exists(request_file):
                         os.remove(request_file)
+                    # 清理响应文件 (防止磁盘堆积)
+                    if os.path.exists(response_file):
+                        os.remove(response_file)
+                        logger.info(f"🧹 已清理响应文件: {os.path.basename(response_file)}")
                     return response.get("result", {})
                 except Exception as e:
                     logger.warning(f"读取响应失败: {e}")
             time.sleep(2)
-        
+
         # 超时 → 标记不可用，返回 fallback
         logger.warning(f"⏱️ [{self.market}] 响应超时: {request_id}")
         self._hermes_available = False
@@ -440,6 +527,154 @@ class FTSeekAgentBridge:
         """强制重置 Hermes 可用性 (用于手动恢复)"""
         self._hermes_available = True
         logger.info(f"[{self.market}] Hermes 可用性已重置")
+
+    # ════════════════════════════════════════════════════════════════
+    #  新增: 通用 LLM 分析场景 (替代分散的 LLM 调用)
+    # ════════════════════════════════════════════════════════════════
+
+    def analyze_next_day_preview(self, collected: Dict, lessons: List[Dict],
+                                  plan_gap: Dict = None) -> Dict:
+        """次日预判分析 — 替代 pipeline/next_day_preview.py 的 LLM 调用"""
+        logger.info(f"[{self.market}] 🌙 次日预判分析...")
+
+        payload = {
+            "trades_context": json.dumps(collected.get("trades", []), ensure_ascii=False, default=str)[:2000],
+            "lessons": json.dumps(lessons[:5], ensure_ascii=False, default=str)[:2000],
+            "plan_gap": json.dumps(plan_gap or {}, ensure_ascii=False)[:1000],
+        }
+
+        if self.use_queue and self._queue:
+            request_id = self.enqueue_task("next_day_preview", payload)
+            if request_id:
+                logger.info(f"[{self.market}] 次日预判任务已入队: {request_id}")
+                result = self.wait_for_queue_result(request_id, timeout=90)
+                if result:
+                    return result
+
+        logger.warning(f"[{self.market}] 次日预判降级 (Hermes 不可用)")
+        return {
+            "status": "fallback",
+            "market_bias_next_day": "NEUTRAL",
+            "key_question": "Hermes 不可用，无法生成次日预判",
+            "regime_shift_flags": [],
+            "emergent_risks": ["Agent 不可用，建议保守交易"],
+            "overnight_watch": [],
+            "watchlist_changes": [],
+        }
+
+    def analyze_news_risk(self, symbol: str, headline: str,
+                           content: str, pos_info: Dict) -> Dict:
+        """新闻风险研判 — 替代 pipeline/news_interceptor.py 的 LLM 调用"""
+        logger.info(f"[{self.market}] 🛡️ 新闻风险研判: {symbol}")
+
+        payload = {
+            "symbol": symbol,
+            "headline": headline,
+            "content": content[:500],
+            "pos_info": pos_info,
+        }
+
+        if self.use_queue and self._queue:
+            request_id = self.enqueue_task("news_risk", payload)
+            if request_id:
+                result = self.wait_for_queue_result(request_id, timeout=30)
+                if result:
+                    return result
+
+        logger.warning(f"[{self.market}] 新闻研判降级: {symbol}")
+        return {
+            "status": "fallback",
+            "action": "HOLD",
+            "confidence": 0.0,
+            "reason": "LLM 不可用，保守持有",
+        }
+
+    def analyze_market(self, code: str, market_data: Dict,
+                        news_context: Dict = None) -> Dict:
+        """个股市场分析 — 替代 ai/llm_market_analyst.py 的 LLM 调用"""
+        logger.info(f"[{self.market}] 📊 个股分析: {code}")
+
+        payload = {
+            "code": code,
+            "market_data": json.dumps(market_data, ensure_ascii=False, default=str)[:2000],
+            "news_context": json.dumps(news_context or {}, ensure_ascii=False)[:1000],
+        }
+
+        if self.use_queue and self._queue:
+            request_id = self.enqueue_task("market_analysis", payload)
+            if request_id:
+                result = self.wait_for_queue_result(request_id, timeout=90)
+                if result:
+                    return result
+
+        return {
+            "status": "fallback",
+            "direction": "NEUTRAL",
+            "confidence": 0.0,
+            "reasoning": "LLM 不可用，无法评估",
+        }
+
+    def analyze_attribution(self, trade_date: str, trades: List[Dict],
+                             lessons: List[Dict]) -> Dict:
+        """归因分析 — 替代 attribution/llm_attribution.py 的 LLM 调用"""
+        logger.info(f"[{self.market}] 🔍 归因分析: {trade_date}")
+
+        payload = {
+            "trade_date": trade_date,
+            "trades": json.dumps(trades, ensure_ascii=False, default=str)[:3000],
+            "lessons": json.dumps(lessons[:10], ensure_ascii=False)[:2000],
+        }
+
+        if self.use_queue and self._queue:
+            request_id = self.enqueue_task("attribution", payload)
+            if request_id:
+                result = self.wait_for_queue_result(request_id, timeout=120)
+                if result:
+                    return result
+
+        # 降级: 基础统计
+        total_pnl = sum(t.get("pnl", 0) for t in trades)
+        win_count = sum(1 for t in trades if t.get("pnl", 0) > 0)
+        return {
+            "status": "fallback",
+            "total_pnl": total_pnl,
+            "win_rate": win_count / max(len(trades), 1),
+            "lessons": lessons[:3],
+        }
+
+    def analyze_premarket_debate(self, candidate_pool: List[Dict],
+                                   market_context: Dict, date: str) -> Dict:
+        """盘前辩论分析 — 替代 harness/premarket_debate.py 的 LLM 调用"""
+        logger.info(f"[{self.market}] 🗣️ 盘前辩论分析...")
+
+        payload = {
+            "candidate_pool": json.dumps(candidate_pool, ensure_ascii=False, default=str)[:3000],
+            "market_context": json.dumps(market_context, ensure_ascii=False, default=str)[:2000],
+            "date": date,
+        }
+
+        if self.use_queue and self._queue:
+            request_id = self.enqueue_task("premarket_debate", payload)
+            if request_id:
+                logger.info(f"[{self.market}] 盘前辩论任务已入队: {request_id}")
+                result = self.wait_for_queue_result(request_id, timeout=120)
+                if result:
+                    return result
+
+        logger.warning(f"[{self.market}] 盘前辩论降级")
+        return {
+            "status": "fallback",
+            "mode": "fallback",
+            "success_count": 0,
+            "total_models": 0,
+            "arbiter_conclusion": {
+                "market_sentiment": "NEUTRAL",
+                "risk_level": "UNKNOWN",
+                "auditor_score": 50,
+                "action_recommendation": "NEUTRAL",
+                "suggested_position_pct": 0.2,
+            },
+        }
 
 
 # 全局单例 (按市场分离)

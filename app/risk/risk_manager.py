@@ -16,7 +16,7 @@ import yaml
 from typing import Dict, List, Optional, Any, Tuple
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from app.utils.session_detector import SessionDetector
+from app.shared.market_hours import MarketType, get_session_config, get_market_phase
 from pathlib import Path
 
 logger = logging.getLogger("ftseek.risk.manager")
@@ -195,9 +195,9 @@ class RiskManager:
                     trailing_stop_enabled=stop_loss_cfg.get("trailing_enabled", True),
                     take_profit_partial=take_profit_cfg.get("partial_enabled", True),
                     take_profit_partial_ratio=take_profit_cfg.get("partial_ratio", 0.50),
-                    daily_loss_limit=circuit_breaker_cfg.get("daily_loss_limit", 0.03),
-                    consecutive_loss_limit=circuit_breaker_cfg.get("consecutive_loss_limit", 3),
-                    pause_duration=circuit_breaker_cfg.get("pause_duration", 3600),
+                    daily_loss_limit=risk_limits.get("max_daily_loss", 0.03),
+                    consecutive_loss_limit=risk_limits.get("consecutive_loss_limit", 3),
+                    pause_duration=risk_limits.get("circuit_breaker", {}).get("pause_duration_sec", 300),
                 )
                 logger.info("风控配置已从配置中心加载")
             else:
@@ -235,10 +235,8 @@ class RiskManager:
         self.weekly_pnl = 0.0
         self.week_start = self._get_week_start()
         
-        # Phase 2: 初始化时段检测器
-        self.session_detector = None
-        if time_aware_config:
-            self.session_detector = SessionDetector(time_aware_config)
+        # Phase 2: 时段检测器已迁移到 app.shared.market_hours
+        self._time_aware_enabled = bool(time_aware_config)
         
         # 系统统计
         self.consecutive_losses = 0
@@ -335,9 +333,9 @@ class RiskManager:
             time_aware_min_conf = source_min_conf
             time_aware_max_pos = source_max_pos
             
-            if self.session_detector:
-                session_config = self.session_detector.get_current_config()
-                session_name = self.session_detector.get_current_session().name
+            if self._time_aware_enabled:
+                session_config = get_session_config(MarketType.HK)
+                session_name = get_market_phase(MarketType.HK).value
                 
                 session_conf = session_config.get('min_confidence')
                 if session_conf is not None:
@@ -384,7 +382,7 @@ class RiskManager:
             # 异常时返回失败，确保安全
             return RiskCheckResult(
                 passed=False,
-                details={'error': False},
+                details={'error': True},
                 timestamp=datetime.now()
             )
     
@@ -480,6 +478,32 @@ class RiskManager:
             logger.error(f"_check_daily_trades 异常：{e}")
             return False
     
+    def _is_daily_circuit_broken(self) -> bool:
+        # P1 修复 2026-05-04: 硬编码日级熔断检查
+        # 检查两项条件，任一触发则熔断:
+        # 1. 今日亏损超过 max_daily_loss (默认 3%)
+        # 2. 连续亏损次数超过 consecutive_loss_limit (默认 3 次)
+        try:
+            if self.today_pnl < 0:
+                total_capital = self.account.get("total_capital", self.config.initial_cash)
+                max_loss = self.config.max_daily_loss * total_capital
+                if abs(self.today_pnl) >= max_loss:
+                    logger.critical(
+                        f"日级熔断触发: 今日亏损 {self.today_pnl:.2f} >= 限额 {max_loss:.2f}"
+                    )
+                    return True
+            consecutive = getattr(self, 'consecutive_losses', 0)
+            limit = getattr(self.config, 'consecutive_loss_limit', 3)
+            if consecutive >= limit:
+                logger.critical(
+                    f"日级熔断触发: 连续亏损 {consecutive} 次 >= 限制 {limit}"
+                )
+                return True
+            return False
+        except Exception as e:
+            logger.error(f"_is_daily_circuit_broken 异常: {e}")
+            return False
+
     def _check_daily_loss(self) -> bool:
         """
         检查日亏损 (<5%)
@@ -1163,6 +1187,8 @@ class RiskLimit:
     max_var_percent: float = 0.03           # 最大 VaR
     max_correlated_exposure: float = 0.40   # 高相关标的合计上限
     max_trades_per_day: int = 5             # 2026-04-16 对齐 config.yaml (5)
+    max_symbol_trades_per_day: int = 1      # 2026-05-08: 单只股票日内最多交易次数 (防重复交易)
+    min_open_interval_sec: int = 900        # 2026-05-08: 两次开仓最小间隔 (秒)
     max_single_loss: float = 0.05           # 2026-04-16 对齐 config.yaml (0.05)
     max_weekly_loss: float = 0.08         # 2026-04-15: 0.10→0.08, 对齐 config.yaml           # 周亏损限制
     consecutive_loss_limit: int = 3       # 2026-04-15: 5→3, 对齐 config.yaml         # 连续亏损限制

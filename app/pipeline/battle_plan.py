@@ -195,14 +195,32 @@ class BattlePlanManager:
         trade_direction_normalized = "LONG" if direction == "BUY" else "SHORT"
 
         plan_direction = target.get('direction', '').upper()
-
-        if plan_direction != 'ANY' and plan_direction != trade_direction_normalized:
-            # 特殊处理: 计划说 BUY (做多)，实际信号说 SELL (可能是技术面看跌)
-            # 这种背离应该由 L1 决策层处理，或者至少是强警告
-            # 为了安全，默认拦截，除非明确允许
+        # WATCH = 仅观察, 实际等同于 ANY (不限制多空), 仅做白名单过滤
+        if plan_direction in ('WATCH', 'ANY'):
+            pass
+        elif plan_direction != trade_direction_normalized:
             return False, f"🚫 [方向背离] 计划建议 {plan_direction}，当前信号 {trade_direction}"
 
         return True, "✅ 符合计划"
+
+    def check_high_conviction_override(
+        self, symbol: str, direction: str,
+        consensus_score: float = 0, agree_count: int = 0,
+        mtf_alignment: float = 0, volume_ratio: float = 0,
+    ) -> Tuple[bool, str]:
+        """高置信度计划外通道 — 门槛远高于常规，仓位严格限制"""
+        if consensus_score < 2.5:
+            return False, f"共识分数{consensus_score:.1f}<2.5"
+        if agree_count < 4:
+            return False, f"策略同意数{agree_count}<4"
+        if mtf_alignment < 0.15:
+            return False, f"MTF对齐度{mtf_alignment:.0%}<15%"
+        if volume_ratio < 1.5:
+            return False, f"量比{volume_ratio:.1f}<1.5x"
+        return True, "高置信度例外放行"
+
+    def get_override_max_position_pct(self) -> float:
+        return 0.03
 
     def get_max_position_pct(self, symbol: str) -> float:
         """获取计划建议的最大仓位比例"""

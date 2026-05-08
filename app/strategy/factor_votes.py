@@ -380,6 +380,9 @@ class VolumeAmplifierStrategy(BaseStrategy):
     def __init__(self, cfg: dict = None):
         super().__init__(cfg or {})
         self.vol_ratio_threshold = self.config.get("vol_ratio", 1.5)
+        self._min_interval_sec = self.config.get("vol_cooldown_sec", 300)
+        self._last_signal_time: Dict[str, float] = {}
+        self._last_direction: Dict[str, str] = {}
 
     def on_kline(self, code: str, kline: dict, kline_type: str,
                  shared_buffer: list = None) -> Optional[Signal]:
@@ -389,6 +392,7 @@ class VolumeAmplifierStrategy(BaseStrategy):
         if len(volumes) < 21 or len(closes) < 3:
             return None
 
+        import time as _time
         avg_vol = sum(volumes[-21:-1]) / 20
         if avg_vol <= 0:
             return None
@@ -398,14 +402,24 @@ class VolumeAmplifierStrategy(BaseStrategy):
 
         # 放量时看价格方向: 最近 3 根 K 线的净变化
         price_delta = closes[-1] - closes[-3]
-        if price_delta > 0:
-            return Signal(code=code, action=SignalAction.BUY, price=closes[-1],
-                          source=SignalSource.TECHNICAL,
-                          reason=f"放量上涨 ({vol_ratio:.1f}x)",
-                          strategy=self.name)
-        elif price_delta < 0:
-            return Signal(code=code, action=SignalAction.SELL, price=closes[-1],
-                          source=SignalSource.TECHNICAL,
-                          reason=f"放量下跌 ({vol_ratio:.1f}x)",
-                          strategy=self.name)
-        return None
+        new_dir = "BUY" if price_delta > 0 else "SELL" if price_delta < 0 else None
+        if new_dir is None:
+            return None
+
+        now = _time.time()
+        last_time = self._last_signal_time.get(code, 0)
+        last_dir = self._last_direction.get(code)
+
+        # 冷却期内且方向相同 → 跳过 (防止连续投票噪音)
+        if (now - last_time) < self._min_interval_sec and new_dir == last_dir:
+            return None
+
+        self._last_signal_time[code] = now
+        self._last_direction[code] = new_dir
+
+        action = SignalAction.BUY if price_delta > 0 else SignalAction.SELL
+        label = "放量上涨" if price_delta > 0 else "放量下跌"
+        return Signal(code=code, action=action, price=closes[-1],
+                      source=SignalSource.TECHNICAL,
+                      reason=f"{label} ({vol_ratio:.1f}x)",
+                      strategy=self.name)

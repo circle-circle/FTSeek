@@ -83,13 +83,13 @@ class DailyReviewWorkflow:
             ),
             TaskDefinition(
                 name="analyze_trades",
-                agent_name="strategy-gen",
+                agent_name="hk-eod-review",
                 input_data={
-                    "task": "analyze",
+                    "task": "review",
                     "date": date,
-                    "stock": "ALL",
+                    "market": market,
                 },
-                timeout_seconds=180,
+                timeout_seconds=600,
                 dependencies=["collect_trades"],
             ),
             TaskDefinition(

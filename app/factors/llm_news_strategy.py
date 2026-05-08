@@ -301,17 +301,12 @@ class LLMNewsStrategyEngine:
             return
         
         try:
-            # 优先使用 openai 兼容客户端
-            from openai import AsyncOpenAI
-            api_key = os.environ.get("BAILIAN_API_KEY", "")
-            if not api_key:
-                raise ValueError("BAILIAN_API_KEY 未配置")
-            
-            self._llm_client = AsyncOpenAI(
-                api_key=api_key,
-                base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
-            )
-            logger.info("LLM 客户端初始化成功 (OpenAI 兼容)")
+            # 使用统一 LLM 工厂 (SSOT)
+            from app.core.unified_llm_factory import get_llm_client
+            self._llm_client = get_llm_client()
+            if not self._llm_client:
+                raise ValueError("Unified LLM Client not available")
+            logger.info("LLM 客户端初始化成功 (Unified Factory)")
         except ImportError:
             # 降级到 ExpertTeam LLMClient
             try:
