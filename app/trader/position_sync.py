@@ -417,7 +417,7 @@ class PositionSync:
                     entry_price=futu_pos.cost_price,
                     entry_time=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                     strategy='futu_sync',
-                    trader_type='MANUAL'
+                    trader_type='SYNC'  # P0 修复 2026-05-08: 标记为同步创建，非MANUAL
                 )
                 logger.info(f"[持仓修复] {code} 已自动创建 (Futu→DB 同步)")
                 

@@ -401,6 +401,7 @@ class PositionManager:
             signal_id: 关联的信号ID (可选)
             strategy: 策略名称 (可选)
             trace_id: 全链路追踪 ID (2026-04-15 新增)
+            trader_type: 交易类型 (AI=自动执行, SYNC=同步创建, MANUAL=手动)
             
         Returns:
             新建持仓的 ID

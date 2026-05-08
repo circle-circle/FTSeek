@@ -1450,6 +1450,7 @@ class TradeExecutor:
                         signal_id=getattr(signal, 'id', None),
                         strategy=getattr(signal, 'strategy', None),
                         trace_id=getattr(signal, 'trace_id', ''),  # Phase 1: 全链路归因 ID
+                        trader_type='AI'  # P0 修复 2026-05-08: 标记为AI自动执行
                     )
 
                     # 🔴 【P0 修复 2026-04-26 / 2026-05-06 二次修复】开仓后强制校验保护单
