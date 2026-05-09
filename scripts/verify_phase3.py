@@ -186,66 +186,13 @@ print()
 
 
 # ==============================================================================
-# 测试 4: 突发新闻快速通道
+# 测试 4: 突发新闻快速通道 — 已移除 (breaking_news.py 死代码已清理)
 # ==============================================================================
 print("-" * 70)
-print("测试 4: 突发新闻快速通道")
+print("测试 4: 突发新闻快速通道 — 跳过 (模块已清理)")
 print("-" * 70)
-
-try:
-    from app.news_push.breaking_news import get_breaking_news_detector, BreakingNewsDetector
-    from app.news_push.collector import NewsItem
-    
-    detector = get_breaking_news_detector()
-    
-    # 测试突发新闻检测
-    test_news = [
-        NewsItem(
-            title="突发：腾讯发布超预期财报，净利润增长 50%",
-            content="腾讯控股今日发布 2024 年 Q1 财报...",
-            source='cls',
-            category='flash',
-        ),
-        NewsItem(
-            title="特斯拉宣布新的电池技术突破",
-            content="Elon Musk 在推特上宣布...",
-            source='reuters',
-            category='tech',
-        ),
-        NewsItem(
-            title="美联储宣布加息 25 个基点",
-            content="Federal Reserve announces...",
-            source='fed',
-            category='macro',
-        ),
-        NewsItem(
-            title="日常财经新闻：港股今日小幅上涨",
-            content="恒生指数今日上涨 0.5%...",
-            source='rss',
-            category='finance',
-        ),
-    ]
-    
-    print("\n突发新闻检测测试:")
-    for news in test_news:
-        alert = detector.detect(news)
-        if alert:
-            print(f"  ✓ 检测到：{news.title[:40]}...")
-            print(f"     优先级:{alert.priority}, 严重程度:{alert.severity}, "
-                  f"相关股票:{alert.related_stocks}")
-        else:
-            print(f"  - 未标记为突发：{news.title[:40]}...")
-    
-    # 统计信息
-    stats = detector.get_statistics()
-    print(f"\n统计信息：{stats}")
-    
-    print("\n✓ 突发新闻快速通道测试通过")
-    
-except Exception as e:
-    print(f"\n✗ 突发新闻快速通道测试失败：{e}")
-    import traceback
-    traceback.print_exc()
+print("  ⏭️  breaking_news.py 已作为死代码移除")
+print()
 
 print()
 
