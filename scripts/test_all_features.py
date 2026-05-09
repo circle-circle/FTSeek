@@ -288,26 +288,7 @@ try:
 except Exception as e:
     test_result("数据质量监控", False, str(e))
 
-# 5.2 导出 API
-try:
-    from app.api.export_api import export_json, export_csv
-    
-    # 测试数据
-    test_data = [
-        {'id': 1, 'name': '测试 1', 'value': 100},
-        {'id': 2, 'name': '测试 2', 'value': 200},
-    ]
-    
-    # JSON 导出
-    json_response = export_json(test_data, "test")
-    test_result("JSON 导出", json_response.media_type == "application/json")
-    
-    # CSV 导出
-    csv_response = export_csv(test_data, "test")
-    test_result("CSV 导出", csv_response.media_type == "text/csv")
-    
-except Exception as e:
-    test_result("导出 API", False, str(e))
+# 5.2 导出 API — 已移除 (export_api.py 为死代码，已清理)
 
 # ============================================================================
 # 测试总结
