@@ -74,6 +74,9 @@ class PreMarketScheduler:
         self._thread.start()
         logger.info("[PreMarketScheduler] 后台线程已启动")
 
+        # P0 修复: 启动时检查是否错过调度时间，若错过则立即补执行一次
+        self._catchup_if_missed()
+
     def stop(self):
         """停止调度器"""
         if not self._thread:
@@ -113,6 +116,35 @@ class PreMarketScheduler:
             ),
             "last_result": self._last_result.to_dict() if self._last_result else None,
         }
+
+    def _catchup_if_missed(self):
+        """P0 修复: 启动时若错过所有调度时间，立即补执行一次"""
+        if not self.enabled:
+            return
+
+        now = datetime.now()
+        current_hm = now.strftime("%H:%M")
+
+        # 检查今天是否已经运行过
+        if self._last_run_at and datetime.fromtimestamp(self._last_run_at).date() == now.date():
+            logger.info("[PreMarketScheduler] 今日已执行过，跳过补执行")
+            return
+
+        # 检查当前时间是否已经过了所有调度时间
+        sorted_times = sorted(self.schedule_times)
+        if current_hm > sorted_times[-1]:
+            logger.info(
+                f"[PreMarketScheduler] 错过调度时间 (当前{current_hm} > 最晚{sorted_times[-1]})，"
+                f"立即补执行 Pipeline"
+            )
+            self._execute_pipeline()
+        else:
+            # 在调度时间之间，检查是否已经过了部分时间
+            missed = [t for t in sorted_times if t < current_hm]
+            if missed:
+                logger.info(
+                    f"[PreMarketScheduler] 错过 {missed}，等待下一次调度 {sorted_times}"
+                )
 
     # ── 内部方法 ─────────────────────────────────────────────────
 
@@ -213,8 +245,8 @@ class PreMarketScheduler:
 
                 injector = get_hk_memory_injector()
 
-                # P0 修复 (2026-05-05): PipelineResult 没有 event_packs/market_context/price_context 属性
-                # 应该使用 result.assessments (LLM 分析结果) 作为辩论的主要输入
+                # P0 fix (2026-05-09): 使用 PipelineResult 上的 market_context/price_context
+                # (现在 Pipeline 执行阶段已注入真实数据)
                 assessments = getattr(result, 'assessments', []) or []
                 event_packs = getattr(result, 'event_packs', None) or getattr(result, 'raw_news', [])
 
@@ -224,6 +256,7 @@ class PreMarketScheduler:
                 else:
                     context = _build_injection_context(event_packs if isinstance(event_packs, list) else [])
                 feedback = injector.inject(context) if injector else ""
+                # 使用 Pipeline 收集的真实市场数据
                 market_ctx = getattr(result, 'market_context', '') or ''
                 price_data = getattr(result, 'price_context', '') or ''
 

@@ -119,8 +119,8 @@ class DebateOrchestrator:
         if feedback:
             parts.append(f"【历史教训】\n{feedback[:1500]}")
 
-        if packs:
-            macro_packs = [p for p in packs if self._is_macro_event(p)]
+        if assessments:
+            macro_packs = [p for p in assessments if self._is_macro_event(p)]
             if macro_packs:
                 parts.append(f"【宏观事件 ({len(macro_packs)}条)】")
                 for p in macro_packs[:5]:
@@ -137,8 +137,8 @@ class DebateOrchestrator:
         if price_data:
             parts.append(f"【量价技术数据】\n{price_data[:2000]}")
 
-        if packs:
-            tech_packs = [p for p in packs if not self._is_macro_event(p)]
+        if assessments:
+            tech_packs = [p for p in assessments if not self._is_macro_event(p)]
             if tech_packs:
                 parts.append(f"【个股事件 ({len(tech_packs)}条)】")
                 for p in tech_packs[:8]:
@@ -155,29 +155,36 @@ class DebateOrchestrator:
             parts.append(f"【量价数据】\n{price_data[:1200]}")
         if feedback:
             parts.append(f"【历史教训】\n{feedback[:1200]}")
-        if packs:
-            parts.append(f"【全部事件 ({len(packs)}条)】")
-            for p in packs[:10]:
+        if assessments:
+            parts.append(f"【全部事件 ({len(assessments)}条)】")
+            for p in assessments[:10]:
                 parts.append(self._format_pack(p))
         return "\n\n".join(parts) if parts else "暂无数据"
 
     @staticmethod
     def _is_macro_event(pack) -> bool:
-        """判断是否为宏观事件"""
-        title = getattr(pack, "title", "") or getattr(pack, "headline", "") or ""
-        industry = getattr(pack, "industry", "") or ""
+        """判断是否为宏观事件 (支持 EventPack 和 PreMarketAssessment)"""
+        title = getattr(pack, "title", "") or getattr(pack, "headline", "") or getattr(pack, "event_pack_id", "") or ""
+        industry = getattr(pack, "industry", "") or getattr(pack, "primary_scene", "") or getattr(pack, "event_type", "") or ""
+        key_events = getattr(pack, "key_events", []) or []
         macro_keywords = ["央行", "美联储", "利率", "GDP", "CPI", "PMI", "政策", "监管",
                           "制裁", "关税", "汇率", "原油", "黄金", "地缘", "南向", "资金流",
                           "指数", "大盘", "板块轮动", "港股通", "A股"]
-        return any(kw in title for kw in macro_keywords) or any(kw in industry for kw in macro_keywords)
+        texts = [title, industry] + key_events
+        return any(kw in t for kw in macro_keywords for t in texts if t)
 
     @staticmethod
     def _format_pack(pack) -> str:
-        title = getattr(pack, "title", "") or getattr(pack, "headline", "") or ""
-        body = (getattr(pack, "content", "") or getattr(pack, "summary", "") or "")[:300]
+        """格式化事件包或 PreMarketAssessment 对象为文本"""
+        # 优先尝试 PreMarketAssessment 字段
+        title = getattr(pack, "event_pack_id", "") or getattr(pack, "title", "") or getattr(pack, "headline", "") or ""
+        body = (getattr(pack, "second_order_insight", "") or getattr(pack, "content", "") or getattr(pack, "summary", "") or "")[:300]
         symbols = ", ".join(getattr(pack, "focus_symbols", [])[:5])
-        source = getattr(pack, "source", "")
-        return f"- {title}\n  标的: {symbols}\n  来源: {source}\n  内容: {body}"
+        source = getattr(pack, "event_type", "") or getattr(pack, "source", "")
+        direction = getattr(pack, "direction", "") or ""
+        confidence = getattr(pack, "confidence", 0) or 0
+        extra = f"方向={direction} 置信度={confidence:.2f}" if direction else ""
+        return f"- {title}\n  标的: {symbols}\n  来源: {source}\n  {extra}\n  内容: {body}"
 
     # ─── 合成 ──────────────────────────────────────────────────────
 

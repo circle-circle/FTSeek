@@ -33,6 +33,9 @@ class PipelineResult:
     review_cards: int = 0
     observe_only: int = 0
     assessments: List[Any] = field(default_factory=list)
+    market_context: str = ""           # 市场环境数据 (指数/汇率/期货)
+    price_context: str = ""            # 价格技术数据 (K线/指标/量价)
+    event_packs: List[Any] = field(default_factory=list)  # 事件包列表
     errors: List[str] = field(default_factory=list)
 
     @property
@@ -174,6 +177,7 @@ class PreMarketPipeline:
             # Stage 4: 事件包构造
             packs = self._stage_build_packs(relevant_clusters, scores)
             result.pack_count = len(packs)
+            result.event_packs = packs  # P0 fix: 注入 event_packs 到 result
 
             # Stage 5: LLM 分析
             assessments = await self._stage_analyze(packs)
@@ -305,6 +309,10 @@ class PreMarketPipeline:
         # 防御: 港股 Pipeline 过滤美股标的 (防止跨市场污染)
         packs = self._filter_hk_packs(packs)
 
+        # P0 fix (2026-05-09): 收集市场上下文和价格数据注入 PipelineResult
+        self._collect_market_context()
+        self._collect_price_context()
+
         logger.info(f"[Pipeline] Stage 5: LLM 分析 ({len(packs)} 个包)")
         assessments = await self._analyst.analyze_batch(packs)
         
@@ -407,6 +415,84 @@ class PreMarketPipeline:
     # ------------------------------------------------------------------
     #  跨市场防御
     # ------------------------------------------------------------------
+
+    def _collect_market_context(self):
+        """P0 fix (2026-05-09): 收集市场环境数据注入 PipelineResult"""
+        try:
+            from futu import OpenQuoteContext, RET_OK
+            from app import config
+
+            ctx = OpenQuoteContext(host=config.OPEND_HOST, port=config.OPEND_PORT)
+            parts = []
+
+            # 港股指数
+            hk_indices = {"HK.800000": "恒生指数", "HK.800700": "国企指数", "HK.HSI": "恒生科技"}
+            ret, data = ctx.get_market_snapshot(list(hk_indices.keys()))
+            if ret == RET_OK and data is not None and not data.empty:
+                parts.append("【港股大盘】")
+                for _, row in data.iterrows():
+                    code = row.get("code", "")
+                    name = hk_indices.get(code, code)
+                    last = float(row.get("last_price", 0) or 0)
+                    change = float(row.get("change_rate", 0) or 0) / 100.0
+                    parts.append(f"  {name} ({code}): {last:.2f} ({change:+.2%})")
+
+            # A股指数 (前日收盘)
+            ashare_indices = {"SH.000001": "上证指数", "SH.000300": "沪深300", "SZ.399006": "创业板指"}
+            ret, data = ctx.get_market_snapshot(list(ashare_indices.keys()))
+            if ret == RET_OK and data is not None and not data.empty:
+                parts.append("【A股收盘】")
+                for _, row in data.iterrows():
+                    code = row.get("code", "")
+                    name = ashare_indices.get(code, code)
+                    last = float(row.get("last_price", 0) or 0)
+                    change = float(row.get("change_rate", 0) or 0) / 100.0
+                    parts.append(f"  {name} ({code}): {last:.2f} ({change:+.2%})")
+
+            # 汇率
+            ret, data = ctx.get_market_snapshot(["HK.USDHKD"])
+            if ret == RET_OK and data is not None and not data.empty:
+                rate = float(data.iloc[0].get("last_price", 0) or 0)
+                parts.append(f"【汇率】USD/HKD: {rate:.4f}")
+
+            ctx.close()
+            self.market_context = "\n".join(parts) if parts else "无实时数据"
+            logger.info(f"[Pipeline] 市场上下文已收集: {len(parts)} 项")
+        except Exception as e:
+            logger.warning(f"[Pipeline] 市场上下文收集失败: {e}")
+            self.market_context = "数据不可用"
+
+    def _collect_price_context(self):
+        """P0 fix (2026-05-09): 收集价格技术数据注入 PipelineResult"""
+        try:
+            from app import config
+            watchlist = getattr(config, 'WATCH_LIST_HK', [])[:15]
+            if not watchlist:
+                self.price_context = "watchlist为空"
+                return
+
+            from futu import OpenQuoteContext, RET_OK
+            ctx = OpenQuoteContext(host=config.OPEND_HOST, port=config.OPEND_PORT)
+            ret, data = ctx.get_market_snapshot(watchlist)
+            parts = []
+            if ret == RET_OK and data is not None and not data.empty:
+                for _, row in data.iterrows():
+                    code = row.get("code", "")
+                    last = float(row.get("last_price", 0) or 0)
+                    change = float(row.get("change_rate", 0) or 0) / 100.0
+                    vol_ratio = float(row.get("volume_ratio", 0) or 0)
+                    turnover = float(row.get("turnover", 0) or 0)
+                    amplitude = float(row.get("amplitude", 0) or 0) / 100.0 if row.get("amplitude") else 0
+                    parts.append(
+                        f"  {code}: {last:.2f} ({change:+.2%}) "
+                        f"量比={vol_ratio:.1f}x 换手={turnover:.2%} 振幅={amplitude:.2%}"
+                    )
+            ctx.close()
+            self.price_context = "\n".join(parts) if parts else "无实时数据"
+            logger.info(f"[Pipeline] 价格上下文已收集: {len(parts)} 只标的")
+        except Exception as e:
+            logger.warning(f"[Pipeline] 价格上下文收集失败: {e}")
+            self.price_context = "数据不可用"
 
     def _filter_hk_packs(self, packs: List[Any]) -> List[Any]:
         """港股 Pipeline 防御: 过滤纯美股标的的事件包"""
