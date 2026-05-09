@@ -10,6 +10,11 @@
   - 定时触发 (后台线程)
   - 手动触发 (API 调用)
   - Session 集成 (与 SessionManager 联动)
+
+Phase 2 (2026-05-09): 统一决策引擎
+  - 08:20 数据聚合层 (指数/量价/快照) + 08:30 Pipeline 辩论融合
+  - 辩论结果直接驱动作战计划 (过滤/排序/urgency)
+  - 08:20 vs 08:30 辩论一致性检查
 """
 
 import asyncio
@@ -314,16 +319,49 @@ class PreMarketScheduler:
                 logger.warning(f"[PreMarketScheduler] 辩论执行失败 (非阻塞): {e}")
 
             # 🚀 自动生成盘前作战计划 (Battle Plan)
+            # Phase 1 (2026-05-09): 融合两条辩论结果 (08:20 + 08:30)
             if result and hasattr(result, "assessments") and result.assessments:
                 from app.pipeline.battle_plan_generator import BattlePlanGenerator
                 generator = BattlePlanGenerator()
 
-                # P2 2026-05-06: 先加载多模型辩论结果 (08:20 调度器输出)
+                # 1. 先加载 08:20 多模型辩论结果
                 generator.load_premarket_debate()
+                pre_0820 = generator._debate_synthesis
 
+                # 2. 再注入 08:30 Pipeline 辩论结果
                 if debate_synthesis:
                     generator.set_debate_synthesis(debate_synthesis)
-                generator.generate_from_assessments(result.assessments)
+
+                # 3. 生成作战计划（辩论结果驱动选标 + 竞价验证）
+                # Phase 2: 构建竞价数据字典
+                auction_data = {}
+                if hasattr(result, 'auction_context') and result.auction_context:
+                    # 解析竞价上下文为结构化数据
+                    for line in result.auction_context.split('\n'):
+                        if 'HK.' in line and '跳空' in line:
+                            try:
+                                parts = line.strip().split()
+                                sym = parts[0] if parts[0].startswith('HK.') else None
+                                if sym:
+                                    for p in parts:
+                                        if '跳空=' in p:
+                                            gap_str = p.split('=')[1].rstrip('%')
+                                            auction_data[sym] = {'gap_pct': float(gap_str) / 100}
+                            except Exception:
+                                pass
+
+                generator.generate_from_assessments(result.assessments, auction_data=auction_data)
+
+                # 4. 一致性检查 (08:20 vs 08:30 辩论对比)
+                if pre_0820 and debate_synthesis:
+                    d1 = getattr(pre_0820, 'consensus_direction', '?')
+                    d2 = getattr(debate_synthesis, 'consensus_direction', '?')
+                    c1 = getattr(pre_0820, 'conviction', 0)
+                    c2 = getattr(debate_synthesis, 'conviction', 0)
+                    agree = "✅" if d1 == d2 else "⚠️"
+                    logger.info(
+                        f"[BattlePlan] 辩论一致性: {agree} 08:20={d1}(c={c1:.2f}) vs 08:30={d2}(c={c2:.2f})"
+                    )
 
         except Exception as e:
             logger.error(f"[PreMarketScheduler] 汇总报告或计划生成失败: {e}")

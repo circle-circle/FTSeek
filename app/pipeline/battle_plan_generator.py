@@ -79,7 +79,7 @@ class BattlePlanGenerator:
         except Exception as e:
             logger.warning(f"[BattlePlanGenerator] 加载辩论文件失败: {e}")
         
-    def generate_from_assessments(self, assessments: List[Any]) -> str:
+    def generate_from_assessments(self, assessments: List[Any], auction_data: Dict = None) -> str:
         if not assessments:
             logger.warning("没有分析结果，生成保守计划")
             return self._save_fallback_plan("No analysis results")
@@ -93,24 +93,100 @@ class BattlePlanGenerator:
             logger.warning("所有 LLM 盘前分析均失败，降级为 Watchlist 全覆盖白名单")
             return self._save_fallback_plan("LLM all failed")
 
+        # ── 辩论结果注入 (P0 2026-05-09): 辩论驱动选标 ──
+        debate_symbols = {}       # symbol → {net_confidence, support, concern}
+        avoid_codes = set()
+        debate_direction = "NEUTRAL"
+        debate_conviction = 0.0
+
+        if self._debate_synthesis:
+            ds = self._debate_synthesis
+            debate_direction = getattr(ds, 'consensus_direction', 'NEUTRAL')
+            debate_conviction = getattr(ds, 'conviction', 0.0)
+            avoid_codes = set(getattr(ds, 'avoid_codes', []))
+
+            # 收集辩论共识排名
+            for item in getattr(ds, 'consensus_ranking', []):
+                sym = item.get('code', '')
+                if sym:
+                    debate_symbols[sym] = {
+                        'net_confidence': item.get('net_confidence', 0),
+                        'support': item.get('reason_bull', ''),
+                        'concern': item.get('reason_bear', ''),
+                    }
+
+            logger.info(
+                f"[BattlePlan] 辩论注入: direction={debate_direction}, "
+                f"conviction={debate_conviction:.2f}, "
+                f"ranked={len(debate_symbols)}, avoid={len(avoid_codes)}"
+            )
+
         targets = []
-        restricted = []
+        restricted = list(avoid_codes)
         max_risk = "LOW"
-        overall_bias = "NEUTRAL"
+        overall_bias = debate_direction if debate_direction != "NEUTRAL" else "NEUTRAL"
         stop_trading = False
+
+        # 如果辩论共识为 CAUTIOUS_BEARISH 且 conviction 高 → 停止交易
+        if debate_direction in ("CAUTIOUS_BEARISH", "SELL") and debate_conviction > 0.7:
+            stop_trading = True
+            logger.warning("[BattlePlan] 辩论强烈看空，触发停止交易")
 
         for a in assessments:
             if getattr(a, "direction", "NO_TRADE") != "NO_TRADE":
                 for sym in getattr(a, "focus_symbols", []):
+                    # 辩论过滤: 在回避名单中的标的 → 降级为 restricted
+                    if sym in avoid_codes:
+                        continue
+
+                    # 辩论排序: 有辩论共识的标的使用辩论信心调整 urgency
+                    urgency = "High" if getattr(a, "confidence", 0) > 0.7 else "Medium"
+                    trigger = getattr(a, "recommendation", "")[:50]
+
+                    if sym in debate_symbols:
+                        db = debate_symbols[sym]
+                        # 辩论净信心 > 0 → 提升 urgency
+                        if db['net_confidence'] > 0.3:
+                            urgency = "High"
+                        elif db['net_confidence'] < -0.3:
+                            urgency = "Low"  # 辩论看空但 Pipeline 看多 → 降级
+                        if db['support']:
+                            trigger = f"[辩论+] {db['support'][:40]}"
+                        if db['concern']:
+                            trigger = f"{trigger} (⚠️{db['concern'][:30]})"
+
                     targets.append({
                         "symbol": sym,
                         "direction": getattr(a, "direction", "ANY").upper(),
                         "status": "VALID",
-                        "urgency": "High" if getattr(a, "confidence", 0) > 0.7 else "Medium",
-                        "key_trigger": getattr(a, "recommendation", "")[:50],
-                        "invalidation_reason": getattr(a, "invalidating_factors", [""])[0] if getattr(a, "invalidating_factors", []) else ""
+                        "urgency": urgency,
+                        "key_trigger": trigger,
+                        "invalidation_reason": getattr(a, "invalidating_factors", [""])[0] if getattr(a, "invalidating_factors", []) else "",
+                        "debate_net_confidence": debate_symbols.get(sym, {}).get('net_confidence', 0),
                     })
-        
+
+        # 辩论优先排序: 净信心高的标的排在前面
+        if debate_symbols:
+            targets.sort(key=lambda t: t.get('debate_net_confidence', 0), reverse=True)
+
+        # ── Phase 2 (2026-05-09): 竞价验证门禁 ──
+        # 如果有竞价数据，过滤跳空过大的标的
+        if auction_data:
+            valid_targets = []
+            filtered_out = []
+            for t in targets:
+                sym = t['symbol']
+                auction_info = auction_data.get(sym, {})
+                gap_pct = abs(auction_info.get('gap_pct', 0))
+                if gap_pct > 0.03:  # 跳空超过 3% → 过滤
+                    filtered_out.append(sym)
+                    logger.info(f"[BattlePlan] 竞价过滤: {sym} (跳空 {gap_pct:.1%} > 3%)")
+                    continue
+                valid_targets.append(t)
+            targets = valid_targets
+            if filtered_out:
+                restricted.extend(filtered_out)
+
         # 去重
         seen = set()
         unique_targets = []
@@ -118,18 +194,30 @@ class BattlePlanGenerator:
             if t['symbol'] not in seen:
                 seen.add(t['symbol'])
                 unique_targets.append(t)
-        
+
+        # 辩论驱动的 market_regime 设置
+        if debate_direction == "BUY" and debate_conviction > 0.6:
+            max_risk = "LOW"
+        elif debate_direction in ("SELL", "CAUTIOUS_BEARISH"):
+            max_risk = "HIGH"
+
         plan = {
             "date": date.today().isoformat(),
             "targets": unique_targets,
             "restricted": restricted,
             "overall_bias": overall_bias,
             "market_regime": max_risk,
-            "risk_level": "MEDIUM",
+            "risk_level": "HIGH" if stop_trading else max_risk,
             "stop_trading": stop_trading,
+            "debate_consensus": {
+                "direction": debate_direction,
+                "conviction": debate_conviction,
+                "ranked_count": len(debate_symbols),
+                "avoid_count": len(avoid_codes),
+            },
             "generated_at": time.time()
         }
-        
+
         return self._save_plan(plan)
 
     def generate_from_llm_json(self, raw_json: Dict) -> str:
