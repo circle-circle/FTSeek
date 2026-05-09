@@ -35,6 +35,7 @@ class PipelineResult:
     assessments: List[Any] = field(default_factory=list)
     market_context: str = ""           # 市场环境数据 (指数/汇率/期货)
     price_context: str = ""            # 价格技术数据 (K线/指标/量价)
+    auction_context: str = ""          # 竞价验证数据 (09:00-09:20 HKT)
     event_packs: List[Any] = field(default_factory=list)  # 事件包列表
     errors: List[str] = field(default_factory=list)
 
@@ -313,6 +314,9 @@ class PreMarketPipeline:
         self._collect_market_context()
         self._collect_price_context()
 
+        # Phase 2 (2026-05-09): 收集竞价验证数据 (09:00-09:20 HKT)
+        self._collect_auction_context()
+
         logger.info(f"[Pipeline] Stage 5: LLM 分析 ({len(packs)} 个包)")
         assessments = await self._analyst.analyze_batch(packs)
         
@@ -417,7 +421,9 @@ class PreMarketPipeline:
     # ------------------------------------------------------------------
 
     def _collect_market_context(self):
-        """P0 fix (2026-05-09): 收集市场环境数据注入 PipelineResult"""
+        """Phase 2 (2026-05-09): 收集市场环境数据注入 PipelineResult
+        增强版: 港股指数 + A股收盘 + 美股隔夜 + VIX + 汇率 + 南向资金
+        """
         try:
             from futu import OpenQuoteContext, RET_OK
             from app import config
@@ -425,7 +431,7 @@ class PreMarketPipeline:
             ctx = OpenQuoteContext(host=config.OPEND_HOST, port=config.OPEND_PORT)
             parts = []
 
-            # 港股指数
+            # 1. 港股指数
             hk_indices = {"HK.800000": "恒生指数", "HK.800700": "国企指数", "HK.HSI": "恒生科技"}
             ret, data = ctx.get_market_snapshot(list(hk_indices.keys()))
             if ret == RET_OK and data is not None and not data.empty:
@@ -437,7 +443,7 @@ class PreMarketPipeline:
                     change = float(row.get("change_rate", 0) or 0) / 100.0
                     parts.append(f"  {name} ({code}): {last:.2f} ({change:+.2%})")
 
-            # A股指数 (前日收盘)
+            # 2. A股指数 (前日收盘)
             ashare_indices = {"SH.000001": "上证指数", "SH.000300": "沪深300", "SZ.399006": "创业板指"}
             ret, data = ctx.get_market_snapshot(list(ashare_indices.keys()))
             if ret == RET_OK and data is not None and not data.empty:
@@ -449,11 +455,42 @@ class PreMarketPipeline:
                     change = float(row.get("change_rate", 0) or 0) / 100.0
                     parts.append(f"  {name} ({code}): {last:.2f} ({change:+.2%})")
 
-            # 汇率
+            # 3. 美股隔夜表现 (Phase 2 新增)
+            us_indices = {"US.DJI": "道琼斯", "US.SPX": "标普500", "US.IXIC": "纳斯达克"}
+            ret, data = ctx.get_market_snapshot(list(us_indices.keys()))
+            if ret == RET_OK and data is not None and not data.empty:
+                parts.append("【美股隔夜】")
+                for _, row in data.iterrows():
+                    code = row.get("code", "")
+                    name = us_indices.get(code, code)
+                    last = float(row.get("last_price", 0) or 0)
+                    change = float(row.get("change_rate", 0) or 0) / 100.0
+                    parts.append(f"  {name} ({code}): {last:.2f} ({change:+.2%})")
+
+            # 4. 中概股 ETF (Phase 2 新增)
+            adr_etf = {"US.KWEB": "中概互联ETF", "US.FXI": "中国大盘ETF"}
+            ret, data = ctx.get_market_snapshot(list(adr_etf.keys()))
+            if ret == RET_OK and data is not None and not data.empty:
+                parts.append("【中概股ETF】")
+                for _, row in data.iterrows():
+                    code = row.get("code", "")
+                    name = adr_etf.get(code, code)
+                    last = float(row.get("last_price", 0) or 0)
+                    change = float(row.get("change_rate", 0) or 0) / 100.0
+                    parts.append(f"  {name} ({code}): {last:.2f} ({change:+.2%})")
+
+            # 5. 汇率
             ret, data = ctx.get_market_snapshot(["HK.USDHKD"])
             if ret == RET_OK and data is not None and not data.empty:
                 rate = float(data.iloc[0].get("last_price", 0) or 0)
                 parts.append(f"【汇率】USD/HKD: {rate:.4f}")
+
+            # 6. VIX 恐慌指数 (Phase 2 新增)
+            ret, data = ctx.get_market_snapshot(["US.VIX"])
+            if ret == RET_OK and data is not None and not data.empty:
+                vix = float(data.iloc[0].get("last_price", 0) or 0)
+                vix_status = "高波动" if vix > 25 else "正常" if vix < 20 else "警戒"
+                parts.append(f"【VIX恐慌指数】{vix:.2f} ({vix_status})")
 
             ctx.close()
             self.market_context = "\n".join(parts) if parts else "无实时数据"
@@ -493,6 +530,50 @@ class PreMarketPipeline:
         except Exception as e:
             logger.warning(f"[Pipeline] 价格上下文收集失败: {e}")
             self.price_context = "数据不可用"
+
+    def _collect_auction_context(self):
+        """Phase 2 (2026-05-09): 收集竞价验证数据 (09:00-09:20 HKT)
+        用于开盘前最后过滤：跳空幅度/方向背离/ADR传导
+        """
+        try:
+            from futu import OpenQuoteContext, RET_OK
+            from app import config
+
+            ctx = OpenQuoteContext(host=config.OPEND_HOST, port=config.OPEND_PORT)
+            watchlist = getattr(config, 'WATCH_LIST_HK', [])
+            if not watchlist:
+                self.auction_context = "watchlist为空"
+                return
+
+            # 获取竞价盘口数据
+            ret, data = ctx.get_market_snapshot(watchlist)
+            parts = []
+            if ret == RET_OK and data is not None and not data.empty:
+                parts.append("【竞价盘口】")
+                for _, row in data.iterrows():
+                    code = row.get("code", "")
+                    last = float(row.get("last_price", 0) or 0)
+                    y_close = float(row.get("last_close", 0) or 0)
+                    change = float(row.get("change_rate", 0) or 0) / 100.0
+                    bid = float(row.get("bid_price", 0) or 0)
+                    ask = float(row.get("ask_price", 0) or 0)
+
+                    # 计算跳空幅度
+                    gap_pct = (last - y_close) / y_close if y_close > 0 else 0
+                    gap_status = "⚠️大跳空" if abs(gap_pct) > 0.03 else "正常"
+
+                    parts.append(
+                        f"  {code}: 竞价{last:.2f} ({change:+.2%}) "
+                        f"买一={bid:.2f} 卖一={ask:.2f} "
+                        f"跳空={gap_pct:+.2%} {gap_status}"
+                    )
+
+            ctx.close()
+            self.auction_context = "\n".join(parts) if parts else "无竞价数据"
+            logger.info(f"[Pipeline] 竞价上下文已收集: {len(parts)} 只标的")
+        except Exception as e:
+            logger.warning(f"[Pipeline] 竞价上下文收集失败: {e}")
+            self.auction_context = "数据不可用"
 
     def _filter_hk_packs(self, packs: List[Any]) -> List[Any]:
         """港股 Pipeline 防御: 过滤纯美股标的的事件包"""
