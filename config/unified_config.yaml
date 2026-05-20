@@ -799,7 +799,7 @@ risk:
       order_latency_threshold: 5
       missing_fill_timeout: 3
 options:
-  enabled: true
+  enabled: false              # 2026-05-21 P0: 紧急禁用 — selector 与 yaml 不一致导致 $5,984 亏损
   max_holding_hours: 72
   profit_target_pct: 0.5
   stop_loss_pct: -0.3
