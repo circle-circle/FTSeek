@@ -375,10 +375,21 @@ def _monitor_option_positions(scheduler):
                 current_price = _get_option_price(scheduler, option_code, entry_price)
                 if current_price <= 0:
                     _opt_price_fail_count[option_code] = _opt_price_fail_count.get(option_code, 0) + 1
-                    if _opt_price_fail_count[option_code] % 10 == 1:  # 第 1/11/21 次告警，避免刷屏
+                    _fail_n = _opt_price_fail_count[option_code]
+                    if _fail_n % 10 == 1:
                         logger.warning(
-                            f"[期权监控] 价格获取失败 {_opt_price_fail_count[option_code]}次 "
+                            f"[期权监控] 价格获取失败 {_fail_n}次 "
                             f"{position.symbol} {option_code} — 止损止盈暂不生效"
+                        )
+                    # Karpathy minimal fix: 连续 50 次获取失败 → 强制平仓 (风控优先于价格精度)
+                    if _fail_n >= 50:
+                        logger.error(
+                            f"[期权·风控] {position.symbol} {option_code} "
+                            f"价格获取连续失败 {_fail_n}次，强制平仓"
+                        )
+                        _execute_option_close_order(
+                            scheduler, position, option_code, qty,
+                            reason=f"PRICE_FAIL_{_fail_n}"
                         )
                     continue
                 _opt_price_fail_count.pop(option_code, None)  # 成功后清零

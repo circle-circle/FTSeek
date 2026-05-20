@@ -147670,3 +147670,7 @@ Index: []
 2026-05-21 07:29:26,940 [app.data.market_data_router] ERROR: [Router] US.QQQ260602P700000 所有数据源均失败：
 2026-05-21 07:29:27,449 [app.data.twelvedata_provider] WARNING: [TwelveData] API错误: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
 2026-05-21 07:29:27,451 [app.data.market_data_router] ERROR: [Router] US.SPY260602P730000 所有数据源均失败：
+2026-05-21 07:29:52,687 [ftseek_us.position_sync] INFO: [US Sync] Done | Futu: 7 | DB: 7
+2026-05-21 07:30:04,721 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 1681次 US.TSLA260603P410000  — 止损止盈暂不生效
+2026-05-21 07:30:16,626 [ftseek_us.risk.vix_monitor] INFO: VIX 指数：18.06
+2026-05-21 07:30:34,831 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 1691次 US.QQQ260602P700000  — 止损止盈暂不生效

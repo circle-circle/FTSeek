@@ -432,6 +432,14 @@ class OptionSelector:
                 logger.warning(f"[期权] {symbol} get_option_chain 返回空: {data}")
                 return None
 
+            # 读取 YAML delta_range 配置 (OTM 筛选)
+            _delta_cfg = None
+            try:
+                from app.execution.short_strategy import load_short_config as _lsc
+                _delta_cfg = _lsc().get("options", {}).get("delta_range", None)
+            except Exception:
+                pass
+
             # 过滤 Put，计算 DTE，找最接近 ATM 的
             best: Optional[OptionContract] = None
             best_diff = float("inf")
@@ -455,6 +463,12 @@ class OptionSelector:
                     continue
 
                 diff = abs(strike - current_price)
+                # delta_range 筛选: 优先选 OTM (delta 在配置范围内)
+                _row_delta = float(row.get("delta", 0) or 0)
+                if _delta_cfg and len(_delta_cfg) == 2:
+                    _d_min, _d_max = min(_delta_cfg), max(_delta_cfg)
+                    if _row_delta != 0 and not (_d_min <= _row_delta <= _d_max):
+                        continue
                 if diff < best_diff:
                     best_diff = diff
                     bid   = float(row.get("bid_price", 0) or 0)
