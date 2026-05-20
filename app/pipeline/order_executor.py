@@ -1798,20 +1798,19 @@ def _check_symbol_cooldown(symbol: str, direction) -> bool:
         import sqlite3
         from pathlib import Path
         db_path = Path(__file__).resolve().parent.parent.parent / "data" / "ftseek_us.db"
-        conn = sqlite3.connect(str(db_path))
-        conn.row_factory = sqlite3.Row
-        cutoff = (datetime.now() - timedelta(hours=24)).strftime("%Y-%m-%d")
-        direction_str = direction.name if hasattr(direction, "name") else str(direction)
+        with sqlite3.connect(str(db_path)) as conn:
+            conn.row_factory = sqlite3.Row
+            cutoff = (datetime.now() - timedelta(hours=24)).strftime("%Y-%m-%d")
+            direction_str = direction.name if hasattr(direction, "name") else str(direction)
 
-        rows = conn.execute(
-            "SELECT exit_price, pnl_pct, exit_reason FROM trade_records "
-            "WHERE symbol = ? AND direction = ? "
-            "AND exit_price > 0 AND pnl_pct < 0 "
-            "AND trade_date >= ? "
-            "ORDER BY id DESC LIMIT ?",
-            (symbol, direction_str, cutoff, consecutive_threshold + 5)
-        ).fetchall()
-        conn.close()
+            rows = conn.execute(
+                "SELECT exit_price, pnl_pct, exit_reason FROM trade_records "
+                "WHERE symbol = ? AND direction = ? "
+                "AND exit_price > 0 AND pnl_pct < 0 "
+                "AND trade_date >= ? "
+                "ORDER BY id DESC LIMIT ?",
+                (symbol, direction_str, cutoff, consecutive_threshold + 5)
+            ).fetchall()
 
         if len(rows) >= consecutive_threshold:
             # 触发冷却
@@ -1867,17 +1866,16 @@ def _check_reversal_cooldown(scheduler, symbol: str, direction) -> bool:
     try:
         from pathlib import Path
         db_path = Path(__file__).resolve().parent.parent.parent / "data" / "ftseek_us.db"
-        conn = sqlite3.connect(str(db_path))
-        # 最近一笔反向平仓 (跨 source_type 全量看, 因为 whipsaw 可能跨策略)
-        cutoff_iso = (datetime.now() - timedelta(seconds=cooldown_sec)).isoformat()
-        row = conn.execute(
-            "SELECT direction, exit_time, source_type FROM trade_records "
-            "WHERE symbol = ? AND direction = ? AND exit_time IS NOT NULL "
-            "AND exit_time > ? "
-            "ORDER BY exit_time DESC LIMIT 1",
-            (symbol, opposite, cutoff_iso)
-        ).fetchone()
-        conn.close()
+        with sqlite3.connect(str(db_path)) as conn:
+            # 最近一笔反向平仓 (跨 source_type 全量看，因为 whipsaw 可能跨策略)
+            cutoff_iso = (datetime.now() - timedelta(seconds=cooldown_sec)).isoformat()
+            row = conn.execute(
+                "SELECT direction, exit_time, source_type FROM trade_records "
+                "WHERE symbol = ? AND direction = ? AND exit_time IS NOT NULL "
+                "AND exit_time > ? "
+                "ORDER BY exit_time DESC LIMIT 1",
+                (symbol, opposite, cutoff_iso)
+            ).fetchone()
 
         if row:
             _, exit_time_str, src = row
@@ -2038,24 +2036,21 @@ def _lookup_decision_id_by_trace(trace_id: str, symbol: str = "") -> str:
     from app.core.paths import get_trade_records_db
     db_path = get_trade_records_db()
     try:
-        conn = sqlite3.connect(str(db_path))
-        if trace_id:
-            row = conn.execute(
-                "SELECT decision_id FROM trade_attribution WHERE trace_id = ? LIMIT 1",
-                (trace_id,)
-            ).fetchone()
-            if row and row[0]:
-                conn.close()
-                return row[0]
-        if symbol:
-            row = conn.execute(
-                "SELECT decision_id FROM trade_attribution WHERE symbol = ? ORDER BY created_at DESC LIMIT 1",
-                (symbol,)
-            ).fetchone()
-            if row and row[0]:
-                conn.close()
-                return row[0]
-        conn.close()
+        with sqlite3.connect(str(db_path)) as conn:
+            if trace_id:
+                row = conn.execute(
+                    "SELECT decision_id FROM trade_attribution WHERE trace_id = ? LIMIT 1",
+                    (trace_id,)
+                ).fetchone()
+                if row and row[0]:
+                    return row[0]
+            if symbol:
+                row = conn.execute(
+                    "SELECT decision_id FROM trade_attribution WHERE symbol = ? ORDER BY created_at DESC LIMIT 1",
+                    (symbol,)
+                ).fetchone()
+                if row and row[0]:
+                    return row[0]
     except Exception:
         pass
     return ""
@@ -2072,40 +2067,37 @@ def _fetch_attribution_data(trace_id: str, symbol: str = "", trade_date: str = "
     from app.core.paths import get_trade_records_db
     db_path = get_trade_records_db()
     try:
-        conn = sqlite3.connect(str(db_path))
-        cursor = conn.cursor()
-        # F19 (2026-05-12): schema 已由 TradeStore._ensure_trade_attribution_schema 集中管理
-        # Primary: match by trace_id
-        if trace_id:
-            cursor.execute(
-                "SELECT signal_strength, signal_confidence FROM trade_attribution WHERE trace_id = ?",
-                (trace_id,)
-            )
-            row = cursor.fetchone()
-            if row and row[0] is not None and row[0] > 0:
-                conn.close()
-                return int(row[0]), float(row[1] or 0.0)
-        # Fallback: match by symbol + trade_date + direction (when trace_id is empty)
-        if symbol and trade_date:
-            if direction:
+        with sqlite3.connect(str(db_path)) as conn:
+            cursor = conn.cursor()
+            # F19 (2026-05-12): schema 已由 TradeStore._ensure_trade_attribution_schema 集中管理
+            # Primary: match by trace_id
+            if trace_id:
                 cursor.execute(
-                    "SELECT signal_strength, signal_confidence FROM trade_attribution "
-                    "WHERE symbol = ? AND trade_date = ? ORDER BY created_at DESC LIMIT 1",
-                    (symbol, trade_date)
+                    "SELECT signal_strength, signal_confidence FROM trade_attribution WHERE trace_id = ?",
+                    (trace_id,)
                 )
-            else:
-                cursor.execute(
-                    "SELECT signal_strength, signal_confidence FROM trade_attribution "
-                    "WHERE symbol = ? AND trade_date = ? ORDER BY created_at DESC LIMIT 1",
-                    (symbol, trade_date)
-                )
-            row = cursor.fetchone()
-            if row and row[0] is not None and row[0] > 0:
-                conn.close()
-                return int(row[0]), float(row[1] or 0.0)
-        conn.close()
+                row = cursor.fetchone()
+                if row and row[0] is not None and row[0] > 0:
+                    return int(row[0]), float(row[1] or 0.0)
+            # Fallback: match by symbol + trade_date + direction (when trace_id is empty)
+            if symbol and trade_date:
+                if direction:
+                    cursor.execute(
+                        "SELECT signal_strength, signal_confidence FROM trade_attribution "
+                        "WHERE symbol = ? AND trade_date = ? ORDER BY created_at DESC LIMIT 1",
+                        (symbol, trade_date)
+                    )
+                else:
+                    cursor.execute(
+                        "SELECT signal_strength, signal_confidence FROM trade_attribution "
+                        "WHERE symbol = ? AND trade_date = ? ORDER BY created_at DESC LIMIT 1",
+                        (symbol, trade_date)
+                    )
+                row = cursor.fetchone()
+                if row and row[0] is not None and row[0] > 0:
+                    return int(row[0]), float(row[1] or 0.0)
     except Exception as e:
-        logger.debug(f"[归因回填] 查询 trade_attribution 失败: {e}")
+        logger.debug(f"[归因回填] 查询 trade_attribution 失败：{e}")
     return 0, 0.0
 
 
@@ -2176,99 +2168,98 @@ def _update_trade_attribution(
     db_path = _Path(__file__).resolve().parent.parent.parent / "data" / "ftseek_us.db"
     
     try:
-        conn = sqlite3.connect(str(db_path))
-        cursor = conn.cursor()
-        
-        # P0 修复 (F19 2026-05-12): 确保 trade_attribution 表存在
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS trade_attribution (
-                attribution_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                trace_id TEXT,
-                trade_date TEXT,
-                symbol TEXT,
-                direction TEXT DEFAULT 'LONG',
-                signal_strength INTEGER DEFAULT 0,
-                signal_confidence REAL DEFAULT 0.0,
-                actual_price REAL DEFAULT 0.0,
-                pnl REAL DEFAULT 0.0,
-                pnl_category TEXT,
-                exit_reason TEXT,
-                result_tags TEXT,
-                direction_correct INTEGER,
-                strategy_fit INTEGER DEFAULT 0,
-                overall_score INTEGER DEFAULT 60,
-                success_factors TEXT,
-                failure_factors TEXT,
-                max_drawdown REAL DEFAULT 0.0,
-                holding_hours REAL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        conn.commit()
-        
-        # Check if row exists
-        cursor.execute("SELECT trace_id FROM trade_attribution WHERE trace_id = ?", (trace_id,))
-        if cursor.fetchone() is None:
-            _insert_trade_attribution(cursor, trace_id, symbol, signal_strength, signal_confidence)
+        with sqlite3.connect(str(db_path)) as conn:
+            cursor = conn.cursor()
+            
+            # P0 修复 (F19 2026-05-12): 确保 trade_attribution 表存在
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS trade_attribution (
+                    attribution_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    trace_id TEXT,
+                    trade_date TEXT,
+                    symbol TEXT,
+                    direction TEXT DEFAULT 'LONG',
+                    signal_strength INTEGER DEFAULT 0,
+                    signal_confidence REAL DEFAULT 0.0,
+                    actual_price REAL DEFAULT 0.0,
+                    pnl REAL DEFAULT 0.0,
+                    pnl_category TEXT,
+                    exit_reason TEXT,
+                    result_tags TEXT,
+                    direction_correct INTEGER,
+                    strategy_fit INTEGER DEFAULT 0,
+                    overall_score INTEGER DEFAULT 60,
+                    success_factors TEXT,
+                    failure_factors TEXT,
+                    max_drawdown REAL DEFAULT 0.0,
+                    holding_hours REAL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            conn.commit()
+            
+            # Check if row exists
+            cursor.execute("SELECT trace_id FROM trade_attribution WHERE trace_id = ?", (trace_id,))
+            if cursor.fetchone() is None:
+                _insert_trade_attribution(cursor, trace_id, symbol, signal_strength, signal_confidence)
 
-        # 1. 确定结果标签
-        is_win = pnl > 0
-        pnl_category = "win" if is_win else "loss"
-        result_tags = json.dumps({
-            "pnl_category": pnl_category,
-            "exit_reason": exit_reason,
-            "is_win": is_win,
-        })
-        
-        # 2. 确定策略拟合度 (基于盈亏与置信度的关系)
-        strategy_fit = 1 if (signal_confidence > 0.6 and is_win) else 0
-        
-        # 3. 计算综合评分 (0-100)
-        base_score = 60
-        pnl_bonus = min(30, abs(pnl_pct) * 100) if is_win else 0
-        drawdown_penalty = max(0, max_drawdown * 10)
-        final_score = max(0, min(100, int(base_score + pnl_bonus - drawdown_penalty)))
-        
-        # 4. 更新记录
-        cursor.execute('''
-            UPDATE trade_attribution 
-            SET actual_price = ?, 
-                pnl = ?,
-                pnl_category = ?,
-                exit_reason = ?,
-                result_tags = ?,
-                direction_correct = ?,
-                strategy_fit = ?,
-                overall_score = ?,
-                success_factors = ?,
-                failure_factors = ?,
-                timestamp = CURRENT_TIMESTAMP
-            WHERE trace_id = ?
-        ''', (
-            0.0, 
-            pnl,
-            pnl_category,
-            exit_reason,
-            result_tags,
-            1 if is_win else 0,
-            strategy_fit,
-            final_score,
-            json.dumps({"exit_reason": exit_reason}),
-            json.dumps({"max_drawdown": max_drawdown}) if not is_win else "",
-            trace_id
-        ))
-        
-        conn.commit()
-        conn.close()
-        logger.debug(f"✅ 归因更新: {trace_id} | PnL={pnl:.2f} | Score={final_score}")
-        
+            # 1. 确定结果标签
+            is_win = pnl > 0
+            pnl_category = "win" if is_win else "loss"
+            result_tags = json.dumps({
+                "pnl_category": pnl_category,
+                "exit_reason": exit_reason,
+                "is_win": is_win,
+            })
+            
+            # 2. 确定策略拟合度 (基于盈亏与置信度的关系)
+            strategy_fit = 1 if (signal_confidence > 0.6 and is_win) else 0
+            
+            # 3. 计算综合评分 (0-100)
+            base_score = 60
+            pnl_bonus = min(30, abs(pnl_pct) * 100) if is_win else 0
+            drawdown_penalty = max(0, max_drawdown * 10)
+            final_score = max(0, min(100, int(base_score + pnl_bonus - drawdown_penalty)))
+            
+            # 4. 更新记录
+            cursor.execute('''
+                UPDATE trade_attribution 
+                SET actual_price = ?, 
+                    pnl = ?,
+                    pnl_category = ?,
+                    exit_reason = ?,
+                    result_tags = ?,
+                    direction_correct = ?,
+                    strategy_fit = ?,
+                    overall_score = ?,
+                    success_factors = ?,
+                    failure_factors = ?,
+                    signal_strength = COALESCE(?, signal_strength),
+                    signal_confidence = COALESCE(?, signal_confidence),
+                    max_drawdown = ?,
+                    holding_hours = ?,
+                    timestamp = CURRENT_TIMESTAMP
+                WHERE trace_id = ?
+            ''', (
+                0.0, 
+                pnl,
+                pnl_category,
+                exit_reason,
+                result_tags,
+                1 if is_win else 0,
+                strategy_fit,
+                final_score,
+                json.dumps({"exit_reason": exit_reason}),
+                json.dumps({"max_drawdown": max_drawdown}) if not is_win else "",
+                trace_id
+            ))
+            
+            conn.commit()
+            logger.debug(f"✅ 归因更新：{trace_id} | PnL={pnl:.2f} | Score={final_score}")
+            
     except Exception as e:
-        logger.warning(f"更新归因记录失败: {e}")
-
-
-def _is_option_contract(symbol: str) -> bool:
-    """判断是否为美股期权合约 (OCC 格式: US.XXXXXXP/CCCCCCCC)"""
+        logger.warning(f"更新归因记录失败：{e}")
     # 期权格式示例: US.CRM260515P180000, US.AAPL260515C180000
     parts = symbol.split(".")
     if len(parts) < 2:

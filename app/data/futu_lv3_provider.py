@@ -494,6 +494,22 @@ class FutuLV3Provider:
             logger.error(f"[FutuLV3] 订阅失败: {e}")
             return False
 
+    # ── 期权代码检测 ────────────────────────────────────────────────
+    @staticmethod
+    def _is_option_code(symbol: str) -> bool:
+        """检测是否为期权合约代码
+        
+        格式: US.XXX26XXXXP/C (标的 + 日期YYMMDD + P/C + 行权价)
+        例如: US.QQQ260602P710000, US.SPY260602P730000
+        """
+        s = symbol.replace("US.", "") if symbol.startswith("US.") else symbol
+        # 期权代码特征: 包含6位日期(26/27/28开头) + P或C + 数字
+        if len(s) > 10 and any(x in s for x in ['26', '27', '28', '29', '30']):
+            for i, c in enumerate(s):
+                if c in ('P', 'C') and i > 6 and s[i+1:].isdigit():
+                    return True
+        return False
+
     def get_quote(self, symbol: str) -> Optional[Dict[str, Any]]:
         """
         获取实时报价 (LV3)
@@ -520,6 +536,8 @@ class FutuLV3Provider:
                 "timestamp": float,      # Unix 时间戳
             }
         """
+        # P0 修复 (2026-05-21): 期权代码仅通过 Futu 快照获取，跳过 Finnhub/TwelveData
+        is_option = self._is_option_code(symbol)
         futu_symbol = self._to_futu_symbol(symbol)
 
         # 1. Push 缓存检查 (实时推送，延迟 <100ms)
@@ -582,14 +600,19 @@ class FutuLV3Provider:
 
                         return result
                     else:
-                        logger.warning(
+                        logger.debug(
                             f"[FutuLV3] {symbol} 快照返回 price=0, 可能非交易时段"
                         )
 
             except Exception as e:
                 self._fail_count += 1
                 self._last_error = str(e)
-                logger.warning(f"[FutuLV3] 获取 {symbol} 快照失败: {e}, 尝试降级")
+                logger.debug(f"[FutuLV3] 获取 {symbol} 快照失败: {e}")
+
+        # P0 修复 (2026-05-21): 期权代码不走 Finnhub/TwelveData 降级（它们不支持期权格式）
+        if is_option:
+            logger.debug(f"[FutuLV3] 期权代码 {symbol} Futu 快照失败，跳过降级源")
+            return None
 
         # 降级: 使用 fallback provider
         if self.fallback:

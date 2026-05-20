@@ -186,53 +186,18 @@ class ClaudeCodeRunner:
     
     def _call_llm(self, prompt: str, system_prompt: str = None,
                   model: str = None, temperature: float = 0.3) -> Optional[str]:
-        """调用 LLM API"""
-        try:
-            import requests
-            
-            url = f"{self.base_url}/chat/completions"
-            headers = {
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json",
-            }
-            
-            messages = []
-            if system_prompt:
-                messages.append({"role": "system", "content": system_prompt})
-            messages.append({"role": "user", "content": prompt})
-            
-            is_deepseek = "deepseek" in (model or "").lower()
-            
-            payload = {
-                "model": model or self.default_model,
-                "messages": messages,
-                "temperature": temperature,
-                "max_tokens": 4096,
-            }
-            
-            if is_deepseek:
-                # DeepSeek 可能需要不同的参数
-                payload["max_tokens"] = 8192
-            
-            resp = requests.post(url, headers=headers, json=payload, timeout=self.timeout)
-            # Check 404 BEFORE raise_for_status to get proper classification
-            if resp.status_code == 404:
-                raise Exception(f"model_not_found: 模型 {model or self.default_model} 在 Bailian 上不存在 (404)")
-            resp.raise_for_status()
-            data = resp.json()
-            return data["choices"][0]["message"]["content"]
-            
-        except requests.exceptions.Timeout:
-            raise TimeoutError(f"LLM 调用超时 ({self.timeout}s)")
-        except requests.exceptions.HTTPError as e:
-            status_code = e.response.status_code if e.response is not None else 0
-            if status_code == 429:
-                raise Exception(f"API 限流: {e}")
-            if status_code == 404:
-                raise Exception(f"model_not_found: 模型 {model or self.default_model} 在 Bailian 上不存在 (404)")
-            raise
-        except Exception as e:
-            raise
+        """调用 LLM API — 2026-05-21 迁移到 UnifiedLLMService
+
+        旧: requests 直连 + 手动错误分类
+        新: YAML llm.features.claude_code 路由 + UnifiedLLMService
+        """
+        from app.llm.unified_service import UnifiedLLMService
+        return UnifiedLLMService.call_text(
+            "claude_code", prompt,
+            system=system_prompt or "",
+            temperature=temperature,
+            max_tokens=4096,
+        )
     
     def _parse_response(self, response: str) -> Optional[Dict]:
         """解析 LLM 响应为 JSON"""

@@ -60,16 +60,20 @@ def _infer_sync(symbol: str, signal: Dict[str, Any], context: Dict[str, Any]) ->
     """同步推断 (异步线程内调用). 2026-05-17 迁移到 model_call.call_llm.
 
     变化:
-      - 旧: llm_helper.call_llm(feature, model="deepseek") + 二次 parse_and_validate
-      - 新: model_call.call_llm(feature, schema_required=...) 内置校验, dict 直接返回
+      - 旧：llm_helper.call_llm(feature, model="deepseek") + 二次 parse_and_validate
+      - 新：model_call.call_llm(feature, schema_required=...) 内置校验，dict 直接返回
       - model 由 yaml `llm.features.thesis_inferer` 决定 (默认 deepseek-flash)
+    
+    2026-05-21 增强：补充资金流/历史胜率/市场环境/持仓信息上下文
     """
     direction = signal.get("direction", "LONG")
     strength = signal.get("strength", 50)
     confidence = signal.get("confidence", 0.5)
     factors = signal.get("factor_detail", {})
 
-    # 简洁 ctx 摘要
+    # === 2026-05-21 增强：构建完整上下文 ===
+    
+    # 1. 基础上下文 (原有)
     ctx_brief = (
         f"price=${context.get('price', 0):.2f}, "
         f"rsi={context.get('rsi', 50):.0f}, "
@@ -81,6 +85,26 @@ def _infer_sync(symbol: str, signal: Dict[str, Any], context: Dict[str, Any]) ->
         f"low_20d={context.get('low_20d', 0):.2f}, "
         f"news_sentiment={context.get('news_sentiment', 0):.2f}"
     )
+    
+    # 2. 资金流上下文 (新增)
+    fund_flow = _get_fund_flow_context(symbol)
+    if fund_flow:
+        ctx_brief += f", fund_flow={fund_flow}"
+    
+    # 3. 历史胜率上下文 (新增)
+    win_rate_history = _get_win_rate_history(symbol, direction)
+    if win_rate_history:
+        ctx_brief += f", win_rate_7d={win_rate_history.get('win_rate_7d', 0):.0%} ({win_rate_history.get('trades_7d', 0)}笔)"
+    
+    # 4. 市场环境上下文 (新增)
+    market_env = _get_market_environment()
+    if market_env:
+        ctx_brief += f", market_regime={market_env.get('regime', 'unknown')}, spy_trend={market_env.get('spy_trend', 0):.1%}"
+    
+    # 5. 持仓信息上下文 (新增)
+    position_info = _get_position_info(symbol)
+    if position_info:
+        ctx_brief += f", position={position_info.get('status', 'none')}, pnl={position_info.get('unrealized_pnl', 0):.2f}"
 
     factor_brief = ", ".join(
         f"{k}={v.get('raw', 0):+.0f}" for k, v in factors.items() if isinstance(v, dict)
@@ -90,7 +114,7 @@ def _infer_sync(symbol: str, signal: Dict[str, Any], context: Dict[str, Any]) ->
     system = (
         "You are FTSeek's entry thesis classifier. "
         "Given an entry decision, identify the most likely thesis. "
-        "🚨 反幻觉: key_evidence 字段必须引用上文具体数值 (例: 'RSI=72, MA20 上方', "
+        "🚨 反幻觉：key_evidence 字段必须引用上文具体数值 (例：'RSI=72, MA20 上方', "
         "'price $145 > 20d_high $143'), 禁止空泛描述如 'strong momentum'. "
         "Output strict JSON, no extra text."
     )
@@ -147,6 +171,105 @@ Rules:
     obj["_cost_usd"] = round(res.cost_usd, 5)
     obj["_fallback_used"] = res.fallback_used
     return obj
+
+
+def _get_fund_flow_context(symbol: str) -> str:
+    """获取资金流上下文 (2026-05-21 新增)"""
+    try:
+        # 尝试从市场数据获取资金流
+        from app.market_data import get_fund_flow
+        flow = get_fund_flow(symbol)
+        if flow:
+            # 返回简化的资金流信号：净流入/流出
+            net = flow.get('net_inflow', 0)
+            if net > 0:
+                return "inflow"
+            elif net < 0:
+                return "outflow"
+    except Exception as e:
+        logger.debug(f"[ThesisInferer] 获取资金流失败：{e}")
+    return ""
+
+
+def _get_win_rate_history(symbol: str, direction: str) -> Dict[str, Any]:
+    """获取历史胜率上下文 (2026-05-21 新增)"""
+    try:
+        import sqlite3
+        from app.core.paths import get_trade_records_db
+        conn = sqlite3.connect(str(get_trade_records_db()))
+        
+        # 查询最近 7 天同方向交易的胜率
+        cursor = conn.execute("""
+            SELECT 
+                COUNT(*) as total,
+                SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END) as wins,
+                AVG(pnl) as avg_pnl
+            FROM trade_records 
+            WHERE symbol = ? AND direction = ? 
+            AND trade_date >= date('now', '-7 days')
+        """, (symbol, direction))
+        
+        row = cursor.fetchone()
+        conn.close()
+        
+        if row and row['total'] > 0:
+            return {
+                'win_rate_7d': row['wins'] / row['total'] if row['total'] > 0 else 0,
+                'trades_7d': row['total'],
+                'avg_pnl_7d': row['avg_pnl']
+            }
+    except Exception as e:
+        logger.debug(f"[ThesisInferer] 获取历史胜率失败：{e}")
+    return {}
+
+
+def _get_market_environment() -> Dict[str, Any]:
+    """获取市场环境上下文 (2026-05-21 新增)"""
+    try:
+        # 获取 SPY/QQQ 趋势判断市场 regime
+        from app.market_data import get_market_indices
+        indices = get_market_indices()
+        
+        spy_trend = indices.get('spy', {}).get('trend', 0)
+        qqq_trend = indices.get('qqq', {}).get('trend', 0)
+        vix = indices.get('vix', 20)
+        
+        # 判断 regime
+        if vix > 30:
+            regime = "volatile"
+        elif spy_trend > 0.02 and qqq_trend > 0.02:
+            regime = "trending_up"
+        elif spy_trend < -0.02 and qqq_trend < -0.02:
+            regime = "trending_down"
+        else:
+            regime = "ranging"
+        
+        return {
+            'regime': regime,
+            'spy_trend': spy_trend,
+            'vix': vix
+        }
+    except Exception as e:
+        logger.debug(f"[ThesisInferer] 获取市场环境失败：{e}")
+    return {}
+
+
+def _get_position_info(symbol: str) -> Dict[str, Any]:
+    """获取持仓信息上下文 (2026-05-21 新增)"""
+    try:
+        from app.portfolio import get_position
+        pos = get_position(symbol)
+        if pos:
+            return {
+                'status': 'held',
+                'unrealized_pnl': pos.get('unrealized_pnl', 0),
+                'quantity': pos.get('quantity', 0)
+            }
+        else:
+            return {'status': 'none', 'unrealized_pnl': 0}
+    except Exception as e:
+        logger.debug(f"[ThesisInferer] 获取持仓信息失败：{e}")
+    return {}
 
 
 def _persist(symbol: str, trace_id: str, thesis_data: Dict[str, Any]):

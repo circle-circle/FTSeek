@@ -995,143 +995,53 @@ DXY: {ctx.get('market_context', {}).get('dxy', 'N/A')}
                           round_num=None, timeout: int = 120,
                           model: str = None) -> Optional[Dict]:
         """
-        v2.0升级: 直接调用 LLM (通过 Bailian API) — 用于辩论模式
-        
-        增强功能 (2026-05-03):
-        - 分类重试策略 (超时/JSON错误/API限流)
-        - 模型切换降级
-        - 指数退避 + 抖动
-        
-        不通过文件系统协议，直接 HTTP 调用，更快更可靠。
-        
+        v2.0升级: 直接调用 LLM — 2026-05-21 迁移到 UnifiedLLMService
+
+        旧: 手动重试 + 模型降级 + 指数退避 (130+ 行)
+        新: YAML llm.features.agent_bridge 路由 (primary: deepseek-pro, fallback: qwen-plus)
+            model_call 已内置: 重试 + 降级 + 审计 + cache
+
         Args:
             prompt: 用户 prompt
             system_prompt: 系统 prompt (可选)
             round_num: 辩论轮次标识
             timeout: 超时秒数
-            model: 模型名 (默认使用 BAILIAN_MODEL 环境变量)
-        
+            model: 模型名 (忽略, 由 YAML 路由)
+
         Returns:
             解析后的 JSON dict, 失败返回 None
         """
-        import requests
-        import random
-        
-        # 重试配置
-        MAX_RETRIES = 2
-        BASE_DELAY = 5
-        MAX_DELAY = 60
-        
-        # 模型降级映射
-        FALLBACK_MODELS = {
-            "deepseek-v4-pro": "qwen-max",
-            "deepseek-chat": "qwen-max",
-            "qwen3.6-plus": "qwen-max",
-            "qwen-max": "minimax-m2.5",
-        }
-        
-        current_model = model or os.getenv("BAILIAN_MODEL", "qwen-max")
-        base_url = os.getenv('BAILIAN_BASE_URL', 'https://dashscope.aliyuncs.com/compatible-mode/v1')
-        api_key = os.getenv('BAILIAN_API_KEY', '')
-        
-        if not api_key:
-            logger.warning("[AgentBridge] BAILIAN_API_KEY 为空，跳过 LLM 调用")
+        from app.llm.unified_service import UnifiedLLMService
+        res = UnifiedLLMService.call(
+            "agent_bridge", prompt,
+            system=system_prompt or "",
+            temperature=0.3,
+            max_tokens=4096,
+            json_mode=True,
+            timeout=timeout,
+        )
+        if not res or not res.success:
+            logger.warning(f"[AgentBridge·LLM] 调用失败: {res.error if res else 'unknown'}")
             return None
-        
-        for attempt in range(MAX_RETRIES + 1):
-            try:
-                url = f"{base_url}/chat/completions"
-                headers = {
-                    "Authorization": f"Bearer {api_key}",
-                    "Content-Type": "application/json",
-                }
-                
-                messages = []
-                if system_prompt:
-                    messages.append({"role": "system", "content": system_prompt})
-                messages.append({"role": "user", "content": prompt})
-                
-                payload = {
-                    "model": current_model,
-                    "messages": messages,
-                    "temperature": 0.3,
-                    "max_tokens": 8192 if "deepseek" in current_model.lower() else 4096,
-                }
-                
-                resp = requests.post(url, headers=headers, json=payload, timeout=timeout)
-                
-                # 错误分类
-                if resp.status_code == 404:
-                    raise Exception(f"model_not_found: 模型 {current_model} 不存在 (404)")
-                if resp.status_code == 429:
-                    raise Exception(f"api_rate_limit: API限流 (429)")
-                resp.raise_for_status()
-                
-                data = resp.json()
-                choices = data.get("choices")
-                if not choices or len(choices) == 0:
-                    logger.warning(f"[AgentBridge] API 返回空 choices: {data}")
-                    return None
-                
-                text = choices[0].get("message", {}).get("content", "")
-                
-                # 解析 JSON
-                text = text.strip()
-                if text.startswith("```json"):
-                    text = text[7:]
-                if text.startswith("```"):
-                    text = text[3:]
-                if text.endswith("```"):
-                    text = text[:-3]
-                text = text.strip()
-                
-                return json.loads(text)
-                
-            except requests.exceptions.Timeout:
-                failure_type = "timeout"
-                error_msg = f"LLM 调用超时 ({timeout}s)"
-            except json.JSONDecodeError as e:
-                failure_type = "json_parse_error"
-                error_msg = f"JSON 解析失败: {e}"
-            except Exception as e:
-                error_str = str(e)
-                if error_str.startswith("model_not_found:"):
-                    failure_type = "model_not_found"
-                elif error_str.startswith("api_rate_limit:"):
-                    failure_type = "api_rate_limit"
-                else:
-                    failure_type = "api_error"
-                error_msg = error_str
-            
-            # 重试决策
-            if attempt < MAX_RETRIES:
-                # 计算延迟 (指数退避 + 抖动)
-                delay = min(BASE_DELAY * (2 ** attempt), MAX_DELAY)
-                jitter = delay * 0.1 * random.random()
-                delay += jitter
-                
-                # 模型切换 (JSON错误或模型不存在时)
-                if failure_type in ["json_parse_error", "model_not_found"]:
-                    fallback = FALLBACK_MODELS.get(current_model)
-                    if fallback and fallback != current_model:
-                        logger.warning(
-                            f"[AgentBridge] {failure_type}, 切换模型 "
-                            f"{current_model} → {fallback}, 重试 {attempt+1}/{MAX_RETRIES}"
-                        )
-                        current_model = fallback
-                        time.sleep(delay)
-                        continue
-                
-                logger.warning(
-                    f"[AgentBridge] {failure_type}, 重试 {attempt+1}/{MAX_RETRIES} "
-                    f"(延迟 {delay:.0f}s, 模型={current_model}): {error_msg}"
-                )
-                time.sleep(delay)
-            else:
-                logger.error(f"[AgentBridge] 全部 {MAX_RETRIES+1} 次尝试失败: {error_msg}")
-                return None
-        
-        return None
+
+        # JSON 解析 (model_call json_mode 已强制格式, 但仍需 parse)
+        text = res.response or ""
+        if isinstance(text, dict):
+            return text  # 已被 schema 解析
+        text = text.strip()
+        if text.startswith("```json"):
+            text = text[7:]
+        if text.startswith("```"):
+            text = text[3:]
+        if text.endswith("```"):
+            text = text[:-3]
+        text = text.strip()
+
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError as e:
+            logger.warning(f"[AgentBridge·LLM] JSON 解析失败: {e}, raw={text[:200]!r}")
+            return None
 
     # ── v3.0 HermesClient 集成 (Python 3.11 Worker) ──
 

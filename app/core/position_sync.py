@@ -961,6 +961,14 @@ class USPositionSync:
         2. Futu LV3 K 线 (交易时段可用)
         3. Fallback: 2% 价格 (保守估计)
         """
+        # P0 修复 (2026-05-21): 期权代码不走 TwelveData/MarketDataRouter（不支持期权格式）
+        from app.data.futu_lv3_provider import FutuLV3Provider
+        if FutuLV3Provider._is_option_code(symbol):
+            # 期权无传统 ATR，使用 3% 价格作为保守估计（期权波动率通常更高）
+            default_atr = fallback_price * 0.03
+            logger.debug(f"[US Sync ATR] {symbol} 期权代码，使用默认 ATR=${default_atr:.2f} (3%)")
+            return default_atr
+
         # 尝试从 TwelveData 获取
         try:
             from app.data.twelvedata_provider import TwelveDataProvider

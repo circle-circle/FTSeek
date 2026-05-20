@@ -645,9 +645,7 @@ class USEmergencyInterceptor:
         try:
             from openai import AsyncOpenAI
 
-            system_prompt = """你是 FTSeek 美股风控分析师。
-基于行情指标变化判断是否需要立即清仓。
-只输出 EXIT (清仓) 或 HOLD (持有)。"""
+            system_prompt = EMERGENCY_SYSTEM_PROMPT
 
             user_prompt = f"""标的: {symbol}
 当前价: ${price:.2f}
@@ -756,7 +754,7 @@ class USEmergencyInterceptor:
             summary = news_item.get("summary", "")
             symbol = position.symbol.replace("US.", "")
 
-            system_prompt = "你是 FTSeek 美股风控分析师。判断新闻是否构成毁灭性风险。只输出 EXIT 或 HOLD。"
+            system_prompt = EMERGENCY_DESTRUCTIVE_PROMPT
             user_prompt = (
                 f"持仓: {symbol}\n新闻: {headline}\n摘要: {summary}\n"
                 f"判断: 立即清仓 (EXIT) 或持有 (HOLD)？"

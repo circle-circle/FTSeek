@@ -105,6 +105,8 @@ def _http_call(
     temperature: float,
     max_tokens: int,
     timeout: int,
+    json_mode: bool = False,
+    extra_body: Optional[Dict] = None,
 ) -> Dict:
     """单次 HTTP 调用. 返回 {text, tokens_in, tokens_out, raw_response} 或 raise"""
     import urllib.request
@@ -121,6 +123,15 @@ def _http_call(
         "temperature": temperature,
         "max_tokens": max_tokens,
     }
+
+    # json_mode: 强制 response_format=json_object (qwen/deepseek 兼容)
+    if json_mode:
+        payload["response_format"] = {"type": "json_object"}
+
+    # extra_body: 模型特定参数 (e.g. enable_thinking, top_p)
+    if extra_body:
+        payload.update(extra_body)
+
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {api_key}",
@@ -161,6 +172,8 @@ def _try_single_model(
     temperature: float,
     max_tokens: int,
     timeout_override: Optional[int] = None,
+    json_mode: bool = False,
+    extra_body: Optional[Dict] = None,
 ) -> CallResult:
     """单一模型调用 + retry 1 次. 不做 schema 校验 / 不做 fallback. 失败返回 success=False."""
     model_cfg = _resolve_model(alias, cfg)
@@ -185,6 +198,7 @@ def _try_single_model(
             r = _http_call(
                 base_url, api_key, model_name, system, user,
                 temperature=temperature, max_tokens=max_tokens, timeout=timeout,
+                json_mode=json_mode, extra_body=extra_body,
             )
             elapsed_ms = (time.time() - start) * 1000
             cost = (r["tokens_in"] / 1000.0 * cost_in_per_1k +
@@ -260,6 +274,8 @@ def call_llm(
     schema_enums: Optional[Dict[str, List[Any]]] = None,
     timeout: Optional[int] = None,
     cross_check: bool = False,
+    json_mode: bool = False,
+    extra_body: Optional[Dict] = None,
 ) -> CallResult:
     """统一 LLM 调用入口
 
@@ -314,6 +330,7 @@ def call_llm(
             temperature=temperature, max_tokens=max_tokens, timeout=timeout,
             schema_required=schema_required,
             schema_optional=schema_optional, schema_enums=schema_enums,
+            json_mode=json_mode, extra_body=extra_body,
         )
 
     # ── 标准路径: primary → fallback → cache ──
@@ -327,6 +344,7 @@ def call_llm(
         res = _try_single_model(
             alias, cfg, system, prompt,
             temperature=temperature, max_tokens=max_tokens, timeout_override=timeout,
+            json_mode=json_mode, extra_body=extra_body,
         )
         if not res.success:
             # L2-B 修复 (2026-05-19): API 失败也记 audit, 否则失败原因 (timeout/auth/rate_limit) 不可观测
@@ -392,6 +410,7 @@ def _cross_check_call(
     feature: str, route: Dict, prompt: str, system: str, cfg: Dict,
     *, temperature: float, max_tokens: int, timeout: Optional[int],
     schema_required, schema_optional, schema_enums,
+    json_mode: bool = False, extra_body: Optional[Dict] = None,
 ) -> CallResult:
     """关键场景: primary 出方案 + fallback critique 评审 (串行接力)
 
@@ -536,21 +555,30 @@ def prompt_hash(system: str, user: str) -> str:
 def call_llm_compat(legacy_model_alias: str, prompt: str, **kw) -> str:
     """旧代码 multi_model_client.chat(model="qwen") 的等价桥接
 
-    使用场景: 渐进迁移期, 旧代码不动, 但希望走新 yaml 路由.
-    Map: qwen → qwen-plus, deepseek → deepseek-pro, minimax → 保持 multi_model_client
+    使用场景：渐进迁移期，旧代码不动，但希望走新 yaml 路由.
+    Map: qwen → qwen-plus, deepseek → deepseek-pro, minimax → qwen-flash
+    
+    2026-05-21: 别名映射从硬编码迁移到 YAML (llm.legacy_aliases)
     """
-    alias_map = {
-        "qwen": "qwen-plus",
-        "deepseek": "deepseek-pro",
-        "minimax": "qwen-flash",  # 暂用 qwen-flash 替代 (minimax 不在新 matrix)
-        "fallback": "qwen-plus",
-    }
-    new_alias = alias_map.get(legacy_model_alias, legacy_model_alias)
-    # 临时 feature 名: "legacy_<alias>"
     cfg = _get_llm_config()
+    
+    # 从 YAML 读取别名映射 (llm.legacy_aliases)，若不存在则用默认值
+    legacy_aliases = cfg.get("legacy_aliases", {})
+    if not legacy_aliases:
+        # 默认映射 (YAML 未配置时的 fallback)
+        legacy_aliases = {
+            "qwen": "qwen-plus",
+            "deepseek": "deepseek-pro",
+            "minimax": "qwen-flash",
+            "fallback": "qwen-plus",
+        }
+    
+    new_alias = legacy_aliases.get(legacy_model_alias, legacy_model_alias)
+    
+    # 临时 feature 名："legacy_<alias>"
     models = cfg.get("models", {}) or {}
     if new_alias not in models:
-        return ""  # 新模型未配置, 让调用方走旧路径
+        return ""  # 新模型未配置，让调用方走旧路径
     res = _try_single_model(new_alias, cfg, kw.get("system", ""), prompt,
                              temperature=kw.get("temperature", 0.1),
                              max_tokens=kw.get("max_tokens", 1000),

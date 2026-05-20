@@ -173,6 +173,12 @@ class MarketDataRouter:
                 errors.append(f"FutuLV3: {e}")
                 logger.warning(f"[Router] Futu LV3 获取报价失败 {symbol}: {e}")
 
+        # P0 修复 (2026-05-21): 期权代码仅 Futu 支持，Finnhub/TwelveData 不支持期权格式
+        from app.data.futu_lv3_provider import FutuLV3Provider
+        if FutuLV3Provider._is_option_code(symbol):
+            logger.debug(f"[Router] 期权代码 {symbol} Futu 失败，跳过 Finnhub/TwelveData")
+            return None
+
         # 1. 尝试 Finnhub
         if self.fh:
             try:

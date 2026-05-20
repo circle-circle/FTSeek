@@ -147,7 +147,7 @@ llm:
   features:
     # 延迟敏感 (FLASH, 单模型, 失败仅日志)
     news_classifier:    qwen-flash
-    thesis_inferer:     deepseek-flash
+    thesis_inferer:     qwen-plus              # 2026-05-21: 改用 dashscope
     sentiment:          qwen-flash
 
     # 质量敏感 (PRO, 主备 + 缓存兜底)
@@ -167,6 +167,21 @@ llm:
     pre_entry_gate:          {primary: deepseek-pro, fallback: qwen-plus, cache_on_fail: false}
     failure_mode_miner:      {primary: deepseek-pro, fallback: qwen-plus}
     adaptive_tuner:          {primary: deepseek-pro, fallback: qwen-plus}
+
+    # ⭐ 2026-05-21 统一迁移 — 原散在 _call_llm 模块
+    llm_strategy_engine:     {primary: qwen-plus,     fallback: deepseek-pro}   # json_mode, 策略打分
+    model_agent:             {primary: deepseek-pro,  fallback: qwen-plus}      # json_mode, 投票评分
+    debate_engine:           {primary: qwen-plus,     fallback: deepseek-pro}   # enable_thinking=false
+    agent_bridge:            {primary: deepseek-pro,  fallback: qwen-plus}      # json_mode, 辩论桥接
+    claude_code:             {primary: deepseek-pro,  fallback: qwen-plus}      # 代码生成
+
+  # 旧别名兼容映射 (2026-05-21): 原 multi_model_client 的 "qwen"/"deepseek" 等别名
+  # 迁移期使用，后续代码统一改用 feature 路由后可删除
+  legacy_aliases:
+    qwen: qwen-plus
+    deepseek: deepseek-pro
+    minimax: qwen-flash          # MiniMax 已停用，降级用 qwen-flash
+    fallback: qwen-plus
 
   # 默认值
   defaults:
@@ -217,7 +232,7 @@ llm_features:
   # ─── L3 entry_thesis 推断 ───
   thesis_inferer:
     enabled: true                 # PB-1 (2026-05-15): 启用 — 让退出按入场理由选 policy
-    model: deepseek             # 推理强
+    model: qwen-plus            # 2026-05-21: 改用 dashscope (DEEPSEEK_API_KEY 未配置)
     timeout_sec: 15
     daily_max_usd: 0.40
 

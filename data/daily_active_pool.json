@@ -1,179 +1,179 @@
 {
-  "timestamp": "2026-05-20T16:34:55.672566+00:00",
+  "timestamp": "2026-05-20T21:44:42.982945+00:00",
   "entries": [
     {
       "code": "US.SPY",
       "source": "MANUAL",
-      "added_at": "2026-05-20T16:34:51.477596+00:00",
+      "added_at": "2026-05-20T21:44:42.980272+00:00",
       "expires_at": null,
       "metadata": {}
     },
     {
       "code": "US.QQQ",
       "source": "MANUAL",
-      "added_at": "2026-05-20T16:34:51.477637+00:00",
+      "added_at": "2026-05-20T21:44:42.980311+00:00",
       "expires_at": null,
       "metadata": {}
     },
     {
       "code": "US.BABA",
       "source": "POSITION",
-      "added_at": "2026-05-20T16:34:51.479654+00:00",
+      "added_at": "2026-05-20T21:44:42.982936+00:00",
       "expires_at": null,
       "metadata": {}
     },
     {
       "code": "US.JD",
       "source": "MANUAL",
-      "added_at": "2026-05-20T16:34:51.477655+00:00",
+      "added_at": "2026-05-20T21:44:42.980320+00:00",
       "expires_at": null,
       "metadata": {}
     },
     {
       "code": "US.PDD",
       "source": "POSITION",
-      "added_at": "2026-05-20T16:34:51.479657+00:00",
+      "added_at": "2026-05-20T21:44:42.982940+00:00",
       "expires_at": null,
       "metadata": {}
     },
     {
       "code": "US.NTES",
       "source": "MANUAL",
-      "added_at": "2026-05-20T16:34:51.477662+00:00",
+      "added_at": "2026-05-20T21:44:42.980328+00:00",
       "expires_at": null,
       "metadata": {}
     },
     {
       "code": "US.BIDU",
       "source": "MANUAL",
-      "added_at": "2026-05-20T16:34:51.477667+00:00",
+      "added_at": "2026-05-20T21:44:42.980332+00:00",
       "expires_at": null,
       "metadata": {}
     },
     {
       "code": "US.AAPL",
       "source": "POSITION",
-      "added_at": "2026-05-20T16:34:51.479635+00:00",
+      "added_at": "2026-05-20T21:44:42.982915+00:00",
       "expires_at": null,
       "metadata": {}
     },
     {
       "code": "US.MSFT",
       "source": "POSITION",
-      "added_at": "2026-05-20T16:34:51.479639+00:00",
+      "added_at": "2026-05-20T21:44:42.982921+00:00",
       "expires_at": null,
       "metadata": {}
     },
     {
       "code": "US.NVDA",
       "source": "POSITION",
-      "added_at": "2026-05-20T16:34:51.479630+00:00",
+      "added_at": "2026-05-20T21:44:42.982907+00:00",
       "expires_at": null,
       "metadata": {}
     },
     {
       "code": "US.AMZN",
       "source": "POSITION",
-      "added_at": "2026-05-20T16:34:51.479650+00:00",
+      "added_at": "2026-05-20T21:44:42.982932+00:00",
       "expires_at": null,
       "metadata": {}
     },
     {
       "code": "US.META",
       "source": "POSITION",
-      "added_at": "2026-05-20T16:34:51.479647+00:00",
+      "added_at": "2026-05-20T21:44:42.982929+00:00",
       "expires_at": null,
       "metadata": {}
     },
     {
       "code": "US.TSLA",
       "source": "POSITION",
-      "added_at": "2026-05-20T16:34:51.479609+00:00",
+      "added_at": "2026-05-20T21:44:42.982868+00:00",
       "expires_at": null,
       "metadata": {}
     },
     {
       "code": "US.AMD",
       "source": "MANUAL",
-      "added_at": "2026-05-20T16:34:51.477693+00:00",
+      "added_at": "2026-05-20T21:44:42.980358+00:00",
       "expires_at": null,
       "metadata": {}
     },
     {
       "code": "US.AVGO",
       "source": "MANUAL",
-      "added_at": "2026-05-20T16:34:51.477697+00:00",
+      "added_at": "2026-05-20T21:44:42.980362+00:00",
       "expires_at": null,
       "metadata": {}
     },
     {
       "code": "US.TSM",
       "source": "MANUAL",
-      "added_at": "2026-05-20T16:34:51.477700+00:00",
+      "added_at": "2026-05-20T21:44:42.980365+00:00",
       "expires_at": null,
       "metadata": {}
     },
     {
       "code": "US.NIO",
       "source": "MANUAL",
-      "added_at": "2026-05-20T16:34:51.477704+00:00",
+      "added_at": "2026-05-20T21:44:42.980369+00:00",
       "expires_at": null,
       "metadata": {}
     },
     {
       "code": "US.JPM",
       "source": "MANUAL",
-      "added_at": "2026-05-20T16:34:51.477708+00:00",
+      "added_at": "2026-05-20T21:44:42.980372+00:00",
       "expires_at": null,
       "metadata": {}
     },
     {
       "code": "US.LLY",
       "source": "MANUAL",
-      "added_at": "2026-05-20T16:34:51.477711+00:00",
+      "added_at": "2026-05-20T21:44:42.980376+00:00",
       "expires_at": null,
       "metadata": {}
     },
     {
       "code": "US.WMT",
       "source": "MANUAL",
-      "added_at": "2026-05-20T16:34:51.477715+00:00",
+      "added_at": "2026-05-20T21:44:42.980380+00:00",
       "expires_at": null,
       "metadata": {}
     },
     {
       "code": "US.MU",
       "source": "MANUAL",
-      "added_at": "2026-05-20T16:34:51.477719+00:00",
+      "added_at": "2026-05-20T21:44:42.980383+00:00",
       "expires_at": null,
       "metadata": {}
     },
     {
       "code": "US.SNDK",
       "source": "MANUAL",
-      "added_at": "2026-05-20T16:34:51.477723+00:00",
+      "added_at": "2026-05-20T21:44:42.980387+00:00",
       "expires_at": null,
       "metadata": {}
     },
     {
       "code": "US.GOOG",
       "source": "MANUAL",
-      "added_at": "2026-05-20T16:34:51.477727+00:00",
+      "added_at": "2026-05-20T21:44:42.980391+00:00",
       "expires_at": null,
       "metadata": {}
     },
     {
       "code": "US.GOOGL",
       "source": "POSITION",
-      "added_at": "2026-05-20T16:34:51.479643+00:00",
+      "added_at": "2026-05-20T21:44:42.982925+00:00",
       "expires_at": null,
       "metadata": {}
     },
     {
       "code": "US.ARM",
       "source": "SCALPING",
-      "added_at": "2026-05-20T16:34:55.657681+00:00",
-      "expires_at": "2026-05-21T04:34:55.657698+00:00",
+      "added_at": "2026-05-20T17:59:23.523677+00:00",
+      "expires_at": "2026-05-21T05:59:23.523694+00:00",
       "metadata": {
         "selector": "scalping_stock_selector",
         "min_amplitude": 0.025,
@@ -183,8 +183,8 @@
     {
       "code": "US.QCOM",
       "source": "SCALPING",
-      "added_at": "2026-05-20T16:34:55.660149+00:00",
-      "expires_at": "2026-05-21T04:34:55.660212+00:00",
+      "added_at": "2026-05-20T17:59:23.532707+00:00",
+      "expires_at": "2026-05-21T05:59:23.532722+00:00",
       "metadata": {
         "selector": "scalping_stock_selector",
         "min_amplitude": 0.025,
@@ -194,8 +194,8 @@
     {
       "code": "US.RIVN",
       "source": "SCALPING",
-      "added_at": "2026-05-20T16:34:55.658915+00:00",
-      "expires_at": "2026-05-21T04:34:55.658931+00:00",
+      "added_at": "2026-05-20T17:59:23.529382+00:00",
+      "expires_at": "2026-05-21T05:59:23.529400+00:00",
       "metadata": {
         "selector": "scalping_stock_selector",
         "min_amplitude": 0.025,
@@ -205,8 +205,8 @@
     {
       "code": "US.LCID",
       "source": "SCALPING",
-      "added_at": "2026-05-20T16:34:55.661384+00:00",
-      "expires_at": "2026-05-21T04:34:55.661400+00:00",
+      "added_at": "2026-05-20T17:59:23.542262+00:00",
+      "expires_at": "2026-05-21T05:59:23.542297+00:00",
       "metadata": {
         "selector": "scalping_stock_selector",
         "min_amplitude": 0.025,
@@ -216,8 +216,8 @@
     {
       "code": "US.ORCL",
       "source": "SCALPING",
-      "added_at": "2026-05-20T16:34:55.662580+00:00",
-      "expires_at": "2026-05-21T04:34:55.662612+00:00",
+      "added_at": "2026-05-20T17:59:23.548748+00:00",
+      "expires_at": "2026-05-21T05:59:23.548762+00:00",
       "metadata": {
         "selector": "scalping_stock_selector",
         "min_amplitude": 0.025,
@@ -227,8 +227,8 @@
     {
       "code": "US.TME",
       "source": "SCALPING",
-      "added_at": "2026-05-20T16:34:55.663796+00:00",
-      "expires_at": "2026-05-21T04:34:55.663811+00:00",
+      "added_at": "2026-05-20T17:59:23.552152+00:00",
+      "expires_at": "2026-05-21T05:59:23.552230+00:00",
       "metadata": {
         "selector": "scalping_stock_selector",
         "min_amplitude": 0.025,
@@ -238,8 +238,8 @@
     {
       "code": "US.BA",
       "source": "SCALPING",
-      "added_at": "2026-05-20T16:34:55.665059+00:00",
-      "expires_at": "2026-05-21T04:34:55.665080+00:00",
+      "added_at": "2026-05-20T17:59:23.556136+00:00",
+      "expires_at": "2026-05-21T05:59:23.556153+00:00",
       "metadata": {
         "selector": "scalping_stock_selector",
         "min_amplitude": 0.025,
@@ -249,8 +249,8 @@
     {
       "code": "US.UBER",
       "source": "SCALPING",
-      "added_at": "2026-05-20T16:34:55.667327+00:00",
-      "expires_at": "2026-05-21T04:34:55.667352+00:00",
+      "added_at": "2026-05-20T17:59:23.550774+00:00",
+      "expires_at": "2026-05-21T05:59:23.550792+00:00",
       "metadata": {
         "selector": "scalping_stock_selector",
         "min_amplitude": 0.025,
@@ -260,8 +260,8 @@
     {
       "code": "US.CRM",
       "source": "SCALPING",
-      "added_at": "2026-05-20T16:34:55.669863+00:00",
-      "expires_at": "2026-05-21T04:34:55.669879+00:00",
+      "added_at": "2026-05-20T17:59:23.557570+00:00",
+      "expires_at": "2026-05-21T05:59:23.557583+00:00",
       "metadata": {
         "selector": "scalping_stock_selector",
         "min_amplitude": 0.025,
@@ -271,8 +271,8 @@
     {
       "code": "US.UNH",
       "source": "SCALPING",
-      "added_at": "2026-05-20T16:34:55.672536+00:00",
-      "expires_at": "2026-05-21T04:34:55.672552+00:00",
+      "added_at": "2026-05-20T17:59:23.554147+00:00",
+      "expires_at": "2026-05-21T05:59:23.554178+00:00",
       "metadata": {
         "selector": "scalping_stock_selector",
         "min_amplitude": 0.025,

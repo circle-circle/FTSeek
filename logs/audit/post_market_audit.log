@@ -24,3 +24,11 @@
 2026-05-20 04:22:52,224 [PostAudit] INFO: [钉钉] 推送成功
 2026-05-20 04:22:52,225 [PostAudit] INFO: ✅ 归因辩论报告已推送 (飞书:✓ 钉钉:✓)
 2026-05-20 04:22:52,225 [PostAudit] INFO: 📄 报告已保存: /opt/ftseek/FTSeek-US/logs/audit/attribution_debate_2026-05-19.md
+2026-05-21 04:00:12,120 [PostAudit] INFO: 🚀 开始美股盘后归因辩论报告...
+2026-05-21 04:00:12,121 [PostAudit] INFO: 📊 收集归因数据...
+2026-05-21 04:00:12,134 [PostAudit] INFO: 🔥 交叉验证归因视角...
+2026-05-21 04:00:12,656 [PostAudit] INFO: [飞书] 推送成功
+2026-05-21 04:00:12,720 [PostAudit] INFO: [钉钉] send_text 成功: **2026-05-20** (美东) | equity=$1,065,464
+2026-05-21 04:00:12,720 [PostAudit] INFO: [钉钉] 推送成功
+2026-05-21 04:00:12,720 [PostAudit] INFO: ✅ 归因辩论报告已推送 (飞书:✓ 钉钉:✓)
+2026-05-21 04:00:12,721 [PostAudit] INFO: 📄 报告已保存: /opt/ftseek/FTSeek-US/logs/audit/attribution_debate_2026-05-20.md

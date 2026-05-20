@@ -193,37 +193,19 @@ class ResearcherAgent:
 总结你的核心观点,回应关键质疑,并给出最终信心度。"""
     
     def _call_llm(self, prompt: str) -> Optional[str]:
-        """调用LLM API"""
-        try:
-            url = f"{self.base_url}/chat/completions"
-            headers = {
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json",
-            }
-            
-            # Qwen3.6-Plus需要禁用thinking
-            is_qwen = "qwen" in self.model_name.lower()
-            payload = {
-                "model": self.model_name,
-                "messages": [
-                    {"role": "system", "content": self.system_prompt},
-                    {"role": "user", "content": prompt},
-                ],
-                "temperature": 0.3,
-                "max_tokens": 500,
-            }
-            
-            if is_qwen:
-                payload["extra_body"] = {"enable_thinking": False}
-            
-            resp = requests.post(url, headers=headers, json=payload, timeout=90)
-            resp.raise_for_status()
-            data = resp.json()
-            return data["choices"][0]["message"]["content"]
-            
-        except Exception as e:
-            logger.warning(f"[{self.side}] LLM调用失败: {e}")
-            return None
+        """调用LLM API — 2026-05-21 迁移到 UnifiedLLMService
+
+        旧: requests 直连 + enable_thinking=False 硬编码
+        新: YAML llm.features.debate_engine 路由 + extra_body 透传
+        """
+        from app.llm.unified_service import UnifiedLLMService
+        return UnifiedLLMService.call_text(
+            "debate_engine", prompt,
+            system=self.system_prompt,
+            temperature=0.3,
+            max_tokens=500,
+            extra_body={"enable_thinking": False},
+        )
     
     def _parse_response(self, response: str) -> DebateArgument:
         """解析LLM响应"""

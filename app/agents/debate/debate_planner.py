@@ -23,6 +23,7 @@ from typing import Dict, Any, Optional, Tuple
 from datetime import datetime
 
 logger = logging.getLogger("ftseek_us.debate.planner")
+from app.llm.prompts.debate import DEBATE_HERMES_R1_PROMPT, DEBATE_HERMES_R2_PROMPT, DEBATE_CLAUDE_R1_PROMPT, DEBATE_CLAUDE_VALIDATION_PROMPT
 
 
 # =====================================================================
@@ -214,12 +215,12 @@ class DebatePlanner:
             
             if round_num == 1:
                 prompt = HERMES_PREMARKET_PROMPT_ROUND1.format(**context)
-                system_prompt = "你是 FTSeek-US 美股盘前策略师。核心目标：稳定赚钱。输出严格 JSON。"
+                system_prompt = DEBATE_HERMES_R1_PROMPT
             else:
                 prompt = CROSS_VALIDATION_PROMPT_HERMES.format(
                     claude_analysis_json=json.dumps(opponent, ensure_ascii=False, indent=2)
                 )
-                system_prompt = "你是 FTSeek-US 美股盘前策略师。回应空头研究员的质疑。输出严格 JSON。"
+                system_prompt = DEBATE_HERMES_R2_PROMPT
             
             if self.agent_bridge:
                 return self.agent_bridge._call_llm_direct(
@@ -259,7 +260,7 @@ class DebatePlanner:
             
             if round_num == 1:
                 prompt = CLAUDE_PREMARKET_PROMPT_ROUND1.format(**enriched_context)
-                system_prompt = "你是 FTSeek-US 空头研究员和系统审计师。擅长批判性思维。输出严格 JSON。"
+                system_prompt = DEBATE_CLAUDE_R1_PROMPT
             else:
                 return self._run_claude_validation(context, hermes_r1=opponent, hermes_r2=None)
             
@@ -303,7 +304,7 @@ class DebatePlanner:
                 hermes_response_json=json.dumps(hermes_r2, ensure_ascii=False, indent=2) if hermes_r2 else "无回应",
             )
             
-            system_prompt = "你是 FTSeek-US 系统审计师。验证计划的正确性。输出严格 JSON。"
+            system_prompt = DEBATE_CLAUDE_VALIDATION_PROMPT
             
             # ── 优先使用 CLI Agent (与 Round1 一致) ──
             cli_result = None

@@ -130,76 +130,27 @@ class ModelAgent:
     # ------------------------------------------------------------------
 
     def _call_llm(self, prompt: str) -> Optional[str]:
-        """根据模型名称路由到对应 API"""
-        if "deepseek" in self.model_name.lower():
-            return self._call_deepseek(prompt)
-        else:
-            # 阿里百炼（Qwen / GLM5 / Minimax）
-            return self._call_bailian(prompt)
+        """根据模型名称路由到对应 API — 2026-05-21 迁移到 UnifiedLLMService
+
+        旧: 手动 deepseek/bailian 路由 + requests 直连
+        新: YAML llm.features.model_agent 路由 (primary: deepseek-pro, fallback: qwen-plus)
+        """
+        from app.llm.unified_service import UnifiedLLMService
+        return UnifiedLLMService.call_text(
+            "model_agent", prompt,
+            system=self.system_prompt,
+            temperature=0.3,
+            max_tokens=200,
+            json_mode=True,
+        )
 
     def _call_deepseek(self, prompt: str) -> Optional[str]:
-        """调用 DeepSeek API"""
-        if not self.deepseek_api_key:
-            logger.debug("[deepseek] API Key 未配置，跳过 LLM 调用")
-            return None
-
-        url = f"{self.deepseek_base_url}/chat/completions"
-        headers = {
-            "Authorization": f"Bearer {self.deepseek_api_key}",
-            "Content-Type": "application/json",
-        }
-        payload = {
-            "model": self.deepseek_model,
-            "messages": [
-                {"role": "system", "content": self.system_prompt},
-                {"role": "user", "content": prompt},
-            ],
-            "temperature": 0.3,
-            "max_tokens": 200,
-            "response_format": {"type": "json_object"},
-        }
-        resp = requests.post(url, headers=headers, json=payload, timeout=self.API_TIMEOUT)
-        resp.raise_for_status()
-        data = resp.json()
-        return data["choices"][0]["message"]["content"]
+        """调用 DeepSeek API — 2026-05-21 废弃，统一走 _call_llm"""
+        return self._call_llm(prompt)
 
     def _call_bailian(self, prompt: str) -> Optional[str]:
-        """调用阿里百炼 API（兼容 OpenAI 格式）"""
-        if not self.bailian_api_key:
-            logger.debug("[bailian] API Key 未配置，跳过 LLM 调用")
-            return None
-
-        # 从 model_name 中提取实际模型标识，如 "bailian/glm-4.7" → "glm-4.7"
-        model_id = self.model_name.split("/")[-1] if "/" in self.model_name else self.model_name
-
-        # glm-4/glm-5/kimi 等思维链模型响应较慢，使用更长超时并禁用思维链
-        # qwen-max 非思维链模型，响应快，使用默认超时
-        is_thinking_model = any(kw in model_id.lower() for kw in ["glm-4", "glm-5", "kimi"])
-        timeout = 90 if is_thinking_model else self.API_TIMEOUT
-
-        # 百炼兼容模式 endpoint
-        url = f"{self.bailian_base_url}/chat/completions"
-        headers = {
-            "Authorization": f"Bearer {self.bailian_api_key}",
-            "Content-Type": "application/json",
-        }
-        payload = {
-            "model": model_id,
-            "messages": [
-                {"role": "system", "content": self.system_prompt},
-                {"role": "user", "content": prompt},
-            ],
-            "temperature": 0.3,
-            "max_tokens": 200,
-        }
-        # 对思维链模型禁用思维过程输出，直接返回答案，大幅减少响应时间
-        if is_thinking_model:
-            payload["extra_body"] = {"enable_thinking": False}
-
-        resp = requests.post(url, headers=headers, json=payload, timeout=timeout)
-        resp.raise_for_status()
-        data = resp.json()
-        return data["choices"][0]["message"]["content"]
+        """调用阿里百炼 API — 2026-05-21 废弃，统一走 _call_llm"""
+        return self._call_llm(prompt)
 
     # ------------------------------------------------------------------
     # 提示词构建
