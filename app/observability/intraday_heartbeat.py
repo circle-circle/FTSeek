@@ -54,17 +54,23 @@ def _is_market_hours() -> bool:
 
 
 def _query_today_trades() -> Dict:
-    """今日交易 + 持仓 + 盈亏汇总"""
+    """今日交易 + 持仓 + 盈亏汇总
+    
+    注意：美股交易日使用美东时间，而非北京时间。
+    美东时间 = UTC-4 (EDT) 或 UTC-5 (EST)。
+    使用 'now', '-4 hours' 近似美东时间，避免跨日混淆。
+    """
     db = str(PROJECT_ROOT / "data" / "ftseek_us.db")
     try:
         conn = sqlite3.connect(db)
         cur = conn.cursor()
-        # 今日已平
+        # 今日已平 — 使用美东时间 (UTC-4)
+        # date('now', '-4 hours') 近似美东日期
         cur.execute(
             "SELECT COUNT(*), SUM(realized_pnl), "
             "  SUM(CASE WHEN realized_pnl>0 THEN 1 ELSE 0 END) "
             "FROM trade_records "
-            "WHERE trade_date=date('now','localtime') AND realized_pnl IS NOT NULL"
+            "WHERE trade_date=date('now', '-4 hours') AND realized_pnl IS NOT NULL"
         )
         n, pnl, wins = cur.fetchone()
         # 持仓
