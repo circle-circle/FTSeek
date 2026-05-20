@@ -113,20 +113,19 @@ def _collect_weekly_data() -> Dict:
 
     # 从 ftseek.db 收集交易数据
     try:
-        conn = sqlite3.connect(FTSEEK_DB)
-        conn.row_factory = sqlite3.Row
+        with sqlite3.connect(FTSEEK_DB) as conn:
+            conn.row_factory = sqlite3.Row
 
-        # positions 表
-        cursor = conn.execute(
-            """
-            SELECT * FROM positions
-            WHERE entry_time >= ? AND entry_time <= ?
-            ORDER BY entry_time
-            """,
-            (week_start, week_end + " 23:59:59"),
-        )
-        positions = [dict(r) for r in cursor.fetchall()]
-        conn.close()
+            # positions 表
+            cursor = conn.execute(
+                """
+                SELECT * FROM positions
+                WHERE entry_time >= ? AND entry_time <= ?
+                ORDER BY entry_time
+                """,
+                (week_start, week_end + " 23:59:59"),
+            )
+            positions = [dict(r) for r in cursor.fetchall()]
 
         if positions:
             data["trading_days"] = len(set(
@@ -150,27 +149,25 @@ def _collect_weekly_data() -> Dict:
 
     # 从 lessons DB 收集
     try:
-        conn = sqlite3.connect(LESSONS_DB)
-        conn.row_factory = sqlite3.Row
+        with sqlite3.connect(LESSONS_DB) as conn:
+            conn.row_factory = sqlite3.Row
 
-        cursor = conn.execute(
-            """
-            SELECT COUNT(*) as c FROM lessons
-            WHERE trade_date >= ? AND trade_date <= ?
-            """,
-            (week_start, week_end),
-        )
-        data["lessons"]["total"] = cursor.fetchone()["c"]
+            cursor = conn.execute(
+                """
+                SELECT COUNT(*) as c FROM lessons
+                WHERE trade_date >= ? AND trade_date <= ?
+                """,
+                (week_start, week_end),
+            )
+            data["lessons"]["total"] = cursor.fetchone()["c"]
 
-        cursor = conn.execute(
-            """
-            SELECT COUNT(DISTINCT pattern_group_id) as c FROM lessons
-            WHERE pattern_group_id != '' AND validation_status != 'invalidated'
-            """
-        )
-        data["lessons"]["patterns"] = cursor.fetchone()["c"]
-
-        conn.close()
+            cursor = conn.execute(
+                """
+                SELECT COUNT(DISTINCT pattern_group_id) as c FROM lessons
+                WHERE pattern_group_id != '' AND validation_status != 'invalidated'
+                """
+            )
+            data["lessons"]["patterns"] = cursor.fetchone()["c"]
     except Exception as e:
         logger.debug(f"[MetaAnalyst] lessons DB 数据收集失败: {e}")
 
@@ -196,17 +193,16 @@ def _collect_weekly_data() -> Dict:
 
     # 从复盘 DB 收集
     try:
-        conn = sqlite3.connect(FTSEEK_DB)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.execute(
-            """
-            SELECT * FROM trade_evaluations
-            WHERE created_at >= ? AND created_at <= ?
-            """,
-            (week_start, week_end + " 23:59:59"),
-        )
-        evaluations = [dict(r) for r in cursor.fetchall()]
-        conn.close()
+        with sqlite3.connect(FTSEEK_DB) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute(
+                """
+                SELECT * FROM trade_evaluations
+                WHERE created_at >= ? AND created_at <= ?
+                """,
+                (week_start, week_end + " 23:59:59"),
+            )
+            evaluations = [dict(r) for r in cursor.fetchall()]
 
         if evaluations:
             data["anomalies"]["total"] = sum(

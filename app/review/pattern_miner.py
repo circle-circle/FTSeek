@@ -269,27 +269,26 @@ class PatternMiner:
     def save_to_knowledge_db(self, patterns: List[Dict], db_path: str = '/opt/ftseek/FTSeek/data/knowledge.db'):
         """保存模式到 knowledge.db"""
         import sqlite3
-        conn = sqlite3.connect(db_path)
-        c = conn.cursor()
+        with sqlite3.connect(db_path) as conn:
+            c = conn.cursor()
         
-        today = datetime.now().strftime('%Y-%m-%d')
+            today = datetime.now().strftime('%Y-%m-%d')
         
-        for i, p in enumerate(patterns):
-            pattern_id = f"pattern_{today}_{i}"
-            c.execute("""INSERT OR REPLACE INTO patterns 
-                (id, title, description, evidence_count, first_seen, last_seen, confidence)
-                VALUES (?, ?, ?, ?, ?, ?, ?)""", (
-                pattern_id,
-                p.get('pattern', '')[:200],
-                p.get('actionable_rule', ''),
-                p.get('evidence_count', 0),
-                today,
-                today,
-                1.0 - p.get('win_rate_when_triggered', 0.5),
-            ))
+            for i, p in enumerate(patterns):
+                pattern_id = f"pattern_{today}_{i}"
+                c.execute("""INSERT OR REPLACE INTO patterns 
+                    (id, title, description, evidence_count, first_seen, last_seen, confidence)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)""", (
+                    pattern_id,
+                    p.get('pattern', '')[:200],
+                    p.get('actionable_rule', ''),
+                    p.get('evidence_count', 0),
+                    today,
+                    today,
+                    1.0 - p.get('win_rate_when_triggered', 0.5),
+                ))
         
-        conn.commit()
-        conn.close()
+            conn.commit()
         logger.info(f"[PatternMiner] 保存 {len(patterns)} 个模式到 knowledge.db")
 
 

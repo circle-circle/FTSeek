@@ -789,27 +789,26 @@ class TradeExecutor:
             from app import config
             db_path = str(config.DATA_DIR / "ftseek.db")
             import sqlite3
-            conn = sqlite3.connect(db_path)
-            extra = getattr(signal, 'extra', {}) or {}
-            conn.execute(
-                "INSERT INTO blocked_decisions "
-                "(code, reject_check, reject_code, reject_reason, final_score, "
-                " gate_name, signal_impact, shadow_mode, raw_score) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    signal.code,
-                    "executor_gate",
-                    gate_name,
-                    reason[:200],
-                    final_score,
-                    gate_name,
-                    extra.get('signal_impact'),
-                    1 if shadow_mode else 0,
-                    extra.get('raw_score', signal.score if hasattr(signal, 'score') else None),
+            with sqlite3.connect(db_path) as conn:
+                extra = getattr(signal, 'extra', {}) or {}
+                conn.execute(
+                    "INSERT INTO blocked_decisions "
+                    "(code, reject_check, reject_code, reject_reason, final_score, "
+                    " gate_name, signal_impact, shadow_mode, raw_score) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        signal.code,
+                        "executor_gate",
+                        gate_name,
+                        reason[:200],
+                        final_score,
+                        gate_name,
+                        extra.get('signal_impact'),
+                        1 if shadow_mode else 0,
+                        extra.get('raw_score', signal.score if hasattr(signal, 'score') else None),
+                    )
                 )
-            )
-            conn.commit()
-            conn.close()
+                conn.commit()
         except Exception as _ge:
             logger.debug(f"[Gate数据记录] 写入失败: {_ge}")
 

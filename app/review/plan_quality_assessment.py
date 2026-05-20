@@ -61,15 +61,14 @@ class PlanQualityAssessment:
     def _load_trades(self, date: str) -> List[Dict]:
         """加载当日交易记录"""
         try:
-            conn = sqlite3.connect(DB_PATH)
-            conn.row_factory = sqlite3.Row
-            cursor = conn.execute(
-                "SELECT code, action, entry_price, entry_time, exit_price, "
-                "realized_pnl, status FROM positions WHERE entry_time LIKE ?",
-                (f"{date}%",)
-            )
-            trades = [dict(row) for row in cursor.fetchall()]
-            conn.close()
+            with sqlite3.connect(DB_PATH) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.execute(
+                    "SELECT code, action, entry_price, entry_time, exit_price, "
+                    "realized_pnl, status FROM positions WHERE entry_time LIKE ?",
+                    (f"{date}%",)
+                )
+                trades = [dict(row) for row in cursor.fetchall()]
             return trades
         except Exception as e:
             logger.warning(f"加载交易记录失败: {e}")

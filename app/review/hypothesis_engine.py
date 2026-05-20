@@ -73,58 +73,55 @@ class HypothesisDB:
         self._init_db()
     
     def _init_db(self):
-        conn = sqlite3.connect(self.db_path)
-        c = conn.cursor()
-        c.execute("""CREATE TABLE IF NOT EXISTS hypotheses (
-            id TEXT PRIMARY KEY,
-            statement TEXT,
-            source TEXT,
-            category TEXT,
-            trigger_conditions TEXT,
-            predicted_outcome TEXT,
-            evidence_count INTEGER DEFAULT 0,
-            confirm_count INTEGER DEFAULT 0,
-            refute_count INTEGER DEFAULT 0,
-            confidence REAL DEFAULT 0.5,
-            status TEXT DEFAULT 'pending',
-            created_at TEXT,
-            updated_at TEXT,
-            confirmed_at TEXT,
-            refuted_at TEXT,
-            actionable_rule TEXT,
-            rule_type TEXT
-        )""")
-        c.execute("CREATE INDEX IF NOT EXISTS idx_status ON hypotheses(status)")
-        c.execute("CREATE INDEX IF NOT EXISTS idx_category ON hypotheses(category)")
-        conn.commit()
-        conn.close()
+        with sqlite3.connect(self.db_path) as conn:
+            c = conn.cursor()
+            c.execute("""CREATE TABLE IF NOT EXISTS hypotheses (
+                id TEXT PRIMARY KEY,
+                statement TEXT,
+                source TEXT,
+                category TEXT,
+                trigger_conditions TEXT,
+                predicted_outcome TEXT,
+                evidence_count INTEGER DEFAULT 0,
+                confirm_count INTEGER DEFAULT 0,
+                refute_count INTEGER DEFAULT 0,
+                confidence REAL DEFAULT 0.5,
+                status TEXT DEFAULT 'pending',
+                created_at TEXT,
+                updated_at TEXT,
+                confirmed_at TEXT,
+                refuted_at TEXT,
+                actionable_rule TEXT,
+                rule_type TEXT
+            )""")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_status ON hypotheses(status)")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_category ON hypotheses(category)")
+            conn.commit()
     
     def save(self, h: Hypothesis):
-        conn = sqlite3.connect(self.db_path)
-        c = conn.cursor()
-        c.execute("""INSERT OR REPLACE INTO hypotheses 
-            (id, statement, source, category, trigger_conditions, predicted_outcome,
-             evidence_count, confirm_count, refute_count, confidence, status,
-             created_at, updated_at, confirmed_at, refuted_at, actionable_rule, rule_type)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", (
-            h.id, h.statement, h.source, h.category,
-            json.dumps(h.trigger_conditions, ensure_ascii=False),
-            h.predicted_outcome, h.evidence_count, h.confirm_count, h.refute_count,
-            h.confidence, h.status, h.created_at, h.updated_at,
-            h.confirmed_at, h.refuted_at, h.actionable_rule, h.rule_type
-        ))
-        conn.commit()
-        conn.close()
+        with sqlite3.connect(self.db_path) as conn:
+            c = conn.cursor()
+            c.execute("""INSERT OR REPLACE INTO hypotheses 
+                (id, statement, source, category, trigger_conditions, predicted_outcome,
+                 evidence_count, confirm_count, refute_count, confidence, status,
+                 created_at, updated_at, confirmed_at, refuted_at, actionable_rule, rule_type)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", (
+                h.id, h.statement, h.source, h.category,
+                json.dumps(h.trigger_conditions, ensure_ascii=False),
+                h.predicted_outcome, h.evidence_count, h.confirm_count, h.refute_count,
+                h.confidence, h.status, h.created_at, h.updated_at,
+                h.confirmed_at, h.refuted_at, h.actionable_rule, h.rule_type
+            ))
+            conn.commit()
     
     def load_all(self, status: Optional[str] = None) -> List[Hypothesis]:
-        conn = sqlite3.connect(self.db_path)
-        c = conn.cursor()
-        if status:
-            c.execute("SELECT * FROM hypotheses WHERE status = ?", (status,))
-        else:
-            c.execute("SELECT * FROM hypotheses")
-        rows = c.fetchall()
-        conn.close()
+        with sqlite3.connect(self.db_path) as conn:
+            c = conn.cursor()
+            if status:
+                c.execute("SELECT * FROM hypotheses WHERE status = ?", (status,))
+            else:
+                c.execute("SELECT * FROM hypotheses")
+            rows = c.fetchall()
         return [Hypothesis(
             id=r[0], statement=r[1], source=r[2], category=r[3],
             trigger_conditions=json.loads(r[4]) if r[4] else {},

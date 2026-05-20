@@ -120,30 +120,29 @@ def analyze_db_signals(db_path, since=None):
         return {}
     
     try:
-        conn = sqlite3.connect(db_path)
-        c = conn.cursor()
+        with sqlite3.connect(db_path) as conn:
+            c = conn.cursor()
         
-        stats = {}
+            stats = {}
         
-        # trades 表统计
-        try:
-            c.execute("SELECT COUNT(*) FROM trades WHERE status = 'OPEN'")
-            open_trades = c.fetchone()[0]
-            c.execute("SELECT COUNT(*) FROM trades WHERE status = 'CLOSED'")
-            closed_trades = c.fetchone()[0]
-            stats['trades'] = {'open': open_trades, 'closed': closed_trades, 'total': open_trades + closed_trades}
-        except Exception:
-            stats['trades'] = {'error': 'table not found'}
+            # trades 表统计
+            try:
+                c.execute("SELECT COUNT(*) FROM trades WHERE status = 'OPEN'")
+                open_trades = c.fetchone()[0]
+                c.execute("SELECT COUNT(*) FROM trades WHERE status = 'CLOSED'")
+                closed_trades = c.fetchone()[0]
+                stats['trades'] = {'open': open_trades, 'closed': closed_trades, 'total': open_trades + closed_trades}
+            except Exception:
+                stats['trades'] = {'error': 'table not found'}
         
-        # positions 表统计
-        try:
-            c.execute("SELECT COUNT(*) FROM positions WHERE status = 'OPEN'")
-            open_positions = c.fetchone()[0]
-            stats['positions'] = {'open': open_positions}
-        except Exception:
-            stats['positions'] = {'error': 'table not found'}
+            # positions 表统计
+            try:
+                c.execute("SELECT COUNT(*) FROM positions WHERE status = 'OPEN'")
+                open_positions = c.fetchone()[0]
+                stats['positions'] = {'open': open_positions}
+            except Exception:
+                stats['positions'] = {'error': 'table not found'}
         
-        conn.close()
         return stats
     except Exception as e:
         print(f"  ⚠️  数据库分析失败: {e}")

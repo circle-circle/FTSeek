@@ -540,9 +540,8 @@ async def health(token: str = Query(default=None), deep: bool = Query(default=Fa
         import sqlite3
         import os
         db_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "ftseek.db")
-        conn = sqlite3.connect(db_path, timeout=5)
-        conn.execute("SELECT 1")
-        conn.close()
+        with sqlite3.connect(db_path, timeout=5) as conn:
+            conn.execute("SELECT 1")
         checks["database"] = "ok"
     except Exception as e:
         checks["database"] = f"error: {str(e)}"
@@ -857,23 +856,22 @@ async def harness_lessons(
     if not os.path.exists(lessons_db):
         return {"count": 0, "lessons": []}
 
-    conn = sqlite3.connect(lessons_db)
-    conn.row_factory = sqlite3.Row
-    cur = conn.cursor()
+    with sqlite3.connect(lessons_db) as conn:
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
 
-    query = "SELECT * FROM lessons WHERE 1=1"
-    params = []
-    if symbol:
-        query += " AND symbol = ?"
-        params.append(symbol)
-    if days:
-        query += f" AND trade_date >= date('now', '-{days} days')"
-    query += " ORDER BY trade_date DESC LIMIT ?"
-    params.append(limit)
+        query = "SELECT * FROM lessons WHERE 1=1"
+        params = []
+        if symbol:
+            query += " AND symbol = ?"
+            params.append(symbol)
+        if days:
+            query += f" AND trade_date >= date('now', '-{days} days')"
+        query += " ORDER BY trade_date DESC LIMIT ?"
+        params.append(limit)
 
-    cur.execute(query, params)
-    rows = [dict(r) for r in cur.fetchall()]
-    conn.close()
+        cur.execute(query, params)
+        rows = [dict(r) for r in cur.fetchall()]
     return {"count": len(rows), "lessons": rows}
 
 

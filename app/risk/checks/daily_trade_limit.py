@@ -43,14 +43,13 @@ class DailyTradeLimitCheck(RiskCheck):
             try:
                 import sqlite3
                 db_path = '/opt/ftseek/FTSeek/data/paper_positions.db'
-                conn = sqlite3.connect(db_path)
-                cursor = conn.cursor()
-                cursor.execute(
-                    "SELECT COUNT(*) FROM positions WHERE entry_time LIKE ?",
-                    (f"{today_str}%",)
-                )
-                today_opened = cursor.fetchone()[0]
-                conn.close()
+                with sqlite3.connect(db_path) as conn:
+                    cursor = conn.cursor()
+                    cursor.execute(
+                        "SELECT COUNT(*) FROM positions WHERE entry_time LIKE ?",
+                        (f"{today_str}%",)
+                    )
+                    today_opened = cursor.fetchone()[0]
             except Exception:
                 # 降级：从 IPositionQueryProvider / subscriber 的 position_manager 统计
                 pos_query = deps.get("position_query")

@@ -128,25 +128,24 @@ class HKMemoryInjector:
 
             cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
 
-            conn = sqlite3.connect(self.lessons_db)
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
+            with sqlite3.connect(self.lessons_db) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
 
-            cursor.execute(
-                """
-                SELECT * FROM lessons
-                WHERE trade_date >= ?
-                  AND pnl_percent < -1.0
-                  AND expiry_date >= ?
-                  AND validation_status != 'invalidated'
-                ORDER BY pnl_percent ASC
-                LIMIT ?
-                """,
-                (cutoff, datetime.now().strftime("%Y-%m-%d"), limit),
-            )
+                cursor.execute(
+                    """
+                    SELECT * FROM lessons
+                    WHERE trade_date >= ?
+                      AND pnl_percent < -1.0
+                      AND expiry_date >= ?
+                      AND validation_status != 'invalidated'
+                    ORDER BY pnl_percent ASC
+                    LIMIT ?
+                    """,
+                    (cutoff, datetime.now().strftime("%Y-%m-%d"), limit),
+                )
 
-            rows = cursor.fetchall()
-            conn.close()
+                rows = cursor.fetchall()
 
             return [dict(r) for r in rows]
 
@@ -164,31 +163,30 @@ class HKMemoryInjector:
 
             cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
 
-            conn = sqlite3.connect(self.lessons_db)
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
+            with sqlite3.connect(self.lessons_db) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
 
-            # 排除已选的高亏损教训
-            cursor.execute(
-                """
-                SELECT * FROM lessons
-                WHERE trade_date >= ?
-                  AND expiry_date >= ?
-                  AND validation_status != 'invalidated'
-                ORDER BY
-                    CASE
-                        WHEN pnl_percent < -2 THEN 1
-                        WHEN pnl_percent < 0 THEN 2
-                        WHEN pnl_percent > 2 THEN 3
-                        ELSE 4
-                    END,
-                    created_at DESC
-                """,
-                (cutoff, datetime.now().strftime("%Y-%m-%d")),
-            )
+                # 排除已选的高亏损教训
+                cursor.execute(
+                    """
+                    SELECT * FROM lessons
+                    WHERE trade_date >= ?
+                      AND expiry_date >= ?
+                      AND validation_status != 'invalidated'
+                    ORDER BY
+                        CASE
+                            WHEN pnl_percent < -2 THEN 1
+                            WHEN pnl_percent < 0 THEN 2
+                            WHEN pnl_percent > 2 THEN 3
+                            ELSE 4
+                        END,
+                        created_at DESC
+                    """,
+                    (cutoff, datetime.now().strftime("%Y-%m-%d")),
+                )
 
-            rows = cursor.fetchall()
-            conn.close()
+                rows = cursor.fetchall()
 
             # 预算截断
             lessons = []
@@ -216,28 +214,27 @@ class HKMemoryInjector:
             if not os.path.exists(self.lessons_db):
                 return []
 
-            conn = sqlite3.connect(self.lessons_db)
-            cursor = conn.cursor()
+            with sqlite3.connect(self.lessons_db) as conn:
+                cursor = conn.cursor()
 
-            # 同 symbol 重复亏损
-            cursor.execute(
-                """
-                SELECT symbol, COUNT(*) as loss_count,
-                       AVG(pnl_percent) as avg_loss,
-                       GROUP_CONCAT(DISTINCT cause) as causes
-                FROM lessons
-                WHERE pnl_percent < -0.5
-                  AND expiry_date >= ?
-                GROUP BY symbol
-                HAVING loss_count >= 2
-                ORDER BY avg_loss ASC
-                LIMIT ?
-                """,
-                (datetime.now().strftime("%Y-%m-%d"), limit),
-            )
+                # 同 symbol 重复亏损
+                cursor.execute(
+                    """
+                    SELECT symbol, COUNT(*) as loss_count,
+                           AVG(pnl_percent) as avg_loss,
+                           GROUP_CONCAT(DISTINCT cause) as causes
+                    FROM lessons
+                    WHERE pnl_percent < -0.5
+                      AND expiry_date >= ?
+                    GROUP BY symbol
+                    HAVING loss_count >= 2
+                    ORDER BY avg_loss ASC
+                    LIMIT ?
+                    """,
+                    (datetime.now().strftime("%Y-%m-%d"), limit),
+                )
 
-            rows = cursor.fetchall()
-            conn.close()
+                rows = cursor.fetchall()
 
             patterns = []
             for row in rows:

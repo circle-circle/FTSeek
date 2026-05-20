@@ -41,50 +41,49 @@ class AuditLogger:
         """初始化审计数据库"""
         try:
             _DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-            conn = sqlite3.connect(str(_DB_PATH))
-            c = conn.cursor()
-            c.execute('''
-                CREATE TABLE IF NOT EXISTS signal_chain (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    trace_id TEXT,
-                    code TEXT,
-                    strategy TEXT,
-                    action TEXT,
-                    price REAL,
-                    confidence REAL,
-                    consensus_score REAL,
-                    market_regime TEXT,
-                    adx REAL,
-                    agree_strategies TEXT,
-                    created_at TEXT DEFAULT (datetime('now'))
-                )
-            ''')
-            c.execute('''
-                CREATE TABLE IF NOT EXISTS execution_result (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    trace_id TEXT,
-                    code TEXT,
-                    executed INTEGER,
-                    reject_reason TEXT,
-                    entry_price REAL,
-                    exit_price REAL,
-                    pnl REAL,
-                    exit_reason TEXT,
-                    holding_hours REAL,
-                    created_at TEXT DEFAULT (datetime('now'))
-                )
-            ''')
-            c.execute('''
-                CREATE TABLE IF NOT EXISTS weight_snapshots (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    snapshot_type TEXT,
-                    code TEXT,
-                    weights TEXT,
-                    created_at TEXT DEFAULT (datetime('now'))
-                )
-            ''')
-            conn.commit()
-            conn.close()
+            with sqlite3.connect(str(_DB_PATH)) as conn:
+                c = conn.cursor()
+                c.execute('''
+                    CREATE TABLE IF NOT EXISTS signal_chain (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        trace_id TEXT,
+                        code TEXT,
+                        strategy TEXT,
+                        action TEXT,
+                        price REAL,
+                        confidence REAL,
+                        consensus_score REAL,
+                        market_regime TEXT,
+                        adx REAL,
+                        agree_strategies TEXT,
+                        created_at TEXT DEFAULT (datetime('now'))
+                    )
+                ''')
+                c.execute('''
+                    CREATE TABLE IF NOT EXISTS execution_result (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        trace_id TEXT,
+                        code TEXT,
+                        executed INTEGER,
+                        reject_reason TEXT,
+                        entry_price REAL,
+                        exit_price REAL,
+                        pnl REAL,
+                        exit_reason TEXT,
+                        holding_hours REAL,
+                        created_at TEXT DEFAULT (datetime('now'))
+                    )
+                ''')
+                c.execute('''
+                    CREATE TABLE IF NOT EXISTS weight_snapshots (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        snapshot_type TEXT,
+                        code TEXT,
+                        weights TEXT,
+                        created_at TEXT DEFAULT (datetime('now'))
+                    )
+                ''')
+                conn.commit()
         except Exception as e:
             logger.error(f"审计 DB 初始化失败: {e}")
     
@@ -102,21 +101,20 @@ class AuditLogger:
             signal_id (用于后续关联执行结果)
         """
         try:
-            conn = sqlite3.connect(str(_DB_PATH))
-            c = conn.cursor()
-            c.execute('''
-                INSERT INTO signal_chain 
-                (trace_id, code, strategy, action, price, confidence, 
-                 consensus_score, market_regime, adx, agree_strategies)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                trace_id, code, strategy, action, price, confidence,
-                consensus_score, market_regime, adx,
-                json.dumps(agree_strategies or []),
-            ))
-            signal_id = c.lastrowid
-            conn.commit()
-            conn.close()
+            with sqlite3.connect(str(_DB_PATH)) as conn:
+                c = conn.cursor()
+                c.execute('''
+                    INSERT INTO signal_chain 
+                    (trace_id, code, strategy, action, price, confidence, 
+                     consensus_score, market_regime, adx, agree_strategies)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    trace_id, code, strategy, action, price, confidence,
+                    consensus_score, market_regime, adx,
+                    json.dumps(agree_strategies or []),
+                ))
+                signal_id = c.lastrowid
+                conn.commit()
             return str(signal_id)
         except Exception as e:
             logger.error(f"记录信号失败: {e}")
@@ -128,19 +126,18 @@ class AuditLogger:
                          exit_reason: str = "", holding_hours: float = 0):
         """记录执行结果"""
         try:
-            conn = sqlite3.connect(str(_DB_PATH))
-            c = conn.cursor()
-            c.execute('''
-                INSERT INTO execution_result 
-                (trace_id, code, executed, reject_reason, entry_price, 
-                 exit_price, pnl, exit_reason, holding_hours)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                trace_id, code, int(executed), reject_reason, entry_price,
-                exit_price, pnl, exit_reason, holding_hours,
-            ))
-            conn.commit()
-            conn.close()
+            with sqlite3.connect(str(_DB_PATH)) as conn:
+                c = conn.cursor()
+                c.execute('''
+                    INSERT INTO execution_result 
+                    (trace_id, code, executed, reject_reason, entry_price, 
+                     exit_price, pnl, exit_reason, holding_hours)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    trace_id, code, int(executed), reject_reason, entry_price,
+                    exit_price, pnl, exit_reason, holding_hours,
+                ))
+                conn.commit()
         except Exception as e:
             logger.error(f"记录执行结果失败: {e}")
     
@@ -150,45 +147,43 @@ class AuditLogger:
                                 weights: Dict[str, float]):
         """记录权重快照"""
         try:
-            conn = sqlite3.connect(str(_DB_PATH))
-            c = conn.cursor()
-            c.execute('''
-                INSERT INTO weight_snapshots (snapshot_type, code, weights)
-                VALUES (?, ?, ?)
-            ''', (snapshot_type, code, json.dumps(weights)))
-            conn.commit()
-            conn.close()
+            with sqlite3.connect(str(_DB_PATH)) as conn:
+                c = conn.cursor()
+                c.execute('''
+                    INSERT INTO weight_snapshots (snapshot_type, code, weights)
+                    VALUES (?, ?, ?)
+                ''', (snapshot_type, code, json.dumps(weights)))
+                conn.commit()
         except Exception as e:
             logger.error(f"记录权重快照失败: {e}")
     
     def get_weights_snapshot(self, code: str = None, limit: int = 10) -> List[Dict]:
         """获取权重快照"""
         try:
-            conn = sqlite3.connect(str(_DB_PATH))
-            conn.row_factory = sqlite3.Row
-            c = conn.cursor()
+            with sqlite3.connect(str(_DB_PATH)) as conn:
+                conn.row_factory = sqlite3.Row
+                c = conn.cursor()
             
-            if code:
-                c.execute(
-                    "SELECT * FROM weight_snapshots WHERE code = ? ORDER BY created_at DESC LIMIT ?",
-                    (code, limit)
-                )
-            else:
-                c.execute(
-                    "SELECT * FROM weight_snapshots ORDER BY created_at DESC LIMIT ?",
-                    (limit,)
-                )
+                if code:
+                    c.execute(
+                        "SELECT * FROM weight_snapshots WHERE code = ? ORDER BY created_at DESC LIMIT ?",
+                        (code, limit)
+                    )
+                else:
+                    c.execute(
+                        "SELECT * FROM weight_snapshots ORDER BY created_at DESC LIMIT ?",
+                        (limit,)
+                    )
             
-            results = []
-            for row in c.fetchall():
-                results.append({
-                    "id": row["id"],
-                    "type": row["snapshot_type"],
-                    "code": row["code"],
-                    "weights": json.loads(row["weights"]),
-                    "created_at": row["created_at"],
-                })
-            conn.close()
+                results = []
+                for row in c.fetchall():
+                    results.append({
+                        "id": row["id"],
+                        "type": row["snapshot_type"],
+                        "code": row["code"],
+                        "weights": json.loads(row["weights"]),
+                        "created_at": row["created_at"],
+                    })
             return results
         except Exception as e:
             logger.error(f"获取权重快照失败: {e}")
@@ -199,37 +194,36 @@ class AuditLogger:
     def get_signal_history(self, code: str = None, limit: int = 50) -> List[Dict]:
         """获取信号历史"""
         try:
-            conn = sqlite3.connect(str(_DB_PATH))
-            conn.row_factory = sqlite3.Row
-            c = conn.cursor()
+            with sqlite3.connect(str(_DB_PATH)) as conn:
+                conn.row_factory = sqlite3.Row
+                c = conn.cursor()
             
-            if code:
-                c.execute(
-                    "SELECT * FROM signal_chain WHERE code = ? ORDER BY created_at DESC LIMIT ?",
-                    (code, limit)
-                )
-            else:
-                c.execute(
-                    "SELECT * FROM signal_chain ORDER BY created_at DESC LIMIT ?",
-                    (limit,)
-                )
+                if code:
+                    c.execute(
+                        "SELECT * FROM signal_chain WHERE code = ? ORDER BY created_at DESC LIMIT ?",
+                        (code, limit)
+                    )
+                else:
+                    c.execute(
+                        "SELECT * FROM signal_chain ORDER BY created_at DESC LIMIT ?",
+                        (limit,)
+                    )
             
-            results = []
-            for row in c.fetchall():
-                results.append({
-                    "trace_id": row["trace_id"],
-                    "code": row["code"],
-                    "strategy": row["strategy"],
-                    "action": row["action"],
-                    "price": row["price"],
-                    "confidence": row["confidence"],
-                    "consensus_score": row["consensus_score"],
-                    "market_regime": row["market_regime"],
-                    "adx": row["adx"],
-                    "agree_strategies": json.loads(row["agree_strategies"]),
-                    "created_at": row["created_at"],
-                })
-            conn.close()
+                results = []
+                for row in c.fetchall():
+                    results.append({
+                        "trace_id": row["trace_id"],
+                        "code": row["code"],
+                        "strategy": row["strategy"],
+                        "action": row["action"],
+                        "price": row["price"],
+                        "confidence": row["confidence"],
+                        "consensus_score": row["consensus_score"],
+                        "market_regime": row["market_regime"],
+                        "adx": row["adx"],
+                        "agree_strategies": json.loads(row["agree_strategies"]),
+                        "created_at": row["created_at"],
+                    })
             return results
         except Exception as e:
             logger.error(f"获取信号历史失败: {e}")
@@ -238,36 +232,35 @@ class AuditLogger:
     def get_execution_history(self, code: str = None, limit: int = 50) -> List[Dict]:
         """获取执行历史"""
         try:
-            conn = sqlite3.connect(str(_DB_PATH))
-            conn.row_factory = sqlite3.Row
-            c = conn.cursor()
+            with sqlite3.connect(str(_DB_PATH)) as conn:
+                conn.row_factory = sqlite3.Row
+                c = conn.cursor()
             
-            if code:
-                c.execute(
-                    "SELECT * FROM execution_result WHERE code = ? ORDER BY created_at DESC LIMIT ?",
-                    (code, limit)
-                )
-            else:
-                c.execute(
-                    "SELECT * FROM execution_result ORDER BY created_at DESC LIMIT ?",
-                    (limit,)
-                )
+                if code:
+                    c.execute(
+                        "SELECT * FROM execution_result WHERE code = ? ORDER BY created_at DESC LIMIT ?",
+                        (code, limit)
+                    )
+                else:
+                    c.execute(
+                        "SELECT * FROM execution_result ORDER BY created_at DESC LIMIT ?",
+                        (limit,)
+                    )
             
-            results = []
-            for row in c.fetchall():
-                results.append({
-                    "trace_id": row["trace_id"],
-                    "code": row["code"],
-                    "executed": bool(row["executed"]),
-                    "reject_reason": row["reject_reason"],
-                    "entry_price": row["entry_price"],
-                    "exit_price": row["exit_price"],
-                    "pnl": row["pnl"],
-                    "exit_reason": row["exit_reason"],
-                    "holding_hours": row["holding_hours"],
-                    "created_at": row["created_at"],
-                })
-            conn.close()
+                results = []
+                for row in c.fetchall():
+                    results.append({
+                        "trace_id": row["trace_id"],
+                        "code": row["code"],
+                        "executed": bool(row["executed"]),
+                        "reject_reason": row["reject_reason"],
+                        "entry_price": row["entry_price"],
+                        "exit_price": row["exit_price"],
+                        "pnl": row["pnl"],
+                        "exit_reason": row["exit_reason"],
+                        "holding_hours": row["holding_hours"],
+                        "created_at": row["created_at"],
+                    })
             return results
         except Exception as e:
             logger.error(f"获取执行历史失败: {e}")

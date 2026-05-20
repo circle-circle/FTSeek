@@ -33,36 +33,35 @@ class KnowledgeAccumulator:
     def _ensure_schema(self):
         """确保 DB schema 包含知识积累所需字段"""
         try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
 
-            # 检查并添加新列
-            existing = {row[1] for row in cursor.execute("PRAGMA table_info(lessons)").fetchall()}
+                # 检查并添加新列
+                existing = {row[1] for row in cursor.execute("PRAGMA table_info(lessons)").fetchall()}
 
-            migrations = [
-                ("pattern_group_id", "TEXT DEFAULT ''"),
-                ("confidence_score", "REAL DEFAULT 0.5"),
-                ("occurrence_count", "INTEGER DEFAULT 1"),
-                ("last_seen_date", "TEXT DEFAULT ''"),
-                ("validation_reason", "TEXT DEFAULT ''"),
-                ("sector", "TEXT DEFAULT ''"),
-            ]
+                migrations = [
+                    ("pattern_group_id", "TEXT DEFAULT ''"),
+                    ("confidence_score", "REAL DEFAULT 0.5"),
+                    ("occurrence_count", "INTEGER DEFAULT 1"),
+                    ("last_seen_date", "TEXT DEFAULT ''"),
+                    ("validation_reason", "TEXT DEFAULT ''"),
+                    ("sector", "TEXT DEFAULT ''"),
+                ]
 
-            for col_name, col_def in migrations:
-                if col_name not in existing:
-                    cursor.execute(f"ALTER TABLE lessons ADD COLUMN {col_name} {col_def}")
-                    logger.info(f"[KnowledgeAccumulator] 新增列: {col_name}")
+                for col_name, col_def in migrations:
+                    if col_name not in existing:
+                        cursor.execute(f"ALTER TABLE lessons ADD COLUMN {col_name} {col_def}")
+                        logger.info(f"[KnowledgeAccumulator] 新增列: {col_name}")
 
-            # 新索引
-            cursor.execute(
-                "CREATE INDEX IF NOT EXISTS idx_lessons_pattern ON lessons(pattern_group_id)"
-            )
-            cursor.execute(
-                "CREATE INDEX IF NOT EXISTS idx_lessons_confidence ON lessons(confidence_score)"
-            )
+                # 新索引
+                cursor.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_lessons_pattern ON lessons(pattern_group_id)"
+                )
+                cursor.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_lessons_confidence ON lessons(confidence_score)"
+                )
 
-            conn.commit()
-            conn.close()
+                conn.commit()
             logger.info("[KnowledgeAccumulator] Schema 已确保最新")
         except Exception as e:
             logger.error(f"[KnowledgeAccumulator] Schema 迁移失败: {e}")
@@ -80,56 +79,55 @@ class KnowledgeAccumulator:
             - pattern_id, cause, sector, symbols, count, avg_loss, weeks_span
         """
         try:
-            conn = sqlite3.connect(self.db_path)
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
+            with sqlite3.connect(self.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
 
-            # 查找相同 cause + sector 组合出现 ≥3 次的情况
-            cursor.execute(
-                """
-                SELECT
-                    COALESCE(NULLIF(cause, ''), 'unknown') as cause_group,
-                    COALESCE(NULLIF(sector, ''), 'general') as sector_group,
-                    GROUP_CONCAT(DISTINCT symbol) as symbols,
-                    COUNT(*) as cnt,
-                    AVG(pnl_percent) as avg_loss,
-                    MIN(trade_date) as first_seen,
-                    MAX(trade_date) as last_seen
-                FROM lessons
-                WHERE pnl_percent < 0
-                  AND validation_status != 'invalidated'
-                GROUP BY cause_group, sector_group
-                HAVING cnt >= ?
-                ORDER BY avg_loss ASC
-                """,
-                (min_occurrences,),
-            )
+                # 查找相同 cause + sector 组合出现 ≥3 次的情况
+                cursor.execute(
+                    """
+                    SELECT
+                        COALESCE(NULLIF(cause, ''), 'unknown') as cause_group,
+                        COALESCE(NULLIF(sector, ''), 'general') as sector_group,
+                        GROUP_CONCAT(DISTINCT symbol) as symbols,
+                        COUNT(*) as cnt,
+                        AVG(pnl_percent) as avg_loss,
+                        MIN(trade_date) as first_seen,
+                        MAX(trade_date) as last_seen
+                    FROM lessons
+                    WHERE pnl_percent < 0
+                      AND validation_status != 'invalidated'
+                    GROUP BY cause_group, sector_group
+                    HAVING cnt >= ?
+                    ORDER BY avg_loss ASC
+                    """,
+                    (min_occurrences,),
+                )
 
-            patterns = []
-            for row in cursor.fetchall():
-                d = dict(row)
-                first = datetime.strptime(d["first_seen"], "%Y-%m-%d")
-                last = datetime.strptime(d["last_seen"], "%Y-%m-%d")
-                weeks_span = max(1, (last - first).days // 7)
+                patterns = []
+                for row in cursor.fetchall():
+                    d = dict(row)
+                    first = datetime.strptime(d["first_seen"], "%Y-%m-%d")
+                    last = datetime.strptime(d["last_seen"], "%Y-%m-%d")
+                    weeks_span = max(1, (last - first).days // 7)
 
-                if weeks_span < min_weeks_span:
-                    continue
+                    if weeks_span < min_weeks_span:
+                        continue
 
-                pattern_id = f"pattern_{d['cause_group']}_{d['sector_group']}"
-                patterns.append({
-                    "pattern_id": pattern_id,
-                    "cause": d["cause_group"],
-                    "sector": d["sector_group"],
-                    "symbols": d["symbols"],
-                    "occurrence_count": d["cnt"],
-                    "avg_loss_pct": round(d["avg_loss"], 2),
-                    "weeks_span": weeks_span,
-                    "first_seen": d["first_seen"],
-                    "last_seen": d["last_seen"],
-                    "is_confirmed": weeks_span >= min_weeks_span and d["cnt"] >= min_occurrences,
-                })
+                    pattern_id = f"pattern_{d['cause_group']}_{d['sector_group']}"
+                    patterns.append({
+                        "pattern_id": pattern_id,
+                        "cause": d["cause_group"],
+                        "sector": d["sector_group"],
+                        "symbols": d["symbols"],
+                        "occurrence_count": d["cnt"],
+                        "avg_loss_pct": round(d["avg_loss"], 2),
+                        "weeks_span": weeks_span,
+                        "first_seen": d["first_seen"],
+                        "last_seen": d["last_seen"],
+                        "is_confirmed": weeks_span >= min_weeks_span and d["cnt"] >= min_occurrences,
+                    })
 
-            conn.close()
 
             # 标记已确认模式到 DB
             for p in patterns:
@@ -148,18 +146,17 @@ class KnowledgeAccumulator:
     def _tag_pattern_group(self, pattern_id: str, cause: str, sector: str):
         """将匹配的教训标记到同一模式组"""
         try:
-            conn = sqlite3.connect(self.db_path)
-            conn.execute(
-                """
-                UPDATE lessons
-                SET pattern_group_id = ?
-                WHERE cause = ? AND (sector = ? OR (sector = '' AND ? = 'general'))
-                  AND pattern_group_id = ''
-                """,
-                (pattern_id, cause, sector, sector),
-            )
-            conn.commit()
-            conn.close()
+            with sqlite3.connect(self.db_path) as conn:
+                conn.execute(
+                    """
+                    UPDATE lessons
+                    SET pattern_group_id = ?
+                    WHERE cause = ? AND (sector = ? OR (sector = '' AND ? = 'general'))
+                      AND pattern_group_id = ''
+                    """,
+                    (pattern_id, cause, sector, sector),
+                )
+                conn.commit()
         except Exception as e:
             logger.debug(f"[KnowledgeAccumulator] 标记模式组失败: {e}")
 
@@ -178,79 +175,78 @@ class KnowledgeAccumulator:
         - 被推翻的教训: validation_status='invalidated', confidence→0
         """
         try:
-            conn = sqlite3.connect(self.db_path)
-            conn.row_factory = sqlite3.Row
+            with sqlite3.connect(self.db_path) as conn:
+                conn.row_factory = sqlite3.Row
 
-            today = datetime.now().strftime("%Y-%m-%d")
+                today = datetime.now().strftime("%Y-%m-%d")
 
-            # 1. 基于 pattern_group_id 统计出现次数
-            cursor = conn.execute(
-                """
-                SELECT pattern_group_id, COUNT(*) as cnt
-                FROM lessons
-                WHERE pattern_group_id != ''
-                  AND validation_status != 'invalidated'
-                GROUP BY pattern_group_id
-                """
-            )
-            pattern_counts = {row["pattern_group_id"]: row["cnt"] for row in cursor.fetchall()}
+                # 1. 基于 pattern_group_id 统计出现次数
+                cursor = conn.execute(
+                    """
+                    SELECT pattern_group_id, COUNT(*) as cnt
+                    FROM lessons
+                    WHERE pattern_group_id != ''
+                      AND validation_status != 'invalidated'
+                    GROUP BY pattern_group_id
+                    """
+                )
+                pattern_counts = {row["pattern_group_id"]: row["cnt"] for row in cursor.fetchall()}
 
-            # 2. 逐条更新
-            cursor = conn.execute(
-                """
-                SELECT id, pattern_group_id, confidence_score, occurrence_count,
-                       last_seen_date, trade_date, pnl_percent, validation_status
-                FROM lessons
-                WHERE validation_status != 'invalidated'
-                """
-            )
+                # 2. 逐条更新
+                cursor = conn.execute(
+                    """
+                    SELECT id, pattern_group_id, confidence_score, occurrence_count,
+                           last_seen_date, trade_date, pnl_percent, validation_status
+                    FROM lessons
+                    WHERE validation_status != 'invalidated'
+                    """
+                )
 
-            updates = []
-            for row in cursor.fetchall():
-                d = dict(row)
-                confidence = d["confidence_score"] or 0.5
-                occ_count = d["occurrence_count"] or 1
-                last_seen = d["last_seen_date"] or d["trade_date"]
+                updates = []
+                for row in cursor.fetchall():
+                    d = dict(row)
+                    confidence = d["confidence_score"] or 0.5
+                    occ_count = d["occurrence_count"] or 1
+                    last_seen = d["last_seen_date"] or d["trade_date"]
 
-                # 模式组内出现次数
-                if d["pattern_group_id"] and d["pattern_group_id"] in pattern_counts:
-                    group_cnt = pattern_counts[d["pattern_group_id"]]
-                    if group_cnt > occ_count:
-                        confidence = min(0.95, confidence + 0.1 * (group_cnt - occ_count))
-                        occ_count = group_cnt
+                    # 模式组内出现次数
+                    if d["pattern_group_id"] and d["pattern_group_id"] in pattern_counts:
+                        group_cnt = pattern_counts[d["pattern_group_id"]]
+                        if group_cnt > occ_count:
+                            confidence = min(0.95, confidence + 0.1 * (group_cnt - occ_count))
+                            occ_count = group_cnt
 
-                # 时间衰减 (14天未重现)
-                if last_seen:
-                    try:
-                        last_dt = datetime.strptime(last_seen, "%Y-%m-%d")
-                        days_since = (datetime.now() - last_dt).days
-                        if days_since > 14:
-                            weeks = (days_since - 14) // 7
-                            confidence = max(0.1, confidence - 0.05 * weeks)
-                    except ValueError:
-                        pass
+                    # 时间衰减 (14天未重现)
+                    if last_seen:
+                        try:
+                            last_dt = datetime.strptime(last_seen, "%Y-%m-%d")
+                            days_since = (datetime.now() - last_dt).days
+                            if days_since > 14:
+                                weeks = (days_since - 14) // 7
+                                confidence = max(0.1, confidence - 0.05 * weeks)
+                        except ValueError:
+                            pass
 
-                # 盈利交易经验: 方向正确 → 提升信心
-                if d["pnl_percent"] and d["pnl_percent"] > 1:
-                    confidence = min(0.95, confidence + 0.05)
+                    # 盈利交易经验: 方向正确 → 提升信心
+                    if d["pnl_percent"] and d["pnl_percent"] > 1:
+                        confidence = min(0.95, confidence + 0.05)
 
-                # 更新 last_seen_date
-                updates.append((
-                    round(confidence, 3), occ_count, today,
-                    d["id"],
-                ))
+                    # 更新 last_seen_date
+                    updates.append((
+                        round(confidence, 3), occ_count, today,
+                        d["id"],
+                    ))
 
-            conn.executemany(
-                """
-                UPDATE lessons
-                SET confidence_score = ?, occurrence_count = ?, last_seen_date = ?
-                WHERE id = ?
-                """,
-                updates,
-            )
+                conn.executemany(
+                    """
+                    UPDATE lessons
+                    SET confidence_score = ?, occurrence_count = ?, last_seen_date = ?
+                    WHERE id = ?
+                    """,
+                    updates,
+                )
 
-            conn.commit()
-            conn.close()
+                conn.commit()
 
             logger.info(
                 f"[KnowledgeAccumulator] 置信度进化完成: {len(updates)} 条教训已更新"
@@ -266,31 +262,30 @@ class KnowledgeAccumulator:
     def validate_lesson(self, lesson_id: str, is_valid: bool, reason: str = ""):
         """验证或推翻一条教训"""
         try:
-            conn = sqlite3.connect(self.db_path)
-            if is_valid:
-                conn.execute(
-                    """
-                    UPDATE lessons
-                    SET validation_status = 'validated',
-                        confidence_score = MIN(0.95, confidence_score + 0.2),
-                        validation_reason = ?
-                    WHERE id = ?
-                    """,
-                    (reason, lesson_id),
-                )
-            else:
-                conn.execute(
-                    """
-                    UPDATE lessons
-                    SET validation_status = 'invalidated',
-                        confidence_score = 0.0,
-                        validation_reason = ?
-                    WHERE id = ?
-                    """,
-                    (reason, lesson_id),
-                )
-            conn.commit()
-            conn.close()
+            with sqlite3.connect(self.db_path) as conn:
+                if is_valid:
+                    conn.execute(
+                        """
+                        UPDATE lessons
+                        SET validation_status = 'validated',
+                            confidence_score = MIN(0.95, confidence_score + 0.2),
+                            validation_reason = ?
+                        WHERE id = ?
+                        """,
+                        (reason, lesson_id),
+                    )
+                else:
+                    conn.execute(
+                        """
+                        UPDATE lessons
+                        SET validation_status = 'invalidated',
+                            confidence_score = 0.0,
+                            validation_reason = ?
+                        WHERE id = ?
+                        """,
+                        (reason, lesson_id),
+                    )
+                conn.commit()
             logger.info(f"[KnowledgeAccumulator] 教训 {lesson_id}: {'验证' if is_valid else '推翻'} ({reason})")
         except Exception as e:
             logger.error(f"[KnowledgeAccumulator] 验证教训失败: {e}")
@@ -312,22 +307,21 @@ class KnowledgeAccumulator:
             按相关性排序的教训列表
         """
         try:
-            conn = sqlite3.connect(self.db_path)
-            conn.row_factory = sqlite3.Row
+            with sqlite3.connect(self.db_path) as conn:
+                conn.row_factory = sqlite3.Row
 
-            # 获取所有活跃教训
-            cursor = conn.execute(
-                """
-                SELECT * FROM lessons
-                WHERE validation_status != 'invalidated'
-                  AND confidence_score >= ?
-                ORDER BY confidence_score DESC, pnl_percent ASC
-                """,
-                (min_confidence,),
-            )
+                # 获取所有活跃教训
+                cursor = conn.execute(
+                    """
+                    SELECT * FROM lessons
+                    WHERE validation_status != 'invalidated'
+                      AND confidence_score >= ?
+                    ORDER BY confidence_score DESC, pnl_percent ASC
+                    """,
+                    (min_confidence,),
+                )
 
-            all_lessons = [dict(r) for r in cursor.fetchall()]
-            conn.close()
+                all_lessons = [dict(r) for r in cursor.fetchall()]
 
             if not all_lessons:
                 return []
@@ -399,42 +393,41 @@ class KnowledgeAccumulator:
     def analyze_cross_symbol_patterns(self) -> List[Dict]:
         """检测跨标的共性错误 (如"所有科技股亏损都因追高")"""
         try:
-            conn = sqlite3.connect(self.db_path)
-            conn.row_factory = sqlite3.Row
+            with sqlite3.connect(self.db_path) as conn:
+                conn.row_factory = sqlite3.Row
 
-            cursor = conn.execute(
-                """
-                SELECT
-                    cause,
-                    COUNT(DISTINCT symbol) as symbol_count,
-                    GROUP_CONCAT(DISTINCT symbol) as symbols,
-                    AVG(pnl_percent) as avg_loss,
-                    COUNT(*) as total_trades
-                FROM lessons
-                WHERE pnl_percent < 0
-                  AND validation_status != 'invalidated'
-                GROUP BY cause
-                HAVING symbol_count >= 2
-                ORDER BY symbol_count DESC, avg_loss ASC
-                """
-            )
+                cursor = conn.execute(
+                    """
+                    SELECT
+                        cause,
+                        COUNT(DISTINCT symbol) as symbol_count,
+                        GROUP_CONCAT(DISTINCT symbol) as symbols,
+                        AVG(pnl_percent) as avg_loss,
+                        COUNT(*) as total_trades
+                    FROM lessons
+                    WHERE pnl_percent < 0
+                      AND validation_status != 'invalidated'
+                    GROUP BY cause
+                    HAVING symbol_count >= 2
+                    ORDER BY symbol_count DESC, avg_loss ASC
+                    """
+                )
 
-            patterns = []
-            for row in cursor.fetchall():
-                d = dict(row)
-                patterns.append({
-                    "cause": d["cause"],
-                    "affected_symbols": d["symbol_count"],
-                    "symbols": d["symbols"],
-                    "avg_loss": round(d["avg_loss"], 2),
-                    "total_trades": d["total_trades"],
-                    "insight": (
-                        f"跨 {d['symbol_count']} 只标的共性问题 [{d['cause']}]: "
-                        f"{d['total_trades']} 次亏损, 平均 {d['avg_loss']:.1f}%"
-                    ),
-                })
+                patterns = []
+                for row in cursor.fetchall():
+                    d = dict(row)
+                    patterns.append({
+                        "cause": d["cause"],
+                        "affected_symbols": d["symbol_count"],
+                        "symbols": d["symbols"],
+                        "avg_loss": round(d["avg_loss"], 2),
+                        "total_trades": d["total_trades"],
+                        "insight": (
+                            f"跨 {d['symbol_count']} 只标的共性问题 [{d['cause']}]: "
+                            f"{d['total_trades']} 次亏损, 平均 {d['avg_loss']:.1f}%"
+                        ),
+                    })
 
-            conn.close()
             return patterns
 
         except Exception as e:
@@ -448,25 +441,24 @@ class KnowledgeAccumulator:
     def get_knowledge_summary(self) -> Dict:
         """获取知识库摘要"""
         try:
-            conn = sqlite3.connect(self.db_path)
-            conn.row_factory = sqlite3.Row
+            with sqlite3.connect(self.db_path) as conn:
+                conn.row_factory = sqlite3.Row
 
-            total = conn.execute("SELECT COUNT(*) as c FROM lessons").fetchone()["c"]
-            active = conn.execute(
-                "SELECT COUNT(*) as c FROM lessons WHERE validation_status != 'invalidated'"
-            ).fetchone()["c"]
-            invalidated = conn.execute(
-                "SELECT COUNT(*) as c FROM lessons WHERE validation_status = 'invalidated'"
-            ).fetchone()["c"]
-            patterns = conn.execute(
-                "SELECT COUNT(DISTINCT pattern_group_id) as c FROM lessons WHERE pattern_group_id != ''"
-            ).fetchone()["c"]
+                total = conn.execute("SELECT COUNT(*) as c FROM lessons").fetchone()["c"]
+                active = conn.execute(
+                    "SELECT COUNT(*) as c FROM lessons WHERE validation_status != 'invalidated'"
+                ).fetchone()["c"]
+                invalidated = conn.execute(
+                    "SELECT COUNT(*) as c FROM lessons WHERE validation_status = 'invalidated'"
+                ).fetchone()["c"]
+                patterns = conn.execute(
+                    "SELECT COUNT(DISTINCT pattern_group_id) as c FROM lessons WHERE pattern_group_id != ''"
+                ).fetchone()["c"]
 
-            avg_confidence = conn.execute(
-                "SELECT AVG(confidence_score) as c FROM lessons WHERE validation_status != 'invalidated'"
-            ).fetchone()["c"] or 0
+                avg_confidence = conn.execute(
+                    "SELECT AVG(confidence_score) as c FROM lessons WHERE validation_status != 'invalidated'"
+                ).fetchone()["c"] or 0
 
-            conn.close()
 
             return {
                 "total_lessons": total,

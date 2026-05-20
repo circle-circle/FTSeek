@@ -325,17 +325,16 @@ class LLMQualityEvaluator:
     def _load_attributions(self, days: int) -> List[Dict]:
         """加载 trade_attribution 数据"""
         try:
-            conn = sqlite3.connect(self.db_path)
-            conn.row_factory = sqlite3.Row
-            cursor = conn.execute(
-                """SELECT trace_id, code, pnl_category, overall_score,
-                   direction_correct, signal_quality, risk_quality, pnl
-                   FROM trade_attribution
-                   WHERE created_at >= datetime('now', ?)""",
-                (f"-{days} days",),
-            )
-            rows = [dict(r) for r in cursor.fetchall()]
-            conn.close()
+            with sqlite3.connect(self.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.execute(
+                    """SELECT trace_id, code, pnl_category, overall_score,
+                       direction_correct, signal_quality, risk_quality, pnl
+                       FROM trade_attribution
+                       WHERE created_at >= datetime('now', ?)""",
+                    (f"-{days} days",),
+                )
+                rows = [dict(r) for r in cursor.fetchall()]
             return rows
         except Exception as e:
             logger.warning(f"[LLMQuality] 加载 attribution 失败: {e}")

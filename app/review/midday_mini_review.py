@@ -159,22 +159,21 @@ class MiddayMiniReview:
         """获取上午交易 (9:30-12:00)"""
         try:
             today = trade_date or datetime.now().strftime("%Y-%m-%d")
-            conn = sqlite3.connect(FTSEEK_DB)
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
+            with sqlite3.connect(FTSEEK_DB) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
 
-            cursor.execute(
-                """
-                SELECT * FROM trades
-                WHERE code LIKE 'HK.%'
-                  AND entry_time >= ? AND entry_time < ?
-                ORDER BY entry_time ASC
-                """,
-                (f"{today} 09:30:00", f"{today} 12:00:00"),
-            )
+                cursor.execute(
+                    """
+                    SELECT * FROM trades
+                    WHERE code LIKE 'HK.%'
+                      AND entry_time >= ? AND entry_time < ?
+                    ORDER BY entry_time ASC
+                    """,
+                    (f"{today} 09:30:00", f"{today} 12:00:00"),
+                )
 
-            rows = cursor.fetchall()
-            conn.close()
+                rows = cursor.fetchall()
 
             trades = [dict(r) for r in rows]
             logger.debug(f"[MiddayMiniReview] 上午交易: {len(trades)} 笔")
@@ -340,30 +339,29 @@ class MiddayMiniReview:
         """写入 hk_lessons.db"""
         try:
             db_path = os.environ.get("FTSEEK_HK_LESSONS_DB", "data/hk_lessons.db")
-            conn = sqlite3.connect(db_path)
-            for lesson in lessons:
-                context_json = json.dumps({})
-                conn.execute(
-                    """
-                    INSERT OR REPLACE INTO lessons
-                    (id, trade_date, symbol, direction, pnl_percent, cause, lesson,
-                     confidence, expiry_date, market_context)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        lesson["id"],
-                        lesson["trade_date"],
-                        lesson["symbol"],
-                        lesson["direction"],
-                        lesson["pnl_percent"],
-                        lesson["cause"],
-                        lesson["lesson"],
-                        lesson.get("confidence", 0.8),
-                        lesson["expiry_date"],
-                        context_json,
-                    ),
-                )
-            conn.commit()
-            conn.close()
+            with sqlite3.connect(db_path) as conn:
+                for lesson in lessons:
+                    context_json = json.dumps({})
+                    conn.execute(
+                        """
+                        INSERT OR REPLACE INTO lessons
+                        (id, trade_date, symbol, direction, pnl_percent, cause, lesson,
+                         confidence, expiry_date, market_context)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            lesson["id"],
+                            lesson["trade_date"],
+                            lesson["symbol"],
+                            lesson["direction"],
+                            lesson["pnl_percent"],
+                            lesson["cause"],
+                            lesson["lesson"],
+                            lesson.get("confidence", 0.8),
+                            lesson["expiry_date"],
+                            context_json,
+                        ),
+                    )
+                conn.commit()
         except Exception as e:
             logger.error(f"[MiddayMiniReview] 写入 DB 失败: {e}")

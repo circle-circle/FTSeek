@@ -198,43 +198,42 @@ class PerformanceAnalytics:
         start_date: str = None, end_date: str = None
     ) -> List[ClosedTrade]:
         """从 positions 表加载已平仓记录"""
-        conn = sqlite3.connect(f"file:{self.db_path}?mode=ro", uri=True)
-        cur = conn.cursor()
+        with sqlite3.connect(f"file:{self.db_path}?mode=ro", uri=True) as conn:
+            cur = conn.cursor()
 
-        query = """
-            SELECT code, action, entry_price, exit_price, quantity,
-                   realized_pnl, entry_time, exit_time, strategy
-            FROM positions
-            WHERE status = 'CLOSED' AND exit_price IS NOT NULL
-              AND entry_price > 0 AND quantity > 0
-        """
-        params = []
-        if start_date:
-            query += " AND entry_time >= ?"
-            params.append(start_date)
-        if end_date:
-            query += " AND entry_time <= ?"
-            params.append(end_date)
+            query = """
+                SELECT code, action, entry_price, exit_price, quantity,
+                       realized_pnl, entry_time, exit_time, strategy
+                FROM positions
+                WHERE status = 'CLOSED' AND exit_price IS NOT NULL
+                  AND entry_price > 0 AND quantity > 0
+            """
+            params = []
+            if start_date:
+                query += " AND entry_time >= ?"
+                params.append(start_date)
+            if end_date:
+                query += " AND entry_time <= ?"
+                params.append(end_date)
 
-        cur.execute(query, params)
-        rows = cur.fetchall()
+            cur.execute(query, params)
+            rows = cur.fetchall()
 
-        trades = []
-        for row in rows:
-            code, action, ep, xp, qty, pnl, et, xt, strategy = row
-            if ep <= 0:
-                continue
-            pnl_pct = (xp - ep) / ep if action == "BUY" else (ep - xp) / ep
+            trades = []
+            for row in rows:
+                code, action, ep, xp, qty, pnl, et, xt, strategy = row
+                if ep <= 0:
+                    continue
+                pnl_pct = (xp - ep) / ep if action == "BUY" else (ep - xp) / ep
 
-            trades.append(ClosedTrade(
-                code=code, action=action or "BUY",
-                entry_price=ep, exit_price=xp,
-                quantity=qty, realized_pnl=pnl or 0.0,
-                pnl_pct=pnl_pct, entry_time=et or "", exit_time=xt or "",
-                strategy=strategy or "",
-            ))
+                trades.append(ClosedTrade(
+                    code=code, action=action or "BUY",
+                    entry_price=ep, exit_price=xp,
+                    quantity=qty, realized_pnl=pnl or 0.0,
+                    pnl_pct=pnl_pct, entry_time=et or "", exit_time=xt or "",
+                    strategy=strategy or "",
+                ))
 
-        conn.close()
 
         if strategy_filter:
             trades = [t for t in trades if strategy_filter.lower() in t.strategy.lower()]

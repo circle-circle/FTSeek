@@ -121,24 +121,23 @@ class WinRateFeedbackLoop:
             return self._cache[cache_key]
 
         try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.execute("""
-                SELECT
-                    COUNT(*) as total,
-                    SUM(CASE WHEN pnl_category = 'win' THEN 1 ELSE 0 END) as wins,
-                    SUM(CASE WHEN pnl_category = 'loss' THEN 1 ELSE 0 END) as losses,
-                    ROUND(AVG(pnl), 2) as avg_pnl,
-                    ROUND(AVG(CASE WHEN pnl > 0 THEN pnl END), 2) as avg_win,
-                    ROUND(AVG(CASE WHEN pnl < 0 THEN pnl END), 2) as avg_loss,
-                    ROUND(AVG(signal_quality), 2) as signal_quality_avg,
-                    ROUND(AVG(direction_correct), 2) as direction_accuracy
-                FROM trade_attribution
-                WHERE code = ?
-                AND created_at >= datetime('now', ?)
-            """, (code, f"-{days} days"))
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.execute("""
+                    SELECT
+                        COUNT(*) as total,
+                        SUM(CASE WHEN pnl_category = 'win' THEN 1 ELSE 0 END) as wins,
+                        SUM(CASE WHEN pnl_category = 'loss' THEN 1 ELSE 0 END) as losses,
+                        ROUND(AVG(pnl), 2) as avg_pnl,
+                        ROUND(AVG(CASE WHEN pnl > 0 THEN pnl END), 2) as avg_win,
+                        ROUND(AVG(CASE WHEN pnl < 0 THEN pnl END), 2) as avg_loss,
+                        ROUND(AVG(signal_quality), 2) as signal_quality_avg,
+                        ROUND(AVG(direction_correct), 2) as direction_accuracy
+                    FROM trade_attribution
+                    WHERE code = ?
+                    AND created_at >= datetime('now', ?)
+                """, (code, f"-{days} days"))
 
-            row = cursor.fetchone()
-            conn.close()
+                row = cursor.fetchone()
 
             if not row or row[0] == 0:
                 return None
@@ -190,20 +189,19 @@ class WinRateFeedbackLoop:
             return self._cache[cache_key]
 
         try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.execute("""
-                SELECT
-                    COUNT(*) as total,
-                    SUM(CASE WHEN pnl_category = 'win' THEN 1 ELSE 0 END) as wins,
-                    ROUND(AVG(pnl), 2) as avg_pnl,
-                    ROUND(AVG(signal_quality), 2) as signal_quality_avg,
-                    ROUND(AVG(direction_correct), 2) as direction_accuracy
-                FROM trade_attribution
-                WHERE created_at >= datetime('now', ?)
-            """, (f"-{days} days",))
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.execute("""
+                    SELECT
+                        COUNT(*) as total,
+                        SUM(CASE WHEN pnl_category = 'win' THEN 1 ELSE 0 END) as wins,
+                        ROUND(AVG(pnl), 2) as avg_pnl,
+                        ROUND(AVG(signal_quality), 2) as signal_quality_avg,
+                        ROUND(AVG(direction_correct), 2) as direction_accuracy
+                    FROM trade_attribution
+                    WHERE created_at >= datetime('now', ?)
+                """, (f"-{days} days",))
 
-            row = cursor.fetchone()
-            conn.close()
+                row = cursor.fetchone()
 
             if not row or row[0] == 0:
                 return {"total_trades": 0}
@@ -235,19 +233,18 @@ class WinRateFeedbackLoop:
     def get_strategy_stats(self, strategy: str, days: int = 30) -> Optional[Dict]:
         """获取特定策略的历史统计"""
         try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.execute("""
-                SELECT
-                    COUNT(*) as total,
-                    SUM(CASE WHEN pnl_category = 'win' THEN 1 ELSE 0 END) as wins,
-                    ROUND(AVG(pnl), 2) as avg_pnl
-                FROM trade_attribution
-                WHERE strategy = ?
-                AND created_at >= datetime('now', ?)
-            """, (strategy, f"-{days} days"))
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.execute("""
+                    SELECT
+                        COUNT(*) as total,
+                        SUM(CASE WHEN pnl_category = 'win' THEN 1 ELSE 0 END) as wins,
+                        ROUND(AVG(pnl), 2) as avg_pnl
+                    FROM trade_attribution
+                    WHERE strategy = ?
+                    AND created_at >= datetime('now', ?)
+                """, (strategy, f"-{days} days"))
 
-            row = cursor.fetchone()
-            conn.close()
+                row = cursor.fetchone()
 
             if not row or row[0] == 0:
                 return None
@@ -275,23 +272,22 @@ class WinRateFeedbackLoop:
     def get_top_codes(self, days: int = 30, limit: int = 10) -> List[Dict]:
         """获取胜率最高的股票 (用于参考)"""
         try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.execute("""
-                SELECT
-                    code,
-                    COUNT(*) as total,
-                    SUM(CASE WHEN pnl_category = 'win' THEN 1 ELSE 0 END) as wins,
-                    ROUND(AVG(pnl), 2) as avg_pnl
-                FROM trade_attribution
-                WHERE created_at >= datetime('now', ?)
-                GROUP BY code
-                HAVING total >= 5
-                ORDER BY (wins * 1.0 / total) DESC, avg_pnl DESC
-                LIMIT ?
-            """, (f"-{days} days", limit))
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.execute("""
+                    SELECT
+                        code,
+                        COUNT(*) as total,
+                        SUM(CASE WHEN pnl_category = 'win' THEN 1 ELSE 0 END) as wins,
+                        ROUND(AVG(pnl), 2) as avg_pnl
+                    FROM trade_attribution
+                    WHERE created_at >= datetime('now', ?)
+                    GROUP BY code
+                    HAVING total >= 5
+                    ORDER BY (wins * 1.0 / total) DESC, avg_pnl DESC
+                    LIMIT ?
+                """, (f"-{days} days", limit))
 
-            rows = cursor.fetchall()
-            conn.close()
+                rows = cursor.fetchall()
 
             result = []
             for row in rows:
@@ -312,23 +308,22 @@ class WinRateFeedbackLoop:
     def get_worst_codes(self, days: int = 30, limit: int = 10) -> List[Dict]:
         """获取胜率最低的股票 (用于风险提示)"""
         try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.execute("""
-                SELECT
-                    code,
-                    COUNT(*) as total,
-                    SUM(CASE WHEN pnl_category = 'win' THEN 1 ELSE 0 END) as wins,
-                    ROUND(AVG(pnl), 2) as avg_pnl
-                FROM trade_attribution
-                WHERE created_at >= datetime('now', ?)
-                GROUP BY code
-                HAVING total >= 5
-                ORDER BY (wins * 1.0 / total) ASC, avg_pnl ASC
-                LIMIT ?
-            """, (f"-{days} days", limit))
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.execute("""
+                    SELECT
+                        code,
+                        COUNT(*) as total,
+                        SUM(CASE WHEN pnl_category = 'win' THEN 1 ELSE 0 END) as wins,
+                        ROUND(AVG(pnl), 2) as avg_pnl
+                    FROM trade_attribution
+                    WHERE created_at >= datetime('now', ?)
+                    GROUP BY code
+                    HAVING total >= 5
+                    ORDER BY (wins * 1.0 / total) ASC, avg_pnl ASC
+                    LIMIT ?
+                """, (f"-{days} days", limit))
 
-            rows = cursor.fetchall()
-            conn.close()
+                rows = cursor.fetchall()
 
             result = []
             for row in rows:

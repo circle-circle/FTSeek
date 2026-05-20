@@ -409,18 +409,17 @@ class PositionSync:
             RECENT_CLOSE_WINDOW_MINUTES = 10  # Futu 结算延迟窗口
             try:
                 db_path = position_manager._db_path if hasattr(position_manager, '_db_path') else 'data/ftseek.db'
-                conn = sqlite3.connect(db_path)
-                cutoff = (datetime.now() - timedelta(minutes=RECENT_CLOSE_WINDOW_MINUTES)).strftime("%Y-%m-%d %H:%M:%S")
-                # 检查是否在冷却期内被 CLOSE
-                recent_close = conn.execute(
-                    "SELECT COUNT(*) FROM positions WHERE code=? AND status='CLOSED' AND exit_time>=?",
-                    (code, cutoff)
-                ).fetchone()[0]
-                recent_trade_close = conn.execute(
-                    "SELECT COUNT(*) FROM trades WHERE code=? AND status='closed' AND exit_time>=?",
-                    (code, cutoff)
-                ).fetchone()[0]
-                conn.close()
+                with sqlite3.connect(db_path) as conn:
+                    cutoff = (datetime.now() - timedelta(minutes=RECENT_CLOSE_WINDOW_MINUTES)).strftime("%Y-%m-%d %H:%M:%S")
+                    # 检查是否在冷却期内被 CLOSE
+                    recent_close = conn.execute(
+                        "SELECT COUNT(*) FROM positions WHERE code=? AND status='CLOSED' AND exit_time>=?",
+                        (code, cutoff)
+                    ).fetchone()[0]
+                    recent_trade_close = conn.execute(
+                        "SELECT COUNT(*) FROM trades WHERE code=? AND status='closed' AND exit_time>=?",
+                        (code, cutoff)
+                    ).fetchone()[0]
                 if recent_close > 0 or recent_trade_close > 0:
                     logger.info(
                         f"[持仓差异] {code}: Futu 有持仓但本地无记录，但 {RECENT_CLOSE_WINDOW_MINUTES}min 内"

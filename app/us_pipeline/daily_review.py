@@ -18,26 +18,25 @@ class DailyReviewer:
     def run_review(self, market: str = "US"):
         logger.info(f"开始生成 {market} 每日复盘报告...")
         
-        conn = sqlite3.connect(self.DB_PATH)
-        cursor = conn.cursor()
+        with sqlite3.connect(self.DB_PATH) as conn:
+            cursor = conn.cursor()
         
-        today = datetime.now().strftime("%Y-%m-%d")
+            today = datetime.now().strftime("%Y-%m-%d")
         
-        # 1. 获取今日交易
-        cursor.execute("SELECT COUNT(*), SUM(pnl) FROM trades WHERE code LIKE ? AND entry_time >= ?", (f"{market}.%", today))
-        total_trades, total_pnl = cursor.fetchone()
-        total_pnl = total_pnl or 0
+            # 1. 获取今日交易
+            cursor.execute("SELECT COUNT(*), SUM(pnl) FROM trades WHERE code LIKE ? AND entry_time >= ?", (f"{market}.%", today))
+            total_trades, total_pnl = cursor.fetchone()
+            total_pnl = total_pnl or 0
         
-        # 2. 获取当前持仓
-        cursor.execute("SELECT COUNT(*), SUM(unrealized_pnl) FROM positions WHERE code LIKE ? AND status = 'OPEN'", (f"{market}.%",))
-        open_pos, total_upnl = cursor.fetchone()
-        total_upnl = total_upnl or 0
+            # 2. 获取当前持仓
+            cursor.execute("SELECT COUNT(*), SUM(unrealized_pnl) FROM positions WHERE code LIKE ? AND status = 'OPEN'", (f"{market}.%",))
+            open_pos, total_upnl = cursor.fetchone()
+            total_upnl = total_upnl or 0
         
-        # 3. 获取最大亏损交易
-        cursor.execute("SELECT code, pnl FROM trades WHERE code LIKE ? AND entry_time >= ? AND pnl < 0 ORDER BY pnl ASC LIMIT 1", (f"{market}.%", today))
-        worst_trade = cursor.fetchone()
+            # 3. 获取最大亏损交易
+            cursor.execute("SELECT code, pnl FROM trades WHERE code LIKE ? AND entry_time >= ? AND pnl < 0 ORDER BY pnl ASC LIMIT 1", (f"{market}.%", today))
+            worst_trade = cursor.fetchone()
         
-        conn.close()
         
         report = f"📊 **{market} 每日复盘报告 ({today})**\n\n"
         report += f"💰 **盈亏统计**\n"

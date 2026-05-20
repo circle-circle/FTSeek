@@ -216,51 +216,67 @@ async def _query_database(args: Dict, deps: ToolDependencies) -> str:
     date = args.get("date", datetime.now().strftime("%Y-%m-%d"))
     limit = int(args.get("limit", 30))
 
-    conn = sqlite3.connect(deps.db_path)
-    conn.row_factory = sqlite3.Row
+    with sqlite3.connect(deps.db_path) as conn:
+        conn.row_factory = sqlite3.Row
 
-    try:
-        if query_type == "trades":
-            prefix = "HK." if market == "hk" else "US."
-            rows = conn.execute(
-                """SELECT code, action, entry_price, exit_price, quantity,
-                   pnl, pnl_percent, entry_time, exit_time, exit_reason, strategy
-                   FROM trades WHERE code LIKE ? AND entry_time >= ? AND entry_time < ?
-                   ORDER BY entry_time DESC LIMIT ?""",
-                (f"{prefix}%", f"{date} 00:00:00", f"{date} 23:59:59", limit),
-            ).fetchall()
-        elif query_type == "positions":
-            prefix = "HK." if market == "hk" else "US."
-            rows = conn.execute(
-                """SELECT code, action, entry_price, quantity,
-                   unrealized_pnl, unrealized_pnl_pct, entry_time
-                   FROM positions WHERE code LIKE ? AND status='open'
-                   ORDER BY entry_time DESC LIMIT ?""",
-                (f"{prefix}%", limit),
-            ).fetchall()
-        elif query_type == "signals":
-            prefix = "HK." if market == "hk" else "US."
-            rows = conn.execute(
-                """SELECT id, code, direction, technical_score AS signal_score, confidence,
-                   created_at, status
-                   FROM signals WHERE code LIKE ? AND created_at >= ?
-                   ORDER BY created_at DESC LIMIT ?""",
-                (f"{prefix}%", f"{date} 00:00:00", limit),
-            ).fetchall()
-        elif query_type == "news":
-            rows = conn.execute(
-                """SELECT headline AS title, COALESCE(content, '') AS summary, source, fetched_at
-                   FROM news_cache WHERE fetched_at >= ? AND fetched_at < ?
-                   ORDER BY fetched_at DESC LIMIT ?""",
-                (f"{date} 00:00:00", f"{date} 23:59:59", limit),
-            ).fetchall()
-        elif query_type == "lessons":
-            # ftseek.db 无 lessons 表，改查 knowledge.db
-            conn.close()
-            import os
-            kb_path = os.path.join(os.path.dirname(deps.db_path), "knowledge.db")
-            if os.path.exists(kb_path):
-                conn2 = sqlite3.connect(kb_path)
+        try:
+            if query_type == "trades":
+                prefix = "HK." if market == "hk" else "US."
+                rows = conn.execute(
+                    """SELECT code, action, entry_price, exit_price, quantity,
+                       pnl, pnl_percent, entry_time, exit_time, exit_reason, strategy
+                       FROM trades WHERE code LIKE ? AND entry_time >= ? AND entry_time < ?
+                       ORDER BY entry_time DESC LIMIT ?""",
+                    (f"{prefix}%", f"{date} 00:00:00", f"{date} 23:59:59", limit),
+                ).fetchall()
+            elif query_type == "positions":
+                prefix = "HK." if market == "hk" else "US."
+                rows = conn.execute(
+                    """SELECT code, action, entry_price, quantity,
+                       unrealized_pnl, unrealized_pnl_pct, entry_time
+                       FROM positions WHERE code LIKE ? AND status='open'
+                       ORDER BY entry_time DESC LIMIT ?""",
+                    (f"{prefix}%", limit),
+                ).fetchall()
+            elif query_type == "signals":
+                prefix = "HK." if market == "hk" else "US."
+                rows = conn.execute(
+                    """SELECT id, code, direction, technical_score AS signal_score, confidence,
+                       created_at, status
+                       FROM signals WHERE code LIKE ? AND created_at >= ?
+                       ORDER BY created_at DESC LIMIT ?""",
+                    (f"{prefix}%", f"{date} 00:00:00", limit),
+                ).fetchall()
+            elif query_type == "news":
+                rows = conn.execute(
+                    """SELECT headline AS title, COALESCE(content, '') AS summary, source, fetched_at
+                       FROM news_cache WHERE fetched_at >= ? AND fetched_at < ?
+                       ORDER BY fetched_at DESC LIMIT ?""",
+                    (f"{date} 00:00:00", f"{date} 23:59:59", limit),
+                ).fetchall()
+            elif query_type == "lessons":
+                # ftseek.db 无 lessons 表，改查 knowledge.db
+                pass
+            else:
+                return json.dumps({"error": f"未知查询类型: {query_type}"}, ensure_ascii=False)
+
+            results = [dict(r) for r in rows]
+
+            # 截断过大的结果
+            result_json = json.dumps(results, ensure_ascii=False, default=str)
+            if len(result_json) > 3000:
+                result_json = json.dumps(results[:limit//2], ensure_ascii=False, default=str)
+            return result_json
+
+        except Exception as e:
+            return json.dumps({"error": f"数据库查询失败: {e}"}, ensure_ascii=False)
+
+    # lessons branch needs separate connection (different db)
+    if query_type == "lessons":
+        import os
+        kb_path = os.path.join(os.path.dirname(deps.db_path), "knowledge.db")
+        if os.path.exists(kb_path):
+            with sqlite3.connect(kb_path) as conn2:
                 conn2.row_factory = sqlite3.Row
                 rows = conn2.execute(
                     """SELECT date AS trade_date, stock_code AS symbol, title AS cause,
@@ -270,25 +286,8 @@ async def _query_database(args: Dict, deps: ToolDependencies) -> str:
                     (date, date, limit),
                 ).fetchall()
                 results = [dict(r) for r in rows]
-                conn2.close()
                 return json.dumps(results, ensure_ascii=False, default=str)
-            return json.dumps([], ensure_ascii=False)
-        else:
-            conn.close()
-            return json.dumps({"error": f"未知查询类型: {query_type}"}, ensure_ascii=False)
-
-        conn.close()
-        results = [dict(r) for r in rows]
-
-        # 截断过大的结果
-        result_json = json.dumps(results, ensure_ascii=False, default=str)
-        if len(result_json) > 3000:
-            result_json = json.dumps(results[:limit//2], ensure_ascii=False, default=str)
-        return result_json
-
-    except Exception as e:
-        conn.close()
-        return json.dumps({"error": f"数据库查询失败: {e}"}, ensure_ascii=False)
+        return json.dumps([], ensure_ascii=False)
 
 
 async def _get_market_data(args: Dict, deps: ToolDependencies) -> str:

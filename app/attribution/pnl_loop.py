@@ -94,37 +94,36 @@ class PnLAttributionEngine:
     
     def _init_db(self):
         """初始化归因数据库"""
-        conn = sqlite3.connect(self.db_path)
-        c = conn.cursor()
-        c.execute('''
-            CREATE TABLE IF NOT EXISTS attribution_reports (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                trace_id TEXT UNIQUE,
-                code TEXT NOT NULL,
-                action TEXT,
-                entry_price REAL,
-                exit_price REAL,
-                quantity INTEGER,
-                pnl REAL,
-                pnl_rate REAL,
-                hold_minutes REAL,
-                exit_reason TEXT,
-                strategy TEXT,
-                signal_quality TEXT,
-                timing_quality TEXT,
-                market_condition TEXT,
-                risk_management TEXT,
-                success_factors TEXT,  -- JSON array
-                failure_factors TEXT,  -- JSON array
-                lessons_learned TEXT,  -- JSON array
-                next_day_actions TEXT, -- JSON array
-                param_adjustments TEXT, -- JSON object
-                timestamp TEXT,
-                created_at TEXT DEFAULT (datetime('now'))
-            )
-        ''')
-        conn.commit()
-        conn.close()
+        with sqlite3.connect(self.db_path) as conn:
+            c = conn.cursor()
+            c.execute('''
+                CREATE TABLE IF NOT EXISTS attribution_reports (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    trace_id TEXT UNIQUE,
+                    code TEXT NOT NULL,
+                    action TEXT,
+                    entry_price REAL,
+                    exit_price REAL,
+                    quantity INTEGER,
+                    pnl REAL,
+                    pnl_rate REAL,
+                    hold_minutes REAL,
+                    exit_reason TEXT,
+                    strategy TEXT,
+                    signal_quality TEXT,
+                    timing_quality TEXT,
+                    market_condition TEXT,
+                    risk_management TEXT,
+                    success_factors TEXT,  -- JSON array
+                    failure_factors TEXT,  -- JSON array
+                    lessons_learned TEXT,  -- JSON array
+                    next_day_actions TEXT, -- JSON array
+                    param_adjustments TEXT, -- JSON object
+                    timestamp TEXT,
+                    created_at TEXT DEFAULT (datetime('now'))
+                )
+            ''')
+            conn.commit()
     
     def analyze(self, code: str, entry_price: float, exit_price: float,
                 quantity: int, pnl: float, pnl_rate: float,
@@ -289,32 +288,31 @@ class PnLAttributionEngine:
     def save(self, report: AttributionReport) -> bool:
         """保存归因报告到数据库"""
         try:
-            conn = sqlite3.connect(self.db_path)
-            c = conn.cursor()
-            c.execute('''
-                INSERT OR REPLACE INTO attribution_reports
-                (trace_id, code, action, entry_price, exit_price, quantity,
-                 pnl, pnl_rate, hold_minutes, exit_reason, strategy,
-                 signal_quality, timing_quality, market_condition, risk_management,
-                 success_factors, failure_factors, lessons_learned,
-                 next_day_actions, param_adjustments, timestamp)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                report.trace_id, report.code, report.action,
-                report.entry_price, report.exit_price, report.quantity,
-                report.pnl, report.pnl_rate, report.hold_minutes,
-                report.exit_reason, report.strategy,
-                report.signal_quality, report.timing_quality,
-                report.market_condition, report.risk_management,
-                json.dumps(report.success_factors),
-                json.dumps(report.failure_factors),
-                json.dumps(report.lessons_learned),
-                json.dumps(report.next_day_actions),
-                json.dumps(report.param_adjustments),
-                report.timestamp,
-            ))
-            conn.commit()
-            conn.close()
+            with sqlite3.connect(self.db_path) as conn:
+                c = conn.cursor()
+                c.execute('''
+                    INSERT OR REPLACE INTO attribution_reports
+                    (trace_id, code, action, entry_price, exit_price, quantity,
+                     pnl, pnl_rate, hold_minutes, exit_reason, strategy,
+                     signal_quality, timing_quality, market_condition, risk_management,
+                     success_factors, failure_factors, lessons_learned,
+                     next_day_actions, param_adjustments, timestamp)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    report.trace_id, report.code, report.action,
+                    report.entry_price, report.exit_price, report.quantity,
+                    report.pnl, report.pnl_rate, report.hold_minutes,
+                    report.exit_reason, report.strategy,
+                    report.signal_quality, report.timing_quality,
+                    report.market_condition, report.risk_management,
+                    json.dumps(report.success_factors),
+                    json.dumps(report.failure_factors),
+                    json.dumps(report.lessons_learned),
+                    json.dumps(report.next_day_actions),
+                    json.dumps(report.param_adjustments),
+                    report.timestamp,
+                ))
+                conn.commit()
             logger.info(f"归因报告已保存: {report.code} PnL={report.pnl:+.2f}")
             return True
         except Exception as e:
@@ -324,23 +322,22 @@ class PnLAttributionEngine:
     def get_recent_reports(self, code: Optional[str] = None,
                            limit: int = 20) -> List[AttributionReport]:
         """获取最近的归因报告"""
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        c = conn.cursor()
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            c = conn.cursor()
         
-        if code:
-            c.execute(
-                "SELECT * FROM attribution_reports WHERE code = ? ORDER BY created_at DESC LIMIT ?",
-                (code, limit)
-            )
-        else:
-            c.execute(
-                "SELECT * FROM attribution_reports ORDER BY created_at DESC LIMIT ?",
-                (limit,)
-            )
+            if code:
+                c.execute(
+                    "SELECT * FROM attribution_reports WHERE code = ? ORDER BY created_at DESC LIMIT ?",
+                    (code, limit)
+                )
+            else:
+                c.execute(
+                    "SELECT * FROM attribution_reports ORDER BY created_at DESC LIMIT ?",
+                    (limit,)
+                )
         
-        rows = c.fetchall()
-        conn.close()
+            rows = c.fetchall()
         
         reports = []
         for row in rows:
@@ -373,22 +370,21 @@ class PnLAttributionEngine:
     
     def get_strategy_performance(self, strategy: str, days: int = 30) -> Dict[str, Any]:
         """获取策略表现统计"""
-        conn = sqlite3.connect(self.db_path)
-        c = conn.cursor()
+        with sqlite3.connect(self.db_path) as conn:
+            c = conn.cursor()
         
-        since = (datetime.now() - timedelta(days=days)).isoformat()
-        c.execute('''
-            SELECT COUNT(*) as total_trades,
-                   AVG(pnl) as avg_pnl,
-                   AVG(CASE WHEN pnl > 0 THEN pnl ELSE 0 END) as avg_win,
-                   AVG(CASE WHEN pnl < 0 THEN pnl ELSE 0 END) as avg_loss,
-                   SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END) * 100.0 / COUNT(*) as win_rate
-            FROM attribution_reports
-            WHERE strategy = ? AND timestamp > ?
-        ''', (strategy, since))
+            since = (datetime.now() - timedelta(days=days)).isoformat()
+            c.execute('''
+                SELECT COUNT(*) as total_trades,
+                       AVG(pnl) as avg_pnl,
+                       AVG(CASE WHEN pnl > 0 THEN pnl ELSE 0 END) as avg_win,
+                       AVG(CASE WHEN pnl < 0 THEN pnl ELSE 0 END) as avg_loss,
+                       SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END) * 100.0 / COUNT(*) as win_rate
+                FROM attribution_reports
+                WHERE strategy = ? AND timestamp > ?
+            ''', (strategy, since))
         
-        row = c.fetchone()
-        conn.close()
+            row = c.fetchone()
         
         if row:
             return {

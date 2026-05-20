@@ -78,60 +78,59 @@ class HKEODCollector:
         seen_keys = set()
 
         try:
-            conn = sqlite3.connect(FTSEEK_DB)
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
+            with sqlite3.connect(FTSEEK_DB) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
 
-            cursor.execute(
-                """
-                SELECT * FROM positions
-                WHERE code LIKE 'HK.%'
-                  AND status = 'CLOSED'
-                  AND date(exit_time) = ?
-                  AND ABS(exit_price - entry_price) > 0.001
-                ORDER BY exit_time ASC
-                """,
-                (date,),
-            )
-            skipped_ghost = 0
-            for row in cursor.fetchall():
-                d = dict(row)
-                # 二次确认: 排除幽灵仓 (position_sync auto-close, entry=exit)
-                if abs(float(d.get("exit_price", 0)) - float(d.get("entry_price", 0))) < 0.001:
-                    skipped_ghost += 1
-                    continue
-                d["source"] = "futu_sync"
-                d["is_intraday"] = (
-                    d.get("entry_time", "")[:10] == date
-                    and d.get("exit_time", "")[:10] == date
+                cursor.execute(
+                    """
+                    SELECT * FROM positions
+                    WHERE code LIKE 'HK.%'
+                      AND status = 'CLOSED'
+                      AND date(exit_time) = ?
+                      AND ABS(exit_price - entry_price) > 0.001
+                    ORDER BY exit_time ASC
+                    """,
+                    (date,),
                 )
-                trades.append(d)
-                seen_keys.add((d.get("code"), d.get("entry_time")))
-            if skipped_ghost:
-                logger.info(
-                    f"[HKEODCollector] 已过滤 {skipped_ghost} 条幽灵仓自动平仓记录 "
-                    f"(entry_price=exit_price, 非真实成交)"
-                )
-
-            cursor.execute(
-                """
-                SELECT * FROM trades
-                WHERE code LIKE 'HK.%' AND entry_time >= ?
-                ORDER BY entry_time ASC
-                """,
-                (f"{date} 00:00:00",),
-            )
-            for row in cursor.fetchall():
-                d = dict(row)
-                key = (d.get("code"), d.get("entry_time"))
-                if key not in seen_keys:
-                    d["source"] = "internal"
-                    et = d.get("entry_time", "")
-                    xt = d.get("exit_time", "")
-                    d["is_intraday"] = xt and xt[:10] == date and et[:10] == date
+                skipped_ghost = 0
+                for row in cursor.fetchall():
+                    d = dict(row)
+                    # 二次确认: 排除幽灵仓 (position_sync auto-close, entry=exit)
+                    if abs(float(d.get("exit_price", 0)) - float(d.get("entry_price", 0))) < 0.001:
+                        skipped_ghost += 1
+                        continue
+                    d["source"] = "futu_sync"
+                    d["is_intraday"] = (
+                        d.get("entry_time", "")[:10] == date
+                        and d.get("exit_time", "")[:10] == date
+                    )
                     trades.append(d)
+                    seen_keys.add((d.get("code"), d.get("entry_time")))
+                if skipped_ghost:
+                    logger.info(
+                        f"[HKEODCollector] 已过滤 {skipped_ghost} 条幽灵仓自动平仓记录 "
+                        f"(entry_price=exit_price, 非真实成交)"
+                    )
 
-            conn.close()
+                cursor.execute(
+                    """
+                    SELECT * FROM trades
+                    WHERE code LIKE 'HK.%' AND entry_time >= ?
+                    ORDER BY entry_time ASC
+                    """,
+                    (f"{date} 00:00:00",),
+                )
+                for row in cursor.fetchall():
+                    d = dict(row)
+                    key = (d.get("code"), d.get("entry_time"))
+                    if key not in seen_keys:
+                        d["source"] = "internal"
+                        et = d.get("entry_time", "")
+                        xt = d.get("exit_time", "")
+                        d["is_intraday"] = xt and xt[:10] == date and et[:10] == date
+                        trades.append(d)
+
             logger.info(f"[HKEODCollector] 获取到 {len(trades)} 笔今日交易")
             return trades
         except Exception as e:
@@ -146,35 +145,34 @@ class HKEODCollector:
         """获取当日 trade_chains 信号/决策上下文, 按 code 分组"""
         ctx: Dict[str, List[Dict]] = {}
         try:
-            conn = sqlite3.connect(FTSEEK_DB)
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
-            cursor.execute(
-                """
-                SELECT code, created_at, signal_layer, decision_layer, execution_layer
-                FROM trade_chains
-                WHERE code LIKE 'HK.%' AND date(created_at) = ?
-                ORDER BY created_at ASC
-                """,
-                (date,),
-            )
-            for row in cursor.fetchall():
-                d = dict(row)
-                code = d.get("code", "")
-                if code not in ctx:
-                    ctx[code] = []
-                # 解析 JSON 层
-                for layer in ("signal_layer", "decision_layer", "execution_layer"):
-                    raw = d.get(layer)
-                    if isinstance(raw, str):
-                        try:
-                            d[layer] = json.loads(raw)
-                        except json.JSONDecodeError:
+            with sqlite3.connect(FTSEEK_DB) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                cursor.execute(
+                    """
+                    SELECT code, created_at, signal_layer, decision_layer, execution_layer
+                    FROM trade_chains
+                    WHERE code LIKE 'HK.%' AND date(created_at) = ?
+                    ORDER BY created_at ASC
+                    """,
+                    (date,),
+                )
+                for row in cursor.fetchall():
+                    d = dict(row)
+                    code = d.get("code", "")
+                    if code not in ctx:
+                        ctx[code] = []
+                    # 解析 JSON 层
+                    for layer in ("signal_layer", "decision_layer", "execution_layer"):
+                        raw = d.get(layer)
+                        if isinstance(raw, str):
+                            try:
+                                d[layer] = json.loads(raw)
+                            except json.JSONDecodeError:
+                                d[layer] = {}
+                        elif raw is None:
                             d[layer] = {}
-                    elif raw is None:
-                        d[layer] = {}
-                ctx[code].append(d)
-            conn.close()
+                    ctx[code].append(d)
             logger.info(f"[HKEODCollector] trade_chains 上下文: {sum(len(v) for v in ctx.values())} 条, {len(ctx)} 个标的")
         except Exception as e:
             logger.warning(f"[HKEODCollector] trade_chains 查询失败: {e}")
@@ -374,16 +372,15 @@ class HKEODCollector:
 
     def _get_open_positions(self) -> List[Dict]:
         try:
-            conn = sqlite3.connect(FTSEEK_DB)
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
-            cursor.execute(
-                """SELECT * FROM positions
-                   WHERE code LIKE 'HK.%' AND status = 'OPEN'
-                   ORDER BY unrealized_pnl ASC"""
-            )
-            rows = cursor.fetchall()
-            conn.close()
+            with sqlite3.connect(FTSEEK_DB) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                cursor.execute(
+                    """SELECT * FROM positions
+                       WHERE code LIKE 'HK.%' AND status = 'OPEN'
+                       ORDER BY unrealized_pnl ASC"""
+                )
+                rows = cursor.fetchall()
             positions = [dict(r) for r in rows]
             logger.info(f"[HKEODCollector] 获取到 {len(positions)} 个持仓")
             return positions
@@ -418,17 +415,16 @@ class HKEODCollector:
         try:
             if not os.path.exists(DECISIONS_DB):
                 return []
-            conn = sqlite3.connect(DECISIONS_DB)
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
-            cursor.execute(
-                """SELECT * FROM decisions
-                   WHERE code LIKE 'HK.%' AND created_at >= ?
-                   ORDER BY created_at ASC""",
-                (f"{date} 00:00:00",),
-            )
-            rows = cursor.fetchall()
-            conn.close()
+            with sqlite3.connect(DECISIONS_DB) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                cursor.execute(
+                    """SELECT * FROM decisions
+                       WHERE code LIKE 'HK.%' AND created_at >= ?
+                       ORDER BY created_at ASC""",
+                    (f"{date} 00:00:00",),
+                )
+                rows = cursor.fetchall()
             decisions = [dict(r) for r in rows]
             logger.info(f"[HKEODCollector] 获取到 {len(decisions)} 条信号决策")
             return decisions
@@ -486,20 +482,19 @@ class HKEODCollector:
 
     def _get_capital_state(self, date: str) -> Dict:
         try:
-            conn = sqlite3.connect(FTSEEK_DB)
-            cursor = conn.cursor()
-            cursor.execute(
-                """SELECT COALESCE(SUM(realized_pnl), 0), COUNT(*)
-                   FROM positions WHERE code LIKE 'HK.%' AND status='CLOSED' AND date(exit_time)=?""",
-                (date,),
-            )
-            row = cursor.fetchone()
-            cursor.execute(
-                """SELECT COALESCE(SUM(unrealized_pnl), 0), COUNT(*)
-                   FROM positions WHERE code LIKE 'HK.%' AND status='OPEN'"""
-            )
-            pos_row = cursor.fetchone()
-            conn.close()
+            with sqlite3.connect(FTSEEK_DB) as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    """SELECT COALESCE(SUM(realized_pnl), 0), COUNT(*)
+                       FROM positions WHERE code LIKE 'HK.%' AND status='CLOSED' AND date(exit_time)=?""",
+                    (date,),
+                )
+                row = cursor.fetchone()
+                cursor.execute(
+                    """SELECT COALESCE(SUM(unrealized_pnl), 0), COUNT(*)
+                       FROM positions WHERE code LIKE 'HK.%' AND status='OPEN'"""
+                )
+                pos_row = cursor.fetchone()
             return {
                 "today_realized_pnl": float(row[0]) if row else 0.0,
                 "today_trade_count": int(row[1]) if row else 0,

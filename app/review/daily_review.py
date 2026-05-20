@@ -366,36 +366,35 @@ def _get_today_trades(date: str, market: str = "hk") -> List[Dict]:
         trades = []
         
         # 1. 从 positions 表获取持仓交易
-        conn = sqlite3.connect(db_path)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT code, action, entry_price, entry_time, realized_pnl, status
-            FROM positions 
-            WHERE entry_time LIKE ?
-        """, (f"{target_date}%",))
-        rows = cursor.fetchall()
-        trades.extend([dict(row) for row in rows])
+        with sqlite3.connect(db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT code, action, entry_price, entry_time, realized_pnl, status
+                FROM positions 
+                WHERE entry_time LIKE ?
+            """, (f"{target_date}%",))
+            rows = cursor.fetchall()
+            trades.extend([dict(row) for row in rows])
         
-        # 2. 从 trade_records 表获取 scalping 交易 (仅美股)
-        if market.lower() == "us":
-            try:
-                cursor.execute("""
-                    SELECT symbol as code, side as action, entry_price, 
-                           created_at as entry_time, realized_pnl, status,
-                           source_type
-                    FROM trade_records 
-                    WHERE date(trade_date) = ?
-                """, (target_date,))
-                scalping_rows = cursor.fetchall()
-                for row in scalping_rows:
-                    d = dict(row)
-                    d['is_scalping'] = d.pop('source_type', '') == 'SCALPING'
-                    trades.append(d)
-            except Exception as e:
-                logger.warning(f"查询 trade_records 失败: {e}")
+            # 2. 从 trade_records 表获取 scalping 交易 (仅美股)
+            if market.lower() == "us":
+                try:
+                    cursor.execute("""
+                        SELECT symbol as code, side as action, entry_price, 
+                               created_at as entry_time, realized_pnl, status,
+                               source_type
+                        FROM trade_records 
+                        WHERE date(trade_date) = ?
+                    """, (target_date,))
+                    scalping_rows = cursor.fetchall()
+                    for row in scalping_rows:
+                        d = dict(row)
+                        d['is_scalping'] = d.pop('source_type', '') == 'SCALPING'
+                        trades.append(d)
+                except Exception as e:
+                    logger.warning(f"查询 trade_records 失败: {e}")
         
-        conn.close()
         logger.info(f"[{market}] 获取 {len(trades)} 条交易记录 (date={target_date})")
         return trades
     except Exception as e:

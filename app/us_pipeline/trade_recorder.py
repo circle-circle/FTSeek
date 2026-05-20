@@ -34,14 +34,13 @@ class TradeRecorder:
         logger.info(f"[TradeRecorder] 记录新交易: {trade_id} | {code} {action} x {quantity} @ {price}")
         
         try:
-            conn = sqlite3.connect(TradeRecorder.DB_PATH)
-            cursor = conn.cursor()
-            cursor.execute(
-                "INSERT INTO trades (id, signal_id, code, action, quantity, entry_price, entry_time, status, strategy, trace_id) VALUES (?, ?, ?, ?, ?, ?, ?, 'OPEN', ?, ?)",
-                (trade_id, signal_id, code, action, quantity, price, now_str, strategy, trace_id)
-            )
-            conn.commit()
-            conn.close()
+            with sqlite3.connect(TradeRecorder.DB_PATH) as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "INSERT INTO trades (id, signal_id, code, action, quantity, entry_price, entry_time, status, strategy, trace_id) VALUES (?, ?, ?, ?, ?, ?, ?, 'OPEN', ?, ?)",
+                    (trade_id, signal_id, code, action, quantity, price, now_str, strategy, trace_id)
+                )
+                conn.commit()
             return trade_id
         except Exception as e:
             logger.error(f"[TradeRecorder] 记录交易失败: {e}")
@@ -60,30 +59,29 @@ class TradeRecorder:
         logger.info(f"[TradeRecorder] 更新交易退出: {trade_id} | Price: {exit_price} | Reason: {exit_reason}")
         
         try:
-            conn = sqlite3.connect(TradeRecorder.DB_PATH)
-            cursor = conn.cursor()
+            with sqlite3.connect(TradeRecorder.DB_PATH) as conn:
+                cursor = conn.cursor()
             
-            # 获取原交易数据
-            cursor.execute("SELECT entry_price, quantity, action FROM trades WHERE id = ?", (trade_id,))
-            row = cursor.fetchone()
+                # 获取原交易数据
+                cursor.execute("SELECT entry_price, quantity, action FROM trades WHERE id = ?", (trade_id,))
+                row = cursor.fetchone()
             
-            if not row:
-                logger.warning(f"Trade {trade_id} not found for exit update")
-                return False
+                if not row:
+                    logger.warning(f"Trade {trade_id} not found for exit update")
+                    return False
             
-            entry_price, quantity, action = row
+                entry_price, quantity, action = row
             
-            if action == "BUY":
-                pnl = (exit_price - entry_price) * abs(quantity)
-            else:
-                pnl = (entry_price - exit_price) * abs(quantity)
+                if action == "BUY":
+                    pnl = (exit_price - entry_price) * abs(quantity)
+                else:
+                    pnl = (entry_price - exit_price) * abs(quantity)
                 
-            cursor.execute(
-                "UPDATE trades SET exit_price = ?, exit_time = ?, status = 'CLOSED', exit_reason = ?, pnl = ?, strategy = ? WHERE id = ?",
-                (exit_price, now_str, exit_reason, pnl, strategy, trade_id)
-            )
-            conn.commit()
-            conn.close()
+                cursor.execute(
+                    "UPDATE trades SET exit_price = ?, exit_time = ?, status = 'CLOSED', exit_reason = ?, pnl = ?, strategy = ? WHERE id = ?",
+                    (exit_price, now_str, exit_reason, pnl, strategy, trade_id)
+                )
+                conn.commit()
             return True
         except Exception as e:
             logger.error(f"[TradeRecorder] 更新退出失败: {e}")

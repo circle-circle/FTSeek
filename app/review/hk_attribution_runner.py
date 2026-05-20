@@ -368,37 +368,36 @@ class HKAttributionRunner:
     def _init_lessons_db(self):
         """初始化 lessons SQLite (仅首次)"""
         try:
-            conn = sqlite3.connect(self.db_path)
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS lessons (
-                    id TEXT PRIMARY KEY,
-                    trade_date TEXT,
-                    symbol TEXT,
-                    direction TEXT,
-                    pnl_percent REAL,
-                    cause TEXT,
-                    lesson TEXT,
-                    confidence REAL,
-                    overall_score INTEGER,
-                    expiry_date TEXT,
-                    validation_status TEXT DEFAULT 'pending',
-                    market_context TEXT,
-                    created_at TEXT DEFAULT (datetime('now'))
+            with sqlite3.connect(self.db_path) as conn:
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS lessons (
+                        id TEXT PRIMARY KEY,
+                        trade_date TEXT,
+                        symbol TEXT,
+                        direction TEXT,
+                        pnl_percent REAL,
+                        cause TEXT,
+                        lesson TEXT,
+                        confidence REAL,
+                        overall_score INTEGER,
+                        expiry_date TEXT,
+                        validation_status TEXT DEFAULT 'pending',
+                        market_context TEXT,
+                        created_at TEXT DEFAULT (datetime('now'))
+                    )
+                    """
                 )
-                """
-            )
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_lessons_symbol ON lessons(symbol)"
-            )
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_lessons_expiry ON lessons(expiry_date)"
-            )
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_lessons_validation ON lessons(validation_status)"
-            )
-            conn.commit()
-            conn.close()
+                conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_lessons_symbol ON lessons(symbol)"
+                )
+                conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_lessons_expiry ON lessons(expiry_date)"
+                )
+                conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_lessons_validation ON lessons(validation_status)"
+                )
+                conn.commit()
             logger.debug(f"[HKAttributionRunner] Lessons DB 初始化完成: {self.db_path}")
         except Exception as e:
             logger.error(f"[HKAttributionRunner] Lessons DB 初始化失败: {e}")
@@ -406,34 +405,33 @@ class HKAttributionRunner:
     def _save_lessons(self, lessons: List[Dict]):
         """写入 lessons DB"""
         try:
-            conn = sqlite3.connect(self.db_path)
-            for lesson in lessons:
-                context_json = __import__("json").dumps(
-                    lesson.get("market_context", {})
-                )
-                conn.execute(
-                    """
-                    INSERT OR REPLACE INTO lessons
-                    (id, trade_date, symbol, direction, pnl_percent, cause, lesson,
-                     confidence, overall_score, expiry_date, market_context)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        lesson["id"],
-                        lesson["trade_date"],
-                        lesson["symbol"],
-                        lesson["direction"],
-                        lesson["pnl_percent"],
-                        lesson["cause"],
-                        lesson["lesson"],
-                        lesson.get("confidence", 0),
-                        lesson.get("overall_score", 0),
-                        lesson["expiry_date"],
-                        context_json,
-                    ),
-                )
-            conn.commit()
-            conn.close()
+            with sqlite3.connect(self.db_path) as conn:
+                for lesson in lessons:
+                    context_json = __import__("json").dumps(
+                        lesson.get("market_context", {})
+                    )
+                    conn.execute(
+                        """
+                        INSERT OR REPLACE INTO lessons
+                        (id, trade_date, symbol, direction, pnl_percent, cause, lesson,
+                         confidence, overall_score, expiry_date, market_context)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            lesson["id"],
+                            lesson["trade_date"],
+                            lesson["symbol"],
+                            lesson["direction"],
+                            lesson["pnl_percent"],
+                            lesson["cause"],
+                            lesson["lesson"],
+                            lesson.get("confidence", 0),
+                            lesson.get("overall_score", 0),
+                            lesson["expiry_date"],
+                            context_json,
+                        ),
+                    )
+                conn.commit()
             logger.info(f"[HKAttributionRunner] {len(lessons)} 条教训已写入 DB")
         except Exception as e:
             logger.error(f"[HKAttributionRunner] 写入 Lessons DB 失败: {e}")

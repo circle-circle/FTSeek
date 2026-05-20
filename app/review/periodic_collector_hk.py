@@ -344,87 +344,85 @@ class PeriodicTradeCollector:
         try:
             # 1) 读取 ftseek.db → trades 表
             if os.path.exists(db_path):
-                conn = sqlite3.connect(db_path)
-                conn.row_factory = sqlite3.Row
-                cur = conn.cursor()
-                cur.execute(
-                    "SELECT * FROM trades WHERE date(entry_time) = ? OR date(exit_time) = ?",
-                    (date, date)
-                )
-                for row in cur.fetchall():
-                    all_trades.append({
-                        "source": "ftseek.trades",
-                        "trade_id": str(row["id"]) if "id" in row.keys() else "",
-                        "code": row["code"] if "code" in row.keys() else "",
-                        "direction": row["action"] if "action" in row.keys() else "",
-                        "entry_price": row["entry_price"] if "entry_price" in row.keys() else 0,
-                        "exit_price": row["exit_price"] if "exit_price" in row.keys() else None,
-                        "quantity": row["quantity"] if "quantity" in row.keys() else 0,
-                        "pnl": row["pnl"] if "pnl" in row.keys() else 0,
-                        "pnl_percent": row["pnl_percent"] if "pnl_percent" in row.keys() else 0,
-                        "strategy": row["strategy"] if "strategy" in row.keys() else "",
-                        "entry_time": row["entry_time"] if "entry_time" in row.keys() else None,
-                        "exit_time": row["exit_time"] if "exit_time" in row.keys() else None,
-                        "exit_reason": row["exit_reason"] if "exit_reason" in row.keys() else "",
-                        "status": row["status"] if "status" in row.keys() else "",
-                    })
-                conn.close()
-                self.logger.info(f"[RealDB] ftseek.db trades: {len(all_trades)} records for {date}")
+                with sqlite3.connect(db_path) as conn:
+                    conn.row_factory = sqlite3.Row
+                    cur = conn.cursor()
+                    cur.execute(
+                        "SELECT * FROM trades WHERE date(entry_time) = ? OR date(exit_time) = ?",
+                        (date, date)
+                    )
+                    for row in cur.fetchall():
+                        all_trades.append({
+                            "source": "ftseek.trades",
+                            "trade_id": str(row["id"]) if "id" in row.keys() else "",
+                            "code": row["code"] if "code" in row.keys() else "",
+                            "direction": row["action"] if "action" in row.keys() else "",
+                            "entry_price": row["entry_price"] if "entry_price" in row.keys() else 0,
+                            "exit_price": row["exit_price"] if "exit_price" in row.keys() else None,
+                            "quantity": row["quantity"] if "quantity" in row.keys() else 0,
+                            "pnl": row["pnl"] if "pnl" in row.keys() else 0,
+                            "pnl_percent": row["pnl_percent"] if "pnl_percent" in row.keys() else 0,
+                            "strategy": row["strategy"] if "strategy" in row.keys() else "",
+                            "entry_time": row["entry_time"] if "entry_time" in row.keys() else None,
+                            "exit_time": row["exit_time"] if "exit_time" in row.keys() else None,
+                            "exit_reason": row["exit_reason"] if "exit_reason" in row.keys() else "",
+                            "status": row["status"] if "status" in row.keys() else "",
+                        })
+                    conn.close()
+                    self.logger.info(f"[RealDB] ftseek.db trades: {len(all_trades)} records for {date}")
 
-            # 2) 读取 ftseek.db → positions (CLOSED)
-            if os.path.exists(db_path):
-                conn = sqlite3.connect(db_path)
-                conn.row_factory = sqlite3.Row
-                cur = conn.cursor()
-                cur.execute(
-                    "SELECT * FROM positions WHERE status = 'CLOSED' AND date(exit_time) = ?",
-                    (date,)
-                )
-                for row in cur.fetchall():
-                    all_trades.append({
-                        "source": "ftseek.positions",
-                        "trade_id": f"POS_{row['id']}",
-                        "code": row["code"] if "code" in row.keys() else "",
-                        "direction": row["action"] if "action" in row.keys() else "",
-                        "entry_price": row["entry_price"] if "entry_price" in row.keys() else 0,
-                        "exit_price": row["exit_price"] if "exit_price" in row.keys() else 0,
-                        "quantity": row["quantity"] if "quantity" in row.keys() else 0,
-                        "pnl": row["realized_pnl"] if "realized_pnl" in row.keys() else 0,
-                        "pnl_percent": row["pl_ratio"] if "pl_ratio" in row.keys() else 0,
-                        "strategy": row["strategy"] if "strategy" in row.keys() else "",
-                        "entry_time": row["entry_time"] if "entry_time" in row.keys() else None,
-                        "exit_time": row["exit_time"] if "exit_time" in row.keys() else None,
-                        "exit_reason": "",
-                        "status": "CLOSED",
-                    })
-                conn.close()
-                pos_count = sum(1 for t in all_trades if t["source"] == "ftseek.positions")
-                self.logger.info(f"[RealDB] ftseek.db positions (CLOSED): {pos_count} records")
+                # 2) 读取 ftseek.db → positions (CLOSED)
+                if os.path.exists(db_path):
+                    with sqlite3.connect(db_path) as conn:
+                        conn.row_factory = sqlite3.Row
+                        cur = conn.cursor()
+                        cur.execute(
+                            "SELECT * FROM positions WHERE status = 'CLOSED' AND date(exit_time) = ?",
+                            (date,)
+                        )
+                        for row in cur.fetchall():
+                            all_trades.append({
+                                "source": "ftseek.positions",
+                                "trade_id": f"POS_{row['id']}",
+                                "code": row["code"] if "code" in row.keys() else "",
+                                "direction": row["action"] if "action" in row.keys() else "",
+                                "entry_price": row["entry_price"] if "entry_price" in row.keys() else 0,
+                                "exit_price": row["exit_price"] if "exit_price" in row.keys() else 0,
+                                "quantity": row["quantity"] if "quantity" in row.keys() else 0,
+                                "pnl": row["realized_pnl"] if "realized_pnl" in row.keys() else 0,
+                                "pnl_percent": row["pl_ratio"] if "pl_ratio" in row.keys() else 0,
+                                "strategy": row["strategy"] if "strategy" in row.keys() else "",
+                                "entry_time": row["entry_time"] if "entry_time" in row.keys() else None,
+                                "exit_time": row["exit_time"] if "exit_time" in row.keys() else None,
+                                "exit_reason": "",
+                                "status": "CLOSED",
+                            })
+                    pos_count = sum(1 for t in all_trades if t["source"] == "ftseek.positions")
+                    self.logger.info(f"[RealDB] ftseek.db positions (CLOSED): {pos_count} records")
 
-            # 3) 读取 execution.db → execution_records
-            exec_db_path = os.path.join(os.path.dirname(db_path), "execution.db")
-            if os.path.exists(exec_db_path):
-                conn = sqlite3.connect(exec_db_path)
-                conn.row_factory = sqlite3.Row
-                cur = conn.cursor()
-                cur.execute(
-                    "SELECT * FROM execution_records WHERE date(fill_time) = ?",
-                    (date,)
-                )
-                exec_records = []
-                for row in cur.fetchall():
-                    exec_records.append({
-                        "code": row["code"] if "code" in row.keys() else "",
-                        "signal_time": row["signal_time"] if "signal_time" in row.keys() else None,
-                        "fill_time": row["fill_time"] if "fill_time" in row.keys() else None,
-                        "signal_price": row["signal_price"] if "signal_price" in row.keys() else 0,
-                        "fill_price": row["fill_price"] if "fill_price" in row.keys() else 0,
-                        "quantity": row["quantity"] if "quantity" in row.keys() else 0,
-                        "slippage": row["slippage"] if "slippage" in row.keys() else 0,
-                        "execution_latency_ms": row["execution_latency_ms"] if "execution_latency_ms" in row.keys() else 0,
-                        "status": row["status"] if "status" in row.keys() else "",
-                    })
-                conn.close()
+                # 3) 读取 execution.db → execution_records
+                exec_db_path = os.path.join(os.path.dirname(db_path), "execution.db")
+                if os.path.exists(exec_db_path):
+                    with sqlite3.connect(exec_db_path) as conn:
+                        conn.row_factory = sqlite3.Row
+                        cur = conn.cursor()
+                        cur.execute(
+                            "SELECT * FROM execution_records WHERE date(fill_time) = ?",
+                            (date,)
+                        )
+                        exec_records = []
+                        for row in cur.fetchall():
+                            exec_records.append({
+                                "code": row["code"] if "code" in row.keys() else "",
+                                "signal_time": row["signal_time"] if "signal_time" in row.keys() else None,
+                                "fill_time": row["fill_time"] if "fill_time" in row.keys() else None,
+                                "signal_price": row["signal_price"] if "signal_price" in row.keys() else 0,
+                                "fill_price": row["fill_price"] if "fill_price" in row.keys() else 0,
+                                "quantity": row["quantity"] if "quantity" in row.keys() else 0,
+                                "slippage": row["slippage"] if "slippage" in row.keys() else 0,
+                                "execution_latency_ms": row["execution_latency_ms"] if "execution_latency_ms" in row.keys() else 0,
+                                "status": row["status"] if "status" in row.keys() else "",
+                            })
                 self.logger.info(f"[RealDB] execution.db: {len(exec_records)} records for {date}")
 
             # 4) 过滤 market

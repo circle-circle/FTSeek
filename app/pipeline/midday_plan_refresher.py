@@ -276,17 +276,16 @@ class MiddayPlanRefresher:
 
         try:
             import sqlite3
-            conn = sqlite3.connect(db_path)
-            conn.row_factory = sqlite3.Row
-            # 从 trade_evaluations 或 news 表查找南向资金相关记录
-            cursor = conn.execute(
-                "SELECT DISTINCT code FROM trade_evaluations "
-                "WHERE evaluated_at >= ? AND evaluated_at < ? "
-                "AND (notes LIKE '%南向%' OR notes LIKE '%港股通%' OR notes LIKE '%southbound%')",
-                (f"{today} 09:30:00", f"{today} 12:00:00"),
-            )
-            rows = cursor.fetchall()
-            conn.close()
+            with sqlite3.connect(db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                # 从 trade_evaluations 或 news 表查找南向资金相关记录
+                cursor = conn.execute(
+                    "SELECT DISTINCT code FROM trade_evaluations "
+                    "WHERE evaluated_at >= ? AND evaluated_at < ? "
+                    "AND (notes LIKE '%南向%' OR notes LIKE '%港股通%' OR notes LIKE '%southbound%')",
+                    (f"{today} 09:30:00", f"{today} 12:00:00"),
+                )
+                rows = cursor.fetchall()
 
             for r in rows:
                 code = r["code"] if isinstance(r, dict) else r[0]
@@ -402,16 +401,15 @@ class MiddayPlanRefresher:
 
         try:
             import sqlite3
-            conn = sqlite3.connect(db_path)
-            conn.row_factory = sqlite3.Row
-            cursor = conn.execute(
-                "SELECT DISTINCT title, summary FROM news_cache "
-                "WHERE fetched_at >= ? AND fetched_at < ? "
-                "ORDER BY fetched_at DESC LIMIT 10",
-                (f"{today} 08:00:00", f"{today} 12:00:00"),
-            )
-            rows = cursor.fetchall()
-            conn.close()
+            with sqlite3.connect(db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.execute(
+                    "SELECT DISTINCT title, summary FROM news_cache "
+                    "WHERE fetched_at >= ? AND fetched_at < ? "
+                    "ORDER BY fetched_at DESC LIMIT 10",
+                    (f"{today} 08:00:00", f"{today} 12:00:00"),
+                )
+                rows = cursor.fetchall()
             for r in rows:
                 title = r["title"] if isinstance(r, dict) else r[0]
                 summary = (r["summary"] if isinstance(r, dict) else r[1]) or ""
@@ -445,17 +443,16 @@ class MiddayPlanRefresher:
 
         try:
             import sqlite3
-            conn = sqlite3.connect(db_path)
-            conn.row_factory = sqlite3.Row
-            cursor = conn.execute(
-                "SELECT code, action, entry_time, exit_time, pnl, pnl_percent, exit_reason "
-                "FROM trades WHERE code LIKE 'HK.%' "
-                "AND entry_time >= ? AND entry_time < ? "
-                "ORDER BY entry_time ASC",
-                (f"{today} 09:30:00", f"{today} 12:00:00"),
-            )
-            rows = cursor.fetchall()
-            conn.close()
+            with sqlite3.connect(db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.execute(
+                    "SELECT code, action, entry_time, exit_time, pnl, pnl_percent, exit_reason "
+                    "FROM trades WHERE code LIKE 'HK.%' "
+                    "AND entry_time >= ? AND entry_time < ? "
+                    "ORDER BY entry_time ASC",
+                    (f"{today} 09:30:00", f"{today} 12:00:00"),
+                )
+                rows = cursor.fetchall()
 
             if not rows:
                 return "上午无交易"

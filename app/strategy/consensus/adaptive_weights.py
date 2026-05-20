@@ -55,33 +55,32 @@ class AdaptiveWeightManager:
         """初始化权重数据库"""
         try:
             _DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-            conn = sqlite3.connect(str(_DB_PATH))
-            c = conn.cursor()
-            c.execute('''
-                CREATE TABLE IF NOT EXISTS strategy_weights (
-                    strategy TEXT PRIMARY KEY,
-                    base_weight REAL,
-                    adjusted_weight REAL,
-                    total_trades INTEGER,
-                    win_rate REAL,
-                    avg_pnl REAL,
-                    updated_at TEXT
-                )
-            ''')
-            c.execute('''
-                CREATE TABLE IF NOT EXISTS trade_records (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    strategy TEXT,
-                    code TEXT,
-                    action TEXT,
-                    pnl REAL,
-                    holding_hours REAL,
-                    is_win INTEGER,
-                    timestamp TEXT
-                )
-            ''')
-            conn.commit()
-            conn.close()
+            with sqlite3.connect(str(_DB_PATH)) as conn:
+                c = conn.cursor()
+                c.execute('''
+                    CREATE TABLE IF NOT EXISTS strategy_weights (
+                        strategy TEXT PRIMARY KEY,
+                        base_weight REAL,
+                        adjusted_weight REAL,
+                        total_trades INTEGER,
+                        win_rate REAL,
+                        avg_pnl REAL,
+                        updated_at TEXT
+                    )
+                ''')
+                c.execute('''
+                    CREATE TABLE IF NOT EXISTS trade_records (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        strategy TEXT,
+                        code TEXT,
+                        action TEXT,
+                        pnl REAL,
+                        holding_hours REAL,
+                        is_win INTEGER,
+                        timestamp TEXT
+                    )
+                ''')
+                conn.commit()
         except Exception as e:
             logger.error(f"自适应权重 DB 初始化失败: {e}")
     
@@ -118,14 +117,13 @@ class AdaptiveWeightManager:
         
         # 持久化
         try:
-            conn = sqlite3.connect(str(_DB_PATH))
-            c = conn.cursor()
-            c.execute('''
-                INSERT INTO trade_records (strategy, code, action, pnl, holding_hours, is_win, timestamp)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            ''', (strategy, code, action, pnl, holding_hours, int(is_win), datetime.now().isoformat()))
-            conn.commit()
-            conn.close()
+            with sqlite3.connect(str(_DB_PATH)) as conn:
+                c = conn.cursor()
+                c.execute('''
+                    INSERT INTO trade_records (strategy, code, action, pnl, holding_hours, is_win, timestamp)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                ''', (strategy, code, action, pnl, holding_hours, int(is_win), datetime.now().isoformat()))
+                conn.commit()
         except Exception as e:
             logger.error(f"记录交易结果失败: {e}")
     
@@ -205,33 +203,31 @@ class AdaptiveWeightManager:
                      total_trades: int, win_rate: float, avg_pnl: float):
         """保存权重到数据库"""
         try:
-            conn = sqlite3.connect(str(_DB_PATH))
-            c = conn.cursor()
-            c.execute('''
-                INSERT OR REPLACE INTO strategy_weights 
-                (strategy, base_weight, adjusted_weight, total_trades, win_rate, avg_pnl, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            ''', (strategy, cfg.get(f"strategy.weights.{strategy}", 0.5),
-                  weight, total_trades, win_rate, avg_pnl, datetime.now().isoformat()))
-            conn.commit()
-            conn.close()
+            with sqlite3.connect(str(_DB_PATH)) as conn:
+                c = conn.cursor()
+                c.execute('''
+                    INSERT OR REPLACE INTO strategy_weights 
+                    (strategy, base_weight, adjusted_weight, total_trades, win_rate, avg_pnl, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                ''', (strategy, cfg.get(f"strategy.weights.{strategy}", 0.5),
+                      weight, total_trades, win_rate, avg_pnl, datetime.now().isoformat()))
+                conn.commit()
         except Exception as e:
             logger.error(f"保存权重失败: {e}")
     
     def _load_from_db(self):
         """从数据库加载历史权重"""
         try:
-            conn = sqlite3.connect(str(_DB_PATH))
-            conn.row_factory = sqlite3.Row
-            c = conn.cursor()
-            c.execute("SELECT * FROM strategy_weights")
-            for row in c.fetchall():
-                self._strategy_stats[row["strategy"]] = {
-                    "total_trades": row["total_trades"],
-                    "win_count": int(row["win_rate"] * row["total_trades"]),
-                    "total_pnl": row["avg_pnl"] * row["total_trades"],
-                }
-            conn.close()
+            with sqlite3.connect(str(_DB_PATH)) as conn:
+                conn.row_factory = sqlite3.Row
+                c = conn.cursor()
+                c.execute("SELECT * FROM strategy_weights")
+                for row in c.fetchall():
+                    self._strategy_stats[row["strategy"]] = {
+                        "total_trades": row["total_trades"],
+                        "win_count": int(row["win_rate"] * row["total_trades"]),
+                        "total_pnl": row["avg_pnl"] * row["total_trades"],
+                    }
             logger.info(f"自适应权重已加载 ({len(self._strategy_stats)} 个策略)")
         except Exception as e:
             logger.error(f"加载权重失败: {e}")

@@ -616,38 +616,37 @@ class PreMarketAnalyst:
         try:
             import sqlite3
             db_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'data', 'ftseek.db')
-            conn = sqlite3.connect(db_path)
-            cur = conn.cursor()
-            for sym in symbols[:5]:
-                row = cur.execute(
-                    "SELECT code, action, entry_price, exit_price, unrealized_pl, strategy, entry_time "
-                    "FROM positions WHERE code=? AND market='HK' AND status='CLOSED' "
-                    "AND strategy NOT LIKE '%sync%' ORDER BY entry_time DESC LIMIT 3",
-                    (sym,)
-                ).fetchall()
-                if row:
-                    lines = [f"## {sym} 近期交易复盘"]
-                    for r in row:
-                        pnl = r[4] if r[4] else 0
-                        lines.append(f"  {r[5]}: 入场={r[2]} 出场={r[3] or 'N/A'} PnL={pnl:+.0f}")
-                    # 只在无技术快照时追加 (有技术快照时复盘数据在下一段)
-                    if not any(sym in p for p in parts):
-                        parts.append("\n".join(lines))
-                    else:
-                        # 追加到已有条目
-                        idx = next(i for i, p in enumerate(parts) if sym in p)
-                        parts[idx] += "\n" + "\n".join(lines)
-                else:
-                    stats = cur.execute(
-                        "SELECT COUNT(*), SUM(CASE WHEN passed=1 THEN 1 ELSE 0 END), "
-                        "ROUND(AVG(ABS(score)),2) FROM decision_traces WHERE code=?",
+            with sqlite3.connect(db_path) as conn:
+                cur = conn.cursor()
+                for sym in symbols[:5]:
+                    row = cur.execute(
+                        "SELECT code, action, entry_price, exit_price, unrealized_pl, strategy, entry_time "
+                        "FROM positions WHERE code=? AND market='HK' AND status='CLOSED' "
+                        "AND strategy NOT LIKE '%sync%' ORDER BY entry_time DESC LIMIT 3",
                         (sym,)
-                    ).fetchone()
-                    if stats and stats[0] > 0:
-                        parts.append(f"## {sym}: {stats[0]}次扫描, {stats[1]}次通过, 均分={stats[2]}")
+                    ).fetchall()
+                    if row:
+                        lines = [f"## {sym} 近期交易复盘"]
+                        for r in row:
+                            pnl = r[4] if r[4] else 0
+                            lines.append(f"  {r[5]}: 入场={r[2]} 出场={r[3] or 'N/A'} PnL={pnl:+.0f}")
+                        # 只在无技术快照时追加 (有技术快照时复盘数据在下一段)
+                        if not any(sym in p for p in parts):
+                            parts.append("\n".join(lines))
+                        else:
+                            # 追加到已有条目
+                            idx = next(i for i, p in enumerate(parts) if sym in p)
+                            parts[idx] += "\n" + "\n".join(lines)
                     else:
-                        parts.append(f"## {sym}: 无历史数据")
-            conn.close()
+                        stats = cur.execute(
+                            "SELECT COUNT(*), SUM(CASE WHEN passed=1 THEN 1 ELSE 0 END), "
+                            "ROUND(AVG(ABS(score)),2) FROM decision_traces WHERE code=?",
+                            (sym,)
+                        ).fetchone()
+                        if stats and stats[0] > 0:
+                            parts.append(f"## {sym}: {stats[0]}次扫描, {stats[1]}次通过, 均分={stats[2]}")
+                        else:
+                            parts.append(f"## {sym}: 无历史数据")
         except Exception as e:
             logger.debug(f"[LLM技术上下文] 历史复盘加载失败: {e}")
 

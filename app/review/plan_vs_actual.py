@@ -72,19 +72,18 @@ def load_actual_trades(date: str) -> List[Dict]:
     """从数据库加载当日交易记录"""
     try:
         import sqlite3
-        conn = sqlite3.connect(DB_PATH)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
         
-        # 获取当日开仓的记录
-        cursor.execute("""
-            SELECT code, action, entry_price, entry_time, realized_pnl, status
-            FROM positions 
-            WHERE entry_time LIKE ?
-        """, (f"{date}%",))
+            # 获取当日开仓的记录
+            cursor.execute("""
+                SELECT code, action, entry_price, entry_time, realized_pnl, status
+                FROM positions 
+                WHERE entry_time LIKE ?
+            """, (f"{date}%",))
         
-        rows = cursor.fetchall()
-        conn.close()
+            rows = cursor.fetchall()
         return [dict(row) for row in rows]
     except Exception as e:
         logger.error(f"[EOD Report] 加载交易记录失败: {e}")

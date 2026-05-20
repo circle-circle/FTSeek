@@ -280,38 +280,36 @@ def format_full_daily_report(date: str = None) -> str:
     try:
         import sqlite3
         db_path = Path('/opt/ftseek/FTSeek/data/ftseek.db')
-        conn = sqlite3.connect(str(db_path))
-        c = conn.cursor()
-        
-        c.execute(f"SELECT code, action, entry_price, exit_price, pnl, pnl_percent, strategy, entry_time, exit_reason, status FROM trades WHERE date(entry_time) = '{date}' ORDER BY entry_time DESC")
-        trades = c.fetchall()
-        
-        if trades:
-            lines.append("### 💹 今日成交记录")
-            for t in trades:
-                code, action, entry, exit_p, pnl, pnl_pct, strategy, entry_time, exit_reason, status = t
-                pnl_str = f"{pnl:+.2f}" if pnl else "N/A"
-                pct_str = f"({pnl_pct:+.1%})" if pnl_pct else ""
-                status_icon = "📈" if action == 'BUY' else "📉"
-                if status == 'CLOSED':
-                    status_icon = "✅" if pnl and pnl > 0 else "❌" if pnl and pnl < 0 else "➡️"
-                lines.append(
-                    f"- {status_icon} **{code}** {action} @ {entry} | "
-                    f"策略: {strategy} | "
-                    f"状态: {status}"
-                    + (f" | 盈亏: {pnl_str} {pct_str}" if pnl is not None else "")
-                    + (f" | 原因: {exit_reason}" if exit_reason and exit_reason != '' else "")
-                )
-        else:
-            lines.append("### 💹 今日成交记录")
-            lines.append("- 今日无实际成交")
-        
-        # 统计 trade_chains
-        c.execute(f"SELECT COUNT(*) FROM trade_chains WHERE date(created_at) = '{date}'")
-        chain_count = c.fetchone()[0]
-        lines.append(f"- trade_chains 记录: {chain_count} 条")
-        
-        conn.close()
+        with sqlite3.connect(str(db_path)) as conn:
+            c = conn.cursor()
+            
+            c.execute(f"SELECT code, action, entry_price, exit_price, pnl, pnl_percent, strategy, entry_time, exit_reason, status FROM trades WHERE date(entry_time) = '{date}' ORDER BY entry_time DESC")
+            trades = c.fetchall()
+            
+            if trades:
+                lines.append("### 💹 今日成交记录")
+                for t in trades:
+                    code, action, entry, exit_p, pnl, pnl_pct, strategy, entry_time, exit_reason, status = t
+                    pnl_str = f"{pnl:+.2f}" if pnl else "N/A"
+                    pct_str = f"({pnl_pct:+.1%})" if pnl_pct else ""
+                    status_icon = "📈" if action == 'BUY' else "📉"
+                    if status == 'CLOSED':
+                        status_icon = "✅" if pnl and pnl > 0 else "❌" if pnl and pnl < 0 else "➡️"
+                    lines.append(
+                        f"- {status_icon} **{code}** {action} @ {entry} | "
+                        f"策略: {strategy} | "
+                        f"状态: {status}"
+                        + (f" | 盈亏: {pnl_str} {pct_str}" if pnl is not None else "")
+                        + (f" | 原因: {exit_reason}" if exit_reason and exit_reason != '' else "")
+                    )
+            else:
+                lines.append("### 💹 今日成交记录")
+                lines.append("- 今日无实际成交")
+            
+            # 统计 trade_chains
+            c.execute(f"SELECT COUNT(*) FROM trade_chains WHERE date(created_at) = '{date}'")
+            chain_count = c.fetchone()[0]
+            lines.append(f"- trade_chains 记录: {chain_count} 条")
     except Exception as e:
         lines.append(f"### ❌ 交易记录读取失败: {e}")
     lines.append("")
@@ -319,24 +317,23 @@ def format_full_daily_report(date: str = None) -> str:
     # ═══════ 3. 当前持仓 ═══════
     try:
         import sqlite3
-        conn = sqlite3.connect(str(db_path))
-        c = conn.cursor()
-        c.execute("SELECT code, action, quantity, entry_price, stop_loss, take_profit, status FROM positions WHERE status='OPEN' ORDER BY code")
-        positions = c.fetchall()
-        
-        lines.append("### 📦 当前持仓")
-        if positions:
-            for p in positions:
-                code, action, qty, entry, sl, tp, status = p
-                lines.append(
-                    f"- **{code}** {action} × {qty}股 | "
-                    f"成本: {entry} | "
-                    f"止损: {sl} | "
-                    f"止盈: {tp}"
-                )
-        else:
-            lines.append("- 当前无持仓")
-        conn.close()
+        with sqlite3.connect(str(db_path)) as conn:
+            c = conn.cursor()
+            c.execute("SELECT code, action, quantity, entry_price, stop_loss, take_profit, status FROM positions WHERE status='OPEN' ORDER BY code")
+            positions = c.fetchall()
+            
+            lines.append("### 📦 当前持仓")
+            if positions:
+                for p in positions:
+                    code, action, qty, entry, sl, tp, status = p
+                    lines.append(
+                        f"- **{code}** {action} × {qty}股 | "
+                        f"成本: {entry} | "
+                        f"止损: {sl} | "
+                        f"止盈: {tp}"
+                    )
+            else:
+                lines.append("- 当前无持仓")
     except Exception as e:
         lines.append(f"### ❌ 持仓读取失败: {e}")
     lines.append("")

@@ -295,14 +295,13 @@ class ShortSellingGate:
         从 positions 表查询所有 SELL 方向的持仓
         """
         try:
-            conn = sqlite3.connect(f"file:{self.db_path}?mode=ro", uri=True)
-            cursor = conn.cursor()
-            cursor.execute(
-                "SELECT quantity, entry_price FROM positions "
-                "WHERE status='OPEN' AND action='SELL'"
-            )
-            rows = cursor.fetchall()
-            conn.close()
+            with sqlite3.connect(f"file:{self.db_path}?mode=ro", uri=True) as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT quantity, entry_price FROM positions "
+                    "WHERE status='OPEN' AND action='SELL'"
+                )
+                rows = cursor.fetchall()
             return sum(qty * price for qty, price in rows if qty and price)
         except Exception as e:
             logger.warning(f"[做空门禁] 查询做空敞口失败: {e}")

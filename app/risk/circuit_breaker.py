@@ -77,16 +77,15 @@ class SmartStopGuard:
         """创建持久化状态表"""
         try:
             import sqlite3
-            conn = sqlite3.connect(self.db_path)
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS smart_stop_state (
-                    key TEXT PRIMARY KEY,
-                    value TEXT NOT NULL,
-                    updated_at TEXT DEFAULT (datetime('now'))
-                )
-            """)
-            conn.commit()
-            conn.close()
+            with sqlite3.connect(self.db_path) as conn:
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS smart_stop_state (
+                        key TEXT PRIMARY KEY,
+                        value TEXT NOT NULL,
+                        updated_at TEXT DEFAULT (datetime('now'))
+                    )
+                """)
+                conn.commit()
         except Exception as e:
             logger.warning(f"[SmartStop] 状态表初始化失败: {e}")
     
@@ -94,25 +93,23 @@ class SmartStopGuard:
         """从数据库加载状态"""
         try:
             import sqlite3
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            
-            today = datetime.now().strftime('%Y-%m-%d')
-            cursor.execute("SELECT key, value FROM smart_stop_state WHERE key IN ('stage', 'consecutive_losses', 'cooldown_until', 'init_date')")
-            for row in cursor.fetchall():
-                key, value = row
-                if key == 'stage':
-                    self._stage = int(value)
-                elif key == 'consecutive_losses':
-                    self._consecutive_losses = int(value)
-                elif key == 'cooldown_until':
-                    self._cooldown_until = float(value)
-                elif key == 'init_date':
-                    if value != today:
-                        # 新的一天，重置状态
-                        self._reset_daily()
-            
-            conn.close()
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+
+                today = datetime.now().strftime('%Y-%m-%d')
+                cursor.execute("SELECT key, value FROM smart_stop_state WHERE key IN ('stage', 'consecutive_losses', 'cooldown_until', 'init_date')")
+                for row in cursor.fetchall():
+                    key, value = row
+                    if key == 'stage':
+                        self._stage = int(value)
+                    elif key == 'consecutive_losses':
+                        self._consecutive_losses = int(value)
+                    elif key == 'cooldown_until':
+                        self._cooldown_until = float(value)
+                    elif key == 'init_date':
+                        if value != today:
+                            # 新的一天，重置状态
+                            self._reset_daily()
         except Exception as e:
             logger.warning(f"[SmartStop] 状态加载失败: {e}")
     
@@ -120,13 +117,12 @@ class SmartStopGuard:
         """保存状态到数据库"""
         try:
             import sqlite3
-            conn = sqlite3.connect(self.db_path)
-            conn.execute("INSERT OR REPLACE INTO smart_stop_state (key, value) VALUES ('stage', ?)", (str(self._stage),))
-            conn.execute("INSERT OR REPLACE INTO smart_stop_state (key, value) VALUES ('consecutive_losses', ?)", (str(self._consecutive_losses),))
-            conn.execute("INSERT OR REPLACE INTO smart_stop_state (key, value) VALUES ('cooldown_until', ?)", (str(self._cooldown_until),))
-            conn.execute("INSERT OR REPLACE INTO smart_stop_state (key, value) VALUES ('init_date', ?)", (self._init_date,))
-            conn.commit()
-            conn.close()
+            with sqlite3.connect(self.db_path) as conn:
+                conn.execute("INSERT OR REPLACE INTO smart_stop_state (key, value) VALUES ('stage', ?)", (str(self._stage),))
+                conn.execute("INSERT OR REPLACE INTO smart_stop_state (key, value) VALUES ('consecutive_losses', ?)", (str(self._consecutive_losses),))
+                conn.execute("INSERT OR REPLACE INTO smart_stop_state (key, value) VALUES ('cooldown_until', ?)", (str(self._cooldown_until),))
+                conn.execute("INSERT OR REPLACE INTO smart_stop_state (key, value) VALUES ('init_date', ?)", (self._init_date,))
+                conn.commit()
         except Exception as e:
             logger.warning(f"[SmartStop] 状态保存失败: {e}")
     
@@ -196,15 +192,14 @@ class SmartStopGuard:
         """检查数据库更新连败状态"""
         try:
             import sqlite3
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            cursor.execute(
-                "SELECT realized_pnl, entry_price, exit_price "
-                "FROM positions WHERE status='CLOSED' AND exit_price IS NOT NULL "
-                "ORDER BY exit_time DESC LIMIT 5"
-            )
-            rows = cursor.fetchall()
-            conn.close()
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT realized_pnl, entry_price, exit_price "
+                    "FROM positions WHERE status='CLOSED' AND exit_price IS NOT NULL "
+                    "ORDER BY exit_time DESC LIMIT 5"
+                )
+                rows = cursor.fetchall()
             
             # 过滤有真实价格变动的交易
             real_trades = [
