@@ -18,8 +18,8 @@ logger = logging.getLogger("ftseek.strategy.weight_resolver")
 _cc_wr = _gcc_wr()
 
 # ── 策略分类常量 ────────────────────────────────────────────────────
-TREND_STRATEGIES = {"macd", "supertrend", "ma_cross"}  # confluence_v2 已禁用
-OSCILLATOR_STRATEGIES = {"rsi", "bollinger", "stochastic"}
+TREND_STRATEGIES = {"macd", "macd_factor", "supertrend", "st_factor", "ma_cross_factor", "confluence_v2"}
+OSCILLATOR_STRATEGIES = {"rsi", "rsi_factor", "bollinger", "bb_factor"}
 MTF_STRATEGIES = {"enhanced_confluence", "layered_integration"}
 SENTIMENT_STRATEGIES = {"sentiment", "sentiment_ai", "news_sentiment", "event_driven", "premarket_analyst"}
 

@@ -39,8 +39,9 @@ TIER_CONFIG = {
 }
 
 # 适合趋势行情的策略集合（与 market_regime 维度匹配逻辑相关）
-TREND_STRATEGIES = {'supertrend', 'confluence_v2', 'macd_strategy', 'momentum'}
-RANGE_STRATEGIES = {'mean_reversion', 'bollinger_strategy', 'oscillator'}
+# 实际策略名来自 factor_votes.py + 独立策略类
+TREND_STRATEGIES = {'supertrend', 'st_factor', 'macd', 'macd_factor', 'ma_cross_factor', 'confluence_v2'}
+RANGE_STRATEGIES = {'rsi', 'rsi_factor', 'bollinger', 'bb_factor'}
 SENTIMENT_STRATEGIES = {'sentiment', 'sentiment_ai', 'news_sentiment', 'event_driven'}
 
 

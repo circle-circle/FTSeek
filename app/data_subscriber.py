@@ -1412,7 +1412,7 @@ class DataSubscriber:
                 "threshold": result.threshold,
                 "market_regime": result.market_regime,
                 "adx": result.adx_value,
-                "quality_boost": getattr(result, 'quality_score', 1.0),
+                "quality_boost": getattr(getattr(result, 'quality_result', None), 'position_factor', 1.0),
                 "timeliness": getattr(result, 'timeliness_factor', 1.0),
                 "llm_signal_impact_factor": getattr(result, 'llm_signal_impact_factor', 1.0),
                 "agree_count": n_agree,

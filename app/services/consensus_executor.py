@@ -298,12 +298,15 @@ class ConsensusExecutor:
         try:
             is_us = code.startswith('US.')
             if is_us:
-                from app.risk.dynamic_exit_manager import get_us_exit_params
-                us_params = get_us_exit_params()
+                from app.risk.dynamic_exit_manager import dynamic_exit_manager as _dem_us
+                us_params = _dem_us.get_market_params('us')
+                # US config 无 stop_loss 顶层键，从 atr_dynamic_stop.min_stop_pct 获取
+                atr_stop = us_params.get('atr_dynamic_stop', {})
+                us_sl = atr_stop.get('min_stop_pct', 0.015) if isinstance(atr_stop, dict) else 0.015
                 dyn = {
-                    'stop_loss_pct': -abs(us_params.get('stop_loss', 0.015)),
+                    'stop_loss_pct': -abs(us_params.get('stop_loss', us_sl)),
                     'take_profit_pct': abs(us_params.get('take_profit', 0.04)),
-                    **us_params
+                    'regime': _dem_us.current_regime,
                 }
             else:
                 dyn = self._get_dynamic_stop_params(code)
