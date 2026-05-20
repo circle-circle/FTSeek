@@ -672,15 +672,13 @@ def main():
         from app.strategy.consensus_engine import (
             TREND_STRATEGIES, OSCILLATOR_STRATEGIES, FACTOR_FAMILIES,
             SESSION_CONFIG, DEFAULT_BASE_WEIGHTS, ADAPTIVE_THRESHOLD_MIN,
-            ADAPTIVE_THRESHOLD_MAX, STRATEGY_CATEGORIES, CATEGORY_BASE_WEIGHTS,
-            SIGNAL_QUALITY_THRESHOLDS, STRATEGY_WEIGHT_MULTIPLIER,
-            VOLUME_STRATEGIES, TREND_SCORE_THRESHOLDS, FACTOR_FAMILY_MAPPING
+            ADAPTIVE_THRESHOLD_MAX, HYBRID_STRATEGIES, SENTIMENT_STRATEGIES,
+            MTF_STRATEGIES, SESSION_PARAMS_ENABLED, FAMILY_MAX_WEIGHT
         )
         logger.info(
             f"[共识引擎] ✅ 关键常量验证通过 "
-            f"(TREND={len(TREND_STRATEGIES)}种, "
-            f"FACTOR={len(FACTOR_FAMILIES)}族, "
-            f"SESSION={len(SESSION_CONFIG)}时段)"
+            f"(TREND={len(TREND_STRATEGIES)}种，OSC={len(OSCILLATOR_STRATEGIES)}种，"
+            f"FACTOR={len(FACTOR_FAMILIES)}族，SESSION={len(SESSION_CONFIG)}时段)"
         )
     except ImportError as e:
         logger.error(f"[共识引擎] ❌ 关键常量缺失：{e}")
