@@ -664,7 +664,30 @@ def main():
         else:
             logger.info("[配置校验] 钉钉推送配置一致 ✅")
     except Exception as e:
-        logger.warning(f"[配置校验] 校验失败: {e}")
+        logger.warning(f"[配置校验] 校验失败：{e}")
+
+    # 0.5) 共识引擎关键常量完整性验证 (P0 2026-05-20)
+    # 防止模块级常量被意外删除导致运行时崩溃
+    try:
+        from app.strategy.consensus_engine import (
+            TREND_STRATEGIES, OSCILLATOR_STRATEGIES, FACTOR_FAMILIES,
+            SESSION_CONFIG, DEFAULT_BASE_WEIGHTS, ADAPTIVE_THRESHOLD_MIN,
+            ADAPTIVE_THRESHOLD_MAX, STRATEGY_CATEGORIES, CATEGORY_BASE_WEIGHTS,
+            SIGNAL_QUALITY_THRESHOLDS, STRATEGY_WEIGHT_MULTIPLIER,
+            VOLUME_STRATEGIES, TREND_SCORE_THRESHOLDS, FACTOR_FAMILY_MAPPING
+        )
+        logger.info(
+            f"[共识引擎] ✅ 关键常量验证通过 "
+            f"(TREND={len(TREND_STRATEGIES)}种, "
+            f"FACTOR={len(FACTOR_FAMILIES)}族, "
+            f"SESSION={len(SESSION_CONFIG)}时段)"
+        )
+    except ImportError as e:
+        logger.error(f"[共识引擎] ❌ 关键常量缺失：{e}")
+        logger.error("[共识引擎] 服务将无法正常启动，请检查 consensus_engine.py")
+        sys.exit(1)
+    except Exception as e:
+        logger.warning(f"[共识引擎] ⚠️ 常量验证失败：{e}")
 
     # 1) 启动 OpenD
     opend = OpenDManager()
