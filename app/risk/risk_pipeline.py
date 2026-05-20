@@ -171,17 +171,20 @@ class RiskPipeline:
         """移除检查"""
         self._checks = [c for c in self._checks if c.name != name]
 
-    def evaluate(self, ctx: SignalContext, deps: Dict) -> PipelineResult:
+    def evaluate(self, ctx: SignalContext, deps: Optional[Dict] = None) -> PipelineResult:
         """
         执行所有检查
 
         Args:
             ctx: 信号上下文
-            deps: 依赖注入字典
+            deps: 依赖注入字典 (可选，默认使用 init_risk_pipeline 注入的 deps)
 
         Returns:
             PipelineResult: 所有检查结果
         """
+        # P0 修复 2026-05-21: deps 自动回退到模块级 _pipeline_deps
+        if deps is None:
+            deps = _pipeline_deps or {}
         results: List[CheckResult] = []
         start_time = time.time()
 
@@ -237,6 +240,61 @@ class RiskPipeline:
 
 from app.risk.checks import DEFAULT_CHECKS, discover_risk_checks
 
+# ============================================================
+#  Pipeline 单例工厂 (P0 修复 2026-05-21)
+#  data_subscriber._on_consensus_inner 通过 init_risk_pipeline /
+#  get_risk_pipeline 获取实例，旧版重构时遗漏导致 ImportError →
+#  consensus-scheduler 线程崩溃。
+# ============================================================
+
+_pipeline_instance: Optional["RiskPipeline"] = None
+_pipeline_deps: Optional[Dict] = None
+
+
+def init_risk_pipeline(deps: Optional[Dict] = None) -> "RiskPipeline":
+    """
+    初始化（或获取已有的）风控 Pipeline 单例。
+
+    Args:
+        deps: 依赖注入字典，传递给各 RiskCheck.check() 方法
+
+    Returns:
+        RiskPipeline 实例
+    """
+    global _pipeline_instance, _pipeline_deps
+
+    if _pipeline_instance is None:
+        check_classes = DEFAULT_CHECKS
+        checks = [cls() for cls in check_classes]
+        _pipeline_instance = RiskPipeline(checks)
+        logger.info(
+            f"[RiskPipeline] 初始化完成: {len(checks)} 项检查 "
+            f"({', '.join(c.name for c in checks)})"
+        )
+
+    _pipeline_deps = deps or {}
+    return _pipeline_instance
+
+
+def get_risk_pipeline(deps: Optional[Dict] = None) -> "RiskPipeline":
+    """
+    获取风控 Pipeline（兼容 init_risk_pipeline 的 fallback 调用）。
+
+    如果尚未初始化，则自动初始化。
+    """
+    global _pipeline_deps
+    if _pipeline_instance is None:
+        return init_risk_pipeline(deps)
+    if deps:
+        _pipeline_deps = deps
+    return _pipeline_instance
+
+
+def get_pipeline_deps() -> Dict:
+    """获取当前注入的依赖字典（供 evaluate 调用）"""
+    return _pipeline_deps or {}
+
+
 __all__ = [
     "SignalContext",
     "CheckResult",
@@ -245,4 +303,7 @@ __all__ = [
     "RiskPipeline",
     "DEFAULT_CHECKS",
     "discover_risk_checks",
+    "init_risk_pipeline",
+    "get_risk_pipeline",
+    "get_pipeline_deps",
 ]

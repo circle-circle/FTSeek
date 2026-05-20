@@ -241,13 +241,29 @@ class NewsMonitor:
         return default_config
     
     async def _ensure_session(self):
-        """确保 HTTP 会话存在"""
-        if self.session is None or self.session.closed:
+        """确保 HTTP 会话存在
+        
+        P0 修复 2026-05-21: 检测 event loop 变化，避免使用绑定到已关闭 loop 的 session
+        """
+        current_loop = asyncio.get_running_loop()
+        needs_new = (
+            self.session is None
+            or self.session.closed
+            or getattr(self, '_session_loop', None) is not current_loop
+        )
+        if needs_new:
+            # 清理旧 session（可能绑定到已关闭的 loop）
+            if self.session and not self.session.closed:
+                try:
+                    await self.session.close()
+                except Exception:
+                    pass
             timeout = aiohttp.ClientTimeout(total=10)
             self.session = aiohttp.ClientSession(
                 timeout=timeout,
                 headers={'User-Agent': 'FTSeek/1.0 News Monitor'}
             )
+            self._session_loop = current_loop
     
     async def close(self):
         """关闭资源"""

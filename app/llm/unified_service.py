@@ -435,7 +435,11 @@ class UnifiedLLMService:
 
     @staticmethod
     def extract_json(raw: str) -> Dict:
-        """从 LLM 文本中提取 JSON (容错处理)"""
+        """从 LLM 文本中提取 JSON (容错处理)
+        
+        2026-05-21 P1 修复: 始终返回 Dict，防止 LLM 返回裸字符串/列表导致
+        下游 .get() 调用崩溃 (辩论失败 38 次根因)
+        """
         if not raw:
             return {}
 
@@ -446,9 +450,19 @@ class UnifiedLLMService:
         text = re.sub(r'\n?\s*```\s*$', '', text, flags=re.MULTILINE)
         text = text.strip()
 
+        def _ensure_dict(obj) -> Dict:
+            """确保返回 Dict，非 dict 类型包装为 {"raw": obj}"""
+            if isinstance(obj, dict):
+                return obj
+            if isinstance(obj, list):
+                return {"items": obj}
+            if isinstance(obj, str):
+                return {"raw": obj}
+            return {}
+
         # 直接解析
         try:
-            return json.loads(text)
+            return _ensure_dict(json.loads(text))
         except json.JSONDecodeError:
             pass
 
@@ -456,7 +470,7 @@ class UnifiedLLMService:
         try:
             start = text.index("{")
             end = text.rindex("}") + 1
-            return json.loads(text[start:end])
+            return _ensure_dict(json.loads(text[start:end]))
         except Exception:
             pass
 
@@ -464,7 +478,7 @@ class UnifiedLLMService:
         match = re.search(r'\{[^{}]*\{[^{}]*\}[^{}]*\}|\{[^{}]*\}', text, re.DOTALL)
         if match:
             try:
-                return json.loads(match.group())
+                return _ensure_dict(json.loads(match.group()))
             except Exception:
                 pass
 

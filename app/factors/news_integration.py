@@ -342,12 +342,24 @@ class NewsSentimentAnalyzer:
             executor.shutdown(wait=False)
 
     def _run_async_with_new_loop(self, coro):
-        """P0 修复: 在新事件循环中运行协程，避免 Event loop is closed"""
+        """P0 修复 2026-05-21: 在隔离的事件循环中运行协程
+        
+        不污染线程的全局 event loop (asyncio.set_event_loop)，
+        避免后续 asyncio.get_event_loop() 拿到已关闭的 loop。
+        """
         loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
         try:
             return loop.run_until_complete(coro)
         finally:
+            try:
+                # 清理 pending tasks
+                pending = asyncio.all_tasks(loop)
+                for task in pending:
+                    task.cancel()
+                if pending:
+                    loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+            except Exception:
+                pass
             loop.close()
 
     async def _call_llm_news_enhancement(
