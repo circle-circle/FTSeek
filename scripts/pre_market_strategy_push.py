@@ -361,7 +361,7 @@ async def call_llm_strategy_analysis(
     watchlist: str,
     config: dict,
 ) -> Optional[dict]:
-    """调用 LLM 进行盘前策略分析"""
+    """调用 LLM 进行盘前策略分析 (已迁移至 UnifiedLLMService)"""
     
     # 格式化新闻
     news_text = ""
@@ -381,44 +381,37 @@ async def call_llm_strategy_analysis(
         watchlist=watchlist,
     )
     
-    logger.info(f"调用 LLM 盘前策略分析: model={config['bailian_model']}, news={len(news_items)}条")
+    logger.info(f"调用 UnifiedLLMService 盘前策略分析: task_type=premarket_planner, news={len(news_items)}条")
     
     try:
-        from openai import AsyncOpenAI
-        client = AsyncOpenAI(
-            api_key=config["bailian_api_key"],
-            base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+        from app.llm.unified_service import get_unified_llm
+        
+        llm = get_unified_llm()
+        messages = [
+            {"role": "system", "content": "你是 FTSeek 首席盘前策略分析师，输出严格 JSON。"},
+            {"role": "user", "content": prompt},
+        ]
+        
+        # schema 校验: 确保返回结构包含 strategies 数组
+        schema = {
+            "strategies": list,
+            "market_overview": str,
+            "overall_bias": str,
+            "risk_level": str,
+        }
+        
+        result = await llm.call_and_parse(
+            messages=messages,
+            task_type="premarket_planner",
+            timeout=config.get("bailian_timeout", 120),
+            schema_required=schema,
         )
         
-        model_name = config["bailian_model"].replace("bailian/", "")
-        
-        response = await asyncio.wait_for(
-            client.chat.completions.create(
-                model=model_name,
-                messages=[
-                    {"role": "system", "content": "你是 FTSeek 首席盘前策略分析师，输出严格 JSON。"},
-                    {"role": "user", "content": prompt},
-                ],
-                temperature=config["llm_temperature"],
-                max_tokens=3000,
-            ),
-            timeout=config["bailian_timeout"],
-        )
-        
-        raw = response.choices[0].message.content
-        logger.info(f"LLM 响应长度: {len(raw)} chars")
-        
-        # 清理控制字符 (LLM 可能在 JSON 中输出 \n \t 等)
-        import re
-        cleaned = re.sub(r'[\x00-\x1f\x7f-\x9f]', '', raw)
-        
-        # 提取 JSON
-        json_match = re.search(r'\{[\s\S]*\}', cleaned)
-        if json_match:
-            result = json.loads(json_match.group())
+        if result:
+            logger.info(f"LLM 策略分析完成: {len(result.get('strategies', []))}条策略")
             return result
         else:
-            logger.error(f"LLM 响应无 JSON: {raw[:200]}")
+            logger.error("LLM 策略分析返回空")
             return None
             
     except Exception as e:
