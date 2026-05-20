@@ -111,7 +111,7 @@ def collect_latest_news(max_items: int = 15) -> List[dict]:
                             pub_dt = datetime.fromisoformat(pub.replace("Z", "+00:00").split("+")[0])
                             if pub_dt < cutoff:
                                 continue
-                        except:
+                        except (ValueError, TypeError):
                             pass
                     
                     all_news.append({

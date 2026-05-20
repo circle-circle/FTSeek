@@ -56,7 +56,7 @@ def get_latest_assessments(hours: int = 12) -> List[Dict]:
                     "rationale": reason_json.get("second_order_insight", ""),
                     "strategy": strat
                 })
-            except:
+            except Exception:
                 pass
         return results
     except Exception as e:

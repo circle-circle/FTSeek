@@ -124,7 +124,7 @@ def save_audit_history(result: dict):
         try:
             with open(AUDIT_HISTORY, "r") as f:
                 history = json.load(f)
-        except:
+        except (json.JSONDecodeError, IOError):
             history = []
     
     # 保留最近 30 条记录
@@ -171,7 +171,7 @@ def format_dingtalk_message(result: dict) -> str:
                 lines.append("")
                 lines.append(f"### 📈 趋势 (最近5次)")
                 lines.append(f"- 通过: {last_valid}/5 | 失败: {5-last_valid}/5")
-        except:
+        except Exception:
             pass
     
     lines.append("")

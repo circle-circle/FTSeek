@@ -24,7 +24,7 @@ sys.path.insert(0, '/opt/ftseek/FTSeek')
 try:
     from dotenv import load_dotenv
     load_dotenv('/opt/ftseek/FTSeek/.env')
-except:
+except ImportError:
     pass
 
 # 测试新闻

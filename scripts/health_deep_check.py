@@ -317,7 +317,7 @@ def save_check_history(results: dict):
         try:
             with open(CHECK_HISTORY, "r") as f:
                 history = json.load(f)
-        except:
+        except (json.JSONDecodeError, IOError):
             history = []
     
     history.append(results)

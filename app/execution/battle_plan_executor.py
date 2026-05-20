@@ -32,6 +32,8 @@ from app.trader.position_manager import PositionManager
 from app.notifier import get_dingtalk_notifier
 from app import config
 from app.execution.lot_size_manager import get_lot_size_manager
+from app.core.logging_config import get_trace_id, set_trace_id
+import uuid
 
 BATTLE_PLAN_PATH = "/opt/ftseek/FTSeek/data/daily_battle_plan.json"
 logger = logging.getLogger("ftseek.battle_executor")
@@ -305,19 +307,25 @@ class BattlePlanExecutionService:
         symbol = target.get("symbol")
         direction = target.get("direction", "BUY")
         qty = target.get("quantity", 100)
-        
+
         # 获取当前价格用于 Signal 创建 (实际下单时 TradeExecutor 会重取)
         current_price = 0.0 # 实际下单时会通过 API 获取最新价
         if self._auction_order_ids.get(symbol):
             current_price = self._auction_order_ids[symbol]['price'] # fallback
 
         action = SignalAction.BUY if direction == "BUY" else SignalAction.SELL
-        
+
         # P0 修复 (2026-05-17): 透传 battle_plan 的 signal_impact 到 Signal extra
         # 确保 executor 门禁可以读取 LLM 的定性判断
         _signal_impact = target.get("signal_impact", "neutral")
         _urgency = target.get("urgency", "Medium")
-        
+
+        # P2-5 (2026-05-20): trace_id 全链路追踪增强
+        # 生成唯一 trace_id，格式：BP-{日期}-{uuid6}，便于日志追踪
+        trace_id = f"BP-{datetime.now().strftime('%Y%m%d%H%M')}-{uuid.uuid4().hex[:6].upper()}"
+        set_trace_id(trace_id)
+        logger.info(f"[BattlePlan] trace_id={trace_id} 提交 {order_name}: {symbol} {action.value} {qty}股")
+
         signal = Signal(
             code=symbol,
             action=action,
@@ -326,6 +334,7 @@ class BattlePlanExecutionService:
             strategy="battle_plan",
             reason=f"盘前计划 - {order_name}",
             tier=TradeTier.TIER_TREND,
+            trace_id=trace_id,
             extra={
                 "signal_impact": _signal_impact,
                 "urgency": _urgency,
@@ -334,7 +343,7 @@ class BattlePlanExecutionService:
             },
         )
 
-        logger.info(f"[BattlePlan] 提交 {order_name}: {symbol} {action.value} {qty}股")
+        logger.info(f"[BattlePlan] trace_id={trace_id} 提交 {order_name}: {symbol} {action.value} {qty}股")
         if self.executor:
             self.executor.execute(signal)
 

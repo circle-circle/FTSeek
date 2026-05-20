@@ -76,7 +76,7 @@ class NewsSignalInjector:
                     # 只保留最近 24 小时的 ID
                     cutoff = (datetime.now() - timedelta(hours=24)).isoformat()
                     return {nid for nid, ts in data.items() if ts > cutoff}
-            except:
+            except (json.JSONDecodeError, IOError):
                 pass
         return set()
     
@@ -87,7 +87,7 @@ class NewsSignalInjector:
             data = {nid: datetime.now().isoformat() for nid in list(self._processed_ids)[-1000:]}
             with open(PROCESSED_FILE, 'w') as f:
                 json.dump(data, f)
-        except:
+        except (json.JSONDecodeError, IOError):
             pass
     
     def inject_signal(self, news_id: str, code: str, action: str, 

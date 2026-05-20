@@ -85,7 +85,7 @@ class ConfigDefaults:
     # ============================================================
     # 趋势过滤
     # ============================================================
-    TREND_FILTER_MIN_ADX = 20              # trend_filter.min_adx_for_trend
+    TREND_FILTER_MIN_ADX = 18              # trend_filter.adx_range_gate (对齐 unified_config.yaml)
     TREND_FILTER_USE_MULTI_TIMEFRAME = True
     TREND_FILTER_PREVENT_BUY_IN_DOWNTREND = True
     TREND_FILTER_PREVENT_SHORT_IN_UPTREND = True
@@ -93,9 +93,9 @@ class ConfigDefaults:
     # ============================================================
     # 入场价格检查
     # ============================================================
-    ENTRY_PRICE_HIGH_BUY_THRESHOLD = 0.005  # 0.5%
+    ENTRY_PRICE_HIGH_BUY_THRESHOLD = 0.01  # entry_price_checker.high_buy_warn (对齐 unified_config.yaml)
     ENTRY_PRICE_CHASE_WARNING_THRESHOLD = 0.03  # 3%
-    ENTRY_PRICE_CHASE_BLOCK_THRESHOLD = 0.05  # 5%
+    ENTRY_PRICE_CHASE_BLOCK_THRESHOLD = 0.03  # entry_price_checker.panic_threshold (对齐 unified_config.yaml)
     
     # ============================================================
     # LLM 交易

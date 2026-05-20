@@ -124,7 +124,7 @@ class PipelineAuditor:
                 r = requests.get(url, timeout=5, headers={"User-Agent": "Mozilla/5.0"})
                 if r.status_code != 200:
                     self.add_issue("critical", f"RSSHub-{name}", f"HTTP {r.status_code}")
-            except:
+            except (requests.RequestException, ConnectionError):
                 pass  # 不告警, 可能是网络波动
         
         return results
@@ -205,7 +205,7 @@ class PipelineAuditor:
             import requests
             r = requests.get("http://localhost:8899/health", timeout=3)
             results.append(f"  {'✅' if r.status_code == 200 else '🔴'} 回调服务: HTTP {r.status_code}")
-        except:
+        except (requests.RequestException, ConnectionError):
             self.add_issue("critical", "回调服务", "不可达")
             results.append("  🔴 回调服务: 不可达")
         
@@ -272,7 +272,7 @@ class PipelineAuditor:
                     if pct > 90:
                         self.add_issue("critical", "系统", f"磁盘 {pct}% 已满")
                     results.append(f"  {'✅' if pct < 80 else '🔴'} 磁盘: {pct}%")
-        except:
+        except Exception:
             pass
         
         # 内存
@@ -283,7 +283,7 @@ class PipelineAuditor:
                     parts = line.split()
                     pct = int(parts[2]) / int(parts[1]) * 100
                     results.append(f"  {'✅' if pct < 80 else '🔴'} 内存: {pct:.0f}%")
-        except:
+        except Exception:
             pass
         
         # 进程
@@ -295,7 +295,7 @@ class PipelineAuditor:
                 else:
                     self.add_issue("critical", "系统", f"{name} 进程不存在")
                     results.append(f"  🔴 {name}: 不存在")
-            except:
+            except Exception:
                 pass
         
         return results

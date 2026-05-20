@@ -176,7 +176,7 @@ def run_reconciliation(market_filter='HK'):
     try:
         cursor.execute("ALTER TABLE positions ADD COLUMN trader_type TEXT DEFAULT 'MANUAL';")
         logger.info("✅ 新增 trader_type 列")
-    except: pass # Already exists
+    except Exception: pass  # Already exists
 
     # 2.1 修复现有持仓的 trader_type (如果未标注)
     # 查询所有 OPEN 且未标记类型的持仓

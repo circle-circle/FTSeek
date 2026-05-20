@@ -369,11 +369,11 @@ class RSSHubMultiSourceFetcher:
                         if env_us:
                             try:
                                 codes.update(_json.loads(env_us))
-                            except:
+                            except (json.JSONDecodeError, ValueError):
                                 pass
                         logger.info(f"[watchlist] 从环境变量加载 {len(codes)} 只")
                         return codes
-                except:
+                except Exception:
                     pass
 
             # 2. config_center
@@ -766,7 +766,7 @@ class RSSHubMultiSourceFetcher:
                         # UnifiedNewsItem → dict
                         try:
                             unique_data.append(news.to_dict())
-                        except:
+                        except Exception:
                             unique_data.append({'id': str(news_id), 'title': str(news)})
             except Exception:
                 continue

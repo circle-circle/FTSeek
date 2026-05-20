@@ -58,7 +58,7 @@ class FeedbackCollector:
             try:
                 with open(self.feedback_file, 'r') as f:
                     return json.load(f)
-            except:
+            except (json.JSONDecodeError, IOError):
                 pass
         return {
             "news_feedback": {},  # news_id -> feedback list
@@ -150,7 +150,7 @@ class WeightOptimizer:
                         self.weights.update(data["weights"])
                     if "learning_stats" in data:
                         self.learning_stats.update(data["learning_stats"])
-            except:
+            except (json.JSONDecodeError, IOError):
                 pass
     
     def _save_weights(self):
