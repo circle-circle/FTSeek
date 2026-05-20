@@ -94,7 +94,7 @@ class PositionManager:
             config_path: 配置文件路径，回退读取路径
         """
         self.db_path = db_path or '/opt/ftseek/FTSeek/data/ftseek.db'
-        self.config_path = config_path or '/opt/ftseek/FTSeek/config/config.yaml'
+        self.config_path = config_path or '/opt/ftseek/FTSeek/config/unified_config.yaml'
         self._ensure_table()
         self._config = self._load_config()
     
@@ -247,9 +247,37 @@ class PositionManager:
 
             # 确保旧数据库添加新字段
             self._ensure_exit_columns(conn)
+            self._ensure_state_machine_columns(conn)
         finally:
             if conn:
                 self._return_connection(conn)
+    
+    def _ensure_state_machine_columns(self, conn):
+        """确保 positions 表有退出状态机字段 (2026-05-10 P0 修复)
+        
+        exit_state 和 state_updated_at 是 DynamicExitManager 10 层退出状态机的核心字段。
+        缺失时整个状态机 (BE_READY→BE_ACTIVE→TRAIL→PARTIAL→BREAKEVEN→...) 完全失效。
+        """
+        cursor = conn.cursor()
+        cursor.execute("PRAGMA table_info(positions)")
+        columns = [row[1] for row in cursor.fetchall()]
+        
+        def _add_column_safe(col_name, col_type, default=None):
+            if col_name in columns:
+                return
+            try:
+                if default is not None:
+                    cursor.execute(f"ALTER TABLE positions ADD COLUMN {col_name} {col_type} DEFAULT {default}")
+                else:
+                    cursor.execute(f"ALTER TABLE positions ADD COLUMN {col_name} {col_type}")
+                logger.info(f"[Schema迁移] 添加 {col_name} 字段到 positions 表")
+            except Exception as e:
+                if 'duplicate column name' not in str(e).lower():
+                    raise
+        
+        _add_column_safe('exit_state', 'TEXT', "'INIT'")
+        _add_column_safe('state_updated_at', 'TEXT')
+        conn.commit()
     
     def _ensure_exit_columns(self, conn):
         """
@@ -356,20 +384,12 @@ class PositionManager:
     def get_open_positions_count(self) -> int:
         """
         获取当前持仓数量 (2026-03-25 新增)
-        2026-04-15 修复: 优先使用富途服务端实时数据
+        2026-05-08 修复: 本地 DB 优先，避免 live_query Futu API 永久阻塞
         
         Returns:
             当前 OPEN 状态的持仓数量
         """
-        # 2026-04-15: 优先使用富途服务端实时查询
-        try:
-            from app.factors.live_position_query import get_live_position_query
-            live_query = get_live_position_query()
-            count = live_query.count_positions(market='HK')
-            return count
-        except Exception:
-            pass  # 降级到本地 DB
-        
+        # 本地 DB 优先（零阻塞风险，SQLite + 连接池 timeout=30s）
         conn = self._get_connection()
         try:
             cursor = conn.cursor()
@@ -378,15 +398,26 @@ class PositionManager:
                 WHERE status = 'OPEN'
             ''')
             count = cursor.fetchone()[0]
-            return count
         finally:
             self._return_connection(conn)
+        
+        # live_query 作为增强校验（不阻塞主路径）
+        try:
+            from app.factors.live_position_query import get_live_position_query
+            live_count = get_live_position_query().count_positions(market='HK')
+            if live_count != count:
+                logger.warning(f"[持仓对账] 本地DB={count} vs 富途={live_count}，以DB为准")
+        except Exception:
+            pass  # 富途查询失败不影响主路径
+        
+        return count
     
     def create_position(self, code: str, action: str, quantity: int, 
                        entry_price: float, entry_time: str,
                        stop_loss: float = None, take_profit: float = None,
                        signal_id: str = None, strategy: str = None, 
-                       trace_id: str = "", trader_type: str = None) -> int:
+                       trace_id: str = "", trader_type: str = None,
+                       strategy_tags: str = None) -> int:
         """
         创建持仓记录 (支持止盈止损 + 信号关联 + 全链路归因 - 2026-04-15 更新)
         
@@ -418,6 +449,9 @@ class PositionManager:
 
             # 检查表是否有 trace_id 字段，没有则添加
             self._ensure_trace_column(conn)
+
+            # 检查表是否有 strategy_tags 字段 (P2 2026-05-17: 门禁组合对比标签)
+            self._ensure_strategy_tags_column(conn)
             
             # P0 根治 (2026-05-06): 创建前检查是否已有同名标的的OPEN持仓，防止重复创建
             cursor.execute("SELECT id, quantity, entry_price FROM positions WHERE code = ? AND status = 'OPEN' LIMIT 1", (code,))
@@ -429,11 +463,27 @@ class PositionManager:
                 )
                 return existing[0]  # 返回已有持仓ID，避免调用方报错
             
+            # P1 修复 (2026-05-16): 扩大去重范围 — 也检查最近 5 分钟内刚关闭的同价持仓
+            # 根因: exit 关闭持仓 → reconcile 重新创建 → 新信号又来 → 多条记录
+            cursor.execute("""
+                SELECT id FROM positions WHERE code = ? AND status = 'CLOSED'
+                AND abs(entry_price - ?) / ? < 0.005
+                AND exit_time >= datetime('now', '-5 minutes')
+                ORDER BY id DESC LIMIT 1
+            """, (code, entry_price, entry_price))
+            recent_close = cursor.fetchone()
+            if recent_close:
+                logger.warning(
+                    f"[防呆] {code} 5 分钟内刚关闭同价持仓 (ID={recent_close[0]}), "
+                    f"拒绝重复创建 (可能是 reconcile 残留)"
+                )
+                return recent_close[0]
+            
             cursor.execute('''
                 INSERT INTO positions 
-                (code, action, quantity, entry_price, entry_time, status, stop_loss, take_profit, signal_id, strategy, trace_id, trader_type)
-                VALUES (?, ?, ?, ?, ?, 'OPEN', ?, ?, ?, ?, ?, ?)
-            ''', (code, action, quantity, entry_price, entry_time, stop_loss, take_profit, signal_id, strategy, trace_id, trader_type or 'MANUAL'))
+                (code, action, quantity, entry_price, entry_time, status, stop_loss, take_profit, signal_id, strategy, trace_id, trader_type, strategy_tags)
+                VALUES (?, ?, ?, ?, ?, 'OPEN', ?, ?, ?, ?, ?, ?, ?)
+            ''', (code, action, quantity, entry_price, entry_time, stop_loss, take_profit, signal_id, strategy, trace_id, trader_type or 'MANUAL', strategy_tags))
             conn.commit()
             position_id = cursor.lastrowid
 
@@ -485,6 +535,20 @@ class PositionManager:
         if 'trace_id' not in columns:
             try:
                 cursor.execute('ALTER TABLE positions ADD COLUMN trace_id TEXT DEFAULT ""')
+                conn.commit()
+            except Exception as e:
+                if 'duplicate column name' not in str(e).lower():
+                    raise
+
+    def _ensure_strategy_tags_column(self, conn):
+        """确保 strategy_tags 字段存在 (P2 2026-05-17: 门禁组合对比标签)"""
+        cursor = conn.cursor()
+        cursor.execute("PRAGMA table_info(positions)")
+        columns = [row[1] for row in cursor.fetchall()]
+        
+        if 'strategy_tags' not in columns:
+            try:
+                cursor.execute('ALTER TABLE positions ADD COLUMN strategy_tags TEXT DEFAULT NULL')
                 conn.commit()
             except Exception as e:
                 if 'duplicate column name' not in str(e).lower():
@@ -614,7 +678,7 @@ class PositionManager:
                         "pnl=?, pnl_percent=?, exit_reason='position_closed' "
                         "WHERE signal_id=? AND status='OPEN'",
                         (exit_price, exit_time, net_pnl,
-                         net_pnl / (position.entry_price * position.quantity) if position.entry_price > 0 else 0,
+                         net_pnl / (position.entry_price * position.quantity) if position.entry_price > 0 and position.quantity > 0 else 0,
                          position.signal_id)
                     )
                     _trade_updates = cursor.rowcount
@@ -626,7 +690,7 @@ class PositionManager:
                         "WHERE code=? AND status='OPEN' "
                         "AND id = (SELECT id FROM trades WHERE code=? AND status='OPEN' ORDER BY id DESC LIMIT 1)",
                         (exit_price, exit_time, net_pnl,
-                         net_pnl / (position.entry_price * position.quantity) if position.entry_price > 0 else 0,
+                         net_pnl / (position.entry_price * position.quantity) if position.entry_price > 0 and position.quantity > 0 else 0,
                          code, code)
                     )
                     _trade_updates = cursor.rowcount
@@ -649,6 +713,20 @@ class PositionManager:
                     pass
         except Exception:
             pass  # 不影响主流程
+
+        # P0 修复 (2026-05-11): 平仓后立即更新 SmartStop 状态
+        # 旧代码只在 check() 时调用 _update_loss_state，但无信号时 check() 不被调用
+        # 导致连续亏损时 SmartStop 状态永远不更新 → 无法触发熔断保护
+        try:
+            from app.risk.circuit_breaker import SmartStopGuard
+            guard = SmartStopGuard(db_path=self._db_path if hasattr(self, '_db_path') else None)
+            guard._update_loss_state()
+            if net_pnl < 0:
+                logger.info(f"[SmartStop·联动] {code} 亏损 {net_pnl:.2f}，已更新连败状态")
+            else:
+                logger.info(f"[SmartStop·联动] {code} 盈利 {net_pnl:.2f}，已重置连败状态")
+        except Exception as _ss_err:
+            logger.debug(f"[SmartStop·联动] 状态更新失败: {_ss_err}")
 
         return net_pnl
     
@@ -762,25 +840,27 @@ class PositionManager:
     
     def check_stop_loss(self, code: str, current_price: float) -> bool:
         """
-        检查是否触发止损
-        
-        优先使用持仓记录中的止损价；若未设置，才使用默认百分比。
-        
+        [防御性校验] 检查止损价是否异常并修复。
+
+        注意：平仓决策已由 DynamicExitManager.check_exit_priority 全权处理。
+        此方法仅用于防御性校验（修复异常止损价），不再触发平仓。
+
         Args:
             code: 股票代码
             current_price: 当前价格
-            
+
         Returns:
-            True 如果触发止损，否则 False
+            True 如果触发止损（仅供日志/预警），否则 False
         """
         position = self.get_position(code)
         if position is None:
             return False
-        
+
+        # 获取方向 (BUY/SELL) — 必须在分支前定义，避免 fallback 分支 UnboundLocalError
+        direction = position.action
+
         # 使用持仓记录中的止损价（优先）
         if position.stop_loss and position.stop_loss > 0:
-            # 获取方向 (BUY/SELL) 用于计算
-            direction = position.action
             
             # 2026-04-24 修复: 防御性校验 — 止损价必须低于入场价至少 0.5%
             # 防止 stop_loss=entry_price 导致开仓即止损
@@ -808,11 +888,17 @@ class PositionManager:
                 
                 # 立即更新 DB，防止下一次 tick 再次进入此分支
                 self.update_stop_loss_take_profit(code, dynamic_sl, position.take_profit)
-                return current_price <= dynamic_sl
+                if direction == 'BUY':
+                    return current_price <= dynamic_sl
+                else:  # SELL
+                    return current_price >= dynamic_sl
             else:
                 # 止损价已设置且合理：只有当前价跌破止损价才触发
-                return current_price <= position.stop_loss
-        
+                if direction == 'BUY':
+                    return current_price <= position.stop_loss
+                else:  # SELL: 价格上涨触发止损
+                    return current_price >= position.stop_loss
+
         # 未设置止损价时，用动态配置的百分比
         try:
             from app.risk.dynamic_exit_manager import dynamic_exit_manager as _dem
@@ -823,128 +909,81 @@ class PositionManager:
         if avg_cost <= 0:
             return False
         pnl_rate = (current_price - avg_cost) / avg_cost
-        return pnl_rate <= -stop_pct
-    
+        if direction == 'BUY':
+            return pnl_rate <= -stop_pct
+        else:  # SELL: 价格上涨亏损
+            return pnl_rate >= stop_pct
+
     def check_take_profit(self, code: str, current_price: float) -> bool:
         """
-        检查是否触发止盈
-        
-        优先使用持仓记录中的止盈价；若未设置，才使用默认百分比。
-        
+        [防御性校验] 检查止盈价是否异常并修复。
+
+        注意：平仓决策已由 DynamicExitManager.check_exit_priority 全权处理。
+        此方法仅用于防御性校验，不再触发平仓。
+
         Args:
             code: 股票代码
             current_price: 当前价格
-            
+
         Returns:
-            True 如果触发止盈，否则 False
+            True 如果触发止盈（仅供日志/预警），否则 False
         """
         position = self.get_position(code)
         if position is None:
             return False
-        
+
+        direction = position.action
+
         # 使用持仓记录中的止盈价（优先）
         if position.take_profit and position.take_profit > 0:
-            # 止盈价已设置：只有当前价达到止盈价才触发
-            return current_price >= position.take_profit
-        
+            if direction == 'BUY':
+                return current_price >= position.take_profit
+            else:  # SELL: 价格下跌触发止盈
+                return current_price <= position.take_profit
+
         # 未设置止盈价时，用动态配置的百分比
         try:
             from app.risk.dynamic_exit_manager import dynamic_exit_manager as _dem
-            take_pct = abs(_dem.current_params.get('take_profit', 0.06))
+            take_pct = abs(_dem.current_params.get('take_profit', 0.05))
         except Exception:
-            take_pct = 0.06  # 默认止盈 6%
+            take_pct = 0.05  # 默认止盈 5% (对齐 YAML default)
         avg_cost = position.entry_price
         if avg_cost <= 0:
             return False
         pnl_rate = (current_price - avg_cost) / avg_cost
-        return pnl_rate >= take_pct
+        if direction == 'BUY':
+            return pnl_rate >= take_pct
+        else:  # SELL: 价格下跌盈利
+            return pnl_rate <= -take_pct
     
     def check_breakeven_stop(self, code: str, current_price: float) -> tuple:
         """
-        检查是否需要启用保本止损
-        
-        保本止损逻辑：
-        - 盈利达到 +2% 后，将止损上移到成本价 +1%（覆盖交易费用）
-        - 只触发一次，防止反复覆盖追踪止盈/分级止损
-        
+        [DEPRECATED] 保本止损检查已废弃 — DynamicExitManager.check_breakeven_stop 为唯一决策源。
+        保留此接口仅用于向后兼容，始终返回 (False, None)。
+
         Args:
-            code: 股票代码
-            current_price: 当前价格
-            
+            code: 股票代码 (unused)
+            current_price: 当前价格 (unused)
+
         Returns:
-            (should_update: bool, new_stop_price: float)
+            (False, None)
         """
-        position = self.get_position(code)
-        if position is None:
-            return False, None
-        
-        avg_cost = position.entry_price
-        pnl_rate = (current_price - avg_cost) / avg_cost
-        
-        # P1 修复: 从配置读取保本触发阈值，而非硬编码 2%
-        try:
-            from app.risk.dynamic_exit_manager import dynamic_exit_manager as _dem
-            be_params = _dem.get_breakeven_stop_params()
-            trigger_profit = be_params.get('trigger_profit', 0.03) # 默认 3%
-            fee_buffer = be_params.get('fee_buffer', 0.015)        # 默认 1.5%
-        except Exception:
-            trigger_profit = 0.02
-            fee_buffer = 0.01
-        
-        # 盈利达到阈值后启用保本止损
-        if pnl_rate >= trigger_profit:
-            # 检查止损是否已在成本价 + buffer 之上（已启用或更优）
-            breakeven_price = round(avg_cost * (1 + fee_buffer), 4)
-            if position.stop_loss and position.stop_loss >= breakeven_price:
-                return False, None  # 已启用或更优，跳过
-            
-            return True, breakeven_price
-        
+        logger.debug(f"[DEPRECATED] check_breakeven_stop({code}) called, always returns (False, None)")
         return False, None
     
     def check_partial_take_profit(self, code: str, current_price: float) -> float:
         """
-        检查是否触发分批止盈（旧逻辑兜底，Task2 的 check_exit_priority 为主）
-        
-        分批止盈逻辑：
-        - 若已设置止盈价，直接跳过（交由 check_take_profit 处理）
-        - 否则：+3% 时平仓 40%，+6% 时平仓剩余
-        
-        Args:
-            code: 股票代码
-            current_price: 当前价格
-            
-        Returns:
-            平仓比例 (0 = 不平仓, 0.5 = 平一半, 1.0 = 全平)
-        """
-        position = self.get_position(code)
-        if position is None:
-            return 0.0
-        
-        # 已设置止盈价时：由 check_take_profit 统一处理，此处跳过
-        if position.take_profit and position.take_profit > 0:
-            return 0.0
-        
-        avg_cost = position.entry_price
-        if avg_cost <= 0:
-            return 0.0
-        pnl_rate = (current_price - avg_cost) / avg_cost
-        
-        # 从动态配置读取止盈目标，没有则使用默认 6%
-        try:
-            from app.risk.dynamic_exit_manager import dynamic_exit_manager as _dem
-            take_pct = abs(_dem.current_params.get('take_profit', 0.06))
-        except Exception:
-            take_pct = 0.06
+        [DEPRECATED] 分批止盈检查已废弃 — DynamicExitManager.check_exit_priority 为唯一决策源。
+        保留此接口仅用于向后兼容，始终返回 0.0。
 
-        # 达到止盈目标全平
-        if pnl_rate >= take_pct:
-            return 1.0
-        
-        # 达到一半止盈距离时，平仓 40%
-        if pnl_rate >= take_pct / 2:
-            return 0.4
-        
+        Args:
+            code: 股票代码 (unused)
+            current_price: 当前价格 (unused)
+
+        Returns:
+            0.0 (不再使用)
+        """
+        logger.debug(f"[DEPRECATED] check_partial_take_profit({code}) called, always returns 0.0")
         return 0.0
     
     def update_breakeven_stop(self, code: str, breakeven_price: float = None):
@@ -977,14 +1016,13 @@ class PositionManager:
             self._return_connection(conn)
 
     def update_exit_state(self, code: str, new_state: str, reason: str = ""):
-        """更新持仓的退出状态 (Phase 1: 状态机支持)
+        """更新持仓退出状态机状态 (INIT → BE_ACTIVE → TRAILING → SCALE_OUT)
 
         Args:
             code: 股票代码
-            new_state: 新状态 (INIT/BE_READY/BE_ACTIVE/TRAIL/PARTIAL/EXIT)
-            reason: 状态转移原因
+            new_state: 新状态值 (来自 ExitReason 或自定义状态)
+            reason: 状态变更原因
         """
-        from datetime import datetime
         position = self.get_position(code)
         if position is None:
             return
@@ -996,9 +1034,40 @@ class PositionManager:
                 UPDATE positions
                 SET exit_state = ?, state_updated_at = ?
                 WHERE id = ?
-            ''', (new_state, datetime.now().isoformat(), position.id))
+            ''', (new_state, __import__('datetime').datetime.now().isoformat(), position.id))
             conn.commit()
-            logger.info(f"[状态机] {code} -> {new_state} ({reason})")
+        finally:
+            self._return_connection(conn)
+
+    def update_peak_price(self, code: str, highest_price: float = None, lowest_price: float = None):
+        """更新持仓期间最高价/最低价 (P0 修复 2026-05-10)
+        
+        trailing_stop 和 breakeven_stop 依赖 peak_price 判断回撤。如果 DB 中
+        highest_price 为 None，服务重启后峰值数据丢失，追踪止盈永远不会触发。
+        
+        Args:
+            code: 股票代码
+            highest_price: 新高价 (做多时更新)
+            lowest_price: 新低价 (做空时更新)
+        """
+        position = self.get_position(code)
+        if position is None:
+            return
+        
+        conn = self._get_connection()
+        try:
+            cursor = conn.cursor()
+            if highest_price is not None:
+                cursor.execute(
+                    'UPDATE positions SET highest_price = ? WHERE id = ?',
+                    (highest_price, position.id)
+                )
+            if lowest_price is not None:
+                cursor.execute(
+                    'UPDATE positions SET lowest_price = ? WHERE id = ?',
+                    (lowest_price, position.id)
+                )
+            conn.commit()
         finally:
             self._return_connection(conn)
 
@@ -1062,26 +1131,28 @@ class PositionManager:
     def calculate_stop_loss_price(self, avg_cost: float) -> float:
         """
         计算止损价格
-        
+        已从硬编码 5% 改为对齐 DynamicExitManager 默认参数 (-3.5%)。
+
         Args:
             avg_cost: 平均成本价
-            
+
         Returns:
-            止损价格 (成本价的 95%)
+            止损价格 (成本价的 96.5%)
         """
-        return round(avg_cost * (1 - 0.05), 2)
-    
+        return round(avg_cost * (1 - 0.035), 2)
+
     def calculate_take_profit_price(self, avg_cost: float) -> float:
         """
         计算止盈价格
-        
+        已从硬编码 15% 改为对齐 DynamicExitManager 默认参数 (+5%)。
+
         Args:
             avg_cost: 平均成本价
-            
+
         Returns:
-            止盈价格 (成本价的 115%)
+            止盈价格 (成本价的 105%)
         """
-        return round(avg_cost * (1 + 0.15), 2)
+        return round(avg_cost * (1 + 0.05), 2)
     
     def _row_to_position(self, row: sqlite3.Row) -> Position:
         """将数据库行转换为 Position 对象 (2026-03-17 新增止盈止损字段)
@@ -1376,7 +1447,7 @@ class PositionManager:
             code: 股票代码
             
         Returns:
-            int: 今日交易次数
+            int: 今日交易次数 (表不存在时返回 0)
         """
         conn = self._get_connection()
         try:
@@ -1388,6 +1459,8 @@ class PositionManager:
             ''', (code, today))
             result = cursor.fetchone()
             return result[0] if result else 0
+        except Exception:
+            return 0  # 表不存在或查询失败，返回 0 不阻断开仓
         finally:
             self._return_connection(conn)
     

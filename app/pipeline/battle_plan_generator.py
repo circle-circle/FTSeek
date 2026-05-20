@@ -133,37 +133,59 @@ class BattlePlanGenerator:
             logger.warning("[BattlePlan] 辩论强烈看空，触发停止交易")
 
         for a in assessments:
-            if getattr(a, "direction", "NO_TRADE") != "NO_TRADE":
-                for sym in getattr(a, "focus_symbols", []):
-                    # 辩论过滤: 在回避名单中的标的 → 降级为 restricted
-                    if sym in avoid_codes:
-                        continue
+            # 2026-05-17 修复: LLM 不再决定是否交易，而是提供上下文
+            # 即使 direction=NO_TRADE，只要 signal_impact 有意义，也应传递 focus_symbols
+            llm_direction = getattr(a, "direction", "NO_TRADE")
+            signal_impact = getattr(a, "signal_impact", "neutral")
+            
+            # 只处理有交易价值或信号影响的评估
+            if llm_direction == "NO_TRADE" and signal_impact not in ("boost", "block"):
+                continue
 
-                    # 辩论排序: 有辩论共识的标的使用辩论信心调整 urgency
-                    urgency = "High" if getattr(a, "confidence", 0) > 0.7 else "Medium"
-                    trigger = getattr(a, "recommendation", "")[:50]
+            for sym in getattr(a, "focus_symbols", []):
+                # 辩论过滤: 在回避名单中的标的 → 跳过
+                if sym in avoid_codes:
+                    continue
 
-                    if sym in debate_symbols:
-                        db = debate_symbols[sym]
-                        # 辩论净信心 > 0 → 提升 urgency
-                        if db['net_confidence'] > 0.3:
-                            urgency = "High"
-                        elif db['net_confidence'] < -0.3:
-                            urgency = "Low"  # 辩论看空但 Pipeline 看多 → 降级
-                        if db['support']:
-                            trigger = f"[辩论+] {db['support'][:40]}"
-                        if db['concern']:
-                            trigger = f"{trigger} (⚠️{db['concern'][:30]})"
+                # LLM signal_impact 注入
+                if signal_impact == "block":
+                    # LLM 建议回避 → 加入 restricted
+                    if sym not in restricted:
+                        restricted.append(sym)
+                        logger.info(f"[BattlePlan] LLM 标记回避: {sym} ({getattr(a, 'second_order_insight', '')[:50]})")
+                    continue
 
-                    targets.append({
-                        "symbol": sym,
-                        "direction": getattr(a, "direction", "ANY").upper(),
-                        "status": "VALID",
-                        "urgency": urgency,
-                        "key_trigger": trigger,
-                        "invalidation_reason": getattr(a, "invalidating_factors", [""])[0] if getattr(a, "invalidating_factors", []) else "",
-                        "debate_net_confidence": debate_symbols.get(sym, {}).get('net_confidence', 0),
-                    })
+                # 辩论排序: 有辩论共识的标的使用辩论信心调整 urgency
+                urgency = "High" if getattr(a, "confidence", 0) > 0.5 else "Medium"
+                trigger = getattr(a, "recommendation", "")[:50]
+                if signal_impact == "boost":
+                    trigger = f"[LLM+signal] {getattr(a, 'second_order_insight', '')[:40]}"
+                elif signal_impact == "weaken":
+                    urgency = "Low"
+                    trigger = f"[LLM⚠️weaken] {getattr(a, 'second_order_insight', '')[:40]}"
+
+                if sym in debate_symbols:
+                    db = debate_symbols[sym]
+                    # 辩论净信心 > 0 → 提升 urgency
+                    if db['net_confidence'] > 0.3:
+                        urgency = "High"
+                    elif db['net_confidence'] < -0.3:
+                        urgency = "Low"  # 辩论看空但 Pipeline 看多 → 降级
+                    if db['support']:
+                        trigger = f"[辩论+] {db['support'][:40]}"
+                    if db['concern']:
+                        trigger = f"{trigger} (⚠️{db['concern'][:30]})"
+
+                targets.append({
+                    "symbol": sym,
+                    "direction": llm_direction if llm_direction != "NO_TRADE" else "ANY",
+                    "status": "VALID",
+                    "urgency": urgency,
+                    "key_trigger": trigger,
+                    "invalidation_reason": getattr(a, "invalidating_factors", [""])[0] if getattr(a, "invalidating_factors", []) else "",
+                    "debate_net_confidence": debate_symbols.get(sym, {}).get('net_confidence', 0),
+                    "signal_impact": signal_impact,  # 2026-05-17 新增
+                })
 
         # 辩论优先排序: 净信心高的标的排在前面
         if debate_symbols:
@@ -201,6 +223,19 @@ class BattlePlanGenerator:
         elif debate_direction in ("SELL", "CAUTIOUS_BEARISH"):
             max_risk = "HIGH"
 
+        # P2 优化 (2026-05-17): LLM signal_impact 分布统计
+        signal_dist = {"boost": 0, "neutral": 0, "weaken": 0, "block": 0}
+        for t in unique_targets:
+            impact = t.get("signal_impact", "neutral")
+            if impact in signal_dist:
+                signal_dist[impact] += 1
+
+        # P2 优化 (2026-05-17): 交易日历状态
+        calendar_status = self._get_calendar_status()
+
+        # P2 优化 (2026-05-17): 关键假设 (从 assessments 提取 invalidating_factors)
+        key_assumptions = self._extract_key_assumptions(assessments)
+
         plan = {
             "date": date.today().isoformat(),
             "targets": unique_targets,
@@ -214,7 +249,14 @@ class BattlePlanGenerator:
                 "conviction": debate_conviction,
                 "ranked_count": len(debate_symbols),
                 "avoid_count": len(avoid_codes),
+                "quality": debate_conviction if self._debate_synthesis else None,
+                "risk_consensus": getattr(self._debate_synthesis, 'risk_consensus', 'N/A') if self._debate_synthesis else 'N/A',
             },
+            # 新增区块
+            "signal_distribution": signal_dist,
+            "calendar_status": calendar_status,
+            "key_assumptions": key_assumptions,
+            "system_health": self._get_system_health(),
             "generated_at": time.time()
         }
 
@@ -232,7 +274,8 @@ class BattlePlanGenerator:
                     "status": "VALID",
                     "urgency": "High" if p.get("conviction", 0) > 0.7 else "Medium",
                     "key_trigger": p.get("key_trigger", ""),
-                    "invalidation_reason": p.get("invalidation", "")
+                    "invalidation_reason": p.get("invalidation", ""),
+                    "signal_impact": "neutral",  # 旧格式无 signal_impact，默认 neutral
                 })
             
             plan = {
@@ -243,12 +286,177 @@ class BattlePlanGenerator:
                 "market_regime": raw_json.get("market_regime", "NEUTRAL"),
                 "risk_level": raw_json.get("risk_level", "MEDIUM"),
                 "stop_trading": raw_json.get("stop_trading", False),
+                "debate_consensus": {
+                    "direction": "NEUTRAL",
+                    "conviction": 0.0,
+                    "ranked_count": 0,
+                    "avoid_count": 0,
+                    "quality": None,
+                    "risk_consensus": "N/A",
+                },
+                # P2 优化 (2026-05-17): 新增区块
+                "signal_distribution": {"boost": 0, "neutral": len(targets), "weaken": 0, "block": 0},
+                "calendar_status": self._get_calendar_status(),
+                "key_assumptions": [],
+                "system_health": self._get_system_health(),
                 "generated_at": time.time()
             }
             return self._save_plan(plan)
         except Exception as e:
             logger.error(f"解析 LLM JSON 失败: {e}")
             return self._save_fallback_plan(str(e))
+
+    def merge_debate_targets(self, existing_targets: List[Dict], existing_restricted: List[str] = None,
+                             assessments: List[Any] = None) -> Dict:
+        """从辩论 consensus_ranking 提取不在 assessments 中的标的，合并到现有计划
+
+        解决根因: generate_from_assessments() 只遍历 assessments.focus_symbols,
+        辩论新增的标的如果不在 assessments 中会丢失。
+
+        Args:
+            existing_targets: 已由 generate_from_assessments() 生成的 targets
+            existing_restricted: 已有的 restricted 名单
+            assessments: LLM PreMarketAssessment 列表，用于交叉引用 signal_impact
+
+        Returns:
+            {added_count: int, new_targets: List[Dict], restricted: List[str]}
+        """
+        if not self._debate_synthesis:
+            logger.info("[BattlePlan] 无辩论合成数据，跳过标的合并")
+            return {"added_count": 0, "new_targets": [], "restricted": existing_restricted or []}
+
+        ds = self._debate_synthesis
+        avoid_codes = set(getattr(ds, 'avoid_codes', []))
+        ranking = getattr(ds, 'consensus_ranking', [])
+
+        if not ranking:
+            logger.info("[BattlePlan] 辩论无 consensus_ranking，跳过标的合并")
+            return {"added_count": 0, "new_targets": [], "restricted": existing_restricted or []}
+
+        # 构建 LLM signal_impact 查找表 (从 assessments 中提取)
+        llm_impact_map = {}
+        if assessments:
+            for a in assessments:
+                syms = getattr(a, "focus_symbols", [])
+                impact = getattr(a, "signal_impact", "neutral")
+                for s in syms:
+                    llm_impact_map[s] = impact
+
+        # 已存在的标的集合 (不重复添加)
+        existing_symbols = {t.get('symbol', '') for t in existing_targets}
+        restricted_set = set(existing_restricted or [])
+
+        new_targets = []
+        for item in ranking:
+            sym = item.get('code', '')
+            if not sym:
+                continue
+            # 跳过: 已在 assessments 中、在 avoid 名单中、或在 restricted 中
+            if sym in existing_symbols or sym in avoid_codes or sym in restricted_set:
+                continue
+
+            net_conf = item.get('net_confidence', 0)
+            urgency = "High" if net_conf > 0.3 else "Medium" if net_conf > 0 else "Low"
+
+            # P0 修复 (2026-05-17): 从 LLM assessments 交叉引用 signal_impact
+            # 辩论标的如果也有 LLM 分析，应继承其 signal_impact 而非默认 neutral
+            signal_impact = llm_impact_map.get(sym, "neutral")
+            if signal_impact == "block":
+                # LLM 建议回避 → 加入 restricted 而非 target
+                restricted_set.add(sym)
+                logger.info(f"[BattlePlan] 辩论标的 {sym} LLM标记回避 → 加入 restricted")
+                continue
+
+            if signal_impact == "boost":
+                urgency = "High"  # LLM boost 提升 urgency
+            elif signal_impact == "weaken":
+                urgency = "Low"   # LLM weaken 降低 urgency
+
+            new_targets.append({
+                "symbol": sym,
+                "direction": "ANY",  # 辩论不指定方向，由盘中信号决定
+                "status": "VALID",
+                "urgency": urgency,
+                "key_trigger": f"[辩论+] {item.get('reason_bull', '')[:40]}",
+                "invalidation_reason": "",
+                "debate_net_confidence": net_conf,
+                "signal_impact": signal_impact,  # 交叉引用 LLM signal_impact
+            })
+
+        # 按辩论净信心排序
+        new_targets.sort(key=lambda t: t.get('debate_net_confidence', 0), reverse=True)
+
+        logger.info(f"[BattlePlan] 辩论标的合并: {len(new_targets)} 只新增, "
+                    f"{len(restricted_set) - len(existing_restricted or [])} 只加入 restricted")
+        return {"added_count": len(new_targets), "new_targets": new_targets,
+                "restricted": list(restricted_set)}
+
+    # ── P2 新增辅助方法 (2026-05-17) ────────────────────────────
+
+    def _get_calendar_status(self) -> Dict:
+        """获取今日交易日历状态"""
+        try:
+            from datetime import date as _date
+            from app.utils.holiday_calendar import get_holiday_calendar
+            cal = get_holiday_calendar()
+            today = _date.today()
+            is_half = cal.is_hk_half_day(today)
+            # 获取半日市下午收盘时间 (如果有)
+            half_day_close = "12:00" if is_half else None
+            return {
+                "is_trading_day": cal.is_trading_day("HK", today),
+                "is_half_day": is_half,
+                "half_day_close": half_day_close,
+            }
+        except Exception as e:
+            return {"is_trading_day": True, "is_half_day": False, "half_day_close": None, "error": str(e)}
+
+    def _extract_key_assumptions(self, assessments: List[Any]) -> List[str]:
+        """从 LLM assessments 提取关键假设 (invalidating_factors)"""
+        assumptions = []
+        seen = set()
+        for a in assessments:
+            factors = getattr(a, "invalidating_factors", []) or []
+            for f in factors:
+                if f and f not in seen and len(f) > 5:
+                    seen.add(f)
+                    assumptions.append(f)
+        # 最多取 5 个
+        return assumptions[:5]
+
+    def _get_system_health(self) -> Dict:
+        """获取当前系统健康状态"""
+        health = {
+            "scheduler_alive": None,
+            "circuit_breaker_active": True,
+            "calendar_valid": True,
+        }
+        try:
+            from app.pipeline.premarket_scheduler import PreMarketScheduler
+            # 检查 scheduler 心跳
+            scheduler = getattr(self, '_scheduler', None)
+            if scheduler:
+                status = scheduler.get_status()
+                health["scheduler_alive"] = status.get("alive", False)
+            else:
+                health["scheduler_alive"] = None  # 未初始化
+        except Exception:
+            health["scheduler_alive"] = None
+
+        try:
+            from app.risk.circuit_breaker import circuit_breaker
+            health["circuit_breaker_active"] = circuit_breaker.can_trade()
+        except Exception:
+            health["circuit_breaker_active"] = None
+
+        try:
+            from app.utils.holiday_calendar import get_holiday_calendar
+            cal = get_holiday_calendar()
+            health["calendar_valid"] = not getattr(cal, '_calendar_expired', False)
+        except Exception:
+            health["calendar_valid"] = None
+
+        return health
 
     def _save_plan(self, plan: Dict) -> str:
         """保存计划并发送通知"""
@@ -275,7 +483,8 @@ class BattlePlanGenerator:
                     "status": "VALID",
                     "urgency": "Low",
                     "key_trigger": f"Fallback白名单 (LLM不可用: {reason[:40]})",
-                    "max_position_pct": 0.03
+                    "max_position_pct": 0.03,
+                    "signal_impact": "neutral",  # 兜底标的无 LLM signal_impact
                 })
         except Exception:
             pass
@@ -294,7 +503,7 @@ class BattlePlanGenerator:
         return self._save_plan(plan)
 
     def _send_notification(self, plan: Dict):
-        """发送钉钉通知 (HK) — 完整作战计划推送"""
+        """发送钉钉通知 (HK) — 条件分段渲染，跟随 plan 结构自动调整"""
         try:
             from app.risk.dingtalk_alert import init_dingtalk_alert
             from app import config
@@ -304,104 +513,275 @@ class BattlePlanGenerator:
                 secret=config.DINGTALK_SECRET
             )
 
+            lines = []
             targets = plan.get("targets", [])
-            restricted = plan.get("restricted", [])
-            regime = plan.get("market_regime", "N/A")
-            risk = plan.get("risk_level", "N/A")
-            bias = plan.get("overall_bias", "N/A")
-            stop = plan.get("stop_trading", False)
-            reason = plan.get("reason", "")
             plan_date = plan.get("date", "")
 
-            lines = [
-                f"📊 **港股盘前作战计划**",
-                f"📅 {plan_date}",
-                f"",
-                f"---",
-                f"",
-                f"## 🌍 市场环境",
-                f"",
-                f"- 市场状态: **{regime}**",
-                f"- 整体倾向: **{bias}**",
-                f"- 风险等级: **{risk}**",
-                f"- 停止交易: **{'🔴 是' if stop else '🟢 否'}**",
-            ]
-            if reason:
-                lines.append(f"- 生成方式: {reason[:80]}")
+            # ═══ 标题 ═══
+            lines.append(f"📊 **港股盘前作战计划**")
+            lines.append(f"📅 {plan_date}")
+            lines.append("")
+            lines.append("---")
             lines.append("")
 
-            # 作战目标表格
+            # ═══ Section 1: 市场环境 (条件渲染) ═══
+            env_lines = self._render_section_market_env(plan)
+            if env_lines:
+                lines.extend(env_lines)
+                lines.append("")
+
+            # ═══ Section 2: 辩论摘要 (条件渲染) ═══
+            debate_lines = self._render_section_debate(plan)
+            if debate_lines:
+                lines.extend(debate_lines)
+                lines.append("")
+
+            # ═══ Section 3: LLM 信号分布 (如有) ═══
+            sig_lines = self._render_section_signals(plan)
+            if sig_lines:
+                lines.extend(sig_lines)
+                lines.append("")
+
+            # ═══ Section 4: 日历状态 (如有) ═══
+            cal_lines = self._render_section_calendar(plan)
+            if cal_lines:
+                lines.extend(cal_lines)
+                lines.append("")
+
+            # ═══ Section 5: 系统健康 (如有) ═══
+            health_lines = self._render_section_health(plan)
+            if health_lines:
+                lines.extend(health_lines)
+                lines.append("")
+
+            # ═══ Section 6: 关键假设 (如有) ═══
+            assumption_lines = self._render_section_assumptions(plan)
+            if assumption_lines:
+                lines.extend(assumption_lines)
+                lines.append("")
+
+            # ═══ Section 7: 作战目标 ═══
             if targets:
-                lines.extend([
-                    f"## 🎯 作战目标 ({len(targets)} 只)",
-                    f"",
-                    f"| 标的 | 方向 | 紧迫度 | 触发条件 | 仓位上限 |",
-                    f"|------|------|--------|----------|----------|",
-                ])
-                for t in targets:
-                    sym = t.get("symbol", "?").replace("HK.", "")
-                    direction = t.get("direction", "ANY")
-                    urgency = t.get("urgency", "—")
-                    trigger = (t.get("key_trigger", "") or "")[:40]
-                    max_pct = t.get("max_position_pct", 0.03)
-                    urgency_emoji = "🔴" if urgency == "High" else "🟡" if urgency == "Medium" else "⚪"
-                    lines.append(
-                        f"| {sym} | {direction} | {urgency_emoji}{urgency} | {trigger} | {max_pct*100:.0f}% |"
-                    )
+                lines.extend(self._render_section_targets(targets))
                 lines.append("")
 
-            # 限制名单
+            # ═══ Section 8: 限制名单 (如有) ═══
+            restricted = plan.get("restricted", [])
             if restricted:
-                lines.append(f"## 🚫 限制名单 ({len(restricted)} 只)")
-                for r in restricted:
-                    if isinstance(r, dict):
-                        lines.append(f"- {r.get('symbol','?'): HK}{r.get('reason','')}")
-                    else:
-                        lines.append(f"- {r}")
+                lines.extend(self._render_section_restricted(restricted))
                 lines.append("")
 
-            # 风险提醒
-            if risk == "HIGH" or stop:
-                lines.append("## ⚠️ 风险提醒")
-                if stop:
-                    lines.append("- 🔴 **已触发全面停止交易**，请检查市场状况")
-                if risk == "HIGH":
-                    lines.append("- 🔴 高风险环境，建议缩减仓位至1-2%")
-                    lines.append("- 严格止损，禁止追高")
+            # ═══ Section 9: 风险提醒 (条件触发) ═══
+            risk_lines = self._render_section_risk(plan)
+            if risk_lines:
+                lines.extend(risk_lines)
                 lines.append("")
 
-            if reason and "LLM" in reason:
-                lines.append("> ⚠️ 本计划由降级逻辑生成 (LLM不可用)，方向均为 ANY，需交易员自行判断")
-                lines.append("")
-
-            # 辩论合成 (如有)
-            ds = self._debate_synthesis
-            if ds:
-                lines.append("## 🧠 多Agent辩论摘要")
-                lines.append("")
-                lines.append(f"- 共识方向: **{ds.consensus_direction}** (conviction={ds.conviction:.2f})")
-                lines.append(f"- 辩论质量: **{ds.debate_quality_score:.2f}**")
-                lines.append(f"- 风险共识: **{ds.risk_consensus}**")
-                if ds.disagreement_flags:
-                    lines.append(f"- 核心分歧:")
-                    for flag in ds.disagreement_flags[:3]:
-                        lines.append(f"  - {flag}")
-                if ds.merged_symbols:
-                    lines.append(f"- 推荐标的:")
-                    for s in ds.merged_symbols[:5]:
-                        sym = s.get("symbol", "").replace("HK.", "")
-                        sup = s.get("support", "")
-                        conc = s.get("concern", "")
-                        lines.append(f"  - {sym}: {sup}" + (f" (⚠️{conc})" if conc else ""))
-                if ds.summary:
-                    lines.append(f"")
-                    lines.append(f"> {ds.summary[:200]}")
-                lines.append("")
-
-            lines.append(f"---")
-            lines.append(f"*FTSeek 盘前作战计划 · 自动生成*")
+            lines.append("---")
+            lines.append("*FTSeek 盘前作战计划 · 条件分段推送*")
 
             sender.send_text("\n".join(lines), alert_level="INFO")
             logger.info(f"[作战计划] 钉钉通知已推送 ({len(targets)}只标的)")
         except Exception as e:
             logger.error(f"发送盘前计划通知失败: {e}")
+
+    # ═══════════════════════════════════════════════
+    #  条件分段 Section 渲染器
+    #  新增字段需在对应 _render_section_* 中添加渲染逻辑
+    # ═══════════════════════════════════════════════
+
+    def _render_section_market_env(self, plan: Dict) -> List[str]:
+        """市场环境 — 自动聚合所有顶层简单字段"""
+        lines = ["## 🌍 市场环境", ""]
+
+        # 核心字段 (始终显示)
+        core = [
+            ("market_regime", "市场状态"),
+            ("overall_bias", "整体倾向"),
+            ("risk_level", "风险等级"),
+        ]
+        values = []
+        for key, label in core:
+            val = plan.get(key)
+            if val is not None:
+                values.append(f"**{val}**")
+            else:
+                values.append("—")
+        lines.append(f"- 市场状态: {values[0]} | 整体倾向: {values[1]} | 风险等级: {values[2]}")
+
+        # 条件字段 (有则显示)
+        stop = plan.get("stop_trading")
+        if stop is not None:
+            lines.append(f"- 停止交易: **{'🔴 是' if stop else '🟢 否'}**")
+
+        reason = plan.get("reason")
+        if reason:
+            lines.append(f"- 生成方式: {reason[:80]}")
+
+        return lines
+
+    def _render_section_debate(self, plan: Dict) -> List[str]:
+        """辩论摘要 — 自动渲染 debate_consensus 下的所有字段"""
+        dc = plan.get("debate_consensus")
+        if not dc:
+            return []
+
+        lines = ["## 🧠 多Agent辩论摘要", ""]
+
+        # 核心信息 (始终显示)
+        direction = dc.get("direction", "N/A")
+        conviction = dc.get("conviction", 0)
+        lines.append(f"- 共识方向: **{direction}** (conviction={conviction:.2f})")
+
+        # 扩展字段 (有则显示)
+        quality = dc.get("quality")
+        if quality is not None:
+            lines.append(f"- 辩论质量: **{quality:.2f}**")
+
+        risk_consensus = dc.get("risk_consensus")
+        if risk_consensus and risk_consensus != "N/A":
+            lines.append(f"- 风险共识: **{risk_consensus}**")
+
+        ranked = dc.get("ranked_count")
+        if ranked is not None:
+            lines.append(f"- 排名标的: {ranked} 只")
+
+        avoid = dc.get("avoid_count")
+        if avoid is not None and avoid > 0:
+            lines.append(f"- 回避标的: {avoid} 只")
+
+        return lines
+
+    def _render_section_signals(self, plan: Dict) -> List[str]:
+        """LLM 信号分布 — 自动渲染 signal_distribution"""
+        sig = plan.get("signal_distribution")
+        if not sig:
+            return []
+
+        lines = ["## 🤖 LLM 信号分布", ""]
+        emoji_map = {"block": "🔴", "weaken": "🟡", "neutral": "⚪", "boost": "🟢"}
+        parts = []
+        for impact, count in sig.items():
+            emoji = emoji_map.get(impact, "❓")
+            parts.append(f"{emoji} {impact}: {count}")
+        lines.append(f"- {' | '.join(parts)}")
+        return lines
+
+    def _render_section_calendar(self, plan: Dict) -> List[str]:
+        """交易日历 — 自动渲染 calendar_status"""
+        cal = plan.get("calendar_status")
+        if not cal:
+            return []
+
+        lines = ["## 📅 交易日历", ""]
+        is_trading = cal.get("is_trading_day")
+        is_half = cal.get("is_half_day")
+        half_close = cal.get("half_day_close")
+
+        if is_trading is not None:
+            if not is_trading:
+                lines.append("- 状态: **🔴 非交易日**")
+            elif is_half:
+                lines.append(f"- 状态: **🟡 半日市** (下午 {half_close or '12:00'} 休市)")
+            else:
+                lines.append("- 状态: **🟢 正常交易日**")
+        return lines
+
+    def _render_section_health(self, plan: Dict) -> List[str]:
+        """系统健康 — 自动渲染 system_health"""
+        health = plan.get("system_health")
+        if not health:
+            return []
+
+        lines = ["## 💚 系统健康", ""]
+        items = []
+
+        sched = health.get("scheduler_alive")
+        if sched is not None:
+            items.append(f"调度 {'✅' if sched else '❌'}")
+
+        cb = health.get("circuit_breaker_active")
+        if cb is not None:
+            items.append(f"熔断 {'✅' if cb else '❌'}")
+
+        cal_v = health.get("calendar_valid")
+        if cal_v is not None:
+            items.append(f"日历 {'✅' if cal_v else '❌'}")
+
+        if items:
+            lines.append(f"- {' | '.join(items)}")
+        return lines
+
+    def _render_section_assumptions(self, plan: Dict) -> List[str]:
+        """关键假设 — 自动渲染 key_assumptions"""
+        assumptions = plan.get("key_assumptions", [])
+        if not assumptions:
+            return []
+
+        lines = ["## ⚠️ 关键假设", ""]
+        for i, a in enumerate(assumptions[:5], 1):
+            lines.append(f"{i}. {a[:80]}")
+        return lines
+
+    def _render_section_targets(self, targets: List[Dict]) -> List[str]:
+        """作战目标 — 条件分段列 (根据 target 中实际存在的字段)"""
+        if not targets:
+            return []
+
+        lines = [
+            f"## 🎯 作战目标 ({len(targets)} 只)",
+            "",
+        ]
+
+        # 动态检测列: 根据 target 实际字段调整表格列
+        has_signal_impact = any("signal_impact" in t for t in targets)
+
+        if has_signal_impact:
+            lines.append("| 标的 | 方向 | 紧迫度 | signal_impact | 触发条件 |")
+            lines.append("|------|------|--------|---------------|----------|")
+        else:
+            lines.append("| 标的 | 方向 | 紧迫度 | 触发条件 |")
+            lines.append("|------|------|--------|----------|")
+
+        for t in targets:
+            sym = t.get("symbol", "?").replace("HK.", "")
+            direction = t.get("direction", "ANY")
+            urgency = t.get("urgency", "—")
+            trigger = (t.get("key_trigger", "") or "")[:40]
+            urgency_emoji = "🔴" if urgency == "High" else "🟡" if urgency == "Medium" else "⚪"
+
+            if has_signal_impact:
+                impact = t.get("signal_impact", "—")
+                impact_emoji = {"boost": "🟢", "weaken": "🟡", "block": "🔴", "neutral": "⚪"}.get(impact, "—")
+                lines.append(f"| {sym} | {direction} | {urgency_emoji}{urgency} | {impact_emoji}{impact} | {trigger} |")
+            else:
+                lines.append(f"| {sym} | {direction} | {urgency_emoji}{urgency} | {trigger} |")
+
+        return lines
+
+    def _render_section_restricted(self, restricted: List) -> List[str]:
+        """限制名单"""
+        if not restricted:
+            return []
+        lines = [f"## 🚫 限制名单 ({len(restricted)} 只)"]
+        for r in restricted:
+            if isinstance(r, dict):
+                lines.append(f"- {r.get('symbol', '?')}: {r.get('reason', '')}")
+            else:
+                lines.append(f"- {r}")
+        return lines
+
+    def _render_section_risk(self, plan: Dict) -> List[str]:
+        """风险提醒 — 条件触发"""
+        risk = plan.get("risk_level", "")
+        stop = plan.get("stop_trading", False)
+        if risk != "HIGH" and not stop:
+            return []
+
+        lines = ["## ⚠️ 风险提醒"]
+        if stop:
+            lines.append("- 🔴 **已触发全面停止交易**，请检查市场状况")
+        if risk == "HIGH":
+            lines.append("- 🔴 高风险环境，建议缩减仓位至1-2%")
+            lines.append("- 严格止损，禁止追高")
+        return lines

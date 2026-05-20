@@ -69,7 +69,7 @@ def demo_news_mapper():
     print("2. 新闻 - 股票映射器演示")
     print("="*60)
 
-    mapper = get_news_mapper(use_ai=False)  # 演示模式，不使用 AI
+    mapper = get_news_mapper()  # 演示模式
 
     # 测试新闻 1: 明确提及公司
     result1 = mapper.map_news_to_stocks(
@@ -273,7 +273,7 @@ def demo_integrated_workflow():
     print(f"  US.TSLA → HK.00700: lag={metrics.lag_seconds:.0f}s, corr={metrics.correlation:.2f}")
 
     # 2. 新闻分析
-    mapper = get_news_mapper(use_ai=False)
+    mapper = get_news_mapper()
     news_result = mapper.map_news_to_stocks(
         news_id="news_tsla_surge",
         title="特斯拉夜间大涨 5%，财报超预期",

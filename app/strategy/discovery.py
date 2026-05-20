@@ -7,7 +7,7 @@
 新增策略只需:
 1. 在 app/strategy/ 目录下创建 .py 文件
 2. 定义继承自 BaseStrategy 的类 (带 name 属性)
-3. 在 config.yaml 的 strategy.enabled 中添加策略名
+3. 在 unified_config.yaml 的 strategy.enabled 中添加策略名
 
 无需修改 __init__.py 或 STRATEGY_REGISTRY.
 

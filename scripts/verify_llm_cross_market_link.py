@@ -46,7 +46,7 @@ def test_llm_analyst_initialization():
         logger.info(f"时间窗口: {llm_config.get('trading_window', {}).get('start')} - {llm_config.get('trading_window', {}).get('end')}")
         
         if not llm_config.get('enabled'):
-            logger.warning("⚠️  LLM分析师未启用,请在config.yaml中设置 llm_market_analyst.enabled: true")
+            logger.warning("⚠️  LLM分析师未启用,请在unified_config.yaml中设置 llm_market_analyst.enabled: true")
             return False
         
         from app.ai.llm_market_analyst import LLMMarketAnalyst
@@ -249,7 +249,7 @@ def main():
     else:
         logger.error("⚠️  部分测试失败,请检查上述错误信息")
         logger.info("\n常见问题:")
-        logger.info("  - LLM未启用: 检查 config.yaml 中 llm_market_analyst.enabled")
+        logger.info("  - LLM未启用: 检查 unified_config.yaml 中 llm_market_analyst.enabled")
         logger.info("  - BAILIAN_API_KEY未配置: 检查 .env 文件")
         logger.info("  - 依赖缺失: 运行 pip install -r requirements.txt")
     

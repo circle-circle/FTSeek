@@ -34,8 +34,8 @@ __all__ = ["PremarkDebateAgent"]
 # ============================================================
 
 MODEL_ROLES = [
-    {"model": "qwen3.6-plus",     "role": "bull",     "label": "多头分析师"},
-    {"model": "deepseek-v4-pro",  "role": "bear",     "label": "空头审计师"},
+    {"model": "qwen3.6-flash",    "role": "bull",     "label": "多头分析师"},
+    {"model": "deepseek-v4-flash","role": "bear",     "label": "空头审计师"},
     {"model": "MiniMax-M2.5",     "role": "auditor",  "label": "独立风险评估师"},
 ]
 
@@ -308,63 +308,28 @@ class PremarkDebateAgent(Agent):
     def _call_dashscope(
         self, model: str, system_prompt: str, user_prompt: str, timeout: int
     ) -> Optional[Dict]:
-        """直接 HTTP 调用 DashScope API"""
-        if not self.api_key:
-            return None
+        """调用 LLM — 通过 UnifiedLLMService (带统计埋点)"""
+        import sys, os
+        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        from app.llm.unified_service import get_unified_llm, UnifiedLLMService
 
-        max_tokens = 8192 if "deepseek" in model.lower() else 4096
-
-        payload = {
-            "model": model,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            "temperature": 0.3,
-            "max_tokens": max_tokens,
-        }
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
 
         try:
-            resp = requests.post(
-                f"{self.base_url}/chat/completions",
-                headers={"Authorization": f"Bearer {self.api_key}"},
-                json=payload,
-                timeout=timeout,
+            svc = get_unified_llm(default_model=model, default_timeout=timeout, max_retries=1)
+            result_text = UnifiedLLMService.run_sync(
+                svc.call(messages, model=model, timeout=timeout, task_type="premarket_debate"),
+                timeout=timeout + 30,
             )
-
-            if resp.status_code == 429:
-                self.logger.warning(
-                    f"[PremarkDebate] API 限流 (429), 模型={model}"
-                )
-                return None
-
-            if resp.status_code == 404:
-                self.logger.warning(
-                    f"[PremarkDebate] 模型不存在 (404): {model}"
-                )
-                return None
-
-            resp.raise_for_status()
-            data = resp.json()
-
-            choices = data.get("choices")
-            if not choices:
-                self.logger.warning(
-                    f"[PremarkDebate] API 返回空 choices: {data}"
-                )
-                return None
-
-            text = choices[0].get("message", {}).get("content", "").strip()
-
-            # 解析 JSON (容错处理)
-            return self._parse_json(text)
-
-        except requests.exceptions.Timeout:
-            self.logger.warning(f"[PremarkDebate] 超时: model={model}")
-            return None
+            if result_text:
+                return self._parse_json(result_text)
         except Exception as e:
-            self.logger.warning(f"[PremarkDebate] 调用失败: model={model}, err={e}")
-            return None
+            self.logger.warning(f"[PremarkDebate] UnifiedLLM 调用失败: model={model}, err={e}")
+
+        return None
 
     def _parse_json(self, text: str) -> Optional[Dict]:
         """从 LLM 返回文本中提取 JSON"""

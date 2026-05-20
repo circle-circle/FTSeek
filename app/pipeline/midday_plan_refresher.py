@@ -77,6 +77,10 @@ class MiddayPlanRefresher:
             logger.warning(f"[午间刷新] 辩论阶段异常 (降级): {e}")
 
         # Step 3: 辩论结果过滤候选 (仅在有辩论结果时)
+        # P0 修复 (2026-05-17): 预加载盘前 LLM signal_impact，午间候选继承历史判断
+        impact_map = self._lookup_premarket_signal_impact(plan)
+        if impact_map:
+            logger.info(f"[午间刷新] 盘前 LLM signal_impact 映射: {len(impact_map)} 只 (非neutral)")
         if debate_synthesis and debate_synthesis.merged_symbols:
             debate_symbols = {s.get("symbol", "") for s in debate_synthesis.merged_symbols}
             # 将辩论推荐中不在候选列表里的标的也加入
@@ -95,6 +99,7 @@ class MiddayPlanRefresher:
                         "key_trigger": f"午间辩论推荐 (共识={debate_synthesis.consensus_direction})",
                         "max_position_pct": MIDDAY_MAX_POSITION_PCT,
                         "source": "midday_debate",
+                        "signal_impact": impact_map.get(sym, "neutral"),  # P0: 继承盘前 LLM 判断
                     })
             logger.info(f"[午间刷新] 辩论注入 {len(debate_symbols)} 只标的")
 
@@ -106,6 +111,13 @@ class MiddayPlanRefresher:
             if sym in seen or not sym.startswith("HK."):
                 continue
             seen.add(sym)
+            # P0 修复 (2026-05-17): 午间候选继承盘前 LLM signal_impact
+            _sym_key = sym
+            if not _sym_key.startswith("HK."):
+                _sym_key = f"HK.{_sym_key}"
+            if "signal_impact" not in c or c["signal_impact"] == "neutral":
+                # 尝试匹配 HK. 前缀
+                c["signal_impact"] = impact_map.get(_sym_key, impact_map.get(sym, "neutral"))
             new_targets.append(c)
             if len(new_targets) >= MIDDAY_MAX_NEW_TARGETS:
                 break
@@ -151,6 +163,8 @@ class MiddayPlanRefresher:
                     direction=t.get("direction", "ANY"),
                     logic=t.get("key_trigger", ""),
                     max_position_pct=t.get("max_position_pct", MIDDAY_MAX_POSITION_PCT),
+                    signal_impact=t.get("signal_impact", "neutral"),
+                    urgency=t.get("urgency", "Medium"),
                 )
             logger.info(f"[午间刷新] 动态池已同步 {len(new_targets)} 只")
         except Exception as e:
@@ -192,6 +206,22 @@ class MiddayPlanRefresher:
             type=EventType.PLAN_MIDDAY_REFRESHED,
             data=payload,
         ))
+
+        # Step 7: 保存午间更新到 feedback relay (连接 EOD 复盘)
+        try:
+            from app.review.hk_feedback_relay import save_midday_update
+            save_midday_update(
+                new_targets=new_targets,
+                market_context={
+                    "debate_consensus": debate_synthesis.consensus_direction if debate_synthesis else None,
+                    "debate_conviction": debate_synthesis.conviction if debate_synthesis else None,
+                },
+                a_share_close=ashare_data,
+            )
+            logger.info(f"[午间刷新] Step 7: 午间更新已保存到 feedback relay")
+        except Exception as _relay_err:
+            logger.warning(f"[午间刷新] Step 7 反馈保存失败 (非阻塞): {_relay_err}")
+
         logger.info("[午间刷新] 领域事件已发射 (PLAN_MIDDAY_REFRESHED)")
 
         return result
@@ -504,20 +534,10 @@ class MiddayPlanRefresher:
 
         feedback_context = "\n".join(feedback_parts)
 
-        # 事件包: 上午新闻摘要
-        news_text = self._gather_morning_news()
-        event_packs = [type('EventPack', (), {
-            'title': line.strip('- '),
-            'content': '',
-            'focus_symbols': [],
-            'source': 'midday_news',
-        }) for line in news_text.split('\n') if line.strip()] if news_text else []
-
         return {
             "market_context": market_context,
             "price_data": price_data,
             "feedback_context": feedback_context,
-            "event_packs": event_packs,
         }
 
     def _run_midday_debate(self, context: Dict) -> Optional[Any]:
@@ -558,7 +578,7 @@ class MiddayPlanRefresher:
 
             logger.info("[午间辩论] 启动多Agent辩论...")
             synthesis = run_debate_sync(
-                event_packs=context.get("event_packs"),
+                assessments=[],
                 market_context=context.get("market_context", ""),
                 feedback_context=context.get("feedback_context", ""),
                 price_data=context.get("price_data", ""),
@@ -585,6 +605,31 @@ class MiddayPlanRefresher:
         except Exception as e:
             logger.error(f"[午间刷新] 读取计划失败: {e}")
             return None
+
+    def _lookup_premarket_signal_impact(self, plan: Dict) -> Dict[str, str]:
+        """从盘前计划中提取各标的的 LLM signal_impact 映射
+
+        午间新增标的如果已被盘前 LLM 分析过，应继承其 signal_impact，
+        而非默认 neutral。这确保 LLM 信号链在午间刷新中不中断。
+        """
+        impact_map = {}
+        for t in plan.get("targets", []):
+            sym = t.get("symbol", "")
+            si = t.get("signal_impact", "neutral")
+            if sym and si != "neutral":
+                impact_map[sym] = si
+        # 同时从动态池中查找
+        try:
+            from app.utils.daily_active_pool import get_daily_active_pool
+            pool = get_daily_active_pool(market_prefix="HK.")
+            for code, entry in pool._entries.items():
+                if not entry.is_expired():
+                    si = entry.metadata.get("signal_impact", "neutral")
+                    if si != "neutral" and code not in impact_map:
+                        impact_map[code] = si
+        except Exception:
+            pass
+        return impact_map
 
     def _save_plan(self, plan: Dict):
         try:

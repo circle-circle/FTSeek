@@ -28,7 +28,6 @@ from .debate_agents import (
     DebateAgent, AgentOpinion, DebateSynthesis,
     create_debate_agents, SYNTHESIS_PROMPT,
 )
-from ..base import BaseLLMService
 from ..scenarios.debate import DEBATE_SCENARIO
 
 logger = logging.getLogger("ftseek.agents.debate_orchestrator")
@@ -183,7 +182,13 @@ class DebateOrchestrator:
         source = getattr(pack, "event_type", "") or getattr(pack, "source", "")
         direction = getattr(pack, "direction", "") or ""
         confidence = getattr(pack, "confidence", 0) or 0
-        extra = f"方向={direction} 置信度={confidence:.2f}" if direction else ""
+        signal_impact = getattr(pack, "signal_impact", "") or ""
+        
+        parts = [f"方向={direction}", f"置信度={confidence:.2f}"]
+        if signal_impact and signal_impact != "neutral":
+            parts.append(f"LLM影响={signal_impact}")
+        extra = " ".join(parts)
+        
         return f"- {title}\n  标的: {symbols}\n  来源: {source}\n  {extra}\n  内容: {body}"
 
     # ─── 合成 ──────────────────────────────────────────────────────
@@ -202,22 +207,24 @@ class DebateOrchestrator:
         ]
 
         try:
-            from app.core.unified_llm_factory import get_llm_client
-            client = get_llm_client(self._llm_config)
-            if not client:
-                return self._fallback_synthesis(macro, tech, risk)
-
-            response = await asyncio.wait_for(
-                client.chat.completions.create(
-                    model=self._fast_model, messages=messages,
-                ),
-                timeout=60,
+            from app.llm.unified_service import get_unified_llm
+            
+            svc = get_unified_llm(
+                default_model=self._fast_model,
+                default_timeout=60,
+                max_retries=1
             )
-            raw = response.choices[0].message.content or "{}"
-            try:
-                await client.close()
-            except Exception:
-                pass
+            
+            raw = await svc.call(
+                messages=messages,
+                model=self._fast_model,
+                timeout=60,
+                task_type="debate_synthesis"
+            )
+            
+            if not raw:
+                return self._fallback_synthesis(macro, tech, risk)
+                
         except Exception as e:
             logger.error(f"[辩论] 合成 LLM 调用失败: {e}")
             return self._fallback_synthesis(macro, tech, risk)

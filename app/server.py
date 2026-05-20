@@ -4,10 +4,12 @@ FastAPI 确认回调服务
 同时提供管理 API 查看信号、账户信息等
 """
 import logging
+import os
+import sys
 import time
 import hashlib
 import secrets
-from collections import defaultdict
+from collections import defaultdict, Counter
 from dataclasses import asdict
 from datetime import datetime
 from typing import Optional
@@ -882,6 +884,186 @@ async def harness_risk_check(payload: dict):
         return {"status": "error", "message": "HarnessPilot not initialized"}
     result = _harness_pilot.run_risk_check(payload.get("portfolio"))
     return result
+
+
+# ============================================================
+#  盘中诊断 API (Layer 2: 实时根因分析)
+#  2026-05-18 新增
+# ============================================================
+
+@app.get("/api/diagnose/realtime")
+async def diagnose_realtime(date: str = None):
+    """
+    实时管线诊断 — 读取 signal_tracker JSON，返回管线健康状态 + 异常检测
+    用法: curl http://localhost:8899/api/diagnose/realtime?date=2026-05-18
+    """
+    try:
+        sys_path = os.path.dirname(os.path.dirname(__file__))
+        if sys_path not in sys.path:
+            sys.path.insert(0, sys_path)
+        from scripts.intraday_diagnose import load_today_records, analyze_pipeline, detect_anomalies
+    except Exception as e:
+        return {"status": "error", "message": f"诊断模块加载失败: {e}"}
+    
+    records = load_today_records(date)
+    if not records:
+        date_str = date or datetime.now().strftime('%Y-%m-%d')
+        return {"status": "no_data", "date": date_str, "message": f"未找到 {date_str} 的信号记录"}
+    
+    stats = analyze_pipeline(records, date)
+    anomalies = detect_anomalies(stats)
+    
+    return {
+        "status": "ok",
+        "date": stats['date'],
+        "pipeline": {
+            "total": stats['total'],
+            "executed": stats['executed'],
+            "rejected": stats['rejected'],
+            "pending": stats['pending'],
+            "execution_rate": round(stats['execution_rate'] * 100, 1),
+        },
+        "top_reject_reason": stats['top_reason'],
+        "top_reject_pct": round(stats['top_reason_pct'] * 100, 1),
+        "anomalies": anomalies,
+        "anomaly_count": len(anomalies),
+        "max_severity": max((a['severity'] for a in anomalies), key=lambda s: {'critical': 4, 'high': 3, 'medium': 2, 'low': 1}.get(s, 0)) if anomalies else 'none',
+    }
+
+
+@app.get("/api/diagnose/root-cause/{code}")
+async def diagnose_root_cause(code: str, date: str = None):
+    """
+    单股根因分析 — 追踪某只股票被哪些环节拦截
+    用法: curl http://localhost:8899/api/diagnose/root-cause/HK.00700
+    """
+    try:
+        sys_path = os.path.dirname(os.path.dirname(__file__))
+        if sys_path not in sys.path:
+            sys.path.insert(0, sys_path)
+        from scripts.intraday_diagnose import load_today_records
+    except Exception as e:
+        return {"status": "error", "message": f"诊断模块加载失败: {e}"}
+    
+    records = load_today_records(date)
+    if not records:
+        return {"status": "no_data"}
+    
+    stock_records = [r for r in records if r.get('code') == code]
+    if not stock_records:
+        return {"status": "not_found", "code": code, "message": f"未找到 {code} 的信号记录"}
+    
+    executed = [r for r in stock_records if r.get('executed')]
+    rejected = [r for r in stock_records if r.get('reject_reason') and not r.get('executed')]
+    
+    # 拒绝原因时间线
+    timeline = []
+    for r in stock_records:
+        timeline.append({
+            "time": r.get('timestamp', ''),
+            "action": r.get('action', ''),
+            "executed": r.get('executed', False),
+            "reject_reason": r.get('reject_reason'),
+            "confidence": r.get('confidence'),
+            "consensus_score": r.get('consensus_score'),
+        })
+    
+    # 根因分析
+    reject_reasons = Counter(r.get('reject_reason', 'unknown') for r in rejected)
+    root_causes = []
+    for reason, count in reject_reasons.most_common(5):
+        pct = count / len(rejected) * 100 if rejected else 0
+        root_causes.append({"reason": reason, "count": count, "pct": round(pct, 1)})
+    
+    return {
+        "status": "ok",
+        "code": code,
+        "total_signals": len(stock_records),
+        "executed": len(executed),
+        "rejected": len(rejected),
+        "root_causes": root_causes,
+        "timeline": timeline[:20],  # 最多返回 20 条
+    }
+
+
+# ═══════════════════════════════════════════════════════════
+# 【新增 2026-05-18】增强诊断 API — Layer 2 根因分析
+# ═══════════════════════════════════════════════════════════
+
+@app.get("/api/diagnose/health")
+async def diagnose_health():
+    """
+    管线健康度评估 — 返回健康分数 + 问题列表
+    
+    用法: curl http://localhost:8899/api/diagnose/health
+    """
+    try:
+        from app.diagnosis.root_cause_analyzer import get_root_cause_analyzer
+        analyzer = get_root_cause_analyzer()
+        result = analyzer.analyze_pipeline_health()
+        return {"status": "ok", **result}
+    except Exception as e:
+        logger.warning(f"[诊断 API] health 端点异常: {e}")
+        return {"status": "error", "message": str(e)}
+
+
+@app.get("/api/diagnose/stocks/{code}")
+async def diagnose_stock_detail(code: str, date: str = None):
+    """
+    单股详细根因分析 — 时间线 + 根因分类 + 建议
+    
+    用法: curl http://localhost:8899/api/diagnose/stocks/HK.00700
+    """
+    try:
+        from app.diagnosis.root_cause_analyzer import get_root_cause_analyzer
+        analyzer = get_root_cause_analyzer()
+        result = analyzer.analyze_stock_root_cause(code, date)
+        return {"status": "ok", **result}
+    except Exception as e:
+        logger.warning(f"[诊断 API] stock_detail 端点异常: {e}")
+        return {"status": "error", "message": str(e)}
+
+
+@app.get("/api/diagnose/knowledge")
+async def list_diagnosis_knowledge(date: str = None):
+    """
+    列出诊断知识库文件
+    
+    用法: curl http://localhost:8899/api/diagnose/knowledge?date=2026-05-18
+    """
+    from pathlib import Path
+    from datetime import datetime
+    
+    knowledge_dir = Path('/opt/ftseek/FTSeek/data/diagnosis_knowledge')
+    target_date = date or datetime.now().strftime('%Y-%m-%d')
+    
+    if not knowledge_dir.exists():
+        return {"status": "no_data", "message": "知识库目录不存在"}
+    
+    files = sorted(knowledge_dir.glob(f"diagnosis_{target_date}_*.json"))
+    
+    knowledge_list = []
+    for f in files:
+        try:
+            with open(f, 'r', encoding='utf-8') as fh:
+                data = json.load(fh)
+                knowledge_list.append({
+                    "file": f.name,
+                    "time": data.get('time', ''),
+                    "summary": data.get('summary', {}),
+                })
+        except Exception:
+            pass
+    
+    return {
+        "status": "ok",
+        "date": target_date,
+        "count": len(knowledge_list),
+        "knowledge": knowledge_list,
+    }
+
+
+print("✅ 增强诊断 API 端点已注册 (/api/diagnose/health, /stocks/*, /knowledge)")
 
 
 print("✅ Harness API 端点已注册 (/api/harness/*)")

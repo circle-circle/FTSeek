@@ -1,17 +1,19 @@
 #!/usr/bin/env python3
 """
-事件驱动策略层
+事件驱动策略层 (Rule-Based)
 
-基于突发利好/利空消息，使用大模型综合分析，生成高优先级交易信号。
+基于突发利好/利空消息，使用关键词规则和规则引擎分析，生成高优先级交易信号。
 
 核心功能:
 1. 事件检测 (关键词匹配 + 异常检测)
-2. 大模型分析 (Qwen/GPT)
+2. 规则引擎分析 ( sentiment/impact/action 基于关键词权重)
 3. 信号生成与推送
 4. 时效性管理
 
 流程:
-新闻源 → 事件检测器 → 大模型分析 → 信号生成 → 优先推送
+新闻源 → 事件检测器 → 规则分析 → 信号生成 → 优先推送
+
+注：本模块为纯规则实现，不使用 LLM。LLM 分析由 llm_news_strategy.py 承担。
 """
 
 import logging
@@ -284,8 +286,8 @@ class QwenEventAnalyzer:
             related_stocks=', '.join(event.related_stocks[:5]) if event.related_stocks else '未指定'
         )
 
-        # 调用大模型
-        response = self._call_llm(prompt)
+        # 使用规则引擎分析
+        response = self._simple_analysis(prompt)
 
         if response:
             # 解析响应
@@ -297,28 +299,13 @@ class QwenEventAnalyzer:
 
         return event
 
-    def _call_llm(self, prompt: str) -> Optional[str]:
-        """调用大模型 API"""
-        try:
-            # 这里集成实际的 LLM 客户端
-            # 如：from app.ai import AIService
-            # ai = AIService()
-            # response = ai.chat(prompt)
-
-            # 临时使用简单规则分析
-            return self._simple_analysis(prompt)
-
-        except Exception as e:
-            logger.error(f"LLM 调用失败：{e}")
-            return None
-
     def _simple_analysis(self, prompt: str) -> Optional[str]:
         """
-        简单规则分析 (降级方案)
+        基于关键词权重的规则分析
 
-        当 LLM 不可用时，使用关键词规则分析
+        通过正面/负面关键词计数，判定事件情感、影响程度和建议操作
         """
-        # 这是一个简化实现，实际应调用 LLM
+        # 基于关键词权重的规则分析
         import json
 
         positive_words = ['利好', '超预期', '增长', '突破', '共赢', 'positive', 'beat']

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 SSOT Configuration Validation Script
-Verifies that unified_config.yaml is the Single Source of Truth
+Verifies that unified_unified_config.yaml is the Single Source of Truth
 """
 import sys
 import os
@@ -21,21 +21,21 @@ def validate_ssot():
     warnings = []
     
     # 1. Load unified_config
-    uc_path = Path('config/unified_config.yaml')
+    uc_path = Path('config/unified_unified_config.yaml')
     if not uc_path.exists():
-        print("❌ unified_config.yaml not found")
+        print("❌ unified_unified_config.yaml not found")
         return False
     
     with open(uc_path) as f:
         uc = yaml.safe_load(f)
     
-    print("\n✅ Step 1: unified_config.yaml loaded successfully")
+    print("\n✅ Step 1: unified_unified_config.yaml loaded successfully")
     
     # 2. Check for deprecated independent config files
     deprecated_files = [
         'config/dynamic_exit_params.yaml',
-        'config/risk_config.yaml', 
-        'config/app_config.yaml',
+        'config/risk_unified_config.yaml', 
+        'config/app_unified_config.yaml',
         'config/strategy_params.json',
         'config/position_strategy.yaml',
     ]

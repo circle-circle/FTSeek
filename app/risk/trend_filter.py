@@ -50,13 +50,15 @@ class TrendInfo:
     confirmed: bool = False
     reason: str = ""
     # 2026-03-25 V3 新增: 多周期趋势确认
-    k60m_trend: Optional[Trend] = None  # 60分钟线趋势
+    k60m_trend: Optional[Trend] = None  # 60分钟线趋势缓存
     multi_timeframe_confirmed: bool = True  # 多周期确认状态
     trend_score: float = 0.0  # 趋势强度评分 (-1 to 1)
     # 2026-03-25 V4 新增: 超短线趋势确认
-    k3m_trend: Optional[Trend] = None  # 3分钟线趋势
-    k5m_trend: Optional[Trend] = None  # 5分钟线趋势
+    k3m_trend: Optional[Trend] = None  # 3分钟线趋势缓存
+    k5m_trend: Optional[Trend] = None  # 5分钟线趋势缓存
     short_term_confirmed: bool = True  # 短周期确认状态
+    # 2026-05-17 新增: 门禁告警 (模拟盘 shadow 模式)
+    gate_warnings: Optional[list] = None  # 门禁告警列表，不拦截但记录
 
 
 class TrendFilter:
@@ -76,8 +78,12 @@ class TrendFilter:
         self.prevent_buy_in_downtrend = self.config.get('prevent_buy_in_downtrend', True)
         self.prevent_short_in_uptrend = self.config.get('prevent_short_in_uptrend', True)
         self.min_adx_for_trend = self.config.get('min_adx_for_trend', 20)
+        self.adx_range_gate = self.config.get('adx_range_gate', 18)  # P0 (2026-05-16): 范围市场门禁
         self.use_multi_timeframe = self.config.get('use_multi_timeframe', True)
         self.require_both_timeframes = self.config.get('require_both_timeframes', True)
+        
+        # 模拟盘 shadow 模式 (2026-05-17): 门禁告警但不拦截，用于数据收集
+        self._shadow_mode = self.config.get('shadow_mode', False)
         
         # 缓存
         self._cache = {}
@@ -170,7 +176,76 @@ class TrendFilter:
             return Trend.WEAK_DOWN
         
         return Trend.RANGE
-    
+
+    def _compute_adx(self, highs: list, lows: list, closes: list, period: int = 14) -> Optional[float]:
+        """
+        计算 ADX (Average Directional Index) — 趋势强度指标
+        ADX < 18: 震荡市（无趋势），应拒绝 BB/RSI 假信号
+        ADX 18-25: 弱趋势
+        ADX > 25: 强趋势
+
+        Args:
+            highs: 最高价列表
+            lows: 最低价列表
+            closes: 收盘价列表
+            period: ADX 周期 (默认 14)
+
+        Returns:
+            ADX 值 (0-100)，或 None 如果数据不足
+        """
+        if len(highs) < period + 1 or len(lows) < period + 1:
+            return None
+
+        # 计算 +DM, -DM, TR
+        plus_dm = []
+        minus_dm = []
+        true_ranges = []
+
+        for i in range(1, len(highs)):
+            high_diff = highs[i] - highs[i - 1]
+            low_diff = lows[i - 1] - lows[i]
+            tr = max(highs[i] - lows[i], abs(highs[i] - closes[i - 1]), abs(lows[i] - closes[i - 1]))
+            true_ranges.append(tr)
+
+            if high_diff > low_diff and high_diff > 0:
+                plus_dm.append(high_diff)
+            else:
+                plus_dm.append(0)
+
+            if low_diff > high_diff and low_diff > 0:
+                minus_dm.append(low_diff)
+            else:
+                minus_dm.append(0)
+
+        # 初始 ATR, +DI, -DI (使用 period 的简单平均)
+        atr = sum(true_ranges[:period]) / period
+        plus_di = 100 * sum(plus_dm[:period]) / atr if atr > 0 else 0
+        minus_di = 100 * sum(minus_dm[:period]) / atr if atr > 0 else 0
+
+        # 计算初始 DX
+        di_sum = plus_di + minus_di
+        dx = 100 * abs(plus_di - minus_di) / di_sum if di_sum > 0 else 0
+        dx_values = [dx]
+
+        # 平滑计算后续值 (Wilder's smoothing)
+        for i in range(period, len(true_ranges)):
+            atr = (atr * (period - 1) + true_ranges[i]) / period
+            plus_di_val = (plus_dm[i] if i < len(plus_dm) else 0)
+            minus_di_val = (minus_dm[i] if i < len(minus_dm) else 0)
+            plus_di = (plus_di * (period - 1) + plus_di_val) / period
+            minus_di = (minus_di * (period - 1) + minus_di_val) / period
+
+            di_sum = plus_di + minus_di
+            dx = 100 * abs(plus_di - minus_di) / di_sum if di_sum > 0 else 0
+            dx_values.append(dx)
+
+        # ADX = DX 的 period 期平均
+        if len(dx_values) < period:
+            return None
+
+        adx = sum(dx_values[-period:]) / period
+        return round(adx, 1)
+
     def analyze_trend(self, closes: list, highs: list = None, lows: list = None, 
                       intraday_closes: list = None, adx: float = None, code: str = None) -> TrendInfo:
         """
@@ -236,6 +311,15 @@ class TrendFilter:
         confirmed = True
         reason_parts = [f"日K:{daily_trend.value}"]
         
+        # ── P0 范围市场门禁 (2026-05-16): ADX < 18 禁止买入 ──
+        # 根因: BB+RSI 在震荡市产生大量假信号，历史胜率仅 42%
+        # ADX < 18 表示无趋势，此时 BB/RSI 的超买超卖信号不可靠
+        # 修复 (2026-05-17): reason_parts 必须在使用前定义 + 模拟盘 shadow 模式
+        adx_below_gate = False
+        if adx is not None and adx < self.adx_range_gate:
+            adx_below_gate = True
+            logger.info(f"[范围市场门禁] ADX={adx:.1f} < {self.adx_range_gate}，标记为震荡市")
+        
         if self.use_multi_timeframe and intraday_closes and len(intraday_closes) >= self.ma_period_intraday:
             # 计算日内均线
             intraday_ma5 = self._calculate_ma(intraday_closes, 5)
@@ -274,13 +358,34 @@ class TrendFilter:
         # 计算允许的操作
         allow_buy = True
         allow_sell = True
+        gate_warnings = []  # 模拟盘 shadow 模式: 记录门禁告警但不拦截
+
+        # P0 (2026-05-16): ADX < 18 震荡市禁止买入
+        # 阈值从 config.ADX_RANGE_GATE 读取，可通过 unified_config.yaml 调整
+        # 修复 (2026-05-17): 使用 adx_below_gate 标志，支持模拟盘 shadow 模式
+        adx_threshold = getattr(self, 'adx_range_gate', 18)
+        if adx_below_gate:
+            gate_warnings.append(f"ADX={adx:.1f}<{adx_threshold} 震荡市")
+            reason_parts.append(f"⚠ADX={adx:.1f}<18 震荡市风险")
+            # 模拟盘: shadow 模式仅告警不拦截
+            if getattr(self, '_shadow_mode', False):
+                logger.info(f"[模拟门禁·影子] {code} ADX={adx:.1f} < {adx_threshold} 告警但放行 (数据收集)")
+            else:
+                allow_buy = False
+                logger.info(f"[范围市场门禁] ADX={adx:.1f} < {adx_threshold}，禁止买入 (震荡市假信号)")
         
         # 下跌趋势中禁止买入 (需要确认)
+        # 模拟盘 shadow 模式: 仅记录告警，不硬拦截
         if self.prevent_buy_in_downtrend:
             if daily_trend in [Trend.WEAK_DOWN, Trend.STRONG_DOWN]:
                 if not self.require_both_timeframes or (intraday_trend in [Trend.WEAK_DOWN, Trend.STRONG_DOWN, None]):
-                    allow_buy = False
-                    reason_parts.append("🚫禁止买入")
+                    if getattr(self, '_shadow_mode', False):
+                        gate_warnings.append(f"下跌趋势({daily_trend.value})")
+                        reason_parts.append(f"⚠下跌趋势({daily_trend.value})")
+                        logger.info(f"[模拟门禁·影子] {code} 下跌趋势 {daily_trend.value} 告警但放行 (数据收集)")
+                    else:
+                        allow_buy = False
+                        reason_parts.append("🚫禁止买入")
         
         # 上涨趋势中禁止做空 (需要确认)
         if self.prevent_short_in_uptrend:
@@ -381,7 +486,8 @@ class TrendFilter:
             trend_score=trend_score,
             k3m_trend=k3m_trend,
             k5m_trend=k5m_trend,
-            short_term_confirmed=short_term_confirmed
+            short_term_confirmed=short_term_confirmed,
+            gate_warnings=gate_warnings if gate_warnings else None
         )
     
     def should_trade(self, action: str, trend_info: TrendInfo, rsi: Optional[float] = None, confidence: Optional[float] = None) -> Tuple[bool, str]:
@@ -423,6 +529,18 @@ def get_trend_filter(config: dict = None) -> TrendFilter:
     """获取趋势过滤器实例"""
     global _trend_filter
     if _trend_filter is None:
+        # 模拟盘 shadow 模式 (2026-05-17): 门禁告警但不拦截
+        if config is None:
+            try:
+                from config.config_center import get_config_center as _gcc_tf
+                _cc_tf = _gcc_tf()
+                config = _cc_tf.get('strategy.trend_filter', {})
+                # 注入模拟盘 shadow 模式
+                _trade_env = _cc_tf.get('base.trade_env', 'paper')
+                if _trade_env in ('paper', 'simulation'):
+                    config['shadow_mode'] = True
+            except Exception:
+                config = {}
         _trend_filter = TrendFilter(config)
     return _trend_filter
 

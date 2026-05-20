@@ -333,7 +333,7 @@ class PositionSync:
             if 'should_close' in locals() and should_close:
                 try:
                     trd_ctx.close()
-                except:
+                except Exception:
                     pass
         
         return positions
@@ -351,20 +351,15 @@ class PositionSync:
         if futu_pos is None:
             # Futu 无持仓，但本地有 → 幽灵仓 (订单未在富途成交或已被外部删除)
             if local_pos and local_pos.status == 'OPEN':
-                logger.warning(f"[持仓差异] {code}: 本地有持仓但 Futu 无持仓，删除幽灵仓")
+                logger.warning(f"[持仓差异] {code}: 本地有持仓但 Futu 无持仓，清理幽灵仓")
                 from datetime import datetime
                 try:
-                    # 直接删除幽灵仓记录，不调用 close_position (避免产生虚假成交记录)
-                    conn = position_manager._get_connection()
-                    try:
-                        conn.execute(
-                            "DELETE FROM positions WHERE code = ? AND status = 'OPEN' AND id = ?",
-                            (code, local_pos.id),
-                        )
-                        conn.commit()
-                        logger.info(f"[持仓修复] {code} 幽灵仓已删除 (id={local_pos.id})")
-                    finally:
-                        position_manager._return_connection(conn)
+                    # P0 修复 (2026-05-08): 改为 CLOSE 而非 DELETE，保留 exit_price 和 realized_pnl
+                    # 用 entry_price 作为 exit_price (零盈亏平仓)，避免 exit_price=NULL 污染统计
+                    exit_price = getattr(local_pos, 'entry_price', 0) or 0
+                    exit_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    position_manager.close_position(code, exit_price, exit_time)
+                    logger.info(f"[持仓修复] {code} 幽灵仓已平仓 (id={local_pos.id}, exit_price={exit_price:.4f}, 零盈亏)")
                     # 钉钉通知：幽灵仓清理
                     try:
                         from app.notifier import get_dingtalk_notifier
@@ -375,12 +370,13 @@ class PositionSync:
                             f"标的: {code}\n"
                             f"数量: {qty} 股\n"
                             f"开仓价: {entry:.4f}\n"
-                            f"原因: 富途无此持仓 (订单可能未成交)"
+                            f"原因: 富途无此持仓 (订单可能未成交)\n"
+                            f"处理: 已按 entry_price 平仓 (保留 exit_price 记录)"
                         )
                     except Exception as dt_err:
                         logger.debug(f"[持仓修复] 钉钉通知发送失败: {dt_err}")
                 except Exception as e:
-                    logger.error(f"[持仓修复] {code} 幽灵仓删除失败: {e}")
+                    logger.error(f"[持仓修复] {code} 幽灵仓清理失败: {e}")
             return
 
         if local_pos is None:
@@ -405,19 +401,59 @@ class PositionSync:
                             logger.error(f"[持仓修复] {code} 数量更新失败: {e}")
                 return
             
-            # 本地无持仓，但 Futu 有 → 漏记，自动创建
+            # 本地无持仓，但 Futu 有 → 可能是漏记，也可能是 Futu 结算延迟
+            # P0 修复 (2026-05-11): 检查是否刚刚被系统平仓（Futu 结算延迟窗口）
+            # 场景: 系统止损 → 本地 DB CLOSED → Futu 订单未结算 → PositionSync 误判为"漏记"
+            import sqlite3
+            from datetime import datetime, timedelta
+            RECENT_CLOSE_WINDOW_MINUTES = 10  # Futu 结算延迟窗口
+            try:
+                db_path = position_manager._db_path if hasattr(position_manager, '_db_path') else 'data/ftseek.db'
+                conn = sqlite3.connect(db_path)
+                cutoff = (datetime.now() - timedelta(minutes=RECENT_CLOSE_WINDOW_MINUTES)).strftime("%Y-%m-%d %H:%M:%S")
+                # 检查是否在冷却期内被 CLOSE
+                recent_close = conn.execute(
+                    "SELECT COUNT(*) FROM positions WHERE code=? AND status='CLOSED' AND exit_time>=?",
+                    (code, cutoff)
+                ).fetchone()[0]
+                recent_trade_close = conn.execute(
+                    "SELECT COUNT(*) FROM trades WHERE code=? AND status='closed' AND exit_time>=?",
+                    (code, cutoff)
+                ).fetchone()[0]
+                conn.close()
+                if recent_close > 0 or recent_trade_close > 0:
+                    logger.info(
+                        f"[持仓差异] {code}: Futu 有持仓但本地无记录，但 {RECENT_CLOSE_WINDOW_MINUTES}min 内"
+                        f"有关闭记录（{recent_close}+{recent_trade_close}），判定为 Futu 结算延迟，跳过创建"
+                    )
+                    return
+            except Exception as check_err:
+                logger.debug(f"[持仓差异] {code}: 冷却期检查失败，继续按漏记处理: {check_err}")
+
             logger.warning(f"[持仓差异] {code}: Futu 有持仓但本地无记录，自动创建")
             try:
                 from app.trader.position_manager import Position
                 from datetime import datetime
+                # P0 修复 (2026-05-11): 同步创建的持仓必须有默认止损止盈
+                # 之前：不传 stop_loss/take_profit → SL=0, TP=0 → 裸奔无保护
+                # 现在：根据 entry_price 计算默认 SL(3.5%) 和 TP(5.0%)
+                entry_px = futu_pos.cost_price
+                default_sl = round(entry_px * 0.965, 3)  # -3.5%
+                default_tp = round(entry_px * 1.050, 3)  # +5.0%
+                logger.info(
+                    f"[持仓修复·默认风控] {code} entry=${entry_px:.2f} "
+                    f"SL=${default_sl:.2f}(-3.5%) TP=${default_tp:.2f}(+5.0%)"
+                )
                 position_manager.create_position(
                     code=code,
                     action='BUY',
                     quantity=futu_pos.quantity,
                     entry_price=futu_pos.cost_price,
                     entry_time=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    stop_loss=default_sl,
+                    take_profit=default_tp,
                     strategy='futu_sync',
-                    trader_type='SYNC'  # P0 修复 2026-05-08: 标记为同步创建，非MANUAL
+                    trader_type='SYNC'
                 )
                 logger.info(f"[持仓修复] {code} 已自动创建 (Futu→DB 同步)")
                 

@@ -18,8 +18,6 @@ import logging
 import time
 from typing import Dict, List, Optional, Any
 
-from .base import BaseLLMService
-
 logger = logging.getLogger("ftseek.agents.runner")
 
 
@@ -91,10 +89,12 @@ class MultiAgentRunner:
                     k: template_vars.get(k, "") for k in round_def["template_keys"]
                 })
 
-                llm = BaseLLMService(
-                    config=self.llm_config,
+                from app.llm.unified_service import get_unified_llm
+                
+                llm = get_unified_llm(
                     default_model=agent_def["model"],
                     default_timeout=agent_def.get("timeout", 90),
+                    max_retries=1,
                     enable_thinking=self.enable_thinking,
                 )
                 messages = [
@@ -102,7 +102,12 @@ class MultiAgentRunner:
                     {"role": "user", "content": prompt},
                 ]
 
-                task = llm.call_and_parse(messages)
+                task = llm.call_and_parse(
+                    messages, 
+                    model=agent_def["model"],
+                    timeout=agent_def.get("timeout", 90),
+                    task_type=f"runner_{sc_name}"
+                )
                 tasks.append(task)
                 agent_map[len(tasks) - 1] = agent_def
 
@@ -130,10 +135,12 @@ class MultiAgentRunner:
         synthesis = {}
         synth_def = self.scenario.get("synthesis")
         if synth_def:
-            synth_llm = BaseLLMService(
-                config=self.llm_config,
+            from app.llm.unified_service import get_unified_llm
+            
+            synth_llm = get_unified_llm(
                 default_model=synth_def["model"],
                 default_timeout=synth_def.get("timeout", 60),
+                max_retries=1,
                 enable_thinking=self.enable_thinking,
             )
 
@@ -154,7 +161,12 @@ class MultiAgentRunner:
                 {"role": "system", "content": synth_def["system_prompt"]},
                 {"role": "user", "content": prompt},
             ]
-            synthesis = await synth_llm.call_and_parse(messages)
+            synthesis = await synth_llm.call_and_parse(
+                messages,
+                model=synth_def["model"],
+                timeout=synth_def.get("timeout", 60),
+                task_type=f"runner_{self.scenario['name']}_synthesis"
+            )
 
         elapsed = time.time() - t0
         logger.info(
@@ -170,7 +182,8 @@ class MultiAgentRunner:
 
     def run_sync(self, contexts: Dict[str, str], timeout: int = 180) -> Dict:
         """Synchronous wrapper."""
-        return BaseLLMService.run_sync(self.run, contexts, timeout=timeout)
+        from app.llm.unified_service import UnifiedLLMService
+        return UnifiedLLMService.run_sync(self.run(contexts), timeout=timeout)
 
 
 def run_scenario_sync(

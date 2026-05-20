@@ -169,6 +169,7 @@ class RiskOfficerPlugin:
         self._daily_reset_if_needed()
 
         data = event.data
+        # data 已归一化为 dict — 用 .get() 访问
         exit_reason = data.get("exit_reason", "")
         code = data.get("code", "")
 

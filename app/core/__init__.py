@@ -10,7 +10,7 @@ FTSeek Core Module (v5.0 - 配置收敛后)
 
 配置架构 (2026-04-09 收敛后):
   - .env → 敏感环境变量
-  - config/config.yaml → 唯一配置源
+  - config/unified_config.yaml → 唯一配置源
   - ConfigCenter → 统一加载器
 """
 

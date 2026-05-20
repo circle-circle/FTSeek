@@ -5,7 +5,7 @@
 功能:
 1. 扫描trade_attribution表过去7天数据
 2. 识别低效策略/场景组合
-3. 生成config.yaml调整建议
+3. 生成unified_config.yaml调整建议
 4. 钉钉推送优化报告
 
 使用方式:

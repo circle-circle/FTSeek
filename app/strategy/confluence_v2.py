@@ -15,7 +15,7 @@ from typing import Optional, Dict, List
 from .base import BaseStrategy, Signal, SignalAction
 from .indicators import (
     IndicatorBuffer, rsi, macd, bollinger_bands, bollinger_pctb,
-    supertrend, sma, ema, atr, adx
+    supertrend, sma, ema, atr, adx, momentum
 )
 from .market_regime import market_regime_detector, MarketRegimeType
 from app import config
@@ -52,28 +52,25 @@ class ConfluenceStrategyV2(BaseStrategy):
         self.vol_ratio = self.config.get("vol_ratio", 1.5)
         self.adx_threshold = self.config.get("adx_threshold", 25)
         
+        # P0 新增 (2026-05-18): Momentum 动量因子参数
+        self.momentum_period = self.config.get("momentum_period", 10)
+        self.momentum_threshold = self.config.get("momentum_threshold", 2.0)  # ROC > ±2% 才触发
+        
         # 启用的因子
         self.enabled_factors = self.config.get("enabled_factors",
-            ["rsi", "macd", "bollinger", "supertrend", "ma_cross", "volume"])
+            ["rsi", "macd", "bollinger", "supertrend", "ma_cross", "volume", "momentum"])
         
-        # 市场状态相关的动态权重
-        self.regime_weights = {
-            MarketRegimeType.STRONG_TREND_UP: {
-                "supertrend": 0.8, "macd": 1.3, "rsi": 0.7, "bollinger": 0.8,
-            },
-            MarketRegimeType.STRONG_TREND_DOWN: {
-                "supertrend": 0.8, "macd": 1.3, "rsi": 0.7, "bollinger": 0.8,
-            },
-            MarketRegimeType.RANGE_BOUND: {
-                "rsi": 1.5, "bollinger": 1.5, "supertrend": 0.3, "macd": 0.7,
-            },
-            MarketRegimeType.HIGH_VOLATILITY: {
-                "bollinger": 1.3, "supertrend": 0.4, "rsi": 0.9,
-            },
-            MarketRegimeType.LOW_VOLATILITY: {
-                "bollinger": 1.2,  # 布林带收窄可能突破
-            },
-        }
+        # P1 修复 (2026-05-08): 核心因子定义 (2核心 + 1确认)
+        # RSI + SuperTrend 为核心因子，Volume 为确认因子
+        self.core_factors = set(self.config.get("core_factors", ["rsi", "supertrend"]))
+        self.core_factor_bonus = self.config.get("core_factor_bonus", 1.2)  # 核心因子额外 20% 权重
+        
+        # 市场状态相关的动态权重 (2026-05-18: 从 YAML 读取，不再硬编码)
+        try:
+            self.regime_weights = self._load_regime_weights()
+        except Exception as e:
+            logger.error(f"[confluence_v2] 加载 regime_weights 失败: {e}，使用空配置")
+            self.regime_weights = {}
         
         # 内部状态
         self._buffers = defaultdict(lambda: IndicatorBuffer())
@@ -96,22 +93,58 @@ class ConfluenceStrategyV2(BaseStrategy):
             f"动态权重={self.use_dynamic_weights}"
         )
 
+    def _load_regime_weights(self) -> dict:
+        """
+        从 YAML 配置加载市场状态→因子权重映射。
+        支持 7 种 regime 类型（含 WEAK_TREND_UP/DOWN）。
+        未在 YAML 定义的 regime 自动 fallback 到空 dict（代码侧兜底 base=1.0）。
+        """
+        raw = self.config.get("regime_weights") or {}
+        result = {}
+        # 枚举名 → YAML key 映射
+        key_map = {
+            MarketRegimeType.STRONG_TREND_UP: "strong_trend_up",
+            MarketRegimeType.STRONG_TREND_DOWN: "strong_trend_down",
+            MarketRegimeType.WEAK_TREND_UP: "weak_trend_up",
+            MarketRegimeType.WEAK_TREND_DOWN: "weak_trend_down",
+            MarketRegimeType.RANGE_BOUND: "range_bound",
+            MarketRegimeType.HIGH_VOLATILITY: "high_volatility",
+            MarketRegimeType.LOW_VOLATILITY: "low_volatility",
+        }
+        for regime_type, yaml_key in key_map.items():
+            if yaml_key in raw:
+                result[regime_type] = raw[yaml_key]
+                logger.debug(f"[regime_weights] {yaml_key}: {raw[yaml_key]}")
+            else:
+                logger.debug(f"[regime_weights] {yaml_key} 未定义，使用默认 base=1.0")
+        return result
+
     def update_params(self, params: dict):
         """动态更新参数"""
         for key, val in params.items():
             if hasattr(self, key):
                 if key in ("min_factors", "rsi_period", "macd_fast", "macd_slow",
-                           "macd_signal", "bb_period", "st_period", "ma_fast", "ma_slow"):
+                           "macd_signal", "bb_period", "st_period", "ma_fast", "ma_slow",
+                           "momentum_period"):
                     setattr(self, key, int(val))
                 elif key in ("rsi_overbought", "rsi_oversold", "bb_std", "st_multiplier",
-                             "vol_ratio", "adx_threshold"):
+                             "vol_ratio", "adx_threshold", "momentum_threshold", "core_factor_bonus"):
                     setattr(self, key, float(val))
-                elif key == "enabled_factors":
+                elif key in ("enabled_factors", "core_factors"):
                     setattr(self, key, val if isinstance(val, list) else val.split(","))
                 elif key == "enabled":
                     self.enabled = bool(val)
                 elif key in ("use_market_regime", "use_dynamic_weights"):
                     setattr(self, key, bool(val))
+                elif key in ("correlation_refresh_interval", "signal_history_maxlen"):
+                    # 注意: 实例属性带前缀下划线
+                    attr = f"_{key}"
+                    setattr(self, attr, int(val))
+                elif key == "regime_weights":
+                    # 动态更新 regime_weights: 接收 dict 直接赋值
+                    if isinstance(val, dict):
+                        self.regime_weights.clear()
+                        self.regime_weights.update(val)
         logger.info(f"Confluence V2 参数已更新")
 
     def get_params(self) -> dict:
@@ -136,7 +169,7 @@ class ConfluenceStrategyV2(BaseStrategy):
             return None
 
     def _get_factor_weight(self, factor: str, regime) -> float:
-        """获取因子权重 (考虑市场状态 + 信号质量)"""
+        """获取因子权重 (考虑市场状态 + 信号质量 + 核心因子加成)"""
         base_weight = 1.0
 
         if not self.use_dynamic_weights or regime is None:
@@ -148,7 +181,13 @@ class ConfluenceStrategyV2(BaseStrategy):
 
         # 信号质量调整：基于因子历史胜率动态加权/减权
         quality_factor = self._get_factor_quality_score(factor)
-        return base_weight * quality_factor
+        weight = base_weight * quality_factor
+        
+        # P1 修复 (2026-05-08): 核心因子额外加成
+        if factor in self.core_factors:
+            weight *= self.core_factor_bonus
+        
+        return weight
 
     # =========================================================================
     # 动态相关性计算 (2026-04-11 新增，替代硬编码折扣)
@@ -222,7 +261,7 @@ class ConfluenceStrategyV2(BaseStrategy):
             code: 股票代码
             factors: _evaluate_factors 返回的因子字典
         """
-        all_tracked = ["rsi", "macd", "bollinger", "supertrend", "ma_cross", "volume"]
+        all_tracked = ["rsi", "macd", "bollinger", "supertrend", "ma_cross", "volume", "momentum"]
         hist = self._factor_signal_history[code]
         maxlen = self._signal_history_maxlen
 
@@ -443,6 +482,16 @@ class ConfluenceStrategyV2(BaseStrategy):
                 weight = self._get_factor_weight("volume", regime)
                 factors["volume"] = {"direction": direction, "weight": weight, "reason": reason}
 
+        # Momentum 动量因子 (P0 新增 2026-05-18)
+        if "momentum" in self.enabled_factors:
+            mom_val = momentum(closes, self.momentum_period)
+            if mom_val is not None and abs(mom_val) >= self.momentum_threshold:
+                # ROC > +threshold → 上涨动量，ROC < -threshold → 下跌动量
+                direction = 1 if mom_val > 0 else -1
+                reason = f"动量 {mom_val:+.1f}% ({self.momentum_period}日ROC)"
+                weight = self._get_factor_weight("momentum", regime)
+                factors["momentum"] = {"direction": direction, "weight": weight, "reason": reason}
+
         # 记录本轮因子信号方向到历史缓存
         self._update_factor_signal_history(code, factors)
 
@@ -458,10 +507,11 @@ class ConfluenceStrategyV2(BaseStrategy):
 
         # 检查数据是否足够
         min_periods = max(
-            self.macd_slow + self.macd_signal,
-            self.bb_period,
-            self.st_period + 5,
-            self.ma_slow,
+            (self.macd_slow or 26) + (self.macd_signal or 9),
+            self.bb_period or 20,
+            (self.st_period or 10) + 5,
+            self.ma_slow or 30,
+            (self.momentum_period or 10) + 1,
         ) + 5
         
         if buf.size < min_periods:
@@ -476,55 +526,43 @@ class ConfluenceStrategyV2(BaseStrategy):
             return None
 
         # =====================================================================
-        # P1-1: 因子相关性调整 (2026-04-06 新增)
-        # 高度相关的因子同时确认时，第二个因子权重打折
+        # P0 升级 (2026-05-18): N×N 因子相关矩阵，替代硬编码 3 对
+        # 自动检测所有活跃因子间的相关性，高度相关时折扣
         # =====================================================================
         adjusted_factors = {}
+        active_factor_names = list(factors.keys())
+
         for factor_name, factor_data in factors.items():
             weight = factor_data["weight"]
             direction = factor_data["direction"]
 
-            # 检查是否有相关因子同向确认
-            correlation_discount = 1.0
+            # N×N: 对每个因子，检查与其他因子的相关性，取最大折扣
+            max_discount = 1.0
+            discount_peer = None
 
-            # RSI + Bollinger 同时确认 → Bollinger 权重动态折扣 (振荡器类高度相关)
-            if factor_name == "bollinger" and "rsi" in factors:
-                if factors["rsi"]["direction"] == direction:
-                    correlation_discount = self._get_dynamic_discount(
-                        code, "bollinger", "rsi", fallback=0.7
+            for peer in active_factor_names:
+                if peer == factor_name:
+                    continue
+                if factors[peer]["direction"] == direction:
+                    # 同向才需要折扣
+                    disc = self._get_dynamic_discount(
+                        code, factor_name, peer, fallback=0.7
                     )
-                    logger.debug(
-                        f"[因子相关性] {code} RSI+Bollinger 同向，"
-                        f"Bollinger 权重折扣={correlation_discount:.2f}"
-                    )
+                    if disc < max_discount:
+                        max_discount = disc
+                        discount_peer = peer
 
-            # MACD + MA Cross 同时确认 → MA Cross 权重动态折扣 (趋势类高度相关)
-            if factor_name == "ma_cross" and "macd" in factors:
-                if factors["macd"]["direction"] == direction:
-                    correlation_discount = self._get_dynamic_discount(
-                        code, "ma_cross", "macd", fallback=0.7
-                    )
-                    logger.debug(
-                        f"[因子相关性] {code} MACD+MA Cross 同向，"
-                        f"MA Cross 权重折扣={correlation_discount:.2f}"
-                    )
-
-            # SuperTrend + Bollinger 同时确认 → SuperTrend 权重动态折扣 (波动率类相关)
-            if factor_name == "supertrend" and "bollinger" in factors:
-                if factors["bollinger"]["direction"] == direction:
-                    correlation_discount = self._get_dynamic_discount(
-                        code, "supertrend", "bollinger", fallback=0.8
-                    )
-                    logger.debug(
-                        f"[因子相关性] {code} SuperTrend+Bollinger 同向，"
-                        f"SuperTrend 权重折扣={correlation_discount:.2f}"
-                    )
+            if discount_peer is not None:
+                logger.debug(
+                    f"[因子相关性] {code} {factor_name}↔{discount_peer} 同向，"
+                    f"{factor_name} 权重折扣={max_discount:.2f}"
+                )
 
             adjusted_factors[factor_name] = {
                 **factor_data,
-                "weight": weight * correlation_discount,
+                "weight": weight * max_discount,
                 "original_weight": weight,
-                "discount": correlation_discount,
+                "discount": max_discount,
             }
 
         # 使用调整后的因子计算得分
@@ -604,7 +642,7 @@ class ConfluenceStrategyV2(BaseStrategy):
             
             raw_conviction = min(1.5, max(0.3, bullish_score / max(1, effective_min_factors + 1)))
             adjusted_conviction = self._apply_ashare_linkage(raw_conviction, code, action_is_buy=True)
-            return Signal(
+            signal = Signal(
                 code=code, name=kline.get("name", code),
                 action=SignalAction.BUY, price=close, quantity=qty,
                 reason=f"多因子共振买入 (得分={bullish_score:.1f}):\n{factor_details}",
@@ -619,8 +657,10 @@ class ConfluenceStrategyV2(BaseStrategy):
                     "avg_correlation_discount": round(avg_correlation_discount, 3),
                 },
             )
+            self._record_signal_detail(signal, code, "BUY", factors, regime, adx_val, bullish_score)
+            return signal
 
-        if bearish_score >= effective_min_factors and (adx_val is None or adx_val >= self.adx_threshold):
+        if bearish_score >= effective_min_factors:
             bearish_factors = [k for k, v in factors.items() if v["direction"] < 0]
             factor_details = "\n".join(
                 f"  - {k}: {v['reason']} (权重{v['weight']:.1f})"
@@ -632,9 +672,9 @@ class ConfluenceStrategyV2(BaseStrategy):
                 f"市场={regime.regime_type.value if regime else 'N/A'}"
             )
             
-            raw_conviction = min(1.5, max(0.3, bullish_score / max(1, effective_min_factors + 1)))
+            raw_conviction = min(1.5, max(0.3, bearish_score / max(1, effective_min_factors + 1)))
             adjusted_conviction = self._apply_ashare_linkage(raw_conviction, code, action_is_buy=False)
-            return Signal(
+            signal = Signal(
                 code=code, name=kline.get("name", code),
                 action=SignalAction.SELL, price=close, quantity=qty,
                 reason=f"多因子共振卖出 (得分={bearish_score:.1f}):\n{factor_details}",
@@ -649,23 +689,27 @@ class ConfluenceStrategyV2(BaseStrategy):
                     "avg_correlation_discount": round(avg_correlation_discount, 3),
                 },
             )
+            self._record_signal_detail(signal, code, "SELL", factors, regime, adx_val, bearish_score)
+            return signal
 
         return None
 
     def _apply_ashare_linkage(self, conviction: float, code: str, action_is_buy: bool) -> float:
         """A股联动调整 — 低耦合装饰器模式 (2026-05-04 新增)
-        
+
+        2026-05-11 防御修复: 南向资金数据必须 5 分钟以内有效，过期数据不调整 conviction
+
         根据南向资金流向调整信号 conviction 分数。
         - 大额流入(>50亿) → 上调买入 conviction
         - 大额流出(<-30亿) → 下调买入 conviction
         - 大额流出(<-50亿) → 上调卖出 conviction
         - 大额流入(>30亿) → 下调卖出 conviction
-        
+
         Args:
             conviction: 原始 conviction 分数
             code: 股票代码 (用于日志)
             action_is_buy: 是否买入信号
-            
+
         Returns:
             float: 调整后的 conviction 分数
         """
@@ -674,6 +718,27 @@ class ConfluenceStrategyV2(BaseStrategy):
             market_data = get_hk_market_data()
             if not market_data or not market_data.southbound_flow_valid:
                 return conviction
+
+            # 防御修复: 南向资金数据时效性检查 (5分钟TTL)
+            import time as _time
+            data_timestamp = getattr(market_data, 'timestamp', None)
+            if data_timestamp:
+                if isinstance(data_timestamp, str):
+                    try:
+                        from datetime import datetime as _dt
+                        data_ts = _dt.fromisoformat(data_timestamp).timestamp()
+                    except Exception:
+                        data_ts = data_timestamp if isinstance(data_timestamp, (int, float)) else _time.time()
+                else:
+                    data_ts = float(data_timestamp)
+                age_seconds = _time.time() - data_ts
+                if age_seconds > 300:  # 5分钟TTL
+                    logger.warning(
+                        f"[A股联动防御] {code} 南向资金数据过期 {age_seconds:.0f}s > 300s，"
+                        f"跳过 conviction 调整"
+                    )
+                    return conviction
+
             sb_net = market_data.southbound_net
             adjustment = 0.0
             if action_is_buy:
@@ -691,3 +756,23 @@ class ConfluenceStrategyV2(BaseStrategy):
         except Exception as e:
             logger.debug(f"[A股联动] 调整失败: {e}")
             return conviction
+
+    def _record_signal_detail(self, signal, code, action, factors, regime, adx_val, score):
+        """记录信号详情到分析数据库"""
+        try:
+            from app.analytics.signal_analyzer import record_signal_detail
+            record_signal_detail(
+                signal_id=signal.id,
+                code=code,
+                action=action,
+                strategy=self.name,
+                entry_price=signal.price,
+                factors=factors or {},
+                market_regime=regime.regime_type.value if regime else "",
+                adx_value=adx_val or 0,
+                consensus_score=score,
+                quality_score=1.0,
+                confidence=getattr(signal, "confidence", 0)
+            )
+        except Exception as e:
+            logger.debug(f"[信号记录] {code} 失败: {e}")

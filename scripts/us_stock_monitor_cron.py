@@ -46,7 +46,7 @@ def main():
         
         # 加载配置
         import yaml
-        config_path = '/opt/ftseek/FTSeek/config/us_stock_config.yaml'
+        config_path = '/opt/ftseek/FTSeek/config/us_stock_unified_config.yaml'
         
         if os.path.exists(config_path):
             with open(config_path, 'r', encoding='utf-8') as f:

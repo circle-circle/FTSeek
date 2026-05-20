@@ -57,11 +57,11 @@ ls -la data/ | grep -E "pre_market_plans|post_market_reviews|overnight_predictio
 
 # 检查LLM配置
 echo -e "\n${YELLOW}[5/5] 检查LLM配置...${NC}"
-if grep -q "llm_market_analyst" config.yaml 2>/dev/null || [ -f config/config.yaml ]; then
+if grep -q "llm_market_analyst" unified_unified_config.yaml 2>/dev/null || [ -f config/unified_unified_unified_config.yaml ]; then
     echo -e "${GREEN}✅ LLM配置存在${NC}"
-    grep -A 3 "llm_market_analyst" config.yaml 2>/dev/null || grep -A 3 "llm_market_analyst" config/config.yaml 2>/dev/null || echo "请手动检查config.yaml中的llm_market_analyst配置"
+    grep -A 3 "llm_market_analyst" unified_unified_config.yaml 2>/dev/null || grep -A 3 "llm_market_analyst" config/unified_unified_unified_config.yaml 2>/dev/null || echo "请手动检查unified_unified_config.yaml中的llm_market_analyst配置"
 else
-    echo -e "${YELLOW}⚠️  未找到LLM配置，请确保config.yaml中包含:${NC}"
+    echo -e "${YELLOW}⚠️  未找到LLM配置，请确保unified_unified_config.yaml中包含:${NC}"
     echo "ai:"
     echo "  llm_market_analyst:"
     echo "    enabled: true"

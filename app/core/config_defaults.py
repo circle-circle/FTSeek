@@ -4,9 +4,9 @@
 
 规则:
 1. 所有 config.get(key, default) 中的 default 必须来自此文件
-2. 修改任何默认值: 只改 config.yaml + 此文件
+2. 修改任何默认值: 只改 unified_config.yaml + 此文件
 3. 禁止在代码中硬编码配置数值
-4. config_audit.py 会自动验证此文件与 config.yaml 的一致性
+4. config_audit.py 会自动验证此文件与 unified_config.yaml 的一致性
 
 用法:
     from app.core.config_defaults import CFG
@@ -19,26 +19,26 @@
 class ConfigDefaults:
     """
     所有配置默认值的唯一代码数据源。
-    与 config.yaml 中的值必须保持一致。
+    与 unified_config.yaml 中的值必须保持一致。
     """
     
     # ============================================================
     # 风控 - 置信度
     # ============================================================
-    MIN_CONFIDENCE = 0.35                    # risk_limits.min_confidence
+    MIN_CONFIDENCE = 0.45                    # risk_limits.min_confidence  # 2026-05-19: 提高信号门槛 (原0.35)
     
     # ============================================================
     # 决策缓冲层
     # ============================================================
     DECISION_BUFFER_SIGNAL_COOLDOWN = 120     # strategy.decision_buffer.signal_cooldown
     DECISION_BUFFER_MAX_PENDING = 500         # strategy.decision_buffer.max_pending
-    DECISION_BUFFER_MIN_CONFIDENCE = 0.35     # strategy.decision_buffer.min_confidence
+    DECISION_BUFFER_MIN_CONFIDENCE = 0.45     # strategy.decision_buffer.min_confidence  # 2026-05-19: 提高信号门槛 (原0.35)
     DECISION_BUFFER_MAX_POSITIONS = None      # strategy.decision_buffer.max_positions (null=动态)
     
     # ============================================================
     # 置信度调整器
     # ============================================================
-    CONFIDENCE_ADJUSTER_MIN_CONFIDENCE = 0.35  # strategy.confidence_adjuster.min_confidence
+    CONFIDENCE_ADJUSTER_MIN_CONFIDENCE = 0.45  # strategy.confidence_adjuster.min_confidence  # 2026-05-19: 提高信号门槛 (原0.35)
     CONFIDENCE_ADJUSTER_MAX_SINGLE_PENALTY = 0.15
     CONFIDENCE_ADJUSTER_MAX_TOTAL_PENALTY = 0.40
     CONFIDENCE_ADJUSTER_MAX_SINGLE_BOOST = 0.10
@@ -73,7 +73,7 @@ class ConfigDefaults:
     # 共识引擎
     # ============================================================
     CONSENSUS_WINDOW = 90                  # strategy.consensus.window_seconds (对齐 unified_config.yaml)
-    CONSENSUS_THRESHOLD = 1.0              # strategy.consensus.threshold (对齐 unified_config.yaml, 2026-05-06 降低阈值)
+    CONSENSUS_THRESHOLD = 1.5              # strategy.consensus.threshold  # 2026-05-19: 提高共识阈值 (原1.0)
     CONSENSUS_ADX_TREND = 25               # strategy.consensus.adx_trend
     CONSENSUS_ADX_RANGE = 20               # strategy.consensus.adx_range
     

@@ -256,54 +256,56 @@ class PremarketDebateScheduler:
             from app import config
 
             ctx = OpenQuoteContext(host=config.OPEND_HOST, port=config.OPEND_PORT)
-            indicators = {}
+            try:
+                indicators = {}
 
-            # 恒生指数/国指/科技指数
-            indices = {
-                "HK.800000": "恒生指数",
-                "HK.800700": "国企指数",
-            }
-            ret, data = ctx.get_market_snapshot(list(indices.keys()))
-            if ret == RET_OK and data is not None and not data.empty:
-                for _, row in data.iterrows():
-                    code = row.get("code", "")
-                    name = indices.get(code, code)
-                    last = float(row.get("last_price", 0) or 0)
-                    change = float(row.get("change_rate", 0) or 0) / 100.0
-                    indicators[name] = {
-                        "code": code,
-                        "last_price": last,
-                        "change_pct": round(change, 4),
-                    }
+                # 恒生指数/国指/科技指数
+                indices = {
+                    "HK.800000": "恒生指数",
+                    "HK.800700": "国企指数",
+                }
+                ret, data = ctx.get_market_snapshot(list(indices.keys()))
+                if ret == RET_OK and data is not None and not data.empty:
+                    for _, row in data.iterrows():
+                        code = row.get("code", "")
+                        name = indices.get(code, code)
+                        last = float(row.get("last_price", 0) or 0)
+                        change = float(row.get("change_rate", 0) or 0) / 100.0
+                        indicators[name] = {
+                            "code": code,
+                            "last_price": last,
+                            "change_pct": round(change, 4),
+                        }
 
-            # A 股指数 (上证/沪深300/创业板 — 前一日收盘)
-            ashare_indices = {
-                "SH.000001": "上证指数",
-                "SH.000300": "沪深300",
-                "SZ.399006": "创业板指",
-            }
-            ret, data = ctx.get_market_snapshot(list(ashare_indices.keys()))
-            if ret == RET_OK and data is not None and not data.empty:
-                for _, row in data.iterrows():
-                    code = row.get("code", "")
-                    name = ashare_indices.get(code, code)
-                    last = float(row.get("last_price", 0) or 0)
-                    change = float(row.get("change_rate", 0) or 0) / 100.0
-                    indicators[name] = {
-                        "code": code,
-                        "last_price": last,
-                        "change_pct": round(change, 4),
-                    }
+                # A 股指数 (上证/沪深300/创业板 — 前一日收盘)
+                ashare_indices = {
+                    "SH.000001": "上证指数",
+                    "SH.000300": "沪深300",
+                    "SZ.399006": "创业板指",
+                }
+                ret, data = ctx.get_market_snapshot(list(ashare_indices.keys()))
+                if ret == RET_OK and data is not None and not data.empty:
+                    for _, row in data.iterrows():
+                        code = row.get("code", "")
+                        name = ashare_indices.get(code, code)
+                        last = float(row.get("last_price", 0) or 0)
+                        change = float(row.get("change_rate", 0) or 0) / 100.0
+                        indicators[name] = {
+                            "code": code,
+                            "last_price": last,
+                            "change_pct": round(change, 4),
+                        }
 
-            # 汇率 (USD/HKD)
-            ret, data = ctx.get_market_snapshot(["HK.USDHKD"])
-            if ret == RET_OK and data is not None and not data.empty:
-                row = data.iloc[0]
-                indicators["USD_HKD"] = float(row.get("last_price", 0) or 0)
+                # 汇率 (USD/HKD)
+                ret, data = ctx.get_market_snapshot(["HK.USDHKD"])
+                if ret == RET_OK and data is not None and not data.empty:
+                    row = data.iloc[0]
+                    indicators["USD_HKD"] = float(row.get("last_price", 0) or 0)
 
-            ctx.close()
-            logger.info(f"[Premarket] 富途指标获取成功: {len(indicators)} 项")
-            return indicators
+                logger.info(f"[Premarket] 富途指标获取成功: {len(indicators)} 项")
+                return indicators
+            finally:
+                ctx.close()
 
         except Exception as e:
             logger.warning(f"[Premarket] 富途指标获取失败: {e}")
@@ -339,30 +341,32 @@ class PremarketDebateScheduler:
                 return None
 
             ctx = OpenQuoteContext(host=config.OPEND_HOST, port=config.OPEND_PORT)
-            ret, data = ctx.get_market_snapshot(codes)
-            snapshots = []
+            try:
+                ret, data = ctx.get_market_snapshot(codes)
+                snapshots = []
 
-            if ret == RET_OK and data is not None and not data.empty:
-                for _, row in data.iterrows():
-                    code = row.get("code", "")
-                    last = float(row.get("last_price", 0) or 0)
-                    change = float(row.get("change_rate", 0) or 0) / 100.0
-                    vol_ratio = float(row.get("volume_ratio", 0) or 0)
-                    turnover = float(row.get("turnover", 0) or 0)
-                    amplitude = float(row.get("amplitude", 0) or 0) / 100.0
+                if ret == RET_OK and data is not None and not data.empty:
+                    for _, row in data.iterrows():
+                        code = row.get("code", "")
+                        last = float(row.get("last_price", 0) or 0)
+                        change = float(row.get("change_rate", 0) or 0) / 100.0
+                        vol_ratio = float(row.get("volume_ratio", 0) or 0)
+                        turnover = float(row.get("turnover", 0) or 0)
+                        amplitude = float(row.get("amplitude", 0) or 0) / 100.0
 
-                    snapshots.append({
-                        "code": code,
-                        "last_price": last,
-                        "change_pct": round(change, 4),
-                        "volume_ratio": round(vol_ratio, 2),
-                        "turnover": round(turnover, 4),
-                        "amplitude_pct": round(amplitude, 4),
-                    })
+                        snapshots.append({
+                            "code": code,
+                            "last_price": last,
+                            "change_pct": round(change, 4),
+                            "volume_ratio": round(vol_ratio, 2),
+                            "turnover": round(turnover, 4),
+                            "amplitude_pct": round(amplitude, 4),
+                        })
 
-            ctx.close()
-            logger.info(f"[Premarket] 候选标的快照: {len(snapshots)} 只")
-            return snapshots
+                logger.info(f"[Premarket] 候选标的快照: {len(snapshots)} 只")
+                return snapshots
+            finally:
+                ctx.close()
 
         except Exception as e:
             logger.warning(f"[Premarket] 候选快照获取失败: {e}")

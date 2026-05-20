@@ -1,0 +1,52 @@
+{
+  "timestamp": "2026-05-19T14:35:00.014285",
+  "date": "2026-05-19",
+  "time": "1435",
+  "alerts": [
+    {
+      "level": "info",
+      "rule_id": "FUNNEL_002",
+      "rule_name": "信号漏斗低转化",
+      "message": "信号执行率仅 18% (6/34)，需关注",
+      "details": {
+        "total_signals": 34,
+        "executed": 6,
+        "exited": 0,
+        "execution_rate": 0.1765
+      },
+      "timestamp": "2026-05-19T14:35:00.013938"
+    },
+    {
+      "level": "critical",
+      "rule_id": "REJECT_001",
+      "rule_name": "拒绝率飙升",
+      "message": "信号拒绝率 82%，主因: mtf_unaligned (14次)",
+      "details": {
+        "rejection_rate": 0.8235,
+        "reject_reasons": {
+          "mtf_unaligned": 14,
+          "价格检查: 价格 456.53 极度接近日内高点 457.00 (距离 0.10% < 0.3%)，禁止追高买入": 1,
+          "价格检查: 价格 151.27 极度接近日内高点 151.70 (距离 0.29% < 0.3%)，禁止追高买入": 1,
+          "计划拦截: 🚫 [计划外拦截] 标的 HK.00388 不在今日作战计划中": 1,
+          "计划拦截: 🚫 [计划外拦截] 标的 HK.01347 不在今日作战计划中": 1,
+          "计划拦截: 🚫 [计划外拦截] 标的 HK.02269 不在今日作战计划中": 2,
+          "冷却期": 1,
+          "仓位限制": 1,
+          "decision_buffer_rejected": 2,
+          "价格检查: 价格 153.25 极度接近日内高点 153.40 (距离 0.10% < 0.3%)，禁止追高买入": 1,
+          "计划拦截: 🚫 [计划外拦截] 标的 HK.00981 不在今日作战计划中": 1,
+          "circuit_breaker_error": 2
+        },
+        "total_signals": 34,
+        "rejected_count": 28
+      },
+      "timestamp": "2026-05-19T14:35:00.014024"
+    }
+  ],
+  "summary": {
+    "total": 2,
+    "critical": 1,
+    "warning": 0,
+    "info": 1
+  }
+}

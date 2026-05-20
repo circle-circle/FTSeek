@@ -114,16 +114,12 @@ class ConfigValidator:
         """加载所有核心配置文件 (2026-04-26: unified_config.yaml 为 SSOT)"""
         core_configs = [
             'unified_config.yaml',      # SSOT (Single Source of Truth) v4.0
-            'config.yaml',              # 兼容旧版 (已废弃，仅 fallback)
             'stock_pool.yaml',          # 股票池 (独立管理)
         ]
         
         for config_file in core_configs:
             config_path = self.config_dir / config_file
             if not config_path.exists():
-                if config_file == 'config.yaml':
-                    logger.debug(f"配置文件 {config_file} 不存在，已跳过 (已迁移至 unified_config.yaml)")
-                    continue
                 logger.debug(f"配置文件 {config_file} 不存在，已跳过")
                 continue
             self.load_config(config_file)
@@ -187,13 +183,11 @@ class ConfigValidator:
     
     def _validate_risk_consistency(self, result: ValidationResult):
         """校验风控配置一致性 (2026-04-26: unified_config.yaml 为 SSOT)"""
-        # SSOT: unified_config.yaml, fallback: config.yaml
+        # SSOT: unified_config.yaml
         unified = self._configs.get('unified_config.yaml', {})
-        config_yaml = self._configs.get('config.yaml', {})
-        risk = self._configs.get('risk_config.yaml', {})
         
-        # 优先从 unified_config.yaml 读取 risk_limits
-        risk_limits = unified.get('risk_limits', config_yaml.get('risk_limits', {}))
+        # 从 unified_config.yaml 读取 risk_limits
+        risk_limits = unified.get('risk_limits', {})
         min_confidence = risk_limits.get('min_confidence', 0.30)
         
         if min_confidence < 0.3 or min_confidence > 0.8:
@@ -324,7 +318,7 @@ class ConfigValidator:
 
     def _validate_watchlist(self, result: ValidationResult):
         """校验 watchlist 配置 (2026-04-26: unified_config.yaml 为 SSOT)"""
-        config = self._configs.get('unified_config.yaml', self._configs.get('config.yaml', {}))
+        config = self._configs.get('unified_config.yaml', {})
         watchlist_hk = config.get('trading', {}).get('watch_list_hk', [])
 
         if not isinstance(watchlist_hk, list):
@@ -389,7 +383,7 @@ class ConfigValidator:
         2. 检测 YAML 与代码硬编码默认值冲突
         3. 检测参数值合理性
         """
-        config = self._configs.get('unified_config.yaml', self._configs.get('config.yaml', {}))
+        config = self._configs.get('unified_config.yaml', {})
         if not config:
             return
 
@@ -412,7 +406,7 @@ class ConfigValidator:
         rules = [
             ("止损百分比", "stop_loss.default_percent", 0.03, "app/risk/stop_loss.py", {}),
             ("止盈百分比", "take_profit.default_percent", 0.10, "app/risk/dynamic_exit_manager.py", {}),
-            ("最大开仓数", "trading.max_open_positions", 20, "app/core/config_container.py", {}),
+            ("最大开仓数", "trading.max_open_positions", 8, "app/core/config_container.py", {}),  # 2026-05-19: 对齐 YAML (原 20)
             ("单股最大仓位", "risk_limits.max_single_position", 0.08, "app/risk/risk_manager.py",
              {"trading.max_single_position": "trading 部分重复定义"}),
             ("总仓位上限", "risk_limits.max_total_position", 0.75, "app/risk/risk_manager.py",
@@ -428,27 +422,27 @@ class ConfigValidator:
             ("连续亏损限制", "risk_limits.consecutive_loss_limit", 3, "app/risk/risk_manager.py", {}),
             ("策略最低胜率", "risk_limits.strategy_min_winrate", 0.45, "app/risk/risk_manager.py", {}),
             ("最大单笔亏损", "risk_limits.max_single_loss", 0.05, "app/risk/risk_manager.py", {}),
-            ("最小置信度", "risk_limits.min_confidence", 0.35, "app/risk/risk_manager.py", {}),
+            ("最小置信度", "risk_limits.min_confidence", 0.45, "app/risk/risk_manager.py", {}),  # 2026-05-19: 对齐 YAML (原 0.35)
             ("共识窗口", "strategy.consensus.window_seconds", 90, "app/core/config_container.py", {}),
             ("共识阈值", "strategy.consensus.threshold", 1.5, "app/core/config_container.py", {}),
             ("决策缓冲冷却", "strategy.decision_buffer.signal_cooldown", 120, "app/decision_buffer.py", {}),
             ("决策缓冲队列", "strategy.decision_buffer.max_pending", 500, "app/decision_buffer.py", {}),
             ("信号冷却", "signal_cooldown.default_seconds", 120, "app/core/config_container.py", {}),
             # 2026-04-16 新增：跨模块默认值校验
-            ("信号输出置信度", "risk_limits.min_confidence", 0.35, "app/signal_engine/fusion_engine.py", {}),
-            ("动态阈值默认", "risk_limits.min_confidence", 0.35, "app/risk/dynamic_threshold.py", {}),
+            ("信号输出置信度", "risk_limits.min_confidence", 0.45, "app/signal_engine/fusion_engine.py", {}),  # 2026-05-19: 对齐 YAML (原 0.35)
+            ("动态阈值默认", "risk_limits.min_confidence", 0.45, "app/risk/dynamic_threshold.py", {}),  # 2026-05-19: 对齐 YAML (原 0.35)
             ("止损计算器默认", "stop_loss.default_percent", 0.03, "app/risk/stop_loss.py", {}),
             ("体制参数加载器-单股仓位", "risk_limits.max_single_position", 0.08, "app/risk/regime_params_loader.py", {}),
             ("体制参数加载器-总仓位", "risk_limits.max_total_position", 0.75, "app/risk/regime_params_loader.py", {}),
             ("体制参数加载器-日交易次数", "risk_limits.max_daily_trades", 5, "app/risk/regime_params_loader.py", {}),
-            ("体制参数加载器-置信度", "risk_limits.min_confidence", 0.35, "app/risk/regime_params_loader.py", {}),
-            ("跨市场调度-最大持仓", "trading.max_open_positions", 20, "app/strategy/cross_market_scheduler.py", {}),
+            ("体制参数加载器 - 置信度", "risk_limits.min_confidence", 0.45, "app/risk/regime_params_loader.py", {}),  # 2026-05-19: 对齐 YAML
+            ("跨市场调度 - 最大持仓", "trading.max_open_positions", 8, "app/strategy/cross_market_scheduler.py", {}),  # 2026-05-19: 对齐 YAML
             ("跨市场调度-日交易次数", "risk_limits.max_daily_trades", 5, "app/strategy/cross_market_scheduler.py", {}),
             ("热重载-单股仓位", "risk_limits.max_single_position", 0.08, "app/core/config_hot_reload.py", {}),
             ("热重载-总仓位", "risk_limits.max_total_position", 0.75, "app/core/config_hot_reload.py", {}),
             ("热重载-日亏损", "risk_limits.max_daily_loss", 0.03, "app/core/config_hot_reload.py", {}),
             ("热重载-最大回撤", "risk_limits.max_drawdown", 0.12, "app/core/config_hot_reload.py", {}),
-            ("热重载-置信度", "risk_limits.min_confidence", 0.35, "app/core/config_hot_reload.py", {}),
+            ("热重载-置信度", "risk_limits.min_confidence", 0.45, "app/core/config_hot_reload.py", {}),
             ("ConsensusConfig-止损", "stop_loss.default_percent", 0.03, "app/core/config_container.py", {}),
             ("ConsensusConfig-止盈", "take_profit.default_percent", 0.10, "app/core/config_container.py", {}),
             ("AI权重", "strategy.ai.weight", 0.15, "app/ai/config.py", {}),
@@ -532,7 +526,7 @@ class ConfigValidator:
 
     def _validate_subscription_slots(self, result: ValidationResult):
         """校验订阅槽位兼容性 (2026-04-26: unified_config.yaml 为 SSOT)"""
-        config = self._configs.get('unified_config.yaml', self._configs.get('config.yaml', {}))
+        config = self._configs.get('unified_config.yaml', {})
         watchlist = config.get('trading', {}).get('watch_list_hk', [])
         subscribe_str = os.getenv('SUBSCRIBE_TYPES', 'QUOTE,K_1M,K_5M')
 
@@ -552,24 +546,24 @@ class ConfigValidator:
         if stock_count > 0:
             result.add_info(
                 category='info',
-                message=f"订阅槽位: {stock_count} 只 × {sub_count} 种 = {total_slots}/100",
+                message=f"订阅槽位: {stock_count} 只 × {sub_count} 种 = {total_slots}/1000",
                 field='SUBSCRIBE_TYPES'
             )
 
-            if total_slots > 100:
+            if total_slots > 1000:
                 result.add_error(
                     category='conflict',
-                    message=f"订阅槽位 {total_slots} 超过富途限制 (100)! "
+                    message=f"订阅槽位 {total_slots} 超过富途限制 (1000)! "
                             f"{stock_count} 只 × {sub_types} 种",
                     field='SUBSCRIBE_TYPES',
-                    suggestion=f'减少 SUBSCRIBE_TYPES 至 {100 // max(stock_count, 1)} 种'
+                    suggestion=f'减少 SUBSCRIBE_TYPES 至 {1000 // max(stock_count, 1)} 种'
                 )
-            elif total_slots > 95:
+            elif total_slots > 950:
                 result.add_warning(
                     category='range',
-                    message=f"订阅槽位 {total_slots}/100 已接近上限，余量不足",
+                    message=f"订阅槽位 {total_slots}/1000 已接近上限，余量不足",
                     field='SUBSCRIBE_TYPES',
-                    suggestion='建议 ≤ 90 以保留 10 个安全余量'
+                    suggestion='建议 ≤ 900 以保留 100 个安全余量'
                 )
     
     def get_merged_config(self) -> Dict:

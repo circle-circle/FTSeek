@@ -237,16 +237,16 @@ async def run_direction_attribution(trade: Dict, battle_plan: Dict,
     except Exception as e:
         logger.warning(f"[Attribution] agent_bridge 失败，降级: {e}")
 
-    # 降级: 使用 BaseLLMService
+    # 降级: 使用 UnifiedLLMService
     trade_text = _format_trade_for_direction(trade, battle_plan)
     messages = [
         {"role": "system", "content": DIRECTION_ATTRIBUTION_PROMPT},
         {"role": "user", "content": trade_text},
     ]
-    from app.agents.base import BaseLLMService
-    svc = BaseLLMService(config=config, default_model="qwen3.6-flash", default_timeout=60)
-    raw = await svc.call_llm(messages)
-    data = svc.extract_json(raw)
+    from app.llm.unified_service import get_unified_llm, UnifiedLLMService
+    svc = get_unified_llm(default_model="qwen3.6-flash", default_timeout=60, max_retries=1)
+    raw = await svc.call(messages, model="qwen3.6-flash", timeout=60, task_type="direction_attribution")
+    data = svc.extract_json(raw) if raw else {}
 
     return LLMAttributionResult(
         cause_category=data.get("cause_category", "unknown"),
@@ -267,10 +267,10 @@ async def run_execution_attribution(trade: Dict, battle_plan: Dict,
         {"role": "system", "content": EXECUTION_ATTRIBUTION_PROMPT},
         {"role": "user", "content": trade_text},
     ]
-    from app.agents.base import BaseLLMService
-    svc = BaseLLMService(config=config, default_model="qwen3.6-flash", default_timeout=60)
-    raw = await svc.call_llm(messages)
-    data = svc.extract_json(raw)
+    from app.llm.unified_service import get_unified_llm, UnifiedLLMService
+    svc = get_unified_llm(default_model="qwen3.6-flash", default_timeout=60, max_retries=1)
+    raw = await svc.call(messages, model="qwen3.6-flash", timeout=60, task_type="execution_attribution")
+    data = svc.extract_json(raw) if raw else {}
 
     return LLMAttributionResult(
         cause_category=data.get("cause_category", "unknown"),
@@ -314,9 +314,9 @@ async def run_plan_gap_analysis(plan: Dict, trades: List[Dict],
         {"role": "system", "content": "你是计划差距分析师。只输出 JSON。"},
         {"role": "user", "content": prompt},
     ]
-    from app.agents.base import BaseLLMService
-    svc = BaseLLMService(config=config, default_model="qwen3.6-flash", default_timeout=60)
-    return await svc.call_and_parse(messages)
+    from app.llm.unified_service import get_unified_llm, UnifiedLLMService
+    svc = get_unified_llm(default_model="qwen3.6-flash", default_timeout=60, max_retries=1)
+    return await svc.call_and_parse(messages, model="qwen3.6-flash", timeout=60, task_type="plan_gap_analysis")
 
 
 def run_attribution_sync(trade: Dict, battle_plan: Dict,
@@ -333,16 +333,16 @@ def run_attribution_sync(trade: Dict, battle_plan: Dict,
         )
         return {"direction": dir_result, "execution": exec_result}
 
-    from app.agents.base import BaseLLMService
-    return BaseLLMService.run_sync(_run, timeout=120)
+    from app.llm.unified_service import UnifiedLLMService
+    return UnifiedLLMService.run_sync(_run(), timeout=120)
 
 
 def run_plan_gap_sync(plan: Dict, trades: List[Dict],
                        positions: List[Dict],
                        config: Dict = None) -> Dict:
     """同步执行计划差距分析"""
-    from app.agents.base import BaseLLMService
-    return BaseLLMService.run_sync(
-        run_plan_gap_analysis, plan, trades, positions, config,
+    from app.llm.unified_service import UnifiedLLMService
+    return UnifiedLLMService.run_sync(
+        run_plan_gap_analysis(plan, trades, positions, config),
         timeout=60,
     )

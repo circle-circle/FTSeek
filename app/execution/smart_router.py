@@ -82,7 +82,7 @@ class SmartOrderRouter:
                 capital = config_center.get('capital.fixed_amount', 1000000)
                 order_pct = config_center.get('trading.order.max_order_pct', 0.12)
                 max_order_amount = capital * order_pct
-            except:
+            except Exception:
                 max_order_amount = 120000.0  # Fallback
         
         self.max_order_amount = max_order_amount

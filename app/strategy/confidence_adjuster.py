@@ -200,6 +200,6 @@ class ConfidenceAdjuster:
         """获取最终置信度值"""
         return round(self.current_confidence, 3)
     
-    def should_reject(self, min_confidence: float = 0.35) -> bool:  # 2026-04-24 统一
+    def should_reject(self, min_confidence: float = 0.45) -> bool:  # 2026-05-19: 提高门槛 (原0.35)
         """检查最终置信度是否低于最低阈值"""
         return self.current_confidence < min_confidence

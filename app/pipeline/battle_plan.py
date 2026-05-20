@@ -8,6 +8,10 @@
    - 检查标的是否在黑名单中 (Restricted List)
    - 检查交易方向是否符合计划
 3. 获取计划建议的仓位上限
+4. 午间LLM推荐缓存注入与查询
+
+风控层级位置 (见 risk_pipeline.py):
+  SmartStopGuard (账户) > CircuitBreaker (系统) > RiskPipeline (信号) > BattlePlan (计划) > DEM (退出)
 
 P1 修复 (2026-04-19): 线程安全保护 (threading.Lock)
 """
@@ -44,6 +48,10 @@ class BattlePlanManager:
     _plan: BattlePlan = None
     _is_enabled: bool = False
     _lock = threading.Lock()  # P1 修复: 线程安全保护
+    # 2026-05-11: 午间新增推荐缓存，用于下午交易决策
+    _midday_recommendations: Dict[str, str] = {}
+    # 2026-05-11 防御修复: 缓存项TTL (2小时)，过期自动失效
+    _midday_timestamps: Dict[str, float] = {}
 
     def __new__(cls, *args, **kwargs):
         if not cls._instance:
@@ -57,6 +65,8 @@ class BattlePlanManager:
         if not self._initialized:
             self._load_plan(plan_path)
             self._initialized = True
+            # 2026-05-11: 每日开盘前清空午间缓存，防止残留前日数据
+            self.clear_midday_recommendations()
             logger.info(f"✅ 作战计划管理器已初始化: Enabled={enabled}")
         else:
             # 支持运行时重载
@@ -102,7 +112,7 @@ class BattlePlanManager:
 
         try:
             from app.pipeline.auction_manager import AuctionManager
-            # 使用默认配置，也可以从 config.yaml 读取
+            # 使用默认配置，也可以从 unified_config.yaml 读取
             am = AuctionManager() 
             
             # 这里的逻辑是：遍历 plan 中的 targets，检查市场数据，更新 status 和 limit_price
@@ -163,11 +173,36 @@ class BattlePlanManager:
         if not is_enabled or not plan:
             return True, "作战计划未启用或为空，放行"
 
-        # P0 修复 (2026-04-23): 计划存在但 targets 为空 → 降级放行
-        # 原因：盘前LLM未生成可交易目标时不应阻止所有BUY信号
+        # P0 修复 (2026-05-11): 计划存在但 targets 为空 → 严格限制，而非完全放行
+        # 原因：盘前LLM未生成可交易目标时，不应无条件放行所有信号。
+        # 策略：仅允许 watchlist 前N只 + 提高置信度要求 + 降低仓位上限
+        # 2026-05-12 更新: N 从 5→8 (从 SSOT 配置读取)
         if not plan.targets:
-            logger.warning(f"⚠️ [作战计划门禁] 今日计划 targets 为空，降级放行 | bias={plan.overall_bias}")
-            return True, "⚠️ 计划targets为空，降级放行"
+            # 从 SSOT 配置读取 watchlist gate 参数
+            gate_count = self._get_config("battle_plan.empty_plan.watchlist_gate_count", 8)
+            try:
+                from app import config
+                watch_list = getattr(config, 'WATCH_LIST_HK', [])[:gate_count]
+            except Exception:
+                watch_list = []
+
+            # P0-3 新增 (2026-05-12): 动态池豁免 — 已在活跃池中的标的允许交易
+            exempt_ok, exempt_reason = self._check_active_pool_exemption(symbol)
+            if exempt_ok:
+                logger.warning(
+                    f"⚠️ [作战计划门禁] {symbol} 动态池豁免放行: {exempt_reason}"
+                )
+                return True, f"⚠️ 动态池豁免: {exempt_reason}"
+
+            if symbol not in watch_list:
+                return False, f"🚫 [严格降级] 计划 targets 为空，{symbol} 不在 watchlist 前{gate_count}只内"
+            # 要求更高置信度 (通过 RiskPipeline 的 WeakSignalCheck 执行)
+            # 降低仓位上限
+            logger.warning(
+                f"⚠️ [作战计划门禁] 今日计划 targets 为空，严格降级 | "
+                f"仅放行 watchlist 前{gate_count}只: {watch_list}, bias={plan.overall_bias}"
+            )
+            return True, f"⚠️ 计划targets为空，严格降级放行 (仅watchlist前{gate_count}只)"
 
         # 1. 检查黑名单
         if symbol in plan.restricted:
@@ -208,15 +243,21 @@ class BattlePlanManager:
         consensus_score: float = 0, agree_count: int = 0,
         mtf_alignment: float = 0, volume_ratio: float = 0,
     ) -> Tuple[bool, str]:
-        """高置信度计划外通道 — 门槛远高于常规，仓位严格限制"""
-        if consensus_score < 2.5:
-            return False, f"共识分数{consensus_score:.1f}<2.5"
-        if agree_count < 4:
-            return False, f"策略同意数{agree_count}<4"
-        if mtf_alignment < 0.15:
-            return False, f"MTF对齐度{mtf_alignment:.0%}<15%"
-        if volume_ratio < 1.5:
-            return False, f"量比{volume_ratio:.1f}<1.5x"
+        """高置信度计划外通道 — 门槛从 SSOT 配置读取"""
+        # 从配置读取阈值 (2026-05-18: 模拟盘宽松调试，降低门槛以验证策略)
+        min_score = self._get_config("battle_plan.empty_plan.override_consensus_threshold", 1.0)
+        min_agree = self._get_config("battle_plan.empty_plan.override_agree_count", 2)
+        min_mtf = self._get_config("battle_plan.empty_plan.override_mtf_alignment", 0.0)
+        min_vol = self._get_config("battle_plan.empty_plan.override_volume_ratio", 1.1)
+
+        if consensus_score < min_score:
+            return False, f"共识分数{consensus_score:.1f}<{min_score}"
+        if agree_count < min_agree:
+            return False, f"策略同意数{agree_count}<{min_agree}"
+        if mtf_alignment < min_mtf:
+            return False, f"MTF对齐度{mtf_alignment:.0%}<{min_mtf:.0%}"
+        if volume_ratio < min_vol:
+            return False, f"量比{volume_ratio:.1f}x<{min_vol}x"
         return True, "高置信度例外放行"
 
     def get_override_max_position_pct(self) -> float:
@@ -237,8 +278,92 @@ class BattlePlanManager:
         """获取标的紧急度"""
         if not self._plan:
             return "Low"
-        
+
         target = next((t for t in self._plan.targets if t.get('symbol') == symbol), None)
         if target:
             return target.get('urgency', 'Medium')
         return "Low"
+
+    # ── 午间推荐缓存管理 ─────────────────────────────────────
+
+    def update_midday_recommendations(self, recommendations: Dict[str, str]):
+        """更新午间LLM推荐缓存 (带 2小时 TTL)
+
+        Args:
+            recommendations: {symbol: action} 映射,
+                             action 取值 HOLD|ADD|REDUCE|CLOSE
+        """
+        import time as _time
+        with self._lock:
+            self._midday_recommendations.update(recommendations)
+            now = _time.time()
+            for sym in recommendations:
+                self._midday_timestamps[sym] = now
+            logger.info(
+                f"[午间推荐] 已更新 {len(recommendations)} 只标的缓存: "
+                f"{list(recommendations.items())[:5]}"
+            )
+
+    def get_midday_recommendation(self, symbol: str) -> Optional[str]:
+        """获取标的午间推荐动作 (带 2小时 TTL 自动失效)
+
+        Returns:
+            str: HOLD|ADD|REDUCE|CLOSE 或 None (无推荐/已过期)
+        """
+        import time as _time
+        with self._lock:
+            action = self._midday_recommendations.get(symbol)
+            if action is None:
+                return None
+            ts = self._midday_timestamps.get(symbol)
+            if ts is None:
+                return None
+            if _time.time() - ts > 7200:  # 2小时 TTL
+                logger.warning(
+                    f"[午间推荐] {symbol} 缓存已过期 (>{7200}s)，自动失效"
+                )
+                self._midday_recommendations.pop(symbol, None)
+                self._midday_timestamps.pop(symbol, None)
+                return None
+            return action
+
+    def clear_midday_recommendations(self):
+        """清空午间推荐缓存 (每日开盘前调用)"""
+        with self._lock:
+            self._midday_recommendations.clear()
+            self._midday_timestamps.clear()
+            logger.info("[午间推荐] 缓存已清空")
+
+    # ── SSOT 配置读取 (2026-05-12 新增) ──────────────────────────
+
+    def _get_config(self, dotted_key: str, default):
+        """从 unified_config.yaml SSOT 读取配置点"""
+        try:
+            from config.config_center import get_config_center
+            cc = get_config_center()
+            return cc.get(dotted_key, default)
+        except Exception as e:
+            logger.debug(f"[BattlePlan] SSOT 配置读取失败 {dotted_key}: {e}，使用默认值 {default}")
+            return default
+
+    def _check_active_pool_exemption(self, symbol: str) -> Tuple[bool, str]:
+        """检查标的是否在动态池中，如果在则允许交易 (2026-05-12 新增)
+
+        当作战计划 targets 为空时，已在动态池 (active pool) 中的标的
+        即使不在 plan targets 中，也允许交易 — 避免辩论结论为空时
+        所有非 watchlist 前 N 只标的都被拦截。
+        """
+        enabled = self._get_config("battle_plan.active_pool_exempt.enabled", False)
+        if not enabled:
+            return False, "动态池豁免未启用"
+
+        try:
+            from app.utils.daily_active_pool import get_daily_active_pool
+            pool = get_daily_active_pool(market_prefix="HK.")
+            active_codes = pool.get_active_codes()
+            if symbol in active_codes:
+                return True, f"标的 {symbol} 已在动态池中 ({len(active_codes)} 只标的)"
+            return False, f"标的 {symbol} 不在动态池中"
+        except Exception as e:
+            logger.debug(f"[BattlePlan] 动态池豁免检查失败: {e}")
+            return False, f"动态池检查异常: {e}"

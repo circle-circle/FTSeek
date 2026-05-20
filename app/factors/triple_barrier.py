@@ -81,25 +81,38 @@ class TripleBarrierLabeler:
                 pt_price = entry_price * 1.02
                 sl_price = entry_price * 0.99
 
-            # 判定逻辑
+            # 判定逻辑: 三重屏障 -- 必须判断哪个屏障先被触碰
             high_series = chunk['high']
             low_series = chunk['low']
             close_series = chunk['close']
-            
-            barrier_hit = 'time' # 默认
-            label = 0 # 默认亏损/中性
 
-            # 1. 检查止损 (Low <= SL)
-            # 只要有一个 bar 的 Low 低于 SL，就认为触碰下屏障
-            if (low_series <= sl_price).any():
+            barrier_hit = 'time'  # 默认
+            label = 0  # 默认亏损/中性
+
+            # 找到第一个触碰止损的索引
+            sl_touches = low_series <= sl_price
+            sl_idx = sl_touches.idxmax() if sl_touches.any() else None
+
+            # 找到第一个触碰止盈的索引
+            pt_touches = high_series >= pt_price
+            pt_idx = pt_touches.idxmax() if pt_touches.any() else None
+
+            if sl_idx is not None and pt_idx is not None:
+                # 两个屏障都被触碰, 按时间顺序判定
+                if sl_idx <= pt_idx:
+                    barrier_hit = 'sl'
+                    label = 0
+                else:
+                    barrier_hit = 'pt'
+                    label = 1
+            elif sl_idx is not None:
                 barrier_hit = 'sl'
-                label = 0 # 止损出局，标记为 0 (或 -1)
-            # 2. 检查止盈 (High >= PT)
-            elif (high_series >= pt_price).any():
+                label = 0
+            elif pt_idx is not None:
                 barrier_hit = 'pt'
-                label = 1 # 止盈出局，标记为 1
+                label = 1
             else:
-                # 3. 垂直屏障 (持仓结束)
+                # 垂直屏障 (持仓结束)
                 exit_p = close_series.iloc[-1]
                 ret = (exit_p - entry_price) / entry_price
                 label = 1 if ret > self.min_ret else 0

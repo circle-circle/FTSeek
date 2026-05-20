@@ -41,6 +41,7 @@ class StopLossLevel:
     trigger_price: Optional[float] = None  # 触发价格
     trigger_time: Optional[str] = None     # 触发时间
     notes: str = ""             # 备注说明
+    take_profit_price: Optional[float] = None  # 止盈价格 (P0 2026-05-10)
 
 
 class StopLossCalculator:
@@ -52,7 +53,7 @@ class StopLossCalculator:
 
     def __init__(
         self,
-        default_stop_percent: float = 0.03,  # 2026-04-16 对齐 config.yaml stop_loss.default_percent (3%)
+        default_stop_percent: float = 0.03,  # 2026-04-16 对齐 unified_config.yaml stop_loss.default_percent (3%)
         atr_multiplier: float = 2.0,         # ATR 乘数
         trailing_percent: float = 0.03,      # 移动止损百分比
         max_holding_periods: int = 20,       # 最大持仓周期
@@ -340,7 +341,7 @@ class StopLossCalculator:
                 f"止损={stop_loss_price:.2f} (-{stop_loss_pct:.1%}) | "
                 f"最长持仓={max_minutes}分钟"
             ),
-            # 扩展字段：存储止盈和追踪信息
+            take_profit_price=take_profit_price,  # P0 2026-05-10: 结构化存储，避免字符串解析
             triggered=False,
         )
 
@@ -368,17 +369,8 @@ class StopLossCalculator:
         if stop_level.type != "breaking_news":
             return False, ""
 
-        # 解析 notes 获取止盈价
-        notes = stop_level.notes
-        take_profit_price = None
-        try:
-            for part in notes.split(" | "):
-                if part.startswith("止盈="):
-                    take_profit_price = float(part.split("=")[1].split(" ")[0])
-                    break
-        except Exception as e:
-            logger.debug(f"[解析止盈价] notes内容无法解析，跳过止盈检查: {e}")
-
+        # P0 修复 (2026-05-10): 使用结构化字段替代脆弱的字符串解析
+        take_profit_price = stop_level.take_profit_price
         if take_profit_price is None:
             return False, ""
 

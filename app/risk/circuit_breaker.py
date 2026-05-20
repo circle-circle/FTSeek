@@ -11,6 +11,7 @@
 """
 
 import logging
+import threading
 import time
 from typing import Optional, Dict, List, Tuple
 from dataclasses import dataclass, field
@@ -58,6 +59,7 @@ class SmartStopGuard:
     DRAWDOWN_LIMIT = 0.03      # 日内回撤硬限制 3%
     
     def __init__(self, db_path: str = None):
+        self._lock = threading.RLock()
         self.db_path = db_path or '/opt/ftseek/FTSeek/data/ftseek.db'
         self._open_equity: Optional[float] = None
         self._init_date: str = datetime.now().strftime('%Y-%m-%d')
@@ -306,6 +308,7 @@ class CircuitBreaker:
         self.reject_limit = reject_limit
         self.pause_duration = pause_duration
         self.drawdown_limit = drawdown_limit
+        self._lock = threading.RLock()
         
         self.state = CircuitBreakerState()
         self.reject_reasons: List[str] = []
@@ -332,19 +335,12 @@ class CircuitBreaker:
             self.state.reset()
     
     def record_reject(self, reason: str = ""):
-        """
-        记录拒绝 - 区分技术错误和市场异常
-        
-        P0 优化：增加分级告警
-        - 3 次：警告
-        - 5 次：触发熔断
-        
-        2026-04-09 优化:
-        - 持仓限制导致的拒绝不触发熔断（这是正常风控行为）
-        
-        Args:
-            reason: 拒绝原因
-        """
+        """记录拒绝 - 区分技术错误和市场异常"""
+        with self._lock:
+            self._record_reject_inner(reason)
+
+    def _record_reject_inner(self, reason: str = ""):
+        """内部逻辑（调用方需持有 self._lock）"""
         self._check_date_reset()
         
         # 技术性错误不计入熔断
@@ -449,12 +445,12 @@ class CircuitBreaker:
             logger.error(f"发送告警失败：{e}")
     
     def can_trade(self) -> bool:
-        """
-        判断是否可以交易
-        
-        Returns:
-            bool: 是否可以交易
-        """
+        """判断是否可以交易"""
+        with self._lock:
+            return self._can_trade_inner()
+
+    def _can_trade_inner(self) -> bool:
+        """内部逻辑（调用方需持有 self._lock）"""
         self._check_date_reset()
         
         # 检查是否在暂停期
@@ -473,12 +469,29 @@ class CircuitBreaker:
         return True
     
     def is_paused(self) -> bool:
+        """判断是否处于熔断暂停状态 (含手动 kill switch)"""
+        with self._lock:
+            return self._is_paused_inner()
+
+    def check(self, current_equity: Optional[float] = None, signal_confidence: float = 0.0) -> Tuple[bool, str, float]:
+        """智能熔断检查 — 委托给 SmartStopGuard
+
+        2026-05-19 修复: CircuitBreaker 缺少 check() 方法导致 CircuitBreakerCheck fail-close
+        根因: SmartStopGuard.check() 存在但 CircuitBreaker 未持有 SmartStopGuard 实例
+        修复: 懒初始化 SmartStopGuard 并委托 check()
         """
-        判断是否处于熔断暂停状态 (含手动 kill switch)
-        
-        Returns:
-            bool: 是否暂停中
-        """
+        with self._lock:
+            # Kill switch 优先
+            if self._halted:
+                return (False, f"🛑 手动熔断: {self._halt_reason}", 0.0)
+
+            # 懒初始化 SmartStopGuard
+            if not hasattr(self, '_smart_stop'):
+                self._smart_stop = SmartStopGuard()
+            return self._smart_stop.check(current_equity, signal_confidence)
+
+    def _is_paused_inner(self) -> bool:
+        """内部逻辑（调用方需持有 self._lock）"""
         self._check_date_reset()
         
         # Kill switch 优先检查
@@ -491,13 +504,15 @@ class CircuitBreaker:
     
     def record_success(self):
         """记录成功交易"""
-        self._check_date_reset()
-        
-        # 成功交易后重置连续拒绝计数
-        if self.state.consecutive_rejects > 0:
-            logger.debug(f"交易成功，重置连续拒绝计数 (原：{self.state.consecutive_rejects})")
-            self.state.consecutive_rejects = 0
-    
+        with self._lock:
+            self._check_date_reset()
+            
+            # 成功交易后重置连续拒绝计数
+            if self.state.consecutive_rejects > 0:
+                logger.debug(f"交易成功，重置连续拒绝计数 (原：{self.state.consecutive_rejects})")
+                self.state.consecutive_rejects = 0
+                self.reject_reasons.clear()
+
     def check_drawdown(self, current_drawdown: float) -> bool:
         """
         检查回撤

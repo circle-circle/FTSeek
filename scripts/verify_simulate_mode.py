@@ -26,8 +26,8 @@ def check_config_files():
     
     issues = []
     
-    # 检查 app_config.yaml
-    app_config_path = PROJECT_ROOT / "config" / "app_config.yaml"
+    # 检查 app_unified_config.yaml
+    app_config_path = PROJECT_ROOT / "config" / "app_unified_config.yaml"
     if app_config_path.exists():
         with open(app_config_path, 'r') as f:
             config = yaml.safe_load(f)
@@ -35,28 +35,28 @@ def check_config_files():
         trading_mode = config.get('trading', {}).get('mode', 'unknown')
         trade_env = config.get('futu', {}).get('trade_env', 0)
         
-        print(f"  app_config.yaml:")
+        print(f"  app_unified_config.yaml:")
         print(f"    trading.mode: {trading_mode}")
         print(f"    futu.trade_env: {trade_env}")
         
         if trading_mode != 'paper':
-            issues.append(f"app_config.yaml trading.mode 应为 'paper'，当前为 '{trading_mode}'")
+            issues.append(f"app_unified_config.yaml trading.mode 应为 'paper'，当前为 '{trading_mode}'")
         if trade_env != 1:
-            issues.append(f"app_config.yaml futu.trade_env 应为 1，当前为 {trade_env}")
+            issues.append(f"app_unified_config.yaml futu.trade_env 应为 1，当前为 {trade_env}")
     
-    # 检查 risk_config.yaml
-    risk_config_path = PROJECT_ROOT / "config" / "risk_config.yaml"
+    # 检查 risk_unified_config.yaml
+    risk_config_path = PROJECT_ROOT / "config" / "risk_unified_config.yaml"
     if risk_config_path.exists():
         with open(risk_config_path, 'r') as f:
             config = yaml.safe_load(f)
         
         trading_mode = config.get('trading', {}).get('mode', 'unknown')
         
-        print(f"  risk_config.yaml:")
+        print(f"  risk_unified_config.yaml:")
         print(f"    trading.mode: {trading_mode}")
         
         if trading_mode != 'paper':
-            issues.append(f"risk_config.yaml trading.mode 应为 'paper'，当前为 '{trading_mode}'")
+            issues.append(f"risk_unified_config.yaml trading.mode 应为 'paper'，当前为 '{trading_mode}'")
     
     # 检查 strategy_params.json
     strategy_params_path = PROJECT_ROOT / "config" / "strategy_params.json"

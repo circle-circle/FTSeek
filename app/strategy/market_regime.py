@@ -403,5 +403,26 @@ class MarketRegimeDetector:
         return recommendations
 
 
-# 全局单例
-market_regime_detector = MarketRegimeDetector()
+# 全局单例 (延迟加载配置，避免循环导入)
+_market_regime_detector_instance: Optional['MarketRegimeDetector'] = None
+
+def get_market_regime_detector() -> 'MarketRegimeDetector':
+    """获取市场状态检测器单例，首次调用时从 YAML 加载配置"""
+    global _market_regime_detector_instance
+    if _market_regime_detector_instance is None:
+        try:
+            from config.config_center import get_config_center
+            center = get_config_center()
+            cfg = center.get("market_regime", {}) if center else {}
+        except Exception:
+            cfg = {}
+        _market_regime_detector_instance = MarketRegimeDetector(cfg)
+    return _market_regime_detector_instance
+
+# 向后兼容代理
+class _LazyDetector:
+    """延迟代理，兼容旧代码 market_regime_detector.detect(code) 调用"""
+    def __getattr__(self, name):
+        return getattr(get_market_regime_detector(), name)
+
+market_regime_detector = _LazyDetector()

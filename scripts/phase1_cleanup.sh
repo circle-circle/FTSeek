@@ -27,7 +27,7 @@ fi
 log "📦 创建备份到 $BACKUP"
 mkdir -p "$BACKUP"
 cp -r "$PROJECT/app" "$BACKUP/app_backup"
-cp "$PROJECT/config/unified_config.yaml" "$BACKUP/" 2>/dev/null || true
+cp "$PROJECT/config/unified_unified_config.yaml" "$BACKUP/" 2>/dev/null || true
 log "✅ 备份完成"
 
 # 记录清理前状态

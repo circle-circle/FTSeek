@@ -50,22 +50,22 @@ class RiskConfig:
     # 信号级
     # 2026-04-13 修复：从 0.60 降至 0.35，与 decision_buffer 保持一致
     # 单策略信号置信度约 0.35-0.55，过高门槛会误杀所有有效信号
-    min_confidence: float = 0.35          # 2026-04-24 统一: 对齐 risk_limits.min_confidence
+    min_confidence: float = 0.45          # 2026-04-24 统一: 对齐 risk_limits.min_confidence
     
     # 订单级
     max_single_position: float = 0.08      # 2026-04-18: 0.18→0.08 统一
-    max_single_loss: float = 0.05           # 2026-04-16 对齐 config.yaml (0.05)
+    max_single_loss: float = 0.05           # 2026-04-16 对齐 unified_config.yaml (0.05)
     
     # 仓位级
-    max_total_position: float = 0.75       # 2026-04-15: 0.80→0.75, 对齐 config.yaml
-    max_daily_trades: int = 5             # 2026-04-15: 10→5, 对齐 config.yaml
-    max_daily_loss: float = 0.03          # 2026-04-15: 0.05→0.03, 对齐 config.yaml
-    max_weekly_loss: float = 0.08         # 2026-04-15: 0.10→0.08, 对齐 config.yaml
+    max_total_position: float = 0.75       # 2026-04-15: 0.80→0.75, 对齐 unified_config.yaml
+    max_daily_trades: int = 5             # 2026-04-15: 10→5, 对齐 unified_config.yaml
+    max_daily_loss: float = 0.03          # 2026-04-15: 0.05→0.03, 对齐 unified_config.yaml
+    max_weekly_loss: float = 0.08         # 2026-04-15: 0.10→0.08, 对齐 unified_config.yaml
     
     # 账户级
-    max_drawdown: float = 0.12            # 2026-04-15: 0.15→0.12, 对齐 config.yaml
-    max_monthly_loss: float = 0.15        # 2026-04-26 P0 修复: config.yaml 已新增但 RiskConfig 未读取
-    consecutive_loss_limit: int = 3       # 2026-04-15: 5→3, 对齐 config.yaml
+    max_drawdown: float = 0.12            # 2026-04-15: 0.15→0.12, 对齐 unified_config.yaml
+    max_monthly_loss: float = 0.15        # 2026-04-26 P0 修复: unified_config.yaml 已新增但 RiskConfig 未读取
+    consecutive_loss_limit: int = 3       # 2026-04-15: 5→3, 对齐 unified_config.yaml
 
     # 2026-04-26 P0 修复: 分层风控子树“读取闭环”
     # 原实现在 from_yaml 中未读取 source_aware_risk / time_aware_risk，
@@ -74,7 +74,7 @@ class RiskConfig:
     time_aware_risk: Dict = field(default_factory=dict)
     
     # 止损止盈 (2026-04-16 修复: 缺失字段导致配置加载失败)
-    stop_loss_pct: float = 0.03           # 2026-04-16 对齐 config.yaml stop_loss.default_percent (3%)
+    stop_loss_pct: float = 0.03           # 2026-04-16 对齐 unified_config.yaml stop_loss.default_percent (3%)
     take_profit_pct: float = 0.10         # 个股止盈百分比 (10%)
     trailing_stop_enabled: bool = True    # 是否启用追踪止损
     take_profit_partial: bool = True      # 是否启用分批止盈
@@ -86,7 +86,7 @@ class RiskConfig:
     
     # 策略级
     strategy_min_trades: int = 20
-    strategy_min_winrate: float = 0.45      # 2026-04-16 对齐 config.yaml (0.45)
+    strategy_min_winrate: float = 0.45      # 2026-04-16 对齐 unified_config.yaml (0.45)
     
     # 预警配置
     dingtalk_webhook: str = ""
@@ -123,7 +123,7 @@ class RiskConfig:
             return cls(
                 trading_mode=trading.get("mode", "paper"),
                 initial_cash=trading.get("paper_initial_cash", 1000000.0),
-                min_confidence=risk_limits.get("min_confidence", 0.35),  # 2026-04-24 统一: 0.55→0.35
+                min_confidence=risk_limits.get("min_confidence", 0.45),  # 2026-05-19: 提高信号门槛 (原0.35)
                 max_single_position=risk_limits.get("max_single_position", 0.18),
                 max_single_loss=risk_limits.get("max_single_loss", 0.05),
                 max_total_position=risk_limits.get("max_total_position", 0.75),
@@ -131,7 +131,7 @@ class RiskConfig:
                 max_daily_loss=risk_limits.get("max_daily_loss", 0.03),
                 max_weekly_loss=risk_limits.get("max_weekly_loss", 0.08),
                 max_drawdown=risk_limits.get("max_drawdown", 0.12),
-                # 2026-04-26 P0 修复: 读取 config.yaml 已新增的 max_monthly_loss
+                # 2026-04-26 P0 修复: 读取 unified_config.yaml 已新增的 max_monthly_loss
                 max_monthly_loss=risk_limits.get("max_monthly_loss", 0.15),
                 consecutive_loss_limit=risk_limits.get("consecutive_loss_limit", 3),
                 stop_loss_pct=risk_limits.get("stop_loss_pct", 0.03),
@@ -181,7 +181,7 @@ class RiskManager:
             
             if risk_limits or stop_loss_cfg or circuit_breaker_cfg:
                 self.config = RiskConfig(
-                    min_confidence=risk_limits.get("min_confidence", 0.35),  # 2026-04-24 统一: 0.55→0.35
+                    min_confidence=risk_limits.get("min_confidence", 0.45),  # 2026-05-19: 提高信号门槛 (原0.35)
                     max_single_position=risk_limits.get("max_single_position", 0.18),
                     max_total_position=risk_limits.get("max_total_position", 0.75),
                     max_drawdown=risk_limits.get("max_drawdown", 0.12),
@@ -416,8 +416,8 @@ class RiskManager:
                     
                     limiter = get_global_limiter()
                     if not limiter.acquire(timeout=10):
-                        logger.warning(f"[限流] 获取 {code} 价格被拒绝")
-                        return True  # 保守通过
+                        logger.warning(f"[限流] 获取 {code} 价格被拒绝，拒绝开仓")
+                        return False  # P0-7 修复: 限流失败→拒绝，防止无价格开仓
                     
                     quote_ctx = OpenQuoteContext(host=app_config.OPEND_HOST, port=app_config.OPEND_PORT)
                     try:
@@ -432,10 +432,10 @@ class RiskManager:
                 except Exception as e:
                     logger.warning(f"获取 {code} 实时价格失败: {e}")
             
-            # 如果仍无法获取价格，保守估计 (假设通过)
+            # P0-7 修复: 无法获取价格→拒绝开仓，防止无价格仓位
             if current_price <= 0:
-                logger.warning(f"无法获取 {code} 当前价格，跳过仓位检查")
-                return True
+                logger.warning(f"无法获取 {code} 当前价格，拒绝开仓（防止无价格仓位）")
+                return False
             
             # 计算新仓位价值
             new_position_value = quantity * current_price
@@ -1063,9 +1063,9 @@ class RiskManager:
             import os as _os
             # 尝试加载主配置文件来比对 trading 层
             config_paths = [
-                "/opt/ftseek/FTSeek/config/config.yaml",
-                "config/config.yaml",
-                _os.path.join(_os.path.dirname(__file__), "../../config/config.yaml"),
+                "/opt/ftseek/FTSeek/config/unified_config.yaml",
+                "config/unified_config.yaml",
+                _os.path.join(_os.path.dirname(__file__), "../../config/unified_config.yaml"),
             ]
             raw_config = None
             for path in config_paths:
@@ -1112,7 +1112,7 @@ class RiskManager:
             else:
                 logger.error(
                     f"[validate_config_consistency] 发现 {len(warnings_list)} 处配置不一致，"
-                    f"请检查 config/config.yaml"
+                    f"请检查 config/unified_config.yaml"
                 )
 
         except Exception as e:
@@ -1180,22 +1180,22 @@ class RiskManager:
 @dataclass
 class RiskLimit:
     """风险限制 (向后兼容旧 API)"""
-    max_position_percent: float = 0.18      # 2026-04-16 对齐 config.yaml
-    max_total_exposure: float = 0.75        # 2026-04-16 对齐 config.yaml
-    max_daily_loss: float = 0.03          # 2026-04-15: 0.05→0.03, 对齐 config.yaml            # 日亏损限制
-    max_drawdown: float = 0.12            # 2026-04-15: 0.15→0.12, 对齐 config.yaml              # 最大回撤限制
+    max_position_percent: float = 0.18      # 2026-04-16 对齐 unified_config.yaml
+    max_total_exposure: float = 0.75        # 2026-04-16 对齐 unified_config.yaml
+    max_daily_loss: float = 0.03          # 2026-04-15: 0.05→0.03, 对齐 unified_config.yaml            # 日亏损限制
+    max_drawdown: float = 0.12            # 2026-04-15: 0.15→0.12, 对齐 unified_config.yaml              # 最大回撤限制
     max_var_percent: float = 0.03           # 最大 VaR
     max_correlated_exposure: float = 0.40   # 高相关标的合计上限
-    max_trades_per_day: int = 5             # 2026-04-16 对齐 config.yaml (5)
+    max_trades_per_day: int = 5             # 2026-04-16 对齐 unified_config.yaml (5)
     max_symbol_trades_per_day: int = 1      # 2026-05-08: 单只股票日内最多交易次数 (防重复交易)
     min_open_interval_sec: int = 900        # 2026-05-08: 两次开仓最小间隔 (秒)
-    max_single_loss: float = 0.05           # 2026-04-16 对齐 config.yaml (0.05)
-    max_weekly_loss: float = 0.08         # 2026-04-15: 0.10→0.08, 对齐 config.yaml           # 周亏损限制
-    consecutive_loss_limit: int = 3       # 2026-04-15: 5→3, 对齐 config.yaml         # 连续亏损限制
-    strategy_min_winrate: float = 0.45      # 2026-04-16 对齐 config.yaml (0.45)
+    max_single_loss: float = 0.05           # 2026-04-16 对齐 unified_config.yaml (0.05)
+    max_weekly_loss: float = 0.08         # 2026-04-15: 0.10→0.08, 对齐 unified_config.yaml           # 周亏损限制
+    consecutive_loss_limit: int = 3       # 2026-04-15: 5→3, 对齐 unified_config.yaml         # 连续亏损限制
+    strategy_min_winrate: float = 0.45      # 2026-04-16 对齐 unified_config.yaml (0.45)
     # 2026-04-13 修复：从 0.60 降至 0.35，与 decision_buffer 保持一致
     # 单策略信号置信度约 0.35-0.55，过高门槛会误杀所有有效信号
-    min_confidence: float = 0.35          # 2026-04-24 统一: 对齐 risk_limits.min_confidence            # 最小置信度
+    min_confidence: float = 0.45          # 2026-04-24 统一: 对齐 risk_limits.min_confidence            # 最小置信度
 
 
 @dataclass

@@ -2,7 +2,7 @@
 """
 配置一致性审计 (只读，零风险)
 ================================
-检查 config.yaml vs 环境变量 vs 代码默认值 的差异
+检查 unified_config.yaml vs 环境变量 vs 代码默认值 的差异
 输出差异报告，不修改任何文件
 
 运行方式:
@@ -23,7 +23,7 @@ PROJECTS = {
 }
 
 # 需要审计的关键配置项映射 (yaml_key, env_var, code_default, description)
-# SSOT v4.1 (2026-05-06): 所有 code_default 对齐 config_defaults.py 和 unified_config.yaml
+# SSOT v4.1 (2026-05-06): 所有 code_default 对齐 config_defaults.py 和 unified_unified_config.yaml
 AUDIT_ITEMS = {
     "FTSeek": [
         # 信号/策略配置
@@ -151,7 +151,7 @@ def audit_project(project_name: str, project_path: str) -> dict:
     
     # 1. 加载 YAML 配置 (unified_config.yaml 为 SSOT)
     yaml_config = {}
-    yaml_paths = ["config/unified_config.yaml", "config/config.yaml", "config.yaml"]
+    yaml_paths = ["config/unified_config.yaml", "unified_config.yaml"]
     yaml_file = None
     for yp in yaml_paths:
         p = base_path / yp

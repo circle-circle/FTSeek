@@ -145,9 +145,9 @@ def test_config_loading(result: StartupTestResult):
         
         # 5. YAML 配置文件
         yaml_files = [
-            'config/config.yaml',
+            'config/unified_unified_config.yaml',
             'config/cross_market_mapping.yaml',
-            'config/us_data_config.yaml',
+            'config/us_data_unified_config.yaml',
         ]
         
         for f in yaml_files:

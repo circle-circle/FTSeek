@@ -61,6 +61,16 @@ class HKEODReview:
             result["errors"].append(f"collector: {e}")
             return result
 
+        # Step 1b: 加载午间上下文 (从 feedback relay)
+        try:
+            from app.review.hk_feedback_relay import load_midday_context
+            midday = load_midday_context()
+            if midday:
+                collected["midday_context"] = midday
+                logger.info(f"[HKEODReview] Step 1b: 已加载午间上下文 ({len(midday.get('new_targets', []))} 只标的)")
+        except Exception as _midday_err:
+            logger.debug(f"[HKEODReview] Step 1b 午间上下文加载失败 (非阻塞): {_midday_err}")
+
         # Step 2: 归因
         lessons = []
         try:
@@ -128,6 +138,61 @@ class HKEODReview:
             except Exception as e:
                 logger.error(f"[HKEODReview] Step 4 失败: {e}", exc_info=True)
                 result["errors"].append(f"memory: {e}")
+
+        # Step 4b: 模式发现 + 假设生成 (P1 2026-05-10) — 从历史交易中挖掘可执行规律
+        try:
+            from app.review.pattern_miner import get_pattern_miner
+            miner = get_pattern_miner()
+            patterns = miner.mine(days=60)
+            if patterns:
+                miner.save_to_knowledge_db(patterns)
+                result["patterns_discovered"] = len(patterns)
+                logger.info(f"[HKEODReview] Step 4b: 发现 {len(patterns)} 个可执行模式")
+
+                # ★ 假设驱动进化：从模式生成可测试假设（对标 RD-Agent）
+                try:
+                    from app.review.hypothesis_engine import get_hypothesis_engine
+                    engine = get_hypothesis_engine()
+                    hypotheses = engine.generate_from_patterns(patterns)
+                    result["hypotheses_generated"] = len(hypotheses)
+
+                    # 输出进化状态摘要
+                    summary = engine.get_evolution_summary()
+                    result["evolution_summary"] = summary
+                    logger.info(f"[HKEODReview] 假设进化状态: {summary}")
+
+                    # 将已确认规则写入反馈文件
+                    confirmed_rules = summary.get('confirmed_rules', [])
+                    if confirmed_rules:
+                        try:
+                            from app.review.hk_feedback_relay import save_eod_feedback
+                            save_eod_feedback({
+                                "trade_date": trade_date,
+                                "confirmed_rules": confirmed_rules,
+                                "hypotheses": [h.to_dict() for h in hypotheses],
+                            })
+                            logger.info(f"[HKEODReview] {len(confirmed_rules)} 条确认规则已写入反馈")
+                        except Exception as _fb_e:
+                            logger.debug(f"[HKEODReview] 反馈写入失败: {_fb_e}")
+                except Exception as _hyp_e:
+                    logger.warning(f"[HKEODReview] 假设引擎初始化失败 (非阻塞): {_hyp_e}")
+
+                # 将 HIGH severity 模式写入反馈文件，供次日盘前使用
+                high_patterns = [p for p in patterns if p.get('severity') == 'HIGH']
+                if high_patterns:
+                    try:
+                        from app.review.hk_feedback_relay import save_eod_feedback
+                        save_eod_feedback({
+                            "trade_date": trade_date,
+                            "high_patterns": high_patterns,
+                        })
+                        logger.info(f"[HKEODReview] {len(high_patterns)} 个高危模式已写入反馈")
+                    except Exception as _fb_e:
+                        logger.debug(f"[HKEODReview] 反馈写入失败: {_fb_e}")
+            else:
+                result["patterns_discovered"] = 0
+        except Exception as _pm_e:
+            logger.warning(f"[HKEODReview] Step 4b 模式发现失败 (非阻塞): {_pm_e}")
 
         # Step 5: 次日预判 (盘后二阶推导 — 双轨: Hermes / 内部)
         next_day_preview = None
@@ -255,6 +320,27 @@ class HKEODReview:
 
         result["status"] = "completed"
         logger.info(f"[HKEODReview] === EOD 复盘完成: {result['trades_reviewed']}笔, {len(result['errors'])}个错误 ===")
+
+        # Step 8: 保存反馈到 relay 文件 (连接次日盘前)
+        try:
+            from app.review.hk_feedback_relay import save_eod_feedback
+            next_day_text = ""
+            if next_day_preview and hasattr(next_day_preview, 'to_injection_text'):
+                next_day_text = next_day_preview.to_injection_text()
+            elif isinstance(next_day_preview, str):
+                next_day_text = next_day_preview
+            save_eod_feedback(
+                trade_date=trade_date,
+                summary=result.get("summary", {}),
+                next_day_preview=next_day_text,
+                lessons=lessons,
+                battle_plan_execution=collected.get("battle_plan", {}),
+                trades=collected.get("trades", []),
+            )
+            logger.info(f"[HKEODReview] Step 8: EOD 反馈已保存到 relay")
+        except Exception as _relay_err:
+            logger.warning(f"[HKEODReview] Step 8 反馈保存失败 (非阻塞): {_relay_err}")
+
         return result
 
     # ════════════════════════════════════════════════════════════════

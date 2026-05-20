@@ -7,6 +7,7 @@
 
 import asyncio
 import logging
+import os
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -264,27 +265,6 @@ class PreMarketPipeline:
         except Exception as e:
             logger.error(f"[Pipeline] Stage 1.5 拦截失败: {e}")
 
-    def _stage_cluster(self, result: PipelineResult) -> List[Any]:
-        """Stage 2: 事件聚类"""
-        logger.info("[Pipeline] Stage 2: 事件聚类")
-
-        # 获取清洗后的新闻 (重新采集并清洗，或从缓存获取)
-        from app.news_push.collector import NewsCollector
-        collector = NewsCollector()
-        try:
-            raw_news = collector.fetch_all()
-            collector.close()
-        except Exception:
-            raw_news = []
-
-        cleaned_news = self._cleaner.clean(raw_news)
-        clusters = self._clusterer.cluster(cleaned_news)
-
-        # 缓存新闻供后续使用
-        self._cached_cleaned_news = cleaned_news
-
-        return clusters
-
     def _stage_score(self, clusters: List[Any]) -> tuple:
         """Stage 3: 相关性评分"""
         logger.info(f"[Pipeline] Stage 3: 相关性评分 ({len(clusters)} 个聚类)")
@@ -322,9 +302,45 @@ class PreMarketPipeline:
         
         # Phase 1 新增: 生成日内作战计划 (Daily Battle Plan)
         try:
-            plan = self._analyst.generate_battle_plan_json(assessments)
-            logger.info(f"[Pipeline] 作战计划已生成: {len(plan['targets'])} 个目标, 基调={plan['overall_bias']}")
-            self._last_battle_plan = plan
+            # P0 修复 (2026-05-11): 防止 Pipeline 补执行覆盖午间刷新结果
+            # 检查文件是否存在且在最近 60 分钟内更新过
+            plan_path = self._analyst.output_path
+            should_generate = True
+            if os.path.exists(plan_path):
+                mtime = os.path.getmtime(plan_path)
+                # 如果文件在 1 小时内更新过，说明已有最新计划，跳过生成
+                if time.time() - mtime < 3600:
+                    logger.info(f"[Pipeline] 跳过作战计划生成: 文件在 {mtime} 已更新 (防覆盖午间刷新)")
+                    should_generate = False
+
+            if should_generate:
+                plan = self._analyst.generate_battle_plan_json(assessments)
+                logger.info(f"[Pipeline] 作战计划已生成: {len(plan['targets'])} 个目标, 基调={plan['overall_bias']}")
+                self._last_battle_plan = plan
+            
+            # 2026-05-11 新增: 自动注入战斗计划目标到动态池 (必须在 if 之外)
+            # 2026-05-17 修复: 传递 signal_impact/urgency 到动态池，保留 LLM 信号质量
+            plan = self._last_battle_plan or self._analyst.generate_battle_plan_json(assessments)
+            from app.utils.daily_active_pool import get_daily_active_pool
+            pool = get_daily_active_pool(market_prefix="HK.")
+            injected = 0
+            for t in plan.get('targets', []):
+                sym = t.get('symbol', '')
+                if sym.startswith('HK.'):
+                    try:
+                        pool.add_plan_target(
+                            code=sym,
+                            direction=t.get('direction', 'ANY'),
+                            logic=t.get('key_trigger', t.get('logic', '')),
+                            max_position_pct=t.get('max_position_pct', 0.05),
+                            signal_impact=t.get('signal_impact', 'neutral'),
+                            urgency=t.get('urgency', 'Medium'),
+                        )
+                        injected += 1
+                    except Exception as e:
+                        logger.debug(f"[Pipeline] 注入 {sym} 到动态池失败: {e}")
+            if injected:
+                logger.info(f"[Pipeline] 战斗计划已注入 {injected} 只标的到动态池")
             
             # 领域事件 — 盘前计划生成
             from app.core.domain_events import get_event_bus, DomainEvent, EventType, PlanPremarketPayload
@@ -429,72 +445,74 @@ class PreMarketPipeline:
             from app import config
 
             ctx = OpenQuoteContext(host=config.OPEND_HOST, port=config.OPEND_PORT)
-            parts = []
+            try:
+                parts = []
 
-            # 1. 港股指数
-            hk_indices = {"HK.800000": "恒生指数", "HK.800700": "国企指数", "HK.HSI": "恒生科技"}
-            ret, data = ctx.get_market_snapshot(list(hk_indices.keys()))
-            if ret == RET_OK and data is not None and not data.empty:
-                parts.append("【港股大盘】")
-                for _, row in data.iterrows():
-                    code = row.get("code", "")
-                    name = hk_indices.get(code, code)
-                    last = float(row.get("last_price", 0) or 0)
-                    change = float(row.get("change_rate", 0) or 0) / 100.0
-                    parts.append(f"  {name} ({code}): {last:.2f} ({change:+.2%})")
+                # 1. 港股指数
+                hk_indices = {"HK.800000": "恒生指数", "HK.800700": "国企指数", "HK.HSI": "恒生科技"}
+                ret, data = ctx.get_market_snapshot(list(hk_indices.keys()))
+                if ret == RET_OK and data is not None and not data.empty:
+                    parts.append("【港股大盘】")
+                    for _, row in data.iterrows():
+                        code = row.get("code", "")
+                        name = hk_indices.get(code, code)
+                        last = float(row.get("last_price", 0) or 0)
+                        change = float(row.get("change_rate", 0) or 0) / 100.0
+                        parts.append(f"  {name} ({code}): {last:.2f} ({change:+.2%})")
 
-            # 2. A股指数 (前日收盘)
-            ashare_indices = {"SH.000001": "上证指数", "SH.000300": "沪深300", "SZ.399006": "创业板指"}
-            ret, data = ctx.get_market_snapshot(list(ashare_indices.keys()))
-            if ret == RET_OK and data is not None and not data.empty:
-                parts.append("【A股收盘】")
-                for _, row in data.iterrows():
-                    code = row.get("code", "")
-                    name = ashare_indices.get(code, code)
-                    last = float(row.get("last_price", 0) or 0)
-                    change = float(row.get("change_rate", 0) or 0) / 100.0
-                    parts.append(f"  {name} ({code}): {last:.2f} ({change:+.2%})")
+                # 2. A股指数 (前日收盘)
+                ashare_indices = {"SH.000001": "上证指数", "SH.000300": "沪深300", "SZ.399006": "创业板指"}
+                ret, data = ctx.get_market_snapshot(list(ashare_indices.keys()))
+                if ret == RET_OK and data is not None and not data.empty:
+                    parts.append("【A股收盘】")
+                    for _, row in data.iterrows():
+                        code = row.get("code", "")
+                        name = ashare_indices.get(code, code)
+                        last = float(row.get("last_price", 0) or 0)
+                        change = float(row.get("change_rate", 0) or 0) / 100.0
+                        parts.append(f"  {name} ({code}): {last:.2f} ({change:+.2%})")
 
-            # 3. 美股隔夜表现 (Phase 2 新增)
-            us_indices = {"US.DJI": "道琼斯", "US.SPX": "标普500", "US.IXIC": "纳斯达克"}
-            ret, data = ctx.get_market_snapshot(list(us_indices.keys()))
-            if ret == RET_OK and data is not None and not data.empty:
-                parts.append("【美股隔夜】")
-                for _, row in data.iterrows():
-                    code = row.get("code", "")
-                    name = us_indices.get(code, code)
-                    last = float(row.get("last_price", 0) or 0)
-                    change = float(row.get("change_rate", 0) or 0) / 100.0
-                    parts.append(f"  {name} ({code}): {last:.2f} ({change:+.2%})")
+                # 3. 美股隔夜表现 (Phase 2 新增)
+                us_indices = {"US.DJI": "道琼斯", "US.SPX": "标普500", "US.IXIC": "纳斯达克"}
+                ret, data = ctx.get_market_snapshot(list(us_indices.keys()))
+                if ret == RET_OK and data is not None and not data.empty:
+                    parts.append("【美股隔夜】")
+                    for _, row in data.iterrows():
+                        code = row.get("code", "")
+                        name = us_indices.get(code, code)
+                        last = float(row.get("last_price", 0) or 0)
+                        change = float(row.get("change_rate", 0) or 0) / 100.0
+                        parts.append(f"  {name} ({code}): {last:.2f} ({change:+.2%})")
 
-            # 4. 中概股 ETF (Phase 2 新增)
-            adr_etf = {"US.KWEB": "中概互联ETF", "US.FXI": "中国大盘ETF"}
-            ret, data = ctx.get_market_snapshot(list(adr_etf.keys()))
-            if ret == RET_OK and data is not None and not data.empty:
-                parts.append("【中概股ETF】")
-                for _, row in data.iterrows():
-                    code = row.get("code", "")
-                    name = adr_etf.get(code, code)
-                    last = float(row.get("last_price", 0) or 0)
-                    change = float(row.get("change_rate", 0) or 0) / 100.0
-                    parts.append(f"  {name} ({code}): {last:.2f} ({change:+.2%})")
+                # 4. 中概股 ETF (Phase 2 新增)
+                adr_etf = {"US.KWEB": "中概互联ETF", "US.FXI": "中国大盘ETF"}
+                ret, data = ctx.get_market_snapshot(list(adr_etf.keys()))
+                if ret == RET_OK and data is not None and not data.empty:
+                    parts.append("【中概股ETF】")
+                    for _, row in data.iterrows():
+                        code = row.get("code", "")
+                        name = adr_etf.get(code, code)
+                        last = float(row.get("last_price", 0) or 0)
+                        change = float(row.get("change_rate", 0) or 0) / 100.0
+                        parts.append(f"  {name} ({code}): {last:.2f} ({change:+.2%})")
 
-            # 5. 汇率
-            ret, data = ctx.get_market_snapshot(["HK.USDHKD"])
-            if ret == RET_OK and data is not None and not data.empty:
-                rate = float(data.iloc[0].get("last_price", 0) or 0)
-                parts.append(f"【汇率】USD/HKD: {rate:.4f}")
+                # 5. 汇率
+                ret, data = ctx.get_market_snapshot(["HK.USDHKD"])
+                if ret == RET_OK and data is not None and not data.empty:
+                    rate = float(data.iloc[0].get("last_price", 0) or 0)
+                    parts.append(f"【汇率】USD/HKD: {rate:.4f}")
 
-            # 6. VIX 恐慌指数 (Phase 2 新增)
-            ret, data = ctx.get_market_snapshot(["US.VIX"])
-            if ret == RET_OK and data is not None and not data.empty:
-                vix = float(data.iloc[0].get("last_price", 0) or 0)
-                vix_status = "高波动" if vix > 25 else "正常" if vix < 20 else "警戒"
-                parts.append(f"【VIX恐慌指数】{vix:.2f} ({vix_status})")
+                # 6. VIX 恐慌指数 (Phase 2 新增)
+                ret, data = ctx.get_market_snapshot(["US.VIX"])
+                if ret == RET_OK and data is not None and not data.empty:
+                    vix = float(data.iloc[0].get("last_price", 0) or 0)
+                    vix_status = "高波动" if vix > 25 else "正常" if vix < 20 else "警戒"
+                    parts.append(f"【VIX恐慌指数】{vix:.2f} ({vix_status})")
 
-            ctx.close()
-            self.market_context = "\n".join(parts) if parts else "无实时数据"
-            logger.info(f"[Pipeline] 市场上下文已收集: {len(parts)} 项")
+                self.market_context = "\n".join(parts) if parts else "无实时数据"
+                logger.info(f"[Pipeline] 市场上下文已收集: {len(parts)} 项")
+            finally:
+                ctx.close()
         except Exception as e:
             logger.warning(f"[Pipeline] 市场上下文收集失败: {e}")
             self.market_context = "数据不可用"
@@ -510,23 +528,25 @@ class PreMarketPipeline:
 
             from futu import OpenQuoteContext, RET_OK
             ctx = OpenQuoteContext(host=config.OPEND_HOST, port=config.OPEND_PORT)
-            ret, data = ctx.get_market_snapshot(watchlist)
-            parts = []
-            if ret == RET_OK and data is not None and not data.empty:
-                for _, row in data.iterrows():
-                    code = row.get("code", "")
-                    last = float(row.get("last_price", 0) or 0)
-                    change = float(row.get("change_rate", 0) or 0) / 100.0
-                    vol_ratio = float(row.get("volume_ratio", 0) or 0)
-                    turnover = float(row.get("turnover", 0) or 0)
-                    amplitude = float(row.get("amplitude", 0) or 0) / 100.0 if row.get("amplitude") else 0
-                    parts.append(
-                        f"  {code}: {last:.2f} ({change:+.2%}) "
-                        f"量比={vol_ratio:.1f}x 换手={turnover:.2%} 振幅={amplitude:.2%}"
-                    )
-            ctx.close()
-            self.price_context = "\n".join(parts) if parts else "无实时数据"
-            logger.info(f"[Pipeline] 价格上下文已收集: {len(parts)} 只标的")
+            try:
+                ret, data = ctx.get_market_snapshot(watchlist)
+                parts = []
+                if ret == RET_OK and data is not None and not data.empty:
+                    for _, row in data.iterrows():
+                        code = row.get("code", "")
+                        last = float(row.get("last_price", 0) or 0)
+                        change = float(row.get("change_rate", 0) or 0) / 100.0
+                        vol_ratio = float(row.get("volume_ratio", 0) or 0)
+                        turnover = float(row.get("turnover", 0) or 0)
+                        amplitude = float(row.get("amplitude", 0) or 0) / 100.0 if row.get("amplitude") else 0
+                        parts.append(
+                            f"  {code}: {last:.2f} ({change:+.2%}) "
+                            f"量比={vol_ratio:.1f}x 换手={turnover:.2%} 振幅={amplitude:.2%}"
+                        )
+                self.price_context = "\n".join(parts) if parts else "无实时数据"
+                logger.info(f"[Pipeline] 价格上下文已收集: {len(parts)} 只标的")
+            finally:
+                ctx.close()
         except Exception as e:
             logger.warning(f"[Pipeline] 价格上下文收集失败: {e}")
             self.price_context = "数据不可用"
@@ -540,37 +560,39 @@ class PreMarketPipeline:
             from app import config
 
             ctx = OpenQuoteContext(host=config.OPEND_HOST, port=config.OPEND_PORT)
-            watchlist = getattr(config, 'WATCH_LIST_HK', [])
-            if not watchlist:
-                self.auction_context = "watchlist为空"
-                return
+            try:
+                watchlist = getattr(config, 'WATCH_LIST_HK', [])
+                if not watchlist:
+                    self.auction_context = "watchlist为空"
+                    return
 
-            # 获取竞价盘口数据
-            ret, data = ctx.get_market_snapshot(watchlist)
-            parts = []
-            if ret == RET_OK and data is not None and not data.empty:
-                parts.append("【竞价盘口】")
-                for _, row in data.iterrows():
-                    code = row.get("code", "")
-                    last = float(row.get("last_price", 0) or 0)
-                    y_close = float(row.get("last_close", 0) or 0)
-                    change = float(row.get("change_rate", 0) or 0) / 100.0
-                    bid = float(row.get("bid_price", 0) or 0)
-                    ask = float(row.get("ask_price", 0) or 0)
+                # 获取竞价盘口数据
+                ret, data = ctx.get_market_snapshot(watchlist)
+                parts = []
+                if ret == RET_OK and data is not None and not data.empty:
+                    parts.append("【竞价盘口】")
+                    for _, row in data.iterrows():
+                        code = row.get("code", "")
+                        last = float(row.get("last_price", 0) or 0)
+                        y_close = float(row.get("last_close", 0) or 0)
+                        change = float(row.get("change_rate", 0) or 0) / 100.0
+                        bid = float(row.get("bid_price", 0) or 0)
+                        ask = float(row.get("ask_price", 0) or 0)
 
-                    # 计算跳空幅度
-                    gap_pct = (last - y_close) / y_close if y_close > 0 else 0
-                    gap_status = "⚠️大跳空" if abs(gap_pct) > 0.03 else "正常"
+                        # 计算跳空幅度
+                        gap_pct = (last - y_close) / y_close if y_close > 0 else 0
+                        gap_status = "⚠️大跳空" if abs(gap_pct) > 0.03 else "正常"
 
-                    parts.append(
-                        f"  {code}: 竞价{last:.2f} ({change:+.2%}) "
-                        f"买一={bid:.2f} 卖一={ask:.2f} "
-                        f"跳空={gap_pct:+.2%} {gap_status}"
-                    )
+                        parts.append(
+                            f"  {code}: 竞价{last:.2f} ({change:+.2%}) "
+                            f"买一={bid:.2f} 卖一={ask:.2f} "
+                            f"跳空={gap_pct:+.2%} {gap_status}"
+                        )
 
-            ctx.close()
-            self.auction_context = "\n".join(parts) if parts else "无竞价数据"
-            logger.info(f"[Pipeline] 竞价上下文已收集: {len(parts)} 只标的")
+                self.auction_context = "\n".join(parts) if parts else "无竞价数据"
+                logger.info(f"[Pipeline] 竞价上下文已收集: {len(parts)} 只标的")
+            finally:
+                ctx.close()
         except Exception as e:
             logger.warning(f"[Pipeline] 竞价上下文收集失败: {e}")
             self.auction_context = "数据不可用"

@@ -4,12 +4,12 @@
 新闻 - 股票映射器 (News-to-Stock Mapper)
 
 功能:
-- 使用 LLM 做命名实体识别 (NER)
-- 建立新闻内容到股票的自动映射
-- 支持影响链扩散 (新闻提到"电动车"→自动关联 Tesla/比亚迪/锂电池)
+- 使用关键词匹配建立新闻内容到股票的自动映射
+- 支持行业关键词扩散 (新闻提到"电动车"→自动关联相关股票)
+- 支持影响链分析 (同一行业股票聚类)
 
 核心流程:
-新闻文本 → NLP 实体识别 → 股票池匹配 → 影响链扩散 → 映射结果
+新闻文本 → 关键词匹配 → 股票池匹配 → 行业扩散 → 映射结果
 
 示例:
     mapper = NewsStockMapper()
@@ -36,14 +36,6 @@ from pathlib import Path
 
 logger = logging.getLogger("ftseek.factors.news_mapper")
 logger.propagate = False
-
-# 导入 AI 服务
-try:
-    from app.ai import AIService
-    AI_AVAILABLE = True
-except ImportError:
-    AI_AVAILABLE = False
-    logger.warning("AI 服务不可用，使用规则模式")
 
 # 导入股票池
 try:
@@ -107,20 +99,19 @@ class NewsStockMapper:
     """
     新闻 - 股票映射器
 
-    使用规则 + AI 混合模式:
-    1. 规则模式：关键词匹配 (快速，适用于明确提及股票名称)
-    2. AI 模式：LLM 实体识别 + 影响链分析 (慢，适用于隐含关联)
+    使用规则模式进行新闻到股票的映射:
+    1. 关键词匹配：公司名称直接匹配 (快速、确定性高)
+    2. 行业关键词匹配：行业/概念 -> 相关股票
+    3. 影响链扩散：同一行业股票聚类分析
     """
 
-    def __init__(self, db_path: str = None, use_ai: bool = True):
+    def __init__(self, db_path: str = None):
         """
         初始化映射器
 
         Args:
             db_path: 映射数据库路径
-            use_ai: 是否启用 AI 分析
         """
-        self.use_ai = use_ai and AI_AVAILABLE
         self._db_path = db_path or str(Path(__file__).parent.parent / "data" / "news_mapping.db")
 
         # 关键词映射表 (行业/概念 -> 股票列表)
@@ -135,9 +126,6 @@ class NewsStockMapper:
         self._cache: Dict[str, Tuple[NewsMappingResult, float]] = {}
         self._cache_ttl = 300  # 5 分钟
 
-        # AI 服务
-        self.ai = AIService() if self.use_ai else None
-
         # 初始化
         self._init_db()
         self._load_aliases()
@@ -145,7 +133,7 @@ class NewsStockMapper:
 
         logger.info(
             f"News-Stock Mapper 已初始化 | "
-            f"AI={self.use_ai}, aliases={len(self._company_aliases)}, "
+            f"模式=规则引擎, aliases={len(self._company_aliases)}, "
             f"industries={len(self._industry_keywords)}"
         )
 
@@ -306,40 +294,13 @@ class NewsStockMapper:
         # 步骤 1: 规则模式 - 关键词匹配
         direct_matches = self._rule_based_match(full_text)
 
-        # 步骤 2: AI 模式 - 实体识别 + 影响链分析
-        entities = []
+        # 步骤 2: 规则模式 - 行业关键词匹配
         industry_matches = []
-        impact_chain = []
-        confidence = 0.0
-        raw_response = ""
-
-        if self.use_ai and (not direct_matches or len(full_text) > 100):
-            ai_result = self._ai_analyze_news(title, content)
-            entities = ai_result.get('entities', [])
-            industry_matches = ai_result.get('industry_matches', [])
-            impact_chain = ai_result.get('impact_chain', [])
-            raw_response = ai_result.get('raw_response', '')
-            confidence = ai_result.get('confidence', 0.0)
-
-            # 合并 AI 识别的直接匹配
-            if entities:
-                for entity in entities:
-                    if entity.get('type') == '公司':
-                        alias = entity.get('text', '')
-                        if alias in self._company_aliases:
-                            code = self._company_aliases[alias]
-                            if not any(m.get('code') == code for m in direct_matches):
-                                direct_matches.append({
-                                    'code': code,
-                                    'name': alias,
-                                    'mention_count': 1,
-                                    'source': 'ai'
-                                })
-
-        # 步骤 3: 行业扩散
-        if not direct_matches and not industry_matches:
-            # 尝试行业关键词匹配
+        if not direct_matches:
             industry_matches = self._industry_match(full_text)
+
+        # 步骤 3: 影响链扩散 (基于规则的行业关联)
+        impact_chain = self._build_impact_chain(direct_matches, industry_matches)
 
         # 构建结果
         result = NewsMappingResult(
@@ -349,9 +310,9 @@ class NewsStockMapper:
             direct_matches=direct_matches,
             industry_matches=industry_matches,
             impact_chain=impact_chain,
-            entities=entities,
-            confidence=confidence or (0.8 if direct_matches else 0.5),
-            raw_response=raw_response,
+            entities=[],  # 规则模式无实体识别
+            confidence=0.8 if direct_matches else (0.5 if industry_matches else 0.0),
+            raw_response="",  # 规则模式无原始响应
             trace_id=trace_id or f"MAP-{news_id[:8]}"
         )
 
@@ -413,99 +374,32 @@ class NewsStockMapper:
 
         return matches
 
-    def _ai_analyze_news(self, title: str, content: str) -> Dict:
+    def _build_impact_chain(self, direct_matches: List[Dict], industry_matches: List[Dict]) -> List[Dict]:
         """
-        使用 AI 分析新闻
-
-        Returns:
-            {
-                'entities': [{'text': '特斯拉', 'type': '公司', 'sentiment': 'negative'}],
-                'industry_matches': [...],
-                'impact_chain': [...],
-                'confidence': 0.85,
-                'raw_response': '...'
-            }
+        基于规则构建影响链
+        
+        根据直接匹配和行业匹配的股票，推断产业链上下游关系
         """
-        from app.ai.providers.qwen import QwenProvider
-
-        # 尝试使用 Qwen Provider
-        try:
-            provider = QwenProvider()
-            if not provider.api_key:
-                logger.debug("Qwen API Key 未配置，使用规则模式")
-                return {
-                    'entities': [],
-                    'industry_matches': [],
-                    'impact_chain': [],
-                    'confidence': 0.0,
-                    'raw_response': 'Qwen API Key 未配置'
-                }
-        except Exception as e:
-            logger.warning(f"初始化 Qwen Provider 失败：{e}")
-            return {
-                'entities': [],
-                'industry_matches': [],
-                'impact_chain': [],
-                'confidence': 0.0,
-                'raw_response': str(e)
-            }
-
-        # 1. 实体识别
-        entities = []
-        entity_response = provider.analyze_news_entities(title, content)
-        if entity_response.success:
-            entities = entity_response.data.get('entities', [])
-
-        # 2. 影响链分析
         impact_chain = []
-        impact_response = provider.analyze_impact_chain(title, content)
-        if impact_response.success:
-            impact_chain = impact_response.data.get('impact_chain', [])
-
-        # 3. 事件分类
-        event_type = 'other'
-        event_response = provider.classify_event(title, content)
-        if event_response.success:
-            event_type = event_response.data.get('event_type', 'other')
-
-        # 4. 合并结果
-        industry_matches = []
-        if entities:
-            for entity in entities:
-                if entity.get('type') == 'industry':
-                    industry = entity.get('text', '')
-                    if industry in self._industry_keywords:
-                        for code in self._industry_keywords[industry]:
-                            industry_matches.append({
-                                'code': code,
-                                'name': code.split('.')[-1],
-                                'industry': industry,
-                                'relevance': entity.get('confidence', 0.5)
-                            })
-
-        # 计算置信度
-        confidence = 0.0
-        if entities:
-            confidence += 0.4
-        if impact_chain:
-            confidence += 0.3
-        if industry_matches:
-            confidence += 0.3
-
-        raw_response = json.dumps({
-            'entities': entities,
-            'impact_chain': impact_chain,
-            'event_type': event_type
-        }, ensure_ascii=False)
-
-        return {
-            'entities': entities,
-            'industry_matches': industry_matches,
-            'impact_chain': impact_chain if isinstance(impact_chain, list) else [],
-            'confidence': min(1.0, confidence),
-            'raw_response': raw_response,
-            'event_type': event_type
-        }
+        
+        # 简单规则：同一行业的股票形成影响链
+        industry_groups = {}
+        for m in industry_matches:
+            industry = m.get('industry', 'unknown')
+            if industry not in industry_groups:
+                industry_groups[industry] = []
+            industry_groups[industry].append(m['code'])
+        
+        for industry, codes in industry_groups.items():
+            if len(codes) > 1:
+                impact_chain.append({
+                    'industry': industry,
+                    'affected_stocks': codes,
+                    'chain_type': 'industry_cluster',
+                    'confidence': 0.6
+                })
+        
+        return impact_chain
 
     def _persist_mapping(self, result: NewsMappingResult):
         """持久化映射结果到数据库"""
@@ -568,11 +462,11 @@ class NewsStockMapper:
 _mapper: Optional[NewsStockMapper] = None
 
 
-def get_news_mapper(use_ai: bool = True) -> NewsStockMapper:
+def get_news_mapper() -> NewsStockMapper:
     """获取全局 News-Stock Mapper 单例"""
     global _mapper
     if _mapper is None:
-        _mapper = NewsStockMapper(use_ai=use_ai)
+        _mapper = NewsStockMapper()
     return _mapper
 
 

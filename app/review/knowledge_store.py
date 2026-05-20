@@ -198,7 +198,7 @@ class KnowledgeStore:
         for r in results:
             try:
                 r['tags'] = json.loads(r.get('tags', '[]'))
-            except:
+            except Exception:
                 r['tags'] = []
 
         conn.close()
@@ -284,7 +284,7 @@ class KnowledgeStore:
             for field in ['risks', 'watchlist']:
                 try:
                     r[field] = json.loads(r.get(field, '[]'))
-                except:
+                except Exception:
                     r[field] = []
 
         conn.close()

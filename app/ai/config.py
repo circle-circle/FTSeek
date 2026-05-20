@@ -13,9 +13,9 @@ class AIConfig:
     """AI 配置"""
     enabled: bool = False
     provider: str = 'bailian'
-    weight: float = 0.15        # 2026-04-16 对齐 config.yaml strategy.ai.weight
-    daily_budget: float = 50.0   # 2026-04-16 对齐 config.yaml ai.daily_budget
-    monthly_budget: float = 1500.0  # 2026-04-16 对齐 config.yaml ai.monthly_budget
+    weight: float = 0.15        # 2026-04-16 对齐 unified_config.yaml strategy.ai.weight
+    daily_budget: float = 50.0   # 2026-04-16 对齐 unified_config.yaml ai.daily_budget
+    monthly_budget: float = 1500.0  # 2026-04-16 对齐 unified_config.yaml ai.monthly_budget
     cache_ttl: int = 3600
     requests_per_minute: int = 10
     

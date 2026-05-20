@@ -16,7 +16,7 @@ FTSeek 风险监控推送脚本
 
 配置：
 - 环境变量：DINGTALK_WEBHOOK_URL, DINGTALK_SECRET
-- 配置文件：config/risk_config.yaml
+- 配置文件：config/risk_unified_config.yaml
 
 定时任务 (crontab):
     0 10,12,14,16 * * 1-5 cd /opt/ftseek/FTSeek && python3 scripts/risk_monitor.py
@@ -63,7 +63,7 @@ def init_components():
     
     # 2. 初始化风控管理器
     try:
-        config_path = "/opt/ftseek/FTSeek/config/risk_config.yaml"
+        config_path = "/opt/ftseek/FTSeek/config/risk_unified_config.yaml"
         risk_manager = get_risk_manager(config_path)
         logger.info(f"风控管理器已初始化 | 模式={risk_manager.config.trading_mode}")
     except Exception as e:

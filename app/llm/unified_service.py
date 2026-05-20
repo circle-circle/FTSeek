@@ -20,13 +20,32 @@ import logging
 import os
 import re
 import requests
-from typing import Dict, List, Optional, Any
+import time
+from typing import Dict, List, Optional, Any, Tuple
+from pathlib import Path
 
 logger = logging.getLogger("ftseek.llm.unified_service")
 
+# 指标文件路径
+METRICS_DIR = Path(__file__).resolve().parent.parent.parent / "data"
+METRICS_FILE = METRICS_DIR / "llm_metrics.jsonl"
+
 
 class UnifiedLLMService:
-    """统一 LLM 服务 — 支持多模型、重试、降级、JSON 解析"""
+    """统一 LLM 服务 — 支持多模型、重试、降级、JSON 解析、成本统计"""
+
+    # 模型定价 (每百万 Token 价格, 人民币, DashScope 2026-05)
+    # 来源: https://help.aliyun.com/zh/model-studio/developer-reference/tongyi-thousand-questions-metering-and-billing
+    MODEL_PRICING = {
+        # (input_price_per_M, output_price_per_M)
+        "qwen3.6-plus":    (2.0,  6.0),
+        "qwen3.6-flash":   (0.3,  0.6),
+        "qwen-max":        (8.0,  24.0),
+        "qwen-turbo":      (0.3,  0.6),
+        "deepseek-v4-pro": (4.0,  12.0),
+        "deepseek-v4-flash": (1.0, 3.0),
+        "MiniMax-M2.5":    (5.0,  15.0),
+    }
 
     # 模型降级链 (主模型 → 备用1 → 备用2)
     FALLBACK_CHAIN = {
@@ -58,15 +77,19 @@ class UnifiedLLMService:
 
     async def call(self, messages: List[Dict], model: str = None,
                     timeout: int = None, temperature: float = 0.3,
-                    max_tokens: int = 4096) -> Optional[str]:
+                    max_tokens: int = 4096, task_type: str = "unknown") -> Optional[str]:
         """
         调用 LLM (带重试+降级)
+
+        Args:
+            task_type: 业务场景标识 (如 "veto", "premarket", "consensus")
 
         Returns: 原始文本，失败返回 None
         """
         model = model or self.default_model
         timeout = timeout or self.default_timeout
         max_tokens = 8192 if "deepseek" in model.lower() else max_tokens
+        start_time = time.time()
 
         for attempt in range(self.max_retries + 1):
             # 指数退避
@@ -83,13 +106,24 @@ class UnifiedLLMService:
                 logger.warning(f"[UnifiedLLM] 降级到 {current_model}")
 
             try:
-                result = await self._http_call(
+                result, usage = await self._http_call(
                     model=current_model,
                     messages=messages,
                     timeout=timeout,
                     temperature=temperature,
                     max_tokens=max_tokens,
                 )
+                
+                latency_ms = int((time.time() - start_time) * 1000)
+                self._record_metrics(
+                    model=current_model,
+                    task_type=task_type,
+                    status="success" if result else "empty",
+                    latency_ms=latency_ms,
+                    usage=usage,
+                    attempt=attempt + 1
+                )
+
                 if result:
                     return result
 
@@ -98,21 +132,35 @@ class UnifiedLLMService:
                     f"[UnifiedLLM] 调用失败 model={current_model} "
                     f"attempt={attempt+1}: {type(e).__name__}: {e}"
                 )
+                self._record_metrics(
+                    model=current_model,
+                    task_type=task_type,
+                    status="error",
+                    latency_ms=int((time.time() - start_time) * 1000),
+                    usage={},
+                    attempt=attempt + 1,
+                    error=str(e)
+                )
 
         return None
 
     async def call_and_parse(self, messages: List[Dict], model: str = None,
-                              timeout: int = None) -> Dict:
+                              timeout: int = None, task_type: str = "unknown") -> Dict:
         """调用 LLM 并解析 JSON 结果"""
-        raw = await self.call(messages, model, timeout)
+        raw = await self.call(messages, model, timeout, task_type=task_type)
         return self.extract_json(raw)
 
     async def _http_call(self, model: str, messages: List[Dict],
                           timeout: int, temperature: float,
-                          max_tokens: int) -> Optional[str]:
-        """直接 HTTP 调用 DashScope API (不依赖 AsyncOpenAI 单例)"""
+                          max_tokens: int) -> Tuple[Optional[str], Dict]:
+        """
+        直接 HTTP 调用 DashScope API
+        
+        Returns:
+            Tuple of (content_text, usage_info)
+        """
         if not self.api_key:
-            return None
+            return None, {}
 
         extra_body = {}
         if self.enable_thinking:
@@ -140,21 +188,22 @@ class UnifiedLLMService:
 
         if resp.status_code == 429:
             logger.warning(f"[UnifiedLLM] API 限流 (429), model={model}")
-            return None
+            return None, {}
 
         if resp.status_code == 404:
             logger.warning(f"[UnifiedLLM] 模型不存在 (404): {model}")
-            return None
+            return None, {}
 
         resp.raise_for_status()
         data = resp.json()
+        usage = data.get("usage", {})
 
         choices = data.get("choices")
         if not choices:
             logger.warning(f"[UnifiedLLM] API 返回空 choices")
-            return None
+            return None, usage
 
-        return choices[0].get("message", {}).get("content", "")
+        return choices[0].get("message", {}).get("content", ""), usage
 
     @staticmethod
     def extract_json(raw: str) -> Dict:
@@ -193,6 +242,108 @@ class UnifiedLLMService:
 
         logger.warning(f"[UnifiedLLM] JSON 解析失败: {text[:200]}")
         return {}
+
+    def _estimate_cost(self, model: str, prompt_tokens: int, completion_tokens: int) -> float:
+        """估算单次调用成本 (人民币)"""
+        pricing = self.MODEL_PRICING.get(model)
+        if not pricing:
+            return 0.0
+        input_price, output_price = pricing
+        return (prompt_tokens / 1_000_000 * input_price) + (completion_tokens / 1_000_000 * output_price)
+
+    def _record_metrics(self, model: str, task_type: str, status: str, 
+                        latency_ms: int, usage: Dict, attempt: int, error: str = None):
+        """
+        记录 LLM 调用指标到 data/llm_metrics.jsonl
+        """
+        try:
+            METRICS_DIR.mkdir(parents=True, exist_ok=True)
+            prompt_tokens = usage.get("prompt_tokens", 0)
+            completion_tokens = usage.get("completion_tokens", 0)
+            total_tokens = usage.get("total_tokens", 0)
+            cost = self._estimate_cost(model, prompt_tokens, completion_tokens)
+            record = {
+                "ts": int(time.time()),
+                "datetime": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "model": model,
+                "task_type": task_type,
+                "status": status,
+                "latency_ms": latency_ms,
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "total_tokens": total_tokens,
+                "cost_cny": round(cost, 6),
+                "attempt": attempt,
+                "error": error[:50] if error else None,
+            }
+            
+            # Append to JSONL (atomic enough for append mode)
+            with open(METRICS_FILE, "a", encoding="utf-8") as f:
+                f.write(json.dumps(record, ensure_ascii=False) + "\n")
+        except Exception as e:
+            logger.debug(f"[UnifiedLLM] 指标记录失败: {e}")
+
+    @staticmethod
+    def get_stats(days: int = 7) -> Dict:
+        """
+        获取 LLM 调用统计 (从 metrics 文件)
+        """
+        if not METRICS_FILE.exists():
+            return {"error": "No metrics file found"}
+        
+        records = []
+        cutoff = int(time.time()) - (days * 86400)
+        
+        try:
+            with open(METRICS_FILE, 'r', encoding='utf-8') as f:
+                for line in f:
+                    if not line.strip(): continue
+                    r = json.loads(line)
+                    if r.get("ts", 0) >= cutoff:
+                        records.append(r)
+        except Exception:
+            return {"error": "Failed to read metrics"}
+            
+        if not records:
+            return {"total_calls": 0}
+
+        total_calls = len(records)
+        success_calls = len([r for r in records if r['status'] == 'success'])
+        total_latency = sum(r.get('latency_ms', 0) for r in records)
+        total_tokens = sum(r.get('total_tokens', 0) for r in records)
+        total_cost = sum(r.get('cost_cny', 0) for r in records)
+        
+        # Model distribution
+        model_stats = {}
+        for r in records:
+            m = r.get('model', 'unknown')
+            if m not in model_stats:
+                model_stats[m] = {"calls": 0, "tokens": 0, "cost": 0.0, "errors": 0}
+            model_stats[m]["calls"] += 1
+            model_stats[m]["tokens"] += r.get('total_tokens', 0)
+            model_stats[m]["cost"] += r.get('cost_cny', 0)
+            if r.get('status') != 'success':
+                model_stats[m]["errors"] += 1
+        # Round costs
+        for m in model_stats:
+            model_stats[m]["cost"] = round(model_stats[m]["cost"], 4)
+            
+        # Task distribution
+        task_counts = {}
+        for r in records:
+            t = r.get('task_type', 'unknown')
+            task_counts[t] = task_counts.get(t, 0) + 1
+
+        return {
+            "period_days": days,
+            "total_calls": total_calls,
+            "success_rate": f"{success_calls/total_calls:.1%}",
+            "avg_latency_ms": int(total_latency / total_calls),
+            "total_tokens": total_tokens,
+            "total_cost_cny": round(total_cost, 4),
+            "models": model_stats,
+            "tasks": task_counts,
+        }
 
     @classmethod
     def run_sync(cls, coro, timeout: int = 150) -> Any:

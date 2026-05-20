@@ -12,6 +12,7 @@ from app.pipeline.premarket_analyst import PreMarketAnalyst, PreMarketAssessment
 from app.pipeline.strategy_router import StrategyRouter, PreMarketSignalConverter
 from app.pipeline.orchestrator import PreMarketPipeline, PipelineResult
 from app.pipeline.premarket_scheduler import PreMarketScheduler
+from app.pipeline.midday_analyst import MiddayAnalyst, MiddayAssessment, run_midday_analysis
 
 __all__ = [
     "NewsCleaner",
@@ -28,4 +29,7 @@ __all__ = [
     "PreMarketPipeline",
     "PipelineResult",
     "PreMarketScheduler",
+    "MiddayAnalyst",
+    "MiddayAssessment",
+    "run_midday_analysis",
 ]

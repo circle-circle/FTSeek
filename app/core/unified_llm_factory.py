@@ -96,5 +96,5 @@ def get_llm_config() -> Dict[str, Any]:
         from config.config_center import get_config_center
         config_center = get_config_center()
         return config_center.get('llm', {})
-    except:
+    except Exception:
         return {}

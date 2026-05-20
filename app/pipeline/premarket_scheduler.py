@@ -18,7 +18,9 @@ Phase 2 (2026-05-09): 统一决策引擎
 """
 
 import asyncio
+import json
 import logging
+import os
 import threading
 import time
 from datetime import datetime, time as dtime
@@ -156,6 +158,7 @@ class PreMarketScheduler:
     def _run_loop(self):
         """后台调度循环"""
         logger.info("[PreMarketScheduler] 调度循环启动")
+        self._last_heartbeat = time.time()  # 心跳时间戳
 
         while not self._stop_event.is_set():
             now = datetime.now()
@@ -172,7 +175,13 @@ class PreMarketScheduler:
                     f"[PreMarketScheduler] 到达调度时间: {current_hm} "
                     f"(last_run={self._last_run_at})"
                 )
-                self._execute_pipeline()
+                # P0 修复 (2026-05-17): 管道异常防护 — 防止 daemon 线程静默死亡
+                try:
+                    self._execute_pipeline()
+                except Exception as e:
+                    logger.critical(f"[PreMarketScheduler] Pipeline 执行失败: {e}", exc_info=True)
+                    self._send_failure_alert(str(e))
+                    # 不退出循环 — 下次调度时间仍可重试
 
             # 检查 session 状态
             if not self._in_premarket_session():
@@ -182,7 +191,20 @@ class PreMarketScheduler:
                 # 在盘前时段, 高频轮询
                 time.sleep(10)
 
+            self._last_heartbeat = time.time()  # 更新心跳
+
         logger.info("[PreMarketScheduler] 调度循环退出")
+
+    def get_status(self) -> Dict:
+        """获取调度器状态 (供外部健康检查调用)"""
+        alive = self._thread.is_alive() if self._thread else False
+        age = time.time() - self._last_heartbeat if self._last_heartbeat else -1
+        return {
+            "alive": alive,
+            "thread_alive": alive,
+            "last_heartbeat_age_sec": round(age, 1),
+            "last_run_at": self._last_run_at,
+        }
 
     def _in_premarket_session(self) -> bool:
         """判断是否在盘前时段 (08:00-09:30 HKT)，且非节假日"""
@@ -236,6 +258,24 @@ class PreMarketScheduler:
         except Exception as e:
             logger.error(f"[PreMarketScheduler] Pipeline 执行异常: {e}", exc_info=True)
             return None
+
+    def _send_failure_alert(self, error: str):
+        """发送 Pipeline 执行失败告警 (钉钉通知)"""
+        try:
+            from app.risk.dingtalk_alert import init_dingtalk_alert
+            from app import config
+            sender = init_dingtalk_alert(getattr(config, 'DINGTALK_WEBHOOK', None))
+            if sender:
+                sender.send_text(
+                    f"🚨 **盘前 Pipeline 执行失败**\n"
+                    f"⏰ 时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+                    f"❌ 错误: {error[:500]}\n"
+                    f"⚠️ 状态: 调度器存活，下次调度时间仍会重试\n"
+                    f"🔧 建议: 检查 LLM 服务/Futu OpenD/日志"
+                )
+                logger.info("[PreMarketScheduler] Pipeline 失败告警已发送")
+        except Exception as e:
+            logger.error(f"[PreMarketScheduler] 发送失败告警异常: {e}")
 
     def _send_summary_report(self, result: Any):
         """发送 Pipeline 执行汇总报告到 DingTalk/飞书 并生成盘前作战计划"""
@@ -351,6 +391,34 @@ class PreMarketScheduler:
                                 pass
 
                 generator.generate_from_assessments(result.assessments, auction_data=auction_data)
+
+                # 3b. 辩论标的合并: 将不在 assessments 中的辩论标的注入计划
+                try:
+                    if generator._debate_synthesis:
+                        plan_path = generator.output_path
+                        if os.path.exists(plan_path):
+                            with open(plan_path, 'r', encoding='utf-8') as _f:
+                                _plan = json.load(_f)
+                            _existing = _plan.get('targets', [])
+                            _restricted = _plan.get('restricted', [])
+                            # P0 修复 (2026-05-17): 传入 assessments 以交叉引用 signal_impact
+                            _merge = generator.merge_debate_targets(
+                                _existing, _restricted,
+                                assessments=result.assessments if hasattr(result, 'assessments') else None
+                            )
+                            if _merge['added_count'] > 0:
+                                _plan['targets'] = _existing + _merge['new_targets']
+                                _plan['restricted'] = _merge['restricted']
+                                _plan['debate_consensus']['ranked_count'] = \
+                                    _plan.get('debate_consensus', {}).get('ranked_count', 0) + _merge['added_count']
+                                with open(plan_path, 'w', encoding='utf-8') as _f:
+                                    json.dump(_plan, _f, ensure_ascii=False, indent=2)
+                                logger.info(
+                                    f"[BattlePlan] 辩论标的已合并: {_merge['added_count']} 只新增, "
+                                    f"总计 {len(_plan['targets'])} 只标的"
+                                )
+                except Exception as _me:
+                    logger.warning(f"[BattlePlan] 辩论标的合并失败 (非阻塞): {_me}")
 
                 # 4. 一致性检查 (08:20 vs 08:30 辩论对比)
                 if pre_0820 and debate_synthesis:

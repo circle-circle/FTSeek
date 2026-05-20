@@ -75,7 +75,7 @@ def main():
 
     # 3. Configuration
     total_checks += 1
-    if check_config("config/config.yaml"): checks_passed += 1
+    if check_config("config/unified_unified_config.yaml"): checks_passed += 1
 
     # Summary
     logger.info("="*40)

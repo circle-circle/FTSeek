@@ -55,20 +55,27 @@ base:
   project_name: FTSeek
   timezone: Asia/Hong_Kong
   trade_env: paper
+  # 模拟盘优化配置 (2026-05-17): 最大化数据收集，门禁 shadow 模式
+  simulation_mode:
+    enabled: true
+    gate_mode: shadow  # shadow=告警放行, block=硬拦截
+    time_gate_shadow: true  # 14:30-15:30 告警不拦截
+    exit_gray_ratio: 0.5  # 50% 仓位用新退出系统
+    min_trade_value: 8000  # 最小交易金额 (低于此费用侵蚀严重)
   version: 3.0.0
 circuit_breaker:
   pause_on_triggered: true
   daily_loss_pct: 0.03
+  daily_loss_limit: -3000
 entry_price_checker:
   enabled: true
-  # 分级阈值 (2026-05-07 辩论修复)
-  high_buy_block: 0.003    # 0.3% 禁止区 (极度接近高点)
-  high_buy_warn: 0.01      # 1.0% 警告区 (突破模式，允许但警告)
-  high_buy_soft: 0.03      # 3.0% 软警告区
-  low_sell_block: 0.005    # 0.5% 禁止区 (极度接近低点)
-  low_sell_warn: 0.02      # 2.0% 警告区
-  chase_threshold: 0.03    # 3.0% 追高警告 (相对于开盘价)
-  panic_threshold: 0.03    # 3.0% 杀跌警告 (相对于开盘价)
+  high_buy_block: 0.003
+  high_buy_warn: 0.01
+  high_buy_soft: 0.03
+  low_sell_block: 0.005
+  low_sell_warn: 0.02
+  chase_threshold: 0.03
+  panic_threshold: 0.03
 data_sources:
   futu:
     host: ${OPEND_HOST:127.0.0.1}
@@ -97,7 +104,7 @@ database:
     retention_days: 30
   path: data/ftseek.db
   pool:
-    enabled: false
+    enabled: true            # 2026-05-19: 启用连接池，提升高并发性能
     max_connections: 10
     timeout: 30
   type: sqlite
@@ -107,32 +114,8 @@ dynamic_exit:
     atr_stop:
       multiplier: 2.0
       preferred_kline: K_30M
-    stop_loss: -0.035
-    take_profit: 0.05
-    time_stop:
-      max_holding_hours: 48
-    trailing_stop:
-      enabled: true
-      trail_percent: 0.015
-      trigger_profit: 0.025
-  high_volatility:
-    atr_stop:
-      multiplier: 3.2
-      preferred_kline: K_60M
-    stop_loss: -0.07
-    take_profit: 0.09
-    time_stop:
-      max_holding_hours: 96
-    trailing_stop:
-      enabled: true
-      trail_percent: 0.045
-      trigger_profit: 0.05
-  range_bound:
-    atr_stop:
-      multiplier: 1.6
-      preferred_kline: K_30M
-    stop_loss: -0.035
-    take_profit: 0.05
+    stop_loss: -0.045          # 2026-05-19: 与 dynamic_exit_params 对齐 (原-0.035)
+    take_profit: 0.06            # 2026-05-19: 修复 R:R 门控误杀 (0.05/0.045=1.11<1.25, 改为 0.06/0.045=1.33>1.25)
     time_stop:
       max_holding_hours: 36
     trailing_stop:
@@ -153,7 +136,7 @@ dynamic_exit:
     atr_stop:
       multiplier: 1.4
       preferred_kline: K_15M
-    stop_loss: -0.03
+    stop_loss: -0.04             # 2026-05-19: 与 dynamic_exit_params 对齐 (原-0.03)
     take_profit: 0.045
     time_stop:
       max_holding_hours: 24
@@ -181,6 +164,10 @@ exit:
     crash_guard_pct: 0.08
     stop_pct: 0.03
   _deprecated: Moved to dynamic_exit_params section
+  us:
+    atr_multiplier: 1.5
+    stop_pct: 0.015
+    time_stop_minutes: 30
 features:
   auto_confirm: true
   config_hot_reload: true
@@ -205,6 +192,7 @@ futu:
   port: 11111
   simulate_account_id: '18820895'
   trade_env: 1
+  us_account_id: 0
 holding_period:
   enabled: true
   max_holding_hours:
@@ -224,7 +212,7 @@ llm:
   model: ${BAILIAN_MODEL}
   provider: bailian
   temperature: 0.1
-  timeout_sec: 120  # P0 修复 (2026-05-06): 从 30 改为 120，与 analyst 配置对齐
+  timeout_sec: 120
 logging:
   backup_count_daily: 30
   backup_count_size: 5
@@ -247,9 +235,12 @@ loss_pause:
   enabled: true
   pause_minutes: 60
 market_regime:
-  adx_thresholds:
-    range: 20
-    trend: 25
+  adx_strong: 30.0    # 强趋势 ADX 阈值
+  adx_weak: 20.0      # 弱趋势 ADX 阈值
+  atr_high: 80.0      # 高波动 ATR 百分位阈值
+  atr_low: 20.0       # 低波动 ATR 百分位阈值
+  ma_period: 50       # 趋势判断均线周期
+  atr_lookback: 100   # ATR 百分位计算周期
   regime_check_interval_sec: 300
 markets:
   hk:
@@ -262,6 +253,14 @@ markets:
       lunch_break_end: '13:00'
       lunch_break_start: '12:00'
       open: 09:30
+  us:
+    check_interval: 300
+    currency: USD
+    market_type: us
+    night_interval: 900
+    trading_hours:
+      close: 04:00
+      open: '21:30'
 migration:
   action: 移至 config/deprecated/ 目录
   deprecated_after: '2026-04-30'
@@ -338,9 +337,42 @@ premarket_pipeline:
     deep_model: deepseek-v4-flash
     deep_threshold: 0.5
     deep_timeout: 120
-    enable_thinking: false  # P1 修复 (2026-05-06): 关闭thinking模式，减少响应时间
+    enable_thinking: false
     fast_model: qwen3.6-flash
     max_retries: 2
+    timeout: 60
+  cleaner:
+    dedup_threshold: 0.85
+    filter_clickbait: true
+    max_content_length: 2000
+    min_content_length: 8
+  clusterer:
+    max_clusters: 10
+    theme_generation: rule
+    time_window_minutes: 120
+  dingtalk:
+    max_cards_per_run: 5
+    send_review_cards: true
+    send_summary: true
+  enabled: true
+  pack_builder:
+    include_market_context: true
+    max_articles_per_pack: 5
+  relevance:
+    min_overall_score: 0.2
+    weights:
+      earnings: 0.2
+      policy: 0.2
+      stock: 0.4
+      urgency: 0.2
+  router:
+    auto_execute_threshold: 0.75
+    review_threshold: 0.55
+  schedule:
+    times:
+    - 08:30
+    - 09:00
+    timezone: Asia/Hong_Kong
 hermes_agent:
   enabled: true
   premarket_enabled: false
@@ -460,6 +492,8 @@ quality_scorer:
     margin: 0.15
     roe: 0.3
 risk_limits:
+  min_rr: 1.25
+  weak_signal_min_score: 0.8
   circuit_breaker:
     consecutive_loss_halt: 3
     daily_loss_halt: 0.03
@@ -476,7 +510,7 @@ risk_limits:
     macd_fast: 12
     macd_signal: 9
     macd_slow: 26
-    min_confidence: 0.35
+    min_confidence: 0.45         # 2026-05-19: 提高信号门槛 (原0.35)
     per_stock_daily_limit: 2
     rsi_overbought: 70
     rsi_oversold: 30
@@ -498,7 +532,7 @@ risk_limits:
   max_monthly_loss_pct: 0.15
   max_position_pct: 0.08
   max_position_size: 0.2
-  max_positions: 5
+  max_positions: 8
   max_single_loss: 0.05
   max_single_position: 0.08
   max_symbol_trades_per_day: 3
@@ -507,7 +541,7 @@ risk_limits:
   max_total_exposure: 0.75
   max_total_position: 0.75
   max_weekly_loss: 0.08
-  min_confidence: 0.35
+  min_confidence: 0.45           # 2026-05-19: 提高信号门槛 (原0.35)
   news_signal_cooldown_sec: 60
   open_close_effect:
     close_trend_threshold: 0.015
@@ -527,39 +561,45 @@ risk_limits:
   source_aware_risk:
     cross_market:
       max_position: 0.08
-      min_confidence: 0.35
+      min_confidence: 0.45         # 2026-05-19: 提高信号门槛 (原0.35)
     event:
       max_position: 0.05
       min_confidence: 0.4
     hybrid:
       max_position: 0.08
-      min_confidence: 0.35
+      min_confidence: 0.45         # 2026-05-19: 提高信号门槛 (原0.35)
     technical:
       max_position: 0.08
-      min_confidence: 0.35
+      min_confidence: 0.45         # 2026-05-19: 提高信号门槛 (原0.35)
   strategy_min_trades: 20
   strategy_min_winrate: 0.45
   time_aware_risk:
     afternoon:
       end: '12:00'
       max_position: 0.1
-      min_confidence: 0.35
+      min_confidence: 0.45         # 2026-05-19: 提高信号门槛 (原0.35)
       start: '10:00'
     closing:
       end: '16:00'
       max_position: 0.08
-      min_confidence: 0.35
+      min_confidence: 0.45         # 2026-05-19: 提高信号门槛 (原0.35)
       start: '13:00'
     mid_day:
       end: '13:00'
       max_position: 0.08
-      min_confidence: 0.35
+      min_confidence: 0.45         # 2026-05-19: 提高信号门槛 (原0.35)
       start: '12:00'
     opening:
       end: '10:00'
       max_position: 0.05
-      min_confidence: 0.35
+      min_confidence: 0.45         # 2026-05-19: 提高信号门槛 (原0.35)
       start: 09:30
+  stop_loss_cooldown_schedule:
+  - 30
+  - 60
+  - 120
+  - 300
+  - 300
 schedule:
   daily_stats_time: '16:30'
   monthly_report_time: 09:00
@@ -589,6 +629,15 @@ signal_fusion:
       - BUY
     policy_weight: 0.4
     technical_weight: 0.3
+  us:
+    macro_resonance:
+      alignment_bonus: 1.2
+      divergence_penalty: 0.8
+      enabled: true
+      trend_proxy: SPY
+    macro_weight: 0.3
+    news_weight: 0.2
+    technical_weight: 0.5
 smart_push:
   auto_execute_min_confidence: 0.6
   manual_confirm_min_confidence: 0.75
@@ -654,6 +703,10 @@ stop_loss:
   trailing_percent: 0.02
   _deprecated: Moved to dynamic_exit_params section
 strategy:
+  # P1 门禁链 (2026-05-19)
+  # USE_GATE_CHAIN: 启用门禁链检查 (true) 或使用 inline 逻辑 (false)
+  # 生产环境建议：true (门禁链已充分测试)
+  USE_GATE_CHAIN: true
   ai:
     disable_threshold: 0.45
     min_accuracy: 0.5
@@ -669,7 +722,7 @@ strategy:
     max_single_penalty: 0.15
     max_total_boost: 0.2
     max_total_penalty: 0.4
-    min_confidence: 0.35
+    min_confidence: 0.45         # 2026-05-19: 提高信号门槛 (原0.35)
   confluence:
     adx_threshold: 25
     bb_period: 20
@@ -707,6 +760,7 @@ strategy:
     - supertrend
     - ma_cross
     - volume
+    - momentum  # P0 新增 2026-05-18: Momentum 动量因子
     ma_fast: 10
     ma_slow: 30
     macd_fast: 12
@@ -714,6 +768,16 @@ strategy:
     macd_slow: 26
     max_holding_periods: 15
     min_factors: 3
+    # P0 核心因子定义 (2026-05-18): RSI + SuperTrend 为核心，需额外确认
+    core_factors:
+    - rsi
+    - supertrend
+    core_factor_bonus: 1.2  # 核心因子额外 20% 权重
+    # P0 相关性计算参数
+    correlation_refresh_interval: 20  # 每 20 根 K 线刷新相关性缓存
+    signal_history_maxlen: 50  # 因子信号历史最大保留长度
+    momentum_period: 10  # P0: 10日ROC动量
+    momentum_threshold: 2.0  # P0: ROC > ±2% 才触发信号
     order_type: market
     retry_count: 3
     rsi_overbought: 70
@@ -727,6 +791,64 @@ strategy:
     use_dynamic_weights: true
     use_market_regime: true
     vol_ratio: 1.5
+    # P0 动态因子权重 (按市场状态，从 YAML 读取而非硬编码)
+    regime_weights:
+      strong_trend_up:
+        supertrend: 0.8
+        macd: 1.3
+        rsi: 0.7
+        bollinger: 0.8
+        ma_cross: 1.0
+        volume: 1.0
+        momentum: 1.5
+      strong_trend_down:
+        supertrend: 0.8
+        macd: 1.3
+        rsi: 0.7
+        bollinger: 0.8
+        ma_cross: 1.0
+        volume: 1.0
+        momentum: 1.5
+      weak_trend_up:
+        supertrend: 0.6
+        macd: 1.1
+        rsi: 0.9
+        bollinger: 0.9
+        ma_cross: 0.8
+        volume: 1.0
+        momentum: 1.0
+      weak_trend_down:
+        supertrend: 0.6
+        macd: 1.1
+        rsi: 0.9
+        bollinger: 0.9
+        ma_cross: 0.8
+        volume: 1.0
+        momentum: 1.0
+      range_bound:
+        rsi: 1.5
+        bollinger: 1.5
+        supertrend: 0.3
+        macd: 0.7
+        ma_cross: 0.5
+        volume: 1.2
+        momentum: 0.5
+      high_volatility:
+        bollinger: 1.3
+        supertrend: 0.4
+        rsi: 0.9
+        macd: 0.7
+        ma_cross: 0.6
+        volume: 0.8
+        momentum: 0.6
+      low_volatility:
+        bollinger: 1.2
+        supertrend: 0.7
+        macd: 0.9
+        rsi: 1.0
+        ma_cross: 0.9
+        volume: 1.0
+        momentum: 1.2
   consensus:
     adaptive_long_term_disable_threshold: 0.3
     adaptive_long_weight: 0.2
@@ -744,15 +866,29 @@ strategy:
     scenario_consecutive_fail_limit: 3
     scenario_fail_penalty: -0.1
     short_bias_factor: 1.0
-    threshold: 1.0  # P0 修复 (2026-05-06 09:45): 从 1.5 降低到 1.0，解决信号分数不足无法触发问题
-    window_sec: 60
+    threshold: 1.5               # 2026-05-19: 提高共识阈值 (原1.0, 要求更多因子确认)
     window_seconds: 90
+    adaptive_threshold_enabled: true
+    adaptive_threshold_window: 200
+    adaptive_threshold_percentile: 75
+    adaptive_threshold_min: 0.8
+    adaptive_threshold_max: 2.5
+    breaking_news_multiplier: 2.0
+    breaking_news_lookback_hours: 2
+    gray_zone_penalty: -0.3
+    trend_boost: 1.5
+    trend_decay: 0.6
+    range_boost: 1.5
+    range_decay: 0.6
+    mtf_trend_boost: 1.3
+    mtf_range_decay: 0.7
+    session_params_enabled: true
   cooldown:
     signal_cooldown: 120
   decision_buffer:
     max_pending: 500
     max_positions: null
-    min_confidence: 0.35
+    min_confidence: 0.45         # 2026-05-19: 提高信号门槛 (原0.35)
     signal_cooldown: 120
   disabled:
   - confluence
@@ -769,7 +905,7 @@ strategy:
     technical_weight: 0.6
   long_signals:
     macd_histogram_threshold: 0.001
-    min_confidence: 0.35
+    min_confidence: 0.45         # 2026-05-19: 提高信号门槛 (原0.35)
     rsi_oversold: 35
     supertrend_multiplier: 2.5
   macd:
@@ -840,22 +976,46 @@ strategy:
     prevent_buy_in_downtrend: true
     prevent_short_in_uptrend: true
     use_multi_timeframe: true
+    adx_range_gate: 18
+  time_gate:
+    enabled: true
+    hk_latest_open: '14:30'
+    # 收盘缓冲区：15:45-16:00 为收盘撮合时段，不同步/不交易
+    close_buffer_start: '15:45'
+    close_buffer_end: '16:00'
+  news_cache:
+    ttl_seconds: 1800  # 新闻缓存有效期 30 分钟
+  market_regime_gate:
+    enabled: true
+    hsi_ma_fast: 5
+    hsi_ma_slow: 20
+    hsi_gap_min_pct: 0.3  # MA5偏离MA20最小幅度(<此值视为横盘)
+  add_position:
+    min_score: 1.5
+    min_confidence: 0.7
+    min_price_pct: 0.005
+    min_hold_minutes: 15
+    max_times_per_day: 1
+    qty_ratio: 0.5
   volume_alert:
     enabled: true
     lookback_periods: 20
     volume_ratio_threshold: 2.0
   weight_engine_path: /opt/ftseek/FTSeek/strategies/weight_engine.py
   weights:
-    bb_factor: 0.25
+    bb_factor: 0.15               # 2026-05-19: 降低权重 (原0.25, bb+rsi组合仅16.7% WR)
     cross_market_arbitrage: 1.0
     event_driven: 1.2
     ma_cross_factor: 0.15
     macd_factor: 0.25
     open_close_effect: 0.8
-    rsi_factor: 0.25
+    rsi_factor: 0.15              # 2026-05-19: 降低权重 (原0.25, bb+rsi组合仅16.7% WR)
     sentiment_ai: 0.5
     st_factor: 0.15
     vol_factor: 0.1
+    confluence_v2: 2.0            # 2026-05-19: 提高权重 (原1.5, 68% WR最佳表现)
+    enhanced_confluence: 1.3
+    supertrend: 1.0               # 2026-05-19: 修复死代码 (原0.0, enabled但weight=0)
   time_gates:
     opening:
       start: 09:30
@@ -868,13 +1028,13 @@ strategy:
         sentiment_ai: 1.5
         momentum_lifecycle: 0.5
       exit_params_override:
-        atr_hard_mult: 3.0
-        atr_dynamic_mult: 3.0
+        atr_hard_mult: 2.5          # 2026-05-19: 开盘ATR稍紧 (原3.0太宽)
+        atr_dynamic_mult: 2.5
         trailing_atr_mult: 2.5
         take_profit_atr_mult: 1.5
         intraday_stop_pct: 0.04
         breakeven_trigger: 0.03
-        max_holding_hours: 4
+        max_holding_hours: 24       # 2026-05-20: 修复开盘时段强平隔夜仓位 (原4太短)
     intraday:
       start: '10:00'
       end: '12:00'
@@ -932,13 +1092,22 @@ strategy:
         sentiment_ai: 1.5
         momentum_lifecycle: 0.5
       exit_params_override:
-        atr_hard_mult: 1.2
-        atr_dynamic_mult: 1.2
+        atr_hard_mult: 1.5          # 2026-05-19: 收盘ATR放宽 (原1.2过紧)
+        atr_dynamic_mult: 1.5
         trailing_atr_mult: 1.0
         take_profit_atr_mult: 1.2
         intraday_stop_pct: 0.015
         breakeven_trigger: 0.015
         max_holding_hours: 2
+  subscribe_types:
+  - QUOTE
+  - K_1M
+  - K_3M
+  - K_5M
+  - K_15M
+  - K_30M
+  - K_60M
+  - K_DAY
 take_profit:
   breakeven:
     enabled: true
@@ -959,7 +1128,7 @@ trading:
     max_slippage_pct: 0.005
     order_retry_base_offset: 0.002
   manual_confirm_for_live: true
-  max_open_positions: 20
+  max_open_positions: 8        # 2026-05-19: 与 risk_limits.max_positions 对齐 (原20)
   mode: paper
   order:
     default_order_qty: 100
@@ -1029,6 +1198,7 @@ trading:
       HK.09992: 200
       HK.09999: 100
     max_order_pct: 0.12
+    max_order_amount: 120000.0
   short_gate:
     auto_execute_confidence: 0.85
     auto_execute_relevance: 0.85
@@ -1056,12 +1226,40 @@ trading:
   - HK.09992
   - HK.02020
   - HK.00941
+  - HK.09618
+  - HK.02688
+  - HK.01024
+  - HK.09868
+  - HK.02015
+  - HK.00291
+  - HK.02208
+  watch_list_us:
+  - US.SPY
+  - US.QQQ
+  - US.BABA
+  - US.JD
+  - US.PDD
+  - US.NTES
+  - US.BIDU
+  - US.AAPL
+  - US.MSFT
+  - US.NVDA
+  - US.AMZN
+  - US.META
+  - US.TSLA
+  - US.AMD
+  - US.AVGO
+  - US.TSM
+  - US.NIO
+  - US.JPM
+  - US.LLY
+  - US.WMT
 trading_costs:
   clearing_fee: 2.0e-06
   commission_rate: 0.0003
-  min_commission: 15.0
-  platform_fee: 15.0
-  stamp_duty: 0.0013
+  min_commission: 3.0          # 2026-05-19: 与 trading_fees.py 对齐 (原15.0)
+  platform_fee: 3.0            # 2026-05-19: 与 min_commission 一致 (原15.0)
+  stamp_duty: 0.001            # 2026-05-19: 与 trading_fees.py 对齐 (原0.0013)
   trading_fee: 5.0e-06
 updated: '2026-04-26'
 version: 4.0.0
@@ -1106,30 +1304,22 @@ water_level:
       min_ratio: 0.85
       quality_min_class: B
       risk_per_trade: 0.015
-
-# ── 港股退出增强 (P1 2026-05-06) ─────────────────────────────
 hk_exit_enhance:
-  # Flash Exit — Tick 级闪崩防御
   flash_exit:
     enabled: true
-    atr_multiplier: 1.0           # 60s 内反向波动 >= 1.0x ATR 触发
-    window_seconds: 60            # 检测窗口
-
-  # Pre-Close Exit — 盘末分层退出
+    atr_multiplier: 1.5          # 2026-05-19: 放宽闪崩防御 (原1.0, 减少误触发)
+    window_seconds: 60
   pre_close_exit:
     enabled: true
-    window_minutes: 15            # 距收盘 <=15min 触发
-
-# ── 盘前多模型辩论 (P2 2026-05-06) ─────────────────────────
+    window_minutes: 15
 premarket_debate:
   enabled: true
   timeout_seconds: 120
-  stagger_delay: 0.5              # 模型调用间隔 (防限流)
+  stagger_delay: 0.5
   models:
-    bull: qwen3.6-plus            # 多头分析师
-    bear: deepseek-v4-pro         # 空头审计师
-    auditor: MiniMax-M2.5         # 独立风险评估师
-
+    bull: qwen3.6-plus
+    bear: deepseek-v4-pro
+    auditor: MiniMax-M2.5
 dynamic_exit_params:
   default:
     atr_dynamic_stop: &id002
@@ -1137,7 +1327,7 @@ dynamic_exit_params:
       multiplier: 1.5
       min_stop_pct: 0.012
       max_stop_pct: 0.05
-    take_profit: 0.05
+    take_profit: 0.06            # 2026-05-19: 修复 R:R 门控误杀 (0.05/0.045=1.11<1.25, 改为 0.06/0.045=1.33>1.25)
     partial_take_profit: &id003
       enabled: true
       levels:
@@ -1154,7 +1344,7 @@ dynamic_exit_params:
       trail_percent_fallback: 0.015
     atr_stop: &id005
       enabled: true
-      hard_multiplier: 1.5
+      hard_multiplier: 2.0         # 2026-05-19: 放宽ATR止损 (原1.5)
       max_multiplier: 3.0
     breakeven_stop: &id006
       enabled: true
@@ -1166,7 +1356,7 @@ dynamic_exit_params:
       session_end_force: false
     time_stop: &id008
       enabled: true
-      max_holding_hours: 36
+      max_holding_hours: 48        # 2026-05-19: 延长持仓时间 (原36)
       flat_timeout_minutes: 120
     volume_surge: &id009
       enabled: true
@@ -1177,7 +1367,7 @@ dynamic_exit_params:
       warning_minutes_before: 5
       min_profit_to_hold: 0.015
       force_exit_below: 0.005
-    stop_loss: -0.035
+    stop_loss: -0.045            # 2026-05-19: 放宽止损 (原-0.035, 减少噪音止损)
   strong_trend_up:
     atr_dynamic_stop:
       enabled: true
@@ -1275,7 +1465,7 @@ dynamic_exit_params:
       multiplier: 1.5
       min_stop_pct: 0.01
       max_stop_pct: 0.04
-    take_profit: 0.05
+    take_profit: 0.06            # 2026-05-19: 修复 R:R 门控误杀 (0.05/0.045=1.11<1.25, 改为 0.06/0.045=1.33>1.25)
     partial_take_profit:
       enabled: true
       levels:
@@ -1289,7 +1479,7 @@ dynamic_exit_params:
       enabled: false
     atr_stop:
       enabled: true
-      hard_multiplier: 1.0
+      hard_multiplier: 1.5          # 2026-05-19: 放宽ATR止损 (原1.0)
       max_multiplier: 2.0
     breakeven_stop:
       enabled: true
@@ -1311,7 +1501,7 @@ dynamic_exit_params:
       warning_minutes_before: 5
       min_profit_to_hold: 0.012
       force_exit_below: 0.003
-    stop_loss: -0.035
+    stop_loss: -0.045            # 2026-05-19: 放宽止损 (原-0.035)
   weak_trend_down:
     atr_dynamic_stop:
       enabled: true
@@ -1360,14 +1550,14 @@ dynamic_exit_params:
       multiplier: 1.5
       min_stop_pct: 0.01
       max_stop_pct: 0.04
-    take_profit: 0.045
+    take_profit: 0.06            # 2026-05-19: 修复 R:R (0.045/0.04=1.125<1.25, 改为 0.06/0.04=1.5)
     partial_take_profit:
       enabled: false
     trailing_stop:
       enabled: false
     atr_stop:
       enabled: true
-      hard_multiplier: 1.0
+      hard_multiplier: 1.5          # 2026-05-19: 放宽ATR止损 (原1.0)
       max_multiplier: 2.0
     breakeven_stop:
       enabled: true
@@ -1397,7 +1587,7 @@ dynamic_exit_params:
     short_take_profit: 0.06
     short_borrow_cost_annual: 0.03
     short_expected_holding_days: 3
-    stop_loss: -0.03
+    stop_loss: -0.04             # 2026-05-19: 放宽止损 (原-0.03, 3%过紧)
   high_volatility:
     atr_dynamic_stop:
       enabled: true
@@ -1518,3 +1708,58 @@ capital:
       threshold: 1000000
       max_order_pct: 0.08
       max_positions: 10
+
+# ============================================================
+# Phase 6: 引擎委托配置 (灰度迁移)
+# ============================================================
+engine:
+  # 止损/止盈执行委托给 ExitStateEngine
+  # false: 使用原始实现 (默认，安全)
+  # true: 使用引擎版本 (需验证)
+  exit_delegation: false
+
+  # 闪崩检测委托
+  # true: 使用引擎版本 (已验证，推荐)
+  # false: 使用原始实现
+  flash_exit_delegation: true
+
+# ============================================================
+# Phase 7: RiskCheck 配置 (可配置热插拔)
+# ============================================================
+risk_checks:
+  # 每个 Check 可单独配置 enabled/disabled
+  # 默认全部启用
+  DecisionBufferCheck:
+    enabled: true
+  QualityCheck:
+    enabled: true
+  TradingHoursCheck:
+    enabled: true
+  LateSessionGateCheck:
+    enabled: true
+  CircuitBreakerCheck:
+    enabled: true
+  MiddayRecommendationCheck:
+    enabled: true
+  ADXConsistencyCheck:
+    enabled: true
+  MultiTimeframeCheck:
+    enabled: true
+  TrailingCooldownCheck:
+    enabled: true
+  SignalCooldownCheck:
+    enabled: true
+  SymbolLossCooldownCheck:
+    enabled: true
+  WeakSignalCheck:
+    enabled: true
+  ConcentrationCheck:
+    enabled: true
+  DailyTradeLimitCheck:
+    enabled: true
+  RiskRewardCheck:
+    enabled: true
+  MinHoldTimeCheck:
+    enabled: true
+  OpenDedupCheck:
+    enabled: true

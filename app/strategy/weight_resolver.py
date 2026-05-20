@@ -11,8 +11,11 @@
 """
 import logging
 from typing import Dict, Tuple, Optional
+from config.config_center import get_config_center as _gcc_wr
 
 logger = logging.getLogger("ftseek.strategy.weight_resolver")
+
+_cc_wr = _gcc_wr()
 
 # ── 策略分类常量 ────────────────────────────────────────────────────
 TREND_STRATEGIES = {"macd", "supertrend", "ma_cross"}  # confluence_v2 已禁用
@@ -20,23 +23,23 @@ OSCILLATOR_STRATEGIES = {"rsi", "bollinger", "stochastic"}
 MTF_STRATEGIES = {"enhanced_confluence", "layered_integration"}
 SENTIMENT_STRATEGIES = {"sentiment", "sentiment_ai", "news_sentiment", "event_driven", "premarket_analyst"}
 
-# 市场状态调整系数
-TREND_BOOST = 1.5
-TREND_DECAY = 0.6
-RANGE_BOOST = 1.5
-RANGE_DECAY = 0.6
-MTF_TREND_BOOST = 1.3
-MTF_RANGE_DECAY = 0.7
+# 市场状态增益/衰减 — 2026-05-16: 迁移至 SSOT
+TREND_BOOST = float(_cc_wr.get('strategy.consensus.trend_boost', 1.5))
+TREND_DECAY = float(_cc_wr.get('strategy.consensus.trend_decay', 0.6))
+RANGE_BOOST = float(_cc_wr.get('strategy.consensus.range_boost', 1.5))
+RANGE_DECAY = float(_cc_wr.get('strategy.consensus.range_decay', 0.6))
+MTF_TREND_BOOST = float(_cc_wr.get('strategy.consensus.mtf_trend_boost', 1.3))
+MTF_RANGE_DECAY = float(_cc_wr.get('strategy.consensus.mtf_range_decay', 0.7))
 
-# 突发新闻倍增
-BREAKING_NEWS_MULTIPLIER = 2.0
-BREAKING_NEWS_LOOKBACK_HOURS = 2
+# 突发新闻倍增 — 2026-05-16: 迁移至 SSOT
+BREAKING_NEWS_MULTIPLIER = float(_cc_wr.get('strategy.consensus.breaking_news_multiplier', 2.0))
+BREAKING_NEWS_LOOKBACK_HOURS = int(_cc_wr.get('strategy.consensus.breaking_news_lookback_hours', 2))
 
-# 灰区防守
-GRAY_ZONE_PENALTY = -0.3
-DIVERGENCE_THRESHOLD = 0.5
-DIVERGENCE_SCORE_DECAY = 0.5
-DIVERGENCE_GRAY_ZONE = True
+# 灰区防守 — 2026-05-16: 迁移至 SSOT
+GRAY_ZONE_PENALTY = float(_cc_wr.get('strategy.consensus.gray_zone_penalty', -0.3))
+DIVERGENCE_THRESHOLD = float(_cc_wr.get('strategy.consensus.divergence_threshold', 0.5))
+DIVERGENCE_SCORE_DECAY = float(_cc_wr.get('strategy.consensus.divergence_score_decay', 0.5))
+DIVERGENCE_GRAY_ZONE = _cc_wr.get('strategy.consensus.divergence_gray_zone', True)
 
 
 class WeightResolver:

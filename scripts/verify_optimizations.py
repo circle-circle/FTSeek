@@ -249,12 +249,12 @@ def test_exit_params_update():
         assert default['stop_loss'] == -0.03, f"止损应为 -3%, 当前为 {default['stop_loss']}"
         assert default['take_profit'] == 0.10, f"止盈应为 10%, 当前为 {default['take_profit']}"
 
-        # 验证 config.yaml
-        with open('/opt/ftseek/FTSeek/config/config.yaml', 'r', encoding='utf-8') as f:
+        # 验证 unified_config.yaml
+        with open('/opt/ftseek/FTSeek/config/unified_unified_config.yaml', 'r', encoding='utf-8') as f:
             config = yaml.safe_load(f)
 
-        assert config['stop_loss']['default_percent'] == 0.03, "config.yaml 止损应为 3%"
-        assert config['take_profit']['default_percent'] == 0.10, "config.yaml 止盈应为 10%"
+        assert config['stop_loss']['default_percent'] == 0.03, "unified_config.yaml 止损应为 3%"
+        assert config['take_profit']['default_percent'] == 0.10, "unified_config.yaml 止盈应为 10%"
 
         print("✓ 止盈止损参数更新测试通过")
         print(f"  - 默认止损：{abs(config['stop_loss']['default_percent']):.1%}")

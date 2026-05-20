@@ -31,48 +31,10 @@ from app.trader.executor import TradeExecutor, get_executor
 from app.trader.position_manager import PositionManager
 from app.notifier import get_dingtalk_notifier
 from app import config
+from app.execution.lot_size_manager import get_lot_size_manager
 
 BATTLE_PLAN_PATH = "/opt/ftseek/FTSeek/data/daily_battle_plan.json"
 logger = logging.getLogger("ftseek.battle_executor")
-
-# P1 修复: 港股整手股数映射表 (常见标的)
-HK_LOT_SIZES = {
-    "HK.00700": 100,   # 腾讯
-    "HK.09988": 100,   # 阿里巴巴
-    "HK.09618": 50,    # 京东集团
-    "HK.03690": 100,   # 美团
-    "HK.01810": 200,   # 小米
-    "HK.09888": 50,    # 百度
-    "HK.02015": 100,   # 理想汽车
-    "HK.09868": 100,   # 小鹏汽车
-    "HK.09866": 100,   # 蔚来
-    "HK.01024": 100,   # 快手
-    "HK.00005": 400,   # 汇丰
-    "HK.02318": 500,   # 平安保险
-    "HK.01299": 400,   # 友邦保险
-    "HK.00001": 500,   # 长和
-    "HK.02269": 100,   # 药明生物
-    "HK.00941": 500,   # 中国移动
-    "HK.00388": 100,   # 港交所
-    "HK.00175": 5000,  # 吉利汽车
-    "HK.00291": 1000,  # 华润啤酒
-    "HK.01211": 500,   # 比亚迪
-}
-DEFAULT_LOT_SIZE = 100  # 默认整手
-
-
-def _align_to_lot_size(qty: int, symbol: str) -> int:
-    """P2 修复: 将数量对齐到整手倍数"""
-    lot_size = HK_LOT_SIZES.get(symbol, DEFAULT_LOT_SIZE)
-    aligned = (qty // lot_size) * lot_size
-    if aligned < lot_size:
-        aligned = lot_size  # 至少 1 手
-    if aligned != qty:
-        logger.warning(
-            f"📐 [整手对齐] {symbol}: {qty} 股 → {aligned} 股 "
-            f"(整手={lot_size})"
-        )
-    return aligned
 
 
 class BattlePlanExecutionService:
@@ -176,8 +138,9 @@ class BattlePlanExecutionService:
                 # 备用: 固定 1% 溢价
                 limit_price = round(ref_price * 1.01, 3)
 
-            # P2 修复: 整手倍数对齐
-            qty = _align_to_lot_size(target.get("quantity", 100), symbol)
+            # P0-1 修复: 统一从 LotSizeManager 获取整手股数
+            lot_mgr = get_lot_size_manager()
+            qty = lot_mgr.enforce_lot_size(symbol, target.get("quantity", 100))
 
             # 提交竞价限价单
             order_id = self._place_futu_order(
@@ -349,6 +312,12 @@ class BattlePlanExecutionService:
             current_price = self._auction_order_ids[symbol]['price'] # fallback
 
         action = SignalAction.BUY if direction == "BUY" else SignalAction.SELL
+        
+        # P0 修复 (2026-05-17): 透传 battle_plan 的 signal_impact 到 Signal extra
+        # 确保 executor 门禁可以读取 LLM 的定性判断
+        _signal_impact = target.get("signal_impact", "neutral")
+        _urgency = target.get("urgency", "Medium")
+        
         signal = Signal(
             code=symbol,
             action=action,
@@ -356,7 +325,13 @@ class BattlePlanExecutionService:
             quantity=qty,
             strategy="battle_plan",
             reason=f"盘前计划 - {order_name}",
-            tier=TradeTier.TIER_TREND
+            tier=TradeTier.TIER_TREND,
+            extra={
+                "signal_impact": _signal_impact,
+                "urgency": _urgency,
+                "source": "battle_plan",
+                "order_name": order_name,
+            },
         )
 
         logger.info(f"[BattlePlan] 提交 {order_name}: {symbol} {action.value} {qty}股")

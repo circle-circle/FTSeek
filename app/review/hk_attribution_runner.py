@@ -452,37 +452,46 @@ class IntradayAttribution:
         return trade.get("is_intraday", False)
 
     def analyze(self, trade: Dict, chain: TradeEvidenceChain) -> Optional[Dict]:
-        """分析日内交易特征"""
+        """分析日内交易特征 — LLM 差异化归因（替代旧模板引擎）"""
         holding_min = chain.holding_period_minutes
         pnl = chain.pnl_percent
 
         if holding_min > 60:
             return None  # 不算日内快进快出
 
-        cause = None
-        lesson = None
-
+        # 快速分类（用于 cause 标签，但 lesson 由 LLM 生成）
         if pnl < -2 and holding_min < 15:
             cause = "intraday_panic_sell"
-            lesson = (
-                f"{trade['code']} 买入后 {holding_min}min 内亏损 >2% 卖出，"
-                "属于恐慌性止损，建议增加入场确认条件"
-            )
         elif pnl > 2 and holding_min < 30:
             cause = "intraday_quick_profit"
-            lesson = (
-                f"{trade['code']} 买入后 {holding_min}min 内盈利 >2%，"
-                "日内快进快出策略有效，可复用该模式"
-            )
         elif pnl < -1 and holding_min < 30:
             cause = "intraday_chase_high"
-            lesson = (
-                f"{trade['code']} 追高买入后 {holding_min}min 内亏损，"
-                "港股 T+0 追高风险高，建议等待回调确认"
-            )
+        else:
+            return None  # 不满足日内归因条件
 
-        if not cause:
-            return None
+        # ★ LLM 差异化归因：提供完整交易上下文
+        llm_lesson = self._llm_analyze_intraday(trade, chain, cause, holding_min, pnl)
+        if llm_lesson:
+            lesson = llm_lesson
+            confidence = 0.9  # LLM 分析，更高置信度
+        else:
+            # 降级：规则模板（LLM 不可用时）
+            if cause == "intraday_panic_sell":
+                lesson = (
+                    f"{trade['code']} 买入后 {holding_min}min 内亏损 >2% 卖出，"
+                    "属于恐慌性止损，建议增加入场确认条件"
+                )
+            elif cause == "intraday_quick_profit":
+                lesson = (
+                    f"{trade['code']} 买入后 {holding_min}min 内盈利 >2%，"
+                    "日内快进快出策略有效，可复用该模式"
+                )
+            else:
+                lesson = (
+                    f"{trade['code']} 追高买入后 {holding_min}min 内亏损，"
+                    "港股 T+0 追高风险高，建议等待回调确认"
+                )
+            confidence = 0.6  # 规则模板，低置信度
 
         return {
             "id": f"hk_intraday_{trade.get('code', '')}_{trade.get('entry_time', '')[:10]}",
@@ -492,7 +501,7 @@ class IntradayAttribution:
             "pnl_percent": round(pnl, 2),
             "cause": cause,
             "lesson": lesson,
-            "confidence": 0.8,  # 规则-based，高置信度
+            "confidence": confidence,
             "overall_score": chain.attribution.overall_score,
             "expiry_date": (datetime.now() + timedelta(days=14)).strftime("%Y-%m-%d"),
             "validation_status": "pending",
@@ -500,8 +509,56 @@ class IntradayAttribution:
                 "is_intraday": True,
                 "holding_minutes": holding_min,
                 "attribution_type": "intraday",
+                "llm_analyzed": llm_lesson is not None,
             },
         }
+
+    def _llm_analyze_intraday(
+        self, trade: Dict, chain: TradeEvidenceChain,
+        cause: str, holding_min: float, pnl: float,
+    ) -> Optional[str]:
+        """用 LLM 做差异化日内归因"""
+        try:
+            from app.llm.unified_service import get_unified_llm
+
+            code = trade.get("code", "UNKNOWN")
+            exit_reason = chain.exit_reason or "unknown"
+            signal_quality = chain.attribution.signal_quality or "unknown"
+            execution_quality = chain.attribution.execution_quality or "unknown"
+            strategy = trade.get("strategy", "unknown")
+
+            prompt = (
+                f"分析以下港股日内交易，找出可执行的教训：\n"
+                f"- 股票: {code}\n"
+                f"- 盈亏: {pnl:.2f}%\n"
+                f"- 持仓: {holding_min:.0f}分钟\n"
+                f"- 出场原因: {exit_reason}\n"
+                f"- 信号质量: {signal_quality}\n"
+                f"- 执行质量: {execution_quality}\n"
+                f"- 策略: {strategy}\n"
+                f"- 分类: {cause}\n\n"
+                f"请输出一个具体可执行的教训（50字以内），不是表面描述。\n"
+                f"要说明：1) 为什么亏/赚 2) 下次具体怎么做\n"
+                f"只输出教训文本，不要其他内容。"
+            )
+
+            svc = get_unified_llm(default_model="qwen3.6-flash", default_timeout=30, max_retries=1)
+            messages = [
+                {"role": "system", "content": "你是港股交易归因分析师。输出简洁的教训。"},
+                {"role": "user", "content": prompt},
+            ]
+            raw = svc.call_and_parse(messages)
+            result = svc.run_sync(raw)
+            svc.close()
+
+            lesson = result.strip()[:200]
+            if lesson and len(lesson) > 10:
+                return lesson
+            return None
+
+        except Exception as e:
+            logger.debug(f"[IntradayAttribution] LLM 归因失败 (降级到模板): {e}")
+            return None
 
 
 class AShareLinkageAttribution:

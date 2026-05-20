@@ -18,6 +18,8 @@ import re
 import os
 import time
 import asyncio
+# FTSeek 适配: 集成市场规则注入 (2026-05-17)
+from app.utils.market_prompt_injector import inject_market_context
 from typing import List, Dict, Optional, Any
 from dataclasses import dataclass
 

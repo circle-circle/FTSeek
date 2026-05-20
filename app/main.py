@@ -154,10 +154,10 @@ except Exception as e:
 # 【新增 2026-04-02】初始化决策缓冲层 - 四层引擎架构核心
 try:
     from app.decision_buffer import init_decision_buffer
-    # 从 config_center 读取统一的 min_confidence，避免与 config.yaml risk_limits.min_confidence 不一致
-    _min_conf = 0.35  # 2026-04-24 统一: 所有 min_confidence 唯一数据源
+    # 从 config_center 读取统一的 min_confidence，避免与 unified_config.yaml risk_limits.min_confidence 不一致
+    _min_conf = 0.45  # 2026-05-19: 提高信号门槛 (原0.35)
     try:
-        _min_conf = float(config_center.get('risk_limits.min_confidence', 0.35))  # 2026-04-24 统一
+        _min_conf = float(config_center.get('risk_limits.min_confidence', 0.45))  # 2026-05-19: 对齐 YAML
     except Exception as _e:
         logger.warning(f'配置中心读取 min_confidence 失败: {_e}')
     
@@ -175,7 +175,7 @@ try:
     except Exception as _e:
         logger.warning(f'配置中心读取风控配置失败: {_e}')
         
-    # 从配置中心读取 max_pending (修复代码硬编码 vs config.yaml 不一致)
+    # 从配置中心读取 max_pending (修复代码硬编码 vs unified_config.yaml 不一致)
     _max_pending = 500  # 默认值 2026-04-22: 200→500
     try:
         _max_pending = int(config_center.get('strategy.decision_buffer.max_pending', 500))
@@ -258,7 +258,7 @@ except Exception as e:
     logger.warning(f"配置校验失败: {e}")
 
 # 【新增 2026-04-18】代码级配置一致性审计 (Blocking)
-# 扫描所有 .py 文件中的硬编码 fallback 值，与 config.yaml 比对
+# 扫描所有 .py 文件中的硬编码 fallback 值，与 unified_config.yaml 比对
 # 【B3-14 2026-04-26】subprocess 改 in-process：避免 Python 解释器冷启动开销
 try:
     import importlib.util as _iu
@@ -273,7 +273,7 @@ try:
     if _audit_issues:
         for _item in _audit_issues:
             logger.error(f"[配置审计] {_item}")
-        logger.error("⛔ 代码配置不一致! 请将代码中的硬编码值与 config.yaml 对齐")
+        logger.error("⛔ 代码配置不一致! 请将代码中的硬编码值与 unified_config.yaml 对齐")
         logger.error("   运行: python3 scripts/config_audit.py 查看完整报告")
         # 注意: 不阻断启动，但强烈警告
     else:
@@ -318,6 +318,40 @@ except Exception as e:
     water_level_manager = None
     profit_loss_manager = None
     valuation_calculator = None
+
+# ============================================================
+#  【新增 2026-05-11】ExitRuleEngine 初始化 — Phase 1 双跑模式
+# ============================================================
+try:
+    from app.risk.exit_rule_engine import get_exit_rule_engine
+    from app.risk.exit_rules import register_phase1_rules
+    import yaml as _yaml
+    
+    engine = get_exit_rule_engine()
+    register_phase1_rules(engine)
+    
+    # 从 YAML 加载规则配置
+    _cfg_path = os.path.join(str(config.BASE_DIR), 'config', 'unified_config.yaml')
+    if os.path.exists(_cfg_path):
+        with open(_cfg_path, 'r') as _f:
+            _full_cfg = _yaml.safe_load(_f)
+        # 提取 Phase 1 规则的配置
+        _exit_cfg = _full_cfg.get('dynamic_exit_params', {}).get('default', {})
+        engine.configure({
+            "atr_hard_stop.enabled": _exit_cfg.get('atr_stop', {}).get('enabled', True),
+            "atr_hard_stop.hard_multiplier": _exit_cfg.get('atr_stop', {}).get('hard_multiplier', 1.5),
+            "atr_hard_stop.min_stop_pct": _exit_cfg.get('atr_stop', {}).get('min_stop_pct', 0.02),
+            "atr_hard_stop.max_stop_pct": _exit_cfg.get('atr_stop', {}).get('max_stop_pct', 0.05),
+            "structural_stop.stop_loss": _exit_cfg.get('stop_loss', -0.035),
+            "trailing_stop.enabled": _exit_cfg.get('trailing_stop', {}).get('enabled', True),
+            "trailing_stop.trigger_profit": _exit_cfg.get('trailing_stop', {}).get('trigger_profit', 0.025),
+            "trailing_stop.atr_multiplier": _exit_cfg.get('trailing_stop', {}).get('atr_multiplier', 2.5),
+            "trailing_stop.trail_percent": _exit_cfg.get('trailing_stop', {}).get('trail_percent_fallback', 0.04),
+        })
+    
+    logger.info("✅ ExitRuleEngine 已初始化 (Phase 1 双跑模式: ATR + Structural + Trailing)")
+except Exception as e:
+    logger.warning(f"ExitRuleEngine 初始化失败 (不影响主流程): {e}")
 
 
 # ============================================================
@@ -646,9 +680,49 @@ def main():
     
     notifier = get_dingtalk_notifier()
 
+
+    # P3 错误告警集成 (2026-05-19): 集成飞书/钉钉告警到 ErrorHandler
+    try:
+        from app.core.error_alert_integration import setup_error_alerts
+        setup_error_alerts(notifier=notifier)
+        logger.info("[ErrorHandler] 告警集成已初始化 (钉钉通知)")
+    except Exception as _alert_e:
+        logger.warning(f"[ErrorHandler] 告警集成失败，仅记录日志：{_alert_e}")
     executor = TradeExecutor()
     
-    # 2.6) 初始化每日动态交易池 (P0 修复: 传入市场前缀 + 持仓对账)
+    # 2.5b) 初始化 FutuMarginMonitor 保证金风控 (2026-05-08)
+    # 复用现有 futu_margin_monitor.py (v2.1)，包含滞回防抖/降级防护/压力测试
+    try:
+        from app.config import USE_MARGIN_GUARD
+        if USE_MARGIN_GUARD:
+            from app.risk.futu_margin_monitor import FutuMarginMonitor
+            from futu import OpenSecTradeContext, TrdEnv
+            
+            # 创建交易上下文用于初始化保证金监控
+            trd_ctx = OpenSecTradeContext(
+                host=_cfg.OPEND_HOST,
+                port=_cfg.OPEND_PORT,
+                filter_trdmarket=TrdMarket.HK
+            )
+            try:
+                acc_id = getattr(_cfg, 'SIMULATE_ACCOUNT_ID', '')
+
+                executor.futu_margin_monitor = FutuMarginMonitor()
+                executor.futu_margin_monitor.initialize(
+                    trd_ctx=trd_ctx,
+                    acc_id=acc_id,
+                    enable_hysteresis=True,
+                    enable_degradation=True,
+                )
+                logger.info("[FutuMarginMonitor] 保证金风控已启用 (滞回防抖 + 降级防护 + 压力测试)")
+            finally:
+                trd_ctx.close()
+        else:
+            logger.info("[FutuMarginMonitor] 未启用 (USE_MARGIN_GUARD=False)")
+    except Exception as e:
+        logger.warning(f"[FutuMarginMonitor] 初始化失败: {e}")
+    
+    # 2.6) 初始化每日动态交易池 (P0 修复：传入市场前缀 + 持仓对账)
     from app.utils.daily_active_pool import get_daily_active_pool
     active_pool = get_daily_active_pool(market_prefix="HK.")
     active_pool.initialize()
@@ -815,6 +889,9 @@ def main():
         from app.deep_review.auto_tuner import get_auto_tuner
         auto_tuner = get_auto_tuner()
         logger.info("自动调优器已初始化 (AutoTuner)")
+    except ModuleNotFoundError as e:
+        logger.debug(f"自动调优器未启用 (模块未安装): {e}")
+        auto_tuner = None
     except Exception as e:
         logger.warning(f"自动调优器初始化失败: {e}")
         auto_tuner = None
@@ -1048,12 +1125,44 @@ def main():
             logger.info("正在创建 DataSubscriber...")
             # 【修复 2026-04-11】传递LLM分析师到DataSubscriber,使共识引擎能够读取LLM缓存
             # 【P0 2026-04-19】注入统一 TradeExecutor 实例，消除双实例导致的风控状态不一致
-            subscriber = DataSubscriber(strategies, notifier, llm_analyst=_llm_analyst_for_scheduler, trade_executor=executor)
+
+            # Phase 12A: DI Container 组装 (feature flag)
+            # Phase 20B: 默认启用 DI Container (从 'false' 改为 'true')
+            _use_assembler = os.environ.get('FTSEEK_USE_ENGINE_ASSEMBLER', 'true').lower() == 'true'
+            if _use_assembler:
+                try:
+                    from app.core.engine_assembler import get_assembler
+                    assembler = get_assembler(config=config)
+                    subscriber = assembler.assemble_subscriber(
+                        strategies=strategies,
+                        notifier=notifier,
+                        llm_analyst=_llm_analyst_for_scheduler,
+                        trade_executor=executor,
+                    )
+                    logger.info("[Phase 12A] DataSubscriber 已通过 EngineAssembler 组装")
+                except Exception as asm_err:
+                    logger.error(f"[Phase 12A] EngineAssembler 失败，回退到手动组装: {asm_err}")
+                    subscriber = DataSubscriber(strategies, notifier, llm_analyst=_llm_analyst_for_scheduler, trade_executor=executor)
+            else:
+                subscriber = DataSubscriber(strategies, notifier, llm_analyst=_llm_analyst_for_scheduler, trade_executor=executor)
+
             # P0 (2026-04-16): 注入到 FastAPI server，供新闻事件注入接口使用
             set_subscriber(subscriber)
             logger.info("DataSubscriber 创建成功，正在启动订阅...")
             subscriber.start()
             logger.info("DataSubscriber.start() 完成")
+
+            # P2 状态恢复 (2026-05-19): 从磁盘恢复交易状态
+            try:
+                from app.services.trading_state_manager import get_trading_state_manager
+                state_mgr = get_trading_state_manager()
+                state_path = "/opt/ftseek/FTSeek/data/trading_state.json"
+                if state_mgr.restore(state_path):
+                    logger.info(f"[TradingStateManager] 状态已从 {state_path} 恢复")
+                else:
+                    logger.info("[TradingStateManager] 无历史状态，从空状态开始")
+            except Exception as _state_e:
+                logger.warning(f"[TradingStateManager] 状态恢复失败，从空状态开始：{_state_e}")
 
             # 注入 quote_ctx 到 Hermes Agent (subscriber 就绪后)
             if hermes_processor and getattr(subscriber, '_quote_ctx', None):
@@ -1075,6 +1184,72 @@ def main():
             logger.info("午间作战计划刷新已激活 (12:00 HKT, Mon-Fri)")
         except Exception as e:
             logger.warning(f"午间作战计划刷新激活失败: {e}")
+
+    # ── 2026-05-11 新增: 盘中异动扫描器 (每 30 分钟) ──
+    intraday_scanner_scheduler = None
+    if subscriber and getattr(subscriber, '_quote_ctx', None):
+        try:
+            from apscheduler.schedulers.background import BackgroundScheduler as _BS4
+            from app.pipeline.intraday_alert_scanner import get_intraday_scanner
+            
+            intraday_scanner_scheduler = _BS4(timezone='Asia/Hong_Kong')
+            intraday_scanner_scheduler.start()
+            
+            scanner = get_intraday_scanner(quote_ctx=subscriber._quote_ctx)
+            
+            def _run_intraday_scan():
+                """盘中异动扫描调度入口"""
+                try:
+                    alerts = scanner.scan()
+                    if alerts:
+                        added = scanner.add_to_pool(alerts)
+                        # 触发订阅同步，让 DataSubscriber 开始 Push 异动标的
+                        if added and hasattr(subscriber, '_sync_subscription'):
+                            subscriber._sync_subscription()
+                except Exception as e:
+                    logger.error(f"[盘中异动扫描] 异常: {e}")
+            
+            # 交易时段: 09:30-12:00, 13:00-16:00, 每 30 分钟
+            intraday_scanner_scheduler.add_job(
+                _run_intraday_scan, 'cron',
+                hour='9-11,13-15', minute='0,30', day_of_week='mon-fri',
+                id='hk-intraday-alert-scan',
+            )
+            logger.info("✅ 盘中异动扫描器已启动 (09:30-16:00 HKT, 每 30 分钟)")
+        except Exception as e:
+            logger.warning(f"盘中异动扫描器启动失败: {e}")
+
+    # ── 新增 (2026-05-18): 盘中实时诊断 (每30分钟) — Layer 1 ──
+    intraday_diag_scheduler = None
+    if subscriber:
+        try:
+            from apscheduler.schedulers.background import BackgroundScheduler as _BS_Diag
+            from app.diagnosis.intraday_diagnoser import get_intraday_diagnoser
+            
+            intraday_diag_scheduler = _BS_Diag(timezone='Asia/Hong_Kong')
+            intraday_diag_scheduler.start()
+            
+            diagnoser = get_intraday_diagnoser(notifier=notifier)
+            
+            def _run_intraday_diagnosis():
+                """盘中诊断调度入口"""
+                try:
+                    alerts = diagnoser.run_diagnosis()
+                    if alerts:
+                        logger.info(f"[盘中诊断] 发现 {len(alerts)} 条警报")
+                except Exception as e:
+                    logger.error(f"[盘中诊断] 异常: {e}")
+            
+            # 交易时段: 09:30-12:00, 13:00-16:00, 每30分钟
+            # 延迟5分钟启动，等待系统稳定
+            intraday_diag_scheduler.add_job(
+                _run_intraday_diagnosis, 'cron',
+                hour='9-11,13-15', minute='5,35', day_of_week='mon-fri',
+                id='hk-intraday-diagnosis',
+            )
+            logger.info("✅ 盘中实时诊断已启动 (09:35-15:35 HKT, 每30分钟)")
+        except Exception as e:
+            logger.warning(f"盘中实时诊断启动失败: {e}")
 
     # 初始化交易健康度看板监控器（注入执行层/系统层依赖）
     _harness_pilot = None
@@ -1122,27 +1297,34 @@ def main():
     except Exception as _e:
         logger.warning(f"HarnessPilot 启动失败: {_e}（不影响交易系统运行）")
 
-    # 【Domain Events 2026-05-04】注册领域事件插件 (Obsidian 知识库)
+    # 【Domain Events 2026-05-04】注册领域事件插件
+    # Phase 20A: 插件自动发现 (自动注册 app/plugins/ 下所有插件)
     try:
-        from app.core.domain_events import get_event_bus
-        from app.plugins.obsidian_plugin import ObsidianPlugin
-        _plugin_enabled = getattr(config, "OBSIDIAN_PLUGIN_ENABLED", True)
-        _obsidian_plugin = ObsidianPlugin(enabled=_plugin_enabled)
-        _obsidian_plugin.register(get_event_bus())
-        logger.info(f"ObsidianPlugin 已注册 (enabled={_plugin_enabled})")
+        from app.plugins import discover_plugins
+        _registered = discover_plugins()
+        logger.info(f"[插件系统] 自动发现完成，已注册 {len(_registered)} 个插件: {', '.join(_registered)}")
     except Exception as _e:
-        logger.debug(f"ObsidianPlugin 注册跳过: {_e}")
+        logger.warning(f"[插件系统] 自动发现失败，回退手动注册: {_e}")
+        # 回退到手动注册
+        try:
+            from app.core.domain_events import get_event_bus
+            from app.plugins.obsidian_plugin import ObsidianPlugin
+            _plugin_enabled = getattr(config, "OBSIDIAN_PLUGIN_ENABLED", True)
+            _obsidian_plugin = ObsidianPlugin(enabled=_plugin_enabled)
+            _obsidian_plugin.register(get_event_bus())
+            logger.info(f"ObsidianPlugin 已注册 (enabled={_plugin_enabled})")
+        except Exception as _e2:
+            logger.debug(f"ObsidianPlugin 注册跳过: {_e2}")
 
-    # 【RiskOfficer 2026-05-05】注册自适应风控插件 (事件驱动反馈回路)
-    try:
-        from app.plugins.risk_officer_plugin import RiskOfficerPlugin
-        _risk_officer_plugin = RiskOfficerPlugin(enabled=True)
-        _risk_officer_plugin.register(get_event_bus())
-        if risk_manager is not None:
-            _risk_officer_plugin.set_risk_manager(risk_manager)
-        logger.info("RiskOfficerPlugin 已注册 (自适应风控)")
-    except Exception as _e:
-        logger.debug(f"RiskOfficerPlugin 注册跳过: {_e}")
+        try:
+            from app.plugins.risk_officer_plugin import RiskOfficerPlugin
+            _risk_officer_plugin = RiskOfficerPlugin(enabled=True)
+            _risk_officer_plugin.register(get_event_bus())
+            if risk_manager is not None:
+                _risk_officer_plugin.set_risk_manager(risk_manager)
+            logger.info("RiskOfficerPlugin 已注册 (自适应风控)")
+        except Exception as _e2:
+            logger.debug(f"RiskOfficerPlugin 注册跳过: {_e2}")
 
     # 5) 发送启动通知
     strategy_summary = "\n".join(
@@ -1187,52 +1369,84 @@ def main():
         pass
     finally:
         logger.info("正在清理资源...")
+        
+
+        # P2 状态持久化 (2026-05-19): 关闭前持久化交易状态
+        try:
+            from app.services.trading_state_manager import get_trading_state_manager
+            state_mgr = get_trading_state_manager()
+            state_path = "/opt/ftseek/FTSeek/data/trading_state.json"
+            if state_mgr.persist(state_path):
+                logger.info(f"[TradingStateManager] 状态已持久化到 {state_path}")
+            else:
+                logger.warning("[TradingStateManager] 状态持久化失败")
+        except Exception as _state_e:
+            logger.warning(f"[TradingStateManager] 状态持久化失败：{_state_e}")
+        # 2026-05-13 修复: shutdown 串行链路加超时保护，防止单步阻塞拖垮全局
+        import contextlib
+        
+        # 1. 停止数据订阅 (含 Futu API 退订)
         if subscriber:
-            subscriber.stop()
+            with contextlib.suppress(Exception):
+                subscriber.stop()
         
-        # 停止跨市场套利调度器
+        # 2. 停止跨市场套利调度器
         if cross_market_scheduler:
-            cross_market_scheduler.stop()
-            logger.info("跨市场套利调度器已停止")
+            with contextlib.suppress(Exception):
+                cross_market_scheduler.stop()
         
-        # 停止美股隔夜监控器 (2026-04-12 修复)
+        # 3. 停止美股隔夜监控器
         if us_monitor:
-            us_monitor.stop()
-            logger.info("美股隔夜监控器已停止")
+            with contextlib.suppress(Exception):
+                us_monitor.stop()
         
-        # P2 2026-05-06: eod_scheduler/midday_scheduler 已迁移到 Hermes cronjob，不再需要停止
-
-        # 停止午间作战计划刷新调度
+        # 4. 停止午间刷新调度 (wait=False 已内置超时)
         if midday_refresher_scheduler:
-            midday_refresher_scheduler.shutdown(wait=False)
-            logger.info("午间作战计划刷新调度已停止")
-
-        # 停止盘前多模型辩论调度 (2026-05-06 新增)
+            with contextlib.suppress(Exception):
+                midday_refresher_scheduler.shutdown(wait=False)
+        
+        # 5. 停止盘中异动扫描器
+        if intraday_scanner_scheduler:
+            with contextlib.suppress(Exception):
+                intraday_scanner_scheduler.shutdown(wait=False)
+        
+        # 5.5. 停止盘中诊断调度器
+        if intraday_diag_scheduler:
+            with contextlib.suppress(Exception):
+                intraday_diag_scheduler.shutdown(wait=False)
+        
+        # 6. 停止盘前多模型辩论调度
         if premarket_debate_scheduler:
-            premarket_debate_scheduler.shutdown(wait=False)
-            logger.info("盘前多模型辩论调度已停止")
-
-        # 停止盘前 Pipeline 调度器 (2026-04-12)
+            with contextlib.suppress(Exception):
+                premarket_debate_scheduler.shutdown(wait=False)
+        
+        # 7. 停止盘前 Pipeline 调度器
         if premarket_scheduler:
-            premarket_scheduler.stop()
-            logger.info("盘前 Pipeline 调度器已停止")
-
-        # 停止 Hermes Agent 处理器
+            with contextlib.suppress(Exception):
+                premarket_scheduler.stop()
+        
+        # 8. 停止 Hermes Agent 处理器 (join 已有 5s 超时)
         if hermes_processor:
-            hermes_processor.stop()
-            logger.info("Hermes Agent 处理器已停止")
+            with contextlib.suppress(Exception):
+                hermes_processor.stop()
         if hermes_thread:
             hermes_thread.join(timeout=5)
-            logger.info("Hermes Agent 线程已退出")
-
-        # 停止 HarnessPilot (2026-05-04)
+        
+        # 9. 停止 HarnessPilot
         if _harness_pilot:
-            _harness_pilot.stop()
-            logger.info("HarnessPilot 已停止")
-
-        executor.close()
-        opend.stop()
-        notifier.send_text("[FTSeek] 系统已停止")
+            with contextlib.suppress(Exception):
+                _harness_pilot.stop()
+        
+        # 10. 关闭执行器和 OpenD
+        with contextlib.suppress(Exception):
+            executor.close()
+        with contextlib.suppress(Exception):
+            opend.stop()
+        
+        # 11. 通知 — 网络调用可能挂起，超时保护
+        with contextlib.suppress(Exception):
+            notifier.send_text("[FTSeek] 系统已停止")
+        
         logger.info("FTSeek 已退出")
 
 

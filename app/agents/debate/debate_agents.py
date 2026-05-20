@@ -277,19 +277,26 @@ class DebateAgent:
         return opinion
 
     async def _call_llm(self, messages: List[Dict], config: Dict = None) -> str:
-        """Call LLM — delegates to shared BaseLLMService."""
-        from ..base import BaseLLMService
-        svc = BaseLLMService(
-            config=config,
-            default_model=self.model,
-            default_timeout=90,
+        """Call LLM — uses UnifiedLLMService for unified stats."""
+        from app.llm.unified_service import get_unified_llm, UnifiedLLMService
+        
+        svc = get_unified_llm(
+            default_model=self.model, 
+            default_timeout=90, 
+            max_retries=1
         )
-        return await svc.call_llm(messages)
+        result = await svc.call(
+            messages, 
+            model=self.model, 
+            timeout=90,
+            task_type="debate_agent"
+        )
+        return result or ""
 
     def _extract_json(self, raw: str) -> Dict:
-        """Extract JSON — delegates to shared BaseLLMService."""
-        from ..base import BaseLLMService
-        return BaseLLMService.extract_json(raw)
+        """Extract JSON — uses UnifiedLLMService."""
+        from app.llm.unified_service import UnifiedLLMService
+        return UnifiedLLMService.extract_json(raw)
 
     def _parse_round1(self, raw: str) -> AgentOpinion:
         data = self._extract_json(raw)

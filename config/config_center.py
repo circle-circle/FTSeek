@@ -208,6 +208,35 @@ class ConfigCenter:
             for config_file in self.CONFIG_FILES:
                 self._load_config_file(config_file)
 
+            # 1.5 加载 meta_overrides.json (归因分析参数覆盖) ← 2026-05-19 修复死代码
+            # 2026-05-19 P1-3: 置信度分级自动应用
+            meta_overrides_path = self.config_dir / "meta_overrides.json"
+            if meta_overrides_path.exists():
+                try:
+                    with open(meta_overrides_path, 'r', encoding='utf-8') as f:
+                        meta_overrides = json.load(f)
+                    if meta_overrides:
+                        applied_count = 0
+                        pending_count = 0
+                        for key, value in meta_overrides.items():
+                            # 置信度分级：高置信度 (>0.8) 自动应用，低置信度待审核
+                            confidence = value.get('confidence', 0.5) if isinstance(value, dict) else 0.5
+                            if confidence >= 0.8:
+                                # 高置信度：自动应用
+                                self._merge_config({key: value})
+                                applied_count += 1
+                                logger.info(f"[归因自动应用] {key}: confidence={confidence:.2f} >= 0.8 ✅")
+                            else:
+                                # 低置信度：记录待审核
+                                pending_count += 1
+                                logger.info(f"[归因待审核] {key}: confidence={confidence:.2f} < 0.8 ⚠️")
+                        logger.info(
+                            f"归因分析覆盖配置已加载：meta_overrides.json | "
+                            f"自动应用={applied_count} 条，待审核={pending_count} 条"
+                        )
+                except Exception as e:
+                    logger.warning(f"加载 meta_overrides.json 失败：{e}")
+
             # 2. 应用环境变量覆盖
             self._apply_env_overrides()
 

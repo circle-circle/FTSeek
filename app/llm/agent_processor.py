@@ -396,8 +396,8 @@ class HermesAgentProcessor:
             # 情况 2: LLM 返回 content → 提取 JSON 并完成
             content = response.get("content", "")
             if content:
-                from app.agents.base import BaseLLMService
-                result = BaseLLMService.extract_json(content)
+                from app.llm.unified_service import UnifiedLLMService
+                result = UnifiedLLMService.extract_json(content)
                 if result:
                     logger.info("[HermesProcessor] Agent 完成 (round %d)", round_num)
                     return result
@@ -421,6 +421,8 @@ class HermesAgentProcessor:
                 logger.error("[HermesProcessor] LLM client 不可用")
                 return None
 
+            timeout_secs = self.llm_config.get("timeout", 120)
+            
             response = await asyncio.wait_for(
                 client.chat.completions.create(
                     model=self.default_model,
@@ -428,16 +430,13 @@ class HermesAgentProcessor:
                     tools=tools,
                     tool_choice="auto",
                 ),
-                timeout=self.llm_config.get("timeout", 120),
+                timeout=timeout_secs,
             )
 
             msg = response.choices[0].message
 
-            # 安全关闭客户端
-            try:
-                client.close()
-            except Exception:
-                pass
+            # ⚠️ 禁止调用 client.close() — 全局单例由 factory 管理生命周期
+            # 调用 close() 会销毁 httpx 连接池，导致后续所有 LLM 调用失败
 
             result = {}
             if msg.content:
@@ -458,7 +457,7 @@ class HermesAgentProcessor:
             return result if result else None
 
         except asyncio.TimeoutError:
-            logger.warning("[HermesProcessor] LLM 调用超时")
+            logger.warning("[HermesProcessor] LLM 调用超时 (timeout=%ds)", self.llm_config.get("timeout", 120))
             return None
         except Exception as e:
             error_msg = str(e)
@@ -470,16 +469,21 @@ class HermesAgentProcessor:
             return None
 
     async def _simulated_tool_call(self, messages: List[Dict]) -> Optional[Dict]:
-        """模拟 tool calling: 用 BaseLLMService 直调，从响应中解析工具请求"""
+        """模拟 tool calling: 用 UnifiedLLMService 直调，从响应中解析工具请求"""
         try:
-            from app.agents.base import BaseLLMService
+            from app.llm.unified_service import get_unified_llm, UnifiedLLMService
 
-            svc = BaseLLMService(
-                config=self.llm_config,
+            svc = get_unified_llm(
                 default_model=self.default_model,
                 default_timeout=120,
+                max_retries=1,
             )
-            raw = await svc.call_llm(messages)
+            raw = await svc.call(
+                messages,
+                model=self.default_model,
+                timeout=120,
+                task_type="agent_processor_simulated"
+            )
 
             if not raw or raw == "{}":
                 return None
@@ -498,12 +502,12 @@ class HermesAgentProcessor:
                     "role": "user",
                     "content": f"工具 {tool_name} 返回结果:\n{tool_result}\n\n请基于此结果继续分析，输出最终 JSON。",
                 })
-                svc2 = BaseLLMService(
-                    config=self.llm_config,
-                    default_model=self.default_model,
-                    default_timeout=120,
+                raw2 = await svc.call(
+                    messages,
+                    model=self.default_model,
+                    timeout=120,
+                    task_type="agent_processor_simulated_followup"
                 )
-                raw2 = await svc2.call_llm(messages)
                 return {"content": raw2} if raw2 and raw2 != "{}" else None
 
             # 不是工具请求，当作最终答案

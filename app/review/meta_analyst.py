@@ -277,10 +277,14 @@ async def run_meta_analysis(config: Dict = None) -> MetaAnalysis:
         {"role": "user", "content": weekly_text},
     ]
 
-    from app.agents.base import BaseLLMService
-    svc = BaseLLMService(config=config, default_model="qwen3.6-plus", default_timeout=90)
-    raw = await svc.call_llm(messages)
-    data = svc.extract_json(raw)
+    from app.llm.unified_service import get_unified_llm, UnifiedLLMService
+
+    svc = get_unified_llm(default_model="qwen3.6-plus", default_timeout=90, max_retries=1)
+    raw = UnifiedLLMService.run_sync(
+        svc.call(messages, model="qwen3.6-plus", timeout=90, task_type="meta_analysis"),
+        timeout=120,
+    )
+    data = svc.extract_json(raw) if raw else {}
 
     result = MetaAnalysis(
         debate_impact_assessment=data.get("debate_impact_assessment", ""),
@@ -361,8 +365,8 @@ def _inject_new_rules(rules: List[str]):
 
 def run_meta_analysis_sync(config: Dict = None) -> MetaAnalysis:
     """同步执行元分析"""
-    from app.agents.base import BaseLLMService
-    return BaseLLMService.run_sync(run_meta_analysis, config, timeout=120)
+    from app.llm.unified_service import UnifiedLLMService
+    return UnifiedLLMService.run_sync(run_meta_analysis(config), timeout=120)
 
 
 def generate_evolution_report(meta: MetaAnalysis, weekly_data: Dict) -> str:

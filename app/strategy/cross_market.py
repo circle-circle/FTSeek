@@ -20,7 +20,7 @@
 
 配置:
 - config/hk_us_mapping.json: 港股 - 美股映射关系
-- config.yaml cross_market 节: 策略参数
+- unified_config.yaml cross_market 节: 策略参数
 """
 
 import logging
@@ -268,14 +268,14 @@ class CrossMarketSessionWindow:
     3. 判断是否港股交易日
     """
     
-    # 套利窗口配置 (默认值，可被 config.yaml cross_market.session 覆盖)
+    # 套利窗口配置 (默认值，可被 unified_config.yaml cross_market.session 覆盖)
     MORNING_ARB_START = "09:30"
     MORNING_ARB_END = "10:00"
     PRE_MARKET_START = "09:00"
 
     @classmethod
     def _load_session_config(cls):
-        """从 config.yaml cross_market.session 加载时间窗口配置"""
+        """从 unified_config.yaml cross_market.session 加载时间窗口配置"""
         cfg = _get_cross_market_config()
         session = cfg.get('session', {}) if cfg else {}
         if not isinstance(session, dict):
@@ -464,11 +464,11 @@ class CrossMarketArbitrage(BaseStrategy):
         # ============================================================
         self.lead_lag = get_lead_lag_tracker()                    # Lead-Lag 追踪器
         self.sizer = get_dynamic_positionSizer()                  # 动态仓位计算器
-        self.news_mapper = get_news_mapper(use_ai=False)          # 新闻映射器 (默认规则模式)
+        self.news_mapper = get_news_mapper()                # 新闻映射器 (规则模式)
         self.duration_predictor = get_duration_predictor()        # 持续时间预测器
         self.perf_tracker = get_event_performance_tracker()       # 事件绩效追踪器
 
-        # 从 config.yaml cross_market.scoring 加载评分权重，保留默认值作 fallback
+        # 从 unified_config.yaml cross_market.scoring 加载评分权重，保留默认值作 fallback
         _cm_cfg = _get_cross_market_config()
         _scoring_cfg = _cm_cfg.get('scoring', {}) if _cm_cfg else {}
         if not isinstance(_scoring_cfg, dict):
@@ -514,7 +514,7 @@ class CrossMarketArbitrage(BaseStrategy):
             }),
         }
             
-        # 决策阀值 (from config.yaml cross_market.scoring.thresholds)
+        # 决策阀值 (from unified_config.yaml cross_market.scoring.thresholds)
         _thresholds_cfg = _scoring_cfg.get('thresholds', {})
         if not isinstance(_thresholds_cfg, dict):
             try:
@@ -528,7 +528,7 @@ class CrossMarketArbitrage(BaseStrategy):
             
         logger.info(
             f"[CrossMarketArbitrage] 评分权重已加载 (来源: "
-            f"{'config.yaml' if _scoring_cfg else 'default'}): "
+            f"{'unified_config.yaml' if _scoring_cfg else 'default'}): "
             f"execute={self._decision_thresholds['execute']}, "
             f"observe={self._decision_thresholds['observe']}"
         )
@@ -550,7 +550,7 @@ class CrossMarketArbitrage(BaseStrategy):
             self.news_digest = None
             logger.warning(f"[CrossMarketArbitrage] 新闻消化度计算器初始化失败，将使用时间衰减 fallback: {_e}")
 
-        # 从 config.yaml cross_market.risk_params 加载风控参数，保留默认值作 fallback
+        # 从 unified_config.yaml cross_market.risk_params 加载风控参数，保留默认值作 fallback
         _risk_cfg = _cm_cfg.get('risk_params', {}) if _cm_cfg else {}
         if not isinstance(_risk_cfg, dict):
             try:
@@ -567,7 +567,7 @@ class CrossMarketArbitrage(BaseStrategy):
         }
         logger.info(
             f"[CrossMarketArbitrage] 风控参数已加载 (来源: "
-            f"{'config.yaml' if _risk_cfg else 'default'}): "
+            f"{'unified_config.yaml' if _risk_cfg else 'default'}): "
             f"stop_loss={self._risk_params['stop_loss_pct']:.1%}, "
             f"take_profit={self._risk_params['take_profit_pct']:.1%}, "
             f"max_holding={self._risk_params['max_holding_minutes']}min"
@@ -1250,7 +1250,7 @@ class CrossMarketArbitrage(BaseStrategy):
         return round(arb_total_score, 4), breakdown, decision
 
 
-# 模块导入时即加载时间窗口配置 (from config.yaml cross_market.session)
+# 模块导入时即加载时间窗口配置 (from unified_config.yaml cross_market.session)
 try:
     CrossMarketSessionWindow._load_session_config()
 except Exception as _e:

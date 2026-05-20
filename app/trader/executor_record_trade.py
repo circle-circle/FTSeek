@@ -50,7 +50,10 @@ def record_trade_to_db(self, order_id: str, signal, price: float = None, pnl: fl
         # 准备数据
         code = signal.code
         action = 'BUY' if str(getattr(signal, 'action', 'BUY')).upper() in ['BUY', 'LONG'] else 'SELL'
+        # P1 修复 (2026-05-12): 平仓信号 quantity=0，使用 1 作为 placeholder（实际数量由 executor.py 的 record_trade_to_db 正确记录）
         quantity = getattr(signal, 'quantity', 0)
+        if quantity <= 0:
+            quantity = 1  # placeholder，实际平仓数量由 position.quantity 决定
         entry_price = price if price else getattr(signal, 'price', 0)
         strategy = getattr(signal, 'strategy', 'manual')
         entry_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')

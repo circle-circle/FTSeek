@@ -22,7 +22,7 @@ FTSeek 自愈引擎 (Self-Healing Engine) v2.0 — Harness 自主巡检核心
 
 核心能力:
   1. 日志模式学习器 — 自动从日志提取 ERROR/WARNING 模式
-  2. 配置漂移检测器 — 对比 config.yaml 与代码硬编码
+  2. 配置漂移检测器 — 对比 unified_config.yaml 与代码硬编码
   3. 风险趋势追踪器 — 追踪同类型问题频率变化
   4. 自愈策略注册表 — 可动态扩展的 IssueHandler 系统
   5. 自愈历史学习器 — 从修复结果中学习，调整策略优先级
@@ -67,7 +67,7 @@ class RepairPatternDB:
                 if r.get("fix_success") and r.get("issue_name"):
                     cache[r["issue_name"]] = r
             return cache
-        except: return {}
+        except Exception: return {}
 
     def fast_match(self, issue_name: str) -> Optional[Dict]:
         return self.cache.get(issue_name)
@@ -422,7 +422,7 @@ class ConfigDriftDetector:
     
     def __init__(self, base_dir: str = "/opt/ftseek/FTSeek"):
         self.base_dir = Path(base_dir)
-        self.config_file = self.base_dir / "config" / "config.yaml"
+        self.config_file = self.base_dir / "config" / "unified_config.yaml"
     
     def check_hardcoded_values(self) -> List[Dict]:
         """检测代码中硬编码的配置值"""
@@ -481,7 +481,7 @@ class ConfigDriftDetector:
             issues.append({
                 "type": "missing_config",
                 "severity": "critical",
-                "detail": "config.yaml 不存在",
+                "detail": "unified_config.yaml 不存在",
             })
         
         hardcoded = self.check_hardcoded_values()
@@ -736,7 +736,7 @@ class SelfHealingEngine:
                     issue_detail=f"{issue.get('file', '')}: {issue.get('pattern', '')} (发现 {issue.get('matches', 0)} 处)",
                     severity="warning",
                     diagnosed_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    root_cause="代码中存在硬编码配置值，应迁移到 config.yaml",
+                    root_cause="代码中存在硬编码配置值，应迁移到 unified_config.yaml",
                     diagnosis_confidence="medium",
                 )
             reports.append(report)
@@ -883,25 +883,25 @@ def _register_all_handlers(engine: SelfHealingEngine, base_dir: str):
         
         evidence = [f"涉及股票: {code}"]
         
-        # 检查 config.yaml 中是否有该股票的 lot_size 配置
+        # 检查 unified_config.yaml 中是否有该股票的 lot_size 配置
         import yaml
         try:
-            with open(bd / "config" / "config.yaml") as f:
+            with open(bd / "config" / "unified_config.yaml") as f:
                 cfg = yaml.safe_load(f)
             lot_sizes = cfg.get("trading", {}).get("order", {}).get("hk_lot_sizes", {})
             if code in lot_sizes:
-                evidence.append(f"config.yaml 已配置 {code} lot_size={lot_sizes[code]}")
+                evidence.append(f"unified_config.yaml 已配置 {code} lot_size={lot_sizes[code]}")
             else:
-                evidence.append(f"config.yaml 未配置 {code} 的 lot_size")
+                evidence.append(f"unified_config.yaml 未配置 {code} 的 lot_size")
         except Exception:
-            evidence.append("无法读取 config.yaml")
+            evidence.append("无法读取 unified_config.yaml")
         
         return DiagnosisResult(
             root_cause=f"下单数量不是 {code} 的整手倍数 — 缺少 lot_size 配置或仓位计算未对齐",
             confidence="high",
             evidence=evidence,
-            related_files=["config/config.yaml", "app/trader/executor.py"],
-            suggested_fix="在 config.yaml 的 trading.order.hk_lot_sizes 中添加该股票的整手股数",
+            related_files=["config/unified_config.yaml", "app/trader/executor.py"],
+            suggested_fix="在 unified_config.yaml 的 trading.order.hk_lot_sizes 中添加该股票的整手股数",
         )
     
     def _lot_size_fix():
@@ -953,7 +953,7 @@ def _register_all_handlers(engine: SelfHealingEngine, base_dir: str):
             root_cause="熔断器频繁触发，可能是风控参数过严或市场环境异常",
             confidence="medium",
             evidence=evidence,
-            related_files=["app/risk/circuit_breaker.py", "config/config.yaml"],
+            related_files=["app/risk/circuit_breaker.py", "config/unified_config.yaml"],
             suggested_fix="检查风控参数：追高阈值、趋势过滤阈值、confidence 要求",
         )
     
@@ -1108,7 +1108,7 @@ def _register_all_handlers(engine: SelfHealingEngine, base_dir: str):
             root_cause=f"追高阈值 {threshold}% 可能过严，正常波动也被拦截",
             confidence="medium",
             evidence=evidence,
-            related_files=["app/risk/entry_price_checker.py", "config/config.yaml"],
+            related_files=["app/risk/entry_price_checker.py", "config/unified_config.yaml"],
             suggested_fix="考虑将追高阈值从 2.0% 放宽至 3.0-5.0%",
         )
     
@@ -1198,7 +1198,7 @@ def _register_all_handlers(engine: SelfHealingEngine, base_dir: str):
             root_cause="代码中存在硬编码配置值，违反统一配置原则",
             confidence="high",
             evidence=evidence,
-            suggested_fix="将硬编码值迁移到 config/config.yaml",
+            suggested_fix="将硬编码值迁移到 config/unified_config.yaml",
         )
     
     engine.register(IssueHandler(

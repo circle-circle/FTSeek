@@ -69,7 +69,7 @@ class FutuFlashCronService:
         '芯片', '半导体', 'AI', '电动车', 'EV',
     ]
     
-    # P0 修复 (2026-04-16): 从 config.yaml 动态加载 watchlist，不再硬编码
+    # P0 修复 (2026-04-16): 从 unified_config.yaml 动态加载 watchlist，不再硬编码
     @classmethod
     def _load_watchlist(cls):
         """从配置中心加载 watchlist + 股票名称映射"""

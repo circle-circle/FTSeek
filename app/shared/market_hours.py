@@ -167,7 +167,7 @@ def _parse_time(val) -> time:
     raise ValueError(f"Cannot parse time from: {val!r}")
 
 
-def _phase_from_time(market: MarketType, t: time) -> MarketPhase:
+def _phase_from_time(market: MarketType, t: time, d: date = None) -> MarketPhase:
     """
     Internal: Map a local time to a market phase.
 
@@ -177,18 +177,34 @@ def _phase_from_time(market: MarketType, t: time) -> MarketPhase:
     Args:
         market: The market type.
         t: Local time (naive, no tzinfo needed — already in market TZ).
+        d: Date for half-day check (HK only).
 
     Returns:
         MarketPhase for the given time.
     """
     if market == MarketType.HK:
-        return _hk_phase_from_time(t)
+        return _hk_phase_from_time(t, d)
     else:
         return _us_phase_from_time(t)
 
 
-def _hk_phase_from_time(t: time) -> MarketPhase:
-    """HK phase mapping with lunch break support."""
+def _hk_phase_from_time(t: time, d: date = None) -> MarketPhase:
+    """HK phase mapping with lunch break support and half-day awareness.
+    
+    Args:
+        t: Local time.
+        d: Date for half-day check (optional, defaults to today).
+    """
+    # Half-day check: if afternoon on a half-day, treat as CLOSED
+    if d is not None and t >= time(12, 0):
+        try:
+            from app.utils.holiday_calendar import get_holiday_calendar
+            cal = get_holiday_calendar()
+            if cal.is_hk_half_day(d):
+                return MarketPhase.CLOSED  # 半日市下午 = 休市
+        except Exception:
+            pass  # Fail-open: calendar unavailable, use normal schedule
+
     # Check config-driven boundaries first
     sessions = _get_session_boundaries(MarketType.HK)
 
@@ -276,7 +292,7 @@ def get_market_phase(market: MarketType, at: Optional[datetime] = None) -> Marke
     if not is_trading_day(market, now.date()):
         return MarketPhase.WEEKEND
 
-    return _phase_from_time(market, now.time())
+    return _phase_from_time(market, now.time(), now.date())
 
 
 def is_trading_hours(market: MarketType, at: Optional[datetime] = None) -> bool:
@@ -362,14 +378,29 @@ def get_session_config(market: MarketType) -> Dict:
         return {}
 
     phase = get_market_phase(market)
-    phase_to_session = {
-        MarketPhase.PRE_OPEN: "opening",
-        MarketPhase.MORNING: "opening",
-        MarketPhase.LUNCH_BREAK: "mid_day",
-        MarketPhase.AFTERNOON: "afternoon",
-        MarketPhase.CLOSED: "closing",
-    }
-    session_name = phase_to_session.get(phase)
+    
+    # 2026-05-13 修复: phase 到 session key 的映射
+    # 根因: MarketPhase.MORNING 覆盖 09:30-12:00 全段，但 time_aware_risk 有
+    #   opening (09:30-10:00) 和 afternoon (10:00-12:00) 两个子段
+    # 旧映射: MORNING → opening (12:00 前全部用 opening 配置)
+    # 新映射: MORNING 内按时间细分 → opening 或 afternoon
+    
+    if phase == MarketPhase.MORNING:
+        # MORNING = 09:30-12:00，需要根据实际时间判断用 opening 还是 afternoon
+        now = get_current_time(market)
+        if now.time() < time(10, 0):
+            session_name = "opening"   # 09:30-10:00
+        else:
+            session_name = "afternoon"  # 10:00-12:00
+    else:
+        phase_to_session = {
+            MarketPhase.PRE_OPEN: "opening",
+            MarketPhase.LUNCH_BREAK: "mid_day",
+            MarketPhase.AFTERNOON: "closing",   # 修复: 13:00-16:00 → closing 配置
+            MarketPhase.CLOSED: None,            # 收盘后无交易配置
+        }
+        session_name = phase_to_session.get(phase)
+    
     if not session_name:
         return {}
 

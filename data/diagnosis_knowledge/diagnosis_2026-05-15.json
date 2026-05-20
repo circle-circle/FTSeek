@@ -1,0 +1,44 @@
+{
+  "status": "ok",
+  "date": "2026-05-15",
+  "stats": {
+    "date": "2026-05-15",
+    "total": 192,
+    "executed": 2,
+    "rejected": 190,
+    "pending": 0,
+    "execution_rate": 0.010416666666666666,
+    "max_concurrent_pct": 0.4368421052631579,
+    "weak_signal_pct": 0.1368421052631579,
+    "weak_signal_error_pct": 0.0,
+    "noise_hours_pct": 0.12631578947368421,
+    "signal_cooldown_pct": 0.08421052631578947,
+    "mtf_rejected_pct": 0.05263157894736842,
+    "late_session_pct": 0.08421052631578947,
+    "top_reasons": {
+      "max_concurrent_positions": 83,
+      "weak_signal": 26,
+      "noise_hours": 24,
+      "signal_cooldown": 16,
+      "late_session_gate": 16
+    }
+  },
+  "trends": [],
+  "suggestions": [
+    {
+      "name": "max_concurrent_positions 过低",
+      "severity": "high",
+      "suggestion": "max_concurrent_positions 拦截占 44%，建议从当前值提高到 5-8",
+      "config_path": "unified_config.yaml → risk_limits.max_concurrent_positions"
+    },
+    {
+      "name": "执行率过低",
+      "severity": "high",
+      "suggestion": "执行率仅 1.0%，管线几乎全拦截，需全面检查风控阈值",
+      "config_path": "多个配置项需综合调整"
+    }
+  ],
+  "suggestion_count": 2,
+  "max_severity": "high",
+  "report": "### 📊 FTSeek 盘后分析 (2026-05-15)\n\n**管线概览**\n- 总信号: 192 | 执行: 2 | 拒绝: 190\n- 执行率: 🔴 1.0%\n\n**拒绝原因 TOP 5**\n- `max_concurrent_positions`: 83 (44%)\n- `weak_signal`: 26 (14%)\n- `noise_hours`: 24 (13%)\n- `signal_cooldown`: 16 (8%)\n- `late_session_gate`: 16 (8%)\n\n### 💡 优化建议\n- 🔴 **max_concurrent_positions 过低**: max_concurrent_positions 拦截占 44%，建议从当前值提高到 5-8\n  - 📁 unified_config.yaml → risk_limits.max_concurrent_positions\n- 🔴 **执行率过低**: 执行率仅 1.0%，管线几乎全拦截，需全面检查风控阈值\n  - 📁 多个配置项需综合调整\n"
+}

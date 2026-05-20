@@ -72,7 +72,7 @@ class SessionDetector:
         
         # 默认时段：标准模式 (兜底)
         default_config = time_aware_config.get('afternoon', {
-            'min_confidence': 0.35, 
+            'min_confidence': 0.45,  # 2026-05-19: 提高信号门槛 (原0.35)
             'max_position': 0.18
         })
         self.default_session = MarketSession("STANDARD", None, None, default_config)

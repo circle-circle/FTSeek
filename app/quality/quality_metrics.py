@@ -26,9 +26,9 @@ class QualityThreshold:
     low_max: float = 0.50        # <0.50 为低质量
 
     # 维度阈值
-    min_historical_accuracy: float = 0.45   # 最低历史准确率
+    min_historical_accuracy: float = 0.55   # 2026-05-19: 提高门槛 (原0.45, 低于50%胜率不应通过)
     min_confidence: float = 0.50            # 最低置信度
-    min_factor_alignment: float = 0.40      # 最低因子对齐度
+    min_factor_alignment: float = 0.50      # 2026-05-19: 提高门槛 (原0.40, 要求更严格因子一致性)
 
 
 @dataclass

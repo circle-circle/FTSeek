@@ -241,7 +241,7 @@ async def _query_database(args: Dict, deps: ToolDependencies) -> str:
         elif query_type == "signals":
             prefix = "HK." if market == "hk" else "US."
             rows = conn.execute(
-                """SELECT id, code, direction, signal_score, confidence,
+                """SELECT id, code, direction, technical_score AS signal_score, confidence,
                    created_at, status
                    FROM signals WHERE code LIKE ? AND created_at >= ?
                    ORDER BY created_at DESC LIMIT ?""",
@@ -249,18 +249,30 @@ async def _query_database(args: Dict, deps: ToolDependencies) -> str:
             ).fetchall()
         elif query_type == "news":
             rows = conn.execute(
-                """SELECT title, summary, source, fetched_at
+                """SELECT headline AS title, COALESCE(content, '') AS summary, source, fetched_at
                    FROM news_cache WHERE fetched_at >= ? AND fetched_at < ?
                    ORDER BY fetched_at DESC LIMIT ?""",
                 (f"{date} 00:00:00", f"{date} 23:59:59", limit),
             ).fetchall()
         elif query_type == "lessons":
-            rows = conn.execute(
-                """SELECT trade_date, symbol, cause, lesson, confidence
-                   FROM lessons WHERE trade_date >= ? AND trade_date < ?
-                   ORDER BY trade_date DESC LIMIT ?""",
-                (date, date, limit),
-            ).fetchall()
+            # ftseek.db 无 lessons 表，改查 knowledge.db
+            conn.close()
+            import os
+            kb_path = os.path.join(os.path.dirname(deps.db_path), "knowledge.db")
+            if os.path.exists(kb_path):
+                conn2 = sqlite3.connect(kb_path)
+                conn2.row_factory = sqlite3.Row
+                rows = conn2.execute(
+                    """SELECT date AS trade_date, stock_code AS symbol, title AS cause,
+                          content AS lesson, confidence AS confidence
+                       FROM lessons WHERE date >= ? AND date < ?
+                       ORDER BY date DESC LIMIT ?""",
+                    (date, date, limit),
+                ).fetchall()
+                results = [dict(r) for r in rows]
+                conn2.close()
+                return json.dumps(results, ensure_ascii=False, default=str)
+            return json.dumps([], ensure_ascii=False)
         else:
             conn.close()
             return json.dumps({"error": f"未知查询类型: {query_type}"}, ensure_ascii=False)

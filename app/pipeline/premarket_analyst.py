@@ -6,7 +6,6 @@
 
 输出 PreMarketAssessment (与用户指定的 JSON Schema 对齐)。
 """
-
 import asyncio
 import json
 import logging
@@ -16,6 +15,9 @@ import os
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import List, Dict, Optional, Any
+
+# FTSeek 适配: 集成市场规则注入 (2026-05-17)
+from app.utils.market_prompt_injector import inject_market_context
 
 logger = logging.getLogger("ftseek.pipeline.premarket_analyst")
 
@@ -48,7 +50,9 @@ class PreMarketAssessment:
     risk_path: str = ""
     stop_loss: str = ""
     position_sizing: str = ""
-    notes: str = ""                   # 补充说明 (新增字段以匹配 Prompt)
+    notes: str = ""
+    signal_impact: str = "neutral"    # boost / neutral / weaken / block
+    avoid_codes: List[str] = field(default_factory=list)
 
     # 兼容旧字段
     relevance_score: float = 0.0
@@ -128,13 +132,18 @@ SYSTEM_PROMPT = """
 - **资金面驱动**: 重点关注南向资金 (Southbound Flow) 和外资流向。
 - **二阶推理**: 事件事实 -> 传导链 -> 资金链 -> 交易机会。
 
+【你的角色 — 技术信号的补充者，非决策者】:
+你不再决定是否交易，而是为已有的技术信号提供额外的上下文和风险提示。
+交易决策由规则引擎主导，你的输出仅用于调整信号的优先级。
+
 你必须遵守以下原则：
 - 只基于输入事实推理，不得编造未知内容
-- **政策一票否决**: 如果涉及强监管/反垄断/制裁风险，必须给出极低的置信度 (Confidence < 0.3) 并建议 NO_TRADE 或 SHORT。
-- 如果信息不完整、逻辑链不闭环、或定价状态不明确，必须输出 NO_TRADE
-- 置信度低于 0.6 时，必须输出 NO_TRADE
+- **政策一票否决**: 如果涉及强监管/反垄断/制裁风险，必须给出 signal_impact="block" 并列出 avoid_codes。
+- 如果事件影响已被市场价格充分反映，给出 signal_impact="weaken"。
+- 如果有明确的新催化剂可能推动价格显著变动，给出 signal_impact="boost"。
+- 如果信息不足以做出有意义的判断，给出 signal_impact="neutral"。
 - 宁可错过，不要做错
-- **突发事件特权**: 如果涉及地缘政治突变、战争、核心供应链断裂（如伊朗石油、芯片禁令），即使部分细节缺失，也应给出较高的置信度 (0.7+) 并推荐对冲方向。
+- **突发事件特权**: 如果涉及地缘政治突变、战争、核心供应链断裂（如伊朗石油、芯片禁令），即使部分细节缺失，也应给出较高的置信度 (0.7+)。
 - 不要输出泛泛而谈的新闻总结，必须给出交易可用的结构化判断
 - 必须严格输出 JSON，禁止输出多余解释文字
 - 输出内容必须适合自动交易系统直接消费
@@ -143,43 +152,44 @@ SYSTEM_PROMPT = """
 1. 事件是否真实且重要
 2. 直接影响对象是谁
 3. 影响是否会传导到相关行业/板块/公司
-4. 市场是否已经充分定价
+4. 市场是否已经充分定价 (pricing_status)
 5. 当前价格行为是否确认该事件
-6. 该事件是否值得交易
+6. 该事件是否值得交易 (由 signal_impact 表达，非 direction)
 7. 如果交易，应该采取什么方向和风险控制方式
 8. 哪些因素会否定当前判断
 
 【强制输出 JSON 格式要求】:
 必须强制输出以下字段：
 - session: 分析时段 (如 "pre_market_hk")
-- market_regime: 整体市场环境 ("RISK_ON" / "NEUTRAL" / "RISK_OFF")
-- risk_level: 风险等级 ("LOW" / "MEDIUM" / "HIGH")
-- stop_trading: 如果大盘极差，必须设为 true 并说明原因
 - focus_symbols: 必须输出最相关的标的代码，最多 5 个
 - direction: BUY / SELL / NO_TRADE
 - confidence: 0.0 ~ 1.0
+- signal_impact: "boost" / "neutral" / "weaken" / "block" — 你对技术信号的调整建议
+  * boost = 有明确催化剂，建议提升该标的优先级
+  * neutral = 无明显影响，保持原信号权重
+  * weaken = 事件已被定价或缺乏后续动能，建议降低优先级
+  * block = 存在政策/制裁/强监管风险，建议回避
+- avoid_codes: 如果你建议回避某些标的，列出其代码（仅在 signal_impact="block" 时有意义）
+- pricing_status: "not_priced_in" / "partially_priced_in" / "fully_priced_in"
+- second_order_insight: 用一句话描述二阶推理逻辑（如"监管收紧→广告收入预期下调→估值重估"）
 - invalidating_factors: 必须明确写出哪些因素会推翻当前判断
 - logic_chain: 必须用数组列出推理步骤
 
-如果没有高确信度交易机会，direction 必须是 NO_TRADE，risk_level 设为 HIGH，stop_trading 设为 false (除非大盘崩了)。
+如果没有高确信度交易机会，direction 设为 NO_TRADE，signal_impact 设为 neutral（除非有明确的风险需要 block）。
 
 输出格式要求：
 严格输出 JSON，结构如下：
 {
   "session": "pre_market_hk",
-  "market_regime": "NEUTRAL",
-  "risk_level": "MEDIUM",
-  "stop_trading": false,
-  "plans": [
-    {
-      "symbol": "HK.00700",
-      "bias": "LONG",
-      "conviction": 0.85,
-      "key_trigger": "突破 380 且成交量放大",
-      "invalidation": "如果跌破 365，逻辑失效",
-      "news_impact": "财报利好，外资流入"
-    }
-  ]
+  "focus_symbols": ["HK.00700", "HK.09988"],
+  "direction": "NO_TRADE",
+  "confidence": 0.45,
+  "signal_impact": "boost",
+  "avoid_codes": [],
+  "pricing_status": "partially_priced_in",
+  "second_order_insight": "南向资金持续流入互联网龙头，估值修复动能增强",
+  "invalidating_factors": ["美联储意外加息", "南向资金突然大幅流出"],
+  "logic_chain": ["事件A→影响B→资金流向C→标的受益D"]
 }
 """
 
@@ -203,7 +213,6 @@ USER_PROMPT_TEMPLATE = """
 相关行业：{industries}
 市场环境：{market_regime}
 美股收盘情况：{us_close}
-ADR 表现：{adr_effect}
 近期价格行为：{price_action}
 近期成交量/波动率：{volume_volatility}
 历史相似事件：{historical_cases}
@@ -297,37 +306,6 @@ class PreMarketAnalyst:
             self._stats["fallbacks"] += 1
             return self._make_fallback(f"解析失败: {e}", pack, raw_response)
 
-    def _validate_assessment(self, assessment: PreMarketAssessment) -> PreMarketAssessment:
-        """
-        P2 新增: 校验 LLM 输出，确保符合风控要求 (业务规则)
-        """
-        # 规则 0: 标的为空 -> 无法交易
-        if not assessment.focus_symbols:
-            logger.warning(f"🛑 [校验] 标的为空 -> 强制 NO_TRADE")
-            assessment.direction = "NO_TRADE"
-            assessment.tradeability = "no_trade"
-            return assessment
-
-        # 规则 1: 定价状态已充分 (fully_priced_in) -> 默认 NO_TRADE
-        if assessment.pricing_status == "fully_priced_in":
-            logger.warning(f"⚠️ [校验] 事件已充分定价 ({assessment.pricing_status}) -> 降级为 NO_TRADE")
-            assessment.direction = "NO_TRADE"
-            assessment.tradeability = "no_trade"
-            return assessment
-
-        # 规则 2: 置信度低于 0.6 -> 强制 NO_TRADE
-        if assessment.confidence < 0.60:
-            logger.warning(f"📉 [校验] 置信度过低 ({assessment.confidence:.2f} < 0.6) -> 强制 NO_TRADE")
-            assessment.direction = "NO_TRADE"
-            assessment.tradeability = "no_trade"
-            
-        # 规则 3: Tradeability 为 no_trade -> 强制 NO_TRADE
-        elif assessment.tradeability == "no_trade":
-            logger.warning(f"🛑 [校验] Tradeability 为 no_trade -> 强制 NO_TRADE")
-            assessment.direction = "NO_TRADE"
-            
-        return assessment
-
     async def analyze_batch(self, packs: List[Any]) -> List[PreMarketAssessment]:
         """批量分析事件包 (分批并行)"""
         if not packs:
@@ -404,10 +382,12 @@ class PreMarketAnalyst:
         
         # 尝试解析 US 市场上下文以填充特定字段 (简化处理)
         us_close = "见跨市场联动信息"
-        adr_effect = "N/A"
-        price_action = getattr(pack, "price_action", "N/A")
-        volume_volatility = getattr(pack, "volatility", "N/A")
-        historical_cases = "N/A"
+        pack_symbols = getattr(pack, "focus_symbols", [])
+        price_action = self._build_technical_context(pack_symbols)
+        # 量比/波动率: 优先从 sentiment_summary 获取，否则从 market_context 获取
+        vol_info = getattr(pack, "sentiment_summary", {})
+        volume_volatility = f"情绪一致性={vol_info.get('consensus', 0):+.2f}, 分歧度={vol_info.get('dispersion', 0):.2f}"
+        historical_cases = self._load_historical_context(pack_symbols)
         related_news = "N/A"
 
         # 3. 加载昨日复盘反馈 (Phase 5: 闭环反馈)
@@ -425,7 +405,6 @@ class PreMarketAnalyst:
                 industries=industries,
                 market_regime=market_regime,
                 us_close=us_market_context,
-                adr_effect=adr_effect,
                 price_action=price_action,
                 volume_volatility=volume_volatility,
                 historical_cases=historical_cases,
@@ -435,8 +414,16 @@ class PreMarketAnalyst:
             logger.error(f"[PreMarketAnalyst] Prompt 模板缺少字段: {e}")
             user_prompt = f"请分析以下事件包: {headline}\n\n{body}"
 
+        # FTSeek 适配: 注入市场规则 (2026-05-17)
+        # 根据所有 focus_symbols 识别市场并注入规则 (支持跨市场事件包)
+        final_system_prompt = SYSTEM_PROMPT
+        symbols = getattr(pack, "focus_symbols", [])
+        if symbols:
+            # 传递所有标的，inject_market_context 自动识别多市场
+            final_system_prompt = inject_market_context(",".join(symbols), SYSTEM_PROMPT)
+            
         return [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": final_system_prompt},
             {"role": "user", "content": user_prompt},
         ]
 
@@ -587,7 +574,6 @@ class PreMarketAnalyst:
 
             # 获取港股价格 (从配置或缓存)
             # 盘前分析时港股未开盘，使用上一交易日收盘价
-            hk_prices = self._get_hk_prev_close_prices(list(us_prices.keys()))
             # 过滤掉 0 值 (TODO placeholder 返回 0.0 表示数据不可用)
             hk_prices = {k: v for k, v in hk_prices.items() if v > 0}
 
@@ -616,33 +602,145 @@ class PreMarketAnalyst:
             logger.warning(f"[PreMarketAnalyst] 获取财报日历失败: {e}")
             return ""
 
-    def _get_hk_prev_close_prices(self, us_codes: List[str]) -> Dict[str, float]:
-        """
-        获取港股上一交易日收盘价
+    def _build_technical_context(self, symbols: list) -> str:
+        """2026-05-17: 注入标的真实交易数据 + 技术指标
 
-        盘前分析时港股未开盘，使用上一交易日收盘价计算套利
+        盘前分析时 (08:20-08:30 HKT) 港股未开盘，但可从 Futu 获取:
+        - 上一交易日 OHLCV + 涨跌幅
+        - 20 日 ATR / 成交量比 / 均线位置
+        - 近期交易历史 P&L (已有逻辑)
 
         Returns:
-            {hk_code: price}
+            技术上下文文本
         """
-        # 尝试从数据源获取，如果没有则返回空
-        # 实际应用中应从富途 API 或数据库获取
+        if not symbols:
+            return ""
+        parts = []
+
+        # 1. 实时技术指标 (Futu 盘前快照)
         try:
-            from app.utils.cross_market_mapper import get_cross_market_mapper
-            mapper = get_cross_market_mapper()
+            from futu import OpenQuoteContext, KLType, AuType, RET_OK
+            from app import config
+            import pandas as pd
 
-            hk_prices = {}
-            for us_code in us_codes:
-                hk_codes = mapper.get_hk_codes_by_us(us_code)
-                for hk_code in hk_codes:
-                    # TODO: 从富途 API 获取上一交易日收盘价
-                    # 目前返回 0 表示数据不可用 → generate_signals 会跳过该配对
-                    hk_prices[hk_code] = 0.0
+            quote_ctx = None
+            try:
+                quote_ctx = OpenQuoteContext(host=config.OPEND_HOST, port=config.OPEND_PORT)
+                for sym in symbols[:5]:
+                    try:
+                        # 获取日 K 线 (近 25 日)
+                        ret, kline_df = quote_ctx.get_cur_kline(sym, 25, KLType.K_DAY, AuType.QFQ)
+                        if ret == RET_OK and kline_df is not None and len(kline_df) > 0:
+                            last = kline_df.iloc[-1]
+                            prev = kline_df.iloc[-2] if len(kline_df) > 1 else last
+                            close = float(last['close'])
+                            prev_close = float(prev['close'])
+                            change_pct = (close - prev_close) / prev_close * 100 if prev_close > 0 else 0
 
-            return hk_prices
+                            # 量能: 量比 = 最新量 / 20日均量
+                            vol_20 = kline_df.tail(20)['volume'].mean()
+                            vol_ratio = float(last['volume']) / vol_20 if vol_20 > 0 else 1.0
 
-        except Exception:
-            return {}
+                            # 波动率: ATR(20)
+                            atr_val = 0.0
+                            if len(kline_df) >= 20:
+                                atr_df = kline_df.tail(21)
+                                tr = pd.concat([
+                                    atr_df['high'] - atr_df['low'],
+                                    (atr_df['high'] - atr_df['close'].shift(1)).abs(),
+                                    (atr_df['low'] - atr_df['close'].shift(1)).abs()
+                                ], axis=1).max(axis=1)
+                                atr_val = tr.iloc[-20:].mean()
+                            atr_pct = atr_val / close * 100 if close > 0 else 0
+
+                            # 均线位置
+                            ma5 = float(kline_df.tail(5)['close'].mean())
+                            ma20 = float(kline_df.tail(20)['close'].mean())
+                            ma_pos = "上方" if close > ma20 else "下方"
+
+                            parts.append(
+                                f"## {sym} 技术快照 (上一交易日)\n"
+                                f"  收盘={close:.2f} | 涨跌={change_pct:+.1f}%\n"
+                                f"  量比={vol_ratio:.1f}x | ATR(20)={atr_val:.2f}({atr_pct:.1f}%)\n"
+                                f"  MA5={ma5:.2f} | MA20={ma20:.2f} | 价格在MA20{ma_pos}"
+                            )
+                    except Exception as e:
+                        logger.debug(f"[LLM技术上下文] {sym} Futu 数据获取失败: {e}")
+
+                if not parts:
+                    parts.append("## 技术快照: 盘前无法获取实时行情，使用历史复盘数据")
+            finally:
+                if quote_ctx:
+                    try:
+                        quote_ctx.close()
+                    except Exception:
+                        pass
+        except ImportError:
+            logger.debug("[LLM技术上下文] futu 模块不可用，跳过实时技术指标")
+        except Exception as e:
+            logger.debug(f"[LLM技术上下文] Futu 连接失败: {e}")
+
+        # 2. 历史交易复盘 (已有逻辑)
+        try:
+            import sqlite3
+            db_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'data', 'ftseek.db')
+            conn = sqlite3.connect(db_path)
+            cur = conn.cursor()
+            for sym in symbols[:5]:
+                row = cur.execute(
+                    "SELECT code, action, entry_price, exit_price, unrealized_pl, strategy, entry_time "
+                    "FROM positions WHERE code=? AND market='HK' AND status='CLOSED' "
+                    "AND strategy NOT LIKE '%sync%' ORDER BY entry_time DESC LIMIT 3",
+                    (sym,)
+                ).fetchall()
+                if row:
+                    lines = [f"## {sym} 近期交易复盘"]
+                    for r in row:
+                        pnl = r[4] if r[4] else 0
+                        lines.append(f"  {r[5]}: 入场={r[2]} 出场={r[3] or 'N/A'} PnL={pnl:+.0f}")
+                    # 只在无技术快照时追加 (有技术快照时复盘数据在下一段)
+                    if not any(sym in p for p in parts):
+                        parts.append("\n".join(lines))
+                    else:
+                        # 追加到已有条目
+                        idx = next(i for i, p in enumerate(parts) if sym in p)
+                        parts[idx] += "\n" + "\n".join(lines)
+                else:
+                    stats = cur.execute(
+                        "SELECT COUNT(*), SUM(CASE WHEN passed=1 THEN 1 ELSE 0 END), "
+                        "ROUND(AVG(ABS(score)),2) FROM decision_traces WHERE code=?",
+                        (sym,)
+                    ).fetchone()
+                    if stats and stats[0] > 0:
+                        parts.append(f"## {sym}: {stats[0]}次扫描, {stats[1]}次通过, 均分={stats[2]}")
+                    else:
+                        parts.append(f"## {sym}: 无历史数据")
+            conn.close()
+        except Exception as e:
+            logger.debug(f"[LLM技术上下文] 历史复盘加载失败: {e}")
+
+        return "\n".join(parts) if parts else ""
+
+    def _load_historical_context(self, symbols: list) -> str:
+        """2026-05-17: 从历史模式库加载相似案例"""
+        if not symbols:
+            return ""
+        try:
+            from app.review.pattern_miner import get_pattern_miner
+            patterns = get_pattern_miner().mine(days=60)
+            parts = []
+            for sym in symbols[:5]:
+                sp = [p for p in patterns if sym in p.get('pattern', '') or sym in p.get('affected_symbols', '')]
+                if sp:
+                    lines = [f"## {sym} 历史模式"]
+                    for p in sp[:2]:
+                        lines.append(f"  {p.get('pattern', '')}")
+                        lines.append(f"    -> {p.get('actionable_rule', '')}")
+                    parts.append("\n".join(lines))
+            return "\n".join(parts) if parts else "无历史案例"
+        except Exception as e:
+            logger.debug(f"历史上下文加载失败: {e}")
+            return ""
 
     async def _call_llm(self, messages: List[Dict], model: str, timeout: int) -> Optional[str]:
         """调用 DashScope API (带自动降级)"""
@@ -713,10 +811,19 @@ class PreMarketAnalyst:
             # 清理可能的 Markdown 标记
             cleaned_raw = re.sub(r'^```json\s*', '', raw, flags=re.MULTILINE)
             cleaned_raw = re.sub(r'\s*```$', '', cleaned_raw, flags=re.MULTILINE)
+            cleaned_raw = re.sub(r'[\x00-\x1f]+', ' ', cleaned_raw)
             validated_data = json.loads(cleaned_raw.strip())
         except json.JSONDecodeError as e:
             logger.error(f"[PreMarketAnalyst] JSON 解析失败: {e}")
-            return self._make_fallback("JSON 解析失败", pack, raw)
+            try:
+                json_match = re.search(r'\{[\s\S]*\}', raw)
+                if json_match:
+                    cleaned = re.sub(r'[\x00-\x1f]+', ' ', json_match.group())
+                    validated_data = json.loads(cleaned)
+                else:
+                    raise ValueError()
+            except Exception:
+                return self._make_fallback("JSON 解析失败", pack, raw)
 
         # 2. 提取核心字段并校验类型
         direction = str(validated_data.get("direction", "NO_TRADE")).upper()
@@ -756,7 +863,8 @@ class PreMarketAnalyst:
             stop_loss=validated_data.get("stop_loss", ""),
             position_sizing=validated_data.get("position_sizing", ""),
             notes=validated_data.get("notes", ""),
-            
+            signal_impact=str(validated_data.get("signal_impact", "neutral")).lower(),
+            avoid_codes=validated_data.get("avoid_codes", []),
             # 兼容字段映射
             relevance_score=float(validated_data.get("relevance_score", validated_data.get("event_quality") == "high" and 0.8 or 0.5)),
             strength_score=float(validated_data.get("strength_score", confidence * 0.9)),
@@ -781,33 +889,34 @@ class PreMarketAnalyst:
 
     def _validate_assessment(self, assessment: PreMarketAssessment) -> PreMarketAssessment:
         """
-        P2 新增: 校验 LLM 输出，确保符合风控要求 (业务规则)
+        P2 修复 (2026-05-17): LLM 不再决定是否交易，而是提供上下文和风险提示。
+        2026-05-17 修复: 删除旧版本重复方法（原 L829-858 的保守规则覆盖新版逻辑）。
         """
-        # 规则 1: 标的为空 -> 无法交易
+        # 规则 1: 标的为空 -> 无法提供信号
         if not assessment.focus_symbols:
             logger.warning(f"🛑 [校验] 标的为空 -> 强制 NO_TRADE")
             assessment.direction = "NO_TRADE"
             assessment.tradeability = "no_trade"
             return assessment
 
-        # 规则 2: 定价状态已充分 (fully_priced_in) -> 默认 NO_TRADE
-        if assessment.pricing_status == "fully_priced_in":
-            logger.warning(f"⚠️ [校验] 事件已充分定价 ({assessment.pricing_status}) -> 降级为 NO_TRADE")
-            assessment.direction = "NO_TRADE"
-            assessment.tradeability = "no_trade"
-            return assessment
+        # 规则 2: signal_impact 默认值
+        if not assessment.signal_impact:
+            assessment.signal_impact = 'neutral'
 
-        # 规则 3: 置信度低于 0.6 -> 强制 NO_TRADE
-        if assessment.confidence < 0.60:
-            logger.warning(f"📉 [校验] 置信度过低 ({assessment.confidence:.2f} < 0.6) -> 强制 NO_TRADE")
-            assessment.direction = "NO_TRADE"
-            assessment.tradeability = "no_trade"
-            
-        # 规则 4: Tradeability 为 no_trade -> 强制 NO_TRADE
-        elif assessment.tradeability == "no_trade":
-            logger.warning(f"🛑 [校验] Tradeability 为 no_trade -> 强制 NO_TRADE")
-            assessment.direction = "NO_TRADE"
-            
+        # 规则 3: 置信度过低 (<0.15) -> 信号无参考价值
+        if assessment.confidence < 0.15:
+            logger.warning(f"置信度过低 ({assessment.confidence:.2f}) -> signal_impact=neutral")
+            assessment.signal_impact = 'neutral'
+
+        # 规则 4: 事件已充分定价 -> 降级信号影响
+        if assessment.pricing_status == "fully_priced_in":
+            logger.warning(f"事件已充分定价 -> signal_impact=weaken")
+            assessment.signal_impact = 'weaken'
+
+        # 规则 5: LLM 标记回避标的 -> 记录警告
+        if getattr(assessment, 'avoid_codes', None):
+            logger.warning(f"LLM 标记回避标的: {assessment.avoid_codes}")
+
         return assessment
 
     def _make_fallback(
@@ -819,8 +928,10 @@ class PreMarketAnalyst:
             primary_scene=f"降级分析: {reason}",
             event_pack_id=getattr(pack, "id", ""),
             focus_symbols=getattr(pack, "focus_symbols", []),
-            direction="WATCH",
+            direction="NO_TRADE",  # 降级=无法交易，与 battle_plan_generator 对齐
             confidence=0.0,
+            signal_impact="neutral",  # 降级标的无 LLM 信号影响
+            avoid_codes=[],
             relevance_score=getattr(pack, "relevance", {}).get("overall", 0.0),
             strength_score=0.0,
             duration="intraday",
@@ -920,7 +1031,8 @@ class PreMarketAnalyst:
                     "urgency": urgency,
                     "event_quality": assmt.event_quality,
                     "pricing_status": assmt.pricing_status,
-                    "regime_hint": assmt.cross_market_signal.get("hk_open_bias", "")
+                    "regime_hint": assmt.cross_market_signal.get("hk_open_bias", ""),
+                    "signal_impact": assmt.signal_impact,  # 2026-05-17 新增
                 }
                 
                 # 去重: 如果标的已存在，保留更高置信度的逻辑
@@ -933,11 +1045,16 @@ class PreMarketAnalyst:
                     target_entry["confidence"] = assmt.confidence
                     plan["targets"].append(target_entry)
             
-            # 记录风险/黑名单
+            # 记录风险/黑名单 (2026-05-17 增强: signal_impact=block 和 avoid_codes)
+            block_codes = list(getattr(assmt, 'avoid_codes', []))
+            if assmt.signal_impact == "block":
+                block_codes.extend(targets)
             if "risk" in assmt.event_quality or "avoid" in assmt.notes.lower():
-                for sym in targets:
-                    if sym not in plan["restricted"]:
-                        plan["restricted"].append(sym)
+                block_codes.extend(targets)
+            for sym in block_codes:
+                if sym not in plan["restricted"]:
+                    plan["restricted"].append(sym)
+                    logger.info(f"[BattlePlan] LLM 标记回避: {sym} (signal_impact={assmt.signal_impact})")
 
         # 2. 整体基调
         total_signals = bull_count + bear_count

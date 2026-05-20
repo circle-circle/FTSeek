@@ -12,6 +12,25 @@ import logging
 
 logger = logging.getLogger("ftseek.holiday_calendar")
 
+# ── 港股半日市 (2026-2027) ──────────────────────────────────
+# 半日市仅上午交易 (09:30-12:00)，下午休市。
+# 来源: HKEX 交易日历
+HK_HALF_DAYS_2026 = {
+    date(2026, 2, 16),   # 春节前夕 (年初一前夕)
+    date(2026, 4, 2),    # 复活节前夕 (耶稣受难节前夕)
+    date(2026, 5, 30),   # 端午节前夕
+    date(2026, 12, 24),  # 圣诞节前夕
+    date(2026, 12, 31),  # 新年前夕
+}
+
+HK_HALF_DAYS_2027 = {
+    date(2027, 2, 7),    # 春节前夕
+    date(2027, 4, 1),    # 复活节前夕
+    date(2027, 6, 13),   # 端午节前夕
+    date(2027, 12, 24),  # 圣诞节前夕
+    date(2027, 12, 31),  # 新年前夕
+}
+
 # ── 港股节假日 (2026-2027) ──────────────────────────────────
 HK_HOLIDAYS_2026 = {
     date(2026, 1, 1),    # 元旦
@@ -86,6 +105,8 @@ class TradingHolidayCalendar:
     _instance = None
     _hk_holidays: Set[date] = set()
     _us_holidays: Set[date] = set()
+    _hk_half_days: Set[date] = set()
+    _calendar_expired: bool = False
 
     def __new__(cls):
         if cls._instance is None:
@@ -99,17 +120,64 @@ class TradingHolidayCalendar:
             return
         self._hk_holidays = set()
         self._us_holidays = set()
+        self._hk_half_days = set()
 
         for year_holidays in [HK_HOLIDAYS_2026, HK_HOLIDAYS_2027]:
             self._hk_holidays.update(year_holidays)
         for year_holidays in [US_HOLIDAYS_2026, US_HOLIDAYS_2027]:
             self._us_holidays.update(year_holidays)
+        for year_half_days in [HK_HALF_DAYS_2026, HK_HALF_DAYS_2027]:
+            self._hk_half_days.update(year_half_days)
 
         self._initialized = True
         logger.info(
             f"📅 节假日日历已加载: HK={len(self._hk_holidays)} 天, "
-            f"US={len(self._us_holidays)} 天"
+            f"US={len(self._us_holidays)} 天, HK半日市={len(self._hk_half_days)} 天"
         )
+
+        # P0 修复 (2026-05-17): 日历过期检测 — 防止 2028+ fail-open
+        self._check_calendar_expiry()
+
+    def _check_calendar_expiry(self):
+        """检测节假日日历是否过期，过期则 fail-closed + 告警"""
+        from datetime import date as _date
+        try:
+            all_hk_dates = set()
+            for year_set in [HK_HOLIDAYS_2026, HK_HOLIDAYS_2027, HK_HALF_DAYS_2026, HK_HALF_DAYS_2027]:
+                all_hk_dates.update(year_set)
+            max_hk_date = max(all_hk_dates) if all_hk_dates else None
+
+            all_us_dates = set()
+            for year_set in [US_HOLIDAYS_2026, US_HOLIDAYS_2027]:
+                all_us_dates.update(year_set)
+            max_us_date = max(all_us_dates) if all_us_dates else None
+
+            today = _date.today()
+            expired = False
+            details = []
+
+            if max_hk_date and today > max_hk_date:
+                expired = True
+                details.append(f"HK 日历截止 {max_hk_date}")
+            if max_us_date and today > max_us_date:
+                expired = True
+                details.append(f"US 日历截止 {max_us_date}")
+
+            if expired:
+                self._calendar_expired = True  # 设置过期标记，is_trading_day 将 fail-closed
+                msg = f"⚠️ 交易日历已过期! {', '.join(details)}。此后所有日期将被视为非交易日 (fail-closed)。请立即更新 holiday_calendar.py"
+                logger.critical(f"[交易日历] {msg}")
+                # 尝试发送钉钉告警
+                try:
+                    from app.risk.dingtalk_alert import init_dingtalk_alert
+                    from app import config
+                    sender = init_dingtalk_alert(getattr(config, 'DINGTALK_WEBHOOK', None))
+                    if sender:
+                        sender.send_text(f"🚨 **交易日历过期告警**\n\n{msg}")
+                except Exception:
+                    pass
+        except Exception as e:
+            logger.error(f"[交易日历] 过期检测异常: {e}")
 
     def is_hk_holiday(self, d: date) -> bool:
         """判断是否为港股节假日"""
@@ -120,6 +188,11 @@ class TradingHolidayCalendar:
         """判断是否为美股节假日"""
         self._ensure_loaded()
         return d in self._us_holidays
+
+    def is_hk_half_day(self, d: date) -> bool:
+        """判断是否为港股半日市 (仅上午交易, 下午休市)"""
+        self._ensure_loaded()
+        return d in self._hk_half_days
 
     def is_trading_day(self, market: str, d: date = None) -> bool:
         """
@@ -136,6 +209,10 @@ class TradingHolidayCalendar:
         # 周末判断
         if d.weekday() >= 5:  # 5=周六, 6=周日
             return False
+
+        # P0 修复 (2026-05-17): 日历过期时 fail-closed
+        if self._calendar_expired:
+            return False  # 日历过期后保守拒绝所有交易日
 
         # 节假日判断
         if market == "HK":

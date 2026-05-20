@@ -75,8 +75,8 @@ def run_self_check() -> SelfCheckResult:
 
     files = {
         "跨市场映射配置": "config/cross_market_mapping.yaml",
-        "美股数据配置": "config/us_data_config.yaml",
-        "主配置文件": "config/config.yaml",
+        "美股数据配置": "config/us_data_unified_unified_config.yaml",
+        "主配置文件": "config/unified_unified_unified_config.yaml",
         "跨市场映射器": "app/utils/cross_market_mapper.py",
         "美股数据获取": "app/data/us_data_fetcher.py",
         "美股数据配置器": "app/data/us_data_config.py",
@@ -289,7 +289,7 @@ def run_self_check() -> SelfCheckResult:
         us_list = cc.get('trading.watch_list_us')
 
         if us_list:
-            result.add("config.yaml watch_list_us", True, f"{len(us_list)} 只")
+            result.add("unified_unified_config.yaml watch_list_us", True, f"{len(us_list)} 只")
             logger.info(f"  ✅ watch_list_us: {len(us_list)} 只")
 
             # 检查核心美股是否在列表中
@@ -305,7 +305,7 @@ def run_self_check() -> SelfCheckResult:
                 result.add("核心美股一致性", True, "一致")
                 logger.info(f"  ✅ 核心美股一致性: 一致")
         else:
-            result.add("config.yaml watch_list_us", False, "为空")
+            result.add("unified_unified_config.yaml watch_list_us", False, "为空")
             logger.warning(f"  ⚠️ watch_list_us 为空")
 
     except Exception as e:

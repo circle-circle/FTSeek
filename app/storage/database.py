@@ -107,24 +107,34 @@ class ConnectionPool:
     def get_connection(self, timeout: float = None) -> sqlite3.Connection:
         """
         从连接池获取连接
-        
+
         Args:
             timeout: 超时时间 (秒)，默认使用初始化时的值
-        
+
         Returns:
             sqlite3.Connection
-        
+
         Raises:
             queue.Empty: 超时未获取到连接
         """
         if self._closed:
             raise RuntimeError("连接池已关闭")
-        
+
         timeout = timeout if timeout is not None else self.timeout
-        
+
         try:
+            # 防御修复: 连接池使用率监控 (80% 告警)
+            available = self._pool.qsize()
+            usage_rate = (self.pool_size - available) / self.pool_size
+            if usage_rate >= 0.80:
+                logger.critical(
+                    f"[连接池告警] 使用率 {usage_rate:.0%} >= 80%，"
+                    f"可用连接 {available}/{self.pool_size}，"
+                    f"可能发生连接泄漏或并发过高"
+                )
+
             conn = self._pool.get(timeout=timeout)
-            
+
             # 健康检查：如果连接已关闭，创建新连接
             try:
                 conn.execute("SELECT 1")
@@ -132,7 +142,7 @@ class ConnectionPool:
                 logger.warning("连接池中获取到失效连接，正在重建")
                 with self._lock:
                     conn = self._create_connection()
-            
+
             return conn
         except queue.Empty:
             logger.error(f"获取数据库连接超时 ({timeout}秒)，当前池大小={self._pool.qsize()}")

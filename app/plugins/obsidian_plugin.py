@@ -117,10 +117,10 @@ class ObsidianPlugin:
             "tags": d.get("tags", []),
             "trace_id": d.get("signal_trace_id", ""),
             "signal_id": d.get("signal_id", ""),
-            "stop_loss": d.get("stop_loss"),
-            "take_profit": d.get("take_profit"),
-            "highest_price": d.get("highest_price"),
-            "lowest_price": d.get("lowest_price"),
+            "stop_loss": d.get("stop_loss", None),
+            "take_profit": d.get("take_profit", None),
+            "highest_price": d.get("highest_price", None),
+            "lowest_price": d.get("lowest_price", None),
             "correlation_id": event.correlation_id,  # v2: for cross-note linking
         })
 
@@ -129,13 +129,13 @@ class ObsidianPlugin:
     def _on_plan_premarket(self, event: DomainEvent) -> None:
         d = event.data
         self.writer.write_daily_premarket({
-            "date": getattr(d, "date", str(_date.today())),
-            "market": getattr(d, "market", "HK"),
-            "targets": getattr(d, "targets", []),
-            "restricted": getattr(d, "restricted", []),
-            "overall_bias": getattr(d, "overall_bias", "\u4e2d\u6027"),
-            "regime": getattr(d, "regime", "unknown"),
-            "generated_at": getattr(d, "generated_at", ""),
+            "date": d.get("date", str(_date.today())),
+            "market": d.get("market", "HK"),
+            "targets": d.get("targets", []),
+            "restricted": d.get("restricted", []),
+            "overall_bias": d.get("overall_bias", "\u4e2d\u6027"),
+            "regime": d.get("regime", "unknown"),
+            "generated_at": d.get("generated_at", ""),
         })
 
     # ── plan.debate ───────────────────────────────────────────────

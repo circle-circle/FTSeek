@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-配置对齐校验脚本 — 确保 config_defaults.py 与 unified_config.yaml 完全同步。
+配置对齐校验脚本 — 确保 config_defaults.py 与 unified_unified_config.yaml 完全同步。
 
 双向校验：
-  1. YAML → DEFAULTS: unified_config.yaml 中的每个关键参数，在 config_defaults.py 中有对应值
-  2. DEFAULTS → YAML: config_defaults.py 中的每个默认值，在 unified_config.yaml 中有对应 key
+  1. YAML → DEFAULTS: unified_unified_config.yaml 中的每个关键参数，在 config_defaults.py 中有对应值
+  2. DEFAULTS → YAML: config_defaults.py 中的每个默认值，在 unified_unified_config.yaml 中有对应 key
   3. 值一致性: 两边的值必须完全相等
 
 用法:
@@ -26,7 +26,7 @@ from app.core.config_defaults import CFG
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 # ============================================================
-# 映射表: (CFG 属性名, unified_config.yaml key 路径, 描述)
+# 映射表: (CFG 属性名, unified_unified_config.yaml key 路径, 描述)
 # ============================================================
 # 维护规则: 新增参数时在此处添加一行
 MAPPING = [
@@ -99,7 +99,7 @@ def get_nested(d, path):
 
 def check_alignment(yaml_path=None, fix=False):
     """执行双向对齐检查"""
-    config_file = Path(yaml_path) if yaml_path else PROJECT_ROOT / 'config' / 'unified_config.yaml'
+    config_file = Path(yaml_path) if yaml_path else PROJECT_ROOT / 'config' / 'unified_unified_config.yaml'
     
     with open(config_file) as f:
         config = yaml.safe_load(f)
@@ -119,7 +119,7 @@ def check_alignment(yaml_path=None, fix=False):
         yaml_val, yaml_found = get_nested(config, yaml_path)
         
         if not yaml_found:
-            errors.append(f"  🔴 YAML 缺失: {yaml_path} 未在 unified_config.yaml 中定义")
+            errors.append(f"  🔴 YAML 缺失: {yaml_path} 未在 unified_unified_config.yaml 中定义")
             continue
         
         if not cfg_found:
@@ -183,7 +183,7 @@ def main():
     
     if errors and args.strict:
         print("\n💡 修复方法:")
-        print("  1. 修改 unified_config.yaml 中的值，或")
+        print("  1. 修改 unified_unified_config.yaml 中的值，或")
         print("  2. 修改 app/core/config_defaults.py 中的对应默认值")
         print("  3. 新增参数: 在 MAPPING 中添加一行 + 在两个文件中都定义值")
         sys.exit(1)

@@ -53,8 +53,8 @@ TTL_MANUAL_HOURS = None      # 人工指定: 永久
 TTL_POSITION_HOURS = None    # 持仓: 永久 (直到平仓)
 
 # 容量限制
-DEFAULT_MAX_POOL_SIZE = 30   # 动态池总容量上限 (不含持仓)
-MAX_INTRADAY_ALERTS = 5      # 盘中异动最大数量
+DEFAULT_MAX_POOL_SIZE = 60   # 2026-05-11: 从30→60, 扩大监控标的范围
+MAX_INTRADAY_ALERTS = 15     # 2026-05-11: 从5→15, 盘中异动池扩容
 
 
 @dataclass
@@ -269,8 +269,57 @@ class DailyActivePool:
             # 如果该股票还有其他来源 (如 MANUAL)，保留它
             return False
 
-    def add_plan_target(self, code: str, direction: str = "ANY", logic: str = "", max_position_pct: float = 0.05):
-        """添加盘前计划目标 (24h TTL)"""
+    def inject_from_battle_plan(self, plan: dict) -> int:
+        """从战斗计划批量注入标的到动态池（幂等）
+
+        调用方:
+        - 服务启动时: main.py / scheduler_core.py
+        - Pipeline 执行时: orchestrator.py / signal_pipeline.py
+        - 辩论 Agent 完成后: cron job script
+
+        2026-05-17 修复: 传递 signal_impact/urgency 保留 LLM 信号质量
+
+        Returns: 成功注入的标的数量
+        """
+        targets = plan.get("targets", [])
+        if not targets:
+            logger.debug(f"[动态池] 战斗计划无 targets，跳过注入")
+            return 0
+
+        injected = 0
+        for t in targets:
+            sym = t.get("symbol", "")
+            if not sym:
+                continue
+            # 市场前缀过滤
+            if not sym.startswith(self._market_prefix):
+                continue
+            direction = t.get("direction", "ANY")
+            logic = t.get("logic", t.get("rationale", ""))
+            max_pct = t.get("max_position_pct", 0.05)
+            signal_impact = t.get("signal_impact", "neutral")
+            urgency = t.get("urgency", "Medium")
+            if self.add_plan_target(sym, direction, logic, max_pct, signal_impact, urgency):
+                injected += 1
+
+        logger.info(f"[动态池] 战斗计划注入完成: {injected}/{len(targets)} 只标的")
+        return injected
+
+    @staticmethod
+    def _normalize_code(code: str) -> str:
+        """标准化港股代码为 5 位数字格式 (HK.00700 而非 HK.0700)"""
+        if not code or not code.startswith("HK."):
+            return code
+        num = code[3:]
+        return f"HK.{num.zfill(5)}"
+
+    def add_plan_target(self, code: str, direction: str = "ANY", logic: str = "", max_position_pct: float = 0.05, signal_impact: str = "neutral", urgency: str = "Medium"):
+        """添加盘前计划目标 (24h TTL)
+
+        2026-05-17 新增 signal_impact/urgency 参数，保留 LLM 信号质量信息供下游使用。
+        2026-05-19 修复: 标准化代码格式 (HK.0700 → HK.00700) 防止 Futu 订阅失败。
+        """
+        code = self._normalize_code(code)
         with self._lock:
             existing = self._entries.get(code)
             if existing:
@@ -279,7 +328,9 @@ class DailyActivePool:
                     existing.metadata.update({
                         "direction": direction,
                         "logic": logic,
-                        "max_position_pct": max_position_pct
+                        "max_position_pct": max_position_pct,
+                        "signal_impact": signal_impact,
+                        "urgency": urgency,
                     })
                     self.save()
                     return False
@@ -291,10 +342,16 @@ class DailyActivePool:
                 source=SOURCE_PLAN,
                 added_at=_now_iso(),
                 expires_at=_make_expiry(TTL_PLAN_HOURS),
-                metadata={"direction": direction, "logic": logic, "max_position_pct": max_position_pct}
+                metadata={
+                    "direction": direction,
+                    "logic": logic,
+                    "max_position_pct": max_position_pct,
+                    "signal_impact": signal_impact,
+                    "urgency": urgency,
+                }
             )
             self.save()
-            logger.info(f"📝 注入盘前计划: {code} (方向: {direction})")
+            logger.info(f"📝 注入盘前计划: {code} (方向: {direction}, impact: {signal_impact}, urgency: {urgency})")
             return True
 
     def add_intraday_alert(self, code: str, reason: str = ""):
@@ -400,7 +457,7 @@ class DailyActivePool:
         skipped = 0
         with self._lock:
             for target in plan["targets"]:
-                symbol = target.get("symbol")
+                symbol = self._normalize_code(target.get("symbol"))
                 if not symbol or not symbol.startswith(self._market_prefix) or symbol in self._entries:
                     continue
 

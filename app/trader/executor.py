@@ -66,7 +66,7 @@ except ImportError:
 # 账户选择逻辑导入（用于港股多账户支持）
 # 【P0 修复 2026-04-26】原实现硬编码外部路径，现已改为环境变量/配置中心读取
 # 一旦该路径被重建或部署至其他账户家目录，模块即导入失败且 bare except 吞掉 → 账户选择静默降级。
-# 改为：env var FTSEEK_OPENCLAW_SKILLS_DIR > config.yaml: openclaw.skills_dir > 历史 fallback。
+# 改为：env var FTSEEK_OPENCLAW_SKILLS_DIR > unified_config.yaml: openclaw.skills_dir > 历史 fallback。
 try:
     import sys
     import os
@@ -179,13 +179,13 @@ def _is_option(code: str) -> bool:
 
 def _resolve_account_ids() -> Dict[str, int]:
     """
-    解析账户 ID 来源，优先级：env var > config.yaml > 安全 fallback。
+    解析账户 ID 来源，优先级：env var > unified_config.yaml > 安全 fallback。
 
     【P0 修复 2026-04-26】原实现在 _get_account_for_code 内硬编码账户号，
     一旦换账户或切环境（线下模拟/线上模拟）需改源码。
     今改为：
       ① 环境变量 FTSEEK_HK_CASH_ACCOUNT_ID / FTSEEK_HK_OPTION_ACCOUNT_ID / FTSEEK_US_ACCOUNT_ID（最优先）
-      ② config.yaml: futu.simulate_account_id / futu.margin_account_id
+      ② unified_config.yaml: futu.simulate_account_id / futu.margin_account_id
       ③ Fallback：保持历史值避免破坏现产环境（Batch 5 核实后可在单独 commit 中移除）
     """
     def _to_int(v, default):
@@ -226,7 +226,7 @@ def _get_account_for_code(code: str, trd_env) -> Optional[int]:
     根据证券代码自动选择账户
 
     【P0 修复 2026-04-26】账户 ID 由 _resolve_account_ids() 统一解析，
-    优先级：env > config.yaml > 历史 fallback。
+    优先级：env > unified_config.yaml > 历史 fallback。
 
     Args:
         code: 证券代码
@@ -304,6 +304,24 @@ class TradeExecutor:
             logger.warning(f"[止盈止损管理] 单例注入失败，止盈止损增强功能禁用: {e}")
             self._profit_loss_manager = None
         
+        # FutuMarginMonitor: 实盘保证金风控守卫 (2026-05-08)
+        # 复用现有 futu_margin_monitor.py (v2.1)，包含滞回防抖/降级防护/压力测试
+        try:
+            from app.risk.futu_margin_monitor import FutuMarginMonitor
+            from app.config import USE_MARGIN_GUARD
+            
+            if USE_MARGIN_GUARD:
+                self.futu_margin_monitor = FutuMarginMonitor()
+                # 注意：FutuMarginMonitor 需要在 main.py 中 initialize(trd_ctx, acc_id)
+                # 这里仅保存引用，初始化延迟到 main.py
+                logger.info("[FutuMarginMonitor] 守卫已注册 (等待 main.py 初始化)")
+            else:
+                self.futu_margin_monitor = None
+                logger.info("[FutuMarginMonitor] 未启用 (USE_MARGIN_GUARD=False)")
+        except Exception as e:
+            logger.warning(f"[FutuMarginMonitor] 注册失败: {e}")
+            self.futu_margin_monitor = None
+        
         # 断点5修复: 持仓周期管理器单例注入 (2026-04-06)
         try:
             from app.factors.holding_period_manager import get_holding_period_manager
@@ -312,6 +330,22 @@ class TradeExecutor:
         except Exception as e:
             logger.warning(f"[持仓周期管理] 单例注入失败，持仓周期管理功能禁用: {e}")
             self._holding_period_manager = None
+
+        # P1 门禁链 (2026-05-19): 渐进式集成，保留 inline 逻辑作为 fallback
+        # 配置开关：USE_GATE_CHAIN=true 时使用门禁链，false 时使用 inline 逻辑
+        try:
+            from app.trader.gates import GateChain, TimeGate, FeeGate, MaxPositionGate, LLMSignalImpactGate, MarketRegimeGate
+            self._gate_chain = GateChain()
+            # 按优先级添加门禁
+            self._gate_chain.add_gate(MaxPositionGate(), priority=0)  # 最高优先级：持仓数
+            self._gate_chain.add_gate(TimeGate(), priority=1)          # 时段检查
+            self._gate_chain.add_gate(FeeGate(), priority=2)           # 费用检查
+            self._gate_chain.add_gate(LLMSignalImpactGate(), priority=3)  # LLM 信号
+            self._gate_chain.add_gate(MarketRegimeGate(), priority=4)  # 市场趋势
+            logger.info(f"[门禁链] 已初始化，{len(self._gate_chain.get_gates())} 个门禁")
+        except Exception as e:
+            logger.warning(f"[门禁链] 初始化失败，降级使用 inline 逻辑：{e}")
+            self._gate_chain = None
 
     def _get_trd_ctx(self, market: str):
         """获取交易上下文 (按市场懒加载)"""
@@ -349,8 +383,8 @@ class TradeExecutor:
             return self._lot_size_cache[code]
         
         # P0 修复: 配置优先 — unified_config.yaml / config/__init__.py 的 HK_LOT_SIZES 是 SSOT
-        from app.config import DEFAULT_ORDER_QTY_BY_CODE
-        config_lot = DEFAULT_ORDER_QTY_BY_CODE.get(code, 0)
+        from app.config import HK_LOT_SIZES
+        config_lot = HK_LOT_SIZES.get(code, 0)
         if config_lot > 0:
             logger.info(f"[每手股数] {code} → {config_lot} (配置优先: HK_LOT_SIZES)")
             self._lot_size_cache[code] = config_lot
@@ -571,6 +605,18 @@ class TradeExecutor:
                         f"市场={market_regime} 仓位={position_ratio:.1%} "
                         f"基础={base_qty} 倍数={multiplier}x 最终={qty}"
                     )
+
+                # 2026-05-11: 应用智能熔断仓位倍率 (CircuitBreaker -> SignalContext -> executor)
+                position_multiplier = extra.get('position_multiplier', 1.0)
+                if position_multiplier != 1.0:
+                    raw_qty = qty
+                    qty = max(base_qty, int(qty * position_multiplier))
+                    qty = (qty // base_qty) * base_qty or base_qty
+                    logger.info(
+                        f"[风控仓位] {signal.code} 熔断倍率={position_multiplier:.1f}x "
+                        f"原={raw_qty} 调整后={qty}"
+                    )
+
                 return qty
 
             # 优先使用信号中的数量 (2026-04-15 修复: 增加整手校验)
@@ -608,6 +654,15 @@ class TradeExecutor:
                 base_ratio = 0.10  # 基础仓位对应 1 股
                 multiplier = max(1, round(position_ratio / base_ratio))
                 qty = max(US_MIN_QTY, base_qty * multiplier)
+
+                # 2026-05-11: 应用智能熔断仓位倍率
+                position_multiplier = extra.get('position_multiplier', 1.0)
+                if position_multiplier != 1.0:
+                    qty = max(US_MIN_QTY, int(qty * position_multiplier))
+                    logger.info(
+                        f"[风控仓位] {signal.code}(US) 熔断倍率={position_multiplier:.1f}x → 调整后={qty}"
+                    )
+
                 logger.info(
                     f"[动态仓位] {signal.code}(US) 置信度={confidence:.2f} "
                     f"市场={market_regime} 仓位={position_ratio:.1%} "
@@ -665,12 +720,29 @@ class TradeExecutor:
             retry_count = order_retry_manager.get_retry_count(temp_order_id)
             logger.warning(f"订单失败，准备重试 (第{retry_count + 1}次): {data}")
             
-            # 计算新价格
+            # 计算新价格 (防御修复: 最大追价幅度不超过 1%)
             action = 'BUY' if trd_side == TrdSide.BUY else 'SELL'
             new_price = order_retry_manager.get_next_price(
-                temp_order_id, code, action, price, 
+                temp_order_id, code, action, price,
                 'MARKET' if order_type == OrderType.MARKET else 'LIMIT'
             )
+            # 2026-05-11 防御修复: 订单重试价格保护，最大追价幅度不超过 1%
+            if action == 'BUY':
+                max_allowed_price = price * 1.01
+                if new_price > max_allowed_price:
+                    logger.warning(
+                        f"[订单重试价格保护] {code} 追价 {new_price:.2f} > 上限 {max_allowed_price:.2f} "
+                        f"(原价格 {price:.2f} 的 1.01x)，强制限制"
+                    )
+                    new_price = max_allowed_price
+            else:  # SELL
+                min_allowed_price = price * 0.99
+                if new_price < min_allowed_price:
+                    logger.warning(
+                        f"[订单重试价格保护] {code} 压价 {new_price:.2f} < 下限 {min_allowed_price:.2f} "
+                        f"(原价格 {price:.2f} 的 0.99x)，强制限制"
+                    )
+                    new_price = min_allowed_price
             
             # 记录重试
             order_retry_manager.record_retry(
@@ -706,6 +778,41 @@ class TradeExecutor:
         price_band = round(price / 0.02) * 0.02
         return f"{code}:{action_str}:{price_band:.3f}"
 
+    def _record_gate_reject(self, signal: Signal, gate_name: str, reason: str,
+                            final_score: float = None, shadow_mode: bool = False):
+        """记录门禁拦截数据到 blocked_decisions 表 (P2 2026-05-17 新增)
+
+        与 failure_tracker.record_failure 互补: failure_tracker 用于统计，
+        本方法用于结构化数据分析 (final_score 分布、gate hit rate 等)。
+        """
+        try:
+            from app import config
+            db_path = str(config.DATA_DIR / "ftseek.db")
+            import sqlite3
+            conn = sqlite3.connect(db_path)
+            extra = getattr(signal, 'extra', {}) or {}
+            conn.execute(
+                "INSERT INTO blocked_decisions "
+                "(code, reject_check, reject_code, reject_reason, final_score, "
+                " gate_name, signal_impact, shadow_mode, raw_score) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    signal.code,
+                    "executor_gate",
+                    gate_name,
+                    reason[:200],
+                    final_score,
+                    gate_name,
+                    extra.get('signal_impact'),
+                    1 if shadow_mode else 0,
+                    extra.get('raw_score', signal.score if hasattr(signal, 'score') else None),
+                )
+            )
+            conn.commit()
+            conn.close()
+        except Exception as _ge:
+            logger.debug(f"[Gate数据记录] 写入失败: {_ge}")
+
     def execute(self, signal: Signal, trade_type: str = 'AUTO') -> TradeResult:
         """
         执行交易信号 (集成熔断器 + 失败追踪 + 自动识别开仓/平仓)
@@ -715,6 +822,10 @@ class TradeExecutor:
         """
         if signal.action == SignalAction.ALERT:
             return TradeResult(success=False, message="ALERT 类型信号不执行交易")
+
+        # P0 修复 (2026-05-19): _is_sim 必须在方法开头定义，避免后续门禁检查时 NameError
+        # 根因: L841/L880 使用 _is_sim，但原定义在 L1015，导致熔断器/性能衰减触发时崩溃
+        _is_sim = getattr(config, 'TRADE_ENV', 1) == 1
 
         # Phase 3: 交易分层 - Tier2/Tier3 影子盘拦截
         if signal.tier != TradeTier.TIER_TREND:
@@ -747,7 +858,42 @@ class TradeExecutor:
         # 熔断器检查 (2026-03-17 新增)
         if not circuit_breaker.can_trade():
             failure_tracker.record_failure(signal.code, 'circuit_breaker', '熔断暂停中')
+            self._record_gate_reject(signal, 'circuit_breaker', '熔断暂停中', shadow_mode=_is_sim)
             return TradeResult(success=False, message="熔断器触发，暂停交易")
+
+        # P1 门禁链检查 (2026-05-19): 渐进式集成，与 inline 逻辑双跑
+        # 配置开关：USE_GATE_CHAIN=true 时启用门禁链，false 时使用 inline 逻辑
+        if self._gate_chain is not None and getattr(config, 'USE_GATE_CHAIN', False):
+            try:
+                # 构建门禁链上下文
+                gate_context = {
+                    'config': config,
+                    'config_center': None,  # 将在门禁内部懒加载
+                    'position_manager': self.position_manager,
+                    'logger': logger,
+                    'failure_tracker': failure_tracker,
+                    'is_sim': _is_sim,
+                    'get_lot_size_fn': self._get_lot_size,
+                }
+                # 尝试获取 config_center
+                try:
+                    from config.config_center import get_config_center
+                    gate_context['config_center'] = get_config_center()
+                except Exception:
+                    pass
+
+                # 执行门禁链检查
+                passed, reason = self._gate_chain.check_all(signal, gate_context)
+                if not passed:
+                    logger.info(f"[门禁链] {signal.code} 拦截：{reason}")
+                    self._record_gate_reject(signal, 'gate_chain', reason, shadow_mode=_is_sim)
+                    failure_tracker.record_failure(signal.code, 'gate_chain', reason)
+                    return TradeResult(success=False, message=reason)
+                else:
+                    logger.debug(f"[门禁链] {signal.code} 全部通过")
+            except Exception as _gc_e:
+                # 异常隔离：门禁链失败时降级使用 inline 逻辑
+                logger.warning(f"[门禁链] 检查异常，降级使用 inline 逻辑：{_gc_e}")
 
         # 新闻增强检查 (2026-04-08 新增)
         # 仅对开仓信号执行新闻增强（平仓/风控信号直接执行）
@@ -785,6 +931,7 @@ class TradeExecutor:
                 if signal.confidence < 0.3:
                     logger.warning(f"🚫 [性能衰减] {signal.code} 信号降权后过低 ({signal.confidence:.2f})，自动拦截")
                     failure_tracker.record_failure(signal.code, 'performance_decay', '信号降权后置信度过低')
+                    self._record_gate_reject(signal, 'performance_decay', '信号降权后置信度过低', shadow_mode=_is_sim)
                     return TradeResult(success=False, message="性能衰减拦截")
         except Exception as e:
             logger.debug(f"[性能衰减] 检查失败 (不影响主流程): {e}")
@@ -917,28 +1064,249 @@ class TradeExecutor:
 
         # 风控检查 (仅开仓需要)
         if trade_type == 'OPEN':
+            # ── 模拟盘 Shadow 模式检测 (2026-05-17) ──
+            # 模拟盘目标: 最大化数据收集，门禁改为告警+标签而非硬拦截
+            _is_sim = getattr(config, 'TRADE_ENV', 1) == 1
+            _shadow_mode = _is_sim  # 模拟盘默认 shadow 模式
+
+            # ── P0 LLM signal_impact 门禁 (2026-05-17) ──
+            # LLM 在盘前分析中对标的给出 signal_impact (boost/neutral/weaken/block)
+            # 优先从动态池 metadata 读取，其次从 signal.extra 读取 (battle_plan 路径)
+            try:
+                from app.utils.daily_active_pool import get_daily_active_pool
+                _impact = None
+                _urgency = "Medium"
+                
+                # 路径 1: 动态池 metadata
+                _pool = get_daily_active_pool(market_prefix="HK.")
+                
+                # P1 修复 (2026-05-17): 前缀归一化查找 (兼容 "00700" vs "HK.00700")
+                _entry = _pool._entries.get(signal.code)
+                if not _entry and not signal.code.startswith("HK."):
+                    _entry = _pool._entries.get(f"HK.{signal.code}")
+                
+                if _entry and not _entry.is_expired():
+                    _impact = _entry.metadata.get("signal_impact", "neutral")
+                    _urgency = _entry.metadata.get("urgency", "Medium")
+                
+                # 路径 2: signal.extra (battle_plan 等绕过动态池的路径)
+                if _impact is None or _impact == "neutral":
+                    _extra_impact = (signal.extra or {}).get("signal_impact")
+                    if _extra_impact:
+                        _impact = _extra_impact
+                        _urgency = (signal.extra or {}).get("urgency", "Medium")
+                
+                if _impact and _impact != "neutral":
+                    signal.extra = signal.extra or {}
+                    signal.extra["llm_signal_impact"] = _impact
+                    signal.extra["llm_urgency"] = _urgency
+
+                    if _impact == "block":
+                        if _is_sim:
+                            logger.warning(
+                                f"[LLM门禁·影子] {signal.code} LLM建议回避(block)，"
+                                f"模拟盘放行+打标签 (urgency={_urgency})"
+                            )
+                            signal.extra['llm_block_override'] = True
+                        else:
+                            _reason = f"LLM 信号 block: {_entry.metadata.get('logic', '政策/风险因素') if _entry else 'LLM判断风险'}"[:100]
+                            logger.warning(f"[LLM门禁·硬拦截] {signal.code} {_reason}")
+                            failure_tracker.record_failure(signal.code, 'llm_block', _reason)
+                            self._record_gate_reject(signal, 'llm_block', _reason, shadow_mode=_is_sim)
+                            return TradeResult(success=False, message=f"LLM信号block: {_reason}")
+
+                    elif _impact == "weaken":
+                        logger.info(f"[LLM门禁·降权] {signal.code} signal_impact=weaken, 要求更高阈值")
+                        signal.extra['llm_weaken_applied'] = True
+                    elif _impact == "boost":
+                        logger.info(f"[LLM门禁·增强] {signal.code} signal_impact=boost (urgency={_urgency})")
+                        signal.extra['llm_boost_applied'] = True
+            except Exception as _llm_gate_e:
+                logger.debug(f"[LLM门禁] 检查跳过: {_llm_gate_e}")
+
+            # ── P1 仓位费用感知门禁 (2026-05-17) ──
+            # 根因: 港股费用 ~140bps，小仓位交易被费用严重侵蚀
+            # HK$3K 交易: 费用占比 1.4% → 实际 R:R 从 1.43:1 降至 0.4:1
+            # HK$8K+ 交易: 费用占比 <0.6% → R:R 可接受
+            # 注意: 此门禁放在 execute() 的顶层 OPEN 块中，确保 _is_sim 在作用域内
+            try:
+                from config.config_center import get_config_center as _gcc_mtv
+                _min_tv = _gcc_mtv().get('base.simulation_mode.min_trade_value', 8000)
+                _est_value = signal.price * self._get_lot_size(signal.code) if signal.price > 0 else 0
+                if 0 < _est_value < _min_tv:
+                    if _is_sim:  # 模拟盘: 告警但放行
+                        logger.info(f"[模拟门禁·费用] {signal.code} 预估金额 HK${_est_value:,.0f} < HK${_min_tv:,}，"
+                                   f"费用侵蚀严重但模拟盘放行 (数据收集)")
+                        signal.extra = signal.extra or {}
+                        signal.extra['fee_warning'] = f'trade_value_below_min ({_est_value:.0f}<{_min_tv})'
+                    else:  # 实盘: 硬拦截
+                        msg = f"交易金额过小: HK${_est_value:,.0f} < HK${_min_tv:,}，费用侵蚀严重"
+                        logger.info(f"[费用门禁] {signal.code} {msg}")
+                        failure_tracker.record_failure(signal.code, 'min_trade_value', msg)
+                        self._record_gate_reject(signal, 'min_trade_value', msg, shadow_mode=_is_sim)
+                        return TradeResult(success=False, message=msg)
+            except Exception as _mtv_e:
+                logger.debug(f"[费用门禁] 检查跳过: {_mtv_e}")
+
+            # ── P0 时段门禁 (2026-05-16): 禁止 14:30 后开新仓 ──
+            # 根因: 历史数据 40% 持平交易因 14:30+ 开仓 → 15:45 盘末退出强平
+            # 优化 (2026-05-17): 模拟盘 shadow 模式 — 14:30-15:30 告警放行，15:30+ 硬拦截
+            try:
+                from datetime import datetime
+                import pytz
+                tg_cfg = getattr(config, 'TIME_GATE', {'enabled': True, 'hk_latest_open': '14:30'})
+                if tg_cfg.get('enabled', True):
+                    latest_str = tg_cfg.get('hk_latest_open', '14:30')
+                    latest_h, latest_m = map(int, latest_str.split(':'))
+                    latest_min = latest_h * 60 + latest_m
+                    hk_now = datetime.now(pytz.timezone('Asia/Hong_Kong'))
+                    hk_minutes = hk_now.hour * 60 + hk_now.minute
+
+                    # ── 半日市下午拦截 (2026-05-17 新增) ──
+                    # 半日市仅上午交易 (09:30-12:00)，下午完全休市
+                    try:
+                        from app.utils.holiday_calendar import get_holiday_calendar
+                        from datetime import date as _date
+                        cal = get_holiday_calendar()
+                        hk_today = _date(hk_now.year, hk_now.month, hk_now.day)
+                        if cal.is_hk_half_day(hk_today) and hk_minutes >= 12 * 60:
+                            msg = f"半日市下午休市: {hk_now.strftime('%Y-%m-%d')} 12:00 后禁止开仓"
+                            logger.info(f"[半日市门禁] {signal.code} {msg}")
+                            failure_tracker.record_failure(signal.code, 'half_day_closed', msg)
+                            self._record_gate_reject(signal, 'half_day', msg, shadow_mode=_is_sim)
+                            return TradeResult(success=False, message=msg)
+                    except Exception as _hd_err:
+                        logger.debug(f"[半日市门禁] 检查跳过: {_hd_err}")
+
+                    if hk_minutes >= latest_min:
+                        if _shadow_mode and hk_minutes < 15 * 60 + 30:
+                            # 模拟盘 14:30-15:30: 告警但放行，收集数据
+                            msg = f"时段门禁告警(影子): {hk_now.strftime('%H:%M')} ≥ {latest_str}，模拟盘放行 (数据收集)"
+                            logger.info(f"[模拟门禁·影子] {signal.code} {msg}")
+                            signal.extra = signal.extra or {}
+                            signal.extra['gate_warning'] = 'time_near_close'
+                        elif hk_minutes >= 15 * 60 + 30:
+                            # 15:30+ 硬拦截: 距离盘末退出仅 15min，不值得
+                            msg = f"时段门禁: 港股 {hk_now.strftime('%H:%M')} ≥ 15:30，禁止开新仓 (盘末退出前不足15min)"
+                            logger.info(f"[时段门禁] {signal.code} {msg}")
+                            failure_tracker.record_failure(signal.code, 'time_gate', msg)
+                            self._record_gate_reject(signal, 'time_gate', msg, shadow_mode=_is_sim)
+                            return TradeResult(success=False, message=msg)
+                        else:
+                            # 实盘: 硬拦截
+                            msg = f"时段门禁: 港股 {hk_now.strftime('%H:%M')} ≥ {latest_str}，禁止开新仓 (防盘末退出强平)"
+                            logger.info(f"[时段门禁] {signal.code} {msg}")
+                            failure_tracker.record_failure(signal.code, 'time_gate', msg)
+                            self._record_gate_reject(signal, 'time_gate', msg, shadow_mode=_is_sim)
+                            return TradeResult(success=False, message=msg)
+            except Exception as _tg_e:
+                logger.debug(f"[时段门禁] 检查跳过: {_tg_e}")
+
+            # ── P0 市场趋势门禁 (2026-05-16): 恒指下跌趋势中禁止开新仓 ──
+            # 根因: 恒指 MA5 < MA20 时，个股做多信号多为假突破，逆市做多胜率低
+            # 修复 (2026-05-17): ① HSI数据缓存(5min TTL)避免重复连接 ② 模拟盘shadow模式 ③ gap_pct阈值防横盘误杀
+            try:
+                import time as _time
+                _mr_cfg = getattr(config, 'MARKET_REGIME_GATE', {
+                    'enabled': True,
+                    'hsi_gap_min_pct': 0.3,  # MA5偏离MA20的最小幅度，低于此视为横盘
+                })
+                if _mr_cfg.get('enabled', True):
+                    from app.utils.futu_limiter import get_global_limiter
+
+                    # ── HSI 数据缓存 (5分钟 TTL) ──
+                    # 避免每次信号检查都新建 OpenQuoteContext 消耗槽位
+                    if not hasattr(_check_trade_gates, '_hsi_cache'):
+                        _check_trade_gates._hsi_cache = {'data': None, 'ma5': None, 'ma20': None, 'ts': 0}
+                    _cache = _check_trade_gates._hsi_cache
+                    _cache_ttl = 300  # 5分钟
+                    _now_ts = _time.time()
+
+                    if _cache['data'] is None or (_now_ts - _cache['ts']) > _cache_ttl:
+                        from futu import OpenQuoteContext, KLType, RET_OK
+                        _hq = OpenQuoteContext(host=config.OPEND_HOST, port=config.OPEND_PORT)
+                        _limiter = get_global_limiter()
+                        _ret_k, _hsi_data = None, None
+                        if _limiter.acquire(timeout=5):
+                            _ret_k, _hsi_data = _hq.get_cur_kline("HK.800000", 30, KLType.K_DAY)
+                            _limiter.record()
+                        _hq.close()
+
+                        if _ret_k == RET_OK and _hsi_data is not None and len(_hsi_data) >= 20:
+                            _closes = _hsi_data['close'].values.tolist()
+                            _cache['ma5'] = sum(_closes[-5:]) / 5
+                            _cache['ma20'] = sum(_closes[-20:]) / 20
+                            _cache['data'] = _closes
+                            _cache['ts'] = _now_ts
+                            _cache['current'] = _closes[-1]
+                        else:
+                            logger.debug(f"[市场趋势门禁] HSI 数据获取失败 (ret={_ret_k})，降级放行")
+                            _cache = None
+
+                    if _cache and _cache['ma5'] is not None:
+                        _ma5 = _cache['ma5']
+                        _ma20 = _cache['ma20']
+                        _current_hsi = _cache['current']
+                        _gap_pct = (_ma20 - _ma5) / _ma20 * 100 if _ma20 > 0 else 0
+                        _gap_min = _mr_cfg.get('hsi_gap_min_pct', 0.3)
+
+                        if _ma5 < _ma20 and abs(_gap_pct) >= _gap_min:
+                            # 恒指处于下跌趋势 (MA5 < MA20 且偏离幅度≥阈值)
+                            _msg = f"市场趋势门禁: HSI MA5({_ma5:.0f}) < MA20({_ma20:.0f}) 差距{_gap_pct:.1f}%≥{_gap_min}%"
+                            # 模拟盘 shadow 模式: 告警+打标签，不硬拦截
+                            if _shadow_mode:
+                                logger.warning(f"[模拟门禁·影子] {signal.code} {_msg}，告警但放行 (数据收集)")
+                                signal.extra = signal.extra or {}
+                                signal.extra['hsi_regime_warning'] = f'downtrend_gap_{_gap_pct:.1f}pct'
+                            else:
+                                _msg += "，下跌趋势中禁止开新仓 (逆市做多风险高)"
+                                logger.info(f"[市场趋势门禁] {signal.code} {_msg}")
+                                failure_tracker.record_failure(signal.code, 'market_regime_gate', _msg)
+                                return TradeResult(success=False, message=_msg)
+                        elif _ma5 < _ma20:
+                            # MA5 < MA20 但 gap 太小，视为横盘震荡而非下跌趋势
+                            logger.debug(f"[市场趋势门禁] HSI MA5({_ma5:.0f}) < MA20({_ma20:.0f}) 但差距{_gap_pct:.1f}% < {_gap_min}%，视为横盘，放行")
+                        else:
+                            logger.debug(f"[市场趋势门禁] HSI MA5({_ma5:.0f}) >= MA20({_ma20:.0f})，趋势允许开仓")
+            except Exception as _mr_e:
+                logger.debug(f"[市场趋势门禁] 检查跳过: {_mr_e}")
+
             # 2026-03-25 新增: 最大持仓数检查
             # 2026-04-15 修复: 以富途服务端实时数据为准，不再依赖本地 DB
             max_open_positions = getattr(config, 'MAX_OPEN_POSITIONS', 12)  # 2026-04-15 调整
             
-            # 优先使用富途服务端实时查询
-            try:
-                from app.factors.live_position_query import get_live_position_query
-                live_query = get_live_position_query()
-                current_open_positions = live_query.count_positions(market='HK')
-                data_source = "futu_server (实时)"
-            except Exception as e:
-                logger.warning(f"富途实时查询失败，降级到本地 DB: {e}")
-                current_open_positions = self.position_manager.get_open_positions_count()
-                data_source = "local_db (降级)"
+            # 2026-05-08 修复: 统一走本地 DB 路径，避免 live_query Futu API 永久阻塞
+            current_open_positions = self.position_manager.get_open_positions_count()
+            data_source = "local_db (SSOT)"
             
             if current_open_positions >= max_open_positions:
                 msg = f"已达最大持仓数 ({current_open_positions}/{max_open_positions})，拒绝开仓 [{data_source}]"
                 logger.warning(f"[持仓限制] {signal.code} {msg}")
                 failure_tracker.record_failure(signal.code, 'position_limit', msg)
+                self._record_gate_reject(signal, 'max_position', msg, shadow_mode=_is_sim)
                 return TradeResult(success=False, message=msg)
-            
-            # 趋势过滤检查 V2 (2026-03-21 增强: 多周期确认) (2026-04-20: 接入全局限流器)
+
+            # P0 修复 (2026-05-08): 开仓前 Futu 可用资金检查
+            # 防止实盘中因资金不足被拒单或在保证金模式下过度杠杆
+            try:
+                _acc = self.get_account_info("HK")
+                if _acc:
+                    _power = float(_acc.get('power', 0) or 0)
+                    _total = float(_acc.get('total_assets', 0) or 0)
+                    # 预估本次开仓所需资金 (信号价格 × 基础数量)
+                    _est_cost = signal.price * self._get_lot_size(signal.code) if signal.price > 0 else 0
+                    if _est_cost > 0 and _power > 0 and _est_cost > _power:
+                        msg = f"购买力不足: 预估需要 {_est_cost:,.0f}, 可用 {_power:,.0f}, 总资产 {_total:,.0f}"
+                        logger.warning(f"[资金门禁] {signal.code} {msg}")
+                        failure_tracker.record_failure(signal.code, 'insufficient_funds', msg)
+                        return TradeResult(success=False, message=msg)
+                    logger.debug(
+                        f"[资金门禁] {signal.code} 购买力={_power:,.0f} 总资产={_total:,.0f} 预估成本={_est_cost:,.0f} ✅"
+                    )
+            except Exception as _af_e:
+                logger.debug(f"[资金门禁] 查询跳过: {_af_e}")
+
+            # 趋势过滤检查 V2 (2026-03-21 增强：多周期确认) (2026-04-20: 接入全局限流器)
             # 2026-04-24 修复: 仅 OPEN 需要趋势过滤；ADD/CLOSE 是已有持仓管理，趋势检查应在开仓时已完成
             # 避免已有持仓因短期波动被 ADD 信号拒绝，导致无法加仓
             if trade_type == 'OPEN':
@@ -973,6 +1341,8 @@ class TradeExecutor:
                     
                     if ret_daily == 0:
                         closes = data_daily['close'].values.tolist()
+                        highs = data_daily['high'].values.tolist() if 'high' in data_daily.columns else None
+                        lows = data_daily['low'].values.tolist() if 'low' in data_daily.columns else None
                         intraday_closes = None
                         
                         if ret_60min == 0:
@@ -986,14 +1356,24 @@ class TradeExecutor:
                         reset_trend_filter()
                         trend_filter = get_trend_filter()
                         
-                        # 从信号extra中获取ADX值 (2026-03-25 新增)
+                        # P0 (2026-05-16): 从 K 线计算 ADX，防止震荡市假信号
+                        # 根因: 信号 pipeline 不传 ADX → 趋势过滤失去范围市场判断能力
                         adx_value = None
                         if hasattr(signal, 'extra') and signal.extra:
                             adx_value = signal.extra.get('adx')
+                        if adx_value is None and highs and lows and len(highs) >= 14:
+                            try:
+                                adx_value = trend_filter._compute_adx(highs, lows, closes)
+                                if adx_value is not None:
+                                    logger.debug(f"[ADX计算] {signal.code} ADX={adx_value:.1f}")
+                            except Exception as _adx_e:
+                                logger.debug(f"[ADX计算] 失败: {_adx_e}")
                         
                         # 多周期趋势分析 (增强版：支持ADX + 多周期确认)
                         trend_info = trend_filter.analyze_trend(
-                            closes, 
+                            closes,
+                            highs=highs,
+                            lows=lows,
                             intraday_closes=intraday_closes,
                             adx=adx_value,
                             code=signal.code
@@ -1186,6 +1566,41 @@ class TradeExecutor:
             trd_side = TrdSide.BUY if signal.action == SignalAction.BUY else TrdSide.SELL
 
             qty = self._get_qty(signal)
+
+            # 防御修复 (2026-05-11): 单标的仓位不超过总资金的 5%
+            # 无论 quality_boost / news_boost / position_multiplier 如何叠加
+            if signal.price and signal.price > 0 and qty > 0:
+                max_single_amount = config.MAX_ORDER_AMOUNT * 0.05
+                max_qty_by_limit = int(max_single_amount / signal.price)
+                _mkt = _detect_market(signal.code)
+                if _mkt == "HK":
+                    _base = self._get_lot_size(signal.code)
+                    if max_qty_by_limit >= _base:
+                        max_qty_by_limit = (max_qty_by_limit // _base) * _base
+                    else:
+                        max_qty_by_limit = _base
+                else:
+                    max_qty_by_limit = max(1, max_qty_by_limit)
+                if qty > max_qty_by_limit and max_qty_by_limit > 0:
+                    logger.warning(
+                        f"[单标的上限] {signal.code} 计算qty={qty} 超过资金5%限制"
+                        f"({max_single_amount:.0f}/{signal.price:.2f}={max_qty_by_limit})，"
+                        f"强制限制为 {max_qty_by_limit}"
+                    )
+                    qty = max_qty_by_limit
+
+            # FutuMarginMonitor 检查 (2026-05-08): 复用现有保证金监控
+            # 包含滞回防抖/降级防护/压力测试 (开仓后预估保证金率)
+            try:
+                from app.config import USE_MARGIN_GUARD
+                if USE_MARGIN_GUARD and hasattr(self, 'futu_margin_monitor') and self.futu_margin_monitor:
+                    _est_cost = signal.price * qty  # 预估成本
+                    if not self.futu_margin_monitor.is_safe_to_open(_est_cost):
+                        msg = "FutuMarginMonitor 拦截：保证金率不安全"
+                        logger.warning(f"[保证金门禁] {signal.code} {msg}")
+                        return TradeResult(success=False, message=msg)
+            except Exception as _mg_e:
+                logger.debug(f"[保证金门禁] 检查跳过: {_mg_e}")
 
             # 2026-03-17 集成智能订单路由
             # 修复: 兼容 action 可能是 SignalAction 枚举或字符串的情况
@@ -1410,12 +1825,12 @@ class TradeExecutor:
                     actual_entry_price, qty, DEFAULT_FEES
                 )
                 
-                # 2026-04-24 修复: 防御性校验 — 止损价绝不能等于或高于入场价
+                # 2026-04-24 修复: 防御性校验 — 止损价必须低于入场价至少 0.5%
                 # 防止因竞态/DB异常导致 stop_loss=entry_price 引发秒级止损
-                if stop_price >= actual_entry_price:
+                if stop_price >= actual_entry_price * 0.995:
                     logger.critical(
                         f"🚨 [止损价异常] {signal.code} stop_price={stop_price:.4f} >= "
-                        f"entry_price={actual_entry_price:.4f}，强制使用 -3% 止损"
+                        f"entry_price*0.995={actual_entry_price*0.995:.4f}，强制使用 -3% 止损"
                     )
                     stop_price = round(actual_entry_price * (1 - 0.03), 4)
                     take_profit_price = round(actual_entry_price * (1 + 0.10), 4)
@@ -1439,6 +1854,18 @@ class TradeExecutor:
                 if not is_add:
                     entry_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                     action_str = "BUY" if signal.action == SignalAction.BUY else "SELL"
+
+                    # ── P2 策略对比标签 (2026-05-17) ──
+                    # 门禁组合标签: 记录当前信号通过了哪些门禁，用于后续归因分析
+                    _gate_tags = []
+                    if hasattr(signal, 'extra') and signal.extra:
+                        if signal.extra.get('gate_warning'):
+                            _gate_tags.append(f"gw:{signal.extra['gate_warning']}")
+                        if signal.extra.get('fee_warning'):
+                            _gate_tags.append(f"fw:{signal.extra['fee_warning']}")
+                    # 构建 strategy_tags 字符串
+                    _strategy_tags = "|".join(_gate_tags) if _gate_tags else "clean"
+
                     position_id = self.position_manager.create_position(
                         code=signal.code,
                         action=action_str,
@@ -1450,7 +1877,8 @@ class TradeExecutor:
                         signal_id=getattr(signal, 'id', None),
                         strategy=getattr(signal, 'strategy', None),
                         trace_id=getattr(signal, 'trace_id', ''),  # Phase 1: 全链路归因 ID
-                        trader_type='AI'  # P0 修复 2026-05-08: 标记为AI自动执行
+                        trader_type='AI',  # P0 修复 2026-05-08: 标记为AI自动执行
+                        strategy_tags=_strategy_tags  # P2: 门禁组合标签用于对比分析
                     )
 
                     # 🔴 【P0 修复 2026-04-26 / 2026-05-06 二次修复】开仓后强制校验保护单
@@ -1611,8 +2039,36 @@ class TradeExecutor:
                 try:
                     self.record_trade_to_db(order_id, signal, actual_entry_price, pnl=0, status='OPEN')
                     logger.info(f"✅ [数据库] 开仓成交已记录：trade_id=trade_{order_id}")
+
+                    # ── LLM 信号质量追踪 (2026-05-17) ──
+                    # 在不确定性中找到确定性：记录 LLM signal_impact 的实际交易表现
+                    try:
+                        _llm_impact = signal.extra.get("llm_signal_impact", "neutral") if signal.extra else "neutral"
+                        _llm_factor_map = {'boost': 1.15, 'weaken': 0.80, 'block': 0.30, 'neutral': 1.00}
+                        _llm_factor = _llm_factor_map.get(_llm_impact, 1.0)
+                        from app.consensus.llm_quality_tracker import get_llm_quality_tracker
+                        _tracker = get_llm_quality_tracker()
+                        _tracker.record_signal(
+                            trade_id=f"trade_{order_id}",
+                            code=signal.code,
+                            signal_impact=_llm_impact,
+                            original_score=signal.score if hasattr(signal, 'score') else 0,
+                            final_score=signal.score * _llm_factor if hasattr(signal, 'score') else 0,
+                            llm_factor_applied=_llm_factor,
+                            entry_price=actual_entry_price,
+                            quantity=qty,
+                        )
+                        logger.debug(f"[LLM质量追踪] 信号入场: {signal.code} impact={_llm_impact}")
+                    except Exception as _llm_q_e:
+                        logger.debug(f"[LLM质量追踪] 入场记录失败: {_llm_q_e}")
                 except Exception as e:
                     logger.error(f"❌ [数据库] 记录开仓成交失败：{e}", exc_info=True)
+
+                # P0 修复 (2026-05-08): 开仓成功后同步水位管理器资金
+                try:
+                    self._sync_water_level_capital()
+                except Exception as _wl_e:
+                    logger.warning(f"[水位同步] 开仓后更新失败: {_wl_e}")
 
                 # P0 修复 (2026-05-06): 开仓成功后发送钉钉通知
                 if not is_add:
@@ -1997,8 +2453,9 @@ class TradeExecutor:
             
             # 2026-03-25 修复碎股问题: 确保平仓数量是整手倍数
             if market == "HK":
-                from app.config import DEFAULT_ORDER_QTY_BY_CODE
-                lot_size = DEFAULT_ORDER_QTY_BY_CODE.get(signal.code) or config.DEFAULT_ORDER_QTY_HK
+                # P1 2026-05-08: 用 _get_lot_size() 动态查询替代硬编码 fallback
+                # 解决 HK.01211 等 lot_size=500 但 DEFAULT_ORDER_QTY_BY_CODE 返回 100 的问题
+                lot_size = self._get_lot_size(signal.code)
                 original_qty = qty
                 # 向下取整到最近的整手倍数
                 qty = (qty // lot_size) * lot_size
@@ -2205,7 +2662,8 @@ class TradeExecutor:
                     updated = False
                     for trade in open_trades:
                         if trade['code'] == signal.code:
-                            pnl_percent = pnl / (trade['entry_price'] * trade['quantity']) if trade['entry_price'] > 0 else 0
+                            denominator = trade['entry_price'] * trade['quantity'] if trade.get('quantity', 0) else 0
+                            pnl_percent = pnl / denominator if denominator > 0 else 0
                             db.update_trade_exit(
                                 trade_id=trade['id'],
                                 exit_price=actual_exit_price,
@@ -2236,6 +2694,54 @@ class TradeExecutor:
                 try:
                     self.record_trade_to_db(order_id, signal, actual_exit_price, pnl, status='CLOSED')
                     logger.info(f"✅ 平仓成交已记录到数据库 (status=CLOSED)")
+
+                    # ── Phase 1.5: 假设驱动进化评估 (对标 RD-Agent Feedback) ──
+                    try:
+                        from app.review.hypothesis_engine import get_hypothesis_engine
+                        trade_info = {
+                            'code': signal.code,
+                            'pnl': pnl,
+                            'exit_reason': signal.extra.get('exit_reason', signal.reason) if hasattr(signal, 'extra') and signal.extra else signal.reason,
+                            'strategy': getattr(signal, 'strategy', 'unknown'),
+                        }
+                        result = get_hypothesis_engine().evaluate_trade(trade_info)
+                        if result.get('matched', 0) > 0:
+                            logger.info(f"[HypothesisEngine] 交易评估: {result['matched']} 个假设被触发, "
+                                       f"更新: {len(result.get('updates', []))} 条")
+                    except Exception as _hyp_e:
+                        logger.debug(f"[HypothesisEngine] 平仓交易评估失败: {_hyp_e}")
+                    
+                    # ── LLM 信号质量追踪 · 结果记录 (2026-05-17) ──
+                    try:
+                        from app.consensus.llm_quality_tracker import get_llm_quality_tracker
+                        _tracker = get_llm_quality_tracker()
+                        _open_sig = _tracker.find_open_signal_by_code(signal.code)
+                        if _open_sig:
+                            _holding_min = 0
+                            if hasattr(signal, 'timestamp'):
+                                _holding_min = max(1, int((datetime.now() - signal.timestamp).total_seconds() / 60))
+                            _entry_price = _open_sig.get('entry_price', 0)
+                            _qty = _open_sig.get('quantity', 1)
+                            _denom = _entry_price * _qty
+                            _actual_return = pnl / _denom if _denom > 0 else 0
+                            _max_dd = abs(min(pnl, 0) / _denom) if _denom > 0 else 0
+                            _max_profit = max(pnl, 0) / _denom if _denom > 0 else 0
+                            _exit_reason = signal.extra.get('exit_reason', signal.reason) if hasattr(signal, 'extra') and signal.extra else signal.reason
+                            if _exit_reason is None:
+                                _exit_reason = 'normal_close'
+                            _tracker.record_outcome(
+                                trade_id=_open_sig['trade_id'],
+                                code=signal.code,
+                                signal_impact=_open_sig['signal_impact'],
+                                actual_return=_actual_return,
+                                max_drawdown=_max_dd,
+                                max_profit=_max_profit,
+                                exit_reason=str(_exit_reason),
+                                holding_minutes=_holding_min,
+                            )
+                            logger.debug(f"[LLM质量追踪] 结果记录: {signal.code} impact={_open_sig['signal_impact']} return={_actual_return:+.2%}")
+                    except Exception as _llm_o_e:
+                        logger.debug(f"[LLM质量追踪] 结果记录失败: {_llm_o_e}")
                     
                     # ── Phase 2: 更新归因记录 (Attribution Update) ──
                     try:
@@ -2314,6 +2820,63 @@ class TradeExecutor:
                 except Exception as health_e:
                     logger.warning(f"[归因系统] 记录交易健康度失败：{health_e}")
                 # ================================================================
+
+                # ═══════════════════════════════════════════════════════════
+                # P0 修复 (2026-05-08): 写入 signal_outcomes 表
+                # 打通策略学习闭环 — 让因子质量评分基于真实交易结果
+                # ═══════════════════════════════════════════════════════════
+                try:
+                    from app.storage.database import get_database
+                    db = get_database()
+                    
+                    # 计算盈亏百分比
+                    pnl_pct = pnl / (entry_price * position.quantity) if position and entry_price > 0 and position.quantity > 0 else 0
+                    
+                    # 从 signal.extra 提取策略上下文
+                    extra = getattr(signal, 'extra', {}) or {}
+                    
+                    # 计算持仓周期数 (K线数)
+                    try:
+                        from datetime import datetime as _dt
+                        entry_dt = _dt.strptime(position.entry_time, "%Y-%m-%d %H:%M:%S") if hasattr(position, 'entry_time') and position.entry_time else _dt.now()
+                        exit_dt = _dt.now()
+                        holding_hours = (exit_dt - entry_dt).total_seconds() / 3600
+                        # 假设日K线，1天=1个周期；如果是分钟K线需要调整
+                        holding_periods = max(1, int(holding_hours * 6.5))  # 港股每天6.5小时交易
+                    except Exception:
+                        holding_periods = 1
+                    
+                    outcome_data = {
+                        'code': signal.code,
+                        'action': position.action if position else signal.action.value if hasattr(signal, 'action') else 'BUY',
+                        'strategy': getattr(signal, 'strategy', 'confluence_v2') or 'confluence_v2',
+                        'entry_price': entry_price,
+                        'exit_price': actual_exit_price,
+                        'pnl_pct': pnl_pct * 100,  # 数据库存储百分比 (如 5.0 表示 5%)
+                        'holding_periods': holding_periods,
+                        'market_regime': extra.get('market_regime', 'neutral'),
+                        'scenario': extra.get('scenario', None),
+                        'adx_value': extra.get('adx', 0.0) or 0.0,
+                        'mtf_alignment': extra.get('mtf_alignment', 0.0) or 0.0,
+                        'sentiment_score': extra.get('sentiment_score', 0.0) or 0.0,
+                        'consensus_score': extra.get('consensus_score', extra.get('conviction', 0.5)) or 0.5,
+                        'quality_score': extra.get('quality_score', 1.0) or 1.0,
+                        'max_drawdown': extra.get('max_drawdown', 0.0) or 0.0,
+                        'max_profit': extra.get('max_profit', abs(pnl_pct)) or abs(pnl_pct),
+                        'confidence': extra.get('conviction', 0.5) or 0.5,
+                    }
+                    
+                    db.save_signal_outcome(outcome_data)
+                    logger.info(
+                        f"✅ [信号结果] {signal.code} 已写入 signal_outcomes | "
+                        f"strategy={outcome_data['strategy']} | "
+                        f"pnl={pnl_pct*100:+.2f}% | "
+                        f"regime={outcome_data['market_regime']} | "
+                        f"conviction={outcome_data['confidence']:.2f}"
+                    )
+                except Exception as outcome_e:
+                    logger.warning(f"[信号结果] 写入 signal_outcomes 失败 (不影响主流程): {outcome_e}")
+                # ═══════════════════════════════════════════════════════════
 
                 # P0 修复 (2026-05-06): 平仓成功后发送钉钉通知
                 try:
@@ -2397,10 +2960,29 @@ class TradeExecutor:
             else:
                 trd_side = TrdSide.BUY
 
-            # 2. 计算平仓数量 = quantity * close_ratio
-            close_qty = int(position.quantity * close_ratio)
+            # 2. 计算平仓数量 — 优先使用 signal.quantity (已由调用方对齐整手)
+            # P0 修复 (2026-05-10): 港股必须对齐整手倍数，否则 Futu 会拒绝订单
+            if signal.quantity and signal.quantity > 0:
+                close_qty = signal.quantity
+            else:
+                close_qty = int(position.quantity * close_ratio)
+                # 港股整手对齐
+                if market == "HK":
+                    lot_size = self._get_lot_size(signal.code)
+                    if close_qty % lot_size != 0:
+                        close_qty = (close_qty // lot_size) * lot_size
+                        # P1 修复 (2026-05-11): 取整后不足一手时，至少 1 手但不能超卖
+                        if close_qty < lot_size:
+                            close_qty = lot_size
+                            if close_qty > position.quantity:
+                                close_qty = position.quantity  # 持仓不足 1 手，全平
+            
             if close_qty < 1:
                 close_qty = 1  # 至少平仓 1 股
+            
+            # P1 修复 (2026-05-11): 防止超卖 — 平仓数量不能超过实际持仓
+            if close_qty > position.quantity:
+                close_qty = position.quantity
             
             # 剩余数量
             remaining_qty = position.quantity - close_qty
@@ -2487,6 +3069,65 @@ class TradeExecutor:
             logger.error(f"获取{market}账户信息失败：{e}")
             return None
 
+    def _sync_water_level_capital(self, market: str = "HK") -> bool:
+        """
+        P0 修复 (2026-05-08): 从 Futu 获取真实资金并同步到水位管理器
+
+        解决水位管理器 current_capital 永远等于 initial_capital 的缺陷。
+        每次成交后/定时调用，确保水位等级随真实资金变化。
+
+        Returns:
+            True 如果同步成功，False 如果失败或水位管理器未启用
+        """
+        if self._water_level_manager is None:
+            return False
+
+        try:
+            acc_info = self.get_account_info(market)
+            if not acc_info:
+                logger.warning("[水位同步] Futu 账户信息不可用")
+                return False
+
+            # Futu accinfo_query 返回字段:
+            # power (购买力), cash (现金), market_val (持仓市值), total_assets (总资产)
+            # 使用 total_assets 作为 current_capital
+            total_assets = float(acc_info.get('total_assets', 0) or 0)
+            cash = float(acc_info.get('cash', 0) or 0)
+            market_val = float(acc_info.get('market_val', 0) or 0)
+            power = float(acc_info.get('power', 0) or 0)
+
+            if total_assets <= 0:
+                logger.warning(f"[水位同步] Futu 返回总资产={total_assets}，跳过更新")
+                return False
+
+            old_ratio = self._water_level_manager.current_capital / self._water_level_manager.initial_capital
+            old_level = self._water_level_manager.get_current_level()
+
+            self._water_level_manager.update_capital(
+                current_capital=total_assets,
+            )
+
+            new_level = self._water_level_manager.get_current_level()
+            new_ratio = self._water_level_manager.current_capital / self._water_level_manager.initial_capital
+
+            level_changed = new_level != old_level
+            level_icon = "🟢" if new_level.value == "green" else "🟡" if new_level.value == "yellow" else "🟠" if new_level.value == "orange" else "🔴"
+
+            log_msg = (
+                f"[水位同步] 总资产={total_assets:,.0f} | 现金={cash:,.0f} | 持仓={market_val:,.0f} | 购买力={power:,.0f} | "
+                f"水位={new_ratio:.1%} ({level_icon} {new_level.value})"
+                + (f" | ⚠️ 等级变化: {old_level.value}→{new_level.value}" if level_changed else "")
+            )
+            if level_changed:
+                logger.warning(log_msg)
+            else:
+                logger.debug(log_msg)
+
+            return True
+        except Exception as e:
+            logger.error(f"[水位同步] 异常: {e}")
+            return False
+
     def close(self):
         if self._trd_ctx_hk:
             self._trd_ctx_hk.close()
@@ -2522,7 +3163,17 @@ class TradeExecutor:
             
             code = signal.code
             action = 'BUY' if signal.action == SignalAction.BUY else 'SELL'
-            quantity = getattr(signal, 'quantity', 0)
+            # P1 修复 (2026-05-12): 平仓时 signal.quantity=0，实际数量从持仓获取
+            if status == 'CLOSED':
+                position = self.position_manager.get_position(code)
+                quantity = position.quantity if position else 0
+                if quantity <= 0:
+                    logger.warning(f"[record_trade] {code} 平仓 quantity={quantity}，从 OPEN 记录回读")
+                    cursor.execute("SELECT quantity FROM trades WHERE id = ? AND status = 'OPEN'", (trade_id,))
+                    row = cursor.fetchone()
+                    quantity = row[0] if row and row[0] and row[0] > 0 else 0
+            else:
+                quantity = getattr(signal, 'quantity', 0)
             entry_price = price if price else getattr(signal, 'price', 0)
             strategy = getattr(signal, 'strategy', 'manual')
             
@@ -2537,8 +3188,8 @@ class TradeExecutor:
                     row = cursor.fetchone()
                     _ep = row[0] if row and row[0] and row[0] > 0 else 0
                     _qty = row[1] if row and row[1] else 1
-                    
-                    # 使用 HK 本地 TradeRecorder 记录平仓
+
+                    # 使用 HK 本地 TradeRecorder 记录平仓 (JSON)
                     try:
                         recorder = hk_trade_recorder.get_trade_recorder()
                         recorder.record_close(
@@ -2548,7 +3199,18 @@ class TradeExecutor:
                         )
                     except Exception as e:
                         logger.debug(f"[HK TradeRecorder] record_close 跳过: {e}")
-                    
+
+                    # P2-1 2026-05-08: 同时更新 SQLite trades 表
+                    now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    cursor.execute("""
+                        UPDATE trades
+                        SET exit_price = ?, exit_time = ?, pnl = ?,
+                            status = 'CLOSED', exit_reason = 'normal_close'
+                        WHERE id = ?
+                    """, (price, now, pnl, trade_id))
+                    conn.commit()
+                    logger.info(f"✅ [SQLite trades] 平仓已更新：{trade_id} exit_price={price} pnl={pnl}")
+
                     pool.return_connection(conn)
                     return
                 else:
@@ -2556,7 +3218,17 @@ class TradeExecutor:
                     pool.return_connection(conn)
                     return
 
-            # 新开记录 — 使用 HK 本地 TradeRecorder
+            # 新开记录 — 使用 HK 本地 TradeRecorder (JSON)
+            # P0 2026-05-10 去重：检查同 order_id 是否已有记录
+            rec_trade_id = f"trade_{order_id}"
+            try:
+                existing_rec = hk_trade_recorder.get_trade_recorder().get_record(rec_trade_id)
+                if existing_rec and status == 'OPEN':
+                    logger.info(f"⏭️ [HK TradeRecorder] 开仓记录已存在，跳过重复写入：{rec_trade_id}")
+                    return  # 已有记录，跳过
+            except Exception as _dup_e:
+                logger.debug(f"[HK TradeRecorder] 去重检查失败: {_dup_e}")
+
             side = 'buy' if action == 'BUY' else 'sell'
             trade_rec = hk_trade_recorder.record_trade(
                 stock_code=code,
@@ -2566,9 +3238,36 @@ class TradeExecutor:
                 strategy_type=strategy,
                 strategy=strategy
             )
-            
+
+            # P0 2026-05-10: 修正 trade_id 为与 SQLite 一致的格式
+            if trade_rec and hasattr(trade_rec, 'trade_id'):
+                trade_rec.trade_id = rec_trade_id
+                hk_trade_recorder.get_trade_recorder()._save_records()
+
             if trade_rec and hasattr(trade_rec, 'id'):
                 logger.info(f"✅ [HK TradeRecorder] 交易记录已写入：{trade_rec.id}")
+
+            # P2-1 2026-05-08: 同时写入 SQLite trades 表 (供 EOD 报告/归因链使用)
+            now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            # SELL 方向直接记 CLOSED, BUY 方向记 OPEN
+            db_status = 'CLOSED' if status == 'CLOSED' else status
+            cursor.execute("""
+                INSERT INTO trades (
+                    id, signal_id, code, name, action,
+                    entry_price, exit_price, quantity,
+                    pnl, pnl_percent, fees,
+                    strategy, entry_time, exit_time,
+                    exit_reason, order_id, status
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                trade_id, signal_id, code, '', action,
+                entry_price, None if db_status == 'OPEN' else price, quantity,
+                pnl, 0, 0,
+                strategy, now, None if db_status == 'OPEN' else now,
+                'normal_close' if db_status == 'CLOSED' else '', order_id, db_status
+            ))
+            conn.commit()
+            logger.info(f"✅ [SQLite trades] 成交已写入：{trade_id} {code} {action} {quantity}股 @ {entry_price} status={db_status}")
             
             pool.return_connection(conn)
             

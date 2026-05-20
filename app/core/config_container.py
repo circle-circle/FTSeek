@@ -5,7 +5,7 @@
 1. 替代分散在各模块的全局变量
 2. 提供依赖注入支持
 3. 添加访问控制和类型注解
-4. 与 ConfigCenter 集成 (config/config.yaml 为唯一配置源)
+4. 与 ConfigCenter 集成 (config/unified_config.yaml 为唯一配置源)
 
 使用示例:
     from app.core.config_container import ConfigContainer
@@ -16,7 +16,7 @@
 
 架构说明 (2026-04-09 收敛后):
   - .env → 敏感环境变量
-  - config/config.yaml → 唯一配置源 (通过 ConfigCenter 加载)
+  - config/unified_config.yaml → 唯一配置源 (通过 ConfigCenter 加载)
   - ConfigContainer → 依赖注入容器 (包装 ConfigCenter 提供点式访问)
 
 SSOT v4.1 (2026-05-06):
@@ -210,8 +210,8 @@ class RiskConfig:
 @dataclass
 class ConsensusConfig:
     """共识引擎配置"""
-    signal_cooldown: int = 120              # 2026-04-16 对齐 config.yaml (120s)
-    consensus_window: int = 90              # 2026-04-15: 60→90, 对齐 config.yaml
+    signal_cooldown: int = 120              # 2026-04-16 对齐 unified_config.yaml (120s)
+    consensus_window: int = 90              # 2026-04-15: 60→90, 对齐 unified_config.yaml
     consensus_threshold: float = 1.0        # 2026-05-06: 1.5→1.0, 对齐 unified_config.yaml
     adx_period: int = 14
     adx_trend: float = 25.0                 # ADX 高于此值 = 趋势市
@@ -230,10 +230,10 @@ class ConsensusConfig:
     max_position_pct: float = 10.0          # 单股最大占总资金 % (黑天鹅 -50% 时仅损 5%)
     max_sector_pct: float = 25.0            # 单行业最大占总资金 % (行业 -40% 时仅损 10%)
     min_cash_reserve_pct: float = 10.0      # 最低现金缓冲 % (防极端行情)
-    max_portfolio_drawdown: float = 0.12    # 2026-04-16 对齐 config.yaml (0.12 = 12%)
+    max_portfolio_drawdown: float = 0.12    # 2026-04-16 对齐 unified_config.yaml (0.12 = 12%)
     max_daily_loss_pct: float = 3.0         # 每日最大亏损 % (触发当日停交易)
-    stop_loss_pct: float = 0.03             # 2026-04-16 对齐 config.yaml stop_loss.default_percent (3%)
-    take_profit_pct: float = 0.10           # 2026-04-16 对齐 config.yaml take_profit.default_percent (10%)
+    stop_loss_pct: float = 0.03             # 2026-04-16 对齐 unified_config.yaml stop_loss.default_percent (3%)
+    take_profit_pct: float = 0.10           # 2026-04-16 对齐 unified_config.yaml take_profit.default_percent (10%)
     
     # 策略分类
     trend_strategies: set = field(default_factory=lambda: {"supertrend", "macd", "ma_cross"})

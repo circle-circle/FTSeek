@@ -238,7 +238,7 @@ class RegimeAdapter:
 
         if fit_score is None:
             # 未知市场状态，返回默认值
-            fit_score = strategy_regimes.get("default", 0.30)  # 2026-04-14 对齐 config.yaml
+            fit_score = strategy_regimes.get("default", 0.30)  # 2026-04-14 对齐 unified_config.yaml
 
         return fit_score
 

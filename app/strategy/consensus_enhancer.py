@@ -17,12 +17,13 @@ logger.propagate = False
 
 @dataclass
 class EnhancedSignal:
-    """增强信号 (质量 + 时效)"""
+    """增强信号 (质量 + 时效 + LLM定性判断)"""
     code: str
     action: str                    # 'BUY' / 'SELL'
     original_score: float          # 原始共识分
     quality_score: float           # 信号质量分 (Phase 1)
     timeliness_factor: float       # 时效性因子 (Phase 3)
+    llm_signal_impact_factor: float  # LLM signal_impact 乘数 (2026-05-17)
     final_score: float             # 最终得分
     news_age_minutes: int          # 新闻平均年龄
     volatility_state: str          # 市场波动状态
@@ -46,7 +47,7 @@ class ConsensusEnhancer:
         self.config = config or {}
 
         # 质量阈值 (Phase 1)
-        self.quality_threshold = self.config.get('quality_threshold', 0.30)  # 2026-04-14 对齐 config.yaml
+        self.quality_threshold = self.config.get('quality_threshold', 0.30)  # 2026-04-14 对齐 unified_config.yaml
         self.high_quality_threshold = self.config.get('high_quality_threshold', 0.75)
 
         # 时效性配置 (Phase 3)
@@ -135,6 +136,11 @@ class ConsensusEnhancer:
 
         final_score = original_score * quality_score * timeliness_factor
 
+        # 3.5 LLM signal_impact 调整 (2026-05-17 新增)
+        # 从动态池读取 LLM 对标的的定性判断，作为最终得分的乘数
+        llm_factor = self._get_llm_signal_impact_factor(code)
+        final_score *= llm_factor
+
         # 4. 给出推送建议
         recommendation = self._get_recommendation(quality_score, timeliness_factor, final_score)
 
@@ -144,6 +150,7 @@ class ConsensusEnhancer:
             original_score=original_score,
             quality_score=quality_score,
             timeliness_factor=timeliness_factor,
+            llm_signal_impact_factor=llm_factor,
             final_score=final_score,
             news_age_minutes=news_age,
             volatility_state=vol_state,
@@ -276,6 +283,51 @@ class ConsensusEnhancer:
             'neutral': 'default',
         }
         return mapping.get(consensus_regime, 'default')
+
+    def _get_llm_signal_impact_factor(self, code: str) -> float:
+        """2026-05-17 新增: 从动态池读取 LLM signal_impact 作为评分乘数
+
+        映射规则:
+        - boost → 1.15 (信号增强 15%)
+        - neutral → 1.0 (无影响)
+        - weaken → 0.80 (信号降权 20%)
+        - block → 0.30 (信号严重降权 70%)
+
+        Args:
+            code: 股票代码 (e.g. "HK.00700" or "00700")
+
+        Returns:
+            乘数 (0.3 ~ 1.15)，默认 1.0
+        """
+        try:
+            from app.utils.daily_active_pool import get_daily_active_pool
+            pool = get_daily_active_pool(market_prefix="HK.")
+            
+            # 尝试原始 code
+            entry = pool._entries.get(code)
+            
+            # 2026-05-17 P1: 前缀归一化 (兼容 "00700" 和 "HK.00700")
+            if not entry:
+                if code.startswith("HK."):
+                    entry = pool._entries.get(code)
+                else:
+                    entry = pool._entries.get(f"HK.{code}")
+            
+            if entry and not entry.is_expired():
+                impact = entry.metadata.get("signal_impact", "neutral")
+                factors = {
+                    "boost": 1.15,
+                    "neutral": 1.0,
+                    "weaken": 0.80,
+                    "block": 0.30,
+                }
+                factor = factors.get(impact, 1.0)
+                if factor != 1.0:
+                    logger.info(f"[LLM信号评分] {code} signal_impact={impact} → 乘数={factor}")
+                return factor
+        except Exception as e:
+            logger.debug(f"[LLM信号评分] 读取失败: {e}")
+        return 1.0
 
     def _get_recommendation(self, quality: float,
                             timeliness: float,

@@ -287,7 +287,6 @@ class LLMNewsStrategyEngine:
         self._market_cache: Dict[str, dict] = {}
         self._market_cache_ttl = 300  # 5分钟
         
-        self._llm_client = None
         self._init_client()
         
         logger.info(
@@ -296,35 +295,17 @@ class LLMNewsStrategyEngine:
         )
     
     def _init_client(self):
-        """初始化 LLM 客户端"""
+        """标记 LLM 引擎状态 (UnifiedLLMService 按需创建，无需预初始化)"""
         if not self.enabled:
             return
         
-        try:
-            # 使用统一 LLM 工厂 (SSOT)
-            from app.core.unified_llm_factory import get_llm_client
-            self._llm_client = get_llm_client()
-            if not self._llm_client:
-                raise ValueError("Unified LLM Client not available")
-            logger.info("LLM 客户端初始化成功 (Unified Factory)")
-        except ImportError:
-            # 降级到 ExpertTeam LLMClient
-            try:
-                import sys
-                sys.path.insert(0, '/opt/ftseek/ExpertTeam')
-                from utils.llm_client import LLMClient
-                self._llm_client = LLMClient(
-                    model=f"bailian/{self.model}",
-                    timeout=self.timeout,
-                    max_retries=2,
-                )
-                logger.info("LLM 客户端初始化成功 (ExpertTeam)")
-            except Exception as e:
-                logger.error("LLM 客户端初始化失败: %s", e)
-                self.enabled = False
-        except Exception as e:
-            logger.error("LLM 客户端初始化失败: %s", e)
-            self.enabled = False
+        # 验证配置有效性
+        if self.model not in ('qwen3.6-plus', 'qwen-plus', 'qwen-turbo', 'qwen-max', 
+                              'deepseek-v4-pro', 'deepseek-v4-flash', 'MiniMax-M2.5'):
+            logger.warning("未知模型: %s, 使用默认 qwen3.6-plus", self.model)
+            self.model = 'qwen3.6-plus'
+        
+        logger.info("LLMNewsStrategyEngine 就绪: model=%s, timeout=%ds", self.model, self.timeout)
     
     async def analyze_news(
         self,
@@ -379,7 +360,7 @@ class LLMNewsStrategyEngine:
         start_time = time.time()
         
         try:
-            if self.enabled and self._llm_client:
+            if self.enabled:
                 strategies = await self._call_llm_strategy(
                     news_title, news_content, news_source, pub_time,
                     event_name, event_sector, static_logic,
@@ -488,46 +469,29 @@ class LLMNewsStrategyEngine:
             geo_scan=geo_scan,
         )
         
-        # 调用 LLM
-        if hasattr(self._llm_client, 'chat'):
-            # OpenAI 兼容客户端
-            extra_body = {}
-            if self.enable_thinking:
-                extra_body["enable_thinking"] = True
-            
-            response = await asyncio.wait_for(
-                self._llm_client.chat.completions.create(
-                    model=self.model,
-                    messages=[
-                        {"role": "system", "content": "你是 FTSeek 首席量化策略分析师，输出严格 JSON。"},
-                        {"role": "user", "content": prompt},
-                    ],
-                    temperature=0.1,
-                    max_tokens=2000,
-                    extra_body=extra_body if extra_body else None,
-                ),
-                timeout=self.timeout,
-            )
-            raw_content = response.choices[0].message.content
-        else:
-            # ExpertTeam LLMClient (同步)
-            import sys
-            sys.path.insert(0, '/opt/ftseek/ExpertTeam')
-            from utils.llm_client import LLMClient
-            client = LLMClient(
-                model=f"bailian/{self.model}",
-                timeout=self.timeout,
-                max_retries=1,
-            )
-            messages = [
-                {"role": "system", "content": "你是 FTSeek 首席量化策略分析师，输出严格 JSON。"},
-                {"role": "user", "content": prompt},
-            ]
-            resp = await asyncio.wait_for(
-                client.chat(messages, use_cache=False),
-                timeout=self.timeout,
-            )
-            raw_content = resp.content
+        # 调用 LLM (UnifiedLLMService — 零副作用，内置重试/降级)
+        from app.llm.unified_service import get_unified_llm, UnifiedLLMService
+        
+        svc = get_unified_llm(
+            default_model=self.model, 
+            default_timeout=self.timeout, 
+            max_retries=2
+        )
+        
+        messages = [
+            {"role": "system", "content": "你是 FTSeek 首席量化策略分析师，输出严格 JSON。"},
+            {"role": "user", "content": prompt},
+        ]
+        
+        raw_content = await svc.call(
+            messages=messages,
+            model=self.model,
+            timeout=self.timeout,
+            task_type="news_strategy"
+        )
+        
+        if not raw_content:
+            raise RuntimeError("UnifiedLLMService 返回空响应")
         
         # 解析 JSON 响应
         strategies = self._parse_llm_response(raw_content, related_stocks, signal)

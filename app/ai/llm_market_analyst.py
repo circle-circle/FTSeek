@@ -277,42 +277,22 @@ class LLMMarketAnalyst:
         return self._llm_client
 
     async def _call_llm(self, messages: list, timeout: int) -> str:
-        """直接调用百炼 API，支持 enable_thinking 参数。
-
-        优先使用 openai 兼容客户端（支持 extra_body）；
-        若 openai 包不可用，则降级到 ExpertTeam LLMClient。
-        """
-        import os
-        try:
-            from app.core.unified_llm_factory import get_llm_client
-            oai_client = get_llm_client()
-            if not oai_client:
-                raise ValueError("Unified LLM Client not available")
-        except ImportError:
-            logger.warning("openai 包未安装，降级到 ExpertTeam LLMClient（不支持 enable_thinking）")
-            client = self._get_llm_client()
-            resp = await asyncio.wait_for(
-                client.chat(messages, use_cache=False),
-                timeout=timeout,
-            )
-            return resp.content
-
-        # qwen3.5-plus 的实际模型名（与 ExpertTeam MODEL_CONFIGS 对齐）
-        model_name = "qwen-plus"
-
-        extra_body: Dict[str, Any] = {}
-        if self.enable_thinking:
-            extra_body["enable_thinking"] = True
-
-        response = await asyncio.wait_for(
-            oai_client.chat.completions.create(
-                model=model_name,
-                messages=messages,
-                extra_body=extra_body if extra_body else None,
-            ),
-            timeout=timeout,
+        """调用 LLM — 使用 UnifiedLLMService（统一统计+重试降级）"""
+        from app.llm.unified_service import get_unified_llm
+        
+        svc = get_unified_llm(
+            default_model="qwen3.6-plus",
+            default_timeout=timeout,
+            max_retries=1,
         )
-        return response.choices[0].message.content
+        
+        result = await svc.call(
+            messages,
+            model="qwen3.6-plus",
+            timeout=timeout,
+            task_type="market_analyst_fallback"
+        )
+        return result or ""
 
     def _cache_key(
         self,

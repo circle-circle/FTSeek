@@ -887,7 +887,7 @@ class CrossMarketScheduler:
                 return False, f"持仓已达上限 ({open_count}/{max_open})"
             
             # --- 3. 日交易次数检查 ---
-            max_daily = int(cc.get('risk_limits.max_daily_trades', 5))  # 2026-04-16 对齐 config.yaml (5)
+            max_daily = int(cc.get('risk_limits.max_daily_trades', 5))  # 2026-04-16 对齐 unified_config.yaml (5)
             try:
                 from app.analytics.trade_evaluation import get_evaluator
                 evaluator = get_evaluator()

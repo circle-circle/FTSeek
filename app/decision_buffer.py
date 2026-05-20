@@ -111,9 +111,9 @@ class DecisionBuffer:
 
     def __init__(
         self,
-        signal_cooldown: int = 120,           # 2026-04-16 对齐 config.yaml (120s)
+        signal_cooldown: int = 120,           # 2026-04-16 对齐 unified_config.yaml (120s)
         max_pending: int = 500,               # 2026-04-22: 200→500 防止队列溢出
-        min_confidence: float = 0.35,         # 2026-04-24 统一: 对齐 risk_limits.min_confidence
+        min_confidence: float = 0.45,         # 2026-05-19: 提高信号门槛 (原0.35)
         max_positions: Optional[int] = None,
         dynamic_position_mode: bool = True,
         source_risk_config: Optional[Dict] = None,
@@ -140,7 +140,7 @@ class DecisionBuffer:
             self.max_positions = self._calculate_dynamic_max_positions()
         else:
             # 回退到默认值
-            self.max_positions = 12  # 2026-04-16 对齐 config.yaml (12)
+            self.max_positions = 12  # 2026-04-16 对齐 unified_config.yaml (12)
 
         # 决策队列（按置信度排序）
         self._pending_queue: List[DecisionRecord] = []
@@ -223,10 +223,10 @@ class DecisionBuffer:
 
         except ImportError as e:
             logger.warning(f"[动态仓位] 无法导入配置，使用默认值 4: {e}")
-            return 12  # 2026-04-16 对齐 config.yaml (12)
+            return 12  # 2026-04-16 对齐 unified_config.yaml (12)
         except Exception as e:
             logger.warning(f"[动态仓位] 计算失败，使用默认值 4: {e}")
-            return 12  # 2026-04-16 对齐 config.yaml (12)
+            return 12  # 2026-04-16 对齐 unified_config.yaml (12)
 
     def process_signal(self, consensus_result: ConsensusResult) -> DecisionRecord:
         """
@@ -790,7 +790,7 @@ def init_decision_buffer(
         if max_pending is None:
             max_pending = int(config_center.get('strategy.decision_buffer.max_pending', 500))  # 2026-04-22: 200→500
         if min_confidence is None:
-            min_confidence = float(config_center.get('strategy.decision_buffer.min_confidence', 0.35))  # 2026-04-24 统一
+            min_confidence = float(config_center.get('strategy.decision_buffer.min_confidence', 0.45))  # 2026-05-19: 对齐 YAML
         if max_positions is None:
             max_positions_cfg = config_center.get('strategy.decision_buffer.max_positions')
             # null 或 None 表示动态计算

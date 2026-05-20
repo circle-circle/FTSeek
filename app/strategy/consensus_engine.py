@@ -25,7 +25,7 @@
   CONSENSUS_ADX_TREND  = 25     # ADX 高于此值判定为趋势
   CONSENSUS_ADX_RANGE  = 20     # ADX 低于此值判定为震荡
 
-  以上 ADX 阈值已迁移到 config/config.yaml 的 market_regime.adx_thresholds 节集中管理。
+  以上 ADX 阈值已迁移到 config/unified_config.yaml 的 market_regime.adx_thresholds 节集中管理。
 """
 import dataclasses
 import logging
@@ -39,6 +39,13 @@ from datetime import datetime, timedelta
 
 from app.strategy.base import Signal, SignalAction
 from app.strategy.consensus_types import SignalSource, LayeredConsensusResult
+from app.services.adaptive_weight_manager import DEFAULT_BASE_WEIGHTS  # P0 fix (2026-05-20): 缺失导入
+
+# Phase 18: 向后兼容 re-export — SignalOutcome, Vote, ConsensusResult 已提取
+from app.strategy.consensus_types import SignalOutcome, Vote, ConsensusResult
+
+# AdaptiveWeightManager: 使用 app.strategy.consensus.adaptive_weights 版本
+# (services 版本构造函数不兼容，已移除 re-export)
 
 logger = logging.getLogger("ftseek.consensus")
 # 2026-04-10 修复: 移除 propagate=False，让日志通过 ftseek 父级 logger 输出
@@ -47,11 +54,130 @@ logger = logging.getLogger("ftseek.consensus")
 # 混合架构开关
 HYBRID_WEIGHT_ENABLED = True  # 启用混合权重架构
 
+# ============================================================
+#  自适应阈值 (Adaptive Threshold) — 从 config_center 读取
+#  2026-05-20: 修复硬编码与 YAML 不一致 (P0)
+# ============================================================
+def _read_adaptive_threshold_cfg():
+    """从 config_center 读取自适应阈值参数（延迟导入避免循环依赖）"""
+    from config.config_center import get_config_center
+    cc = get_config_center()
+    return {
+        'enabled': cc.get('strategy.consensus.adaptive_threshold_enabled', True),
+        'window': int(cc.get('strategy.consensus.adaptive_threshold_window', 200)),
+        'percentile': int(cc.get('strategy.consensus.adaptive_threshold_percentile', 75)),
+        'min': float(cc.get('strategy.consensus.adaptive_threshold_min', 0.8)),
+        'max': float(cc.get('strategy.consensus.adaptive_threshold_max', 2.5)),
+    }
+
+# 模块加载时的快照（供外部引用，如 _score_history maxlen）
+_cfg_snapshot = _read_adaptive_threshold_cfg()
+ADAPTIVE_THRESHOLD_ENABLED = _cfg_snapshot['enabled']
+ADAPTIVE_THRESHOLD_WINDOW = _cfg_snapshot['window']
+ADAPTIVE_THRESHOLD_PERCENTILE = _cfg_snapshot['percentile']
+ADAPTIVE_THRESHOLD_MIN = _cfg_snapshot['min']
+ADAPTIVE_THRESHOLD_MAX = _cfg_snapshot['max']
+
+# ============================================================
+#  策略分类与基准权重 (从 git HEAD 恢复, P0 2026-05-20)
+# ============================================================
+# 趋势型策略 (MOMENTUM factors): 在趋势行情中表现更好
+TREND_STRATEGIES = {"st_factor", "macd_factor", "ma_cross_factor", "vol_factor"}
+# 震荡型策略 (MEAN_REVERSION factors): 在盘整行情中表现更好
+OSCILLATOR_STRATEGIES = {"rsi_factor", "bb_factor"}
+# 综合型策略: 本身已做多因子融合, 任何行情都有参考价値
+HYBRID_STRATEGIES = {"confluence", "fusion_v2", "fusion_v3", "enhanced_confluence"}
+# 情绪型策略: 基于新闻和情绪分析 (新增 2026-03-17)
+SENTIMENT_STRATEGIES = {"sentiment", "sentiment_ai", "news_sentiment", "event_driven", "premarket_analyst"}
+# 多周期信号策略: 基于 15M/30M/60M/日线 K 线产生的中长周期信号 (新增 2026-03-25)
+MTF_STRATEGIES = {"mtf_15m", "mtf_30m", "mtf_60m", "mtf_day"}
+# 套利型策略：跨市场套利 (新增 2026-04-09)
+ARBITRAGE_STRATEGIES = {"cross_market_arbitrage"}
+# 时段型策略：基于特定时段的市场效应 (新增 2026-04-09)
+TIMEBASED_STRATEGIES = {"open_close_effect"}
+# 其他 (price_break, volume_alert 等)
+OTHER_STRATEGIES = set()
+
+# ─────────────────────────────────────────────────────────
+#  时段参数 & 因子族 (P1 2026-05-04, P0 修复 2026-05-20)
+# ─────────────────────────────────────────────────────────
+SESSION_PARAMS_ENABLED = _cfg_snapshot.get('session_params_enabled', True) if isinstance(_cfg_snapshot, dict) else True
+try:
+    from config.config_center import get_config_center as _cc_sp
+    SESSION_PARAMS_ENABLED = _cc_sp().get('strategy.consensus.session_params_enabled', True)
+except Exception:
+    SESSION_PARAMS_ENABLED = True
+
+# (window_multiplier, threshold_multiplier)
+SESSION_CONFIG = {
+    "market_open":  (0.8, 1.2),   # 09:30-10:00  波动大，缩短窗口、提高阈值
+    "midday":       (1.2, 1.3),   # 12:00-13:00  午间休市，放宽窗口、提高阈值
+    "afternoon":    (1.0, 1.0),   # 13:00-15:00  正常
+    "market_close": (0.7, 1.5),   # 15:00-16:00  尾盘，缩短窗口、大幅提高阈值
+    "regular":      (1.0, 1.0),   # 10:00-12:00  正常
+}
+
+# 因子族分组 — 同族因子共线性惩罚
+FACTOR_FAMILIES = {
+    "momentum":  ["rsi_factor", "macd_factor", "stoch_factor"],
+    "trend":     ["adx_factor", "ema_factor", "supertrend_factor"],
+    "volatility":["bb_factor", "atr_factor", "vol_factor"],
+    "volume":    ["obv_factor", "vwap_factor", "volume_factor"],
+}
+FAMILY_MAX_WEIGHT = {
+    "momentum":  1.5,
+    "trend":     1.5,
+    "volatility":1.2,
+    "volume":    1.0,
+}
+
+# 基准权重 (可通过 config 覆盖)
+DEFAULT_BASE_WEIGHTS = {
+    "confluence_v2": 1.5,            # 主力融合策略
+    "supertrend":    1.0,            # 趋势跟踪主力
+    "sentiment_ai":  0.5,            # AI 情绪辅助确认
+    "event_driven":           1.2,   # 事件驱动
+    "cross_market_arbitrage": 1.0,   # 跨市场套利
+    "enhanced_confluence":    1.3,   # 增强融合
+    "open_close_effect":      0.8,   # 开盘/收盘效应
+    "premarket_analyst":     1.0,   # 盘前LLM分析
+    "rsi_factor":        1.0,
+    "bb_factor":         1.0,
+    "macd_factor":       1.0,
+    "st_factor":         1.0,
+    "ma_cross_factor":   0.8,
+    "vol_factor":        0.6,
+}
+
+# 市场状态增益/衰减系数
+TREND_BOOST   = 1.5   # 趋势市对趋势策略的增益
+TREND_DECAY   = 0.6   # 趋势市对震荡策略的衰减
+RANGE_BOOST   = 1.5   # 震荡市对震荡策略的增益
+RANGE_DECAY   = 0.6   # 震荡市对趋势策略的衰减
+MTF_TREND_BOOST  = 1.3  # 趋势市对 MTF 策略的增益
+MTF_RANGE_DECAY  = 0.7  # 震荡市 MTF 策略的衰减
+
+# 突发新闻权重倍增器
+BREAKING_NEWS_MULTIPLIER = 2.0
+BREAKING_NEWS_LOOKBACK_HOURS = 2
+
+# 灰区防守惩罚
+GRAY_ZONE_PENALTY = -0.10
+
+# 策略分歧度度量
+DIVERGENCE_THRESHOLD = 0.5
+DIVERGENCE_SCORE_DECAY = 0.5
+DIVERGENCE_GRAY_ZONE = True
+
+# 策略场景失效检测
+SCENARIO_CONSECUTIVE_FAIL_LIMIT = 3
+SCENARIO_FAIL_PENALTY = -0.10
+
 # 【P0 修复 2026-04-26】原实现写死 /opt/ftseek/FTSeek 绝对路径，
 # 一旦部署目录变更或使用工作区软链接指向其他路径，importlib 就会报 FileNotFoundError。
 # 统一改为：
 #   ① 优先 env var FTSEEK_WEIGHT_ENGINE_PATH
-#   ② 次选 config.yaml: strategy.weight_engine_path
+#   ② 次选 unified_config.yaml: strategy.weight_engine_path
 #   ③ Fallback：相对当前文件的 <project_root>/strategies/weight_engine.py
 def _resolve_weight_engine_path() -> str:
     import os as _os
@@ -73,8 +199,8 @@ def _resolve_weight_engine_path() -> str:
 WEIGHT_ENGINE_PATH = _resolve_weight_engine_path()
 
 # ============================================================
-#  市场状态 ADX 阈值 — 从 config/config.yaml market_regime 节加载
-#  保留硬编码作为 fallback，修改请统一在 config.yaml 的 market_regime.adx_thresholds 节
+#  市场状态 ADX 阈值 — 从 config/unified_config.yaml market_regime 节加载
+#  保留硬编码作为 fallback，修改请统一在 unified_config.yaml 的 market_regime.adx_thresholds 节
 # ============================================================
 def _load_adx_thresholds_from_config() -> Tuple[float, float]:
     """
@@ -110,185 +236,6 @@ CONSENSUS_ADX_TREND = _CONSENSUS_ADX_TREND
 CONSENSUS_ADX_RANGE = _CONSENSUS_ADX_RANGE
 
 
-# ============================================================
-#  信号质量记录结构（增强版）
-# ============================================================
-@dataclass
-class SignalOutcome:
-    """信号成交结果记录（增强版，支持回溯分析）"""
-    code: str
-    action: str                    # 'BUY' / 'SELL'
-    strategy: str                  # 触发策略
-    entry_price: float
-    exit_price: float
-    pnl_pct: float                 # 盈亏百分比
-    holding_periods: int           # 持仓周期数
-    market_regime: str             # 市场状态 (trending/ranging/neutral)
-    scenario: str                  # 场景标签 (Phase 1 新增)
-    adx_value: float               # ADX值
-    mtf_alignment: float           # 多周期对齐度 (0-1)
-    sentiment_score: float         # 情绪得分
-    consensus_score: float         # 共识得分
-    quality_score: float           # 当时的质量分
-    max_drawdown: float            # 持仓期间最大回撤
-    max_profit: float              # 持仓期间最大浮盈
-    timestamp: float = 0.0         # 平仓时间戳
-
-
-# ============================================================
-#  策略分类与基准权重
-# ============================================================
-# 趋势型策略 (MOMENTUM factors): 在趋势行情中表现更好
-TREND_STRATEGIES = {"st_factor", "macd_factor", "ma_cross_factor", "vol_factor"}
-# 震荡型策略 (MEAN_REVERSION factors): 在盘整行情中表现更好
-OSCILLATOR_STRATEGIES = {"rsi_factor", "bb_factor"}
-# 综合型策略: 本身已做多因子融合, 任何行情都有参考价値
-HYBRID_STRATEGIES = {"confluence", "fusion_v2", "fusion_v3", "enhanced_confluence"}
-# 情绪型策略: 基于新闻和情绪分析 (新增 2026-03-17)
-SENTIMENT_STRATEGIES = {"sentiment", "sentiment_ai", "news_sentiment", "event_driven", "premarket_analyst"}
-# 多周期信号策略: 基于 15M/30M/60M/日线 K 线产生的中长周期信号 (新增 2026-03-25)
-MTF_STRATEGIES = {"mtf_15m", "mtf_30m", "mtf_60m", "mtf_day"}
-# 套利型策略：跨市场套利 (新增 2026-04-09)
-ARBITRAGE_STRATEGIES = {"cross_market_arbitrage"}
-# 时段型策略：基于特定时段的市场效应 (新增 2026-04-09)
-TIMEBASED_STRATEGIES = {"open_close_effect"}
-# 其他 (price_break, volume_alert 等)
-OTHER_STRATEGIES = set()
-
-# ============================================================
-#  P1 优化 2026-05-04: 因子家族 (共线性惩罚)
-# ============================================================
-# 同族因子共享投票权重上限，防止高相关性因子绑架共识
-FACTOR_FAMILIES = {
-    "MOMENTUM":       {"macd_factor", "st_factor", "ma_cross_factor", "vol_factor"},
-    "MEAN_REVERSION": {"rsi_factor", "bb_factor"},
-}
-# 每个家族的最大总权重贡献 (防止同族多因子叠加)
-FAMILY_MAX_WEIGHT = {
-    "MOMENTUM":       1.8,  # MACD + ST + MA_Cross + Vol → 上限 1.8
-    "MEAN_REVERSION": 1.5,  # RSI + BB → 上限 1.5
-}
-
-# ============================================================
-#  P1 优化 2026-05-04: 自适应阈值
-#  P0 修复 2026-05-06 09:52: 临时关闭，解决信号无法触发问题
-# ============================================================
-ADAPTIVE_THRESHOLD_ENABLED = False  # 临时关闭
-ADAPTIVE_THRESHOLD_WINDOW = 200        # 滚动窗口大小
-ADAPTIVE_THRESHOLD_PERCENTILE = 75     # 取前 25% 的信号
-ADAPTIVE_THRESHOLD_MIN = 0.8           # 自适应阈值下界
-ADAPTIVE_THRESHOLD_MAX = 2.5           # 自适应阈值上界
-
-# ============================================================
-#  P1 优化 2026-05-04: 时段分段参数
-# ============================================================
-SESSION_PARAMS_ENABLED = True
-# (window_multiplier, threshold_multiplier): 相对于基准 window/threshold
-SESSION_CONFIG = {
-    "market_open":  (0.5, 1.30),   # 09:30-10:00 窗口减半(45s), 阈值+30%
-    "afternoon":    (0.8, 1.00),   # 13:00-15:00 A股联动段, 窗口略缩, 阈值不变
-    "midday":       (0.5, 1.20),   # 12:00-13:00 午间休市, 低流动性, 阈值+20%
-    "market_close": (0.5, 0.90),   # 15:00-16:00 尾盘冲刺, 趋势明确, 阈值-10%
-    "regular":      (1.0, 1.00),   # 10:00-12:00 上午盘中, 正常参数
-}
-
-# 基准权重 (可通过 config 覆盖)
-# 优化于 2026-03-27: 精简策略组合，只保留核心3个策略
-# 核心策略: confluence_v2(主力), supertrend(趋势), sentiment_ai(情绪)
-DEFAULT_BASE_WEIGHTS = {
-    "confluence_v2": 1.5,            # 主力融合策略，权重最高
-    "supertrend":    1.0,            # 趋势跟踪主力
-    "sentiment_ai":  0.5,            # AI 情绪辅助确认
-    # 新增策略 (2026-04-09)
-    "event_driven":           1.2,   # 事件驱动：高优先级突发信号
-    "cross_market_arbitrage": 1.0,   # 跨市场套利：中优先级
-    "enhanced_confluence":    1.3,   # 增强融合：多因子 + 多周期
-    "open_close_effect":      0.8,   # 开盘/收盘效应：辅助信号
-    # 新增 (2026-04-12)
-    "premarket_analyst":     1.0,   # 盘前LLM分析：独立研判信号
-    # 因子投票策略 (2026-05-03 透明化架构 → P0 修复 2026-05-04)
-    "rsi_factor":        1.0,   # RSI 超买超卖 — MEAN_REVERSION
-    "bb_factor":         1.0,   # 布林带极值 — MEAN_REVERSION
-    "macd_factor":       1.0,   # MACD 动量 — MOMENTUM
-    "st_factor":         1.0,   # SuperTrend 趋势 — MOMENTUM
-    "ma_cross_factor":   0.8,   # 均线交叉 — MOMENTUM (信号频率低)
-    "vol_factor":        0.6,   # 放量确认 — 噪音大，低基权
-}
-
-# 市场状态增益/衰减系数
-TREND_BOOST   = 1.5   # 趋势市对趋势策略的增益
-TREND_DECAY   = 0.6   # 趋势市对震荡策略的衰减
-RANGE_BOOST   = 1.5   # 震荡市对震荡策略的增益
-RANGE_DECAY   = 0.6   # 震荡市对趋势策略的衰减
-# 多周期策略在各市场下的增益（市场趋势夹市时 MTF 信号更可靠）
-MTF_TREND_BOOST  = 1.3  # 趋势市对 MTF 策略的增益
-MTF_RANGE_DECAY  = 0.7  # 震荡市 MTF 策略的衰减加强（从 0.8 降至 0.7）
-
-# 突发新闻权重倍增器 (2026-04-08 新增)
-BREAKING_NEWS_MULTIPLIER = 2.0  # 突发新闻权重翻倍
-BREAKING_NEWS_LOOKBACK_HOURS = 2  # 回溯 2 小时内的突发新闻
-
-# 灰区防守惩罚 (2026-04-11 新增 - 落袋为安)
-GRAY_ZONE_PENALTY = -0.10  # 灰区场景权重惩罚（负 delta，压低所有策略权重）
-
-# 策略分歧度度量 (2026-04-13 新增)
-DIVERGENCE_THRESHOLD = 0.5    # 分歧度阈值: BUY和SELL策略数接近时触发
-DIVERGENCE_SCORE_DECAY = 0.5  # 分歧时分数衰减系数
-DIVERGENCE_GRAY_ZONE = True   # 高分歧时自动标记灰区
-
-# 策略场景失效检测 (2026-04-13 新增)
-SCENARIO_CONSECUTIVE_FAIL_LIMIT = 3   # 连续失败次数触发降权
-SCENARIO_FAIL_PENALTY = -0.10         # 失效惩罚 delta
-
-
-@dataclass
-class Vote:
-    """一票: 策略 + 方向 + 信号详情"""
-    strategy: str
-    action: SignalAction
-    price: float
-    reason: str
-    signal: Signal
-    timestamp: float = field(default_factory=time.time)
-
-
-@dataclass(frozen=True)
-class ConsensusResult:
-    """加权共识结果（frozen - 并发安全，禁止字段重赋值）"""
-    code: str
-    action: SignalAction
-    price: float
-    score: float               # 最终加权得分
-    threshold: float           # 使用的阈值
-    market_regime: str         # "trending" / "ranging" / "neutral"
-    scenario: str                  # 场景标签 (Phase 1 新增)
-    adx_value: Optional[float]
-    agree_strategies: Tuple[str, ...]       # 同向策略
-    oppose_strategies: Tuple[str, ...]      # 反向策略
-    weight_details: Dict[str, float]        # {策略: 实际权重}
-    reasons: Tuple[str, ...]
-    votes: Tuple[Vote, ...]
-    confidence: float = 0.0    # 置信度 (0-1, 用于风控检查)
-    trace_id: str = ""         # 【新增 2026-04-02】决策链路追踪ID
-    divergence: float = 0.0    # 策略分歧度 (0=一致, 1=完全分裂)
-    quality_result: Optional[object] = None  # 统一质量评分结果 (SignalQualityResult, 2026-04-11 新增)
-    source: str = "TECHNICAL"    # Phase 2: 信号来源 (TECHNICAL / EVENT / HYBRID)
-    extra: Optional[Dict[str, Any]] = None   # 扩展字段，存储 LLM 审计等附加信息
-
-    def __post_init__(self):
-        """frozen dataclass 深度不可变：List→Tuple, Dict→MappingProxyType"""
-        from types import MappingProxyType
-        if not isinstance(self.agree_strategies, tuple):
-            object.__setattr__(self, 'agree_strategies', tuple(self.agree_strategies))
-        if not isinstance(self.oppose_strategies, tuple):
-            object.__setattr__(self, 'oppose_strategies', tuple(self.oppose_strategies))
-        if not isinstance(self.reasons, tuple):
-            object.__setattr__(self, 'reasons', tuple(self.reasons))
-        if not isinstance(self.votes, tuple):
-            object.__setattr__(self, 'votes', tuple(self.votes))
-        if not isinstance(self.weight_details, MappingProxyType):
-            object.__setattr__(self, 'weight_details', MappingProxyType(self.weight_details))
-
 
 class ConsensusEngine:
     """
@@ -297,8 +244,8 @@ class ConsensusEngine:
     参数:
       window_seconds: 共识窗口 (秒)
       threshold:      触发阈值 (加权总分)
-      adx_trend:      ADX 趋势判定线 (优先从 config.yaml market_regime.adx_thresholds 读取)
-      adx_range:      ADX 震荡判定线 (优先从 config.yaml market_regime.adx_thresholds 读取)
+      adx_trend:      ADX 趋势判定线 (优先从 unified_config.yaml market_regime.adx_thresholds 读取)
+      adx_range:      ADX 震荡判定线 (优先从 unified_config.yaml market_regime.adx_thresholds 读取)
       base_weights:   {策略名: 基准权重} 字典
       on_consensus:   共识达成回调
     """
@@ -360,6 +307,10 @@ class ConsensusEngine:
 
         # Phase 1+3: 共识增强器 (延迟初始化)
         self._enhancer = None
+
+        # AI 否决层观察器 (2026-05-10 新增 — 模拟盘异步观察模式)
+        self._veto_observer = None
+        self._veto_thread_pool = None
 
         # 2026-04-08 新增：突发新闻检测器（延迟初始化）
         self._news_analyzer = None
@@ -1258,6 +1209,45 @@ class ConsensusEngine:
             logger.debug(f"获取资金流向情绪失败: {e}")
             return 0  # 默认中性
 
+    def _get_strategy_health_multiplier(self, strategy: str) -> float:
+        """
+        获取策略健康度权重乘数 (2026-05-19 P0-3)
+        
+        基于 StrategyHealthTracker 的动态权重调整：
+        - EXCELLENT (>80): 1.2x
+        - GOOD (60-80): 1.0x
+        - NORMAL (40-60): 1.0x
+        - POOR (20-40): 0.8x
+        - CRITICAL (<20): 0.5x
+        
+        Args:
+            strategy: 策略名称
+        
+        Returns:
+            float: 权重乘数 (0.5 - 1.2)
+        """
+        try:
+            from app.analytics.strategy_health import get_strategy_health_tracker
+            tracker = get_strategy_health_tracker()
+            health = tracker.get_health(strategy)
+            
+            if health is None:
+                return 1.0
+            
+            # 根据健康等级返回权重乘数
+            level = health.health_level
+            if level == "EXCELLENT":
+                return 1.2
+            elif level == "CRITICAL":
+                return 0.5
+            elif level == "POOR":
+                return 0.8
+            else:
+                return 1.0
+        except Exception as e:
+            logger.debug(f"[策略健康度] {strategy} 获取失败：{e}")
+            return 1.0
+
     def _check_breaking_news(self, code: str, lookback_hours: int = None) -> bool:
         """
         检查是否有突发新闻（2026-04-08 新增）
@@ -1334,7 +1324,11 @@ class ConsensusEngine:
                             expired_codes.append(code)
                 
                 for code in expired_codes:
-                    self._evaluate(code)
+                    try:
+                        self._evaluate(code)
+                    except Exception as e:
+                        import traceback
+                        self._logger.error(f"[scheduler_error] {code} 评估异常: {e}\n{traceback.format_exc()}")
                 
                 # 每 0.5 秒检查一次
                 self._eval_stop_event.wait(0.5)
@@ -1523,7 +1517,7 @@ class ConsensusEngine:
             )
 
     def _evaluate(self, code: str):
-        """窗口到期, 加权评分 (v3: 时间衰减 + 因子族惩罚 + 自适应阈值 + 时段参数)"""
+        """窗口到期，加权评分 (v3: 时间衰减 + 因子族惩罚 + 自适应阈值 + 时段参数)"""
         with self._lock:
             votes = self._ballots.pop(code, [])
             self._eval_schedule.pop(code, None)  # P2: 清理调度记录
@@ -2185,6 +2179,9 @@ class ConsensusEngine:
                 # TradeChain: 记录信号层数据
                 self._record_signal_chain(code, result)
 
+                # AI 否决层观察 (2026-05-10 新增 — 模拟盘异步观察模式)
+                self._run_veto_observer_async(code, result)
+
                 self.on_consensus(result)
         else:
             logger.info(
@@ -2226,6 +2223,7 @@ class ConsensusEngine:
                 f"[信号增强] {result.code} | "
                 f"质量分={enhanced.quality_score:.2f} | "
                 f"时效性={enhanced.timeliness_factor:.2f} | "
+                f"LLM乘数={enhanced.llm_signal_impact_factor:.2f} | "
                 f"最终分={enhanced.final_score:.2f} | "
                 f"建议={enhanced.recommendation}"
             )
@@ -2242,15 +2240,67 @@ class ConsensusEngine:
                 "quality_score": enhanced.quality_score,
                 "timeliness_factor": enhanced.timeliness_factor,
                 "final_score": enhanced.final_score,
+                "llm_signal_impact_factor": enhanced.llm_signal_impact_factor,
                 "news_age_minutes": enhanced.news_age_minutes,
                 "volatility_state": enhanced.volatility_state,
             })
+
+            # P0 修复 (2026-05-17): 将 LLM 增强后的 final_score 写回 score
+            # 确保 data_subscriber 构造 Signal(score=result.score) 时使用的是增强后的分数
+            if hasattr(result, 'score'):
+                result.score = enhanced.final_score
 
             return result
 
         except Exception as e:
             logger.debug(f"信号增强失败：{e}")
             return result  # 返回原始结果
+
+    def _run_veto_observer_async(self, code: str, result) -> None:
+        """
+        AI 否决层观察器 (2026-05-10 新增 — 模拟盘异步观察模式)
+        
+        异步运行，不阻塞主信号流程。
+        记录否决判断到 data/veto_log.jsonl，供后续分析。
+        """
+        try:
+            # 延迟初始化
+            if self._veto_observer is None:
+                from app.risk.ai_veto_observer import AIVetoObserver
+                from app.llm.agent_bridge import get_agent_bridge
+                self._veto_observer = AIVetoObserver(agent_bridge=get_agent_bridge())
+            
+            # 构建市场上下文
+            regime, adx = self._get_market_regime(code)
+            market_ctx = {
+                "vix": adx if adx else 20,  # 用 ADX 替代 VIX
+                "trend": regime,
+                "volatility": "high" if adx and adx > 30 else "normal",
+            }
+            
+            # 构建信号信息
+            signal = {
+                "code": code,
+                "direction": result.action.value if hasattr(result.action, 'value') else str(result.action),
+                "strength": getattr(result, 'confidence', 0.5) * 100,
+                "source": ",".join(result.agree_strategies) if hasattr(result, 'agree_strategies') else "unknown",
+            }
+            
+            # 异步运行 (不阻塞)
+            def _run_veto():
+                try:
+                    veto_result = self._veto_observer.evaluate(code, signal, market_ctx)
+                    self._veto_observer.log(code, signal, veto_result)
+                except Exception as e:
+                    logger.debug(f"[VetoObserver] 异步评估失败: {e}")
+            
+            # 启动后台线程
+            import threading
+            t = threading.Thread(target=_run_veto, daemon=True, name=f"veto-{code}")
+            t.start()
+            
+        except Exception as e:
+            logger.debug(f"[VetoObserver] 初始化失败: {e}")
 
     def _record_signal_chain(self, code: str, result) -> None:
         """
@@ -2350,593 +2400,6 @@ class ConsensusEngine:
             f"共识引擎参数更新: 窗口={self.window}s, 阈值={self.threshold}, "
             f"最少策略={self.min_strategies}, ADX趋势>{self.adx_trend}, ADX震荡<{self.adx_range}"
         )
-
-
-# ============================================================
-#  策略权重自适应学习管理器
-# ============================================================
-
-class AdaptiveWeightManager:
-    """
-    策略权重自适应学习管理器 v2（贝叶斯收缩 + 混合模型 + 持久化）
-
-    v1→v2 变更 (2026-04-11):
-    - 过拟合修复: 贝叶斯收缩替代原线性映射，小样本权重向先验(1.0)靠拢
-    - 模型重构: 场景维度从乘法改为加法 delta（±SCENARIO_DELTA_MAX），避免级联放大
-    - 反馈延迟: 从每天1次改为每N笔交易触发（UPDATE_EVERY_N_TRADES=5）
-    - 数据孤岛: 权重快照持久化到 SQLite，进程重启后恢复上次学习成果
-    - UCB探索: 保留不变
-
-    公式:
-        confidence = min(1.0, trades / CONFIDENCE_TRADES)
-        shrunk_rate = confidence × actual_win_rate + (1 - confidence) × PRIOR_WIN_RATE
-        base_multiplier = MAX_DECAY + (MAX_BOOST - MAX_DECAY) × shrunk_rate
-        scenario_delta = confidence_s × (scenario_win_rate - 0.5) × 2 × SCENARIO_DELTA_MAX
-        ucb_delta = UCB_EXPLORATION / sqrt(trades)
-        final_multiplier = clamp(base_multiplier + scenario_delta + ucb_delta, MAX_DECAY, MAX_BOOST)
-        final_weight = base_weight × final_multiplier
-    """
-
-    # 调整边界（相对基准权重的比例）
-    MAX_BOOST  = 1.30   # 最多上调 30%
-    MAX_DECAY  = 0.70   # 最多下调 30%
-    MIN_TRADES = 3      # v2: 配合贝叶斯收缩，3笔即可开始学习
-    MIN_TRADES_PER_REGIME = 3  # 每个市场状态最少交易数
-
-    # v2 新增参数
-    CONFIDENCE_TRADES = 20       # 达到此笔数时完全信任实际胜率
-    UPDATE_EVERY_N_TRADES = 5    # 每5笔触发增量更新
-    PRIOR_WIN_RATE = 0.5         # 贝叶斯先验胜率
-    SCENARIO_DELTA_MAX = 0.15    # 场景加法最大偏移 ±0.15
-    DATA_RETENTION_DAYS = 30     # 数据保留天数
-
-    # UCB探索参数
-    UCB_EXPLORATION = 0.1  # 探索系数（10%的探索空间）
-
-    def __init__(self, engine: "ConsensusEngine", config: Dict = None):
-        self.engine = engine
-        # 从 config 加载参数（硬编码作为 fallback）
-        self._load_config(config)
-        # {策略: [{'pnl': float, 'ts': datetime}, ...]}
-        self._trade_history: Dict[str, List[Dict]] = defaultdict(list)
-        # {策略: {市场状态: [{'pnl': float, 'ts': datetime, 'adx': float}, ...]}}
-        self._regime_performance: Dict[str, Dict[str, List[Dict]]] = defaultdict(lambda: defaultdict(list))
-        # {策略: {场景: [{'pnl': float, 'ts': datetime}, ...]}}
-        self._scenario_performance: Dict[str, Dict[str, List[Dict]]] = defaultdict(lambda: defaultdict(list))
-        self._last_update: Optional[datetime] = None
-        self._trades_since_update: int = 0  # v2: 笔数触发计数器
-        self._lock = threading.Lock()
-        # v2: 启动时从 SQLite 恢复上次权重
-        self._load_from_db()
-        logger.info(
-            f"自适应权重管理器 v2 已初始化 | "
-            f"置信笔数={self.CONFIDENCE_TRADES}, 更新间隔={self.UPDATE_EVERY_N_TRADES}笔, "
-            f"场景delta_max=±{self.SCENARIO_DELTA_MAX}"
-        )
-
-    def _load_config(self, config = None):
-        """从 config 加载自适应权重参数（覆盖类常量）"""
-        if not config:
-            return
-        # ConfigProxy → dict 转换（ConfigProxy 不支持 `in` 操作符，会导致无限循环）
-        if hasattr(config, 'to_dict'):
-            config = config.to_dict()
-        elif not isinstance(config, dict):
-            return
-        aw_cfg = config.get('adaptive_weight', {})
-        if not aw_cfg:
-            return
-        # 同样处理嵌套 ConfigProxy
-        if hasattr(aw_cfg, 'to_dict'):
-            aw_cfg = aw_cfg.to_dict()
-        elif not isinstance(aw_cfg, dict):
-            return
-        if 'confidence_trades' in aw_cfg:
-            self.CONFIDENCE_TRADES = int(aw_cfg['confidence_trades'])
-        if 'min_trades' in aw_cfg:
-            self.MIN_TRADES = int(aw_cfg['min_trades'])
-        if 'update_every_n_trades' in aw_cfg:
-            self.UPDATE_EVERY_N_TRADES = int(aw_cfg['update_every_n_trades'])
-        if 'max_boost' in aw_cfg:
-            self.MAX_BOOST = float(aw_cfg['max_boost'])
-        if 'max_decay' in aw_cfg:
-            self.MAX_DECAY = float(aw_cfg['max_decay'])
-        if 'prior_win_rate' in aw_cfg:
-            self.PRIOR_WIN_RATE = float(aw_cfg['prior_win_rate'])
-        if 'ucb_exploration' in aw_cfg:
-            self.UCB_EXPLORATION = float(aw_cfg['ucb_exploration'])
-        if 'scenario_delta_max' in aw_cfg:
-            self.SCENARIO_DELTA_MAX = float(aw_cfg['scenario_delta_max'])
-        if 'data_retention_days' in aw_cfg:
-            self.DATA_RETENTION_DAYS = int(aw_cfg['data_retention_days'])
-        logger.info(f"[自适应权重] 从配置加载参数: {aw_cfg}")
-
-    def record_trade(
-        self, 
-        agree_strategies: List[str], 
-        pnl: float,
-        market_regime: str = "neutral",
-        scenario: str = None,
-        adx_value: float = 0.0,
-        exit_reason: str = None,  # 退出理由 (2026-04-13 新增)
-    ):
-        """
-        记录一笔已平仓的交易结果
-
-        Args:
-            agree_strategies: 本次共识中同向投票的策略列表
-            pnl: 已实现盈亏（正=盈利，负=亏损）
-            market_regime: 市场状态 (trending/ranging/neutral)
-            scenario: 场景标签
-            adx_value: ADX值
-            exit_reason: 退出理由 (stop_loss/take_profit/trailing_stop/risk_control等)
-        """
-        now = datetime.now()
-        with self._lock:
-            for strategy in agree_strategies:
-                self._trade_history[strategy].append({
-                    'pnl': pnl, 'ts': now, 'exit_reason': exit_reason or 'unknown'
-                })
-                self._regime_performance[strategy][market_regime].append({
-                    'pnl': pnl, 
-                    'ts': now,
-                    'adx': adx_value,
-                })
-                if scenario:
-                    self._scenario_performance[strategy][scenario].append({
-                        'pnl': pnl,
-                        'ts': now,
-                    })
-            # v2: 累计笔数计数器
-            self._trades_since_update += 1
-
-        logger.debug(
-            f"[自适应权重] 记录交易: 策略={agree_strategies}, pnl={pnl:.2f}, "
-            f"市场状态={market_regime}, 场景={scenario or 'N/A'}, ADX={adx_value:.1f}, "
-            f"累计={self._trades_since_update}/{self.UPDATE_EVERY_N_TRADES}"
-        )
-        self.update_weights_if_ready()
-
-    def update_weights_if_ready(self):
-        """
-        检查是否满足更新条件，满足则重新计算并应用权重
-
-        v2 触发条件（满足其一即可）:
-        1. 累计交易笔数 >= UPDATE_EVERY_N_TRADES
-        2. 距上次更新超过1天（兜底，防止无交易时永不更新）
-        """
-        with self._lock:
-            should_update = False
-            # 条件1: 笔数触发
-            if self._trades_since_update >= self.UPDATE_EVERY_N_TRADES:
-                should_update = True
-            # 条件2: 每日兜底
-            elif self._last_update is not None:
-                elapsed = datetime.now() - self._last_update
-                if elapsed >= timedelta(days=1):
-                    should_update = True
-            else:
-                # 首次运行，有足够交易就更新
-                total = sum(len(v) for v in self._trade_history.values())
-                if total >= self.MIN_TRADES:
-                    should_update = True
-
-            if should_update:
-                self._do_update_weights()
-
-    def _do_update_weights(self):
-        """
-        执行权重重计算 v2（调用时须持有 _lock）
-
-        核心变更:
-        1. 贝叶斯收缩: shrunk_rate = confidence × actual + (1-confidence) × prior
-        2. 场景从乘法改为加法 delta
-        3. 市场状态保持乘法但加入置信度
-        4. 更新后持久化到 SQLite
-        """
-        # 清理过期数据
-        cutoff = datetime.now() - timedelta(days=self.DATA_RETENTION_DAYS)
-        for strategy in list(self._trade_history.keys()):
-            self._trade_history[strategy] = [
-                r for r in self._trade_history[strategy] if r['ts'] > cutoff
-            ]
-        for strategy in list(self._regime_performance.keys()):
-            for regime in list(self._regime_performance[strategy].keys()):
-                self._regime_performance[strategy][regime] = [
-                    r for r in self._regime_performance[strategy][regime]
-                    if r['ts'] > cutoff
-                ]
-        for strategy in list(self._scenario_performance.keys()):
-            for scenario in list(self._scenario_performance[strategy].keys()):
-                self._scenario_performance[strategy][scenario] = [
-                    r for r in self._scenario_performance[strategy][scenario]
-                    if r['ts'] > cutoff
-                ]
-
-        updated = {}
-        for strategy in set(list(self._trade_history.keys()) + list(self._regime_performance.keys())):
-            records = self._trade_history.get(strategy, [])
-            if len(records) < self.MIN_TRADES:
-                continue
-
-            # 1. 贝叶斯收缩胜率 (退出归因感知: 风控退出不计入策略评价)
-            # 过滤风控退出, 时间退出的微亏降低负面评价
-            effective_records = []
-            for r in records:
-                er = r.get('exit_reason', 'unknown')
-                if er == 'risk_control':
-                    continue  # 风控退出不计入策略评价
-                if er == 'time_exit' and r['pnl'] < 0:
-                    # 时间退出微亏: 降低负面评价 (pnl * 0.5)
-                    effective_records.append({**r, 'pnl': r['pnl'] * 0.5})
-                else:
-                    effective_records.append(r)
-            
-            if len(effective_records) < self.MIN_TRADES:
-                continue
-            
-            wins = sum(1 for r in effective_records if r['pnl'] > 0)
-            actual_win_rate = wins / len(effective_records)
-            
-            # 分层胜率时间窗 (2026-04-13 新增: 替代单一全量胜率)
-            SHORT_WIN = 20
-            MEDIUM_WIN = 60
-            LONG_WIN = 200
-            SW = 0.3
-            MW = 0.5
-            LW = 0.2
-            
-            recent = effective_records[-SHORT_WIN:]
-            medium = effective_records[-MEDIUM_WIN:]
-            long_term = effective_records[-LONG_WIN:]
-            
-            wr_short = sum(1 for r in recent if r['pnl'] > 0) / max(1, len(recent))
-            wr_medium = sum(1 for r in medium if r['pnl'] > 0) / max(1, len(medium))
-            wr_long = sum(1 for r in long_term if r['pnl'] > 0) / max(1, len(long_term))
-            
-            # 加权胜率: 短窗(30%) + 中窗(50%) + 长窗(20%)
-            weighted_win_rate = wr_short * SW + wr_medium * MW + wr_long * LW
-            
-            confidence = min(1.0, len(records) / self.CONFIDENCE_TRADES)
-            shrunk_rate = confidence * weighted_win_rate + (1 - confidence) * self.PRIOR_WIN_RATE
-
-            # 2. 基础倍数（贝叶斯收缩后映射）
-            base_multiplier = self.MAX_DECAY + (self.MAX_BOOST - self.MAX_DECAY) * shrunk_rate
-
-            # 3. 市场状态调整（保持乘法，加入置信度）
-            regime_adjustment = self._calculate_regime_adjustment(strategy)
-            # 市场调整也做收缩: 向1.0靠拢
-            regime_adjustment = 1.0 + confidence * (regime_adjustment - 1.0)
-
-            # 4. 场景加法 delta（v2: 从乘法改为加法）
-            scenario_delta = self._calculate_scenario_delta(strategy)
-
-            # 5. UCB探索加成
-            ucb_delta = self._calculate_ucb_bonus(strategy, len(records))
-
-            # 6. 综合: base_multiplier × regime (乘法) + scenario + ucb (加法)
-            final_multiplier = base_multiplier * regime_adjustment + scenario_delta + ucb_delta
-
-            # 6b. 长窗策略保留判断 (2026-04-13 新增)
-            long_disable_threshold = 0.30
-            if len(long_term) >= LONG_WIN and wr_long < long_disable_threshold:
-                logger.warning(
-                    f"[自适应权重/长窗警告] {strategy} 长期胜率={wr_long:.0%} < {long_disable_threshold:.0%}, "
-                    f"建议评伋是否停用"
-                )
-                final_multiplier *= 0.85  # 额外惩罚
-
-            # 7. 截断
-            final_multiplier = max(self.MAX_DECAY, min(self.MAX_BOOST, final_multiplier))
-
-            base_weight = DEFAULT_BASE_WEIGHTS.get(strategy, 0.5)
-            new_weight = round(base_weight * final_multiplier, 3)
-
-            old_weight = self.engine.base_weights.get(strategy, base_weight)
-            self.engine.base_weights[strategy] = new_weight
-            updated[strategy] = {
-                'old': old_weight,
-                'new': new_weight,
-                'actual_wr': round(actual_win_rate, 3),
-                'layered_wr': round(weighted_win_rate, 3),
-                'wr_short': round(wr_short, 3),
-                'wr_medium': round(wr_medium, 3),
-                'wr_long': round(wr_long, 3),
-                'shrunk_wr': round(shrunk_rate, 3),
-                'confidence': round(confidence, 2),
-                'trades': len(records),
-                'regime_adj': round(regime_adjustment, 3),
-                'scenario_delta': round(scenario_delta, 3),
-                'ucb_delta': round(ucb_delta, 3),
-            }
-
-        if updated:
-            logger.info(
-                f"[自适应权重v2] 权重已更新 ({len(updated)} 个策略): "
-                + ", ".join(
-                    f"{s}={v['old']:.2f}→{v['new']:.2f}"
-                    f"(实际{v['actual_wr']:.0%}→收缩{v['shrunk_wr']:.0%}, "
-                    f"置信{v['confidence']:.0%}/{v['trades']}笔, "
-                    f"状态×{v['regime_adj']:.2f}, 场景Δ{v['scenario_delta']:+.3f}, "
-                    f"UCBΔ{v['ucb_delta']:+.3f})"
-                    for s, v in updated.items()
-                )
-            )
-            # v2: 持久化到 SQLite
-            self._save_to_db(updated)
-        else:
-            logger.debug("[自适应权重v2] 无策略满足最少交易笔数要求，跳过本次更新")
-
-        self._last_update = datetime.now()
-        self._trades_since_update = 0  # 重置计数器
-    
-    def _calculate_regime_adjustment(self, strategy: str) -> float:
-        """
-        计算市场状态调整系数（新增）
-        
-        逻辑：
-        - 如果策略在某个市场状态表现特别好（胜率>70%），且该状态频繁出现，给予加成
-        - 如果策略在某个市场状态表现特别差（胜率<30%），且该状态频繁出现，给予惩罚
-        - 否则返回1.0（无调整）
-        """
-        regime_perf = self._regime_performance.get(strategy, {})
-        if not regime_perf:
-            return 1.0
-        
-        total_adjustment = 0.0
-        total_weight = 0.0
-        
-        for regime, records in regime_perf.items():
-            if len(records) < self.MIN_TRADES_PER_REGIME:
-                continue  # 该状态样本不足
-            
-            wins = sum(1 for r in records if r['pnl'] > 0)
-            win_rate = wins / len(records)
-            
-            # 根据胜率计算调整系数
-            if win_rate > 0.7:
-                adjustment = 1.1  # 表现好，加成10%
-            elif win_rate < 0.3:
-                adjustment = 0.9  # 表现差，惩罚10%
-            else:
-                adjustment = 1.0  # 正常
-            
-            # 以交易次数为权重
-            total_adjustment += adjustment * len(records)
-            total_weight += len(records)
-        
-        if total_weight == 0:
-            return 1.0
-        
-        return total_adjustment / total_weight
-    
-    def _calculate_scenario_delta(self, strategy: str) -> float:
-        """
-        计算场景维度加法 delta (v2: 从乘法改为加法)
-
-        公式: delta = confidence_s × (weighted_win_rate - 0.5) × 2 × SCENARIO_DELTA_MAX
-        范围: [-SCENARIO_DELTA_MAX, +SCENARIO_DELTA_MAX]
-
-        样本少时 confidence_s 小 → delta 趋近 0
-        样本多时 confidence_s → 1 → delta 趋近真实偏移
-        """
-        scenario_perf = self._scenario_performance.get(strategy, {})
-        if not scenario_perf:
-            return 0.0
-
-        total_wr_weighted = 0.0
-        total_samples = 0
-
-        for scenario, records in scenario_perf.items():
-            if len(records) < self.MIN_TRADES_PER_REGIME:
-                continue
-            
-            # 策略场景失效检测: 最近N笔是否全部亏损 (2026-04-13 新增)
-            fail_limit = SCENARIO_CONSECUTIVE_FAIL_LIMIT
-            fail_penalty = SCENARIO_FAIL_PENALTY
-            recent = records[-fail_limit:]
-            if len(recent) >= fail_limit and all(r['pnl'] < 0 for r in recent):
-                logger.info(
-                    f"[策略失效] {strategy} 在 {scenario} 场景连续{len(recent)}笔亏损, "
-                    f"触发降权惩罚 {fail_penalty:+.2f}"
-                )
-                return fail_penalty  # 直接返回最大负 delta
-            
-            wins = sum(1 for r in records if r['pnl'] > 0)
-            win_rate = wins / len(records)
-            total_wr_weighted += win_rate * len(records)
-            total_samples += len(records)
-
-        if total_samples == 0:
-            return 0.0
-
-        weighted_win_rate = total_wr_weighted / total_samples
-        # 场景级置信度
-        confidence_s = min(1.0, total_samples / self.CONFIDENCE_TRADES)
-        # 加法 delta: (偏离0.5的程度) × 2 × max_delta × 置信度
-        delta = confidence_s * (weighted_win_rate - 0.5) * 2 * self.SCENARIO_DELTA_MAX
-        # 限幅
-        return max(-self.SCENARIO_DELTA_MAX, min(self.SCENARIO_DELTA_MAX, delta))
-    
-    def _calculate_ucb_bonus(self, strategy: str, total_trades: int) -> float:
-        """
-        计算UCB探索加成（新增）
-        
-        UCB (Upper Confidence Bound) 算法简化版：
-        - 交易次数少的策略给予探索加成，避免过早忽略
-        - 交易次数多的策略探索加成逐渐减小
-        """
-        if total_trades < self.MIN_TRADES:
-            return self.UCB_EXPLORATION  # 数据不足，给予最大探索
-        
-        # UCB公式：exploration / sqrt(total_trades)
-        ucb = self.UCB_EXPLORATION / (total_trades ** 0.5)
-        return min(ucb, self.UCB_EXPLORATION)  # 限制最大值
-
-    # ------------------------------------------------------------------
-    #  v2: 持久化 (SQLite)
-    # ------------------------------------------------------------------
-
-    def _save_to_db(self, updated: Dict[str, Dict]):
-        """将更新后的权重快照保存到 SQLite"""
-        try:
-            import json
-            from app.storage.database import get_database
-            db = get_database()
-            for strategy, info in updated.items():
-                # 构建 regime 和 scenario 详情 JSON
-                regime_detail = {}
-                for regime, records in self._regime_performance.get(strategy, {}).items():
-                    wins = sum(1 for r in records if r['pnl'] > 0)
-                    regime_detail[regime] = {'wins': wins, 'total': len(records)}
-
-                scenario_detail = {}
-                for scenario, records in self._scenario_performance.get(strategy, {}).items():
-                    wins = sum(1 for r in records if r['pnl'] > 0)
-                    scenario_detail[scenario] = {'wins': wins, 'total': len(records)}
-
-                db.save_weight_snapshot(
-                    strategy=strategy,
-                    weight=info['new'],
-                    win_rate=info['shrunk_wr'],
-                    trades=info['trades'],
-                    regime_detail=json.dumps(regime_detail) if regime_detail else None,
-                    scenario_detail=json.dumps(scenario_detail) if scenario_detail else None,
-                )
-            logger.info(f"[自适应权重v2] 已持久化 {len(updated)} 个策略权重快照")
-        except Exception as e:
-            logger.warning(f"[自适应权重v2] 持久化失败（降级为内存模式）: {e}")
-
-    def _load_from_db(self):
-        """启动时从 SQLite 恢复上次权重"""
-        try:
-            from app.storage.database import get_database
-            db = get_database()
-            snapshots = db.load_weight_snapshots()
-            if not snapshots:
-                logger.info("[自适应权重v2] 无历史快照，使用默认权重")
-                return
-
-            restored = 0
-            for strategy, info in snapshots.items():
-                if strategy in DEFAULT_BASE_WEIGHTS:
-                    base = DEFAULT_BASE_WEIGHTS[strategy]
-                    # 安全校验：恢复的权重不能偏离基准太多
-                    saved_weight = info['weight']
-                    if base * self.MAX_DECAY <= saved_weight <= base * self.MAX_BOOST:
-                        self.engine.base_weights[strategy] = saved_weight
-                        restored += 1
-                        logger.debug(
-                            f"[自适应权重v2] 恢复 {strategy}: {saved_weight:.3f} "
-                            f"(胜率={info['win_rate']:.0%}, {info['trades']}笔, "
-                            f"更新于={info.get('updated_at', 'N/A')})"
-                        )
-                    else:
-                        logger.warning(
-                            f"[自适应权重v2] {strategy} 快照权重 {saved_weight:.3f} "
-                            f"超出安全范围 [{base*self.MAX_DECAY:.3f}, {base*self.MAX_BOOST:.3f}]，"
-                            f"使用默认值"
-                        )
-
-            if restored:
-                logger.info(f"[自适应权重v2] 已从 SQLite 恢复 {restored} 个策略权重")
-        except Exception as e:
-            logger.warning(f"[自适应权重v2] 恢复失败（使用默认权重）: {e}")
-
-    def get_strategy_stats(self) -> Dict[str, Dict]:
-        """获取各策略历史统计"""
-        stats = {}
-        cutoff = datetime.now() - timedelta(days=self.DATA_RETENTION_DAYS)
-        with self._lock:
-            for strategy, records in self._trade_history.items():
-                recent = [r for r in records if r['ts'] > cutoff]
-                if not recent:
-                    continue
-                wins = sum(1 for r in recent if r['pnl'] > 0)
-                total_pnl = sum(r['pnl'] for r in recent)
-                confidence = min(1.0, len(recent) / self.CONFIDENCE_TRADES)
-                stats[strategy] = {
-                    'trades': len(recent),
-                    'wins': wins,
-                    'win_rate': round(wins / len(recent), 3),
-                    'confidence': round(confidence, 2),
-                    'total_pnl': round(total_pnl, 2),
-                    'current_weight': self.engine.base_weights.get(strategy, 0.5),
-                }
-        return stats
-    def get_kelly_stats(self, strategies: list, market_regime: str = None):
-        """P5 fix (2026-04-26): 获取 Kelly 公式所需的统计数据。
-
-        Returns:
-            dict with: win_rate, avg_win, avg_loss, kelly_fraction, total_trades
-            数据不足时返回 None
-        """
-        with self._lock:
-            all_records = []
-            for s in strategies:
-                records = self._trade_history.get(s, [])
-                if market_regime:
-                    regime_records = []
-                    for rgn, recs in self._regime_performance.get(s, {}).items():
-                        if rgn == market_regime:
-                            regime_records.extend(recs)
-                    records = records + regime_records
-                all_records.extend(records)
-
-            if len(all_records) < self.MIN_TRADES:
-                return None
-
-            wins = [r['pnl'] for r in all_records if r.get('pnl', 0) > 0]
-            losses = [r['pnl'] for r in all_records if r.get('pnl', 0) < 0]
-
-            total = len(all_records)
-            wr = len(wins) / total if total > 0 else 0.0
-            avg_win = sum(wins) / len(wins) if wins else 0.0
-            avg_loss = abs(sum(losses) / len(losses)) if losses else 1.0
-
-            if avg_loss == 0 or avg_win == 0:
-                return None
-
-            rr = avg_win / avg_loss
-            kelly_f = (wr * (rr + 1) - 1) / rr
-            half_kelly = max(0.01, min(kelly_f * 0.5, 0.15))
-
-            return {
-                'win_rate': round(wr, 3),
-                'avg_win': round(avg_win, 2),
-                'avg_loss': round(avg_loss, 2),
-                'reward_risk': round(rr, 2),
-                'kelly_fraction': round(kelly_f, 4),
-                'half_kelly': round(half_kelly, 4),
-                'total_trades': total,
-            }
-
-    def apply_drift_penalty(self, code: str, penalty: float = -0.05):
-        """P7 fix (2026-04-26): 对未平仓亏损的策略施加即时权重惩罚。
-
-        当持仓浮亏超过阈值时，不等平仓就降低相关策略权重，
-        阻止这些策略在错误的行情中继续生成新的同向信号。
-        penalty 钳位至 [-0.15, 0]。
-        """
-        penalty = max(-0.15, min(0.0, penalty))
-        with self._lock:
-            affected = set()
-            for s, history in self._trade_history.items():
-                for r in history[-5:]:
-                    if r.get('code') == code:
-                        affected.add(s)
-
-            if not affected:
-                return
-
-            for s in affected:
-                current = self.engine.base_weights.get(s, 1.0)
-                new_w = max(0.3, current + penalty)
-                self.engine.base_weights[s] = round(new_w, 2)
-                logger.info(
-                    f"[漂移惩罚] {s} {code} 浮亏漂移, "
-                    f"权重 {current:.2f} -> {new_w:.2f} (penalty={penalty})"
-                )
 
 
 # ============================================================

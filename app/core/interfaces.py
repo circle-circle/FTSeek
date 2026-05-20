@@ -11,7 +11,7 @@ Interfaces — 业务层接口定义
 """
 
 from abc import ABC, abstractmethod
-from typing import Protocol, Optional, Dict, Any, List
+from typing import Protocol, Optional, Dict, Any, List, Tuple
 from dataclasses import dataclass
 from enum import Enum
 from datetime import datetime
@@ -227,3 +227,118 @@ class TradeEvent:
     SIGNAL_REJECTED = "signal.rejected"
     CIRCUIT_BREAKER_TRIPPED = "circuit_breaker.trip"
     RISK_ALERT = "risk.alert"
+
+
+# ===== Provider 接口 (2026-05-19: 架构级重构 Phase 0) =====
+# 用于 risk_pipeline 依赖倒置，替代对 DataSubscriber 私有属性的直接访问
+
+class ITradingHoursProvider(Protocol):
+    """交易时段 Provider — 提供交易时间判断"""
+
+    def is_trading_hours(self) -> bool:
+        """是否在交易时段"""
+        ...
+
+    def is_high_quality_trading_hours(self) -> bool:
+        """是否在高质量交易时段 (非开盘/收盘噪音时段)"""
+        ...
+
+    def get_trading_period(self) -> Dict[str, str]:
+        """获取当前交易时段名称 (如 'morning_open', 'midday', 'afternoon')"""
+        ...
+
+
+class IExitStateProvider(Protocol):
+    """退出状态 Provider — 提供止损/止盈/追踪 状态查询"""
+
+    def get_trailing_exit_time(self, code: str) -> float:
+        """获取标的追踪止盈触发时间戳 (0=未触发)"""
+        ...
+
+    def get_trailing_stop_price(self, code: str) -> float:
+        """获取标的追踪止损价格 (0=未设置)"""
+        ...
+
+    def get_peak_price(self, code: str) -> float:
+        """获取标的峰值价格缓存 (0=无缓存)"""
+        ...
+
+
+class ICooldownProvider(Protocol):
+    """冷却管理 Provider — 提供信号/开仓/标的冷却查询"""
+
+    def is_signal_cooled(self, code: str) -> bool:
+        """信号是否已冷却 (距离上次信号足够久)"""
+        ...
+
+    def get_last_open_ts(self, code: str) -> float:
+        """获取标的最近一次开仓时间戳 (0=从未开仓)"""
+        ...
+
+    def get_symbol_loss_cooldown_until(self, code: str) -> float:
+        """获取标的连续亏损冷却截止时间戳 (0=未冷却)"""
+        ...
+
+
+class ICircuitBreakerProvider(Protocol):
+    """智能熔断 Provider — 提供账户级熔断状态查询"""
+
+    def is_paused(self) -> bool:
+        """熔断器是否处于暂停状态"""
+        ...
+
+    def check(self, current_equity: Optional[float], signal_confidence: float) -> Tuple[bool, str, float]:
+        """智能熔断检查 → (allowed, reason, position_multiplier)"""
+        ...
+
+    def get_current_equity(self) -> Optional[float]:
+        """获取当前账户权益"""
+        ...
+
+
+class IQualityProvider(Protocol):
+    """质量管理器 Provider — 提供标的质量检查"""
+
+    def check_quality(self, code: str, price: float) -> Optional[Dict]:
+        """检查标的质量和估值 → 返回质量报告字典或 None"""
+        ...
+
+    def get_quality_scorer(self) -> Optional[Any]:
+        """获取质量评分器实例 (None=未启用)"""
+        ...
+
+
+class IMarketDataProvider(Protocol):
+    """行情数据 Provider — 提供 ADX/ATR/MTF 指标查询"""
+
+    def get_mtf_alignment(self, code: str, action: str) -> Tuple:
+        """获取多周期趋势对齐结果 → (confirmed, boost, reason)"""
+        ...
+
+    def get_mtf_scores(self, code: str) -> Tuple[float, float]:
+        """获取 MTF BUY/SELL 对齐分数 → (buy_score, sell_score)"""
+        ...
+
+    def update_mtf_alignment(self, code: str, buy_score: float, sell_score: float) -> None:
+        """同步 MTF 分数至共识引擎缓存"""
+        ...
+
+    def get_adx(self, code: str) -> float:
+        """获取标的 ADX 值 (0=无数据)"""
+        ...
+
+
+class IPositionQueryProvider(Protocol):
+    """持仓查询 Provider — 提供只读持仓查询"""
+
+    def get_position(self, code: str) -> Optional[Any]:
+        """获取指定标的持仓 (None=无持仓)"""
+        ...
+
+    def get_all_positions(self) -> List[Any]:
+        """获取所有持仓列表"""
+        ...
+
+    def get_open_position_ts(self, code: str) -> float:
+        """获取开仓时间戳 (同 get_last_open_ts, 语义别名)"""
+        ...

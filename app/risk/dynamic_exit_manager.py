@@ -94,6 +94,19 @@ class DynamicExitManager:
             
             # 加载默认参数
             self._apply_params('default')
+
+            # P0 修复 (2026-05-13): 加载 Pre-Close Exit 配置到 exit manager 实例
+            # 此前这些配置只被 DataSubscriber 加载，但 check_exit_priority 用的是
+            # getattr(self, '_pre_close_window_minutes', 15) — 检查自身实例属性
+            prec = full_config.get('hk_exit_enhance', {}).get('pre_close_exit', {})
+            if prec:
+                self._pre_close_exit_enabled = prec.get('enabled', True)
+                self._pre_close_window_minutes = prec.get('window_minutes', 15)
+                self._pre_close_min_hold_hours = prec.get('min_hold_hours', 6.0)
+                logger.info(
+                    f"[ExitManager] Pre-Close Exit 配置: enabled={self._pre_close_exit_enabled}, "
+                    f"window={self._pre_close_window_minutes}min, min_hold={self._pre_close_min_hold_hours}h"
+                )
             
         except Exception as e:
             logger.error(f"加载配置失败：{e}")
@@ -109,8 +122,8 @@ class DynamicExitManager:
         
         self.current_regime = regime
         self.current_params = {
-            'stop_loss': params.get('stop_loss', -0.06),
-            'take_profit': params.get('take_profit', 0.12),
+            'stop_loss': params.get('stop_loss', -0.035),  # P1 修复: fallback 对齐 YAML
+            'take_profit': params.get('take_profit', 0.05),  # P1 修复: fallback 对齐 YAML
             'partial_take_profit': params.get('partial_take_profit', {}),
             'trailing_stop': params.get('trailing_stop', {}),
             'atr_stop': params.get('atr_stop', {}),
@@ -148,11 +161,11 @@ class DynamicExitManager:
     
     def get_stop_loss(self) -> float:
         """获取止损比例"""
-        return self.current_params.get('stop_loss', -0.06)
+        return self.current_params.get('stop_loss', -0.035)  # P1 修复: fallback 对齐 YAML
     
     def get_take_profit(self) -> float:
         """获取止盈比例"""
-        return self.current_params.get('take_profit', 0.12)
+        return self.current_params.get('take_profit', 0.05)  # P1 修复: fallback 对齐 YAML
     
     def get_stop_loss_price_with_fees(
         self, 
@@ -229,9 +242,9 @@ class DynamicExitManager:
         """获取移动止盈参数"""
         return self.current_params.get('trailing_stop', {
             'enabled': True,
-            'trigger_profit': 0.05,   # 盈利 5% 后启动追踪止盈 (对齐 YAML default)
-            'trail_percent': 0.02,    # 回撤 2% 触发 (对齐 YAML default)
-            'atr_multiplier': 2.5,    # ATR 移动止损倍数
+            'trigger_profit': 0.025,   # 盈利 2.5% 后启动追踪止盈 (对齐 YAML default)
+            'trail_percent': 0.015,    # 回撤 1.5% 触发 (对齐 YAML default)
+            'atr_multiplier': 1.5,     # ATR 移动止损倍数 (对齐 YAML default)
         })
     
     def get_market_params(self, market: str = 'hk') -> Dict:
@@ -490,6 +503,7 @@ class DynamicExitManager:
         is_same_day: bool = True,
         current_volume: float = 0,   # P6 新增: 当前成交量
         avg_volume: float = 0,       # P6 新增: 20日平均成交量
+        exit_state: str = None,      # P1 修复: 当前退出状态，防止分批止盈重复触发
     ) -> 'ExitDecision':
         """
         组合式退出优先级检查，按优先级依次判断各退出条件。
@@ -567,54 +581,106 @@ class DynamicExitManager:
         time_params = self.get_time_stop_params()
         if time_params.get('enabled', True) and entry_time:
             try:
-                from datetime import datetime
+                from datetime import datetime, timedelta
                 if isinstance(entry_time, str):
                     et = datetime.fromisoformat(entry_time)
                 else:
                     et = entry_time
-                holding_hours = (datetime.now() - et).total_seconds() / 3600
+                now = datetime.now()
+
+                # P0 修复 (2026-05-11): 计算实际交易时长，跳过周末/节假日缺口
+                # 港股交易时段: 09:30-12:00, 13:00-16:00 (5.5h/天)
+                # 旧代码用 wall-clock 计算，周末持仓 65.9h >= 48h → 开盘即止损
+                HK_OPEN_AM = (9, 30)
+                HK_CLOSE_AM = (12, 0)
+                HK_OPEN_PM = (13, 0)
+                HK_CLOSE_PM = (16, 0)
+                HOURS_PER_TRADING_DAY = 5.5
+
+                def _trading_hours_between(t_start: datetime, t_end: datetime) -> float:
+                    total = 0.0
+                    current = t_start.replace(hour=0, minute=0, second=0, microsecond=0)
+                    end_day = t_end.replace(hour=0, minute=0, second=0, microsecond=0)
+                    while current <= end_day:
+                        weekday = current.weekday()  # 0=Mon, 5=Sat, 6=Sun
+                        if weekday < 5:  # 跳过周末
+                            am_start = current.replace(hour=HK_OPEN_AM[0], minute=HK_OPEN_AM[1])
+                            am_end = current.replace(hour=HK_CLOSE_AM[0], minute=HK_CLOSE_AM[1])
+                            pm_start = current.replace(hour=HK_OPEN_PM[0], minute=HK_OPEN_PM[1])
+                            pm_end = current.replace(hour=HK_CLOSE_PM[0], minute=HK_CLOSE_PM[1])
+
+                            for seg_start, seg_end in [(am_start, am_end), (pm_start, pm_end)]:
+                                eff_start = max(t_start if current.date() == t_start.date() else seg_start, seg_start)
+                                eff_end = min(t_end if current.date() == t_end.date() else seg_end, seg_end)
+                                if eff_end > eff_start:
+                                    total += (eff_end - eff_start).total_seconds() / 3600
+                        current += timedelta(days=1)
+                    return total
+
+                holding_hours = _trading_hours_between(et, now)
+
                 # P1 修复 (2026-05-04): 接入 TimeGate 时段参数覆写
                 max_hours = get_exit_param("max_holding_hours", default=time_params.get('max_holding_hours', 72), entry_time=entry_time)
                 if holding_hours >= max_hours:
-                    return ExitDecision(
-                        should_exit=True,
-                        reason=f"时间止损: 持仓{holding_hours:.1f}h >= {max_hours}h",
-                        priority=4, close_ratio=1.0, is_stop_loss=False
-                    )
+                    # P1 修复 (2026-05-20): 盈利持仓不因时间到期强制平仓，让趋势止损/止盈接管
+                    if pnl_pct > 0.005:  # 盈利 > 0.5%
+                        logger.debug(f"[时间止损-跳过] {code} 持仓{holding_hours:.1f}h >= {max_hours}h 但盈利{pnl_pct:.2%}，交由趋势管理")
+                    else:
+                        return ExitDecision(
+                            should_exit=True,
+                            reason=f"时间止损: 持仓{holding_hours:.1f}h(交易时长) >= {max_hours}h, PnL={pnl_pct:.2%}",
+                            priority=4, close_ratio=1.0, is_stop_loss=True
+                        )
             except Exception:
                 pass
 
         # ── 4.5. 盘末退出 (Pre-Close Exit) — P1 2026-05-06 ──────────
         # 港股 15:45 收盘撮合前分层退出，避免隔夜跳空风险
         # 规则: 亏损全平 / 0~0.5ATR 微利减半 / ≥0.5ATR 保留
+        # P0 修复 (2026-05-13): 增加最小持仓时间过滤，防止刚开仓就被盘末退出强平
         if getattr(self, '_pre_close_exit_enabled', True):
             try:
                 window_min = getattr(self, '_pre_close_window_minutes', 15)
+                min_hold_hours = getattr(self, '_pre_close_min_hold_hours', 6.0)
                 from datetime import datetime
                 now = datetime.now()
-                hk_close = now.replace(hour=16, minute=0, second=0, microsecond=0)
-                minutes_to_close = (hk_close - now).total_seconds() / 60.0
 
-                if 0 < minutes_to_close <= window_min and atr_value and atr_value > 0:
-                    # 计算盈利距入场价 (ATR 口径)
-                    profit_atr = (current_price - entry_price) / atr_value if direction == 'BUY' \
-                        else (entry_price - current_price) / atr_value
+                # 检查最小持仓时间
+                if entry_time:
+                    if isinstance(entry_time, str):
+                        et = datetime.fromisoformat(entry_time)
+                    else:
+                        et = entry_time
+                    holding_hours = (now - et).total_seconds() / 3600.0
+                    if holding_hours < min_hold_hours:
+                        # 持仓不足最小时间，跳过盘末退出，让止损/止盈正常运作
+                        logger.debug(
+                            f"[Pre-Close Exit] 跳过 {code}: 持仓 {holding_hours:.1f}h < {min_hold_hours}h 最小要求"
+                        )
+                    else:
+                        hk_close = now.replace(hour=16, minute=0, second=0, microsecond=0)
+                        minutes_to_close = (hk_close - now).total_seconds() / 60.0
 
-                    if profit_atr < 0:
-                        # 亏损 → 全平
-                        return ExitDecision(
-                            should_exit=True,
-                            reason=f"盘末退出: 亏损 {profit_atr:.1f}ATR, 不持有亏损过夜",
-                            priority=4.5, close_ratio=1.0, is_stop_loss=True
-                        )
-                    elif profit_atr < 0.5:
-                        # 微利 (0~0.5 ATR) → 减半
-                        return ExitDecision(
-                            should_exit=True,
-                            reason=f"盘末退出: 微利 {profit_atr:.1f}ATR, 减半降低隔夜风险",
-                            priority=4.5, close_ratio=0.5, is_stop_loss=False
-                        )
-                    # ≥0.5 ATR → 保留过夜, 不触发
+                        if 0 < minutes_to_close <= window_min and atr_value and atr_value > 0:
+                            # 计算盈利距入场价 (ATR 口径)
+                            profit_atr = (current_price - entry_price) / atr_value if direction == 'BUY' \
+                                else (entry_price - current_price) / atr_value
+
+                            if profit_atr < 0:
+                                # 亏损 → 全平
+                                return ExitDecision(
+                                    should_exit=True,
+                                    reason=f"盘末退出: 亏损 {profit_atr:.1f}ATR (持仓{holding_hours:.1f}h), 不持有亏损过夜",
+                                    priority=4.5, close_ratio=1.0, is_stop_loss=True
+                                )
+                            elif profit_atr < 0.5:
+                                # 微利 (0~0.5 ATR) → 减半
+                                return ExitDecision(
+                                    should_exit=True,
+                                    reason=f"盘末退出: 微利 {profit_atr:.1f}ATR (持仓{holding_hours:.1f}h), 减半降低隔夜风险",
+                                    priority=4.5, close_ratio=0.5, is_stop_loss=False
+                                )
+                            # ≥0.5 ATR → 保留过夜, 不触发
             except Exception:
                 pass
 
@@ -622,16 +688,18 @@ class DynamicExitManager:
         # 辩证设计: 仅在浮盈 > 1.5% 且成交量 > 3.5倍均量时触发，部分止盈 50%
         # 防止低位放量下跌被误杀，同时避免一次性清空筹码
         if current_volume > 0 and avg_volume > 0:
-            vol_cfg = getattr(config, 'PHASE1_HK_OPT', {}).get('exit_strategy', {}).get('volume_surge', {})
+            vol_cfg = self.current_params.get('volume_surge', {
+                'enabled': True, 'vol_multiplier': 3.5, 'min_profit_pct': 0.015
+            })
             if vol_cfg.get('enabled', True):
                 vol_mult = vol_cfg.get('vol_multiplier', 3.5)
                 min_pnl = vol_cfg.get('min_profit_pct', 0.015)
-                
+
                 if current_volume >= avg_volume * vol_mult and pnl_pct >= min_pnl:
                     return ExitDecision(
                         should_exit=True,
                         reason=f"放量止盈(P6): 量比={current_volume/avg_volume:.1f}x, 浮盈={pnl_pct:.1%}",
-                        priority=4.5, close_ratio=0.5, is_stop_loss=False # 兑现一半
+                        priority=4.5, close_ratio=0.5, is_stop_loss=False  # 兑现一半
                     )
 
         # ── 5. 波动止损（日内价格区间 > 3×ATR）──────────────────────
@@ -686,19 +754,35 @@ class DynamicExitManager:
 
         # ── 8-10. 分批止盈 & 固定止盈 ─────────────────────────────
         # P1 修复 (2026-05-04): 接入 TimeGate 时段参数覆写
+        # P1 修复 (2026-05-11): 跳过已执行的批次，防止同一层级重复触发
         tp_mult = get_exit_param("take_profit_atr_mult", default=1.0, entry_time=entry_time)
         partial_levels = self.get_partial_take_profit_levels()
         if partial_levels:
+            # 解析已执行到的批次 (exit_state 格式: 'PARTIAL_TP1', 'PARTIAL_TP2', 等)
+            executed_level = 0
+            if exit_state and 'PARTIAL_TP' in exit_state:
+                try:
+                    executed_level = int(exit_state.split('PARTIAL_TP')[1])
+                except (ValueError, IndexError):
+                    pass
+
+            # P0 修复 (2026-05-10): 价格跳过时选择最高满足层级，而非仅第一层
+            triggered = []
             for idx, level in enumerate(sorted(partial_levels, key=lambda x: x['target'])):
-                target = level['target'] * tp_mult  # 时段调整止盈目标
-                ratio = level['ratio']
+                level_num = idx + 1
+                if level_num <= executed_level:
+                    continue  # 已执行的层级跳过
+                target = level['target'] * tp_mult
                 if pnl_pct >= target:
-                    priority = 8 + idx
-                    return ExitDecision(
-                        should_exit=True,
-                        reason=f"分批止盈第{idx+1}目标: +{target:.1%}",
-                        priority=priority, close_ratio=ratio, is_stop_loss=False
-                    )
+                    triggered.append((idx, target, level['ratio']))
+            if triggered:
+                idx, target, ratio = triggered[-1]  # 取最高层级
+                return ExitDecision(
+                    should_exit=True,
+                    reason=f"分批止盈第{idx+1}目标(跳级): +{target:.1%}",
+                    priority=8 + idx, close_ratio=ratio, is_stop_loss=False,
+                    new_state=f"PARTIAL_TP{idx+1}",  # 记录已执行层级
+                )
 
         # 固定止盈（全平）
         take_profit = self.get_take_profit() * tp_mult  # 时段调整

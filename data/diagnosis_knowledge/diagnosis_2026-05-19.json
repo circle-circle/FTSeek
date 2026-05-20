@@ -1,0 +1,49 @@
+{
+  "status": "ok",
+  "date": "2026-05-19",
+  "stats": {
+    "date": "2026-05-19",
+    "total": 54,
+    "executed": 7,
+    "rejected": 47,
+    "pending": 0,
+    "execution_rate": 0.12962962962962962,
+    "max_concurrent_pct": 0.0,
+    "weak_signal_pct": 0.0,
+    "weak_signal_error_pct": 0.0,
+    "noise_hours_pct": 0.0,
+    "signal_cooldown_pct": 0.02127659574468085,
+    "mtf_rejected_pct": 0.3191489361702128,
+    "late_session_pct": 0.0,
+    "top_reasons": {
+      "mtf_unaligned": 15,
+      "circuit_breaker_rejected": 8,
+      "decision_buffer_rejected": 6,
+      "circuit_breaker_error": 3,
+      "late_session_rejected": 3
+    }
+  },
+  "trends": [
+    {
+      "name": "执行率上升",
+      "severity": "low",
+      "message": "执行率从 1.8% 升至 13.0% (+11.2pp)"
+    },
+    {
+      "name": "信号量异常变化",
+      "severity": "medium",
+      "message": "信号量从 114 变为 54 (-60)"
+    }
+  ],
+  "suggestions": [
+    {
+      "name": "mtf_rejected 过多",
+      "severity": "medium",
+      "suggestion": "多周期不一致占 32%，检查多周期数据源同步",
+      "config_path": "data_subscriber.py → _regime_detector 更新逻辑"
+    }
+  ],
+  "suggestion_count": 1,
+  "max_severity": "medium",
+  "report": "### 📊 FTSeek 盘后分析 (2026-05-19)\n\n**管线概览**\n- 总信号: 54 | 执行: 7 | 拒绝: 47\n- 执行率: 🟢 13.0%\n\n**拒绝原因 TOP 5**\n- `mtf_unaligned`: 15 (32%)\n- `circuit_breaker_rejected`: 8 (17%)\n- `decision_buffer_rejected`: 6 (13%)\n- `circuit_breaker_error`: 3 (6%)\n- `late_session_rejected`: 3 (6%)\n\n### 📈 趋势变化\n- 🟢 执行率上升: 执行率从 1.8% 升至 13.0% (+11.2pp)\n- 🟡 信号量异常变化: 信号量从 114 变为 54 (-60)\n\n### 💡 优化建议\n- 🟡 **mtf_rejected 过多**: 多周期不一致占 32%，检查多周期数据源同步\n  - 📁 data_subscriber.py → _regime_detector 更新逻辑\n"
+}

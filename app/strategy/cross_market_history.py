@@ -31,7 +31,7 @@ _CFG_HISTORY_KEY = "history"
 
 
 def _get_history_config() -> Dict:
-    """从 config.yaml cross_market.history 节读取配置，失败时返回默认值"""
+    """从 unified_config.yaml cross_market.history 节读取配置，失败时返回默认值"""
     defaults = {
         "lookback_days": 30,
         "min_samples": 5,

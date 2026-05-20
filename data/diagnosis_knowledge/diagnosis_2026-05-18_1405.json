@@ -1,0 +1,53 @@
+{
+  "timestamp": "2026-05-18T14:05:00.001705",
+  "date": "2026-05-18",
+  "time": "1405",
+  "alerts": [
+    {
+      "level": "info",
+      "rule_id": "FUNNEL_002",
+      "rule_name": "信号漏斗低转化",
+      "message": "信号执行率仅 1% (1/77)，需关注",
+      "details": {
+        "total_signals": 77,
+        "executed": 1,
+        "exited": 0,
+        "execution_rate": 0.013
+      },
+      "timestamp": "2026-05-18T14:05:00.001131"
+    },
+    {
+      "level": "critical",
+      "rule_id": "REJECT_001",
+      "rule_name": "拒绝率飙升",
+      "message": "信号拒绝率 99%，主因: weak_signal (30次)",
+      "details": {
+        "rejection_rate": 0.987,
+        "reject_reasons": {
+          "计划拦截: 🚫 [计划外拦截] 标的 HK.02269 不在今日作战计划中": 4,
+          "noise_hours": 1,
+          "weak_signal": 30,
+          "mtf_unaligned": 26,
+          "计划拦截: 🚫 [计划外拦截] 标的 HK.09992 不在今日作战计划中": 2,
+          "冷却期": 2,
+          "mtf_rejected": 5,
+          "计划拦截: 🚫 [黑名单拦截] 标的 HK.09988 在禁止交易名单中": 1,
+          "计划拦截: 🚫 [计划外拦截] 标的 HK.00941 不在今日作战计划中": 1,
+          "计划拦截: 🚫 [计划外拦截] 标的 HK.02020 不在今日作战计划中": 1,
+          "计划拦截: 🚫 [黑名单拦截] 标的 HK.01211 在禁止交易名单中": 1,
+          "计划拦截: 🚫 [黑名单拦截] 标的 HK.01347 在禁止交易名单中": 1,
+          "计划拦截: 🚫 [黑名单拦截] 标的 HK.02269 在禁止交易名单中": 1
+        },
+        "total_signals": 77,
+        "rejected_count": 76
+      },
+      "timestamp": "2026-05-18T14:05:00.001380"
+    }
+  ],
+  "summary": {
+    "total": 2,
+    "critical": 1,
+    "warning": 0,
+    "info": 1
+  }
+}

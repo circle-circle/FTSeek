@@ -87,6 +87,14 @@ class DingTalkAlertSender:
             content: 消息内容
             alert_level: 警报级别
         """
+        # FTSeek 适配: 集成通知降噪 (2026-05-17)
+        from app.notifier.notification_noise import check_and_log
+        severity = "critical" if alert_level in ("CRITICAL", "ERROR") else "info"
+        
+        if not check_and_log(content, route_type="dingtalk", severity=severity):
+            logger.debug(f"[钉钉通知] 降噪拦截: {alert_level} - {content[:30]}...")
+            return True  # 返回 True 避免调用方误判为失败
+            
         emoji = self._get_level_emoji(alert_level)
         full_content = f"{emoji} {content}"
         
@@ -107,6 +115,14 @@ class DingTalkAlertSender:
             text: Markdown 内容
             alert_level: 警报级别
         """
+        # FTSeek 适配: 集成通知降噪 (2026-05-17)
+        from app.notifier.notification_noise import check_and_log
+        severity = "critical" if alert_level in ("CRITICAL", "ERROR") else "info"
+        
+        if not check_and_log(text, route_type="dingtalk_md", severity=severity):
+            logger.debug(f"[钉钉通知] Markdown 降噪拦截: {title}")
+            return True
+            
         emoji = self._get_level_emoji(alert_level)
         full_title = f"{emoji} {title}"
         

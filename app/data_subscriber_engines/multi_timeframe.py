@@ -113,7 +113,9 @@ TREND_FILTER_SYNC = {
 
 
 # MTF warmup grace period after cold start (seconds)
-MTF_WARMUP_SECONDS = 30 * 60  # 30 minutes — skip MTF rejection during this window
+# ⚠️ SSOT: unified_config.yaml → risk_limits.mtf_warmup_seconds
+# This constant is only used as fallback when config_center is unavailable.
+MTF_WARMUP_SECONDS = 30 * 60  # 30 分钟 (fallback 默认值)
 
 # Minimum alignment threshold (absolute floor)
 MTF_MIN_ALIGNMENT_THRESHOLD = 0.35
@@ -300,16 +302,25 @@ class MultiTimeframeEngine:
                 not is_buy and day_trend == "up" and h1_trend == "up"
             )
             if both_against:
-                return False, 0.0, f"日线+60M双重逆势（日={day_trend}, 60M={h1_trend}）"
+                # 2026-05-18 改为软拦截: 不硬拒绝，返回极低boost + 告警
+                logger.warning(
+                    f"[MTF软拦截] {code} 日线+60M双重逆势（日={day_trend}, 60M={h1_trend}）"
+                    f"，降低权重但放行"
+                )
+                return True, -0.15, f"⚠️日线+60M双重逆势（日={day_trend}, 60M={h1_trend}），软放行"
 
-        # Ultra-short (3M + 5M) dual reverse intercept
+        # Ultra-short (3M + 5M) dual reverse → 软拦截 (2026-05-18)
         short_both_against = (
             is_buy and m5_trend == "down" and m3_trend == "down"
         ) or (
             not is_buy and m5_trend == "up" and m3_trend == "up"
         )
         if short_both_against:
-            return False, 0.0, f"超短线3M+5M双重逆势（3M={m3_trend}, 5M={m5_trend}）"
+            logger.warning(
+                f"[MTF软拦截] {code} 超短线3M+5M双重逆势（3M={m3_trend}, 5M={m5_trend}）"
+                f"，降低权重但放行"
+            )
+            return True, -0.10, f"⚠️3M+5M双重逆势（3M={m3_trend}, 5M={m5_trend}），软放行"
 
         # Single day reverse → penalty but not reject (only if day was updated)
         single_against = False

@@ -93,7 +93,7 @@ class CrossMarketNewsDigest:
 
     def __init__(self, config: dict = None):
         cfg = config or {}
-        # 从 config.yaml cross_market.news_digest 加载
+        # 从 unified_config.yaml cross_market.news_digest 加载
         try:
             from config.config_center import get_config_center
             cc = get_config_center()

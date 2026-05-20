@@ -351,7 +351,7 @@ class RSSHubMultiSourceFetcher:
 
         优先级:
         1. 环境变量 WATCH_LIST_HK + WATCH_LIST_US
-        2. config/config.yaml via config_center
+        2. config/unified_unified_config.yaml via config_center
         3. fallback 最小列表
         """
         try:
@@ -385,7 +385,7 @@ class RSSHubMultiSourceFetcher:
                 us = cc.get('trading.watch_list_us', [])
                 codes = set(hk) | set(us)
                 if codes:
-                    logger.info(f"[watchlist] 从 config.yaml 加载 {len(codes)} 只")
+                    logger.info(f"[watchlist] 从 unified_config.yaml 加载 {len(codes)} 只")
                     return codes
             except Exception as e:
                 logger.debug(f"[watchlist] config_center 加载失败: {e}")

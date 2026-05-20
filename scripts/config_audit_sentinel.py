@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 FTSeek 配置一致性自动巡检 (Config Audit Sentinel)
-- 每日定时运行，检测 config.yaml 与代码默认值的一致性
+- 每日定时运行，检测 unified_config.yaml 与代码默认值的一致性
 - 不一致时推送钉钉告警
 - 记录审计日志到 data/config_audit_history.json
 
@@ -86,7 +86,7 @@ def run_audit() -> dict:
     # 3. 检查关键参数状态
     validator = ConfigValidator()
     validator.load_all_configs()
-    config = validator._configs.get("config.yaml", {})
+    config = validator._configs.get("unified_config.yaml", {})
     
     # 读取关键参数值
     risk_limits = config.get("risk_limits", {})

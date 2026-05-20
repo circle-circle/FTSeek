@@ -23,7 +23,7 @@ class StrategyRouter:
     """
 
     config: Dict = field(default_factory=dict)
-    auto_execute_threshold: float = 0.75
+    auto_execute_threshold: float = 0.80  # 2026-05-19: 提高阈值，过滤弱信号 (原 0.75)
     review_threshold: float = 0.55
 
     def __post_init__(self):

@@ -1,0 +1,2 @@
+{"timestamp": "2026-05-10T07:37:47.576523", "symbol": "HK.00700", "signal": {"direction": "LONG", "strength": 75, "source": "test"}, "veto": {"decision": "PASS", "reason": "LLM 评估失败，默认放行", "confidence": 0.0}}
+{"timestamp": "2026-05-10T07:37:47.576819", "symbol": "HK.00700", "signal": {"direction": "LONG", "strength": 75, "source": "test"}, "veto": {"decision": "PASS", "reason": "LLM 评估失败，默认放行", "confidence": 0.0}, "result": {"pnl": -50, "hold_time_min": 30, "exit_reason": "stop_loss"}, "veto_correct": false}

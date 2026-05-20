@@ -229,9 +229,48 @@ def run_reconciliation(market_filter='HK'):
         info = server_positions[code]
         logger.info(f"🆕 发现服务端新持仓 {code}，同步至 DB")
         
+        # P0 修复 (2026-05-17): 冷却期检查 — 10 分钟内刚关闭的持仓不重新创建
+        # 根因: 系统止损 → 本地 DB CLOSED → Futu 订单未结算 → reconcile 误判为"漏记"
+        # 与 position_sync.py 的 10 分钟冷却对齐
+        RECENT_CLOSE_WINDOW_MINUTES = 10
+        try:
+            from datetime import timedelta
+            cutoff = (datetime.now() - timedelta(minutes=RECENT_CLOSE_WINDOW_MINUTES)).strftime("%Y-%m-%d %H:%M:%S")
+            cursor.execute(
+                "SELECT COUNT(*), MAX(exit_time) FROM positions WHERE code=? AND status='CLOSED' AND exit_time>=?",
+                (code, cutoff)
+            )
+            recent_count, last_exit = cursor.fetchone()
+            if recent_count > 0:
+                logger.info(
+                    f"   ⏳ {code} {RECENT_CLOSE_WINDOW_MINUTES}min 内有关闭记录 ({recent_count}次, 最近={last_exit})，"
+                    f"判定为 Futu 结算延迟/止损冷却窗口，跳过创建"
+                )
+                continue
+        except Exception as _cool_e:
+            logger.debug(f"   冷却期检查失败: {_cool_e}")
+        
         # 查找信号
         sig_id = find_signal_id(cursor, code, info['cost'])
         trader_type = 'AI' if sig_id else 'MANUAL'
+        
+        # P1 修复 (2026-05-16): 尝试找到最近关闭的同代码同价格持仓，继承其 strategy
+        # 原因: 当 exit 逻辑关闭了持仓但 reconcile 发现 Futu 仍有持仓时，
+        # 不应创建新的 reconcile_sync 记录，而应继承原始策略归属
+        strategy_name = 'reconcile_sync'
+        try:
+            cursor.execute("""
+                SELECT strategy FROM positions 
+                WHERE code = ? AND status = 'CLOSED' 
+                AND abs(entry_price - ?) / ? < 0.01
+                ORDER BY exit_time DESC LIMIT 1
+            """, (code, info['cost'], info['cost']))
+            row = cursor.fetchone()
+            if row and row[0] and row[0] != 'reconcile_sync':
+                strategy_name = row[0]
+                logger.info(f"   📋 继承原始策略: {strategy_name}")
+        except Exception as _strat_e:
+            logger.debug(f"   策略继承失败: {_strat_e}")
         
         now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         action = 'SELL' if info.get('qty', 0) < 0 else 'BUY'
@@ -241,9 +280,9 @@ def run_reconciliation(market_filter='HK'):
             INSERT INTO positions (
                 code, action, quantity, entry_price, entry_time, status, 
                 market, strategy, signal_id, trader_type
-            ) VALUES (?, ?, ?, ?, ?, 'OPEN', ?, 'reconcile_sync', ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, 'OPEN', ?, ?, ?, ?)
         """, (
-            code, action, info['qty'], info['cost'], now_str, info['market'], sig_id, trader_type
+            code, action, info['qty'], info['cost'], now_str, info['market'], strategy_name, sig_id, trader_type
         ))
         
         if trader_type == 'AI':

@@ -22,7 +22,7 @@ from app.storage.repository import get_db as _pool_get_db  # B3-13 连接池
 logger = logging.getLogger("ftseek.attribution.calc")
 
 DB_PATH = "/opt/ftseek/FTSeek/data/ftseek.db"
-CONFIG_PATH = "/opt/ftseek/FTSeek/config/config.yaml"
+CONFIG_PATH = "/opt/ftseek/FTSeek/config/unified_config.yaml"
 
 # 基准指数代码
 BENCHMARKS = {

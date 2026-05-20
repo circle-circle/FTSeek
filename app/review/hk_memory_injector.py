@@ -55,6 +55,13 @@ class HKMemoryInjector:
             sections.append(next_day)
             budget -= len(next_day)
 
+        # 优先级 0b: 昨日实战表现 (从 feedback relay 加载)
+        if budget > 300:
+            feedback = self._load_yesterday_feedback_relay()
+            if feedback:
+                sections.append(feedback)
+                budget -= len(feedback)
+
         # 优先级 1: 上下文感知注入 (使用知识积累器的相关性评分)
         if context and budget > 500:
             try:
@@ -407,6 +414,45 @@ class HKMemoryInjector:
             return memory.get("next_day_preview", "") or None
         except Exception as e:
             logger.debug(f"[HKMemoryInjector] 加载次日预判失败: {e}")
+            return None
+
+    def _load_yesterday_feedback_relay(self) -> Optional[str]:
+        """从 feedback relay 加载昨日 EOD 反馈 (实战表现 + 教训 + 计划执行)"""
+        try:
+            from app.review.hk_feedback_relay import load_yesterday_feedback
+            fb = load_yesterday_feedback()
+            if not fb:
+                return None
+
+            parts = ["📊 昨日实战表现 (来自 EOD 反馈)"]
+            perf = fb.get("performance", {})
+            if perf.get("total_trades"):
+                parts.append(
+                    f"  交易: {perf['total_trades']}笔 | "
+                    f"胜率: {perf['win_count']}/{perf['total_trades']} | "
+                    f"总盈亏: {perf['total_pnl']:+.0f}"
+                )
+
+            # 次日预判
+            if fb.get("next_day_preview"):
+                parts.append(f"\n  【昨日预判今日需验证】\n  {fb['next_day_preview'][:500]}")
+
+            # 作战计划执行
+            bp = fb.get("battle_plan_execution", {})
+            if bp:
+                parts.append(f"\n  【昨日计划执行】\n  {str(bp)[:300]}")
+
+            # 最新教训 (最多 3 条)
+            lessons = fb.get("lessons", [])[:3]
+            if lessons:
+                parts.append("\n  【昨日教训】")
+                for l in lessons:
+                    title = l.get("title", l.get("lesson", ""))[:80]
+                    parts.append(f"  • {title}")
+
+            return "\n".join(parts)
+        except Exception as e:
+            logger.debug(f"[HKMemoryInjector] 加载 feedback relay 失败: {e}")
             return None
 
     def update_memory(self, lessons: List[Dict]):

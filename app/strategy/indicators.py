@@ -548,3 +548,46 @@ def volatility_adaptive_multiplier(
     ratio = current_vf / baseline_vf
     # 高波动时放宽布林带 (增大 σ), 低波动时收紧
     return max(0.5, min(3.0, 1.0 + alpha * (ratio - 1.0)))
+
+
+# ============================================================
+#  动量因子 (Momentum / Rate of Change)
+# ============================================================
+
+def momentum(closes: list, period: int = 10) -> Optional[float]:
+    """计算动量因子（Rate of Change, ROC）
+
+    ROC = (当前价 / N日前价 - 1) × 100
+
+    Args:
+        closes: 收盘价序列（按时间递增）
+        period: 回看周期，默认10（港股/美股常用10日动量）
+
+    Returns:
+        动量百分比（正=上涨动量，负=下跌动量），None 如果数据不足
+    """
+    if len(closes) < period + 1:
+        return None
+    prev_close = closes[-(period + 1)]
+    curr_close = closes[-1]
+    if prev_close <= 0:
+        return None
+    return (curr_close / prev_close - 1.0) * 100.0
+
+
+def multi_period_momentum(closes: list, periods: list = None) -> dict:
+    """计算多周期动量（一次返回多个周期）
+
+    Args:
+        closes: 收盘价序列
+        periods: 周期列表，默认 [5, 10, 20]
+
+    Returns:
+        {period: momentum_value_or_None}
+    """
+    if periods is None:
+        periods = [5, 10, 20]
+    result = {}
+    for p in periods:
+        result[p] = momentum(closes, p)
+    return result

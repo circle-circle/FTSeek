@@ -192,18 +192,15 @@ class AttributionDebate:
         user = self._build_debate_prompt(lesson)
 
         try:
-            from app.agents.base import BaseLLMService
-            svc = BaseLLMService(
-                config=self.llm_config,
-                default_model="qwen3.6-flash",
-                default_timeout=30,
-            )
+            from app.llm.unified_service import get_unified_llm, UnifiedLLMService
+            svc = get_unified_llm(default_model="qwen3.6-flash", default_timeout=30, max_retries=1)
             messages = [
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
             ]
-            result = BaseLLMService.run_sync(
-                svc.call_and_parse, messages, timeout=30
+            result = UnifiedLLMService.run_sync(
+                svc.call_and_parse(messages, model="qwen3.6-flash", timeout=30, task_type="attribution_debate"),
+                timeout=60,
             )
 
             # 映射到验证结果

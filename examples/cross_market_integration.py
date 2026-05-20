@@ -134,7 +134,7 @@ def main():
     # 6. 新闻映射演示
     # ============================================================
     print("\n6. 新闻映射演示...")
-    news_mapper = get_news_mapper(use_ai=False)  # 规则模式
+    news_mapper = get_news_mapper()  # 规则模式
 
     news_result = news_mapper.map_news_to_stocks(
         news_id='demo_news_001',

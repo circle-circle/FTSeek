@@ -171,12 +171,17 @@ class DomainEvent:
     v2 变更 (2026-05-05):
     - correlation_id 默认从 signal_id 自动填充
     - source 默认从调用栈推断
+    - data 自动归一化为 dict（接受 dataclass 或 dict）
     """
     type: str
     data: Dict[str, Any] = field(default_factory=dict)
     timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
     correlation_id: Optional[str] = None
     source: Optional[str] = None
+
+    def __post_init__(self):
+        """自动将 dataclass payload 归一化为 dict，确保所有 handler 可以用 .get()"""
+        self.data = _payload_to_dict(self.data)
 
     @property
     def data_as(self) -> Dict[str, Any]:

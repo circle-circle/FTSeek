@@ -3,7 +3,7 @@ FTSeek 配置文件
 
 📋 配置架构 (2026-04-09 收敛后):
   - .env → 敏感环境变量 (API_TOKEN, DINGTALK_SECRET, 富途账号等)
-  - config/config.yaml → 唯一配置源 (策略/交易/风控/通知等所有配置)
+  - config/unified_config.yaml → 唯一配置源 (SSOT v4.0)
   - ConfigCenter → 统一加载器 (支持热重载/环境变量覆盖)
 
 ⚠️ 安全提示:
@@ -60,6 +60,10 @@ if _raw_trade_env == 0 and not _allow_real:
 # 模拟账户 ID
 SIMULATE_ACCOUNT_ID = os.getenv("SIMULATE_ACCOUNT_ID", "18820895")
 
+# MarginGuard: 实盘保证金风控开关 (2026-05-08)
+# 默认关闭，实盘时设置 USE_MARGIN_GUARD=true 启用
+USE_MARGIN_GUARD = os.getenv("USE_MARGIN_GUARD", "false").lower() == "true"
+
 # ============================================================
 #  钉钉推送配置 (必须通过环境变量)
 # ============================================================
@@ -113,7 +117,7 @@ if not API_TOKEN:
 #
 #  优先级 (从高到低):
 #   1. 环境变量 WATCH_LIST_HK (运维覆盖/紧急切换)
-#   2. config.yaml via config_center (单一事实源)
+#   2. unified_config.yaml via config_center (单一事实源)
 #   3. 最小 fallback (3 只核心股，防止配置失效时系统裸奔)
 # ============================================================
 
@@ -134,12 +138,12 @@ def _load_watch_list_hk() -> list:
                 f"[watchlist] 环境变量 WATCH_LIST_HK 解析失败: {e}"
             )
 
-    # 2. 从 config.yaml 读取 (config_center 已在文件顶部初始化)
+    # 2. 从 unified_config.yaml 读取 (config_center 已在文件顶部初始化)
     try:
         yaml_list = config_center.get("trading.watch_list_hk")
         if isinstance(yaml_list, list) and len(yaml_list) > 0:
             logging.getLogger("ftseek.config").info(
-                f"[watchlist] 从 config.yaml 加载 {len(yaml_list)} 只港股"
+                f"[watchlist] 从 unified_config.yaml 加载 {len(yaml_list)} 只港股"
             )
             return yaml_list
     except Exception as e:
@@ -149,7 +153,7 @@ def _load_watch_list_hk() -> list:
 
     # 3. 最小 fallback (核心股，防止配置全部失效)
     logging.getLogger("ftseek.config").warning(
-        "[watchlist] 无法从环境变量或 config.yaml 加载，使用最小 fallback (3 只)"
+        "[watchlist] 无法从环境变量或 unified_config.yaml 加载，使用最小 fallback (3 只)"
     )
     return ["HK.00700", "HK.09988", "HK.03690"]
 
@@ -172,7 +176,7 @@ def _load_watch_list_us() -> list:
         yaml_list = config_center.get("trading.watch_list_us")
         if isinstance(yaml_list, list) and len(yaml_list) > 0:
             logging.getLogger("ftseek.config").info(
-                f"[watchlist-us] 从 config.yaml 加载 {len(yaml_list)} 只美股"
+                f"[watchlist-us] 从 unified_config.yaml 加载 {len(yaml_list)} 只美股"
             )
             return yaml_list
     except Exception as e:
@@ -208,7 +212,7 @@ else:
 
 # 订阅槽位校验 — 仅基于港股名单 (美股不参与实时订阅)
 _SUBSCRIPTION_SLOTS = len(WATCH_LIST_SUBSCRIBE) * len(SUBSCRIBE_TYPES)
-_MAX_FUTU_SLOTS = 100
+_MAX_FUTU_SLOTS = 1000
 if _SUBSCRIPTION_SLOTS > _MAX_FUTU_SLOTS:
     import warnings
     warnings.warn(
@@ -277,6 +281,21 @@ CONSENSUS_ADX_TREND = float(config_center.get('strategy.consensus.adx_trend', 25
 CONSENSUS_ADX_RANGE = float(config_center.get('strategy.consensus.adx_range', 20))
 SIGNAL_COOLDOWN = int(config_center.get('strategy.cooldown.signal_cooldown', 120))
 MAX_OPEN_POSITIONS = int(config_center.get('trading.max_open_positions', 20))
+
+# P0 (2026-05-16): 时段门禁配置
+TIME_GATE = {
+    'enabled': config_center.get('strategy.time_gate.enabled', True) in (True, 'true', '1'),
+    'hk_latest_open': config_center.get('strategy.time_gate.hk_latest_open', '14:30'),
+}
+
+# P0 (2026-05-16): ADX 范围市场门禁
+ADX_RANGE_GATE = float(config_center.get('strategy.trend_filter.adx_range_gate', 18))
+
+# P0 (2026-05-16): 市场趋势门禁 (HSI MA5 vs MA20)
+MARKET_REGIME_GATE = {
+    'enabled': config_center.get('strategy.market_regime_gate.enabled', True) in (True, 'true', '1'),
+    'hsi_gap_min_pct': float(config_center.get('strategy.market_regime_gate.hsi_gap_min_pct', 0.3)),
+}
 
 SHORT_SELLING_ENABLED_VAL = config_center.get('trading.short_selling_enabled', 'false')
 SHORT_SELLING_ENABLED = str(SHORT_SELLING_ENABLED_VAL).lower() in ('true', '1', 'yes')

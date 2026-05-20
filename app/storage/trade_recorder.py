@@ -296,7 +296,7 @@ class TradeRecorder:
         # 计算持有天数
         entry_date = datetime.strptime(record.timestamp[:19], '%Y-%m-%dT%H:%M:%S')
         exit_date = datetime.now()
-        record.holding_period = (exit_date - entry_date).days
+        record.holding_period = int((exit_date - entry_date).total_seconds() / 60)  # 分钟，非天数
         
         # 复盘信息
         record.lessons_learned = lessons_learned
@@ -404,9 +404,19 @@ class TradeRecorder:
             return False
     
     def _save_records(self):
-        """保存交易记录"""
+        """保存交易记录（按 trade_id 去重，防止重启后指数级重复）"""
         today = datetime.now().strftime('%Y-%m-%d')
         records_file = TRADE_RECORDS_DIR / f'{today}.json'
+        
+        # 按 trade_id 去重：保留最后出现的版本（最新状态）
+        seen = {}
+        for r in self.records:
+            seen[r.trade_id] = r
+        deduped = list(seen.values())
+        
+        if len(deduped) < len(self.records):
+            logger.warning(f"去重: {len(self.records)} 条 → {len(deduped)} 条 (移除 {len(self.records) - len(deduped)} 条重复)")
+            self.records = deduped
         
         data = [r.to_dict() for r in self.records]
         

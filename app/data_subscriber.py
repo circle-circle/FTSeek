@@ -33,11 +33,16 @@ from collections import defaultdict
 from typing import List, Dict, Tuple, Optional, Any
 
 from app import config
+from config.config_center import get_config_center as _gcc_dsub
+from app.services.trading_state_manager import get_trading_state_manager
 from app.strategy.base import BaseStrategy, Signal, SignalAction
 from app.strategy.indicators import IndicatorBuffer, adx as calc_adx
 from app.signal_store import signal_store
 from app.notifier.dingtalk import DingTalkNotifier
-from app.strategy.consensus_engine import ConsensusEngine, ConsensusResult, AdaptiveWeightManager
+from app.strategy.consensus_engine import ConsensusEngine, ConsensusResult
+# Phase 17 修复: 使用 consensus/adaptive_weights.py 版本 (engine_ref 构造函数)
+# 而非 services/adaptive_weight_manager.py 版本 (base_weights 构造函数)
+from app.strategy.consensus.adaptive_weights import AdaptiveWeightManager
 from app.trader.executor import TradeExecutor
 from app.trader.position_manager import PositionManager
 from app.strategy.hk_specific import get_hk_adapter, HKMarketConfig
@@ -68,13 +73,13 @@ logger = logging.getLogger("ftseek.subscriber")
 logger.propagate = True
 
 # 推送冷却 (同标的达成共识后冷却) - 支持动态更新
-SIGNAL_COOLDOWN = int(getattr(config, "SIGNAL_COOLDOWN", 120))
+SIGNAL_COOLDOWN = int(_gcc_dsub().get('strategy.cooldown.signal_cooldown', 120))
 
-# 共识引擎参数
-CONSENSUS_WINDOW    = int(getattr(config, "CONSENSUS_WINDOW", 90))
-CONSENSUS_THRESHOLD = float(getattr(config, "CONSENSUS_THRESHOLD", 1.0))  # SSOT: unified_config.yaml
-CONSENSUS_ADX_TREND = float(getattr(config, "CONSENSUS_ADX_TREND", 25))
-CONSENSUS_ADX_RANGE = float(getattr(config, "CONSENSUS_ADX_RANGE", 20))
+# 共识引擎参数 (2026-05-20: 修复 key 路径 window → window_seconds 对齐 YAML)
+CONSENSUS_WINDOW    = int(_gcc_dsub().get('strategy.consensus.window_seconds', 90))
+CONSENSUS_THRESHOLD = float(_gcc_dsub().get('strategy.consensus.threshold', 1.5))  # 2026-05-19: 提高共识阈值 (原1.0)
+CONSENSUS_ADX_TREND = float(_gcc_dsub().get('strategy.consensus.adx_trend', 25))
+CONSENSUS_ADX_RANGE = float(_gcc_dsub().get('strategy.consensus.adx_range', 20))
 
 # ============================================================
 #  配置读取辅助 (P1-2 2026-04-28)
@@ -117,6 +122,10 @@ class DataSubscriber:
         # Config flag: market_hours.shadow_mode (default: False)
         self._market_hours_shadow = None
         self._init_market_hours_shadow()
+
+        # P2 状态管理器 (2026-05-19): 集中管理 15+ 个状态字典
+        self._state_manager = get_trading_state_manager()
+        logger.info("[TradingStateManager] 已注入到 DataSubscriber")
 
         # 推送冷却: code -> last_push_time
         self._cooldown: Dict[str, float] = {}
@@ -333,6 +342,154 @@ class DataSubscriber:
         self._current_regime = 'default'
         self._last_regime_check = 0
         logger.info("市场状态参数加载器已初始化")
+
+        # ============================================================
+        #  Phase 6: 注入 6 个聚焦引擎 (依赖倒置)
+        #  目标：逐步将状态字典委托给引擎管理，最终瘦身为薄编排层
+        # ============================================================
+        self._init_engines()
+
+    def _init_engines(self):
+        """初始化 6 个聚焦引擎 (Phase 6)"""
+        try:
+            from app.engine import (
+                ExitStateEngine, CooldownManager,
+                MarketDataStore, IndicatorCache, FutuBridge
+            )
+
+            # Phase 6: 读取配置开关
+            try:
+                from config.config_center import get_config_center as _gcc
+                self._exit_delegation_enabled = _gcc().get('engine.exit_delegation', False)
+            except Exception:
+                self._exit_delegation_enabled = False
+
+            # FutuBridge: SDK 连接管理
+            self._futu_bridge = FutuBridge(
+                opend_host=config.OPEND_HOST,
+                opend_port=config.OPEND_PORT,
+                subscribe_types=_gcc_dsub().get('strategy.subscribe_types', ["QUOTE", "K_1M", "K_5M", "K_15M"]),
+                heartbeat_timeout=180,
+            )
+
+            # MarketDataStore: 行情数据 CQRS
+            self._market_data_store = MarketDataStore(
+                kline_maxlen=200,
+                mtf_warmup_seconds=300,
+            )
+
+            # ExitStateEngine: 止损/止盈/闪崩/追踪
+            self._exit_engine = ExitStateEngine(
+                trade_executor=self.trade_executor,
+                position_manager=self.position_manager,
+                notifier=self.notifier,
+                consensus_engine=None,  # 稍后注入
+            )
+
+            # CooldownManager: 信号/止损/标的冷却
+            self._cooldown_manager = CooldownManager()
+
+            # IndicatorCache: ADX/ATR/峰值计算
+            self._indicator_cache = IndicatorCache(
+                market_data_store=self._market_data_store,
+                consensus_engine=None,  # 稍后注入
+                adx_period=ADX_PERIOD,
+            )
+
+            # 注入依赖
+            self._futu_bridge.set_market_data_store(self._market_data_store)
+
+            logger.info(
+                f"[DataSubscriber] 6 个聚焦引擎已初始化: "
+                f"FutuBridge, MarketDataStore, ExitStateEngine, "
+                f"CooldownManager, IndicatorCache "
+                f"| exit_delegation={self._exit_delegation_enabled} "
+                f"| flash_exit_delegation={self._exit_engine is not None}"
+            )
+
+        except Exception as e:
+            logger.warning(f"[DataSubscriber] 引擎初始化失败 (回退到原始模式): {e}")
+            self._futu_bridge = None
+            self._market_data_store = None
+            self._exit_engine = None
+            self._cooldown_manager = None
+            self._indicator_cache = None
+
+        # Phase 10A: 初始化 ExitExecutor 服务
+        try:
+            from app.services.exit_executor import ExitExecutor
+            self._exit_executor = ExitExecutor(
+                position_manager=self.position_manager,
+                trade_executor=self.trade_executor,
+                notifier=self.notifier,
+                consensus_engine=self._consensus,
+                scenario_cache=getattr(self, '_scenario_cache', {}),
+            )
+            logger.info("[DataSubscriber] ExitExecutor 服务已初始化")
+        except Exception as e:
+            logger.warning(f"[DataSubscriber] ExitExecutor 初始化失败: {e}")
+            self._exit_executor = None
+        # Phase 10B: 初始化 ConsensusExecutor 服务
+        try:
+            from app.services.consensus_executor import ConsensusExecutor
+            self._consensus_executor = ConsensusExecutor(
+                trade_executor=self.trade_executor,
+                notifier=self.notifier,
+                position_manager=self.position_manager,
+                signal_tracker=signal_tracker,
+                evaluator=get_evaluator(),
+                circuit_breaker=self.circuit_breaker,
+                adaptive_weight_manager=self._adaptive_weight_manager,
+                consensus_engine=self._consensus,
+                scenario_cache=getattr(self, '_scenario_cache', {}),
+            )
+            logger.info("[DataSubscriber] ConsensusExecutor 服务已初始化")
+        except Exception as e:
+            logger.warning(f"[DataSubscriber] ConsensusExecutor 初始化失败：{e}")
+            self._consensus_executor = None
+
+        # Phase 15: 初始化 KlineExitChecker 服务
+        try:
+            from app.services.kline_exit_checker import KlineExitChecker
+            self._kline_exit_checker = KlineExitChecker(
+                position_manager=self.position_manager,
+                exit_executor=self._exit_executor,
+                consensus_engine=self._consensus,
+                peak_price_cache=self._peak_price_cache,
+                trailing_stop_cache=self._trailing_stop_cache,
+                soft_stop_warnings=self.soft_stop_warnings,
+                kline_buffers=self._kline_buffers,
+                get_atr_fn=self._get_atr,
+            )
+            logger.info("[DataSubscriber] KlineExitChecker 服务已初始化")
+        except Exception as e:
+            logger.warning(f"[DataSubscriber] KlineExitChecker 初始化失败：{e}")
+            self._kline_exit_checker = None
+
+        # Phase 16: 初始化 SubscriptionManager 服务
+        try:
+            from app.services.subscription_manager import SubscriptionManager
+            import threading
+            self._subscription_manager = SubscriptionManager(
+                quote_ctx=self._quote_ctx,
+                config=config,
+                market_data_store=self._market_data_store if hasattr(self, '_market_data_store') else None,
+                kline_buffers_by_period=self._kline_buffers_by_period,
+                kline_buffers=self._kline_buffers,
+                update_multi_timeframe_trend_fn=self._update_multi_timeframe_trend,
+                get_subscribe_codes_fn=lambda: self._get_subscribe_codes(),
+                is_trading_hours_fn=lambda: self._is_trading_hours(),
+            )
+            self._subscription_manager._reconnect_lock = threading.Lock()
+            logger.info("[DataSubscriber] SubscriptionManager 服务已初始化")
+        except Exception as e:
+            logger.warning(f"[DataSubscriber] SubscriptionManager 初始化失败：{e}")
+            self._subscription_manager = None
+
+    # =========================================================================
+    #  Phase 6: 引擎委托属性 (向后兼容，逐步迁移)
+    #  这些属性允许现有代码通过 self._xxx 访问引擎状态，同时保持向后兼容
+    # =========================================================================
 
     def _get_quote_ctx(self):
         if self._quote_ctx is None:
@@ -658,13 +815,17 @@ class DataSubscriber:
         now = datetime.now()
         current_time = now.hour * 60 + now.minute
 
-        # 排除开盘冲击期（09:30 - 09:45）
+        # 排除开盘冲击期（09:30 - 09:45）— SSOT: strategy.time_gate.open_buffer
         open_buffer_start = 9 * 60 + 30   # 09:30
         open_buffer_end   = 9 * 60 + 45   # 09:45
 
-        # 排除收盘撮合期（15:45 - 16:00）
-        close_buffer_start = 15 * 60 + 45  # 15:45
-        close_buffer_end   = 16 * 60       # 16:00
+        # 排除收盘撮合期（15:45 - 16:00）— SSOT: strategy.time_gate.close_buffer
+        from config.config_center import get_config_center as _gcc_cb
+        _cb_cfg = _gcc_cb().get('strategy.time_gate', {})
+        _cb_s = _cb_cfg.get('close_buffer_start', '15:45')
+        _cb_e = _cb_cfg.get('close_buffer_end', '16:00')
+        close_buffer_start = int(_cb_s.split(':')[0]) * 60 + int(_cb_s.split(':')[1])
+        close_buffer_end = int(_cb_e.split(':')[0]) * 60 + int(_cb_e.split(':')[1])
 
         if open_buffer_start <= current_time < open_buffer_end:
             return False  # 开盘波动期，信号噪音大
@@ -1117,10 +1278,20 @@ class DataSubscriber:
 
         # 初始化/获取 Pipeline（首次调用时注入 subscriber 依赖）
         try:
-            pipeline = init_risk_pipeline(deps={"subscriber": self})
+            from app.core.subscriber_adapter import DataSubscriberAdapter
+            _adapter = DataSubscriberAdapter(self)
+            pipeline = init_risk_pipeline(deps={
+                "trading_hours": _adapter,       # ITradingHoursProvider
+                "exit_state": _adapter,          # IExitStateProvider
+                "cooldown": _adapter,            # ICooldownProvider
+                "circuit_breaker": _adapter,     # ICircuitBreakerProvider
+                "quality": _adapter,             # IQualityProvider
+                "market_data": _adapter,         # IMarketDataProvider
+                "position_query": _adapter,      # IPositionQueryProvider
+            })
         except Exception:
             from app.risk.risk_pipeline import get_risk_pipeline
-            pipeline = get_risk_pipeline(deps={"subscriber": self})
+            pipeline = get_risk_pipeline(deps={})
 
         # 执行 Pipeline
         pipeline_result = pipeline.evaluate(ctx)
@@ -1173,6 +1344,7 @@ class DataSubscriber:
 
         # 冷启动宽限期检查
         in_warmup = time.time() < self._mtf_warmup_until
+        mtf_penalty = 1.0  # 默认无惩罚
         if in_warmup:
             warmup_remaining = int(self._mtf_warmup_until - time.time())
             logger.info(
@@ -1180,15 +1352,19 @@ class DataSubscriber:
                 f"对齐度={mtf_alignment:.0%}, 可用周期={len(updated)}/7, "
                 f"跳过MTF拒绝"
             )
+            # Fix A: 宽限期内真正跳过拒绝
+        elif mtf_alignment < 0.10:
+            # Fix B: 硬拒绝 → 软拦截 (降权而非 return)
+            mtf_penalty = max(0.3, mtf_alignment / 0.10)  # 0%→0.3x, 5%→0.8x, 9%→0.9x
+            logger.info(
+                f"[MTF降权] {code} 多周期对齐度={mtf_alignment:.0%} < 0.10, "
+                f"信号降权至 {mtf_penalty:.0%}"
+            )
         elif mtf_alignment < effective_threshold:
             logger.info(
-                f"[MTF拒绝] {code} 多周期对齐度={mtf_alignment:.0%} < "
-                f"有效阈值={effective_threshold:.0%} (可用{len(updated)}/7周期), 拒绝信号"
+                f"[MTF软放行] {code} 多周期对齐度={mtf_alignment:.0%} < "
+                f"有效阈值={effective_threshold:.0%} (软拦截: 记录但不拒绝)"
             )
-            signal_tracker.record_execution(
-                signal_id, executed=False, reject_reason='mtf_unaligned'
-            )
-            return
         elif len(updated) < 7:
             logger.info(
                 f"[MTF部分] {code} 对齐度={mtf_alignment:.0%} >= "
@@ -1210,7 +1386,11 @@ class DataSubscriber:
             for v in result.votes
         )
 
-        confidence = result.confidence
+        confidence = result.confidence * mtf_penalty
+        if mtf_penalty < 1.0:
+            logger.info(
+                f"[MTF降权生效] {code} 置信度 {result.confidence:.0%} → {confidence:.0%} (惩罚={mtf_penalty:.0%})"
+            )
 
         consensus_signal = Signal(
             code=code,
@@ -1223,16 +1403,20 @@ class DataSubscriber:
             extra={
                 "consensus": True,
                 "score": result.score,
+                "final_score": getattr(result, 'final_score', result.score),
                 "threshold": result.threshold,
                 "market_regime": result.market_regime,
                 "adx": result.adx_value,
+                "quality_boost": getattr(result, 'quality_score', 1.0),
+                "timeliness": getattr(result, 'timeliness_factor', 1.0),
+                "llm_signal_impact_factor": getattr(result, 'llm_signal_impact_factor', 1.0),
                 "agree_count": n_agree,
                 "total_count": n_agree + len(result.oppose_strategies),
                 "strategies": result.agree_strategies,
                 "oppose": result.oppose_strategies,
                 "weights": result.weight_details,
                 "confidence": round(confidence, 2),
-                "quality_boost": quality_boost,
+                "mtf_penalty": round(mtf_penalty, 2),
             },
         )
 
@@ -1334,6 +1518,18 @@ class DataSubscriber:
             self._last_global_open_ts = _now_ts
 
         # === 修复结束 ===
+
+        # Phase 13: 委托给 ConsensusExecutor 服务 (已提取并测试通过)
+        if self._consensus_executor is not None:
+            return self._consensus_executor.execute_consensus(
+                code=code,
+                consensus_signal=consensus_signal,
+                result=result,
+                position=position,
+                trade_type=trade_type,
+                signal_id=signal_id,
+                strategies_str=strategies_str,
+            )
 
         # 3. 执行交易
 
@@ -1574,13 +1770,16 @@ class DataSubscriber:
     # ----------------------------------------------------------
     #  顺势加仓逻辑
     # ----------------------------------------------------------
-    # 加仓触发条件（全部满足才执行）
-    _ADD_SCORE_MIN = 1.5          # 最低共识得分
-    _ADD_CONFIDENCE_MIN = 0.70    # 最低置信度
-    _ADD_PRICE_MIN_PCT = 0.005    # 价格须高于持仓均价至少 0.5%（顺势）
-    _ADD_HOLD_MIN_MINUTES = 15    # 持仓时间须 >= 15 分钟
-    _ADD_MAX_TIMES_PER_DAY = 1    # 每日每品种最多加仓 1 次
-    _ADD_QTY_RATIO = 0.5          # 加仓量 = 初始信号量 × 50%
+    # 2026-05-17: 加仓参数全部从 unified_config.yaml 加载 (strategy.add_position.*)
+    # 旧硬编码已删除，防止 SSOT 漂移
+
+    def _get_add_position_cfg(self) -> dict:
+        """从 SSOT 加载加仓参数"""
+        from config.config_center import get_config_center as _gcc_ap
+        return _gcc_ap().get('strategy.add_position', {
+            'min_score': 1.5, 'min_confidence': 0.70, 'min_price_pct': 0.005,
+            'min_hold_minutes': 15, 'max_times_per_day': 1, 'qty_ratio': 0.5,
+        })
 
     def _try_add_position(self, code: str, position, result, consensus_signal, signal_id: str) -> bool:
         """
@@ -1594,22 +1793,23 @@ class DataSubscriber:
         5. 今日加仓次数 < _ADD_MAX_TIMES_PER_DAY (1)
         """
         try:
+            cfg = self._get_add_position_cfg()
             # 1. 得分检查
-            if result.score < self._ADD_SCORE_MIN:
-                logger.debug(f"[加仓拒绝] {code} 得分={result.score:.2f} < {self._ADD_SCORE_MIN}")
+            if result.score < cfg['min_score']:
+                logger.debug(f"[加仓拒绝] {code} 得分={result.score:.2f} < {cfg['min_score']}")
                 return False
 
             # 2. 置信度检查
-            if result.confidence < self._ADD_CONFIDENCE_MIN:
-                logger.debug(f"[加仓拒绝] {code} 置信度={result.confidence:.2f} < {self._ADD_CONFIDENCE_MIN}")
+            if result.confidence < cfg['min_confidence']:
+                logger.debug(f"[加仓拒绝] {code} 置信度={result.confidence:.2f} < {cfg['min_confidence']}")
                 return False
 
             # 3. 价格须高于均价（顺势）
             entry_price = position.entry_price
-            if entry_price > 0 and result.price < entry_price * (1 + self._ADD_PRICE_MIN_PCT):
+            if entry_price > 0 and result.price < entry_price * (1 + cfg['min_price_pct']):
                 logger.debug(
-                    f"[加仓拒绝] {code} 当前价={result.price:.3f} 未超过均价*{1+self._ADD_PRICE_MIN_PCT}="
-                    f"{entry_price * (1 + self._ADD_PRICE_MIN_PCT):.3f}"
+                    f"[加仓拒绝] {code} 当前价={result.price:.3f} 未超过均价*{1+cfg['min_price_pct']}="
+                    f"{entry_price * (1 + cfg['min_price_pct']):.3f}"
                 )
                 return False
 
@@ -1619,23 +1819,23 @@ class DataSubscriber:
             if entry_time_str:
                 et = _dt.fromisoformat(entry_time_str) if isinstance(entry_time_str, str) else entry_time_str
                 hold_minutes = (_dt.now() - et).total_seconds() / 60
-                if hold_minutes < self._ADD_HOLD_MIN_MINUTES:
+                if hold_minutes < cfg['min_hold_minutes']:
                     logger.debug(
-                        f"[加仓拒绝] {code} 持仓仅 {hold_minutes:.1f}min < {self._ADD_HOLD_MIN_MINUTES}min"
+                        f"[加仓拒绝] {code} 持仓仅 {hold_minutes:.1f}min < {cfg['min_hold_minutes']}min"
                     )
                     return False
 
             # 5. 今日加仓次数检查
             today_add_count = self.position_manager.get_today_add_count(code)
-            if today_add_count >= self._ADD_MAX_TIMES_PER_DAY:
+            if today_add_count >= cfg['max_times_per_day']:
                 logger.info(
                     f"[加仓拒绝] {code} 今日已加仓 {today_add_count} 次，"
-                    f"上限={self._ADD_MAX_TIMES_PER_DAY}"
+                    f"上限={cfg['max_times_per_day']}"
                 )
                 return False
 
             # 6. 计算加仓数量（原信号量的50%，最小100股）
-            add_qty = max(100, int(consensus_signal.quantity * self._ADD_QTY_RATIO))
+            add_qty = max(100, int(consensus_signal.quantity * cfg['qty_ratio']))
 
             # 7. 构造加仓信号（注入 is_add_position 标记供 executor 识别）
             add_signal = dataclasses.replace(
@@ -1702,24 +1902,40 @@ class DataSubscriber:
         """
         执行止损平仓 (2026-03-23 优化: 确保整手数量)
         2026-03-27 修复: 添加止损冷却机制，防止频繁触发
-        2026-03-27 修复: 交易密码未解锁时跳过止损执行
-        
-        Args:
-            code: 股票代码
-            current_price: 当前价格
+        2026-05-15 优化: 冷却时间从 5s 延长到 30s，减少重复触发
+        2026-05-15 修复: 修复 _get_lot_size() 不存在导致 AttributeError 的 bug
+        2026-05-15 优化: 统一冷却锁管理，消除双路径竞争
+
+        Phase 6: 委托给 ExitStateEngine (配置驱动，默认关闭)
         """
+        # Phase 6: 配置驱动委托给引擎
+        if getattr(self, '_exit_delegation_enabled', False) and self._exit_engine is not None:
+            position = self.position_manager.get_position(code)
+            if position is not None:
+                return self._exit_engine.execute_stop_loss(
+                    code=code,
+                    current_price=current_price,
+                    position=position,
+                    signal=None,
+                    trade_type="STOP_LOSS",
+                )
+        # Phase 10A: 委托给 ExitExecutor 服务
+        if self._exit_executor is not None:
+            return self._exit_executor.execute_stop_loss(code, current_price)
         # 止损冷却递增：按失败次数增加冷却时间
         if not hasattr(self, '_stop_loss_fail_count'):
             self._stop_loss_fail_count = {}
         
         fail_count = self._stop_loss_fail_count.get(code, 0)
-        COOLDOWN_SCHEDULE = [5, 15, 30, 60, 60]  # 第1次5s, 第2次15s, 第3次30s, 第4次+60s
+        # 2026-05-16: 迁移至 SSOT (unified_config.yaml → risk_limits.stop_loss_cooldown_schedule)
+        from config.config_center import get_config_center as _gcc_cooldown
+        COOLDOWN_SCHEDULE = _gcc_cooldown().get('risk_limits.stop_loss_cooldown_schedule', [30, 60, 120, 300, 300])
         cooldown_seconds = COOLDOWN_SCHEDULE[min(fail_count, len(COOLDOWN_SCHEDULE) - 1)]
         
         now = time.time()
         last_stop_time = self._stop_loss_cooldown.get(code, 0)
         if now - last_stop_time < cooldown_seconds:
-            logger.debug(
+            logger.info(
                 f"[止损冷却] {code} 冷却中，距离上次止损 {now - last_stop_time:.1f}s < {cooldown_seconds}s (失败次数={fail_count})"
             )
             return  # 仍在冷却中
@@ -1728,20 +1944,32 @@ class DataSubscriber:
         bad_orders = getattr(self, '_bad_orders', {})
         if code in bad_orders:
             bo = bad_orders[code]
-            logger.debug(
+            logger.warning(
                 f"[止损跳过] {code} 已标记为 BAD_ORDER (失败{bo['fail_count']}次: {bo['error'][:60]})"
             )
             return
         
-        # 设置冷却时间戳（无论成功与否，都先记录，防止频繁触发）
-        self._stop_loss_cooldown[code] = now
+        # P0 修复 (2026-05-19): 用线程安全的原子锁保护 _stop_loss_inflight
+        # 根因: 旧代码 check-then-act 存在竞态窗口，两个线程可能同时通过检查
+        if not hasattr(self, '_stop_loss_inflight'):
+            self._stop_loss_inflight = {}
+        if not hasattr(self, '_stop_loss_inflight_lock'):
+            self._stop_loss_inflight_lock = threading.Lock()
+
+        with self._stop_loss_inflight_lock:
+            if self._stop_loss_inflight.get(code, False):
+                logger.debug(f"[止损跳过] {code} 已有止损线程正在执行，跳过重复触发")
+                return
+            self._stop_loss_inflight[code] = True
         
         position = self.position_manager.get_position(code)
         if position is None:
             return
         
         # 获取每手股数 (2026-05-07 P0 修复: 动态获取而非配置默认值)
-        lot_size = self._get_lot_size(code)
+        # P0 修复 (2026-05-15): 修复 _get_lot_size() 不存在导致 AttributeError 的 bug
+        from app.config import DEFAULT_ORDER_QTY_BY_CODE, HK_LOT_SIZES
+        lot_size = HK_LOT_SIZES.get(code) or DEFAULT_ORDER_QTY_BY_CODE.get(code, 100)
         
         # 碎股处理: 如果持仓不足一手，以实际持仓数量平仓 (2026-05-07 P0 修复)
         close_qty = position.quantity
@@ -1756,6 +1984,11 @@ class DataSubscriber:
             logger.warning(
                 f"[止损数量调整] {code} 原数量={position.quantity}，调整为整手={close_qty}"
             )
+        
+        logger.info(
+            f"[止损执行] {code} 持仓={position.quantity}股 | 每手={lot_size}股 | "
+            f"平仓={close_qty}股 | 入场价={position.entry_price} | 当前价={current_price}"
+        )
         
         # 创建止损信号
         from app.strategy.base import Signal, SignalAction
@@ -1788,14 +2021,15 @@ class DataSubscriber:
                 ps = get_position_sync()
                 futu_pos = ps._futu_positions.get(code)
                 if futu_pos is None or futu_pos.quantity <= 0:
-                    # Futu 无此持仓 → 本地是幽灵仓，直接清理，不尝试下单
+                    # Futu 无此持仓 → 可能是幽灵仓，也可能是刚卖出尚未同步
+                    # P1 修复 (2026-05-16): 先用 current_price 平仓保留 P&L，避免 entry=exit 丢失盈亏
                     logger.warning(
                         f"[止损跳过] {code} Futu 无实际持仓 (本地有 {close_qty}股)，"
-                        f"判定为幽灵仓，直接清理不执行下单"
+                        f"以当前价 {current_price:.2f} 平仓 (防 P&L 丢失)"
                     )
                     try:
-                        self.position_manager.close_position(code, position.entry_price, datetime.now().isoformat())
-                        logger.info(f"[持仓修复] {code} 幽灵仓已清理")
+                        self.position_manager.close_position(code, current_price, datetime.now().isoformat())
+                        logger.info(f"[持仓修复] {code} 已平仓 (P&L 已记录)")
                     except Exception as _e:
                         logger.error(f"[持仓修复] {code} 清理失败: {_e}")
                     self._stop_loss_fail_count.pop(code, None)
@@ -1808,6 +2042,8 @@ class DataSubscriber:
         
         # P0 修复 (2026-04-23): 止损执行放入后台线程，不阻塞 Worker
         # 避免 Futu API 慢响应/失败时阻塞整个行情处理管线
+        # 2026-05-17 P0: 用 in-flight 锁防止重复触发，冷却改为线程完成后设置
+        # 2026-05-19 P0: 已在上方原子锁中设置 inflight=True，此处直接启动线程
         threading.Thread(
             target=self._do_execute_stop_loss,
             args=(code, stop_loss_signal, 'CLOSE'),
@@ -1816,11 +2052,14 @@ class DataSubscriber:
         ).start()
     
     def _do_execute_stop_loss(self, code: str, signal, trade_type: str):
-        """在后台线程中执行止损平仓 (P0 修复: 不阻塞 Worker)"""
+        """在后台线程中执行止损平仓 (P0 修复: 不阻塞 Worker)
+        2026-05-17 P0: 完成后清除 in-flight 锁，防止线程泄漏
+        """
         try:
+            # 确保 position 检查也在 try 中，失败时也能清理 inflight
             position = self.position_manager.get_position(code)
             if position is None:
-                logger.debug(f"[止损跳过] {code} 持仓已不存在")
+                logger.warning(f"[止损跳过] {code} 线程启动后持仓已被清除")
                 return
             
             trade_result = self.trade_executor.execute(signal, trade_type)
@@ -1831,10 +2070,12 @@ class DataSubscriber:
                     f"[止损成功] {code} | 入场价={position.entry_price} | "
                     f"出场价={current_price} | 盈亏={trade_result.pnl:.2f}"
                 )
+                # 清理相关状态（成功执行后自动清理，防止残留）
                 self._stop_loss_fail_count.pop(code, None)
                 self._stop_loss_cooldown.pop(code, None)
                 self._trailing_stop_cache.pop(code, None)
                 self._peak_price_cache.pop(code, None)
+                logger.debug(f"[状态清理] {code} 止损相关缓存已清理")
                 try:
                     current_scenario = None
                     if hasattr(self, '_scenario_cache') and code in self._scenario_cache:
@@ -1905,18 +2146,50 @@ class DataSubscriber:
                         pass
         except Exception as e:
             logger.error(f"[止损后台执行异常] {code}: {e}")
+        finally:
+            # 2026-05-17 P0: 无论成功/失败/异常，都清除 in-flight 锁
+            # 2026-05-19 P0: 使用锁保护清除操作 + 设置冷却时间戳
+            if hasattr(self, '_stop_loss_inflight_lock'):
+                with self._stop_loss_inflight_lock:
+                    inflight = getattr(self, '_stop_loss_inflight', {})
+                    inflight.pop(code, None)
+            else:
+                inflight = getattr(self, '_stop_loss_inflight', {})
+                inflight.pop(code, None)
+
+            # 2026-05-19: 修复 _stop_loss_cooldown 死代码 — 设置冷却时间戳防止频繁重试
+            self._stop_loss_cooldown[code] = time.time()
 
     def _execute_take_profit(self, code: str, current_price: float):
         """
         执行止盈平仓 (2026-03-23 优化: 确保整手数量)
-        
+
         Args:
             code: 股票代码
             current_price: 当前价格
+
+        Phase 6: 委托给 ExitStateEngine (配置驱动，默认关闭)
         """
+        # Phase 6: 配置驱动委托给引擎
+        if getattr(self, '_exit_delegation_enabled', False) and self._exit_engine is not None:
+            position = self.position_manager.get_position(code)
+            if position is not None:
+                return self._exit_engine.execute_take_profit(
+                    code=code,
+                    current_price=current_price,
+                    position=position,
+                    signal=None,
+                )
+        # Phase 14: 委托给 ExitExecutor 服务
+        if self._exit_executor is not None:
+            return self._exit_executor.execute_take_profit(code, current_price)
         position = self.position_manager.get_position(code)
         if position is None:
             return
+
+        # 2026-05-19: 修复 _trailing_exit_time 死代码 — 设置触发时间戳供冷却检查使用
+        # TrailingCooldownCheck 依赖此时间戳防止短期内重新开仓
+        self._trailing_exit_time[code] = time.time()
         
         # 获取每手股数配置
         from app.config import DEFAULT_ORDER_QTY_BY_CODE
@@ -1959,12 +2232,15 @@ class DataSubscriber:
                 ps = get_position_sync()
                 futu_pos = ps._futu_positions.get(code)
                 if futu_pos is None or futu_pos.quantity <= 0:
+                    # Futu 无此持仓 → 可能是幽灵仓，也可能是刚卖出尚未同步
+                    # P1 修复 (2026-05-16): 先用 current_price 平仓保留 P&L
                     logger.warning(
-                        f"[止盈跳过] {code} Futu 无实际持仓，判定为幽灵仓，直接清理"
+                        f"[止盈跳过] {code} Futu 无实际持仓，"
+                        f"以当前价 {current_price:.2f} 平仓 (防 P&L 丢失)"
                     )
                     try:
-                        position_manager.close_position(code, position.entry_price, datetime.now().isoformat())
-                        logger.info(f"[持仓修复] {code} 幽灵仓已清理")
+                        position_manager.close_position(code, current_price, datetime.now().isoformat())
+                        logger.info(f"[持仓修复] {code} 已平仓 (P&L 已记录)")
                     except Exception as _e:
                         logger.error(f"[持仓修复] {code} 清理失败: {_e}")
                     return
@@ -2081,6 +2357,9 @@ class DataSubscriber:
             current_price: 当前价格
             ratio: 平仓比例 (0.6 = 60% = 追踪止盈场景)
         """
+        # Phase 14: 委托给 ExitExecutor 服务
+        if self._exit_executor is not None:
+            return self._exit_executor.execute_partial_take_profit(code, current_price, ratio)
         position = self.position_manager.get_position(code)
         if position is None:
             return
@@ -2404,13 +2683,23 @@ class DataSubscriber:
         # =================================================================
         #  Flash Exit — Tick 级闪崩防御 (P1 2026-05-06)
         #  在 Push 回调中检测 60s 内反向波动，优先级高于 K_1M 粒度的退出检查
+        #  Phase 6: 委托给 ExitStateEngine (配置驱动)
         # =================================================================
         if pos_now and self._flash_exit_enabled:
-            self._check_flash_exit(
-                code=code,
-                current_price=current_price,
-                position=pos_now,
-            )
+            if self._exit_engine is not None:
+                # 使用引擎版本
+                self._exit_engine.check_flash_exit(
+                    code=code,
+                    current_price=current_price,
+                    position=pos_now,
+                )
+            else:
+                # 回退到原始实现
+                self._check_flash_exit(
+                    code=code,
+                    current_price=current_price,
+                    position=pos_now,
+                )
 
         # 策略计算 — 只调用 on_quote 策略
         for strategy in self.strategies:
@@ -2428,6 +2717,10 @@ class DataSubscriber:
         在 Push 回调 (毫秒级) 中检测，弥补 K_1M 粒度无法覆盖的闪崩缺口。
         参考美股 exit_policy.yaml flash_exit 规则。
         """
+        # Phase 14: 委托给 ExitExecutor 服务
+        if self._exit_executor is not None:
+            return self._exit_executor.check_flash_exit(
+                code, current_price, position, self._get_atr)
         if not self._flash_exit_enabled:
             return
 
@@ -2524,44 +2817,29 @@ class DataSubscriber:
         # partial_ratio = self.position_manager.check_partial_take_profit(code, current_price)
         # if partial_ratio > 0: ...
 
-        # 硬止损 (保留作为最后一道防线)
-        # 注意: check_stop_loss 会检查 DB 中的 stop_loss 值，
-        # 如果状态机更新了 stop_loss (如保本上移)，这里也会生效。
+        # Phase 15: 委托给 KlineExitChecker 服务
+        if self._kline_exit_checker is not None:
+            if self._kline_exit_checker.check_exits(
+                code=code,
+                current_price=current_price,
+                k_type=k_type,
+                execute_stop_loss_fn=self._execute_stop_loss,
+                execute_take_profit_fn=self._execute_take_profit,
+                execute_partial_take_profit_fn=self._execute_partial_take_profit,
+            ):
+                return
+
+        # =================================================================
+        # P0 修复 (2026-05-19): 删除重复的 inline 止损/止盈逻辑
+        # 根因: KlineExitChecker (L2810-2819) 已全权处理止损/止盈，
+        #       但 L2821-2878 仍然执行 inline 硬止损和止盈，导致多退出系统并发冲突
+        # 影响: 同一持仓可能被多个系统同时触发退出，止损/止盈价格不一致，日志混乱
+        # 修复: 删除 inline 逻辑，KlineExitChecker 成为唯一退出执行入口
+        # =================================================================
+
+        # 软止损预警 (保留，仅记录日志，不执行交易)
         if current_price > 0:
             pos_now = self.position_manager.get_position(code)
-            if pos_now and self.position_manager.check_stop_loss(code, current_price):
-                # Phase 1: 硬风险白名单机制 (同上)
-                if pos_now and pos_now.entry_time:
-                    try:
-                        from datetime import datetime
-                        entry_dt = datetime.fromisoformat(pos_now.entry_time.replace(' ', 'T'))
-                        elapsed = (datetime.now() - entry_dt).total_seconds()
-                        
-                        is_hard_risk = False
-                        try:
-                            from app.risk.dynamic_exit_manager import dynamic_exit_manager as _dem_hr
-                            struct_stop = abs(_dem_hr.get_stop_loss())
-                            pnl_rate = (current_price - pos_now.entry_price) / pos_now.entry_price
-                            if pnl_rate <= -struct_stop * 0.8:
-                                is_hard_risk = True
-                        except: pass
-
-                        if elapsed < 60 and not is_hard_risk:
-                            logger.warning(f"[止损跳过] {code} 开仓仅 {elapsed:.0f} 秒，跳过非硬风险")
-                        else:
-                            logger.info(f"[止损触发] {code} 当前价={current_price} {'(硬风险)' if is_hard_risk else ''}")
-                            self._execute_stop_loss(code, current_price)
-                            return
-                    except Exception:
-                        logger.info(f"[止损触发] {code} 当前价={current_price}")
-                        self._execute_stop_loss(code, current_price)
-                        return
-                else:
-                    logger.info(f"[止损触发] {code} 当前价={current_price}")
-                    self._execute_stop_loss(code, current_price)
-                    return
-
-            # 软止损预警
             if pos_now and pos_now.stop_loss and pos_now.stop_loss > 0:
                 pnl_rate = (current_price - pos_now.entry_price) / pos_now.entry_price
                 stop_rate = (pos_now.stop_loss - pos_now.entry_price) / pos_now.entry_price
@@ -2576,13 +2854,7 @@ class DataSubscriber:
                         )
                         self.soft_stop_warnings[code] = time.time()
 
-            # 止盈
-            if self.position_manager.check_take_profit(code, current_price):
-                logger.info(f"[止盈触发] {code} 当前价={current_price}")
-                self._execute_take_profit(code, current_price)
-                return
-
-            # P0 2026-05-04: 动态退出管理器 (从 _process_quote_data 迁移至此)
+        # P0 2026-05-04: 动态退出管理器 (从 _process_quote_data 迁移至此)
             # 每根 K 线 (1分钟粒度) 检查一次，使用 quote worker 维护的 peak_price_cache
             if k_type == "K_1M" and pos_now:
                 try:
@@ -2615,16 +2887,70 @@ class DataSubscriber:
                             f"{exit_decision.reason} | ratio={exit_decision.close_ratio:.0%}"
                         )
                         if exit_decision.close_ratio < 1.0:
+                            logger.info(f"[组合退出-部分止盈] {code} 平仓比例={exit_decision.close_ratio:.0%}")
                             self._execute_partial_take_profit(code, current_price, exit_decision.close_ratio)
                         elif exit_decision.is_stop_loss:
                             self._execute_stop_loss(code, current_price)
                         else:
+                            logger.info(f"[组合退出-止盈] {code}")
                             self._execute_take_profit(code, current_price)
                         self._trailing_stop_cache.pop(code, None)
                         self._peak_price_cache.pop(code, None)
                         return
                 except Exception as _de:
                     logger.debug(f"[动态退出] {code} 检查异常: {_de}")
+
+                # ── P1 (2026-05-17): HKExitAggregator 灰度执行 ──
+                # 从双跑模式升级为 50% 灰度执行
+                # 50% 仓位用新退出系统 (ATR动态止损)，50% 用旧系统 (固定百分比)
+                # 目标: 对比数据后决定是否全面切换
+                try:
+                    from app.risk.hk_exit_aggregator import get_hk_exit_aggregator
+                    aggregator = get_hk_exit_aggregator()
+
+                    exit_result = aggregator.evaluate(
+                        code=code,
+                        entry_price=pos_now.entry_price,
+                        current_price=current_price,
+                        peak_price=self._peak_price_cache.get(code, current_price),
+                        atr_value=self._get_atr(code),
+                        direction=pos_now.action,
+                        config={},  # 使用规则默认值
+                    )
+
+                    if exit_result.should_exit:
+                        # 灰度判断: 模拟盘 50% 概率用新退出系统
+                        _use_new_exit = False
+                        try:
+                            from config.config_center import get_config_center as _gcc_gray
+                            _gray_ratio = _gcc_gray().get('base.simulation_mode.exit_gray_ratio', 0.5)
+                            import random
+                            _use_new_exit = random.random() < _gray_ratio
+                        except Exception:
+                            _use_new_exit = False
+
+                        if _use_new_exit:
+                            # 新退出系统执行 — 直接调用 _execute_stop_loss (HKExitAggregator 本质是动态止损)
+                            logger.info(
+                                f"[HKAggregator·灰度执行] {code} rule={exit_result.rule_name} "
+                                f"reason={exit_result.reason} price={exit_result.final_stop_price:.2f} "
+                                f"ratio={exit_result.close_ratio:.0%}"
+                            )
+                            try:
+                                self._execute_stop_loss(code, current_price)
+                                self._trailing_stop_cache.pop(code, None)
+                                self._peak_price_cache.pop(code, None)
+                                return
+                            except Exception as _exec_e:
+                                logger.warning(f"[HKAggregator·灰度执行] {code} 执行失败: {_exec_e}，回退旧系统")
+
+                        # 旧系统或灰度未命中 → 仅记录对比日志
+                        logger.debug(
+                            f"[HKAggregator·双跑] {code} rule={exit_result.rule_name} "
+                            f"gray={'命中' if _use_new_exit else '未命中'} (记录对比)"
+                        )
+                except Exception as _agg_e:
+                    logger.debug(f"[HKAggregator·双跑] {code} 检查异常: {_agg_e}")
 
             # P6 fix: 时间止损 + 放量异常退出 (从 _process_quote_data 迁移)
             if k_type == "K_1M" and pos_now:
@@ -2649,7 +2975,9 @@ class DataSubscriber:
                                 self._trailing_stop_cache.pop(code, None)
                                 self._peak_price_cache.pop(code, None)
                                 return
-                except Exception: pass
+                except Exception as _ts_e:
+                    # 2026-05-19: 时间止损异常必须记录，防止仓位保护失效
+                    logger.warning(f"[时间止损] {code} 检查异常: {_ts_e}")
 
                 # 放量异常退出
                 if self._kline_buffers[code].size >= 25:
@@ -2664,7 +2992,9 @@ class DataSubscriber:
                             if current_vol > avg_vol_20 * 3.0 and pnl_pct > 0.03:
                                 logger.info(f"[放量止盈] {code} 量比={current_vol/avg_vol_20:.1f}x, 部分止盈50%")
                                 self._execute_partial_take_profit(code, current_price, 0.5)
-                    except Exception: pass
+                    except Exception as _vol_e:
+                        # 2026-05-19: 放量止盈异常记录，避免静默失败
+                        logger.warning(f"[放量止盈] {code} 检查异常: {_vol_e}")
 
         # 更新 ADX
         self._update_adx(code, kline)
@@ -2731,10 +3061,16 @@ class DataSubscriber:
     def subscribe(self, codes=None):
         """
         行情订阅 - 2026-04-22 升级为动态池驱动
-        
+
         Args:
             codes: 可选，显式指定订阅列表。None 时从动态池获取。
         """
+        # Phase 16: SubscriptionManager 因 quote_ctx 延迟创建问题暂不委托
+        # quote_ctx 在 __init__ 时为 None，SubscriptionManager 捕获 None 后无法工作
+        # TODO: 待 SubscriptionManager 支持 lazy quote_ctx 后启用
+        # if self._subscription_manager is not None:
+        #     return self._subscription_manager.subscribe(codes)
+
         from futu import SubType
 
         ctx = self._get_quote_ctx()
@@ -2805,7 +3141,7 @@ class DataSubscriber:
         from datetime import datetime, timedelta
         from futu import KLType, SubType
         
-        watchlist = getattr(config, 'WATCH_LIST_HK', [])
+        watchlist = _gcc_dsub().get('strategy.watch_list_hk', [])
         if not watchlist:
             logger.warning("[预热] 无 Watchlist，跳过预热")
             return
@@ -2892,6 +3228,10 @@ class DataSubscriber:
         取消所有港股行情订阅 (2026-04-23 新增)
         用于港股收盘后释放富途 OpenD 槽位。
         """
+        # Phase 16: SubscriptionManager 因 quote_ctx 延迟创建问题暂不委托
+        # if self._subscription_manager is not None:
+        #     return self._subscription_manager.unsubscribe_all()
+
         from futu import SubType
 
         if not self._quote_ctx:
@@ -2904,7 +3244,7 @@ class DataSubscriber:
             codes = [c for c in codes if c.startswith("HK.")]
         except Exception as e:
             logger.warning(f"[动态订阅] 获取代码列表失败: {e}")
-            codes = getattr(config, 'WATCH_LIST_HK', [])
+            codes = _gcc_dsub().get('strategy.watch_list_hk', [])
 
         if not codes:
             logger.debug("[动态订阅] 无代码，无需退订")
@@ -3033,6 +3373,10 @@ class DataSubscriber:
             # 2. 现有连接不可用，关闭并重建
             logger.info("[重连] 现有连接不可用，开始重建新连接...")
         """
+        # Phase 16: SubscriptionManager 因 quote_ctx 延迟创建问题暂不委托
+        # if self._subscription_manager is not None:
+        #     return self._subscription_manager.reconnect()
+
         if not self._reconnect_lock.acquire(blocking=False):
             logger.warning("[重连] 已有重连任务进行中，跳过")
             return
@@ -3300,7 +3644,7 @@ class DataSubscriber:
             logger.warning(f"[动态池订阅] 获取失败: {e}，回退到静态 watchlist")
         
         # 空池回退: 使用配置中的静态 watchlist
-        fallback = getattr(config, 'WATCH_LIST_SUBSCRIBE', config.WATCH_LIST_HK)
+        fallback = _gcc_dsub().get('strategy.watch_list_subscribe', _gcc_dsub().get('strategy.watch_list_hk', []))
         logger.warning(f"[动态池订阅] 动态池为空，回退到静态 watchlist ({len(fallback)} 只)")
         return fallback
 
@@ -3406,7 +3750,9 @@ class DataSubscriber:
 
             # P0 修复: 自动清理超过 2 小时的 pending news_event 信号
             try:
-                ftseek_db = sqlite3.connect('/opt/ftseek/FTSeek/data/ftseek.db')
+                import os as _os
+                _data_dir = _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))), 'data')
+                ftseek_db = sqlite3.connect(_os.path.join(_data_dir, 'ftseek.db'))
                 ftseek_db.execute("""
                     UPDATE signals SET status = 'expired', expire_at = datetime('now')
                     WHERE strategy = 'news_event' AND status = 'pending'
@@ -3420,7 +3766,7 @@ class DataSubscriber:
             except Exception as e:
                 logger.debug(f"[信号清理] 过期清理失败: {e}")
 
-            db_path = '/opt/ftseek/FTSeek/data/news_signals.db'
+            db_path = _os.path.join(_data_dir, 'news_signals.db')
             with _pool_get_db(db_path) as conn:
                 cursor = conn.execute("""
                     SELECT id, code, action, confidence, priority, reason 

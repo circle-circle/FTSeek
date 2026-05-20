@@ -12,6 +12,7 @@
 
 import logging
 import time
+import threading
 from typing import Optional, Dict, List
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -50,7 +51,7 @@ class OrderRetryManager:
     def __init__(self, max_retries: int = 3, retry_interval: int = 5):
         """
         初始化
-        
+
         Args:
             max_retries: 最大重试次数
             retry_interval: 重试间隔 (秒)
@@ -58,29 +59,32 @@ class OrderRetryManager:
         self.max_retries = max_retries
         self.retry_interval = retry_interval
         self.retry_history: Dict[str, List[RetryRecord]] = {}  # order_id -> records
+        self._lock = threading.Lock()  # 2026-05-19: 线程安全保护
         logger.info(f"订单重试管理器已初始化 | 最大重试：{max_retries}次 | 间隔：{retry_interval}秒")
     
     def should_retry(self, order_id: str) -> bool:
         """
         判断是否应该重试
-        
+
         Args:
             order_id: 订单 ID
-        
+
         Returns:
             bool: 是否应该重试
         """
-        if order_id not in self.retry_history:
-            return True  # 首次尝试
-        
-        records = self.retry_history[order_id]
-        return len(records) < self.max_retries
-    
+        with self._lock:
+            if order_id not in self.retry_history:
+                return True  # 首次尝试
+
+            records = self.retry_history[order_id]
+            return len(records) < self.max_retries
+
     def get_retry_count(self, order_id: str) -> int:
         """获取重试次数"""
-        if order_id not in self.retry_history:
-            return 0
-        return len(self.retry_history[order_id])
+        with self._lock:
+            if order_id not in self.retry_history:
+                return 0
+            return len(self.retry_history[order_id])
     
     def record_retry(self, order_id: str, code: str, action: str,
                     reason: RetryReason, original_price: float,
@@ -88,7 +92,7 @@ class OrderRetryManager:
                     message: str = ""):
         """
         记录重试
-        
+
         Args:
             order_id: 订单 ID
             code: 股票代码
@@ -99,24 +103,28 @@ class OrderRetryManager:
             success: 是否成功
             message: 消息
         """
-        record = RetryRecord(
-            order_id=order_id,
-            code=code,
-            action=action,
-            attempt=self.get_retry_count(order_id) + 1,
-            reason=reason,
-            timestamp=datetime.now().isoformat(),
-            original_price=original_price,
-            new_price=new_price,
-            success=success,
-            message=message,
-        )
-        
-        if order_id not in self.retry_history:
-            self.retry_history[order_id] = []
-        
-        self.retry_history[order_id].append(record)
-        
+        with self._lock:
+            # 2026-05-19: 在锁内计算 attempt，避免竞态
+            attempt = len(self.retry_history.get(order_id, [])) + 1
+
+            record = RetryRecord(
+                order_id=order_id,
+                code=code,
+                action=action,
+                attempt=attempt,
+                reason=reason,
+                timestamp=datetime.now().isoformat(),
+                original_price=original_price,
+                new_price=new_price,
+                success=success,
+                message=message,
+            )
+
+            if order_id not in self.retry_history:
+                self.retry_history[order_id] = []
+
+            self.retry_history[order_id].append(record)
+
         if success:
             logger.info(f"[{code}] 重试成功 (第{record.attempt}次): {reason.value}")
         else:

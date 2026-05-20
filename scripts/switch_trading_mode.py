@@ -21,7 +21,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-CONFIG_PATH = PROJECT_ROOT / "config" / "config.yaml"
+CONFIG_PATH = PROJECT_ROOT / "config" / "unified_unified_config.yaml"
 BACKUP_DIR = PROJECT_ROOT / "config" / "backups"
 
 # ── ANSI 颜色 ─────────────────────────────────────────────────────────
@@ -36,7 +36,7 @@ class C:
 
 
 # ── 预设配置 ──────────────────────────────────────────────────────────
-# 每个预设定义了需要在 config.yaml 中修改的 key-value 对
+# 每个预设定义了需要在 unified_unified_config.yaml 中修改的 key-value 对
 # key 使用 YAML 层级路径表示
 
 PRESETS = {
@@ -82,7 +82,7 @@ PRESETS = {
 }
 
 # YAML key 到正则匹配的映射
-# 这些正则用于在 config.yaml 中定位并替换特定行
+# 这些正则用于在 unified_unified_config.yaml 中定位并替换特定行
 KEY_PATTERNS = {
     'futu.trade_env': (r'(\s*trade_env:\s*)\S+', r'\g<1>{value}'),
     'futu.force_simulate': (r'(\s*force_simulate:\s*)\S+', r'\g<1>{value}'),

@@ -1,0 +1,56 @@
+{
+  "status": "ok",
+  "date": "2026-05-18",
+  "stats": {
+    "date": "2026-05-18",
+    "total": 114,
+    "executed": 2,
+    "rejected": 112,
+    "pending": 0,
+    "execution_rate": 0.017543859649122806,
+    "max_concurrent_pct": 0.0,
+    "weak_signal_pct": 0.26785714285714285,
+    "weak_signal_error_pct": 0.0,
+    "noise_hours_pct": 0.05357142857142857,
+    "signal_cooldown_pct": 0.03571428571428571,
+    "mtf_rejected_pct": 0.38392857142857145,
+    "late_session_pct": 0.05357142857142857,
+    "top_reasons": {
+      "mtf_unaligned": 36,
+      "weak_signal": 30,
+      "mtf_rejected": 7,
+      "noise_hours": 6,
+      "late_session_gate": 6
+    }
+  },
+  "trends": [
+    {
+      "name": "信号量异常变化",
+      "severity": "medium",
+      "message": "信号量从 192 变为 114 (-78)"
+    }
+  ],
+  "suggestions": [
+    {
+      "name": "weak_signal 过多",
+      "severity": "medium",
+      "suggestion": "weak_signal 拦截占 27%，可能 consensus_threshold 过高或因子权重不合理",
+      "config_path": "unified_config.yaml → strategy.consensus.threshold"
+    },
+    {
+      "name": "mtf_rejected 过多",
+      "severity": "medium",
+      "suggestion": "多周期不一致占 38%，检查多周期数据源同步",
+      "config_path": "data_subscriber.py → _regime_detector 更新逻辑"
+    },
+    {
+      "name": "执行率过低",
+      "severity": "high",
+      "suggestion": "执行率仅 1.8%，管线几乎全拦截，需全面检查风控阈值",
+      "config_path": "多个配置项需综合调整"
+    }
+  ],
+  "suggestion_count": 3,
+  "max_severity": "high",
+  "report": "### 📊 FTSeek 盘后分析 (2026-05-18)\n\n**管线概览**\n- 总信号: 114 | 执行: 2 | 拒绝: 112\n- 执行率: 🔴 1.8%\n\n**拒绝原因 TOP 5**\n- `mtf_unaligned`: 36 (32%)\n- `weak_signal`: 30 (27%)\n- `mtf_rejected`: 7 (6%)\n- `noise_hours`: 6 (5%)\n- `late_session_gate`: 6 (5%)\n\n### 📈 趋势变化\n- 🟡 信号量异常变化: 信号量从 192 变为 114 (-78)\n\n### 💡 优化建议\n- 🟡 **weak_signal 过多**: weak_signal 拦截占 27%，可能 consensus_threshold 过高或因子权重不合理\n  - 📁 unified_config.yaml → strategy.consensus.threshold\n- 🟡 **mtf_rejected 过多**: 多周期不一致占 38%，检查多周期数据源同步\n  - 📁 data_subscriber.py → _regime_detector 更新逻辑\n- 🔴 **执行率过低**: 执行率仅 1.8%，管线几乎全拦截，需全面检查风控阈值\n  - 📁 多个配置项需综合调整\n"
+}

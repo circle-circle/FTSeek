@@ -20,6 +20,7 @@ app/risk/hard_stop_guard.py — 硬编码止损兜底机制 (2026-05-01)
   HARD_DAILY_LOSS_PCT = 0.03     # 3% 日亏损限制
 """
 import logging
+import threading
 import time
 from typing import Optional
 from datetime import datetime, timedelta
@@ -27,8 +28,29 @@ from datetime import datetime, timedelta
 logger = logging.getLogger("ftseek.risk.hard_stop_guard")
 
 # ═══════════════════════════════════════════════════════════════
-#  硬编码参数 — 不可通过配置修改，代码级保护
+#  硬编码参数 — 兜底保护，优先从 unified_config.yaml 读取
 # ═══════════════════════════════════════════════════════════════
+
+def _load_hard_stop_params():
+    """从统一配置读取硬止损参数，读取失败则使用硬编码兜底"""
+    try:
+        from config.config_center import get_config_center
+        cc = get_config_center()
+        params = cc.get('risk_limits.hard_stop_guard', {})
+        return {
+            'HARD_STOP_LOSS_PCT': params.get('hard_stop_loss_pct', 0.08),
+            'HARD_MAX_HOLDING_HOURS': params.get('hard_max_holding_hours', 72),
+            'HARD_DAILY_LOSS_PCT': params.get('hard_daily_loss_pct', 0.03),
+            'HARD_MAX_CONSECUTIVE_LOSSES': params.get('hard_max_consecutive_losses', 3),
+        }
+    except Exception:
+        return {
+            'HARD_STOP_LOSS_PCT': 0.08,
+            'HARD_MAX_HOLDING_HOURS': 72,
+            'HARD_DAILY_LOSS_PCT': 0.03,
+            'HARD_MAX_CONSECUTIVE_LOSSES': 3,
+        }
+
 
 # 最大单笔亏损百分比（8%）
 HARD_STOP_LOSS_PCT = 0.08
@@ -61,6 +83,7 @@ class HardStopGuard:
     """
 
     def __init__(self):
+        self._lock = threading.RLock()
         self._consecutive_losses: dict = {}  # code → 连续亏损次数
         self._daily_loss: dict = {}          # date → 累计亏损
 
@@ -74,17 +97,19 @@ class HardStopGuard:
     ) -> Optional['HardStopDecision']:
         """
         检查是否触发硬编码止损。
-
-        Args:
-            code: 股票代码
-            entry_price: 入场价格
-            current_price: 当前价格
-            entry_time: 入场时间
-            daily_pnl: 当日累计盈亏百分比
-
-        Returns:
-            HardStopDecision 如果触发，否则 None
         """
+        with self._lock:
+            return self._check_hard_stop_inner(code, entry_price, current_price, entry_time, daily_pnl)
+
+    def _check_hard_stop_inner(
+        self,
+        code: str,
+        entry_price: float,
+        current_price: float,
+        entry_time,
+        daily_pnl: float = 0.0,
+    ) -> Optional['HardStopDecision']:
+        """内部检查逻辑（调用方需持有 self._lock）"""
         if entry_price <= 0 or current_price <= 0:
             return None
 
@@ -147,7 +172,7 @@ class HardStopGuard:
         return None
 
     def _record_loss(self, code: str):
-        """记录亏损次数"""
+        """记录亏损次数（调用方需持有 self._lock）"""
         count = self._consecutive_losses.get(code, 0) + 1
         self._consecutive_losses[code] = count
         if count >= HARD_MAX_CONSECUTIVE_LOSSES:
@@ -158,11 +183,13 @@ class HardStopGuard:
 
     def reset(self, code: str):
         """重置某股票的亏损记录"""
-        self._consecutive_losses.pop(code, None)
+        with self._lock:
+            self._consecutive_losses.pop(code, None)
 
     def should_halt_trading(self, code: str) -> bool:
         """判断是否应该暂停该股票的交易"""
-        return self._consecutive_losses.get(code, 0) >= HARD_MAX_CONSECUTIVE_LOSSES
+        with self._lock:
+            return self._consecutive_losses.get(code, 0) >= HARD_MAX_CONSECUTIVE_LOSSES
 
 
 class HardStopDecision:

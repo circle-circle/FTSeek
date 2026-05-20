@@ -567,11 +567,33 @@ class FTSeekAgentBridge:
         """新闻风险研判 — 替代 pipeline/news_interceptor.py 的 LLM 调用"""
         logger.info(f"[{self.market}] 🛡️ 新闻风险研判: {symbol}")
 
+        # P1 修复 (2026-05-17): 注入盘前 LLM signal_impact 上下文
+        _impact_ctx = "neutral"
+        try:
+            from app.utils.daily_active_pool import get_daily_active_pool
+            _pool = get_daily_active_pool(market_prefix="HK.")
+            _code_key = symbol if symbol.startswith("HK.") else f"HK.{symbol}"
+            _entry = _pool._entries.get(_code_key) or _pool._entries.get(symbol)
+            if _entry and not _entry.is_expired():
+                _impact_ctx = _entry.metadata.get("signal_impact", "neutral")
+        except Exception:
+            pass
+
+        # FTSeek 适配: 注入市场规则到 payload (2026-05-17)
+        from app.utils.market_prompt_injector import inject_market_context, detect_market
+        market_rules = ""
+        market_type = detect_market(symbol)
+        if market_type in ("hk", "us"):
+            from app.utils.market_prompt_injector import MARKET_RULES
+            market_rules = MARKET_RULES.get(market_type, "")
+            
         payload = {
             "symbol": symbol,
             "headline": headline,
             "content": content[:500],
             "pos_info": pos_info,
+            "premarket_signal_impact": _impact_ctx,  # 新增上下文
+            "market_rules": market_rules,  # FTSeek 适配: 市场规则
         }
 
         if self.use_queue and self._queue:

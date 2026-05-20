@@ -101,7 +101,7 @@ def test_risk_config():
     print("=" * 60)
     
     try:
-        risk_mgr = RiskManager.from_config('/opt/ftseek/FTSeek/config/risk_config.yaml')
+        risk_mgr = RiskManager.from_config('/opt/ftseek/FTSeek/config/risk_unified_config.yaml')
         
         # 置信度阈值
         assert risk_mgr.config.min_confidence == 0.50, f"置信度阈值应为 0.50，实际：{risk_mgr.config.min_confidence}"

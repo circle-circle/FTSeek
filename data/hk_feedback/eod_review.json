@@ -1,0 +1,42 @@
+{
+  "trade_date": "2026-05-10",
+  "saved_at": "2026-05-10T07:03:24.433141",
+  "summary": {
+    "total_pnl": 1500,
+    "win_rate": 0.7
+  },
+  "next_day_preview": "明日关注 A 股联动",
+  "lessons": [
+    {
+      "title": "T+0 频繁交易",
+      "category": "execution"
+    }
+  ],
+  "battle_plan_execution": {
+    "targets_hit": 3,
+    "total_targets": 5
+  },
+  "trades": [
+    {
+      "code": "HK.00700",
+      "pnl": 800,
+      "action": "BUY"
+    }
+  ],
+  "performance": {
+    "total_trades": 1,
+    "win_count": 1,
+    "total_pnl": 800.0
+  },
+  "execution_quality": {
+    "avg_slippage_pct": 0.02,
+    "fill_rate": 0.95,
+    "avg_latency_ms": 120
+  },
+  "_meta": {
+    "schema_version": 1,
+    "checksum": "e3e4561d",
+    "writer_pid": 750191,
+    "written_at": "2026-05-10T07:03:24.433409"
+  }
+}
