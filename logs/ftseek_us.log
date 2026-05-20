@@ -146542,3 +146542,755 @@ Index: []
 2026-05-21 05:45:43,240 [app.notifier.dingtalk] INFO: [钉钉] send_text 成功: 💓 FTSeek-US 通道心跳
 2026-05-21 05:45:48,049 [ftseek_us.review.orchestrator] INFO: [DebateRunner] R1 独立风险评估师 (MiniMax-M2.5) 成功
 2026-05-21 05:45:58,589 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 21次 US.TSLA260603P410000  — 止损止盈暂不生效
+2026-05-21 05:46:22,625 [ftseek_us.review.orchestrator] INFO: [DebateRunner] R1 空头审计师 (deepseek-v4-pro) 成功
+2026-05-21 05:46:28,706 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 31次 US.QQQ260602P700000  — 止损止盈暂不生效
+2026-05-21 05:46:30,233 [ftseek.us_pipeline.emergency_interceptor] INFO: 🔍 [新闻拦截] 模糊关键词匹配: ['insider selling'] → LLM 二阶确认中...
+2026-05-21 05:46:32,399 [ftseek_us.review.orchestrator] INFO: [DebateRunner] R1 多头分析师 (qwen3.6-plus) 成功
+2026-05-21 05:46:32,400 [ftseek_us.review.orchestrator] INFO: [DebateRunner] Round 1 完成: 3/3 成功
+2026-05-21 05:46:37,606 [httpx] INFO: HTTP Request: POST https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions "HTTP/1.1 200 OK"
+2026-05-21 05:46:37,629 [ftseek.us_pipeline.emergency_interceptor] INFO: [新闻 LLM 二阶确认] QCOM → IGNORE
+2026-05-21 05:46:37,629 [ftseek.us_pipeline.emergency_interceptor] INFO: ✅ [新闻拦截] LLM 判定非黑天鹅，忽略: QUALCOMM (QCOM) Is Down 7.0% After New Hyperscaler Deal Highlights AI Ambitions Over Handset Risks
+2026-05-21 05:47:13,850 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 41次 US.TSLA260603P410000  — 止损止盈暂不生效
+2026-05-21 05:47:36,530 [ftseek_us.review.orchestrator] INFO: [DebateRunner] R2 多头分析师 交叉反驳成功
+2026-05-21 05:47:37,776 [ftseek_us.review.orchestrator] INFO: [DebateRunner] R2 独立风险评估师 交叉反驳成功
+2026-05-21 05:47:43,974 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 51次 US.QQQ260602P700000  — 止损止盈暂不生效
+2026-05-21 05:48:24,779 [ftseek_us.llm.agent_bridge] WARNING: [AgentBridge·LLM] JSON 解析失败: Extra data: line 53 column 1 (char 1956), raw='{\n  "responses_to_others": [\n    {\n      "to_model": "多头分析师",\n      "response": "我们同意市场方向过滤的必要性，但完全禁止做空（如在配置中设定short_allowed: false）可能过于激进。做空策略本身在熊市中有效，问题出在市场状态识别不足和风险控制。证据：历史voting_llm胜率38%并非全盘否定做空，说'
+2026-05-21 05:48:24,779 [ftseek_us.review.orchestrator] INFO: [DebateRunner] Round 2 完成: 2/3 成功
+2026-05-21 05:48:29,104 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 61次 US.TSLA260603P410000  — 止损止盈暂不生效
+2026-05-21 05:48:59,240 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 71次 US.QQQ260602P700000  — 止损止盈暂不生效
+2026-05-21 05:49:38,397 [ftseek_us.review.orchestrator] INFO: [DebateRunner] Arbiter 综合收敛成功
+2026-05-21 05:49:38,397 [ftseek_us.review.orchestrator] INFO: [DebateRunner] Arbiter 完成: 收敛度 0.85
+2026-05-21 05:49:38,398 [ftseek_us.review.orchestrator] INFO: [Analyst] 结构化辩论完成: 2 轮 | mode=partial | 收敛度=0.3 | 质量=low | (2/3 成功)
+2026-05-21 05:49:38,398 [ftseek_us.review.orchestrator] INFO: [Orchestrator] 开始 Phase 3 验证辩论结论
+2026-05-21 05:49:38,398 [ftseek_us.review.orchestrator] INFO: [Orchestrator] 验证完成: 验证完成: 0/0 个 claim 有证据支持 (可信度 0%, 证据质量: weak)
+2026-05-21 05:49:38,449 [app.notifier.dingtalk] INFO: [钉钉] send_text 成功: 📊 FTSeek-US 盘后复盘报告 (2026-05-20)
+2026-05-21 05:49:38,449 [ftseek_us.review.orchestrator] INFO: [Orchestrator] 日报已推送
+2026-05-21 05:49:38,450 [ftseek_us.review.orchestrator] INFO: [DebateExtractor] 提取 0 个 LLM Issue
+2026-05-21 05:49:38,450 [app.core.scheduler_triggers] INFO: [Orchestrator] 日复盘增强完成: mode=partial | lessons=0 | llm_issues=0
+2026-05-21 05:49:38,458 [app.core.scheduler_triggers] INFO: [教训验证] 验证完成: 有效=10, 无效=0, 更新=10
+2026-05-21 05:49:38,510 [app.notifier.dingtalk] INFO: [钉钉] send_text 成功: 📋 [教训验证] 今日更新 10 条教训: ✅ 验证 10 条, ❌ 失效 0 条
+2026-05-21 05:49:38,516 [app.storage.trade_store] INFO: [TradeStore] 交易记录表初始化完成
+2026-05-21 05:49:38,530 [ftseek_us.llm.agent_bridge] INFO: [Agent-US] 开始生成盘后归因报告...
+2026-05-21 05:49:38,533 [ftseek_us.llm.agent_bridge] INFO: [Agent-US] EOD 请求已写入: /root/.hermes/ftseek/requests/eod_us_20260521_054938.json
+2026-05-21 05:49:38,534 [ftseek_us.llm.agent_bridge] INFO: [AgentQueue] SQLite 请求队列表初始化完成
+2026-05-21 05:49:38,541 [ftseek_us.llm.agent_bridge] INFO: [AgentQueue] 入队: eod_us_20260521_054938 (generate_eod_review)
+2026-05-21 05:49:38,547 [ftseek_us.storage.daily_log] INFO: [ShadowLog] 数据库初始化完成: /opt/ftseek/FTSeek-US/data/shadow_logs.db
+2026-05-21 05:49:39,688 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：141)
+2026-05-21 05:49:39,688 [app.data.finnhub_provider] INFO: [Finnhub] US.ORCL $188.16 (+3.69%)
+2026-05-21 05:49:39,688 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.ORCL 从 Finnhub 获取报价 $188.16
+2026-05-21 05:49:39,689 [app.data.market_data_router] WARNING: [Router] US.ORCL LV3 K 线数据不足 (0 条)
+2026-05-21 05:49:39,848 [app.coordinator.capital_allocator] WARNING: [CapitalAllocator·RECONCILE] bucket=main 账本=0.000 实际=0.012 → 修正
+2026-05-21 05:49:39,848 [app.coordinator.capital_allocator] WARNING: [CapitalAllocator·RECONCILE] bucket=scalping 账本=0.000 实际=0.014 → 修正
+2026-05-21 05:49:40,609 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：142)
+2026-05-21 05:49:40,609 [app.data.finnhub_provider] INFO: [Finnhub] US.SPY $741.25 (+1.02%)
+2026-05-21 05:49:40,609 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.SPY 从 Finnhub 获取报价 $741.25
+2026-05-21 05:49:40,609 [app.data.market_data_router] INFO: [Router] US.ORCL price=$188.16 sentiment=0.00 vix=18.06 regime=RANGE source=futu_lv3_quote_only
+2026-05-21 05:49:41,599 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：143)
+2026-05-21 05:49:41,599 [app.data.finnhub_provider] INFO: [Finnhub] US.SNDK $1392.56 (+0.67%)
+2026-05-21 05:49:41,599 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.SNDK 从 Finnhub 获取报价 $1392.56
+2026-05-21 05:49:41,599 [app.data.market_data_router] WARNING: [Router] US.SNDK LV3 K 线数据不足 (0 条)
+2026-05-21 05:49:41,599 [app.data.market_data_router] INFO: [Router] US.SNDK price=$1392.56 sentiment=0.00 vix=18.06 regime=RANGE source=futu_lv3_quote_only
+2026-05-21 05:49:42,167 [app.data.twelvedata_provider] WARNING: [TwelveData] API错误: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
+2026-05-21 05:49:42,169 [app.data.market_data_router] ERROR: [Router] US.TSLA260603P410000 所有数据源均失败：
+2026-05-21 05:49:43,123 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：144)
+2026-05-21 05:49:43,124 [app.data.finnhub_provider] INFO: [Finnhub] US.QCOM $202.51 (+3.53%)
+2026-05-21 05:49:43,124 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.QCOM 从 Finnhub 获取报价 $202.51
+2026-05-21 05:49:43,124 [app.data.market_data_router] WARNING: [Router] US.QCOM LV3 K 线数据不足 (0 条)
+2026-05-21 05:49:43,124 [app.data.market_data_router] INFO: [Router] US.QCOM price=$202.51 sentiment=0.00 vix=18.06 regime=RANGE source=futu_lv3_quote_only
+2026-05-21 05:49:43,441 [app.monitoring.trading_monitor] WARNING: [Monitor·warning] 💔 心跳超时: 最后更新 05:44:43
+2026-05-21 05:49:43,718 [app.data.twelvedata_provider] WARNING: [TwelveData] API错误: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
+2026-05-21 05:49:43,720 [app.data.market_data_router] ERROR: [Router] US.QQQ260602P710000 所有数据源均失败：
+2026-05-21 05:49:44,104 [ftseek_us.position_sync] INFO: [US Sync] Done | Futu: 7 | DB: 7
+2026-05-21 05:49:44,275 [app.data.twelvedata_provider] WARNING: [TwelveData] API错误: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
+2026-05-21 05:49:44,276 [app.data.market_data_router] ERROR: [Router] US.QQQ260602P700000 所有数据源均失败：
+2026-05-21 05:49:44,382 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 81次 US.TSLA260603P410000  — 止损止盈暂不生效
+2026-05-21 05:49:44,826 [app.data.twelvedata_provider] WARNING: [TwelveData] API错误: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
+2026-05-21 05:49:44,827 [app.data.market_data_router] ERROR: [Router] US.SPY260602P730000 所有数据源均失败：
+2026-05-21 05:49:45,960 [ftseek_us.risk.vix_monitor] INFO: VIX 指数：18.06
+2026-05-21 05:50:14,501 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 91次 US.QQQ260602P700000  — 止损止盈暂不生效
+2026-05-21 05:50:59,634 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 101次 US.TSLA260603P410000  — 止损止盈暂不生效
+2026-05-21 05:51:29,756 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 111次 US.QQQ260602P700000  — 止损止盈暂不生效
+2026-05-21 05:52:14,889 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 121次 US.TSLA260603P410000  — 止损止盈暂不生效
+2026-05-21 05:52:45,013 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 131次 US.QQQ260602P700000  — 止损止盈暂不生效
+2026-05-21 05:52:45,866 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：145)
+2026-05-21 05:52:45,866 [app.data.finnhub_provider] INFO: [Finnhub] US.ORCL $188.16 (+3.69%)
+2026-05-21 05:52:45,866 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.ORCL 从 Finnhub 获取报价 $188.16
+2026-05-21 05:52:45,866 [app.data.market_data_router] WARNING: [Router] US.ORCL LV3 K 线数据不足 (0 条)
+2026-05-21 05:52:46,876 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：146)
+2026-05-21 05:52:46,876 [app.data.finnhub_provider] INFO: [Finnhub] US.SPY $741.25 (+1.02%)
+2026-05-21 05:52:46,876 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.SPY 从 Finnhub 获取报价 $741.25
+2026-05-21 05:52:46,876 [app.data.market_data_router] INFO: [Router] US.ORCL price=$188.16 sentiment=0.00 vix=18.06 regime=RANGE source=futu_lv3_quote_only
+2026-05-21 05:52:48,027 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：147)
+2026-05-21 05:52:48,028 [app.data.finnhub_provider] INFO: [Finnhub] US.SNDK $1392.56 (+0.67%)
+2026-05-21 05:52:48,028 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.SNDK 从 Finnhub 获取报价 $1392.56
+2026-05-21 05:52:48,028 [app.data.market_data_router] WARNING: [Router] US.SNDK LV3 K 线数据不足 (0 条)
+2026-05-21 05:52:48,028 [app.data.market_data_router] INFO: [Router] US.SNDK price=$1392.56 sentiment=0.00 vix=18.06 regime=RANGE source=futu_lv3_quote_only
+2026-05-21 05:52:48,799 [app.data.twelvedata_provider] WARNING: [TwelveData] API错误: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
+2026-05-21 05:52:48,800 [app.data.market_data_router] ERROR: [Router] US.TSLA260603P410000 所有数据源均失败：
+2026-05-21 05:52:49,741 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：148)
+2026-05-21 05:52:49,741 [app.data.finnhub_provider] INFO: [Finnhub] US.QCOM $202.51 (+3.53%)
+2026-05-21 05:52:49,741 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.QCOM 从 Finnhub 获取报价 $202.51
+2026-05-21 05:52:49,741 [app.data.market_data_router] WARNING: [Router] US.QCOM LV3 K 线数据不足 (0 条)
+2026-05-21 05:52:49,741 [app.data.market_data_router] INFO: [Router] US.QCOM price=$202.51 sentiment=0.00 vix=18.06 regime=RANGE source=futu_lv3_quote_only
+2026-05-21 05:52:50,370 [app.data.twelvedata_provider] WARNING: [TwelveData] API错误: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
+2026-05-21 05:52:50,371 [app.data.market_data_router] ERROR: [Router] US.QQQ260602P710000 所有数据源均失败：
+2026-05-21 05:52:50,966 [app.data.twelvedata_provider] WARNING: [TwelveData] API错误: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
+2026-05-21 05:52:50,967 [app.data.market_data_router] ERROR: [Router] US.QQQ260602P700000 所有数据源均失败：
+2026-05-21 05:52:51,493 [app.data.twelvedata_provider] WARNING: [TwelveData] API错误: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
+2026-05-21 05:52:51,494 [app.data.market_data_router] ERROR: [Router] US.SPY260602P730000 所有数据源均失败：
+2026-05-21 05:53:30,156 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 141次 US.TSLA260603P410000  — 止损止盈暂不生效
+2026-05-21 05:54:00,276 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 151次 US.QQQ260602P700000  — 止损止盈暂不生效
+2026-05-21 05:54:44,514 [ftseek_us.position_sync] INFO: [US Sync] Done | Futu: 7 | DB: 7
+2026-05-21 05:54:45,434 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 161次 US.TSLA260603P410000  — 止损止盈暂不生效
+2026-05-21 05:54:47,392 [ftseek_us.risk.vix_monitor] INFO: VIX 指数：18.06
+2026-05-21 05:55:15,559 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 171次 US.QQQ260602P700000  — 止损止盈暂不生效
+2026-05-21 05:55:52,659 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：149)
+2026-05-21 05:55:52,659 [app.data.finnhub_provider] INFO: [Finnhub] US.ORCL $188.16 (+3.69%)
+2026-05-21 05:55:52,659 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.ORCL 从 Finnhub 获取报价 $188.16
+2026-05-21 05:55:52,660 [app.data.market_data_router] WARNING: [Router] US.ORCL LV3 K 线数据不足 (0 条)
+2026-05-21 05:55:53,591 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：150)
+2026-05-21 05:55:53,592 [app.data.finnhub_provider] INFO: [Finnhub] US.SPY $741.25 (+1.02%)
+2026-05-21 05:55:53,592 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.SPY 从 Finnhub 获取报价 $741.25
+2026-05-21 05:55:53,592 [app.data.market_data_router] INFO: [Router] US.ORCL price=$188.16 sentiment=0.00 vix=18.06 regime=RANGE source=futu_lv3_quote_only
+2026-05-21 05:55:54,515 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：151)
+2026-05-21 05:55:54,515 [app.data.finnhub_provider] INFO: [Finnhub] US.SNDK $1392.56 (+0.67%)
+2026-05-21 05:55:54,515 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.SNDK 从 Finnhub 获取报价 $1392.56
+2026-05-21 05:55:54,516 [app.data.market_data_router] WARNING: [Router] US.SNDK LV3 K 线数据不足 (0 条)
+2026-05-21 05:55:54,516 [app.data.market_data_router] INFO: [Router] US.SNDK price=$1392.56 sentiment=0.00 vix=18.06 regime=RANGE source=futu_lv3_quote_only
+2026-05-21 05:55:55,108 [app.data.twelvedata_provider] WARNING: [TwelveData] API错误: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
+2026-05-21 05:55:55,109 [app.data.market_data_router] ERROR: [Router] US.TSLA260603P410000 所有数据源均失败：
+2026-05-21 05:55:56,134 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：152)
+2026-05-21 05:55:56,134 [app.data.finnhub_provider] INFO: [Finnhub] US.QCOM $202.51 (+3.53%)
+2026-05-21 05:55:56,134 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.QCOM 从 Finnhub 获取报价 $202.51
+2026-05-21 05:55:56,134 [app.data.market_data_router] WARNING: [Router] US.QCOM LV3 K 线数据不足 (0 条)
+2026-05-21 05:55:56,134 [app.data.market_data_router] INFO: [Router] US.QCOM price=$202.51 sentiment=0.00 vix=18.06 regime=RANGE source=futu_lv3_quote_only
+2026-05-21 05:55:56,693 [app.data.twelvedata_provider] WARNING: [TwelveData] API错误: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
+2026-05-21 05:55:56,694 [app.data.market_data_router] ERROR: [Router] US.QQQ260602P710000 所有数据源均失败：
+2026-05-21 05:55:57,270 [app.data.twelvedata_provider] WARNING: [TwelveData] API错误: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
+2026-05-21 05:55:57,272 [app.data.market_data_router] ERROR: [Router] US.QQQ260602P700000 所有数据源均失败：
+2026-05-21 05:55:57,877 [app.data.twelvedata_provider] WARNING: [TwelveData] API错误: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
+2026-05-21 05:55:57,878 [app.data.market_data_router] ERROR: [Router] US.SPY260602P730000 所有数据源均失败：
+2026-05-21 05:56:00,693 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 181次 US.TSLA260603P410000  — 止损止盈暂不生效
+2026-05-21 05:56:30,815 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 191次 US.QQQ260602P700000  — 止损止盈暂不生效
+2026-05-21 05:57:15,950 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 201次 US.TSLA260603P410000  — 止损止盈暂不生效
+2026-05-21 05:57:46,073 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 211次 US.QQQ260602P700000  — 止损止盈暂不生效
+2026-05-21 05:58:31,198 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 221次 US.TSLA260603P410000  — 止损止盈暂不生效
+2026-05-21 05:58:59,045 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：153)
+2026-05-21 05:58:59,046 [app.data.finnhub_provider] INFO: [Finnhub] US.ORCL $188.16 (+3.69%)
+2026-05-21 05:58:59,046 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.ORCL 从 Finnhub 获取报价 $188.16
+2026-05-21 05:58:59,046 [app.data.market_data_router] WARNING: [Router] US.ORCL LV3 K 线数据不足 (0 条)
+2026-05-21 05:58:59,969 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：154)
+2026-05-21 05:58:59,969 [app.data.finnhub_provider] INFO: [Finnhub] US.SPY $741.25 (+1.02%)
+2026-05-21 05:58:59,969 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.SPY 从 Finnhub 获取报价 $741.25
+2026-05-21 05:58:59,969 [app.data.market_data_router] INFO: [Router] US.ORCL price=$188.16 sentiment=0.00 vix=18.06 regime=RANGE source=futu_lv3_quote_only
+2026-05-21 05:59:00,907 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：155)
+2026-05-21 05:59:00,908 [app.data.finnhub_provider] INFO: [Finnhub] US.SNDK $1392.56 (+0.67%)
+2026-05-21 05:59:00,908 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.SNDK 从 Finnhub 获取报价 $1392.56
+2026-05-21 05:59:00,908 [app.data.market_data_router] WARNING: [Router] US.SNDK LV3 K 线数据不足 (0 条)
+2026-05-21 05:59:00,908 [app.data.market_data_router] INFO: [Router] US.SNDK price=$1392.56 sentiment=0.00 vix=18.06 regime=RANGE source=futu_lv3_quote_only
+2026-05-21 05:59:01,318 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 231次 US.QQQ260602P700000  — 止损止盈暂不生效
+2026-05-21 05:59:01,513 [app.data.twelvedata_provider] WARNING: [TwelveData] API错误: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
+2026-05-21 05:59:01,515 [app.data.market_data_router] ERROR: [Router] US.TSLA260603P410000 所有数据源均失败：
+2026-05-21 05:59:02,473 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：156)
+2026-05-21 05:59:02,473 [app.data.finnhub_provider] INFO: [Finnhub] US.QCOM $202.51 (+3.53%)
+2026-05-21 05:59:02,473 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.QCOM 从 Finnhub 获取报价 $202.51
+2026-05-21 05:59:02,473 [app.data.market_data_router] WARNING: [Router] US.QCOM LV3 K 线数据不足 (0 条)
+2026-05-21 05:59:02,473 [app.data.market_data_router] INFO: [Router] US.QCOM price=$202.51 sentiment=0.00 vix=18.06 regime=RANGE source=futu_lv3_quote_only
+2026-05-21 05:59:03,023 [app.data.twelvedata_provider] WARNING: [TwelveData] API错误: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
+2026-05-21 05:59:03,025 [app.data.market_data_router] ERROR: [Router] US.QQQ260602P710000 所有数据源均失败：
+2026-05-21 05:59:03,550 [app.data.twelvedata_provider] WARNING: [TwelveData] API错误: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
+2026-05-21 05:59:03,551 [app.data.market_data_router] ERROR: [Router] US.QQQ260602P700000 所有数据源均失败：
+2026-05-21 05:59:04,079 [app.data.twelvedata_provider] WARNING: [TwelveData] API错误: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
+2026-05-21 05:59:04,081 [app.data.market_data_router] ERROR: [Router] US.SPY260602P730000 所有数据源均失败：
+2026-05-21 05:59:44,941 [ftseek_us.position_sync] INFO: [US Sync] Done | Futu: 7 | DB: 7
+2026-05-21 05:59:46,460 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 241次 US.TSLA260603P410000  — 止损止盈暂不生效
+2026-05-21 05:59:48,957 [ftseek_us.risk.vix_monitor] INFO: VIX 指数：18.06
+2026-05-21 06:00:16,575 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 251次 US.QQQ260602P700000  — 止损止盈暂不生效
+2026-05-21 06:01:01,710 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 261次 US.TSLA260603P410000  — 止损止盈暂不生效
+2026-05-21 06:01:31,827 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 271次 US.QQQ260602P700000  — 止损止盈暂不生效
+2026-05-21 06:02:05,241 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：157)
+2026-05-21 06:02:05,241 [app.data.finnhub_provider] INFO: [Finnhub] US.ORCL $188.16 (+3.69%)
+2026-05-21 06:02:05,241 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.ORCL 从 Finnhub 获取报价 $188.16
+2026-05-21 06:02:05,242 [app.data.market_data_router] WARNING: [Router] US.ORCL LV3 K 线数据不足 (0 条)
+2026-05-21 06:02:07,179 [app.data.alphavantage_provider] INFO: [FRED] 获取 VIX 成功: 18.06
+2026-05-21 06:02:08,114 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：158)
+2026-05-21 06:02:08,114 [app.data.finnhub_provider] INFO: [Finnhub] US.SPY $741.25 (+1.02%)
+2026-05-21 06:02:08,114 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.SPY 从 Finnhub 获取报价 $741.25
+2026-05-21 06:02:08,114 [app.data.market_data_router] INFO: [Router] US.ORCL price=$188.16 sentiment=0.00 vix=18.06 regime=RANGE source=futu_lv3_quote_only
+2026-05-21 06:02:09,010 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：159)
+2026-05-21 06:02:09,010 [app.data.finnhub_provider] INFO: [Finnhub] US.SNDK $1392.56 (+0.67%)
+2026-05-21 06:02:09,010 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.SNDK 从 Finnhub 获取报价 $1392.56
+2026-05-21 06:02:09,010 [app.data.market_data_router] WARNING: [Router] US.SNDK LV3 K 线数据不足 (0 条)
+2026-05-21 06:02:09,011 [app.data.market_data_router] INFO: [Router] US.SNDK price=$1392.56 sentiment=0.00 vix=18.06 regime=RANGE source=futu_lv3_quote_only
+2026-05-21 06:02:09,611 [app.data.twelvedata_provider] WARNING: [TwelveData] API错误: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
+2026-05-21 06:02:09,613 [app.data.market_data_router] ERROR: [Router] US.TSLA260603P410000 所有数据源均失败：
+2026-05-21 06:02:10,591 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：160)
+2026-05-21 06:02:10,591 [app.data.finnhub_provider] INFO: [Finnhub] US.QCOM $202.51 (+3.53%)
+2026-05-21 06:02:10,591 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.QCOM 从 Finnhub 获取报价 $202.51
+2026-05-21 06:02:10,591 [app.data.market_data_router] WARNING: [Router] US.QCOM LV3 K 线数据不足 (0 条)
+2026-05-21 06:02:10,591 [app.data.market_data_router] INFO: [Router] US.QCOM price=$202.51 sentiment=0.00 vix=18.06 regime=RANGE source=futu_lv3_quote_only
+2026-05-21 06:02:11,237 [app.data.twelvedata_provider] WARNING: [TwelveData] API错误: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
+2026-05-21 06:02:11,238 [app.data.market_data_router] ERROR: [Router] US.QQQ260602P710000 所有数据源均失败：
+2026-05-21 06:02:11,831 [app.data.twelvedata_provider] WARNING: [TwelveData] API错误: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
+2026-05-21 06:02:11,833 [app.data.market_data_router] ERROR: [Router] US.QQQ260602P700000 所有数据源均失败：
+2026-05-21 06:02:12,339 [app.data.twelvedata_provider] WARNING: [TwelveData] API错误: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
+2026-05-21 06:02:12,340 [app.data.market_data_router] ERROR: [Router] US.SPY260602P730000 所有数据源均失败：
+2026-05-21 06:02:16,961 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 281次 US.TSLA260603P410000  — 止损止盈暂不生效
+2026-05-21 06:02:47,083 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 291次 US.QQQ260602P700000  — 止损止盈暂不生效
+2026-05-21 06:03:32,213 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 301次 US.TSLA260603P410000  — 止损止盈暂不生效
+2026-05-21 06:04:02,333 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 311次 US.QQQ260602P700000  — 止损止盈暂不生效
+2026-05-21 06:04:45,351 [ftseek_us.position_sync] INFO: [US Sync] Done | Futu: 7 | DB: 7
+2026-05-21 06:04:47,494 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 321次 US.TSLA260603P410000  — 止损止盈暂不生效
+2026-05-21 06:04:50,414 [ftseek_us.risk.vix_monitor] INFO: VIX 指数：18.06
+2026-05-21 06:05:13,373 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：161)
+2026-05-21 06:05:13,373 [app.data.finnhub_provider] INFO: [Finnhub] US.ORCL $188.16 (+3.69%)
+2026-05-21 06:05:13,373 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.ORCL 从 Finnhub 获取报价 $188.16
+2026-05-21 06:05:13,373 [app.data.market_data_router] WARNING: [Router] US.ORCL LV3 K 线数据不足 (0 条)
+2026-05-21 06:05:14,340 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：162)
+2026-05-21 06:05:14,340 [app.data.finnhub_provider] INFO: [Finnhub] US.SPY $741.25 (+1.02%)
+2026-05-21 06:05:14,340 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.SPY 从 Finnhub 获取报价 $741.25
+2026-05-21 06:05:14,340 [app.data.market_data_router] INFO: [Router] US.ORCL price=$188.16 sentiment=0.00 vix=18.06 regime=RANGE source=futu_lv3_quote_only
+2026-05-21 06:05:15,241 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：163)
+2026-05-21 06:05:15,241 [app.data.finnhub_provider] INFO: [Finnhub] US.SNDK $1392.56 (+0.67%)
+2026-05-21 06:05:15,241 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.SNDK 从 Finnhub 获取报价 $1392.56
+2026-05-21 06:05:15,241 [app.data.market_data_router] WARNING: [Router] US.SNDK LV3 K 线数据不足 (0 条)
+2026-05-21 06:05:15,241 [app.data.market_data_router] INFO: [Router] US.SNDK price=$1392.56 sentiment=0.00 vix=18.06 regime=RANGE source=futu_lv3_quote_only
+2026-05-21 06:05:15,850 [app.data.twelvedata_provider] WARNING: [TwelveData] API错误: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
+2026-05-21 06:05:15,851 [app.data.market_data_router] ERROR: [Router] US.TSLA260603P410000 所有数据源均失败：
+2026-05-21 06:05:16,772 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：164)
+2026-05-21 06:05:16,772 [app.data.finnhub_provider] INFO: [Finnhub] US.QCOM $202.51 (+3.53%)
+2026-05-21 06:05:16,772 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.QCOM 从 Finnhub 获取报价 $202.51
+2026-05-21 06:05:16,772 [app.data.market_data_router] WARNING: [Router] US.QCOM LV3 K 线数据不足 (0 条)
+2026-05-21 06:05:16,773 [app.data.market_data_router] INFO: [Router] US.QCOM price=$202.51 sentiment=0.00 vix=18.06 regime=RANGE source=futu_lv3_quote_only
+2026-05-21 06:05:17,362 [app.data.twelvedata_provider] WARNING: [TwelveData] API错误: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
+2026-05-21 06:05:17,364 [app.data.market_data_router] ERROR: [Router] US.QQQ260602P710000 所有数据源均失败：
+2026-05-21 06:05:17,610 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 331次 US.QQQ260602P700000  — 止损止盈暂不生效
+2026-05-21 06:05:17,899 [app.data.twelvedata_provider] WARNING: [TwelveData] API错误: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
+2026-05-21 06:05:17,900 [app.data.market_data_router] ERROR: [Router] US.QQQ260602P700000 所有数据源均失败：
+2026-05-21 06:05:18,484 [app.data.twelvedata_provider] WARNING: [TwelveData] API错误: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
+2026-05-21 06:05:18,486 [app.data.market_data_router] ERROR: [Router] US.SPY260602P730000 所有数据源均失败：
+2026-05-21 06:06:02,741 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 341次 US.TSLA260603P410000  — 止损止盈暂不生效
+2026-05-21 06:06:32,856 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 351次 US.QQQ260602P700000  — 止损止盈暂不生效
+2026-05-21 06:07:17,987 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 361次 US.TSLA260603P410000  — 止损止盈暂不生效
+2026-05-21 06:07:48,106 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 371次 US.QQQ260602P700000  — 止损止盈暂不生效
+2026-05-21 06:08:19,541 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：165)
+2026-05-21 06:08:19,541 [app.data.finnhub_provider] INFO: [Finnhub] US.ORCL $188.16 (+3.69%)
+2026-05-21 06:08:19,541 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.ORCL 从 Finnhub 获取报价 $188.16
+2026-05-21 06:08:19,541 [app.data.market_data_router] WARNING: [Router] US.ORCL LV3 K 线数据不足 (0 条)
+2026-05-21 06:08:20,531 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：166)
+2026-05-21 06:08:20,532 [app.data.finnhub_provider] INFO: [Finnhub] US.SPY $741.25 (+1.02%)
+2026-05-21 06:08:20,532 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.SPY 从 Finnhub 获取报价 $741.25
+2026-05-21 06:08:20,532 [app.data.market_data_router] INFO: [Router] US.ORCL price=$188.16 sentiment=0.00 vix=18.06 regime=RANGE source=futu_lv3_quote_only
+2026-05-21 06:08:21,477 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：167)
+2026-05-21 06:08:21,478 [app.data.finnhub_provider] INFO: [Finnhub] US.SNDK $1392.56 (+0.67%)
+2026-05-21 06:08:21,478 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.SNDK 从 Finnhub 获取报价 $1392.56
+2026-05-21 06:08:21,478 [app.data.market_data_router] WARNING: [Router] US.SNDK LV3 K 线数据不足 (0 条)
+2026-05-21 06:08:21,478 [app.data.market_data_router] INFO: [Router] US.SNDK price=$1392.56 sentiment=0.00 vix=18.06 regime=RANGE source=futu_lv3_quote_only
+2026-05-21 06:08:22,080 [app.data.twelvedata_provider] WARNING: [TwelveData] API错误: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
+2026-05-21 06:08:22,082 [app.data.market_data_router] ERROR: [Router] US.TSLA260603P410000 所有数据源均失败：
+2026-05-21 06:08:22,981 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：168)
+2026-05-21 06:08:22,982 [app.data.finnhub_provider] INFO: [Finnhub] US.QCOM $202.51 (+3.53%)
+2026-05-21 06:08:22,982 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.QCOM 从 Finnhub 获取报价 $202.51
+2026-05-21 06:08:22,982 [app.data.market_data_router] WARNING: [Router] US.QCOM LV3 K 线数据不足 (0 条)
+2026-05-21 06:08:22,982 [app.data.market_data_router] INFO: [Router] US.QCOM price=$202.51 sentiment=0.00 vix=18.06 regime=RANGE source=futu_lv3_quote_only
+2026-05-21 06:08:23,535 [app.data.twelvedata_provider] WARNING: [TwelveData] API错误: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
+2026-05-21 06:08:23,536 [app.data.market_data_router] ERROR: [Router] US.QQQ260602P710000 所有数据源均失败：
+2026-05-21 06:08:24,071 [app.data.twelvedata_provider] WARNING: [TwelveData] API错误: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
+2026-05-21 06:08:24,073 [app.data.market_data_router] ERROR: [Router] US.QQQ260602P700000 所有数据源均失败：
+2026-05-21 06:08:24,661 [app.data.twelvedata_provider] WARNING: [TwelveData] API错误: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
+2026-05-21 06:08:24,663 [app.data.market_data_router] ERROR: [Router] US.SPY260602P730000 所有数据源均失败：
+2026-05-21 06:08:33,231 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 381次 US.TSLA260603P410000  — 止损止盈暂不生效
+2026-05-21 06:09:03,346 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 391次 US.QQQ260602P700000  — 止损止盈暂不生效
+2026-05-21 06:09:45,772 [ftseek_us.position_sync] INFO: [US Sync] Done | Futu: 7 | DB: 7
+2026-05-21 06:09:48,485 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 401次 US.TSLA260603P410000  — 止损止盈暂不生效
+2026-05-21 06:09:53,230 [ftseek_us.risk.vix_monitor] INFO: VIX 指数：18.06
+2026-05-21 06:10:18,602 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 411次 US.QQQ260602P700000  — 止损止盈暂不生效
+2026-05-21 06:11:03,734 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 421次 US.TSLA260603P410000  — 止损止盈暂不生效
+2026-05-21 06:11:25,760 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：169)
+2026-05-21 06:11:25,760 [app.data.finnhub_provider] INFO: [Finnhub] US.ORCL $188.16 (+3.69%)
+2026-05-21 06:11:25,760 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.ORCL 从 Finnhub 获取报价 $188.16
+2026-05-21 06:11:25,760 [app.data.market_data_router] WARNING: [Router] US.ORCL LV3 K 线数据不足 (0 条)
+2026-05-21 06:11:26,722 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：170)
+2026-05-21 06:11:26,722 [app.data.finnhub_provider] INFO: [Finnhub] US.SPY $741.25 (+1.02%)
+2026-05-21 06:11:26,722 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.SPY 从 Finnhub 获取报价 $741.25
+2026-05-21 06:11:26,722 [app.data.market_data_router] INFO: [Router] US.ORCL price=$188.16 sentiment=0.00 vix=18.06 regime=RANGE source=futu_lv3_quote_only
+2026-05-21 06:11:27,695 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：171)
+2026-05-21 06:11:27,696 [app.data.finnhub_provider] INFO: [Finnhub] US.SNDK $1392.56 (+0.67%)
+2026-05-21 06:11:27,696 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.SNDK 从 Finnhub 获取报价 $1392.56
+2026-05-21 06:11:27,696 [app.data.market_data_router] WARNING: [Router] US.SNDK LV3 K 线数据不足 (0 条)
+2026-05-21 06:11:27,696 [app.data.market_data_router] INFO: [Router] US.SNDK price=$1392.56 sentiment=0.00 vix=18.06 regime=RANGE source=futu_lv3_quote_only
+2026-05-21 06:11:28,294 [app.data.twelvedata_provider] WARNING: [TwelveData] API错误: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
+2026-05-21 06:11:28,296 [app.data.market_data_router] ERROR: [Router] US.TSLA260603P410000 所有数据源均失败：
+2026-05-21 06:11:29,280 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：172)
+2026-05-21 06:11:29,280 [app.data.finnhub_provider] INFO: [Finnhub] US.QCOM $202.51 (+3.53%)
+2026-05-21 06:11:29,280 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.QCOM 从 Finnhub 获取报价 $202.51
+2026-05-21 06:11:29,280 [app.data.market_data_router] WARNING: [Router] US.QCOM LV3 K 线数据不足 (0 条)
+2026-05-21 06:11:29,280 [app.data.market_data_router] INFO: [Router] US.QCOM price=$202.51 sentiment=0.00 vix=18.06 regime=RANGE source=futu_lv3_quote_only
+2026-05-21 06:11:29,773 [app.data.twelvedata_provider] WARNING: [TwelveData] API错误: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
+2026-05-21 06:11:29,774 [app.data.market_data_router] ERROR: [Router] US.QQQ260602P710000 所有数据源均失败：
+2026-05-21 06:11:30,296 [app.data.twelvedata_provider] WARNING: [TwelveData] API错误: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
+2026-05-21 06:11:30,297 [app.data.market_data_router] ERROR: [Router] US.QQQ260602P700000 所有数据源均失败：
+2026-05-21 06:11:30,852 [app.data.twelvedata_provider] WARNING: [TwelveData] API错误: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
+2026-05-21 06:11:30,853 [app.data.market_data_router] ERROR: [Router] US.SPY260602P730000 所有数据源均失败：
+2026-05-21 06:11:33,854 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 431次 US.QQQ260602P700000  — 止损止盈暂不生效
+2026-05-21 06:12:18,986 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 441次 US.TSLA260603P410000  — 止损止盈暂不生效
+2026-05-21 06:12:49,107 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 451次 US.QQQ260602P700000  — 止损止盈暂不生效
+2026-05-21 06:13:34,234 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 461次 US.TSLA260603P410000  — 止损止盈暂不生效
+2026-05-21 06:14:04,360 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 471次 US.QQQ260602P700000  — 止损止盈暂不生效
+2026-05-21 06:14:31,909 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：173)
+2026-05-21 06:14:31,909 [app.data.finnhub_provider] INFO: [Finnhub] US.ORCL $188.16 (+3.69%)
+2026-05-21 06:14:31,909 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.ORCL 从 Finnhub 获取报价 $188.16
+2026-05-21 06:14:31,909 [app.data.market_data_router] WARNING: [Router] US.ORCL LV3 K 线数据不足 (0 条)
+2026-05-21 06:14:32,825 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：174)
+2026-05-21 06:14:32,826 [app.data.finnhub_provider] INFO: [Finnhub] US.SPY $741.25 (+1.02%)
+2026-05-21 06:14:32,826 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.SPY 从 Finnhub 获取报价 $741.25
+2026-05-21 06:14:32,826 [app.data.market_data_router] INFO: [Router] US.ORCL price=$188.16 sentiment=0.00 vix=18.06 regime=RANGE source=futu_lv3_quote_only
+2026-05-21 06:14:33,744 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：175)
+2026-05-21 06:14:33,744 [app.data.finnhub_provider] INFO: [Finnhub] US.SNDK $1392.56 (+0.67%)
+2026-05-21 06:14:33,744 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.SNDK 从 Finnhub 获取报价 $1392.56
+2026-05-21 06:14:33,744 [app.data.market_data_router] WARNING: [Router] US.SNDK LV3 K 线数据不足 (0 条)
+2026-05-21 06:14:33,744 [app.data.market_data_router] INFO: [Router] US.SNDK price=$1392.56 sentiment=0.00 vix=18.06 regime=RANGE source=futu_lv3_quote_only
+2026-05-21 06:14:34,331 [app.data.twelvedata_provider] WARNING: [TwelveData] API错误: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
+2026-05-21 06:14:34,332 [app.data.market_data_router] ERROR: [Router] US.TSLA260603P410000 所有数据源均失败：
+2026-05-21 06:14:35,273 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：176)
+2026-05-21 06:14:35,273 [app.data.finnhub_provider] INFO: [Finnhub] US.QCOM $202.51 (+3.53%)
+2026-05-21 06:14:35,273 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.QCOM 从 Finnhub 获取报价 $202.51
+2026-05-21 06:14:35,273 [app.data.market_data_router] WARNING: [Router] US.QCOM LV3 K 线数据不足 (0 条)
+2026-05-21 06:14:35,273 [app.data.market_data_router] INFO: [Router] US.QCOM price=$202.51 sentiment=0.00 vix=18.06 regime=RANGE source=futu_lv3_quote_only
+2026-05-21 06:14:35,902 [app.data.twelvedata_provider] WARNING: [TwelveData] API错误: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
+2026-05-21 06:14:35,903 [app.data.market_data_router] ERROR: [Router] US.QQQ260602P710000 所有数据源均失败：
+2026-05-21 06:14:36,504 [app.data.twelvedata_provider] WARNING: [TwelveData] API错误: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
+2026-05-21 06:14:36,505 [app.data.market_data_router] ERROR: [Router] US.QQQ260602P700000 所有数据源均失败：
+2026-05-21 06:14:37,035 [app.data.twelvedata_provider] WARNING: [TwelveData] API错误: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
+2026-05-21 06:14:37,037 [app.data.market_data_router] ERROR: [Router] US.SPY260602P730000 所有数据源均失败：
+2026-05-21 06:14:46,202 [ftseek_us.position_sync] INFO: [US Sync] Done | Futu: 7 | DB: 7
+2026-05-21 06:14:49,518 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 481次 US.TSLA260603P410000  — 止损止盈暂不生效
+2026-05-21 06:14:56,285 [ftseek_us.risk.vix_monitor] INFO: VIX 指数：18.06
+2026-05-21 06:15:19,637 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 491次 US.QQQ260602P700000  — 止损止盈暂不生效
+2026-05-21 06:16:04,772 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 501次 US.TSLA260603P410000  — 止损止盈暂不生效
+2026-05-21 06:16:34,887 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 511次 US.QQQ260602P700000  — 止损止盈暂不生效
+2026-05-21 06:17:20,018 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 521次 US.TSLA260603P410000  — 止损止盈暂不生效
+2026-05-21 06:17:38,043 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：177)
+2026-05-21 06:17:38,044 [app.data.finnhub_provider] INFO: [Finnhub] US.ORCL $188.16 (+3.69%)
+2026-05-21 06:17:38,044 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.ORCL 从 Finnhub 获取报价 $188.16
+2026-05-21 06:17:38,044 [app.data.market_data_router] WARNING: [Router] US.ORCL LV3 K 线数据不足 (0 条)
+2026-05-21 06:17:39,676 [app.data.alphavantage_provider] INFO: [FRED] 获取 VIX 成功: 18.06
+2026-05-21 06:17:40,665 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：178)
+2026-05-21 06:17:40,666 [app.data.finnhub_provider] INFO: [Finnhub] US.SPY $741.25 (+1.02%)
+2026-05-21 06:17:40,666 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.SPY 从 Finnhub 获取报价 $741.25
+2026-05-21 06:17:40,666 [app.data.market_data_router] INFO: [Router] US.ORCL price=$188.16 sentiment=0.00 vix=18.06 regime=RANGE source=futu_lv3_quote_only
+2026-05-21 06:17:41,600 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：179)
+2026-05-21 06:17:41,601 [app.data.finnhub_provider] INFO: [Finnhub] US.SNDK $1392.56 (+0.67%)
+2026-05-21 06:17:41,601 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.SNDK 从 Finnhub 获取报价 $1392.56
+2026-05-21 06:17:41,601 [app.data.market_data_router] WARNING: [Router] US.SNDK LV3 K 线数据不足 (0 条)
+2026-05-21 06:17:41,601 [app.data.market_data_router] INFO: [Router] US.SNDK price=$1392.56 sentiment=0.00 vix=18.06 regime=RANGE source=futu_lv3_quote_only
+2026-05-21 06:17:42,198 [app.data.twelvedata_provider] WARNING: [TwelveData] API错误: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
+2026-05-21 06:17:42,199 [app.data.market_data_router] ERROR: [Router] US.TSLA260603P410000 所有数据源均失败：
+2026-05-21 06:17:43,154 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：180)
+2026-05-21 06:17:43,154 [app.data.finnhub_provider] INFO: [Finnhub] US.QCOM $202.51 (+3.53%)
+2026-05-21 06:17:43,154 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.QCOM 从 Finnhub 获取报价 $202.51
+2026-05-21 06:17:43,154 [app.data.market_data_router] WARNING: [Router] US.QCOM LV3 K 线数据不足 (0 条)
+2026-05-21 06:17:43,154 [app.data.market_data_router] INFO: [Router] US.QCOM price=$202.51 sentiment=0.00 vix=18.06 regime=RANGE source=futu_lv3_quote_only
+2026-05-21 06:17:43,755 [app.data.twelvedata_provider] WARNING: [TwelveData] API错误: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
+2026-05-21 06:17:43,757 [app.data.market_data_router] ERROR: [Router] US.QQQ260602P710000 所有数据源均失败：
+2026-05-21 06:17:44,334 [app.data.twelvedata_provider] WARNING: [TwelveData] API错误: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
+2026-05-21 06:17:44,335 [app.data.market_data_router] ERROR: [Router] US.QQQ260602P700000 所有数据源均失败：
+2026-05-21 06:17:44,943 [app.data.twelvedata_provider] WARNING: [TwelveData] API错误: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
+2026-05-21 06:17:44,944 [app.data.market_data_router] ERROR: [Router] US.SPY260602P730000 所有数据源均失败：
+2026-05-21 06:17:44,945 [ftseek.us_pipeline.earnings_calendar] INFO: 获取财报日历 (horizon=3month)...
+2026-05-21 06:17:50,144 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 531次 US.QQQ260602P700000  — 止损止盈暂不生效
+2026-05-21 06:17:51,547 [ftseek.us_pipeline.earnings_calendar] INFO: 获取到 1 条财报数据
+2026-05-21 06:18:35,270 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 541次 US.TSLA260603P410000  — 止损止盈暂不生效
+2026-05-21 06:19:05,388 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 551次 US.QQQ260602P700000  — 止损止盈暂不生效
+2026-05-21 06:19:46,624 [ftseek_us.position_sync] INFO: [US Sync] Done | Futu: 7 | DB: 7
+2026-05-21 06:19:50,535 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 561次 US.TSLA260603P410000  — 止损止盈暂不生效
+2026-05-21 06:19:57,711 [ftseek_us.risk.vix_monitor] INFO: VIX 指数：18.06
+2026-05-21 06:20:20,649 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 571次 US.QQQ260602P700000  — 止损止盈暂不生效
+2026-05-21 06:20:52,593 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：181)
+2026-05-21 06:20:52,593 [app.data.finnhub_provider] INFO: [Finnhub] US.ORCL $188.16 (+3.69%)
+2026-05-21 06:20:52,593 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.ORCL 从 Finnhub 获取报价 $188.16
+2026-05-21 06:20:52,594 [app.data.market_data_router] WARNING: [Router] US.ORCL LV3 K 线数据不足 (0 条)
+2026-05-21 06:20:53,480 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：182)
+2026-05-21 06:20:53,480 [app.data.finnhub_provider] INFO: [Finnhub] US.SPY $741.25 (+1.02%)
+2026-05-21 06:20:53,480 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.SPY 从 Finnhub 获取报价 $741.25
+2026-05-21 06:20:53,480 [app.data.market_data_router] INFO: [Router] US.ORCL price=$188.16 sentiment=0.00 vix=18.06 regime=RANGE source=futu_lv3_quote_only
+2026-05-21 06:20:54,488 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：183)
+2026-05-21 06:20:54,489 [app.data.finnhub_provider] INFO: [Finnhub] US.SNDK $1392.56 (+0.67%)
+2026-05-21 06:20:54,489 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.SNDK 从 Finnhub 获取报价 $1392.56
+2026-05-21 06:20:54,489 [app.data.market_data_router] WARNING: [Router] US.SNDK LV3 K 线数据不足 (0 条)
+2026-05-21 06:20:54,489 [app.data.market_data_router] INFO: [Router] US.SNDK price=$1392.56 sentiment=0.00 vix=18.06 regime=RANGE source=futu_lv3_quote_only
+2026-05-21 06:20:55,038 [app.data.twelvedata_provider] WARNING: [TwelveData] API错误: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
+2026-05-21 06:20:55,039 [app.data.market_data_router] ERROR: [Router] US.TSLA260603P410000 所有数据源均失败：
+2026-05-21 06:20:56,003 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：184)
+2026-05-21 06:20:56,004 [app.data.finnhub_provider] INFO: [Finnhub] US.QCOM $202.51 (+3.53%)
+2026-05-21 06:20:56,004 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.QCOM 从 Finnhub 获取报价 $202.51
+2026-05-21 06:20:56,004 [app.data.market_data_router] WARNING: [Router] US.QCOM LV3 K 线数据不足 (0 条)
+2026-05-21 06:20:56,004 [app.data.market_data_router] INFO: [Router] US.QCOM price=$202.51 sentiment=0.00 vix=18.06 regime=RANGE source=futu_lv3_quote_only
+2026-05-21 06:20:56,612 [app.data.twelvedata_provider] WARNING: [TwelveData] API错误: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
+2026-05-21 06:20:56,613 [app.data.market_data_router] ERROR: [Router] US.QQQ260602P710000 所有数据源均失败：
+2026-05-21 06:20:57,187 [app.data.twelvedata_provider] WARNING: [TwelveData] API错误: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
+2026-05-21 06:20:57,188 [app.data.market_data_router] ERROR: [Router] US.QQQ260602P700000 所有数据源均失败：
+2026-05-21 06:20:57,745 [app.data.twelvedata_provider] WARNING: [TwelveData] API错误: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
+2026-05-21 06:20:57,746 [app.data.market_data_router] ERROR: [Router] US.SPY260602P730000 所有数据源均失败：
+2026-05-21 06:21:05,791 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 581次 US.TSLA260603P410000  — 止损止盈暂不生效
+2026-05-21 06:21:35,906 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 591次 US.QQQ260602P700000  — 止损止盈暂不生效
+2026-05-21 06:22:21,036 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 601次 US.TSLA260603P410000  — 止损止盈暂不生效
+2026-05-21 06:22:51,157 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 611次 US.QQQ260602P700000  — 止损止盈暂不生效
+2026-05-21 06:23:36,285 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 621次 US.TSLA260603P410000  — 止损止盈暂不生效
+2026-05-21 06:23:58,825 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：185)
+2026-05-21 06:23:58,826 [app.data.finnhub_provider] INFO: [Finnhub] US.ORCL $188.16 (+3.69%)
+2026-05-21 06:23:58,826 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.ORCL 从 Finnhub 获取报价 $188.16
+2026-05-21 06:23:58,826 [app.data.market_data_router] WARNING: [Router] US.ORCL LV3 K 线数据不足 (0 条)
+2026-05-21 06:23:59,829 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：186)
+2026-05-21 06:23:59,829 [app.data.finnhub_provider] INFO: [Finnhub] US.SPY $741.25 (+1.02%)
+2026-05-21 06:23:59,829 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.SPY 从 Finnhub 获取报价 $741.25
+2026-05-21 06:23:59,829 [app.data.market_data_router] INFO: [Router] US.ORCL price=$188.16 sentiment=0.00 vix=18.06 regime=RANGE source=futu_lv3_quote_only
+2026-05-21 06:24:00,871 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：187)
+2026-05-21 06:24:00,872 [app.data.finnhub_provider] INFO: [Finnhub] US.SNDK $1392.56 (+0.67%)
+2026-05-21 06:24:00,872 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.SNDK 从 Finnhub 获取报价 $1392.56
+2026-05-21 06:24:00,872 [app.data.market_data_router] WARNING: [Router] US.SNDK LV3 K 线数据不足 (0 条)
+2026-05-21 06:24:00,872 [app.data.market_data_router] INFO: [Router] US.SNDK price=$1392.56 sentiment=0.00 vix=18.06 regime=RANGE source=futu_lv3_quote_only
+2026-05-21 06:24:01,529 [app.data.twelvedata_provider] WARNING: [TwelveData] API错误: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
+2026-05-21 06:24:01,530 [app.data.market_data_router] ERROR: [Router] US.TSLA260603P410000 所有数据源均失败：
+2026-05-21 06:24:02,495 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：188)
+2026-05-21 06:24:02,495 [app.data.finnhub_provider] INFO: [Finnhub] US.QCOM $202.51 (+3.53%)
+2026-05-21 06:24:02,495 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.QCOM 从 Finnhub 获取报价 $202.51
+2026-05-21 06:24:02,495 [app.data.market_data_router] WARNING: [Router] US.QCOM LV3 K 线数据不足 (0 条)
+2026-05-21 06:24:02,495 [app.data.market_data_router] INFO: [Router] US.QCOM price=$202.51 sentiment=0.00 vix=18.06 regime=RANGE source=futu_lv3_quote_only
+2026-05-21 06:24:03,158 [app.data.twelvedata_provider] WARNING: [TwelveData] API错误: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
+2026-05-21 06:24:03,159 [app.data.market_data_router] ERROR: [Router] US.QQQ260602P710000 所有数据源均失败：
+2026-05-21 06:24:03,780 [app.data.twelvedata_provider] WARNING: [TwelveData] API错误: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
+2026-05-21 06:24:03,781 [app.data.market_data_router] ERROR: [Router] US.QQQ260602P700000 所有数据源均失败：
+2026-05-21 06:24:04,348 [app.data.twelvedata_provider] WARNING: [TwelveData] API错误: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
+2026-05-21 06:24:04,350 [app.data.market_data_router] ERROR: [Router] US.SPY260602P730000 所有数据源均失败：
+2026-05-21 06:24:06,405 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 631次 US.QQQ260602P700000  — 止损止盈暂不生效
+2026-05-21 06:24:47,037 [ftseek_us.position_sync] INFO: [US Sync] Done | Futu: 7 | DB: 7
+2026-05-21 06:24:51,565 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 641次 US.TSLA260603P410000  — 止损止盈暂不生效
+2026-05-21 06:24:59,108 [ftseek_us.risk.vix_monitor] INFO: VIX 指数：18.06
+2026-05-21 06:25:21,677 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 651次 US.QQQ260602P700000  — 止损止盈暂不生效
+2026-05-21 06:26:06,810 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 661次 US.TSLA260603P410000  — 止损止盈暂不生效
+2026-05-21 06:26:36,925 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 671次 US.QQQ260602P700000  — 止损止盈暂不生效
+2026-05-21 06:27:05,362 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：189)
+2026-05-21 06:27:05,362 [app.data.finnhub_provider] INFO: [Finnhub] US.ORCL $188.16 (+3.69%)
+2026-05-21 06:27:05,362 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.ORCL 从 Finnhub 获取报价 $188.16
+2026-05-21 06:27:05,362 [app.data.market_data_router] WARNING: [Router] US.ORCL LV3 K 线数据不足 (0 条)
+2026-05-21 06:27:06,333 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：190)
+2026-05-21 06:27:06,333 [app.data.finnhub_provider] INFO: [Finnhub] US.SPY $741.25 (+1.02%)
+2026-05-21 06:27:06,333 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.SPY 从 Finnhub 获取报价 $741.25
+2026-05-21 06:27:06,333 [app.data.market_data_router] INFO: [Router] US.ORCL price=$188.16 sentiment=0.00 vix=18.06 regime=RANGE source=futu_lv3_quote_only
+2026-05-21 06:27:07,327 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：191)
+2026-05-21 06:27:07,327 [app.data.finnhub_provider] INFO: [Finnhub] US.SNDK $1392.56 (+0.67%)
+2026-05-21 06:27:07,328 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.SNDK 从 Finnhub 获取报价 $1392.56
+2026-05-21 06:27:07,328 [app.data.market_data_router] WARNING: [Router] US.SNDK LV3 K 线数据不足 (0 条)
+2026-05-21 06:27:07,328 [app.data.market_data_router] INFO: [Router] US.SNDK price=$1392.56 sentiment=0.00 vix=18.06 regime=RANGE source=futu_lv3_quote_only
+2026-05-21 06:27:07,868 [app.data.twelvedata_provider] WARNING: [TwelveData] API错误: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
+2026-05-21 06:27:07,869 [app.data.market_data_router] ERROR: [Router] US.TSLA260603P410000 所有数据源均失败：
+2026-05-21 06:27:08,850 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：192)
+2026-05-21 06:27:08,850 [app.data.finnhub_provider] INFO: [Finnhub] US.QCOM $202.51 (+3.53%)
+2026-05-21 06:27:08,851 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.QCOM 从 Finnhub 获取报价 $202.51
+2026-05-21 06:27:08,851 [app.data.market_data_router] WARNING: [Router] US.QCOM LV3 K 线数据不足 (0 条)
+2026-05-21 06:27:08,851 [app.data.market_data_router] INFO: [Router] US.QCOM price=$202.51 sentiment=0.00 vix=18.06 regime=RANGE source=futu_lv3_quote_only
+2026-05-21 06:27:09,377 [app.data.twelvedata_provider] WARNING: [TwelveData] API错误: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
+2026-05-21 06:27:09,378 [app.data.market_data_router] ERROR: [Router] US.QQQ260602P710000 所有数据源均失败：
+2026-05-21 06:27:09,865 [app.data.twelvedata_provider] WARNING: [TwelveData] API错误: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
+2026-05-21 06:27:09,867 [app.data.market_data_router] ERROR: [Router] US.QQQ260602P700000 所有数据源均失败：
+2026-05-21 06:27:10,402 [app.data.twelvedata_provider] WARNING: [TwelveData] API错误: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
+2026-05-21 06:27:10,403 [app.data.market_data_router] ERROR: [Router] US.SPY260602P730000 所有数据源均失败：
+2026-05-21 06:27:22,062 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 681次 US.TSLA260603P410000  — 止损止盈暂不生效
+2026-05-21 06:27:52,184 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 691次 US.QQQ260602P700000  — 止损止盈暂不生效
+2026-05-21 06:28:37,319 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 701次 US.TSLA260603P410000  — 止损止盈暂不生效
+2026-05-21 06:29:07,439 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 711次 US.QQQ260602P700000  — 止损止盈暂不生效
+2026-05-21 06:29:47,455 [ftseek_us.position_sync] INFO: [US Sync] Done | Futu: 7 | DB: 7
+2026-05-21 06:29:52,596 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 721次 US.TSLA260603P410000  — 止损止盈暂不生效
+2026-05-21 06:30:00,461 [ftseek_us.risk.vix_monitor] INFO: VIX 指数：18.06
+2026-05-21 06:30:11,514 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：193)
+2026-05-21 06:30:11,514 [app.data.finnhub_provider] INFO: [Finnhub] US.ORCL $188.16 (+3.69%)
+2026-05-21 06:30:11,514 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.ORCL 从 Finnhub 获取报价 $188.16
+2026-05-21 06:30:11,514 [app.data.market_data_router] WARNING: [Router] US.ORCL LV3 K 线数据不足 (0 条)
+2026-05-21 06:30:12,707 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：194)
+2026-05-21 06:30:12,707 [app.data.finnhub_provider] INFO: [Finnhub] US.SPY $741.25 (+1.02%)
+2026-05-21 06:30:12,707 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.SPY 从 Finnhub 获取报价 $741.25
+2026-05-21 06:30:12,707 [app.data.market_data_router] INFO: [Router] US.ORCL price=$188.16 sentiment=0.00 vix=18.06 regime=RANGE source=futu_lv3_quote_only
+2026-05-21 06:30:13,704 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：195)
+2026-05-21 06:30:13,705 [app.data.finnhub_provider] INFO: [Finnhub] US.SNDK $1392.56 (+0.67%)
+2026-05-21 06:30:13,705 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.SNDK 从 Finnhub 获取报价 $1392.56
+2026-05-21 06:30:13,705 [app.data.market_data_router] WARNING: [Router] US.SNDK LV3 K 线数据不足 (0 条)
+2026-05-21 06:30:13,705 [app.data.market_data_router] INFO: [Router] US.SNDK price=$1392.56 sentiment=0.00 vix=18.06 regime=RANGE source=futu_lv3_quote_only
+2026-05-21 06:30:14,296 [app.data.twelvedata_provider] WARNING: [TwelveData] API错误: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
+2026-05-21 06:30:14,297 [app.data.market_data_router] ERROR: [Router] US.TSLA260603P410000 所有数据源均失败：
+2026-05-21 06:30:15,261 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：196)
+2026-05-21 06:30:15,262 [app.data.finnhub_provider] INFO: [Finnhub] US.QCOM $202.51 (+3.53%)
+2026-05-21 06:30:15,262 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.QCOM 从 Finnhub 获取报价 $202.51
+2026-05-21 06:30:15,262 [app.data.market_data_router] WARNING: [Router] US.QCOM LV3 K 线数据不足 (0 条)
+2026-05-21 06:30:15,262 [app.data.market_data_router] INFO: [Router] US.QCOM price=$202.51 sentiment=0.00 vix=18.06 regime=RANGE source=futu_lv3_quote_only
+2026-05-21 06:30:15,854 [app.data.twelvedata_provider] WARNING: [TwelveData] API错误: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
+2026-05-21 06:30:15,856 [app.data.market_data_router] ERROR: [Router] US.QQQ260602P710000 所有数据源均失败：
+2026-05-21 06:30:16,509 [app.data.twelvedata_provider] WARNING: [TwelveData] API错误: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
+2026-05-21 06:30:16,510 [app.data.market_data_router] ERROR: [Router] US.QQQ260602P700000 所有数据源均失败：
+2026-05-21 06:30:17,062 [app.data.twelvedata_provider] WARNING: [TwelveData] API错误: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
+2026-05-21 06:30:17,063 [app.data.market_data_router] ERROR: [Router] US.SPY260602P730000 所有数据源均失败：
+2026-05-21 06:30:22,714 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 731次 US.QQQ260602P700000  — 止损止盈暂不生效
+2026-05-21 06:31:07,849 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 741次 US.TSLA260603P410000  — 止损止盈暂不生效
+2026-05-21 06:31:37,967 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 751次 US.QQQ260602P700000  — 止损止盈暂不生效
+2026-05-21 06:32:23,107 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 761次 US.TSLA260603P410000  — 止损止盈暂不生效
+2026-05-21 06:32:53,228 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 771次 US.QQQ260602P700000  — 止损止盈暂不生效
+2026-05-21 06:33:18,207 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：197)
+2026-05-21 06:33:18,207 [app.data.finnhub_provider] INFO: [Finnhub] US.ORCL $188.16 (+3.69%)
+2026-05-21 06:33:18,207 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.ORCL 从 Finnhub 获取报价 $188.16
+2026-05-21 06:33:18,207 [app.data.market_data_router] WARNING: [Router] US.ORCL LV3 K 线数据不足 (0 条)
+2026-05-21 06:33:19,938 [app.data.alphavantage_provider] INFO: [FRED] 获取 VIX 成功: 18.06
+2026-05-21 06:33:20,890 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：198)
+2026-05-21 06:33:20,890 [app.data.finnhub_provider] INFO: [Finnhub] US.SPY $741.25 (+1.02%)
+2026-05-21 06:33:20,890 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.SPY 从 Finnhub 获取报价 $741.25
+2026-05-21 06:33:20,890 [app.data.market_data_router] INFO: [Router] US.ORCL price=$188.16 sentiment=0.00 vix=18.06 regime=RANGE source=futu_lv3_quote_only
+2026-05-21 06:33:21,780 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：199)
+2026-05-21 06:33:21,781 [app.data.finnhub_provider] INFO: [Finnhub] US.SNDK $1392.56 (+0.67%)
+2026-05-21 06:33:21,781 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.SNDK 从 Finnhub 获取报价 $1392.56
+2026-05-21 06:33:21,781 [app.data.market_data_router] WARNING: [Router] US.SNDK LV3 K 线数据不足 (0 条)
+2026-05-21 06:33:21,781 [app.data.market_data_router] INFO: [Router] US.SNDK price=$1392.56 sentiment=0.00 vix=18.06 regime=RANGE source=futu_lv3_quote_only
+2026-05-21 06:33:22,386 [app.data.twelvedata_provider] WARNING: [TwelveData] API错误: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
+2026-05-21 06:33:22,387 [app.data.market_data_router] ERROR: [Router] US.TSLA260603P410000 所有数据源均失败：
+2026-05-21 06:33:23,289 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：200)
+2026-05-21 06:33:23,289 [app.data.finnhub_provider] INFO: [Finnhub] US.QCOM $202.51 (+3.53%)
+2026-05-21 06:33:23,289 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.QCOM 从 Finnhub 获取报价 $202.51
+2026-05-21 06:33:23,289 [app.data.market_data_router] WARNING: [Router] US.QCOM LV3 K 线数据不足 (0 条)
+2026-05-21 06:33:23,289 [app.data.market_data_router] INFO: [Router] US.QCOM price=$202.51 sentiment=0.00 vix=18.06 regime=RANGE source=futu_lv3_quote_only
+2026-05-21 06:33:23,818 [app.data.twelvedata_provider] WARNING: [TwelveData] API错误: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
+2026-05-21 06:33:23,820 [app.data.market_data_router] ERROR: [Router] US.QQQ260602P710000 所有数据源均失败：
+2026-05-21 06:33:24,343 [app.data.twelvedata_provider] WARNING: [TwelveData] API错误: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
+2026-05-21 06:33:24,345 [app.data.market_data_router] ERROR: [Router] US.QQQ260602P700000 所有数据源均失败：
+2026-05-21 06:33:24,930 [app.data.twelvedata_provider] WARNING: [TwelveData] API错误: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
+2026-05-21 06:33:24,932 [app.data.market_data_router] ERROR: [Router] US.SPY260602P730000 所有数据源均失败：
+2026-05-21 06:33:38,364 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 781次 US.TSLA260603P410000  — 止损止盈暂不生效
+2026-05-21 06:34:08,480 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 791次 US.QQQ260602P700000  — 止损止盈暂不生效
+2026-05-21 06:34:47,866 [ftseek_us.position_sync] INFO: [US Sync] Done | Futu: 7 | DB: 7
+2026-05-21 06:34:53,639 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 801次 US.TSLA260603P410000  — 止损止盈暂不生效
+2026-05-21 06:35:01,705 [ftseek_us.risk.vix_monitor] INFO: VIX 指数：18.06
+2026-05-21 06:35:23,753 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 811次 US.QQQ260602P700000  — 止损止盈暂不生效
+2026-05-21 06:36:08,886 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 821次 US.TSLA260603P410000  — 止损止盈暂不生效
+2026-05-21 06:36:26,223 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：201)
+2026-05-21 06:36:26,223 [app.data.finnhub_provider] INFO: [Finnhub] US.ORCL $188.16 (+3.69%)
+2026-05-21 06:36:26,223 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.ORCL 从 Finnhub 获取报价 $188.16
+2026-05-21 06:36:26,223 [app.data.market_data_router] WARNING: [Router] US.ORCL LV3 K 线数据不足 (0 条)
+2026-05-21 06:36:27,167 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：202)
+2026-05-21 06:36:27,167 [app.data.finnhub_provider] INFO: [Finnhub] US.SPY $741.25 (+1.02%)
+2026-05-21 06:36:27,167 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.SPY 从 Finnhub 获取报价 $741.25
+2026-05-21 06:36:27,167 [app.data.market_data_router] INFO: [Router] US.ORCL price=$188.16 sentiment=0.00 vix=18.06 regime=RANGE source=futu_lv3_quote_only
+2026-05-21 06:36:28,151 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：203)
+2026-05-21 06:36:28,151 [app.data.finnhub_provider] INFO: [Finnhub] US.SNDK $1392.56 (+0.67%)
+2026-05-21 06:36:28,151 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.SNDK 从 Finnhub 获取报价 $1392.56
+2026-05-21 06:36:28,151 [app.data.market_data_router] WARNING: [Router] US.SNDK LV3 K 线数据不足 (0 条)
+2026-05-21 06:36:28,151 [app.data.market_data_router] INFO: [Router] US.SNDK price=$1392.56 sentiment=0.00 vix=18.06 regime=RANGE source=futu_lv3_quote_only
+2026-05-21 06:36:28,647 [app.data.twelvedata_provider] WARNING: [TwelveData] API错误: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
+2026-05-21 06:36:28,649 [app.data.market_data_router] ERROR: [Router] US.TSLA260603P410000 所有数据源均失败：
+2026-05-21 06:36:29,571 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：204)
+2026-05-21 06:36:29,571 [app.data.finnhub_provider] INFO: [Finnhub] US.QCOM $202.51 (+3.53%)
+2026-05-21 06:36:29,571 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.QCOM 从 Finnhub 获取报价 $202.51
+2026-05-21 06:36:29,571 [app.data.market_data_router] WARNING: [Router] US.QCOM LV3 K 线数据不足 (0 条)
+2026-05-21 06:36:29,572 [app.data.market_data_router] INFO: [Router] US.QCOM price=$202.51 sentiment=0.00 vix=18.06 regime=RANGE source=futu_lv3_quote_only
+2026-05-21 06:36:30,141 [app.data.twelvedata_provider] WARNING: [TwelveData] API错误: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
+2026-05-21 06:36:30,143 [app.data.market_data_router] ERROR: [Router] US.QQQ260602P710000 所有数据源均失败：
+2026-05-21 06:36:30,730 [app.data.twelvedata_provider] WARNING: [TwelveData] API错误: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
+2026-05-21 06:36:30,732 [app.data.market_data_router] ERROR: [Router] US.QQQ260602P700000 所有数据源均失败：
+2026-05-21 06:36:31,284 [app.data.twelvedata_provider] WARNING: [TwelveData] API错误: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
+2026-05-21 06:36:31,286 [app.data.market_data_router] ERROR: [Router] US.SPY260602P730000 所有数据源均失败：
+2026-05-21 06:36:38,998 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 831次 US.QQQ260602P700000  — 止损止盈暂不生效
+2026-05-21 06:37:24,124 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 841次 US.TSLA260603P410000  — 止损止盈暂不生效
+2026-05-21 06:37:54,245 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 851次 US.QQQ260602P700000  — 止损止盈暂不生效
+2026-05-21 06:38:39,371 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 861次 US.TSLA260603P410000  — 止损止盈暂不生效
+2026-05-21 06:39:09,490 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 871次 US.QQQ260602P700000  — 止损止盈暂不生效
+2026-05-21 06:39:32,512 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：205)
+2026-05-21 06:39:32,512 [app.data.finnhub_provider] INFO: [Finnhub] US.ORCL $188.16 (+3.69%)
+2026-05-21 06:39:32,512 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.ORCL 从 Finnhub 获取报价 $188.16
+2026-05-21 06:39:32,512 [app.data.market_data_router] WARNING: [Router] US.ORCL LV3 K 线数据不足 (0 条)
+2026-05-21 06:39:33,427 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：206)
+2026-05-21 06:39:33,428 [app.data.finnhub_provider] INFO: [Finnhub] US.SPY $741.25 (+1.02%)
+2026-05-21 06:39:33,428 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.SPY 从 Finnhub 获取报价 $741.25
+2026-05-21 06:39:33,428 [app.data.market_data_router] INFO: [Router] US.ORCL price=$188.16 sentiment=0.00 vix=18.06 regime=RANGE source=futu_lv3_quote_only
+2026-05-21 06:39:34,371 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：207)
+2026-05-21 06:39:34,371 [app.data.finnhub_provider] INFO: [Finnhub] US.SNDK $1392.56 (+0.67%)
+2026-05-21 06:39:34,371 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.SNDK 从 Finnhub 获取报价 $1392.56
+2026-05-21 06:39:34,371 [app.data.market_data_router] WARNING: [Router] US.SNDK LV3 K 线数据不足 (0 条)
+2026-05-21 06:39:34,371 [app.data.market_data_router] INFO: [Router] US.SNDK price=$1392.56 sentiment=0.00 vix=18.06 regime=RANGE source=futu_lv3_quote_only
+2026-05-21 06:39:34,962 [app.data.twelvedata_provider] WARNING: [TwelveData] API错误: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
+2026-05-21 06:39:34,963 [app.data.market_data_router] ERROR: [Router] US.TSLA260603P410000 所有数据源均失败：
+2026-05-21 06:39:35,838 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：208)
+2026-05-21 06:39:35,839 [app.data.finnhub_provider] INFO: [Finnhub] US.QCOM $202.51 (+3.53%)
+2026-05-21 06:39:35,839 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.QCOM 从 Finnhub 获取报价 $202.51
+2026-05-21 06:39:35,839 [app.data.market_data_router] WARNING: [Router] US.QCOM LV3 K 线数据不足 (0 条)
+2026-05-21 06:39:35,839 [app.data.market_data_router] INFO: [Router] US.QCOM price=$202.51 sentiment=0.00 vix=18.06 regime=RANGE source=futu_lv3_quote_only
+2026-05-21 06:39:36,473 [app.data.twelvedata_provider] WARNING: [TwelveData] API错误: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
+2026-05-21 06:39:36,474 [app.data.market_data_router] ERROR: [Router] US.QQQ260602P710000 所有数据源均失败：
+2026-05-21 06:39:37,044 [app.data.twelvedata_provider] WARNING: [TwelveData] API错误: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
+2026-05-21 06:39:37,046 [app.data.market_data_router] ERROR: [Router] US.QQQ260602P700000 所有数据源均失败：
+2026-05-21 06:39:37,643 [app.data.twelvedata_provider] WARNING: [TwelveData] API错误: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
+2026-05-21 06:39:37,645 [app.data.market_data_router] ERROR: [Router] US.SPY260602P730000 所有数据源均失败：
+2026-05-21 06:39:48,275 [ftseek_us.position_sync] INFO: [US Sync] Done | Futu: 7 | DB: 7
+2026-05-21 06:39:54,633 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 881次 US.TSLA260603P410000  — 止损止盈暂不生效
+2026-05-21 06:40:03,013 [ftseek_us.risk.vix_monitor] INFO: VIX 指数：18.06
+2026-05-21 06:40:24,752 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 891次 US.QQQ260602P700000  — 止损止盈暂不生效
+2026-05-21 06:41:09,883 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 901次 US.TSLA260603P410000  — 止损止盈暂不生效
+2026-05-21 06:41:39,998 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 911次 US.QQQ260602P700000  — 止损止盈暂不生效
+2026-05-21 06:42:25,131 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 921次 US.TSLA260603P410000  — 止损止盈暂不生效
+2026-05-21 06:42:38,755 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：209)
+2026-05-21 06:42:38,756 [app.data.finnhub_provider] INFO: [Finnhub] US.ORCL $188.16 (+3.69%)
+2026-05-21 06:42:38,756 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.ORCL 从 Finnhub 获取报价 $188.16
+2026-05-21 06:42:38,756 [app.data.market_data_router] WARNING: [Router] US.ORCL LV3 K 线数据不足 (0 条)
+2026-05-21 06:42:39,619 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：210)
+2026-05-21 06:42:39,619 [app.data.finnhub_provider] INFO: [Finnhub] US.SPY $741.25 (+1.02%)
+2026-05-21 06:42:39,619 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.SPY 从 Finnhub 获取报价 $741.25
+2026-05-21 06:42:39,619 [app.data.market_data_router] INFO: [Router] US.ORCL price=$188.16 sentiment=0.00 vix=18.06 regime=RANGE source=futu_lv3_quote_only
+2026-05-21 06:42:40,500 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：211)
+2026-05-21 06:42:40,500 [app.data.finnhub_provider] INFO: [Finnhub] US.SNDK $1392.56 (+0.67%)
+2026-05-21 06:42:40,500 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.SNDK 从 Finnhub 获取报价 $1392.56
+2026-05-21 06:42:40,501 [app.data.market_data_router] WARNING: [Router] US.SNDK LV3 K 线数据不足 (0 条)
+2026-05-21 06:42:40,501 [app.data.market_data_router] INFO: [Router] US.SNDK price=$1392.56 sentiment=0.00 vix=18.06 regime=RANGE source=futu_lv3_quote_only
+2026-05-21 06:42:41,064 [app.data.twelvedata_provider] WARNING: [TwelveData] API错误: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
+2026-05-21 06:42:41,065 [app.data.market_data_router] ERROR: [Router] US.TSLA260603P410000 所有数据源均失败：
+2026-05-21 06:42:41,983 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：212)
+2026-05-21 06:42:41,983 [app.data.finnhub_provider] INFO: [Finnhub] US.QCOM $202.51 (+3.53%)
+2026-05-21 06:42:41,983 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.QCOM 从 Finnhub 获取报价 $202.51
+2026-05-21 06:42:41,983 [app.data.market_data_router] WARNING: [Router] US.QCOM LV3 K 线数据不足 (0 条)
+2026-05-21 06:42:41,984 [app.data.market_data_router] INFO: [Router] US.QCOM price=$202.51 sentiment=0.00 vix=18.06 regime=RANGE source=futu_lv3_quote_only
+2026-05-21 06:42:42,546 [app.data.twelvedata_provider] WARNING: [TwelveData] API错误: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
+2026-05-21 06:42:42,547 [app.data.market_data_router] ERROR: [Router] US.QQQ260602P710000 所有数据源均失败：
+2026-05-21 06:42:43,134 [app.data.twelvedata_provider] WARNING: [TwelveData] API错误: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
+2026-05-21 06:42:43,136 [app.data.market_data_router] ERROR: [Router] US.QQQ260602P700000 所有数据源均失败：
+2026-05-21 06:42:43,685 [app.data.twelvedata_provider] WARNING: [TwelveData] API错误: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
+2026-05-21 06:42:43,686 [app.data.market_data_router] ERROR: [Router] US.SPY260602P730000 所有数据源均失败：
+2026-05-21 06:42:55,247 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 931次 US.QQQ260602P700000  — 止损止盈暂不生效
+2026-05-21 06:43:40,372 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 941次 US.TSLA260603P410000  — 止损止盈暂不生效
+2026-05-21 06:44:10,490 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 951次 US.QQQ260602P700000  — 止损止盈暂不生效
+2026-05-21 06:44:48,689 [ftseek_us.position_sync] INFO: [US Sync] Done | Futu: 7 | DB: 7
+2026-05-21 06:44:55,646 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 961次 US.TSLA260603P410000  — 止损止盈暂不生效
+2026-05-21 06:45:04,256 [ftseek_us.risk.vix_monitor] INFO: VIX 指数：18.06
+2026-05-21 06:45:25,762 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 971次 US.QQQ260602P700000  — 止损止盈暂不生效
+2026-05-21 06:45:43,619 [app.notifier.dingtalk] INFO: [钉钉] send_text 成功: 💓 FTSeek-US 通道心跳
+2026-05-21 06:45:44,820 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：213)
+2026-05-21 06:45:44,821 [app.data.finnhub_provider] INFO: [Finnhub] US.ORCL $188.16 (+3.69%)
+2026-05-21 06:45:44,821 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.ORCL 从 Finnhub 获取报价 $188.16
+2026-05-21 06:45:44,821 [app.data.market_data_router] WARNING: [Router] US.ORCL LV3 K 线数据不足 (0 条)
+2026-05-21 06:45:45,822 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：214)
+2026-05-21 06:45:45,822 [app.data.finnhub_provider] INFO: [Finnhub] US.SPY $741.25 (+1.02%)
+2026-05-21 06:45:45,822 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.SPY 从 Finnhub 获取报价 $741.25
+2026-05-21 06:45:45,822 [app.data.market_data_router] INFO: [Router] US.ORCL price=$188.16 sentiment=0.00 vix=18.06 regime=RANGE source=futu_lv3_quote_only
+2026-05-21 06:45:46,743 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：215)
+2026-05-21 06:45:46,744 [app.data.finnhub_provider] INFO: [Finnhub] US.SNDK $1392.56 (+0.67%)
+2026-05-21 06:45:46,744 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.SNDK 从 Finnhub 获取报价 $1392.56
+2026-05-21 06:45:46,744 [app.data.market_data_router] WARNING: [Router] US.SNDK LV3 K 线数据不足 (0 条)
+2026-05-21 06:45:46,744 [app.data.market_data_router] INFO: [Router] US.SNDK price=$1392.56 sentiment=0.00 vix=18.06 regime=RANGE source=futu_lv3_quote_only
+2026-05-21 06:45:47,429 [app.data.twelvedata_provider] WARNING: [TwelveData] API错误: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
+2026-05-21 06:45:47,430 [app.data.market_data_router] ERROR: [Router] US.TSLA260603P410000 所有数据源均失败：
+2026-05-21 06:45:48,414 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：216)
+2026-05-21 06:45:48,414 [app.data.finnhub_provider] INFO: [Finnhub] US.QCOM $202.51 (+3.53%)
+2026-05-21 06:45:48,414 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.QCOM 从 Finnhub 获取报价 $202.51
+2026-05-21 06:45:48,414 [app.data.market_data_router] WARNING: [Router] US.QCOM LV3 K 线数据不足 (0 条)
+2026-05-21 06:45:48,415 [app.data.market_data_router] INFO: [Router] US.QCOM price=$202.51 sentiment=0.00 vix=18.06 regime=RANGE source=futu_lv3_quote_only
+2026-05-21 06:45:49,013 [app.data.twelvedata_provider] WARNING: [TwelveData] API错误: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
+2026-05-21 06:45:49,014 [app.data.market_data_router] ERROR: [Router] US.QQQ260602P710000 所有数据源均失败：
+2026-05-21 06:45:49,604 [app.data.twelvedata_provider] WARNING: [TwelveData] API错误: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
+2026-05-21 06:45:49,606 [app.data.market_data_router] ERROR: [Router] US.QQQ260602P700000 所有数据源均失败：
+2026-05-21 06:45:50,210 [app.data.twelvedata_provider] WARNING: [TwelveData] API错误: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
+2026-05-21 06:45:50,212 [app.data.market_data_router] ERROR: [Router] US.SPY260602P730000 所有数据源均失败：
+2026-05-21 06:46:10,893 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 981次 US.TSLA260603P410000  — 止损止盈暂不生效
+2026-05-21 06:46:41,010 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 991次 US.QQQ260602P700000  — 止损止盈暂不生效
+2026-05-21 06:47:26,161 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 1001次 US.TSLA260603P410000  — 止损止盈暂不生效
+2026-05-21 06:47:56,279 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 1011次 US.QQQ260602P700000  — 止损止盈暂不生效
+2026-05-21 06:48:41,408 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 1021次 US.TSLA260603P410000  — 止损止盈暂不生效
+2026-05-21 06:48:51,345 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：217)
+2026-05-21 06:48:51,345 [app.data.finnhub_provider] INFO: [Finnhub] US.ORCL $188.16 (+3.69%)
+2026-05-21 06:48:51,345 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.ORCL 从 Finnhub 获取报价 $188.16
+2026-05-21 06:48:51,345 [app.data.market_data_router] WARNING: [Router] US.ORCL LV3 K 线数据不足 (0 条)
+2026-05-21 06:48:53,214 [app.data.alphavantage_provider] INFO: [FRED] 获取 VIX 成功: 18.06
+2026-05-21 06:48:54,098 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：218)
+2026-05-21 06:48:54,098 [app.data.finnhub_provider] INFO: [Finnhub] US.SPY $741.25 (+1.02%)
+2026-05-21 06:48:54,098 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.SPY 从 Finnhub 获取报价 $741.25
+2026-05-21 06:48:54,098 [app.data.market_data_router] INFO: [Router] US.ORCL price=$188.16 sentiment=0.00 vix=18.06 regime=RANGE source=futu_lv3_quote_only
+2026-05-21 06:48:55,023 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：219)
+2026-05-21 06:48:55,023 [app.data.finnhub_provider] INFO: [Finnhub] US.SNDK $1392.56 (+0.67%)
+2026-05-21 06:48:55,023 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.SNDK 从 Finnhub 获取报价 $1392.56
+2026-05-21 06:48:55,023 [app.data.market_data_router] WARNING: [Router] US.SNDK LV3 K 线数据不足 (0 条)
+2026-05-21 06:48:55,023 [app.data.market_data_router] INFO: [Router] US.SNDK price=$1392.56 sentiment=0.00 vix=18.06 regime=RANGE source=futu_lv3_quote_only
+2026-05-21 06:48:55,508 [app.data.twelvedata_provider] WARNING: [TwelveData] API错误: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
+2026-05-21 06:48:55,510 [app.data.market_data_router] ERROR: [Router] US.TSLA260603P410000 所有数据源均失败：
+2026-05-21 06:48:56,400 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：220)
+2026-05-21 06:48:56,400 [app.data.finnhub_provider] INFO: [Finnhub] US.QCOM $202.51 (+3.53%)
+2026-05-21 06:48:56,401 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.QCOM 从 Finnhub 获取报价 $202.51
+2026-05-21 06:48:56,401 [app.data.market_data_router] WARNING: [Router] US.QCOM LV3 K 线数据不足 (0 条)
+2026-05-21 06:48:56,401 [app.data.market_data_router] INFO: [Router] US.QCOM price=$202.51 sentiment=0.00 vix=18.06 regime=RANGE source=futu_lv3_quote_only
+2026-05-21 06:48:56,891 [app.data.twelvedata_provider] WARNING: [TwelveData] API错误: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
+2026-05-21 06:48:56,892 [app.data.market_data_router] ERROR: [Router] US.QQQ260602P710000 所有数据源均失败：
+2026-05-21 06:48:57,418 [app.data.twelvedata_provider] WARNING: [TwelveData] API错误: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
+2026-05-21 06:48:57,420 [app.data.market_data_router] ERROR: [Router] US.QQQ260602P700000 所有数据源均失败：
+2026-05-21 06:48:58,025 [app.data.twelvedata_provider] WARNING: [TwelveData] API错误: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
+2026-05-21 06:48:58,027 [app.data.market_data_router] ERROR: [Router] US.SPY260602P730000 所有数据源均失败：
+2026-05-21 06:48:58,027 [ftseek.us_pipeline.earnings_calendar] INFO: 获取财报日历 (horizon=3month)...
+2026-05-21 06:48:58,802 [ftseek.us_pipeline.earnings_calendar] INFO: 获取到 1 条财报数据
+2026-05-21 06:49:11,532 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 1031次 US.QQQ260602P700000  — 止损止盈暂不生效
+2026-05-21 06:49:46,972 [app.monitoring.trading_monitor] WARNING: [Monitor·warning] 💔 心跳超时: 最后更新 05:44:43
+2026-05-21 06:49:49,103 [ftseek_us.position_sync] INFO: [US Sync] Done | Futu: 7 | DB: 7
+2026-05-21 06:49:56,675 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 1041次 US.TSLA260603P410000  — 止损止盈暂不生效
+2026-05-21 06:50:05,319 [ftseek_us.risk.vix_monitor] INFO: VIX 指数：18.06
+2026-05-21 06:50:26,791 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 1051次 US.QQQ260602P700000  — 止损止盈暂不生效
+2026-05-21 06:51:11,921 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 1061次 US.TSLA260603P410000  — 止损止盈暂不生效
+2026-05-21 06:51:42,038 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 1071次 US.QQQ260602P700000  — 止损止盈暂不生效
+2026-05-21 06:51:59,933 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：221)
+2026-05-21 06:51:59,933 [app.data.finnhub_provider] INFO: [Finnhub] US.ORCL $188.16 (+3.69%)
+2026-05-21 06:51:59,933 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.ORCL 从 Finnhub 获取报价 $188.16
+2026-05-21 06:51:59,933 [app.data.market_data_router] WARNING: [Router] US.ORCL LV3 K 线数据不足 (0 条)
+2026-05-21 06:52:00,850 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：222)
+2026-05-21 06:52:00,851 [app.data.finnhub_provider] INFO: [Finnhub] US.SPY $741.25 (+1.02%)
+2026-05-21 06:52:00,851 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.SPY 从 Finnhub 获取报价 $741.25
+2026-05-21 06:52:00,851 [app.data.market_data_router] INFO: [Router] US.ORCL price=$188.16 sentiment=0.00 vix=18.06 regime=RANGE source=futu_lv3_quote_only
+2026-05-21 06:52:01,911 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：223)
+2026-05-21 06:52:01,911 [app.data.finnhub_provider] INFO: [Finnhub] US.SNDK $1392.56 (+0.67%)
+2026-05-21 06:52:01,912 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.SNDK 从 Finnhub 获取报价 $1392.56
+2026-05-21 06:52:01,912 [app.data.market_data_router] WARNING: [Router] US.SNDK LV3 K 线数据不足 (0 条)
+2026-05-21 06:52:01,912 [app.data.market_data_router] INFO: [Router] US.SNDK price=$1392.56 sentiment=0.00 vix=18.06 regime=RANGE source=futu_lv3_quote_only
+2026-05-21 06:52:02,523 [app.data.twelvedata_provider] WARNING: [TwelveData] API错误: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
+2026-05-21 06:52:02,524 [app.data.market_data_router] ERROR: [Router] US.TSLA260603P410000 所有数据源均失败：
+2026-05-21 06:52:03,485 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：224)
+2026-05-21 06:52:03,485 [app.data.finnhub_provider] INFO: [Finnhub] US.QCOM $202.51 (+3.53%)
+2026-05-21 06:52:03,485 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.QCOM 从 Finnhub 获取报价 $202.51
+2026-05-21 06:52:03,486 [app.data.market_data_router] WARNING: [Router] US.QCOM LV3 K 线数据不足 (0 条)
+2026-05-21 06:52:03,486 [app.data.market_data_router] INFO: [Router] US.QCOM price=$202.51 sentiment=0.00 vix=18.06 regime=RANGE source=futu_lv3_quote_only
+2026-05-21 06:52:04,088 [app.data.twelvedata_provider] WARNING: [TwelveData] API错误: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
+2026-05-21 06:52:04,090 [app.data.market_data_router] ERROR: [Router] US.QQQ260602P710000 所有数据源均失败：
+2026-05-21 06:52:04,723 [app.data.twelvedata_provider] WARNING: [TwelveData] API错误: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
+2026-05-21 06:52:04,724 [app.data.market_data_router] ERROR: [Router] US.QQQ260602P700000 所有数据源均失败：
+2026-05-21 06:52:05,322 [app.data.twelvedata_provider] WARNING: [TwelveData] API错误: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
+2026-05-21 06:52:05,323 [app.data.market_data_router] ERROR: [Router] US.SPY260602P730000 所有数据源均失败：
+2026-05-21 06:52:27,173 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 1081次 US.TSLA260603P410000  — 止损止盈暂不生效
+2026-05-21 06:52:57,298 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 1091次 US.QQQ260602P700000  — 止损止盈暂不生效
+2026-05-21 06:53:42,427 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 1101次 US.TSLA260603P410000  — 止损止盈暂不生效
+2026-05-21 06:54:12,543 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 1111次 US.QQQ260602P700000  — 止损止盈暂不生效
+2026-05-21 06:54:49,511 [ftseek_us.position_sync] INFO: [US Sync] Done | Futu: 7 | DB: 7
+2026-05-21 06:54:57,695 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 1121次 US.TSLA260603P410000  — 止损止盈暂不生效
+2026-05-21 06:55:06,441 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：225)
+2026-05-21 06:55:06,442 [app.data.finnhub_provider] INFO: [Finnhub] US.ORCL $188.16 (+3.69%)
+2026-05-21 06:55:06,442 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.ORCL 从 Finnhub 获取报价 $188.16
+2026-05-21 06:55:06,442 [app.data.market_data_router] WARNING: [Router] US.ORCL LV3 K 线数据不足 (0 条)
+2026-05-21 06:55:06,699 [ftseek_us.risk.vix_monitor] INFO: VIX 指数：18.06
+2026-05-21 06:55:07,369 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：226)
+2026-05-21 06:55:07,369 [app.data.finnhub_provider] INFO: [Finnhub] US.SPY $741.25 (+1.02%)
+2026-05-21 06:55:07,369 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.SPY 从 Finnhub 获取报价 $741.25
+2026-05-21 06:55:07,369 [app.data.market_data_router] INFO: [Router] US.ORCL price=$188.16 sentiment=0.00 vix=18.06 regime=RANGE source=futu_lv3_quote_only
+2026-05-21 06:55:08,284 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：227)
+2026-05-21 06:55:08,284 [app.data.finnhub_provider] INFO: [Finnhub] US.SNDK $1392.56 (+0.67%)
+2026-05-21 06:55:08,284 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.SNDK 从 Finnhub 获取报价 $1392.56
+2026-05-21 06:55:08,284 [app.data.market_data_router] WARNING: [Router] US.SNDK LV3 K 线数据不足 (0 条)
+2026-05-21 06:55:08,284 [app.data.market_data_router] INFO: [Router] US.SNDK price=$1392.56 sentiment=0.00 vix=18.06 regime=RANGE source=futu_lv3_quote_only
+2026-05-21 06:55:08,908 [app.data.twelvedata_provider] WARNING: [TwelveData] API错误: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
+2026-05-21 06:55:08,909 [app.data.market_data_router] ERROR: [Router] US.TSLA260603P410000 所有数据源均失败：
+2026-05-21 06:55:09,781 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：228)
+2026-05-21 06:55:09,781 [app.data.finnhub_provider] INFO: [Finnhub] US.QCOM $202.51 (+3.53%)
+2026-05-21 06:55:09,781 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.QCOM 从 Finnhub 获取报价 $202.51
+2026-05-21 06:55:09,782 [app.data.market_data_router] WARNING: [Router] US.QCOM LV3 K 线数据不足 (0 条)
+2026-05-21 06:55:09,782 [app.data.market_data_router] INFO: [Router] US.QCOM price=$202.51 sentiment=0.00 vix=18.06 regime=RANGE source=futu_lv3_quote_only
+2026-05-21 06:55:10,305 [app.data.twelvedata_provider] WARNING: [TwelveData] API错误: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
+2026-05-21 06:55:10,307 [app.data.market_data_router] ERROR: [Router] US.QQQ260602P710000 所有数据源均失败：
+2026-05-21 06:55:10,865 [app.data.twelvedata_provider] WARNING: [TwelveData] API错误: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
+2026-05-21 06:55:10,866 [app.data.market_data_router] ERROR: [Router] US.QQQ260602P700000 所有数据源均失败：
+2026-05-21 06:55:11,450 [app.data.twelvedata_provider] WARNING: [TwelveData] API错误: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data
+2026-05-21 06:55:11,452 [app.data.market_data_router] ERROR: [Router] US.SPY260602P730000 所有数据源均失败：
+2026-05-21 06:55:27,805 [app.pipeline.position_monitor] WARNING: [期权监控] 价格获取失败 1131次 US.QQQ260602P700000  — 止损止盈暂不生效
