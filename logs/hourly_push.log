@@ -1,0 +1,56 @@
+2026-05-15 14:52:37,398 [INFO] ftseek_us.feishu_push: ✅ 飞书 SDK 客户端已初始化
+2026-05-15 14:52:37,398 [INFO] ftseek_us.feishu_push: ✅ 飞书推送服务已初始化
+2026-05-15 14:57:14,554 [INFO] ftseek_us.feishu_push: ✅ 飞书 SDK 客户端已初始化
+2026-05-15 14:57:14,554 [INFO] ftseek_us.feishu_push: ✅ 飞书推送服务已初始化
+2026-05-15 14:57:14,554 [ERROR] ftseek_us.feishu_push: 飞书消息发送异常：'CreateMessageRequestBuilder' object has no attribute 'receive_id'
+2026-05-15 14:58:08,530 [INFO] ftseek_us.feishu_push: ✅ 飞书 SDK 客户端已初始化
+2026-05-15 14:58:08,531 [INFO] ftseek_us.feishu_push: ✅ 飞书推送服务已初始化
+2026-05-15 14:58:08,851 [ERROR] ftseek_us.feishu_push: ❌ 飞书消息发送失败：field validation failed
+2026-05-15 19:18:11,088 [INFO] ftseek_us.feishu_push: ✅ 飞书 SDK 客户端已初始化
+2026-05-15 19:18:11,089 [INFO] ftseek_us.feishu_push: ✅ 飞书推送服务已初始化
+2026-05-15 19:18:11,457 [INFO] ftseek_us.feishu_push: ✅ 飞书 Webhook 发送成功
+2026-05-19 08:47:04,686 [WARNING] ftseek_us.feishu_push: ⚠️ 飞书配置不完整
+2026-05-19 08:47:04,686 [WARNING] ftseek_us.feishu_push: ⚠️ 飞书配置不完整
+2026-05-19 08:47:04,686 [WARNING] ftseek_us.feishu_push: ⚠️ 飞书配置不完整
+2026-05-19 08:47:04,686 [WARNING] ftseek_us.feishu_push: ⚠️ 飞书配置不完整
+2026-05-19 08:47:04,686 [WARNING] ftseek_us.feishu_push: ⚠️ 飞书配置不完整
+2026-05-19 08:47:05,691 [WARNING] ftseek_us.feishu_push: ⚠️ 飞书配置不完整
+2026-05-19 08:47:05,692 [WARNING] ftseek_us.feishu_push: ⚠️ 飞书配置不完整
+2026-05-19 08:47:05,693 [WARNING] ftseek_us.feishu_push: ⚠️ 飞书配置不完整
+2026-05-19 08:47:05,693 [WARNING] ftseek_us.feishu_push: ⚠️ 飞书配置不完整
+2026-05-19 08:47:05,693 [WARNING] ftseek_us.feishu_push: ⚠️ 飞书配置不完整
+2026-05-19 08:47:07,695 [WARNING] ftseek_us.feishu_push: ⚠️ 飞书配置不完整
+2026-05-19 08:47:07,695 [WARNING] ftseek_us.feishu_push: ⚠️ 飞书配置不完整
+2026-05-19 08:47:07,696 [WARNING] ftseek_us.feishu_push: ⚠️ 飞书配置不完整
+2026-05-19 08:47:07,696 [WARNING] ftseek_us.feishu_push: ⚠️ 飞书配置不完整
+2026-05-19 08:47:07,697 [WARNING] ftseek_us.feishu_push: ⚠️ 飞书配置不完整
+2026-05-19 09:10:33,489 [WARNING] ftseek_us.feishu_push: ⚠️ 飞书配置不完整
+2026-05-19 09:10:33,489 [WARNING] ftseek_us.feishu_push: ⚠️ 飞书配置不完整
+2026-05-19 09:10:33,489 [WARNING] ftseek_us.feishu_push: ⚠️ 飞书配置不完整
+2026-05-19 09:10:33,489 [WARNING] ftseek_us.feishu_push: ⚠️ 飞书配置不完整
+2026-05-19 09:10:33,489 [WARNING] ftseek_us.feishu_push: ⚠️ 飞书配置不完整
+2026-05-19 09:10:34,494 [WARNING] ftseek_us.feishu_push: ⚠️ 飞书配置不完整
+2026-05-19 09:10:34,494 [WARNING] ftseek_us.feishu_push: ⚠️ 飞书配置不完整
+2026-05-19 09:10:34,495 [WARNING] ftseek_us.feishu_push: ⚠️ 飞书配置不完整
+2026-05-19 09:10:34,495 [WARNING] ftseek_us.feishu_push: ⚠️ 飞书配置不完整
+2026-05-19 09:10:34,495 [WARNING] ftseek_us.feishu_push: ⚠️ 飞书配置不完整
+2026-05-19 09:10:36,495 [WARNING] ftseek_us.feishu_push: ⚠️ 飞书配置不完整
+2026-05-19 09:10:36,498 [WARNING] ftseek_us.feishu_push: ⚠️ 飞书配置不完整
+2026-05-19 09:10:36,498 [WARNING] ftseek_us.feishu_push: ⚠️ 飞书配置不完整
+2026-05-19 09:10:36,498 [WARNING] ftseek_us.feishu_push: ⚠️ 飞书配置不完整
+2026-05-19 09:10:36,499 [WARNING] ftseek_us.feishu_push: ⚠️ 飞书配置不完整
+2026-05-19 09:11:36,062 [WARNING] ftseek_us.feishu_push: ⚠️ 飞书配置不完整
+2026-05-19 09:11:36,062 [WARNING] ftseek_us.feishu_push: ⚠️ 飞书配置不完整
+2026-05-19 09:11:36,062 [WARNING] ftseek_us.feishu_push: ⚠️ 飞书配置不完整
+2026-05-19 09:11:36,062 [WARNING] ftseek_us.feishu_push: ⚠️ 飞书配置不完整
+2026-05-19 09:11:36,062 [WARNING] ftseek_us.feishu_push: ⚠️ 飞书配置不完整
+2026-05-19 09:11:37,068 [WARNING] ftseek_us.feishu_push: ⚠️ 飞书配置不完整
+2026-05-19 09:11:37,068 [WARNING] ftseek_us.feishu_push: ⚠️ 飞书配置不完整
+2026-05-19 09:11:37,068 [WARNING] ftseek_us.feishu_push: ⚠️ 飞书配置不完整
+2026-05-19 09:11:37,068 [WARNING] ftseek_us.feishu_push: ⚠️ 飞书配置不完整
+2026-05-19 09:11:37,068 [WARNING] ftseek_us.feishu_push: ⚠️ 飞书配置不完整
+2026-05-19 09:11:39,068 [WARNING] ftseek_us.feishu_push: ⚠️ 飞书配置不完整
+2026-05-19 09:11:39,069 [WARNING] ftseek_us.feishu_push: ⚠️ 飞书配置不完整
+2026-05-19 09:11:39,069 [WARNING] ftseek_us.feishu_push: ⚠️ 飞书配置不完整
+2026-05-19 09:11:39,073 [WARNING] ftseek_us.feishu_push: ⚠️ 飞书配置不完整
+2026-05-19 09:11:39,073 [WARNING] ftseek_us.feishu_push: ⚠️ 飞书配置不完整

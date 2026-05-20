@@ -1,0 +1,897 @@
+{
+  "report_type": "daily",
+  "report_version": "2.0",
+  "report_date": "2026-05-18",
+  "generated_at": "2026-05-19T04:34:18.190554",
+  "summary": {
+    "total_trades": 15,
+    "closed_trades": 12,
+    "winning_trades": 0,
+    "losing_trades": 12,
+    "total_pnl": -265.22,
+    "win_rate": 0.0,
+    "avg_pnl": -22.1,
+    "avg_holding_period": 0.0
+  },
+  "signal_funnel": {
+    "total_decisions": 13,
+    "by_direction_strength": {
+      "SHORT(s=14)": 8,
+      "SHORT(s=15)": 2,
+      "SHORT(s=19)": 3
+    }
+  },
+  "rejection_analysis": {
+    "total": 25,
+    "by_reason": {
+      "SHORT_STRENGTH_WEAK": 13,
+      "PRE_TRADE_CHECK": 12
+    },
+    "by_symbol": {
+      "US.NVDA": 5,
+      "US.RIVN": 4,
+      "US.SPY": 4,
+      "US.QQQ": 3,
+      "US.BWXT": 2
+    },
+    "top_rejector": "SHORT_STRENGTH_WEAK"
+  },
+  "capital_state": {
+    "current_equity": 1071380.0,
+    "cash": 590011.0,
+    "buying_power": 1661389.0,
+    "drawdown_pct": -1.97,
+    "max_drawdown_pct": -6.07,
+    "water_level": "green"
+  },
+  "attribution_data": {
+    "total_records": 3,
+    "data_available": true,
+    "signal_scores": [],
+    "execution_scores": [],
+    "risk_scores": [],
+    "timing_scores": [],
+    "overall_scores": [],
+    "slippage_values": [],
+    "success_factors": [],
+    "failure_factors": [],
+    "scene_tags": [],
+    "five_factor": {
+      "five_factor_available": true,
+      "noise_trades_pnl": -15174.73,
+      "early_exit_pnl": 0.0,
+      "late_exit_pnl": 0.0,
+      "overtrading_pnl": 1392.16,
+      "missed_signals_pnl": 4527.7,
+      "behavioral_score": {
+        "score": 84,
+        "grade": "B"
+      },
+      "rules": [
+        {
+          "rule_id": "R1",
+          "human_text": "平均持有 0.1 天，平均盈利 1.6%",
+          "entry_hour_range": [
+            9.0,
+            16.0
+          ],
+          "holding_days_range": [
+            0.1,
+            0.10382611852099866
+          ],
+          "support_count": 84,
+          "coverage_rate": 1.0,
+          "avg_pnl_pct": 0.0162,
+          "weight": 1.0
+        }
+      ],
+      "disposition_effect": {
+        "severity": "low",
+        "avg_hold_winners_days": 0.2,
+        "avg_hold_losers_days": 0.0,
+        "loser_winner_hold_ratio": 0.23,
+        "interpretation": "亏损持仓是盈利的 0.2x — 健康"
+      },
+      "chasing": {
+        "severity": "insufficient_data",
+        "avg_deviation_pct": 0
+      },
+      "anchoring": {
+        "severity": "low",
+        "anchored_ratio": 0.01,
+        "interpretation": "1% 的亏损单超过止损设计 — 止损纪律良好"
+      }
+    },
+    "signal_scores_avg": null,
+    "execution_scores_avg": null,
+    "risk_scores_avg": null,
+    "timing_scores_avg": null,
+    "overall_scores_avg": null
+  },
+  "trade_analyses": [
+    {
+      "trade_id": 720,
+      "symbol": "US.LCID",
+      "direction": "LONG",
+      "entry_price": 5.7499,
+      "exit_price": 5.7499,
+      "realized_pnl": 0,
+      "pnl_pct": 0,
+      "exit_reason": "sl_hit",
+      "holding_hours": 0,
+      "signal_strength": 66,
+      "signal_confidence": 0.67,
+      "verdict": "合理",
+      "entry_logic": "入场逻辑正常 (strength=66, conf=0.67)",
+      "exit_logic": "退出原因: sl_hit",
+      "pnl_attribution": "亏损退出 (-$0.00, sl_hit)",
+      "timing_assessment": "开盘时段入场 (ET 9:xx) — 波动大，需确认",
+      "risk_compliance": "风险合规正常",
+      "evidence": {
+        "no_decision_reason": true,
+        "verdict_reason": {
+          "unreasonable_count": 0,
+          "reasonable_count": 1,
+          "issue_count": 0
+        }
+      },
+      "issues": [],
+      "suggestions": [],
+      "needs_debate": false,
+      "debate_reason": ""
+    },
+    {
+      "trade_id": 721,
+      "symbol": "US.TME",
+      "direction": "LONG",
+      "entry_price": 9.065,
+      "exit_price": 9.0599,
+      "realized_pnl": -11.19,
+      "pnl_pct": -0.06,
+      "exit_reason": "sl_hit",
+      "holding_hours": 0,
+      "signal_strength": 66,
+      "signal_confidence": 0.67,
+      "verdict": "合理",
+      "entry_logic": "入场逻辑正常 (strength=66, conf=0.67)",
+      "exit_logic": "退出原因: sl_hit",
+      "pnl_attribution": "亏损退出 (-$11.19, sl_hit)",
+      "timing_assessment": "开盘时段入场 (ET 9:xx) — 波动大，需确认",
+      "risk_compliance": "风险合规正常",
+      "evidence": {
+        "no_decision_reason": true,
+        "verdict_reason": {
+          "unreasonable_count": 0,
+          "reasonable_count": 1,
+          "issue_count": 0
+        }
+      },
+      "issues": [],
+      "suggestions": [
+        "高信号强度但亏损 — 需检查信号有效性"
+      ],
+      "needs_debate": false,
+      "debate_reason": ""
+    },
+    {
+      "trade_id": 722,
+      "symbol": "US.LCID",
+      "direction": "LONG",
+      "entry_price": 5.7499,
+      "exit_price": 5.745,
+      "realized_pnl": -16.96,
+      "pnl_pct": -0.09,
+      "exit_reason": "sl_hit",
+      "holding_hours": 0,
+      "signal_strength": 66,
+      "signal_confidence": 0.67,
+      "verdict": "合理",
+      "entry_logic": "入场逻辑正常 (strength=66, conf=0.67)",
+      "exit_logic": "退出原因: sl_hit",
+      "pnl_attribution": "亏损退出 (-$16.96, sl_hit)",
+      "timing_assessment": "开盘时段入场 (ET 9:xx) — 波动大，需确认",
+      "risk_compliance": "风险合规正常",
+      "evidence": {
+        "no_decision_reason": true,
+        "verdict_reason": {
+          "unreasonable_count": 0,
+          "reasonable_count": 1,
+          "issue_count": 0
+        }
+      },
+      "issues": [],
+      "suggestions": [
+        "高信号强度但亏损 — 需检查信号有效性"
+      ],
+      "needs_debate": false,
+      "debate_reason": ""
+    },
+    {
+      "trade_id": 723,
+      "symbol": "US.TME",
+      "direction": "LONG",
+      "entry_price": 9.08,
+      "exit_price": 9.01,
+      "realized_pnl": -153.3,
+      "pnl_pct": -0.77,
+      "exit_reason": "sl_hit",
+      "holding_hours": 0,
+      "signal_strength": 66,
+      "signal_confidence": 0.67,
+      "verdict": "合理",
+      "entry_logic": "入场逻辑正常 (strength=66, conf=0.67)",
+      "exit_logic": "退出原因: sl_hit",
+      "pnl_attribution": "亏损退出 (-$153.30, sl_hit)",
+      "timing_assessment": "开盘时段入场 (ET 9:xx) — 波动大，需确认",
+      "risk_compliance": "风险合规正常",
+      "evidence": {
+        "no_decision_reason": true,
+        "verdict_reason": {
+          "unreasonable_count": 0,
+          "reasonable_count": 1,
+          "issue_count": 0
+        }
+      },
+      "issues": [],
+      "suggestions": [
+        "高信号强度但亏损 — 需检查信号有效性"
+      ],
+      "needs_debate": false,
+      "debate_reason": ""
+    },
+    {
+      "trade_id": 718,
+      "symbol": "US.ARM",
+      "direction": "LONG",
+      "entry_price": 203.527,
+      "exit_price": 203.19,
+      "realized_pnl": -18.2,
+      "pnl_pct": -0.17,
+      "exit_reason": "TRAILING_STOP",
+      "holding_hours": 0.0,
+      "signal_strength": 0,
+      "signal_confidence": 0,
+      "verdict": "不合理",
+      "entry_logic": "存在问题: signal_strength=0 — 投票数据缺失或静默失败; signal_confidence=0.0 — 投票数据缺失",
+      "exit_logic": "追踪止损亏损退出 (-0.17%) — 正常风控",
+      "pnl_attribution": "亏损退出 (-$18.20, TRAILING_STOP)",
+      "timing_assessment": "开盘时段入场 (ET 9:xx) — 波动大，需确认",
+      "risk_compliance": "风险合规正常",
+      "evidence": {
+        "signal_data_missing": true,
+        "no_decision_reason": true,
+        "verdict_reason": {
+          "unreasonable_count": 1,
+          "reasonable_count": 1,
+          "issue_count": 2
+        }
+      },
+      "issues": [
+        "signal_strength=0 — 投票数据缺失或静默失败",
+        "signal_confidence=0.0 — 投票数据缺失"
+      ],
+      "suggestions": [],
+      "needs_debate": false,
+      "debate_reason": ""
+    },
+    {
+      "trade_id": 719,
+      "symbol": "US.ARM",
+      "direction": "SHORT",
+      "entry_price": 188.307,
+      "exit_price": 188.307,
+      "realized_pnl": 0,
+      "pnl_pct": 0,
+      "exit_reason": "TRAILING_STOP",
+      "holding_hours": 0.2,
+      "signal_strength": 0,
+      "signal_confidence": 0,
+      "verdict": "不合理",
+      "entry_logic": "存在问题: signal_strength=0 — 投票数据缺失或静默失败; signal_confidence=0.0 — 投票数据缺失",
+      "exit_logic": "追踪止损亏损退出 (0.00%) — 正常风控",
+      "pnl_attribution": "亏损退出 (-$0.00, TRAILING_STOP)",
+      "timing_assessment": "开盘时段入场 (ET 9:xx) — 波动大，需确认",
+      "risk_compliance": "风险合规正常",
+      "evidence": {
+        "signal_data_missing": true,
+        "no_decision_reason": true,
+        "verdict_reason": {
+          "unreasonable_count": 1,
+          "reasonable_count": 1,
+          "issue_count": 2
+        }
+      },
+      "issues": [
+        "signal_strength=0 — 投票数据缺失或静默失败",
+        "signal_confidence=0.0 — 投票数据缺失"
+      ],
+      "suggestions": [],
+      "needs_debate": false,
+      "debate_reason": ""
+    },
+    {
+      "trade_id": 724,
+      "symbol": "US.CRM",
+      "direction": "SHORT",
+      "entry_price": 178.705,
+      "exit_price": 178.79,
+      "realized_pnl": -10.2,
+      "pnl_pct": -0.05,
+      "exit_reason": "sl_hit",
+      "holding_hours": 0,
+      "signal_strength": 66,
+      "signal_confidence": 0.67,
+      "verdict": "合理",
+      "entry_logic": "入场逻辑正常 (strength=66, conf=0.67)",
+      "exit_logic": "退出原因: sl_hit",
+      "pnl_attribution": "亏损退出 (-$10.20, sl_hit)",
+      "timing_assessment": "正常交易时段入场 (ET 11:xx)",
+      "risk_compliance": "风险合规正常",
+      "evidence": {
+        "no_decision_reason": true,
+        "verdict_reason": {
+          "unreasonable_count": 0,
+          "reasonable_count": 1,
+          "issue_count": 0
+        }
+      },
+      "issues": [],
+      "suggestions": [
+        "高信号强度但亏损 — 需检查信号有效性"
+      ],
+      "needs_debate": false,
+      "debate_reason": ""
+    },
+    {
+      "trade_id": 725,
+      "symbol": "US.NFLX",
+      "direction": "SHORT",
+      "entry_price": 89.29,
+      "exit_price": 89.31,
+      "realized_pnl": -4.4,
+      "pnl_pct": -0.02,
+      "exit_reason": "sl_hit",
+      "holding_hours": 0,
+      "signal_strength": 66,
+      "signal_confidence": 0.67,
+      "verdict": "合理",
+      "entry_logic": "入场逻辑正常 (strength=66, conf=0.67)",
+      "exit_logic": "退出原因: sl_hit",
+      "pnl_attribution": "亏损退出 (-$4.40, sl_hit)",
+      "timing_assessment": "正常交易时段入场 (ET 11:xx)",
+      "risk_compliance": "风险合规正常",
+      "evidence": {
+        "no_decision_reason": true,
+        "verdict_reason": {
+          "unreasonable_count": 0,
+          "reasonable_count": 1,
+          "issue_count": 0
+        }
+      },
+      "issues": [],
+      "suggestions": [
+        "高信号强度但亏损 — 需检查信号有效性"
+      ],
+      "needs_debate": false,
+      "debate_reason": ""
+    },
+    {
+      "trade_id": 726,
+      "symbol": "US.ORCL",
+      "direction": "SHORT",
+      "entry_price": 185.35,
+      "exit_price": 185.6184,
+      "realized_pnl": -26.03,
+      "pnl_pct": -0.14,
+      "exit_reason": "sl_hit",
+      "holding_hours": 0,
+      "signal_strength": 66,
+      "signal_confidence": 0.67,
+      "verdict": "合理",
+      "entry_logic": "入场逻辑正常 (strength=66, conf=0.67)",
+      "exit_logic": "退出原因: sl_hit",
+      "pnl_attribution": "亏损退出 (-$26.03, sl_hit)",
+      "timing_assessment": "正常交易时段入场 (ET 11:xx)",
+      "risk_compliance": "风险合规正常",
+      "evidence": {
+        "no_decision_reason": true,
+        "verdict_reason": {
+          "unreasonable_count": 0,
+          "reasonable_count": 1,
+          "issue_count": 0
+        }
+      },
+      "issues": [],
+      "suggestions": [
+        "高信号强度但亏损 — 需检查信号有效性"
+      ],
+      "needs_debate": false,
+      "debate_reason": ""
+    },
+    {
+      "trade_id": 730,
+      "symbol": "US.TME",
+      "direction": "LONG",
+      "entry_price": 9.015,
+      "exit_price": 9.01,
+      "realized_pnl": -9.98,
+      "pnl_pct": -0.06,
+      "exit_reason": "sl_hit",
+      "holding_hours": 0,
+      "signal_strength": 66,
+      "signal_confidence": 0.67,
+      "verdict": "合理",
+      "entry_logic": "入场逻辑正常 (strength=66, conf=0.67)",
+      "exit_logic": "退出原因: sl_hit",
+      "pnl_attribution": "亏损退出 (-$9.98, sl_hit)",
+      "timing_assessment": "正常交易时段入场 (ET 13:xx)",
+      "risk_compliance": "风险合规正常",
+      "evidence": {
+        "no_decision_reason": true,
+        "verdict_reason": {
+          "unreasonable_count": 0,
+          "reasonable_count": 1,
+          "issue_count": 0
+        }
+      },
+      "issues": [],
+      "suggestions": [
+        "高信号强度但亏损 — 需检查信号有效性"
+      ],
+      "needs_debate": false,
+      "debate_reason": ""
+    },
+    {
+      "trade_id": 731,
+      "symbol": "US.ARM",
+      "direction": "SHORT",
+      "entry_price": 208.06,
+      "exit_price": 208.095,
+      "realized_pnl": -3.01,
+      "pnl_pct": -0.02,
+      "exit_reason": "sl_hit",
+      "holding_hours": 0,
+      "signal_strength": 66,
+      "signal_confidence": 0.67,
+      "verdict": "合理",
+      "entry_logic": "入场逻辑正常 (strength=66, conf=0.67)",
+      "exit_logic": "退出原因: sl_hit",
+      "pnl_attribution": "亏损退出 (-$3.01, sl_hit)",
+      "timing_assessment": "正常交易时段入场 (ET 13:xx)",
+      "risk_compliance": "风险合规正常",
+      "evidence": {
+        "no_decision_reason": true,
+        "verdict_reason": {
+          "unreasonable_count": 0,
+          "reasonable_count": 1,
+          "issue_count": 0
+        }
+      },
+      "issues": [],
+      "suggestions": [
+        "高信号强度但亏损 — 需检查信号有效性"
+      ],
+      "needs_debate": false,
+      "debate_reason": ""
+    },
+    {
+      "trade_id": 732,
+      "symbol": "US.ARM",
+      "direction": "SHORT",
+      "entry_price": 207.4801,
+      "exit_price": 207.61,
+      "realized_pnl": -11.95,
+      "pnl_pct": -0.06,
+      "exit_reason": "sl_hit",
+      "holding_hours": 0,
+      "signal_strength": 66,
+      "signal_confidence": 0.67,
+      "verdict": "合理",
+      "entry_logic": "入场逻辑正常 (strength=66, conf=0.67)",
+      "exit_logic": "退出原因: sl_hit",
+      "pnl_attribution": "亏损退出 (-$11.95, sl_hit)",
+      "timing_assessment": "正常交易时段入场 (ET 13:xx)",
+      "risk_compliance": "风险合规正常",
+      "evidence": {
+        "no_decision_reason": true,
+        "verdict_reason": {
+          "unreasonable_count": 0,
+          "reasonable_count": 1,
+          "issue_count": 0
+        }
+      },
+      "issues": [],
+      "suggestions": [
+        "高信号强度但亏损 — 需检查信号有效性"
+      ],
+      "needs_debate": false,
+      "debate_reason": ""
+    }
+  ],
+  "dimensions": {
+    "signal_quality": {
+      "score": null,
+      "total_signals": 13,
+      "total_trades": 15,
+      "signal_to_trade_ratio": 1.1538,
+      "strength_distribution": {
+        "high": 0,
+        "medium": 13,
+        "low": 2
+      },
+      "avg_signal_strength": 57.2,
+      "assessment": "mixed"
+    },
+    "voting_consistency": {
+      "score": null,
+      "status": "available",
+      "data_available": true,
+      "avg_signal_strength": 66.0,
+      "high_strength_trades": 0,
+      "medium_strength_trades": 10,
+      "low_strength_trades": 0,
+      "avg_consensus_level": 0.6667
+    },
+    "execution_quality": {
+      "total_trades": 12,
+      "data_available": false,
+      "execution_rate": 1.0,
+      "note": "trade_attribution 执行数据未填充，执行质量分析受限。"
+    },
+    "risk_compliance": {
+      "data_available": true,
+      "current_drawdown_pct": -1.97,
+      "max_drawdown_pct": -6.07,
+      "water_level": "green",
+      "risk_score": 9.0,
+      "max_single_trade_loss": 153.3,
+      "losing_trade_count": 10,
+      "losing_trade_ratio": 0.8333
+    },
+    "funnel_diagnosis": {
+      "score": null,
+      "status": "almost_all_rejected",
+      "total_decisions": 13,
+      "total_trades": 15,
+      "total_rejections": 25,
+      "trade_conversion_rate": 1.1538,
+      "rejection_rate": 1.9231,
+      "top_rejector": "SHORT_STRENGTH_WEAK",
+      "by_direction_strength": {
+        "SHORT(s=14)": 8,
+        "SHORT(s=15)": 2,
+        "SHORT(s=19)": 3
+      }
+    },
+    "attribution_learning": {
+      "data_available": true,
+      "lessons_count": 1,
+      "five_factor": {
+        "five_factor_available": true,
+        "noise_trades_pnl": -15174.73,
+        "early_exit_pnl": 0.0,
+        "late_exit_pnl": 0.0,
+        "overtrading_pnl": 1392.16,
+        "missed_signals_pnl": 4527.7,
+        "behavioral_score": {
+          "score": 84,
+          "grade": "B"
+        },
+        "rules": [
+          {
+            "rule_id": "R1",
+            "human_text": "平均持有 0.1 天，平均盈利 1.6%",
+            "entry_hour_range": [
+              9.0,
+              16.0
+            ],
+            "holding_days_range": [
+              0.1,
+              0.10382611852099866
+            ],
+            "support_count": 84,
+            "coverage_rate": 1.0,
+            "avg_pnl_pct": 0.0162,
+            "weight": 1.0
+          }
+        ],
+        "disposition_effect": {
+          "severity": "low",
+          "avg_hold_winners_days": 0.2,
+          "avg_hold_losers_days": 0.0,
+          "loser_winner_hold_ratio": 0.23,
+          "interpretation": "亏损持仓是盈利的 0.2x — 健康"
+        },
+        "chasing": {
+          "severity": "insufficient_data",
+          "avg_deviation_pct": 0
+        },
+        "anchoring": {
+          "severity": "low",
+          "anchored_ratio": 0.01,
+          "interpretation": "1% 的亏损单超过止损设计 — 止损纪律良好"
+        }
+      },
+      "behavioral_score": {
+        "score": 84,
+        "grade": "B"
+      }
+    }
+  },
+  "decision_analysis": {
+    "distribution": {
+      "unknown": 12
+    },
+    "avg_confidence": 0.67
+  },
+  "risk_analysis": {
+    "data_available": true,
+    "current_drawdown_pct": -1.97,
+    "max_drawdown_pct": -6.07,
+    "water_level": "green",
+    "risk_score": 9.0,
+    "max_single_trade_loss": 153.3,
+    "losing_trade_count": 10,
+    "losing_trade_ratio": 0.8333
+  },
+  "voting_analysis": {
+    "score": null,
+    "status": "available",
+    "data_available": true,
+    "avg_signal_strength": 66.0,
+    "high_strength_trades": 0,
+    "medium_strength_trades": 10,
+    "low_strength_trades": 0,
+    "avg_consensus_level": 0.6667
+  },
+  "error_patterns": {
+    "detected": false,
+    "patterns": []
+  },
+  "review_score": {
+    "overall_score": 4.9,
+    "max_score": 10.0,
+    "status": "needs_improvement",
+    "breakdown": {
+      "win_rate_score": 0.0,
+      "win_rate": 0.0,
+      "win_rate_weight": 0.25,
+      "signal_quality_score": 5.5,
+      "avg_signal_strength": 55.0,
+      "signal_quality_weight": 0.2,
+      "risk_compliance_score": 9.02,
+      "drawdown_pct": -1.97,
+      "risk_compliance_weight": 0.2,
+      "funnel_efficiency_score": 10,
+      "conversion_rate": 0.9231,
+      "funnel_efficiency_weight": 0.15,
+      "attribution_learning_score": 0,
+      "lessons_count": 0,
+      "attribution_learning_weight": 0.1,
+      "plan_execution_score": 5.0,
+      "plan_execution_weight": 0.1
+    }
+  },
+  "market_regime": {
+    "state": "unknown",
+    "confidence": "low",
+    "indicators": {
+      "drawdown_pct": 1.97
+    }
+  },
+  "plan_vs_actual": {
+    "plan_available": true,
+    "planned_targets": [
+      {
+        "symbol": "US.NVDA",
+        "direction": "LONG",
+        "entry_zone": [
+          136.5,
+          138.2
+        ],
+        "stop_loss": 134.0,
+        "take_profit": 144.5,
+        "urgency": "LOW",
+        "rationale": "技术面确认：日线回踩20EMA缩量企稳，盘口买盘承接力增强。中性市下资金抱团高流动性龙头，本单标注为试仓模式，止损收紧至前低下方1.8%，博取区间均值回归与趋势延续。 [降级试仓]",
+        "open_check_status": "CANCELLED",
+        "gap_pct": -0.0442012386527531,
+        "cancellation_reason": "Gap too large (-4.42% > 3%)"
+      },
+      {
+        "symbol": "US.MU",
+        "direction": "LONG",
+        "entry_zone": [
+          167.0,
+          169.5
+        ],
+        "stop_loss": 164.0,
+        "take_profit": 176.0,
+        "urgency": "LOW",
+        "rationale": "技术面确认：周线杯柄形态突破后回踩颈线，15分钟级别MACD底背离确认。存储周期提供基本面安全垫，试仓跟随右侧结构，严格收紧止损防范假突破洗盘。 [降级试仓]",
+        "open_check_status": "CANCELLED",
+        "gap_pct": -0.06617182768263298,
+        "cancellation_reason": "Gap too large (-6.62% > 3%)"
+      },
+      {
+        "symbol": "US.BWXT",
+        "direction": "LONG",
+        "entry_zone": [
+          114.5,
+          116.0
+        ],
+        "stop_loss": 112.5,
+        "take_profit": 122.0,
+        "urgency": "LOW",
+        "rationale": "技术面确认：沿上升通道下轨运行，RSI超卖区金叉向上，波动率显著低于大盘。防御型工业标的契合中性市试仓逻辑，止损收紧至通道破位点，追求低风险稳健收益。 [降级试仓]",
+        "open_check_status": "CANCELLED",
+        "gap_pct": -0.029487057931165257,
+        "cancellation_reason": "Direction Divergence (Plan LONG but Gap -2.95%)"
+      }
+    ],
+    "executed_targets": [],
+    "missed_opportunities": [
+      "US.BWXT",
+      "US.MU",
+      "US.NVDA"
+    ],
+    "unplanned_trades": [
+      "US.CRM",
+      "US.ORCL",
+      "US.ARM",
+      "US.TME",
+      "US.NFLX",
+      "US.LCID"
+    ],
+    "plan_date": "2026-05-18",
+    "execution_rate": 0.0
+  },
+  "key_learnings": [],
+  "improvement_suggestions": [
+    "胜率低于 40%，建议重新评估策略",
+    "亏损交易占比 83%，建议收紧入场条件",
+    "今日 25 次信号被拒绝，TOP 原因: SHORT_STRENGTH_WEAK"
+  ],
+  "exit_reason_pnl": {
+    "window_days": 30,
+    "total_reasons": 15,
+    "by_reason": {
+      "PRE_CLOSE_EXIT": {
+        "n": 22,
+        "win_rate": 0.273,
+        "avg_pnl_pct": -0.00114,
+        "sharpe_proxy": -0.163,
+        "recommendation": "⚠ review"
+      },
+      "FLASH_EXIT": {
+        "n": 4,
+        "win_rate": 0.0,
+        "avg_pnl_pct": -0.0169,
+        "sharpe_proxy": -0.923,
+        "recommendation": "🔍 insufficient"
+      },
+      "STRUCTURE_EXIT": {
+        "n": 33,
+        "win_rate": 0.303,
+        "avg_pnl_pct": -0.00238,
+        "sharpe_proxy": -0.455,
+        "recommendation": "⚠ review"
+      },
+      "TRAILING_STOP": {
+        "n": 82,
+        "win_rate": 0.488,
+        "avg_pnl_pct": 0.00781,
+        "sharpe_proxy": 0.222,
+        "recommendation": "✅ keep"
+      },
+      "orphan_cleaned": {
+        "n": 428,
+        "win_rate": 0.0,
+        "avg_pnl_pct": 0.0,
+        "sharpe_proxy": 0.0,
+        "recommendation": "⚠ marginal"
+      },
+      "sl_hit": {
+        "n": 123,
+        "win_rate": 0.154,
+        "avg_pnl_pct": -0.00122,
+        "sharpe_proxy": -0.544,
+        "recommendation": "⚠ review"
+      },
+      "tp_hit": {
+        "n": 5,
+        "win_rate": 1.0,
+        "avg_pnl_pct": 0.01024,
+        "sharpe_proxy": 3.317,
+        "recommendation": "✅ keep"
+      },
+      "ghost_cleanup_cruise": {
+        "n": 15,
+        "win_rate": 0.0,
+        "avg_pnl_pct": 0.0,
+        "sharpe_proxy": 0.0,
+        "recommendation": "⚠ marginal"
+      },
+      "time_stop": {
+        "n": 7,
+        "win_rate": 0.286,
+        "avg_pnl_pct": -0.00534,
+        "sharpe_proxy": -0.397,
+        "recommendation": "🚨 disable"
+      },
+      "stale_scalping_cleanup": {
+        "n": 5,
+        "win_rate": 0.0,
+        "avg_pnl_pct": 0.0,
+        "sharpe_proxy": 0.0,
+        "recommendation": "⚠ marginal"
+      }
+    }
+  },
+  "coordinator_summary": {
+    "window_date": "2026-05-18",
+    "owner_strategy_distribution": {
+      "main": 2,
+      "scalping": 3
+    },
+    "active_positions_by_owner": {
+      "main": 1
+    },
+    "arbitration": {
+      "total": 0,
+      "multi_candidate": 0,
+      "winners": {}
+    }
+  },
+  "shadow_comparison": {
+    "real": {
+      "n": 5,
+      "total_pnl": -46.34629999999716,
+      "win_rate": 0.0
+    },
+    "shadow_by_variant": [
+      {
+        "variant": "baseline",
+        "n": 3,
+        "total_pnl": -28.148299999997743,
+        "win_rate": 0.0
+      }
+    ]
+  },
+  "pnl_outliers": {
+    "n": 0,
+    "outliers": []
+  },
+  "symbol_loss_guard_triggers": {
+    "total_symbols_tracked": 5,
+    "blocked_count": 3,
+    "blocked": [
+      {
+        "symbol": "US.TME",
+        "total_pnl": -173.86998000000222,
+        "trades": 2,
+        "wins": 0,
+        "consecutive_losses": 2,
+        "blocked": true,
+        "reason": "consecutive_losses=2 >= 2"
+      },
+      {
+        "symbol": "US.NFLX",
+        "total_pnl": -35.058929999999705,
+        "trades": 2,
+        "wins": 0,
+        "consecutive_losses": 2,
+        "blocked": true,
+        "reason": "consecutive_losses=2 >= 2"
+      },
+      {
+        "symbol": "US.ARM",
+        "total_pnl": -17.0657608000016,
+        "trades": 2,
+        "wins": 0,
+        "consecutive_losses": 2,
+        "blocked": true,
+        "reason": "consecutive_losses=2 >= 2"
+      }
+    ]
+  }
+}

@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>复盘报告 - FTSeek Dashboard</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f5f5f5; }
+        .header { background: #2c3e50; color: white; padding: 1rem 2rem; }
+        .header h1 { font-size: 1.5rem; }
+        .container { max-width: 1400px; margin: 0 auto; padding: 2rem; }
+        .nav { margin-bottom: 2rem; }
+        .nav a { margin-right: 1rem; color: #3498db; text-decoration: none; }
+        .nav a:hover { text-decoration: underline; }
+        .card { background: white; border-radius: 8px; padding: 1.5rem; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-bottom: 1rem; }
+        .card h3 { color: #2c3e50; margin-bottom: 1rem; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { padding: 0.75rem; text-align: left; border-bottom: 1px solid #ecf0f1; }
+        th { background: #f8f9fa; font-weight: 600; }
+        .badge { display: inline-block; padding: 0.25rem 0.5rem; border-radius: 4px; font-size: 0.8rem; font-weight: 600; }
+        .badge-S { background: #d4edda; color: #155724; }
+        .badge-A { background: #d1ecf1; color: #0c5460; }
+        .badge-B { background: #fff3cd; color: #856404; }
+        .badge-C { background: #f8d7da; color: #721c24; }
+        .positive { color: #27ae60; }
+        .negative { color: #e74c3c; }
+        .filters { margin-bottom: 1rem; }
+        .filters select, .filters button { padding: 0.5rem 1rem; margin-right: 0.5rem; border: 1px solid #ddd; border-radius: 4px; }
+        .filters button { background: #3498db; color: white; border: none; cursor: pointer; }
+        .filters button:hover { background: #2980b9; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>📊 FTSeek Dashboard - 复盘报告</h1>
+    </div>
+    
+    <div class="container">
+        <div class="nav">
+            <a href="/">← 返回首页</a>
+            <a href="/reviews">复盘报告</a>
+        </div>
+        
+        <!-- 筛选器 -->
+        <div class="card">
+            <h3>筛选</h3>
+            <div class="filters">
+                <select id="type-filter">
+                    <option value="daily">日复盘</option>
+                    <option value="weekly">周复盘</option>
+                    <option value="monthly">月复盘</option>
+                </select>
+                <select id="market-filter">
+                    <option value="HK">港股</option>
+                    <option value="US">美股</option>
+                </select>
+                <button onclick="loadReports()">查询</button>
+            </div>
+        </div>
+        
+        <!-- 复盘报告列表 -->
+        <div class="card">
+            <h3>复盘报告列表</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>类型</th>
+                        <th>市场</th>
+                        <th>周期</th>
+                        <th>交易数</th>
+                        <th>胜率</th>
+                        <th>盈亏</th>
+                        <th>评分</th>
+                        <th>生成时间</th>
+                    </tr>
+                </thead>
+                <tbody id="reports-table">
+                    <tr><td colspan="8" style="text-align:center;color:#7f8c8d;">加载中...</td></tr>
+                </tbody>
+            </table>
+        </div>
+        
+        <!-- 改进建议 -->
+        <div class="card">
+            <h3>改进建议</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>优先级</th>
+                        <th>类别</th>
+                        <th>描述</th>
+                        <th>状态</th>
+                        <th>创建时间</th>
+                    </tr>
+                </thead>
+                <tbody id="improvements-table">
+                    <tr><td colspan="5" style="text-align:center;color:#7f8c8d;">加载中...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+    
+    <script>
+        const API_BASE = window.location.protocol + '//' + window.location.host;
+        
+        async function loadReports() {
+            const type = document.getElementById('type-filter').value;
+            const market = document.getElementById('market-filter').value;
+            
+            try {
+                const response = await fetch(`${API_BASE}/api/review/reports?type=${type}&market=${market}&limit=20`);
+                const data = await response.json();
+                
+                const tbody = document.getElementById('reports-table');
+                if (data.reports && data.reports.length > 0) {
+                    tbody.innerHTML = data.reports.map(r => `
+                        <tr>
+                            <td>${r.report_type === 'daily' ? '日' : r.report_type === 'weekly' ? '周' : '月'}</td>
+                            <td>${r.market}</td>
+                            <td>${r.period_start}</td>
+                            <td>${r.total_trades}</td>
+                            <td class="${r.win_rate >= 0.6 ? 'positive' : ''}">${(r.win_rate * 100).toFixed(1)}%</td>
+                            <td class="${r.total_pnl >= 0 ? 'positive' : 'negative'}">$${r.total_pnl.toFixed(2)}</td>
+                            <td><span class="badge badge-${r.overall_level}">${r.overall_score.toFixed(0)}分 (${r.overall_level})</span></td>
+                            <td>${new Date(r.generated_at).toLocaleString('zh-CN')}</td>
+                        </tr>
+                    `).join('');
+                } else {
+                    tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:#7f8c8d;">暂无数据</td></tr>';
+                }
+            } catch (e) {
+                console.error('加载复盘报告失败:', e);
+                document.getElementById('reports-table').innerHTML = '<tr><td colspan="8" style="text-align:center;color:#e74c3c;">加载失败</td></tr>';
+            }
+        }
+        
+        async function loadImprovements() {
+            try {
+                const response = await fetch(`${API_BASE}/api/review/improvements?status=pending`);
+                const data = await response.json();
+                
+                const tbody = document.getElementById('improvements-table');
+                if (data.improvements && data.improvements.length > 0) {
+                    tbody.innerHTML = data.improvements.map(i => `
+                        <tr>
+                            <td><span class="badge badge-${i.priority === 'high' ? 'S' : i.priority === 'medium' ? 'A' : 'B'}">${i.priority}</span></td>
+                            <td>${i.category}</td>
+                            <td>${i.description}</td>
+                            <td>${i.status}</td>
+                            <td>${new Date(i.created_at).toLocaleString('zh-CN')}</td>
+                        </tr>
+                    `).join('');
+                } else {
+                    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:#7f8c8d;">暂无改进建议</td></tr>';
+                }
+            } catch (e) {
+                console.error('加载改进建议失败:', e);
+            }
+        }
+        
+        // 页面加载时获取数据
+        loadReports();
+        loadImprovements();
+    </script>
+</body>
+</html>

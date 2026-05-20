@@ -1,0 +1,183 @@
+{
+  "timestamp": "2026-05-20T12:34:17.069262+00:00",
+  "entries": [
+    {
+      "code": "US.SPY",
+      "source": "MANUAL",
+      "added_at": "2026-05-20T12:34:17.067236+00:00",
+      "expires_at": null,
+      "metadata": {}
+    },
+    {
+      "code": "US.QQQ",
+      "source": "MANUAL",
+      "added_at": "2026-05-20T12:34:17.067271+00:00",
+      "expires_at": null,
+      "metadata": {}
+    },
+    {
+      "code": "US.BABA",
+      "source": "POSITION",
+      "added_at": "2026-05-20T12:34:17.069253+00:00",
+      "expires_at": null,
+      "metadata": {}
+    },
+    {
+      "code": "US.JD",
+      "source": "MANUAL",
+      "added_at": "2026-05-20T12:34:17.067281+00:00",
+      "expires_at": null,
+      "metadata": {}
+    },
+    {
+      "code": "US.PDD",
+      "source": "POSITION",
+      "added_at": "2026-05-20T12:34:17.069257+00:00",
+      "expires_at": null,
+      "metadata": {}
+    },
+    {
+      "code": "US.NTES",
+      "source": "MANUAL",
+      "added_at": "2026-05-20T12:34:17.067288+00:00",
+      "expires_at": null,
+      "metadata": {}
+    },
+    {
+      "code": "US.BIDU",
+      "source": "MANUAL",
+      "added_at": "2026-05-20T12:34:17.067292+00:00",
+      "expires_at": null,
+      "metadata": {}
+    },
+    {
+      "code": "US.AAPL",
+      "source": "POSITION",
+      "added_at": "2026-05-20T12:34:17.069235+00:00",
+      "expires_at": null,
+      "metadata": {}
+    },
+    {
+      "code": "US.MSFT",
+      "source": "POSITION",
+      "added_at": "2026-05-20T12:34:17.069239+00:00",
+      "expires_at": null,
+      "metadata": {}
+    },
+    {
+      "code": "US.NVDA",
+      "source": "POSITION",
+      "added_at": "2026-05-20T12:34:17.069229+00:00",
+      "expires_at": null,
+      "metadata": {}
+    },
+    {
+      "code": "US.AMZN",
+      "source": "POSITION",
+      "added_at": "2026-05-20T12:34:17.069250+00:00",
+      "expires_at": null,
+      "metadata": {}
+    },
+    {
+      "code": "US.META",
+      "source": "POSITION",
+      "added_at": "2026-05-20T12:34:17.069246+00:00",
+      "expires_at": null,
+      "metadata": {}
+    },
+    {
+      "code": "US.TSLA",
+      "source": "POSITION",
+      "added_at": "2026-05-20T12:34:17.069144+00:00",
+      "expires_at": null,
+      "metadata": {}
+    },
+    {
+      "code": "US.AMD",
+      "source": "MANUAL",
+      "added_at": "2026-05-20T12:34:17.067319+00:00",
+      "expires_at": null,
+      "metadata": {}
+    },
+    {
+      "code": "US.AVGO",
+      "source": "MANUAL",
+      "added_at": "2026-05-20T12:34:17.067323+00:00",
+      "expires_at": null,
+      "metadata": {}
+    },
+    {
+      "code": "US.TSM",
+      "source": "MANUAL",
+      "added_at": "2026-05-20T12:34:17.067327+00:00",
+      "expires_at": null,
+      "metadata": {}
+    },
+    {
+      "code": "US.NIO",
+      "source": "MANUAL",
+      "added_at": "2026-05-20T12:34:17.067331+00:00",
+      "expires_at": null,
+      "metadata": {}
+    },
+    {
+      "code": "US.JPM",
+      "source": "MANUAL",
+      "added_at": "2026-05-20T12:34:17.067334+00:00",
+      "expires_at": null,
+      "metadata": {}
+    },
+    {
+      "code": "US.LLY",
+      "source": "MANUAL",
+      "added_at": "2026-05-20T12:34:17.067338+00:00",
+      "expires_at": null,
+      "metadata": {}
+    },
+    {
+      "code": "US.WMT",
+      "source": "MANUAL",
+      "added_at": "2026-05-20T12:34:17.067342+00:00",
+      "expires_at": null,
+      "metadata": {}
+    },
+    {
+      "code": "US.MU",
+      "source": "MANUAL",
+      "added_at": "2026-05-20T12:34:17.067345+00:00",
+      "expires_at": null,
+      "metadata": {}
+    },
+    {
+      "code": "US.SNDK",
+      "source": "MANUAL",
+      "added_at": "2026-05-20T12:34:17.067349+00:00",
+      "expires_at": null,
+      "metadata": {}
+    },
+    {
+      "code": "US.GOOG",
+      "source": "MANUAL",
+      "added_at": "2026-05-20T12:34:17.067353+00:00",
+      "expires_at": null,
+      "metadata": {}
+    },
+    {
+      "code": "US.GOOGL",
+      "source": "POSITION",
+      "added_at": "2026-05-20T12:34:17.069243+00:00",
+      "expires_at": null,
+      "metadata": {}
+    }
+  ],
+  "summary": {
+    "total": 24,
+    "breakdown": {
+      "POSITION": 9,
+      "PLAN": 0,
+      "MANUAL": 15,
+      "INTRADAY_ALERT": 0
+    },
+    "max_pool_size": 50
+  }
+}

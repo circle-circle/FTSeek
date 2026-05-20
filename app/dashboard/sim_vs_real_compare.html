@@ -1,0 +1,516 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>模拟 vs 实盘对比 - FTSeek-US</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <style>
+        body {
+            background-color: #f5f6fa;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+        }
+        .container {
+            max-width: 1400px;
+            margin-top: 30px;
+        }
+        .card {
+            border: none;
+            border-radius: 12px;
+            box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+            margin-bottom: 20px;
+        }
+        .card-header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-radius: 12px 12px 0 0 !important;
+            font-weight: 600;
+            padding: 15px 20px;
+        }
+        .comparison-card {
+            background: white;
+            border-radius: 12px;
+            padding: 25px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+            margin-bottom: 20px;
+        }
+        .comparison-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding-bottom: 15px;
+            border-bottom: 2px solid #f0f0f0;
+        }
+        .account-badge {
+            padding: 8px 20px;
+            border-radius: 20px;
+            font-weight: 600;
+            font-size: 14px;
+        }
+        .account-badge.paper {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+        .account-badge.real {
+            background: linear-gradient(135deg, #f5576c 0%, #f093fb 100%);
+            color: white;
+        }
+        .metric-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 12px 0;
+            border-bottom: 1px solid #f0f0f0;
+        }
+        .metric-row:last-child {
+            border-bottom: none;
+        }
+        .metric-label {
+            color: #636e72;
+            font-weight: 500;
+        }
+        .metric-value {
+            font-weight: 700;
+            font-size: 18px;
+        }
+        .metric-value.paper { color: #667eea; }
+        .metric-value.real { color: #f5576c; }
+        .metric-diff {
+            width: 100px;
+            text-align: right;
+            font-size: 14px;
+        }
+        .metric-diff.better { color: #00b894; }
+        .metric-diff.worse { color: #e74c3c; }
+        .chart-container {
+            position: relative;
+            height: 350px;
+        }
+        .alert-info {
+            border-radius: 8px;
+            border: none;
+            background: #e3f2fd;
+            color: #1976d2;
+        }
+        .analysis-box {
+            background: #fff8e6;
+            border-left: 4px solid #f5576c;
+            padding: 20px;
+            border-radius: 0 8px 8px 0;
+            margin-top: 20px;
+        }
+        .analysis-title {
+            font-weight: 600;
+            color: #f5576c;
+            margin-bottom: 10px;
+        }
+        .holding-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            margin-bottom: 10px;
+        }
+        .holding-code {
+            font-weight: 600;
+            color: #2d3436;
+        }
+        .holding-qty {
+            color: #636e72;
+            font-size: 14px;
+        }
+        .holding-pnl {
+            font-weight: 700;
+        }
+        .holding-pnl.positive { color: #00b894; }
+        .holding-pnl.negative { color: #e74c3c; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h2><i class="bi bi-arrow-left-right me-2"></i>模拟 vs 实盘对比分析</h2>
+            <div>
+                <a href="/dashboard" class="btn btn-outline-secondary">
+                    <i class="bi bi-house me-1"></i>Dashboard
+                </a>
+            </div>
+        </div>
+
+        <!-- 时间范围选择 -->
+        <div class="card mb-4">
+            <div class="card-body">
+                <div class="row align-items-center">
+                    <div class="col-md-6">
+                        <label class="form-label">对比时间段</label>
+                        <select class="form-select" id="periodSelect">
+                            <option value="7d">最近 7 天</option>
+                            <option value="30d" selected>最近 30 天</option>
+                            <option value="90d">最近 90 天</option>
+                            <option value="all">全部</option>
+                        </select>
+                    </div>
+                    <div class="col-md-6 text-end">
+                        <button class="btn btn-primary" onclick="loadComparison()">
+                            <i class="bi bi-arrow-clockwise me-1"></i>刷新对比
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 核心指标对比 -->
+        <div class="row mb-4">
+            <div class="col-md-6">
+                <div class="comparison-card">
+                    <div class="comparison-header">
+                        <h5 class="mb-0"><i class="bi bi-piggy-bank me-2"></i>收益表现</h5>
+                        <span class="account-badge paper">模拟账户</span>
+                        <span class="account-badge real">实盘账户</span>
+                    </div>
+                    <div class="metric-row">
+                        <span class="metric-label">总收益率</span>
+                        <div>
+                            <span class="metric-value paper" id="paperReturn">+12.5%</span>
+                            <span class="metric-value real ms-3" id="realReturn">+8.3%</span>
+                            <span class="metric-diff better" id="returnDiff">+4.2%</span>
+                        </div>
+                    </div>
+                    <div class="metric-row">
+                        <span class="metric-label">年化收益率</span>
+                        <div>
+                            <span class="metric-value paper" id="paperAnnual">+45.2%</span>
+                            <span class="metric-value real ms-3" id="realAnnual">+30.1%</span>
+                            <span class="metric-diff better" id="annualDiff">+15.1%</span>
+                        </div>
+                    </div>
+                    <div class="metric-row">
+                        <span class="metric-label">最大回撤</span>
+                        <div>
+                            <span class="metric-value paper" id="paperDrawdown">-3.2%</span>
+                            <span class="metric-value real ms-3" id="realDrawdown">-5.8%</span>
+                            <span class="metric-diff worse" id="drawdownDiff">-2.6%</span>
+                        </div>
+                    </div>
+                    <div class="metric-row">
+                        <span class="metric-label">夏普比率</span>
+                        <div>
+                            <span class="metric-value paper" id="paperSharpe">2.1</span>
+                            <span class="metric-value real ms-3" id="realSharpe">1.5</span>
+                            <span class="metric-diff better" id="sharpeDiff">+0.6</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="comparison-card">
+                    <div class="comparison-header">
+                        <h5 class="mb-0"><i class="bi bi-bar-chart me-2"></i>交易质量</h5>
+                    </div>
+                    <div class="metric-row">
+                        <span class="metric-label">胜率</span>
+                        <div>
+                            <span class="metric-value paper" id="paperWinRate">62%</span>
+                            <span class="metric-value real ms-3" id="realWinRate">55%</span>
+                            <span class="metric-diff better" id="winRateDiff">+7%</span>
+                        </div>
+                    </div>
+                    <div class="metric-row">
+                        <span class="metric-label">盈亏比</span>
+                        <div>
+                            <span class="metric-value paper" id="paperProfitFactor">2.8</span>
+                            <span class="metric-value real ms-3" id="realProfitFactor">2.1</span>
+                            <span class="metric-diff better" id="profitFactorDiff">+0.7</span>
+                        </div>
+                    </div>
+                    <div class="metric-row">
+                        <span class="metric-label">平均持仓时间</span>
+                        <div>
+                            <span class="metric-value paper" id="paperHoldTime">4.2 天</span>
+                            <span class="metric-value real ms-3" id="realHoldTime">2.8 天</span>
+                            <span class="metric-diff worse" id="holdTimeDiff">-1.4 天</span>
+                        </div>
+                    </div>
+                    <div class="metric-row">
+                        <span class="metric-label">交易频率</span>
+                        <div>
+                            <span class="metric-value paper" id="paperFreq">3.5 笔/周</span>
+                            <span class="metric-value real ms-3" id="realFreq">5.2 笔/周</span>
+                            <span class="metric-diff worse" id="freqDiff">+1.7 笔</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 资金曲线对比 -->
+        <div class="card mb-4">
+            <div class="card-header">
+                <i class="bi bi-graph-up me-2"></i>资金曲线对比
+            </div>
+            <div class="card-body">
+                <div class="chart-container">
+                    <canvas id="equityCompareChart"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- 胜率对比 -->
+        <div class="card mb-4">
+            <div class="card-header">
+                <i class="bi bi-pie-chart me-2"></i>胜率对比
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-6">
+                        <div class="chart-container">
+                            <canvas id="paperWinChart"></canvas>
+                        </div>
+                        <p class="text-center mt-3 text-muted">模拟账户：62% 胜率</p>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="chart-container">
+                            <canvas id="realWinChart"></canvas>
+                        </div>
+                        <p class="text-center mt-3 text-muted">实盘账户：55% 胜率</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 持仓对比 -->
+        <div class="row mb-4">
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">
+                        <i class="bi bi-briefcase me-2"></i>模拟账户持仓
+                    </div>
+                    <div class="card-body" id="paperHoldings">
+                        <div class="holding-item">
+                            <div>
+                                <div class="holding-code">AAPL</div>
+                                <div class="holding-qty">100 股</div>
+                            </div>
+                            <div class="holding-pnl positive">+$1,250 (+8.3%)</div>
+                        </div>
+                        <div class="holding-item">
+                            <div>
+                                <div class="holding-code">MSFT</div>
+                                <div class="holding-qty">50 股</div>
+                            </div>
+                            <div class="holding-pnl positive">+$680 (+5.2%)</div>
+                        </div>
+                        <div class="holding-item">
+                            <div>
+                                <div class="holding-code">GOOGL</div>
+                                <div class="holding-qty">30 股</div>
+                            </div>
+                            <div class="holding-pnl positive">+$420 (+3.8%)</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header" style="background: linear-gradient(135deg, #f5576c 0%, #f093fb 100%);">
+                        <i class="bi bi-briefcase me-2"></i>实盘账户持仓
+                    </div>
+                    <div class="card-body" id="realHoldings">
+                        <div class="holding-item">
+                            <div>
+                                <div class="holding-code">AAPL</div>
+                                <div class="holding-qty">50 股</div>
+                            </div>
+                            <div class="holding-pnl positive">+$625 (+8.3%)</div>
+                        </div>
+                        <div class="holding-item">
+                            <div>
+                                <div class="holding-code">NVDA</div>
+                                <div class="holding-qty">20 股</div>
+                            </div>
+                            <div class="holding-pnl negative">-$380 (-4.2%)</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 差异原因分析 -->
+        <div class="card mb-4">
+            <div class="card-header" style="background: linear-gradient(135deg, #a8edea 0%, #fed6e3 100%);">
+                <i class="bi bi-search me-2"></i>差异原因分析
+            </div>
+            <div class="card-body">
+                <div class="analysis-box">
+                    <div class="analysis-title"><i class="bi bi-exclamation-circle me-2"></i>主要差异</div>
+                    <ul class="mb-0">
+                        <li><strong>心理因素影响:</strong> 实盘交易时情绪波动更大，导致决策质量下降 (信心评分低 15%)</li>
+                        <li><strong>止损执行率:</strong> 模拟账户 95%，实盘账户仅 78%，导致亏损扩大</li>
+                        <li><strong>持仓时间:</strong> 实盘持仓时间更短，可能存在过早止盈问题</li>
+                        <li><strong>交易频率:</strong> 实盘交易更频繁，冲动交易比例高 (25% vs 12%)</li>
+                    </ul>
+                </div>
+                <div class="analysis-box" style="background: #e8f5e9; border-left-color: #00b894;">
+                    <div class="analysis-title" style="color: #00b894;"><i class="bi bi-check-circle me-2"></i>改进建议</div>
+                    <ul class="mb-0">
+                        <li><strong>降低实盘仓位:</strong> 将仓位降至模拟账户的 50%，减少心理压力</li>
+                        <li><strong>设置价格提醒:</strong> 使用止损止盈提醒，提高执行率</li>
+                        <li><strong>建立交易清单:</strong> 每次交易前检查，减少冲动交易</li>
+                        <li><strong>延长持仓时间:</strong> 设定最小持仓时间，避免过早止盈</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        let equityCompareChart = null;
+        let paperWinChart = null;
+        let realWinChart = null;
+
+        // 初始化图表
+        function initCharts() {
+            // 资金曲线对比
+            const equityCtx = document.getElementById('equityCompareChart').getContext('2d');
+            equityCompareChart = new Chart(equityCtx, {
+                type: 'line',
+                data: {
+                    labels: ['03/01', '03/05', '03/10', '03/15', '03/20', '03/25', '03/28'],
+                    datasets: [
+                        {
+                            label: '模拟账户',
+                            data: [100000, 103500, 102800, 107200, 110500, 109200, 112500],
+                            borderColor: '#667eea',
+                            backgroundColor: 'rgba(102, 126, 234, 0.1)',
+                            fill: true,
+                            tension: 0.4
+                        },
+                        {
+                            label: '实盘账户',
+                            data: [100000, 101500, 100800, 104200, 106500, 105200, 108300],
+                            borderColor: '#f5576c',
+                            backgroundColor: 'rgba(245, 87, 108, 0.1)',
+                            fill: true,
+                            tension: 0.4
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            position: 'top'
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: false,
+                            grid: {
+                                color: 'rgba(0,0,0,0.05)'
+                            }
+                        },
+                        x: {
+                            grid: {
+                                display: false
+                            }
+                        }
+                    }
+                }
+            });
+
+            // 模拟账户胜率饼图
+            const paperWinCtx = document.getElementById('paperWinChart').getContext('2d');
+            paperWinChart = new Chart(paperWinCtx, {
+                type: 'doughnut',
+                data: {
+                    labels: ['盈利交易', '亏损交易'],
+                    datasets: [{
+                        data: [62, 38],
+                        backgroundColor: ['#00b894', '#e74c3c'],
+                        borderWidth: 0
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            position: 'bottom'
+                        }
+                    }
+                }
+            });
+
+            // 实盘账户胜率饼图
+            const realWinCtx = document.getElementById('realWinChart').getContext('2d');
+            realWinChart = new Chart(realWinCtx, {
+                type: 'doughnut',
+                data: {
+                    labels: ['盈利交易', '亏损交易'],
+                    datasets: [{
+                        data: [55, 45],
+                        backgroundColor: ['#00b894', '#e74c3c'],
+                        borderWidth: 0
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            position: 'bottom'
+                        }
+                    }
+                }
+            });
+        }
+
+        // 加载对比数据
+        async function loadComparison() {
+            const period = document.getElementById('periodSelect').value;
+
+            try {
+                const response = await fetch(`/api/review/sim-real-compare?period=${period}`);
+                const data = await response.json();
+
+                if (response.ok) {
+                    updateMetrics(data.metrics);
+                    updateCharts(data.equity_curves);
+                    updateHoldings(data.holdings);
+                } else {
+                    console.error('加载对比数据失败:', data.error);
+                }
+            } catch (error) {
+                console.error('网络错误:', error);
+            }
+        }
+
+        // 更新指标
+        function updateMetrics(metrics) {
+            // TODO: 实现动态更新
+        }
+
+        // 更新图表
+        function updateCharts(equityCurves) {
+            // TODO: 实现动态更新
+        }
+
+        // 更新持仓
+        function updateHoldings(holdings) {
+            // TODO: 实现动态更新
+        }
+
+        // 页面加载时初始化
+        document.addEventListener('DOMContentLoaded', function() {
+            initCharts();
+            loadComparison();
+        });
+    </script>
+</body>
+</html>

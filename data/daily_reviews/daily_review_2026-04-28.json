@@ -1,0 +1,97 @@
+{
+  "report_type": "daily",
+  "report_date": "2026-04-28",
+  "generated_at": "2026-04-29T04:09:41.573870",
+  "summary": {
+    "total_trades": 0,
+    "closed_trades": 0
+  },
+  "signal_funnel": {
+    "total_decisions": 2271,
+    "by_direction_strength": {
+      "LONG(s=53)": 5,
+      "LONG(s=54)": 20,
+      "LONG(s=55)": 23,
+      "LONG(s=56)": 17,
+      "LONG(s=57)": 34,
+      "LONG(s=58)": 67,
+      "LONG(s=59)": 116,
+      "LONG(s=60)": 55,
+      "LONG(s=61)": 93,
+      "LONG(s=62)": 96,
+      "LONG(s=63)": 120,
+      "LONG(s=64)": 67,
+      "LONG(s=65)": 115,
+      "LONG(s=66)": 124,
+      "LONG(s=67)": 49,
+      "LONG(s=68)": 79,
+      "LONG(s=69)": 73,
+      "LONG(s=70)": 20,
+      "LONG(s=71)": 35,
+      "LONG(s=72)": 13,
+      "LONG(s=73)": 2,
+      "LONG(s=74)": 9,
+      "LONG(s=75)": 9,
+      "LONG(s=76)": 2,
+      "LONG(s=78)": 2,
+      "LONG(s=84)": 1,
+      "NEUTRAL(s=50)": 620,
+      "SHORT(s=21)": 1,
+      "SHORT(s=26)": 1,
+      "SHORT(s=27)": 2,
+      "SHORT(s=28)": 3,
+      "SHORT(s=30)": 5,
+      "SHORT(s=31)": 1,
+      "SHORT(s=32)": 4,
+      "SHORT(s=33)": 18,
+      "SHORT(s=34)": 8,
+      "SHORT(s=35)": 7,
+      "SHORT(s=36)": 29,
+      "SHORT(s=37)": 5,
+      "SHORT(s=38)": 8,
+      "SHORT(s=39)": 11,
+      "SHORT(s=40)": 18,
+      "SHORT(s=41)": 20,
+      "SHORT(s=42)": 42,
+      "SHORT(s=43)": 35,
+      "SHORT(s=44)": 15,
+      "SHORT(s=45)": 34,
+      "SHORT(s=46)": 36,
+      "SHORT(s=47)": 35,
+      "SHORT(s=48)": 67
+    }
+  },
+  "rejection_analysis": {
+    "total": 720,
+    "by_reason": {
+      "CONSENSUS_LOW": 620,
+      "CONFIDENCE_LOW": 100
+    },
+    "by_symbol": {
+      "US.TSM": 37,
+      "US.CRM": 30,
+      "US.MU": 30,
+      "US.BILI": 29,
+      "US.PDD": 28
+    },
+    "top_rejector": "CONSENSUS_LOW"
+  },
+  "capital_state": {
+    "current_equity": 1026577.0,
+    "cash": 553523.0,
+    "buying_power": 0.0,
+    "drawdown_pct": -6.07,
+    "max_drawdown_pct": -6.07,
+    "water_level": "yellow"
+  },
+  "decision_analysis": {},
+  "timing_analysis": {},
+  "risk_analysis": {},
+  "voting_analysis": {},
+  "key_learnings": [],
+  "improvement_suggestions": [
+    "产生 2271 条决策但 0 笔执行，检查门禁/风控是否过严",
+    "今日 720 次信号被拒绝，TOP 原因: CONSENSUS_LOW"
+  ],
+  "error_patterns": {}
+}

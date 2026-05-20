@@ -1,0 +1,1439 @@
+"""
+订单执行管线 — FTSeek-US 下单执行与仓位管理
+
+从 scheduler_tasks.py 拆分而来。本模块包含完整的订单构建、风控门禁、
+仓位计算、平仓逻辑和通知。
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import os
+import time
+import uuid
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Dict, Any, List, Optional
+
+from app.core.models import (
+    SignalScore, Direction, MarketRegime,
+    Order, OrderType, OrderState, Position,
+    TradeEvent, ExitReason, AlertLevel,
+)
+from app.execution.options_selector import OptionSelector
+from app.data.adaptive_polling import StockTier
+
+logger = logging.getLogger(__name__)
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  工具函数: 价格获取
+# ═══════════════════════════════════════════════════════════════════
+
+def _get_current_price(scheduler, symbol: str) -> float:
+    """获取当前价格（富途 → Yahoo fallback）"""
+    # 优先从执行引擎（富途）获取
+    if scheduler.execution_engine and hasattr(scheduler.execution_engine, "broker_adapter"):
+        adapter = scheduler.execution_engine.broker_adapter
+        if adapter and adapter.is_connected():
+            try:
+                price = adapter.get_current_price(symbol)
+                if price > 0:
+                    return price
+            except Exception as e:
+                logger.debug(f"[价格获取] adapter.get_current_price({symbol}) 失败: {e}")
+
+    # fallback：通过 MarketDataRouter 获取报价
+    try:
+        quote = scheduler.data_router.get_quote(symbol)
+        if quote:
+            return float(quote.get("price", 0))
+    except Exception as e:
+        logger.debug(f"[价格获取] data_router.get_quote({symbol}) 失败: {e}")
+    return 0.0
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  持仓冲突处理
+# ═══════════════════════════════════════════════════════════════════
+
+def _close_position_for_conflict(scheduler, position: Position):
+    """
+    因持仓方向冲突而平仓。
+
+    P0 修复 (2026-04-17): 当 position_store 与 broker 不同步时,
+    自动关闭冲突持仓, 避免下单失败。
+    """
+    try:
+        price = _get_current_price(scheduler, position.symbol)
+        if price <= 0:
+            logger.error(f"[持仓冲突] {position.symbol} 无法获取价格, 跳过平仓")
+            return
+
+        exit_reason = ExitReason.POSITION_CONFLICT
+        _close_position(scheduler, position, price, exit_reason)
+        logger.info(f"[持仓冲突] {position.symbol} 已平仓, 等待下轮扫描再开新仓")
+        # 设置冷却期, 防止立即反向开仓
+        scheduler._set_cooldown(position.symbol)
+    except Exception as e:
+        logger.error(f"[持仓冲突] {position.symbol} 平仓异常: {e}")
+
+
+def _close_short_for_long(scheduler, symbol: str, qty: float, current_price: float) -> bool:
+    """
+    自动平仓空头以准备开多头。
+
+    P1 修复 (2026-04-19): 增加作战计划门禁 — 如果作战计划明确禁止 LONG 方向,
+    拒绝执行反向操作。
+    P1 优化 (2026-04-17): 当 broker 有空头持仓但新信号为 LONG 时,
+    自动以市价买入平仓, 避免信号丢失。
+    
+    Returns:
+        True if close was attempted, False if skipped
+    """
+    from app.core.models import Order as OrderModel, Direction as Dir, OrderType as OT
+
+    # P1 修复: 作战计划门禁 (防止与作战计划背离的反手)
+    try:
+        from app.us_pipeline.battle_plan_manager import USBattlePlanManager
+        mgr = USBattlePlanManager()
+        # 检查作战计划是否允许此标的做多
+        plan_info = mgr.get_target_info(symbol)
+        if plan_info:
+            plan_dir = plan_info.get("direction", "").upper()
+            plan_status = plan_info.get("status", "PRE_MARKET")
+            if plan_status == "CANCELLED":
+                logger.warning(
+                    f"🚫 [作战计划反手门禁] {symbol} 计划已取消, 拒绝平空转多"
+                )
+                return False
+            if plan_dir and plan_dir not in ("LONG", "ANY"):
+                logger.warning(
+                    f"⚠️ [作战计划反手门禁] {symbol} 计划方向为 {plan_dir}, "
+                    f"与反手 LONG 背离, 仅记录告警但不拦截 (允许执行)"
+                )
+    except Exception as e:
+        logger.debug(f"[作战计划反手门禁] 检查异常 (放行): {e}")
+
+    try:
+        if current_price <= 0:
+            current_price = _get_current_price(scheduler, symbol)
+            if current_price <= 0:
+                logger.error(f"[空头转多头] {symbol} 无法获取价格, 跳过平仓")
+                return False
+
+        # 构建平仓订单 (BUY 平空仓)
+        order = OrderModel(
+            client_order_id=f"{symbol}_CLOSE_SHORT_{int(time.time())}",
+            symbol=symbol,
+            direction=Dir.LONG,  # 买入平空
+            order_type=OT.MARKET,
+            quantity=qty,
+            price=current_price,
+        )
+
+        if scheduler.execution_engine:
+            try:
+                result = scheduler.execution_engine.broker_adapter.submit_order(order)
+                logger.info(
+                    f"[空头转多头] {symbol} 空头平仓已提交: "
+                    f"qty={qty} price=${current_price:.2f} result={result}"
+                )
+            except Exception as e:
+                logger.error(f"[空头转多头] {symbol} 平仓提交失败: {e}")
+                return False
+
+        # 设置冷却期
+        scheduler._set_cooldown(symbol)
+        logger.info(f"[空头转多头] {symbol} 空头已平仓, 下轮扫描将尝试开多头")
+
+        # 通知
+        try:
+            from app.notifier.dingtalk import DingTalkNotifier
+            notifier = DingTalkNotifier()
+            msg = (
+                f"🔄 FTSeek-US 持仓冲突自动处理\n\n"
+                f"📌 标的: {symbol}\n"
+                f"📉 操作: 平空仓 {int(qty)} 股 @ ${current_price:.2f}\n"
+                f"📈 原因: 新信号 LONG, 自动清理反向空头\n"
+                f"⏳ 下轮扫描将尝试开多头"
+            )
+            notifier.send_text(msg)
+        except Exception as e:
+            logger.warning(f"[空头转多头] 钉钉通知失败: {e}")
+        return True
+
+    except Exception as e:
+        logger.error(f"[空头转多头] {symbol} 处理异常: {e}")
+        return False
+
+
+def _close_long_for_short(scheduler, symbol: str, qty: float, current_price: float) -> bool:
+    """
+    自动平仓多头以准备开空头（通过期权）。
+
+    P1 修复 (2026-04-19): 增加作战计划门禁 — 如果作战计划明确禁止 SHORT 方向,
+    拒绝执行反向操作。
+    P1 优化 (2026-04-17): 当 broker 有多头持仓但新信号为 SHORT 时,
+    自动卖出平仓, 然后通过期权做空。
+    
+    Returns:
+        True if close was attempted, False if skipped
+    """
+    from app.core.models import Order as OrderModel, Direction as Dir, OrderType as OT
+
+    # P1 修复: 作战计划门禁
+    try:
+        from app.us_pipeline.battle_plan_manager import USBattlePlanManager
+        mgr = USBattlePlanManager()
+        plan_info = mgr.get_target_info(symbol)
+        if plan_info:
+            plan_dir = plan_info.get("direction", "").upper()
+            plan_status = plan_info.get("status", "PRE_MARKET")
+            if plan_status == "CANCELLED":
+                logger.warning(
+                    f"🚫 [作战计划反手门禁] {symbol} 计划已取消, 拒绝平多转空"
+                )
+                return False
+            if plan_dir and plan_dir not in ("SHORT", "ANY"):
+                logger.warning(
+                    f"⚠️ [作战计划反手门禁] {symbol} 计划方向为 {plan_dir}, "
+                    f"与反手 SHORT 背离, 仅记录告警但不拦截 (允许执行)"
+                )
+    except Exception as e:
+        logger.debug(f"[作战计划反手门禁] 检查异常 (放行): {e}")
+
+    try:
+        if current_price <= 0:
+            current_price = _get_current_price(scheduler, symbol)
+            if current_price <= 0:
+                logger.error(f"[多头转空头] {symbol} 无法获取价格, 跳过平仓")
+                return False
+
+        # 构建平仓订单 (SELL 平多仓)
+        order = OrderModel(
+            client_order_id=f"{symbol}_CLOSE_LONG_{int(time.time())}",
+            symbol=symbol,
+            direction=Dir.SHORT,  # 卖出平多
+            order_type=OT.MARKET,
+            quantity=qty,
+            price=current_price,
+        )
+
+        if scheduler.execution_engine:
+            try:
+                result = scheduler.execution_engine.broker_adapter.submit_order(order)
+                logger.info(
+                    f"[多头转空头] {symbol} 多头平仓已提交: "
+                    f"qty={qty} price=${current_price:.2f}"
+                )
+            except Exception as e:
+                logger.error(f"[多头转空头] {symbol} 平仓提交失败: {e}")
+                return False
+
+        scheduler._set_cooldown(symbol)
+        logger.info(f"[多头转空头] {symbol} 多头已平仓, 下轮扫描将尝试开空头(期权)")
+
+        # 通知
+        try:
+            from app.notifier.dingtalk import DingTalkNotifier
+            notifier = DingTalkNotifier()
+            msg = (
+                f"🔄 FTSeek-US 持仓冲突自动处理\n\n"
+                f"📌 标的: {symbol}\n"
+                f"📈 操作: 平多仓 {int(qty)} 股 @ ${current_price:.2f}\n"
+                f"📉 原因: 新信号 SHORT, 自动清理反向多头\n"
+                f"⏳ 下轮扫描将尝试期权做空"
+            )
+            notifier.send_text(msg)
+        except Exception as e:
+            logger.warning(f"[多头转空头] 钉钉通知失败: {e}")
+        return True
+
+    except Exception as e:
+        logger.error(f"[多头转空头] {symbol} 处理异常: {e}")
+        return False
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  通知函数
+# ═══════════════════════════════════════════════════════════════════
+
+def _notify_order(scheduler, symbol: str, signal: SignalScore, order: Order, position: Position, voting_result: Dict = None):
+    """下单通知 (钉钉 + 飞书)"""
+    if scheduler.notifier:
+        try:
+            # 将信号信息和投票结果写入 position.metadata (供后续平仓通知和复盘使用)
+            if hasattr(position, 'metadata') and position.metadata:
+                position.metadata['signal_strength'] = signal.strength
+                position.metadata['signal_confidence'] = signal.confidence
+                position.metadata['strategy_id'] = signal.strategy_id
+                position.metadata['voting_result'] = voting_result
+            else:
+                position.metadata = {
+                    'signal_strength': signal.strength,
+                    'signal_confidence': signal.confidence,
+                    'strategy_id': signal.strategy_id,
+                    'voting_result': voting_result,
+                }
+            
+            scheduler.notifier.notify_order_filled(order, position, voting_result=voting_result)
+        except Exception as e:
+            logger.debug(f"通知失败：{e}")
+
+
+def _notify_exit(scheduler, position: Position, reason: ExitReason, pnl: float, pnl_pct: float):
+    """平仓通知 (钉钉 + 飞书)"""
+    if scheduler.notifier:
+        try:
+            scheduler.notifier.notify_exit(position, reason, pnl)
+        except Exception as e:
+            logger.debug(f"通知失败：{e}")
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  动态仓位计算
+# ═══════════════════════════════════════════════════════════════════
+
+def _get_order_qty(scheduler, symbol: str) -> int:
+    """
+    获取订单数量 (基于资本安全水位的动态仓位计算)
+
+    P1-1 修复 (2026-04-17): 使用 _get_current_price 替代 get_full_market_context
+    避免重复调用 TwelveData 浪费信用
+
+    Livermore 原则: 根据账户净值、风险承受能力和当前水位动态调整仓位,
+    永远不被破产, 永远不陷于绝境。
+    """
+    DEFAULT_QTY = 50  # P2 修复: 集中定义默认值
+    try:
+        from app.risk.capital_safety import get_capital_safety_system
+        capital = get_capital_safety_system()
+
+        # P1-1 修复: 优先使用 Futu LV2 实时价格
+        price = _get_current_price(scheduler, symbol)
+
+        if price <= 0:
+            logger.warning(f"[动态仓位] {symbol} 无法获取价格, 使用默认 {DEFAULT_QTY} 股")
+            try:
+                from app.utils.watchlist_manager import get_order_qty
+                return get_order_qty(symbol, default_qty=DEFAULT_QTY)
+            except Exception as e:
+                logger.debug(f'[动态仓位] 获取订单数量失败: {e}，使用默认 {DEFAULT_QTY}')
+                return DEFAULT_QTY
+
+        # 止损价 (默认入场价下方 10%, Livermore 铁律)
+        stop_loss_price = price * 0.90
+
+        # 动态计算仓位
+        sizing = capital.calc_position_size(
+            entry_price=price,
+            stop_loss_price=stop_loss_price,
+        )
+
+        size = sizing["size"]
+        logger.info(
+            f"[动态仓位] {symbol} ${price:.2f} | "
+            f"止损 ${stop_loss_price:.2f} | "
+            f"仓位={size} 股 (${size*price:,.0f}) | "
+            f"{sizing['reason']}"
+        )
+
+        if size <= 0:
+            logger.warning(f"[动态仓位] {symbol} 计算仓位为 0: {sizing['reason']}")
+            # Fallback: 使用 watchlist 配置的默认值
+            try:
+                from app.utils.watchlist_manager import get_order_qty
+                return get_order_qty(symbol, default_qty=DEFAULT_QTY)
+            except Exception as e:
+                logger.debug(f'[动态仓位] 获取订单数量失败: {e}，使用默认 {DEFAULT_QTY}')
+                return DEFAULT_QTY
+
+        return size
+
+    except Exception as e:
+        logger.warning(f"[动态仓位] {symbol} 计算异常: {e}, 使用默认 {DEFAULT_QTY} 股")
+        try:
+            from app.utils.watchlist_manager import get_order_qty
+            return get_order_qty(symbol, default_qty=DEFAULT_QTY)
+        except Exception:
+            return DEFAULT_QTY
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  期权下单
+# ═══════════════════════════════════════════════════════════════════
+
+def _submit_put_option(scheduler, symbol: str, signal: SignalScore, context: Dict[str, Any]):
+    """SHORT 信号处理：买入 ATM Put 期权替代卖空"""
+    try:
+        from app.core.config_container import get_config
+        _oc = get_config().get_section("options", {})
+    except Exception:
+        _oc = {}
+
+    if not _oc.get("ENABLED", True):
+        logger.info(f"[期权] {symbol} OPTIONS_CONFIG.ENABLED=False，跳过 SHORT 信号")
+        return
+
+    price = context.get("price", 0)
+    if price <= 0:
+        logger.warning(f"[期权] {symbol} 价格为 0，取消期权下单")
+        return
+
+    max_cost  = float(_oc.get("MAX_OPTION_COST", 2000))
+    min_dte   = int(_oc.get("MIN_DTE", 7))
+    max_dte   = int(_oc.get("MAX_DTE", 21))
+
+    # 尝试注入 quote_ctx（execution_engine 已连接时）
+    if (scheduler.option_selector.quote_ctx is None
+            and scheduler.execution_engine
+            and hasattr(scheduler.execution_engine, "broker_adapter")):
+        adapter = getattr(scheduler.execution_engine, "broker_adapter", None)
+        if adapter and adapter.is_connected() and adapter.quote_ctx:
+            scheduler.option_selector.quote_ctx = adapter.quote_ctx
+
+    # 查询 ATM Put 合约
+    contract = scheduler.option_selector.get_atm_put(
+        symbol, price, min_dte=min_dte, max_dte=max_dte
+    )
+    if contract is None:
+        logger.error(f"[期权] {symbol} 无法获取 Put 期权合约，放弃 SHORT 信号")
+        return
+
+    # 计算手数
+    qty = OptionSelector.calc_option_cost(contract, max_cost)
+    cost_total = qty * contract.last_price * 100
+
+    logger.info(
+        f"[期权] {symbol} 买入 Put {contract.option_code} "
+        f"qty={qty} price=${contract.last_price:.2f} "
+        f"K={contract.strike_price} expiry={contract.expiry_date} "
+        f"DTE={contract.dte} cost≈${cost_total:.0f} "
+        f"{'[模拟]' if contract.is_simulated else '[真实]'}"
+    )
+
+    # 下单
+    try:
+        adapter = None
+        if scheduler.execution_engine and hasattr(scheduler.execution_engine, "broker_adapter"):
+            adapter = getattr(scheduler.execution_engine, "broker_adapter", None)
+
+        if adapter:
+            order_result = adapter.submit_option_order(
+                option_code=contract.option_code,
+                qty=qty,
+                price=contract.ask,  # 以 ask 价买入（确保成交）
+                direction="BUY",
+            )
+        else:
+            order_result = {
+                "order_id": f"OPT_{contract.option_code}_BUY",
+                "futu_order_id": f"SIM_{contract.option_code[:20]}",
+                "status": "simulated_fill",
+            }
+
+        logger.info(f"[期权] 下单结果：{order_result}")
+
+    except Exception as e:
+        logger.error(f"[期权] {symbol} 期权下单异常：{e}", exc_info=True)
+        return
+
+    # 写入 option_positions 表
+    try:
+        scheduler.trade_store.upsert_option_position({
+            "symbol":             symbol,
+            "option_code":        contract.option_code,
+            "direction":          "SHORT_PROXY",
+            "qty":                qty,
+            "entry_price":        contract.last_price,
+            "strike_price":       contract.strike_price,
+            "expiry_date":        contract.expiry_date,
+            "entry_time":         datetime.now().isoformat(),
+            "cost_total":         cost_total,
+            "signal_strength":    signal.strength,
+            "signal_confidence":  signal.confidence,
+            "is_simulated":       contract.is_simulated,
+        })
+    except Exception as e:
+        logger.warning(f"[期权] 写入期权持仓记录失败：{e}")
+
+    # 在 position_store 中登记占位持仓（供监控循环识别）
+    try:
+        position = Position(
+            strategy_id="voting_llm_option",
+            symbol=symbol,
+            direction=Direction.SHORT,
+            size=float(qty),
+            avg_entry_price=contract.last_price,
+            initial_sl=contract.last_price * (1 - float(_oc.get("STOP_LOSS_RATIO", 0.3))),
+            initial_tp=contract.last_price * float(_oc.get("TAKE_PROFIT_RATIO", 2.0)),
+            current_sl=contract.last_price * (1 - float(_oc.get("STOP_LOSS_RATIO", 0.3))),
+            take_profit_levels=[
+                {"ratio": 1.0, "price": contract.last_price * float(_oc.get("TAKE_PROFIT_RATIO", 2.0))},
+            ],
+            time_stop_hours=contract.dte * 24,
+            market_regime=signal.market_regime,
+        )
+        position.entry_time = datetime.now()
+        # 在 metadata 中标记为期权持仓
+        position.metadata = {
+            "is_option":    True,
+            "option_code":  contract.option_code,
+            "strike_price": contract.strike_price,
+            "expiry_date":  contract.expiry_date,
+            "dte":          contract.dte,
+            "cost_total":   cost_total,
+            "is_simulated": contract.is_simulated,
+        }
+        scheduler.position_store.add(symbol, position)
+    except Exception as e:
+        logger.warning(f"[期权] 登记期权持仓到内存失败：{e}")
+
+    # 冷却
+    scheduler._set_cooldown(symbol)
+
+    # 事件记录
+    scheduler.event_store.append(TradeEvent(
+        event_type="option_order_submitted",
+        signal_id=signal.signal_id,
+        order_id=order_result.get("order_id", ""),
+        data={
+            "symbol":        symbol,
+            "option_code":   contract.option_code,
+            "direction":     "SHORT_PROXY",
+            "qty":           qty,
+            "price":         contract.last_price,
+            "strike":        contract.strike_price,
+            "expiry":        contract.expiry_date,
+            "dte":           contract.dte,
+            "cost_total":    cost_total,
+        },
+        source="scheduler",
+        severity=AlertLevel.INFO,
+    ))
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  直接做空策略
+# ═══════════════════════════════════════════════════════════════════
+
+def _try_direct_short_only(scheduler, symbol: str, signal: SignalScore, context: Dict[str, Any]):
+    """直接卖空（不尝试期权）"""
+    # 简化实现：复用普通下单逻辑
+    _submit_order(scheduler, symbol, signal, context, None)
+
+
+def _try_direct_short_with_fallback(scheduler, symbol: str, signal: SignalScore, context: Dict[str, Any]):
+    """优先直接卖空，失败降级买 Put"""
+    try:
+        # 尝试直接卖空
+        _submit_order(scheduler, symbol, signal, context, None)
+    except Exception as e:
+        logger.warning(f"[SHORT] {symbol} 直接卖空失败，降级买 Put: {e}")
+        _submit_put_option(scheduler, symbol, signal, context)
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  核心下单入口 (风控门禁 → 持仓冲突 → 仓位计算 → 止盈止损 → 执行)
+# ═══════════════════════════════════════════════════════════════════
+
+def _submit_order(scheduler, symbol: str, signal: SignalScore, context: Dict[str, Any], voting_result: Dict = None):
+    """构建订单并通过执行引擎下单
+
+    P0/P1 修复 (2026-04-17):
+    - 集成 TradeGuard 交易保护网关 (PDT/反手/黑天鹅)
+    - 下单前检查 broker 持仓方向冲突
+    - 区分期权空头和直接空头，采用不同处理策略
+    - 自动清理反向持仓，避免信号丢失
+    - Phase 3 新增: 性能衰减检查 (Performance Decay)
+    """
+    
+    # 🔴 P0 关键修复: 全局风险状态机门禁检查
+    # 在一切交易逻辑之前，检查系统是否处于 RISK_OFF 或 HALT 状态
+    try:
+        from app.us_pipeline.risk_state_machine import RiskStateMachine, RiskAction
+        from app.us_pipeline.risk_state_machine import RiskState  # For logging
+        
+        sm = RiskStateMachine()
+        # Check if OPEN is allowed
+        if not sm.is_trade_allowed(RiskAction.OPEN):
+            current_state = sm.get_state().value
+            logger.warning(f"🚫 [风控拦截] 拒绝交易 {symbol}: 当前系统处于 {current_state} 状态")
+            return
+    except Exception as e:
+        logger.error(f"⚠️ 风险状态机检查失败 (放行): {e}")
+    
+    # ── 建议3: VIX Regime 仓位系数 + 止损调整 (2026-04-29) ──
+    vix_pos_mult = context.get("vix_position_multiplier", 1.0)
+    vix_sl_adj = context.get("vix_stop_loss_adjustment", 1.0)
+    vix_regime = context.get("vix_regime", "normal")
+    
+    if vix_pos_mult != 1.0 or vix_sl_adj != 1.0:
+        # 调整信号 metadata 中的仓位建议
+        if hasattr(signal, 'metadata') and signal.metadata:
+            original_pct = signal.metadata.get("position_pct", 0.10)
+            adjusted_pct = round(original_pct * vix_pos_mult, 4)
+            signal.metadata["position_pct"] = adjusted_pct
+            signal.metadata["vix_regime"] = vix_regime
+            signal.metadata["vix_position_multiplier"] = vix_pos_mult
+            signal.metadata["vix_stop_loss_adjustment"] = vix_sl_adj
+            
+            logger.info(
+                "[VIX Regime] %s | regime=%s | 仓位系数=%.2f (%.0f%%→%.0f%%) | 止损调整=%.2f",
+                symbol, vix_regime, vix_pos_mult,
+                original_pct * 100, adjusted_pct * 100, vix_sl_adj
+            )
+            
+            # 危机模式清仓拦截
+            if vix_regime == "crisis" and vix_pos_mult == 0.0:
+                logger.warning(f"🚫 [VIX 危机] {symbol} VIX 危机模式，拒绝开新仓")
+                return
+    
+    # Phase 3 新增：性能衰减检查 (Performance Decay)
+    # 根据近期策略胜率动态调整信号强度，防止"连败"期间继续重仓
+    try:
+        from app.utils.performance_decay import get_decay_factor
+        
+        db_path = os.path.join(os.path.dirname(__file__), "..", "..", "data", "ftseek_us.db")
+        strategy = context.get("strategy", "unknown")
+        decay = get_decay_factor(db_path, strategy, lookback_days=5)
+        
+        if decay < 1.0:
+            original_strength = signal.strength
+            signal.strength = max(10, original_strength * decay)
+            logger.warning(f"📉 [性能衰减] 策略 {strategy} 近期表现不佳 -> 信号降权 (x{decay})")
+            
+            # 如果强度降得太低，直接拦截
+            if signal.strength < 30:
+                logger.warning(f"🚫 [性能衰减] {symbol} 信号降权后过低 ({signal.strength})，自动拦截")
+                return
+    except Exception as e:
+        logger.debug(f"[性能衰减] 检查失败 (不影响主流程): {e}")
+
+    # ── Phase US-1: 美股盘前作战计划门禁 ──
+    # ── P0 新增 (2026-04-25): 做空专用高门槛检查 ──
+    direction_str = "BUY" if signal.direction == "LONG" else "SELL"
+    is_short = (direction_str == "SELL")
+    
+    if is_short:
+        # 做空专用: strength ≤ 35 (等效 effective ≥ 65) 才可考虑
+        short_effective = 100 - signal.strength
+        if short_effective < 65:
+            logger.warning(
+                f"🚫 [做空门禁] {symbol} 做空信号强度不足 "
+                f"(strength={signal.strength}, effective={short_effective} < 65)"
+            )
+            return
+        # 三重确认: RSI + MACD + 均线
+        rsi = context.get("rsi", 50)
+        macd_signal_val = context.get("macd_signal", 0)
+        price = context.get("price", 0)
+        ma20 = context.get("ma20", 0)
+        
+        triple_confirm = 0
+        if rsi > 65: triple_confirm += 1
+        if macd_signal_val < 0: triple_confirm += 1
+        if ma20 > 0 and price < ma20: triple_confirm += 1
+        
+        if triple_confirm < 2:
+            logger.warning(
+                f"🚫 [做空门禁] {symbol} 三重确认不足 ({triple_confirm}/2): "
+                f"RSI={rsi:.0f} MACD={macd_signal_val:.2f} price={price:.2f} MA20={ma20:.2f}"
+            )
+            return
+        logger.info(
+            f"✅ [做空门禁] {symbol} 通过 (strength={signal.strength}, "
+            f"effective={short_effective}, 三重确认={triple_confirm}/3)"
+        )
+    
+    try:
+        from app.us_pipeline.battle_plan_manager import USBattlePlanManager
+        mgr = USBattlePlanManager()
+        allowed, reason = mgr.check_trade(symbol, direction_str, strength=signal.strength, confidence=signal.confidence)
+        if not allowed:
+            logger.warning(f"🚫 [US Plan Gate] 拦截交易 {symbol}: {reason}")
+            return
+    except Exception as e:
+        logger.debug(f"[US Plan Gate] 检查异常 (放行): {e}")
+
+    # Generate a trace_id for this specific trade attempt
+    trace_id = str(uuid.uuid4())[:8]
+    logger.info(f"[TradeGuard] 开始评估订单 {symbol} | Trace ID: {trace_id}")
+    
+    # ── P0 新增: 价格动量门控 (防止逆势下单) ──
+    try:
+        from app.risk.price_momentum_gate import get_price_momentum_gate
+        direction_str_check = signal.direction.value if hasattr(signal.direction, 'value') else str(signal.direction)
+        gate = get_price_momentum_gate()
+        passed, reason = gate.check(symbol, direction_str_check)
+        if not passed:
+            logger.warning(f"🚫 [价格动量门控] 拒绝交易 {symbol}: {reason}")
+            return
+        else:
+            logger.debug(f"[价格动量门控] {symbol} 通过: {reason}")
+    except Exception as e:
+        logger.debug(f"[价格动量门控] 检查异常 (放行): {e}")
+    
+    # ── P0: 交易保护网关检查 ──
+    from app.core.trade_guard import TradeGuard, GuardDecision
+    
+    # 获取账户净值
+    try:
+        from app.risk.capital_safety import get_capital_safety_system
+        equity = get_capital_safety_system()._state.current_equity
+        if equity <= 0: equity = 100000.0
+    except (AttributeError, ImportError):
+        equity = 100000.0
+
+    guard = TradeGuard({
+        "equity": equity,
+        "data_dir": os.path.join(os.path.dirname(__file__), "..", "data")
+    })
+    
+    # 构建上下文 (包含 trace_id 以便全链路追踪)
+    guard_context = {
+        "trace_id": trace_id,
+        "symbol": symbol,
+        "direction": "OPEN_LONG" if signal.direction.value == "LONG" else "OPEN_SHORT",
+        "signal_strength": signal.strength,
+        "volatility": context.get("atr", 0) / max(0.001, context.get("price", 1)),
+        "recent_news": [], 
+        "is_reversal": False,
+    }
+    
+    result = guard.evaluate(guard_context)
+    decision = result["decision"]
+    reason = result["reason"]
+    result_trace = result.get("trace_id", trace_id)
+    
+    # 拦截逻辑
+    if decision == GuardDecision.BLOCK_OPEN_LONG:
+        logger.warning(f"[TradeGuard] 禁止开多 {symbol} | {reason.name} | Trace: {result_trace}")
+        return
+    if decision == GuardDecision.BLOCK_OPEN_SHORT:
+        logger.warning(f"[TradeGuard] 禁止开空 {symbol} | {reason.name} | Trace: {result_trace}")
+        return
+    if decision == GuardDecision.DELAY_AND_WAIT:
+        logger.info(f"[TradeGuard] 延迟交易 {symbol} | {reason.name} | Trace: {result_trace}")
+        return
+    if decision == GuardDecision.ALLOW_CLOSE_ONLY:
+        logger.info(f"[TradeGuard] {symbol} 仅允许平仓逻辑 | Trace: {result_trace}")
+        if not scheduler.position_store.has(symbol):
+            return
+
+    # 检查 broker 持仓方向冲突
+    if (scheduler.execution_engine
+            and scheduler.execution_engine.broker_adapter
+            and scheduler.execution_engine.broker_adapter.is_connected()):
+        try:
+            broker_positions = scheduler.execution_engine.broker_adapter.get_positions()
+            for bp in broker_positions:
+                if bp["symbol"] == symbol:
+                    qty = bp.get("qty", 0)
+                    if qty < 0 and signal.direction == Direction.LONG:
+                        logger.warning(
+                            f"[持仓冲突] {symbol} broker 有 {abs(qty):.0f} 股空头, "
+                            f"新信号为 LONG, 自动平仓后再开仓"
+                        )
+                        success = _close_short_for_long(scheduler, symbol, abs(qty), bp.get("current_price", 0))
+                        if not success:
+                            logger.warning(f"[持仓冲突] {symbol} 空头平仓失败, 同步 broker 持仓状态")
+                            scheduler.position_store.remove(symbol)
+                        return  # 平仓后等待下轮再开新仓
+                    elif qty > 0 and signal.direction == Direction.SHORT:
+                        logger.warning(
+                            f"[持仓冲突] {symbol} broker 有 {qty:.0f} 股多头, "
+                            f"新信号为 SHORT, 自动平仓后再做空"
+                        )
+                        success = _close_long_for_short(scheduler, symbol, qty, bp.get("current_price", 0))
+                        if not success:
+                            logger.warning(f"[持仓冲突] {symbol} 多头平仓失败, 同步 broker 持仓状态")
+                            scheduler.position_store.remove(symbol)
+                        return
+        except Exception as e:
+            logger.warning(f"[持仓冲突] 检查 broker 持仓失败 (继续执行): {e}")
+
+    # 检查 position_store 中是否存在反向持仓
+    if scheduler.position_store.has(symbol):
+        existing_pos = scheduler.position_store.get(symbol)
+        existing_dir = existing_pos.direction
+        if existing_dir != signal.direction:
+            logger.warning(
+                f"[持仓冲突] {symbol} 已有{existing_dir.value}持仓, "
+                f"新信号为{signal.direction.value}, 需先平仓"
+            )
+            _close_position_for_conflict(scheduler, existing_pos)
+            return
+
+    # ── Livermore 金字塔加仓处理 (P1-1) ──
+    if scheduler.position_store.has(symbol) and signal.direction == Direction.LONG:
+        try:
+            from app.risk.pyramid_engine import get_pyramid_engine
+            pyramid = get_pyramid_engine()
+            position = scheduler.position_store.get(symbol)
+            price = context.get("price", 0)
+            
+            # 检查是否满足加仓条件
+            max_total_size = float(context.get("max_position_size", 50.0))
+            can_add, add_reason, add_params = pyramid.can_add_position(
+                position=position,
+                current_price=price,
+                max_total_size=max_total_size,
+            )
+            
+            if can_add:
+                # 执行加仓 (更新现有持仓)
+                add_result = pyramid.execute_add_on(
+                    position=position,
+                    add_params=add_params,
+                    order_func=lambda **kwargs: {"success": True, "order_id": f"ADD_{symbol}_{int(time.time())}"},
+                )
+                
+                if add_result["success"]:
+                    logger.info(f"[金字塔加仓] {symbol} 加仓完成: {add_reason}")
+                    
+                    # P1 优化 (2026-04-18): 随机延迟 10-45 秒
+                    import random
+                    import time as _time
+                    delay = random.uniform(10, 45)
+                    logger.info(f"[金字塔加仓] 触发随机延迟 {delay:.0f}s 以分散系统性风险 (Beta 风险)")
+                    _time.sleep(delay)
+                    
+                    # 记录加仓事件
+                    scheduler.event_store.append(TradeEvent(
+                        event_type="pyramid_add_on",
+                        signal_id=signal.signal_id,
+                        trace_id=signal.trace_id,
+                        position_id=position.position_id,
+                        data={
+                            "symbol": symbol,
+                            "level": add_params['level'],
+                            "add_size": add_params['add_size'],
+                            "add_price": add_params['add_price'],
+                            "new_avg_price": add_params['new_avg_price'],
+                            "new_sl": add_params['new_sl'],
+                        },
+                        source="scheduler",
+                        severity=AlertLevel.INFO,
+                    ))
+                    return  # 加仓完成, 不需要创建新持仓
+                else:
+                    logger.warning(f"[金字塔加仓] {symbol} 加仓执行失败: {add_result.get('reason')}")
+            else:
+                logger.debug(f"[金字塔加仓] {symbol} 跳过: {add_reason}")
+                return  # 不满足加仓条件, 跳过
+        except Exception as e:
+            logger.warning(f"[金字塔加仓] {symbol} 异常 (继续常规下单): {e}")
+    
+    # SHORT 信号：使用完整期权下单链路
+    if signal.direction == Direction.SHORT:
+        try:
+            # 注入 option_selector 到 context
+            if hasattr(scheduler, 'option_selector') and scheduler.option_selector is not None:
+                if (scheduler.option_selector.quote_ctx is None
+                        and scheduler.execution_engine
+                        and hasattr(scheduler.execution_engine, "broker_adapter")):
+                    adapter = getattr(scheduler.execution_engine, "broker_adapter", None)
+                    if adapter and adapter.is_connected() and adapter.quote_ctx:
+                        scheduler.option_selector.quote_ctx = adapter.quote_ctx
+                context["option_selector"] = scheduler.option_selector
+            else:
+                logger.debug(f"[做空] {symbol} option_selector 未初始化，将使用模拟模式")
+
+            # 调用完整链路：Broker下单 + DB记录 + position_store注册 + 事件记录
+            _submit_put_option(scheduler, symbol, signal, context)
+        except Exception as e:
+            logger.error(f"[做空] {symbol} 策略路由异常: {e}", exc_info=True)
+        return
+
+    price = round(context.get("price", 0), 2)
+    atr = context.get("atr", price * 0.02)
+
+    if price <= 0:
+        logger.warning(f"[下单] {symbol} 价格为 0，取消下单")
+        return
+
+    # 仓位计算：固定 50 股（可在 watchlist_us.json 每只股票配置 order_qty 覆盖）
+    quantity = _get_order_qty(scheduler, symbol)
+    if quantity <= 0:
+        logger.warning(f"[下单] {symbol} 数量为 0，跳过")
+        return
+
+    # ============================================================
+    # Phase 3: Dynamic Stop-Loss & Take-Profit (Regime Aware)
+    # ============================================================
+    
+    # ── Livermore 止损纪律强化 (P0-2, 2026-04-16) ──
+    LIVERMORE_HARD_STOP_PCT = float(context.get("livermore_stop_pct", 0.10))
+    LIVERMORE_TRAILING_ACTIVE = True
+    
+    # 1. Base Config — 统一配置访问
+    try:
+        from app.core.config_container import get_config
+        _rc = get_config().get_section("risk", {})
+    except Exception as e:
+        logger.debug(f"[动态仓位] 加载 RISK_CONFIG 失败: {e}")
+        _rc = {}
+        
+    sl_pct     = float(_rc.get("DEFAULT_STOP_LOSS",     0.06))
+    tp1_pct    = float(_rc.get("DEFAULT_TAKE_PROFIT_1", 0.08))
+    tp2_pct    = float(_rc.get("DEFAULT_TAKE_PROFIT_2", 0.15))
+    tp3_pct    = float(_rc.get("DEFAULT_TAKE_PROFIT_3", 0.25))
+    atr_mult   = float(_rc.get("TRAILING_STOP_ATR_MULT", 2.0))
+
+    # 1.5 IntradayScorer 波动率自适应止损 (2026-04-27)
+    _scorer_sl = 0
+    if voting_result:
+        _scorer_sl = voting_result.get("position_suggestion", {}).get("stop_loss_pct", 0)
+    if _scorer_sl > 0:
+        logger.info(
+            f"[Scorer止损] {symbol} scorer建议 {_scorer_sl*100:.1f}% "
+            f"(ATR={context.get('atr',0):.2f} VIX={context.get('vix',20):.0f}), 原默认 {sl_pct*100:.0f}%"
+        )
+        sl_pct = max(sl_pct, _scorer_sl)
+    
+    # Livermore 铁律: 止损不得低于 10%
+    if sl_pct < LIVERMORE_HARD_STOP_PCT:
+        logger.info(f"[Livermore止损] 原止损 {sl_pct*100:.0f}% < 10% 底线, 提升至 10%")
+        sl_pct = LIVERMORE_HARD_STOP_PCT
+
+    # 2. Dynamic Adjustment based on Market Regime
+    _regime_vix = float(context.get("vix", 20.0))
+    _regime = signal.market_regime
+
+    if _regime == MarketRegime.HIGH_VOL or _regime_vix > 25:
+        logger.info(f"[风控] {symbol} 检测到高波动 (VIX={_regime_vix}), 放宽风控参数")
+        sl_pct = max(sl_pct, 0.12)
+        tp1_pct = 0.15
+        tp2_pct = 0.25
+        tp3_pct = 0.40
+        atr_mult = 3.0
+        
+    elif _regime == MarketRegime.TREND_UP:
+        logger.info(f"[风控] {symbol} 检测到上涨趋势, 启用趋势跟随参数")
+        sl_pct = max(sl_pct, 0.08)
+        tp1_pct = 0.12
+        tp2_pct = 0.20
+        tp3_pct = 0.30
+        atr_mult = 2.5
+
+    elif _regime == MarketRegime.RANGE:
+        logger.info(f"[风控] {symbol} 检测到震荡市场, 启用快进快出参数")
+        sl_pct = max(LIVERMORE_HARD_STOP_PCT, 0.05)
+        tp1_pct = 0.06
+        tp2_pct = 0.10
+        tp3_pct = 0.15
+        atr_mult = 1.5
+
+    # LLM 策略自定义止盈止损 (优先级高于 regime 默认值)
+    if signal.metadata and signal.metadata.get("custom_take_profit_pct"):
+        custom_tp = signal.metadata["custom_take_profit_pct"]
+        custom_sl = signal.metadata.get("custom_stop_loss_pct", custom_tp / 2)
+        logger.info(f"[LLM策略] 使用自定义风控: 止盈+{custom_tp*100:.0f}% 止损-{custom_sl*100:.0f}%")
+        
+        if signal.direction == Direction.LONG:
+            stop_loss = price * (1 - custom_sl)
+            take_profit_1 = price * (1 + custom_tp * 0.6)
+            take_profit_2 = price * (1 + custom_tp * 0.8)
+            take_profit_3 = price * (1 + custom_tp)
+        else:
+            stop_loss = price * (1 + custom_sl)
+            take_profit_1 = price * (1 - custom_tp * 0.6)
+            take_profit_2 = price * (1 - custom_tp * 0.8)
+            take_profit_3 = price * (1 - custom_tp)
+    else:
+        # 默认 regime-based 止盈止损
+        if signal.direction == Direction.LONG:
+            stop_loss = price - max(atr * atr_mult, price * sl_pct)
+            take_profit_1 = price * (1 + tp1_pct)
+            take_profit_2 = price * (1 + tp2_pct)
+            take_profit_3 = price * (1 + tp3_pct)
+        else:
+            stop_loss = price + max(atr * atr_mult, price * sl_pct)
+            take_profit_1 = price * (1 - tp1_pct)
+            take_profit_2 = price * (1 - tp2_pct)
+            take_profit_3 = price * (1 - tp3_pct)
+
+    # 创建持仓记录（本地）
+    position = Position(
+        strategy_id="voting_llm",
+        signal_id=signal.signal_id,
+        trace_id=signal.trace_id,
+        symbol=symbol,
+        direction=signal.direction,
+        size=float(quantity),
+        avg_entry_price=price,
+        initial_sl=stop_loss,
+        initial_tp=take_profit_1,
+        current_sl=stop_loss,
+        take_profit_levels=[
+            {"ratio": 0.40, "price": take_profit_1},
+            {"ratio": 0.35, "price": take_profit_2},
+            {"ratio": 0.25, "price": take_profit_3},
+        ],
+        time_stop_hours=int(os.getenv("TIME_STOP_HOURS", "168")),
+        market_regime=signal.market_regime,
+        trail_state={
+            "active": LIVERMORE_TRAILING_ACTIVE,
+            "livermore_mode": True,
+            "highest_price": price,
+            "lowest_price": price,
+            "peak_price": price,
+            "prev_scan_price": price,
+            "initial_atr": atr,
+            "atr_mult": atr_mult,
+        },
+    )
+
+    # 构建订单
+    order = Order(
+        client_order_id=f"{symbol}_{int(time.time())}",
+        signal_id=signal.signal_id,
+        trace_id=signal.trace_id,
+        symbol=symbol,
+        direction=signal.direction,
+        order_type=OrderType.LIMIT,
+        quantity=float(quantity),
+        price=price,
+        stop_price=stop_loss,
+    )
+
+    # P1-5 修复 2026-04-26: 统一在下单前写入归因基线
+    try:
+        import sqlite3 as _sql3
+        _db = os.path.join(os.path.dirname(__file__), "..", "..", "data", "ftseek_us.db")
+        _conn = _sql3.connect(_db)
+        _cur = _conn.cursor()
+        _cur.execute('''
+            INSERT OR IGNORE INTO trade_attribution
+            (trace_id, trade_date, symbol, signal_strength, signal_confidence, created_at)
+            VALUES (?, date('now'), ?, ?, ?, CURRENT_TIMESTAMP)
+        ''', (getattr(signal, 'trace_id', ''), symbol,
+              getattr(signal, 'strength', 0), getattr(signal, 'confidence', 0.0)))
+        _conn.commit()
+        _conn.close()
+    except Exception as _attr_err:
+        logger.debug(f"[归因] trade_attribution 写入失败 (不影响下单): {_attr_err}")
+
+    try:
+        if scheduler.execution_engine:
+            submitted_order = scheduler.execution_engine.submit_order(order)
+            logger.info(
+                f"[下单] {symbol} {signal.direction.value} "
+                f"qty={quantity} price=${price:.2f} "
+                f"SL=${stop_loss:.2f} TP1=${take_profit_1:.2f}"
+            )
+        else:
+            # 无执行引擎：直接模拟成交
+            order.state = OrderState.FILLED
+            order.filled_quantity = order.quantity
+            order.avg_fill_price = price
+            submitted_order = order
+            logger.info(
+                f"[模拟成交] {symbol} {signal.direction.value} "
+                f"qty={quantity} price=${price:.2f}"
+            )
+
+        # 记录持仓
+        submitted_futu_id = getattr(submitted_order, "futu_order_id", "")
+        if submitted_futu_id:
+            position.futu_order_id = submitted_futu_id
+        scheduler.position_store.add(symbol, position)
+        # 持久化持仓快照（重启后可恢复）
+        try:
+            scheduler.trade_store.upsert_open_position(position)
+        except Exception as e:
+            logger.warning(f"[下单] 持仓快照写入失败：{e}")
+
+        # LLM 异步审计 (P1-1 修复 2026-04-29: 盘中禁用)
+        from app.core.scheduler_triggers import get_market_phase, MarketPhase
+        current_phase = get_market_phase()
+        
+        llm_engine = getattr(scheduler, 'llm_engine', None)
+        if llm_engine and hasattr(llm_engine, 'audit_position_async'):
+            if current_phase == MarketPhase.TRADING:
+                try:
+                    audit_queue = getattr(scheduler, '_deferred_audit_queue', None)
+                    if audit_queue is None:
+                        scheduler._deferred_audit_queue = []
+                        audit_queue = scheduler._deferred_audit_queue
+                    
+                    audit_queue.append({
+                        "symbol": symbol,
+                        "context_keys": list(context.keys())[:10],
+                        "price": context.get("price", 0),
+                        "direction": signal.direction.value if hasattr(signal, 'direction') else "UNKNOWN",
+                        "timestamp": time.time(),
+                    })
+                    logger.debug(
+                        "[LLM 审计] 盘中阶段 → 排队到盘后执行 | %s %s @ $%.2f",
+                        symbol, signal.direction.value if hasattr(signal, 'direction') else "?", context.get("price", 0)
+                    )
+                except Exception as e:
+                    logger.debug(f"[LLM 审计] 排队失败 (已忽略): {e}")
+            else:
+                try:
+                    rsshub = getattr(scheduler, 'llm_rsshub', None)
+                    llm_engine.audit_position_async(symbol, context, rsshub=rsshub)
+                except Exception as e:
+                    logger.debug(f"[LLM 审计] 触发失败 (已忽略): {e}")
+
+        # P1 新增: 关联交易结果到决策记录
+        try:
+            from app.storage.decision_recorder import get_decision_recorder
+            recorder = get_decision_recorder()
+            decision_id = signal.metadata.get("decision_id") if signal.metadata else None
+            if decision_id:
+                recorder.link_trade_outcome(
+                    decision_id=decision_id,
+                    symbol=symbol,
+                    direction=signal.direction.value,
+                    entry_price=price,
+                    quantity=quantity,
+                )
+                logger.info(f"[DecisionRecorder] 关联交易: {decision_id} -> {symbol} entry=${price:.2f}")
+        except Exception as e:
+            logger.warning(f"[DecisionRecorder] 关联交易失败 (不影响主流程): {e}")
+
+        # 记录冷却
+        scheduler._set_cooldown(symbol)
+
+        # 记录事件
+        scheduler.event_store.append(TradeEvent(
+            event_type="order_submitted",
+            signal_id=signal.signal_id,
+            order_id=order.order_id,
+            data={
+                "symbol": symbol,
+                "direction": signal.direction.value,
+                "quantity": quantity,
+                "price": price,
+                "stop_loss": stop_loss,
+                "take_profit_1": take_profit_1,
+                "strength": signal.strength,
+                "confidence": signal.confidence,
+            },
+            source="scheduler",
+            severity=AlertLevel.INFO,
+        ))
+
+        # 推送通知
+        _notify_order(scheduler, symbol, signal, order, position, voting_result)
+
+        # 自适应轮询：开仓后升级为 P0 (持仓股)
+        if scheduler.polling_controller:
+            scheduler.polling_controller.update_tier(symbol, StockTier.POSITION)
+            logger.info(f"[自适应轮询] {symbol} 开仓 → 升级为 P0 (持仓股)")
+
+    except Exception as e:
+        logger.error(f"[下单] {symbol} 失败：{e}", exc_info=True)
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  平仓执行
+# ═══════════════════════════════════════════════════════════════════
+
+def _insert_trade_attribution(cursor, trace_id, symbol, strength=0, confidence=0.0):
+    """Insert a baseline attribution record for a new trade"""
+    try:
+        cursor.execute('''
+            INSERT INTO trade_attribution 
+            (trace_id, trade_date, symbol, signal_strength, signal_confidence, created_at)
+            VALUES (?, date('now'), ?, ?, ?, CURRENT_TIMESTAMP)
+        ''', (trace_id, symbol, strength, confidence))
+    except Exception as e:
+        logger.warning(f"插入归因基准记录失败: {e}")
+
+
+def _update_trade_attribution(
+    trace_id: str,
+    symbol: str,
+    pnl: float,
+    pnl_pct: float,
+    exit_reason: str,
+    holding_hours: float,
+    signal_strength: int = 0,
+    signal_confidence: float = 0.0,
+    max_drawdown: float = 0.0,
+):
+    """
+    交易平仓后，更新 trade_attribution 表的归因数据。
+    与 HK 标准保持一致: 记录结果标签、盈亏类别、退出原因。
+    """
+    import sqlite3
+    from pathlib import Path as _Path
+    
+    db_path = _Path(__file__).resolve().parent.parent.parent / "data" / "ftseek_us.db"
+    
+    try:
+        conn = sqlite3.connect(str(db_path))
+        cursor = conn.cursor()
+        
+        # Check if row exists
+        cursor.execute("SELECT trace_id FROM trade_attribution WHERE trace_id = ?", (trace_id,))
+        if cursor.fetchone() is None:
+            _insert_trade_attribution(cursor, trace_id, symbol, signal_strength, signal_confidence)
+
+        # 1. 确定结果标签
+        is_win = pnl > 0
+        pnl_category = "win" if is_win else "loss"
+        result_tags = json.dumps({
+            "pnl_category": pnl_category,
+            "exit_reason": exit_reason,
+            "is_win": is_win,
+        })
+        
+        # 2. 确定策略拟合度 (基于盈亏与置信度的关系)
+        strategy_fit = 1 if (signal_confidence > 0.6 and is_win) else 0
+        
+        # 3. 计算综合评分 (0-100)
+        base_score = 60
+        pnl_bonus = min(30, abs(pnl_pct) * 100) if is_win else 0
+        drawdown_penalty = max(0, max_drawdown * 10)
+        final_score = max(0, min(100, int(base_score + pnl_bonus - drawdown_penalty)))
+        
+        # 4. 更新记录
+        cursor.execute('''
+            UPDATE trade_attribution 
+            SET actual_price = ?, 
+                pnl = ?,
+                pnl_category = ?,
+                exit_reason = ?,
+                result_tags = ?,
+                direction_correct = ?,
+                strategy_fit = ?,
+                overall_score = ?,
+                success_factors = ?,
+                failure_factors = ?,
+                timestamp = CURRENT_TIMESTAMP
+            WHERE trace_id = ?
+        ''', (
+            0.0, 
+            pnl,
+            pnl_category,
+            exit_reason,
+            result_tags,
+            1 if is_win else 0,
+            strategy_fit,
+            final_score,
+            json.dumps({"exit_reason": exit_reason}),
+            json.dumps({"max_drawdown": max_drawdown}) if not is_win else "",
+            trace_id
+        ))
+        
+        conn.commit()
+        conn.close()
+        logger.debug(f"✅ 归因更新: {trace_id} | PnL={pnl:.2f} | Score={final_score}")
+        
+    except Exception as e:
+        logger.warning(f"更新归因记录失败: {e}")
+
+
+def _close_position(scheduler, position: Position, current_price: float, exit_reason: ExitReason):
+    """平仓 — 触及即全平，简洁优先"""
+    # 计算盈亏
+    if position.direction == Direction.LONG:
+        pnl = (current_price - position.avg_entry_price) * position.size
+        pnl_pct = (current_price - position.avg_entry_price) / position.avg_entry_price
+    else:
+        pnl = (position.avg_entry_price - current_price) * position.size
+        pnl_pct = (position.avg_entry_price - current_price) / position.avg_entry_price
+
+    logger.info(
+        f"[平仓] {position.symbol} reason={exit_reason.value} "
+        f"PnL=${pnl:.2f} ({pnl_pct:.2%})"
+    )
+
+    # 构建平仓订单
+    close_order = Order(
+        client_order_id=f"{position.symbol}_close_{int(time.time())}",
+        signal_id=position.signal_id,
+        symbol=position.symbol,
+        direction=Direction.SHORT if position.direction == Direction.LONG else Direction.LONG,
+        order_type=OrderType.MARKET,
+        quantity=position.size,
+        price=current_price,
+    )
+    # P1-2 修复 2026-04-26: 平仓订单标记 is_exit=True，跳过幂等检查避免重复拦截
+    if not hasattr(close_order, 'metadata') or close_order.metadata is None:
+        close_order.metadata = {}
+    close_order.metadata['is_exit'] = True
+
+    try:
+        if scheduler.execution_engine:
+            close_result = scheduler.execution_engine.submit_order(close_order)
+            # P0 Fix 2026-04-28: 记录平仓单的 futu_order_id 到 position.metadata
+            close_futu_id = getattr(close_result, "futu_order_id", "")
+            if close_futu_id:
+                meta = getattr(position, "metadata", {}) or {}
+                meta["close_futu_order_id"] = close_futu_id
+                position.metadata = meta
+                logger.info(f"[平仓] 平仓单 futu_order_id={close_futu_id}")
+    except Exception as e:
+        # P0 修复 2026-04-23: 平仓失败退避机制 — 防止无限循环
+        meta = getattr(position, "metadata", None)
+        if meta is None:
+            meta = {}
+            position.metadata = meta
+        close_fail_count = meta.get("_close_fail_count", 0) + 1
+        meta["_close_fail_count"] = close_fail_count
+
+        max_retries = 3
+        if close_fail_count >= max_retries:
+            meta["_close_blocked"] = True
+            meta["_close_blocked_reason"] = str(e)
+            meta["_close_blocked_at"] = datetime.now().isoformat()
+            logger.critical(
+                f"[平仓·异常] {position.symbol} 连续 {close_fail_count} 次平仓失败，"
+                f"已标记为异常持仓 (blocked=True)，需人工介入。"
+                f"最后错误: {e}"
+            )
+            try:
+                if hasattr(scheduler, 'trade_store') and scheduler.trade_store:
+                    scheduler.trade_store.upsert_open_position(
+                        position, source="scheduler", action="mark_anomalous"
+                    )
+            except Exception as db_err:
+                logger.debug(f"[平仓·异常] DB 同步失败: {db_err}")
+            # 发送钉钉告警
+            try:
+                if hasattr(scheduler, 'dingtalk') and scheduler.dingtalk:
+                    scheduler.dingtalk.send_text(
+                        f"🚨 P0 异常持仓告警\n"
+                        f"标的: {position.symbol}\n"
+                        f"方向: {position.direction.value}\n"
+                        f"数量: {position.size}\n"
+                        f"入场价: ${position.avg_entry_price:.2f}\n"
+                        f"当前价: ${current_price:.2f}\n"
+                        f"PnL: ${pnl:.2f} ({pnl_pct:.2%})\n"
+                        f"失败次数: {close_fail_count}\n"
+                        f"最后错误: {e}\n"
+                        f"操作: 请在富途牛牛 APP 中手动平仓"
+                    )
+            except Exception as notify_err:
+                logger.debug(f"[平仓·告警] 钉钉通知失败: {notify_err}")
+        else:
+            logger.error(
+                f"[平仓] {position.symbol} 下单失败 ({close_fail_count}/{max_retries})，"
+                f"保留本地持仓状态: {e}"
+            )
+        return
+
+    # 更新持仓 (标记为 pending_close，等待下次 sync 确认 Futu 已平仓)
+    position.exit_time = datetime.now()
+    position.exit_price = current_price
+    position.exit_reason = exit_reason
+    position.realized_pnl = pnl
+    meta = getattr(position, "metadata", {}) or {}
+    meta["_pending_close"] = True
+    meta["_pending_close_at"] = datetime.now().isoformat()
+    position.metadata = meta
+
+    scheduler.position_store.remove(position.symbol)
+    try:
+        if hasattr(scheduler, 'trade_store') and scheduler.trade_store:
+            scheduler.trade_store.upsert_open_position(
+                position, source="scheduler", action="pending_close"
+            )
+    except Exception as e:
+        logger.warning(f"[平仓] DB 同步失败：{e}")
+
+    # 写入持久化交易记录
+    try:
+        meta = getattr(position, "metadata", {}) or {}
+        voting_result = meta.get("voting_result", {})
+        model_scores = voting_result.get("model_scores", []) if voting_result else []
+
+        scheduler.trade_store.save_trade({
+            "trace_id":          position.trace_id,
+            "trade_date":        position.entry_time.strftime("%Y-%m-%d"),
+            "symbol":            position.symbol,
+            "direction":         position.direction.value,
+            "entry_time":        position.entry_time.isoformat(),
+            "exit_time":         position.exit_time.isoformat(),
+            "entry_price":       position.avg_entry_price,
+            "exit_price":        current_price,
+            "quantity":          position.size,
+            "realized_pnl":      pnl,
+            "pnl_pct":           pnl_pct,
+            "exit_reason":       exit_reason.value,
+            "holding_hours":     position.holding_hours,
+            "signal_strength":   meta.get("signal_strength", 0),
+            "signal_confidence": meta.get("signal_confidence", 0.0),
+            "futu_order_id":     getattr(position, "futu_order_id", ""),
+            "close_futu_order_id": meta.get("close_futu_order_id", ""),
+            "voting_result":     voting_result,
+            "final_strength":    voting_result.get("final_strength", 0) if voting_result else 0,
+            "consensus_level":   voting_result.get("consensus_level", 0) if voting_result else 0,
+            "model_scores":      model_scores,
+            "strategy_id":       meta.get("strategy_id", "voting_llm"),
+            "decision_reason":   meta.get("decision_reason", ""),
+            "max_drawdown":      meta.get("max_drawdown", 0.0),
+        })
+
+        # ── Phase 2: 更新归因记录 (Attribution Update) ──
+        if position.trace_id:
+            _update_trade_attribution(
+                trace_id=position.trace_id,
+                symbol=position.symbol,
+                pnl=pnl,
+                pnl_pct=pnl_pct,
+                exit_reason=exit_reason.value,
+                holding_hours=position.holding_hours,
+                signal_strength=meta.get("signal_strength", 0),
+                signal_confidence=meta.get("signal_confidence", 0.0),
+                max_drawdown=meta.get("max_drawdown", 0.0),
+            )
+
+            # ── Phase 3: 记录退出事件 (WAL) ──
+            try:
+                from app.core.event_log import log_event
+                log_event(
+                    trace_id=position.trace_id,
+                    event_type="EXIT",
+                    symbol=position.symbol,
+                    data={
+                        "exit_price": current_price,
+                        "pnl": pnl,
+                        "exit_reason": exit_reason.value,
+                        "holding_hours": position.holding_hours,
+                    }
+                )
+            except Exception as e:
+                logger.warning(f"[平仓] 写入交易记录失败: {e}")
+
+    except Exception as e:
+        logger.warning(f"[平仓] 写入交易记录失败（不影响平仓）: {e}")
+
+    # 记录事件
+    scheduler.event_store.append(TradeEvent(
+        event_type="position_closed",
+        position_id=position.position_id,
+        signal_id=position.signal_id,
+        data={
+            "symbol": position.symbol,
+            "exit_reason": exit_reason.value,
+            "exit_price": current_price,
+            "entry_price": position.avg_entry_price,
+            "pnl": pnl,
+            "pnl_pct": pnl_pct,
+            "holding_hours": position.holding_hours,
+        },
+        source="scheduler",
+        severity=AlertLevel.INFO,
+    ))
+
+    # 推送平仓通知
+    try:
+        _notify_exit(scheduler, position, exit_reason, pnl, pnl_pct)
+    except Exception as e:
+        logger.debug(f"[平仓] 通知失败: {e}")
+
+    # 风控：连续亏损记录
+    if pnl < 0 and scheduler.risk_engine and hasattr(scheduler.risk_engine, "strategy_breaker"):
+        try:
+            scheduler.risk_engine.strategy_breaker.record_loss("voting_llm")
+        except Exception as e:
+            logger.debug(f"[平仓] 策略熔断记录失败: {e}")

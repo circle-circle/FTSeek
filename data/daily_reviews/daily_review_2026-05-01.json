@@ -1,0 +1,380 @@
+{
+  "report_type": "daily",
+  "report_version": "2.0",
+  "report_date": "2026-05-01",
+  "generated_at": "2026-05-02T07:26:54.735453",
+  "summary": {
+    "total_trades": 11,
+    "closed_trades": 11,
+    "winning_trades": 3,
+    "losing_trades": 8,
+    "total_pnl": -2274.28,
+    "win_rate": 0.2727,
+    "avg_pnl": -206.75,
+    "avg_holding_period": 3.1
+  },
+  "signal_funnel": {
+    "total_decisions": 1444,
+    "by_direction_strength": {
+      "LONG(s=52)": 25,
+      "LONG(s=53)": 10,
+      "LONG(s=54)": 37,
+      "LONG(s=55)": 35,
+      "LONG(s=56)": 81,
+      "LONG(s=57)": 96,
+      "LONG(s=58)": 58,
+      "LONG(s=59)": 44,
+      "LONG(s=60)": 101,
+      "LONG(s=61)": 65,
+      "LONG(s=62)": 94,
+      "LONG(s=63)": 46,
+      "LONG(s=64)": 25,
+      "LONG(s=65)": 29,
+      "LONG(s=66)": 26,
+      "LONG(s=67)": 17,
+      "LONG(s=68)": 10,
+      "LONG(s=69)": 6,
+      "LONG(s=70)": 3,
+      "LONG(s=71)": 7,
+      "LONG(s=72)": 1,
+      "LONG(s=73)": 3,
+      "LONG(s=75)": 2,
+      "LONG(s=79)": 1,
+      "LONG(s=81)": 1,
+      "NEUTRAL(s=50)": 363,
+      "SHORT(s=24)": 1,
+      "SHORT(s=29)": 1,
+      "SHORT(s=30)": 1,
+      "SHORT(s=31)": 1,
+      "SHORT(s=33)": 5,
+      "SHORT(s=34)": 1,
+      "SHORT(s=35)": 7,
+      "SHORT(s=36)": 2,
+      "SHORT(s=37)": 11,
+      "SHORT(s=38)": 16,
+      "SHORT(s=39)": 6,
+      "SHORT(s=40)": 27,
+      "SHORT(s=41)": 10,
+      "SHORT(s=42)": 19,
+      "SHORT(s=43)": 36,
+      "SHORT(s=44)": 39,
+      "SHORT(s=45)": 25,
+      "SHORT(s=46)": 21,
+      "SHORT(s=47)": 21,
+      "SHORT(s=48)": 8
+    }
+  },
+  "rejection_analysis": {
+    "total": 733,
+    "by_reason": {
+      "CONSENSUS_LOW": 363,
+      "STRENGTH_WEAK": 258,
+      "CONFIDENCE_LOW": 112
+    },
+    "by_symbol": {
+      "US.NFLX": 32,
+      "US.BRK.B": 31,
+      "US.CRM": 31,
+      "US.NKE": 31,
+      "US.V": 31
+    },
+    "top_rejector": "CONSENSUS_LOW"
+  },
+  "capital_state": {
+    "current_equity": 1055648.0,
+    "cash": 255624.0,
+    "buying_power": 1311272.0,
+    "drawdown_pct": -3.41,
+    "max_drawdown_pct": -6.07,
+    "water_level": "green"
+  },
+  "dimensions": {
+    "signal_quality": {
+      "score": null,
+      "total_signals": 1444,
+      "total_trades": 11,
+      "signal_to_trade_ratio": 0.0076,
+      "strength_distribution": {
+        "high": 0,
+        "medium": 9,
+        "low": 2
+      },
+      "avg_signal_strength": 49.64,
+      "assessment": "mixed"
+    },
+    "voting_consistency": {
+      "score": null,
+      "status": "data_not_populated",
+      "data_available": false,
+      "note": "final_strength 和 consensus_level 均为 0/NULL，投票数据未写入。请检查 voting_coordinator 写入管线。",
+      "raw_strengths": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "raw_consensus": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    "execution_quality": {
+      "total_trades": 11,
+      "data_available": false,
+      "execution_rate": 1.0,
+      "note": "trade_attribution 执行数据未填充，执行质量分析受限。"
+    },
+    "risk_compliance": {
+      "data_available": true,
+      "current_drawdown_pct": -3.41,
+      "max_drawdown_pct": -6.07,
+      "water_level": "green",
+      "risk_score": 9.0,
+      "max_single_trade_loss": 1302.0,
+      "losing_trade_count": 8,
+      "losing_trade_ratio": 0.7273
+    },
+    "funnel_diagnosis": {
+      "score": null,
+      "status": "overly_restrictive",
+      "total_decisions": 1444,
+      "total_trades": 11,
+      "total_rejections": 733,
+      "trade_conversion_rate": 0.0076,
+      "rejection_rate": 0.5076,
+      "top_rejector": "CONSENSUS_LOW",
+      "by_direction_strength": {
+        "LONG(s=52)": 25,
+        "LONG(s=53)": 10,
+        "LONG(s=54)": 37,
+        "LONG(s=55)": 35,
+        "LONG(s=56)": 81,
+        "LONG(s=57)": 96,
+        "LONG(s=58)": 58,
+        "LONG(s=59)": 44,
+        "LONG(s=60)": 101,
+        "LONG(s=61)": 65,
+        "LONG(s=62)": 94,
+        "LONG(s=63)": 46,
+        "LONG(s=64)": 25,
+        "LONG(s=65)": 29,
+        "LONG(s=66)": 26,
+        "LONG(s=67)": 17,
+        "LONG(s=68)": 10,
+        "LONG(s=69)": 6,
+        "LONG(s=70)": 3,
+        "LONG(s=71)": 7,
+        "LONG(s=72)": 1,
+        "LONG(s=73)": 3,
+        "LONG(s=75)": 2,
+        "LONG(s=79)": 1,
+        "LONG(s=81)": 1,
+        "NEUTRAL(s=50)": 363,
+        "SHORT(s=24)": 1,
+        "SHORT(s=29)": 1,
+        "SHORT(s=30)": 1,
+        "SHORT(s=31)": 1,
+        "SHORT(s=33)": 5,
+        "SHORT(s=34)": 1,
+        "SHORT(s=35)": 7,
+        "SHORT(s=36)": 2,
+        "SHORT(s=37)": 11,
+        "SHORT(s=38)": 16,
+        "SHORT(s=39)": 6,
+        "SHORT(s=40)": 27,
+        "SHORT(s=41)": 10,
+        "SHORT(s=42)": 19,
+        "SHORT(s=43)": 36,
+        "SHORT(s=44)": 39,
+        "SHORT(s=45)": 25,
+        "SHORT(s=46)": 21,
+        "SHORT(s=47)": 21,
+        "SHORT(s=48)": 8
+      }
+    },
+    "attribution_learning": {
+      "data_available": false,
+      "lessons_count": 0
+    }
+  },
+  "decision_analysis": {
+    "distribution": {
+      "unknown": 11
+    },
+    "avg_confidence": 0.6
+  },
+  "risk_analysis": {
+    "data_available": true,
+    "current_drawdown_pct": -3.41,
+    "max_drawdown_pct": -6.07,
+    "water_level": "green",
+    "risk_score": 9.0,
+    "max_single_trade_loss": 1302.0,
+    "losing_trade_count": 8,
+    "losing_trade_ratio": 0.7273
+  },
+  "voting_analysis": {
+    "score": null,
+    "status": "data_not_populated",
+    "data_available": false,
+    "note": "final_strength 和 consensus_level 均为 0/NULL，投票数据未写入。请检查 voting_coordinator 写入管线。",
+    "raw_strengths": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "raw_consensus": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ]
+  },
+  "error_patterns": {
+    "detected": false,
+    "patterns": []
+  },
+  "review_score": {
+    "overall_score": 4.3,
+    "max_score": 10.0,
+    "status": "needs_improvement",
+    "breakdown": {
+      "win_rate_score": 3.27,
+      "win_rate": 0.2727,
+      "win_rate_weight": 0.25,
+      "signal_quality_score": 4.96,
+      "avg_signal_strength": 49.64,
+      "signal_quality_weight": 0.2,
+      "risk_compliance_score": 8.29,
+      "drawdown_pct": -3.41,
+      "risk_compliance_weight": 0.2,
+      "funnel_efficiency_score": 2,
+      "conversion_rate": 0.0076,
+      "funnel_efficiency_weight": 0.15,
+      "attribution_learning_score": 0,
+      "lessons_count": 0,
+      "attribution_learning_weight": 0.1,
+      "plan_execution_score": 5.0,
+      "plan_execution_weight": 0.1
+    }
+  },
+  "market_regime": {
+    "state": "unknown",
+    "confidence": "low",
+    "indicators": {
+      "drawdown_pct": 3.41
+    }
+  },
+  "plan_vs_actual": {
+    "plan_available": true,
+    "planned_targets": [
+      {
+        "symbol": "US.XOM",
+        "direction": "LONG",
+        "entry_zone": [
+          150.43,
+          155.01
+        ],
+        "stop_loss": 148.07,
+        "take_profit": 160.69,
+        "urgency": "HIGH",
+        "rationale": "WTI原油维持强势+历史信号强度68-75，能源板块为当前确定性最高方向。采用XOM+CVX配对交易分散单标的波动风险，符合稳定盈利目标，且避开科技股高Beta敞口。",
+        "arbiter_note": "保留原逻辑，严格限制单标的敞口≤25%，配合CVX构建能源底仓，总能源仓位控制在50%以内。"
+      },
+      {
+        "symbol": "US.CVX",
+        "direction": "LONG",
+        "entry_zone": [
+          188.35,
+          194.09
+        ],
+        "stop_loss": 185.83,
+        "take_profit": 197.6,
+        "urgency": "HIGH",
+        "rationale": "与XOM同属能源核心资产，受益于油价上行周期。历史回测显示其consensus=1.0，波动率低于XOM，适合作为底仓配置对冲大盘回撤，提升组合夏普比率。",
+        "arbiter_note": "与XOM形成低相关性配对，单仓上限20%，严格遵循右侧突破回踩确认入场。"
+      },
+      {
+        "symbol": "US.GS",
+        "direction": "LONG",
+        "entry_zone": [
+          918.2,
+          946.16
+        ],
+        "stop_loss": 911.1,
+        "take_profit": 959.74,
+        "urgency": "MEDIUM",
+        "rationale": "中性市况下大型投行具备估值防御性，财报季已过且无政策利空。资金偏好从成长向价值轮动，GS提供稳健的右侧入场机会，替代高波动科技ETF。",
+        "arbiter_note": "替代高波动ETF，单仓≤20%，盘前需二次校验财报日历确保无冲突，符合PRE_CLOSE_EXIT纪律。"
+      },
+      {
+        "symbol": "US.MSFT",
+        "direction": "LONG",
+        "entry_zone": [
+          404.78,
+          417.1
+        ],
+        "stop_loss": 394.5,
+        "take_profit": 443.82,
+        "urgency": "MEDIUM",
+        "rationale": "科技龙头中波动率最低，避开NVDA等高Beta标的以控制方向敞口。符合NEUTRAL市况下的‘低波+高确定性’配置逻辑，适合作为组合压舱石。",
+        "arbiter_note": "作为组合稳定器，强制要求R:R≥1:2，入场区间收窄至±0.8%，放弃左侧交易。"
+      }
+    ],
+    "executed_targets": [
+      "US.CVX",
+      "US.XOM",
+      "US.GS"
+    ],
+    "missed_opportunities": [
+      "US.MSFT"
+    ],
+    "unplanned_trades": [
+      "US.SPY",
+      "US.IWM",
+      "US.DIA",
+      "US.NVDA",
+      "US.UVXY",
+      "US.LMT"
+    ],
+    "plan_date": "2026-05-02",
+    "execution_rate": 0.75
+  },
+  "key_learnings": [],
+  "improvement_suggestions": [
+    "胜率低于 40%，建议重新评估策略",
+    "亏损交易占比 73%，建议收紧入场条件",
+    "今日 733 次信号被拒绝，TOP 原因: CONSENSUS_LOW"
+  ]
+}

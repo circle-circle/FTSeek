@@ -1,0 +1,119 @@
+{
+  "report_type": "daily",
+  "report_date": "2026-04-29",
+  "generated_at": "2026-04-30T05:52:13.843229",
+  "summary": {
+    "total_trades": 1,
+    "closed_trades": 1,
+    "winning_trades": 1,
+    "total_pnl": 0.49,
+    "win_rate": 1.0
+  },
+  "signal_funnel": {
+    "total_decisions": 1656,
+    "by_direction_strength": {
+      "LONG(s=52)": 10,
+      "LONG(s=53)": 6,
+      "LONG(s=54)": 20,
+      "LONG(s=55)": 29,
+      "LONG(s=56)": 25,
+      "LONG(s=57)": 28,
+      "LONG(s=58)": 59,
+      "LONG(s=59)": 44,
+      "LONG(s=60)": 32,
+      "LONG(s=61)": 88,
+      "LONG(s=62)": 60,
+      "LONG(s=63)": 133,
+      "LONG(s=64)": 86,
+      "LONG(s=65)": 73,
+      "LONG(s=66)": 72,
+      "LONG(s=67)": 81,
+      "LONG(s=68)": 41,
+      "LONG(s=69)": 25,
+      "LONG(s=70)": 30,
+      "LONG(s=71)": 17,
+      "LONG(s=72)": 15,
+      "LONG(s=73)": 14,
+      "LONG(s=74)": 2,
+      "LONG(s=75)": 6,
+      "LONG(s=76)": 1,
+      "LONG(s=77)": 1,
+      "NEUTRAL(s=50)": 309,
+      "SHORT(s=26)": 1,
+      "SHORT(s=27)": 1,
+      "SHORT(s=29)": 1,
+      "SHORT(s=31)": 1,
+      "SHORT(s=32)": 2,
+      "SHORT(s=33)": 2,
+      "SHORT(s=34)": 2,
+      "SHORT(s=35)": 4,
+      "SHORT(s=36)": 8,
+      "SHORT(s=37)": 13,
+      "SHORT(s=38)": 14,
+      "SHORT(s=39)": 17,
+      "SHORT(s=40)": 24,
+      "SHORT(s=41)": 56,
+      "SHORT(s=42)": 14,
+      "SHORT(s=43)": 22,
+      "SHORT(s=44)": 48,
+      "SHORT(s=45)": 45,
+      "SHORT(s=46)": 28,
+      "SHORT(s=47)": 31,
+      "SHORT(s=48)": 15
+    }
+  },
+  "rejection_analysis": {
+    "total": 443,
+    "by_reason": {
+      "CONSENSUS_LOW": 309,
+      "CONFIDENCE_LOW": 134
+    },
+    "by_symbol": {
+      "US.UBER": 21,
+      "US.GS": 20,
+      "US.JD": 18,
+      "US.MSFT": 18,
+      "US.LI": 16
+    },
+    "top_rejector": "CONSENSUS_LOW"
+  },
+  "capital_state": {
+    "current_equity": 1043019.0,
+    "cash": 563129.0,
+    "buying_power": 1606148.0,
+    "drawdown_pct": -4.56,
+    "max_drawdown_pct": -6.07,
+    "water_level": "green"
+  },
+  "decision_analysis": {
+    "distribution": {
+      "unknown": 1
+    },
+    "avg_confidence": 5.0
+  },
+  "timing_analysis": {
+    "note": "timing scores not available in ftseek_us.db"
+  },
+  "risk_analysis": {
+    "stop_loss_execution_rate": 1.0,
+    "max_drawdown": 0
+  },
+  "voting_analysis": {
+    "avg_signal_strength": 50.0,
+    "avg_consensus_level": 0.0,
+    "high_strength_trades": 0,
+    "high_strength_win_rate": 0,
+    "medium_strength_trades": 1,
+    "medium_strength_win_rate": 1.0,
+    "low_strength_trades": 0,
+    "low_strength_win_rate": 0
+  },
+  "key_learnings": [],
+  "improvement_suggestions": [
+    "今日 443 次信号被拒绝，TOP 原因: CONSENSUS_LOW"
+  ],
+  "error_patterns": {
+    "detected": false,
+    "patterns": []
+  }
+}

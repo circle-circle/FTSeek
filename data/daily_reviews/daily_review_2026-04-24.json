@@ -1,0 +1,296 @@
+{
+  "report_type": "daily",
+  "report_version": "2.0",
+  "report_date": "2026-04-24",
+  "generated_at": "2026-05-03T23:48:05.740082",
+  "summary": {
+    "total_trades": 1,
+    "closed_trades": 1,
+    "winning_trades": 1,
+    "losing_trades": 0,
+    "total_pnl": 17882.56,
+    "win_rate": 1.0,
+    "avg_pnl": 17882.56,
+    "avg_holding_period": 0.6
+  },
+  "signal_funnel": {
+    "total_decisions": 737,
+    "by_direction_strength": {
+      "LONG(s=51)": 5,
+      "LONG(s=52)": 1,
+      "LONG(s=53)": 1,
+      "LONG(s=54)": 4,
+      "LONG(s=56)": 4,
+      "LONG(s=57)": 12,
+      "LONG(s=58)": 51,
+      "LONG(s=60)": 25,
+      "LONG(s=62)": 6,
+      "LONG(s=63)": 3,
+      "LONG(s=64)": 5,
+      "LONG(s=66)": 1,
+      "LONG(s=70)": 68,
+      "NEUTRAL(s=40)": 1,
+      "NEUTRAL(s=43)": 10,
+      "NEUTRAL(s=44)": 1,
+      "NEUTRAL(s=50)": 455,
+      "NEUTRAL(s=51)": 2,
+      "SHORT(s=19)": 1,
+      "SHORT(s=20)": 1,
+      "SHORT(s=22)": 1,
+      "SHORT(s=24)": 1,
+      "SHORT(s=26)": 3,
+      "SHORT(s=27)": 3,
+      "SHORT(s=28)": 2,
+      "SHORT(s=29)": 6,
+      "SHORT(s=30)": 3,
+      "SHORT(s=31)": 6,
+      "SHORT(s=32)": 1,
+      "SHORT(s=33)": 4,
+      "SHORT(s=34)": 10,
+      "SHORT(s=35)": 1,
+      "SHORT(s=36)": 15,
+      "SHORT(s=37)": 2,
+      "SHORT(s=38)": 9,
+      "SHORT(s=39)": 4,
+      "SHORT(s=40)": 3,
+      "SHORT(s=41)": 2,
+      "SHORT(s=42)": 2,
+      "SHORT(s=43)": 1,
+      "SHORT(s=45)": 1
+    }
+  },
+  "rejection_analysis": {
+    "total": 0,
+    "by_reason": {},
+    "by_symbol": {},
+    "top_rejector": "none"
+  },
+  "capital_state": {
+    "current_equity": 1037445.0,
+    "cash": -328482.0,
+    "buying_power": 336027.0,
+    "drawdown_pct": -0.04,
+    "max_drawdown_pct": -3.59,
+    "water_level": "green"
+  },
+  "attribution_data": {
+    "total_records": 0,
+    "data_available": false,
+    "error": "'signal_scores'"
+  },
+  "trade_analyses": [
+    {
+      "trade_id": 1,
+      "symbol": "US.ORCL",
+      "direction": "SHORT",
+      "entry_price": 186.08,
+      "exit_price": 172.45,
+      "realized_pnl": 17882.56,
+      "pnl_pct": 7.32,
+      "exit_reason": "EXTERNAL_CLOSE",
+      "holding_hours": 0.6,
+      "signal_strength": 0,
+      "signal_confidence": 0,
+      "verdict": "不合理",
+      "entry_logic": "存在问题: signal_strength=0 — 投票数据缺失或静默失败; signal_confidence=0.0 — 投票数据缺失",
+      "exit_logic": "外部手动平仓 — 非系统决策",
+      "pnl_attribution": "盈利退出 (+$17882.56, EXTERNAL_CLOSE)",
+      "timing_assessment": "开盘时段入场 (ET 9:xx) — 波动大，需确认",
+      "risk_compliance": "风险合规问题: 仓位过大 ($244,137)",
+      "evidence": {
+        "signal_data_missing": true,
+        "manual_close": true,
+        "verdict_reason": {
+          "unreasonable_count": 1,
+          "reasonable_count": 1,
+          "issue_count": 3
+        }
+      },
+      "issues": [
+        "signal_strength=0 — 投票数据缺失或静默失败",
+        "signal_confidence=0.0 — 投票数据缺失",
+        "仓位过大 ($244,137)"
+      ],
+      "suggestions": [
+        "低信号强度但盈利 — 可能是运气而非策略有效"
+      ],
+      "needs_debate": false,
+      "debate_reason": ""
+    }
+  ],
+  "dimensions": {
+    "signal_quality": {
+      "score": null,
+      "total_signals": 737,
+      "total_trades": 1,
+      "signal_to_trade_ratio": 0.0014,
+      "strength_distribution": {
+        "high": 0,
+        "medium": 0,
+        "low": 1
+      },
+      "avg_signal_strength": 0.0,
+      "assessment": "low_quality"
+    },
+    "voting_consistency": {
+      "score": null,
+      "status": "data_not_populated",
+      "data_available": false,
+      "note": "final_strength 和 consensus_level 均为 0/NULL，投票数据未写入。请检查 voting_coordinator 写入管线。",
+      "raw_strengths": [
+        0
+      ],
+      "raw_consensus": [
+        0.0
+      ]
+    },
+    "execution_quality": {
+      "total_trades": 1,
+      "data_available": false,
+      "execution_rate": 1.0,
+      "note": "trade_attribution 执行数据未填充，执行质量分析受限。"
+    },
+    "risk_compliance": {
+      "data_available": true,
+      "current_drawdown_pct": -0.04,
+      "max_drawdown_pct": -3.59,
+      "water_level": "green",
+      "risk_score": 9.0,
+      "max_single_trade_loss": 0,
+      "losing_trade_count": 0,
+      "losing_trade_ratio": 0.0
+    },
+    "funnel_diagnosis": {
+      "score": null,
+      "status": "overly_restrictive",
+      "total_decisions": 737,
+      "total_trades": 1,
+      "total_rejections": 0,
+      "trade_conversion_rate": 0.0014,
+      "rejection_rate": 0.0,
+      "top_rejector": "none",
+      "by_direction_strength": {
+        "LONG(s=51)": 5,
+        "LONG(s=52)": 1,
+        "LONG(s=53)": 1,
+        "LONG(s=54)": 4,
+        "LONG(s=56)": 4,
+        "LONG(s=57)": 12,
+        "LONG(s=58)": 51,
+        "LONG(s=60)": 25,
+        "LONG(s=62)": 6,
+        "LONG(s=63)": 3,
+        "LONG(s=64)": 5,
+        "LONG(s=66)": 1,
+        "LONG(s=70)": 68,
+        "NEUTRAL(s=40)": 1,
+        "NEUTRAL(s=43)": 10,
+        "NEUTRAL(s=44)": 1,
+        "NEUTRAL(s=50)": 455,
+        "NEUTRAL(s=51)": 2,
+        "SHORT(s=19)": 1,
+        "SHORT(s=20)": 1,
+        "SHORT(s=22)": 1,
+        "SHORT(s=24)": 1,
+        "SHORT(s=26)": 3,
+        "SHORT(s=27)": 3,
+        "SHORT(s=28)": 2,
+        "SHORT(s=29)": 6,
+        "SHORT(s=30)": 3,
+        "SHORT(s=31)": 6,
+        "SHORT(s=32)": 1,
+        "SHORT(s=33)": 4,
+        "SHORT(s=34)": 10,
+        "SHORT(s=35)": 1,
+        "SHORT(s=36)": 15,
+        "SHORT(s=37)": 2,
+        "SHORT(s=38)": 9,
+        "SHORT(s=39)": 4,
+        "SHORT(s=40)": 3,
+        "SHORT(s=41)": 2,
+        "SHORT(s=42)": 2,
+        "SHORT(s=43)": 1,
+        "SHORT(s=45)": 1
+      }
+    },
+    "attribution_learning": {
+      "data_available": false,
+      "lessons_count": 0
+    }
+  },
+  "decision_analysis": {
+    "distribution": {
+      "外部手动平仓 (Futu APP)": 1
+    },
+    "avg_confidence": null,
+    "note": "signal_confidence 数据未填充，所有值为 NULL/0"
+  },
+  "risk_analysis": {
+    "data_available": true,
+    "current_drawdown_pct": -0.04,
+    "max_drawdown_pct": -3.59,
+    "water_level": "green",
+    "risk_score": 9.0,
+    "max_single_trade_loss": 0,
+    "losing_trade_count": 0,
+    "losing_trade_ratio": 0.0
+  },
+  "voting_analysis": {
+    "score": null,
+    "status": "data_not_populated",
+    "data_available": false,
+    "note": "final_strength 和 consensus_level 均为 0/NULL，投票数据未写入。请检查 voting_coordinator 写入管线。",
+    "raw_strengths": [
+      0
+    ],
+    "raw_consensus": [
+      0.0
+    ]
+  },
+  "error_patterns": {
+    "detected": false,
+    "patterns": []
+  },
+  "review_score": {
+    "overall_score": 5.3,
+    "max_score": 10.0,
+    "status": "needs_improvement",
+    "breakdown": {
+      "win_rate_score": 10,
+      "win_rate": 1.0,
+      "win_rate_weight": 0.25,
+      "signal_quality_score": 0.0,
+      "avg_signal_strength": 0.0,
+      "signal_quality_weight": 0.2,
+      "risk_compliance_score": 9.98,
+      "drawdown_pct": -0.04,
+      "risk_compliance_weight": 0.2,
+      "funnel_efficiency_score": 2,
+      "conversion_rate": 0.0014,
+      "funnel_efficiency_weight": 0.15,
+      "attribution_learning_score": 0,
+      "lessons_count": 0,
+      "attribution_learning_weight": 0.1,
+      "plan_execution_score": 5.0,
+      "plan_execution_weight": 0.1
+    }
+  },
+  "market_regime": {
+    "state": "unknown",
+    "confidence": "low",
+    "indicators": {
+      "drawdown_pct": 0.04
+    }
+  },
+  "plan_vs_actual": {
+    "plan_available": false,
+    "planned_targets": [],
+    "executed_targets": [],
+    "missed_opportunities": [],
+    "unplanned_trades": []
+  },
+  "key_learnings": [],
+  "improvement_suggestions": [
+    "决策/交易比异常高 (737:1)，信号质量可能偏低"
+  ]
+}

@@ -1,0 +1,111 @@
+{
+  "timestamp": "2026-04-19T16:09:30.843848+00:00",
+  "entries": [
+    {
+      "code": "US.TSLA",
+      "source": "POSITION",
+      "added_at": "2026-04-19T16:09:30.842727+00:00",
+      "expires_at": null,
+      "metadata": {}
+    },
+    {
+      "code": "US.NVDA",
+      "source": "POSITION",
+      "added_at": "2026-04-19T16:09:30.842753+00:00",
+      "expires_at": null,
+      "metadata": {}
+    },
+    {
+      "code": "US.AAPL",
+      "source": "POSITION",
+      "added_at": "2026-04-19T16:09:30.842758+00:00",
+      "expires_at": null,
+      "metadata": {}
+    },
+    {
+      "code": "US.MSFT",
+      "source": "POSITION",
+      "added_at": "2026-04-19T16:09:30.842762+00:00",
+      "expires_at": null,
+      "metadata": {}
+    },
+    {
+      "code": "US.GOOGL",
+      "source": "POSITION",
+      "added_at": "2026-04-19T16:09:30.842766+00:00",
+      "expires_at": null,
+      "metadata": {}
+    },
+    {
+      "code": "US.META",
+      "source": "POSITION",
+      "added_at": "2026-04-19T16:09:30.842769+00:00",
+      "expires_at": null,
+      "metadata": {}
+    },
+    {
+      "code": "US.AMZN",
+      "source": "POSITION",
+      "added_at": "2026-04-19T16:09:30.842773+00:00",
+      "expires_at": null,
+      "metadata": {}
+    },
+    {
+      "code": "US.BABA",
+      "source": "POSITION",
+      "added_at": "2026-04-19T16:09:30.842776+00:00",
+      "expires_at": null,
+      "metadata": {}
+    },
+    {
+      "code": "US.PDD",
+      "source": "POSITION",
+      "added_at": "2026-04-19T16:09:30.842780+00:00",
+      "expires_at": null,
+      "metadata": {}
+    },
+    {
+      "code": "US.QQQ",
+      "source": "PLAN",
+      "added_at": "2026-04-19T16:09:30.843778+00:00",
+      "expires_at": "2026-04-20T16:09:30.843812+00:00",
+      "metadata": {
+        "direction": "LONG",
+        "logic": "Broad tech strength + dovish Fed pivot + low VIX environment favors index breakout.",
+        "max_position_pct": 0.05
+      }
+    },
+    {
+      "code": "US.XLE",
+      "source": "PLAN",
+      "added_at": "2026-04-19T16:09:30.843828+00:00",
+      "expires_at": "2026-04-20T16:09:30.843831+00:00",
+      "metadata": {
+        "direction": "SHORT",
+        "logic": "Oil price drop + sector rotation out of energy into tech. Bearish VWAP rejection.",
+        "max_position_pct": 0.05
+      }
+    },
+    {
+      "code": "US.AMD",
+      "source": "PLAN",
+      "added_at": "2026-04-19T16:09:30.843838+00:00",
+      "expires_at": "2026-04-20T16:09:30.843841+00:00",
+      "metadata": {
+        "direction": "LONG",
+        "logic": "Sympathy long on NVDA earnings + semiconductor sector momentum.",
+        "max_position_pct": 0.05
+      }
+    }
+  ],
+  "summary": {
+    "total": 12,
+    "breakdown": {
+      "POSITION": 9,
+      "PLAN": 3,
+      "MANUAL": 0,
+      "INTRADAY_ALERT": 0
+    },
+    "max_pool_size": 30
+  }
+}

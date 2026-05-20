@@ -1,0 +1,893 @@
+# app/execution/broker_adapter.py
+"""
+富途券商适配器
+
+实现富途 OpenD 真实连接：
+- 模拟账户美股下单（TrdEnv.SIMULATE）
+- 持仓查询
+- 实时报价
+"""
+import logging
+import time
+import threading
+from typing import Optional, Dict, Any, List
+
+from app.core.models import Order, OrderState, Direction, OrderType
+
+logger = logging.getLogger(__name__)
+
+
+class FutuBrokerAdapter:
+    """富途券商适配器（支持模拟和真实环境）"""
+
+    # 心跳与重连配置
+    HEARTBEAT_INTERVAL_SEC = 30
+    MAX_RECONNECT_ATTEMPTS = 3
+    RECONNECT_BACKOFF_SEC = [5, 15, 30]  # 指数退避间隔
+
+    def __init__(
+        self,
+        host: str = "127.0.0.1",
+        port: int = 11111,
+        trade_env: int = 1,    # 0=真实，1=模拟
+        account_id: str = "",
+        on_disconnect_callback=None,
+    ):
+        self.host = host
+        self.port = port
+        self.trade_env = trade_env
+        self.account_id = account_id
+        self.connected = False
+        self.quote_ctx = None
+        self.trade_ctx = None
+        self._unlock_pwd = ""  # 模拟环境无需解锁密码
+
+        # 心跳与重连状态
+        self._last_heartbeat_time = 0.0
+        self._heartbeat_failures = 0
+        self._reconnect_attempts = 0
+        self._reconnect_lock = threading.Lock()
+        self._on_disconnect_callback = on_disconnect_callback
+        self._heartbeat_thread: Optional[threading.Thread] = None
+        self._heartbeat_stop_event = threading.Event()
+
+    # ------------------------------------------------------------------
+    # 连接管理
+    # ------------------------------------------------------------------
+
+    def connect(self) -> bool:
+        """连接到富途 OpenD（美股模拟交易）"""
+        # 检查是否已经连接，避免重复登录
+        if self.connected and self.trade_ctx is not None:
+            logger.info("[富途] 已连接，跳过重复连接")
+            return True
+        
+        try:
+            from futu import (
+                OpenQuoteContext,
+                OpenSecTradeContext,
+                TrdMarket,
+                TrdEnv,
+                RET_OK,
+            )
+
+            # 行情 Context
+            self.quote_ctx = OpenQuoteContext(host=self.host, port=self.port)
+
+            # 交易 Context（美股市场）
+            self.trade_ctx = OpenSecTradeContext(
+                filter_trdmarket=TrdMarket.US,
+                host=self.host,
+                port=self.port,
+                is_encrypt=False,
+            )
+
+            # 模拟环境无需解锁密码
+            if self.trade_env == 1:
+                logger.info("[富途] 模拟交易环境，无需解锁")
+                # 自动探测模拟账户 ID（防止 OpenD 重启后 ID 变化）
+                self._discover_simulate_account()
+            else:
+                logger.warning("[富途] 真实交易环境，请确认已设置解锁密码")
+
+            self.connected = True
+            logger.info(f"[富途] 连接成功 {self.host}:{self.port} env={'模拟' if self.trade_env == 1 else '真实'}")
+            return True
+
+        except ImportError:
+            logger.error("[富途] futu-api 未安装，请运行: pip install futu-api")
+            return False
+        except Exception as e:
+            logger.error(f"[富途] 连接失败: {e}")
+            return False
+
+    def _discover_simulate_account(self):
+        """自动探测模拟账户 ID，防止 OpenD 重启后 ID 变化导致下单失败"""
+        try:
+            from futu import TrdEnv, RET_OK
+            ret, data = self.trade_ctx.get_acc_list()
+            if ret != RET_OK:
+                logger.warning(f"[富途] 无法获取账户列表，使用配置值: {self.account_id}")
+                return
+            sim_rows = data[data['trd_env'] == TrdEnv.SIMULATE]
+            if sim_rows.empty:
+                logger.warning(f"[富途] 未找到模拟账户，使用配置值: {self.account_id}")
+                return
+            actual_sim_id = str(sim_rows.iloc[0]['acc_id'])
+            if not self.account_id:
+                self.account_id = actual_sim_id
+                logger.info(f"[富途] 自动探测模拟账户: {actual_sim_id}")
+            elif self.account_id != actual_sim_id:
+                logger.warning(
+                    f"[富途] 配置的模拟账户 {self.account_id} 不存在，"
+                    f"自动切换为实际账户: {actual_sim_id}"
+                )
+                self.account_id = actual_sim_id
+            else:
+                logger.info(f"[富途] 模拟账户验证通过: {self.account_id}")
+        except Exception as e:
+            logger.warning(f"[富途] 自动探测账户异常: {e}，使用配置值: {self.account_id}")
+
+    def disconnect(self):
+        """断开连接"""
+        try:
+            if self.quote_ctx:
+                self.quote_ctx.close()
+                self.quote_ctx = None
+            if self.trade_ctx:
+                self.trade_ctx.close()
+                self.trade_ctx = None
+        except Exception as e:
+            logger.debug(f"[富途] 断开连接: {e}")
+        finally:
+            self.connected = False
+            logger.info("[富途] 已断开连接")
+
+    def is_connected(self) -> bool:
+        """检查连接状态（含心跳探测）"""
+        if not self.connected or self.trade_ctx is None:
+            return False
+        # 如果距上次心跳超过 60 秒，主动探测一次
+        if time.time() - self._last_heartbeat_time > 60:
+            return self._heartbeat_check()
+        return True
+
+    # ------------------------------------------------------------------
+    # 心跳检测与自动重连
+    # ------------------------------------------------------------------
+
+    def start_heartbeat(self, interval: int = HEARTBEAT_INTERVAL_SEC):
+        """启动后台心跳检测线程"""
+        if self._heartbeat_thread and self._heartbeat_thread.is_alive():
+            logger.debug("[心跳] 心跳线程已运行")
+            return
+        self._heartbeat_stop_event.clear()
+        self._heartbeat_thread = threading.Thread(
+            target=self._heartbeat_loop,
+            args=(interval,),
+            daemon=True,
+            name="futu-heartbeat",
+        )
+        self._heartbeat_thread.start()
+        logger.info(f"[心跳] 后台心跳检测已启动 (间隔={interval}s)")
+
+    def stop_heartbeat(self):
+        """停止后台心跳检测"""
+        self._heartbeat_stop_event.set()
+        if self._heartbeat_thread and self._heartbeat_thread.is_alive():
+            self._heartbeat_thread.join(timeout=10)
+        logger.info("[心跳] 后台心跳检测已停止")
+
+    def _heartbeat_loop(self, interval: int):
+        """心跳循环：每 interval 秒检查一次连接"""
+        while not self._heartbeat_stop_event.is_set():
+            self._heartbeat_stop_event.wait(interval)
+            if self._heartbeat_stop_event.is_set():
+                break
+            if self.connected:
+                alive = self._heartbeat_check()
+                if not alive:
+                    self._attempt_reconnect()
+
+    def _heartbeat_check(self) -> bool:
+        """
+        执行一次心跳探测：调用轻量级 API 验证连接。
+        成功时更新 _last_heartbeat_time 和 _heartbeat_failures。
+        """
+        try:
+            if not self.trade_ctx:
+                return False
+            from futu import RET_OK
+            # 轻量级 API：查询账户列表，开销极小
+            ret, data = self.trade_ctx.get_acc_list()
+            if ret == RET_OK:
+                self._last_heartbeat_time = time.time()
+                # 心跳恢复：之前有过失败记录
+                if self._heartbeat_failures > 0:
+                    logger.info(f"[心跳] 连接恢复 (之前失败 {self._heartbeat_failures} 次)")
+                    self._heartbeat_failures = 0
+                    self._reconnect_attempts = 0
+                return True
+            else:
+                logger.warning(f"[心跳] 探测失败: {data}")
+                self._heartbeat_failures += 1
+                return False
+        except Exception as e:
+            logger.warning(f"[心跳] 探测异常: {e}")
+            self._heartbeat_failures += 1
+            return False
+
+    def _attempt_reconnect(self):
+        """尝试自动重连（指数退避，最多 MAX_RECONNECT_ATTEMPTS 次）"""
+        with self._reconnect_lock:
+            if self._reconnect_attempts >= self.MAX_RECONNECT_ATTEMPTS:
+                logger.error(
+                    f"[重连] 已达最大重试次数 ({self.MAX_RECONNECT_ATTEMPTS})，"
+                    f"标记连接断开"
+                )
+                self.connected = False
+                if self._on_disconnect_callback:
+                    try:
+                        self._on_disconnect_callback()
+                    except Exception as e:
+                        logger.error(f"[重连] 回调异常: {e}")
+                return
+
+            backoff = self.RECONNECT_BACKOFF_SEC[self._reconnect_attempts]
+            self._reconnect_attempts += 1
+            logger.info(
+                f"[重连] 尝试 {self._reconnect_attempts}/{self.MAX_RECONNECT_ATTEMPTS}，"
+                f"等待 {backoff}s..."
+            )
+            time.sleep(backoff)
+
+            # 先断开旧连接
+            self.disconnect()
+
+            # 尝试重新连接
+            success = self.connect()
+            if success:
+                logger.info(f"[重连] 成功 (尝试 {self._reconnect_attempts} 次)")
+                self._heartbeat_failures = 0
+                self._reconnect_attempts = 0
+                self._last_heartbeat_time = time.time()
+            else:
+                logger.warning(
+                    f"[重连] 第 {self._reconnect_attempts} 次失败"
+                )
+                # 如果仍有机会，递归尝试
+                if self._reconnect_attempts < self.MAX_RECONNECT_ATTEMPTS:
+                    self._attempt_reconnect()
+                else:
+                    self.connected = False
+                    if self._on_disconnect_callback:
+                        try:
+                            self._on_disconnect_callback()
+                        except Exception as e:
+                            logger.error(f"[重连] 回调异常: {e}")
+
+    # ------------------------------------------------------------------
+    # 下单
+    # ------------------------------------------------------------------
+
+    def submit_order(self, order: Order) -> Dict[str, Any]:
+        """
+        提交订单到富途模拟账户
+
+        Args:
+            order: 订单对象
+
+        Returns:
+            {"order_id": str, "status": str, "futu_order_id": str}
+        """
+        # 2. 提交订单
+        if not self.is_connected():
+            return self._simulate_fill(order)
+
+        try:
+            from futu import TrdEnv, TrdSide, OrderType as FutuOrderType, RET_OK
+
+            # 转换方向 (确保 Order 对象有 direction 或从 action 推断)
+            trd_side = order.trd_side if hasattr(order, 'trd_side') else (TrdSide.BUY if order.direction == Direction.LONG else TrdSide.SELL)
+            # 转换订单类型
+            futu_order_type = FutuOrderType.NORMAL
+            if order.order_type == OrderType.MARKET:
+                futu_order_type = FutuOrderType.MARKET
+            # 转换交易环境
+            trd_env = TrdEnv.SIMULATE if self.trade_env == 1 else TrdEnv.REAL
+
+            # 2026-04-26: 移除 TWAP 拆单逻辑，统一单笔提交
+            # 风控层已充分约束订单规模 (PositionLimits / CapitalSafety / RiskStateMachine)
+            # 移动止损策略 (Chandelier/ATR/Flash Exit) 独立于下单方式，不受影响
+            is_sell = False
+            if hasattr(order, 'trd_side'):
+                is_sell = (order.trd_side == TrdSide.SELL)
+            elif hasattr(order, 'direction'):
+                is_sell = (order.direction != Direction.LONG)
+
+            ret, data = self.trade_ctx.place_order(
+                price=order.price,
+                qty=order.quantity,
+                code=order.symbol,
+                trd_side=trd_side,
+                order_type=futu_order_type,
+                trd_env=trd_env,
+                acc_id=int(self.account_id) if self.account_id else 0,
+            )
+
+            if ret == RET_OK:
+                futu_id = str(data["order_id"].values[0])
+
+                # P0 Fix: 订单状态确认 (防止幽灵仓)
+                # 在创建内存持仓前，确认订单未失败
+                # 等待短暂时间让 Futu 更新状态，然后查询确认
+                try:
+                    from futu import TrdEnv, RET_OK as RET_OK_FUTU
+                    import time
+                    
+                    trd_env = TrdEnv.SIMULATE if self.trade_env == 1 else TrdEnv.REAL
+                    
+                    # 循环查询 3 次，每次间隔 0.5s
+                    order_failed = False
+                    for _attempt in range(3):
+                        time.sleep(0.5)
+                        ret_q, data_q = self.trade_ctx.order_list_query(
+                            order_id=futu_id,
+                            trd_env=trd_env
+                        )
+                        if ret_q == RET_OK_FUTU and not data_q.empty:
+                            status = str(data_q.iloc[0].get('order_status', ''))
+                            # 状态：FAILED, DELETED, CANCELLED -> 失败
+                            if 'FAIL' in status or 'DEL' in status or 'CANCEL' in status:
+                                logger.error(f"🚨 [订单失败] {order.symbol} Status={status}")
+                                order_failed = True
+                                break
+                            
+                            # 状态：FILLED, PART_DEALT -> 成功，跳出循环
+                            if 'FILLED' in status or 'DEALT' in status:
+                                break
+                except RuntimeError:
+                    raise
+                except Exception as e:
+                    logger.warning(f"[订单状态检查] 异常 (降级放行): {e}")
+
+                if order_failed:
+                    raise RuntimeError(f"订单提交后失败: {order.symbol}")
+
+                # P0 Fix: PDT 逻辑修复 (支持做空)
+                # 记录日内交易：如果非隔夜单 且 是开仓单
+                # 开仓判断：position_id 为空或 0 (假设传入的 Order 对象有此属性)
+                # 若无 position_id 属性，默认为 0 (视为开仓)
+                is_overnight = getattr(order, 'is_overnight', False)
+                position_id = getattr(order, 'position_id', 0)
+                is_opening = (position_id == 0 or position_id is None)
+                
+                if not is_overnight and is_opening:
+                    try:
+                        from app.risk.pdt_guard import get_pdt_guard
+                        get_pdt_guard().record_day_trade(order.symbol)
+                    except Exception as pdt_err:
+                        logger.debug(f"[PDT] 记录日内交易失败: {pdt_err}")
+
+                logger.info(
+                    f"[富途] 下单成功 {order.symbol} {trd_side} "
+                    f"qty={order.quantity} price={order.price} "
+                    f"futu_order_id={futu_id}"
+                )
+                return {
+                    "order_id": order.order_id,
+                    "futu_order_id": futu_id,
+                    "futu_order_ids": [futu_id],  # 保持向后兼容
+                    "status": "submitted",
+                }
+            else:
+                raise RuntimeError(f"下单失败: {data}")
+
+        except ImportError:
+            return self._simulate_fill(order)
+        except Exception as e:
+            logger.error(f"[富途] 下单异常 {order.symbol}: {e}")
+            raise
+
+    def cancel_order(self, order_id: str) -> bool:
+        """取消订单"""
+        if not self.is_connected():
+            logger.warning("[富途] 未连接，模拟取消成功")
+            return True
+
+        try:
+            from futu import TrdEnv, ModifyOrderOp, RET_OK
+
+            trd_env = TrdEnv.SIMULATE if self.trade_env == 1 else TrdEnv.REAL
+
+            ret, data = self.trade_ctx.modify_order(
+                modify_order_op=ModifyOrderOp.CANCEL,
+                order_id=order_id,
+                qty=0,
+                price=0,
+                trd_env=trd_env,
+                acc_id=int(self.account_id) if self.account_id else 0,
+            )
+            if ret == 0:  # RET_OK
+                logger.info(f"[富途] 取消订单成功 {order_id}")
+                return True
+            else:
+                logger.error(f"[富途] 取消订单失败 {order_id}: {data}")
+                return False
+
+        except ImportError:
+            return True
+        except Exception as e:
+            logger.error(f"[富途] 取消订单异常 {order_id}: {e}")
+            return False
+
+    def query_order(self, order_id: str) -> Optional[Order]:
+        """查询订单状态"""
+        if not self.is_connected():
+            return None
+
+        try:
+            from futu import TrdEnv, RET_OK
+
+            trd_env = TrdEnv.SIMULATE if self.trade_env == 1 else TrdEnv.REAL
+            ret, data = self.trade_ctx.order_list_query(
+                order_id=order_id,
+                trd_env=trd_env,
+                acc_id=int(self.account_id) if self.account_id else 0,
+            )
+
+            if ret == RET_OK and len(data) > 0:
+                row = data.iloc[0]
+                order = Order(
+                    order_id=order_id,
+                    symbol=str(row.get("code", "")),
+                    quantity=float(row.get("qty", 0)),
+                    price=float(row.get("price", 0)),
+                    filled_quantity=float(row.get("dealt_qty", 0)),
+                    avg_fill_price=float(row.get("dealt_avg_price", 0)),
+                )
+                # 转换状态
+                futu_status = str(row.get("order_status", ""))
+                order.state = self._convert_order_status(futu_status)
+                return order
+
+        except ImportError:
+            pass
+        except Exception as e:
+            logger.error(f"[富途] 查询订单异常 {order_id}: {e}")
+
+        return None
+
+    # ------------------------------------------------------------------
+    # 持仓查询
+    # ------------------------------------------------------------------
+
+    def get_positions(self) -> List[Dict[str, Any]]:
+        """
+        查询持仓列表
+
+        Returns:
+            [{"symbol", "qty", "cost_price", "current_price", "unrealized_pnl"}, ...]
+        """
+        if not self.is_connected():
+            logger.debug("[富途] 未连接，返回空持仓")
+            return []
+
+        try:
+            from futu import TrdEnv, RET_OK
+
+            trd_env = TrdEnv.SIMULATE if self.trade_env == 1 else TrdEnv.REAL
+            ret, data = self.trade_ctx.position_list_query(
+                trd_env=trd_env,
+                acc_id=int(self.account_id) if self.account_id else 0,
+            )
+
+            if ret == RET_OK and len(data) > 0:
+                positions = []
+                for _, row in data.iterrows():
+                    positions.append({
+                        "symbol": str(row.get("code", "")),
+                        "qty": float(row.get("qty", 0)),
+                        "cost_price": float(row.get("cost_price", 0)),
+                        "current_price": float(row.get("market_val", 0)) / max(1, float(row.get("qty", 1))),
+                        "unrealized_pnl": float(row.get("pl_val", 0)),
+                        "unrealized_pnl_ratio": float(row.get("pl_ratio", 0)),
+                    })
+                return positions
+            return []
+
+        except ImportError:
+            return []
+        except Exception as e:
+            logger.error(f"[富途] 查询持仓异常: {e}")
+            return []
+
+    # ------------------------------------------------------------------
+    # 实时报价
+    # ------------------------------------------------------------------
+
+    def get_current_price(self, symbol: str) -> float:
+        """
+        获取当前价格（市场快照）
+
+        Args:
+            symbol: 如 "US.AAPL"
+
+        Returns:
+            当前价格，失败返回 0.0
+        """
+        if not self.is_connected() or not self.quote_ctx:
+            return 0.0
+
+        try:
+            from futu import RET_OK
+
+            ret, data = self.quote_ctx.get_market_snapshot([symbol])
+            if ret == RET_OK and len(data) > 0:
+                price = float(data["last_price"].values[0])
+                return price
+        except ImportError:
+            pass
+        except Exception as e:
+            logger.error(f"[富途] 获取价格异常 {symbol}: {e}")
+
+        return 0.0
+
+    @staticmethod
+    def _safe_float(val, default=0.0) -> float:
+        """安全转换: 处理 Futu 模拟盘返回的 'N/A'/'--'/None 等非法值"""
+        if val is None:
+            return default
+        if isinstance(val, str):
+            val = val.strip()
+            if val in ("N/A", "--", "-", "") or val.lower() == "nan":
+                return default
+        try:
+            return float(val)
+        except (ValueError, TypeError):
+            return default
+
+    def get_account_info(self) -> Dict[str, Any]:
+        """获取账户资金信息 (完整 accinfo 字段)"""
+        if not self.is_connected():
+            return {}
+
+        try:
+            from futu import TrdEnv, RET_OK
+            sf = self._safe_float
+
+            trd_env = TrdEnv.SIMULATE if self.trade_env == 1 else TrdEnv.REAL
+            ret, data = self.trade_ctx.accinfo_query(
+                trd_env=trd_env,
+                acc_id=int(self.account_id) if self.account_id else 0,
+            )
+            if ret == RET_OK and len(data) > 0:
+                row = data.iloc[0]
+                # P0 修复 (2026-05-02): 提取完整 accinfo 字段供保证金风控使用
+                # 2026-05-04: _safe_float 处理模拟盘 'N/A' 返回值
+                return {
+                    # 基础字段
+                    "total_assets": sf(row.get("total_assets")),
+                    "cash": sf(row.get("cash")),
+                    "market_val": sf(row.get("market_val")),
+                    "buying_power": sf(row.get("power")),
+                    # 新增: 保证金风控字段
+                    "avl_withdrawal_cash": sf(row.get("avl_withdrawal_cash")),
+                    "frozen_cash": sf(row.get("frozen_cash")),
+                    "debt": sf(row.get("debt")),
+                    "interest_debt": sf(row.get("interest_debt")),
+                    "initial_margin": sf(row.get("initial_margin")),
+                    "maintain_margin": sf(row.get("maintain_margin")),
+                    "short_sell_power": sf(row.get("short_sell_power")),
+                    "net_assets_power": sf(row.get("net_assets_power")),
+                    # 元数据
+                    "_trade_env": self.trade_env,
+                    "_raw": {
+                        k: row.get(k) for k in [
+                            "total_assets", "cash", "market_val", "power",
+                            "avl_withdrawal_cash", "frozen_cash", "debt", "interest_debt",
+                            "initial_margin", "maintain_margin", "short_sell_power", "net_assets_power",
+                        ]
+                    },
+                }
+        except ImportError:
+            pass
+        except Exception as e:
+            logger.error(f"[富途] 查询账户异常: {e}")
+
+        return {}
+
+    # ------------------------------------------------------------------
+    # 直接卖空
+    # ------------------------------------------------------------------
+
+    def try_direct_short(self, symbol: str, qty: int, price: float) -> Dict[str, Any]:
+        """
+        尝试直接卖空（TrdSide.SELL）
+
+        幻方增强 (2026-04-29):
+        - 借券可用性预检 (避免无效下单)
+        - 重试机制 (仅瞬态错误, 最多 2 次, 1s 退避)
+        - 扩展错误关键词分类
+
+        Args:
+            symbol: 股票代码，如 "US.TSLA"
+            qty:    卖空数量
+            price:  限价（0 使用市价）
+
+        Returns:
+            {"success": bool, "order_id": str, "futu_order_id": str, "status": str, "error": str}
+        """
+        import time as _time
+
+        if not self.is_connected():
+            logger.warning(f"[卖空] {symbol} 未连接富途，降级到 Put 期权")
+            return {"success": False, "error": "not_connected"}
+
+        # ── 预检: 借券可用性 ──
+        try:
+            from app.risk.short_specific_checks import check_borrow_cost
+            borrow_ok, borrow_reason = check_borrow_cost(symbol)
+            if not borrow_ok:
+                logger.warning(f"[卖空] {symbol} 借券预检失败: {borrow_reason}")
+                return {"success": False, "error": f"borrow_check_failed: {borrow_reason}"}
+        except ImportError:
+            pass
+
+        # ── 执行卖空 (含重试) ──
+        max_attempts = 2
+        last_error = None
+
+        for attempt in range(1, max_attempts + 1):
+            try:
+                from futu import TrdEnv, TrdSide, OrderType as FutuOrderType, RET_OK
+
+                futu_order_type = FutuOrderType.NORMAL if price > 0 else FutuOrderType.MARKET
+                trd_env = TrdEnv.SIMULATE if self.trade_env == 1 else TrdEnv.REAL
+
+                ret, data = self.trade_ctx.place_order(
+                    price=price if price > 0 else 0,
+                    qty=qty,
+                    code=symbol,
+                    trd_side=TrdSide.SELL,
+                    order_type=futu_order_type,
+                    trd_env=trd_env,
+                    acc_id=int(self.account_id) if self.account_id else 0,
+                )
+
+                if ret == RET_OK:
+                    futu_order_id = str(data["order_id"].values[0])
+                    logger.info(
+                        f"[卖空] {symbol} 直接卖空成功 qty={qty} price={price} "
+                        f"futu_order_id={futu_order_id}"
+                    )
+                    return {
+                        "success": True,
+                        "order_id": futu_order_id,
+                        "futu_order_id": futu_order_id,
+                        "status": "submitted",
+                    }
+                else:
+                    error_msg = str(data).lower() if data is not None else ""
+                    last_error = str(data)
+
+                    # 不支持卖空的错误特征 (扩展版)
+                    short_fail_keywords = [
+                        "not support", "short sell", "margin", "insufficient",
+                        "short", "borrow", "locate", "restricted",
+                        "not allowed", "cannot sell", "no position",
+                        "hard to borrow", "locate", "restricted security",
+                        "margin requirement",
+                    ]
+                    is_short_not_supported = any(
+                        kw in error_msg for kw in short_fail_keywords
+                    )
+                    is_transient = "timeout" in error_msg or "network" in error_msg or "temporary" in error_msg
+
+                    if is_short_not_supported:
+                        logger.info(
+                            f"[卖空] {symbol} 不支持直接卖空，将降级到 Put 期权"
+                        )
+                        return {"success": False, "error": last_error}
+
+                    if is_transient and attempt < max_attempts:
+                        logger.warning(
+                            f"[卖空] {symbol} 瞬态错误 (attempt={attempt}/{max_attempts}), "
+                            f"1s 后重试..."
+                        )
+                        _time.sleep(1)
+                        continue
+
+                    logger.warning(f"[卖空] {symbol} 直接卖空失败: {data}")
+                    return {"success": False, "error": last_error}
+
+            except ImportError:
+                logger.warning("[卖空] futu-api 未安装，降级到 Put 期权")
+                return {"success": False, "error": "futu_not_installed"}
+            except Exception as e:
+                last_error = str(e)
+                is_transient = any(kw in last_error.lower() for kw in ["timeout", "network", "temporary", "connection"])
+
+                if is_transient and attempt < max_attempts:
+                    logger.warning(
+                        f"[卖空] {symbol} 瞬态异常 (attempt={attempt}/{max_attempts}): {e}"
+                    )
+                    _time.sleep(1)
+                    continue
+
+                logger.error(f"[卖空] {symbol} 卖空异常: {e}")
+                return {"success": False, "error": last_error}
+
+        return {"success": False, "error": last_error or "max_retries_exceeded"}
+
+    # ------------------------------------------------------------------
+    # 期权下单 & 查询
+    # ------------------------------------------------------------------
+
+    def submit_option_order(
+        self,
+        option_code: str,
+        qty: int,
+        price: float,
+        direction: str = "BUY",
+    ) -> Dict[str, Any]:
+        """
+        提交期权订单（买入/卖出）。
+
+        Args:
+            option_code: 富途期权代码，如 "US.TSLA250425P380000"
+            qty:         手数（1手=100股权益）
+            price:       限价（0 使用市价）
+            direction:   "BUY" 开仓买入 Put / "SELL" 平仓卖出 Put
+
+        Returns:
+            {"order_id", "futu_order_id", "status"}
+        """
+        # 模拟盘期权交易 — 通过 Futu 模拟 API 执行 (2026-04-30 修复)
+        # 旧逻辑：trade_env==1 直接 simulated_fill，跳过 API 验证
+        # 新逻辑：统一走 API，trd_env=TrdEnv.SIMULATE 自动路由到模拟盘
+        # 优势：验证期权代码有效性、获取真实成交状态、避免虚假持仓
+        if not self.is_connected():
+            logger.info(
+                f"[期权·模拟] {direction} {option_code} qty={qty} price={price}"
+            )
+            return {
+                "order_id": f"OPT_{option_code}_{direction}",
+                "futu_order_id": f"SIM_OPT_{option_code[:20]}",
+                "status": "simulated_fill",
+            }
+
+        try:
+            from futu import TrdEnv, TrdSide, OrderType as FutuOrderType, RET_OK
+
+            trd_side = TrdSide.BUY if direction.upper() == "BUY" else TrdSide.SELL
+            futu_order_type = FutuOrderType.NORMAL if price > 0 else FutuOrderType.MARKET
+            trd_env = TrdEnv.SIMULATE if self.trade_env == 1 else TrdEnv.REAL
+
+            ret, data = self.trade_ctx.place_order(
+                price=price if price > 0 else 0,
+                qty=qty,
+                code=option_code,
+                trd_side=trd_side,
+                order_type=futu_order_type,
+                trd_env=trd_env,
+                acc_id=int(self.account_id) if self.account_id else 0,
+            )
+
+            if ret == RET_OK:
+                futu_order_id = str(data["order_id"].values[0])
+                logger.info(
+                    f"[期权] {direction} {option_code} qty={qty} price={price} "
+                    f"futu_order_id={futu_order_id}"
+                )
+                return {
+                    "order_id": f"OPT_{option_code}_{direction}",
+                    "futu_order_id": futu_order_id,
+                    "status": "submitted",
+                }
+            else:
+                logger.error(f"[期权] 下单失败 {option_code}: {data}")
+                return {
+                    "order_id": f"OPT_{option_code}_{direction}",
+                    "futu_order_id": f"SIM_FAIL_{option_code[:16]}",
+                    "status": "rejected",
+                    "error": str(data),
+                }
+
+        except ImportError:
+            return {
+                "order_id": f"OPT_{option_code}_{direction}",
+                "futu_order_id": f"SIM_OPT_{option_code[:20]}",
+                "status": "simulated_fill",
+            }
+        except Exception as e:
+            logger.error(f"[期权] 下单异常 {option_code}: {e}")
+            raise
+
+    def get_option_positions(self) -> List[Dict[str, Any]]:
+        """
+        查询账户中所有期权持仓（过滤 security_type=OPTION）。
+
+        Returns:
+            [{"option_code", "qty", "cost_price", "current_price",
+              "unrealized_pnl", "unrealized_pnl_ratio"}, ...]
+        """
+        if not self.is_connected():
+            logger.debug("[期权] 未连接，返回空期权持仓")
+            return []
+
+        try:
+            from futu import TrdEnv, RET_OK
+
+            trd_env = TrdEnv.SIMULATE if self.trade_env == 1 else TrdEnv.REAL
+            ret, data = self.trade_ctx.position_list_query(
+                trd_env=trd_env,
+                acc_id=int(self.account_id) if self.account_id else 0,
+            )
+
+            if ret != RET_OK or data is None or len(data) == 0:
+                return []
+
+            positions = []
+            for _, row in data.iterrows():
+                sec_type = str(row.get("security_type", "")).upper()
+                if sec_type != "OPTION":
+                    continue
+                qty = float(row.get("qty", 0))
+                if qty <= 0:
+                    continue
+                cost  = float(row.get("cost_price", 0))
+                mval  = float(row.get("market_val", 0))
+                cur_p = mval / max(1, qty * 100)  # 期权市值 / 份数/100
+                positions.append({
+                    "option_code":         str(row.get("code", "")),
+                    "qty":                 int(qty),
+                    "cost_price":          cost,
+                    "current_price":       round(cur_p, 4),
+                    "unrealized_pnl":      float(row.get("pl_val", 0)),
+                    "unrealized_pnl_ratio": float(row.get("pl_ratio", 0)),
+                })
+            return positions
+
+        except ImportError:
+            return []
+        except Exception as e:
+            logger.error(f"[期权] 查询期权持仓异常: {e}")
+            return []
+
+    # ------------------------------------------------------------------
+    # 内部工具
+    # ------------------------------------------------------------------
+
+    def _simulate_fill(self, order: Order) -> Dict[str, Any]:
+        """模拟成交（无富途连接时）"""
+        logger.info(
+            f"[模拟成交] {order.symbol} {order.direction.value} "
+            f"qty={order.quantity} price={order.price}"
+        )
+        return {
+            "order_id": order.order_id,
+            "futu_order_id": f"SIM_{order.order_id[:8]}",
+            "status": "simulated_fill",
+        }
+
+    @staticmethod
+    def _convert_order_status(futu_status: str) -> OrderState:
+        """转换富途订单状态到内部状态"""
+        mapping = {
+            "NONE": OrderState.CREATED,
+            "UNSUBMITTED": OrderState.CREATED,
+            "WAITING_SUBMIT": OrderState.CREATED,
+            "SUBMITTING": OrderState.SENT,
+            "SUBMITTED": OrderState.ACKED,
+            "FILLED_PART": OrderState.PARTIALLY_FILLED,
+            "FILLED_ALL": OrderState.FILLED,
+            "CANCELLING_PART": OrderState.CANCEL_REQUESTED,
+            "CANCELLING_ALL": OrderState.CANCEL_REQUESTED,
+            "CANCELLED_PART": OrderState.CANCELED,
+            "CANCELLED_ALL": OrderState.CANCELED,
+            "FAILED": OrderState.REJECTED,
+            "DISABLED": OrderState.CANCELED,
+            "DELETED": OrderState.CANCELED,
+        }
+        return mapping.get(futu_status.upper(), OrderState.UNKNOWN)

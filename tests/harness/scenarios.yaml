@@ -1,0 +1,64 @@
+# FTSeek-US Scenario Manifest
+# 此文件定义了所有必须防守的测试场景。
+# 任何代码变更不得降低此文件的覆盖度。
+
+modules:
+  agent:
+    - id: AG-01
+      name: "盘前计划生成 (Battle Plan)"
+      desc: "Agent 接收 VIX/News/Positions 上下文并输出有效 JSON 计划"
+      status: "✅ Covered"
+    - id: AG-02
+      name: "盘后复盘归因 (Review)"
+      desc: "Agent 对比计划与实际执行，更新记忆文件"
+      status: "✅ Covered"
+    - id: AG-03
+      name: "Agent 断连降级 (Fallback)"
+      desc: "Agent 超时或断连时，系统应静默跳过而非崩溃"
+      status: "✅ Covered"
+    - id: AG-04
+      name: "JSON 格式容错 (Parser)"
+      desc: "Agent 返回包含 Markdown 标记时，能自动清洗解析"
+      status: "✅ Covered (Fixed P0)"
+
+  execution:
+    - id: EX-01
+      name: "作战计划快车道 (Fast Track)"
+      desc: "计划内标的直接下单，不经过投票 (Intraday Logic)"
+      status: "✅ Covered"
+    - id: EX-02
+      name: "非计划标的拦截 (Gatekeeper)"
+      desc: "计划外标的信号必须被丢弃"
+      status: "✅ Covered"
+    - id: EX-03
+      name: "紧急止损优先 (Emergency)"
+      desc: "即使不在计划内，触发止损必须立即执行"
+      status: "✅ Covered"
+    - id: EX-04
+      name: "TWAP 拆单 (Removed)"
+      desc: "验证系统已移除 TWAP 逻辑，改为单笔执行"
+      status: "✅ Covered (Verified)"
+
+  risk:
+    - id: RK-01
+      name: "周末完全静默 (Silence)"
+      desc: "非交易时间不产生任何行情 API 调用"
+      status: "✅ Covered"
+    - id: RK-02
+      name: "幽灵持仓清理 (Ghost Cleanup)"
+      desc: "Futu 无持仓但 DB 有时，必须自动清理"
+      status: "✅ Covered (Verified P0-3)"
+    - id: RK-03
+      name: "持仓一致性 (Consistency)"
+      desc: "PositionStore 与 DB、Broker 三方数据一致"
+      status: "✅ Covered"
+
+  reliability:
+    - id: RB-01
+      name: "Broker 下单失败重试 (Retry)"
+      desc: "网络超时时应重试 3 次，而非直接报错"
+      status: "✅ Covered"
+    - id: RB-02
+      name: "行情数据陈旧检测 (Staleness)"
+      desc: "价格超过 60s 未更新应停止交易"
+      status: "✅ Covered"

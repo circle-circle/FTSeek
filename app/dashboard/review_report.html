@@ -1,0 +1,501 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>复盘报告 - FTSeek-US</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <style>
+        body {
+            background-color: #f5f6fa;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+        }
+        .container {
+            max-width: 1400px;
+            margin-top: 30px;
+        }
+        .card {
+            border: none;
+            border-radius: 12px;
+            box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+            margin-bottom: 20px;
+        }
+        .card-header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-radius: 12px 12px 0 0 !important;
+            font-weight: 600;
+            padding: 15px 20px;
+        }
+        .nav-pills .nav-link {
+            border-radius: 8px;
+            padding: 10px 20px;
+            margin-right: 10px;
+            font-weight: 500;
+        }
+        .nav-pills .nav-link.active {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+        .stat-card {
+            background: white;
+            border-radius: 12px;
+            padding: 20px;
+            text-align: center;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+        }
+        .stat-value {
+            font-size: 28px;
+            font-weight: 700;
+            color: #667eea;
+        }
+        .stat-label {
+            font-size: 14px;
+            color: #636e72;
+            margin-top: 5px;
+        }
+        .stat-card.positive .stat-value { color: #00b894; }
+        .stat-card.negative .stat-value { color: #e74c3c; }
+        .chart-container {
+            position: relative;
+            height: 300px;
+        }
+        .learning-item {
+            background: #f8f9fa;
+            border-left: 4px solid #667eea;
+            padding: 15px;
+            margin-bottom: 15px;
+            border-radius: 0 8px 8px 0;
+        }
+        .improvement-item {
+            background: #fff8e6;
+            border-left: 4px solid #f5576c;
+            padding: 15px;
+            margin-bottom: 15px;
+            border-radius: 0 8px 8px 0;
+        }
+        .badge-win { background-color: #00b894; }
+        .badge-loss { background-color: #e74c3c; }
+        .dimension-score {
+            display: inline-block;
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            text-align: center;
+            line-height: 50px;
+            font-weight: 700;
+            margin-right: 10px;
+        }
+        .dimension-score.good { background: linear-gradient(135deg, #00b894 0%, #00cec9 100%); }
+        .dimension-score.average { background: linear-gradient(135deg, #fdcb6e 0%, #f5576c 100%); }
+        .dimension-score.poor { background: linear-gradient(135deg, #e74c3c 0%, #c0392b 100%); }
+        .trade-item {
+            border-left: 3px solid #667eea;
+            padding-left: 15px;
+            margin-bottom: 15px;
+        }
+        .trade-item.best { border-left-color: #00b894; }
+        .trade-item.worst { border-left-color: #e74c3c; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h2><i class="bi bi-journal-text me-2"></i>复盘报告</h2>
+            <div>
+                <a href="/dashboard" class="btn btn-outline-secondary">
+                    <i class="bi bi-house me-1"></i>Dashboard
+                </a>
+            </div>
+        </div>
+
+        <!-- 时间范围选择 -->
+        <div class="card mb-4">
+            <div class="card-body">
+                <div class="row align-items-center">
+                    <div class="col-md-8">
+                        <ul class="nav nav-pills" id="reportTypeTabs">
+                            <li class="nav-item">
+                                <button class="nav-link active" data-type="daily" data-date="2026-03-28">
+                                    <i class="bi bi-calendar-day me-1"></i>每日复盘
+                                </button>
+                            </li>
+                            <li class="nav-item">
+                                <button class="nav-link" data-type="weekly" data-date="2026-03-24">
+                                    <i class="bi bi-calendar-week me-1"></i>每周复盘
+                                </button>
+                            </li>
+                            <li class="nav-item">
+                                <button class="nav-link" data-type="monthly" data-date="2026-03-01">
+                                    <i class="bi bi-calendar-month me-1"></i>每月复盘
+                                </button>
+                            </li>
+                        </ul>
+                    </div>
+                    <div class="col-md-4 text-end">
+                        <input type="date" class="form-control d-inline-block w-auto" id="datePicker" value="2026-03-28">
+                        <button class="btn btn-primary ms-2" onclick="loadReport()">
+                            <i class="bi bi-search me-1"></i>查询
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 关键指标 -->
+        <div class="row mb-4" id="statsRow">
+            <div class="col-md-2">
+                <div class="stat-card">
+                    <div class="stat-value" id="totalTrades">-</div>
+                    <div class="stat-label">交易次数</div>
+                </div>
+            </div>
+            <div class="col-md-2">
+                <div class="stat-card positive">
+                    <div class="stat-value" id="winRate">-</div>
+                    <div class="stat-label">胜率</div>
+                </div>
+            </div>
+            <div class="col-md-2">
+                <div class="stat-card">
+                    <div class="stat-value" id="totalReturn">-</div>
+                    <div class="stat-label">收益率</div>
+                </div>
+            </div>
+            <div class="col-md-2">
+                <div class="stat-card positive">
+                    <div class="stat-value" id="avgWin">-</div>
+                    <div class="stat-label">平均盈利</div>
+                </div>
+            </div>
+            <div class="col-md-2">
+                <div class="stat-card negative">
+                    <div class="stat-value" id="avgLoss">-</div>
+                    <div class="stat-label">平均亏损</div>
+                </div>
+            </div>
+            <div class="col-md-2">
+                <div class="stat-card">
+                    <div class="stat-value" id="profitFactor">-</div>
+                    <div class="stat-label">盈亏比</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 6 大维度评分 -->
+        <div class="card mb-4">
+            <div class="card-header">
+                <i class="bi bi-radar me-2"></i>6 大维度评分
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-4 mb-3">
+                        <div class="d-flex align-items-center">
+                            <div class="dimension-score good" id="decisionScore">8</div>
+                            <div>
+                                <strong>决策质量</strong>
+                                <div class="text-muted small">Decision Quality</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-4 mb-3">
+                        <div class="d-flex align-items-center">
+                            <div class="dimension-score average" id="timingScore">6</div>
+                            <div>
+                                <strong>时机把握</strong>
+                                <div class="text-muted small">Timing</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-4 mb-3">
+                        <div class="d-flex align-items-center">
+                            <div class="dimension-score good" id="positionScore">8</div>
+                            <div>
+                                <strong>仓位管理</strong>
+                                <div class="text-muted small">Position Sizing</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-4 mb-3">
+                        <div class="d-flex align-items-center">
+                            <div class="dimension-score poor" id="riskScore">4</div>
+                            <div>
+                                <strong>风控执行</strong>
+                                <div class="text-muted small">Risk Control</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-4 mb-3">
+                        <div class="d-flex align-items-center">
+                            <div class="dimension-score average" id="psychologyScore">6</div>
+                            <div>
+                                <strong>心理状态</strong>
+                                <div class="text-muted small">Psychology</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-4 mb-3">
+                        <div class="d-flex align-items-center">
+                            <div class="dimension-score good" id="strategyScore">8</div>
+                            <div>
+                                <strong>策略遵循</strong>
+                                <div class="text-muted small">Strategy</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 资金曲线 -->
+        <div class="card mb-4">
+            <div class="card-header">
+                <i class="bi bi-graph-up me-2"></i>资金曲线
+            </div>
+            <div class="card-body">
+                <div class="chart-container">
+                    <canvas id="equityChart"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- 最佳/最差交易 -->
+        <div class="row mb-4">
+            <div class="col-md-6">
+                <div class="card h-100">
+                    <div class="card-header" style="background: linear-gradient(135deg, #00b894 0%, #00cec9 100%);">
+                        <i class="bi bi-trophy me-2"></i>最佳交易
+                    </div>
+                    <div class="card-body" id="bestTrades">
+                        <div class="trade-item best">
+                            <strong>AAPL</strong> <span class="badge badge-win">+12.5%</span>
+                            <div class="text-muted small">技术突破，持有 5 天，盈利 $1,250</div>
+                        </div>
+                        <div class="trade-item best">
+                            <strong>MSFT</strong> <span class="badge badge-win">+8.3%</span>
+                            <div class="text-muted small">基本面良好，持有 10 天，盈利 $830</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="card h-100">
+                    <div class="card-header" style="background: linear-gradient(135deg, #e74c3c 0%, #c0392b 100%);">
+                        <i class="bi bi-exclamation-triangle me-2"></i>最差交易
+                    </div>
+                    <div class="card-body" id="worstTrades">
+                        <div class="trade-item worst">
+                            <strong>NVDA</strong> <span class="badge badge-loss">-5.2%</span>
+                            <div class="text-muted small">止损未执行，亏损 $520</div>
+                        </div>
+                        <div class="trade-item worst">
+                            <strong>TSLA</strong> <span class="badge badge-loss">-3.8%</span>
+                            <div class="text-muted small">冲动交易，亏损 $380</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 关键学习 -->
+        <div class="card mb-4">
+            <div class="card-header" style="background: linear-gradient(135deg, #a8edea 0%, #fed6e3 100%);">
+                <i class="bi bi-lightbulb me-2"></i>关键学习
+            </div>
+            <div class="card-body" id="keyLearnings">
+                <div class="learning-item">
+                    <strong>突破确认后再入场更稳妥</strong>
+                    <div class="text-muted small mt-1">从 NVDA 交易中学习到，假突破较多，需要等待收盘价确认。</div>
+                </div>
+                <div class="learning-item">
+                    <strong>严格执行止损纪律</strong>
+                    <div class="text-muted small mt-1">多笔亏损扩大的交易都是因为未及时止损，需要设置价格提醒并严格执行。</div>
+                </div>
+                <div class="learning-item">
+                    <strong>避免在财报前重仓</strong>
+                    <div class="text-muted small mt-1">TSLA 财报波动超预期，导致大幅亏损，以后财报前降低仓位或平仓。</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 改进目标 -->
+        <div class="card mb-4">
+            <div class="card-header" style="background: linear-gradient(135deg, #f5576c 0%, #f093fb 100%);">
+                <i class="bi bi-target me-2"></i>改进目标
+            </div>
+            <div class="card-body" id="improvementGoals">
+                <div class="improvement-item">
+                    <strong>止损执行率提升至 95% 以上</strong>
+                    <div class="text-muted small mt-1">当前执行率 78%，需要设置价格提醒并严格执行。</div>
+                    <div class="mt-2">
+                        <span class="badge bg-secondary">优先级：P0</span>
+                        <span class="badge bg-secondary">状态：进行中</span>
+                    </div>
+                </div>
+                <div class="improvement-item">
+                    <strong>减少冲动交易比例至 10% 以下</strong>
+                    <div class="text-muted small mt-1">当前冲动交易占比 25%，需要建立交易前检查清单。</div>
+                    <div class="mt-2">
+                        <span class="badge bg-secondary">优先级：P1</span>
+                        <span class="badge bg-secondary">状态：进行中</span>
+                    </div>
+                </div>
+                <div class="improvement-item">
+                    <strong>提高盈亏比至 2.5 以上</strong>
+                    <div class="text-muted small mt-1">当前盈亏比 1.8，需要优化止盈策略，让利润奔跑。</div>
+                    <div class="mt-2">
+                        <span class="badge bg-secondary">优先级：P2</span>
+                        <span class="badge bg-secondary">状态：计划中</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        let equityChart = null;
+
+        // 初始化图表
+        function initCharts() {
+            const ctx = document.getElementById('equityChart').getContext('2d');
+            
+            equityChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: ['03/01', '03/05', '03/10', '03/15', '03/20', '03/25', '03/28'],
+                    datasets: [{
+                        label: '资金曲线',
+                        data: [100000, 102500, 101800, 105200, 107500, 106200, 108900],
+                        borderColor: '#667eea',
+                        backgroundColor: 'rgba(102, 126, 234, 0.1)',
+                        fill: true,
+                        tension: 0.4
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            display: false
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: false,
+                            grid: {
+                                color: 'rgba(0,0,0,0.05)'
+                            }
+                        },
+                        x: {
+                            grid: {
+                                display: false
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        // 加载报告
+        async function loadReport() {
+            const date = document.getElementById('datePicker').value;
+            const activeTab = document.querySelector('#reportTypeTabs .nav-link.active');
+            const type = activeTab.dataset.type;
+
+            try {
+                const response = await fetch(`/api/review/report?type=${type}&date=${date}`);
+                const data = await response.json();
+
+                if (response.ok) {
+                    updateStats(data.stats);
+                    updateDimensions(data.dimensions);
+                    updateCharts(data.equity_curve);
+                    updateBestWorstTrades(data.best_worst_trades);
+                    updateLearnings(data.key_learnings);
+                    updateImprovements(data.improvement_goals);
+                } else {
+                    console.error('加载报告失败:', data.error);
+                }
+            } catch (error) {
+                console.error('网络错误:', error);
+            }
+        }
+
+        // 更新统计
+        function updateStats(stats) {
+            document.getElementById('totalTrades').textContent = stats.total_trades || '-';
+            document.getElementById('winRate').textContent = (stats.win_rate || 0) + '%';
+            document.getElementById('totalReturn').textContent = (stats.total_return || 0) + '%';
+            document.getElementById('avgWin').textContent = '$' + (stats.avg_win || 0);
+            document.getElementById('avgLoss').textContent = '$' + (stats.avg_loss || 0);
+            document.getElementById('profitFactor').textContent = stats.profit_factor || '-';
+        }
+
+        // 更新维度评分
+        function updateDimensions(dimensions) {
+            if (dimensions) {
+                updateDimensionScore('decisionScore', dimensions.decision);
+                updateDimensionScore('timingScore', dimensions.timing);
+                updateDimensionScore('positionScore', dimensions.position);
+                updateDimensionScore('riskScore', dimensions.risk);
+                updateDimensionScore('psychologyScore', dimensions.psychology);
+                updateDimensionScore('strategyScore', dimensions.strategy);
+            }
+        }
+
+        function updateDimensionScore(elementId, score) {
+            const el = document.getElementById(elementId);
+            el.textContent = score || '-';
+            el.className = 'dimension-score';
+            if (score >= 7) el.classList.add('good');
+            else if (score >= 5) el.classList.add('average');
+            else el.classList.add('poor');
+        }
+
+        // 更新图表
+        function updateCharts(equityCurve) {
+            if (equityCurve && equityChart) {
+                equityChart.data.labels = equityCurve.dates;
+                equityChart.data.datasets[0].data = equityCurve.values;
+                equityChart.update();
+            }
+        }
+
+        // 更新最佳/最差交易
+        function updateBestWorstTrades(data) {
+            // TODO: 实现动态更新
+        }
+
+        // 更新学习
+        function updateLearnings(learnings) {
+            // TODO: 实现动态更新
+        }
+
+        // 更新改进目标
+        function updateImprovements(improvements) {
+            // TODO: 实现动态更新
+        }
+
+        // 标签页切换
+        document.querySelectorAll('#reportTypeTabs .nav-link').forEach(tab => {
+            tab.addEventListener('click', function() {
+                document.querySelectorAll('#reportTypeTabs .nav-link').forEach(t => t.classList.remove('active'));
+                this.classList.add('active');
+                document.getElementById('datePicker').value = this.dataset.date;
+                loadReport();
+            });
+        });
+
+        // 页面加载时初始化
+        document.addEventListener('DOMContentLoaded', function() {
+            initCharts();
+            loadReport();
+        });
+    </script>
+</body>
+</html>

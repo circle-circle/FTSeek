@@ -1,0 +1,1188 @@
+{
+  "actions": [
+    {
+      "issue_id": "low_win_rate_20260502",
+      "action": "无自动修复方案: 胜率过低: 27%",
+      "success": false,
+      "baseline": {
+        "win_rate": 0.2727,
+        "drawdown_pct": -3.41
+      },
+      "timestamp": "2026-05-02T06:23:07.656086",
+      "check_due": "2026-05-05T06:23:07.656087",
+      "checked": true
+    },
+    {
+      "issue_id": "signal_strength_all_low_20260502",
+      "action": "信号强度阈值调整: 50 → 60",
+      "success": true,
+      "baseline": {
+        "win_rate": 0.2727,
+        "drawdown_pct": -3.41
+      },
+      "timestamp": "2026-05-02T06:23:07.656706",
+      "check_due": "2026-05-05T06:23:07.656708",
+      "checked": true
+    },
+    {
+      "issue_id": "high_losing_ratio_20260502",
+      "action": "入场信心阈值调整: 0.5 → 0.6",
+      "success": true,
+      "baseline": {
+        "win_rate": 0.2727,
+        "drawdown_pct": -3.41
+      },
+      "timestamp": "2026-05-02T06:23:07.657268",
+      "check_due": "2026-05-05T06:23:07.657271",
+      "checked": true
+    },
+    {
+      "issue_id": "low_win_rate_20260502",
+      "action": "无自动修复方案: 胜率过低: 27%",
+      "success": false,
+      "baseline": {
+        "win_rate": 0.2727,
+        "drawdown_pct": -3.41
+      },
+      "timestamp": "2026-05-02T06:23:34.763316",
+      "check_due": "2026-05-05T06:23:34.763318",
+      "checked": true
+    },
+    {
+      "issue_id": "signal_strength_all_low_20260502",
+      "action": "信号强度阈值调整: 50 → 60",
+      "success": true,
+      "baseline": {
+        "win_rate": 0.2727,
+        "drawdown_pct": -3.41
+      },
+      "timestamp": "2026-05-02T06:23:34.814285",
+      "check_due": "2026-05-05T06:23:34.814287",
+      "checked": true
+    },
+    {
+      "issue_id": "high_losing_ratio_20260502",
+      "action": "入场信心阈值调整: 0.5 → 0.6",
+      "success": true,
+      "baseline": {
+        "win_rate": 0.2727,
+        "drawdown_pct": -3.41
+      },
+      "timestamp": "2026-05-02T06:23:34.870071",
+      "check_due": "2026-05-05T06:23:34.870073",
+      "checked": true
+    },
+    {
+      "issue_id": "unplanned_trades_20260502",
+      "action": "提高计划外交易门槛",
+      "success": true,
+      "baseline": {
+        "win_rate": 0.2727,
+        "drawdown_pct": -3.41
+      },
+      "timestamp": "2026-05-02T06:23:34.929939",
+      "check_due": "2026-05-05T06:23:34.929941",
+      "checked": true
+    },
+    {
+      "issue_id": "low_win_rate_20260502",
+      "action": "无自动修复方案: 胜率过低: 27%",
+      "success": false,
+      "baseline": {
+        "win_rate": 0.2727,
+        "drawdown_pct": -3.41
+      },
+      "rollback_version": "",
+      "timestamp": "2026-05-02T06:47:49.563981",
+      "check_due": "2026-05-05T06:47:49.563982",
+      "checked": true
+    },
+    {
+      "issue_id": "signal_strength_all_low_20260502",
+      "action": "信号强度阈值调整: 50 → 60",
+      "success": true,
+      "baseline": {
+        "win_rate": 0.2727,
+        "drawdown_pct": -3.41
+      },
+      "rollback_version": "2e427e3e1e4c",
+      "timestamp": "2026-05-02T06:47:49.911022",
+      "check_due": "2026-05-05T06:47:49.911044",
+      "checked": true
+    },
+    {
+      "issue_id": "high_losing_ratio_20260502",
+      "action": "入场信心阈值调整: 0.5 → 0.6",
+      "success": true,
+      "baseline": {
+        "win_rate": 0.2727,
+        "drawdown_pct": -3.41
+      },
+      "rollback_version": "e4f44ae463c7",
+      "timestamp": "2026-05-02T06:47:50.078779",
+      "check_due": "2026-05-05T06:47:50.078793",
+      "checked": true
+    },
+    {
+      "issue_id": "low_win_rate_20260502",
+      "action": "无自动修复方案: 胜率过低: 27%",
+      "success": false,
+      "baseline": {
+        "win_rate": 0.2727,
+        "drawdown_pct": -3.41
+      },
+      "rollback_version": "",
+      "timestamp": "2026-05-02T06:48:15.107627",
+      "check_due": "2026-05-05T06:48:15.107630",
+      "checked": true
+    },
+    {
+      "issue_id": "signal_strength_all_low_20260502",
+      "action": "信号强度阈值调整: 50 → 60",
+      "success": true,
+      "baseline": {
+        "win_rate": 0.2727,
+        "drawdown_pct": -3.41
+      },
+      "rollback_version": "76648e75f43e",
+      "timestamp": "2026-05-02T06:48:15.456986",
+      "check_due": "2026-05-05T06:48:15.457012",
+      "checked": true
+    },
+    {
+      "issue_id": "high_losing_ratio_20260502",
+      "action": "入场信心阈值调整: 0.5 → 0.6",
+      "success": true,
+      "baseline": {
+        "win_rate": 0.2727,
+        "drawdown_pct": -3.41
+      },
+      "rollback_version": "415778fd712d",
+      "timestamp": "2026-05-02T06:48:15.757628",
+      "check_due": "2026-05-05T06:48:15.757709",
+      "checked": true
+    },
+    {
+      "issue_id": "unplanned_trades_20260502",
+      "action": "提高计划外交易门槛",
+      "success": true,
+      "baseline": {
+        "win_rate": 0.2727,
+        "drawdown_pct": -3.41
+      },
+      "rollback_version": "",
+      "timestamp": "2026-05-02T06:48:15.875016",
+      "check_due": "2026-05-05T06:48:15.875035",
+      "checked": true
+    },
+    {
+      "issue_id": "low_win_rate_20260502",
+      "action": "无自动修复方案: 胜率过低: 27%",
+      "success": false,
+      "baseline": {
+        "win_rate": 0.2727,
+        "drawdown_pct": -3.41
+      },
+      "rollback_version": "",
+      "timestamp": "2026-05-02T07:26:54.816979",
+      "check_due": "2026-05-05T07:26:54.816982",
+      "checked": true
+    },
+    {
+      "issue_id": "high_losing_ratio_20260502",
+      "action": "入场信心阈值调整: 0.5 → 0.6",
+      "success": true,
+      "baseline": {
+        "win_rate": 0.2727,
+        "drawdown_pct": -3.41
+      },
+      "rollback_version": "845617ff2827",
+      "timestamp": "2026-05-02T07:26:55.155081",
+      "check_due": "2026-05-05T07:26:55.155101",
+      "checked": true
+    },
+    {
+      "issue_id": "unplanned_trades_20260502",
+      "action": "提高计划外交易门槛",
+      "success": true,
+      "baseline": {
+        "win_rate": 0.2727,
+        "drawdown_pct": -3.41
+      },
+      "rollback_version": "",
+      "timestamp": "2026-05-02T07:26:55.209306",
+      "check_due": "2026-05-05T07:26:55.209339",
+      "checked": true
+    },
+    {
+      "issue_id": "unplanned_trades_20260505",
+      "action": "提高计划外交易门槛",
+      "success": true,
+      "baseline": {
+        "win_rate": 0.4,
+        "drawdown_pct": -3.67
+      },
+      "rollback_version": "",
+      "timestamp": "2026-05-05T04:04:28.149107",
+      "check_due": "2026-05-08T04:04:28.149120",
+      "checked": true
+    },
+    {
+      "issue_id": "unplanned_trades_20260505",
+      "action": "提高计划外交易门槛",
+      "success": true,
+      "baseline": {
+        "win_rate": 0.4,
+        "drawdown_pct": -3.67
+      },
+      "rollback_version": "",
+      "timestamp": "2026-05-05T07:06:33.707858",
+      "check_due": "2026-05-08T07:06:33.707870",
+      "checked": true
+    },
+    {
+      "issue_id": "unplanned_trades_20260505",
+      "action": "提高计划外交易门槛",
+      "success": true,
+      "baseline": {
+        "win_rate": 0.4,
+        "drawdown_pct": -3.67
+      },
+      "rollback_version": "",
+      "timestamp": "2026-05-05T07:48:25.629485",
+      "check_due": "2026-05-08T07:48:25.629498",
+      "checked": true
+    },
+    {
+      "issue_id": "signal_strength_all_low_20260506",
+      "action": "信号强度阈值调整: 50 → 60",
+      "success": true,
+      "baseline": {
+        "win_rate": 0.0,
+        "drawdown_pct": -3.09
+      },
+      "rollback_version": "be9f2b69081e",
+      "timestamp": "2026-05-06T04:35:28.459715",
+      "check_due": "2026-05-09T04:35:28.459730",
+      "checked": true
+    },
+    {
+      "issue_id": "unplanned_trades_20260506",
+      "action": "提高计划外交易门槛",
+      "success": true,
+      "baseline": {
+        "win_rate": 0.0,
+        "drawdown_pct": -3.09
+      },
+      "rollback_version": "",
+      "timestamp": "2026-05-06T04:35:28.509664",
+      "check_due": "2026-05-09T04:35:28.509683",
+      "checked": true
+    },
+    {
+      "issue_id": "signal_strength_all_low_20260506",
+      "action": "信号强度阈值调整: 50 → 60",
+      "success": true,
+      "baseline": {
+        "win_rate": 0.0,
+        "drawdown_pct": -3.09
+      },
+      "rollback_version": "b101f5bd6d60",
+      "timestamp": "2026-05-06T05:59:30.074924",
+      "check_due": "2026-05-09T05:59:30.074938",
+      "checked": true
+    },
+    {
+      "issue_id": "unplanned_trades_20260506",
+      "action": "提高计划外交易门槛",
+      "success": true,
+      "baseline": {
+        "win_rate": 0.0,
+        "drawdown_pct": -3.09
+      },
+      "rollback_version": "",
+      "timestamp": "2026-05-06T05:59:30.124466",
+      "check_due": "2026-05-09T05:59:30.124486",
+      "checked": true
+    },
+    {
+      "issue_id": "signal_strength_all_low_20260506",
+      "action": "信号强度阈值调整: 50 → 60",
+      "success": true,
+      "baseline": {
+        "win_rate": 0.0,
+        "drawdown_pct": -3.09
+      },
+      "rollback_version": "f4ac709ce126",
+      "timestamp": "2026-05-06T07:36:32.156995",
+      "check_due": "2026-05-09T07:36:32.157012",
+      "checked": true
+    },
+    {
+      "issue_id": "unplanned_trades_20260506",
+      "action": "提高计划外交易门槛",
+      "success": true,
+      "baseline": {
+        "win_rate": 0.0,
+        "drawdown_pct": -3.09
+      },
+      "rollback_version": "",
+      "timestamp": "2026-05-06T07:36:32.209413",
+      "check_due": "2026-05-09T07:36:32.209432",
+      "checked": true
+    },
+    {
+      "issue_id": "signal_strength_all_low_20260506",
+      "action": "信号强度阈值调整: 50 → 60",
+      "success": true,
+      "baseline": {
+        "win_rate": 0.0,
+        "drawdown_pct": -3.09
+      },
+      "rollback_version": "7d886eae624b",
+      "timestamp": "2026-05-06T07:37:26.555442",
+      "check_due": "2026-05-09T07:37:26.555459",
+      "checked": true
+    },
+    {
+      "issue_id": "unplanned_trades_20260506",
+      "action": "提高计划外交易门槛",
+      "success": true,
+      "baseline": {
+        "win_rate": 0.0,
+        "drawdown_pct": -3.09
+      },
+      "rollback_version": "",
+      "timestamp": "2026-05-06T07:37:26.604864",
+      "check_due": "2026-05-09T07:37:26.604880",
+      "checked": true
+    },
+    {
+      "issue_id": "low_win_rate_20260508",
+      "action": "无自动修复方案: 胜率过低: 6%",
+      "success": false,
+      "baseline": {
+        "win_rate": 0.0563,
+        "drawdown_pct": -1.99
+      },
+      "rollback_version": "",
+      "timestamp": "2026-05-08T04:42:24.159291",
+      "check_due": "2026-05-11T04:42:24.159294",
+      "checked": true
+    },
+    {
+      "issue_id": "unplanned_trades_20260508",
+      "action": "提高计划外交易门槛",
+      "success": true,
+      "baseline": {
+        "win_rate": 0.0563,
+        "drawdown_pct": -1.99
+      },
+      "rollback_version": "",
+      "timestamp": "2026-05-08T04:42:24.214553",
+      "check_due": "2026-05-11T04:42:24.214570",
+      "checked": true
+    },
+    {
+      "issue_id": "low_win_rate_20260508",
+      "action": "无自动修复方案: 胜率过低: 6%",
+      "success": false,
+      "baseline": {
+        "win_rate": 0.0563,
+        "drawdown_pct": -1.99
+      },
+      "rollback_version": "",
+      "timestamp": "2026-05-08T07:11:37.266472",
+      "check_due": "2026-05-11T07:11:37.266474",
+      "checked": true
+    },
+    {
+      "issue_id": "unplanned_trades_20260508",
+      "action": "提高计划外交易门槛",
+      "success": true,
+      "baseline": {
+        "win_rate": 0.0563,
+        "drawdown_pct": -1.99
+      },
+      "rollback_version": "",
+      "timestamp": "2026-05-08T07:11:37.317277",
+      "check_due": "2026-05-11T07:11:37.317294",
+      "checked": true
+    },
+    {
+      "issue_id": "low_win_rate_20260508",
+      "action": "无自动修复方案: 胜率过低: 6%",
+      "success": false,
+      "baseline": {
+        "win_rate": 0.0563,
+        "drawdown_pct": -1.99
+      },
+      "rollback_version": "",
+      "timestamp": "2026-05-08T07:21:11.667994",
+      "check_due": "2026-05-11T07:21:11.667996",
+      "checked": true
+    },
+    {
+      "issue_id": "unplanned_trades_20260508",
+      "action": "提高计划外交易门槛",
+      "success": true,
+      "baseline": {
+        "win_rate": 0.0563,
+        "drawdown_pct": -1.99
+      },
+      "rollback_version": "",
+      "timestamp": "2026-05-08T07:21:11.723073",
+      "check_due": "2026-05-11T07:21:11.723093",
+      "checked": true
+    },
+    {
+      "issue_id": "signal_strength_all_low_20260509",
+      "action": "信号强度阈值调整: 50 → 60",
+      "success": true,
+      "baseline": {
+        "win_rate": 0.4516,
+        "drawdown_pct": -1.34
+      },
+      "rollback_version": "89b0e6d7821e",
+      "timestamp": "2026-05-09T04:20:39.926608",
+      "check_due": "2026-05-12T04:20:39.926625",
+      "checked": true
+    },
+    {
+      "issue_id": "unplanned_trades_20260509",
+      "action": "提高计划外交易门槛",
+      "success": true,
+      "baseline": {
+        "win_rate": 0.4516,
+        "drawdown_pct": -1.34
+      },
+      "rollback_version": "",
+      "timestamp": "2026-05-09T04:20:39.977274",
+      "check_due": "2026-05-12T04:20:39.977294",
+      "checked": true
+    },
+    {
+      "issue_id": "signal_strength_all_low_20260509",
+      "action": "信号强度阈值调整: 50 → 60",
+      "success": true,
+      "baseline": {
+        "win_rate": 0.4516,
+        "drawdown_pct": -1.34
+      },
+      "rollback_version": "0cc9a055b8b7",
+      "timestamp": "2026-05-09T04:27:55.439695",
+      "check_due": "2026-05-12T04:27:55.439719",
+      "checked": true
+    },
+    {
+      "issue_id": "unplanned_trades_20260509",
+      "action": "提高计划外交易门槛",
+      "success": true,
+      "baseline": {
+        "win_rate": 0.4516,
+        "drawdown_pct": -1.34
+      },
+      "rollback_version": "",
+      "timestamp": "2026-05-09T04:27:55.491459",
+      "check_due": "2026-05-12T04:27:55.491477",
+      "checked": true
+    },
+    {
+      "issue_id": "signal_strength_all_low_20260509",
+      "action": "信号强度阈值调整: 50 → 60",
+      "success": true,
+      "baseline": {
+        "win_rate": 0.4516,
+        "drawdown_pct": -1.34
+      },
+      "rollback_version": "3d9d88fbba0f",
+      "timestamp": "2026-05-09T04:41:10.551989",
+      "check_due": "2026-05-12T04:41:10.552009",
+      "checked": true
+    },
+    {
+      "issue_id": "unplanned_trades_20260509",
+      "action": "提高计划外交易门槛",
+      "success": true,
+      "baseline": {
+        "win_rate": 0.4516,
+        "drawdown_pct": -1.34
+      },
+      "rollback_version": "",
+      "timestamp": "2026-05-09T04:41:10.603577",
+      "check_due": "2026-05-12T04:41:10.603597",
+      "checked": true
+    },
+    {
+      "issue_id": "low_win_rate_20260509",
+      "action": "无自动修复方案: 胜率过低: 10%",
+      "success": false,
+      "baseline": {
+        "win_rate": 0.1038,
+        "drawdown_pct": 0
+      },
+      "rollback_version": "",
+      "timestamp": "2026-05-09T04:41:10.983569",
+      "check_due": "2026-05-12T04:41:10.983571",
+      "checked": true
+    },
+    {
+      "issue_id": "signal_strength_all_low_20260509",
+      "action": "信号强度阈值调整: 50 → 60",
+      "success": true,
+      "baseline": {
+        "win_rate": 0.4516,
+        "drawdown_pct": -1.34
+      },
+      "rollback_version": "82a2e8ee9dc2",
+      "timestamp": "2026-05-09T04:47:15.058636",
+      "check_due": "2026-05-12T04:47:15.058657",
+      "checked": true
+    },
+    {
+      "issue_id": "unplanned_trades_20260509",
+      "action": "提高计划外交易门槛",
+      "success": true,
+      "baseline": {
+        "win_rate": 0.4516,
+        "drawdown_pct": -1.34
+      },
+      "rollback_version": "",
+      "timestamp": "2026-05-09T04:47:15.111329",
+      "check_due": "2026-05-12T04:47:15.111345",
+      "checked": true
+    },
+    {
+      "issue_id": "low_win_rate_20260509",
+      "action": "无自动修复方案: 胜率过低: 10%",
+      "success": false,
+      "baseline": {
+        "win_rate": 0.1038,
+        "drawdown_pct": 0
+      },
+      "rollback_version": "",
+      "timestamp": "2026-05-09T04:47:15.364820",
+      "check_due": "2026-05-12T04:47:15.364822",
+      "checked": true
+    },
+    {
+      "issue_id": "signal_strength_all_low_20260509",
+      "action": "信号强度阈值调整: 50 → 60",
+      "success": true,
+      "baseline": {
+        "win_rate": 0.4516,
+        "drawdown_pct": -1.34
+      },
+      "rollback_version": "10b22f748546",
+      "timestamp": "2026-05-09T05:28:00.089076",
+      "check_due": "2026-05-12T05:28:00.089094",
+      "checked": true
+    },
+    {
+      "issue_id": "unplanned_trades_20260509",
+      "action": "提高计划外交易门槛",
+      "success": true,
+      "baseline": {
+        "win_rate": 0.4516,
+        "drawdown_pct": -1.34
+      },
+      "rollback_version": "",
+      "timestamp": "2026-05-09T05:28:00.194024",
+      "check_due": "2026-05-12T05:28:00.194040",
+      "checked": true
+    },
+    {
+      "issue_id": "low_win_rate_20260509",
+      "action": "无自动修复方案: 胜率过低: 10%",
+      "success": false,
+      "baseline": {
+        "win_rate": 0.1038,
+        "drawdown_pct": 0
+      },
+      "rollback_version": "",
+      "timestamp": "2026-05-09T05:28:00.494098",
+      "check_due": "2026-05-12T05:28:00.494100",
+      "checked": true
+    },
+    {
+      "issue_id": "signal_strength_all_low_20260509",
+      "action": "信号强度阈值调整: 50 → 60",
+      "success": true,
+      "baseline": {
+        "win_rate": 0.4516,
+        "drawdown_pct": -1.34
+      },
+      "rollback_version": "76f3efaedf30",
+      "timestamp": "2026-05-09T05:54:21.918156",
+      "check_due": "2026-05-12T05:54:21.918222",
+      "checked": true
+    },
+    {
+      "issue_id": "unplanned_trades_20260509",
+      "action": "提高计划外交易门槛",
+      "success": true,
+      "baseline": {
+        "win_rate": 0.4516,
+        "drawdown_pct": -1.34
+      },
+      "rollback_version": "",
+      "timestamp": "2026-05-09T05:54:21.967315",
+      "check_due": "2026-05-12T05:54:21.967331",
+      "checked": true
+    },
+    {
+      "issue_id": "low_win_rate_20260509",
+      "action": "无自动修复方案: 胜率过低: 10%",
+      "success": false,
+      "baseline": {
+        "win_rate": 0.1038,
+        "drawdown_pct": 0
+      },
+      "rollback_version": "",
+      "timestamp": "2026-05-09T05:54:22.291406",
+      "check_due": "2026-05-12T05:54:22.291408",
+      "checked": true
+    },
+    {
+      "issue_id": "signal_strength_all_low_20260509",
+      "action": "信号强度阈值调整: 50 → 60",
+      "success": true,
+      "baseline": {
+        "win_rate": 0.4516,
+        "drawdown_pct": -1.34
+      },
+      "rollback_version": "3d01e2cebe4c",
+      "timestamp": "2026-05-09T06:03:21.719490",
+      "check_due": "2026-05-12T06:03:21.719506",
+      "checked": true
+    },
+    {
+      "issue_id": "unplanned_trades_20260509",
+      "action": "提高计划外交易门槛",
+      "success": true,
+      "baseline": {
+        "win_rate": 0.4516,
+        "drawdown_pct": -1.34
+      },
+      "rollback_version": "",
+      "timestamp": "2026-05-09T06:03:21.774818",
+      "check_due": "2026-05-12T06:03:21.774839",
+      "checked": true
+    },
+    {
+      "issue_id": "low_win_rate_20260509",
+      "action": "无自动修复方案: 胜率过低: 10%",
+      "success": false,
+      "baseline": {
+        "win_rate": 0.1038,
+        "drawdown_pct": 0
+      },
+      "rollback_version": "",
+      "timestamp": "2026-05-09T06:03:22.027847",
+      "check_due": "2026-05-12T06:03:22.027849",
+      "checked": true
+    },
+    {
+      "issue_id": "signal_strength_all_low_20260509",
+      "action": "信号强度阈值调整: 50 → 60",
+      "success": true,
+      "baseline": {
+        "win_rate": 0.4516,
+        "drawdown_pct": -1.34
+      },
+      "rollback_version": "dd9c6d238514",
+      "timestamp": "2026-05-09T06:40:25.632782",
+      "check_due": "2026-05-12T06:40:25.632801",
+      "checked": true
+    },
+    {
+      "issue_id": "unplanned_trades_20260509",
+      "action": "提高计划外交易门槛",
+      "success": true,
+      "baseline": {
+        "win_rate": 0.4516,
+        "drawdown_pct": -1.34
+      },
+      "rollback_version": "",
+      "timestamp": "2026-05-09T06:40:25.686035",
+      "check_due": "2026-05-12T06:40:25.686052",
+      "checked": true
+    },
+    {
+      "issue_id": "low_win_rate_20260509",
+      "action": "无自动修复方案: 胜率过低: 10%",
+      "success": false,
+      "baseline": {
+        "win_rate": 0.1038,
+        "drawdown_pct": 0
+      },
+      "rollback_version": "",
+      "timestamp": "2026-05-09T06:40:26.008079",
+      "check_due": "2026-05-12T06:40:26.008082",
+      "checked": false
+    },
+    {
+      "issue_id": "signal_strength_all_low_20260509",
+      "action": "信号强度阈值调整: 50 → 60",
+      "success": true,
+      "baseline": {
+        "win_rate": 0.4516,
+        "drawdown_pct": -1.34
+      },
+      "rollback_version": "56a776b2062e",
+      "timestamp": "2026-05-09T06:50:56.912039",
+      "check_due": "2026-05-12T06:50:56.912056",
+      "checked": false
+    },
+    {
+      "issue_id": "unplanned_trades_20260509",
+      "action": "提高计划外交易门槛",
+      "success": true,
+      "baseline": {
+        "win_rate": 0.4516,
+        "drawdown_pct": -1.34
+      },
+      "rollback_version": "",
+      "timestamp": "2026-05-09T06:50:56.966510",
+      "check_due": "2026-05-12T06:50:56.966526",
+      "checked": false
+    },
+    {
+      "issue_id": "low_win_rate_20260509",
+      "action": "无自动修复方案: 胜率过低: 10%",
+      "success": false,
+      "baseline": {
+        "win_rate": 0.1038,
+        "drawdown_pct": 0
+      },
+      "rollback_version": "",
+      "timestamp": "2026-05-09T06:50:57.212584",
+      "check_due": "2026-05-12T06:50:57.212586",
+      "checked": false
+    },
+    {
+      "issue_id": "low_win_rate_20260512",
+      "action": "无自动修复方案: 胜率过低: 0%",
+      "success": false,
+      "baseline": {
+        "win_rate": 0.0,
+        "drawdown_pct": -0.95
+      },
+      "rollback_version": "",
+      "timestamp": "2026-05-12T04:33:57.813182",
+      "check_due": "2026-05-15T04:33:57.813185",
+      "checked": false
+    },
+    {
+      "issue_id": "signal_strength_all_low_20260512",
+      "action": "信号强度阈值调整: 50 → 60",
+      "success": true,
+      "baseline": {
+        "win_rate": 0.0,
+        "drawdown_pct": -0.95
+      },
+      "rollback_version": "ac98f521e7aa",
+      "timestamp": "2026-05-12T04:33:58.217900",
+      "check_due": "2026-05-15T04:33:58.217915",
+      "checked": false
+    },
+    {
+      "issue_id": "unplanned_trades_20260512",
+      "action": "提高计划外交易门槛",
+      "success": true,
+      "baseline": {
+        "win_rate": 0.0,
+        "drawdown_pct": -0.95
+      },
+      "rollback_version": "",
+      "timestamp": "2026-05-12T04:33:58.271697",
+      "check_due": "2026-05-15T04:33:58.271712",
+      "checked": false
+    },
+    {
+      "issue_id": "low_win_rate_20260512",
+      "action": "无自动修复方案: 胜率过低: 0%",
+      "success": false,
+      "baseline": {
+        "win_rate": 0.0,
+        "drawdown_pct": -0.95
+      },
+      "rollback_version": "",
+      "timestamp": "2026-05-12T06:30:24.658481",
+      "check_due": "2026-05-15T06:30:24.658483",
+      "checked": false
+    },
+    {
+      "issue_id": "signal_strength_all_low_20260512",
+      "action": "信号强度阈值调整: 50 → 60",
+      "success": true,
+      "baseline": {
+        "win_rate": 0.0,
+        "drawdown_pct": -0.95
+      },
+      "rollback_version": "286b66a82b4d",
+      "timestamp": "2026-05-12T06:30:25.057111",
+      "check_due": "2026-05-15T06:30:25.057129",
+      "checked": false
+    },
+    {
+      "issue_id": "unplanned_trades_20260512",
+      "action": "提高计划外交易门槛",
+      "success": true,
+      "baseline": {
+        "win_rate": 0.0,
+        "drawdown_pct": -0.95
+      },
+      "rollback_version": "",
+      "timestamp": "2026-05-12T06:30:25.106746",
+      "check_due": "2026-05-15T06:30:25.106765",
+      "checked": false
+    },
+    {
+      "issue_id": "low_win_rate_20260512",
+      "action": "无自动修复方案: 胜率过低: 0%",
+      "success": false,
+      "baseline": {
+        "win_rate": 0.0,
+        "drawdown_pct": -0.95
+      },
+      "rollback_version": "",
+      "timestamp": "2026-05-12T06:50:38.554626",
+      "check_due": "2026-05-15T06:50:38.554628",
+      "checked": false
+    },
+    {
+      "issue_id": "signal_strength_all_low_20260512",
+      "action": "信号强度阈值调整: 50 → 60",
+      "success": true,
+      "baseline": {
+        "win_rate": 0.0,
+        "drawdown_pct": -0.95
+      },
+      "rollback_version": "8576097463bf",
+      "timestamp": "2026-05-12T06:50:38.946775",
+      "check_due": "2026-05-15T06:50:38.946802",
+      "checked": false
+    },
+    {
+      "issue_id": "unplanned_trades_20260512",
+      "action": "提高计划外交易门槛",
+      "success": true,
+      "baseline": {
+        "win_rate": 0.0,
+        "drawdown_pct": -0.95
+      },
+      "rollback_version": "",
+      "timestamp": "2026-05-12T06:50:38.996024",
+      "check_due": "2026-05-15T06:50:38.996041",
+      "checked": false
+    }
+  ],
+  "rollbacks": [
+    {
+      "issue_id": "low_win_rate_20260502",
+      "reason": "胜率恶化: 27% → 0%",
+      "timestamp": "2026-05-06T04:35:28.511043"
+    },
+    {
+      "issue_id": "signal_strength_all_low_20260502",
+      "reason": "胜率恶化: 27% → 0%",
+      "timestamp": "2026-05-06T04:35:28.624943"
+    },
+    {
+      "issue_id": "high_losing_ratio_20260502",
+      "reason": "胜率恶化: 27% → 0%",
+      "timestamp": "2026-05-06T04:35:28.736364"
+    },
+    {
+      "issue_id": "low_win_rate_20260502",
+      "reason": "胜率恶化: 27% → 0%",
+      "timestamp": "2026-05-06T04:35:28.789814"
+    },
+    {
+      "issue_id": "signal_strength_all_low_20260502",
+      "reason": "胜率恶化: 27% → 0%",
+      "timestamp": "2026-05-06T04:35:28.846784"
+    },
+    {
+      "issue_id": "high_losing_ratio_20260502",
+      "reason": "胜率恶化: 27% → 0%",
+      "timestamp": "2026-05-06T04:35:28.899577"
+    },
+    {
+      "issue_id": "unplanned_trades_20260502",
+      "reason": "胜率恶化: 27% → 0%",
+      "timestamp": "2026-05-06T04:35:28.955664"
+    },
+    {
+      "issue_id": "low_win_rate_20260502",
+      "reason": "胜率恶化: 27% → 0%",
+      "timestamp": "2026-05-06T04:35:29.005957"
+    },
+    {
+      "issue_id": "signal_strength_all_low_20260502",
+      "reason": "胜率恶化: 27% → 0%",
+      "timestamp": "2026-05-06T04:35:29.052859"
+    },
+    {
+      "issue_id": "high_losing_ratio_20260502",
+      "reason": "胜率恶化: 27% → 0%",
+      "timestamp": "2026-05-06T04:35:29.103084"
+    },
+    {
+      "issue_id": "low_win_rate_20260502",
+      "reason": "胜率恶化: 27% → 0%",
+      "timestamp": "2026-05-06T04:35:29.151663"
+    },
+    {
+      "issue_id": "signal_strength_all_low_20260502",
+      "reason": "胜率恶化: 27% → 0%",
+      "timestamp": "2026-05-06T04:35:29.206409"
+    },
+    {
+      "issue_id": "high_losing_ratio_20260502",
+      "reason": "胜率恶化: 27% → 0%",
+      "timestamp": "2026-05-06T04:35:29.257836"
+    },
+    {
+      "issue_id": "unplanned_trades_20260502",
+      "reason": "胜率恶化: 27% → 0%",
+      "timestamp": "2026-05-06T04:35:29.306720"
+    },
+    {
+      "issue_id": "low_win_rate_20260502",
+      "reason": "胜率恶化: 27% → 0%",
+      "timestamp": "2026-05-06T04:35:29.354544"
+    },
+    {
+      "issue_id": "high_losing_ratio_20260502",
+      "reason": "胜率恶化: 27% → 0%",
+      "timestamp": "2026-05-06T04:35:29.404559"
+    },
+    {
+      "issue_id": "unplanned_trades_20260502",
+      "reason": "胜率恶化: 27% → 0%",
+      "timestamp": "2026-05-06T04:35:29.455620"
+    },
+    {
+      "issue_id": "unplanned_trades_20260502",
+      "reason": "胜率恶化: 27% → 0%",
+      "timestamp": "2026-05-06T05:59:30.125832"
+    },
+    {
+      "issue_id": "unplanned_trades_20260502",
+      "reason": "胜率恶化: 27% → 0%",
+      "timestamp": "2026-05-06T07:36:32.210914"
+    },
+    {
+      "issue_id": "unplanned_trades_20260502",
+      "reason": "胜率恶化: 27% → 0%",
+      "timestamp": "2026-05-06T07:37:26.606660"
+    },
+    {
+      "issue_id": "unplanned_trades_20260502",
+      "reason": "胜率恶化: 27% → 0%",
+      "timestamp": "2026-05-07T04:35:23.706640"
+    },
+    {
+      "issue_id": "unplanned_trades_20260502",
+      "reason": "胜率恶化: 27% → 0%",
+      "timestamp": "2026-05-07T06:05:13.770797"
+    },
+    {
+      "issue_id": "unplanned_trades_20260502",
+      "reason": "胜率恶化: 27% → 0%",
+      "timestamp": "2026-05-07T06:15:08.872854"
+    },
+    {
+      "issue_id": "unplanned_trades_20260502",
+      "reason": "胜率恶化: 27% → 0%",
+      "timestamp": "2026-05-07T06:22:32.847684"
+    },
+    {
+      "issue_id": "unplanned_trades_20260502",
+      "reason": "胜率恶化: 27% → 0%",
+      "timestamp": "2026-05-07T07:12:20.476022"
+    },
+    {
+      "issue_id": "unplanned_trades_20260502",
+      "reason": "胜率恶化: 27% → 0%",
+      "timestamp": "2026-05-07T07:20:34.832233"
+    },
+    {
+      "issue_id": "unplanned_trades_20260502",
+      "reason": "胜率恶化: 27% → 6%",
+      "timestamp": "2026-05-08T04:42:24.220029"
+    },
+    {
+      "issue_id": "unplanned_trades_20260505",
+      "reason": "胜率恶化: 40% → 6%",
+      "timestamp": "2026-05-08T04:42:24.265345"
+    },
+    {
+      "issue_id": "unplanned_trades_20260505",
+      "reason": "胜率恶化: 40% → 6%",
+      "timestamp": "2026-05-08T07:11:37.320220"
+    },
+    {
+      "issue_id": "unplanned_trades_20260505",
+      "reason": "胜率恶化: 40% → 6%",
+      "timestamp": "2026-05-08T07:11:37.373561"
+    },
+    {
+      "issue_id": "unplanned_trades_20260505",
+      "reason": "胜率恶化: 40% → 6%",
+      "timestamp": "2026-05-08T07:21:11.726188"
+    },
+    {
+      "issue_id": "low_win_rate_20260508",
+      "reason": "胜率恶化: 6% → 0%",
+      "timestamp": "2026-05-12T04:33:58.273947"
+    },
+    {
+      "issue_id": "unplanned_trades_20260508",
+      "reason": "胜率恶化: 6% → 0%",
+      "timestamp": "2026-05-12T04:33:58.325359"
+    },
+    {
+      "issue_id": "low_win_rate_20260508",
+      "reason": "胜率恶化: 6% → 0%",
+      "timestamp": "2026-05-12T04:33:58.375811"
+    },
+    {
+      "issue_id": "unplanned_trades_20260508",
+      "reason": "胜率恶化: 6% → 0%",
+      "timestamp": "2026-05-12T04:33:58.428952"
+    },
+    {
+      "issue_id": "low_win_rate_20260508",
+      "reason": "胜率恶化: 6% → 0%",
+      "timestamp": "2026-05-12T04:33:58.478658"
+    },
+    {
+      "issue_id": "unplanned_trades_20260508",
+      "reason": "胜率恶化: 6% → 0%",
+      "timestamp": "2026-05-12T04:33:58.534910"
+    },
+    {
+      "issue_id": "signal_strength_all_low_20260509",
+      "reason": "胜率恶化: 45% → 0%",
+      "timestamp": "2026-05-12T04:33:58.581865"
+    },
+    {
+      "issue_id": "unplanned_trades_20260509",
+      "reason": "胜率恶化: 45% → 0%",
+      "timestamp": "2026-05-12T04:33:58.630951"
+    },
+    {
+      "issue_id": "signal_strength_all_low_20260509",
+      "reason": "胜率恶化: 45% → 0%",
+      "timestamp": "2026-05-12T04:33:58.683384"
+    },
+    {
+      "issue_id": "unplanned_trades_20260509",
+      "reason": "胜率恶化: 45% → 0%",
+      "timestamp": "2026-05-12T04:33:58.731248"
+    },
+    {
+      "issue_id": "unplanned_trades_20260509",
+      "reason": "胜率恶化: 45% → 0%",
+      "timestamp": "2026-05-12T06:30:25.108988"
+    },
+    {
+      "issue_id": "signal_strength_all_low_20260509",
+      "reason": "胜率恶化: 45% → 0%",
+      "timestamp": "2026-05-12T06:30:25.154073"
+    },
+    {
+      "issue_id": "unplanned_trades_20260509",
+      "reason": "胜率恶化: 45% → 0%",
+      "timestamp": "2026-05-12T06:30:25.203747"
+    },
+    {
+      "issue_id": "low_win_rate_20260509",
+      "reason": "胜率恶化: 10% → 0%",
+      "timestamp": "2026-05-12T06:30:25.249113"
+    },
+    {
+      "issue_id": "signal_strength_all_low_20260509",
+      "reason": "胜率恶化: 45% → 0%",
+      "timestamp": "2026-05-12T06:30:25.308761"
+    },
+    {
+      "issue_id": "unplanned_trades_20260509",
+      "reason": "胜率恶化: 45% → 0%",
+      "timestamp": "2026-05-12T06:30:25.366968"
+    },
+    {
+      "issue_id": "low_win_rate_20260509",
+      "reason": "胜率恶化: 10% → 0%",
+      "timestamp": "2026-05-12T06:30:25.415419"
+    },
+    {
+      "issue_id": "signal_strength_all_low_20260509",
+      "reason": "胜率恶化: 45% → 0%",
+      "timestamp": "2026-05-12T06:30:25.462399"
+    },
+    {
+      "issue_id": "unplanned_trades_20260509",
+      "reason": "胜率恶化: 45% → 0%",
+      "timestamp": "2026-05-12T06:30:25.512574"
+    },
+    {
+      "issue_id": "low_win_rate_20260509",
+      "reason": "胜率恶化: 10% → 0%",
+      "timestamp": "2026-05-12T06:30:25.562372"
+    },
+    {
+      "issue_id": "signal_strength_all_low_20260509",
+      "reason": "胜率恶化: 45% → 0%",
+      "timestamp": "2026-05-12T06:30:25.618100"
+    },
+    {
+      "issue_id": "unplanned_trades_20260509",
+      "reason": "胜率恶化: 45% → 0%",
+      "timestamp": "2026-05-12T06:30:25.668825"
+    },
+    {
+      "issue_id": "low_win_rate_20260509",
+      "reason": "胜率恶化: 10% → 0%",
+      "timestamp": "2026-05-12T06:30:25.716818"
+    },
+    {
+      "issue_id": "signal_strength_all_low_20260509",
+      "reason": "胜率恶化: 45% → 0%",
+      "timestamp": "2026-05-12T06:30:25.826179"
+    },
+    {
+      "issue_id": "unplanned_trades_20260509",
+      "reason": "胜率恶化: 45% → 0%",
+      "timestamp": "2026-05-12T06:30:25.922786"
+    },
+    {
+      "issue_id": "low_win_rate_20260509",
+      "reason": "胜率恶化: 10% → 0%",
+      "timestamp": "2026-05-12T06:30:25.976277"
+    },
+    {
+      "issue_id": "low_win_rate_20260509",
+      "reason": "胜率恶化: 10% → 0%",
+      "timestamp": "2026-05-12T06:50:38.998632"
+    },
+    {
+      "issue_id": "signal_strength_all_low_20260509",
+      "reason": "胜率恶化: 45% → 0%",
+      "timestamp": "2026-05-12T06:50:39.049930"
+    },
+    {
+      "issue_id": "unplanned_trades_20260509",
+      "reason": "胜率恶化: 45% → 0%",
+      "timestamp": "2026-05-12T06:50:39.106485"
+    },
+    {
+      "issue_id": "low_win_rate_20260509",
+      "reason": "胜率恶化: 10% → 0%",
+      "timestamp": "2026-05-12T06:50:39.218396"
+    }
+  ]
+}

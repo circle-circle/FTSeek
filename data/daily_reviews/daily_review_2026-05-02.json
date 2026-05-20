@@ -1,0 +1,383 @@
+{
+  "report_type": "daily",
+  "report_version": "2.0",
+  "report_date": "2026-05-02",
+  "generated_at": "2026-05-03T23:55:50.838180",
+  "summary": {
+    "total_trades": 2,
+    "closed_trades": 2,
+    "winning_trades": 1,
+    "losing_trades": 1,
+    "total_pnl": 28.1,
+    "win_rate": 0.5,
+    "avg_pnl": 14.05,
+    "avg_holding_period": 2.1
+  },
+  "signal_funnel": {
+    "total_decisions": 863,
+    "by_direction_strength": {
+      "LONG(s=56)": 1,
+      "LONG(s=65)": 1,
+      "LONG(s=68)": 2,
+      "LONG(s=69)": 3,
+      "LONG(s=72)": 1,
+      "LONG(s=73)": 1,
+      "NEUTRAL(s=50)": 849,
+      "SHORT(s=28)": 1,
+      "SHORT(s=42)": 2,
+      "SHORT(s=48)": 2
+    }
+  },
+  "rejection_analysis": {
+    "total": 855,
+    "by_reason": {
+      "CONSENSUS_LOW": 849,
+      "STRENGTH_WEAK": 5,
+      "CONFIDENCE_LOW": 1
+    },
+    "by_symbol": {
+      "US.AMD": 20,
+      "US.AMZN": 20,
+      "US.AVGO": 20,
+      "US.BA": 20,
+      "US.BABA": 20
+    },
+    "top_rejector": "CONSENSUS_LOW"
+  },
+  "capital_state": {
+    "current_equity": 1054361.0,
+    "cash": 563929.0,
+    "buying_power": 1618290.0,
+    "drawdown_pct": -3.52,
+    "max_drawdown_pct": -6.07,
+    "water_level": "green"
+  },
+  "attribution_data": {
+    "total_records": 0,
+    "data_available": false,
+    "note": "trade_attribution 无当日数据",
+    "five_factor": {
+      "five_factor_available": true,
+      "noise_trades_pnl": -13006.5,
+      "early_exit_pnl": 0.0,
+      "late_exit_pnl": 0.0,
+      "overtrading_pnl": 386.09,
+      "missed_signals_pnl": 21499.86,
+      "behavioral_score": {
+        "score": 88,
+        "grade": "A"
+      },
+      "rules": [
+        {
+          "rule_id": "R1",
+          "human_text": "平均持有 0.3 天，平均盈利 2.3%",
+          "entry_hour_range": [
+            9.0,
+            16.0
+          ],
+          "holding_days_range": [
+            0.1269158026747685,
+            0.3807474080243055
+          ],
+          "support_count": 10,
+          "coverage_rate": 1.0,
+          "avg_pnl_pct": 0.0227,
+          "weight": 1.0
+        }
+      ],
+      "disposition_effect": {
+        "severity": "low",
+        "avg_hold_winners_days": 0.3,
+        "avg_hold_losers_days": 0.2,
+        "loser_winner_hold_ratio": 0.98,
+        "interpretation": "亏损持仓是盈利的 1.0x — 健康"
+      },
+      "chasing": {
+        "severity": "insufficient_data",
+        "avg_deviation_pct": 0
+      },
+      "anchoring": {
+        "severity": "low",
+        "anchored_ratio": 0.0,
+        "interpretation": "0% 的亏损单超过止损设计 — 止损纪律良好"
+      }
+    },
+    "signal_scores_avg": null,
+    "execution_scores_avg": null,
+    "risk_scores_avg": null,
+    "timing_scores_avg": null,
+    "overall_scores_avg": null
+  },
+  "trade_analyses": [
+    {
+      "trade_id": 23,
+      "symbol": "US.MU",
+      "direction": "LONG",
+      "entry_price": 542.332,
+      "exit_price": 541.405,
+      "realized_pnl": -215.99,
+      "pnl_pct": -0.17,
+      "exit_reason": "PRE_CLOSE_EXIT",
+      "holding_hours": 1.2,
+      "signal_strength": 0,
+      "signal_confidence": 0,
+      "verdict": "不合理",
+      "entry_logic": "存在问题: signal_strength=0 — 投票数据缺失或静默失败; signal_confidence=0.0 — 投票数据缺失",
+      "exit_logic": "盘末微盈/微亏退出 (-0.17%) — 止损未激活",
+      "pnl_attribution": "盘末强平亏损 (-$215.99) — 止损未激活",
+      "timing_assessment": "正常交易时段入场 (ET 13:xx)",
+      "risk_compliance": "风险合规正常",
+      "evidence": {
+        "signal_data_missing": true,
+        "no_decision_reason": true,
+        "verdict_reason": {
+          "unreasonable_count": 1,
+          "reasonable_count": 0,
+          "issue_count": 2
+        }
+      },
+      "issues": [
+        "signal_strength=0 — 投票数据缺失或静默失败",
+        "signal_confidence=0.0 — 投票数据缺失"
+      ],
+      "suggestions": [],
+      "needs_debate": false,
+      "debate_reason": ""
+    },
+    {
+      "trade_id": 25,
+      "symbol": "US.TSM",
+      "direction": "LONG",
+      "entry_price": 397.8,
+      "exit_price": 398.57,
+      "realized_pnl": 244.09,
+      "pnl_pct": 0.19,
+      "exit_reason": "PRE_CLOSE_EXIT",
+      "holding_hours": 3.0,
+      "signal_strength": 0,
+      "signal_confidence": 0,
+      "verdict": "不合理",
+      "entry_logic": "存在问题: signal_strength=0 — 投票数据缺失或静默失败; signal_confidence=0.0 — 投票数据缺失",
+      "exit_logic": "盘末微盈/微亏退出 (0.19%) — 止损未激活",
+      "pnl_attribution": "盘末微利退出 (+$244.09) — 非主动止盈",
+      "timing_assessment": "正常交易时段入场 (ET 11:xx)",
+      "risk_compliance": "风险合规正常",
+      "evidence": {
+        "signal_data_missing": true,
+        "no_decision_reason": true,
+        "verdict_reason": {
+          "unreasonable_count": 1,
+          "reasonable_count": 1,
+          "issue_count": 2
+        }
+      },
+      "issues": [
+        "signal_strength=0 — 投票数据缺失或静默失败",
+        "signal_confidence=0.0 — 投票数据缺失"
+      ],
+      "suggestions": [
+        "低信号强度但盈利 — 可能是运气而非策略有效"
+      ],
+      "needs_debate": false,
+      "debate_reason": ""
+    }
+  ],
+  "dimensions": {
+    "signal_quality": {
+      "score": null,
+      "total_signals": 863,
+      "total_trades": 2,
+      "signal_to_trade_ratio": 0.0023,
+      "strength_distribution": {
+        "high": 0,
+        "medium": 0,
+        "low": 2
+      },
+      "avg_signal_strength": 0.0,
+      "assessment": "low_quality"
+    },
+    "voting_consistency": {
+      "score": null,
+      "status": "data_not_populated",
+      "data_available": false,
+      "note": "final_strength 和 consensus_level 均为 0/NULL，投票数据未写入。请检查 voting_coordinator 写入管线。",
+      "raw_strengths": [
+        0,
+        0
+      ],
+      "raw_consensus": [
+        0.0,
+        0.0
+      ]
+    },
+    "execution_quality": {
+      "total_trades": 2,
+      "data_available": false,
+      "execution_rate": 1.0,
+      "note": "trade_attribution 执行数据未填充，执行质量分析受限。"
+    },
+    "risk_compliance": {
+      "data_available": true,
+      "current_drawdown_pct": -3.52,
+      "max_drawdown_pct": -6.07,
+      "water_level": "green",
+      "risk_score": 9.0,
+      "max_single_trade_loss": 215.99,
+      "losing_trade_count": 1,
+      "losing_trade_ratio": 0.5
+    },
+    "funnel_diagnosis": {
+      "score": null,
+      "status": "overly_restrictive",
+      "total_decisions": 863,
+      "total_trades": 2,
+      "total_rejections": 855,
+      "trade_conversion_rate": 0.0023,
+      "rejection_rate": 0.9907,
+      "top_rejector": "CONSENSUS_LOW",
+      "by_direction_strength": {
+        "LONG(s=56)": 1,
+        "LONG(s=65)": 1,
+        "LONG(s=68)": 2,
+        "LONG(s=69)": 3,
+        "LONG(s=72)": 1,
+        "LONG(s=73)": 1,
+        "NEUTRAL(s=50)": 849,
+        "SHORT(s=28)": 1,
+        "SHORT(s=42)": 2,
+        "SHORT(s=48)": 2
+      }
+    },
+    "attribution_learning": {
+      "data_available": true,
+      "lessons_count": 1,
+      "five_factor": {
+        "five_factor_available": true,
+        "noise_trades_pnl": -13006.5,
+        "early_exit_pnl": 0.0,
+        "late_exit_pnl": 0.0,
+        "overtrading_pnl": 386.09,
+        "missed_signals_pnl": 21499.86,
+        "behavioral_score": {
+          "score": 88,
+          "grade": "A"
+        },
+        "rules": [
+          {
+            "rule_id": "R1",
+            "human_text": "平均持有 0.3 天，平均盈利 2.3%",
+            "entry_hour_range": [
+              9.0,
+              16.0
+            ],
+            "holding_days_range": [
+              0.1269158026747685,
+              0.3807474080243055
+            ],
+            "support_count": 10,
+            "coverage_rate": 1.0,
+            "avg_pnl_pct": 0.0227,
+            "weight": 1.0
+          }
+        ],
+        "disposition_effect": {
+          "severity": "low",
+          "avg_hold_winners_days": 0.3,
+          "avg_hold_losers_days": 0.2,
+          "loser_winner_hold_ratio": 0.98,
+          "interpretation": "亏损持仓是盈利的 1.0x — 健康"
+        },
+        "chasing": {
+          "severity": "insufficient_data",
+          "avg_deviation_pct": 0
+        },
+        "anchoring": {
+          "severity": "low",
+          "anchored_ratio": 0.0,
+          "interpretation": "0% 的亏损单超过止损设计 — 止损纪律良好"
+        }
+      },
+      "behavioral_score": {
+        "score": 88,
+        "grade": "A"
+      }
+    }
+  },
+  "decision_analysis": {
+    "distribution": {
+      "unknown": 2
+    },
+    "avg_confidence": null,
+    "note": "signal_confidence 数据未填充，所有值为 NULL/0"
+  },
+  "risk_analysis": {
+    "data_available": true,
+    "current_drawdown_pct": -3.52,
+    "max_drawdown_pct": -6.07,
+    "water_level": "green",
+    "risk_score": 9.0,
+    "max_single_trade_loss": 215.99,
+    "losing_trade_count": 1,
+    "losing_trade_ratio": 0.5
+  },
+  "voting_analysis": {
+    "score": null,
+    "status": "data_not_populated",
+    "data_available": false,
+    "note": "final_strength 和 consensus_level 均为 0/NULL，投票数据未写入。请检查 voting_coordinator 写入管线。",
+    "raw_strengths": [
+      0,
+      0
+    ],
+    "raw_consensus": [
+      0.0,
+      0.0
+    ]
+  },
+  "error_patterns": {
+    "detected": false,
+    "patterns": []
+  },
+  "review_score": {
+    "overall_score": 3.9,
+    "max_score": 10.0,
+    "status": "critical",
+    "breakdown": {
+      "win_rate_score": 6.0,
+      "win_rate": 0.5,
+      "win_rate_weight": 0.25,
+      "signal_quality_score": 0.0,
+      "avg_signal_strength": 0.0,
+      "signal_quality_weight": 0.2,
+      "risk_compliance_score": 8.24,
+      "drawdown_pct": -3.52,
+      "risk_compliance_weight": 0.2,
+      "funnel_efficiency_score": 2,
+      "conversion_rate": 0.0023,
+      "funnel_efficiency_weight": 0.15,
+      "attribution_learning_score": 0,
+      "lessons_count": 0,
+      "attribution_learning_weight": 0.1,
+      "plan_execution_score": 5.0,
+      "plan_execution_weight": 0.1
+    }
+  },
+  "market_regime": {
+    "state": "unknown",
+    "confidence": "low",
+    "indicators": {
+      "drawdown_pct": 3.52
+    }
+  },
+  "plan_vs_actual": {
+    "plan_available": false,
+    "planned_targets": [],
+    "executed_targets": [],
+    "missed_opportunities": [],
+    "unplanned_trades": []
+  },
+  "key_learnings": [],
+  "improvement_suggestions": [
+    "今日 855 次信号被拒绝，TOP 原因: CONSENSUS_LOW"
+  ]
+}

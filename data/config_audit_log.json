@@ -1,0 +1,212 @@
+[
+  {
+    "param_path": "risk.signal_quality.min_score",
+    "old_value": 50,
+    "new_value": 60,
+    "reason": "auto_fix: signal_strength_all_low_20260502 — 信号强度全部偏低",
+    "severity": "P0",
+    "approval_level": "L1",
+    "timestamp": "2026-05-02T06:47:49.700424",
+    "version_hash": "2e427e3e1e4c"
+  },
+  {
+    "param_path": "risk.signal_quality.min_confidence",
+    "old_value": 0.5,
+    "new_value": 0.6,
+    "reason": "auto_fix: high_losing_ratio_20260502 — 亏损交易占比过高: 73%",
+    "severity": "P1",
+    "approval_level": "L1",
+    "timestamp": "2026-05-02T06:47:50.008596",
+    "version_hash": "e4f44ae463c7"
+  },
+  {
+    "param_path": "risk.signal_quality.min_score",
+    "old_value": 60,
+    "new_value": 60,
+    "reason": "auto_fix: signal_strength_all_low_20260502 — 信号强度全部偏低",
+    "severity": "P0",
+    "approval_level": "L1",
+    "timestamp": "2026-05-02T06:48:15.281640",
+    "version_hash": "76648e75f43e"
+  },
+  {
+    "param_path": "risk.signal_quality.min_confidence",
+    "old_value": 0.6,
+    "new_value": 0.6,
+    "reason": "auto_fix: high_losing_ratio_20260502 — 亏损交易占比过高: 73%",
+    "severity": "P1",
+    "approval_level": "L1",
+    "timestamp": "2026-05-02T06:48:15.600395",
+    "version_hash": "415778fd712d"
+  },
+  {
+    "param_path": "risk.signal_quality.min_confidence",
+    "old_value": 0.6,
+    "new_value": 0.6,
+    "reason": "auto_fix: high_losing_ratio_20260502 — 亏损交易占比过高: 73%",
+    "severity": "P1",
+    "approval_level": "L1",
+    "timestamp": "2026-05-02T07:26:54.991573",
+    "version_hash": "845617ff2827"
+  },
+  {
+    "param_path": "risk.signal_quality.min_score",
+    "old_value": 60,
+    "new_value": 60,
+    "reason": "auto_fix: signal_strength_all_low_20260506 — 信号强度全部偏低",
+    "severity": "P0",
+    "approval_level": "L1",
+    "timestamp": "2026-05-06T04:35:28.267134",
+    "version_hash": "be9f2b69081e"
+  },
+  {
+    "param_path": "risk.signal_quality.min_score",
+    "old_value": 60,
+    "new_value": 60,
+    "reason": "auto_fix: signal_strength_all_low_20260506 — 信号强度全部偏低",
+    "severity": "P0",
+    "approval_level": "L1",
+    "timestamp": "2026-05-06T05:59:29.892700",
+    "version_hash": "b101f5bd6d60"
+  },
+  {
+    "param_path": "risk.signal_quality.min_score",
+    "old_value": 60,
+    "new_value": 60,
+    "reason": "auto_fix: signal_strength_all_low_20260506 — 信号强度全部偏低",
+    "severity": "P0",
+    "approval_level": "L1",
+    "timestamp": "2026-05-06T07:36:31.968705",
+    "version_hash": "f4ac709ce126"
+  },
+  {
+    "param_path": "risk.signal_quality.min_score",
+    "old_value": 60,
+    "new_value": 60,
+    "reason": "auto_fix: signal_strength_all_low_20260506 — 信号强度全部偏低",
+    "severity": "P0",
+    "approval_level": "L1",
+    "timestamp": "2026-05-06T07:37:26.359624",
+    "version_hash": "7d886eae624b"
+  },
+  {
+    "param_path": "risk.signal_quality.min_score",
+    "old_value": 60,
+    "new_value": 60,
+    "reason": "auto_fix: signal_strength_all_low_20260509 — 信号强度全部偏低",
+    "severity": "P0",
+    "approval_level": "L1",
+    "timestamp": "2026-05-09T04:20:39.737767",
+    "version_hash": "89b0e6d7821e"
+  },
+  {
+    "param_path": "risk.signal_quality.min_score",
+    "old_value": 60,
+    "new_value": 60,
+    "reason": "auto_fix: signal_strength_all_low_20260509 — 信号强度全部偏低",
+    "severity": "P0",
+    "approval_level": "L1",
+    "timestamp": "2026-05-09T04:27:55.256739",
+    "version_hash": "0cc9a055b8b7"
+  },
+  {
+    "param_path": "risk.signal_quality.min_score",
+    "old_value": 60,
+    "new_value": 60,
+    "reason": "auto_fix: signal_strength_all_low_20260509 — 信号强度全部偏低",
+    "severity": "P0",
+    "approval_level": "L1",
+    "timestamp": "2026-05-09T04:41:10.366221",
+    "version_hash": "3d9d88fbba0f"
+  },
+  {
+    "param_path": "risk.signal_quality.min_score",
+    "old_value": 60,
+    "new_value": 60,
+    "reason": "auto_fix: signal_strength_all_low_20260509 — 信号强度全部偏低",
+    "severity": "P0",
+    "approval_level": "L1",
+    "timestamp": "2026-05-09T04:47:14.879128",
+    "version_hash": "82a2e8ee9dc2"
+  },
+  {
+    "param_path": "risk.signal_quality.min_score",
+    "old_value": 60,
+    "new_value": 60,
+    "reason": "auto_fix: signal_strength_all_low_20260509 — 信号强度全部偏低",
+    "severity": "P0",
+    "approval_level": "L1",
+    "timestamp": "2026-05-09T05:27:59.906812",
+    "version_hash": "10b22f748546"
+  },
+  {
+    "param_path": "risk.signal_quality.min_score",
+    "old_value": 60,
+    "new_value": 60,
+    "reason": "auto_fix: signal_strength_all_low_20260509 — 信号强度全部偏低",
+    "severity": "P0",
+    "approval_level": "L1",
+    "timestamp": "2026-05-09T05:54:21.457962",
+    "version_hash": "76f3efaedf30"
+  },
+  {
+    "param_path": "risk.signal_quality.min_score",
+    "old_value": 60,
+    "new_value": 60,
+    "reason": "auto_fix: signal_strength_all_low_20260509 — 信号强度全部偏低",
+    "severity": "P0",
+    "approval_level": "L1",
+    "timestamp": "2026-05-09T06:03:21.164604",
+    "version_hash": "3d01e2cebe4c"
+  },
+  {
+    "param_path": "risk.signal_quality.min_score",
+    "old_value": 60,
+    "new_value": 60,
+    "reason": "auto_fix: signal_strength_all_low_20260509 — 信号强度全部偏低",
+    "severity": "P0",
+    "approval_level": "L1",
+    "timestamp": "2026-05-09T06:40:25.175334",
+    "version_hash": "dd9c6d238514"
+  },
+  {
+    "param_path": "risk.signal_quality.min_score",
+    "old_value": 60,
+    "new_value": 60,
+    "reason": "auto_fix: signal_strength_all_low_20260509 — 信号强度全部偏低",
+    "severity": "P0",
+    "approval_level": "L1",
+    "timestamp": "2026-05-09T06:50:56.728853",
+    "version_hash": "56a776b2062e"
+  },
+  {
+    "param_path": "risk.signal_quality.min_score",
+    "old_value": 60,
+    "new_value": 60,
+    "reason": "auto_fix: signal_strength_all_low_20260512 — 信号强度全部偏低",
+    "severity": "P0",
+    "approval_level": "L1",
+    "timestamp": "2026-05-12T04:33:58.025825",
+    "version_hash": "ac98f521e7aa"
+  },
+  {
+    "param_path": "risk.signal_quality.min_score",
+    "old_value": 60,
+    "new_value": 60,
+    "reason": "auto_fix: signal_strength_all_low_20260512 — 信号强度全部偏低",
+    "severity": "P0",
+    "approval_level": "L1",
+    "timestamp": "2026-05-12T06:30:24.869995",
+    "version_hash": "286b66a82b4d"
+  },
+  {
+    "param_path": "risk.signal_quality.min_score",
+    "old_value": 60,
+    "new_value": 60,
+    "reason": "auto_fix: signal_strength_all_low_20260512 — 信号强度全部偏低",
+    "severity": "P0",
+    "approval_level": "L1",
+    "timestamp": "2026-05-12T06:50:38.766087",
+    "version_hash": "8576097463bf"
+  }
+]

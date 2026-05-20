@@ -1,0 +1,307 @@
+# app/agents/voting/voting_aggregator.py
+from typing import Dict, Any, List
+import statistics
+import logging
+from .voting_config import VotingConfig, ModelRole
+from .model_agent import ModelScore
+
+logger = logging.getLogger(__name__)
+
+class VotingAggregator:
+    """投票聚合器"""
+    
+    def __init__(self, config: VotingConfig):
+        self.config = config
+    
+    def aggregate(self, scores: List[ModelScore], market_data: Dict[str, Any] = None) -> Dict[str, Any]:
+        """
+        聚合多个模型评分
+        
+        Args:
+            scores: 模型评分列表
+            market_data: 市场数据 (用于动态权重调整)
+        
+        Returns:
+            {
+                "final_strength": int,  # 最终评分
+                "final_confidence": float,  # 最终置信度
+                "direction": str,  # 方向（LONG/SHORT/NEUTRAL）
+                "consensus_level": float,  # 一致性水平 (0-1)
+                "std_dev": float,  # 标准差
+                "needs_manual_review": bool,  # 是否需要人工审核
+                "model_scores": List[Dict],  # 各模型评分详情
+                "is_neutral": bool,  # 是否为中性信号（应跳过下单）
+            }
+        """
+        if not scores:
+            return self._empty_result()
+        
+        # 动态权重调整：高波动市场降低 DeepSeek 权重，提高 MiniMax 权重
+        weights = self.config.model_weights.copy()
+
+        if market_data:
+            vix = market_data.get("vix", 20)
+            if vix > self.config.VIX_HIGH_THRESHOLD:  # 高波动市场 (>30)
+                # 3模型动态权重: 降低 Qwen(宏观) 权重，提高 MiniMax(情绪) 权重
+                weights[ModelRole.QWEN] = max(0.15, weights[ModelRole.QWEN] - self.config.VIX_WEIGHT_ADJUSTMENT)
+                weights[ModelRole.MINIMAX] = min(0.50, weights[ModelRole.MINIMAX] + self.config.VIX_WEIGHT_ADJUSTMENT)
+                logger.info(f"[动态权重] VIX={vix:.1f} > {self.config.VIX_HIGH_THRESHOLD}, 降低宏观模型权重，提高情绪模型权重")
+        
+        # P0 优化 (2026-04-17): 分离内部投票和外部投票 (LLM 策略)
+        internal_scores = []
+        external_scores = []
+
+        for score in scores:
+            if score.model_id == "llm_strategy":
+                external_scores.append(score)
+            else:
+                internal_scores.append(score)
+
+        # P0 修复 (2026-04-17): 模型偏差校正
+        # minimax 系统性偏高 20-34 分, 使用比例缩放更平滑
+        # qwen=58, minimax=85 → minimax校正=85*0.75=64 (接近 qwen)
+        # qwen=65, minimax=62 → minimax校正=62*0.75=47 (仍偏低, 但 std_dev 合理)
+        bias_config = getattr(self.config, 'MODEL_BIAS_CORRECTION', {})
+        scale = bias_config.get("minimax_scale", 1.0)
+
+        # P1-2 修复 (2026-04-21): 方向一致性保护
+        # 问题: 直接修改 score.strength 会导致 std_dev 过大 → consensus=0
+        # 修复: 只在校正后方向翻转时钳位，但使用校正后的原始值计算 std_dev
+        # 然后在 final_strength 上做方向保护，不影响 consensus
+        direction_protection_needed = False
+        qwen_original = None
+        minimax_original = None
+        minimax_corrected = None
+
+        for score in internal_scores:
+            if score.model_id == "qwen":
+                qwen_original = score.strength
+                break
+
+        for score in internal_scores:
+            if score.model_id == "minimax" and scale != 1.0:
+                original = score.strength
+                minimax_original = original
+                corrected = max(0, min(100, round(score.strength * scale)))
+                minimax_corrected = corrected
+
+                # 方向一致性检查：如果校正后方向翻转，标记需要保护
+                if qwen_original is not None:
+                    qwen_dir = "LONG" if qwen_original >= 50 else "SHORT"
+                    mini_dir_orig = "LONG" if original >= 50 else "SHORT"
+                    mini_dir_corr = "LONG" if corrected >= 50 else "SHORT"
+
+                    if qwen_dir == mini_dir_orig and qwen_dir != mini_dir_corr:
+                        direction_protection_needed = True
+                        logger.info(
+                            f"[方向保护] 标记: qwen={qwen_original}{qwen_dir}, "
+                            f"minimax {original}→{corrected} 方向翻转"
+                        )
+
+                score.strength = corrected
+                logger.info(
+                    f"[偏差校正] {score.model_id}: {original} → {corrected} (scale={scale})"
+                )
+
+        # 计算内部投票的加权平均
+        internal_weighted_sum = 0
+        internal_total_weight = 0
+
+        for score in internal_scores:
+            role = self._get_model_role(score.model_id)
+            weight = weights.get(role, 0.25)
+            internal_weighted_sum += score.strength * weight
+            internal_total_weight += weight
+
+        internal_strength = round(internal_weighted_sum / internal_total_weight) if internal_total_weight > 0 else 50
+        
+        # 计算外部投票 (LLM 策略) 的平均强度
+        external_strength = 50
+        if external_scores:
+            ext_weights_sum = sum(s.strength for s in external_scores)
+            external_strength = int(ext_weights_sum / len(external_scores))
+            logger.info(
+                f"[LLM投票] 外部投票强度={external_strength}, "
+                f"模型数={len(external_scores)}"
+            )
+        
+        # 融合内部和外部投票 (P1 优化: 动态权重 + round 替代 int)
+        llm_weight_used = self.config.LLM_EXTERNAL_VOTE_WEIGHT
+        if external_scores and self.config.LLM_EXTERNAL_VOTE_ENABLED:
+            # 计算动态权重
+            llm_weight_used, weight_reason = self._compute_dynamic_llm_weight(
+                internal_strength, internal_scores, external_scores
+            )
+            # 使用 round() 替代 int() 避免截断吞没
+            final_strength = round(internal_strength * (1 - llm_weight_used) + external_strength * llm_weight_used)
+            logger.info(
+                f"[投票融合] 内部={internal_strength}, LLM={external_strength}, "
+                f"LLM动态权重={llm_weight_used:.2f} ({weight_reason}), 最终={final_strength}"
+            )
+        else:
+            final_strength = internal_strength
+
+        # P1-2 修复 (2026-04-21): 方向保护 -- 在 final_strength 上应用，不影响 std_dev
+        # 当 qwen 和 minimax 原始方向一致时，final_strength 不应翻转方向
+        if direction_protection_needed and qwen_original is not None and minimax_original is not None:
+            qwen_dir = "LONG" if qwen_original >= 50 else "SHORT"
+            final_dir = "LONG" if final_strength >= 50 else "SHORT"
+            if qwen_dir != final_dir:
+                # 翻转了 → 钳位到方向边界
+                if qwen_dir == "LONG":
+                    final_strength = max(final_strength, 51)
+                else:
+                    final_strength = min(final_strength, 49)
+                logger.info(
+                    f"[方向保护] final_strength 钳位 → {final_strength} "
+                    f"(原始同向={qwen_dir}, 防翻转)"
+                )
+        
+        # 2. 计算平均置信度
+        avg_confidence = sum(s.confidence for s in scores) / len(scores)
+
+        # 3. 一致性计算 - P0 修复 (2026-04-17): 2模型架构
+        # 使用方向一致性 + 分数接近度综合计算
+        # 旧方法: consensus = 1 - std_dev/MAX_STD_DEV (2模型下 std_dev 天然更大)
+        strengths = [s.strength for s in scores]
+        std_dev = statistics.stdev(strengths) if len(strengths) > 1 else 0
+
+        direction_votes = [s.direction for s in scores]
+        short_votes = direction_votes.count("SHORT")
+        long_votes = direction_votes.count("LONG")
+        direction_agreed = (short_votes == len(scores)) or (long_votes == len(scores))
+
+        # P0 修复: 方向一致性优先, 分数接近度辅助
+        if direction_agreed:
+            # 所有模型同向 → 高一致性
+            # 2模型下 std_dev=0 → consensus=1.0, std_dev=14 → consensus=0.3
+            # 放宽 std_dev 的影响
+            consensus_level = max(0.30, 1.0 - (std_dev / 40.0))  # 分母从20→40, 最低0.30
+        else:
+            # 模型分歧 → 低一致性
+            consensus_level = max(0.0, 0.30 - (std_dev / 40.0))
+
+        # 4. 中性信号检测：评分在中性区间且模型分歧小 → 无交易信号
+        # 2026-04-16 修复: 如果所有模型方向一致(都SHORT或都LONG), 即使strength在中性区也不应跳过
+        is_neutral = (
+            self.config.NEUTRAL_LOW <= final_strength <= self.config.NEUTRAL_HIGH
+            and std_dev <= self.config.NEUTRAL_MAX_STD
+            and not direction_agreed  # 新增: 全同向时不判定为中性
+        )
+        
+        # 5. 确定方向
+        if is_neutral:
+            direction = "NEUTRAL"
+        else:
+            direction = "LONG" if final_strength > 50 else "SHORT"
+        
+        # 6. 一致性水平已在上方根据方向一致性计算 (L175-182)
+        # 不再覆盖 consensus_level，保留方向一致性保护
+        # consensus_level = max(0, 1 - (std_dev / self.config.MAX_STD_DEV))  # REMOVED: was overriding L175-182
+        
+        # 7. 判断是否需要人工审核
+        needs_review = (
+            std_dev > self.config.MAX_STD_DEV or
+            consensus_level < self.config.MIN_CONSENSUS
+        )
+        
+        # 8. 一致性过高 → 自动辩论触发 (2026-04-17 新增)
+        auto_debate_triggered = (
+            self.config.AUTO_DEBATE_ENABLED
+            and consensus_level > self.config.AUTO_DEBATE_CONSENSUS_THRESHOLD
+            and final_strength > self.config.AUTO_DEBATE_STRENGTH_THRESHOLD
+        )
+        if auto_debate_triggered:
+            logger.info(
+                f"[自动辩论] 一致性={consensus_level:.2f} > {self.config.AUTO_DEBATE_CONSENSUS_THRESHOLD}, "
+                f"强度={final_strength} > {self.config.AUTO_DEBATE_STRENGTH_THRESHOLD} → 触发反向辩论"
+            )
+        
+        return {
+            "final_strength": final_strength,
+            "final_confidence": round(avg_confidence, 2),
+            "direction": direction,
+            "consensus_level": round(consensus_level, 2),
+            "std_dev": round(std_dev, 2),
+            "needs_manual_review": needs_review,
+            "model_scores": [s.to_dict() for s in scores],
+            "is_neutral": is_neutral,
+            "auto_debate_triggered": auto_debate_triggered,  # 新增
+            "llm_weight_used": round(llm_weight_used, 3) if external_scores else None,  # 新增
+        }
+    
+    def _compute_dynamic_llm_weight(
+        self,
+        internal_strength: int,
+        internal_scores: List[ModelScore],
+        external_scores: List[ModelScore],
+    ) -> tuple:
+        """
+        计算 LLM 外部投票动态权重 (2026-04-17 优化)
+        
+        动态调整规则:
+        - 基础权重: 15%
+        - 方向一致: +10% (奖励共识)
+        - LLM 置信度高于内部平均: +5% (奖励高质量推理)
+        - 方向分歧: -10% (降低噪声影响)
+        - 范围: 5% ~ 30%
+        
+        Returns:
+            (weight: float, reason: str)
+        """
+        base = self.config.LLM_EXTERNAL_VOTE_WEIGHT  # 0.15
+        weight = base
+        reasons = [f"基础{base*100:.0f}%"]
+        
+        # 1. 方向一致性检测
+        internal_dir = "LONG" if internal_strength > 50 else "SHORT"
+        external_dirs = [s.direction for s in external_scores if isinstance(s.direction, str)]
+        if not external_dirs:
+            # direction 是 int 类型 (1/-1)
+            ext_dir_int = external_scores[0].direction if external_scores else 0
+            external_dirs = ["LONG" if ext_dir_int > 0 else "SHORT" if ext_dir_int < 0 else "NEUTRAL"]
+        
+        if all(d == internal_dir for d in external_dirs):
+            weight += self.config.LLM_DIRECTION_AGREE_BONUS
+            reasons.append("方向一致+10%")
+        elif any(d != internal_dir for d in external_dirs):
+            weight -= self.config.LLM_DIRECTION_AGREE_BONUS
+            reasons.append("方向分歧-10%")
+        
+        # 2. 置信度对比
+        if internal_scores:
+            internal_avg_conf = sum(s.confidence for s in internal_scores) / len(internal_scores)
+        else:
+            internal_avg_conf = 0.5
+        
+        external_avg_conf = sum(s.confidence for s in external_scores) / len(external_scores) if external_scores else 0.5
+        if external_avg_conf > internal_avg_conf:
+            weight += self.config.LLM_CONFIDENCE_BONUS
+            reasons.append(f"LLM置信度更高+5%")
+        
+        # 3. 钳位到 [MIN, MAX]
+        weight = max(self.config.LLM_EXTERNAL_VOTE_MIN, min(self.config.LLM_EXTERNAL_VOTE_MAX, weight))
+        
+        return weight, " → ".join(reasons)
+    
+    def _get_model_role(self, model_id: str) -> ModelRole:
+        """获取模型角色 - 2模型架构 2026-04-17"""
+        mapping = {
+            "qwen": ModelRole.QWEN,
+            "minimax": ModelRole.MINIMAX,
+            # GLM 已移除 (2026-04-17)，未知模型默认归入 QWEN
+        }
+        return mapping.get(model_id.lower(), ModelRole.QWEN)
+    
+    def _empty_result(self) -> Dict[str, Any]:
+        """空结果"""
+        return {
+            "final_strength": 50,
+            "final_confidence": 0.0,
+            "direction": "NEUTRAL",
+            "consensus_level": 0.0,
+            "std_dev": 0.0,
+            "needs_manual_review": True,
+            "model_scores": [],
+            "is_neutral": True,
+        }

@@ -1,0 +1,53 @@
+# FTSeek-US 依赖包
+
+# Web 框架
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+pydantic>=2.5.0
+
+# 环境配置
+python-dotenv>=1.0.0
+
+# 数据库
+aiosqlite>=0.19.0
+
+# HTTP 客户端
+httpx>=0.25.0
+requests>=2.31.0
+
+# 数据处理
+pandas>=2.0.0
+numpy>=1.24.0
+
+# 行情数据
+# Primary: TwelveData + Finnhub (需要 API Key)
+# Fallback: Alpha Vantage (免费，替换 Yahoo Finance)
+alpha-vantage>=2.3.1        # Alpha Vantage 官方 SDK（新增）
+# yfinance==0.2.18          # 已弃用，仅作为最后备用（可选）
+multitasking==0.0.11        # yfinance 依赖（如启用 yfinance）
+
+# RSS 新闻
+feedparser>=6.0.10
+
+# 日期时间
+python-dateutil>=2.8.0
+pytz>=2023.3
+
+# 日志
+loguru>=0.7.0
+
+# 富途 API
+futu-api>=9.0.0
+
+# 测试
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
+pytest-cov>=4.1.0
+
+# 代码质量
+black>=23.0.0
+flake8>=6.1.0
+mypy>=1.7.0
+
+# 监控 (可选)
+prometheus-client>=0.19.0

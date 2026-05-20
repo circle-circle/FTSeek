@@ -1,0 +1,88 @@
+{
+  "_comment": "FTSeek-US 监控股票池 - 全行业龙头覆盖 (57只) - 2026-04-19 更新",
+  "_version": "3.0",
+  "_updated": "2026-04-19",
+  "_strategy": "全行业龙头覆盖，支持动态池扩展",
+  "_data_source": "Futu OpenD LV3 + Finnhub + TwelveData",
+  
+  "us_stocks": [
+    {"code": "US.AAPL", "name": "Apple Inc", "sector": "Technology", "enabled": true, "tier": "TIER1", "order_qty": 50, "max_position_ratio": 0.15, "stop_loss": -0.08, "take_profit": 0.20, "notes": "消费电子/AI 龙头"},
+    {"code": "US.MSFT", "name": "Microsoft Corp", "sector": "Technology", "enabled": true, "tier": "TIER1", "order_qty": 50, "max_position_ratio": 0.15, "stop_loss": -0.08, "take_profit": 0.20, "notes": "云计算/AI 龙头"},
+    {"code": "US.NVDA", "name": "NVIDIA Corp", "sector": "Semiconductors", "enabled": true, "tier": "TIER1", "order_qty": 50, "max_position_ratio": 0.15, "stop_loss": -0.10, "take_profit": 0.25, "notes": "AI 芯片龙头"},
+    {"code": "US.GOOG", "name": "Alphabet Inc Class C", "sector": "Technology", "enabled": true, "tier": "TIER1", "order_qty": 50, "max_position_ratio": 0.15, "stop_loss": -0.10, "take_profit": 0.20, "notes": "搜索/AI 龙头"},
+    {"code": "US.AMZN", "name": "Amazon.com Inc", "sector": "Consumer Cyclical", "enabled": true, "tier": "TIER1", "order_qty": 50, "max_position_ratio": 0.15, "stop_loss": -0.08, "take_profit": 0.20, "notes": "电商/云龙头"},
+    {"code": "US.META", "name": "Meta Platforms", "sector": "Technology", "enabled": true, "tier": "TIER1", "order_qty": 50, "max_position_ratio": 0.15, "stop_loss": -0.08, "take_profit": 0.20, "notes": "社交媒体/AI 龙头"},
+    {"code": "US.TSLA", "name": "Tesla Inc", "sector": "Consumer Cyclical", "enabled": true, "tier": "TIER1", "order_qty": 50, "max_position_ratio": 0.15, "stop_loss": -0.08, "take_profit": 0.20, "notes": "新能源车龙头"},
+    {"code": "US.AMD", "name": "Advanced Micro Devices", "sector": "Semiconductors", "enabled": true, "tier": "TIER1", "order_qty": 100, "max_position_ratio": 0.15, "stop_loss": -0.10, "take_profit": 0.25, "notes": "半导体/CPU/GPU"},
+    {"code": "US.NFLX", "name": "Netflix Inc", "sector": "Communication Services", "enabled": true, "tier": "TIER1", "order_qty": 20, "max_position_ratio": 0.15, "stop_loss": -0.08, "take_profit": 0.20, "notes": "流媒体龙头"},
+    {"code": "US.AVGO", "name": "Broadcom Inc", "sector": "Semiconductors", "enabled": true, "tier": "TIER1", "order_qty": 10, "max_position_ratio": 0.15, "stop_loss": -0.10, "take_profit": 0.20, "notes": "网络芯片/AI 龙头"},
+    
+    {"code": "US.BABA", "name": "Alibaba Group", "sector": "Consumer Cyclical", "enabled": true, "tier": "TIER1", "order_qty": 100, "max_position_ratio": 0.15, "stop_loss": -0.10, "take_profit": 0.20, "notes": "中概电商龙头"},
+    {"code": "US.PDD", "name": "PDD Holdings", "sector": "Consumer Cyclical", "enabled": true, "tier": "TIER2", "order_qty": 50, "max_position_ratio": 0.10, "stop_loss": -0.12, "take_profit": 0.20, "notes": "拼多多/跨境"},
+    {"code": "US.JD", "name": "JD.com Inc", "sector": "Consumer Cyclical", "enabled": true, "tier": "TIER2", "order_qty": 50, "max_position_ratio": 0.10, "stop_loss": -0.10, "take_profit": 0.15, "notes": "中概电商/物流"},
+    {"code": "US.LI", "name": "Li Auto Inc", "sector": "Consumer Cyclical", "enabled": true, "tier": "TIER2", "order_qty": 50, "max_position_ratio": 0.10, "stop_loss": -0.10, "take_profit": 0.20, "notes": "中概新能源车"},
+    {"code": "US.NIO", "name": "NIO Inc", "sector": "Consumer Cyclical", "enabled": true, "tier": "TIER2", "order_qty": 100, "max_position_ratio": 0.10, "stop_loss": -0.12, "take_profit": 0.25, "notes": "中概新能源/高端"},
+    {"code": "US.XPEV", "name": "XPeng Inc", "sector": "Consumer Cyclical", "enabled": true, "tier": "TIER2", "order_qty": 100, "max_position_ratio": 0.10, "stop_loss": -0.12, "take_profit": 0.25, "notes": "中概新能源/智驾"},
+    {"code": "US.BIDU", "name": "Baidu Inc", "sector": "Technology", "enabled": true, "tier": "TIER2", "order_qty": 50, "max_position_ratio": 0.10, "stop_loss": -0.10, "take_profit": 0.20, "notes": "中概 AI/自动驾驶"},
+    {"code": "US.NTES", "name": "NetEase Inc", "sector": "Communication Services", "enabled": true, "tier": "TIER2", "order_qty": 20, "max_position_ratio": 0.10, "stop_loss": -0.08, "take_profit": 0.15, "notes": "中概游戏龙头"},
+    {"code": "US.TME", "name": "Tencent Music", "sector": "Communication Services", "enabled": true, "tier": "TIER2", "order_qty": 100, "max_position_ratio": 0.10, "stop_loss": -0.10, "take_profit": 0.20, "notes": "中概音乐流媒体"},
+    {"code": "US.BILI", "name": "Bilibili Inc", "sector": "Communication Services", "enabled": true, "tier": "TIER2", "order_qty": 50, "max_position_ratio": 0.08, "stop_loss": -0.12, "take_profit": 0.25, "notes": "中概视频社区"},
+
+    {"code": "US.JPM", "name": "JPMorgan Chase", "sector": "Financial Services", "enabled": true, "tier": "TIER1", "order_qty": 20, "max_position_ratio": 0.15, "stop_loss": -0.08, "take_profit": 0.15, "notes": "美国银行龙头"},
+    {"code": "US.GS", "name": "Goldman Sachs", "sector": "Financial Services", "enabled": true, "tier": "TIER1", "order_qty": 10, "max_position_ratio": 0.15, "stop_loss": -0.08, "take_profit": 0.15, "notes": "投行龙头"},
+    {"code": "US.BAC", "name": "Bank of America", "sector": "Financial Services", "enabled": true, "tier": "TIER1", "order_qty": 100, "max_position_ratio": 0.15, "stop_loss": -0.08, "take_profit": 0.15, "notes": "商业银行龙头"},
+    {"code": "US.V", "name": "Visa Inc", "sector": "Financial Services", "enabled": true, "tier": "TIER1", "order_qty": 20, "max_position_ratio": 0.15, "stop_loss": -0.08, "take_profit": 0.15, "notes": "支付龙头"},
+    {"code": "US.BRK.B", "name": "Berkshire Hathaway B", "sector": "Financial Services", "enabled": true, "tier": "TIER1", "order_qty": 10, "max_position_ratio": 0.15, "stop_loss": -0.08, "take_profit": 0.15, "notes": "巴菲特长跑"},
+    
+    {"code": "US.LLY", "name": "Eli Lilly", "sector": "Healthcare", "enabled": true, "tier": "TIER1", "order_qty": 10, "max_position_ratio": 0.15, "stop_loss": -0.08, "take_profit": 0.20, "notes": "医药/减肥药龙头"},
+    {"code": "US.JNJ", "name": "Johnson & Johnson", "sector": "Healthcare", "enabled": true, "tier": "TIER1", "order_qty": 20, "max_position_ratio": 0.15, "stop_loss": -0.08, "take_profit": 0.15, "notes": "医药综合龙头"},
+    {"code": "US.UNH", "name": "UnitedHealth Group", "sector": "Healthcare", "enabled": true, "tier": "TIER1", "order_qty": 10, "max_position_ratio": 0.15, "stop_loss": -0.08, "take_profit": 0.15, "notes": "医疗保险龙头"},
+    {"code": "US.PFE", "name": "Pfizer Inc", "sector": "Healthcare", "enabled": true, "tier": "TIER2", "order_qty": 100, "max_position_ratio": 0.10, "stop_loss": -0.10, "take_profit": 0.20, "notes": "制药龙头"},
+    {"code": "US.MRK", "name": "Merck & Co", "sector": "Healthcare", "enabled": true, "tier": "TIER2", "order_qty": 20, "max_position_ratio": 0.10, "stop_loss": -0.08, "take_profit": 0.15, "notes": "抗癌药龙头"},
+
+    {"code": "US.XOM", "name": "Exxon Mobil", "sector": "Energy", "enabled": true, "tier": "TIER1", "order_qty": 50, "max_position_ratio": 0.15, "stop_loss": -0.08, "take_profit": 0.15, "notes": "能源/油气龙头"},
+    {"code": "US.CVX", "name": "Chevron Corp", "sector": "Energy", "enabled": true, "tier": "TIER1", "order_qty": 20, "max_position_ratio": 0.15, "stop_loss": -0.08, "take_profit": 0.15, "notes": "能源/油气"},
+    {"code": "US.COP", "name": "ConocoPhillips", "sector": "Energy", "enabled": true, "tier": "TIER2", "order_qty": 20, "max_position_ratio": 0.10, "stop_loss": -0.10, "take_profit": 0.15, "notes": "页岩油龙头"},
+    {"code": "US.SLB", "name": "Schlumberger", "sector": "Energy", "enabled": true, "tier": "TIER2", "order_qty": 50, "max_position_ratio": 0.10, "stop_loss": -0.10, "take_profit": 0.15, "notes": "油服龙头"},
+
+    {"code": "US.WMT", "name": "Walmart Inc", "sector": "Consumer Defensive", "enabled": true, "tier": "TIER1", "order_qty": 20, "max_position_ratio": 0.15, "stop_loss": -0.08, "take_profit": 0.15, "notes": "零售龙头"},
+    {"code": "US.COST", "name": "Costco Wholesale", "sector": "Consumer Defensive", "enabled": true, "tier": "TIER1", "order_qty": 10, "max_position_ratio": 0.15, "stop_loss": -0.08, "take_profit": 0.15, "notes": "会员制零售"},
+    {"code": "US.NKE", "name": "Nike Inc", "sector": "Consumer Cyclical", "enabled": true, "tier": "TIER1", "order_qty": 50, "max_position_ratio": 0.15, "stop_loss": -0.08, "take_profit": 0.15, "notes": "运动品牌龙头"},
+    {"code": "US.SBUX", "name": "Starbucks Corp", "sector": "Consumer Cyclical", "enabled": true, "tier": "TIER1", "order_qty": 50, "max_position_ratio": 0.15, "stop_loss": -0.08, "take_profit": 0.15, "notes": "咖啡连锁龙头"},
+    {"code": "US.MCD", "name": "McDonald's Corp", "sector": "Consumer Cyclical", "enabled": true, "tier": "TIER1", "order_qty": 20, "max_position_ratio": 0.15, "stop_loss": -0.08, "take_profit": 0.15, "notes": "快餐龙头"},
+    
+    {"code": "US.BWXT", "name": "BWX Technologies", "sector": "Industrials", "enabled": true, "tier": "TIER1", "order_qty": 20, "max_position_ratio": 0.15, "stop_loss": -0.10, "take_profit": 0.20, "notes": "核能/防务"},
+    {"code": "US.LMT", "name": "Lockheed Martin", "sector": "Industrials", "enabled": true, "tier": "TIER1", "order_qty": 10, "max_position_ratio": 0.15, "stop_loss": -0.08, "take_profit": 0.15, "notes": "军工航天龙头"},
+    {"code": "US.CAT", "name": "Caterpillar Inc", "sector": "Industrials", "enabled": true, "tier": "TIER1", "order_qty": 10, "max_position_ratio": 0.15, "stop_loss": -0.08, "take_profit": 0.15, "notes": "工程机械龙头"},
+    {"code": "US.BA", "name": "Boeing Co", "sector": "Industrials", "enabled": true, "tier": "TIER1", "order_qty": 10, "max_position_ratio": 0.15, "stop_loss": -0.08, "take_profit": 0.20, "notes": "航空制造龙头"},
+    {"code": "US.RIVN", "name": "Rivian Automotive", "sector": "Consumer Cyclical", "enabled": true, "tier": "TIER2", "order_qty": 100, "max_position_ratio": 0.08, "stop_loss": -0.15, "take_profit": 0.25, "notes": "电动皮卡"},
+    {"code": "US.LCID", "name": "Lucid Group", "sector": "Consumer Cyclical", "enabled": true, "tier": "TIER2", "order_qty": 100, "max_position_ratio": 0.05, "stop_loss": -0.15, "take_profit": 0.25, "notes": "高端电动车"},
+    {"code": "US.F", "name": "Ford Motor", "sector": "Consumer Cyclical", "enabled": true, "tier": "TIER2", "order_qty": 100, "max_position_ratio": 0.10, "stop_loss": -0.10, "take_profit": 0.20, "notes": "传统车企转型"},
+    {"code": "US.UBER", "name": "Uber Technologies", "sector": "Technology", "enabled": true, "tier": "TIER2", "order_qty": 50, "max_position_ratio": 0.10, "stop_loss": -0.10, "take_profit": 0.20, "notes": "出行龙头"},
+    {"code": "US.ORCL", "name": "Oracle Corp", "sector": "Technology", "enabled": true, "tier": "TIER1", "order_qty": 20, "max_position_ratio": 0.15, "stop_loss": -0.08, "take_profit": 0.15, "notes": "数据库/云"},
+    {"code": "US.CRM", "name": "Salesforce Inc", "sector": "Technology", "enabled": true, "tier": "TIER1", "order_qty": 20, "max_position_ratio": 0.15, "stop_loss": -0.08, "take_profit": 0.15, "notes": "CRM/SaaS"},
+    {"code": "US.MU", "name": "Micron Technology", "sector": "Semiconductors", "enabled": true, "tier": "TIER1", "order_qty": 100, "max_position_ratio": 0.15, "stop_loss": -0.10, "take_profit": 0.20, "notes": "存储芯片"},
+    {"code": "US.QCOM", "name": "Qualcomm Inc", "sector": "Semiconductors", "enabled": true, "tier": "TIER1", "order_qty": 20, "max_position_ratio": 0.15, "stop_loss": -0.10, "take_profit": 0.20, "notes": "通信芯片"},
+    {"code": "US.TSM", "name": "TSMC", "sector": "Semiconductors", "enabled": true, "tier": "TIER1", "order_qty": 20, "max_position_ratio": 0.15, "stop_loss": -0.10, "take_profit": 0.20, "notes": "晶圆代工"},
+    {"code": "US.ARM", "name": "Arm Holdings", "sector": "Semiconductors", "enabled": true, "tier": "TIER2", "order_qty": 20, "max_position_ratio": 0.10, "stop_loss": -0.10, "take_profit": 0.20, "notes": "架构授权"}
+  ],
+  
+  "etfs": [
+    {"code": "US.SPY", "name": "SPDR S&P 500 ETF", "sector": "ETF", "enabled": true, "tier": "ETF", "order_qty": 50, "max_position_ratio": 0.20, "notes": "大盘基准"},
+    {"code": "US.QQQ", "name": "Invesco QQQ Trust", "sector": "ETF", "enabled": true, "tier": "ETF", "order_qty": 50, "max_position_ratio": 0.20, "notes": "科技基准"},
+    {"code": "US.DIA", "name": "SPDR Dow Jones ETF", "sector": "ETF", "enabled": true, "tier": "ETF", "order_qty": 20, "max_position_ratio": 0.20, "notes": "道指基准"},
+    {"code": "US.IWM", "name": "iShares Russell 2000", "sector": "ETF", "enabled": true, "tier": "ETF", "order_qty": 20, "max_position_ratio": 0.20, "notes": "小盘基准"},
+    {"code": "US.UVXY", "name": "ProShares Ultra VIX", "sector": "ETF", "enabled": true, "tier": "ETF", "order_qty": 50, "max_position_ratio": 0.10, "notes": "波动率对冲"}
+  ],
+  
+  "sectors": [
+    "Technology", "Semiconductors", "Consumer Cyclical", "Consumer Defensive",
+    "Financial Services", "Healthcare", "Energy", "Industrials", "Communication Services"
+  ],
+  
+  "tiers": {
+    "TIER1": {"description": "核心龙头，高流动性", "max_position_ratio": 0.15, "liquidity_multiplier": 1.0},
+    "TIER2": {"description": "二线龙头，中等流动性", "max_position_ratio": 0.10, "liquidity_multiplier": 0.7},
+    "ETF": {"description": "指数基准", "max_position_ratio": 0.20, "liquidity_multiplier": 1.0}
+  }
+}

@@ -1,0 +1,92 @@
+[
+  {
+    "trade_id": "SIM_US_TSLA_20260327",
+    "code": "US.TSLA",
+    "direction": "SHORT",
+    "quantity": 50,
+    "entry_price": 383.43,
+    "stop_loss": 398.7672,
+    "updated_at": "2026-03-27T05:08:34.098136",
+    "notes": "模拟持仓 - 部分止盈后剩余"
+  },
+  {
+    "trade_id": "SIM_US_NVDA_20260327",
+    "code": "US.NVDA",
+    "direction": "SHORT",
+    "quantity": 50,
+    "entry_price": 174.4,
+    "stop_loss": 181.376,
+    "updated_at": "2026-03-27T05:08:34.098163",
+    "notes": "模拟持仓 - 部分止盈后剩余"
+  },
+  {
+    "trade_id": "SIM_US_AAPL_20260327",
+    "code": "US.AAPL",
+    "direction": "SHORT",
+    "quantity": 100,
+    "entry_price": 256.16,
+    "stop_loss": 266.4064,
+    "updated_at": "2026-03-27T05:08:34.098173",
+    "notes": "模拟持仓 - 部分止盈后剩余"
+  },
+  {
+    "trade_id": "SIM_US_MSFT_20260327",
+    "code": "US.MSFT",
+    "direction": "SHORT",
+    "quantity": 50,
+    "entry_price": 367.67,
+    "stop_loss": 382.3768,
+    "updated_at": "2026-03-27T05:08:34.098179",
+    "notes": "模拟持仓 - 部分止盈后剩余"
+  },
+  {
+    "trade_id": "SIM_US_GOOGL_20260327",
+    "code": "US.GOOGL",
+    "direction": "SHORT",
+    "quantity": 50,
+    "entry_price": 284.28,
+    "stop_loss": 295.65119999999996,
+    "updated_at": "2026-03-27T05:08:34.098185",
+    "notes": "模拟持仓 - 部分止盈后剩余"
+  },
+  {
+    "trade_id": "SIM_US_META_20260327",
+    "code": "US.META",
+    "direction": "SHORT",
+    "quantity": 50,
+    "entry_price": 556.63,
+    "stop_loss": 578.8952,
+    "updated_at": "2026-03-27T05:08:34.098191",
+    "notes": "模拟持仓 - 部分止盈后剩余"
+  },
+  {
+    "trade_id": "SIM_US_AMZN_20260327",
+    "code": "US.AMZN",
+    "direction": "SHORT",
+    "quantity": 50,
+    "entry_price": 210.75,
+    "stop_loss": 219.18,
+    "updated_at": "2026-03-27T05:08:34.098196",
+    "notes": "模拟持仓 - 部分止盈后剩余"
+  },
+  {
+    "trade_id": "SIM_US_BABA_20260327",
+    "code": "US.BABA",
+    "direction": "SHORT",
+    "quantity": 100,
+    "entry_price": 125.05,
+    "stop_loss": 130.052,
+    "updated_at": "2026-03-27T05:08:34.098202",
+    "notes": "模拟持仓 - 部分止盈后剩余"
+  },
+  {
+    "trade_id": "SIM_US_PDD_20260327",
+    "code": "US.PDD",
+    "direction": "SHORT",
+    "quantity": 50,
+    "entry_price": 100.59,
+    "stop_loss": 104.6136,
+    "updated_at": "2026-03-27T05:08:34.098208",
+    "notes": "模拟持仓 - 部分止盈后剩余"
+  }
+]

@@ -1,0 +1,273 @@
+{
+  "report_type": "daily",
+  "report_version": "2.0",
+  "report_date": "2026-05-06",
+  "generated_at": "2026-05-07T07:16:13.520023",
+  "summary": {
+    "total_trades": 0,
+    "closed_trades": 0,
+    "total_pnl": 0,
+    "win_rate": 0,
+    "avg_pnl": 0,
+    "equity_snapshot": {
+      "current_equity": 1066600.0,
+      "drawdown_pct": -2.4
+    }
+  },
+  "signal_funnel": {
+    "total_decisions": 0,
+    "by_direction_strength": {}
+  },
+  "rejection_analysis": {
+    "total": 0,
+    "by_reason": {},
+    "by_symbol": {},
+    "top_rejector": "none"
+  },
+  "capital_state": {
+    "current_equity": 1066600.0,
+    "cash": 562955.0,
+    "buying_power": 1629555.0,
+    "drawdown_pct": -2.4,
+    "max_drawdown_pct": -6.07,
+    "water_level": "green"
+  },
+  "attribution_data": {
+    "total_records": 0,
+    "data_available": false,
+    "note": "trade_attribution 无当日数据",
+    "five_factor": {
+      "five_factor_available": true,
+      "noise_trades_pnl": -12397.22,
+      "early_exit_pnl": 0.0,
+      "late_exit_pnl": 0.0,
+      "overtrading_pnl": 137.91,
+      "missed_signals_pnl": 36480.51,
+      "behavioral_score": {
+        "score": 88,
+        "grade": "A"
+      },
+      "rules": [
+        {
+          "rule_id": "R1",
+          "human_text": "平均持有 0.2 天，平均盈利 2.6%",
+          "entry_hour_range": [
+            9.0,
+            16.0
+          ],
+          "holding_days_range": [
+            0.1,
+            0.22707777871354168
+          ],
+          "support_count": 20,
+          "coverage_rate": 1.0,
+          "avg_pnl_pct": 0.0263,
+          "weight": 1.0
+        }
+      ],
+      "disposition_effect": {
+        "severity": "low",
+        "avg_hold_winners_days": 0.2,
+        "avg_hold_losers_days": 0.1,
+        "loser_winner_hold_ratio": 0.83,
+        "interpretation": "亏损持仓是盈利的 0.8x — 健康"
+      },
+      "chasing": {
+        "severity": "insufficient_data",
+        "avg_deviation_pct": 0
+      },
+      "anchoring": {
+        "severity": "low",
+        "anchored_ratio": 0.0,
+        "interpretation": "0% 的亏损单超过止损设计 — 止损纪律良好"
+      }
+    },
+    "signal_scores_avg": null,
+    "execution_scores_avg": null,
+    "risk_scores_avg": null,
+    "timing_scores_avg": null,
+    "overall_scores_avg": null
+  },
+  "trade_analyses": [],
+  "dimensions": {
+    "signal_quality": {
+      "score": 5.0,
+      "total_signals": 0,
+      "signal_to_trade_ratio": 0,
+      "strength_distribution": {},
+      "assessment": "no_trades"
+    },
+    "voting_consistency": {
+      "score": null,
+      "status": "no_trades",
+      "data_available": false
+    },
+    "execution_quality": {
+      "score": null,
+      "status": "no_trades",
+      "data_available": false
+    },
+    "risk_compliance": {
+      "data_available": true,
+      "current_drawdown_pct": -2.4,
+      "max_drawdown_pct": -6.07,
+      "water_level": "green",
+      "risk_score": 9.0
+    },
+    "funnel_diagnosis": {
+      "score": null,
+      "status": "no_decisions",
+      "total_decisions": 0,
+      "total_trades": 0,
+      "total_rejections": 0
+    },
+    "attribution_learning": {
+      "data_available": true,
+      "lessons_count": 1,
+      "five_factor": {
+        "five_factor_available": true,
+        "noise_trades_pnl": -12397.22,
+        "early_exit_pnl": 0.0,
+        "late_exit_pnl": 0.0,
+        "overtrading_pnl": 137.91,
+        "missed_signals_pnl": 36480.51,
+        "behavioral_score": {
+          "score": 88,
+          "grade": "A"
+        },
+        "rules": [
+          {
+            "rule_id": "R1",
+            "human_text": "平均持有 0.2 天，平均盈利 2.6%",
+            "entry_hour_range": [
+              9.0,
+              16.0
+            ],
+            "holding_days_range": [
+              0.1,
+              0.22707777871354168
+            ],
+            "support_count": 20,
+            "coverage_rate": 1.0,
+            "avg_pnl_pct": 0.0263,
+            "weight": 1.0
+          }
+        ],
+        "disposition_effect": {
+          "severity": "low",
+          "avg_hold_winners_days": 0.2,
+          "avg_hold_losers_days": 0.1,
+          "loser_winner_hold_ratio": 0.83,
+          "interpretation": "亏损持仓是盈利的 0.8x — 健康"
+        },
+        "chasing": {
+          "severity": "insufficient_data",
+          "avg_deviation_pct": 0
+        },
+        "anchoring": {
+          "severity": "low",
+          "anchored_ratio": 0.0,
+          "interpretation": "0% 的亏损单超过止损设计 — 止损纪律良好"
+        }
+      },
+      "behavioral_score": {
+        "score": 88,
+        "grade": "A"
+      }
+    }
+  },
+  "decision_analysis": {},
+  "risk_analysis": {
+    "data_available": true,
+    "current_drawdown_pct": -2.4,
+    "max_drawdown_pct": -6.07,
+    "water_level": "green",
+    "risk_score": 9.0
+  },
+  "voting_analysis": {
+    "score": null,
+    "status": "no_trades",
+    "data_available": false
+  },
+  "error_patterns": {},
+  "review_score": {
+    "overall_score": 5.0,
+    "max_score": 10.0,
+    "status": "no_trades",
+    "breakdown": {}
+  },
+  "market_regime": {
+    "state": "unknown",
+    "confidence": "low",
+    "indicators": {
+      "drawdown_pct": 2.4
+    }
+  },
+  "plan_vs_actual": {
+    "plan_available": true,
+    "planned_targets": [
+      {
+        "symbol": "US.AMD",
+        "direction": "LONG",
+        "entry_zone": [
+          148.2,
+          150.0
+        ],
+        "stop_loss": 145.5,
+        "take_profit": 157.0,
+        "urgency": "MEDIUM",
+        "rationale": "半导体板块跟随QQQ缩量整理至20日均线支撑 -> 量比回升确认短线资金回流 -> 中性市况下博弈区间反弹，盈亏比>2:1。"
+      },
+      {
+        "symbol": "US.LLY",
+        "direction": "LONG",
+        "entry_zone": [
+          882.0,
+          886.0
+        ],
+        "stop_loss": 873.0,
+        "take_profit": 902.0,
+        "urgency": "LOW",
+        "rationale": "医药防御属性在NEUTRAL市占优 -> 财报真空期机构调仓偏好确定性增长 -> 回踩前期成交密集区获支撑 -> 逢低布局稳健收益。"
+      },
+      {
+        "symbol": "US.BABA",
+        "direction": "LONG",
+        "entry_zone": [
+          118.5,
+          120.5
+        ],
+        "stop_loss": 116.0,
+        "take_profit": 125.5,
+        "urgency": "MEDIUM",
+        "rationale": "中概ADR与美股大盘相关性阶段性减弱 -> 估值处于低位且无新增利空 -> 空头回补叠加技术面超卖 -> 博弈均值回归反弹。"
+      },
+      {
+        "symbol": "US.GOOG",
+        "direction": "LONG",
+        "entry_zone": [
+          195.5,
+          197.5
+        ],
+        "stop_loss": 191.5,
+        "take_profit": 204.0,
+        "urgency": "LOW",
+        "rationale": "大型科技股提供中性市底仓稳定性 -> AI资本开支逻辑支撑估值下限 -> 盘前回踩VWAP形成高胜率入场点 -> 顺势低吸。"
+      }
+    ],
+    "executed_targets": [],
+    "missed_opportunities": [
+      "US.AMD",
+      "US.GOOG",
+      "US.LLY",
+      "US.BABA"
+    ],
+    "unplanned_trades": [],
+    "plan_date": "2026-05-06",
+    "execution_rate": 0.0
+  },
+  "key_learnings": [],
+  "improvement_suggestions": [
+    "今日无交易，系统运行正常，等待交易信号"
+  ]
+}

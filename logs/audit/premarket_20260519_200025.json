@@ -1,0 +1,51 @@
+{
+  "check_type": "premarket_check",
+  "timestamp": "2026-05-19T12:00:22.676332+00:00",
+  "market": "US",
+  "checks": [
+    {
+      "name": "服务进程",
+      "status": "PASS",
+      "detail": "ftseek-us: active"
+    },
+    {
+      "name": "做空策略路由器",
+      "status": "PASS",
+      "detail": "策略数=2 | 默认=unknown | 模拟盘强制期权=False"
+    },
+    {
+      "name": "快速退出引擎",
+      "status": "PASS",
+      "detail": "已启用=True | 跟踪中=0 | 目标=15% | 止损=25%"
+    },
+    {
+      "name": "期权持仓恢复",
+      "status": "PASS",
+      "detail": "未平仓期权=0"
+    },
+    {
+      "name": "数据源连接",
+      "status": "PASS",
+      "detail": "AAPL 价格=$297.84"
+    },
+    {
+      "name": "昨日交易回顾",
+      "status": "PASS",
+      "detail": "日期=2026-05-18 | 总交易=15 | 做多=0 | 做空/期权=0"
+    },
+    {
+      "name": "日志错误扫描",
+      "status": "PASS",
+      "detail": "最近 500 行中有 0 个 ERROR/CRITICAL"
+    },
+    {
+      "name": "系统资源",
+      "status": "PASS",
+      "detail": "内存=128MB | CPU=0.0%"
+    }
+  ],
+  "overall_status": "PASS",
+  "errors": [],
+  "warnings": [],
+  "summary": "FTSeek-US 盘前预检 | 状态=PASS | 检查项=8 | 错误=0 | 警告=0"
+}

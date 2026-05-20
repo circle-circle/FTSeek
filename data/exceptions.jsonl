@@ -1,0 +1,1 @@
+{"timestamp": "2026-04-18T09:35:00-04:00", "type": "REVERSE_BLOCKED", "symbol": "AAPL", "reason": "Cooldown active, last reverse < 15 mins", "impact": "Missed potential 0.8% swing", "action_needed": false, "note": ""}

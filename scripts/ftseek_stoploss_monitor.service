@@ -1,0 +1,28 @@
+[Unit]
+Description=FTSeek-US Stop-Loss Monitor Service (P0 Enhanced)
+After=network.target ftseek-us.service
+Wants=ftseek-us.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/ftseek/FTSeek-US
+Environment="PATH=/opt/ftseek/FTSeek-US/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+ExecStart=/opt/ftseek/FTSeek-US/venv/bin/python /opt/ftseek/FTSeek-US/scripts/stoploss_monitor.py --mode continuous
+Restart=always
+RestartSec=10
+StandardOutput=append:/opt/ftseek/FTSeek-US/logs/stoploss_monitor.log
+StandardError=append:/opt/ftseek/FTSeek-US/logs/stoploss_monitor_error.log
+
+# 资源限制
+LimitNOFILE=65535
+Nice=10
+
+# 安全设置
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/opt/ftseek/FTSeek-US/logs /opt/ftseek/FTSeek-US/data
+
+[Install]
+WantedBy=multi-user.target
