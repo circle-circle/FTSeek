@@ -105,7 +105,7 @@ API_TOKEN = os.getenv("API_TOKEN")
 if not API_TOKEN:
     if os.getenv("FTSEEK_DEV_MODE", "").lower() in ("1", "true", "yes"):
         API_TOKEN = secrets.token_hex(16)
-        print(f"⚠️  警告：API_TOKEN 未设置，已生成临时 Token: {API_TOKEN}")
+        logging.getLogger("ftseek.config").warning(f"⚠️  API_TOKEN 未设置，已生成临时 Token: {API_TOKEN}")
     else:
         raise RuntimeError(
             "🔐 安全错误：API_TOKEN 环境变量未设置！\n"

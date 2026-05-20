@@ -115,13 +115,26 @@ class UnifiedLLMService:
                 )
                 
                 latency_ms = int((time.time() - start_time) * 1000)
+                
+                # 提取 prompt 内容用于审计 (2026-05-21 增强)
+                prompt_text = ""
+                if messages:
+                    # 提取 system + user 消息
+                    for msg in messages:
+                        role = msg.get("role", "")
+                        content = msg.get("content", "")
+                        if role in ("system", "user"):
+                            prompt_text += f"[{role}]: {content}\n"
+                
                 self._record_metrics(
                     model=current_model,
                     task_type=task_type,
                     status="success" if result else "empty",
                     latency_ms=latency_ms,
                     usage=usage,
-                    attempt=attempt + 1
+                    attempt=attempt + 1,
+                    prompt=prompt_text,
+                    response=result
                 )
 
                 if result:
@@ -144,10 +157,138 @@ class UnifiedLLMService:
 
         return None
 
+    async def call_with_tools(self, messages: List[Dict], tools: List[Dict],
+                               model: str = None, timeout: int = None,
+                               tool_choice: str = "auto",
+                               temperature: float = 0.3, max_tokens: int = 4096,
+                               task_type: str = "unknown") -> Optional[Dict]:
+        """
+        调用 LLM with native function calling (带重试+降级)
+
+        Returns: {"content": str, "tool_calls": [...]} 或 None
+        """
+        model = model or self.default_model
+        timeout = timeout or self.default_timeout
+        start_time = time.time()
+
+        for attempt in range(self.max_retries + 1):
+            if attempt > 0:
+                delay = 2 ** attempt
+                logger.warning(f"[UnifiedLLM] 重试等待 {delay}s (attempt={attempt})")
+                await asyncio.sleep(delay)
+
+            current_model = model
+            if attempt > 0 and model in self.FALLBACK_CHAIN:
+                fallback_idx = min(attempt - 1, len(self.FALLBACK_CHAIN[model]) - 1)
+                current_model = self.FALLBACK_CHAIN[model][fallback_idx]
+                logger.warning(f"[UnifiedLLM] 降级到 {current_model}")
+
+            try:
+                result, usage = await self._http_call_with_tools(
+                    model=current_model, messages=messages,
+                    tools=tools, tool_choice=tool_choice,
+                    timeout=timeout, temperature=temperature,
+                    max_tokens=max_tokens,
+                )
+                latency_ms = int((time.time() - start_time) * 1000)
+                self._record_metrics(
+                    model=current_model, task_type=task_type,
+                    status="success" if result else "empty",
+                    latency_ms=latency_ms, usage=usage, attempt=attempt + 1,
+                )
+                if result:
+                    return result
+            except Exception as e:
+                logger.error(
+                    f"[UnifiedLLM] call_with_tools 失败 model={current_model} "
+                    f"attempt={attempt+1}: {type(e).__name__}: {e}"
+                )
+                self._record_metrics(
+                    model=current_model, task_type=task_type,
+                    status=f"error:{type(e).__name__}",
+                    latency_ms=int((time.time() - start_time) * 1000),
+                    usage={}, attempt=attempt + 1,
+                )
+
+        return None
+
+    async def _http_call_with_tools(self, model: str, messages: List[Dict],
+                                      tools: List[Dict], tool_choice: str,
+                                      timeout: int, temperature: float,
+                                      max_tokens: int) -> Tuple[Optional[Dict], Dict]:
+        """HTTP 调用 with native function calling"""
+        if not self.api_key:
+            return None, {}
+
+        payload = {
+            "model": model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "tools": tools,
+            "tool_choice": tool_choice,
+        }
+
+        loop = asyncio.get_event_loop()
+        resp = await loop.run_in_executor(
+            None,
+            lambda: requests.post(
+                f"{self.base_url}/chat/completions",
+                headers={"Authorization": f"Bearer {self.api_key}"},
+                json=payload, timeout=timeout,
+            )
+        )
+
+        if resp.status_code in (429, 404):
+            logger.warning(f"[UnifiedLLM] API {resp.status_code}, model={model}")
+            return None, {}
+        resp.raise_for_status()
+        data = resp.json()
+        usage = data.get("usage", {})
+        choices = data.get("choices")
+        if not choices:
+            return None, usage
+
+        msg = choices[0].get("message", {})
+        result = {}
+        if msg.get("content"):
+            result["content"] = msg["content"]
+        if msg.get("tool_calls"):
+            result["tool_calls"] = [
+                {
+                    "id": tc["id"],
+                    "function": {
+                        "name": tc["function"]["name"],
+                        "arguments": tc["function"]["arguments"],
+                    },
+                }
+                for tc in msg["tool_calls"]
+            ]
+
+        return result if result else None, usage
+
     async def call_and_parse(self, messages: List[Dict], model: str = None,
-                              timeout: int = None, task_type: str = "unknown") -> Dict:
-        """调用 LLM 并解析 JSON 结果"""
+                              timeout: int = None, task_type: str = "unknown",
+                              schema_required: Dict = None) -> Dict:
+        """调用 LLM 并解析 JSON (可选 schema 校验 2026-05-21)"""
         raw = await self.call(messages, model, timeout, task_type=task_type)
+        if not raw:
+            return {}
+        
+        # 如果提供了 schema，进行校验
+        if schema_required:
+            try:
+                from app.llm.json_schema_guard import parse_and_validate
+                result = parse_and_validate(raw, schema_required)
+                if result:
+                    return result
+                else:
+                    logger.warning(f"[UnifiedLLM] Schema 校验失败，返回空 dict")
+                    return {}
+            except Exception as e:
+                logger.warning(f"[UnifiedLLM] Schema 校验异常：{e}")
+                return self.extract_json(raw)
+        
         return self.extract_json(raw)
 
     async def _http_call(self, model: str, messages: List[Dict],
@@ -252,9 +393,12 @@ class UnifiedLLMService:
         return (prompt_tokens / 1_000_000 * input_price) + (completion_tokens / 1_000_000 * output_price)
 
     def _record_metrics(self, model: str, task_type: str, status: str, 
-                        latency_ms: int, usage: Dict, attempt: int, error: str = None):
+                        latency_ms: int, usage: Dict, attempt: int, error: str = None,
+                        prompt: str = None, response: str = None):
         """
         记录 LLM 调用指标到 data/llm_metrics.jsonl
+        
+        2026-05-21 增强：添加 prompt 和 response 内容用于审计
         """
         try:
             METRICS_DIR.mkdir(parents=True, exist_ok=True)
@@ -275,6 +419,9 @@ class UnifiedLLMService:
                 "cost_cny": round(cost, 6),
                 "attempt": attempt,
                 "error": error[:50] if error else None,
+                # 2026-05-21 增强：审计内容 (截断避免过大)
+                "prompt_preview": prompt[:500] if prompt else None,
+                "response_preview": response[:500] if response else None,
             }
             
             # Append to JSONL (atomic enough for append mode)

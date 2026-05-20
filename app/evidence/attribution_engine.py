@@ -23,6 +23,10 @@ from app.evidence.trade_evidence_chain import (
     ExecutionTag, RiskTag, TimingTag, NewsTag, MarketTag
 )
 
+# Prompt 提取到独立文件 (2026-05-21)
+from app.llm.prompts.attribution import SYSTEM_PROMPT as ATTR_SYSTEM_PROMPT
+from app.llm.prompts.attribution import USER_PROMPT_TEMPLATE as ATTR_USER_PROMPT_TEMPLATE
+
 logger = logging.getLogger("ftseek.evidence.attribution")
 logger.propagate = False
 
@@ -326,18 +330,92 @@ class AttributionEngine:
     
     def _llm_assisted_attribution(self, chain: TradeEvidenceChain):
         """
-        LLM辅助归因 - 模型判断亏损主因
+        LLM 辅助归因 - 模型判断盈亏主因 (2026-05-21)
         
-        Prompt示例:
-        "这笔交易亏损2.5%，请分析主要原因：
-        - 场景识别错误
-        - 策略不适配
-        - 执行问题
-        - 风控问题"
+        触发条件：PnL 绝对值 > 1% 或 归因标签不明确时调用
+        使用 UnifiedLLMService — 统一审计/缓存/降级
         """
-        # TODO: 集成qwen3.5-plus分析
-        # 当前跳过，后续Phase 3实现
-        pass
+        try:
+            # 触发条件：显著盈亏或归因不明确
+            if abs(chain.pnl_percent) < 1.0 and chain.attribution.direction_correct:
+                return  # 小盈亏且方向正确，跳过 LLM
+            
+            # 构建上下文
+            symbol = chain.trace_id.split('-')[0] if '-' in chain.trace_id else chain.trace_id
+            direction = chain.evidence.direction
+            pnl = chain.pnl_percent
+            scene = chain.evidence.scene
+            strategy = chain.evidence.strategy_id
+            news_sentiment = chain.evidence.news_sentiment
+            llm_reasoning = chain.evidence.llm_reasoning[:500] if chain.evidence.llm_reasoning else "N/A"
+            
+            # 2026-05-21: 增强版 Prompt (含思维链引导 + Few-shot)
+            system_prompt = ATTR_SYSTEM_PROMPT
+            
+            user_prompt = ATTR_USER_PROMPT_TEMPLATE.format(
+                symbol=symbol, direction=direction, pnl=pnl,
+                scene=scene, strategy=strategy,
+                news_sentiment=news_sentiment,
+                llm_reasoning=llm_reasoning
+            )
+            
+            # 使用 UnifiedLLMService (2026-05-21 升级)
+            import asyncio
+            from app.llm.unified_service import get_unified_llm
+            
+            async def _call_llm():
+                svc = get_unified_llm(
+                    default_model="qwen-plus",
+                    default_timeout=60,
+                    max_retries=2
+                )
+                
+                messages = [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ]
+                
+                return await svc.call(
+                    messages=messages,
+                    model="qwen-plus",
+                    timeout=60,
+                    task_type="attribution"
+                )
+            
+            raw_content = asyncio.run(_call_llm())
+            
+            if not raw_content:
+                logger.warning("[LLM 归因] 返回空响应，跳过")
+                return
+            
+            # 解析 JSON
+            import json
+            import re
+            
+            # 尝试提取 JSON 块
+            json_match = re.search(r'\{[\s\S]*\}', raw_content)
+            if not json_match:
+                logger.warning("[LLM 归因] 响应无 JSON: %s", raw_content[:200])
+                return
+            
+            data = json.loads(json_match.group())
+            
+            # 写入归因标签
+            chain.attribution.llm_main_cause = data.get("main_cause", "unknown")
+            chain.attribution.llm_confidence = data.get("confidence", 0.0)
+            chain.attribution.llm_suggestion = data.get("suggestion", "")[:200]
+            
+            # 新增 lesson 字段 (2026-05-21)
+            if hasattr(chain.attribution, 'llm_lesson'):
+                chain.attribution.llm_lesson = data.get("lesson", "")[:200]
+            
+            logger.info(
+                f"[LLM 归因] {chain.trace_id}: {data.get('main_cause')} "
+                f"(置信度={data.get('confidence', 0):.2f})"
+            )
+            
+        except Exception as e:
+            logger.warning(f"[LLM 归因] 失败 (非阻塞): {e}")
     
     # ==================== LLM一致性检查 (Gemini亮点) ====================
     

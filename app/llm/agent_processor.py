@@ -412,56 +412,32 @@ class HermesAgentProcessor:
     async def _call_llm_with_tools(
         self, messages: List[Dict], tools: List[Dict],
     ) -> Optional[Dict]:
-        """调用 LLM，支持 native function calling。返回 {"content": str, "tool_calls": [...]} 或 None"""
+        """调用 LLM with native function calling — 统一走 UnifiedLLMService"""
+        from app.llm.unified_service import get_unified_llm
+
+        svc = get_unified_llm(
+            default_model=self.default_model,
+            default_timeout=self.llm_config.get("timeout", 120),
+            max_retries=1,
+        )
+
         try:
-            from app.core.unified_llm_factory import get_llm_client
-
-            client = get_llm_client(self.llm_config)
-            if not client:
-                logger.error("[HermesProcessor] LLM client 不可用")
-                return None
-
-            timeout_secs = self.llm_config.get("timeout", 120)
-            
-            response = await asyncio.wait_for(
-                client.chat.completions.create(
-                    model=self.default_model,
-                    messages=messages,
-                    tools=tools,
-                    tool_choice="auto",
-                ),
-                timeout=timeout_secs,
+            result = await svc.call_with_tools(
+                messages=messages, tools=tools,
+                model=self.default_model,
+                timeout=self.llm_config.get("timeout", 120),
+                task_type="agent_processor",
             )
 
-            msg = response.choices[0].message
+            if result:
+                # 兼容旧格式：如果 native function calling 不支持，回退到模拟模式
+                if "tool_calls" not in result and not result.get("content"):
+                    return await self._simulated_tool_call(messages)
 
-            # ⚠️ 禁止调用 client.close() — 全局单例由 factory 管理生命周期
-            # 调用 close() 会销毁 httpx 连接池，导致后续所有 LLM 调用失败
+            return result
 
-            result = {}
-            if msg.content:
-                result["content"] = msg.content
-
-            if msg.tool_calls:
-                result["tool_calls"] = [
-                    {
-                        "id": tc.id,
-                        "function": {
-                            "name": tc.function.name,
-                            "arguments": tc.function.arguments,
-                        },
-                    }
-                    for tc in msg.tool_calls
-                ]
-
-            return result if result else None
-
-        except asyncio.TimeoutError:
-            logger.warning("[HermesProcessor] LLM 调用超时 (timeout=%ds)", self.llm_config.get("timeout", 120))
-            return None
         except Exception as e:
             error_msg = str(e)
-            # 如果 native function calling 不支持，回退到模拟模式
             if "tools" in error_msg.lower() or "tool_choice" in error_msg.lower():
                 logger.warning("[HermesProcessor] Native function calling 不支持，使用模拟模式")
                 return await self._simulated_tool_call(messages)

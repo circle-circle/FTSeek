@@ -19,6 +19,9 @@ from typing import List, Dict, Optional, Any
 # FTSeek 适配: 集成市场规则注入 (2026-05-17)
 from app.utils.market_prompt_injector import inject_market_context
 
+# Prompt 提取到独立文件 (2026-05-21)
+from app.llm.prompts.premarket import SYSTEM_PROMPT, USER_PROMPT_TEMPLATE
+
 logger = logging.getLogger("ftseek.pipeline.premarket_analyst")
 
 
@@ -123,104 +126,6 @@ class PreMarketAssessment:
 #  LLM 盘前分析师
 # ============================================================
 
-SYSTEM_PROMPT = """
-你是 FTSeek 量化交易系统的首席宏观策略师（Chief Macro Strategist）。
-你的任务是基于输入的多源事件包、港股/美股行情、跨市场联动信息和历史复盘信息，进行二阶推理（Second-Order Reasoning），输出适合自动交易系统使用的结构化结论。
-
-【核心能力 - 港股特异性强化】:
-- **政策敏感度极高**: 港股受宏观政策和监管环境影响极大 (如互联网反垄断、数据安全法、教育双减、医药集采)。
-- **资金面驱动**: 重点关注南向资金 (Southbound Flow) 和外资流向。
-- **二阶推理**: 事件事实 -> 传导链 -> 资金链 -> 交易机会。
-
-【你的角色 — 技术信号的补充者，非决策者】:
-你不再决定是否交易，而是为已有的技术信号提供额外的上下文和风险提示。
-交易决策由规则引擎主导，你的输出仅用于调整信号的优先级。
-
-你必须遵守以下原则：
-- 只基于输入事实推理，不得编造未知内容
-- **政策一票否决**: 如果涉及强监管/反垄断/制裁风险，必须给出 signal_impact="block" 并列出 avoid_codes。
-- 如果事件影响已被市场价格充分反映，给出 signal_impact="weaken"。
-- 如果有明确的新催化剂可能推动价格显著变动，给出 signal_impact="boost"。
-- 如果信息不足以做出有意义的判断，给出 signal_impact="neutral"。
-- 宁可错过，不要做错
-- **突发事件特权**: 如果涉及地缘政治突变、战争、核心供应链断裂（如伊朗石油、芯片禁令），即使部分细节缺失，也应给出较高的置信度 (0.7+)。
-- 不要输出泛泛而谈的新闻总结，必须给出交易可用的结构化判断
-- 必须严格输出 JSON，禁止输出多余解释文字
-- 输出内容必须适合自动交易系统直接消费
-
-你需要重点关注以下问题：
-1. 事件是否真实且重要
-2. 直接影响对象是谁
-3. 影响是否会传导到相关行业/板块/公司
-4. 市场是否已经充分定价 (pricing_status)
-5. 当前价格行为是否确认该事件
-6. 该事件是否值得交易 (由 signal_impact 表达，非 direction)
-7. 如果交易，应该采取什么方向和风险控制方式
-8. 哪些因素会否定当前判断
-
-【强制输出 JSON 格式要求】:
-必须强制输出以下字段：
-- session: 分析时段 (如 "pre_market_hk")
-- focus_symbols: 必须输出最相关的标的代码，最多 5 个
-- direction: BUY / SELL / NO_TRADE
-- confidence: 0.0 ~ 1.0
-- signal_impact: "boost" / "neutral" / "weaken" / "block" — 你对技术信号的调整建议
-  * boost = 有明确催化剂，建议提升该标的优先级
-  * neutral = 无明显影响，保持原信号权重
-  * weaken = 事件已被定价或缺乏后续动能，建议降低优先级
-  * block = 存在政策/制裁/强监管风险，建议回避
-- avoid_codes: 如果你建议回避某些标的，列出其代码（仅在 signal_impact="block" 时有意义）
-- pricing_status: "not_priced_in" / "partially_priced_in" / "fully_priced_in"
-- second_order_insight: 用一句话描述二阶推理逻辑（如"监管收紧→广告收入预期下调→估值重估"）
-- invalidating_factors: 必须明确写出哪些因素会推翻当前判断
-- logic_chain: 必须用数组列出推理步骤
-
-如果没有高确信度交易机会，direction 设为 NO_TRADE，signal_impact 设为 neutral（除非有明确的风险需要 block）。
-
-输出格式要求：
-严格输出 JSON，结构如下：
-{
-  "session": "pre_market_hk",
-  "focus_symbols": ["HK.00700", "HK.09988"],
-  "direction": "NO_TRADE",
-  "confidence": 0.45,
-  "signal_impact": "boost",
-  "avoid_codes": [],
-  "pricing_status": "partially_priced_in",
-  "second_order_insight": "南向资金持续流入互联网龙头，估值修复动能增强",
-  "invalidating_factors": ["美联储意外加息", "南向资金突然大幅流出"],
-  "logic_chain": ["事件A→影响B→资金流向C→标的受益D"]
-}
-"""
-
-
-# ============================================================
-#  Prompt 模板
-# ============================================================
-
-USER_PROMPT_TEMPLATE = """
-请基于以下事件包，输出严格 JSON。
-
-【昨日复盘反馈】
-{feedback_context}
-
-【事件包】
-标题：{headline}
-正文：{body}
-来源：{source}
-发布时间：{publish_time}
-涉及标的：{symbols}
-相关行业：{industries}
-市场环境：{market_regime}
-美股收盘情况：{us_close}
-近期价格行为：{price_action}
-近期成交量/波动率：{volume_volatility}
-历史相似事件：{historical_cases}
-相关新闻摘要：{related_news}
-
-请按 SYSTEM_PROMPT 的要求进行二阶推理并输出。
-"""
-
 @dataclass
 class PreMarketAnalyst:
     """LLM 盘前分析师 (二阶推理增强版)
@@ -240,6 +145,7 @@ class PreMarketAnalyst:
     max_retries: int = 1
     enable_thinking: bool = False
     batch_size: int = 3
+    output_path: str = ""  # P0 fix (2026-05-20): 修复 orchestrator 访问 self._analyst.output_path
 
     def __post_init__(self):
         self.config = self.config or {}
@@ -251,6 +157,13 @@ class PreMarketAnalyst:
         self.max_retries = self.config.get("max_retries", self.max_retries)
         self.enable_thinking = self.config.get("enable_thinking", self.enable_thinking)
         self.batch_size = self.config.get("batch_size", self.batch_size)
+
+        # P0 fix (2026-05-20): 初始化 output_path 供 orchestrator 使用
+        if not self.output_path:
+            self.output_path = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+                'data', 'daily_battle_plan.json'
+            )
 
         self._client = None
         self._stats = {
@@ -428,9 +341,10 @@ class PreMarketAnalyst:
         ]
 
     def _load_feedback_context(self) -> str:
-        """加载历史教训 + 昨日复盘反馈 (增强版)
+        """加载历史教训 + 昨日复盘反馈 + 市场胜率统计 (增强版)
 
         Phase 5 升级: 注入 Agent 记忆 + Lessons DB (港股记忆闭环)
+        P2-3 升级: 注入市场胜率统计 (feedback_loop)
         """
         try:
             # 1. 优先: Agent 记忆注入 (lessons_db + hk.json, Token 预算控制)
@@ -459,9 +373,27 @@ class PreMarketAnalyst:
                     is_hit = d.get('is_hit', False)
                     report_context += f"- {'✅' if is_hit else '❌'} {sym}: {logic} -> {reason}\n"
 
+            # 3. P2-3: 追加市场胜率统计 (feedback_loop)
+            win_rate_context = ""
+            try:
+                from app.llm.feedback_loop import get_feedback_loop
+                loop = get_feedback_loop()
+                regime = loop.get_market_regime_stats(days=7)
+                if regime.get("total_trades", 0) > 0:
+                    win_rate_context = f"""
+【近7天市场统计】
+- 总交易: {regime['total_trades']}笔
+- 整体胜率: {regime['win_rate']:.1%}
+- 平均盈亏: {regime['avg_pnl']:+.2f}
+- 信号质量: {regime.get('signal_quality_avg', 0):.2f}/1.0
+- 方向准确率: {regime.get('direction_accuracy', 0):.1%}
+"""
+            except Exception as e:
+                logger.debug(f"加载市场胜率统计失败: {e}")
+
             if report_context:
-                return f"{memory_context}\n\n【昨日复盘统计】\n{report_context}"
-            return memory_context
+                return f"{memory_context}\n\n【昨日复盘统计】\n{report_context}{win_rate_context}"
+            return f"{memory_context}{win_rate_context}"
 
         except Exception as e:
             logger.warning(f"加载反馈上下文失败: {e}")
@@ -743,65 +675,19 @@ class PreMarketAnalyst:
             return ""
 
     async def _call_llm(self, messages: List[Dict], model: str, timeout: int) -> Optional[str]:
-        """调用 DashScope API (带自动降级)"""
-        for attempt in range(self.max_retries + 1):
-            # P1 修复 (2026-05-06): 重试间添加延迟，让瞬态错误有时间自愈
-            if attempt > 0:
-                delay = 2 ** attempt  # 指数退避: 2s, 4s
-                logger.warning(f"[PreMarketAnalyst] 重试等待 {delay}s (attempt={attempt})")
-                await asyncio.sleep(delay)
-            
-            current_model = model
-            
-            # 自动降级：如果主模型失败，切换到备用模型
-            if attempt > 0 and model == self.fast_model:
-                current_model = self.fallback_model
-                logger.warning(f"[PreMarketAnalyst] ⚡ 降级到备用模型 {current_model}")
-            
-            try:
-                from app.core.unified_llm_factory import get_llm_client
-                
-                client = get_llm_client(self.config)
-                if not client:
-                    logger.error("Unified LLM Client not available")
-                    return None
+        """调用 LLM — 统一走 UnifiedLLMService (重试/降级/审计集中管理)"""
+        from app.llm.unified_service import get_unified_llm
 
-                extra_body: Dict[str, Any] = {}
-                if self.enable_thinking:
-                    extra_body["enable_thinking"] = True
-
-                response = await asyncio.wait_for(
-                    client.chat.completions.create(
-                        model=current_model,
-                        messages=messages,
-                        extra_body=extra_body if extra_body else None,
-                    ),
-                    timeout=timeout,
-                )
-                result = response.choices[0].message.content
-                # ⚠️ P0 修复 (2026-05-06): 禁止关闭全局单例 client
-                # get_llm_client() 返回全局单例 AsyncOpenAI，close() 会销毁底层 httpx 连接
-                # 但单例引用仍存在，后续调用会返回已关闭的 client → 所有 LLM 调用失败
-                # 正确做法：不关闭 client，由 unified_llm_factory 管理生命周期
-                return result
-
-            except ImportError:
-                logger.error("openai 包未安装，无法调用 LLM")
-                return None
-            except asyncio.TimeoutError:
-                logger.warning(
-                    f"[PreMarketAnalyst] LLM 超时 (attempt={attempt+1}, model={current_model})"
-                )
-                if attempt >= self.max_retries:
-                    return None
-            except Exception as e:
-                logger.error(
-                    f"[PreMarketAnalyst] LLM 调用异常 (attempt={attempt+1}, model={current_model}): {e}"
-                )
-                if attempt >= self.max_retries:
-                    return None
-
-        return None
+        svc = get_unified_llm(
+            default_model=model,
+            default_timeout=timeout,
+            max_retries=self.max_retries,
+            enable_thinking=self.enable_thinking,
+        )
+        return await svc.call(
+            messages, model=model, timeout=timeout,
+            task_type="premarket",
+        )
 
     def _parse_response(self, raw: str, pack: Any) -> PreMarketAssessment:
         """解析 LLM JSON 响应 (适配新版 Chief Macro Strategist Prompt)"""

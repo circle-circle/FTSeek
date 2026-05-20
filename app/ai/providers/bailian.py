@@ -3,12 +3,12 @@ Bailian (百炼) AI Provider
 
 使用阿里云百炼平台的大模型 API
 支持 OpenAI 兼容格式 (2026-03-17 更新)
+2026-05-21: 迁移到 UnifiedLLMService — 统一重试/降级/成本统计
 """
-import os
-import json
 import logging
-from typing import Dict, Any
+import os
 from pathlib import Path
+from typing import Dict, Any
 from ..base import BaseProvider, AIResponse
 
 logger = logging.getLogger("ftseek.ai.bailian")
@@ -25,81 +25,63 @@ except ImportError:
 
 
 class BailianProvider(BaseProvider):
-    """百炼 AI Provider"""
-    
+    """百炼 AI Provider — chat() 委托 UnifiedLLMService (2026-05-21)"""
+
     name = "bailian"
-    
+
     def __init__(self, config: dict = None):
         self.api_key = os.getenv('BAILIAN_API_KEY', '')
         self.model = os.getenv('BAILIAN_MODEL', 'qwen-plus')
         self.timeout = int(os.getenv('BAILIAN_TIMEOUT', '30'))
-        
-        # 修复 URL 构建 (2026-04-08)
-        # 如果 endpoint 已包含 https://，直接使用；否则添加
+
+        # endpoint 保留用于兼容，实际调用走 UnifiedLLMService
         endpoint_raw = os.getenv('BAILIAN_ENDPOINT', 'dashscope.aliyuncs.com')
         if endpoint_raw.startswith('https://') or endpoint_raw.startswith('http://'):
-            # 已包含完整 URL，清理末尾斜杠
             self.endpoint = endpoint_raw.rstrip('/')
         else:
-            # 不包含协议，保持原样让 chat() 方法添加
             self.endpoint = endpoint_raw
-        
+
         if not self.api_key:
             logger.warning("BAILIAN_API_KEY 未配置，AI 功能将不可用")
         else:
-            logger.info(f"百炼 Provider 已初始化: endpoint={self.endpoint}, model={self.model}")
-    
+            logger.info(f"百炼 Provider 已初始化: model={self.model}")
+
     def chat(self, prompt: str, **kwargs) -> AIResponse:
-        """发送聊天请求 (使用 OpenAI 兼容格式)"""
+        """发送聊天请求 — 委托 UnifiedLLMService (统一重试/降级/审计)"""
         try:
-            import requests
-            
-            # 使用 OpenAI 兼容端点 (修复: endpoint 可能已包含完整 URL)
-            if self.endpoint.startswith('https://') or self.endpoint.startswith('http://'):
-                url = self.endpoint
-                # 如果 URL 不包含 compatible-mode，自动添加
-                if '/compatible-mode' not in url:
-                    url = url.rstrip('/') + '/compatible-mode/v1/chat/completions'
-                # 如果 URL 不包含 chat/completions，添加
-                elif '/chat/completions' not in url:
-                    url = url.rstrip('/') + '/chat/completions'
-            else:
-                url = f"https://{self.endpoint}/compatible-mode/v1/chat/completions"
-            
-            headers = {
-                'Authorization': f'Bearer {self.api_key}',
-                'Content-Type': 'application/json'
-            }
-            
-            # OpenAI 兼容格式
-            payload = {
-                'model': self.model,
-                'messages': [
-                    {'role': 'user', 'content': prompt}
-                ],
-                'temperature': kwargs.get('temperature', 0.1),
-                'max_tokens': kwargs.get('max_tokens', 500)
-            }
-            
-            response = requests.post(url, json=payload, headers=headers, timeout=self.timeout)
-            response.raise_for_status()
-            
-            result = response.json()
-            
-            # OpenAI 兼容响应格式
-            if 'choices' in result and len(result['choices']) > 0:
-                text = result['choices'][0]['message']['content']
-                tokens = result.get('usage', {}).get('completion_tokens', 0)
-                
+            from app.llm.unified_service import get_unified_llm, UnifiedLLMService
+
+            messages = [{'role': 'user', 'content': prompt}]
+            temperature = kwargs.get('temperature', 0.1)
+            max_tokens = kwargs.get('max_tokens', 500)
+
+            svc = get_unified_llm(
+                default_model=self.model,
+                default_timeout=self.timeout,
+                max_retries=1,
+            )
+            result_text = UnifiedLLMService.run_sync(
+                svc.call(
+                    messages,
+                    model=self.model,
+                    timeout=self.timeout,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    task_type="bailian_provider",
+                ),
+                timeout=self.timeout + 30,
+            )
+
+            if result_text:
                 return AIResponse.success_response(
-                    data={'text': text, 'raw': result},
-                    tokens=tokens,
-                    cost=self._calculate_cost(tokens),
-                    provider=self.name
+                    data={'text': result_text, 'raw': None},
+                    tokens=0,  # 成本/用量由 UnifiedLLMService 内部统计
+                    cost=0.0,
+                    provider=self.name,
                 )
             else:
-                return AIResponse.error_response(f"响应格式异常：{result}", self.name)
-        
+                return AIResponse.error_response("LLM 返回空响应", self.name)
+
         except Exception as e:
             logger.error(f"百炼 API 调用失败：{e}")
             return AIResponse.error_response(str(e), self.name)

@@ -799,7 +799,7 @@ async def get_attribution_summary(days: int = Query(30, description="统计天�
     return summary
 
 
-print("✅ 归因链路回溯查询 API 已注册 (/api/attribution/*)")
+logger.info("✅ 归因链路回溯查询 API 已注册 (/api/attribution/*)")
 
 # ============================================================
 #  Harness API 端点 (2026-05-04)
@@ -1063,7 +1063,7 @@ async def list_diagnosis_knowledge(date: str = None):
     }
 
 
-print("✅ 增强诊断 API 端点已注册 (/api/diagnose/health, /stocks/*, /knowledge)")
+logger.info("✅ 增强诊断 API 端点已注册 (/api/diagnose/health, /stocks/*, /knowledge)")
 
 
-print("✅ Harness API 端点已注册 (/api/harness/*)")
+logger.info("✅ Harness API 端点已注册 (/api/harness/*)")

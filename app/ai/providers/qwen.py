@@ -52,55 +52,40 @@ class QwenProvider(BaseProvider):
             logger.info(f"Qwen Provider 已初始化：model={self.model}")
 
     def chat(self, prompt: str, **kwargs) -> AIResponse:
-        """发送聊天请求"""
+        """发送聊天请求 — 委托 UnifiedLLMService (统一重试/降级/审计)"""
         try:
-            import requests
+            from app.llm.unified_service import get_unified_llm, UnifiedLLMService
 
-            url = f"{self.endpoint}/services/aigc/text-generation/generation"
+            messages = [{'role': 'user', 'content': prompt}]
+            temperature = kwargs.get('temperature', 0.1)
+            max_tokens = kwargs.get('max_tokens', 500)
 
-            headers = {
-                'Authorization': f'Bearer {self.api_key}',
-                'Content-Type': 'application/json'
-            }
+            svc = get_unified_llm(
+                default_model=self.model,
+                default_timeout=self.timeout,
+                max_retries=1,
+            )
+            result_text = UnifiedLLMService.run_sync(
+                svc.call(
+                    messages,
+                    model=self.model,
+                    timeout=self.timeout,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    task_type="qwen_provider",
+                ),
+                timeout=self.timeout + 30,
+            )
 
-            # Qwen 请求格式
-            payload = {
-                'model': self.model,
-                'input': {
-                    'messages': [
-                        {'role': 'user', 'content': prompt}
-                    ]
-                },
-                'parameters': {
-                    'temperature': kwargs.get('temperature', 0.1),
-                    'max_tokens': kwargs.get('max_tokens', 500),
-                    'result_format': 'message'
-                }
-            }
-
-            response = requests.post(url, json=payload, headers=headers, timeout=self.timeout)
-            response.raise_for_status()
-
-            result = response.json()
-
-            # Qwen 响应格式
-            if 'output' in result and 'choices' in result['output']:
-                choices = result['output']['choices']
-                if choices and 'message' in choices[0]:
-                    text = choices[0]['message']['content']
-
-                    # 计算 token
-                    usage = result.get('usage', {})
-                    tokens = usage.get('output_tokens', 0)
-
-                    return AIResponse.success_response(
-                        data={'text': text, 'raw': result},
-                        tokens=tokens,
-                        cost=self._calculate_cost(tokens),
-                        provider=self.name
-                    )
-
-            return AIResponse.error_response(f"响应格式异常：{result}", self.name)
+            if result_text:
+                return AIResponse.success_response(
+                    data={'text': result_text, 'raw': None},
+                    tokens=0,  # 成本/用量由 UnifiedLLMService 内部统计
+                    cost=0.0,
+                    provider=self.name,
+                )
+            else:
+                return AIResponse.error_response("LLM 返回空响应", self.name)
 
         except Exception as e:
             logger.error(f"Qwen API 调用失败：{e}")

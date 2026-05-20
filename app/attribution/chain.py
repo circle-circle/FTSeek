@@ -269,9 +269,11 @@ def update_trade_attribution_result(
                 "is_win": is_win,
             })
             strategy_fit = 1 if (signal_confidence > 0.6 and is_win) else 0
+            # Phase 5 修复: 综合评分 = 基础分 + 信号强度加成 + PnL 奖励 - 回撤惩罚
             base_score = 60
+            signal_bonus = min(20, signal_strength // 5) if signal_strength > 0 else 0  # 信号强度 0-100 → 0-20 分
             pnl_bonus = min(30, abs(pnl / 1000) * 100) if pnl > 0 else 0
-            final_score = max(0, min(100, int(base_score + pnl_bonus)))
+            final_score = max(0, min(100, int(base_score + signal_bonus + pnl_bonus)))
 
             cursor.execute('''
                 UPDATE trade_attribution
@@ -284,6 +286,8 @@ def update_trade_attribution_result(
                     overall_score     = ?,
                     success_factors   = ?,
                     failure_factors   = ?,
+                    signal_score      = COALESCE(?, signal_score),
+                    holding_hours     = ?,
                     timestamp         = ?
                 WHERE trace_id = ?
             ''', (
@@ -291,6 +295,8 @@ def update_trade_attribution_result(
                 1 if is_win else 0, strategy_fit, final_score,
                 json.dumps({"exit_reason": exit_reason}),
                 json.dumps({}),
+                int(signal_strength) if signal_strength > 0 else None,
+                holding_hours,
                 datetime.now().isoformat(),
                 trace_id,
             ))

@@ -50,58 +50,26 @@ class BaseLLMService:
         timeout: Optional[int] = None,
         extra_body: Optional[Dict] = None,
     ) -> str:
-        """Call LLM with retry, timeout, and safe client cleanup.
+        """Call LLM — 统一走 UnifiedLLMService (重试/降级/审计集中管理)
 
         Returns the raw text response, or "{}" on all failures.
         """
+        from app.llm.unified_service import get_unified_llm
+
         _model = model or self.default_model
         _timeout = timeout or self.default_timeout
 
-        _extra_body = dict(extra_body or {})
-        if self.enable_thinking:
-            _extra_body.setdefault("enable_thinking", True)
-        if not _extra_body:
-            _extra_body = None
-
-        for attempt in range(self.max_retries + 1):
-            try:
-                from app.core.unified_llm_factory import get_llm_client
-
-                client = get_llm_client(self._config)
-                if not client:
-                    logger.error("[BaseLLMService] LLM client unavailable")
-                    return "{}"
-
-                response = await asyncio.wait_for(
-                    client.chat.completions.create(
-                        model=_model,
-                        messages=messages,
-                        extra_body=_extra_body,
-                    ),
-                    timeout=_timeout,
-                )
-                result = response.choices[0].message.content or "{}"
-                # P0 修复 (2026-05-06): 禁止关闭全局单例 client
-                # get_llm_client() 返回全局单例，close() 会销毁 httpx 连接
-                # 导致后续所有 LLM 调用失败。factory 管理生命周期。
-                return result
-
-            except asyncio.TimeoutError:
-                logger.warning(
-                    "[BaseLLMService] Timeout model=%s timeout=%ds attempt=%d",
-                    _model, _timeout, attempt + 1,
-                )
-                if attempt < self.max_retries:
-                    await asyncio.sleep(2 ** attempt)  # 指数退避
-            except Exception as e:
-                logger.error(
-                    "[BaseLLMService] LLM call failed model=%s attempt=%d: %s",
-                    _model, attempt + 1, e,
-                )
-                if attempt < self.max_retries:
-                    await asyncio.sleep(2 ** attempt)  # 指数退避
-
-        return "{}"
+        svc = get_unified_llm(
+            default_model=_model,
+            default_timeout=_timeout,
+            max_retries=self.max_retries,
+            enable_thinking=self.enable_thinking,
+        )
+        result = await svc.call(
+            messages, model=_model, timeout=_timeout,
+            task_type="base_llm_service",
+        )
+        return result or "{}"
 
     @staticmethod
     def _safe_close(client) -> None:

@@ -89,7 +89,7 @@ def analyze_trade_chains() -> Dict[str, BacktestResult]:
         import statistics
         try:
             sharpe = statistics.mean(pnls) / (statistics.stdev(pnls) + 0.001)
-        except:
+        except Exception:
             sharpe = 0.0
     else:
         sharpe = 0.0

@@ -1,0 +1,12 @@
+{
+  "timestamp": "2026-05-20T15:05:00.007264",
+  "date": "2026-05-20",
+  "time": "1505",
+  "alerts": [],
+  "summary": {
+    "total": 0,
+    "critical": 0,
+    "warning": 0,
+    "info": 0
+  }
+}

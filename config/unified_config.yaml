@@ -213,6 +213,35 @@ llm:
   provider: bailian
   temperature: 0.1
   timeout_sec: 120
+  
+  # 2026-05-21 新增：Token 预算配置
+  budget:
+    daily_max_cny: 10.0         # 每日最大 LLM 成本 (人民币)
+    warning_threshold: 0.8      # 80% 时告警
+    enabled: true
+  
+  # 2026-05-21 新增：模型路由配置
+  features:
+    # 延迟敏感 (FLASH, 单模型, 失败仅日志)
+    news_classifier:    qwen3.6-flash
+    sentiment_analyst:  qwen3.6-flash
+    
+    # 质量敏感 (PLUS, 双模型, 关键决策)
+    premarket_planner:  qwen3.6-plus
+    attribution_engine: qwen3.6-plus
+    consensus_veto:     qwen3.6-plus
+    
+    # 回退链
+    fallback_chain:
+      qwen3.6-plus:  [qwen-max, qwen-turbo]
+      qwen3.6-flash: [qwen-turbo]
+  
+  # 2026-05-21 新增：缓存配置
+  cache:
+    enabled: true
+    cache_dir: /tmp/ftseek_llm_cache
+    cache_ttl_seconds: 300       # 5 分钟缓存
+    cache_on_fail: false
 logging:
   backup_count_daily: 30
   backup_count_size: 5

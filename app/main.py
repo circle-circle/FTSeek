@@ -799,7 +799,6 @@ def main():
         )
     except Exception:
         pass
-    print("✅ Executor created.")
     logger.info("✅ Executor created.")
     # exit_mgr.set_executor(executor) # 注入执行器以便紧急清仓
     

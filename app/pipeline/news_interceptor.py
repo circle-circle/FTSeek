@@ -88,22 +88,8 @@ class EmergencyNewsInterceptor:
             self.model = llm_analyst.fast_model
         else:
             self.model = "qwen3.6-flash" # 默认
-        
-        logger.info("🛡️ 突发新闻拦截器已启动")
 
-    async def _get_llm_client(self):
-        """获取 LLM 客户端"""
-        if self._client is None:
-            try:
-                from app.core.unified_llm_factory import get_llm_client
-                self._client = get_llm_client()
-                if not self._client:
-                    logger.error("Unified LLM Client not available")
-                    return None
-            except ImportError:
-                logger.error("openai 包未安装，无法调用 LLM")
-                return None
-        return self._client
+        logger.info("🛡️ 突发新闻拦截器已启动")
 
     async def check_and_intercept(self, news_items: List[Any], positions: List[Any]) -> List[InterceptorResult]:
         """

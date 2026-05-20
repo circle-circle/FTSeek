@@ -57,7 +57,17 @@ DIRECTION_ATTRIBUTION_PROMPT = """你是 FTSeek 的**方向归因分析师 (Dire
 }}
 
 如果交易本身是合理的 (方向对、执行对、只是市场不利)，cause_category 填 "reasonable_loss"。
-不要为了找原因而强行归因。诚实比聪明更重要。"""
+不要为了找原因而强行归因。诚实比聪明更重要。
+
+【示例输出】
+{{
+  "cause_category": "timing_poor",
+  "root_cause": "信号方向正确但入场过早，未等 ADX>25 确认趋势",
+  "lesson_text": "在震荡市中，即使方向判断正确，过早入场也会被止损出局。应等待趋势确认信号后再入场。",
+  "improvement_action": "增加 ADX 确认过滤，要求 ADX>25 且 DI+>DI- 后再开多仓",
+  "confidence": 0.85,
+  "key_finding": "入场时机比方向判断更重要"
+}}"""
 
 EXECUTION_ATTRIBUTION_PROMPT = """你是 FTSeek 的**执行归因分析师 (Execution Attribution Analyst)**。
 
@@ -84,7 +94,17 @@ EXECUTION_ATTRIBUTION_PROMPT = """你是 FTSeek 的**执行归因分析师 (Exec
 }}
 
 如果执行完全对齐计划，cause_category 填 "execution_aligned"。
-不要为了找问题而强行找问题。诚实比聪明更重要。"""
+不要为了找问题而强行找问题。诚实比聪明更重要。
+
+【示例输出】
+{{
+  "cause_category": "execution_deviation",
+  "root_cause": "计划要求等 MACD 金叉确认，但实际在 MACD 死叉时提前入场",
+  "lesson_text": "严格遵守作战计划的入场条件，不因'感觉要涨'而提前入场。计划外的入场往往带来更大的滑点和风险。",
+  "improvement_action": "增加入场条件校验，入场前检查 MACD/RSI/ADX 是否满足计划要求",
+  "confidence": 0.90,
+  "key_finding": "执行纪律比判断方向更难"
+}}"""
 
 PLAN_GAP_PROMPT = """你是 FTSeek 的**计划差距分析师 (Plan Gap Analyst)**。
 
@@ -237,15 +257,15 @@ async def run_direction_attribution(trade: Dict, battle_plan: Dict,
     except Exception as e:
         logger.warning(f"[Attribution] agent_bridge 失败，降级: {e}")
 
-    # 降级: 使用 UnifiedLLMService
+    # 降级: 使用 UnifiedLLMService (2026-05-21: 升级到 qwen-plus 提升归因质量)
     trade_text = _format_trade_for_direction(trade, battle_plan)
     messages = [
         {"role": "system", "content": DIRECTION_ATTRIBUTION_PROMPT},
         {"role": "user", "content": trade_text},
     ]
     from app.llm.unified_service import get_unified_llm, UnifiedLLMService
-    svc = get_unified_llm(default_model="qwen3.6-flash", default_timeout=60, max_retries=1)
-    raw = await svc.call(messages, model="qwen3.6-flash", timeout=60, task_type="direction_attribution")
+    svc = get_unified_llm(default_model="qwen-plus", default_timeout=60, max_retries=2)
+    raw = await svc.call(messages, model="qwen-plus", timeout=60, task_type="direction_attribution")
     data = svc.extract_json(raw) if raw else {}
 
     return LLMAttributionResult(
@@ -268,8 +288,8 @@ async def run_execution_attribution(trade: Dict, battle_plan: Dict,
         {"role": "user", "content": trade_text},
     ]
     from app.llm.unified_service import get_unified_llm, UnifiedLLMService
-    svc = get_unified_llm(default_model="qwen3.6-flash", default_timeout=60, max_retries=1)
-    raw = await svc.call(messages, model="qwen3.6-flash", timeout=60, task_type="execution_attribution")
+    svc = get_unified_llm(default_model="qwen-plus", default_timeout=60, max_retries=2)
+    raw = await svc.call(messages, model="qwen-plus", timeout=60, task_type="execution_attribution")
     data = svc.extract_json(raw) if raw else {}
 
     return LLMAttributionResult(
@@ -315,8 +335,8 @@ async def run_plan_gap_analysis(plan: Dict, trades: List[Dict],
         {"role": "user", "content": prompt},
     ]
     from app.llm.unified_service import get_unified_llm, UnifiedLLMService
-    svc = get_unified_llm(default_model="qwen3.6-flash", default_timeout=60, max_retries=1)
-    return await svc.call_and_parse(messages, model="qwen3.6-flash", timeout=60, task_type="plan_gap_analysis")
+    svc = get_unified_llm(default_model="qwen-plus", default_timeout=60, max_retries=2)
+    return await svc.call_and_parse(messages, model="qwen-plus", timeout=60, task_type="plan_gap_analysis")
 
 
 def run_attribution_sync(trade: Dict, battle_plan: Dict,

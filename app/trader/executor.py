@@ -91,13 +91,13 @@ try:
             sys.path.insert(0, _openclaw_dir)
         from common import select_account_for_code
         ACCOUNT_SELECTION_AVAILABLE = True
-        print(f"[账户选择] 模块加载成功 (skills_dir={_openclaw_dir})")
+        logging.getLogger("ftseek.trader.executor").info(f"[账户选择] 模块加载成功 (skills_dir={_openclaw_dir})")
     else:
         ACCOUNT_SELECTION_AVAILABLE = False
-        print("[账户选择] skills_dir 未配置且 fallback 路径不存在，将使用默认账户")
+        logging.getLogger("ftseek.trader.executor").warning("[账户选择] skills_dir 未配置且 fallback 路径不存在，将使用默认账户")
 except Exception as e:
     ACCOUNT_SELECTION_AVAILABLE = False
-    print(f"[账户选择] 模块加载失败，将使用默认账户：{e}")
+    logging.getLogger("ftseek.trader.executor").error(f"[账户选择] 模块加载失败，将使用默认账户：{e}")
 
 logger = logging.getLogger("ftseek.trader.executor")
 

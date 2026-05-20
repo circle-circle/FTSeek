@@ -1,75 +1,51 @@
 {
-  "timestamp": "2026-05-19T12:19 HKT",
+  "timestamp": "2026-05-20T12:22:40.830100",
   "assessment": {
-    "market_regime": "NEUTRAL",
-    "confidence": 0.3,
-    "morning_summary": "上午无交易与实时数据，市场处于静默期，等待午后A股联动及南向资金指引。",
-    "afternoon_strategy": "午后以观察为主，待A股开盘及南向资金明确方向后再择机布局。",
+    "session": "midday",
+    "market_regime": "RISK_OFF",
+    "morning_summary": "科技股分化明显，00700微利，01211大幅拖累，整体呈风险偏好收缩态势。",
+    "key_observations": [
+      "A股午间休市联动减弱，港股午后易受外资情绪与南向资金主导",
+      "早盘南向资金呈净流出，压制大盘蓝筹估值修复",
+      "01211放量破位验证早盘弱势信号，板块轮动加速需警惕"
+    ],
+    "trade_performance": {
+      "total_trades": 4,
+      "win_rate": 0.25,
+      "total_pnl": -2446.9
+    },
+    "pnl_assessment": "单票01211重挫拖累整体，胜率偏低需严控回撤。",
+    "execution_quality": "00700高优计划执行到位，但其余标的缺乏止损纪律。",
+    "afternoon_strategy": "午后以防守为主，逢高减持弱势股，聚焦00700波段机会，严控仓位。",
     "focus_symbols": [
       "HK.00700",
-      "HK.09988",
-      "HK.03690"
+      "HK.01211",
+      "HK.09988"
     ],
     "risk_adjustments": [
-      "严格空仓观望，避免盲目试错",
-      "关注午后13:00 A股开盘对港股情绪传导",
-      "设置严格止损，防范尾盘流动性收缩"
-    ]
-  },
-  "actual_data": {
-    "morning_trades": 2,
-    "morning_pnl": 28.69,
-    "open_positions": [
+      "收紧整体港股仓位至50%以下",
+      "对01211设置硬性止损线，跌破关键支撑立即离场",
+      "避免追高，等待13:00后南向资金回流确认再行介入"
+    ],
+    "position_recommendations": [
       {
-        "code": "HK.01211",
-        "side": "LONG",
-        "qty": 500,
-        "entry": 93.25,
-        "current": 93.45,
-        "unrealized": 100.0
+        "symbol": "HK.00700",
+        "action": "HOLD",
+        "reason": "符合盘前高优计划，盈利状态可继续持有观察午后资金承接"
       },
       {
-        "code": "HK.09988",
-        "side": "LONG",
-        "qty": 100,
-        "entry": 134.0,
-        "current": 133.7,
-        "unrealized": -30.0
+        "symbol": "HK.01211",
+        "action": "REDUCE",
+        "reason": "早盘大幅亏损且趋势转弱，需减仓防范进一步下行风险"
       },
       {
-        "code": "US.QQQ",
-        "side": "LONG",
-        "qty": 728,
-        "entry": 649.77,
-        "current": 672.88,
-        "unrealized": 17746.46
+        "symbol": "HK.09988",
+        "action": "CLOSE",
+        "reason": "微亏且缺乏反弹动能，建议平仓释放资金用于防守"
       }
     ],
-    "total_unrealized": 17816.46,
-    "seven_day_stats": {
-      "trades": 24,
-      "total_pnl": -4834.08,
-      "avg_pnl": -201.42,
-      "win_rate": 33.3
-    },
-    "signal_records": 21,
-    "consensus_scores": {
-      "min": 0.99,
-      "max": 2.66,
-      "avg": 1.33
-    },
-    "battle_plan": {
-      "date": "2026-05-19",
-      "bias": "NEUTRAL",
-      "targets": 5,
-      "top_target": "HK.00700 (urgency=High, confidence=0.65)"
-    }
-  },
-  "agent_notes": [
-    "LLM未获取到上午实际交易数据，报告称'无交易'。实际有2笔平仓交易(+28.69)。",
-    "LLM报告称'无持仓'。实际有3个持仓(HK.01211/HK.09988/US.QQQ)，其中US.QQQ浮盈+$17,746为主力。",
-    "LLM报告称'无盘前计划'。实际有battle plan(5 targets, NEUTRAL bias)。",
-    "7天胜率33.3%偏低，总亏损-4834。信号记录21条但status均为'unknown'，说明signal recording pipeline有分类问题。",
-    "共识分数平均1.33(阈值1.5)，大部分信号未达执行门槛。"
-  ]
+    "confidence": 0.75,
+    "timestamp": 1779250960.8299792,
+    "trace_id": "midday-20260520-1222"
+  }
 }
