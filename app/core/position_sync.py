@@ -578,8 +578,13 @@ class USPositionSync:
                 sl_price = cost * sl_mult
                 tp_price = cost * tp_mult
 
+            # P0 修复 (2026-05-20): 期权仓位归主线策略管理，避免误标为手动仓
+            # 期权代码格式：US.XXX26XXXXP/C (含年月 + Put/Call)
+            is_option = any(x in symbol for x in ['26', '27', '28']) and any(x in symbol for x in ['P', 'C'])
+            strategy_id = "voting_llm_option" if is_option else "manual_sync"
+
             position = Position(
-                strategy_id="manual_sync",
+                strategy_id=strategy_id,
                 symbol=symbol,
                 direction=direction,
                 size=size,
@@ -596,6 +601,9 @@ class USPositionSync:
                 "lowest_price": cost,
                 "prev_scan_price": cost,
             }
+            # P0 修复 (2026-05-20): 期权仓位设置正确的 metadata.source
+            if is_option:
+                position.metadata = {"source": "voting_llm_option", "is_option": True}
             self.position_store.add(symbol, position)
             logger.warning(
                 f"⚠️ [US Sync] 发现手动开仓 {symbol} ({info['direction']} {size}股 @${cost:.2f})，"
@@ -1012,8 +1020,13 @@ class USPositionSync:
 
         # 内存中没有，从 DB 重建
         direction = Direction.SHORT if db_pos['direction'] == 'SHORT' else Direction.LONG
+        
+        # P0 修复 (2026-05-20): 期权仓位归主线策略管理
+        is_option = any(x in symbol for x in ['26', '27', '28']) and any(x in symbol for x in ['P', 'C'])
+        strategy_id = "voting_llm_option" if is_option else "manual_sync"
+        
         position = Position(
-            strategy_id="manual_sync",
+            strategy_id=strategy_id,
             symbol=symbol,
             direction=direction,
             size=db_pos['size'],
@@ -1030,6 +1043,9 @@ class USPositionSync:
             "lowest_price": futu_info.get('cost', db_pos['avg_entry_price']),
             "prev_scan_price": futu_info.get('cost', db_pos['avg_entry_price']),
         }
+        # P0 修复 (2026-05-20): 期权仓位设置正确的 metadata.source
+        if is_option:
+            position.metadata = {"source": "voting_llm_option", "is_option": True}
         self.position_store.add(symbol, position)
         logger.info(f"[US Sync] 从 DB 恢复 {symbol}: size={db_pos['size']}, SL=${db_pos['current_sl']:.2f}")
 

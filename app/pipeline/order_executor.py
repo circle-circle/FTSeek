@@ -646,7 +646,7 @@ def _submit_put_option(scheduler, symbol: str, signal: SignalScore, context: Dic
             "dte":          contract.dte,
             "cost_total":   cost_total,
             "is_simulated": contract.is_simulated,
-            "source_type":  "MAIN_PIPELINE",  # P1 修复：标注来源
+            "source":       "voting_llm_option",  # P0 修复：使用规范命名，确保正确识别为 AUTO_MAIN
         }
         scheduler.position_store.add(symbol, position)
     except Exception as e:

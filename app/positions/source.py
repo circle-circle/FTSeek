@@ -34,6 +34,8 @@ class PositionSource(Enum):
         _map = {
             "main": cls.AUTO_MAIN, "main_pipeline": cls.AUTO_MAIN,
             "voting_llm": cls.AUTO_MAIN,
+            "voting_llm_option": cls.AUTO_MAIN,  # 期权仓位归主线策略管理
+            "manual_sync": cls.MANUAL,  # 向后兼容：同步发现的手动仓
             "scalping": cls.AUTO_SCALPING, "scalping_engine": cls.AUTO_SCALPING,
             "fast_lane": cls.AUTO_FAST_LANE,
             "battle_plan_fast_path": cls.AUTO_LLM_PLAN,

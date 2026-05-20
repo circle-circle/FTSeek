@@ -237,8 +237,13 @@ def restore_positions_from_db(scheduler):
                     continue
                 direction_str = row.get("direction", "LONG")
                 direction = Direction.SHORT if direction_str == "SHORT" else Direction.LONG
+                
+                # P0 修复 (2026-05-20): 期权仓位归主线策略管理
+                is_option = any(x in symbol for x in ['26', '27', '28']) and any(x in symbol for x in ['P', 'C'])
+                strategy_id = "voting_llm_option" if is_option else row.get("strategy_id", "recovered")
+                
                 position = Position(
-                    strategy_id=row.get("strategy_id", "recovered"),
+                    strategy_id=strategy_id,
                     signal_id=row.get("signal_id", ""), trace_id=row.get("trace_id", ""),
                     symbol=symbol, direction=direction,
                     size=float(row.get("size", row.get("quantity", 0))),
@@ -259,7 +264,11 @@ def restore_positions_from_db(scheduler):
                     position.entry_time = datetime.now()
                 position.trail_state = row.get("trail_state", {}) or {}
                 position.metadata = {}
-                # P0 修复 (2026-05-12): 恢复异常标记, 防止重启后无限循环平仓
+                # P0 修复 (2026-05-20): 期权仓位设置正确的 metadata.source
+                is_option = any(x in symbol for x in ['26', '27', '28']) and any(x in symbol for x in ['P', 'C'])
+                if is_option:
+                    position.metadata = {"source": "voting_llm_option", "is_option": True}
+                # P0 修复 (2026-05-12): 恢复异常标记，防止重启后无限循环平仓
                 # P0 修复 (2026-05-13): 自动恢复 — 当 Broker 确认持仓存在且 DB 一致时,
                 #   清除 is_anomalous 并恢复正常监控 (之前是一旦标记就永久阻塞退出逻辑)
                 if row.get("is_anomalous"):

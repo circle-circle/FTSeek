@@ -1,96 +1,102 @@
 {
   "responses_to_claude": [
     {
-      "claude_point": "SYSTEM TECHNICAL RISK: 近期 scalping 胜率 0%（13笔），voting_llm 胜率 39%，建议 HALT_TRADING。",
-      "response": "AGREE. 历史回测数据已证实当前策略在盘前微观结构下完全失效，继续执行将导致确定性资金损耗。",
-      "plan_adjustment": "立即触发系统级熔断（Circuit Breaker）。暂停所有自动化 scalping 与 voting_llm 信号路由。切换至人工复核模式，待连续 3 笔模拟盘盈利且胜率回升至 >50% 后解除限制。"
+      "claude_point": "数据缺失: VIX/SPY/QQQ/DXY均为N/A, 无法评估市场状态和波动率水平",
+      "response": "AGREE",
+      "plan_adjustment": "已触发数据管道熔断机制。立即切换至备用数据源(Polygon/IBKR)，若开盘前30分钟未恢复，系统强制进入只读模式，暂停所有信号生成与订单路由。"
     },
     {
-      "claude_point": "SYSTEMIC RISK: VIX/SPY/QQQ/DXY 等关键宏观指标缺失，系统处于失明状态。",
-      "response": "AGREE. 缺乏波动率基准与大盘 Beta 锚点，无法计算风险敞口或执行对冲，开仓等同于无保护裸奔。",
-      "plan_adjustment": "接入备用数据管道（ES/NQ 期货替代 SPY/QQQ，CBOE 延迟 VIX，ICE DXY 期货）。若数据仍不可用，强制将系统仓位上限设为 0%，仅保留行情监控与信号记录功能。"
+      "claude_point": "持仓数据缺失: 无法验证实际风险敞口和集中度",
+      "response": "AGREE",
+      "plan_adjustment": "执行全量券商API对账脚本，清除本地缓存。确认无孤儿仓位后，重置风险敞口计算引擎，确保集中度阈值生效。"
     },
     {
-      "claude_point": "SYSTEMIC RISK: 盘前交易导致灾难性亏损（平均 -200%+），流动性陷阱与股池为空。",
-      "response": "AGREE. 盘前时段点差极宽、做市商报价稀疏，固定止损参数极易被算法猎杀。空股池进一步放大误入低流动性标的的概率。",
-      "plan_adjustment": "全面禁止 9:00 AM ET 前的自动交易。策略重心平移至 9:30-10:00 AM ET 的开盘区间突破（ORB）。重构选股过滤器：仅纳入盘前成交量 >500k、相对成交量 >2.0 且市值 Top 300 的标的。"
+      "claude_point": "策略表现堪忧: scalping策略17笔胜率0%, voting_llm策略143笔胜率39%, 均录得亏损",
+      "response": "AGREE",
+      "plan_adjustment": "承认策略参数在当前微观结构下失效。scalping策略立即降级为观察模式；voting_llm策略置信度阈值上调至0.75，并增加波动率过滤(VIX>20或盘前量比<1.2时禁用)。"
     },
     {
-      "claude_point": "RESTRICTED LIST: 13 只标的因历史巨额亏损、高失败率或连续止损被严格禁止。",
-      "response": "AGREE. 统计显著性极强，继续交易这些标的违背风控底线。",
-      "plan_adjustment": "将上述标的加入硬性黑名单。仅在常规交易时段（RTH）且出现明确量价共振或财报/事件驱动时，方可申请临时解禁。"
+      "claude_point": "近期表现恶化: 近20笔交易0胜10负, 总盈亏$-265, 策略可能需要暂停检视",
+      "response": "AGREE",
+      "plan_adjustment": "全面暂停实盘自动交易。切换至Paper Trading模式，启动滚动回测(近60日)，重点优化入场动量确认与盈亏比，目标将近期胜率修复至55%+。"
+    },
+    {
+      "claude_point": "频繁无效退出: 大量交易以stale_scalping_cleanup/ghost_cleanup退出, 表明入场逻辑可能存在缺陷",
+      "response": "AGREE",
+      "plan_adjustment": "重构订单生命周期管理。引入硬性TTL(最大持仓30分钟)，增加量价共振确认(Price Action + Volume Profile)，杜绝无流动性支撑的挂单。"
+    },
+    {
+      "claude_point": "严格禁止盘前交易(历史教训10/10条均为此类亏损)",
+      "response": "AGREE",
+      "plan_adjustment": "写入系统底层硬规则：美东时间9:30前拦截所有新订单。盘前信号仅作为开盘方向参考，实际入场强制推迟至开盘后15分钟(流动性稳定期)。"
+    },
+    {
+      "claude_point": "DIA案例显示6.1小时未触发止损, 止损参数过宽需调整",
+      "response": "AGREE",
+      "plan_adjustment": "废弃固定百分比止损。全面切换为ATR(14)动态止损(1.5x ATR)结合VWAP追踪止损，单笔最大容忍回撤严格控制在1.2%以内。"
     }
   ],
-  "updated_targets": [],
+  "updated_targets": [
+    {
+      "ticker": "US.AAPL",
+      "action": "WATCH",
+      "rationale": "高流动性核心标的。仅允许在数据恢复后，于开盘15分钟突破VWAP且量比>1.5时观察，严禁盘前介入。"
+    },
+    {
+      "ticker": "US.MSFT",
+      "action": "WATCH",
+      "rationale": "机构资金锚点。需等待宏观数据(VIX/DXY)恢复验证，符合新动态止损规则方可纳入交易池。"
+    },
+    {
+      "ticker": "US.AMD",
+      "action": "WATCH",
+      "rationale": "半导体板块高Beta标的。需结合板块ETF(SOXX)共振确认，严格执行TTL与ATR止损。"
+    }
+  ],
   "updated_restricted": [
     "US.NVDA",
     "US.UBER",
     "US.TME",
-    "US.DIA",
-    "US.SPY",
     "US.QCOM",
     "US.XOM",
-    "US.LCID",
-    "US.CVX",
     "US.LMT",
-    "US.ORCL",
-    "US.NFLX",
-    "US.CRM",
-    "SYSTEM_PREMARKET_AUTO_HALT"
+    "US.CVX",
+    "US.DIA",
+    "US.SPY",
+    "US.LCID",
+    "ALL_PREMARKET_SESSIONS"
   ],
   "updated_position_actions": [
     {
-      "symbol": "SYSTEM",
-      "action": "HALT_TRADING",
-      "reason": "执行硬性风控熔断。暂停所有盘前自动下单与信号路由，等待宏观数据恢复及 RTH 开盘流动性确认。"
+      "action": "SYSTEM_AUDIT",
+      "description": "执行全量API持仓对账，强制平仓所有stale/ghost订单，重置风控模块与保证金计算。"
+    },
+    {
+      "action": "MODE_SWITCH",
+      "description": "系统状态由AUTO_TRADING切换至PAPER_TRADING。实盘资金隔离，直至连续20笔模拟交易胜率>50%且最大回撤<2%。"
+    },
+    {
+      "action": "PARAMETER_UPDATE",
+      "description": "应用动态ATR止损，禁用盘前入场逻辑，提高LLM投票阈值至0.75，启用订单TTL(30min)。"
     }
   ],
   "final_risk_warnings": [
-    "宏观数据缺失导致风险敞口无法量化，任何开仓行为均缺乏对冲基础与仓位管理依据。",
-    "盘前流动性枯竭与宽点差将放大滑点成本，历史胜率 0% 证明当前策略参数已严重过拟合或失效。",
-    "已触发系统级熔断，严禁在 9:30 AM ET 前进行任何手动或自动干预。",
-    "若无视警告强行交易，预期最大回撤将突破账户净值 15% 警戒线，并可能引发连锁强平。"
+    "数据管道异常：核心宏观与波动率指标缺失，当前所有信号置信度极低，严禁实盘交易。",
+    "策略失效风险：近期连续亏损表明现有参数无法适应当前市场微观结构，需强制回测优化。",
+    "盘前流动性陷阱：历史数据100%证伪盘前策略有效性，已实施系统级硬性拦截。",
+    "风控参数滞后：固定止损已导致DIA等标的长时间暴露于风险中，已全面升级为动态追踪止损。",
+    "系统降级运行：在数据恢复与策略验证完成前，所有操作仅限模拟盘，实盘资金处于隔离状态。"
   ],
-  "final_confidence": 0.1,
+  "final_confidence": 0.15,
   "restricted": [],
   "arbiter_mode": "deterministic_rule_based",
   "claude_audit": {
     "validation_passed": true,
     "remaining_concerns": [
       {
-        "type": "DATA_INCONSISTENCY",
-        "symbol": "US.RIVN",
-        "description": "原始 restricted 列表中包含 US.RIVN（历史巨额亏损标的），但 updated_restricted 中该标的消失，未被显式保留。系统恢复交易后存在误入黑名单标的的风险。",
-        "severity": "MEDIUM"
-      },
-      {
-        "type": "DATA_INCONSISTENCY",
-        "symbol": "US.NIO",
-        "description": "原始 restricted 列表中包含 US.NIO，但 updated_restricted 中该标的消失。应与 RIVN、LCID 一同保留在硬性黑名单中。",
-        "severity": "MEDIUM"
-      },
-      {
         "type": "OTHER",
-        "symbol": "US.AMD",
-        "description": "初始计划中作为 LONG 目标，修正后既不在 updated_targets 也不在 updated_restricted，状态不明确。建议显式标注为 SUSPENDED 或加入 restricted，确保系统恢复后决策连续性。",
-        "severity": "LOW"
-      },
-      {
-        "type": "OTHER",
-        "symbol": "US.MU",
-        "description": "同 AMD，初始计划 LONG 目标在修正后状态丢失，未显式归档。",
-        "severity": "LOW"
-      },
-      {
-        "type": "OTHER",
-        "symbol": "US.QQQ",
-        "description": "初始计划中 QQQ 的 HOLD(0股) 仓位行动在修正版 position_actions 中丢失。应保留空仓确认记录以避免系统误判为无持仓约束。",
-        "severity": "LOW"
-      },
-      {
-        "type": "OTHER",
-        "symbol": "SYSTEM",
-        "description": "熔断解除条件（3笔模拟盘盈利+胜率>50%）缺乏时间窗口约束。若模拟盘长期未触发，系统可能无限期停滞或被人为主观提前解除。建议增加最短观察期（如5个交易日）与最长有效期（如20个交易日）。",
+        "symbol": "N/A",
+        "description": "修正计划已将系统切换至模拟盘并取消了所有实盘下单，当前无仓位约束、止损或财报风险。但数据管道恢复正常后，新参数（动态ATR止损、TTL、盘前硬限制等）仍需通过连续模拟交易验证，避免参数过拟合。",
         "severity": "LOW"
       }
     ],
@@ -98,22 +104,17 @@
       "US.NVDA",
       "US.UBER",
       "US.TME",
-      "US.DIA",
-      "US.SPY",
       "US.QCOM",
       "US.XOM",
-      "US.LCID",
-      "US.CVX",
       "US.LMT",
-      "US.ORCL",
-      "US.NFLX",
-      "US.CRM",
-      "US.RIVN",
-      "US.NIO",
-      "SYSTEM_PREMARKET_AUTO_HALT"
+      "US.CVX",
+      "US.DIA",
+      "US.SPY",
+      "US.LCID",
+      "ALL_PREMARKET_SESSIONS"
     ],
     "recommendation": "APPROVE_WITH_CAUTION",
-    "confidence": 0.82
+    "confidence": 0.85
   },
   "debate_summary": "Hermes 计划 (0标的) + Claude 风险审计 (0受限) (降级: 数据缺失, 试仓模式)",
   "targets": [
@@ -122,35 +123,35 @@
       "direction": "LONG",
       "entry_zone": [
         138.2,
-        139.8
+        140.0
       ],
-      "stop_loss": 135.5,
+      "stop_loss": 136.5,
       "take_profit": 145.5,
       "urgency": "LOW",
-      "rationale": "技术面确认：QQQ在705附近构筑平台，资金回流半导体核心资产。NVDA日线回踩50日均线与前期筹码密集区重合，盘前量缩止跌，MACD零轴上方二次金叉。推理链：中性市况无催化→指数横盘→资金避险偏好高流动性龙头→NVDA技术面双底结构确认→试仓做多，止损收紧至结构下方1.8%。 [降级试仓]",
+      "rationale": "【试仓模式】技术面确认：日线回踩20日均线获支撑，RSI脱离超卖区形成底背离。流动性极佳，机构护盘意愿强。严格收紧止损至结构低点下方，博取区间均值回归至前高阻力。 [降级试仓]",
       "open_check_status": "VALID",
-      "gap_pct": -0.013314397301615481,
-      "confirmed_entry_price": 222.32
+      "gap_pct": -0.007691615689096706,
+      "confirmed_entry_price": 220.61
     },
     {
-      "symbol": "US.AMD",
+      "symbol": "US.MU",
       "direction": "LONG",
       "entry_zone": [
-        166.5,
-        168.2
+        154.5,
+        156.8
       ],
-      "stop_loss": 163.8,
-      "take_profit": 174.0,
+      "stop_loss": 152.0,
+      "take_profit": 163.0,
       "urgency": "LOW",
-      "rationale": "技术面确认：跟随NVDA板块联动，但弹性更高。日线在上升通道下轨获得支撑，RSI脱离超卖区，盘前买盘逐步放大且未破前低。推理链：半导体轮动→AMD作为高Beta替代标的→技术面回踩确认支撑有效→试仓介入，严格风控应对中性市震荡，盈亏比>1:2。 [降级试仓]",
+      "rationale": "【试仓模式】技术面确认：周线级别上升通道下轨企稳，量价呈现缩量整理后的突破蓄势形态。存储周期逻辑提供基本面托底，技术结构清晰。试仓仓位控制在1%以内，止损收紧防假突破。 [降级试仓]",
       "open_check_status": "VALID",
-      "gap_pct": -0.007333176137703404,
-      "confirmed_entry_price": 420.99
+      "gap_pct": 0.025236963347712603,
+      "confirmed_entry_price": 698.74
     }
   ],
   "risk_warnings": [
     "⚠️ Arbiter 原判空仓 (数据缺失), 降级为试仓模式, 仓位减半"
   ],
   "max_positions": 2,
-  "date": "2026-05-19"
+  "date": "2026-05-20"
 }
