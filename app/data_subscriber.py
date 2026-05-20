@@ -183,13 +183,18 @@ class DataSubscriber:
         # 否则会导致回调线程阻塞，后续所有行情回调堆积在队列中无法消费。
         # 修复方案：handler 只更新心跳 + 入队，由独立工作线程处理重型逻辑。
         self._quote_queue = queue.Queue(maxsize=50)     # P0 2026-05-04: Per-code 去重后降至标的数
-        self._kline_queue = queue.Queue(maxsize=100)    # P0 2026-05-04: 适度限制 K 线队列
+        self._kline_queue = queue.Queue(maxsize=200)    # P0 2026-05-20: 去重后 key 数=标的×周期
         self._quote_worker: Optional[threading.Thread] = None
         # P0 2026-05-04: Per-code 报价去重 — 队列只存 code, 数据在 dict
         self._latest_quotes: Dict[str, dict] = {}
         self._pending_codes: set = set()
         self._quote_lock = threading.Lock()
         self._kline_worker: Optional[threading.Thread] = None
+        # P0 2026-05-20: Per-(code,k_type) K线去重 — 队列只存 key, 数据在 dict
+        # 同一 (code, k_type) 多次推送只保留最新值，队列中不重复入队
+        self._latest_klines: Dict[Tuple[str, str], dict] = {}
+        self._pending_kline_keys: set = set()
+        self._kline_lock = threading.Lock()
         self._worker_running = False
 
         # 多周期趋势缓存 (2026-03-25 新增)
@@ -2616,18 +2621,22 @@ class DataSubscriber:
         logger.info("[QuoteWorker] 退出")
 
     def _kline_worker_loop(self):
-        """K 线数据处理工作循环"""
+        """K 线数据处理工作循环 (v2: per-(code,k_type) 去重, 队列只存 key)"""
         logger.info("[KlineWorker] 启动")
         while self._worker_running:
             try:
-                item = self._kline_queue.get(timeout=2)
+                key = self._kline_queue.get(timeout=2)
             except queue.Empty:
                 continue
-            if item is None:
+            if key is None:
                 break
             try:
-                code, kline, k_type = item
-                self._process_kline_data(code, kline, k_type)
+                with self._kline_lock:
+                    kline = self._latest_klines.pop(key, None)
+                    self._pending_kline_keys.discard(key)
+                if kline is not None:
+                    code, k_type = key
+                    self._process_kline_data(code, kline, k_type)
             except Exception as e:
                 logger.error(f"[KlineWorker] 处理异常: {e}", exc_info=True)
         logger.info("[KlineWorker] 退出")
@@ -3330,10 +3339,17 @@ class DataSubscriber:
                         code = row.get("code", "")
                         kline = row.to_dict()
                         k_type = kline.get("k_type", "K_1M")
-                        try:
-                            subscriber._kline_queue.put_nowait((code, kline, k_type))
-                        except queue.Full:
-                            logger.warning(f"[KlineHandler] 队列已满，丢弃 {code} {k_type}")
+                        key = (code, k_type)
+                        # P0 2026-05-20: Per-(code,k_type) 去重入队
+                        # 最新数据存 dict，已在队列中的 key 不重复入队
+                        with subscriber._kline_lock:
+                            subscriber._latest_klines[key] = kline
+                            if key not in subscriber._pending_kline_keys:
+                                subscriber._pending_kline_keys.add(key)
+                                try:
+                                    subscriber._kline_queue.put_nowait(key)
+                                except queue.Full:
+                                    logger.warning(f"[KlineHandler] 队列已满，丢弃 {code} {k_type}")
                 except Exception as e:
                     logger.error(f"[KLINE回调异常] {e}", exc_info=True)
 
