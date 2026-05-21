@@ -67,6 +67,11 @@ from app.data_subscriber_engines.multi_timeframe import (
 )
 from app.data_subscriber_engines.dynamic_stop_params import DynamicStopEngine, StopConfig
 
+# ============================================================
+#  P0 God Class 拆分 (2026-05-21): 统一缓存管理器
+# ============================================================
+from app.data_subscriber_engines.cache_manager import CacheManager
+
 logger = logging.getLogger("ftseek.subscriber")
 # 2026-04-21 修复: 移除 propagate=False，允许日志传播到 ftseek 父级 logger
 # 之前 propagate=False 导致所有 INFO 日志被静默丢弃（日志黑洞）
@@ -236,8 +241,12 @@ class DataSubscriber:
         else:
             self.trade_executor = TradeExecutor()
         self.position_manager = PositionManager()
+        
+        # P0 2026-05-21: 注册开仓回调 — 消除循环依赖
+        # position_manager 开仓时通知 data_subscriber 订阅新标的
+        self.position_manager.register_on_position_opened(self._on_position_opened_callback)
 
-        # 【P0修复 2026-05-04】注入共享 Trade Context 到 PositionSync，避免频繁创建/销毁连接
+        # 【P0 修复 2026-05-04】注入共享 Trade Context 到 PositionSync，避免频繁创建/销毁连接
         try:
             from app.trader.position_sync import get_position_sync
             # 确保 TradeExecutor 的 context 已初始化
@@ -3084,6 +3093,21 @@ class DataSubscriber:
         if signal is None:
             return
         self._consensus.submit(signal)
+
+    def _on_position_opened_callback(self, code: str, source: str):
+        """
+        开仓回调 — 新持仓开仓时动态订阅行情
+        
+        Args:
+            code: 股票代码
+            source: 来源标识 (e.g., SOURCE_POSITION)
+        """
+        logger.info(f"[PositionOpened] 新持仓 {code} (source={source}) — 动态订阅行情")
+        try:
+            # 订阅单个标的的行情和 K 线
+            self.subscribe(codes=[code])
+        except Exception as e:
+            logger.warning(f"[PositionOpened] {code} 动态订阅失败: {e}")
 
     # ----------------------------------------------------------
     #  行情订阅

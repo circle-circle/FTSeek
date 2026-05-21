@@ -95,8 +95,20 @@ class PositionManager:
         """
         self.db_path = db_path or '/opt/ftseek/FTSeek/data/ftseek.db'
         self.config_path = config_path or '/opt/ftseek/FTSeek/config/unified_config.yaml'
+        # P0 2026-05-21: 回调注入 — 替代循环依赖的 lazy import
+        self._on_position_opened_callback = None
         self._ensure_table()
         self._config = self._load_config()
+    
+    def register_on_position_opened(self, callback):
+        """
+        注册开仓回调 — 消除 position_manager → data_subscriber 循环依赖
+        
+        Args:
+            callback: 函数签名 callback(code: str, source: str) -> None
+        """
+        self._on_position_opened_callback = callback
+        logger.info("[PositionManager] 开仓回调已注册")
     
     def _load_config(self) -> Dict[str, Any]:
         """
@@ -492,14 +504,13 @@ class PositionManager:
                 from app.utils.daily_active_pool import get_daily_active_pool, SOURCE_POSITION
                 pool = get_daily_active_pool()
                 pool.add_position(code, metadata={"action": action, "quantity": quantity})
+                # P0 2026-05-21: 回调注入 — 替代循环依赖的 lazy import
                 # 通知 DataSubscriber 订阅此标的
-                try:
-                    from app.data_subscriber import get_subscriber_instance
-                    subscriber = get_subscriber_instance()
-                    if subscriber and hasattr(subscriber, 'subscribe_code'):
-                        subscriber.subscribe_code(code, SOURCE_POSITION)
-                except Exception:
-                    pass  # subscriber 可能尚未初始化
+                if self._on_position_opened_callback is not None:
+                    try:
+                        self._on_position_opened_callback(code, SOURCE_POSITION)
+                    except Exception as e:
+                        logger.warning(f"[PositionManager] 开仓回调执行失败: {e}")
             except Exception:
                 pass  # 不影响主流程
 

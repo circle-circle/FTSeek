@@ -1,0 +1,37 @@
+{
+  "status": "ok",
+  "date": "2026-05-21",
+  "stats": {
+    "date": "2026-05-21",
+    "total": 44,
+    "executed": 3,
+    "rejected": 41,
+    "pending": 0,
+    "execution_rate": 0.06818181818181818,
+    "max_concurrent_pct": 0.0,
+    "weak_signal_pct": 0.0,
+    "weak_signal_error_pct": 0.0,
+    "noise_hours_pct": 0.024390243902439025,
+    "signal_cooldown_pct": 0.0,
+    "mtf_rejected_pct": 0.0,
+    "late_session_pct": 0.024390243902439025,
+    "top_reasons": {
+      "decision_buffer_rejected": 20,
+      "circuit_breaker": 14,
+      "计划拦截: 🚫 [计划外拦截] 标的 HK.09988 不在今日作战计划中": 1,
+      "计划拦截: 🚫 [计划外拦截] 标的 HK.01211 不在今日作战计划中": 1,
+      "价格检查: 价格 86.72 极度接近日内高点 86.90 (距离 0.20% < 0.3%)，禁止追高买入": 1
+    }
+  },
+  "trends": [
+    {
+      "name": "执行率下降",
+      "severity": "high",
+      "message": "执行率从 13.0% 降至 6.8% (-6.1pp)"
+    }
+  ],
+  "suggestions": [],
+  "suggestion_count": 0,
+  "max_severity": "none",
+  "report": "### 📊 FTSeek 盘后分析 (2026-05-21)\n\n**管线概览**\n- 总信号: 44 | 执行: 3 | 拒绝: 41\n- 执行率: 🟡 6.8%\n\n**拒绝原因 TOP 5**\n- `decision_buffer_rejected`: 20 (49%)\n- `circuit_breaker`: 14 (34%)\n- `计划拦截: 🚫 [计划外拦截] 标的 HK.09988 不在今日作战计划中`: 1 (2%)\n- `计划拦截: 🚫 [计划外拦截] 标的 HK.01211 不在今日作战计划中`: 1 (2%)\n- `价格检查: 价格 86.72 极度接近日内高点 86.90 (距离 0.20% < 0.3%)，禁止追高买入`: 1 (2%)\n\n### 📈 趋势变化\n- 🔴 执行率下降: 执行率从 13.0% 降至 6.8% (-6.1pp)\n\n### ✅ 无优化建议\n"
+}
