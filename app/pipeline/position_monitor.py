@@ -324,7 +324,12 @@ def _monitor_option_positions(scheduler):
     """定期检查所有期权持仓，执行自动平仓和风险警报"""
     from app.core.scheduler_triggers import get_market_phase, MarketPhase
     phase = get_market_phase()
-    if phase in (MarketPhase.WEEKEND, MarketPhase.OVERNIGHT, MarketPhase.PRE_MARKET):
+    # P0 修复 (2026-05-21): 增加 AFTER_HOURS 检查
+    # 根因：期权在盘后时段 (16:00-20:00 ET) 流动性极低，价格数据不可靠
+    #       且所有数据源（Yahoo/AlphaVantage/TwelveData）均不支持期权符号
+    #       导致每 3 分钟触发一次"所有数据源均失败"ERROR
+    #       修复：仅交易时段 (TRADING) 执行期权价格轮询和风控检查
+    if phase in (MarketPhase.WEEKEND, MarketPhase.OVERNIGHT, MarketPhase.PRE_MARKET, MarketPhase.AFTER_HOURS):
         return
     try:
         positions = scheduler.position_store.all()
