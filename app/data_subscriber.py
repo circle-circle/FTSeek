@@ -2682,6 +2682,11 @@ class DataSubscriber:
                     self._peak_price_cache[code] = min(
                         self._peak_price_cache[code], current_price
                     )
+            # P2 修复 (2026-05-21): 同步写入 DB，避免重启后峰值丢失
+            if pos_now.action == 'BUY' and current_price > self._peak_price_cache.get(code, 0):
+                self.position_manager.update_peak_price(code, highest_price=current_price)
+            elif pos_now.action == 'SELL' and current_price < self._peak_price_cache.get(code, float('inf')):
+                self.position_manager.update_peak_price(code, lowest_price=current_price)
         else:
             self._peak_price_cache.pop(code, None)
 

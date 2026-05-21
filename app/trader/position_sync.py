@@ -452,7 +452,8 @@ class PositionSync:
                     stop_loss=default_sl,
                     take_profit=default_tp,
                     strategy='futu_sync',
-                    trader_type='SYNC'
+                    trader_type='SYNC',
+                    strategy_tags='sync'  # P2 修复 (2026-05-21): 标记同步来源
                 )
                 logger.info(f"[持仓修复] {code} 已自动创建 (Futu→DB 同步)")
                 

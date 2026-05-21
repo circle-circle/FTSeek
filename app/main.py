@@ -611,9 +611,9 @@ def _sync_positions_from_futu(executor):
             else:
                 c.execute(
                     """INSERT INTO positions
-                       (code, action, quantity, entry_price, entry_time, status, stop_loss, take_profit)
-                       VALUES (?,?,?,?,?,'OPEN',?,?)""",
-                    (code, 'BUY', qty, cost, now_str, sl, tp)
+                       (code, action, quantity, entry_price, entry_time, status, stop_loss, take_profit, strategy, strategy_tags)
+                       VALUES (?,?,?,?,?,'OPEN',?,?,?,?)""",
+                    (code, 'BUY', qty, cost, now_str, sl, tp, 'futu_sync', 'sync')
                 )
                 inserted.append(f"{code}({qty}股@{cost})")
 

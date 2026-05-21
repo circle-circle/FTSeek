@@ -1300,9 +1300,9 @@ class PositionManager:
             cursor = conn.cursor()
             cursor.execute('''
                 INSERT INTO positions
-                (code, action, quantity, entry_price, entry_time, status, is_add, signal_id, trader_type)
+                (code, action, quantity, entry_price, entry_time, status, is_add, signal_id, trader_type, strategy, strategy_tags)
                 VALUES (?, (SELECT action FROM positions WHERE code=? AND status='OPEN' LIMIT 1),
-                        ?, ?, ?, 'CLOSED', 1, ?, 'AI')
+                        ?, ?, ?, 'CLOSED', 1, ?, 'AI', 'pyramid', 'add')
             ''', (code, code, add_qty, add_price, add_time, signal_id))
             conn.commit()
             return cursor.lastrowid
