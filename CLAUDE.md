@@ -2,6 +2,19 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## ⚠️ 治理规范 (必读，优先级最高)
+
+开始任何工作前，先读 `SYSTEM_OBJECTIVE.md`。该文件定义了：
+- 当前阶段和北极星指标
+- 当前焦点 (Top 3，超范围需提案)
+- Agent 自主边界 (🟢🟡🔴🚫)
+- 决策铁律 (5 问检验)
+- 反指标和历史教训
+
+`SYSTEM_OBJECTIVE.md` 是本项目的宪法，所有 Agent (包括 Claude) 的工作必须在其框架内执行。
+
+---
+
 ## Overview
 
 FTSeek-US is the US market trading system, part of the FTSeek dual-market architecture. Independent pipeline (Planner → Gate → Interceptor) with RiskStateMachine V2 + idempotent interceptor. Uses Futu OpenD shared with HK market (global 1000 slot limit). Currently paper trading (TRADE_ENV=1).
