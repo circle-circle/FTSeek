@@ -557,7 +557,25 @@ class DynamicExitManager:
                 )
 
         # ── 2. 结构止损（固定百分比）─────────────────────────────────
+        # Phase 4b (2026-05-21): 时间衰减止损收紧
+        # 根因: 持仓越久，信号衰减，原始止损线过于宽松导致深度亏损
+        # 规则: >2天收紧至原始50%，>3天收紧至原始30%
         struct_stop = abs(self.get_stop_loss())
+        TIME_DECAY_ENABLED = True
+        if TIME_DECAY_ENABLED and entry_time:
+            try:
+                from datetime import datetime as _dt
+                if isinstance(entry_time, str):
+                    _et = _dt.fromisoformat(entry_time)
+                else:
+                    _et = entry_time
+                _holding_h = (datetime.now() - _et).total_seconds() / 3600.0
+                if _holding_h > 72:  # >3天
+                    struct_stop = struct_stop * 0.30
+                elif _holding_h > 48:  # >2天
+                    struct_stop = struct_stop * 0.50
+            except Exception:
+                pass
         if pnl_pct <= -struct_stop:
             return ExitDecision(
                 should_exit=True, reason=f"结构止损: 亏损={pnl_pct:.1%}",

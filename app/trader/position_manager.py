@@ -491,6 +491,19 @@ class PositionManager:
                 )
                 return recent_close[0]
             
+            # Phase 4a (2026-05-21): 止损一致性 — 开仓时强制设置 stop_loss
+            # 根因: 历史 68 条 stop_loss=0/NULL 导致止损形同虚设
+            if stop_loss is None or stop_loss <= 0:
+                stop_loss = self.calculate_stop_loss_price(entry_price)
+                logger.info(
+                    f"[止损自动设置] {code} entry={entry_price:.3f} → stop_loss={stop_loss:.3f} (-3.5%)"
+                )
+            if take_profit is None or take_profit <= 0:
+                take_profit = self.calculate_take_profit_price(entry_price)
+                logger.info(
+                    f"[止盈自动设置] {code} entry={entry_price:.3f} → take_profit={take_profit:.3f} (+5%)"
+                )
+
             cursor.execute('''
                 INSERT INTO positions 
                 (code, action, quantity, entry_price, entry_time, status, stop_loss, take_profit, signal_id, strategy, trace_id, trader_type, strategy_tags)

@@ -617,6 +617,48 @@ class TradeExecutor:
                         f"原={raw_qty} 调整后={qty}"
                     )
 
+                # Phase 3a (2026-05-21): 最小仓位金额保护 — 港股至少 5000 HKD
+                # 根因: 低价股 1 手仅几百港元，手续费占比过高导致盈亏比恶化
+                MIN_POSITION_AMOUNT_HK = 5000.0
+                if signal.price and signal.price > 0:
+                    current_amount = qty * signal.price
+                    if current_amount < MIN_POSITION_AMOUNT_HK:
+                        # 向上对齐到满足最小金额的整手倍数
+                        min_qty_by_amount = int(MIN_POSITION_AMOUNT_HK / signal.price)
+                        min_qty_aligned = ((min_qty_by_amount + base_qty - 1) // base_qty) * base_qty
+                        # 安全上限: 不超过总资金 5% (与上方 _execute_open 的防御一致)
+                        max_single_amount = config.MAX_ORDER_AMOUNT * 0.05
+                        max_qty_by_cap = int(max_single_amount / signal.price)
+                        max_qty_by_cap = (max_qty_by_cap // base_qty) * base_qty or base_qty
+                        new_qty = min(min_qty_aligned, max_qty_by_cap)
+                        if new_qty > qty and new_qty >= base_qty:
+                            logger.info(
+                                f"[最小仓位] {signal.code} 原qty={qty} 金额={current_amount:.0f}HKD "
+                                f"< {MIN_POSITION_AMOUNT_HK:.0f}HKD → qty={new_qty} "
+                                f"(金额={new_qty * signal.price:.0f}HKD, 上限={max_qty_by_cap})"
+                            )
+                            qty = new_qty
+
+                # Phase 3b (2026-05-21): 高确信度仓位分级 — 至少 2 手
+                # 条件: confidence >= 0.75 且 agree_count >= 3 (多策略共识)
+                HIGH_CONF_MIN_MULTIPLIER = 2
+                _con = extra.get('confidence', 0.0)
+                _ac = extra.get('agree_count', 0)
+                if _con >= 0.75 and _ac >= 3:
+                    min_qty_high_conf = base_qty * HIGH_CONF_MIN_MULTIPLIER
+                    if qty < min_qty_high_conf:
+                        # 仍需满足资金上限
+                        max_single_amount = config.MAX_ORDER_AMOUNT * 0.05
+                        max_qty_cap = int(max_single_amount / signal.price) if signal.price > 0 else min_qty_high_conf
+                        max_qty_cap = (max_qty_cap // base_qty) * base_qty or base_qty
+                        boosted = min(min_qty_high_conf, max_qty_cap)
+                        if boosted > qty:
+                            logger.info(
+                                f"[高确信度加仓] {signal.code} con={_con:.2f} ac={_ac} "
+                                f"qty {qty} → {boosted} (≥{HIGH_CONF_MIN_MULTIPLIER}手)"
+                            )
+                            qty = boosted
+
                 return qty
 
             # 优先使用信号中的数量 (2026-04-15 修复: 增加整手校验)
