@@ -547,33 +547,15 @@ def _monitor_option_positions(scheduler):
                             f"[期权监控] 价格获取失败 {_fail_n}次 "
                             f"{position.symbol} {option_code} — 止损止盈暂不生效"
                         )
-                    # Karpathy minimal fix: 连续 50 次获取失败 → 强制平仓 (风控优先于价格精度)
-                    if _fail_n >= 50:
+                    # P1 修复 (2026-05-22): PRICE_FAIL 改为告警 + 延迟处理，不直接平仓
+                    # 根因：价格获取失败 ≠ 行情异常，可能是网络/连接问题
+                    # 优化：记录告警，等待行情恢复，不强制平仓（避免误杀盈利仓位）
+                    if _fail_n >= 50 and _fail_n % 50 == 0:
                         logger.error(
-                            f"[期权·风控] {position.symbol} {option_code} "
-                            f"价格获取连续失败 {_fail_n}次，强制平仓"
+                            f"[期权·风控告警] {position.symbol} {option_code} "
+                            f"价格获取连续失败 {_fail_n}次 — 止盈止损暂不生效，等待行情恢复"
                         )
-                        _execute_option_close_order(
-                            scheduler, position, option_code, qty,
-                            reason=f"PRICE_FAIL_{_fail_n}"
-                        )
-                        # P0 fix (2026-05-21): Persist PRICE_FAIL-closed option codes
-                        # to prevent futu_sync re-import loop. futu_sync sees the position
-                        # still in Futu (user opened manually, SELL may have failed) and
-                        # re-imports it every 30s, causing infinite duplicate trade_records.
-                        # futu_sync._sync_to_position_store_locked checks this file.
-                        try:
-                            import json as _json
-                            _pf_file = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'price_fail_closed.json')
-                            _pf_file = os.path.normpath(_pf_file)
-                            _closed_set = set()
-                            if os.path.exists(_pf_file):
-                                _closed_set = set(_json.load(open(_pf_file)))
-                            _closed_set.add(option_code)
-                            _json.dump(list(_closed_set), open(_pf_file, 'w'), indent=2)
-                            logger.info(f"[期权·P0] 已记录 PRICE_FAIL 关闭: {option_code}")
-                        except Exception as _e:
-                            logger.warning(f"[期权·P0] 记录失败: {_e}")
+                        # TODO: 未来可添加降级策略（如：使用持仓查询 fallback）
                     continue
                 _opt_price_fail_count.pop(option_code, None)  # 成功后清零
 
