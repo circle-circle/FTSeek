@@ -191,9 +191,106 @@ class KlineProcessor:
             logger.debug(f"[软止损预警] {code} 计算异常：{e}")
     
     def _check_dynamic_exit(self, code: str, current_price: float, pos_now) -> bool:
-        """动态退出检查"""
-        # TODO: 从 data_subscriber 迁移 dynamic_exit_manager + HKExitAggregator 逻辑
-        # 当前先保持为占位符
+        """
+        动态退出检查 — 组合退出状态机 + HKExitAggregator 灰度
+        
+        迁移自 data_subscriber.py L2930-3025
+        """
+        try:
+            from app.risk.dynamic_exit_manager import dynamic_exit_manager as _dem_exit
+            exit_state = getattr(pos_now, 'exit_state', None)
+            exit_decision = _dem_exit.check_exit_priority(
+                code=code,
+                entry_price=pos_now.entry_price,
+                current_price=current_price,
+                peak_price=self.cache.peak_price_cache.get(code, current_price),
+                entry_time=getattr(pos_now, 'entry_time', None),
+                atr_value=self.get_atr(code),
+                direction=pos_now.action,
+                is_same_day=True,
+            )
+            if exit_decision.new_state:
+                self.position_manager.update_exit_state(
+                    code, exit_decision.new_state, reason=exit_decision.reason
+                )
+            if exit_decision.new_stop_loss:
+                self.position_manager.update_stop_loss_take_profit(
+                    code, exit_decision.new_stop_loss, pos_now.take_profit
+                )
+                logger.info(
+                    f"[状态机] {code} 止损价更新：{pos_now.stop_loss:.2f} -> {exit_decision.new_stop_loss:.2f}"
+                )
+            if exit_decision.should_exit:
+                logger.info(
+                    f"[组合退出-P{exit_decision.priority}] {code} "
+                    f"{exit_decision.reason} | ratio={exit_decision.close_ratio:.0%}"
+                )
+                if exit_decision.close_ratio < 1.0:
+                    logger.info(f"[组合退出 - 部分止盈] {code} 平仓比例={exit_decision.close_ratio:.0%}")
+                    self.execute_partial_take_profit(code, current_price, exit_decision.close_ratio)
+                elif exit_decision.is_stop_loss:
+                    self.execute_stop_loss(code, current_price)
+                else:
+                    logger.info(f"[组合退出 - 止盈] {code}")
+                    self.execute_take_profit(code, current_price)
+                self.cache.trailing_stop_cache.pop(code, None)
+                self.cache.peak_price_cache.pop(code, None)
+                return True
+        except Exception as _de:
+            logger.debug(f"[动态退出] {code} 检查异常：{_de}")
+
+        # ── P1 (2026-05-17): HKExitAggregator 灰度执行 ──
+        # 从双跑模式升级为 50% 灰度执行
+        # 50% 仓位用新退出系统 (ATR 动态止损)，50% 用旧系统 (固定百分比)
+        # 目标：对比数据后决定是否全面切换
+        try:
+            from app.risk.hk_exit_aggregator import get_hk_exit_aggregator
+            aggregator = get_hk_exit_aggregator()
+
+            exit_result = aggregator.evaluate(
+                code=code,
+                entry_price=pos_now.entry_price,
+                current_price=current_price,
+                peak_price=self.cache.peak_price_cache.get(code, current_price),
+                atr_value=self.get_atr(code),
+                direction=pos_now.action,
+                config={},  # 使用规则默认值
+            )
+
+            if exit_result.should_exit:
+                # 灰度判断：模拟盘 50% 概率用新退出系统
+                _use_new_exit = False
+                try:
+                    from config.config_center import get_config_center as _gcc_gray
+                    _gray_ratio = _gcc_gray().get('base.simulation_mode.exit_gray_ratio', 0.5)
+                    import random
+                    _use_new_exit = random.random() < _gray_ratio
+                except Exception:
+                    _use_new_exit = False
+
+                if _use_new_exit:
+                    # 新退出系统执行 — 直接调用 execute_stop_loss (HKExitAggregator 本质是动态止损)
+                    logger.info(
+                        f"[HKAggregator·灰度执行] {code} rule={exit_result.rule_name} "
+                        f"reason={exit_result.reason} price={exit_result.final_stop_price:.2f} "
+                        f"ratio={exit_result.close_ratio:.0%}"
+                    )
+                    try:
+                        self.execute_stop_loss(code, current_price)
+                        self.cache.trailing_stop_cache.pop(code, None)
+                        self.cache.peak_price_cache.pop(code, None)
+                        return True
+                    except Exception as _exec_e:
+                        logger.warning(f"[HKAggregator·灰度执行] {code} 执行失败：{_exec_e}，回退旧系统")
+
+                # 旧系统或灰度未命中 → 仅记录对比日志
+                logger.debug(
+                    f"[HKAggregator·双跑] {code} rule={exit_result.rule_name} "
+                    f"gray={'命中' if _use_new_exit else '未命中'} (记录对比)"
+                )
+        except Exception as _agg_e:
+            logger.debug(f"[HKAggregator·双跑] {code} 检查异常：{_agg_e}")
+        
         return False
     
     def _update_adx(self, code: str, kline: dict):
