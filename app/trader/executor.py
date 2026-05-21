@@ -3246,6 +3246,37 @@ class TradeExecutor:
                     pool.return_connection(conn)
                     return
 
+            # P0 修复 (2026-05-21): 双重写入防御
+            # 平仓时 order_id 是新的（与开仓不同），trade_id 不匹配已有记录
+            # 必须按 code 查找 OPEN 记录并 UPDATE，而非 INSERT 新行
+            if status == 'CLOSED':
+                cursor.execute(
+                    "SELECT id FROM trades WHERE code=? AND status='OPEN' ORDER BY id DESC LIMIT 1",
+                    (code,)
+                )
+                open_row = cursor.fetchone()
+                if open_row:
+                    now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    _exit_r = exit_reason or 'normal_close'
+                    cursor.execute("""
+                        UPDATE trades
+                        SET exit_price=?, exit_time=?, pnl=?, pnl_percent=?,
+                            status='CLOSED', exit_reason=?
+                        WHERE id=?
+                    """, (
+                        price, now, pnl,
+                        pnl / (quantity * price) if quantity > 0 and price > 0 else 0,
+                        _exit_r, open_row[0]
+                    ))
+                    conn.commit()
+                    logger.info(f"✅ [SQLite trades] 平仓已更新(code匹配): {open_row[0]} {code} pnl={pnl}")
+                    pool.return_connection(conn)
+                    return
+                else:
+                    logger.warning(f"⚠️ [SQLite trades] {code} 无 OPEN 记录可更新，跳过平仓写入")
+                    pool.return_connection(conn)
+                    return
+
             # 新开记录 — 使用 HK 本地 TradeRecorder (JSON)
             # P0 2026-05-10 去重：检查同 order_id 是否已有记录
             rec_trade_id = f"trade_{order_id}"

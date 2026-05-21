@@ -900,7 +900,7 @@ strategy:
     adaptive_threshold_enabled: true
     adaptive_threshold_window: 200
     adaptive_threshold_percentile: 75
-    adaptive_threshold_min: 0.8
+    adaptive_threshold_min: 1.2  # 2026-05-21: 提高自适应下限 (原0.8, 过滤弱信号)
     adaptive_threshold_max: 2.5
     breaking_news_multiplier: 2.0
     breaking_news_lookback_hours: 2

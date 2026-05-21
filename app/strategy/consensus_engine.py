@@ -79,6 +79,21 @@ ADAPTIVE_THRESHOLD_MIN = _cfg_snapshot['min']
 ADAPTIVE_THRESHOLD_MAX = _cfg_snapshot['max']
 
 # ============================================================
+#  因子权重 — 从 config_center 读取 (Phase 2b SSOT 对齐)
+# ============================================================
+def _read_factor_weights_cfg() -> dict:
+    """从 config_center 读取因子权重（延迟导入避免循环依赖）"""
+    try:
+        from config.config_center import get_config_center
+        cc = get_config_center()
+        weights_cfg = cc.get('strategy.weights', {})
+        if isinstance(weights_cfg, dict):
+            return {k: float(v) for k, v in weights_cfg.items() if isinstance(v, (int, float))}
+    except Exception:
+        pass
+    return {}
+
+# ============================================================
 #  策略分类与基准权重 (从 git HEAD 恢复, P0 2026-05-20)
 # ============================================================
 # 趋势型策略 (MOMENTUM factors): 在趋势行情中表现更好
@@ -127,7 +142,7 @@ FACTOR_FAMILIES = {
 FAMILY_MAX_WEIGHT = {
     "momentum":  1.5,
     "trend":     1.5,
-    "volatility":1.2,
+    "volatility":0.8,  # 2026-05-21: 收紧 (原1.2, bb+rsi+vol组合22%WR)
     "volume":    1.0,
 }
 
@@ -266,6 +281,13 @@ class ConsensusEngine:
         self.adx_trend = adx_trend
         self.adx_range = adx_range
         self.base_weights = base_weights or DEFAULT_BASE_WEIGHTS.copy()
+
+        # Phase 2b (2026-05-21): SSOT 对齐 — 用 config 权重覆盖默认值
+        if not base_weights:  # 仅当未显式传入 base_weights 时
+            _cfg_weights = _read_factor_weights_cfg()
+            for strategy, weight in _cfg_weights.items():
+                if strategy in self.base_weights:
+                    self.base_weights[strategy] = weight
         self.on_consensus = on_consensus
         self.min_strategies = min_strategies  # V2: 最少需要的策略数量
         self.allow_short = allow_short  # 是否允许做空
@@ -1457,6 +1479,28 @@ class ConsensusEngine:
                 )
         return score
 
+    # ── Phase 2a (2026-05-21): 因子组合黑名单 ──
+    # 基于历史交易数据诊断，以下因子组合胜率极低 (<25%) 且贡献大量亏损
+    FACTOR_BLACKLIST = [
+        frozenset({"bb_factor", "rsi_factor", "vol_factor"}),  # 22% WR, 均亏-267 HKD
+    ]
+
+    def _check_factor_blacklist(self, votes: list, score: float, code: str) -> float:
+        """因子组合黑名单: 当低胜率因子组合同时触发时，衰减信号分数"""
+        active_strategies = set(v.strategy for v in votes)
+        for blacklisted in self.FACTOR_BLACKLIST:
+            if blacklisted.issubset(active_strategies):
+                decay = 0.3  # 保留30%信号强度而非完全屏蔽
+                old_score = score
+                score *= decay
+                logger.warning(
+                    f"[因子黑名单] {code} 低胜率组合触发: "
+                    f"{{', '.join(sorted(blacklisted))}} "
+                    f"score {old_score:+.2f} → {score:+.2f} (×{decay})"
+                )
+                break
+        return score
+
     def _compute_adaptive_threshold(self) -> float:
         """基于滚动分数历史的 percentile 阈值"""
         if not ADAPTIVE_THRESHOLD_ENABLED or len(self._score_history) < 20:
@@ -1603,6 +1647,9 @@ class ConsensusEngine:
 
         # ── P1 优化: 因子族共线性惩罚 ──
         score = self._apply_factor_family_cap(unique_votes, weight_details, score)
+
+        # ── Phase 2a (2026-05-21): 因子组合黑名单 ──
+        score = self._check_factor_blacklist(unique_votes, score, code)
 
         # Phase 2: 分层共识计算 (结构共识 vs 事件共识)
         structural_votes = []

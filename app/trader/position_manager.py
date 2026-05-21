@@ -688,10 +688,11 @@ class PositionManager:
                     # 优先用 signal_id 精确匹配
                     cursor.execute(
                         "UPDATE trades SET status='CLOSED', exit_price=?, exit_time=?, "
-                        "pnl=?, pnl_percent=?, exit_reason='position_closed' "
+                        "pnl=?, pnl_percent=?, fees=?, exit_reason='position_closed' "
                         "WHERE signal_id=? AND status='OPEN'",
                         (exit_price, exit_time, net_pnl,
                          net_pnl / (position.entry_price * position.quantity) if position.entry_price > 0 and position.quantity > 0 else 0,
+                         total_fees,
                          _sig_id)
                     )
                     _trade_updates = cursor.rowcount
@@ -699,11 +700,12 @@ class PositionManager:
                     # fallback: 用 code 匹配最近的 OPEN trade
                     cursor.execute(
                         "UPDATE trades SET status='CLOSED', exit_price=?, exit_time=?, "
-                        "pnl=?, pnl_percent=?, exit_reason='position_closed' "
+                        "pnl=?, pnl_percent=?, fees=?, exit_reason='position_closed' "
                         "WHERE code=? AND status='OPEN' "
                         "AND id = (SELECT id FROM trades WHERE code=? AND status='OPEN' ORDER BY id DESC LIMIT 1)",
                         (exit_price, exit_time, net_pnl,
                          net_pnl / (position.entry_price * position.quantity) if position.entry_price > 0 and position.quantity > 0 else 0,
+                         total_fees,
                          code, code)
                     )
                     _trade_updates = cursor.rowcount
