@@ -440,6 +440,7 @@ def restore_positions_from_db(scheduler):
                 # 设置 metadata
                 position.metadata = {
                     "source": "voting_llm_option",
+                    "protection": "managed",  # P1 修复：期权仓位归主线策略管理
                     "is_option": True,
                     "option_code": option_code,
                     "strike_price": float(strike_price) if strike_price else 0.0,
