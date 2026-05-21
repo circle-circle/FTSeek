@@ -1,0 +1,47 @@
+{
+  "timestamp": "2026-05-21T14:35:00.003661",
+  "date": "2026-05-21",
+  "time": "1435",
+  "alerts": [
+    {
+      "level": "info",
+      "rule_id": "FUNNEL_002",
+      "rule_name": "信号漏斗低转化",
+      "message": "信号执行率仅 9% (3/35)，需关注",
+      "details": {
+        "total_signals": 35,
+        "executed": 3,
+        "exited": 0,
+        "execution_rate": 0.0857
+      },
+      "timestamp": "2026-05-21T14:35:00.003397"
+    },
+    {
+      "level": "critical",
+      "rule_id": "REJECT_001",
+      "rule_name": "拒绝率飙升",
+      "message": "信号拒绝率 91%，主因: decision_buffer_rejected (19次)",
+      "details": {
+        "rejection_rate": 0.9143,
+        "reject_reasons": {
+          "decision_buffer_rejected": 19,
+          "计划拦截: 🚫 [计划外拦截] 标的 HK.09988 不在今日作战计划中": 1,
+          "计划拦截: 🚫 [计划外拦截] 标的 HK.01211 不在今日作战计划中": 1,
+          "价格检查: 价格 86.72 极度接近日内高点 86.90 (距离 0.20% < 0.3%)，禁止追高买入": 1,
+          "计划拦截: 🚫 [计划外拦截] 标的 HK.02020 不在今日作战计划中": 1,
+          "hk_adapter": 1,
+          "circuit_breaker": 8
+        },
+        "total_signals": 35,
+        "rejected_count": 32
+      },
+      "timestamp": "2026-05-21T14:35:00.003485"
+    }
+  ],
+  "summary": {
+    "total": 2,
+    "critical": 1,
+    "warning": 0,
+    "info": 1
+  }
+}

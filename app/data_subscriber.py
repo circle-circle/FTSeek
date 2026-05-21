@@ -183,7 +183,9 @@ class DataSubscriber:
         # 否则会导致回调线程阻塞，后续所有行情回调堆积在队列中无法消费。
         # 修复方案：handler 只更新心跳 + 入队，由独立工作线程处理重型逻辑。
         self._quote_queue = queue.Queue(maxsize=50)     # P0 2026-05-04: Per-code 去重后降至标的数
-        self._kline_queue = queue.Queue(maxsize=200)    # P0 2026-05-20: 去重后 key 数=标的×周期
+        # P0 2026-05-21: 双队列优先机制 — 持仓股优先处理（止损/止盈安全）
+        self._priority_kline_queue = queue.Queue(maxsize=500)  # 持仓股 K线，优先处理
+        self._kline_queue = queue.Queue(maxsize=1000)   # P0 2026-05-21: 非持仓股 K线，从 200 提升至 1000
         self._quote_worker: Optional[threading.Thread] = None
         # P0 2026-05-04: Per-code 报价去重 — 队列只存 code, 数据在 dict
         self._latest_quotes: Dict[str, dict] = {}
@@ -2629,13 +2631,19 @@ class DataSubscriber:
         logger.info("[QuoteWorker] 退出")
 
     def _kline_worker_loop(self):
-        """K 线数据处理工作循环 (v2: per-(code,k_type) 去重, 队列只存 key)"""
-        logger.info("[KlineWorker] 启动")
+        """K 线数据处理工作循环 (v3: 双队列优先 — 持仓股优先处理)"""
+        logger.info("[KlineWorker] 启动 (双队列优先模式)")
         while self._worker_running:
+            key = None
+            # 优先消费持仓股队列
             try:
-                key = self._kline_queue.get(timeout=2)
+                key = self._priority_kline_queue.get(timeout=0.1)
             except queue.Empty:
-                continue
+                # 优先队列空，消费普通队列
+                try:
+                    key = self._kline_queue.get(timeout=2)
+                except queue.Empty:
+                    continue
             if key is None:
                 break
             try:
@@ -2646,7 +2654,7 @@ class DataSubscriber:
                     code, k_type = key
                     self._process_kline_data(code, kline, k_type)
             except Exception as e:
-                logger.error(f"[KlineWorker] 处理异常: {e}", exc_info=True)
+                logger.error(f"[KlineWorker] 处理异常：{e}", exc_info=True)
         logger.info("[KlineWorker] 退出")
 
     def _process_quote_data(self, code: str, quote: dict):
@@ -3353,18 +3361,21 @@ class DataSubscriber:
                         kline = row.to_dict()
                         k_type = kline.get("k_type", "K_1M")
                         key = (code, k_type)
-                        # P0 2026-05-20: Per-(code,k_type) 去重入队
-                        # 最新数据存 dict，已在队列中的 key 不重复入队
+                        # P0 2026-05-21: 双队列优先 — 持仓股入优先队列，非持仓股入普通队列
                         with subscriber._kline_lock:
                             subscriber._latest_klines[key] = kline
                             if key not in subscriber._pending_kline_keys:
                                 subscriber._pending_kline_keys.add(key)
+                                # 判断是否持仓
+                                is_holding = subscriber.position_manager.get_position(code) is not None
+                                target_queue = subscriber._priority_kline_queue if is_holding else subscriber._kline_queue
+                                queue_name = "priority" if is_holding else "normal"
                                 try:
-                                    subscriber._kline_queue.put_nowait(key)
+                                    target_queue.put_nowait(key)
                                 except queue.Full:
-                                    logger.warning(f"[KlineHandler] 队列已满，丢弃 {code} {k_type}")
+                                    logger.warning(f"[KlineHandler] {queue_name}队列已满，丢弃 {code} {k_type}")
                 except Exception as e:
-                    logger.error(f"[KLINE回调异常] {e}", exc_info=True)
+                    logger.error(f"[KLINE 回调异常] {e}", exc_info=True)
 
         ctx = self._get_quote_ctx()
         self._quote_handler = MyQuoteHandler()
