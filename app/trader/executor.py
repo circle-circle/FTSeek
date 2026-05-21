@@ -659,13 +659,30 @@ class TradeExecutor:
                             )
                             qty = boosted
 
+                # Phase 5 (2026-05-21): 绝对仓位上限 — 防止单笔巨亏
+                # 根因: HK.01347 单笔 95,600 HKD 亏损 -5,250
+                # 规则: 单标的仓位不超过 MAX_ORDER_AMOUNT 的 25% (30,000 HKD)
+                MAX_SINGLE_POSITION_PCT = 0.25
+                if signal.price and signal.price > 0:
+                    max_abs_amount = config.MAX_ORDER_AMOUNT * MAX_SINGLE_POSITION_PCT
+                    max_abs_qty = int(max_abs_amount / signal.price)
+                    max_abs_qty = (max_abs_qty // base_qty) * base_qty or base_qty
+                    if qty > max_abs_qty:
+                        old_qty = qty
+                        qty = max_abs_qty
+                        logger.warning(
+                            f"[仓位上限] {signal.code} qty {old_qty} → {qty} "
+                            f"(金额 {old_qty * signal.price:.0f} → {qty * signal.price:.0f} HKD, "
+                            f"上限={MAX_SINGLE_POSITION_PCT*100:.0f}%={max_abs_amount:.0f})"
+                        )
+
                 return qty
 
             # 优先使用信号中的数量 (2026-04-15 修复: 增加整手校验)
             if signal.quantity and signal.quantity > 0:
                 # 检查是否为整手倍数
                 if signal.quantity % base_qty == 0:
-                    return signal.quantity
+                    qty = signal.quantity
                 else:
                     # 不是整手倍数，向下对齐
                     aligned_qty = (signal.quantity // base_qty) * base_qty
@@ -674,15 +691,40 @@ class TradeExecutor:
                             f"[碎股防护] {signal.code} signal.quantity={signal.quantity} 非整手倍数，"
                             f"向下对齐到 {aligned_qty} (每手 {base_qty} 股)"
                         )
-                        return aligned_qty
+                        qty = aligned_qty
                     else:
                         logger.warning(
                             f"[碎股防护] {signal.code} signal.quantity={signal.quantity} 不足 1 手，"
                             f"使用基础数量 {base_qty}"
                         )
-                        return base_qty
+                        qty = base_qty
 
-            return base_qty
+                # Phase 5 (2026-05-21): 信号数量路径也需仓位上限保护
+                MAX_SINGLE_POSITION_PCT = 0.25
+                if signal.price and signal.price > 0:
+                    max_abs_amount = config.MAX_ORDER_AMOUNT * MAX_SINGLE_POSITION_PCT
+                    max_abs_qty = int(max_abs_amount / signal.price)
+                    max_abs_qty = (max_abs_qty // base_qty) * base_qty or base_qty
+                    if qty > max_abs_qty:
+                        old_qty = qty
+                        qty = max_abs_qty
+                        logger.warning(
+                            f"[仓位上限] {signal.code}(信号路径) qty {old_qty} → {qty} "
+                            f"(金额 {old_qty * signal.price:.0f} → {qty * signal.price:.0f} HKD)"
+                        )
+                return qty
+
+            # Phase 5: base_qty 路径也需保护 (通常很小，但防御性检查)
+            qty = base_qty
+            MAX_SINGLE_POSITION_PCT = 0.25
+            if signal.price and signal.price > 0:
+                max_abs_amount = config.MAX_ORDER_AMOUNT * MAX_SINGLE_POSITION_PCT
+                max_abs_qty = int(max_abs_amount / signal.price)
+                max_abs_qty = (max_abs_qty // base_qty) * base_qty or base_qty
+                if qty > max_abs_qty:
+                    qty = max_abs_qty
+                    logger.warning(f"[仓位上限] {signal.code}(base_qty路径) → {qty}")
+            return qty
 
         # ============================================================
         # 美股 (US) - 最小交易单位 1 股，无碎股问题

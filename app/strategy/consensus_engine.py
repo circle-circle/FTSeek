@@ -1483,6 +1483,7 @@ class ConsensusEngine:
     # 基于历史交易数据诊断，以下因子组合胜率极低 (<25%) 且贡献大量亏损
     FACTOR_BLACKLIST = [
         frozenset({"bb_factor", "rsi_factor", "vol_factor"}),  # 22% WR, 均亏-267 HKD
+        frozenset({"st_factor", "rsi_factor", "bb_factor"}),  # 0% WR, 3笔全亏-3,410 HKD
     ]
 
     def _check_factor_blacklist(self, votes: list, score: float, code: str) -> float:
