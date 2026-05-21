@@ -1272,15 +1272,22 @@ strategies:
     capital_pct: 0.65
     priority: 5
   scalping:
-    capital_pct: 0.25
+    capital_pct: 0.0           # P9: 数据驱动 - scalping 18 笔 0% 胜率，暂时禁用
     priority: 10               # 高于 main, 时效性更强
     direction_preference: SHORT  # P6: 数据驱动 - SHORT 胜率 37.0% vs LONG 20.9%
-  fast_lane:
-    capital_pct: 0.20          # 在 main 的 0.65 内分配 (子集, 不与 main 累加)
-    priority: 8
+    enabled: false             # P9: 禁用 scalping 直到策略修复
+  # P10 优化 (2026-05-22): 连续亏损后动态降仓
+  # 数据：1 连败后胜率 20%，4 连败后胜率 40%（反转）
+  # 策略：连续 3 次亏损后降仓 50%，避免情绪化交易
+  # 注意：已有 symbol_daily_loss_guard 机制 (max_consecutive_losses=2)，无需重复配置
+  dynamic_position_sizing:
     enabled: true
-    min_confidence: 0.7
-    require_entry_zone: true
+    consecutive_loss_threshold: 3    # 连续 3 次亏损后触发降仓
+    position_reduction: 0.5          # 降仓 50%
+    reset_after_win: true            # 盈利后重置
+    max_drawdown_pause: 0.05         # 单日最大回撤 5% 暂停新仓
+  fast_lane:
+    capital_pct: 0.20          # 在 main 的 0.65 内分配 (子集，不与 main 累加)
   llm_plan:
     capital_pct: 0.0           # LLM plan 不直接持仓
     priority: 3
