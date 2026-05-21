@@ -178,8 +178,22 @@ def _close_option_position(scheduler, position: Position, reason: str, current_o
         if adapter and option_code:
             result = adapter.submit_option_order(option_code=option_code, qty=qty, price=exit_price, direction="SELL")
             if result and result.get("status") in ("rejected", "failed"):
-                logger.warning(f"[期权平仓] {position.symbol} 订单被拒/失败 status={result.get('status')}, 跳过DB清理防止幽灵仓")
-                return  # Don't mark DB exited — Futu still holds position
+                error_msg = result.get("message", "").lower()
+                # P1 修复：检测到"持仓不足"说明 Broker 端已平仓，应清理 DB
+                if "持仓不足" in error_msg or "insufficient position" in error_msg or "no position" in error_msg:
+                    logger.warning(f"[期权平仓] {position.symbol} 持仓不足 (Broker 端已平仓)，执行 DB 清理")
+                    # 执行 DB 清理，避免幽灵仓
+                    try:
+                        if option_code:
+                            scheduler.trade_store.remove_option_position(option_code)
+                        scheduler.position_store.remove(position.symbol)
+                        _remove_from_open_positions_db(position.symbol)
+                    except Exception as e:
+                        logger.warning(f"[期权平仓] DB 清理失败：{e}")
+                    return
+                else:
+                    logger.warning(f"[期权平仓] {position.symbol} 订单被拒/失败 status={result.get('status')}, 跳过 DB 清理防止幽灵仓")
+                    return  # Don't mark DB exited — Futu still holds position
             order_submitted = True
     except Exception as e:
         logger.warning(f"[期权平仓] {position.symbol} 卖出期权失败: {e}, 跳过DB清理防止幽灵仓")
