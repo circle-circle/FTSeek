@@ -183,6 +183,7 @@ def _close_option_position(scheduler, position: Position, reason: str, current_o
         logger.warning(f"[期权平仓] 删除 option_positions 失败：{e}")
 
     scheduler.position_store.remove(position.symbol)
+    _remove_from_open_positions_db(position.symbol)  # P0 修复: 同步清理 open_positions 表
 
     if scheduler.notifier:
         try:
@@ -209,15 +210,27 @@ def _execute_option_close_order(scheduler, position, option_code, qty, reason, c
         adapter = None
         if scheduler.execution_engine and hasattr(scheduler.execution_engine, "broker_adapter"):
             adapter = getattr(scheduler.execution_engine, "broker_adapter", None)
+        order_result = None
         if adapter and option_code:
             try:
-                adapter.submit_option_order(option_code=option_code, qty=qty, price=0, direction="SELL")
-                logger.info(f"[期权平仓] {position.symbol} 提交卖出订单 {option_code} qty={qty}")
+                order_result = adapter.submit_option_order(option_code=option_code, qty=qty, price=0, direction="SELL")
+                # 检查订单提交结果
+                if order_result and order_result.get("status") == "rejected":
+                    logger.error(f"[期权平仓] {position.symbol} 订单被拒绝：{order_result.get('error')}")
+                    # 订单被拒绝，清除计数器避免无限循环，但不清理 DB
+                    _opt_price_fail_count.pop(option_code, None)
+                    return
+                logger.info(f"[期权平仓] {position.symbol} 提交卖出订单 {option_code} qty={qty} result={order_result}")
             except Exception as e:
-                logger.warning(f"[期权平仓] 提交订单失败: {e}")
+                logger.warning(f"[期权平仓] 提交订单失败：{e}")
+                # 提交失败，清除计数器避免无限循环
+                _opt_price_fail_count.pop(option_code, None)
+                return
         if current_option_price <= 0:
             current_option_price = _get_option_price(scheduler, option_code, position.avg_entry_price)
         _close_option_position(scheduler, position, reason=reason, current_option_price=current_option_price)
+        # 成功后清除失败计数器
+        _opt_price_fail_count.pop(option_code, None)
     except Exception as e:
         logger.error(f"[期权平仓] {position.symbol} 执行异常：{e}", exc_info=True)
 
