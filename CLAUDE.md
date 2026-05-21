@@ -2,6 +2,33 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## ⚠️ 治理规范 (必读，优先级最高)
+
+开始任何工作前，先读 `SYSTEM_OBJECTIVE.md`。该文件定义了：
+- 当前阶段和北极星指标
+- 当前焦点 (Top 3，超范围需提案)
+- Agent 自主边界 (🟢🟡🔴🚫)
+- 决策铁律 (5 问检验)
+- 反指标和历史教训
+
+`SYSTEM_OBJECTIVE.md` 是本项目的宪法，所有 Agent (包括 Claude) 的工作必须在其框架内执行。
+
+## 📋 必读 — 开始工作前必须执行
+
+1. `cat SYSTEM_OBJECTIVE.md` — 项目宪法
+2. `cat AGENT_INTERACTION.md` — Agent 交互手册（5 问模板 + 审批流程 + git hooks 说明）
+3. `git log --oneline -5` — 最近提交
+4. `tail -20 logs/daily_monitor.log` — 最新监控
+
+不读以上 4 个文件就开始改代码 = 违规。
+
+## 🚧 Git Hooks（已启用）
+
+- **pre-commit**: 拦截 .env 修改、治理文件删除、yaml enabled→true、Python 语法错误
+- **commit-msg**: 高风险改动必须引用 [ADR-XXX]/[RFC-XXX]/[hotfix]
+
+---
+
 ## Overview
 
 FTSeek is a quantitative trading system for HK/US stock markets, built with Python 3.8+. Core features include signal generation, risk management, simulated/live trading, and Feishu/DingTalk notifications.
