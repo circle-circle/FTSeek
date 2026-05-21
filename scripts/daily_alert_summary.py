@@ -38,15 +38,126 @@ load_dotenv(US_ROOT / ".env.us")
 sys.path.insert(0, str(US_ROOT))  # US first so app.observability resolves correctly
 sys.path.insert(1, str(HK_ROOT))   # HK second (fallback for shared modules)
 
+# ================== 交易时段判断 ==================
+
+def _get_edt_offset(dt: datetime) -> int:
+    """判断 CST 日期是否处于美国夏令时 (EDT), 返回 ET→CST 偏移小时数
+    
+    EDT: 3月第二个周日 02:00 → 11月第一个周日 02:00
+    EDT 时 ET→CST 偏移 = +4h; EST 时 = +5h
+    """
+    year = dt.year
+    # 3月第二个周日
+    d = datetime(year, 3, 8)
+    while d.weekday() != 6:
+        d += timedelta(days=1)
+    dst_start = d  # ~Mar 8-14
+
+    # 11月第一个周日
+    d = datetime(year, 11, 1)
+    while d.weekday() != 6:
+        d += timedelta(days=1)
+    dst_end = d  # ~Nov 1-7
+
+    if dst_start <= dt < dst_end:
+        return 4  # EDT: ET + 4 = CST
+    return 5  # EST: ET + 5 = CST
+
+
+def is_us_trading_hours(dt: datetime) -> bool:
+    """判断 CST (UTC+8) 时间是否处于美股交易时段(从中国视角)
+    
+    美股交易会话在中国时间跨越午夜:
+    - EDT (夏令时): 21:00-05:00 CST (盘前→收盘后)
+    - EST (冬令时): 22:00-06:00 CST
+    
+    逻辑: 检查 CST 小时是否落在当日 evening 或次日 early morning 的交易窗口内。
+    周末以 ET 交易日为准: Mon-Fri evening → 交易; Sat-Sun → 不交易。
+    """
+    offset = _get_edt_offset(dt)
+    
+    # 交易窗口: 当日 evening 开始, 次日 early morning 结束
+    # EDT (offset=4): evening_start=21, morning_end=5  (04:05 ET + 12h CST buffer)
+    # EST (offset=5): evening_start=22, morning_end=6  (04:05 ET + 13h CST buffer)
+    evening_start = offset + 17   # EDT: 21, EST: 22
+    morning_end = 1 + offset      # EDT: 5, EST: 6
+    
+    h = dt.hour
+    wd = dt.weekday()  # Mon=0 ... Sun=6
+    
+    # Evening 部分 (21:00+ or 22:00+): 交易日是当天 (Mon-Fri)
+    if h >= evening_start:
+        if wd < 5:  # Mon-Fri evening
+            return True
+        return False  # Sat/Sun evening → 不交易
+    
+    # Early morning 部分 (00:00-05:00 or 00:00-06:00): 交易日是前一天
+    if h < morning_end:
+        if wd == 0:  # Monday morning → Sunday evening → 不交易
+            return False
+        if wd <= 5:  # Tue-Sat morning → Mon-Fri evening → 交易
+            return True
+        return False  # Sunday morning → Saturday evening → 不交易
+    
+    # 其他时间 (06:00-21:00) → 非交易
+    return False
+
+
+def is_hk_trading_hours(dt: datetime) -> bool:
+    """判断 CST (UTC+8) 时间是否处于港股交易时段
+    
+    港股盘中: 09:00-12:00, 13:00-16:00 HKT (= CST)
+    周末不交易。
+    """
+    if dt.weekday() >= 5:
+        return False
+    h = dt.hour
+    if (9 <= h < 12) or (13 <= h < 16):
+        return True
+    return False
+
+
+# ================== 噪音过滤 ==================
+
+# 非交易时间的预期性消息 — 不算真正告警
+_NOISE_PATTERNS = [
+    "初始化",           # 启动消息
+    "订阅完成",         # 正常订阅
+    "退订完成",         # 正常退订
+    "K 线数据不足 (0 条)",  # 非交易时间 K 线为空是预期
+    "K线数据不足 (0 条)",   # 同上 (无空格版本)
+    "LV3 K 线数据不足 (0 条)",
+    "预热",             # 预热阶段
+    "无 Watchlist",     # 空 watchlist
+]
+
+
+def _is_noise_alert(content: str, market: str, dt: datetime) -> bool:
+    """判断是否为噪音告警 (非交易时间的预期消息)"""
+    # 非交易时间: 过滤预期性消息
+    if market == "US" and not is_us_trading_hours(dt):
+        for pat in _NOISE_PATTERNS:
+            if pat in content:
+                return True
+    elif market == "HK" and not is_hk_trading_hours(dt):
+        for pat in _NOISE_PATTERNS:
+            if pat in content:
+                return True
+    return False
+
+
 # ================== 日志解析 ==================
 
-def parse_log_alerts(log_path: str, market: str, since: datetime) -> List[Dict]:
+def parse_log_alerts(log_path: str, market: str, since: datetime, until: datetime = None) -> List[Dict]:
     """从日志文件中提取告警类事件
 
     匹配的日志模式:
-    - [告警观察] / [告警升级]
     - ERROR / WARNING / CRITICAL
     - 熔断 / 拦截 / 拒绝 / 失败
+    
+    改进:
+    - 支持 until 截止边界, 防止跨日污染
+    - 非交易时间的噪音消息自动过滤
     """
     alerts = []
     try:
@@ -55,12 +166,14 @@ def parse_log_alerts(log_path: str, market: str, since: datetime) -> List[Dict]:
 
         with open(log_path, "r", errors="ignore") as f:
             for line in f:
-                # 只取目标日期之后的行
+                # 只取目标日期范围内的行
                 try:
                     ts_str = line[:19]
                     line_time = datetime.strptime(ts_str, "%Y-%m-%d %H:%M:%S")
                     if line_time < since:
                         continue
+                    if until and line_time >= until:
+                        break  # 超过截止时间, 日志是按时间排序的, 可以提前退出
                 except (ValueError, IndexError):
                     continue
 
@@ -80,11 +193,19 @@ def parse_log_alerts(log_path: str, market: str, since: datetime) -> List[Dict]:
                 if len(content) > 200:
                     content = content[:200] + "..."
 
+                # 过滤非交易时间的噪音
+                if _is_noise_alert(content, market, line_time):
+                    continue
+
                 alerts.append({
                     "market": market,
                     "time": ts_str,
                     "level": level,
                     "content": content,
+                    "is_trading_hours": (
+                        is_us_trading_hours(line_time) if market == "US"
+                        else is_hk_trading_hours(line_time)
+                    ),
                 })
     except Exception as e:
         print(f"[汇总报告] 解析 {log_path} 失败: {e}")
@@ -163,13 +284,26 @@ def build_summary_report(
     hk_summary: Dict,
     report_date: str,
 ) -> str:
-    """构建 Markdown 格式汇总报告"""
+    """构建 Markdown 格式汇总报告
+    
+    区分盘中/非盘中告警, 非交易时段告警默认静默(仅展示盘中告警)。
+    """
 
-    # 统计
-    us_error = sum(1 for a in us_alerts if a["level"] == "ERROR")
-    us_warn = sum(1 for a in us_alerts if a["level"] == "WARN")
-    hk_error = sum(1 for a in hk_alerts if a["level"] == "ERROR")
-    hk_warn = sum(1 for a in hk_alerts if a["level"] == "WARN")
+    # 盘中告警 vs 非盘中
+    us_trading = [a for a in us_alerts if a.get("is_trading_hours")]
+    us_offhours = [a for a in us_alerts if not a.get("is_trading_hours")]
+    hk_trading = [a for a in hk_alerts if a.get("is_trading_hours")]
+    hk_offhours = [a for a in hk_alerts if not a.get("is_trading_hours")]
+
+    # 统计 (仅计盘中告警)
+    us_error = sum(1 for a in us_trading if a["level"] == "ERROR")
+    us_warn = sum(1 for a in us_trading if a["level"] == "WARN")
+    hk_error = sum(1 for a in hk_trading if a["level"] == "ERROR")
+    hk_warn = sum(1 for a in hk_trading if a["level"] == "WARN")
+
+    # 非盘中被过滤的数量
+    us_offhours_count = len(us_offhours)
+    hk_offhours_count = len(hk_offhours)
 
     lines = [
         f"## 📊 FTSeek 每日告警汇总 — {report_date}",
@@ -180,14 +314,17 @@ def build_summary_report(
         "",
         f"- **交易**: {us_summary['trades']} 笔 | 盈亏: ${us_summary['pnl']:+.2f}",
         f"- **持仓**: {us_summary['positions']} 只",
-        f"- **告警**: {us_error} 错误 + {us_warn} 警告 (共 {len(us_alerts)} 条)",
+        f"- **盘中告警**: {us_error} 错误 + {us_warn} 警告 (共 {len(us_trading)} 条)",
     ]
 
-    # 美股 Top 5 告警
-    if us_alerts:
+    if us_offhours_count > 0:
+        lines.append(f"- 🔇 非盘中静默: {us_offhours_count} 条 (已过滤)")
+
+    # 美股盘中 Top 5 告警
+    if us_trading:
         lines.append("")
-        lines.append("**最近告警**:")
-        for a in us_alerts[-5:]:
+        lines.append("**盘中告警**:")
+        for a in us_trading[-5:]:
             emoji = "🔴" if a["level"] == "ERROR" else "🟡"
             lines.append(f"- {emoji} {a['time']} [{a['level']}] {a['content'][50:]}")
 
@@ -199,35 +336,42 @@ def build_summary_report(
         "",
         f"- **交易**: {hk_summary['trades']} 笔 | 盈亏: {hk_summary['pnl']:+.2f}%",
         f"- **持仓**: {hk_summary['positions']} 只",
-        f"- **告警**: {hk_error} 错误 + {hk_warn} 警告 (共 {len(hk_alerts)} 条)",
+        f"- **盘中告警**: {hk_error} 错误 + {hk_warn} 警告 (共 {len(hk_trading)} 条)",
     ]
 
-    # 港股 Top 5 告警
-    if hk_alerts:
+    if hk_offhours_count > 0:
+        lines.append(f"- 🔇 非盘中静默: {hk_offhours_count} 条 (已过滤)")
+
+    # 港股盘中 Top 5 告警
+    if hk_trading:
         lines.append("")
-        lines.append("**最近告警**:")
-        for a in hk_alerts[-5:]:
+        lines.append("**盘中告警**:")
+        for a in hk_trading[-5:]:
             emoji = "🔴" if a["level"] == "ERROR" else "🟡"
             lines.append(f"- {emoji} {a['time']} [{a['level']}] {a['content'][50:]}")
 
     # 总结
     total_errors = us_error + hk_error
     total_warns = us_warn + hk_warn
+    total_offhours = us_offhours_count + hk_offhours_count
     lines += [
         "",
         "---",
         "",
         "### 📋 总结",
         "",
-        f"- 总告警: {total_errors} 错误 + {total_warns} 警告",
+        f"- 盘中告警: {total_errors} 错误 + {total_warns} 警告",
     ]
 
+    if total_offhours > 0:
+        lines.append(f"- 🔇 非盘中静默: {total_offhours} 条")
+
     if total_errors == 0 and total_warns == 0:
-        lines.append("- ✅ 当日系统运行正常，无异常告警")
+        lines.append("- ✅ 盘中系统运行正常，无异常告警")
     elif total_errors > 5:
-        lines.append("- 🔴 告警较多，建议排查")
+        lines.append("- 🔴 盘中告警较多，建议排查")
     else:
-        lines.append("- 🟡 有少量告警，已观察")
+        lines.append("- 🟡 盘中有少量告警，已观察")
 
     return "\n".join(lines)
 
@@ -307,25 +451,42 @@ def push_to_feishu(title: str, content: str) -> bool:
 # ================== 主流程 ==================
 
 def main():
-    """每日告警汇总报告主入口"""
+    """每日告警汇总报告主入口
+    
+    美股交易日跨 CST 午夜:
+    - 盘中 21:30 CST (Day N-1) → 04:00 CST (Day N)
+    - 报告日期 = Day N, 扫描范围 = Day N-1 21:00 → Day N 06:00
+    """
 
     # 确定报告日期 (昨日, 因为盘后 1 小时已经是次日)
     now = datetime.now()
     report_date = (now - timedelta(days=1)).strftime("%Y-%m-%d")
+    report_dt = datetime.strptime(report_date, "%Y-%m-%d")
 
-    # 日志扫描起点: 昨日 00:00
-    since = datetime.strptime(report_date, "%Y-%m-%d")
+    # 日志扫描范围: 覆盖美股跨午夜的交易会话
+    # since = 报告日前一天 21:00 CST (覆盖盘前)
+    # until = 报告日 06:00 CST (覆盖盘后收尾)
+    since = (report_dt - timedelta(hours=3)).replace(hour=21, minute=0)  # Day N-1 21:00
+    until = report_dt.replace(hour=6, minute=0)  # Day N 06:00
 
     print(f"[汇总报告] 生成 {report_date} 告警汇总...")
+    print(f"  扫描范围: {since} → {until}")
 
-    # 1. 解析日志
+    # 1. 解析日志 (带截止边界 + 噪音过滤)
     us_log = str(US_ROOT / "logs" / "ftseek_us.log")
     hk_log = str(HK_ROOT / "logs" / "ftseek.log")
 
-    us_alerts = parse_log_alerts(us_log, "US", since)
-    hk_alerts = parse_log_alerts(hk_log, "HK", since)
+    us_alerts = parse_log_alerts(us_log, "US", since, until)
+    hk_alerts = parse_log_alerts(hk_log, "HK", since, until)
 
-    print(f"  US: {len(us_alerts)} 条告警, HK: {len(hk_alerts)} 条告警")
+    # 分类统计: 盘中 vs 非盘中
+    us_trading = [a for a in us_alerts if a.get("is_trading_hours")]
+    us_offhours = [a for a in us_alerts if not a.get("is_trading_hours")]
+    hk_trading = [a for a in hk_alerts if a.get("is_trading_hours")]
+    hk_offhours = [a for a in hk_alerts if not a.get("is_trading_hours")]
+
+    print(f"  US: {len(us_alerts)} 条 (盘中 {len(us_trading)}, 非盘中 {len(us_offhours)})")
+    print(f"  HK: {len(hk_alerts)} 条 (盘中 {len(hk_trading)}, 非盘中 {len(hk_offhours)})")
 
     # 2. 交易数据
     us_summary = get_us_trade_summary(report_date)
