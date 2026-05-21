@@ -2448,9 +2448,12 @@ class ScalpingEngine:
                     logger.warning(f"[ScalpingEngine·RiskKernel] {symbol} 拒下单 (risk_engine.pre_trade_check)")
                     return {"success": False, "error": "risk_engine.pre_trade_check: rejected"}
             else:
-                # 兜底: 仅 PreTradeChecker (无 risk_engine 时)
+                # 兜底：仅 PreTradeChecker (无 risk_engine 时)
                 from app.risk.pre_trade_check import PreTradeChecker
-                _ck = PreTradeChecker(min_confidence=0.5, min_signal_strength=50)
+                from app.core.config_container import get_config
+                _cfg = get_config()
+                _min_strength = _cfg.get_dotted("scheduler.min_signal_strength", 99)
+                _ck = PreTradeChecker(min_confidence=0.5, min_signal_strength=_min_strength)
                 _result = _ck.check(sig)
                 if not _result.allowed:
                     logger.warning(f"[ScalpingEngine·PreTradeCheck·fallback] {symbol} 拒: {_result.reason}")
