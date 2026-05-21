@@ -395,13 +395,16 @@ def restore_positions_from_db(scheduler):
         # P0-2 修复 (2026-05-22): 从 option_positions 表恢复期权持仓
         try:
             import sqlite3
-            conn = sqlite3.connect(os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'ftseek_us.db'))
-            conn = os.path.normpath(conn)
+            db_path = os.path.normpath(os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'ftseek_us.db'))
+            conn = sqlite3.connect(db_path)
             cursor = conn.cursor()
             cursor.execute("SELECT option_code, qty, entry_price, strike_price, expiry_date, entry_time FROM option_positions")
             option_rows = cursor.fetchall()
             conn.close()
-            
+
+            # 预先导入模型，避免循环内引用问题
+            from app.core.models import Position, Direction, MarketRegime
+
             for row in option_rows:
                 option_code, qty, entry_price, strike_price, expiry_date, entry_time = row
                 if not option_code:
@@ -414,7 +417,6 @@ def restore_positions_from_db(scheduler):
                 if scheduler.position_store.has(option_code):
                     continue
                 # 创建 Position 对象
-                from app.core.models import Position, Direction, MarketRegime
                 position = Position(
                     strategy_id="voting_llm_option",
                     signal_id="",
