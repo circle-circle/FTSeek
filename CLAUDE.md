@@ -13,6 +13,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `SYSTEM_OBJECTIVE.md` 是本项目的宪法，所有 Agent (包括 Claude) 的工作必须在其框架内执行。
 
+## 📋 必读 — 开始工作前必须执行
+
+1. `cat SYSTEM_OBJECTIVE.md` — 项目宪法
+2. `cat AGENT_INTERACTION.md` — Agent 交互手册（5 问模板 + 审批流程 + git hooks 说明）
+3. `python3 scripts/governance_check.py` — 当前治理状态
+4. `git log --oneline -5` — 最近提交
+
+不读以上 4 个文件就开始改代码 = 违规。
+
+## 🚧 Git Hooks（已启用）
+
+- **pre-commit**: 拦截 .env 修改、治理文件删除、yaml enabled→true、Python 语法错误
+- **commit-msg**: 高风险改动必须引用 [ADR-XXX]/[RFC-XXX]/[hotfix]
+
 ---
 
 ## Overview
