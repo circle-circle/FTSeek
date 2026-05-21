@@ -402,9 +402,6 @@ def restore_positions_from_db(scheduler):
             option_rows = cursor.fetchall()
             conn.close()
 
-            # 预先导入模型，避免循环内引用问题
-            from app.core.models import Position, Direction, MarketRegime
-
             for row in option_rows:
                 option_code, qty, entry_price, strike_price, expiry_date, entry_time = row
                 if not option_code:
