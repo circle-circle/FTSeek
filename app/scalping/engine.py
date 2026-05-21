@@ -1399,6 +1399,14 @@ class ScalpingEngine:
         if not effective_directions:
             return  # All directions suppressed
 
+        # P6 优化 (2026-05-22): 数据驱动方向偏好
+        # 数据：SHORT 胜率 37.0% vs LONG 20.9%，优先选择 SHORT
+        direction_preference = self._load_scalping_config().get("direction_preference")
+        if direction_preference and direction_preference in effective_directions:
+            # 如果偏好方向在允许方向中，优先只交易该方向
+            effective_directions = [direction_preference]
+            logger.debug(f"[Scalping] 方向偏好 {direction_preference}，过滤其他方向")
+
         # 信号检测
         # ── 生命周期感知的优先级策略 ──
         vol = data.get("volume", 0)

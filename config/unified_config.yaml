@@ -1272,6 +1272,7 @@ strategies:
   scalping:
     capital_pct: 0.25
     priority: 10               # 高于 main, 时效性更强
+    direction_preference: SHORT  # P6: 数据驱动 - SHORT 胜率 37.0% vs LONG 20.9%
   fast_lane:
     capital_pct: 0.20          # 在 main 的 0.65 内分配 (子集, 不与 main 累加)
     priority: 8

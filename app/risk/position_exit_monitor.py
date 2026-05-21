@@ -519,9 +519,29 @@ class ExitMonitor:
                 # 向下兼容：绝对值供 guardian.get_atr_multiplier 的三档分段查询使用
                 profit_atr = abs(profit_atr_signed)
 
+                # P5 优化 (2026-05-22): 最小持仓时间检查
+                # 数据：<5min 持仓胜率仅 21.7%，过早平仓是亏损主因
+                # 策略：持仓 <10min 不触发非硬止损退出（SL_HIT/硬止损除外）
+                min_hold_minutes = 10
+                held_minutes = held_hours * 60 if held_hours else 0
+                
+                # 硬止损豁免：SL_HIT、STOP_LOSS 等紧急退出不受限制
+                hard_stop_reasons = {"SL_HIT", "STOP_LOSS", "PRICE_FAIL"}
+                
+                if held_minutes < min_hold_minutes:
+                    # 检查后续规则是否会触发退出
+                    # 如果是硬止损，允许执行；如果是其他退出，跳过
+                    _skip_non_hard_exits = True
+                    logger.debug(
+                        f"[最小持仓] {symbol} 持仓 {held_minutes:.0f}min < {min_hold_minutes}min, "
+                        f"仅允许硬止损退出"
+                    )
+                else:
+                    _skip_non_hard_exits = False
+
                 # ── 规则 1: Flash Exit ──
                 flash_result = self._check_flash_exit(position, current_price, effective_atr, trail_state, now_ts, direction, policy_guardian, earnings_guard)
-                if flash_result:
+                if flash_result and not _skip_non_hard_exits:
                     self._execute_exit(position, flash_result, execute_close_fn, trail_state, now_ts)
                     closed.append({"symbol": symbol, "reason": flash_result["reason"], "pnl_pct": pnl_pct})
                     continue
@@ -531,29 +551,29 @@ class ExitMonitor:
                 daytrade_result = self._check_day_trade_exit(
                     position, current_price, entry_price, effective_atr, trail_state, now_ts, direction, pnl_pct, policy_guardian
                 )
-                if daytrade_result:
+                if daytrade_result and not _skip_non_hard_exits:
                     self._execute_exit(position, daytrade_result, execute_close_fn, trail_state, now_ts)
                     closed.append({"symbol": symbol, "reason": daytrade_result["reason"], "pnl_pct": pnl_pct})
                     continue
 
                 # ── 规则 2.5: Scale Out 分批止盈 ──
                 scale_result = self._check_scale_out(position, current_price, trail_state, direction)
-                if scale_result:
+                if scale_result and not _skip_non_hard_exits:
                     self._execute_exit(position, scale_result, execute_close_fn, trail_state, now_ts)
                     closed.append({"symbol": symbol, "reason": scale_result["reason"], "pnl_pct": pnl_pct})
                     continue
 
                 # ── 规则 2: 统一跟踪止损 ──
-                # Chandelier 移动止损 = 天然止盈: 止损跟随峰值上移，回撤自动锁利润
+                # Chandelier 移动止损 = 天然止盈：止损跟随峰值上移，回撤自动锁利润
                 stop_result = self._check_trailing_stop(position, current_price, entry_price, effective_atr, profit_atr_signed, trail_state, now_ts, direction, policy_guardian)
-                if stop_result:
+                if stop_result and not _skip_non_hard_exits:
                     self._execute_exit(position, stop_result, execute_close_fn, trail_state, now_ts)
                     closed.append({"symbol": symbol, "reason": stop_result["reason"], "pnl_pct": pnl_pct})
                     continue
 
                 # ── 规则 3: Time Stop (盈利豁免) ──
                 time_result = self._check_time_stop(position, current_price, now_ts, direction, policy_guardian)
-                if time_result:
+                if time_result and not _skip_non_hard_exits:
                     self._execute_exit(position, time_result, execute_close_fn, trail_state, now_ts)
                     closed.append({"symbol": symbol, "reason": time_result["reason"], "pnl_pct": pnl_pct})
                     continue
