@@ -75,20 +75,24 @@ class FeishuNotifier:
     def send_text(self, content: str) -> bool:
         """
         发送文本消息
-        
+
         Args:
             content: 消息内容
-        
+
         Returns:
             是否成功
         """
+        # P0 修复 2026-05-21: 飞书 Webhook 要求包含关键字 [FTSeek-US]
+        if not content.startswith("[FTSeek-US]"):
+            content = f"[FTSeek-US] {content}"
+
         payload = {
             "msg_type": "text",
             "content": {
                 "text": content
             }
         }
-        
+
         return self._send(payload)
     
     def send_post(self, title: str, content: List[List[Dict]]) -> bool:

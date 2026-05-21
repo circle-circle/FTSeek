@@ -44,7 +44,7 @@ class ConfigDefaults:
     # ============================================================
     # 熔断器 (risk.circuit_breaker)
     # ============================================================
-    CB_CONSECUTIVE_LOSSES = 2               # risk.circuit_breaker.strategy.consecutive_losses (P0 2026-05-20 同步YAML)
+    CB_CONSECUTIVE_LOSSES = 3               # risk.circuit_breaker.strategy.consecutive_losses (synced to YAML 2026-05-21)
     CB_HOURLY_LOSS_THRESHOLD = -0.02        # risk.circuit_breaker.strategy.hourly_loss_threshold
     CB_PAUSE_DURATION = 1800                # risk.circuit_breaker.strategy.pause_duration (秒)
 

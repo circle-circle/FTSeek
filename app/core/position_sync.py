@@ -413,7 +413,25 @@ class USPositionSync:
             cursor.execute("DELETE FROM open_positions WHERE symbol=?", (symbol,))
 
         # 4. Update/Insert Futu positions
+        # P0 fix (2026-05-21): Load PRICE_FAIL-closed set to skip re-insert/update
+        _pf_closed = set()
+        try:
+            import json as _pfj
+            _pf_p = os.path.normpath(os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'price_fail_closed.json'))
+            if os.path.exists(_pf_p):
+                _pf_closed = set(_pfj.load(open(_pf_p)))
+        except Exception:
+            pass
+
         for symbol, info in futu_positions.items():
+            # P0 fix: Skip PRICE_FAIL-closed options entirely (no DB update or insert)
+            if symbol in _pf_closed:
+                # Also clean from open_positions if present (prevents _restore_position_from_db)
+                if symbol in db_positions:
+                    cursor.execute("DELETE FROM open_positions WHERE symbol=?", (symbol,))
+                    logger.warning(f"[US Sync·P0] 清理 PRICE_FAIL 已关闭期权(DB): {symbol}")
+                continue
+
             if symbol in db_positions:
                 # Update existing
                 db_info = db_positions[symbol]
@@ -540,11 +558,30 @@ class USPositionSync:
         db_positions = self._get_db_positions()
 
         # 1. 新增持仓 (Futu 有，内存没有) → 手动开仓检测
+        # P0 fix (2026-05-21): Skip re-importing options that were force-closed via PRICE_FAIL.
+        # These positions still exist in Futu (user opened manually, SELL may have failed),
+        # but re-importing them triggers the infinite PRICE_FAIL re-import loop.
+        _price_fail_closed = set()
+        try:
+            import json as _pf_json
+            _pf_path = os.path.normpath(os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'price_fail_closed.json'))
+            if os.path.exists(_pf_path):
+                _price_fail_closed = set(_pf_json.load(open(_pf_path)))
+        except Exception:
+            pass
         new_symbols = futu_symbols - mem_symbols
         for symbol in new_symbols:
+            # P0 fix: Skip PRICE_FAIL-closed options
+            if symbol in _price_fail_closed:
+                logger.warning(f"[US Sync·P0] 跳过 PRICE_FAIL 已关闭期权 {symbol} (防止重导入循环)")
+                continue
             # P2 修复: 如果 DB 中已有该持仓，说明是已存在的仓位 (可能是部分平仓后同步延迟)
             # 不应报告为"手动开仓"，而是直接恢复内存状态
             if symbol in db_positions:
+                # Also check PRICE_FAIL closed for DB restore path
+                if symbol in _price_fail_closed:
+                    logger.warning(f"[US Sync·P0] 跳过 PRICE_FAIL 已关闭期权(DB) {symbol}")
+                    continue
                 self._restore_position_from_db(symbol, futu_positions[symbol])
                 continue
 

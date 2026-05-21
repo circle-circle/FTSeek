@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
 from datetime import datetime
 from typing import Dict, Any, List, Optional
@@ -235,9 +236,26 @@ def _execute_option_close_order(scheduler, position, option_code, qty, reason, c
         logger.error(f"[期权平仓] {position.symbol} 执行异常：{e}", exc_info=True)
 
 
+def _load_price_fail_closed_set() -> set:
+    """加载 PRICE_FAIL 已关闭的期权代码集合，防止同步循环"""
+    try:
+        import json as _json
+        _pf_p = os.path.normpath(os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'price_fail_closed.json'))
+        if os.path.exists(_pf_p):
+            return set(_json.load(open(_pf_p)))
+    except Exception:
+        pass
+    return set()
+
+
 def restore_positions_from_db(scheduler):
     """服务重启后从 DB 快照恢复未平仓持仓到内存"""
     try:
+        # P0 修复 (2026-05-21): 加载 PRICE_FAIL 已关闭集合，跳过这些期权
+        _pf_closed = _load_price_fail_closed_set()
+        if _pf_closed:
+            logger.info(f"[持仓恢复] PRICE_FAIL 已关闭集合: {_pf_closed}")
+
         positions = scheduler.trade_store.load_open_positions()
         if not positions:
             logger.info("[持仓恢复] DB 无未平仓记录")
@@ -247,6 +265,11 @@ def restore_positions_from_db(scheduler):
             try:
                 symbol = row.get("symbol", "")
                 if not symbol:
+                    continue
+
+                # P0 修复 (2026-05-21): 跳过 PRICE_FAIL 已关闭的期权，阻断同步死循环
+                if symbol in _pf_closed:
+                    logger.warning(f"[持仓恢复] 跳过 PRICE_FAIL 已关闭: {symbol}")
                     continue
                 direction_str = row.get("direction", "LONG")
                 direction = Direction.SHORT if direction_str == "SHORT" else Direction.LONG
@@ -348,6 +371,10 @@ def _monitor_option_positions(scheduler):
         positions = scheduler.position_store.all()
         if not positions:
             return
+
+        # P0 修复 (2026-05-21): 加载 PRICE_FAIL 已关闭集合，跳过这些期权的监控
+        _pf_closed = _load_price_fail_closed_set()
+
         try:
             from app.core.config_container import get_config
             _oc = get_config().get_section("options", {})
@@ -362,6 +389,10 @@ def _monitor_option_positions(scheduler):
                     continue
                 option_code = meta.get("option_code", "")
                 expiry_date = meta.get("expiry_date", "")
+
+                # P0 修复 (2026-05-21): 跳过 PRICE_FAIL 已关闭的期权，阻断死循环
+                if option_code in _pf_closed or position.symbol in _pf_closed:
+                    continue
                 entry_price = position.avg_entry_price
                 qty = int(position.size)
                 dte = OptionSelector.days_to_expiry(expiry_date) if expiry_date else 999
@@ -409,6 +440,23 @@ def _monitor_option_positions(scheduler):
                             scheduler, position, option_code, qty,
                             reason=f"PRICE_FAIL_{_fail_n}"
                         )
+                        # P0 fix (2026-05-21): Persist PRICE_FAIL-closed option codes
+                        # to prevent futu_sync re-import loop. futu_sync sees the position
+                        # still in Futu (user opened manually, SELL may have failed) and
+                        # re-imports it every 30s, causing infinite duplicate trade_records.
+                        # futu_sync._sync_to_position_store_locked checks this file.
+                        try:
+                            import json as _json
+                            _pf_file = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'price_fail_closed.json')
+                            _pf_file = os.path.normpath(_pf_file)
+                            _closed_set = set()
+                            if os.path.exists(_pf_file):
+                                _closed_set = set(_json.load(open(_pf_file)))
+                            _closed_set.add(option_code)
+                            _json.dump(list(_closed_set), open(_pf_file, 'w'), indent=2)
+                            logger.info(f"[期权·P0] 已记录 PRICE_FAIL 关闭: {option_code}")
+                        except Exception as _e:
+                            logger.warning(f"[期权·P0] 记录失败: {_e}")
                     continue
                 _opt_price_fail_count.pop(option_code, None)  # 成功后清零
 
