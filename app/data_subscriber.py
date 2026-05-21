@@ -767,122 +767,35 @@ class DataSubscriber:
 
     def _is_trading_hours(self) -> bool:
         """
-        检查当前是否为港股交易时间
-
-        港股交易时间:
-        - 上午: 09:30 - 12:00
-        - 下午: 13:00 - 16:00
-
-        Returns:
-            True: 在交易时间内
-            False: 非交易时间 (收盘后、开盘前、周末)
-
-        【2026-05-02】If Shadow Mode is active, delegates to validator.
+        检查当前是否为港股交易时间 (委托给 TradingHoursChecker)
+        
+        P0 2026-05-21: 逻辑迁移至 TradingHoursChecker
         """
-        # Shadow Mode: run both old and new logic, return OLD result
-        if self._market_hours_shadow is not None:
-            return self._market_hours_shadow.check()
-
-        # Direct call (original logic preserved)
-        return self._is_trading_hours_impl()
+        return self._get_trading_hours_checker().is_trading_hours()
 
     def _is_trading_hours_impl(self) -> bool:
         """
-        Original trading hours implementation.
-        Extracted for Shadow Mode comparison.
+        Original trading hours implementation (委托给 TradingHoursChecker)
+        
+        P0 2026-05-21: 逻辑迁移至 TradingHoursChecker
         """
-        now = datetime.now()
-        hour = now.hour
-        minute = now.minute
-        weekday = now.weekday()
-
-        # 周末不交易
-        if weekday >= 5:  # 5=周六, 6=周日
-            return False
-
-        current_time = hour * 60 + minute
-
-        # 上午交易时间: 09:30 - 12:00 (570 - 720 分钟)
-        morning_start = 9 * 60 + 30   # 09:30 = 570
-        morning_end = 12 * 60         # 12:00 = 720
-
-        # 下午交易时间: 13:00 - 16:00 (780 - 960 分钟)
-        afternoon_start = 13 * 60     # 13:00 = 780
-        afternoon_end = 16 * 60       # 16:00 = 960
-
-        if morning_start <= current_time < morning_end:
-            return True
-        if afternoon_start <= current_time < afternoon_end:
-            return True
-
-        return False
+        return self._get_trading_hours_checker()._is_trading_hours_impl()
 
     def _is_high_quality_trading_hours(self) -> bool:
         """
-        检查是否为高质量交易时间（排除开收盘噪音时段）
-
-        排除时段：
-        - 开盘冲击期: 09:30 - 09:45 （流动性差、价格剧烈波动）
-        - 收盘撮合期: 15:45 - 16:00 （做市商平仓、价格失真）
-
-        Returns:
-            True: 信号质量可靠的交易时段
-            False: 噪音较高的时段
+        检查是否为高质量交易时间 (委托给 TradingHoursChecker)
+        
+        P0 2026-05-21: 逻辑迁移至 TradingHoursChecker
         """
-        if not self._is_trading_hours():
-            return False
-
-        now = datetime.now()
-        current_time = now.hour * 60 + now.minute
-
-        # 排除开盘冲击期（09:30 - 09:45）— SSOT: strategy.time_gate.open_buffer
-        open_buffer_start = 9 * 60 + 30   # 09:30
-        open_buffer_end   = 9 * 60 + 45   # 09:45
-
-        # 排除收盘撮合期（15:45 - 16:00）— SSOT: strategy.time_gate.close_buffer
-        from config.config_center import get_config_center as _gcc_cb
-        _cb_cfg = _gcc_cb().get('strategy.time_gate', {})
-        _cb_s = _cb_cfg.get('close_buffer_start', '15:45')
-        _cb_e = _cb_cfg.get('close_buffer_end', '16:00')
-        close_buffer_start = int(_cb_s.split(':')[0]) * 60 + int(_cb_s.split(':')[1])
-        close_buffer_end = int(_cb_e.split(':')[0]) * 60 + int(_cb_e.split(':')[1])
-
-        if open_buffer_start <= current_time < open_buffer_end:
-            return False  # 开盘波动期，信号噪音大
-        if close_buffer_start <= current_time < close_buffer_end:
-            return False  # 收盘撮合期，价格失真
-
-        return True
+        return self._get_trading_hours_checker().is_high_quality_trading_hours()
     
     def _get_trading_period_info(self) -> Dict[str, any]:
         """
-        P2 2026-04-27: 返回当前交易时段信息 (分时段质量门)
+        P2 2026-04-27: 返回当前交易时段信息 (委托给 TradingHoursChecker)
         
-        Returns:
-            {
-                'period': 'open_noise' | 'main' | 'close_noise' | 'out_of_hours',
-                'description': str,
-            }
+        P0 2026-05-21: 逻辑迁移至 TradingHoursChecker
         """
-        now = datetime.now()
-        if now.weekday() >= 5:
-            return {'period': 'out_of_hours', 'description': '周末非交易时段'}
-        
-        current_time = now.hour * 60 + now.minute
-        
-        # 上午交易: 09:30-12:00
-        if 570 <= current_time < 720:
-            if current_time < 578:  # 09:30-09:38 (从 15 分钟缩短到 8 分钟)
-                return {'period': 'open_noise', 'description': '开盘噪音段 (09:30-09:38)'}
-            return {'period': 'main', 'description': '主交易段 (上午)'}
-        
-        # 下午交易: 13:00-16:00
-        if 780 <= current_time < 960:
-            if current_time >= 945:  # 15:45-16:00 收盘撮合
-                return {'period': 'close_noise', 'description': '收盘撮合段 (15:45-16:00)'}
-            return {'period': 'main', 'description': '主交易段 (下午)'}
-        
-        return {'period': 'out_of_hours', 'description': '非交易时段'}
+        return self._get_trading_hours_checker().get_trading_period_info()
     
     def _is_cooled_down(self, code: str) -> bool:
         """检查是否冷却完成 - 2026-03-17 优化：只在推送成功后才更新冷却时间"""
@@ -944,112 +857,36 @@ class DataSubscriber:
     #  ATR 波动率计算 (港股适配用)
     # ----------------------------------------------------------
     def _get_atr_percent(self, code: str) -> float:
-        """计算 ATR 波动率百分比 (用于港股适配)
-        
-        使用 Wilder 风格的 True Range 均值计算，避免用整体价格区间导致 ATR 估算过小。
-        True Range = max(High, PrevClose) - min(Low, PrevClose)
-        ATR = 14根K线的TR均值 / 当前价
         """
-        buf = self._kline_buffers[code]
-        if buf.size < 15:
-            return 0.02  # 默认 2%
+        计算 ATR 波动率百分比 (委托给 ATRCalculator)
         
-        closes = list(buf.close)
-        highs  = list(buf.high)
-        lows   = list(buf.low)
-        
-        # 取最近14根K线计算True Range
-        tr_list = []
-        n = min(14, len(highs))
-        for i in range(-n, 0):
-            prev_close = closes[i - 1] if abs(i - 1) <= len(closes) else closes[0]
-            tr = max(highs[i], prev_close) - min(lows[i], prev_close)
-            if tr > 0:
-                tr_list.append(tr)
-        
-        if not tr_list:
-            return 0.02
-        
-        current_price = closes[-1]
-        atr = sum(tr_list) / len(tr_list)
-        atr_pct = atr / current_price if current_price > 0 else 0.02
-        # 设置合理上下界（0.3% ~ 8%），避免极端值
-        return max(0.003, min(atr_pct, 0.08))
+        P0 2026-05-21: 逻辑迁移至 ATRCalculator
+        """
+        return self._get_atr_calculator().get_atr_percent(code)
 
     def _get_atr_from_period(self, code: str, k_type: str, period: int = 14) -> float:
-        """从指定周期K线缓冲区计算 ATR 百分比（2026-03-25 新增）
-
-        通过多周期K线（15M/30M/60M/日线）获取更稳定的ATR，用于止损宽度自适应。
-
-        Args:
-            code:   股票代码
-            k_type: K线周期 "K_15M" / "K_30M" / "K_60M" / "K_DAY"
-            period: ATR 计算周期，默认14
-
-        Returns:
-            float: ATR 百分比 (0.003 ~ 0.15)
         """
-        try:
-            buf = self._kline_buffers_by_period[code].get(k_type)
-            if buf is None or buf.size < period + 1:
-                return self._get_atr_percent(code)  # fallback 到 1M
-
-            closes = list(buf.close)
-            highs  = list(buf.high)
-            lows   = list(buf.low)
-
-            tr_list = []
-            n = min(period, len(highs) - 1)
-            for i in range(-n, 0):
-                prev_close = closes[i - 1] if (len(closes) + i - 1) >= 0 else closes[0]
-                tr = max(highs[i], prev_close) - min(lows[i], prev_close)
-                if tr > 0:
-                    tr_list.append(tr)
-
-            if not tr_list:
-                return self._get_atr_percent(code)
-
-            current_price = closes[-1]
-            if current_price <= 0:
-                return 0.02
-            atr_val = sum(tr_list) / len(tr_list)
-            atr_pct = atr_val / current_price
-            # 各周期 ATR 上下界有所不同（2026-03-25 补全 1M/3M/5M）
-            bounds = {
-                "K_1M":  (0.001, 0.04),   # 1分钟：波动极小
-                "K_3M":  (0.002, 0.05),   # 3分钟
-                "K_5M":  (0.002, 0.05),   # 5分钟
-                "K_15M": (0.003, 0.06),
-                "K_30M": (0.004, 0.08),
-                "K_60M": (0.005, 0.10),
-                "K_DAY": (0.008, 0.15),
-            }
-            lo, hi = bounds.get(k_type, (0.003, 0.10))
-            return max(lo, min(atr_pct, hi))
-        except Exception as e:
-            logger.debug(f"[多周期ATR] {code} {k_type} 计算失败: {e}")
-            return self._get_atr_percent(code)
+        从指定周期 K 线缓冲区计算 ATR 百分比 (委托给 ATRCalculator)
+        
+        P0 2026-05-21: 逻辑迁移至 ATRCalculator
+        """
+        return self._get_atr_calculator().get_atr_from_period(code, k_type, period)
 
     def _get_preferred_atr_percent(self, code: str) -> float:
-        """根据动态止损配置选择最优ATR周期计算ATR百分比（2026-03-25 新增）
-
-        优先级：dynamic_exit_manager 中配置的 preferred_kline → 60M → 30M → 1M fallback
         """
-        try:
-            from app.risk.dynamic_exit_manager import dynamic_exit_manager as _dem
-            preferred = _dem.current_params.get('atr_stop', {}).get('preferred_kline', 'K_60M')
-            return self._get_atr_from_period(code, preferred)
-        except Exception:
-            return self._get_atr_from_period(code, 'K_60M')
+        根据动态止损配置选择最优 ATR 周期计算 ATR 百分比 (委托给 ATRCalculator)
+        
+        P0 2026-05-21: 逻辑迁移至 ATRCalculator
+        """
+        return self._get_atr_calculator().get_preferred_atr_percent(code)
 
     def _get_atr(self, code: str) -> float:
-        """计算 ATR 绝对值（用于退出引擎，2026-03-25 升级：使用多周期优先ATR）"""
-        buf = self._kline_buffers[code]
-        if buf.size < 5:
-            return 0.0
-        current_price = buf.close[-1]
-        atr_pct = self._get_preferred_atr_percent(code)
-        return current_price * atr_pct
+        """
+        计算 ATR 绝对值（委托给 ATRCalculator）
+        
+        P0 2026-05-21: 逻辑迁移至 ATRCalculator
+        """
+        return self._get_atr_calculator().get_atr(code)
 
     def _update_trailing_stop(self, code: str, current_price: float, position) -> None:
         """
@@ -2857,6 +2694,45 @@ class DataSubscriber:
             logger.info("[KlineProcessor] 延迟初始化完成（依赖注入）")
         
         return self._kline_processor
+
+    def _get_atr_calculator(self):
+        """
+        懒加载 ATRCalculator（延迟初始化，首次使用时创建）
+        
+        Returns:
+            ATRCalculator 实例
+        """
+        if not hasattr(self, '_atr_calculator') or self._atr_calculator is None:
+            from app.data_subscriber_engines.atr_calculator import ATRCalculator
+            
+            # 创建 ATRCalculator，注入依赖
+            self._atr_calculator = ATRCalculator(
+                kline_buffers=self._kline_buffers,
+                kline_buffers_by_period=getattr(self, '_kline_buffers_by_period', {}),
+            )
+            logger.info("[ATRCalculator] 延迟初始化完成（依赖注入）")
+        
+        return self._atr_calculator
+
+    def _get_trading_hours_checker(self):
+        """
+        懒加载 TradingHoursChecker（延迟初始化，首次使用时创建）
+        
+        Returns:
+            TradingHoursChecker 实例
+        """
+        if not hasattr(self, '_trading_hours_checker') or self._trading_hours_checker is None:
+            from app.data_subscriber_engines.trading_hours import TradingHoursChecker
+            from config.config_center import get_config_center as _gcc
+            
+            # 创建 TradingHoursChecker，注入依赖
+            self._trading_hours_checker = TradingHoursChecker(
+                market_hours_shadow=getattr(self, '_market_hours_shadow', None),
+                config_center=_gcc() if _gcc else None,
+            )
+            logger.info("[TradingHoursChecker] 延迟初始化完成（依赖注入）")
+        
+        return self._trading_hours_checker
 
     def _process_kline_data(self, code: str, kline: dict, k_type: str):
         """处理单个 K 线数据（在工作线程中运行）"""
