@@ -2670,7 +2670,9 @@ class TradeExecutor:
                                 exit_price=actual_exit_price,
                                 pnl=pnl,
                                 pnl_percent=pnl_percent,
-                                exit_reason='normal_close'
+                                exit_reason='normal_close',
+                                stop_loss=trade.get('stop_loss'),  # 保留开仓时的止损
+                                take_profit=trade.get('take_profit')  # 保留开仓时的止盈
                             )
                             logger.info(f"✅ [数据库] 交易记录已更新：trade_id={trade['id']}, pnl={pnl:.2f}, pnl%={pnl_percent:.2%}")
                             updated = True

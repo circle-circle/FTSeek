@@ -1129,17 +1129,20 @@ class Database:
     
     def update_trade_exit(self, trade_id: str, exit_price: float, 
                          pnl: float, pnl_percent: float,
-                         exit_reason: str = '') -> bool:
+                         exit_reason: str = '', 
+                         stop_loss: float = None, take_profit: float = None) -> bool:
         """更新交易退出信息"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
                 UPDATE trades 
                 SET exit_price = ?, pnl = ?, pnl_percent = ?, 
-                    exit_reason = ?, exit_time = ?, status = 'CLOSED'
+                    exit_reason = ?, exit_time = ?, status = 'CLOSED',
+                    stop_loss = COALESCE(stop_loss, ?),
+                    take_profit = COALESCE(take_profit, ?)
                 WHERE id = ?
             """, (exit_price, pnl, pnl_percent, exit_reason, 
-                  datetime.now().isoformat(), trade_id))
+                  datetime.now().isoformat(), stop_loss, take_profit, trade_id))
         return True
     
     def get_open_trades(self) -> List[Dict]:
