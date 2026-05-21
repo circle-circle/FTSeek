@@ -1089,8 +1089,22 @@ class USPositionSync:
             "prev_scan_price": futu_info.get('cost', db_pos['avg_entry_price']),
         }
         # P0 修复 (2026-05-20): 期权仓位设置正确的 metadata.source
+        # P0-2 修复 (2026-05-22): 期权仓位必须设置 option_code，否则 position_monitor 无法获取价格
         if is_option:
-            position.metadata = {"source": "voting_llm_option", "is_option": True}
+            # 从 option_positions 表获取 option_code
+            option_code = symbol  # 默认使用 symbol 作为 option_code
+            try:
+                import sqlite3
+                conn = sqlite3.connect(DB_PATH)
+                cursor = conn.cursor()
+                cursor.execute("SELECT option_code FROM option_positions WHERE symbol=?", (symbol,))
+                row = cursor.fetchone()
+                if row:
+                    option_code = row[0]
+                conn.close()
+            except Exception as e:
+                logger.debug(f"[US Sync] 获取 option_code 失败 {symbol}: {e}")
+            position.metadata = {"source": "voting_llm_option", "is_option": True, "option_code": option_code}
         self.position_store.add(symbol, position)
         logger.info(f"[US Sync] 从 DB 恢复 {symbol}: size={db_pos['size']}, SL=${db_pos['current_sl']:.2f}")
 
