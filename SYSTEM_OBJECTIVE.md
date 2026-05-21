@@ -149,7 +149,69 @@ Shadow: 242 笔 (194 未关闭)
 
 ---
 
-## 9. 历史教训 (不可重犯)
+## 9. 测试策略
+
+### 测试金字塔
+
+```
+        ┌─────────────┐
+        │  E2E 测试   │  ← 全链路验证 (预演场/Shadow)
+        ├─────────────┤
+        │  集成测试   │  ← 模块间契约 (信号→下单→退出)
+        ├─────────────┤
+        │  单元测试   │  ← 核心逻辑 (止损止盈、方向判断)
+        └─────────────┘
+```
+
+### 强制测试要求
+
+| 改动类型 | 最低测试要求 | 验证方式 |
+|----------|--------------|----------|
+| 🔴 交易主路径 | 单元测试 + 集成测试 + Shadow 验证 | CI + 预演场 |
+| 🟡 风控路径 | 单元测试 + Shadow 验证 | CI + 数据回测 |
+| 🟢 非核心路径 | 单元测试 | CI |
+| 🟢 配置调优 | dry-run + 日志确认 | 手动验证 |
+
+### 测试覆盖目标
+
+| 模块 | 目标覆盖率 | 当前 | 状态 |
+|------|-----------|------|------|
+| `app/risk/exit_policy.py` | ≥ 80% | 待测 | 🔴 |
+| `app/risk/position_exit_monitor.py` | ≥ 80% | 待测 | 🔴 |
+| `app/trader/executor.py` | ≥ 70% | 待测 | 🟡 |
+| `app/signal/pipeline.py` | ≥ 70% | 待测 | 🟡 |
+
+### 测试执行规范
+
+```bash
+# 1. 单元测试 (每次提交前)
+pytest tests/ -v --cov=app --cov-report=term-missing
+
+# 2. 集成测试 (每次 RFC 前)
+pytest tests/integration/ -v
+
+# 3. Shadow 验证 (每次交易路径改动后)
+python scripts/shadow_runner.py --config config/unified_config.yaml
+
+# 4. 配置漂移检测
+python scripts/config_validate.py
+```
+
+### 测试数据管理
+
+- **历史交易数据**: `data/ftseek_us.db` (只读，用于回测)
+- **Mock 数据**: `tests/fixtures/` (用于单元测试)
+- **Shadow 数据**: `data/simulation.db` (用于预演验证)
+
+### 测试失败处理
+
+- CI 失败 → 禁止合并
+- Shadow 验证失败 → 禁止上线
+- 配置漂移检测失败 → 必须修复后才能提交
+
+---
+
+## 10. 历史教训 (不可重犯)
 
 ### 5/20-21 期权灾难 (-$5,984)
 - **错误**: YAML 配置 OTM delta，代码硬编码 ATM，止损触发 -55% 而非配置的 -30%
