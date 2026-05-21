@@ -2656,6 +2656,22 @@ class TradeExecutor:
                     logger.debug(f"归因记录失败 (Exit): {e}")
                 
                 # P0 修复：同步更新 trades 表 (确保与 positions 表一致)
+                # P0 修复 (2026-05-21): 从 signal 提取真实 exit_reason，不再硬编码
+                _real_exit_reason = 'normal_close'
+                if hasattr(signal, 'extra') and signal.extra:
+                    _real_exit_reason = signal.extra.get('exit_reason', signal.extra.get('stop_loss', signal.extra.get('trailing_stop', None))) or _real_exit_reason
+                if hasattr(signal, 'reason') and signal.reason:
+                    _reason_lower = signal.reason.lower()
+                    if any(kw in _reason_lower for kw in ('止损', 'stop_loss', 'stop loss', 'sl')):
+                        _real_exit_reason = 'stop_loss'
+                    elif any(kw in _reason_lower for kw in ('止盈', 'take_profit', 'take profit', 'tp')):
+                        _real_exit_reason = 'take_profit'
+                    elif any(kw in _reason_lower for kw in ('移动止损', 'trailing_stop', 'trailing stop')):
+                        _real_exit_reason = 'trailing_stop'
+                    elif any(kw in _reason_lower for kw in ('时间止损', 'time_stop')):
+                        _real_exit_reason = 'time_stop'
+                    elif any(kw in _reason_lower for kw in ('保本', 'breakeven')):
+                        _real_exit_reason = 'breakeven'
                 try:
                     from app.storage.database import get_database
                     db = get_database()
@@ -2670,7 +2686,7 @@ class TradeExecutor:
                                 exit_price=actual_exit_price,
                                 pnl=pnl,
                                 pnl_percent=pnl_percent,
-                                exit_reason='normal_close',
+                                exit_reason=_real_exit_reason,
                                 stop_loss=trade.get('stop_loss'),  # 保留开仓时的止损
                                 take_profit=trade.get('take_profit')  # 保留开仓时的止盈
                             )
@@ -2696,7 +2712,7 @@ class TradeExecutor:
                 # P0+P4 修复 (2026-04-15): 记录平仓成交到数据库 (status=CLOSED)
                 # P0 修复 (2026-05-21): 传入 qty 避免 position 已清除导致 quantity=0
                 try:
-                    self.record_trade_to_db(order_id, signal, actual_exit_price, pnl, status='CLOSED', quantity_override=qty)
+                    self.record_trade_to_db(order_id, signal, actual_exit_price, pnl, status='CLOSED', quantity_override=qty, exit_reason=_real_exit_reason)
                     logger.info(f"✅ 平仓成交已记录到数据库 (status=CLOSED)")
 
                     # ── Phase 1.5: 假设驱动进化评估 (对标 RD-Agent Feedback) ──
@@ -2886,7 +2902,7 @@ class TradeExecutor:
                 try:
                     from app.notifier import get_dingtalk_notifier
                     strategy_name = getattr(signal, 'strategy', 'consensus') or 'consensus'
-                    pnl_pct_str = f"{pnl/entry_price*100:+.2f}%" if entry_price > 0 else "N/A"
+                    pnl_pct_str = f"{pnl/(entry_price*position.quantity)*100:+.2f}%" if position and entry_price > 0 and position.quantity > 0 else "N/A"
                     get_dingtalk_notifier().send_text(
                         f"🔴 [{market}] 平仓成交通知\n"
                         f"标的: {signal.code}\n"
@@ -3149,7 +3165,7 @@ class TradeExecutor:
 # P0 修复：添加 record_trade_to_db 方法 (2026-03-30 13:19)
 # ============================================================================
 
-    def record_trade_to_db(self, order_id: str, signal, price: float = None, pnl: float = 0, status: str = 'OPEN', quantity_override: int = None, stop_loss: float = None, take_profit: float = None):
+    def record_trade_to_db(self, order_id: str, signal, price: float = None, pnl: float = 0, status: str = 'OPEN', quantity_override: int = None, stop_loss: float = None, take_profit: float = None, exit_reason: str = None):
         """
         记录成交到数据库 (使用 HK 本地 TradeRecorder，无跨项目依赖)
         quantity_override: P0 修复 (2026-05-21) 平仓时 position 已被 close，需外部传入数量
@@ -3199,24 +3215,27 @@ class TradeExecutor:
                     _qty = row[1] if row and row[1] else 1
 
                     # 使用 HK 本地 TradeRecorder 记录平仓 (JSON)
+                    # P0 修复 (2026-05-21): 使用真实 exit_reason 而非硬编码
+                    _exit_r = exit_reason or 'normal_close'
                     try:
                         recorder = hk_trade_recorder.get_trade_recorder()
                         recorder.record_close(
                             trade_id=trade_id,
                             exit_price=price,
-                            exit_reason='normal_close',
+                            exit_reason=_exit_r,
                         )
                     except Exception as e:
                         logger.debug(f"[HK TradeRecorder] record_close 跳过: {e}")
 
                     # P2-1 2026-05-08: 同时更新 SQLite trades 表
+                    # P0 修复 (2026-05-21): 使用真实 exit_reason
                     now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                     cursor.execute("""
                         UPDATE trades
                         SET exit_price = ?, exit_time = ?, pnl = ?,
-                            status = 'CLOSED', exit_reason = 'normal_close'
+                            status = 'CLOSED', exit_reason = ?
                         WHERE id = ?
-                    """, (price, now, pnl, trade_id))
+                    """, (price, now, pnl, _exit_r, trade_id))
                     conn.commit()
                     logger.info(f"✅ [SQLite trades] 平仓已更新：{trade_id} exit_price={price} pnl={pnl}")
 

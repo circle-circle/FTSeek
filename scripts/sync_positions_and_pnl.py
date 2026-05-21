@@ -54,7 +54,7 @@ def get_hk_positions(db_path: str) -> List[Dict[str, Any]]:
         
         positions = []
         for row in cursor.fetchall():
-            pnl_percent = (row['unrealized_pnl'] / row['entry_price'] / row['quantity'] * 100) if row['quantity'] > 0 else 0
+            pnl_percent = (row['unrealized_pnl'] / row['entry_price'] / row['quantity']) if row['quantity'] > 0 else 0
             
             positions.append({
                 'market': 'HK',
@@ -119,10 +119,10 @@ def get_us_positions(db_path: str) -> List[Dict[str, Any]]:
             # 计算盈亏
             if row['direction'] and 'SHORT' in str(row['direction']).upper():
                 pnl = (row['entry_price'] - current_price) * quantity
-                pnl_percent = (row['entry_price'] - current_price) / row['entry_price'] * 100 if row['entry_price'] > 0 else 0
+                pnl_percent = (row['entry_price'] - current_price) / row['entry_price'] if row['entry_price'] > 0 else 0
             else:
                 pnl = (current_price - row['entry_price']) * quantity
-                pnl_percent = (current_price - row['entry_price']) / row['entry_price'] * 100 if row['entry_price'] > 0 else 0
+                pnl_percent = (current_price - row['entry_price']) / row['entry_price'] if row['entry_price'] > 0 else 0
             
             positions.append({
                 'market': 'US',

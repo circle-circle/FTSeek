@@ -669,9 +669,11 @@ class PositionManager:
             conn.commit()
 
             # P1 2026-04-27: 同步关闭 trades 表中对应的 OPEN 记录
+            # P0 2026-05-21: 修复 AttributeError — Position 对象无 signal_id 属性
             try:
                 _trade_updates = 0
-                if position.signal_id:
+                _sig_id = getattr(position, 'signal_id', None)
+                if _sig_id:
                     # 优先用 signal_id 精确匹配
                     cursor.execute(
                         "UPDATE trades SET status='CLOSED', exit_price=?, exit_time=?, "
@@ -679,7 +681,7 @@ class PositionManager:
                         "WHERE signal_id=? AND status='OPEN'",
                         (exit_price, exit_time, net_pnl,
                          net_pnl / (position.entry_price * position.quantity) if position.entry_price > 0 and position.quantity > 0 else 0,
-                         position.signal_id)
+                         _sig_id)
                     )
                     _trade_updates = cursor.rowcount
                 if _trade_updates == 0:
