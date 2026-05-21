@@ -1444,7 +1444,7 @@ scheduler:
   # ConfigWriter 唯一调的节点是 risk.signal_quality.min_confidence (SSOT)
   # 此节点保留仅为避免老代码兜底失效
   min_confidence: 0.4  # DEPRECATED, do not edit — see MinConfidenceResolver
-  min_signal_strength: 50
+  min_signal_strength: 66  # P4: 从 50 提升到 66，过滤单因子信号（数据：strength=66 胜率 12% → 99 胜率 32%）
   min_consensus_level: 0.2
   adaptive_scan_enabled: true
   scan_segments:
