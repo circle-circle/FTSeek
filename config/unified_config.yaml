@@ -605,8 +605,8 @@ risk_limits:
   time_aware_risk:
     afternoon:
       end: '12:00'
-      max_position: 0.1
-      min_confidence: 0.65         # 2026-05-21: 午盘降权 (0.45→0.65, 过滤假突破)
+      max_position: 0.15
+      min_confidence: 0.45         # 2026-05-21修正：回调，原0.65误杀全部信号(信号均值0.56)
       start: '10:00'
     closing:
       end: '16:00'
@@ -616,7 +616,7 @@ risk_limits:
     mid_day:
       end: '13:00'
       max_position: 0.08
-      min_confidence: 0.65         # 2026-05-21: 午盘降权 (0.45→0.65, 过滤假突破)
+      min_confidence: 0.65         # 2026-05-21: 午间休市保持高门槛(合理)
       start: '12:00'
     opening:
       end: '10:00'
@@ -1089,9 +1089,12 @@ strategy:
         intraday_stop_pct: 0.02
         breakeven_trigger: 0.03  # 2026-05-21: 上调保本触发 (2%→3%)
         max_holding_hours: 48
+    # ── 下午盘 13:00-15:00 (真正的afternoon) ──
     afternoon:
       start: '13:00'
       end: '15:00'
+      min_confidence: 0.45        # 2026-05-21修正：下午盘标准门槛
+      max_position: 0.20
       active_strategies:
       - rsi_factor
       - macd_factor
