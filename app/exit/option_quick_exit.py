@@ -36,8 +36,9 @@ class OptionQuickExitEngine:
         self.trailing_stop = config.get("trailing_stop", 0.05)        # 5% 回撤平仓
         self.max_holding_hours = config.get("max_holding_hours", 72)  # 72h 强制平仓
         self.profit_target = config.get("profit_target_pct", 0.15)    # 15% 目标止盈
-        self.stop_loss = config.get("stop_loss_pct", 0.25)            # 25% 硬止损
+        self.stop_loss = config.get("stop_loss_pct", 0.40)            # P2: 25% → 40% 硬止损（期权波动大）
         self.time_decay_warning = config.get("time_decay_warning", 0.10)  # 10% 时间价值警告
+        self.min_holding_hours_for_decay = config.get("min_holding_hours_for_decay", 24)  # P3: 至少持仓 24h 才考虑时间损耗
 
         # 跟踪最高盈利 (SQLite 持久化，重启后可恢复)
         self._peak_profits: Dict[str, float] = {}  # symbol -> peak_pnl_pct
@@ -144,8 +145,13 @@ class OptionQuickExitEngine:
         """
         检查时间价值损耗
 
-        简单估算: 持仓时间 / 总到期时间 > 警告阈值
+        P3 优化：至少持仓 24h 才考虑时间损耗（避免过早平仓）
+        简单估算：持仓时间 / 总到期时间 > 警告阈值
         """
+        # P3: 持仓不足 24h 不考虑时间损耗
+        if holding_hours < self.min_holding_hours_for_decay:
+            return False
+
         expiry_str = position.get("expiry", "")
         if not expiry_str:
             return False
@@ -174,7 +180,7 @@ class OptionQuickExitEngine:
             return decay_pct > self.time_decay_warning
 
         except Exception as e:
-            logger.debug(f"[时间价值] 计算失败: {e}")
+            logger.debug(f"[时间价值] 计算失败：{e}")
             return False
 
     # ================================================================
