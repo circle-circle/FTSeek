@@ -39,10 +39,19 @@ def _get_option_price(scheduler, option_code: str, entry_price: float) -> float:
     问题：Broker 断连或期权不在持仓列表时返回 0.0 → 监控静默跳过，止损止盈失效。
     修复：失败时 fallback 到 get_market_snapshot([option_code]) 直接查行情。
     """
-    if not (scheduler.execution_engine and hasattr(scheduler.execution_engine, "broker_adapter")):
+    # 调试日志：检查 scheduler.execution_engine 状态
+    if not scheduler.execution_engine:
+        logger.warning(f"[期权监控] scheduler.execution_engine 为 None")
+        return 0.0
+    if not hasattr(scheduler.execution_engine, "broker_adapter"):
+        logger.warning(f"[期权监控] scheduler.execution_engine.broker_adapter 属性缺失")
         return 0.0
     adapter = getattr(scheduler.execution_engine, "broker_adapter", None)
-    if not adapter or not adapter.is_connected():
+    if not adapter:
+        logger.warning(f"[期权监控] broker_adapter 为 None")
+        return 0.0
+    if not adapter.is_connected():
+        logger.warning(f"[期权监控] broker_adapter.is_connected() = False")
         return 0.0
 
     # 源 1：从持仓列表获取 current_price
@@ -64,12 +73,17 @@ def _get_option_price(scheduler, option_code: str, entry_price: float) -> float:
             if ret == RET_OK and data is not None and len(data) > 0:
                 price = float(data["last_price"].values[0])
                 if price > 0:
-                    logger.debug(f"[期权监控] 行情快照获取价格 {option_code}: ${price:.2f}")
+                    logger.info(f"[期权监控] 行情快照获取价格 {option_code}: ${price:.2f}")
                     return price
+            else:
+                logger.warning(f"[期权监控] 行情快照返回失败 {option_code}: ret={ret}")
+        else:
+            logger.warning(f"[期权监控] adapter.quote_ctx 为 None")
     except ImportError:
+        logger.warning(f"[期权监控] futu 模块导入失败")
         pass
     except Exception as e:
-        logger.debug(f"[期权监控] 行情快照失败 {option_code}: {e}")
+        logger.warning(f"[期权监控] 行情快照失败 {option_code}: {e}")
 
     return 0.0
 
@@ -211,6 +225,25 @@ def _close_option_position(scheduler, position: Position, reason: str, current_o
             scheduler.risk_engine.strategy_breaker.record_loss("voting_llm")
         except Exception:
             pass
+
+    # P0 fix (2026-05-22): Update trade attribution on option close
+    # Pattern 35: _close_option_position was missing _update_trade_attribution call
+    # Root cause: attribution written on open but never updated on close → 0% coverage
+    try:
+        from app.pipeline.order_executor import _update_trade_attribution
+        _update_trade_attribution(
+            trace_id=position.trace_id,
+            symbol=position.symbol,
+            pnl=pnl,
+            pnl_pct=pnl_pct,
+            exit_reason=reason,
+            holding_hours=holding_hours,
+            signal_strength=meta.get("signal_strength", 0),
+            signal_confidence=meta.get("signal_confidence", 0.0),
+        )
+        logger.debug(f"[期权平仓] 归因更新完成: {position.symbol} {position.trace_id}")
+    except Exception as e:
+        logger.warning(f"[期权平仓] 归因更新失败 (不影响平仓): {e}")
 
 
 def _execute_option_close_order(scheduler, position, option_code, qty, reason, current_option_price=0.0):
