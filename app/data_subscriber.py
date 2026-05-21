@@ -1757,158 +1757,13 @@ class DataSubscriber:
 
     def _execute_stop_loss(self, code: str, current_price: float):
         """
-        执行止损平仓 (2026-03-23 优化: 确保整手数量)
-        2026-03-27 修复: 添加止损冷却机制，防止频繁触发
-        2026-05-15 优化: 冷却时间从 5s 延长到 30s，减少重复触发
-        2026-05-15 修复: 修复 _get_lot_size() 不存在导致 AttributeError 的 bug
-        2026-05-15 优化: 统一冷却锁管理，消除双路径竞争
-
-        Phase 6: 委托给 ExitStateEngine (配置驱动，默认关闭)
+        执行止损平仓 (委托给 TradeExecutor)
+        
+        P0 2026-05-21: 逻辑迁移至 TradeExecutor
         """
-        # Phase 6: 配置驱动委托给引擎
-        if getattr(self, '_exit_delegation_enabled', False) and self._exit_engine is not None:
-            position = self.position_manager.get_position(code)
-            if position is not None:
-                return self._exit_engine.execute_stop_loss(
-                    code=code,
-                    current_price=current_price,
-                    position=position,
-                    signal=None,
-                    trade_type="STOP_LOSS",
-                )
-        # Phase 10A: 委托给 ExitExecutor 服务
-        if self._exit_executor is not None:
-            return self._exit_executor.execute_stop_loss(code, current_price)
-        # 止损冷却递增：按失败次数增加冷却时间
-        if not hasattr(self, '_stop_loss_fail_count'):
-            self._stop_loss_fail_count = {}
-        
-        fail_count = self._stop_loss_fail_count.get(code, 0)
-        # 2026-05-16: 迁移至 SSOT (unified_config.yaml → risk_limits.stop_loss_cooldown_schedule)
-        from config.config_center import get_config_center as _gcc_cooldown
-        COOLDOWN_SCHEDULE = _gcc_cooldown().get('risk_limits.stop_loss_cooldown_schedule', [30, 60, 120, 300, 300])
-        cooldown_seconds = COOLDOWN_SCHEDULE[min(fail_count, len(COOLDOWN_SCHEDULE) - 1)]
-        
-        now = time.time()
-        last_stop_time = self._stop_loss_cooldown.get(code, 0)
-        if now - last_stop_time < cooldown_seconds:
-            logger.info(
-                f"[止损冷却] {code} 冷却中，距离上次止损 {now - last_stop_time:.1f}s < {cooldown_seconds}s (失败次数={fail_count})"
-            )
-            return  # 仍在冷却中
-        
-        # P0 修复 (2026-04-23): 跳过已标记为 BAD_ORDER 的标的
-        bad_orders = getattr(self, '_bad_orders', {})
-        if code in bad_orders:
-            bo = bad_orders[code]
-            logger.warning(
-                f"[止损跳过] {code} 已标记为 BAD_ORDER (失败{bo['fail_count']}次: {bo['error'][:60]})"
-            )
-            return
-        
-        # P0 修复 (2026-05-19): 用线程安全的原子锁保护 _stop_loss_inflight
-        # 根因: 旧代码 check-then-act 存在竞态窗口，两个线程可能同时通过检查
-        if not hasattr(self, '_stop_loss_inflight'):
-            self._stop_loss_inflight = {}
-        if not hasattr(self, '_stop_loss_inflight_lock'):
-            self._stop_loss_inflight_lock = threading.Lock()
-
-        with self._stop_loss_inflight_lock:
-            if self._stop_loss_inflight.get(code, False):
-                logger.debug(f"[止损跳过] {code} 已有止损线程正在执行，跳过重复触发")
-                return
-            self._stop_loss_inflight[code] = True
-        
-        position = self.position_manager.get_position(code)
-        if position is None:
-            return
-        
-        # 获取每手股数 (2026-05-07 P0 修复: 动态获取而非配置默认值)
-        # P0 修复 (2026-05-15): 修复 _get_lot_size() 不存在导致 AttributeError 的 bug
-        from app.config import DEFAULT_ORDER_QTY_BY_CODE, HK_LOT_SIZES
-        lot_size = HK_LOT_SIZES.get(code) or DEFAULT_ORDER_QTY_BY_CODE.get(code, 100)
-        
-        # 碎股处理: 如果持仓不足一手，以实际持仓数量平仓 (2026-05-07 P0 修复)
-        close_qty = position.quantity
-        if close_qty < lot_size:
-            logger.warning(
-                f"[止损碎股处理] {code} 持仓{close_qty}股不足一手({lot_size}股)，"
-                f"以实际数量平仓 (若 Futu 拒绝将标记为 BAD_ORDER)"
-            )
-        elif close_qty % lot_size != 0:
-            # 向上取整到整手
-            close_qty = ((close_qty + lot_size - 1) // lot_size) * lot_size
-            logger.warning(
-                f"[止损数量调整] {code} 原数量={position.quantity}，调整为整手={close_qty}"
-            )
-        
-        logger.info(
-            f"[止损执行] {code} 持仓={position.quantity}股 | 每手={lot_size}股 | "
-            f"平仓={close_qty}股 | 入场价={position.entry_price} | 当前价={current_price}"
-        )
-        
-        # 创建止损信号 (P1 修复 2026-05-21: 传递 trace_id)
-        from app.strategy.base import Signal, SignalAction
-        stop_loss_signal = Signal(
-            code=code,
-            name=position.code,
-            action=SignalAction.SELL if position.action == 'BUY' else SignalAction.BUY,
-            price=current_price,
-            quantity=close_qty,
-            reason=f"止损触发 (盈亏={((current_price - position.entry_price) / position.entry_price * 100):.2f}%)",
-            strategy="止损",
-            trace_id=getattr(position, 'trace_id', '') or '',
-            extra={
-                "stop_loss": True,
-                "entry_price": position.entry_price,
-                "pnl_rate": (current_price - position.entry_price) / position.entry_price,
-                "exit_reason": "stop_loss"
-            }
-        )
-        
-        logger.info(f"[止损尝试] {code} | 数量={close_qty}股 | 每手={lot_size}股")
-        
-        # P0 修复 (2026-04-23): 验证 Futu 实际持仓，避免幽灵仓导致无效下单
-        # position_sync 的 _futu_positions 缓存是 Futu 真实持仓的唯一可信源
-        # 2026-04-24 修复: 模拟盘 (TRADE_ENV=1) 不应验证 Futu 实际持仓，
-        # 本地 DB 就是唯一真实源。Futu 模拟盘无实际成交，验证永远失败。
-        try:
-            if config.TRADE_ENV == 1:
-                logger.debug(f"[止损验证] {code} 模拟盘跳过 Futu 持仓验证 (TRADE_ENV=1)")
-            else:
-                from app.trader.position_sync import get_position_sync
-                ps = get_position_sync()
-                futu_pos = ps._futu_positions.get(code)
-                if futu_pos is None or futu_pos.quantity <= 0:
-                    # Futu 无此持仓 → 可能是幽灵仓，也可能是刚卖出尚未同步
-                    # P1 修复 (2026-05-16): 先用 current_price 平仓保留 P&L，避免 entry=exit 丢失盈亏
-                    logger.warning(
-                        f"[止损跳过] {code} Futu 无实际持仓 (本地有 {close_qty}股)，"
-                        f"以当前价 {current_price:.2f} 平仓 (防 P&L 丢失)"
-                    )
-                    try:
-                        self.position_manager.close_position(code, current_price, datetime.now().isoformat())
-                        logger.info(f"[持仓修复] {code} 已平仓 (P&L 已记录)")
-                    except Exception as _e:
-                        logger.error(f"[持仓修复] {code} 清理失败: {_e}")
-                    self._stop_loss_fail_count.pop(code, None)
-                    self._stop_loss_cooldown.pop(code, None)
-                    self._trailing_stop_cache.pop(code, None)
-                    self._peak_price_cache.pop(code, None)
-                    return
-        except Exception as _e:
-            logger.debug(f"[止损Futu验证] {code} 检查异常 (降级放行): {_e}")
-        
-        # P0 修复 (2026-04-23): 止损执行放入后台线程，不阻塞 Worker
-        # 避免 Futu API 慢响应/失败时阻塞整个行情处理管线
-        # 2026-05-17 P0: 用 in-flight 锁防止重复触发，冷却改为线程完成后设置
-        # 2026-05-19 P0: 已在上方原子锁中设置 inflight=True，此处直接启动线程
-        threading.Thread(
-            target=self._do_execute_stop_loss,
-            args=(code, stop_loss_signal, 'CLOSE'),
-            daemon=True,
-            name=f"StopLoss_{code}",
-        ).start()
+        # TODO: 完全迁移后删除原方法，改为直接调用
+        # 当前先委托给 TradeExecutor
+        self._get_trade_executor().execute_stop_loss(code, current_price)
     
     def _do_execute_stop_loss(self, code: str, signal, trade_type: str):
         """在后台线程中执行止损平仓 (P0 修复: 不阻塞 Worker)
@@ -2733,6 +2588,26 @@ class DataSubscriber:
             logger.info("[TradingHoursChecker] 延迟初始化完成（依赖注入）")
         
         return self._trading_hours_checker
+
+    def _get_trade_executor(self):
+        """
+        懒加载 TradeExecutor（延迟初始化，首次使用时创建）
+        
+        Returns:
+            TradeExecutor 实例
+        """
+        if not hasattr(self, '_trade_executor') or self._trade_executor is None:
+            from app.data_subscriber_engines.trade_executor import TradeExecutor
+            from config import config as _cfg
+            
+            # 创建 TradeExecutor，注入依赖
+            self._trade_executor = TradeExecutor(
+                position_manager=self.position_manager,
+                config=_cfg,
+            )
+            logger.info("[TradeExecutor] 延迟初始化完成（依赖注入）")
+        
+        return self._trade_executor
 
     def _process_kline_data(self, code: str, kline: dict, k_type: str):
         """处理单个 K 线数据（在工作线程中运行）"""
