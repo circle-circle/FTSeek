@@ -2847,6 +2847,12 @@ class DataSubscriber:
                 execute_take_profit_fn=self._execute_take_profit,
                 execute_partial_take_profit_fn=self._execute_partial_take_profit,
                 soft_stop_warnings=self.soft_stop_warnings,  # 向后兼容
+                # Phase 3c: 多周期趋势相关依赖
+                mtf_engine=getattr(self, '_mtf_engine', None),
+                kline_buffers_by_period=getattr(self, '_kline_buffers_by_period', {}),
+                multi_timeframe_trends=getattr(self, '_multi_timeframe_trends', {}),
+                trends_updated=getattr(self, '_trends_updated', set()),
+                sync_trend_change_fn=getattr(self, '_sync_trend_change', None),
             )
             logger.info("[KlineProcessor] 延迟初始化完成（依赖注入）")
         

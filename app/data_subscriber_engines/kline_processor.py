@@ -49,6 +49,12 @@ class KlineProcessor:
         execute_take_profit_fn: Optional[Callable] = None,
         execute_partial_take_profit_fn: Optional[Callable] = None,
         soft_stop_warnings: Optional[Dict[str, float]] = None,
+        # Phase 3c: 多周期趋势相关依赖
+        mtf_engine=None,
+        kline_buffers_by_period: Optional[Dict] = None,
+        multi_timeframe_trends: Optional[Dict] = None,
+        trends_updated: Optional[set] = None,
+        sync_trend_change_fn: Optional[Callable] = None,
     ):
         """
         初始化 K 线处理器
@@ -69,6 +75,11 @@ class KlineProcessor:
             execute_take_profit_fn: 止盈执行回调
             execute_partial_take_profit_fn: 部分止盈执行回调
             soft_stop_warnings: 软止损预警缓存（可选，向后兼容）
+            mtf_engine: 多周期趋势引擎（可选）
+            kline_buffers_by_period: 按周期分组的 K 线缓冲区（可选）
+            multi_timeframe_trends: 多周期趋势状态（可选）
+            trends_updated: 已更新的趋势集合（可选）
+            sync_trend_change_fn: 趋势变化同步回调（可选）
         """
         self.position_manager = position_manager
         self.cache = cache
@@ -88,6 +99,13 @@ class KlineProcessor:
         # 内部状态
         # P0 2026-05-21: soft_stop_warnings 支持注入（向后兼容 data_subscriber）
         self.soft_stop_warnings = soft_stop_warnings if soft_stop_warnings is not None else {}
+        
+        # Phase 3c: 多周期趋势相关依赖
+        self.mtf_engine = mtf_engine
+        self.kline_buffers_by_period = kline_buffers_by_period or {}
+        self.multi_timeframe_trends = multi_timeframe_trends or {}
+        self.trends_updated = trends_updated or set()
+        self.sync_trend_change_fn = sync_trend_change_fn
         
         logger.info("[KlineProcessor] 初始化完成（依赖注入模式）")
     
@@ -167,10 +185,42 @@ class KlineProcessor:
     # ----------------------------------------------------------
     
     def _update_multi_timeframe_trend(self, code: str, k_type: str, kline: dict):
-        """更新多周期趋势"""
-        # TODO: 从 data_subscriber 迁移 _update_multi_timeframe_trend 逻辑
-        # 当前先保持为占位符
-        pass
+        """
+        更新多周期趋势 — 委托给 MultiTimeframeEngine
+        
+        迁移自 data_subscriber.py L1109-1138
+        
+        依赖注入：mtf_engine, kline_buffers_by_period, multi_timeframe_trends, 
+                 consensus, trends_updated, sync_trend_change_fn
+        """
+        if self.mtf_engine is None:
+            return  # 未注入引擎，跳过
+        
+        try:
+            # 委托给引擎计算趋势方向
+            trend = self.mtf_engine.update_trend(
+                code=code,
+                k_type=k_type,
+                kline=kline,
+                kline_buffers=self.kline_buffers_by_period,
+                trends=self.multi_timeframe_trends,
+                consensus=self.consensus,
+                trend_filter=None,  # trend_filter sync handled below
+            )
+            if trend is None:
+                return  # 数据不足
+            
+            old_trend = self.multi_timeframe_trends[code][k_type]
+            self.multi_timeframe_trends[code][k_type] = trend
+            self.trends_updated.add((code, k_type))
+            
+            if trend != old_trend:
+                # 趋势变化时的同步逻辑（保留原有 side effects）
+                if self.sync_trend_change_fn:
+                    self.sync_trend_change_fn(code, k_type, trend)
+                
+        except Exception as e:
+            logger.debug(f"[多周期趋势] {code} {k_type} 更新失败：{e}")
     
     def _check_soft_stop_warning(self, code: str, current_price: float, pos_now):
         """软止损预警检查"""
