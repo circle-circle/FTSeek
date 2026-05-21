@@ -575,13 +575,13 @@ risk_limits:
   open_close_effect:
     close_trend_threshold: 0.015
     close_window_minutes: 30
-    enabled: true
+    enabled: false       # 2026-05-21: 禁用 (22.2%胜率)
     open_breakout_threshold: 0.02
     open_volume_ratio: 1.5
     open_window_minutes: 30
   sentiment_ai:
     cooldown_seconds: 7200
-    enabled: true
+    enabled: false       # 2026-05-21: 禁用 (16.3%胜率)
     lookback_hours: 24
     max_news: 20
     negative_threshold: -0.4
@@ -606,7 +606,7 @@ risk_limits:
     afternoon:
       end: '12:00'
       max_position: 0.1
-      min_confidence: 0.45         # 2026-05-19: 提高信号门槛 (原0.35)
+      min_confidence: 0.65         # 2026-05-21: 午盘降权 (0.45→0.65, 过滤假突破)
       start: '10:00'
     closing:
       end: '16:00'
@@ -616,7 +616,7 @@ risk_limits:
     mid_day:
       end: '13:00'
       max_position: 0.08
-      min_confidence: 0.45         # 2026-05-19: 提高信号门槛 (原0.35)
+      min_confidence: 0.65         # 2026-05-21: 午盘降权 (0.45→0.65, 过滤假突破)
       start: '12:00'
     opening:
       end: '10:00'
@@ -703,14 +703,14 @@ stock_pool:
       name: 观察股票
       stocks:
       - HK.09618
-      - HK.01810
+      # - HK.01810  # 2026-05-21: 移出 (29%胜率, 亏-¥2,612)
       weight: 0.3
     tier3:
       name: 机会股票
       stocks:
       - HK.01024
       - HK.09888
-      - HK.00981
+      # - HK.00981  # 2026-05-21: 移出 (24%胜率, 亏-¥2,617)
       - HK.01347
       - HK.01211
       - HK.02015
@@ -719,7 +719,7 @@ stock_pool:
       - HK.00388
       - HK.01299
       - HK.02269
-      - HK.09992
+      # - HK.09992  # 2026-05-21: 移出 (15%胜率, 亏-¥6,850)
       - HK.02020
       - HK.00883
       - HK.00941
@@ -923,6 +923,8 @@ strategy:
   - confluence
   - price_break
   - enhanced_confluence
+  - sentiment_ai        # 2026-05-21: 禁用 (16.3%胜率, 均亏-2.95%)
+  - open_close_effect   # 2026-05-21: 禁用 (22.2%胜率, 均亏-1.65%)
   enabled:
     open_close: open_close_effect
     primary: none
@@ -1085,7 +1087,7 @@ strategy:
         trailing_atr_mult: 1.5
         take_profit_atr_mult: 2.0
         intraday_stop_pct: 0.02
-        breakeven_trigger: 0.02
+        breakeven_trigger: 0.03  # 2026-05-21: 上调保本触发 (2%→3%)
         max_holding_hours: 48
     afternoon:
       start: '13:00'
@@ -1108,7 +1110,7 @@ strategy:
         trailing_atr_mult: 1.5
         take_profit_atr_mult: 2.0
         intraday_stop_pct: 0.02
-        breakeven_trigger: 0.02
+        breakeven_trigger: 0.03  # 2026-05-21: 上调保本触发 (2%→3%)
         max_holding_hours: 36
     closing:
       start: '15:00'
@@ -1126,7 +1128,7 @@ strategy:
         trailing_atr_mult: 1.0
         take_profit_atr_mult: 1.2
         intraday_stop_pct: 0.015
-        breakeven_trigger: 0.015
+        breakeven_trigger: 0.03  # 2026-05-21: 上调保本触发 (1.5%→3%, 防止盈利单过早踢出)
         max_holding_hours: 2
   subscribe_types:
   - QUOTE
@@ -1356,7 +1358,7 @@ dynamic_exit_params:
       multiplier: 1.5
       min_stop_pct: 0.012
       max_stop_pct: 0.05
-    take_profit: 0.06            # 2026-05-19: 修复 R:R 门控误杀 (0.05/0.045=1.11<1.25, 改为 0.06/0.045=1.33>1.25)
+    take_profit: 0.08            # 2026-05-21: 提高止盈 (6%→8%, 改善R:R至1.07:1)
     partial_take_profit: &id003
       enabled: true
       levels:
@@ -1396,7 +1398,7 @@ dynamic_exit_params:
       warning_minutes_before: 5
       min_profit_to_hold: 0.015
       force_exit_below: 0.005
-    stop_loss: -0.045            # 2026-05-19: 放宽止损 (原-0.035, 减少噪音止损)
+    stop_loss: -0.035            # 2026-05-21: 收紧止损 (4.5%→3.5%, 截断大亏交易)
   strong_trend_up:
     atr_dynamic_stop:
       enabled: true
