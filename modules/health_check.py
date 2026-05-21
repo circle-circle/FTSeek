@@ -217,7 +217,7 @@ class HealthChecker:
         """确保 HTTP 会话存在"""
         if self.session is None or self.session.closed:
             timeout = aiohttp.ClientTimeout(total=10)
-            self.session = aiohttp.ClientSession(timeout=timeout)
+            self.session = aiohttp.ClientSession(timeout=timeout, connector=aiohttp.TCPConnector(force_close=True))
     
     async def close(self):
         """关闭资源"""

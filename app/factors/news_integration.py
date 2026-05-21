@@ -346,6 +346,9 @@ class NewsSentimentAnalyzer:
         
         不污染线程的全局 event loop (asyncio.set_event_loop)，
         避免后续 asyncio.get_event_loop() 拿到已关闭的 loop。
+        
+        L3 修复 2026-05-21: 增加 SSL transport 清理，防止 Python 3.8 + aiohttp
+        的 "Fatal error on SSL transport" / "Bad file descriptor" 错误。
         """
         loop = asyncio.new_event_loop()
         try:
@@ -358,6 +361,8 @@ class NewsSentimentAnalyzer:
                     task.cancel()
                 if pending:
                     loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+                # L3: 给 SSL 连接 100ms 完成关闭握手，减少 "Bad file descriptor" 错误
+                loop.run_until_complete(asyncio.sleep(0.1))
             except Exception:
                 pass
             loop.close()

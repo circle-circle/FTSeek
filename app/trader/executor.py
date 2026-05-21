@@ -2036,7 +2036,7 @@ class TradeExecutor:
 
                 # P0 修复：记录成交到数据库 (同时更新 trades 和 positions 表)
                 try:
-                    self.record_trade_to_db(order_id, signal, actual_entry_price, pnl=0, status='OPEN')
+                    self.record_trade_to_db(order_id, signal, actual_entry_price, pnl=0, status='OPEN', quantity_override=qty, stop_loss=stop_price, take_profit=take_profit_price)
                     logger.info(f"✅ [数据库] 开仓成交已记录：trade_id=trade_{order_id}")
 
                     # ── LLM 信号质量追踪 (2026-05-17) ──
@@ -2421,12 +2421,6 @@ class TradeExecutor:
         # P3 修复 (2026-04-15): 记录执行质量监控开始
         exec_monitor = get_execution_monitor()
         order_type_str = config.DEFAULT_ORDER_TYPE
-        record_id = exec_monitor.record_start(
-            code=signal.code,
-            signal_price=signal.price,
-            quantity=0,  # 平仓数量从持仓获取
-            order_type=order_type_str,
-        )
 
         try:
             # 1. 获取持仓
@@ -2435,6 +2429,14 @@ class TradeExecutor:
                 msg = f"[{market}] 平仓失败：未找到 {signal.code} 的持仓记录"
                 logger.warning(msg)
                 return TradeResult(success=False, message=msg)
+
+            # P0 修复 (2026-05-21): 使用实际持仓数量记录，不再用 0
+            record_id = exec_monitor.record_start(
+                code=signal.code,
+                signal_price=signal.price,
+                quantity=position.quantity,
+                order_type=order_type_str,
+            )
 
             # TrdSide, OrderType, TrdEnv 已在文件顶部导入
 
@@ -2690,8 +2692,9 @@ class TradeExecutor:
                 )
 
                 # P0+P4 修复 (2026-04-15): 记录平仓成交到数据库 (status=CLOSED)
+                # P0 修复 (2026-05-21): 传入 qty 避免 position 已清除导致 quantity=0
                 try:
-                    self.record_trade_to_db(order_id, signal, actual_exit_price, pnl, status='CLOSED')
+                    self.record_trade_to_db(order_id, signal, actual_exit_price, pnl, status='CLOSED', quantity_override=qty)
                     logger.info(f"✅ 平仓成交已记录到数据库 (status=CLOSED)")
 
                     # ── Phase 1.5: 假设驱动进化评估 (对标 RD-Agent Feedback) ──
@@ -3144,9 +3147,11 @@ class TradeExecutor:
 # P0 修复：添加 record_trade_to_db 方法 (2026-03-30 13:19)
 # ============================================================================
 
-    def record_trade_to_db(self, order_id: str, signal, price: float = None, pnl: float = 0, status: str = 'OPEN'):
+    def record_trade_to_db(self, order_id: str, signal, price: float = None, pnl: float = 0, status: str = 'OPEN', quantity_override: int = None, stop_loss: float = None, take_profit: float = None):
         """
         记录成交到数据库 (使用 HK 本地 TradeRecorder，无跨项目依赖)
+        quantity_override: P0 修复 (2026-05-21) 平仓时 position 已被 close，需外部传入数量
+        stop_loss / take_profit: L2 修复 (2026-05-21) 记录止损止盈价，供归因分析使用
         """
         from app.storage import trade_recorder as hk_trade_recorder
         from app import config
@@ -3162,8 +3167,10 @@ class TradeExecutor:
             
             code = signal.code
             action = 'BUY' if signal.action == SignalAction.BUY else 'SELL'
-            # P1 修复 (2026-05-12): 平仓时 signal.quantity=0，实际数量从持仓获取
-            if status == 'CLOSED':
+            # P0 修复 (2026-05-21): 优先使用外部传入的数量，避免平仓时 position 已清除导致 quantity=0
+            if quantity_override is not None and quantity_override > 0:
+                quantity = quantity_override
+            elif status == 'CLOSED':
                 position = self.position_manager.get_position(code)
                 quantity = position.quantity if position else 0
                 if quantity <= 0:
@@ -3256,14 +3263,16 @@ class TradeExecutor:
                     entry_price, exit_price, quantity,
                     pnl, pnl_percent, fees,
                     strategy, entry_time, exit_time,
-                    exit_reason, order_id, status
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    exit_reason, order_id, status,
+                    stop_loss, take_profit
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 trade_id, signal_id, code, '', action,
                 entry_price, None if db_status == 'OPEN' else price, quantity,
                 pnl, 0, 0,
                 strategy, now, None if db_status == 'OPEN' else now,
-                'normal_close' if db_status == 'CLOSED' else '', order_id, db_status
+                'normal_close' if db_status == 'CLOSED' else '', order_id, db_status,
+                stop_loss, take_profit
             ))
             conn.commit()
             logger.info(f"✅ [SQLite trades] 成交已写入：{trade_id} {code} {action} {quantity}股 @ {entry_price} status={db_status}")

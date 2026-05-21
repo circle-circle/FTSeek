@@ -70,7 +70,7 @@ circuit_breaker:
 entry_price_checker:
   enabled: true
   high_buy_block: 0.003
-  high_buy_warn: 0.01
+  high_buy_warn: 0.02
   high_buy_soft: 0.03
   low_sell_block: 0.005
   low_sell_warn: 0.02

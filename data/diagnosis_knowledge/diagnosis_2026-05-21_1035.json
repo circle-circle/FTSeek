@@ -1,0 +1,43 @@
+{
+  "timestamp": "2026-05-21T10:35:00.020530",
+  "date": "2026-05-21",
+  "time": "1035",
+  "alerts": [
+    {
+      "level": "warning",
+      "rule_id": "FUNNEL_001",
+      "rule_name": "信号漏斗断裂",
+      "message": "信号执行率 0% (9个信号全部未执行)，漏斗可能断裂",
+      "details": {
+        "total_signals": 9,
+        "executed": 0,
+        "exited": 0,
+        "gaps": [
+          "信号生成→执行: 100% 断裂"
+        ]
+      },
+      "timestamp": "2026-05-21T10:35:00.020369"
+    },
+    {
+      "level": "critical",
+      "rule_id": "REJECT_001",
+      "rule_name": "拒绝率飙升",
+      "message": "信号拒绝率 100%，主因: decision_buffer_rejected (9次)",
+      "details": {
+        "rejection_rate": 1.0,
+        "reject_reasons": {
+          "decision_buffer_rejected": 9
+        },
+        "total_signals": 9,
+        "rejected_count": 9
+      },
+      "timestamp": "2026-05-21T10:35:00.020424"
+    }
+  ],
+  "summary": {
+    "total": 2,
+    "critical": 1,
+    "warning": 1,
+    "info": 0
+  }
+}

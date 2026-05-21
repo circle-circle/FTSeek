@@ -152,6 +152,32 @@ class SignalStore:
             cooldown_map[key] = now
             return True
 
+    def _update_signal_status(self, signal_id: str, status: str):
+        """更新信号 DB 状态 (P0 修复 2026-05-21)"""
+        if self._db_conn is None:
+            return
+        try:
+            from datetime import datetime
+            now = datetime.now().isoformat()
+            if status == 'confirmed':
+                self._db_conn.execute(
+                    "UPDATE signals SET status = ?, confirmed_at = ? WHERE id = ?",
+                    (status, now, signal_id)
+                )
+            elif status == 'executed':
+                self._db_conn.execute(
+                    "UPDATE signals SET status = ?, executed_at = ? WHERE id = ?",
+                    (status, now, signal_id)
+                )
+            else:
+                self._db_conn.execute(
+                    "UPDATE signals SET status = ? WHERE id = ?",
+                    (status, signal_id)
+                )
+            self._db_conn.commit()
+        except Exception as e:
+            logger.warning(f"信号状态更新失败: {signal_id} -> {status}: {e}")
+
     def add(self, signal: Signal) -> bool:
         """
         添加信号，自动设置过期时间
@@ -227,6 +253,10 @@ class SignalStore:
             
             signal.confirmed = True
             logger.info(f"🔔 信号已确认：{signal_id} -> {signal.code} {signal.action.value}")
+            
+            # P0 修复 (2026-05-21): 同步更新 DB 状态
+            self._update_signal_status(signal_id, 'confirmed')
+            
             return signal
 
     def reject(self, signal_id: str) -> bool:
@@ -246,6 +276,9 @@ class SignalStore:
             if signal:
                 signal.executed = True
                 self._history.append(signal)
+            
+            # P0 修复 (2026-05-21): 同步更新 DB 状态
+            self._update_signal_status(signal_id, 'executed')
 
     def cleanup_expired(self):
         """清理过期信号"""

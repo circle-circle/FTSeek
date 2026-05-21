@@ -375,11 +375,13 @@ class PreMarketPipeline:
         review_count = 0
         observe_count = 0
 
-        # 自动执行: 生成 Signal → SignalStore
+        # 自动执行: 生成 Signal → 直接执行 + 通知
         for a in routed.get("auto", []):
             signal = self._signal_converter.convert(a)
             if signal:
-                self._send_to_signal_store(signal)
+                # P0 修复 (2026-05-21): auto 信号必须执行，不能只入库
+                # 根因: 只调 _send_to_signal_store 不执行不发通知 → 全部过期
+                self._execute_auto_signal(a, signal)
                 auto_count += 1
 
         # 人工确认: 发送 DingTalk ActionCard
@@ -406,6 +408,55 @@ class PreMarketPipeline:
                 logger.warning(f"[Pipeline] 信号被冷却拦截: {signal.code}")
         except Exception as e:
             logger.error(f"[Pipeline] 信号入库失败: {e}")
+
+    def _execute_auto_signal(self, assessment: Any, signal: Any):
+        """P0 修复 (2026-05-21): auto 信号直接执行 + 通知
+        
+        根因: auto 信号只调 _send_to_signal_store → 无人确认 → 全部过期
+        修复: auto 信号已通过 strategy_router 高置信度过滤，应直接执行
+        """
+        from app.signal_store import signal_store
+        
+        # 1. 先入库 (用于追踪和冷却)
+        success = signal_store.add(signal)
+        if not success:
+            logger.warning(f"[Pipeline] auto 信号被冷却拦截: {signal.code}")
+            return
+        
+        # 2. 直接执行
+        try:
+            from app.trader.executor import get_executor
+            executor = get_executor()
+            
+            if executor and signal.action.value in ("BUY", "SELL"):
+                result = executor.execute(signal)
+                signal_store.mark_executed(signal.id)
+                
+                # TradeResult 是 dataclass，用属性访问
+                ok = result.success if hasattr(result, 'success') else False
+                msg = result.message if hasattr(result, 'message') else str(result)
+                
+                logger.info(
+                    f"[Pipeline] ✅ auto 信号已执行: {signal.code} {signal.action.value} "
+                    f"success={ok} msg={msg[:100]}"
+                )
+                
+                # 3. 通知执行结果
+                try:
+                    from app.main import get_notifier
+                    notifier = get_notifier()
+                    if notifier and hasattr(notifier, 'send_execution_result'):
+                        notifier.send_execution_result(signal, ok, msg)
+                except Exception as e:
+                    logger.debug(f"[Pipeline] 执行结果通知失败: {e}")
+            else:
+                logger.warning(
+                    f"[Pipeline] auto 信号无 executor 或非交易信号: "
+                    f"{signal.code} {signal.action.value}"
+                )
+                signal_store.mark_executed(signal.id)
+        except Exception as e:
+            logger.error(f"[Pipeline] auto 信号执行失败: {signal.code}: {e}")
 
     def _send_review_card(self, assessment: Any):
         """发送 DingTalk 人工确认 ActionCard"""

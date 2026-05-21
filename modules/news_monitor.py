@@ -259,8 +259,10 @@ class NewsMonitor:
                 except Exception:
                     pass
             timeout = aiohttp.ClientTimeout(total=10)
+            connector = aiohttp.TCPConnector(force_close=True)
             self.session = aiohttp.ClientSession(
                 timeout=timeout,
+                connector=connector,
                 headers={'User-Agent': 'FTSeek/1.0 News Monitor'}
             )
             self._session_loop = current_loop

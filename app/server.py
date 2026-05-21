@@ -318,22 +318,27 @@ async def confirm_signal(request: Request, signal_id: str = Query(...), token: s
         result = _executor.execute(signal)
         signal_store.mark_executed(signal_id)
 
-        if _notifier:
-            _notifier.send_execution_result(signal, result["success"], result["message"])
+        # P0 修复 (2026-05-21): TradeResult 是 dataclass，用属性访问
+        ok = result.success if hasattr(result, 'success') else False
+        msg = result.message if hasattr(result, 'message') else str(result)
+        oid = result.order_id if hasattr(result, 'order_id') else 'N/A'
 
-        if result["success"]:
+        if _notifier:
+            _notifier.send_execution_result(signal, ok, msg)
+
+        if ok:
             return HTMLResponse(CONFIRM_HTML.format(
                 icon="✅", title="交易已执行",
                 detail=(
                     f"<span class='code'>{signal.code}</span> {signal.action.value}<br>"
                     f"价格: {currency}{signal.price:.2f} | 数量: {signal.quantity}<br>"
-                    f"订单号: {result.get('order_id', 'N/A')}"
+                    f"订单号: {oid}"
                 )
             ))
         else:
             return HTMLResponse(CONFIRM_HTML.format(
                 icon="❌", title="交易执行失败",
-                detail=f"{result['message']}"
+                detail=f"{msg}"
             ))
     else:
         signal_store.mark_executed(signal_id)

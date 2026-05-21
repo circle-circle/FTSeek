@@ -74,16 +74,20 @@ def sync_today_trades():
             create_time = row.get('create_time', '')
             updated_time = row.get('updated_time', '')
             
+            # P0 修复 (2026-05-21): 使用实际成交价 dealt_avg_price，不用下单价 price (市价单 price=0)
+            entry_price = dealt_avg_price if dealt_avg_price > 0 else price
+
             # 判断状态
-            status = 'closed' if order_status == 10 else 'open'
+            # P0 修复 (2026-05-21): FILLED_ALL=11, FILLED_PART=10, 之前只判断 ==10
+            status = 'closed' if order_status in (10, 11) else 'open'
             
             # 计算盈亏
-            if dealt_qty > 0 and price > 0:
+            if dealt_qty > 0 and entry_price > 0:
                 if trd_side == 'BUY':
-                    pnl = (dealt_avg_price - price) * dealt_qty
+                    pnl = (dealt_avg_price - entry_price) * dealt_qty
                 else:
-                    pnl = (price - dealt_avg_price) * dealt_qty
-                pnl_percent = pnl / (price * dealt_qty) * 100
+                    pnl = (entry_price - dealt_avg_price) * dealt_qty
+                pnl_percent = pnl / (entry_price * dealt_qty) * 100
             else:
                 pnl = 0
                 pnl_percent = 0
@@ -98,7 +102,7 @@ def sync_today_trades():
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ''', (
                     f'FUTU-{order_id}', code, stock_name, trd_side,
-                    price, dealt_avg_price, dealt_qty, pnl, pnl_percent,
+                    entry_price, dealt_avg_price, dealt_qty, pnl, pnl_percent,
                     5.0, 'confluence_v2', None, create_time, updated_time,
                     exit_reason, order_id, status
                 ))
