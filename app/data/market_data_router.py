@@ -305,14 +305,33 @@ class MarketDataRouter:
         errors = []
         ts_ctx = None
         
+        # P1 修复 (2026-05-21): 期权代码跳过技术指标计算
+        # 期权定价基于 Black-Scholes 等模型（Greeks），RSI/MACD/BB 对期权无意义
+        # 期权 K 线数据稀疏且不连续，计算技术指标会返回误导性数值
+        from app.data.futu_lv3_provider import FutuLV3Provider
+        is_option = FutuLV3Provider._is_option_code(symbol)
+        if is_option:
+            logger.debug(f"[Router] {symbol} 期权代码，跳过技术指标计算，仅获取报价数据")
+        
         # ★★★ Step 1: Futu LV3 主通道 — 实时价格 + K线 → 技术指标计算
         if self.futu:
             try:
                 # 获取 LV3 实时报价
                 futu_quote = self.futu.get_quote(symbol)
                 if futu_quote and futu_quote.get("price", 0) > 0:
-                    # 获取 K 线数据用于技术指标计算
-                    klines = self.futu.get_kline(symbol, ktype="K_1M", count=200)
+                    # 期权跳过 K 线技术指标计算 (P1 2026-05-21)
+                    if is_option:
+                        ts_ctx = {
+                            "price": futu_quote["price"],
+                            "change_percent": futu_quote.get("change_percent", 0.0),
+                            "volume": futu_quote.get("volume", 0),
+                            "data_source": "futu_lv3_quote_only",
+                            "is_option": True,
+                        }
+                        logger.info(f"[Router] {symbol} ★ 期权报价 | price=${futu_quote['price']:.2f} vol={futu_quote.get('volume', 0)}")
+                    else:
+                        # 获取 K 线数据用于技术指标计算
+                        klines = self.futu.get_kline(symbol, ktype="K_1M", count=200)
                     
                     if klines and len(klines) >= 30:
                         # 从 LV3 K 线计算技术指标

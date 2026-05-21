@@ -160092,3 +160092,47 @@ Index: []
 2026-05-21 22:12:01,516 [ftseek.exit_monitor] INFO: [退出监控·M1·跳过] US.QCOM source=unknown protection=protected (策略不接管, 用户责任)
 2026-05-21 22:12:01,516 [ftseek.exit_monitor] INFO: [退出监控·M1·跳过] US.SNDK source=unknown protection=protected (策略不接管, 用户责任)
 2026-05-21 22:12:01,516 [ftseek.exit_monitor] WARNING: [退出监控·M1] 跳过 3 个 PROTECTED/FROZEN 仓位 (默认隔离; takeover 接管: scripts/position_takeover.py)
+2026-05-21 22:12:14,729 [ftseek_us.position_sync] WARNING: [US Sync·P0] 跳过 PRICE_FAIL 已关闭期权 US.QQQ260602P700000 (防止重导入循环)
+2026-05-21 22:12:14,730 [ftseek_us.position_sync] WARNING: [US Sync·P0] 跳过 PRICE_FAIL 已关闭期权 US.QQQ260602P710000 (防止重导入循环)
+2026-05-21 22:12:14,730 [ftseek_us.position_sync] WARNING: [US Sync·P0] 跳过 PRICE_FAIL 已关闭期权 US.TSLA260603P410000 (防止重导入循环)
+2026-05-21 22:12:14,730 [ftseek_us.position_sync] WARNING: [US Sync·P0] 跳过 PRICE_FAIL 已关闭期权 US.SPY260602P730000 (防止重导入循环)
+2026-05-21 22:12:14,731 [ftseek_us.position_sync] INFO: [US Sync] Done | Futu: 8 | DB: 8
+2026-05-21 22:12:14,734 [ftseek_us.position_sync] WARNING: ⚠️ [US Sync Consistency] 检测到 2 个不一致:
+  DB 缺少 Broker 持仓: {'US.QQQ260602P700000', 'US.QQQ260602P710000', 'US.TSLA260603P410000', 'US.SPY260602P730000'}
+  Memory 缺少 Broker 持仓: {'US.QQQ260602P700000', 'US.QQQ260602P710000', 'US.TSLA260603P410000', 'US.SPY260602P730000'}
+2026-05-21 22:12:16,728 [ftseek.exit_monitor] INFO: [退出监控·M1·跳过] US.ORCL source=unknown protection=protected (策略不接管, 用户责任)
+2026-05-21 22:12:16,729 [ftseek.exit_monitor] INFO: [退出监控·M1·跳过] US.QCOM source=unknown protection=protected (策略不接管, 用户责任)
+2026-05-21 22:12:16,729 [ftseek.exit_monitor] INFO: [退出监控·M1·跳过] US.SNDK source=unknown protection=protected (策略不接管, 用户责任)
+2026-05-21 22:12:16,729 [ftseek.exit_monitor] WARNING: [退出监控·M1] 跳过 3 个 PROTECTED/FROZEN 仓位 (默认隔离; takeover 接管: scripts/position_takeover.py)
+2026-05-21 22:12:31,973 [ftseek.exit_monitor] INFO: [退出监控·M1·跳过] US.ORCL source=unknown protection=protected (策略不接管, 用户责任)
+2026-05-21 22:12:31,973 [ftseek.exit_monitor] INFO: [退出监控·M1·跳过] US.QCOM source=unknown protection=protected (策略不接管, 用户责任)
+2026-05-21 22:12:31,974 [ftseek.exit_monitor] INFO: [退出监控·M1·跳过] US.SNDK source=unknown protection=protected (策略不接管, 用户责任)
+2026-05-21 22:12:31,974 [ftseek.exit_monitor] WARNING: [退出监控·M1] 跳过 3 个 PROTECTED/FROZEN 仓位 (默认隔离; takeover 接管: scripts/position_takeover.py)
+2026-05-21 22:12:45,024 [ftseek_us.position_sync] WARNING: [US Sync·P0] 跳过 PRICE_FAIL 已关闭期权 US.QQQ260602P700000 (防止重导入循环)
+2026-05-21 22:12:45,025 [ftseek_us.position_sync] WARNING: [US Sync·P0] 跳过 PRICE_FAIL 已关闭期权 US.QQQ260602P710000 (防止重导入循环)
+2026-05-21 22:12:45,025 [ftseek_us.position_sync] WARNING: [US Sync·P0] 跳过 PRICE_FAIL 已关闭期权 US.TSLA260603P410000 (防止重导入循环)
+2026-05-21 22:12:45,026 [ftseek_us.position_sync] WARNING: [US Sync·P0] 跳过 PRICE_FAIL 已关闭期权 US.SPY260602P730000 (防止重导入循环)
+2026-05-21 22:12:45,047 [ftseek_us.position_sync] INFO: [US Sync] Done | Futu: 8 | DB: 8
+2026-05-21 22:12:45,067 [ftseek_us.position_sync] WARNING: ⚠️ [US Sync Consistency] 检测到 2 个不一致:
+  DB 缺少 Broker 持仓: {'US.QQQ260602P700000', 'US.QQQ260602P710000', 'US.TSLA260603P410000', 'US.SPY260602P730000'}
+  Memory 缺少 Broker 持仓: {'US.QQQ260602P700000', 'US.QQQ260602P710000', 'US.TSLA260603P410000', 'US.SPY260602P730000'}
+2026-05-21 22:12:47,210 [ftseek.exit_monitor] INFO: [退出监控·M1·跳过] US.ORCL source=unknown protection=protected (策略不接管, 用户责任)
+2026-05-21 22:12:47,210 [ftseek.exit_monitor] INFO: [退出监控·M1·跳过] US.QCOM source=unknown protection=protected (策略不接管, 用户责任)
+2026-05-21 22:12:47,210 [ftseek.exit_monitor] INFO: [退出监控·M1·跳过] US.SNDK source=unknown protection=protected (策略不接管, 用户责任)
+2026-05-21 22:12:47,210 [ftseek.exit_monitor] WARNING: [退出监控·M1] 跳过 3 个 PROTECTED/FROZEN 仓位 (默认隔离; takeover 接管: scripts/position_takeover.py)
+2026-05-21 22:13:02,422 [ftseek.exit_monitor] INFO: [退出监控·M1·跳过] US.ORCL source=unknown protection=protected (策略不接管, 用户责任)
+2026-05-21 22:13:02,422 [ftseek.exit_monitor] INFO: [退出监控·M1·跳过] US.QCOM source=unknown protection=protected (策略不接管, 用户责任)
+2026-05-21 22:13:02,422 [ftseek.exit_monitor] INFO: [退出监控·M1·跳过] US.SNDK source=unknown protection=protected (策略不接管, 用户责任)
+2026-05-21 22:13:02,422 [ftseek.exit_monitor] WARNING: [退出监控·M1] 跳过 3 个 PROTECTED/FROZEN 仓位 (默认隔离; takeover 接管: scripts/position_takeover.py)
+2026-05-21 22:13:15,418 [ftseek_us.position_sync] WARNING: [US Sync·P0] 跳过 PRICE_FAIL 已关闭期权 US.QQQ260602P700000 (防止重导入循环)
+2026-05-21 22:13:15,418 [ftseek_us.position_sync] WARNING: [US Sync·P0] 跳过 PRICE_FAIL 已关闭期权 US.QQQ260602P710000 (防止重导入循环)
+2026-05-21 22:13:15,418 [ftseek_us.position_sync] WARNING: [US Sync·P0] 跳过 PRICE_FAIL 已关闭期权 US.TSLA260603P410000 (防止重导入循环)
+2026-05-21 22:13:15,418 [ftseek_us.position_sync] WARNING: [US Sync·P0] 跳过 PRICE_FAIL 已关闭期权 US.SPY260602P730000 (防止重导入循环)
+2026-05-21 22:13:15,419 [ftseek_us.position_sync] INFO: [US Sync] Done | Futu: 8 | DB: 8
+2026-05-21 22:13:15,421 [ftseek_us.position_sync] WARNING: ⚠️ [US Sync Consistency] 检测到 2 个不一致:
+  DB 缺少 Broker 持仓: {'US.QQQ260602P700000', 'US.QQQ260602P710000', 'US.TSLA260603P410000', 'US.SPY260602P730000'}
+  Memory 缺少 Broker 持仓: {'US.QQQ260602P700000', 'US.QQQ260602P710000', 'US.TSLA260603P410000', 'US.SPY260602P730000'}
+2026-05-21 22:13:17,669 [ftseek.exit_monitor] INFO: [退出监控·M1·跳过] US.ORCL source=unknown protection=protected (策略不接管, 用户责任)
+2026-05-21 22:13:17,670 [ftseek.exit_monitor] INFO: [退出监控·M1·跳过] US.QCOM source=unknown protection=protected (策略不接管, 用户责任)
+2026-05-21 22:13:17,670 [ftseek.exit_monitor] INFO: [退出监控·M1·跳过] US.SNDK source=unknown protection=protected (策略不接管, 用户责任)
+2026-05-21 22:13:17,670 [ftseek.exit_monitor] WARNING: [退出监控·M1] 跳过 3 个 PROTECTED/FROZEN 仓位 (默认隔离; takeover 接管: scripts/position_takeover.py)
