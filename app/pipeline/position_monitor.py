@@ -154,14 +154,22 @@ def _close_option_position(scheduler, position: Position, reason: str, current_o
 
     logger.info(f"[期权平仓] {position.symbol} {option_code} reason={reason} exit=${exit_price:.2f} PnL=${pnl:.0f} ({pnl_pct:.2%})")
 
+    # P0 fix (2026-05-22): Check order result BEFORE DB cleanup to prevent orphan options
+    # Pattern 34: _close_option_position was fire-and-forget — DB marked exited but Futu still holds
+    order_submitted = False
     try:
         adapter = None
         if scheduler.execution_engine and hasattr(scheduler.execution_engine, "broker_adapter"):
             adapter = getattr(scheduler.execution_engine, "broker_adapter", None)
         if adapter and option_code:
-            adapter.submit_option_order(option_code=option_code, qty=qty, price=exit_price, direction="SELL")
+            result = adapter.submit_option_order(option_code=option_code, qty=qty, price=exit_price, direction="SELL")
+            if result and result.get("status") in ("rejected", "failed"):
+                logger.warning(f"[期权平仓] {position.symbol} 订单被拒/失败 status={result.get('status')}, 跳过DB清理防止幽灵仓")
+                return  # Don't mark DB exited — Futu still holds position
+            order_submitted = True
     except Exception as e:
-        logger.warning(f"[期权平仓] {position.symbol} 卖出期权失败: {e}")
+        logger.warning(f"[期权平仓] {position.symbol} 卖出期权失败: {e}, 跳过DB清理防止幽灵仓")
+        return  # Exception = order not confirmed, don't clean up DB
 
     try:
         scheduler.trade_store.save_trade({
