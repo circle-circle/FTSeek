@@ -48,6 +48,7 @@ class KlineProcessor:
         execute_stop_loss_fn: Optional[Callable] = None,
         execute_take_profit_fn: Optional[Callable] = None,
         execute_partial_take_profit_fn: Optional[Callable] = None,
+        soft_stop_warnings: Optional[Dict[str, float]] = None,
     ):
         """
         初始化 K 线处理器
@@ -67,6 +68,7 @@ class KlineProcessor:
             execute_stop_loss_fn: 止损执行回调
             execute_take_profit_fn: 止盈执行回调
             execute_partial_take_profit_fn: 部分止盈执行回调
+            soft_stop_warnings: 软止损预警缓存（可选，向后兼容）
         """
         self.position_manager = position_manager
         self.cache = cache
@@ -84,7 +86,8 @@ class KlineProcessor:
         self.execute_partial_take_profit = execute_partial_take_profit_fn or (lambda code, price, ratio: None)
         
         # 内部状态
-        self.soft_stop_warnings: Dict[str, float] = {}  # 软止损预警缓存
+        # P0 2026-05-21: soft_stop_warnings 支持注入（向后兼容 data_subscriber）
+        self.soft_stop_warnings = soft_stop_warnings if soft_stop_warnings is not None else {}
         
         logger.info("[KlineProcessor] 初始化完成（依赖注入模式）")
     

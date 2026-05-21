@@ -174,7 +174,11 @@ class DataSubscriber:
 
         # 软止损预警冷却字典 (2026-04-07 新增)
         # 结构：{code: last_warning_timestamp} - 防止每秒多次预警
+        # P0 2026-05-21: 迁移至 KlineProcessor，此处保留向后兼容代理
         self.soft_stop_warnings: Dict[str, float] = {}
+        
+        # P0 2026-05-21: KlineProcessor (延迟初始化，首次使用时创建)
+        self._kline_processor = None
 
         # 行情心跳：记录最后一次收到行情数据的时间（用于断线检测）
         self._last_quote_time: float = time.time()
@@ -2811,6 +2815,43 @@ class DataSubscriber:
         self._peak_price_cache.pop(code, None)
         self._flash_snapshots.pop(code, None)
 
+    def _get_kline_processor(self):
+        """
+        懒加载 KlineProcessor（延迟初始化，首次使用时创建）
+        
+        Returns:
+            KlineProcessor 实例
+        """
+        if self._kline_processor is None:
+            from app.data_subscriber_engines.kline_processor import KlineProcessor
+            from app.data_subscriber_engines.cache_manager import CacheManager
+            
+            # 创建 CacheManager（如果尚未创建）
+            if not hasattr(self, '_cache_manager') or self._cache_manager is None:
+                self._cache_manager = CacheManager()
+            
+            # 创建 KlineProcessor，注入依赖
+            self._kline_processor = KlineProcessor(
+                position_manager=self.position_manager,
+                cache=self._cache_manager,
+                strategies=self._strategies,
+                consensus_engine=self._consensus,
+                kline_exit_checker=self._kline_exit_checker,
+                kline_buffers=self._kline_buffers,
+                regime_detector=self._regime_detector,
+                scenario_classifier=getattr(self, '_scenario_classifier', None),
+                scenario_memory=getattr(self, '_scenario_memory', None),
+                layered_manager=self.layered_manager,
+                get_atr_fn=getattr(self, '_get_atr', None),
+                execute_stop_loss_fn=self._execute_stop_loss,
+                execute_take_profit_fn=self._execute_take_profit,
+                execute_partial_take_profit_fn=self._execute_partial_take_profit,
+                soft_stop_warnings=self.soft_stop_warnings,  # 向后兼容
+            )
+            logger.info("[KlineProcessor] 延迟初始化完成（依赖注入）")
+        
+        return self._kline_processor
+
     def _process_kline_data(self, code: str, kline: dict, k_type: str):
         """处理单个 K 线数据（在工作线程中运行）"""
         # 提取当前价格 (用于止损/止盈检查)
@@ -2870,28 +2911,20 @@ class DataSubscriber:
 
         # =================================================================
         # P0 修复 (2026-05-19): 删除重复的 inline 止损/止盈逻辑
-        # 根因: KlineExitChecker (L2810-2819) 已全权处理止损/止盈，
+        # 根因：KlineExitChecker (L2810-2819) 已全权处理止损/止盈，
         #       但 L2821-2878 仍然执行 inline 硬止损和止盈，导致多退出系统并发冲突
-        # 影响: 同一持仓可能被多个系统同时触发退出，止损/止盈价格不一致，日志混乱
-        # 修复: 删除 inline 逻辑，KlineExitChecker 成为唯一退出执行入口
+        # 影响：同一持仓可能被多个系统同时触发退出，止损/止盈价格不一致，日志混乱
+        # 修复：删除 inline 逻辑，KlineExitChecker 成为唯一退出执行入口
         # =================================================================
 
-        # 软止损预警 (保留，仅记录日志，不执行交易)
+        # P0 2026-05-21: 软止损预警委托给 KlineProcessor
+        # 原逻辑：2919-2934 行 inline 实现
+        # 新逻辑：委托给 KlineProcessor._check_soft_stop_warning()
         if current_price > 0:
             pos_now = self.position_manager.get_position(code)
-            if pos_now and pos_now.stop_loss and pos_now.stop_loss > 0:
-                pnl_rate = (current_price - pos_now.entry_price) / pos_now.entry_price
-                stop_rate = (pos_now.stop_loss - pos_now.entry_price) / pos_now.entry_price
-                soft_threshold = stop_rate * 0.8
-                if pnl_rate <= soft_threshold and pnl_rate > stop_rate:
-                    last_warning = self.soft_stop_warnings.get(code, 0)
-                    if time.time() - last_warning >= 300:
-                        distance_to_stop = abs(pnl_rate - stop_rate)
-                        logger.warning(
-                            f"[软止损预警] {code} 亏损 {abs(pnl_rate):.2%} "
-                            f"接近止损线 {abs(stop_rate):.2%}，距离 {distance_to_stop:.2%}"
-                        )
-                        self.soft_stop_warnings[code] = time.time()
+            if pos_now:
+                processor = self._get_kline_processor()
+                processor._check_soft_stop_warning(code, current_price, pos_now)
 
         # P0 2026-05-04: 动态退出管理器 (从 _process_quote_data 迁移至此)
             # 每根 K 线 (1分钟粒度) 检查一次，使用 quote worker 维护的 peak_price_cache
