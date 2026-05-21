@@ -390,7 +390,69 @@ def restore_positions_from_db(scheduler):
                 logger.info(f"[持仓恢复] {symbol} {direction_str} {position.size}股 @${position.avg_entry_price:.2f}")
             except Exception as e:
                 logger.warning(f"[持仓恢复] 恢复单条记录失败: {e}")
-        logger.info(f"[持仓恢复] 完成: {restored}/{len(positions)} 条记录恢复")
+        logger.info(f"[持仓恢复] 完成：{restored}/{len(positions)} 条记录恢复")
+
+        # P0-2 修复 (2026-05-22): 从 option_positions 表恢复期权持仓
+        try:
+            import sqlite3
+            conn = sqlite3.connect(os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'ftseek_us.db'))
+            conn = os.path.normpath(conn)
+            cursor = conn.cursor()
+            cursor.execute("SELECT option_code, qty, entry_price, strike_price, expiry_date, entry_time FROM option_positions")
+            option_rows = cursor.fetchall()
+            conn.close()
+            
+            for row in option_rows:
+                option_code, qty, entry_price, strike_price, expiry_date, entry_time = row
+                if not option_code:
+                    continue
+                # 跳过 PRICE_FAIL 已关闭的期权
+                if option_code in _pf_closed:
+                    logger.warning(f"[持仓恢复] 跳过 PRICE_FAIL 已关闭期权：{option_code}")
+                    continue
+                # 检查内存中是否已存在
+                if scheduler.position_store.has(option_code):
+                    continue
+                # 创建 Position 对象
+                from app.core.models import Position, Direction, MarketRegime
+                position = Position(
+                    strategy_id="voting_llm_option",
+                    signal_id="",
+                    trace_id="",
+                    symbol=option_code,
+                    direction=Direction.LONG,  # 期权买入方向默认为 LONG
+                    size=float(qty),
+                    avg_entry_price=float(entry_price),
+                    initial_sl=0.0,
+                    initial_tp=0.0,
+                    current_sl=0.0,
+                    take_profit_levels=[],
+                    time_stop_hours=72,
+                    market_regime=MarketRegime.RANGE,
+                )
+                # 解析 entry_time
+                if entry_time and isinstance(entry_time, str):
+                    try:
+                        position.entry_time = datetime.fromisoformat(entry_time)
+                    except Exception:
+                        position.entry_time = datetime.now()
+                else:
+                    position.entry_time = datetime.now()
+                # 设置 metadata
+                position.metadata = {
+                    "source": "voting_llm_option",
+                    "is_option": True,
+                    "option_code": option_code,
+                    "strike_price": float(strike_price) if strike_price else 0.0,
+                    "expiry_date": expiry_date or "",
+                    "entry_time": entry_time or "",
+                }
+                scheduler.position_store.add(option_code, position)
+                restored += 1
+                logger.info(f"[持仓恢复] 期权 {option_code} LONG {qty}股 @${entry_price:.2f}")
+        except Exception as e:
+            logger.warning(f"[持仓恢复] 期权持仓恢复失败：{e}")
+
         return restored
     except Exception as e:
         logger.warning(f"[持仓恢复] 查询 DB 失败: {e}")
