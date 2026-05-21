@@ -879,8 +879,12 @@ options:
       require_borrow_availability: true
 dynamic_exit:
   default:
-    stop_loss: -0.03
-    take_profit: 0.1
+    # RFC-0001 Phase0止血 (2026-05-21): 止损从-3%放宽到-4.5%, 减少噪声扫单
+    # 归因: 115笔sl_hit 胜率16.5% 亏-$2,023, 美股日内2-3%波动是常态
+    stop_loss: -0.045
+    # RFC-0001 Phase0止血 (2026-05-21): 止盈从10%降到5%, 让tp_hit成为有效退出路径
+    # 归因: tp_hit仅5笔(1.9%), 10%止盈形同虚设, 利润全部靠TRAILING_STOP
+    take_profit: 0.05
     partial_take_profit:
       enabled: true
       levels:

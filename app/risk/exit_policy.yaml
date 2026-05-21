@@ -165,7 +165,7 @@ short_overrides:
   # 幻方 Principle: 技术破位快速平仓
   technical_breach:
     enabled: true                     # P0 修复 (2026-05-08): 显式开关
-    trigger_atr_mult: 0.3             # 突破确认: >0.3 ATR 超阻力位
+    trigger_atr_mult: 1.0             # RFC-0001: 0.3→1.0 (33笔STRUCTURE_EXIT亏-$3,106, 门槛过低)
     cover_pct: 100                    # 平仓 100%
     # P0 修复 (2026-05-08): 防呆机制
     require_resistance_20d: true      # 必须存在真实阻力位，禁止降级到 peak_price
