@@ -148001,3 +148001,20 @@ Index: []
 2026-05-21 08:21:29,636 [app.pipeline.signal_pipeline] INFO: [扫描] overnight → 完全静默，跳过扫描
 2026-05-21 08:24:29,780 [app.pipeline.signal_pipeline] INFO: [扫描] overnight → 完全静默，跳过扫描
 2026-05-21 08:25:36,270 [ftseek_us.risk.vix_monitor] INFO: VIX 指数：18.06
+2026-05-21 08:27:29,912 [app.pipeline.signal_pipeline] INFO: [扫描] overnight → 完全静默，跳过扫描
+2026-05-21 08:30:30,048 [app.pipeline.signal_pipeline] INFO: [扫描] overnight → 完全静默，跳过扫描
+2026-05-21 08:30:37,429 [ftseek_us.risk.vix_monitor] INFO: VIX 指数：18.06
+2026-05-21 08:33:30,186 [app.pipeline.signal_pipeline] INFO: [扫描] overnight → 完全静默，跳过扫描
+2026-05-21 08:35:38,856 [ftseek_us.risk.vix_monitor] INFO: VIX 指数：18.06
+2026-05-21 08:36:30,319 [app.pipeline.signal_pipeline] INFO: [扫描] overnight → 完全静默，跳过扫描
+2026-05-21 08:39:30,455 [app.pipeline.signal_pipeline] INFO: [扫描] overnight → 完全静默，跳过扫描
+2026-05-21 08:40:40,609 [ftseek_us.risk.vix_monitor] INFO: VIX 指数：18.06
+2026-05-21 08:42:30,591 [app.pipeline.signal_pipeline] INFO: [扫描] overnight → 完全静默，跳过扫描
+2026-05-21 08:45:30,728 [app.pipeline.signal_pipeline] INFO: [扫描] overnight → 完全静默，跳过扫描
+2026-05-21 08:45:42,065 [ftseek_us.risk.vix_monitor] INFO: VIX 指数：18.06
+2026-05-21 08:45:44,470 [app.notifier.dingtalk] INFO: [钉钉] send_text 成功: 💓 FTSeek-US 通道心跳
+2026-05-21 08:48:30,864 [app.pipeline.signal_pipeline] INFO: [扫描] overnight → 完全静默，跳过扫描
+2026-05-21 08:49:53,991 [app.monitoring.trading_monitor] WARNING: [Monitor·warning] 💔 心跳超时: 最后更新 05:44:43
+2026-05-21 08:50:43,449 [ftseek_us.risk.vix_monitor] INFO: VIX 指数：18.06
+2026-05-21 08:51:30,999 [app.pipeline.signal_pipeline] INFO: [扫描] overnight → 完全静默，跳过扫描
+2026-05-21 08:54:31,129 [app.pipeline.signal_pipeline] INFO: [扫描] overnight → 完全静默，跳过扫描
