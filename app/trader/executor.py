@@ -3165,7 +3165,8 @@ class TradeExecutor:
             cursor = conn.cursor()
             
             trade_id = f"trade_{order_id}"
-            signal_id = f"signal_{trade_id}"
+            # P0 修复 (2026-05-21): 使用 signal 对象的真实 id，确保可追溯到原始信号
+            signal_id = getattr(signal, 'id', None) or f"signal_{trade_id}"
             
             code = signal.code
             action = 'BUY' if signal.action == SignalAction.BUY else 'SELL'

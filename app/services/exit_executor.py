@@ -146,7 +146,7 @@ class ExitExecutor:
             f"入场={position.entry_price} | 当前={current_price}"
         )
 
-        # 创建止损信号
+        # 创建止损信号 (P1 修复 2026-05-21: 传递 trace_id 确保全链路归因)
         from app.strategy.base import Signal, SignalAction
         stop_loss_signal = Signal(
             code=code, name=position.code,
@@ -154,8 +154,10 @@ class ExitExecutor:
             price=current_price, quantity=close_qty,
             reason=f"止损触发 (盈亏={((current_price - position.entry_price) / position.entry_price * 100):.2f}%)",
             strategy="止损",
+            trace_id=getattr(position, 'trace_id', '') or '',  # 从 position 获取 trace_id
             extra={"stop_loss": True, "entry_price": position.entry_price,
-                   "pnl_rate": (current_price - position.entry_price) / position.entry_price}
+                   "pnl_rate": (current_price - position.entry_price) / position.entry_price,
+                   "exit_reason": "stop_loss"}
         )
 
         # Futu 持仓验证 (模拟盘跳过)
@@ -320,8 +322,10 @@ class ExitExecutor:
             price=current_price, quantity=close_qty,
             reason=f"止盈触发 (盈亏={((current_price - position.entry_price) / position.entry_price * 100):.2f}%)",
             strategy="止盈",
+            trace_id=getattr(position, 'trace_id', '') or '',  # 从 position 获取 trace_id
             extra={"take_profit": True, "entry_price": position.entry_price,
-                   "pnl_rate": (current_price - position.entry_price) / position.entry_price}
+                   "pnl_rate": (current_price - position.entry_price) / position.entry_price,
+                   "exit_reason": "take_profit"}
         )
 
         # Futu 验证 (模拟盘跳过)
@@ -414,9 +418,11 @@ class ExitExecutor:
             price=current_price, quantity=close_qty,
             reason=f"分批止盈 ({ratio:.0%}) 盈亏={((current_price - position.entry_price) / position.entry_price * 100):.2f}%",
             strategy="分批止盈",
+            trace_id=getattr(position, 'trace_id', '') or '',
             extra={"partial_take_profit": True, "ratio": ratio,
                    "entry_price": position.entry_price,
-                   "pnl_rate": (current_price - position.entry_price) / position.entry_price}
+                   "pnl_rate": (current_price - position.entry_price) / position.entry_price,
+                   "exit_reason": "partial_take_profit"}
         )
 
         if ratio >= 1.0:
@@ -459,8 +465,10 @@ class ExitExecutor:
                 action=SignalAction.SELL if position.action == 'BUY' else SignalAction.BUY,
                 price=current_price, quantity=position.quantity,
                 reason="分批止盈失败后全仓平仓", strategy="分批止盈兜底",
+                trace_id=getattr(position, 'trace_id', '') or '',
                 extra={"partial_take_profit": True, "fallback": True,
-                       "entry_price": position.entry_price}
+                       "entry_price": position.entry_price,
+                       "exit_reason": "partial_take_profit_fallback"}
             )
             retry_result = self._executor.execute(full_signal, 'CLOSE')
             if retry_result.success:
