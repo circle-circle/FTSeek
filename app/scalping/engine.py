@@ -1402,6 +1402,14 @@ class ScalpingEngine:
         # P6 优化 (2026-05-22): 数据驱动方向偏好
         # 数据：SHORT 胜率 37.0% vs LONG 20.9%，优先选择 SHORT
         direction_preference = self._load_scalping_config().get("direction_preference")
+        # 正确路径：strategies.scalping.direction_preference
+        if not direction_preference:
+            try:
+                from app.core.config_container import get_config as get_app_config
+                cfg = get_app_config()
+                direction_preference = cfg.get_dotted("strategies.scalping.direction_preference")
+            except Exception:
+                pass
         if direction_preference and direction_preference in effective_directions:
             # 如果偏好方向在允许方向中，优先只交易该方向
             effective_directions = [direction_preference]
