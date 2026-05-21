@@ -321,6 +321,7 @@ class MarketDataRouter:
                 if futu_quote and futu_quote.get("price", 0) > 0:
                     # 期权跳过 K 线技术指标计算 (P1 2026-05-21)
                     if is_option:
+                        klines = None  # 期权不需要 K 线技术指标
                         ts_ctx = {
                             "price": futu_quote["price"],
                             "change_percent": futu_quote.get("change_percent", 0.0),

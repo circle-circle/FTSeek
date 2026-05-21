@@ -564,11 +564,11 @@ def _monitor_option_positions(scheduler):
 
                 try:
                     from app.exit.option_quick_exit import get_quick_exit_engine
-                    from app.execution.short_strategy import load_short_config
-                    cfg = load_short_config()
-                    qe = get_quick_exit_engine(cfg.get("options", {}).get("quick_exit", {}))
-                    qe.profit_target = cfg.get("options", {}).get("profit_target_pct", 0.15)
-                    qe.stop_loss = abs(cfg.get("options", {}).get("stop_loss_pct", -0.25))
+                    from app.core.config_container import get_config
+                    _opt_cfg = get_config().get_section("options", {})
+                    qe = get_quick_exit_engine(_opt_cfg.get("quick_exit", {}))
+                    qe.profit_target = _opt_cfg.get("profit_target_pct", 0.15)
+                    qe.stop_loss = abs(_opt_cfg.get("stop_loss_pct", -0.40))  # P2: 25% → 40%
                     should_exit, exit_reason = qe.check_exit({
                         "symbol": position.symbol, "entry_price": entry_price,
                         "entry_time": meta.get("entry_time", ""), "expiry": expiry_date,
