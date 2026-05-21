@@ -652,6 +652,14 @@ def _submit_put_option(scheduler, symbol: str, signal: SignalScore, context: Dic
     except Exception as e:
         logger.warning(f"[期权] 登记期权持仓到内存失败：{e}")
 
+    # P0 修复 (2026-05-21): 期权路径缺少 post_trade_hook 调用
+    # 与 _submit_order LONG/SHORT 对齐，确保归因/mirror/push 副作用执行
+    try:
+        from app.pipeline.post_trade_hook import on_position_opened
+        on_position_opened(position, signal, context or {}, scheduler)
+    except Exception as _pte:
+        logger.debug(f"[PostTradeHook·Option] 提交失败 (不影响下单): {_pte}")
+
     # 冷却
     scheduler._set_cooldown(symbol)
 

@@ -1,157 +1,213 @@
 {
-  "responses_to_claude": [
-    {
-      "claude_point": "数据缺失: VIX/SPY/QQQ/DXY均为N/A, 无法评估市场状态和波动率水平",
-      "response": "AGREE",
-      "plan_adjustment": "已触发数据管道熔断机制。立即切换至备用数据源(Polygon/IBKR)，若开盘前30分钟未恢复，系统强制进入只读模式，暂停所有信号生成与订单路由。"
-    },
-    {
-      "claude_point": "持仓数据缺失: 无法验证实际风险敞口和集中度",
-      "response": "AGREE",
-      "plan_adjustment": "执行全量券商API对账脚本，清除本地缓存。确认无孤儿仓位后，重置风险敞口计算引擎，确保集中度阈值生效。"
-    },
-    {
-      "claude_point": "策略表现堪忧: scalping策略17笔胜率0%, voting_llm策略143笔胜率39%, 均录得亏损",
-      "response": "AGREE",
-      "plan_adjustment": "承认策略参数在当前微观结构下失效。scalping策略立即降级为观察模式；voting_llm策略置信度阈值上调至0.75，并增加波动率过滤(VIX>20或盘前量比<1.2时禁用)。"
-    },
-    {
-      "claude_point": "近期表现恶化: 近20笔交易0胜10负, 总盈亏$-265, 策略可能需要暂停检视",
-      "response": "AGREE",
-      "plan_adjustment": "全面暂停实盘自动交易。切换至Paper Trading模式，启动滚动回测(近60日)，重点优化入场动量确认与盈亏比，目标将近期胜率修复至55%+。"
-    },
-    {
-      "claude_point": "频繁无效退出: 大量交易以stale_scalping_cleanup/ghost_cleanup退出, 表明入场逻辑可能存在缺陷",
-      "response": "AGREE",
-      "plan_adjustment": "重构订单生命周期管理。引入硬性TTL(最大持仓30分钟)，增加量价共振确认(Price Action + Volume Profile)，杜绝无流动性支撑的挂单。"
-    },
-    {
-      "claude_point": "严格禁止盘前交易(历史教训10/10条均为此类亏损)",
-      "response": "AGREE",
-      "plan_adjustment": "写入系统底层硬规则：美东时间9:30前拦截所有新订单。盘前信号仅作为开盘方向参考，实际入场强制推迟至开盘后15分钟(流动性稳定期)。"
-    },
-    {
-      "claude_point": "DIA案例显示6.1小时未触发止损, 止损参数过宽需调整",
-      "response": "AGREE",
-      "plan_adjustment": "废弃固定百分比止损。全面切换为ATR(14)动态止损(1.5x ATR)结合VWAP追踪止损，单笔最大容忍回撤严格控制在1.2%以内。"
-    }
-  ],
-  "updated_targets": [
-    {
-      "ticker": "US.AAPL",
-      "action": "WATCH",
-      "rationale": "高流动性核心标的。仅允许在数据恢复后，于开盘15分钟突破VWAP且量比>1.5时观察，严禁盘前介入。"
-    },
-    {
-      "ticker": "US.MSFT",
-      "action": "WATCH",
-      "rationale": "机构资金锚点。需等待宏观数据(VIX/DXY)恢复验证，符合新动态止损规则方可纳入交易池。"
-    },
-    {
-      "ticker": "US.AMD",
-      "action": "WATCH",
-      "rationale": "半导体板块高Beta标的。需结合板块ETF(SOXX)共振确认，严格执行TTL与ATR止损。"
-    }
-  ],
-  "updated_restricted": [
-    "US.NVDA",
-    "US.UBER",
-    "US.TME",
-    "US.QCOM",
-    "US.XOM",
-    "US.LMT",
-    "US.CVX",
-    "US.DIA",
-    "US.SPY",
-    "US.LCID",
-    "ALL_PREMARKET_SESSIONS"
-  ],
-  "updated_position_actions": [
-    {
-      "action": "SYSTEM_AUDIT",
-      "description": "执行全量API持仓对账，强制平仓所有stale/ghost订单，重置风控模块与保证金计算。"
-    },
-    {
-      "action": "MODE_SWITCH",
-      "description": "系统状态由AUTO_TRADING切换至PAPER_TRADING。实盘资金隔离，直至连续20笔模拟交易胜率>50%且最大回撤<2%。"
-    },
-    {
-      "action": "PARAMETER_UPDATE",
-      "description": "应用动态ATR止损，禁用盘前入场逻辑，提高LLM投票阈值至0.75，启用订单TTL(30min)。"
-    }
-  ],
-  "final_risk_warnings": [
-    "数据管道异常：核心宏观与波动率指标缺失，当前所有信号置信度极低，严禁实盘交易。",
-    "策略失效风险：近期连续亏损表明现有参数无法适应当前市场微观结构，需强制回测优化。",
-    "盘前流动性陷阱：历史数据100%证伪盘前策略有效性，已实施系统级硬性拦截。",
-    "风控参数滞后：固定止损已导致DIA等标的长时间暴露于风险中，已全面升级为动态追踪止损。",
-    "系统降级运行：在数据恢复与策略验证完成前，所有操作仅限模拟盘，实盘资金处于隔离状态。"
-  ],
-  "final_confidence": 0.15,
-  "restricted": [],
-  "arbiter_mode": "deterministic_rule_based",
-  "claude_audit": {
-    "validation_passed": true,
-    "remaining_concerns": [
-      {
-        "type": "OTHER",
-        "symbol": "N/A",
-        "description": "修正计划已将系统切换至模拟盘并取消了所有实盘下单，当前无仓位约束、止损或财报风险。但数据管道恢复正常后，新参数（动态ATR止损、TTL、盘前硬限制等）仍需通过连续模拟交易验证，避免参数过拟合。",
-        "severity": "LOW"
-      }
-    ],
-    "final_restricted": [
-      "US.NVDA",
-      "US.UBER",
-      "US.TME",
-      "US.QCOM",
-      "US.XOM",
-      "US.LMT",
-      "US.CVX",
-      "US.DIA",
-      "US.SPY",
-      "US.LCID",
-      "ALL_PREMARKET_SESSIONS"
-    ],
-    "recommendation": "APPROVE_WITH_CAUTION",
-    "confidence": 0.85
-  },
-  "debate_summary": "Hermes 计划 (0标的) + Claude 风险审计 (0受限) (降级: 数据缺失, 试仓模式)",
+  "date": "2026-05-21",
+  "market_regime": "DEGRADED",
+  "regime_reasoning": "VIX与美元指数缺失，市场缺乏明确风险偏好信号；无重要隔夜新闻和财报催化，大盘指数处于技术中性区间，预计维持横盘整理。",
   "targets": [
     {
       "symbol": "US.NVDA",
       "direction": "LONG",
       "entry_zone": [
-        138.2,
-        140.0
+        880.0,
+        890.0
       ],
-      "stop_loss": 136.5,
-      "take_profit": 145.5,
+      "stop_loss": 870.0,
+      "take_profit": 920.0,
       "urgency": "LOW",
-      "rationale": "【试仓模式】技术面确认：日线回踩20日均线获支撑，RSI脱离超卖区形成底背离。流动性极佳，机构护盘意愿强。严格收紧止损至结构低点下方，博取区间均值回归至前高阻力。 [降级试仓]",
+      "rationale": "NVDA在连续回调后于880附近形成双底支撑，技术面反弹动能积蓄，试仓做多，止损收紧至870下方。 [降级试仓]",
       "open_check_status": "VALID",
-      "gap_pct": -0.007691615689096706,
-      "confirmed_entry_price": 220.61
+      "gap_pct": 0.012964054213317552,
+      "confirmed_entry_price": 223.47
     },
     {
-      "symbol": "US.MU",
+      "symbol": "US.AMD",
       "direction": "LONG",
       "entry_zone": [
-        154.5,
-        156.8
+        155.0,
+        158.0
       ],
       "stop_loss": 152.0,
-      "take_profit": 163.0,
+      "take_profit": 168.0,
       "urgency": "LOW",
-      "rationale": "【试仓模式】技术面确认：周线级别上升通道下轨企稳，量价呈现缩量整理后的突破蓄势形态。存储周期逻辑提供基本面托底，技术结构清晰。试仓仓位控制在1%以内，止损收紧防假突破。 [降级试仓]",
-      "open_check_status": "VALID",
-      "gap_pct": 0.025236963347712603,
-      "confirmed_entry_price": 698.74
+      "rationale": "AMD跟随半导体板块企稳，155为前期密集成交区上沿，突破后转为支撑，可试仓博弈反弹。 [降级试仓]",
+      "open_check_status": "CANCELLED",
+      "gap_pct": 0.08098055790363476,
+      "cancellation_reason": "Gap too large (8.10% > 3%)"
+    },
+    {
+      "symbol": "US.ORCL",
+      "direction": "SHORT",
+      "entry_zone": [
+        186.0,
+        188.0
+      ],
+      "stop_loss": 190.0,
+      "take_profit": 178.0,
+      "urgency": "LOW",
+      "rationale": "ORCL近期反弹至下降趋势线附近，186-188区域存在较强阻力，试仓空头，止损设在190上方。 [降级试仓]",
+      "open_check_status": "CANCELLED",
+      "gap_pct": 0.036922737793453037,
+      "cancellation_reason": "Gap too large (3.69% > 3%)"
     }
   ],
+  "restricted": [
+    "US.SPY",
+    "US.XOM",
+    "US.ARM",
+    "US.DIA",
+    "US.UBER",
+    "US.LCID",
+    "US.TME",
+    "US.CVX",
+    "US.BA",
+    "US.UNH",
+    "US.LMT",
+    "US.QCOM"
+  ],
+  "position_actions": [
+    {
+      "symbol": "US.TSLA260603P410000",
+      "action": "HOLD",
+      "reason": "当前无实质持仓，保持空仓观察，待市场方向明朗后再决定是否入场。"
+    },
+    {
+      "symbol": "US.QQQ260602P710000",
+      "action": "HOLD",
+      "reason": "当前无实质持仓，保持空仓观察。"
+    },
+    {
+      "symbol": "US.SPY260602P730000",
+      "action": "HOLD",
+      "reason": "当前无实质持仓，保持空仓观察。"
+    },
+    {
+      "symbol": "US.QQQ260602P700000",
+      "action": "HOLD",
+      "reason": "当前无实质持仓，保持空仓观察。"
+    },
+    {
+      "symbol": "US.SNDK",
+      "action": "HOLD",
+      "reason": "当前无实质持仓，维持观望。"
+    },
+    {
+      "symbol": "US.QCOM",
+      "action": "HOLD",
+      "reason": "当前无实质持仓，维持观望。"
+    },
+    {
+      "symbol": "US.ORCL",
+      "action": "HOLD",
+      "reason": "当前无实质持仓，维持观望。"
+    }
+  ],
+  "strategy_adjustments": [
+    "在市场环境中性、催化缺失的情况下，保持空仓或极轻仓，等待VIX或宏观经济数据给出方向信号。",
+    "对于远月期权持仓，由于时间价值损耗较快，若无明确方向性交易计划，应避免盲目入场。"
+  ],
   "risk_warnings": [
+    "缺乏波动性指标（VIX缺失）可能低估潜在尾部风险，突发地缘政治或经济数据可能引发跳空。",
+    "低成交量环境下，部分个股可能出现异常波动。",
     "⚠️ Arbiter 原判空仓 (数据缺失), 降级为试仓模式, 仓位减半"
   ],
-  "max_positions": 2,
-  "date": "2026-05-20"
+  "confidence": 0.4,
+  "arbiter_mode": "deterministic_rule_based",
+  "claude_audit": {
+    "bear_cases": [
+      {
+        "symbol": "US.QQQ",
+        "direction": "SHORT",
+        "entry_zone": [
+          580,
+          590
+        ],
+        "stop_loss": 605,
+        "take_profit": 555,
+        "rationale": "推理链: (1) 系统已记录2笔QQQ期权硬止损亏损$5,984 (-$2,934 + -$3,050), 表明QQQ在当前市场微观结构下做空头寸面临强阻力; (2) VIX缓存值18.06处于低位但非极端, 科技板块估值仍处历史高位区间; (3) 半导体板块(QCOM累计亏$3,768, NVDA亏$2,905)持续走弱拖累QQQ; (4) 但注意: 系统近期0胜10负, 任何做空信号需等待开盘后15分钟量价确认, 严禁盘前入场. 入场区间基于等开盘后实际价格+VWAP确认.",
+        "risk_level": "HIGH"
+      },
+      {
+        "symbol": "US.BABA",
+        "direction": "SHORT",
+        "entry_zone": [
+          125,
+          130
+        ],
+        "stop_loss": 135,
+        "take_profit": 112,
+        "rationale": "推理链: (1) 中概股地缘政策风险持续存在, 美方对华科技制裁升级预期; (2) 系统股池中5只中概ADR(BABA/JD/PDD/NTES/BIDU)集中度异常高, 板块联动下跌概率大; (3) trade_records.json显示BABA历史做空入场价125.05, 止损130.05, 可作为参考锚点; (4) 需确认开盘后中概板块是否有独立利空催化. 严禁盘前入场.",
+        "risk_level": "MEDIUM"
+      },
+      {
+        "symbol": "US.TSLA",
+        "direction": "SHORT",
+        "entry_zone": [
+          0,
+          0
+        ],
+        "stop_loss": 0,
+        "take_profit": 0,
+        "rationale": "推理链: (1) TSLA在股池中(source=POSITION)但entry_zone无法确定 — 系统市场数据管道N/A, SPY/QQQ实时价格不可用; (2) TSLA作为高Beta标的在系统性风险环境下波动剧烈; (3) 但本条bear_case为条件性建议: 仅在数据管道恢复且确认TSLA技术破位(跌破关键支撑+放量)后才考虑; (4) 当前数据不足, 入场区间/止损/止盈均设为0表示待确认. 严禁盘前入场.",
+        "risk_level": "HIGH"
+      }
+    ],
+    "position_risks": [
+      {
+        "symbol": "SYSTEM",
+        "risk_type": "TECHNICAL",
+        "description": "当前持仓为空数组[], 无活跃仓位需审计. 但trade_records.json中存在3月27日的9笔历史模拟持仓(TSLA/NVDA/AAPL/MSFT/GOOGL/META/AMZN/BABA/PDD), 均为SHORT方向, 标记'部分止盈后剩余' — 这些仓位是否与DB一致存疑, 可能存在僵尸仓位未清理.",
+        "suggested_action": "EXIT"
+      },
+      {
+        "symbol": "DATA_PIPELINE",
+        "risk_type": "TECHNICAL",
+        "description": "市场数据管道严重故障: VIX/SPY/QQQ/DXY均为N/A. 唯一可用数据是VIX缓存值18.06(时间戳不可靠). 在无实时行情条件下, 所有信号生成和风控判断均不可信. risk_audit.json已确认此问题并建议切换至只读模式.",
+        "suggested_action": "HOLD"
+      }
+    ],
+    "restricted": [
+      "US.NVDA",
+      "US.UBER",
+      "US.TME",
+      "US.QCOM",
+      "US.DIA",
+      "US.SPY",
+      "US.XOM",
+      "US.LCID",
+      "US.CVX",
+      "US.LMT",
+      "US.ARM",
+      "US.BA",
+      "US.UNH"
+    ],
+    "restricted_reasons": {
+      "US.NVDA": "历史教训#1: 盘前入场亏损$1,302 (-648.99%), 高信号强度(strength=63)仍亏损, 信号可靠性未验证",
+      "US.UBER": "历史教训#2: 盘前入场亏损$510.32 (-636.67%)",
+      "US.TME": "历史教训#3: 盘前入场亏损$301.92 (-3166.44%), 亏损比例极端",
+      "US.QCOM": "历史教训#6: 盘前入场亏损$76.23; 44笔交易胜率仅23%, 总亏损$3,768",
+      "US.DIA": "历史教训#4: 盘前入场亏损$142.25; 持仓6.1h全程未触发止损/止盈, 止损参数过宽",
+      "US.SPY": "历史教训#5: 盘前入场亏损$76.50; 市场数据管道N/A无法验证信号",
+      "US.XOM": "盘前入场亏损$67; 高信号强度(strength=63)仍亏损",
+      "US.LCID": "盘前入场亏损$39.36 (-648.97%)",
+      "US.CVX": "盘前入场亏损$30.80; 高信号强度(strength=63)仍亏损",
+      "US.LMT": "盘前入场亏损$27.54; 高信号强度(strength=68)仍亏损",
+      "US.ARM": "最近交易: SHORT亏损$253 (-0.1%), 退出原因ghost_cleanup_cruise表明broker调用失败",
+      "US.BA": "最近4笔SHORT全部以ghost_cleanup_cruise退出, broker集成疑似故障",
+      "US.UNH": "SHORT以ghost_cleanup_cruise退出, broker集成疑似故障"
+    },
+    "systemic_risks": [
+      "[P0] 市场数据管道全面故障: VIX/SPY/QQQ/DXY均为N/A, 系统处于盲飞状态. 唯一VIX缓存值18.06时间戳不可靠, 可能为过期数据. 在数据恢复前所有信号不可信.",
+      "[P0] 期权selector代码与yaml配置严重不一致: options_selector.py硬编码delta=-0.5(ATM)而非yaml配置的[-0.4,-0.3](OTM), 已造成-$5,984亏损. 修复前期权策略必须禁用.",
+      "[P0] 止损/止盈R:R严重倒挂: 默认止损-3% vs 止盈+10%, 实际R:R=1:3.3(反向). 115笔sl_hit中83.5%亏损, 总亏-$2,023. 盈利集中在0-2%极窄区间, 止盈+10%几乎永不触发.",
+      "[P0] 策略全面失效: scalping 15笔胜率0%, voting_llm 147笔胜率38%, 近20笔0胜10负总亏$6,473. 系统已切换至paper trading模式但参数未经验证.",
+      "[P1] Broker集成疑似故障: 最近5笔交易全部以ghost_cleanup_cruise退出(BA×4, UNH×1, ARM×1), 表明订单实际未送达broker. 可能存在虚假成交记录.",
+      "[P1] 盘前交易硬规则未验证: 历史10/10教训均为盘前入场亏损. 当前时间08:31 ET(盘前), 系统必须等到09:45 ET后才能考虑入场.",
+      "[P1] 中概ADR集中度风险: 股池24只中含5只中概(BABA/JD/PDD/NTES/BIDU), 地缘政治事件可能导致板块联动暴跌.",
+      "[P2] 漏斗过于严格: 1444决策仅11笔交易(0.76%转化率), 风控可能过度过滤有效信号.",
+      "[P2] 投票数据未写入DB: final_strength和consensus_level均为0/NULL, voting_llm策略的投票机制可能从未真正执行."
+    ],
+    "market_bias": "NEUTRAL",
+    "confidence": 0.25
+  },
+  "debate_summary": "Hermes 计划 (0标的) + Claude 风险审计 (13受限) (降级: 数据缺失, 试仓模式)",
+  "max_positions": 2
 }
