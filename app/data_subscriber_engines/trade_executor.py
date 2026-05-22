@@ -22,7 +22,7 @@ import time
 import threading
 from datetime import datetime
 from typing import Dict, Optional
-from utils.logger import get_logger
+from app.core.logging_config import get_logger
 
 logger = get_logger(__name__)
 
@@ -252,8 +252,7 @@ class TradeExecutor:
             result = self.position_manager.close_position(
                 code,
                 current_price,
-                datetime.now().isoformat(),
-                signal=stop_loss_signal
+                datetime.now().isoformat()
             )
             
             if result:
