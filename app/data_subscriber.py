@@ -2231,9 +2231,12 @@ class DataSubscriber:
             _cfg = _TradeExecutorConfig()
             
             # 创建 TradeExecutor，注入依赖
+            # P0 根治 (2026-05-22): 注入真实 Futu 执行器，确保止损/止盈发送真实订单
+            # 旧代码漏传 trade_executor → wrapper 只能 DB-only 平仓 → 幽灵持仓
             self._trade_executor = TradeExecutor(
                 position_manager=self.position_manager,
                 config=_cfg,
+                trade_executor=self.trade_executor,  # 真实 Futu 执行器 (line 246 创建)
             )
             logger.info("[TradeExecutor] 延迟初始化完成（依赖注入）")
         

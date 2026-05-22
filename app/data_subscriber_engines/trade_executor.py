@@ -248,21 +248,28 @@ class TradeExecutor:
         P0 2026-05-21: 从 data_subscriber.py L1906-2021 迁移
         """
         try:
-            # 执行平仓
-            result = self.position_manager.close_position(
-                code,
-                current_price,
-                datetime.now().isoformat()
-            )
-            
-            if result:
+            # P0 根治 (2026-05-22): 必须通过真实 Futu 执行器发送平仓订单
+            # 旧代码直接调 position_manager.close_position() 只改 DB 不发订单 → 幽灵仓
+            # trade_executor.execute() 内部: 发 Futu 订单 → 成功后自动更新 DB
+            if self.trade_executor is None:
+                logger.error(
+                    f"[止损致命错误] {code} Futu 执行器未注入，无法发送真实订单。"
+                    f"拒绝 DB-only 平仓以避免幽灵持仓。"
+                )
+                self._stop_loss_fail_count[code] = self._stop_loss_fail_count.get(code, 0) + 1
+                return
+
+            trade_result = self.trade_executor.execute(stop_loss_signal, 'CLOSE')
+
+            if trade_result and trade_result.success:
                 logger.info(f"[止损成功] {code} 平仓 {close_qty}股 @ {current_price:.2f}")
                 # 清理缓存
                 self._stop_loss_fail_count.pop(code, None)
                 self._trailing_stop_cache.pop(code, None)
                 self._peak_price_cache.pop(code, None)
             else:
-                logger.warning(f"[止损失败] {code} 平仓返回 None")
+                msg = trade_result.message if trade_result else '执行器返回 None'
+                logger.warning(f"[止损失败] {code} {msg}")
                 # 递增失败计数
                 self._stop_loss_fail_count[code] = self._stop_loss_fail_count.get(code, 0) + 1
         except Exception as e:
@@ -367,24 +374,32 @@ class TradeExecutor:
                     return
         except Exception as _e:
             logger.debug(f"[止盈 Futu 验证] {code} 检查异常 (降级放行): {_e}")
-        
-        # 执行平仓
-        result = self.position_manager.close_position(
-            code,
-            current_price,
-            datetime.now().isoformat()
-        )
-        
-        if result:
-            logger.info(
-                f"[止盈成功] {code} | 入场价={position.entry_price} | "
-                f"出场价={current_price} | 盈亏={result.pnl:.2f}"
-            )
-            # 清理追踪止盈缓存
-            self._trailing_stop_cache.pop(code, None)
-            self._peak_price_cache.pop(code, None)
-        else:
-            logger.warning(f"[止盈失败] {code} 平仓返回 None")
+
+        # P0 根治 (2026-05-22): 必须通过真实 Futu 执行器发送平仓订单
+        # 旧代码直接调 position_manager.close_position() 只改 DB 不发订单 → 幽灵仓
+        try:
+            if self.trade_executor is None:
+                logger.error(
+                    f"[止盈致命错误] {code} Futu 执行器未注入，无法发送真实订单。"
+                    f"拒绝 DB-only 平仓以避免幽灵持仓。"
+                )
+                return
+
+            trade_result = self.trade_executor.execute(take_profit_signal, 'CLOSE')
+
+            if trade_result and trade_result.success:
+                logger.info(
+                    f"[止盈成功] {code} | 入场价={position.entry_price} | "
+                    f"出场价={current_price} | 盈亏={trade_result.pnl:.2f}"
+                )
+                # 清理追踪止盈缓存
+                self._trailing_stop_cache.pop(code, None)
+                self._peak_price_cache.pop(code, None)
+            else:
+                msg = trade_result.message if trade_result else '执行器返回 None'
+                logger.warning(f"[止盈失败] {code} {msg}")
+        except Exception as e:
+            logger.error(f"[止盈异常] {code}: {e}", exc_info=True)
 
     def execute_partial_take_profit(
         self,
