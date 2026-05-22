@@ -77,9 +77,17 @@ class SignalStore:
             self._db_conn = None
 
     def _persist_signal(self, signal: Signal):
-        """将信号持久化到 SQLite"""
+        """将信号持久化到 SQLite (带自动重连)"""
+        # 【P0 2026-05-22 修复】自动重连: 如果 _db_conn 丢失，尝试重新初始化
         if self._db_conn is None:
-            return
+            logger.warning("信号 DB 连接丢失，尝试重新初始化...")
+            try:
+                self._init_signal_db()
+            except Exception as init_e:
+                logger.warning(f"信号 DB 重连失败: {init_e}")
+            if self._db_conn is None:
+                logger.warning("信号 DB 重连失败，跳过持久化")
+                return
         try:
             with self._db_lock:
                 from datetime import datetime
@@ -107,7 +115,14 @@ class SignalStore:
                 ))
                 self._db_conn.commit()
         except Exception as e:
-            logger.warning(f"信号 DB 持久化失败: {e}")
+            logger.warning(f"信号 DB 持久化失败: {e}，尝试重连...")
+            # 标记连接为失效，下次写入时重连
+            with self._db_lock:
+                try:
+                    self._db_conn.close()
+                except Exception:
+                    pass
+                self._db_conn = None
 
     def _get_cooldown_key(self, signal: Signal) -> str:
         """生成冷却键值：策略 ID + 股票代码 + 动作"""
