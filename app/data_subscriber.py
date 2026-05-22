@@ -37,7 +37,7 @@ from config.config_center import get_config_center as _gcc_dsub
 from app.services.trading_state_manager import get_trading_state_manager
 from app.strategy.base import BaseStrategy, Signal, SignalAction
 from app.strategy.indicators import IndicatorBuffer, adx as calc_adx
-from app.signal_store import signal_store
+from app.signal.core import signal_store
 from app.notifier.dingtalk import DingTalkNotifier
 from app.strategy.consensus_engine import ConsensusEngine, ConsensusResult
 # Phase 17 修复: 使用 consensus/adaptive_weights.py 版本 (engine_ref 构造函数)
@@ -48,7 +48,7 @@ from app.trader.position_manager import PositionManager
 from app.strategy.hk_specific import get_hk_adapter, HKMarketConfig
 from app.risk.regime_params_loader import params_loader as regime_params_loader
 from app.data.hsi_data import hsi_fetcher
-from app.storage.signal_tracker import signal_tracker
+from app.signal.core import signal_tracker
 from app.risk.circuit_breaker import CircuitBreaker  # 新增: 熔断器
 from app.analytics.trade_evaluation import get_evaluator  # 新增: 交易评估器
 from app.core.domain_events import get_event_bus, DomainEvent, EventType, TradeOpenedPayload, TradeClosedPayload

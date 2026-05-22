@@ -254,7 +254,7 @@ async def get_correlation_data(
     - 噪声信号列表
     - 过拟合信号列表
     """
-    from app.analytics.signal_correlation import get_signal_quality_correlation
+    from app.signal.analytics import get_signal_quality_correlation
 
     correlation = get_signal_quality_correlation()
     report = correlation.get_full_report()
@@ -292,7 +292,7 @@ async def get_recommendations(
     - 执行策略调整建议
     """
     from app.analytics.strategy_attribution import get_strategy_attribution
-    from app.analytics.signal_correlation import get_signal_quality_correlation
+    from app.signal.analytics import get_signal_quality_correlation
     from app.analytics.optimization_advisor import generate_optimization_recommendations
     from app.storage.trade_recorder import get_trade_chain_recorder
 

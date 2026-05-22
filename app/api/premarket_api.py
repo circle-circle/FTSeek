@@ -139,7 +139,7 @@ async def approve_assessment(assessment_id: str):
         signal = converter.convert(assessment)
 
         if signal:
-            from app.signal_store import signal_store
+            from app.signal.core import signal_store
             success = signal_store.add(signal)
             if success:
                 return {

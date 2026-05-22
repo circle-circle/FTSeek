@@ -1066,7 +1066,7 @@ class ConsensusEngine:
         
         # P1-1: 持久化到 SQLite (异步写入，不阻塞交易流程)
         try:
-            from app.analytics.signal_analytics import get_analytics
+            from app.signal.analytics import get_analytics
             analytics = get_analytics()
             analytics.record_outcome(outcome)
             logger.debug(f"[信号质量] {code} 已持久化到数据库")
@@ -2230,7 +2230,7 @@ class ConsensusEngine:
             # 在置信度调整完成后计算，将结果附加到 ConsensusResult
             # ============================================================
             try:
-                from app.strategy.signal_quality_scorer import get_default_scorer
+                from app.signal.quality import get_default_scorer
                 _scorer = get_default_scorer()
                 _news_factor = self._get_news_factor(code)
                 _quality_ctx = {

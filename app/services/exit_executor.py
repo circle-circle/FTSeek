@@ -371,7 +371,7 @@ class ExitExecutor:
 
             # signal_tracker 回填
             try:
-                from app.signal_store import get_signal_tracker as _gst
+                from app.signal.core import get_signal_tracker as _gst
                 _gst().record_exit_by_code(code=code, exit_price=current_price,
                                            pnl=trade_result.pnl or 0.0, exit_reason='take_profit')
             except Exception as e:

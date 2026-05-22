@@ -203,7 +203,7 @@ async def get_scenario_performance(
         }
     """
     try:
-        from app.analytics.signal_analytics import get_analytics
+        from app.signal.analytics import get_analytics
         analytics = get_analytics()
 
         # 分析各场景表现

@@ -440,7 +440,7 @@ class PreMarketPipeline:
     def _send_to_signal_store(self, signal: Any):
         """将 Signal 发送到 SignalStore"""
         try:
-            from app.signal_store import signal_store
+            from app.signal.core import signal_store
             success = signal_store.add(signal)
             if success:
                 logger.info(
@@ -458,7 +458,7 @@ class PreMarketPipeline:
         根因: auto 信号只调 _send_to_signal_store → 无人确认 → 全部过期
         修复: auto 信号已通过 strategy_router 高置信度过滤，应直接执行
         """
-        from app.signal_store import signal_store
+        from app.signal.core import signal_store
         
         # 1. 先入库 (用于追踪和冷却)
         success = signal_store.add(signal)

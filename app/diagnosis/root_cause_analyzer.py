@@ -35,7 +35,7 @@ class RootCauseAnalyzer:
         """延迟初始化数据源"""
         if self.signal_tracker is None:
             try:
-                from app.storage.signal_tracker import SignalTracker
+                from app.signal.core import SignalTracker
                 self.signal_tracker = SignalTracker()
             except Exception as e:
                 logger.warning(f"[根因分析] signal_tracker 初始化失败: {e}")

@@ -476,7 +476,7 @@ class ExitStateEngine:
         """懒加载 signal_tracker"""
         if self._signal_tracker is None:
             try:
-                from app.signal_store import get_signal_tracker
+                from app.signal.core import get_signal_tracker
                 self._signal_tracker = get_signal_tracker()
             except Exception:
                 pass

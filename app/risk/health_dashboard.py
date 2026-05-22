@@ -117,7 +117,7 @@ class HealthDashboardCollector:
     #  策略层
     # ------------------------------------------------------------------ #
     def _collect_strategy_layer(self, dash: HealthDashboard):
-        from app.storage.signal_tracker import signal_tracker
+        from app.signal.core import signal_tracker
 
         stats = signal_tracker.get_statistics()
         if not stats:
@@ -191,7 +191,7 @@ class HealthDashboardCollector:
     #  执行层
     # ------------------------------------------------------------------ #
     def _collect_execution_layer(self, dash: HealthDashboard):
-        from app.storage.signal_tracker import signal_tracker
+        from app.signal.core import signal_tracker
 
         stats = signal_tracker.get_statistics()
         if stats and stats.get("total_signals", 0) > 0:
@@ -232,7 +232,7 @@ class HealthDashboardCollector:
             dash.total_rejects_today = cb_status.get("total_rejects_today", 0)
 
         # 拦截率：拒绝数 / 总信号数
-        from app.storage.signal_tracker import signal_tracker
+        from app.signal.core import signal_tracker
         stats = signal_tracker.get_statistics()
         if stats and stats.get("total_signals", 0) > 0:
             dash.risk_intercept_rate = round(

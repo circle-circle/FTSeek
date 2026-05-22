@@ -406,7 +406,7 @@ class NewsSignalBridge:
         
         # 降级方案 2: 从 SignalStore 获取
         try:
-            from app.signal_store import signal_store
+            from app.signal.core import signal_store
             pos_signals = signal_store.get_positions()
             
             for sig in pos_signals:

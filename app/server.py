@@ -18,7 +18,7 @@ from fastapi import FastAPI, Query, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from app import config
-from app.signal_store import signal_store
+from app.signal.core import signal_store
 from app.storage.repository import get_db
 from app.trader.executor import TradeExecutor
 from app.notifier.dingtalk import DingTalkNotifier

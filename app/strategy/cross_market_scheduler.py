@@ -29,7 +29,7 @@ from app.strategy.cross_market import (
 )
 from app.notifier.dingtalk import DingTalkNotifier
 from app.strategy.transition_manager import get_transition_manager
-from app.strategy.signal_coordinator import SignalCoordinator
+from app.signal.quality import SignalCoordinator
 
 logger = logging.getLogger("ftseek.cross_market_scheduler")
 

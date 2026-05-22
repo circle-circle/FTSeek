@@ -760,7 +760,7 @@ class ConfluenceStrategyV2(BaseStrategy):
     def _record_signal_detail(self, signal, code, action, factors, regime, adx_val, score):
         """记录信号详情到分析数据库"""
         try:
-            from app.analytics.signal_analyzer import record_signal_detail
+            from app.signal.analytics import record_signal_detail
             record_signal_detail(
                 signal_id=signal.id,
                 code=code,
