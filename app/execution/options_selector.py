@@ -79,6 +79,10 @@ class OptionSelector:
                 quality_gate = None
         self.quality_gate = quality_gate
         self.iv_history_provider = iv_history_provider
+        # P0 (2026-05-22): 期权链空返回 blocklist — 防止 BWXT 等无期权标的反复走降级链
+        self.OPTION_EMPTY_THRESHOLD = 3  # 连续 N 次空返回后标记为 no_options
+        self._option_empty_counts: Dict[str, int] = {}
+        self._no_options_symbols: set = set()
 
     # ------------------------------------------------------------------
     # 公开接口
@@ -115,6 +119,11 @@ class OptionSelector:
         """
         min_dte = min_dte if min_dte is not None else self.min_dte
         max_dte = max_dte if max_dte is not None else self.max_dte
+
+        # P0 (2026-05-22): 检查 blocklist，跳过已知无期权的标的
+        if symbol in self._no_options_symbols:
+            logger.debug(f"[期权·blocklist] {symbol} 已被标记为无可用期权，跳过")
+            return self._build_simulated_put(symbol, current_price, min_dte, max_dte)
 
         tiers = [
             ("1级·正常", min_dte, max_dte),
@@ -430,6 +439,14 @@ class OptionSelector:
 
             if ret != RET_OK or data is None or len(data) == 0:
                 logger.warning(f"[期权] {symbol} get_option_chain 返回空: {data}")
+                # P0 (2026-05-22): 跟踪连续空返回次数，超过阈值加入 blocklist
+                self._option_empty_counts[symbol] = self._option_empty_counts.get(symbol, 0) + 1
+                if self._option_empty_counts[symbol] >= self.OPTION_EMPTY_THRESHOLD:
+                    self._no_options_symbols.add(symbol)
+                    logger.warning(
+                        f"[期权·blocklist] {symbol} 连续 {self._option_empty_counts[symbol]} 次期权链为空，"
+                        f"已加入 no_options 列表，后续将跳过期权路径"
+                    )
                 return None
 
             # 读取 YAML delta_range 配置 (OTM 筛选)

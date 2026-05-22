@@ -18,6 +18,19 @@ from app.execution.options_selector import OptionSelector
 logger = logging.getLogger(__name__)
 
 
+def _load_price_fail_closed_set() -> set:
+    """加载 PRICE_FAIL 已关闭的期权代码集合，防止 broker_sync 重导入循环"""
+    try:
+        import json as _json
+        import os as _os
+        _pf_p = _os.path.normpath(_os.path.join(_os.path.dirname(__file__), '..', '..', 'data', 'price_fail_closed.json'))
+        if _os.path.exists(_pf_p):
+            return set(_json.load(open(_pf_p)))
+    except Exception:
+        pass
+    return set()
+
+
 def restore_positions_from_db(scheduler):
     """服务重启后从 DB 快照恢复未平仓持仓到内存
 
@@ -142,6 +155,11 @@ def restore_positions_from_db(scheduler):
     else:
         logger.info("[恢复·防幽灵] 无已知幽灵持仓")
 
+    # P1 修复 (2026-05-22): 加载 PRICE_FAIL 已关闭集合，防止 broker_sync 重导入循环
+    _pf_closed = _load_price_fail_closed_set()
+    if _pf_closed:
+        logger.info(f"[恢复·PRICE_FAIL 防循环] 已关闭期权集合: {_pf_closed}")
+
     # --- 1. 恢复普通股票持仓 (仅恢复 Broker 确认的) ---
     snapshots = []
     restored_count = 0
@@ -264,9 +282,22 @@ def restore_positions_from_db(scheduler):
         if broker_symbols is not None:
             missing_symbols = broker_symbols - mem_symbols
             if missing_symbols:
-                # 过滤幽灵标的
-                real_missing = missing_symbols - known_ghosts
+                # 过滤幽灵标的 + PRICE_FAIL 已关闭期权
+                real_missing = missing_symbols - known_ghosts - _pf_closed
                 ghost_rejected = missing_symbols & known_ghosts
+                pf_rejected = missing_symbols & _pf_closed
+                if pf_rejected:
+                    logger.warning(
+                        f"[恢复·一致性校验·PRICE_FAIL] 拒绝回写已关闭期权: {sorted(pf_rejected)}"
+                    )
+                    # 从 DB 永久清理这些已关闭期权
+                    try:
+                        for sym in pf_rejected:
+                            scheduler.trade_store._get_conn().execute(
+                                "DELETE FROM open_positions WHERE symbol = ?", (sym,)
+                            ).connection.commit()
+                    except Exception:
+                        pass
                 if ghost_rejected:
                     logger.warning(
                         f"[恢复·一致性校验·防幽灵] 拒绝回写已知幽灵持仓: {sorted(ghost_rejected)}"
@@ -354,6 +385,19 @@ def restore_positions_from_db(scheduler):
                         )
                         pass
 
+                    # P1 修复 (2026-05-22): PRICE_FAIL 已关闭期权跳过恢复
+                    if option_code in _pf_closed:
+                        logger.warning(
+                            f"[恢复·PRICE_FAIL 防循环] 跳过已关闭期权 {option_code} (防止重导入循环)"
+                        )
+                        try:
+                            scheduler.trade_store._get_conn().execute(
+                                "DELETE FROM option_positions WHERE option_code = ?", (option_code,)
+                            ).connection.commit()
+                        except Exception:
+                            pass
+                        continue
+
                     # Broker 验证: 防止幽灵期权仓（DB 有但 Futu 无）
                     if broker_symbols is not None and option_code not in broker_symbols:
                         logger.warning(
@@ -418,10 +462,24 @@ def restore_positions_from_db(scheduler):
         db_cursor.execute("SELECT symbol FROM open_positions")
         db_symbols = set(row[0] for row in db_cursor.fetchall())
 
-        # 计算差异: Broker 有但 DB 无，过滤已知幽灵
+        # 计算差异: Broker 有但 DB 无，过滤已知幽灵 + PRICE_FAIL 已关闭期权
         missing_in_db = broker_symbols - db_symbols if broker_symbols else set()
-        real_missing_p0 = missing_in_db - known_ghosts
+        real_missing_p0 = missing_in_db - known_ghosts - _pf_closed
         ghost_rejected_p0 = missing_in_db & known_ghosts
+        pf_rejected_p0 = missing_in_db & _pf_closed
+
+        if pf_rejected_p0:
+            logger.info(
+                f"[恢复·P0 回填·PRICE_FAIL] 跳过已关闭期权: {sorted(pf_rejected_p0)}"
+            )
+            # 从 DB 清理已关闭期权（如果残留）
+            try:
+                for sym in pf_rejected_p0:
+                    db_conn.execute(
+                        "DELETE FROM open_positions WHERE symbol = ?", (sym,)
+                    ).connection.commit()
+            except Exception:
+                pass
 
         if ghost_rejected_p0:
             logger.info(

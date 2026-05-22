@@ -1041,6 +1041,33 @@ DXY: {ctx.get('market_context', {}).get('dxy', 'N/A')}
             return json.loads(text)
         except json.JSONDecodeError as e:
             logger.warning(f"[AgentBridge·LLM] JSON 解析失败: {e}, raw={text[:200]!r}")
+            # P1 修复 (2026-05-22): 重试一次，限制 max_tokens 减少截断风险
+            # 根因: LLM 响应过长 (1668-2664 chars) 被 provider 截断，JSON 不完整
+            try:
+                logger.info("[AgentBridge·LLM] 重试: 限制 max_tokens=2048 获取更短响应")
+                res2 = UnifiedLLMService.call(
+                    "agent_bridge", prompt + "\n\n[IMPORTANT] Keep your response concise. Limit each string value to 200 chars max.",
+                    system=(system_prompt or "") + "\n[IMPORTANT] Return SHORT responses. Each string value ≤ 200 chars.",
+                    temperature=0.3,
+                    max_tokens=2048,
+                    json_mode=True,
+                    timeout=timeout,
+                )
+                if res2 and res2.success:
+                    text2 = res2.response or ""
+                    if isinstance(text2, dict):
+                        return text2
+                    text2 = text2.strip()
+                    if text2.startswith("```json"):
+                        text2 = text2[7:]
+                    if text2.startswith("```"):
+                        text2 = text2[3:]
+                    if text2.endswith("```"):
+                        text2 = text2[:-3]
+                    text2 = text2.strip()
+                    return json.loads(text2)
+            except Exception as e2:
+                logger.warning(f"[AgentBridge·LLM] 重试也失败: {e2}")
             return None
 
     # ── v3.0 HermesClient 集成 (Python 3.11 Worker) ──

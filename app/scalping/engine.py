@@ -1508,7 +1508,8 @@ class ScalpingEngine:
             if is_counter_trend:
                 # 逆趋势交易: 仓位减半，止损收紧 20%
                 params["position_pct"] = params.get("position_pct", 0.08) * 0.5
-                params["stop_loss"] = params.get("stop_loss", 0.007) * 0.8
+                # P1 修复 (2026-05-22): 默认值从 0.007 对齐到 YAML base_params 0.020
+                params["stop_loss"] = params.get("stop_loss", 0.020) * 0.8
                 logger.info(
                     f"[方向对齐] {symbol} {direction} 逆 SPY 趋势 ({spy_change:+.1%}) → "
                     f"仓位减半 + 止损收紧 20%"
@@ -2453,7 +2454,8 @@ class ScalpingEngine:
                 from app.core.config_container import get_config
                 _cfg = get_config()
                 _min_strength = _cfg.get_dotted("scheduler.min_signal_strength", 99)
-                _ck = PreTradeChecker(min_confidence=0.5, min_signal_strength=_min_strength)
+                # P1 修复 (2026-05-22): 传 None 走 MinConfidenceResolver，不再硬编码 0.5 覆盖 YAML
+                _ck = PreTradeChecker(min_confidence=None, min_signal_strength=_min_strength)
                 _result = _ck.check(sig)
                 if not _result.allowed:
                     logger.warning(f"[ScalpingEngine·PreTradeCheck·fallback] {symbol} 拒: {_result.reason}")

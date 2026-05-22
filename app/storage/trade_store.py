@@ -385,6 +385,26 @@ class TradeStore:
             新记录的 rowid
         """
         import json
+        import logging as _logging
+        _logger = _logging.getLogger(__name__)
+        
+        # P0 数据质量守卫 (2026-05-22): 关键归因字段完整性检查
+        _symbol = record.get("symbol", "")
+        if not _symbol:
+            _logger.error(f"[数据质量守卫] save_trade 缺少 symbol! record keys: {list(record.keys())}")
+        _missing_fields = []
+        if not record.get("strategy_id"):
+            _missing_fields.append("strategy_id")
+        if not record.get("exit_reason"):
+            _missing_fields.append("exit_reason")
+        if record.get("signal_strength") in (None, 0, ""):
+            _missing_fields.append("signal_strength")
+        if _missing_fields:
+            _logger.warning(
+                f"[数据质量守卫] {_symbol} save_trade 缺少归因字段: {_missing_fields} | "
+                f"source={record.get('source_type', 'UNKNOWN')} | "
+                f"trace_id={record.get('trace_id', 'NONE')}"
+            )
         
         with self._lock:
             conn = self._get_conn()

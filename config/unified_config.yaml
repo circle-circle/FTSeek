@@ -857,7 +857,8 @@ options:
       technical_breach:
         enabled: true
         resistance_lookback_days: 20
-        breach_threshold_pct: 1.0
+        breach_threshold_pct: 2.0      # P3 优化 (2026-05-22): 1.0% → 2.0% 减少过早退出
+        entry_cooldown_minutes: 60      # P3 优化 (2026-05-22): 30min → 60min 给足行情发展空间
         action: market_order_cover
       pair_preference:
         enabled: true
@@ -1272,10 +1273,10 @@ strategies:
     capital_pct: 0.65
     priority: 5
   scalping:
-    capital_pct: 0.0           # P9: 数据驱动 - scalping 18 笔 0% 胜率，暂时禁用
+    capital_pct: 0.10          # P1 修复 (2026-05-22): 从 0.0 恢复到 10% 初始仓位
     priority: 10               # 高于 main, 时效性更强
     direction_preference: SHORT  # P6: 数据驱动 - SHORT 胜率 37.0% vs LONG 20.9%
-    enabled: false             # P9: 禁用 scalping 直到策略修复
+    enabled: true              # P1 修复 (2026-05-22): 修复参数后重新启用
   # P10 优化 (2026-05-22): 连续亏损后动态降仓
   # 数据：1 连败后胜率 20%，4 连败后胜率 40%（反转）
   # 策略：连续 3 次亏损后降仓 50%，避免情绪化交易
@@ -1546,8 +1547,8 @@ news_v2:
     data_dir: ~/.hermes/ftseek/data/v2_collection_us/
     report_interval: 10
 scalping:
-  enabled: false              # P9: 数据驱动 - scalping 18 笔 0% 胜率，暂时禁用
-  mode: observe
+  enabled: true               # P1 修复 (2026-05-22): 修复参数后重新启用
+  mode: live
   budget_pct: 0.25
   max_position_pct: 0.1
   max_daily_loss_pct: 0.03

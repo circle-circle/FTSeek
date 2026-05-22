@@ -54,7 +54,7 @@ class ConfigDefaults:
     # ============================================================
     SCHEDULER_MIN_CONFIDENCE = 0.4          # P0 优化: 0.5 → 0.4
     SCHEDULER_MAX_POSITIONS = 5             # scheduler.max_positions
-    SCHEDULER_MIN_SIGNAL_STRENGTH = 50      # scheduler.min_signal_strength
+    SCHEDULER_MIN_SIGNAL_STRENGTH = 99      # scheduler.min_signal_strength (P8: raised from 50→99, strength≥99 has 32.1% WR vs 11.4% at 66)
     SCHEDULER_MIN_CONSENSUS = 0.2           # scheduler.min_consensus_level
     SCHEDULER_SCAN_INTERVAL = 10            # scheduler.scan_interval_minutes
 

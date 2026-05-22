@@ -36,7 +36,7 @@ class OptionQuickExitEngine:
         self.trailing_stop = config.get("trailing_stop", 0.05)        # 5% 回撤平仓
         self.max_holding_hours = config.get("max_holding_hours", 72)  # 72h 强制平仓
         self.profit_target = config.get("profit_target_pct", 0.15)    # 15% 目标止盈
-        self.stop_loss = config.get("stop_loss_pct", 0.40)            # P2: 25% → 40% 硬止损（期权波动大）
+        self.stop_loss = config.get("stop_loss_pct", 0.25)            # P3: 40% → 25% 补偿滑点（实测滑点15-23%，25%配置→实际~40%）
         self.time_decay_warning = config.get("time_decay_warning", 0.10)  # 10% 时间价值警告
         self.min_holding_hours_for_decay = config.get("min_holding_hours_for_decay", 24)  # P3: 至少持仓 24h 才考虑时间损耗
 

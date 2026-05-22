@@ -2268,6 +2268,10 @@ def _update_trade_attribution(
             
     except Exception as e:
         logger.warning(f"更新归因记录失败：{e}")
+
+
+def _is_option_contract(symbol: str) -> bool:
+    """判断是否为美股期权合约 (OCC 格式: US.XXXXXXP/CCCCCCCC)"""
     # 期权格式示例: US.CRM260515P180000, US.AAPL260515C180000
     parts = symbol.split(".")
     if len(parts) < 2:

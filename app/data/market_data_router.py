@@ -314,6 +314,7 @@ class MarketDataRouter:
             logger.debug(f"[Router] {symbol} 期权代码，跳过技术指标计算，仅获取报价数据")
         
         # ★★★ Step 1: Futu LV3 主通道 — 实时价格 + K线 → 技术指标计算
+        klines = None  # FIX (2026-05-22): Prevent UnboundLocalError if quote fails or price=0
         if self.futu:
             try:
                 # 获取 LV3 实时报价

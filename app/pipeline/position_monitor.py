@@ -200,6 +200,14 @@ def _close_option_position(scheduler, position: Position, reason: str, current_o
         return  # Exception = order not confirmed, don't clean up DB
 
     try:
+        # P0 修复 (2026-05-22): 检测 sandbox 模式
+        _option_mode = "normal"
+        try:
+            from app.core.config_container import get_config as _gc
+            if _gc().get_dotted("mode.sandbox.enabled", False):
+                _option_mode = "sandbox"
+        except Exception:
+            pass
         scheduler.trade_store.save_trade({
             "trace_id": position.trace_id, "trade_date": (position.entry_time or datetime.now()).strftime("%Y-%m-%d"),
             "symbol": position.symbol, "direction": "SHORT_PROXY_OPTION",
@@ -209,6 +217,12 @@ def _close_option_position(scheduler, position: Position, reason: str, current_o
             "exit_reason": reason, "holding_hours": holding_hours,
             "signal_strength": meta.get("signal_strength", 0),
             "signal_confidence": meta.get("signal_confidence", 0.0), "futu_order_id": option_code,
+            # P0 修复 (2026-05-22): 归因字段透传 — 期权交易也需要完整归因
+            "strategy_id": meta.get("strategy_id", "voting_llm"),
+            "owner_strategy": getattr(position, "owner_strategy", None) or "main",
+            "source_type": "SHORT_PROXY_OPTION",
+            "market_regime": getattr(position, "market_regime", "UNKNOWN") if hasattr(getattr(position, "market_regime", "UNKNOWN"), "value") else str(getattr(position, "market_regime", "UNKNOWN") or "UNKNOWN"),
+            "mode": _option_mode,
         })
     except Exception as e:
         logger.warning(f"[期权平仓] 写入 trade_records 失败：{e}")
@@ -547,15 +561,54 @@ def _monitor_option_positions(scheduler):
                             f"[期权监控] 价格获取失败 {_fail_n}次 "
                             f"{position.symbol} {option_code} — 止损止盈暂不生效"
                         )
-                    # P1 修复 (2026-05-22): PRICE_FAIL 改为告警 + 延迟处理，不直接平仓
-                    # 根因：价格获取失败 ≠ 行情异常，可能是网络/连接问题
-                    # 优化：记录告警，等待行情恢复，不强制平仓（避免误杀盈利仓位）
+                    # P1 修复 (2026-05-22): PRICE_FAIL 改为告警 + 延迟处理
+                    # P1b 修复 (2026-05-22): 100+ 次失败 → 强制平仓 + 写入 blocklist，防止无限循环
+                    # P1c 修复 (2026-05-22 04:25): 50 次失败 → 立即写入 blocklist，防止重启后重导入
+                    #     数据：PRICE_FAIL_50~53 已造成 -$13K+ 损失，blocklist 在 100 才写入太晚
                     if _fail_n >= 50 and _fail_n % 50 == 0:
                         logger.error(
                             f"[期权·风控告警] {position.symbol} {option_code} "
                             f"价格获取连续失败 {_fail_n}次 — 止盈止损暂不生效，等待行情恢复"
                         )
-                        # TODO: 未来可添加降级策略（如：使用持仓查询 fallback）
+                        # P1c: 50 次失败即写入 blocklist（与 force-close 阈值同步）
+                        #     防止 service restart 后 position_sync 重新导入已爆仓的期权
+                        try:
+                            _pf_path = os.path.normpath(os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'price_fail_closed.json'))
+                            import json as _pf_json
+                            _existing = set()
+                            if os.path.exists(_pf_path):
+                                _existing = set(_pf_json.load(open(_pf_path)))
+                            _existing.add(position.symbol)
+                            _existing.add(option_code)
+                            with open(_pf_path, 'w') as _pf_f:
+                                _pf_json.dump(sorted(_existing), _pf_f)
+                            logger.info(f"[期权·BLOCKLIST@50] 已写入 {position.symbol}, {option_code} → price_fail_closed.json (fail_n={_fail_n})")
+                        except Exception as bl_err:
+                            logger.error(f"[期权·BLOCKLIST@50] 写入失败: {bl_err}")
+                    if _fail_n >= 100:
+                        logger.critical(
+                            f"[期权·PRICE_FAIL_FORCE_CLOSE] {position.symbol} {option_code} "
+                            f"价格获取连续失败 {_fail_n}次，强制平仓并加入 blocklist"
+                        )
+                        try:
+                            _execute_option_close_order(scheduler, position, option_code, qty, reason=f"PRICE_FAIL_{_fail_n}")
+                        except Exception as pf_err:
+                            logger.error(f"[期权·PRICE_FAIL_FORCE_CLOSE] 平仓执行失败: {pf_err}")
+                        # 写入 blocklist 防止 position_sync 重新导入（50 次已写，此处幂等追加）
+                        try:
+                            _pf_path = os.path.normpath(os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'price_fail_closed.json'))
+                            import json as _pf_json
+                            _existing = set()
+                            if os.path.exists(_pf_path):
+                                _existing = set(_pf_json.load(open(_pf_path)))
+                            _existing.add(position.symbol)
+                            _existing.add(option_code)
+                            with open(_pf_path, 'w') as _pf_f:
+                                _pf_json.dump(sorted(_existing), _pf_f)
+                            logger.info(f"[期权·BLOCKLIST] 已写入 {position.symbol}, {option_code} → price_fail_closed.json")
+                        except Exception as bl_err:
+                            logger.error(f"[期权·BLOCKLIST] 写入失败: {bl_err}")
+                        _opt_price_fail_count.pop(option_code, None)
                     continue
                 _opt_price_fail_count.pop(option_code, None)  # 成功后清零
 
@@ -568,7 +621,7 @@ def _monitor_option_positions(scheduler):
                     _opt_cfg = get_config().get_section("options", {})
                     qe = get_quick_exit_engine(_opt_cfg.get("quick_exit", {}))
                     qe.profit_target = _opt_cfg.get("profit_target_pct", 0.15)
-                    qe.stop_loss = abs(_opt_cfg.get("stop_loss_pct", -0.40))  # P2: 25% → 40%
+                    qe.stop_loss = abs(_opt_cfg.get("stop_loss_pct", -0.25))  # P3: 40% → 25% 补偿滑点
                     should_exit, exit_reason = qe.check_exit({
                         "symbol": position.symbol, "entry_price": entry_price,
                         "entry_time": meta.get("entry_time", ""), "expiry": expiry_date,
@@ -1188,6 +1241,27 @@ def _process_pending_order(scheduler, tracker, order: dict):
                 # 写入交易记录
                 try:
                     if hasattr(scheduler, 'trade_store') and scheduler.trade_store:
+                        # P0 修复 (2026-05-22): 从 position 和 trade_attribution 回填 signal_strength
+                        _sig_strength = 0
+                        _sig_confidence = 0.0
+                        _owner = "main"
+                        _strategy = "voting_llm"
+                        try:
+                            _pos_meta = getattr(position, "metadata", {}) or {}
+                            _sig_strength = _pos_meta.get("signal_strength", 0)
+                            _sig_confidence = _pos_meta.get("signal_confidence", 0.0)
+                            _owner = getattr(position, "owner_strategy", None) or "main"
+                            _strategy = _pos_meta.get("strategy_id", "voting_llm")
+                            # Fallback: 从 trade_attribution DB 回填
+                            if _sig_strength == 0 and position.trace_id:
+                                from app.pipeline.order_executor import _fetch_attribution_data
+                                _sig_strength, _sig_confidence = _fetch_attribution_data(
+                                    position.trace_id,
+                                    symbol=symbol,
+                                    trade_date=position.entry_time.strftime("%Y-%m-%d"),
+                                )
+                        except Exception:
+                            pass
                         scheduler.trade_store.save_trade({
                             "trace_id": position.trace_id,
                             "trade_date": position.entry_time.strftime("%Y-%m-%d"),
@@ -1202,11 +1276,12 @@ def _process_pending_order(scheduler, tracker, order: dict):
                             "pnl_pct": pnl_pct,
                             "exit_reason": exit_reason_str,
                             "holding_hours": position.holding_hours,
-                            "signal_strength": 0,
-                            "signal_confidence": 0.0,
+                            "signal_strength": _sig_strength,
+                            "signal_confidence": _sig_confidence,
                             "futu_order_id": getattr(position, "futu_order_id", ""),
                             "close_futu_order_id": futu_id,
-                            "strategy_id": "voting_llm",
+                            "strategy_id": _strategy,
+                            "owner_strategy": _owner,
                         })
                 except Exception as e:
                     logger.warning(f"[订单追踪] {symbol} 交易记录写入失败: {e}")
