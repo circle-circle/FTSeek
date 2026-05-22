@@ -2626,7 +2626,23 @@ class DataSubscriber:
             codes = _gcc_dsub().get('strategy.watch_list_hk', [])
 
         if not codes:
-            logger.debug("[动态订阅] 无代码，无需退订")
+            # P0 2026-05-22: 即使无代码可退订，也要关闭所有SDK连接防止夜间重连循环
+            logger.debug("[动态订阅] 无代码可退订，但仍需关闭SDK连接")
+            try:
+                if self._quote_ctx is not None:
+                    self._quote_ctx.close()
+                    logger.info("[动态订阅] Quote SDK连接已关闭 (无代码退订路径)")
+            except Exception:
+                pass
+            finally:
+                self._quote_ctx = None
+            # 同时关闭 Trade 连接
+            try:
+                if hasattr(self, 'trade_executor') and self.trade_executor:
+                    self.trade_executor.close()
+                    logger.info("[动态订阅] Trade SDK连接已关闭 (无代码退订路径)")
+            except Exception:
+                pass
             return
 
         sub_type_map = {
@@ -2660,7 +2676,29 @@ class DataSubscriber:
                     logger.warning(f"[退订] {code} {st} 异常: {e}")
 
         self._subscribed = False
-        logger.info(f"[动态订阅] 退订完成: 成功={success_count}, 失败={fail_count} | 槽位已释放")
+
+        # P0 2026-05-22: 退订后关闭所有SDK连接，防止非交易时段SDK内部自动重连循环
+        # 根因: Futu SDK open_context_base 有内置重连机制，当OpenD服务端关闭连接(RemoteClose)
+        #        后会自动尝试重连，形成 connect→ECONNREFUSED→reconnect 死循环
+        # 修复: 退订完成后彻底关闭所有 context，进入交易时段时懒加载会重新创建
+        try:
+            if self._quote_ctx is not None:
+                self._quote_ctx.close()
+                logger.info("[动态订阅] Quote SDK连接已关闭 (非交易时段静默)")
+        except Exception as close_err:
+            logger.warning(f"[动态订阅] 关闭Quote SDK连接异常: {close_err}")
+        finally:
+            self._quote_ctx = None
+
+        # 同时关闭 TradeExecutor 的交易上下文 (HK+US)，防止夜间重连循环
+        try:
+            if hasattr(self, 'trade_executor') and self.trade_executor:
+                self.trade_executor.close()
+                logger.info("[动态订阅] Trade SDK连接已关闭 (非交易时段静默)")
+        except Exception as close_err:
+            logger.warning(f"[动态订阅] 关闭Trade SDK连接异常: {close_err}")
+
+        logger.info(f"[动态订阅] 退订完成: 成功={success_count}, 失败={fail_count} | 槽位已释放 | 所有连接已关闭")
 
     def _setup_handlers(self):
         from futu import StockQuoteHandlerBase, CurKlineHandlerBase
@@ -2810,14 +2848,23 @@ class DataSubscriber:
     def start(self):
         self._running = True
         try:
-            self.subscribe()
-            self._setup_handlers()
+            # 【P0 2026-05-22 修复】非交易时段启动不订阅，避免 subscribe→unsubscribe 循环压垮 OpenD
+            # cleanup_loop 会在进入交易时段时自动触发 subscribe
+            is_market_open = self._is_trading_hours()
+            if is_market_open:
+                self.subscribe()
+                self._setup_handlers()
+                logger.info("[启动] 当前为交易时段，已完成行情订阅")
+            else:
+                # 非交易时段：仅初始化 handlers（不订阅），等 cleanup_loop 动态触发
+                logger.info("[启动] 当前为非交易时段，跳过行情订阅，等待交易时段自动触发")
             self._start_workers()  # P0: 启动异步处理工作线程
             logger.info(
                 f"数据订阅已启动 | 共识窗口={CONSENSUS_WINDOW}s | "
                 f"触发阈值={CONSENSUS_THRESHOLD} | "
                 f"ADX趋势>{CONSENSUS_ADX_TREND} 震荡<{CONSENSUS_ADX_RANGE} | "
-                f"推送冷却={SIGNAL_COOLDOWN}s"
+                f"推送冷却={SIGNAL_COOLDOWN}s | "
+                f"交易时段={'是' if is_market_open else '否'}"
             )
         except Exception as e:
             logger.error(f"数据订阅启动异常：{e}")
