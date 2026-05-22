@@ -229,26 +229,14 @@ def run_reconciliation(market_filter='HK'):
         info = server_positions[code]
         logger.info(f"🆕 发现服务端新持仓 {code}，同步至 DB")
         
-        # P0 修复 (2026-05-17): 冷却期检查 — 10 分钟内刚关闭的持仓不重新创建
-        # 根因: 系统止损 → 本地 DB CLOSED → Futu 订单未结算 → reconcile 误判为"漏记"
-        # 与 position_sync.py 的 10 分钟冷却对齐
-        RECENT_CLOSE_WINDOW_MINUTES = 10
-        try:
-            from datetime import timedelta
-            cutoff = (datetime.now() - timedelta(minutes=RECENT_CLOSE_WINDOW_MINUTES)).strftime("%Y-%m-%d %H:%M:%S")
-            cursor.execute(
-                "SELECT COUNT(*), MAX(exit_time) FROM positions WHERE code=? AND status='CLOSED' AND exit_time>=?",
-                (code, cutoff)
-            )
-            recent_count, last_exit = cursor.fetchone()
-            if recent_count > 0:
-                logger.info(
-                    f"   ⏳ {code} {RECENT_CLOSE_WINDOW_MINUTES}min 内有关闭记录 ({recent_count}次, 最近={last_exit})，"
-                    f"判定为 Futu 结算延迟/止损冷却窗口，跳过创建"
-                )
-                continue
-        except Exception as _cool_e:
-            logger.debug(f"   冷却期检查失败: {_cool_e}")
+        # P0 修复 (2026-05-22): 移除 10min 冷却跳过逻辑
+        # 第一性原理: Futu 持有该持仓 = 本地平仓未真实执行到 Futu
+        # 旧逻辑: 10min 内有关闭记录 → 跳过创建 → 幽灵仓永远不被修复
+        # 新逻辑: Futu 有持仓 → 本地必须同步，无论何时关闭过
+        # 如果本地平仓确实已发到 Futu (Futu 订单成功)，Futu 不可能仍持有
+        # 因此 reconcile 阶段 Futu 仍有持仓 = 本地平仓失败 → 必须重建本地记录
+        # (根本修复在上游: trade_executor 止损/止盈必须先发 Futu 订单再更新 DB)
+
         
         # 查找信号
         sig_id = find_signal_id(cursor, code, info['cost'])

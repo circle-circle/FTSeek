@@ -459,7 +459,11 @@ class PositionSync:
                     f"[持仓修复·默认风控] {code} entry=${entry_px:.2f} "
                     f"SL=${default_sl:.2f}(-3.5%) TP=${default_tp:.2f}(+5.0%)"
                 )
-                position_manager.create_position(
+                # P0 修复 (2026-05-22): force=True 跳过防呆检查
+                # 原因: 此处已确认 Futu 持有该持仓，本地必须创建对应 OPEN 记录
+                # 防呆检查 (5min 同价 CLOSED) 是为正常交易信号设计的，
+                # 幽灵仓修复路径不应受其限制
+                new_id = position_manager.create_position(
                     code=code,
                     action='BUY',
                     quantity=futu_pos.quantity,
@@ -469,9 +473,24 @@ class PositionSync:
                     take_profit=default_tp,
                     strategy='futu_sync',
                     trader_type='SYNC',
-                    strategy_tags='sync'  # P2 修复 (2026-05-21): 标记同步来源
+                    strategy_tags='sync',  # P2 修复 (2026-05-21): 标记同步来源
+                    force=True,  # 跳过防呆，确保 OPEN 记录被创建
                 )
-                logger.info(f"[持仓修复] {code} 已自动创建 (Futu→DB 同步)")
+                # 验证实际创建的是 OPEN 记录 (而非防呆返回 CLOSED ID)
+                import sqlite3 as _sqlite3
+                _db_path = position_manager._db_path if hasattr(position_manager, '_db_path') else 'data/ftseek.db'
+                with _sqlite3.connect(_db_path) as _conn:
+                    _row = _conn.execute(
+                        "SELECT status FROM positions WHERE id = ?", (new_id,)
+                    ).fetchone()
+                if _row and _row[0] == 'OPEN':
+                    logger.info(f"[持仓修复] {code} 已自动创建 (id={new_id}, Futu→DB 同步)")
+                else:
+                    logger.error(
+                        f"[持仓修复·致命] {code} create_position 返回 id={new_id} "
+                        f"但状态={_row[0] if _row else 'NOT_FOUND'}，幽灵仓未修复！"
+                    )
+
                 
                 # P0 修复 (2026-05-06): 自动同步创建持仓后发送钉钉通知
                 try:

@@ -426,15 +426,16 @@ class PositionManager:
         
         return count
     
-    def create_position(self, code: str, action: str, quantity: int, 
+    def create_position(self, code: str, action: str, quantity: int,
                        entry_price: float, entry_time: str,
                        stop_loss: float = None, take_profit: float = None,
-                       signal_id: str = None, strategy: str = None, 
+                       signal_id: str = None, strategy: str = None,
                        trace_id: str = "", trader_type: str = None,
-                       strategy_tags: str = None) -> int:
+                       strategy_tags: str = None,
+                       force: bool = False) -> int:
         """
         创建持仓记录 (支持止盈止损 + 信号关联 + 全链路归因 - 2026-04-15 更新)
-        
+
         Args:
             code: 股票代码
             action: 买卖方向 (BUY/SELL)
@@ -447,9 +448,11 @@ class PositionManager:
             strategy: 策略名称 (可选)
             trace_id: 全链路追踪 ID (2026-04-15 新增)
             trader_type: 交易类型 (AI=自动执行, SYNC=同步创建, MANUAL=手动)
-            
+            force: 跳过防呆检查 (2026-05-22 新增, 仅用于 position_sync 幽灵仓修复)
+                   调用方已确认 Futu 持有该持仓，必须强制创建本地记录
+
         Returns:
-            新建持仓的 ID
+            新建持仓的 ID (force=False 时可能返回已有持仓 ID)
         """
         conn = self._get_connection()
         try:
@@ -467,31 +470,42 @@ class PositionManager:
             # 检查表是否有 strategy_tags 字段 (P2 2026-05-17: 门禁组合对比标签)
             self._ensure_strategy_tags_column(conn)
             
-            # P0 根治 (2026-05-06): 创建前检查是否已有同名标的的OPEN持仓，防止重复创建
-            cursor.execute("SELECT id, quantity, entry_price FROM positions WHERE code = ? AND status = 'OPEN' LIMIT 1", (code,))
-            existing = cursor.fetchone()
-            if existing:
-                logger.warning(
-                    f"[防呆] {code} 已存在 OPEN 持仓 (ID={existing[0]}, qty={existing[1]}), "
-                    f"拒绝重复创建。如需加仓请使用 update_position_fields"
-                )
-                return existing[0]  # 返回已有持仓ID，避免调用方报错
-            
-            # P1 修复 (2026-05-16): 扩大去重范围 — 也检查最近 5 分钟内刚关闭的同价持仓
-            # 根因: exit 关闭持仓 → reconcile 重新创建 → 新信号又来 → 多条记录
-            cursor.execute("""
-                SELECT id FROM positions WHERE code = ? AND status = 'CLOSED'
-                AND abs(entry_price - ?) / ? < 0.005
-                AND exit_time >= datetime('now', '-5 minutes')
-                ORDER BY id DESC LIMIT 1
-            """, (code, entry_price, entry_price))
-            recent_close = cursor.fetchone()
-            if recent_close:
-                logger.warning(
-                    f"[防呆] {code} 5 分钟内刚关闭同价持仓 (ID={recent_close[0]}), "
-                    f"拒绝重复创建 (可能是 reconcile 残留)"
-                )
-                return recent_close[0]
+            # P0 防呆检查 (2026-05-06): 防止重复创建
+            # force=True 时跳过 (调用方已确认 Futu 持有该持仓，必须强制创建)
+            if not force:
+                # 检查是否已有同名标的的OPEN持仓
+                cursor.execute("SELECT id, quantity, entry_price FROM positions WHERE code = ? AND status = 'OPEN' LIMIT 1", (code,))
+                existing = cursor.fetchone()
+                if existing:
+                    logger.warning(
+                        f"[防呆] {code} 已存在 OPEN 持仓 (ID={existing[0]}, qty={existing[1]}), "
+                        f"拒绝重复创建。如需加仓请使用 update_position_fields"
+                    )
+                    return existing[0]  # 返回已有持仓ID，避免调用方报错
+
+                # P1 修复 (2026-05-16): 检查最近 5 分钟内刚关闭的同价持仓
+                # 根因: exit 关闭持仓 → reconcile 重新创建 → 新信号又来 → 多条记录
+                # P0 修复 (2026-05-22): 时区 bug — datetime('now') 返回 UTC，exit_time 存的是本地时间
+                #   'T' > ' ' 导致字符串比较永远为 True → 所有同价 CLOSED 都被误判为"5min 内"
+                #   改用 Python 计算本地时间阈值，并统一替换 'T' 分隔符
+                from datetime import datetime as _dt, timedelta as _td
+                _local_5min_ago = (_dt.now() - _td(minutes=5)).strftime('%Y-%m-%d %H:%M:%S')
+                cursor.execute("""
+                    SELECT id FROM positions WHERE code = ? AND status = 'CLOSED'
+                    AND abs(entry_price - ?) / ? < 0.005
+                    AND replace(exit_time, 'T', ' ') >= ?
+                    ORDER BY id DESC LIMIT 1
+                """, (code, entry_price, entry_price, _local_5min_ago))
+                recent_close = cursor.fetchone()
+                if recent_close:
+                    logger.warning(
+                        f"[防呆] {code} 5 分钟内刚关闭同价持仓 (ID={recent_close[0]}), "
+                        f"拒绝重复创建 (可能是 reconcile 残留)"
+                    )
+                    return recent_close[0]
+            else:
+                logger.info(f"[create_position] force=True 跳过防呆检查 ({code})")
+
             
             # Phase 4a (2026-05-21): 止损一致性 — 开仓时强制设置 stop_loss
             # 根因: 历史 68 条 stop_loss=0/NULL 导致止损形同虚设
