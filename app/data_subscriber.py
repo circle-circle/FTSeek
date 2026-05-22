@@ -2151,7 +2151,7 @@ class DataSubscriber:
             self._kline_processor = KlineProcessor(
                 position_manager=self.position_manager,
                 cache=self._cache_manager,
-                strategies=self._strategies,
+                strategies=self.strategies,  # 修复：使用 self.strategies 而非 self._strategies
                 consensus_engine=self._consensus,
                 kline_exit_checker=self._kline_exit_checker,
                 kline_buffers=self._kline_buffers,
