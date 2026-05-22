@@ -300,6 +300,25 @@ class PreMarketPipeline:
         logger.info(f"[Pipeline] Stage 5: LLM 分析 ({len(packs)} 个包)")
         assessments = await self._analyst.analyze_batch(packs)
         
+        # LLM 分析质量摘要 (2026-05-22 新增)
+        if assessments:
+            confidence_values = [a.confidence for a in assessments]
+            action_counts = {}
+            for a in assessments:
+                action = getattr(a, 'action', 'NO_TRADE')
+                action_counts[action] = action_counts.get(action, 0) + 1
+            
+            avg_conf = sum(confidence_values) / len(confidence_values)
+            min_conf = min(confidence_values)
+            max_conf = max(confidence_values)
+            
+            logger.info(
+                f"[Pipeline] LLM 分析摘要: "
+                f"总计={len(assessments)} 平均置信度={avg_conf:.2f} "
+                f"min={min_conf:.2f} max={max_conf:.2f} "
+                f"动作分布={action_counts}"
+            )
+        
         # Phase 1 新增: 生成日内作战计划 (Daily Battle Plan)
         try:
             # P0 修复 (2026-05-11): 防止 Pipeline 补执行覆盖午间刷新结果
@@ -375,22 +394,46 @@ class PreMarketPipeline:
         review_count = 0
         observe_count = 0
 
-        # 自动执行: 生成 Signal → 直接执行 + 通知
+        # 自动执行：生成 Signal → 直接执行 + 通知
         for a in routed.get("auto", []):
             signal = self._signal_converter.convert(a)
             if signal:
                 # P0 修复 (2026-05-21): auto 信号必须执行，不能只入库
-                # 根因: 只调 _send_to_signal_store 不执行不发通知 → 全部过期
+                # 根因：只调 _send_to_signal_store 不执行不发通知 → 全部过期
                 self._execute_auto_signal(a, signal)
                 auto_count += 1
 
-        # 人工确认: 发送 DingTalk ActionCard
+        # 人工确认：发送 DingTalk ActionCard
         for a in routed.get("review", []):
             self._send_review_card(a)
             review_count += 1
 
-        # 仅观察: 计入统计
-        observe_count = len(routed.get("observe", []))
+        # 仅观察：计入统计 + 记录 NO_TRADE 详情
+        observe_list = routed.get("observe", [])
+        observe_count = len(observe_list)
+        
+        # 【P1 2026-05-22 优化】NO_TRADE 统计日志
+        if observe_count > 0:
+            no_trade_details = []
+            conf_values = []
+            for a in observe_list:
+                conf = getattr(a, 'confidence', 0)
+                conf_values.append(conf)
+                event_pack_id = getattr(a, 'event_pack_id', 'N/A')
+                no_trade_details.append(f"  - EP-{event_pack_id}: conf={conf:.2f}, tradeability={getattr(a, 'tradeability', 'N/A')}")
+            
+            # 置信度分布统计
+            conf_avg = sum(conf_values) / len(conf_values) if conf_values else 0
+            conf_max = max(conf_values) if conf_values else 0
+            conf_min = min(conf_values) if conf_values else 0
+            
+            logger.info(
+                f"[Pipeline] NO_TRADE 统计: {observe_count} 个事件进入观察队列\n"
+                f"  置信度分布：avg={conf_avg:.2f}, max={conf_max:.2f}, min={conf_min:.2f}\n"
+                f"  阈值检查：auto>=0.75, review>=0.55, observe<0.55\n"
+                f"  详情 (前 5 个):\n" + "\n".join(no_trade_details[:5]) +
+                (f"\n  ... 还有 {len(no_trade_details)-5} 个" if len(no_trade_details) > 5 else "")
+            )
 
         return auto_count, review_count, observe_count
 
