@@ -852,8 +852,17 @@ def _reconcile_position_store(scheduler):
     discrepancies = []
     
     # 3a. Broker 有但内存无 → 可能是 Scalping 仓位 (内存已清但 open_positions 有)
+    # P0 修复 (2026-05-23): 加载 PRICE_FAIL 已关闭集合，防止期权重导入循环
+    # 根因: position_sync 正确跳过 PRICE_FAIL 期权，但对账函数未过滤，
+    #       导致期权被重新加入 position_store → signal pipeline 扫描 → ERROR 循环
+    _pf_closed = _load_price_fail_closed_set()
+
     new_symbols = broker_symbols - mem_symbols
     for symbol in new_symbols:
+        # P0 修复 (2026-05-23): 跳过 PRICE_FAIL 已关闭的期权，与 position_sync 保持一致
+        if symbol in _pf_closed:
+            logger.warning(f"[持仓对账] 跳过 PRICE_FAIL 已关闭期权 {symbol} (防止重导入循环)")
+            continue
         bp = broker_positions[symbol]
         is_scalping_in_db = symbol in db_scalping_symbols
         

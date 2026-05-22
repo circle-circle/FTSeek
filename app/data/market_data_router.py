@@ -462,6 +462,11 @@ class MarketDataRouter:
                 logger.warning(f"[Router] Futu LV3 主通道失败 {symbol}: {e}")
         
         # Step 2: TwelveData 降级 (仅当 LV3 不可用时)
+        # P0 修复 (2026-05-23): 期权代码仅 Futu 支持，跳过 TwelveData/Finnhub
+        # 根因: TwelveData 不支持期权符号格式，每次调用浪费 API 配额并产生 ERROR
+        if is_option and (not ts_ctx or ts_ctx.get("price", 0) <= 0):
+            logger.debug(f"[Router] {symbol} 期权代码 Futu 无数据 (非交易时段/已过期)，跳过 TwelveData")
+            return None
         if not ts_ctx or ts_ctx.get("data_source") not in ("futu_lv3", "futu_lv3_quote_only"):
             if self.td:
                 try:
