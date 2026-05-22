@@ -25,7 +25,7 @@ class ConfigDefaults:
     # ============================================================
     MIN_CONFIDENCE = 0.4                    # P0 优化: 0.6 → 0.4
     MIN_CONSENSUS = 0.2                     # P0 优化: 0.3 → 0.2
-    MIN_SIGNAL_SCORE = 50                   # P0 优化: 60 → 50
+    MIN_SIGNAL_SCORE = 99                   # P3 优化 (2026-05-22): 50→99 与 SCHEDULER_MIN_SIGNAL_STRENGTH 对齐
 
     # ============================================================
     # 风控 — 交易限制 (risk.trading)

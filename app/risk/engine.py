@@ -57,7 +57,7 @@ class RiskEngine(BaseRiskEngine):
         from app.core.config_defaults import CFG
         self.pre_trade_checker = PreTradeChecker(
             min_confidence=risk_config.get("MIN_CONFIDENCE", CFG.MIN_CONFIDENCE),
-            min_signal_strength=risk_config.get("SIGNAL_MIN_SCORE", 50),
+            min_signal_strength=risk_config.get("SIGNAL_MIN_SCORE", CFG.MIN_SIGNAL_SCORE),
         )
         
         # P0 2026-04-20: 保存 risk_config 为实例属性，供 pre_trade_check() 使用

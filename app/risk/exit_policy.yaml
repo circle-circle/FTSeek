@@ -165,12 +165,14 @@ short_overrides:
   # 幻方 Principle: 技术破位快速平仓
   technical_breach:
     enabled: true                     # P0 修复 (2026-05-08): 显式开关
-    trigger_atr_mult: 1.0             # RFC-0001: 0.3→1.0 (33笔STRUCTURE_EXIT亏-$3,106, 门槛过低)
+    trigger_atr_mult: 2.0             # P3 优化 (2026-05-22): 1.0→2.0 增加破位缓冲区，减少过早 STRUCTURE_EXIT
+                                      #   数据：33笔 STRUCTURE_EXIT 亏 -$3,106，触发过于激进
+                                      #   注意：unified_config.yaml 的 breach_threshold_pct 不影响此处逻辑
     cover_pct: 100                    # 平仓 100%
     # P0 修复 (2026-05-08): 防呆机制
     require_resistance_20d: true      # 必须存在真实阻力位，禁止降级到 peak_price
-    min_loss_pct: 0.5                 # 最小亏损门槛: 盈利或微亏 (-0.5%以内) 不触发
-    entry_cooldown_minutes: 30        # 入场冷却: 前 30 分钟不触发技术破位
+    min_loss_pct: 1.0                 # P3 优化 (2026-05-22): 0.5→1.0 最小亏损门槛提高，减少微亏误杀
+    entry_cooldown_minutes: 60        # P3 优化 (2026-05-22): 30→60min 给足行情发展空间
 
   scale_out:                       # 做空止盈更积极
     tier_1_pct: 10.0               # +10% 平 40%
