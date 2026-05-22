@@ -428,9 +428,9 @@ class PreMarketPipeline:
             conf_min = min(conf_values) if conf_values else 0
             
             logger.info(
-                f"[Pipeline] NO_TRADE 统计: {observe_count} 个事件进入观察队列\n"
+                f"[Pipeline] NO_TRADE 统计：{observe_count} 个事件进入观察队列\n"
                 f"  置信度分布：avg={conf_avg:.2f}, max={conf_max:.2f}, min={conf_min:.2f}\n"
-                f"  阈值检查：auto>=0.75, review>=0.55, observe<0.55\n"
+                f"  阈值检查：auto>={self._router.auto_execute_threshold:.2f}, review>=0.55, observe<0.55\n"
                 f"  详情 (前 5 个):\n" + "\n".join(no_trade_details[:5]) +
                 (f"\n  ... 还有 {len(no_trade_details)-5} 个" if len(no_trade_details) > 5 else "")
             )

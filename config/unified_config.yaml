@@ -395,7 +395,7 @@ premarket_pipeline:
       stock: 0.4
       urgency: 0.2
   router:
-    auto_execute_threshold: 0.75
+    auto_execute_threshold: 0.70  # 2026-05-22: 降低阈值，增加交易机会 (原 0.75)
     review_threshold: 0.55
   schedule:
     times:
@@ -439,7 +439,7 @@ hermes_agent:
       stock: 0.4
       urgency: 0.2
   router:
-    auto_execute_threshold: 0.75
+    auto_execute_threshold: 0.70  # 2026-05-22: 降低阈值，增加交易机会 (原 0.75)
     review_threshold: 0.55
   schedule:
     times:
