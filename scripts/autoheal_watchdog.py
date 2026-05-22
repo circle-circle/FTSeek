@@ -312,11 +312,60 @@ def check_db_consistency() -> dict:
     return results
 
 
+def _is_any_market_open() -> dict:
+    """检查当前是否有任何市场处于交易时段
+    
+    Returns:
+        dict with keys: hk (bool), us (bool), any (bool), current_hkt (str), current_cst (str)
+    """
+    from datetime import timezone, timedelta as td
+    
+    now_cst = datetime.now()  # 服务器在 CST (UTC+8)
+    now_hkt = now_cst  # HKT = CST for this server
+    
+    weekday = now_cst.weekday()  # 0=Mon, 6=Sun
+    current_min = now_cst.hour * 60 + now_cst.minute
+    
+    # HK: Mon-Fri, 09:30-12:00 + 13:00-16:00 HKT
+    hk_open = False
+    if weekday < 5:
+        hk_open = (9*60+30 <= current_min < 12*60) or (13*60 <= current_min < 16*60)
+    
+    # US: Mon-Fri (CST evening → next day morning)
+    # Summer (DST, ~Mar-Nov): 21:30 CST - 04:00+1 CST
+    # Winter: 22:30 CST - 05:00+1 CST
+    us_open = False
+    month = now_cst.month
+    is_dst = 3 <= month <= 10  # 简化: 3月-10月为夏令时
+    
+    if weekday < 5:  # Mon evening to Fri evening
+        if is_dst:
+            us_open = current_min >= 21*60+30 or current_min < 4*60
+        else:
+            us_open = current_min >= 22*60+30 or current_min < 5*60
+    elif weekday == 5:  # Saturday morning (Friday's session spillover)
+        if is_dst:
+            us_open = current_min < 4*60
+        else:
+            us_open = current_min < 5*60
+    
+    return {
+        "hk": hk_open,
+        "us": us_open,
+        "any": hk_open or us_open,
+        "current_time_cst": now_cst.strftime("%H:%M:%S"),
+        "weekday": ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"][weekday],
+    }
+
+
 def check_service_health() -> dict:
     """检查服务健康"""
     import urllib.request
 
     results = {}
+
+    # 0. 交易时段检测 (P0 2026-05-22: 非交易时段日志静默是正常的)
+    results["is_trading_hours"] = _is_any_market_open()
 
     # 1. ftseek HTTP health
     try:
@@ -651,12 +700,23 @@ def main():
 
     if svc.get("log_freshness", {}).get("stale"):
         age = svc["log_freshness"].get("age_seconds", 0)
-        issues.append({
-            "severity": "P1",
-            "category": "log_stale",
-            "description": f"日志超过 {age}s 未更新，服务可能卡死",
-            "auto_fix": "restart_service",
-        })
+        trading = svc.get("is_trading_hours", {}).get("any", True)
+        if trading:
+            # 交易时段日志停滞 = 真问题
+            issues.append({
+                "severity": "P1",
+                "category": "log_stale",
+                "description": f"日志超过 {age}s 未更新，服务可能卡死",
+                "auto_fix": "restart_service",
+            })
+        else:
+            # 非交易时段日志静默 = 正常，降级为信息性提示
+            issues.append({
+                "severity": "P3",
+                "category": "log_stale_off_hours",
+                "description": f"非交易时段日志静默 {age}s (正常)",
+                "auto_fix": None,
+            })
 
     # 资源问题
     res = report["checks"]["resources"]
