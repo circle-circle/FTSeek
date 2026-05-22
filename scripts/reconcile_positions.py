@@ -264,14 +264,24 @@ def run_reconciliation(market_filter='HK'):
         action = 'SELL' if info.get('qty', 0) < 0 else 'BUY'
         
         # 插入记录
+        # P0 2026-05-22: INSERT OR IGNORE 防止 UNIQUE constraint 冲突
+        # 根因: 多线程竞态 (position_sync + reconcile 同时运行) 导致同 code OPEN 记录冲突
+        # 修复: INSERT OR IGNORE + 检查 rowcount，未插入则 UPDATE 对齐
         cursor.execute("""
-            INSERT INTO positions (
+            INSERT OR IGNORE INTO positions (
                 code, action, quantity, entry_price, entry_time, status, 
                 market, strategy, signal_id, trader_type
             ) VALUES (?, ?, ?, ?, ?, 'OPEN', ?, ?, ?, ?)
         """, (
             code, action, info['qty'], info['cost'], now_str, info['market'], strategy_name, sig_id, trader_type
         ))
+        if cursor.rowcount == 0:
+            # 已有 OPEN 记录，更新数量/价格对齐
+            cursor.execute(
+                "UPDATE positions SET quantity=?, entry_price=? WHERE code=? AND status='OPEN'",
+                (info['qty'], info['cost'], code)
+            )
+            logger.info(f"   🔄 {code} 已有 OPEN 记录，已更新数量/价格对齐")
         
         if trader_type == 'AI':
             logger.info(f"   🤖 确认为 AI 持仓")

@@ -520,13 +520,39 @@ class PositionManager:
                     f"[止盈自动设置] {code} entry={entry_price:.3f} → take_profit={take_profit:.3f} (+5%)"
                 )
 
+            # P0 2026-05-22: INSERT OR IGNORE 防止 UNIQUE constraint 冲突
+            # 根因: 多线程竞态 (position_sync + reconcile 同时运行) 导致同 code OPEN 记录冲突
+            # 修复: INSERT OR IGNORE + 检查 rowcount，未插入则查询已有 OPEN 记录的 ID 并更新
             cursor.execute('''
-                INSERT INTO positions 
+                INSERT OR IGNORE INTO positions 
                 (code, action, quantity, entry_price, entry_time, status, stop_loss, take_profit, signal_id, strategy, trace_id, trader_type, strategy_tags)
                 VALUES (?, ?, ?, ?, ?, 'OPEN', ?, ?, ?, ?, ?, ?, ?)
             ''', (code, action, quantity, entry_price, entry_time, stop_loss, take_profit, signal_id, strategy, trace_id, trader_type or 'MANUAL', strategy_tags))
+            
+            if cursor.rowcount == 0:
+                # 已有 OPEN 记录 (UNIQUE constraint 触发)，查询并更新
+                cursor.execute(
+                    "SELECT id FROM positions WHERE code=? AND status='OPEN' LIMIT 1",
+                    (code,)
+                )
+                existing = cursor.fetchone()
+                if existing:
+                    position_id = existing[0]
+                    cursor.execute(
+                        "UPDATE positions SET quantity=?, entry_price=?, stop_loss=?, take_profit=? WHERE id=?",
+                        (quantity, entry_price, stop_loss, take_profit, position_id)
+                    )
+                    logger.warning(
+                        f"[create_position] {code} 已有 OPEN 记录 (id={position_id})，"
+                        f"更新数量/价格而非新建 (UNIQUE constraint 保护)"
+                    )
+                else:
+                    logger.error(f"[create_position] {code} INSERT OR IGNORE 未插入且无 OPEN 记录，异常状态！")
+                    position_id = None
+            else:
+                position_id = cursor.lastrowid
+            
             conn.commit()
-            position_id = cursor.lastrowid
 
             # 自动订阅动态池 (新成交股票加入实时监控)
             try:

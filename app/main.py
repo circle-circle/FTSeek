@@ -609,13 +609,22 @@ def _sync_positions_from_futu(executor):
                 )
                 synced.append(f"{code}({qty}股@{cost})")
             else:
+                # P0 2026-05-22: INSERT OR IGNORE 防止 UNIQUE constraint 冲突
                 c.execute(
-                    """INSERT INTO positions
+                    """INSERT OR IGNORE INTO positions
                        (code, action, quantity, entry_price, entry_time, status, stop_loss, take_profit, strategy, strategy_tags)
                        VALUES (?,?,?,?,?,'OPEN',?,?,?,?)""",
                     (code, 'BUY', qty, cost, now_str, sl, tp, 'futu_sync', 'sync')
                 )
-                inserted.append(f"{code}({qty}股@{cost})")
+                if c.rowcount > 0:
+                    inserted.append(f"{code}({qty}股@{cost})")
+                else:
+                    # 已有 OPEN 记录，更新对齐
+                    c.execute(
+                        "UPDATE positions SET quantity=?, entry_price=?, stop_loss=?, take_profit=? WHERE code=? AND status='OPEN'",
+                        (qty, cost, sl, tp, code)
+                    )
+                    synced.append(f"{code}({qty}股@{cost}·已有OPEN更新)")
 
         # 2. 本地有，富途无 → 标记 CLOSED（富途已平仓但本地未同步）
         for code, pos_id in local_open.items():
