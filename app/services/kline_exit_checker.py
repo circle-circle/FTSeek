@@ -173,7 +173,7 @@ class KlineExitChecker:
         """P0 修复 2026-05-21: ExitRuleEngine 双跑评估 — 仅记录，不执行交易
         
         构建 ExitContext 并调用 ExitRuleEngine.evaluate()，将结果写入日志。
-        目的: 收集 Phase 1 规则的实际触发数据，为 Phase 2 (正式切换) 提供对比依据。
+        目的：收集 Phase 1 规则的实际触发数据，为 Phase 2 (正式切换) 提供对比依据。
         """
         if self._exit_rule_engine is None:
             return
@@ -195,14 +195,24 @@ class KlineExitChecker:
                 is_same_day=True,
             )
             decision = self._exit_rule_engine.evaluate(ctx)
+            
+            # 增强日志：记录评估结果（无论是否触发）
             if decision.should_exit:
                 logger.info(
                     f"[ExitRule·双跑] {code} {decision.rule_name} 触发 "
                     f"(P{decision.priority}) | {decision.reason} | "
                     f"pnl={ctx.pnl_pct:.2%} (仅记录，不执行)"
                 )
+            else:
+                # 记录评估状态（用于监控和调试）
+                logger.debug(
+                    f"[ExitRule·双跑] {code} 评估完成 | "
+                    f"pnl={ctx.pnl_pct:.2%} | atr={atr:.4f} | "
+                    f"peak={self._peak_price_cache.get(code, current_price):.3f} | "
+                    f"未触发 (阈值：-3.5%)"
+                )
         except Exception as _sre:
-            logger.debug(f"[ExitRule·双跑] {code} 评估异常: {_sre}")
+            logger.debug(f"[ExitRule·双跑] {code} 评估异常：{_sre}")
 
     def _check_dynamic_exit(
         self,
