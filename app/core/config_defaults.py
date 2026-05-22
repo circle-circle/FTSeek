@@ -84,8 +84,8 @@ class ConfigDefaults:
     CONSENSUS_MTF_TREND_BOOST = 1.3        # strategy.consensus.mtf_trend_boost
     CONSENSUS_MTF_RANGE_DECAY = 0.7        # strategy.consensus.mtf_range_decay
     # 分歧度与防守
-    CONSENSUS_DIVERGENCE_THRESHOLD = 0.5   # strategy.consensus.divergence_threshold
-    CONSENSUS_DIVERGENCE_SCORE_DECAY = 0.5 # strategy.consensus.divergence_score_decay
+    CONSENSUS_DIVERGENCE_THRESHOLD = 0.7   # strategy.consensus.divergence_threshold  # 2026-05-22: 放宽 (原0.5)
+    CONSENSUS_DIVERGENCE_SCORE_DECAY = 0.3 # strategy.consensus.divergence_score_decay  # 2026-05-22: 减轻 (原0.5)
     CONSENSUS_DIVERGENCE_GRAY_ZONE = True  # strategy.consensus.divergence_trigger_gray
     CONSENSUS_GRAY_ZONE_PENALTY = -0.3     # strategy.consensus.gray_zone_penalty  # 2026-05-22: 对齐 YAML (代码原值-0.10)
     CONSENSUS_CHAOS_THRESHOLD = 0.7        # strategy.consensus.chaos_threshold

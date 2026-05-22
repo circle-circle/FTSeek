@@ -106,8 +106,8 @@ def _read_consensus_params_cfg() -> dict:
         'breaking_news_multiplier': 2.0,
         'breaking_news_lookback_hours': 2,
         'gray_zone_penalty': -0.3,
-        'divergence_threshold': 0.5,
-        'divergence_score_decay': 0.5,
+        'divergence_threshold': 0.7,
+        'divergence_score_decay': 0.3,
         'divergence_gray_zone': True,
         'scenario_consecutive_fail_limit': 3,
         'scenario_fail_penalty': -0.1,
@@ -1541,7 +1541,7 @@ class ConsensusEngine:
                 score *= decay
                 logger.warning(
                     f"[因子黑名单] {code} 低胜率组合触发: "
-                    f"{{', '.join(sorted(blacklisted))}} "
+                    f"{', '.join(sorted(blacklisted))} "
                     f"score {old_score:+.2f} → {score:+.2f} (×{decay})"
                 )
                 break

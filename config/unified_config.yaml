@@ -888,8 +888,8 @@ strategy:
     adaptive_short_window: 20
     adx_range: 20
     adx_trend: 25
-    divergence_score_decay: 0.5
-    divergence_threshold: 0.5
+    divergence_score_decay: 0.3           # 2026-05-22: 放宽衰减 (原0.5, 分歧惩罚过重导致0触发)
+    divergence_threshold: 0.7              # 2026-05-22: 提高阈值 (原0.5, 2:1投票属正常分歧)
     divergence_trigger_gray: true
     min_strategies: 2
     scenario_consecutive_fail_limit: 3
