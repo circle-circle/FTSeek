@@ -1034,16 +1034,16 @@ strategy:
     volume_ratio_threshold: 2.0
   weight_engine_path: /opt/ftseek/FTSeek/strategies/weight_engine.py
   weights:
-    bb_factor: 0.15               # 2026-05-19: 降低权重 (原0.25, bb+rsi组合仅16.7% WR)
+    bb_factor: 0.50               # 2026-05-22: 提高权重 (原0.15, 0.15导致理论最大分0.95<阈值1.5)
     cross_market_arbitrage: 1.0
     event_driven: 1.2
-    ma_cross_factor: 0.15
-    macd_factor: 0.25
+    ma_cross_factor: 0.40         # 2026-05-22: 提高权重 (原0.15)
+    macd_factor: 0.60             # 2026-05-22: 提高权重 (原0.25)
     open_close_effect: 0.8
-    rsi_factor: 0.15              # 2026-05-19: 降低权重 (原0.25, bb+rsi组合仅16.7% WR)
+    rsi_factor: 0.50              # 2026-05-22: 提高权重 (原0.15, 低WR惩罚保留但不至于静默)
     sentiment_ai: 0.5
-    st_factor: 0.15
-    vol_factor: 0.1
+    st_factor: 0.60               # 2026-05-22: 提高权重 (原0.15, 趋势主力)
+    vol_factor: 0.30              # 2026-05-22: 提高权重 (原0.10)
     confluence_v2: 2.0            # 2026-05-19: 提高权重 (原1.5, 68% WR最佳表现)
     enhanced_confluence: 1.3
     supertrend: 1.0               # 2026-05-19: 修复死代码 (原0.0, enabled但weight=0)
