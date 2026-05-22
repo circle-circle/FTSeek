@@ -76,6 +76,27 @@ class ConfigDefaults:
     CONSENSUS_THRESHOLD = 1.0              # strategy.consensus.threshold  # 2026-05-22: 恢复原值 (05-19提至1.5导致零触发)
     CONSENSUS_ADX_TREND = 25               # strategy.consensus.adx_trend
     CONSENSUS_ADX_RANGE = 20               # strategy.consensus.adx_range
+    # 市场状态增益/衰减系数 (P1 SSOT 2026-05-22)
+    CONSENSUS_TREND_BOOST = 1.5            # strategy.consensus.trend_boost
+    CONSENSUS_TREND_DECAY = 0.6            # strategy.consensus.trend_decay
+    CONSENSUS_RANGE_BOOST = 1.5            # strategy.consensus.range_boost
+    CONSENSUS_RANGE_DECAY = 0.6            # strategy.consensus.range_decay
+    CONSENSUS_MTF_TREND_BOOST = 1.3        # strategy.consensus.mtf_trend_boost
+    CONSENSUS_MTF_RANGE_DECAY = 0.7        # strategy.consensus.mtf_range_decay
+    # 分歧度与防守
+    CONSENSUS_DIVERGENCE_THRESHOLD = 0.5   # strategy.consensus.divergence_threshold
+    CONSENSUS_DIVERGENCE_SCORE_DECAY = 0.5 # strategy.consensus.divergence_score_decay
+    CONSENSUS_DIVERGENCE_GRAY_ZONE = True  # strategy.consensus.divergence_trigger_gray
+    CONSENSUS_GRAY_ZONE_PENALTY = -0.3     # strategy.consensus.gray_zone_penalty  # 2026-05-22: 对齐 YAML (代码原值-0.10)
+    CONSENSUS_CHAOS_THRESHOLD = 0.7        # strategy.consensus.chaos_threshold
+    # 场景失效检测
+    CONSENSUS_SCENARIO_FAIL_LIMIT = 3      # strategy.consensus.scenario_consecutive_fail_limit
+    CONSENSUS_SCENARIO_FAIL_PENALTY = -0.1 # strategy.consensus.scenario_fail_penalty
+    # 突发新闻
+    CONSENSUS_BREAKING_NEWS_MULTIPLIER = 2.0  # strategy.consensus.breaking_news_multiplier
+    CONSENSUS_BREAKING_NEWS_LOOKBACK_HOURS = 2  # strategy.consensus.breaking_news_lookback_hours
+    # 开关
+    CONSENSUS_HYBRID_WEIGHT_ENABLED = True # strategy.consensus.hybrid_weight_enabled
     
     # ============================================================
     # 信号冷却

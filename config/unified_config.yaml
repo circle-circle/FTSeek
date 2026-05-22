@@ -912,6 +912,7 @@ strategy:
     mtf_trend_boost: 1.3
     mtf_range_decay: 0.7
     session_params_enabled: true
+    chaos_threshold: 0.7                # 信号混乱放弃阈值 (策略反转比例)
   cooldown:
     signal_cooldown: 120
   decision_buffer:

@@ -51,9 +51,6 @@ logger = logging.getLogger("ftseek.consensus")
 # 2026-04-10 修复: 移除 propagate=False，让日志通过 ftseek 父级 logger 输出
 # 之前设为 False 导致共识引擎日志静默丢失
 
-# 混合架构开关
-HYBRID_WEIGHT_ENABLED = True  # 启用混合权重架构
-
 # ============================================================
 #  自适应阈值 (Adaptive Threshold) — 从 config_center 读取
 #  2026-05-20: 修复硬编码与 YAML 不一致 (P0)
@@ -92,6 +89,51 @@ def _read_factor_weights_cfg() -> dict:
     except Exception:
         pass
     return {}
+
+# ============================================================
+#  共识参数 — 从 config_center 读取 (P1 SSOT 2026-05-22)
+# ============================================================
+def _read_consensus_params_cfg() -> dict:
+    """从 config_center 读取共识引擎参数（消除魔法数字，SSOT 对齐 unified_config.yaml）"""
+    _defaults = {
+        'hybrid_weight_enabled': True,
+        'trend_boost': 1.5,
+        'trend_decay': 0.6,
+        'range_boost': 1.5,
+        'range_decay': 0.6,
+        'mtf_trend_boost': 1.3,
+        'mtf_range_decay': 0.7,
+        'breaking_news_multiplier': 2.0,
+        'breaking_news_lookback_hours': 2,
+        'gray_zone_penalty': -0.3,
+        'divergence_threshold': 0.5,
+        'divergence_score_decay': 0.5,
+        'divergence_gray_zone': True,
+        'scenario_consecutive_fail_limit': 3,
+        'scenario_fail_penalty': -0.1,
+        'chaos_threshold': 0.7,
+    }
+    try:
+        from config.config_center import get_config_center
+        cc = get_config_center()
+        result = {}
+        for key, default in _defaults.items():
+            val = cc.get(f'strategy.consensus.{key}', default)
+            # 类型安全: bool/int/float
+            if isinstance(default, bool):
+                result[key] = bool(val) if val is not None else default
+            elif isinstance(default, int):
+                result[key] = int(val) if val is not None else default
+            else:
+                result[key] = float(val) if val is not None else default
+        return result
+    except Exception:
+        return dict(_defaults)
+
+_consensus_params = _read_consensus_params_cfg()
+
+# 混合架构开关 (SSOT: strategy.consensus.hybrid_weight_enabled)
+HYBRID_WEIGHT_ENABLED = _consensus_params['hybrid_weight_enabled']
 
 # ============================================================
 #  策略分类与基准权重 (从 git HEAD 恢复, P0 2026-05-20)
@@ -164,29 +206,32 @@ DEFAULT_BASE_WEIGHTS = {
     "vol_factor":        0.6,
 }
 
-# 市场状态增益/衰减系数
-TREND_BOOST   = 1.5   # 趋势市对趋势策略的增益
-TREND_DECAY   = 0.6   # 趋势市对震荡策略的衰减
-RANGE_BOOST   = 1.5   # 震荡市对震荡策略的增益
-RANGE_DECAY   = 0.6   # 震荡市对趋势策略的衰减
-MTF_TREND_BOOST  = 1.3  # 趋势市对 MTF 策略的增益
-MTF_RANGE_DECAY  = 0.7  # 震荡市 MTF 策略的衰减
+# 市场状态增益/衰减系数 (SSOT: strategy.consensus.trend_boost / trend_decay / ...)
+TREND_BOOST   = _consensus_params['trend_boost']    # 趋势市对趋势策略的增益
+TREND_DECAY   = _consensus_params['trend_decay']    # 趋势市对震荡策略的衰减
+RANGE_BOOST   = _consensus_params['range_boost']    # 震荡市对震荡策略的增益
+RANGE_DECAY   = _consensus_params['range_decay']    # 震荡市对趋势策略的衰减
+MTF_TREND_BOOST  = _consensus_params['mtf_trend_boost']   # 趋势市对 MTF 策略的增益
+MTF_RANGE_DECAY  = _consensus_params['mtf_range_decay']   # 震荡市 MTF 策略的衰减
 
-# 突发新闻权重倍增器
-BREAKING_NEWS_MULTIPLIER = 2.0
-BREAKING_NEWS_LOOKBACK_HOURS = 2
+# 突发新闻权重倍增器 (SSOT: strategy.consensus.breaking_news_multiplier)
+BREAKING_NEWS_MULTIPLIER = _consensus_params['breaking_news_multiplier']
+BREAKING_NEWS_LOOKBACK_HOURS = _consensus_params['breaking_news_lookback_hours']
 
-# 灰区防守惩罚
-GRAY_ZONE_PENALTY = -0.10
+# 灰区防守惩罚 (SSOT: strategy.consensus.gray_zone_penalty)
+GRAY_ZONE_PENALTY = _consensus_params['gray_zone_penalty']
 
-# 策略分歧度度量
-DIVERGENCE_THRESHOLD = 0.5
-DIVERGENCE_SCORE_DECAY = 0.5
-DIVERGENCE_GRAY_ZONE = True
+# 策略分歧度度量 (SSOT: strategy.consensus.divergence_threshold / ...)
+DIVERGENCE_THRESHOLD = _consensus_params['divergence_threshold']
+DIVERGENCE_SCORE_DECAY = _consensus_params['divergence_score_decay']
+DIVERGENCE_GRAY_ZONE = _consensus_params['divergence_gray_zone']
 
-# 策略场景失效检测
-SCENARIO_CONSECUTIVE_FAIL_LIMIT = 3
-SCENARIO_FAIL_PENALTY = -0.10
+# 策略场景失效检测 (SSOT: strategy.consensus.scenario_consecutive_fail_limit / ...)
+SCENARIO_CONSECUTIVE_FAIL_LIMIT = _consensus_params['scenario_consecutive_fail_limit']
+SCENARIO_FAIL_PENALTY = _consensus_params['scenario_fail_penalty']
+
+# 信号混乱阈值 (SSOT: strategy.consensus.chaos_threshold)
+CHAOS_THRESHOLD = _consensus_params['chaos_threshold']
 
 # 【P0 修复 2026-04-26】原实现写死 /opt/ftseek/FTSeek 绝对路径，
 # 一旦部署目录变更或使用工作区软链接指向其他路径，importlib 就会报 FileNotFoundError。
@@ -1613,7 +1658,7 @@ class ConsensusEngine:
                 flip_count += 1
         total_strategies = len(strategy_directions)
         # P1 优化: 放宽混乱阈值至 70% (vol_factor 已有冷却，减少误判)
-        CHAOS_THRESHOLD = 0.7
+        # CHAOS_THRESHOLD: SSOT strategy.consensus.chaos_threshold
         if total_strategies > 0 and flip_count / total_strategies > CHAOS_THRESHOLD:
             logger.info(
                 f"[共识] {code} ⚠️ 信号混乱（{flip_count}/{total_strategies} 策略反转），放弃本窗口"
