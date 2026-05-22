@@ -17,7 +17,7 @@ logger = logging.getLogger("ftseek.config_audit")
 _AUDIT_ITEMS = [
     ("strategy.cooldown.signal_cooldown", "SIGNAL_COOLDOWN", 120, "信号冷却时间"),
     ("strategy.consensus.window_seconds", "CONSENSUS_WINDOW", 90, "共识窗口"),
-    ("strategy.consensus.threshold", "CONSENSUS_THRESHOLD", 1.5, "共识阈值"),  # 2026-05-19: 提高共识阈值 (原1.0)
+    ("strategy.consensus.threshold", "CONSENSUS_THRESHOLD", 1.0, "共识阈值"),  # 2026-05-22: 对齐 config_defaults.py (05-19提至1.5导致零触发，已恢复1.0)
     ("trading.max_open_positions", "MAX_OPEN_POSITIONS", 5, "最大持仓数"),
     ("risk_limits.min_confidence", "MIN_CONFIDENCE", 0.45, "最小置信度"),  # 2026-05-19: 提高信号门槛 (原0.35)
     ("risk_limits.max_single_position", "MAX_SINGLE_POSITION", 0.08, "单标的最大仓位"),

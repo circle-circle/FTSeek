@@ -372,8 +372,7 @@ class TradeExecutor:
         result = self.position_manager.close_position(
             code,
             current_price,
-            datetime.now().isoformat(),
-            signal=take_profit_signal
+            datetime.now().isoformat()
         )
         
         if result:

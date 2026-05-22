@@ -1,46 +1,19 @@
 {
-  "timestamp": "2026-05-21T12:19:03.123363",
+  "timestamp": "2026-05-22T12:20:53.231492",
   "assessment": {
     "session": "midday",
     "market_regime": "NEUTRAL",
-    "morning_summary": "港股早盘震荡整理，09992建仓微盈，交投清淡，市场等待午后方向。",
-    "key_observations": [
-      "A股午间休市削弱跨市场联动，港股独立波动特征显现",
-      "南向资金上午净流入放缓，增量资金观望情绪较浓",
-      "09992早盘信号初步验证，但量能未有效放大需确认"
-    ],
-    "trade_performance": {
-      "total_trades": 1,
-      "win_rate": 1.0,
-      "total_pnl": 40
-    },
-    "pnl_assessment": "早盘单票微利，整体持仓稳健，未现大幅回撤。",
-    "execution_quality": "严格按盘前低紧迫度计划建仓，执行纪律良好。",
-    "afternoon_strategy": "维持现有仓位，午后跟踪A股开盘联动，若放量则顺势加仓。",
-    "focus_symbols": [
-      "HK.00700",
-      "HK.09992",
-      "HK.00981"
-    ],
-    "risk_adjustments": [
-      "严控单票仓位上限，防范午后流动性收缩",
-      "为HK.09992设置保本移动止损，锁定微利",
-      "警惕A股午后情绪突变引发的港股被动抛压"
-    ],
-    "position_recommendations": [
-      {
-        "symbol": "HK.09992",
-        "action": "HOLD",
-        "reason": "早盘信号初步验证且浮盈，午后观察量能确认后再定方向"
-      },
-      {
-        "symbol": "HK.00700",
-        "action": "HOLD",
-        "reason": "盘前中紧迫度标的，等待午后A股联动及资金回流信号"
-      }
-    ],
-    "confidence": 0.6,
-    "timestamp": 1779337143.123283,
-    "trace_id": "midday-20260521-1219"
+    "morning_summary": "午间分析降级: LLM 返回空结果",
+    "key_observations": [],
+    "trade_performance": {},
+    "pnl_assessment": "",
+    "execution_quality": "",
+    "afternoon_strategy": "",
+    "focus_symbols": [],
+    "risk_adjustments": [],
+    "position_recommendations": [],
+    "confidence": 0.0,
+    "timestamp": 1779423653.2314072,
+    "trace_id": ""
   }
 }

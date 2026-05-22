@@ -2223,7 +2223,12 @@ class DataSubscriber:
         """
         if not hasattr(self, '_trade_executor') or self._trade_executor is None:
             from app.data_subscriber_engines.trade_executor import TradeExecutor
-            from config import config as _cfg
+            from config.config_center import get_config_center
+            _cc = get_config_center()
+            # TradeExecutor only needs TRADE_ENV (0=real, 1=simulation)
+            class _TradeExecutorConfig:
+                TRADE_ENV = _cc.get('futu.trade_env', 1)
+            _cfg = _TradeExecutorConfig()
             
             # 创建 TradeExecutor，注入依赖
             self._trade_executor = TradeExecutor(
