@@ -2643,6 +2643,13 @@ class DataSubscriber:
                     logger.info("[动态订阅] Trade SDK连接已关闭 (无代码退订路径)")
             except Exception:
                 pass
+            # P0 修复 (2026-05-22): 清除 PositionSync 僵尸引用
+            try:
+                from app.trader.position_sync import get_position_sync
+                for m in ('HK', 'US'):
+                    get_position_sync(market=m)._trade_context = None
+            except Exception:
+                pass
             return
 
         sub_type_map = {
@@ -2697,6 +2704,18 @@ class DataSubscriber:
                 logger.info("[动态订阅] Trade SDK连接已关闭 (非交易时段静默)")
         except Exception as close_err:
             logger.warning(f"[动态订阅] 关闭Trade SDK连接异常: {close_err}")
+
+        # P0 修复 (2026-05-22): 清除 PositionSync 对已关闭 context 的引用
+        # 防止 PositionSync._trade_context 变成僵尸引用 → 下次交易时段同步必崩
+        try:
+            from app.trader.position_sync import get_position_sync
+            for market in ('HK', 'US'):
+                sync = get_position_sync(market=market)
+                if sync._trade_context is not None:
+                    sync._trade_context = None
+                    logger.info(f"[动态订阅] PositionSync({market}) 共享 context 引用已清除")
+        except Exception as ps_err:
+            logger.debug(f"[动态订阅] PositionSync 引用清理异常: {ps_err}")
 
         logger.info(f"[动态订阅] 退订完成: 成功={success_count}, 失败={fail_count} | 槽位已释放 | 所有连接已关闭")
 

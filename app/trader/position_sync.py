@@ -280,7 +280,12 @@ class PositionSync:
         return self._fetch_from_futu()
 
     def _fetch_from_futu(self) -> Dict[str, FutuPosition]:
-        """从 Futu OpenD 拉取持仓 (根据 market 属性自动选择港股/美股)"""
+        """从 Futu OpenD 拉取持仓 (根据 market 属性自动选择港股/美股)
+        
+        P0 修复 (2026-05-22): 共享 context 僵尸引用防护
+        - unsubscribe_all() 关闭 context 后，PositionSync._trade_context 仍指向已关闭对象
+        - 本修复在查询失败时自动清除共享引用，下次同步创建临时 context
+        """
         from futu import OpenSecTradeContext, TrdEnv, TrdMarket
         from app import config
         
@@ -329,6 +334,18 @@ class PositionSync:
                 self._last_position_count = 0
         except Exception as e:
             logger.error(f"[{self.market}Futu同步] 异常: {e}")
+            
+            # P0 修复 (2026-05-22): 共享 context 僵尸引用防护
+            # 如果查询失败且使用的是共享 context，清除引用防止下次同步继续用僵尸对象
+            # 场景: unsubscribe_all() 关闭了 context → PositionSync._trade_context 仍指向已关闭对象
+            #       → 每次同步都失败 → 幽灵仓无法被清理
+            if not should_close and self._trade_context is not None:
+                logger.warning(
+                    f"[{self.market}Futu同步] 共享 context 查询失败，清除引用 "
+                    f"(可能是非交易时段 context 已关闭，下次同步将创建临时 context)"
+                )
+                self._trade_context = None
+            
             # 确保临时创建的 context 在异常时也被关闭
             if 'should_close' in locals() and should_close:
                 try:
