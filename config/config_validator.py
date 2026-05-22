@@ -424,7 +424,7 @@ class ConfigValidator:
             ("最大单笔亏损", "risk_limits.max_single_loss", 0.05, "app/risk/risk_manager.py", {}),
             ("最小置信度", "risk_limits.min_confidence", 0.45, "app/risk/risk_manager.py", {}),  # 2026-05-19: 对齐 YAML (原 0.35)
             ("共识窗口", "strategy.consensus.window_seconds", 90, "app/core/config_container.py", {}),
-            ("共识阈值", "strategy.consensus.threshold", 1.5, "app/core/config_container.py", {}),
+            ("共识阈值", "strategy.consensus.threshold", 1.0, "app/core/config_container.py", {}),  # 2026-05-22: 1.5→1.0, 对齐 config_container.py + YAML
             ("决策缓冲冷却", "strategy.decision_buffer.signal_cooldown", 120, "app/decision_buffer.py", {}),
             ("决策缓冲队列", "strategy.decision_buffer.max_pending", 500, "app/decision_buffer.py", {}),
             ("信号冷却", "signal_cooldown.default_seconds", 120, "app/core/config_container.py", {}),
