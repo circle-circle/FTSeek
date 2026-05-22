@@ -895,12 +895,12 @@ strategy:
     scenario_consecutive_fail_limit: 3
     scenario_fail_penalty: -0.1
     short_bias_factor: 1.0
-    threshold: 1.5               # 2026-05-19: 提高共识阈值 (原1.0, 要求更多因子确认)
+    threshold: 1.0               # 2026-05-22: 恢复原值 (05-19提至1.5导致全天零触发，实际最高分仅0.71)
     window_seconds: 90
     adaptive_threshold_enabled: true
     adaptive_threshold_window: 200
     adaptive_threshold_percentile: 75
-    adaptive_threshold_min: 1.2  # 2026-05-21: 提高自适应下限 (原0.8, 过滤弱信号)
+    adaptive_threshold_min: 0.8  # 2026-05-22: 恢复原值 (05-21提至1.2导致弱信号全灭)
     adaptive_threshold_max: 2.5
     breaking_news_multiplier: 2.0
     breaking_news_lookback_hours: 2
