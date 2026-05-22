@@ -73,7 +73,7 @@ class ConfigDefaults:
     # 共识引擎
     # ============================================================
     CONSENSUS_WINDOW = 90                  # strategy.consensus.window_seconds (对齐 unified_config.yaml)
-    CONSENSUS_THRESHOLD = 1.5              # strategy.consensus.threshold  # 2026-05-19: 提高共识阈值 (原1.0)
+    CONSENSUS_THRESHOLD = 1.0              # strategy.consensus.threshold  # 2026-05-22: 恢复原值 (05-19提至1.5导致零触发)
     CONSENSUS_ADX_TREND = 25               # strategy.consensus.adx_trend
     CONSENSUS_ADX_RANGE = 20               # strategy.consensus.adx_range
     
