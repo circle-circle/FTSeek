@@ -54,6 +54,8 @@ class Position:
     # Phase 1: 退出状态机
     exit_state: Optional[str] = None
     state_updated_at: Optional[str] = None
+    # 信号归因 (2026-05-22 新增)
+    signal_id: Optional[str] = None  # 关联的信号 ID
 
 
 class PositionManager:
@@ -1235,6 +1237,7 @@ class PositionManager:
             lowest_price=_float('lowest_price', 15),
             exit_state=_get('exit_state', 27, 'INIT'),
             state_updated_at=_get('state_updated_at', 28),
+            signal_id=_get('signal_id', 16),  # 2026-05-22: 添加 signal_id 映射
         )
     
     # ==================== 顺势加仓方法 ====================
