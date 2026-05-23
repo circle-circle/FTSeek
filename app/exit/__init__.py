@@ -15,6 +15,10 @@
 - TrailingExitModule: Chandelier 追踪止损
 - ScaleOutExitModule: 分层止盈
 - DynamicRiskExit: 动态风控 (ATR止损+个股风险限制+连续亏损熔断)
+
+成本与仓位:
+- CostModel: 交易成本模型 (佣金+滑点+价差)
+- PositionSizing: ATR仓位控制 (风险定仓+Edge过滤)
 """
 from app.exit.base import (
     ExitProfile,
@@ -22,6 +26,8 @@ from app.exit.base import (
     BaseExitModule,
 )
 from app.exit.registry import ExitModuleRegistry, get_exit_registry
+from app.exit.cost_model import CostModel, CostEstimate
+from app.exit.position_sizing import PositionSizing, SizingResult
 
 
 def _auto_register() -> None:
@@ -47,4 +53,8 @@ __all__ = [
     "ExitModuleRegistry",
     "get_exit_registry",
     "DynamicRiskExit",
+    "CostModel",
+    "CostEstimate",
+    "PositionSizing",
+    "SizingResult",
 ]
