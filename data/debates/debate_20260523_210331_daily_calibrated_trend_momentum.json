@@ -1,0 +1,243 @@
+{
+  "debate_id": "debate_20260523_210331_daily_calibrated_trend_momentum",
+  "strategy_name": "daily_calibrated_trend_momentum",
+  "timestamp": "2026-05-23T21:03:31.287886",
+  "statistical_gate": {
+    "passed": false,
+    "checks": {
+      "min_samples": true,
+      "positive_sharpe": true,
+      "bonferroni_significant": false,
+      "top_n_robust": false,
+      "monte_carlo_significant": false,
+      "concentration_acceptable": false
+    },
+    "metrics": {
+      "n_trades": 123,
+      "mean_pnl": 13.4664,
+      "std_pnl": 273.1386,
+      "total_pnl": 1656.3731,
+      "win_rate": 0.5285,
+      "sharpe_per_trade": 0.0493,
+      "corrected_sharpe": 0.3486,
+      "trades_per_year": 50.0,
+      "t_statistic": 0.5468,
+      "p_raw": 0.2923,
+      "p_bonferroni": 1.0,
+      "bonferroni_threshold": 0.0045,
+      "top_n_robust": 0,
+      "monte_carlo_p": 0.314,
+      "top_10pct_contribution": 3.0895
+    },
+    "details": {
+      "top_n_robustness": 0
+    },
+    "reason": "Bonferroni校正后不显著: p=1.0000 >= 0.05; Top-N稳健性不足: 移除0笔后不显著 (需>=3); 蒙特卡洛置换检验不显著: p=0.3140; 利润过度集中: Top 10%贡献 309.0%"
+  },
+  "rounds": [
+    {
+      "round": 1,
+      "model": "qwen3.7-max",
+      "content": {
+        "error": "HTTP 401",
+        "raw": "{\"error\":{\"message\":\"Incorrect API key provided. For details, see: https://help.aliyun.com/zh/model-studio/error-code#apikey-error\",\"type\":\"invalid_request_error\",\"param\":null,\"code\":\"invalid_api_key\"},\"request_id\":\"29d7599a-5d1d-9fec-925d-17f548f169d0\"}"
+      },
+      "timestamp": "2026-05-23T21:05:03.608126"
+    },
+    {
+      "round": 1,
+      "model": "deepseek-v4-pro",
+      "content": {
+        "assessment": "策略统计意义上不显著，利润高度集中在极少数交易，且剔除最优交易后立即失效，表明策略不可靠，可能存在严重的过拟合和幸存者偏差。",
+        "effectiveness_score": 15,
+        "failure_modes": [
+          {
+            "mode": "统计显著性完全缺失",
+            "probability": "HIGH",
+            "evidence": "Bonferroni校正后p=1.0，蒙特卡洛置换检验p=0.314，t统计量仅0.5468，远未达到一般置信水平，策略收益极可能来自随机波动。"
+          },
+          {
+            "mode": "利润极度集中",
+            "probability": "HIGH",
+            "evidence": "前10%交易贡献了309%的总利润（top_10pct_contribution=3.0895），收益完全由少数异常值驱动，任何异常值缺失都将导致策略转负。"
+          },
+          {
+            "mode": "稳健性灾难性缺失",
+            "probability": "HIGH",
+            "evidence": "Top-N稳健性检验显示移除0笔最优交易后策略已不显著（top_n_robust=0），说明连单一最好交易都不可或缺，极度脆弱。"
+          }
+        ],
+        "suggestions": [
+          {
+            "action": "重构因子以降低集中度，例如增加波动率调整或截面标准化，避免收益集中在极端少数标的。",
+            "expected_impact": "可能减少对异常值的依赖，提升策略稳定性，但可能降低名义收益。",
+            "risk": "过度平滑可能使因子失去预测能力，需逐步测试。"
+          },
+          {
+            "action": "增加严格的样本外验证和交叉验证，并缩短回测周期以检验时间稳健性。",
+            "expected_impact": "若通过，可确信策略有效性；若失败，则避免在实盘中误导。",
+            "risk": "数据划分不当可能引入前视偏差。"
+          },
+          {
+            "action": "审视线数据源的胜率和盈亏分布，对严重拖后腿的标的（如NVDA）加入排除规则或动态权重限制。",
+            "expected_impact": "可减少极端亏损对整体的侵蚀，改善胜率和利润因子。",
+            "risk": "过度优化可能引入过拟合，需结合经济逻辑。"
+          }
+        ],
+        "key_risk": "策略高度依赖极少数的异常盈利交易，统计上不显著，实盘极大概率失效且回撤深度可能远超历史记录。",
+        "data_gaps": [
+          "回测总PnL（$13,826）与统计门禁计算的total_pnl（$1,656）严重不一致，表明盈亏计算口径可能存在差异，需澄清。",
+          "未提供样本外/前向测试数据，无法验证策略在未知环境中的表现。",
+          "缺少按年份或市场阶段的分段回测，无法识别策略在不同波动率或趋势环境下的适应力。"
+        ]
+      },
+      "timestamp": "2026-05-23T21:05:03.608144"
+    },
+    {
+      "round": 2,
+      "model": "qwen3.7-max",
+      "content": {
+        "error": "HTTP 401",
+        "raw": "{\"error\":{\"message\":\"Incorrect API key provided. For details, see: https://help.aliyun.com/zh/model-studio/error-code#apikey-error\",\"type\":\"invalid_request_error\",\"param\":null,\"code\":\"invalid_api_key\"},\"request_id\":\"6c7e7584-fd3f-9d22-b710-0e430da14d9f\"}"
+      },
+      "timestamp": "2026-05-23T21:05:03.608147"
+    },
+    {
+      "round": 2,
+      "model": "deepseek-v4-pro",
+      "content": {
+        "challenges": [
+          {
+            "target": "对方分析为HTTP 401错误，无实质内容",
+            "challenge": "对方未完成审计任务，无法提供任何理性反驳或补充证据，因此无法进行有效交叉质疑。审计流程出现断层，缺乏对抗性检验。",
+            "counter_evidence": "返回的错误信息表明API鉴权失败，无任何策略评估内容，不能作为审计意见，相当于审计无效。",
+            "severity": "CRITICAL"
+          }
+        ],
+        "missed_dimensions": [
+          "策略统计显著性（如Bonferroni校正、置换检验）",
+          "利润集中度分析（Top 10%贡献度）",
+          "稳健性测试（移除最优交易的影响）",
+          "回测PnL一致性校验（数据口径差异）",
+          "不同市场阶段的分段表现"
+        ],
+        "risk_if_opponent_wrong": "如果对方错误地（或在未分析的情况下）默认策略有效并直接上线，策略的极端集中性、统计不显著和稳健性缺失将导致实际回撤远超历史记录，资金面临重大损失风险。",
+        "revised_assessment": "由于对方未能提供有效分析，原评估维持不变：策略存在严重过拟合与幸存者偏差，缺乏统计显著性和稳健性支持，实盘极大概率失效。必须在解决数据差异并通过严格样本外验证后，方可考虑最小仓位试运行。",
+        "concessions": []
+      },
+      "timestamp": "2026-05-23T21:05:03.608150"
+    },
+    {
+      "round": 3,
+      "model": "qwen3.7-max",
+      "content": {
+        "error": "HTTP 401",
+        "raw": "{\"error\":{\"message\":\"Incorrect API key provided. For details, see: https://help.aliyun.com/zh/model-studio/error-code#apikey-error\",\"type\":\"invalid_request_error\",\"param\":null,\"code\":\"invalid_api_key\"},\"request_id\":\"40539d21-1602-939d-b610-3d71eace3963\"}"
+      },
+      "timestamp": "2026-05-23T21:05:03.608152"
+    },
+    {
+      "round": 3,
+      "model": "deepseek-v4-pro",
+      "content": {
+        "consensus": [
+          "策略回测总PnL与统计门禁计算不一致，存在数据口径差异",
+          "策略利润高度集中，前10%交易贡献309%的总利润"
+        ],
+        "disagreements": [
+          {
+            "topic": "审计有效性",
+            "model_a_view": "deepseek-v4-pro认为策略统计不显著、稳健性缺失，不应启用",
+            "model_b_view": "qwen3.7-max因API错误未提供任何分析",
+            "resolution": "由于对方审计无效，无法形成真正分歧，但审计流程需修复以获取多视角验证"
+          }
+        ],
+        "blind_spots": [
+          "未提供样本外验证数据，无法判断泛化能力",
+          "不同市场阶段分段表现缺失",
+          "未审查因子逻辑的经济学意义及实盘交易成本的影响"
+        ],
+        "final_recommendation": "该策略存在严重的统计不显著、利润集中和稳健性缺失问题，强烈不建议启用。必须解决数据不一致问题，通过严格的样本外和分段回测验证，并降低对极端交易的依赖后，方可重新评估。",
+        "confidence": 0.85,
+        "action_items": [
+          {
+            "action": "澄清并修正回测PnL计算口径，确保与统计门禁数据一致",
+            "priority": "P0",
+            "owner": "factor",
+            "estimated_impact": "消除数据差异，防止因计算错误导致的错误评估"
+          },
+          {
+            "action": "执行样本外前向测试和分段回测（按年份/波动率周期）",
+            "priority": "P0",
+            "owner": "factor",
+            "estimated_impact": "验证策略在不同环境下的鲁棒性，避免过拟合"
+          },
+          {
+            "action": "重构因子以降低利润集中度，例如引入波动率调整或截面标准化",
+            "priority": "P1",
+            "owner": "factor",
+            "estimated_impact": "减少对少数异常值的依赖，提升策略稳健性"
+          },
+          {
+            "action": "审视线数据源，针对严重亏损标的加入排除或权重限制规则",
+            "priority": "P2",
+            "owner": "registry",
+            "estimated_impact": "降低极端亏损对组合的拖累"
+          },
+          {
+            "action": "修复qwen3.7-max API认证问题，确保审计流程获得多模型视角",
+            "priority": "P1",
+            "owner": "registry",
+            "estimated_impact": "恢复对抗性审计，避免单点评估偏差"
+          }
+        ]
+      },
+      "timestamp": "2026-05-23T21:05:03.608155"
+    }
+  ],
+  "consensus": [
+    "策略利润高度集中，前10%交易贡献309%的总利润",
+    "策略回测总PnL与统计门禁计算不一致，存在数据口径差异"
+  ],
+  "disagreements": [
+    "{\"topic\": \"审计有效性\", \"model_a_view\": \"deepseek-v4-pro认为策略统计不显著、稳健性缺失，不应启用\", \"model_b_view\": \"qwen3.7-max因API错误未提供任何分析\", \"resolution\": \"由于对方审计无效，无法形成真正分歧，但审计流程需修复以获取多视角验证\"}"
+  ],
+  "action_items": [
+    {
+      "action": "澄清并修正回测PnL计算口径，确保与统计门禁数据一致",
+      "priority": "P0",
+      "owner": "factor",
+      "estimated_impact": "消除数据差异，防止因计算错误导致的错误评估"
+    },
+    {
+      "action": "执行样本外前向测试和分段回测（按年份/波动率周期）",
+      "priority": "P0",
+      "owner": "factor",
+      "estimated_impact": "验证策略在不同环境下的鲁棒性，避免过拟合"
+    },
+    {
+      "action": "重构因子以降低利润集中度，例如引入波动率调整或截面标准化",
+      "priority": "P1",
+      "owner": "factor",
+      "estimated_impact": "减少对少数异常值的依赖，提升策略稳健性"
+    },
+    {
+      "action": "修复qwen3.7-max API认证问题，确保审计流程获得多模型视角",
+      "priority": "P1",
+      "owner": "registry",
+      "estimated_impact": "恢复对抗性审计，避免单点评估偏差"
+    },
+    {
+      "action": "审视线数据源，针对严重亏损标的加入排除或权重限制规则",
+      "priority": "P2",
+      "owner": "registry",
+      "estimated_impact": "降低极端亏损对组合的拖累"
+    }
+  ],
+  "confidence": 0.675,
+  "metadata": {
+    "model_a": "qwen3.7-max",
+    "model_b": "deepseek-v4-pro",
+    "n_total_tests": 11
+  }
+}
