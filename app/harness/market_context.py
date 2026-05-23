@@ -303,6 +303,15 @@ class MarketContextProvider:
             ctx.allow_new_positions = False
             logger.warning(f"[MarketContext] VIX={ctx.vix:.1f} >= 25, 禁止新开仓")
 
+        # 4.5. HIGH_VOL 仓位缩放 (P1-1 辩论发现: HIGH_VOL 14.9%WR -$39,537)
+        # VIX 20-25 = caution zone → 仓位缩放 50%
+        # VIX 15-20 = normal → 仓位不变
+        # VIX < 15 = euphoria → 仓位不变
+        if ctx.vix is not None and 20 <= ctx.vix < 25:
+            ctx.position_scale = min(ctx.position_scale, 0.50)
+            ctx.risk_state = RiskState.CAUTION
+            logger.info(f"[MarketContext] HIGH_VOL 警戒: VIX={ctx.vix:.1f}, 仓位缩放50%")
+
         # 5. 资本水位门禁
         if ctx.capital_level in (CapitalLevel.DANGER, CapitalLevel.CIRCUIT_BREAKER):
             ctx.allow_new_positions = False

@@ -113,6 +113,24 @@ class PreTradeChecker:
             )
         checks_passed.append("MARKET_STATE")
 
+        # 0.05. P1-1 HIGH_VOL 守卫 (2026-05-23, 辩论发现)
+        # HIGH_VOL regime: 141笔 14.9%WR -$39,537 — 必须收紧
+        # 使用 VIX 作为 HIGH_VOL 代理: VIX 20-25 = caution zone
+        try:
+            from app.analysis.market_state import MarketStateChecker
+            _msc = MarketStateChecker()
+            _vix_data = _msc._fetch_vix()
+            _vix = _vix_data[0] if isinstance(_vix_data, tuple) else (_vix_data or 20)
+            if isinstance(_vix, (int, float)) and 20 <= _vix < 25:
+                # Caution zone: 提高信号/置信度门槛
+                self._high_vol_active = True
+                self._high_vol_vix = _vix
+                logger.info(f"[P1-1] HIGH_VOL 警戒: VIX={_vix:.1f} (20-25区间), 收紧入场门槛")
+            else:
+                self._high_vol_active = False
+        except Exception:
+            self._high_vol_active = False
+
         # 0.1. P0 辩论止血守卫 (2026-05-23, 基于309笔实盘数据)
         # P0-1: 禁止期权交易 (0%WR, -$23,635)
         _symbol = getattr(signal, 'symbol', '')
@@ -157,6 +175,15 @@ class PreTradeChecker:
         
         # 0.5. 获取当前有效的阈值 (DEGRADED 模式下降级)
         eff_conf, eff_strength = self._get_effective_thresholds()
+
+        # P1-1 (2026-05-23): HIGH_VOL 收紧门槛
+        # 数据: HIGH_VOL regime 14.9%WR -$39,537, 必须提高入场标准
+        if getattr(self, '_high_vol_active', False):
+            _hv_conf_boost = 0.10   # 置信度 +10% (e.g. 0.50 → 0.60)
+            _hv_strength_boost = 10  # 信号强度 +10 (e.g. 99 → 109, 但上限100)
+            eff_conf = min(eff_conf + _hv_conf_boost, 0.90)
+            eff_strength = min(eff_strength + _hv_strength_boost, 100)
+            checks_passed.append("HIGH_VOL_TIGHTENED")
 
         # 1. 信号强度检查（SHORT 方向使用 effective_strength = 100 - strength）
         direction_str = str(signal.direction).upper()
