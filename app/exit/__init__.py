@@ -14,6 +14,7 @@
 - AtrExitModule: ATR 倍数止损
 - TrailingExitModule: Chandelier 追踪止损
 - ScaleOutExitModule: 分层止盈
+- DynamicRiskExit: 动态风控 (ATR止损+个股风险限制+连续亏损熔断)
 """
 from app.exit.base import (
     ExitProfile,
@@ -28,9 +29,10 @@ def _auto_register() -> None:
     from app.exit.atr_exit import AtrExitModule
     from app.exit.trailing_exit import TrailingExitModule
     from app.exit.scale_out_exit import ScaleOutExitModule
+    from app.exit.dynamic_risk import DynamicRiskExit
 
     registry = get_exit_registry()
-    for mod_cls in [AtrExitModule, TrailingExitModule, ScaleOutExitModule]:
+    for mod_cls in [AtrExitModule, TrailingExitModule, ScaleOutExitModule, DynamicRiskExit]:
         if mod_cls.name not in registry.list_available():
             registry.register(mod_cls)
 
@@ -44,4 +46,5 @@ __all__ = [
     "BaseExitModule",
     "ExitModuleRegistry",
     "get_exit_registry",
+    "DynamicRiskExit",
 ]

@@ -143,3 +143,23 @@ exit_profiles:
     time_stop_days: 7
     max_holding_minutes: 0
     pre_close_behavior: hold
+
+  # ── 数据驱动风控配置 (2026-05-23, 辩论P0-2) ──
+  # 验证: 118→85笔, WR 52%→54%, PF 1.22→1.74, 底90% -171%→-10%
+
+  mean_reversion_risk_managed:
+    stop_loss_type: atr_multi
+    stop_loss_params:
+      multiplier: 1.0              # ATR×1.0 (均值回归最优)
+      max_loss_pct: -0.05          # 硬底限 -5%
+    take_profit_type: fixed_pct
+    take_profit_params:
+      target_pct: 0.04             # +4% 止盈
+    max_holding_minutes: 4320      # 3天 = 72h = 4320min
+    pre_close_behavior: hold
+    # 风控参数 (由 DynamicRiskExit 读取)
+    risk_params:
+      max_stock_loss_pct: 0.01     # 个股最大亏损占总资金 1%
+      max_consecutive_losses: 3    # 连续3亏暂停
+      blacklist: ["NVDA", "META"]  # 排除高亏损标的
+      capital: 100000.0
