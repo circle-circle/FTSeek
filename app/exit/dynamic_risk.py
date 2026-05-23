@@ -91,10 +91,24 @@ class DynamicRiskExit(BaseExitModule):
     name = "dynamic_risk"
 
     # 默认风控参数 (可通过 profile 覆盖)
+    # P0 辩论止血 2026-05-23: 基于309笔实盘数据分析
     DEFAULT_RISK_PARAMS = {
         "max_stock_loss_pct": 0.01,     # 个股最大亏损占总资金 1%
-        "max_consecutive_losses": 0,     # 连续亏损暂停 (0=不启用)
-        "blacklist": [],                 # 标的黑名单
+        "max_consecutive_losses": 3,     # 连续3亏暂停 (从0改为3)
+        "blacklist": [                   # P0-3: 持续亏损股票黑名单
+            "US.QCOM",   # 44笔 22.7%WR -$3,768
+            "US.TME",    # 20笔 0%WR -$913
+            "US.NVDA",   # 3笔 0%WR -$2,905
+            "US.META",   # 1笔 0%WR -$1,964
+            "US.GOOGL",  # 1笔 0%WR -$6,015
+            "US.QQQ",    # 2笔 0%WR -$5,984
+            "US.UNH",    # 7笔 0%WR -$120
+            "US.NFLX",   # 8笔 0%WR -$122
+            "US.DIA",    # 4笔 0%WR -$507
+        ],
+        "ban_options": True,             # P0-1: 禁止期权交易 (0%WR -$23,635)
+        "ban_short_overnight": True,     # P0-4: SHORT持仓>8h强制退出 (27.9%WR -$6,041)
+        "max_short_hold_hours": 8.0,     # SHORT最大持仓时间
         "capital": 100000.0,             # 总资金 (用于计算百分比)
     }
 
@@ -238,6 +252,7 @@ class DynamicRiskExit(BaseExitModule):
         self,
         symbol: str,
         risk_params: Optional[Dict[str, Any]] = None,
+        direction: Optional[str] = None,
     ) -> tuple:
         """
         检查是否允许在该标的开新仓
@@ -245,11 +260,21 @@ class DynamicRiskExit(BaseExitModule):
         Args:
             symbol: 标的代码
             risk_params: 风控参数 (None 使用默认)
+            direction: 交易方向 ("LONG"/"SHORT"/"SHORT_PROXY_OPTION" 等)
 
         Returns:
             (allowed: bool, reason: str)
         """
         params = {**self.DEFAULT_RISK_PARAMS, **(risk_params or {})}
+
+        # P0-1 (2026-05-23): 禁止期权交易 — 0%WR, -$23,635
+        if params.get("ban_options", False):
+            if direction and "OPTION" in str(direction).upper():
+                return False, f"BANNED: 期权交易已禁止 (direction={direction})"
+            # 检查期权风格的symbol (如 US.SNDK260605P1370000)
+            sym_clean = symbol.replace("US.", "")
+            if len(sym_clean) > 6 and any(c.isdigit() for c in sym_clean[1:]):
+                return False, f"BANNED: 疑似期权合约 ({symbol})"
 
         # 1. 黑名单检查
         blacklist = params.get("blacklist", [])

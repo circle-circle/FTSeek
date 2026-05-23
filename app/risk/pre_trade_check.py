@@ -112,7 +112,38 @@ class PreTradeChecker:
                 checks_passed=checks_passed,
             )
         checks_passed.append("MARKET_STATE")
-        
+
+        # 0.1. P0 辩论止血守卫 (2026-05-23, 基于309笔实盘数据)
+        # P0-1: 禁止期权交易 (0%WR, -$23,635)
+        _symbol = getattr(signal, 'symbol', '')
+        _direction = str(getattr(signal, 'direction', '')).upper()
+        if "OPTION" in _direction:
+            return PreTradeResult(
+                allowed=False,
+                reason=f"P0_OPTION_BANNED(direction={_direction})",
+                checks_passed=checks_passed,
+            )
+        # P0-1b: 期权风格symbol检测 (如 US.SNDK260605P1370000)
+        _sym_clean = _symbol.replace("US.", "")
+        if len(_sym_clean) > 6 and any(c.isdigit() for c in _sym_clean[1:]):
+            return PreTradeResult(
+                allowed=False,
+                reason=f"P0_OPTION_BANNED(symbol={_symbol})",
+                checks_passed=checks_passed,
+            )
+        # P0-3: 持续亏损股票黑名单 (数据驱动)
+        _P0_BLACKLIST = {
+            "US.QCOM", "US.TME", "US.NVDA", "US.META",
+            "US.GOOGL", "US.QQQ", "US.UNH", "US.NFLX", "US.DIA",
+        }
+        if _symbol in _P0_BLACKLIST:
+            return PreTradeResult(
+                allowed=False,
+                reason=f"P0_BLACKLISTED({_symbol})",
+                checks_passed=checks_passed,
+            )
+        checks_passed.append("P0_GUARD")
+
         # 0.5. PDT 保护检查 (P0 2026-04-21 新增)
         # 默认所有信号为日内交易，除非 metadata 中明确标记 force_overnight=True
         is_overnight = signal.metadata.get("force_overnight", False)
