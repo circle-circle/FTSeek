@@ -141,6 +141,38 @@ class TestStatisticalGate:
         # 集中度高 → 检查应触发
         assert result.metrics["top_10pct_contribution"] > 0.5
 
+    def test_block_bootstrap(self):
+        """Block bootstrap: 保留序列结构的检验"""
+        gate = StatisticalGate()
+        trades = make_profitable_trades(n=100, mean=3.0, std=4.0)
+        result = gate.evaluate(trades, n_total_tests=1, timeframe="daily")
+        assert "block_bootstrap_p" in result.metrics
+        assert "block_size" in result.metrics
+        assert result.metrics["block_size"] == 3  # daily = 3
+        # 盈利策略的 block bootstrap p 应较低 (< 0.6, 因 block bootstrap 更保守)
+        assert result.metrics["block_bootstrap_p"] < 0.6
+
+    def test_block_bootstrap_autocorrelated(self):
+        """有序列自相关的交易: block bootstrap 保留结构"""
+        import random
+        rng = random.Random(42)
+        gate = StatisticalGate()
+        trades = []
+        for _ in range(30):
+            for _ in range(3):
+                trades.append({"pnl": abs(rng.gauss(2.0, 1.0))})
+            for _ in range(2):
+                trades.append({"pnl": -abs(rng.gauss(1.5, 1.0))})
+        result = gate.evaluate(trades, n_total_tests=1, timeframe="daily")
+        assert "block_bootstrap_p" in result.metrics
+
+    def test_auto_block_size(self):
+        """不同时间框架的 block size"""
+        assert StatisticalGate._auto_block_size("daily") == 3
+        assert StatisticalGate._auto_block_size("15min") == 8
+        assert StatisticalGate._auto_block_size("5min") == 15
+        assert StatisticalGate._auto_block_size("unknown") == 5
+
     def test_to_dict(self):
         """结果序列化"""
         gate = StatisticalGate()

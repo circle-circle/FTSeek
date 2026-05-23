@@ -11,8 +11,12 @@
     3. 修正 Sharpe (按实际交易频率年化)
     4. 头部交易移除后仍显著 (Top-N Robustness)
     5. 蒙特卡洛置换检验 (1000 次)
+    6. 利润集中度
+    7. Block Bootstrap (保留序列自相关, 适合动量/趋势策略)
 
-版本: 1.0 | 2026-05-23
+    综合判定: min_samples AND (bonferroni OR monte_carlo OR block_bootstrap) AND top_n_robust
+
+版本: 1.1 | 2026-05-23 (新增 block bootstrap)
 """
 from __future__ import annotations
 
@@ -176,6 +180,18 @@ class StatisticalGate:
             fail_reasons.append(
                 f"蒙特卡洛置换检验不显著: p={mc_p:.4f}")
 
+        # ── Check 7: Block Bootstrap (保留序列自相关) ──
+        # deepseek-v4-pro 辩论指出: 随机置换破坏动量策略的序列持续性
+        # block bootstrap 保留局部结构，更适合趋势/动量策略
+        block_size = self._auto_block_size(timeframe)
+        bb_p = self._block_bootstrap(pnl_list, block_size=block_size, n_bootstraps=1000)
+        metrics["block_bootstrap_p"] = bb_p
+        metrics["block_size"] = block_size
+        checks["block_bootstrap_significant"] = bb_p < self.ALPHA
+        if not checks["block_bootstrap_significant"]:
+            fail_reasons.append(
+                f"Block bootstrap不显著: p={bb_p:.4f} (block={block_size})")
+
         # ── Check 6: 利润集中度 ──
         sorted_pnl = sorted(pnl_list, reverse=True)
         top_3_pct = sum(sorted_pnl[:max(1, n // 10)]) / total_pnl if total_pnl > 0 else 1.0
@@ -186,10 +202,15 @@ class StatisticalGate:
                 f"利润过度集中: Top 10%贡献 {top_3_pct:.1%}")
 
         # ── 综合判定 ──
-        # 必须通过: min_samples, bonferroni OR monte_carlo, top_n_robust
+        # 必须通过: min_samples, (bonferroni OR monte_carlo OR block_bootstrap), top_n_robust
+        significance_passed = (
+            checks["bonferroni_significant"]
+            or checks["monte_carlo_significant"]
+            or checks["block_bootstrap_significant"]
+        )
         hard_pass = (
             checks["min_samples"]
-            and (checks["bonferroni_significant"] or checks["monte_carlo_significant"])
+            and significance_passed
             and checks["top_n_robust"]
         )
 
@@ -314,3 +335,85 @@ class StatisticalGate:
                 count_extreme += 1
 
         return count_extreme / n_permutations
+
+    @staticmethod
+    def _auto_block_size(timeframe: str) -> int:
+        """
+        根据时间框架自动选择 block size
+
+        动量/趋势策略的 PnL 序列通常有短期自相关。
+        block size 应覆盖自相关的衰减窗口。
+
+        Returns:
+            block_size (交易笔数)
+        """
+        block_map = {
+            "tick": 50,
+            "1min": 30,
+            "5min": 15,
+            "15min": 8,
+            "30min": 5,
+            "1h": 4,
+            "daily": 3,
+            "weekly": 2,
+        }
+        return block_map.get(timeframe, 5)
+
+    def _block_bootstrap(
+        self,
+        pnl_list: List[float],
+        block_size: int = 5,
+        n_bootstraps: int = 1000,
+    ) -> float:
+        """
+        Block Bootstrap 检验 (保留序列自相关结构)
+
+        与随机置换不同，block bootstrap 从原始序列中抽取
+        连续的交易块，保留局部的序列依赖性。
+
+        H0: 策略的 PnL 均值 = 0 (即没有 alpha)
+        H1: 策略的 PnL 均值 > 0
+
+        方法:
+        1. 计算真实均值
+        2. 对每次 bootstrap:
+           a. 从 pnl_list 中随机抽取若干长度为 block_size 的连续块
+           b. 拼接成等长度的新序列
+           c. 计算 bootstrap 均值
+        3. p = bootstrap均值 >= 真实均值的比例
+
+        Args:
+            pnl_list: 交易 PnL 列表
+            block_size: 块大小 (覆盖自相关衰减窗口)
+            n_bootstraps: bootstrap 次数
+
+        Returns:
+            p_value
+        """
+        n = len(pnl_list)
+        if n < block_size * 2:
+            return 1.0
+
+        true_mean = sum(pnl_list) / n
+        count_extreme = 0
+        rng = random.Random(42)
+
+        # 需要多少个块来覆盖 n 个样本
+        n_blocks_needed = (n + block_size - 1) // block_size
+
+        for _ in range(n_bootstraps):
+            # 随机抽取块
+            bootstrap_sample = []
+            for _ in range(n_blocks_needed):
+                # 随机选择块起始位置
+                start = rng.randint(0, n - block_size)
+                bootstrap_sample.extend(pnl_list[start:start + block_size])
+
+            # 截断到原始长度
+            bootstrap_sample = bootstrap_sample[:n]
+            boot_mean = sum(bootstrap_sample) / n
+
+            if boot_mean >= true_mean:
+                count_extreme += 1
+
+        return count_extreme / n_bootstraps
