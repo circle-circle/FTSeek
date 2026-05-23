@@ -1253,7 +1253,7 @@ def _execute_stock_short(scheduler, symbol: str, signal: SignalScore, context: D
             {"ratio": 0.6, "price": round(price * (1 - tp_pct * 1.5), 2)},
         ],
         time_stop_hours=int(_load_short_config_val("time_decay.max_holding_days", 5) * 24),
-        market_regime=getattr(signal, "market_regime", ""),
+        market_regime=getattr(signal, "market_regime", "") or MarketRegime.RANGE,
     )
     position.entry_time = datetime.now()
     position.futu_order_id = result.get("futu_order_id", "")
@@ -2592,11 +2592,24 @@ def _close_position(scheduler, position: Position, current_price: float, exit_re
             _consensus_level = float(signal_confidence or 0.0)
 
         # O4: 写 market_regime + mode (此前两列 NULL/DEFAULT)
+        # P1-1 修复 (2026-05-23): UNKNOWN → RANGE fallback, 消除93%UNKNOWN
         _regime = ""
         try:
-            _regime = str(position.market_regime.value if hasattr(position.market_regime, "value") else position.market_regime or "")
+            _raw = position.market_regime
+            if hasattr(_raw, "value"):
+                _regime = _raw.value
+            elif _raw:
+                _regime = str(_raw)
+            # 规范化: 将 legacy 非标准值映射到 MarketRegime 枚举值
+            _REGIME_NORMALIZE = {
+                "unknown": "RANGE", "UNKNOWN": "RANGE", "": "RANGE",
+                "normal": "RANGE", "NORMAL": "RANGE", "中性": "RANGE",
+                "trending": "TREND_UP", "bullish": "TREND_UP",
+                "bearish": "TREND_DOWN", "high_volatility": "HIGH_VOL",
+            }
+            _regime = _REGIME_NORMALIZE.get(_regime, _regime) or "RANGE"
         except Exception:
-            pass
+            _regime = "RANGE"
         _mode = "normal"
         try:
             from app.core.config_container import get_config as _gc
@@ -2645,7 +2658,7 @@ def _close_position(scheduler, position: Position, current_price: float, exit_re
             # Phase A (2026-05-14): 持仓的 owner_strategy 必须落到 trade_records
             "owner_strategy":    getattr(position, "owner_strategy", None) or "main",
             # O4 (2026-05-16): regime + mode 落库 (此前两列 UNKNOWN/normal 都未传入)
-            "market_regime":     _regime or "UNKNOWN",
+            "market_regime":     _regime or "RANGE",
             "mode":              _mode,
         })
 
@@ -2759,18 +2772,19 @@ def _close_position(scheduler, position: Position, current_price: float, exit_re
 
             # 从 meta 提取策略上下文
             strategy_id = meta.get("strategy_id", "voting_llm")
-            market_regime = meta.get("market_regime", "UNKNOWN")
+            market_regime = meta.get("market_regime", "RANGE")
             max_dd = meta.get("max_drawdown", 0.0)
 
             # 映射 exit_reason 到 regime (fallback)
-            if market_regime == "UNKNOWN":
+            # P1-1 (2026-05-23): 使用标准 MarketRegime 枚举值
+            if market_regime in ("UNKNOWN", "unknown", ""):
                 er = exit_reason.value.lower()
                 if "trail" in er:
-                    market_regime = "trending"
+                    market_regime = "TREND_UP"
                 elif "stop" in er or "flash" in er:
-                    market_regime = "high_volatility"
+                    market_regime = "HIGH_VOL"
                 else:
-                    market_regime = "ranging"
+                    market_regime = "RANGE"
 
             with sqlite3.connect(db_path) as conn:
                 conn.execute(

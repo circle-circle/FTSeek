@@ -1,7 +1,7 @@
 {
   "last_reset_date": "2026-05-23",
   "twelvedata_calls": 0,
-  "finnhub_calls": 116,
+  "finnhub_calls": 189,
   "alphavantage_calls": 0,
   "current_source": "twelvedata",
   "warning_sent": false,
