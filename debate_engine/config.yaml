@@ -1,0 +1,45 @@
+platform:
+  name: bailian
+  api_key_env: BAILIAN_API_KEY
+  base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+
+models:
+  - name: qwen3.7-max
+    family: qwen
+    label: "Qwen"
+    strengths: ["data_analysis", "chinese"]
+    max_tokens: 8000
+    temperature: 0.3
+    enabled: true
+
+  - name: deepseek-v4-pro
+    family: deepseek
+    label: "DeepSeek"
+    strengths: ["code_analysis", "math", "logic"]
+    max_tokens: 8000
+    temperature: 0.3
+    enabled: true
+
+  - name: glm-5
+    family: glm
+    label: "GLM"
+    strengths: ["reasoning", "risk"]
+    max_tokens: 8000
+    temperature: 0.3
+    enabled: false
+
+  - name: minimax-m2.5
+    family: minimax
+    label: "MiniMax"
+    strengths: ["creative", "long_context"]
+    max_tokens: 8000
+    temperature: 0.3
+    enabled: false
+
+debate_defaults:
+  min_rounds: 3
+  max_rounds: 7
+  convergence_threshold: 0.8
+  divergence_limit: 2
+  default_selection:
+    models: ["qwen3.7-max", "deepseek-v4-pro"]
