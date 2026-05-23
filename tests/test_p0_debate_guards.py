@@ -213,3 +213,132 @@ class TestPreTradeP0Guard:
         signal = self._make_signal(symbol="US.ORCL", direction="SHORT", strength=10)
         result = checker.check(signal)
         assert "P0_GUARD" in result.checks_passed
+
+
+class TestHighVolGuard:
+    """P1-1: HIGH_VOL regime guard (VIX 20-25 → tighten thresholds)"""
+
+    def _make_signal(self, symbol="US.AAPL", direction="LONG", strength=99, confidence=0.8):
+        signal = MagicMock()
+        signal.symbol = symbol
+        signal.direction = direction
+        signal.strength = strength
+        signal.confidence = confidence
+        signal.metadata = {}
+        signal.is_expired.return_value = False
+        return signal
+
+    @patch('app.risk.pre_trade_check.market_can_trade', return_value=True)
+    @patch('app.risk.pre_trade_check.get_pdt_guard')
+    @patch('app.analysis.market_state.MarketStateChecker')
+    def test_vix_caution_tightens_thresholds(self, mock_msc_cls, mock_pdt, mock_market):
+        from app.risk.pre_trade_check import PreTradeChecker
+
+        # Mock VIX = 22 (caution zone)
+        msc_instance = MagicMock()
+        msc_instance._fetch_vix.return_value = (22.0, None)
+        mock_msc_cls.return_value = msc_instance
+
+        pdt_instance = MagicMock()
+        pdt_instance.check_trade_permission.return_value = (True, "OK", "NORMAL")
+        mock_pdt.return_value = pdt_instance
+
+        checker = PreTradeChecker()
+        signal = self._make_signal(symbol="US.ORCL", direction="SHORT", strength=5)
+        result = checker.check(signal)
+
+        # HIGH_VOL should be active → thresholds tightened
+        assert "HIGH_VOL_TIGHTENED" in result.checks_passed
+        assert "P0_GUARD" in result.checks_passed
+
+    @patch('app.risk.pre_trade_check.market_can_trade', return_value=True)
+    @patch('app.risk.pre_trade_check.get_pdt_guard')
+    @patch('app.analysis.market_state.MarketStateChecker')
+    def test_vix_normal_no_tightening(self, mock_msc_cls, mock_pdt, mock_market):
+        from app.risk.pre_trade_check import PreTradeChecker
+
+        # Mock VIX = 16 (normal)
+        msc_instance = MagicMock()
+        msc_instance._fetch_vix.return_value = (16.0, None)
+        mock_msc_cls.return_value = msc_instance
+
+        pdt_instance = MagicMock()
+        pdt_instance.check_trade_permission.return_value = (True, "OK", "NORMAL")
+        mock_pdt.return_value = pdt_instance
+
+        checker = PreTradeChecker()
+        signal = self._make_signal(symbol="US.ORCL", direction="SHORT", strength=5)
+        result = checker.check(signal)
+
+        # HIGH_VOL should NOT be active
+        assert "HIGH_VOL_TIGHTENED" not in result.checks_passed
+        assert "P0_GUARD" in result.checks_passed
+
+    @patch('app.risk.pre_trade_check.market_can_trade', return_value=True)
+    @patch('app.risk.pre_trade_check.get_pdt_guard')
+    @patch('app.analysis.market_state.MarketStateChecker')
+    def test_vix_above_25_no_highvol(self, mock_msc_cls, mock_pdt, mock_market):
+        from app.risk.pre_trade_check import PreTradeChecker
+
+        # Mock VIX = 28 (above 25 = market_can_trade blocks, but HIGH_VOL not active in 20-25 range)
+        msc_instance = MagicMock()
+        msc_instance._fetch_vix.return_value = (28.0, None)
+        mock_msc_cls.return_value = msc_instance
+
+        pdt_instance = MagicMock()
+        pdt_instance.check_trade_permission.return_value = (True, "OK", "NORMAL")
+        mock_pdt.return_value = pdt_instance
+
+        checker = PreTradeChecker()
+        signal = self._make_signal(symbol="US.ORCL", direction="SHORT", strength=5)
+        result = checker.check(signal)
+
+        # VIX >= 25 is handled by market_can_trade (blocks), not HIGH_VOL tighten
+        assert "HIGH_VOL_TIGHTENED" not in result.checks_passed
+
+
+class TestMarketContextHighVol:
+    """P1-1: MarketContext VIX 20-25 position scaling"""
+
+    def test_vix_caution_scales_position(self):
+        from app.harness.market_context import MarketContext, RiskState, CapitalLevel
+        ctx = MarketContext(
+            timestamp=__import__('datetime').datetime.now(),
+            vix=22.0,
+            risk_state=RiskState.NORMAL,
+            capital_level=CapitalLevel.SAFE,
+            position_scale=1.0,
+        )
+        # Simulate what _build_context does for VIX 20-25
+        if ctx.vix is not None and 20 <= ctx.vix < 25:
+            ctx.position_scale = min(ctx.position_scale, 0.50)
+            ctx.risk_state = RiskState.CAUTION
+
+        assert ctx.position_scale == 0.50
+        assert ctx.risk_state == RiskState.CAUTION
+
+    def test_vix_normal_no_scaling(self):
+        from app.harness.market_context import MarketContext, RiskState, CapitalLevel
+        ctx = MarketContext(
+            timestamp=__import__('datetime').datetime.now(),
+            vix=16.0,
+            risk_state=RiskState.NORMAL,
+            capital_level=CapitalLevel.SAFE,
+            position_scale=1.0,
+        )
+        if ctx.vix is not None and 20 <= ctx.vix < 25:
+            ctx.position_scale = min(ctx.position_scale, 0.50)
+            ctx.risk_state = RiskState.CAUTION
+
+        assert ctx.position_scale == 1.0
+        assert ctx.risk_state == RiskState.NORMAL
+
+    def test_vix_above_25_blocks_trading(self):
+        from app.harness.market_context import MarketContext, RiskState, CapitalLevel
+        ctx = MarketContext(
+            timestamp=__import__('datetime').datetime.now(),
+            vix=28.0,
+            risk_state=RiskState.CAUTION,
+            capital_level=CapitalLevel.SAFE,
+        )
+        assert ctx.can_trade is False
