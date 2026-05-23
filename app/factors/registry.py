@@ -1,15 +1,21 @@
 """
-因子注册中心 (Factor Registry)
+因子注册中心 (FactorRegistry) — 统一管理因子的注册、发现、实例化
 
-管理所有已注册因子的创建、实例化和参数扫描。
-单例模式 — 整个应用共享一个注册中心。
+设计:
+- 单例模式，全局唯一入口
+- 支持自动发现 (auto-discover) app/factors/ 下的因子模块
+- 支持运行时动态注册
+- 按时间框架分组查询
+
+版本: 1.0 | 2026-05-23
 """
 from __future__ import annotations
 
+import importlib
 import logging
 from typing import Any, Dict, List, Optional, Type
 
-from app.factors.base import BaseFactor, FactorParams, FactorValue
+from .base import BaseFactor, FactorParams, FactorTimeframe, FactorValue
 
 logger = logging.getLogger(__name__)
 
@@ -17,193 +23,248 @@ logger = logging.getLogger(__name__)
 class FactorRegistry:
     """
     因子注册中心 — 单例
-    
+
     Usage:
-        registry = FactorRegistry()
-        
-        # 注册因子类
+        registry = FactorRegistry.instance()
         registry.register(SSSFactor)
-        registry.register(GDIANFactor)
-        
-        # 实例化因子
-        factor = registry.create("SSS", FactorParams({"threshold": -1.5}))
-        
-        # 列出所有已注册因子
-        names = registry.list_available()
-        
-        # 网格扫描
-        results = registry.scan_params("SSS", symbol, market_data)
+        factor = registry.create("SSS", FactorParams(params={"threshold": -1.5}))
+        value = factor.compute("US.AAPL", market_data)
     """
 
     _instance: Optional[FactorRegistry] = None
-    _factor_classes: Dict[str, Type[BaseFactor]] = {}
+    _initialized: bool = False
 
     def __new__(cls) -> FactorRegistry:
         if cls._instance is None:
             cls._instance = super().__new__(cls)
-            cls._instance._factor_classes = {}
         return cls._instance
+
+    def __init__(self):
+        if self._initialized:
+            return
+        self._factors: Dict[str, Type[BaseFactor]] = {}
+        self._instances: Dict[str, BaseFactor] = {}
+        self._timeframe_index: Dict[str, List[str]] = {}
+        self._initialized = True
+        logger.info("[FactorRegistry] 初始化完成")
+
+    @classmethod
+    def instance(cls) -> FactorRegistry:
+        """获取单例"""
+        return cls()
+
+    @classmethod
+    def reset(cls):
+        """重置单例 (仅测试用)"""
+        cls._instance = None
+        cls._initialized = False
+
+    # ── 注册 ──
 
     def register(self, factor_cls: Type[BaseFactor]) -> Type[BaseFactor]:
         """
-        注册因子类 — 可作为装饰器使用
-        
-        Usage:
-            @registry.register
-            class MyFactor(BaseFactor):
-                name = "MY_FACTOR"
-                ...
+        注册因子类
+
+        Args:
+            factor_cls: BaseFactor 子类
+
+        Returns:
+            原始类 (可用作装饰器)
         """
-        if not hasattr(factor_cls, 'name') or not factor_cls.name:
-            raise ValueError(f"{factor_cls.__name__} must define class attribute 'name'")
+        if not issubclass(factor_cls, BaseFactor):
+            raise TypeError(f"{factor_cls.__name__} must extend BaseFactor")
 
-        name = factor_cls.name
-        if name in self._factor_classes:
-            existing = self._factor_classes[name]
-            if existing is not factor_cls:
-                logger.warning(
-                    f"Factor '{name}' already registered as {existing.__name__}, "
-                    f"overwriting with {factor_cls.__name__}"
-                )
+        # 实例化获取 name
+        probe = factor_cls()
+        name = probe.name
+        if not name:
+            raise ValueError(f"{factor_cls.__name__}.name is empty")
 
-        self._factor_classes[name] = factor_cls
-        logger.debug(f"Registered factor: {name} ({factor_cls.__name__})")
+        if name in self._factors:
+            logger.warning("[FactorRegistry] 覆盖已有因子: %s", name)
+
+        self._factors[name] = factor_cls
+
+        # 时间框架索引
+        tf = probe.timeframe.value
+        if tf not in self._timeframe_index:
+            self._timeframe_index[tf] = []
+        if name not in self._timeframe_index[tf]:
+            self._timeframe_index[tf].append(name)
+
+        # 清除缓存实例
+        self._instances.pop(name, None)
+
+        logger.info("[FactorRegistry] 已注册: %s (tf=%s, v%s, params=%d combinations)",
+                     name, tf, probe.version, len(probe.get_param_combinations()))
         return factor_cls
 
-    def create(
-        self,
-        name: str,
-        params: Optional[FactorParams] = None,
-    ) -> BaseFactor:
+    def unregister(self, name: str) -> None:
+        """注销因子"""
+        cls = self._factors.pop(name, None)
+        if cls:
+            probe = cls()
+            tf = probe.timeframe.value
+            if tf in self._timeframe_index:
+                self._timeframe_index[tf] = [
+                    n for n in self._timeframe_index[tf] if n != name
+                ]
+        self._instances.pop(name, None)
+        logger.info("[FactorRegistry] 已注销: %s", name)
+
+    # ── 发现 ──
+
+    def auto_discover(self) -> int:
         """
-        实例化因子
-        
-        Args:
-            name: 因子名称 (必须已注册)
-            params: 因子参数 (可选，使用默认参数)
-        
+        自动发现并注册 app/factors/ 下的因子模块
+
+        约定: 每个因子模块必须有一个与模块同名的类，
+              或在模块级定义 FACTOR_CLASS 变量指向因子类。
+
         Returns:
-            BaseFactor: 因子实例
-        
-        Raises:
-            KeyError: 因子未注册
+            新注册的因子数量
         """
-        if name not in self._factor_classes:
-            available = ", ".join(sorted(self._factor_classes.keys()))
-            raise KeyError(
-                f"Factor '{name}' not registered. Available: [{available}]"
-            )
+        count = 0
+        factor_modules = [
+            "app.factors.sss",
+            "app.factors.gdian",
+            "app.factors.mfff",
+            "app.factors.vol_regime",
+        ]
 
-        factor_cls = self._factor_classes[name]
-        factor = factor_cls(params=params)
-
-        if not factor.validate_params():
-            raise ValueError(
-                f"Factor '{name}' failed parameter validation: {factor.params.params}"
-            )
-
-        return factor
-
-    def compute_all(
-        self,
-        symbol: str,
-        market_data: Dict[str, Any],
-        ctx: Optional[Dict[str, Any]] = None,
-        factor_names: Optional[List[str]] = None,
-    ) -> Dict[str, FactorValue]:
-        """
-        批量计算多个因子
-        
-        Args:
-            symbol: 标的代码
-            market_data: 市场数据
-            ctx: 额外上下文
-            factor_names: 要计算的因子名称列表 (None = 全部)
-        
-        Returns:
-            Dict[str, FactorValue]: {因子名: 因子值}
-        """
-        names = factor_names or list(self._factor_classes.keys())
-        results = {}
-
-        for name in names:
+        for module_path in factor_modules:
             try:
-                factor = self.create(name)
-                results[name] = factor.compute(symbol, market_data, ctx)
+                mod = importlib.import_module(module_path)
+
+                # 方式1: FACTOR_CLASS 变量
+                if hasattr(mod, "FACTOR_CLASS"):
+                    self.register(mod.FACTOR_CLASS)
+                    count += 1
+                    continue
+
+                # 方式2: 扫描模块中的 BaseFactor 子类
+                for attr_name in dir(mod):
+                    attr = getattr(mod, attr_name)
+                    if (isinstance(attr, type)
+                            and issubclass(attr, BaseFactor)
+                            and attr is not BaseFactor
+                            and getattr(attr, 'name', '')):
+                        self.register(attr)
+                        count += 1
+                        break  # 每模块只注册一个
+
+            except ImportError as e:
+                logger.debug("[FactorRegistry] 跳过 %s: %s", module_path, e)
             except Exception as e:
-                logger.error(f"Factor '{name}' compute failed: {e}")
-                # 不中断其他因子的计算
+                logger.warning("[FactorRegistry] 加载 %s 失败: %s", module_path, e)
 
-        return results
+        logger.info("[FactorRegistry] 自动发现完成: 注册 %d 个新因子", count)
+        return count
 
-    def scan_params(
-        self,
-        name: str,
-        symbol: str,
-        market_data: Dict[str, Any],
-        ctx: Optional[Dict[str, Any]] = None,
-    ) -> List[FactorValue]:
+    # ── 实例化 ──
+
+    def create(self, name: str, params: Optional[FactorParams] = None) -> BaseFactor:
         """
-        网格扫描 — 遍历参数空间所有组合
-        
+        创建因子实例
+
         Args:
             name: 因子名称
-            symbol: 标的代码
-            market_data: 市场数据
-            ctx: 额外上下文
-        
+            params: 参数 (None 使用默认)
+
         Returns:
-            List[FactorValue]: 所有参数组合的计算结果
+            BaseFactor 实例
         """
-        # 先用默认参数创建实例以获取 param_space
-        default_factor = self.create(name)
-        combinations = default_factor.get_param_combinations()
+        if name not in self._factors:
+            raise KeyError(f"因子未注册: {name}. 已注册: {list(self._factors.keys())}")
 
-        results = []
-        for params in combinations:
-            try:
-                factor = self.create(name, params=params)
-                result = factor.compute(symbol, market_data, ctx)
-                results.append(result)
-            except Exception as e:
-                logger.error(f"Factor '{name}' scan failed for params {params.params}: {e}")
+        cls = self._factors[name]
+        instance = cls(params=params)
 
-        logger.info(f"Factor '{name}' scan: {len(results)}/{len(combinations)} completed")
-        return results
+        if not instance.validate_params():
+            raise ValueError(f"参数验证失败: {name} with {params}")
+
+        return instance
+
+    def get_or_create(self, name: str, params: Optional[FactorParams] = None) -> BaseFactor:
+        """获取缓存实例或创建新的 (仅当 params 为 None 时使用缓存)"""
+        if params is None and name in self._instances:
+            return self._instances[name]
+
+        instance = self.create(name, params)
+
+        if params is None:
+            self._instances[name] = instance
+
+        return instance
+
+    # ── 查询 ──
 
     def list_available(self) -> List[str]:
         """列出所有已注册因子名称"""
-        return sorted(self._factor_classes.keys())
+        return sorted(self._factors.keys())
 
-    def describe_all(self) -> Dict[str, str]:
-        """获取所有因子的描述"""
-        descriptions = {}
-        for name in self._factor_classes:
+    def list_by_timeframe(self, timeframe: FactorTimeframe) -> List[str]:
+        """按时间框架列出"""
+        return self._timeframe_index.get(timeframe.value, [])
+
+    def get_info(self, name: str) -> Dict[str, Any]:
+        """获取因子详细信息"""
+        if name not in self._factors:
+            return {}
+
+        cls = self._factors[name]
+        probe = cls()
+        return {
+            "name": probe.name,
+            "version": probe.version,
+            "timeframe": probe.timeframe.value,
+            "param_space": probe.param_space,
+            "param_combinations": len(probe.get_param_combinations()),
+            "description": probe.describe(),
+        }
+
+    def compute_all(self, symbol: str, market_data: Dict[str, Any],
+                    ctx: Optional[Dict[str, Any]] = None,
+                    timeframe: Optional[FactorTimeframe] = None
+                    ) -> Dict[str, FactorValue]:
+        """
+        计算所有 (或指定时间框架) 因子的值
+
+        Args:
+            symbol: 标的代码
+            market_data: 行情数据
+            ctx: 额外上下文
+            timeframe: 可选过滤 (None = 全部)
+
+        Returns:
+            Dict[factor_name, FactorValue]
+        """
+        results = {}
+        names = (self.list_by_timeframe(timeframe)
+                 if timeframe else self.list_available())
+
+        for name in names:
             try:
-                factor = self.create(name)
-                descriptions[name] = factor.describe()
+                factor = self.get_or_create(name)
+                value = factor.compute(symbol, market_data, ctx)
+                results[name] = value
             except Exception as e:
-                descriptions[name] = f"Error: {e}"
-        return descriptions
+                logger.warning("[FactorRegistry] 计算 %s 失败: %s", name, e)
 
-    def unregister(self, name: str) -> bool:
-        """注销因子 (主要用于测试)"""
-        if name in self._factor_classes:
-            del self._factor_classes[name]
-            return True
-        return False
+        return results
 
-    def clear(self):
-        """清空所有注册 (主要用于测试)"""
-        self._factor_classes.clear()
+    def __len__(self):
+        return len(self._factors)
 
-    @classmethod
-    def reset_singleton(cls):
-        """重置单例 (主要用于测试)"""
-        cls._instance = None
-        cls._factor_classes = {}
+    def __contains__(self, name: str):
+        return name in self._factors
 
+    def __repr__(self):
+        return f"<FactorRegistry({len(self._factors)} factors: {self.list_available()})>"
+
+
+# ── 便捷函数 ──
 
 def get_registry() -> FactorRegistry:
-    """获取全局注册中心实例"""
-    return FactorRegistry()
+    """获取全局 FactorRegistry 单例 (便捷函数)"""
+    return FactorRegistry.instance()

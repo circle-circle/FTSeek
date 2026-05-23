@@ -1,0 +1,202 @@
+# ============================================================
+# FTSeek-US 策略变体配置 — 因子组合定义
+# ============================================================
+# 基于回测分析通过的 9 条门禁策略
+# 族群: 5min(1), 15min(5), daily(3)
+#
+# 每个变体定义:
+#   - factors: 因子槽位 (name + params + weight + condition)
+#   - direction_gate: 方向门控 (CONSENSUS/ALL_LONG/ALL_SHORT/ANY)
+#   - min_composite_score: 最低综合评分
+#   - direction_preference: 方向偏好 (ANY/LONG/SHORT)
+#
+# 版本: 1.0 | 2026-05-23
+# ============================================================
+
+strategy_variants:
+
+  # ── 5 分钟族群 ──
+
+  aggressive_5m_high_momentum:
+    timeframe: 5min
+    description: "5分钟高动量策略: 轻度超卖 + 紧趋势 + 高动量"
+    direction_gate: CONSENSUS
+    min_composite_score: 0.4
+    direction_preference: LONG
+    slots:
+      - name: SSS
+        params: {threshold: -1, w_rsi: 0.5, w_bb: 0.35, w_vol: 0.15}
+        weight: 0.35
+        condition: "SSS.score >= -1"
+      - name: GDIAN
+        params: {tight_threshold: 35, w_slope: 0.35, w_adx: 0.35, w_pos: 0.30}
+        weight: 0.30
+        condition: "GDIAN.value <= 35"
+      - name: MFFF
+        params: {threshold: 2.0, w_macd: 0.4, w_vol: 0.3, w_flow: 0.3}
+        weight: 0.35
+        condition: "MFFF.score >= 0.6"
+
+  # ── 15 分钟族群 ──
+
+  stable_15m_long:
+    timeframe: 15min
+    description: "15分钟基础做多: 轻度超卖 + 中等趋势 + 低动量"
+    direction_gate: CONSENSUS
+    min_composite_score: 0.2
+    direction_preference: LONG
+    slots:
+      - name: SSS
+        params: {threshold: -1, w_rsi: 0.5, w_bb: 0.35, w_vol: 0.15}
+        weight: 0.4
+        condition: "SSS.score >= -1"
+      - name: GDIAN
+        params: {tight_threshold: 40, w_slope: 0.35, w_adx: 0.35, w_pos: 0.30}
+        weight: 0.3
+        condition: "GDIAN.value <= 40"
+      - name: MFFF
+        params: {threshold: 0.5, w_macd: 0.4, w_vol: 0.3, w_flow: 0.3}
+        weight: 0.3
+        condition: "MFFF.score >= 0.3"
+
+  stable_15m_improved:
+    timeframe: 15min
+    description: "15分钟改进版: SSS放宽到+1, 持仓翻倍"
+    direction_gate: CONSENSUS
+    min_composite_score: 0.2
+    direction_preference: LONG
+    slots:
+      - name: SSS
+        params: {threshold: 1, w_rsi: 0.5, w_bb: 0.35, w_vol: 0.15}
+        weight: 0.4
+        condition: "SSS.score >= -0.5"
+      - name: GDIAN
+        params: {tight_threshold: 40, w_slope: 0.35, w_adx: 0.35, w_pos: 0.30}
+        weight: 0.3
+        condition: "GDIAN.value <= 40"
+      - name: MFFF
+        params: {threshold: 0.5, w_macd: 0.4, w_vol: 0.3, w_flow: 0.3}
+        weight: 0.3
+        condition: "MFFF.score >= 0.3"
+
+  stable_15m_tight_momentum:
+    timeframe: 15min
+    description: "15分钟紧动量: GDIAN放宽到45, 出场放宽"
+    direction_gate: CONSENSUS
+    min_composite_score: 0.25
+    direction_preference: LONG
+    slots:
+      - name: SSS
+        params: {threshold: -1, w_rsi: 0.5, w_bb: 0.35, w_vol: 0.15}
+        weight: 0.35
+        condition: "SSS.score >= -1"
+      - name: GDIAN
+        params: {tight_threshold: 45, w_slope: 0.35, w_adx: 0.35, w_pos: 0.30}
+        weight: 0.30
+        condition: "GDIAN.value <= 45"
+      - name: MFFF
+        params: {threshold: 0.5, w_macd: 0.4, w_vol: 0.3, w_flow: 0.3}
+        weight: 0.35
+        condition: "MFFF.score >= 0.3"
+
+  stable_15m_relaxed_oversold_tight_trend:
+    timeframe: 15min
+    description: "15分钟超卖+紧趋势: SSS放宽-1.5, GDIAN收紧35, MFFF升1.0 (最佳变体)"
+    direction_gate: CONSENSUS
+    min_composite_score: 0.3
+    direction_preference: LONG
+    slots:
+      - name: SSS
+        params: {threshold: -1.5, w_rsi: 0.5, w_bb: 0.35, w_vol: 0.15}
+        weight: 0.4
+        condition: "SSS.score >= -1.5"
+      - name: GDIAN
+        params: {tight_threshold: 35, w_slope: 0.35, w_adx: 0.35, w_pos: 0.30}
+        weight: 0.3
+        condition: "GDIAN.value <= 35"
+      - name: MFFF
+        params: {threshold: 1.0, w_macd: 0.4, w_vol: 0.3, w_flow: 0.3}
+        weight: 0.3
+        condition: "MFFF.score >= 0.5"
+
+  stable_15m_wider_os_higher_tp:
+    timeframe: 15min
+    description: "15分钟宽超卖+高止盈: 同上入场, TP从6升至7"
+    direction_gate: CONSENSUS
+    min_composite_score: 0.3
+    direction_preference: LONG
+    slots:
+      - name: SSS
+        params: {threshold: -1.5, w_rsi: 0.5, w_bb: 0.35, w_vol: 0.15}
+        weight: 0.4
+        condition: "SSS.score >= -1.5"
+      - name: GDIAN
+        params: {tight_threshold: 35, w_slope: 0.35, w_adx: 0.35, w_pos: 0.30}
+        weight: 0.3
+        condition: "GDIAN.value <= 35"
+      - name: MFFF
+        params: {threshold: 1.0, w_macd: 0.4, w_vol: 0.3, w_flow: 0.3}
+        weight: 0.3
+        condition: "MFFF.score >= 0.5"
+
+  # ── 日线族群 ──
+
+  radical_daily_deep_oversold:
+    timeframe: daily
+    description: "日线深度超卖: SSS=-2, GDIAN<=25, MFFF>=1.5"
+    direction_gate: CONSENSUS
+    min_composite_score: 0.4
+    direction_preference: LONG
+    slots:
+      - name: SSS
+        params: {threshold: -2, w_rsi: 0.5, w_bb: 0.35, w_vol: 0.15}
+        weight: 0.4
+        condition: "SSS.score <= -0.6"
+      - name: GDIAN
+        params: {tight_threshold: 25, w_slope: 0.35, w_adx: 0.35, w_pos: 0.30}
+        weight: 0.3
+        condition: "GDIAN.value <= 25"
+      - name: MFFF
+        params: {threshold: 1.5, w_macd: 0.4, w_vol: 0.3, w_flow: 0.3}
+        weight: 0.3
+        condition: "MFFF.score >= 0.5"
+
+  extreme_daily_deep_oversold_max_momentum:
+    timeframe: daily
+    description: "日线极端超卖+最大动量: PF=2.82, 41笔交易"
+    direction_gate: CONSENSUS
+    min_composite_score: 0.5
+    direction_preference: LONG
+    slots:
+      - name: SSS
+        params: {threshold: -2, w_rsi: 0.5, w_bb: 0.35, w_vol: 0.15}
+        weight: 0.35
+        condition: "SSS.score <= -0.7"
+      - name: GDIAN
+        params: {tight_threshold: 20, w_slope: 0.35, w_adx: 0.35, w_pos: 0.30}
+        weight: 0.30
+        condition: "GDIAN.value <= 20"
+      - name: MFFF
+        params: {threshold: 2.0, w_macd: 0.5, w_vol: 0.25, w_flow: 0.25}
+        weight: 0.35
+        condition: "MFFF.score >= 0.6"
+
+  hypo_day_moderate_os_tight_trend:
+    timeframe: daily
+    description: "日线温和超卖+紧趋势: Sharpe=3.453"
+    direction_gate: CONSENSUS
+    min_composite_score: 0.35
+    direction_preference: LONG
+    slots:
+      - name: SSS
+        params: {threshold: -1.5, w_rsi: 0.5, w_bb: 0.35, w_vol: 0.15}
+        weight: 0.4
+        condition: "SSS.score <= -0.5"
+      - name: GDIAN
+        params: {tight_threshold: 25, w_slope: 0.35, w_adx: 0.35, w_pos: 0.30}
+        weight: 0.3
+        condition: "GDIAN.value <= 25"
+      - name: MFFF
+        params: {threshold: 1.5, w_macd: 0.4, w_vol: 0.3, w_flow: 0.3}
+        weight: 0.3
+        condition: "MFFF.score >= 0.5"

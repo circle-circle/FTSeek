@@ -1,248 +1,244 @@
 """
-MFFF — MomentumFlowFilterFactor (动量过滤因子)
+MFFF (MomentumFlowFilterFactor) — 动量过滤因子
 
-衡量价格动量 + 资金流向，综合 MACD + 成交量比 + 价格变化率。
+核心理念:
+    入场时必须有充沛的正向动能支撑。
+    综合 MACD 动量、成交量趋势、资金流方向 三个维度。
 
-值域: score ∈ [-2, 2]
-  ≥ 2.0: 强正向动量 (门禁: MFFF ≥ 2.0)
-  ≥ 1.5: 中强正向动量 (门禁: MFFF ≥ 1.5)
-  ≥ 1.0: 正向动量 (门禁: MFFF ≥ 1.0)
-  ≥ 0.5: 弱正向动量
-  ≈ 0:   无动量
-  < 0:   负向动量
+计算方法:
+    MFFF = w_macd * macd_component + w_vol * vol_component + w_flow * flow_component
 
-对应门禁策略族群:
-  5min 高动量:    MFFF ≥ 2.0
-  15min 超卖反转: MFFF ≥ 1.0
-  日线深度反转:   MFFF ≥ 1.5
+    其中:
+    - macd_component: MACD histogram 归一化 (正值=多头动量)
+    - vol_component: 成交量趋势 (近 5 根 vs 均量)
+    - flow_component: 大单资金流方向
 
 参数空间:
-  macd_fast: [8, 12]
-  macd_slow: [26]
-  macd_signal: [9]
-  volume_weight: [0.3, 0.5, 0.7]
-  threshold: [0.5, 1.0, 1.5, 2.0]
+    macd_fast: [8, 12]
+    macd_slow: [26]
+    volume_weight: [0.3, 0.5, 0.7]
+    threshold: [0.5, 1.0, 1.5, 2.0]
+    w_macd: [0.3, 0.4, 0.5]
+    w_vol: [0.2, 0.3]
+    w_flow: [0.2, 0.3]
+
+输出:
+    score ∈ [-1, 1]:
+      -1.0 = 极端负向动量 (空头强势)
+       0.0 = 动量中性
+      +1.0 = 极端正向动量 (多头强势)
+
+    对于超卖反转策略:
+        MFFF.score >= 1.0 意味着反转时已有正向动能确认
+
+版本: 1.0 | 2026-05-23
 """
 from __future__ import annotations
 
 import logging
+import math
 from typing import Any, Dict, List, Optional
 
-from app.factors.base import BaseFactor, FactorParams, FactorTimeframe, FactorValue
+from .base import BaseFactor, FactorParams, FactorTimeframe, FactorValue
 
 logger = logging.getLogger(__name__)
 
 
 class MFFFFactor(BaseFactor):
-    """
-    MomentumFlowFilterFactor — 动量过滤因子
-    
-    计算逻辑:
-    1. MACD 信号: (MACD - Signal) / price → 归一化动量
-    2. 资金流: 价格变化 × 成交量 → OBV 斜率近似
-    3. 成交量确认: 当前量 / 历史量 → 动量是否有量支撑
-    
-    综合: score = w_macd * macd_signal + w_flow * flow_signal + w_vol * vol_confirm
-    """
+    """动量过滤因子"""
 
     name = "MFFF"
     timeframe = FactorTimeframe.MIN_15
     version = "1.0"
 
-    param_space: Dict[str, List[Any]] = {
-        "macd_fast": [8, 12],
-        "macd_slow": [26],
-        "macd_signal": [9],
-        "volume_weight": [0.3, 0.5, 0.7],
+    param_space = {
+        "threshold": [0.5, 1.0, 1.5, 2.0],
+        "w_macd": [0.3, 0.4, 0.5],
+        "w_vol": [0.2, 0.3],
+        "w_flow": [0.2, 0.3],
     }
 
-    def compute(
-        self,
-        symbol: str,
-        market_data: Dict[str, Any],
-        ctx: Optional[Dict[str, Any]] = None,
-    ) -> FactorValue:
-        bars = market_data.get("bars", [])
-        macd_fast = self.params.get("macd_fast", 12)
-        macd_slow = self.params.get("macd_slow", 26)
-        macd_signal_period = self.params.get("macd_signal", 9)
-        vol_weight = self.params.get("volume_weight", 0.5)
+    _DEFAULTS = {
+        "threshold": 1.0,
+        "w_macd": 0.4,
+        "w_vol": 0.3,
+        "w_flow": 0.3,
+    }
 
-        min_bars = macd_slow + macd_signal_period + 5
-        if len(bars) < min_bars:
-            return FactorValue(
-                name=self.name, value=0.0, score=0.0,
-                direction_hint="NEUTRAL", confidence=0.0,
-                metadata={"error": "insufficient_bars", "need": min_bars, "have": len(bars)},
-                params_used=self.params.params,
-            )
+    def __init__(self, params: Optional[FactorParams] = None):
+        if params is None:
+            params = FactorParams(params=dict(self._DEFAULTS))
+        else:
+            for k, v in self._DEFAULTS.items():
+                if k not in params.params:
+                    params.params[k] = v
+        super().__init__(params)
 
-        closes = [b["close"] for b in bars]
-        volumes = [b.get("volume", 0) for b in bars]
+    def compute(self, symbol: str, market_data: Dict[str, Any],
+                ctx: Optional[Dict[str, Any]] = None) -> FactorValue:
+        """
+        计算动量过滤
 
-        # ── 1. MACD 信号 ──
-        macd_line, signal_line, histogram = self._compute_macd(
-            closes, macd_fast, macd_slow, macd_signal_period
-        )
+        Args:
+            symbol: 标的代码
+            market_data: 必须包含:
+                - macd, macd_signal, macd_hist: MACD 指标
+                - volume, avg_volume: 成交量
+                可选:
+                - bars: K线序列 (用于量趋势)
+                - net_capital_flow: 净流入
+                - large_order_ratio: 大单占比
+            ctx: 未使用
+        """
+        md = market_data
+        w_macd = self.params.get("w_macd", 0.4)
+        w_vol = self.params.get("w_vol", 0.3)
+        w_flow = self.params.get("w_flow", 0.3)
+        threshold = self.params.get("threshold", 1.0)
 
-        # 归一化 MACD histogram: 除以当前价格
-        current_price = closes[-1]
-        macd_normalized = self._safe_divide(histogram, current_price) * 1000
-        # 典型范围: [-5, +5] → 映射到 [-1, 1]
-        macd_signal = self._clamp(macd_normalized / 5.0, -1.0, 1.0)
+        # 1. MACD 动量分量
+        macd_component = self._compute_macd_component(md)
 
-        # ── 2. 资金流 (OBV 斜率近似) ──
-        flow_signal = self._compute_flow_signal(closes, volumes, lookback=10)
-        # flow_signal ∈ [-1, 1]
+        # 2. 成交量趋势分量
+        vol_component = self._compute_vol_component(md)
 
-        # ── 3. 成交量确认 ──
-        vol_ratio = self._compute_volume_confirmation(volumes, lookback=20)
-        # vol_ratio: 1.0 = 正常, >1.5 = 放量, <0.5 = 缩量
-        vol_confirm = self._clamp((vol_ratio - 1.0), -0.5, 1.0)
+        # 3. 资金流分量
+        flow_component = self._compute_flow_component(md)
 
-        # ── 综合评分 ──
-        # MACD 权重 (1 - vol_weight) 分配给 macd 和 flow
-        macd_w = (1.0 - vol_weight) * 0.6
-        flow_w = (1.0 - vol_weight) * 0.4
-        vol_w = vol_weight
+        # 综合评分
+        raw_score = (w_macd * macd_component
+                     + w_vol * vol_component
+                     + w_flow * flow_component)
 
-        raw_score = macd_w * macd_signal + flow_w * flow_signal
-        # 成交量作为确认: 同向放量增强，反向缩量减弱
-        vol_multiplier = 1.0 + vol_confirm * (1.0 if raw_score > 0 else -1.0)
-        raw_score *= max(vol_multiplier, 0.5)
-
-        # 映射到 [-2, 2] 范围 (与门禁策略的 MFFF 值对齐)
-        final_score = self._clamp(raw_score * 2.0, -2.0, 2.0)
-
-        # 方向判断
-        if final_score >= 0.3:
+        # 方向判定
+        if raw_score >= 0.3:
             direction = "LONG"
-        elif final_score <= -0.3:
+            confidence = min(1.0, abs(raw_score))
+        elif raw_score <= -0.3:
             direction = "SHORT"
+            confidence = min(1.0, abs(raw_score))
         else:
             direction = "NEUTRAL"
-
-        # 置信度
-        signals_agree = sum(1 for s in [macd_signal, flow_signal]
-                          if (s > 0) == (raw_score > 0) and abs(s) > 0.2)
-        confidence = self._clamp(0.4 + 0.2 * signals_agree + 0.1 * (vol_confirm > 0.2), 0.0, 1.0)
+            confidence = 1.0 - abs(raw_score)
 
         return FactorValue(
             name=self.name,
-            value=final_score,
-            score=self._clamp(final_score / 2.0, -1.0, 1.0),  # 归一化到 [-1, 1]
+            value=raw_score,
+            score=raw_score,
             direction_hint=direction,
             confidence=confidence,
-            metadata={
-                "macd_line": round(macd_line, 6),
-                "signal_line": round(signal_line, 6),
-                "histogram": round(histogram, 6),
-                "macd_normalized": round(macd_normalized, 4),
-                "macd_signal": round(macd_signal, 4),
-                "flow_signal": round(flow_signal, 4),
-                "vol_ratio": round(vol_ratio, 2),
-                "vol_confirm": round(vol_confirm, 4),
-                "raw_score": round(raw_score, 4),
+            params_used={
+                "threshold": threshold,
+                "w_macd": w_macd, "w_vol": w_vol, "w_flow": w_flow,
             },
-            params_used=self.params.params,
+            metadata={
+                "macd_component": round(macd_component, 4),
+                "vol_component": round(vol_component, 4),
+                "flow_component": round(flow_component, 4),
+                "above_threshold": abs(raw_score) >= threshold,
+            },
         )
 
-    # ── 技术指标计算 ──
+    def _compute_macd_component(self, md: Dict[str, Any]) -> float:
+        """MACD histogram 归一化"""
+        macd = float(md.get("macd", 0))
+        macd_signal = float(md.get("macd_signal", 0))
+        macd_hist = float(md.get("macd_hist", macd - macd_signal))
+        price = float(md.get("price", md.get("close", 1)))
 
-    @staticmethod
-    def _ema(values: List[float], period: int) -> List[float]:
-        """计算 EMA 序列"""
-        if len(values) < period:
-            return values[:]
-
-        multiplier = 2.0 / (period + 1)
-        ema = [sum(values[:period]) / period]  # 首个值 = SMA
-
-        for val in values[period:]:
-            ema.append((val - ema[-1]) * multiplier + ema[-1])
-
-        return ema
-
-    def _compute_macd(
-        self,
-        closes: List[float],
-        fast: int,
-        slow: int,
-        signal_period: int,
-    ) -> tuple:
-        """
-        计算 MACD
-        
-        Returns:
-            (macd_line, signal_line, histogram) — 最新值
-        """
-        ema_fast = self._ema(closes, fast)
-        ema_slow = self._ema(closes, slow)
-
-        # 对齐长度 (EMA slow 较短)
-        offset = len(ema_fast) - len(ema_slow)
-        macd_values = [
-            ema_fast[offset + i] - ema_slow[i]
-            for i in range(len(ema_slow))
-        ]
-
-        if len(macd_values) < signal_period:
-            macd_line = macd_values[-1] if macd_values else 0.0
-            return macd_line, 0.0, macd_line
-
-        signal_values = self._ema(macd_values, signal_period)
-        # 对齐
-        sig_offset = len(macd_values) - len(signal_values)
-
-        macd_line = macd_values[-1]
-        signal_line = signal_values[-1]
-        histogram = macd_line - signal_line
-
-        return macd_line, signal_line, histogram
-
-    @staticmethod
-    def _compute_flow_signal(
-        closes: List[float], volumes: List[float], lookback: int
-    ) -> float:
-        """
-        资金流信号 — 简化版 OBV 斜率
-        
-        正 = 资金流入, 负 = 资金流出
-        返回 [-1, 1]
-        """
-        if len(closes) < lookback + 1 or len(volumes) < lookback + 1:
+        if price <= 0:
             return 0.0
 
-        obv_changes = []
-        for i in range(-lookback, 0):
-            price_change = closes[i] - closes[i - 1]
-            if price_change > 0:
-                obv_changes.append(volumes[i])
-            elif price_change < 0:
-                obv_changes.append(-volumes[i])
-            else:
-                obv_changes.append(0)
+        # MACD histogram 占价格的百分比
+        hist_pct = macd_hist / price * 100
 
-        net_flow = sum(obv_changes)
-        total_vol = sum(abs(v) for v in obv_changes)
+        # 归一化: ±2% 为极端
+        component = max(-1.0, min(1.0, hist_pct / 2.0))
 
-        if total_vol == 0:
-            return 0.0
+        # MACD 交叉信号加成
+        if macd > macd_signal and macd_hist > 0:
+            component = min(1.0, component * 1.2)  # 多头交叉加成
+        elif macd < macd_signal and macd_hist < 0:
+            component = max(-1.0, component * 1.2)  # 空头交叉加成
 
-        # 归一化到 [-1, 1]
-        return max(-1.0, min(1.0, net_flow / total_vol))
+        return component
 
-    @staticmethod
-    def _compute_volume_confirmation(volumes: List[float], lookback: int) -> float:
-        """成交量确认 — 当前量 / 历史均值"""
-        if len(volumes) < lookback + 1:
-            return 1.0
+    def _compute_vol_component(self, md: Dict[str, Any]) -> float:
+        """成交量趋势"""
+        volume = float(md.get("volume", 0))
+        avg_volume = float(md.get("avg_volume", 1))
+        bars = md.get("bars", [])
 
-        current = volumes[-1]
-        historical = volumes[-(lookback + 1):-1]
-        avg = sum(historical) / len(historical) if historical else 1.0
+        # 基础量比
+        if avg_volume > 0:
+            vol_ratio = volume / avg_volume
+        else:
+            vol_ratio = 1.0
 
-        if avg == 0:
-            return 1.0
+        # 量趋势: 近几根 K 线的量变化方向
+        vol_trend = 0.0
+        if len(bars) >= 3:
+            vols = [float(b.get("volume", 0)) for b in bars[-5:]]
+            if vols[0] > 0:
+                # 线性趋势斜率
+                n = len(vols)
+                x_mean = (n - 1) / 2
+                y_mean = sum(vols) / n
+                num = sum((i - x_mean) * (vols[i] - y_mean) for i in range(n))
+                den = sum((i - x_mean) ** 2 for i in range(n))
+                if den > 0 and y_mean > 0:
+                    vol_trend = (num / den) / y_mean * 5  # 归一化
 
-        return current / avg
+        # 综合: 量比偏离 + 量趋势
+        vol_deviation = max(-1.0, min(1.0, (vol_ratio - 1.0)))
+        component = 0.6 * vol_deviation + 0.4 * max(-1.0, min(1.0, vol_trend))
+
+        return component
+
+    def _compute_flow_component(self, md: Dict[str, Any]) -> float:
+        """资金流方向"""
+        # 直接提供净流入
+        net_flow = md.get("net_capital_flow", None)
+        if net_flow is not None:
+            try:
+                net_flow = float(net_flow)
+                # 归一化: ±1M 为极端
+                return max(-1.0, min(1.0, net_flow / 1_000_000))
+            except (TypeError, ValueError):
+                pass
+
+        # 大单占比
+        large_ratio = md.get("large_order_ratio", None)
+        if large_ratio is not None:
+            try:
+                large_ratio = float(large_ratio)
+                # 大单占比 > 0.3 = 强流入
+                return max(-1.0, min(1.0, (large_ratio - 0.2) * 5))
+            except (TypeError, ValueError):
+                pass
+
+        # 无法获取资金流数据 → 用量价相关性近似
+        bars = md.get("bars", [])
+        if len(bars) >= 3:
+            # 简化: 价格上涨 + 放量 = 正向流入
+            price_change = 0
+            vol_change = 0
+            for i in range(1, min(4, len(bars))):
+                c = float(bars[i].get("close", 0))
+                pc = float(bars[i - 1].get("close", 0))
+                v = float(bars[i].get("volume", 0))
+                pv = float(bars[i - 1].get("volume", 0))
+                if pc > 0 and pv > 0:
+                    price_change += (c - pc) / pc
+                    vol_change += (v - pv) / pv
+
+            # 量价正相关 = 正向流入
+            if price_change != 0:
+                correlation = (1 if (price_change > 0) == (vol_change > 0) else -1)
+                strength = min(1.0, abs(price_change) * 50)
+                return correlation * strength * 0.5
+
+        return 0.0
+
+
+FACTOR_CLASS = MFFFFactor

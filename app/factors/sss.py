@@ -1,25 +1,35 @@
 """
-SSS — SuperSoldScore (超卖深度因子)
+SSS (SuperSoldScore) — 超卖深度因子
 
-衡量标的超卖程度，综合 RSI + Bollinger Band 位置 + 成交量异常。
+核心理念:
+    量化标的当前的超卖程度。值越负表示超卖越深，反转概率越高。
 
-值域: score ∈ [-2, 2]
-  -2: 极度超卖 (强烈买入信号)
-  -1: 中度超卖
-   0: 中性
-  +1: 中度超买
-  +2: 极度超买 (强烈卖出信号)
+计算方法:
+    综合 RSI、Bollinger Band %B、成交量萎缩 三个维度评估超卖深度。
 
-对应门禁策略族群:
-  5min 高动量:    SSS = -1
-  15min 超卖反转: SSS ∈ [-1.5, 1]
-  日线深度反转:   SSS = -2
+    SSS = w_rsi * rsi_component + w_bb * bb_component + w_vol * vol_component
+
+    其中:
+    - rsi_component: (RSI - 50) / 50, 范围 [-1, 1], RSI=20 → -0.6
+    - bb_component: (%B - 0.5) * 2, 范围 [-1, 1], %B=0 → -1.0
+    - vol_component: -(1 - volume/avg_volume), 量缩越大越超卖
 
 参数空间:
-  rsi_period: [7, 14, 21]
-  bb_period: [20]
-  bb_std: [1.5, 2.0, 2.5]
-  volume_lookback: [20]
+    rsi_period: [7, 14, 21]
+    bb_period: [20]
+    bb_std: [1.5, 2.0, 2.5]
+    threshold: [-2, -1.5, -1, -0.5, 0, 0.5, 1]
+    w_rsi: [0.4, 0.5]
+    w_bb: [0.3, 0.4]
+    w_vol: [0.1, 0.2]
+
+输出:
+    score ∈ [-1, 1]:
+      -1.0 = 极端超卖 (RSI<20, 低于布林下轨, 量缩)
+       0.0 = 中性
+      +1.0 = 极端超买
+
+版本: 1.0 | 2026-05-23
 """
 from __future__ import annotations
 
@@ -27,179 +37,132 @@ import logging
 import math
 from typing import Any, Dict, List, Optional
 
-from app.factors.base import BaseFactor, FactorParams, FactorTimeframe, FactorValue
+from .base import BaseFactor, FactorParams, FactorTimeframe, FactorValue
 
 logger = logging.getLogger(__name__)
 
 
 class SSSFactor(BaseFactor):
-    """
-    SuperSoldScore — 超卖深度因子
-    
-    计算逻辑:
-    1. RSI 偏离度: (RSI - 50) / 50 → [-1, 1]，反转符号使得超卖为正
-    2. BB 位置: (close - lower_band) / (upper_band - lower_band) → [0, 1]
-       反转并扩展到 [-1, 1]: 0 = 下轨 (超卖), 1 = 上轨 (超买)
-    3. 成交量异常: 当前成交量 / 过去 N 根均值 → 异常度
-    
-    综合: score = w_rsi * rsi_signal + w_bb * bb_signal + w_vol * vol_signal
-    """
+    """超卖深度因子"""
 
     name = "SSS"
     timeframe = FactorTimeframe.MIN_15
     version = "1.0"
 
-    param_space: Dict[str, List[Any]] = {
-        "rsi_period": [7, 14, 21],
-        "bb_period": [20],
-        "bb_std": [1.5, 2.0, 2.5],
-        "volume_lookback": [20],
+    param_space = {
+        "threshold": [-2, -1.5, -1, -0.5, 0, 0.5, 1],
+        "w_rsi": [0.4, 0.5],
+        "w_bb": [0.3, 0.4],
+        "w_vol": [0.1, 0.2],
     }
 
-    # 默认权重
-    _W_RSI = 0.45
-    _W_BB = 0.40
-    _W_VOL = 0.15
+    # 默认参数
+    _DEFAULTS = {
+        "threshold": -1.0,
+        "w_rsi": 0.5,
+        "w_bb": 0.35,
+        "w_vol": 0.15,
+    }
 
-    def compute(
-        self,
-        symbol: str,
-        market_data: Dict[str, Any],
-        ctx: Optional[Dict[str, Any]] = None,
-    ) -> FactorValue:
-        bars = market_data.get("bars", [])
-        if len(bars) < max(
-            self.params.get("rsi_period", 14) + 1,
-            self.params.get("bb_period", 20),
-            self.params.get("volume_lookback", 20),
-        ):
-            return FactorValue(
-                name=self.name, value=0.0, score=0.0,
-                direction_hint="NEUTRAL", confidence=0.0,
-                metadata={"error": "insufficient_bars"},
-                params_used=self.params.params,
-            )
+    def __init__(self, params: Optional[FactorParams] = None):
+        if params is None:
+            params = FactorParams(params=dict(self._DEFAULTS))
+        else:
+            # 填充缺失参数
+            for k, v in self._DEFAULTS.items():
+                if k not in params.params:
+                    params.params[k] = v
+        super().__init__(params)
 
-        closes = [b["close"] for b in bars]
-        volumes = [b.get("volume", 0) for b in bars]
+    def compute(self, symbol: str, market_data: Dict[str, Any],
+                ctx: Optional[Dict[str, Any]] = None) -> FactorValue:
+        """
+        计算超卖深度
 
-        rsi_period = self.params.get("rsi_period", 14)
-        bb_period = self.params.get("bb_period", 20)
-        bb_std = self.params.get("bb_std", 2.0)
-        vol_lookback = self.params.get("volume_lookback", 20)
+        Args:
+            symbol: 标的代码
+            market_data: 必须包含:
+                - rsi_14 (或 rsi_N): RSI 值
+                - bollinger_upper, bollinger_lower, price: 计算 %B
+                - volume, avg_volume: 量比
+            ctx: 未使用
+        """
+        md = market_data
+        w_rsi = self.params.get("w_rsi", 0.5)
+        w_bb = self.params.get("w_bb", 0.35)
+        w_vol = self.params.get("w_vol", 0.15)
 
-        # ── 1. RSI 偏离度 ──
-        rsi = self._compute_rsi(closes, rsi_period)
-        # RSI 30 = 超卖 → score 正; RSI 70 = 超买 → score 负
-        rsi_signal = self._clamp((50 - rsi) / 50, -1.0, 1.0)
+        # 1. RSI 分量
+        rsi = md.get("rsi_14", md.get("rsi", 50.0))
+        try:
+            rsi = float(rsi)
+        except (TypeError, ValueError):
+            rsi = 50.0
+        # 归一化到 [-1, 1]: RSI=0 → -1, RSI=50 → 0, RSI=100 → 1
+        rsi_component = (rsi - 50.0) / 50.0
+        rsi_component = max(-1.0, min(1.0, rsi_component))
 
-        # ── 2. Bollinger Band 位置 ──
-        bb_pct = self._compute_bb_position(closes, bb_period, bb_std)
-        # bb_pct 0 = 下轨 (超卖), 1 = 上轨 (超买)
-        bb_signal = self._clamp(1.0 - 2.0 * bb_pct, -1.0, 1.0)
+        # 2. Bollinger %B 分量
+        price = float(md.get("price", md.get("close", 0)))
+        bb_upper = float(md.get("bollinger_upper", 0))
+        bb_lower = float(md.get("bollinger_lower", 0))
 
-        # ── 3. 成交量异常 ──
-        vol_ratio = self._compute_volume_ratio(volumes, vol_lookback)
-        # 放量超卖增加信号强度 (方向由 rsi/bb 决定，vol 只做放大)
-        vol_signal = min(vol_ratio - 1.0, 1.0)  # 正常量 = 0, 放量 > 0
+        if bb_upper > bb_lower and bb_upper > 0:
+            pct_b = (price - bb_lower) / (bb_upper - bb_lower)
+            # %B ∈ [0, 1], 归一化到 [-1, 1]
+            bb_component = (pct_b - 0.5) * 2.0
+            bb_component = max(-1.0, min(1.0, bb_component))
+        else:
+            bb_component = 0.0
+            pct_b = 0.5
 
-        # ── 综合评分 ──
-        raw_score = (
-            self._W_RSI * rsi_signal +
-            self._W_BB * bb_signal +
-            self._W_VOL * vol_signal * (1.0 if rsi_signal > 0 else -1.0)
-        )
+        # 3. 量缩分量 (量缩越大 → 超卖信号越强)
+        volume = float(md.get("volume", 0))
+        avg_volume = float(md.get("avg_volume", 1))
+        if avg_volume > 0:
+            vol_ratio = volume / avg_volume
+            # vol_ratio=0.3 → component=0.7 (缩量=超卖)
+            # vol_ratio=2.0 → component=-1.0 (放量=不超卖)
+            vol_component = max(-1.0, min(1.0, 1.0 - vol_ratio))
+        else:
+            vol_ratio = 1.0
+            vol_component = 0.0
 
-        # 映射到 [-2, 2] 范围 (与门禁策略的 SSS 值对齐)
-        final_score = self._clamp(raw_score * 2.0, -2.0, 2.0)
+        # 综合评分
+        raw_score = (w_rsi * rsi_component
+                     + w_bb * bb_component
+                     + w_vol * vol_component)
 
-        # 方向判断
-        if final_score >= 0.5:
-            direction = "LONG"
-        elif final_score <= -0.5:
-            direction = "SHORT"
+        # 注意: SSS 是"超卖"因子，score 越负越超卖
+        # 但 direction_hint 应该是反直觉的: 超卖 → 看多(反转)
+        if raw_score <= -0.5:
+            direction = "LONG"   # 超卖 → 做多反转
+            confidence = min(1.0, abs(raw_score))
+        elif raw_score >= 0.5:
+            direction = "SHORT"  # 超买 → 做空反转
+            confidence = min(1.0, abs(raw_score))
         else:
             direction = "NEUTRAL"
-
-        # 置信度: 多个子信号一致时更高
-        agreement = sum(1 for s in [rsi_signal, bb_signal] if (s > 0) == (raw_score > 0))
-        confidence = self._clamp(0.5 + 0.25 * agreement, 0.0, 1.0)
+            confidence = 1.0 - abs(raw_score)
 
         return FactorValue(
             name=self.name,
-            value=final_score,
-            score=self._clamp(final_score / 2.0, -1.0, 1.0),  # 归一化到 [-1, 1]
+            value=raw_score,
+            score=raw_score,
             direction_hint=direction,
             confidence=confidence,
+            params_used={"w_rsi": w_rsi, "w_bb": w_bb, "w_vol": w_vol,
+                         "threshold": self.params.get("threshold", -1.0)},
             metadata={
                 "rsi": round(rsi, 2),
-                "rsi_signal": round(rsi_signal, 4),
-                "bb_pct": round(bb_pct, 4),
-                "bb_signal": round(bb_signal, 4),
-                "vol_ratio": round(vol_ratio, 2),
-                "vol_signal": round(vol_signal, 4),
-                "raw_score": round(raw_score, 4),
+                "rsi_component": round(rsi_component, 4),
+                "pct_b": round(pct_b, 4),
+                "bb_component": round(bb_component, 4),
+                "vol_ratio": round(vol_ratio, 3),
+                "vol_component": round(vol_component, 4),
             },
-            params_used=self.params.params,
         )
 
-    # ── 技术指标计算 (纯函数) ──
 
-    @staticmethod
-    def _compute_rsi(closes: List[float], period: int) -> float:
-        """计算 RSI (Wilder 平滑)"""
-        if len(closes) < period + 1:
-            return 50.0  # 默认中性
-
-        deltas = [closes[i] - closes[i - 1] for i in range(1, len(closes))]
-        gains = [max(d, 0) for d in deltas[-period:]]
-        losses = [abs(min(d, 0)) for d in deltas[-period:]]
-
-        avg_gain = sum(gains) / period
-        avg_loss = sum(losses) / period
-
-        if avg_loss == 0:
-            return 100.0
-        rs = avg_gain / avg_loss
-        return 100.0 - (100.0 / (1.0 + rs))
-
-    @staticmethod
-    def _compute_bb_position(
-        closes: List[float], period: int, num_std: float
-    ) -> float:
-        """计算 Bollinger Band 位置 (0 = 下轨, 1 = 上轨)"""
-        if len(closes) < period:
-            return 0.5  # 默认中轨
-
-        window = closes[-period:]
-        mean = sum(window) / len(window)
-        variance = sum((x - mean) ** 2 for x in window) / len(window)
-        std = math.sqrt(variance)
-
-        if std == 0:
-            return 0.5
-
-        upper = mean + num_std * std
-        lower = mean - num_std * std
-        current = closes[-1]
-
-        if upper == lower:
-            return 0.5
-
-        pct = (current - lower) / (upper - lower)
-        return max(0.0, min(1.0, pct))
-
-    @staticmethod
-    def _compute_volume_ratio(volumes: List[float], lookback: int) -> float:
-        """计算成交量比率 (当前 / 过去 N 根均值)"""
-        if len(volumes) < lookback + 1:
-            return 1.0
-
-        current_vol = volumes[-1]
-        past_vols = volumes[-(lookback + 1):-1]
-        avg_vol = sum(past_vols) / len(past_vols) if past_vols else 1.0
-
-        if avg_vol == 0:
-            return 1.0
-
-        return current_vol / avg_vol
+# 模块级导出 (供 auto_discover 使用)
+FACTOR_CLASS = SSSFactor

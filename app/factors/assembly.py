@@ -1,220 +1,342 @@
 """
-因子组合器 (Factor Assembly)
+因子组合器 (FactorAssembly) — 将多个因子组合为一个完整的入场策略
 
-将多个因子组合成策略入场信号，支持：
-- 因子权重配置
-- 入场条件表达式 (如 "SSS.score >= -1.5")
-- 方向门禁 (ALL_LONG / ALL_SHORT / CONSENSUS / ANY)
-- 综合评分计算
+设计:
+1. 每个 assembly 定义: 因子列表 + 入场条件 + 方向门控
+2. 条件表达式安全评估 (ConditionEvaluator)
+3. 从 YAML 加载预定义策略变体
+4. 支持动态组装新变体
+
+版本: 1.0 | 2026-05-23
 """
+from __future__ import annotations
+
+import logging
+import yaml
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
-import re
 
-from app.factors.base import FactorValue
+from .base import (
+    BaseFactor, ConditionEvaluator, FactorParams,
+    FactorTimeframe, FactorValue,
+)
+from .registry import FactorRegistry
+
+logger = logging.getLogger(__name__)
 
 
+# ============================================================
+#  因子槽位定义
+# ============================================================
 @dataclass
+class FactorSlot:
+    """
+    因子在组合中的槽位
+
+    name: 因子名称 (必须在 registry 中注册)
+    params: 该槽位的参数覆盖
+    weight: 在综合评分中的权重
+    condition: 入场条件表达式 (e.g., "SSS.score >= -1.5")
+    """
+    name: str
+    params: Dict[str, Any] = field(default_factory=dict)
+    weight: float = 1.0
+    condition: str = ""
+
+
+# ============================================================
+#  因子组合评估结果
+# ============================================================
+@dataclass
+class AssemblyResult:
+    """组合评估结果"""
+    assembly_name: str
+    passed: bool                      # 是否满足所有入场条件
+    composite_score: float            # 综合评分
+    direction: str                    # "LONG" | "SHORT" | "NEUTRAL"
+    confidence: float                 # 综合置信度
+    factor_values: Dict[str, FactorValue] = field(default_factory=dict)
+    condition_results: List[Tuple[str, bool, str]] = field(default_factory=list)
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "assembly_name": self.assembly_name,
+            "passed": self.passed,
+            "composite_score": round(self.composite_score, 4),
+            "direction": self.direction,
+            "confidence": round(self.confidence, 3),
+            "factors": {k: v.to_dict() for k, v in self.factor_values.items()},
+            "conditions": [(c, p, r) for c, p, r in self.condition_results],
+            "metadata": self.metadata,
+        }
+
+
+# ============================================================
+#  因子组合器
+# ============================================================
 class FactorAssembly:
     """
-    因子组合 — 可序列化为 YAML
-    
-    定义策略的入场因子配置和条件。
+    因子组合 — 可序列化为 YAML 的策略入场定义
+
+    示例:
+        assembly = FactorAssembly(
+            name="stable_15m_relaxed_oversold_tight_trend",
+            timeframe="15min",
+            slots=[
+                FactorSlot(name="SSS", params={"threshold": -1.5},
+                           weight=0.4, condition="SSS.score >= -1.5"),
+                FactorSlot(name="GDIAN", params={"tight_threshold": 35},
+                           weight=0.3, condition="GDIAN.value <= 35"),
+                FactorSlot(name="MFFF", params={"threshold": 1.0},
+                           weight=0.3, condition="MFFF.score >= 1.0"),
+            ],
+            direction_gate="CONSENSUS",
+            min_composite_score=0.3,
+        )
     """
-    name: str                                    # "stable_15m_relaxed_oversold_tight_trend"
-    factors: List[Dict[str, Any]]                # [{name: "SSS", params: {...}, weight: 0.4}, ...]
-    direction_gate: str                          # "ALL_LONG" | "ALL_SHORT" | "CONSENSUS" | "ANY"
-    min_composite_score: float                   # 最低综合评分门槛
-    timeframe: str                               # 组合的工作时间框架
-    entry_conditions: List[str]                  # ["SSS.score >= -1.5", "GDIAN.value <= 35"]
-    description: str = ""
-    
-    def evaluate(self, factor_values: Dict[str, FactorValue]) -> Tuple[bool, float, str]:
+
+    def __init__(
+        self,
+        name: str,
+        timeframe: str = "15min",
+        slots: Optional[List[FactorSlot]] = None,
+        direction_gate: str = "CONSENSUS",
+        min_composite_score: float = 0.3,
+        direction_preference: str = "ANY",  # "LONG" | "SHORT" | "ANY"
+        description: str = "",
+    ):
+        self.name = name
+        self.timeframe = timeframe
+        self.slots = slots or []
+        self.direction_gate = direction_gate
+        self.min_composite_score = min_composite_score
+        self.direction_preference = direction_preference
+        self.description = description
+
+    def evaluate(self, symbol: str, market_data: Dict[str, Any],
+                 ctx: Optional[Dict[str, Any]] = None,
+                 registry: Optional[FactorRegistry] = None
+                 ) -> AssemblyResult:
         """
-        评估是否满足入场条件
-        
+        评估因子组合
+
         Args:
-            factor_values: 因子名称 -> FactorValue 映射
-            
+            symbol: 标的代码
+            market_data: 行情数据
+            ctx: 额外上下文
+            registry: 因子注册中心 (None 使用全局单例)
+
         Returns:
-            Tuple[bool, float, str]: (是否入场, 综合评分, 方向建议)
+            AssemblyResult
         """
-        # 1. 检查所有必需因子是否存在
-        required_factors = {f['name'] for f in self.factors}
-        missing = required_factors - set(factor_values.keys())
-        if missing:
-            return False, 0.0, "NEUTRAL"
-        
-        # 2. 评估入场条件
-        conditions_met = self._evaluate_conditions(factor_values)
-        if not conditions_met:
-            return False, 0.0, "NEUTRAL"
-        
-        # 3. 计算综合评分 (加权)
-        composite_score = self._compute_composite_score(factor_values)
-        if composite_score < self.min_composite_score:
-            return False, composite_score, "NEUTRAL"
-        
-        # 4. 方向门禁
-        direction = self._evaluate_direction_gate(factor_values)
-        if direction == "NEUTRAL":
-            return False, composite_score, "NEUTRAL"
-        
-        return True, composite_score, direction
-    
-    def _evaluate_conditions(self, factor_values: Dict[str, FactorValue]) -> bool:
-        """评估所有入场条件"""
-        for condition in self.entry_conditions:
-            if not self._evaluate_single_condition(condition, factor_values):
-                return False
-        return True
-    
-    def _evaluate_single_condition(
-        self, 
-        condition: str, 
-        factor_values: Dict[str, FactorValue]
-    ) -> bool:
-        """
-        评估单个条件表达式
-        
-        支持格式: "FACTOR_NAME.attribute op value"
-        例如: "SSS.score >= -1.5", "GDIAN.value <= 35"
-        """
-        # 解析表达式
-        match = re.match(r'(\w+)\.(\w+)\s*(>=|<=|>|<|==|!=)\s*([+-]?\d*\.?\d+)', condition)
-        if not match:
-            return False
-        
-        factor_name = match.group(1)
-        attribute = match.group(2)
-        operator = match.group(3)
-        threshold = float(match.group(4))
-        
-        # 获取因子值
-        if factor_name not in factor_values:
-            return False
-        
-        fv = factor_values[factor_name]
-        
-        # 获取属性值
-        value = getattr(fv, attribute, None)
-        if value is None:
-            return False
-        
-        # 比较
-        if operator == '>=':
-            return value >= threshold
-        elif operator == '<=':
-            return value <= threshold
-        elif operator == '>':
-            return value > threshold
-        elif operator == '<':
-            return value < threshold
-        elif operator == '==':
-            return abs(value - threshold) < 1e-6
-        elif operator == '!=':
-            return abs(value - threshold) >= 1e-6
-        
-        return False
-    
-    def _compute_composite_score(self, factor_values: Dict[str, FactorValue]) -> float:
-        """
-        计算加权综合评分
-        
-        使用因子的 score 字段 (归一化到 [-1, 1])
-        """
+        if registry is None:
+            registry = FactorRegistry.instance()
+
+        factor_values: Dict[str, FactorValue] = {}
+        condition_results: List[Tuple[str, bool, str]] = []
+        weighted_scores: List[float] = []
         total_weight = 0.0
-        weighted_sum = 0.0
-        
-        for factor_config in self.factors:
-            name = factor_config['name']
-            weight = factor_config.get('weight', 1.0)
-            
-            if name in factor_values:
-                fv = factor_values[name]
-                # score 已在 [-1, 1] 范围，乘以 confidence
-                contribution = fv.score * fv.confidence * weight
-                weighted_sum += contribution
-                total_weight += weight
-        
-        if total_weight == 0:
-            return 0.0
-        
-        return weighted_sum / total_weight
-    
-    def _evaluate_direction_gate(self, factor_values: Dict[str, FactorValue]) -> str:
-        """
-        评估方向门禁
-        
-        - ALL_LONG: 所有因子 direction_hint == "LONG"
-        - ALL_SHORT: 所有因子 direction_hint == "SHORT"
-        - CONSENSUS: 多数因子方向一致
-        - ANY: 任意因子有方向即可
-        """
-        directions = []
-        for factor_config in self.factors:
-            name = factor_config['name']
-            if name in factor_values:
-                fv = factor_values[name]
-                directions.append(fv.direction_hint)
-        
+
+        # 1. 计算所有因子值
+        for slot in self.slots:
+            try:
+                params = FactorParams(params=slot.params) if slot.params else None
+                factor = registry.create(slot.name, params)
+                fv = factor.compute(symbol, market_data, ctx)
+                factor_values[slot.name] = fv
+                weighted_scores.append(fv.score * slot.weight)
+                total_weight += slot.weight
+            except Exception as e:
+                logger.warning("[%s] 因子 %s 计算失败: %s", self.name, slot.name, e)
+                condition_results.append(
+                    (f"{slot.name} compute", False, f"error: {e}"))
+
+        # 2. 评估入场条件
+        all_conditions_passed = True
+        for slot in self.slots:
+            if not slot.condition:
+                continue  # 无条件 = 始终通过
+
+            passed, reason = ConditionEvaluator.evaluate(
+                slot.condition, factor_values)
+            condition_results.append((slot.condition, passed, reason))
+
+            if not passed:
+                all_conditions_passed = False
+
+        # 3. 综合评分
+        if total_weight > 0:
+            composite_score = sum(weighted_scores) / total_weight
+        else:
+            composite_score = 0.0
+
+        # 4. 方向判定
+        direction = self._determine_direction(factor_values, composite_score)
+
+        # 5. 方向偏好过滤
+        if self.direction_preference != "ANY":
+            if direction != self.direction_preference and direction != "NEUTRAL":
+                all_conditions_passed = False
+                condition_results.append(
+                    ("direction_preference", False,
+                     f"prefer {self.direction_preference} but got {direction}"))
+
+        # 6. 最低综合评分检查
+        score_passed = abs(composite_score) >= self.min_composite_score
+        if not score_passed:
+            condition_results.append(
+                ("min_composite_score", False,
+                 f"|{composite_score:.4f}| < {self.min_composite_score}"))
+
+        # 7. 综合置信度
+        if factor_values:
+            avg_confidence = sum(fv.confidence for fv in factor_values.values()) / len(factor_values)
+        else:
+            avg_confidence = 0.0
+
+        passed = all_conditions_passed and score_passed
+
+        return AssemblyResult(
+            assembly_name=self.name,
+            passed=passed,
+            composite_score=composite_score,
+            direction=direction if passed else "NEUTRAL",
+            confidence=avg_confidence,
+            factor_values=factor_values,
+            condition_results=condition_results,
+            metadata={
+                "timeframe": self.timeframe,
+                "direction_gate": self.direction_gate,
+                "min_composite_score": self.min_composite_score,
+                "n_factors": len(factor_values),
+            },
+        )
+
+    def _determine_direction(self, factor_values: Dict[str, FactorValue],
+                              composite_score: float) -> str:
+        """根据 direction_gate 策略确定交易方向"""
+        if not factor_values:
+            return "NEUTRAL"
+
+        directions = [fv.direction_hint for fv in factor_values.values()
+                       if fv.direction_hint != "NEUTRAL"]
+
         if not directions:
             return "NEUTRAL"
-        
-        if self.direction_gate == "ALL_LONG":
-            if all(d == "LONG" for d in directions):
+
+        if self.direction_gate == "CONSENSUS":
+            # 多数投票
+            long_count = directions.count("LONG")
+            short_count = directions.count("SHORT")
+            if long_count > short_count and long_count > len(directions) / 2:
                 return "LONG"
+            elif short_count > long_count and short_count > len(directions) / 2:
+                return "SHORT"
             return "NEUTRAL"
-        
+
+        elif self.direction_gate == "ALL_LONG":
+            return "LONG" if all(d == "LONG" for d in directions) else "NEUTRAL"
+
         elif self.direction_gate == "ALL_SHORT":
-            if all(d == "SHORT" for d in directions):
-                return "SHORT"
-            return "NEUTRAL"
-        
-        elif self.direction_gate == "CONSENSUS":
-            long_count = sum(1 for d in directions if d == "LONG")
-            short_count = sum(1 for d in directions if d == "SHORT")
-            
-            if long_count > short_count and long_count >= len(directions) / 2:
-                return "LONG"
-            elif short_count > long_count and short_count >= len(directions) / 2:
-                return "SHORT"
-            return "NEUTRAL"
-        
+            return "SHORT" if all(d == "SHORT" for d in directions) else "NEUTRAL"
+
         elif self.direction_gate == "ANY":
-            # 返回多数方向
-            long_count = sum(1 for d in directions if d == "LONG")
-            short_count = sum(1 for d in directions if d == "SHORT")
-            
-            if long_count > short_count:
+            # 跟随综合评分方向
+            if composite_score > 0:
                 return "LONG"
-            elif short_count > long_count:
+            elif composite_score < 0:
                 return "SHORT"
             return "NEUTRAL"
-        
+
         return "NEUTRAL"
-    
+
     def to_dict(self) -> Dict[str, Any]:
-        """序列化为字典"""
         return {
-            'name': self.name,
-            'factors': self.factors,
-            'direction_gate': self.direction_gate,
-            'min_composite_score': self.min_composite_score,
-            'timeframe': self.timeframe,
-            'entry_conditions': self.entry_conditions,
-            'description': self.description,
+            "name": self.name,
+            "timeframe": self.timeframe,
+            "direction_gate": self.direction_gate,
+            "min_composite_score": self.min_composite_score,
+            "direction_preference": self.direction_preference,
+            "description": self.description,
+            "slots": [
+                {"name": s.name, "params": s.params,
+                 "weight": s.weight, "condition": s.condition}
+                for s in self.slots
+            ],
         }
-    
+
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'FactorAssembly':
-        """从字典创建"""
+    def from_dict(cls, data: Dict[str, Any]) -> FactorAssembly:
+        """从字典构建"""
+        slots = [
+            FactorSlot(
+                name=s["name"],
+                params=s.get("params", {}),
+                weight=s.get("weight", 1.0),
+                condition=s.get("condition", ""),
+            )
+            for s in data.get("slots", [])
+        ]
         return cls(
-            name=data['name'],
-            factors=data['factors'],
-            direction_gate=data['direction_gate'],
-            min_composite_score=data['min_composite_score'],
-            timeframe=data['timeframe'],
-            entry_conditions=data['entry_conditions'],
-            description=data.get('description', ''),
+            name=data["name"],
+            timeframe=data.get("timeframe", "15min"),
+            slots=slots,
+            direction_gate=data.get("direction_gate", "CONSENSUS"),
+            min_composite_score=data.get("min_composite_score", 0.3),
+            direction_preference=data.get("direction_preference", "ANY"),
+            description=data.get("description", ""),
         )
+
+
+# ============================================================
+#  策略变体库 (从 YAML 加载)
+# ============================================================
+class StrategyVariantLibrary:
+    """
+    策略变体库 — 管理所有预定义的因子组合
+
+    从 config/strategy_variants.yaml 加载。
+    """
+
+    def __init__(self):
+        self._variants: Dict[str, FactorAssembly] = {}
+
+    def load(self, yaml_path: str = "config/strategy_variants.yaml") -> int:
+        """加载策略变体配置"""
+        path = Path(yaml_path)
+        if not path.exists():
+            logger.warning("[StrategyVariantLibrary] 配置文件不存在: %s", yaml_path)
+            return 0
+
+        with open(path) as f:
+            data = yaml.safe_load(f)
+
+        count = 0
+        for name, variant_data in data.get("strategy_variants", {}).items():
+            variant_data["name"] = name
+            try:
+                assembly = FactorAssembly.from_dict(variant_data)
+                self._variants[name] = assembly
+                count += 1
+            except Exception as e:
+                logger.warning("[StrategyVariantLibrary] 加载 %s 失败: %s", name, e)
+
+        logger.info("[StrategyVariantLibrary] 已加载 %d 个策略变体", count)
+        return count
+
+    def get(self, name: str) -> Optional[FactorAssembly]:
+        return self._variants.get(name)
+
+    def list_variants(self) -> List[str]:
+        return sorted(self._variants.keys())
+
+    def add(self, assembly: FactorAssembly):
+        self._variants[assembly.name] = assembly
+
+    def __len__(self):
+        return len(self._variants)
+
+    def __contains__(self, name: str):
+        return name in self._variants

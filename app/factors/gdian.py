@@ -1,28 +1,41 @@
 """
-GDIAN — GradientDirectionIndex (趋势方向因子)
+GDIAN (GradientDirectionIndex) — 趋势方向强度因子
 
-衡量趋势方向强度，综合 MA 斜率 + ADX。
+核心理念:
+    量化当前趋势的方向性和强度。
+    值越小说明趋势越弱/越混乱 (适合反转策略入场)。
+    值越大说明趋势越明确 (适合趋势跟随策略)。
 
-值域: value ∈ [0, 100]
-  0-20:  无趋势 (震荡)
-  20-35: 弱趋势 (门禁: GDIAN ≤ 35)
-  35-50: 中等趋势
-  50-100: 强趋势
+计算方法:
+    综合 MA 斜率、ADX、价格相对 MA 位置 评估趋势方向。
 
-score ∈ [-1, 1]
-  正: 上升趋势
-  负: 下降趋势
-  绝对值: 趋势强度
+    GDIAN = w_slope * slope_component + w_adx * adx_component + w_pos * position_component
 
-对应门禁策略族群:
-  5min 高动量:    GDIAN = 35 (紧趋势)
-  15min 超卖反转: GDIAN ≤ 35-40
-  日线深度反转:   GDIAN ≤ 25
+    其中:
+    - slope_component: MA20 斜率 (归一化), 正=上升趋势
+    - adx_component: ADX 强度 (归一化), 高=趋势明确
+    - position_component: 价格相对 MA50 的偏离度
 
 参数空间:
-  ma_period: [10, 20, 50]
-  adx_period: [14]
-  tight_threshold: [20, 25, 35, 45]
+    ma_fast: [10, 20]
+    ma_slow: [50]
+    adx_period: [14]
+    tight_threshold: [20, 25, 35, 45]  — 趋势"紧"的阈值
+    w_slope: [0.3, 0.4]
+    w_adx: [0.3, 0.4]
+    w_pos: [0.2, 0.3]
+
+输出:
+    value: 0-100 (趋势强度综合值)
+    score ∈ [-1, 1]:
+      -1.0 = 强下行趋势
+       0.0 = 无趋势 / 震荡
+      +1.0 = 强上行趋势
+
+    对于超卖反转策略:
+        GDIAN.value <= 35 意味着趋势较弱，适合反转入场
+
+版本: 1.0 | 2026-05-23
 """
 from __future__ import annotations
 
@@ -30,185 +43,218 @@ import logging
 import math
 from typing import Any, Dict, List, Optional
 
-from app.factors.base import BaseFactor, FactorParams, FactorTimeframe, FactorValue
+from .base import BaseFactor, FactorParams, FactorTimeframe, FactorValue
 
 logger = logging.getLogger(__name__)
 
 
 class GDIANFactor(BaseFactor):
-    """
-    GradientDirectionIndex — 趋势方向因子
-    
-    计算逻辑:
-    1. MA 斜率: (MA_now - MA_N_bars_ago) / MA_N_bars_ago → 趋势方向
-    2. ADX: 趋势强度指标 (不关心方向，只关心强度)
-    3. 综合: value = ADX 值, direction = MA 斜率方向
-    
-    ADX 计算:
-    - +DM / -DM (方向运动)
-    - TR (真实波幅)
-    - +DI / -DI (方向指标)
-    - DX = |+DI - -DI| / (+DI + -DI)
-    - ADX = EMA(DX, period)
-    """
+    """趋势方向强度因子"""
 
     name = "GDIAN"
     timeframe = FactorTimeframe.MIN_15
     version = "1.0"
 
-    param_space: Dict[str, List[Any]] = {
-        "ma_period": [10, 20, 50],
-        "adx_period": [14],
+    param_space = {
         "tight_threshold": [20, 25, 35, 45],
+        "w_slope": [0.3, 0.4],
+        "w_adx": [0.3, 0.4],
+        "w_pos": [0.2, 0.3],
     }
 
-    def compute(
-        self,
-        symbol: str,
-        market_data: Dict[str, Any],
-        ctx: Optional[Dict[str, Any]] = None,
-    ) -> FactorValue:
-        bars = market_data.get("bars", [])
-        ma_period = self.params.get("ma_period", 20)
-        adx_period = self.params.get("adx_period", 14)
+    _DEFAULTS = {
+        "tight_threshold": 35,
+        "w_slope": 0.35,
+        "w_adx": 0.35,
+        "w_pos": 0.30,
+    }
+
+    def __init__(self, params: Optional[FactorParams] = None):
+        if params is None:
+            params = FactorParams(params=dict(self._DEFAULTS))
+        else:
+            for k, v in self._DEFAULTS.items():
+                if k not in params.params:
+                    params.params[k] = v
+        super().__init__(params)
+
+    def compute(self, symbol: str, market_data: Dict[str, Any],
+                ctx: Optional[Dict[str, Any]] = None) -> FactorValue:
+        """
+        计算趋势方向强度
+
+        Args:
+            symbol: 标的代码
+            market_data: 必须包含:
+                - ma_5, ma_20, ma_50: 均线
+                - price: 当前价格
+                - bars: 最近 N 根 K 线 (用于计算 MA 斜率)
+                可选:
+                - adx: ADX 值 (若无则从 bars 估算)
+            ctx: 未使用
+        """
+        md = market_data
+        w_slope = self.params.get("w_slope", 0.35)
+        w_adx = self.params.get("w_adx", 0.35)
+        w_pos = self.params.get("w_pos", 0.30)
         tight_threshold = self.params.get("tight_threshold", 35)
 
-        min_bars = max(ma_period + 5, adx_period * 2 + 1)
-        if len(bars) < min_bars:
-            return FactorValue(
-                name=self.name, value=0.0, score=0.0,
-                direction_hint="NEUTRAL", confidence=0.0,
-                metadata={"error": "insufficient_bars", "need": min_bars, "have": len(bars)},
-                params_used=self.params.params,
-            )
+        price = float(md.get("price", md.get("close", 0)))
+        ma_20 = float(md.get("ma_20", 0))
+        ma_50 = float(md.get("ma_50", 0))
 
-        closes = [b["close"] for b in bars]
-        highs = [b["high"] for b in bars]
-        lows = [b["low"] for b in bars]
+        # 1. MA 斜率分量 (从 bars 计算 MA20 的变化率)
+        slope_component = self._compute_slope(md)
 
-        # ── 1. MA 斜率 ──
-        ma_now = sum(closes[-ma_period:]) / ma_period
-        ma_prev = sum(closes[-(ma_period * 2):-ma_period]) / ma_period if len(closes) >= ma_period * 2 else closes[0]
-        ma_slope = self._safe_divide(ma_now - ma_prev, ma_prev) * 100  # 百分比
-
-        # 方向: 正 = 上升, 负 = 下降
-        trend_direction = 1.0 if ma_slope > 0 else -1.0
-
-        # ── 2. ADX 计算 ──
-        adx = self._compute_adx(highs, lows, closes, adx_period)
-
-        # ── 综合 ──
-        # value = ADX (趋势强度 0-100)
-        value = self._clamp(adx, 0.0, 100.0)
-
-        # score = ADX 强度 × 方向, 归一化到 [-1, 1]
-        # 用 sigmoid 映射: ADX 25 → 0.5, ADX 50 → 0.9
-        normalized_strength = 1.0 / (1.0 + math.exp(-0.08 * (adx - 25)))
-        score = self._clamp(normalized_strength * trend_direction, -1.0, 1.0)
-
-        # 方向判断
-        if value <= tight_threshold:
-            # 弱趋势 → 适合反转策略
-            direction = "NEUTRAL"
-        elif ma_slope > 0:
-            direction = "LONG"
+        # 2. ADX 分量
+        adx = md.get("adx", None)
+        if adx is not None:
+            try:
+                adx = float(adx)
+            except (TypeError, ValueError):
+                adx = self._estimate_adx(md)
         else:
-            direction = "SHORT"
+            adx = self._estimate_adx(md)
 
-        # 置信度: ADX 越高越确定
-        confidence = self._clamp(adx / 60.0, 0.3, 1.0)
+        # ADX 归一化: 0-25=弱, 25-50=中, 50+=强
+        # 归一化到 [0, 1]
+        adx_norm = min(1.0, adx / 50.0)
+        adx_component = adx_norm
+
+        # 3. 价格相对 MA50 的偏离度
+        if ma_50 > 0:
+            deviation = (price - ma_50) / ma_50 * 100  # 百分比
+            # 归一化: ±5% 以内为中性，±15% 为极端
+            position_component = max(-1.0, min(1.0, deviation / 15.0))
+        else:
+            deviation = 0.0
+            position_component = 0.0
+
+        # 综合: value 范围 0-100
+        # slope + position 给出方向，adx 给出强度
+        direction_signal = w_slope * slope_component + w_pos * position_component
+        trend_strength = adx_component * 100  # 0-100
+
+        # 综合值: 趋势强度 × 方向
+        raw_value = trend_strength * abs(direction_signal)
+
+        # 方向判定
+        if direction_signal > 0.1:
+            trend_dir = "up"
+            score = min(1.0, raw_value / 50.0)
+        elif direction_signal < -0.1:
+            trend_dir = "down"
+            score = -min(1.0, raw_value / 50.0)
+        else:
+            trend_dir = "neutral"
+            score = 0.0
+
+        # 方向提示: 趋势弱 → 适合反转; 趋势强 → 适合跟随
+        is_tight = raw_value <= tight_threshold
+
+        if is_tight and score < 0:
+            direction_hint = "LONG"   # 弱下跌趋势 → 反转做多
+        elif is_tight and score > 0:
+            direction_hint = "SHORT"  # 弱上涨趋势 → 反转做空
+        elif not is_tight and score > 0:
+            direction_hint = "LONG"   # 强上涨趋势 → 跟随做多
+        elif not is_tight and score < 0:
+            direction_hint = "SHORT"  # 强下跌趋势 → 跟随做空
+        else:
+            direction_hint = "NEUTRAL"
+
+        confidence = min(1.0, adx_norm + abs(direction_signal))
 
         return FactorValue(
             name=self.name,
-            value=value,
+            value=round(raw_value, 2),
             score=score,
-            direction_hint=direction,
+            direction_hint=direction_hint,
             confidence=confidence,
-            metadata={
-                "adx": round(adx, 2),
-                "ma_slope_pct": round(ma_slope, 4),
-                "ma_now": round(ma_now, 4),
-                "trend_direction": trend_direction,
+            params_used={
                 "tight_threshold": tight_threshold,
-                "is_tight_trend": value <= tight_threshold,
+                "w_slope": w_slope, "w_adx": w_adx, "w_pos": w_pos,
             },
-            params_used=self.params.params,
+            metadata={
+                "slope_component": round(slope_component, 4),
+                "adx": round(adx, 2),
+                "adx_component": round(adx_component, 4),
+                "deviation_pct": round(deviation, 2),
+                "position_component": round(position_component, 4),
+                "trend_direction": trend_dir,
+                "is_tight": is_tight,
+                "raw_value": round(raw_value, 2),
+            },
         )
 
-    @staticmethod
-    def _compute_adx(
-        highs: List[float],
-        lows: List[float],
-        closes: List[float],
-        period: int,
-    ) -> float:
-        """
-        计算 ADX (Average Directional Index)
-        
-        使用 Wilder 平滑法
-        """
-        if len(highs) < period * 2 + 1:
-            return 25.0  # 默认中等趋势
+    def _compute_slope(self, md: Dict[str, Any]) -> float:
+        """从 bars 或 MA 值计算 MA20 斜率 (归一化)"""
+        bars = md.get("bars", [])
+        ma_20 = float(md.get("ma_20", 0))
+        ma_5 = float(md.get("ma_5", 0))
 
-        n = len(highs)
+        if ma_20 > 0 and ma_5 > 0:
+            # 快速近似: MA5 在 MA20 之上 → 上升斜率
+            cross_signal = (ma_5 - ma_20) / ma_20 * 100
+            return max(-1.0, min(1.0, cross_signal / 3.0))
 
-        # 计算 True Range, +DM, -DM
-        tr_list = []
-        plus_dm_list = []
-        minus_dm_list = []
+        if len(bars) >= 5:
+            # 从 bars 估算斜率 (线性回归斜率)
+            closes = [float(b.get("close", 0)) for b in bars[-5:]]
+            if closes and closes[0] > 0:
+                n = len(closes)
+                x_mean = (n - 1) / 2
+                y_mean = sum(closes) / n
+                numerator = sum((i - x_mean) * (closes[i] - y_mean) for i in range(n))
+                denominator = sum((i - x_mean) ** 2 for i in range(n))
+                if denominator > 0:
+                    slope = numerator / denominator
+                    # 归一化: slope / price * 100 → 百分比变化率
+                    norm_slope = slope / closes[0] * 100 * 10  # 放大
+                    return max(-1.0, min(1.0, norm_slope))
 
-        for i in range(1, n):
-            h = highs[i]
-            l = lows[i]
-            prev_c = closes[i - 1]
+        return 0.0
 
-            tr = max(h - l, abs(h - prev_c), abs(l - prev_c))
-            tr_list.append(tr)
+    def _estimate_adx(self, md: Dict[str, Any]) -> float:
+        """从价格波动估算 ADX (简化版)"""
+        bars = md.get("bars", [])
+        if len(bars) < 5:
+            return 20.0  # 默认中性
 
-            up_move = h - highs[i - 1]
-            down_move = lows[i - 1] - l
+        # 用 True Range 的变异系数近似 ADX
+        trs = []
+        for i in range(1, len(bars)):
+            h = float(bars[i].get("high", 0))
+            l = float(bars[i].get("low", 0))
+            pc = float(bars[i - 1].get("close", 0))
+            if pc > 0:
+                tr = max(h - l, abs(h - pc), abs(l - pc))
+                trs.append(tr / pc * 100)
 
-            plus_dm = up_move if (up_move > down_move and up_move > 0) else 0.0
-            minus_dm = down_move if (down_move > up_move and down_move > 0) else 0.0
+        if not trs:
+            return 20.0
 
-            plus_dm_list.append(plus_dm)
-            minus_dm_list.append(minus_dm)
+        mean_tr = sum(trs) / len(trs)
+        if mean_tr <= 0:
+            return 20.0
 
-        # Wilder 平滑 (EMA with alpha = 1/period)
-        atr = sum(tr_list[:period])
-        plus_dm_smooth = sum(plus_dm_list[:period])
-        minus_dm_smooth = sum(minus_dm_list[:period])
+        # 方向一致性: 连续上涨/下跌天数越多 → ADX 越高
+        directions = []
+        for i in range(1, len(bars)):
+            c = float(bars[i].get("close", 0))
+            pc = float(bars[i - 1].get("close", 0))
+            if pc > 0:
+                directions.append(1 if c > pc else -1)
 
-        dx_values = []
+        if directions:
+            # 一致性: 全正=1.0, 全负=1.0, 混合=0.0
+            consistency = abs(sum(directions)) / len(directions)
+        else:
+            consistency = 0.5
 
-        for i in range(period, len(tr_list)):
-            atr = atr - (atr / period) + tr_list[i]
-            plus_dm_smooth = plus_dm_smooth - (plus_dm_smooth / period) + plus_dm_list[i]
-            minus_dm_smooth = minus_dm_smooth - (minus_dm_smooth / period) + minus_dm_list[i]
+        # ADX ≈ volatility * consistency * scale
+        adx_est = mean_tr * consistency * 15
+        return max(5.0, min(60.0, adx_est))
 
-            if atr == 0:
-                continue
 
-            plus_di = 100.0 * (plus_dm_smooth / atr)
-            minus_di = 100.0 * (minus_dm_smooth / atr)
-
-            di_sum = plus_di + minus_di
-            if di_sum == 0:
-                dx = 0.0
-            else:
-                dx = 100.0 * abs(plus_di - minus_di) / di_sum
-
-            dx_values.append(dx)
-
-        if not dx_values:
-            return 25.0
-
-        # ADX = EMA of DX
-        if len(dx_values) < period:
-            return sum(dx_values) / len(dx_values)
-
-        adx = sum(dx_values[:period]) / period
-        for dx in dx_values[period:]:
-            adx = (adx * (period - 1) + dx) / period
-
-        return adx
+FACTOR_CLASS = GDIANFactor
