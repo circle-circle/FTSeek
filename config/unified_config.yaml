@@ -1750,6 +1750,26 @@ diagnostics:
     mode: rules
     min_confidence: 0.65
 pipeline:
+  # ============================================================
+  # 策略路由器 (StrategyRouter) — 新旧链路切换 (2026-05-23 辩论收敛)
+  # ============================================================
+  # master_switch 控制全局链路选择:
+  #   legacy      → 完全使用旧系统 (signal_pipeline + risk_engine + exit_monitor)
+  #   factor      → 完全使用新框架 (FactorAssembly + DynamicRisk + DynamicExit)
+  #   hybrid      → 混合模式 (per-module override, 默认: signal=factor, exit=legacy)
+  #   shadow_only → 仅 shadow 对比, 不真实下单 (推荐初始阶段)
+  #
+  # 切换方式: 修改 master_switch 后重启服务, 无需改代码
+  # 安全降级: 新框架异常时自动 fallback 到 legacy
+  # ============================================================
+  master_switch: shadow_only    # 当前: shadow_only (安全验证阶段)
+  overrides:
+    signal: null                # null = follow master, or: legacy/factor
+    risk: null
+    exit: null
+    sizing: null
+
+  # 旧管线 stage 配置 (保留)
   use_new_stages: true
   stages:
   - name: market_data
@@ -1764,3 +1784,15 @@ pipeline:
     enabled: true
     timeout_sec: 30.0
     abort_on_error: false
+
+  # 市场上下文门禁 (从旧系统移植, 新旧链路共用)
+  market_context:
+    enabled: true
+    vix_threshold: 25           # VIX >= 25 禁止新开仓
+    cache_ttl_minutes: 30       # 市场数据缓存时间
+    capital_safety:
+      enabled: true
+      warning_drawdown: -0.05   # -5% 回撤 → 仓位减半
+      alert_drawdown: -0.10     # -10% → 仅25%仓位
+      danger_drawdown: -0.20    # -20% → 不开新仓
+      circuit_breaker: -0.35    # -35% → 全部平仓

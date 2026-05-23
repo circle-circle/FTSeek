@@ -306,11 +306,39 @@ class USPositionSync:
                 if self._consecutive_empty_queries < self._max_consecutive_empty:
                     # 使用上次已知的持仓数据继续同步，不跳过
                     if self._last_known_positions:
-                        logger.warning(
-                            f"[US Sync] Futu 返回空持仓列表 (连续{self._consecutive_empty_queries}次), "
-                            f"使用上次已知持仓({len(self._last_known_positions)}只)继续同步"
-                        )
-                        futu_positions = dict(self._last_known_positions)
+                        # P0 fix (2026-05-23): Filter cache against trade_records to prevent
+                        # resurrecting already-closed positions
+                        _closed_symbols_cache = set()
+                        try:
+                            _conn_c = sqlite3.connect(DB_PATH)
+                            _closed_rows_c = _conn_c.execute(
+                                "SELECT DISTINCT symbol FROM trade_records WHERE exit_time IS NOT NULL"
+                            ).fetchall()
+                            _closed_symbols_cache = {r[0] for r in _closed_rows_c}
+                            _conn_c.close()
+                        except Exception:
+                            pass
+                        _filtered_cache = {
+                            s: p for s, p in self._last_known_positions.items()
+                            if s not in _closed_symbols_cache
+                        }
+                        if _filtered_cache != self._last_known_positions:
+                            logger.warning(
+                                f"[US Sync·P0] 过滤缓存中已平仓 {len(self._last_known_positions) - len(_filtered_cache)} 只"
+                            )
+                        if _filtered_cache:
+                            logger.warning(
+                                f"[US Sync] Futu 返回空持仓列表 (连续{self._consecutive_empty_queries}次), "
+                                f"使用上次已知持仓({len(_filtered_cache)}只, 过滤{len(self._last_known_positions) - len(_filtered_cache)}只)继续同步"
+                            )
+                            futu_positions = dict(_filtered_cache)
+                        else:
+                            logger.warning(
+                                f"[US Sync] Futu 返回空持仓列表 (连续{self._consecutive_empty_queries}次), "
+                                f"缓存中无未平仓持仓，跳过本轮"
+                            )
+                            self._futu_ctx = None
+                            return
                     else:
                         logger.warning(
                             f"[US Sync] Futu 返回空持仓列表 (连续{self._consecutive_empty_queries}次), "
@@ -330,6 +358,20 @@ class USPositionSync:
             else:
                 # 非空查询，重置计数器
                 self._consecutive_empty_queries = 0
+                # P0 fix (2026-05-23): Filter Futu positions against trade_records to exclude
+                # already-closed symbols. This prevents _last_known_positions cache poisoning
+                # where closed positions (from scalping cleanup, PRICE_FAIL, etc.) get
+                # re-imported on every sync cycle because Futu still reports them.
+                _closed_symbols = set()
+                try:
+                    _conn = sqlite3.connect(DB_PATH)
+                    _closed_rows = _conn.execute(
+                        "SELECT DISTINCT symbol FROM trade_records WHERE exit_time IS NOT NULL"
+                    ).fetchall()
+                    _closed_symbols = {r[0] for r in _closed_rows}
+                    _conn.close()
+                except Exception:
+                    pass
                 for _, row in data.iterrows():
                     qty = float(row.get('qty', 0))
                     if qty != 0:
