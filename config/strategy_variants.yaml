@@ -203,12 +203,15 @@ strategy_variants:
 
   # ── 数据驱动校准变体 (2026-05-23) ──
   # 基于 9 标的 × 251 天真实日线数据验证
-  # 发现: 日线级别超卖反转(SSS<0)无 alpha, 趋势跟随(GDIAN+MFFF)有微弱正 alpha
-  # 最佳组合: GDIAN<=10 + MFFF>=0.05, 3天持有, +0.17% alpha over baseline
+  # GDIAN 因子审计结论:
+  #   ≤10 = 均值回归做多 (不是趋势跟随!)
+  #   [5,10) + MFFF>0 = 最佳组合: +0.274% 1d, 56.6% WR
+  #   ≥30 = 趋势耗尽做空 (新信号!)
+  #   ≥50 = 极端耗尽: +0.868% 1d 做空, 63.2% WR
 
-  daily_calibrated_trend_momentum:
+  daily_calibrated_mean_reversion:
     timeframe: daily
-    description: "日线校准: 弱趋势+正向动量 (数据驱动, 非回测过拟合)"
+    description: "日线校准: GDIAN[5,10)均值回归 + MFFF动量确认 (最佳组合)"
     direction_gate: ANY
     min_composite_score: 0.0
     direction_preference: LONG
@@ -216,28 +219,36 @@ strategy_variants:
       - name: GDIAN
         params: {tight_threshold: 10, w_slope: 0.35, w_adx: 0.35, w_pos: 0.30}
         weight: 0.5
-        condition: "GDIAN.value <= 10"
-      - name: MFFF
-        params: {threshold: 0.05, w_macd: 0.4, w_vol: 0.3, w_flow: 0.3}
-        weight: 0.5
-        condition: "MFFF.score >= 0.05"
-
-  daily_calibrated_oversold_momentum:
-    timeframe: daily
-    description: "日线校准: 轻度超卖+动量确认 (SSS辅助过滤)"
-    direction_gate: ANY
-    min_composite_score: 0.0
-    direction_preference: LONG
-    slots:
-      - name: SSS
-        params: {threshold: -0.2, w_rsi: 0.5, w_bb: 0.35, w_vol: 0.15}
-        weight: 0.2
-        condition: "SSS.score <= -0.1"
+        condition: "GDIAN.value >= 5"
       - name: GDIAN
         params: {tight_threshold: 10, w_slope: 0.35, w_adx: 0.35, w_pos: 0.30}
-        weight: 0.4
+        weight: 0.0
         condition: "GDIAN.value <= 10"
       - name: MFFF
-        params: {threshold: 0.05, w_macd: 0.4, w_vol: 0.3, w_flow: 0.3}
-        weight: 0.4
-        condition: "MFFF.score >= 0.05"
+        params: {threshold: 0.0, w_macd: 0.4, w_vol: 0.3, w_flow: 0.3}
+        weight: 0.5
+        condition: "MFFF.score >= 0"
+
+  daily_trend_exhaustion_short:
+    timeframe: daily
+    description: "日线校准: GDIAN>=30趋势耗尽反转做空 (+0.157% 1d, 51.1% WR)"
+    direction_gate: ANY
+    min_composite_score: 0.0
+    direction_preference: SHORT
+    slots:
+      - name: GDIAN
+        params: {tight_threshold: 10, w_slope: 0.35, w_adx: 0.35, w_pos: 0.30}
+        weight: 1.0
+        condition: "GDIAN.value >= 30"
+
+  daily_extreme_exhaustion_short:
+    timeframe: daily
+    description: "日线校准: GDIAN>=50极端耗尽做空 (+0.868% 1d, 63.2% WR, 最强信号)"
+    direction_gate: ANY
+    min_composite_score: 0.0
+    direction_preference: SHORT
+    slots:
+      - name: GDIAN
+        params: {tight_threshold: 10, w_slope: 0.35, w_adx: 0.35, w_pos: 0.30}
+        weight: 1.0
+        condition: "GDIAN.value >= 50"

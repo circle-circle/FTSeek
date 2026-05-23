@@ -1,41 +1,44 @@
 """
-GDIAN (GradientDirectionIndex) — 趋势方向强度因子
+GDIAN (GradientDirectionIndex) — 趋势方向一致性因子
 
 核心理念:
-    量化当前趋势的方向性和强度。
-    值越小说明趋势越弱/越混乱 (适合反转策略入场)。
-    值越大说明趋势越明确 (适合趋势跟随策略)。
+    衡量"趋势的方向一致性" = ADX强度 × |方向信号|
+    
+    GDIAN.value = ADX_norm × 100 × |direction_signal|
 
-计算方法:
-    综合 MA 斜率、ADX、价格相对 MA 位置 评估趋势方向。
+数据驱动校准 (2026-05-23, 9标的×251天):
+    ┌────────────────┬────────┬───────────────────────────────┐
+    │ GDIAN.value    │ 占比   │ 含义                          │
+    ├────────────────┼────────┼───────────────────────────────┤
+    │ < 3            │ 31%    │ 极度混乱 → 均值回归做多        │
+    │ [3, 5)         │ 16%    │ 弱混乱 → 中性                 │
+    │ [5, 10)        │ 19%    │ 温和方向 → 均值回归最佳入场    │
+    │   [8, 10)      │  4%    │ ★ Sweet Spot: +0.317% 1d, 60%│
+    │ [10, 20)       │ 19%    │ 有方向 → 中性/负面             │
+    │ [20, 30)       │  8%    │ 强方向 → 追涨杀跌危险区        │
+    │ >= 30          │  8%    │ 趋势耗尽 → 反转做空            │
+    │ >= 50          │  2%    │ ★ 极端耗尽: +0.87% 1d 做空     │
+    └────────────────┴────────┴───────────────────────────────┘
 
-    GDIAN = w_slope * slope_component + w_adx * adx_component + w_pos * position_component
-
-    其中:
-    - slope_component: MA20 斜率 (归一化), 正=上升趋势
-    - adx_component: ADX 强度 (归一化), 高=趋势明确
-    - position_component: 价格相对 MA50 的偏离度
+    关键发现:
+    1. GDIAN≤10 做多 = 均值回归策略 (不是趋势跟随!)
+    2. GDIAN≥30 做空 = 趋势耗尽反转 (新增信号)
+    3. GDIAN [5,10) + MFFF>0 = 最佳组合 (+0.274% 1d, 56.6% WR)
 
 参数空间:
-    ma_fast: [10, 20]
-    ma_slow: [50]
-    adx_period: [14]
-    tight_threshold: [20, 25, 35, 45]  — 趋势"紧"的阈值
+    tight_threshold: [5, 8, 10, 15, 20]
     w_slope: [0.3, 0.4]
     w_adx: [0.3, 0.4]
     w_pos: [0.2, 0.3]
 
 输出:
-    value: 0-100 (趋势强度综合值)
+    value: 0-100 (趋势方向一致性强度)
     score ∈ [-1, 1]:
       -1.0 = 强下行趋势
-       0.0 = 无趋势 / 震荡
+       0.0 = 无趋势 / 震荡 / 混乱
       +1.0 = 强上行趋势
 
-    对于超卖反转策略:
-        GDIAN.value <= 35 意味着趋势较弱，适合反转入场
-
-版本: 1.0 | 2026-05-23
+版本: 1.1 | 2026-05-23 (数据校准后更新)
 """
 from __future__ import annotations
 
@@ -149,16 +152,18 @@ class GDIANFactor(BaseFactor):
             trend_dir = "neutral"
             score = 0.0
 
-        # 方向提示: 趋势弱 → 适合反转; 趋势强 → 适合跟随
+        # 方向提示 (v1.1 数据校准)
+        # 低 GDIAN (is_tight) = 均值回归区域 → 做多
+        # 高 GDIAN (>=30) = 趋势耗尽区域 → 做空 (反转信号)
         is_tight = raw_value <= tight_threshold
 
-        if is_tight and score < 0:
-            direction_hint = "LONG"   # 弱下跌趋势 → 反转做多
-        elif is_tight and score > 0:
-            direction_hint = "SHORT"  # 弱上涨趋势 → 反转做空
-        elif not is_tight and score > 0:
+        if is_tight:
+            direction_hint = "LONG"   # 均值回归做多 (无论方向信号正负)
+        elif raw_value >= 30:
+            direction_hint = "SHORT"  # 趋势耗尽 → 反转做空 (v1.1 新增)
+        elif score > 0:
             direction_hint = "LONG"   # 强上涨趋势 → 跟随做多
-        elif not is_tight and score < 0:
+        elif score < 0:
             direction_hint = "SHORT"  # 强下跌趋势 → 跟随做空
         else:
             direction_hint = "NEUTRAL"
