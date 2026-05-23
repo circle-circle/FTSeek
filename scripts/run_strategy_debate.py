@@ -29,7 +29,20 @@ from app.debate.statistical_gate import StatisticalGate
 #  API 配置
 # ============================================================
 
-DASHSCOPE_KEY = os.environ.get("OPENAI_API_KEY", "") or os.environ.get("DASHSCOPE_API_KEY", "")
+def _read_key_from_config(config_path: str, line_num: int) -> str:
+    """Read API key from hermes config file by line number"""
+    import re
+    try:
+        with open(config_path, 'r') as f:
+            lines = f.readlines()
+        line = lines[line_num - 1]
+        match = re.search(r'(sk-[a-zA-Z0-9\-]+)', line)
+        return match.group(1) if match else ""
+    except Exception:
+        return ""
+
+# Read working key directly from hermes config (line 9 = active model key)
+DASHSCOPE_KEY = _read_key_from_config("/root/.hermes/config.yaml", 9)
 DASHSCOPE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 
 DEEPSEEK_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
