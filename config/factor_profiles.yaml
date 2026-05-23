@@ -1,0 +1,208 @@
+# ============================================================
+# 策略变体配置 — 9 条门禁策略的因子组合 + 退出 Profile
+# ============================================================
+# 每个策略变体定义:
+# - 因子组合 (FactorAssembly): SSS + GDIAN + MFFF 参数
+# - 退出配置 (ExitProfile): 引用 config/exit_profiles.yaml
+# - 入场条件表达式
+# ============================================================
+
+version: "1.0"
+last_updated: "2026-05-23"
+
+strategy_variants:
+
+  # ── 5 分钟族群 (高动量短线) ──
+
+  aggressive_5m_high_momentum:
+    timeframe: 5min
+    direction_gate: "ALL_SHORT"
+    min_composite_score: 0.5
+    factors:
+      - name: SSS
+        params: {threshold: -1, rsi_period: 14}
+        weight: 0.35
+      - name: GDIAN
+        params: {ma_period: 20, tight_threshold: 35}
+        weight: 0.35
+      - name: MFFF
+        params: {threshold: 2.0}
+        weight: 0.30
+    entry_conditions:
+      - "SSS.score >= -1"
+      - "GDIAN.value <= 35"
+      - "MFFF.score >= 1.0"
+    exit_profile: aggressive_5m_high_momentum
+    description: "5min 高动量: 超卖深度 + 紧趋势 + 强动量"
+
+  aggressive_5m_moderate_momentum:
+    timeframe: 5min
+    direction_gate: "ALL_SHORT"
+    min_composite_score: 0.4
+    factors:
+      - name: SSS
+        params: {threshold: -1, rsi_period: 14}
+        weight: 0.35
+      - name: GDIAN
+        params: {ma_period: 20, tight_threshold: 40}
+        weight: 0.35
+      - name: MFFF
+        params: {threshold: 1.5}
+        weight: 0.30
+    entry_conditions:
+      - "SSS.score >= -1"
+      - "GDIAN.value <= 40"
+      - "MFFF.score >= 0.75"
+    exit_profile: aggressive_5m_moderate_momentum
+    description: "5min 中等动量: 适度超卖 + 中等趋势"
+
+  aggressive_5m_scalp:
+    timeframe: 5min
+    direction_gate: "CONSENSUS"
+    min_composite_score: 0.6
+    factors:
+      - name: SSS
+        params: {threshold: -1.5, rsi_period: 7}
+        weight: 0.40
+      - name: GDIAN
+        params: {ma_period: 10, tight_threshold: 45}
+        weight: 0.30
+      - name: MFFF
+        params: {threshold: 2.0}
+        weight: 0.30
+    entry_conditions:
+      - "SSS.score >= -1.5"
+      - "GDIAN.value <= 45"
+      - "MFFF.score >= 1.0"
+    exit_profile: aggressive_5m_scalp
+    description: "5min 极短线: 深度超卖 + 极快进出"
+
+  # ── 15 分钟族群 (超卖反转) ──
+
+  stable_15m_base:
+    timeframe: 15min
+    direction_gate: "ALL_LONG"
+    min_composite_score: 0.3
+    factors:
+      - name: SSS
+        params: {threshold: -1, rsi_period: 14}
+        weight: 0.40
+      - name: GDIAN
+        params: {ma_period: 20, tight_threshold: 40}
+        weight: 0.30
+      - name: MFFF
+        params: {threshold: 0.5}
+        weight: 0.30
+    entry_conditions:
+      - "SSS.score >= -1"
+      - "GDIAN.value <= 40"
+      - "MFFF.score >= 0.25"
+    exit_profile: stable_15m_base
+    description: "15min 基础: 超卖 + 弱趋势 + 正动量"
+
+  stable_15m_relaxed_oversold:
+    timeframe: 15min
+    direction_gate: "ALL_LONG"
+    min_composite_score: 0.3
+    factors:
+      - name: SSS
+        params: {threshold: -1.5, rsi_period: 14}
+        weight: 0.45
+      - name: GDIAN
+        params: {ma_period: 20, tight_threshold: 45}
+        weight: 0.25
+      - name: MFFF
+        params: {threshold: 0.5}
+        weight: 0.30
+    entry_conditions:
+      - "SSS.score >= -1.5"
+      - "GDIAN.value <= 45"
+      - "MFFF.score >= 0.25"
+    exit_profile: stable_15m_relaxed_oversold
+    description: "15min 放宽超卖: 更深度超卖换取更多机会"
+
+  stable_15m_tight_trend:
+    timeframe: 15min
+    direction_gate: "ALL_LONG"
+    min_composite_score: 0.35
+    factors:
+      - name: SSS
+        params: {threshold: -1.5, rsi_period: 14}
+        weight: 0.30
+      - name: GDIAN
+        params: {ma_period: 20, tight_threshold: 35}
+        weight: 0.40
+      - name: MFFF
+        params: {threshold: 1.0}
+        weight: 0.30
+    entry_conditions:
+      - "SSS.score >= -1.5"
+      - "GDIAN.value <= 35"
+      - "MFFF.score >= 0.5"
+    exit_profile: stable_15m_tight_trend
+    description: "15min 紧趋势: 要求更明确的趋势方向"
+
+  stable_15m_deep_oversold:
+    timeframe: 15min
+    direction_gate: "ALL_LONG"
+    min_composite_score: 0.4
+    factors:
+      - name: SSS
+        params: {threshold: -2, rsi_period: 14}
+        weight: 0.50
+      - name: GDIAN
+        params: {ma_period: 20, tight_threshold: 35}
+        weight: 0.25
+      - name: MFFF
+        params: {threshold: 1.5}
+        weight: 0.25
+    entry_conditions:
+      - "SSS.score >= -2"
+      - "GDIAN.value <= 35"
+      - "MFFF.score >= 0.75"
+    exit_profile: stable_15m_deep_oversold
+    description: "15min 深度超卖: 极端超卖 + 强动量反转"
+
+  # ── 日线族群 (深度反转) ──
+
+  radical_daily_deep_oversold:
+    timeframe: daily
+    direction_gate: "ALL_LONG"
+    min_composite_score: 0.5
+    factors:
+      - name: SSS
+        params: {threshold: -2, rsi_period: 14}
+        weight: 0.50
+      - name: GDIAN
+        params: {ma_period: 50, tight_threshold: 25}
+        weight: 0.25
+      - name: MFFF
+        params: {threshold: 1.5}
+        weight: 0.25
+    entry_conditions:
+      - "SSS.score >= -2"
+      - "GDIAN.value <= 25"
+      - "MFFF.score >= 0.75"
+    exit_profile: radical_daily_deep_oversold
+    description: "日线深度反转: 极度超卖 + 无趋势 + 动量回归"
+
+  radical_daily_moderate_oversold:
+    timeframe: daily
+    direction_gate: "ALL_LONG"
+    min_composite_score: 0.35
+    factors:
+      - name: SSS
+        params: {threshold: -1.5, rsi_period: 14}
+        weight: 0.45
+      - name: GDIAN
+        params: {ma_period: 50, tight_threshold: 30}
+        weight: 0.30
+      - name: MFFF
+        params: {threshold: 1.0}
+        weight: 0.25
+    entry_conditions:
+      - "SSS.score >= -1.5"
+      - "GDIAN.value <= 30"
+      - "MFFF.score >= 0.5"
+    exit_profile: radical_daily_moderate_oversold
+    description: "日线中度反转: 适度超卖 + 弱趋势"
