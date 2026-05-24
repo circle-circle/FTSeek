@@ -98,33 +98,51 @@ PROMPT_FILE="/tmp/ftseek_debate_prompt_${DATE}.txt"
 echo "$CLAUDE_PROMPT" > "$PROMPT_FILE"
 chmod 644 "$PROMPT_FILE"
 
-su - claude-runner -c "cd $FTSEEK_DIR && timeout 600 claude -p \"\$(cat $PROMPT_FILE)\" --dangerously-skip-permissions" \
+# FIX: 使用 setsid 创建新会话组，防止父终端超时 SIGHUP 杀死 Claude
+# setsid 使 Claude 进程完全脱离调用者的 session，即使 cron agent 的 terminal()
+# 超时(默认180s)也不会传播 SIGHUP 到 Claude
+CLAUDE_PID_FILE="$OUTPUT_DIR/claude.pid"
+setsid su - claude-runner -c "cd $FTSEEK_DIR && timeout 600 claude -p \"\$(cat $PROMPT_FILE)\" --dangerously-skip-permissions" \
     > "$OUTPUT_DIR/claude_output.txt" 2>&1 &
 
 CLAUDE_PID=$!
-echo "Claude Code PID: $CLAUDE_PID"
+disown $CLAUDE_PID 2>/dev/null  # 从 shell job list 移除，防止 SIGHUP 传播
+echo "$CLAUDE_PID" > "$CLAUDE_PID_FILE"
+echo "Claude Code PID: $CLAUDE_PID (setsid+disown, 完全脱离父终端)"
 echo "等待 Claude Code 完成 (最多 10 分钟)..."
 
 # 等待 Claude 完成，同时输出进度
 WAIT_COUNT=0
+CLAUDE_EXIT=-1
 while kill -0 $CLAUDE_PID 2>/dev/null; do
     sleep 10
     WAIT_COUNT=$((WAIT_COUNT + 10))
     if [ $WAIT_COUNT -ge 600 ]; then
         echo "⚠️ Claude Code 超时 (10分钟)，终止进程"
-        kill $CLAUDE_PID 2>/dev/null || true
+        kill -- -$CLAUDE_PID 2>/dev/null || kill $CLAUDE_PID 2>/dev/null || true
         break
     fi
     # 每 30s 输出一次进度
     if [ $((WAIT_COUNT % 30)) -eq 0 ]; then
-        echo "  ... 等待中 (${WAIT_COUNT}s), CPU: $(ps -p $CLAUDE_PID -o %cpu= 2>/dev/null || echo 'N/A')"
+        OUT_SIZE=$(wc -c < "$OUTPUT_DIR/claude_output.txt" 2>/dev/null || echo 0)
+        echo "  ... 等待中 (${WAIT_COUNT}s), output: ${OUT_SIZE}B"
     fi
 done
 
 wait $CLAUDE_PID 2>/dev/null
 CLAUDE_EXIT=$?
 
-echo "Claude Code 完成 (退出码: $CLAUDE_EXIT)"
+# 检查 Claude 输出是否有效 (非空且非 "Session terminated")
+CLAUDE_OUTPUT_SIZE=$(wc -c < "$OUTPUT_DIR/claude_output.txt" 2>/dev/null || echo 0)
+if [ "$CLAUDE_OUTPUT_SIZE" -lt 100 ] || grep -q "Session terminated" "$OUTPUT_DIR/claude_output.txt" 2>/dev/null; then
+    echo "⚠️ Claude Code 输出无效 (${CLAUDE_OUTPUT_SIZE}B)，标记为失败"
+    echo "claude_failed=true" > "$OUTPUT_DIR/claude_status.txt"
+    CLAUDE_EXIT=1
+else
+    echo "claude_failed=false" > "$OUTPUT_DIR/claude_status.txt"
+fi
+
+echo "Claude Code 完成 (退出码: $CLAUDE_EXIT, 输出: ${CLAUDE_OUTPUT_SIZE}B)"
 echo ""
 
 # ============================================================
