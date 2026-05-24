@@ -782,6 +782,12 @@ risk:
     min_confidence: 0.4
     min_consensus: 0.2
     min_score: 50
+  # P1 Regime Gate (2026-05-24 辩论共识): 方向感知入场过滤
+  # SPY<MA200 仅拦截 LONG (SHORT 仍允许); VWAP 过滤低强度多头
+  p1_regime_gate:
+    enabled: true                    # 总开关
+    vwap_filter_enabled: true        # VWAP 子开关 (LONG + strength<80 + price<VWAP → 拦截)
+    vwap_threshold: -0.001           # VWAP 偏离度阈值 (<此值视为弱势)
   stop_loss: '_deprecated: Use dynamic_exit'
   take_profit: '_deprecated: Use dynamic_exit'
   circuit_breaker:

@@ -104,14 +104,46 @@ class PreTradeChecker:
         """
         checks_passed = []
         
-        # 0. 市场状态检查（优化 2）
-        if not market_can_trade():
+        # 0. 市场状态检查 (P1 优化 2026-05-24: 方向感知 Regime Gate)
+        # 旧逻辑: market_can_trade() 一刀切拦截所有方向 (LONG+SHORT)
+        # 新逻辑: VIX>=25 拦截所有方向; SPY<MA200 仅拦截 LONG (允许 SHORT)
+        # 数据支撑: SHORT 胜率35% 盈利$12,021 vs LONG 胜率20.3% 盈利$1,933
+        _p1_vix_ok = True
+        _p1_spy_ok = True
+        try:
+            from app.analysis.market_state import MarketStateChecker as _MSC
+            _msc = _MSC()
+            _p1_vix_ok = _msc.vix_below_25()
+            _p1_spy_ok = _msc.spy_above_ma200()
+        except Exception:
+            pass  # 数据不可用时放行，避免误杀
+        
+        if not _p1_vix_ok:
             return PreTradeResult(
                 allowed=False,
-                reason="MARKET_STATE_NOT_ALLOWED(SPY<MA200 or VIX>=25)",
+                reason="P1_VIX_HIGH(VIX>=25 blocks all directions)",
                 checks_passed=checks_passed,
             )
-        checks_passed.append("MARKET_STATE")
+        checks_passed.append("P1_VIX")
+        
+        _direction = str(getattr(signal, 'direction', '')).upper()
+        _is_long = "LONG" in _direction and "SHORT" not in _direction
+        if _is_long and not _p1_spy_ok:
+            # P1 Regime Gate: SPY<MA200 仅拦截做多
+            # 配置开关: risk.p1_regime_gate.spy_long_block
+            _p1_enabled = True
+            try:
+                from app.core.config_container import get_config as _gc2
+                _p1_enabled = _gc2().get_dotted("risk.p1_regime_gate.enabled", True)
+            except Exception:
+                pass
+            if _p1_enabled:
+                return PreTradeResult(
+                    allowed=False,
+                    reason="P1_SPY_BEAR(SPY<MA200 blocks LONG only)",
+                    checks_passed=checks_passed,
+                )
+        checks_passed.append("P1_SPY")
 
         # 0.05. P1-1 HIGH_VOL 守卫 (2026-05-23, 辩论发现)
         # HIGH_VOL regime: 141笔 14.9%WR -$39,537 — 必须收紧
@@ -196,6 +228,36 @@ class PreTradeChecker:
                 checks_passed=checks_passed,
             )
         checks_passed.append("SIGNAL_STRENGTH")
+
+        # 1.5. P1 VWAP Gate (2026-05-24: 辩论共识 — 低强度多头信号需动量确认)
+        # 数据支撑: 强度66的89笔仅11.2%胜率, 缺乏技术确认的信号是噪音
+        # 规则: LONG + strength<80 + 价格<VWAP → 拦截
+        # 数据源: signal.metadata["vwap_deviation"] (>0 = 价格在VWAP上方)
+        # 软门禁: VWAP数据不可用时放行 (不阻断交易)
+        _p1_vwap_enabled = True
+        try:
+            from app.core.config_container import get_config as _gc3
+            _p1_vwap_enabled = _gc3().get_dotted("risk.p1_regime_gate.vwap_filter_enabled", True)
+        except Exception:
+            pass
+        if _p1_vwap_enabled and _is_long and signal.strength < 80:
+            _vwap_dev = None
+            try:
+                _meta = getattr(signal, 'metadata', None) or {}
+                _vwap_dev = _meta.get("vwap_deviation")
+            except Exception:
+                pass
+            if _vwap_dev is not None:
+                _vwap_threshold = -0.001  # 价格低于VWAP 0.1% 视为弱势
+                if float(_vwap_dev) < _vwap_threshold:
+                    return PreTradeResult(
+                        allowed=False,
+                        reason=f"P1_VWAP_WEAK(strength={signal.strength}<80, vwap_dev={_vwap_dev:.4f}<{_vwap_threshold})",
+                        checks_passed=checks_passed,
+                    )
+                checks_passed.append("P1_VWAP")
+            # VWAP 数据不可用 → 软放行，记录日志
+            # 后续由 signal_pipeline 负责注入 VWAP 数据
 
         # 2. 置信度检查（优化 3.3：阈值 0.65）
         if signal.confidence < eff_conf:

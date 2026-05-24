@@ -24,6 +24,20 @@ import uuid
 from datetime import datetime, timedelta
 from typing import Dict, Any, List, Optional
 
+
+def _get_vwap_deviation(scheduler, symbol: str) -> Optional[float]:
+    """P1 VWAP Gate helper: 从 market_data 缓存获取 VWAP 偏离度。
+    返回 None 表示数据不可用 (pre_trade_check 将软放行)。
+    """
+    try:
+        if scheduler and hasattr(scheduler, 'market_data') and scheduler.market_data:
+            ctx = scheduler.market_data.get_full_market_context(symbol)
+            if ctx and "ticker_vwap_deviation" in ctx:
+                return float(ctx["ticker_vwap_deviation"])
+    except Exception:
+        pass
+    return None
+
 from app.core.models import (
     SignalScore, Direction, MarketRegime,
 )
@@ -641,6 +655,8 @@ def _process_symbol_new_pipeline(scheduler, symbol: str, vix: float,
             "_factor_detail": getattr(candidate, "factor_detail", {}) or {},
             "signal_tags": "/".join(getattr(candidate, "signal_tags", []) or []) or candidate.strategy_id,
             "factors_used": getattr(candidate, "signal_tags", []) or [],
+            # P1 VWAP Gate (2026-05-24): 从 full market context 注入 VWAP 偏离度
+            "vwap_deviation": _get_vwap_deviation(scheduler, symbol),
         },
     )
 
@@ -1292,6 +1308,8 @@ def _build_signal_from_vote(scheduler, symbol: str, vote_result: Dict[str, Any],
             # T5 (2026-05-16): 把 IntradayScorer 的 _factor_detail 透传到 SignalScorer
             # SignalScorer 检测到 trend/volume 已上游计算 → 二层权重置 0, 避免双计
             "_factor_detail": vote_result.get("_factor_detail", {}) or {},
+            # P1 VWAP Gate (2026-05-24): 透传 VWAP 偏离度供 pre_trade_check 过滤低强度多头
+            "vwap_deviation": context.get("ticker_vwap_deviation"),
         },
     )
     return signal
