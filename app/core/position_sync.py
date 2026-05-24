@@ -378,6 +378,11 @@ class USPositionSync:
                         code = str(row['code'])
                         if not code.startswith('US.'):
                             code = 'US.' + code
+                        # P0 fix (2026-05-24): Apply _closed_symbols filter here.
+                        # The set was computed at L365-371 but never used — dead code.
+                        # Skip symbols with closed trade_records to prevent zombie resurrection.
+                        if code in _closed_symbols:
+                            continue
                         futu_positions[code] = {
                             'qty': abs(qty),
                             'cost': float(row.get('cost_price', 0)),

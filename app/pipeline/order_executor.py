@@ -505,22 +505,16 @@ def _submit_put_option(scheduler, symbol: str, signal: SignalScore, context: Dic
     except Exception:
         _oc = {}
 
-    # P0 修复 (2026-04-30): options.enabled 控制的是期权交易功能，不是做空功能。
-    # 模拟盘可能禁用期权但需要支持做空。如果期权确实不可用且无替代方案，才跳过。
+    # P0 加固 (2026-05-24): 期权硬封锁 — options.enabled=False 时绝对禁止期权下单
+    # 根因: 旧逻辑在 enabled=False + stock_short=True 时仍继续执行期权下单，
+    #        导致 5/21-5/22 期间 SHORT_PROXY_OPTION 仍产生 $30,237 亏损。
+    # 修复: enabled=False 直接 return，做空路由由上层调用方处理（正股做空路径）。
     if not _oc.get("ENABLED", True):
-        # 检查是否有正股做空能力作为替代
-        try:
-            from app.core.config_container import get_config
-            cfg = get_config()
-            stock_short_enabled = cfg.get_dotted("options.short_strategy.stock_short.enabled", False)
-            if stock_short_enabled:
-                logger.info(f"[期权] {symbol} OPTIONS_CONFIG.ENABLED=False，但正股做空可用，继续做空流程")
-            else:
-                logger.warning(f"[期权] {symbol} OPTIONS_CONFIG.ENABLED=False 且正股做空未启用，跳过 SHORT 信号")
-                return
-        except Exception:
-            logger.warning(f"[期权] {symbol} OPTIONS_CONFIG.ENABLED=False，跳过 SHORT 信号")
-            return
+        logger.warning(
+            f"[期权·硬封锁] {symbol} OPTIONS_ENABLED=False，禁止期权下单。"
+            f"做空请使用正股做空路径。"
+        )
+        return
 
     price = context.get("price", 0)
     if price <= 0:
@@ -1110,15 +1104,26 @@ def _execute_short(scheduler, symbol: str, signal: SignalScore, context: Dict[st
     if signal.direction != Direction.SHORT:
         return
 
-    # 判断是否可尝试正股做空
+    # P0 加固 (2026-05-24): 做空路由修复 — 模拟盘也走正股做空
+    # 根因: 旧逻辑 `stock_short_enabled and not is_sim` 导致模拟盘永远跳过正股做空，
+    #        直接走 _submit_put_option → 被硬封锁 return → SHORT 信号静默丢弃
+    # 修复: simulated_mode_force_options=false 时，模拟盘也尝试正股做空
     try_direct = False
+    options_disabled = False
     try:
         from app.core.config_container import get_config
         cfg = get_config()
         stock_short_enabled = cfg.get_dotted("options.short_strategy.stock_short.enabled", False)
+        force_options = cfg.get_dotted("options.short_strategy.simulated_mode_force_options", False)
+        options_enabled = cfg.get_dotted("options.enabled", True)
+        options_disabled = not options_enabled
         is_sim = cfg.is_simulated() if hasattr(cfg, 'is_simulated') else True
-        if stock_short_enabled and not is_sim:
-            try_direct = True
+        if stock_short_enabled:
+            # 非模拟盘 → 直接做空
+            # 模拟盘 + force_options=false → 也直接做空 (Futu 模拟盘已支持)
+            # 模拟盘 + force_options=true → 走期权路径
+            if not is_sim or not force_options:
+                try_direct = True
     except Exception:
         pass
 
@@ -1134,7 +1139,13 @@ def _execute_short(scheduler, symbol: str, signal: SignalScore, context: Dict[st
             except (KeyError, Exception):
                 pass
 
-    # 降级路径: Put 期权 (现有链路)
+    # 降级路径: Put 期权 (仅在期权启用时有效)
+    if options_disabled:
+        logger.warning(
+            f"[做空·路由终止] {symbol} 正股做空不可用/失败，且期权已禁用(options.enabled=False)，"
+            f"SHORT 信号放弃执行"
+        )
+        return
     try:
         if hasattr(scheduler, 'option_selector') and scheduler.option_selector is not None:
             if (scheduler.option_selector.quote_ctx is None
