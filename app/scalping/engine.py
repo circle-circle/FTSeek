@@ -2496,7 +2496,7 @@ class ScalpingEngine:
             sched = getattr(self, "scheduler", None)
             coord = getattr(sched, "coordinator", None) if sched else None
             if coord is not None and getattr(coord, "enabled", False):
-                from app.strategies.adapters import ScalpingAdapter
+                from app.strategy.adapters import ScalpingAdapter
                 _adapters = getattr(sched, "_strategy_adapters", []) or []
                 _scalp_adapter = next((a for a in _adapters if a.name == "scalping"), None)
                 if _scalp_adapter is None:

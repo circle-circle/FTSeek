@@ -1,12 +1,17 @@
 #!/usr/bin/env python3
 """
-配置默认值唯一数据源 — FTSeek-US SSOT v1.0 (2026-05-06)
+配置默认值 — 紧急回退层 (Emergency Fallback Layer)
+
+⚠️ SSOT 层级:
+  1. config/unified_config.yaml          ← 唯一真相源 (PRIMARY SSOT)
+  2. 本文件 (config_defaults.py)          ← 仅当 YAML key 缺失时的回退值
+  3. 业务代码                             ← 禁止硬编码配置数值
 
 规则:
-1. 所有 config.get(key, default) 中的 default 必须来自此文件
-2. 修改任何默认值: 只改 unified_config.yaml + 此文件
-3. 禁止在代码中硬编码业务配置数值
-4. config_audit.py 会在启动时自动验证此文件与 unified_config.yaml 的一致性
+1. 新增配置项: 只加 YAML，不加本文件 (除非需要启动时防御)
+2. 修改配置值: 只改 YAML，本文件保持同步 (config_audit.py 会校验)
+3. 本文件中的值必须与 YAML 一致，标注 "最后同步: YYYY-MM-DD"
+4. config_audit.py 启动时自动验证一致性
 
 用法:
     from app.core.config_defaults import CFG

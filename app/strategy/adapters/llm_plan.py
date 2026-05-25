@@ -3,7 +3,7 @@
 Phase A: 仅元数据. LLM Plan 不直接持仓 (capital_pct=0), 它的输出 (作战计划) 给
         fast_lane / main 提供 watchlist + entry_zone. priority=3 最低.
 """
-from app.strategies.base_adapter import StrategyAdapter, AdapterMeta
+from app.strategy.base_adapter import StrategyAdapter, AdapterMeta
 
 
 class LLMPlanAdapter(StrategyAdapter):

@@ -3,7 +3,7 @@
 Phase A: 仅元数据. fast_lane 实际逻辑在 app/strategy/pure/fast_lane.py.
         capital_bucket=main → fast_lane 占用计入 main 桶 (不双计).
 """
-from app.strategies.base_adapter import StrategyAdapter, AdapterMeta
+from app.strategy.base_adapter import StrategyAdapter, AdapterMeta
 
 
 class FastLaneAdapter(StrategyAdapter):

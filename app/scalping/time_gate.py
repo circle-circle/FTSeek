@@ -29,16 +29,19 @@ ET = pytz.timezone("America/New_York")
 LONG = "LONG"
 SHORT = "SHORT"
 
-# 默认 5 阶段配置 (可被 unified_config.yaml 覆盖)
+# 默认 5 阶段配置
+# ⚠️ EMERGENCY FALLBACK ONLY — SSOT 是 config/unified_config.yaml → scalping.phases
+# 修改参数请改 YAML，此处仅防止 YAML 加载失败时系统崩溃
+# 最后同步: 2026-05-26 (对齐 unified_config.yaml scalping.phases)
 DEFAULT_PHASES_CONFIG = {
     "base_params": {
-        "tp_pct": 0.025,       # P0 重写 (2026-05-20): 1.2% → 2.5%
-        "sl_pct": 0.020,       # P0 重写 (2026-05-20): 0.7% → 2.0%
+        "tp_pct": 0.025,
+        "sl_pct": 0.020,
         "position_pct": 0.08,
-        "max_hold_minutes": 60, # P0 重写 (2026-05-20): 4 → 60
+        "max_hold_minutes": 60,
     },
     "opening_drive": {
-        "enabled": False,
+        "enabled": True,          # 对齐 YAML (原 False, 2026-05-20 启用)
         "start_minutes": 575,       # 09:35
         "end_minutes": 600,         # 10:00
         "directions": ["LONG", "SHORT"],
@@ -66,15 +69,15 @@ DEFAULT_PHASES_CONFIG = {
         "directions": ["LONG", "SHORT"],
         "signals": ["rsi", "bollinger"],
         "tp_scale": 0.7,
-        "sl_scale": 0.7,
-        "pos_scale": 0.9,
+        "sl_scale": 0.5,           # 对齐 YAML (原 0.7, 2026-05-20 收紧)
+        "pos_scale": 1.0,
         "hold_scale": 1.0,
     },
     "afternoon": {
         "enabled": True,
         "start_minutes": 840,       # 14:00
         "end_minutes": 930,         # 15:30
-        "directions": ["LONG"],
+        "directions": ["LONG", "SHORT"],  # 对齐 YAML (原仅 LONG, 2026-05-20 加入 SHORT)
         "signals": ["rsi", "vwap", "momentum"],
         "tp_scale": 1.0,
         "sl_scale": 1.0,
@@ -85,7 +88,7 @@ DEFAULT_PHASES_CONFIG = {
         "enabled": True,
         "start_minutes": 930,       # 15:30
         "end_minutes": 960,         # 16:00
-        "directions": ["LONG"],
+        "directions": ["LONG", "SHORT"],  # 对齐 YAML
         "signals": ["rsi"],
         "tp_scale": 0.5,
         "sl_scale": 0.7,

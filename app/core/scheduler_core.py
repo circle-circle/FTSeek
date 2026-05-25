@@ -709,7 +709,7 @@ class TradingScheduler:
         dispatcher = ExitDispatcher()
         # B.5 (2026-05-14): 注册 4 个最小 ExitPolicy (Phase A 全部委托 PositionExitMonitor)
         try:
-            from app.strategies.exit_policies import (
+            from app.strategy.exit_policies import (
                 MainPipelineExitPolicy, ScalpingExitPolicy,
                 FastLaneExitPolicy, LLMPlanExitPolicy,
             )
@@ -727,7 +727,7 @@ class TradingScheduler:
 
         # 注册 4 个 adapter (Phase A: 仅声明元数据, 不接管下单)
         try:
-            from app.strategies.adapters import all_adapters
+            from app.strategy.adapters import all_adapters
             self._strategy_adapters = all_adapters()
             logger.info(
                 f"[调度器·Coordinator] 已注册 {len(self._strategy_adapters)} 个 adapter: "

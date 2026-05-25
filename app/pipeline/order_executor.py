@@ -1960,7 +1960,7 @@ def _submit_order(scheduler, symbol: str, signal: SignalScore, context: Dict[str
             # 主 adapter 必装 (主线信号已经生成, 直接挂)
             _main_adapter = next((a for a in _adapters if a.name == "main"), None)
             if _main_adapter is None:
-                from app.strategies.adapters import MainPipelineAdapter
+                from app.strategy.adapters import MainPipelineAdapter
                 _main_adapter = MainPipelineAdapter()
             _candidates = [(_main_adapter, signal)]
             # 其他 adapter (Phase A: 返回 None 不参与, Phase B: 真实生成)

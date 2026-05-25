@@ -6,7 +6,7 @@ T8b: effective_priority 按 regime 浮动 (趋势策略趋势市友好).
 """
 from typing import Any, Optional
 
-from app.strategies.base_adapter import StrategyAdapter, AdapterMeta
+from app.strategy.base_adapter import StrategyAdapter, AdapterMeta
 
 
 class MainPipelineAdapter(StrategyAdapter):
