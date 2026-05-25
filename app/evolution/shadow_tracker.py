@@ -13,7 +13,8 @@ FTSeek-US 影子策略追踪器 (Shadow Tracker) - 工业级实现
 """
 import json
 import logging
-import sqlite3
+from app.storage.db_pool import get_pool
+import sqlite3  # kept for schema init with custom paths
 from typing import Dict, List, Any, Optional, Tuple
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -103,7 +104,7 @@ class ShadowTracker:
             if self.proposals_db.exists() and self.proposals_db.stat().st_size == 0:
                 logger.warning(f"[Shadow] 检测到 0 字节 DB 文件，删除并重建: {self.proposals_db}")
                 self.proposals_db.unlink()
-            conn = sqlite3.connect(self.proposals_db)
+            conn = get_pool().connection("proposals")
             # 先确保 proposals 表存在（improvement_pipeline.py 也会创建，但 ShadowTracker 可能先初始化）
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS proposals (
@@ -177,7 +178,6 @@ class ShadowTracker:
                 logger.info("[Shadow] 已迁移 shadow_daily_results.regime 列")
 
             conn.commit()
-            conn.close()
         except Exception as e:
             logger.error(f"[Shadow] Schema 迁移失败: {e}")
 
@@ -185,20 +185,18 @@ class ShadowTracker:
         try:
             test_mode = self._determine_test_mode(proposal_id)
             self._update_proposal_status(proposal_id, "testing")
-            conn = sqlite3.connect(self.proposals_db)
+            conn = get_pool().connection("proposals")
             conn.execute("UPDATE proposals SET test_start_date = ?, test_mode = ? WHERE proposal_id = ?", 
                         (datetime.now().strftime('%Y-%m-%d'), test_mode, proposal_id))
             conn.commit()
-            conn.close()
             logger.info(f"[Shadow] 开始测试提议: {proposal_id} (模式: {test_mode})")
         except Exception as e:
             logger.error(f"[Shadow] 启动测试失败: {e}")
 
     def _determine_test_mode(self, proposal_id: str) -> str:
         try:
-            conn = sqlite3.connect(self.proposals_db)
+            conn = get_pool().connection("proposals")
             row = conn.execute("SELECT target_param FROM proposals WHERE proposal_id = ?", (proposal_id,)).fetchone()
-            conn.close()
             if row:
                 param = row[0].lower()
                 if 'min_confidence' in param or 'min_score' in param:
@@ -402,12 +400,11 @@ class ShadowTracker:
             return 'rejected'
 
         # 测试超过 30 天上限 → 强制淘汰
-        conn = sqlite3.connect(self.proposals_db)
+        conn = get_pool().connection("proposals")
         row = conn.execute(
             "SELECT test_days_count FROM proposals WHERE proposal_id = ?",
             (proposal_id,)
         ).fetchone()
-        conn.close()
         if row and row[0] and row[0] >= 30:
             return 'rejected'
 
@@ -416,12 +413,11 @@ class ShadowTracker:
     def _get_regime_labels(self, proposal_id: str) -> Optional[List[str]]:
         """从 shadow_daily_results 表读取 regime 标签"""
         try:
-            conn = sqlite3.connect(self.proposals_db)
+            conn = get_pool().connection("proposals")
             rows = conn.execute(
                 "SELECT regime FROM shadow_daily_results WHERE proposal_id = ? ORDER BY date_str",
                 (proposal_id,)
             ).fetchall()
-            conn.close()
             labels = [r[0] for r in rows if r[0]]
             return labels if labels else None
         except Exception:
@@ -429,10 +425,9 @@ class ShadowTracker:
 
     def _execute_promotion(self, proposal_id: str):
         try:
-            conn = sqlite3.connect(self.proposals_db)
+            conn = get_pool().connection("proposals")
             row = conn.execute("SELECT target_param, proposed_value, current_value FROM proposals WHERE proposal_id = ?", 
                               (proposal_id,)).fetchone()
-            conn.close()
             
             if not row: return
             target_param, proposed_value, current_value = row
@@ -454,7 +449,7 @@ class ShadowTracker:
             rollback_until = (datetime.now() + timedelta(days=10)).strftime('%Y-%m-%d')
 
             # 继承原提议的 strategy_type
-            conn = sqlite3.connect(self.proposals_db)
+            conn = get_pool().connection("proposals")
             row = conn.execute(
                 "SELECT strategy_type FROM proposals WHERE proposal_id = ?",
                 (original_id,)
@@ -472,7 +467,6 @@ class ShadowTracker:
                 datetime.now().strftime('%Y-%m-%d'), "level3", inherited_strategy
             ))
             conn.commit()
-            conn.close()
             logger.info(f"[Shadow] 创建回滚影子: {rollback_id} (观察至 {rollback_until})")
         except Exception as e:
             logger.error(f"[Shadow] 创建回滚影子失败: {e}")
@@ -518,28 +512,26 @@ class ShadowTracker:
 
     def _record_daily_result(self, pid, strategy_type, date_str, real_pnl, shadow_pnl, diff_pnl, regime="UNKNOWN"):
         try:
-            conn = sqlite3.connect(self.proposals_db)
+            conn = get_pool().connection("proposals")
             conn.execute("""
                 INSERT INTO shadow_daily_results (proposal_id, strategy_type, date_str, real_pnl, shadow_pnl, diff_pnl, regime)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
             """, (pid, strategy_type, date_str, real_pnl, shadow_pnl, diff_pnl, regime))
             conn.commit()
-            conn.close()
         except Exception as e:
             logger.error(f"[Shadow] 记录每日结果失败: {e}")
 
     def _get_daily_diffs(self, pid) -> List[float]:
         try:
-            conn = sqlite3.connect(self.proposals_db)
+            conn = get_pool().connection("proposals")
             rows = conn.execute("SELECT diff_pnl FROM shadow_daily_results WHERE proposal_id = ? ORDER BY date_str", (pid,)).fetchall()
-            conn.close()
             return [r[0] for r in rows]
         except sqlite3.Error:
             return []
 
     def _get_active_testing_proposals(self, strategy_type: str = None, limit: int = 3) -> List[Dict]:
         try:
-            conn = sqlite3.connect(self.proposals_db)
+            conn = get_pool().connection("proposals")
             conn.row_factory = sqlite3.Row
             if strategy_type:
                 rows = conn.execute(
@@ -551,7 +543,6 @@ class ShadowTracker:
                     "SELECT * FROM proposals WHERE status='testing' ORDER BY test_start_date DESC LIMIT ?", 
                     (limit,)
                 ).fetchall()
-            conn.close()
             return [dict(r) for r in rows]
         except Exception as e:
             return []
@@ -590,7 +581,7 @@ class ShadowTracker:
 
     def _update_shadow_stats(self, pid, pnl, wr, daily_diff):
         try:
-            conn = sqlite3.connect(self.proposals_db)
+            conn = get_pool().connection("proposals")
             conn.execute("""
                 UPDATE proposals SET 
                     shadow_pnl_total = COALESCE(shadow_pnl_total, 0) + ?,
@@ -600,28 +591,25 @@ class ShadowTracker:
                 WHERE proposal_id = ?
             """, (pnl, 1 if wr > 0 else 0, pid))
             conn.commit()
-            conn.close()
         except Exception as e:
             logger.error(f"[Shadow] 更新统计失败: {e}")
 
     def _count_active_proposals(self, strategy_type: str = None) -> int:
         try:
-            conn = sqlite3.connect(self.proposals_db)
+            conn = get_pool().connection("proposals")
             if strategy_type:
                 count = conn.execute("SELECT COUNT(*) FROM proposals WHERE status='testing' AND strategy_type=?", (strategy_type,)).fetchone()[0]
             else:
                 count = conn.execute("SELECT COUNT(*) FROM proposals WHERE status='testing'").fetchone()[0]
-            conn.close()
             return count
         except sqlite3.Error:
             return 0
 
     def _update_proposal_status(self, pid, status):
         try:
-            conn = sqlite3.connect(self.proposals_db)
+            conn = get_pool().connection("proposals")
             conn.execute("UPDATE proposals SET status = ? WHERE proposal_id = ?", (status, pid))
             conn.commit()
-            conn.close()
         except Exception as e:
             logger.error(f"[Shadow] 更新状态失败: {e}")
 

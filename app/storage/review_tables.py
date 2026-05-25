@@ -47,9 +47,9 @@ class ReviewDatabase:
     
     @contextmanager
     def get_connection(self):
-        """获取数据库连接上下文管理器"""
-        conn = sqlite3.connect(str(self.db_path))
-        conn.row_factory = sqlite3.Row
+        """获取数据库连接上下文管理器 (使用 pool 缓存连接)"""
+        from app.storage.db_pool import get_pool
+        conn = get_pool().connection("review")
         try:
             yield conn
             conn.commit()
@@ -57,8 +57,6 @@ class ReviewDatabase:
             conn.rollback()
             logger.error(f"数据库操作失败：{e}")
             raise
-        finally:
-            conn.close()
     
     def _init_tables(self):
         """初始化 8 张复盘表"""

@@ -20,12 +20,13 @@
 """
 from __future__ import annotations
 import logging
-import sqlite3
 import threading
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
+
+from app.storage.db_pool import get_pool
 
 logger = logging.getLogger("ftseek_us.intraday_heartbeat")
 
@@ -121,9 +122,8 @@ def _query_today_trades() -> Dict:
     美东时间 = UTC-4 (EDT) 或 UTC-5 (EST)。
     使用 'now', '-4 hours' 近似美东时间，避免跨日混淆。
     """
-    db = str(PROJECT_ROOT / "data" / "ftseek_us.db")
     try:
-        conn = sqlite3.connect(db)
+        conn = get_pool().connection("ftseek_us")
         cur = conn.cursor()
         # 今日已平 — 使用美东时间 (UTC-4)
         # date('now', '-4 hours') 近似美东日期
@@ -145,7 +145,6 @@ def _query_today_trades() -> Dict:
                 "symbol": row[0], "direction": row[1], "size": row[2],
                 "entry": row[3], "sl": row[4], "owner": row[5] or "?",
             })
-        conn.close()
         return {
             "today_trades": n or 0,
             "today_pnl": round(pnl or 0, 2),
@@ -170,20 +169,19 @@ def _query_signal_funnel(window_min: int = 30) -> Dict:
 
     # 入场数 (trade_records 主 DB)
     try:
-        conn = sqlite3.connect(str(PROJECT_ROOT / "data" / "ftseek_us.db"))
+        conn = get_pool().connection("ftseek_us")
         cur = conn.cursor()
         cur.execute(
             "SELECT COUNT(*) FROM trade_records WHERE entry_time > ?",
             (cutoff_iso,)
         )
         entries = cur.fetchone()[0] or 0
-        conn.close()
     except Exception as e:
         logger.debug(f"[Heartbeat] entries query 失败: {e}")
 
     # 拒绝 (rejections.db)
     try:
-        conn = sqlite3.connect(str(PROJECT_ROOT / "data" / "rejections.db"))
+        conn = get_pool().connection("rejections")
         cur = conn.cursor()
         cur.execute(
             "SELECT reason_category, COUNT(*) FROM rejections "
@@ -193,7 +191,6 @@ def _query_signal_funnel(window_min: int = 30) -> Dict:
         top_reasons = [(r[0], r[1]) for r in cur.fetchall()]
         cur.execute("SELECT COUNT(*) FROM rejections WHERE timestamp > ?", (cutoff_iso,))
         total_rejects = cur.fetchone()[0] or 0
-        conn.close()
     except Exception as e:
         logger.debug(f"[Heartbeat] rejects query 失败: {e}")
 
@@ -212,7 +209,7 @@ def _query_llm_health(window_min: int = 30) -> Dict:
     """
     try:
         import json as _json
-        conn = sqlite3.connect(str(PROJECT_ROOT / "data" / "llm_audit.db"))
+        conn = get_pool().connection("llm_audit")
         cutoff = time.time() - window_min * 60
         cur = conn.cursor()
         cur.execute(
@@ -239,7 +236,6 @@ def _query_llm_health(window_min: int = 30) -> Dict:
             except Exception:
                 # JSON 解析失败 → 不计 (避免误统计)
                 pass
-        conn.close()
         success_pct = round(100.0 * (ok or 0) / max(1, n or 1), 1)
         return {
             "calls": n or 0,
