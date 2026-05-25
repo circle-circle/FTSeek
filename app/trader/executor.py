@@ -3341,13 +3341,16 @@ class TradeExecutor:
             # 必须按 code 查找 OPEN 记录并 UPDATE，而非 INSERT 新行
             if status == 'CLOSED':
                 cursor.execute(
-                    "SELECT id FROM trades WHERE code=? AND status='OPEN' ORDER BY id DESC LIMIT 1",
+                    "SELECT id, entry_price FROM trades WHERE code=? AND status='OPEN' ORDER BY id DESC LIMIT 1",
                     (code,)
                 )
                 open_row = cursor.fetchone()
                 if open_row:
                     now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                     _exit_r = exit_reason or 'normal_close'
+                    _entry_px = open_row[1] if open_row[1] and open_row[1] > 0 else price
+                    _denom = quantity * _entry_px if quantity > 0 and _entry_px > 0 else 1
+                    # P1 修复 2026-05-26: pnl_percent 分母用 entry_price 而非 exit_price
                     cursor.execute("""
                         UPDATE trades
                         SET exit_price=?, exit_time=?, pnl=?, pnl_percent=?,
@@ -3355,7 +3358,7 @@ class TradeExecutor:
                         WHERE id=?
                     """, (
                         price, now, pnl,
-                        pnl / (quantity * price) if quantity > 0 and price > 0 else 0,
+                        pnl / _denom if _denom > 0 else 0,
                         _exit_r, open_row[0]
                     ))
                     conn.commit()
