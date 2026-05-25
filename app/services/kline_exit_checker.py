@@ -227,6 +227,21 @@ class KlineExitChecker:
         try:
             from app.risk.dynamic_exit_manager import dynamic_exit_manager as _dem_exit
             exit_state = getattr(pos_now, 'exit_state', None)
+
+            # P0 修复 2026-05-26: 动态计算 is_same_day，不再硬编码 True
+            is_same_day = True
+            entry_time_raw = getattr(pos_now, 'entry_time', None)
+            if entry_time_raw:
+                try:
+                    from datetime import datetime as _dt_now
+                    if isinstance(entry_time_raw, str):
+                        _entry_dt = _dt_now.fromisoformat(entry_time_raw.replace(' ', 'T'))
+                    else:
+                        _entry_dt = entry_time_raw
+                    is_same_day = (_dt_now.now().date() == _entry_dt.date())
+                except Exception:
+                    is_same_day = True  # 解析失败 fallback 保守策略
+
             exit_decision = _dem_exit.check_exit_priority(
                 code=code,
                 entry_price=pos_now.entry_price,
@@ -235,7 +250,8 @@ class KlineExitChecker:
                 entry_time=getattr(pos_now, 'entry_time', None),
                 atr_value=self._get_atr(code),
                 direction=pos_now.action,
-                is_same_day=True,
+                is_same_day=is_same_day,
+                exit_state=exit_state,  # P0 修复 2026-05-26: 传递 exit_state 防止分批止盈重复
             )
             if exit_decision.new_state:
                 self._pm.update_exit_state(
@@ -265,7 +281,19 @@ class KlineExitChecker:
                 self._peak_price_cache.pop(code, None)
                 return True
         except Exception as _de:
-            logger.debug(f"[动态退出] {code} 检查异常: {_de}")
+            # P0 修复 2026-05-26: 异常不再静默吞掉，升级为 warning + fallback 硬止损
+            logger.warning(
+                f"[动态退出] {code} check_exit_priority 异常: {_de}，"
+                f"fallback 到硬止损检查", exc_info=False
+            )
+            # Fallback: 如果动态退出引擎挂了，回退到基础硬止损
+            try:
+                if self._pm.check_stop_loss(code, current_price):
+                    logger.warning(f"[动态退出·fallback] {code} 硬止损触发")
+                    execute_stop_loss_fn(code, current_price)
+                    return True
+            except Exception:
+                pass  # fallback 也失败，不阻塞主循环
 
         return False
 

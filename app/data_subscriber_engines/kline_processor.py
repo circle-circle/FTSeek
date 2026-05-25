@@ -249,6 +249,21 @@ class KlineProcessor:
         try:
             from app.risk.dynamic_exit_manager import dynamic_exit_manager as _dem_exit
             exit_state = getattr(pos_now, 'exit_state', None)
+
+            # P0 修复 2026-05-26: 动态计算 is_same_day，不再硬编码 True
+            is_same_day = True
+            entry_time_raw = getattr(pos_now, 'entry_time', None)
+            if entry_time_raw:
+                try:
+                    from datetime import datetime as _dt_now
+                    if isinstance(entry_time_raw, str):
+                        _entry_dt = _dt_now.fromisoformat(entry_time_raw.replace(' ', 'T'))
+                    else:
+                        _entry_dt = entry_time_raw
+                    is_same_day = (_dt_now.now().date() == _entry_dt.date())
+                except Exception:
+                    is_same_day = True
+
             exit_decision = _dem_exit.check_exit_priority(
                 code=code,
                 entry_price=pos_now.entry_price,
@@ -257,7 +272,8 @@ class KlineProcessor:
                 entry_time=getattr(pos_now, 'entry_time', None),
                 atr_value=self.get_atr(code),
                 direction=pos_now.action,
-                is_same_day=True,
+                is_same_day=is_same_day,
+                exit_state=exit_state,  # P0 修复 2026-05-26: 传递 exit_state
             )
             if exit_decision.new_state:
                 self.position_manager.update_exit_state(
@@ -287,7 +303,17 @@ class KlineProcessor:
                 self.cache.peak_price_cache.pop(code, None)
                 return True
         except Exception as _de:
-            logger.debug(f"[动态退出] {code} 检查异常：{_de}")
+            # P0 修复 2026-05-26: 异常升级为 warning + fallback 硬止损
+            logger.warning(
+                f"[动态退出] {code} check_exit_priority 异常: {_de}，fallback 硬止损"
+            )
+            try:
+                if self.position_manager.check_stop_loss(code, current_price):
+                    logger.warning(f"[动态退出·fallback] {code} 硬止损触发")
+                    self.execute_stop_loss(code, current_price)
+                    return True
+            except Exception:
+                pass
 
         # ── P1 (2026-05-17): HKExitAggregator 灰度执行 ──
         # 从双跑模式升级为 50% 灰度执行

@@ -135,11 +135,15 @@ class ExitExecutor:
 
         close_qty = position.quantity
         if close_qty < lot_size:
+            # P0 修复 2026-05-26: 不足一手时直接用全部持仓平仓（碎股卖出允许）
+            # 模拟盘富途接受碎股卖出，实盘走 ODD LOT 柜台
             logger.warning(
-                f"[止损碎股处理] {code} 持仓{close_qty}股不足一手({lot_size}股)"
+                f"[止损碎股处理] {code} 持仓{close_qty}股不足一手({lot_size}股)，全量平仓"
             )
+            # close_qty 保持不变 = position.quantity
         elif close_qty % lot_size != 0:
-            close_qty = ((close_qty + lot_size - 1) // lot_size) * lot_size
+            # P0 修复 2026-05-26: 向下取整，防止向上取整导致卖出超过持仓
+            close_qty = (close_qty // lot_size) * lot_size
 
         logger.info(
             f"[止损执行] {code} 持仓={position.quantity} | 平仓={close_qty} | "
@@ -313,7 +317,10 @@ class ExitExecutor:
         lot_size = DEFAULT_ORDER_QTY_BY_CODE.get(code, 100)
         close_qty = position.quantity
         if close_qty % lot_size != 0:
-            close_qty = ((close_qty + lot_size - 1) // lot_size) * lot_size
+            # P0 修复 2026-05-26: 向下取整，防止向上取整导致卖出超过持仓
+            close_qty = (close_qty // lot_size) * lot_size
+            if close_qty <= 0:
+                close_qty = position.quantity  # 碎股全量平仓
 
         from app.strategy.base import Signal, SignalAction
         take_profit_signal = Signal(

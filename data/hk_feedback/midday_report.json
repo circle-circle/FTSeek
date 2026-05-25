@@ -1,0 +1,24 @@
+{
+  "assessment": {
+    "session": "midday",
+    "market_regime": "NEUTRAL",
+    "morning_summary": "午间分析降级: LLM 返回空结果",
+    "key_observations": [],
+    "trade_performance": {},
+    "pnl_assessment": "",
+    "execution_quality": "",
+    "afternoon_strategy": "",
+    "focus_symbols": [],
+    "risk_adjustments": [],
+    "position_recommendations": [],
+    "confidence": 0.0,
+    "timestamp": 1779423653.2314072,
+    "trace_id": ""
+  },
+  "context_summary": {
+    "morning_trades": 0,
+    "open_positions": 0,
+    "7day_pnl": -3291.4,
+    "7day_wr": 37.5
+  }
+}

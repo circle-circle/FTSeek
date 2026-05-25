@@ -1,0 +1,54 @@
+{
+  "date": "2026-05-25",
+  "type": "eod_attribution",
+  "summary": {
+    "trades_today": 0,
+    "signals_today": 0,
+    "cross_market_executions": 0,
+    "premarket_targets": 0,
+    "premarket_bias": "Neutral",
+    "intraday_diagnosis_runs": 10,
+    "intraday_alerts": 0
+  },
+  "positions": [
+    {"code": "HK.02269", "entry_price": 33.3, "quantity": 500, "source": "futu_sync", "entry_time": "2026-05-22 15:59:41"},
+    {"code": "HK.09992", "entry_price": 150.9, "quantity": 200, "source": "futu_sync", "entry_time": "2026-05-22 15:59:41"}
+  ],
+  "exit_rule_engine": {
+    "status": "initialized",
+    "mode": "Phase 1 dual-run (ATR + Structural + Trailing, 3 rules)",
+    "today_triggers": 0,
+    "note": "架构隔离：futu_sync 持仓未接入评估管道"
+  },
+  "system_health": {
+    "sdk_reconnects": 2,
+    "reconnect_times": ["11:02", "15:52"],
+    "llm_debate_truncations": 2,
+    "llm_truncation_pattern": "'\\n  \"direction\"'",
+    "error_count": 11,
+    "error_sources": ["us_overnight_fetcher (10x OTC symbols)", "ShadowMode first discrepancy (1x)"],
+    "shadow_mode_agreement": "92.2%-100%",
+    "shadow_mode_drift_type": "old=True new=False"
+  },
+  "recent_7d": {
+    "total_trades": 8,
+    "win_rate": 0.25,
+    "total_pnl_pct": -311.81,
+    "dominant_exit_reason": "normal_close (87.5%)",
+    "extreme_loss": "HK.01810 -257%"
+  },
+  "risk_items": [
+    "HK.01810 -257% 极端亏损需根因分析",
+    "LLM辩论截断持续发生，影响盘前分析质量",
+    "SDK每日2次重连，心跳阈值238s可能过短",
+    "futu_sync持仓未接入ExitRuleEngine评估管道",
+    "normal_close主导退出，ATR/Chandelier/Breakeven零激活"
+  ],
+  "recommendations": [
+    "P1: ExitRuleEngine接入futu_sync持仓",
+    "P1: LLM Provider切换或prompt优化解决截断",
+    "P2: SDK心跳超时阈值调整",
+    "P2: HK.01810极端亏损根因分析",
+    "P3: ShadowMode新系统校准"
+  ]
+}
