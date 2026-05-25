@@ -1526,25 +1526,41 @@ class ConsensusEngine:
 
     # ── Phase 2a (2026-05-21): 因子组合黑名单 ──
     # 基于历史交易数据诊断，以下因子组合胜率极低 (<25%) 且贡献大量亏损
+    # P0辩论修复 2026-05-26: 基于审计数据的策略黑名单
+    # 组合黑名单 (所有因子都在active_strategies中时触发)
     FACTOR_BLACKLIST = [
-        frozenset({"bb_factor", "rsi_factor", "vol_factor"}),  # 22% WR, 均亏-267 HKD
-        frozenset({"st_factor", "rsi_factor", "bb_factor"}),  # 0% WR, 3笔全亏-3,410 HKD
+        frozenset({"bb_factor", "rsi_factor", "vol_factor"}),  # 5笔 0%WR -$2,260
+        frozenset({"st_factor", "rsi_factor", "bb_factor"}),  # 10笔 0%WR -$1,550
+        frozenset({"st_factor", "rsi_factor", "bb_factor", "vol_factor"}),  # 含st_factor
     ]
+    # 单因子黑名单 (任一因子出现即触发)
+    STRATEGY_BLACKLIST = {
+        "confluence_v2",  # 5笔 0%WR -$125
+    }
 
     def _check_factor_blacklist(self, votes: list, score: float, code: str) -> float:
-        """因子组合黑名单: 当低胜率因子组合同时触发时，衰减信号分数"""
+        """因子组合黑名单 + 单因子黑名单: 命中时完全屏蔽信号 (ADR-043)"""
         active_strategies = set(v.strategy for v in votes)
+
+        # 1. 单因子黑名单检查
+        for strategy in self.STRATEGY_BLACKLIST:
+            if strategy in active_strategies:
+                logger.warning(
+                    f"[因子黑名单] {code} 单因子 {strategy} 被禁用 (ADR-043), "
+                    f"score {score:+.2f} → 0"
+                )
+                return 0.0
+
+        # 2. 组合黑名单检查
         for blacklisted in self.FACTOR_BLACKLIST:
             if blacklisted.issubset(active_strategies):
-                decay = 0.3  # 保留30%信号强度而非完全屏蔽
-                old_score = score
-                score *= decay
                 logger.warning(
                     f"[因子黑名单] {code} 低胜率组合触发: "
                     f"{', '.join(sorted(blacklisted))} "
-                    f"score {old_score:+.2f} → {score:+.2f} (×{decay})"
+                    f"score {score:+.2f} → 0 (ADR-043)"
                 )
-                break
+                return 0.0
+
         return score
 
     def _compute_adaptive_threshold(self) -> float:
