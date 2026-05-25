@@ -161,10 +161,10 @@ class TradeExecutor:
                 f"以实际数量平仓 (若 Futu 拒绝将标记为 BAD_ORDER)"
             )
         elif close_qty % lot_size != 0:
-            # 向上取整到整手
-            close_qty = ((close_qty + lot_size - 1) // lot_size) * lot_size
+            # 向下取整到整手 (P0修复: 防止向上取整导致超卖)
+            close_qty = (close_qty // lot_size) * lot_size
             logger.warning(
-                f"[止损数量调整] {code} 原数量={position.quantity}，调整为整手={close_qty}"
+                f"[止损数量调整] {code} 原数量={position.quantity}，向下取整到整手={close_qty}"
             )
         
         logger.info(
@@ -325,9 +325,11 @@ class TradeExecutor:
         # 确保平仓数量为整手
         close_qty = position.quantity
         if close_qty % lot_size != 0:
-            close_qty = ((close_qty + lot_size - 1) // lot_size) * lot_size
+            close_qty = (close_qty // lot_size) * lot_size
+            if close_qty <= 0:
+                close_qty = position.quantity  # 碎股全量平仓
             logger.warning(
-                f"[止盈数量调整] {code} 原数量={position.quantity}，调整为整手={close_qty}"
+                f"[止盈数量调整] {code} 原数量={position.quantity}，向下取整到整手={close_qty}"
             )
         
         # 创建止盈信号 (P1 修复 2026-05-21: 传递 trace_id)
