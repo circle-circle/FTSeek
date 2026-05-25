@@ -1650,6 +1650,12 @@ class TradeExecutor:
 
             qty = self._get_qty(signal)
 
+            # P1 修复 2026-05-26: qty=0 时立即返回（水位限制或其他原因）
+            if qty <= 0:
+                msg = f"{signal.code} 计算下单数量=0 (水位限制或仓位计算异常)，拒绝开仓"
+                logger.warning(f"[qty=0] {msg}")
+                return TradeResult(success=False, message=msg)
+
             # 防御修复 (2026-05-11): 单标的仓位不超过总资金的 5%
             # 无论 quality_boost / news_boost / position_multiplier 如何叠加
             if signal.price and signal.price > 0 and qty > 0:
