@@ -55,15 +55,15 @@ class StopConfig:
                 "breakeven_trigger": 0.025, "trail_atr_mult": 2.8,
             },
             "weak_up": {
-                "stop_loss_pct": -0.045, "take_profit_pct": 0.06,
+                "stop_loss_pct": -0.025, "take_profit_pct": 0.08,  # P1-SSOT: 对齐default,弱上涨不应比default更宽
                 "breakeven_trigger": 0.020, "trail_atr_mult": 2.3,
             },
             "strong_down": {
-                "stop_loss_pct": -0.03, "take_profit_pct": 0.045,
+                "stop_loss_pct": -0.04, "take_profit_pct": 0.06,  # P1-SSOT: R:R=1.5:1
                 "breakeven_trigger": 0.018, "trail_atr_mult": 1.4,
             },
             "weak_down": {
-                "stop_loss_pct": -0.04, "take_profit_pct": 0.05,
+                "stop_loss_pct": -0.035, "take_profit_pct": 0.06,  # P1-SSOT: R:R=1.71:1
                 "breakeven_trigger": 0.020, "trail_atr_mult": 1.7,
             },
             "neutral": {

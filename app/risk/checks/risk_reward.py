@@ -33,8 +33,8 @@ class RiskRewardCheck(RiskCheck):
             # 从 risk_limits SSOT 读取阈值 (2026-05-11 P0 修复，2026-05-19 对齐 YAML 1.25)
             min_rr = get_config_center().get('risk_limits.min_rr', 1.25)
 
-            stop_pct = abs(_dem.current_params.get('stop_loss', -0.045))
-            take_pct = abs(_dem.current_params.get('take_profit', 0.06))  # 2026-05-19: fallback 对齐 YAML SSOT
+            stop_pct = abs(_dem.current_params.get('stop_loss', -0.025))   # P1-SSOT: fallback 对齐 YAML (-0.025)
+            take_pct = abs(_dem.current_params.get('take_profit', 0.08))   # P1-SSOT: fallback 对齐 YAML (0.08)
             if stop_pct > 0:
                 rr_ratio = take_pct / stop_pct
                 if rr_ratio < min_rr:

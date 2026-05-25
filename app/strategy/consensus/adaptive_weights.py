@@ -190,7 +190,7 @@ class AdaptiveWeightManager:
     
     def _calculate_regime_adjustment(self, strategy: str) -> float:
         """市场状态权重调整"""
-        regime_params = cfg.get(f"dynamic_exit.default", {})
+        regime_params = cfg.get(f"dynamic_exit_params.default", {})
         # 简化实现，可根据实际需求扩展
         return 0.0
     

@@ -578,8 +578,8 @@ def _sync_positions_from_futu(executor):
     active = data[data['qty'] > 0][['code', 'qty', 'cost_price']].drop_duplicates(subset='code')
     futu_map = {row['code']: row for _, row in active.iterrows()}
 
-    stop_pct = abs(_dem.current_params.get('stop_loss', 0.03))
-    take_pct = abs(_dem.current_params.get('take_profit', 0.045))
+    stop_pct = abs(_dem.current_params.get('stop_loss', 0.025))  # P1-SSOT
+    take_pct = abs(_dem.current_params.get('take_profit', 0.08))  # P1-SSOT
 
     # 【P0 修复 2026-04-26】原实现 `with get_db(...) as conn: pass` 在 with 退出后才使用 conn，
     # 连接已归还连接池，后续 cursor/commit 会作用于已释放/关闭的连接，构成死代码路径。
@@ -865,25 +865,25 @@ def main():
                 continue
             if _pos.stop_loss is None or _pos.stop_loss <= 0:
                 # 未设置止损 → 使用默认值
-                _stop_pct = abs(_dem_sl.current_params.get('stop_loss', 0.03))
+                _stop_pct = abs(_dem_sl.current_params.get('stop_loss', 0.025))  # P1-SSOT
                 _new_sl = round(_pos.entry_price * (1 - _stop_pct), 4) if _pos.action == 'BUY' else round(_pos.entry_price * (1 + _stop_pct), 4)
                 executor.position_manager.update_stop_loss_take_profit(_pos.code, _new_sl, _pos.take_profit or 0)
                 logger.warning(f"[SL修复] {_pos.code} 止损未设置 → {_new_sl} (默认{_stop_pct:.0%})")
             elif _pos.stop_loss == _pos.entry_price:
                 # SL=entry → 使用默认值
-                _stop_pct = abs(_dem_sl.current_params.get('stop_loss', 0.03))
+                _stop_pct = abs(_dem_sl.current_params.get('stop_loss', 0.025))  # P1-SSOT
                 _new_sl = round(_pos.entry_price * (1 - _stop_pct), 4) if _pos.action == 'BUY' else round(_pos.entry_price * (1 + _stop_pct), 4)
                 executor.position_manager.update_stop_loss_take_profit(_pos.code, _new_sl, _pos.take_profit or 0)
                 logger.warning(f"[SL修复] {_pos.code} SL=entry({_pos.entry_price}) → {_new_sl} (默认{_stop_pct:.0%})")
             elif _pos.action == 'BUY' and _pos.stop_loss >= _pos.entry_price:
                 # 做多但 SL >= entry → 明显错误
-                _stop_pct = abs(_dem_sl.current_params.get('stop_loss', 0.03))
+                _stop_pct = abs(_dem_sl.current_params.get('stop_loss', 0.025))  # P1-SSOT
                 _new_sl = round(_pos.entry_price * (1 - _stop_pct), 4)
                 executor.position_manager.update_stop_loss_take_profit(_pos.code, _new_sl, _pos.take_profit or 0)
                 logger.warning(f"[SL修复] {_pos.code} SL({_pos.stop_loss})>=entry({_pos.entry_price}) → {_new_sl}")
             elif _pos.action == 'SELL' and _pos.stop_loss <= _pos.entry_price:
                 # 做空但 SL <= entry → 明显错误
-                _stop_pct = abs(_dem_sl.current_params.get('stop_loss', 0.03))
+                _stop_pct = abs(_dem_sl.current_params.get('stop_loss', 0.025))  # P1-SSOT
                 _new_sl = round(_pos.entry_price * (1 + _stop_pct), 4)
                 executor.position_manager.update_stop_loss_take_profit(_pos.code, _new_sl, _pos.take_profit or 0)
                 logger.warning(f"[SL修复] {_pos.code} SELL SL({_pos.stop_loss})<=entry({_pos.entry_price}) → {_new_sl}")

@@ -95,7 +95,7 @@ class WeightCalculator:
     def _get_regime_adjustment(self, strategy: str, regime: str) -> float:
         """获取市场状态调整系数"""
         # 从配置读取
-        regime_params = cfg.get(f"dynamic_exit.{regime}", {})
+        regime_params = cfg.get(f"dynamic_exit_params.{regime}", {})
         if not regime_params:
             return 0.0
         

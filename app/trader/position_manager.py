@@ -939,9 +939,9 @@ class PositionManager:
                 
                 try:
                     from app.risk.dynamic_exit_manager import dynamic_exit_manager as _dem
-                    stop_pct = abs(_dem.current_params.get('stop_loss', 0.03))
+                    stop_pct = abs(_dem.current_params.get('stop_loss', 0.025))  # P1-SSOT: fallback对齐YAML
                 except Exception:
-                    stop_pct = 0.03
+                    stop_pct = 0.025  # P1-SSOT
                 
                 avg_cost = position.entry_price
                 # 做多: Entry * (1 - pct), 做空: Entry * (1 + pct)
@@ -972,9 +972,9 @@ class PositionManager:
         # 未设置止损价时，用动态配置的百分比
         try:
             from app.risk.dynamic_exit_manager import dynamic_exit_manager as _dem
-            stop_pct = abs(_dem.current_params.get('stop_loss', 0.03))
+            stop_pct = abs(_dem.current_params.get('stop_loss', 0.025))  # P1-SSOT
         except Exception:
-            stop_pct = 0.03  # 默认止损 3%
+            stop_pct = 0.025  # P1-SSOT: 默认止损 2.5%
         avg_cost = position.entry_price
         if avg_cost <= 0:
             return False
@@ -1014,9 +1014,9 @@ class PositionManager:
         # 未设置止盈价时，用动态配置的百分比
         try:
             from app.risk.dynamic_exit_manager import dynamic_exit_manager as _dem
-            take_pct = abs(_dem.current_params.get('take_profit', 0.05))
+            take_pct = abs(_dem.current_params.get('take_profit', 0.08))  # P1-SSOT: fallback 对齐 YAML (0.08)
         except Exception:
-            take_pct = 0.05  # 默认止盈 5% (对齐 YAML default)
+            take_pct = 0.08  # 默认止盈 8% (对齐 YAML default)
         avg_cost = position.entry_price
         if avg_cost <= 0:
             return False
@@ -1310,10 +1310,10 @@ class PositionManager:
         # 按新均价重算止盈止损（从动态配置读取，失败则用默认值）
         try:
             from app.risk.dynamic_exit_manager import dynamic_exit_manager as _dem
-            stop_pct = abs(_dem.current_params.get('stop_loss', 0.03))
-            take_pct = abs(_dem.current_params.get('take_profit', 0.045))
+            stop_pct = abs(_dem.current_params.get('stop_loss', 0.025))  # P1-SSOT
+            take_pct = abs(_dem.current_params.get('take_profit', 0.08))  # P1-SSOT
         except Exception:
-            stop_pct, take_pct = 0.03, 0.045
+            stop_pct, take_pct = 0.025, 0.08  # P1-SSOT
 
         if position.action == 'BUY':
             new_stop_loss = round(new_avg_price * (1 - stop_pct), 4)
