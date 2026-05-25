@@ -49,9 +49,19 @@ class GuardReason(Enum):
 def is_trading_day(dt: datetime) -> bool:
     """
     判断给定日期是否为美股交易日。
-    简化逻辑：周一至周五 (排除主要节假日逻辑，此处仅做周末过滤)。
+    逻辑：周一至周五 + 非节假日 (接入 holiday_calendar)。
+
+    P0 修复 (2026-05-26): 原实现仅检查 weekday，Memorial Day 等节假日被误判为交易日。
     """
-    return dt.weekday() < 5
+    if dt.weekday() >= 5:
+        return False
+    try:
+        from app.utils.holiday_calendar import get_holiday_calendar
+        if get_holiday_calendar().is_us_holiday(dt.date()):
+            return False
+    except Exception:
+        pass  # 日历加载失败退化为仅周末判断
+    return True
 
 def get_trading_window_dates(days: int = 5) -> List[datetime]:
     """获取过去 N 个交易日的日期列表"""

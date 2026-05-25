@@ -927,7 +927,12 @@ class ScalpingEngine:
 
     def _tick(self):
         """单次 tick — 完整流程"""
-        # 0. MOC 保护: 强制平仓检查 (15:55+)
+        # 0a. P0 防御纵深 (2026-05-26): 节假日/周末门控 — 必须在一切交易逻辑之前
+        # 防止 MOC 等逻辑在 is_trading_allowed 检查之前执行
+        if not self.time_gate.is_trading_allowed():
+            return
+
+        # 0b. MOC 保护: 强制平仓检查 (15:55+)
         if self.time_gate.should_force_close_all():
             # P0 修复 (2026-05-09): 跨交易日自动重置 MOC 守卫
             from datetime import date as _date
@@ -938,9 +943,7 @@ class ScalpingEngine:
             self._force_close_all_positions("MOC 收盘强制平仓")
             return
 
-        # 1. 时段检查
-        if not self.time_gate.is_trading_allowed():
-            return
+        # 1. (已移至 0a: 节假日/周末门控在 _tick 顶部)
         
         # 1b. 轻量级时间门控 (Scalping 活跃时段检查)
         if not self._is_active_time():
@@ -2675,6 +2678,9 @@ class ScalpingEngine:
                     close_direction = "LONG" if info["direction"] == "SHORT" else "SHORT"
                     if self._submit_close_order(symbol, close_direction, current_price, info):
                         self._close_trade(symbol, current_price, exit_reason, info)
+                    else:
+                        # P0 修复 (2026-05-26): 券商拒绝平仓 (持仓不足等) → 立即关闭 trade_record 防止孤儿循环
+                        self._close_trade_on_broker_reject(symbol, current_price, f"broker_reject:{exit_reason}", info)
                     # P0 修复 (2026-05-09): 无论成功/失败都移除，防止每 tick 重复刷单
                     symbols_to_remove.append(symbol)
                     continue
@@ -2697,6 +2703,9 @@ class ScalpingEngine:
                     close_direction = "LONG" if info["direction"] == "SHORT" else "SHORT"
                     if self._submit_close_order(symbol, close_direction, current_price, info):
                         self._close_trade(symbol, current_price, time_reason, info)
+                    else:
+                        # P0 修复 (2026-05-26): 券商拒绝平仓 → 立即关闭 trade_record 防止孤儿循环
+                        self._close_trade_on_broker_reject(symbol, current_price, f"broker_reject:{time_reason}", info)
                     # P0 修复 (2026-05-09): 无论成功/失败都移除，防止每 tick 重复刷单
                     symbols_to_remove.append(symbol)
 
@@ -3418,6 +3427,41 @@ class ScalpingEngine:
             logger.error(f"[Scalping平仓] {symbol} 下单失败: {err}")
 
         return False
+
+    def _close_trade_on_broker_reject(
+        self, symbol: str, current_price: float, exit_reason: str, info: Dict
+    ):
+        """P0 修复 (2026-05-26): 券商拒绝平仓 (持仓不足等) → 立即关闭 trade_record 防止孤儿循环
+
+        当 _submit_close_order 返回 False 时，broker 拒绝了平仓请求 (如"持仓不足")。
+        此时 trade_record 仍然 open (exit_time IS NULL)，scalping 引擎会在下一 tick
+        再次尝试，导致无限重试循环。
+
+        修复：立即用 entry_price 作为 exit_price (无实际成交) 关闭 trade_record，
+        realized_pnl=0，防止孤儿记录和无限重试。
+        """
+        record_id = info.get("record_id")
+        if self.trade_store and record_id:
+            try:
+                entry_price = info.get("entry_price", current_price)
+                self.trade_store.update_exit(
+                    record_id=record_id,
+                    exit_price=entry_price,
+                    exit_reason=exit_reason,
+                    realized_pnl=0.0,
+                    pnl_pct=0.0,
+                )
+                logger.warning(
+                    f"[Scalping·BrokerReject] {symbol} trade_record 已关闭: "
+                    f"reason={exit_reason} @ ${entry_price:.2f} (无实际成交)"
+                )
+            except Exception as e:
+                logger.error(f"[Scalping·BrokerReject] {symbol} trade_record 关闭失败: {e}")
+        else:
+            logger.warning(
+                f"[Scalping·BrokerReject] {symbol} 无 record_id (observe 模式或 record 未创建), "
+                f"仅从 _active_trades 移除"
+            )
 
     # ── MOC 收盘保护 ──
 

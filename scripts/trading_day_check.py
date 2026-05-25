@@ -63,7 +63,14 @@ KNOWN_HK_HOLIDAYS_2026 = {
 def check_trading_day(market: str, target_date: str = None, get_next: bool = False) -> dict:
     """Check if a given date is a trading day via Futu API."""
     if target_date is None:
-        target_date = datetime.now().strftime("%Y-%m-%d")
+        # For US market, use ET date to correctly detect holidays
+        # (e.g., at 04:00 CST = 14:00 ET prev day, or at 00:00-04:00 CST = prev evening ET)
+        if market == "US":
+            import pytz
+            et = pytz.timezone("America/New_York")
+            target_date = datetime.now(et).strftime("%Y-%m-%d")
+        else:
+            target_date = datetime.now().strftime("%Y-%m-%d")
 
     # Weekend check (fast path)
     dt = datetime.strptime(target_date, "%Y-%m-%d")

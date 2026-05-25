@@ -40,3 +40,19 @@
 2026-05-22 04:00:42,493 [PostAudit] INFO: [钉钉] 推送成功
 2026-05-22 04:00:42,493 [PostAudit] INFO: ✅ 归因辩论报告已推送 (飞书:✓ 钉钉:✓)
 2026-05-22 04:00:42,494 [PostAudit] INFO: 📄 报告已保存: /opt/ftseek/FTSeek-US/logs/audit/attribution_debate_2026-05-21.md
+2026-05-25 04:00:31,984 [PostAudit] INFO: 🚀 开始美股盘后归因辩论报告...
+2026-05-25 04:00:31,985 [PostAudit] INFO: 📊 收集归因数据...
+2026-05-25 04:00:31,994 [PostAudit] INFO: 🔥 交叉验证归因视角...
+2026-05-25 04:00:32,458 [PostAudit] INFO: [飞书] 推送成功
+2026-05-25 04:00:32,530 [PostAudit] INFO: [钉钉] send_text 成功: **2026-05-24** (美东) | equity=$1,067,024
+2026-05-25 04:00:32,531 [PostAudit] INFO: [钉钉] 推送成功
+2026-05-25 04:00:32,531 [PostAudit] INFO: ✅ 归因辩论报告已推送 (飞书:✓ 钉钉:✓)
+2026-05-25 04:00:32,532 [PostAudit] INFO: 📄 报告已保存: /opt/ftseek/FTSeek-US/logs/audit/attribution_debate_2026-05-24.md
+2026-05-26 04:00:27,653 [PostAudit] INFO: 🚀 开始美股盘后归因辩论报告...
+2026-05-26 04:00:27,653 [PostAudit] INFO: 📊 收集归因数据...
+2026-05-26 04:00:27,663 [PostAudit] INFO: 🔥 交叉验证归因视角...
+2026-05-26 04:00:28,095 [PostAudit] INFO: [飞书] 推送成功
+2026-05-26 04:00:28,158 [PostAudit] INFO: [钉钉] send_text 成功: **2026-05-25** (美东) | equity=$1,067,022
+2026-05-26 04:00:28,159 [PostAudit] INFO: [钉钉] 推送成功
+2026-05-26 04:00:28,159 [PostAudit] INFO: ✅ 归因辩论报告已推送 (飞书:✓ 钉钉:✓)
+2026-05-26 04:00:28,159 [PostAudit] INFO: 📄 报告已保存: /opt/ftseek/FTSeek-US/logs/audit/attribution_debate_2026-05-25.md

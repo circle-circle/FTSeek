@@ -171,6 +171,15 @@ class TimeGate:
 
     def is_trading_allowed(self, dt: Optional[datetime] = None) -> bool:
         dt = dt or self.get_now_et()
+        # P0 修复 (2026-05-26): 周末 + 节假日检查 — 防止非交易日触发交易
+        if dt.weekday() >= 5:  # 周六=5, 周日=6
+            return False
+        try:
+            from app.utils.holiday_calendar import get_holiday_calendar
+            if get_holiday_calendar().is_us_holiday(dt.date()):
+                return False
+        except Exception:
+            pass  # 日历加载失败不阻断，退化为仅时间判断
         return self.get_current_phase(dt) != "closed"
 
     # ── 过渡检测 ──
