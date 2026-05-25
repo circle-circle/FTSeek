@@ -184,6 +184,20 @@ class KlineExitChecker:
             if entry_price <= 0 or atr <= 0:
                 return
 
+            # 动态计算 is_same_day
+            is_same_day = True
+            entry_time_raw = getattr(pos_now, 'entry_time', None)
+            if entry_time_raw:
+                try:
+                    from datetime import datetime as _dt_now
+                    if isinstance(entry_time_raw, str):
+                        _entry_dt = _dt_now.fromisoformat(entry_time_raw.replace(' ', 'T'))
+                    else:
+                        _entry_dt = entry_time_raw
+                    is_same_day = (_dt_now.now().date() == _entry_dt.date())
+                except Exception:
+                    is_same_day = True
+
             ctx = ExitContext(
                 code=code,
                 entry_price=entry_price,
@@ -192,7 +206,7 @@ class KlineExitChecker:
                 atr_value=atr,
                 entry_time=getattr(pos_now, 'entry_time', None),
                 direction=pos_now.action,
-                is_same_day=True,
+                is_same_day=is_same_day,
             )
             decision = self._exit_rule_engine.evaluate(ctx)
             
