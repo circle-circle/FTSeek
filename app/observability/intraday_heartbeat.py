@@ -36,19 +36,18 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 # ─── 交易日缓存 (避免每次心跳都查 Futu API) ───
 _trading_day_cache: Dict[str, bool] = {}  # {"2026-05-25": False, ...}
 
-# 已知美股假日 (快速路径, 避免 Futu API 调用)
-_KNOWN_US_HOLIDAYS = {
-    "2026-01-01", "2026-01-19", "2026-02-16", "2026-04-03",
-    "2026-05-25",  # Memorial Day
-    "2026-06-19", "2026-07-03", "2026-09-07", "2026-11-26", "2026-12-25",
-}
+# P2' 修复 (2026-05-26): 删除硬编码假日列表，统一使用 holiday_calendar SSOT
+# 原 _KNOWN_US_HOLIDAYS 与 holiday_calendar 可能漂移，改为调用统一入口
 
 
 def _is_trading_day(market: str = "US") -> bool:
     """检查今日是否为交易日 (带日级缓存).
 
-    优先级: 缓存 > 已知假日 > Futu API.
+    优先级: 缓存 > holiday_calendar > Futu API.
     缓存 key 使用美东日期 (UTC-4), 与交易日语义一致.
+
+    P2' 修复 (2026-05-26): 删除硬编码 _KNOWN_US_HOLIDAYS，
+    统一调用 holiday_calendar，消除双写漂移风险。
     """
     # 美东日期 (UTC-4 for EDT)
     et_date = (datetime.utcnow() - timedelta(hours=4)).strftime("%Y-%m-%d")
@@ -58,11 +57,16 @@ def _is_trading_day(market: str = "US") -> bool:
     if cache_key in _trading_day_cache:
         return _trading_day_cache[cache_key]
 
-    # 2. 已知假日快速路径
-    if market == "US" and et_date in _KNOWN_US_HOLIDAYS:
-        _trading_day_cache[cache_key] = False
-        logger.info(f"[Heartbeat] {et_date} 是已知假日 ({market}), 跳过")
-        return False
+    # 2. holiday_calendar 快速路径 (SSOT, 替代原硬编码 _KNOWN_US_HOLIDAYS)
+    try:
+        from app.utils.holiday_calendar import get_holiday_calendar
+        cal = get_holiday_calendar()
+        if market == "US" and cal.is_us_holiday(datetime.strptime(et_date, "%Y-%m-%d").date()):
+            _trading_day_cache[cache_key] = False
+            logger.info(f"[Heartbeat] {et_date} 是已知假日 ({market}), 跳过")
+            return False
+    except Exception as e:
+        logger.debug(f"[Heartbeat] holiday_calendar 加载失败 (降级到 Futu API): {e}")
 
     # 3. Futu API 查询 (每日最多 1 次)
     try:

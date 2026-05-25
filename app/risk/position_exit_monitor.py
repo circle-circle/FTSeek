@@ -113,7 +113,11 @@ def get_market_hours_us(start_dt, end_dt) -> float:
 
 
 def is_us_market_open() -> bool:
-    """判断美股是否在交易时段 (美东 09:30-16:00)"""
+    """判断美股是否在交易时段 (美东 09:30-16:00, 含节假日检查)
+
+    P2' 修复 (2026-05-26): 原实现无节假日检查，Memorial Day 等假日会误触发退出逻辑。
+    现在统一调用 holiday_calendar，与 scheduler_triggers 保持一致。
+    """
     try:
         if ET:
             now_et = datetime.now(ET)
@@ -121,6 +125,13 @@ def is_us_market_open() -> bool:
             now_et = datetime.now()
         if now_et.weekday() >= 5:
             return False
+        # 节假日检查 — 统一入口
+        try:
+            from app.utils.holiday_calendar import get_holiday_calendar
+            if get_holiday_calendar().is_us_holiday(now_et.date()):
+                return False
+        except Exception:
+            pass
         t = now_et.hour * 60 + now_et.minute
         return 570 <= t <= 960
     except Exception:

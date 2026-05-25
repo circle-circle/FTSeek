@@ -16,6 +16,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Tuple
 
+from app.utils.timezone import _et_trade_date
+
 from app.core.models import (
     SignalScore, Direction, MarketRegime,
     Order, OrderType, OrderState, Position,
@@ -2562,10 +2564,10 @@ def _close_position(scheduler, position: Position, current_price: float, exit_re
             signal_strength, signal_confidence = _fetch_attribution_data(
                 position.trace_id,
                 symbol=position.symbol,
-                trade_date=position.entry_time.strftime("%Y-%m-%d"),
+                trade_date=_et_trade_date(position.entry_time),
             )
             if signal_strength > 0:
-                logger.info(f"[平仓·归因回填] {position.symbol} trade_date={position.entry_time.strftime('%Y-%m-%d')} "
+                logger.info(f"[平仓·归因回填] {position.symbol} trade_date={_et_trade_date(position.entry_time)} "
                             f"signal_strength={signal_strength} confidence={signal_confidence}")
 
         # P1-5 (2026-05-14): UPDATE trade_attribution 的 exit_* 字段 (F19 完整 schema)
@@ -2643,7 +2645,7 @@ def _close_position(scheduler, position: Position, current_price: float, exit_re
 
         scheduler.trade_store.save_trade({
             "trace_id":          _trace_id,
-            "trade_date":        position.entry_time.strftime("%Y-%m-%d"),
+            "trade_date":        _et_trade_date(position.entry_time),
             "symbol":            position.symbol,
             "direction":         position.direction.value,
             "entry_time":        position.entry_time.isoformat(),

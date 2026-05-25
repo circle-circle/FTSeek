@@ -170,7 +170,7 @@ class TradeRecorder:
             trade_id: 交易 ID
         """
         trade_id = kwargs.get('trade_id', str(uuid.uuid4())[:8])
-        trade_date = datetime.now().strftime('%Y-%m-%d')
+        trade_date = (datetime.now() - timedelta(hours=12)).strftime('%Y-%m-%d')  # ET date
         entry_time = datetime.now().isoformat()
         direction = 'LONG' if side.lower() in ['buy', 'long'] else 'SHORT'
         

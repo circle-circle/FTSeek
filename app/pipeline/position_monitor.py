@@ -18,6 +18,7 @@ from app.core.models import (
     Position, Direction, MarketRegime,
     Order, OrderType, ExitReason, TradeEvent, AlertLevel,
 )
+from app.utils.timezone import _et_trade_date
 from app.execution.options_selector import OptionSelector
 from app.risk.position_exit_monitor import get_exit_monitor
 
@@ -209,7 +210,7 @@ def _close_option_position(scheduler, position: Position, reason: str, current_o
         except Exception:
             pass
         scheduler.trade_store.save_trade({
-            "trace_id": position.trace_id, "trade_date": (position.entry_time or datetime.now()).strftime("%Y-%m-%d"),
+            "trace_id": position.trace_id, "trade_date": _et_trade_date(position.entry_time or datetime.now()),
             "symbol": position.symbol, "direction": "SHORT_PROXY_OPTION",
             "entry_time": position.entry_time.isoformat() if position.entry_time else "",
             "exit_time": now_str, "entry_price": entry_price, "exit_price": exit_price,
@@ -1267,13 +1268,13 @@ def _process_pending_order(scheduler, tracker, order: dict):
                                 _sig_strength, _sig_confidence = _fetch_attribution_data(
                                     position.trace_id,
                                     symbol=symbol,
-                                    trade_date=position.entry_time.strftime("%Y-%m-%d"),
+                                    trade_date=_et_trade_date(position.entry_time),
                                 )
                         except Exception:
                             pass
                         scheduler.trade_store.save_trade({
                             "trace_id": position.trace_id,
-                            "trade_date": position.entry_time.strftime("%Y-%m-%d"),
+                            "trade_date": _et_trade_date(position.entry_time),
                             "symbol": symbol,
                             "direction": position.direction.value,
                             "entry_time": position.entry_time.isoformat(),

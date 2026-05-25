@@ -82,9 +82,22 @@ def to_cst(dt: datetime) -> datetime:
     return dt
 
 
+def _et_trade_date(entry_time) -> str:
+    """Convert naive CST entry_time to US Eastern trading date (YYYY-MM-DD).
+
+    P2' 修复 (2026-05-26): trade_date 原用 CST 日期，导致美东下午交易
+    (CST 次日凌晨) 被标记到下一天，审计计数偏差。
+    CST(UTC+8) → ET(UTC-4/5): 减 12h 对日期边界始终正确。
+    """
+    from datetime import timedelta
+    return (entry_time - timedelta(hours=12)).strftime("%Y-%m-%d")
+
+
 def is_market_open(dt: Optional[datetime] = None) -> bool:
     """
-    判断美股是否开盘 (美东 9:30 - 16:00, 周一到周五)
+    判断美股是否开盘 (美东 9:30 - 16:00, 周一到周五, 含节假日检查)
+
+    P2' 修复 (2026-05-26): 原实现无节假日检查，统一调用 holiday_calendar。
 
     Args:
         dt: 指定时间 (默认当前时间)
@@ -103,6 +116,14 @@ def is_market_open(dt: Optional[datetime] = None) -> bool:
     # 周末
     if dt.weekday() >= 5:
         return False
+
+    # 节假日检查 — 统一入口
+    try:
+        from app.utils.holiday_calendar import get_holiday_calendar
+        if get_holiday_calendar().is_us_holiday(dt.date()):
+            return False
+    except Exception:
+        pass
 
     # 时间
     hour_min = dt.hour + dt.minute / 60.0

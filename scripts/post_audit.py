@@ -70,7 +70,7 @@ def load_config() -> Dict:
     with open(config_path) as f: return yaml.safe_load(f)
 
 def audit_daily_performance(conn) -> Dict[str, Any]:
-    today = datetime.now().strftime('%Y-%m-%d')
+    today = (datetime.now() - timedelta(hours=12)).strftime('%Y-%m-%d')  # ET date
     cursor = conn.execute("SELECT * FROM performance_stats WHERE trade_date = ?", (today,))
     row = cursor.fetchone()
     if not row:
@@ -117,7 +117,7 @@ def audit_positions(conn) -> Dict[str, Any]:
     }
 
 def audit_tradeguard(conn, config: Dict) -> Dict[str, Any]:
-    today = datetime.now().strftime('%Y-%m-%d')
+    today = (datetime.now() - timedelta(hours=12)).strftime('%Y-%m-%d')  # ET date
     # 1. 反手胜率
     cursor = conn.execute("""SELECT COUNT(*) as cnt, SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins FROM trade_records WHERE date(entry_time) <= ? AND decision_reason LIKE '%REVERSE%'""", (today,))
     row = cursor.fetchone()
@@ -244,7 +244,7 @@ def append_history_csv(conn, perf: Dict):
     csv_path = PROJECT_ROOT / 'data' / 'history_stats.csv'
     is_new = not csv_path.exists()
     
-    today = datetime.now().strftime('%Y-%m-%d')
+    today = (datetime.now() - timedelta(hours=12)).strftime('%Y-%m-%d')  # ET date
     cap = conn.execute("SELECT * FROM capital_state ORDER BY id DESC LIMIT 1").fetchone()
     
     row = {

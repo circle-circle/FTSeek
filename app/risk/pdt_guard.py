@@ -103,8 +103,20 @@ class PDTGuard:
 
     @staticmethod
     def _is_trading_day(d: date) -> bool:
-        """判断是否为美股交易日 (周一至周五, 简化处理不含节假日)"""
-        return d.weekday() < 5  # 0=Mon, 4=Fri
+        """判断是否为美股交易日 (周一至周五 + 节假日检查)
+
+        P2' 修复 (2026-05-26): 原实现仅检查 weekday，不含节假日。
+        PDT 滑动窗口在假日会多算一天，导致窗口偏移。
+        """
+        if d.weekday() >= 5:
+            return False
+        try:
+            from app.utils.holiday_calendar import get_holiday_calendar
+            if get_holiday_calendar().is_us_holiday(d):
+                return False
+        except Exception:
+            pass
+        return True
 
     def _get_rolling_window_trades(self) -> list:
         """获取 5 个交易日滑动窗口内的交易记录"""
