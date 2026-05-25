@@ -129,9 +129,9 @@ class ExitExecutor:
             self._stop_loss_inflight.pop(code, None)
             return
 
-        # 整手对齐
-        from app.config import DEFAULT_ORDER_QTY_BY_CODE, HK_LOT_SIZES
-        lot_size = HK_LOT_SIZES.get(code) or DEFAULT_ORDER_QTY_BY_CODE.get(code, 100)
+        # P1 修复 2026-05-26: 统一使用 LotSizeManager (4级降级) 获取 lot_size
+        from app.execution.lot_size_manager import get_lot_size_manager
+        lot_size = get_lot_size_manager().get_lot_size(code)
 
         close_qty = position.quantity
         if close_qty < lot_size:
@@ -313,8 +313,8 @@ class ExitExecutor:
 
         self._trailing_exit_time[code] = time.time()
 
-        from app.config import DEFAULT_ORDER_QTY_BY_CODE
-        lot_size = DEFAULT_ORDER_QTY_BY_CODE.get(code, 100)
+        from app.execution.lot_size_manager import get_lot_size_manager
+        lot_size = get_lot_size_manager().get_lot_size(code)
         close_qty = position.quantity
         if close_qty % lot_size != 0:
             # P0 修复 2026-05-26: 向下取整，防止向上取整导致卖出超过持仓
@@ -392,8 +392,8 @@ class ExitExecutor:
         if position is None:
             return
 
-        from app.config import DEFAULT_ORDER_QTY_BY_CODE, HK_LOT_SIZES
-        lot_size = HK_LOT_SIZES.get(code) or DEFAULT_ORDER_QTY_BY_CODE.get(code, 100)
+        from app.execution.lot_size_manager import get_lot_size_manager
+        lot_size = get_lot_size_manager().get_lot_size(code)
         total_qty = position.quantity
 
         raw_close_qty = int(total_qty * ratio)
