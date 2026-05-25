@@ -237,17 +237,12 @@ class WeeklyProposer:
         try:
             import yaml
             from pathlib import Path
-            from app.core.paths import get_config_path, get_exit_policy_path
-            
-            # 从 unified_config.yaml 读
-            cfg_path = get_config_path()
-            if cfg_path.exists():
-                with open(cfg_path) as f:
-                    cfg = yaml.safe_load(f)
-                risk = cfg.get("risk", {}).get("signal_quality", {})
-                return {
-                    "min_conf": risk.get("min_confidence", 0.6),
-                }
+            from app.core.config_container import get_config
+            cfg = get_config()
+            risk = cfg.get_section("risk", {}).get("signal_quality", {})
+            return {
+                "min_conf": risk.get("min_confidence", 0.6),
+            }
         except Exception:
             pass
         

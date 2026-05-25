@@ -94,14 +94,10 @@ class PipelineAdapter:
         """从 unified_config 加载管线配置"""
         from app.harness.strategy_router import PipelineConfig
         try:
-            import yaml
-            from pathlib import Path
-            config_path = Path(__file__).resolve().parent.parent.parent / "config" / "unified_config.yaml"
-            if config_path.exists():
-                with open(config_path) as f:
-                    cfg = yaml.safe_load(f)
-                pipeline_cfg = cfg.get("pipeline", {})
-                return PipelineConfig.from_dict(pipeline_cfg)
+            from app.core.config_container import get_config
+            cfg = get_config()
+            pipeline_cfg = cfg.get_section("pipeline", {})
+            return PipelineConfig.from_dict(pipeline_cfg)
         except Exception as e:
             logger.warning(f"加载管线配置失败: {e}, 使用默认 legacy")
         return PipelineConfig()
