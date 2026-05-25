@@ -32,7 +32,7 @@ from datetime import datetime, timedelta
 from dataclasses import dataclass
 
 from app.core.decision_log import DecisionLog, DecisionType
-from app.logs.failure_tracker import failure_tracker
+from app.logging.failure_tracker import failure_tracker
 from app.execution.execution_monitor import get_execution_monitor, ExecutionMonitor
 
 logger = logging.getLogger("ftseek.logging.unified")

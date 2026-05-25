@@ -7,7 +7,7 @@
       确认没有过度过滤导致交易机会流失。
 
 用法:
-    python app/diagnostics/gate_stack_analysis.py [--days 7]
+    python app/diagnosis/gate_stack_analysis.py [--days 7]
 
 输出:
     - 每层门禁的独立拦截次数/比例

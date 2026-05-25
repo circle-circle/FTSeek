@@ -18,7 +18,7 @@ from app.strategy.base import Signal, SignalAction, TradeTier
 from app.trader.position_manager import PositionManager
 from app.risk.risk_manager import get_risk_manager
 from app.risk.dynamic_exit_manager import dynamic_exit_manager
-from app.logs.failure_tracker import failure_tracker
+from app.logging.failure_tracker import failure_tracker
 from app.risk.circuit_breaker import circuit_breaker
 from app.execution.smart_router import smart_router
 from app.execution.account_router import select_account_for_code, is_option_code

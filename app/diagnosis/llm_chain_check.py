@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """港股 LLM 信号链路盘前诊断脚本
 
-用法: python app/diagnostics/llm_chain_check.py
+用法: python app/diagnosis/llm_chain_check.py
 
 检查项:
 1. battle_plan.json 是否包含 signal_impact 字段
