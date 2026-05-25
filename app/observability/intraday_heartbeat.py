@@ -32,18 +32,79 @@ logger = logging.getLogger("ftseek_us.intraday_heartbeat")
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
 
-def _is_market_hours() -> bool:
-    """美股盘中 (09:30-16:00 ET = 21:30-04:00 北京/UTC+8)"""
+# ─── 交易日缓存 (避免每次心跳都查 Futu API) ───
+_trading_day_cache: Dict[str, bool] = {}  # {"2026-05-25": False, ...}
+
+# 已知美股假日 (快速路径, 避免 Futu API 调用)
+_KNOWN_US_HOLIDAYS = {
+    "2026-01-01", "2026-01-19", "2026-02-16", "2026-04-03",
+    "2026-05-25",  # Memorial Day
+    "2026-06-19", "2026-07-03", "2026-09-07", "2026-11-26", "2026-12-25",
+}
+
+
+def _is_trading_day(market: str = "US") -> bool:
+    """检查今日是否为交易日 (带日级缓存).
+
+    优先级: 缓存 > 已知假日 > Futu API.
+    缓存 key 使用美东日期 (UTC-4), 与交易日语义一致.
+    """
+    # 美东日期 (UTC-4 for EDT)
+    et_date = (datetime.utcnow() - timedelta(hours=4)).strftime("%Y-%m-%d")
+    cache_key = f"{market}_{et_date}"
+
+    # 1. 缓存命中
+    if cache_key in _trading_day_cache:
+        return _trading_day_cache[cache_key]
+
+    # 2. 已知假日快速路径
+    if market == "US" and et_date in _KNOWN_US_HOLIDAYS:
+        _trading_day_cache[cache_key] = False
+        logger.info(f"[Heartbeat] {et_date} 是已知假日 ({market}), 跳过")
+        return False
+
+    # 3. Futu API 查询 (每日最多 1 次)
     try:
-        # 简化: 用 UTC, ET = UTC-4 (EDT) 或 UTC-5 (EST)
-        # 5/19 处于 EDT, 09:30-16:00 ET = 13:30-20:00 UTC
+        from futu import OpenQuoteContext, RET_OK
+        ctx = OpenQuoteContext(host="127.0.0.1", port=11111)
+        ret, data = ctx.request_trading_days(
+            market=market, start=et_date, end=et_date
+        )
+        ctx.close()
+        if ret == RET_OK:
+            trading_dates = [d["time"] for d in data]
+            is_td = et_date in trading_dates
+            _trading_day_cache[cache_key] = is_td
+            if not is_td:
+                logger.info(f"[Heartbeat] Futu 确认 {et_date} 非 {market} 交易日")
+            return is_td
+    except Exception as e:
+        logger.debug(f"[Heartbeat] Futu 交易日查询失败: {e}")
+
+    # API 失败 → 安全侧: 认为是交易日 (不抑制心跳)
+    _trading_day_cache[cache_key] = True
+    return True
+
+
+def _is_market_hours() -> bool:
+    """美股盘中 (09:30-16:00 ET = 21:30-04:00 北京/UTC+8).
+
+    三重门控: 周末 → 假日/交易日 → 时间窗口.
+    """
+    try:
         utc_now = datetime.utcnow()
-        h = utc_now.hour
-        m = utc_now.minute
-        # EDT 09:30-16:00 ≈ UTC 13:30-20:00
-        # 周末跳过
+
+        # 1. 周末跳过
         if utc_now.weekday() >= 5:  # Sat=5, Sun=6
             return False
+
+        # 2. 交易日检查 (带缓存, 含假日)
+        if not _is_trading_day("US"):
+            return False
+
+        # 3. 时间窗口: EDT 09:30-16:00 ≈ UTC 13:30-20:00
+        h = utc_now.hour
+        m = utc_now.minute
         if h < 13 or h >= 20:
             return False
         if h == 13 and m < 30:

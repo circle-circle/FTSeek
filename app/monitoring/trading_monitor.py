@@ -164,9 +164,14 @@ class TradingMonitor:
         logger.info("[Monitor] ⏹️ 已停止")
 
     def _monitor_loop(self):
-        """监控主循环"""
+        """监控主循环 — 非交易日跳过, 避免虚假告警"""
         while self._running:
             try:
+                # 交易日门控: 非交易日跳过所有检查
+                if not self._is_trading_session():
+                    time.sleep(self._interval)
+                    continue
+
                 self._check_pnl()
                 self._check_pdt_risk()
                 self._check_circuit_breaker()
@@ -174,6 +179,44 @@ class TradingMonitor:
             except Exception as e:
                 logger.error(f"[Monitor] 监控循环异常: {e}")
             time.sleep(self._interval)
+
+    def _is_trading_session(self) -> bool:
+        """检查当前是否为交易日盘中 (带缓存).
+
+        三重门控: 周末 → 假日 → 盘中时间窗口.
+        """
+        from datetime import timedelta as _td
+        utc_now = datetime.utcnow()
+
+        # 1. 周末
+        if utc_now.weekday() >= 5:
+            return False
+
+        # 2. 盘中时间窗口 (EDT 09:30-16:00 ≈ UTC 13:30-20:00)
+        h, m = utc_now.hour, utc_now.minute
+        if h < 13 or h >= 20:
+            return False
+        if h == 13 and m < 30:
+            return False
+
+        # 3. 交易日检查 (复用 heartbeat 的缓存机制)
+        try:
+            from app.observability.intraday_heartbeat import _is_trading_day
+            return _is_trading_day("US")
+        except ImportError:
+            pass
+
+        # Fallback: 已知假日
+        et_date = (utc_now - _td(hours=4)).strftime("%Y-%m-%d")
+        _HOLIDAYS = {
+            "2026-01-01", "2026-01-19", "2026-02-16", "2026-04-03",
+            "2026-05-25", "2026-06-19", "2026-07-03", "2026-09-07",
+            "2026-11-26", "2026-12-25",
+        }
+        if et_date in _HOLIDAYS:
+            return False
+
+        return True
 
     def _check_pnl(self):
         """检查 PnL 告警"""
