@@ -30,20 +30,20 @@ class ConfigDefaults:
     # ============================================================
     # 风控 - 置信度
     # ============================================================
-    MIN_CONFIDENCE = 0.45                    # risk_limits.min_confidence  # 2026-05-19: 提高信号门槛 (原0.35)
+    MIN_CONFIDENCE = 0.60                    # risk_limits.min_confidence  # 2026-05-26: P0辩论修复 (0.45→0.60)
     
     # ============================================================
     # 决策缓冲层
     # ============================================================
     DECISION_BUFFER_SIGNAL_COOLDOWN = 120     # strategy.decision_buffer.signal_cooldown
     DECISION_BUFFER_MAX_PENDING = 500         # strategy.decision_buffer.max_pending
-    DECISION_BUFFER_MIN_CONFIDENCE = 0.45     # strategy.decision_buffer.min_confidence  # 2026-05-19: 提高信号门槛 (原0.35)
+    DECISION_BUFFER_MIN_CONFIDENCE = 0.60     # strategy.decision_buffer.min_confidence  # 2026-05-26: P0辩论修复 (0.45→0.60)
     DECISION_BUFFER_MAX_POSITIONS = None      # strategy.decision_buffer.max_positions (null=动态)
     
     # ============================================================
     # 置信度调整器
     # ============================================================
-    CONFIDENCE_ADJUSTER_MIN_CONFIDENCE = 0.45  # strategy.confidence_adjuster.min_confidence  # 2026-05-19: 提高信号门槛 (原0.35)
+    CONFIDENCE_ADJUSTER_MIN_CONFIDENCE = 0.60  # strategy.confidence_adjuster.min_confidence  # 2026-05-26: P0辩论修复 (0.45→0.60)
     CONFIDENCE_ADJUSTER_MAX_SINGLE_PENALTY = 0.15
     CONFIDENCE_ADJUSTER_MAX_TOTAL_PENALTY = 0.40
     CONFIDENCE_ADJUSTER_MAX_SINGLE_BOOST = 0.10
