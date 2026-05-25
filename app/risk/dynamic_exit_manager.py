@@ -122,8 +122,8 @@ class DynamicExitManager:
         
         self.current_regime = regime
         self.current_params = {
-            'stop_loss': params.get('stop_loss', -0.035),  # P1 修复: fallback 对齐 YAML
-            'take_profit': params.get('take_profit', 0.05),  # P1 修复: fallback 对齐 YAML
+            'stop_loss': params.get('stop_loss', -0.025),  # P1 修复: fallback 对齐 YAML (-0.025)
+            'take_profit': params.get('take_profit', 0.08),  # P1 修复: fallback 对齐 YAML (0.08)
             'partial_take_profit': params.get('partial_take_profit', {}),
             'trailing_stop': params.get('trailing_stop', {}),
             'atr_stop': params.get('atr_stop', {}),
@@ -161,11 +161,11 @@ class DynamicExitManager:
     
     def get_stop_loss(self) -> float:
         """获取止损比例"""
-        return self.current_params.get('stop_loss', -0.035)  # P1 修复: fallback 对齐 YAML
+        return self.current_params.get('stop_loss', -0.025)  # P1 修复: fallback 对齐 YAML (-0.025)
     
     def get_take_profit(self) -> float:
         """获取止盈比例"""
-        return self.current_params.get('take_profit', 0.05)  # P1 修复: fallback 对齐 YAML
+        return self.current_params.get('take_profit', 0.08)  # P1 修复: fallback 对齐 YAML (0.08)
     
     def get_stop_loss_price_with_fees(
         self, 

@@ -67,7 +67,7 @@ class StopConfig:
                 "breakeven_trigger": 0.020, "trail_atr_mult": 1.7,
             },
             "neutral": {
-                "stop_loss_pct": -0.035, "take_profit_pct": 0.05,
+                "stop_loss_pct": -0.025, "take_profit_pct": 0.08,
                 "breakeven_trigger": 0.018, "trail_atr_mult": 1.6,
             },
         }

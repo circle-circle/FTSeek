@@ -342,7 +342,7 @@ try:
             "atr_hard_stop.hard_multiplier": _exit_cfg.get('atr_stop', {}).get('hard_multiplier', 1.5),
             "atr_hard_stop.min_stop_pct": _exit_cfg.get('atr_stop', {}).get('min_stop_pct', 0.02),
             "atr_hard_stop.max_stop_pct": _exit_cfg.get('atr_stop', {}).get('max_stop_pct', 0.05),
-            "structural_stop.stop_loss": _exit_cfg.get('stop_loss', -0.035),
+            "structural_stop.stop_loss": _exit_cfg.get('stop_loss', -0.025),
             "trailing_stop.enabled": _exit_cfg.get('trailing_stop', {}).get('enabled', True),
             "trailing_stop.trigger_profit": _exit_cfg.get('trailing_stop', {}).get('trigger_profit', 0.025),
             "trailing_stop.atr_multiplier": _exit_cfg.get('trailing_stop', {}).get('atr_multiplier', 2.5),

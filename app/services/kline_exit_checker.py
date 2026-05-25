@@ -113,8 +113,8 @@ class KlineExitChecker:
                     except Exception:
                         pass
 
-                    if elapsed < 60 and not is_hard_risk:
-                        logger.warning(f"[止损跳过] {code} 开仓仅 {elapsed:.0f} 秒，跳过非硬风险")
+                    if elapsed < 600 and not is_hard_risk:
+                        logger.warning(f"[止损跳过] {code} 开仓仅 {elapsed:.0f} 秒(<10min保护期)，跳过非硬风险")
                     else:
                         logger.info(f"[止损触发] {code} 当前价={current_price} {'(硬风险)' if is_hard_risk else ''}")
                         execute_stop_loss_fn(code, current_price)

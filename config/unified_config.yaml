@@ -1378,7 +1378,7 @@ dynamic_exit_params:
     partial_take_profit: &id003
       enabled: true
       levels:
-      - trigger: 0.015
+      - trigger: 0.02            # 2026-05-26: P1辩论修复 - L1从1.5%→2.0% (R:R从0.6:1提升至1:1)
         ratio: 0.4
       - trigger: 0.03
         ratio: 0.3
@@ -1399,7 +1399,7 @@ dynamic_exit_params:
       buffer_pct: 0.006
     intraday_stop: &id007
       enabled: true
-      stop_percent: 0.015
+      stop_percent: 0.02            # 2026-05-26: P1辩论修复 - 放宽日内止损 (1.5%→2.0%, 消除30-60min噪音止损)
       session_end_force: false
     time_stop: &id008
       enabled: true

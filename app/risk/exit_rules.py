@@ -78,7 +78,7 @@ class StructuralStopRule(ExitRule):
         return True  # 永远启用，作为最后保底
     
     def evaluate(self, ctx: ExitContext, config: dict) -> Optional[ExitDecision]:
-        stop_pct = abs(config.get("structural_stop.stop_loss", -0.035))
+        stop_pct = abs(config.get("structural_stop.stop_loss", -0.025))
         
         if ctx.pnl_pct <= -stop_pct:
             return ExitDecision(

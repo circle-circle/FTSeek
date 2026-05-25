@@ -265,9 +265,9 @@ class RiskOfficerPlugin:
         except Exception as e:
             logger.warning(
                 "[RiskOfficerPlugin] 读取 dynamic_exit_manager 止损参数失败: %s，"
-                "使用默认 -0.035", e
+                "使用默认 -0.025", e
             )
-            self._current_global_stop_loss = -0.035
+            self._current_global_stop_loss = -0.025
             return self._current_global_stop_loss
 
     def _invalidate_stop_loss_cache(self) -> None:
