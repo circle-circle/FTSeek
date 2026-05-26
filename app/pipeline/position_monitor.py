@@ -609,6 +609,14 @@ def _monitor_option_positions(scheduler):
                             logger.info(f"[期权·BLOCKLIST] 已写入 {position.symbol}, {option_code} → price_fail_closed.json")
                         except Exception as bl_err:
                             logger.error(f"[期权·BLOCKLIST] 写入失败: {bl_err}")
+                        # P3 修复 (2026-05-26): 清理峰值跟踪防止僵尸记录
+                        try:
+                            from app.exit.option_quick_exit import get_quick_exit_engine
+                            qe = get_quick_exit_engine()
+                            qe.reset_peak(position.symbol)
+                            logger.debug(f"[期权·清理峰值] {position.symbol} peak_profit 已清除")
+                        except Exception as peak_err:
+                            logger.debug(f"[期权·清理峰值] 失败 (可忽略): {peak_err}")
                         _opt_price_fail_count.pop(option_code, None)
                     continue
                 _opt_price_fail_count.pop(option_code, None)  # 成功后清零
