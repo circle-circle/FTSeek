@@ -111,7 +111,7 @@ ROUND2_PROMPT = """【你的上一轮分析】
 3. 你的最终判断是什么？
 
 输出严格 JSON：
-{
+{{
   "direction": "BUY|SELL|NO_TRADE",
   "confidence": 0.0-1.0,
   "logic_chain": ["修正后的推理步骤"],
@@ -120,7 +120,7 @@ ROUND2_PROMPT = """【你的上一轮分析】
   "agree_with": ["同意的观点摘要"],
   "disagree_with": ["不同意的观点摘要"],
   "rebuttal_reason": "核心分歧理由"
-}"""
+}}"""
 
 SYNTHESIS_PROMPT = """你是一位公正的辩论主持人。三位分析师从不同角度分析了今日市场：
 
@@ -141,17 +141,17 @@ SYNTHESIS_PROMPT = """你是一位公正的辩论主持人。三位分析师从�
 5. 这场辩论的质量如何？（0-1，高质量的辩论意味着各agent基于不同逻辑得出不同结论）
 
 输出严格 JSON：
-{
+{{
   "consensus_direction": "BUY|SELL|NO_TRADE",
   "conviction": 0.0-1.0,
   "disagreement_flags": ["分歧1", "分歧2"],
   "risk_consensus": "LOW|MEDIUM|HIGH",
   "merged_symbols": [
-    {"symbol": "HK.00001", "direction": "LONG", "support": "宏观+技术共振", "concern": "风控提示注意仓位"}
+    {{"symbol": "HK.00001", "direction": "LONG", "support": "宏观+技术共振", "concern": "风控提示注意仓位"}}
   ],
   "debate_quality_score": 0.0-1.0,
   "summary": "一段话总结今日辩论核心结论"
-}"""
+}}"""
 
 DEBATE_SCENARIO = {
     "name": "debate",

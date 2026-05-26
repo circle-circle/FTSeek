@@ -22,14 +22,14 @@ DIRECTION_ATTRIBUTION_PROMPT = """你是 FTSeek 的**方向归因分析师 (Dire
 
 【输出要求】
 必须输出严格 JSON:
-{
+{{
   "cause_category": "direction_wrong|timing_poor|market_misread|signal_noise|reasonable_loss",
   "root_cause": "一句话根因 (中文，不超过40字)",
   "lesson_text": "可操作的教训 (中文，不超过80字)",
   "improvement_action": "具体改进动作 (中文，不超过60字)",
   "confidence": 0.0-1.0,
   "key_finding": "最关键的一个发现"
-}
+}}
 
 如果交易本身是合理的 (方向对、执行对、只是市场不利)，cause_category 填 "reasonable_loss"。
 不要为了找原因而强行归因。诚实比聪明更重要。"""
@@ -49,14 +49,14 @@ EXECUTION_ATTRIBUTION_PROMPT = """你是 FTSeek 的**执行归因分析师 (Exec
 
 【输出要求】
 必须输出严格 JSON:
-{
+{{
   "cause_category": "execution_aligned|execution_deviation|plan_missing|overtrade|undertrade|manual_override",
   "root_cause": "一句话根因 (中文，不超过40字)",
   "lesson_text": "可操作的教训 (中文，不超过80字)",
   "improvement_action": "具体改进动作 (中文，不超过60字)",
   "confidence": 0.0-1.0,
   "key_finding": "最关键的一个发现"
-}"""
+}}"""
 
 ATTRIBUTION_SCENARIO = {
     "name": "attribution",

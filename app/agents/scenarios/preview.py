@@ -23,19 +23,19 @@ NEXT_DAY_PROMPT = """你是 FTSeek 的**次日预判分析师 (Next-Day Preview 
 
 【输出要求】
 必须输出严格 JSON:
-{
+{{
   "regime_shift_flags": ["状态变化1", "状态变化2"],
   "sector_rotation": [
-    {"from": "流出板块", "to": "流入板块", "strength": "STRONG|MODERATE|WEAK"}
+    {{"from": "流出板块", "to": "流入板块", "strength": "STRONG|MODERATE|WEAK"}}
   ],
   "watchlist_changes": [
-    {"symbol": "HK.00001", "action": "elevate|demote|add|remove", "reason": "原因"}
+    {{"symbol": "HK.00001", "action": "elevate|demote|add|remove", "reason": "原因"}}
   ],
   "emergent_risks": ["盘前计划未覆盖的风险"],
   "overnight_watch": ["需要关注的隔夜标的/指数"],
   "market_bias_next_day": "BUY|SELL|NEUTRAL",
   "key_question": "明日最需要回答的一个核心问题"
-}
+}}
 
 如果信息不足以形成判断，各字段留空数组。不要编造。"""
 

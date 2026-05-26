@@ -37,16 +37,16 @@ META_ANALYST_PROMPT = """你是 FTSeek 的**元分析师 (Meta Analyst)**。
 
 【输出要求】
 必须输出严格 JSON:
-{
+{{
   "debate_impact_assessment": "辩论对盘前计划的改善评估 (中文，不超过100字)",
   "shared_blind_spots": ["Agent 共同盲点1", "盲点2"],
   "strategy_adjustments": [
-    {"parameter": "参数名", "current_value": "当前值", "suggested_value": "建议值", "reason": "原因"}
+    {{"parameter": "参数名", "current_value": "当前值", "suggested_value": "建议值", "reason": "原因"}}
   ],
   "new_system_rules": ["新规则1", "新规则2"],
   "evolution_recommendations": ["本周最重要的3条进化建议"],
   "weekly_score": 0-100
-}
+}}
 
 分析要具体、可操作。不要泛泛而谈。每个建议都应该能直接转化为代码或配置更改。"""
 
