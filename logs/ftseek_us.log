@@ -38295,3 +38295,1261 @@ RuntimeError: 下单失败: 持仓不足
 2026-05-26 21:53:11,495 [ftseek.exit_monitor] INFO: [退出监控·M1·跳过] US.QCOM source=unknown protection=protected (策略不接管, 用户责任)
 2026-05-26 21:53:11,499 [ftseek.exit_monitor] INFO: [退出监控·M1·跳过] US.SNDK source=unknown protection=protected (策略不接管, 用户责任)
 2026-05-26 21:53:11,499 [ftseek.exit_monitor] WARNING: [退出监控·M1] 跳过 3 个 PROTECTED/FROZEN 仓位 (默认隔离; takeover 接管: scripts/position_takeover.py)
+2026-05-26 21:53:20,530 [ftseek_us.main] INFO: 收到停止信号，正在关闭...
+2026-05-26 21:53:20,530 [ftseek_us.main] INFO: [shutdown] 开始优雅关闭流程...
+2026-05-26 21:53:20,530 [app.core.scheduler_core] INFO: 停止 FTSeek-US 服务...
+2026-05-26 21:53:30,532 [ftseek_us.subscription_manager] INFO: [SubscriptionManager] 美股自动循环停止
+2026-05-26 21:53:30,539 [app.analysis.strategy_attribution] INFO: [归因层] 已初始化, 数据目录: /root/.hermes/ftseek/data/attribution
+2026-05-26 21:53:30,547 [app.analysis.strategy_attribution] INFO: [归因层] 日报已写出: conflicts=0, main_pnl=0.0000, scalping_pnl=0.0000
+2026-05-26 21:53:30,547 [app.scalping.engine] INFO: [ScalpingEngine] 归因数据已刷新
+2026-05-26 21:53:30,547 [app.scalping.engine] INFO: [ScalpingEngine] 等待线程已停止
+2026-05-26 21:53:32,913 [ftseek_us.position_sync] INFO: [US Sync] 跳过新持仓 US.ARM (创建 174s 前, 等待 Futu 确认成交)
+2026-05-26 21:53:32,916 [ftseek_us.position_sync] INFO: [US Sync] 跳过新持仓 US.QCOM (创建 174s 前, 等待 Futu 确认成交)
+2026-05-26 21:53:32,918 [ftseek_us.position_sync] INFO: [US Sync] 跳过新持仓 US.SNDK (创建 174s 前, 等待 Futu 确认成交)
+2026-05-26 21:53:32,920 [ftseek_us.position_sync] INFO: [US Sync] 跳过新持仓 US.ARM (创建 174s 前 < 180s 保护窗口, 等待 Futu 确认成交)
+2026-05-26 21:53:32,921 [ftseek_us.position_sync] INFO: [US Sync] 跳过新持仓 US.QCOM (创建 174s 前 < 180s 保护窗口, 等待 Futu 确认成交)
+2026-05-26 21:53:32,921 [ftseek_us.position_sync] INFO: [US Sync] 跳过新持仓 US.SNDK (创建 174s 前 < 180s 保护窗口, 等待 Futu 确认成交)
+2026-05-26 21:53:32,921 [ftseek_us.position_sync] INFO: [US Sync] Done | Futu: 0 | DB: 0
+2026-05-26 21:53:32,923 [ftseek_us.position_sync] WARNING: ⚠️ [US Sync Consistency] 检测到 2 个不一致:
+  DB 有多余持仓 (Broker 已无): {'US.ARM', 'US.QCOM', 'US.SNDK'}
+  Memory 有幽灵仓: {'US.ARM', 'US.QCOM', 'US.SNDK'}
+2026-05-26 21:53:35,548 [app.scalping.engine] INFO: [ScalpingEngine] 资金同步线程已停止
+2026-05-26 21:53:35,548 [app.core.scheduler_core] INFO: [Scalping] 引擎已停止
+2026-05-26 21:53:35,551 [app.analysis.strategy_attribution] INFO: [归因层] 日报已写出: conflicts=0, main_pnl=0.0000, scalping_pnl=0.0000
+2026-05-26 21:53:35,551 [app.core.scheduler_core] INFO: [调度器] 归因数据已刷新
+2026-05-26 21:53:35,555 [app.core.scheduler_core] INFO: [调度器] 服务停止
+2026-05-26 21:53:35,555 [ftseek_us.main] INFO: [shutdown] scheduler 已停止
+2026-05-26 21:53:35,557 | 2312570 | 140680466785856 | [open_context_base.py:516] on_disconnect: Disconnected: conn=0(1) reason=CallClose
+2026-05-26 21:53:35,727 [ftseek_us.config_mgmt.drift_detector] INFO: [DriftDetector] 已停止 | 累计漂移=0
+2026-05-26 21:53:36,381 [ftseek_us.config_mgmt.hot_reloader] INFO: [HotReloader] 已停止 | 重载=0 次 | 错误=0 次
+2026-05-26 21:53:36,390 [ftseek_us.main] INFO: [shutdown] EventStore 连接已关闭
+2026-05-26 21:53:36,391 [app.data.alphavantage_provider] INFO: [AlphaVantage] 连接已关闭
+2026-05-26 21:53:36,391 [ftseek_us.main] WARNING: [shutdown] data_router.close() 异常: 'MarketDataRouter' object has no attribute 'futu_provider'
+2026-05-26 21:53:36,391 [ftseek_us.main] INFO: [shutdown] PushHub 已关闭 (聚合桶已 flush)
+2026-05-26 21:53:36,391 [ftseek_us.main] INFO: [shutdown] PostTradeHook stats: {'submitted': 0, 'completed': 0, 'failed': 0}
+2026-05-26 21:53:36,447 [app.notifier.dingtalk] INFO: [钉钉] send_text 成功: [INFO] FTSeek-US 正在关闭
+2026-05-26 21:53:36,448 [ftseek_us.main] INFO: [shutdown] 执行强制退出 (os._exit)
+2026-05-26 21:53:36,827 [ftseek_us.main] INFO: [PreFlight] OpenD 连通性检查通过 (127.0.0.1:11111)
+2026-05-26 21:53:36,827 [ftseek_us.main] INFO: [安全确认] ✅ 当前运行模式: 模拟盘 (TRADE_ENV=1 | FUTU_TRADE_ENV=1)
+2026-05-26 21:53:36,827 [ftseek_us.main] INFO: [安全确认] ✅ 模拟盘验证期 — 持续收集数据、验证策略，禁止自动切换实盘
+2026-05-26 21:53:37,835 [config.config_loader] INFO: ✅ 统一配置已加载: /opt/ftseek/FTSeek-US/config/unified_config.yaml
+2026-05-26 21:53:38,070 [app.core.config_container] INFO: [ConfigContainer] 已加载 54 个配置节
+2026-05-26 21:53:38,075 [app.decision.strategies.base] INFO: [策略注册] price_break v1.0.0
+2026-05-26 21:53:38,075 [app.decision.strategies.base] INFO: [策略注册] ma_cross v1.0.0
+2026-05-26 21:53:38,075 [app.decision.strategies.base] INFO: [策略注册] rsi_rebound v1.0.0
+[Idempotency] Loaded 0 records from DB
+2026-05-26 21:53:38,113 | 2356328 | 140001789632832 | [open_context_base.py:409] _init_connect_sync: New connect ready: conn=7465037434656968412(1) context=<futu.quote.open_quote_context.OpenQuoteContext object at 0x7f5497fba6a0>
+2026-05-26 21:53:38,116 | 2356328 | 140001789632832 | [open_context_base.py:409] _init_connect_sync: New connect ready: conn=7465037434671162141(2) context=<futu.trade.open_trade_context.OpenSecTradeContext object at 0x7f549815d700>
+2026-05-26 21:53:38,119 [app.execution.broker_adapter] INFO: [富途] 模拟交易环境，无需解锁
+2026-05-26 21:53:38,125 [app.execution.broker_adapter] INFO: [富途] 模拟账户验证通过: 18297050
+2026-05-26 21:53:38,125 [app.execution.broker_adapter] INFO: [富途] 连接成功 127.0.0.1:11111 env=模拟
+2026-05-26 21:53:38,149 [app.risk.circuit_breaker] INFO: [熔断器] 注册数据源: default (weight=1.0)
+2026-05-26 21:53:38,149 [ftseek_us.position_limits] INFO: [PositionLimits] 初始化: max_symbol=25%, max_direction=65%, max_total=80%
+2026-05-26 21:53:38,150 [app.risk.stop_loss_config] WARNING: [StopLossSoT] dynamic_exit 配置缺失，使用默认值
+2026-05-26 21:53:38,165 [app.data.twelvedata_provider] INFO: [TwelveData] 初始化完成 | API Key=✅ | Cache TTL=900s
+2026-05-26 21:53:38,165 [app.data.finnhub_provider] INFO: [Finnhub] 初始化完成 | API Key=✅ | Cache TTL=300s
+2026-05-26 21:53:38,165 [app.data.alphavantage_provider] INFO: [AlphaVantage] 初始化完成 | API Key=✅ | Premium=False | Cache TTL=900s
+2026-05-26 21:53:38,165 [app.data.market_data_router] INFO: [MarketDataRouter] Futu LV3 提供商已初始化
+2026-05-26 21:53:38,165 [app.data.market_data_router] INFO: [MarketDataRouter] 初始化完成 | 启用的数据源：['TwelveData', 'Finnhub', 'AlphaVantage'] | Cache TTL=900s
+2026-05-26 21:53:38,167 [app.agents.debate.debate_engine] INFO: [辩论引擎-P0优化] 已初始化: 多头=MiniMax-M2.5, 空头=qwen-max, 快速模式=True
+2026-05-26 21:53:38,168 [app.core.scheduler_core] WARNING: ======================================================================
+2026-05-26 21:53:38,168 [app.core.scheduler_core] WARNING: ║  🧪 [SANDBOX MODE] 沙盒加速实验模式已启用
+2026-05-26 21:53:38,168 [app.core.scheduler_core] WARNING: ║  扫描=3min  监控=0.25min
+2026-05-26 21:53:38,168 [app.core.scheduler_core] WARNING: ║  cooldown=30s  min_conf=0.45  min_strength=20
+2026-05-26 21:53:38,168 [app.core.scheduler_core] WARNING: ║  universe (12): ['NVDA', 'TSLA', 'AMD', 'RIVN', 'LCID', 'SNDK', 'ARM', 'NIO', 'BWXT', 'MU', 'SPY', 'QQQ']
+2026-05-26 21:53:38,168 [app.core.scheduler_core] WARNING: ║  风控守底: kill_switch / per_trade_R / max_total_position 仍生效
+2026-05-26 21:53:38,168 [app.core.scheduler_core] WARNING: ║  关闭沙盒: mode.sandbox.enabled=false 重启
+2026-05-26 21:53:38,168 [app.core.scheduler_core] WARNING: ======================================================================
+2026-05-26 21:53:38,168 [app.core.scheduler_core] INFO: [调度器] 配置已加载 | scan=3min monitor=0.25min max_pos=5 min_score=20 min_conf=0.45 min_consensus=0.20 cooldown=0min
+2026-05-26 21:53:38,169 [app.storage.vote_tables] INFO: 投票日志表初始化完成：data/ftseek.db
+2026-05-26 21:53:38,170 [app.decision.vote_logger] INFO: VoteLogger 初始化完成
+2026-05-26 21:53:38,181 [app.execution.short_strategy] INFO: [做空路由器] 已初始化 | 默认方法=options_put | 模拟盘强制期权=False
+2026-05-26 21:53:38,183 [app.exit.option_quick_exit] INFO: [OptionQuickExit] 从 DB 恢复 6 个期权峰值跟踪
+2026-05-26 21:53:38,183 [app.core.scheduler_core] INFO: [调度器] 做空策略路由器 + 快速退出引擎已初始化
+2026-05-26 21:53:38,184 [app.core.scheduler_core] WARNING: [T4·SANDBOX] coordinator.observe_only 强制为 False — sandbox 严格 enforce 模式 (SymbolLock + SignalArbitrator 真实阻断)
+2026-05-26 21:53:38,195 [app.coordinator.exit_dispatcher] INFO: [ExitDispatcher] 注册 main → main_exit
+2026-05-26 21:53:38,196 [app.coordinator.exit_dispatcher] INFO: [ExitDispatcher] 注册 scalping → scalping_exit
+2026-05-26 21:53:38,196 [app.coordinator.exit_dispatcher] INFO: [ExitDispatcher] 注册 fast_lane → fast_lane_exit
+2026-05-26 21:53:38,196 [app.coordinator.exit_dispatcher] INFO: [ExitDispatcher] 注册 llm_plan → llm_plan_exit
+2026-05-26 21:53:38,198 [app.core.scheduler_core] INFO: [调度器·Coordinator] 已注册 4 个 adapter: ['main(p=5)', 'scalping(p=10)', 'fast_lane(p=8)', 'llm_plan(p=3)']
+2026-05-26 21:53:38,198 [app.core.scheduler_core] INFO: ══════════════════════════════════════════════════════════════════════
+2026-05-26 21:53:38,198 [app.core.scheduler_core] INFO: ║ Coordinator Phase A — 多策略协调层启动
+2026-05-26 21:53:38,198 [app.core.scheduler_core] INFO: ║   enabled       : True
+2026-05-26 21:53:38,198 [app.core.scheduler_core] INFO: ║   observe_only  : False  (true=不阻断只记录 / false=强制)
+2026-05-26 21:53:38,198 [app.core.scheduler_core] INFO: ║   max_total_pct : 0.9
+2026-05-26 21:53:38,198 [app.core.scheduler_core] INFO: ║   caps          : {'main': 0.65, 'scalping': 0.1, 'llm_plan': 0.0}
+2026-05-26 21:53:38,198 [app.core.scheduler_core] INFO: ║   adapters      : [('main', 5), ('scalping', 10), ('fast_lane', 8), ('llm_plan', 3)]
+2026-05-26 21:53:38,198 [app.core.scheduler_core] INFO: ║   reconcile     : every 300s
+2026-05-26 21:53:38,198 [app.core.scheduler_core] INFO: ║   audit_db      : signal_arbitration in decisions.db
+2026-05-26 21:53:38,198 [app.core.scheduler_core] INFO: ║   watchdog      : scan_loop + monitor_loop 心跳监控
+2026-05-26 21:53:38,198 [app.core.scheduler_core] INFO: ║ 开盘验证: scripts/coordinator_status.py --all
+2026-05-26 21:53:38,198 [app.core.scheduler_core] INFO: ══════════════════════════════════════════════════════════════════════
+2026-05-26 21:53:38,200 [app.observability.watchdog] INFO: [Watchdog] 注册心跳: scan_loop threshold=3000s
+2026-05-26 21:53:38,200 [app.observability.watchdog] INFO: [Watchdog] 注册心跳: monitor_loop threshold=150.0s
+2026-05-26 21:53:38,200 [app.observability.watchdog] INFO: [Watchdog] 启动 — 检查间隔 60.0s
+2026-05-26 21:53:38,200 [app.core.scheduler_core] INFO: [Watchdog] 已启动 — scan=10min, monitor=0.5min
+2026-05-26 21:53:38,201 [app.core.scheduler_core] INFO: [T6·reconcile] 后台线程已启动 (interval=300s)
+2026-05-26 21:53:38,201 [app.core.scheduler_core] INFO: [调度器] position_store 已注入 RiskEngine (仓位限制检查已激活)
+2026-05-26 21:53:38,206 [ftseek.capital_safety] INFO: [资本安全] 状态已加载 | 净值=$1,080,696 | 回撤=-1.1% | 水位=green
+2026-05-26 21:53:38,206 [ftseek.capital_safety] INFO: [资本安全] 初始化 (模拟) | 初始资金=$100,000 | 单笔最大风险=4% | 总风险上限=12%
+2026-05-26 21:53:38,206 [app.core.scheduler_core] INFO: [调度器] capital_safety 已注入 RiskEngine (总敞口计算修复)
+2026-05-26 21:53:38,206 [app.core.scheduler_core] INFO: [调度器] broker_adapter 已注入 RiskEngine (方向敞口拆分已激活)
+2026-05-26 21:53:38,206 [app.core.scheduler_core] INFO: [调度器] option_selector 已复用 broker_adapter.quote_ctx (节省 OpenD 槽位)
+2026-05-26 21:53:38,208 [app.storage.trade_store] INFO: [TradeStore] 交易记录表初始化完成
+2026-05-26 21:53:38,211 [app.core.scheduler_core] INFO: [调度器] LessonInjector 已初始化 — 10 条活跃教训
+2026-05-26 21:53:38,211 [app.core.scheduler_core] INFO: [调度器] lesson_injector 已注入 RiskEngine (教训约束检查已激活)
+2026-05-26 21:53:38,212 [app.utils.watchlist_manager] INFO: ✅ 股票名单已从 unified_config.yaml 加载
+2026-05-26 21:53:38,212 [app.core.scheduler_core] INFO: [调度器] 从 watchlist_us.json 加载 31 只基础股票
+2026-05-26 21:53:38,213 [app.core.scheduler_core] INFO: [调度器] 合并动态池: 0 只活跃 -> 总计 31 只
+2026-05-26 21:53:38,214 [app.core.scheduler_core] WARNING: [SANDBOX] watchlist 覆盖为 universe: ['NVDA', 'TSLA', 'AMD', 'RIVN', 'LCID', 'SNDK', 'ARM', 'NIO', 'BWXT', 'MU', 'SPY', 'QQQ']
+2026-05-26 21:53:38,220 [ftseek_us.news_v2.pipeline] INFO: [Pipeline] 添加新闻源: Finnhub 突发新闻 (finnhub_news)
+2026-05-26 21:53:38,220 [ftseek_us.news_v2.pipeline] INFO: [Pipeline] 添加新闻源: SEC EDGAR 公告 (sec_edgar)
+2026-05-26 21:53:38,221 [ftseek_us.news_v2.pipeline] INFO: [Pipeline] 添加新闻源: RSSHub 美股新闻聚合 (rsshub_us)
+2026-05-26 21:53:38,221 [app.core.scheduler_core] INFO: [NewsV2] RSSHub 美股源已添加 (WSJ/Reuters/Fed)
+2026-05-26 21:53:38,221 [app.core.scheduler_core] WARNING: [NewsV2] CN 源添加失败 (降级运行): 'dict' object has no attribute 'get_dotted'
+2026-05-26 21:53:38,225 [app.factors.registry] INFO: [FactorRegistry] 初始化完成
+2026-05-26 21:53:38,225 [app.factors.registry] INFO: [FactorRegistry] 已注册: SSS (tf=15min, v1.0, params=56 combinations)
+2026-05-26 21:53:38,225 [app.factors.registry] INFO: [FactorRegistry] 已注册: GDIAN (tf=15min, v1.0, params=32 combinations)
+2026-05-26 21:53:38,226 [app.factors.registry] INFO: [FactorRegistry] 已注册: MFFF (tf=15min, v1.0, params=48 combinations)
+2026-05-26 21:53:38,229 [ftseek_us.news_v2.pipeline] INFO: [Pipeline] 地缘预筛器已初始化
+2026-05-26 21:53:38,229 [app.core.scheduler_core] INFO: [NewsV2] 数据收集器已挂接 + 地缘预筛器已激活
+2026-05-26 21:53:38,230 [app.core.scheduler_core] INFO: [NewsV2] 管线已初始化 (observe 模式) | watchlist=12
+2026-05-26 21:53:38,234 [ftseek_us.risk.us_risk_pipeline] INFO: [USRiskPipeline] 构建 9 个检查
+2026-05-26 21:53:38,234 [app.core.scheduler_core] INFO: [USRiskPipeline] 已初始化 (9 个检查)
+2026-05-26 21:53:38,235 [ftseek.us_pipeline.earnings_calendar] WARNING: [财报日历] 使用静态 KEY_US_SYMBOLS fallback
+2026-05-26 21:53:38,236 [ftseek.us_pipeline.earnings_calendar] INFO: 获取财报日历 (horizon=3month)...
+2026-05-26 21:53:41,725 [ftseek.us_pipeline.earnings_calendar] INFO: 获取到 5787 条财报数据
+2026-05-26 21:53:41,728 [ftseek.us_pipeline.earnings_risk] INFO: 财报日历已更新: 5 只股票
+2026-05-26 21:53:41,728 [app.core.scheduler_core] INFO: [Earnings] 财报日历已加载: 5 只股票 (未来7天)
+2026-05-26 21:53:41,729 [ftseek_us.risk.vix_monitor] INFO: VIX 监控器已初始化 | 缓存 TTL=180s | 退避策略 60-480s
+2026-05-26 21:53:41,729 [app.core.scheduler_core] INFO: [VIX Monitor] 已初始化 (阈值: 正常<20 / 警戒<25 / 高波动<30 / 极端≥40)
+2026-05-26 21:53:41,731 [app.analysis.market_state] INFO: 市场状态检查器已初始化
+2026-05-26 21:53:41,731 [app.core.shared_kernel] INFO: [SharedKernel] 全局共享内核已初始化
+2026-05-26 21:53:41,731 [app.core.scheduler_core] INFO: [SharedKernel] 已绑定 VIX 数据源 (market_state)
+2026-05-26 21:53:41,736 [app.scalping.engine] INFO: [ScalpingEngine] 初始化 | 模式: live | polling: 5s
+2026-05-26 21:53:41,737 [app.core.scheduler_core] INFO: [Scalping] 引擎已初始化 | 模式: live | scheduler 已注入
+2026-05-26 21:53:41,740 [ftseek.dragonhead_pool] INFO: 🐲 龙头股票池管理器已初始化: HK=44只, US=36只
+2026-05-26 21:53:41,741 [ftseek_us.adaptive_polling] INFO: [轮询注册] US.TSLA 层级=P1_HIGH_VOL 间隔=300-900s
+2026-05-26 21:53:41,741 [ftseek_us.adaptive_polling] INFO: [轮询注册] US.NVDA 层级=P1_HIGH_VOL 间隔=300-900s
+2026-05-26 21:53:41,741 [ftseek_us.adaptive_polling] INFO: [轮询注册] US.RIVN 层级=P1_HIGH_VOL 间隔=300-900s
+2026-05-26 21:53:41,741 [ftseek_us.adaptive_polling] INFO: [轮询注册] US.LCID 层级=P1_HIGH_VOL 间隔=300-900s
+2026-05-26 21:53:41,741 [ftseek_us.adaptive_polling] INFO: [轮询注册] US.SNDK 层级=P1_HIGH_VOL 间隔=300-900s
+2026-05-26 21:53:41,741 [ftseek_us.adaptive_polling] INFO: [轮询注册] US.ARM 层级=P1_HIGH_VOL 间隔=300-900s
+2026-05-26 21:53:41,741 [ftseek_us.adaptive_polling] INFO: [轮询注册] US.MU 层级=P1_HIGH_VOL 间隔=300-900s
+2026-05-26 21:53:41,741 [ftseek_us.adaptive_polling] INFO: [轮询注册] US.BWXT 层级=P1_HIGH_VOL 间隔=300-900s
+2026-05-26 21:53:41,741 [ftseek_us.adaptive_polling] INFO: [轮询注册] US.AMD 层级=P2_WATCHLIST 间隔=900-1800s
+2026-05-26 21:53:41,741 [ftseek_us.adaptive_polling] INFO: [轮询注册] US.NIO 层级=P2_WATCHLIST 间隔=900-1800s
+2026-05-26 21:53:41,741 [ftseek_us.adaptive_polling] INFO: [轮询注册] US.SPY 层级=P2_WATCHLIST 间隔=900-1800s
+2026-05-26 21:53:41,741 [ftseek_us.adaptive_polling] INFO: [轮询注册] US.QQQ 层级=P2_WATCHLIST 间隔=900-1800s
+2026-05-26 21:53:41,741 [app.core.scheduler_core] WARNING: [O1·SANDBOX] polling_controller 已严格过滤: 注册 12 只 (过滤 21 只非 universe), universe=['US.AMD', 'US.ARM', 'US.BWXT', 'US.LCID', 'US.MU', 'US.NIO', 'US.NVDA', 'US.QQQ', 'US.RIVN', 'US.SNDK', 'US.SPY', 'US.TSLA']
+2026-05-26 21:53:41,741 [app.core.scheduler_core] INFO: [自适应轮询] 已注册 12 只观察股 | API 预算=31/轮 | TIER1=11 | ETF=2
+2026-05-26 21:53:41,743 [ftseek_us.subscription_manager] INFO: [SubscriptionManager] 美股分时段订阅管理器已初始化
+2026-05-26 21:53:41,743 [app.core.scheduler_core] INFO: [调度器] 分时段订阅管理器已初始化
+2026-05-26 21:53:41,743 [app.core.scheduler_core] INFO: [调度器] 初始化完成，监控 12 只股票
+2026-05-26 21:53:41,743 [app.strategy.registry] INFO: [StrategyRegistry] 已注册: price_break (group=trend, v1.0.0)
+2026-05-26 21:53:41,744 [app.strategy.registry] INFO: [StrategyRegistry] 已注册: ma_cross (group=trend, v1.0.0)
+2026-05-26 21:53:41,744 [app.strategy.registry] INFO: [StrategyRegistry] 已注册: rsi_rebound (group=reversion, v1.0.0)
+2026-05-26 21:53:41,748 [app.core.di_container] INFO: [DIContainer] TradingScheduler 装配完成
+[Idempotency] Loaded 0 records from DB
+2026-05-26 21:53:41,755 | 2356328 | 140001789632832 | [open_context_base.py:409] _init_connect_sync: New connect ready: conn=7465037449931320180(3) context=<futu.quote.open_quote_context.OpenQuoteContext object at 0x7f54967d4e80>
+2026-05-26 21:53:41,761 | 2356328 | 140001789632832 | [open_context_base.py:409] _init_connect_sync: New connect ready: conn=7465037449948988834(4) context=<futu.trade.open_trade_context.OpenSecTradeContext object at 0x7f5496760b80>
+2026-05-26 21:53:41,766 [app.execution.broker_adapter] INFO: [富途] 模拟交易环境，无需解锁
+2026-05-26 21:53:41,772 [app.execution.broker_adapter] INFO: [富途] 模拟账户验证通过: 18297050
+2026-05-26 21:53:41,772 [app.execution.broker_adapter] INFO: [富途] 连接成功 127.0.0.1:11111 env=模拟
+2026-05-26 21:53:41,775 [app.risk.circuit_breaker] INFO: [熔断器] 注册数据源: default (weight=1.0)
+2026-05-26 21:53:41,776 [ftseek_us.position_limits] INFO: [PositionLimits] 初始化: max_symbol=25%, max_direction=65%, max_total=80%
+2026-05-26 21:53:41,776 [app.risk.stop_loss_config] WARNING: [StopLossSoT] dynamic_exit 配置缺失，使用默认值
+2026-05-26 21:53:41,776 [ftseek_us.main] INFO: [DI] 核心组件已通过DI容器装配: EventStore/Execution/Risk/Notifier
+2026-05-26 21:53:41,777 [ftseek_us.main] INFO: [Agent] 美股 Agent 桥接已初始化 | Hermes 可用=True
+2026-05-26 21:53:41,779 [ftseek_us.hermes_client] INFO: 启动 Hermes Worker: /root/.hermes/hermes-agent/venv/bin/python3 /opt/ftseek/FTSeek-US/scripts/hermes_worker.py
+2026-05-26 21:53:43,137 [ftseek_us.hermes_client] INFO: Hermes Worker 就绪 (PID=2356352)
+2026-05-26 21:53:43,137 [ftseek_us.main] INFO: [HermesWorker] ✅ Worker 预检通过 (Python 3.11 subprocess)
+2026-05-26 21:53:43,138 [ftseek.us_pipeline.battle_plan_manager] INFO: ✅ 已加载美股作战计划 (2026-05-26)
+2026-05-26 21:53:43,138 [ftseek.us_pipeline.battle_plan_manager] INFO: [计划质检] ✅ 作战计划数据完整性校验通过
+2026-05-26 21:53:43,139 [ftseek_us.main] INFO: ✅ 美股作战计划已加载: /opt/ftseek/FTSeek-US/data/daily_battle_plan_us.json
+2026-05-26 21:53:43,141 [ftseek_us.config_mgmt.validator] WARNING: [ConfigValidator] ⚠️ 推荐配置缺失: exit.us.atr_multiplier
+2026-05-26 21:53:43,141 [ftseek_us.config_mgmt.validator] WARNING: [ConfigValidator] ⚠️ 推荐配置缺失: strategy.consensus.threshold
+2026-05-26 21:53:43,141 [ftseek_us.config_mgmt.validator] INFO: [ConfigValidator] 校验结果: ⚠️ 2 警告
+2026-05-26 21:53:43,141 [ftseek_us.main] INFO: [ConfigGov] ✅ 配置校验通过: ⚠️ 2 警告
+2026-05-26 21:53:43,168 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.4 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-05-26 21:53:43,183 [exit_policy_guardian] INFO: ✅ 策略校验通过: 8 条规则全部实现
+2026-05-26 21:53:43,183 [ftseek_us.main] INFO: [ExitPolicy] ✅ 退出策略校验通过: 8/8 条规则已实现 (2.4)
+2026-05-26 21:53:43,207 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.4 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-05-26 21:53:43,207 [ftseek_us.main] INFO: [ShortConfig] ✅ 做空配置校验通过: 全部通过
+2026-05-26 21:53:43,208 [ftseek_us.config_audit] INFO: ✅ 配置一致性审计通过 — 无漂移检测
+2026-05-26 21:53:43,208 [ftseek_us.main] INFO: [ConfigAudit] ✅ SSOT 配置一致性审计通过 — 无漂移检测
+2026-05-26 21:53:43,210 [ftseek_us.config_mgmt.drift_detector] INFO: [DriftDetector] 初始快照: hash=3933e2f89183b790 keys=1373
+2026-05-26 21:53:43,213 [ftseek_us.config_mgmt.drift_detector] INFO: [DriftDetector] 启动 (interval=4h)
+2026-05-26 21:53:43,213 [ftseek_us.main] INFO: [ConfigGov] ✅ 漂移检测已启动 (interval=4h)
+2026-05-26 21:53:43,213 [ftseek_us.config_mgmt.hot_reloader] INFO: [HotReloader] 启动 (cooldown=60s, files=1)
+2026-05-26 21:53:43,214 [ftseek_us.main] INFO: [ConfigGov] ✅ 热重载已启动 (cooldown=60s)
+2026-05-26 21:53:43,214 [ftseek.daily_active_pool] INFO: 📂 加载人工指定名单: 23 只
+2026-05-26 21:53:43,214 [ftseek.daily_active_pool] INFO: 📂 恢复持久化池子: 31 条记录
+2026-05-26 21:53:43,214 [ftseek.daily_active_pool] INFO: ⏰ 过期移除: US.ORCL (来源: SCALPING)
+2026-05-26 21:53:43,214 [ftseek.daily_active_pool] INFO: ⏰ 过期移除: US.QCOM (来源: SCALPING)
+2026-05-26 21:53:43,214 [ftseek.daily_active_pool] INFO: ⏰ 过期移除: US.ARM (来源: SCALPING)
+2026-05-26 21:53:43,214 [ftseek.daily_active_pool] INFO: ⏰ 过期移除: US.UBER (来源: SCALPING)
+2026-05-26 21:53:43,214 [ftseek.daily_active_pool] INFO: ⏰ 过期移除: US.LCID (来源: SCALPING)
+2026-05-26 21:53:43,214 [ftseek.daily_active_pool] INFO: ⏰ 过期移除: US.TME (来源: SCALPING)
+2026-05-26 21:53:43,214 [ftseek.daily_active_pool] INFO: ⏰ 过期移除: US.CRM (来源: SCALPING)
+2026-05-26 21:53:43,216 [ftseek.daily_active_pool] INFO: 🔍 启动对账: 动态池中有 9 只 POSITION 条目
+2026-05-26 21:53:43,217 [ftseek.daily_active_pool] INFO: ✅ 每日动态交易池 v2 已初始化: 24 只标的 (市场=US.)
+2026-05-26 21:53:43,218 [ftseek.daily_active_pool] INFO: 💼 批量注入持仓: 9 只 (跳过 0 只非本市场)
+2026-05-26 21:53:43,218 [ftseek_us.main] INFO: 💼 US 注入持仓: 9 只 -> ['US.TSLA', 'US.NVDA', 'US.AAPL', 'US.MSFT', 'US.GOOGL', 'US.META', 'US.AMZN', 'US.BABA', 'US.PDD']
+2026-05-26 21:53:43,218 [ftseek_us.main] INFO: 📝 US 注入盘前计划: 3 只
+2026-05-26 21:53:43,218 [ftseek_us.main] INFO: ✅ US 动态交易池 v2 就绪: 24 只 | {'POSITION': 9, 'PLAN': 0, 'MANUAL': 15, 'INTRADAY_ALERT': 0}
+2026-05-26 21:53:43,218 [ftseek_us.main] INFO: ✅ 交易调度器已启动（后台线程）
+2026-05-26 21:53:43,218 [ftseek_us.main] INFO: ✅ FTSeek-US 服务已启动
+2026-05-26 21:53:43,218 [ftseek_us.main] INFO: API 服务监听：http://0.0.0.0:8901  (FastAPI 待实现)
+2026-05-26 21:53:43,231 [ftseek_us.main] INFO: ✅ [PostTradeHook·wired] order_executor 已绑定 (3 处 on_position_opened 调用, 3 处 import) — 入场后将触发 thesis_inferer 等副作用
+2026-05-26 21:53:43,283 [app.notifier.dingtalk] INFO: [钉钉] send_text 成功: [INFO] FTSeek-US v2.0.0 (LV3实时行情) 已启动
+2026-05-26 21:53:43,285 [ftseek_us.intraday_heartbeat] INFO: [Heartbeat] 后台线程已启动 (interval=1800s)
+2026-05-26 21:53:43,285 [ftseek_us.main] INFO: 💓 盘中心跳后台线程已启动 (interval=30min, 仅盘中触发)
+2026-05-26 21:53:43,286 [ftseek.holiday_calendar] INFO: 📅 节假日日历已加载: HK=31 天, US=22 天
+2026-05-26 21:53:43,290 [ftseek.us_pipeline.emergency_interceptor] INFO: 🛡️ 美股突发拦截器 (V3) 已初始化 | 行情主 + 新闻辅 | 间隔=30s | 闪崩阈值=-5% | 放量倍数=3.0x
+2026-05-26 21:53:43,292 [ftseek.us_pipeline.emergency_interceptor] INFO: 🚀 启动突发拦截监控循环 (富途 LV3 行情主 + 新闻辅)...
+2026-05-26 21:53:43,292 [ftseek_us.main] INFO: 🛡️ 美股突发拦截器后台线程已启动
+2026-05-26 21:53:43,296 [ftseek_us.position_sync] INFO: 🔍 [US Sync] 启动时立即执行 Broker 对账...
+2026-05-26 21:53:43,297 | 2356328 | 140000633026112 | [open_context_base.py:409] _init_connect_sync: New connect ready: conn=7465037456378001553(5) context=<futu.quote.open_quote_context.OpenQuoteContext object at 0x7f5494623880>
+2026-05-26 21:53:43,302 | 2356328 | 140001789632832 | [open_context_base.py:409] _init_connect_sync: New connect ready: conn=7465037456420436979(6) context=<futu.trade.open_trade_context.OpenSecTradeContext object at 0x7f5494650c40>
+2026-05-26 21:53:43,319 [ftseek_us.position_sync] WARNING: [US Sync] Ghost position: US.QCOM (DB only, closing)
+2026-05-26 21:53:43,319 [ftseek_us.position_sync] WARNING: [US Sync] Ghost position: US.SNDK (DB only, closing)
+2026-05-26 21:53:43,319 [ftseek_us.position_sync] WARNING: [US Sync] Ghost position: US.ARM (DB only, closing)
+2026-05-26 21:53:43,325 [ftseek_us.position_sync] INFO: [US Sync] Done | Futu: 0 | DB: 0
+2026-05-26 21:53:43,327 [ftseek_us.position_sync] INFO: ✅ [US Sync] 启动对账完成
+2026-05-26 21:53:43,328 [ftseek_us.position_sync] INFO: US position sync started (interval=30s)
+2026-05-26 21:53:43,328 [ftseek_us.main] INFO: ✅ 运行时持仓同步器已启动 (30s 间隔, Broker→PositionStore 自动同步)
+2026-05-26 21:53:43,332 | 2356328 | 140001476077120 | [open_context_base.py:516] on_disconnect: Disconnected: conn=0(5) reason=CallClose
+2026-05-26 21:53:43,351 [app.positions.reconciler] WARNING: ======================================================================
+2026-05-26 21:53:43,351 [app.positions.reconciler] WARNING: [Reconciler] 启动对账完成
+2026-05-26 21:53:43,351 [app.positions.reconciler] WARNING:   Broker 持仓: 0 | 本地内存: 0
+2026-05-26 21:53:43,351 [app.positions.reconciler] WARNING:   matched         : 0
+2026-05-26 21:53:43,351 [app.positions.reconciler] WARNING:   broker_only     : 0 (智能推断)
+2026-05-26 21:53:43,351 [app.positions.reconciler] WARNING:   ↳ adopted       : 0 (策略孤儿 → MANAGED, ExitMonitor 续命)
+2026-05-26 21:53:43,351 [app.positions.reconciler] WARNING:   ↳ legacy        : 0 (LEGACY/MANUAL → PROTECTED)
+2026-05-26 21:53:43,351 [app.positions.reconciler] WARNING:   local_only      : 0 (标 ghost)
+2026-05-26 21:53:43,351 [app.positions.reconciler] WARNING:   errors          : 0
+2026-05-26 21:53:43,351 [app.positions.reconciler] WARNING: ======================================================================
+2026-05-26 21:53:43,352 [ftseek_us.main] INFO: [M1] 启动对账完成: matched=0 broker_only=0 local_only=0 legacy_tagged=0
+2026-05-26 21:53:43,352 [ftseek_us.main] INFO: [关键告警通道] ✅ 已配置: DingTalk, Feishu
+2026-05-26 21:53:43,407 [app.risk.symbol_daily_loss_guard] INFO: [SymbolDailyLossGuard·restore] 重建 0 symbols 状态, 今日已平仓 0 笔
+2026-05-26 21:53:43,408 [ftseek_us.position_sync] INFO: [US Sync] Done | Futu: 0 | DB: 0
+2026-05-26 21:53:43,421 [ftseek.order_tracker] INFO: [OrderTracker] 已初始化 | 待追踪订单: 0
+2026-05-26 21:53:43,422 [ftseek.order_tracker] INFO: [OrderTracker·restore] 启动恢复, 发现 0 笔 pending 订单
+2026-05-26 21:53:43,422 [ftseek.order_tracker] INFO: [OrderTracker·restore] 完成 — restored=0 still_pending=0 marked_stale=0
+2026-05-26 21:53:43,422 [ftseek_us.main] INFO: [启动·OrderTracker] 恢复完成: {'restored': 0, 'still_pending': 0, 'marked_stale': 0}
+2026-05-26 21:53:43,426 [app.monitoring.trading_monitor] INFO: [Monitor] ✅ 启动 (间隔=60s)
+2026-05-26 21:53:43,426 [ftseek_us.main] INFO: [监控告警] 已启动 (PnL/PDT/熔断器实时监控)
+2026-05-26 21:53:43,493 [ftseek.market_backup] INFO: 市场数据路由器已加载
+2026-05-26 21:53:43,499 [ftseek.market_backup] INFO: Alpha Vantage SDK v3 已加载 (TimeSeries 可用，GlobalQuotes 已弃用)
+2026-05-26 21:53:43,509 [app.push.aggregator] INFO: [PushAggregator] 启动 (window=300s)
+2026-05-26 21:53:43,509 [app.push.health] INFO: [PushHealth] 启动 (interval=3600s)
+2026-05-26 21:53:43,510 [app.push.hub] INFO: [PushHub] 启动 — channels=['dingtalk', 'feishu', 'flag_file'] dedup_ttl=60s aggregate_window=300s async=True workers=4
+2026-05-26 21:53:43,510 [ftseek_us.intraday_heartbeat] INFO: [Heartbeat] ✅ 已推送 (343 chars)
+2026-05-26 21:53:43,565 [app.notifier.dingtalk] INFO: [钉钉] send_text 成功: ℹ️ FTSeek-US 心跳 21:53
+2026-05-26 21:53:46,448 [ftseek_us.feishu_push] INFO: ✅ 飞书 SDK 已加载
+2026-05-26 21:53:46,450 [ftseek.intraday_attribution] INFO: [盘中归因] 已启动 (间隔=60min)
+2026-05-26 21:53:46,450 [ftseek_us.main] INFO: [盘中归因] 已启动 (每60分钟)
+2026-05-26 21:53:46,450 [app.core.scheduler_core] INFO: [调度器] 服务启动
+2026-05-26 21:53:46,451 [app.pipeline.position_monitor] INFO: [持仓恢复] PRICE_FAIL 已关闭集合: {'US.TSLA260603P410000', 'US.MU260605P720000', 'US.RIVN260605P13000', 'US.QQQ260602P710000', 'US.QQQ260602P700000', 'US.SPY260602P730000', 'US.SNDK260605P1370000'}
+2026-05-26 21:53:46,452 [app.pipeline.position_monitor] INFO: [持仓恢复] DB 无未平仓记录
+2026-05-26 21:53:46,452 [app.core.scheduler_core] INFO: [调度器] 🔍 开始启动持仓对账...
+2026-05-26 21:53:46,454 [app.core.scheduler_core] INFO: [调度器] ✅ 持仓对账完成 | DB=0 | 内存=0 | 差异=0
+2026-05-26 21:53:46,454 [app.core.scheduler_core] INFO: [调度器·Coordinator] 启动回灌完成: capital={'main': 0.0, 'scalping': 0.0, 'llm_plan': 0.0} locks={}
+2026-05-26 21:53:46,455 [app.observability.watchdog] INFO: [Watchdog] 注册心跳: monitor_loop threshold=75.0s
+2026-05-26 21:53:46,455 [app.observability.watchdog] INFO: [Watchdog] 注册心跳: scan_loop threshold=540s
+2026-05-26 21:53:46,455 [app.core.scheduler_core] INFO: [LLM策略] 策略引擎循环已启动 (按市场阶段自适应)
+2026-05-26 21:53:46,456 [app.core.scheduler_core] INFO: [NewsV2] 管线采集循环已启动 (interval=180s, observe模式)
+2026-05-26 21:53:46,456 [app.core.scheduler_core] INFO: [NewsV2] 后台采集线程已启动
+2026-05-26 21:53:46,461 [app.core.scheduler_core] INFO: [VIX Monitor] 监控循环已启动 (interval=300s)
+2026-05-26 21:53:46,463 [app.core.scheduler_core] INFO: [VIX Monitor] 后台监控线程已启动
+2026-05-26 21:53:46,463 [app.scalping.time_gate] INFO: [TimeGate v2] 已启用 5 个时段: opening_drive, morning, midday, afternoon, closing_drive
+2026-05-26 21:53:46,467 [app.scalping.engine] INFO: [ScalpingEngine] 等待线程已启动 (当前 phase=unknown)，开盘后自动激活
+2026-05-26 21:53:46,472 [app.core.scheduler_core] INFO: [调度器] 交易时间内启动，立即触发首次信号扫描
+2026-05-26 21:53:46,474 [ftseek_us.futu_lv3] INFO: [FutuLV3] 正在连接 OpenD 127.0.0.1:11111...
+2026-05-26 21:53:46,485 [app.core.scheduler_core] INFO: [分时调度] 当前美股已收盘，暂不订阅 (自动循环将在盘前激活)
+2026-05-26 21:53:46,487 [ftseek_us.subscription_manager] INFO: [US] 自动订阅循环启动
+2026-05-26 21:53:46,487 [ftseek_us.subscription_manager] INFO: [SubscriptionManager] 美股自动循环启动 | 60s
+2026-05-26 21:53:46,493 [ftseek_us.harness_audit] INFO: 🔍 开始盘前巡检 (Pre-Market Audit)...
+2026-05-26 21:53:46,493 [ftseek_us.harness_audit] INFO:    TwelveData 令牌桶初始化: 0/8
+2026-05-26 21:53:46,493 [ftseek_us.harness_audit] INFO:    Finnhub 令牌桶初始化: 0/60
+2026-05-26 21:53:46,494 [ftseek_us.harness_audit] INFO:    API 状态: TD(0), FH(0)
+2026-05-26 21:53:46,494 [ftseek_us.harness_audit] INFO:    ✅ 盘前检查通过，系统状态良好
+2026-05-26 21:53:46,494 | 2356328 | 139998955304512 | [open_context_base.py:409] _init_connect_sync: New connect ready: conn=7465037469755525512(7) context=<futu.quote.open_quote_context.OpenQuoteContext object at 0x7f5447191f10>
+2026-05-26 21:53:46,494 [ftseek_us.futu_lv3] INFO: [FutuLV3] ✅ Push Handler 已注册 (Quote+Kline+Ticker+OrderBook)
+2026-05-26 21:53:46,495 [app.pipeline.position_monitor] WARNING: [持仓对账] 跳过 PRICE_FAIL 已关闭期权 US.TSLA260603P410000 (防止重导入循环)
+2026-05-26 21:53:46,495 [app.pipeline.position_monitor] WARNING: [持仓对账] 跳过 PRICE_FAIL 已关闭期权 US.MU260605P720000 (防止重导入循环)
+2026-05-26 21:53:46,496 [app.pipeline.position_monitor] WARNING: [持仓对账] 跳过 PRICE_FAIL 已关闭期权 US.RIVN260605P13000 (防止重导入循环)
+2026-05-26 21:53:46,497 [app.pipeline.signal_pipeline] INFO: [扫描] 开始信号扫描...
+2026-05-26 21:53:46,500 [app.storage.trade_store] INFO: [TradeStore] 交易记录表初始化完成
+2026-05-26 21:53:46,501 [app.pipeline.position_monitor] WARNING: [持仓对账] 发现 Broker 新持仓 US.SNDK (LONG 7.0股 @$1426.84)
+2026-05-26 21:53:46,503 [app.storage.trade_store] INFO: [TradeStore] 交易记录表初始化完成
+2026-05-26 21:53:46,505 [app.pipeline.position_monitor] WARNING: [持仓对账] 发现 Broker 新持仓 US.QCOM (LONG 12.0股 @$200.84)
+2026-05-26 21:53:46,507 [app.storage.trade_store] INFO: [TradeStore] 交易记录表初始化完成
+2026-05-26 21:53:46,509 [app.pipeline.position_monitor] WARNING: [持仓对账] 发现 Broker 新持仓 US.ARM (SHORT 23.0股 @$281.04)
+2026-05-26 21:53:46,509 [app.pipeline.position_monitor] WARNING: [持仓对账] 跳过 PRICE_FAIL 已关闭期权 US.QQQ260602P700000 (防止重导入循环)
+2026-05-26 21:53:46,509 [app.pipeline.position_monitor] WARNING: [持仓对账] 跳过 PRICE_FAIL 已关闭期权 US.SPY260602P730000 (防止重导入循环)
+2026-05-26 21:53:46,509 [app.pipeline.position_monitor] WARNING: [持仓对账] 跳过 PRICE_FAIL 已关闭期权 US.SNDK260605P1370000 (防止重导入循环)
+2026-05-26 21:53:46,540 [ftseek_us.futu_lv3] INFO: [FutuLV3] ✅ 连接成功 | LV3 行情可用 | US.AAPL=$310.29 | 延迟 < 1s
+2026-05-26 21:53:46,567 [app.notifier.dingtalk] INFO: [钉钉] send_text 成功: **📊 对账摘要**:
+2026-05-26 21:53:46,567 [app.pipeline.position_monitor] INFO: [持仓对账] 告警已推送: 0恢复 + 3未知 + 0幽灵
+2026-05-26 21:53:46,567 [app.pipeline.position_monitor] INFO: [持仓对账] 完成: +9 新增, -0 清理, 内存共 3 个
+2026-05-26 21:53:46,568 [app.core.scheduler_core] INFO: [分时调度] 美股交易时段，重新订阅 Push 行情
+2026-05-26 21:53:46,568 [app.core.scheduler_core] WARNING: [SANDBOX·FutuLV3] 订阅已过滤: TIER1=8 TIER2=4 ETF=0 (universe=['US.AMD', 'US.ARM', 'US.BWXT', 'US.LCID', 'US.MU', 'US.NIO', 'US.NVDA', 'US.QQQ', 'US.RIVN', 'US.SNDK', 'US.SPY', 'US.TSLA'])
+2026-05-26 21:53:46,601 [ftseek_us.futu_lv3] INFO: [FutuLV3] ✅ 已订阅 12 只美股 QUOTE: ['TSLA', 'NVDA', 'RIVN', 'LCID', 'SNDK', 'ARM', 'MU', 'BWXT', 'AMD', 'NIO', 'SPY', 'QQQ']
+2026-05-26 21:53:46,638 [ftseek_us.futu_lv3] INFO: [FutuLV3] ✅ 已订阅 12 只美股 K_1M: ['TSLA', 'NVDA', 'RIVN', 'LCID', 'SNDK', 'ARM', 'MU', 'BWXT', 'AMD', 'NIO', 'SPY', 'QQQ']
+2026-05-26 21:53:46,674 [ftseek_us.futu_lv3] INFO: [FutuLV3] ✅ 已订阅 12 只美股 K_5M: ['TSLA', 'NVDA', 'RIVN', 'LCID', 'SNDK', 'ARM', 'MU', 'BWXT', 'AMD', 'NIO', 'SPY', 'QQQ']
+2026-05-26 21:53:46,710 [ftseek_us.futu_lv3] INFO: [FutuLV3] ✅ 已订阅 12 只美股 K_15M: ['TSLA', 'NVDA', 'RIVN', 'LCID', 'SNDK', 'ARM', 'MU', 'BWXT', 'AMD', 'NIO', 'SPY', 'QQQ']
+2026-05-26 21:53:46,748 [ftseek_us.futu_lv3] INFO: [FutuLV3] ✅ 已订阅 12 只美股 K_30M: ['TSLA', 'NVDA', 'RIVN', 'LCID', 'SNDK', 'ARM', 'MU', 'BWXT', 'AMD', 'NIO', 'SPY', 'QQQ']
+2026-05-26 21:53:46,786 [ftseek_us.futu_lv3] INFO: [FutuLV3] ✅ 已订阅 12 只美股 ORDER_BOOK: ['TSLA', 'NVDA', 'RIVN', 'LCID', 'SNDK', 'ARM', 'MU', 'BWXT', 'AMD', 'NIO', 'SPY', 'QQQ']
+2026-05-26 21:53:46,822 [ftseek_us.futu_lv3] INFO: [FutuLV3] ✅ 已订阅 12 只美股 TICKER: ['TSLA', 'NVDA', 'RIVN', 'LCID', 'SNDK', 'ARM', 'MU', 'BWXT', 'AMD', 'NIO', 'SPY', 'QQQ']
+2026-05-26 21:53:46,823 [ftseek_us.futu_lv3] INFO: [FutuLV3] 总订阅: 12 只美股
+2026-05-26 21:53:46,823 [app.core.scheduler_core] INFO: [FutuLV3] ✅ 全量 Push 订阅: 12 只 (QUOTE+K_1M+K_5M+K_15M+K_30M+ORDER_BOOK+TICKER)
+2026-05-26 21:53:46,823 [app.core.scheduler_core] INFO: [FutuLV3] ✅ Push 订阅模式已激活 | 监控 12 只美股 | 槽位: 84/1000 | TIER1=8 TIER2=4 ETF=0
+2026-05-26 21:53:46,861 [app.core.scheduler_core] INFO: [FutuLV3] ✅ 快照验证通过 | 测试标的: NVDA | 价格: $215.26 | 数据源: futu_lv3
+2026-05-26 21:53:46,878 [app.pipeline.position_monitor] INFO: [资本安全] 🟢 安全 | 净值=$1,080,696 | 回撤 -1.1% | 风险系数 1.0
+2026-05-26 21:53:47,029 [ftseek_us.futu_lv3] INFO: [FutuLV3] ✅ Ticker 数据到达: 1 笔, 首批: ['US.SPY']
+2026-05-26 21:53:47,068 [ftseek.exit_monitor] INFO: 📊 ExitMonitor 已初始化 (ExitMonitor 已就绪)
+2026-05-26 21:53:47,069 [ftseek.exit_monitor] INFO: [退出监控·M1·跳过] US.SNDK source=unknown protection=protected (策略不接管, 用户责任)
+2026-05-26 21:53:47,069 [ftseek.exit_monitor] INFO: [退出监控·M1·跳过] US.QCOM source=unknown protection=protected (策略不接管, 用户责任)
+2026-05-26 21:53:47,069 [ftseek.exit_monitor] INFO: [退出监控·M1·跳过] US.ARM source=unknown protection=protected (策略不接管, 用户责任)
+2026-05-26 21:53:47,069 [ftseek.exit_monitor] WARNING: [退出监控·M1] 跳过 3 个 PROTECTED/FROZEN 仓位 (默认隔离; takeover 接管: scripts/position_takeover.py)
+2026-05-26 21:53:47,077 [app.storage.trade_store] INFO: [TruthSource] 仓位写入 US.SNDK v1 src=exit_monitor action=update_trail
+2026-05-26 21:53:47,078 [ftseek_us.futu_lv3] INFO: [FutuLV3] ✅ Push 数据到达: 1 条, 首批: ['US.TSLA']
+2026-05-26 21:53:47,098 [app.storage.trade_store] INFO: [TruthSource] 仓位写入 US.QCOM v1 src=exit_monitor action=update_trail
+2026-05-26 21:53:47,119 [app.storage.trade_store] INFO: [TruthSource] 仓位写入 US.ARM v1 src=exit_monitor action=update_trail
+2026-05-26 21:53:47,195 [app.analysis.market_state] INFO: VIX 当前值=16.59 (FRED CSV)
+2026-05-26 21:53:47,197 [app.scalping.engine] INFO: [ScalpingEngine] ATR 自适应退出已启用 | TP 倍数=1.5x | SL 倍数=1.5x
+2026-05-26 21:53:47,197 [app.scalping.engine] INFO: [ScalpingEngine] 轻量追踪止损已启用 | trail_mult=0.8x | min_profit=1.5%
+2026-05-26 21:53:47,198 [app.scalping.engine] INFO: [ScalpingEngine] 订单流过滤已启用 | min_bid_ask=1.5
+2026-05-26 21:53:47,198 [app.scalping.engine] INFO: [ScalpingEngine] 多时间框架确认已启用 | higher_tf=K_5M
+2026-05-26 21:53:47,198 [app.scalping.engine] INFO: [ScalpingEngine] 逐笔成交检测已启用 | window=50, imbalance=2.0x
+2026-05-26 21:53:47,198 [app.scalping.engine] INFO: [ScalpingEngine] 使用配置总资金: $1,000,000
+2026-05-26 21:53:47,198 [app.scalping.engine] INFO: [ScalpingEngine] 策略日亏损限额动态计算: $10,000 (1% of equity)
+2026-05-26 21:53:47,213 [app.scalping.budget] INFO: [ScalpingBudget] 持久化恢复 | 日亏损: $0 | 已用: $145,176 | 持仓: 10
+2026-05-26 21:53:47,215 [app.scalping.budget] INFO: [ScalpingBudget] 初始化 | 总资金: $1,000,000 | Scalping 预算: $250,000 (25%) | 单笔最大: $25,000 | 日亏损上限: $30,000
+2026-05-26 21:53:47,217 [app.scalping.circuit_breaker] INFO: [CircuitBreaker] 初始化 | 最大连续亏损: 2 | 冷却时间: 60 分钟
+2026-05-26 21:53:47,218 [app.scalping.engine] INFO: [ScalpingEngine] 信号冷却时间: 60s
+2026-05-26 21:53:47,218 [app.scalping.engine] INFO: [ScalpingEngine] STRUCTURE_EXIT 冷却已配置: 连续亏损=3次, 冷却=24小时, 方向=same_only
+2026-05-26 21:53:47,218 [app.scalping.stats] INFO: [StatsTracker] 已初始化 (CSV: /root/.hermes/ftseek/data/scalping_trades.csv)
+2026-05-26 21:53:47,219 [ftseek-us.risk.margin_guard] INFO: [MarginGuard] 美股保证金风控已启动 | 滞回间隙=0.1 | 最大API失败=2次 | 缓存TTL=30.0s
+2026-05-26 21:53:47,219 [app.scalping.engine] INFO: [ScalpingEngine] 美股保证金风控 (MarginGuard) 已初始化并连接
+2026-05-26 21:53:47,231 [ftseek.scalping.selector] INFO: [ScalpingSelector] 已创建 | 振幅>=2% | 量>=500,000 | 最大25只 | 财报排除=True | 动态扩展=✅
+2026-05-26 21:53:47,261 [app.storage.unified_trade_store] INFO: [UnifiedTradeStore] 已初始化 (db=/opt/ftseek/FTSeek-US/data/ftseek_us.db)
+2026-05-26 21:53:47,263 [app.scalping.engine] INFO: [ScalpingEngine] 统一交易记录已连接
+2026-05-26 21:53:47,263 [app.scalping.engine] INFO: [ScalpingEngine] 强制标的验证器已初始化: ['US.SNDK']
+2026-05-26 21:53:47,268 [app.scalping.engine] INFO: [Scalping 恢复] 无需要恢复的活跃交易
+2026-05-26 21:53:47,269 [app.scalping.engine] INFO: [ScalpingEngine] 交易时段已到，激活 Scalping 引擎
+2026-05-26 21:53:47,305 [ftseek_us.futu_lv3] INFO: [FutuLV3] ✅ 已订阅 4 只美股 QUOTE: ['JD', 'BIDU', 'WMT', 'GOOGL']
+2026-05-26 21:53:47,344 [ftseek_us.futu_lv3] INFO: [FutuLV3] ✅ 已订阅 4 只美股 K_1M: ['JD', 'BIDU', 'WMT', 'GOOGL']
+2026-05-26 21:53:47,344 [ftseek_us.futu_lv3] INFO: [FutuLV3] 总订阅: 16 只美股
+2026-05-26 21:53:47,344 [app.scalping.engine] INFO: [Scalping Futu] 已订阅 6 只标的 | 槽位: +12 | 标的: ['US.SPY', 'US.QQQ', 'US.JD', 'US.BIDU', 'US.WMT']...
+2026-05-26 21:53:47,344 [ftseek.scalping.selector] INFO: [ScalpingSelector] 候选池: 31 只, 开始筛选...
+2026-05-26 21:53:47,426 [ftseek_us.risk.vix_monitor] INFO: VIX 指数：16.59
+2026-05-26 21:53:47,426 [app.core.scheduler_core] INFO: [VIX] 当前值=16.6 | 级别=NORMAL | ✅ VIX 指数 16.59 (市场平稳)
+2026-05-26 21:53:47,437 [ftseek.scalping.selector] INFO: [ScalpingSelector] Step1 流动性: 27/31 通过 (量>=500,000)
+2026-05-26 21:53:47,437 [ftseek.scalping.selector] INFO: [ScalpingSelector] Step2 振幅: 9/27 通过 (振幅>=2%)
+2026-05-26 21:53:47,437 [ftseek.scalping.selector] INFO: [ScalpingSelector] 最终入选: 9 只 | Top5: ['ARM', 'MU', 'SNDK', 'QCOM', 'TME']
+2026-05-26 21:53:47,439 [ftseek.daily_active_pool] INFO: ⚡ 添加剥头皮标的: US.ARM
+2026-05-26 21:53:47,441 [ftseek.daily_active_pool] INFO: ⚡ 添加剥头皮标的: US.QCOM
+2026-05-26 21:53:47,442 [ftseek.daily_active_pool] INFO: ⚡ 添加剥头皮标的: US.TME
+2026-05-26 21:53:47,447 [ftseek.daily_active_pool] INFO: ⚡ 添加剥头皮标的: US.LCID
+2026-05-26 21:53:47,456 [ftseek.daily_active_pool] INFO: ⚡ 添加剥头皮标的: US.RIVN
+2026-05-26 21:53:47,459 [ftseek.daily_active_pool] INFO: ⚡ 添加剥头皮标的: US.UBER
+2026-05-26 21:53:47,459 [ftseek.scalping.selector] INFO: [ScalpingSelector] 盘前动量扩展: +0 只
+2026-05-26 21:53:47,465 [ftseek.scalping.selector] INFO: [ScalpingSelector] 新闻关联扩展: +0 只
+2026-05-26 21:53:47,465 [ftseek.scalping.selector] INFO: [ScalpingSelector] 筛选完成: 9 只入选 SOURCE_SCALPING (基础=9 + 扩展=0) | 振幅>=2% | 量>=500,000 | 财报排除=True
+2026-05-26 21:53:47,465 [app.scalping.engine] INFO: [ScalpingEngine] 自动选股完成: 9 只入选
+2026-05-26 21:53:47,469 [app.scalping.engine] INFO: [ScalpingEngine] 主循环启动
+2026-05-26 21:53:47,474 [app.scalping.engine] INFO: [ScalpingEngine] 🚀 ACTIVE 模式已启动 | 线程: ScalpingEngine
+2026-05-26 21:53:47,716 [app.data.market_data_router] INFO: [Router] US.SPY ★★★ LV3 主通道 | price=$749.74 RSI=61.2 MACD=0.1546 ATR=0.23 trend=NEUTRAL | ticker=N/A | ob=N/A
+2026-05-26 21:53:49,882 [app.data.alphavantage_provider] INFO: [FRED] 获取 VIX 成功: 16.59
+2026-05-26 21:53:50,463 [app.data.alphavantage_provider] INFO: [FRED] 获取 VIX 成功: 16.59
+2026-05-26 21:53:51,189 [app.data.alphavantage_provider] INFO: [FRED] 获取 VIX 成功: 16.59
+2026-05-26 21:53:51,190 [app.data.market_data_router] INFO: [Router] US.SPY price=$749.74 sentiment=0.00 vix=16.59 regime=RANGE source=futu_lv3
+2026-05-26 21:53:51,190 [app.scalping.engine] INFO: [Scalping·强制标的] 加入 US.SNDK (min_trades=3)
+2026-05-26 21:53:51,190 [app.scalping.engine] INFO: [Scalping·黑名单] 过滤 3 只标的: {'UBER', 'TME', 'LCID'}
+2026-05-26 21:53:51,190 [app.scalping.engine] INFO: [ScalpingEngine] _tick 检查: 标的数=4 | 样本=['US.ARM', 'US.QCOM', 'US.RIVN', 'US.SNDK']
+2026-05-26 21:53:51,233 [app.data.market_data_router] INFO: [Router] US.ARM ★★★ LV3 主通道 | price=$305.59 RSI=36.9 MACD=-0.0294 ATR=16.11 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:53:51,234 [app.data.market_data_router] INFO: [Router] US.ARM price=$305.59 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:53:51,549 [app.data.market_data_router] INFO: [Router] US.QCOM ★★★ LV3 主通道 | price=$240.03 RSI=40.6 MACD=-0.0118 ATR=0.12 trend=DOWN | ticker=N/A | ob=N/A
+2026-05-26 21:53:51,549 [app.data.market_data_router] INFO: [Router] US.QCOM price=$240.03 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:53:51,560 [app.scalping.signals] INFO: [SignalDetector] ✅ 信号触发 | 方向: SHORT | 投票: vwap/bollinger | 价格: $240.03 | RSI: 40.6
+2026-05-26 21:53:51,561 [app.data.market_data_router] WARNING: [Router] US.RIVN LV3 K 线数据不足 (28 条)
+2026-05-26 21:53:51,562 [app.data.market_data_router] INFO: [Router] US.RIVN price=$14.53 sentiment=0.00 vix=16.59 regime=RANGE source=futu_lv3_quote_only
+2026-05-26 21:53:51,610 [app.data.market_data_router] INFO: [Router] US.SNDK ★★★ LV3 主通道 | price=$1562.00 RSI=43.9 MACD=-0.0107 ATR=58.30 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:53:51,612 [app.data.market_data_router] INFO: [Router] US.SNDK price=$1562.00 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:53:51,666 [app.data.market_data_router] INFO: [Router] US.ARM ★★★ LV3 主通道 | price=$305.59 RSI=36.9 MACD=-0.0294 ATR=16.11 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:53:51,667 [app.data.market_data_router] INFO: [Router] US.ARM price=$305.59 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:53:51,721 [app.data.market_data_router] INFO: [Router] US.QCOM ★★★ LV3 主通道 | price=$240.03 RSI=40.6 MACD=-0.0118 ATR=0.12 trend=DOWN | ticker=N/A | ob=N/A
+2026-05-26 21:53:51,721 [app.data.market_data_router] INFO: [Router] US.QCOM price=$240.03 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:53:51,721 [app.data.market_data_router] WARNING: [Router] US.RIVN LV3 K 线数据不足 (28 条)
+2026-05-26 21:53:51,721 [app.data.market_data_router] INFO: [Router] US.RIVN price=$14.53 sentiment=0.00 vix=16.59 regime=RANGE source=futu_lv3_quote_only
+2026-05-26 21:53:51,762 [app.data.market_data_router] INFO: [Router] US.SNDK ★★★ LV3 主通道 | price=$1562.24 RSI=43.9 MACD=-0.0107 ATR=58.30 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:53:51,763 [app.data.market_data_router] INFO: [Router] US.SNDK price=$1562.24 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:53:54,148 [app.pipeline.signal_pipeline] INFO: [扫描] VIX=16.6 SPY=0.00% 市场情绪=-1.00
+2026-05-26 21:53:54,194 [ftseek.dynamic_pool] INFO: [动态池] tier=inst | equity=$1,080,696 | futu=safe | water=green → risk=safe | max_symbols=20 | min_confidence=0.5 | max_price=$2000.0 | catalyst=False
+2026-05-26 21:53:54,197 [app.pipeline.signal_pipeline] INFO: [自适应扫描] 本轮轮询 10 只股票：['US.TSLA', 'US.NVDA', 'US.RIVN', 'US.LCID', 'US.MU', 'US.BWXT', 'US.AMD', 'US.NIO', 'US.SPY', 'US.QQQ']
+2026-05-26 21:53:54,337 [app.data.market_data_router] INFO: [Router] US.TSLA ★★★ LV3 主通道 | price=$430.87 RSI=44.7 MACD=-0.0291 ATR=4.53 trend=NEUTRAL | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:53:54,340 [app.data.market_data_router] INFO: [Router] US.TSLA price=$430.87 sentiment=0.00 vix=16.59 regime=RANGE source=futu_lv3
+2026-05-26 21:53:54,341 [app.pipeline.stages.market_data_stage] INFO: [MarketData] US.TSLA price=$430.87 spread=3bps rsi=45 atr=4.53 regime=normal
+2026-05-26 21:53:54,351 [app.pipeline.stages.runner] INFO: [Pipeline] US.TSLA market_data ✓ → SymbolContext(price=430.87) (58ms)
+2026-05-26 21:53:54,354 [app.pipeline.stages.runner] INFO: [Pipeline] US.TSLA signal ✓ → None (拦截) (0ms)
+2026-05-26 21:53:54,354 [app.pipeline.stages.runner] INFO: [Pipeline] US.TSLA Stage 'signal' 返回 None, 管线终止
+2026-05-26 21:53:54,407 [app.data.market_data_router] INFO: [Router] US.NVDA ★★★ LV3 主通道 | price=$215.30 RSI=66.8 MACD=0.0106 ATR=2.39 trend=NEUTRAL | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:53:54,408 [app.data.market_data_router] INFO: [Router] US.NVDA price=$215.30 sentiment=0.00 vix=16.59 regime=RANGE source=futu_lv3
+2026-05-26 21:53:54,408 [app.pipeline.stages.market_data_stage] INFO: [MarketData] US.NVDA price=$215.30 spread=3bps rsi=67 atr=2.39 regime=normal
+2026-05-26 21:53:54,408 [app.pipeline.stages.runner] INFO: [Pipeline] US.NVDA market_data ✓ → SymbolContext(price=215.30) (52ms)
+2026-05-26 21:53:54,408 [app.pipeline.stages.runner] INFO: [Pipeline] US.NVDA signal ✓ → None (拦截) (0ms)
+2026-05-26 21:53:54,408 [app.pipeline.stages.runner] INFO: [Pipeline] US.NVDA Stage 'signal' 返回 None, 管线终止
+2026-05-26 21:53:54,408 [app.data.market_data_router] WARNING: [Router] US.RIVN LV3 K 线数据不足 (28 条)
+2026-05-26 21:53:54,409 [app.data.market_data_router] INFO: [Router] US.RIVN price=$14.53 sentiment=0.00 vix=16.59 regime=RANGE source=futu_lv3_quote_only
+2026-05-26 21:53:54,409 [app.pipeline.stages.market_data_stage] INFO: [MarketData] US.RIVN price=$14.53 spread=3bps rsi=50 atr=0.00 regime=normal
+2026-05-26 21:53:54,410 [app.pipeline.stages.runner] INFO: [Pipeline] US.RIVN market_data ✓ → SymbolContext(price=14.53) (2ms)
+2026-05-26 21:53:54,411 [app.pipeline.stages.runner] INFO: [Pipeline] US.RIVN signal ✓ → None (拦截) (0ms)
+2026-05-26 21:53:54,411 [app.pipeline.stages.runner] INFO: [Pipeline] US.RIVN Stage 'signal' 返回 None, 管线终止
+2026-05-26 21:53:54,411 [app.data.market_data_router] WARNING: [Router] US.LCID LV3 K 线数据不足 (16 条)
+2026-05-26 21:53:54,411 [app.data.market_data_router] INFO: [Router] US.LCID price=$6.04 sentiment=0.00 vix=16.59 regime=RANGE source=futu_lv3_quote_only
+2026-05-26 21:53:54,411 [app.pipeline.stages.market_data_stage] INFO: [MarketData] US.LCID price=$6.04 spread=3bps rsi=50 atr=0.00 regime=normal
+2026-05-26 21:53:54,411 [app.pipeline.stages.runner] INFO: [Pipeline] US.LCID market_data ✓ → SymbolContext(price=6.04) (0ms)
+2026-05-26 21:53:54,411 [app.pipeline.stages.runner] INFO: [Pipeline] US.LCID signal ✓ → None (拦截) (0ms)
+2026-05-26 21:53:54,411 [app.pipeline.stages.runner] INFO: [Pipeline] US.LCID Stage 'signal' 返回 None, 管线终止
+2026-05-26 21:53:54,458 [app.data.market_data_router] INFO: [Router] US.MU ★★★ LV3 主通道 | price=$851.56 RSI=57.8 MACD=-0.0406 ATR=26.71 trend=NEUTRAL | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:53:54,459 [app.data.market_data_router] INFO: [Router] US.MU price=$851.56 sentiment=0.00 vix=16.59 regime=RANGE source=futu_lv3
+2026-05-26 21:53:54,460 [app.pipeline.stages.market_data_stage] INFO: [MarketData] US.MU price=$851.56 spread=3bps rsi=58 atr=26.71 regime=normal
+2026-05-26 21:53:54,460 [app.pipeline.stages.runner] INFO: [Pipeline] US.MU market_data ✓ → SymbolContext(price=851.56) (48ms)
+2026-05-26 21:53:54,460 [app.pipeline.stages.runner] INFO: [Pipeline] US.MU signal ✓ → None (拦截) (0ms)
+2026-05-26 21:53:54,460 [app.pipeline.stages.runner] INFO: [Pipeline] US.MU Stage 'signal' 返回 None, 管线终止
+2026-05-26 21:53:54,670 [app.data.market_data_router] INFO: [Router] US.BWXT ★★★ LV3 主通道 | price=$206.00 RSI=79.3 MACD=0.2031 ATR=0.12 trend=UP | ticker=N/A | ob=N/A
+2026-05-26 21:53:54,670 [app.data.market_data_router] INFO: [Router] US.BWXT price=$206.00 sentiment=0.00 vix=16.59 regime=TREND_UP source=futu_lv3
+2026-05-26 21:53:54,670 [app.pipeline.stages.market_data_stage] INFO: [MarketData] US.BWXT price=$206.00 spread=3bps rsi=79 atr=0.12 regime=normal
+2026-05-26 21:53:54,670 [app.pipeline.stages.runner] INFO: [Pipeline] US.BWXT market_data ✓ → SymbolContext(price=206.00) (210ms)
+2026-05-26 21:53:54,671 [app.pipeline.stages.runner] INFO: [Pipeline] US.BWXT signal ✓ → None (拦截) (0ms)
+2026-05-26 21:53:54,671 [app.pipeline.stages.runner] INFO: [Pipeline] US.BWXT Stage 'signal' 返回 None, 管线终止
+2026-05-26 21:53:54,712 [app.data.market_data_router] INFO: [Router] US.AMD ★★★ LV3 主通道 | price=$489.75 RSI=43.9 MACD=0.0136 ATR=8.44 trend=NEUTRAL | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:53:54,715 [app.data.market_data_router] INFO: [Router] US.AMD price=$489.75 sentiment=0.00 vix=16.59 regime=RANGE source=futu_lv3
+2026-05-26 21:53:54,718 [app.pipeline.stages.market_data_stage] INFO: [MarketData] US.AMD price=$489.75 spread=3bps rsi=44 atr=8.44 regime=normal
+2026-05-26 21:53:54,718 [app.pipeline.stages.runner] INFO: [Pipeline] US.AMD market_data ✓ → SymbolContext(price=489.75) (47ms)
+2026-05-26 21:53:54,718 [app.pipeline.stages.runner] INFO: [Pipeline] US.AMD signal ✓ → None (拦截) (0ms)
+2026-05-26 21:53:54,718 [app.pipeline.stages.runner] INFO: [Pipeline] US.AMD Stage 'signal' 返回 None, 管线终止
+2026-05-26 21:53:54,719 [app.data.market_data_router] WARNING: [Router] US.NIO LV3 K 线数据不足 (29 条)
+2026-05-26 21:53:54,720 [app.data.market_data_router] INFO: [Router] US.NIO price=$5.30 sentiment=0.00 vix=16.59 regime=RANGE source=futu_lv3_quote_only
+2026-05-26 21:53:54,720 [app.pipeline.stages.market_data_stage] INFO: [MarketData] US.NIO price=$5.30 spread=3bps rsi=50 atr=0.00 regime=normal
+2026-05-26 21:53:54,720 [app.pipeline.stages.runner] INFO: [Pipeline] US.NIO market_data ✓ → SymbolContext(price=5.30) (1ms)
+2026-05-26 21:53:54,720 [app.pipeline.stages.runner] INFO: [Pipeline] US.NIO signal ✓ → None (拦截) (0ms)
+2026-05-26 21:53:54,720 [app.pipeline.stages.runner] INFO: [Pipeline] US.NIO Stage 'signal' 返回 None, 管线终止
+2026-05-26 21:53:54,793 [app.data.market_data_router] INFO: [Router] US.SPY ★★★ LV3 主通道 | price=$749.71 RSI=76.5 MACD=0.0787 ATR=1.50 trend=UP | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:53:54,793 [app.data.market_data_router] INFO: [Router] US.SPY price=$749.71 sentiment=0.00 vix=16.59 regime=TREND_UP source=futu_lv3
+2026-05-26 21:53:54,794 [app.pipeline.stages.market_data_stage] INFO: [MarketData] US.SPY price=$749.71 spread=3bps rsi=76 atr=1.50 regime=normal
+2026-05-26 21:53:54,794 [app.pipeline.stages.runner] INFO: [Pipeline] US.SPY market_data ✓ → SymbolContext(price=749.71) (73ms)
+2026-05-26 21:53:54,794 [app.pipeline.stages.signal_stage] INFO: [Signal] US.SPY 技术面命中: 3/4 指标共振 | score=-10
+2026-05-26 21:53:54,795 [app.pipeline.stages.runner] INFO: [Pipeline] US.SPY signal ✓ → SignalCandidate(SHORT strength=10) (1ms)
+2026-05-26 21:53:54,796 [app.pipeline.stages.risk_stage] INFO: [Risk] US.SPY 仓位=70股 ($52,480) | equity=$1,080,696 | tier=inst | wl=green | pct=5.0%
+2026-05-26 21:53:54,796 [app.pipeline.stages.runner] INFO: [Pipeline] US.SPY risk ✓ → OrderRequest(qty=70 sl=747.46) (0ms)
+2026-05-26 21:53:54,875 [app.data.market_data_router] INFO: [Router] US.SPY ★★★ LV3 主通道 | price=$749.71 RSI=76.5 MACD=0.0787 ATR=1.50 trend=UP | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:53:54,879 [app.data.market_data_router] INFO: [Router] US.SPY price=$749.71 sentiment=0.00 vix=16.59 regime=TREND_UP source=futu_lv3
+2026-05-26 21:53:54,903 [ftseek_us.decision_recorder] INFO: [DecisionRecorder] 5 张表初始化完成
+2026-05-26 21:53:54,908 [ftseek_us.decision_recorder] INFO: [DecisionRecorder] 初始化完成: /opt/ftseek/FTSeek-US/data/decisions.db
+2026-05-26 21:53:54,918 [ftseek_us.decision_recorder] INFO: [DecisionRecorder] 记录决策: DEC-20260526215354-SPY-1a4a9a US.SPY SHORT strength=10
+2026-05-26 21:53:54,922 [app.agents.voting.voting_coordinator] INFO: [DecisionRecorder] 决策已记录: DEC-20260526215354-SPY-1a4a9a
+2026-05-26 21:53:54,950 [app.pipeline.order_executor] WARNING: 🚫 [做空门禁] US.SPY 做空信号强度不足 (strength=10 < 25)
+2026-05-26 21:53:55,003 [app.pipeline.signal_pipeline] INFO: [扫描] VIX=16.6 SPY=0.00% 市场情绪=-1.00
+2026-05-26 21:53:55,039 [ftseek.dynamic_pool] INFO: [动态池] tier=inst | equity=$1,080,696 | futu=safe | water=green → risk=safe | max_symbols=20 | min_confidence=0.5 | max_price=$2000.0 | catalyst=False
+2026-05-26 21:53:55,039 [app.pipeline.signal_pipeline] INFO: [自适应扫描] 本轮轮询 1 只股票：['US.QQQ']
+2026-05-26 21:53:55,072 [app.data.market_data_router] INFO: [Router] US.QQQ ★★★ LV3 主通道 | price=$726.42 RSI=54.2 MACD=0.0010 ATR=2.62 trend=NEUTRAL | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:53:55,074 [app.data.market_data_router] INFO: [Router] US.QQQ price=$726.42 sentiment=0.00 vix=16.59 regime=RANGE source=futu_lv3
+2026-05-26 21:53:55,074 [app.pipeline.stages.market_data_stage] INFO: [MarketData] US.QQQ price=$726.42 spread=3bps rsi=54 atr=2.62 regime=normal
+2026-05-26 21:53:55,074 [app.pipeline.stages.runner] INFO: [Pipeline] US.QQQ market_data ✓ → SymbolContext(price=726.42) (65ms)
+2026-05-26 21:53:55,075 [app.pipeline.stages.runner] INFO: [Pipeline] US.QQQ signal ✓ → None (拦截) (0ms)
+2026-05-26 21:53:55,075 [app.pipeline.stages.runner] INFO: [Pipeline] US.QQQ Stage 'signal' 返回 None, 管线终止
+2026-05-26 21:53:55,114 [app.data.market_data_router] INFO: [Router] US.QQQ ★★★ LV3 主通道 | price=$726.42 RSI=54.2 MACD=0.0010 ATR=2.62 trend=NEUTRAL | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:53:55,114 [app.data.market_data_router] INFO: [Router] US.QQQ price=$726.42 sentiment=0.00 vix=16.59 regime=RANGE source=futu_lv3
+2026-05-26 21:53:55,114 [app.pipeline.stages.market_data_stage] INFO: [MarketData] US.QQQ price=$726.42 spread=3bps rsi=54 atr=2.62 regime=normal
+2026-05-26 21:53:55,114 [app.pipeline.stages.runner] INFO: [Pipeline] US.QQQ market_data ✓ → SymbolContext(price=726.42) (72ms)
+2026-05-26 21:53:55,114 [app.pipeline.stages.runner] INFO: [Pipeline] US.QQQ signal ✓ → None (拦截) (0ms)
+2026-05-26 21:53:55,114 [app.pipeline.stages.runner] INFO: [Pipeline] US.QQQ Stage 'signal' 返回 None, 管线终止
+2026-05-26 21:53:55,166 [app.data.market_data_router] INFO: [Router] US.SNDK ★★★ LV3 主通道 | price=$1561.30 RSI=43.9 MACD=-0.0107 ATR=58.30 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:53:55,168 [app.data.market_data_router] INFO: [Router] US.SNDK price=$1561.30 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:53:55,230 [app.data.market_data_router] INFO: [Router] US.QCOM ★★★ LV3 主通道 | price=$240.03 RSI=40.6 MACD=-0.0118 ATR=0.12 trend=DOWN | ticker=N/A | ob=N/A
+2026-05-26 21:53:55,231 [app.data.market_data_router] INFO: [Router] US.QCOM price=$240.03 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:53:55,269 [app.data.market_data_router] INFO: [Router] US.ARM ★★★ LV3 主通道 | price=$305.31 RSI=36.9 MACD=-0.0294 ATR=16.11 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:53:55,270 [app.data.market_data_router] INFO: [Router] US.ARM price=$305.31 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:53:56,847 [app.data.market_data_router] INFO: [Router] US.SPY ★★★ LV3 主通道 | price=$749.75 RSI=76.5 MACD=0.0787 ATR=1.50 trend=UP | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:53:56,847 [app.data.market_data_router] INFO: [Router] US.SPY price=$749.75 sentiment=0.00 vix=16.59 regime=TREND_UP source=futu_lv3
+2026-05-26 21:53:56,847 [app.scalping.engine] INFO: [Scalping·强制标的] 加入 US.SNDK (min_trades=3)
+2026-05-26 21:53:56,847 [app.scalping.engine] INFO: [Scalping·黑名单] 过滤 3 只标的: {'UBER', 'TME', 'LCID'}
+2026-05-26 21:53:56,847 [app.scalping.engine] INFO: [ScalpingEngine] _tick 检查: 标的数=4 | 样本=['US.ARM', 'US.QCOM', 'US.RIVN', 'US.SNDK']
+2026-05-26 21:53:56,879 [app.data.market_data_router] INFO: [Router] US.ARM ★★★ LV3 主通道 | price=$305.29 RSI=36.9 MACD=-0.0294 ATR=16.11 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:53:56,880 [app.data.market_data_router] INFO: [Router] US.ARM price=$305.29 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:53:57,027 [app.data.market_data_router] INFO: [Router] US.QCOM ★★★ LV3 主通道 | price=$240.16 RSI=40.6 MACD=-0.0118 ATR=0.12 trend=DOWN | ticker=N/A | ob=N/A
+2026-05-26 21:53:57,027 [app.data.market_data_router] INFO: [Router] US.QCOM price=$240.16 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:53:57,042 [app.scalping.signals] INFO: [SignalDetector] ✅ 信号触发 | 方向: SHORT | 投票: vwap/bollinger | 价格: $240.16 | RSI: 40.6
+2026-05-26 21:53:57,043 [app.data.market_data_router] WARNING: [Router] US.RIVN LV3 K 线数据不足 (28 条)
+2026-05-26 21:53:57,043 [app.data.market_data_router] INFO: [Router] US.RIVN price=$14.52 sentiment=0.00 vix=16.59 regime=RANGE source=futu_lv3_quote_only
+2026-05-26 21:53:57,091 [app.data.market_data_router] INFO: [Router] US.SNDK ★★★ LV3 主通道 | price=$1560.49 RSI=43.9 MACD=-0.0107 ATR=58.30 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:53:57,092 [app.data.market_data_router] INFO: [Router] US.SNDK price=$1560.49 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:53:57,145 [app.data.market_data_router] INFO: [Router] US.ARM ★★★ LV3 主通道 | price=$305.29 RSI=36.9 MACD=-0.0294 ATR=16.11 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:53:57,146 [app.data.market_data_router] INFO: [Router] US.ARM price=$305.29 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:53:57,204 [app.data.market_data_router] INFO: [Router] US.QCOM ★★★ LV3 主通道 | price=$240.16 RSI=40.6 MACD=-0.0118 ATR=0.12 trend=DOWN | ticker=N/A | ob=N/A
+2026-05-26 21:53:57,204 [app.data.market_data_router] INFO: [Router] US.QCOM price=$240.16 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:53:57,204 [app.data.market_data_router] WARNING: [Router] US.RIVN LV3 K 线数据不足 (28 条)
+2026-05-26 21:53:57,204 [app.data.market_data_router] INFO: [Router] US.RIVN price=$14.52 sentiment=0.00 vix=16.59 regime=RANGE source=futu_lv3_quote_only
+2026-05-26 21:53:57,247 [app.data.market_data_router] INFO: [Router] US.SNDK ★★★ LV3 主通道 | price=$1560.49 RSI=43.9 MACD=-0.0107 ATR=58.30 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:53:57,248 [app.data.market_data_router] INFO: [Router] US.SNDK price=$1560.49 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:54:02,320 [app.data.market_data_router] INFO: [Router] US.SPY ★★★ LV3 主通道 | price=$749.89 RSI=76.5 MACD=0.0787 ATR=1.50 trend=UP | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:54:02,321 [app.data.market_data_router] INFO: [Router] US.SPY price=$749.89 sentiment=0.00 vix=16.59 regime=TREND_UP source=futu_lv3
+2026-05-26 21:54:02,321 [app.scalping.engine] INFO: [Scalping·强制标的] 加入 US.SNDK (min_trades=3)
+2026-05-26 21:54:02,321 [app.scalping.engine] INFO: [Scalping·黑名单] 过滤 3 只标的: {'UBER', 'TME', 'LCID'}
+2026-05-26 21:54:02,324 [app.scalping.engine] INFO: [ScalpingEngine] _tick 检查: 标的数=4 | 样本=['US.ARM', 'US.QCOM', 'US.RIVN', 'US.SNDK']
+2026-05-26 21:54:02,368 [app.data.market_data_router] INFO: [Router] US.ARM ★★★ LV3 主通道 | price=$305.59 RSI=36.9 MACD=-0.0294 ATR=16.11 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:54:02,369 [app.data.market_data_router] INFO: [Router] US.ARM price=$305.59 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:54:02,376 [ftseek.exit_monitor] INFO: [退出监控·M1·跳过] US.SNDK source=unknown protection=protected (策略不接管, 用户责任)
+2026-05-26 21:54:02,376 [ftseek.exit_monitor] INFO: [退出监控·M1·跳过] US.QCOM source=unknown protection=protected (策略不接管, 用户责任)
+2026-05-26 21:54:02,376 [ftseek.exit_monitor] INFO: [退出监控·M1·跳过] US.ARM source=unknown protection=protected (策略不接管, 用户责任)
+2026-05-26 21:54:02,377 [ftseek.exit_monitor] WARNING: [退出监控·M1] 跳过 3 个 PROTECTED/FROZEN 仓位 (默认隔离; takeover 接管: scripts/position_takeover.py)
+2026-05-26 21:54:02,488 [app.data.market_data_router] INFO: [Router] US.QCOM ★★★ LV3 主通道 | price=$240.14 RSI=40.6 MACD=-0.0118 ATR=0.12 trend=DOWN | ticker=N/A | ob=N/A
+2026-05-26 21:54:02,488 [app.data.market_data_router] INFO: [Router] US.QCOM price=$240.14 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:54:02,507 [app.scalping.signals] INFO: [SignalDetector] ✅ 信号触发 | 方向: SHORT | 投票: vwap/bollinger | 价格: $240.14 | RSI: 40.6
+2026-05-26 21:54:02,509 [app.data.market_data_router] WARNING: [Router] US.RIVN LV3 K 线数据不足 (28 条)
+2026-05-26 21:54:02,509 [app.data.market_data_router] INFO: [Router] US.RIVN price=$14.52 sentiment=0.00 vix=16.59 regime=RANGE source=futu_lv3_quote_only
+2026-05-26 21:54:02,555 [app.data.market_data_router] INFO: [Router] US.SNDK ★★★ LV3 主通道 | price=$1565.96 RSI=43.9 MACD=-0.0107 ATR=58.30 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:54:02,555 [app.data.market_data_router] INFO: [Router] US.SNDK price=$1565.96 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:54:02,612 [app.data.market_data_router] INFO: [Router] US.ARM ★★★ LV3 主通道 | price=$305.59 RSI=36.9 MACD=-0.0294 ATR=16.11 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:54:02,613 [app.data.market_data_router] INFO: [Router] US.ARM price=$305.59 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:54:02,677 [app.data.market_data_router] INFO: [Router] US.QCOM ★★★ LV3 主通道 | price=$240.14 RSI=40.6 MACD=-0.0118 ATR=0.12 trend=DOWN | ticker=N/A | ob=N/A
+2026-05-26 21:54:02,678 [app.data.market_data_router] INFO: [Router] US.QCOM price=$240.14 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:54:02,680 [app.data.market_data_router] WARNING: [Router] US.RIVN LV3 K 线数据不足 (28 条)
+2026-05-26 21:54:02,680 [app.data.market_data_router] INFO: [Router] US.RIVN price=$14.52 sentiment=0.00 vix=16.59 regime=RANGE source=futu_lv3_quote_only
+2026-05-26 21:54:02,715 [app.data.market_data_router] INFO: [Router] US.SNDK ★★★ LV3 主通道 | price=$1565.96 RSI=43.9 MACD=-0.0107 ATR=58.30 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:54:02,715 [app.data.market_data_router] INFO: [Router] US.SNDK price=$1565.96 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:54:07,788 [app.data.market_data_router] INFO: [Router] US.SPY ★★★ LV3 主通道 | price=$749.99 RSI=76.5 MACD=0.0787 ATR=1.50 trend=UP | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:54:07,790 [app.data.market_data_router] INFO: [Router] US.SPY price=$749.99 sentiment=0.00 vix=16.59 regime=TREND_UP source=futu_lv3
+2026-05-26 21:54:07,794 [app.scalping.engine] INFO: [Scalping·强制标的] 加入 US.SNDK (min_trades=3)
+2026-05-26 21:54:07,794 [app.scalping.engine] INFO: [Scalping·黑名单] 过滤 3 只标的: {'UBER', 'TME', 'LCID'}
+2026-05-26 21:54:07,794 [app.scalping.engine] INFO: [ScalpingEngine] _tick 检查: 标的数=4 | 样本=['US.ARM', 'US.QCOM', 'US.RIVN', 'US.SNDK']
+2026-05-26 21:54:07,836 [app.data.market_data_router] INFO: [Router] US.ARM ★★★ LV3 主通道 | price=$305.38 RSI=36.9 MACD=-0.0294 ATR=16.11 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:54:07,836 [app.data.market_data_router] INFO: [Router] US.ARM price=$305.38 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:54:07,998 [app.data.market_data_router] INFO: [Router] US.QCOM ★★★ LV3 主通道 | price=$240.50 RSI=40.6 MACD=-0.0118 ATR=0.12 trend=DOWN | ticker=N/A | ob=N/A
+2026-05-26 21:54:08,000 [app.data.market_data_router] INFO: [Router] US.QCOM price=$240.50 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:54:08,010 [app.scalping.signals] INFO: [SignalDetector] ✅ 信号触发 | 方向: SHORT | 投票: vwap/bollinger | 价格: $240.50 | RSI: 40.6
+2026-05-26 21:54:08,010 [app.data.market_data_router] WARNING: [Router] US.RIVN LV3 K 线数据不足 (28 条)
+2026-05-26 21:54:08,011 [app.data.market_data_router] INFO: [Router] US.RIVN price=$14.52 sentiment=0.00 vix=16.59 regime=RANGE source=futu_lv3_quote_only
+2026-05-26 21:54:08,075 [app.data.market_data_router] INFO: [Router] US.SNDK ★★★ LV3 主通道 | price=$1565.89 RSI=43.9 MACD=-0.0107 ATR=58.30 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:54:08,075 [app.data.market_data_router] INFO: [Router] US.SNDK price=$1565.89 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:54:08,133 [app.data.market_data_router] INFO: [Router] US.ARM ★★★ LV3 主通道 | price=$305.38 RSI=36.9 MACD=-0.0294 ATR=16.11 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:54:08,134 [app.data.market_data_router] INFO: [Router] US.ARM price=$305.38 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:54:08,187 [app.data.market_data_router] INFO: [Router] US.QCOM ★★★ LV3 主通道 | price=$240.50 RSI=40.6 MACD=-0.0118 ATR=0.12 trend=DOWN | ticker=N/A | ob=N/A
+2026-05-26 21:54:08,187 [app.data.market_data_router] INFO: [Router] US.QCOM price=$240.50 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:54:08,187 [app.data.market_data_router] WARNING: [Router] US.RIVN LV3 K 线数据不足 (28 条)
+2026-05-26 21:54:08,187 [app.data.market_data_router] INFO: [Router] US.RIVN price=$14.52 sentiment=0.00 vix=16.59 regime=RANGE source=futu_lv3_quote_only
+2026-05-26 21:54:08,228 [app.data.market_data_router] INFO: [Router] US.SNDK ★★★ LV3 主通道 | price=$1565.89 RSI=43.9 MACD=-0.0107 ATR=58.30 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:54:08,228 [app.data.market_data_router] INFO: [Router] US.SNDK price=$1565.89 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:54:13,294 [app.data.market_data_router] INFO: [Router] US.SPY ★★★ LV3 主通道 | price=$750.08 RSI=76.5 MACD=0.0787 ATR=1.50 trend=UP | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:54:13,295 [app.data.market_data_router] INFO: [Router] US.SPY price=$750.08 sentiment=0.00 vix=16.59 regime=TREND_UP source=futu_lv3
+2026-05-26 21:54:13,295 [app.scalping.engine] INFO: [Scalping·强制标的] 加入 US.SNDK (min_trades=3)
+2026-05-26 21:54:13,295 [app.scalping.engine] INFO: [Scalping·黑名单] 过滤 3 只标的: {'UBER', 'TME', 'LCID'}
+2026-05-26 21:54:13,295 [app.scalping.engine] INFO: [ScalpingEngine] _tick 检查: 标的数=4 | 样本=['US.ARM', 'US.QCOM', 'US.RIVN', 'US.SNDK']
+2026-05-26 21:54:13,330 [app.data.market_data_router] INFO: [Router] US.ARM ★★★ LV3 主通道 | price=$305.80 RSI=36.9 MACD=-0.0294 ATR=16.11 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:54:13,334 [app.data.market_data_router] INFO: [Router] US.ARM price=$305.80 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:54:13,471 [app.data.market_data_router] INFO: [Router] US.QCOM ★★★ LV3 主通道 | price=$240.69 RSI=40.6 MACD=-0.0118 ATR=0.12 trend=DOWN | ticker=N/A | ob=N/A
+2026-05-26 21:54:13,472 [app.data.market_data_router] INFO: [Router] US.QCOM price=$240.69 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:54:13,479 [app.scalping.signals] INFO: [SignalDetector] ✅ 信号触发 | 方向: SHORT | 投票: vwap/bollinger | 价格: $240.69 | RSI: 40.6
+2026-05-26 21:54:13,479 [app.data.market_data_router] WARNING: [Router] US.RIVN LV3 K 线数据不足 (28 条)
+2026-05-26 21:54:13,480 [app.data.market_data_router] INFO: [Router] US.RIVN price=$14.53 sentiment=0.00 vix=16.59 regime=RANGE source=futu_lv3_quote_only
+2026-05-26 21:54:13,533 [app.data.market_data_router] INFO: [Router] US.SNDK ★★★ LV3 主通道 | price=$1569.30 RSI=43.9 MACD=-0.0107 ATR=58.30 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:54:13,541 [app.data.market_data_router] INFO: [Router] US.SNDK price=$1569.30 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:54:13,610 [app.data.market_data_router] INFO: [Router] US.ARM ★★★ LV3 主通道 | price=$305.80 RSI=36.9 MACD=-0.0294 ATR=16.11 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:54:13,611 [app.data.market_data_router] INFO: [Router] US.ARM price=$305.80 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:54:13,667 [app.data.market_data_router] INFO: [Router] US.QCOM ★★★ LV3 主通道 | price=$240.69 RSI=40.6 MACD=-0.0118 ATR=0.12 trend=DOWN | ticker=N/A | ob=N/A
+2026-05-26 21:54:13,668 [app.data.market_data_router] INFO: [Router] US.QCOM price=$240.69 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:54:13,668 [app.data.market_data_router] WARNING: [Router] US.RIVN LV3 K 线数据不足 (28 条)
+2026-05-26 21:54:13,668 [app.data.market_data_router] INFO: [Router] US.RIVN price=$14.53 sentiment=0.00 vix=16.59 regime=RANGE source=futu_lv3_quote_only
+2026-05-26 21:54:13,706 [app.data.market_data_router] INFO: [Router] US.SNDK ★★★ LV3 主通道 | price=$1569.30 RSI=43.9 MACD=-0.0107 ATR=58.30 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:54:13,706 [app.data.market_data_router] INFO: [Router] US.SNDK price=$1569.30 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:54:14,448 [ftseek_us.position_sync] INFO: [US Sync] 跳过新持仓 US.QCOM (创建 28s 前, 等待 Futu 确认成交)
+2026-05-26 21:54:14,451 [ftseek_us.position_sync] INFO: [US Sync] 跳过新持仓 US.SNDK (创建 28s 前, 等待 Futu 确认成交)
+2026-05-26 21:54:14,470 [ftseek_us.position_sync] INFO: [US Sync] 跳过新持仓 US.ARM (创建 28s 前, 等待 Futu 确认成交)
+2026-05-26 21:54:14,496 [ftseek_us.position_sync] INFO: [US Sync] 跳过新持仓 US.QCOM (创建 28s 前 < 180s 保护窗口, 等待 Futu 确认成交)
+2026-05-26 21:54:14,496 [ftseek_us.position_sync] INFO: [US Sync] 跳过新持仓 US.SNDK (创建 28s 前 < 180s 保护窗口, 等待 Futu 确认成交)
+2026-05-26 21:54:14,496 [ftseek_us.position_sync] INFO: [US Sync] 跳过新持仓 US.ARM (创建 28s 前 < 180s 保护窗口, 等待 Futu 确认成交)
+2026-05-26 21:54:14,496 [ftseek_us.position_sync] INFO: [US Sync] Done | Futu: 0 | DB: 0
+2026-05-26 21:54:14,533 [ftseek_us.position_sync] WARNING: ⚠️ [US Sync Consistency] 检测到 2 个不一致:
+  DB 有多余持仓 (Broker 已无): {'US.QCOM', 'US.SNDK', 'US.ARM'}
+  Memory 有幽灵仓: {'US.QCOM', 'US.SNDK', 'US.ARM'}
+2026-05-26 21:54:17,534 [ftseek.exit_monitor] INFO: [退出监控·M1·跳过] US.SNDK source=unknown protection=protected (策略不接管, 用户责任)
+2026-05-26 21:54:17,535 [ftseek.exit_monitor] INFO: [退出监控·M1·跳过] US.QCOM source=unknown protection=protected (策略不接管, 用户责任)
+2026-05-26 21:54:17,535 [ftseek.exit_monitor] INFO: [退出监控·M1·跳过] US.ARM source=unknown protection=protected (策略不接管, 用户责任)
+2026-05-26 21:54:17,535 [ftseek.exit_monitor] WARNING: [退出监控·M1] 跳过 3 个 PROTECTED/FROZEN 仓位 (默认隔离; takeover 接管: scripts/position_takeover.py)
+2026-05-26 21:54:18,771 [app.data.market_data_router] INFO: [Router] US.SPY ★★★ LV3 主通道 | price=$750.04 RSI=76.5 MACD=0.0787 ATR=1.50 trend=UP | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:54:18,771 [app.data.market_data_router] INFO: [Router] US.SPY price=$750.04 sentiment=0.00 vix=16.59 regime=TREND_UP source=futu_lv3
+2026-05-26 21:54:18,771 [app.scalping.engine] INFO: [Scalping·强制标的] 加入 US.SNDK (min_trades=3)
+2026-05-26 21:54:18,771 [app.scalping.engine] INFO: [Scalping·黑名单] 过滤 3 只标的: {'UBER', 'TME', 'LCID'}
+2026-05-26 21:54:18,771 [app.scalping.engine] INFO: [ScalpingEngine] _tick 检查: 标的数=4 | 样本=['US.ARM', 'US.QCOM', 'US.RIVN', 'US.SNDK']
+2026-05-26 21:54:18,808 [app.data.market_data_router] INFO: [Router] US.ARM ★★★ LV3 主通道 | price=$303.82 RSI=36.9 MACD=-0.0294 ATR=16.11 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:54:18,808 [app.data.market_data_router] INFO: [Router] US.ARM price=$303.82 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:54:18,936 [app.data.market_data_router] INFO: [Router] US.QCOM ★★★ LV3 主通道 | price=$239.98 RSI=40.6 MACD=-0.0118 ATR=0.12 trend=DOWN | ticker=N/A | ob=N/A
+2026-05-26 21:54:18,936 [app.data.market_data_router] INFO: [Router] US.QCOM price=$239.98 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:54:18,952 [app.scalping.signals] INFO: [SignalDetector] ✅ 信号触发 | 方向: SHORT | 投票: vwap/bollinger | 价格: $239.98 | RSI: 40.6
+2026-05-26 21:54:18,953 [app.data.market_data_router] WARNING: [Router] US.RIVN LV3 K 线数据不足 (28 条)
+2026-05-26 21:54:18,954 [app.data.market_data_router] INFO: [Router] US.RIVN price=$14.52 sentiment=0.00 vix=16.59 regime=RANGE source=futu_lv3_quote_only
+2026-05-26 21:54:19,009 [app.data.market_data_router] INFO: [Router] US.SNDK ★★★ LV3 主通道 | price=$1566.21 RSI=43.9 MACD=-0.0107 ATR=58.30 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:54:19,012 [app.data.market_data_router] INFO: [Router] US.SNDK price=$1566.21 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:54:19,068 [app.data.market_data_router] INFO: [Router] US.ARM ★★★ LV3 主通道 | price=$303.82 RSI=36.9 MACD=-0.0294 ATR=16.11 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:54:19,068 [app.data.market_data_router] INFO: [Router] US.ARM price=$303.82 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:54:19,133 [app.data.market_data_router] INFO: [Router] US.QCOM ★★★ LV3 主通道 | price=$239.98 RSI=40.6 MACD=-0.0118 ATR=0.12 trend=DOWN | ticker=N/A | ob=N/A
+2026-05-26 21:54:19,134 [app.data.market_data_router] INFO: [Router] US.QCOM price=$239.98 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:54:19,136 [app.data.market_data_router] WARNING: [Router] US.RIVN LV3 K 线数据不足 (28 条)
+2026-05-26 21:54:19,136 [app.data.market_data_router] INFO: [Router] US.RIVN price=$14.52 sentiment=0.00 vix=16.59 regime=RANGE source=futu_lv3_quote_only
+2026-05-26 21:54:19,175 [app.data.market_data_router] INFO: [Router] US.SNDK ★★★ LV3 主通道 | price=$1566.21 RSI=43.9 MACD=-0.0107 ATR=58.30 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:54:19,176 [app.data.market_data_router] INFO: [Router] US.SNDK price=$1566.21 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:54:24,248 [app.data.market_data_router] INFO: [Router] US.SPY ★★★ LV3 主通道 | price=$750.10 RSI=76.5 MACD=0.0787 ATR=1.50 trend=UP | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:54:24,249 [app.data.market_data_router] INFO: [Router] US.SPY price=$750.10 sentiment=0.00 vix=16.59 regime=TREND_UP source=futu_lv3
+2026-05-26 21:54:24,250 [app.scalping.engine] INFO: [Scalping·强制标的] 加入 US.SNDK (min_trades=3)
+2026-05-26 21:54:24,251 [app.scalping.engine] INFO: [Scalping·黑名单] 过滤 3 只标的: {'UBER', 'TME', 'LCID'}
+2026-05-26 21:54:24,251 [app.scalping.engine] INFO: [ScalpingEngine] _tick 检查: 标的数=4 | 样本=['US.ARM', 'US.QCOM', 'US.RIVN', 'US.SNDK']
+2026-05-26 21:54:24,293 [app.data.market_data_router] INFO: [Router] US.ARM ★★★ LV3 主通道 | price=$304.17 RSI=36.9 MACD=-0.0294 ATR=16.11 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:54:24,295 [app.data.market_data_router] INFO: [Router] US.ARM price=$304.17 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:54:24,407 [app.data.market_data_router] INFO: [Router] US.QCOM ★★★ LV3 主通道 | price=$239.99 RSI=40.6 MACD=-0.0118 ATR=0.12 trend=DOWN | ticker=N/A | ob=N/A
+2026-05-26 21:54:24,407 [app.data.market_data_router] INFO: [Router] US.QCOM price=$239.99 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:54:24,414 [app.scalping.signals] INFO: [SignalDetector] ✅ 信号触发 | 方向: SHORT | 投票: vwap/bollinger | 价格: $239.99 | RSI: 40.6
+2026-05-26 21:54:24,414 [app.data.market_data_router] WARNING: [Router] US.RIVN LV3 K 线数据不足 (28 条)
+2026-05-26 21:54:24,414 [app.data.market_data_router] INFO: [Router] US.RIVN price=$14.53 sentiment=0.00 vix=16.59 regime=RANGE source=futu_lv3_quote_only
+2026-05-26 21:54:24,457 [app.data.market_data_router] INFO: [Router] US.SNDK ★★★ LV3 主通道 | price=$1567.45 RSI=43.9 MACD=-0.0107 ATR=58.30 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:54:24,458 [app.data.market_data_router] INFO: [Router] US.SNDK price=$1567.45 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:54:24,502 [app.data.market_data_router] INFO: [Router] US.ARM ★★★ LV3 主通道 | price=$304.17 RSI=36.9 MACD=-0.0294 ATR=16.11 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:54:24,503 [app.data.market_data_router] INFO: [Router] US.ARM price=$304.17 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:54:24,571 [app.data.market_data_router] INFO: [Router] US.QCOM ★★★ LV3 主通道 | price=$239.99 RSI=40.6 MACD=-0.0118 ATR=0.12 trend=DOWN | ticker=N/A | ob=N/A
+2026-05-26 21:54:24,573 [app.data.market_data_router] INFO: [Router] US.QCOM price=$239.99 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:54:24,573 [app.data.market_data_router] WARNING: [Router] US.RIVN LV3 K 线数据不足 (28 条)
+2026-05-26 21:54:24,573 [app.data.market_data_router] INFO: [Router] US.RIVN price=$14.53 sentiment=0.00 vix=16.59 regime=RANGE source=futu_lv3_quote_only
+2026-05-26 21:54:24,611 [app.data.market_data_router] INFO: [Router] US.SNDK ★★★ LV3 主通道 | price=$1567.45 RSI=43.9 MACD=-0.0107 ATR=58.30 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:54:24,612 [app.data.market_data_router] INFO: [Router] US.SNDK price=$1567.45 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:54:29,683 [app.data.market_data_router] INFO: [Router] US.SPY ★★★ LV3 主通道 | price=$750.09 RSI=76.5 MACD=0.0787 ATR=1.50 trend=UP | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:54:29,683 [app.data.market_data_router] INFO: [Router] US.SPY price=$750.09 sentiment=0.00 vix=16.59 regime=TREND_UP source=futu_lv3
+2026-05-26 21:54:29,683 [app.scalping.engine] INFO: [Scalping·强制标的] 加入 US.SNDK (min_trades=3)
+2026-05-26 21:54:29,683 [app.scalping.engine] INFO: [Scalping·黑名单] 过滤 3 只标的: {'UBER', 'TME', 'LCID'}
+2026-05-26 21:54:29,683 [app.scalping.engine] INFO: [ScalpingEngine] _tick 检查: 标的数=4 | 样本=['US.ARM', 'US.QCOM', 'US.RIVN', 'US.SNDK']
+2026-05-26 21:54:29,730 [app.data.market_data_router] INFO: [Router] US.ARM ★★★ LV3 主通道 | price=$304.17 RSI=36.9 MACD=-0.0294 ATR=16.11 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:54:29,732 [app.data.market_data_router] INFO: [Router] US.ARM price=$304.17 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:54:29,862 [app.data.market_data_router] INFO: [Router] US.QCOM ★★★ LV3 主通道 | price=$240.02 RSI=40.6 MACD=-0.0118 ATR=0.12 trend=DOWN | ticker=N/A | ob=N/A
+2026-05-26 21:54:29,863 [app.data.market_data_router] INFO: [Router] US.QCOM price=$240.02 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:54:29,883 [app.scalping.signals] INFO: [SignalDetector] ✅ 信号触发 | 方向: SHORT | 投票: vwap/bollinger | 价格: $240.02 | RSI: 40.6
+2026-05-26 21:54:29,885 [app.data.market_data_router] WARNING: [Router] US.RIVN LV3 K 线数据不足 (28 条)
+2026-05-26 21:54:29,885 [app.data.market_data_router] INFO: [Router] US.RIVN price=$14.53 sentiment=0.00 vix=16.59 regime=RANGE source=futu_lv3_quote_only
+2026-05-26 21:54:29,934 [app.data.market_data_router] INFO: [Router] US.SNDK ★★★ LV3 主通道 | price=$1569.30 RSI=43.9 MACD=-0.0107 ATR=58.30 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:54:29,935 [app.data.market_data_router] INFO: [Router] US.SNDK price=$1569.30 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:54:29,989 [app.data.market_data_router] INFO: [Router] US.ARM ★★★ LV3 主通道 | price=$304.17 RSI=36.9 MACD=-0.0294 ATR=16.11 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:54:29,992 [app.data.market_data_router] INFO: [Router] US.ARM price=$304.17 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:54:30,060 [app.data.market_data_router] INFO: [Router] US.QCOM ★★★ LV3 主通道 | price=$240.02 RSI=40.6 MACD=-0.0118 ATR=0.12 trend=DOWN | ticker=N/A | ob=N/A
+2026-05-26 21:54:30,061 [app.data.market_data_router] INFO: [Router] US.QCOM price=$240.02 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:54:30,061 [app.data.market_data_router] WARNING: [Router] US.RIVN LV3 K 线数据不足 (28 条)
+2026-05-26 21:54:30,061 [app.data.market_data_router] INFO: [Router] US.RIVN price=$14.53 sentiment=0.00 vix=16.59 regime=RANGE source=futu_lv3_quote_only
+2026-05-26 21:54:30,101 [app.data.market_data_router] INFO: [Router] US.SNDK ★★★ LV3 主通道 | price=$1569.30 RSI=43.9 MACD=-0.0107 ATR=58.30 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:54:30,101 [app.data.market_data_router] INFO: [Router] US.SNDK price=$1569.30 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:54:32,724 [ftseek.exit_monitor] INFO: [退出监控·M1·跳过] US.SNDK source=unknown protection=protected (策略不接管, 用户责任)
+2026-05-26 21:54:32,726 [ftseek.exit_monitor] INFO: [退出监控·M1·跳过] US.QCOM source=unknown protection=protected (策略不接管, 用户责任)
+2026-05-26 21:54:32,726 [ftseek.exit_monitor] INFO: [退出监控·M1·跳过] US.ARM source=unknown protection=protected (策略不接管, 用户责任)
+2026-05-26 21:54:32,726 [ftseek.exit_monitor] WARNING: [退出监控·M1] 跳过 3 个 PROTECTED/FROZEN 仓位 (默认隔离; takeover 接管: scripts/position_takeover.py)
+2026-05-26 21:54:35,185 [app.data.market_data_router] INFO: [Router] US.SPY ★★★ LV3 主通道 | price=$750.11 RSI=76.5 MACD=0.0787 ATR=1.50 trend=UP | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:54:35,186 [app.data.market_data_router] INFO: [Router] US.SPY price=$750.11 sentiment=0.00 vix=16.59 regime=TREND_UP source=futu_lv3
+2026-05-26 21:54:35,186 [app.scalping.engine] INFO: [Scalping·强制标的] 加入 US.SNDK (min_trades=3)
+2026-05-26 21:54:35,188 [app.scalping.engine] INFO: [Scalping·黑名单] 过滤 3 只标的: {'UBER', 'TME', 'LCID'}
+2026-05-26 21:54:35,188 [app.scalping.engine] INFO: [ScalpingEngine] _tick 检查: 标的数=4 | 样本=['US.ARM', 'US.QCOM', 'US.RIVN', 'US.SNDK']
+2026-05-26 21:54:35,244 [app.data.market_data_router] INFO: [Router] US.ARM ★★★ LV3 主通道 | price=$304.89 RSI=36.9 MACD=-0.0294 ATR=16.11 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:54:35,245 [app.data.market_data_router] INFO: [Router] US.ARM price=$304.89 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:54:35,369 [app.data.market_data_router] INFO: [Router] US.QCOM ★★★ LV3 主通道 | price=$240.31 RSI=40.6 MACD=-0.0118 ATR=0.12 trend=DOWN | ticker=N/A | ob=N/A
+2026-05-26 21:54:35,369 [app.data.market_data_router] INFO: [Router] US.QCOM price=$240.31 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:54:35,376 [app.scalping.signals] INFO: [SignalDetector] ✅ 信号触发 | 方向: SHORT | 投票: vwap/bollinger | 价格: $240.31 | RSI: 40.6
+2026-05-26 21:54:35,378 [app.data.market_data_router] WARNING: [Router] US.RIVN LV3 K 线数据不足 (28 条)
+2026-05-26 21:54:35,378 [app.data.market_data_router] INFO: [Router] US.RIVN price=$14.54 sentiment=0.00 vix=16.59 regime=RANGE source=futu_lv3_quote_only
+2026-05-26 21:54:35,429 [app.data.market_data_router] INFO: [Router] US.SNDK ★★★ LV3 主通道 | price=$1572.36 RSI=43.9 MACD=-0.0107 ATR=58.30 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:54:35,430 [app.data.market_data_router] INFO: [Router] US.SNDK price=$1572.36 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:54:35,490 [app.data.market_data_router] INFO: [Router] US.ARM ★★★ LV3 主通道 | price=$304.89 RSI=36.9 MACD=-0.0294 ATR=16.11 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:54:35,490 [app.data.market_data_router] INFO: [Router] US.ARM price=$304.89 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:54:35,564 [app.data.market_data_router] INFO: [Router] US.QCOM ★★★ LV3 主通道 | price=$240.31 RSI=40.6 MACD=-0.0118 ATR=0.12 trend=DOWN | ticker=N/A | ob=N/A
+2026-05-26 21:54:35,571 [app.data.market_data_router] INFO: [Router] US.QCOM price=$240.31 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:54:35,574 [app.data.market_data_router] WARNING: [Router] US.RIVN LV3 K 线数据不足 (28 条)
+2026-05-26 21:54:35,577 [app.data.market_data_router] INFO: [Router] US.RIVN price=$14.54 sentiment=0.00 vix=16.59 regime=RANGE source=futu_lv3_quote_only
+2026-05-26 21:54:35,625 [app.data.market_data_router] INFO: [Router] US.SNDK ★★★ LV3 主通道 | price=$1572.36 RSI=43.9 MACD=-0.0107 ATR=58.30 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:54:35,625 [app.data.market_data_router] INFO: [Router] US.SNDK price=$1572.36 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:54:40,691 [app.data.market_data_router] INFO: [Router] US.SPY ★★★ LV3 主通道 | price=$750.06 RSI=76.5 MACD=0.0787 ATR=1.50 trend=UP | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:54:40,694 [app.data.market_data_router] INFO: [Router] US.SPY price=$750.06 sentiment=0.00 vix=16.59 regime=TREND_UP source=futu_lv3
+2026-05-26 21:54:40,694 [app.scalping.engine] INFO: [Scalping·强制标的] 加入 US.SNDK (min_trades=3)
+2026-05-26 21:54:40,695 [app.scalping.engine] INFO: [Scalping·黑名单] 过滤 3 只标的: {'UBER', 'TME', 'LCID'}
+2026-05-26 21:54:40,695 [app.scalping.engine] INFO: [ScalpingEngine] _tick 检查: 标的数=4 | 样本=['US.ARM', 'US.QCOM', 'US.RIVN', 'US.SNDK']
+2026-05-26 21:54:40,731 [app.data.market_data_router] INFO: [Router] US.ARM ★★★ LV3 主通道 | price=$304.95 RSI=36.9 MACD=-0.0294 ATR=16.11 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:54:40,732 [app.data.market_data_router] INFO: [Router] US.ARM price=$304.95 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:54:40,854 [app.data.market_data_router] INFO: [Router] US.QCOM ★★★ LV3 主通道 | price=$240.56 RSI=40.6 MACD=-0.0118 ATR=0.12 trend=DOWN | ticker=N/A | ob=N/A
+2026-05-26 21:54:40,854 [app.data.market_data_router] INFO: [Router] US.QCOM price=$240.56 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:54:40,865 [app.scalping.signals] INFO: [SignalDetector] ✅ 信号触发 | 方向: SHORT | 投票: vwap/bollinger | 价格: $240.56 | RSI: 40.6
+2026-05-26 21:54:40,865 [app.data.market_data_router] WARNING: [Router] US.RIVN LV3 K 线数据不足 (28 条)
+2026-05-26 21:54:40,867 [app.data.market_data_router] INFO: [Router] US.RIVN price=$14.54 sentiment=0.00 vix=16.59 regime=RANGE source=futu_lv3_quote_only
+2026-05-26 21:54:40,915 [app.data.market_data_router] INFO: [Router] US.SNDK ★★★ LV3 主通道 | price=$1571.96 RSI=43.9 MACD=-0.0107 ATR=58.30 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:54:40,916 [app.data.market_data_router] INFO: [Router] US.SNDK price=$1571.96 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:54:40,967 [app.data.market_data_router] INFO: [Router] US.ARM ★★★ LV3 主通道 | price=$304.95 RSI=36.9 MACD=-0.0294 ATR=16.11 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:54:40,968 [app.data.market_data_router] INFO: [Router] US.ARM price=$304.95 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:54:41,036 [app.data.market_data_router] INFO: [Router] US.QCOM ★★★ LV3 主通道 | price=$240.56 RSI=40.6 MACD=-0.0118 ATR=0.12 trend=DOWN | ticker=N/A | ob=N/A
+2026-05-26 21:54:41,036 [app.data.market_data_router] INFO: [Router] US.QCOM price=$240.56 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:54:41,036 [app.data.market_data_router] WARNING: [Router] US.RIVN LV3 K 线数据不足 (28 条)
+2026-05-26 21:54:41,036 [app.data.market_data_router] INFO: [Router] US.RIVN price=$14.54 sentiment=0.00 vix=16.59 regime=RANGE source=futu_lv3_quote_only
+2026-05-26 21:54:41,078 [app.data.market_data_router] INFO: [Router] US.SNDK ★★★ LV3 主通道 | price=$1571.96 RSI=43.9 MACD=-0.0107 ATR=58.30 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:54:41,078 [app.data.market_data_router] INFO: [Router] US.SNDK price=$1571.96 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:54:43,624 [app.notifier.dingtalk] INFO: [钉钉] send_text 成功: 💓 FTSeek-US 通道心跳
+2026-05-26 21:54:45,052 [ftseek_us.position_sync] INFO: [US Sync] 跳过新持仓 US.QCOM (创建 59s 前, 等待 Futu 确认成交)
+2026-05-26 21:54:45,055 [ftseek_us.position_sync] INFO: [US Sync] 跳过新持仓 US.SNDK (创建 59s 前, 等待 Futu 确认成交)
+2026-05-26 21:54:45,059 [ftseek_us.position_sync] INFO: [US Sync] 跳过新持仓 US.ARM (创建 59s 前, 等待 Futu 确认成交)
+2026-05-26 21:54:45,086 [ftseek_us.position_sync] INFO: [US Sync] 跳过新持仓 US.QCOM (创建 59s 前 < 180s 保护窗口, 等待 Futu 确认成交)
+2026-05-26 21:54:45,088 [ftseek_us.position_sync] INFO: [US Sync] 跳过新持仓 US.SNDK (创建 59s 前 < 180s 保护窗口, 等待 Futu 确认成交)
+2026-05-26 21:54:45,088 [ftseek_us.position_sync] INFO: [US Sync] 跳过新持仓 US.ARM (创建 59s 前 < 180s 保护窗口, 等待 Futu 确认成交)
+2026-05-26 21:54:45,088 [ftseek_us.position_sync] INFO: [US Sync] Done | Futu: 0 | DB: 0
+2026-05-26 21:54:45,105 [ftseek_us.position_sync] WARNING: ⚠️ [US Sync Consistency] 检测到 2 个不一致:
+  DB 有多余持仓 (Broker 已无): {'US.QCOM', 'US.SNDK', 'US.ARM'}
+  Memory 有幽灵仓: {'US.QCOM', 'US.SNDK', 'US.ARM'}
+2026-05-26 21:54:46,156 [app.data.market_data_router] INFO: [Router] US.SPY ★★★ LV3 主通道 | price=$750.15 RSI=76.5 MACD=0.0787 ATR=1.50 trend=UP | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:54:46,157 [app.data.market_data_router] INFO: [Router] US.SPY price=$750.15 sentiment=0.00 vix=16.59 regime=TREND_UP source=futu_lv3
+2026-05-26 21:54:46,158 [app.scalping.engine] INFO: [Scalping·强制标的] 加入 US.SNDK (min_trades=3)
+2026-05-26 21:54:46,159 [app.scalping.engine] INFO: [Scalping·黑名单] 过滤 3 只标的: {'UBER', 'TME', 'LCID'}
+2026-05-26 21:54:46,160 [app.scalping.engine] INFO: [ScalpingEngine] _tick 检查: 标的数=4 | 样本=['US.ARM', 'US.QCOM', 'US.RIVN', 'US.SNDK']
+2026-05-26 21:54:46,202 [app.data.market_data_router] INFO: [Router] US.ARM ★★★ LV3 主通道 | price=$303.75 RSI=36.9 MACD=-0.0294 ATR=16.11 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:54:46,203 [app.data.market_data_router] INFO: [Router] US.ARM price=$303.75 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:54:46,327 [app.data.market_data_router] INFO: [Router] US.QCOM ★★★ LV3 主通道 | price=$240.16 RSI=40.6 MACD=-0.0118 ATR=0.12 trend=DOWN | ticker=N/A | ob=N/A
+2026-05-26 21:54:46,327 [app.data.market_data_router] INFO: [Router] US.QCOM price=$240.16 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:54:46,349 [app.scalping.signals] INFO: [SignalDetector] ✅ 信号触发 | 方向: SHORT | 投票: vwap/bollinger | 价格: $240.16 | RSI: 40.6
+2026-05-26 21:54:46,349 [app.data.market_data_router] WARNING: [Router] US.RIVN LV3 K 线数据不足 (28 条)
+2026-05-26 21:54:46,349 [app.data.market_data_router] INFO: [Router] US.RIVN price=$14.53 sentiment=0.00 vix=16.59 regime=RANGE source=futu_lv3_quote_only
+2026-05-26 21:54:46,400 [app.data.market_data_router] INFO: [Router] US.SNDK ★★★ LV3 主通道 | price=$1573.00 RSI=43.9 MACD=-0.0107 ATR=58.30 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:54:46,400 [app.data.market_data_router] INFO: [Router] US.SNDK price=$1573.00 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:54:46,454 [app.data.market_data_router] INFO: [Router] US.ARM ★★★ LV3 主通道 | price=$303.75 RSI=36.9 MACD=-0.0294 ATR=16.11 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:54:46,454 [app.data.market_data_router] INFO: [Router] US.ARM price=$303.75 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:54:46,512 [app.data.market_data_router] INFO: [Router] US.QCOM ★★★ LV3 主通道 | price=$240.16 RSI=40.6 MACD=-0.0118 ATR=0.12 trend=DOWN | ticker=N/A | ob=N/A
+2026-05-26 21:54:46,513 [app.data.market_data_router] INFO: [Router] US.QCOM price=$240.16 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:54:46,515 [app.data.market_data_router] WARNING: [Router] US.RIVN LV3 K 线数据不足 (28 条)
+2026-05-26 21:54:46,516 [app.data.market_data_router] INFO: [Router] US.RIVN price=$14.53 sentiment=0.00 vix=16.59 regime=RANGE source=futu_lv3_quote_only
+2026-05-26 21:54:46,557 [app.data.market_data_router] INFO: [Router] US.SNDK ★★★ LV3 主通道 | price=$1573.00 RSI=43.9 MACD=-0.0107 ATR=58.30 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:54:46,557 [app.data.market_data_router] INFO: [Router] US.SNDK price=$1573.00 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:54:47,899 [ftseek.exit_monitor] INFO: [退出监控·M1·跳过] US.SNDK source=unknown protection=protected (策略不接管, 用户责任)
+2026-05-26 21:54:47,900 [ftseek.exit_monitor] INFO: [退出监控·M1·跳过] US.QCOM source=unknown protection=protected (策略不接管, 用户责任)
+2026-05-26 21:54:47,900 [ftseek.exit_monitor] INFO: [退出监控·M1·跳过] US.ARM source=unknown protection=protected (策略不接管, 用户责任)
+2026-05-26 21:54:47,900 [ftseek.exit_monitor] WARNING: [退出监控·M1] 跳过 3 个 PROTECTED/FROZEN 仓位 (默认隔离; takeover 接管: scripts/position_takeover.py)
+2026-05-26 21:54:51,638 [app.data.market_data_router] INFO: [Router] US.SPY ★★★ LV3 主通道 | price=$750.06 RSI=76.5 MACD=0.0787 ATR=1.50 trend=UP | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:54:51,639 [app.data.market_data_router] INFO: [Router] US.SPY price=$750.06 sentiment=0.00 vix=16.59 regime=TREND_UP source=futu_lv3
+2026-05-26 21:54:51,640 [app.scalping.engine] INFO: [Scalping·强制标的] 加入 US.SNDK (min_trades=3)
+2026-05-26 21:54:51,640 [app.scalping.engine] INFO: [Scalping·黑名单] 过滤 3 只标的: {'UBER', 'TME', 'LCID'}
+2026-05-26 21:54:51,640 [app.scalping.engine] INFO: [ScalpingEngine] _tick 检查: 标的数=4 | 样本=['US.ARM', 'US.QCOM', 'US.RIVN', 'US.SNDK']
+2026-05-26 21:54:51,682 [app.data.market_data_router] INFO: [Router] US.ARM ★★★ LV3 主通道 | price=$303.74 RSI=36.9 MACD=-0.0294 ATR=16.11 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:54:51,683 [app.data.market_data_router] INFO: [Router] US.ARM price=$303.74 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:54:52,718 [app.analysis.market_state] INFO: VIX 当前值=16.59 (FRED CSV)
+2026-05-26 21:54:52,822 [app.data.market_data_router] INFO: [Router] US.QCOM ★★★ LV3 主通道 | price=$240.13 RSI=40.6 MACD=-0.0118 ATR=0.12 trend=DOWN | ticker=N/A | ob=N/A
+2026-05-26 21:54:52,823 [app.data.market_data_router] INFO: [Router] US.QCOM price=$240.13 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:54:52,841 [app.scalping.signals] INFO: [SignalDetector] ✅ 信号触发 | 方向: SHORT | 投票: vwap/bollinger | 价格: $240.13 | RSI: 40.6
+2026-05-26 21:54:52,842 [app.data.market_data_router] WARNING: [Router] US.RIVN LV3 K 线数据不足 (28 条)
+2026-05-26 21:54:52,842 [app.data.market_data_router] INFO: [Router] US.RIVN price=$14.54 sentiment=0.00 vix=16.59 regime=RANGE source=futu_lv3_quote_only
+2026-05-26 21:54:52,907 [app.data.market_data_router] INFO: [Router] US.SNDK ★★★ LV3 主通道 | price=$1568.12 RSI=43.9 MACD=-0.0107 ATR=58.30 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:54:52,907 [app.data.market_data_router] INFO: [Router] US.SNDK price=$1568.12 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:54:52,967 [app.data.market_data_router] INFO: [Router] US.ARM ★★★ LV3 主通道 | price=$303.70 RSI=36.9 MACD=-0.0294 ATR=16.11 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:54:52,968 [app.data.market_data_router] INFO: [Router] US.ARM price=$303.70 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:54:53,023 [app.data.market_data_router] INFO: [Router] US.QCOM ★★★ LV3 主通道 | price=$240.13 RSI=40.6 MACD=-0.0118 ATR=0.12 trend=DOWN | ticker=N/A | ob=N/A
+2026-05-26 21:54:53,024 [app.data.market_data_router] INFO: [Router] US.QCOM price=$240.13 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:54:53,025 [app.data.market_data_router] WARNING: [Router] US.RIVN LV3 K 线数据不足 (28 条)
+2026-05-26 21:54:53,025 [app.data.market_data_router] INFO: [Router] US.RIVN price=$14.54 sentiment=0.00 vix=16.59 regime=RANGE source=futu_lv3_quote_only
+2026-05-26 21:54:53,070 [app.data.market_data_router] INFO: [Router] US.SNDK ★★★ LV3 主通道 | price=$1568.12 RSI=43.9 MACD=-0.0107 ATR=58.30 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:54:53,071 [app.data.market_data_router] INFO: [Router] US.SNDK price=$1568.12 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:54:58,150 [app.data.market_data_router] INFO: [Router] US.SPY ★★★ LV3 主通道 | price=$750.14 RSI=76.5 MACD=0.0787 ATR=1.50 trend=UP | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:54:58,150 [app.data.market_data_router] INFO: [Router] US.SPY price=$750.14 sentiment=0.00 vix=16.59 regime=TREND_UP source=futu_lv3
+2026-05-26 21:54:58,150 [app.scalping.engine] INFO: [Scalping·强制标的] 加入 US.SNDK (min_trades=3)
+2026-05-26 21:54:58,150 [app.scalping.engine] INFO: [Scalping·黑名单] 过滤 3 只标的: {'UBER', 'TME', 'LCID'}
+2026-05-26 21:54:58,151 [app.scalping.engine] INFO: [ScalpingEngine] _tick 检查: 标的数=4 | 样本=['US.ARM', 'US.QCOM', 'US.RIVN', 'US.SNDK']
+2026-05-26 21:54:58,186 [app.data.market_data_router] INFO: [Router] US.ARM ★★★ LV3 主通道 | price=$303.75 RSI=36.9 MACD=-0.0294 ATR=16.11 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:54:58,189 [app.data.market_data_router] INFO: [Router] US.ARM price=$303.75 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:54:58,311 [app.data.market_data_router] INFO: [Router] US.QCOM ★★★ LV3 主通道 | price=$240.11 RSI=40.6 MACD=-0.0118 ATR=0.12 trend=DOWN | ticker=N/A | ob=N/A
+2026-05-26 21:54:58,313 [app.data.market_data_router] INFO: [Router] US.QCOM price=$240.11 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:54:58,323 [app.data.market_data_router] WARNING: [Router] US.RIVN LV3 K 线数据不足 (28 条)
+2026-05-26 21:54:58,323 [app.data.market_data_router] INFO: [Router] US.RIVN price=$14.54 sentiment=0.00 vix=16.59 regime=RANGE source=futu_lv3_quote_only
+2026-05-26 21:54:58,370 [app.data.market_data_router] INFO: [Router] US.SNDK ★★★ LV3 主通道 | price=$1568.28 RSI=43.9 MACD=-0.0107 ATR=58.30 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:54:58,371 [app.data.market_data_router] INFO: [Router] US.SNDK price=$1568.28 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:54:58,425 [app.data.market_data_router] INFO: [Router] US.ARM ★★★ LV3 主通道 | price=$303.75 RSI=36.9 MACD=-0.0294 ATR=16.11 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:54:58,426 [app.data.market_data_router] INFO: [Router] US.ARM price=$303.75 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:54:58,492 [app.data.market_data_router] INFO: [Router] US.QCOM ★★★ LV3 主通道 | price=$240.11 RSI=40.6 MACD=-0.0118 ATR=0.12 trend=DOWN | ticker=N/A | ob=N/A
+2026-05-26 21:54:58,494 [app.data.market_data_router] INFO: [Router] US.QCOM price=$240.11 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:54:58,495 [app.data.market_data_router] WARNING: [Router] US.RIVN LV3 K 线数据不足 (28 条)
+2026-05-26 21:54:58,495 [app.data.market_data_router] INFO: [Router] US.RIVN price=$14.54 sentiment=0.00 vix=16.59 regime=RANGE source=futu_lv3_quote_only
+2026-05-26 21:54:58,545 [app.data.market_data_router] INFO: [Router] US.SNDK ★★★ LV3 主通道 | price=$1568.28 RSI=43.9 MACD=-0.0107 ATR=58.30 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:54:58,545 [app.data.market_data_router] INFO: [Router] US.SNDK price=$1568.28 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:55:03,079 [ftseek.exit_monitor] INFO: [退出监控·M1·跳过] US.SNDK source=unknown protection=protected (策略不接管, 用户责任)
+2026-05-26 21:55:03,081 [ftseek.exit_monitor] INFO: [退出监控·M1·跳过] US.QCOM source=unknown protection=protected (策略不接管, 用户责任)
+2026-05-26 21:55:03,081 [ftseek.exit_monitor] INFO: [退出监控·M1·跳过] US.ARM source=unknown protection=protected (策略不接管, 用户责任)
+2026-05-26 21:55:03,082 [ftseek.exit_monitor] WARNING: [退出监控·M1] 跳过 3 个 PROTECTED/FROZEN 仓位 (默认隔离; takeover 接管: scripts/position_takeover.py)
+2026-05-26 21:55:03,629 [app.data.market_data_router] INFO: [Router] US.SPY ★★★ LV3 主通道 | price=$750.10 RSI=76.5 MACD=0.0787 ATR=1.50 trend=UP | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:55:03,629 [app.data.market_data_router] INFO: [Router] US.SPY price=$750.10 sentiment=0.00 vix=16.59 regime=TREND_UP source=futu_lv3
+2026-05-26 21:55:03,630 [app.scalping.engine] INFO: [Scalping·强制标的] 加入 US.SNDK (min_trades=3)
+2026-05-26 21:55:03,630 [app.scalping.engine] INFO: [Scalping·黑名单] 过滤 3 只标的: {'UBER', 'TME', 'LCID'}
+2026-05-26 21:55:03,630 [app.scalping.engine] INFO: [ScalpingEngine] _tick 检查: 标的数=4 | 样本=['US.ARM', 'US.QCOM', 'US.RIVN', 'US.SNDK']
+2026-05-26 21:55:03,668 [app.data.market_data_router] INFO: [Router] US.ARM ★★★ LV3 主通道 | price=$303.75 RSI=36.9 MACD=-0.0294 ATR=16.11 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:55:03,668 [app.data.market_data_router] INFO: [Router] US.ARM price=$303.75 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:55:03,788 [app.data.market_data_router] INFO: [Router] US.QCOM ★★★ LV3 主通道 | price=$239.47 RSI=40.6 MACD=-0.0118 ATR=0.12 trend=DOWN | ticker=N/A | ob=N/A
+2026-05-26 21:55:03,790 [app.data.market_data_router] INFO: [Router] US.QCOM price=$239.47 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:55:03,796 [app.data.market_data_router] WARNING: [Router] US.RIVN LV3 K 线数据不足 (28 条)
+2026-05-26 21:55:03,798 [app.data.market_data_router] INFO: [Router] US.RIVN price=$14.54 sentiment=0.00 vix=16.59 regime=RANGE source=futu_lv3_quote_only
+2026-05-26 21:55:03,859 [app.data.market_data_router] INFO: [Router] US.SNDK ★★★ LV3 主通道 | price=$1567.00 RSI=43.9 MACD=-0.0107 ATR=58.30 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:55:03,863 [app.data.market_data_router] INFO: [Router] US.SNDK price=$1567.00 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:55:03,909 [app.data.market_data_router] INFO: [Router] US.ARM ★★★ LV3 主通道 | price=$303.75 RSI=36.9 MACD=-0.0294 ATR=16.11 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:55:03,910 [app.data.market_data_router] INFO: [Router] US.ARM price=$303.75 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:55:03,969 [app.data.market_data_router] INFO: [Router] US.QCOM ★★★ LV3 主通道 | price=$239.47 RSI=40.6 MACD=-0.0118 ATR=0.12 trend=DOWN | ticker=N/A | ob=N/A
+2026-05-26 21:55:03,969 [app.data.market_data_router] INFO: [Router] US.QCOM price=$239.47 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:55:03,969 [app.data.market_data_router] WARNING: [Router] US.RIVN LV3 K 线数据不足 (28 条)
+2026-05-26 21:55:03,969 [app.data.market_data_router] INFO: [Router] US.RIVN price=$14.54 sentiment=0.00 vix=16.59 regime=RANGE source=futu_lv3_quote_only
+2026-05-26 21:55:04,006 [app.data.market_data_router] INFO: [Router] US.SNDK ★★★ LV3 主通道 | price=$1567.00 RSI=43.9 MACD=-0.0107 ATR=58.30 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:55:04,006 [app.data.market_data_router] INFO: [Router] US.SNDK price=$1567.00 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:55:09,086 [app.data.market_data_router] INFO: [Router] US.SPY ★★★ LV3 主通道 | price=$750.21 RSI=76.5 MACD=0.0787 ATR=1.50 trend=UP | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:55:09,088 [app.data.market_data_router] INFO: [Router] US.SPY price=$750.21 sentiment=0.00 vix=16.59 regime=TREND_UP source=futu_lv3
+2026-05-26 21:55:09,091 [app.scalping.engine] INFO: [Scalping·强制标的] 加入 US.SNDK (min_trades=3)
+2026-05-26 21:55:09,094 [app.scalping.engine] INFO: [Scalping·黑名单] 过滤 3 只标的: {'UBER', 'TME', 'LCID'}
+2026-05-26 21:55:09,103 [app.scalping.engine] INFO: [ScalpingEngine] _tick 检查: 标的数=4 | 样本=['US.ARM', 'US.QCOM', 'US.RIVN', 'US.SNDK']
+2026-05-26 21:55:09,170 [app.data.market_data_router] INFO: [Router] US.ARM ★★★ LV3 主通道 | price=$304.16 RSI=36.9 MACD=-0.0294 ATR=16.11 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:55:09,170 [app.data.market_data_router] INFO: [Router] US.ARM price=$304.16 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:55:09,300 [app.data.market_data_router] INFO: [Router] US.QCOM ★★★ LV3 主通道 | price=$239.50 RSI=40.6 MACD=-0.0118 ATR=0.12 trend=DOWN | ticker=N/A | ob=N/A
+2026-05-26 21:55:09,302 [app.data.market_data_router] INFO: [Router] US.QCOM price=$239.50 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:55:09,317 [app.data.market_data_router] WARNING: [Router] US.RIVN LV3 K 线数据不足 (28 条)
+2026-05-26 21:55:09,318 [app.data.market_data_router] INFO: [Router] US.RIVN price=$14.55 sentiment=0.00 vix=16.59 regime=RANGE source=futu_lv3_quote_only
+2026-05-26 21:55:09,373 [app.data.market_data_router] INFO: [Router] US.SNDK ★★★ LV3 主通道 | price=$1569.00 RSI=43.9 MACD=-0.0107 ATR=58.30 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:55:09,373 [app.data.market_data_router] INFO: [Router] US.SNDK price=$1569.00 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:55:09,424 [app.data.market_data_router] INFO: [Router] US.ARM ★★★ LV3 主通道 | price=$304.16 RSI=36.9 MACD=-0.0294 ATR=16.11 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:55:09,425 [app.data.market_data_router] INFO: [Router] US.ARM price=$304.16 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:55:09,533 [app.data.market_data_router] INFO: [Router] US.QCOM ★★★ LV3 主通道 | price=$239.50 RSI=40.6 MACD=-0.0118 ATR=0.12 trend=DOWN | ticker=N/A | ob=N/A
+2026-05-26 21:55:09,540 [app.data.market_data_router] INFO: [Router] US.QCOM price=$239.50 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:55:09,540 [app.data.market_data_router] WARNING: [Router] US.RIVN LV3 K 线数据不足 (28 条)
+2026-05-26 21:55:09,541 [app.data.market_data_router] INFO: [Router] US.RIVN price=$14.55 sentiment=0.00 vix=16.59 regime=RANGE source=futu_lv3_quote_only
+2026-05-26 21:55:09,648 [app.data.market_data_router] INFO: [Router] US.SNDK ★★★ LV3 主通道 | price=$1569.00 RSI=43.9 MACD=-0.0107 ATR=58.30 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:55:09,649 [app.data.market_data_router] INFO: [Router] US.SNDK price=$1569.00 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:55:14,733 [app.data.market_data_router] INFO: [Router] US.SPY ★★★ LV3 主通道 | price=$750.29 RSI=76.5 MACD=0.0787 ATR=1.50 trend=UP | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:55:14,733 [app.data.market_data_router] INFO: [Router] US.SPY price=$750.29 sentiment=0.00 vix=16.59 regime=TREND_UP source=futu_lv3
+2026-05-26 21:55:14,733 [app.scalping.engine] INFO: [Scalping·强制标的] 加入 US.SNDK (min_trades=3)
+2026-05-26 21:55:14,736 [app.scalping.engine] INFO: [Scalping·黑名单] 过滤 3 只标的: {'UBER', 'TME', 'LCID'}
+2026-05-26 21:55:14,736 [app.scalping.engine] INFO: [ScalpingEngine] _tick 检查: 标的数=4 | 样本=['US.ARM', 'US.QCOM', 'US.RIVN', 'US.SNDK']
+2026-05-26 21:55:14,775 [app.data.market_data_router] INFO: [Router] US.ARM ★★★ LV3 主通道 | price=$304.67 RSI=36.9 MACD=-0.0294 ATR=16.11 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:55:14,775 [app.data.market_data_router] INFO: [Router] US.ARM price=$304.67 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:55:14,888 [app.data.market_data_router] INFO: [Router] US.QCOM ★★★ LV3 主通道 | price=$239.50 RSI=40.6 MACD=-0.0118 ATR=0.12 trend=DOWN | ticker=N/A | ob=N/A
+2026-05-26 21:55:14,888 [app.data.market_data_router] INFO: [Router] US.QCOM price=$239.50 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:55:14,901 [app.data.market_data_router] WARNING: [Router] US.RIVN LV3 K 线数据不足 (28 条)
+2026-05-26 21:55:14,902 [app.data.market_data_router] INFO: [Router] US.RIVN price=$14.55 sentiment=0.00 vix=16.59 regime=RANGE source=futu_lv3_quote_only
+2026-05-26 21:55:14,959 [app.data.market_data_router] INFO: [Router] US.SNDK ★★★ LV3 主通道 | price=$1568.15 RSI=43.9 MACD=-0.0107 ATR=58.30 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:55:14,960 [app.data.market_data_router] INFO: [Router] US.SNDK price=$1568.15 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:55:15,023 [app.data.market_data_router] INFO: [Router] US.ARM ★★★ LV3 主通道 | price=$304.67 RSI=36.9 MACD=-0.0294 ATR=16.11 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:55:15,024 [app.data.market_data_router] INFO: [Router] US.ARM price=$304.67 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:55:15,083 [app.data.market_data_router] INFO: [Router] US.QCOM ★★★ LV3 主通道 | price=$239.50 RSI=40.6 MACD=-0.0118 ATR=0.12 trend=DOWN | ticker=N/A | ob=N/A
+2026-05-26 21:55:15,084 [app.data.market_data_router] INFO: [Router] US.QCOM price=$239.50 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:55:15,084 [app.data.market_data_router] WARNING: [Router] US.RIVN LV3 K 线数据不足 (28 条)
+2026-05-26 21:55:15,084 [app.data.market_data_router] INFO: [Router] US.RIVN price=$14.55 sentiment=0.00 vix=16.59 regime=RANGE source=futu_lv3_quote_only
+2026-05-26 21:55:15,122 [app.data.market_data_router] INFO: [Router] US.SNDK ★★★ LV3 主通道 | price=$1568.15 RSI=43.9 MACD=-0.0107 ATR=58.30 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:55:15,124 [app.data.market_data_router] INFO: [Router] US.SNDK price=$1568.15 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:55:15,638 [ftseek_us.position_sync] INFO: [US Sync] 跳过新持仓 US.QCOM (创建 89s 前, 等待 Futu 确认成交)
+2026-05-26 21:55:15,638 [ftseek_us.position_sync] INFO: [US Sync] 跳过新持仓 US.SNDK (创建 89s 前, 等待 Futu 确认成交)
+2026-05-26 21:55:15,638 [ftseek_us.position_sync] INFO: [US Sync] 跳过新持仓 US.ARM (创建 89s 前, 等待 Futu 确认成交)
+2026-05-26 21:55:15,659 [ftseek_us.position_sync] INFO: [US Sync] 跳过新持仓 US.QCOM (创建 89s 前 < 180s 保护窗口, 等待 Futu 确认成交)
+2026-05-26 21:55:15,660 [ftseek_us.position_sync] INFO: [US Sync] 跳过新持仓 US.SNDK (创建 89s 前 < 180s 保护窗口, 等待 Futu 确认成交)
+2026-05-26 21:55:15,660 [ftseek_us.position_sync] INFO: [US Sync] 跳过新持仓 US.ARM (创建 89s 前 < 180s 保护窗口, 等待 Futu 确认成交)
+2026-05-26 21:55:15,660 [ftseek_us.position_sync] INFO: [US Sync] Done | Futu: 0 | DB: 0
+2026-05-26 21:55:15,676 [ftseek_us.position_sync] WARNING: ⚠️ [US Sync Consistency] 检测到 2 个不一致:
+  DB 有多余持仓 (Broker 已无): {'US.QCOM', 'US.SNDK', 'US.ARM'}
+  Memory 有幽灵仓: {'US.QCOM', 'US.SNDK', 'US.ARM'}
+2026-05-26 21:55:18,263 [ftseek.exit_monitor] INFO: [退出监控·M1·跳过] US.SNDK source=unknown protection=protected (策略不接管, 用户责任)
+2026-05-26 21:55:18,267 [ftseek.exit_monitor] INFO: [退出监控·M1·跳过] US.QCOM source=unknown protection=protected (策略不接管, 用户责任)
+2026-05-26 21:55:18,268 [ftseek.exit_monitor] INFO: [退出监控·M1·跳过] US.ARM source=unknown protection=protected (策略不接管, 用户责任)
+2026-05-26 21:55:18,268 [ftseek.exit_monitor] WARNING: [退出监控·M1] 跳过 3 个 PROTECTED/FROZEN 仓位 (默认隔离; takeover 接管: scripts/position_takeover.py)
+2026-05-26 21:55:20,214 [app.data.market_data_router] INFO: [Router] US.SPY ★★★ LV3 主通道 | price=$750.28 RSI=76.5 MACD=0.0787 ATR=1.50 trend=UP | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:55:20,217 [app.data.market_data_router] INFO: [Router] US.SPY price=$750.28 sentiment=0.00 vix=16.59 regime=TREND_UP source=futu_lv3
+2026-05-26 21:55:20,217 [app.scalping.engine] INFO: [Scalping·强制标的] 加入 US.SNDK (min_trades=3)
+2026-05-26 21:55:20,218 [app.scalping.engine] INFO: [Scalping·黑名单] 过滤 3 只标的: {'UBER', 'TME', 'LCID'}
+2026-05-26 21:55:20,218 [app.scalping.engine] INFO: [ScalpingEngine] _tick 检查: 标的数=4 | 样本=['US.ARM', 'US.QCOM', 'US.RIVN', 'US.SNDK']
+2026-05-26 21:55:20,265 [app.data.market_data_router] INFO: [Router] US.ARM ★★★ LV3 主通道 | price=$304.67 RSI=36.9 MACD=-0.0294 ATR=16.11 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:55:20,268 [app.data.market_data_router] INFO: [Router] US.ARM price=$304.67 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:55:20,398 [app.data.market_data_router] INFO: [Router] US.QCOM ★★★ LV3 主通道 | price=$239.76 RSI=40.6 MACD=-0.0118 ATR=0.12 trend=DOWN | ticker=N/A | ob=N/A
+2026-05-26 21:55:20,398 [app.data.market_data_router] INFO: [Router] US.QCOM price=$239.76 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:55:20,407 [app.data.market_data_router] WARNING: [Router] US.RIVN LV3 K 线数据不足 (28 条)
+2026-05-26 21:55:20,409 [app.data.market_data_router] INFO: [Router] US.RIVN price=$14.55 sentiment=0.00 vix=16.59 regime=RANGE source=futu_lv3_quote_only
+2026-05-26 21:55:20,467 [app.data.market_data_router] INFO: [Router] US.SNDK ★★★ LV3 主通道 | price=$1569.46 RSI=43.9 MACD=-0.0107 ATR=58.30 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:55:20,472 [app.data.market_data_router] INFO: [Router] US.SNDK price=$1569.46 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:55:20,527 [app.data.market_data_router] INFO: [Router] US.ARM ★★★ LV3 主通道 | price=$304.67 RSI=36.9 MACD=-0.0294 ATR=16.11 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:55:20,527 [app.data.market_data_router] INFO: [Router] US.ARM price=$304.67 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:55:20,586 [app.data.market_data_router] INFO: [Router] US.QCOM ★★★ LV3 主通道 | price=$239.76 RSI=40.6 MACD=-0.0118 ATR=0.12 trend=DOWN | ticker=N/A | ob=N/A
+2026-05-26 21:55:20,588 [app.data.market_data_router] INFO: [Router] US.QCOM price=$239.76 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:55:20,589 [app.data.market_data_router] WARNING: [Router] US.RIVN LV3 K 线数据不足 (28 条)
+2026-05-26 21:55:20,589 [app.data.market_data_router] INFO: [Router] US.RIVN price=$14.55 sentiment=0.00 vix=16.59 regime=RANGE source=futu_lv3_quote_only
+2026-05-26 21:55:20,633 [app.data.market_data_router] INFO: [Router] US.SNDK ★★★ LV3 主通道 | price=$1569.46 RSI=43.9 MACD=-0.0107 ATR=58.30 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:55:20,634 [app.data.market_data_router] INFO: [Router] US.SNDK price=$1569.46 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:55:25,712 [app.data.market_data_router] INFO: [Router] US.SPY ★★★ LV3 主通道 | price=$750.28 RSI=76.5 MACD=0.0787 ATR=1.50 trend=UP | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:55:25,712 [app.data.market_data_router] INFO: [Router] US.SPY price=$750.28 sentiment=0.00 vix=16.59 regime=TREND_UP source=futu_lv3
+2026-05-26 21:55:25,713 [app.scalping.engine] INFO: [Scalping·强制标的] 加入 US.SNDK (min_trades=3)
+2026-05-26 21:55:25,715 [app.scalping.engine] INFO: [Scalping·黑名单] 过滤 3 只标的: {'UBER', 'TME', 'LCID'}
+2026-05-26 21:55:25,715 [app.scalping.engine] INFO: [ScalpingEngine] _tick 检查: 标的数=4 | 样本=['US.ARM', 'US.QCOM', 'US.RIVN', 'US.SNDK']
+2026-05-26 21:55:25,751 [app.data.market_data_router] INFO: [Router] US.ARM ★★★ LV3 主通道 | price=$304.99 RSI=36.9 MACD=-0.0294 ATR=16.11 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:55:25,752 [app.data.market_data_router] INFO: [Router] US.ARM price=$304.99 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:55:25,883 [app.data.market_data_router] INFO: [Router] US.QCOM ★★★ LV3 主通道 | price=$239.39 RSI=40.6 MACD=-0.0118 ATR=0.12 trend=DOWN | ticker=N/A | ob=N/A
+2026-05-26 21:55:25,886 [app.data.market_data_router] INFO: [Router] US.QCOM price=$239.39 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:55:25,897 [app.data.market_data_router] WARNING: [Router] US.RIVN LV3 K 线数据不足 (28 条)
+2026-05-26 21:55:25,898 [app.data.market_data_router] INFO: [Router] US.RIVN price=$14.55 sentiment=0.00 vix=16.59 regime=RANGE source=futu_lv3_quote_only
+2026-05-26 21:55:25,950 [app.data.market_data_router] INFO: [Router] US.SNDK ★★★ LV3 主通道 | price=$1568.82 RSI=43.9 MACD=-0.0107 ATR=58.30 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:55:25,951 [app.data.market_data_router] INFO: [Router] US.SNDK price=$1568.82 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:55:26,003 [app.data.market_data_router] INFO: [Router] US.ARM ★★★ LV3 主通道 | price=$304.99 RSI=36.9 MACD=-0.0294 ATR=16.11 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:55:26,004 [app.data.market_data_router] INFO: [Router] US.ARM price=$304.99 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:55:26,074 [app.data.market_data_router] INFO: [Router] US.QCOM ★★★ LV3 主通道 | price=$239.39 RSI=40.6 MACD=-0.0118 ATR=0.12 trend=DOWN | ticker=N/A | ob=N/A
+2026-05-26 21:55:26,074 [app.data.market_data_router] INFO: [Router] US.QCOM price=$239.39 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:55:26,075 [app.data.market_data_router] WARNING: [Router] US.RIVN LV3 K 线数据不足 (28 条)
+2026-05-26 21:55:26,075 [app.data.market_data_router] INFO: [Router] US.RIVN price=$14.55 sentiment=0.00 vix=16.59 regime=RANGE source=futu_lv3_quote_only
+2026-05-26 21:55:26,107 [app.data.market_data_router] INFO: [Router] US.SNDK ★★★ LV3 主通道 | price=$1568.82 RSI=43.9 MACD=-0.0107 ATR=58.30 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:55:26,107 [app.data.market_data_router] INFO: [Router] US.SNDK price=$1568.82 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:55:31,165 [app.data.market_data_router] INFO: [Router] US.SPY ★★★ LV3 主通道 | price=$750.20 RSI=76.5 MACD=0.0787 ATR=1.50 trend=UP | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:55:31,165 [app.data.market_data_router] INFO: [Router] US.SPY price=$750.20 sentiment=0.00 vix=16.59 regime=TREND_UP source=futu_lv3
+2026-05-26 21:55:31,166 [app.scalping.engine] INFO: [Scalping·强制标的] 加入 US.SNDK (min_trades=3)
+2026-05-26 21:55:31,167 [app.scalping.engine] INFO: [Scalping·黑名单] 过滤 3 只标的: {'UBER', 'TME', 'LCID'}
+2026-05-26 21:55:31,167 [app.scalping.engine] INFO: [ScalpingEngine] _tick 检查: 标的数=4 | 样本=['US.ARM', 'US.QCOM', 'US.RIVN', 'US.SNDK']
+2026-05-26 21:55:31,210 [app.data.market_data_router] INFO: [Router] US.ARM ★★★ LV3 主通道 | price=$304.74 RSI=36.9 MACD=-0.0294 ATR=16.11 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:55:31,210 [app.data.market_data_router] INFO: [Router] US.ARM price=$304.74 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:55:31,373 [app.data.market_data_router] INFO: [Router] US.QCOM ★★★ LV3 主通道 | price=$239.02 RSI=40.6 MACD=-0.0118 ATR=0.12 trend=DOWN | ticker=N/A | ob=N/A
+2026-05-26 21:55:31,373 [app.data.market_data_router] INFO: [Router] US.QCOM price=$239.02 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:55:31,380 [app.data.market_data_router] WARNING: [Router] US.RIVN LV3 K 线数据不足 (28 条)
+2026-05-26 21:55:31,380 [app.data.market_data_router] INFO: [Router] US.RIVN price=$14.55 sentiment=0.00 vix=16.59 regime=RANGE source=futu_lv3_quote_only
+2026-05-26 21:55:31,432 [app.data.market_data_router] INFO: [Router] US.SNDK ★★★ LV3 主通道 | price=$1568.37 RSI=43.9 MACD=-0.0107 ATR=58.30 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:55:31,433 [app.data.market_data_router] INFO: [Router] US.SNDK price=$1568.37 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:55:31,486 [app.data.market_data_router] INFO: [Router] US.ARM ★★★ LV3 主通道 | price=$304.74 RSI=36.9 MACD=-0.0294 ATR=16.11 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:55:31,486 [app.data.market_data_router] INFO: [Router] US.ARM price=$304.74 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:55:31,550 [app.data.market_data_router] INFO: [Router] US.QCOM ★★★ LV3 主通道 | price=$239.02 RSI=40.6 MACD=-0.0118 ATR=0.12 trend=DOWN | ticker=N/A | ob=N/A
+2026-05-26 21:55:31,550 [app.data.market_data_router] INFO: [Router] US.QCOM price=$239.02 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:55:31,550 [app.data.market_data_router] WARNING: [Router] US.RIVN LV3 K 线数据不足 (28 条)
+2026-05-26 21:55:31,550 [app.data.market_data_router] INFO: [Router] US.RIVN price=$14.55 sentiment=0.00 vix=16.59 regime=RANGE source=futu_lv3_quote_only
+2026-05-26 21:55:31,589 [app.data.market_data_router] INFO: [Router] US.SNDK ★★★ LV3 主通道 | price=$1568.37 RSI=43.9 MACD=-0.0107 ATR=58.30 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:55:31,589 [app.data.market_data_router] INFO: [Router] US.SNDK price=$1568.37 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:55:33,438 [ftseek.exit_monitor] INFO: [退出监控·M1·跳过] US.SNDK source=unknown protection=protected (策略不接管, 用户责任)
+2026-05-26 21:55:33,438 [ftseek.exit_monitor] INFO: [退出监控·M1·跳过] US.QCOM source=unknown protection=protected (策略不接管, 用户责任)
+2026-05-26 21:55:33,439 [ftseek.exit_monitor] INFO: [退出监控·M1·跳过] US.ARM source=unknown protection=protected (策略不接管, 用户责任)
+2026-05-26 21:55:33,439 [ftseek.exit_monitor] WARNING: [退出监控·M1] 跳过 3 个 PROTECTED/FROZEN 仓位 (默认隔离; takeover 接管: scripts/position_takeover.py)
+2026-05-26 21:55:36,664 [app.data.market_data_router] INFO: [Router] US.SPY ★★★ LV3 主通道 | price=$750.27 RSI=76.5 MACD=0.0787 ATR=1.50 trend=UP | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:55:36,664 [app.data.market_data_router] INFO: [Router] US.SPY price=$750.27 sentiment=0.00 vix=16.59 regime=TREND_UP source=futu_lv3
+2026-05-26 21:55:36,665 [app.scalping.engine] INFO: [Scalping·强制标的] 加入 US.SNDK (min_trades=3)
+2026-05-26 21:55:36,665 [app.scalping.engine] INFO: [Scalping·黑名单] 过滤 3 只标的: {'UBER', 'TME', 'LCID'}
+2026-05-26 21:55:36,666 [app.scalping.engine] INFO: [ScalpingEngine] _tick 检查: 标的数=4 | 样本=['US.ARM', 'US.QCOM', 'US.RIVN', 'US.SNDK']
+2026-05-26 21:55:36,703 [app.data.market_data_router] INFO: [Router] US.ARM ★★★ LV3 主通道 | price=$304.61 RSI=36.9 MACD=-0.0294 ATR=16.11 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:55:36,703 [app.data.market_data_router] INFO: [Router] US.ARM price=$304.61 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:55:36,847 [app.data.market_data_router] INFO: [Router] US.QCOM ★★★ LV3 主通道 | price=$238.57 RSI=40.6 MACD=-0.0118 ATR=0.12 trend=DOWN | ticker=N/A | ob=N/A
+2026-05-26 21:55:36,848 [app.data.market_data_router] INFO: [Router] US.QCOM price=$238.57 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:55:36,861 [app.data.market_data_router] WARNING: [Router] US.RIVN LV3 K 线数据不足 (28 条)
+2026-05-26 21:55:36,863 [app.data.market_data_router] INFO: [Router] US.RIVN price=$14.54 sentiment=0.00 vix=16.59 regime=RANGE source=futu_lv3_quote_only
+2026-05-26 21:55:36,922 [app.data.market_data_router] INFO: [Router] US.SNDK ★★★ LV3 主通道 | price=$1568.45 RSI=43.9 MACD=-0.0107 ATR=58.30 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:55:36,923 [app.data.market_data_router] INFO: [Router] US.SNDK price=$1568.45 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:55:36,971 [app.data.market_data_router] INFO: [Router] US.ARM ★★★ LV3 主通道 | price=$304.61 RSI=36.9 MACD=-0.0294 ATR=16.11 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:55:36,982 [app.data.market_data_router] INFO: [Router] US.ARM price=$304.61 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:55:37,050 [app.data.market_data_router] INFO: [Router] US.QCOM ★★★ LV3 主通道 | price=$238.57 RSI=40.6 MACD=-0.0118 ATR=0.12 trend=DOWN | ticker=N/A | ob=N/A
+2026-05-26 21:55:37,051 [app.data.market_data_router] INFO: [Router] US.QCOM price=$238.57 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:55:37,051 [app.data.market_data_router] WARNING: [Router] US.RIVN LV3 K 线数据不足 (28 条)
+2026-05-26 21:55:37,051 [app.data.market_data_router] INFO: [Router] US.RIVN price=$14.54 sentiment=0.00 vix=16.59 regime=RANGE source=futu_lv3_quote_only
+2026-05-26 21:55:37,101 [app.data.market_data_router] INFO: [Router] US.SNDK ★★★ LV3 主通道 | price=$1568.45 RSI=43.9 MACD=-0.0107 ATR=58.30 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:55:37,103 [app.data.market_data_router] INFO: [Router] US.SNDK price=$1568.45 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:55:42,160 [app.data.market_data_router] INFO: [Router] US.SPY ★★★ LV3 主通道 | price=$750.34 RSI=76.5 MACD=0.0787 ATR=1.50 trend=UP | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:55:42,160 [app.data.market_data_router] INFO: [Router] US.SPY price=$750.34 sentiment=0.00 vix=16.59 regime=TREND_UP source=futu_lv3
+2026-05-26 21:55:42,161 [app.scalping.engine] INFO: [Scalping·强制标的] 加入 US.SNDK (min_trades=3)
+2026-05-26 21:55:42,162 [app.scalping.engine] INFO: [Scalping·黑名单] 过滤 3 只标的: {'UBER', 'TME', 'LCID'}
+2026-05-26 21:55:42,162 [app.scalping.engine] INFO: [ScalpingEngine] _tick 检查: 标的数=4 | 样本=['US.ARM', 'US.QCOM', 'US.RIVN', 'US.SNDK']
+2026-05-26 21:55:42,206 [app.data.market_data_router] INFO: [Router] US.ARM ★★★ LV3 主通道 | price=$304.52 RSI=36.9 MACD=-0.0294 ATR=16.11 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:55:42,208 [app.data.market_data_router] INFO: [Router] US.ARM price=$304.52 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:55:42,351 [app.data.market_data_router] INFO: [Router] US.QCOM ★★★ LV3 主通道 | price=$238.75 RSI=40.6 MACD=-0.0118 ATR=0.12 trend=DOWN | ticker=N/A | ob=N/A
+2026-05-26 21:55:42,351 [app.data.market_data_router] INFO: [Router] US.QCOM price=$238.75 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:55:42,362 [app.data.market_data_router] WARNING: [Router] US.RIVN LV3 K 线数据不足 (28 条)
+2026-05-26 21:55:42,363 [app.data.market_data_router] INFO: [Router] US.RIVN price=$14.53 sentiment=0.00 vix=16.59 regime=RANGE source=futu_lv3_quote_only
+2026-05-26 21:55:42,437 [app.data.market_data_router] INFO: [Router] US.SNDK ★★★ LV3 主通道 | price=$1572.03 RSI=43.9 MACD=-0.0107 ATR=58.30 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:55:42,438 [app.data.market_data_router] INFO: [Router] US.SNDK price=$1572.03 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:55:42,504 [app.data.market_data_router] INFO: [Router] US.ARM ★★★ LV3 主通道 | price=$304.52 RSI=36.9 MACD=-0.0294 ATR=16.11 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:55:42,507 [app.data.market_data_router] INFO: [Router] US.ARM price=$304.52 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:55:42,566 [app.data.market_data_router] INFO: [Router] US.QCOM ★★★ LV3 主通道 | price=$238.75 RSI=40.6 MACD=-0.0118 ATR=0.12 trend=DOWN | ticker=N/A | ob=N/A
+2026-05-26 21:55:42,567 [app.data.market_data_router] INFO: [Router] US.QCOM price=$238.75 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:55:42,567 [app.data.market_data_router] WARNING: [Router] US.RIVN LV3 K 线数据不足 (28 条)
+2026-05-26 21:55:42,567 [app.data.market_data_router] INFO: [Router] US.RIVN price=$14.53 sentiment=0.00 vix=16.59 regime=RANGE source=futu_lv3_quote_only
+2026-05-26 21:55:42,606 [app.data.market_data_router] INFO: [Router] US.SNDK ★★★ LV3 主通道 | price=$1571.50 RSI=43.9 MACD=-0.0107 ATR=58.30 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:55:42,606 [app.data.market_data_router] INFO: [Router] US.SNDK price=$1571.50 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:55:46,131 [ftseek_us.position_sync] INFO: [US Sync] 跳过新持仓 US.QCOM (创建 120s 前, 等待 Futu 确认成交)
+2026-05-26 21:55:46,134 [ftseek_us.position_sync] INFO: [US Sync] 跳过新持仓 US.SNDK (创建 120s 前, 等待 Futu 确认成交)
+2026-05-26 21:55:46,137 [ftseek_us.position_sync] INFO: [US Sync] 跳过新持仓 US.ARM (创建 120s 前, 等待 Futu 确认成交)
+2026-05-26 21:55:46,160 [ftseek_us.position_sync] INFO: [US Sync] 跳过新持仓 US.QCOM (创建 120s 前 < 180s 保护窗口, 等待 Futu 确认成交)
+2026-05-26 21:55:46,161 [ftseek_us.position_sync] INFO: [US Sync] 跳过新持仓 US.SNDK (创建 120s 前 < 180s 保护窗口, 等待 Futu 确认成交)
+2026-05-26 21:55:46,161 [ftseek_us.position_sync] INFO: [US Sync] 跳过新持仓 US.ARM (创建 120s 前 < 180s 保护窗口, 等待 Futu 确认成交)
+2026-05-26 21:55:46,161 [ftseek_us.position_sync] INFO: [US Sync] Done | Futu: 0 | DB: 0
+2026-05-26 21:55:46,181 [ftseek_us.position_sync] WARNING: ⚠️ [US Sync Consistency] 检测到 2 个不一致:
+  DB 有多余持仓 (Broker 已无): {'US.QCOM', 'US.SNDK', 'US.ARM'}
+  Memory 有幽灵仓: {'US.QCOM', 'US.SNDK', 'US.ARM'}
+2026-05-26 21:55:47,671 [app.data.market_data_router] INFO: [Router] US.SPY ★★★ LV3 主通道 | price=$750.25 RSI=76.5 MACD=0.0787 ATR=1.50 trend=UP | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:55:47,671 [app.data.market_data_router] INFO: [Router] US.SPY price=$750.25 sentiment=0.00 vix=16.59 regime=TREND_UP source=futu_lv3
+2026-05-26 21:55:47,672 [app.scalping.engine] INFO: [Scalping·强制标的] 加入 US.SNDK (min_trades=3)
+2026-05-26 21:55:47,672 [app.scalping.engine] INFO: [Scalping·黑名单] 过滤 3 只标的: {'UBER', 'TME', 'LCID'}
+2026-05-26 21:55:47,672 [app.scalping.engine] INFO: [ScalpingEngine] _tick 检查: 标的数=4 | 样本=['US.ARM', 'US.QCOM', 'US.RIVN', 'US.SNDK']
+2026-05-26 21:55:47,711 [app.data.market_data_router] INFO: [Router] US.ARM ★★★ LV3 主通道 | price=$304.50 RSI=36.9 MACD=-0.0294 ATR=16.11 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:55:47,711 [app.data.market_data_router] INFO: [Router] US.ARM price=$304.50 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:55:47,838 [app.data.market_data_router] INFO: [Router] US.QCOM ★★★ LV3 主通道 | price=$238.98 RSI=40.6 MACD=-0.0118 ATR=0.12 trend=DOWN | ticker=N/A | ob=N/A
+2026-05-26 21:55:47,839 [app.data.market_data_router] INFO: [Router] US.QCOM price=$238.98 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:55:47,859 [app.data.market_data_router] WARNING: [Router] US.RIVN LV3 K 线数据不足 (28 条)
+2026-05-26 21:55:47,861 [app.data.market_data_router] INFO: [Router] US.RIVN price=$14.53 sentiment=0.00 vix=16.59 regime=RANGE source=futu_lv3_quote_only
+2026-05-26 21:55:47,913 [app.data.market_data_router] INFO: [Router] US.SNDK ★★★ LV3 主通道 | price=$1572.00 RSI=43.9 MACD=-0.0107 ATR=58.30 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:55:47,917 [app.data.market_data_router] INFO: [Router] US.SNDK price=$1572.00 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:55:47,969 [app.data.market_data_router] INFO: [Router] US.ARM ★★★ LV3 主通道 | price=$304.50 RSI=36.9 MACD=-0.0294 ATR=16.11 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:55:47,970 [app.data.market_data_router] INFO: [Router] US.ARM price=$304.50 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:55:48,042 [app.data.market_data_router] INFO: [Router] US.QCOM ★★★ LV3 主通道 | price=$238.98 RSI=40.6 MACD=-0.0118 ATR=0.12 trend=DOWN | ticker=N/A | ob=N/A
+2026-05-26 21:55:48,043 [app.data.market_data_router] INFO: [Router] US.QCOM price=$238.98 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:55:48,043 [app.data.market_data_router] WARNING: [Router] US.RIVN LV3 K 线数据不足 (28 条)
+2026-05-26 21:55:48,043 [app.data.market_data_router] INFO: [Router] US.RIVN price=$14.53 sentiment=0.00 vix=16.59 regime=RANGE source=futu_lv3_quote_only
+2026-05-26 21:55:48,092 [app.data.market_data_router] INFO: [Router] US.SNDK ★★★ LV3 主通道 | price=$1572.00 RSI=43.9 MACD=-0.0107 ATR=58.30 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:55:48,094 [app.data.market_data_router] INFO: [Router] US.SNDK price=$1572.00 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:55:48,619 [ftseek.exit_monitor] INFO: [退出监控·M1·跳过] US.SNDK source=unknown protection=protected (策略不接管, 用户责任)
+2026-05-26 21:55:48,620 [ftseek.exit_monitor] INFO: [退出监控·M1·跳过] US.QCOM source=unknown protection=protected (策略不接管, 用户责任)
+2026-05-26 21:55:48,620 [ftseek.exit_monitor] INFO: [退出监控·M1·跳过] US.ARM source=unknown protection=protected (策略不接管, 用户责任)
+2026-05-26 21:55:48,620 [ftseek.exit_monitor] WARNING: [退出监控·M1] 跳过 3 个 PROTECTED/FROZEN 仓位 (默认隔离; takeover 接管: scripts/position_takeover.py)
+2026-05-26 21:55:53,189 [app.data.market_data_router] INFO: [Router] US.SPY ★★★ LV3 主通道 | price=$750.25 RSI=76.5 MACD=0.0787 ATR=1.50 trend=UP | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:55:53,189 [app.data.market_data_router] INFO: [Router] US.SPY price=$750.25 sentiment=0.00 vix=16.59 regime=TREND_UP source=futu_lv3
+2026-05-26 21:55:53,189 [app.scalping.engine] INFO: [Scalping·强制标的] 加入 US.SNDK (min_trades=3)
+2026-05-26 21:55:53,189 [app.scalping.engine] INFO: [Scalping·黑名单] 过滤 3 只标的: {'UBER', 'TME', 'LCID'}
+2026-05-26 21:55:53,189 [app.scalping.engine] INFO: [ScalpingEngine] _tick 检查: 标的数=4 | 样本=['US.ARM', 'US.QCOM', 'US.RIVN', 'US.SNDK']
+2026-05-26 21:55:53,237 [app.data.market_data_router] INFO: [Router] US.ARM ★★★ LV3 主通道 | price=$304.49 RSI=36.9 MACD=-0.0294 ATR=16.11 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:55:53,237 [app.data.market_data_router] INFO: [Router] US.ARM price=$304.49 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:55:54,529 [app.analysis.market_state] INFO: VIX 当前值=16.59 (FRED CSV)
+2026-05-26 21:55:54,645 [app.data.market_data_router] INFO: [Router] US.QCOM ★★★ LV3 主通道 | price=$238.99 RSI=40.6 MACD=-0.0118 ATR=0.12 trend=DOWN | ticker=N/A | ob=N/A
+2026-05-26 21:55:54,646 [app.data.market_data_router] INFO: [Router] US.QCOM price=$238.99 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:55:54,657 [app.data.market_data_router] WARNING: [Router] US.RIVN LV3 K 线数据不足 (28 条)
+2026-05-26 21:55:54,657 [app.data.market_data_router] INFO: [Router] US.RIVN price=$14.53 sentiment=0.00 vix=16.59 regime=RANGE source=futu_lv3_quote_only
+2026-05-26 21:55:54,720 [app.data.market_data_router] INFO: [Router] US.SNDK ★★★ LV3 主通道 | price=$1573.12 RSI=43.9 MACD=-0.0107 ATR=58.30 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:55:54,721 [app.data.market_data_router] INFO: [Router] US.SNDK price=$1573.12 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:55:54,780 [app.data.market_data_router] INFO: [Router] US.ARM ★★★ LV3 主通道 | price=$304.71 RSI=36.9 MACD=-0.0294 ATR=16.11 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:55:54,780 [app.data.market_data_router] INFO: [Router] US.ARM price=$304.71 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:55:54,842 [app.data.market_data_router] INFO: [Router] US.QCOM ★★★ LV3 主通道 | price=$238.99 RSI=40.6 MACD=-0.0118 ATR=0.12 trend=DOWN | ticker=N/A | ob=N/A
+2026-05-26 21:55:54,843 [app.data.market_data_router] INFO: [Router] US.QCOM price=$238.99 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:55:54,843 [app.data.market_data_router] WARNING: [Router] US.RIVN LV3 K 线数据不足 (28 条)
+2026-05-26 21:55:54,843 [app.data.market_data_router] INFO: [Router] US.RIVN price=$14.53 sentiment=0.00 vix=16.59 regime=RANGE source=futu_lv3_quote_only
+2026-05-26 21:55:54,883 [app.data.market_data_router] INFO: [Router] US.SNDK ★★★ LV3 主通道 | price=$1573.12 RSI=43.9 MACD=-0.0107 ATR=58.30 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:55:54,884 [app.data.market_data_router] INFO: [Router] US.SNDK price=$1573.12 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:55:59,958 [app.data.market_data_router] INFO: [Router] US.SPY ★★★ LV3 主通道 | price=$750.50 RSI=76.5 MACD=0.0787 ATR=1.50 trend=UP | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:55:59,958 [app.data.market_data_router] INFO: [Router] US.SPY price=$750.50 sentiment=0.00 vix=16.59 regime=TREND_UP source=futu_lv3
+2026-05-26 21:55:59,959 [app.scalping.engine] INFO: [Scalping·强制标的] 加入 US.SNDK (min_trades=3)
+2026-05-26 21:55:59,959 [app.scalping.engine] INFO: [Scalping·黑名单] 过滤 3 只标的: {'UBER', 'TME', 'LCID'}
+2026-05-26 21:55:59,960 [app.scalping.engine] INFO: [ScalpingEngine] _tick 检查: 标的数=4 | 样本=['US.ARM', 'US.QCOM', 'US.RIVN', 'US.SNDK']
+2026-05-26 21:55:59,994 [app.data.market_data_router] INFO: [Router] US.ARM ★★★ LV3 主通道 | price=$304.80 RSI=36.9 MACD=-0.0294 ATR=16.11 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:55:59,997 [app.data.market_data_router] INFO: [Router] US.ARM price=$304.80 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:56:00,135 [app.data.market_data_router] INFO: [Router] US.QCOM ★★★ LV3 主通道 | price=$238.79 RSI=40.6 MACD=-0.0118 ATR=0.12 trend=DOWN | ticker=N/A | ob=N/A
+2026-05-26 21:56:00,139 [app.data.market_data_router] INFO: [Router] US.QCOM price=$238.79 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:56:00,158 [app.data.market_data_router] WARNING: [Router] US.RIVN LV3 K 线数据不足 (28 条)
+2026-05-26 21:56:00,158 [app.data.market_data_router] INFO: [Router] US.RIVN price=$14.53 sentiment=0.00 vix=16.59 regime=RANGE source=futu_lv3_quote_only
+2026-05-26 21:56:00,200 [app.data.market_data_router] INFO: [Router] US.SNDK ★★★ LV3 主通道 | price=$1573.61 RSI=43.9 MACD=-0.0107 ATR=58.30 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:56:00,201 [app.data.market_data_router] INFO: [Router] US.SNDK price=$1573.61 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:56:00,254 [app.data.market_data_router] INFO: [Router] US.ARM ★★★ LV3 主通道 | price=$304.80 RSI=36.9 MACD=-0.0294 ATR=16.11 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:56:00,255 [app.data.market_data_router] INFO: [Router] US.ARM price=$304.80 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:56:00,319 [app.data.market_data_router] INFO: [Router] US.QCOM ★★★ LV3 主通道 | price=$238.79 RSI=40.6 MACD=-0.0118 ATR=0.12 trend=DOWN | ticker=N/A | ob=N/A
+2026-05-26 21:56:00,319 [app.data.market_data_router] INFO: [Router] US.QCOM price=$238.79 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:56:00,319 [app.data.market_data_router] WARNING: [Router] US.RIVN LV3 K 线数据不足 (28 条)
+2026-05-26 21:56:00,319 [app.data.market_data_router] INFO: [Router] US.RIVN price=$14.53 sentiment=0.00 vix=16.59 regime=RANGE source=futu_lv3_quote_only
+2026-05-26 21:56:00,359 [app.data.market_data_router] INFO: [Router] US.SNDK ★★★ LV3 主通道 | price=$1573.61 RSI=43.9 MACD=-0.0107 ATR=58.30 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:56:00,360 [app.data.market_data_router] INFO: [Router] US.SNDK price=$1573.61 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:56:03,818 [ftseek.exit_monitor] INFO: [退出监控·M1·跳过] US.SNDK source=unknown protection=protected (策略不接管, 用户责任)
+2026-05-26 21:56:03,821 [ftseek.exit_monitor] INFO: [退出监控·M1·跳过] US.QCOM source=unknown protection=protected (策略不接管, 用户责任)
+2026-05-26 21:56:03,821 [ftseek.exit_monitor] INFO: [退出监控·M1·跳过] US.ARM source=unknown protection=protected (策略不接管, 用户责任)
+2026-05-26 21:56:03,821 [ftseek.exit_monitor] WARNING: [退出监控·M1] 跳过 3 个 PROTECTED/FROZEN 仓位 (默认隔离; takeover 接管: scripts/position_takeover.py)
+2026-05-26 21:56:05,410 [app.data.market_data_router] INFO: [Router] US.SPY ★★★ LV3 主通道 | price=$750.49 RSI=76.5 MACD=0.0787 ATR=1.50 trend=UP | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:56:05,410 [app.data.market_data_router] INFO: [Router] US.SPY price=$750.49 sentiment=0.00 vix=16.59 regime=TREND_UP source=futu_lv3
+2026-05-26 21:56:05,411 [app.scalping.engine] INFO: [Scalping·强制标的] 加入 US.SNDK (min_trades=3)
+2026-05-26 21:56:05,411 [app.scalping.engine] INFO: [Scalping·黑名单] 过滤 3 只标的: {'UBER', 'TME', 'LCID'}
+2026-05-26 21:56:05,411 [app.scalping.engine] INFO: [ScalpingEngine] _tick 检查: 标的数=4 | 样本=['US.ARM', 'US.QCOM', 'US.RIVN', 'US.SNDK']
+2026-05-26 21:56:05,449 [app.data.market_data_router] INFO: [Router] US.ARM ★★★ LV3 主通道 | price=$304.94 RSI=36.9 MACD=-0.0294 ATR=16.11 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:56:05,450 [app.data.market_data_router] INFO: [Router] US.ARM price=$304.94 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:56:05,593 [app.data.market_data_router] INFO: [Router] US.QCOM ★★★ LV3 主通道 | price=$238.85 RSI=40.6 MACD=-0.0118 ATR=0.12 trend=DOWN | ticker=N/A | ob=N/A
+2026-05-26 21:56:05,593 [app.data.market_data_router] INFO: [Router] US.QCOM price=$238.85 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:56:05,604 [app.data.market_data_router] WARNING: [Router] US.RIVN LV3 K 线数据不足 (28 条)
+2026-05-26 21:56:05,605 [app.data.market_data_router] INFO: [Router] US.RIVN price=$14.53 sentiment=0.00 vix=16.59 regime=RANGE source=futu_lv3_quote_only
+2026-05-26 21:56:05,652 [app.data.market_data_router] INFO: [Router] US.SNDK ★★★ LV3 主通道 | price=$1573.22 RSI=43.9 MACD=-0.0107 ATR=58.30 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:56:05,657 [app.data.market_data_router] INFO: [Router] US.SNDK price=$1573.22 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:56:05,705 [app.data.market_data_router] INFO: [Router] US.ARM ★★★ LV3 主通道 | price=$304.94 RSI=36.9 MACD=-0.0294 ATR=16.11 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:56:05,705 [app.data.market_data_router] INFO: [Router] US.ARM price=$304.94 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:56:05,768 [app.data.market_data_router] INFO: [Router] US.QCOM ★★★ LV3 主通道 | price=$238.85 RSI=40.6 MACD=-0.0118 ATR=0.12 trend=DOWN | ticker=N/A | ob=N/A
+2026-05-26 21:56:05,769 [app.data.market_data_router] INFO: [Router] US.QCOM price=$238.85 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:56:05,770 [app.data.market_data_router] WARNING: [Router] US.RIVN LV3 K 线数据不足 (28 条)
+2026-05-26 21:56:05,770 [app.data.market_data_router] INFO: [Router] US.RIVN price=$14.53 sentiment=0.00 vix=16.59 regime=RANGE source=futu_lv3_quote_only
+2026-05-26 21:56:05,806 [app.data.market_data_router] INFO: [Router] US.SNDK ★★★ LV3 主通道 | price=$1573.22 RSI=43.9 MACD=-0.0107 ATR=58.30 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:56:05,808 [app.data.market_data_router] INFO: [Router] US.SNDK price=$1573.22 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:56:10,895 [app.data.market_data_router] INFO: [Router] US.SPY ★★★ LV3 主通道 | price=$750.49 RSI=76.5 MACD=0.0787 ATR=1.50 trend=UP | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:56:10,895 [app.data.market_data_router] INFO: [Router] US.SPY price=$750.49 sentiment=0.00 vix=16.59 regime=TREND_UP source=futu_lv3
+2026-05-26 21:56:10,895 [app.scalping.engine] INFO: [Scalping·强制标的] 加入 US.SNDK (min_trades=3)
+2026-05-26 21:56:10,896 [app.scalping.engine] INFO: [Scalping·黑名单] 过滤 3 只标的: {'UBER', 'TME', 'LCID'}
+2026-05-26 21:56:10,896 [app.scalping.engine] INFO: [ScalpingEngine] _tick 检查: 标的数=4 | 样本=['US.ARM', 'US.QCOM', 'US.RIVN', 'US.SNDK']
+2026-05-26 21:56:10,935 [app.data.market_data_router] INFO: [Router] US.ARM ★★★ LV3 主通道 | price=$305.29 RSI=36.9 MACD=-0.0294 ATR=16.11 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:56:10,935 [app.data.market_data_router] INFO: [Router] US.ARM price=$305.29 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:56:11,057 [app.data.market_data_router] INFO: [Router] US.QCOM ★★★ LV3 主通道 | price=$238.65 RSI=40.6 MACD=-0.0118 ATR=0.12 trend=DOWN | ticker=N/A | ob=N/A
+2026-05-26 21:56:11,058 [app.data.market_data_router] INFO: [Router] US.QCOM price=$238.65 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:56:11,070 [app.data.market_data_router] WARNING: [Router] US.RIVN LV3 K 线数据不足 (28 条)
+2026-05-26 21:56:11,078 [app.data.market_data_router] INFO: [Router] US.RIVN price=$14.52 sentiment=0.00 vix=16.59 regime=RANGE source=futu_lv3_quote_only
+2026-05-26 21:56:11,123 [app.data.market_data_router] INFO: [Router] US.SNDK ★★★ LV3 主通道 | price=$1572.86 RSI=43.9 MACD=-0.0107 ATR=58.30 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:56:11,124 [app.data.market_data_router] INFO: [Router] US.SNDK price=$1572.86 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:56:11,170 [app.data.market_data_router] INFO: [Router] US.ARM ★★★ LV3 主通道 | price=$305.29 RSI=36.9 MACD=-0.0294 ATR=16.11 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:56:11,170 [app.data.market_data_router] INFO: [Router] US.ARM price=$305.29 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:56:11,225 [app.data.market_data_router] INFO: [Router] US.QCOM ★★★ LV3 主通道 | price=$238.65 RSI=40.6 MACD=-0.0118 ATR=0.12 trend=DOWN | ticker=N/A | ob=N/A
+2026-05-26 21:56:11,225 [app.data.market_data_router] INFO: [Router] US.QCOM price=$238.65 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:56:11,226 [app.data.market_data_router] WARNING: [Router] US.RIVN LV3 K 线数据不足 (28 条)
+2026-05-26 21:56:11,226 [app.data.market_data_router] INFO: [Router] US.RIVN price=$14.52 sentiment=0.00 vix=16.59 regime=RANGE source=futu_lv3_quote_only
+2026-05-26 21:56:11,265 [app.data.market_data_router] INFO: [Router] US.SNDK ★★★ LV3 主通道 | price=$1572.86 RSI=43.9 MACD=-0.0107 ATR=58.30 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:56:11,265 [app.data.market_data_router] INFO: [Router] US.SNDK price=$1572.86 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:56:16,345 [app.data.market_data_router] INFO: [Router] US.SPY ★★★ LV3 主通道 | price=$750.48 RSI=76.5 MACD=0.0787 ATR=1.50 trend=UP | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:56:16,347 [app.data.market_data_router] INFO: [Router] US.SPY price=$750.48 sentiment=0.00 vix=16.59 regime=TREND_UP source=futu_lv3
+2026-05-26 21:56:16,348 [app.scalping.engine] INFO: [Scalping·强制标的] 加入 US.SNDK (min_trades=3)
+2026-05-26 21:56:16,349 [app.scalping.engine] INFO: [Scalping·黑名单] 过滤 3 只标的: {'UBER', 'TME', 'LCID'}
+2026-05-26 21:56:16,349 [app.scalping.engine] INFO: [ScalpingEngine] _tick 检查: 标的数=4 | 样本=['US.ARM', 'US.QCOM', 'US.RIVN', 'US.SNDK']
+2026-05-26 21:56:16,392 [app.data.market_data_router] INFO: [Router] US.ARM ★★★ LV3 主通道 | price=$304.80 RSI=36.9 MACD=-0.0294 ATR=16.11 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:56:16,394 [app.data.market_data_router] INFO: [Router] US.ARM price=$304.80 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:56:16,520 [app.data.market_data_router] INFO: [Router] US.QCOM ★★★ LV3 主通道 | price=$239.04 RSI=40.6 MACD=-0.0118 ATR=0.12 trend=DOWN | ticker=N/A | ob=N/A
+2026-05-26 21:56:16,520 [app.data.market_data_router] INFO: [Router] US.QCOM price=$239.04 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:56:16,538 [app.data.market_data_router] WARNING: [Router] US.RIVN LV3 K 线数据不足 (28 条)
+2026-05-26 21:56:16,538 [app.data.market_data_router] INFO: [Router] US.RIVN price=$14.51 sentiment=0.00 vix=16.59 regime=RANGE source=futu_lv3_quote_only
+2026-05-26 21:56:16,595 [app.data.market_data_router] INFO: [Router] US.SNDK ★★★ LV3 主通道 | price=$1571.40 RSI=43.9 MACD=-0.0107 ATR=58.30 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:56:16,603 [app.data.market_data_router] INFO: [Router] US.SNDK price=$1571.40 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:56:16,653 [app.data.market_data_router] INFO: [Router] US.ARM ★★★ LV3 主通道 | price=$304.79 RSI=36.9 MACD=-0.0294 ATR=16.11 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:56:16,653 [app.data.market_data_router] INFO: [Router] US.ARM price=$304.79 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:56:16,718 [app.data.market_data_router] INFO: [Router] US.QCOM ★★★ LV3 主通道 | price=$239.04 RSI=40.6 MACD=-0.0118 ATR=0.12 trend=DOWN | ticker=N/A | ob=N/A
+2026-05-26 21:56:16,722 [app.data.market_data_router] INFO: [Router] US.QCOM price=$239.04 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:56:16,723 [app.data.market_data_router] WARNING: [Router] US.RIVN LV3 K 线数据不足 (28 条)
+2026-05-26 21:56:16,723 [app.data.market_data_router] INFO: [Router] US.RIVN price=$14.51 sentiment=0.00 vix=16.59 regime=RANGE source=futu_lv3_quote_only
+2026-05-26 21:56:16,765 [app.data.market_data_router] INFO: [Router] US.SNDK ★★★ LV3 主通道 | price=$1571.40 RSI=43.9 MACD=-0.0107 ATR=58.30 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:56:16,766 [app.data.market_data_router] INFO: [Router] US.SNDK price=$1571.40 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:56:16,817 [ftseek_us.position_sync] INFO: [US Sync] 跳过新持仓 US.QCOM (创建 150s 前, 等待 Futu 确认成交)
+2026-05-26 21:56:16,822 [ftseek_us.position_sync] INFO: [US Sync] 跳过新持仓 US.SNDK (创建 150s 前, 等待 Futu 确认成交)
+2026-05-26 21:56:16,823 [ftseek_us.position_sync] INFO: [US Sync] 跳过新持仓 US.ARM (创建 150s 前, 等待 Futu 确认成交)
+2026-05-26 21:56:16,849 [ftseek_us.position_sync] INFO: [US Sync] 跳过新持仓 US.QCOM (创建 150s 前 < 180s 保护窗口, 等待 Futu 确认成交)
+2026-05-26 21:56:16,849 [ftseek_us.position_sync] INFO: [US Sync] 跳过新持仓 US.SNDK (创建 150s 前 < 180s 保护窗口, 等待 Futu 确认成交)
+2026-05-26 21:56:16,849 [ftseek_us.position_sync] INFO: [US Sync] 跳过新持仓 US.ARM (创建 150s 前 < 180s 保护窗口, 等待 Futu 确认成交)
+2026-05-26 21:56:16,849 [ftseek_us.position_sync] INFO: [US Sync] Done | Futu: 0 | DB: 0
+2026-05-26 21:56:16,873 [ftseek_us.position_sync] WARNING: ⚠️ [US Sync Consistency] 检测到 2 个不一致:
+  DB 有多余持仓 (Broker 已无): {'US.QCOM', 'US.SNDK', 'US.ARM'}
+  Memory 有幽灵仓: {'US.QCOM', 'US.SNDK', 'US.ARM'}
+2026-05-26 21:56:18,992 [ftseek.exit_monitor] INFO: [退出监控·M1·跳过] US.SNDK source=unknown protection=protected (策略不接管, 用户责任)
+2026-05-26 21:56:18,992 [ftseek.exit_monitor] INFO: [退出监控·M1·跳过] US.QCOM source=unknown protection=protected (策略不接管, 用户责任)
+2026-05-26 21:56:18,992 [ftseek.exit_monitor] INFO: [退出监控·M1·跳过] US.ARM source=unknown protection=protected (策略不接管, 用户责任)
+2026-05-26 21:56:18,992 [ftseek.exit_monitor] WARNING: [退出监控·M1] 跳过 3 个 PROTECTED/FROZEN 仓位 (默认隔离; takeover 接管: scripts/position_takeover.py)
+2026-05-26 21:56:21,836 [app.data.market_data_router] INFO: [Router] US.SPY ★★★ LV3 主通道 | price=$750.42 RSI=76.5 MACD=0.0787 ATR=1.50 trend=UP | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:56:21,836 [app.data.market_data_router] INFO: [Router] US.SPY price=$750.42 sentiment=0.00 vix=16.59 regime=TREND_UP source=futu_lv3
+2026-05-26 21:56:21,837 [app.scalping.engine] INFO: [Scalping·强制标的] 加入 US.SNDK (min_trades=3)
+2026-05-26 21:56:21,837 [app.scalping.engine] INFO: [Scalping·黑名单] 过滤 3 只标的: {'UBER', 'TME', 'LCID'}
+2026-05-26 21:56:21,837 [app.scalping.engine] INFO: [ScalpingEngine] _tick 检查: 标的数=4 | 样本=['US.ARM', 'US.QCOM', 'US.RIVN', 'US.SNDK']
+2026-05-26 21:56:21,876 [app.data.market_data_router] INFO: [Router] US.ARM ★★★ LV3 主通道 | price=$305.20 RSI=36.9 MACD=-0.0294 ATR=16.11 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:56:21,877 [app.data.market_data_router] INFO: [Router] US.ARM price=$305.20 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:56:22,016 [app.data.market_data_router] INFO: [Router] US.QCOM ★★★ LV3 主通道 | price=$238.85 RSI=40.6 MACD=-0.0118 ATR=0.12 trend=DOWN | ticker=N/A | ob=N/A
+2026-05-26 21:56:22,017 [app.data.market_data_router] INFO: [Router] US.QCOM price=$238.85 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:56:22,055 [app.data.market_data_router] WARNING: [Router] US.RIVN LV3 K 线数据不足 (28 条)
+2026-05-26 21:56:22,057 [app.data.market_data_router] INFO: [Router] US.RIVN price=$14.50 sentiment=0.00 vix=16.59 regime=RANGE source=futu_lv3_quote_only
+2026-05-26 21:56:22,101 [app.data.market_data_router] INFO: [Router] US.SNDK ★★★ LV3 主通道 | price=$1572.05 RSI=43.9 MACD=-0.0107 ATR=58.30 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:56:22,101 [app.data.market_data_router] INFO: [Router] US.SNDK price=$1572.05 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:56:22,168 [app.data.market_data_router] INFO: [Router] US.ARM ★★★ LV3 主通道 | price=$305.20 RSI=36.9 MACD=-0.0294 ATR=16.11 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:56:22,168 [app.data.market_data_router] INFO: [Router] US.ARM price=$305.20 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:56:22,227 [app.data.market_data_router] INFO: [Router] US.QCOM ★★★ LV3 主通道 | price=$238.85 RSI=40.6 MACD=-0.0118 ATR=0.12 trend=DOWN | ticker=N/A | ob=N/A
+2026-05-26 21:56:22,232 [app.data.market_data_router] INFO: [Router] US.QCOM price=$238.85 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:56:22,232 [app.data.market_data_router] WARNING: [Router] US.RIVN LV3 K 线数据不足 (28 条)
+2026-05-26 21:56:22,233 [app.data.market_data_router] INFO: [Router] US.RIVN price=$14.50 sentiment=0.00 vix=16.59 regime=RANGE source=futu_lv3_quote_only
+2026-05-26 21:56:22,266 [app.data.market_data_router] INFO: [Router] US.SNDK ★★★ LV3 主通道 | price=$1572.05 RSI=43.9 MACD=-0.0107 ATR=58.30 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:56:22,267 [app.data.market_data_router] INFO: [Router] US.SNDK price=$1572.05 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:56:27,341 [app.data.market_data_router] INFO: [Router] US.SPY ★★★ LV3 主通道 | price=$750.55 RSI=76.5 MACD=0.0787 ATR=1.50 trend=UP | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:56:27,341 [app.data.market_data_router] INFO: [Router] US.SPY price=$750.55 sentiment=0.00 vix=16.59 regime=TREND_UP source=futu_lv3
+2026-05-26 21:56:27,341 [app.scalping.engine] INFO: [Scalping·强制标的] 加入 US.SNDK (min_trades=3)
+2026-05-26 21:56:27,341 [app.scalping.engine] INFO: [Scalping·黑名单] 过滤 3 只标的: {'UBER', 'TME', 'LCID'}
+2026-05-26 21:56:27,341 [app.scalping.engine] INFO: [ScalpingEngine] _tick 检查: 标的数=4 | 样本=['US.ARM', 'US.QCOM', 'US.RIVN', 'US.SNDK']
+2026-05-26 21:56:27,378 [app.data.market_data_router] INFO: [Router] US.ARM ★★★ LV3 主通道 | price=$305.91 RSI=36.9 MACD=-0.0294 ATR=16.11 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:56:27,378 [app.data.market_data_router] INFO: [Router] US.ARM price=$305.91 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:56:27,498 [app.data.market_data_router] INFO: [Router] US.QCOM ★★★ LV3 主通道 | price=$238.97 RSI=40.6 MACD=-0.0118 ATR=0.12 trend=DOWN | ticker=N/A | ob=N/A
+2026-05-26 21:56:27,498 [app.data.market_data_router] INFO: [Router] US.QCOM price=$238.97 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:56:27,510 [app.data.market_data_router] WARNING: [Router] US.RIVN LV3 K 线数据不足 (28 条)
+2026-05-26 21:56:27,511 [app.data.market_data_router] INFO: [Router] US.RIVN price=$14.49 sentiment=0.00 vix=16.59 regime=RANGE source=futu_lv3_quote_only
+2026-05-26 21:56:27,565 [app.data.market_data_router] INFO: [Router] US.SNDK ★★★ LV3 主通道 | price=$1572.20 RSI=43.9 MACD=-0.0107 ATR=58.30 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:56:27,568 [app.data.market_data_router] INFO: [Router] US.SNDK price=$1572.20 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:56:27,626 [app.data.market_data_router] INFO: [Router] US.ARM ★★★ LV3 主通道 | price=$305.91 RSI=36.9 MACD=-0.0294 ATR=16.11 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:56:27,631 [app.data.market_data_router] INFO: [Router] US.ARM price=$305.91 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:56:27,693 [app.data.market_data_router] INFO: [Router] US.QCOM ★★★ LV3 主通道 | price=$238.97 RSI=40.6 MACD=-0.0118 ATR=0.12 trend=DOWN | ticker=N/A | ob=N/A
+2026-05-26 21:56:27,694 [app.data.market_data_router] INFO: [Router] US.QCOM price=$238.97 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:56:27,694 [app.data.market_data_router] WARNING: [Router] US.RIVN LV3 K 线数据不足 (28 条)
+2026-05-26 21:56:27,694 [app.data.market_data_router] INFO: [Router] US.RIVN price=$14.49 sentiment=0.00 vix=16.59 regime=RANGE source=futu_lv3_quote_only
+2026-05-26 21:56:27,736 [app.data.market_data_router] INFO: [Router] US.SNDK ★★★ LV3 主通道 | price=$1572.20 RSI=43.9 MACD=-0.0107 ATR=58.30 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:56:27,737 [app.data.market_data_router] INFO: [Router] US.SNDK price=$1572.20 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:56:32,808 [app.data.market_data_router] INFO: [Router] US.SPY ★★★ LV3 主通道 | price=$750.50 RSI=76.5 MACD=0.0787 ATR=1.50 trend=UP | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:56:32,809 [app.data.market_data_router] INFO: [Router] US.SPY price=$750.50 sentiment=0.00 vix=16.59 regime=TREND_UP source=futu_lv3
+2026-05-26 21:56:32,811 [app.scalping.engine] INFO: [Scalping·强制标的] 加入 US.SNDK (min_trades=3)
+2026-05-26 21:56:32,811 [app.scalping.engine] INFO: [Scalping·黑名单] 过滤 3 只标的: {'UBER', 'TME', 'LCID'}
+2026-05-26 21:56:32,811 [app.scalping.engine] INFO: [ScalpingEngine] _tick 检查: 标的数=4 | 样本=['US.ARM', 'US.QCOM', 'US.RIVN', 'US.SNDK']
+2026-05-26 21:56:32,854 [app.data.market_data_router] INFO: [Router] US.ARM ★★★ LV3 主通道 | price=$306.22 RSI=36.9 MACD=-0.0294 ATR=16.11 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:56:32,855 [app.data.market_data_router] INFO: [Router] US.ARM price=$306.22 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:56:32,969 [app.data.market_data_router] INFO: [Router] US.QCOM ★★★ LV3 主通道 | price=$239.38 RSI=40.6 MACD=-0.0118 ATR=0.12 trend=DOWN | ticker=N/A | ob=N/A
+2026-05-26 21:56:32,971 [app.data.market_data_router] INFO: [Router] US.QCOM price=$239.38 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:56:32,977 [app.scalping.signals] INFO: [SignalDetector] ✅ 信号触发 | 方向: SHORT | 投票: vwap/bollinger | 价格: $239.38 | RSI: 40.6
+2026-05-26 21:56:32,977 [app.data.market_data_router] WARNING: [Router] US.RIVN LV3 K 线数据不足 (28 条)
+2026-05-26 21:56:32,977 [app.data.market_data_router] INFO: [Router] US.RIVN price=$14.49 sentiment=0.00 vix=16.59 regime=RANGE source=futu_lv3_quote_only
+2026-05-26 21:56:33,039 [app.data.market_data_router] INFO: [Router] US.SNDK ★★★ LV3 主通道 | price=$1572.82 RSI=43.9 MACD=-0.0107 ATR=58.30 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:56:33,040 [app.data.market_data_router] INFO: [Router] US.SNDK price=$1572.82 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:56:33,120 [app.data.market_data_router] INFO: [Router] US.ARM ★★★ LV3 主通道 | price=$306.22 RSI=36.9 MACD=-0.0294 ATR=16.11 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:56:33,120 [app.data.market_data_router] INFO: [Router] US.ARM price=$306.22 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:56:33,178 [app.data.market_data_router] INFO: [Router] US.QCOM ★★★ LV3 主通道 | price=$239.38 RSI=40.6 MACD=-0.0118 ATR=0.12 trend=DOWN | ticker=N/A | ob=N/A
+2026-05-26 21:56:33,178 [app.data.market_data_router] INFO: [Router] US.QCOM price=$239.38 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:56:33,180 [app.data.market_data_router] WARNING: [Router] US.RIVN LV3 K 线数据不足 (28 条)
+2026-05-26 21:56:33,180 [app.data.market_data_router] INFO: [Router] US.RIVN price=$14.49 sentiment=0.00 vix=16.59 regime=RANGE source=futu_lv3_quote_only
+2026-05-26 21:56:33,234 [app.data.market_data_router] INFO: [Router] US.SNDK ★★★ LV3 主通道 | price=$1572.82 RSI=43.9 MACD=-0.0107 ATR=58.30 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:56:33,238 [app.data.market_data_router] INFO: [Router] US.SNDK price=$1572.82 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:56:34,205 [ftseek.exit_monitor] INFO: [退出监控·M1·跳过] US.SNDK source=unknown protection=protected (策略不接管, 用户责任)
+2026-05-26 21:56:34,206 [ftseek.exit_monitor] INFO: [退出监控·M1·跳过] US.QCOM source=unknown protection=protected (策略不接管, 用户责任)
+2026-05-26 21:56:34,206 [ftseek.exit_monitor] INFO: [退出监控·M1·跳过] US.ARM source=unknown protection=protected (策略不接管, 用户责任)
+2026-05-26 21:56:34,206 [ftseek.exit_monitor] WARNING: [退出监控·M1] 跳过 3 个 PROTECTED/FROZEN 仓位 (默认隔离; takeover 接管: scripts/position_takeover.py)
+2026-05-26 21:56:38,307 [app.data.market_data_router] INFO: [Router] US.SPY ★★★ LV3 主通道 | price=$750.51 RSI=76.5 MACD=0.0787 ATR=1.50 trend=UP | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:56:38,307 [app.data.market_data_router] INFO: [Router] US.SPY price=$750.51 sentiment=0.00 vix=16.59 regime=TREND_UP source=futu_lv3
+2026-05-26 21:56:38,307 [app.scalping.engine] INFO: [Scalping·强制标的] 加入 US.SNDK (min_trades=3)
+2026-05-26 21:56:38,308 [app.scalping.engine] INFO: [Scalping·黑名单] 过滤 3 只标的: {'UBER', 'TME', 'LCID'}
+2026-05-26 21:56:38,308 [app.scalping.engine] INFO: [ScalpingEngine] _tick 检查: 标的数=4 | 样本=['US.ARM', 'US.QCOM', 'US.RIVN', 'US.SNDK']
+2026-05-26 21:56:38,368 [app.data.market_data_router] INFO: [Router] US.ARM ★★★ LV3 主通道 | price=$306.02 RSI=36.9 MACD=-0.0294 ATR=16.11 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:56:38,369 [app.data.market_data_router] INFO: [Router] US.ARM price=$306.02 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:56:38,493 [app.data.market_data_router] INFO: [Router] US.QCOM ★★★ LV3 主通道 | price=$239.75 RSI=40.6 MACD=-0.0118 ATR=0.12 trend=DOWN | ticker=N/A | ob=N/A
+2026-05-26 21:56:38,493 [app.data.market_data_router] INFO: [Router] US.QCOM price=$239.75 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:56:38,503 [app.scalping.signals] INFO: [SignalDetector] ✅ 信号触发 | 方向: SHORT | 投票: vwap/bollinger | 价格: $239.75 | RSI: 40.6
+2026-05-26 21:56:38,505 [app.data.market_data_router] WARNING: [Router] US.RIVN LV3 K 线数据不足 (28 条)
+2026-05-26 21:56:38,505 [app.data.market_data_router] INFO: [Router] US.RIVN price=$14.49 sentiment=0.00 vix=16.59 regime=RANGE source=futu_lv3_quote_only
+2026-05-26 21:56:38,554 [app.data.market_data_router] INFO: [Router] US.SNDK ★★★ LV3 主通道 | price=$1572.82 RSI=43.9 MACD=-0.0107 ATR=58.30 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:56:38,554 [app.data.market_data_router] INFO: [Router] US.SNDK price=$1572.82 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:56:38,621 [app.data.market_data_router] INFO: [Router] US.ARM ★★★ LV3 主通道 | price=$306.01 RSI=36.9 MACD=-0.0294 ATR=16.11 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:56:38,621 [app.data.market_data_router] INFO: [Router] US.ARM price=$306.01 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:56:38,685 [app.data.market_data_router] INFO: [Router] US.QCOM ★★★ LV3 主通道 | price=$239.75 RSI=40.6 MACD=-0.0118 ATR=0.12 trend=DOWN | ticker=N/A | ob=N/A
+2026-05-26 21:56:38,685 [app.data.market_data_router] INFO: [Router] US.QCOM price=$239.75 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:56:38,685 [app.data.market_data_router] WARNING: [Router] US.RIVN LV3 K 线数据不足 (28 条)
+2026-05-26 21:56:38,685 [app.data.market_data_router] INFO: [Router] US.RIVN price=$14.49 sentiment=0.00 vix=16.59 regime=RANGE source=futu_lv3_quote_only
+2026-05-26 21:56:38,722 [app.data.market_data_router] INFO: [Router] US.SNDK ★★★ LV3 主通道 | price=$1572.82 RSI=43.9 MACD=-0.0107 ATR=58.30 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:56:38,722 [app.data.market_data_router] INFO: [Router] US.SNDK price=$1572.82 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:56:43,790 [app.data.market_data_router] INFO: [Router] US.SPY ★★★ LV3 主通道 | price=$750.47 RSI=76.5 MACD=0.0787 ATR=1.50 trend=UP | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:56:43,791 [app.data.market_data_router] INFO: [Router] US.SPY price=$750.47 sentiment=0.00 vix=16.59 regime=TREND_UP source=futu_lv3
+2026-05-26 21:56:43,791 [app.scalping.engine] INFO: [Scalping·强制标的] 加入 US.SNDK (min_trades=3)
+2026-05-26 21:56:43,792 [app.scalping.engine] INFO: [Scalping·黑名单] 过滤 3 只标的: {'UBER', 'TME', 'LCID'}
+2026-05-26 21:56:43,792 [app.scalping.engine] INFO: [ScalpingEngine] _tick 检查: 标的数=4 | 样本=['US.ARM', 'US.QCOM', 'US.RIVN', 'US.SNDK']
+2026-05-26 21:56:43,840 [app.data.market_data_router] INFO: [Router] US.ARM ★★★ LV3 主通道 | price=$305.70 RSI=36.9 MACD=-0.0294 ATR=16.11 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:56:43,840 [app.data.market_data_router] INFO: [Router] US.ARM price=$305.70 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:56:43,970 [app.data.market_data_router] INFO: [Router] US.QCOM ★★★ LV3 主通道 | price=$239.66 RSI=40.6 MACD=-0.0118 ATR=0.12 trend=DOWN | ticker=N/A | ob=N/A
+2026-05-26 21:56:43,970 [app.data.market_data_router] INFO: [Router] US.QCOM price=$239.66 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:56:43,979 [app.scalping.signals] INFO: [SignalDetector] ✅ 信号触发 | 方向: SHORT | 投票: vwap/bollinger | 价格: $239.66 | RSI: 40.6
+2026-05-26 21:56:43,979 [app.data.market_data_router] WARNING: [Router] US.RIVN LV3 K 线数据不足 (28 条)
+2026-05-26 21:56:43,983 [app.data.market_data_router] INFO: [Router] US.RIVN price=$14.47 sentiment=0.00 vix=16.59 regime=RANGE source=futu_lv3_quote_only
+2026-05-26 21:56:44,036 [app.data.market_data_router] INFO: [Router] US.SNDK ★★★ LV3 主通道 | price=$1573.15 RSI=43.9 MACD=-0.0107 ATR=58.30 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:56:44,037 [app.data.market_data_router] INFO: [Router] US.SNDK price=$1573.15 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:56:44,092 [app.data.market_data_router] INFO: [Router] US.ARM ★★★ LV3 主通道 | price=$305.70 RSI=36.9 MACD=-0.0294 ATR=16.11 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:56:44,093 [app.data.market_data_router] INFO: [Router] US.ARM price=$305.70 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:56:44,163 [app.data.market_data_router] INFO: [Router] US.QCOM ★★★ LV3 主通道 | price=$239.66 RSI=40.6 MACD=-0.0118 ATR=0.12 trend=DOWN | ticker=N/A | ob=N/A
+2026-05-26 21:56:44,163 [app.data.market_data_router] INFO: [Router] US.QCOM price=$239.66 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:56:44,164 [app.data.market_data_router] WARNING: [Router] US.RIVN LV3 K 线数据不足 (28 条)
+2026-05-26 21:56:44,164 [app.data.market_data_router] INFO: [Router] US.RIVN price=$14.47 sentiment=0.00 vix=16.59 regime=RANGE source=futu_lv3_quote_only
+2026-05-26 21:56:44,209 [app.data.market_data_router] INFO: [Router] US.SNDK ★★★ LV3 主通道 | price=$1573.15 RSI=43.9 MACD=-0.0107 ATR=58.30 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:56:44,209 [app.data.market_data_router] INFO: [Router] US.SNDK price=$1573.15 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3
+2026-05-26 21:56:47,394 [ftseek_us.position_sync] WARNING: [US Sync] Ghost position: US.QCOM (DB only, closing)
+2026-05-26 21:56:47,394 [ftseek_us.position_sync] WARNING: [US Sync] Ghost position: US.SNDK (DB only, closing)
+2026-05-26 21:56:47,394 [ftseek_us.position_sync] WARNING: [US Sync] Ghost position: US.ARM (DB only, closing)
+2026-05-26 21:56:47,400 [ftseek_us.position_sync] INFO: 🧹 [US Sync] 清理幽灵仓 US.QCOM (Futu 已平仓)
+2026-05-26 21:56:47,735 [ftseek_us.position_sync] INFO: [US Sync] 飞书幽灵仓清理通知已发送: US.QCOM
+2026-05-26 21:56:47,735 [ftseek_us.position_sync] INFO: 🧹 [US Sync] 清理幽灵仓 US.SNDK (Futu 已平仓)
+2026-05-26 21:56:48,060 [ftseek_us.position_sync] INFO: [US Sync] 飞书幽灵仓清理通知已发送: US.SNDK
+2026-05-26 21:56:48,060 [ftseek_us.position_sync] INFO: 🧹 [US Sync] 清理幽灵仓 US.ARM (Futu 已平仓)
+2026-05-26 21:56:48,374 [ftseek_us.position_sync] INFO: [US Sync] 飞书幽灵仓清理通知已发送: US.ARM
+2026-05-26 21:56:48,375 [ftseek_us.position_sync] INFO: [US Sync] Done | Futu: 0 | DB: 0
+2026-05-26 21:56:49,262 [app.data.market_data_router] INFO: [Router] US.SPY ★★★ LV3 主通道 | price=$750.56 RSI=76.5 MACD=0.0787 ATR=1.50 trend=UP | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:56:49,265 [app.data.market_data_router] INFO: [Router] US.SPY price=$750.56 sentiment=0.00 vix=16.59 regime=TREND_UP source=futu_lv3
+2026-05-26 21:56:49,266 [app.scalping.engine] INFO: [Scalping·强制标的] 加入 US.SNDK (min_trades=3)
+2026-05-26 21:56:49,266 [app.scalping.engine] INFO: [Scalping·黑名单] 过滤 3 只标的: {'UBER', 'TME', 'LCID'}
+2026-05-26 21:56:49,267 [app.scalping.engine] INFO: [ScalpingEngine] _tick 检查: 标的数=4 | 样本=['US.ARM', 'US.QCOM', 'US.RIVN', 'US.SNDK']
+2026-05-26 21:56:49,302 [app.data.market_data_router] INFO: [Router] US.ARM ★★★ LV3 主通道 | price=$305.70 RSI=36.9 MACD=-0.0294 ATR=16.11 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-05-26 21:56:49,309 [app.data.market_data_router] INFO: [Router] US.ARM price=$305.70 sentiment=0.00 vix=16.59 regime=TREND_DOWN source=futu_lv3

@@ -791,13 +791,13 @@ def _check_gates_and_conflicts(scheduler, symbol: str, signal: SignalScore, cont
     if is_short:
         # 做空门禁 (P0-辩论修复 2026-05-26: direct语义, 无需反转)
         # strength 越高 = 信号越强 (LONG/SHORT 均同)
-        if signal.strength < 25:
+        if signal.strength < 50:
             logger.warning(
                 f"🚫 [做空门禁] {symbol} 做空信号强度不足 "
-                f"(strength={signal.strength} < 25)"
+                f"(strength={signal.strength} < 50)"
             )
             get_rejection_logger().record(symbol,
-                f"short_strength={signal.strength}<25",
+                f"short_strength={signal.strength}<50",
                 "SHORT_EFFECTIVE_WEAK", strength=signal.strength,
                 confidence=None, direction="SHORT")
             return False

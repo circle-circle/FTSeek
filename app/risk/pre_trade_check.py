@@ -29,7 +29,7 @@ class PreTradeChecker:
     def __init__(
         self,
         min_confidence: Optional[float] = None,  # P0 修复：从配置读取，默认 None
-        min_signal_strength: int = 25,       # P0-辩论修复: 99→50→25 (技术面策略max=24.25, 需匹配direct语义)
+        min_signal_strength: int = 50,       # P0-辩论修复: 99→50 (strength已缩放到0-100, 50=3指标共振)
     ):
         # F4 (2026-05-14): 收敛到 MinConfidenceResolver, 不再各自直读 yaml
         if min_confidence is None:

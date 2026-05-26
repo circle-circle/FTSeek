@@ -152,11 +152,11 @@ class SignalScore:
     
     def get_position_ratio(self) -> float:
         """根据评分获取仓位比例"""
-        if self.strength < 25:
+        if self.strength < 50:
             return 0.0
-        elif self.strength < 50:
-            return 0.25
         elif self.strength < 70:
+            return 0.25
+        elif self.strength < 85:
             return 0.50
         else:
             return 1.0

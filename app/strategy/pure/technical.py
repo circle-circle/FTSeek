@@ -117,7 +117,9 @@ def evaluate(ctx: SymbolContext, config: Dict[str, Any]) -> Optional[SignalCandi
         return None
 
     direction = "LONG" if total_score > 0 else "SHORT"
-    strength = min(100, int(abs_score))
+    # Fix: scale abs_score (max ~24.25) to 0-100 range
+    # 2 indicators ≈ 40, 3 indicators ≈ 60-76, 4 indicators ≈ 80-96
+    strength = min(100, int(abs_score * 100 / 24.25))
     confidence = min(0.95, active_signals / len(indicators) * 0.80)
 
     return SignalCandidate(
