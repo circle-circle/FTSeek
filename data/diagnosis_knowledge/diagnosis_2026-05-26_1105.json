@@ -1,0 +1,29 @@
+{
+  "timestamp": "2026-05-26T11:05:00.016409",
+  "date": "2026-05-26",
+  "time": "1105",
+  "alerts": [
+    {
+      "level": "critical",
+      "rule_id": "REJECT_001",
+      "rule_name": "拒绝率飙升",
+      "message": "信号拒绝率 100%，主因: circuit_breaker (1次)",
+      "details": {
+        "rejection_rate": 1.0,
+        "reject_reasons": {
+          "circuit_breaker": 1,
+          "decision_buffer_rejected": 1
+        },
+        "total_signals": 2,
+        "rejected_count": 2
+      },
+      "timestamp": "2026-05-26T11:05:00.016277"
+    }
+  ],
+  "summary": {
+    "total": 1,
+    "critical": 1,
+    "warning": 0,
+    "info": 0
+  }
+}

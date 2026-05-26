@@ -54,7 +54,7 @@ class SmartStopGuard:
     # 最低交易 (小米 200 股 @30) 往返成本 ~15 HKD
     # 一般交易 (腾讯 100 股 @460) 往返成本 ~81 HKD
     MIN_LOSS_AMOUNT = 15.0     # 忽略 < 15 元的小额亏损 (覆盖最低手续费)
-    CONFIDENCE_THRESHOLD = 0.8 # 阶段 2 放行阈值
+    CONFIDENCE_THRESHOLD = 0.65 # 阶段 2 放行阈值 (P2 调优: 0.8→0.65，匹配实际信号分布)
     COOLDOWN_SECONDS = 3600    # 熔断冷却期 60 分钟
     DRAWDOWN_LIMIT = 0.03      # 日内回撤硬限制 3%
     
@@ -189,15 +189,24 @@ class SmartStopGuard:
         return True, "✅ 正常模式", 1.0
     
     def _update_loss_state(self):
-        """检查数据库更新连败状态"""
+        """检查数据库更新连败状态
+        
+        P0 修复 (2026-05-26): 只统计当日亏损，不跨日累积
+        根因: 原实现查询全历史 CLOSED positions，导致每日开盘后
+        _reset_daily() 刚重置就被历史亏损数据立即升级回 stage 2，
+        SmartStop 日重置形同虚设。
+        """
         try:
             import sqlite3
+            today = datetime.now().strftime('%Y-%m-%d')
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
                 cursor.execute(
                     "SELECT realized_pnl, entry_price, exit_price "
                     "FROM positions WHERE status='CLOSED' AND exit_price IS NOT NULL "
-                    "ORDER BY exit_time DESC LIMIT 5"
+                    "AND DATE(exit_time) = DATE(?) "
+                    "ORDER BY exit_time DESC LIMIT 5",
+                    (today,)
                 )
                 rows = cursor.fetchall()
             
