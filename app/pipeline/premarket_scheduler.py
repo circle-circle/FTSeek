@@ -361,6 +361,15 @@ class PreMarketScheduler:
             # 🚀 自动生成盘前作战计划 (Battle Plan)
             # Phase 1 (2026-05-09): 融合两条辩论结果 (08:20 + 08:30)
             if result and hasattr(result, "assessments") and result.assessments:
+                # P1 修复 (2026-05-26): 检查是否所有 assessments 都是 NO_TRADE
+                # 如果是，跳过 generate_from_assessments (会生成空计划)
+                # 直接使用辩论结果生成计划
+                all_no_trade = all(
+                    getattr(a, 'direction', '') == 'NO_TRADE' or 
+                    getattr(a, 'tradeability', '') == 'no_trade'
+                    for a in result.assessments
+                )
+                
                 from app.pipeline.battle_plan_generator import BattlePlanGenerator
                 generator = BattlePlanGenerator()
 
@@ -390,7 +399,14 @@ class PreMarketScheduler:
                             except Exception:
                                 pass
 
-                generator.generate_from_assessments(result.assessments, auction_data=auction_data)
+                # P1 修复 (2026-05-26): 仅当有可交易 assessments 时才调用 generate_from_assessments
+                if not all_no_trade:
+                    generator.generate_from_assessments(result.assessments, auction_data=auction_data)
+                else:
+                    # 所有 assessments 都是 NO_TRADE，直接用辩论结果生成空计划
+                    # 然后通过 merge_debate_targets 填充
+                    logger.info("[BattlePlan] 所有 assessments 为 NO_TRADE，跳过 generate_from_assessments")
+                    generator._save_fallback_plan("All assessments NO_TRADE, using debate results")
 
                 # 3b. 辩论标的合并: 将不在 assessments 中的辩论标的注入计划
                 try:

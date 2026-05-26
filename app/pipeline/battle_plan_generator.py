@@ -408,7 +408,17 @@ class BattlePlanGenerator:
 
         # 已存在的标的集合 (不重复添加)
         existing_symbols = {t.get('symbol', '') for t in existing_targets}
-        restricted_set = set(existing_restricted or [])
+        
+        # P1 修复 (2026-05-26): 规范化 restricted_set，去除中文名后缀
+        # 根因: 原始 restricted 可能包含 "HK.01347（华虹半导体）" 格式
+        # 导致与 targets 中的 "HK.01347" 无法正确去重
+        restricted_set = set()
+        for r in (existing_restricted or []):
+            if isinstance(r, str):
+                # 去除中文名后缀: "HK.01347（华虹半导体）" -> "HK.01347"
+                code = r.split('（')[0].strip() if '（' in r else r.strip()
+                if code:
+                    restricted_set.add(code)
 
         new_targets = []
         for item in ranking:
