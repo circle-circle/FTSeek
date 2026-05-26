@@ -1362,6 +1362,35 @@ class ScalpingEngine:
                 logger.debug(f"[Scalping冷却] {symbol} STRUCTURE_EXIT 连续亏损冷却中，跳过开仓")
                 return
 
+            # RFC-051: Coordinator 锁前置过滤 — 跳过被其他策略锁定的标的
+            # 根因: scalping 对 QCOM/UNH/SNDK (main 锁定) 每 6s 生成信号，
+            # 虽然 hedge_guard 阻止执行，但浪费计算/配额且制造日志噪音
+            try:
+                sched = getattr(self, "scheduler", None)
+                coord = getattr(sched, "coordinator", None) if sched else None
+                if coord is not None and getattr(coord, "enabled", False):
+                    _lock_owner = coord.lock.owner(symbol) if hasattr(coord, 'lock') and hasattr(coord.lock, 'owner') else None
+                    if _lock_owner and _lock_owner != "scalping":
+                        return  # 被 main/llm_plan 等锁定，静默跳过
+            except Exception:
+                pass  # 锁查询异常不阻断
+
+            # RFC-051: PositionStore 反向持仓前置过滤
+            # 根因: 即使 coordinator 未锁定，position_store 中已有反向仓位时
+            # 不应生成信号（双重保险，与 hedge_guard 形成纵深防御）
+            try:
+                sched = getattr(self, "scheduler", None)
+                ps = getattr(sched, "position_store", None) if sched else None
+                if ps is not None:
+                    _existing = ps.get(symbol)
+                    if _existing is not None:
+                        _ex_dir = _existing.direction.value if hasattr(_existing.direction, 'value') else str(_existing.direction)
+                        _ex_owner = getattr(_existing, 'owner_strategy', None) or (_existing.metadata or {}).get('source', '')
+                        if _ex_owner and _ex_owner != 'scalping':
+                            return  # 其他策略的持仓，scalping 不介入
+            except Exception:
+                pass
+
         # 获取行情数据
         try:
             data = self._fetch_market_data(symbol)
@@ -1492,6 +1521,25 @@ class ScalpingEngine:
             return
 
         direction = signal["direction"]
+
+        # RFC-051: RSI 极端值 + 个股趋势对齐过滤
+        # 根因: SNDK RSI=100 + trend=UP + STRONG_BUY → 生成 SHORT 信号
+        # 均值回归策略做空 RSI=100 的强上升趋势股票，历史上胜率极低
+        # 规则: RSI≥95 + trend=UP → 禁 SHORT; RSI≤5 + trend=DOWN → 禁 LONG
+        _rsi = data.get("rsi_14", data.get("rsi", 50))
+        _trend = str(data.get("trend", "")).upper()
+        if direction == SHORT and _rsi >= 95 and _trend in ("UP", "STRONG_UP"):
+            logger.debug(
+                f"[Scalping·RSI趋势对齐] {symbol} RSI={_rsi:.0f} trend={_trend} "
+                f"拒绝逆势 SHORT (做空RSI极端+强上升趋势)"
+            )
+            return
+        if direction == LONG and _rsi <= 5 and _trend in ("DOWN", "STRONG_DOWN"):
+            logger.debug(
+                f"[Scalping·RSI趋势对齐] {symbol} RSI={_rsi:.0f} trend={_trend} "
+                f"拒绝逆势 LONG (做多RSI极端+强下降趋势)"
+            )
+            return
 
         # ═══════════════════════════════════════════════════════════
         # P1 修复 (2026-05-09): SPY 方向对齐 — 逆趋势交易降仓
