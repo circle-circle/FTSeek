@@ -25,17 +25,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from collections import deque
 
-from app.utils.session_detector import SessionDetector
+from app.shared.market_hours import get_market_phase, get_session_config, MarketType
 from app.strategy.consensus_engine import ConsensusResult
-
-# 初始化全局时段检测器 (延迟加载)
-_session_detector: Optional[SessionDetector] = None
-
-def get_session_detector(time_aware_config: Dict = None) -> SessionDetector:
-    global _session_detector
-    if _session_detector is None and time_aware_config:
-        _session_detector = SessionDetector(time_aware_config)
-    return _session_detector
 from app.strategy.base import SignalAction
 
 logger = logging.getLogger("ftseek.decision_buffer")
@@ -125,8 +116,8 @@ class DecisionBuffer:
         self.dynamic_position_mode = dynamic_position_mode
         self.source_risk_config = source_risk_config
         
-        # Phase 2: 初始化时段检测器
-        self.session_detector = get_session_detector(time_aware_config)
+        # Phase 2: 使用 market_hours 替代 session_detector
+        self._market_type = MarketType.HK  # 港股决策缓冲默认 HK
 
         # 2026-04-09 动态仓位模式：
         # - 模拟交易 (TRADE_ENV=1): max_positions = 股票池数量，充分验证加仓/平仓
@@ -289,12 +280,14 @@ class DecisionBuffer:
         else:
             signal_source = str(signal_source).lower()
 
-        # 获取当前时段配置
+        # 获取当前时段配置 (market_hours API)
         current_session_config = {}
-        if self.session_detector:
-            current_session_config = self.session_detector.get_current_config()
-            session_name = self.session_detector.get_current_session().name
+        try:
+            current_session_config = get_session_config(self._market_type)
+            session_name = get_market_phase(self._market_type).name
             logger.debug(f"[Session-Detector] 当前时段: {session_name}")
+        except Exception:
+            session_name = "UNKNOWN"
 
         # 优先级：时段配置 > 来源配置 > 默认配置
         min_conf = self.min_confidence
