@@ -79,8 +79,8 @@ class StartupReconciler:
             # 优先用 USPositionSync 已实现的 fetch
             from app.core.position_sync import get_us_position_sync
             sync = get_us_position_sync()
-            if sync is not None and hasattr(sync, "fetch_futu_positions"):
-                return sync.fetch_futu_positions() or {}
+            if sync is not None and hasattr(sync, "query_broker_positions"):
+                return sync.query_broker_positions() or {}
         except Exception as e:
             logger.debug(f"[Reconciler] USPositionSync fetch 失败: {e}")
         return {}

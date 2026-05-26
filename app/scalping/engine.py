@@ -2021,6 +2021,26 @@ class ScalpingEngine:
         # DEBUG (2026-05-07): 检查mode值
         logger.info(f"[ScalpingEngine] [DEBUG] _execute_trade 到达mode检查点 | mode={self.mode} | symbol={symbol}")
 
+        # P0 融合修复 (2026-05-27): 反向持仓冲突检查
+        # 根因: position_monitor 从 broker 导入 QCOM LONG → scalping 引擎不知道 →
+        # 尝试 SHORT → broker 拒绝 "持仓不足" (模拟盘不支持裸卖空已有 LONG 的标的).
+        # 修复: 下单前检查 position_store 是否已有反向持仓 → 跳过.
+        try:
+            _ps = getattr(self, "scheduler", None)
+            if _ps and hasattr(_ps, "position_store") and _ps.position_store:
+                _existing = _ps.position_store.get(symbol)
+                if _existing:
+                    _exist_dir = getattr(_existing, "direction", None)
+                    _exist_dir_str = _exist_dir.value if hasattr(_exist_dir, "value") else str(_exist_dir) if _exist_dir else ""
+                    if _exist_dir_str and _exist_dir_str.upper() != direction.upper():
+                        logger.warning(
+                            f"🚫 [Scalping·反向冲突] {symbol} 已有 {_exist_dir_str} 持仓 "
+                            f"(position_monitor 导入), 拒绝 scalping {direction}"
+                        )
+                        return {"success": False, "error": "opposing_position_exists"}
+        except Exception as _opp_err:
+            logger.debug(f"[Scalping·反向检查] 异常 (放行): {_opp_err}")
+
         # 统一交易记录 (Karpathy: 所有来源统一落库)
         # P0 修复 (2026-05-07): 仅在下单成功后写入 trade_store，防止被风控拦截/下单失败时产生幽灵记录
         record_id = None
