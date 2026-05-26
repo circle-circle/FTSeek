@@ -824,6 +824,25 @@ def run_audit():
         report_path.write_text(report, encoding="utf-8")
         logger.info(f"📄 报告已保存: {report_path}")
 
+        # ── 催化回看闭环 (RFC-Catalyst 2026-05-27) ──
+        # 盘前催化预测 vs 实际涨跌 → 教训注入 → 下次盘前自动参考
+        try:
+            from app.catalyst.postmarket_review import run_postmarket_catalyst_review
+            logger.info("🧪 开始催化回看...")
+            review_result = run_postmarket_catalyst_review(scheduler=None)
+            if review_result and not review_result.get("skipped"):
+                logger.info(
+                    "✅ 催化回看完成: %d/%d 命中 (%.0f%%), %d 条教训",
+                    review_result.get("hits", 0),
+                    review_result.get("total", 0),
+                    review_result.get("accuracy", 0) * 100,
+                    review_result.get("lessons_count", 0),
+                )
+            else:
+                logger.info("🧪 催化回看: 无数据或已禁用")
+        except Exception as e:
+            logger.warning(f"🧪 催化回看失败 (不影响主报告): {e}")
+
     finally:
         db.close()
 

@@ -116,6 +116,14 @@ def run_premarket_catalyst_scan(scheduler) -> List[CatalystVerdict]:
     logger.info("[Catalyst] 盘前催化完成: %d 个 verdict (HIGH+ %d, MEDIUM %d)",
                 len(verdicts), len(debate_events), len(medium_events))
     
+    # ── 推送盘前催化报告 ──
+    if verdicts:
+        try:
+            from app.catalyst.notifier import push_premarket_report
+            push_premarket_report(verdicts, market_context=market_ctx)
+        except Exception as e:
+            logger.warning("[Catalyst] 盘前推送失败 (不影响主流程): %s", e)
+    
     return verdicts
 
 

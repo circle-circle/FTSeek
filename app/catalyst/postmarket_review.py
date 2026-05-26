@@ -79,13 +79,25 @@ def run_postmarket_catalyst_review(scheduler=None) -> Dict:
     # 持久化回看结果
     _save_review_result(verdicts, actual_returns, hits, misses, accuracy, lessons)
     
-    return {
+    # 构建完整结果 (含 details 供通知格式化)
+    result = {
         "total": total,
         "hits": len(hits),
         "misses": len(misses),
         "accuracy": accuracy,
         "lessons_count": len(lessons),
+        "details": [d for d in (hits + misses)],
+        "lessons": lessons,
     }
+    
+    # ── 推送盘后催化回看报告 ──
+    try:
+        from app.catalyst.notifier import push_postmarket_report
+        push_postmarket_report(result)
+    except Exception as e:
+        logger.warning("[CatalystReview] 推送失败 (不影响主流程): %s", e)
+    
+    return result
 
 
 def _load_today_verdicts() -> List[Dict]:
