@@ -156,6 +156,7 @@ llm:
     weekly_proposer:    {primary: deepseek-pro,  fallback: qwen-plus}
     daily_auto_tuner:   {primary: deepseek-pro,  fallback: qwen-plus}
     regime_classifier:  {primary: qwen-plus,     fallback: deepseek-pro}
+    attribution_engine: {primary: qwen-plus,     fallback: deepseek-pro}  # RFC-050: LLM 逐笔归因
 
     # 关键决策 (PRO + critique 双调, 通过 cross_check 字段控制)
     earnings_analyst:        {primary: qwen-plus,    fallback: deepseek-pro}

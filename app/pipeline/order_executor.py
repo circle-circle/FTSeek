@@ -2237,6 +2237,8 @@ def _update_trade_attribution(
             final_score = max(0, min(100, int(base_score + pnl_bonus - drawdown_penalty)))
             
             # 4. 更新记录
+            # RFC-050 (P1-1 fix): 移除不存在的 max_drawdown 列, holding_hours→holding_minutes
+            _holding_min = int(holding_hours * 60) if holding_hours else 0
             cursor.execute('''
                 UPDATE trade_attribution 
                 SET actual_price = ?, 
@@ -2251,8 +2253,7 @@ def _update_trade_attribution(
                     failure_factors = ?,
                     signal_strength = COALESCE(?, signal_strength),
                     signal_confidence = COALESCE(?, signal_confidence),
-                    max_drawdown = ?,
-                    holding_hours = ?,
+                    holding_minutes = ?,
                     timestamp = CURRENT_TIMESTAMP
                 WHERE trace_id = ?
             ''', (
@@ -2266,6 +2267,9 @@ def _update_trade_attribution(
                 final_score,
                 json.dumps({"exit_reason": exit_reason}),
                 json.dumps({"max_drawdown": max_drawdown}) if not is_win else "",
+                signal_strength or None,
+                signal_confidence or None,
+                _holding_min,
                 trace_id
             ))
             

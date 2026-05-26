@@ -90,6 +90,8 @@ class LLMTAttributionEngine:
             trade: {symbol, direction, entry_price, exit_price, pnl_pct, 
                     exit_reason, entry_time, exit_time, factor_detail, trace_id}
             market_context: {vix, spy_chg, session, regime}
+        
+        RFC-050 (P1-3): 改用 call_llm 统一接口，不再依赖 llm_client 实例
         """
         start = time.time()
         
@@ -116,7 +118,7 @@ class LLMTAttributionEngine:
             regime=ctx.get("regime", "N/A"),
         )
 
-        # 调用 LLM
+        # 构建归因结果骨架
         attribution = TradeAttribution(
             trace_id=trade.get("trace_id", ""),
             symbol=trade.get("symbol", ""),
@@ -129,56 +131,39 @@ class LLMTAttributionEngine:
             exit_time=trade.get("exit_time", ""),
         )
 
-        if self.llm_client:
-            try:
-                # 2026-05-13: 支持 MultiModelClient 的 model 参数
-                chat_kwargs = {
-                    "user_prompt": user_prompt if hasattr(self.llm_client, 'chat') and 'user_prompt' in self.llm_client.chat.__code__.co_varnames else None,
-                }
-                # MultiModelClient uses positional args, others use keyword
-                if hasattr(self.llm_client, 'chat'):
-                    co_names = self.llm_client.chat.__code__.co_varnames
-                    if 'model' in co_names:
-                        response = self.llm_client.chat(
-                            user_prompt,
-                            system=ATTRIBUTION_SYSTEM_PROMPT,
-                            model=self.attribution_model,
-                            temperature=0.1,
-                            max_tokens=500,
-                        )
-                    else:
-                        response = self.llm_client.chat(
-                            user_prompt,
-                            system=ATTRIBUTION_SYSTEM_PROMPT,
-                            temperature=0.1,
-                            max_tokens=500,
-                        )
-                else:
-                    response = None
+        # RFC-050: 使用 call_llm 统一接口
+        try:
+            from app.llm.model_call import call_llm
+            res = call_llm(
+                "attribution_engine",
+                user_prompt,
+                system=ATTRIBUTION_SYSTEM_PROMPT,
+                temperature=0.1,
+                max_tokens=500,
+            )
+            response = res.response if res and res.success else None
+            
+            # 解析 JSON 输出
+            llm_output = self._parse_llm_json(response) if response else None
+            if llm_output:
+                attribution.key_decision_factor = llm_output.get("key_decision_factor", "")
+                attribution.should_have_done_differently = llm_output.get("should_have_done_differently", False)
+                attribution.specific_suggestion = llm_output.get("specific_suggestion", "")
+                attribution.is_systemic_issue = llm_output.get("is_systemic_issue", False)
+                attribution.systemic_pattern = llm_output.get("systemic_pattern", "")
+                attribution.confidence = float(llm_output.get("confidence", 0.0))
+                attribution.llm_model = res.model_used if res else "unknown"
                 
-                # 解析 JSON 输出
-                llm_output = self._parse_llm_json(response)
-                if llm_output:
-                    attribution.key_decision_factor = llm_output.get("key_decision_factor", "")
-                    attribution.should_have_done_differently = llm_output.get("should_have_done_differently", False)
-                    attribution.specific_suggestion = llm_output.get("specific_suggestion", "")
-                    attribution.is_systemic_issue = llm_output.get("is_systemic_issue", False)
-                    attribution.systemic_pattern = llm_output.get("systemic_pattern", "")
-                    attribution.confidence = float(llm_output.get("confidence", 0.0))
-                    attribution.llm_model = getattr(self.llm_client, 'model_name', 'unknown')
-                    
-                    logger.info(
-                        f"[LLM归因] {trade.get('symbol')} pnl={trade.get('pnl_pct'):+.1%} "
-                        f"factor={attribution.key_decision_factor} "
-                        f"systemic={attribution.is_systemic_issue}"
-                    )
-                else:
-                    logger.warning(f"[LLM归因] {trade.get('symbol')} JSON 解析失败")
-                    
-            except Exception as e:
-                logger.error(f"[LLM归因] {trade.get('symbol')} 调用失败: {e}")
-        else:
-            logger.warning("[LLM归因] LLM 客户端未配置，跳过归因")
+                logger.info(
+                    f"[LLM归因] {trade.get('symbol')} pnl={trade.get('pnl_pct'):+.1%} "
+                    f"factor={attribution.key_decision_factor} "
+                    f"systemic={attribution.is_systemic_issue}"
+                )
+            else:
+                logger.warning(f"[LLM归因] {trade.get('symbol')} JSON 解析失败")
+                
+        except Exception as e:
+            logger.error(f"[LLM归因] {trade.get('symbol')} 调用失败: {e}")
 
         attribution.attribution_time = time.time() - start
         return attribution

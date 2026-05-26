@@ -2907,6 +2907,29 @@ class ScalpingEngine:
         except Exception as _sme:
             logger.debug(f"[ShadowMirror·Scalping] exit 失败 (不影响实盘): {_sme}")
 
+        # RFC-050 (P1-2): Scalping 退出路径回填 trade_attribution
+        try:
+            from app.pipeline.order_executor import _update_trade_attribution
+            _entry_time = info.get("entry_time")
+            _holding_hrs = 0.0
+            if _entry_time and hasattr(_entry_time, 'timestamp'):
+                _holding_hrs = (time.time() - _entry_time.timestamp()) / 3600.0
+            _sig_ctx = info.get("signal_context") or {}
+            _attr_trace_id = _sig_ctx.get("trace_id") or info.get("order_id") or ""
+            if _attr_trace_id:
+                _update_trade_attribution(
+                    trace_id=str(_attr_trace_id),
+                    symbol=symbol,
+                    pnl=float(net_pnl),
+                    pnl_pct=float(net_pnl_pct),
+                    exit_reason=str(exit_reason),
+                    holding_hours=_holding_hrs,
+                    signal_strength=int(_sig_ctx.get("strength", 0) or 0),
+                    signal_confidence=float(_sig_ctx.get("confidence", 0) or 0),
+                )
+        except Exception as _attr_e:
+            logger.debug(f"[Scalping·归因] {symbol} trade_attribution UPDATE 失败 (不影响平仓): {_attr_e}")
+
         # 策略级日亏损预算追踪
         self._strategy_realized_pnl_today += net_pnl
 
