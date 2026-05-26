@@ -293,7 +293,10 @@ class USPositionSync:
         if ctx is None:
             return
         try:
-            ret, data = ctx.position_list_query(trd_env=trade_env)
+            # P0 修复 (2026-05-27): refresh_cache=True — 强制从 broker 拉最新持仓
+            # 根因: Futu SDK 默认 refresh_cache=False 返回本地缓存，可能过期，
+            # 导致 QCOM/SNDK 等真实持仓被误判为幽灵仓，反复清理→重导入→通知。
+            ret, data = ctx.position_list_query(trd_env=trade_env, refresh_cache=True)
             # P0 修复: 查询失败或返回异常 → 重置连接 + 跳过本轮，防止误删持仓
             if ret != 0:
                 logger.warning(f"[US Sync] Futu 持仓查询失败 (ret={ret})，重置连接，跳过本轮")
@@ -362,11 +365,14 @@ class USPositionSync:
                 # already-closed symbols. This prevents _last_known_positions cache poisoning
                 # where closed positions (from scalping cleanup, PRICE_FAIL, etc.) get
                 # re-imported on every sync cycle because Futu still reports them.
+                # P0 修复 (2026-05-27): 仅排除有真实成交 (exit_price > 0) 的记录
+                # 根因: ghost_cleaned 记录 exit_price=0 (无真实平仓)，被误纳入 _closed_symbols，
+                # 导致 QCOM/SNDK 等真实 broker 持仓被永久过滤 → 幽灵仓死循环。
                 _closed_symbols = set()
                 try:
                     _conn = sqlite3.connect(DB_PATH)
                     _closed_rows = _conn.execute(
-                        "SELECT DISTINCT symbol FROM trade_records WHERE exit_time IS NOT NULL"
+                        "SELECT DISTINCT symbol FROM trade_records WHERE exit_time IS NOT NULL AND exit_price > 0"
                     ).fetchall()
                     _closed_symbols = {r[0] for r in _closed_rows}
                     _conn.close()
@@ -752,6 +758,17 @@ class USPositionSync:
                         pass
                 self.position_store.remove(symbol)
                 logger.info(f"🧹 [US Sync] 清理幽灵仓 {symbol} (Futu 已平仓)")
+                
+                # P0 修复 (2026-05-27): 幽灵通知冷却 — 同一 symbol 30分钟内仅通知一次
+                # 防止 position_monitor 重导入→position_sync 再清理的死循环通知轰炸
+                _ghost_cooldown = getattr(self, '_ghost_notify_cooldown', {})
+                _last_notify = _ghost_cooldown.get(symbol, 0)
+                _now_cd = time.time()
+                if _now_cd - _last_notify < 1800:  # 30 min cooldown
+                    logger.debug(f"[US Sync] 幽灵通知冷却中: {symbol} (距上次 {_now_cd - _last_notify:.0f}s)")
+                    continue
+                _ghost_cooldown[symbol] = _now_cd
+                self._ghost_notify_cooldown = _ghost_cooldown
                 
                 # P0 修复 (2026-05-07 / 2026-05-12): 幽灵仓清理不发零值通知
                 # 2026-05-12: exit_price=0 说明无真实成交确认，通知是误导
