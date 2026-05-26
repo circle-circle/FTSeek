@@ -789,22 +789,15 @@ def _check_gates_and_conflicts(scheduler, symbol: str, signal: SignalScore, cont
     is_short = (direction_str == "SELL")
 
     if is_short:
-        # 做空专用门禁:
-        #   有效强度门: effective = 100 - strength ≥ 65 (反转后必须显著强)
-        #
-        # A.1 修复 (2026-05-19): 删除 short_min_strength<20 绝对底限.
-        #   根因: SHORT 信号语义反转 — strength 越低 = SHORT 越强. 5/12-5/18 数据,
-        #   124 笔 SHORT(s=14/15/19) 被 raw strength<20 拒, 但全部 effective ≥ 81.
-        #   实际 SHORT 历史胜率 15.9% vs LONG 2.7%, 但被自家代码屏蔽了真正 alpha.
-        #   保留 effective_strength<65 门作为唯一过滤 — 反转后强度仍是兜底.
-        short_effective = 100 - signal.strength
-        if short_effective < 65:
+        # 做空门禁 (P0-辩论修复 2026-05-26: direct语义, 无需反转)
+        # strength 越高 = 信号越强 (LONG/SHORT 均同)
+        if signal.strength < 50:
             logger.warning(
                 f"🚫 [做空门禁] {symbol} 做空信号强度不足 "
-                f"(strength={signal.strength}, effective={short_effective} < 65)"
+                f"(strength={signal.strength} < 50)"
             )
             get_rejection_logger().record(symbol,
-                f"short_effective={short_effective}<65",
+                f"short_strength={signal.strength}<50",
                 "SHORT_EFFECTIVE_WEAK", strength=signal.strength,
                 confidence=None, direction="SHORT")
             return False

@@ -281,31 +281,18 @@ class USBattlePlanManager:
         
         if not target:
             # 方案 A: 计划外标的 → 技术面高评分后门
-            # 做多: strength ≥ 65
-            # 做空: strength ≤ 35 (等效 effective ≥ 65)
+            # P0-辩论修复: strength 统一 direct 语义 (LONG/SHORT 均同)
+            # 越高 = 信号越强, 无需反转
             trade_dir = "LONG" if direction.upper() == "BUY" else "SHORT"
-            if trade_dir == "SHORT":
-                short_effective = 100 - strength
-                if short_effective >= 65:
-                    return True, (
-                        f"Plan bypass (SHORT): {symbol} not in battle plan, "
-                        f"but short signal is strong (strength={strength}, "
-                        f"effective={short_effective} >= 65)"
-                    )
-                return False, (
-                    f"Symbol {symbol} not in battle plan "
-                    f"(short effective={short_effective}/65 — below bypass threshold)"
+            if strength >= 50:
+                return True, (
+                    f"Plan bypass ({trade_dir}): {symbol} not in battle plan, "
+                    f"but signal is strong (strength={strength} >= 50)"
                 )
-            else:
-                if strength >= 65:
-                    return True, (
-                        f"Plan bypass: {symbol} not in battle plan, "
-                        f"but technical signal is strong (strength={strength} >= 65)"
-                    )
-                return False, (
-                    f"Symbol {symbol} is not in today's battle plan "
-                    f"(strength={strength}/65 — below bypass threshold)"
-                )
+            return False, (
+                f"Symbol {symbol} not in battle plan "
+                f"(strength={strength}/50 — below bypass threshold)"
+            )
 
         # 3. Check Status (Pre-market plan status)
         # Later, OpenChecker might update this to "CANCELLED" or "EXECUTABLE"

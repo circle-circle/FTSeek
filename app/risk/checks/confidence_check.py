@@ -24,11 +24,9 @@ class ConfidenceCheck(RiskCheck):
         if confidence < self.min_confidence:
             return self._reject(signal, f"置信度 {confidence:.2f} < {self.min_confidence}")
         
-        # strength 方向检查: LONG 看 strength, SHORT 看 (100-strength)
+        # strength 方向检查 (P0-辩论修复: direct语义, LONG/SHORT均同, 无需反转)
         direction = getattr(signal, 'direction', 'LONG')
-        if direction == "LONG" and strength < self.min_score:
+        if strength < self.min_score:
             return self._reject(signal, f"信号强度 {strength} < {self.min_score}")
-        elif direction == "SHORT" and (100 - strength) < self.min_score:
-            return self._reject(signal, f"做空强度 {100-strength} < {self.min_score}")
         
         return self._pass(signal, f"confidence={confidence:.2f}, strength={strength}")

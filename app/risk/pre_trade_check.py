@@ -217,21 +217,18 @@ class PreTradeChecker:
             eff_strength = min(eff_strength + _hv_strength_boost, 100)
             checks_passed.append("HIGH_VOL_TIGHTENED")
 
-        # 1. 信号强度检查（SHORT 方向使用 effective_strength = 100 - strength）
-        # P0-辩论修复 (2026-05-26): 方向感知门槛
-        # LONG: strength >= 50 = 看多信号 (strength越高越看多)
-        # SHORT: effective = 100-strength >= 50, 即 strength <= 50 = 看空信号
-        # 数据: SHORT strength=-1(eff=101) 43.6%WR +$12K | strength=66(eff=34) 15.8%WR
+        # 1. 信号强度检查
+        # P0-辩论修复 (2026-05-26): strength 统一为 direct 语义
+        # 越高 = 信号越强 (LONG/SHORT 均同), 无需反转
+        # 数据: SHORT strength=70 → 70%看空强度, 应放行 (非反转后的30)
         direction_str = str(signal.direction).upper()
         is_short = "SHORT" in direction_str
-        effective_strength = (100 - signal.strength) if is_short else signal.strength
-        # SHORT方向使用更宽松的门槛 (看空信号本身就稀缺且高价值)
-        _dir_threshold = eff_strength - 10 if is_short else eff_strength
-        _dir_threshold = max(_dir_threshold, 30)  # 绝对下限30
-        if effective_strength < _dir_threshold:
+        # Direct语义: strength 直接作为 effective, 不反转
+        effective_strength = signal.strength
+        if effective_strength < eff_strength:
             return PreTradeResult(
                 allowed=False,
-                reason=f"SIGNAL_TOO_WEAK(dir={direction_str} strength={signal.strength} effective={effective_strength}<{_dir_threshold})",
+                reason=f"SIGNAL_TOO_WEAK(dir={direction_str} strength={signal.strength}<{eff_strength})",
                 checks_passed=checks_passed,
             )
         checks_passed.append("SIGNAL_STRENGTH")
