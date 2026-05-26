@@ -217,6 +217,47 @@ class BattlePlanGenerator:
                 seen.add(t['symbol'])
                 unique_targets.append(t)
 
+        # P0 修复 (2026-05-26): restricted-targets 交叉去重
+        # 根因: restricted 从 avoid_codes/signal_impact=="block" 生成,
+        #        targets 从 focus_symbols 生成, 两者独立导致 60% 标的被自我封锁
+        # 审计: docs/hk_premarket_intraday_audit_20260526.md
+        restricted_clean = set()
+        for r in restricted:
+            sym = r.split('（')[0].strip() if isinstance(r, str) and '（' in r else (r.strip() if isinstance(r, str) else str(r))
+            restricted_clean.add(sym)
+        _before_dedup = len(unique_targets)
+        unique_targets = [t for t in unique_targets if t.get('symbol') not in restricted_clean]
+        if _before_dedup != len(unique_targets):
+            logger.warning(
+                f"[BattlePlan] P0 去重: 移除 {(_before_dedup - len(unique_targets))} 只 "
+                f"同时出现在 targets 和 restricted 中的标的"
+            )
+
+        # P0 修复 (2026-05-26): 为 targets 填充交易参数 (止损/止盈/仓位)
+        # 根因: 原实现仅传递 symbol+direction, 缺乏 entry_zone/stop_loss/take_profit
+        try:
+            from app.risk.dynamic_exit_manager import dynamic_exit_manager as _dem
+            _sl_pct = abs(_dem.get_stop_loss())
+            _tp_pct = abs(_dem.get_take_profit())
+        except Exception:
+            _sl_pct, _tp_pct = 0.025, 0.08
+
+        for t in unique_targets:
+            if not t.get('max_position_pct'):
+                t['max_position_pct'] = 0.08
+            if not t.get('stop_loss') and t.get('entry_price'):
+                try:
+                    ep = float(t['entry_price'])
+                    direction = t.get('direction', 'ANY').upper()
+                    if direction in ('SHORT', 'SELL'):
+                        t['stop_loss'] = round(ep * (1 + _sl_pct), 3)
+                        t['take_profit'] = round(ep * (1 - _tp_pct), 3)
+                    else:
+                        t['stop_loss'] = round(ep * (1 - _sl_pct), 3)
+                        t['take_profit'] = round(ep * (1 + _tp_pct), 3)
+                except (ValueError, TypeError):
+                    pass
+
         # 辩论驱动的 market_regime 设置
         if debate_direction == "BUY" and debate_conviction > 0.6:
             max_risk = "LOW"

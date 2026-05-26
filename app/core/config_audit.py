@@ -19,7 +19,7 @@ _AUDIT_ITEMS = [
     ("strategy.consensus.window_seconds", "CONSENSUS_WINDOW", 90, "共识窗口"),
     ("strategy.consensus.threshold", "CONSENSUS_THRESHOLD", 1.0, "共识阈值"),  # 2026-05-22: 对齐 config_defaults.py (05-19提至1.5导致零触发，已恢复1.0)
     ("trading.max_open_positions", "MAX_OPEN_POSITIONS", 5, "最大持仓数"),
-    ("risk_limits.min_confidence", "MIN_CONFIDENCE", 0.45, "最小置信度"),  # 2026-05-19: 提高信号门槛 (原0.35)
+    ("risk_limits.min_confidence", "MIN_CONFIDENCE", 0.60, "最小置信度"),  # 2026-05-26: P0辩论修复 0.45→0.60 (对齐 config_defaults.py + YAML)
     ("risk_limits.max_single_position", "MAX_SINGLE_POSITION", 0.08, "单标的最大仓位"),
     ("risk_limits.max_total_position", "MAX_TOTAL_POSITION", 0.75, "总仓位上限"),
     ("stop_loss.default_percent", "DEFAULT_STOP_LOSS", 0.03, "默认止损比例"),

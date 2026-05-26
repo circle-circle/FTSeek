@@ -204,13 +204,22 @@ class BattlePlanManager:
             )
             return True, f"⚠️ 计划targets为空，严格降级放行 (仅watchlist前{gate_count}只)"
 
-        # 1. 检查黑名单
-        if symbol in plan.restricted:
-            return False, f"🚫 [黑名单拦截] 标的 {symbol} 在禁止交易名单中"
-
-        # 2. 检查白名单 (Target List)
+        # P0 修复 (2026-05-26): targets 优先于 restricted
+        # 根因: 原实现先检查 restricted, 导致同时在两个列表中的标的被永久拦截
+        # 修复: 先检查 targets, 仅在不在 targets 中时才检查 restricted
         target = next((t for t in plan.targets if t.get('symbol') == symbol), None)
 
+        # 1. 检查黑名单 (仅在不在 targets 中时生效)
+        if not target:
+            # 规范化 restricted 匹配 (处理带中文名的格式)
+            restricted_syms = set()
+            for r in plan.restricted:
+                sym = r.split('（')[0].strip() if isinstance(r, str) and '（' in r else (r.strip() if isinstance(r, str) else str(r))
+                restricted_syms.add(sym)
+            if symbol in restricted_syms:
+                return False, f"🚫 [黑名单拦截] 标的 {symbol} 在禁止交易名单中"
+
+        # 2. 检查白名单 (Target List)
         if not target:
             return False, f"🚫 [计划外拦截] 标的 {symbol} 不在今日作战计划中"
 
