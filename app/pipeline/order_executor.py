@@ -810,7 +810,7 @@ def _check_gates_and_conflicts(scheduler, symbol: str, signal: SignalScore, cont
         triple_confirm = 0
         if rsi > 65: triple_confirm += 1
         if macd_signal_val < 0: triple_confirm += 1
-        if ma20 > 0 and price < ma20: triple_confirm += 1
+        if ma20 > 0 and price > ma20: triple_confirm += 1  # 做空入场: 价格在MA20上方(上升趋势中做空=反转机会)
 
         if triple_confirm < 2:
             logger.warning(
