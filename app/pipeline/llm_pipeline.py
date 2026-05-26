@@ -986,8 +986,34 @@ def run_premarket_planning(scheduler):
     except Exception as e:
         logger.debug(f"[盘前计划] 财报退出计划失败: {e}")
 
+    # ── 催化事件检测 (RFC-Catalyst 2026-05-27) ──
+    # 在辩论之前扫描新闻催化, verdicts 注入 debate_context
+    catalyst_verdicts = []
+    try:
+        from app.catalyst.detector import run_premarket_catalyst_scan
+        from app.catalyst.reverse_catalyst import get_reverse_verdicts
+        
+        # 盘前扫描过夜新闻
+        catalyst_verdicts = run_premarket_catalyst_scan(scheduler)
+        
+        # 合并盘中反向催化积累的结论
+        reverse_verdicts = get_reverse_verdicts()
+        catalyst_verdicts.extend(reverse_verdicts)
+        
+        if catalyst_verdicts:
+            logger.info("[盘前计划] 🧪 催化事件: %d 个 (盘前 %d + 反向 %d)",
+                        len(catalyst_verdicts),
+                        len(catalyst_verdicts) - len(reverse_verdicts),
+                        len(reverse_verdicts))
+    except Exception as e:
+        logger.debug(f"[盘前计划] 催化检测失败 (不影响主流程): {e}")
+
     # ── 构建 DebatePlanner 上下文 ──
     debate_context = _build_debate_context(scheduler, exposure_context, earnings_exit_plan)
+    
+    # 注入催化结论到辩论上下文
+    if catalyst_verdicts:
+        debate_context["catalyst_events"] = [v.to_dict() for v in catalyst_verdicts]
 
     # ── Level 1: 双 Agent 辩论 ──
     plan = None

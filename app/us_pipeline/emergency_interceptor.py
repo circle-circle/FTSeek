@@ -302,6 +302,12 @@ class USEmergencyInterceptor:
                             f"价格闪崩 {change_pct:+.1%} (阈值 {PRICE_CRASH_THRESHOLD:.0%})",
                             price, prev_price
                         )
+                        # RFC-Catalyst (2026-05-27): 反向催化 — 行情异动触发新闻搜索+快速辩论
+                        try:
+                            from app.catalyst.reverse_catalyst import on_price_anomaly
+                            on_price_anomaly(symbol, change_pct, scheduler=getattr(self, '_scheduler', None))
+                        except Exception:
+                            pass  # 不影响主流程
                         continue
 
                     # 检查 3: 连续下跌

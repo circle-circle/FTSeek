@@ -437,13 +437,31 @@ class DebatePlanner:
         md = raw_context.get("market_data", {})
         cap = raw_context.get("capital_state", {})
         
+        # ── 催化事件注入 (RFC-Catalyst 2026-05-27) ──
+        overnight_news = raw_context.get("overnight_news", "无隔夜新闻")
+        catalyst_events = raw_context.get("catalyst_events", [])
+        if catalyst_events:
+            catalyst_lines = ["\n\n【⚡ 催化事件检测 (多模型辩论结论)】"]
+            for cv in catalyst_events:
+                icon = "🔴" if cv.get("direction") == "SHORT" else "🟢" if cv.get("direction") == "LONG" else "⚪"
+                catalyst_lines.append(
+                    f"- {icon} **{cv.get('symbol', '?')}** {cv.get('direction', '?')} "
+                    f"strength={cv.get('strength', 0)} consensus={cv.get('consensus_level', 0):.0%} | "
+                    f"{cv.get('reasoning', '')[:60]}"
+                )
+            if catalyst_events:
+                catalyst_lines.append(
+                    "\n⚠️ 以上催化事件由独立多模型辩论引擎检测, 请在 targets/restricted 中体现这些事件的影响。"
+                )
+            overnight_news = overnight_news + "\n".join(catalyst_lines)
+        
         return {
             "vix": md.get("vix", "N/A"),
             "spy": md.get("spy", "N/A"),
             "qqq": md.get("qqq", "N/A"),
             "dxy": md.get("dxy", "N/A"),
             "regime": md.get("regime", "NEUTRAL"),
-            "overnight_news": raw_context.get("overnight_news", "无隔夜新闻"),
+            "overnight_news": overnight_news,
             "earnings_info": raw_context.get("earnings_info", "本周无重要财报"),
             "positions_json": json.dumps(raw_context.get("positions", []), ensure_ascii=False, indent=2),
             "current_equity": cap.get("current_equity", "N/A"),
