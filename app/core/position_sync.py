@@ -310,39 +310,14 @@ class USPositionSync:
                 if self._consecutive_empty_queries < self._max_consecutive_empty:
                     # 使用上次已知的持仓数据继续同步，不跳过
                     if self._last_known_positions:
-                        # P0 fix (2026-05-23): Filter cache against trade_records to prevent
-                        # resurrecting already-closed positions
-                        _closed_symbols_cache = set()
-                        try:
-                            _conn_c = sqlite3.connect(DB_PATH)
-                            _closed_rows_c = _conn_c.execute(
-                                "SELECT DISTINCT symbol FROM trade_records WHERE exit_time IS NOT NULL"
-                            ).fetchall()
-                            _closed_symbols_cache = {r[0] for r in _closed_rows_c}
-                            _conn_c.close()
-                        except Exception:
-                            pass
-                        _filtered_cache = {
-                            s: p for s, p in self._last_known_positions.items()
-                            if s not in _closed_symbols_cache
-                        }
-                        if _filtered_cache != self._last_known_positions:
-                            logger.warning(
-                                f"[US Sync·P0] 过滤缓存中已平仓 {len(self._last_known_positions) - len(_filtered_cache)} 只"
-                            )
-                        if _filtered_cache:
-                            logger.warning(
-                                f"[US Sync] Futu 返回空持仓列表 (连续{self._consecutive_empty_queries}次), "
-                                f"使用上次已知持仓({len(_filtered_cache)}只, 过滤{len(self._last_known_positions) - len(_filtered_cache)}只)继续同步"
-                            )
-                            futu_positions = dict(_filtered_cache)
-                        else:
-                            logger.warning(
-                                f"[US Sync] Futu 返回空持仓列表 (连续{self._consecutive_empty_queries}次), "
-                                f"缓存中无未平仓持仓，跳过本轮"
-                            )
-                            self._futu_ctx = None
-                            return
+                        # P0 修复 (2026-05-27): 移除 _closed_symbols_cache 过滤器
+                        # 同主路径逻辑: broker 是 SSOT，缓存是 broker 快照，不应按历史交易记录过滤。
+                        # 已平仓的 symbol 不会出现在 broker 持仓中，自然不在缓存里。
+                        logger.warning(
+                            f"[US Sync] Futu 返回空持仓列表 (连续{self._consecutive_empty_queries}次), "
+                            f"使用上次已知持仓({len(self._last_known_positions)}只)继续同步"
+                        )
+                        futu_positions = dict(self._last_known_positions)
                     else:
                         logger.warning(
                             f"[US Sync] Futu 返回空持仓列表 (连续{self._consecutive_empty_queries}次), "
@@ -362,34 +337,17 @@ class USPositionSync:
             else:
                 # 非空查询，重置计数器
                 self._consecutive_empty_queries = 0
-                # P0 fix (2026-05-23): Filter Futu positions against trade_records to exclude
-                # already-closed symbols. This prevents _last_known_positions cache poisoning
-                # where closed positions (from scalping cleanup, PRICE_FAIL, etc.) get
-                # re-imported on every sync cycle because Futu still reports them.
-                # P0 修复 (2026-05-27): 仅排除有真实成交 (exit_price > 0) 的记录
-                # 根因: ghost_cleaned 记录 exit_price=0 (无真实平仓)，被误纳入 _closed_symbols，
-                # 导致 QCOM/SNDK 等真实 broker 持仓被永久过滤 → 幽灵仓死循环。
-                _closed_symbols = set()
-                try:
-                    _conn = sqlite3.connect(DB_PATH)
-                    _closed_rows = _conn.execute(
-                        "SELECT DISTINCT symbol FROM trade_records WHERE exit_time IS NOT NULL AND exit_price > 0"
-                    ).fetchall()
-                    _closed_symbols = {r[0] for r in _closed_rows}
-                    _conn.close()
-                except Exception:
-                    pass
+                # P0 修复 (2026-05-27): 移除 _closed_symbols 过滤器
+                # 根因: QCOM/SNDK 有真实历史交易 (exit_price>0, TRAILING_STOP/sl_hit)，
+                # 导致被永久排除 → position_sync 看不到 → 误判为幽灵仓 → 死循环。
+                # Broker 是 SSOT (唯一事实源): 如果 broker 当前持有某 symbol，就必须跟踪。
+                # PRICE_FAIL 期权已由独立的 _price_fail_closed 机制保护 (line 463-480)。
                 for _, row in data.iterrows():
                     qty = float(row.get('qty', 0))
                     if qty != 0:
                         code = str(row['code'])
                         if not code.startswith('US.'):
                             code = 'US.' + code
-                        # P0 fix (2026-05-24): Apply _closed_symbols filter here.
-                        # The set was computed at L365-371 but never used — dead code.
-                        # Skip symbols with closed trade_records to prevent zombie resurrection.
-                        if code in _closed_symbols:
-                            continue
                         futu_positions[code] = {
                             'qty': abs(qty),
                             'cost': float(row.get('cost_price', 0)),
