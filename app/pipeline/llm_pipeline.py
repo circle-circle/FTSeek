@@ -763,6 +763,53 @@ def _build_debate_context(scheduler, exposure_context=None, earnings_exit_plan=N
     except Exception:
         pass
 
+    # P0 修复 (2026-05-27): 个股实时价格校准 — O6 修复从 premarket_planner.py 同步
+    # 根因: debate planner 路径无价格数据 → LLM 幻觉 entry_zone (NVDA $142 vs 实际 $214)
+    # 修复: 从 MarketDataRouter 获取 universe 股票实时报价注入上下文
+    price_calibration = {}
+    try:
+        _router = getattr(scheduler, 'data_router', None)
+        if _router is None and hasattr(scheduler, 'market_data'):
+            _router = scheduler.market_data
+        if _router is None:
+            from app.data.market_data_router import MarketDataRouter
+            _router = MarketDataRouter(enable_futu_lv3=True)
+        # 从 sandbox universe 或 watchlist 获取标的列表
+        _cal_symbols = []
+        try:
+            from app.core.config_container import get_config as _gc
+            _cfg = _gc()
+            if _cfg.get_dotted("mode.sandbox.enabled", False):
+                _univ = _cfg.get_dotted("mode.sandbox.universe", []) or []
+                _cal_symbols = [s if s.startswith("US.") else f"US.{s}" for s in _univ][:15]
+        except Exception:
+            pass
+        if not _cal_symbols:
+            _cal_symbols = [
+                s.get('code', s) if isinstance(s, dict) else str(s)
+                for s in (watchlist or [])
+            ][:15]
+        for _sym in _cal_symbols:
+            if not _sym:
+                continue
+            try:
+                _q = _router.get_quote(_sym)
+                if _q and float(_q.get("price", 0) or 0) > 0:
+                    price_calibration[_sym] = {
+                        "current_price": float(_q.get("price", 0)),
+                        "bid": float(_q.get("bid", 0) or _q.get("price", 0)),
+                        "ask": float(_q.get("ask", 0) or _q.get("price", 0)),
+                    }
+            except Exception:
+                continue
+        if price_calibration:
+            logger.info(
+                f"[盘前计划·O6] 价格校准: {len(price_calibration)} 只标的 "
+                f"(防止 LLM 幻觉 entry_zone)"
+            )
+    except Exception as _pce:
+        logger.warning(f"[盘前计划·O6] 价格校准 fetch 失败: {_pce}")
+
     overnight_news = getattr(scheduler, '_premarket_news_summary', '无隔夜新闻')
 
     watchlist = getattr(scheduler, 'watchlist', [])
@@ -797,6 +844,7 @@ def _build_debate_context(scheduler, exposure_context=None, earnings_exit_plan=N
         "watchlist_info": wl_info[:15],
         "memory": memory_context,
         "exposure_context": exposure_context or {},
+        "price_calibration": price_calibration,
     }
 
 

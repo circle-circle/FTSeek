@@ -297,6 +297,25 @@ class USBattlePlanManager:
         # 3. Check Status (Pre-market plan status)
         # Later, OpenChecker might update this to "CANCELLED" or "EXECUTABLE"
         status = target.get("status", "PRE_MARKET")
+        # P0 修复 (2026-05-27): open_check_status=CANCELLED → 视同"不在计划中"
+        # 根因: OpenChecker 写入 open_check_status="CANCELLED" 但 check_trade 不读此字段
+        # → NVDA SHORT 79 被方向冲突拦截 (plan=LONG), 但 open_check 已取消 LONG 方向
+        # 修复: CANCELLED target 降级为"不在计划中", 走 strength bypass 路径
+        open_status = target.get("open_check_status", "")
+        if open_status == "CANCELLED" and status != "CANCELLED":
+            cancel_reason = target.get("cancellation_reason", "OpenChecker cancelled")
+            logger.info(f"[Plan Gate] {symbol} open_check=CANCELLED ({cancel_reason}), 降级为计划外")
+            # 直接走 strength bypass 逻辑 (与上方 "not target" 分支一致)
+            trade_dir = "LONG" if direction.upper() == "BUY" else "SHORT"
+            if strength >= 50:
+                return True, (
+                    f"Plan bypass ({trade_dir}): {symbol} open_check cancelled, "
+                    f"signal is strong (strength={strength} >= 50)"
+                )
+            return False, (
+                f"Symbol {symbol} plan cancelled by OpenChecker "
+                f"(strength={strength}/50 — below bypass threshold)"
+            )
         if status == "CANCELLED":
             reason = target.get("cancellation_reason", "Cancelled by OpenChecker.")
             return False, f"Plan cancelled for {symbol}: {reason}"
