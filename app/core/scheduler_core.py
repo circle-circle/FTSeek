@@ -356,8 +356,9 @@ class TradingScheduler:
             # ─── 催化辩论一手源 (2026-05-27 RFC-Catalyst) ───
             # 港交所披露易 + 证监会官网 (公司直接发布, 比二手新闻快且权威)
             try:
-                _cat_cfg = cfg.get_dotted("catalyst", {}) or {}
-                if _cat_cfg.get("enabled", False):
+                from app.core.config_container import get_config as _gc_cat
+                _cat_cfg = _gc_cat().get_dotted("catalyst", {}) or {}
+                if isinstance(_cat_cfg, dict) and _cat_cfg.get("enabled", False):
                     _src_cfg = _cat_cfg.get("sources", {}) or {}
                     
                     # HKEX 港交所披露易
