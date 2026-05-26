@@ -26,6 +26,13 @@ MIDDAY_MIN_PRICE_CHANGE = 0.02      # 涨幅 > 2% (防噪音)
 MIDDAY_MAX_POSITION_PCT = 0.03      # 午间新增仓位上限 3%
 MIDDAY_MAX_NEW_TARGETS = 5          # 午间最多新增 5 只
 
+# 反馈闭环: 上午亏损标的自动 restricted (P2 优化 2026-05-26)
+MORNING_LOSS_THRESHOLD = -500       # 亏损超过 500 HKD 视为信号失效
+MORNING_SL_EXIT_REASONS = {         # 明确的止损退出原因
+    'stop_loss', 'trailing_stop', 'time_stop', 'breakeven',
+    '止损', '移动止损', '时间止损',
+}
+
 
 class MiddayPlanRefresher:
 
@@ -46,6 +53,44 @@ class MiddayPlanRefresher:
             return result
 
         existing_symbols = {t.get("symbol") for t in plan.get("targets", [])}
+
+        # Step 0: 反馈闭环 — 上午止损/亏损标的自动 restricted (P2 2026-05-26)
+        morning_losses = []
+        try:
+            morning_losses = self._collect_morning_losses(trade_date)
+            if morning_losses:
+                restricted_set = set()
+                for r in plan.get("restricted", []):
+                    sym = r.split('（')[0].strip() if isinstance(r, str) and '（' in r else (r.strip() if isinstance(r, str) else str(r))
+                    restricted_set.add(sym)
+
+                added_count = 0
+                for ml in morning_losses:
+                    sym = ml["symbol"]
+                    if sym not in restricted_set:
+                        plan.setdefault("restricted", []).append(sym)
+                        restricted_set.add(sym)
+                        added_count += 1
+                        logger.warning(
+                            f"🔄 [反馈闭环] {sym} 上午亏损自动 restricted: "
+                            f"reason={ml['reason']}, pnl={ml['pnl']:.0f}"
+                        )
+
+                # 同时从 targets 中移除 (如果存在)
+                if added_count > 0:
+                    loss_syms = {ml["symbol"] for ml in morning_losses}
+                    plan["targets"] = [
+                        t for t in plan.get("targets", [])
+                        if t.get("symbol") not in loss_syms
+                    ]
+                    result["restricted_by_feedback"] = added_count
+
+                logger.info(
+                    f"[反馈闭环] 上午止损标的: {len(morning_losses)} 只, "
+                    f"新增 restricted: {added_count} 只"
+                )
+        except Exception as e:
+            result["errors"].append(f"反馈闭环: {e}")
 
         # Step 1: 收集午间信息
         candidates = []
@@ -103,12 +148,20 @@ class MiddayPlanRefresher:
                     })
             logger.info(f"[午间刷新] 辩论注入 {len(debate_symbols)} 只标的")
 
-        # Step 4: 去重 + 过滤已在计划中的
+        # Step 4: 去重 + 过滤已在计划中的 + 反馈闭环 restricted
         new_targets = []
         seen = set(existing_symbols)
+        # 构建 restricted 集合 (含反馈闭环新增的)
+        restricted_filter = set()
+        for r in plan.get("restricted", []):
+            sym = r.split('（')[0].strip() if isinstance(r, str) and '（' in r else (r.strip() if isinstance(r, str) else str(r))
+            restricted_filter.add(sym)
         for c in candidates:
             sym = c["symbol"]
             if sym in seen or not sym.startswith("HK."):
+                continue
+            if sym in restricted_filter:
+                logger.info(f"[午间刷新] 候选 {sym} 被 restricted 过滤 (含反馈闭环)")
                 continue
             seen.add(sym)
             # P0 修复 (2026-05-17): 午间候选继承盘前 LLM signal_impact
@@ -589,6 +642,65 @@ class MiddayPlanRefresher:
         except Exception as e:
             logger.warning(f"[午间辩论] 辩论执行失败, 降级为规则驱动: {e}")
             return None
+
+    # ─── 反馈闭环: 上午止损标的收集 ──────────────────────────
+
+    def _collect_morning_losses(self, trade_date: str) -> List[Dict]:
+        """
+        收集上午止损/亏损标的，用于午间自动 restricted。
+
+        双重条件 (OR):
+        1. exit_reason 明确为止损类 (stop_loss, trailing_stop, time_stop)
+        2. 亏损金额超过阈值 (MORNING_LOSS_THRESHOLD)
+
+        Returns:
+            [{"symbol": "HK.XXXX", "reason": "stop_loss", "pnl": -1234}, ...]
+        """
+        import sqlite3
+        db_path = PLAN_PATH.parent / "ftseek.db"
+        if not db_path.exists():
+            return []
+
+        results = []
+        seen = set()
+        try:
+            conn = sqlite3.connect(str(db_path))
+            conn.row_factory = sqlite3.Row
+            cur = conn.cursor()
+
+            # 查询今日上午已关闭的亏损交易 (12:00 前)
+            cur.execute("""
+                SELECT code, exit_reason, pnl, exit_time
+                FROM trades
+                WHERE status = 'CLOSED'
+                  AND date(exit_time) = ?
+                  AND time(exit_time) < '12:00:00'
+                  AND (
+                      exit_reason IN (?, ?, ?, ?, ?, ?, ?)
+                      OR pnl < ?
+                  )
+            """, (
+                trade_date,
+                *MORNING_SL_EXIT_REASONS,
+                MORNING_LOSS_THRESHOLD,
+            ))
+
+            for row in cur.fetchall():
+                code = row["code"]
+                if code in seen:
+                    continue
+                seen.add(code)
+                results.append({
+                    "symbol": code,
+                    "reason": row["exit_reason"] or "loss",
+                    "pnl": row["pnl"] or 0,
+                })
+
+            conn.close()
+        except Exception as e:
+            logger.warning(f"[午间刷新] 上午止损标的收集失败: {e}")
+
+        return results
 
     # ─── 计划读写 ───────────────────────────────────────────
 
