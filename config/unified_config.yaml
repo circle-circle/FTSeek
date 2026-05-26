@@ -1461,7 +1461,7 @@ scheduler:
   # ConfigWriter 唯一调的节点是 risk.signal_quality.min_confidence (SSOT)
   # 此节点保留仅为避免老代码兜底失效
   min_confidence: 0.4  # DEPRECATED, do not edit — see MinConfidenceResolver
-  min_signal_strength: 99  # P8: 从 66 提升到 99，只保留 3 因子信号（数据：strength=66 胜率 11.4% vs 99 胜率 32.1%）
+  min_signal_strength: 50  # P0-辩论修复: 99→50 (P3过度收紧导致5/23后零交易, P0守卫已兜底)
   min_consensus_level: 0.2
   adaptive_scan_enabled: true
   scan_segments:

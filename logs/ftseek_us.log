@@ -34891,3 +34891,9 @@ RuntimeError: 下单失败: 持仓不足
 2026-05-26 07:56:07,018 [ftseek_us.position_sync] INFO: [US Sync] Done | Futu: 0 | DB: 0
 2026-05-26 07:56:47,927 [ftseek_us.risk.vix_monitor] INFO: VIX 指数：16.76
 2026-05-26 07:57:04,714 [app.pipeline.signal_pipeline] INFO: [扫描] weekend → 完全静默，跳过扫描
+2026-05-26 08:00:04,863 [app.pipeline.signal_pipeline] INFO: [扫描] weekend → 完全静默，跳过扫描
+2026-05-26 08:01:07,405 [ftseek_us.position_sync] INFO: [US Sync] Market closed, sync paused (will resume next session)
+2026-05-26 08:01:12,279 [ftseek_us.config_mgmt.hot_reloader] INFO: [HotReloader] 检测到文件变化: unified_config.yaml
+2026-05-26 08:01:12,474 [app.core.config_container] INFO: [ConfigContainer] 已加载 54 个配置节
+2026-05-26 08:01:12,474 [ftseek_us.config_mgmt.hot_reloader] INFO: [HotReloader] ✅ 配置已热重载 (第 1 次)
+2026-05-26 08:01:49,138 [ftseek_us.risk.vix_monitor] INFO: VIX 指数：16.76

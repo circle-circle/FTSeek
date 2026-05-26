@@ -29,7 +29,7 @@ class PreTradeChecker:
     def __init__(
         self,
         min_confidence: Optional[float] = None,  # P0 修复：从配置读取，默认 None
-        min_signal_strength: int = 99,       # P3 优化 (2026-05-22): 50→99 与 CFG.MIN_SIGNAL_SCORE 对齐
+        min_signal_strength: int = 50,       # P0-辩论修复: 99→50 (P3过度收紧导致零交易, P0守卫兜底)
     ):
         # F4 (2026-05-14): 收敛到 MinConfidenceResolver, 不再各自直读 yaml
         if min_confidence is None:
@@ -218,13 +218,20 @@ class PreTradeChecker:
             checks_passed.append("HIGH_VOL_TIGHTENED")
 
         # 1. 信号强度检查（SHORT 方向使用 effective_strength = 100 - strength）
+        # P0-辩论修复 (2026-05-26): 方向感知门槛
+        # LONG: strength >= 50 = 看多信号 (strength越高越看多)
+        # SHORT: effective = 100-strength >= 50, 即 strength <= 50 = 看空信号
+        # 数据: SHORT strength=-1(eff=101) 43.6%WR +$12K | strength=66(eff=34) 15.8%WR
         direction_str = str(signal.direction).upper()
         is_short = "SHORT" in direction_str
         effective_strength = (100 - signal.strength) if is_short else signal.strength
-        if effective_strength < eff_strength:
+        # SHORT方向使用更宽松的门槛 (看空信号本身就稀缺且高价值)
+        _dir_threshold = eff_strength - 10 if is_short else eff_strength
+        _dir_threshold = max(_dir_threshold, 30)  # 绝对下限30
+        if effective_strength < _dir_threshold:
             return PreTradeResult(
                 allowed=False,
-                reason=f"SIGNAL_TOO_WEAK(dir={direction_str} strength={signal.strength} effective={effective_strength}<{eff_strength})",
+                reason=f"SIGNAL_TOO_WEAK(dir={direction_str} strength={signal.strength} effective={effective_strength}<{_dir_threshold})",
                 checks_passed=checks_passed,
             )
         checks_passed.append("SIGNAL_STRENGTH")
