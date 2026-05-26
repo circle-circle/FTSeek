@@ -7,6 +7,7 @@
 
 import asyncio
 import logging
+import json
 import os
 import time
 import uuid
@@ -336,10 +337,22 @@ class PreMarketPipeline:
                 plan = self._analyst.generate_battle_plan_json(assessments)
                 logger.info(f"[Pipeline] 作战计划已生成: {len(plan['targets'])} 个目标, 基调={plan['overall_bias']}")
                 self._last_battle_plan = plan
+            else:
+                # P0 修复 (2026-05-26): 跳过生成时，从文件加载现有计划
+                # 根因: 原代码用 `or` 短路逻辑，should_generate=False 时仍会调用 generate 覆盖好计划
+                try:
+                    with open(plan_path, 'r', encoding='utf-8') as f:
+                        plan = json.load(f)
+                    self._last_battle_plan = plan
+                    logger.info(f"[Pipeline] 复用现有作战计划: {len(plan.get('targets', []))} 个目标")
+                except Exception as e:
+                    logger.warning(f"[Pipeline] 加载现有计划失败: {e}, 回退到空计划")
+                    plan = {"targets": [], "restricted": [], "overall_bias": "NEUTRAL"}
+                    self._last_battle_plan = plan
             
             # 2026-05-11 新增: 自动注入战斗计划目标到动态池 (必须在 if 之外)
             # 2026-05-17 修复: 传递 signal_impact/urgency 到动态池，保留 LLM 信号质量
-            plan = self._last_battle_plan or self._analyst.generate_battle_plan_json(assessments)
+            # P0 修复 (2026-05-26): 移除危险的 `or` 短路，直接使用 self._last_battle_plan
             from app.utils.daily_active_pool import get_daily_active_pool
             pool = get_daily_active_pool(market_prefix="HK.")
             injected = 0
