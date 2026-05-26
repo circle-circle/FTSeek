@@ -293,10 +293,11 @@ class USPositionSync:
         if ctx is None:
             return
         try:
-            # P0 修复 (2026-05-27): refresh_cache=True — 强制从 broker 拉最新持仓
-            # 根因: Futu SDK 默认 refresh_cache=False 返回本地缓存，可能过期，
-            # 导致 QCOM/SNDK 等真实持仓被误判为幽灵仓，反复清理→重导入→通知。
-            ret, data = ctx.position_list_query(trd_env=trade_env, refresh_cache=True)
+            # P0 修复 (2026-05-27): 使用 refresh_cache=False (默认) — 缓存数据更可靠
+            # Futu SDK 的 refresh_cache=True 可能因服务端延迟返回空结果，
+            # 导致真实持仓被误判为幽灵仓。缓存由 Futu OpenD 维护，数据可靠。
+            # 真正的根因修复: _closed_symbols 过滤已改为 exit_price > 0 (排除假 ghost 记录)
+            ret, data = ctx.position_list_query(trd_env=trade_env)
             # P0 修复: 查询失败或返回异常 → 重置连接 + 跳过本轮，防止误删持仓
             if ret != 0:
                 logger.warning(f"[US Sync] Futu 持仓查询失败 (ret={ret})，重置连接，跳过本轮")
