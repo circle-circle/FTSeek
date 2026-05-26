@@ -1624,6 +1624,25 @@ class TradeExecutor:
                     return TradeResult(success=False, message=f"计划拦截: {reason}")
             else:
                 logger.debug(f"✅ [作战计划门禁] 允许开仓 {signal.code}: {reason}")
+            
+            # RFC-046: 注入计划交易参数到 signal.extra (仅港股)
+            if not signal.code.startswith('US.'):
+                try:
+                    plan_params = plan_mgr.get_target_trade_params(signal.code)
+                    _plan_sl = plan_params.get("stop_loss_pct")
+                    _plan_tp = plan_params.get("take_profit_pct")
+                    if _plan_sl is not None and _plan_tp is not None:
+                        if not hasattr(signal, 'extra') or signal.extra is None:
+                            signal.extra = {}
+                        signal.extra["plan_stop_loss_pct"] = abs(_plan_sl)
+                        signal.extra["plan_take_profit_pct"] = abs(_plan_tp)
+                        signal.extra["plan_max_position_pct"] = plan_params.get("max_position_pct", 0.08)
+                        logger.info(
+                            f"[RFC-046 计划参数注入] {signal.code}: "
+                            f"SL={abs(_plan_sl):.1%}, TP={abs(_plan_tp):.1%}"
+                        )
+                except Exception as e:
+                    logger.warning(f"⚠️ [RFC-046] 计划参数注入失败 (不影响交易): {e}")
         except Exception as e:
             logger.error(f"⚠️ [作战计划门禁] 检查异常 (放行): {e}")
 
@@ -1899,19 +1918,29 @@ class TradeExecutor:
                     stop_loss = abs(us_params.get('stop_loss', 0.03))
                     take_profit = abs(us_params.get('take_profit', 0.05))
                 else:
-                    stop_loss = dynamic_exit_manager.get_stop_loss()
-                    take_profit = dynamic_exit_manager.get_take_profit()
+                    # RFC-046: 优先使用计划参数 (如有)
+                    _extra = getattr(signal, 'extra', {}) or {}
+                    _plan_sl = _extra.get("plan_stop_loss_pct")
+                    _plan_tp = _extra.get("plan_take_profit_pct")
+                    if _plan_sl is not None and _plan_tp is not None:
+                        stop_loss = abs(_plan_sl)
+                        take_profit = abs(_plan_tp)
+                        logger.info(f"[RFC-046 计划参数] {signal.code} 使用计划 SL={stop_loss:.1%} TP={take_profit:.1%}")
+                    else:
+                        stop_loss = dynamic_exit_manager.get_stop_loss()
+                        take_profit = dynamic_exit_manager.get_take_profit()
                 
                 # 以真实成交价为基础计算止盈止损价 (考虑交易费用)
                 # 2026-03-24: 优化止盈止损计算，加入交易费用考量
-                from app.risk.trading_fees import DEFAULT_FEES
+                from app.risk.trading_fees import DEFAULT_FEES, adjust_stop_loss_for_fees, adjust_take_profit_for_fees
                 
-                # 使用考虑费用的止盈止损计算
-                stop_price = dynamic_exit_manager.get_stop_loss_price_with_fees(
-                    actual_entry_price, qty, DEFAULT_FEES
+                # RFC-046: 统一使用 adjust_*_for_fees 函数，确保计划参数和 DEM 参数都正确处理
+                # stop_loss 可能是负数(DEM)或正数(计划/US)，统一用 abs
+                stop_price = adjust_stop_loss_for_fees(
+                    actual_entry_price, -abs(stop_loss), qty, DEFAULT_FEES
                 )
-                take_profit_price = dynamic_exit_manager.get_take_profit_price_with_fees(
-                    actual_entry_price, qty, DEFAULT_FEES
+                take_profit_price = adjust_take_profit_for_fees(
+                    actual_entry_price, abs(take_profit), qty, DEFAULT_FEES
                 )
                 
                 # 2026-04-24 修复: 防御性校验 — 止损价必须低于入场价至少 0.5%
