@@ -420,6 +420,18 @@ class BattlePlanGenerator:
                 continue
 
             net_conf = item.get('net_confidence', 0)
+
+            # P2 修复 (2026-05-26): 辩论信心度门控 — 强烈看空标的不进白名单
+            # 根因: 辩论 net_confidence < -0.3 意味着多模型共识不推荐交易
+            # 将此类标的加入 restricted 而非 targets，直接提升胜率
+            if net_conf < -0.3:
+                restricted_set.add(sym)
+                logger.info(
+                    f"[BattlePlan] 辩论标的 {sym} 信心度过低 "
+                    f"(net_conf={net_conf:+.2f} < -0.3) → 加入 restricted"
+                )
+                continue
+
             urgency = "High" if net_conf > 0.3 else "Medium" if net_conf > 0 else "Low"
 
             # P0 修复 (2026-05-17): 从 LLM assessments 交叉引用 signal_impact
