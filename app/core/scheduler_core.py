@@ -353,6 +353,31 @@ class TradingScheduler:
             except Exception as e:
                 logger.warning("[NewsV2] RSSHub 源添加失败 (降级运行): %s", e)
 
+            # ─── 催化辩论一手源 (2026-05-27 RFC-Catalyst) ───
+            # 港交所披露易 + 证监会官网 (公司直接发布, 比二手新闻快且权威)
+            try:
+                _cat_cfg = cfg.get_dotted("catalyst", {}) or {}
+                if _cat_cfg.get("enabled", False):
+                    _src_cfg = _cat_cfg.get("sources", {}) or {}
+                    
+                    # HKEX 港交所披露易
+                    if _src_cfg.get("hkex", {}).get("enabled", False):
+                        from app.catalyst.sources.hkex_source import HKEXSource
+                        hkex_interval = int(_src_cfg["hkex"].get("interval_seconds", 120))
+                        hkex_src = HKEXSource(interval_seconds=hkex_interval)
+                        self.news_pipeline_v2.add_source(hkex_src)
+                        logger.info("[Catalyst] HKEX 港交所源已添加 (%ds轮询)", hkex_interval)
+                    
+                    # CSRC 证监会官网
+                    if _src_cfg.get("csrc", {}).get("enabled", False):
+                        from app.catalyst.sources.csrc_source import CSRCSource
+                        csrc_interval = int(_src_cfg["csrc"].get("interval_seconds", 300))
+                        csrc_src = CSRCSource(interval_seconds=csrc_interval)
+                        self.news_pipeline_v2.add_source(csrc_src)
+                        logger.info("[Catalyst] CSRC 证监会源已添加 (%ds轮询)", csrc_interval)
+            except Exception as e:
+                logger.warning("[Catalyst] 一手源添加失败 (降级运行): %s", e)
+
             # 链路修复 (2026-05-15): 接入 CN 国产源 — 国内大陆环境优先
             # 之前问题: news_sources.cn 配置存在但 0 代码引用 (死配置)
             try:

@@ -60,7 +60,7 @@ class NewsNowUSFetcher:
         'cls': {
             'name': '财联社电报',
             'weight': 0.30,
-            'interval': 5,
+            'interval': 2,  # 2分钟 (催化辩论一手源提速, RFC-Catalyst 2026-05-27)
         },
         'jin10': {
             'name': '金十数据',

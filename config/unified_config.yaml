@@ -140,6 +140,23 @@ llm:
       timeout: 30
       cost_in: 0.002
       cost_out: 0.008
+    # ─── 催化辩论专用强模型 (2026-05-27 RFC-Catalyst) ───
+    qwen-max:
+      provider: dashscope
+      api_key_env: DASHSCOPE_API_KEY
+      base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+      model_name: qwen3.7-max           # 最强Qwen: 宏观传导推理
+      timeout: 60
+      cost_in: 0.008
+      cost_out: 0.024
+    kimi-k2:
+      provider: dashscope
+      api_key_env: DASHSCOPE_API_KEY
+      base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+      model_name: kimi-k2.6             # 月之暗面: 长上下文+行业分析
+      timeout: 60
+      cost_in: 0.004
+      cost_out: 0.016
 
   # Feature → Model 路由
   # 简单格式: 'feature_name: <alias>' (单模型, 失败 None)
@@ -175,6 +192,14 @@ llm:
     debate_engine:           {primary: qwen-plus,     fallback: deepseek-pro}   # enable_thinking=false
     agent_bridge:            {primary: deepseek-pro,  fallback: qwen-plus}      # json_mode, 辩论桥接
     claude_code:             {primary: deepseek-pro,  fallback: qwen-plus}      # 代码生成
+
+    # ⭐ 2026-05-27 催化辩论 — 3视角各用最强模型 (不同家族: 阿里/DeepSeek/月之暗面)
+    catalyst_macro:      {primary: qwen-max,    fallback: qwen-plus}       # qwen3.7-max: 宏观传导
+    catalyst_risk:       {primary: deepseek-pro, fallback: qwen-plus}      # deepseek-v4-pro: 风控质疑
+    catalyst_sentiment:  {primary: kimi-k2,     fallback: qwen-plus}       # kimi-k2.6: 行业情绪
+    catalyst_classifier: {primary: qwen-max,    fallback: qwen-plus}       # 催化分类+中文翻译
+    catalyst_review:     {primary: deepseek-pro, fallback: qwen-plus}      # 盘后回看
+    catalyst_breaking:   {primary: qwen-flash,  fallback: qwen-plus}       # 盘中快速(低延迟)
 
   # 旧别名兼容映射 (2026-05-21): 原 multi_model_client 的 "qwen"/"deepseek" 等别名
   # 迁移期使用，后续代码统一改用 feature 路由后可删除
@@ -1803,3 +1828,46 @@ pipeline:
       alert_drawdown: -0.10     # -10% → 仅25%仓位
       danger_drawdown: -0.20    # -20% → 不开新仓
       circuit_breaker: -0.35    # -35% → 全部平仓
+
+# ─── 催化辩论引擎 (2026-05-27 RFC-Catalyst) ───
+# 盘前/盘后新闻催化事件检测 + 多模型辩论
+# 盘中不介入 (避免影响交易延迟)
+catalyst:
+  enabled: true
+  
+  # 盘前扫描
+  premarket:
+    scan_news_hours: 12          # 扫描过去12小时新闻
+    min_severity: HIGH           # 低于此级别不辩论
+    debate_timeout_seconds: 180  # 辩论总超时
+    consensus_threshold: 0.4     # 分歧度阈值 (低于此值放弃信号)
+  
+  # 盘后回看
+  postmarket:
+    enabled: true
+    generate_lessons: true       # 生成教训写入 lessons DB
+  
+  # 反向催化: 行情先行 → 新闻确认
+  reverse_catalyst:
+    enabled: true
+    min_change_pct: 0.03         # 3%异动触发反向催化
+    quick_debate_timeout: 60     # 快速辩论60秒
+    quick_debate_rounds: 1       # 快速辩论仅1轮
+  
+  # 一手信息源
+  sources:
+    hkex:
+      enabled: true
+      interval_seconds: 120      # 2分钟轮询 (港交所披露易)
+    csrc:
+      enabled: true
+      interval_seconds: 300      # 5分钟轮询 (证监会官网)
+    cls_interval_minutes: 2      # 财联社从5分钟缩短到2分钟
+  
+  # 标的关联映射 (行业/板块传导)
+  sector_mapping:
+    chinese_adr: ["FUTU", "BABA", "PDD", "BIDU", "JD", "NIO", "LI", "XPEV"]
+    chinese_broker: ["FUTU", "TIGR", "HLBZ"]
+    ai_chip: ["NVDA", "AMD", "AVGO", "MU", "ARM", "QCOM"]
+    ev: ["TSLA", "RIVN", "LCID", "NIO", "XPEV", "LI"]
+    big_tech: ["AAPL", "MSFT", "GOOGL", "AMZN", "META"]

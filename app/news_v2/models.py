@@ -39,6 +39,9 @@ class NewsSource:
     WALLSTREETCN = "wallstreetcn"          # 华尔街见闻
     EASTMONEY_US = "eastmoney_us"          # 东方财富美股新闻
     XUEQIU_US = "xueqiu_us"                # 雪球美股 (备选)
+    # 催化辩论一手源 (2026-05-27)
+    HKEX_NEWS = "hkex_news"                # 港交所披露易 (公司公告)
+    CSRC_NEWS = "csrc_news"                # 证监会官网 (监管公告)
 
 
 @dataclass
