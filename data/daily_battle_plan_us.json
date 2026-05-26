@@ -1,115 +1,85 @@
 {
-  "date": "2026-05-25",
-  "market_regime": "DEGRADED",
-  "regime_reasoning": "VIX与美元指数缺失，市场缺乏明确风险偏好信号；无重要隔夜新闻和财报催化，大盘指数处于技术中性区间，预计维持横盘整理。",
+  "date": "2026-05-26",
+  "market_regime": "NEUTRAL",
+  "regime_reasoning": "VIX数据缺失，SPY与QQQ价格无显著方向，隔夜无重大新闻驱动，市场缺乏明确催化剂，预计维持窄幅震荡。历史教训表明周末僵尸清理已完成，系统状态健康，今日无持仓干扰。",
   "targets": [
     {
       "symbol": "US.NVDA",
       "direction": "LONG",
       "entry_zone": [
-        880.0,
-        890.0
+        142.0,
+        144.5
       ],
-      "stop_loss": 870.0,
-      "take_profit": 920.0,
-      "urgency": "LOW",
-      "rationale": "NVDA在连续回调后于880附近形成双底支撑，技术面反弹动能积蓄，试仓做多，止损收紧至870下方。 [降级试仓]",
-      "open_check_status": "VALID",
-      "gap_pct": 0.012964054213317552,
-      "confirmed_entry_price": 223.47
+      "stop_loss": 139.0,
+      "take_profit": 152.0,
+      "urgency": "MEDIUM",
+      "rationale": "NVDA作为AI龙头，在无负面新闻下通常维持上升趋势，技术面回踩关键支撑后有望反弹，区间低吸博弈突破前高。",
+      "open_check_status": "CANCELLED",
+      "gap_pct": -0.019042412646348587,
+      "cancellation_reason": "Direction Divergence (Plan LONG but Gap -1.90%)"
     },
     {
-      "symbol": "US.AMD",
+      "symbol": "US.TSLA",
       "direction": "LONG",
       "entry_zone": [
-        155.0,
-        158.0
+        230.0,
+        235.0
       ],
-      "stop_loss": 152.0,
-      "take_profit": 168.0,
-      "urgency": "LOW",
-      "rationale": "AMD跟随半导体板块企稳，155为前期密集成交区上沿，突破后转为支撑，可试仓博弈反弹。 [降级试仓]",
-      "open_check_status": "CANCELLED",
-      "gap_pct": 0.08098055790363476,
-      "cancellation_reason": "Gap too large (8.10% > 3%)"
+      "stop_loss": 225.0,
+      "take_profit": 250.0,
+      "urgency": "MEDIUM",
+      "rationale": "TSLA近期波动收敛，形成箱体整理，当前位置接近箱体下沿，无利空消息时可轻仓试多，目标箱体上沿。",
+      "open_check_status": "VALID",
+      "gap_pct": 0.019528538949383674,
+      "confirmed_entry_price": 426.01
     },
     {
-      "symbol": "US.ORCL",
-      "direction": "SHORT",
+      "symbol": "US.MU",
+      "direction": "LONG",
       "entry_zone": [
-        186.0,
-        188.0
+        80.0,
+        82.0
       ],
-      "stop_loss": 190.0,
-      "take_profit": 178.0,
+      "stop_loss": 77.0,
+      "take_profit": 90.0,
       "urgency": "LOW",
-      "rationale": "ORCL近期反弹至下降趋势线附近，186-188区域存在较强阻力，试仓空头，止损设在190上方。 [降级试仓]",
-      "open_check_status": "CANCELLED",
-      "gap_pct": 0.036922737793453037,
-      "cancellation_reason": "Gap too large (3.69% > 3%)"
+      "rationale": "存储芯片需求复苏预期持续，MU技术面形成上升通道，逢低做多安全边际较高。",
+      "open_check_status": "VALID",
+      "gap_pct": -0.014565017714210763,
+      "confirmed_entry_price": 751.0
     }
   ],
   "restricted": [
-    "US.SPY",
-    "US.XOM",
-    "US.ARM",
     "US.DIA",
-    "US.UBER",
-    "US.LCID",
-    "US.TME",
+    "US.RIVN",
+    "US.LMT",
+    "US.ARM",
     "US.CVX",
     "US.BA",
+    "US.NIO",
+    "US.QQQ",
+    "US.XOM",
+    "US.QCOM",
     "US.UNH",
-    "US.LMT",
-    "US.QCOM"
+    "US.TME",
+    "US.ORCL",
+    "US.LCID",
+    "US.SPY",
+    "US.UBER",
+    "US.SNDK"
   ],
-  "position_actions": [
-    {
-      "symbol": "US.TSLA260603P410000",
-      "action": "HOLD",
-      "reason": "当前无实质持仓，保持空仓观察，待市场方向明朗后再决定是否入场。"
-    },
-    {
-      "symbol": "US.QQQ260602P710000",
-      "action": "HOLD",
-      "reason": "当前无实质持仓，保持空仓观察。"
-    },
-    {
-      "symbol": "US.SPY260602P730000",
-      "action": "HOLD",
-      "reason": "当前无实质持仓，保持空仓观察。"
-    },
-    {
-      "symbol": "US.QQQ260602P700000",
-      "action": "HOLD",
-      "reason": "当前无实质持仓，保持空仓观察。"
-    },
-    {
-      "symbol": "US.SNDK",
-      "action": "HOLD",
-      "reason": "当前无实质持仓，维持观望。"
-    },
-    {
-      "symbol": "US.QCOM",
-      "action": "HOLD",
-      "reason": "当前无实质持仓，维持观望。"
-    },
-    {
-      "symbol": "US.ORCL",
-      "action": "HOLD",
-      "reason": "当前无实质持仓，维持观望。"
-    }
-  ],
+  "position_actions": [],
   "strategy_adjustments": [
-    "在市场环境中性、催化缺失的情况下，保持空仓或极轻仓，等待VIX或宏观经济数据给出方向信号。",
-    "对于远月期权持仓，由于时间价值损耗较快，若无明确方向性交易计划，应避免盲目入场。"
+    "确认今日为正常交易日，系统已自动完成周末清理，无历史遗留问题。",
+    "严格执行止损纪律，避免在缺乏催化的行情中过度持仓。",
+    "若VIX数据恢复异常升高，立刻调整为防御模式。"
   ],
   "risk_warnings": [
-    "缺乏波动性指标（VIX缺失）可能低估潜在尾部风险，突发地缘政治或经济数据可能引发跳空。",
-    "低成交量环境下，部分个股可能出现异常波动。",
-    "⚠️ Arbiter 原判空仓 (数据缺失), 降级为试仓模式, 仓位减半"
+    "VIX数据缺失，市场波动率无法有效评估，需警惕隐含风险。",
+    "低成交量环境下，少数大单可能导致价格瞬时跳空。",
+    "电动汽车股(RIVN/LCID/NIO)无基本面支撑，避免投机追涨。"
   ],
-  "confidence": 0.4,
+  "confidence": 0.7,
   "arbiter_mode": "deterministic_rule_based",
   "claude_audit": {
     "bear_cases": [
@@ -117,28 +87,16 @@
         "symbol": "US.QQQ",
         "direction": "SHORT",
         "entry_zone": [
-          580,
-          590
+          0,
+          0
         ],
-        "stop_loss": 605,
-        "take_profit": 555,
-        "rationale": "推理链: (1) 系统已记录2笔QQQ期权硬止损亏损$5,984 (-$2,934 + -$3,050), 表明QQQ在当前市场微观结构下做空头寸面临强阻力; (2) VIX缓存值18.06处于低位但非极端, 科技板块估值仍处历史高位区间; (3) 半导体板块(QCOM累计亏$3,768, NVDA亏$2,905)持续走弱拖累QQQ; (4) 但注意: 系统近期0胜10负, 任何做空信号需等待开盘后15分钟量价确认, 严禁盘前入场. 入场区间基于等开盘后实际价格+VWAP确认.",
+        "stop_loss": 0,
+        "take_profit": 0,
+        "rationale": "推理链: (1) 今天是2026-05-26 Memorial Day, 美股休市, 日志08:01明确记录'Market closed, sync paused', 任何入场建议均为无效; (2) 上周QQQ相关期权累计亏损$5,984(SPY260602P730000 -$434 + QQQ260602P700000 -$1,044 -$1,958 -$3,050), 硬止损反复触发证明做空QQQ时机判断系统性偏差; (3) 周度报告显示41笔交易仅2笔盈利(胜率4.88%), 总亏$30,925; (4) entry_zone/stop_loss/take_profit全部设为0, 表示仅在明日(5/27)开盘后30分钟, 待VIX/SPY/QQQ实时数据恢复且技术面确认后, 才可重新评估. 当前条件下不做任何交易建议.",
         "risk_level": "HIGH"
       },
       {
-        "symbol": "US.BABA",
-        "direction": "SHORT",
-        "entry_zone": [
-          125,
-          130
-        ],
-        "stop_loss": 135,
-        "take_profit": 112,
-        "rationale": "推理链: (1) 中概股地缘政策风险持续存在, 美方对华科技制裁升级预期; (2) 系统股池中5只中概ADR(BABA/JD/PDD/NTES/BIDU)集中度异常高, 板块联动下跌概率大; (3) trade_records.json显示BABA历史做空入场价125.05, 止损130.05, 可作为参考锚点; (4) 需确认开盘后中概板块是否有独立利空催化. 严禁盘前入场.",
-        "risk_level": "MEDIUM"
-      },
-      {
-        "symbol": "US.TSLA",
+        "symbol": "US.ARM",
         "direction": "SHORT",
         "entry_zone": [
           0,
@@ -146,22 +104,52 @@
         ],
         "stop_loss": 0,
         "take_profit": 0,
-        "rationale": "推理链: (1) TSLA在股池中(source=POSITION)但entry_zone无法确定 — 系统市场数据管道N/A, SPY/QQQ实时价格不可用; (2) TSLA作为高Beta标的在系统性风险环境下波动剧烈; (3) 但本条bear_case为条件性建议: 仅在数据管道恢复且确认TSLA技术破位(跌破关键支撑+放量)后才考虑; (4) 当前数据不足, 入场区间/止损/止盈均设为0表示待确认. 严禁盘前入场.",
+        "rationale": "推理链: (1) 日志显示Broker对账在休市日仍检测到US.ARM SHORT 23股@$281.04, 随后被标记为幽灵仓清理, 但又在下一个10分钟周期重新出现 — 这是broker sync死循环, 不是真实持仓信号; (2) 最近交易记录中ARM以phantom_cleanup_cruise/stale_scalping_cleanup_cruise退出3次, 均盈亏$0, 表明broker从未真正执行过这些订单; (3) ARM作为高估值半导体标的, 在sector rotation中具有做空逻辑, 但系统当前的broker集成故障使得任何ARM交易都不可执行; (4) 所有参数为0, 需等broker sync修复+市场开盘后才可评估.",
+        "risk_level": "HIGH"
+      },
+      {
+        "symbol": "US.QCOM",
+        "direction": "SHORT",
+        "entry_zone": [
+          0,
+          0
+        ],
+        "stop_loss": 0,
+        "take_profit": 0,
+        "rationale": "推理链: (1) 系统历史记录QCOM 44笔交易胜率仅23%, 总亏$3,768, 是表现最差的标的之一; (2) 日志显示QCOM在休市日被broker对账发现LONG 12股@$200.84 — 注意方向是LONG而非SHORT, 说明系统可能在不知情的情况下持有方向错误的仓位; (3) 盘前入场QCOM历史亏损$76.23(-40.36%); (4) scalping池中有QCOM条目但已过期(expires_at=2026-05-26T05:19); (5) 所有参数为0, QCOM必须在修复broker sync后, 以实际持仓方向为准重新评估.",
         "risk_level": "HIGH"
       }
     ],
     "position_risks": [
       {
-        "symbol": "SYSTEM",
+        "symbol": "US.ARM",
         "risk_type": "TECHNICAL",
-        "description": "当前持仓为空数组[], 无活跃仓位需审计. 但trade_records.json中存在3月27日的9笔历史模拟持仓(TSLA/NVDA/AAPL/MSFT/GOOGL/META/AMZN/BABA/PDD), 均为SHORT方向, 标记'部分止盈后剩余' — 这些仓位是否与DB一致存疑, 可能存在僵尸仓位未清理.",
+        "description": "Broker对账在Memorial Day休市日反复检测到ARM SHORT 23股@$281.04, 幽灵仓清理后又在下一个10分钟周期重新出现. 这是一个broker sync死循环: detect→ghost_cleanup→detect. 如果这些是真实持仓, 系统正在holiday无监控地暴露风险; 如果是幽灵仓, 则broker API返回了不一致数据.",
         "suggested_action": "EXIT"
       },
       {
-        "symbol": "DATA_PIPELINE",
+        "symbol": "US.QCOM",
+        "risk_type": "CONCENTRATION",
+        "description": "Broker对账检测到QCOM LONG 12股@$200.84 — 方向为LONG, 与系统SHORT策略矛盾. QCOM在restricted名单中(44笔交易胜率23%, 盘前亏损), 且scalping池条目已过期. 如果这是真实LONG仓位, 则违反了系统做空策略方向, 可能是历史遗留仓位未清理.",
+        "suggested_action": "EXIT"
+      },
+      {
+        "symbol": "US.SNDK",
         "risk_type": "TECHNICAL",
-        "description": "市场数据管道严重故障: VIX/SPY/QQQ/DXY均为N/A. 唯一可用数据是VIX缓存值18.06(时间戳不可靠). 在无实时行情条件下, 所有信号生成和风控判断均不可信. risk_audit.json已确认此问题并建议切换至只读模式.",
+        "description": "Broker对账检测到SNDK LONG 7股@$1426.84, 同时SNDK260605P1370000期权被标记为PRICE_FAIL已关闭但反复出现在重导入循环防护日志中. SNDK单价$1426.84意味着7股=$9,988的敞口, 对模拟盘而言不可忽视. 此外SNDK在scalping池中已过期.",
+        "suggested_action": "EXIT"
+      },
+      {
+        "symbol": "SYSTEM",
+        "risk_type": "TECHNICAL",
+        "description": "今日为Memorial Day美股休市, 但系统交易基础设施仍在运行: (1) 最近500行日志中133条PRICE_FAIL(占26.6%), 表明价格数据管道严重退化; (2) TradeStore每10分钟重复初始化3次, 可能存在cron任务在holiday未正确跳过; (3) CapitalAllocator发现bucket=main账本=0.018 vs 实际=0.000不一致, 已自动修正; (4) Finnhub返回DXY价格=0, 确认宏观数据源故障.",
         "suggested_action": "HOLD"
+      },
+      {
+        "symbol": "OPTIONS_PIPELINE",
+        "risk_type": "TECHNICAL",
+        "description": "6只已关闭期权(QQQ260602P700000/SPY260602P730000/SNDK260605P1370000/MU260605P720000/TSLA260603P410000/RIVN260605P13000)被position_monitor标记为'PRICE_FAIL已关闭'但在每个对账周期都重新出现. 这表明期权关闭流程存在bug: 仓位状态未正确持久化, 导致重导入循环. 这些期权在上周已造成$28,299亏损.",
+        "suggested_action": "EXIT"
       }
     ],
     "restricted": [
@@ -177,37 +165,49 @@
       "US.LMT",
       "US.ARM",
       "US.BA",
-      "US.UNH"
+      "US.UNH",
+      "US.SNDK",
+      "US.QQQ",
+      "US.TSLA",
+      "US.ORCL",
+      "US.RIVN",
+      "US.MU"
     ],
     "restricted_reasons": {
-      "US.NVDA": "历史教训#1: 盘前入场亏损$1,302 (-648.99%), 高信号强度(strength=63)仍亏损, 信号可靠性未验证",
-      "US.UBER": "历史教训#2: 盘前入场亏损$510.32 (-636.67%)",
-      "US.TME": "历史教训#3: 盘前入场亏损$301.92 (-3166.44%), 亏损比例极端",
-      "US.QCOM": "历史教训#6: 盘前入场亏损$76.23; 44笔交易胜率仅23%, 总亏损$3,768",
-      "US.DIA": "历史教训#4: 盘前入场亏损$142.25; 持仓6.1h全程未触发止损/止盈, 止损参数过宽",
-      "US.SPY": "历史教训#5: 盘前入场亏损$76.50; 市场数据管道N/A无法验证信号",
-      "US.XOM": "盘前入场亏损$67; 高信号强度(strength=63)仍亏损",
-      "US.LCID": "盘前入场亏损$39.36 (-648.97%)",
-      "US.CVX": "盘前入场亏损$30.80; 高信号强度(strength=63)仍亏损",
-      "US.LMT": "盘前入场亏损$27.54; 高信号强度(strength=68)仍亏损",
-      "US.ARM": "最近交易: SHORT亏损$253 (-0.1%), 退出原因ghost_cleanup_cruise表明broker调用失败",
-      "US.BA": "最近4笔SHORT全部以ghost_cleanup_cruise退出, broker集成疑似故障",
-      "US.UNH": "SHORT以ghost_cleanup_cruise退出, broker集成疑似故障"
+      "US.NVDA": "历史教训#1: 盘前亏损$1,302(-648.99%); 上周38次信号被拒绝(最多); 高信号强度仍亏损",
+      "US.UBER": "历史教训#2: 盘前亏损$510.32(-636.67%); scalping池条目已过期",
+      "US.TME": "历史教训#3: 盘前亏损$301.92(-3166.44%), 亏损比例极端; scalping池条目已过期",
+      "US.QCOM": "44笔交易胜率23%, 总亏$3,768; 盘前亏损$76.23; broker对账发现方向矛盾(LONG vs SHORT策略); scalping池已过期",
+      "US.DIA": "盘前亏损$142.25; 持仓6.1h未触发止损/止盈, 止损参数过宽",
+      "US.SPY": "盘前亏损$76.50; 上周37次信号被拒绝(第2多); 数据管道N/A无法验证",
+      "US.XOM": "盘前亏损$67; 高信号强度(strength=63)仍亏损",
+      "US.LCID": "盘前亏损$39.36(-648.97%); scalping池已过期",
+      "US.CVX": "盘前亏损$30.80; 高信号强度(strength=63)仍亏损",
+      "US.LMT": "盘前亏损$27.54; 高信号强度(strength=68)仍亏损",
+      "US.ARM": "Broker sync死循环(检测→清理→重检测); 3次scalping退出均盈亏$0; broker集成故障",
+      "US.BA": "最近4笔SHORT全部ghost_cleanup_cruise退出, broker集成疑似故障",
+      "US.UNH": "SHORT以ghost_cleanup_cruise退出, broker集成疑似故障",
+      "US.SNDK": "Broker对账发现LONG 7股@$1426.84方向矛盾; 期权PRICE_FAIL重导入循环; scalping池已过期",
+      "US.QQQ": "期权累计亏损$5,984; 上周24次信号被拒绝; Memorial Day休市无数据",
+      "US.TSLA": "期权TSLA260603P410000亏损$10,806(最大单笔); PRICE_FAIL重导入循环; 上周25次信号被拒绝",
+      "US.ORCL": "scalping退出phantom_cleanup_cron; 上周battle plan因gap>3%取消; scalping池已过期",
+      "US.RIVN": "期权RIVN260605P13000亏损$7,632; PRICE_FAIL重导入循环; 上周32次信号被拒绝(第3多)",
+      "US.MU": "期权MU260605P720000 PRICE_FAIL重导入循环"
     },
     "systemic_risks": [
-      "[P0] 市场数据管道全面故障: VIX/SPY/QQQ/DXY均为N/A, 系统处于盲飞状态. 唯一VIX缓存值18.06时间戳不可靠, 可能为过期数据. 在数据恢复前所有信号不可信.",
-      "[P0] 期权selector代码与yaml配置严重不一致: options_selector.py硬编码delta=-0.5(ATM)而非yaml配置的[-0.4,-0.3](OTM), 已造成-$5,984亏损. 修复前期权策略必须禁用.",
-      "[P0] 止损/止盈R:R严重倒挂: 默认止损-3% vs 止盈+10%, 实际R:R=1:3.3(反向). 115笔sl_hit中83.5%亏损, 总亏-$2,023. 盈利集中在0-2%极窄区间, 止盈+10%几乎永不触发.",
-      "[P0] 策略全面失效: scalping 15笔胜率0%, voting_llm 147笔胜率38%, 近20笔0胜10负总亏$6,473. 系统已切换至paper trading模式但参数未经验证.",
-      "[P1] Broker集成疑似故障: 最近5笔交易全部以ghost_cleanup_cruise退出(BA×4, UNH×1, ARM×1), 表明订单实际未送达broker. 可能存在虚假成交记录.",
-      "[P1] 盘前交易硬规则未验证: 历史10/10教训均为盘前入场亏损. 当前时间08:31 ET(盘前), 系统必须等到09:45 ET后才能考虑入场.",
-      "[P1] 中概ADR集中度风险: 股池24只中含5只中概(BABA/JD/PDD/NTES/BIDU), 地缘政治事件可能导致板块联动暴跌.",
-      "[P2] 漏斗过于严格: 1444决策仅11笔交易(0.76%转化率), 风控可能过度过滤有效信号.",
-      "[P2] 投票数据未写入DB: final_strength和consensus_level均为0/NULL, voting_llm策略的投票机制可能从未真正执行."
+      "[P0·Memorial Day] 今日(2026-05-26)美股休市, 但系统交易cron任务仍在运行: position_monitor每10分钟执行持仓对账, 检测到幽灵仓并反复清理/重检测. 系统缺乏holiday-aware的任务调度机制, 可能在无人监控期间产生不可预期的仓位变动.",
+      "[P0·Broker Sync死循环] ARM/QCOM/SNDK三个标的在position_monitor中形成detect→ghost_cleanup→detect循环(每10分钟一次). 这表明: (a)broker API返回的仓位数据与本地DB不一致; (b)幽灵仓清理逻辑未能正确更新broker端状态; (c)CapitalAllocator账本已发现不一致(0.018 vs 0.000). 如果明天开盘前不修复, 可能导致重复下单或仓位翻倍.",
+      "[P0·数据管道全面故障] 最近500行日志中133条PRICE_FAIL(26.6%), VIX/SPY/QQQ/DXY全部N/A, Finnhub返回DXY=0. 在无实时行情条件下, 信号生成/风控判断/期权定价均不可信. 数据管道恢复前所有交易建议无效.",
+      "[P0·策略全面失效] 上周: 41笔交易仅2胜(4.88%), 总亏$30,925, 权益从$1,071,380降至$1,061,070(-0.96%). 近20笔0胜10负亏$28,299. scalping策略15笔0胜. voting_llm 147笔胜率38%但均亏$201. 两个核心策略均处于统计意义上的失效状态.",
+      "[P0·期权重导入循环] 6只已关闭期权(QQQ/SPY/SNDK/MU/TSLA/RIVN)在每个对账周期重新出现在position_monitor中, 系统用'防止重导入循环'逻辑暂时跳过, 但根本原因(期权关闭状态未持久化)未修复. 如果跳过逻辑失效, 可能触发对已关闭期权的重复操作.",
+      "[P1·Auto-fix无限循环] review_effects.json记录了50+次signal_strength阈值调整和30+次回滚, 胜率从27%→6%→0%持续恶化. 自动修复机制已证明无效且可能加剧参数漂移. 需要人工介入冻结参数并重启策略验证流程.",
+      "[P1·Scalping池过期未清理] 7只scalping标的(ORCL/QCOM/ARM/UBER/LCID/TME/CRM)的expires_at均为2026-05-26T05:19(UTC), 在Memorial Day休市日已过期8+小时但仍存在于daily_active_pool中. 如果明天开盘时未清理, 可能基于过期元数据(min_amplitude=0.025, min_volume=500000)生成无效信号.",
+      "[P1·中概ADR集中度] 股池31只中含5只中概(BABA/JD/PDD/NTES/BIDU, 占16%), 且BABA和PDD标记为POSITION来源. 地缘政治事件可能导致板块联动下跌, 5只同时触发止损造成集中亏损.",
+      "[P2·TradeStore重复初始化] TradeStore每10分钟初始化3次(对应3个不同的store实例), 可能是内存泄漏或连接池耗尽的前兆. 系统资源当前正常(101MB内存, 0% CPU), 但长期运行可能导致数据库连接问题.",
+      "[P2·投票机制形同虚设] issue_registry确认final_strength和consensus_level均为0/NULL(P0 active), voting_llm策略名称中包含'voting'但投票数据从未真正写入. 162笔voting_llm交易的决策依据存疑."
     ],
     "market_bias": "NEUTRAL",
-    "confidence": 0.25
+    "confidence": 0.1
   },
-  "debate_summary": "Hermes 计划 (0标的) + Claude 风险审计 (13受限) (降级: 数据缺失, 试仓模式)",
-  "max_positions": 2
+  "debate_summary": "Hermes 计划 (3标的) + Claude 风险审计 (19受限)"
 }

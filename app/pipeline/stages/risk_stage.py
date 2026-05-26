@@ -1,13 +1,16 @@
 """
-Risk Stage — 风控审批 + 仓位计算
+Risk Stage — 仓位计算 + OrderRequest 构建
 
 职责:
-  1. 预交易检查 (PreTradeChecker — 市场状态/PDT/信号强度/置信度/教训约束)
-  2. 仓位计算 (PositionSizer — 资金水位 + tier + 风险参数)
+  1. 仓位计算 (PositionSizer — 资金水位 + tier + 风险参数)
+  2. 止损/止盈计算 (ATR-based)
   3. 构建 OrderRequest (已审批, 可直接提交执行引擎)
 
+注意: 风控门禁 (PreTradeChecker/TradeGuard/VIX/做空门禁等) 统一由
+_submit_order._check_gates_and_conflicts 执行，本阶段不再重复。
+
 输入: SignalCandidate
-输出: OrderRequest 或 None (被风控拦截)
+输出: OrderRequest 或 None (仓位计算为 0)
 """
 
 from __future__ import annotations
@@ -16,7 +19,6 @@ import logging
 from typing import Optional, Dict, Any
 
 from app.core.pipeline_contracts import SignalCandidate, OrderRequest
-from app.core.models import SignalScore, Direction as ModelDirection
 
 logger = logging.getLogger(__name__)
 
@@ -41,23 +43,11 @@ def process(candidate: SignalCandidate,
     """
     symbol = candidate.symbol
 
-    # ── 1. 构建内部 SignalScore (桥接新契约 → 现有风控接口) ──
-    direction = ModelDirection.LONG if candidate.is_long else ModelDirection.SHORT
-    signal = SignalScore(
-        symbol=symbol,
-        direction=direction,
-        strength=candidate.strength,
-        confidence=candidate.confidence,
-        strategy_id=candidate.strategy_id,
-        metadata=candidate.metadata,
-    )
-
-    # ── 2. 预交易检查 ──
-    if risk_engine:
-        approved = risk_engine.pre_trade_check(signal)
-        if not approved:
-            logger.info(f"[Risk] {symbol} 风控拦截 (confidence={candidate.confidence:.2f} strength={candidate.strength})")
-            return None
+    # ── 1. 风控门禁 ──
+    # 风控门禁统一由 _submit_order._check_gates_and_conflicts 执行，避免重复。
+    # _check_gates_and_conflicts 是完整门禁集合 (RiskStateMachine/ADR/VIX/做空门禁/
+    # TradeGuard/动量门控/作战计划)，pre_trade_check 仅是其子集。
+    # 此处不再调用 risk_engine.pre_trade_check()，防止每单 3 次重复检查。
 
     # ── 3. 仓位计算 ──
     quantity = _compute_position_size(symbol, candidate, risk_engine)

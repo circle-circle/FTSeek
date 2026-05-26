@@ -9,6 +9,15 @@ Phase A 范围:
 Phase A 默认观察模式 (各组件 observe_only=True), 不阻断现有流程.
 
 Phase B/C/D 待加: run_open_cycle 主循环, OrderGateway 注入, ExecutionMode.
+
+⚠️ observe_only + Scalping 已知局限 (2026-05-26 记录):
+- observe_only=True 时 SymbolLock 完全不强制 → Scalping + Main 可能在同一标的上竞争
+- Scalping 引擎有独立风控栈 (_verify_global_risk_gate + pre_trade_check),
+  不走 _check_gates_and_conflicts → VIX regime / ADR 集中度 / 价格动量门控 / TradeGuard
+  对 Scalping 不生效
+- 唯一保护: _open_position_lock (RLock) 仅保护 position_store 写入瞬间,
+  不阻止两个引擎在同一秒内各自决策开仓
+- Phase B 切 enforce 时需评估: Scalping 是否应接入完整 _check_gates_and_conflicts
 """
 from __future__ import annotations
 import logging

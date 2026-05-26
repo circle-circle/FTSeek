@@ -402,9 +402,18 @@ def _run_signal_scan_body(scheduler, vix, spy_context, market_news, pool_filter)
                         # 不 skip, 让主管线继续评估 — 方向冲突由后续风险检查处理
                     else:
                         continue
-                _process_symbol_impl(scheduler, symbol, vix, spy_context,
-                                     market_news.get("sentiment", 0),
-                                     on_candidate=_collect)
+                # P1 (2026-05-26): 新管线 CRA 模式 — 用 modular stages 生成候选,
+                # 然后走 PortfolioConstructor 全局排序, 风控统一在 _submit_order 执行
+                if _use_new_pipeline():
+                    _candidate = _run_new_pipeline_to_candidate(
+                        scheduler, symbol, vix, spy_context, market_news.get("sentiment", 0))
+                    if _candidate is not None:
+                        _sig, _ctx, _vr = _bridge_candidate_to_old_format(_candidate)
+                        _collect(symbol, _sig, _ctx, _vr)
+                else:
+                    _process_symbol_impl(scheduler, symbol, vix, spy_context,
+                                         market_news.get("sentiment", 0),
+                                         on_candidate=_collect)
                 record_api_success()
             except Exception as e:
                 record_api_error()
@@ -415,6 +424,120 @@ def _run_signal_scan_body(scheduler, vix, spy_context, market_news, pool_filter)
             _execute_portfolio_plan(scheduler, candidates, vix)
         else:
             logger.info("[组合构建] 本轮无合格候选")
+
+
+# ============================================================
+#  P1 (2026-05-26): CRA 模式下的新管线集成
+# ============================================================
+
+def _run_new_pipeline_to_candidate(scheduler, symbol, vix, spy_context, market_sentiment):
+    """运行新管线 market_data + signal 阶段 (不含 risk), 返回 SignalCandidate
+
+    CRA 模式专用: 只生成信号候选, 风控和仓位计算延迟到 _submit_order 统一执行。
+    """
+    from app.pipeline.stages import market_data_stage, signal_stage
+
+    earnings_guard = getattr(scheduler, 'earnings_risk_guard', None)
+    shared_kernel = None
+    try:
+        from app.core.shared_kernel import get_shared_kernel
+        shared_kernel = get_shared_kernel()
+    except Exception:
+        pass
+
+    battle_plan_manager = None
+    try:
+        from app.us_pipeline.battle_plan_manager import USBattlePlanManager
+        mgr = USBattlePlanManager()
+        if mgr._plan:
+            battle_plan_manager = mgr
+    except Exception:
+        pass
+
+    # Stage 1: market_data
+    ctx = market_data_stage.process(
+        symbol=symbol,
+        data_router=scheduler.market_data,
+        vix=vix,
+        spy_context=spy_context,
+        earnings_guard=earnings_guard,
+        shared_kernel=shared_kernel,
+    )
+    if ctx is None:
+        return None
+
+    # Stage 2: signal
+    candidate = signal_stage.process(
+        ctx=ctx,
+        position_store=scheduler.position_store,
+        battle_plan_manager=battle_plan_manager,
+        voting_coordinator=getattr(scheduler, 'voting_coordinator', None),
+    )
+    return candidate
+
+
+def _bridge_candidate_to_old_format(candidate):
+    """将 SignalCandidate 桥接为旧格式 (signal, context, vote_result) 供 CRA 使用"""
+    from app.core.models import SignalScore, Direction as SignalDirection
+    import uuid
+    from datetime import datetime
+
+    symbol = candidate.symbol
+    direction = SignalDirection.LONG if candidate.is_long else SignalDirection.SHORT
+
+    signal = SignalScore(
+        symbol=symbol,
+        direction=direction,
+        strength=candidate.strength,
+        confidence=candidate.confidence,
+        strategy_id=candidate.strategy_id,
+        trace_id=getattr(candidate, "trace_id", "")
+            or f"US-{datetime.now().strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}",
+        metadata={
+            "source": candidate.source,
+            "rationale": candidate.rationale,
+            "factors_used": getattr(candidate, "signal_tags", []) or [],
+            "signal_tags": "/".join(getattr(candidate, "signal_tags", []) or []) or candidate.strategy_id,
+        },
+    )
+
+    ctx = candidate.context
+    context = {}
+    if ctx:
+        context = {
+            "symbol": symbol, "price": ctx.price,
+            "bid": ctx.bid, "ask": ctx.ask,
+            "lv3_bid": ctx.bid, "lv3_ask": ctx.ask,
+            "prev_close": ctx.prev_close,
+            "change_percent": ctx.change_pct * 100,
+            "volume": ctx.volume, "avg_volume": ctx.avg_volume,
+            "rsi": ctx.rsi, "macd": ctx.macd, "macd_signal": ctx.macd_signal,
+            "bollinger_upper": ctx.bollinger_upper, "bollinger_lower": ctx.bollinger_lower,
+            "supertrend_direction": ctx.supertrend_direction,
+            "atr": ctx.atr, "atr_pct": ctx.atr_pct,
+            "ma5": ctx.ma5, "ma20": ctx.ma20, "ma50": ctx.ma50, "ma200": ctx.ma200,
+            "spread_bps": ctx.spread_bps, "adv_shares": ctx.adv_shares,
+            "vix": ctx.vix, "vix_regime": ctx.vix_regime,
+            "spy_price": ctx.spy_price, "spy_ma200": ctx.spy_ma200,
+            "market_sentiment": ctx.market_sentiment,
+            "news_sentiment": ctx.news_sentiment,
+            "is_earnings_period": ctx.earnings_blackout,
+            "is_earnings_blackout": ctx.earnings_blackout,
+            "data_source": ctx.source,
+        }
+
+    vote_result = {
+        "symbol": symbol,
+        "direction": candidate.direction,
+        "final_strength": candidate.strength,
+        "consensus_level": candidate.confidence,
+        "final_confidence": candidate.confidence,
+        "std_dev": 0,
+        "strategy_id": candidate.strategy_id,
+        "position_suggestion": {"stop_loss_pct": 0.05, "take_profit_pct": 0.10},
+    }
+
+    return signal, context, vote_result
 
 
 def run_signal_scan(scheduler):
@@ -872,7 +995,9 @@ def _process_symbol_impl(scheduler, symbol: str, vix: float, spy_context: Dict[s
     try:
         from app.us_pipeline.battle_plan_manager import USBattlePlanManager
         _bp_mgr = USBattlePlanManager()
-        _bp_mgr.load(_bp_mgr.plan_path)
+        # P2 (2026-05-26): 不再每次 symbol 重新 load 文件, singleton 已缓存
+        if not _bp_mgr._plan:
+            _bp_mgr.load(_bp_mgr.plan_path)
         _plan = _bp_mgr.get_plan()
         _restricted = _plan.get("restricted", []) if _plan else []
         if symbol in _restricted:

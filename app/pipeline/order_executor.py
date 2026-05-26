@@ -791,13 +791,13 @@ def _check_gates_and_conflicts(scheduler, symbol: str, signal: SignalScore, cont
     if is_short:
         # 做空门禁 (P0-辩论修复 2026-05-26: direct语义, 无需反转)
         # strength 越高 = 信号越强 (LONG/SHORT 均同)
-        if signal.strength < 50:
+        if signal.strength < 25:
             logger.warning(
                 f"🚫 [做空门禁] {symbol} 做空信号强度不足 "
-                f"(strength={signal.strength} < 50)"
+                f"(strength={signal.strength} < 25)"
             )
             get_rejection_logger().record(symbol,
-                f"short_strength={signal.strength}<50",
+                f"short_strength={signal.strength}<25",
                 "SHORT_EFFECTIVE_WEAK", strength=signal.strength,
                 confidence=None, direction="SHORT")
             return False
@@ -824,7 +824,7 @@ def _check_gates_and_conflicts(scheduler, symbol: str, signal: SignalScore, cont
             return False
         logger.info(
             f"✅ [做空门禁] {symbol} 通过 (strength={signal.strength}, "
-            f"effective={short_effective}, 三重确认={triple_confirm}/3)"
+            f"三重确认={triple_confirm}/3)"
         )
 
         # 幻方增强门禁 (2026-04-29): 借券成本 + 轧空风险 + 市况适配
@@ -848,7 +848,7 @@ def _check_gates_and_conflicts(scheduler, symbol: str, signal: SignalScore, cont
                 return False
             # Principle 3: 市况适配 (牛市提高门槛)
             regime = context.get("market_regime", "")
-            ok, reason = check_regime_for_short(regime, short_effective)
+            ok, reason = check_regime_for_short(regime, signal.strength)
             if not ok:
                 logger.warning(f"🚫 [市况适配] {symbol} {reason}")
                 return False
