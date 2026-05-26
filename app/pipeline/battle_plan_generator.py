@@ -556,33 +556,93 @@ class BattlePlanGenerator:
         return self.output_path
 
     def _save_fallback_plan(self, reason: str) -> str:
-        """兜底计划: 基于 WATCH_LIST_HK + 持仓生成可操作的白名单
-        方向标记 ANY（不限制多空），仓位限制 3%（不确定性高时降仓）。
+        """兜底计划: 基于 WATCH_LIST_HK + 持仓 + 辩论结果 生成可操作的白名单
+        
+        P0 修复 (2026-05-26): 集成辩论系统数据
+        - 辩论 net_confidence > 0.3 → urgency=High, SL=-3.0%, TP=+10.0%
+        - 辩论 net_confidence 0~0.3 → urgency=Medium, SL=-2.5%, TP=+8.0%
+        - 辩论 net_confidence < -0.3 → restricted (不交易)
+        - avoid_codes → restricted
+        - watchlist 兜底标的 → urgency=Low, SL=-2.0%, TP=+6.0%
         """
         targets = []
+        restricted = []
+        debate_map = {}  # symbol → net_confidence
+        avoid_codes = set()
+        
+        # ── 从辩论系统获取数据 ──
+        if self._debate_synthesis:
+            ds = self._debate_synthesis
+            avoid_codes = set(getattr(ds, 'avoid_codes', []))
+            for item in getattr(ds, 'consensus_ranking', []):
+                sym = item.get('code', '')
+                if sym:
+                    nc = item.get('net_confidence', 0)
+                    debate_map[sym] = nc
+                    # 辩论看空标的 → restricted
+                    if nc < -0.3:
+                        restricted.append(sym)
+                        logger.info(f"[Fallback] 辩论看空 → restricted: {sym} (net_conf={nc:.2f})")
+            # avoid_codes → restricted
+            for ac in avoid_codes:
+                clean = ac.split('（')[0].strip() if '（' in ac else ac.strip()
+                if clean not in restricted:
+                    restricted.append(clean)
+            logger.info(f"[Fallback] 辩论注入: ranked={len(debate_map)}, avoid={len(avoid_codes)}, restricted={len(restricted)}")
+        
+        # ── SL/TP 映射 (基于 urgency) ──
+        URGENCY_PARAMS = {
+            "High":   {"sl": 0.030, "tp": 0.100, "pos": 0.08},
+            "Medium": {"sl": 0.025, "tp": 0.080, "pos": 0.06},
+            "Low":    {"sl": 0.020, "tp": 0.060, "pos": 0.03},
+        }
+        
         try:
             from app import config
             watchlist = getattr(config, 'WATCH_LIST_HK', [])
+            restricted_set = set(restricted)
             for sym in watchlist:
+                if sym in restricted_set:
+                    continue
+                
+                # 根据辩论信心度确定 urgency
+                nc = debate_map.get(sym, 0)
+                if nc > 0.3:
+                    urgency = "High"
+                    trigger = f"[辩论+] 净信心={nc:.2f}"
+                elif nc > 0:
+                    urgency = "Medium"
+                    trigger = f"[辩论~] 净信心={nc:.2f}"
+                else:
+                    urgency = "Low"
+                    trigger = f"Fallback白名单 (LLM不可用: {reason[:30]})"
+                
+                params = URGENCY_PARAMS[urgency]
                 targets.append({
                     "symbol": sym,
                     "direction": "ANY",
                     "status": "VALID",
-                    "urgency": "Low",
-                    "key_trigger": f"Fallback白名单 (LLM不可用: {reason[:40]})",
-                    "max_position_pct": 0.03,
-                    "signal_impact": "neutral",  # 兜底标的无 LLM signal_impact
+                    "urgency": urgency,
+                    "key_trigger": trigger,
+                    "max_position_pct": params["pos"],
+                    "signal_impact": "neutral",
+                    "stop_loss_pct": params["sl"],
+                    "take_profit_pct": params["tp"],
+                    "debate_net_confidence": nc,
                 })
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"[Fallback] watchlist 构建异常: {e}")
+
+        # 按辩论信心度排序
+        targets.sort(key=lambda t: t.get('debate_net_confidence', 0), reverse=True)
 
         plan = {
             "date": date.today().isoformat(),
             "targets": targets,
-            "restricted": [],
+            "restricted": restricted,
             "overall_bias": "NEUTRAL",
             "market_regime": "UNKNOWN",
-            "risk_level": "HIGH",
+            "risk_level": "MEDIUM",
             "stop_trading": False,
             "reason": f"Fallback: {reason}",
             "generated_at": time.time()
