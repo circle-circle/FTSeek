@@ -821,7 +821,9 @@ def _check_positions(scheduler):
                 current_hash = _hl.md5(json.dumps(_stable, sort_keys=True).encode()).hexdigest()
                 last_hash = getattr(pos, "_last_trail_hash", None)
                 if current_hash != last_hash:
-                    scheduler.trade_store.upsert_open_position(pos, source="exit_monitor", action="update_trail")
+                    # Fix: preserve original source instead of overwriting with "exit_monitor"
+                    _pos_src = (getattr(pos, 'metadata', None) or {}).get('source', 'auto_main')
+                    scheduler.trade_store.upsert_open_position(pos, source=_pos_src, action="update_trail")
                     pos._last_trail_hash = current_hash
     except Exception as e:
         logger.debug(f"[退出监控] trail_state DB 同步失败: {e}")

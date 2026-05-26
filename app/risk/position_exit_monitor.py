@@ -534,7 +534,7 @@ class ExitMonitor:
                 # 数据：<5min 持仓胜率仅 21.7%，过早平仓是亏损主因
                 # 策略：持仓 <10min 不触发非硬止损退出（SL_HIT/硬止损除外）
                 min_hold_minutes = 10
-                held_minutes = held_hours * 60 if held_hours else 0
+                # held_minutes already computed at L510 from (now_ts - entry_time_ts) / 60.0
                 
                 # 硬止损豁免：SL_HIT、STOP_LOSS 等紧急退出不受限制
                 hard_stop_reasons = {"SL_HIT", "STOP_LOSS", "PRICE_FAIL"}
