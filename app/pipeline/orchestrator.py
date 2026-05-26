@@ -383,7 +383,7 @@ class PreMarketPipeline:
                     date=plan.get('date', datetime.now().strftime("%Y-%m-%d")),
                     market='HK',
                     targets=target_symbols,
-                    restricted=[t.get('symbol', '') for t in plan.get('restricted', [])],
+                    restricted=[t.get('symbol', '') if isinstance(t, dict) else str(t) for t in plan.get('restricted', [])],
                     overall_bias=plan.get('overall_bias', '中性'),
                     regime=plan.get('market_regime', 'unknown'),
                     generated_at=plan.get('generated_at', ''),
