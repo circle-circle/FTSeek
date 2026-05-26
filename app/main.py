@@ -1202,6 +1202,15 @@ def main():
             logger.info("将以纯 API 模式运行")
 
     # 午间作战计划刷新调度 (12:00 HKT) — subscriber 就绪后启动
+    # P0 修复 (2026-05-26): 强制初始化 _quote_ctx (懒加载导致条件检查失败)
+    if subscriber:
+        try:
+            # 强制初始化 quote_ctx (如果是 None 则创建)
+            if hasattr(subscriber, '_get_quote_ctx'):
+                subscriber._get_quote_ctx()
+        except Exception as e:
+            logger.warning(f"强制初始化 quote_ctx 失败: {e}")
+    
     if subscriber and getattr(subscriber, '_quote_ctx', None):
         try:
             from app.pipeline.midday_plan_refresher import MiddayPlanRefresher
@@ -1213,6 +1222,8 @@ def main():
             logger.info("午间作战计划刷新已激活 (12:00 HKT, Mon-Fri)")
         except Exception as e:
             logger.warning(f"午间作战计划刷新激活失败: {e}")
+    else:
+        logger.warning("午间作战计划刷新未激活: subscriber 或 quote_ctx 不可用")
 
     # ── 2026-05-11 新增: 盘中异动扫描器 (每 30 分钟) ──
     intraday_scanner_scheduler = None
