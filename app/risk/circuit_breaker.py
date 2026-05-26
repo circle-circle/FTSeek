@@ -136,6 +136,16 @@ class SmartStopGuard:
         self._open_equity = None
         self._save_state()
     
+    # 开盘宽限期配置
+    OPENING_GRACE_START = "09:30"  # HKT
+    OPENING_GRACE_END = "10:00"    # HKT
+    
+    def _is_opening_grace_period(self) -> bool:
+        """判断是否在开盘宽限期内 (09:30-10:00 HKT)"""
+        now = datetime.now()
+        current_time = now.strftime("%H:%M")
+        return self.OPENING_GRACE_START <= current_time < self.OPENING_GRACE_END
+    
     def check(self, current_equity: Optional[float] = None, signal_confidence: float = 0.0) -> Tuple[bool, str, float]:
         """
         智能熔断检查
@@ -154,7 +164,7 @@ class SmartStopGuard:
         # 更新连败状态
         self._update_loss_state()
         
-        # 日内亏损熔断 (硬限制)
+        # 日内亏损熔断 (硬限制，不受宽限期影响)
         if current_equity is not None and self._open_equity and self._open_equity > 0:
             drawdown = (current_equity - self._open_equity) / self._open_equity
             if drawdown <= -self.DRAWDOWN_LIMIT:
@@ -163,6 +173,11 @@ class SmartStopGuard:
                 self._cooldown_until = time.time() + self.COOLDOWN_SECONDS
                 self._save_state()
                 return False, f"🛑 系统熔断：今日回撤 {drawdown:.2%} 超过硬限制", 0.0
+        
+        # 开盘宽限期: 09:30-10:00 内，stage 1/2 视为正常 (stage 3 熔断仍生效)
+        if self._is_opening_grace_period() and self._stage in (self.STAGE_WARNING, self.STAGE_RESTRICT):
+            logger.info(f"[SmartStop] 开盘宽限期 ({self.OPENING_GRACE_START}-{self.OPENING_GRACE_END})，stage={self._stage} 临时视为正常模式")
+            return True, f"✅ 开盘宽限期 (原stage={self._stage}，临时放行)", 1.0
         
         # 阶段 3: 熔断
         if self._stage == self.STAGE_CIRCUIT:
