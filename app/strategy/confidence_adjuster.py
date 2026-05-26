@@ -111,6 +111,11 @@ class ConfidenceAdjuster:
         "mtf_strong_aligned": 0.08,     # 多周期强对齐增强
         "breaking_news": 0.06,          # 突发新闻增强
         "high_agreement": 0.05,         # 高度共识增强
+        # P2 新增 (2026-05-26): 作战计划 urgency 联动
+        "plan_high_urgency": 0.08,      # 盘前计划高紧迫度标的增强
+        "plan_medium_urgency": 0.03,    # 盘前计划中紧迫度标的微增强
+        "plan_low_urgency": -0.05,      # 盘前计划低紧迫度标的降权
+        "plan_not_in_targets": -0.03,   # 不在盘前计划 targets 中的标的降权
     }
     
     def __init__(self, raw_confidence: float):

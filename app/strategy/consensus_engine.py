@@ -2229,6 +2229,38 @@ class ConsensusEngine:
                     f"质量分={quality:.2f}，分数调整 {result.score:.2f}→{adjusted_score:.2f}"
                 )
 
+            # P2 新增 (2026-05-26): 作战计划 urgency 联动
+            # 盘前计划高紧迫度标的增强，低紧迫度降权，非计划标的微降权
+            try:
+                from app.pipeline.battle_plan import BattlePlanManager
+                _plan_mgr = BattlePlanManager()
+                _urgency = _plan_mgr.get_urgency(code)
+                if _urgency == "High":
+                    adjuster.apply_preset(
+                        "plan_high_urgency",
+                        f"盘前计划高紧迫度({code})"
+                    )
+                elif _urgency == "Medium":
+                    adjuster.apply_preset(
+                        "plan_medium_urgency",
+                        f"盘前计划中紧迫度({code})"
+                    )
+                elif _urgency == "Low":
+                    # 检查是否真的在计划中 (get_urgency 对非计划标的也返回 Low)
+                    _plan_params = _plan_mgr.get_target_trade_params(code)
+                    if _plan_params["max_position_pct"] == 0.05:  # 默认值=非计划标的
+                        adjuster.apply_preset(
+                            "plan_not_in_targets",
+                            f"不在盘前计划中({code})"
+                        )
+                    else:
+                        adjuster.apply_preset(
+                            "plan_low_urgency",
+                            f"盘前计划低紧迫度({code})"
+                        )
+            except Exception as _plan_err:
+                logger.debug(f"作战计划 urgency 检查跳过: {_plan_err}")
+
             # 应用最终置信度
             conf_result = adjuster.get_result()
             result = dataclasses.replace(result, confidence=conf_result.final_confidence)
