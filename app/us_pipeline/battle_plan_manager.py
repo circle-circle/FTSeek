@@ -258,6 +258,13 @@ class USBattlePlanManager:
                     f"HALT_TRADING: {action_item.get('reason', 'System trading halted by battle plan')}"
                 )
 
+        # P0 修复 (2026-04-22): ETF 标的 (SPY/QQQ/DIA/IWM/UVXY) 不受 restricted 限制
+        # 这些 ETF 用于市场状态监测，不应被计划门禁拦截
+        # P0 修复 (2026-05-27): 移到 restricted 检查之前 — 否则 ETF 被 restricted 拦截
+        ETF_WHITELIST = {"US.SPY", "US.QQQ", "US.DIA", "US.IWM", "US.UVXY"}
+        if symbol in ETF_WHITELIST:
+            return True, f"ETF whitelist bypass ({symbol})"
+
         # 1. Check Restricted List (合并 restricted + updated_restricted)
         # P0 修复 (2026-05-20): 辩论报告写入 updated_restricted 但 check_trade 只读 restricted (空)
         restricted = set(self._plan.get("restricted", []))
@@ -272,12 +279,6 @@ class USBattlePlanManager:
             if t.get("symbol") == symbol:
                 target = t
                 break
-        
-        # P0 修复 (2026-04-22): ETF 标的 (SPY/QQQ/DIA/IWM/UVXY) 不在计划中时允许交易
-        # 这些 ETF 用于市场状态监测，不应被计划门禁拦截
-        ETF_WHITELIST = {"US.SPY", "US.QQQ", "US.DIA", "US.IWM", "US.UVXY"}
-        if not target and symbol in ETF_WHITELIST:
-            return True, f"ETF whitelist bypass ({symbol})"
         
         if not target:
             # 方案 A: 计划外标的 → 技术面高评分后门
