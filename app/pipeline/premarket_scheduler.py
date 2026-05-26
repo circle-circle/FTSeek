@@ -357,6 +357,8 @@ class PreMarketScheduler:
                 _send_debate_notification(debate_synthesis)
             except Exception as e:
                 logger.warning(f"[PreMarketScheduler] 辩论执行失败 (非阻塞): {e}")
+                # P0 修复: 辩论失败时重置，防止坏数据覆盖 08:20 辩论结果
+                debate_synthesis = None
 
             # 🚀 自动生成盘前作战计划 (Battle Plan)
             # Phase 1 (2026-05-09): 融合两条辩论结果 (08:20 + 08:30)
