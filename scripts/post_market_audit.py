@@ -151,7 +151,11 @@ def attribution_signal(db, today, window_days=30):
 # 归因视角 3: 退出归因
 # ════════════════════════════════════════════════════════════
 def attribution_exit(db, today, window_days=7):
-    """退出原因分布: 哪类退出方式实际效果好"""
+    """退出原因分布: 哪类退出方式实际效果好
+    
+    Bug fix (2026-05-27): exit_reason 含嵌入百分比 (如 QUICK_EXIT_🛑 硬止损触发 (-63.0% <= -)
+    导致 GROUP BY 过细。需归一化到前缀后再聚合。
+    """
     since = (us_eastern_now() - timedelta(days=window_days)).strftime("%Y-%m-%d")
     rows = db.execute("""
         SELECT exit_reason, COUNT(*) as cnt,
@@ -163,14 +167,47 @@ def attribution_exit(db, today, window_days=7):
         WHERE trade_date >= ? AND realized_pnl IS NOT NULL AND exit_reason IS NOT NULL
         GROUP BY exit_reason ORDER BY total_pnl DESC
     """, (since,)).fetchall()
-    return [{
-        "reason": r['exit_reason'],
-        "cnt": r['cnt'], "wins": r['wins'],
-        "win_rate": r['wins'] / r['cnt'] * 100 if r['cnt'] > 0 else 0,
-        "total_pnl": r['total_pnl'] or 0,
-        "avg_pnl": r['avg_pnl'] or 0,
-        "avg_hold": r['avg_hold'] or 0,
-    } for r in rows]
+
+    # 归一化: 合并同类退出原因 (去掉嵌入的百分比参数)
+    normalized = {}
+    for r in rows:
+        raw = r['exit_reason']
+        # 归一化规则: 取到第一个 '(' 之前的部分作为类别名
+        paren_idx = raw.find('(')
+        if paren_idx > 0:
+            key = raw[:paren_idx].strip()
+        else:
+            key = raw.strip()
+        
+        if key not in normalized:
+            normalized[key] = {
+                "reason": key,
+                "cnt": 0, "wins": 0,
+                "total_pnl": 0, "total_hold": 0,
+                "sub_reasons": [],
+            }
+        n = normalized[key]
+        n["cnt"] += r['cnt']
+        n["wins"] += r['wins']
+        n["total_pnl"] += (r['total_pnl'] or 0)
+        n["total_hold"] += (r['avg_hold'] or 0) * r['cnt']
+        n["sub_reasons"].append(raw)
+
+    result = []
+    for key, n in normalized.items():
+        result.append({
+            "reason": n["reason"],
+            "cnt": n["cnt"],
+            "wins": n["wins"],
+            "win_rate": n["wins"] / n["cnt"] * 100 if n["cnt"] > 0 else 0,
+            "total_pnl": n["total_pnl"],
+            "avg_pnl": n["total_pnl"] / n["cnt"] if n["cnt"] > 0 else 0,
+            "avg_hold": n["total_hold"] / n["cnt"] if n["cnt"] > 0 else 0,
+            "sub_reasons": n["sub_reasons"],
+        })
+    
+    result.sort(key=lambda x: x["total_pnl"], reverse=True)
+    return result
 
 
 # ════════════════════════════════════════════════════════════
@@ -466,18 +503,20 @@ def synthesize_debate(strategy, signal, exit_attr, regime, trend,
         )
         actions.append("重新校准信号强度权重，或提高 strength≥90 的额外过滤条件")
 
-    # 2. 退出归因: sl_hit 胜率 vs trailing_stop
-    sl = next((e for e in exit_attr if e['reason'] == 'sl_hit'), None)
-    trail = next((e for e in exit_attr if e['reason'] == 'TRAILING_STOP'), None)
-    if sl and trail:
-        if sl['win_rate'] < 20 and trail['win_rate'] > 30:
-            consensus.append(
-                f"📊 退出策略分化: 止损({sl['cnt']}笔 胜率{sl['win_rate']:.0f}% "
-                f"亏${sl['total_pnl']:,.0f}) vs "
-                f"追踪止盈({trail['cnt']}笔 胜率{trail['win_rate']:.0f}% "
-                f"赚${trail['total_pnl']:+,.0f})"
-            )
-            actions.append(f"止损触发率{sl['win_rate']:.0f}%偏低，检查SL设置是否过紧或入场点位偏差")
+    # 2. 退出归因: 亏损退出聚合检测
+    #    (归一化后 exit_attr 中 QUICK_EXIT_🛑 等已合并)
+    loss_exits = [e for e in exit_attr if e['total_pnl'] < -500]
+    if loss_exits:
+        total_loss = sum(e['total_pnl'] for e in loss_exits)
+        total_loss_cnt = sum(e['cnt'] for e in loss_exits)
+        top_loss = loss_exits[0]  # 已按 total_pnl DESC 排序, 最大亏损在首(负数最小)
+        # 找最大亏损 (total_pnl 最负)
+        worst = min(loss_exits, key=lambda e: e['total_pnl'])
+        consensus.append(
+            f"🔴 亏损退出集中: {total_loss_cnt}笔合计亏${total_loss:,.0f}，"
+            f"最严重: {worst['reason']} ({worst['cnt']}笔 ${worst['total_pnl']:+,.0f})"
+        )
+        actions.append(f"审查 {worst['reason']} 触发条件，考虑调整参数或增加入场过滤")
 
     # 3. ghost/orphan 占比
     if execution['ghost_orphan_pct'] > 30:
@@ -500,6 +539,22 @@ def synthesize_debate(strategy, signal, exit_attr, regime, trend,
             consensus.append(f"📈 近5日盈利趋势: 日均PnL ${avg_pnl:+,.0f}，胜率{avg_wr:.0f}%")
 
     # ── 分歧检测 ──
+
+    # 0. 方向亏损集中检测 (P0: 识别主要亏损来源)
+    if execution['direction']:
+        dir_losses = [d for d in execution['direction'] if d['total_pnl'] < -1000]
+        if dir_losses:
+            worst_dir = min(dir_losses, key=lambda d: d['total_pnl'])
+            total_dir_loss = sum(d['total_pnl'] for d in dir_losses)
+            disputes.append(
+                f"方向亏损集中: {worst_dir['dir']}({worst_dir['cnt']}笔 "
+                f"胜率{worst_dir['win_rate']:.0f}% ${worst_dir['total_pnl']:+,.0f}) "
+                f"占总亏损{abs(worst_dir['total_pnl']/total_dir_loss*100):.0f}%"
+            )
+            actions.append(
+                f"审查 {worst_dir['dir']} 策略入场条件，"
+                f"考虑暂停或收紧该方向参数"
+            )
 
     # 1. 方向分歧: LONG vs SHORT
     long_d = next((d for d in execution['direction'] if d['dir'] == 'LONG'), None)
@@ -629,13 +684,20 @@ def build_report(today, strategy, signal, exit_attr, regime, trend,
 
     # ─── 退出归因 ───
     L.append("## 🚪 退出归因 (近7日)")
-    for e in exit_attr[:8]:
+    total_exit_pnl = 0
+    total_exit_cnt = 0
+    for e in exit_attr:
         pnl_marker = "🟢" if e['total_pnl'] > 0 else ("🔴" if e['total_pnl'] < 0 else "⚪")
         L.append(
             f"  {pnl_marker} {e['reason']}: {e['cnt']}笔 "
             f"胜率{e['win_rate']:.0f}% PnL=${e['total_pnl']:+,.0f} "
             f"avg=${e['avg_pnl']:+,.0f}"
         )
+        total_exit_pnl += e['total_pnl']
+        total_exit_cnt += e['cnt']
+    L.append(
+        f"  **合计**: {total_exit_cnt}笔 PnL=${total_exit_pnl:+,.0f}"
+    )
     L.append("")
 
     # ─── 环境归因 ───
