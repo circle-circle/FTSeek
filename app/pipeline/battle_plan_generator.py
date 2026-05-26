@@ -242,12 +242,30 @@ class BattlePlanGenerator:
         except Exception:
             _sl_pct, _tp_pct = 0.025, 0.08
 
+        # P2 修复 (2026-05-26): 为缺少 entry_price 的标的尝试获取市场参考价
+        _price_cache = {}
         for t in unique_targets:
             if not t.get('max_position_pct'):
                 t['max_position_pct'] = 0.08
-            if not t.get('stop_loss') and t.get('entry_price'):
+            # 尝试获取 entry_price (优先已有值, 其次 market_snapshot)
+            ep = None
+            if t.get('entry_price'):
                 try:
                     ep = float(t['entry_price'])
+                except (ValueError, TypeError):
+                    pass
+            if ep is None:
+                sym = t.get('symbol', '')
+                if sym and sym not in _price_cache:
+                    try:
+                        from app.execution.battle_plan_executor import BattlePlanExecutor
+                        _prices = BattlePlanExecutor._get_yesterday_close_prices(None, [sym])
+                        _price_cache[sym] = _prices.get(sym)
+                    except Exception:
+                        _price_cache[sym] = None
+                ep = _price_cache.get(sym)
+            if ep and not t.get('stop_loss'):
+                try:
                     direction = t.get('direction', 'ANY').upper()
                     if direction in ('SHORT', 'SELL'):
                         t['stop_loss'] = round(ep * (1 + _sl_pct), 3)
@@ -255,8 +273,13 @@ class BattlePlanGenerator:
                     else:
                         t['stop_loss'] = round(ep * (1 - _sl_pct), 3)
                         t['take_profit'] = round(ep * (1 + _tp_pct), 3)
+                    t['entry_price'] = ep  # 回填供后续引用
                 except (ValueError, TypeError):
                     pass
+            # 即使无法获取价格，也记录 SL/TP 百分比供执行器参考
+            if not t.get('stop_loss'):
+                t['stop_loss_pct'] = round(_sl_pct, 4)
+                t['take_profit_pct'] = round(_tp_pct, 4)
 
         # 辩论驱动的 market_regime 设置
         if debate_direction == "BUY" and debate_conviction > 0.6:
@@ -422,6 +445,7 @@ class BattlePlanGenerator:
                 "invalidation_reason": "",
                 "debate_net_confidence": net_conf,
                 "signal_impact": signal_impact,  # 交叉引用 LLM signal_impact
+                "max_position_pct": 0.08,  # P2 修复 (2026-05-26): 辩论标的默认仓位
             })
 
         # 按辩论净信心排序
