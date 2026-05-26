@@ -283,6 +283,44 @@ class BattlePlanManager:
         
         return 0.05  # 非计划标的（如果允许交易）给更低仓位
 
+    def get_target_trade_params(self, symbol: str) -> Dict:
+        """
+        获取计划中目标的交易参数 (供执行层参考)
+        
+        Returns:
+            {
+                "max_position_pct": float,
+                "stop_loss_pct": float or None,   # 如 0.025 表示 -2.5%
+                "take_profit_pct": float or None,  # 如 0.08 表示 +8.0%
+                "stop_loss": float or None,        # 绝对价格 (如有)
+                "take_profit": float or None,      # 绝对价格 (如有)
+                "urgency": str,
+            }
+        """
+        default = {
+            "max_position_pct": 0.05,
+            "stop_loss_pct": None,
+            "take_profit_pct": None,
+            "stop_loss": None,
+            "take_profit": None,
+            "urgency": "Low",
+        }
+        if not self._plan:
+            return default
+
+        target = next((t for t in self._plan.targets if t.get('symbol') == symbol), None)
+        if not target:
+            return default
+
+        return {
+            "max_position_pct": float(target.get('max_position_pct', 0.08)),
+            "stop_loss_pct": target.get('stop_loss_pct'),
+            "take_profit_pct": target.get('take_profit_pct'),
+            "stop_loss": target.get('stop_loss'),
+            "take_profit": target.get('take_profit'),
+            "urgency": target.get('urgency', 'Medium'),
+        }
+
     def get_urgency(self, symbol: str) -> str:
         """获取标的紧急度"""
         if not self._plan:
