@@ -183,7 +183,50 @@ class RecommendationSynthesizer:
             "generated_at": now.isoformat(timespec="seconds"),
         }
 
-        # 5. 持久化
+        # 5. 透传 battle_plan 全量决策数据 (不截断，不丢失)
+        # 这些是 LLM 和辩论引擎的真实分析，对用户决策至关重要
+        if battle_plan.get("final_confidence") is not None:
+            result["system_conviction"] = float(battle_plan["final_confidence"])
+        if battle_plan.get("final_risk_warnings"):
+            result["risk_warnings"] = battle_plan["final_risk_warnings"]
+        elif battle_plan.get("risk_warnings"):
+            result["risk_warnings"] = battle_plan["risk_warnings"]
+        if battle_plan.get("debate_summary"):
+            result["debate_summary"] = battle_plan["debate_summary"]
+        if battle_plan.get("arbiter_mode"):
+            result["arbiter_mode"] = battle_plan["arbiter_mode"]
+        if battle_plan.get("updated_targets"):
+            result["position_actions"] = battle_plan["updated_targets"]
+        elif battle_plan.get("updated_position_actions"):
+            result["position_actions"] = battle_plan["updated_position_actions"]
+        # Claude 独立审计摘要
+        claude_audit = battle_plan.get("claude_audit") or {}
+        if claude_audit:
+            audit_summary = {}
+            if claude_audit.get("systemic_risks"):
+                audit_summary["systemic_risks"] = claude_audit["systemic_risks"][:3]
+            if claude_audit.get("bear_cases"):
+                audit_summary["bear_cases"] = claude_audit["bear_cases"][:2]
+            if claude_audit.get("market_bias"):
+                audit_summary["market_bias"] = claude_audit["market_bias"]
+            if claude_audit.get("confidence") is not None:
+                audit_summary["confidence"] = claude_audit["confidence"]
+            if audit_summary:
+                result["claude_audit"] = audit_summary
+        # 交叉验证结论
+        responses = battle_plan.get("responses_to_claude") or []
+        if responses:
+            consensus = []
+            for r in responses[:4]:
+                if isinstance(r, dict):
+                    point = r.get("claude_point", "")[:60]
+                    resp = r.get("response", "")[:80]
+                    if point:
+                        consensus.append(f"{point} → {resp}")
+            if consensus:
+                result["debate_consensus"] = consensus
+
+        # 6. 持久化
         self._persist(result)
         return result
 

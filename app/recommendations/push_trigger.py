@@ -272,10 +272,9 @@ class PremarketPushTrigger:
             logger.warning(f"[PushTrigger] send_accuracy_report 异常: {e}", exc_info=True)
             return False
 
-    # ─── 格式化: 推荐卡片 ────────────────────────────────
+    # ─── 格式化: 推荐卡片 (交易员决策格式) ────────────────────
     def format_recommendation_card(self, recommendations: Dict[str, Any]) -> str:
         date_str = recommendations.get("date") or datetime.now().strftime("%Y-%m-%d")
-        # 兼容两套字段名: synthesizer 输出 market_regime, 旧格式用 market_tone
         market_tone = (
             recommendations.get("market_regime")
             or recommendations.get("market_tone")
@@ -284,7 +283,6 @@ class PremarketPushTrigger:
         vix = recommendations.get("vix")
         vix_str = _fmt_num(vix, "{:.1f}") if vix is not None else "—"
 
-        # 兼容两套字段名: synthesizer 输出 recommendations, 旧格式用 tickers
         tickers_raw: List[Dict[str, Any]] = list(
             recommendations.get("recommendations")
             or recommendations.get("tickers")
@@ -301,95 +299,154 @@ class PremarketPushTrigger:
             if (t.get("action") or t.get("direction") or "").upper() in ("SELL", "SHORT")
         )
 
+        # ── 系统信心度 ──
+        conviction = recommendations.get("system_conviction")
+        debate_summary = recommendations.get("debate_summary") or ""
+        arbiter_mode = recommendations.get("arbiter_mode") or ""
+
         lines: List[str] = []
         lines.append(f"⚔️ 美股盘前作战 | {date_str}")
         lines.append("━━━━━━━━━━━━━━━")
+
+        # 系统健康 + 市场定调
+        if conviction is not None:
+            if conviction >= 0.7:
+                conv_emoji, conv_label = "🟢", "高信心"
+            elif conviction >= 0.4:
+                conv_emoji, conv_label = "🟡", "中等"
+            else:
+                conv_emoji, conv_label = "🔴", "低信心/防御模式"
+            lines.append(f"{conv_emoji} 系统信心: {conviction:.0%} ({conv_label})")
         lines.append(f"🌍 市场定调: {market_tone} | VIX: {vix_str}")
         lines.append(f"📊 推荐: {bull_count} 看涨 / {bear_count} 看跌")
 
-        # 辩论摘要 (来自 synthesizer.summary)
-        summary_text = recommendations.get("summary") or ""
-        if summary_text:
-            lines.append(f"💡 {summary_text}")
+        if debate_summary:
+            lines.append(f"📝 {debate_summary}")
+        if arbiter_mode and arbiter_mode != "standard":
+            lines.append(f"⚙️ 模式: {arbiter_mode}")
+
+        # ── 风险预警 (最重要的决策信息) ──
+        risk_warnings = recommendations.get("risk_warnings") or []
+        if risk_warnings:
+            lines.append("")
+            lines.append("🚨 风险预警")
+            for w in risk_warnings[:3]:
+                if isinstance(w, str):
+                    # 截断到 80 字符保证可读
+                    w_text = w[:80] + ("..." if len(w) > 80 else "")
+                    lines.append(f"  ⚠️ {w_text}")
 
         lines.append("")
 
+        # ── 标的推荐 (完整理由) ──
         if not tickers:
-            lines.append("🔍 今日无高置信度标的，建议观望。")
-            lines.append("   信号强度不足或市场分歧过大，等待更明确机会。")
+            if conviction is not None and conviction < 0.3:
+                lines.append("🛑 系统建议: 今日不宜交易")
+                lines.append("   信心度过低，数据源或信号质量存在问题。")
+                lines.append("   等待系统修复确认后再操作。")
+            else:
+                lines.append("🔍 今日无高置信度标的，建议观望。")
         else:
+            lines.append("📌 今日标的")
             for idx, item in enumerate(tickers, start=1):
                 lines.extend(self._format_ticker_block(idx, item))
                 lines.append("")
 
-        # 回避列表: 兼容 action_items (synthesizer) 和 avoid (旧格式)
+        # ── 持仓操作指令 (辩论增强后) ──
+        position_actions = recommendations.get("position_actions") or []
         action_items = recommendations.get("action_items") or []
-        avoid = recommendations.get("avoid") or []
 
-        if action_items:
-            # synthesizer 输出: ["NIO: 今日回避", "TSLA: EXIT - 财报风险"]
+        if position_actions:
+            lines.append("━━━━━━━━━━━━━━━")
+            lines.append("📤 持仓操作指令")
+            for pa in position_actions[:6]:
+                if not isinstance(pa, dict):
+                    continue
+                sym = self._clean_sym(pa.get("symbol", "?"))
+                action = pa.get("action", "?").upper()
+                rationale = pa.get("rationale") or pa.get("reason") or ""
+                zone = pa.get("target_zone") or pa.get("entry_zone")
+
+                action_emoji = {"EXIT": "🔴", "REDUCE": "🟡", "HOLD": "🟢", "TRIM": "🟡"}.get(action, "⚪")
+                zone_str = ""
+                if isinstance(zone, (list, tuple)) and len(zone) >= 2:
+                    zone_str = f" @{zone[0]}-{zone[1]}"
+
+                lines.append(f"  {action_emoji} {sym}: {action}{zone_str}")
+                if rationale:
+                    r_text = rationale[:70] + ("..." if len(rationale) > 70 else "")
+                    lines.append(f"     → {r_text}")
+
+        elif action_items:
             avoid_syms = []
             exit_items = []
             for item in action_items:
                 if not isinstance(item, str):
                     continue
                 if "回避" in item:
-                    sym = item.split(":")[0].strip()
-                    avoid_syms.append(sym)
+                    avoid_syms.append(item.split(":")[0].strip())
                 else:
                     exit_items.append(item)
-            if avoid_syms:
-                lines.append(f"⛔ 回避: {', '.join(avoid_syms[:8])}" + (f" 等{len(avoid_syms)}只" if len(avoid_syms) > 8 else ""))
-            if exit_items:
-                lines.append("📤 操作: " + " | ".join(exit_items[:5]))
-        elif avoid:
-            avoid_parts: List[str] = []
-            for a in avoid:
-                if not isinstance(a, dict):
-                    continue
-                sym = a.get("symbol") or a.get("ticker") or "?"
-                reason = a.get("reason") or ""
-                avoid_parts.append(f"{sym} ({reason})" if reason else sym)
-            if avoid_parts:
-                lines.append("⛔ 回避: " + ", ".join(avoid_parts))
+            if avoid_syms or exit_items:
+                lines.append("━━━━━━━━━━━━━━━")
+                if avoid_syms:
+                    lines.append(f"⛔ 回避: {', '.join(avoid_syms[:8])}" + (f" 等{len(avoid_syms)}只" if len(avoid_syms) > 8 else ""))
+                if exit_items:
+                    lines.append("📤 操作: " + " | ".join(exit_items[:5]))
 
-        lines.append("━━━━━━━━━━━━━━━")
+        # ── 辩论交叉验证 ──
+        debate_consensus = recommendations.get("debate_consensus") or []
+        if debate_consensus:
+            lines.append("")
+            lines.append("━━━━━━━━━━━━━━━")
+            lines.append("🔬 辩论交叉验证")
+            for item in debate_consensus[:3]:
+                if isinstance(item, str):
+                    lines.append(f"  • {item[:90]}")
 
-        # ── 热点发现板块 (watchlist 外的盘前异动 + 新闻催化) ──
+        # ── Claude 独立审计 ──
+        claude_audit = recommendations.get("claude_audit") or {}
+        if claude_audit:
+            audit_lines = self._format_claude_audit(claude_audit)
+            if audit_lines:
+                lines.append("")
+                lines.extend(audit_lines)
+
+        # ── 热点发现 ──
         hot_picks = recommendations.get("hot_picks") or []
         if hot_picks:
+            lines.append("━━━━━━━━━━━━━━━")
             lines.append("🔥 热点发现 (观察池外)")
             for hp in hot_picks[:5]:
                 sym = hp.get("symbol", "?")
                 catalyst = hp.get("catalyst", "")
                 change = hp.get("change_pct")
-                rationale = hp.get("rationale", "")
                 source = hp.get("source", "")
-
                 if change is not None:
                     arrow = "▲" if change > 0 else "▼"
                     change_str = f" {arrow}{abs(change):.1f}%"
                 else:
                     change_str = ""
-
-                # 来源标签
-                source_tag = ""
-                if source == "premarket_mover":
-                    source_tag = " [盘前异动]"
-                elif source in ("news_catalyst", "news_text"):
-                    source_tag = " [新闻催化]"
-
-                head = f"  💎 {sym}{change_str}{source_tag}"
-                lines.append(head)
+                source_tag = {"premarket_mover": " [盘前异动]", "news_catalyst": " [新闻催化]", "news_text": " [新闻]"}.get(source, "")
+                lines.append(f"  💎 {sym}{change_str}{source_tag}")
                 if catalyst:
                     lines.append(f"     → {catalyst}")
+            lines.append("  ⚠️ 非观察池标的，仅供参考")
 
-            lines.append("  ⚠️ 以上为非观察池标的，仅供参考，需自行研判")
+        # ── 历史准确率 (如果有) ──
+        accuracy = recommendations.get("rolling_accuracy") or {}
+        if accuracy:
             lines.append("━━━━━━━━━━━━━━━")
+            acc_pct = accuracy.get("accuracy_pct")
+            total = accuracy.get("total_tracked", 0)
+            if acc_pct is not None and total > 0:
+                lines.append(f"📈 近30日准确率: {acc_pct:.0f}% ({accuracy.get('correct',0)}/{total})")
 
+        # ── 尾部 ──
+        lines.append("━━━━━━━━━━━━━━━")
         sector_alloc = recommendations.get("sector_allocation") or {}
         if isinstance(sector_alloc, dict) and sector_alloc:
-            sector_parts: List[str] = []
+            sector_parts = []
             for name, weight in sector_alloc.items():
                 try:
                     pct = float(weight)
@@ -397,21 +454,57 @@ class PremarketPushTrigger:
                     sector_parts.append(f"{name} {pct:.0f}%")
                 except (TypeError, ValueError):
                     sector_parts.append(f"{name} {weight}")
-            lines.append("📊 行业配置: " + " | ".join(sector_parts))
+            lines.append("📊 行业: " + " | ".join(sector_parts))
 
         cutoff = recommendations.get("data_cutoff") or "09:25 ET"
         market_open = recommendations.get("market_open") or "09:30 ET"
-        lines.append(f"⏰ 数据截止: {cutoff} | 开盘: {market_open}")
+        lines.append(f"⏰ 截止: {cutoff} | 开盘: {market_open}")
+        lines.append("💡 本推荐仅供参考，请结合盘面实际走势做出决策")
 
         return "\n".join(lines)
 
+    def _format_claude_audit(self, audit: Dict[str, Any]) -> List[str]:
+        """格式化 Claude 独立审计摘要"""
+        lines: List[str] = []
+        bias = audit.get("market_bias")
+        conf = audit.get("confidence")
+        if bias or conf is not None:
+            header = "🔍 Claude独立审计"
+            if bias:
+                header += f" | 偏向: {bias}"
+            if conf is not None:
+                header += f" | 信心: {conf:.0%}"
+            lines.append(header)
+
+        systemic = audit.get("systemic_risks") or []
+        if systemic:
+            for risk in systemic[:2]:
+                if isinstance(risk, str):
+                    r_text = risk[:80] + ("..." if len(risk) > 80 else "")
+                    lines.append(f"  🔴 {r_text}")
+
+        bears = audit.get("bear_cases") or []
+        if bears:
+            for bear in bears[:2]:
+                if isinstance(bear, str):
+                    b_text = bear[:80] + ("..." if len(bear) > 80 else "")
+                    lines.append(f"  🐻 {b_text}")
+        return lines
+
+    @staticmethod
+    def _clean_sym(sym: str) -> str:
+        """去除 US. 前缀"""
+        s = str(sym).strip()
+        for prefix in ("US.", "HK."):
+            if s.startswith(prefix):
+                s = s[len(prefix):]
+        return s
+
     def _format_ticker_block(self, rank: int, item: Dict[str, Any]) -> List[str]:
         symbol = item.get("symbol") or item.get("ticker") or "?"
-        # 兼容: synthesizer 用 action, 旧格式用 direction
         direction = (item.get("action") or item.get("direction") or "").upper() or "BUY"
         arrow = _direction_arrow(direction)
 
-        # 兼容: synthesizer 用 confidence_level + confidence_score, 旧格式用 confidence + confidence_label
         conf_level = item.get("confidence_level") or item.get("confidence_label")
         conf_score = item.get("confidence_score") or item.get("confidence")
         if conf_level and conf_score is not None:
@@ -429,9 +522,11 @@ class PremarketPushTrigger:
         rank_marker = _rank_emoji(rank)
         sector = item.get("sector")
         sector_tag = f" [{sector}]" if sector else ""
-        head = f"{rank_marker} {symbol}{sector_tag} {arrow} {direction} | 信心: {conf_str}"
+        urgency = item.get("urgency", "").upper()
+        urgency_tag = f" ⚡{urgency}" if urgency and urgency not in ("LOW", "") else ""
 
-        # 兼容: synthesizer 用 entry_zone 字符串, 旧格式用 entry_low/entry_high
+        head = f"{rank_marker} {symbol}{sector_tag} {arrow} {direction}{urgency_tag}"
+
         entry_zone = item.get("entry_zone")
         if entry_zone and isinstance(entry_zone, str) and entry_zone:
             entry_str = entry_zone
@@ -448,17 +543,25 @@ class PremarketPushTrigger:
         rr = item.get("risk_reward")
         rr_str = _fmt_num(rr, "{:.1f}") if rr is not None else "—"
         catalyst = item.get("catalyst") or ""
-        # 兼容: synthesizer 用 zh_thesis, 旧格式用 rationale
         rationale = item.get("zh_thesis") or item.get("rationale") or ""
 
         block: List[str] = [head]
         block.append(f"   入场: {entry_str} | 目标: {target_str} | 止损: {stop_str}")
-        catalyst_part = f"   盈亏比: {rr_str}"
+        info_line = f"   盈亏比: {rr_str}"
         if catalyst:
-            catalyst_part += f" | 催化: {catalyst}"
-        block.append(catalyst_part)
-        if rationale and rationale != "综合多源信号给出建议。":
-            block.append(f"   理由: {rationale}")
+            info_line += f" | 催化: {catalyst}"
+        block.append(info_line)
+        # 完整理由 (不截断，这是用户最需要的信息)
+        if rationale and rationale.strip() != "综合多源信号给出建议。":
+            block.append(f"   📋 {rationale}")
+
+        # 风险因素
+        risk_factors = item.get("risk_factors") or []
+        if risk_factors and isinstance(risk_factors, list):
+            rf_text = "; ".join(str(r) for r in risk_factors[:2] if r)
+            if rf_text:
+                block.append(f"   ⚠️ 风险: {rf_text}")
+
         return block
 
     # ─── 格式化: 准确率卡片 ──────────────────────────────────────

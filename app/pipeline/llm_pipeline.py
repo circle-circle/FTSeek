@@ -1285,7 +1285,29 @@ def run_premarket_planning(scheduler):
                         except Exception as _hot_e:
                             logger.debug(f"[Recommendations] 热点发现异常（不影响主流程）: {_hot_e}")
 
-                        # 3. 推送
+                        # 3. 准确率验证 + 存储 (闭环反馈)
+                        try:
+                            from app.recommendations.accuracy_tracker import AccuracyTracker
+                            _tracker = AccuracyTracker()
+
+                            # 3a. 验证昨日推荐 (注入滚动准确率)
+                            _yesterday_report = _tracker.verify_yesterday()
+                            if _yesterday_report:
+                                _rolling = _tracker.get_rolling_accuracy()
+                                if _rolling:
+                                    _recommendations["rolling_accuracy"] = _rolling
+                                    logger.info(
+                                        f"[Recommendations] 📈 滚动准确率: "
+                                        f"{_rolling.get('accuracy_pct', 0):.0f}% "
+                                        f"({_rolling.get('correct',0)}/{_rolling.get('total_tracked',0)})"
+                                    )
+
+                            # 3b. 存储今日推荐 (供明日验证)
+                            _tracker.store_recommendations(_recommendations)
+                        except Exception as _acc_e:
+                            logger.debug(f"[Recommendations] 准确率追踪异常（不影响主流程）: {_acc_e}")
+
+                        # 4. 推送
                         _trigger = PremarketPushTrigger()
                         _sent = _trigger.send_final(_recommendations)
                         if _sent:
