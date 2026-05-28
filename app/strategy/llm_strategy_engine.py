@@ -177,7 +177,7 @@ class LLMStrategyEngine:
             
         self.enabled = cfg.get('enabled', False)
         # 默认使用 qwen3.6-flash (二阶推理专用)
-        self.model = cfg.get('model', os.getenv("BAILIAN_MODEL_STRATEGY", "qwen3.6-flash"))
+        self.model = cfg.get('model', os.getenv("BAILIAN_MODEL_STRATEGY", os.getenv("BAILIAN_MODEL_FAST", "qwen-flash")))
         self.bailian_base_url = cfg.get('base_url', os.getenv("BAILIAN_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"))
         
         # 读取 API Key: 优先 config -> 其次环境变量

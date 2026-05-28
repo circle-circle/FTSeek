@@ -174,7 +174,7 @@ class USEmergencyInterceptor:
         self.finnhub_api_key = os.environ.get("FINNHUB_API_KEY")
 
         # LLM 配置
-        self.llm_model = "qwen3.6-flash"
+        self.llm_model = os.getenv("BAILIAN_MODEL_FAST", "qwen-flash")
         self.llm_api_key = os.environ.get("BAILIAN_API_KEY")
 
         # 记录已处理的新闻 ID (防抖辅助)

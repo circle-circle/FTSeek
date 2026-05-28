@@ -1,5 +1,6 @@
 from typing import Dict, Any, List, Optional
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
+import os
 import time
 import hashlib
 import json
@@ -175,29 +176,83 @@ class VotingCoordinator:
 - 返回纯 JSON，不要使用 ```json 代码块，不要有任何额外文本。
 返回格式：{"strength": 65, "confidence": 0.72, "direction": "LONG", "reasoning": "降息预期+MACD金叉，但SPY承压，降低评分"}""",
 
-        "minimax": """【情绪分析专家】你 ONLY 关注新闻情绪和市场情绪信号。
+        "minimax": """【情绪与风险分析专家 (DeepSeek 风控)】你负责新闻情绪分析和风险评估, 是 魔鬼代言人。
 
 ✅ 你关注的:
 • 新闻情绪分 (正向/负向/中性)
 • VIX 恐慌指数水平
 • 大盘整体情绪 (标普 500/纳指涨跌)
 • 市场热度 (成交量/关注度)
+• 该交易最可能出错的地方
+• 当前止损是否合理
+• 是否存在"共识陷阱" (所有人都看多时最危险)
 
 ❌ 你不看的:
-• 技术指标 (交给 GLM)
-• 宏观传导链 (交给 Qwen)
-• 个股基本面估值 (短线不依赖)
+• 技术指标细节 (交给 Qwen)
+• 宏观传导链推理 (交给 Qwen)
 
 评分标准:
-- 0-30: 强烈看空 (重大利空 + VIX 飙升)
-- 31-45: 看空 (情绪偏空)
-- 46-55: 中性 (情绪不明/消息面平静)
-- 56-70: 看多 (情绪偏多)
-- 71-100: 强烈看多 (重大利好 + 情绪高涨)
+- 0-30: 强烈看空 (重大利空 + VIX 飙升 + 高风险)
+- 31-45: 看空 (情绪偏空或风险偏高)
+- 46-55: 中性 (情绪不明/风险可控)
+- 56-70: 看多 (情绪偏多+风险低)
+- 71-100: 强烈看多 (重大利好 + 情绪高涨 + 低风险)
 
 【重要】情绪不明时给中性分 (46-55)，高 VIX(>30) 时降低置信度。
 【重要】返回纯 JSON，不要使用 ```json 代码块，不要有任何额外文本。
-返回格式：{"strength": 65, "confidence": 0.72, "direction": "LONG", "reasoning": "新闻情绪正向，VIX 降至 18"}""",
+返回格式：{"strength": 65, "confidence": 0.72, "direction": "LONG", "reasoning": "新闻正向+VIX=18+止损合理"}""",
+
+        # ── Task #27 (2026-05-27): 新增 纯技术面专家 ──
+        "technical": """【纯技术面分析专家】你 ONLY 关注价格走势和技术指标，禁止参考任何基本面或情绪信息。
+
+✅ 你关注的:
+• K 线形态（突破/旗形/三角整理/双底双顶）
+• 趋势指标（MA5/MA20/MA50 排列、EMA 穿越）
+• 动量指标（RSI 超买超卖、MACD 金叉死叉、随机指标）
+• 量价关系（放量突破/缩量回调/量价背离）
+• 支撑阻力位（前高前低、整数关口、Fibonacci）
+
+❌ 你不看的:
+• 新闻/情绪/事件（交给 MiniMax）
+• 宏观政策/板块轮动（交给 Qwen）
+• 任何非图表数据
+
+评分标准:
+- 0-30: 强烈看空（明确下跌趋势 + 动量向下 + 跌破支撑）
+- 31-45: 看空（趋势偏空或动量走弱）
+- 46-55: 中性（横盘震荡/信号矛盾）
+- 56-70: 看多（趋势偏多或动量走强）
+- 71-100: 强烈看多（明确上涨趋势 + 动量向上 + 突破阻力）
+
+【重要】只基于技术面给出判断。返回纯 JSON，不要使用 ```json 代码块。
+返回格式：{"strength": 65, "confidence": 0.72, "direction": "LONG", "reasoning": "MA20上穿MA50+RSI=62动量上行+量价配合"}""",
+
+        # ── Task #27 (2026-05-27): 新增 风险质疑专家 ──
+        "risk_contrarian": """【风险质疑专家】你的核心职责是找出这笔交易最可能出错的地方。你是"魔鬼代言人"。
+
+✅ 你关注的:
+• 当前交易假设最薄弱的环节是什么？
+• 如果大盘突然反转，这笔交易会亏多少？
+• 止损是否合理？仓位是否过大？
+• 该标的近期是否有异常波动/流动性风险？
+• 是否存在"共识陷阱"（所有人都看多时最危险）？
+
+❌ 你不做的:
+• 不给看多/看空建议
+• 不参考技术面或情绪面做方向判断
+• 只做风险评估和警示
+
+评分标准 (⚠️ 反向评分 — 分数越低=风险越大):
+- 0-30: 极高风险（应拒绝交易 — 多重风险叠加）
+- 31-45: 高风险（需大幅降低仓位或收紧止损）
+- 46-55: 中等风险（正常交易，标准风控）
+- 56-70: 低风险（可适当放大仓位）
+- 71-100: 极低风险（强支撑/高确定性）
+
+【重要】方向跟随其他投票的共识方向（你不做方向判断），但 Strength 基于风险评估。
+VIX > 25 时，最大 Strength 不得超过 50。
+返回纯 JSON，不要使用 ```json 代码块。
+返回格式：{"strength": 40, "confidence": 0.80, "direction": "LONG", "reasoning": "SPY MA200下方+VIX=28，逆势做多风险极大，建议半仓"}""",
 
     }
 
@@ -217,14 +272,22 @@ class VotingCoordinator:
         # P1 修复: LLM 投票结果缓存
         self.enable_cache = enable_cache
         self.vote_cache = VotingCache() if enable_cache else None
+
+        # P1 (2026-05-27): 投票上下文丰富化辅助单例
+        # - news_provider: USNewsProvider 实例 (按需初始化)
+        # - market_data_router: MarketDataRouter 实例 (按需初始化, 用于取 bid/ask spread)
+        # 任何一项初始化失败即置 None, 不影响主流程
+        self._news_provider = None
+        self._md_router = None
         
         # P0优化: 辩论引擎 - 快速模式 (1轮,非3轮)
+        # 2026-05-28 精简: bull/bear 模型同步为 qwen3.7-max + deepseek-v4-pro
         self.enable_debate = enable_debate
         if enable_debate:
             self.debate_engine = DebateEngine(
                 max_rounds=1,  # 2模型架构: 1轮快速辩论
-                bull_model="bailian/MiniMax-M2.5",  # MiniMax情绪分析
-                bear_model="bailian/qwen-max",  # Qwen综合推理
+                bull_model=f"bailian/{os.getenv('BAILIAN_MODEL_STRATEGY', 'qwen-max')}",       # Qwen 综合专家 (多头)
+                bear_model="bailian/deepseek-v4-pro",   # DeepSeek 风控专家 (空头质疑)
                 fast_mode=True,
             )
             pass  # Removed legacy agents
@@ -266,7 +329,12 @@ class VotingCoordinator:
                 cached["from_cache"] = True
                 return cached
 
-        scores = self._collect_scores_parallel(market_data)
+        # P1 (2026-05-27): 丰富投票上下文 - 从 7 指标扩展到 15+ 维度
+        # 新增维度: 个股新闻情绪、当前持仓、近 7 天胜率、bid-ask spread、最近 5 笔交易、盘前计划上下文
+        # 任何一项失败都不影响投票主流程, _collect_scores_parallel 会自动消费 enriched 字段
+        enriched_data = self._enrich_voting_context(market_data)
+
+        scores = self._collect_scores_parallel(enriched_data)
 
         # P0 优化 (2026-04-17): 注入外部投票 (LLM 策略引擎)
         # P1 修复 (2026-04-17): ModelScore 使用 model_id= 而非 model=, direction 转字符串
@@ -294,26 +362,315 @@ class VotingCoordinator:
                     f"direction={score.direction}"
                 )
 
-        result = self.aggregator.aggregate(scores, market_data)
+        result = self.aggregator.aggregate(scores, enriched_data)
 
         # 添加元数据
-        result["symbol"] = market_data.get("symbol") or market_data.get("ticker") or "UNKNOWN"
+        result["symbol"] = enriched_data.get("symbol") or enriched_data.get("ticker") or "UNKNOWN"
         result["timestamp"] = time.time()
 
         # 方案 E 优化：添加动态仓位建议
         result["position_suggestion"] = self.calculate_position_suggestion(result)
 
         # 方案 E 优化：添加市场状态评估
-        result["market_regime"] = self.assess_market_regime(market_data)
+        result["market_regime"] = self.assess_market_regime(enriched_data)
 
         # P1 新增: 决策记录 — 打通断点1 (投票→数据库)
-        self._record_decision_to_db(result, market_data, external_votes)
+        self._record_decision_to_db(result, enriched_data, external_votes)
 
-        # P1 修复: 写入缓存
+        # P1 修复: 写入缓存 (缓存 key 仍基于原始 market_data 的核心字段, 保持兼容)
         if self.enable_cache and self.vote_cache:
             self.vote_cache.put(symbol, result, market_data)
 
         return result
+
+    # ------------------------------------------------------------------
+    # P1 (2026-05-27): 投票上下文丰富化
+    # ------------------------------------------------------------------
+
+    def _enrich_voting_context(self, market_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        丰富投票上下文：从 7 指标扩展到 15+ 维度
+
+        新增维度:
+        - news_sentiment_score: 个股新闻情绪分 (-1.0 ~ +1.0)
+        - position_info: 当前持仓状态 + 未实现 P&L
+        - win_rate_7d: 最近 7 天同标的同方向胜率
+        - spread_bps: bid-ask spread (流动性指标, 单位 bps)
+        - recent_trades: 最近 5 笔同标的交易结果
+        - battle_plan_context: 当日盘前计划中该标的的信息
+
+        所有数据获取均 try/except 包裹，任何一项失败不影响投票继续。
+        """
+        enriched = market_data.copy()
+        symbol = market_data.get("symbol") or market_data.get("ticker") or ""
+        if not symbol:
+            return enriched
+
+        # 1. 个股新闻情绪分
+        try:
+            sentiment = None
+            try:
+                # 优先尝试模块级函数 (若未来提供)
+                from app.data.news_provider import get_news_sentiment_score  # type: ignore
+                sentiment = get_news_sentiment_score(symbol)
+            except ImportError:
+                # Fallback: 复用 USNewsProvider 单例 (含 LLM + 关键词规则 + 缓存)
+                if self._news_provider is None:
+                    from app.data.news_provider import USNewsProvider
+                    self._news_provider = USNewsProvider()
+                sentiment = self._news_provider.get_sentiment_score(symbol)
+            if sentiment is not None:
+                enriched["news_sentiment_score"] = sentiment
+                # 同步写入 model_agent 实际读取的键名 (若上游未填充)
+                if "news_sentiment" not in market_data:
+                    enriched["news_sentiment"] = sentiment
+        except Exception as e:
+            logger.debug(f"[投票上下文] 新闻情绪获取失败 {symbol}: {e}")
+
+        # 2. 当前持仓状态 + 未实现 P&L
+        try:
+            store = None
+            try:
+                from app.core.position_sync import get_position_store  # type: ignore
+                store = get_position_store()
+            except ImportError:
+                # Fallback: 通过 USPositionSync 单例访问其内部 position_store
+                from app.core.position_sync import get_us_position_sync
+                sync = get_us_position_sync()
+                store = getattr(sync, "position_store", None)
+
+            if store is not None and hasattr(store, "get"):
+                pos = store.get(symbol)
+                if pos:
+                    direction = getattr(pos, "direction", "")
+                    direction_str = (
+                        direction.value if hasattr(direction, "value") else str(direction)
+                    )
+                    holding_minutes = getattr(pos, "holding_minutes", None)
+                    if holding_minutes is None:
+                        # 从 entry_time 估算
+                        try:
+                            from datetime import datetime as _dt
+                            entry_time = getattr(pos, "entry_time", None)
+                            if entry_time:
+                                holding_minutes = int(
+                                    (_dt.now() - entry_time).total_seconds() / 60
+                                )
+                            else:
+                                holding_minutes = 0
+                        except Exception:
+                            holding_minutes = 0
+                    enriched["position_info"] = {
+                        "held": True,
+                        "direction": direction_str,
+                        "unrealized_pnl_pct": getattr(pos, "pnl_pct", 0),
+                        "entry_price": getattr(pos, "avg_entry_price", 0),
+                        "holding_minutes": holding_minutes,
+                    }
+                else:
+                    enriched["position_info"] = {"held": False}
+        except Exception as e:
+            logger.debug(f"[投票上下文] 持仓状态获取失败 {symbol}: {e}")
+
+        # 3. 最近 7 天同标的同方向胜率 (使用 realized_pnl 列)
+        try:
+            import sqlite3
+            from app.core.paths import get_trade_records_db
+            direction = market_data.get("direction", "LONG")
+            ticker = symbol.split(".")[-1] if "." in symbol else symbol
+            conn = sqlite3.connect(str(get_trade_records_db()))
+            conn.row_factory = sqlite3.Row
+            try:
+                row = conn.execute(
+                    """
+                    SELECT COUNT(*) AS total,
+                           SUM(CASE WHEN COALESCE(realized_pnl, 0) > 0 THEN 1 ELSE 0 END) AS wins
+                    FROM trade_records
+                    WHERE symbol LIKE ? AND direction = ?
+                      AND trade_date >= date('now', '-7 days')
+                    """,
+                    (f"%{ticker}%", direction),
+                ).fetchone()
+            finally:
+                conn.close()
+            if row and row["total"] and row["total"] > 0:
+                wins = row["wins"] or 0
+                enriched["win_rate_7d"] = {
+                    "rate": round(wins / row["total"], 3),
+                    "trades": row["total"],
+                }
+        except Exception as e:
+            logger.debug(f"[投票上下文] 7d 胜率获取失败 {symbol}: {e}")
+
+        # 4. Bid-ask spread (流动性指标, 单位 bps)
+        try:
+            if self._md_router is None:
+                from app.data.market_data_router import MarketDataRouter
+                import os as _os
+                self._md_router = MarketDataRouter(
+                    twelvedata_api_key=_os.getenv("TWELVEDATA_API_KEY"),
+                    finnhub_api_key=_os.getenv("FINNHUB_API_KEY"),
+                    alphavantage_api_key=_os.getenv("ALPHAVANTAGE_API_KEY"),
+                )
+            quote = self._md_router.get_quote(symbol) if self._md_router else None
+            if quote:
+                bid = quote.get("bid", 0) or 0
+                ask = quote.get("ask", 0) or 0
+                mid = (bid + ask) / 2 if (bid and ask) else 0
+                if mid > 0 and ask >= bid:
+                    enriched["spread_bps"] = round((ask - bid) / mid * 10000, 1)
+        except Exception as e:
+            logger.debug(f"[投票上下文] spread 获取失败 {symbol}: {e}")
+
+        # 5. 最近 5 笔同标的交易结果
+        try:
+            import sqlite3
+            from app.core.paths import get_trade_records_db
+            ticker = symbol.split(".")[-1] if "." in symbol else symbol
+            conn = sqlite3.connect(str(get_trade_records_db()))
+            conn.row_factory = sqlite3.Row
+            try:
+                rows = conn.execute(
+                    """
+                    SELECT direction, realized_pnl, entry_price, exit_price, trade_date
+                    FROM trade_records
+                    WHERE symbol LIKE ?
+                    ORDER BY created_at DESC LIMIT 5
+                    """,
+                    (f"%{ticker}%",),
+                ).fetchall()
+            finally:
+                conn.close()
+            if rows:
+                enriched["recent_trades"] = [
+                    {
+                        "direction": r["direction"],
+                        "pnl": r["realized_pnl"] or 0,
+                        "date": r["trade_date"],
+                    }
+                    for r in rows
+                ]
+        except Exception as e:
+            logger.debug(f"[投票上下文] 近 5 笔交易获取失败 {symbol}: {e}")
+
+        # 6. 当日盘前计划上下文
+        try:
+            from app.us_pipeline.battle_plan_manager import USBattlePlanManager
+            mgr = USBattlePlanManager()
+            plan = mgr.get_plan() if hasattr(mgr, "get_plan") else None
+            if plan and isinstance(plan, dict):
+                ticker = symbol.split(".")[-1] if "." in symbol else symbol
+                for target in plan.get("targets", []):
+                    target_sym = target.get("symbol", "") or ""
+                    if ticker and ticker in target_sym:
+                        logic_str = target.get("logic", "") or ""
+                        enriched["battle_plan_context"] = {
+                            "direction": target.get("direction"),
+                            "urgency": target.get("urgency"),
+                            "entry_zone": target.get("entry_zone"),
+                            "logic": logic_str[:100],
+                        }
+                        break
+        except Exception as e:
+            logger.debug(f"[投票上下文] 盘前计划获取失败 {symbol}: {e}")
+
+        # 7. 历史交易上下文 (Task #33 - 长上下文利用)
+        # 注入最近 N 笔同标的交易, 让 LLM 学习时间序列模式
+        try:
+            inject_history = True
+            history_max_trades = 20
+            try:
+                from app.core.config_container import get_config
+                cfg = get_config()
+                inject_history = cfg.get_dotted("voting.inject_history", True)
+                history_max_trades = int(
+                    cfg.get_dotted("voting.history_max_trades", 20)
+                )
+            except Exception:
+                pass
+
+            if inject_history:
+                import sqlite3
+                from app.core.paths import get_trade_records_db
+                ticker = symbol.split(".")[-1] if "." in symbol else symbol
+                conn = sqlite3.connect(str(get_trade_records_db()))
+                conn.row_factory = sqlite3.Row
+                try:
+                    rows = conn.execute(
+                        """
+                        SELECT direction, realized_pnl, entry_price, exit_price,
+                               trade_date, entry_time, exit_time, signal_confidence
+                        FROM trade_records
+                        WHERE symbol LIKE ? AND exit_price IS NOT NULL
+                        ORDER BY created_at DESC LIMIT ?
+                        """,
+                        (f"%{ticker}%", history_max_trades),
+                    ).fetchall()
+                finally:
+                    conn.close()
+
+                if rows:
+                    lines = []
+                    for r in reversed(rows):  # 按时间正序
+                        pnl = r["realized_pnl"] or 0
+                        result_icon = "+" if pnl > 0 else "-"
+                        pnl_pct = ""
+                        entry_p = r["entry_price"]
+                        exit_p = r["exit_price"]
+                        if entry_p and entry_p > 0 and exit_p:
+                            pct = (exit_p - entry_p) / entry_p * 100
+                            if r["direction"] == "SHORT":
+                                pct = -pct
+                            pnl_pct = f"{pct:+.1f}%"
+
+                        # 计算持有时长
+                        holding = ""
+                        if r["entry_time"] and r["exit_time"]:
+                            try:
+                                from datetime import datetime as _dt2
+                                et = r["entry_time"]
+                                xt = r["exit_time"]
+                                entry_t = (
+                                    _dt2.fromisoformat(et.replace("Z", "+00:00"))
+                                    if isinstance(et, str) else et
+                                )
+                                exit_t = (
+                                    _dt2.fromisoformat(xt.replace("Z", "+00:00"))
+                                    if isinstance(xt, str) else xt
+                                )
+                                hours = (exit_t - entry_t).total_seconds() / 3600
+                                holding = (
+                                    f"{hours:.0f}h" if hours >= 1
+                                    else f"{hours*60:.0f}m"
+                                )
+                            except Exception:
+                                pass
+
+                        sc = r["signal_confidence"]
+                        conf = f"c={sc:.1f}" if sc else ""
+                        line = (
+                            f"{r['trade_date']} {r['direction']} "
+                            f"{result_icon}${abs(pnl):.0f}({pnl_pct}) {holding} {conf}"
+                        )
+                        lines.append(line.strip())
+
+                    # 控制总长度 (约 500 tokens ≈ 2000 字符)
+                    historical_text = "\n".join(lines)
+                    if len(historical_text) > 2000:
+                        historical_text = historical_text[:2000] + "..."
+
+                    enriched["historical_trades_text"] = historical_text
+                    enriched["historical_trade_count"] = len(rows)
+
+                    # 汇总统计
+                    wins = sum(1 for r in rows if (r["realized_pnl"] or 0) > 0)
+                    enriched["historical_win_rate"] = (
+                        round(wins / len(rows), 3) if rows else 0
+                    )
+        except Exception as e:
+            logger.debug(f"[投票上下文] 历史交易上下文获取失败 {symbol}: {e}")
+
+        return enriched
 
     def _record_decision_to_db(
         self,
@@ -363,6 +720,41 @@ class VotingCoordinator:
             logger.info(f"[DecisionRecorder] 决策已记录: {decision_id}")
         except Exception as e:
             logger.warning(f"[DecisionRecorder] 记录决策失败 (不影响主流程): {e}")
+
+        # Task #26 (2026-05-27): 记录投票预测到准确率追踪器
+        try:
+            from app.analysis.voting_accuracy_tracker import get_voting_accuracy_tracker
+            tracker = get_voting_accuracy_tracker()
+
+            # 构建模型投票明细
+            model_votes_detail: Dict[str, Any] = {}
+            for ms in result.get("model_scores", []) or []:
+                if not isinstance(ms, dict):
+                    continue
+                mid = ms.get("model_id") or ms.get("model") or "unknown"
+                d = ms.get("direction", "NEUTRAL")
+                if isinstance(d, int):
+                    d = "LONG" if d > 0 else "SHORT" if d < 0 else "NEUTRAL"
+                model_votes_detail[mid] = {
+                    "direction": d,
+                    "strength": ms.get("strength", 50),
+                    "confidence": ms.get("confidence", 0.5),
+                }
+
+            tracker.record_prediction(
+                decision_id=result.get("decision_id") or f"DEC-{int(time.time())}",
+                symbol=result.get("symbol") or symbol or "",
+                predicted_direction=result.get("direction", "NEUTRAL"),
+                predicted_strength=int(result.get("final_strength", 50) or 50),
+                predicted_confidence=float(
+                    result.get("final_confidence")
+                    or result.get("consensus_level")
+                    or 0.5
+                ),
+                model_votes=model_votes_detail,
+            )
+        except Exception as _vae:
+            logger.debug(f"[投票准确率] 记录预测失败 (不影响主流程): {_vae}")
     
     def calculate_position_suggestion(self, voting_result: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -474,9 +866,14 @@ class VotingCoordinator:
         - 增加 LLM 调用失败降级策略
         - 当超过半数模型失败时，触发降级模式
         - 降级模式：使用纯技术指标评分 + 发送钉钉告警
+
+        P1 修复 (2026-05-27):
+        - 每个失败模型生成 degraded_vote=True 的技术 fallback 评分
+        - 记录失败原因 (timeout/api_error/rate_limit)
+        - 降级监控指标记录到 EventStore
         """
         scores = []
-        failed_models = []
+        failed_models = []  # (model_name, failure_reason)
         total_models = len(self.model_agents)
 
         with ThreadPoolExecutor(max_workers=6) as executor:
@@ -491,23 +888,45 @@ class VotingCoordinator:
                     score = future.result(timeout=self.timeout)
                     scores.append(score)
                 except FuturesTimeoutError:
-                    failed_models.append(role.value)
+                    failed_models.append((role.value, "timeout"))
                     logger.error(f"[投票] {role.value} 模型评分超时")
                 except Exception as e:
-                    failed_models.append(role.value)
+                    # 区分 rate_limit 和其他 API 错误
+                    err_str = str(e).lower()
+                    if "rate" in err_str or "429" in err_str or "limit" in err_str:
+                        reason = "rate_limit"
+                    else:
+                        reason = "api_error"
+                    failed_models.append((role.value, reason))
                     logger.error(f"[投票] {role.value} 模型评分失败：{e}")
 
-        # P0 降级：超过半数模型失败 → 切换纯技术模式
+        # 为每个失败模型生成降级投票 (degraded_vote=True)
+        for model_name, failure_reason in failed_models:
+            degraded_score = self._generate_technical_fallback(market_data)
+            degraded_score.model_id = model_name
+            degraded_score.degraded_vote = True
+            degraded_score.failure_reason = failure_reason
+            degraded_score.reasoning = (
+                f"[降级] {failure_reason} | {degraded_score.reasoning}"
+            )
+            scores.append(degraded_score)
+
+        # 降级监控: 记录到 EventStore
+        if failed_models:
+            self._record_degradation_event(
+                failed_models, total_models, market_data
+            )
+
+        # P0 降级告警: 超过半数模型失败 → 发送钉钉告警
         if len(failed_models) > total_models / 2:
             logger.critical(
                 f"[投票·降级] {len(failed_models)}/{total_models} 模型失败 "
-                f"({', '.join(failed_models)})，切换纯技术模式"
+                f"({', '.join(m for m, _ in failed_models)})，切换纯技术模式"
             )
-            # 注入降级标记
-            technical_score = self._generate_technical_fallback(market_data)
-            scores.append(technical_score)
-            # 发送告警
-            self._send_llm_failure_alert(failed_models, market_data.get("symbol") or market_data.get("ticker") or "UNKNOWN")
+            self._send_llm_failure_alert(
+                [m for m, _ in failed_models],
+                market_data.get("symbol") or market_data.get("ticker") or "UNKNOWN",
+            )
 
         return scores
 
@@ -610,8 +1029,56 @@ class VotingCoordinator:
                 f"📌 标的: {symbol}\n"
                 f"❌ 失败模型: {', '.join(failed_models)}\n"
                 f"🔧 已切换: 纯技术指标降级模式\n"
-                f"⚠️ 置信度降至 0.3，建议人工审查"
+                f"⚠️ 降级投票权重已降至 30%，建议人工审查"
             )
             send_dingtalk_message(msg)
         except Exception as e:
             logger.error(f"[投票] 发送 LLM 失败告警异常: {e}")
+
+    def _record_degradation_event(
+        self,
+        failed_models: List[tuple],
+        total_models: int,
+        market_data: Dict[str, Any],
+    ):
+        """记录降级事件到 EventStore 供后续统计月度降级触发率"""
+        try:
+            from app.core.events import EventStore
+            from app.core.models import TradeEvent, AlertLevel
+            from app.core.di_container import get_di_container
+            import uuid as _uuid
+            from datetime import datetime as _dt
+
+            symbol = market_data.get("symbol") or market_data.get("ticker") or "UNKNOWN"
+            degraded_ratio = len(failed_models) / total_models if total_models > 0 else 0
+
+            event_data = {
+                "failed_models": [
+                    {"model": m, "reason": r} for m, r in failed_models
+                ],
+                "total_models": total_models,
+                "degraded_count": len(failed_models),
+                "degraded_ratio": round(degraded_ratio, 2),
+                "symbol": symbol,
+            }
+
+            event = TradeEvent(
+                event_id=str(_uuid.uuid4()),
+                event_type="llm_degradation",
+                timestamp=_dt.now(),
+                data=event_data,
+                source="voting_coordinator",
+                severity=AlertLevel.WARNING if degraded_ratio <= 0.5 else AlertLevel.CRITICAL,
+            )
+
+            container = get_di_container()
+            store = container.event_store()
+            store.append(event)
+
+            logger.info(
+                f"[降级监控] 已记录降级事件: {len(failed_models)}/{total_models} "
+                f"models failed for {symbol} | "
+                f"reasons: {', '.join(r for _, r in failed_models)}"
+            )
+        except Exception as e:
+            logger.warning(f"[降级监控] 记录降级事件失败 (不影响主流程): {e}")

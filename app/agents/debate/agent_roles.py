@@ -6,6 +6,7 @@ Agent: Hermes (qwen3.6-plus) + Claude Code (deepseek v4)
 """
 from dataclasses import dataclass, field
 from typing import Dict, Any, Optional, List
+import os
 
 
 # =====================================================================
@@ -295,7 +296,7 @@ from app.llm.prompts.debate import ARBITER_PROMPT, EOD_HERMES_PROMPT, EOD_CLAUDE
 AGENT_ROLES = {
     "hermes_premarket": AgentRole(
         name="Hermes (盘前策略师)",
-        model="qwen3.6-plus",
+        model=os.getenv("BAILIAN_MODEL_STRATEGY", "qwen-max"),
         system_prompt="你是 FTSeek-US 美股盘前策略师。核心目标：稳定赚钱。输出严格 JSON。",
         timeout=90,
     ),
@@ -307,13 +308,13 @@ AGENT_ROLES = {
     ),
     "hermes_arbiter": AgentRole(
         name="Hermes (仲裁师)",
-        model="qwen3.6-plus",
+        model=os.getenv("BAILIAN_MODEL_STRATEGY", "qwen-max"),
         system_prompt="你是 FTSeek-US 首席仲裁师。综合多方观点生成最终作战计划。输出严格 JSON。",
         timeout=60,
     ),
     "hermes_eod": AgentRole(
         name="Hermes (盘后归因)",
-        model="qwen3.6-plus",
+        model=os.getenv("BAILIAN_MODEL_STRATEGY", "qwen-max"),
         system_prompt="你是 FTSeek-US 盘后归因分析师。分析交易表现，提炼教训。输出严格 JSON。",
         timeout=60,
     ),

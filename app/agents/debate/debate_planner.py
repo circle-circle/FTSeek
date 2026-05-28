@@ -57,7 +57,7 @@ class DebatePlanner:
             self.max_rounds = debate_cfg.get("max_rounds", 2)
             self.divergence_threshold = debate_cfg.get("divergence_threshold", 0.4)
             self.max_total_timeout = debate_cfg.get("max_total_timeout_seconds", 600)
-            self.hermes_model = debate_cfg.get("hermes_model", "qwen3.6-plus")
+            self.hermes_model = debate_cfg.get("hermes_model", os.getenv("HERMES_DEBATE_MODEL", "qwen-max"))
             self.claude_cli_model = debate_cfg.get("claude_cli_model", "deepseek-v4-pro")
             self.claude_api_models = debate_cfg.get("claude_api_models", ["deepseek-v4-pro", "qwen-max", "minimax-m2.5"])
             self.claude_cli_timeout = debate_cfg.get("claude_cli_timeout_seconds", 180)
@@ -75,7 +75,7 @@ class DebatePlanner:
             self.max_rounds = max_rounds
             self.divergence_threshold = divergence_threshold
             self.max_total_timeout = max_total_timeout
-            self.hermes_model = "qwen3.6-plus"
+            self.hermes_model = os.getenv("HERMES_DEBATE_MODEL", "qwen-max")
             self.claude_cli_model = "deepseek-v4-pro"
             self.claude_api_models = ["deepseek-v4-pro", "qwen-max", "minimax-m2.5"]
             self.claude_cli_timeout = 180
@@ -227,7 +227,7 @@ class DebatePlanner:
                     prompt=prompt,
                     system_prompt=system_prompt,
                     round_num=round_num,
-                    model=os.getenv("HERMES_DEBATE_MODEL", getattr(self, "hermes_model", "qwen3.6-plus")),
+                    model=os.getenv("HERMES_DEBATE_MODEL", getattr(self, "hermes_model", os.getenv("HERMES_DEBATE_MODEL", "qwen-max"))),
                 )
             else:
                 logger.warning("[DebatePlanner] AgentBridge 不可用，跳过 Hermes")
@@ -553,7 +553,7 @@ class DebatePlanner:
                     prompt=prompt,
                     system_prompt="你是 FTSeek-US 美股盘前策略师。核心目标：稳定赚钱。输出严格 JSON。",
                     round_num=1,
-                    model=os.getenv("HERMES_DEBATE_MODEL", getattr(self, "hermes_model", "qwen3.6-plus")),
+                    model=os.getenv("HERMES_DEBATE_MODEL", getattr(self, "hermes_model", os.getenv("HERMES_DEBATE_MODEL", "qwen-max"))),
                 )
         except Exception as e:
             logger.error(f"[DebatePlanner] Fallback 失败: {e}")
