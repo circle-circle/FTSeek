@@ -355,6 +355,38 @@ class PremarketPushTrigger:
 
         lines.append("━━━━━━━━━━━━━━━")
 
+        # ── 热点发现板块 (watchlist 外的盘前异动 + 新闻催化) ──
+        hot_picks = recommendations.get("hot_picks") or []
+        if hot_picks:
+            lines.append("🔥 热点发现 (观察池外)")
+            for hp in hot_picks[:5]:
+                sym = hp.get("symbol", "?")
+                catalyst = hp.get("catalyst", "")
+                change = hp.get("change_pct")
+                rationale = hp.get("rationale", "")
+                source = hp.get("source", "")
+
+                if change is not None:
+                    arrow = "▲" if change > 0 else "▼"
+                    change_str = f" {arrow}{abs(change):.1f}%"
+                else:
+                    change_str = ""
+
+                # 来源标签
+                source_tag = ""
+                if source == "premarket_mover":
+                    source_tag = " [盘前异动]"
+                elif source in ("news_catalyst", "news_text"):
+                    source_tag = " [新闻催化]"
+
+                head = f"  💎 {sym}{change_str}{source_tag}"
+                lines.append(head)
+                if catalyst:
+                    lines.append(f"     → {catalyst}")
+
+            lines.append("  ⚠️ 以上为非观察池标的，仅供参考，需自行研判")
+            lines.append("━━━━━━━━━━━━━━━")
+
         sector_alloc = recommendations.get("sector_allocation") or {}
         if isinstance(sector_alloc, dict) and sector_alloc:
             sector_parts: List[str] = []

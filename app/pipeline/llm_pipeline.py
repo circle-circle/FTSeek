@@ -728,15 +728,15 @@ def _build_debate_context(scheduler, exposure_context=None, earnings_exit_plan=N
                 "drawdown_pct": cs._state.drawdown_pct if hasattr(cs._state, 'drawdown_pct') else 0,
                 "water_level": cs._state.water_level if hasattr(cs._state, 'water_level') else "N/A",
             }
-    except Exception:
-        pass
+    except Exception as _silent_e:
+        logger.debug(f"[silent_except:llm_pipeline.py] {_silent_e}")
 
     market_data = {}
     if hasattr(scheduler, 'vix_monitor') and scheduler.vix_monitor:
         try:
             market_data['vix'] = scheduler.vix_monitor.get_current_vix()
-        except Exception:
-            pass
+        except Exception as _silent_e:
+            logger.debug(f"[silent_except:llm_pipeline.py] {_silent_e}")
 
     # 修复数据断流虚警 (2026-05-04): 注入 SPY/QQQ/DXY 防止 LLM 误判 "数据熔断"
     if hasattr(scheduler, 'market_data') and scheduler.market_data:
@@ -744,26 +744,36 @@ def _build_debate_context(scheduler, exposure_context=None, earnings_exit_plan=N
             spy_ctx = scheduler.market_data.get_spy_context()
             if spy_ctx:
                 market_data['spy'] = spy_ctx.get('spy_price', 'N/A')
-        except Exception:
-            pass
+        except Exception as _silent_e:
+            logger.debug(f"[silent_except:llm_pipeline.py] {_silent_e}")
         for sym in ['US.QQQ', 'US.DIA']:
             try:
                 q = scheduler.market_data.get_quote(sym)
                 if q and q.get('price', 0) > 0:
                     key = sym.split('.')[-1].lower()  # qqq, dia
                     market_data[key] = q['price']
-            except Exception:
-                pass
+            except Exception as _silent_e:
+                logger.debug(f"[silent_except:llm_pipeline.py] {_silent_e}")
     # DXY: 通过 Finnhub 获取 (若无则跳过)
     try:
         if hasattr(scheduler, 'market_data') and hasattr(scheduler.market_data, 'fh'):
             dxy_q = scheduler.market_data.fh.get_quote('DX-Y.NYB')
             if dxy_q and dxy_q.get('c', 0) > 0:
                 market_data['dxy'] = dxy_q['c']
-    except Exception:
-        pass
+    except Exception as _silent_e:
+        logger.debug(f"[silent_except:llm_pipeline.py] {_silent_e}")
 
-    # P0 修复 (2026-05-27): 个股实时价格校准 — O6 修复从 premarket_planner.py 同步
+    overnight_news = getattr(scheduler, '_premarket_news_summary', '无隔夜新闻')
+
+    watchlist = getattr(scheduler, 'watchlist', [])
+    wl_info = []
+    for s in watchlist:
+        if isinstance(s, dict):
+            wl_info.append(s)
+        else:
+            wl_info.append({"code": s})
+
+    # P0 修复 (2026-05-27, Task #23): 个股实时价格校准 — O6 修复从 premarket_planner.py 同步
     # 根因: debate planner 路径无价格数据 → LLM 幻觉 entry_zone (NVDA $142 vs 实际 $214)
     # 修复: 从 MarketDataRouter 获取 universe 股票实时报价注入上下文
     price_calibration = {}
@@ -774,7 +784,7 @@ def _build_debate_context(scheduler, exposure_context=None, earnings_exit_plan=N
         if _router is None:
             from app.data.market_data_router import MarketDataRouter
             _router = MarketDataRouter(enable_futu_lv3=True)
-        # 从 sandbox universe 或 watchlist 获取标的列表
+        # 优先级: sandbox universe → watchlist.us_stocks 配置 → scheduler.watchlist
         _cal_symbols = []
         try:
             from app.core.config_container import get_config as _gc
@@ -782,8 +792,11 @@ def _build_debate_context(scheduler, exposure_context=None, earnings_exit_plan=N
             if _cfg.get_dotted("mode.sandbox.enabled", False):
                 _univ = _cfg.get_dotted("mode.sandbox.universe", []) or []
                 _cal_symbols = [s if s.startswith("US.") else f"US.{s}" for s in _univ][:15]
-        except Exception:
-            pass
+            if not _cal_symbols:
+                _wl_cfg = _cfg.get_dotted("watchlist.us_stocks", []) or []
+                _cal_symbols = [s if s.startswith("US.") else f"US.{s}" for s in _wl_cfg][:15]
+        except Exception as _silent_e:
+            logger.debug(f"[silent_except:llm_pipeline.py] {_silent_e}")
         if not _cal_symbols:
             _cal_symbols = [
                 s.get('code', s) if isinstance(s, dict) else str(s)
@@ -799,6 +812,7 @@ def _build_debate_context(scheduler, exposure_context=None, earnings_exit_plan=N
                         "current_price": float(_q.get("price", 0)),
                         "bid": float(_q.get("bid", 0) or _q.get("price", 0)),
                         "ask": float(_q.get("ask", 0) or _q.get("price", 0)),
+                        "change_pct": float(_q.get("change_pct", 0) or 0),
                     }
             except Exception:
                 continue
@@ -807,18 +821,14 @@ def _build_debate_context(scheduler, exposure_context=None, earnings_exit_plan=N
                 f"[盘前计划·O6] 价格校准: {len(price_calibration)} 只标的 "
                 f"(防止 LLM 幻觉 entry_zone)"
             )
+        # Task #23: 同步至 scheduler 供 USPreMarketPlanner 复用, 避免重复 fetch
+        if scheduler is not None and price_calibration:
+            try:
+                scheduler._price_calibration = price_calibration
+            except Exception as _silent_e:
+                logger.debug(f"[silent_except:llm_pipeline.py] {_silent_e}")
     except Exception as _pce:
         logger.warning(f"[盘前计划·O6] 价格校准 fetch 失败: {_pce}")
-
-    overnight_news = getattr(scheduler, '_premarket_news_summary', '无隔夜新闻')
-
-    watchlist = getattr(scheduler, 'watchlist', [])
-    wl_info = []
-    for s in watchlist:
-        if isinstance(s, dict):
-            wl_info.append(s)
-        else:
-            wl_info.append({"code": s})
 
     memory_context = ""
     try:
@@ -1106,6 +1116,40 @@ def run_premarket_planning(scheduler):
                 logger.warning(f"[盘前计划] 降级失败, 使用 watchlist 兜底: {e}")
                 plan = _build_watchlist_fallback(plan, scheduler)
 
+        # Task #23 (2026-05-27): Entry Zone 合理性校验 — 保存前检查
+        # 防止 LLM 幻觉 entry_zone 偏离当前价，偏离 >5% 警告并打标记
+        try:
+            _price_cal = (debate_context or {}).get("price_calibration", {}) or {}
+            if plan.get("targets") and _price_cal:
+                for _target in plan["targets"]:
+                    _sym = _target.get("symbol", "")
+                    _entry_zone = _target.get("entry_zone", []) or []
+                    if not _sym or len(_entry_zone) != 2:
+                        continue
+                    # 兼容 US.AAPL 与 AAPL 两种形式
+                    _cal = _price_cal.get(_sym) or _price_cal.get(f"US.{_sym}") or _price_cal.get(_sym.replace("US.", ""))
+                    if not _cal:
+                        continue
+                    _current = float(_cal.get("current_price", 0) or 0)
+                    if _current <= 0:
+                        continue
+                    try:
+                        _ez_lo = float(_entry_zone[0])
+                        _ez_hi = float(_entry_zone[1])
+                    except (TypeError, ValueError):
+                        continue
+                    _center = (_ez_lo + _ez_hi) / 2
+                    _deviation = abs(_center - _current) / _current
+                    if _deviation > 0.05:  # >5% 偏离
+                        logger.warning(
+                            f"[盘前计划] ⚠️ {_sym} entry_zone 中心 ${_center:.2f} "
+                            f"偏离当前价 ${_current:.2f} 达 {_deviation:.1%} (>5%)"
+                        )
+                        _target["_price_warning"] = f"entry_zone偏离当前价{_deviation:.1%}"
+                        _target["_current_price_ref"] = _current
+        except Exception as _ez_e:
+            logger.debug(f"[盘前计划] entry_zone 校验异常 (不阻断保存): {_ez_e}")
+
         from app.us_pipeline.battle_plan_manager import USBattlePlanManager
         mgr = USBattlePlanManager()
         saved = mgr.save(plan)
@@ -1192,6 +1236,67 @@ def run_premarket_planning(scheduler):
                         logger.info(f"[盘前计划] ✅ 详细通知已发送 ({len(targets)} targets, {len(restricted)} restricted)")
                 except Exception as e:
                     logger.debug(f"[盘前计划] 通知失败: {e}")
+
+                # === 盘前推荐系统集成 (Task #40, 2026-05-28) ===
+                # 在作战计划保存+加载成功后, 合成可读性更强的推荐 + 价格校准 + 推送
+                # 推荐子系统任何异常不影响主流程
+                try:
+                    from app.core.config_container import get_config
+                    _rec_cfg = get_config()
+                    if _rec_cfg.get_dotted("recommendations.enabled", False):
+                        from app.recommendations.synthesizer import RecommendationSynthesizer
+                        from app.recommendations.price_calibrator import PriceCalibrator
+                        from app.recommendations.push_trigger import PremarketPushTrigger
+
+                        logger.info("[Recommendations] 开始生成盘前推荐...")
+
+                        # 1. 合成推荐 (本函数内可用: plan / debate_context)
+                        # 当前 voting_results / debate_summary 在本函数上下文不可直接获取,
+                        # 传空字典; synthesizer 会从 battle_plan 提取 debate_summary 等信息。
+                        _synth = RecommendationSynthesizer()
+                        _recommendations = _synth.synthesize(
+                            battle_plan=plan,
+                            voting_results={},
+                            debate_summary={"summary": plan.get("debate_summary", "")} if isinstance(plan.get("debate_summary"), str) else (plan.get("debate_summary") or {}),
+                            market_data=None,  # 校准器会获取实时数据
+                        )
+
+                        # 2. 价格校准 (复用已计算的 price_calibration, 避免重复 fetch)
+                        if _rec_cfg.get_dotted("recommendations.price_calibration.enabled", True):
+                            _price_cal = (debate_context or {}).get("price_calibration", {}) or {}
+                            _calibrator = PriceCalibrator()
+                            _recommendations = _calibrator.calibrate(_recommendations, market_data=_price_cal or None)
+
+                        # 2.5 热点发现 (watchlist 外的盘前异动 + 新闻催化)
+                        try:
+                            from app.recommendations.hot_discovery import HotDiscovery
+                            _hot = HotDiscovery()
+                            _news_text = news_summary if isinstance(news_summary, str) else None
+                            _hot_picks = _hot.discover(
+                                battle_plan=plan,
+                                news_summary_text=_news_text,
+                            )
+                            if _hot_picks:
+                                _recommendations["hot_picks"] = _hot_picks
+                                logger.info(
+                                    f"[Recommendations] 🔥 热点发现: {len(_hot_picks)} 只 "
+                                    f"({', '.join(p['symbol'] for p in _hot_picks[:3])})"
+                                )
+                        except Exception as _hot_e:
+                            logger.debug(f"[Recommendations] 热点发现异常（不影响主流程）: {_hot_e}")
+
+                        # 3. 推送
+                        _trigger = PremarketPushTrigger()
+                        _sent = _trigger.send_final(_recommendations)
+                        if _sent:
+                            logger.info("[Recommendations] ✅ 盘前推荐已推送")
+                        else:
+                            logger.warning("[Recommendations] 盘前推荐推送失败或已推送过")
+                    else:
+                        logger.debug("[Recommendations] recommendations.enabled=false, 跳过")
+                except Exception as _rec_e:
+                    logger.warning(f"[Recommendations] 推荐系统异常（不影响主流程）: {_rec_e}")
+                # === 盘前推荐系统集成 结束 ===
             else:
                 logger.warning("[盘前计划] ⚠️ 计划保存成功但加载失败，下次将重试")
         else:
@@ -1200,21 +1305,23 @@ def run_premarket_planning(scheduler):
 
 def run_open_checker(scheduler):
     """
-    美股开盘确认器 (每日一次, 约 09:15-09:25 ET)
+    美股开盘确认器 (每日一次, 约 09:15-09:29 ET)
     验证作战计划中的目标是否符合执行条件。
+    在 PRE_MARKET → TRADING 过渡窗口执行，确保 CANCELLED 标的不进入信号扫描。
     """
-    if getattr(scheduler, '_open_checker_executed_today', False):
-        return
-
     from app.core.scheduler_triggers import ET
     now_et = datetime.now(ET)
     today_et = now_et.date()
 
-    if getattr(scheduler, '_open_checker_date', None) == today_et:
-        scheduler._open_checker_executed_today = True
+    # 日期级幂等: 新的一天自动重置 flag
+    if getattr(scheduler, '_open_checker_date', None) != today_et:
+        scheduler._open_checker_executed_today = False
+
+    if getattr(scheduler, '_open_checker_executed_today', False):
         return
 
-    if not (now_et.hour == 9 and 15 <= now_et.minute <= 25):
+    # 时间窗口: 09:15-09:29 ET (开盘前15分钟，含补救窗口)
+    if not (now_et.hour == 9 and 15 <= now_et.minute <= 29):
         return
 
     logger.info("[开盘确认] 🔍 开始执行美股开盘确认...")
@@ -1232,10 +1339,21 @@ def run_open_checker(scheduler):
         scheduler._open_checker_executed_today = True
         scheduler._open_checker_date = today_et
 
+        # 刷新 BattlePlanManager 缓存，使 check_trade 读到最新状态
         from app.us_pipeline.battle_plan_manager import USBattlePlanManager
         mgr = USBattlePlanManager()
         mgr.load(checker.plan_path)
-        logger.info("[开盘确认] ✅ 确认完成，BattlePlanManager 已刷新")
+
+        # 汇总日志: 哪些标的被过滤
+        plan = mgr._plan if hasattr(mgr, '_plan') else {}
+        targets = plan.get('targets', [])
+        cancelled = [t for t in targets if t.get('open_check_status') == 'CANCELLED']
+        valid = [t for t in targets if t.get('open_check_status') == 'VALID']
+        logger.info(
+            f"[开盘确认] ✅ 完成 | "
+            f"有效={len(valid)} 取消={len(cancelled)} | "
+            f"被过滤: {[t['symbol'] for t in cancelled] if cancelled else '无'}"
+        )
     except Exception as e:
         logger.error(f"[开盘确认] ❌ 执行失败: {e}", exc_info=True)
 
