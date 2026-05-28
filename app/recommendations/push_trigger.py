@@ -213,7 +213,13 @@ class PremarketPushTrigger:
 
     # ─── 公开 API: 最终推荐 ──────────────────────────────────────
     def send_final(self, recommendations: Dict[str, Any]) -> bool:
-        """推送最终推荐 (09:25 ET 调用)."""
+        """推送最终推荐 (09:25 ET 调用).
+
+        质量控制: 不值得推就不推，不做无意义的推送。
+        - 有 GREEN 信号 → 推完整卡片
+        - 无 GREEN 但有持仓操作指令 → 推简短操作提醒
+        - 都没有 → 不推 (静默)
+        """
         try:
             if not self._is_enabled():
                 logger.info("[PushTrigger] recommendations.enabled=false, 跳过 final 推送")
@@ -225,13 +231,42 @@ class PremarketPushTrigger:
             if self._already_pushed("final", date_str):
                 logger.info(f"[PushTrigger] {date_str} final 推荐今日已推送, 幂等跳过")
                 return False
-            content = self.format_recommendation_card(recommendations)
-            title = f"美股盘前作战 | {date_str}"
+
+            # ── 质量门禁: 值不值得推? ──
+            recs = recommendations.get("recommendations") or []
+            has_green = any(
+                r.get("validation", {}).get("verdict") == "GREEN" for r in recs
+            )
+            position_actions = recommendations.get("position_actions") or []
+            blocked = recommendations.get("blocked_recommendations") or []
+            conviction = recommendations.get("system_conviction")
+
+            if not has_green and not position_actions:
+                # 没有可交易信号，也没有持仓操作 → 不推
+                logger.info(
+                    f"[PushTrigger] {date_str} 无可推送内容 "
+                    f"(0 GREEN信号, 0持仓操作, {len(blocked)}已拦截), 静默跳过"
+                )
+                # 仍然标记为已处理，避免后续重试
+                self._mark_pushed("final", date_str)
+                return False
+
+            if not has_green and position_actions:
+                # 只有持仓操作指令 → 推简短提醒
+                content = self._format_actions_only(recommendations)
+                title = f"📤 持仓操作提醒 | {date_str}"
+                level = Level.HIGH  # 操作指令是高优先级
+            else:
+                # 有 GREEN 信号 → 完整卡片
+                content = self.format_recommendation_card(recommendations)
+                title = f"⚔️ 美股盘前作战 | {date_str}"
+                level = Level.HIGH
+
             ok = self._dispatch(
                 title=title,
                 body=content,
                 category=Category.PLAN_PREMARKET,
-                level=Level.HIGH,
+                level=level,
                 dedup_key=f"reco:final:{date_str}",
                 payload={"date": date_str, "kind": "premarket_final"},
             )
@@ -241,6 +276,46 @@ class PremarketPushTrigger:
         except Exception as e:
             logger.warning(f"[PushTrigger] send_final 异常: {e}", exc_info=True)
             return False
+
+    def _format_actions_only(self, recommendations: Dict[str, Any]) -> str:
+        """简短卡片: 只有持仓操作指令，无新开仓推荐。"""
+        date_str = recommendations.get("date") or datetime.now().strftime("%Y-%m-%d")
+        conviction = recommendations.get("system_conviction")
+        debate_summary = recommendations.get("debate_summary") or ""
+        position_actions = recommendations.get("position_actions") or []
+        blocked = recommendations.get("blocked_recommendations") or []
+
+        lines: List[str] = []
+        lines.append(f"⛔ 今日不开新仓 | {date_str}")
+
+        if conviction is not None:
+            lines.append(f"系统信心: {conviction:.0%}" + (" — 建议观望" if conviction < 0.4 else ""))
+        if debate_summary:
+            lines.append(f"📝 {debate_summary}")
+        if blocked:
+            lines.append(f"🚫 {len(blocked)}只标的被历史数据验证拦截")
+
+        if position_actions:
+            lines.append("")
+            lines.append("📤 持仓操作:")
+            for pa in position_actions[:8]:
+                if not isinstance(pa, dict):
+                    continue
+                sym = self._clean_sym(pa.get("symbol", "?"))
+                action = pa.get("action", "?").upper()
+                rationale = pa.get("rationale") or pa.get("reason") or ""
+                zone = pa.get("target_zone") or pa.get("entry_zone")
+
+                emoji = {"EXIT": "🔴", "REDUCE": "🟡", "HOLD": "🟢", "TRIM": "🟡"}.get(action, "⚪")
+                zone_str = ""
+                if isinstance(zone, (list, tuple)) and len(zone) >= 2:
+                    zone_str = f" @{zone[0]}-{zone[1]}"
+                r_short = rationale[:50] + ("..." if len(rationale) > 50 else "") if rationale else ""
+                lines.append(f"  {emoji} {sym}: {action}{zone_str}" + (f" — {r_short}" if r_short else ""))
+
+        lines.append("")
+        lines.append("无历史验证通过的新开仓信号，等待更好机会。")
+        return "\n".join(lines)
 
     def send_accuracy_report(self, accuracy_report: Dict[str, Any]) -> bool:
         """推送盘后准确率报告 (16:30 ET 调用)."""
