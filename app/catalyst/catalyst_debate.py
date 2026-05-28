@@ -232,8 +232,8 @@ class CatalystDebate:
                 json_mode=True,
                 timeout=min(timeout_seconds, 60),
             )
-            if resp.ok and resp.data:
-                return role, resp.data
+            if resp.success and resp.response:
+                return role, resp.response
             logger.warning("[CatalystDebate] %s 模型返回失败: %s", role, resp.error)
             return role, None
         
@@ -288,10 +288,10 @@ class CatalystDebate:
                 json_mode=True,
                 timeout=min(timeout_seconds, 45),
             )
-            if resp.ok and resp.data:
+            if resp.success and resp.response:
                 # 用交叉验证结果修正 Round 1
                 updated = list(r1_results)
-                updated.append(resp.data)  # 追加交叉验证结论
+                updated.append(resp.response)  # 追加交叉验证结论
                 logger.info("[CatalystDebate] Round 2 交叉验证完成")
                 return updated
         except Exception as e:

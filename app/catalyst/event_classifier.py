@@ -422,8 +422,8 @@ class CatalystClassifier:
                     timeout=20,
                 )
                 
-                if result.ok and result.data:
-                    llm_data = result.data
+                if result.success and result.response:
+                    llm_data = result.response
                     if not llm_data.get("confirmed", True):
                         logger.info("[Catalyst] LLM 否决: %s", c["headline"][:40])
                         candidates.remove(c)

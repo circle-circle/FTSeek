@@ -256,8 +256,8 @@ def _analyze_misses(misses: List[Dict], details: List[Dict]) -> List[str]:
                 timeout=30,
             )
             
-            if result.ok and result.data:
-                lesson_text = result.data.get("lesson", "")
+            if result.success and result.response:
+                lesson_text = result.response.get("lesson", "")
                 if lesson_text:
                     lessons.append(
                         f"[催化回看] {miss['symbol']} {miss['predicted']}→"
@@ -275,11 +275,12 @@ def _inject_lessons(lessons: List[str]):
         from app.review.lesson_injector import LessonInjector
         li = LessonInjector()
         for lesson in lessons:
-            li.add_lesson(
-                text=lesson,
+            li.save_lesson(
+                category="catalyst_review",
+                title=lesson[:80],
+                description=lesson,
+                impact_score=0.6,
                 source="catalyst_postmarket",
-                confidence=0.6,
-                tags=["catalyst", "postmarket_review"],
             )
         logger.info("[CatalystReview] 注入 %d 条教训到 LessonInjector", len(lessons))
     except Exception as e:

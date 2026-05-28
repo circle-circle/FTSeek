@@ -26,11 +26,188 @@ from app.core.models import (
 from app.execution.options_selector import OptionSelector
 from app.data.adaptive_polling import StockTier
 from app.storage.rejection_logger import get_rejection_logger
+from app.execution.twap_executor import (
+    TWAPExecutor, TWAPResult, should_use_twap, cancel_active_twap,
+)
 
 logger = logging.getLogger(__name__)
 
 # ── 全局常量 ──
 DEFAULT_ORDER_QTY = 50  # 默认下单股数 (watchlist_us.json 可覆盖)
+
+
+# ══════════════════════════════════════════════════════════════════
+#  执行优化: TWAP 拆单 + 延迟/滑点监控 (Task #14, 2026-05-27)
+# ══════════════════════════════════════════════════════════════════
+
+def _load_execution_optimization_config() -> Dict[str, Any]:
+    """从 unified_config.yaml 读取 TWAP / 延迟跟踪 配置"""
+    defaults = {
+        "twap_threshold_usd": 5000.0,
+        "twap_slices": 4,
+        "twap_interval_seconds": 30.0,
+        "enable_latency_tracking": True,
+        "enable_twap": True,
+    }
+    try:
+        from app.core.config_container import get_config
+        cfg = get_config()
+        return {
+            "twap_threshold_usd": float(cfg.get_dotted("execution.twap_threshold_usd", defaults["twap_threshold_usd"])),
+            "twap_slices": int(cfg.get_dotted("execution.twap_slices", defaults["twap_slices"])),
+            "twap_interval_seconds": float(cfg.get_dotted("execution.twap_interval_seconds", defaults["twap_interval_seconds"])),
+            "enable_latency_tracking": bool(cfg.get_dotted("execution.enable_latency_tracking", defaults["enable_latency_tracking"])),
+            "enable_twap": bool(cfg.get_dotted("execution.enable_twap", defaults["enable_twap"])),
+        }
+    except Exception as e:
+        logger.debug(f"[执行优化] 配置加载失败, 使用默认值: {e}")
+        return defaults
+
+
+def _record_execution_metrics(
+    symbol: str,
+    direction: str,
+    signal_price: float,
+    fill_price: float,
+    signal_time: float,
+    fill_time: float,
+    twap_result: Optional[TWAPResult] = None,
+) -> Dict[str, Any]:
+    """计算执行延迟 + 滑点, 返回 metadata dict (供写入 trade_records.metadata_json)
+
+    同时写日志: "Execution latency: {ms}ms for {symbol}"
+    """
+    latency_ms = int(max(0.0, (fill_time - signal_time)) * 1000)
+    slippage_pct = 0.0
+    if signal_price and signal_price > 0 and fill_price and fill_price > 0:
+        slip = (float(fill_price) - float(signal_price)) / float(signal_price) * 100.0
+        # SHORT 方向: 实际价 < 参考价 = 不利 → 反转符号使 “正 = 不利”
+        slippage_pct = -slip if str(direction).upper() == "SHORT" else slip
+
+    logger.info(f"Execution latency: {latency_ms}ms for {symbol}")
+
+    metadata: Dict[str, Any] = {
+        "signal_price": round(float(signal_price or 0.0), 4),
+        "fill_price": round(float(fill_price or 0.0), 4),
+        "slippage_pct": round(float(slippage_pct), 4),
+        "execution_latency_ms": latency_ms,
+        "signal_time": datetime.fromtimestamp(signal_time).isoformat() if signal_time else None,
+        "fill_time": datetime.fromtimestamp(fill_time).isoformat() if fill_time else None,
+        "execution_mode": "TWAP" if twap_result else "MARKET",
+    }
+    if twap_result is not None:
+        metadata["twap"] = twap_result.to_dict()
+        if twap_result.degraded:
+            metadata["execution_mode"] = "TWAP_DEGRADED"
+        if twap_result.canceled:
+            metadata["execution_mode"] = "TWAP_CANCELED"
+    return metadata
+
+
+def _submit_order_optimized(
+    scheduler,
+    order: Order,
+    signal_price: float,
+    signal_time: float,
+    direction: Direction,
+    signal_id: str = "",
+    trace_id: str = "",
+) -> Tuple[Order, Dict[str, Any]]:
+    """统一下单入口 — 金额 > 阈值 走 TWAP, 否则走市价; 返回 (order, exec_metadata)
+
+    Args:
+        order: 已准备好的订单 (quantity/price/direction 均已设置)
+        signal_price: 信号生成时参考价
+        signal_time: 信号生成 epoch (s)
+        direction: 方向
+        signal_id/trace_id: 归因
+
+    Returns:
+        (submitted_order, metadata) — metadata 含 slippage_pct/execution_latency_ms/twap 详情
+    """
+    cfg = _load_execution_optimization_config()
+    notional = float(order.quantity) * float(order.price or signal_price or 0.0)
+    use_twap = (
+        cfg["enable_twap"]
+        and should_use_twap(notional, cfg["twap_threshold_usd"])
+        and scheduler.execution_engine is not None
+    )
+
+    if not use_twap:
+        # 普通路径
+        if scheduler.execution_engine:
+            submitted = scheduler.execution_engine.submit_order(order)
+        else:
+            order.state = OrderState.FILLED
+            order.filled_quantity = order.quantity
+            order.avg_fill_price = signal_price or order.price
+            order.fill_price = order.avg_fill_price
+            order.filled_at = datetime.now()
+            submitted = order
+
+        fill_price = float(
+            getattr(submitted, "fill_price", 0)
+            or getattr(submitted, "avg_fill_price", 0)
+            or order.price
+            or signal_price
+        )
+        fill_time = time.time()
+        meta = _record_execution_metrics(
+            order.symbol, direction.value if hasattr(direction, "value") else str(direction),
+            signal_price, fill_price, signal_time, fill_time, twap_result=None,
+        )
+        return submitted, meta
+
+    # ── TWAP 路径 ──
+    logger.info(
+        f"[执行优化] {order.symbol} 订单金额 ≈ ${notional:,.0f} > 阈值 "
+        f"${cfg['twap_threshold_usd']:,.0f} → 启用 TWAP 拆单 "
+        f"({cfg['twap_slices']} 片 / {cfg['twap_interval_seconds']:.0f}s)"
+    )
+
+    def _broker_submit(slice_order: Order) -> Order:
+        return scheduler.execution_engine.submit_order(slice_order)
+
+    executor = TWAPExecutor(
+        broker_submit=_broker_submit,
+        slices=cfg["twap_slices"],
+        interval_seconds=cfg["twap_interval_seconds"],
+        signal_price=signal_price,
+        signal_time=signal_time,
+    )
+
+    twap_result = executor.execute_sync(
+        symbol=order.symbol,
+        direction=direction,
+        total_qty=int(order.quantity),
+        price_limit=order.price if order.order_type == OrderType.LIMIT else None,
+        signal_id=signal_id,
+        trace_id=trace_id,
+    )
+
+    # 将 TWAP 结果回填到 order 对象, 保持与下游一致
+    order.state = OrderState.FILLED if twap_result.filled_qty > 0 else OrderState.REJECTED
+    order.filled_quantity = float(twap_result.filled_qty)
+    order.avg_fill_price = float(twap_result.avg_fill_price)
+    try:
+        order.fill_price = float(twap_result.avg_fill_price)
+    except Exception as _silent_e:
+        logger.debug(f"[silent_except:order_executor.py] {_silent_e}")
+    order.filled_at = datetime.fromtimestamp(twap_result.finished_at) if twap_result.finished_at else datetime.now()
+    order.sent_at = datetime.fromtimestamp(twap_result.started_at) if twap_result.started_at else datetime.now()
+    # 首个成交片的 futu_order_id 作为代表 (供归因/查询)
+    for s in twap_result.slices:
+        if s.futu_order_id:
+            order.futu_order_id = s.futu_order_id
+            break
+
+    fill_time = twap_result.finished_at or time.time()
+    meta = _record_execution_metrics(
+        order.symbol, direction.value if hasattr(direction, "value") else str(direction),
+        signal_price, twap_result.avg_fill_price,
+        signal_time, fill_time, twap_result=twap_result,
+    )
+    return order, meta
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -276,25 +453,47 @@ def _notify_order(scheduler, symbol: str, signal: SignalScore, order: Order, pos
     P-Push (2026-05-16): 同时走 PushHub (聚合 + 防疲劳) 和旧 notifier.
     yaml `push.enabled=true` 时 PushHub 接管, 旧 notifier 仍发 (双路过渡期).
     收盘后 daily_review 看是否单一通道即可, 然后再删旧路径.
+
+    Task #42 (P0, 2026-05-28): 投票→交易记录数据链路修复
+      历史问题: signal_strength/voting_result 写入逻辑被嵌在 ``if scheduler.notifier:``
+      块内, 当 notifier 未配置或失败时, position.metadata 永远拿不到投票数据,
+      导致平仓时 trade_records 的 signal_strength / final_strength 全为 0.
+      修复: 将 position.metadata 写入提到外层, 与 notifier 解耦, 确保投票结果
+      始终落到持仓元数据上.
     """
+    # ── Task #42: 始终先写 position.metadata, 不依赖 notifier 是否启用 ──
+    try:
+        # P0 修复 (2026-05-27): 推导 entry_reason 并写入 position.metadata
+        # 修复 52.2% 交易 entry_reason 为空的归因断链问题
+        from app.core.models import derive_entry_reason
+        _entry_reason = derive_entry_reason(
+            strategy_id=signal.strategy_id,
+            source=(signal.metadata or {}).get("source", "") if hasattr(signal, "metadata") else "",
+            metadata=signal.metadata if hasattr(signal, "metadata") else {},
+        )
+
+        # 信号 + 投票快照 (用于平仓时 trade_records 字段回填)
+        _signal_snapshot = {
+            'signal_strength': int(getattr(signal, 'strength', 0) or 0),
+            'signal_confidence': float(getattr(signal, 'confidence', 0.0) or 0.0),
+            'strategy_id': getattr(signal, 'strategy_id', '') or '',
+            'voting_result': voting_result or {},
+            'source_type': 'MAIN_PIPELINE',  # P1 修复：标注来源
+            'entry_reason': _entry_reason,   # P0 归因修复
+        }
+
+        if hasattr(position, 'metadata') and position.metadata:
+            position.metadata.update(_signal_snapshot)
+        else:
+            position.metadata = dict(_signal_snapshot)
+    except Exception as _meta_err:
+        # metadata 写入失败不能阻断下单流程, 但要明确告警 (Task #42 要求)
+        logger.warning(
+            f"[Task#42] {symbol} 写 position.metadata 失败 (signal_strength 链路降级到 attribution/decisions 兜底): {_meta_err}"
+        )
+
     if scheduler.notifier:
         try:
-            # 将信号信息和投票结果写入 position.metadata (供后续平仓通知和复盘使用)
-            if hasattr(position, 'metadata') and position.metadata:
-                position.metadata['signal_strength'] = signal.strength
-                position.metadata['signal_confidence'] = signal.confidence
-                position.metadata['strategy_id'] = signal.strategy_id
-                position.metadata['voting_result'] = voting_result
-                position.metadata['source_type'] = 'MAIN_PIPELINE'  # P1 修复：标注来源
-            else:
-                position.metadata = {
-                    'signal_strength': signal.strength,
-                    'signal_confidence': signal.confidence,
-                    'strategy_id': signal.strategy_id,
-                    'voting_result': voting_result,
-                    'source_type': 'MAIN_PIPELINE',  # P1 修复：标注来源
-                }
-
             scheduler.notifier.notify_order_filled(order, position, voting_result=voting_result)
         except Exception as e:
             logger.error(f"[通知] 下单通知失败: {e}", exc_info=True)
@@ -346,7 +545,7 @@ def _notify_exit(scheduler, position: Position, reason: ExitReason, pnl: float, 
 #  动态仓位计算
 # ═══════════════════════════════════════════════════════════════════
 
-def _get_order_qty(scheduler, symbol: str, atr: float = 0, direction: str = "LONG") -> int:
+def _get_order_qty(scheduler, symbol: str, atr: float = 0, direction: str = "LONG", context: dict = None) -> int:
     """
     获取订单数量 (基于资本安全水位的动态仓位计算)
 
@@ -447,19 +646,47 @@ def _get_order_qty(scheduler, symbol: str, atr: float = 0, direction: str = "LON
             logger.debug(f"[动态仓位] {symbol} ATR 不可用, 使用固定 10% 止损")
 
         # ── 动态计算仓位 (P3 2026-05-02: 接入 PositionSizer 纯函数 + 资金自适应) ──
-        from app.risk.position_sizer import calc_position_size, load_config_from_yaml
+        # 2026-05-27: 支持 VOLATILITY_ADJUSTED 方法
+        from app.risk.position_sizer import calc_position_size, calc_volatility_adjusted_size, load_config_from_yaml, get_sizing_method
         tiers, water_levels, guards = load_config_from_yaml()
+        sizing_method = get_sizing_method()
 
-        sizing_result = calc_position_size(
-            equity=capital._state.current_equity,
-            buying_power=capital._state.buying_power,
-            entry_price=price,
-            stop_loss_price=stop_loss_price,
-            tiers=tiers,
-            water_levels=water_levels,
-            drawdown_pct=capital._state.drawdown_pct,
-            guards=guards,
-        )
+        if sizing_method == "volatility_adjusted" and atr and atr > 0:
+            # 获取 ATR 历史均值 (20天)
+            atr_mean = atr  # 默认等于当前值 (scale=1.0)
+            try:
+                from app.core.config_container import get_config
+                _cfg = get_config()
+                # 尝试从 market_data 获取历史 ATR 均值
+                _atr_mean_from_ctx = (context or {}).get("atr_mean", 0)
+                if _atr_mean_from_ctx > 0:
+                    atr_mean = _atr_mean_from_ctx
+            except Exception as _silent_e:
+                logger.debug(f"[silent_except:order_executor.py] {_silent_e}")
+
+            sizing_result = calc_volatility_adjusted_size(
+                equity=capital._state.current_equity,
+                buying_power=capital._state.buying_power,
+                entry_price=price,
+                stop_loss_price=stop_loss_price,
+                atr_current=atr,
+                atr_mean=atr_mean,
+                tiers=tiers,
+                water_levels=water_levels,
+                drawdown_pct=capital._state.drawdown_pct,
+                guards=guards,
+            )
+        else:
+            sizing_result = calc_position_size(
+                equity=capital._state.current_equity,
+                buying_power=capital._state.buying_power,
+                entry_price=price,
+                stop_loss_price=stop_loss_price,
+                tiers=tiers,
+                water_levels=water_levels,
+                drawdown_pct=capital._state.drawdown_pct,
+                guards=guards,
+            )
 
         size = sizing_result.shares
         logger.info(
@@ -469,6 +696,41 @@ def _get_order_qty(scheduler, symbol: str, atr: float = 0, direction: str = "LON
             f"tier={sizing_result.tier} | wl={sizing_result.water_level} | "
             f"pct={sizing_result.position_pct*100:.1f}%"
         )
+
+        # Task #13 (2026-05-27): 叠加 regime_adapter 仓位缩放 (HIGH_VOL=50% etc.)
+        # 与 VOLATILITY_ADJUSTED 不冲突: ATR scale 描述个股波动, regime scale 描述全市场状态
+        # regime 从 shared_kernel / VIX 代理推断 (与上游 pre_trade_check 一致)
+        try:
+            _regime = None
+            try:
+                from app.core.shared_kernel import get_shared_kernel
+                _kernel = get_shared_kernel()
+                _regime = (
+                    getattr(_kernel, "current_regime", None)
+                    or getattr(_kernel, "market_regime", None)
+                )
+            except Exception as _silent_e:
+                logger.debug(f"[silent_except:order_executor.py] {_silent_e}")
+            if not _regime:
+                # 以 VIX 作为 fallback (与 pre_trade_check 同逻辑)
+                try:
+                    from app.analysis.market_state import MarketStateChecker
+                    _vix_data = MarketStateChecker()._fetch_vix()
+                    _vix = _vix_data[0] if isinstance(_vix_data, tuple) else _vix_data
+                    if isinstance(_vix, (int, float)) and _vix >= 25:
+                        _regime = "HIGH_VOL"
+                except Exception as _silent_e:
+                    logger.debug(f"[silent_except:order_executor.py] {_silent_e}")
+            if _regime and size > 0:
+                from app.strategy.regime_adapter import apply_regime_position_scale
+                _adj_size, _scale, _note = apply_regime_position_scale(size, _regime)
+                if _adj_size != size and _scale < 1.0:
+                    logger.info(
+                        f"[动态仓位·Regime] {symbol} {_note}"
+                    )
+                    size = _adj_size
+        except Exception as _e:
+            logger.debug(f"[动态仓位·Regime] 应用缩放失败 (忽略): {_e}")
 
         # W5 修复 (2026-05-02): 仅在 shares==0 时 fallback，warning 仅记录不阻断
         if sizing_result.warnings:
@@ -619,6 +881,9 @@ def _submit_put_option(scheduler, symbol: str, signal: SignalScore, context: Dic
     try:
         position = Position(
             strategy_id="voting_llm_option",
+            # Task #15 (2026-05-27): 期权路径补 trace_id / signal_id 以贯通全链路
+            signal_id=getattr(signal, "signal_id", "") or "",
+            trace_id=getattr(signal, "trace_id", "") or "",
             symbol=symbol,
             direction=Direction.SHORT,
             size=float(qty),
@@ -791,13 +1056,50 @@ def _check_gates_and_conflicts(scheduler, symbol: str, signal: SignalScore, cont
     if is_short:
         # 做空门禁 (P0-辩论修复 2026-05-26: direct语义, 无需反转)
         # strength 越高 = 信号越强 (LONG/SHORT 均同)
-        if signal.strength < 50:
+        # P1 (2026-05-28 任务#43): 门限可配置 + 计划标的 bonus
+        # 原固定门限 (保留处理表述供回归测试识别): signal.strength < 50
+        _short_threshold = 50
+        _bp_bonus_enabled = True
+        _bp_bonus = 0.25
+        _bp_floor = 30
+        try:
+            from app.core.config_container import get_config as _gc_short
+            _pt_cfg = _gc_short().get_dotted("risk.pre_trade", {}) or {}
+            _short_threshold = int(_pt_cfg.get("short_min_strength", 50))
+            _bp_bonus_enabled = bool(_pt_cfg.get("battle_plan_bonus_enabled", True))
+            _bp_bonus = float(_pt_cfg.get("battle_plan_bonus", 0.25))
+            _bp_floor = int(_pt_cfg.get("min_effective_strength_floor", 30))
+        except Exception as _silent_e:
+            logger.debug(f"[silent_except:order_executor.py] {_silent_e}")
+        # battle_plan bonus: 计划标的降低门槛 (默认 25%, 低于 floor 则取 floor)
+        _eff_short_threshold = _short_threshold
+        _in_plan = False
+        if _bp_bonus_enabled:
+            try:
+                from app.us_pipeline.battle_plan_manager import USBattlePlanManager
+                _bp_mgr = USBattlePlanManager()
+                _info = _bp_mgr.get_target_info(symbol) or {}
+                if _info:
+                    _status = str(_info.get("status", "")).upper()
+                    _catalyst = str(_info.get("catalyst", ""))
+                    if (
+                        _status in ("ACTIVE", "VALID", "ANY", "")
+                        and "Watchlist fallback" not in _catalyst
+                    ):
+                        _in_plan = True
+                        _adj = int(round(_short_threshold * (1.0 - max(0.0, min(0.5, _bp_bonus)))))
+                        _eff_short_threshold = max(_bp_floor, _adj)
+            except Exception:
+                _in_plan = False
+
+        if signal.strength < _eff_short_threshold:
+            _bp_tag = " [BP]" if _in_plan else ""
             logger.warning(
                 f"🚫 [做空门禁] {symbol} 做空信号强度不足 "
-                f"(strength={signal.strength} < 50)"
+                f"(strength={signal.strength} < {_eff_short_threshold}{_bp_tag})"
             )
             get_rejection_logger().record(symbol,
-                f"short_strength={signal.strength}<50",
+                f"short_strength={signal.strength}<{_eff_short_threshold}",
                 "SHORT_EFFECTIVE_WEAK", strength=signal.strength,
                 confidence=None, direction="SHORT")
             return False
@@ -852,8 +1154,8 @@ def _check_gates_and_conflicts(scheduler, symbol: str, signal: SignalScore, cont
             if not ok:
                 logger.warning(f"🚫 [市况适配] {symbol} {reason}")
                 return False
-        except ImportError:
-            pass  # short_specific_checks 模块不可用时放行
+        except ImportError as _silent_e:
+            logger.debug(f"[silent_except:order_executor.py] {_silent_e}")
 
     try:
         from app.us_pipeline.battle_plan_manager import USBattlePlanManager
@@ -998,6 +1300,17 @@ def _check_gates_and_conflicts(scheduler, symbol: str, signal: SignalScore, cont
     except Exception as e:
         logger.debug(f"[竞态防护] 检查失败 (继续): {e}")
 
+    # Task #15 (2026-05-27): 风控全部通过，输出统一 [RISK] 日志前缀
+    try:
+        _trace_id = getattr(signal, "trace_id", "") or "NONE"
+        logger.info(
+            f"[RISK][trace:{_trace_id}] Pre-trade check passed for {symbol} "
+            f"(dir={signal.direction.value if hasattr(signal.direction, 'value') else signal.direction}, "
+            f"strength={signal.strength}, confidence={signal.confidence:.2f})"
+        )
+    except Exception as _silent_e:
+        logger.debug(f"[silent_except:order_executor.py] {_silent_e}")
+
     return True
 
 def _handle_pyramid_add(scheduler, symbol: str, signal: SignalScore, context: Dict[str, Any]) -> bool:
@@ -1119,8 +1432,8 @@ def _execute_short(scheduler, symbol: str, signal: SignalScore, context: Dict[st
             # 模拟盘 + force_options=true → 走期权路径
             if not is_sim or not force_options:
                 try_direct = True
-    except Exception:
-        pass
+    except Exception as _silent_e:
+        logger.debug(f"[silent_except:order_executor.py] {_silent_e}")
 
     if try_direct:
         try:
@@ -1131,8 +1444,8 @@ def _execute_short(scheduler, symbol: str, signal: SignalScore, context: Dict[st
             # P0-3 同步修复 (2026-05-03): 清理可能已添加的幽灵仓
             try:
                 scheduler.position_store.remove(symbol)
-            except (KeyError, Exception):
-                pass
+            except (KeyError, Exception) as _silent_e:
+                logger.debug(f"[silent_except:order_executor.py] {_silent_e}")
 
     # 降级路径: Put 期权 (仅在期权启用时有效)
     if options_disabled:
@@ -1197,8 +1510,8 @@ def _execute_stock_short(scheduler, symbol: str, signal: SignalScore, context: D
                     "PRE_ENTRY_GATE", strength=getattr(signal, "strength", 0),
                     confidence=getattr(signal, "confidence", 0), direction="SHORT",
                 )
-            except Exception:
-                pass
+            except Exception as _silent_e:
+                logger.debug(f"[silent_except:order_executor.py] {_silent_e}")
             return
     except Exception as _ge:
         logger.debug(f"[PreEntryGate·SHORT·exception] {symbol} 检查失败 (放行): {_ge}")
@@ -1210,7 +1523,7 @@ def _execute_stock_short(scheduler, symbol: str, signal: SignalScore, context: D
     session_vol_ratio = kernel.get_session_vol_ratio(entry_session)
 
     # 非对称仓位 (幻方 Principle 4)
-    long_qty = _get_order_qty(scheduler, symbol, atr, direction="SHORT")
+    long_qty = _get_order_qty(scheduler, symbol, atr, direction="SHORT", context=context)
     short_ratio = _load_short_position_ratio()
     quantity = max(1, int(long_qty * short_ratio))
 
@@ -1373,8 +1686,8 @@ def _execute_long(scheduler, symbol: str, signal: SignalScore, context: Dict[str
                     "PRE_ENTRY_GATE", strength=getattr(signal, "strength", 0),
                     confidence=getattr(signal, "confidence", 0), direction="LONG",
                 )
-            except Exception:
-                pass
+            except Exception as _silent_e:
+                logger.debug(f"[silent_except:order_executor.py] {_silent_e}")
             return
     except Exception as _ge:
         logger.debug(f"[PreEntryGate·LONG·exception] {symbol} 检查失败 (放行): {_ge}")
@@ -1386,7 +1699,7 @@ def _execute_long(scheduler, symbol: str, signal: SignalScore, context: Dict[str
     session_vol_ratio = kernel.get_session_vol_ratio(entry_session)
 
     # 仓位计算：固定 50 股（可在 watchlist_us.json 每只股票配置 order_qty 覆盖）
-    quantity = _get_order_qty(scheduler, symbol, atr, direction="LONG")
+    quantity = _get_order_qty(scheduler, symbol, atr, direction="LONG", context=context)
     if quantity <= 0:
         logger.warning(f"[下单] {symbol} 数量为 0，跳过")
         return
@@ -1588,11 +1901,38 @@ def _execute_long(scheduler, symbol: str, signal: SignalScore, context: Dict[str
 
     try:
         if scheduler.execution_engine:
-            submitted_order = scheduler.execution_engine.submit_order(order)
+            # Task #14 (2026-05-27): 金额 > 阈值 走 TWAP 拆单, 同时记录延迟/滑点
+            _signal_time = float(getattr(signal, "created_at_ts", 0) or 0) or time.time()
+            try:
+                _ca = getattr(signal, "created_at", None)
+                if _ca and hasattr(_ca, "timestamp"):
+                    _signal_time = _ca.timestamp()
+            except Exception as _silent_e:
+                logger.debug(f"[silent_except:order_executor.py] {_silent_e}")
+            submitted_order, _exec_meta = _submit_order_optimized(
+                scheduler, order, signal_price=price, signal_time=_signal_time,
+                direction=signal.direction, signal_id=signal.signal_id, trace_id=signal.trace_id,
+            )
+            # 将执行元数据挂到 position.metadata, 供平仓时写入 trade_records.metadata_json
+            try:
+                if not hasattr(position, "metadata") or position.metadata is None:
+                    position.metadata = {}
+                position.metadata["execution"] = _exec_meta
+            except Exception as _silent_e:
+                logger.debug(f"[silent_except:order_executor.py] {_silent_e}")
+            # TWAP 下实际成交均价可能偏离信号价, 以成交均价作为持仓入场价
+            try:
+                _avg = float(getattr(submitted_order, "avg_fill_price", 0) or getattr(submitted_order, "fill_price", 0) or 0)
+                if _avg > 0 and abs(_avg - price) / max(price, 1e-6) > 1e-6:
+                    position.avg_entry_price = _avg
+            except Exception as _silent_e:
+                logger.debug(f"[silent_except:order_executor.py] {_silent_e}")
             logger.info(
-                f"[下单] {symbol} {signal.direction.value} "
-                f"qty={quantity} price=${price:.2f} "
-                f"SL=${stop_loss:.2f} TP1=${take_profit_1:.2f}"
+                f"[EXEC][trace:{getattr(signal, 'trace_id', '') or 'NONE'}] Order placed for {symbol} "
+                f"({signal.direction.value} qty={quantity} price=${price:.2f} "
+                f"SL=${stop_loss:.2f} TP1=${take_profit_1:.2f} "
+                f"mode={_exec_meta.get('execution_mode')} "
+                f"slip={_exec_meta.get('slippage_pct'):+.3f}% latency={_exec_meta.get('execution_latency_ms')}ms)"
             )
         else:
             # 无执行引擎：直接模拟成交
@@ -1601,8 +1941,8 @@ def _execute_long(scheduler, symbol: str, signal: SignalScore, context: Dict[str
             order.avg_fill_price = price
             submitted_order = order
             logger.info(
-                f"[模拟成交] {symbol} {signal.direction.value} "
-                f"qty={quantity} price=${price:.2f}"
+                f"[EXEC][trace:{getattr(signal, 'trace_id', '') or 'NONE'}] Simulated fill for {symbol} "
+                f"({signal.direction.value} qty={quantity} price=${price:.2f})"
             )
 
         # 记录持仓
@@ -1625,8 +1965,8 @@ def _execute_long(scheduler, symbol: str, signal: SignalScore, context: Dict[str
                     _eq = get_capital_safety_system()._state.total_equity or 0
                     if _eq > 0:
                         _pct = (quantity * price) / _eq
-                except Exception:
-                    pass
+                except Exception as _silent_e:
+                    logger.debug(f"[silent_except:order_executor.py] {_silent_e}")
             position.position_pct = round(_pct, 4)
         except Exception:
             position.owner_strategy = "main"
@@ -1652,8 +1992,8 @@ def _execute_long(scheduler, symbol: str, signal: SignalScore, context: Dict[str
                     f"broker_reconcile 将在 5min 内尝试修复",
                     async_mode=True,
                 )
-            except Exception:
-                pass
+            except Exception as _silent_e:
+                logger.debug(f"[silent_except:order_executor.py] {_silent_e}")
             return  # 中断后续 in-memory 操作
 
         # DB 持久化成功后, 写 in-memory PositionStore
@@ -1765,8 +2105,8 @@ def _execute_long(scheduler, symbol: str, signal: SignalScore, context: Dict[str
         # P0-3 修复 (2026-05-03): 下单失败时清理可能已添加的幽灵仓
         try:
             scheduler.position_store.remove(symbol)
-        except KeyError:
-            pass  # 未添加过，正常
+        except KeyError as _silent_e:
+            logger.debug(f"[silent_except:order_executor.py] {_silent_e}")
         except Exception as cleanup_err:
             logger.debug(f"[下单] 清理幽灵仓失败: {cleanup_err}")
 
@@ -1901,8 +2241,8 @@ def _check_reversal_cooldown(scheduler, symbol: str, direction) -> bool:
                     f"{opposite} 在 {gap:.0f}s 前刚平仓 (源={src}, 冷却={cooldown_sec}s)"
                 )
                 return False
-            except Exception:
-                pass
+            except Exception as _silent_e:
+                logger.debug(f"[silent_except:order_executor.py] {_silent_e}")
     except Exception as e:
         logger.debug(f"[F1·反向冷却] 查询失败 (放行): {e}")
     return True
@@ -1943,6 +2283,33 @@ def _submit_order(scheduler, symbol: str, signal: SignalScore, context: Dict[str
     # 价格随机游走时, 反向追单大概率被吃损
     if not _check_reversal_cooldown(scheduler, symbol, signal.direction):
         return
+
+    # Task #50 (2026-05-28): symbol+direction 级互斥锁
+    # 在 coordinator 仲裁前先做 (symbol, direction) 级阻断:
+    # - 避免 Main 与 Scalping 在同一标的同方向重复入场
+    # - 不同方向 (对冲) 仍放行
+    _sym_dir_owner = "main"
+    try:
+        _sig_meta = getattr(signal, "metadata", None) or {}
+        _sym_dir_owner = str(_sig_meta.get("owner_strategy") or "main")
+    except Exception as _silent_e:
+        logger.debug(f"[silent_except:order_executor.py] {_silent_e}")
+    try:
+        from app.execution.symbol_lock_manager import get_symbol_lock_manager
+        _sym_dir_lock = get_symbol_lock_manager()
+        _dir_str = signal.direction.value if hasattr(signal.direction, "value") else str(signal.direction)
+        if not _sym_dir_lock.try_acquire(symbol, _dir_str, _sym_dir_owner):
+            logger.warning(
+                f"[信号拒绝] {symbol} {_dir_str}: 被其他策略占有 "
+                f"(holder={_sym_dir_lock.is_locked(symbol, _dir_str)}), {_sym_dir_owner} 跳过"
+            )
+            return
+        # 标记本次持锁, 出口/平仓需释放
+        context["_symdir_lock_acquired"] = True
+        context["_symdir_lock_owner"] = _sym_dir_owner
+        context["_symdir_lock_dir"] = _dir_str
+    except Exception as _sde:
+        logger.debug(f"[SymbolLock·symdir] acquire 异常 (放行): {_sde}")
 
     # 0.7 Phase A (2026-05-14): Coordinator 多源信号采集 + 仲裁审计 (无副作用)
     # T4 (2026-05-16): sandbox enforce — 真实阻断 SymbolLock 冲突
@@ -2008,6 +2375,18 @@ def _submit_order(scheduler, symbol: str, signal: SignalScore, context: Dict[str
                     logger.debug(f"[R1·lock·release] {symbol} 主线 (未成单) 主动释放")
         except Exception as _re:
             logger.debug(f"[R1·release] 异常: {_re}")
+        # Task #50: symbol+direction 锁同步释放 (创仓失败路径)
+        try:
+            if context.get("_symdir_lock_acquired") and not context.get("_r1_position_created"):
+                from app.execution.symbol_lock_manager import get_symbol_lock_manager
+                get_symbol_lock_manager().release(
+                    symbol,
+                    context.get("_symdir_lock_dir", ""),
+                    context.get("_symdir_lock_owner", "main"),
+                )
+                context["_symdir_lock_acquired"] = False
+        except Exception as _sre:
+            logger.debug(f"[SymbolLock·symdir·release] 异常: {_sre}")
 
     try:
         # 1. 风控门禁与冲突检查
@@ -2046,6 +2425,35 @@ def _lookup_decision_id_by_trace(trace_id: str, symbol: str = "") -> str:
     用于平仓时无法从 position.metadata 获取 decision_id 的 fallback。
     Returns: decision_id or empty string.
     """
+
+
+def _derive_entry_reason_for_close(meta: dict) -> str:
+    """P0 修复 (2026-05-27): 平仓时推导 entry_reason
+
+    优先级:
+      1. position.metadata['entry_reason'] (开仓时已写入)
+      2. 从 strategy_id + source_type 推导
+      3. 兜底 'unknown'
+    """
+    from app.core.models import derive_entry_reason, EntryReason
+
+    # 1. 直接读取开仓时写入的 entry_reason
+    existing = meta.get("entry_reason", "")
+    if existing and existing != "None":
+        return existing
+
+    # 2. 推导
+    strategy_id = meta.get("strategy_id", "")
+    source = meta.get("source", "") or meta.get("source_type", "")
+    # source_type 可能是 MAIN_PIPELINE/SCALPING 等
+    if source == "SCALPING":
+        return EntryReason.SCALPING.value
+    return derive_entry_reason(
+        strategy_id=strategy_id,
+        source=source,
+        metadata=meta,
+    )
+
     import sqlite3
     from app.core.paths import get_trade_records_db
     db_path = get_trade_records_db()
@@ -2065,8 +2473,8 @@ def _lookup_decision_id_by_trace(trace_id: str, symbol: str = "") -> str:
                 ).fetchone()
                 if row and row[0]:
                     return row[0]
-    except Exception:
-        pass
+    except Exception as _silent_e:
+        logger.debug(f"[silent_except:order_executor.py] {_silent_e}")
     return ""
 
 
@@ -2113,6 +2521,70 @@ def _fetch_attribution_data(trace_id: str, symbol: str = "", trade_date: str = "
     except Exception as e:
         logger.debug(f"[归因回填] 查询 trade_attribution 失败：{e}")
     return 0, 0.0
+
+
+def _fetch_decision_data(symbol: str, trade_date: str = "", direction: str = ""):
+    """
+    Task #42 (P0, 2026-05-28): 投票→交易记录数据链路修复 — decisions.db 兜底查询.
+
+    当 position.metadata 丢失且 trade_attribution 也查不到 (例如 trace_id 为空)
+    时, 从 voting_coordinator 写入的 decisions.db 反查同一 (symbol, 交易日,
+    方向) 组合的最近一条决策, 补出 final_strength / consensus_level / signal_strength.
+
+    Returns:
+        dict {
+            "signal_strength": int,    # = decisions.final_strength (以投票后强度为准)
+            "signal_confidence": float, # = consensus_level
+            "final_strength": int,
+            "consensus_level": float,
+            "decision_id": str,
+        } 或空 dict (未命中).
+    """
+    import sqlite3
+    try:
+        from app.core.paths import get_decisions_db
+        db_path = get_decisions_db()
+    except Exception:
+        return {}
+    if not symbol:
+        return {}
+    # 规范化方向 (decisions.direction 存为 LONG/SHORT/NEUTRAL)
+    _dir = (direction or "").upper().strip()
+    try:
+        with sqlite3.connect(str(db_path)) as conn:
+            cursor = conn.cursor()
+            # 优先: symbol + trade_date + direction
+            params = [symbol]
+            sql = ("SELECT decision_id, final_strength, consensus_level, direction "
+                   "FROM decisions WHERE symbol = ?")
+            if trade_date:
+                sql += " AND date(created_at) = ?"
+                params.append(trade_date)
+            if _dir and _dir not in ("NEUTRAL", ""):
+                sql += " AND direction = ?"
+                params.append(_dir)
+            sql += " ORDER BY created_at DESC LIMIT 1"
+            row = cursor.execute(sql, tuple(params)).fetchone()
+            if not row and (_dir or trade_date):
+                # 退化: 仅匹配 symbol 取最近一条 (避免 trade_date 跨天/方向不一致漏掉)
+                row = cursor.execute(
+                    "SELECT decision_id, final_strength, consensus_level, direction "
+                    "FROM decisions WHERE symbol = ? ORDER BY created_at DESC LIMIT 1",
+                    (symbol,)
+                ).fetchone()
+            if row and row[1] is not None:
+                return {
+                    "decision_id":      row[0] or "",
+                    "final_strength":   int(row[1] or 0),
+                    "consensus_level":  float(row[2] or 0.0),
+                    # decisions.db 中 final_strength 即为投票后强度, 以此作为 signal_strength 兜底
+                    "signal_strength":  int(row[1] or 0),
+                    "signal_confidence": float(row[2] or 0.0),
+                    "direction":        row[3] or "",
+                }
+    except Exception as e:
+        logger.debug(f"[Task#42][decisions 兜底] {symbol} 查询失败: {e}")
+    return {}
 
 
 def _insert_trade_attribution(
@@ -2303,6 +2775,15 @@ def _get_contract_multiplier(symbol: str) -> int:
 
 def _close_position(scheduler, position: Position, current_price: float, exit_reason: ExitReason):
     """平仓 — 触及即全平，简洁优先"""
+    # Task #14 (2026-05-27): 如果该标的开仓 TWAP 还在进行中, 先取消剩余片, 避免平后被动加仓
+    try:
+        if cancel_active_twap(position.symbol, reason=f"close:{exit_reason.value}"):
+            logger.warning(
+                f"[平仓·TWAP取消] {position.symbol} 剩余 TWAP 片已取消 (reason={exit_reason.value})"
+            )
+    except Exception as _ce:
+        logger.debug(f"[平仓·TWAP取消] 异常(忽略): {_ce}")
+
     # 合约乘数 (美股期权标准乘数=100, 股票=1)
     contract_multiplier = _get_contract_multiplier(position.symbol)
 
@@ -2530,7 +3011,10 @@ def _close_position(scheduler, position: Position, current_price: float, exit_re
     # 配合 app/core/position_sync.py:USPositionSync.mark_closed_tombstone (60s ttl)
     try:
         from app.core.position_sync import get_us_position_sync
-        get_us_position_sync().mark_closed_tombstone(position.symbol)
+        _sync = get_us_position_sync()
+        _sync.mark_closed_tombstone(position.symbol)
+        # P0-3 加固 (2026-05-27): 立即确认 tombstone (broker 已确认成交)
+        _sync.confirm_tombstone(position.symbol)
     except Exception as _te:
         logger.debug(f"[平仓] tombstone 标记失败 (不影响平仓): {_te}")
 
@@ -2546,6 +3030,15 @@ def _close_position(scheduler, position: Position, current_price: float, exit_re
     except Exception as _ce:
         logger.debug(f"[Coordinator] on_position_closed 失败: {_ce}")
 
+    # Task #50 (2026-05-28): 释放 symbol+direction 级互斥锁
+    try:
+        from app.execution.symbol_lock_manager import get_symbol_lock_manager
+        _dir_str = position.direction.value if hasattr(position.direction, "value") else str(position.direction)
+        _owner = getattr(position, "owner_strategy", None) or "main"
+        get_symbol_lock_manager().release(position.symbol, _dir_str, _owner)
+    except Exception as _sre:
+        logger.debug(f"[SymbolLock·symdir·close] 释放异常: {_sre}")
+
     # 写入持久化交易记录
     try:
         meta = getattr(position, "metadata", {}) or {}
@@ -2557,15 +3050,40 @@ def _close_position(scheduler, position: Position, current_price: float, exit_re
         # while position.metadata may be lost due to service restart or sync overwrite.
         signal_strength = meta.get("signal_strength", 0)
         signal_confidence = meta.get("signal_confidence", 0.0)
+        # Task #42 (P0, 2026-05-28): 同步从 metadata 中读 voting/decision 快照,
+        # 供后面 final_strength / consensus_level 优先使用
+        _decision_data = {}
+        _trade_date_for_lookup = _et_trade_date(position.entry_time)
+        _direction_for_lookup = (
+            position.direction.value if hasattr(position.direction, "value") else str(position.direction)
+        )
         if signal_strength == 0:
             signal_strength, signal_confidence = _fetch_attribution_data(
                 position.trace_id,
                 symbol=position.symbol,
-                trade_date=_et_trade_date(position.entry_time),
+                trade_date=_trade_date_for_lookup,
             )
             if signal_strength > 0:
-                logger.info(f"[平仓·归因回填] {position.symbol} trade_date={_et_trade_date(position.entry_time)} "
+                logger.info(f"[平仓·归因回填] {position.symbol} trade_date={_trade_date_for_lookup} "
                             f"signal_strength={signal_strength} confidence={signal_confidence}")
+        # Task #42 (P0, 2026-05-28): trade_attribution 仍为 0 时, 从 decisions.db 反查投票结果.
+        # 场景: 代码重启后 position.metadata 丢失 + position.trace_id 为空
+        # (例如 close-* 兜底 trace_id) 这种双丢失的古老仓位.
+        if signal_strength == 0:
+            _decision_data = _fetch_decision_data(
+                symbol=position.symbol,
+                trade_date=_trade_date_for_lookup,
+                direction=_direction_for_lookup,
+            )
+            if _decision_data.get("signal_strength", 0) > 0:
+                signal_strength = _decision_data["signal_strength"]
+                signal_confidence = _decision_data["signal_confidence"]
+                logger.info(
+                    f"[平仓·decisions 兜底] {position.symbol} "
+                    f"trade_date={_trade_date_for_lookup} dir={_direction_for_lookup} "
+                    f"decision_id={_decision_data.get('decision_id', '')} "
+                    f"final_strength={signal_strength} consensus={signal_confidence}"
+                )
 
         # P1-5 (2026-05-14): UPDATE trade_attribution 的 exit_* 字段 (F19 完整 schema)
         try:
@@ -2594,8 +3112,13 @@ def _close_position(scheduler, position: Position, current_price: float, exit_re
 
         # O4 (2026-05-16): voting 缺失时回退到 signal_strength/confidence
         # 5/15 4/12 主线 trades final_strength=0 (fast-path 传 None → voting_result={} → 0)
+        # Task #42 (2026-05-28): 优先顺序 — voting_result -> decisions.db -> signal_strength
         _final_strength = (voting_result or {}).get("final_strength", 0) or 0
         _consensus_level = (voting_result or {}).get("consensus_level", 0.0) or 0.0
+        if not _final_strength and _decision_data.get("final_strength", 0):
+            _final_strength = int(_decision_data["final_strength"])
+        if not _consensus_level and _decision_data.get("consensus_level", 0.0):
+            _consensus_level = float(_decision_data["consensus_level"])
         if not _final_strength:
             _final_strength = int(signal_strength or 0)
         if not _consensus_level:
@@ -2625,8 +3148,8 @@ def _close_position(scheduler, position: Position, current_price: float, exit_re
             from app.core.config_container import get_config as _gc
             if _gc().get_dotted("mode.sandbox.enabled", False):
                 _mode = "sandbox"
-        except Exception:
-            pass
+        except Exception as _silent_e:
+            logger.debug(f"[silent_except:order_executor.py] {_silent_e}")
 
         # P2 修复 (2026-05-19): legacy close trace_id 兜底
         # 5/18 ARM legacy 仓位被 FLAT_ALL 强平触发的 close 事件 (id=718/719) 无 trace_id —
@@ -2639,9 +3162,26 @@ def _close_position(scheduler, position: Position, current_price: float, exit_re
                 f"[平仓·trace 兜底] {position.symbol} 无 entry trace_id (legacy 仓位?), "
                 f"生成 close-side: {_trace_id}"
             )
-
+        
+        # Task #15 (2026-05-27): 退出 trace_id 传递 —
+        # 优先从 position.metadata.exit_trace_id (position_exit_monitor 注入) 读取,
+        # 未设置则 fallback 生成 (兼容 position_monitor / FLAT_ALL 等其他退出路径).
+        _exit_trace_id = (meta.get("exit_trace_id") if isinstance(meta, dict) else "") or ""
+        if not _exit_trace_id:
+            _exit_trace_id = (
+                f"EXIT-{position.symbol}-{datetime.now().strftime('%Y%m%d%H%M%S')}-"
+                f"{uuid.uuid4().hex[:6].upper()}"
+            )
+        logger.info(
+            f"[EXEC][trace:{_trace_id}\u2192{_exit_trace_id}] Close order placed for {position.symbol} "
+            f"(reason={exit_reason.value if hasattr(exit_reason, 'value') else exit_reason}, "
+            f"qty={position.size}, pnl=${pnl:.2f})"
+        )
+        
         scheduler.trade_store.save_trade({
             "trace_id":          _trace_id,
+            # Task #15 (2026-05-27): 持久化 exit_trace_id，与 entry trace_id 配对, 支撑全链路复盘
+            "exit_trace_id":     _exit_trace_id,
             "trade_date":        _et_trade_date(position.entry_time),
             "symbol":            position.symbol,
             "direction":         position.direction.value,
@@ -2670,14 +3210,60 @@ def _close_position(scheduler, position: Position, current_price: float, exit_re
             # O4 (2026-05-16): regime + mode 落库 (此前两列 UNKNOWN/normal 都未传入)
             "market_regime":     _regime or "RANGE",
             "mode":              _mode,
+            # P0 修复 (2026-05-27): entry_reason 归因链路修复
+            # 从 position.metadata 读取开仓时写入的 entry_reason, 兜底从 strategy_id 推导
+            "entry_reason":      _derive_entry_reason_for_close(meta),
+            # Task #14 (2026-05-27): 执行优化元数据 (TWAP / 滑点 / 延迟)
+            "metadata_json":     (meta.get("execution") if isinstance(meta.get("execution"), dict) else None),
         })
+
+        # Task #26 (2026-05-27): 回填 voting_predictions 实际结果 (异步, 不阻平仓主线)
+        try:
+            from app.pipeline.post_trade_hook import on_position_closed as _vap_on_close
+            _vap_on_close({
+                "symbol": position.symbol,
+                "pnl": float(pnl),
+                "direction": (
+                    position.direction.value
+                    if hasattr(position.direction, "value")
+                    else str(position.direction)
+                ),
+                "trade_date": _et_trade_date(position.entry_time),
+            })
+        except Exception as _vae:
+            logger.debug(f"[投票准确率] 更新结果失败: {_vae}")
 
         # Y5 (2026-05-15): PnL 异常值监控 + 标的护栏 (主线路径)
         try:
             from app.risk.symbol_daily_loss_guard import get_symbol_daily_loss_guard
             get_symbol_daily_loss_guard().record_trade(position.symbol, float(pnl))
-        except Exception:
-            pass
+        except Exception as _silent_e:
+            logger.debug(f"[silent_except:order_executor.py] {_silent_e}")
+
+        # Task #29 (2026-05-27): 教训应用验证 — 学了→用了 链路
+        try:
+            from app.review.lesson_injector import LessonInjector
+            _trade_dict = {
+                "symbol": position.symbol,
+                "trade_date": _et_trade_date(position.entry_time),
+                "direction": str(position.direction.value if hasattr(position.direction, "value") else position.direction),
+                "entry_time": position.entry_time.isoformat() if position.entry_time else "",
+                "entry_price": float(position.avg_entry_price),
+                "quantity": int(position.size),
+                "stop_loss": float(getattr(position, "current_sl", 0) or 0),
+                "signal_strength": int(signal_strength or 0),
+                "signal_confidence": float(signal_confidence or 0.0),
+                "realized_pnl": float(pnl),
+            }
+            _lesson_result = LessonInjector().verify_lesson_application(_trade_dict)
+            if _lesson_result.get("applicable_lessons", 0) > 0:
+                logger.info(
+                    f"[教训验证] {position.symbol} "
+                    f"教训应用率: {_lesson_result['application_rate']:.0%} "
+                    f"({_lesson_result['applied_lessons']}/{_lesson_result['applicable_lessons']})"
+                )
+        except Exception as _le:
+            logger.debug(f"[教训验证] 异常 (不影响平仓): {_le}")
         # Z1 (2026-05-15): Shadow 镜像同步平仓
         try:
             from app.evolution.shadow_mirror import get_shadow_mirror
@@ -2687,8 +3273,8 @@ def _close_position(scheduler, position: Position, current_price: float, exit_re
                 exit_price=float(current_price),
                 exit_reason=str(exit_reason.value if hasattr(exit_reason, "value") else exit_reason),
             )
-        except Exception:
-            pass
+        except Exception as _silent_e:
+            logger.debug(f"[silent_except:order_executor.py] {_silent_e}")
         try:
             from app.risk.pnl_outlier_monitor import get_pnl_outlier_monitor
             get_pnl_outlier_monitor().check(position.symbol, float(pnl), {
@@ -2696,8 +3282,8 @@ def _close_position(scheduler, position: Position, current_price: float, exit_re
                 "source": "main",
                 "exit_reason": str(exit_reason.value if hasattr(exit_reason, "value") else exit_reason),
             })
-        except Exception:
-            pass
+        except Exception as _silent_e:
+            logger.debug(f"[silent_except:order_executor.py] {_silent_e}")
 
         # ── P0 Fix (2026-05-02): 关联决策结果到 decisions.db trade_outcomes ──
         # 这是 model_performance 更新和方向识别率评估的关键链路
