@@ -433,6 +433,17 @@ class PremarketPushTrigger:
                     lines.append(f"     → {catalyst}")
             lines.append("  ⚠️ 非观察池标的，仅供参考")
 
+        # ── 被拦截的推荐 (信号验证不通过) ──
+        blocked = recommendations.get("blocked_recommendations") or []
+        if blocked:
+            lines.append("━━━━━━━━━━━━━━━")
+            lines.append("🚫 已拦截 (历史数据验证)")
+            for b in blocked[:4]:
+                sym = b.get("symbol", "?")
+                reason = b.get("reason", "信号质量不足")
+                reason_short = reason[:60] + ("..." if len(reason) > 60 else "")
+                lines.append(f"  ❌ {sym}: {reason_short}")
+
         # ── 历史准确率 (如果有) ──
         accuracy = recommendations.get("rolling_accuracy") or {}
         if accuracy:
@@ -525,7 +536,14 @@ class PremarketPushTrigger:
         urgency = item.get("urgency", "").upper()
         urgency_tag = f" ⚡{urgency}" if urgency and urgency not in ("LOW", "") else ""
 
-        head = f"{rank_marker} {symbol}{sector_tag} {arrow} {direction}{urgency_tag}"
+        # 信号验证徽章
+        validation = item.get("validation") or {}
+        verdict = validation.get("verdict", "")
+        verdict_badge = {"GREEN": "✅", "YELLOW": "🟡", "RED": "🔴"}.get(verdict, "")
+        hist_wr = validation.get("historical_wr")
+        hist_tag = f" (历史{hist_wr}%WR)" if hist_wr is not None else ""
+
+        head = f"{rank_marker} {verdict_badge} {symbol}{sector_tag} {arrow} {direction}{urgency_tag}{hist_tag}"
 
         entry_zone = item.get("entry_zone")
         if entry_zone and isinstance(entry_zone, str) and entry_zone:

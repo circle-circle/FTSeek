@@ -1285,6 +1285,28 @@ def run_premarket_planning(scheduler):
                         except Exception as _hot_e:
                             logger.debug(f"[Recommendations] 热点发现异常（不影响主流程）: {_hot_e}")
 
+                        # 2.7 信号质量验证 (基于历史交易数据硬规则)
+                        try:
+                            from app.recommendations.signal_validator import SignalValidator
+                            _validator = SignalValidator()
+                            _regime = _recommendations.get("market_regime", "UNKNOWN")
+                            _recs_list = _recommendations.get("recommendations") or []
+                            if _recs_list:
+                                _approved, _blocked = _validator.validate_batch(_recs_list, _regime)
+                                _recommendations["recommendations"] = _approved
+                                if _blocked:
+                                    _recommendations["blocked_recommendations"] = [
+                                        {"symbol": b.get("symbol"), "reason": b.get("validation", {}).get("reason", "")}
+                                        for b in _blocked
+                                    ]
+                                _recommendations["pattern_summary"] = _validator.get_pattern_summary()
+                                logger.info(
+                                    f"[Recommendations] ✅ 信号验证: "
+                                    f"{len(_approved)} 通过 / {len(_blocked)} 拦截"
+                                )
+                        except Exception as _val_e:
+                            logger.debug(f"[Recommendations] 信号验证异常（不影响主流程）: {_val_e}")
+
                         # 3. 准确率验证 + 存储 (闭环反馈)
                         try:
                             from app.recommendations.accuracy_tracker import AccuracyTracker
