@@ -59,6 +59,7 @@ class PositionStore:
             self._positions[symbol] = position
 
         # 自动同步动态池 (P0 修复: 传入市场前缀)
+        # Task #49 (2026-05-28): 消除 silent exception, 失败记录但不中断主流程 (非关键路径)
         try:
             from app.utils.daily_active_pool import get_daily_active_pool
             pool = get_daily_active_pool(market_prefix="US.")
@@ -66,8 +67,9 @@ class PositionStore:
                 "direction": position.direction.value if hasattr(position.direction, 'value') else str(position.direction),
                 "quantity": position.quantity,
             })
-        except Exception:
-            pass  # 不影响主流程
+        except Exception as e:
+            logger.error(f"[daily_active_pool] {symbol} 添加同步失败: {e}")
+            # 不中断主流程 (内存持仓已写入), 但异常向监控系统暴露
 
     def get(self, symbol: str) -> Optional[Position]:
         with self._lock:
@@ -78,11 +80,13 @@ class PositionStore:
             self._positions.pop(symbol, None)
 
         # 自动同步动态池 (P0 修复: 传入市场前缀)
+        # Task #49 (2026-05-28): 消除 silent exception, 失败记录但不中断主流程 (非关键路径)
         try:
             from app.utils.daily_active_pool import get_daily_active_pool
             get_daily_active_pool(market_prefix="US.").remove_position(symbol)
-        except Exception:
-            pass  # 不影响主流程
+        except Exception as e:
+            logger.error(f"[daily_active_pool] {symbol} 移除同步失败: {e}")
+            # 不中断主流程 (内存持仓已移除), 但异常向监控系统暴露
 
     def all(self) -> List[Position]:
         with self._lock:
@@ -107,12 +111,19 @@ class TradingScheduler:
     3. 持仓监控（每 MONITOR_INTERVAL_MINUTES 分钟）
     """
 
-    SCAN_INTERVAL_MINUTES = 10     # 信号扫描间隔 (默认值，运行时从 unified_config.yaml 覆盖)
-    MONITOR_INTERVAL_MINUTES = 0.5  # 持仓监控间隔 (默认值)
-    MAX_POSITIONS = 5              # 最大同时持仓数 (默认值)
-    MIN_SIGNAL_STRENGTH = 50       # 最低 effective 信号强度 (默认值)
-    MIN_CONFIDENCE = 0.50          # 最低置信度 (默认值)
-    MIN_CONSENSUS_LEVEL = 0.20     # 最低共识度 (默认值)
+    # Task #46 (2026-05-28) 配置 SSOT: 类级常量仅作 fallback,
+    # 实际值在 __init__ → _load_scheduler_params 内通过 ConfigKeys 从
+    # unified_config.yaml 读取。如需修改, 请改 YAML, 不要改这里。
+    SCAN_INTERVAL_MINUTES = 10     # fallback: scheduler.scan_interval_minutes
+    MONITOR_INTERVAL_MINUTES = 0.5  # fallback: scheduler.monitor_interval_minutes
+    MAX_POSITIONS = 5              # fallback: scheduler.max_positions
+    _DEFAULT_MIN_SIGNAL_STRENGTH = 50    # fallback: strategies.defaults.min_strength
+    _DEFAULT_MIN_CONFIDENCE = 0.5         # fallback: risk.signal_quality.min_confidence
+    _DEFAULT_MIN_CONSENSUS_LEVEL = 0.20   # fallback: scheduler.min_consensus_level
+    # 兼容旧引用 (保持 self.MIN_CONFIDENCE 访问可用)
+    MIN_SIGNAL_STRENGTH = _DEFAULT_MIN_SIGNAL_STRENGTH
+    MIN_CONFIDENCE = _DEFAULT_MIN_CONFIDENCE
+    MIN_CONSENSUS_LEVEL = _DEFAULT_MIN_CONSENSUS_LEVEL
 
     def __init__(
         self,
@@ -469,8 +480,8 @@ class TradingScheduler:
             self.us_risk_pipeline = USRiskPipeline(
                 risk_engine=None,  # risk_engine 在 _process_symbol_impl 中注入
                 config={
-                    "min_confidence": getattr(self, 'MIN_CONFIDENCE', CFG.MIN_CONFIDENCE),
-                    "min_score": getattr(self, 'MIN_SIGNAL_STRENGTH', 50),
+                    "min_confidence": getattr(self, 'MIN_CONFIDENCE', type(self)._DEFAULT_MIN_CONFIDENCE),
+                    "min_score": getattr(self, 'MIN_SIGNAL_STRENGTH', type(self)._DEFAULT_MIN_SIGNAL_STRENGTH),
                     "max_per_symbol": 0.25,
                     "max_total": 0.80,
                     "max_per_direction": 0.65,  # 04/30: 从50%提升, 匹配unified_config.yaml (QQQ占45%导致连续拦截)
@@ -602,8 +613,8 @@ class TradingScheduler:
                 _sandbox_universe = {
                     (s if s.startswith("US.") else f"US.{s}") for s in _univ
                 }
-        except Exception:
-            pass
+        except Exception as _silent_e:
+            logger.warning(f"[silent_except:scheduler_core.py] {_silent_e}")
 
         # 按 watchlist.json 中的 tier 注册到对应优先级
         tier_map = {
@@ -707,8 +718,8 @@ class TradingScheduler:
                     "[T4·SANDBOX] coordinator.observe_only 强制为 False — "
                     "sandbox 严格 enforce 模式 (SymbolLock + SignalArbitrator 真实阻断)"
                 )
-        except Exception:
-            pass
+        except Exception as _silent_e:
+            logger.warning(f"[silent_except:scheduler_core.py] {_silent_e}")
 
         # 各 bucket cap (从 yaml). B.3 (2026-05-14): bucket 而非 strategy
         # fast_lane 走 main bucket → 不在 caps 里 (避免重复加总)
@@ -815,8 +826,8 @@ class TradingScheduler:
                             _cs = _gcs()
                             if _cs._state and _cs._state.current_equity > 0:
                                 _equity = _cs._state.current_equity
-                        except Exception:
-                            pass
+                        except Exception as _silent_e:
+                            logger.warning(f"[silent_except:scheduler_core.py] {_silent_e}")
                         if _equity <= 0:
                             continue
                         _by_strategy: Dict[str, float] = {}
@@ -878,19 +889,28 @@ class TradingScheduler:
             )
             # P0 2026-05-04: SSOT 收敛 — 从 strategies.defaults 读取 (唯一来源)
             # 回退到 scheduler.* 路径以兼容旧配置
+            # Task #46 (2026-05-28): 通过 ConfigKeys 读取 SSOT 路径,
+            # 默认值与 unified_config.yaml 保持一致。
+            from app.core.config_keys import ConfigKeys
             self.MIN_SIGNAL_STRENGTH = _sb_get(
-                "strategies.defaults.min_strength",
-                cfg.get_dotted("scheduler.min_signal_strength", self.MIN_SIGNAL_STRENGTH)
+                ConfigKeys.MIN_EFFECTIVE_STRENGTH.value,
+                cfg.get_dotted(
+                    "strategies.defaults.min_strength",
+                    cfg.get_dotted(
+                        "scheduler.min_signal_strength",
+                        self._DEFAULT_MIN_SIGNAL_STRENGTH,
+                    ),
+                ),
             )
             # F4 (2026-05-14): 收敛到 MinConfidenceResolver
             # 沙盒模式: 沙盒 overrides 优先于 resolver
             from app.core.min_confidence_resolver import get_min_confidence_resolver
-            if self._sandbox_mode and "risk.signal_quality.min_confidence" in sandbox_overrides:
-                self.MIN_CONFIDENCE = float(sandbox_overrides["risk.signal_quality.min_confidence"])
+            if self._sandbox_mode and ConfigKeys.MIN_CONFIDENCE.value in sandbox_overrides:
+                self.MIN_CONFIDENCE = float(sandbox_overrides[ConfigKeys.MIN_CONFIDENCE.value])
             else:
                 self.MIN_CONFIDENCE = get_min_confidence_resolver().for_phase("intraday")
             self.MIN_CONSENSUS_LEVEL = cfg.get_dotted(
-                "scheduler.min_consensus_level", self.MIN_CONSENSUS_LEVEL
+                "scheduler.min_consensus_level", self._DEFAULT_MIN_CONSENSUS_LEVEL
             )
             # P0 修复 (2026-05-04): 统一信号冷却时间 SSOT
             # 原代码读取 scheduler.signal_cooldown_minutes=60 (3600秒)
@@ -920,6 +940,22 @@ class TradingScheduler:
                 self.MIN_CONFIDENCE, self.MIN_CONSENSUS_LEVEL,
                 self.SIGNAL_COOLDOWN_MINUTES,
             )
+            # Task #46 (2026-05-28): 显式打印 SSOT 关键阈值, 便于审计配置漂移
+            try:
+                logger.info(
+                    "[配置SSOT] min_conf=%.2f min_strength=%d max_total_pos=%.2f "
+                    "main_pct=%.2f scalping_pct=%.2f stop_loss=%.3f take_profit=%.3f atr_x=%.2f",
+                    self.MIN_CONFIDENCE,
+                    int(self.MIN_SIGNAL_STRENGTH),
+                    float(cfg.get_dotted(ConfigKeys.MAX_TOTAL_POSITION.value, 0.85)),
+                    float(cfg.get_dotted(ConfigKeys.MAIN_BUDGET_PCT.value, 0.65)),
+                    float(cfg.get_dotted(ConfigKeys.SCALPING_BUDGET_PCT.value, 0.20)),
+                    float(cfg.get_dotted(ConfigKeys.STOP_LOSS_PCT.value, 0.045)),
+                    float(cfg.get_dotted(ConfigKeys.TAKE_PROFIT_PCT.value, 0.025)),
+                    float(cfg.get_dotted(ConfigKeys.ATR_MULTIPLIER.value, 2.5)),
+                )
+            except Exception as _e:
+                logger.debug("[配置SSOT] 摘要打印失败 (不阻断): %s", _e)
         except Exception as e:
             logger.warning("[调度器] 配置加载失败，使用类默认值: %s", e)
 
@@ -980,8 +1016,8 @@ class TradingScheduler:
                     _sandbox_universe = {
                         (s if s.startswith("US.") else f"US.{s}") for s in _univ
                     }
-            except Exception:
-                pass
+            except Exception as _silent_e:
+                logger.warning(f"[silent_except:scheduler_core.py] {_silent_e}")
 
             if _sandbox_universe:
                 # 过滤 plan targets 只保留 universe 内标的
@@ -1055,8 +1091,8 @@ class TradingScheduler:
                 _sandbox_universe = {
                     (s if s.startswith("US.") else f"US.{s}") for s in _univ
                 }
-        except Exception:
-            pass
+        except Exception as _silent_e:
+            logger.warning(f"[silent_except:scheduler_core.py] {_silent_e}")
 
         for s in (stocks_with_tiers if isinstance(stocks_with_tiers, list) else self.watchlist):
             if isinstance(s, dict):
@@ -1350,8 +1386,8 @@ class TradingScheduler:
             from app.analysis.strategy_attribution import get_attribution
             get_attribution()._flush_daily_attribution()
             logger.info("[调度器] 归因数据已刷新")
-        except Exception:
-            pass
+        except Exception as _silent_e:
+            logger.warning(f"[silent_except:scheduler_core.py] {_silent_e}")
         # P0 修复 (2026-04-30): 关闭 Futu 连接设超时，防止网络调用阻塞 shutdown
         if hasattr(self, 'quote_ctx_for_options') and self.quote_ctx_for_options:
             try:
@@ -1404,8 +1440,8 @@ class TradingScheduler:
             ctx = self.data_router.get_full_market_context(symbol)
             if ctx and ctx.get("price", 0) > 0:
                 price = ctx["price"]
-        except Exception:
-            pass
+        except Exception as _silent_e:
+            logger.warning(f"[silent_except:scheduler_core.py] {_silent_e}")
 
         try:
             _close_position(self, pos, price, ExitReason.EMERGENCY)
@@ -1475,7 +1511,9 @@ class TradingScheduler:
 
         港股交易期间 FTSeek-US 应断开 OpenD 连接，释放槽位给 FTSeek 港股系统。
         """
-        now = datetime.now()
+        # P1 修复 (2026-05-28): 显式使用北京时间，不依赖服务器本地时区
+        HKT = pytz.timezone("Asia/Hong_Kong")
+        now = datetime.now(HKT)
         hour = now.hour
         minute = now.minute
         weekday = now.weekday()
@@ -1506,8 +1544,8 @@ class TradingScheduler:
             logger.info("[分时调度] 港股交易时段，FTSeek-US 退订并断开 Futu 连接，释放 OpenD 槽位")
             try:
                 self.data_router.futu.unsubscribe_all()
-            except Exception:
-                pass
+            except Exception as _silent_e:
+                logger.warning(f"[silent_except:scheduler_core.py] {_silent_e}")
             self.data_router.futu.disconnect()
 
         # 美股时段且未订阅 → 重新订阅
@@ -1594,25 +1632,9 @@ class TradingScheduler:
                     # 盘前: 生成作战计划 (每日一次)
                     run_premarket_planning(self)
 
-                    # P0 修复 (F1 2026-05-12): 开盘确认器 — 09:15-09:25 ET 执行
-                    # 之前: run_open_checker import 了但从未调用 → CANCELLED 路径死链
-                    if not getattr(self, '_open_checker_executed_today', False):
-                        now_et_pre = datetime.now(ET)
-                        if now_et_pre.hour == 9 and 15 <= now_et_pre.minute <= 25:
-                            try:
-                                logger.info("[开盘确认] 执行 OpenChecker (09:15-09:25 ET)")
-                                run_open_checker(self)
-                                self._open_checker_executed_today = True
-                            except Exception as _oc_err:
-                                logger.error(f"[开盘确认] 执行失败: {_oc_err}", exc_info=True)
-                        elif now_et_pre.hour >= 9 and now_et_pre.minute > 25 and not getattr(self, '_open_checker_executed_today', False):
-                            # 如果错过了窗口但还没执行，补救执行一次
-                            logger.warning("[开盘确认] 窗口已过，补救执行")
-                            try:
-                                run_open_checker(self)
-                                self._open_checker_executed_today = True
-                            except Exception as _oc_err:
-                                logger.error(f"[开盘确认] 补救执行失败: {_oc_err}", exc_info=True)
+                    # P0 修复: 开盘确认器 — run_open_checker 内部自带时间窗口 + 日期幂等
+                    # 无需外部 guard，函数自行判断 09:15-09:29 ET 窗口并每日执行一次
+                    run_open_checker(self)
 
                     # 盘前: 每2小时采集新闻 + LLM 推荐 (不执行交易)
                     if last_afterhours_run is None or (now - last_afterhours_run).total_seconds() >= 7200:
@@ -1668,6 +1690,11 @@ class TradingScheduler:
         """持仓快照任务 - 在 scheduler_triggers.py 中实现"""
         from .scheduler_triggers import check_position_snapshot
         check_position_snapshot(self)
+
+    def _check_position_reconcile(self):
+        """Task #49 (2026-05-28): 每日 09:30 ET 持仓对账任务 - 在 scheduler_triggers.py 中实现"""
+        from .scheduler_triggers import check_position_reconcile
+        check_position_reconcile(self)
 
 
     def _news_v2_loop(self):
@@ -1726,8 +1753,8 @@ class TradingScheduler:
                                         f"[VIX 警报] {vix_data['message']}\n"
                                         f"建议: {vix_data.get('recommendation', 'N/A')}"
                                     )
-                                except Exception:
-                                    pass
+                                except Exception as _silent_e:
+                                    logger.warning(f"[silent_except:scheduler_core.py] {_silent_e}")
             except Exception as e:
                 logger.debug("[VIX Monitor] 监控异常: %s", e)
 

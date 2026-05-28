@@ -162,11 +162,15 @@ def is_us_market_open() -> bool:
             if get_holiday_calendar().is_us_holiday(now_et.date()):
                 return False
         except Exception as _silent_e:
-            logger.debug(f"[silent_except:position_exit_monitor.py] {_silent_e}")
+            logger.warning(f"[silent_except:position_exit_monitor.py] {_silent_e}")
         t = now_et.hour * 60 + now_et.minute
         return 570 <= t <= 960
-    except Exception:
-        return True
+    except Exception as e:
+        # P0 修复 (2026-05-28): fail-closed 而非 fail-open
+        # 旧行为: 异常返回 True(假设市场开) → 周末/假日可能提交退出订单, 面临跳空风险
+        # 新行为: 异常返回 False(保守跳过), 记录 WARNING 便于排查
+        logger.warning(f"[is_us_market_open] 判断异常, 保守返回False: {e}")
+        return False
 
 
 # ============================================================
@@ -428,7 +432,7 @@ class ExitMonitor:
                 dyn_rr = dyn_tp / dyn_sl if dyn_sl > 0 else 0
                 checks.append(("DynamicExit_default", dyn_tp, dyn_sl, dyn_rr))
             except Exception as _silent_e:
-                logger.debug(f"[silent_except:position_exit_monitor.py] {_silent_e}")
+                logger.warning(f"[silent_except:position_exit_monitor.py] {_silent_e}")
 
             # 3. Scalping base_params
             try:
@@ -439,7 +443,7 @@ class ExitMonitor:
                 scalp_rr = scalp_tp / scalp_sl if scalp_sl > 0 else 0
                 checks.append(("Scalping_base", scalp_tp, scalp_sl, scalp_rr))
             except Exception as _silent_e:
-                logger.debug(f"[silent_except:position_exit_monitor.py] {_silent_e}")
+                logger.warning(f"[silent_except:position_exit_monitor.py] {_silent_e}")
 
             # 输出校验结果
             has_warning = False
@@ -484,7 +488,7 @@ class ExitMonitor:
                     else:
                         total_pnl += (p.avg_entry_price - price) * getattr(p, 'size', 0)
             except Exception as _silent_e:
-                logger.debug(f"[silent_except:position_exit_monitor.py] {_silent_e}")
+                logger.warning(f"[silent_except:position_exit_monitor.py] {_silent_e}")
 
         # P0 修复 (2026-05-28): 使用账户净值作为回撤分母，而非持仓成本
         # 旧行为: total_cost 作为分母 → 半仓时回撤被放大 2 倍，误触发 REDUCE/FLAT
@@ -522,7 +526,7 @@ class ExitMonitor:
                     f"equity=${equity:.0f} total_cost=${total_cost:.0f} total_pnl=${total_pnl:+.0f} positions=[{detail}]"
                 )
             except Exception as _silent_e:
-                logger.debug(f"[silent_except:position_exit_monitor.py] {_silent_e}")
+                logger.warning(f"[silent_except:position_exit_monitor.py] {_silent_e}")
         return action
 
     # ============================================================
@@ -783,7 +787,7 @@ class ExitMonitor:
                             f"已使用备用价格 ${_fallback_price:.2f} 继续监控止损"
                         )
                     except Exception as _silent_e:
-                        logger.debug(f"[silent_except:position_exit_monitor.py] {_silent_e}")
+                        logger.warning(f"[silent_except:position_exit_monitor.py] {_silent_e}")
                     current_price = _fallback_price
 
                 if current_price is None or current_price <= 0:
@@ -1393,13 +1397,13 @@ class ExitMonitor:
             position.metadata["exit_trace_id"] = exit_trace_id
             position.metadata["trace_id"] = entry_trace_id  # 统一 key, 下游按需取用
         except Exception as _silent_e:
-            logger.debug(f"[silent_except:position_exit_monitor.py] {_silent_e}")
+            logger.warning(f"[silent_except:position_exit_monitor.py] {_silent_e}")
         try:
             reason["entry_trace_id"] = entry_trace_id
             reason["exit_trace_id"] = exit_trace_id
             reason["trace_id"] = entry_trace_id
         except Exception as _silent_e:
-            logger.debug(f"[silent_except:position_exit_monitor.py] {_silent_e}")
+            logger.warning(f"[silent_except:position_exit_monitor.py] {_silent_e}")
 
         _trace_pair = f"[trace:{entry_trace_id or 'NONE'}\u2192{exit_trace_id}]"
         logger.warning(
@@ -1448,7 +1452,7 @@ class ExitMonitor:
                 exit_time=datetime.now(),
             )
         except Exception as _silent_e:
-            logger.debug(f"[silent_except:position_exit_monitor.py] {_silent_e}")
+            logger.warning(f"[silent_except:position_exit_monitor.py] {_silent_e}")
 
         # ── P3 G14: 退出时写入标签化记忆 ──
         try:
@@ -1539,7 +1543,7 @@ class ExitMonitor:
                     self._vix_ts = now
                     return vix_close
         except Exception as _silent_e:
-            logger.debug(f"[silent_except:position_exit_monitor.py] {_silent_e}")
+            logger.warning(f"[silent_except:position_exit_monitor.py] {_silent_e}")
         # 降级: 从 MarketDataRouter / alphavantage 获取
         try:
             from app.data.alphavantage_provider import AlphaVantageProvider
@@ -1550,7 +1554,7 @@ class ExitMonitor:
                 self._vix_ts = now
                 return self._vix_cached
         except Exception as _silent_e:
-            logger.debug(f"[silent_except:position_exit_monitor.py] {_silent_e}")
+            logger.warning(f"[silent_except:position_exit_monitor.py] {_silent_e}")
         return self._vix_cached  # 返回旧缓存或 None
 
     def _calc_atr_from_kline(self, symbol: str) -> float:
@@ -1589,7 +1593,7 @@ class ExitMonitor:
                         median_tr = float(data200['tr'].dropna().median())
                         atr = max(atr, median_tr * 0.7)
                 except Exception as _silent_e:
-                    logger.debug(f"[silent_except:position_exit_monitor.py] {_silent_e}")
+                    logger.warning(f"[silent_except:position_exit_monitor.py] {_silent_e}")
 
                 return atr
         except Exception as e:

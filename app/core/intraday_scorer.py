@@ -522,6 +522,16 @@ class IntradayScorer:
             if rsi > 50:
                 bear_score += 0.3  # 高位回落加成
 
+        # 2.5) 极端 RSI 惩罚 — P0 修复 (2026-05-28)
+        # RSI > 80: 极度超买, 涨幅视为动量耗竭而非延续
+        # RSI < 20: 极度超卖, 跌幅视为恐慌出清而非趋势延续
+        if rsi > 80:
+            overbought_penalty = (rsi - 80) / 20 * 2.0  # RSI=90→1.0, RSI=95→1.5, RSI=100→2.0
+            bear_score += overbought_penalty
+        elif rsi < 20:
+            oversold_penalty = (20 - rsi) / 20 * 2.0
+            bull_score += oversold_penalty
+
         # 3) MACD 柱: 使用 hist = macd - macd_signal
         hist = macd - macd_signal
         if hist > 0:
@@ -537,19 +547,34 @@ class IntradayScorer:
         # 4) 短期价格变化率 — P1 2026-05-12 审计修复
         # 优先使用 slope_5m (最近 5 根 1-min K 线的变化率), 反映"当下"动量。
         # 如果 slope_5m 不可用 (fallback 路径), 退回到 change_percent (日累计)。
+        # P0 修复 (2026-05-28): 极端 RSI 区域反转变化率信号 — 超买区涨幅=耗竭
+        is_extreme_overbought = rsi > 80
+        is_extreme_oversold = rsi < 20
         slope_5m = ctx.get("slope_5m")
         if slope_5m is not None:
             # slope_5m 是百分比 (如 +0.5 表示最近 5 分钟涨了 0.5%)
             if slope_5m > 0:
-                bull_score += slope_5m / 8  # 线性加分, 与原来 scale 一致
+                if is_extreme_overbought:
+                    bear_score += slope_5m / 8  # 超买区涨幅 → 反转看空
+                else:
+                    bull_score += slope_5m / 8
             else:
-                bear_score += min(abs(slope_5m) / 8, 1.0)
+                if is_extreme_oversold:
+                    bull_score += min(abs(slope_5m) / 8, 1.0)  # 超卖区跌幅 → 反转看多
+                else:
+                    bear_score += min(abs(slope_5m) / 8, 1.0)
         else:
             # Fallback: 日累计 change_percent (已知语义问题, 但比没有好)
             if change_pct > 0:
-                bull_score += change_pct / 8  # 线性加分, 不封顶
+                if is_extreme_overbought:
+                    bear_score += min(change_pct / 8, 1.5)  # 超买区涨幅 → 耗竭
+                else:
+                    bull_score += change_pct / 8  # 线性加分, 不封顶
             else:
-                bear_score += min(abs(change_pct) / 8, 1.0)
+                if is_extreme_oversold:
+                    bull_score += min(abs(change_pct) / 8, 1.5)  # 超卖区跌幅 → 恐慌出清
+                else:
+                    bear_score += min(abs(change_pct) / 8, 1.0)
 
         if bull_score > bear_score:
             raw = min(bull_score / 3 * 100, 100)

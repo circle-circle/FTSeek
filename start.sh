@@ -96,12 +96,12 @@ if [ ${#MISSING_KEYS[@]} -gt 0 ]; then
     exit 1
 fi
 
-# config.yaml 完整性校验（若存在 config_validate.py 则调用）
-if [ -f "config/config.yaml" ] && [ -f "scripts/config_validate.py" ]; then
+# unified_config.yaml 完整性校验（若存在 config_validate.py 则调用）
+if [ -f "config/unified_config.yaml" ] && [ -f "scripts/config_validate.py" ]; then
     if ! $PYTHON scripts/config_validate.py --quick >/dev/null 2>&1; then
-        echo "⚠️  config.yaml 校验未通过（非阻断），请稍后核查"
+        echo "⚠️  unified_config.yaml 校验未通过（非阻断），请稍后核查"
     else
-        echo "✅ config.yaml 校验通过"
+        echo "✅ unified_config.yaml 校验通过"
     fi
 fi
 
@@ -116,4 +116,4 @@ echo "API: http://localhost:8901"
 echo "日志：logs/ftseek_us.log"
 echo ""
 
-exec $PYTHON main.py
+exec $PYTHON main.py --start 2>&1
