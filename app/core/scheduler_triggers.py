@@ -71,8 +71,8 @@ def get_market_phase() -> MarketPhase:
         from app.utils.holiday_calendar import get_holiday_calendar
         if get_holiday_calendar().is_us_holiday(now_et.date()):
             return MarketPhase.WEEKEND
-    except Exception:
-        pass  # 日历加载失败不阻断, 退化为仅周末判断
+    except Exception as _silent_e:
+        logger.debug(f"[silent_except:scheduler_triggers.py] {_silent_e}")
 
     hour = now_et.hour
     minute = now_et.minute
@@ -125,6 +125,60 @@ def set_cooldown(scheduler: 'TradingScheduler', symbol: str):
     """
     with scheduler._open_position_lock:
         scheduler._signal_cooldown[symbol] = datetime.now()
+
+
+def _check_recommendation_accuracy(scheduler):
+    """
+    16:30+ ET 生成并推送推荐准确率报告 (Task #40, 2026-05-28)
+
+    判定条件:
+    - hour >= 16 且 minute >= 30  (避免与 16:00 复盘抢跡)
+    - 当日未执行过 (日期级幂等性)
+    - recommendations.accuracy_tracking.enabled = true
+
+    该函数不报错, 任何异常需被调用方 try-except 包裹。
+    """
+    try:
+        now_et = datetime.now(ET)
+        # 16:30+ ET 门控
+        if not (now_et.hour > 16 or (now_et.hour == 16 and now_et.minute >= 30)):
+            return
+        # 幂等性: 当日仅运行一次
+        if getattr(scheduler, "_recommendation_accuracy_date", None) == now_et.date():
+            return
+
+        from app.core.config_container import get_config
+        cfg = get_config()
+        if not cfg.get_dotted("recommendations.accuracy_tracking.enabled", False):
+            return
+
+        from app.recommendations.accuracy_tracker import AccuracyTracker
+        from app.recommendations.push_trigger import PremarketPushTrigger
+
+        tracker = AccuracyTracker()
+        report = tracker.verify_yesterday()
+
+        # 注入滚动准确率到报告
+        rolling = tracker.get_rolling_accuracy()
+        if rolling:
+            report["rolling_accuracy"] = rolling
+
+        if report and report.get("total", 0) > 0:
+            trigger = PremarketPushTrigger()
+            trigger.send_accuracy_report(report)
+            logger.info(
+                f"[Recommendations] 准确率报告已推送: "
+                f"{report.get('accuracy_pct', 0):.1f}% (n={report.get('total', 0)})"
+            )
+        else:
+            logger.info("[Recommendations] 准确率报告: 当日无可评估推荐")
+
+        # 设置幂等标记 (无论是否有数据, 当日不重复运行)
+        scheduler._recommendation_accuracy_date = now_et.date()
+    except ImportError as ie:
+        logger.debug(f"[Recommendations] 准确率模块未就绪 (跳过): {ie}")
+    except Exception as e:
+        logger.warning(f"[Recommendations] 准确率评估异常: {e}")
 
 
 def _trigger_eod_agent_review(scheduler, review: dict):
@@ -220,8 +274,8 @@ def _trigger_eod_agent_review(scheduler, review: dict):
             query = " ".join(search_terms[:10])
             if query.strip():
                 bridge.search_lessons(query, top_k=3)
-        except Exception:
-            pass
+        except Exception as _silent_e:
+            logger.debug(f"[silent_except:scheduler_triggers.py] {_silent_e}")
 
         # 写入 Agent 请求
         request = bridge.generate_eod_review(
@@ -276,6 +330,14 @@ def check_daily_review(scheduler: 'TradingScheduler'):
     now_et = datetime.now(ET)
     # 放宽条件: 16:00 之后任何时间都可以触发 (只要当天未执行过)
     if now_et.hour >= 16:
+        # Task #40 (2026-05-28): 16:30+ ET 推荐准确率报告触发
+        # 独立于日复盘的幂等门（拥有自己的 _recommendation_accuracy_date 标记）
+        # 这样无论日复盘是否已运行, 16:30 准确率报告都能独立触发
+        try:
+            _check_recommendation_accuracy(scheduler)
+        except Exception as _rae:
+            logger.debug(f"[Recommendations] 准确率触发异常（不影响主流程）: {_rae}")
+
         if getattr(scheduler, '_last_review_date', None) != now_et.date():
             scheduler._last_review_date = now_et.date()
             try:
@@ -317,12 +379,24 @@ def check_daily_review(scheduler: 'TradingScheduler'):
                     loop_context = {}
                     # 从 config 获取当前参数作为修复基准
                     try:
+                        # Task #46 (2026-05-28): 从 SSOT 路径读取, 避免硬编码
                         from app.core.config_container import get_config
+                        from app.core.config_keys import ConfigKeys
                         cfg = get_config()
-                        risk_cfg = cfg.get("risk", {})
-                        loop_context["MIN_CONFIDENCE"] = risk_cfg.get("MIN_CONFIDENCE", 0.50)
-                        loop_context["SIGNAL_MIN_SCORE"] = risk_cfg.get("SIGNAL_MIN_SCORE", 50)
-                        loop_context["MAX_POSITION_PER_SYMBOL"] = risk_cfg.get("MAX_POSITION_PER_SYMBOL", 0.25)
+                        if cfg is not None:
+                            loop_context["MIN_CONFIDENCE"] = float(
+                                cfg.get_dotted(ConfigKeys.MIN_CONFIDENCE.value, 0.5)
+                            )
+                            loop_context["SIGNAL_MIN_SCORE"] = int(
+                                cfg.get_dotted(ConfigKeys.MIN_EFFECTIVE_STRENGTH.value, 50)
+                            )
+                            loop_context["MAX_POSITION_PER_SYMBOL"] = float(
+                                cfg.get_dotted("risk.position.max_per_symbol", 0.25)
+                            )
+                        else:
+                            loop_context["MIN_CONFIDENCE"] = 0.5
+                            loop_context["SIGNAL_MIN_SCORE"] = 50
+                            loop_context["MAX_POSITION_PER_SYMBOL"] = 0.25
                     except Exception as e:
                         logger.debug(f"[ReviewLoop] 配置加载失败，使用默认值: {e}")
                         pass
@@ -400,7 +474,60 @@ def check_daily_review(scheduler: 'TradingScheduler'):
                 except Exception as lae:
                     logger.debug(f"[LLM归因] 失败 (不影响主流程): {lae}")
                 # ── LLM 逐笔归因结束 ──
-                
+
+                # ── Task #12 (2026-05-27): 信号质量追踪与反馈闭环 ──
+                # 生成 confidence -> 胜率映射、策略表现、因子贡献度、阈值调整建议
+                # 仅输出建议, 不自动修改配置
+                try:
+                    from app.analysis.signal_quality_tracker import run_signal_quality_daily
+                    sq_summary = run_signal_quality_daily(as_of=now_et.date())
+                    if sq_summary:
+                        recs = sq_summary.get("threshold_recommendations", {})
+                        actions = recs.get("strategy_actions", []) or []
+                        logger.info(
+                            "[SignalQuality] 每日反馈完成 | trades=%d | 推荐 min_conf=%s | 高危策略=%d",
+                            sq_summary.get("total_closed_trades", 0),
+                            recs.get("suggested_min_signal_confidence"),
+                            len(actions),
+                        )
+                        # 高危策略告警推送 (近 10 笔胜率 < 20%)
+                        if scheduler.notifier and actions:
+                            lines = ["⚠️ [信号质量] 高危策略告警"]
+                            for a in actions:
+                                lines.append(
+                                    f"  - {a['category']}: 近{a['recent_trades']}笔胜率 "
+                                    f"{a['recent_win_rate']:.1%} → {a['recommendation']}"
+                                )
+                            if recs.get("anomalies"):
+                                lines.append("异常: " + "; ".join(recs["anomalies"]))
+                            try:
+                                scheduler.notifier.send_text("\n".join(lines))
+                            except Exception as _silent_e:
+                                logger.debug(f"[silent_except:scheduler_triggers.py] {_silent_e}")
+                except Exception as sqe:
+                    logger.debug(f"[SignalQuality] 每日反馈失败 (不影响主流程): {sqe}")
+                # ── 信号质量追踪结束 ──
+
+                # ── Task #22 (2026-05-27): 盘前计划命中率追踪 ──
+                # 对标当日盘前作战计划 vs 实际交易, 输出 hit_rate / traded_rate / unplanned_count
+                try:
+                    from app.analysis.plan_effectiveness import PlanEffectivenessTracker
+                    tracker = PlanEffectivenessTracker()
+                    plan_report = tracker.evaluate_daily_plan(now_et.date().isoformat())
+                    if plan_report and plan_report.get("plan_available") and scheduler.notifier:
+                        hit_rate = plan_report.get("hit_rate", 0) or 0
+                        traded_rate = plan_report.get("traded_rate", 0) or 0
+                        msg = (
+                            f"📊 盘前计划效果: 命中率 {hit_rate:.0%}, 执行率 {traded_rate:.0%}"
+                        )
+                        try:
+                            scheduler.notifier.send_text(msg)
+                        except Exception as _silent_e:
+                            logger.debug(f"[silent_except:scheduler_triggers.py] {_silent_e}")
+                except Exception as pe:
+                    logger.debug(f"[计划效果] 评估失败: {pe}")
+                # ── 盘前计划命中率追踪结束 ──
+
                 # Phase 5: 通过 Agent 桥接触发盘后全链路归因
                 if hasattr(scheduler, 'agent_bridge') and scheduler.agent_bridge:
                     try:
@@ -431,6 +558,20 @@ def check_daily_review(scheduler: 'TradingScheduler'):
                                 logger.info(f"✅ [Shadow] {strategy_type} 提议 {res['proposal_id']} 胜出，自动转正!")
                 except Exception as ste:
                     logger.debug(f"[Shadow] 影子测试评估失败 (不影响主流程): {ste}")
+                
+                # Phase 7 (P0-3 2026-05-27): Shadow Trades EOD 批量关闭
+                # 每日收盘后自动关闭所有超过 24h 未关闭的 shadow_trades
+                try:
+                    from app.core.position_sync import get_us_position_sync
+                    sync = get_us_position_sync()
+                    eod_result = sync.close_stale_shadow_trades(max_age_hours=24)
+                    if eod_result.get('closed', 0) > 0:
+                        logger.info(
+                            f"[ShadowEOD] 收盘批量关闭: "
+                            f"closed={eod_result['closed']}, errors={eod_result.get('errors', 0)}"
+                        )
+                except Exception as se:
+                    logger.debug(f"[ShadowEOD] EOD 关闭失败 (不影响主流程): {se}")
                 
 
             except Exception as e:
@@ -497,6 +638,64 @@ def check_weekly_review(scheduler: 'TradingScheduler'):
                     )
                 except Exception as oe:
                     logger.debug(f"[Orchestrator] 周复盘增强失败 (不影响主流程): {oe}")
+
+                # ── Task #16 (2026-05-27): 周频参数优化 ──
+                # 周末/周五盘后运行回测驱动的参数优化, 仅产出建议报告, 不自动落地
+                try:
+                    from app.backtest.weekly_optimizer import run_weekly_optimization
+                    from app.backtest.live_backtest_comparison import run_comparison
+                    opt_report = run_weekly_optimization(notifier=scheduler.notifier)
+                    logger.info(
+                        f"[WeeklyOptimizer] 完成: best_score={opt_report.best_score} "
+                        f"overfit={opt_report.overfit_warning}"
+                    )
+                    cmp_report = run_comparison(notifier=scheduler.notifier)
+                    logger.info(
+                        f"[LiveBacktestCompare] 完成: live={cmp_report.n_live} "
+                        f"sharpe_diff={cmp_report.diffs.get('sharpe_diff')}"
+                    )
+                except Exception as wo_err:
+                    logger.debug(f"[WeeklyOptimizer] 失败 (不影响主流程): {wo_err}")
+
+                # ── Task #30 (2026-05-27): 系统性问题周度归纳 ──
+                # 从 trade_attribution 聚合本周系统性问题, 按 systemic_pattern 聚类
+                # 然后推送 Top-3 高优先修复项。于周五 16:00+ ET 触发
+                # (避免依赖周末 scheduler 运行)。
+                try:
+                    from app.analysis.systemic_issue_analyzer import SystemicIssueAnalyzer
+                    analyzer = SystemicIssueAnalyzer()
+                    weekly_report = analyzer.analyze_weekly()
+                    if weekly_report and weekly_report.get("total_systemic_issues", 0) > 0:
+                        patterns = weekly_report.get("patterns", {})
+                        top_issues = sorted(
+                            patterns.items(),
+                            key=lambda x: x[1].get("total_loss", 0),
+                        )[:3]
+                        msg_lines = [
+                            f"📋 周度系统性问题报告 ({weekly_report['week']})",
+                            f"共 {weekly_report['total_systemic_issues']} 个系统性问题",
+                        ]
+                        for pattern, data in top_issues:
+                            msg_lines.append(
+                                f"  • {pattern}: {data['count']}次, "
+                                f"损失 ${abs(data.get('total_loss', 0)):.0f}, "
+                                f"严重度={data.get('severity', 'low')}"
+                            )
+                        if scheduler.notifier:
+                            try:
+                                scheduler.notifier.send_text("\n".join(msg_lines))
+                            except Exception as _silent_e:
+                                logger.debug(f"[silent_except:scheduler_triggers.py] {_silent_e}")
+                        logger.info(
+                            f"[系统性问题] 周报生成: {weekly_report['week']}, "
+                            f"issues={weekly_report['total_systemic_issues']}, "
+                            f"patterns={len(patterns)}"
+                        )
+                    else:
+                        logger.info(f"[系统性问题] 本周无系统性问题 ({weekly_report.get('week') if weekly_report else ''})")
+                except Exception as sie:
+                    logger.debug(f"[系统性问题] 周度分析失败: {sie}")
+                # ── Task #30 结束 ──
             except Exception as e:
                 logger.error(f"[周报] 复盘推送失败：{e}", exc_info=True)
             
@@ -1037,3 +1236,46 @@ def _format_monthly_review(report: dict) -> str:
 
 ⏰ 生成时间：{datetime.now(ET).strftime('%Y-%m-%d %H:%M')} ET
 """
+
+
+# ============================================================================
+# Task #49 (2026-05-28): 每日 09:30 ET 持仓对账任务
+# ============================================================================
+def check_position_reconcile(scheduler: 'TradingScheduler'):
+    """每日 09:30 ET 执行持仓对账 (内存 vs DB 一致性检测)
+
+    触发条件:
+      - 美东时间 09:30 ≤ hh:mm ≤ 09:45 (宽窗口避免扫描间隔跳过)
+      - 当日未执行过 (日级幂等: scheduler._last_reconcile_date)
+
+    调用 USPositionSync.daily_reconcile():
+      - 内存/DB 一致 → logger.info
+      - 不一致 → logger.critical + 飞书告警
+      - 异常 → logger.error (不中断主流程)
+
+    Args:
+        scheduler: TradingScheduler 实例 (提供 _last_reconcile_date 幂等状态)
+    """
+    now_et = datetime.now(ET)
+    # 窗口: 09:30 ~ 09:45 ET
+    if not (now_et.hour == 9 and 30 <= now_et.minute <= 45):
+        return
+    # 日级幂等
+    if getattr(scheduler, '_last_reconcile_date', None) == now_et.date():
+        return
+    scheduler._last_reconcile_date = now_et.date()
+
+    try:
+        from app.core.position_sync import get_position_synchronizer
+        sync = get_position_synchronizer()
+        result = sync.daily_reconcile()
+        if result:
+            logger.info(f"[定时对账] 持仓一致性检查通过: {now_et.strftime('%Y-%m-%d %H:%M')} ET")
+        else:
+            logger.warning(
+                f"[定时对账] 发现持仓不一致 (已发送告警): "
+                f"{now_et.strftime('%Y-%m-%d %H:%M')} ET"
+            )
+    except Exception as e:
+        logger.error(f"[定时对账] 执行异常: {e}", exc_info=True)
+        # 不中断主流程

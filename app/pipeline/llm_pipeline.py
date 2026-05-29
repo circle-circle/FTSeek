@@ -433,7 +433,7 @@ def run_llm_strategy_scan(scheduler):
                 from app.core.models import SignalScore, Direction
                 signal_obj = SignalScore(
                     symbol=strategy.symbol, strategy_id="llm_strategy",
-                    strength=max(0, min(100, int((1 - strategy.confidence) * 100))),
+                    strength=max(0, min(100, int(strategy.confidence * 100))),  # direct语义: 越高=越强
                     confidence=strategy.confidence, direction=Direction.SHORT,
                 )
                 try:
