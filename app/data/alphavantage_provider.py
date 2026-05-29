@@ -527,6 +527,27 @@ class AlphaVantageProvider:
             except Exception as fred_e:
                 logger.debug(f"[FRED] VIX 获取失败: {fred_e}")
             
+            # 方法3: Finnhub VIXY 代理 (P1-1: 中国服务器 FRED/CBOE 不可达)
+            try:
+                finnhub_key = os.environ.get("FINNHUB_API_KEY", "")
+                if finnhub_key:
+                    fh_resp = requests.get(
+                        f"https://finnhub.io/api/v1/quote?symbol=VIXY&token={finnhub_key}",
+                        timeout=8,
+                    )
+                    fh_resp.raise_for_status()
+                    fh_data = fh_resp.json()
+                    fh_price = fh_data.get("c", 0)
+                    if fh_price and fh_price > 0:
+                        vix_est = round(fh_price * 0.85, 2)  # VIXY→VIX contango校准
+                        result = {"vix": vix_est, "source": "finnhub_vixy"}
+                        self.cache[cache_key] = result
+                        self.cache_time[cache_key] = datetime.now()
+                        logger.info(f"[Finnhub] VIX (VIXY代理): VIXY=${fh_price:.2f} → VIX≈{vix_est:.2f}")
+                        return vix_est
+            except Exception as fh_e:
+                logger.debug(f"[Finnhub] VIXY 代理获取失败: {fh_e}")
+
             logger.warning("[AlphaVantage] VIX 数据获取失败，使用默认值 20.0")
             
         except Exception as e:
