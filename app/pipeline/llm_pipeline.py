@@ -1264,14 +1264,23 @@ def run_premarket_planning(scheduler):
                         # 2. 价格校准 (复用已计算的 price_calibration, 避免重复 fetch)
                         if _rec_cfg.get_dotted("recommendations.price_calibration.enabled", True):
                             _price_cal = (debate_context or {}).get("price_calibration", {}) or {}
-                            _calibrator = PriceCalibrator()
+                            # 如果 debate_context 无预取行情, 注入 scheduler 的 MarketDataRouter
+                            # (避免 PriceCalibrator 创建裸 MarketDataRouter 导致数据源缺失)
+                            _cal_router = None
+                            if not _price_cal and hasattr(scheduler, 'market_data'):
+                                _cal_router = scheduler.market_data
+                            _calibrator = PriceCalibrator(router=_cal_router)
                             _recommendations = _calibrator.calibrate(_recommendations, market_data=_price_cal or None)
 
                         # 2.5 热点发现 (watchlist 外的盘前异动 + 新闻催化)
                         try:
                             from app.recommendations.hot_discovery import HotDiscovery
                             _hot = HotDiscovery()
-                            _news_text = news_summary if isinstance(news_summary, str) else None
+                            # 修复: news_summary 在 run_premarket_planning 作用域未定义 (NameError)
+                            # 使用 scheduler 上缓存的盘前新闻摘要
+                            _news_text = getattr(scheduler, '_premarket_news_summary', None)
+                            if not isinstance(_news_text, str):
+                                _news_text = (debate_context or {}).get("overnight_news", None)
                             _hot_picks = _hot.discover(
                                 battle_plan=plan,
                                 news_summary_text=_news_text,
@@ -1283,7 +1292,7 @@ def run_premarket_planning(scheduler):
                                     f"({', '.join(p['symbol'] for p in _hot_picks[:3])})"
                                 )
                         except Exception as _hot_e:
-                            logger.debug(f"[Recommendations] 热点发现异常（不影响主流程）: {_hot_e}")
+                            logger.warning(f"[Recommendations] 热点发现异常（不影响主流程）: {_hot_e}")
 
                         # 2.7 信号质量验证 (基于历史交易数据硬规则)
                         try:
@@ -1305,7 +1314,7 @@ def run_premarket_planning(scheduler):
                                     f"{len(_approved)} 通过 / {len(_blocked)} 拦截"
                                 )
                         except Exception as _val_e:
-                            logger.debug(f"[Recommendations] 信号验证异常（不影响主流程）: {_val_e}")
+                            logger.warning(f"[Recommendations] 信号验证异常（不影响主流程）: {_val_e}")
 
                         # 3. 准确率验证 + 存储 (闭环反馈)
                         try:
@@ -1327,15 +1336,17 @@ def run_premarket_planning(scheduler):
                             # 3b. 存储今日推荐 (供明日验证)
                             _tracker.store_recommendations(_recommendations)
                         except Exception as _acc_e:
-                            logger.debug(f"[Recommendations] 准确率追踪异常（不影响主流程）: {_acc_e}")
+                            logger.warning(f"[Recommendations] 准确率追踪异常（不影响主流程）: {_acc_e}")
 
                         # 4. 推送
                         _trigger = PremarketPushTrigger()
                         _sent = _trigger.send_final(_recommendations)
                         if _sent:
                             logger.info("[Recommendations] ✅ 盘前推荐已推送")
+                        elif _trigger._already_pushed("final", str(_recommendations.get("date") or datetime.now().strftime("%Y-%m-%d"))):
+                            logger.info("[Recommendations] 盘前推荐今日已推送 (幂等跳过)")
                         else:
-                            logger.warning("[Recommendations] 盘前推荐推送失败或已推送过")
+                            logger.warning("[Recommendations] 盘前推荐推送失败")
                     else:
                         logger.debug("[Recommendations] recommendations.enabled=false, 跳过")
                 except Exception as _rec_e:
