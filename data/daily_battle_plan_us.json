@@ -1,114 +1,122 @@
 {
   "date": "2026-05-29",
-  "market_regime": "NEUTRAL",
-  "regime_reasoning": "SPY与QQQ处于高位，但缺乏VIX和DXY数据，且无隔夜新闻及财报驱动，市场方向不明确。历史教训强调空仓等待高确定性机会，因此判断为中性环境，不宜强行交易。",
+  "market_regime": "DEGRADED",
+  "regime_reasoning": "无隔夜新闻催化，SPY与QQQ处于高位窄幅震荡，VIX数据缺失暗示低波动，市场缺乏方向性驱动。连续第六日无交易信号，资金面平稳，符合中性市场阶段特征。",
   "targets": [
     {
       "symbol": "US.NVDA",
       "direction": "LONG",
       "entry_zone": [
-        205.0,
-        210.0
+        210.5,
+        212.0
       ],
-      "stop_loss": 198.0,
-      "take_profit": 225.0,
+      "stop_loss": 208.5,
+      "take_profit": 218.0,
       "urgency": "LOW",
-      "rationale": "NVDA作为AI龙头，股池核心标的，若大盘回踩支撑位出现企稳信号可轻仓试探。但当前缺乏催化剂，仅作技术性挂单，入场区间较宽，等待安全边际。"
+      "rationale": "技术面显示在210附近形成小双底支撑，RSI脱离超卖，试仓做多，止损紧贴支撑下方。 [降级试仓]",
+      "open_check_status": "VALID",
+      "gap_pct": 0.00776105362182505,
+      "confirmed_entry_price": 214.25
     },
     {
-      "symbol": "US.BWXT",
+      "symbol": "US.TSLA",
       "direction": "LONG",
       "entry_zone": [
-        48.0,
-        50.0
+        432.0,
+        434.0
       ],
-      "stop_loss": 46.5,
-      "take_profit": 55.0,
+      "stop_loss": 428.0,
+      "take_profit": 442.0,
       "urgency": "LOW",
-      "rationale": "核能板块近期相对抗跌，BWXT作为防御性标的，在无明确市场方向时具备避险属性。轻仓关注支撑位确认后的小波段机会。",
-      "_price_warning": "entry_zone偏离当前价75.4%",
-      "_current_price_ref": 199.27
+      "rationale": "高位旗形整理，430价位多次获得买盘承接，缩量回踩确认，以旗形下轨作为止损。 [降级试仓]",
+      "open_check_status": "VALID",
+      "gap_pct": 0.003951312562448926,
+      "confirmed_entry_price": 442.1
+    },
+    {
+      "symbol": "US.AMD",
+      "direction": "LONG",
+      "entry_zone": [
+        505.0,
+        508.0
+      ],
+      "stop_loss": 500.0,
+      "take_profit": 520.0,
+      "urgency": "LOW",
+      "rationale": "前期SHORT亏损后观察反弹力度，突破510平台可确认反转，当前试仓需严格止损于500整数关口。 [降级试仓]",
+      "open_check_status": "CANCELLED",
+      "gap_pct": 0.04550591274165559,
+      "cancellation_reason": "Gap too large (4.55% > 3%)"
     }
   ],
   "restricted": [
-    "US.DIA",
-    "US.SPY",
-    "US.LCID",
-    "US.XOM",
-    "US.TSLA",
     "US.QQQ",
-    "US.RIVN",
-    "US.CVX",
-    "US.NIO",
-    "US.UNH",
-    "US.ARM",
-    "US.ORCL",
-    "US.LMT"
+    "US.QQQ260602P700000",
+    "US.RIVN260605P13000",
+    "US.TSLA260603P410000",
+    "US.SPY260602P730000",
+    "US.QCOM"
   ],
   "position_actions": [
     {
-      "symbol": "US.TSLA",
-      "action": "NO_ACTION",
-      "reason": "当前持仓数量为0，已无头寸，无需操作。观望为主，等待明确信号再考虑重新建仓。"
+      "symbol": "US.NVDA",
+      "action": "HOLD",
+      "reason": "持仓数量为0，无实际敞口，保持空仓观望以等待高确定性机会。"
     },
     {
-      "symbol": "US.NVDA",
-      "action": "NO_ACTION",
-      "reason": "当前持仓数量为0，已无头寸，无需操作。保持空仓，等待挂单条件触发。"
+      "symbol": "US.TSLA",
+      "action": "HOLD",
+      "reason": "持仓数量为0，无实际敞口，维持空仓耐心等待信号。"
     }
   ],
   "strategy_adjustments": [
-    "延续空仓等待高确定性机会的策略，避免因缺乏催化剂而强行交易。",
-    "将电动车相关标的（TSLA、RIVN、LCID、NIO）列为限制标的，因其缺乏财报和新闻驱动，且波动性较高，不适合无明确方向的行情。",
-    "仅保留极少数低相关性的防御性挂单（如BWXT），并严格控制仓位。"
+    "延续历史教训中的耐心原则，不强行交易，仅在高确定性信号出现时建仓；",
+    "当前中性市场环境下，提高入场标准，优先选择有明确催化剂的标的，避免消耗微薄利润；",
+    "持续监控跨市场联动与波动率回升迹象，一旦条件满足迅速切换至有明确方向的策略。"
   ],
   "risk_warnings": [
-    "VIX数据缺失，无法有效衡量市场情绪，存在未知波动风险。",
-    "本周无重要财报，市场可能缺乏方向产生无序震荡。",
-    "历史教训显示强行交易易触发止损造成连续回撤，需保持纪律。"
+    "无重大新闻驱动，市场可能维持低波动，日内机会有限，强行交易易被小幅止损消耗；",
+    "VIX数据缺失，无法准确评估期权隐含波动率，若突发外部冲击可能引发超出预期的波动；",
+    "部分股池标的（如RIVN、LCID、NIO）处于高波动敏感区，无强催化时回避。",
+    "⚠️ Arbiter 原判空仓 (数据缺失), 降级为试仓模式, 仓位减半"
   ],
-  "confidence": 0.65,
+  "confidence": 0.6,
   "arbiter_mode": "deterministic_rule_based",
   "claude_audit": {
     "bear_cases": [],
     "position_risks": [],
     "restricted": [
-      "US.RIVN",
-      "US.SPY",
-      "US.QQQ",
       "US.TSLA",
       "US.NVDA",
-      "US.XOM",
-      "US.LMT",
-      "US.CVX",
-      "US.DIA",
-      "US.ARM",
-      "US.UNH",
-      "US.ORCL"
+      "US.QCOM",
+      "US.QQQ",
+      "US.TSLA260603P410000",
+      "US.RIVN260605P13000",
+      "US.QQQ260602P700000",
+      "US.SPY260602P730000"
     ],
     "restricted_reasons": {
-      "US.RIVN": "近期期权做空亏损,硬止损触发",
-      "US.SPY": "近期期权做空亏损,硬止损触发",
-      "US.QQQ": "近期期权做空亏损,硬止损触发",
-      "US.TSLA": "近期期权做空亏损,硬止损触发",
-      "US.NVDA": "历史盘前入场亏损严重,信号可靠性存疑",
-      "US.XOM": "历史盘前入场亏损且高信号强度仍亏损",
-      "US.LMT": "历史盘前入场亏损且高信号强度仍亏损",
-      "US.CVX": "历史盘前入场亏损且高信号强度仍亏损",
-      "US.DIA": "历史盘前入场亏损且止损参数过宽",
-      "US.ARM": "近期交易出现broker reject及幽灵清理,数据不稳定",
-      "US.UNH": "近期交易幽灵清理,持仓异常",
-      "US.ORCL": "近期交易幽灵清理,系统异常"
+      "US.TSLA": "近期TSLA期权交易亏损$10806，且盘前流动性差已多次导致亏损",
+      "US.NVDA": "盘前入场亏损$1302 (-649%)，历史教训明确禁止盘前NVDA交易",
+      "US.QCOM": "44笔交易仅23%胜率，总亏损$3768，盘前入场亏损$76.23，信号可靠性极差",
+      "US.QQQ": "QQQ期权交易亏损$5984，禁止继续做空该标的",
+      "US.TSLA260603P410000": "期权流动性差，3笔0%胜率总亏损$10806，属于高毒性标的",
+      "US.RIVN260605P13000": "期权交易亏损$7632，2笔0%胜率，IV可能严重失真",
+      "US.QQQ260602P700000": "深度虚值期权，硬止损触发亏损$1044，流动性风险极高",
+      "US.SPY260602P730000": "硬止损触发亏损$434，期权做空机制存在严重问题"
     },
     "systemic_risks": [
-      "市场数据全面缺失:VIX/SPY/QQQ/DXY均为N/A,无法评估市场环境",
-      "资金状态与持仓数据不可用,系统可能存在连接或初始化问题",
-      "近20笔交易0胜8负,总盈亏-$22315,近期信号极度不可靠",
-      "历史教训累计10条盘前入场巨额亏损,当前时段环境极度不利",
-      "近期多次交易被幽灵清理或broker拒绝,系统完整性存疑"
+      "【严重】市场数据完全缺失：VIX、SPY、QQQ、DXY均为N/A，无法评估市场真实风险环境，任何做空建议缺乏数据支撑",
+      "【严重】近期20笔交易0胜8负，总盈亏$-22315，策略持续流血，voting_llm胜率仅36%、scalping胜率仅18%，策略本身存在系统性缺陷而非个别标的问题",
+      "【严重】期权做空机制存在根本性缺陷：所有期权空头(TSLA/RIVN/QQQ/SPY)全部触发硬止损，亏损从$434到$10806不等，期权空头的止损机制和IV估算需要彻底重构",
+      "【历史教训聚合】10条活跃教训全部指向盘前入场问题，亏损范围$-28至$-1302，盘前流动性枯竭使止损/止盈机制完全失效，应作为硬性规则禁用盘前交易",
+      "【标的专项警告累积】NVDA/XOM/LMT/CVX/DIA等5个标的存在专项警告，信号强度与盈利呈负相关(NVDA 63强度仍亏损$1302，LMT 68强度仍亏损$27.54)，信号系统的可靠性需要全盘审视",
+      "【无持仓无股池】当前空持仓且股池为空，可能意味着系统处于防御状态或数据源中断，此状态下输出的任何做空建议均不可靠",
+      "【做空机会挑战】无市场数据、无股池、无重要财报、无隔夜新闻的真空期，强行推荐做空标的就是冒险行为"
     ],
     "market_bias": "NEUTRAL",
-    "confidence": 0.25
+    "confidence": 0.85
   },
-  "debate_summary": "Hermes 计划 (2标的) + Claude 风险审计 (12受限)"
+  "debate_summary": "Hermes 计划 (0标的) + Claude 风险审计 (8受限) (降级: 数据缺失, 试仓模式)",
+  "max_positions": 2
 }
