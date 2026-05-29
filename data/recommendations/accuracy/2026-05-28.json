@@ -1,0 +1,38 @@
+{
+  "date": "2026-05-28",
+  "system_conviction": 0.15,
+  "market_regime": "NEUTRAL",
+  "targets": [
+    {
+      "symbol": "AMD",
+      "action": "SELL",
+      "entry_zone": "500.50-502.50",
+      "target": "491.00",
+      "stop_loss": "505.00",
+      "confidence_score": 0.5,
+      "confidence_level": "MEDIUM",
+      "risk_reward": 3.0
+    },
+    {
+      "symbol": "NVDA",
+      "action": "BUY",
+      "entry_zone": "210.20-211.80",
+      "target": "217.50",
+      "stop_loss": "208.50",
+      "confidence_score": 0.5,
+      "confidence_level": "MEDIUM",
+      "risk_reward": 2.6
+    },
+    {
+      "symbol": "TSLA",
+      "action": "BUY",
+      "entry_zone": "430.00-432.50",
+      "target": "441.00",
+      "stop_loss": "427.00",
+      "confidence_score": 0.5,
+      "confidence_level": "MEDIUM",
+      "risk_reward": 2.29
+    }
+  ],
+  "stored_at": "2026-05-28T21:15:17"
+}

@@ -1,0 +1,68 @@
+{
+  "date": "2026-05-28",
+  "plan_available": true,
+  "generated_at": "2026-05-29T04:37:42.507152",
+  "targets": [
+    {
+      "symbol": "US.NVDA",
+      "plan_direction": "LONG",
+      "entry_zone": [
+        210.2,
+        211.8
+      ],
+      "status": "",
+      "traded": false,
+      "entry_zone_hit": false,
+      "direction_match": false,
+      "pnl_contribution": 0.0,
+      "matched_trades": 0,
+      "actual_entry_prices": [],
+      "actual_directions": []
+    },
+    {
+      "symbol": "US.AMD",
+      "plan_direction": "SHORT",
+      "entry_zone": [
+        500.5,
+        502.5
+      ],
+      "status": "",
+      "traded": true,
+      "entry_zone_hit": true,
+      "direction_match": true,
+      "pnl_contribution": -897.2799999999988,
+      "matched_trades": 1,
+      "actual_entry_prices": [
+        501.64
+      ],
+      "actual_directions": [
+        "SHORT"
+      ]
+    },
+    {
+      "symbol": "US.TSLA",
+      "plan_direction": "LONG",
+      "entry_zone": [
+        430.0,
+        432.5
+      ],
+      "status": "",
+      "traded": false,
+      "entry_zone_hit": false,
+      "direction_match": false,
+      "pnl_contribution": 0.0,
+      "matched_trades": 0,
+      "actual_entry_prices": [],
+      "actual_directions": []
+    }
+  ],
+  "hit_rate": 0.3333333333333333,
+  "traded_rate": 0.3333333333333333,
+  "avg_pnl_of_planned": -897.2799999999988,
+  "unplanned_trade_count": 2,
+  "planned_count": 3,
+  "total_trades": 3,
+  "plan_date": "2026-05-28",
+  "traded_planned_count": 1,
+  "hit_count": 1
+}

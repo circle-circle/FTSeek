@@ -182,9 +182,11 @@ class PreTradeChecker:
                 checks_passed=checks_passed,
             )
         # P0-3: 持续亏损股票黑名单 (数据驱动)
+        # 注意: 不拦截 sandbox universe 中的标的 (NVDA/QQQ),
+        #       那些标的由 SignalValidator + HIGH_VOL gate 做精细化管控
         _P0_BLACKLIST = {
-            "US.QCOM", "US.TME", "US.NVDA", "US.META",
-            "US.GOOGL", "US.QQQ", "US.UNH", "US.NFLX", "US.DIA",
+            "US.QCOM", "US.TME", "US.META",
+            "US.GOOGL", "US.UNH", "US.NFLX", "US.DIA",
         }
         if _symbol in _P0_BLACKLIST:
             return PreTradeResult(

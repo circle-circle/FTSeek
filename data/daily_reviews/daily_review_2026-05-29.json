@@ -1,0 +1,416 @@
+{
+  "report_type": "daily",
+  "report_version": "2.0",
+  "report_date": "2026-05-29",
+  "generated_at": "2026-05-29T18:16:00.911586",
+  "summary": {
+    "total_trades": 0,
+    "closed_trades": 0,
+    "total_pnl": 0,
+    "win_rate": 0,
+    "avg_pnl": 0,
+    "equity_snapshot": {
+      "current_equity": 1080842.0,
+      "drawdown_pct": -1.4
+    }
+  },
+  "signal_funnel": {
+    "total_decisions": 13,
+    "by_direction_strength": {
+      "LONG(s=42)": 1,
+      "LONG(s=46)": 1,
+      "LONG(s=79)": 1,
+      "SHORT(s=42)": 2,
+      "SHORT(s=46)": 1,
+      "SHORT(s=53)": 2,
+      "SHORT(s=58)": 1,
+      "SHORT(s=60)": 2,
+      "SHORT(s=79)": 2
+    }
+  },
+  "rejection_analysis": {
+    "total": 3,
+    "by_reason": {
+      "SHORT_TRIPLE_CONFIRM": 3
+    },
+    "by_symbol": {
+      "US.BWXT": 1,
+      "US.NVDA": 1,
+      "US.TSLA": 1
+    },
+    "top_rejector": "SHORT_TRIPLE_CONFIRM"
+  },
+  "capital_state": {
+    "current_equity": 1080842.0,
+    "cash": 861817.0,
+    "buying_power": 1942659.0,
+    "drawdown_pct": -1.4,
+    "max_drawdown_pct": -6.07,
+    "water_level": "green"
+  },
+  "attribution_data": {
+    "total_records": 0,
+    "data_available": false,
+    "note": "trade_attribution 无当日数据",
+    "five_factor": {
+      "five_factor_available": true,
+      "noise_trades_pnl": 34664.16,
+      "early_exit_pnl": 0.0,
+      "late_exit_pnl": 0.0,
+      "overtrading_pnl": 1392.16,
+      "missed_signals_pnl": 8879.76,
+      "behavioral_score": {
+        "score": 84,
+        "grade": "B"
+      },
+      "rules": [
+        {
+          "rule_id": "R1",
+          "human_text": "平均持有 0.1 天，平均盈利 1.9%",
+          "entry_hour_range": [
+            9.0,
+            16.0
+          ],
+          "holding_days_range": [
+            0.1,
+            0.11353217982018848
+          ],
+          "support_count": 84,
+          "coverage_rate": 1.0,
+          "avg_pnl_pct": 0.0195,
+          "weight": 1.0
+        }
+      ],
+      "disposition_effect": {
+        "severity": "low",
+        "avg_hold_winners_days": 0.2,
+        "avg_hold_losers_days": 0.1,
+        "loser_winner_hold_ratio": 0.6,
+        "interpretation": "亏损持仓是盈利的 0.6x — 健康"
+      },
+      "chasing": {
+        "severity": "insufficient_data",
+        "avg_deviation_pct": 0
+      },
+      "anchoring": {
+        "severity": "low",
+        "anchored_ratio": 0.07,
+        "interpretation": "7% 的亏损单超过止损设计 — 止损纪律良好"
+      }
+    },
+    "signal_scores_avg": null,
+    "execution_scores_avg": null,
+    "risk_scores_avg": null,
+    "timing_scores_avg": null,
+    "overall_scores_avg": null
+  },
+  "trade_analyses": [],
+  "dimensions": {
+    "signal_quality": {
+      "score": 5.0,
+      "total_signals": 13,
+      "signal_to_trade_ratio": 0,
+      "strength_distribution": {},
+      "assessment": "no_trades"
+    },
+    "voting_consistency": {
+      "score": null,
+      "status": "no_trades",
+      "data_available": false
+    },
+    "execution_quality": {
+      "score": null,
+      "status": "no_trades",
+      "data_available": false
+    },
+    "risk_compliance": {
+      "data_available": true,
+      "current_drawdown_pct": -1.4,
+      "max_drawdown_pct": -6.07,
+      "water_level": "green",
+      "risk_score": 9.0
+    },
+    "funnel_diagnosis": {
+      "score": null,
+      "status": "normal",
+      "total_decisions": 13,
+      "total_trades": 0,
+      "total_rejections": 3,
+      "trade_conversion_rate": 0.0,
+      "rejection_rate": 0.2308,
+      "top_rejector": "SHORT_TRIPLE_CONFIRM",
+      "by_direction_strength": {
+        "LONG(s=42)": 1,
+        "LONG(s=46)": 1,
+        "LONG(s=79)": 1,
+        "SHORT(s=42)": 2,
+        "SHORT(s=46)": 1,
+        "SHORT(s=53)": 2,
+        "SHORT(s=58)": 1,
+        "SHORT(s=60)": 2,
+        "SHORT(s=79)": 2
+      }
+    },
+    "attribution_learning": {
+      "data_available": true,
+      "lessons_count": 1,
+      "five_factor": {
+        "five_factor_available": true,
+        "noise_trades_pnl": 34664.16,
+        "early_exit_pnl": 0.0,
+        "late_exit_pnl": 0.0,
+        "overtrading_pnl": 1392.16,
+        "missed_signals_pnl": 8879.76,
+        "behavioral_score": {
+          "score": 84,
+          "grade": "B"
+        },
+        "rules": [
+          {
+            "rule_id": "R1",
+            "human_text": "平均持有 0.1 天，平均盈利 1.9%",
+            "entry_hour_range": [
+              9.0,
+              16.0
+            ],
+            "holding_days_range": [
+              0.1,
+              0.11353217982018848
+            ],
+            "support_count": 84,
+            "coverage_rate": 1.0,
+            "avg_pnl_pct": 0.0195,
+            "weight": 1.0
+          }
+        ],
+        "disposition_effect": {
+          "severity": "low",
+          "avg_hold_winners_days": 0.2,
+          "avg_hold_losers_days": 0.1,
+          "loser_winner_hold_ratio": 0.6,
+          "interpretation": "亏损持仓是盈利的 0.6x — 健康"
+        },
+        "chasing": {
+          "severity": "insufficient_data",
+          "avg_deviation_pct": 0
+        },
+        "anchoring": {
+          "severity": "low",
+          "anchored_ratio": 0.07,
+          "interpretation": "7% 的亏损单超过止损设计 — 止损纪律良好"
+        }
+      },
+      "behavioral_score": {
+        "score": 84,
+        "grade": "B"
+      }
+    }
+  },
+  "decision_analysis": {},
+  "risk_analysis": {
+    "data_available": true,
+    "current_drawdown_pct": -1.4,
+    "max_drawdown_pct": -6.07,
+    "water_level": "green",
+    "risk_score": 9.0
+  },
+  "voting_analysis": {
+    "score": null,
+    "status": "no_trades",
+    "data_available": false
+  },
+  "error_patterns": {},
+  "review_score": {
+    "overall_score": 5.0,
+    "max_score": 10.0,
+    "status": "no_trades",
+    "breakdown": {}
+  },
+  "market_regime": {
+    "state": "unknown",
+    "confidence": "low",
+    "indicators": {
+      "drawdown_pct": 1.4
+    }
+  },
+  "plan_vs_actual": {
+    "plan_available": false,
+    "planned_targets": [],
+    "executed_targets": [],
+    "missed_opportunities": [],
+    "unplanned_trades": []
+  },
+  "key_learnings": [],
+  "improvement_suggestions": [
+    "产生 13 条决策但 0 笔执行，检查门禁/风控是否过严",
+    "今日 3 次信号被拒绝，TOP 原因: SHORT_TRIPLE_CONFIRM"
+  ],
+  "exit_reason_pnl": {
+    "window_days": 30,
+    "total_reasons": 26,
+    "by_reason": {
+      "PRE_CLOSE_EXIT": {
+        "n": 18,
+        "win_rate": 0.167,
+        "avg_pnl_pct": -0.00296,
+        "sharpe_proxy": -0.692,
+        "recommendation": "⚠ review"
+      },
+      "FLASH_EXIT": {
+        "n": 4,
+        "win_rate": 0.0,
+        "avg_pnl_pct": -0.0169,
+        "sharpe_proxy": -0.923,
+        "recommendation": "🔍 insufficient"
+      },
+      "STRUCTURE_EXIT": {
+        "n": 33,
+        "win_rate": 0.303,
+        "avg_pnl_pct": -0.00238,
+        "sharpe_proxy": -0.455,
+        "recommendation": "⚠ review"
+      },
+      "TRAILING_STOP": {
+        "n": 92,
+        "win_rate": 0.457,
+        "avg_pnl_pct": 0.0054,
+        "sharpe_proxy": 0.142,
+        "recommendation": "✅ keep"
+      },
+      "sl_hit": {
+        "n": 123,
+        "win_rate": 0.154,
+        "avg_pnl_pct": -0.00122,
+        "sharpe_proxy": -0.544,
+        "recommendation": "⚠ review"
+      },
+      "tp_hit": {
+        "n": 5,
+        "win_rate": 1.0,
+        "avg_pnl_pct": 0.01024,
+        "sharpe_proxy": 3.317,
+        "recommendation": "✅ keep"
+      },
+      "time_stop": {
+        "n": 7,
+        "win_rate": 0.286,
+        "avg_pnl_pct": -0.00534,
+        "sharpe_proxy": -0.397,
+        "recommendation": "🚨 disable"
+      },
+      "ghost_cleanup_cruise": {
+        "n": 5,
+        "win_rate": 0.0,
+        "avg_pnl_pct": 0.0,
+        "sharpe_proxy": 0.0,
+        "recommendation": "⚠ marginal"
+      },
+      "manual_close_simulated": {
+        "n": 4,
+        "win_rate": 0.0,
+        "avg_pnl_pct": 0.0,
+        "sharpe_proxy": 0.0,
+        "recommendation": "🔍 insufficient"
+      }
+    }
+  },
+  "coordinator_summary": {
+    "window_date": "2026-05-29",
+    "owner_strategy_distribution": {},
+    "active_positions_by_owner": {
+      "main": 2
+    },
+    "arbitration": {
+      "total": 0,
+      "multi_candidate": 0,
+      "winners": {}
+    }
+  },
+  "shadow_comparison": {
+    "real": {
+      "n": 0,
+      "total_pnl": 0,
+      "win_rate": 0
+    },
+    "shadow_by_variant": [
+      {
+        "variant": "baseline",
+        "n": 7,
+        "total_pnl": 0.0,
+        "win_rate": 0.0
+      },
+      {
+        "variant": "early_chandelier",
+        "n": 7,
+        "total_pnl": 0.0,
+        "win_rate": 0.0
+      },
+      {
+        "variant": "min_hold_6min",
+        "n": 7,
+        "total_pnl": 0.0,
+        "win_rate": 0.0
+      },
+      {
+        "variant": "no_chandelier",
+        "n": 7,
+        "total_pnl": 0.0,
+        "win_rate": 0.0
+      },
+      {
+        "variant": "quick_exit",
+        "n": 7,
+        "total_pnl": 0.0,
+        "win_rate": 0.0
+      },
+      {
+        "variant": "short_only",
+        "n": 3,
+        "total_pnl": 0.0,
+        "win_rate": 0.0
+      },
+      {
+        "variant": "tighter_stop",
+        "n": 7,
+        "total_pnl": 0.0,
+        "win_rate": 0.0
+      },
+      {
+        "variant": "tp_sl_5to1",
+        "n": 7,
+        "total_pnl": 0.0,
+        "win_rate": 0.0
+      }
+    ]
+  },
+  "pnl_outliers": {
+    "n": 0,
+    "outliers": []
+  },
+  "symbol_loss_guard_triggers": {
+    "total_symbols_tracked": 0,
+    "blocked_count": 0,
+    "blocked": []
+  },
+  "llm_roi": {
+    "date": "2026-05-29",
+    "cost": {
+      "total_usd": 0,
+      "by_feature": {},
+      "total_tokens": 0,
+      "total_calls": 0
+    },
+    "revenue": {
+      "llm_attributed_pnl": 0,
+      "llm_trade_count": 0,
+      "total_pnl": 0,
+      "total_trade_count": 0
+    },
+    "roi": {
+      "value": 0,
+      "cost_per_trade": 0,
+      "pnl_per_dollar_spent": 0
+    },
+    "generated_at": "2026-05-29T18:16:00.911559"
+  }
+}

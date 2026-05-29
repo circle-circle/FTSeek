@@ -1,0 +1,53 @@
+[Unit]
+Description=FTSeek-US 美股AI投研服务 (LV3实时行情)
+Documentation=https://github.com/ftseek/FTSeek-US
+After=network.target network-online.target
+Wants=network-online.target
+
+# 进程锁：确保只有一个实例运行
+ConditionPathExists=!/run/ftseek-us.lock
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/ftseek/FTSeek-US
+
+# 环境变量 — 系统级
+Environment="PYTHONUNBUFFERED=1"
+Environment="PYTHONPATH=/opt/ftseek/FTSeek-US:/opt/ftseek"
+
+# 所有业务环境变量统一从 .env.us 加载（单一来源，避免与 systemd Environment 冲突）
+EnvironmentFile=/opt/ftseek/FTSeek-US/.env.us
+
+# 启动命令：使用增强后的 start.sh（包含 OpenD 健康检查）
+# 若需直接拉起 main.py（OpenD 由 main.py 内部管理），可改回：
+#   ExecStart=/opt/ftseek/FTSeek-US/venv/bin/python main.py --start
+ExecStart=/opt/ftseek/FTSeek-US/start.sh
+
+# 优雅停止
+TimeoutStopSec=45
+KillSignal=SIGTERM
+KillMode=control-group
+TimeoutStartSec=120
+
+# ── Task #21 自动重启策略 ──
+# RestartSec=30 给依赖（OpenD/网络）足够恢复时间
+# StartLimitBurst=5 / StartLimitIntervalSec=300 防止崩溃循环
+Restart=on-failure
+RestartSec=30
+StartLimitBurst=5
+StartLimitIntervalSec=300
+
+# 日志
+StandardOutput=append:/opt/ftseek/FTSeek-US/logs/ftseek_us.log
+StandardError=append:/opt/ftseek/FTSeek-US/logs/ftseek_us.log
+
+# 资源限制
+LimitNOFILE=65535
+LimitNPROC=4096
+
+# 安全加固
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

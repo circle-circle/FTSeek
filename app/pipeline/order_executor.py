@@ -1053,6 +1053,48 @@ def _check_gates_and_conflicts(scheduler, symbol: str, signal: SignalScore, cont
     direction_str = "BUY" if signal.direction == "LONG" else "SELL"
     is_short = (direction_str == "SELL")
 
+    # ── P0 (2026-05-29): LONG 方向 strength 门禁 ──
+    # 数据: strength 1-29 累计亏损 $18,757 (占全部亏损73%)
+    # 之前 LONG 仅依赖 post-decay <30 拦截, 大量低信心信号漏过
+    if not is_short:
+        _long_min = 50
+        try:
+            from app.core.config_container import get_config as _gc_long
+            _lt_cfg = _gc_long().get_dotted("risk.pre_trade", {}) or {}
+            _long_min = int(_lt_cfg.get("long_min_strength", 50))
+        except Exception:
+            pass
+        if signal.strength < _long_min:
+            logger.warning(
+                f"🚫 [做多门禁] {symbol} LONG 信号强度不足 "
+                f"(strength={signal.strength} < {_long_min})"
+            )
+            get_rejection_logger().record(symbol,
+                f"long_strength={signal.strength}<{_long_min}",
+                "LONG_STRENGTH_WEAK", strength=signal.strength,
+                confidence=None, direction="LONG")
+            return False
+
+    # ── P0 (2026-05-29): HIGH_VOL 硬拦截 ──
+    # 数据: HIGH_VOL regime 133笔, 累计亏损 $39,537
+    #   LONG+HIGH_VOL: 7.1% WR — 几乎必输
+    #   SHORT+HIGH_VOL: 23.4% WR — 仍然大亏
+    # pre_trade_check 已有 VIX>=25 拦截, 这里补充 regime 级拦截
+    try:
+        _hv_regime = str(getattr(signal, 'market_regime', '') or '').upper()
+        if _hv_regime == "HIGH_VOL":
+            logger.warning(
+                f"🚫 [HIGH_VOL门禁] {symbol} 高波动市况禁止开新仓 "
+                f"(regime={_hv_regime}, strength={signal.strength})"
+            )
+            get_rejection_logger().record(symbol,
+                f"HIGH_VOL regime blocked",
+                "HIGH_VOL_BLOCKED", strength=signal.strength,
+                confidence=None, direction=direction_str)
+            return False
+    except Exception:
+        pass
+
     if is_short:
         # 做空门禁 (P0-辩论修复 2026-05-26: direct语义, 无需反转)
         # strength 越高 = 信号越强 (LONG/SHORT 均同)

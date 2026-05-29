@@ -1,0 +1,175 @@
+{
+  "date": "2026-05-28",
+  "market_regime": "NEUTRAL",
+  "summary": "今日推荐 2 只看涨、1 只看跌。Semiconductors 占比 67%。",
+  "recommendations": [
+    {
+      "rank": 1,
+      "symbol": "AMD",
+      "action": "SELL",
+      "confidence_level": "MEDIUM",
+      "confidence_score": 0.5,
+      "zh_thesis": "【试仓模式】500心理关口多次测试未破，相对NVDA呈现明显滞涨与RSI顶背离。中性市资金虹吸效应下，弱势标的易回踩均线。试仓轻仓做空，止损极窄设于突破位上方，严格纪律执行。 [降级试仓]。",
+      "entry_zone": "500.50-502.50",
+      "target": "491.00",
+      "stop_loss": "505.00",
+      "risk_reward": 3.0,
+      "catalyst": "",
+      "risk_factors": [],
+      "sector": "Semiconductors"
+    },
+    {
+      "rank": 2,
+      "symbol": "NVDA",
+      "action": "BUY",
+      "confidence_level": "MEDIUM",
+      "confidence_score": 0.5,
+      "zh_thesis": "【试仓模式】技术面确认日线级别210支撑有效，QQQ企稳带动半导体权重回流。降级模式下放弃基本面博弈，纯靠量价结构做多。止损收紧至前低下方1.2%，盈亏比>1:3，仅参与确定性反弹。 [降级试仓]。",
+      "entry_zone": "210.20-211.80",
+      "target": "217.50",
+      "stop_loss": "208.50",
+      "risk_reward": 2.6,
+      "catalyst": "",
+      "risk_factors": [],
+      "sector": "Semiconductors"
+    },
+    {
+      "rank": 3,
+      "symbol": "TSLA",
+      "action": "BUY",
+      "confidence_level": "MEDIUM",
+      "confidence_score": 0.5,
+      "zh_thesis": "【试仓模式】盘前量价显示430为强支撑带，中性市下高Beta标的易出现均值回归。技术面确认双针探底结构，试仓介入博弈短线反弹。止损收紧至0.7%，不追高，仅做区间下沿试错。 [降级试仓]。",
+      "entry_zone": "430.00-432.50",
+      "target": "441.00",
+      "stop_loss": "427.00",
+      "risk_reward": 2.29,
+      "catalyst": "",
+      "risk_factors": [],
+      "sector": "Consumer Cyclical"
+    }
+  ],
+  "sector_allocation": {
+    "Semiconductors": 0.6667,
+    "Consumer Cyclical": 0.3333
+  },
+  "action_items": [
+    "ARM: 今日回避",
+    "ORCL: 今日回避",
+    "LCID: 今日回避",
+    "NIO: 今日回避",
+    "UBER: 今日回避",
+    "TME: 今日回避",
+    "QCOM: 今日回避",
+    "QQQ: 今日回避",
+    "UNH: 今日回避",
+    "DIA: 今日回避",
+    "LMT: 今日回避",
+    "TEST: 今日回避",
+    "XOM: 今日回避",
+    "SPY: 今日回避",
+    "SNDK: 今日回避",
+    "CVX: 今日回避",
+    "RIVN: 今日回避",
+    "MU: 今日回避"
+  ],
+  "generated_at": "2026-05-28T21:26:44+08:00",
+  "system_conviction": 0.15,
+  "risk_warnings": [
+    "【数据源断裂导致风控失效】NVDA/AMD 盲持 $227K 敞口，止损/追踪止盈无法触发，必须优先恢复数据或强制平仓。",
+    "【模型退化与信号反转】Voting 管线输出全零，高置信度信号胜率反降，自动交易已丧失正期望，需切换人工复核。",
+    "【配置漂移与执行层脱节】exit_profiles 资本参数低估 10.8 倍，盘前禁令未硬编码，教训学习未闭环，存在系统性执行漏洞。",
+    "【事件驱动与期权定价崩溃】MU 19% 异常跳空属基本面催化，技术面失效；7 个期权 PRICE_FAIL 导致 Delta 对冲链条断裂。",
+    "【全面防御模式】在数据管线、信号质量、配置参数三重修复前，禁止任何新开仓指令，当前唯一目标是降杠杆、清无效仓位、修复系统状态。"
+  ],
+  "debate_summary": "Hermes 计划 (0标的) + Claude 风险审计 (20受限) (降级: 数据缺失, 试仓模式)",
+  "arbiter_mode": "deterministic_rule_based",
+  "position_actions": [
+    {
+      "symbol": "US.NVDA",
+      "action": "REDUCE",
+      "target_zone": [
+        210,
+        215
+      ],
+      "rationale": "降集中度至安全阈值(5%)，等待数据源恢复后重新评估"
+    },
+    {
+      "symbol": "US.AMD",
+      "action": "EXIT",
+      "target_zone": [
+        498,
+        502
+      ],
+      "rationale": "数据断裂盲持风险过高，立即释放敞口"
+    },
+    {
+      "symbol": "US.MU",
+      "action": "EXIT",
+      "target_zone": [
+        148,
+        155
+      ],
+      "rationale": "19%跳空事件驱动，技术面失效，逼空风险极高"
+    },
+    {
+      "symbol": "US.QCOM",
+      "action": "EXIT",
+      "target_zone": [
+        160,
+        165
+      ],
+      "rationale": "策略因子完全失效(p<0.001)，停止慢性出血"
+    },
+    {
+      "symbol": "US.TSLA",
+      "action": "EXIT",
+      "target_zone": [
+        340,
+        345
+      ],
+      "rationale": "多空双向亏损，策略一致性缺失，期权对冲失效"
+    }
+  ],
+  "claude_audit": {
+    "systemic_risks": [
+      "【数据源全面断裂】20:41日志: market_data_router ERROR — US.AMD和US.NVDA所有数据源均失败。这是系统最大的两个持仓(合计名义~$227K), 在无法获取价格的情况下系统处于盲持状态。止损/止盈/追踪止损全部无法执行。Finnhub也返回DXY价格=0(WARNING)。VIX/SPY/QQQ/DXY宏观数据全为N/A。",
+      "【投票管线断裂(持续)】所有近期交易signal_strength=0, signal_confidence=0。voting_coordinator输出未填充数据, 决策引擎在盲飞。battle plan的recommendations使用'综合多源信号给出建议'的通用模板文本, 无具体因子分析。",
+      "【持仓数据严重不一致】Prompt声明持仓为[], 但broker reconciliation确认7个持仓(NVDA/TSLA/AMD/MU/SNDK/UNH/QCOM), 名义敞口估计$300K+。capital allocation显示main=0.0/scalping=0.0/llm_plan=0.0(零资本分配)却有7个capital locks。这是状态管理层面的严重bug。"
+    ],
+    "bear_cases": [
+      {
+        "symbol": "US.NVDA",
+        "direction": "SHORT",
+        "entry_zone": [
+          210,
+          218
+        ],
+        "stop_loss": 226,
+        "take_profit": 195,
+        "rationale": "推理链: (1) 系统当前持有 NVDA LONG 765股(名义敞口~$163K, 占equity $1,080,757的15.1%)——这是最大单一持仓且集中度过高; (2) 20:41日志显示 US.AMD 和 US.NVDA 所有数据源均失败(market_data_router ERROR), 系统无法为最大持仓获取定价, 处于盲持状态; (3) exit_profiles.yaml第164行将NVDA列入mean_reversion_risk_managed黑名单(blacklist:['NVDA','META']), 但765股多头仍在运行——配置自相矛盾; (4) 近期NVDA LONG交易(850号)持仓仅0.7h即触发TRAILING_STOP亏损$1028, 入场后方向立即反向; (5) 历史4笔交易0%胜率总亏$3933; (6) 盘前教训#1亏损$1302(-649%); (7) 推荐引擎给出BUY 208.5-210.5但当前价格数据不可用, 入场区间无法验证; (8) battle plan降级为试仓模式。结论: 在数据源全部失败的情况下持有多头仓位是系统性风险, 若恢复数据后价格在210-218区间应考虑反手做空以对冲集中度过高的多头敞口。",
+        "risk_level": "HIGH"
+      },
+      {
+        "symbol": "US.AMD",
+        "direction": "SHORT",
+        "entry_zone": [
+          500,
+          502.5
+        ],
+        "stop_loss": 510,
+        "take_profit": 488,
+        "rationale": "推理链: (1) 系统已持有 AMD SHORT 128股(名义~$64K), 与推荐引擎#1 SELL信号一致; (2) 20:41日志 US.AMD 所有数据源均失败——第二大持仓同样处于盲持状态; (3) 5/28信号漏斗中AMD被SHORT_EFFECTIVE_WEAK拒绝1次, 说明系统自身风控对AMD空头信号缺乏信心; (4) 半导体板块在推荐中占比67%(AMD SELL + NVDA BUY), 板块内部方向矛盾暗示系统性判断混乱; (5) 日线500关口多次冲高回落+RSI顶背离(recommendation rationale)——技术面逻辑成立但缺乏实时数据确认; (6) 风险收益比2.79:1看似合理, 但在数据源断裂的情况下止损执行能力存疑。结论: 维持现有空头方向, 但必须在数据恢复后立即验证持仓盈亏并确认止损有效性。",
+        "risk_level": "HIGH"
+      }
+    ],
+    "market_bias": "NEUTRAL",
+    "confidence": 0.1
+  },
+  "debate_consensus": [
+    "数据源全面断裂 (NVDA/AMD 盲持 $227K, 宏观数据 N/A) → AGREE. 数据源中断是最高优先级技术故障。在无法获取实时报价的情况下，自动化风控（止损/追踪止盈）完全失效，盲持等同于裸敞口暴露。",
+    "持仓集中度与配置脱节 (NVDA 15.1% 超限, exit_profiles 黑名单矛盾, equity 参数偏差) → AGREE. 配置文件未同步实盘资金规模，且黑名单逻辑未拦截历史遗留仓位，暴露了状态管理层面的严重缺陷与风控参数漂移。",
+    "投票管线断裂与信号置信度失效 (signal_strength=0, 高置信度胜率反降) → AGREE. 决策引擎当前处于‘盲飞’状态，模型因子已退化，高置信度信号反而表现更差，继续依赖自动信号将导致负期望累积。",
+    "盘前交易禁令未硬编码 & Scalping 策略仍在运行 → AGREE. 教训学习模块与执行层存在断层，导致风控规则未落地，Scalping 引擎在 0% 胜率下仍分配 $10K 日亏损限额。"
+  ]
+}
