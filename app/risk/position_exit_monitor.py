@@ -1314,21 +1314,46 @@ class ExitMonitor:
             if policy_guardian is not None and hasattr(policy_guardian, "policy"):
                 policy_dict = policy_guardian.policy or {}
 
-            # CR-3 (2026-05-15): SL 单调收紧守护 — 防 chandelier 保利后被 ATR 放松
-            # 旧 bug: chandelier 把 SL 提到 entry 之上 (保利) → 后续 ATR 重算把 SL 拉回 entry 之下 → 保利失效
-            # 新规: LONG 的 current_sl 单调升 (越高越紧); SHORT 单调降 (越低越紧)
+            # ── P0 修复 (2026-05-29): 渐进式追踪止损 — 消除 0~2.0 ATR 保护死区 ──
+            # 旧 bug: profit_atr_signed < 2.0 时 SL 固定在 entry - atr*mult，利润自由蒸发
+            # 新逻辑: 4 档渐进
+            #   0~0.5 ATR: 不动 (允许正常波动)
+            #   0.5~1.0 ATR: 保本 (SL 移至入场价 + buffer)
+            #   1.0~2.0 ATR: 紧凑追踪 (SL = peak - 1.5×ATR)
+            #   ≥2.0 ATR: 标准追踪 (SL = peak - trail_mult×ATR)
+            # CR-3 单调守护保持不变: LONG SL 只升不降, SHORT SL 只降不升
+
             _old_sl = float(getattr(position, "current_sl", 0) or 0)
             _new_sl = None
+            _tier = ""  # 日志用
+
+            # 保本 buffer: 入场价 ± 0.1% (覆盖手续费+价差噪声)
+            _breakeven_buffer = entry_price * 0.001
 
             if direction == "LONG":
-                if profit_atr_signed >= 2.0:
+                _abs_profit = profit_atr_signed  # LONG: 正=盈利, 负=亏损
+
+                if _abs_profit >= 2.0:
+                    # Tier 4: 标准追踪
                     regime = trail_state.get("regime", "normal")
                     trail_mult = resolve_trail_multiplier(policy_dict, regime, "LONG")
                     _new_sl = trail_state.get("highest_price", entry_price) - atr * trail_mult
+                    _tier = f"标准追踪(profit={_abs_profit:.1f}ATR, mult={trail_mult:.1f})"
+                elif _abs_profit >= 1.0:
+                    # Tier 3: 紧凑追踪 (1.5x ATR)
+                    _new_sl = trail_state.get("highest_price", entry_price) - atr * 1.5
+                    _tier = f"紧凑追踪(profit={_abs_profit:.1f}ATR, mult=1.5)"
+                elif _abs_profit >= 0.5:
+                    # Tier 2: 保本
+                    _new_sl = entry_price + _breakeven_buffer
+                    _tier = f"保本(profit={_abs_profit:.1f}ATR, SL=entry+buffer)"
                 else:
+                    # Tier 1: 不动 (正常波动区间)
                     atr_mult = float(policy_dict.get("exit_rules", {}).get("atr_stop", {}).get(
                         "multiplier_by_profit", {}).get("initial", 2.5))
                     _new_sl = entry_price - atr * atr_mult
+                    _tier = f"固定(profit={_abs_profit:.1f}ATR, mult={atr_mult:.1f})"
+
                 # CR-3: LONG SL 单调升 (max), 防止放松
                 if _old_sl > 0:
                     position.current_sl = max(_old_sl, _new_sl)
@@ -1339,14 +1364,37 @@ class ExitMonitor:
                         )
                 else:
                     position.current_sl = _new_sl
+
+                if _tier and not _tier.startswith("固定"):
+                    logger.info(
+                        f"[SL·渐进] {position.symbol} LONG {_tier} "
+                        f"SL: ${_old_sl:.2f}→${position.current_sl:.2f} "
+                        f"entry=${entry_price:.2f} high=${trail_state.get('highest_price', entry_price):.2f}"
+                    )
             else:
-                if profit_atr_signed >= 2.0:
+                # SHORT: profit_atr_signed 正=盈利(价格下跌), 负=亏损(价格上涨)
+                _abs_profit = profit_atr_signed
+
+                if _abs_profit >= 2.0:
+                    # Tier 4: 标准追踪
                     regime = trail_state.get("regime", "normal")
                     trail_mult = resolve_trail_multiplier(policy_dict, regime, "SHORT")
                     _new_sl = trail_state.get("lowest_price", entry_price) + atr * trail_mult
+                    _tier = f"标准追踪(profit={_abs_profit:.1f}ATR, mult={trail_mult:.1f})"
+                elif _abs_profit >= 1.0:
+                    # Tier 3: 紧凑追踪 (1.5x ATR)
+                    _new_sl = trail_state.get("lowest_price", entry_price) + atr * 1.5
+                    _tier = f"紧凑追踪(profit={_abs_profit:.1f}ATR, mult=1.5)"
+                elif _abs_profit >= 0.5:
+                    # Tier 2: 保本
+                    _new_sl = entry_price - _breakeven_buffer
+                    _tier = f"保本(profit={_abs_profit:.1f}ATR, SL=entry-buffer)"
                 else:
+                    # Tier 1: 不动
                     short_mult = float(policy_dict.get("short_overrides", {}).get("atr_multiplier", 2.0))
                     _new_sl = entry_price + atr * short_mult
+                    _tier = f"固定(profit={_abs_profit:.1f}ATR, mult={short_mult:.1f})"
+
                 # CR-3: SHORT SL 单调降 (min)
                 if _old_sl > 0:
                     position.current_sl = min(_old_sl, _new_sl)
@@ -1357,6 +1405,13 @@ class ExitMonitor:
                         )
                 else:
                     position.current_sl = _new_sl
+
+                if _tier and not _tier.startswith("固定"):
+                    logger.info(
+                        f"[SL·渐进] {position.symbol} SHORT {_tier} "
+                        f"SL: ${_old_sl:.2f}→${position.current_sl:.2f} "
+                        f"entry=${entry_price:.2f} low=${trail_state.get('lowest_price', entry_price):.2f}"
+                    )
         else:
             # 兜底 (无 policy_guardian) 也走单调守护
             _old_sl = float(getattr(position, "current_sl", 0) or 0)

@@ -42,6 +42,7 @@ class PositionSource(Enum):
             "llm_plan": cls.AUTO_LLM_PLAN,
             "manual": cls.MANUAL, "futu_manual": cls.MANUAL,
             "broker_recovery": cls.LEGACY, "futu_sync": cls.MANUAL,
+            "broker_reconcile": cls.AUTO_MAIN,  # P0 (2026-05-29): 对账恢复仓归主线管理
             "simulation": cls.LEGACY,
         }
         return _map.get(s, cls.UNKNOWN)

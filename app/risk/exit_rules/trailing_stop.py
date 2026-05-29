@@ -40,15 +40,18 @@ def check_trailing_stop(monitor, position, current_price, entry_price, atr,
         if profit_atr_signed <= 0:
             # 亏损头寸：禁止追踪止损，交由固定ATR止损管控
             return None
-        elif profit_atr_abs < 1.5:
-            # 微利(0~1.5 ATR)：不激活追踪，避免噪声扫出
+        elif profit_atr_abs < 0.5:
+            # 微利(0~0.5 ATR)：不激活追踪，允许正常波动
+            # P0 修复 (2026-05-29): 门槛从 1.5 降至 0.5，对齐渐进式追踪止损
             return None
         elif profit_atr_abs >= 5.0:
             atr_mult = 2.5   # 大盈利：适当放宽，让利润奔跑
         elif profit_atr_abs >= 3.0:
             atr_mult = 2.0   # 中等盈利：标准追踪
+        elif profit_atr_abs >= 1.0:
+            atr_mult = 1.5   # P0 修复: 紧凑追踪 (1.0~3.0 ATR)
         else:
-            atr_mult = 3.0   # 小盈利(1.5~3.0 ATR)：宽松追踪，防虚假触发
+            atr_mult = 3.0   # 小盈利(0.5~1.0 ATR)：宽松追踪，保本为主
 
     # 3. peak/trough 更新 (LONG=最高, SHORT=最低)
     if direction == "LONG":

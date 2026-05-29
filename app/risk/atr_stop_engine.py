@@ -200,21 +200,33 @@ def compute_stop_lines(
         atr_stop = hard_stop
 
     # === 4. Chandelier：仅在"盈利"≥ activation 时激活 ===
+    # P0 修复 (2026-05-29): 激活门槛从 2.0 降至 1.0 ATR (渐进式追踪止损)
+    # 消除 0~2.0 ATR 利润保护死区，与 _update_trail_state 4档逻辑对齐
     chandelier_stop = 0.0
     trail_mult = resolve_trail_multiplier(policy, regime, direction)
-    activation = float(ch_cfg.get("activation_profit_atr", 2.0))
+    activation = float(ch_cfg.get("activation_profit_atr", 1.0))
     if ch_cfg.get("enabled", True) and atr > 0 and profit_atr_signed >= activation:
         if direction == "LONG":
-            chandelier_stop = peak_price - atr * trail_mult
+            # 1.0~2.0 ATR: 紧凑追踪 1.5x; ≥2.0 ATR: 标准追踪 trail_mult
+            if profit_atr_signed < 2.0:
+                _effective_mult = 1.5
+            else:
+                _effective_mult = trail_mult
+            chandelier_stop = peak_price - atr * _effective_mult
         else:
-            chandelier_stop = peak_price + atr * trail_mult
+            if profit_atr_signed < 2.0:
+                _effective_mult = 1.5
+            else:
+                _effective_mult = trail_mult
+            chandelier_stop = peak_price + atr * _effective_mult
 
     # === 5. Breakeven：仅在"盈利"≥ trigger 时激活 ===
+    # P0 修复 (2026-05-29): 激活门槛从 1.5 降至 0.5 ATR (保本触发提前)
     # Y4 (2026-05-15): bug 修复 — SHORT break-even 应在 entry 之上 (价格反弹回到 entry 附近触发保利)
     # 旧 bug: SHORT 用 entry × (1 - buffer), 导致 stop_line 低于 entry, 入场即满足触发条件
     # 真凶: GOOGL SHORT entry $335.99 → breakeven_stop=$335.32 → 入场 0.5h 后异常 +$6K 损失
     breakeven_stop = 0.0
-    be_trigger = float(be_cfg.get("trigger_profit_atr", 1.5))
+    be_trigger = float(be_cfg.get("trigger_profit_atr", 0.5))
     buffer_pct = float(be_cfg.get("buffer_pct", 0.2)) / 100.0
     if be_cfg.get("enabled", True) and profit_atr_signed >= be_trigger:
         if direction == "LONG":

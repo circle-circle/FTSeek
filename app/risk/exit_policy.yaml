@@ -48,7 +48,7 @@ exit_rules:
   # 规则 3: Chandelier 追踪止损 (替代固定 3% 回撤)
   chandelier_trail:
     enabled: true
-    activation_profit_atr: 1.2      # 优化 (2026-05-03): 从 2.0 降至 1.2, 更早激活追踪止盈, 减少 PRE_CLOSE_EXIT 被动强平
+    activation_profit_atr: 1.0      # P0 (2026-05-29): 从 1.2 降至 1.0, 渐进式追踪止损 Tier3 对齐
     multiplier_by_regime:
       normal: 2.5                   # 优化 (2026-05-03): 从 2.0 放宽到 2.5, 给利润更多呼吸空间
       trending: 3.5                 # 优化 (2026-05-03): 从 3.0 放宽到 3.5, 趋势市让利润奔跑
@@ -59,7 +59,7 @@ exit_rules:
   # 规则 4: 保本触发
   breakeven:
     enabled: true
-    trigger_profit_atr: 1.0         # 优化 (2026-05-03): 从 1.5 降至 1.0, 更早移至保本
+    trigger_profit_atr: 0.5         # P0 (2026-05-29): 从 1.0 降至 0.5, 渐进式追踪止损 Tier2 对齐
     buffer_pct: 0.2                 # 成本价 + 0.2% 滑点缓冲
 
   # 规则 5: 分层止盈 (分批减仓)
