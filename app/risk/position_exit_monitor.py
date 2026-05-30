@@ -34,6 +34,7 @@ FTSeek-US 持仓退出监控 (Position Exit Monitor)
   - P2: Chandelier regime乘数: normal 2.0→2.5, trending 3.0→3.5, volatile 1.5→2.0
 """
 import logging
+import math
 import time
 import sqlite3
 import uuid
@@ -488,7 +489,7 @@ class ExitMonitor:
                     else:
                         total_pnl += (p.avg_entry_price - price) * getattr(p, 'size', 0)
             except Exception as _silent_e:
-                logger.warning(f"[silent_except:position_exit_monitor.py] {_silent_e}")
+                logger.critical(f"[退出监控·P0] 组合PnL计算异常，回撤检测可能失效: {_silent_e}", exc_info=True)
 
         # P0 修复 (2026-05-28): 使用账户净值作为回撤分母，而非持仓成本
         # 旧行为: total_cost 作为分母 → 半仓时回撤被放大 2 倍，误触发 REDUCE/FLAT
@@ -766,6 +767,21 @@ class ExitMonitor:
                 # 之前: trail_state 在第 268 行才赋值, 但 line 238 就可能引用 → NameError
                 trail_state = position.trail_state if position.trail_state else {}
 
+                # P0 修复 (2026-05-29): trail_state 完整性验证
+                # 防止进程重启后 highest_price 重置为异常值导致追踪止损失效
+                if trail_state.get("highest_price") and trail_state["highest_price"] < entry_price:
+                    logger.warning(
+                        f"[trail_state] {symbol} highest_price异常："
+                        f"{trail_state['highest_price']:.2f} < entry {entry_price:.2f}，重置"
+                    )
+                    trail_state["highest_price"] = entry_price
+                if trail_state.get("lowest_price") and trail_state["lowest_price"] > entry_price:
+                    logger.warning(
+                        f"[trail_state] {symbol} lowest_price异常："
+                        f"{trail_state['lowest_price']:.2f} > entry {entry_price:.2f}，重置"
+                    )
+                    trail_state["lowest_price"] = entry_price
+
                 # 获取当前价格
                 current_price = get_price_fn(symbol)
                 # P0 修复 (2026-05-11): 价格类型异常时发送告警 + 使用备用价格继续监控
@@ -827,16 +843,24 @@ class ExitMonitor:
                         f"vol_ratio={current_session_ratio:.2f}"
                     )
 
-                # 2. 平滑融合：入场 ratio → 当前 ratio（60 分钟线性过渡）
+                # 2. 平滑融合：入场 ratio → 当前 ratio（cosine 缓入缓出过渡）
                 #    防止 session 切换时止损线突变（如 11:30 从 1.2→0.6 暴跌 50%）
+                #    P1 修复 (2026-05-29): 线性过渡在60min边界跳变 → 改为cosine平滑 + 延长至90min
                 entry_ratio = trail_state.get("entry_session_ratio", current_session_ratio)
                 entry_time_ts = trail_state.get("entry_time_ts", now_ts)
                 held_minutes = (now_ts - entry_time_ts) / 60.0
-                # 融合权重: 0 (刚入场) → 1 (60min 后)
-                blend_weight = min(held_minutes / 60.0, 1.0)
+                # 融合权重: cosine缓入缓出，过渡时间延长到90分钟避免边界突变
+                raw_weight = min(held_minutes / 90.0, 1.0)
+                blend_weight = 0.5 * (1 - math.cos(math.pi * raw_weight))
                 session_ratio = entry_ratio * (1.0 - blend_weight) + current_session_ratio * blend_weight
 
                 effective_atr = atr * session_ratio
+                # P1 修复 (2026-05-29): effective_atr 下限保护
+                # session_ratio 在 midday 可能压到0.6，导致 effective_atr 极小
+                # Chandelier 无法激活，SL 固定 → 微幅波动触发止损
+                # 确保 effective_atr 在任何 session 下不低于 daily_atr 的 35%
+                min_effective_atr = atr * 0.35
+                effective_atr = max(effective_atr, min_effective_atr)
 
                 # 日志: session 切换时记录
                 if abs(session_ratio - entry_ratio) > 0.1 and blend_weight > 0:
@@ -881,6 +905,7 @@ class ExitMonitor:
                 )
 
                 if selected_decision:
+                    trail_state['effective_atr'] = effective_atr  # ATR观察日志需要
                     self._execute_exit(position, selected_decision, execute_close_fn, trail_state, now_ts)
                     closed.append({"symbol": symbol, "reason": selected_decision["reason"], "pnl_pct": pnl_pct})
                     continue
@@ -1302,11 +1327,24 @@ class ExitMonitor:
         position.trail_state = trail_state
 
         # ── 持久化 trail_state 到 trail_state_store (2026-05-27) ──
+        # P0 修复 (2026-05-29): 提升日志级别 + 重试机制，防止静默丢失导致重启后 peak_price 重置
         try:
+            import time as _time_mod
             from app.risk.trail_state_store import save_trail_state
-            save_trail_state(position.symbol, trail_state)
+            _persist_ok = False
+            for _retry_i in range(3):  # 最多尝试 3 次 (首次 + 2 次重试)
+                if save_trail_state(position.symbol, trail_state):
+                    _persist_ok = True
+                    break
+                if _retry_i < 2:
+                    _time_mod.sleep(0.1)  # 重试间隔 100ms
+            if not _persist_ok:
+                logger.warning(
+                    f"[trail_state] {position.symbol} 持久化失败(重试3次均失败)，"
+                    f"重启可能导致 peak_price 重置"
+                )
         except Exception as _persist_err:
-            logger.debug(f"[trail_state] {position.symbol} 持久化失败: {_persist_err}")
+            logger.warning(f"[trail_state] {position.symbol} 持久化异常: {_persist_err}")
 
         if atr > 0:
             profit_atr_signed = compute_profit_atr_signed(direction, entry_price, current_price, atr)
@@ -1507,7 +1545,7 @@ class ExitMonitor:
                 exit_time=datetime.now(),
             )
         except Exception as _silent_e:
-            logger.warning(f"[silent_except:position_exit_monitor.py] {_silent_e}")
+            logger.critical(f"[退出监控·P0] 交易记录保存异常，可能产生幽灵交易: {_silent_e}", exc_info=True)
 
         # ── P3 G14: 退出时写入标签化记忆 ──
         try:
@@ -1537,6 +1575,20 @@ class ExitMonitor:
         success = execute_close_fn(position, reason)
         if success:
             logger.info(f"[EXIT]{_trace_pair} ✅ Close confirmed: {position.symbol} | {reason.get('reason', '')}")
+            # ATR观察日志: 退出决策关键参数 (2026-05-30)
+            try:
+                _hold_minutes = getattr(position, 'holding_hours', 0) * 60
+                _effective_atr = reason.get('effective_atr', trail_state.get('effective_atr', 0.0))
+                _pnl = pnl_pct * 100
+                _profit_atr = (exit_price - entry_price) / _effective_atr if _effective_atr > 0 and direction_str == 'LONG' else \
+                              (entry_price - exit_price) / _effective_atr if _effective_atr > 0 else 0.0
+                logger.info(
+                    f"[ATR_EXIT] symbol={position.symbol} exit_reason={reason.get('reason', 'UNKNOWN')} "
+                    f"hold_time={_hold_minutes:.0f}min pnl={_pnl:.2f}% "
+                    f"profit_atr={_profit_atr:.2f}x effective_atr={_effective_atr:.4f}"
+                )
+            except Exception:
+                pass  # 日志增强不影响核心逻辑
             # ── P0 Fix: 写入 trade_attribution 归因记录 ──
             # position_exit_monitor 是主要退出路径, 之前从未调用 _update_trade_attribution,
             # 导致所有通过此路径退出的交易无归因记录 (8 次 EXIT 全部缺失)
@@ -1646,7 +1698,8 @@ class ExitMonitor:
                                          abs(r['low'] - r['prev_close'])), axis=1
                         )
                         median_tr = float(data200['tr'].dropna().median())
-                        atr = max(atr, median_tr * 0.7)
+                        # P1 修复 (2026-05-29): floor系数0.7→0.85，防止极端缩水
+                        atr = max(atr, median_tr * 0.85)
                 except Exception as _silent_e:
                     logger.warning(f"[silent_except:position_exit_monitor.py] {_silent_e}")
 

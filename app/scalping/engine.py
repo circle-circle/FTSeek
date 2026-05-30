@@ -237,6 +237,10 @@ class ScalpingEngine:
         # P1 修复 (2026-05-06): 信号冷却 — 防止同一标的每tick重复开仓
         self._signal_cooldown: Dict[str, float] = {}  # symbol → last_signal_timestamp
         self._signal_cooldown_sec = 300  # P0 修复 (2026-05-08): 从 180s 延长至 300s，减少同标的反复触发
+        # RFC-053 (2026-05-30): 信号检测去重 — 防止 SignalDetector 每6s spam 同一信号
+        # 即使信号被下游拒绝(pre_trade_check/budget), 检测层也需冷却
+        self._detection_cooldown: Dict[str, float] = {}  # "symbol:direction" → timestamp
+        self._detection_cooldown_sec = 60  # 同symbol+direction 60s内不重复检测
 
         # P0 修复 (2026-05-13): 下单失败冷却 — 防止 broker 拒绝后无限重试 (如方向冲突)
         self._order_fail_cooldown: Dict[str, float] = {}  # symbol → fail_timestamp
@@ -319,15 +323,20 @@ class ScalpingEngine:
         # ═══════════════════════════════════════════════════════════
         # P2 修复 (2026-05-08): ATR 波动率自适应退出
         # 配置驱动开关，默认启用。ATR 不可用时自动回退到 FixedExit
+        # Task #9 (2026-05-30): TP/SL 倍数优先从 exit_policy.yaml::scalping_overrides.atr_exit 读取,
+        #   unified_config.scalping.atr_tp_multiplier/atr_sl_multiplier 仅作为兑底覆写
         # ═══════════════════════════════════════════════════════════
         self.use_atr_exit = scalping_cfg.get("use_atr_exit", False)
         if self.use_atr_exit:
-            tp_mult = scalping_cfg.get("atr_tp_multiplier", 1.5)
-            sl_mult = scalping_cfg.get("atr_sl_multiplier", 1.0)
+            # 优先使用 unified_config 显式参数; 未配置时传 None 让 ATRExit 从 exit_policy.yaml 读取
+            tp_mult = scalping_cfg.get("atr_tp_multiplier")
+            sl_mult = scalping_cfg.get("atr_sl_multiplier")
             self.atr_exit = ATRExit(tp_multiplier=tp_mult, sl_multiplier=sl_mult)
             logger.info(
                 f"[ScalpingEngine] ATR 自适应退出已启用 | "
-                f"TP 倍数={tp_mult}x | SL 倍数={sl_mult}x"
+                f"TP 倍数={self.atr_exit.tp_mult}x | SL 倍数={self.atr_exit.sl_mult}x | "
+                f"范围 TP=[{self.atr_exit.min_tp_pct:.2%},{self.atr_exit.max_tp_pct:.2%}] "
+                f"SL=[{self.atr_exit.min_sl_pct:.2%},{self.atr_exit.max_sl_pct:.2%}]"
             )
         else:
             self.atr_exit = None
@@ -1331,6 +1340,19 @@ class ScalpingEngine:
                 logger.debug(f"[Scalping冷却] {symbol} 下单失败冷却中, 剩余 {remaining:.0f}s")
                 return
 
+            # RFC-053 (2026-05-30): 信号检测级冷却 — 防止 detect() spam 日志
+            # 检查所有可能的方向(LONG/SHORT), 任一在冷却中就跳过
+            _now_det = time.time()
+            _in_det_cooldown = False
+            for _d in (LONG, SHORT):
+                _dk = f"{symbol}:{_d}"
+                _last_det = self._detection_cooldown.get(_dk, 0)
+                if _now_det - _last_det < self._detection_cooldown_sec:
+                    _in_det_cooldown = True
+                    break
+            if _in_det_cooldown:
+                return
+
             # P0 修复 (2026-05-08): 标的级冷却 — sl_hit 当日超过3次冷却到次日
             if hasattr(self, '_symbol_sl_hit_count'):
                 today = datetime.now().strftime("%Y-%m-%d")
@@ -1521,6 +1543,10 @@ class ScalpingEngine:
             return
 
         direction = signal["direction"]
+
+        # RFC-053 (2026-05-30): 设置信号检测冷却 — 防止同symbol+direction 60s内重复触发
+        _det_key = f"{symbol}:{direction}"
+        self._detection_cooldown[_det_key] = time.time()
 
         # RFC-051: RSI 极端值 + 个股趋势对齐过滤
         # 根因: SNDK RSI=100 + trend=UP + STRONG_BUY → 生成 SHORT 信号
@@ -1987,6 +2013,14 @@ class ScalpingEngine:
                     f"5/12-18 数据: 熊市做多胜率 2.7%)"
                 )
                 return {"success": False, "error": "long_in_downtrend"}
+            # RFC-053 (2026-05-30): RANGE regime 也禁 LONG
+            # 数据: LONG+RANGE 22笔 9.1%WR -$3,058
+            if _regime in ("RANGE", "SIDEWAYS", "NEUTRAL"):
+                logger.warning(
+                    f"🚫 [Scalping·regime门] {symbol} LONG 被禁 (regime={_regime}, "
+                    f"无趋势做多 9.1% WR)"
+                )
+                return {"success": False, "error": "long_in_range"}
 
         # F1 (2026-05-16): 反向开仓冷却 — 防 whipsaw
         # 短线尤其严重: 5/14 SNDK SHORT→LONG 90s, 5/15 CRM 173s, LCID 127s
@@ -2003,12 +2037,19 @@ class ScalpingEngine:
         phase = self.time_gate.get_current_phase()
 
         # 获取当前阶段的 scaler（用于 ATR 阶段自适应）
+        # Task #9 (2026-05-30): SSOT 依然是 time_gate.cfg (unified_config.scalping.phases),
+        #   仅在 time_gate 未提供时从 exit_policy.yaml::scalping_overrides.phase_scaling 读取兜底
         phase_tp_scale = 1.0
         phase_sl_scale = 1.0
         if self.time_gate and phase and phase != "closed":
             p = self.time_gate.cfg.get(phase, {})
-            phase_tp_scale = p.get("tp_scale", 1.0)
-            phase_sl_scale = p.get("sl_scale", 1.0)
+            phase_tp_scale = p.get("tp_scale", None)
+            phase_sl_scale = p.get("sl_scale", None)
+            if phase_tp_scale is None or phase_sl_scale is None:
+                from app.scalping.exits import get_phase_scaling
+                fb_tp, fb_sl = get_phase_scaling(phase)
+                phase_tp_scale = phase_tp_scale if phase_tp_scale is not None else fb_tp
+                phase_sl_scale = phase_sl_scale if phase_sl_scale is not None else fb_sl
 
         # 计算止盈止损价格 (使用当前时段参数, 非初始化默认值)
         # ═══════════════════════════════════════════════════════════
@@ -2245,6 +2286,7 @@ class ScalpingEngine:
                 direction=direction,
                 price=price,
                 quantity=position_size,
+                signals=signals,  # RFC-053: 传递信号投票
             )
 
             if order_result and order_result.get("success"):
@@ -2466,7 +2508,8 @@ class ScalpingEngine:
             logger.debug(f"[R1·release·scalping] 异常: {_re}")
 
     def _place_order(
-        self, symbol: str, direction: str, price: float, quantity: int
+        self, symbol: str, direction: str, price: float, quantity: int,
+        signals: str = "",  # RFC-053: 传递信号投票用于 strength 计算
     ) -> Optional[Dict]:
         """
         通过 ExecutionEngine 下单
@@ -2505,8 +2548,11 @@ class ScalpingEngine:
             sig = _ScalpSig()
             sig.symbol = symbol
             sig.direction = _D.LONG if direction == "LONG" else _D.SHORT
-            sig.strength = 70
-            sig.confidence = 0.7
+            # RFC-053 (2026-05-30): 从信号投票计算 strength, 不再硬编码70
+            # 2票(vwap+bb) = 66, 3票(rsi+vwap+bb) = 99, 1票 = 33 (被min 50拦截)
+            _votes = len(signals.split("/")) if signals else 2
+            sig.strength = min(99, _votes * 33)
+            sig.confidence = 0.5 + (_votes * 0.1)  # 2票=0.7, 3票=0.8
             sig.position_pct = (price * quantity / 100000.0) if price > 0 else 0.05
             sig.stop_loss_pct = 0.02
             sig.strategy_id = "scalping"
@@ -2576,7 +2622,9 @@ class ScalpingEngine:
                 _sig.symbol = symbol
                 _sig.direction = direction
                 _sig.confidence = 0.7  # 通过 scalping 内部 filter 的信号默认高 conf
-                _sig.strength = 70
+                # RFC-053 (2026-05-30): 从信号投票计算 strength
+                _votes2 = len(signals.split("/")) if signals else 2
+                _sig.strength = min(99, _votes2 * 33)
                 _sig.position_pct = 0.05
                 _sig.metadata = {"owner_strategy": "scalping", "source": "scalping_engine"}
                 # 直接调底层 arbitrator (写审计) — 不阻塞下单
