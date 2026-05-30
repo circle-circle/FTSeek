@@ -75,6 +75,17 @@ class SymbolContext:
     spread_bps: float = 3.0
     adv_shares: int = 5_000_000
 
+    # === RFC-054: Trend-First 策略所需字段 ===
+    market_regime: str = ""              # "TREND_UP"/"TREND_DOWN"/"RANGE"/"HIGH_VOL"/"LOW_VOL"
+    trend: str = ""                      # "UP"/"DOWN"/"NEUTRAL" (均线排列方向)
+    volume_ratio: float = 1.0            # 当前成交量 / 5日均量
+    slope_5m: float = 0.0                # 5分钟价格斜率 (%)
+    order_flow_imbalance: float = 0.0    # 买卖力量失衡 [-1, 1]
+    ticker_buy_sell_ratio: float = 1.0   # 逐笔买卖比
+    high_distance_pct: float = 0.0       # 距日内高点距离 (%)
+    spy_ma20: float = 0.0                # SPY 20日均线
+    spy_ma50: float = 0.0                # SPY 50日均线
+
     # 元数据
     source: str = ""                 # "futu_lv3" / "twelvedata" / "finnhub"
     metadata: Dict[str, Any] = field(default_factory=dict)
@@ -140,6 +151,17 @@ class SymbolContext:
         if vix_multipliers:
             ctx.vix_regime = vix_multipliers.get("regime", "normal")
             ctx.vix = float(vix_multipliers.get("vix", 0) or 0)
+
+        # RFC-054 Trend-First fields
+        ctx.market_regime = str(context.get('market_regime', '') or '')
+        ctx.trend = str(context.get('trend', '') or '')
+        ctx.volume_ratio = float(context.get('volume_ratio', 1.0) or 1.0)
+        ctx.slope_5m = float(context.get('slope_5m', 0.0) or 0.0)
+        ctx.order_flow_imbalance = float(context.get('order_flow_imbalance', 0.0) or 0.0)
+        ctx.ticker_buy_sell_ratio = float(context.get('ticker_buy_sell_ratio', 1.0) or 1.0)
+        ctx.high_distance_pct = float(context.get('high_distance_pct', 0.0) or 0.0)
+        ctx.spy_ma20 = float(context.get('spy_ma20', 0.0) or 0.0)
+        ctx.spy_ma50 = float(context.get('spy_ma50', 0.0) or 0.0)
 
         return ctx
 

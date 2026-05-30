@@ -140,6 +140,7 @@ def _load_yaml_config(name: str) -> Dict[str, Any]:
 from app.strategy.pure import fast_lane    # noqa: E402, F401
 from app.strategy.pure import technical    # noqa: E402, F401
 from app.strategy.pure import llm_vote     # noqa: E402, F401
+from app.strategy.pure import trend_first  # noqa: E402, F401  # RFC-054
 
 
 # 注册内置默认配置 (供 YAML 不可用时)
@@ -155,5 +156,9 @@ _BUILTIN_DEFAULTS = {
     },
     "llm_vote": {
         "enabled": True, "min_consensus": 0.30, "min_confidence": 0.50,
+    },
+    "trend_first": {
+        "enabled": True, "observe_only": True, "min_sector_score": 40,
+        "min_score": 55, "max_positions": 3,
     },
 }

@@ -42,7 +42,7 @@ mode:
       scheduler.scan_interval_minutes: 3       # 10 → 3
       scheduler.monitor_interval_minutes: 0.25 # 0.5 → 0.25
       strategy.signal_cooldown: 30             # 120 → 30
-      risk.signal_quality.min_confidence: 0.45 # 0.50 → 0.45
+      risk.signal_quality.min_confidence: 0.50 # P0-3 (Task #19): 0.45 → 0.50 提高信号门槛
       strategies.defaults.min_strength: 20     # 25 → 20
       MAX_DAILY_DRAWDOWN: 0.05                 # 0.03 → 0.05
       risk.position.max_per_sector: 0.55       # 0.40 → 0.55
@@ -1360,6 +1360,45 @@ strategies:
   llm_plan:
     capital_pct: 0.0           # LLM plan 不直接持仓
     priority: 3
+
+  # === RFC-054: Trend-First 趋势优先策略 ===
+  # 通过"趋势方向+板块龙头"组合，修正均值回归在动量市场的失效
+  trend_first:
+    enabled: true
+    observe_only: false             # Task #19: 开放模拟交易执行 (从 true → false)
+
+    # 资金分配（从 Main 预算池切分，与 Technical 共享 0.65 总额）
+    capital_source: main            # 明确标注资金来源
+
+    # Layer 2: 选股参数
+    min_sector_score: 40            # 板块热度门槛
+    leader_bonus: 15                # 龙头加分
+    overheat_threshold: 80          # 过热板块阈值
+    overheat_penalty: 0.8           # 过热惩罚系数
+    sector_max_age_hours: 2         # 板块数据最大有效期(小时)
+
+    # Layer 3: 入场参数
+    pullback_rsi_long: [35, 55]     # LONG回调入场RSI区间
+    pullback_rsi_short: [45, 65]    # SHORT回调入场RSI区间
+    breakout_min_volume_ratio: 2.0  # BREAKOUT最低放量倍数
+
+    # Layer 4: ATR风控映射
+    stop_loss_atr_mult: 1.5         # PULLBACK止损倍数
+    breakout_stop_loss_atr_mult: 1.0  # BREAKOUT止损倍数（更紧）
+    trail_activation_atr: 1.0       # 追踪激活阈值
+    trail_atr_mult: 1.5             # 追踪止损倍数
+
+    # 信号质量门槛
+    min_score: 55                   # 最低评分（低于此不产出信号）
+
+    # 执行约束（observe_only=false 时生效） —— Task #19
+    max_daily_trades: 5             # 日最大交易数
+    max_positions: 3                # 最大同时持仓
+    max_position_pct: 0.10          # 单仓最大占比 (0.15 → 0.10 保守调低)
+
+    # 执行保护 —— Task #19
+    opening_delay_minutes: 15       # 开盘后15分钟内不入场（数据需预热）
+    no_entry_after_et: "15:30"      # 15:30后不再新开仓（保证至少30分钟持仓）
 
   defaults:
     min_confidence: 0.5

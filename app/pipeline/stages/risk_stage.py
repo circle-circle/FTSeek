@@ -106,6 +106,28 @@ def process(candidate: SignalCandidate,
     if _check_global_blacklist(symbol):
         return None
 
+    # ── 0.05 Trend-First 持仓上限 (Task #19) ──
+    # observe_only=false 后需控制其独立的并发持仓数, 避免资金超限
+    try:
+        strategy_id = str(getattr(candidate, 'strategy_id', '') or '')
+        if strategy_id == 'trend_first' and position_store is not None:
+            from app.core.config_container import get_config
+            tf_cfg = get_config().get_dotted('strategies.trend_first') or {}
+            max_pos = int(tf_cfg.get('max_positions', 3))
+            current_tf = 0
+            for pos in (position_store.all() if hasattr(position_store, 'all') else []):
+                owner = str(getattr(pos, 'owner_strategy', '') or getattr(pos, 'strategy_id', '') or '')
+                if owner == 'trend_first':
+                    current_tf += 1
+            if current_tf >= max_pos:
+                logger.warning(
+                    f"[RiskStage] {symbol} trend_first 持仓已达上限 "
+                    f"({current_tf}/{max_pos}), 拒绝入场"
+                )
+                return None
+    except Exception as e:
+        logger.debug(f"[RiskStage] trend_first 持仓限制检查异常(放行): {e}")
+
     # ── 0.1 流动性检查 (P1 2026-05-30) ──
     # 辅助决策: spread 过大拒绝入场, spread 偏大仅降权
     liquidity = _check_liquidity(symbol)
@@ -187,13 +209,28 @@ def process(candidate: SignalCandidate,
     ctx = candidate.context
     atr = ctx.atr if ctx else 0
     price = ctx.price if ctx else 0
-    atr_mult = 1.5
+
+    # RFC-054: 读取策略指定的 ATR 倍数 (trend_first 区分 PULLBACK/BREAKOUT)
+    atr_mult = 1.5  # 默认
+    if isinstance(candidate.metadata, dict):
+        _sl_mult = candidate.metadata.get('stop_loss_atr_mult')
+        if _sl_mult and float(_sl_mult) > 0:
+            atr_mult = float(_sl_mult)
+
+    # RFC-054: 方向感知止损 — SHORT 止损在上方, LONG 止损在下方
+    _dir_raw = candidate.direction
+    _dir_str = (_dir_raw.value if hasattr(_dir_raw, 'value') else str(_dir_raw)).upper()
+    _is_short = _dir_str in ('SHORT', 'SELL')
 
     stop_loss = price * 0.94  # -6% 默认
     take_profit_1 = price * 1.06  # +6% 默认
     if atr > 0 and price > 0:
-        stop_loss = price - (atr * atr_mult)
-        take_profit_1 = price + (atr * atr_mult * 2)
+        if _is_short:
+            stop_loss = price + (atr * atr_mult)       # SHORT: 止损在上方
+            take_profit_1 = price - (atr * atr_mult * 2)  # SHORT: 止盈在下方
+        else:
+            stop_loss = price - (atr * atr_mult)       # LONG: 止损在下方
+            take_profit_1 = price + (atr * atr_mult * 2)  # LONG: 止盈在上方
 
     # ATR观察日志: 入场决策关键参数 (2026-05-30)
     sl_distance = abs(price - stop_loss) if price > 0 else 0

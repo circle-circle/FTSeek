@@ -532,7 +532,17 @@ class MarketDataRouter:
 
         # Step 7: 市场状态判断
         ts_ctx["market_regime"] = self._calc_market_regime(ts_ctx)
-        
+
+        # Step 8: RFC-054 字段默认值补全
+        # 确保所有 RFC-054 必需字段在任何数据路径下都有值
+        # (LV3 主通道已计算这些字段，此处为 fallback/降级 路径兜底)
+        ts_ctx.setdefault("slope_5m", 0.0)
+        ts_ctx.setdefault("volume_ratio", 1.0)
+        ts_ctx.setdefault("high_distance_pct", 0.0)
+        ts_ctx.setdefault("trend", "NEUTRAL")
+        ts_ctx.setdefault("order_flow_imbalance", 0.0)
+        ts_ctx.setdefault("ticker_buy_sell_ratio", 1.0)
+
         # 添加时间戳
         ts_ctx["timestamp"] = datetime.now().isoformat()
 
@@ -793,9 +803,9 @@ class MarketDataRouter:
         if self.av and hasattr(self.av, 'close'):
             self.av.close()
         # P1 修复 (2026-05-09): 关闭 Futu LV3 连接，释放 OpenD 槽位
-        if self.futu_provider and hasattr(self.futu_provider, 'disconnect'):
+        if self.futu and hasattr(self.futu, 'disconnect'):
             try:
-                self.futu_provider.disconnect()
+                self.futu.disconnect()
                 logger.info("[MarketDataRouter] Futu LV3 连接已断开")
             except Exception as e:
                 logger.warning(f"[MarketDataRouter] Futu 断开失败: {e}")
