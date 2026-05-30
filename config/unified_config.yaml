@@ -1400,6 +1400,34 @@ strategies:
     opening_delay_minutes: 15       # 开盘后15分钟内不入场（数据需预热）
     no_entry_after_et: "15:30"      # 15:30后不再新开仓（保证至少30分钟持仓）
 
+  # === ORB: Opening Range Breakout (开盘区间突破) ===
+  # 数据驱动: 10:00-11:00 是盈利主力时段 (+$21K), trailing stop 是唯一赚钱退出方式
+  # ORB 天然匹配: 09:45后入场 + trailing stop 退出, 只有2个核心参数
+  orb:
+    enabled: true
+    observe_only: false             # 直接参与模拟交易
+
+    # 开盘区间参数
+    min_range_width_pct: 0.3        # 区间最小宽度% (太窄=假突破风险)
+    max_range_width_pct: 2.5        # 区间最大宽度% (太宽=波动过大)
+    breakout_buffer_pct: 0.1        # 突破缓冲区% (防边界抖动)
+    max_chase_pct: 1.5              # 最大追高% (已远离区间不追)
+
+    # 风控参数
+    stop_loss_atr_mult: 1.5         # ATR止损倍数 (兜底, 与区间中点取较远者)
+    min_risk_reward: 1.5            # 最小盈亏比
+
+    # 量能确认 (可选, 0=不检查)
+    min_volume_ratio: 0
+
+    # 时间窗口
+    entry_end_et: "11:00"           # ORB入场截止时间
+    no_entry_after_et: "15:30"      # 收盘前截止
+
+    # 执行约束
+    max_daily_trades: 5             # 日最大交易数
+    max_positions: 3                # 最大同时持仓
+
   defaults:
     min_confidence: 0.5
     # Task #6 (2026-05-30): min_strength 25 → 40, 提升信号强度门槛

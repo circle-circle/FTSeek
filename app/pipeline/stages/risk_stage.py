@@ -125,6 +125,22 @@ def process(candidate: SignalCandidate,
                     f"({current_tf}/{max_pos}), 拒绝入场"
                 )
                 return None
+        # ── 0.06 ORB 持仓上限 ──
+        if strategy_id == 'orb' and position_store is not None:
+            from app.core.config_container import get_config
+            orb_cfg = get_config().get_dotted('strategies.orb') or {}
+            max_pos = int(orb_cfg.get('max_positions', 3))
+            current_orb = 0
+            for pos in (position_store.all() if hasattr(position_store, 'all') else []):
+                owner = str(getattr(pos, 'owner_strategy', '') or getattr(pos, 'strategy_id', '') or '')
+                if owner == 'orb':
+                    current_orb += 1
+            if current_orb >= max_pos:
+                logger.warning(
+                    f"[RiskStage] {symbol} ORB 持仓已达上限 "
+                    f"({current_orb}/{max_pos}), 拒绝入场"
+                )
+                return None
     except Exception as e:
         logger.debug(f"[RiskStage] trend_first 持仓限制检查异常(放行): {e}")
 
@@ -234,6 +250,17 @@ def process(candidate: SignalCandidate,
         stop_loss = plan_sl
         take_profit_1 = plan_tp or (price * 1.06)
         logger.debug(f"[Risk] {symbol} 使用作战计划 SL={plan_sl} TP={plan_tp}")
+    elif isinstance(candidate.metadata, dict) and candidate.metadata.get('stop_loss') and str(candidate.strategy_id) == 'orb':
+        # ORB 策略: 使用区间中点 + ATR兜底 计算的精确止损
+        orb_sl = float(candidate.metadata['stop_loss'])
+        stop_loss = orb_sl
+        # TP 由 trailing stop 管理, 这里设一个保守的固定目标 (2x SL distance)
+        sl_dist = abs(price - orb_sl)
+        if _is_short:
+            take_profit_1 = price - sl_dist * 2.5
+        else:
+            take_profit_1 = price + sl_dist * 2.5
+        logger.info(f"[Risk] {symbol} ORB止损: SL={orb_sl:.2f} (区间中点+ATR) TP={take_profit_1:.2f}")
     elif atr > 0 and price > 0:
         # ATR 动态止损
         atr_mult = 1.5

@@ -383,6 +383,36 @@ class MarketDataRouter:
                                     (ts_ctx["price"] - day_high) / day_high * 100, 3
                                 )
 
+                            # ── ORB: 注入日内高/低/开盘价 + 开盘区间 ──
+                            ts_ctx["day_high"] = day_high
+                            ts_ctx["day_low"] = float(futu_quote.get("low_price", 0))
+                            ts_ctx["open_price"] = float(futu_quote.get("open_price", 0))
+
+                            # 计算开盘区间 (Opening Range): 开盘后前15根1分钟K线的高低点
+                            if klines and len(klines) >= 15:
+                                try:
+                                    import pytz
+                                    from datetime import datetime as _dt
+                                    now_et = _dt.now(pytz.timezone('US/Eastern'))
+                                    # 筛选今日开盘后的K线 (09:30 ET 起)
+                                    market_open_str = now_et.strftime("%Y-%m-%d") + " 09:30"
+                                    today_bars = []
+                                    for k in klines:
+                                        tk = str(k.get("time_key", ""))
+                                        if tk >= market_open_str:
+                                            today_bars.append(k)
+                                    # 取前15根 (09:30-09:44)
+                                    orb_bars = today_bars[:15]
+                                    if len(orb_bars) >= 5:  # 至少5根才算有效
+                                        orb_high = max(float(b.get("high", 0)) for b in orb_bars)
+                                        orb_low = min(float(b.get("low", 0)) for b in orb_bars)
+                                        if orb_high > 0 and orb_low > 0 and orb_high > orb_low:
+                                            ts_ctx["opening_high"] = orb_high
+                                            ts_ctx["opening_low"] = orb_low
+                                            ts_ctx["opening_range_ready"] = len(today_bars) >= 15
+                                except Exception as orb_e:
+                                    logger.debug(f"[Router] {symbol} ORB区间计算异常: {orb_e}")
+
                             # ★★★ 2026-05-20 增强: Push Ticker + OrderBook 实时因子注入
                             # 利用已订阅但未处理的 TICKER/ORDER_BOOK 数据 (之前浪费槽位)
                             current_price = ts_ctx.get("price", 0)

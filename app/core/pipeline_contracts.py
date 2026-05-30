@@ -86,6 +86,14 @@ class SymbolContext:
     spy_ma20: float = 0.0                # SPY 20日均线
     spy_ma50: float = 0.0                # SPY 50日均线
 
+    # === ORB (Opening Range Breakout) 所需字段 ===
+    day_high: float = 0.0                 # 日内最高价 (Futu snapshot)
+    day_low: float = 0.0                  # 日内最低价 (Futu snapshot)
+    open_price: float = 0.0               # 今日开盘价
+    opening_high: float = 0.0             # 开盘区间高点 (前15分钟)
+    opening_low: float = 0.0              # 开盘区间低点 (前15分钟)
+    opening_range_ready: bool = False     # 开盘区间是否已确立 (≥15根1分钟K线)
+
     # 元数据
     source: str = ""                 # "futu_lv3" / "twelvedata" / "finnhub"
     metadata: Dict[str, Any] = field(default_factory=dict)
@@ -162,6 +170,14 @@ class SymbolContext:
         ctx.high_distance_pct = float(context.get('high_distance_pct', 0.0) or 0.0)
         ctx.spy_ma20 = float(context.get('spy_ma20', 0.0) or 0.0)
         ctx.spy_ma50 = float(context.get('spy_ma50', 0.0) or 0.0)
+
+        # ORB fields
+        ctx.day_high = float(context.get('day_high', 0.0) or 0.0)
+        ctx.day_low = float(context.get('day_low', 0.0) or 0.0)
+        ctx.open_price = float(context.get('open_price', 0.0) or 0.0)
+        ctx.opening_high = float(context.get('opening_high', 0.0) or 0.0)
+        ctx.opening_low = float(context.get('opening_low', 0.0) or 0.0)
+        ctx.opening_range_ready = bool(context.get('opening_range_ready', False))
 
         return ctx
 

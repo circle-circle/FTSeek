@@ -141,6 +141,7 @@ from app.strategy.pure import fast_lane    # noqa: E402, F401
 from app.strategy.pure import technical    # noqa: E402, F401
 from app.strategy.pure import llm_vote     # noqa: E402, F401
 from app.strategy.pure import trend_first  # noqa: E402, F401  # RFC-054
+from app.strategy.pure import orb          # noqa: E402, F401  # ORB Opening Range Breakout
 
 
 # 注册内置默认配置 (供 YAML 不可用时)
@@ -160,5 +161,17 @@ _BUILTIN_DEFAULTS = {
     "trend_first": {
         "enabled": True, "observe_only": True, "min_sector_score": 40,
         "min_score": 55, "max_positions": 3,
+    },
+    "orb": {
+        "enabled": True,
+        "min_range_width_pct": 0.3,
+        "max_range_width_pct": 2.5,
+        "breakout_buffer_pct": 0.1,
+        "max_chase_pct": 1.5,
+        "stop_loss_atr_mult": 1.5,
+        "min_risk_reward": 1.5,
+        "min_volume_ratio": 0,
+        "entry_end_et": "11:00",
+        "no_entry_after_et": "15:30",
     },
 }

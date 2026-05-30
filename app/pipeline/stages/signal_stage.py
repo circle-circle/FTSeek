@@ -3,7 +3,7 @@ Signal Stage — 信号生成 (策略编排层)
 
 职责:
   1. 按优先级尝试各策略, 第一个命中即返回 (first-hit)
-  2. 快车道 → 趋势优先 → 技术面 → LLM 投票
+  2. 快车道 → ORB → 趋势优先 → 技术面 → LLM 投票
 
 策略本身是纯函数 (app/strategy/pure/), 本 Stage 只负责编排调用顺序。
 """
@@ -28,9 +28,10 @@ def process(ctx: SymbolContext,
 
     顺序:
       1. 快车道 (作战计划匹配, 最高优先级)
-      2. Trend-First (趋势方向 + RSI回调)
-      3. Technical (均值回归多因子)
-      4. LLM 投票 (盘前/盘后)
+      2. ORB (开盘区间突破, 09:45-11:00)
+      3. Trend-First (趋势方向 + RSI回调, 10:00+)
+      4. Technical (均值回归多因子)
+      5. LLM 投票 (盘前/盘后)
     """
     symbol = ctx.symbol
 
@@ -64,7 +65,19 @@ def process(ctx: SymbolContext,
         except Exception as e:
             logger.debug(f"[Signal] 快车道检查异常 (放行): {e}")
 
-    # ── 策略 2: Trend-First (趋势方向 + RSI回调) ──
+    # ── 策略 2: ORB (开盘区间突破, 无持仓时) ──
+    if not has_position:
+        try:
+            candidate = eval_strategy("orb", ctx)
+            if candidate:
+                logger.info(
+                    f"[Signal] {symbol} ORB命中: {candidate.rationale}"
+                )
+                return candidate
+        except Exception as e:
+            logger.debug(f"[Signal] ORB异常 (放行): {e}")
+
+    # ── 策略 3: Trend-First (趋势方向 + RSI回调) ──
     try:
         candidate = eval_strategy("trend_first", ctx)
         if candidate:
@@ -75,7 +88,7 @@ def process(ctx: SymbolContext,
     except Exception as e:
         logger.debug(f"[Signal] TrendFirst异常 (放行): {e}")
 
-    # ── 策略 3: Technical (均值回归多因子) ──
+    # ── 策略 4: Technical (均值回归多因子) ──
     try:
         candidate = eval_strategy("technical", ctx)
         if candidate:
@@ -88,7 +101,7 @@ def process(ctx: SymbolContext,
     except Exception as e:
         logger.debug(f"[Signal] 技术面异常 (放行): {e}")
 
-    # ── 策略 4: LLM 投票 (无持仓时) ──
+    # ── 策略 5: LLM 投票 (无持仓时) ──
     try:
         if voting_coordinator and not has_position:
             vote_result = voting_coordinator.vote(symbol, ctx)
