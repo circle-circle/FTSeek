@@ -1413,8 +1413,113 @@ def run_open_checker(scheduler):
         logger.error(f"[开盘确认] ❌ 执行失败: {e}", exc_info=True)
 
 
-# ============================================================================
-# Phase 5: Agent 计划合并
+def run_open_price_refresh(scheduler):
+    """
+    开盘价刷新 (每日一次, 09:30:00-09:31:00 ET)
+
+    美股开盘价由 NASDAQ/NYSE Opening Cross 集合竞价决定 (09:28-09:30)。
+    盘前 ECN 报价 (OpenChecker 9:20 取的) 可能偏离真实开盘价。
+
+    本函数在开盘后30秒内用真实市价刷新 confirmed_entry_price,
+    并按原 SL/TP 距离重算绝对价位, 确保盈亏比不变。
+    """
+    from app.core.scheduler_triggers import ET
+    now_et = datetime.now(ET)
+    today_et = now_et.date()
+
+    # 日期级幂等
+    if getattr(scheduler, '_price_refresh_date', None) != today_et:
+        scheduler._price_refresh_executed_today = False
+
+    if getattr(scheduler, '_price_refresh_executed_today', False):
+        return
+
+    # 时间窗口: 09:30:00 - 09:31:00 ET (开盘后第1分钟)
+    if not (now_et.hour == 9 and 30 <= now_et.minute <= 30):
+        return
+
+    logger.info("[开盘价刷新] 🔄 用真实开盘价刷新作战计划...")
+
+    try:
+        from app.us_pipeline.battle_plan_manager import USBattlePlanManager
+        mgr = USBattlePlanManager()
+        plan = mgr._plan
+        if not plan:
+            # 尝试加载
+            import os
+            project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            plan_path = os.path.join(project_root, 'data', 'daily_battle_plan_us.json')
+            mgr.load(plan_path)
+            plan = mgr._plan
+        if not plan or not plan.get('targets'):
+            return
+
+        router = scheduler.market_data
+        updated = 0
+        for target in plan.get('targets', []):
+            if target.get('open_check_status') != 'VALID':
+                continue
+            symbol = target.get('symbol', '')
+            if not symbol:
+                continue
+
+            # 获取真实开盘价
+            quote = router.get_quote(symbol)
+            if not quote:
+                continue
+            real_price = float(quote.get('price', 0) or 0)
+            if real_price <= 0:
+                continue
+
+            # 计算原始 SL/TP 距离
+            old_confirmed = float(target.get('confirmed_entry_price', 0) or 0)
+            old_sl = float(target.get('stop_loss', 0) or 0)
+            old_tp = float(target.get('take_profit', 0) or 0)
+
+            if old_confirmed > 0:
+                sl_distance = old_confirmed - old_sl   # LONG: 正数, SHORT: 负数
+                tp_distance = old_tp - old_confirmed
+            else:
+                # 没有盘前价格, 用 entry_zone 中点
+                ez = target.get('entry_zone', [])
+                if len(ez) == 2:
+                    mid = (ez[0] + ez[1]) / 2.0
+                    sl_distance = mid - old_sl if old_sl else mid * 0.02
+                    tp_distance = old_tp - mid if old_tp else mid * 0.04
+                else:
+                    sl_distance = real_price * 0.02
+                    tp_distance = real_price * 0.04
+
+            # 用真实价格重算
+            target['confirmed_entry_price'] = round(real_price, 2)
+            target['stop_loss'] = round(real_price - sl_distance, 2)
+            target['take_profit'] = round(real_price + tp_distance, 2)
+            target['open_price'] = round(real_price, 2)
+
+            logger.info(
+                f"[开盘价刷新] {symbol}: "
+                f"盘前={old_confirmed} → 开盘={real_price} | "
+                f"SL={target['stop_loss']} TP={target['take_profit']}"
+            )
+            updated += 1
+
+        if updated > 0:
+            # 保存更新后的计划
+            import json, os
+            project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            plan_path = os.path.join(project_root, 'data', 'daily_battle_plan_us.json')
+            with open(plan_path, 'w', encoding='utf-8') as f:
+                json.dump(plan, f, indent=2, ensure_ascii=False)
+
+            # 刷新 BattlePlanManager 缓存
+            mgr.load(plan_path)
+
+        scheduler._price_refresh_executed_today = True
+        scheduler._price_refresh_date = today_et
+        logger.info(f"[开盘价刷新] ✅ 刷新 {updated} 个目标")
+
+    except Exception as e:
+        logger.error(f"[开盘价刷新] ❌ 失败: {e}", exc_info=True)
 # ============================================================================
 
 def _deduplicate_strings(items: list) -> list:

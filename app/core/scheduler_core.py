@@ -1588,7 +1588,7 @@ class TradingScheduler:
     
     def _llm_strategy_loop(self):
         """LLM 策略引擎循环 - 按市场阶段自适应调度"""
-        from app.pipeline.llm_pipeline import run_llm_strategy_scan, run_after_hours_llm_scan, run_premarket_planning, run_open_checker
+        from app.pipeline.llm_pipeline import run_llm_strategy_scan, run_after_hours_llm_scan, run_premarket_planning, run_open_checker, run_open_price_refresh
         from .scheduler_triggers import get_market_phase, MarketPhase
         import time
 
@@ -1635,6 +1635,9 @@ class TradingScheduler:
                     # P0 修复: 开盘确认器 — run_open_checker 内部自带时间窗口 + 日期幂等
                     # 无需外部 guard，函数自行判断 09:15-09:29 ET 窗口并每日执行一次
                     run_open_checker(self)
+
+                    # 开盘价刷新: 09:30:00-09:31:00 ET 用真实开盘价刷新 confirmed_price + SL/TP
+                    run_open_price_refresh(self)
 
                     # 盘前: 每2小时采集新闻 + LLM 推荐 (不执行交易)
                     if last_afterhours_run is None or (now - last_afterhours_run).total_seconds() >= 7200:
