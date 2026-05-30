@@ -1,91 +1,159 @@
 """
-双市场节假日日历 (Trading Holiday Calendar)
+统一交易日历 (Trading Calendar SSOT)
 
-涵盖港股和美股的法定休市日，用于防止在非交易日触发盘前计划/竞价单。
+架构:
+  Futu API (request_trading_days) → 权威数据源, 批量缓存
+  硬编码节假日 → 离线降级, API 不可用时兜底
+  get_market_state → 实时市场状态 (盘中/盘前/盘后/休市)
 
-P2 实现 (2026-04-19): 覆盖 2026-2027 年主要节假日。
+消费方统一入口:
+  cal = get_holiday_calendar()
+  cal.is_trading_day("US", date.today())
+  cal.is_trading_day("HK", date.today())
+  cal.next_trading_day("US")
+  cal.is_us_holiday(d)  # 兼容旧接口
+  cal.is_hk_holiday(d)   # 兼容旧接口
+  cal.is_market_open_realtime("US")  # Futu get_market_state
+
+缓存策略:
+  - 首次调用批量查询 [today-30d, today+60d] 共 ~90 天交易日
+  - 内存缓存, 进程生命周期内有效
+  - 缓存 miss (日期超出范围) 自动扩展查询
+  - API 失败 → 降级到硬编码, 不影响交易安全
+
+线程安全: threading.Lock 保护缓存读写
 """
 
-from datetime import date, timedelta
-from typing import Optional, Set
+from __future__ import annotations
+
 import logging
+import os
+import threading
+from datetime import date, datetime, timedelta
+from typing import Dict, List, Optional, Set
 
-logger = logging.getLogger("ftseek.holiday_calendar")
+logger = logging.getLogger("ftseek.trading_calendar")
 
-# ── 港股节假日 (2026-2027) ──────────────────────────────────
-HK_HOLIDAYS_2026 = {
-    date(2026, 1, 1),    # 元旦
-    date(2026, 2, 17),   # 春节 (年初一)
-    date(2026, 2, 18),   # 春节 (年初二)
-    date(2026, 2, 19),   # 春节 (年初三)
-    date(2026, 4, 3),    # 清明节
-    date(2026, 4, 6),    # 复活节星期一
-    date(2026, 4, 7),    # 佛诞
-    date(2026, 5, 1),    # 劳动节
-    date(2026, 5, 25),   # 端午节
-    date(2026, 7, 1),    # 香港特区成立纪念日
-    date(2026, 10, 1),   # 国庆节
-    date(2026, 10, 2),   # 国庆节翌日
-    date(2026, 10, 19),  # 重阳节
-    date(2026, 12, 25),  # 圣诞节
-    date(2026, 12, 26),  # 节礼日
-    date(2026, 12, 28),  # 圣诞节补假
+# ═══════════════════════════════════════════════════════════════════
+#  Futu 连接参数 (SSOT: 环境变量 → 默认值)
+# ═══════════════════════════════════════════════════════════════════
+
+_FUTU_HOST = os.environ.get("FUTU_OPEND_HOST", "127.0.0.1")
+_FUTU_PORT = int(os.environ.get("FUTU_OPEND_PORT", "11111"))
+
+# 市场名映射: 用户传 "US"/"HK" → Futu TradeDateMarket 枚举
+_MARKET_MAP = {
+    "US": "US",
+    "HK": "HK",
+    "CN": "CN",
 }
 
-HK_HOLIDAYS_2027 = {
-    date(2027, 1, 1),    # 元旦
-    date(2027, 2, 8),    # 春节 (年初一)
-    date(2027, 2, 9),    # 春节 (年初二)
-    date(2027, 2, 10),   # 春节 (年初三)
-    date(2027, 3, 25),   # 耶稣受难节
-    date(2027, 3, 26),   # 复活节星期一
-    date(2027, 3, 27),   # 清明节补假
-    date(2027, 5, 1),    # 劳动节
-    date(2027, 5, 3),    # 佛诞补假
-    date(2027, 6, 14),   # 端午节
-    date(2027, 7, 1),    # 香港特区成立纪念日
-    date(2027, 10, 1),   # 国庆节
-    date(2027, 10, 11),  # 中秋节补假
-    date(2027, 10, 12),  # 重阳节
-    date(2027, 12, 27),  # 圣诞节补假
+
+# ═══════════════════════════════════════════════════════════════════
+#  硬编码节假日 (2026-2027) — 离线降级用
+# ═══════════════════════════════════════════════════════════════════
+
+HK_HOLIDAYS: Set[date] = {
+    # 2026
+    date(2026, 1, 1), date(2026, 2, 17), date(2026, 2, 18), date(2026, 2, 19),
+    date(2026, 4, 3), date(2026, 4, 6), date(2026, 4, 7), date(2026, 5, 1),
+    date(2026, 5, 25), date(2026, 7, 1), date(2026, 10, 1), date(2026, 10, 2),
+    date(2026, 10, 19), date(2026, 12, 25), date(2026, 12, 26), date(2026, 12, 28),
+    # 2027
+    date(2027, 1, 1), date(2027, 2, 8), date(2027, 2, 9), date(2027, 2, 10),
+    date(2027, 3, 25), date(2027, 3, 26), date(2027, 3, 27), date(2027, 5, 1),
+    date(2027, 5, 3), date(2027, 6, 14), date(2027, 7, 1), date(2027, 10, 1),
+    date(2027, 10, 11), date(2027, 10, 12), date(2027, 12, 27),
 }
 
-# ── 美股节假日 (2026-2027) ────────────────────────────────
-US_HOLIDAYS_2026 = {
-    date(2026, 1, 1),    # 元旦
-    date(2026, 1, 19),   # 马丁路德金日
-    date(2026, 2, 16),   # 总统日
-    date(2026, 4, 3),    # 耶稣受难节
-    date(2026, 5, 25),   # 阵亡将士纪念日
-    date(2026, 6, 19),   # 六月节 (Juneteenth)
-    date(2026, 7, 3),    # 独立日 (提前休市)
-    date(2026, 9, 7),    # 劳动节
-    date(2026, 11, 26),  # 感恩节
-    date(2026, 12, 24),  # 圣诞前夕 (提前休市)
-    date(2026, 12, 25),  # 圣诞节
+US_HOLIDAYS: Set[date] = {
+    # 2026
+    date(2026, 1, 1), date(2026, 1, 19), date(2026, 2, 16), date(2026, 4, 3),
+    date(2026, 5, 25), date(2026, 6, 19), date(2026, 7, 3), date(2026, 9, 7),
+    date(2026, 11, 26), date(2026, 12, 24), date(2026, 12, 25),
+    # 2027
+    date(2027, 1, 1), date(2027, 1, 18), date(2027, 2, 15), date(2027, 4, 2),
+    date(2027, 5, 31), date(2027, 6, 18), date(2027, 7, 5), date(2027, 9, 6),
+    date(2027, 11, 25), date(2027, 12, 24), date(2027, 12, 27),
 }
 
-US_HOLIDAYS_2027 = {
-    date(2027, 1, 1),    # 元旦
-    date(2027, 1, 18),   # 马丁路德金日
-    date(2027, 2, 15),   # 总统日
-    date(2027, 4, 2),    # 耶稣受难节
-    date(2027, 5, 31),   # 阵亡将士纪念日
-    date(2027, 6, 18),   # 六月节 (Juneteenth)
-    date(2027, 7, 5),    # 独立日补假
-    date(2027, 9, 6),    # 劳动节
-    date(2027, 11, 25),  # 感恩节
-    date(2027, 12, 24),  # 圣诞前夕 (提前休市)
-    date(2027, 12, 27),  # 圣诞节补假
+_HOLIDAYS_BY_MARKET: Dict[str, Set[date]] = {
+    "HK": HK_HOLIDAYS,
+    "US": US_HOLIDAYS,
 }
 
+
+# ═══════════════════════════════════════════════════════════════════
+#  Futu API 适配层
+# ═══════════════════════════════════════════════════════════════════
+
+def _futu_request_trading_days(market: str, start: str, end: str) -> Optional[List[str]]:
+    """
+    调用 Futu request_trading_days API.
+
+    Returns:
+        交易日列表 ["2026-05-26", ...] 或 None (API 失败)
+    """
+    try:
+        from futu import OpenQuoteContext, TradeDateMarket, RET_OK
+        futu_market = getattr(TradeDateMarket, market, None)
+        if futu_market is None:
+            logger.debug(f"[TradingCalendar] 未知市场: {market}")
+            return None
+
+        ctx = OpenQuoteContext(host=_FUTU_HOST, port=_FUTU_PORT)
+        try:
+            ret, data = ctx.request_trading_days(
+                market=futu_market, start=start, end=end
+            )
+        finally:
+            ctx.close()
+
+        if ret == RET_OK:
+            return [d["time"] for d in data]
+        else:
+            logger.debug(f"[TradingCalendar] Futu API 错误: {data}")
+            return None
+    except Exception as e:
+        logger.debug(f"[TradingCalendar] Futu API 调用失败: {e}")
+        return None
+
+
+def _futu_get_market_state(code: str) -> Optional[str]:
+    """
+    调用 Futu get_market_state API 获取实时市场状态.
+
+    Returns:
+        市场状态字符串 (如 "Morning", "Closed") 或 None
+    """
+    try:
+        from futu import OpenQuoteContext, RET_OK
+        ctx = OpenQuoteContext(host=_FUTU_HOST, port=_FUTU_PORT)
+        try:
+            ret, data = ctx.get_market_state([code])
+        finally:
+            ctx.close()
+
+        if ret == RET_OK and not data.empty:
+            return str(data.iloc[0].get("market_state", "N/A"))
+        return None
+    except Exception as e:
+        logger.debug(f"[TradingCalendar] get_market_state 失败: {e}")
+        return None
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  主类: TradingHolidayCalendar (SSOT)
+# ═══════════════════════════════════════════════════════════════════
 
 class TradingHolidayCalendar:
-    """交易节假日日历"""
+    """
+    统一交易日历 (单例).
 
-    _instance = None
-    _hk_holidays: Set[date] = set()
-    _us_holidays: Set[date] = set()
+    优先级: Futu API > 硬编码节假日 > 仅周末判断.
+    """
+
+    _instance: Optional[TradingHolidayCalendar] = None
 
     def __new__(cls):
         if cls._instance is None:
@@ -93,59 +161,139 @@ class TradingHolidayCalendar:
             cls._instance._initialized = False
         return cls._instance
 
-    def _ensure_loaded(self):
-        """确保节假日数据已加载"""
+    def __init__(self):
         if self._initialized:
             return
-        self._hk_holidays = set()
-        self._us_holidays = set()
-
-        for year_holidays in [HK_HOLIDAYS_2026, HK_HOLIDAYS_2027]:
-            self._hk_holidays.update(year_holidays)
-        for year_holidays in [US_HOLIDAYS_2026, US_HOLIDAYS_2027]:
-            self._us_holidays.update(year_holidays)
-
         self._initialized = True
+        self._lock = threading.Lock()
+
+        # 交易日缓存: {"US": {"2026-05-26", "2026-05-27", ...}, "HK": {...}}
+        self._trading_days_cache: Dict[str, Set[str]] = {}
+
+        # 缓存覆盖范围: {"US": ("2026-05-01", "2026-07-30"), ...}
+        self._cache_range: Dict[str, tuple] = {}
+
+        # Futu API 可用标记 (失败后短时间内不重试)
+        self._api_available: bool = True
+        self._api_disabled_until: float = 0.0
+
         logger.info(
-            f"📅 节假日日历已加载: HK={len(self._hk_holidays)} 天, "
-            f"US={len(self._us_holidays)} 天"
+            f"📅 交易日历初始化: 硬编码 HK={len(HK_HOLIDAYS)}天, "
+            f"US={len(US_HOLIDAYS)}天 | Futu API={_FUTU_HOST}:{_FUTU_PORT}"
         )
 
-    def is_hk_holiday(self, d: date) -> bool:
-        """判断是否为港股节假日"""
-        self._ensure_loaded()
-        return d in self._hk_holidays
+    # ─── Futu API 缓存管理 ───────────────────────────────────────
 
-    def is_us_holiday(self, d: date) -> bool:
-        """判断是否为美股节假日"""
-        self._ensure_loaded()
-        return d in self._us_holidays
+    def _ensure_cache(self, market: str, d: date) -> bool:
+        """
+        确保指定日期在缓存中. 如不在, 扩展查询.
+
+        Returns:
+            True = 缓存命中 (可以判断), False = 缓存 miss 且 API 失败
+        """
+        date_str = d.isoformat()
+
+        with self._lock:
+            # 已在缓存中
+            if market in self._trading_days_cache and date_str in self._trading_days_cache[market]:
+                return True
+
+            # 在缓存范围内但不是交易日 → 也是命中 (不在集合中 = 非交易日)
+            if market in self._cache_range:
+                lo, hi = self._cache_range[market]
+                if lo <= date_str <= hi:
+                    return True
+
+        # 缓存 miss → 查询 Futu API
+        return self._refresh_cache(market, d)
+
+    def _refresh_cache(self, market: str, center: date) -> bool:
+        """从 Futu API 批量查询交易日并缓存."""
+        import time
+
+        # API 冷却期 (失败后 60 秒内不重试)
+        if time.time() < self._api_disabled_until:
+            return False
+
+        start = (center - timedelta(days=30)).isoformat()
+        end = (center + timedelta(days=60)).isoformat()
+
+        result = _futu_request_trading_days(market, start, end)
+
+        if result is not None:
+            with self._lock:
+                trading_set = set(result)
+                if market in self._trading_days_cache:
+                    self._trading_days_cache[market].update(trading_set)
+                else:
+                    self._trading_days_cache[market] = trading_set
+
+                # 更新缓存范围
+                old_lo, old_hi = self._cache_range.get(market, ("9999-12-31", "0000-01-01"))
+                self._cache_range[market] = (
+                    min(old_lo, start),
+                    max(old_hi, end),
+                )
+
+            self._api_available = True
+            logger.info(
+                f"[TradingCalendar] Futu 缓存刷新: {market} "
+                f"[{start}~{end}] = {len(result)} 交易日"
+            )
+            return True
+        else:
+            # API 失败 → 进入冷却期
+            self._api_disabled_until = time.time() + 60.0
+            self._api_available = False
+            logger.debug(f"[TradingCalendar] Futu API 失败, 降级到硬编码 (冷却 60s)")
+            return False
+
+    # ─── 核心公开 API ────────────────────────────────────────────
 
     def is_trading_day(self, market: str, d: date = None) -> bool:
         """
-        判断是否为交易日 (非周末 + 非节假日)
+        判断是否为交易日 (非周末 + 非节假日).
+
+        优先级:
+          1. Futu API 缓存 (权威)
+          2. 硬编码节假日 (离线降级)
+          3. 仅周末判断 (最终兜底)
 
         Args:
             market: "HK" 或 "US"
-            d: 日期 (默认今天)
+            d: 日期 (默认今天, 调用方应传 ET 日期)
         """
         if d is None:
             d = date.today()
-        self._ensure_loaded()
 
-        # 周末判断
-        if d.weekday() >= 5:  # 5=周六, 6=周日
+        # 周末快速排除
+        if d.weekday() >= 5:
             return False
 
-        # 节假日判断
-        if market == "HK":
-            return d not in self._hk_holidays
-        elif market == "US":
-            return d not in self._us_holidays
+        market = market.upper()
 
+        # 1. Futu API 缓存 (含自动刷新)
+        if self._ensure_cache(market, d):
+            with self._lock:
+                return d.isoformat() in self._trading_days_cache.get(market, set())
+
+        # 2. 硬编码降级
+        holidays = _HOLIDAYS_BY_MARKET.get(market, set())
+        if d in holidays:
+            return False
+
+        # 3. 非周末 + 非已知假日 → 视为交易日
         return True
 
-    def next_trading_day(self, market: str, from_date: date = None, max_days: int = 14) -> Optional[date]:
+    def is_us_holiday(self, d: date) -> bool:
+        """判断是否为美股节假日 (兼容旧接口)"""
+        return d in US_HOLIDAYS
+
+    def is_hk_holiday(self, d: date) -> bool:
+        """判断是否为港股节假日 (兼容旧接口)"""
+        return d in HK_HOLIDAYS
+
+    def next_trading_day(self, market: str, from_date: Optional[date] = None, max_days: int = 14) -> Optional[date]:
         """获取下一个交易日"""
         if from_date is None:
             from_date = date.today()
@@ -156,18 +304,91 @@ class TradingHolidayCalendar:
             d += timedelta(days=1)
         return None
 
-    def get_summary(self) -> dict:
-        """获取日历摘要"""
-        self._ensure_loaded()
+    def prev_trading_day(self, market: str, from_date: Optional[date] = None, max_days: int = 14) -> Optional[date]:
+        """获取上一个交易日"""
+        if from_date is None:
+            from_date = date.today()
+        d = from_date - timedelta(days=1)
+        for _ in range(max_days):
+            if self.is_trading_day(market, d):
+                return d
+            d -= timedelta(days=1)
+        return None
+
+    def trading_days_in_range(self, market: str, start: date, end: date) -> List[date]:
+        """获取日期范围内的所有交易日"""
+        days = []
+        d = start
+        while d <= end:
+            if self.is_trading_day(market, d):
+                days.append(d)
+            d += timedelta(days=1)
+        return days
+
+    def is_market_open_realtime(self, market: str) -> bool:
+        """
+        通过 Futu get_market_state 获取实时市场状态.
+
+        Returns:
+            True = 市场正在交易中 (Morning/Afternoon)
+            False = 休市/盘前/盘后/未知
+        """
+        # 选一个代表性标的查询市场状态
+        code_map = {"US": "US.SPY", "HK": "HK.00700"}
+        code = code_map.get(market.upper())
+        if not code:
+            return False
+
+        state = _futu_get_market_state(code)
+        if state is None:
+            return False
+
+        # Futu MarketState 枚举: Morning, Afternoon = 盘中
+        open_states = {"Morning", "Afternoon", "QotMarketState_Morning", "QotMarketState_Afternoon"}
+        return state in open_states
+
+    def get_market_state_realtime(self, market: str) -> str:
+        """获取实时市场状态字符串"""
+        code_map = {"US": "US.SPY", "HK": "HK.00700"}
+        code = code_map.get(market.upper())
+        if not code:
+            return "Unknown"
+        return _futu_get_market_state(code) or "Unknown"
+
+    # ─── 诊断 / 调试 ─────────────────────────────────────────────
+
+    def get_cache_info(self) -> Dict:
+        """获取缓存状态 (诊断用)"""
+        with self._lock:
+            return {
+                "api_available": self._api_available,
+                "markets_cached": list(self._trading_days_cache.keys()),
+                "trading_days_count": {
+                    m: len(days) for m, days in self._trading_days_cache.items()
+                },
+                "cache_ranges": dict(self._cache_range),
+            }
+
+    def get_summary(self) -> Dict:
+        """获取日历摘要 (兼容旧接口)"""
         return {
-            "hk_holidays_count": len(self._hk_holidays),
-            "us_holidays_count": len(self._us_holidays),
-            "next_hk_holiday": self.next_trading_day("HK"),
-            "next_us_holiday": self.next_trading_day("US"),
+            "hk_holidays_count": len(HK_HOLIDAYS),
+            "us_holidays_count": len(US_HOLIDAYS),
+            "next_us_trading_day": self.next_trading_day("US"),
+            "next_hk_trading_day": self.next_trading_day("HK"),
+            "futu_api_available": self._api_available,
+            **self.get_cache_info(),
         }
 
+    def warm_cache(self, market: str = "US"):
+        """预热缓存 (启动时调用, 可选)"""
+        self._refresh_cache(market, date.today())
 
-# 全局单例
+
+# ═══════════════════════════════════════════════════════════════════
+#  全局单例
+# ═══════════════════════════════════════════════════════════════════
+
 def get_holiday_calendar() -> TradingHolidayCalendar:
-    """获取节假日日历单例"""
+    """获取交易日历单例"""
     return TradingHolidayCalendar()

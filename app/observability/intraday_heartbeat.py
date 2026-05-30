@@ -33,88 +33,47 @@ logger = logging.getLogger("ftseek_us.intraday_heartbeat")
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
 
-# ─── 交易日缓存 (避免每次心跳都查 Futu API) ───
-_trading_day_cache: Dict[str, bool] = {}  # {"2026-05-25": False, ...}
-
-# P2' 修复 (2026-05-26): 删除硬编码假日列表，统一使用 holiday_calendar SSOT
-# 原 _KNOWN_US_HOLIDAYS 与 holiday_calendar 可能漂移，改为调用统一入口
+# ─── 交易日判断: 委托到统一 SSOT (holiday_calendar) ───
+# P1 修复 (2026-05-31): 删除本模块的 Futu API/缓存逻辑, 统一由 holiday_calendar 管理.
+# 所有交易日判断 (含 Futu API + 硬编码降级) 集中在 app.utils.holiday_calendar.
 
 
 def _is_trading_day(market: str = "US") -> bool:
-    """检查今日是否为交易日 (带日级缓存).
+    """检查今日是否为交易日.
 
-    优先级: 缓存 > holiday_calendar > Futu API.
-    缓存 key 使用美东日期 (UTC-4), 与交易日语义一致.
-
-    P2' 修复 (2026-05-26): 删除硬编码 _KNOWN_US_HOLIDAYS，
-    统一调用 holiday_calendar，消除双写漂移风险。
+    委托到 holiday_calendar SSOT (Futu API 优先 + 硬编码降级).
+    使用 ET 日期, 与交易日语义一致.
     """
-    # 美东日期 (UTC-4 for EDT)
-    et_date = (datetime.utcnow() - timedelta(hours=4)).strftime("%Y-%m-%d")
-    cache_key = f"{market}_{et_date}"
+    from app.utils.timezone import get_trade_date
+    from app.utils.holiday_calendar import get_holiday_calendar
 
-    # 1. 缓存命中
-    if cache_key in _trading_day_cache:
-        return _trading_day_cache[cache_key]
-
-    # 2. holiday_calendar 快速路径 (SSOT, 替代原硬编码 _KNOWN_US_HOLIDAYS)
-    try:
-        from app.utils.holiday_calendar import get_holiday_calendar
-        cal = get_holiday_calendar()
-        if market == "US" and cal.is_us_holiday(datetime.strptime(et_date, "%Y-%m-%d").date()):
-            _trading_day_cache[cache_key] = False
-            logger.info(f"[Heartbeat] {et_date} 是已知假日 ({market}), 跳过")
-            return False
-    except Exception as e:
-        logger.debug(f"[Heartbeat] holiday_calendar 加载失败 (降级到 Futu API): {e}")
-
-    # 3. Futu API 查询 (每日最多 1 次)
-    try:
-        from futu import OpenQuoteContext, RET_OK
-        ctx = OpenQuoteContext(host="127.0.0.1", port=11111)
-        ret, data = ctx.request_trading_days(
-            market=market, start=et_date, end=et_date
-        )
-        ctx.close()
-        if ret == RET_OK:
-            trading_dates = [d["time"] for d in data]
-            is_td = et_date in trading_dates
-            _trading_day_cache[cache_key] = is_td
-            if not is_td:
-                logger.info(f"[Heartbeat] Futu 确认 {et_date} 非 {market} 交易日")
-            return is_td
-    except Exception as e:
-        logger.debug(f"[Heartbeat] Futu 交易日查询失败: {e}")
-
-    # API 失败 → 安全侧: 认为是交易日 (不抑制心跳)
-    _trading_day_cache[cache_key] = True
-    return True
+    et_date_str = get_trade_date()
+    et_date = datetime.strptime(et_date_str, "%Y-%m-%d").date()
+    return get_holiday_calendar().is_trading_day(market, et_date)
 
 
 def _is_market_hours() -> bool:
-    """美股盘中 (09:30-16:00 ET = 21:30-04:00 北京/UTC+8).
+    """美股盘中 (09:30-16:00 ET).
 
     三重门控: 周末 → 假日/交易日 → 时间窗口.
+    统一使用 app.utils.timezone 获取 ET 时间.
     """
     try:
-        utc_now = datetime.utcnow()
+        from app.utils.timezone import now_et
+
+        et_now = now_et()
 
         # 1. 周末跳过
-        if utc_now.weekday() >= 5:  # Sat=5, Sun=6
+        if et_now.weekday() >= 5:
             return False
 
-        # 2. 交易日检查 (带缓存, 含假日)
+        # 2. 交易日检查 (委托到 SSOT)
         if not _is_trading_day("US"):
             return False
 
-        # 3. 时间窗口: EDT 09:30-16:00 ≈ UTC 13:30-20:00
-        h = utc_now.hour
-        m = utc_now.minute
-        if h < 13 or h >= 20:
-            return False
-        if h == 13 and m < 30:
-            return False
-        return True
+        # 3. 时间窗口: ET 09:30-16:00
+        hour_min = et_now.hour + et_now.minute / 60.0
+        return 9.5 <= hour_min <= 16.0
     except Exception:
         return True  # 安全侧: 失败时认为是盘中, 不抑制心跳
 
