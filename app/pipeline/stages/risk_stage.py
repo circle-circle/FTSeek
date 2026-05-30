@@ -210,27 +210,44 @@ def process(candidate: SignalCandidate,
     atr = ctx.atr if ctx else 0
     price = ctx.price if ctx else 0
 
-    # RFC-054: 读取策略指定的 ATR 倍数 (trend_first 区分 PULLBACK/BREAKOUT)
-    atr_mult = 1.5  # 默认
-    if isinstance(candidate.metadata, dict):
-        _sl_mult = candidate.metadata.get('stop_loss_atr_mult')
-        if _sl_mult and float(_sl_mult) > 0:
-            atr_mult = float(_sl_mult)
-
-    # RFC-054: 方向感知止损 — SHORT 止损在上方, LONG 止损在下方
+    # 方向判断
     _dir_raw = candidate.direction
     _dir_str = (_dir_raw.value if hasattr(_dir_raw, 'value') else str(_dir_raw)).upper()
     _is_short = _dir_str in ('SHORT', 'SELL')
 
+    # 优先: 作战计划固定 SL/TP (fast_lane)
+    plan_sl = None
+    plan_tp = None
+    if isinstance(candidate.metadata, dict):
+        _psl = candidate.metadata.get('plan_stop_loss')
+        _ptp = candidate.metadata.get('plan_take_profit')
+        if _psl and float(_psl) > 0:
+            plan_sl = float(_psl)
+        if _ptp and float(_ptp) > 0:
+            plan_tp = float(_ptp)
+
     stop_loss = price * 0.94  # -6% 默认
     take_profit_1 = price * 1.06  # +6% 默认
-    if atr > 0 and price > 0:
+
+    if plan_sl:
+        # 作战计划指定了固定止损/止盈
+        stop_loss = plan_sl
+        take_profit_1 = plan_tp or (price * 1.06)
+        logger.debug(f"[Risk] {symbol} 使用作战计划 SL={plan_sl} TP={plan_tp}")
+    elif atr > 0 and price > 0:
+        # ATR 动态止损
+        atr_mult = 1.5
+        if isinstance(candidate.metadata, dict):
+            _sl_mult = candidate.metadata.get('stop_loss_atr_mult')
+            if _sl_mult and float(_sl_mult) > 0:
+                atr_mult = float(_sl_mult)
+
         if _is_short:
-            stop_loss = price + (atr * atr_mult)       # SHORT: 止损在上方
-            take_profit_1 = price - (atr * atr_mult * 2)  # SHORT: 止盈在下方
+            stop_loss = price + (atr * atr_mult)
+            take_profit_1 = price - (atr * atr_mult * 2)
         else:
-            stop_loss = price - (atr * atr_mult)       # LONG: 止损在下方
-            take_profit_1 = price + (atr * atr_mult * 2)  # LONG: 止盈在上方
+            stop_loss = price - (atr * atr_mult)
+            take_profit_1 = price + (atr * atr_mult * 2)
 
     # ATR观察日志: 入场决策关键参数 (2026-05-30)
     sl_distance = abs(price - stop_loss) if price > 0 else 0

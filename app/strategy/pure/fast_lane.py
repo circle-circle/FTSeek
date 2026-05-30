@@ -42,10 +42,24 @@ def evaluate(ctx: SymbolContext, config: Dict[str, Any]) -> Optional[SignalCandi
     require_zone = config.get("require_entry_zone", True)
 
     if require_zone:
-        if not entry_zone or len(entry_zone) != 2:
-            return None
-        low, high = entry_zone
-        if not (low <= ctx.price <= high):
+        # 优先使用 OpenChecker 确认的实时价格作为入场中心
+        confirmed = float(plan_match.get("confirmed_entry_price", 0) or 0)
+        if confirmed > 0:
+            # 动态区间: confirmed_price ± 0.5%
+            tol = confirmed * 0.005
+            effective_low = confirmed - tol
+            effective_high = confirmed + tol
+        else:
+            # 降级: 原始 entry_zone ± 1%
+            if not entry_zone or len(entry_zone) != 2:
+                return None
+            low, high = entry_zone
+            mid = (low + high) / 2.0
+            tol = mid * 0.01
+            effective_low = low - tol
+            effective_high = high + tol
+
+        if not (effective_low <= ctx.price <= effective_high):
             return None
 
         # RSI 辅助判断 (不阻止, 仅附加信息)
@@ -70,5 +84,10 @@ def evaluate(ctx: SymbolContext, config: Dict[str, Any]) -> Optional[SignalCandi
         urgency=str(plan_match.get("urgency", "NORMAL")).upper(),
         rationale=str(plan_match.get("rationale", plan_match.get("catalyst", f"快车道 entry_zone 匹配 @ ${ctx.price:.2f}"))),
         context=ctx,
-        metadata={"plan_match": plan_match, "price": ctx.price},
+        metadata={
+            "plan_match": plan_match,
+            "price": ctx.price,
+            "plan_stop_loss": plan_match.get("stop_loss"),
+            "plan_take_profit": plan_match.get("take_profit"),
+        },
     )
