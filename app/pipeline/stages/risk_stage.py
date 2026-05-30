@@ -23,6 +23,64 @@ from app.core.pipeline_contracts import SignalCandidate, OrderRequest
 logger = logging.getLogger(__name__)
 
 
+def _get_futu_provider():
+    """获取 FutuLV3Provider 单例 (顽强，失败返回 None)"""
+    try:
+        from app.data.futu_lv3_provider import get_futu_lv3_provider
+        return get_futu_lv3_provider()
+    except Exception as e:
+        logger.debug(f"[Risk] 获取 Futu provider 失败: {e}")
+        return None
+
+
+def _check_liquidity(symbol: str) -> Optional[Dict[str, Any]]:
+    """获取盘口流动性评估 (辅助决策)"""
+    try:
+        provider = _get_futu_provider()
+        if provider and hasattr(provider, 'get_order_book_quality'):
+            return provider.get_order_book_quality(symbol)
+    except Exception as e:
+        logger.debug(f"[LIQUIDITY] {symbol} 检查失败: {e}")
+    return None
+
+
+def _get_ticker_sentiment(symbol: str) -> Optional[Dict[str, Any]]:
+    """获取成交流向情绪 (辅助决策)"""
+    try:
+        provider = _get_futu_provider()
+        if provider and hasattr(provider, 'get_ticker_sentiment'):
+            return provider.get_ticker_sentiment(symbol)
+    except Exception as e:
+        logger.debug(f"[TICKER] {symbol} 流向查询失败: {e}")
+    return None
+
+
+def _check_global_blacklist(symbol: str) -> bool:
+    """检查标的是否在全局黑名单中 (P0 2026-05-30)
+
+    从 unified_config.yaml 的 risk.global_blacklist 读取黑名单，
+    支持 US.XXXX 与 XXXX 两种格式匹配。
+    命中则丢弃信号，跨策略统一拦截。
+    """
+    try:
+        from app.core.config_container import get_config
+        blacklist = get_config().get_dotted("risk.global_blacklist", []) or []
+    except Exception as e:
+        logger.debug(f"[BLACKLIST] 读取全局黑名单失败: {e}")
+        return False
+
+    if not blacklist:
+        return False
+
+    # 标准化 symbol 格式（支持 US.XXXX 和 XXXX 两种）
+    clean_symbol = symbol.replace("US.", "")
+    for bl_symbol in blacklist:
+        if clean_symbol == str(bl_symbol).replace("US.", ""):
+            logger.warning(f"[BLACKLIST] {symbol} 被全局黑名单拦截，禁止入场")
+            return True
+    return False
+
+
 def process(candidate: SignalCandidate,
             risk_engine=None,
             position_store=None,
@@ -42,6 +100,76 @@ def process(candidate: SignalCandidate,
         OrderRequest 或 None
     """
     symbol = candidate.symbol
+
+    # ── 0. 全局黑名单拦截 (P0 2026-05-30) ──
+    # 性能优先: 在任何仓位/止损计算之前过滤亏损标的
+    if _check_global_blacklist(symbol):
+        return None
+
+    # ── 0.1 流动性检查 (P1 2026-05-30) ──
+    # 辅助决策: spread 过大拒绝入场, spread 偏大仅降权
+    liquidity = _check_liquidity(symbol)
+    if liquidity and not liquidity.get('tradeable', True):
+        logger.warning(
+            f"[LIQUIDITY] {symbol} 流动性不足(spread="
+            f"{liquidity.get('spread_pct', 0):.3f}%)，拒绝入场"
+        )
+        return None
+
+    # 流动性降权: spread > 0.2% 时置信度 ×0.85
+    if liquidity and liquidity.get('spread_pct', 0) > 0.2:
+        old_conf = float(getattr(candidate, 'confidence', 0.0) or 0.0)
+        new_conf = round(min(1.0, old_conf * 0.85), 4)
+        candidate.confidence = new_conf
+        if isinstance(candidate.metadata, dict):
+            candidate.metadata['liquidity_penalty'] = 0.85
+            candidate.metadata['liquidity_spread_pct'] = liquidity.get('spread_pct', 0)
+        logger.info(
+            f"[LIQUIDITY] {symbol} spread={liquidity.get('spread_pct', 0):.3f}%，"
+            f"置信度降权×0.85 ({old_conf:.3f} → {new_conf:.3f})"
+        )
+
+    # ── 0.2 成交流向确认 (P1 2026-05-30) ──
+    # 辅助决策: 信号方向与成交流向一致 → 加权, 反之降权
+    ticker_data = _get_ticker_sentiment(symbol)
+    if ticker_data and ticker_data.get('confidence', 0) > 0.5:
+        sentiment = float(ticker_data.get('sentiment', 0) or 0)
+        raw_dir = candidate.direction
+        direction = (raw_dir.value if hasattr(raw_dir, 'value') else str(raw_dir)).upper()
+        is_long = direction in ('LONG', 'BUY')
+        is_short = direction in ('SHORT', 'SELL')
+
+        old_conf = float(getattr(candidate, 'confidence', 0.0) or 0.0)
+        new_conf = old_conf
+        ticker_factor = None
+
+        if is_long and sentiment < -0.3:
+            ticker_factor = 0.85
+            new_conf = round(old_conf * ticker_factor, 4)
+            logger.info(
+                f"[TICKER] {symbol} {direction} 信号但成交流向偏空"
+                f"(sentiment={sentiment:.2f})，降权×0.85"
+            )
+        elif is_short and sentiment > 0.3:
+            ticker_factor = 0.85
+            new_conf = round(old_conf * ticker_factor, 4)
+            logger.info(
+                f"[TICKER] {symbol} {direction} 信号但成交流向偏多"
+                f"(sentiment={sentiment:.2f})，降权×0.85"
+            )
+        elif (is_long and sentiment > 0.3) or (is_short and sentiment < -0.3):
+            ticker_factor = 1.08
+            new_conf = round(min(1.0, old_conf * ticker_factor), 4)
+            logger.info(
+                f"[TICKER] {symbol} {direction} 信号与成交流向一致"
+                f"(sentiment={sentiment:.2f})，增强×1.08"
+            )
+
+        if ticker_factor is not None:
+            candidate.confidence = new_conf
+            if isinstance(candidate.metadata, dict):
+                candidate.metadata['ticker_factor'] = ticker_factor
+                candidate.metadata['ticker_sentiment'] = sentiment
 
     # ── 1. 风控门禁 ──
     # 风控门禁统一由 _submit_order._check_gates_and_conflicts 执行，避免重复。
@@ -66,6 +194,16 @@ def process(candidate: SignalCandidate,
     if atr > 0 and price > 0:
         stop_loss = price - (atr * atr_mult)
         take_profit_1 = price + (atr * atr_mult * 2)
+
+    # ATR观察日志: 入场决策关键参数 (2026-05-30)
+    sl_distance = abs(price - stop_loss) if price > 0 else 0
+    confidence = candidate.metadata.get("confidence", 0.0) if candidate.metadata else 0.0
+    direction = candidate.direction.value if hasattr(candidate.direction, 'value') else str(candidate.direction)
+    logger.info(
+        f"[ATR_ENTRY] symbol={symbol} direction={direction} "
+        f"ATR={atr:.4f} SL_distance={sl_distance:.4f} "
+        f"position_size={quantity} confidence={confidence:.3f}"
+    )
 
     return OrderRequest(
         candidate=candidate,

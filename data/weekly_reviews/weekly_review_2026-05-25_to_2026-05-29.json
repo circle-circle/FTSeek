@@ -1,0 +1,204 @@
+{
+  "report_type": "weekly",
+  "period_start": "2026-05-25",
+  "period_end": "2026-05-29",
+  "generated_at": "2026-05-30T04:33:48.708708",
+  "summary": {
+    "total_trades": 12,
+    "closed_trades": 10,
+    "winning_trades": 3,
+    "total_pnl": 1706.4,
+    "win_rate": 0.3,
+    "avg_pnl_per_trade": 170.64
+  },
+  "daily_comparison": {
+    "daily_stats": {
+      "2026-05-26": {
+        "trades": 7,
+        "wins": 0,
+        "pnl": 0
+      },
+      "2026-05-29": {
+        "trades": 5,
+        "wins": 3,
+        "pnl": 1706.4
+      }
+    },
+    "best_day": "2026-05-29",
+    "worst_day": "2026-05-26",
+    "trading_days": 2
+  },
+  "signal_funnel": {
+    "total_decisions": 52,
+    "by_day": {
+      "2026-05-26": 23,
+      "2026-05-27": 13,
+      "2026-05-29": 16
+    },
+    "by_direction_strength": {
+      "LONG(s=10)": 1,
+      "LONG(s=11)": 1,
+      "LONG(s=42)": 8,
+      "LONG(s=46)": 2,
+      "LONG(s=62)": 1,
+      "SHORT(s=10)": 4,
+      "SHORT(s=13)": 1,
+      "SHORT(s=14)": 3,
+      "SHORT(s=15)": 1,
+      "SHORT(s=19)": 1,
+      "SHORT(s=42)": 17,
+      "SHORT(s=46)": 3,
+      "SHORT(s=48)": 1,
+      "SHORT(s=53)": 1,
+      "SHORT(s=58)": 3,
+      "SHORT(s=60)": 1,
+      "SHORT(s=62)": 2,
+      "SHORT(s=79)": 1
+    }
+  },
+  "rejection_trend": {
+    "total": 33,
+    "by_day": {
+      "2026-05-26": 16,
+      "2026-05-27": 5,
+      "2026-05-29": 12
+    },
+    "by_reason": {
+      "SHORT_EFFECTIVE_WEAK": 29,
+      "SHORT_TRIPLE_CONFIRM": 3,
+      "LONG_STRENGTH_WEAK": 1
+    },
+    "by_symbol": {
+      "US.LCID": 4,
+      "US.NIO": 4,
+      "US.RIVN": 4,
+      "US.AMD": 3,
+      "US.MU": 3
+    },
+    "trend": "stable",
+    "top_rejector": "SHORT_EFFECTIVE_WEAK"
+  },
+  "capital_curve": {
+    "start_equity": 1067022.0,
+    "end_equity": 1080917.0,
+    "weekly_pnl": 13894.58,
+    "weekly_return_pct": 1.3,
+    "max_drawdown_pct": -0.97,
+    "daily_points": [
+      {
+        "day": "2026-05-25",
+        "equity": 1067022.0,
+        "cash": 1079160.0,
+        "drawdown": -2.36
+      },
+      {
+        "day": "2026-05-26",
+        "equity": 1082190.0,
+        "cash": 1063304.0,
+        "drawdown": -0.98
+      },
+      {
+        "day": "2026-05-27",
+        "equity": 1082247.0,
+        "cash": 1056215.0,
+        "drawdown": -0.97
+      },
+      {
+        "day": "2026-05-29",
+        "equity": 1080917.0,
+        "cash": 822006.0,
+        "drawdown": -1.4
+      }
+    ]
+  },
+  "strategy_performance": {
+    "strategy_breakdown": {
+      "unknown": {
+        "trades": 10,
+        "wins": 3,
+        "pnl": 1706.4,
+        "win_rate": 0.3
+      }
+    }
+  },
+  "voting_analysis": {
+    "avg_signal_strength": 57.2,
+    "high_strength_trades": 0,
+    "high_strength_win_rate": 0,
+    "medium_strength_trades": 9,
+    "medium_strength_win_rate": 0.2222,
+    "low_strength_trades": 1,
+    "low_strength_win_rate": 1.0
+  },
+  "risk_analysis": {
+    "stop_loss_execution_rate": 1.0,
+    "max_drawdown": 0
+  },
+  "consistency_score": {
+    "score": 0.7,
+    "avg_strength": 57.2,
+    "std_strength": 9.09,
+    "interpretation": "medium"
+  },
+  "key_learnings": [],
+  "improvement_plan": [
+    {
+      "action": "胜率低于 40%，建议重新评估策略",
+      "priority": "high"
+    },
+    {
+      "action": "有 1 笔低信号强度交易，建议提高入场门槛",
+      "priority": "medium"
+    },
+    {
+      "action": "本周 33 次信号被拒绝 (趋势: stable)，TOP 原因: SHORT_EFFECTIVE_WEAK",
+      "priority": "medium"
+    }
+  ],
+  "daily_reviews_summary": {
+    "daily_count": 4,
+    "days_with_trades": 4,
+    "reviews": [
+      {
+        "date": "2026-05-26",
+        "trades": 5,
+        "pnl": 0,
+        "win_rate": 0,
+        "suggestions": [
+          "胜率低于 40%，建议重新评估策略",
+          "今日 16 次信号被拒绝，TOP 原因: SHORT_EFFECTIVE_WEAK"
+        ]
+      },
+      {
+        "date": "2026-05-27",
+        "trades": 3,
+        "pnl": 201.65,
+        "win_rate": 0.6667,
+        "suggestions": [
+          "今日 23 次信号被拒绝，TOP 原因: SHORT_EFFECTIVE_WEAK"
+        ]
+      },
+      {
+        "date": "2026-05-28",
+        "trades": 3,
+        "pnl": -2487.38,
+        "win_rate": 0,
+        "suggestions": [
+          "胜率低于 40%，建议重新评估策略",
+          "亏损交易占比 100%，建议收紧入场条件",
+          "今日 9 次信号被拒绝，TOP 原因: SHORT_EFFECTIVE_WEAK"
+        ]
+      },
+      {
+        "date": "2026-05-29",
+        "trades": 5,
+        "pnl": 1706.4,
+        "win_rate": 0.6,
+        "suggestions": [
+          "有 1 笔低信号强度交易，建议提高入场门槛",
+          "今日 12 次信号被拒绝，TOP 原因: SHORT_EFFECTIVE_WEAK"
+        ]
+      }
+    ]
+  }
+}

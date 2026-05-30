@@ -10,6 +10,60 @@ from typing import Optional, List, Dict, Any
 import uuid
 
 
+class EntryReason(str, Enum):
+    """入场原因枚举 (2026-05-30: 支持归因系统 entry_reason 推导)"""
+    MAIN_SIGNAL = "main_signal"
+    SCALPING = "scalping_signal"
+    CROSS_MARKET = "cross_market"
+    NEWS_DRIVEN = "news_driven"
+    EARNINGS = "earnings"
+    MANUAL = "manual"
+    UNKNOWN = "unknown"
+
+
+def derive_entry_reason(strategy_id: str = "", source: str = "", metadata: Optional[Dict] = None) -> str:
+    """从持仓元数据推导入场原因 (2026-05-30: 修复导入缺失)
+
+    优先级:
+      1. metadata['entry_reason'] 已有值直接返回
+      2. 从 source_type / source 推导
+      3. 从 strategy_id 推导
+      4. 兜底 'unknown'
+    """
+    if metadata is None:
+        metadata = {}
+
+    # 优先从 metadata 直接获取
+    existing = metadata.get('entry_reason', '')
+    if existing and existing != 'None':
+        return existing
+
+    # 从 source 推导
+    src = source or metadata.get('source_type', '') or metadata.get('source', '')
+    if src == 'SCALPING':
+        return EntryReason.SCALPING.value
+    elif src == 'MAIN_PIPELINE':
+        return metadata.get('signal_source', EntryReason.MAIN_SIGNAL.value)
+    elif src == 'CROSS_MARKET':
+        return EntryReason.CROSS_MARKET.value
+    elif src == 'NEWS':
+        return EntryReason.NEWS_DRIVEN.value
+
+    # 从 strategy_id 推导
+    if strategy_id:
+        if 'scalp' in strategy_id.lower():
+            return EntryReason.SCALPING.value
+        elif 'cross' in strategy_id.lower() or 'arb' in strategy_id.lower():
+            return EntryReason.CROSS_MARKET.value
+        elif 'news' in strategy_id.lower():
+            return EntryReason.NEWS_DRIVEN.value
+        elif 'earn' in strategy_id.lower():
+            return EntryReason.EARNINGS.value
+        return strategy_id
+
+    return src or EntryReason.UNKNOWN.value
+
+
 class Direction(str, Enum):
     """交易方向"""
     LONG = "LONG"

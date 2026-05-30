@@ -1022,6 +1022,166 @@ class FutuLV3Provider:
             logger.debug(f"[FutuLV3] TICKER 异常: {symbol}: {e}")
             return None
 
+    # ═══════════════════════════════════════════════════════════
+    # P1 新增 (2026-05-30): 盘口流动性 + 成交流向辅助决策
+    # ═══════════════════════════════════════════════════════════
+
+    def get_order_book_quality(self, symbol: str) -> Dict[str, Any]:
+        """评估标的实时流动性质量
+
+        优先级: Push OrderBook 缓存 → Push Quote 缓存 → 快照
+
+        Returns:
+            {
+                'spread_pct': float,       # bid-ask spread 百分比
+                'balance_ratio': float,    # ask_vol / bid_vol 比值
+                'liquidity_score': float,  # 0-100 综合评分
+                'tradeable': bool,         # 是否适合交易 (spread < 0.5%)
+            }
+        """
+        default = {
+            'spread_pct': 0.0,
+            'balance_ratio': 1.0,
+            'liquidity_score': 50.0,
+            'tradeable': True,
+        }
+        try:
+            bid = ask = 0.0
+            bid_vol = ask_vol = 0.0
+
+            # ① 优先 Push OrderBook 缓存 (实时推送，<100ms 延迟)
+            ob = self.get_push_orderbook(symbol)
+            if ob:
+                bid = float(ob.get('BidPrice', 0) or 0)
+                ask = float(ob.get('AskPrice', 0) or 0)
+                bid_vol = float(ob.get('BidVol', 0) or 0)
+                ask_vol = float(ob.get('AskVol', 0) or 0)
+
+            # ② Push Quote 缓存
+            if bid <= 0 or ask <= 0:
+                pq = self.get_push_quote(symbol)
+                if pq:
+                    bid = float(pq.get('bid', 0) or 0)
+                    ask = float(pq.get('ask', 0) or 0)
+                    bid_vol = float(pq.get('bid_vol', 0) or 0)
+                    ask_vol = float(pq.get('ask_vol', 0) or 0)
+
+            # ③ 快照降级
+            if (bid <= 0 or ask <= 0) and self._ensure_connected():
+                futu_symbol = self._to_futu_symbol(symbol)
+                ret, data = self._quote_ctx.get_market_snapshot([futu_symbol])
+                if ret != 0 or data is None or data.empty:
+                    return dict(default)
+                row = data.iloc[0]
+                bid = float(row.get('bid_price', 0) or 0)
+                ask = float(row.get('ask_price', 0) or 0)
+                bid_vol = float(row.get('bid_vol', 0) or 0)
+                ask_vol = float(row.get('ask_vol', 0) or 0)
+
+            # 数据有效性
+            if bid <= 0 or ask <= 0 or ask < bid:
+                return dict(default)
+
+            bid_vol_safe = bid_vol if bid_vol > 0 else 1.0
+            ask_vol_safe = ask_vol if ask_vol > 0 else 1.0
+
+            mid = (bid + ask) / 2
+            spread_pct = (ask - bid) / mid * 100  # 百分比
+            balance_ratio = ask_vol_safe / bid_vol_safe if bid_vol > 0 else 999.0
+
+            # 流动性评分: spread 越小越好, 0.1% → 80, 0.3% → 40, 0.5% → 0
+            liquidity_score = max(0.0, min(100.0, 100.0 - spread_pct * 200))
+            tradeable = spread_pct < 0.5
+
+            return {
+                'spread_pct': round(spread_pct, 4),
+                'balance_ratio': round(balance_ratio, 2),
+                'liquidity_score': round(liquidity_score, 1),
+                'tradeable': bool(tradeable),
+            }
+        except Exception as e:
+            logger.warning(f"[LIQUIDITY] {symbol} 流动性检查异常: {e}")
+            return dict(default)
+
+    def get_ticker_sentiment(self, symbol: str, window: int = 30) -> Dict[str, Any]:
+        """分析最近 N 笔成交的主动买卖情绪
+
+        通过富途 Ticker 推送 (PushTickerHandler 缓存) 或 get_recent_tickers API
+        获取成交方向。direction == 'BUY' 表示主动买入 (做多力量)，
+        direction == 'SELL' 表示主动卖出 (做空力量)。
+
+        Returns:
+            {
+                'sentiment': float,       # [-1, 1], 正=多头力量, 负=空头力量
+                'buy_ratio': float,       # 主动买入笔数占比 [0, 1]
+                'volume_weighted': float, # 量加权情绪 (大单权重更高)
+                'confidence': float,      # 数据质量 [0, 1]
+            }
+        """
+        default = {
+            'sentiment': 0.0,
+            'buy_ratio': 0.5,
+            'volume_weighted': 0.0,
+            'confidence': 0.0,
+        }
+        try:
+            # ① 优先 Push 缓存 (PushTickerHandler 实时累积)
+            tickers = self.get_push_tickers(symbol) or []
+
+            # ② 缓存不足则降级到 API
+            if len(tickers) < 5 and self._ensure_connected():
+                try:
+                    fetched = self.get_recent_tickers(symbol, count=max(window, 50))
+                    if fetched:
+                        tickers = fetched
+                except Exception:
+                    pass
+
+            if not tickers or len(tickers) < 5:
+                return dict(default)
+
+            recent = tickers[-window:] if len(tickers) > window else tickers
+
+            buy_count = sell_count = 0
+            buy_volume = sell_volume = 0.0
+
+            for t in recent:
+                direction = t.get('direction', 'NEUTRAL')
+                try:
+                    volume = float(t.get('volume', 0) or 0)
+                except (TypeError, ValueError):
+                    volume = 0.0
+                if direction == 'BUY':
+                    buy_count += 1
+                    buy_volume += volume
+                elif direction == 'SELL':
+                    sell_count += 1
+                    sell_volume += volume
+
+            total = buy_count + sell_count
+            if total == 0:
+                return dict(default)
+
+            buy_ratio = buy_count / total
+            sentiment = (buy_count - sell_count) / total  # [-1, 1]
+
+            total_vol = buy_volume + sell_volume
+            volume_weighted = (
+                (buy_volume - sell_volume) / total_vol if total_vol > 0 else 0.0
+            )
+
+            confidence = min(1.0, len(recent) / max(window, 1))  # 数据充足度
+
+            return {
+                'sentiment': round(sentiment, 3),
+                'buy_ratio': round(buy_ratio, 3),
+                'volume_weighted': round(volume_weighted, 3),
+                'confidence': round(confidence, 2),
+            }
+        except Exception as e:
+            logger.warning(f"[TICKER_SENTIMENT] {symbol} 成交流向分析异常: {e}")
+            return dict(default)
+
     def get_health_status(self) -> dict:
         """获取健康状态"""
         total = self._success_count + self._fail_count

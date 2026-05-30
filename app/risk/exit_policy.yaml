@@ -36,10 +36,13 @@ exit_rules:
     method: "entry_price - atr * multiplier"
     # 非线性状态机：根据利润深度调整 ATR 倍数
     # 优化 (2026-05-03): 收紧整体倍数以匹配 PRE_CLOSE_EXIT 豁免节奏
+    # 优化 (2026-05-30 Task#7): 3档扩展为5档, 让退出曲线更贴合波动特征, 减少"由盈转亏"
     multiplier_by_profit:
-      initial: 2.0                   # 开仓初期：2.0x ATR (原 2.5x, 更积极保护)
-      profit_1atr: 1.8              # 盈利≥1ATR：收紧到 1.8x (原 2.0x)
-      profit_5atr: 1.2              # 盈利≥5ATR：收紧到 1.2x (原 1.5x, 锁定利润)
+      initial: 2.0                   # 开仓初期：2.0x ATR (保持不变)
+      profit_05atr: 1.8             # 新增 (2026-05-30): 盈利≥0.5ATR 即开始收紧锁利
+      profit_1atr: 1.6              # 收紧 (2026-05-30): 1.8 → 1.6, 更积极锁利
+      profit_2atr: 1.4              # 新增 (2026-05-30): 盈利≥2ATR 进一步收紧
+      profit_5atr: 1.2              # 保持: 大盈利最紧凑 (锁定利润)
     # 硬底限：任何情况不超过成本的 -15%
     max_loss_pct: 15.0
     # 波动率底限：ATR 不能低于 200 日中位 TR 的 70%
@@ -48,7 +51,7 @@ exit_rules:
   # 规则 3: Chandelier 追踪止损 (替代固定 3% 回撤)
   chandelier_trail:
     enabled: true
-    activation_profit_atr: 1.0      # P0 (2026-05-29): 从 1.2 降至 1.0, 渐进式追踪止损 Tier3 对齐
+    activation_profit_atr: 0.8      # 优化 (2026-05-30 Task#7): 从 1.0 降至 0.8, 更早锁定利润, 减少由盈转亏
     multiplier_by_regime:
       normal: 2.5                   # 优化 (2026-05-03): 从 2.0 放宽到 2.5, 给利润更多呼吸空间
       trending: 3.5                 # 优化 (2026-05-03): 从 3.0 放宽到 3.5, 趋势市让利润奔跑
@@ -59,8 +62,8 @@ exit_rules:
   # 规则 4: 保本触发
   breakeven:
     enabled: true
-    trigger_profit_atr: 0.5         # P0 (2026-05-29): 从 1.0 降至 0.5, 渐进式追踪止损 Tier2 对齐
-    buffer_pct: 0.2                 # 成本价 + 0.2% 滑点缓冲
+    trigger_profit_atr: 0.4         # 优化 (2026-05-30 Task#7): 从 0.5 降至 0.4, 保本触发更积极
+    buffer_pct: 0.15                # 优化 (2026-05-30 Task#7): 从 0.2% 降至 0.15%, 减少滑点摩擦 (单位: 百分比 0.15 = 0.15%)
 
   # 规则 5: 分层止盈 (分批减仓)
   scale_out:
@@ -193,9 +196,9 @@ short_overrides:
 # 时段波动率比值 (参考值, 实际由 SharedKernel 校准):
 #   opening_drive:  1.50  (开盘 1.5x 日均波动 → 所有止损自动放宽)
 #   morning:        1.20  (早盘 1.2x)
-#   midday:         0.60  (午盘 0.6x → 所有止损自动收紧)
+#   midday:         0.75  (午盘 0.75x → 适度收紧, 2026-05-30 Task#7 从 0.60 抬升)
 #   afternoon:      0.95  (午后 0.95x)
-#   closing_drive:  1.15  (尾盘 1.15x)
+#   closing_drive:  1.00  (尾盘 1.0x → 回归基准, 2026-05-30 Task#7 从 1.15 下调)
 session_adaptation:
   enabled: true
   source: "shared_kernel"          # 参数值从 SharedKernel 取，不在此定义
@@ -267,3 +270,55 @@ day_trade_mode:
     take_profit_tier_1: 2.0         # 优化: 从 1.5% 提到 2.0%
     take_profit_tier_2: 5.0         # 优化: 从 4.0% 提到 5.0%
     max_idle_minutes: 120           # 优化: 从 90min 延长到 120min
+
+# ============================================================
+# SCALPING 策略退出参数覆写 (Task #9, 2026-05-30)
+# ============================================================
+# SCALPING 使用独立退出引擎 (app/scalping/exits.py) 但配置统一到此文件管理
+# - 启动时由 _load_scalping_exit_config() 一次性加载, 缓存到模块级 _SCALPING_EXIT_CONFIG
+# - enabled: false 时所有 SCALPING 类回退到代码默认值 (向后兼容)
+# - 修改参数无需改 Python 代码
+# ------------------------------------------------------------
+scalping_overrides:
+  enabled: true
+
+  # ── ATRExit (app/scalping/exits.py::ATRExit) ──
+  atr_exit:
+    tp_multiplier: 1.5              # TP = entry ± 1.5×ATR
+    sl_multiplier: 1.0              # SL = entry ∓ 1.0×ATR
+    min_tp_pct: 0.005               # 最低止盈 0.5% (ATR 太小时兜底)
+    max_tp_pct: 0.05                # 最高止盈 5%   (ATR 太大时限制)
+    min_sl_pct: 0.003               # 最低止损 0.3%
+    max_sl_pct: 0.03                # 最高止损 3%
+
+  # ── 轻量追踪止损 (ATRExit.check_exit 内嵌) ──
+  trailing:
+    enabled: true
+    activation_profit_pct: 0.015    # 盈利 ≥1.5% 时激活追踪
+    trail_multiplier: 0.8           # 回撤 0.8×ATR 触发
+    min_trail_pct: 0.008            # 最小追踪距离 0.8% (ATR 极小时兜底)
+
+  # ── 时间退出 (TimeExit) ──
+  time_exit:
+    max_hold_minutes: 60            # 最大持仓 60 分钟
+    profit_extension_minutes: 30    # 盈利时可延长 30 分钟
+
+  # ── 时段缩放 (覆盖 base 参数, 与 time_gate.py / unified_config.scalping.phases 对齐) ──
+  # 物理含义: phase_amplitude / global_amplitude
+  # SSOT: unified_config.yaml::scalping.phases (此处仅作为退出系统兜底)
+  phase_scaling:
+    opening_drive:
+      tp_scale: 1.5
+      sl_scale: 1.5
+    morning:
+      tp_scale: 1.2
+      sl_scale: 1.2
+    midday:
+      tp_scale: 0.7
+      sl_scale: 0.5
+    afternoon:
+      tp_scale: 1.0
+      sl_scale: 1.0
+    closing_drive:
+      tp_scale: 0.5
+      sl_scale: 0.7

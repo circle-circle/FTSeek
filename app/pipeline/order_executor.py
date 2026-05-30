@@ -972,6 +972,30 @@ def _try_direct_short_with_fallback(scheduler, symbol: str, signal: SignalScore,
 
 def _check_gates_and_conflicts(scheduler, symbol: str, signal: SignalScore, context: Dict[str, Any]) -> bool:
     """检查所有风控门禁与持仓冲突。返回 True 如果允许继续下单。"""
+    # P0 审计修复 (2026-05-30): 信号质量门控 — 观测模式
+    # 根因: 5/29 五笔交易 signal_strength=0, confidence=0.0 (voting_llm 链路未传递)
+    # 策略: 先观测(日志), 不硬拦截. 待 voting_llm 信号传播修复后收紧为 hard block.
+    try:
+        _sig_str = int(getattr(signal, 'strength', 0) or 0)
+        _sig_conf = float(getattr(signal, 'confidence', 0.0) or 0.0)
+        _strategy = getattr(signal, 'strategy_id', '') or ''
+        if _sig_str <= 0 and _sig_conf <= 0.0:
+            if 'voting_llm' not in _strategy:
+                # 非 voting_llm 策略: strength=0 & conf=0 → 拦截 (这些策略应有有效信号)
+                logger.warning(
+                    f"🚫 [SignalGate] 拦截 {symbol}: strength={_sig_str}, conf={_sig_conf:.2f}, "
+                    f"strategy={_strategy} (非voting_llm, 信号不应为0)"
+                )
+                return False
+            else:
+                # voting_llm: 已知信号传播bug, 仅记录不拦截
+                logger.warning(
+                    f"⚠️ [SignalGate·观测] {symbol}: strength={_sig_str}, conf={_sig_conf:.2f} "
+                    f"(voting_llm 信号传播bug, 放行但需修复)"
+                )
+    except Exception as _sg_err:
+        logger.debug(f"[SignalGate] 检查异常 (放行): {_sg_err}")
+
     # 🔴 P0 关键修复: 全局风险状态机门禁检查
     # 在一切交易逻辑之前，检查系统是否处于 RISK_OFF 或 HALT 状态
     try:

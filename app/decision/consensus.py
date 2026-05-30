@@ -29,6 +29,11 @@ from .strategy_orthogonalizer import (
 
 logger = logging.getLogger(__name__)
 
+# Task #6 (2026-05-30) ATR适配优化：置信度保守校准
+# 历史数据显示置信度与实际胜率存在反向偏差（过度乐观）
+# 乘以 0.85 消除偏差，让下游 min_confidence 门槛反映真实胜率
+CONFIDENCE_CALIBRATION_FACTOR = 0.85
+
 
 class ConsensusEngine:
     """
@@ -297,7 +302,16 @@ class ConsensusEngine:
         
         # 使用评分器进行最终评分
         consensus = self.scorer.score(consensus, market_context)
-        
+
+        # Task #6 (2026-05-30): 置信度保守校准 — 乘以 0.85 消除过度乐观
+        # 所有共识信号统一出口应用，确保下游门槛评估使用校准后置信度
+        try:
+            calibrated = float(consensus.confidence) * CONFIDENCE_CALIBRATION_FACTOR
+            # 限制在 [0, 1]
+            consensus.confidence = max(0.0, min(1.0, calibrated))
+        except Exception as e:
+            logger.warning("[consensus] confidence calibration failed: %s", e)
+
         return consensus
     
     def get_strategy_contributions(self, signals: List[SignalScore]) -> Dict[str, Dict[str, Any]]:

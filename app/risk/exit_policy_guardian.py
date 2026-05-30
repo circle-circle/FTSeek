@@ -191,10 +191,12 @@ class ExitPolicyGuardian:
         """
         获取 ATR 止损倍数 — 综合行业、方向、利润深度
 
-        非线性状态机 (2026-04-25 修复):
-        - profit_atr < 1.0: initial (2.5x)
-        - 1.0 <= profit_atr < 5.0: profit_1atr (2.0x)
-        - profit_atr >= 5.0: profit_5atr (1.5x)
+        非线性状态机 (2026-05-30 Task#7 扩展为5档):
+        - profit_atr < 0.5:           initial      (2.0x)
+        - 0.5 <= profit_atr < 1.0:    profit_05atr (1.8x)  ← 新增
+        - 1.0 <= profit_atr < 2.0:    profit_1atr  (1.6x)
+        - 2.0 <= profit_atr < 5.0:    profit_2atr  (1.4x)  ← 新增
+        - profit_atr >= 5.0:          profit_5atr  (1.2x)
 
         优先级: 行业覆盖 > 非线性状态机 > 做空覆盖 > 默认值
         """
@@ -202,13 +204,17 @@ class ExitPolicyGuardian:
         atr_config = rules.get('atr_stop', {})
         multipliers = atr_config.get('multiplier_by_profit', {})
 
-        # 1. 根据利润深度计算非线性倍数 (核心逻辑)
+        # 1. 根据利润深度计算非线性倍数 (核心逻辑, 5档分级)
         if profit_atr >= 5.0:
-            base_mult = multipliers.get('profit_5atr', 1.5)
+            base_mult = multipliers.get('profit_5atr', 1.2)
+        elif profit_atr >= 2.0:
+            base_mult = multipliers.get('profit_2atr', 1.4)
         elif profit_atr >= 1.0:
-            base_mult = multipliers.get('profit_1atr', 2.0)
+            base_mult = multipliers.get('profit_1atr', 1.6)
+        elif profit_atr >= 0.5:
+            base_mult = multipliers.get('profit_05atr', 1.8)
         else:
-            base_mult = multipliers.get('initial', 2.5)
+            base_mult = multipliers.get('initial', 2.0)
 
         # 2. 做空更紧 (取 行业/非线性 与 short_override 的较小值)
         if direction == 'SHORT':

@@ -42,16 +42,30 @@ def check_trailing_stop(monitor, position, current_price, entry_price, atr,
             return None
         elif profit_atr_abs < 0.5:
             # 微利(0~0.5 ATR)：不激活追踪，允许正常波动
-            # P0 修复 (2026-05-29): 门槛从 1.5 降至 0.5，对齐渐进式追踪止损
             return None
-        elif profit_atr_abs >= 5.0:
-            atr_mult = 2.5   # 大盈利：适当放宽，让利润奔跑
-        elif profit_atr_abs >= 3.0:
-            atr_mult = 2.0   # 中等盈利：标准追踪
-        elif profit_atr_abs >= 1.0:
-            atr_mult = 1.5   # P0 修复: 紧凑追踪 (1.0~3.0 ATR)
         else:
-            atr_mult = 3.0   # 小盈利(0.5~1.0 ATR)：宽松追踪，保本为主
+            # P0 修复 (2026-05-29): 连续函数计算ATR倍数，消除离散阶梯跳跃导致SL突变
+            # 原离散逻辑: 0.9→1.0 ATR 时 atr_mult 从3.0跳到1.5（40%突变）
+            # 新连续逻辑: 分段线性插值，确保平滑过渡
+            #   0.5→1.0 ATR: 3.0→2.5 (宽松→适中)
+            #   1.0→2.0 ATR: 2.5→2.0 (适中→标准)
+            #   2.0→3.0 ATR: 2.0→1.8 (标准→紧凑)
+            #   3.0→5.0 ATR: 1.8→1.5 (紧凑→最紧)
+            #   ≥5.0 ATR: 固定1.5
+            if profit_atr_abs < 1.0:
+                t = (profit_atr_abs - 0.5) / 0.5
+                atr_mult = 3.0 - 0.5 * t
+            elif profit_atr_abs < 2.0:
+                t = (profit_atr_abs - 1.0) / 1.0
+                atr_mult = 2.5 - 0.5 * t
+            elif profit_atr_abs < 3.0:
+                t = (profit_atr_abs - 2.0) / 1.0
+                atr_mult = 2.0 - 0.2 * t
+            elif profit_atr_abs < 5.0:
+                t = (profit_atr_abs - 3.0) / 2.0
+                atr_mult = 1.8 - 0.3 * t
+            else:
+                atr_mult = 1.5  # 大盈利最紧凑追踪
 
     # 3. peak/trough 更新 (LONG=最高, SHORT=最低)
     if direction == "LONG":

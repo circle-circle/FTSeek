@@ -71,9 +71,23 @@ class WatchlistManager:
         logger.info("重新加载股票名单...")
         self._load_watchlist()
     
+    def _get_global_blacklist(self) -> List[str]:
+        """读取全局黑名单 (P0 2026-05-30)
+
+        从 unified_config.yaml 的 risk.global_blacklist 读取并去除 US. 前缀，
+        返回仅含纯代码的黑名单集合。
+        """
+        try:
+            from app.core.config_container import get_config
+            raw = get_config().get_dotted("risk.global_blacklist", []) or []
+            return [str(s).replace("US.", "") for s in raw]
+        except Exception as e:
+            logger.debug(f"[BLACKLIST] watchlist_manager 读取全局黑名单失败: {e}")
+            return []
+
     def get_enabled_stocks(self) -> List[Dict[str, Any]]:
         """
-        获取启用的股票列表
+        获取启用的股票列表 (双重过滤: enabled + 不在全局黑名单)
         
         Returns:
             [
@@ -82,7 +96,19 @@ class WatchlistManager:
             ]
         """
         stocks = self._watchlist_data.get("us_stocks", [])
-        return [s for s in stocks if s.get("enabled", False)]
+        enabled = [s for s in stocks if s.get("enabled", False)]
+        # P0 (2026-05-30): 双重过滤 — enabled 且不在全局黑名单
+        blacklist = self._get_global_blacklist()
+        if not blacklist:
+            return enabled
+        filtered = [
+            s for s in enabled
+            if s.get("code", "").replace("US.", "") not in blacklist
+        ]
+        blocked = [s.get("code") for s in enabled if s not in filtered]
+        if blocked:
+            logger.info(f"[BLACKLIST] watchlist 过滤拦截 {len(blocked)} 个黑名单标的: {blocked}")
+        return filtered
     
     def get_stock_codes(self) -> List[str]:
         """

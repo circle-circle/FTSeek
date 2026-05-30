@@ -28,7 +28,7 @@ class ConfigDefaults:
     # 风控 — 信号质量 (risk.signal_quality)
     # P0 优化 (2026-05-12): 降低门槛增加交易机会，模拟盘阶段优先获取数据
     # ============================================================
-    MIN_CONFIDENCE = 0.4                    # P0 优化: 0.6 → 0.4
+    MIN_CONFIDENCE = 0.55                   # 2026-05-30: 0.4 → 0.55 (同步 YAML risk.signal_quality.min_confidence)
     MIN_CONSENSUS = 0.2                     # P0 优化: 0.3 → 0.2
     MIN_SIGNAL_SCORE = 50                   # Synced to YAML risk.signal_quality.min_score (2026-05-23 06:20 CST)
 
@@ -57,7 +57,7 @@ class ConfigDefaults:
     # 调度器 (scheduler)
     # P0 优化 (2026-05-12): 降低门槛增加交易机会
     # ============================================================
-    SCHEDULER_MIN_CONFIDENCE = 0.4          # P0 优化: 0.5 → 0.4
+    SCHEDULER_MIN_CONFIDENCE = 0.55         # 2026-05-30: 0.4 → 0.55 (同步 YAML risk.signal_quality.min_confidence)
     SCHEDULER_MAX_POSITIONS = 5             # scheduler.max_positions
     SCHEDULER_MIN_SIGNAL_STRENGTH = 50      # P0-辩论修复: 99→50 (P3过度收紧导致5/23后零交易, P0守卫已兜底)
     SCHEDULER_MIN_CONSENSUS = 0.2           # scheduler.min_consensus_level

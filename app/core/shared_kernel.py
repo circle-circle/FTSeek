@@ -113,9 +113,11 @@ _SESSION_NORMALIZE = {
 DEFAULT_SESSION_VOL_RATIO = {
     "opening_drive": 1.50,   # 开盘 1.5x 日均波动
     "morning":       1.20,   # 早盘 1.2x
-    "midday":        0.60,   # 午盘 0.6x (最低)
+    # 优化 (2026-05-30 Task#7): midday 0.60 → 0.75, 避免午盘 effective_atr 被压得过低导致止损过紧
+    "midday":        0.75,   # 午盘 0.75x (原 0.60, 适度抬升避免噪音误触)
     "afternoon":     0.95,   # 午后逐步回升
-    "closing_drive": 1.15,   # 尾盘 1.15x
+    # 优化 (2026-05-30 Task#7): closing_drive 1.15 → 1.0, 收盘前不需要放宽 ATR (回归基准)
+    "closing_drive": 1.00,   # 尾盘 1.0x (原 1.15, 临近收盘不再放宽)
     "after_hours":   0.80,   # 盘后流动性薄, 有效波动低但跳空风险高
 }
 

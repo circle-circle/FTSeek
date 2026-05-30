@@ -481,6 +481,9 @@ class USPositionSync:
                     logger.debug(f"[US Sync] 仓位验证失败 (不影响同步): {e}")
                 
                 # 2. ATR 动态止损 (替代固定 -8%)
+                # P0 审计修复 (2026-05-30): 对 day_trade 合格标的, SL 距离上限 5% (SHORT) / 3% (LONG)
+                # 根因: broker_reconcile 用日线 ATR×2.0, RIVN 等低价股 SL 距离达 7-8%,
+                #       而 day_trade_mode 应为 5min ATR×1.5 (约 1-2%). 兜底用 max_loss_pct 封顶.
                 try:
                     atr = self._get_symbol_atr(symbol, info['cost'])
                     atr_mult = 2.0  # F32 修复: exit_policy.yaml atr_stop.initial
@@ -490,6 +493,23 @@ class USPositionSync:
                     else:
                         initial_sl = info['cost'] + atr * atr_mult
                         initial_tp = info['cost'] - atr * atr_mult * 2.0
+                    
+                    # P0 审计修复: day_trade 合格标的 SL 封顶
+                    # ETF 列表保持宽止损, 其他标的用 day_trade max_loss_pct 封顶
+                    from app.risk.position_limits import ETF_EXPOSURE_DISCOUNT
+                    _is_etf = symbol in ETF_EXPOSURE_DISCOUNT
+                    if not _is_etf:
+                        _max_sl_pct = 0.03 if info['direction'] == 'LONG' else 0.05
+                        if info['direction'] == 'LONG':
+                            _sl_floor = info['cost'] * (1 - _max_sl_pct)
+                            initial_sl = max(initial_sl, _sl_floor)
+                        else:
+                            _sl_ceil = info['cost'] * (1 + _max_sl_pct)
+                            initial_sl = min(initial_sl, _sl_ceil)
+                        logger.info(
+                            f"[US Sync] {symbol} day_trade SL cap applied: "
+                            f"max_sl_pct={_max_sl_pct*100:.1f}%, capped_sl=${initial_sl:.2f}"
+                        )
                     
                     # 硬底限保护 (-15%)
                     hard_stop = info['cost'] * 0.85 if info['direction'] == 'LONG' else info['cost'] * 1.15

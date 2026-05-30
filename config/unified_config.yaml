@@ -400,27 +400,32 @@ data_sources:
     fallback: alphavantage
 watchlist:
   us_stocks:
+  # P0 标的池优化 (2026-05-30): 按波动特征对齐 tier/max_position_ratio
+  #   - TIER1 高波 (TSLA/RIVN/ARM/SNDK): 0.08
+  #   - TIER1 中波 (UBER/ORCL/BWXT/LLY/MU): 0.12
+  #   - TIER2 稳定 (MSFT/GOOG/AMZN/META/AAPL): 0.15
+  # 同步禁用归因数据持续亏损标的: QCOM/LCID/TME/NVDA/NIO
   - code: US.TSLA
     name: Tesla Inc
     sector: Consumer Cyclical
     enabled: true
     tier: TIER1
-    max_position_ratio: 0.15
-    notes: 新能源车龙头 | ATR%≈0.08%
+    max_position_ratio: 0.08
+    notes: 新能源车龙头 | ATR%≈0.08% | 高波收紧仓位
   - code: US.NVDA
     name: NVIDIA Corp
     sector: Semiconductors
-    enabled: true
+    enabled: false
     tier: TIER1
     max_position_ratio: 0.15
-    notes: AI芯片核心 | GTC/财报催化剂密集
+    notes: AI芯片核心 | 近期ATR极低0%胜率，暂停 (2026-05-30)
   - code: US.RIVN
     name: Rivian Automotive
     sector: Consumer Cyclical
     enabled: true
     tier: TIER1
-    max_position_ratio: 0.1
-    notes: 最高ATR%≈0.20% | 短线回旋空间大
+    max_position_ratio: 0.08
+    notes: 最高ATR%≈0.20% | 短线回旋空间大 | 高波收紧仓位
   - code: US.UBER
     name: Uber Technologies
     sector: Technology
@@ -431,10 +436,10 @@ watchlist:
   - code: US.LCID
     name: Lucid Group
     sector: Consumer Cyclical
-    enabled: true
+    enabled: false
     tier: TIER1
     max_position_ratio: 0.08
-    notes: 高波电动车 | ATR%≈0.19% | 与TSLA非完全同步
+    notes: 黑名单16%胜率，禁止入场 (2026-05-30)
   - code: US.SNDK
     name: SanDisk Corp
     sector: Technology
@@ -447,71 +452,71 @@ watchlist:
     sector: Semiconductors
     enabled: true
     tier: TIER1
-    max_position_ratio: 0.12
-    notes: 架构授权 | 波动弹性好 | ATR%≈0.05%
+    max_position_ratio: 0.08
+    notes: 架构授权 | 波动弹性好 | ATR%≈0.05% | 高波收紧仓位
   - code: US.MU
     name: Micron Technology
     sector: Semiconductors
     enabled: true
     tier: TIER1
-    max_position_ratio: 0.15
+    max_position_ratio: 0.12
     notes: 存储芯片周期股 | 波段明确
   - code: US.QCOM
     name: Qualcomm Inc
     sector: Semiconductors
-    enabled: true
+    enabled: false
     tier: TIER1
     max_position_ratio: 0.15
-    notes: 通信芯片 | MACD趋势稳定
+    notes: 44笔22.7%胜率持续亏损-$3.8K，暂停 (2026-05-30)
   - code: US.BWXT
     name: BWX Technologies
     sector: Industrials
     enabled: true
     tier: TIER1
-    max_position_ratio: 0.15
+    max_position_ratio: 0.12
     notes: 核能防务 | 唯一SHORT信号触发标的
   - code: US.LLY
     name: Eli Lilly
     sector: Healthcare
     enabled: true
     tier: TIER1
-    max_position_ratio: 0.15
+    max_position_ratio: 0.12
     notes: 减肥药龙头 | 催化剂密集 | ATR%≈0.06%
   - code: US.AAPL
     name: Apple Inc
     sector: Technology
     enabled: true
     tier: TIER2
-    max_position_ratio: 0.12
-    notes: 消费电子市值锚定
+    max_position_ratio: 0.15
+    notes: 消费电子市值锚定 | 稳定大盘股可放宽仓位
   - code: US.MSFT
     name: Microsoft Corp
     sector: Technology
     enabled: true
     tier: TIER2
-    max_position_ratio: 0.12
-    notes: 云计算市值锚定
+    max_position_ratio: 0.15
+    notes: 云计算市值锚定 | 稳定大盘股可放宽仓位
   - code: US.GOOG
     name: Alphabet Inc Class C
     sector: Technology
     enabled: true
     tier: TIER2
-    max_position_ratio: 0.12
-    notes: 搜索/AI 市值锚定
+    max_position_ratio: 0.15
+    notes: 搜索/AI 市值锚定 | 稳定大盘股可放宽仓位
   - code: US.AMZN
     name: Amazon.com Inc
     sector: Consumer Cyclical
     enabled: true
     tier: TIER2
-    max_position_ratio: 0.12
-    notes: 电商/云 市值锚定
+    max_position_ratio: 0.15
+    notes: 电商/云 市值锚定 | 稳定大盘股可放宽仓位
   - code: US.META
     name: Meta Platforms
     sector: Technology
     enabled: true
     tier: TIER2
-    max_position_ratio: 0.12
-    notes: 社交媒体/AI 市值锚定
+    max_position_ratio: 0.15
+    notes: 社交媒体/AI 市值锚定 | 稳定大盘股可放宽仓位
   - code: US.AVGO
     name: Broadcom Inc
     sector: Semiconductors
@@ -557,10 +562,10 @@ watchlist:
   - code: US.NIO
     name: NIO Inc
     sector: Consumer Cyclical
-    enabled: true
+    enabled: false
     tier: TIER2
     max_position_ratio: 0.08
-    notes: 中概新能源车 | 中概赛道代表
+    notes: 低胜率标的，暂停 (2026-05-30)
   - code: US.NTES
     name: NetEase Inc
     sector: Communication Services
@@ -571,17 +576,17 @@ watchlist:
   - code: US.TME
     name: Tencent Music
     sector: Communication Services
-    enabled: true
+    enabled: false
     tier: TIER2
     max_position_ratio: 0.08
-    notes: 音乐流媒体 | 中概消费赛道
+    notes: 0%胜率-$913，暂停 (2026-05-30)
   - code: US.ORCL
     name: Oracle Corp
     sector: Technology
     enabled: true
-    tier: TIER2
+    tier: TIER1
     max_position_ratio: 0.12
-    notes: 数据库/云 | SaaS双雄
+    notes: 数据库/云 | SaaS双雄 | 中波动 (2026-05-30 调整为TIER1)
   - code: US.CRM
     name: Salesforce Inc
     sector: Technology
@@ -616,7 +621,22 @@ watchlist:
     enabled: true
     tier: TIER2
     max_position_ratio: 0.12
-    notes: 金融龙头 | 价值板块锚定
+    notes: 金融龙头，低相关防御 (2026-05-30 防御性增配)
+  # P0 防御性扩充 (2026-05-30): 新增低相关防御标的对冲风险敞口
+  - code: US.XOM
+    name: Exxon Mobil
+    sector: Energy
+    enabled: true
+    tier: TIER2
+    max_position_ratio: 0.12
+    notes: 能源龙头，低相关防御
+  - code: US.PG
+    name: Procter & Gamble
+    sector: Consumer Defensive
+    enabled: true
+    tier: TIER2
+    max_position_ratio: 0.12
+    notes: 消费必需品，低相关防御
   etfs:
   - code: US.SPY
     name: SPDR S&P 500 ETF
@@ -702,6 +722,14 @@ OPTION_QUALITY_GATE:
   min_dte: 5
   max_dte: 45
 risk:
+  # P0 全局黑名单 (2026-05-30): 跨策略统一拦截亏损标的，不仅限于Scalping
+  # 实施在 app/pipeline/stages/risk_stage.py 的入场校验最早期
+  global_blacklist:
+    - US.LCID
+    - US.TME
+    - US.UBER
+    - US.QCOM
+    - US.NIO
   # F10 (2026-05-12): 风险单位 R 配置 — 仓位 = 风险预算 / 止损距离
   # P0-X (2026-05-15, 基于 14 日 LCID 8 笔 -$634 教训): 标的级日亏损护栏
   symbol_daily_loss_guard:
@@ -805,9 +833,16 @@ risk:
     max_order_amount: 120000
     min_liquidity_ratio: 0.5
   signal_quality:
-    min_confidence: 0.4
+    # Task #6 (2026-05-30): 提高入场门槛 0.4 → 0.55
+    # 历史置信度<0.55的信号胜率显著偏低，提升基础门槛过滤噪声
+    min_confidence: 0.55
     min_consensus: 0.2
     min_score: 50
+  # Task #6 (2026-05-30): 仓位计算ATR联动配置
+  # risk_per_trade_pct: 0.005 → 0.008 (单笔风险预算放大), max_position_pct: 0.15 → 0.12 (单标的上限收紧)
+  position_sizing:
+    risk_per_trade_pct: 0.008    # 0.5% → 0.8% 单笔风险
+    max_position_pct: 0.12       # 15% → 12% 单标的最大仓位
   # P1 Regime Gate (2026-05-24 辩论共识): 方向感知入场过滤
   # SPY<MA200 仅拦截 LONG (SHORT 仍允许); VWAP 过滤低强度多头
   p1_regime_gate:
@@ -1285,7 +1320,8 @@ debate_mode:
     FTSEEK_DEBATE_TIMEOUT: '300'
     FTSEEK_DEBATE_FALLBACK_MODEL: qwen-max
 strategy:
-  signal_cooldown: 120
+  # Task #6 (2026-05-30): 信号冷却 120s → 180s, 减少同标的反复入场抖动
+  signal_cooldown: 180
   consensus_threshold: 0.6
 strategies:
   # ─── Phase A (2026-05-14): 多策略协调 ───
@@ -1327,8 +1363,16 @@ strategies:
 
   defaults:
     min_confidence: 0.5
-    min_strength: 25  # lowered from 50 (2026-05-13): double-gate was blocking all SHORTs
+    # Task #6 (2026-05-30): min_strength 25 → 40, 提升信号强度门槛
+    min_strength: 40
     max_positions: 5
+    # Task #6 (2026-05-30): 方向偏好 — LONG 需要更高确认度
+    # 数据驱动: SHORT 胜率显著高于 LONG, LONG 接飞刀亏损模式频繁
+    direction_bias:
+      SHORT:
+        min_confidence: 0.55
+      LONG:
+        min_confidence: 0.70  # LONG需要更高确认度
     # F3 DEPRECATED (2026-05-16): SoT is `strategy.signal_cooldown` (line 1117)
     # 0 代码引用此键, 仅保留向后兼容. 修改不会生效.
     signal_cooldown_seconds: 120
@@ -1586,7 +1630,7 @@ scalping:
   max_daily_loss_pct: 0.03
   max_concurrent: 10
   signal_cooldown_sec: 60
-  daily_max_trades_per_symbol: 5
+  daily_max_trades_per_symbol: 2    # P0 审计修复 (2026-05-30): 5→2, 防止5/7式死亡螺旋(QCOM单日19笔-$1433)
   use_atr_exit: true
   atr_tp_multiplier: 1.5
   atr_sl_multiplier: 1.5
@@ -1598,11 +1642,14 @@ scalping:
     min_profit_to_activate: 0.015  # 1.0% → 1.5% (盈利1.5%后才激活追踪)
   # P0 新增 (2026-05-20): 亏损标的黑名单
   # 归因: LCID -$913 (14笔), TME -$913 (7笔), UBER -$233 (3笔) — 持续亏损
+  # P0 扩展 (2026-05-30): 增加 QCOM (44笔 22.7%胜率) 与 NIO (低胜率)
   blacklist:
     symbols:
       - LCID
       - TME
       - UBER
+      - QCOM
+      - NIO
     reason: 归因数据持续亏损，暂时回避
   rsi_period: 14
   rsi_oversold: 25

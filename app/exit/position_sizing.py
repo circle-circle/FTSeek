@@ -70,13 +70,16 @@ class PositionSizing:
     def __init__(
         self,
         capital: float = 100000.0,
-        risk_per_trade_pct: float = 0.02,
-        max_position_pct: float = 0.15,
+        # Task #6 (2026-05-30): 0.005 → 0.008 提升单笔风险预算
+        risk_per_trade_pct: float = 0.008,
+        # Task #6 (2026-05-30): 0.15 → 0.12 收紧单标的上限
+        max_position_pct: float = 0.12,
         min_shares: int = 10,
         sl_atr_mult: float = 1.0,
         tp_pct: float = 0.04,
         expected_win_rate: float = 0.55,
         min_edge_ratio: float = 1.5,
+        watchlist_config: Optional[Dict[str, Dict[str, Any]]] = None,
     ):
         self.capital = capital
         self.risk_per_trade_pct = risk_per_trade_pct
@@ -86,12 +89,61 @@ class PositionSizing:
         self.tp_pct = tp_pct
         self.expected_win_rate = expected_win_rate
         self.min_edge_ratio = min_edge_ratio
+        # Task #6 (2026-05-30): 按 watchlist 中的 max_position_ratio / tier 分级设仓位上限
+        # watchlist_config: {"TSLA": {"max_position_ratio": 0.15, "tier": "TIER1"}, ...}
+        self.watchlist_config: Dict[str, Dict[str, Any]] = watchlist_config or {}
+
+    @staticmethod
+    def _normalize_symbol(symbol: str) -> str:
+        """去掉可能的 'US.' 前缀, 统一为大写。"""
+        if not symbol:
+            return ""
+        s = symbol.strip().upper()
+        if s.startswith("US."):
+            s = s[3:]
+        return s
+
+    def _get_symbol_config(self, symbol: str, key: str) -> Optional[Any]:
+        """从 watchlist 配置中读取指定 key。未配置返回 None。"""
+        if not symbol:
+            return None
+        s = self._normalize_symbol(symbol)
+        cfg = self.watchlist_config.get(s) or self.watchlist_config.get(symbol)
+        if not cfg:
+            return None
+        return cfg.get(key)
+
+    def _get_max_position_ratio(self, symbol: str) -> float:
+        """按标的 tier 分级返回最大仓位比例。
+
+        优先顺序:
+          1. watchlist 中显式配置的 max_position_ratio
+          2. tier 默认规则: TIER1=0.10, TIER2=0.12
+          3. 实例默认 self.max_position_pct (0.12)
+        """
+        # 1) watchlist 显式配置
+        watchlist_ratio = self._get_symbol_config(symbol, "max_position_ratio")
+        if watchlist_ratio is not None:
+            try:
+                return float(watchlist_ratio)
+            except (TypeError, ValueError):
+                logger.warning(
+                    "[position_sizing] invalid max_position_ratio for %s: %r",
+                    symbol, watchlist_ratio,
+                )
+        # 2) tier 默认规则
+        tier = self._get_symbol_config(symbol, "tier")
+        if tier == "TIER1":
+            return 0.10  # TIER1 默认 10%
+        # 3) 实例默认值 (12%)
+        return self.max_position_pct
 
     def calculate(
         self,
         price: float,
         atr: float,
         cost_model: Optional[CostModel] = None,
+        symbol: Optional[str] = None,
     ) -> SizingResult:
         """
         计算建议仓位
@@ -100,6 +152,7 @@ class PositionSizing:
             price: 当前价格
             atr: 当前 ATR
             cost_model: 成本模型 (None = IBKR)
+            symbol: 可选标的代码 — 提供后启用 tier 分级仓位上限 (Task #6)
 
         Returns:
             SizingResult
@@ -114,7 +167,7 @@ class PositionSizing:
                 should_trade=False, reason="invalid price or atr",
             )
 
-        # 1. 风险金额
+        # 1. 风险金额 (核心公式: shares = (capital × risk_pct) / (ATR × sl_mult))
         risk_dollars = self.capital * self.risk_per_trade_pct
 
         # 2. 止损距离
@@ -123,8 +176,12 @@ class PositionSizing:
         # 3. 基础股数 (风险 / 止损)
         base_shares = int(risk_dollars / sl_dollars)
 
-        # 4. 上限: 最大持仓市值
-        max_shares = int(self.capital * self.max_position_pct / price)
+        # 4. 上限: 按 symbol tier 分级取最大持仓比例 (Task #6)
+        max_position_pct = (
+            self._get_max_position_ratio(symbol)
+            if symbol else self.max_position_pct
+        )
+        max_shares = int(self.capital * max_position_pct / price)
 
         # 5. 最终股数
         shares = max(self.min_shares, min(base_shares, max_shares))

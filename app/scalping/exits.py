@@ -5,13 +5,85 @@
 第二层: 时间止损 (辅助 — 持仓超时强制平仓)
 第三层: 动态参数调整 (保护 — 连续盈亏时收紧/放宽)
 第四层: ATR 波动率自适应 (P2 新增 — 根据市场波动率动态调整 TP/SL)
+
+Task #9 (2026-05-30): SCALPING 退出参数迁移到 app/risk/exit_policy.yaml
+  - 模块级 _SCALPING_EXIT_CONFIG 在 import 时一次性加载
+  - 配置缺失或加载失败时自动回退到代码默认值 (向后兼容)
+  - 不影响运行期性能 (仅初始化时读盘)
 """
 
+import os
 from datetime import datetime, timedelta
 from typing import Dict, Tuple, Optional
 import logging
 
+try:
+    import yaml  # type: ignore
+except Exception:  # pragma: no cover
+    yaml = None  # type: ignore
+
 logger = logging.getLogger(__name__)
+
+
+# ═══════════════════════════════════════════════════════════
+# Task #9 (2026-05-30): exit_policy.yaml::scalping_overrides 加载器
+# ═══════════════════════════════════════════════════════════
+_EXIT_POLICY_PATH = os.path.join(
+    os.path.dirname(__file__), "..", "risk", "exit_policy.yaml"
+)
+
+
+def _load_scalping_exit_config() -> dict:
+    """从 exit_policy.yaml 加载 SCALPING 退出配置。
+
+    成功条件: 文件存在 + scalping_overrides.enabled = True。
+    任一失败: 返回 {} 让所有调用方走代码默认值 (向后兼容)。
+    """
+    if yaml is None:
+        logger.warning("[SCALPING_EXIT] PyYAML 不可用, 使用代码默认值")
+        return {}
+    try:
+        with open(_EXIT_POLICY_PATH, "r", encoding="utf-8") as f:
+            policy = yaml.safe_load(f) or {}
+        overrides = policy.get("scalping_overrides", {}) or {}
+        if overrides.get("enabled", False):
+            logger.info(
+                "[SCALPING_EXIT] 已加载 exit_policy.yaml::scalping_overrides "
+                f"(atr_exit={bool(overrides.get('atr_exit'))}, "
+                f"trailing={bool(overrides.get('trailing'))}, "
+                f"time_exit={bool(overrides.get('time_exit'))}, "
+                f"phase_scaling={bool(overrides.get('phase_scaling'))})"
+            )
+            return overrides
+        logger.info("[SCALPING_EXIT] scalping_overrides.enabled=false, 使用代码默认值")
+    except FileNotFoundError:
+        logger.warning(
+            f"[SCALPING_EXIT] exit_policy.yaml 未找到 ({_EXIT_POLICY_PATH}), 使用代码默认值"
+        )
+    except Exception as e:
+        logger.warning(
+            f"[SCALPING_EXIT] 无法加载 exit_policy.yaml 配置, 使用代码默认值: {e}"
+        )
+    return {}
+
+
+# 模块级缓存 — 仅在首次 import 时读盘一次, 不影响运行期性能
+_SCALPING_EXIT_CONFIG: dict = _load_scalping_exit_config()
+
+
+def get_scalping_exit_config() -> dict:
+    """对外暴露的只读访问器 (engine.py 等调用方使用)。"""
+    return _SCALPING_EXIT_CONFIG
+
+
+def get_phase_scaling(phase: str) -> Tuple[float, float]:
+    """读取指定时段的 (tp_scale, sl_scale), 缺失返回 (1.0, 1.0)。
+
+    SSOT: unified_config.yaml::scalping.phases (time_gate.py 使用)
+    本函数仅供 SCALPING 退出系统在缺失上下文时兜底使用。
+    """
+    ps = (_SCALPING_EXIT_CONFIG.get("phase_scaling") or {}).get(phase) or {}
+    return float(ps.get("tp_scale", 1.0)), float(ps.get("sl_scale", 1.0))
 
 
 class FixedExit:
@@ -101,7 +173,7 @@ class TimeExit:
 
     def __init__(
         self,
-        max_hold_minutes: int = 5,
+        max_hold_minutes: Optional[int] = None,
         breakeven_after_minutes: int = 6,  # B.1 修复 (2026-05-19): 2→6 min, 给信号反弹时间
         breakeven_loss_threshold: float = -0.003,
     ):
@@ -109,6 +181,13 @@ class TimeExit:
         # 5/12-5/18 数据: <6min 16 笔 0% 胜率 -$973 (摩擦+噪声灾难), 30min-2h 60% 胜率 +$742.
         # 原 breakeven_after=2 在 0% gross 时立即提前止损 → 摩擦吞利.
         # 改 6 min 给市场反应时间 (注意: 真 sl_hit 价格穿 SL 路径不受影响, 那是 atr_exit 走的).
+        # Task #9 (2026-05-30): max_hold_minutes 从 exit_policy.yaml::scalping_overrides.time_exit 读取
+        if max_hold_minutes is None:
+            te_cfg = _SCALPING_EXIT_CONFIG.get("time_exit", {}) or {}
+            max_hold_minutes = int(te_cfg.get("max_hold_minutes", 5))
+            self._profit_extension_minutes = int(te_cfg.get("profit_extension_minutes", 0))
+        else:
+            self._profit_extension_minutes = 0
         self.max_hold = max_hold_minutes
         self.breakeven_after = breakeven_after_minutes
         self.breakeven_loss_threshold = breakeven_loss_threshold
@@ -300,15 +379,36 @@ class ATRExit:
 
     def __init__(
         self,
-        tp_multiplier: float = 1.5,
-        sl_multiplier: float = 1.0,
-        min_tp_pct: float = 0.005,   # 最低止盈 0.5% (ATR 极小时的保底)
-        max_tp_pct: float = 0.05,    # 最高止盈 5% (ATR 极大时的封顶)
+        tp_multiplier: Optional[float] = None,
+        sl_multiplier: Optional[float] = None,
+        min_tp_pct: Optional[float] = None,
+        max_tp_pct: Optional[float] = None,
+        min_sl_pct: Optional[float] = None,
+        max_sl_pct: Optional[float] = None,
     ):
-        self.tp_mult = tp_multiplier
-        self.sl_mult = sl_multiplier
-        self.min_tp_pct = min_tp_pct
-        self.max_tp_pct = max_tp_pct
+        # ═════════════════════════════════════════════════════════
+        # Task #9 (2026-05-30): 参数从 exit_policy.yaml::scalping_overrides.atr_exit 读取
+        # 优先级: 显式参数 > YAML 配置 > 代码默认值 (向后兼容)
+        # ═════════════════════════════════════════════════════════
+        cfg = _SCALPING_EXIT_CONFIG.get("atr_exit", {}) or {}
+
+        def _pick(explicit, key, default):
+            return explicit if explicit is not None else cfg.get(key, default)
+
+        self.tp_mult = float(_pick(tp_multiplier, "tp_multiplier", 1.5))
+        self.sl_mult = float(_pick(sl_multiplier, "sl_multiplier", 1.0))
+        self.min_tp_pct = float(_pick(min_tp_pct, "min_tp_pct", 0.005))
+        self.max_tp_pct = float(_pick(max_tp_pct, "max_tp_pct", 0.05))
+        # 新增: 独立的 SL 上下限 (原代码复用 min_tp_pct*0.5/max_tp_pct*0.5, 保留其作为兑底)
+        self.min_sl_pct = float(_pick(min_sl_pct, "min_sl_pct", self.min_tp_pct * 0.5))
+        self.max_sl_pct = float(_pick(max_sl_pct, "max_sl_pct", self.max_tp_pct * 0.5))
+
+        # 追踪止损配置 (供 check_exit 兑底使用, 优先读取 levels 传入值)
+        trail_cfg = _SCALPING_EXIT_CONFIG.get("trailing", {}) or {}
+        self._trail_enabled = bool(trail_cfg.get("enabled", True))
+        self._trail_activation_pct = float(trail_cfg.get("activation_profit_pct", 0.01))
+        self._trail_multiplier = float(trail_cfg.get("trail_multiplier", 1.5))
+        self._trail_min_pct = float(trail_cfg.get("min_trail_pct", 0.0))
 
     def calculate_levels(
         self,
@@ -338,7 +438,7 @@ class ATRExit:
         if atr_value <= 0 or entry_price <= 0:
             # 回退到固定百分比模式（使用阶段调整后的值）
             base_tp_pct = max(self.min_tp_pct, min(self.max_tp_pct, 0.012 * adj_tp_mult))
-            base_sl_pct = max(self.min_tp_pct * 0.5, min(self.max_tp_pct * 0.5, 0.007 * adj_sl_mult))
+            base_sl_pct = max(self.min_sl_pct, min(self.max_sl_pct, 0.007 * adj_sl_mult))
             return {
                 "entry": entry_price,
                 "take_profit": entry_price * (1 + base_tp_pct) if direction == "LONG" else entry_price * (1 - base_tp_pct),
@@ -353,10 +453,11 @@ class ATRExit:
 
         # ATR 绝对值转百分比
         atr_pct = atr_value / entry_price
-        
-        # 计算 TP/SL 百分比，使用阶段调整后的 multiplier，限制在 [min, max] 范围内
+
+        # 计算 TP/SL 百分比, 使用阶段调整后的 multiplier, 限制在 [min, max] 范围内
+        # Task #9 (2026-05-30): SL 范围使用独立的 min_sl_pct/max_sl_pct (原代码复用 TP 范围×0.5)
         tp_pct = max(self.min_tp_pct, min(self.max_tp_pct, atr_pct * adj_tp_mult))
-        sl_pct = max(self.min_tp_pct * 0.5, min(self.max_tp_pct * 0.5, atr_pct * adj_sl_mult))
+        sl_pct = max(self.min_sl_pct, min(self.max_sl_pct, atr_pct * adj_sl_mult))
         
         if direction == "LONG":
             tp = round(entry_price * (1 + tp_pct), 2)
@@ -413,12 +514,14 @@ class ATRExit:
         # ═══════════════════════════════════════════════════════════
         # 优先级 2: 轻量追踪止损 (TP 未到达时才检查)
         # 安全门控: trail_stop 必须比原始 SL 更紧才允许触发
+        # Task #9 (2026-05-30): trail_mult / min_profit_to_activate 默认值从
+        #   exit_policy.yaml::scalping_overrides.trailing 读取, levels 传入值仍可覆写
         # ═══════════════════════════════════════════════════════════
-        if peak_price > 0 and "atr_value" in levels and levels["atr_value"] > 0:
+        if self._trail_enabled and peak_price > 0 and "atr_value" in levels and levels["atr_value"] > 0:
             entry_price = levels["entry"]
             atr = levels["atr_value"]
-            trail_mult = levels.get("trail_mult", 1.5)
-            min_profit = levels.get("min_profit_to_activate", 0.01)  # 默认 1% (与 unified_config.yaml 一致)
+            trail_mult = levels.get("trail_mult", self._trail_multiplier)
+            min_profit = levels.get("min_profit_to_activate", self._trail_activation_pct)
             
             pnl_pct = (current_price - entry_price) / entry_price if direction == "LONG" else (entry_price - current_price) / entry_price
             

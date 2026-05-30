@@ -1,29 +1,29 @@
 {
-  "as_of": "2026-05-28",
-  "generated_at": "2026-05-29T04:37:42",
+  "as_of": "2026-05-29",
+  "generated_at": "2026-05-30T04:33:48",
   "history_days": 90,
-  "total_closed_trades": 320,
+  "total_closed_trades": 319,
   "confidence_winrate_map": {
     "buckets": {
       "0-0.3": {
-        "total": 149,
+        "total": 148,
         "wins": 54,
-        "losses": 83,
-        "win_rate": 0.3624,
-        "avg_pnl": -135.2024,
-        "total_pnl": -20145.1537,
+        "losses": 82,
+        "win_rate": 0.3649,
+        "avg_pnl": -117.2857,
+        "total_pnl": -17358.2837,
         "max_loss": -7749.0,
         "max_win": 17882.56
       },
       "0.3-0.5": {
         "total": 7,
-        "wins": 0,
-        "losses": 5,
-        "win_rate": 0.0,
-        "avg_pnl": -133.9636,
-        "total_pnl": -937.745,
-        "max_loss": -897.28,
-        "max_win": 0.0
+        "wins": 1,
+        "losses": 4,
+        "win_rate": 0.1429,
+        "avg_pnl": 38.2171,
+        "total_pnl": 267.5195,
+        "max_loss": -24.51,
+        "max_win": 307.9845
       },
       "0.5-0.7": {
         "total": 110,
@@ -53,7 +53,7 @@
       "0.7-1.0"
     ],
     "monotonic": false,
-    "total_samples": 320
+    "total_samples": 319
   },
   "strategy_performance": {
     "all_time": {
@@ -108,12 +108,12 @@
         "max_win": 274.08
       },
       "其他": {
-        "total": 168,
-        "wins": 61,
-        "losses": 95,
-        "win_rate": 0.3631,
-        "avg_pnl": -100.7786,
-        "total_pnl": -16930.8091,
+        "total": 167,
+        "wins": 62,
+        "losses": 93,
+        "win_rate": 0.3713,
+        "avg_pnl": -77.4771,
+        "total_pnl": -12938.6746,
         "max_loss": -7749.0,
         "max_win": 17882.56
       }
@@ -161,7 +161,7 @@
           "max_win": 0.0
         },
         "scalping": {
-          "total": 9,
+          "total": 5,
           "wins": 0,
           "losses": 0,
           "win_rate": 0.0,
@@ -171,14 +171,14 @@
           "max_win": 0.0
         },
         "其他": {
-          "total": 15,
-          "wins": 2,
-          "losses": 13,
-          "win_rate": 0.1333,
-          "avg_pnl": -1843.382,
-          "total_pnl": -27650.73,
-          "max_loss": -7749.0,
-          "max_win": 990.71
+          "total": 9,
+          "wins": 3,
+          "losses": 6,
+          "win_rate": 0.3333,
+          "avg_pnl": -832.5106,
+          "total_pnl": -7492.5955,
+          "max_loss": -4664.0,
+          "max_win": 977.895
         }
       },
       "30d": {
@@ -233,18 +233,18 @@
           "max_win": 274.08
         },
         "其他": {
-          "total": 162,
-          "wins": 57,
-          "losses": 93,
-          "win_rate": 0.3519,
-          "avg_pnl": -209.4036,
-          "total_pnl": -33923.3881,
+          "total": 161,
+          "wins": 58,
+          "losses": 91,
+          "win_rate": 0.3602,
+          "avg_pnl": -185.9084,
+          "total_pnl": -29931.2536,
           "max_loss": -7749.0,
           "max_win": 3165.058
         }
       }
     },
-    "as_of": "2026-05-28"
+    "as_of": "2026-05-29"
   },
   "factor_contribution": {
     "top_combos": [
@@ -258,17 +258,6 @@
         "total_pnl": -247.3783,
         "max_loss": -134.145,
         "max_win": 274.08
-      },
-      {
-        "factors": "unknown",
-        "total": 6,
-        "wins": 2,
-        "losses": 4,
-        "win_rate": 0.3333,
-        "avg_pnl": -380.955,
-        "total_pnl": -2285.73,
-        "max_loss": -1178.1,
-        "max_win": 990.71
       },
       {
         "factors": "bollinger+rsi",
@@ -350,17 +339,6 @@
         "max_win": 274.08
       },
       {
-        "factor": "unknown",
-        "total": 6,
-        "wins": 2,
-        "losses": 4,
-        "win_rate": 0.3333,
-        "avg_pnl": -380.955,
-        "total_pnl": -2285.73,
-        "max_loss": -1178.1,
-        "max_win": 990.71
-      },
-      {
         "factor": "early_rsi_reversal",
         "total": 6,
         "wins": 0,
@@ -376,7 +354,7 @@
     "single_count": 5
   },
   "threshold_recommendations": {
-    "as_of": "2026-05-28",
+    "as_of": "2026-05-29",
     "suggested_min_signal_confidence": 0.5,
     "current_baseline": 0.5,
     "rationale": "近30d 无桶达到 50% 胜率, 维持基线",
