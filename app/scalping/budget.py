@@ -11,12 +11,18 @@ Scalping 内部风控:
   最大同时持仓: 5 只
 
 线程安全: 所有状态变更使用 threading.Lock
+
+P1 修复 (2026-05-31): 时区统一
+  - 日重置使用 ET 日期 (app.utils.timezone.get_trade_date)
+  - 持久化存储使用 ET 日期, 避免 CST 跨日导致重置失效
 """
 
 import threading
 import logging
 from typing import Dict, Optional
-from datetime import datetime, date
+from datetime import datetime
+
+from app.utils.timezone import now_et, get_trade_date
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +82,7 @@ class ScalpingBudget:
         self._daily_loss = 0.0
         self._daily_loss_limit = total_equity * max_daily_loss_pct
         self._concurrent_positions = 0
-        self._current_date = date.today()
+        self._current_date: str = get_trade_date()  # ET 日期
 
         # 锁 — 使用 RLock 允许嵌套获取 (allocate → can_allocate)
         self._state_lock = threading.RLock()
@@ -102,12 +108,12 @@ class ScalpingBudget:
         )
 
     def _reset_daily_if_new_day(self):
-        """如果是新的一天，重置日亏损"""
-        today = date.today()
-        if today != self._current_date:
+        """如果是新的 ET 交易日，重置日亏损"""
+        today_et = get_trade_date()
+        if today_et != self._current_date:
             self._daily_loss = 0.0
-            self._current_date = today
-            logger.info("[ScalpingBudget] 新交易日，日亏损已重置")
+            self._current_date = today_et
+            logger.info(f"[ScalpingBudget] ET 新交易日 ({today_et})，日亏损已重置")
 
     def get_available_budget(self) -> float:
         """获取可用预算"""
@@ -200,7 +206,7 @@ class ScalpingBudget:
 
             self._used += amount
             self._concurrent_positions += 1
-            self._save_persistent_state()  # P1 修复: 持久化
+            self._save_persistent_state()
 
             logger.info(
                 f"[ScalpingBudget] 分配 ${amount:,.0f} | "
@@ -215,7 +221,7 @@ class ScalpingBudget:
         with self._state_lock:
             self._used = max(0, self._used - amount)
             self._concurrent_positions = max(0, self._concurrent_positions - 1)
-            self._save_persistent_state()  # P1 修复: 持久化
+            self._save_persistent_state()
 
             logger.debug(
                 f"[ScalpingBudget] 释放 ${amount:,.0f} | "
@@ -232,7 +238,7 @@ class ScalpingBudget:
         """
         with self._state_lock:
             self._daily_loss += loss_amount
-            self._save_persistent_state()  # P1 修复: 持久化
+            self._save_persistent_state()
 
             if self._daily_loss >= self._daily_loss_limit:
                 logger.critical(
@@ -261,7 +267,7 @@ class ScalpingBudget:
             cursor.execute("""
                 INSERT INTO scalping_budget_state (id, trade_date, last_update)
                 VALUES (1, ?, ?)
-            """, (date.today().isoformat(), datetime.now().isoformat()))
+            """, (get_trade_date(), now_et().isoformat()))
         conn.commit()
         conn.close()
 
@@ -278,8 +284,8 @@ class ScalpingBudget:
             conn.close()
             if row:
                 stored_date = row[0]
-                today = date.today().isoformat()
-                if stored_date == today:
+                today_et = get_trade_date()
+                if stored_date == today_et:
                     self._daily_loss = float(row[1] or 0)
                     self._used = float(row[2] or 0)
                     self._concurrent_positions = int(row[3] or 0)
@@ -288,12 +294,15 @@ class ScalpingBudget:
                         f"已用: ${self._used:,.0f} | 持仓: {self._concurrent_positions}"
                     )
                 else:
-                    logger.info("[ScalpingBudget] 新交易日，持久化状态已过期，使用默认值")
+                    logger.info(
+                        f"[ScalpingBudget] ET 新交易日 ({today_et})，持久化状态已过期 "
+                        f"(stored={stored_date})，使用默认值"
+                    )
         except Exception as e:
             logger.warning(f"[ScalpingBudget] 加载持久化状态失败: {e}")
 
     def _save_persistent_state(self):
-        """保存当前状态到 DB"""
+        """保存当前状态到 DB (使用 ET 日期)"""
         if not self._db_path:
             return
         import sqlite3
@@ -306,11 +315,11 @@ class ScalpingBudget:
                     concurrent_positions = ?, last_update = ?
                 WHERE id = 1
             """, (
-                date.today().isoformat(),
+                get_trade_date(),
                 self._daily_loss,
                 self._used,
                 self._concurrent_positions,
-                datetime.now().isoformat(),
+                now_et().isoformat(),
             ))
             conn.commit()
             conn.close()

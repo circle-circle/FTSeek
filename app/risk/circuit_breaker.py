@@ -8,10 +8,19 @@ P0 修复 (2026-04-17):
 - SystemCircuitBreaker 引入数据源健康度评分
 - 区分"降级模式"和"完全恢复"
 - 熔断器状态变更记录至 EventStore
+
+P1 修复 (2026-05-31): 时区统一
+- 所有日期判断使用美东时间 (app.utils.timezone)
+- TradingFrequencyLimiter 日重置基于 ET 日期
 """
-from datetime import datetime, timedelta
+import logging
+from datetime import datetime, timedelta, date
 from typing import Dict, Optional, Any, List
 from dataclasses import dataclass, field
+
+from app.utils.timezone import now_et, get_trade_date
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -27,7 +36,7 @@ class DailyTradeRecord:
     """每日交易记录"""
     trade_count: int = 0
     symbol_trades: Dict[str, int] = field(default_factory=dict)
-    last_reset_date: Optional[datetime] = None
+    last_reset_date: Optional[str] = None  # ET 日期字符串 YYYY-MM-DD
 
 
 class StrategyCircuitBreaker:
@@ -45,12 +54,12 @@ class StrategyCircuitBreaker:
         
         state = self.states[strategy_id]
         state.consecutive_losses += 1
-        state.last_loss_time = datetime.now()
+        state.last_loss_time = now_et()
         
         # 检查是否触发熔断
         if state.consecutive_losses >= self.threshold:
-            state.triggered_at = datetime.now()
-            state.pause_until = datetime.now() + self.pause_duration
+            state.triggered_at = now_et()
+            state.pause_until = now_et() + self.pause_duration
     
     def is_triggered(self, strategy_id: str) -> bool:
         """检查是否触发熔断"""
@@ -63,7 +72,7 @@ class StrategyCircuitBreaker:
             return False
         
         # 检查是否已过暂停期
-        if state.pause_until and datetime.now() > state.pause_until:
+        if state.pause_until and now_et() > state.pause_until:
             # 重置状态
             state.consecutive_losses = 0
             state.triggered_at = None
@@ -81,7 +90,7 @@ class StrategyCircuitBreaker:
         if not state.pause_until:
             return 0
         
-        remaining = (state.pause_until - datetime.now()).total_seconds()
+        remaining = (state.pause_until - now_et()).total_seconds()
         return max(0, int(remaining))
     
     def reset(self, strategy_id: str):
@@ -100,7 +109,7 @@ class SymbolCircuitBreaker:
     def check_volatility(self, symbol: str, volatility: float) -> bool:
         """检查波动率，返回是否可交易"""
         if volatility > self.volatility_threshold:
-            self.frozen_symbols[symbol] = datetime.now()
+            self.frozen_symbols[symbol] = now_et()
             return False
         return True
     
@@ -119,7 +128,7 @@ class DataSourceHealth:
         self.is_healthy = True
 
     def record_success(self):
-        self.last_update = datetime.now()
+        self.last_update = now_et()
         self.consecutive_failures = 0
         self.is_healthy = True
 
@@ -168,7 +177,6 @@ class SystemCircuitBreaker:
     def register_source(self, name: str, weight: float = 1.0):
         """注册一个数据源"""
         self.data_sources[name] = DataSourceHealth(name, weight)
-        logger = __import__("logging").getLogger(__name__)
         logger.info(f"[熔断器] 注册数据源: {name} (weight={weight})")
 
     def update_market_data_status(self, is_alive: bool, source: str = "default"):
@@ -237,7 +245,7 @@ class SystemCircuitBreaker:
     def _record_state_change(self, old_state: str, new_state: str, health_score: float):
         """记录熔断器状态变更"""
         record = {
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": now_et().isoformat(),
             "old_state": old_state,
             "new_state": new_state,
             "health_score": round(health_score, 1),
@@ -247,8 +255,6 @@ class SystemCircuitBreaker:
             },
         }
         self.state_history.append(record)
-        import logging
-        logger = logging.getLogger(__name__)
         logger.warning(
             f"[熔断器] 状态变更: {old_state} -> {new_state} "
             f"(健康评分={health_score:.1f})"
@@ -302,6 +308,8 @@ class TradingFrequencyLimiter:
     
     SSOT: 参数应从 unified_config.yaml -> risk.trading.max_daily_trades 加载
           使用 from_config() 类方法确保配置一致性
+
+    P1 修复 (2026-05-31): 日重置使用 ET 日期, 避免 CST 跨日 bug
     """
     
     def __init__(
@@ -324,10 +332,6 @@ class TradingFrequencyLimiter:
     def from_config(cls, config_dict: Dict = None) -> 'TradingFrequencyLimiter':
         """
         从 unified_config.yaml 创建实例 (SSOT)
-        
-        Args:
-            config_dict: risk.trading 节点的 dict。
-                         为 None 时尝试自动加载 unified_config.yaml
         """
         if config_dict is None:
             try:
@@ -343,13 +347,12 @@ class TradingFrequencyLimiter:
         )
     
     def _reset_if_new_day(self):
-        """如果是新的一天，重置日交易计数"""
-        today = datetime.now().date()
-        last_date = self.daily_record.last_reset_date.date() if self.daily_record.last_reset_date else None
-        
-        if last_date != today:
+        """如果是新的 ET 交易日，重置日交易计数"""
+        today_et = get_trade_date()
+        if self.daily_record.last_reset_date != today_et:
             self.daily_record = DailyTradeRecord()
-            self.daily_record.last_reset_date = datetime.now()
+            self.daily_record.last_reset_date = today_et
+            logger.info(f"[TradingFrequencyLimiter] ET 新交易日重置 → {today_et}")
     
     def record_trade(self, symbol: str) -> bool:
         """
@@ -361,7 +364,7 @@ class TradingFrequencyLimiter:
         self._reset_if_new_day()
         
         # 检查是否处于暂停期
-        if self.pause_until and datetime.now() < self.pause_until:
+        if self.pause_until and now_et() < self.pause_until:
             return False
         
         # 检查单日总交易数
@@ -385,7 +388,7 @@ class TradingFrequencyLimiter:
         
         # 检查是否触发连续亏损熔断
         if self.consecutive_losses >= self.consecutive_loss_threshold:
-            self.pause_until = datetime.now() + timedelta(hours=self.loss_pause_hours)
+            self.pause_until = now_et() + timedelta(hours=self.loss_pause_hours)
     
     def record_profit(self):
         """记录盈利（重置连续亏损计数）"""
@@ -393,7 +396,7 @@ class TradingFrequencyLimiter:
     
     def is_paused(self) -> bool:
         """检查是否处于暂停期"""
-        if self.pause_until and datetime.now() < self.pause_until:
+        if self.pause_until and now_et() < self.pause_until:
             return True
         return False
     
@@ -403,7 +406,7 @@ class TradingFrequencyLimiter:
         
         remaining_pause = 0
         if self.pause_until:
-            remaining_pause = max(0, int((self.pause_until - datetime.now()).total_seconds()))
+            remaining_pause = max(0, int((self.pause_until - now_et()).total_seconds()))
         
         return {
             "daily_trades": self.daily_record.trade_count,

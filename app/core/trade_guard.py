@@ -43,7 +43,7 @@ class GuardReason(Enum):
     VOLATILITY_TOO_HIGH = "波动率过高，暂停交易"
 
 # ============================================================
-# 2. 简易交易日历 (NYSE/NASDAQ)
+# 2. 简易交易日历 (NYSE/NASDAQ) — 使用 ET 时间
 # ============================================================
 
 def is_trading_day(dt: datetime) -> bool:
@@ -52,22 +52,31 @@ def is_trading_day(dt: datetime) -> bool:
     逻辑：周一至周五 + 非节假日 (接入 holiday_calendar)。
 
     P0 修复 (2026-05-26): 原实现仅检查 weekday，Memorial Day 等节假日被误判为交易日。
+    P1 修复 (2026-05-31): 输入 datetime 先转 ET 再判断, 防止 CST 跨日误判.
     """
-    if dt.weekday() >= 5:
+    # 统一转为 ET 日期
+    try:
+        from app.utils.timezone import to_et
+        et_dt = to_et(dt)
+    except Exception:
+        et_dt = dt
+
+    if et_dt.weekday() >= 5:
         return False
     try:
         from app.utils.holiday_calendar import get_holiday_calendar
-        if get_holiday_calendar().is_us_holiday(dt.date()):
+        if get_holiday_calendar().is_us_holiday(et_dt.date()):
             return False
     except Exception:
         pass  # 日历加载失败退化为仅周末判断
     return True
 
 def get_trading_window_dates(days: int = 5) -> List[datetime]:
-    """获取过去 N 个交易日的日期列表"""
+    """获取过去 N 个交易日的日期列表 (ET 时区)"""
+    from app.utils.timezone import now_et
     dates = []
-    dt = datetime.now()
-    # 最多回溯 10 天以找到 5 个交易日
+    dt = now_et()
+    # 最多回溯 14 天以找到 N 个交易日
     for _ in range(14):
         dt -= timedelta(days=1)
         if is_trading_day(dt):
