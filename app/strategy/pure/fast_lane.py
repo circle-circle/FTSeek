@@ -89,5 +89,6 @@ def evaluate(ctx: SymbolContext, config: Dict[str, Any]) -> Optional[SignalCandi
             "price": ctx.price,
             "plan_stop_loss": plan_match.get("stop_loss"),
             "plan_take_profit": plan_match.get("take_profit"),
+            "owner_strategy": "fast_lane",
         },
     )

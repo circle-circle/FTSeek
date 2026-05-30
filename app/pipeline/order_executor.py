@@ -1961,7 +1961,7 @@ def _execute_long(scheduler, symbol: str, signal: SignalScore, context: Dict[str
         # Phase A (2026-05-14): trace 入场快照 + owner_strategy + direction
         _direction_str = getattr(signal.direction, "value", str(getattr(signal, "direction", "LONG")))
         _owner = (signal.metadata or {}).get("owner_strategy") if hasattr(signal, "metadata") else None
-        _owner = _owner or "main"
+        _owner = _owner or str(getattr(signal, 'strategy_id', '') or '') or "main"
         _cur.execute('''
             INSERT OR REPLACE INTO trade_attribution
             (trace_id, trade_date, symbol, direction, signal_strength, signal_confidence,
@@ -2037,7 +2037,10 @@ def _execute_long(scheduler, symbol: str, signal: SignalScore, context: Dict[str
         try:
             _meta = (signal.metadata or {}) if hasattr(signal, "metadata") else {}
             owner = _meta.get("owner_strategy")
-            position.owner_strategy = owner or getattr(position, "owner_strategy", None) or "main"
+            # ORB fix: fallback to strategy_id when metadata doesn't set owner_strategy
+            # Prevents all pure strategies from defaulting to "main"
+            _sid = str(getattr(signal, 'strategy_id', '') or '')
+            position.owner_strategy = owner or getattr(position, "owner_strategy", None) or _sid or "main"
             # position_pct 优先级: signal.position_pct > signal.metadata.position_pct > 估算
             _pct = float(getattr(signal, "position_pct", 0) or 0)
             if _pct <= 0:

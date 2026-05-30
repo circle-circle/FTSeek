@@ -17,6 +17,9 @@ class EntryReason(str, Enum):
     CROSS_MARKET = "cross_market"
     NEWS_DRIVEN = "news_driven"
     EARNINGS = "earnings"
+    ORB_BREAKOUT = "orb_breakout"         # 开盘区间突破
+    FAST_LANE = "fast_lane"               # 作战计划快车道
+    TREND_FIRST = "trend_first"           # 趋势回调
     MANUAL = "manual"
     UNKNOWN = "unknown"
 
@@ -51,13 +54,20 @@ def derive_entry_reason(strategy_id: str = "", source: str = "", metadata: Optio
 
     # 从 strategy_id 推导
     if strategy_id:
-        if 'scalp' in strategy_id.lower():
+        _sid = strategy_id.lower()
+        if 'scalp' in _sid:
             return EntryReason.SCALPING.value
-        elif 'cross' in strategy_id.lower() or 'arb' in strategy_id.lower():
+        elif 'orb' in _sid:
+            return EntryReason.ORB_BREAKOUT.value
+        elif 'fast_lane' in _sid or 'battle_plan' in _sid:
+            return EntryReason.FAST_LANE.value
+        elif 'trend_first' in _sid:
+            return EntryReason.TREND_FIRST.value
+        elif 'cross' in _sid or 'arb' in _sid:
             return EntryReason.CROSS_MARKET.value
-        elif 'news' in strategy_id.lower():
+        elif 'news' in _sid:
             return EntryReason.NEWS_DRIVEN.value
-        elif 'earn' in strategy_id.lower():
+        elif 'earn' in _sid:
             return EntryReason.EARNINGS.value
         return strategy_id
 

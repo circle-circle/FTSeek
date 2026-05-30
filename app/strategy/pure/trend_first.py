@@ -98,5 +98,6 @@ def evaluate(ctx: SymbolContext, cfg: Dict[str, Any]) -> Optional[SignalCandidat
         metadata={
             "stop_loss_atr_mult": sl_atr_mult,
             "atr": ctx.atr,
+            "owner_strategy": "trend_first",
         },
     )
