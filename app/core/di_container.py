@@ -88,6 +88,21 @@ class DIContainer:
         from app.data.news_provider import USNewsProvider
         return self._get_or_create("news_provider", USNewsProvider)
 
+    def atr_provider(self) -> "ATRProvider":
+        """ATR 单一真相源 (Single Source of Truth)
+
+        所有 ATR 消费方（TrendFirst / ATRStopEngine / ExitRuleDispatcher 等）
+        统一从该 Provider 读取，避免多处独立计算导致的数据不一致。
+        """
+        from app.core.atr_provider import ATRProvider
+        return self._get_or_create(
+            "atr_provider",
+            lambda: ATRProvider(
+                market_data_router=self.data_provider(),
+                cache_ttl_seconds=60,
+            ),
+        )
+
     # ================================================================
     #  策略层
     # ================================================================
@@ -260,7 +275,7 @@ class DIContainer:
     def health_check(self) -> Dict[str, Any]:
         """检查所有核心组件状态"""
         components = {}
-        for key in ["event_store", "data_provider", "execution_engine", "risk_engine"]:
+        for key in ["event_store", "data_provider", "atr_provider", "execution_engine", "risk_engine"]:
             if key in self._instances:
                 components[key] = "OK"
             else:

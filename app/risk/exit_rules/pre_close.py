@@ -49,7 +49,6 @@ def check_pre_close_exit(position, current_price, atr, trail_state, direction, p
         now_ts = now_et.timestamp()
         if now_ts - last_scan < 60:
             return None
-        trail_state['_last_pre_close_check'] = now_ts
 
         # P1 修复 (2026-05-08): 入场后最小持有时间保护
         entry_time = position.entry_time
@@ -70,6 +69,9 @@ def check_pre_close_exit(position, current_price, atr, trail_state, direction, p
 
         if atr <= 0 or position.avg_entry_price <= 0:
             return None
+
+        # 通过验证后才记录冷却时间戳 (避免无效调用消耗冷却窗口)
+        trail_state['_last_pre_close_check'] = now_ts
 
         profit_atr_signed = compute_profit_atr_signed(direction, position.avg_entry_price, current_price, atr)
 
@@ -198,3 +200,270 @@ class PreCloseExitRule(BaseExitRule):
             market_data["direction"],
             market_data.get("policy_guardian"),
         )
+
+
+# ============================================================
+#  自适应 Pre-Close Exit (Task #3, 2026-05-31)
+# ------------------------------------------------------------
+#  目标: 将 PRE_CLOSE 占比从 54% 降至 <35%
+#  策略: 基于 PnL/ATR 的四分支自适应退出 + regime 动态窗口
+#       1) 利润    : PnL >=  1.0 ATR → 全平 (锁利)
+#       2) 持平    : |PnL| <  0.3 ATR → 50% 平仓 (减少隔夜风险)
+#       3) 亏损    : PnL <= -1.5 ATR → 全平 (止损)
+#       4) 中间地带: 0.3~1.0 ATR 小利 / -1.5~-0.3 ATR 小亏 → 不强平, 允许过夜
+# ============================================================
+
+_DEFAULT_ADAPTIVE_CONFIG: Dict[str, Any] = {
+    "enabled": True,
+    "mode": "adaptive",
+    "profit_exit": {
+        "min_profit_atr": 1.0,
+        "close_ratio": 1.0,
+    },
+    "breakeven_exit": {
+        "tolerance_atr": 0.3,
+        "close_ratio": 0.50,
+    },
+    "loss_exit": {
+        "min_loss_atr": 1.5,
+        "close_ratio": 1.0,
+    },
+    "force_close_remaining": False,
+    "window_minutes": {
+        "trending": 10,
+        "range_bound": 5,
+        "high_vol": 15,
+        "default": 10,
+    },
+}
+
+
+def _resolve_window_minutes(regime: Optional[str], cfg_window: Dict[str, Any]) -> int:
+    """基于 regime 解析退出窗口分钟数。"""
+    if not isinstance(cfg_window, dict):
+        return 10
+    key = (regime or "default").lower() if isinstance(regime, str) else "default"
+    # 兼容常用别名
+    aliases = {
+        "trend": "trending",
+        "trending_up": "trending",
+        "trending_down": "trending",
+        "range": "range_bound",
+        "sideways": "range_bound",
+        "choppy": "range_bound",
+        "volatile": "high_vol",
+        "highvol": "high_vol",
+        "high_volatility": "high_vol",
+    }
+    key = aliases.get(key, key)
+    val = cfg_window.get(key, cfg_window.get("default", 10))
+    try:
+        return int(val)
+    except (TypeError, ValueError):
+        return 10
+
+
+def _coerce_attr(obj: Any, key: str, default: Any = None) -> Any:
+    """同时支持 dict 与对象两种 position/market_data 接口。"""
+    if obj is None:
+        return default
+    if isinstance(obj, dict):
+        return obj.get(key, default)
+    return getattr(obj, key, default)
+
+
+def check_adaptive_pre_close_exit(
+    position: Any,
+    market_data: Dict[str, Any],
+    trail_state: Optional[Dict[str, Any]] = None,
+    config: Optional[Dict[str, Any]] = None,
+) -> Optional[Dict[str, Any]]:
+    """自适应收盘前退出策略 (Task #3, 2026-05-31).
+
+    分级逻辑 (基于 PnL/ATR):
+      1) 利润分支: PnL >= profit_exit.min_profit_atr        → close_ratio (默认 1.0)
+      2) 持平分支: |PnL| < breakeven_exit.tolerance_atr     → close_ratio (默认 0.5)
+      3) 亏损分支: PnL <= -loss_exit.min_loss_atr           → close_ratio (默认 1.0)
+      4) 中间地带: 不强平 (force_close_remaining=False)
+
+    退出窗口按 regime 动态:
+      trending=10min, range_bound=5min, high_vol=15min, default=10min
+
+    Args:
+        position: 持仓 dict 或对象, 需含 entry_price/avg_entry_price, direction, quantity/size
+        market_data: 行情 dict, 需含 current_price, atr, minutes_to_close, regime(可选)
+        trail_state: 追踪状态 dict (用于 60s 冷却)
+        config: pre_close 配置段 dict (来自 exit_policy.yaml)
+
+    Returns:
+        触发: dict {reason, reason_cn, exit_price, close_ratio, description, metadata}
+        未触发: None
+    """
+    try:
+        cfg = dict(_DEFAULT_ADAPTIVE_CONFIG)
+        if isinstance(config, dict):
+            # 浅合并: 顶层覆盖 + 子段合并
+            for k, v in config.items():
+                if isinstance(v, dict) and isinstance(cfg.get(k), dict):
+                    merged = dict(cfg[k])
+                    merged.update(v)
+                    cfg[k] = merged
+                else:
+                    cfg[k] = v
+
+        if not cfg.get("enabled", True):
+            return None
+
+        # ── 1. 距收盘窗口判断 (按 regime 动态) ──
+        minutes_to_close = market_data.get("minutes_to_close")
+        if minutes_to_close is None:
+            return None
+        try:
+            mtc = float(minutes_to_close)
+        except (TypeError, ValueError):
+            return None
+        if mtc < 0:
+            return None
+
+        regime = market_data.get("regime") or market_data.get("market_regime")
+        window_minutes = _resolve_window_minutes(regime, cfg.get("window_minutes", {}))
+        if mtc > window_minutes:
+            return None
+
+        # ── 2. 60s 冷却, 避免重复触发 ──
+        if isinstance(trail_state, dict):
+            now_ts = datetime.now().timestamp()
+            last_ts = float(trail_state.get("_last_adaptive_pre_close_ts", 0) or 0)
+            if now_ts - last_ts < 60:
+                return None
+
+        # ── 3. 关键字段抽取 (兼容 dict / 对象) ──
+        entry_price = float(
+            _coerce_attr(position, "entry_price", None)
+            or _coerce_attr(position, "avg_entry_price", 0)
+            or 0
+        )
+        current_price = float(market_data.get("current_price", 0) or 0)
+        atr = float(market_data.get("atr", 0) or market_data.get("effective_atr", 0) or 0)
+        direction = str(_coerce_attr(position, "direction", "LONG") or "LONG").upper()
+        symbol = _coerce_attr(position, "symbol", "?")
+
+        if entry_price <= 0 or current_price <= 0 or atr <= 0:
+            logger.debug(
+                f"[adaptive_pre_close·跳过] {symbol} 参数不足: "
+                f"entry={entry_price} cur={current_price} atr={atr}"
+            )
+            return None
+
+        # 通过验证后才记录冷却时间戳 (避免无效调用消耗冷却窗口)
+        if isinstance(trail_state, dict):
+            trail_state["_last_adaptive_pre_close_ts"] = now_ts
+
+        # ── 4. PnL/ATR 计算 (有符号) ──
+        if direction in ("SHORT", "SELL"):
+            profit = entry_price - current_price
+        else:
+            profit = current_price - entry_price
+        profit_atr = profit / atr
+
+        # ── 5. 四分支自适应判定 ──
+        profit_cfg = cfg.get("profit_exit", {}) or {}
+        breakeven_cfg = cfg.get("breakeven_exit", {}) or {}
+        loss_cfg = cfg.get("loss_exit", {}) or {}
+
+        min_profit_atr = float(profit_cfg.get("min_profit_atr", 1.0))
+        profit_ratio = float(profit_cfg.get("close_ratio", 1.0))
+        tolerance_atr = float(breakeven_cfg.get("tolerance_atr", 0.3))
+        breakeven_ratio = float(breakeven_cfg.get("close_ratio", 0.5))
+        min_loss_atr = float(loss_cfg.get("min_loss_atr", 1.5))
+        loss_ratio = float(loss_cfg.get("close_ratio", 1.0))
+        force_remaining = bool(cfg.get("force_close_remaining", False))
+
+        base_meta = {
+            "profit_atr": round(profit_atr, 3),
+            "atr": atr,
+            "minutes_to_close": mtc,
+            "window_minutes": window_minutes,
+            "regime": regime,
+            "mode": cfg.get("mode", "adaptive"),
+        }
+
+        # 分支 1: 利润达标 → 锁利全平
+        if profit_atr >= min_profit_atr:
+            logger.info(
+                f"[adaptive_pre_close·锁利] {symbol} profit={profit_atr:.2f}ATR"
+                f" >= {min_profit_atr:.2f} → close {profit_ratio*100:.0f}% (regime={regime}, mtc={mtc:.0f}min)"
+            )
+            return {
+                "reason": "PRE_CLOSE_EXIT",
+                "reason_cn": (
+                    f"盘末锁利退出 (浮盈{profit_atr:.1f}ATR>={min_profit_atr:.1f}, "
+                    f"距收盘{mtc:.0f}分钟, regime={regime})"
+                ),
+                "exit_price": current_price,
+                "close_ratio": profit_ratio,
+                "description": f"PnL {profit_atr:.2f} ATR 达到锁利阈值, 全平防止隔夜回吐",
+                "metadata": {**base_meta, "branch": "profit"},
+            }
+
+        # 分支 3: 重大亏损 → 止损全平 (优先级高于持平判断)
+        if profit_atr <= -min_loss_atr:
+            logger.info(
+                f"[adaptive_pre_close·止损] {symbol} loss={profit_atr:.2f}ATR"
+                f" <= -{min_loss_atr:.2f} → close {loss_ratio*100:.0f}% (regime={regime}, mtc={mtc:.0f}min)"
+            )
+            return {
+                "reason": "PRE_CLOSE_EXIT",
+                "reason_cn": (
+                    f"盘末止损退出 (浮亏{profit_atr:.1f}ATR<=-{min_loss_atr:.1f}, "
+                    f"距收盘{mtc:.0f}分钟, regime={regime})"
+                ),
+                "exit_price": current_price,
+                "close_ratio": loss_ratio,
+                "description": f"PnL {profit_atr:.2f} ATR 触及隔夜止损线, 全平避免跳空风险",
+                "metadata": {**base_meta, "branch": "loss"},
+            }
+
+        # 分支 2: 持平/微动 → 减半仓
+        if abs(profit_atr) < tolerance_atr:
+            logger.info(
+                f"[adaptive_pre_close·持平减仓] {symbol} pnl={profit_atr:.2f}ATR"
+                f" |.| < {tolerance_atr:.2f} → close {breakeven_ratio*100:.0f}% (regime={regime}, mtc={mtc:.0f}min)"
+            )
+            return {
+                "reason": "PRE_CLOSE_EXIT_PARTIAL",
+                "reason_cn": (
+                    f"盘末持平减仓 ({breakeven_ratio*100:.0f}%, |PnL|{abs(profit_atr):.2f}ATR<{tolerance_atr:.2f}, "
+                    f"距收盘{mtc:.0f}分钟, regime={regime})"
+                ),
+                "exit_price": current_price,
+                "close_ratio": breakeven_ratio,
+                "description": f"PnL {profit_atr:.2f} ATR 处于持平带, 减半仓降低隔夜敞口",
+                "metadata": {**base_meta, "branch": "breakeven"},
+            }
+
+        # 分支 4: 中间地带 (小利 0.3~1.0 ATR / 小亏 -1.5~-0.3 ATR) — 默认不强平
+        if force_remaining:
+            logger.info(
+                f"[adaptive_pre_close·强制兜底] {symbol} pnl={profit_atr:.2f}ATR"
+                f" 中间带 + force_close_remaining=True → 全平"
+            )
+            return {
+                "reason": "PRE_CLOSE_EXIT",
+                "reason_cn": f"盘末强制兜底 (中间带, PnL{profit_atr:.1f}ATR, 距收盘{mtc:.0f}分钟)",
+                "exit_price": current_price,
+                "close_ratio": 1.0,
+                "description": "force_close_remaining=True, 中间带兜底平仓",
+                "metadata": {**base_meta, "branch": "force_remaining"},
+            }
+
+        logger.debug(
+            f"[adaptive_pre_close·过夜] {symbol} pnl={profit_atr:.2f}ATR 处于中间带 "
+            f"({-min_loss_atr:.1f}~{-tolerance_atr:.1f} 或 {tolerance_atr:.1f}~{min_profit_atr:.1f}), "
+            f"允许持仓过夜 (regime={regime}, mtc={mtc:.0f}min)"
+        )
+        return None
+
+    except Exception as e:
+        logger.warning(f"[adaptive_pre_close·异常] {e}", exc_info=True)
+        return None

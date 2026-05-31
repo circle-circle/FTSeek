@@ -42,8 +42,9 @@ mode:
       scheduler.scan_interval_minutes: 3       # 10 → 3
       scheduler.monitor_interval_minutes: 0.25 # 0.5 → 0.25
       strategy.signal_cooldown: 30             # 120 → 30
-      risk.signal_quality.min_confidence: 0.50 # P0-3 (Task #19): 0.45 → 0.50 提高信号门槛
-      strategies.defaults.min_strength: 20     # 25 → 20
+      # Task #2 (2026-05-31): 沙盒 override 与新默认对齐, 避免 sandbox 模式实际门槛偏低
+      risk.signal_quality.min_confidence: 0.65 # 0.50 → 0.65 与 defaults 对齐
+      strategies.defaults.min_strength: 50     # 20 → 50 与 defaults 对齐
       MAX_DAILY_DRAWDOWN: 0.05                 # 0.03 → 0.05
       risk.position.max_per_sector: 0.55       # 0.40 → 0.55
       symbol_cooldown.reversal_seconds: 60     # F1: 沙盒加速实验 (180 → 60)
@@ -91,10 +92,21 @@ llm_budget:
     warn_pct: 0.7              # 70% 告警
     halt_pct: 1.0              # 100% 停用
 
+# LLM投票缓存配置（2026-05-31优化：30min→5min提升决策新鲜度）
+# 背景: 原30分钟TTL在行情变动<0.3%时复用, 实测30min内可能走出5%大波动导致决策滑后
+# 优化: TTL缩短至5min, 同时适当放宽价格阈值以平衡API成本
+llm_voting:
+  cache_ttl_seconds: 300          # 投票缓存有效期（秒），原1800→300
+  price_change_threshold: 0.008   # 行情变动阈值，超过则强制重新投票，原0.003→0.008
+  max_cache_entries: 50           # 最大缓存条目数 (超出后按LRU淘汰)
+
 # 异构模型配置 (2026-05-13)
-# DEPRECATED (2026-05-15): llm_models 配置 0 代码引用 (死配置)
-# 实际模型映射在 app/llm/multi_model_client.py:DEFAULT_MODEL_FOR
-# 保留此 section 仅为兼容性参考, 修改不会生效
+# DEPRECATED (2026-05-31): llm_models 配置不再生效 (0 代码引用)
+#   实际生效路径:
+#     - 业务 feature → 模型 路由: llm.features.<feature> (本文件下方)
+#     - 别名 → 实例 兜底映射: app/llm/multi_model_client.py:DEFAULT_MODEL_FOR
+#   启动时 ConfigValidator.check_deprecated_fields 会再次告警, 修改本节点不会生效。
+#   保留此 section 仅为兼容性参考, 一段稳定窗口后整体移除。
 llm_models:
   attribution: "qwen"          # DEPRECATED — 实际由 DEFAULT_MODEL_FOR 控制
   proposal: "deepseek"         # DEPRECATED
@@ -724,11 +736,12 @@ OPTION_QUALITY_GATE:
 risk:
   # Phase 3 (2026-05-31): 退出路由统一 — ExitRuleDispatcher 影子模式开关
   # use_unified_dispatcher=true: 主路径走新 dispatcher (谨慎启用, 仅验证后切换)
-  # shadow_mode=true: 与 legacy 并行评估, 仅记录差异 (默认 false 避免日志噪声)
+  # log_comparison_mode=true: 与 legacy 并行评估, 仅记录差异 (默认 false 避免日志噪声)
   exit_routing:
     use_unified_dispatcher: false
-    shadow_mode: true     # 2026-05-31: 开启影子模式, 收集新旧决策差异数据
-    log_diff_only: true   # shadow_mode 下仅在决策不一致时输出日志
+    # 注意: 此为 ExitMonitor 内部的对比日志开关，与 exit_rules_controller (Dispatcher 主路径) 是独立的两套系统
+    log_comparison_mode: true    # 原 shadow_mode 重命名，避免与 exit_rules_controller.shadow_mode 混淆
+    log_diff_only: true   # log_comparison_mode 下仅在决策不一致时输出日志
   # Phase 1 (2026-05-31): 策略隔离开关 — 退出监控按 owner_strategy 严格校验
   # 关闭时走原 fallback 逻辑 (向后兼容); 开启时 owner_strategy 缺失/未知的仓位将被跳过
   strategy_enforcement:
@@ -862,9 +875,9 @@ risk:
     max_order_amount: 120000
     min_liquidity_ratio: 0.5
   signal_quality:
-    # Task #6 (2026-05-30): 提高入场门槛 0.4 → 0.55
-    # 历史置信度<0.55的信号胜率显著偏低，提升基础门槛过滤噪声
-    min_confidence: 0.55
+    # Task #2 (2026-05-31): 提高入场门槛 0.55 → 0.65 (与 defaults.min_confidence 对齐)
+    # 当前胜率 30.3%，进一步抬升 SSOT 阈值过滤弱信号
+    min_confidence: 0.65
     min_consensus: 0.2
     min_score: 50
   # Task #6 (2026-05-30): 仓位计算ATR联动配置
@@ -894,6 +907,16 @@ risk:
       market_data_timeout: 60
       order_latency_threshold: 5
       missing_fill_timeout: 3
+# Phase 4 (2026-05-31): ExitRuleDispatcher 正式路由控制器
+# 由 app/pipeline/position_monitor.py::_check_positions 读取
+# 与 risk.exit_routing 共存：本控制器决定 dispatcher 是否参与主路径执行；
+# risk.exit_routing 仅控制 position_exit_monitor 内部的 shadow 评估日志。
+exit_rules_controller:
+  dispatcher_enabled: true        # 启用 ExitRuleDispatcher 主路径
+  shadow_mode: false              # false=正式执行；true=仅记录决策
+  monitor_comparison: true        # 保留新旧决策对比日志（用于验证）
+  fallback_on_error: true         # dispatcher 异常时回退到旧 PositionExitMonitor
+  log_suppressed_rules: true      # 记录被互斥压制的规则
 options:
   enabled: false              # 2026-05-21 P0: 紧急禁用 — selector 与 yaml 不一致导致 $5,984 亏损
   max_holding_hours: 72
@@ -1351,7 +1374,16 @@ debate_mode:
 strategy:
   # Task #6 (2026-05-30): 信号冷却 120s → 180s, 减少同标的反复入场抖动
   signal_cooldown: 180
+  # Task #2 (2026-05-31): consensus_threshold 改为 VIX 自适应 (在 app/decision/consensus.py 中实现)
+  # 此处保留 fallback 默认值；运行时按 VIX 动态选择 0.55/0.60/0.70/0.75
   consensus_threshold: 0.6
+  # VIX 自适应共识阈值 (Task #2 2026-05-31)
+  # 极端波动: 放宽 (允许做空把握行情); 平静市场: 收紧 (要求更高确认)
+  consensus_threshold_by_vix:
+    extreme: 0.55      # VIX > 40
+    high:    0.60      # VIX > 30
+    elevated: 0.70     # VIX > 20
+    normal:  0.75      # VIX <= 20
 strategies:
   # ─── Phase A (2026-05-14): 多策略协调 ───
   # 灰度: enabled=true → coordinator 生效 (但 observe_only=true 不阻断现有流程)
@@ -1359,18 +1391,23 @@ strategies:
   coordinator:
     enabled: true              # Phase A 灰度: 开启观察模式 收集数据
     observe_only: true         # 不阻断, 仅记录 BLOCKED_* 事件用于评估
-    max_total_pct: 0.90
+    max_total_pct: 0.80    # Task fix: 0.90→0.80 与 risk_limits.max_total_position 对齐
     audit_arbitration: true    # 写 signal_arbitration 表
     reconcile_interval_sec: 300  # 每 5 分钟与 PositionRegistry 对账
     # R4 (2026-05-15): unified_dispatcher 灰度位 (代码尚未启用 — 仅声明)
     # 当 ExitDispatcher 4 policy 各自稳定 7+ 天后, 切 true 启用统一 ExitDecision 优先级仲裁
     # 启用前置条件: PositionExitMonitor 与 ExitDispatcher 决策一致率 > 95%
     unified_dispatcher_enabled: false
+  # === Task #1 (2026-05-31): 资金分配冲突修复 ===
+  # 总池: main 0.65 (含 trend_first/fast_lane 子策略切分) + scalping 0.15 (独立池) = 0.80
+  # max_total_position: 0.80 → 与 risk_limits.max_total_position 对齐
+  # 子策略 (trend_first, fast_lane) 通过 capital_source: main + capital_pct_of_main 从 main 池切分,
+  # 不再独立累加, 由 CapitalAllocator 的 bucket_map 在 scheduler_core 强制收敛到 main 桶.
   main:
-    capital_pct: 0.65
+    capital_pct: 0.65          # Main 总池 (内含 trend_first 35% + fast_lane 25% + 直发 40%)
     priority: 5
   scalping:
-    capital_pct: 0.10          # P1 修复 (2026-05-22): 从 0.0 恢复到 10% 初始仓位
+    capital_pct: 0.15          # Task #1 (2026-05-31): 独立池 0.10 → 0.15, main+scalping=0.80=max_total
     priority: 10               # 高于 main, 时效性更强
     direction_preference: SHORT  # P6: 数据驱动 - SHORT 胜率 37.0% vs LONG 20.9%
     enabled: true              # P1 修复 (2026-05-22): 修复参数后重新启用
@@ -1385,7 +1422,10 @@ strategies:
     reset_after_win: true            # 盈利后重置
     max_drawdown_pause: 0.05         # 单日最大回撤 5% 暂停新仓
   fast_lane:
-    capital_pct: 0.20          # 在 main 的 0.65 内分配 (子集，不与 main 累加)
+    # Task #1 (2026-05-31): 子策略从 main 池切分，不独立累加
+    capital_source: main          # 资金来源: main 池
+    capital_pct_of_main: 0.25     # 占 main 池 25% (= 0.65 × 0.25 = 0.1625 全账户)
+    capital_pct: 0.20             # 兼容字段：CapitalAllocator bucket_map 已映射到 main，不双计
   llm_plan:
     capital_pct: 0.0           # LLM plan 不直接持仓
     priority: 3
@@ -1397,7 +1437,9 @@ strategies:
     observe_only: false             # Task #19: 开放模拟交易执行 (从 true → false)
 
     # 资金分配（从 Main 预算池切分，与 Technical 共享 0.65 总额）
+    # Task #1 (2026-05-31): 显式 capital_pct_of_main, 不再独立累加 capital_pct
     capital_source: main            # 明确标注资金来源
+    capital_pct_of_main: 0.35       # 占 main 池 35% (= 0.65 × 0.35 = 0.2275 全账户)
 
     # Layer 2: 选股参数
     min_sector_score: 40            # 板块热度门槛
@@ -1458,19 +1500,23 @@ strategies:
     max_positions: 3                # 最大同时持仓
 
   defaults:
-    min_confidence: 0.5
-    # Task #6 (2026-05-30): min_strength 25 → 40, 提升信号强度门槛
-    min_strength: 40
+    # Task #2 (2026-05-31): 提升信号入场门槛 — 0.50/40 → 0.65/50
+    # 当前胜率 30.3%, 日均亏损 -$1503, 主因之一是弱信号通过率过高
+    min_confidence: 0.65
+    # Task #2 (2026-05-31): min_strength 40 → 50, 进一步过滤弱信号
+    min_strength: 50
     max_positions: 5
-    # Task #6 (2026-05-30): 方向偏好 — LONG 需要更高确认度
-    # 数据驱动: SHORT 胜率显著高于 LONG, LONG 接飞刀亏损模式频繁
+    # Task #2 (2026-05-31): 方向偏好 — LONG 接飞刀亏损模式严重，要求更高确认度
+    # 数据驱动: SHORT 胜率显著高于 LONG
     direction_bias:
-      SHORT:
-        min_confidence: 0.55
       LONG:
-        min_confidence: 0.70  # LONG需要更高确认度
-    # F3 DEPRECATED (2026-05-16): SoT is `strategy.signal_cooldown` (line 1117)
-    # 0 代码引用此键, 仅保留向后兼容. 修改不会生效.
+        min_confidence: 0.75  # LONG 需要 0.75 高确认度（避免追涨/接飞刀）
+      SHORT:
+        min_confidence: 0.60  # SHORT 阈值 0.60 (历史胜率较高，可适度放宽)
+    # DEPRECATED (2026-05-31): strategies.defaults.signal_cooldown_seconds 不再生效
+    #   实际生效路径: strategy.signal_cooldown (本文件 SoT, 见上方 strategy 段)
+    #   启动时 ConfigValidator.check_deprecated_fields 会再次告警, 修改此键不会生效。
+    #   保留以兼容旧导出脚本, 一段稳定窗口后整体移除。
     signal_cooldown_seconds: 120
     signal_expire_seconds: 300
     degraded_confidence_offset: -0.1
@@ -1582,8 +1628,10 @@ strategies:
     min_consensus: 0.3
     min_confidence: 0.5
 risk_limits:
-  max_total_position: 0.65
-  # Capital allocation: main=0.65 + scalping=0.25 = 0.90, 10% buffer for slippage
+  # Task #1 (2026-05-31): 总敞口对齐 — main 0.65 (含子策略) + scalping 0.15 = 0.80
+  # 子策略 (trend_first/fast_lane) 走 capital_source: main, 不再单独累加
+  max_total_position: 0.80
+  # Capital allocation: main=0.65 (含 trend_first 35% + fast_lane 25%) + scalping=0.15 = 0.80
   end_of_day:
     no_new_entry_after_et: "15:50"
     force_close_loss_at_et: "15:55"
@@ -1622,10 +1670,13 @@ scheduler:
   scan_interval_minutes: 10
   monitor_interval_minutes: 0.5
   max_positions: 5
-  # F4 (2026-05-14): scheduler.min_confidence DEPRECATED — 现由 strategies.defaults 提供
-  # 真正生效的门槛通过 MinConfidenceResolver.for_phase("intraday") 解析
-  # ConfigWriter 唯一调的节点是 risk.signal_quality.min_confidence (SSOT)
-  # 此节点保留仅为避免老代码兜底失效
+  # DEPRECATED (2026-05-31): scheduler.min_confidence 不再作为入场门槛 SSOT
+  #   实际生效路径:
+  #     - 全局门槛: risk.signal_quality.min_confidence (本文件 SSOT)
+  #     - 阶段解析: app/risk/min_confidence_resolver.py:MinConfidenceResolver.for_phase("intraday")
+  #     - ConfigWriter 唯一写入: risk.signal_quality.min_confidence
+  #   启动时 ConfigValidator.check_deprecated_fields 会再次告警, 修改此键不会生效。
+  #   保留仅为避免老代码兜底失效, 一段稳定窗口后整体移除。
   min_confidence: 0.55  # DEPRECATED, do not edit — see MinConfidenceResolver (synced with code 0.55)
   min_signal_strength: 50  # P0-辩论修复: 99→50 (P3过度收紧导致5/23后零交易, P0守卫已兜底)
   min_consensus_level: 0.2
@@ -1945,7 +1996,8 @@ pipeline:
     sizing: null
 
   # 旧管线 stage 配置 (保留)
-  use_new_stages: true
+  use_modular_stages: true     # CRA 模块化管线 (SSOT, 代码中 use_new_stages 向后兼容)
+  use_new_stages: true         # DEPRECATED alias — 请使用 use_modular_stages
   stages:
   - name: market_data
     enabled: true
@@ -1963,7 +2015,7 @@ pipeline:
   # 市场上下文门禁 (从旧系统移植, 新旧链路共用)
   market_context:
     enabled: true
-    vix_threshold: 25           # VIX >= 25 禁止新开仓
+    vix_threshold: 25            # 参考值: pre_trade_check 使用 VIX≥25 硬编码门禁 (此处仅供文档参考)
     cache_ttl_minutes: 30       # 市场数据缓存时间
     capital_safety:
       enabled: true

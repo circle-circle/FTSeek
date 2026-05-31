@@ -883,7 +883,7 @@ class TradeStore:
                            strategy_id, signal_id, position_id, market_regime,
                            version, source, sync_status, trace_id,
                            is_filled, is_partially_reduced, is_anomalous,
-                           action_log_json, last_sync_at
+                           action_log_json, last_sync_at, owner_strategy
                     FROM open_positions
                     WHERE (sync_status IS NULL
                            OR sync_status NOT IN (
@@ -920,6 +920,7 @@ class TradeStore:
                         "is_anomalous":      bool(r[21]) if len(r) > 21 else False,
                         "action_log":        json.loads(r[22]) if (len(r) > 22 and r[22]) else [],
                         "last_sync_at":      r[23] if len(r) > 23 else "",
+                        "owner_strategy":    r[24] if len(r) > 24 else "",
                     })
                 return result
             finally:

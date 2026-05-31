@@ -2,7 +2,7 @@
 Market Data Stage — 行情获取 + 上下文增强
 
 职责:
-  1. 宏观闸门 (VIX > 30 / SPY < MA200)
+  1. 宏观闸门 (VIX >= 25 硬拦截 / SPY < MA200 仅设 flag, LONG 由 pre_trade_check 拦截)
   2. 行情数据获取 (委托给 MarketDataRouter)
   3. 动态成本注入 (spread / ADV / ATR)
   4. 财报黑名单检查
@@ -43,15 +43,20 @@ def process(symbol: str,
         SymbolContext 或 None (被宏观闸门/财报黑名单拦截)
     """
     # ── Layer 1: 宏观闸门 ──
-    if vix > 30:
-        logger.warning(f"[宏观闸门] {symbol} VIX={vix:.1f}>30, 禁止开仓")
+    # VIX>=25: 硬拦截 (与 pre_trade_check.py P1 gate 对齐)
+    if vix >= 25:
+        logger.warning(f"[宏观闸门] {symbol} VIX={vix:.1f}>=25, 禁止开仓")
         return None
 
+    # SPY < MA200: 仅设置 context flag, 不做硬拦截。
+    # 方向感知的 LONG-only 拦截由 pre_trade_check.py P1 gate 权威执行,
+    # 此处仅透传 flag 供下游决策使用 (SHORT 候选不受此限制)。
     spy_price = spy_context.get("spy_price", 0)
     spy_ma200 = spy_context.get("spy_ma200", 0)
-    if spy_price > 0 and spy_ma200 > 0 and spy_price < spy_ma200:
-        logger.warning(f"[宏观闸门] {symbol} SPY ${spy_price:.2f} < MA200 ${spy_ma200:.2f}")
-        return None
+    spy_below_ma200 = bool(spy_price > 0 and spy_ma200 > 0 and spy_price < spy_ma200)
+    if spy_below_ma200:
+        logger.info(f"[宏观闸门] {symbol} SPY ${spy_price:.2f} < MA200 ${spy_ma200:.2f}, "
+                    f"设置 spy_below_ma200 flag (LONG 由 pre_trade_check 拦截, SHORT 放行)")
 
     # ── 行情获取 ──
     raw = data_router.get_full_market_context(symbol)
@@ -99,6 +104,7 @@ def process(symbol: str,
     ctx.vix = vix
     ctx.spy_price = spy_price
     ctx.spy_ma200 = spy_ma200
+    ctx.spy_below_ma200 = spy_below_ma200
     ctx.source = "market_data_stage"
 
     logger.info(f"[MarketData] {symbol} price=${ctx.price:.2f} spread={ctx.spread_bps:.0f}bps "

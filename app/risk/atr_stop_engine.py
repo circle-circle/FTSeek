@@ -10,6 +10,14 @@
 - 接入成本缓冲（cost buffer）：止损线额外让出 k × total_cost_bps 的价格空间，
   规避被噪声成本打穿
 
+ATR 来源说明 (Task #4 统一ATR计算)
+----------------------------------------
+本模块为纯函数式止损计算器，本身不独立计算 ATR：atr 严格以参数形式传入。
+调用方（position_exit_monitor / exit_rules/* / risk pipeline 等）需从统一的
+ATRProvider（app.core.atr_provider）获取 ATR 后传入本模块，以保证与其他
+ATR 消费方（TrendFirst / ExitRuleDispatcher 等）同根同源、数据一致。
+限 fallback：调用方如拿不到 ATR，可以 entry_price * 0.02 作为保底估计。
+
 模块严格无状态（无 I/O、无持久化），便于单元测试与回测重放。
 """
 from __future__ import annotations
@@ -142,6 +150,73 @@ def resolve_trail_multiplier(
             short_tm = trail
         trail = min(trail, short_tm)
     return trail
+
+
+def apply_atr_constraints(
+    *,
+    atr_raw: float,
+    price: float,
+    policy: Dict[str, Any],
+    symbol: Optional[str] = None,
+    median_atr_14d: Optional[float] = None,
+    earnings_guard: Any = None,
+) -> float:
+    """对原始 ATR 施加 floor/cap 双重约束 (Phase 3, 2026-05-31)
+
+    Floor (下限):
+        atr ≥ price × atr_floor_price_pct/100
+        防止 ATR 过小导致止损距离形同虚设
+
+    Cap (上限 / 财报保护):
+        如 symbol 临近财报期, atr ≤ median_atr_14d × atr_cap_multiplier
+        防止财报跳空导致 ATR 飙升 5-10x 让止损线被锁在极远处
+
+    Args:
+        atr_raw: 原始 ATR
+        price: 当前价格 (用于计算下限)
+        policy: exit_policy.yaml 加载后的 dict
+        symbol: 标的 (财报保护需要)
+        median_atr_14d: 14 日 ATR 中位数 (用于财报上限)
+        earnings_guard: EarningsGuard 实例 (None 表示不启用财报保护)
+
+    Returns:
+        约束后的 ATR
+    """
+    if atr_raw is None or atr_raw <= 0:
+        return atr_raw or 0.0
+
+    atr = float(atr_raw)
+    pt_cfg = (policy or {}).get("progressive_trailing", {}) or {}
+
+    # Floor 1: 价格百分比下限
+    try:
+        floor_pct = float(pt_cfg.get("atr_floor_price_pct", 0.0))
+    except (TypeError, ValueError):
+        floor_pct = 0.0
+    if floor_pct > 0 and price and price > 0:
+        floor_value = price * floor_pct / 100.0
+        if atr < floor_value:
+            logger.debug(
+                "[ATR floor] %s atr_raw=%.4f -> floor=%.4f (price=%.2f x %.2f%%)",
+                symbol or "?", atr, floor_value, price, floor_pct,
+            )
+            atr = floor_value
+
+    # Cap: 财报期上限
+    if earnings_guard is not None and symbol and median_atr_14d and median_atr_14d > 0:
+        try:
+            cap = earnings_guard.get_atr_cap(symbol, float(median_atr_14d))
+        except Exception as e:
+            logger.debug("[ATR cap] earnings_guard.get_atr_cap(%s) error: %s", symbol, e)
+            cap = None
+        if cap is not None and cap > 0 and atr > cap:
+            logger.info(
+                "[ATR cap] %s atr=%.4f capped to %.4f (earnings window)",
+                symbol, atr, cap,
+            )
+            atr = cap
+
+    return atr
 
 
 def compute_stop_lines(

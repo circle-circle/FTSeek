@@ -3369,7 +3369,7 @@ class ScalpingEngine:
                 initial_tp=tp_price,
                 current_sl=sl_price,
                 take_profit_levels=[{"ratio": 1.0, "price": tp_price}],
-                time_stop_hours=max_hold_minutes // 60,
+                time_stop_hours=max_hold_minutes / 60.0 if max_hold_minutes > 0 else 0.083,
                 market_regime=MarketRegime.RANGE,
             )
             pos.entry_time = now_et()
@@ -3554,7 +3554,7 @@ class ScalpingEngine:
                                 initial_sl=sl_price, initial_tp=tp_price,
                                 current_sl=sl_price,
                                 take_profit_levels=[{"ratio": 1.0, "price": tp_price}],
-                                time_stop_hours=max_hold // 60,
+                                time_stop_hours=max_hold / 60.0 if max_hold > 0 else 0.083,
                                 market_regime=MarketRegime.RANGE,
                             )
                             pos.metadata = {"source": "scalping", "restored": True}

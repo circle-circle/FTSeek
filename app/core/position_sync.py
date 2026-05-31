@@ -540,13 +540,13 @@ class USPositionSync:
                     INSERT INTO open_positions (
                         symbol, direction, size, avg_entry_price,
                         initial_sl, current_sl, initial_tp,
-                        entry_time, updated_at, strategy_id, trader_type
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        entry_time, updated_at, strategy_id, trader_type, owner_strategy
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     symbol, info['direction'], info['qty'], info['cost'],
                     initial_sl, initial_sl, initial_tp,
                     datetime.now().isoformat(), datetime.now().isoformat(),
-                    'futu_sync', 'MANUAL'
+                    'futu_sync', 'MANUAL', 'futu_sync'
                 ))
 
         conn.commit()
@@ -665,6 +665,7 @@ class USPositionSync:
                 time_stop_hours=72,
                 market_regime=MarketRegime.RANGE,
             )
+            position.owner_strategy = strategy_id
             position.trail_state = {
                 "highest_price": cost,
                 "lowest_price": cost,
@@ -723,7 +724,13 @@ class USPositionSync:
                         # Scalping 持仓: 保护窗口 = max(max_hold_minutes * 2, 5min)
                         # 例: max_hold=5min → 保护 10min = 600s
                         grace_period = 180  # 默认 (主管线)
-                        if getattr(existing_pos, 'strategy_id', '') == 'scalping':
+                        # Task #7 (2026-05-31): owner_strategy 优先, strategy_id 仅作向后兼容 fallback
+                        _owner = (
+                            getattr(existing_pos, 'owner_strategy', '')
+                            or getattr(existing_pos, 'strategy_id', '')
+                            or ''
+                        )
+                        if _owner == 'scalping':
                             meta = getattr(existing_pos, 'metadata', {}) or {}
                             max_hold_min = meta.get('max_hold_minutes', 5)
                             grace_period = max(max_hold_min * 60 * 2, 300)
@@ -1126,6 +1133,7 @@ class USPositionSync:
             time_stop_hours=72,
             market_regime=MarketRegime.RANGE,
         )
+        position.owner_strategy = strategy_id
         position.trail_state = {
             "highest_price": db_pos['avg_entry_price'],
             "lowest_price": futu_info.get('cost', db_pos['avg_entry_price']),

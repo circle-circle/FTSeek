@@ -28,7 +28,13 @@ logger = logging.getLogger(__name__)
 
 @register("trend_first")
 def evaluate(ctx: SymbolContext, cfg: Dict[str, Any]) -> Optional[SignalCandidate]:
-    """Trend-First: 趋势方向 + RSI回调入场"""
+    """Trend-First: 趋势方向 + RSI回调入场
+
+    ATR 来源说明 (Task #4 统一ATR计算):
+        ctx.atr 由 SymbolContext.from_raw() 填充，其原始值来自
+        MarketDataRouter.get_full_market_context()。本函数不独立计算 ATR，
+        与 ATRProvider 同根同源（均走 MarketDataRouter），数据一致。
+    """
 
     # ── 防御: 数据完整性 ──
     if ctx.rsi is None or ctx.rsi <= 0 or ctx.atr is None or ctx.atr <= 0:

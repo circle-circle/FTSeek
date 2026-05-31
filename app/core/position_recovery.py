@@ -223,6 +223,12 @@ def restore_positions_from_db(scheduler):
                     # 恢复开仓时间和移动止损状态
                     position.entry_time = entry_time
                     position.trail_state = snap.get("trail_state", {})
+                    position.owner_strategy = (
+                        snap.get("owner_strategy")
+                        or snap.get("strategy_id")
+                        or getattr(position, 'strategy_id', '')
+                        or "main"
+                    )
                     if snap.get("position_id"):
                         position.position_id = snap["position_id"]
 
@@ -340,6 +346,7 @@ def restore_positions_from_db(scheduler):
                                     time_stop_hours=72,
                                     market_regime=MarketRegime.RANGE,
                                 )
+                                position.owner_strategy = "broker_sync"
                                 scheduler.position_store.add(sym, position)
                                 scheduler.trade_store.upsert_open_position(
                                     position, source="broker_sync", action="startup_reconcile"
@@ -439,6 +446,7 @@ def restore_positions_from_db(scheduler):
                         "signal_confidence": snap.get("signal_confidence", 0.0),
                     }
 
+                    position.owner_strategy = "voting_llm_option"
                     scheduler.position_store.add(symbol, position)
                     logger.info(
                         f"[恢复] 恢复期权持仓 {symbol} {option_code} "
@@ -545,6 +553,7 @@ def restore_positions_from_db(scheduler):
                         "prev_scan_price": cost,
                     }
 
+                    position.owner_strategy = "broker_reconcile_p0"
                     scheduler.position_store.add(code, position)
                     scheduler.trade_store.upsert_open_position(
                         position, source="broker_reconcile_p0", action="startup_fill"

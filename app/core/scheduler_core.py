@@ -722,15 +722,18 @@ class TradingScheduler:
             logger.warning(f"[silent_except:scheduler_core.py] {_silent_e}")
 
         # 各 bucket cap (从 yaml). B.3 (2026-05-14): bucket 而非 strategy
-        # fast_lane 走 main bucket → 不在 caps 里 (避免重复加总)
+        # fast_lane / trend_first 走 main bucket → 不在 caps 里 (避免重复加总)
+        # Task #1 (2026-05-31): scalping 默认 0.25 → 0.15 (与 yaml 对齐, main+scalping=0.80=max_total)
         caps = {
             "main":     float(cfg.get_dotted("strategies.main.capital_pct", 0.65)) if cfg else 0.65,
-            "scalping": float(cfg.get_dotted("strategies.scalping.capital_pct", 0.25)) if cfg else 0.25,
+            "scalping": float(cfg.get_dotted("strategies.scalping.capital_pct", 0.15)) if cfg else 0.15,
             "llm_plan": float(cfg.get_dotted("strategies.llm_plan.capital_pct", 0.0)) if cfg else 0.0,
         }
-        # B.3: bucket_map — 让 fast_lane 占用计入 main bucket
+        # B.3: bucket_map — 让 fast_lane / trend_first 占用计入 main bucket
+        # Task #1 (2026-05-31): trend_first 也明确映射到 main 桶, 与 yaml capital_source: main 对齐
         bucket_map = {
-            "fast_lane": "main",
+            "fast_lane":   "main",
+            "trend_first": "main",
         }
 
         from app.coordinator import (

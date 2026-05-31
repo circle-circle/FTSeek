@@ -55,15 +55,64 @@ class VotingCache:
 
     缓存策略：
     - 按 symbol 缓存
-    - 行情变动 < 0.3% 且技术指标无信号切换时复用
-    - 最长 TTL 30 分钟，超时强制刷新
+    - 行情变动 < price_change_threshold 且技术指标无信号切换时复用
+    - 最长 TTL cache_ttl_seconds，超时强制刷新
+
+    2026-05-31 优化: TTL 30min→5min, 阈值 0.3%→0.8%, 参数化可从 unified_config.yaml 读取
     """
 
-    CACHE_TTL = 1800  # 30 分钟
-    PRICE_CHANGE_THRESHOLD = 0.003  # 0.3%
+    # 默认值 (2026-05-31 优化: 30min→5min 提升决策新鲜度)
+    DEFAULT_CACHE_TTL = 300            # 5 分钟 (原 1800)
+    DEFAULT_PRICE_CHANGE_THRESHOLD = 0.008  # 0.8% (原 0.003)
+    DEFAULT_MAX_CACHE_ENTRIES = 50
 
-    def __init__(self):
+    def __init__(
+        self,
+        cache_ttl: Optional[int] = None,
+        price_change_threshold: Optional[float] = None,
+        max_cache_entries: Optional[int] = None,
+    ):
+        # 优先使用显式参数，其次从 unified_config.yaml 读取，最后使用默认值
+        cfg_ttl = None
+        cfg_thr = None
+        cfg_max = None
+        try:
+            from app.core.config_container import get_config
+            cfg = get_config()
+            cfg_ttl = cfg.get_dotted("llm_voting.cache_ttl_seconds", None)
+            cfg_thr = cfg.get_dotted("llm_voting.price_change_threshold", None)
+            cfg_max = cfg.get_dotted("llm_voting.max_cache_entries", None)
+        except Exception as e:
+            logger.debug(f"[投票缓存] 读取 llm_voting 配置失败, 使用默认值: {e}")
+
+        self.cache_ttl = int(
+            cache_ttl if cache_ttl is not None
+            else (cfg_ttl if cfg_ttl is not None else self.DEFAULT_CACHE_TTL)
+        )
+        self.price_change_threshold = float(
+            price_change_threshold if price_change_threshold is not None
+            else (cfg_thr if cfg_thr is not None else self.DEFAULT_PRICE_CHANGE_THRESHOLD)
+        )
+        self.max_cache_entries = int(
+            max_cache_entries if max_cache_entries is not None
+            else (cfg_max if cfg_max is not None else self.DEFAULT_MAX_CACHE_ENTRIES)
+        )
+
         self.entries: Dict[str, VotingCacheEntry] = {}
+        logger.info(
+            f"[VotingCache] 初始化 ttl={self.cache_ttl}s "
+            f"price_threshold={self.price_change_threshold:.3%} "
+            f"max_entries={self.max_cache_entries}"
+        )
+
+    # 向后兼容: 保留旧类常量引用 (只读, 不再生效, 仅供旧代码访问不报错)
+    @property
+    def CACHE_TTL(self) -> int:  # noqa: N802 (历史命名)
+        return self.cache_ttl
+
+    @property
+    def PRICE_CHANGE_THRESHOLD(self) -> float:  # noqa: N802
+        return self.price_change_threshold
 
     def _compute_market_hash(self, market_data: Dict[str, Any]) -> str:
         """计算行情快照哈希"""
@@ -84,24 +133,29 @@ class VotingCache:
         """
         entry = self.entries.get(symbol)
         if not entry:
+            logger.info(f"[VotingCache] {symbol} 缓存未命中 reason=no_entry")
             return None
 
         # TTL 检查
         age = time.time() - entry.timestamp
-        if age > self.CACHE_TTL:
-            logger.debug(f"[投票缓存] {symbol} TTL 过期 ({age:.0f}s)")
+        if age > self.cache_ttl:
+            logger.info(
+                f"[VotingCache] {symbol} 缓存未命中 reason=ttl_expired age={age:.0f}s ttl={self.cache_ttl}s"
+            )
             del self.entries[symbol]
             return None
 
         # 行情变动检查
         current_price = market_data.get("price", 0)
         cached_price = entry.price_snapshot.get(symbol, 0)
+        change_pct = 0.0
 
         if current_price > 0 and cached_price > 0:
             change_pct = abs(current_price - cached_price) / cached_price
-            if change_pct > self.PRICE_CHANGE_THRESHOLD:
-                logger.debug(
-                    f"[投票缓存] {symbol} 行情变动 {change_pct*100:.2f}% > 0.3%，刷新"
+            if change_pct > self.price_change_threshold:
+                logger.info(
+                    f"[VotingCache] {symbol} 缓存未命中 reason=price_change "
+                    f"pct={change_pct:.2%} threshold={self.price_change_threshold:.2%}"
                 )
                 del self.entries[symbol]
                 return None
@@ -109,19 +163,33 @@ class VotingCache:
         # 技术指标信号检查
         current_hash = self._compute_market_hash(market_data)
         if current_hash != entry.market_hash:
-            logger.debug(f"[投票缓存] {symbol} 技术信号变化，刷新")
+            logger.info(
+                f"[VotingCache] {symbol} 缓存未命中 reason=signal_change "
+                f"old={entry.market_hash} new={current_hash}"
+            )
             del self.entries[symbol]
             return None
 
         # 缓存命中
         entry.hit_count += 1
         logger.debug(
-            f"[投票缓存] {symbol} 命中 (已复用 {entry.hit_count} 次, 缓存年龄 {age:.0f}s)"
+            f"[VotingCache] {symbol} 缓存命中 age={age:.0f}s "
+            f"price_change={change_pct:.2%} hits={entry.hit_count}"
         )
         return entry.result
 
     def put(self, symbol: str, result: Dict[str, Any], market_data: Dict[str, Any]):
-        """写入缓存"""
+        """写入缓存 (超过最大条目数时按 LRU 淘汰最早写入的)"""
+        # 简单容量控制: 满则按 timestamp 淘汰最早一条
+        if symbol not in self.entries and len(self.entries) >= self.max_cache_entries:
+            oldest_symbol = min(
+                self.entries.items(), key=lambda kv: kv[1].timestamp
+            )[0]
+            logger.debug(
+                f"[VotingCache] 容量已满({self.max_cache_entries}), 淘汰最早条目 {oldest_symbol}"
+            )
+            del self.entries[oldest_symbol]
+
         price = market_data.get("price", 0)
         self.entries[symbol] = VotingCacheEntry(
             result=result,
@@ -143,7 +211,9 @@ class VotingCache:
         return {
             "size": len(self.entries),
             "total_hits": total_hits,
-            "ttl": self.CACHE_TTL,
+            "ttl": self.cache_ttl,
+            "price_change_threshold": self.price_change_threshold,
+            "max_entries": self.max_cache_entries,
         }
 
 class VotingCoordinator:
@@ -311,12 +381,72 @@ VIX > 25 时，最大 Strength 不得超过 50。
 【重要】返回纯 JSON，不要使用 ```json 代码块，不要有任何额外文本。
 返回格式：{{"strength": <整数>, "confidence": <0.0-1.0>, "direction": "<LONG 或 SHORT>", "reasoning": "<30 字内>"}}"""
     
+    # ------------------------------------------------------------------
+    # Task #9 (2026-05-31): 三级降级入口
+    #   Level 0: 多模型投票 (_run_full_voting)
+    #   Level 1: 单模型降级 (_run_single_model_vote, primary only, 30s)
+    #   Level 2: 纯技术信号   (_build_technical_only_result, conf ≤0.60)
+    # ------------------------------------------------------------------
     def run_voting(
         self,
         market_data: Dict[str, Any],
         external_votes: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
-        """盘前/盘后 LLM 多模型投票。盘中请使用 app.pipeline.signal_pipeline._generate_technical_signal()"""
+        """盘前/盘后 LLM 多模型投票 (含三级降级).
+
+        降级链路:
+        - Level 0: 正常多模型投票
+        - Level 1: 多模型超时/异常 → primary 单模型 (30s)
+        - Level 2: LLM 完全不可用 → 纯技术信号 (置信度封顶 0.60)
+        """
+        symbol = market_data.get("symbol") or market_data.get("ticker") or "UNKNOWN"
+
+        # Level 0: 正常多模型投票
+        try:
+            result = self._run_full_voting(market_data, external_votes)
+            if result is not None:
+                result.setdefault("degradation_level", 0)
+                return result
+            logger.warning(
+                f"[VotingCoordinator] {symbol} 多模型投票返回 None，进入降级"
+            )
+        except Exception as e:
+            logger.warning(
+                f"[VotingCoordinator] {symbol} 多模型投票失败：{e}，尝试单模型降级"
+            )
+
+        # Level 1: 单模型降级
+        try:
+            logger.info(f"[VotingCoordinator] {symbol} 降级到单模型投票")
+            result = self._run_single_model_vote(market_data)
+            if result is not None:
+                result["degraded"] = True
+                result["degradation_level"] = 1
+                result["degradation_reason"] = "多模型投票超时或异常，降级为单模型"
+                # 单模型置信度不超过 0.70
+                if "final_confidence" in result:
+                    result["final_confidence"] = min(
+                        float(result["final_confidence"] or 0.5), 0.70
+                    )
+                return result
+        except Exception as e:
+            logger.warning(f"[VotingCoordinator] {symbol} 单模型投票也失败：{e}")
+
+        # Level 2: 纯技术信号
+        logger.warning(
+            f"[VotingCoordinator] {symbol} LLM 完全不可用，降级为纯技术信号"
+        )
+        return self._build_technical_only_result(market_data)
+
+    def _run_full_voting(
+        self,
+        market_data: Dict[str, Any],
+        external_votes: Optional[List[Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
+        """Level 0: 多模型投票 (原 run_voting 主体逻辑)。
+
+        盘前/盘后 LLM 多模型投票。盘中请使用 app.pipeline.signal_pipeline._generate_technical_signal()。
+        """
         symbol = market_data.get("symbol") or market_data.get("ticker") or "UNKNOWN"
 
         # P1 缓存检查
@@ -855,7 +985,123 @@ VIX > 25 时，最大 Strength 不得超过 50。
             "spy_ma200_ratio": spy_ma200_ratio,
             "suggested_strategy": suggested_strategy,
         }
-    
+
+    # ------------------------------------------------------------------
+    # Task #9 (2026-05-31): 单模型降级 + 纯技术信号 fallback
+    # ------------------------------------------------------------------
+    def _get_primary_model_role(self) -> ModelRole:
+        """返回 primary 模型角色 (默认 Qwen, 不存在则取首个)。"""
+        if ModelRole.QWEN in self.model_agents:
+            return ModelRole.QWEN
+        return next(iter(self.model_agents.keys()))
+
+    def _run_single_model_vote(
+        self, market_data: Dict[str, Any]
+    ) -> Optional[Dict[str, Any]]:
+        """Level 1: 单模型降级投票。
+
+        仅使用 primary 模型 (默认 Qwen)，超时 30s (较多模型 90s 更短)。
+        任何异常/超时返回 None，走 Level 2。
+        """
+        primary_role = self._get_primary_model_role()
+        primary_agent = self.model_agents.get(primary_role)
+        if primary_agent is None:
+            return None
+
+        # 单模型降级也需要丰富上下文 (复用同一函数，失败不影响主流程)
+        try:
+            enriched = self._enrich_voting_context(market_data)
+        except Exception as e:
+            logger.debug(f"[VotingCoordinator] 单模型降级丰富上下文失败: {e}")
+            enriched = market_data
+
+        SINGLE_TIMEOUT = 30.0
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(primary_agent.generate_score, enriched)
+            try:
+                score = future.result(timeout=SINGLE_TIMEOUT)
+            except FuturesTimeoutError:
+                logger.warning(
+                    f"[VotingCoordinator] 单模型 {primary_role.value} 也超时(30s)"
+                )
+                return None
+            except Exception as e:
+                logger.warning(
+                    f"[VotingCoordinator] 单模型 {primary_role.value} 异常: {e}"
+                )
+                return None
+
+        symbol = enriched.get("symbol") or enriched.get("ticker") or "UNKNOWN"
+        is_neutral = 45 <= int(score.strength) <= 55
+        result = {
+            "symbol": symbol,
+            "direction": score.direction,
+            "final_strength": int(score.strength),
+            "final_confidence": float(score.confidence),
+            "consensus_level": float(score.confidence),
+            "std_dev": 0.0,
+            "model_scores": [
+                {
+                    "model_id": score.model_id,
+                    "strength": int(score.strength),
+                    "confidence": float(score.confidence),
+                    "direction": score.direction,
+                    "reasoning": score.reasoning,
+                }
+            ],
+            "is_neutral": is_neutral,
+            "timestamp": time.time(),
+        }
+        try:
+            result["position_suggestion"] = self.calculate_position_suggestion(result)
+        except Exception:
+            result["position_suggestion"] = {}
+        try:
+            result["market_regime"] = self.assess_market_regime(enriched)
+        except Exception:
+            result["market_regime"] = {"regime": "NORMAL"}
+        return result
+
+    def _build_technical_only_result(
+        self, market_data: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Level 2: 纯技术信号。置信度严格不超过 0.60。"""
+        symbol = market_data.get("symbol") or market_data.get("ticker") or "UNKNOWN"
+        score = self._generate_technical_fallback(market_data)
+        capped_conf = min(float(score.confidence), 0.60)
+        result = {
+            "symbol": symbol,
+            "direction": score.direction,
+            "final_strength": int(score.strength),
+            "final_confidence": capped_conf,
+            "consensus_level": capped_conf,
+            "std_dev": 0.0,
+            "model_scores": [
+                {
+                    "model_id": "technical_fallback",
+                    "strength": int(score.strength),
+                    "confidence": capped_conf,
+                    "direction": score.direction,
+                    "reasoning": score.reasoning,
+                }
+            ],
+            "is_neutral": (score.direction == "NEUTRAL"),
+            "degraded": True,
+            "degradation_level": 2,
+            "degradation_reason": "LLM 完全不可用，使用纯技术信号",
+            "reasoning": "技术面信号（无 LLM 增强）",
+            "timestamp": time.time(),
+        }
+        try:
+            result["position_suggestion"] = self.calculate_position_suggestion(result)
+        except Exception:
+            result["position_suggestion"] = {}
+        try:
+            result["market_regime"] = self.assess_market_regime(market_data)
+        except Exception:
+            result["market_regime"] = {"regime": "NORMAL"}
+        return result
+
     def _collect_scores_parallel(
         self,
         market_data: Dict[str, Any],

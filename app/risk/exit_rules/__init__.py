@@ -33,7 +33,7 @@ from .scale_out import ScaleOutRule, check_scale_out
 from .graduated_stop import GraduatedStopRule, check_graduated_stop
 from .trailing_stop import TrailingStopRule, check_trailing_stop
 from .time_stop import TimeStopRule, check_time_stop
-from .pre_close import PreCloseExitRule, check_pre_close_exit
+from .pre_close import PreCloseExitRule, check_pre_close_exit, check_adaptive_pre_close_exit
 from .thesis_failure import (
     ThesisFailureRule,
     THESIS_FAILURE_MAP,
@@ -71,6 +71,7 @@ __all__ = [
     "check_trailing_stop",
     "check_time_stop",
     "check_pre_close_exit",
+    "check_adaptive_pre_close_exit",
     "check_thesis_failure",
     # Task #48
     "ExitReason",

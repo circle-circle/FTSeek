@@ -55,7 +55,9 @@ def evaluate(ctx: SymbolContext, cfg: Dict[str, Any]) -> Optional[SignalCandidat
     orb_high = ctx.opening_high
     orb_low = ctx.opening_low
     orb_mid = (orb_high + orb_low) / 2.0
-    orb_width_pct = (orb_high - orb_low) / ctx.price * 100
+    # 使用开盘价计算区间宽度，避免突破后价格偏移导致宽度评估不一致
+    _base_price = ctx.open_price if ctx.open_price > 0 else ctx.price
+    orb_width_pct = (orb_high - orb_low) / _base_price * 100
 
     # ── 防御: 区间宽度过滤 ──
     min_width_pct = cfg.get("min_range_width_pct", 0.3)
@@ -143,11 +145,21 @@ def evaluate(ctx: SymbolContext, cfg: Dict[str, Any]) -> Optional[SignalCandidat
     sl_distance = abs(price - stop_loss)
     if sl_distance <= 0:
         return None
-    # 最小盈亏比 1.5:1 (止盈由 trailing stop 管理, 这里只做下限检查)
+
     min_rr = cfg.get("min_risk_reward", 1.5)
-    # 估算 TP = 2x SL distance (trailing stop 通常能拿到更多)
-    est_tp_distance = sl_distance * 2.0
-    if est_tp_distance / sl_distance < min_rr:
+
+    # 估算潜在收益: 使用开盘区间宽度作为最小目标距离
+    # 理由: 突破后至少应该走出一个区间宽度的距离
+    orb_range = orb_high - orb_low
+    est_tp_distance = max(orb_range, sl_distance)  # 至少等于区间宽度或SL距离
+
+    actual_rr = est_tp_distance / sl_distance
+    if actual_rr < min_rr:
+        logger.debug(
+            f"[ORB] {ctx.symbol} 盈亏比不足: "
+            f"R/R={actual_rr:.2f} < {min_rr} "
+            f"(est_tp={est_tp_distance:.3f}, sl={sl_distance:.3f})"
+        )
         return None
 
     # ── 输出 ──

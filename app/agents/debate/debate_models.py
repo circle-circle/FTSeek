@@ -59,7 +59,11 @@ class DebateSummary:
     recommendation: str  # "STRONG_BULL" / "WEAK_BULL" / "NEUTRAL" / "WEAK_BEAR" / "STRONG_BEAR"
     debate_rounds: List[DebateRound] = field(default_factory=list)  # 辩论过程记录
     timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
-    
+    # Task #9 (2026-05-31): 降级标记
+    degraded: bool = False                # True = 当次辩论失败, 走降级路径
+    degradation_reason: str = ""          # 降级原因
+    verdict_age_hours: float = 0.0        # 若复用历史结论, 距今小时数
+
     def to_dict(self) -> dict:
         """序列化为字典"""
         return {
@@ -71,4 +75,7 @@ class DebateSummary:
             "recommendation": self.recommendation,
             "rounds": [r.to_dict() for r in self.debate_rounds],
             "timestamp": self.timestamp,
+            "degraded": self.degraded,
+            "degradation_reason": self.degradation_reason,
+            "verdict_age_hours": round(self.verdict_age_hours, 2),
         }

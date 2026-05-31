@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import time
 from datetime import datetime
@@ -26,6 +27,192 @@ logger = logging.getLogger(__name__)
 
 # 期权价格获取失败计数器 {option_code: fail_count}
 _opt_price_fail_count: Dict[str, int] = {}
+
+# ============================================================
+# Phase 4 (2026-05-31): ExitRuleDispatcher 正式路由集成
+#   - 由 unified_config.yaml::exit_rules_controller 控制
+#   - 触发后通过 _execute_close 走与 legacy 完全相同的下单/DB 写入路径
+#   - 异常或未触发的仓位仍由 legacy PositionExitMonitor.scan_positions 处理
+# ============================================================
+
+# Dispatcher 规则名 -> legacy ExitReason 映射 (供 _execute_close 内 reason_map 使用)
+_DISPATCHER_REASON_MAP: Dict[str, str] = {
+    "flash_exit": "FLASH_EXIT",
+    "pre_close": "PRE_CLOSE_EXIT",
+    "circuit_breaker": "HARD_STOP",
+    "earnings_guard": "HARD_STOP",
+    "trailing_stop": "CHANDELIER",
+    "day_trade": "TIME_STOP",
+    "time_decay": "TIME_STOP",
+    "scale_out": "SCALE_OUT",
+}
+
+
+def _get_exit_controller_config() -> Dict[str, Any]:
+    """读取 unified_config.yaml::exit_rules_controller (best-effort)"""
+    try:
+        from app.core.config_container import get_config
+        cfg = get_config()
+        if cfg is None:
+            return {}
+        section = cfg.get_section("exit_rules_controller", {}) or {}
+        if not isinstance(section, dict):
+            return {}
+        return section
+    except Exception as e:
+        logger.debug(f"[ExitDispatcher] 读取 exit_rules_controller 失败: {e}")
+        return {}
+
+
+def _build_exit_dispatcher(scheduler):
+    """懒构建 ExitRuleDispatcher 单例并缓存到 scheduler"""
+    cached = getattr(scheduler, "_exit_dispatcher", None)
+    if cached is not None:
+        return cached
+    try:
+        from app.risk.exit_rule_dispatcher import get_exit_rule_dispatcher
+        from app.risk.exit_policy_guardian import get_guardian
+        guardian = get_guardian()  # 单例: 内部已 load()
+        policy = getattr(guardian, "policy", None) or {}
+        dispatcher = get_exit_rule_dispatcher(policy if isinstance(policy, dict) else {})
+        scheduler._exit_dispatcher = dispatcher
+        if dispatcher is not None:
+            n_rules = len(getattr(dispatcher, "exit_rules", {}) or {})
+            logger.info(
+                f"[ExitDispatcher] ExitRuleDispatcher 已初始化 (主路径, 规则数={n_rules})"
+            )
+        return dispatcher
+    except Exception as e:
+        logger.warning(f"[ExitDispatcher] 初始化失败: {e}")
+        return None
+
+
+def _build_dispatcher_position_dict(position) -> Dict[str, Any]:
+    """将 Position 对象转为 dispatcher.evaluate() 期望的 dict"""
+    direction_str = "LONG"
+    try:
+        d = getattr(position, "direction", None)
+        if d is not None:
+            direction_str = d.value if hasattr(d, "value") else str(d)
+    except Exception:
+        pass
+    holding_hours = 0.0
+    try:
+        if getattr(position, "entry_time", None):
+            from app.risk.position_exit_monitor import get_market_hours_us
+            holding_hours = get_market_hours_us(position.entry_time, now_et())
+    except Exception:
+        pass
+    return {
+        "symbol": getattr(position, "symbol", ""),
+        "position_id": getattr(position, "position_id", "") or getattr(position, "symbol", ""),
+        "entry_price": float(getattr(position, "avg_entry_price", 0) or 0),
+        "direction": direction_str,
+        "holding_hours": holding_hours,
+        "owner_strategy": (
+            getattr(position, "owner_strategy", "")
+            or getattr(position, "strategy_id", "")
+            or "main"
+        ),
+    }
+
+
+def _build_dispatcher_market_data(scheduler, position, current_price: float) -> Dict[str, Any]:
+    """为 dispatcher.evaluate() 构建 market_data 字典 (ATR 来自 ATRProvider，Task #4)"""
+    md: Dict[str, Any] = {"current_price": float(current_price)}
+
+    # ATR 单一真相源
+    try:
+        from app.core.di_container import get_di_container
+        atr_provider = get_di_container().atr_provider()
+        if atr_provider is not None:
+            atr_val = atr_provider.get_atr(position.symbol)
+            if atr_val is not None and float(atr_val) > 0:
+                atr_val = float(atr_val)
+                # Apply session-aware blending (matching legacy path behavior)
+                try:
+                    from app.risk.position_exit_monitor import get_market_hours_us
+                    if hasattr(position, 'entry_time') and position.entry_time:
+                        hours = get_market_hours_us(position.entry_time, now_et())
+                        # Session ratio: 0→1 as market progresses from open to close
+                        session_ratio = min(1.0, hours / 6.5)  # 6.5h trading day
+                        # Apply cosine smoothing (matching progressive_trailing.session_blend_window_minutes)
+                        blend_minutes = 90.0  # from exit_policy.yaml progressive_trailing
+                        blend_hours = blend_minutes / 60.0
+                        if hours < blend_hours:
+                            # Smooth transition from entry session ratio to current
+                            t = hours / blend_hours
+                            smooth = (1 - math.cos(t * math.pi)) / 2
+                            session_ratio = smooth * session_ratio + (1 - smooth) * 1.0
+                        effective_atr = atr_val * max(0.35, session_ratio)  # floor at 0.35
+                        md["atr"] = float(effective_atr)
+                        md["atr_raw"] = float(atr_val)
+                    else:
+                        md["atr"] = float(atr_val)
+                except Exception:
+                    md["atr"] = float(atr_val)
+    except Exception as e:
+        logger.debug(f"[ExitDispatcher] {position.symbol} ATR 获取失败: {e}")
+
+    # minutes_to_close (供 pre_close 自适应规则使用)
+    try:
+        now = now_et()
+        close_dt = now.replace(hour=16, minute=0, second=0, microsecond=0)
+        delta_min = (close_dt - now).total_seconds() / 60.0
+        md["minutes_to_close"] = delta_min
+    except Exception:
+        pass
+
+    # daily_loss_pct (供 circuit_breaker 使用，best-effort)
+    try:
+        cap_safety = getattr(scheduler, "capital_safety", None)
+        if cap_safety is not None and hasattr(cap_safety, "get_today_drawdown_pct"):
+            dl = cap_safety.get_today_drawdown_pct()
+            if dl is not None:
+                md["daily_loss_pct"] = float(dl)
+    except Exception:
+        pass
+
+    return md
+
+
+def _build_exit_reason_dict(position, decision, current_price: float) -> Dict[str, Any]:
+    """将 ExitDecision 转为 _execute_close 期望的 reason_dict"""
+    reason_key = _DISPATCHER_REASON_MAP.get(decision.rule_name, "ATR_STOP")
+    reason_dict: Dict[str, Any] = {
+        "reason": reason_key,
+        "exit_price": decision.exit_price or current_price,
+        "rule_name": decision.rule_name,
+        "dispatcher_reason": decision.reason,
+    }
+    md = decision.metadata or {}
+    size_int = int(getattr(position, "size", 0) or 0)
+
+    # scale_out: 部分平仓 (close_pct: 25 表示平 25%)
+    if decision.rule_name == "scale_out":
+        try:
+            close_pct = float(md.get("close_pct") or 0)
+            if 0 < close_pct < 100 and size_int > 0:
+                reason_dict["close_qty"] = max(1, int(size_int * close_pct / 100.0))
+        except Exception:
+            pass
+    # pre_close: 自适应分级 close_ratio (0.0~1.0)
+    elif decision.rule_name == "pre_close":
+        try:
+            cr = md.get("close_ratio")
+            if cr is not None:
+                cr_f = float(cr)
+                if 0 < cr_f < 1.0 and size_int > 0:
+                    reason_dict["close_qty"] = max(1, int(size_int * cr_f))
+        except Exception:
+            pass
+    # For pre_close with close_ratio < 1.0, use PARTIAL reason
+    if decision.rule_name == "pre_close":
+        md2 = decision.metadata or {}
+        cr = float(md2.get("close_ratio", 1.0) or 1.0)
+        if cr < 1.0:
+            reason_dict["reason"] = "PRE_CLOSE_EXIT_PARTIAL"
+    return reason_dict
 
 
 def _notify_risk_blocked(scheduler, symbol: str, reason: str):
@@ -690,7 +877,12 @@ def _check_positions(scheduler):
         meta = getattr(position, "metadata", {}) or {}
         if meta.get("is_option"): continue
         # broker-synced 仓位: 跳过 exit_monitor，但加入 trail-only 列表
-        strategy = getattr(position, 'strategy_id', '') or ''
+        # Task #7 (2026-05-31): owner_strategy 优先, strategy_id 仅作向后兼容 fallback
+        strategy = (
+            getattr(position, 'owner_strategy', '')
+            or getattr(position, 'strategy_id', '')
+            or ''
+        )
         if strategy in ('futu_sync',):
             trail_only_positions.append(position)
             continue
@@ -765,6 +957,7 @@ def _check_positions(scheduler):
                 "ATR_STOP": ExitReason.TRAILING_STOP, "CHANDELIER": ExitReason.TRAILING_STOP,
                 "BREAKEVEN": ExitReason.BREAKEVEN_STOP, "TIME_STOP": ExitReason.TIME_STOP,
                 "SCALE_OUT": ExitReason.SCALE_OUT, "PRE_CLOSE_EXIT": ExitReason.PRE_CLOSE_EXIT,
+                "PRE_CLOSE_EXIT_PARTIAL": ExitReason.PRE_CLOSE_EXIT,
                 "TECHNICAL_BREACH": ExitReason.STRUCTURE_EXIT}
             er = reason_map.get(reason.get("reason", ""), ExitReason.TRAILING_STOP)
             cp = reason.get("exit_price", pos.avg_entry_price)
@@ -800,6 +993,97 @@ def _check_positions(scheduler):
         from app.risk.earnings_risk_guard import EarningsRiskGuard
         earnings_guard = EarningsRiskGuard()
     except Exception: pass
+
+    # ============================================================
+    # Phase 4 (2026-05-31): ExitRuleDispatcher 主路径路由
+    #   - dispatcher_enabled=True & shadow_mode=False 时先走 dispatcher
+    #   - 已平仓的 symbol 从 monitored_positions 中移除避免重复触发
+    #   - dispatcher 异常且 fallback_on_error=True 时 → 全量交 legacy 处理
+    # ============================================================
+    controller_cfg = _get_exit_controller_config()
+    dispatcher_enabled = bool(controller_cfg.get("dispatcher_enabled", False))
+    shadow_mode_ctrl = bool(controller_cfg.get("shadow_mode", True))
+    fallback_on_error = bool(controller_cfg.get("fallback_on_error", True))
+    log_suppressed = bool(controller_cfg.get("log_suppressed_rules", True))
+    monitor_comparison = bool(controller_cfg.get("monitor_comparison", False))
+
+    dispatcher_closed_symbols = set()
+    if dispatcher_enabled:
+        dispatcher = _build_exit_dispatcher(scheduler)
+        if dispatcher is None:
+            if not fallback_on_error:
+                logger.error("[ExitDispatcher] 不可用且 fallback_on_error=False, 跳过本轮")
+                return
+            logger.warning("[ExitDispatcher] 不可用，回退到 legacy 路径")
+        else:
+            for position in list(monitored_positions):
+                try:
+                    cur_price = price_cache.get(position.symbol)
+                    if not cur_price or cur_price <= 0:
+                        continue
+                    pos_dict = _build_dispatcher_position_dict(position)
+                    md_dict = _build_dispatcher_market_data(scheduler, position, cur_price)
+                    trail_state = getattr(position, "trail_state", {}) or {}
+                    decision = dispatcher.evaluate(pos_dict, md_dict, trail_state)
+                    if not decision or not decision.should_exit:
+                        continue
+
+                    # 互斥压制日志
+                    if log_suppressed and decision.suppressed_rules:
+                        logger.info(
+                            f"[ExitDispatcher·互斥] {position.symbol} 激活={decision.rule_name} "
+                            f"压制={decision.suppressed_rules}"
+                        )
+
+                    if shadow_mode_ctrl:
+                        # Shadow 模式: 仅记录决策, 不实际执行
+                        logger.info(
+                            f"[ExitDispatcher·Shadow] {position.symbol} 本应触发: "
+                            f"rule={decision.rule_name} reason={decision.reason}"
+                        )
+                        continue
+
+                    # 正式模式: 执行平仓
+                    reason_dict = _build_exit_reason_dict(position, decision, cur_price)
+                    if _execute_close(position, reason_dict):
+                        # Check if this was a partial close (position still exists)
+                        _is_partial_close = reason_dict.get("close_qty", 0) > 0
+                        if _is_partial_close:
+                            # Partial close: set cooldown to prevent re-fire, but don't
+                            # add to dispatcher_closed_symbols (position still exists)
+                            if hasattr(exit_monitor, '_exit_cooldowns'):
+                                exit_monitor._exit_cooldowns[position.symbol] = time.time()
+                            # Update trail state with trigger time to prevent legacy re-fire
+                            if isinstance(trail_state, dict):
+                                trail_state["last_trigger_time"] = time.time()
+                        else:
+                            dispatcher_closed_symbols.add(position.symbol)
+                        logger.warning(
+                            f"[ExitDispatcher·执行] {position.symbol} | rule={decision.rule_name} | "
+                            f"price=${reason_dict['exit_price']} | {decision.reason}"
+                            f"{' | PARTIAL' if _is_partial_close else ''}"
+                        )
+                        if monitor_comparison:
+                            logger.info(
+                                f"[ExitDispatcher·对比] {position.symbol} dispatcher触发={decision.rule_name} | "
+                                f"同轮 legacy 将在 scan_positions 跳过该仓位"
+                            )
+                except Exception as ee:
+                    logger.error(
+                        f"[ExitDispatcher] {getattr(position, 'symbol', '?')} 评估/执行异常: {ee}",
+                        exc_info=True,
+                    )
+                    if not fallback_on_error:
+                        # 严格模式: 不 fallback, 跳过该仓位继续下一个
+                        continue
+                    logger.warning(
+                        f"[ExitDispatcher] {getattr(position, 'symbol', '?')} 异常已忽略，该仓位交 legacy 处理"
+                    )
+
+    # 已被 dispatcher 平仓的仓位不再交 legacy，避免重复触发
+    if dispatcher_closed_symbols:
+        monitored_positions = [p for p in monitored_positions if p.symbol not in dispatcher_closed_symbols]
+
     try:
         closed = exit_monitor.scan_positions(positions=monitored_positions, get_price_fn=_get_price,
             execute_close_fn=_execute_close, policy_guardian=policy_guardian, earnings_guard=earnings_guard)

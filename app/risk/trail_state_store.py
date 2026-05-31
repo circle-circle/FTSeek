@@ -55,6 +55,25 @@ class TrailStateStore:
                     updated_at  TEXT NOT NULL
                 )
             """)
+            # Phase 1 (2026-05-31): 增加 position_id 粒度的 trail_state_snapshot
+            # 与上表 trail_state(symbol 为主键) 互补：snapshot 以 position_id 为主键,
+            # 记录 trail_high/low / 激活时间 / 触发时间 等关键字段，供启动息复。
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS trail_state_snapshot (
+                    position_id        TEXT PRIMARY KEY,
+                    symbol             TEXT,
+                    trail_status       TEXT,
+                    trail_high         REAL,
+                    trail_low          REAL,
+                    activation_time    TEXT,
+                    last_update_time   TEXT,
+                    close_trigger_time TEXT
+                )
+            """)
+            try:
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_trail_snap_symbol ON trail_state_snapshot(symbol)")
+            except Exception:
+                pass
             conn.commit()
             conn.close()
         except Exception as e:
@@ -70,9 +89,123 @@ class TrailStateStore:
             )
             conn.commit()
             conn.close()
+            # Phase 1: 同步写 trail_state_snapshot (错误不影响主流程)
+            try:
+                self._save_snapshot(symbol, state)
+            except Exception as _se:
+                logger.debug(f"[TrailStateStore] snapshot 同步失败 {symbol}: {_se}")
             return True
         except Exception as e:
             logger.error(f"[TrailStateStore] save({symbol}) 失败: {e}")
+            return False
+
+    # ---- Phase 1 (2026-05-31): position_id 粒度的快照 ----
+
+    def _save_snapshot(self, symbol: str, state: Dict[str, Any]) -> None:
+        """同步写入 trail_state_snapshot (position_id 主键)"""
+        position_id = (
+            state.get("position_id")
+            or state.get("pid")
+            or symbol  # fallback: 表结构 PRIMARY KEY 要求非空
+        )
+        trail_status = state.get("trail_status") or (
+            "ACTIVE" if state.get("dt_profit_lock_activated") or state.get("dt_breakeven_activated")
+            else "PENDING"
+        )
+        trail_high = state.get("trail_high") or state.get("highest_price")
+        trail_low = state.get("trail_low") or state.get("lowest_price")
+        activation_time = state.get("activation_time") or state.get("entry_time_ts")
+        last_update_time = state.get("last_update_time") or datetime.now().isoformat()
+        close_trigger_time = state.get("close_trigger_time") or state.get("last_trigger_time")
+
+        conn = self._get_conn()
+        try:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO trail_state_snapshot (
+                    position_id, symbol, trail_status, trail_high, trail_low,
+                    activation_time, last_update_time, close_trigger_time
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    str(position_id), symbol, str(trail_status),
+                    float(trail_high) if isinstance(trail_high, (int, float)) else None,
+                    float(trail_low) if isinstance(trail_low, (int, float)) else None,
+                    str(activation_time) if activation_time is not None else None,
+                    str(last_update_time),
+                    str(close_trigger_time) if close_trigger_time is not None else None,
+                ),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def load_snapshot(self, position_id: str) -> Optional[Dict[str, Any]]:
+        """按 position_id 读回 trail_state_snapshot (启动息复用)"""
+        try:
+            conn = self._get_conn()
+            row = conn.execute(
+                """SELECT position_id, symbol, trail_status, trail_high, trail_low,
+                          activation_time, last_update_time, close_trigger_time
+                   FROM trail_state_snapshot WHERE position_id = ?""",
+                (position_id,),
+            ).fetchone()
+            conn.close()
+            if not row:
+                return None
+            return {
+                "position_id": row[0],
+                "symbol": row[1],
+                "trail_status": row[2],
+                "trail_high": row[3],
+                "trail_low": row[4],
+                "activation_time": row[5],
+                "last_update_time": row[6],
+                "close_trigger_time": row[7],
+            }
+        except Exception as e:
+            logger.error(f"[TrailStateStore] load_snapshot({position_id}) 失败: {e}")
+            return None
+
+    def load_all_snapshots(self) -> List[Dict[str, Any]]:
+        """加载全部 snapshot (进程启动时恢复)"""
+        out: List[Dict[str, Any]] = []
+        try:
+            conn = self._get_conn()
+            rows = conn.execute(
+                """SELECT position_id, symbol, trail_status, trail_high, trail_low,
+                          activation_time, last_update_time, close_trigger_time
+                   FROM trail_state_snapshot"""
+            ).fetchall()
+            conn.close()
+            for r in rows:
+                out.append({
+                    "position_id": r[0],
+                    "symbol": r[1],
+                    "trail_status": r[2],
+                    "trail_high": r[3],
+                    "trail_low": r[4],
+                    "activation_time": r[5],
+                    "last_update_time": r[6],
+                    "close_trigger_time": r[7],
+                })
+        except Exception as e:
+            logger.error(f"[TrailStateStore] load_all_snapshots 失败: {e}")
+        return out
+
+    def mark_close_triggered(self, position_id: str, trigger_time: Optional[str] = None) -> bool:
+        """标记 close 触发时间 (供退出路径调用)"""
+        try:
+            conn = self._get_conn()
+            conn.execute(
+                "UPDATE trail_state_snapshot SET close_trigger_time = ?, last_update_time = ? WHERE position_id = ?",
+                (trigger_time or datetime.now().isoformat(), datetime.now().isoformat(), position_id),
+            )
+            conn.commit()
+            conn.close()
+            return True
+        except Exception as e:
+            logger.error(f"[TrailStateStore] mark_close_triggered({position_id}) 失败: {e}")
             return False
 
     def load(self, symbol: str) -> Optional[Dict[str, Any]]:

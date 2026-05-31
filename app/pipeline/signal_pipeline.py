@@ -295,10 +295,10 @@ def _run_signal_scan_impl(scheduler):
         from app.us_pipeline.battle_plan_manager import USBattlePlanManager
         plan = USBattlePlanManager().get_plan()
         if plan.get("market_regime") == "DEGRADED":
-            scheduler.MIN_CONFIDENCE = max(0.40, scheduler.MIN_CONFIDENCE - 0.10)
-            scheduler.MIN_SIGNAL_STRENGTH = max(40, _saved_min_strength - 10)
+            scheduler.MIN_CONFIDENCE = min(0.90, scheduler.MIN_CONFIDENCE + 0.05)
+            scheduler.MIN_SIGNAL_STRENGTH = min(99, _saved_min_strength + 5)
             logger.info(
-                "[降级模式] 阈值下调: 置信度 %.2f→%.2f | 信号分 %d→%d",
+                "[降级模式] 阈值上调(更保守): 置信度 %.2f→%.2f | 信号分 %d→%d",
                 _saved_min_confidence, scheduler.MIN_CONFIDENCE,
                 _saved_min_strength, scheduler.MIN_SIGNAL_STRENGTH,
             )
@@ -676,14 +676,41 @@ def _execute_portfolio_plan(scheduler, candidates: list, vix: float):
 #  核心决策管线: _process_symbol_impl
 # ============================================================
 
+_LEGACY_PIPELINE_WARNED = False  # 进程内仅告警一次, 避免日志洪流
+
+
 def _use_new_pipeline() -> bool:
-    """检查是否启用模块化 Stage 管线"""
+    """信号管线路由决策
+
+    2026-05-31 (Task #7): 默认使用 CRA 新管线 (modular stages),
+    旧管线保留为 fallback (仅当配置显式关闭时启用)。
+
+    配置优先级 (任一为 False 时禁用新管线):
+      1. pipeline.use_modular_stages (官方配置, 默认 True)
+      2. pipeline.use_new_stages      (旧字段, 向后兼容, 默认 True)
+
+    使用旧管线时输出 DEPRECATED 警告 (进程内仅一次)。
+    """
+    global _LEGACY_PIPELINE_WARNED
     try:
         from app.core.config_container import get_config
         cfg = get_config()
-        return cfg.get_dotted("pipeline.use_new_stages", False)
+        # 新字段优先, 缺省回退到旧字段; 两者均默认 True (CRA 优先)
+        modular = cfg.get_dotted("pipeline.use_modular_stages", None)
+        if modular is None:
+            modular = cfg.get_dotted("pipeline.use_new_stages", True)
+        modular = bool(modular)
     except Exception:
-        return False
+        # 配置读取异常时也默认走 CRA, 防止退化为旧链路
+        modular = True
+
+    if not modular and not _LEGACY_PIPELINE_WARNED:
+        logger.warning(
+            "[DEPRECATED] 正在使用旧信号管线, 建议切换到 CRA 模式 "
+            "(pipeline.use_modular_stages=true). 旧管线已进入退役窗口, 后续版本将移除."
+        )
+        _LEGACY_PIPELINE_WARNED = True
+    return modular
 
 
 def _process_symbol_new_pipeline(scheduler, symbol: str, vix: float,
@@ -871,7 +898,7 @@ def _process_symbol_impl(scheduler, symbol: str, vix: float, spy_context: Dict[s
     """P3 压缩管线 (2026-04-29): 宏观闸门 → 信号生成 → 仓位映射
 
     三层决策:
-    1. 宏观闸门: VIX>30 / SPY<MA200 → 直接拒绝
+    1. 宏观闸门: VIX>=25 → 直接拒绝; SPY<MA200 → context flag (LONG 由 pre_trade_check 拦截)
     2. 信号生成: 盘中纯技术面 / 盘前盘后 LLM 投票
     3. 仓位映射: ATR → 仓位大小，不做信号二次衰减
 
@@ -889,14 +916,20 @@ def _process_symbol_impl(scheduler, symbol: str, vix: float, spy_context: Dict[s
     logger.info(f"[决策] 开始处理 {symbol}")
 
     # ── Layer 1: 宏观闸门 (P3 2026-04-29) ──
-    if vix > 30:
-        logger.warning(f"[宏观闸门] VIX={vix:.1f}>30, 禁止开仓")
+    # VIX>=25: 硬拦截 (与 pre_trade_check.py P1 gate 对齐)
+    if vix >= 25:
+        logger.warning(f"[宏观闸门] VIX={vix:.1f}>=25, 禁止开仓")
         return
+
+    # SPY < MA200: 仅设置 context flag, 不做硬拦截。
+    # 方向感知的 LONG-only 拦截由 pre_trade_check.py P1 gate 权威执行,
+    # SHORT 候选不受此限制。
     spy_price = spy_context.get("spy_price", 0)
     spy_ma200 = spy_context.get("spy_ma200", 0)
-    if spy_price > 0 and spy_ma200 > 0 and spy_price < spy_ma200:
-        logger.warning(f"[宏观闸门] SPY ${spy_price:.2f} < MA200 ${spy_ma200:.2f}, 禁止开仓")
-        return
+    spy_below_ma200 = bool(spy_price > 0 and spy_ma200 > 0 and spy_price < spy_ma200)
+    if spy_below_ma200:
+        logger.info(f"[宏观闸门] SPY ${spy_price:.2f} < MA200 ${spy_ma200:.2f}, "
+                    f"设置 spy_below_ma200 flag (LONG 由 pre_trade_check 拦截, SHORT 放行)")
 
     # Step1: 获取行情上下文
     context = scheduler.market_data.get_full_market_context(symbol)
@@ -907,6 +940,9 @@ def _process_symbol_impl(scheduler, symbol: str, vix: float, spy_context: Dict[s
         return
 
     context["symbol"] = symbol
+    context["spy_below_ma200"] = spy_below_ma200
+    context["spy_price"] = spy_price
+    context["spy_ma200"] = spy_ma200
 
     # 动态成本参数注入
     price = context.get("price", 0)
@@ -1234,10 +1270,37 @@ def _process_symbol_impl(scheduler, symbol: str, vix: float, spy_context: Dict[s
             confidence=signal.confidence, direction=direction)
         return
 
-    if signal.confidence < scheduler.MIN_CONFIDENCE:
-        logger.info(f"[决策] {symbol} 置信度不足 ({signal.confidence:.2f}<{scheduler.MIN_CONFIDENCE})，放弃")
+    # ── Degradation-aware + direction-aware confidence gate ──
+    # Base threshold: scheduler.MIN_CONFIDENCE (已含 DEGRADED 模式上调)
+    # degraded_confidence_offset: 降级信号额外降低阈值 (config 默认 -0.1)
+    # direction_bias: LONG 需 0.75, SHORT 需 0.60 (从 yaml 读取)
+    effective_min_conf = scheduler.MIN_CONFIDENCE
+    try:
+        from app.core.config_container import get_config as _get_cfg
+        _cfg = _get_cfg()
+    except Exception:
+        _cfg = None
+
+    # Degraded offset: 降级信号允许更低的置信度
+    _sig_meta = signal.metadata if isinstance(signal.metadata, dict) else {}
+    is_degraded = bool(_sig_meta.get("degraded", False))
+    if is_degraded and _cfg:
+        degraded_offset = float(_cfg.get_dotted('strategies.defaults.degraded_confidence_offset', -0.1) or -0.1)
+        effective_min_conf += degraded_offset
+
+    # Direction-aware threshold: 从 yaml 的 direction_bias 读取方向专用阈值
+    if _cfg:
+        direction_str = signal.direction.value if hasattr(signal.direction, 'value') else str(signal.direction)
+        dir_bias_key = f'strategies.defaults.direction_bias.{direction_str}.min_confidence'
+        dir_threshold = _cfg.get_dotted(dir_bias_key, None)
+        if dir_threshold is not None:
+            effective_min_conf = max(effective_min_conf, float(dir_threshold))
+
+    if signal.confidence < effective_min_conf:
+        logger.info(f"[决策] {symbol} 置信度不足 ({signal.confidence:.2f}<{effective_min_conf:.2f}, "
+                    f"base={scheduler.MIN_CONFIDENCE:.2f}, degraded={is_degraded})，放弃")
         get_rejection_logger().record(symbol,
-            f"confidence={signal.confidence:.2f}<{scheduler.MIN_CONFIDENCE}",
+            f"confidence={signal.confidence:.2f}<{effective_min_conf:.2f}",
             "CONFIDENCE_LOW", strength=signal.strength,
             confidence=signal.confidence, direction=direction)
         return
@@ -1357,6 +1420,18 @@ def _build_signal_from_vote(scheduler, symbol: str, vote_result: Dict[str, Any],
     direction_str = vote_result.get("direction", "LONG")
     direction = Direction.LONG if direction_str == "LONG" else Direction.SHORT
 
+    # Task #9 (2026-05-31): 降级信号置信度封顶 0.60
+    is_degraded = bool(vote_result.get("degraded"))
+    degradation_level = vote_result.get("degradation_level", 0)
+    degradation_reason = vote_result.get("degradation_reason", "")
+    raw_confidence = float(vote_result.get("final_confidence", 0.5) or 0.5)
+    if is_degraded and raw_confidence > 0.60:
+        logger.warning(
+            f"[降级信号] {symbol} confidence {raw_confidence:.2f} → 0.60 "
+            f"(level={degradation_level}, reason={degradation_reason})"
+        )
+        raw_confidence = 0.60
+
     regime_raw = vote_result.get("market_regime", context.get("market_regime", "RANGE"))
     # market_regime 可能来自多个路径:
     # 1. vote_result["market_regime"] 可能是字符串 (如 "TREND_UP") 或字典 (如 {"regime": "NORMAL", ...})
@@ -1417,7 +1492,7 @@ def _build_signal_from_vote(scheduler, symbol: str, vote_result: Dict[str, Any],
         symbol=symbol,
         direction=direction,
         strength=int(vote_result.get("final_strength", 50)),
-        confidence=float(vote_result.get("final_confidence", 0.5)),
+        confidence=float(raw_confidence),
         expected_horizon=60 * 24,
         volatility_fit=True,
         market_regime=regime,
@@ -1437,6 +1512,10 @@ def _build_signal_from_vote(scheduler, symbol: str, vote_result: Dict[str, Any],
             "_factor_detail": vote_result.get("_factor_detail", {}) or {},
             # P1 VWAP Gate (2026-05-24): 透传 VWAP 偏离度供 pre_trade_check 过滤低强度多头
             "vwap_deviation": context.get("ticker_vwap_deviation"),
+            # Task #9 (2026-05-31): 降级标记透传供下游使用
+            "degraded": is_degraded,
+            "degradation_level": degradation_level,
+            "degradation_reason": degradation_reason,
         },
     )
     return signal

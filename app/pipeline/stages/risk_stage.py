@@ -144,6 +144,24 @@ def process(candidate: SignalCandidate,
     except Exception as e:
         logger.debug(f"[RiskStage] trend_first 持仓限制检查异常(放行): {e}")
 
+    # ── 0.07 全局持仓总数检查 ──
+    # 防止 ORB(max=3) + TrendFirst(max=3) + 其他策略 总和超过全局上限
+    if position_store is not None:
+        try:
+            from app.core.config_container import get_config
+            _raw_max = get_config().get_dotted('strategies.defaults.max_positions', None) if get_config() else None
+            global_max = int(_raw_max) if _raw_max is not None else 5
+            all_positions = position_store.all() if hasattr(position_store, 'all') else []
+            total_count = len(list(all_positions))
+            if total_count >= global_max:
+                logger.warning(
+                    f"[RiskStage] {symbol} 全局持仓已达上限 "
+                    f"({total_count}/{global_max}), 拒绝入场"
+                )
+                return None
+        except Exception as e:
+            logger.debug(f"[RiskStage] 全局持仓检查异常: {e}")
+
     # ── 0.1 流动性检查 (P1 2026-05-30) ──
     # 辅助决策: spread 过大拒绝入场, spread 偏大仅降权
     liquidity = _check_liquidity(symbol)
@@ -242,8 +260,16 @@ def process(candidate: SignalCandidate,
         if _ptp and float(_ptp) > 0:
             plan_tp = float(_ptp)
 
-    stop_loss = price * 0.94  # -6% 默认
-    take_profit_1 = price * 1.06  # +6% 默认
+    # SL/TP defaults from config (risk.dynamic_exit.default), fallback to -4.5% / +2.5%
+    try:
+        from app.core.config_container import get_config as _get_risk_cfg
+        _risk_cfg = _get_risk_cfg()
+        _sl_pct = float(_risk_cfg.get_dotted('risk.dynamic_exit.default.stop_loss', -0.045) or -0.045)
+        _tp_pct = float(_risk_cfg.get_dotted('risk.dynamic_exit.default.take_profit', 0.025) or 0.025)
+    except Exception:
+        _sl_pct, _tp_pct = -0.045, 0.025
+    stop_loss = price * (1 + _sl_pct)
+    take_profit_1 = price * (1 + _tp_pct)
 
     if plan_sl:
         # 作战计划指定了固定止损/止盈

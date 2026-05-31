@@ -79,6 +79,25 @@ CONSISTENCY_RULES = [
     },
 ]
 
+# ============================================================================
+# 废弃配置字段 (Task #7 2026-05-31)
+# ============================================================================
+# 启动时若发现这些 key 仍存在于 unified_config.yaml, 输出 WARNING 但不阻断启动
+# 格式: "<dotted.path>": "<实际生效路径说明>"
+DEPRECATED_FIELDS: Dict[str, str] = {
+    "llm_models": (
+        "已移至 llm.models / llm.features (本文件) 与 "
+        "app/llm/multi_model_client.py:DEFAULT_MODEL_FOR (别名兜底)"
+    ),
+    "strategies.defaults.signal_cooldown_seconds": (
+        "已改为 strategy.signal_cooldown (本文件 SoT)"
+    ),
+    "scheduler.min_confidence": (
+        "已改为 risk.signal_quality.min_confidence (SSOT) + "
+        "app/risk/min_confidence_resolver.py:MinConfidenceResolver"
+    ),
+}
+
 
 class ValidationResult:
     """校验结果"""
@@ -131,6 +150,7 @@ class ConfigValidator:
         self._check_types(result)
         self._check_ranges(result)
         self._check_consistency(result)
+        self._check_deprecated_fields(result)
 
         # 日志输出
         level = logging.ERROR if result.errors else logging.WARNING if result.warnings else logging.INFO
@@ -216,3 +236,68 @@ class ConfigValidator:
                     )
             except Exception as e:
                 result.warnings.append(f"一致性检查异常 [{rule['name']}]: {e}")
+
+    # ------------------------------------------------------------------
+    # Task #7 (2026-05-31): 废弃配置字段检测
+    # ------------------------------------------------------------------
+
+    def _check_deprecated_fields(self, result: ValidationResult) -> None:
+        """检测并警告已废弃但仍出现在配置中的字段
+
+        仅输出 WARNING (不阻断启动); 静默某个字段可在 DEPRECATED_FIELDS 中移除。
+        """
+        for field_path, replacement in DEPRECATED_FIELDS.items():
+            try:
+                value = self.config.get(field_path)
+            except Exception:
+                value = None
+            if value is not None:
+                result.warnings.append(
+                    f"[Config·DEPRECATED] '{field_path}' 仍存在于配置中但已不生效, "
+                    f"请改用: {replacement}"
+                )
+
+
+def check_deprecated_fields(config) -> List[str]:
+    """独立函数入口 — 供 main.py / scripts 直接调用
+
+    Args:
+        config: ConfigLoader 实例 或 dict
+
+    Returns:
+        告警信息列表（同时已通过 logger 输出 WARNING）
+    """
+    warnings: List[str] = []
+
+    def _get(cfg, dotted: str):
+        # ConfigLoader 优先 (有 .get(dotted) 接口)
+        if not isinstance(cfg, dict) and hasattr(cfg, "get"):
+            try:
+                return cfg.get(dotted)
+            except Exception:
+                pass
+        # dict 递归
+        cur: Any = cfg
+        for part in dotted.split("."):
+            if isinstance(cur, dict) and part in cur:
+                cur = cur[part]
+            else:
+                return None
+        return cur
+
+    for field_path, replacement in DEPRECATED_FIELDS.items():
+        try:
+            value = _get(config, field_path)
+        except Exception:
+            value = None
+        if value is not None:
+            msg = (
+                f"[Config·DEPRECATED] '{field_path}' 仍存在于配置中但已不生效, "
+                f"请改用: {replacement}"
+            )
+            warnings.append(msg)
+            logger.warning(msg)
+
+    if not warnings:
+        logger.info("[Config·DEPRECATED] 未检测到废弃字段 (配置已清理)")
+    return warnings

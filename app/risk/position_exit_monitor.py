@@ -360,7 +360,7 @@ class ExitMonitor:
                 self._dispatcher_use_main = bool(cfg.get_dotted(
                     "risk.exit_routing.use_unified_dispatcher", False))
                 self._dispatcher_shadow_mode = bool(cfg.get_dotted(
-                    "risk.exit_routing.shadow_mode", False))
+                    "risk.exit_routing.log_comparison_mode", False))
                 self._dispatcher_log_diff_only = bool(cfg.get_dotted(
                     "risk.exit_routing.log_diff_only", True))
         except Exception as e:
@@ -690,10 +690,11 @@ class ExitMonitor:
         这里是主线 ExitMonitor 与 ScalpingEngine 退出职责划分的唯一闸门 —
         其他代码路径不得重复实现同名逻辑。
 
-        判定优先级:
+        判定优先级 (Task #7 2026-05-31: owner_strategy 优先):
           1. position.metadata['source'] == 'scalping' (orderbook 中最可靠的记号)
           2. position.metadata['strategy'] == 'scalping' (历史兼容)
-          3. position.strategy_id == 'scalping' (某些 PositionStore 有独立字段)
+          3. position.owner_strategy == 'scalping' (Task #7: 优先读取新字段)
+          4. position.strategy_id == 'scalping' (向后兼容, 老字段)
 
         对于空列表、缺失属性、类型异常等场景需保守返回 False (不过滤)。
         """
@@ -704,6 +705,9 @@ class ExitMonitor:
                     return True
                 if meta.get("strategy") == "scalping":
                     return True
+            # Task #7 (2026-05-31): owner_strategy 优先, strategy_id 仅作向后兼容 fallback
+            if getattr(position, 'owner_strategy', '') == "scalping":
+                return True
             if getattr(position, 'strategy_id', '') == "scalping":
                 return True
         except Exception:

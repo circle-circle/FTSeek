@@ -4,13 +4,15 @@
 使用Qwen3.6-Plus(多头)和GLM-5(空头)进行2-3轮辩论
 """
 import json
+import os
 import re
 import logging
+import time
 from typing import Dict, Any, Optional
 from datetime import datetime
+from pathlib import Path
 
 import requests
-from pathlib import Path
 from dotenv import load_dotenv
 
 from .debate_models import DebateArgument, DebateRound, DebateSummary
@@ -323,6 +325,21 @@ class DebateEngine:
             self.bear_researcher = ResearcherAgent("BEAR", bear_model_id, bailian_api_key, bailian_base_url)
         
         logger.info(f"[辩论引擎-P0优化] 已初始化: 多头={bull_model_id}, 空头={bear_model_id}, 快速模式={fast_mode}")
+
+        # Task #9 (2026-05-31): 辩论结论持久化目录
+        try:
+            self._verdict_dir = Path(os.getenv(
+                "DEBATE_VERDICT_DIR",
+                str(Path(__file__).resolve().parents[3] / "data" / "debate_verdicts"),
+            ))
+            self._verdict_dir.mkdir(parents=True, exist_ok=True)
+        except Exception as e:
+            logger.warning(f"[辩论引擎] 初始化结论持久化目录失败: {e}")
+            self._verdict_dir = None
+        # 历史结论最長可复用时镐 (小时)
+        self._verdict_max_age_hours = float(
+            os.getenv("DEBATE_VERDICT_MAX_AGE_HOURS", "24")
+        )
     
     def run_debate(self, voting_result: Dict[str, Any], market_data: Dict[str, Any]) -> DebateSummary:
         """
@@ -445,3 +462,151 @@ class DebateEngine:
             return "WEAK_BEAR"
         else:
             return "NEUTRAL"
+
+    # ------------------------------------------------------------------
+    # Task #9 (2026-05-31): 辩论降级入口
+    #   辩论成功 → 持久化催化结论
+    #   辩论失败 → 加载最近一次<24h 的结论 (标记 degraded)
+    #   无可用历史结论 → 返回中性 + degraded
+    # ------------------------------------------------------------------
+    def run_debate_with_fallback(
+        self,
+        voting_result: Dict[str, Any],
+        market_data: Dict[str, Any],
+    ) -> DebateSummary:
+        """⚠️ 未接入 — 当前零调用 (2026-05-31 全链路分析确认)
+
+        VotingCoordinator 创建 DebateEngine 但从未调用 run_debate 或 run_debate_with_fallback。
+        辩论降级、结论持久化、中性降级全部不可达。
+
+        TODO: 决策是否接入或删除 (RFC 提案)
+
+        辩论引擎 — 带降级加载。
+
+        - 成功: 使用 run_debate 并持久化催化结论
+        - 失败: 按 symbol 加载最近一次成功结论 (age <= max_age)
+        - 完全不可用: 返回中性 DebateSummary (degraded=True)
+        """
+        symbol = market_data.get("symbol") or market_data.get("ticker") or "UNKNOWN"
+        try:
+            summary = self.run_debate(voting_result, market_data)
+            if summary is not None:
+                # 持久化催化结论 (不影响主流程)
+                try:
+                    self._save_verdict(symbol, summary)
+                except Exception as e:
+                    logger.debug(f"[辩论引擎] {symbol} 保存结论失败: {e}")
+                return summary
+        except Exception as e:
+            logger.warning(f"[辩论引擎] {symbol} 辩论失败: {e}")
+
+        # 降级: 加载上次成功结论
+        last = self._load_last_verdict(symbol)
+        if last is not None:
+            age_hours = last.verdict_age_hours
+            if age_hours <= self._verdict_max_age_hours:
+                last.degraded = True
+                last.degradation_reason = (
+                    f"辩论引擎不可用，复用 {age_hours:.1f}h 前的催化结论"
+                )
+                logger.info(
+                    f"[辩论引擎] {symbol} 使用 {age_hours:.1f}h 前的催化结论 (degraded)"
+                )
+                return last
+
+        # 完全降级: 中性 + degraded
+        logger.warning(f"[辩论引擎] {symbol} 辩论不可用且无历史结论，返回中性")
+        neutral_arg_bull = DebateArgument(
+            side="BULL", core_thesis="辩论不可用",
+            supporting_points=[], risk_factors=[], confidence=0.5,
+        )
+        neutral_arg_bear = DebateArgument(
+            side="BEAR", core_thesis="辩论不可用",
+            supporting_points=[], risk_factors=[], confidence=0.5,
+        )
+        return DebateSummary(
+            bull_case=neutral_arg_bull,
+            bear_case=neutral_arg_bear,
+            divergence_score=0.0,
+            consensus_points=[],
+            key_risks=[],
+            recommendation="NEUTRAL",
+            debate_rounds=[],
+            degraded=True,
+            degradation_reason="辩论引擎不可用且无历史结论",
+        )
+
+    @staticmethod
+    def _safe_symbol_key(symbol: str) -> str:
+        """将 symbol 清洗为可用于文件名的 key。"""
+        return re.sub(r"[^A-Za-z0-9_.-]+", "_", str(symbol)).strip("_") or "UNKNOWN"
+
+    def _save_verdict(self, symbol: str, summary: DebateSummary) -> Optional[Path]:
+        """将辩论结论持久化为 JSON。文件名以 symbol 为 key，覆盖写。"""
+        if self._verdict_dir is None:
+            return None
+        key = self._safe_symbol_key(symbol)
+        path = self._verdict_dir / f"{key}.json"
+        payload = summary.to_dict()
+        # 写入使用 epoch 时间戳便于后续计算 age
+        payload["_saved_at_epoch"] = time.time()
+        payload["_symbol"] = symbol
+        try:
+            tmp = path.with_suffix(".json.tmp")
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(payload, f, ensure_ascii=False, indent=2)
+            tmp.replace(path)
+            return path
+        except Exception as e:
+            logger.debug(f"[辩论引擎] 写入 {path} 失败: {e}")
+            return None
+
+    def _load_last_verdict(self, symbol: str) -> Optional[DebateSummary]:
+        """加载最近一次成功的辩论结论。带上 verdict_age_hours。"""
+        if self._verdict_dir is None:
+            return None
+        key = self._safe_symbol_key(symbol)
+        path = self._verdict_dir / f"{key}.json"
+        if not path.exists():
+            return None
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception as e:
+            logger.debug(f"[辩论引擎] 读取 {path} 失败: {e}")
+            return None
+
+        saved_at = float(data.get("_saved_at_epoch", 0) or 0)
+        age_hours = (time.time() - saved_at) / 3600.0 if saved_at > 0 else 1e9
+
+        try:
+            bull = data.get("bull_case", {}) or {}
+            bear = data.get("bear_case", {}) or {}
+            bull_arg = DebateArgument(
+                side="BULL",
+                core_thesis=bull.get("core_thesis", ""),
+                supporting_points=bull.get("supporting_points", []),
+                risk_factors=bull.get("risk_factors", []),
+                confidence=float(bull.get("confidence", 0.5)),
+            )
+            bear_arg = DebateArgument(
+                side="BEAR",
+                core_thesis=bear.get("core_thesis", ""),
+                supporting_points=bear.get("supporting_points", []),
+                risk_factors=bear.get("risk_factors", []),
+                confidence=float(bear.get("confidence", 0.5)),
+            )
+            summary = DebateSummary(
+                bull_case=bull_arg,
+                bear_case=bear_arg,
+                divergence_score=float(data.get("divergence_score", 0.0)),
+                consensus_points=list(data.get("consensus_points", [])),
+                key_risks=list(data.get("key_risks", [])),
+                recommendation=str(data.get("recommendation", "NEUTRAL")),
+                debate_rounds=[],
+                verdict_age_hours=age_hours,
+            )
+            return summary
+        except Exception as e:
+            logger.debug(f"[辩论引擎] 解析历史结论失败: {e}")
+            return None

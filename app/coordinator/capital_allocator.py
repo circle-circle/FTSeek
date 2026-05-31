@@ -76,8 +76,16 @@ class CapitalAllocator:
         logger.info(f"[CapitalAllocator] observe_only={observe}")
 
     def try_reserve(self, strategy: str, position_pct: float) -> bool:
-        """
-        尝试为 strategy 预留 position_pct 资金.
+        """尝试预留资金额度。
+
+        ⚠️ 当前限制:
+        - observe_only=True 模式下永远返回 True (仅记录不阻断)
+        - 主订单路径 (order_executor._submit_order) 尚未在下单前调用此方法
+        - signal.position_pct 默认为 0.0, 导致预留金额为 0
+        以上问题计划在 Phase B 修复, 届时将:
+        1. _submit_order 下单前调用 try_reserve
+        2. 从 _get_order_qty 结果计算 position_pct
+        3. observe_only 切为 False
 
         资金记账走 bucket (B.3 2026-05-14): 多策略共享 bucket 时, 占用计入同一桶.
         例 strategy=fast_lane, bucket_map={"fast_lane":"main"} → 实际记到 main 桶, 受 main 的 cap 限制.
@@ -161,6 +169,30 @@ class CapitalAllocator:
     def is_observe_only(self) -> bool:
         """B.6 (2026-05-14): 公开访问 — 替代私有 _observe_only"""
         return self._observe_only
+
+    def compute_scale_factor(self, strategy: str, position_pct: float) -> float:
+        """Task #1 (2026-05-31): 计算按比例缩放系数
+
+        当调用方希望 "总敞口超限 → 按比例缩放" 而非硬拒时使用.
+        返回 [0.0, 1.0] 区间系数: 1.0 = 无需缩放; 0.0 = 完全拒绝.
+        同时考虑 bucket cap 和 总敞口 cap, 取较小者.
+        调用方可: 将 position_pct 乘以 该系数 后再 try_reserve.
+        """
+        with self._lock:
+            if position_pct <= 0:
+                return 1.0
+            bucket = self._bucket_for(strategy)
+            current = self._allocations.get(bucket, 0.0)
+            cap = self._caps.get(bucket, 0.0)
+            total = sum(self._allocations.values())
+
+            # bucket 剩余
+            bucket_headroom = max(0.0, cap - current) if cap > 0 else float('inf')
+            # 总敞口剩余
+            total_headroom = max(0.0, self._max_total - total)
+            allowed = min(bucket_headroom, total_headroom, position_pct)
+            scale = 0.0 if position_pct == 0 else max(0.0, min(1.0, allowed / position_pct))
+            return scale
 
     def reset_and_reconcile(self, positions_by_strategy: Dict[str, float]):
         """

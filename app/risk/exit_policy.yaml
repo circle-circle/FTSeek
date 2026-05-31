@@ -7,9 +7,47 @@
 # 3. 启动时强制校验：代码逻辑必须覆盖此文件所有规则
 # ============================================================
 
-version: "2.4"
-last_updated: "2026-05-03"
-design_rationale: "ATR动态止损 + 分层止盈 + 行业差异化 + 日内短线模式 + session-aware ATR + 时间加权盘末退出 (P2优化)"
+version: "2.5"
+last_updated: "2026-05-31"
+design_rationale: "ATR动态止损 + 分层止盈 + 行业差异化 + 日内短线模式 + session-aware ATR + 时间加权盘末退出 (P2优化) | Phase 3 (2026-05-31): 参数完全外部化 + ATR下限/财报上限 + ExitRuleDispatcher 影子模式"
+
+# ── Phase 3 (2026-05-31): 渐进式追踪止损参数外部化 ──
+# _update_trail_state 中 4 档渐进 SL 的所有 magic number 集中到此处
+progressive_trailing:
+  enabled: true
+  # 各档触发的 ATR 利润阈值 (与 _update_trail_state 4 档对齐)
+  tier_thresholds_atr:
+    tier1_max: 0.5      # <0.5 ATR: 不动 (固定 SL)
+    tier2_max: 1.0      # 0.5~1.0 ATR: 保本
+    tier3_max: 2.0      # 1.0~2.0 ATR: 紧凑追踪
+    # >=2.0 ATR: 标准追踪 (使用 chandelier_trail.multiplier_by_regime)
+  tier3_compact_multiplier: 1.5    # 紧凑追踪 ATR 倍数
+  breakeven_buffer_pct: 0.001       # 保本 buffer = 入场价 × 0.1%
+  fallback_long_sl_pct: 0.92        # 兜底 LONG SL (无 ATR/policy 时)
+  fallback_short_sl_pct: 1.08       # 兜底 SHORT SL
+  # P1 修复 (2026-05-29): effective_atr 下限 (防止 session_ratio 极端缩水)
+  effective_atr_floor_ratio: 0.35   # effective_atr ≥ daily_atr × 0.35
+  # ATR Volatility Floor 系数 (atr ≥ median_tr_200d × coef)
+  atr_floor_coef: 0.85
+  # ATR 下限百分比 (Phase 3 新增): atr ≥ price × pct/100
+  atr_floor_price_pct: 0.0          # 默认 0 表示不启用，可根据需要打开
+  # 保留入场 session ratio cosine 平滑窗口 (分钟)
+  session_blend_window_minutes: 90.0
+
+# ── Phase 3 (2026-05-31): 退出监控调度参数 ──
+exit_monitor:
+  scan_interval_seconds: 60         # 扫描周期 (分钟以下)
+  cooldown_seconds: 120             # 同一持仓退出冷却
+  min_hold_minutes: 10              # 最小持仓时间 (低于此跳过非硬止损)
+
+# ── Phase 3 (2026-05-31): 退出规则互斥 (新 ExitRuleDispatcher 使用) ──
+# key=高优先级触发的规则, value=被压制不再上报的规则列表
+exit_rules_exclusivity:
+  pre_close: [day_trade, trailing_stop, scale_out, time_decay]
+  flash_exit: [day_trade, trailing_stop, scale_out]
+  earnings_guard: [day_trade, trailing_stop, scale_out, time_decay]
+  trailing_stop: [time_decay]
+  day_trade: [time_decay]
 
 # ── 全局风控 ──
 global:
@@ -106,6 +144,28 @@ exit_rules:
     quarter_exit_below_atr: 1.0     # 低于 1.0 ATR 减1/4
     # 层4: ≥1.0 ATR → 保留过夜 (不变)
     hold_threshold_atr: 1.0         # 盈利≥1 ATR 可持有过夜
+
+  # ── Task #3 (2026-05-31): 自适应分级退出 ──
+  # 目标: PRE_CLOSE 占比 54% → <35%, 让利润仓位有更多时间达到目标
+  # 调度入口: ExitRuleDispatcher._eval_pre_close (mode=adaptive 时启用)
+  pre_close:
+    enabled: true
+    mode: adaptive                  # adaptive | legacy
+    profit_exit:
+      min_profit_atr: 1.0           # PnL >= 1.0 ATR → 锁利全平
+      close_ratio: 1.0
+    breakeven_exit:
+      tolerance_atr: 0.3            # |PnL| < 0.3 ATR → 持平减半仓
+      close_ratio: 0.50
+    loss_exit:
+      min_loss_atr: 1.5             # PnL <= -1.5 ATR → 止损全平
+      close_ratio: 1.0
+    force_close_remaining: false    # 中间地带 (0.3~1.0 / -1.5~-0.3) 不强平, 允许过夜
+    window_minutes:
+      trending: 10                  # 趋势市: 收盘前 10 分钟
+      range_bound: 5                # 震荡市: 收盘前 5 分钟 (早平无价值持仓)
+      high_vol: 15                  # 高波动: 收盘前 15 分钟 (保守)
+      default: 10
 
   # 规则 6: 时间止损
   # O3 (2026-05-16): 禁用 — 30天 sharpe=-0.40, win_rate=29% (5/15 exit_reason_pnl 报告)
