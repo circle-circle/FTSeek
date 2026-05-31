@@ -142,7 +142,7 @@ def _submit_order_optimized(
             order.filled_quantity = order.quantity
             order.avg_fill_price = signal_price or order.price
             order.fill_price = order.avg_fill_price
-            order.filled_at = datetime.now()
+            order.filled_at = now_et()
             submitted = order
 
         fill_price = float(
@@ -193,8 +193,8 @@ def _submit_order_optimized(
         order.fill_price = float(twap_result.avg_fill_price)
     except Exception as _silent_e:
         logger.debug(f"[silent_except:order_executor.py] {_silent_e}")
-    order.filled_at = datetime.fromtimestamp(twap_result.finished_at) if twap_result.finished_at else datetime.now()
-    order.sent_at = datetime.fromtimestamp(twap_result.started_at) if twap_result.started_at else datetime.now()
+    order.filled_at = datetime.fromtimestamp(twap_result.finished_at) if twap_result.finished_at else now_et()
+    order.sent_at = datetime.fromtimestamp(twap_result.started_at) if twap_result.started_at else now_et()
     # 首个成交片的 futu_order_id 作为代表 (供归因/查询)
     for s in twap_result.slices:
         if s.futu_order_id:

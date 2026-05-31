@@ -10,6 +10,7 @@ import uuid
 from app.core.engine import ExecutionEngine as BaseExecutionEngine
 from app.core.models import Order, OrderState, SignalScore, TradeEvent, FailureRecord, FailureType, Direction, OrderType
 from app.core.events import EventStore
+from app.utils.timezone import now_et
 
 from .order_state_machine import OrderStateMachine
 from .idempotency import IdempotencyManager
@@ -190,8 +191,8 @@ class ExecutionEngine(BaseExecutionEngine):
                         order.futu_order_id = result["futu_order_id"]
                     order.state = OrderState.FILLED
                     state_machine.transition(OrderState.FILLED)
-                    order.sent_at = datetime.now()
-                    order.filled_at = datetime.now()
+                    order.sent_at = now_et()
+                    order.filled_at = now_et()
                     order.fill_price = order.price
                     order.filled_quantity = order.quantity
                     logger.debug(f"[ExecutionEngine] 模拟成交 (兼容模式): {order.symbol} {order.direction.value} @ ${order.fill_price:.2f}")
@@ -204,7 +205,7 @@ class ExecutionEngine(BaseExecutionEngine):
                     # SENT
                     order.state = OrderState.SENT
                     state_machine.transition(OrderState.SENT)
-                    order.sent_at = datetime.now()
+                    order.sent_at = now_et()
 
                     # 模拟 ACKED (延迟 configurable)
                     ack_delay = float(self.config.get("simulate_fill_delay_seconds", 0.0))
@@ -230,7 +231,7 @@ class ExecutionEngine(BaseExecutionEngine):
 
                     order.state = OrderState.FILLED
                     state_machine.transition(OrderState.FILLED)
-                    order.filled_at = datetime.now()
+                    order.filled_at = now_et()
                     order.fill_price = order.price
                     order.filled_quantity = order.quantity
                     logger.debug(f"[ExecutionEngine] 模拟成交 (完整链路): {order.symbol} {order.direction.value} @ ${order.fill_price:.2f}")
@@ -241,7 +242,7 @@ class ExecutionEngine(BaseExecutionEngine):
                         order.futu_order_id = result["futu_order_id"]
                     order.state = OrderState.SENT
                     state_machine.transition(OrderState.SENT)
-                    order.sent_at = datetime.now()
+                    order.sent_at = now_et()
             else:
                 # 模拟模式直接成交 (无 broker 连接)
                 # P0 修复 (2026-05-11): 也走完整链路
@@ -252,7 +253,7 @@ class ExecutionEngine(BaseExecutionEngine):
                     # 完整链路模式
                     order.state = OrderState.SENT
                     state_machine.transition(OrderState.SENT)
-                    order.sent_at = datetime.now()
+                    order.sent_at = now_et()
 
                     ack_delay = float(self.config.get("simulate_fill_delay_seconds", 0.0))
                     if ack_delay > 0:
@@ -274,7 +275,7 @@ class ExecutionEngine(BaseExecutionEngine):
 
                     order.state = OrderState.FILLED
                     state_machine.transition(OrderState.FILLED)
-                    order.filled_at = datetime.now()
+                    order.filled_at = now_et()
                     order.fill_price = order.price
                     order.filled_quantity = order.quantity
                     logger.debug(f"[ExecutionEngine] 模拟成交 (离线·完整链路): {order.symbol} {order.direction.value} @ ${order.fill_price:.2f}")
@@ -282,8 +283,8 @@ class ExecutionEngine(BaseExecutionEngine):
                     # 兼容模式: 直接标记 FILLED
                     order.state = OrderState.FILLED
                     state_machine.transition(OrderState.FILLED)
-                    order.sent_at = datetime.now()
-                    order.filled_at = datetime.now()
+                    order.sent_at = now_et()
+                    order.filled_at = now_et()
                     order.fill_price = order.price
                     order.filled_quantity = order.quantity
                     logger.debug(f"[ExecutionEngine] 模拟成交 (离线·兼容模式): {order.symbol} {order.direction.value} @ ${order.fill_price:.2f}")

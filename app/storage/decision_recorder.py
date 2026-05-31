@@ -186,8 +186,11 @@ class DecisionRecorder:
         Returns:
             decision_id
         """
-        decision_id = f"DEC-{datetime.now().strftime('%Y%m%d%H%M%S')}-{symbol.split('.')[-1]}-{uuid4()[:6]}"
-        now = datetime.now().isoformat()
+        # P1 修复 (2026-05-31): 统一用 ET 时间存储, 与 DB SSOT 对齐
+        from app.utils.timezone import now_et
+        _now = now_et()
+        decision_id = f"DEC-{_now.strftime('%Y%m%d%H%M%S')}-{symbol.split('.')[-1]}-{uuid4()[:6]}"
+        now = _now.isoformat()
 
         with self._lock:
             conn = self._conn()

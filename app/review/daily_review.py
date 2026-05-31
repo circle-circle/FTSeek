@@ -674,9 +674,15 @@ class DailyReviewGenerator:
             from app.diagnostics.shadow_account import create_shadow_diagnostic
             diag = create_shadow_diagnostic()
 
+            # P0 修复 (2026-05-31): 用 Python ET 时间替代 SQLite datetime('now')
+            from datetime import timedelta as _td
+            from app.utils.timezone import now_et
+            cutoff_30d = (now_et() - _td(days=30)).strftime("%Y-%m-%dT%H:%M:%S")
+
             # 先检查是否有数据
             trades = self._query(
-                "SELECT * FROM trade_records WHERE exit_time IS NOT NULL AND exit_time > datetime('now', '-30 days') ORDER BY exit_time DESC"
+                "SELECT * FROM trade_records WHERE exit_time IS NOT NULL AND exit_time > ? ORDER BY exit_time DESC",
+                (cutoff_30d,)
             )
             if len(trades) < 3:
                 return {'five_factor_available': False, 'reason': f'样本不足 (n={len(trades)})'}

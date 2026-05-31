@@ -540,18 +540,24 @@ class ScalpingEngine:
         """
         try:
             import sqlite3
+            from datetime import timedelta as _td
             from app.core.paths import get_decisions_db
+            from app.utils.timezone import now_et
             db_path = get_decisions_db()
+            
+            # P0 修复 (2026-05-31): 用 Python ET 时间替代 SQLite datetime('now')
+            # SQLite datetime('now') 返回 UTC, 与 DB 中 ET 时间不匹配
+            cutoff = (now_et() - _td(minutes=30)).isoformat()
             
             with sqlite3.connect(str(db_path)) as conn:
                 row = conn.execute("""
                     SELECT direction, final_strength, created_at
                     FROM decisions
                     WHERE symbol = ?
-                      AND created_at > datetime('now', '-30 minutes')
+                      AND created_at > ?
                     ORDER BY created_at DESC
                     LIMIT 1
-                """, (symbol,)).fetchone()
+                """, (symbol, cutoff)).fetchone()
                 
                 if row:
                     direction, strength, created_at = row

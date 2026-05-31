@@ -13,21 +13,25 @@ def get_decay_factor(db_path: str, strategy_name: str = None, lookback_days: int
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
         
-        # 美股使用 trade_records 表 (或者 open_positions if tracking pnl there, but trade_records is better)
-        # Let's use trade_records
+        # P0 修复 (2026-05-31): 用 Python ET 时间替代 SQLite datetime('now')
+        # SQLite datetime('now') 返回 UTC, 与 DB 中 ET 时间不匹配
+        from datetime import timedelta as _td
+        from app.utils.timezone import now_et
+        cutoff = (now_et() - _td(days=lookback_days)).strftime("%Y-%m-%dT%H:%M:%S")
+        
         query = """
             SELECT count(*) as total,
                    SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins
             FROM trade_records 
             WHERE exit_time IS NOT NULL
-            AND exit_time > datetime('now', ?)
+            AND exit_time > ?
         """
         
         if strategy_name:
             query += " AND strategy_id = ?"
-            params = (f'-{lookback_days} days', strategy_name)
+            params = (cutoff, strategy_name)
         else:
-            params = (f'-{lookback_days} days',)
+            params = (cutoff,)
             
         cursor.execute(query, params)
         row = cursor.fetchone()
