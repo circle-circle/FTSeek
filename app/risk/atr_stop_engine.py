@@ -279,7 +279,7 @@ def compute_stop_lines(
     # Phase 3 (2026-05-31): 收紧 0.5~2.0 ATR 区间追踪止损
     chandelier_stop = 0.0
     trail_mult = resolve_trail_multiplier(policy, regime, direction)
-    activation = float(ch_cfg.get("activation_profit_atr", 1.0))
+    activation = float(ch_cfg.get("activation_profit_atr", 0.8))  # Fix 10: was 1.0, matches YAML 0.8
     pt_cfg = (policy or {}).get("progressive_trailing", {}) or {}
     tier2_mult = float(pt_cfg.get("tier2_compact_multiplier", 0.8))
     tier3_mult = float(pt_cfg.get("tier3_compact_multiplier", 1.2))
@@ -307,8 +307,8 @@ def compute_stop_lines(
     # 旧 bug: SHORT 用 entry × (1 - buffer), 导致 stop_line 低于 entry, 入场即满足触发条件
     # 真凶: GOOGL SHORT entry $335.99 → breakeven_stop=$335.32 → 入场 0.5h 后异常 +$6K 损失
     breakeven_stop = 0.0
-    be_trigger = float(be_cfg.get("trigger_profit_atr", 0.5))
-    buffer_pct = float(be_cfg.get("buffer_pct", 0.2)) / 100.0
+    be_trigger = float(be_cfg.get("trigger_profit_atr", 0.4))  # Fix 11: was 0.5, matches YAML 0.4
+    buffer_pct = float(be_cfg.get("buffer_pct", 0.15)) / 100.0  # Fix 11: was 0.2, matches YAML 0.15
     if be_cfg.get("enabled", True) and profit_atr_signed >= be_trigger:
         if direction == "LONG":
             # LONG: 价格回到 entry 附近 (略高于 entry) 触发保利
@@ -389,10 +389,10 @@ if __name__ == "__main__":
             "atr_stop": {"enabled": True, "max_loss_pct": 15.0},
             "chandelier_trail": {
                 "enabled": True,
-                "activation_profit_atr": 2.0,
+                "activation_profit_atr": 0.8,
                 "multiplier_by_regime": {"normal": 2.0, "trending": 3.0, "volatile": 1.5},
             },
-            "breakeven": {"enabled": True, "trigger_profit_atr": 1.5, "buffer_pct": 0.2},
+            "breakeven": {"enabled": True, "trigger_profit_atr": 0.4, "buffer_pct": 0.15},
             "cost_buffer": {"k": 1.5},
         },
         "short_overrides": {"max_loss_pct": 10.0, "trail_multiplier": 1.5},

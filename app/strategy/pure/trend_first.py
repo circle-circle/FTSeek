@@ -77,7 +77,11 @@ def evaluate(ctx: SymbolContext, cfg: Dict[str, Any]) -> Optional[SignalCandidat
         return None  # RANGE / HIGH_VOL / 空 → 不激活
 
     # ── 确认层 1: 量能确认 ──
-    min_volume_ratio = cfg.get("min_volume_ratio", 0)
+    # Fix 8 (2026-05-31): read breakout_min_volume_ratio with fallback to min_volume_ratio
+    # Use explicit None check (not `or`) since 0 is a valid value meaning "disabled"
+    _bvr = cfg.get('breakout_min_volume_ratio')
+    _mvr = cfg.get('min_volume_ratio')
+    min_volume_ratio = _bvr if _bvr is not None else (_mvr if _mvr is not None else 2.0)
     volume_ratio = getattr(ctx, "volume_ratio", None)
     volume_confirmed = False
     if min_volume_ratio and min_volume_ratio > 0:

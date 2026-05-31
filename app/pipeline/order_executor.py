@@ -492,6 +492,11 @@ def _notify_order(scheduler, symbol: str, signal: SignalScore, order: Order, pos
                 f"confidence={getattr(signal, 'confidence', 0):.2f} "
                 f"regime={getattr(signal, 'market_regime', 'UNKNOWN')}"
             ),
+            # Preserve quality scoring metadata
+            "quality_factors": signal.metadata.get("quality_factors") if hasattr(signal, "metadata") and signal.metadata else None,
+            "fused": signal.metadata.get("fused") if hasattr(signal, "metadata") and signal.metadata else None,
+            "fused_count": signal.metadata.get("fused_count") if hasattr(signal, "metadata") and signal.metadata else None,
+            "fused_strategies": signal.metadata.get("fused_strategies") if hasattr(signal, "metadata") and signal.metadata else None,
         }
 
         if hasattr(position, 'metadata') and position.metadata:

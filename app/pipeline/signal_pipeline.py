@@ -500,6 +500,11 @@ def _bridge_candidate_to_old_format(candidate):
             "rationale": candidate.rationale,
             "factors_used": getattr(candidate, "signal_tags", []) or [],
             "signal_tags": "/".join(getattr(candidate, "signal_tags", []) or []) or candidate.strategy_id,
+            # Preserve quality scoring and fusion metadata
+            "quality_factors": candidate.metadata.get("quality_factors") if hasattr(candidate, "metadata") and candidate.metadata else None,
+            "fused": candidate.metadata.get("fused") if hasattr(candidate, "metadata") and candidate.metadata else None,
+            "fused_count": candidate.metadata.get("fused_count") if hasattr(candidate, "metadata") and candidate.metadata else None,
+            "fused_strategies": candidate.metadata.get("fused_strategies") if hasattr(candidate, "metadata") and candidate.metadata else None,
         },
     )
 
@@ -1460,8 +1465,11 @@ def _build_signal_from_vote(scheduler, symbol: str, vote_result: Dict[str, Any],
             if not hasattr(scorer_ctx, _attr):
                 setattr(scorer_ctx, _attr, _default)
 
-        quality = SignalQualityScorer.score(scorer_ctx, direction_str)
-        raw_confidence = max(raw_confidence, quality.confidence)
+        quality = SignalQualityScorer.score(
+            scorer_ctx, direction_str,
+            strategy_confidence=raw_confidence,
+        )
+        raw_confidence = quality.confidence
         quality_factors = quality.to_dict()
     except Exception as e:
         logger.debug(f"[SignalPipeline] quality scoring failed: {e}")

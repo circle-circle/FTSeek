@@ -45,6 +45,7 @@ _DISPATCHER_REASON_MAP: Dict[str, str] = {
     "day_trade": "TIME_STOP",
     "time_decay": "TIME_STOP",
     "scale_out": "SCALE_OUT",
+    "velocity_exit": "VELOCITY_EXIT",
 }
 
 
@@ -958,7 +959,8 @@ def _check_positions(scheduler):
                 "BREAKEVEN": ExitReason.BREAKEVEN_STOP, "TIME_STOP": ExitReason.TIME_STOP,
                 "SCALE_OUT": ExitReason.SCALE_OUT, "PRE_CLOSE_EXIT": ExitReason.PRE_CLOSE_EXIT,
                 "PRE_CLOSE_EXIT_PARTIAL": ExitReason.PRE_CLOSE_EXIT,
-                "TECHNICAL_BREACH": ExitReason.STRUCTURE_EXIT}
+                "TECHNICAL_BREACH": ExitReason.STRUCTURE_EXIT,
+                "VELOCITY_EXIT": ExitReason.VELOCITY_EXIT}
             er = reason_map.get(reason.get("reason", ""), ExitReason.TRAILING_STOP)
             cp = reason.get("exit_price", pos.avg_entry_price)
             close_qty = reason.get("close_qty", 0)

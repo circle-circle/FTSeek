@@ -131,6 +131,7 @@ class ExitReason(str, Enum):
     EMERGENCY = "EMERGENCY"  # P0-3 新增 2026-04-26: 紧急清仓 (EmergencyInterceptor 使用)
     SCALE_OUT = "SCALE_OUT"  # 2026-04-27: 分批止盈部分平仓
     PRE_CLOSE_EXIT = "PRE_CLOSE_EXIT"  # 2026-04-27: 盘末强制退出
+    VELOCITY_EXIT = "VELOCITY_EXIT"  # 2026-05-31: 速度捕捉退出
 
 
 class FailureType(str, Enum):

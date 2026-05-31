@@ -212,6 +212,16 @@ class ExitMonitor:
                 logger.debug(f"[ExitMonitor] CostModel 初始化失败，将退化为无 cost_buffer: {e}")
                 self._cost_model = None
 
+        # P0 修复 (2026-05-31): Cache exit policy to avoid 300+ instantiations per minute
+        try:
+            from app.risk.exit_policy_guardian import ExitPolicyGuardian
+            self._exit_policy_guardian = ExitPolicyGuardian()
+            self._exit_policy_guardian.load()
+            self._cached_exit_policy = self._exit_policy_guardian.policy or {}
+        except Exception as e:
+            logger.debug(f"[ExitMonitor] Failed to load exit policy in __init__: {e}")
+            self._cached_exit_policy = {}
+
         # Phase 3 (2026-05-31): 从 exit_policy.yaml 读取调度参数 (覆盖类常量, 实现外部化)
         self._reload_exit_monitor_params()
 
@@ -334,16 +344,8 @@ class ExitMonitor:
     # ============================================================
 
     def _load_exit_policy_dict(self) -> Dict[str, Any]:
-        """加载 exit_policy.yaml 为 dict (best-effort, 失败返回空)"""
-        try:
-            from app.risk.exit_policy_guardian import ExitPolicyGuardian
-            guardian = ExitPolicyGuardian()
-            policy = getattr(guardian, "policy", None)
-            if isinstance(policy, dict):
-                return policy
-        except Exception as e:
-            logger.debug(f"[ExitMonitor] _load_exit_policy_dict 失败: {e}")
-        return {}
+        """Return cached exit policy (loaded once in __init__)"""
+        return self._cached_exit_policy
 
     def _reload_exit_monitor_params(self):
         """从 exit_policy.yaml::exit_monitor 读取调度参数 (Phase 3 外部化)"""

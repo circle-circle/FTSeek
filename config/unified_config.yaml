@@ -1371,6 +1371,25 @@ debate_mode:
     FTSEEK_DEBATE_MODE: 'false'
     FTSEEK_DEBATE_TIMEOUT: '300'
     FTSEEK_DEBATE_FALLBACK_MODEL: qwen-max
+
+# Fix 13 (2026-05-31): 信号质量评分权重 — 外部化配置
+# SSOT for SignalQualityScorer._load_weights()
+signal_quality:
+  weights:
+    trend_quality: 0.25        # 趋势质量 (MA排列+斜率+SPY共振)
+    momentum: 0.20             # 动量 (RSI+MACD+slope)
+    volume: 0.25               # 成交量 (volume_ratio+VWAP+量价一致)
+    order_flow: 0.15           # 资金流 (order_flow+ticker+大单)
+    market_env: 0.15           # 市场环境 (VIX+SPY/MA200+regime)
+  confluence_bonus:
+    "5": 0.15
+    "4": 0.10
+    "3": 0.05
+    "2": 0.0
+    "1": -0.05
+    "0": -0.10
+  contradiction_penalty: -0.10
+
 strategy:
   # Task #6 (2026-05-30): 信号冷却 120s → 180s, 减少同标的反复入场抖动
   signal_cooldown: 180
@@ -1435,6 +1454,7 @@ strategies:
   trend_first:
     enabled: true
     observe_only: false             # Task #19: 开放模拟交易执行 (从 true → false)
+    min_volume_ratio: 2.0           # Fix 12 (2026-05-31): 显式声明, 与 breakout_min_volume_ratio 对齐
 
     # 资金分配（从 Main 预算池切分，与 Technical 共享 0.65 总额）
     # Task #1 (2026-05-31): 显式 capital_pct_of_main, 不再独立累加 capital_pct

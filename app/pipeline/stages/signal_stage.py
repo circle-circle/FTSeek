@@ -27,7 +27,10 @@ def _apply_quality_scoring(ctx: SymbolContext, candidate: SignalCandidate) -> No
         direction_str = candidate.direction if isinstance(candidate.direction, str) else (
             candidate.direction.value if hasattr(candidate.direction, 'value') else str(candidate.direction)
         )
-        quality = SignalQualityScorer.score(ctx, direction_str)
+        quality = SignalQualityScorer.score(
+            ctx, direction_str,
+            strategy_confidence=getattr(candidate, 'confidence', None),
+        )
         candidate.confidence = quality.confidence
         candidate.strength = quality.strength
         if isinstance(getattr(candidate, 'metadata', None), dict):
@@ -132,16 +135,29 @@ def process(ctx: SymbolContext,
     # ── 策略 5: LLM 投票 (无持仓时) ──
     try:
         if voting_coordinator and not has_position:
-            vote_result = voting_coordinator.vote(symbol, ctx)
-            if vote_result:
-                ctx.metadata["vote_result"] = vote_result
-                candidate = eval_strategy("llm_vote", ctx)
-                if candidate is not None:
-                    _apply_quality_scoring(ctx, candidate)
-                    logger.info(
-                        f"[Signal] {symbol} LLM投票命中: {candidate.rationale}"
-                    )
-                    candidates.append(candidate)
+            # Skip LLM vote if we already have high-confidence candidates
+            if candidates and any(c.confidence >= 0.70 for c in candidates):
+                logger.info(f"[SignalStage] Skipping LLM vote for {symbol} - already have high-confidence candidates")
+            else:
+                # LLM vote with timeout
+                try:
+                    import concurrent.futures
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                        future = executor.submit(voting_coordinator.vote, symbol, ctx)
+                        vote_result = future.result(timeout=5.0)  # 5 second timeout
+                        if vote_result:
+                            ctx.metadata["vote_result"] = vote_result
+                            candidate = eval_strategy("llm_vote", ctx)
+                            if candidate is not None:
+                                _apply_quality_scoring(ctx, candidate)
+                                logger.info(
+                                    f"[Signal] {symbol} LLM投票命中: {candidate.rationale}"
+                                )
+                                candidates.append(candidate)
+                except concurrent.futures.TimeoutError:
+                    logger.warning(f"[SignalStage] LLM vote timeout for {symbol}")
+                except Exception as e:
+                    logger.debug(f"[SignalStage] LLM vote failed for {symbol}: {e}")
     except Exception as e:
         logger.debug(f"[Signal] LLM投票异常 (放行): {e}")
 

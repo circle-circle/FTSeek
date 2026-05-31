@@ -283,8 +283,8 @@ class ExitPolicyGuardian:
             'exit_rules': {
                 'flash_exit': {'enabled': True, 'flash_multiplier_default': 0.8},
                 'atr_stop': {'enabled': True, 'multiplier_by_profit': {'initial': 2.5}},
-                'breakeven': {'enabled': True, 'trigger_profit_atr': 1.5},
-                'chandelier_trail': {'enabled': False},
+                'breakeven': {'enabled': True, 'trigger_profit_atr': 0.4, 'buffer_pct': 0.15},
+                'chandelier_trail': {'enabled': True, 'activation_profit_atr': 0.8},
                 'scale_out': {'enabled': False},
                 'time_stop': {'enabled': True, 'max_holding_hours': 72},
                 'earnings_guard': {'enabled': False},

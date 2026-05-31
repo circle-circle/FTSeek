@@ -46,90 +46,81 @@ DEFAULT_ATR_TIERS: List[Dict[str, Any]] = [
 ]
 
 
-def _load_tiers_from_config() -> List[Dict[str, float]]:
-    """从 unified_config 读取 pct tiers (SSOT), 失败退化为默认"""
+def _load_scale_out_config() -> Dict[str, Any]:
+    """Load scale-out config from exit_policy.yaml via ExitPolicyGuardian.
+
+    P0 fix (2026-05-31): The previous get_dotted("exit_policy.scale_out.*") approach
+    read from unified_config, but the data lives in exit_policy.yaml.
+    """
     try:
-        from app.core.config_container import get_config
-        cfg = get_config()
-        if cfg is None:
-            return list(DEFAULT_TIERS)
-        raw = cfg.get_dotted("exit_policy.scale_out.tiers", None)
-        if not raw or not isinstance(raw, list):
-            return list(DEFAULT_TIERS)
-        out: List[Dict[str, float]] = []
-        for t in raw:
-            if not isinstance(t, dict):
-                continue
-            try:
-                tp = float(t.get("trigger_pct", 0) or 0)
-                cp = float(t.get("close_pct", 0) or 0)
-                ns = float(t.get("new_stop_pct", 0) or 0)
-            except (TypeError, ValueError):
-                continue
-            if tp <= 0 or cp <= 0:
-                continue
-            out.append({"trigger_pct": tp, "close_pct": cp, "new_stop_pct": ns})
-        return out or list(DEFAULT_TIERS)
+        from app.risk.exit_policy_guardian import ExitPolicyGuardian
+        guardian = ExitPolicyGuardian()
+        guardian.load()
+        policy = guardian.policy or {}
+        return policy.get("exit_rules", {}).get("scale_out", {})
     except Exception as e:
-        logger.debug(f"[scale_out] 读取 exit_policy.scale_out.tiers 失败, 使用默认: {e}")
+        logger.debug(f"[scale_out] Failed to load config: {e}")
+        return {}
+
+
+def _load_tiers_from_config() -> List[Dict[str, float]]:
+    """从 exit_policy.yaml 读取 pct tiers, 失败退化为默认"""
+    cfg = _load_scale_out_config()
+    raw = cfg.get("tiers") if cfg else None
+    if not raw or not isinstance(raw, list):
         return list(DEFAULT_TIERS)
+    out: List[Dict[str, float]] = []
+    for t in raw:
+        if not isinstance(t, dict):
+            continue
+        try:
+            tp = float(t.get("trigger_pct", 0) or 0)
+            cp = float(t.get("close_pct", 0) or 0)
+            ns = float(t.get("new_stop_pct", 0) or 0)
+        except (TypeError, ValueError):
+            continue
+        if tp <= 0 or cp <= 0:
+            continue
+        out.append({"trigger_pct": tp, "close_pct": cp, "new_stop_pct": ns})
+    return out or list(DEFAULT_TIERS)
 
 
 def _load_atr_tiers_from_config() -> List[Dict[str, Any]]:
-    """从 unified_config 读取 ATR tiers (SSOT), 失败退化为 DEFAULT_ATR_TIERS"""
-    try:
-        from app.core.config_container import get_config
-        cfg = get_config()
-        if cfg is None:
-            return list(DEFAULT_ATR_TIERS)
-        raw = cfg.get_dotted("exit_policy.scale_out.atr_tiers", None)
-        if not raw or not isinstance(raw, list):
-            return list(DEFAULT_ATR_TIERS)
-        out: List[Dict[str, Any]] = []
-        for t in raw:
-            if not isinstance(t, dict):
-                continue
-            try:
-                pa = float(t.get("profit_atr", 0) or 0)
-                cp = float(t.get("close_pct", 0) or 0)
-                rs = float(t.get("ratchet_sl_pct", 0) or 0)
-            except (TypeError, ValueError):
-                continue
-            if pa <= 0 or cp <= 0:
-                continue
-            tier: Dict[str, Any] = {"profit_atr": pa, "close_pct": cp, "ratchet_sl_pct": rs}
-            if t.get("trailing_remainder"):
-                tier["trailing_remainder"] = True
-            out.append(tier)
-        return out or list(DEFAULT_ATR_TIERS)
-    except Exception as e:
-        logger.debug(f"[scale_out] 读取 exit_policy.scale_out.atr_tiers 失败, 使用默认: {e}")
+    """从 exit_policy.yaml 读取 ATR tiers, 失败退化为 DEFAULT_ATR_TIERS"""
+    cfg = _load_scale_out_config()
+    raw = cfg.get("atr_tiers") if cfg else None
+    if not raw or not isinstance(raw, list):
         return list(DEFAULT_ATR_TIERS)
+    out: List[Dict[str, Any]] = []
+    for t in raw:
+        if not isinstance(t, dict):
+            continue
+        try:
+            pa = float(t.get("profit_atr", 0) or 0)
+            cp = float(t.get("close_pct", 0) or 0)
+            rs = float(t.get("ratchet_sl_pct", 0) or 0)
+        except (TypeError, ValueError):
+            continue
+        if pa <= 0 or cp <= 0:
+            continue
+        tier: Dict[str, Any] = {"profit_atr": pa, "close_pct": cp, "ratchet_sl_pct": rs}
+        if t.get("trailing_remainder"):
+            tier["trailing_remainder"] = True
+        out.append(tier)
+    return out or list(DEFAULT_ATR_TIERS)
 
 
 def _get_tier_mode() -> str:
-    """读取 exit_policy.scale_out.tier_mode, 默认 'atr'"""
-    try:
-        from app.core.config_container import get_config
-        cfg = get_config()
-        if cfg is None:
-            return "atr"
-        mode = cfg.get_dotted("exit_policy.scale_out.tier_mode", "atr")
-        return str(mode or "atr").lower()
-    except Exception:
-        return "atr"
+    """读取 exit_policy.yaml scale_out.tier_mode, 默认 'atr'"""
+    cfg = _load_scale_out_config()
+    mode = cfg.get("tier_mode", "atr") if cfg else "atr"
+    return str(mode or "atr").lower()
 
 
 def _trailing_remainder_enabled() -> bool:
-    """读取 exit_policy.scale_out.trailing_remainder, 默认 True"""
-    try:
-        from app.core.config_container import get_config
-        cfg = get_config()
-        if cfg is None:
-            return True
-        return bool(cfg.get_dotted("exit_policy.scale_out.trailing_remainder", True))
-    except Exception:
-        return True
+    """读取 exit_policy.yaml scale_out.trailing_remainder, 默认 True"""
+    cfg = _load_scale_out_config()
+    return bool(cfg.get("trailing_remainder", True)) if cfg else True
 
 
 def _calc_new_stop_price(direction: str, entry_price: float, new_stop_pct: float) -> float:
@@ -220,6 +211,13 @@ def _check_scale_out_pct(position, current_price, trail_state, direction, entry_
         trailing_remainder = bool(is_last_tier and _trailing_remainder_enabled())
         if trailing_remainder:
             trail_state["trailing_remainder"] = True
+        symbol = getattr(position, "symbol", "?")
+        logger.info(
+            "[scale_out] %s %s Tier %d/%d fired | mode=pct | pnl_pct=%.2f%% | "
+            "close %.0f%% | ratchet_sl=%.4f | trailing_remainder=%s",
+            symbol, direction, i+1, len(tiers),
+            pnl_pct * 100, close_pct, applied_stop, trailing_remainder
+        )
         sign = "+" if direction == "LONG" else "+"
         return {
             "reason": "SCALE_OUT",
@@ -237,6 +235,15 @@ def _check_scale_out_pct(position, current_price, trail_state, direction, entry_
                 f"剩余止损上移至 entry{'+' if direction == 'LONG' else '-'}{new_stop_pct*100:.2f}% = {applied_stop:.4f}"
                 + (" [trailing_remainder]" if trailing_remainder else "")
             ),
+            "metadata": {
+                "tier": i + 1,
+                "total_tiers": len(tiers),
+                "mode": "pct",
+                "trigger_value": round(pnl_pct, 4),
+                "close_pct": close_pct,
+                "ratchet_sl": applied_stop,
+                "trailing_remainder": trailing_remainder,
+            },
         }
     return None
 
@@ -283,6 +290,13 @@ def _check_scale_out_atr(position, current_price, trail_state, direction,
         trailing_remainder = bool((is_last_tier or tier_trailing) and _trailing_remainder_enabled())
         if trailing_remainder:
             trail_state["trailing_remainder"] = True
+        symbol = getattr(position, "symbol", "?")
+        logger.info(
+            "[scale_out] %s %s Tier %d/%d fired | mode=atr | profit_atr=%.2f | "
+            "close %.0f%% | ratchet_sl=%.4f | trailing_remainder=%s",
+            symbol, direction, i+1, len(atr_tiers),
+            profit_atr, close_pct, applied_stop, trailing_remainder
+        )
         return {
             "reason": "SCALE_OUT",
             "reason_cn": f"ATR锯齿止盈 Tier {i+1}/{len(atr_tiers)} (profit={profit_atr:.2f}ATR ≥ {tier_profit_atr}ATR)",
@@ -300,11 +314,16 @@ def _check_scale_out_atr(position, current_price, trail_state, direction,
                 + (" [trailing_remainder]" if trailing_remainder else "")
             ),
             "metadata": {
+                "tier": i + 1,
+                "total_tiers": len(atr_tiers),
                 "mode": "atr",
-                "profit_atr": round(profit_atr, 3),
+                "trigger_value": round(profit_atr, 3),
                 "tier_profit_atr": tier_profit_atr,
+                "close_pct": close_pct,
+                "ratchet_sl": applied_stop,
                 "ratchet_sl_pct": ratchet_sl_pct,
                 "atr": atr,
+                "trailing_remainder": trailing_remainder,
             },
         }
     return None

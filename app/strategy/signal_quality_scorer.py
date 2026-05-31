@@ -16,6 +16,41 @@ from typing import Dict, Any
 
 logger = logging.getLogger(__name__)
 
+# Module-level cache to avoid file I/O on every call
+_WEIGHTS_CACHE = None
+
+def _load_weights():
+    """Load signal quality weights from unified_config.yaml, with fallback to defaults.
+
+    Fix 13 (2026-05-31): Read from unified_config signal_quality section instead of
+    standalone JSON file. Falls back to hardcoded defaults if config unavailable.
+    """
+    global _WEIGHTS_CACHE
+    if _WEIGHTS_CACHE is None:
+        _DEFAULTS = {
+            'trend': 0.25, 'momentum': 0.20, 'volume': 0.25,
+            'order_flow': 0.15, 'market': 0.15,
+        }
+        try:
+            from app.core.config_container import get_config
+            cfg = get_config()
+            sq = cfg.get_dotted('signal_quality', None) if cfg else None
+            if sq and isinstance(sq, dict):
+                raw_w = sq.get('weights', _DEFAULTS)
+                # Normalize keys: YAML may use trend_quality/market_env; code uses trend/market
+                _WEIGHTS_CACHE = {
+                    'trend': raw_w.get('trend', raw_w.get('trend_quality', 0.25)),
+                    'momentum': raw_w.get('momentum', 0.20),
+                    'volume': raw_w.get('volume', 0.25),
+                    'order_flow': raw_w.get('order_flow', 0.15),
+                    'market': raw_w.get('market', raw_w.get('market_env', 0.15)),
+                }
+            else:
+                _WEIGHTS_CACHE = dict(_DEFAULTS)
+        except Exception:
+            _WEIGHTS_CACHE = dict(_DEFAULTS)
+    return _WEIGHTS_CACHE
+
 
 @dataclass
 class QualityResult:
@@ -53,12 +88,14 @@ class SignalQualityScorer:
     CONFLUENCE_BONUS = {0: -0.10, 1: -0.05, 2: 0.0, 3: +0.05, 4: +0.10, 5: +0.15}
 
     @classmethod
-    def score(cls, ctx, direction: str) -> QualityResult:
+    def score(cls, ctx, direction: str, strategy_confidence: float = None) -> QualityResult:
         """对 SymbolContext + 方向 计算信号质量
 
         Args:
             ctx: SymbolContext 对象 (app/core/pipeline_contracts.py)
             direction: "LONG" or "SHORT"
+            strategy_confidence: 策略原始置信度 (可选). 若提供, 则与质量分数
+                加权混合 (60% strategy + 40% quality), 避免质量评分覆盖策略判断.
 
         Returns:
             QualityResult with confidence, strength, and dimension breakdowns
@@ -89,8 +126,9 @@ class SignalQualityScorer:
         }
 
         # 加权求和
+        weights = _load_weights() or cls.WEIGHTS
         weighted_sum = sum(
-            dimensions[k] * cls.WEIGHTS[k] for k in cls.WEIGHTS
+            dimensions[k] * weights.get(k, cls.WEIGHTS.get(k, 0)) for k in cls.WEIGHTS
         )
 
         # 汇合奖励: 多少维度 > 0.6
@@ -101,7 +139,17 @@ class SignalQualityScorer:
         contradicting = sum(1 for d in dimensions.values() if d < 0.3)
         contradiction_penalty = -0.10 * contradicting
 
-        raw_confidence = weighted_sum + confluence_bonus + contradiction_penalty
+        quality_score = weighted_sum + confluence_bonus + contradiction_penalty
+
+        # Fix 7 (2026-05-31): Blend strategy confidence with quality score
+        # instead of quality_score replacing strategy confidence.
+        # Strategy confidence: 60% weight (primary signal)
+        # Quality score: 40% weight (confirmation from market context)
+        if strategy_confidence is not None:
+            raw_confidence = (strategy_confidence * 0.60) + (quality_score * 0.40)
+        else:
+            raw_confidence = quality_score
+
         confidence = max(0.10, min(0.95, raw_confidence))
 
         # Strength: 从 confidence 映射到 0-99，考虑汇合程度
@@ -118,6 +166,9 @@ class SignalQualityScorer:
                 "agreeing_dims": agreeing,
                 "contradicting_dims": contradicting,
                 "weighted_sum": round(weighted_sum, 3),
+                "quality_score": round(quality_score, 3),
+                "strategy_confidence": strategy_confidence,
+                "blended": strategy_confidence is not None,
                 "direction": direction,
             },
         )
@@ -127,6 +178,7 @@ class SignalQualityScorer:
             f"conf={confidence:.3f} str={strength} "
             f"dims={{{', '.join(f'{k}={v:.2f}' for k, v in dimensions.items())}}} "
             f"confluence={confluence_bonus:+.2f} penalty={contradiction_penalty:+.2f}"
+            + (f" blended(strat={strategy_confidence:.3f})" if strategy_confidence is not None else "")
         )
 
         return result
