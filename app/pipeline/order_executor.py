@@ -3390,6 +3390,15 @@ def _close_position(scheduler, position: Position, current_price: float, exit_re
         except Exception as _silent_e:
             logger.debug(f"[silent_except:order_executor.py] {_silent_e}")
 
+        # C4 fix (2026-05-31): 主线 P&L 计入共享日回撤池
+        try:
+            _risk_eng = getattr(scheduler, "risk_engine", None)
+            _dd_ctrl = getattr(_risk_eng, "drawdown_controller", None) if _risk_eng else None
+            if _dd_ctrl is not None:
+                _dd_ctrl.record_trade_pnl(float(pnl), source="main")
+        except Exception as _dd_e:
+            logger.debug(f"[主线·C4] 回撤上报失败 (不影响平仓): {_dd_e}")
+
         # Task #29 (2026-05-27): 教训应用验证 — 学了→用了 链路
         try:
             from app.review.lesson_injector import LessonInjector

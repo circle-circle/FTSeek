@@ -153,6 +153,36 @@ class DrawdownController:
 
         self._check_limits()
 
+    def record_trade_pnl(self, pnl: float, source: str = "unknown"):
+        """C4 fix (2026-05-31): 记录单笔交易 P&L, 累加到日内回撤
+
+        供 scalping 和主线在平仓时调用, 确保所有策略的亏损都计入共享日回撤池。
+
+        Args:
+            pnl: 交易净盈亏 (正=盈利, 负=亏损), 单位: 美元
+            source: 来源标识 ("scalping" / "main" / etc.)
+        """
+        if self.daily_start_assets <= 0:
+            logger.debug(f"[回撤] record_trade_pnl 跳过: daily_start_assets={self.daily_start_assets}")
+            return
+
+        # 累加到日内回撤 (亏损增加回撤, 盈利减少回撤)
+        if pnl < 0:
+            self.current_daily_dd_abs += abs(pnl)
+        else:
+            self.current_daily_dd_abs = max(0, self.current_daily_dd_abs - pnl)
+
+        self.current_daily_dd = self.current_daily_dd_abs / self.daily_start_assets
+
+        if pnl < 0:
+            logger.info(
+                f"[回撤·{source}] 记录亏损 ${pnl:.2f} | "
+                f"日内回撤: ${self.current_daily_dd_abs:.2f} "
+                f"({self.current_daily_dd:.2%} / {self.max_daily:.2%})"
+            )
+
+        self._check_limits()
+
     def update_drawdown(self, daily_dd: float, total_dd: float):
         """兼容旧接口：直接传入回撤百分比"""
         self.current_daily_dd = daily_dd

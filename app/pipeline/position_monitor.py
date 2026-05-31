@@ -1019,6 +1019,10 @@ def _check_positions(scheduler):
             logger.warning("[ExitDispatcher] 不可用，回退到 legacy 路径")
         else:
             for position in list(monitored_positions):
+                # C1 fix (2026-05-31): 过滤 scalping 仓位 — ScalpingEngine 自管退出
+                # ExitRuleDispatcher 不得干预 scalping 仓位, 否则会导致双重平仓 + 状态不一致
+                if exit_monitor._is_scalping_position(position):
+                    continue
                 try:
                     cur_price = price_cache.get(position.symbol)
                     if not cur_price or cur_price <= 0:
