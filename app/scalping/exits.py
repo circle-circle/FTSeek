@@ -14,6 +14,7 @@ Task #9 (2026-05-30): SCALPING 退出参数迁移到 app/risk/exit_policy.yaml
 
 import os
 from datetime import datetime, timedelta
+from app.utils.timezone import now_et
 from typing import Dict, Tuple, Optional
 import logging
 
@@ -205,7 +206,7 @@ class TimeExit:
         Returns:
             (should_exit, reason)
         """
-        now = datetime.now()
+        now = now_et()
         hold_minutes = (now - entry_time).total_seconds() / 60.0
 
         # ═══════════════════════════════════════════════════════════

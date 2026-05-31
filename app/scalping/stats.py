@@ -17,6 +17,7 @@ import os
 import threading
 import logging
 from datetime import datetime
+from app.utils.timezone import now_et
 from typing import Dict, List, Optional
 from pathlib import Path
 
@@ -54,7 +55,7 @@ class TradeRecord:
         self.exit_reason: Optional[str] = None
         self.pnl_pct: Optional[float] = None
         self.pnl_amount: Optional[float] = None
-        self.entry_time = datetime.now()
+        self.entry_time = now_et()
         self.exit_time: Optional[datetime] = None
         self.hold_minutes: Optional[float] = None
 
@@ -66,7 +67,7 @@ class TradeRecord:
         """平仓"""
         self.exit_price = exit_price
         self.exit_reason = exit_reason
-        self.exit_time = datetime.now()
+        self.exit_time = now_et()
         self.hold_minutes = (
             (self.exit_time - self.entry_time).total_seconds() / 60
         )
@@ -265,7 +266,7 @@ class ScalpingStatsTracker:
     def get_today_stats(self) -> Dict:
         """获取今日统计"""
         with self._lock:
-            today = datetime.now().date()
+            today = now_et().date()
             completed = [
                 t for t in self._trades
                 if t.pnl_pct is not None

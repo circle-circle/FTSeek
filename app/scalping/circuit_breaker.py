@@ -14,6 +14,7 @@
 import threading
 import logging
 from datetime import datetime, timedelta
+from app.utils.timezone import now_et
 from typing import Dict, Optional
 
 logger = logging.getLogger(__name__)
@@ -103,7 +104,7 @@ class ScalpingCircuitBreaker:
             return  # 已在冷却中
 
         self._state = self.STATE_COOLDOWN
-        self._cooldown_until = datetime.now() + timedelta(
+        self._cooldown_until = now_et() + timedelta(
             minutes=self.cooldown_minutes
         )
 
@@ -126,7 +127,7 @@ class ScalpingCircuitBreaker:
                 return False
 
             if self._state == self.STATE_COOLDOWN:
-                if self._cooldown_until and datetime.now() >= self._cooldown_until:
+                if self._cooldown_until and now_et() >= self._cooldown_until:
                     # 冷却结束，恢复
                     self._state = self.STATE_NORMAL
                     self._cooldown_until = None
@@ -135,7 +136,7 @@ class ScalpingCircuitBreaker:
                     return False
                 else:
                     remaining = (
-                        (self._cooldown_until - datetime.now()).total_seconds() / 60
+                        (self._cooldown_until - now_et()).total_seconds() / 60
                     )
                     logger.debug(
                         f"[CircuitBreaker] 熔断中，剩余 {remaining:.0f} 分钟"
@@ -153,7 +154,7 @@ class ScalpingCircuitBreaker:
                 and self._cooldown_until
             ):
                 remaining = (
-                    self._cooldown_until - datetime.now()
+                    self._cooldown_until - now_et()
                 ).total_seconds() / 60
                 remaining_minutes = max(0, remaining)
 
@@ -168,7 +169,7 @@ class ScalpingCircuitBreaker:
                 "is_blocked": self._state == self.STATE_COOLDOWN
                 and (
                     not self._cooldown_until
-                    or datetime.now() < self._cooldown_until
+                    or now_et() < self._cooldown_until
                 ),
             }
 

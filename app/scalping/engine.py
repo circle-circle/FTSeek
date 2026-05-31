@@ -23,6 +23,7 @@ from datetime import datetime
 from typing import Dict, List, Optional, Any
 from pathlib import Path
 import sys
+from app.utils.timezone import now_et
 
 logger = logging.getLogger(__name__)
 
@@ -38,20 +39,20 @@ class _ForcedTickerValidator:
         self._notifier = notifier
         self._trades: Dict[str, List[dict]] = {code: [] for code in self._tickers}
         self._daily_pnl: Dict[str, float] = {code: 0.0 for code in self._tickers}
-        self._date = datetime.now().strftime("%Y-%m-%d")
+        self._date = now_et().strftime("%Y-%m-%d")
     
     def record_trade(self, symbol: str, pnl_pct: float):
         if symbol not in self._tickers:
             return
         # 跨日重置
-        today = datetime.now().strftime("%Y-%m-%d")
+        today = now_et().strftime("%Y-%m-%d")
         if today != self._date:
             self._emit_daily_report()
             self._trades = {code: [] for code in self._tickers}
             self._daily_pnl = {code: 0.0 for code in self._tickers}
             self._date = today
         
-        self._trades[symbol].append({"pnl_pct": pnl_pct, "ts": datetime.now().isoformat()})
+        self._trades[symbol].append({"pnl_pct": pnl_pct, "ts": now_et().isoformat()})
         self._daily_pnl[symbol] += pnl_pct
         
         cfg = self._tickers[symbol]
@@ -1393,7 +1394,7 @@ class ScalpingEngine:
 
             # P0 修复 (2026-05-08): 标的级冷却 — sl_hit 当日超过3次冷却到次日
             if hasattr(self, '_symbol_sl_hit_count'):
-                today = datetime.now().strftime("%Y-%m-%d")
+                today = now_et().strftime("%Y-%m-%d")
                 sl_count = self._symbol_sl_hit_count.get(symbol, {}).get("count", 0)
                 sl_date = self._symbol_sl_hit_count.get(symbol, {}).get("date", "")
                 if sl_date == today and sl_count >= 3:
@@ -1405,7 +1406,7 @@ class ScalpingEngine:
 
             # C3+S2 修复 (2026-05-13): 每标的每日最大交易次数
             if hasattr(self, '_per_symbol_daily_count'):
-                today = datetime.now().strftime("%Y-%m-%d")
+                today = now_et().strftime("%Y-%m-%d")
                 sym_stats = self._per_symbol_daily_count.get(symbol, {"count": 0, "date": ""})
                 if sym_stats.get("date") != today:
                     sym_stats = {"count": 0, "date": today}
@@ -2223,7 +2224,7 @@ class ScalpingEngine:
                 # 若 signal_context 已有 trace_id (上游传入) 则复用, 否则新生成.
                 import uuid as _uuid
                 _trace_id = (signal_context or {}).get("trace_id") or (
-                    f"US-{datetime.now().strftime('%Y%m%d')}-"
+                    f"US-{now_et().strftime('%Y%m%d')}-"
                     f"{_uuid.uuid4().hex[:6].upper()}"
                 )
                 signal_record = UnifiedTradeRecord(
@@ -2290,7 +2291,7 @@ class ScalpingEngine:
                 self._active_trades[symbol] = {
                     "trade": trade,
                     "levels": levels,
-                    "entry_time": datetime.now(),
+                    "entry_time": now_et(),
                     "max_hold_minutes": max_hold_minutes,
                     "direction": direction,
                     "entry_price": price,
@@ -2418,7 +2419,7 @@ class ScalpingEngine:
                     self._active_trades[symbol] = {
                         "trade": trade,
                         "levels": levels,
-                        "entry_time": datetime.now(),
+                        "entry_time": now_et(),
                         "max_hold_minutes": max_hold_minutes,
                         "direction": direction,
                         "entry_price": price,
@@ -2488,7 +2489,7 @@ class ScalpingEngine:
                                 factor_detail=_factor_t3,
                                 owner_strategy="scalping",
                                 direction=direction,
-                                entry_time=datetime.now().isoformat(),
+                                entry_time=now_et().isoformat(),
                                 entry_price=float(price),
                                 quantity=int(position_size),
                                 regime=_regime_t3,
@@ -2981,7 +2982,7 @@ class ScalpingEngine:
 
             # P0 修复 (2026-05-08): 标的级冷却 — 记录 sl_hit 次数
             if reason_tag == "sl_hit":
-                today = datetime.now().strftime("%Y-%m-%d")
+                today = now_et().strftime("%Y-%m-%d")
                 if symbol not in self._symbol_sl_hit_count:
                     self._symbol_sl_hit_count[symbol] = {"count": 0, "date": today}
                 if self._symbol_sl_hit_count[symbol]["date"] != today:
@@ -3123,8 +3124,8 @@ class ScalpingEngine:
             from app.core.paths import get_trade_records_db
             db_path = str(get_trade_records_db())
             entry_price = info.get("entry_price", exit_price)
-            entry_time = info.get("entry_time", datetime.now())
-            hold_minutes = (datetime.now() - entry_time).total_seconds() / 60.0
+            entry_time = info.get("entry_time", now_et())
+            hold_minutes = (now_et() - entry_time).total_seconds() / 60.0
             holding_periods = max(1, int(hold_minutes / 5))  # 5分钟K线 = 1周期
             
             # 幂等检查: 是否已有相同 (code, strategy, entry_price, exit_price) 的记录
@@ -3220,7 +3221,7 @@ class ScalpingEngine:
                 time_stop_hours=5,
                 market_regime=MarketRegime.RANGE,
             )
-            pos.entry_time = datetime.now()
+            pos.entry_time = now_et()
             pos.metadata = {"source": "scalping", "source_type": "SCALPING", "signals": signals}
 
             # 构造 Order 对象
@@ -3271,8 +3272,8 @@ class ScalpingEngine:
             else:
                 exit_enum = ExitReason.MANUAL
 
-            entry_time = info.get("entry_time", datetime.now())
-            holding_hours = (datetime.now() - entry_time).total_seconds() / 3600.0
+            entry_time = info.get("entry_time", now_et())
+            holding_hours = (now_et() - entry_time).total_seconds() / 3600.0
 
             # 构造 Position 对象
             pos = Position(
@@ -3290,7 +3291,7 @@ class ScalpingEngine:
                 market_regime=MarketRegime.RANGE,
             )
             pos.entry_time = entry_time
-            pos.exit_time = datetime.now()
+            pos.exit_time = now_et()
             # holding_hours is a @property computed from entry_time/exit_time — do NOT assign
             pos.metadata = {"source": "scalping", "source_type": "SCALPING", "net_pnl": net_pnl}
 
@@ -3365,7 +3366,7 @@ class ScalpingEngine:
                 time_stop_hours=max_hold_minutes // 60,
                 market_regime=MarketRegime.RANGE,
             )
-            pos.entry_time = datetime.now()
+            pos.entry_time = now_et()
             pos.metadata = {"source": "scalping", "max_hold_minutes": max_hold_minutes}
             # B.4 (2026-05-14): scalping 路径标 owner_strategy + position_pct
             pos.owner_strategy = "scalping"
@@ -3439,7 +3440,7 @@ class ScalpingEngine:
             conn = sqlite3.connect(str(db_path))
             cursor = conn.cursor()
             import json
-            now = datetime.now().isoformat()
+            now = now_et().isoformat()
             meta = json.dumps({
                 "source": "scalping",
                 "max_hold_minutes": max_hold_minutes,
@@ -3524,7 +3525,7 @@ class ScalpingEngine:
                     self._active_trades[symbol] = {
                         "trade": trade,
                         "levels": {"take_profit": tp_price, "stop_loss": sl_price},
-                        "entry_time": datetime.fromisoformat(row["entry_time"]) if row["entry_time"] else datetime.now(),
+                        "entry_time": datetime.fromisoformat(row["entry_time"]) if row["entry_time"] else now_et(),
                         "max_hold_minutes": max_hold,
                         "direction": direction,
                         "entry_price": entry_price,

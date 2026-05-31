@@ -11,6 +11,7 @@ Scalping 日报生成 — 盘后汇总
 
 import logging
 from datetime import datetime
+from app.utils.timezone import now_et
 from typing import Dict, Optional
 
 logger = logging.getLogger(__name__)
@@ -43,7 +44,7 @@ class ScalpingDailyReport:
         lines = [
             "=" * 50,
             "⚡ SCALPING 日报",
-            f"日期: {datetime.now().strftime('%Y-%m-%d')}",
+            f"日期: {now_et().strftime('%Y-%m-%d')}",
             "=" * 50,
             "",
             "── 今日统计 ──",
@@ -146,7 +147,7 @@ class ScalpingDailyReport:
         total_stats = self.stats_tracker.get_stats() if self.stats_tracker else {}
 
         return {
-            "date": datetime.now().strftime("%Y-%m-%d"),
+            "date": now_et().strftime("%Y-%m-%d"),
             "today_trades": today_stats.get("total_trades", 0),
             "today_wins": today_stats.get("wins", 0),
             "today_losses": today_stats.get("losses", 0),

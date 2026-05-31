@@ -16,6 +16,7 @@ Scalping 标的筛选器 (Scalping Stock Selector)
 
 import logging
 from typing import Dict, List, Optional, Set
+from app.utils.timezone import now_et
 
 logger = logging.getLogger("ftseek.scalping.selector")
 
@@ -233,7 +234,7 @@ class ScalpingStockSelector:
             c = conn.cursor()
 
             # 获取最近 30 分钟的新闻
-            cutoff = (datetime.now() - timedelta(minutes=30)).isoformat()
+            cutoff = (now_et() - timedelta(minutes=30)).isoformat()
             c.execute("""
                 SELECT title, content FROM news 
                 WHERE created_at > ? 
