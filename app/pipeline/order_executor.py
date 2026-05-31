@@ -16,7 +16,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Tuple
 
-from app.utils.timezone import _et_trade_date
+from app.utils.timezone import _et_trade_date, now_et
 
 from app.core.models import (
     SignalScore, Direction, MarketRegime,
@@ -896,7 +896,7 @@ def _submit_put_option(scheduler, symbol: str, signal: SignalScore, context: Dic
             "entry_price":        contract.last_price,
             "strike_price":       contract.strike_price,
             "expiry_date":        contract.expiry_date,
-            "entry_time":         datetime.now().isoformat(),
+            "entry_time":         now_et().isoformat(),
             "cost_total":         cost_total,
             "signal_strength":    signal.strength,
             "signal_confidence":  signal.confidence,
@@ -925,7 +925,7 @@ def _submit_put_option(scheduler, symbol: str, signal: SignalScore, context: Dic
             time_stop_hours=contract.dte * 24,
             market_regime=signal.market_regime,
         )
-        position.entry_time = datetime.now()
+        position.entry_time = now_et()
         # 在 metadata 中标记为期权持仓 + 来源
         position.metadata = {
             "is_option":    True,
@@ -1395,7 +1395,7 @@ def _check_gates_and_conflicts(scheduler, symbol: str, signal: SignalScore, cont
         from app.storage.trade_store import TradeStore as _TS
         trade_store = getattr(scheduler, 'trade_store', None)
         if trade_store:
-            cutoff = (datetime.now() - timedelta(minutes=5)).isoformat()
+            cutoff = (now_et() - timedelta(minutes=5)).isoformat()
             conn = trade_store._get_conn()
             recent_close = conn.execute(
                 "SELECT exit_time, exit_reason FROM trade_records "
@@ -1686,7 +1686,7 @@ def _execute_stock_short(scheduler, symbol: str, signal: SignalScore, context: D
         time_stop_hours=int(_load_short_config_val("time_decay.max_holding_days", 5) * 24),
         market_regime=getattr(signal, "market_regime", "") or MarketRegime.RANGE,
     )
-    position.entry_time = datetime.now()
+    position.entry_time = now_et()
     position.futu_order_id = result.get("futu_order_id", "")
     position.trail_state = {
         "resistance_20d": resistance,
@@ -2269,7 +2269,7 @@ def _check_symbol_cooldown(symbol: str, direction) -> bool:
         db_path = Path(__file__).resolve().parent.parent.parent / "data" / "ftseek_us.db"
         with sqlite3.connect(str(db_path)) as conn:
             conn.row_factory = sqlite3.Row
-            cutoff = (datetime.now() - timedelta(hours=24)).strftime("%Y-%m-%d")
+            cutoff = (now_et() - timedelta(hours=24)).strftime("%Y-%m-%d")
             direction_str = direction.name if hasattr(direction, "name") else str(direction)
 
             rows = conn.execute(
@@ -2337,7 +2337,7 @@ def _check_reversal_cooldown(scheduler, symbol: str, direction) -> bool:
         db_path = Path(__file__).resolve().parent.parent.parent / "data" / "ftseek_us.db"
         with sqlite3.connect(str(db_path)) as conn:
             # 最近一笔反向平仓 (跨 source_type 全量看，因为 whipsaw 可能跨策略)
-            cutoff_iso = (datetime.now() - timedelta(seconds=cooldown_sec)).isoformat()
+            cutoff_iso = (now_et() - timedelta(seconds=cooldown_sec)).isoformat()
             row = conn.execute(
                 "SELECT direction, exit_time, source_type FROM trade_records "
                 "WHERE symbol = ? AND direction = ? AND exit_time IS NOT NULL "
@@ -2350,7 +2350,7 @@ def _check_reversal_cooldown(scheduler, symbol: str, direction) -> bool:
             _, exit_time_str, src = row
             try:
                 exit_dt = datetime.fromisoformat(exit_time_str)
-                gap = (datetime.now() - exit_dt).total_seconds()
+                gap = (now_et() - exit_dt).total_seconds()
                 logger.warning(
                     f"🚫 [F1·反向冷却] {symbol} {direction_str} 拒入场: "
                     f"{opposite} 在 {gap:.0f}s 前刚平仓 (源={src}, 冷却={cooldown_sec}s)"
@@ -2568,29 +2568,6 @@ def _derive_entry_reason_for_close(meta: dict) -> str:
         source=source,
         metadata=meta,
     )
-
-    import sqlite3
-    from app.core.paths import get_trade_records_db
-    db_path = get_trade_records_db()
-    try:
-        with sqlite3.connect(str(db_path)) as conn:
-            if trace_id:
-                row = conn.execute(
-                    "SELECT decision_id FROM trade_attribution WHERE trace_id = ? LIMIT 1",
-                    (trace_id,)
-                ).fetchone()
-                if row and row[0]:
-                    return row[0]
-            if symbol:
-                row = conn.execute(
-                    "SELECT decision_id FROM trade_attribution WHERE symbol = ? ORDER BY created_at DESC LIMIT 1",
-                    (symbol,)
-                ).fetchone()
-                if row and row[0]:
-                    return row[0]
-    except Exception as _silent_e:
-        logger.debug(f"[silent_except:order_executor.py] {_silent_e}")
-    return ""
 
 
 def _fetch_attribution_data(trace_id: str, symbol: str = "", trade_date: str = "", direction: str = ""):
@@ -3002,7 +2979,7 @@ def _close_position(scheduler, position: Position, current_price: float, exit_re
         if close_fail_count >= max_retries:
             meta["_close_blocked"] = True
             meta["_close_blocked_reason"] = str(e)
-            meta["_close_blocked_at"] = datetime.now().isoformat()
+            meta["_close_blocked_at"] = now_et().isoformat()
             logger.critical(
                 f"[平仓·异常] {position.symbol} 连续 {close_fail_count} 次平仓失败，"
                 f"已标记为异常持仓 (blocked=True)，需人工介入。"
@@ -3093,8 +3070,9 @@ def _close_position(scheduler, position: Position, current_price: float, exit_re
             trd_env_f = TrdEnv.SIMULATE if getattr(scheduler, 'trade_env', 1) == 1 else TrdEnv.REAL
             order_confirmed = False
 
-            # 查询 5 次，每次间隔 1s (总计 5s 确认窗口)
-            for _attempt in range(5):
+            # P1 修复 (2026-05-31): 确认窗口从 5s 缩短到 2s, 减少 FLAT_ALL 时的线程阻塞
+            # 未确认的订单标记为 STALE, 下次扫描会重新确认
+            for _attempt in range(2):
                 _time.sleep(1)
                 ret_q, data_q = scheduler.execution_engine.broker_adapter.trade_ctx.order_list_query(
                     order_id=close_futu_id,
@@ -3120,7 +3098,7 @@ def _close_position(scheduler, position: Position, current_price: float, exit_re
             if not order_confirmed:
                 logger.warning(
                     f"[平仓·未确认] {position.symbol} futu_order_id={close_futu_id} "
-                    f"5s 内未确认成交，标记为 STALE，等待下次扫描确认"
+                    f"2s 内未确认成交，标记为 STALE，等待下次扫描确认"
                 )
                 tracker.update_order_state(close_futu_id, OrderState.STALE)
                 meta['_close_order_unconfirmed'] = True
@@ -3150,13 +3128,14 @@ def _close_position(scheduler, position: Position, current_price: float, exit_re
 
     # 只有确认成交后才执行后续的持仓清理和通知
     # 更新持仓 (标记为已平仓)
-    position.exit_time = datetime.now()
+    # P0 修复 (2026-05-31): exit_time 统一用美东时间, 避免 CST 导致日期错位
+    position.exit_time = now_et()
     position.exit_price = current_price
     position.exit_reason = exit_reason
     position.realized_pnl = pnl
     meta = getattr(position, "metadata", {}) or {}
     meta["_pending_close"] = True
-    meta["_pending_close_at"] = datetime.now().isoformat()
+    meta["_pending_close_at"] = now_et().isoformat()
     position.metadata = meta
 
     scheduler.position_store.remove(position.symbol)
@@ -3330,7 +3309,7 @@ def _close_position(scheduler, position: Position, current_price: float, exit_re
         _exit_trace_id = (meta.get("exit_trace_id") if isinstance(meta, dict) else "") or ""
         if not _exit_trace_id:
             _exit_trace_id = (
-                f"EXIT-{position.symbol}-{datetime.now().strftime('%Y%m%d%H%M%S')}-"
+                f"EXIT-{position.symbol}-{now_et().strftime('%Y%m%d%H%M%S')}-"
                 f"{uuid.uuid4().hex[:6].upper()}"
             )
         logger.info(

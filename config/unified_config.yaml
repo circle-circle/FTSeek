@@ -722,6 +722,35 @@ OPTION_QUALITY_GATE:
   min_dte: 5
   max_dte: 45
 risk:
+  # Phase 3 (2026-05-31): 退出路由统一 — ExitRuleDispatcher 影子模式开关
+  # use_unified_dispatcher=true: 主路径走新 dispatcher (谨慎启用, 仅验证后切换)
+  # shadow_mode=true: 与 legacy 并行评估, 仅记录差异 (默认 false 避免日志噪声)
+  exit_routing:
+    use_unified_dispatcher: false
+    shadow_mode: true     # 2026-05-31: 开启影子模式, 收集新旧决策差异数据
+    log_diff_only: true   # shadow_mode 下仅在决策不一致时输出日志
+  # Phase 1 (2026-05-31): 策略隔离开关 — 退出监控按 owner_strategy 严格校验
+  # 关闭时走原 fallback 逻辑 (向后兼容); 开启时 owner_strategy 缺失/未知的仓位将被跳过
+  strategy_enforcement:
+    strict_owner_validation: true
+  # 模式适配 (Task #6, 2026-05-31)：模拟/实盘共享同一份风控参数易掩盖实盘风险，
+  # 此处按 TradingMode 给出三套阈值，由 app/core/trading_mode.py 在运行时挑选。
+  mode_adaptation:
+    simulate:
+      max_position_pct: 15.0
+      max_daily_loss_pct: 5.0
+      max_total_exposure_pct: 80.0
+      circuit_breaker_loss_pct: 8.0
+    live_conservative:
+      max_position_pct: 8.0       # 仓位减半
+      max_daily_loss_pct: 2.0     # 日亏损更严
+      max_total_exposure_pct: 40.0 # 总敞口减半
+      circuit_breaker_loss_pct: 3.0 # 熔断更敏感
+    live_normal:
+      max_position_pct: 12.0
+      max_daily_loss_pct: 3.0
+      max_total_exposure_pct: 60.0
+      circuit_breaker_loss_pct: 5.0
   # P0 全局黑名单 (2026-05-30): 跨策略统一拦截亏损标的，不仅限于Scalping
   # 实施在 app/pipeline/stages/risk_stage.py 的入场校验最早期
   global_blacklist:

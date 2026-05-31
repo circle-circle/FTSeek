@@ -108,6 +108,9 @@ try:
 except ImportError:
     ET = None
 
+# P0 修复 (2026-05-31): 统一使用 timezone.py 的 now_et() 作为时间 SSOT
+from app.utils.timezone import now_et as _now_et
+
 
 # ============================================================
 #  市场时间工具
@@ -209,6 +212,17 @@ class ExitMonitor:
                 logger.debug(f"[ExitMonitor] CostModel 初始化失败，将退化为无 cost_buffer: {e}")
                 self._cost_model = None
 
+        # Phase 3 (2026-05-31): 从 exit_policy.yaml 读取调度参数 (覆盖类常量, 实现外部化)
+        self._reload_exit_monitor_params()
+
+        # Phase 3 (2026-05-31): ExitRuleDispatcher (影子模式) 与 EarningsGuard 注入
+        self._unified_dispatcher = None
+        self._dispatcher_shadow_mode = False
+        self._dispatcher_use_main = False
+        self._dispatcher_log_diff_only = True
+        self._earnings_guard_phase3 = None
+        self._init_phase3_components()
+
         # Task #19: 初始化退出规则实例 (注入 monitor 引用以复用 ATR/VIX/cost_model)
         # 注意: 顺序决定了规则在 scan_positions 中的遍历顺序;
         #       Pre-Close 仍由编排器单独优先处理 (不参与质量评分竞争)
@@ -278,7 +292,7 @@ class ExitMonitor:
         # 异常时可自动 fallback 到 _check_via_legacy (逐条检查).
         self._exit_context = ExitRuleContext(
             cooldown_sec=float(self.COOLDOWN_SECONDS),
-            min_hold_minutes=10.0,
+            min_hold_minutes=float(getattr(self, "_min_hold_minutes_cfg", 10.0)),
         )
         self._use_registry, self._registry_fallback_on_error = self._load_registry_flags()
         logger.info(
@@ -304,6 +318,141 @@ class ExitMonitor:
             logger.debug(f"[ExitMonitor] 读取 Registry Feature Flag 失败, 使用默认: {e}")
         return use_registry, fallback
 
+    # ============================================================
+    # Phase 3 (2026-05-31): 退出参数外部化 + ExitRuleDispatcher 影子模式
+    # ============================================================
+
+    def _load_exit_policy_dict(self) -> Dict[str, Any]:
+        """加载 exit_policy.yaml 为 dict (best-effort, 失败返回空)"""
+        try:
+            from app.risk.exit_policy_guardian import ExitPolicyGuardian
+            guardian = ExitPolicyGuardian()
+            policy = getattr(guardian, "policy", None)
+            if isinstance(policy, dict):
+                return policy
+        except Exception as e:
+            logger.debug(f"[ExitMonitor] _load_exit_policy_dict 失败: {e}")
+        return {}
+
+    def _reload_exit_monitor_params(self):
+        """从 exit_policy.yaml::exit_monitor 读取调度参数 (Phase 3 外部化)"""
+        try:
+            policy = self._load_exit_policy_dict()
+            em_cfg = (policy.get("exit_monitor") or {}) if policy else {}
+            scan = float(em_cfg.get("scan_interval_seconds", self.SCAN_INTERVAL_SECONDS))
+            cooldown = float(em_cfg.get("cooldown_seconds", self.COOLDOWN_SECONDS))
+            min_hold = float(em_cfg.get("min_hold_minutes", 10))
+            # 使用实例字段覆盖类常量 (向后兼容, 不修改调用点)
+            self.SCAN_INTERVAL_SECONDS = scan
+            self.COOLDOWN_SECONDS = cooldown
+            self._min_hold_minutes_cfg = min_hold
+        except Exception as e:
+            logger.debug(f"[ExitMonitor] _reload_exit_monitor_params 失败 (使用默认): {e}")
+            self._min_hold_minutes_cfg = 10.0
+
+    def _init_phase3_components(self):
+        """初始化 ExitRuleDispatcher 与 EarningsGuard (Phase 3)"""
+        # 1. 读 feature flag
+        try:
+            from app.core.config_container import get_config
+            cfg = get_config()
+            if cfg is not None:
+                self._dispatcher_use_main = bool(cfg.get_dotted(
+                    "risk.exit_routing.use_unified_dispatcher", False))
+                self._dispatcher_shadow_mode = bool(cfg.get_dotted(
+                    "risk.exit_routing.shadow_mode", False))
+                self._dispatcher_log_diff_only = bool(cfg.get_dotted(
+                    "risk.exit_routing.log_diff_only", True))
+        except Exception as e:
+            logger.debug(f"[ExitMonitor] 读取 risk.exit_routing flags 失败: {e}")
+
+        # 2. 初始化 dispatcher (使用 exit_policy 作为配置源)
+        if self._dispatcher_shadow_mode or self._dispatcher_use_main:
+            try:
+                from app.risk.exit_rule_dispatcher import get_exit_rule_dispatcher
+                policy = self._load_exit_policy_dict()
+                self._unified_dispatcher = get_exit_rule_dispatcher(policy)
+                logger.info(
+                    f"✅ [ExitRuleDispatcher] 启用 "
+                    f"shadow={self._dispatcher_shadow_mode}, main={self._dispatcher_use_main}"
+                )
+            except Exception as e:
+                logger.warning(f"[ExitMonitor] ExitRuleDispatcher 初始化失败: {e}")
+                self._unified_dispatcher = None
+
+        # 3. 初始化 EarningsGuard (Phase 3 ATR 数学保护)
+        try:
+            from app.risk.earnings_guard import get_earnings_guard
+            policy = self._load_exit_policy_dict()
+            eg_cfg = (policy.get("exit_rules") or {}).get("earnings_guard", {}) or {}
+            self._earnings_guard_phase3 = get_earnings_guard(config=eg_cfg)
+        except Exception as e:
+            logger.debug(f"[ExitMonitor] EarningsGuard (Phase 3) 初始化失败: {e}")
+            self._earnings_guard_phase3 = None
+
+    def _shadow_mode_enabled(self) -> bool:
+        """是否开启影子模式评估"""
+        return bool(self._dispatcher_shadow_mode and self._unified_dispatcher is not None)
+
+    def _shadow_evaluate(
+        self,
+        position,
+        current_price: float,
+        effective_atr: float,
+        trail_state: Dict[str, Any],
+        direction: str,
+        now_ts: float,
+        legacy_decision: Optional[Dict[str, Any]],
+    ) -> None:
+        """在影子模式下使用 ExitRuleDispatcher 评估 + 对比旧决策 (仅记录差异)"""
+        if not self._shadow_mode_enabled():
+            return
+        try:
+            # 构造 dispatcher 需要的代理数据
+            entry_price = float(getattr(position, "avg_entry_price", 0) or 0)
+            holding_hours = float(getattr(position, "holding_hours", 0) or 0)
+            pos_dict = {
+                "symbol": getattr(position, "symbol", "?"),
+                "position_id": getattr(position, "position_id", "") or getattr(position, "symbol", "?"),
+                "entry_price": entry_price,
+                "direction": direction,
+                "holding_hours": holding_hours,
+                "owner_strategy": getattr(position, "owner_strategy", "main"),
+            }
+            md_dict = {
+                "current_price": current_price,
+                "atr": effective_atr,
+                "now_ts": now_ts,
+            }
+            new_decision = self._unified_dispatcher.evaluate(pos_dict, md_dict, trail_state or {})
+            self._log_shadow_comparison(position, legacy_decision, new_decision)
+        except Exception as e:
+            logger.debug(f"[ExitMonitor] shadow evaluate 异常: {e}")
+
+    def _log_shadow_comparison(
+        self,
+        position,
+        legacy_decision: Optional[Dict[str, Any]],
+        new_decision,
+    ) -> None:
+        """输出影子模式下两路决策的差异日志"""
+        legacy_reason = None
+        if isinstance(legacy_decision, dict):
+            legacy_reason = legacy_decision.get("reason")
+        new_reason = getattr(new_decision, "rule_name", None) if new_decision else None
+
+        # log_diff_only=True 时不一致才输出
+        if self._dispatcher_log_diff_only and legacy_reason == new_reason:
+            return
+
+        logger.info(
+            "[shadow] symbol=%s legacy=%s new=%s suppressed=%s",
+            getattr(position, "symbol", "?"),
+            legacy_reason or "NONE",
+            new_reason or "NONE",
+            getattr(new_decision, "suppressed_rules", []) if new_decision else [],
+        )
+
     def _has_exit_record(self, symbol: str, exit_reason: str, max_minutes: int = 1440) -> bool:
         """
         P1 修复 (2026-05-01): 检查该标的是否在指定时间内已有相同原因的退出记录
@@ -317,7 +466,7 @@ class ExitMonitor:
                 return False
             conn = sqlite3.connect(db_path)
             cursor = conn.cursor()
-            cutoff = (datetime.now() - __import__('datetime', fromlist=['timedelta']).timedelta(minutes=max_minutes)).isoformat()
+            cutoff = (_now_et() - __import__('datetime', fromlist=['timedelta']).timedelta(minutes=max_minutes)).isoformat()
             cursor.execute(
                 "SELECT COUNT(*) FROM trade_records WHERE symbol=? AND exit_reason=? AND exit_time > ?",
                 (symbol, exit_reason, cutoff)
@@ -581,7 +730,8 @@ class ExitMonitor:
         """
         closed = []
         now_ts = time.time()
-        today = datetime.now().strftime('%Y-%m-%d')
+        # P0 修复 (2026-05-31): 用美东时间作为日期 key, 避免 CST 跨日错位
+        today = _now_et().strftime('%Y-%m-%d')
 
         # ── 幻方 P2 (2026-05-01): session-aware ATR ──
         # 一个 session_vol_ratio 影响全部 5 条退出规则
@@ -710,9 +860,28 @@ class ExitMonitor:
         except Exception:
             _dispatcher = None
 
+        # Phase 1 (2026-05-31): 读取策略隔离 feature flag
+        # 开启后，owner_strategy 为空 / 'unknown' 的仓位不会被退出监控处置，
+        # 避免跨策略双写入者误平其他策略仓位。
+        try:
+            from app.core.config_container import get_config
+            _strict_owner = bool(get_config().get_dotted(
+                "risk.strategy_enforcement.strict_owner_validation", False))
+        except Exception:
+            _strict_owner = False
+
         for position in main_positions:
             try:
                 symbol = position.symbol
+                # Phase 1 (2026-05-31): owner_strategy 严格校验 — 防双重执行竞争
+                if _strict_owner:
+                    _owner = (getattr(position, "owner_strategy", None) or "").strip().lower()
+                    if not _owner or _owner in ("unknown", "none", "null"):
+                        logger.warning(
+                            f"[策略隔离·跳过] {symbol} owner_strategy 为空/未知 ('{_owner}'), "
+                            f"为防跨策略误平, 本轮跳过退出检查"
+                        )
+                        continue
                 direction = position.direction.value if hasattr(position.direction, 'value') else str(position.direction)
                 entry_price = position.avg_entry_price
                 if entry_price <= 0:
@@ -844,22 +1013,30 @@ class ExitMonitor:
                     )
 
                 # 2. 平滑融合：入场 ratio → 当前 ratio（cosine 缓入缓出过渡）
-                #    防止 session 切换时止损线突变（如 11:30 从 1.2→0.6 暴跌 50%）
-                #    P1 修复 (2026-05-29): 线性过渡在60min边界跳变 → 改为cosine平滑 + 延长至90min
+                #    Phase 3 (2026-05-31): 过渡窗口外部化 (session_blend_window_minutes)
                 entry_ratio = trail_state.get("entry_session_ratio", current_session_ratio)
                 entry_time_ts = trail_state.get("entry_time_ts", now_ts)
                 held_minutes = (now_ts - entry_time_ts) / 60.0
-                # 融合权重: cosine缓入缓出，过渡时间延长到90分钟避免边界突变
-                raw_weight = min(held_minutes / 90.0, 1.0)
+                _blend_window = float(
+                    (self._load_exit_policy_dict().get("progressive_trailing") or {}).get(
+                        "session_blend_window_minutes", 90.0)
+                )
+                # 融合权重: cosine缓入缓出
+                raw_weight = min(held_minutes / _blend_window, 1.0) if _blend_window > 0 else 1.0
                 blend_weight = 0.5 * (1 - math.cos(math.pi * raw_weight))
                 session_ratio = entry_ratio * (1.0 - blend_weight) + current_session_ratio * blend_weight
 
                 effective_atr = atr * session_ratio
                 # P1 修复 (2026-05-29): effective_atr 下限保护
-                # session_ratio 在 midday 可能压到0.6，导致 effective_atr 极小
-                # Chandelier 无法激活，SL 固定 → 微幅波动触发止损
-                # 确保 effective_atr 在任何 session 下不低于 daily_atr 的 35%
-                min_effective_atr = atr * 0.35
+                # session_ratio 在 midday 可能压到 0.6，导致 effective_atr 极小
+                # Phase 3 (2026-05-31): 下限系数外部化 (effective_atr_floor_ratio)
+                _pt_floor_cfg = {}
+                try:
+                    _pt_floor_cfg = (self._load_exit_policy_dict().get("progressive_trailing") or {})
+                except Exception:
+                    _pt_floor_cfg = {}
+                _eff_atr_floor_ratio = float(_pt_floor_cfg.get("effective_atr_floor_ratio", 0.35))
+                min_effective_atr = atr * _eff_atr_floor_ratio
                 effective_atr = max(effective_atr, min_effective_atr)
 
                 # 日志: session 切换时记录
@@ -906,9 +1083,22 @@ class ExitMonitor:
 
                 if selected_decision:
                     trail_state['effective_atr'] = effective_atr  # ATR观察日志需要
+                    # Phase 3 (2026-05-31): 影子模式 — 不干预主路径, 仅记录差异
+                    if self._shadow_mode_enabled():
+                        self._shadow_evaluate(
+                            position, current_price, effective_atr,
+                            trail_state, direction, now_ts, selected_decision,
+                        )
                     self._execute_exit(position, selected_decision, execute_close_fn, trail_state, now_ts)
                     closed.append({"symbol": symbol, "reason": selected_decision["reason"], "pnl_pct": pnl_pct})
                     continue
+
+                # Phase 3: 未触发任何退出时也走一轮 shadow 评估 (记录“应该退”却未退出的场景)
+                if self._shadow_mode_enabled():
+                    self._shadow_evaluate(
+                        position, current_price, effective_atr,
+                        trail_state, direction, now_ts, None,
+                    )
 
                 # 无规则触发 → 更新 trail_state 后跳到下一个持仓
                 self._update_trail_state(
@@ -1057,8 +1247,8 @@ class ExitMonitor:
         """
         symbol = getattr(position, 'symbol', '?')
 
-        # 最小持仓时间检查
-        min_hold_minutes = 10
+        # 最小持仓时间检查 — Phase 3 外部化 (exit_policy.exit_monitor.min_hold_minutes)
+        min_hold_minutes = float(getattr(self, "_min_hold_minutes_cfg", 10))
         _skip_non_hard_exits = held_minutes < min_hold_minutes
         if _skip_non_hard_exits:
             logger.debug(
@@ -1353,35 +1543,36 @@ class ExitMonitor:
                 policy_dict = policy_guardian.policy or {}
 
             # ── P0 修复 (2026-05-29): 渐进式追踪止损 — 消除 0~2.0 ATR 保护死区 ──
-            # 旧 bug: profit_atr_signed < 2.0 时 SL 固定在 entry - atr*mult，利润自由蒸发
-            # 新逻辑: 4 档渐进
-            #   0~0.5 ATR: 不动 (允许正常波动)
-            #   0.5~1.0 ATR: 保本 (SL 移至入场价 + buffer)
-            #   1.0~2.0 ATR: 紧凑追踪 (SL = peak - 1.5×ATR)
-            #   ≥2.0 ATR: 标准追踪 (SL = peak - trail_mult×ATR)
-            # CR-3 单调守护保持不变: LONG SL 只升不降, SHORT SL 只降不升
+            # Phase 3 (2026-05-31): 4档阈值与系数完全外部化到 progressive_trailing
+            _pt_cfg = (policy_dict.get("progressive_trailing") or {}) if policy_dict else {}
+            _tier_th = _pt_cfg.get("tier_thresholds_atr") or {}
+            _tier1_max = float(_tier_th.get("tier1_max", 0.5))
+            _tier2_max = float(_tier_th.get("tier2_max", 1.0))
+            _tier3_max = float(_tier_th.get("tier3_max", 2.0))
+            _tier3_mult = float(_pt_cfg.get("tier3_compact_multiplier", 1.5))
+            _be_buffer_pct = float(_pt_cfg.get("breakeven_buffer_pct", 0.001))
 
             _old_sl = float(getattr(position, "current_sl", 0) or 0)
             _new_sl = None
             _tier = ""  # 日志用
 
-            # 保本 buffer: 入场价 ± 0.1% (覆盖手续费+价差噪声)
-            _breakeven_buffer = entry_price * 0.001
+            # 保本 buffer: 入场价 ± buffer_pct (覆盖手续费+价差噪声)
+            _breakeven_buffer = entry_price * _be_buffer_pct
 
             if direction == "LONG":
                 _abs_profit = profit_atr_signed  # LONG: 正=盈利, 负=亏损
 
-                if _abs_profit >= 2.0:
+                if _abs_profit >= _tier3_max:
                     # Tier 4: 标准追踪
                     regime = trail_state.get("regime", "normal")
                     trail_mult = resolve_trail_multiplier(policy_dict, regime, "LONG")
                     _new_sl = trail_state.get("highest_price", entry_price) - atr * trail_mult
                     _tier = f"标准追踪(profit={_abs_profit:.1f}ATR, mult={trail_mult:.1f})"
-                elif _abs_profit >= 1.0:
-                    # Tier 3: 紧凑追踪 (1.5x ATR)
-                    _new_sl = trail_state.get("highest_price", entry_price) - atr * 1.5
-                    _tier = f"紧凑追踪(profit={_abs_profit:.1f}ATR, mult=1.5)"
-                elif _abs_profit >= 0.5:
+                elif _abs_profit >= _tier2_max:
+                    # Tier 3: 紧凑追踪
+                    _new_sl = trail_state.get("highest_price", entry_price) - atr * _tier3_mult
+                    _tier = f"紧凑追踪(profit={_abs_profit:.1f}ATR, mult={_tier3_mult:.1f})"
+                elif _abs_profit >= _tier1_max:
                     # Tier 2: 保本
                     _new_sl = entry_price + _breakeven_buffer
                     _tier = f"保本(profit={_abs_profit:.1f}ATR, SL=entry+buffer)"
@@ -1413,17 +1604,17 @@ class ExitMonitor:
                 # SHORT: profit_atr_signed 正=盈利(价格下跌), 负=亏损(价格上涨)
                 _abs_profit = profit_atr_signed
 
-                if _abs_profit >= 2.0:
+                if _abs_profit >= _tier3_max:
                     # Tier 4: 标准追踪
                     regime = trail_state.get("regime", "normal")
                     trail_mult = resolve_trail_multiplier(policy_dict, regime, "SHORT")
                     _new_sl = trail_state.get("lowest_price", entry_price) + atr * trail_mult
                     _tier = f"标准追踪(profit={_abs_profit:.1f}ATR, mult={trail_mult:.1f})"
-                elif _abs_profit >= 1.0:
-                    # Tier 3: 紧凑追踪 (1.5x ATR)
-                    _new_sl = trail_state.get("lowest_price", entry_price) + atr * 1.5
-                    _tier = f"紧凑追踪(profit={_abs_profit:.1f}ATR, mult=1.5)"
-                elif _abs_profit >= 0.5:
+                elif _abs_profit >= _tier2_max:
+                    # Tier 3: 紧凑追踪
+                    _new_sl = trail_state.get("lowest_price", entry_price) + atr * _tier3_mult
+                    _tier = f"紧凑追踪(profit={_abs_profit:.1f}ATR, mult={_tier3_mult:.1f})"
+                elif _abs_profit >= _tier1_max:
                     # Tier 2: 保本
                     _new_sl = entry_price - _breakeven_buffer
                     _tier = f"保本(profit={_abs_profit:.1f}ATR, SL=entry-buffer)"
@@ -1451,13 +1642,20 @@ class ExitMonitor:
                         f"entry=${entry_price:.2f} low=${trail_state.get('lowest_price', entry_price):.2f}"
                     )
         else:
-            # 兜底 (无 policy_guardian) 也走单调守护
+            # 兜底 (无 policy_guardian) 也走单调守护 — Phase 3 外部化
+            _pt_cfg = {}
+            try:
+                _pt_cfg = self._load_exit_policy_dict().get("progressive_trailing") or {}
+            except Exception:
+                _pt_cfg = {}
+            _fb_long = float(_pt_cfg.get("fallback_long_sl_pct", 0.92))
+            _fb_short = float(_pt_cfg.get("fallback_short_sl_pct", 1.08))
             _old_sl = float(getattr(position, "current_sl", 0) or 0)
             if direction == "LONG":
-                _new_sl = entry_price * 0.92
+                _new_sl = entry_price * _fb_long
                 position.current_sl = max(_old_sl, _new_sl) if _old_sl > 0 else _new_sl
             else:
-                _new_sl = entry_price * 1.08
+                _new_sl = entry_price * _fb_short
                 position.current_sl = min(_old_sl, _new_sl) if _old_sl > 0 else _new_sl
 
     # ============================================================
@@ -1471,6 +1669,16 @@ class ExitMonitor:
             reason["exit_price"] = position.avg_entry_price  # fallback
 
         trail_state["last_trigger_time"] = now_ts
+        # Phase 1 (2026-05-31): close_trigger_time 写入 snapshot 表 (仅 best-effort)
+        try:
+            from app.risk.trail_state_store import get_trail_state_store
+            _store = get_trail_state_store()
+            _pid = getattr(position, "position_id", None) or position.symbol
+            _trigger_iso = _now_et().isoformat()
+            trail_state["close_trigger_time"] = _trigger_iso
+            _store.mark_close_triggered(str(_pid), _trigger_iso)
+        except Exception as _silent_e:
+            logger.debug(f"[trail_snapshot] mark_close_triggered 失败: {_silent_e}")
         position.trail_state = trail_state
         # 类级别冷却记录：防止position对象重建后丢失trail_state导致重复退出
         self._exit_cooldowns[position.symbol] = now_ts
@@ -1482,7 +1690,7 @@ class ExitMonitor:
         # 写入 position.metadata + reason，供下游 _close_position / save_trade 读取。
         # ============================================================
         entry_trace_id = getattr(position, 'trace_id', '') or ''
-        exit_trace_id = f"EXIT-{position.symbol}-{datetime.now().strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:6].upper()}"
+        exit_trace_id = f"EXIT-{position.symbol}-{_now_et().strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:6].upper()}"
         try:
             if not isinstance(getattr(position, 'metadata', None), dict):
                 position.metadata = {}
@@ -1542,7 +1750,7 @@ class ExitMonitor:
                 pnl_amount=0.0,
                 exit_reason=reason.get("reason", "UNKNOWN"),
                 entry_time=getattr(position, 'entry_time', None),
-                exit_time=datetime.now(),
+                exit_time=_now_et(),
             )
         except Exception as _silent_e:
             logger.critical(f"[退出监控·P0] 交易记录保存异常，可能产生幽灵交易: {_silent_e}", exc_info=True)
@@ -1619,7 +1827,8 @@ class ExitMonitor:
 
     def _get_atr(self, symbol: str) -> float:
         """计算 ATR + Volatility Floor (复用主进程连接)"""
-        today = datetime.now().strftime('%Y-%m-%d')
+        # P0 修复 (2026-05-31): ATR 缓存 key 用美东日期, 避免周五晚 ET 缓存失效
+        today = _now_et().strftime('%Y-%m-%d')
         cached = self._atr_cache.get(symbol)
         if cached and cached.get('date') == today:
             return cached.get('value', 0.0)
@@ -1699,7 +1908,15 @@ class ExitMonitor:
                         )
                         median_tr = float(data200['tr'].dropna().median())
                         # P1 修复 (2026-05-29): floor系数0.7→0.85，防止极端缩水
-                        atr = max(atr, median_tr * 0.85)
+                        # Phase 3 (2026-05-31): 系数外部化 (atr_floor_coef)
+                        try:
+                            _floor_coef = float(
+                                (self._load_exit_policy_dict().get("progressive_trailing") or {}).get(
+                                    "atr_floor_coef", 0.85)
+                            )
+                        except Exception:
+                            _floor_coef = 0.85
+                        atr = max(atr, median_tr * _floor_coef)
                 except Exception as _silent_e:
                     logger.warning(f"[silent_except:position_exit_monitor.py] {_silent_e}")
 
