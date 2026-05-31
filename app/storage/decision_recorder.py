@@ -248,6 +248,24 @@ class DecisionRecorder:
                     f"[DecisionRecorder] 记录决策: {decision_id} {symbol} "
                     f"{voting_result.get('direction')} strength={voting_result.get('final_strength')}"
                 )
+
+                # [SignalIC Phase 1] 记录信号快照到 signal_snapshots.db
+                # 非阻塞: 失败不影响主流程, 仅 debug 级别日志
+                try:
+                    from app.analysis.signal_ic_tracker import record_signal_snapshot
+                    record_signal_snapshot(
+                        decision_id=decision_id,
+                        symbol=symbol,
+                        direction=voting_result.get("direction", "NEUTRAL"),
+                        strength=voting_result.get("final_strength", 50),
+                        confidence=voting_result.get("consensus_level", 0),
+                        consensus_level=voting_result.get("consensus_level", 0),
+                        strategy_id=voting_result.get("strategy_id"),
+                        created_at=now,
+                    )
+                except Exception as _ic_e:
+                    logger.debug(f"[DecisionRecorder] SignalIC 快照记录失败 (不影响主流程): {_ic_e}")
+
                 return decision_id
 
             except Exception as e:

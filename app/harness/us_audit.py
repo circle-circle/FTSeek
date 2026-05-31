@@ -199,7 +199,38 @@ def run_post_market_audit(scheduler) -> Dict[str, Any]:
             # 这里可以检查最近是否有未平仓的交易记录等
             pass
             
-        # 3. 总结
+        # 3. Signal IC 摘要 (Phase 1)
+        try:
+            from app.analysis.signal_ic_tracker import get_ic_summary, get_stats
+            snap_stats = get_stats()
+            ic_summary = get_ic_summary(min_signals=20)
+            
+            audit_result["signal_ic"] = ic_summary
+            audit_result["snapshot_stats"] = snap_stats
+            
+            if ic_summary.get("status") == "ok":
+                ic_val = ic_summary.get("ic_mean", 0)
+                logger.info(f"   📊 Signal IC: {ic_val:.4f} (N={ic_summary['n_signals']})")
+                if ic_val < 0.01:
+                    audit_result["recommendations"].append(
+                        f"⚠️ 信号预测力极低 (IC={ic_val:.4f}), "
+                        f"strength 评分与前瞻收益无相关性"
+                    )
+                
+                # 报告低 IC 股票
+                by_dir = ic_summary.get("by_direction", {})
+                for d, info in by_dir.items():
+                    if info.get("ic", 0) < -0.1 and info.get("n", 0) >= 10:
+                        audit_result["recommendations"].append(
+                            f"⚠️ {d} 信号 IC 为负 ({info['ic']:.4f}, N={info['n']}), "
+                            f"该方向信号可能反向"
+                        )
+            elif ic_summary.get("status") == "insufficient_data":
+                logger.info(f"   📊 Signal IC: 数据不足 ({ic_summary.get('n_signals', 0)} 条)")
+        except Exception as e:
+            logger.debug(f"   Signal IC 摘要获取失败 (不影响主流程): {e}")
+        
+        # 4. 总结
         if audit_result["risk_flags"]:
             audit_result["status"] = "WARNING"
             for flag in audit_result["risk_flags"]:
