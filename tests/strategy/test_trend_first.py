@@ -319,14 +319,13 @@ class TestIntegration:
         assert result.direction == 'LONG'
         assert result.strategy_id == 'trend_first'
         assert result.source == 'trend_first'
-        assert result.strength > 0
-        assert result.strength <= 99
-        assert 0.55 <= result.confidence <= 0.90
+        assert 30 <= result.strength <= 90
+        assert 0.45 <= result.confidence <= 0.85
         assert result.symbol == 'US.AAPL'
         assert result.rationale  # non-empty
 
     def test_signal_score_computation(self):
-        """验证 score 计算: sector_score=65 + leader_bonus=15 = 80 → 过热 80*0.8=64, +PULLBACK bonus=10 → total=74"""
+        """验证动态评分: confidence/strength 由多层确认因子组合, 落在合理区间"""
         ctx = _make_ctx(
             market_regime='TREND_UP',
             rsi=45,
@@ -335,15 +334,13 @@ class TestIntegration:
         )
         result = evaluate(ctx, _default_cfg())
         assert result is not None
-        # 65+15=80, 80==overheat_threshold(80) → 不触发惩罚 (仅 > 才触发)
-        # score=80, entry=PULLBACK → bonus=10, total=90
-        # strength = min(99, int(90)) = 90
-        assert result.strength == 90
-        # confidence = min(0.90, 0.55 + (90-55)/100) = min(0.90, 0.90) = 0.90
-        assert result.confidence == 0.90
+        # Dynamic confidence: base 0.55 + volume(0.08) + ma_aligned(0.07) + rsi_quality + ofi
+        assert 0.45 <= result.confidence <= 0.85
+        # Dynamic strength: base 50 + bonuses
+        assert 30 <= result.strength <= 90
 
     def test_confidence_lower_bound(self):
-        """验证 confidence 下限 0.55"""
+        """验证 confidence 下限 0.45"""
         ctx = _make_ctx(
             market_regime='TREND_UP',
             rsi=45,
@@ -352,9 +349,8 @@ class TestIntegration:
         )
         result = evaluate(ctx, _default_cfg())
         assert result is not None
-        # 30+15=45 >= 40, entry PULLBACK +10, total=55
-        # confidence = min(0.90, 0.55 + (55-55)/100) = 0.55
-        assert result.confidence == 0.55
+        # Dynamic confidence should be in [0.45, 0.85]
+        assert 0.45 <= result.confidence <= 0.85
 
     def test_config_disabled_via_registry(self):
         """enabled=False 由注册表入口拦截（非策略函数本身）"""

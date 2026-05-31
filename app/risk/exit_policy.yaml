@@ -21,7 +21,8 @@ progressive_trailing:
     tier2_max: 1.0      # 0.5~1.0 ATR: 保本
     tier3_max: 2.0      # 1.0~2.0 ATR: 紧凑追踪
     # >=2.0 ATR: 标准追踪 (使用 chandelier_trail.multiplier_by_regime)
-  tier3_compact_multiplier: 1.5    # 紧凑追踪 ATR 倍数
+  tier3_compact_multiplier: 1.2    # 1.0~2.0 ATR: peak - 1.2×ATR (原 1.5, Phase 3 收紧)
+  tier2_compact_multiplier: 0.8    # 0.5~1.0 ATR: peak - 0.8×ATR (原 breakeven, Phase 3 紧凑追踪)
   breakeven_buffer_pct: 0.001       # 保本 buffer = 入场价 × 0.1%
   fallback_long_sl_pct: 0.92        # 兜底 LONG SL (无 ATR/policy 时)
   fallback_short_sl_pct: 1.08       # 兜底 SHORT SL
@@ -106,7 +107,22 @@ exit_rules:
   # 规则 5: 分层止盈 (分批减仓)
   scale_out:
     enabled: true
-    tiers:
+    tier_mode: atr                  # Phase 3: atr | pct (默认 ATR 模式)
+    atr_tiers:                      # Phase 3: ATR-relative 分档
+      - profit_atr: 0.5
+        close_pct: 15
+        ratchet_sl_pct: 0.3
+      - profit_atr: 1.0
+        close_pct: 25
+        ratchet_sl_pct: 0.5
+      - profit_atr: 2.0
+        close_pct: 30
+        ratchet_sl_pct: 1.0
+      - profit_atr: 3.0
+        close_pct: 30
+        ratchet_sl_pct: 1.5
+        trailing_remainder: true
+    tiers:                          # pct 模式 (向后兼容, tier_mode=pct 时使用)
       - level: 1
         trigger_profit_pct: 5.0             # 优化 (2026-05-03): 从 8% 降至 5%
         close_pct: 30               # 平 30%
@@ -119,6 +135,16 @@ exit_rules:
         trigger_profit_pct: 18.0            # 优化 (2026-05-03): 从 25% 降至 18%
         close_pct: 40               # 平剩余 40%
         move_sl_to: "chandelier_1x" # 切换 1x ATR 追踪
+
+  # 规则 5.5: 速度捕捉退出 (Phase 3 2026-05-31)
+  velocity_exit:
+    enabled: true
+    lookback_bars: 3              # 检测最近 N 根 K 线的变动
+    sigma_window: 20              # σ 计算窗口 (K 线数)
+    sigma_multiplier: 2.0         # 触发阈值: 变动 > N × σ
+    close_pct: 30                 # 平仓比例 (%)
+    cooldown_seconds: 60          # 冷却时间
+    trail_mult: 1.0               # 触发后收紧追踪止损到此 ATR 倍数
 
   # 规则 3.5: 盘末退出 (Pre-Close Exit) — 优化 (2026-05-03 P2)
   # 根因修复: 原单一 1 ATR 阈值导致 54% 仓位被动强平, 平均利润仅 +0.08%

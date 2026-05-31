@@ -276,21 +276,27 @@ def compute_stop_lines(
 
     # === 4. Chandelier：仅在"盈利"≥ activation 时激活 ===
     # P0 修复 (2026-05-29): 激活门槛从 2.0 降至 1.0 ATR (渐进式追踪止损)
-    # 消除 0~2.0 ATR 利润保护死区，与 _update_trail_state 4档逻辑对齐
+    # Phase 3 (2026-05-31): 收紧 0.5~2.0 ATR 区间追踪止损
     chandelier_stop = 0.0
     trail_mult = resolve_trail_multiplier(policy, regime, direction)
     activation = float(ch_cfg.get("activation_profit_atr", 1.0))
+    pt_cfg = (policy or {}).get("progressive_trailing", {}) or {}
+    tier2_mult = float(pt_cfg.get("tier2_compact_multiplier", 0.8))
+    tier3_mult = float(pt_cfg.get("tier3_compact_multiplier", 1.2))
     if ch_cfg.get("enabled", True) and atr > 0 and profit_atr_signed >= activation:
         if direction == "LONG":
-            # 1.0~2.0 ATR: 紧凑追踪 1.5x; ≥2.0 ATR: 标准追踪 trail_mult
-            if profit_atr_signed < 2.0:
-                _effective_mult = 1.5
+            if profit_atr_signed < 1.0:
+                _effective_mult = tier2_mult
+            elif profit_atr_signed < 2.0:
+                _effective_mult = tier3_mult
             else:
                 _effective_mult = trail_mult
             chandelier_stop = peak_price - atr * _effective_mult
         else:
-            if profit_atr_signed < 2.0:
-                _effective_mult = 1.5
+            if profit_atr_signed < 1.0:
+                _effective_mult = tier2_mult
+            elif profit_atr_signed < 2.0:
+                _effective_mult = tier3_mult
             else:
                 _effective_mult = trail_mult
             chandelier_stop = peak_price + atr * _effective_mult

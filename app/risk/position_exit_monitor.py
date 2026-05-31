@@ -279,9 +279,20 @@ class ExitMonitor:
         self._rule_registry.register(
             "scale_out",
             lambda pos, md, ts, pg: self._check_scale_out(
-                pos, md.get("current_price"), ts, md.get("direction"),
+                pos, md.get("current_price"), ts, md.get("direction"), market_data=md,
             ),
         )
+        # Phase 3 (2026-05-31): 速度捕捉退出
+        try:
+            from app.risk.exit_rules.velocity_exit import check_velocity_exit as _impl_velocity_exit
+            _velocity_cfg = (self._policy_guardian.policy if hasattr(self, "_policy_guardian") and self._policy_guardian else {}) or {}
+            _ve_cfg = _velocity_cfg.get("exit_rules", {}).get("velocity_exit", {}) if isinstance(_velocity_cfg, dict) else {}
+            self._rule_registry.register(
+                "velocity_exit",
+                lambda pos, md, ts, pg: _impl_velocity_exit(pos, md, ts, _ve_cfg),
+            )
+        except Exception as _ve_err:
+            logger.warning(f"[ExitRuleRegistry] velocity_exit 注册失败: {_ve_err}")
         logger.info(
             f"\u2705 [ExitRuleRegistry] \u521d\u59cb\u5316\u5b8c\u6210, \u542f\u7528\u89c4\u5219(\u6309\u4f18\u5148\u7ea7): "
             f"{self._rule_registry.list_enabled()}"
@@ -1277,7 +1288,10 @@ class ExitMonitor:
         if daytrade_result and not _skip_non_hard_exits:
             _triggered_exits.append(daytrade_result)
 
-        scale_result = self._check_scale_out(position, current_price, trail_state, direction)
+        scale_result = self._check_scale_out(
+            position, current_price, trail_state, direction,
+            market_data={"current_price": current_price, "atr": effective_atr, "direction": direction},
+        )
         if scale_result and not _skip_non_hard_exits:
             _triggered_exits.append(scale_result)
 
@@ -1470,9 +1484,9 @@ class ExitMonitor:
         return _impl_day_trade_exit(position, current_price, entry_price, atr, trail_state, now_ts,
                                      direction, pnl_pct, policy_guardian)
 
-    def _check_scale_out(self, position, current_price, trail_state, direction):
+    def _check_scale_out(self, position, current_price, trail_state, direction, market_data=None):
         """分批止盈委托 (实现在 exit_rules/scale_out.py)"""
-        return _impl_scale_out(position, current_price, trail_state, direction)
+        return _impl_scale_out(position, current_price, trail_state, direction, market_data=market_data)
 
     # ============================================================
     #  规则 3: Time Stop
@@ -1553,7 +1567,8 @@ class ExitMonitor:
             _tier1_max = float(_tier_th.get("tier1_max", 0.5))
             _tier2_max = float(_tier_th.get("tier2_max", 1.0))
             _tier3_max = float(_tier_th.get("tier3_max", 2.0))
-            _tier3_mult = float(_pt_cfg.get("tier3_compact_multiplier", 1.5))
+            _tier3_mult = float(_pt_cfg.get("tier3_compact_multiplier", 1.2))
+            _tier2_mult = float(_pt_cfg.get("tier2_compact_multiplier", 0.8))
             _be_buffer_pct = float(_pt_cfg.get("breakeven_buffer_pct", 0.001))
 
             _old_sl = float(getattr(position, "current_sl", 0) or 0)
@@ -1577,9 +1592,9 @@ class ExitMonitor:
                     _new_sl = trail_state.get("highest_price", entry_price) - atr * _tier3_mult
                     _tier = f"紧凑追踪(profit={_abs_profit:.1f}ATR, mult={_tier3_mult:.1f})"
                 elif _abs_profit >= _tier1_max:
-                    # Tier 2: 保本
-                    _new_sl = entry_price + _breakeven_buffer
-                    _tier = f"保本(profit={_abs_profit:.1f}ATR, SL=entry+buffer)"
+                    # Tier 2: 紧凑追踪 (Phase 3: 原 breakeven, 现 peak - tier2_mult×ATR)
+                    _new_sl = trail_state.get("highest_price", entry_price) - atr * _tier2_mult
+                    _tier = f"紧凑追踪(profit={_abs_profit:.1f}ATR, mult={_tier2_mult:.1f})"
                 else:
                     # Tier 1: 不动 (正常波动区间)
                     atr_mult = float(policy_dict.get("exit_rules", {}).get("atr_stop", {}).get(
@@ -1619,9 +1634,9 @@ class ExitMonitor:
                     _new_sl = trail_state.get("lowest_price", entry_price) + atr * _tier3_mult
                     _tier = f"紧凑追踪(profit={_abs_profit:.1f}ATR, mult={_tier3_mult:.1f})"
                 elif _abs_profit >= _tier1_max:
-                    # Tier 2: 保本
-                    _new_sl = entry_price - _breakeven_buffer
-                    _tier = f"保本(profit={_abs_profit:.1f}ATR, SL=entry-buffer)"
+                    # Tier 2: 紧凑追踪 (Phase 3: 原 breakeven, 现 peak + tier2_mult×ATR)
+                    _new_sl = trail_state.get("lowest_price", entry_price) + atr * _tier2_mult
+                    _tier = f"紧凑追踪(profit={_abs_profit:.1f}ATR, mult={_tier2_mult:.1f})"
                 else:
                     # Tier 1: 不动
                     short_mult = float(policy_dict.get("short_overrides", {}).get("atr_multiplier", 2.0))

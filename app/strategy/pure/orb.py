@@ -124,8 +124,10 @@ def evaluate(ctx: SymbolContext, cfg: Dict[str, Any]) -> Optional[SignalCandidat
 
     # ── 量能确认 (可选) ──
     min_volume_ratio = cfg.get("min_volume_ratio", 0)
-    if min_volume_ratio > 0 and ctx.volume_ratio < min_volume_ratio:
+    vol_ratio = getattr(ctx, "volume_ratio", None) or 0
+    if min_volume_ratio > 0 and vol_ratio < min_volume_ratio:
         return None
+    volume_confirmed = vol_ratio >= 1.3
 
     # ── 止损计算: 区间中点 ──
     # LONG: SL = orb_mid (价格跌回区间中点 = 突破失败)
@@ -162,6 +164,45 @@ def evaluate(ctx: SymbolContext, cfg: Dict[str, Any]) -> Optional[SignalCandidat
         )
         return None
 
+    # ── RSI 过热检查 ──
+    rsi = getattr(ctx, "rsi", None)
+    rsi_ok = True
+    if rsi is not None and rsi > 0:
+        if direction == "LONG" and rsi > 70:
+            logger.debug(f"[ORB] {ctx.symbol} RSI超买: {rsi}")
+            return None
+        elif direction == "SHORT" and rsi < 30:
+            logger.debug(f"[ORB] {ctx.symbol} RSI超卖: {rsi}")
+            return None
+        rsi_ok = not (rsi > 65 or rsi < 35)
+
+    # ── 动态 confidence ──
+    base_conf = 0.60
+    if volume_confirmed:
+        base_conf += 0.10
+    if rsi_ok:
+        base_conf += 0.05
+    macd = getattr(ctx, "macd", None)
+    macd_sig = getattr(ctx, "macd_signal", None)
+    macd_aligned = False
+    if macd is not None and macd_sig is not None:
+        if (direction == "LONG" and macd > macd_sig) or (direction == "SHORT" and macd < macd_sig):
+            base_conf += 0.05
+            macd_aligned = True
+    if orb_width_pct > 1.0:
+        base_conf += 0.05
+    confidence = round(min(0.85, max(0.50, base_conf)), 3)
+
+    # ── 动态 strength ──
+    base_str = 60
+    if volume_confirmed:
+        base_str += 8
+    if macd_aligned:
+        base_str += 5
+    if orb_width_pct > 1.0:
+        base_str += 5
+    strength = min(90, max(40, base_str))
+
     # ── 输出 ──
     logger.info(
         f"[ORB] {ctx.symbol} {direction} | "
@@ -172,8 +213,8 @@ def evaluate(ctx: SymbolContext, cfg: Dict[str, Any]) -> Optional[SignalCandidat
     return SignalCandidate(
         symbol=ctx.symbol,
         direction=direction,
-        strength=70,  # 固定中高强度 (ORB 是经过数据验证的策略)
-        confidence=0.75,
+        strength=strength,
+        confidence=confidence,
         strategy_id="orb",
         source="orb",
         rationale=(
@@ -191,5 +232,7 @@ def evaluate(ctx: SymbolContext, cfg: Dict[str, Any]) -> Optional[SignalCandidat
             "atr": ctx.atr,
             "regime": regime,
             "owner_strategy": "orb",
+            "volume_confirmed": volume_confirmed,
+            "macd_aligned": macd_aligned,
         },
     )

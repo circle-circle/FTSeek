@@ -1432,6 +1432,40 @@ def _build_signal_from_vote(scheduler, symbol: str, vote_result: Dict[str, Any],
         )
         raw_confidence = 0.60
 
+    # ── Signal Quality Scorer integration (2026-05-31) ──
+    # Build a ctx-like object from the context dict so SignalQualityScorer can
+    # read attributes (it uses getattr extensively). Take max of vote-based and
+    # quality-based confidence to avoid being overly aggressive in either direction.
+    quality_factors = None
+    try:
+        from app.strategy.signal_quality_scorer import SignalQualityScorer
+
+        class _ScorerCtx:
+            """Minimal attribute wrapper so SignalQualityScorer.score() works on a dict."""
+            def __init__(self, d: dict):
+                for k, v in d.items():
+                    setattr(self, k, v)
+
+        scorer_ctx = _ScorerCtx(context)
+        # Ensure required attributes have safe defaults
+        for _attr, _default in (
+            ('symbol', ''), ('price', 0), ('ma5', 0), ('ma20', 0), ('ma50', 0),
+            ('rsi', 50), ('macd', 0), ('macd_signal', 0), ('volume', 0),
+            ('avg_volume', 0), ('vix', 20), ('vix_regime', 'normal'),
+            ('spy_price', 0), ('spy_ma200', 0), ('market_regime', ''),
+            ('trend', ''), ('volume_ratio', 1.0), ('slope_5m', 0.0),
+            ('order_flow_imbalance', 0.0), ('ticker_buy_sell_ratio', 1.0),
+            ('metadata', {}),
+        ):
+            if not hasattr(scorer_ctx, _attr):
+                setattr(scorer_ctx, _attr, _default)
+
+        quality = SignalQualityScorer.score(scorer_ctx, direction_str)
+        raw_confidence = max(raw_confidence, quality.confidence)
+        quality_factors = quality.to_dict()
+    except Exception as e:
+        logger.debug(f"[SignalPipeline] quality scoring failed: {e}")
+
     regime_raw = vote_result.get("market_regime", context.get("market_regime", "RANGE"))
     # market_regime 可能来自多个路径:
     # 1. vote_result["market_regime"] 可能是字符串 (如 "TREND_UP") 或字典 (如 {"regime": "NORMAL", ...})
@@ -1516,6 +1550,8 @@ def _build_signal_from_vote(scheduler, symbol: str, vote_result: Dict[str, Any],
             "degraded": is_degraded,
             "degradation_level": degradation_level,
             "degradation_reason": degradation_reason,
+            # Signal Quality Scorer (2026-05-31): 多维质量评分明细
+            "quality_factors": quality_factors,
         },
     )
     return signal

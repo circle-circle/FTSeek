@@ -8,6 +8,11 @@ Task #62 (2026-05-29):
   - 返回 dict 中新增 partial_close_pct / new_stop_pct / stop_price 字段, 供
     orchestrator 在执行减仓的同时把 trail_state 的止损线推到新水位
 
+Phase 3 (2026-05-31):
+  - 新增 ATR-relative 止盈模式 (tier_mode: atr), 按 profit_atr 分级触发
+  - 保留 pct 模式向后兼容 (tier_mode: pct)
+  - ATR 模式默认 4 档: 0.5/1.0/2.0/3.0 ATR, 含 ratchet SL + trailing_remainder
+
 接口约定 (与 ExitRuleRegistry / _execute_exit 兼容):
   返回 None 表示不触发; 返回 dict 触发, 字段:
     - reason / reason_cn / exit_price / description / close_ratio / close_qty
@@ -31,9 +36,18 @@ DEFAULT_TIERS: List[Dict[str, float]] = [
     {"trigger_pct": 0.050, "close_pct": 0.25, "new_stop_pct": 0.030},
 ]
 
+# Phase 3 (2026-05-31): ATR-relative 默认分档
+DEFAULT_ATR_TIERS: List[Dict[str, Any]] = [
+    {"profit_atr": 0.5, "close_pct": 15, "ratchet_sl_pct": 0.3},   # Tier 0: 微利锁定
+    {"profit_atr": 1.0, "close_pct": 25, "ratchet_sl_pct": 0.5},   # Tier 1: 落袋为安
+    {"profit_atr": 2.0, "close_pct": 30, "ratchet_sl_pct": 1.0},   # Tier 2: 趋势利润
+    {"profit_atr": 3.0, "close_pct": 30, "ratchet_sl_pct": 1.5,    # Tier 3: 留底仓
+     "trailing_remainder": True},
+]
+
 
 def _load_tiers_from_config() -> List[Dict[str, float]]:
-    """从 unified_config 读取 tiers (SSOT), 失败退化为默认"""
+    """从 unified_config 读取 pct tiers (SSOT), 失败退化为默认"""
     try:
         from app.core.config_container import get_config
         cfg = get_config()
@@ -61,6 +75,51 @@ def _load_tiers_from_config() -> List[Dict[str, float]]:
         return list(DEFAULT_TIERS)
 
 
+def _load_atr_tiers_from_config() -> List[Dict[str, Any]]:
+    """从 unified_config 读取 ATR tiers (SSOT), 失败退化为 DEFAULT_ATR_TIERS"""
+    try:
+        from app.core.config_container import get_config
+        cfg = get_config()
+        if cfg is None:
+            return list(DEFAULT_ATR_TIERS)
+        raw = cfg.get_dotted("exit_policy.scale_out.atr_tiers", None)
+        if not raw or not isinstance(raw, list):
+            return list(DEFAULT_ATR_TIERS)
+        out: List[Dict[str, Any]] = []
+        for t in raw:
+            if not isinstance(t, dict):
+                continue
+            try:
+                pa = float(t.get("profit_atr", 0) or 0)
+                cp = float(t.get("close_pct", 0) or 0)
+                rs = float(t.get("ratchet_sl_pct", 0) or 0)
+            except (TypeError, ValueError):
+                continue
+            if pa <= 0 or cp <= 0:
+                continue
+            tier: Dict[str, Any] = {"profit_atr": pa, "close_pct": cp, "ratchet_sl_pct": rs}
+            if t.get("trailing_remainder"):
+                tier["trailing_remainder"] = True
+            out.append(tier)
+        return out or list(DEFAULT_ATR_TIERS)
+    except Exception as e:
+        logger.debug(f"[scale_out] 读取 exit_policy.scale_out.atr_tiers 失败, 使用默认: {e}")
+        return list(DEFAULT_ATR_TIERS)
+
+
+def _get_tier_mode() -> str:
+    """读取 exit_policy.scale_out.tier_mode, 默认 'atr'"""
+    try:
+        from app.core.config_container import get_config
+        cfg = get_config()
+        if cfg is None:
+            return "atr"
+        mode = cfg.get_dotted("exit_policy.scale_out.tier_mode", "atr")
+        return str(mode or "atr").lower()
+    except Exception:
+        return "atr"
+
+
 def _trailing_remainder_enabled() -> bool:
     """读取 exit_policy.scale_out.trailing_remainder, 默认 True"""
     try:
@@ -74,10 +133,6 @@ def _trailing_remainder_enabled() -> bool:
 
 
 def _calc_new_stop_price(direction: str, entry_price: float, new_stop_pct: float) -> float:
-    """根据方向把 new_stop_pct 折算为绝对价
-    LONG : entry * (1 + new_stop_pct)  → 止损上移
-    SHORT: entry * (1 - new_stop_pct)  → 止损下移
-    """
     if entry_price <= 0:
         return 0.0
     if direction == "LONG":
@@ -86,10 +141,6 @@ def _calc_new_stop_price(direction: str, entry_price: float, new_stop_pct: float
 
 
 def _is_more_protective(direction: str, candidate: float, current: float) -> bool:
-    """判断候选止损是否比当前更紧 (单向移动)
-    LONG : 价格越高越紧 (上移)
-    SHORT: 价格越低越紧 (下移)
-    """
     if candidate <= 0:
         return False
     if current <= 0:
@@ -99,78 +150,80 @@ def _is_more_protective(direction: str, candidate: float, current: float) -> boo
     return candidate < current
 
 
-def check_scale_out(position, current_price, trail_state, direction):
-    """锯齿止盈判定逻辑 (Task #62)
+def check_scale_out(position, current_price, trail_state, direction, market_data=None):
+    """锯齿止盈判定逻辑 (Task #62 + Phase 3 ATR 模式)
 
-    分级减仓 + 剩余仓位止损单向上移; 最后一档触发后置 trailing_remainder
-    标志, 后续由 Trailing Stop 规则接管。
+    Phase 3 (2026-05-31): 支持 ATR-relative 模式, 当 market_data 含 ATR 时
+    按 ATR 倍数分档; 否则回退到 pct 百分比模式。
     """
     entry_price = float(getattr(position, "avg_entry_price", 0) or 0)
     if entry_price <= 0 or current_price <= 0:
         return None
 
+    # Phase 3: ATR-relative profit calculation
+    profit_atr = None
+    atr = 0.0
+    md = market_data or {}
+    atr = float(md.get("atr") or md.get("effective_atr", 0) or 0)
+    if atr and atr > 0 and entry_price > 0:
+        if direction == "SHORT":
+            profit_atr = (entry_price - current_price) / atr
+        else:
+            profit_atr = (current_price - entry_price) / atr
+
+    mode = _get_tier_mode()
+    if mode == "atr" and profit_atr is not None:
+        return _check_scale_out_atr(position, current_price, trail_state, direction,
+                                     entry_price, profit_atr, atr)
+    else:
+        return _check_scale_out_pct(position, current_price, trail_state, direction, entry_price)
+
+
+def _check_scale_out_pct(position, current_price, trail_state, direction, entry_price):
+    """pct 百分比模式 (向后兼容, Task #62 原始逻辑)"""
     tiers = _load_tiers_from_config()
     if not tiers:
         return None
 
-    # 当前已实现的 (有向) 收益率
     if direction == "LONG":
         pnl_pct = (current_price - entry_price) / entry_price
     else:
         pnl_pct = (entry_price - current_price) / entry_price
 
-    triggered: List[int] = list(trail_state.get("triggered_tiers", []) or [])
+    triggered = list(trail_state.get("triggered_tiers", []) or [])
     original_size = trail_state.get("scale_out_original_size", position.size)
     trail_state["scale_out_original_size"] = original_size
 
     for i, tier in enumerate(tiers):
         if i in triggered:
             continue
-
         trigger_pct = float(tier.get("trigger_pct", 0) or 0)
         close_pct = float(tier.get("close_pct", 0) or 0)
         new_stop_pct = float(tier.get("new_stop_pct", 0) or 0)
         if trigger_pct <= 0 or close_pct <= 0:
             continue
-
-        # 触发判定: 收益率达标
         if pnl_pct < trigger_pct:
-            # 触发是"达到任一未触发档"即触发，但要按层级顺序由低到高
-            # 顺序遍历，遇到首个未达成的层级立即停止 (避免越级跳触)
             break
-
-        # 计算减仓股数 (以原始仓位为基准, 与既有协议一致)
         close_qty = max(1, int(original_size * close_pct))
         if close_qty <= 0:
             continue
-
-        # 计算并应用单向上移的新止损
         candidate_stop = _calc_new_stop_price(direction, entry_price, new_stop_pct)
         current_floor = float(trail_state.get("scale_out_stop_floor", 0) or 0)
         if _is_more_protective(direction, candidate_stop, current_floor):
             trail_state["scale_out_stop_floor"] = candidate_stop
             applied_stop = candidate_stop
         else:
-            # 已有更紧的止损, 不反向调整, 但仍要返回当前 floor 给 orchestrator
             applied_stop = current_floor or candidate_stop
-
-        # 记录已触发档
         triggered.append(i)
         trail_state["triggered_tiers"] = triggered
-
-        # 是否进入 trailing_remainder (最后一档触发后)
         is_last_tier = (i == len(tiers) - 1)
         trailing_remainder = bool(is_last_tier and _trailing_remainder_enabled())
         if trailing_remainder:
             trail_state["trailing_remainder"] = True
-
-        sign = "+" if direction == "LONG" else "+"  # pnl_pct 在 SHORT 已转正
+        sign = "+" if direction == "LONG" else "+"
         return {
             "reason": "SCALE_OUT",
-            "reason_cn": (
-                f"锯齿止盈 Tier {i+1}/{len(tiers)} "
-                f"({sign}{pnl_pct*100:.2f}% ≥ {trigger_pct*100:.2f}%)"
-            ),
+            "reason_cn": f"锯齿止盈 Tier {i+1}/{len(tiers)} ({sign}{pnl_pct*100:.2f}% ≥ {trigger_pct*100:.2f}%)",
             "exit_price": current_price,
             "close_qty": close_qty,
             "close_ratio": close_pct,
@@ -179,20 +232,86 @@ def check_scale_out(position, current_price, trail_state, direction):
             "stop_price": applied_stop,
             "trailing_remainder": trailing_remainder,
             "description": (
-                f"锯齿止盈 Tier {i+1}: pnl={pnl_pct*100:.2f}% ≥ "
-                f"{trigger_pct*100:.2f}%, 减仓 {close_qty}/{original_size} "
-                f"({close_pct:.0%}), 剩余止损上移至 entry"
-                f"{'+' if direction == 'LONG' else '-'}{new_stop_pct*100:.2f}% "
-                f"= {applied_stop:.4f}"
+                f"锯齿止盈 Tier {i+1}: pnl={pnl_pct*100:.2f}% ≥ {trigger_pct*100:.2f}%, "
+                f"减仓 {close_qty}/{original_size} ({close_pct:.0%}), "
+                f"剩余止损上移至 entry{'+' if direction == 'LONG' else '-'}{new_stop_pct*100:.2f}% = {applied_stop:.4f}"
                 + (" [trailing_remainder]" if trailing_remainder else "")
             ),
         }
+    return None
 
+
+def _check_scale_out_atr(position, current_price, trail_state, direction,
+                          entry_price, profit_atr, atr):
+    """ATR-relative 模式 (Phase 3, 2026-05-31)"""
+    atr_tiers = _load_atr_tiers_from_config()
+    if not atr_tiers:
+        return None
+
+    triggered = list(trail_state.get("triggered_tiers", []) or [])
+    original_size = trail_state.get("scale_out_original_size", position.size)
+    trail_state["scale_out_original_size"] = original_size
+
+    for i, tier in enumerate(atr_tiers):
+        if i in triggered:
+            continue
+        tier_profit_atr = float(tier.get("profit_atr", 0) or 0)
+        close_pct = float(tier.get("close_pct", 0) or 0)
+        ratchet_sl_pct = float(tier.get("ratchet_sl_pct", 0) or 0)
+        if tier_profit_atr <= 0 or close_pct <= 0:
+            continue
+        if profit_atr < tier_profit_atr:
+            break
+        close_ratio = close_pct / 100.0
+        close_qty = max(1, int(original_size * close_ratio))
+        if close_qty <= 0:
+            continue
+        if direction == "LONG":
+            candidate_stop = entry_price + ratchet_sl_pct * atr
+        else:
+            candidate_stop = entry_price - ratchet_sl_pct * atr
+        current_floor = float(trail_state.get("scale_out_stop_floor", 0) or 0)
+        if _is_more_protective(direction, candidate_stop, current_floor):
+            trail_state["scale_out_stop_floor"] = candidate_stop
+            applied_stop = candidate_stop
+        else:
+            applied_stop = current_floor or candidate_stop
+        triggered.append(i)
+        trail_state["triggered_tiers"] = triggered
+        is_last_tier = (i == len(atr_tiers) - 1)
+        tier_trailing = bool(tier.get("trailing_remainder", False))
+        trailing_remainder = bool((is_last_tier or tier_trailing) and _trailing_remainder_enabled())
+        if trailing_remainder:
+            trail_state["trailing_remainder"] = True
+        return {
+            "reason": "SCALE_OUT",
+            "reason_cn": f"ATR锯齿止盈 Tier {i+1}/{len(atr_tiers)} (profit={profit_atr:.2f}ATR ≥ {tier_profit_atr}ATR)",
+            "exit_price": current_price,
+            "close_qty": close_qty,
+            "close_ratio": close_ratio,
+            "partial_close_pct": close_ratio,
+            "new_stop_pct": ratchet_sl_pct * atr / entry_price if entry_price > 0 else 0,
+            "stop_price": applied_stop,
+            "trailing_remainder": trailing_remainder,
+            "description": (
+                f"ATR锯齿止盈 Tier {i+1}: profit={profit_atr:.2f}ATR ≥ {tier_profit_atr}ATR, "
+                f"减仓 {close_qty}/{original_size} ({close_pct:.0f}%), "
+                f"ratchet SL={applied_stop:.4f} (entry {'+'if direction=='LONG' else '-'}{ratchet_sl_pct}×ATR)"
+                + (" [trailing_remainder]" if trailing_remainder else "")
+            ),
+            "metadata": {
+                "mode": "atr",
+                "profit_atr": round(profit_atr, 3),
+                "tier_profit_atr": tier_profit_atr,
+                "ratchet_sl_pct": ratchet_sl_pct,
+                "atr": atr,
+            },
+        }
     return None
 
 
 class ScaleOutRule(BaseExitRule):
-    """锯齿止盈规则 (Task #62 升级版)"""
+    """锯齿止盈规则 (Task #62 升级版 + Phase 3 ATR 模式)"""
 
     rule_name = "SCALE_OUT"
 
@@ -202,4 +321,5 @@ class ScaleOutRule(BaseExitRule):
             market_data["current_price"],
             trail_state,
             market_data["direction"],
+            market_data=market_data,
         )
