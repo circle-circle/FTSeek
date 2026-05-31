@@ -1417,19 +1417,18 @@ strategies:
     # 当 ExitDispatcher 4 policy 各自稳定 7+ 天后, 切 true 启用统一 ExitDecision 优先级仲裁
     # 启用前置条件: PositionExitMonitor 与 ExitDispatcher 决策一致率 > 95%
     unified_dispatcher_enabled: false
-  # === Task #1 (2026-05-31): 资金分配冲突修复 ===
-  # 总池: main 0.65 (含 trend_first/fast_lane 子策略切分) + scalping 0.15 (独立池) = 0.80
-  # max_total_position: 0.80 → 与 risk_limits.max_total_position 对齐
-  # 子策略 (trend_first, fast_lane) 通过 capital_source: main + capital_pct_of_main 从 main 池切分,
-  # 不再独立累加, 由 CapitalAllocator 的 bucket_map 在 scheduler_core 强制收敛到 main 桶.
+  # === ADR-002 (2026-05-31): 暂停 scalping, 聚焦主线 ===
+  # 决策依据: scalping 150笔 18% WR 持续负收益, 主线 SHORT+trailing 42.9% WR +$13K 已验证
+  # 资金重新分配: main 0.65→0.80, scalping 0.15→0.0
+  # 代码保留, 后续可通过 enabled:true 恢复
   main:
-    capital_pct: 0.65          # Main 总池 (内含 trend_first 35% + fast_lane 25% + 直发 40%)
+    capital_pct: 0.80          # ADR-002: 0.65→0.80 (收回 scalping 15% 资金)
     priority: 5
   scalping:
-    capital_pct: 0.15          # Task #1 (2026-05-31): 独立池 0.10 → 0.15, main+scalping=0.80=max_total
+    capital_pct: 0.0           # ADR-002: 0.15→0.0 (暂停, 资金归还主线)
     priority: 10               # 高于 main, 时效性更强
     direction_preference: SHORT  # P6: 数据驱动 - SHORT 胜率 37.0% vs LONG 20.9%
-    enabled: true              # P1 修复 (2026-05-22): 修复参数后重新启用
+    enabled: false             # ADR-002 (2026-05-31): 暂停 scalping, 聚焦已验证的主线 SHORT+trailing edge
   # P10 优化 (2026-05-22): 连续亏损后动态降仓
   # 数据：1 连败后胜率 20%，4 连败后胜率 40%（反转）
   # 策略：连续 3 次亏损后降仓 50%，避免情绪化交易

@@ -723,10 +723,10 @@ class TradingScheduler:
 
         # 各 bucket cap (从 yaml). B.3 (2026-05-14): bucket 而非 strategy
         # fast_lane / trend_first 走 main bucket → 不在 caps 里 (避免重复加总)
-        # Task #1 (2026-05-31): scalping 默认 0.25 → 0.15 (与 yaml 对齐, main+scalping=0.80=max_total)
+        # ADR-002 (2026-05-31): scalping 暂停, main 0.65→0.80, scalping 0.15→0.0
         caps = {
-            "main":     float(cfg.get_dotted("strategies.main.capital_pct", 0.65)) if cfg else 0.65,
-            "scalping": float(cfg.get_dotted("strategies.scalping.capital_pct", 0.15)) if cfg else 0.15,
+            "main":     float(cfg.get_dotted("strategies.main.capital_pct", 0.80)) if cfg else 0.80,
+            "scalping": float(cfg.get_dotted("strategies.scalping.capital_pct", 0.0)) if cfg else 0.0,
             "llm_plan": float(cfg.get_dotted("strategies.llm_plan.capital_pct", 0.0)) if cfg else 0.0,
         }
         # B.3: bucket_map — 让 fast_lane / trend_first 占用计入 main bucket
@@ -950,9 +950,9 @@ class TradingScheduler:
                     "main_pct=%.2f scalping_pct=%.2f stop_loss=%.3f take_profit=%.3f atr_x=%.2f",
                     self.MIN_CONFIDENCE,
                     int(self.MIN_SIGNAL_STRENGTH),
-                    float(cfg.get_dotted(ConfigKeys.MAX_TOTAL_POSITION.value, 0.85)),
-                    float(cfg.get_dotted(ConfigKeys.MAIN_BUDGET_PCT.value, 0.65)),
-                    float(cfg.get_dotted(ConfigKeys.SCALPING_BUDGET_PCT.value, 0.20)),
+                    float(cfg.get_dotted(ConfigKeys.MAX_TOTAL_POSITION.value, 0.80)),
+                    float(cfg.get_dotted(ConfigKeys.MAIN_BUDGET_PCT.value, 0.80)),
+                    float(cfg.get_dotted(ConfigKeys.SCALPING_BUDGET_PCT.value, 0.0)),
                     float(cfg.get_dotted(ConfigKeys.STOP_LOSS_PCT.value, 0.045)),
                     float(cfg.get_dotted(ConfigKeys.TAKE_PROFIT_PCT.value, 0.025)),
                     float(cfg.get_dotted(ConfigKeys.ATR_MULTIPLIER.value, 2.5)),
