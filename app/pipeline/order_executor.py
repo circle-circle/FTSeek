@@ -473,6 +473,8 @@ def _notify_order(scheduler, symbol: str, signal: SignalScore, order: Order, pos
         )
 
         # 信号 + 投票快照 (用于平仓时 trade_records 字段回填)
+        # P1 修复 (2026-05-31): 添加 decision_id 到 metadata, 确保平仓时可关联到 signal_snapshots
+        _decision_id = (voting_result or {}).get("decision_id", "") or ""
         _signal_snapshot = {
             'signal_strength': int(getattr(signal, 'strength', 0) or 0),
             'signal_confidence': float(getattr(signal, 'confidence', 0.0) or 0.0),
@@ -481,6 +483,8 @@ def _notify_order(scheduler, symbol: str, signal: SignalScore, order: Order, pos
             'source_type': 'MAIN_PIPELINE',  # P1 修复：标注来源
             'entry_reason': _entry_reason,   # P0 归因修复
             'signal_id': getattr(signal, 'signal_id', '') or getattr(signal, 'trace_id', '') or '',  # P0 归因
+            # P1 修复 (2026-05-31): decision_id 持久化 — 平仓时用于关联 signal_snapshots
+            'decision_id': _decision_id,
             # P1 修复 (2026-05-31): decision_reason 归因 — 记录为什么做这笔交易
             'decision_reason': (
                 f"strategy={getattr(signal, 'strategy_id', 'unknown')} "
@@ -2642,6 +2646,9 @@ def _fetch_decision_data(symbol: str, trade_date: str = "", direction: str = "")
     时, 从 voting_coordinator 写入的 decisions.db 反查同一 (symbol, 交易日,
     方向) 组合的最近一条决策, 补出 final_strength / consensus_level / signal_strength.
 
+    P1 修复 (2026-05-31): 新增 signal_snapshots.db 作为第 4 层兜底.
+    当 decisions.db 也查不到时, 从 signal_snapshots 按 (symbol, trade_date) 匹配.
+
     Returns:
         dict {
             "signal_strength": int,    # = decisions.final_strength (以投票后强度为准)
@@ -2695,6 +2702,49 @@ def _fetch_decision_data(symbol: str, trade_date: str = "", direction: str = "")
                 }
     except Exception as e:
         logger.debug(f"[Task#42][decisions 兜底] {symbol} 查询失败: {e}")
+
+    # ── P1 第 4 层兜底 (2026-05-31): signal_snapshots.db ──
+    # 当 decisions.db 也查不到时, 从 signal_snapshots 按 (symbol, trade_date) 匹配
+    try:
+        from app.core.paths import get_data_dir
+        snap_db = get_data_dir() / "signal_snapshots.db"
+        if snap_db.exists():
+            with sqlite3.connect(str(snap_db)) as conn:
+                cursor = conn.cursor()
+                snap_params = [symbol]
+                snap_sql = ("SELECT decision_id, strength, confidence, direction "
+                           "FROM signal_snapshots WHERE symbol = ?")
+                if trade_date:
+                    snap_sql += " AND trade_date = ?"
+                    snap_params.append(trade_date)
+                if _dir and _dir not in ("NEUTRAL", ""):
+                    snap_sql += " AND direction = ?"
+                    snap_params.append(_dir)
+                snap_sql += " ORDER BY created_at DESC LIMIT 1"
+                snap_row = cursor.execute(snap_sql, tuple(snap_params)).fetchone()
+                if not snap_row and trade_date:
+                    snap_row = cursor.execute(
+                        "SELECT decision_id, strength, confidence, direction "
+                        "FROM signal_snapshots WHERE symbol = ? AND trade_date = ? "
+                        "ORDER BY created_at DESC LIMIT 1",
+                        (symbol, trade_date)
+                    ).fetchone()
+                if snap_row and snap_row[1] is not None:
+                    logger.info(
+                        f"[P1·signal_snapshots 兜底] {symbol} {trade_date} "
+                        f"strength={snap_row[1]} decision_id={snap_row[0]}"
+                    )
+                    return {
+                        "decision_id":      snap_row[0] or "",
+                        "final_strength":   int(snap_row[1] or 0),
+                        "consensus_level":  float(snap_row[2] or 0.0),
+                        "signal_strength":  int(snap_row[1] or 0),
+                        "signal_confidence": float(snap_row[2] or 0.0),
+                        "direction":        snap_row[3] or "",
+                    }
+    except Exception as e:
+        logger.debug(f"[P1·signal_snapshots 兜底] {symbol} 查询失败: {e}")
+
     return {}
 
 
@@ -3328,6 +3378,9 @@ def _close_position(scheduler, position: Position, current_price: float, exit_re
             "entry_reason":      _derive_entry_reason_for_close(meta),
             # Task #14 (2026-05-27): 执行优化元数据 (TWAP / 滑点 / 延迟)
             "metadata_json":     (meta.get("execution") if isinstance(meta.get("execution"), dict) else None),
+            # P1 修复 (2026-05-31): decision_id 归因链路 — 关联 signal_snapshots + decisions
+            # 优先从 position.metadata 读取 (开仓时写入), 兜底从 _decision_data 获取
+            "decision_id":       meta.get("decision_id", "") or _decision_data.get("decision_id", ""),
         })
 
         # Task #26 (2026-05-27): 回填 voting_predictions 实际结果 (异步, 不阻平仓主线)

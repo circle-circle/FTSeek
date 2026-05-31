@@ -215,7 +215,12 @@ class DecisionRecorder:
                 ))
 
                 # 写入模型投票明细
-                for ms in voting_result.get("model_scores", []):
+                model_scores_list = voting_result.get("model_scores", [])
+                logger.debug(f"[DecisionRecorder] DEBUG: model_scores type={type(model_scores_list)}, len={len(model_scores_list)}")
+                if model_scores_list:
+                    logger.debug(f"[DecisionRecorder] DEBUG: first model_score={model_scores_list[0]}")
+                
+                for ms in model_scores_list:
                     model_id = ms.get("model_id", ms.get("model", "unknown"))
                     direction = ms.get("direction", "NEUTRAL")
                     # Handle int direction (1/-1 from LLM)
@@ -226,6 +231,7 @@ class DecisionRecorder:
                     role_map = {"qwen": "QWEN", "minimax": "MINIMAX", "llm_strategy": "LLM_STRATEGY"}
                     model_role = role_map.get(model_id.lower(), "UNKNOWN")
 
+                    logger.debug(f"[DecisionRecorder] DEBUG: inserting model_vote: {model_id}, {model_role}, {ms.get('strength', 50)}")
                     conn.execute("""
                         INSERT INTO model_votes
                         (decision_id, model_id, model_role, strength, direction,
