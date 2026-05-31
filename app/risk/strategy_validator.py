@@ -14,6 +14,7 @@ FTSeek-US 策略风控过滤器
 
 import logging
 from datetime import datetime, timedelta
+from app.utils.timezone import now_et
 from typing import Dict, List, Optional
 
 logger = logging.getLogger("ftseek.strategy_validator")
@@ -39,7 +40,7 @@ class StrategyValidator:
         
         # 日统计
         self._daily_count = 0
-        self._daily_date = datetime.now().strftime("%Y-%m-%d")
+        self._daily_date = now_et().strftime("%Y-%m-%d")
         
         logger.info(f"[策略风控] 初始化 | 单策略最大仓位={self.max_position_pct*100:.0f}% | 日最大策略数={self.max_daily_strategies}")
     
@@ -65,8 +66,8 @@ class StrategyValidator:
         # 2. 冷却期检查
         cooldown_key = f"{symbol}_{direction}"
         last_time = self.cooldown_symbols.get(cooldown_key)
-        if last_time and (datetime.now() - last_time).total_seconds() < self.cooldown_seconds:
-            remaining = int(self.cooldown_seconds - (datetime.now() - last_time).total_seconds())
+        if last_time and (now_et() - last_time).total_seconds() < self.cooldown_seconds:
+            remaining = int(self.cooldown_seconds - (now_et() - last_time).total_seconds())
             return False, f"冷却中: {cooldown_key} (剩余 {remaining}s)"
         
         # 3. 仓位限制
@@ -95,13 +96,13 @@ class StrategyValidator:
     def mark_executed(self, symbol: str, direction: str):
         """标记策略已执行, 开始冷却"""
         cooldown_key = f"{symbol}_{direction}"
-        self.cooldown_symbols[cooldown_key] = datetime.now()
+        self.cooldown_symbols[cooldown_key] = now_et()
         self._daily_count += 1
         logger.info(f"[策略风控] 执行记录: {cooldown_key} | 今日第 {self._daily_count} 条")
     
     def _check_daily_reset(self):
         """检查是否需要重置日统计"""
-        today = datetime.now().strftime("%Y-%m-%d")
+        today = now_et().strftime("%Y-%m-%d")
         if today != self._daily_date:
             self._daily_date = today
             self._daily_count = 0

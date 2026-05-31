@@ -11,6 +11,7 @@ FTSeek-US 核心调度器 - 触发器
 import logging
 import os
 from datetime import datetime, date, timedelta
+from app.utils.timezone import now_et
 from typing import TYPE_CHECKING
 from enum import Enum
 from app.core.paths import get_decisions_db, get_project_root
@@ -113,7 +114,7 @@ def is_in_cooldown(scheduler: 'TradingScheduler', symbol: str) -> bool:
     with scheduler._open_position_lock:
         if symbol not in scheduler._signal_cooldown:
             return False
-        elapsed = (datetime.now() - scheduler._signal_cooldown[symbol]).total_seconds() / 60
+        elapsed = (now_et() - scheduler._signal_cooldown[symbol]).total_seconds() / 60
         return elapsed < scheduler.SIGNAL_COOLDOWN_MINUTES
 
 
@@ -124,7 +125,7 @@ def set_cooldown(scheduler: 'TradingScheduler', symbol: str):
     P1 修复 (2026-05-04): 使用 scheduler._open_position_lock 保护写入。
     """
     with scheduler._open_position_lock:
-        scheduler._signal_cooldown[symbol] = datetime.now()
+        scheduler._signal_cooldown[symbol] = now_et()
 
 
 def _check_recommendation_accuracy(scheduler):

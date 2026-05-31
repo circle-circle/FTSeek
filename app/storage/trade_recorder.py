@@ -7,6 +7,7 @@
 import sqlite3
 import logging
 from datetime import datetime
+from app.utils.timezone import now_et
 from typing import Dict, List, Optional, Any
 from pathlib import Path
 import uuid
@@ -170,8 +171,8 @@ class TradeRecorder:
             trade_id: 交易 ID
         """
         trade_id = kwargs.get('trade_id', str(uuid.uuid4())[:8])
-        trade_date = (datetime.now() - timedelta(hours=12)).strftime('%Y-%m-%d')  # ET date
-        entry_time = datetime.now().isoformat()
+        trade_date = (now_et() - timedelta(hours=12)).strftime('%Y-%m-%d')  # ET date
+        entry_time = now_et().isoformat()
         direction = 'LONG' if side.lower() in ['buy', 'long'] else 'SHORT'
         
         # 计算风险收益比
@@ -213,7 +214,7 @@ class TradeRecorder:
                 kwargs.get('position_size', 0.1),
                 kwargs.get('position_size', 0.1),
                 decision_confidence,
-                datetime.now().isoformat()
+                now_et().isoformat()
             ))
             conn.commit()
             
@@ -318,7 +319,7 @@ class TradeRecorder:
             return False
         
         updates.append("updated_at = ?")
-        values.append(datetime.now().isoformat())
+        values.append(now_et().isoformat())
         values.append(trade_id)
         
         conn = self._get_conn()
@@ -389,7 +390,7 @@ class TradeRecorder:
             
             # 计算持有时间
             entry_time = datetime.fromisoformat(row['entry_time'])
-            holding_hours = (datetime.now() - entry_time).total_seconds() / 3600
+            holding_hours = (now_et() - entry_time).total_seconds() / 3600
             
             # 计算实际风险收益比
             stop_loss_planned = row['stop_loss_planned']
@@ -410,7 +411,7 @@ class TradeRecorder:
                     updated_at = ?
                 WHERE id = ?
             """, (
-                datetime.now().isoformat(),
+                now_et().isoformat(),
                 exit_price,
                 exit_reason,
                 pnl,
@@ -422,7 +423,7 @@ class TradeRecorder:
                 emotion_state,
                 risk_reward_actual,
                 stop_loss_executed,
-                datetime.now().isoformat(),
+                now_et().isoformat(),
                 trade_id
             ))
             conn.commit()

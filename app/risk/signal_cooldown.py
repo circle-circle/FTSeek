@@ -4,6 +4,7 @@
 """
 import logging
 from datetime import datetime, timedelta
+from app.utils.timezone import now_et
 from typing import Dict, Optional
 from pathlib import Path
 import json
@@ -62,7 +63,7 @@ class SignalCooldown:
             True = 可以下单，False = 在冷却期
         """
         with self._lock:
-            now = datetime.now()
+            now = now_et()
             
             if symbol in self._cache:
                 last_signal = self._cache[symbol]
@@ -85,7 +86,7 @@ class SignalCooldown:
             symbol: 标的代码
         """
         with self._lock:
-            self._cache[symbol] = datetime.now()
+            self._cache[symbol] = now_et()
             self._save_cache()
             logger.debug(f"[信号冷却] 记录 {symbol} 信号时间")
     
@@ -97,7 +98,7 @@ class SignalCooldown:
             (can_trade: bool, remaining_seconds: float)
         """
         with self._lock:
-            now = datetime.now()
+            now = now_et()
             
             if symbol not in self._cache:
                 return True, 0.0
@@ -121,7 +122,7 @@ class SignalCooldown:
     
     def get_status(self) -> Dict[str, float]:
         """获取所有冷却状态"""
-        now = datetime.now()
+        now = now_et()
         status = {}
         
         with self._lock:

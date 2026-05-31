@@ -17,6 +17,7 @@ Phase 2 核心组件: 针对财报期间的特殊风控逻辑
 import os
 import logging
 from datetime import datetime, timedelta
+from app.utils.timezone import now_et
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass
 
@@ -99,7 +100,7 @@ class EarningsRiskGuard:
                 "flash_exit_multiplier": entry["flash_exit_multiplier"],
                 "time_of_day": entry.get("time_of_day", "N/A"),
             }
-        self._last_update = datetime.now()
+        self._last_update = now_et()
         logger.info(f"财报日历已更新: {len(self._earnings_symbols)} 只股票")
     
     def is_earnings_period(self, symbol: str) -> bool:
@@ -118,7 +119,7 @@ class EarningsRiskGuard:
         info = self._earnings_symbols[symbol]
         try:
             report_date = datetime.strptime(info["report_date"], "%Y-%m-%d")
-            today = datetime.now()
+            today = now_et()
             delta = (today - report_date).days
             # 财报日前 1 天 到 财报日后 2 天 = 3 天窗口
             return -1 <= delta <= 2
@@ -138,7 +139,7 @@ class EarningsRiskGuard:
         info = self._earnings_symbols[symbol]
         try:
             report_date = datetime.strptime(info["report_date"], "%Y-%m-%d")
-            now = datetime.now()
+            now = now_et()
             hours_until = (report_date - now).total_seconds() / 3600
             
             if 0 < hours_until <= self.config.EARNINGS_BLACKOUT_HOURS_BEFORE:
@@ -228,7 +229,7 @@ class EarningsRiskGuard:
             (should_exit, reason)
         """
         # 1. 超时检查
-        hours_held = (datetime.now() - position.entry_time).total_seconds() / 3600
+        hours_held = (now_et() - position.entry_time).total_seconds() / 3600
         if hours_held > self.config.EARNINGS_HOLD_MAX_HOURS:
             return True, f"财报持仓超时: {hours_held:.0f}h > {self.config.EARNINGS_HOLD_MAX_HOURS}h"
         
