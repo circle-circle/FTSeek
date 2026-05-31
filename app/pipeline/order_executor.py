@@ -480,6 +480,14 @@ def _notify_order(scheduler, symbol: str, signal: SignalScore, order: Order, pos
             'voting_result': voting_result or {},
             'source_type': 'MAIN_PIPELINE',  # P1 修复：标注来源
             'entry_reason': _entry_reason,   # P0 归因修复
+            'signal_id': getattr(signal, 'signal_id', '') or getattr(signal, 'trace_id', '') or '',  # P0 归因
+            # P1 修复 (2026-05-31): decision_reason 归因 — 记录为什么做这笔交易
+            'decision_reason': (
+                f"strategy={getattr(signal, 'strategy_id', 'unknown')} "
+                f"strength={getattr(signal, 'strength', 0)} "
+                f"confidence={getattr(signal, 'confidence', 0):.2f} "
+                f"regime={getattr(signal, 'market_regime', 'UNKNOWN')}"
+            ),
         }
 
         if hasattr(position, 'metadata') and position.metadata:
@@ -731,6 +739,22 @@ def _get_order_qty(scheduler, symbol: str, atr: float = 0, direction: str = "LON
                     size = _adj_size
         except Exception as _e:
             logger.debug(f"[动态仓位·Regime] 应用缩放失败 (忽略): {_e}")
+
+        # P0 修复 (2026-05-31): 接入 TradingMode 风控倍数
+        # 模拟盘 multiplier=1.0, 实盘保守=0.5, 实盘正常=0.8
+        try:
+            from app.core.trading_mode import TradingMode
+            _tm = TradingMode()
+            _tm_mult = _tm.get_risk_multiplier()
+            if _tm_mult < 1.0 and size > 0:
+                _orig_size = size
+                size = max(1, int(size * _tm_mult))
+                logger.info(
+                    f"[动态仓位·TradingMode] {symbol} {_tm.mode_label}: "
+                    f"{_orig_size} → {size} 股 (×{_tm_mult})"
+                )
+        except Exception as _tme:
+            logger.debug(f"[动态仓位·TradingMode] 应用风控倍数失败 (忽略): {_tme}")
 
         # W5 修复 (2026-05-02): 仅在 shares==0 时 fallback，warning 仅记录不阻断
         if sizing_result.warnings:
@@ -3292,6 +3316,8 @@ def _close_position(scheduler, position: Position, current_price: float, exit_re
             "strategy_id":       meta.get("strategy_id", "voting_llm"),
             "decision_reason":   meta.get("decision_reason", ""),
             "max_drawdown":      meta.get("max_drawdown", 0.0),
+            # P0 修复 (2026-05-31): signal_id 归因链路 — 从 position 读取
+            "signal_id":         getattr(position, "signal_id", "") or meta.get("signal_id", "") or _trace_id,
             # Phase A (2026-05-14): 持仓的 owner_strategy 必须落到 trade_records
             "owner_strategy":    getattr(position, "owner_strategy", None) or "main",
             # O4 (2026-05-16): regime + mode 落库 (此前两列 UNKNOWN/normal 都未传入)

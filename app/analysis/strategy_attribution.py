@@ -44,7 +44,9 @@ class StrategyAttribution:
         self._lock = threading.Lock()
 
         # 当日归因状态
-        self._today = date.today().isoformat()
+        # P1 修复 (2026-05-31): 使用 ET 日期, 避免 CST 跨日重置
+        from app.utils.timezone import get_trade_date
+        self._today = get_trade_date()
         self._reset_daily()
 
         # 文件路径
@@ -55,7 +57,9 @@ class StrategyAttribution:
 
     def _reset_daily(self):
         """重置当日统计"""
-        self._today = date.today().isoformat()
+        # P1 修复 (2026-05-31): 使用 ET 日期
+        from app.utils.timezone import get_trade_date
+        self._today = get_trade_date()
         self._conflicts: List[Dict] = []           # 信号冲突事件
         self._main_trades: List[Dict] = []         # 主线交易记录
         self._scalping_trades: List[Dict] = []     # scalping 交易记录
@@ -63,7 +67,9 @@ class StrategyAttribution:
 
     def _check_day_rollover(self):
         """跨日重置"""
-        today = date.today().isoformat()
+        # P1 修复 (2026-05-31): 使用 ET 日期
+        from app.utils.timezone import get_trade_date
+        today = get_trade_date()
         if today != self._today:
             # 写出昨日归因
             self._flush_daily_attribution()

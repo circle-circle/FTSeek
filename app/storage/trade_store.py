@@ -25,6 +25,22 @@ def _get_runtime_mode() -> str:
     return "normal"
 
 
+def _get_trade_mode() -> str:
+    """Phase 1 (2026-05-31): 根据 TRADE_ENV 环境变量返回 simulate/live.
+
+    约定:
+      - TRADE_ENV=1 (默认) -> 'simulate'
+      - TRADE_ENV=0           -> 'live'
+      - 解析异常              -> 'simulate' (最安全兑底)
+    """
+    try:
+        import os as _os
+        raw = _os.getenv("TRADE_ENV", "1").strip()
+        return "live" if raw == "0" else "simulate"
+    except Exception:
+        return "simulate"
+
+
 class TradeStore:
     """
     持久化交易记录存储
@@ -124,6 +140,8 @@ class TradeStore:
                     ("mode", "ALTER TABLE trade_records ADD COLUMN mode TEXT DEFAULT 'normal'"),
                     # O4 (2026-05-16): regime 显式落库 (Y1 RegimeDetector 数据复盘可见)
                     ("market_regime", "ALTER TABLE trade_records ADD COLUMN market_regime TEXT DEFAULT 'UNKNOWN'"),
+                    # Phase 1 (2026-05-31): 模拟/实盘隔离 — 根据 TRADE_ENV 填充, 默认 simulate
+                    ("trade_mode", "ALTER TABLE trade_records ADD COLUMN trade_mode TEXT DEFAULT 'simulate'"),
                 ]:
                     try:
                         conn.execute(col_def[1])
@@ -139,6 +157,7 @@ class TradeStore:
                     "CREATE INDEX IF NOT EXISTS idx_trade_date_source ON trade_records(trade_date, source_type)",
                     "CREATE INDEX IF NOT EXISTS idx_owner_strategy ON trade_records(owner_strategy)",
                     "CREATE INDEX IF NOT EXISTS idx_trade_mode ON trade_records(mode)",
+                    "CREATE INDEX IF NOT EXISTS idx_trade_records_trade_mode ON trade_records(trade_mode)",
                 ]:
                     try:
                         conn.execute(idx_def)
@@ -285,6 +304,41 @@ class TradeStore:
                 # F19 (2026-05-12): 归因表完整 schema
                 self._ensure_trade_attribution_schema(conn)
 
+                # Phase 2 (2026-05-31): 入场/出场市场上下文快照表
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS entry_context_snapshot (
+                        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                        trade_id        TEXT,
+                        symbol          TEXT NOT NULL,
+                        snapshot_type   TEXT NOT NULL DEFAULT 'entry',  -- 'entry' or 'exit'
+                        snapshot_time   TEXT NOT NULL,
+                        price           REAL,
+                        vix_value       REAL,
+                        spy_change_pct  REAL,
+                        atr_value       REAL,
+                        session_type    TEXT,
+                        market_regime   TEXT,
+                        volume_ratio    REAL,
+                        created_at      TEXT DEFAULT (datetime('now'))
+                    )
+                """)
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_context_trade_id ON entry_context_snapshot(trade_id)")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_context_symbol_time ON entry_context_snapshot(symbol, snapshot_time)")
+
+                # Phase 2 (2026-05-31): exit_reason 标准化术语表
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS exit_reason_glossary (
+                        reason_code        TEXT PRIMARY KEY,
+                        category           TEXT NOT NULL,
+                        description        TEXT,
+                        total_count        INTEGER DEFAULT 0,
+                        win_count          INTEGER DEFAULT 0,
+                        avg_pnl            REAL DEFAULT 0,
+                        avg_holding_hours  REAL DEFAULT 0,
+                        last_updated       TEXT DEFAULT (datetime('now'))
+                    )
+                """)
+
                 conn.commit()
                 logger.info("[TradeStore] 交易记录表初始化完成")
             finally:
@@ -355,6 +409,25 @@ class TradeStore:
             except Exception:
                 pass  # 列已存在
 
+        # Phase 2 (2026-05-31): LLM 归因调度器需要的扩展字段
+        for col_def in [
+            ("trade_id",                     "ALTER TABLE trade_attribution ADD COLUMN trade_id TEXT"),
+            ("key_decision_factor",          "ALTER TABLE trade_attribution ADD COLUMN key_decision_factor TEXT"),
+            ("should_have_done_differently", "ALTER TABLE trade_attribution ADD COLUMN should_have_done_differently TEXT"),
+            ("specific_suggestion",          "ALTER TABLE trade_attribution ADD COLUMN specific_suggestion TEXT"),
+            ("is_systemic_issue",            "ALTER TABLE trade_attribution ADD COLUMN is_systemic_issue INTEGER DEFAULT 0"),
+            ("systemic_pattern",             "ALTER TABLE trade_attribution ADD COLUMN systemic_pattern TEXT"),
+            ("root_cause_category",          "ALTER TABLE trade_attribution ADD COLUMN root_cause_category TEXT"),
+            ("confidence",                   "ALTER TABLE trade_attribution ADD COLUMN confidence REAL"),
+            ("llm_model",                    "ALTER TABLE trade_attribution ADD COLUMN llm_model TEXT"),
+            ("human_feedback",               "ALTER TABLE trade_attribution ADD COLUMN human_feedback TEXT"),
+        ]:
+            try:
+                conn.execute(col_def[1])
+                logger.debug(f"[TradeStore.attribution] Phase2 新增列: {col_def[0]}")
+            except Exception:
+                pass
+
         # 3 个索引: symbol/decision_id/entry_time
         for idx_def in [
             "CREATE INDEX IF NOT EXISTS idx_attr_symbol ON trade_attribution(symbol)",
@@ -363,13 +436,14 @@ class TradeStore:
             "CREATE INDEX IF NOT EXISTS idx_attr_entry_time ON trade_attribution(entry_time)",
             "CREATE INDEX IF NOT EXISTS idx_attr_trade_date ON trade_attribution(trade_date)",
             "CREATE INDEX IF NOT EXISTS idx_attr_owner ON trade_attribution(owner_strategy)",
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_attr_trade_id ON trade_attribution(trade_id) WHERE trade_id IS NOT NULL",
         ]:
             try:
                 conn.execute(idx_def)
             except Exception:
                 pass
 
-    def save_trade(self, record: Dict[str, Any]) -> int:
+    def save_trade(self, record: Dict[str, Any], voting_data: Optional[Dict[str, Any]] = None) -> int:
         """
         保存一笔完整交易记录
 
@@ -380,10 +454,28 @@ class TradeStore:
                   - entry_reason: 下单理由 (JSON 数组或字符串)
                   - signal_details: 信号详情 (JSON 对象)
                   - metadata_json: 扩展元数据 (JSON 对象)
+            voting_data: Phase 2 (2026-05-31) 可选投票数据快捷入口
+                如传入, 会覆盖/合并 record 中的 voting_result/model_scores/consensus_level
+                结构: {
+                    "voting_result": {...},
+                    "model_scores": [...],
+                    "consensus_level": 0.85,
+                    "final_strength": 75,
+                }
         
         Returns:
             新记录的 rowid
         """
+        # Phase 2 (2026-05-31): 兼容外部直接传入 voting_data
+        if voting_data:
+            if voting_data.get("voting_result") is not None:
+                record.setdefault("voting_result", voting_data["voting_result"])
+            if voting_data.get("model_scores") is not None:
+                record.setdefault("model_scores", voting_data["model_scores"])
+            if voting_data.get("consensus_level") is not None:
+                record.setdefault("consensus_level", voting_data["consensus_level"])
+            if voting_data.get("final_strength") is not None:
+                record.setdefault("final_strength", voting_data["final_strength"])
         import json
         import logging as _logging
         _logger = _logging.getLogger(__name__)
@@ -438,9 +530,9 @@ class TradeStore:
                         futu_order_id, close_futu_order_id, voting_result, final_strength, consensus_level,
                         model_scores, strategy_id, decision_reason, max_drawdown, trace_id,
                         source_type, entry_reason, signal_details, metadata_json,
-                        owner_strategy, mode, market_regime,
-                        created_at
-                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                        owner_strategy, mode, market_regime, trade_mode,
+                        signal_id, created_at
+                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """, (
                     record.get("trade_date", ""),
                     record.get("symbol", ""),
@@ -476,6 +568,10 @@ class TradeStore:
                     record.get("mode") or _get_runtime_mode(),
                     # O4 (2026-05-16): market_regime 显式落库 (Y1 RegimeDetector 数据可用)
                     record.get("market_regime") or "UNKNOWN",
+                    # Phase 1 (2026-05-31): trade_mode 跳离 — 根据 TRADE_ENV 自动填充
+                    record.get("trade_mode") or _get_trade_mode(),
+                    # P0 修复 (2026-05-31): signal_id 归因链路
+                    record.get("signal_id") or record.get("trace_id") or "",
                     datetime.now().isoformat(),
                 ))
                 conn.commit()
@@ -490,59 +586,83 @@ class TradeStore:
             finally:
                 conn.close()
 
-    def query_by_date(self, trade_date: str) -> List[Dict[str, Any]]:
+    def query_by_date(self, trade_date: str, trade_mode: Optional[str] = None) -> List[Dict[str, Any]]:
         """
         按交易日期查询记录
 
         Args:
             trade_date: 'YYYY-MM-DD'
+            trade_mode: 可选 'simulate' / 'live' 过滤 (Phase 1 2026-05-31)
         """
         with self._lock:
             conn = self._get_conn()
             try:
-                rows = conn.execute("""
-                    SELECT id, trade_date, symbol, direction, entry_time, exit_time,
-                           entry_price, exit_price, quantity, realized_pnl, pnl_pct,
-                           exit_reason, holding_hours, signal_strength, signal_confidence,
-                           futu_order_id, created_at
-                    FROM trade_records
-                    WHERE trade_date = ?
-                    ORDER BY entry_time ASC
-                """, (trade_date,)).fetchall()
+                if trade_mode:
+                    rows = conn.execute("""
+                        SELECT id, trade_date, symbol, direction, entry_time, exit_time,
+                               entry_price, exit_price, quantity, realized_pnl, pnl_pct,
+                               exit_reason, holding_hours, signal_strength, signal_confidence,
+                               futu_order_id, created_at
+                        FROM trade_records
+                        WHERE trade_date = ? AND trade_mode = ?
+                        ORDER BY entry_time ASC
+                    """, (trade_date, trade_mode)).fetchall()
+                else:
+                    rows = conn.execute("""
+                        SELECT id, trade_date, symbol, direction, entry_time, exit_time,
+                               entry_price, exit_price, quantity, realized_pnl, pnl_pct,
+                               exit_reason, holding_hours, signal_strength, signal_confidence,
+                               futu_order_id, created_at
+                        FROM trade_records
+                        WHERE trade_date = ?
+                        ORDER BY entry_time ASC
+                    """, (trade_date,)).fetchall()
                 return [self._row_to_dict(r) for r in rows]
             finally:
                 conn.close()
 
-    def query_today(self) -> List[Dict[str, Any]]:
-        """查询今日交易记录"""
+    def query_today(self, trade_mode: Optional[str] = None) -> List[Dict[str, Any]]:
+        """查询今日交易记录 (可按 trade_mode 过滤)"""
         today = date.today().strftime("%Y-%m-%d")
-        return self.query_by_date(today)
+        return self.query_by_date(today, trade_mode=trade_mode)
 
-    def query_range(self, start: str, end: str) -> List[Dict[str, Any]]:
+    def query_range(self, start: str, end: str, trade_mode: Optional[str] = None) -> List[Dict[str, Any]]:
         """
         查询日期区间内的交易记录
 
         Args:
             start: 'YYYY-MM-DD'
             end:   'YYYY-MM-DD'
+            trade_mode: 可选 'simulate' / 'live' 过滤 (Phase 1 2026-05-31)
         """
         with self._lock:
             conn = self._get_conn()
             try:
-                rows = conn.execute("""
-                    SELECT id, trade_date, symbol, direction, entry_time, exit_time,
-                           entry_price, exit_price, quantity, realized_pnl, pnl_pct,
-                           exit_reason, holding_hours, signal_strength, signal_confidence,
-                           futu_order_id, created_at
-                    FROM trade_records
-                    WHERE trade_date BETWEEN ? AND ?
-                    ORDER BY entry_time ASC
-                """, (start, end)).fetchall()
+                if trade_mode:
+                    rows = conn.execute("""
+                        SELECT id, trade_date, symbol, direction, entry_time, exit_time,
+                               entry_price, exit_price, quantity, realized_pnl, pnl_pct,
+                               exit_reason, holding_hours, signal_strength, signal_confidence,
+                               futu_order_id, created_at
+                        FROM trade_records
+                        WHERE trade_date BETWEEN ? AND ? AND trade_mode = ?
+                        ORDER BY entry_time ASC
+                    """, (start, end, trade_mode)).fetchall()
+                else:
+                    rows = conn.execute("""
+                        SELECT id, trade_date, symbol, direction, entry_time, exit_time,
+                               entry_price, exit_price, quantity, realized_pnl, pnl_pct,
+                               exit_reason, holding_hours, signal_strength, signal_confidence,
+                               futu_order_id, created_at
+                        FROM trade_records
+                        WHERE trade_date BETWEEN ? AND ?
+                        ORDER BY entry_time ASC
+                    """, (start, end)).fetchall()
                 return [self._row_to_dict(r) for r in rows]
             finally:
                 conn.close()
 
-    def stats_by_date(self, trade_date: str) -> Dict[str, Any]:
+    def stats_by_date(self, trade_date: str, trade_mode: Optional[str] = None) -> Dict[str, Any]:
         """
         统计指定日期的交易绩效
 
@@ -554,7 +674,7 @@ class TradeStore:
                 exit_reason_dist: {reason: count},
             }
         """
-        records = self.query_by_date(trade_date)
+        records = self.query_by_date(trade_date, trade_mode=trade_mode)
         if not records:
             return {"total_trades": 0, "total_pnl": 0.0}
 
@@ -584,9 +704,9 @@ class TradeStore:
             "records":          records,
         }
 
-    def stats_today(self) -> Dict[str, Any]:
-        """统计今日交易绩效"""
-        return self.stats_by_date(date.today().strftime("%Y-%m-%d"))
+    def stats_today(self, trade_mode: Optional[str] = None) -> Dict[str, Any]:
+        """统计今日交易绩效 (可按 trade_mode 过滤)"""
+        return self.stats_by_date(date.today().strftime("%Y-%m-%d"), trade_mode=trade_mode)
 
     # ------------------------------------------------------------------
     # 未平仓持仓快照（重启后恢复用）
@@ -1101,6 +1221,101 @@ class TradeStore:
                     }
                     for r in rows
                 ]
+            finally:
+                conn.close()
+
+    # ------------------------------------------------------------------
+    # Phase 2 (2026-05-31): 市场上下文快照 (entry/exit)
+    # ------------------------------------------------------------------
+
+    def save_context_snapshot(
+        self,
+        trade_id: str,
+        symbol: str,
+        snapshot_type: str,
+        snapshot_time: str,
+        price: Optional[float] = None,
+        vix_value: Optional[float] = None,
+        spy_change_pct: Optional[float] = None,
+        atr_value: Optional[float] = None,
+        session_type: Optional[str] = None,
+        market_regime: Optional[str] = None,
+        volume_ratio: Optional[float] = None,
+    ) -> int:
+        """保存市场上下文快照
+
+        Args:
+            trade_id: trade_records.id (可为字符串, 进库存为 TEXT)
+            symbol: 标的
+            snapshot_type: 'entry' / 'exit'
+            snapshot_time: ISO 格式时间戳
+            price/vix_value/spy_change_pct/atr_value: 可选指标
+            session_type/market_regime/volume_ratio: 可选上下文
+
+        Returns:
+            新快照记录的 rowid
+        """
+        if snapshot_type not in ("entry", "exit"):
+            logger.warning(f"[TradeStore.context] 未知 snapshot_type={snapshot_type}, 仍会写入")
+        with self._lock:
+            conn = self._get_conn()
+            try:
+                cursor = conn.execute("""
+                    INSERT INTO entry_context_snapshot (
+                        trade_id, symbol, snapshot_type, snapshot_time,
+                        price, vix_value, spy_change_pct, atr_value,
+                        session_type, market_regime, volume_ratio, created_at
+                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+                """, (
+                    str(trade_id) if trade_id is not None else None,
+                    symbol,
+                    snapshot_type,
+                    snapshot_time,
+                    price,
+                    vix_value,
+                    spy_change_pct,
+                    atr_value,
+                    session_type,
+                    market_regime,
+                    volume_ratio,
+                    datetime.now().isoformat(),
+                ))
+                conn.commit()
+                return cursor.lastrowid
+            finally:
+                conn.close()
+
+    def get_context_snapshot(self, trade_id: str) -> Dict[str, Any]:
+        """获取交易的入场与出场上下文
+
+        Returns:
+            {
+                "entry": {...} | None,
+                "exit":  {...} | None,
+            }
+        """
+        cols = [
+            "id", "trade_id", "symbol", "snapshot_type", "snapshot_time",
+            "price", "vix_value", "spy_change_pct", "atr_value",
+            "session_type", "market_regime", "volume_ratio", "created_at",
+        ]
+        result: Dict[str, Any] = {"entry": None, "exit": None}
+        with self._lock:
+            conn = self._get_conn()
+            try:
+                rows = conn.execute(f"""
+                    SELECT {', '.join(cols)}
+                    FROM entry_context_snapshot
+                    WHERE trade_id = ?
+                    ORDER BY snapshot_time ASC
+                """, (str(trade_id),)).fetchall()
+                for r in rows:
+                    d = dict(zip(cols, r))
+                    stype = d.get("snapshot_type")
+                    if stype in ("entry", "exit"):
+                        # 同类型多条保留最新一条
+                        result[stype] = d
+                return result
             finally:
                 conn.close()
 
