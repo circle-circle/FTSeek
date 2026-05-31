@@ -528,6 +528,44 @@ class ScalpingEngine:
             logger.debug(f"[ScalpingEngine] 配置加载失败: {e}")
             return {}
 
+    def _get_main_pipeline_direction(self, symbol: str) -> Optional[str]:
+        """
+        P0 方向对齐锁 (2026-05-31): 查询主管线最近决策方向
+        
+        从 decisions.db 查询同标的最近 30 分钟内的决策,
+        返回 "LONG" / "SHORT" / None (无数据或中性).
+        
+        设计: 仅查询, 不修改任何状态. 失败返回 None (不阻塞 scalping).
+        """
+        try:
+            import sqlite3
+            from app.core.paths import get_decisions_db
+            db_path = get_decisions_db()
+            
+            with sqlite3.connect(str(db_path)) as conn:
+                row = conn.execute("""
+                    SELECT direction, final_strength, created_at
+                    FROM decisions
+                    WHERE symbol = ?
+                      AND created_at > datetime('now', '-30 minutes')
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                """, (symbol,)).fetchone()
+                
+                if row:
+                    direction, strength, created_at = row
+                    # 只有 strength 足够明确时才锁定方向
+                    # strength > 50 = LONG, strength < 50 = SHORT
+                    if strength and strength > 55:
+                        return "LONG"
+                    elif strength and strength < 45:
+                        return "SHORT"
+                    # 45-55 区间为中性, 不锁定
+                return None
+        except Exception as e:
+            logger.debug(f"[Scalping·方向锁] {symbol} decisions.db 查询失败: {e}")
+            return None
+
     def _get_account_equity(self, fallback: float) -> float:
         """从 broker 动态获取账户净值 (SSOT 修复 2026-04-30)
         
@@ -1452,6 +1490,26 @@ class ScalpingEngine:
             effective_directions.remove(SHORT)
         if not effective_directions:
             return  # All directions suppressed
+
+        # ── P0 修复 (2026-05-31): 方向对齐锁 — 防止 scalping 与主管线反向开仓 ──
+        # 数据证据: 方向一致 avg_pnl=+0.59%, 方向不一致 avg_pnl=-25.3%
+        # 原理: 查询 decisions.db 最近 30 分钟内同标的的决策方向,
+        # 如果主管线明确看多(strength>50), scalping 不应做空, 反之亦然
+        try:
+            _main_dir = self._get_main_pipeline_direction(symbol)
+            if _main_dir in ("LONG", "SHORT"):
+                _opposite = "SHORT" if _main_dir == "LONG" else "LONG"
+                if _opposite in effective_directions:
+                    effective_directions.remove(_opposite)
+                    logger.info(
+                        f"[Scalping·方向锁] {symbol} 主管线={_main_dir}, "
+                        f"移除反向 {_opposite}, 允许={effective_directions}"
+                    )
+        except Exception as _dir_lock_e:
+            logger.debug(f"[Scalping·方向锁] {symbol} 查询失败 (不影响): {_dir_lock_e}")
+        
+        if not effective_directions:
+            return  # All directions suppressed after alignment
 
         # P6 优化 (2026-05-22): 数据驱动方向偏好
         # 数据：SHORT 胜率 37.0% vs LONG 20.9%，优先选择 SHORT
