@@ -65,7 +65,7 @@ class PositionStore:
             pool = get_daily_active_pool(market_prefix="US.")
             pool.add_position(symbol, metadata={
                 "direction": position.direction.value if hasattr(position.direction, 'value') else str(position.direction),
-                "quantity": position.quantity,
+                "quantity": position.size,
             })
         except Exception as e:
             logger.error(f"[daily_active_pool] {symbol} 添加同步失败: {e}")

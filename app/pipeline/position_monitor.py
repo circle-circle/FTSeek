@@ -18,7 +18,7 @@ from app.core.models import (
     Position, Direction, MarketRegime,
     Order, OrderType, ExitReason, TradeEvent, AlertLevel,
 )
-from app.utils.timezone import _et_trade_date
+from app.utils.timezone import _et_trade_date, now_et
 from app.execution.options_selector import OptionSelector
 from app.risk.position_exit_monitor import get_exit_monitor
 
@@ -156,7 +156,7 @@ def _close_option_position(scheduler, position: Position, reason: str, current_o
     qty         = int(position.size)
     entry_price = position.avg_entry_price
     cost_total  = meta.get("cost_total", entry_price * qty * 100)
-    now_str     = datetime.now().isoformat()
+    now_str     = now_et().isoformat()
     exit_price  = current_option_price if current_option_price > 0 else 0.0
     value_now   = exit_price * qty * 100
     pnl         = value_now - cost_total
@@ -165,7 +165,7 @@ def _close_option_position(scheduler, position: Position, reason: str, current_o
     if position.entry_time:
         # P0 修复 (2026-05-11): 复用 get_market_hours_us 跳过周末
         from app.risk.position_exit_monitor import get_market_hours_us
-        holding_hours = get_market_hours_us(position.entry_time, datetime.now())
+        holding_hours = get_market_hours_us(position.entry_time, now_et())
 
     logger.info(f"[期权平仓] {position.symbol} {option_code} reason={reason} exit=${exit_price:.2f} PnL=${pnl:.0f} ({pnl_pct:.2%})")
 
@@ -210,7 +210,7 @@ def _close_option_position(scheduler, position: Position, reason: str, current_o
         except Exception:
             pass
         scheduler.trade_store.save_trade({
-            "trace_id": position.trace_id, "trade_date": _et_trade_date(position.entry_time or datetime.now()),
+            "trace_id": position.trace_id, "trade_date": _et_trade_date(position.entry_time or now_et()),
             "symbol": position.symbol, "direction": "SHORT_PROXY_OPTION",
             "entry_time": position.entry_time.isoformat() if position.entry_time else "",
             "exit_time": now_str, "entry_price": entry_price, "exit_price": exit_price,
@@ -367,7 +367,7 @@ def restore_positions_from_db(scheduler):
                 elif isinstance(entry_time_raw, datetime):
                     position.entry_time = entry_time_raw
                 else:
-                    position.entry_time = datetime.now()
+                    position.entry_time = now_et()
                 position.trail_state = row.get("trail_state", {}) or {}
                 position.metadata = {}
                 # P0 修复 (2026-05-20): 期权仓位设置正确的 metadata.source
@@ -463,9 +463,9 @@ def restore_positions_from_db(scheduler):
                     try:
                         position.entry_time = datetime.fromisoformat(entry_time)
                     except Exception:
-                        position.entry_time = datetime.now()
+                        position.entry_time = now_et()
                 else:
-                    position.entry_time = datetime.now()
+                    position.entry_time = now_et()
                 # 设置 metadata
                 position.metadata = {
                     "source": "voting_llm_option",
@@ -543,7 +543,7 @@ def _monitor_option_positions(scheduler):
                         # P0 修复 (2026-05-11): 复用 get_market_hours_us 跳过周末/节假日
                         # 旧代码用 wall-clock，期权周五持仓到周一会误触发
                         from app.risk.position_exit_monitor import get_market_hours_us
-                        holding_hours = get_market_hours_us(entry_time, datetime.now())
+                        holding_hours = get_market_hours_us(entry_time, now_et())
                         _opt_cfg = load_short_config()
                         max_hours = _opt_cfg.get("options", {}).get("max_holding_hours", 72)
                         if holding_hours > max_hours:
@@ -697,8 +697,8 @@ def _check_positions(scheduler):
         if meta.get("_close_blocked"):
             # P0 修复 (2026-05-13): 运行时自动恢复 — 每小时尝试一次
             last_attempt = meta.get("_close_recovery_attempt", "")
-            now_key = datetime.now().strftime("%Y-%m-%d %H:")
-            hour_bucket = datetime.now().strftime("%Y-%m-%d %H")
+            now_key = now_et().strftime("%Y-%m-%d %H:")
+            hour_bucket = now_et().strftime("%Y-%m-%d %H")
             if last_attempt != hour_bucket:
                 meta["_close_recovery_attempt"] = hour_bucket
                 logger.info(
@@ -740,9 +740,9 @@ def _check_positions(scheduler):
         metadata = getattr(scheduler, "_price_fail_metadata", {"count": 0, "last_alert": ""})
         metadata["count"] = metadata.get("count", 0) + 1
         setattr(scheduler, "_price_fail_metadata", metadata)
-        if metadata["count"] >= 6 and metadata.get("last_alert") != datetime.now().strftime("%Y-%m-%d %H:"):
+        if metadata["count"] >= 6 and metadata.get("last_alert") != now_et().strftime("%Y-%m-%d %H:"):
             logger.warning(f"[退出监控] 连续 {metadata['count']} 轮价格获取失败，所有持仓失去止损保护！")
-            metadata["last_alert"] = datetime.now().strftime("%Y-%m-%d %H:")
+            metadata["last_alert"] = now_et().strftime("%Y-%m-%d %H:")
             setattr(scheduler, "_price_fail_metadata", metadata)
         return
     if hasattr(scheduler, "_price_fail_metadata"):
@@ -908,7 +908,7 @@ def _reconcile_position_store(scheduler):
                 db_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'data', 'ftseek_us.db')
                 ts = TradeStore(db_path)
                 conn = ts._get_conn()
-                cutoff = (datetime.now() - timedelta(minutes=RECENT_CLOSE_WINDOW_MINUTES)).strftime("%Y-%m-%d %H:%M:%S")
+                cutoff = (now_et() - timedelta(minutes=RECENT_CLOSE_WINDOW_MINUTES)).strftime("%Y-%m-%d %H:%M:%S")
                 recent_exits = conn.execute(
                     "SELECT COUNT(*) FROM trade_records WHERE symbol=? AND exit_time>=? AND exit_reason IS NOT NULL",
                     (symbol, cutoff)
@@ -1090,7 +1090,7 @@ def _send_reconcile_alert(scheduler, discrepancies: list, broker_positions: dict
                 src = "Scalping" if d.get('source') == 'scalping' else 'Main'
                 lines.append(f"- {d['symbol']} ({src})\n\n")
         
-        lines.append(f"> 时间: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+        lines.append(f"> 时间: {now_et().strftime('%Y-%m-%d %H:%M')}")
         
         if scheduler.notifier:
             scheduler.notifier.send_text("\n".join(lines))
@@ -1250,7 +1250,7 @@ def _process_pending_order(scheduler, tracker, order: dict):
                     pnl_pct = (position.avg_entry_price - current_price) / position.avg_entry_price
                 
                 # 执行平仓清理
-                position.exit_time = __import__('datetime', fromlist=['datetime']).datetime.now()
+                position.exit_time = now_et()
                 position.exit_price = current_price
                 position.exit_reason = ExitReason.__members__.get(exit_reason_str, ExitReason.STOP_LOSS)
                 position.realized_pnl = pnl

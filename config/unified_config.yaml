@@ -22,21 +22,21 @@ mode:
     # 加入 RIVN/LCID/SNDK/ARM/NIO/BWXT/MU (5/15 实际有信号触发的高波动小盘)
     # 保留 NVDA/TSLA/AMD/SPY/QQQ 作为 anchor + ETF beacon. 总 12 只.
     universe:                   # 沙盒仅交易这些 symbol (覆盖 watchlist)
-      # ── Anchor (大盘半导体 + 龙头, 保留 LLM 计划匹配能力) ──
-      - NVDA                    # AI 龙头, 计划频繁出现
-      - TSLA                    # EV 龙头, 计划频繁出现
-      - AMD                     # 半导体二线, ATR 中等
       # ── 高波动小盘 (Scalping 友好, 信号易触发) ──
+      - TSLA                    # EV 龙头, 计划频繁出现
+      - AMD                     # 半导体二线, ATR 中等 (已升级 TIER1)
       - RIVN                    # ATR%≈0.20%, 5/15 实际有 LONG 触发
-      - LCID                    # ATR%≈0.19%, 与 TSLA 非完全同步, 5/14 跌 8 笔
       - SNDK                    # 高波存储芯片, 5/15 SHORT +$195
       - ARM                     # 5/15 SHORT +$1219 (单日最大盈利)
-      - NIO                     # 中概 EV, 高波动
       - BWXT                    # 唯一 SHORT 信号高触发的工业股
       - MU                      # 存储周期股, 波段明确
       # ── 市场 beacon (大盘+科技基准, Beta 对冲) ──
       - SPY
       - QQQ
+      # ── 已移除 (数据驱动) ──
+      # NVDA: 3笔 0%胜率 -$2905, ATR极低, 5/30暂停
+      # LCID: 16%胜率, 黑名单
+      # NIO:  低胜率, 黑名单
     # 风控放宽 (但不禁)
     overrides:
       scheduler.scan_interval_minutes: 3       # 10 → 3
@@ -535,7 +535,7 @@ watchlist:
     name: Advanced Micro Devices
     sector: Semiconductors
     enabled: true
-    tier: TIER2
+    tier: TIER1
     max_position_ratio: 0.12
     notes: CPU/GPU | 半导体二线弹性
   - code: US.NFLX
@@ -1626,7 +1626,7 @@ scheduler:
   # 真正生效的门槛通过 MinConfidenceResolver.for_phase("intraday") 解析
   # ConfigWriter 唯一调的节点是 risk.signal_quality.min_confidence (SSOT)
   # 此节点保留仅为避免老代码兜底失效
-  min_confidence: 0.4  # DEPRECATED, do not edit — see MinConfidenceResolver
+  min_confidence: 0.55  # DEPRECATED, do not edit — see MinConfidenceResolver (synced with code 0.55)
   min_signal_strength: 50  # P0-辩论修复: 99→50 (P3过度收紧导致5/23后零交易, P0守卫已兜底)
   min_consensus_level: 0.2
   adaptive_scan_enabled: true

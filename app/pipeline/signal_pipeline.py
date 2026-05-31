@@ -24,6 +24,8 @@ import uuid
 from datetime import datetime, timedelta
 from typing import Dict, Any, List, Optional
 
+from app.utils.timezone import now_et
+
 
 def _get_vwap_deviation(scheduler, symbol: str) -> Optional[float]:
     """P1 VWAP Gate helper: 从 market_data 缓存获取 VWAP 偏离度。
@@ -492,7 +494,7 @@ def _bridge_candidate_to_old_format(candidate):
         confidence=candidate.confidence,
         strategy_id=candidate.strategy_id,
         trace_id=getattr(candidate, "trace_id", "")
-            or f"US-{datetime.now().strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}",
+            or f"US-{now_et().strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}",
         metadata={
             "source": candidate.source,
             "rationale": candidate.rationale,
@@ -1410,7 +1412,7 @@ def _build_signal_from_vote(scheduler, symbol: str, vote_result: Dict[str, Any],
 
     signal = SignalScore(
         signal_id=str(uuid.uuid4())[:8],
-        trace_id=f"US-{datetime.now().strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}",
+        trace_id=f"US-{now_et().strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}",
         strategy_id="voting_llm",
         symbol=symbol,
         direction=direction,

@@ -378,7 +378,12 @@ class Position:
     @property
     def holding_hours(self) -> float:
         """计算持仓时长 (小时) — 仅计算交易时段，跳过周末/节假日"""
-        end_time = self.exit_time or datetime.now()
+        # P0 修复 (2026-05-31): 用 now_et() 替代 datetime.now() 统一时区
+        try:
+            from app.utils.timezone import now_et as _now_et
+            end_time = self.exit_time or _now_et()
+        except ImportError:
+            end_time = self.exit_time or datetime.now()
         entry = self.entry_time
         if isinstance(end_time, str):
             end_time = datetime.fromisoformat(end_time)

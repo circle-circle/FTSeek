@@ -147,8 +147,8 @@ class ExitPolicyGuardian:
                 'check': lambda: self._grep_in_daemon('cost_buffer_price') or self._grep_in_daemon('cost_buffer'),
             },
             'earnings_guard': {
-                'required_code': 'earnings_guard.is_in_earnings_window()',
-                'check': lambda: self._grep_in_daemon('is_in_earnings_window') or self._grep_in_daemon('flash_multiplier_override'),
+                'required_code': 'earnings_guard.get_earnings_guard() or is_in_earnings_window()',
+                'check': lambda: self._grep_in_daemon('is_in_earnings_window') or self._grep_in_daemon('flash_multiplier_override') or self._grep_in_daemon('earnings_guard') or self._grep_in_daemon('get_earnings_guard'),
             },
             'pre_close_exit': {
                 'required_code': '_check_pre_close_exit() with time-weighted tiered exit',
@@ -175,6 +175,7 @@ class ExitPolicyGuardian:
         search_files = [
             BASE_DIR / "app" / "risk" / "position_exit_monitor.py",
             BASE_DIR / "app" / "risk" / "atr_stop_engine.py",
+            BASE_DIR / "app" / "risk" / "earnings_guard.py",
         ]
         for fpath in search_files:
             try:
