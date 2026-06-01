@@ -90,7 +90,7 @@ exit_rules:
   # 规则 3: Chandelier 追踪止损 (替代固定 3% 回撤)
   chandelier_trail:
     enabled: true
-    activation_profit_atr: 0.8      # 优化 (2026-05-30 Task#7): 从 1.0 降至 0.8, 更早锁定利润, 减少由盈转亏
+    activation_profit_atr: 0.6      # RFC-055: 0.8→0.6ATR, 更早激活追踪锁利 (SHORT 55.8%WR)
     multiplier_by_regime:
       normal: 2.5                   # 优化 (2026-05-03): 从 2.0 放宽到 2.5, 给利润更多呼吸空间
       trending: 3.5                 # 优化 (2026-05-03): 从 3.0 放宽到 3.5, 趋势市让利润奔跑
@@ -108,18 +108,12 @@ exit_rules:
   scale_out:
     enabled: true
     tier_mode: atr                  # Phase 3: atr | pct (默认 ATR 模式)
-    atr_tiers:                      # Phase 3: ATR-relative 分档
-      - profit_atr: 0.5
-        close_pct: 15
-        ratchet_sl_pct: 0.3
-      - profit_atr: 1.0
-        close_pct: 25
-        ratchet_sl_pct: 0.5
-      - profit_atr: 2.0
+    atr_tiers:                      # RFC-055: 4层→2层, 减少过早减仓, 让利润发展
+      - profit_atr: 1.5
         close_pct: 30
-        ratchet_sl_pct: 1.0
+        ratchet_sl_pct: 0.8
       - profit_atr: 3.0
-        close_pct: 30
+        close_pct: 70
         ratchet_sl_pct: 1.5
         trailing_remainder: true
     tiers:                          # pct 模式 (向后兼容, tier_mode=pct 时使用)
@@ -149,7 +143,7 @@ exit_rules:
   # 新方案: 分层退出 + 时间加权 + 亏损仓位强制平仓 + 小利润仓位减仓
   pre_close_exit:
     enabled: true
-    window_minutes: 15              # 距收盘 <15 分钟触发
+    window_minutes: 8               # RFC-055: 15→8min, 让利润有更多发展空间 (54%被强平)
     # ── P1 修复 (2026-05-08): 入场后最小持有时间保护 ──
     min_hold_minutes_before_pre_close: 30  # 持仓 <30 分钟不触发盘末退出
     # ── 时间加权: 距收盘越近, 退出越积极 ──

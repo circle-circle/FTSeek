@@ -824,7 +824,7 @@ risk:
         max_equity: 50000
         risk_pct: 0.035
         total_pct: 0.25
-        max_positions: 5
+        max_positions: 3                 # RFC-055: 5→3, 集中火力在最优信号
         min_trade_usd: 500
         max_position_pct: 0.3
       medium:
@@ -1527,12 +1527,12 @@ strategies:
     min_confidence: 0.65
     # Task #2 (2026-05-31): min_strength 40 → 50, 进一步过滤弱信号
     min_strength: 50
-    max_positions: 5
+    max_positions: 3                 # RFC-055: 5→3, 集中火力在最优信号
     # Task #2 (2026-05-31): 方向偏好 — LONG 接飞刀亏损模式严重，要求更高确认度
     # 数据驱动: SHORT 胜率显著高于 LONG
     direction_bias:
       LONG:
-        min_confidence: 0.80  # RFC-055: LONG 0.75→0.80 (33%WR vs SHORT 43%WR, 需更高确认)
+        min_confidence: 0.85  # RFC-055: 0.80→0.85 (LONG sl_hit 仅6.9%WR, 极严过滤)
       SHORT:
         min_confidence: 0.60  # SHORT 阈值 0.60 (历史胜率较高，可适度放宽)
     # DEPRECATED (2026-05-31): strategies.defaults.signal_cooldown_seconds 不再生效
@@ -1691,7 +1691,7 @@ signal_fusion:
 scheduler:
   scan_interval_minutes: 10
   monitor_interval_minutes: 0.5
-  max_positions: 5
+  max_positions: 3                 # RFC-055: 5→3, 集中火力在最优信号
   # DEPRECATED (2026-05-31): scheduler.min_confidence 不再作为入场门槛 SSOT
   #   实际生效路径:
   #     - 全局门槛: risk.signal_quality.min_confidence (本文件 SSOT)
@@ -1730,12 +1730,12 @@ scheduler:
 portfolio:
   collect_rank_allocate: true
   net_exposure_target:
-    trending_up: 0.3
-    trending_down: -0.2
-    range: 0.0
-    high_vol: -0.1
+    trending_up: 0.15             # RFC-055: 0.3→0.15 (减少LONG暴露)
+    trending_down: -0.4           # RFC-055: -0.2→-0.4 (SHORT优势方向加码)
+    range: -0.15                  # RFC-055: 0→-0.15 (SHORT 42.9%WR > LONG 33.3%WR)
+    high_vol: -0.2                # RFC-055: -0.1→-0.2 (高波偏空)
     crisis: 0.0
-    normal: 0.1
+    normal: -0.05                 # RFC-055: 0.1→-0.05 (默认微偏空)
   score_weights:
     strength: 0.35
     confidence: 0.25
