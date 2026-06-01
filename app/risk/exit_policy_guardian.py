@@ -154,6 +154,14 @@ class ExitPolicyGuardian:
                 'required_code': '_check_pre_close_exit() with time-weighted tiered exit',
                 'check': lambda: self._grep_in_daemon('_check_pre_close_exit') or self._grep_in_daemon('preclose_result'),
             },
+            'velocity_exit': {
+                'required_code': 'velocity_exit with sigma_multiplier and lookback_bars',
+                'check': lambda: self._grep_in_daemon('velocity_exit') or self._grep_in_daemon('sigma_multiplier'),
+            },
+            'pre_close': {
+                'required_code': 'PreCloseExitRule or check_adaptive_pre_close_exit',
+                'check': lambda: self._grep_in_daemon('PreCloseExitRule') or self._grep_in_daemon('check_adaptive_pre_close_exit'),
+            },
         }
         
         checker = implementation_status.get(rule_name)
