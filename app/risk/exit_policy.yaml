@@ -1,10 +1,20 @@
 # ============================================================
-# FTSeek-US 退出策略 — 单一真相源 (Single Source of Truth)
+# FTSeek-US 退出策略 — 主线生产 SSOT (Single Source of Truth)
 # ============================================================
+# 适用范围: 主线 ExitRuleDispatcher / ExitMonitor / atr_stop_engine
+# 读取者: app/risk/position_exit_monitor.py, app/risk/exit_rule_dispatcher.py
+#         app/pipeline/position_monitor.py
+#
+# ⚠️ 不要与以下 yaml 混淆:
+#   - config/exit_profiles.yaml — harness/shadow_bridge 影子系统专用 (回测/辩论)
+#                                  即使参数名相同 (如 activation_profit_atr) 也是
+#                                  独立配置, 改这里不会影响 shadow, 反之亦然
+#   - config/unified_config.yaml::dynamic_exit — regime-aware 兜底参数, 优先级低于本表
+#
 # 设计原则:
-# 1. 所有退出参数只在此文件定义，代码只读取不硬编码
-# 2. 修改策略 = 改 YAML，不需要改 Python 代码
-# 3. 启动时强制校验：代码逻辑必须覆盖此文件所有规则
+# 1. 主线退出参数只在此文件定义, 代码只读取不硬编码
+# 2. 修改策略 = 改 YAML, 不需要改 Python 代码
+# 3. 启动时强制校验: 代码逻辑必须覆盖此文件所有规则
 # ============================================================
 
 version: "2.5"
@@ -35,11 +45,28 @@ progressive_trailing:
   # 保留入场 session ratio cosine 平滑窗口 (分钟)
   session_blend_window_minutes: 90.0
 
+# ── RFC-057 (2026-06-01): 全局入场冷却 (grace period) ──
+# 数据驱动 (n=60): <30min 持仓 31.7% wr -$27,437 (占总亏损 188%)
+# 30min-1h: 25% wr +$14,970 (放过噪声窗口反而盈利)
+# 入场后 min_hold_minutes 内仅允许 flash_exit / circuit_breaker / earnings_guard
+# 其他规则 (trailing_stop / day_trade / scale_out / time_decay / velocity_exit) 被屏蔽
+# 安全底线: 浮亏 >= max_grace_loss_pct (-3%) 立即解除保护, 防止 grace 包过宽导致大亏
+global_hold_protection:
+  enabled: true
+  min_hold_minutes_after_entry: 10  # 模拟盘: 30→10min grace period
+  max_grace_loss_pct: 0.03          # 浮亏 >=3% 立即解除保护 (硬底兜底)
+  allowed_during_grace:
+    - flash_exit
+    - circuit_breaker
+    - earnings_guard                # 财报突发也必须能逃
+    - pre_close                     # 盘末退出 (避免隔夜跳空)
+  log_each_block: true              # 每次屏蔽记日志便于审计
+
 # ── Phase 3 (2026-05-31): 退出监控调度参数 ──
 exit_monitor:
   scan_interval_seconds: 60         # 扫描周期 (分钟以下)
   cooldown_seconds: 120             # 同一持仓退出冷却
-  min_hold_minutes: 20              # RFC-055: 10→20min, 数据: <5min 162笔 -$10,689 19.1%WR
+  min_hold_minutes: 5               # 模拟盘数据采集: 20→5min, 允许更短持仓
 
 # ── Phase 3 (2026-05-31): 退出规则互斥 (新 ExitRuleDispatcher 使用) ──
 # key=高优先级触发的规则, value=被压制不再上报的规则列表
@@ -334,7 +361,7 @@ day_trade_mode:
   # 修复 (2026-05-12): 隔夜持仓重置基准时间 + 首次扫描 30min 宽限期
   time_decay:
     enabled: true
-    max_idle_minutes: 90            # RFC-055: 150→90min, 信号90min无进展即失效, 加速资金周转
+    max_idle_minutes: 60            # 模拟盘: 90→60min, 加速信号轮转
     min_progress_pct: 0.5           # 优化: 从 0.2% 提到 0.5% (避免无意义进展判断)
     grace_period_minutes: 30        # 修复 (2026-05-12): 首次扫描宽限期
     overnight_reset_threshold: 60   # 修复 (2026-05-12): 持仓>60min 视为隔夜, 重置基准
@@ -347,7 +374,7 @@ day_trade_mode:
     max_loss_pct: 5.0               # 优化: 从 4.0% 放宽到 5.0%
     take_profit_tier_1: 2.0         # 优化: 从 1.5% 提到 2.0%
     take_profit_tier_2: 5.0         # 优化: 从 4.0% 提到 5.0%
-    max_idle_minutes: 90            # RFC-055: 120→90min, 与LONG对齐, 信号失效加速退出
+    max_idle_minutes: 60            # 模拟盘: 90→60min, 与LONG对齐
 
 # ============================================================
 # SCALPING 策略退出参数覆写 (Task #9, 2026-05-30)

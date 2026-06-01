@@ -773,23 +773,10 @@ risk:
   # P0 全局黑名单 (2026-05-30): 跨策略统一拦截亏损标的，不仅限于Scalping
   # 实施在 app/pipeline/stages/risk_stage.py 的入场校验最早期
   global_blacklist:
-    - US.LCID
-    - US.TME
-    - US.UBER
-    - US.QCOM
-    - US.NIO
-    - US.DIA      # RFC-055: 0% 胜率, 4笔 -$507
-    - US.NVDA     # RFC-055: 0% 胜率, 3笔 -$2,905 (已 disabled 但黑名单兜底)
-    - US.LMT      # RFC-055: 33%WR -$106, SHORT STRUCTURE_EXIT 持续亏损
-    - US.UNH      # RFC-055: 0%WR -$120, 全部 SHORT 交易亏损
-    - US.NFLX     # RFC-055: 0%WR -$122, 全部交易亏损
-    - US.ARM      # RFC-055 Phase 4: TRAILING_STOP 33%WR -$525 (回测场景D)
-    - US.AMD      # RFC-055 Phase 4: 1笔 -$275, 持续亏损
-    - US.BWXT     # RFC-055 Phase 4: 0%WR -$50, 小样本持续亏损
-    - US.NFLX     # 2026-06-01: 0% 胜率, 8笔 -$122 (90天数据, 信号系统对此标的失灵)
-    - US.UNH      # 2026-06-01: 0% 胜率, 9笔 -$120 (90天数据, 同上)
-    - US.META     # 2026-06-01: 从原 pre_trade_check 硬编码迁移过来 (历史亏损归因)
-    - US.GOOGL    # 2026-06-01: 从原 pre_trade_check 硬编码迁移过来 (历史亏损归因)
+    - US.QCOM     # 44笔 22.7%胜率 -$3.8K (保留)
+    - US.LCID     # 16%胜率 (保留)
+    - US.TME      # 0%胜率 (保留)
+    # 模拟盘数据采集: 移除此前添加的额外黑名单项, 允许更多标的交易
   # RFC-056 (2026-06-01): HIGH_VOL 市况 VIX 阈值多档化
   # 数据驱动 (n=141, 90天): HIGH_VOL regime 14.9% 胜率 -$39,537, 占总亏损 271%
   # 旧逻辑: VIX>30 才熔断, VIX 22-29 区间放任入场 → 主要亏损源
@@ -825,14 +812,13 @@ risk:
     # 实测调参 (2026-05-15): 历史 7 天 win_rate 5%, 多标的 2 笔全亏即触发场景
     enabled: true                       # 关键防御, 永远开
     max_daily_loss_pct: 0.005           # 0.5% 净值 (从 1% 收紧)
-    max_consecutive_losses: 2           # 2 笔即触发 (从 3 收紧, 基于 LCID/RIVN/TME 实测)
+    max_consecutive_losses: 5           # 模拟盘: 2→5, 允许更多连续亏损以收集数据
     min_trades_for_winrate_check: 3     # 3+ 笔启动胜率检查 (从 5 收紧)
     max_loss_rate: 0.66                 # 3 中 2 亏即触发 (从 70% 收紧)
     exempt_symbols: []                  # 手动豁免名单 (慎用)
 
-  # RFC-055 (2026-06-01): VIX 门禁阈值 — 从 25 收紧到 22
-  # 数据: HIGH_VOL regime SHORT 22.4%WR -$6,554, VIX 20-25 区间也大量亏损
-  vix_block_threshold: 22
+  # 模拟盘数据采集: VIX放宽到30, 收集更多市场状态数据
+  vix_block_threshold: 30
   per_trade_risk_pct: 0.005    # 每笔 0.5% 净值基础风险
   max_trade_risk_pct: 0.010    # 极限 1.0% (高 confidence setup)
   # F17 (2026-05-12): 组合层面止损
@@ -1441,18 +1427,17 @@ signal_quality:
   contradiction_penalty: -0.10
 
 strategy:
-  # Task #6 (2026-05-30): 信号冷却 120s → 180s, 减少同标的反复入场抖动
-  signal_cooldown: 180
+  # 模拟盘数据采集: 放宽冷却以收集更多信号
+  signal_cooldown: 60
   # Task #2 (2026-05-31): consensus_threshold 改为 VIX 自适应 (在 app/decision/consensus.py 中实现)
   # 此处保留 fallback 默认值；运行时按 VIX 动态选择 0.55/0.60/0.70/0.75
-  consensus_threshold: 0.6
-  # VIX 自适应共识阈值 (Task #2 2026-05-31)
-  # 极端波动: 放宽 (允许做空把握行情); 平静市场: 收紧 (要求更高确认)
+  consensus_threshold: 0.4           # 模拟盘: 0.6→0.4, 放宽共识要求
+  # VIX 自适应共识阈值 (模拟盘数据采集: 全部放宽)
   consensus_threshold_by_vix:
-    extreme: 0.55      # VIX > 40
-    high:    0.60      # VIX > 30
-    elevated: 0.70     # VIX > 20
-    normal:  0.75      # VIX <= 20
+    extreme: 0.35      # VIX > 40
+    high:    0.40      # VIX > 30
+    elevated: 0.45     # VIX > 20
+    normal:  0.50      # VIX <= 20
 strategies:
   # ─── Phase A (2026-05-14): 多策略协调 ───
   # 灰度: enabled=true → coordinator 生效 (但 observe_only=true 不阻断现有流程)
@@ -1533,8 +1518,8 @@ strategies:
     min_score: 55                   # 最低评分（低于此不产出信号）
 
     # 执行约束（observe_only=false 时生效） —— Task #19
-    max_daily_trades: 5             # 日最大交易数
-    max_positions: 3                # 最大同时持仓
+    max_daily_trades: 10             # 模拟盘: 5→10
+    max_positions: 5                # 模拟盘: 3→5
     max_position_pct: 0.10          # 单仓最大占比 (0.15 → 0.10 保守调低)
 
     # 执行保护 —— Task #19
@@ -1574,23 +1559,24 @@ strategies:
     no_entry_after_et: "15:30"      # 收盘前截止
 
     # 执行约束 (双系统合计上限)
-    max_daily_trades: 5             # 日最大交易数 (pipeline+engine合计)
-    max_positions: 3                # 最大同时持仓 (pipeline+engine合计)
+    max_daily_trades: 15            # 模拟盘: 5→15
+    max_positions: 5                # 模拟盘: 3→5
 
   defaults:
     # Task #2 (2026-05-31): 提升信号入场门槛 — 0.50/40 → 0.65/50
     # 当前胜率 30.3%, 日均亏损 -$1503, 主因之一是弱信号通过率过高
-    min_confidence: 0.65
+    min_confidence: 0.50
     # Task #2 (2026-05-31): min_strength 40 → 50, 进一步过滤弱信号
-    min_strength: 50
-    max_positions: 5                 # RFC-055: 3→5, SHORT信号频率提升后需要更多并发位
+    # 模拟盘数据采集模式: 放宽以收集更多信号
+    min_strength: 35
+    max_positions: 12                # 模拟盘: 5→12, 最大化数据采集
     # Task #2 (2026-05-31): 方向偏好 — LONG 接飞刀亏损模式严重，要求更高确认度
     # 数据驱动: SHORT 胜率显著高于 LONG
     direction_bias:
       LONG:
-        min_confidence: 0.90  # RFC-055: 0.85→0.90 (LONG 全面亏损, 极严过滤近乎阻断)
+        min_confidence: 0.60  # 模拟盘: 0.90→0.60, 允许LONG采集数据
       SHORT:
-        min_confidence: 0.55  # RFC-055: 0.60→0.55 (增加SHORT信号频率, 回测54.8%WR有冗余)
+        min_confidence: 0.45  # 模拟盘: 0.55→0.45, 最大化SHORT信号
     # DEPRECATED (2026-05-31): strategies.defaults.signal_cooldown_seconds 不再生效
     #   实际生效路径: strategy.signal_cooldown (本文件 SoT, 见上方 strategy 段)
     #   启动时 ConfigValidator.check_deprecated_fields 会再次告警, 修改此键不会生效。
@@ -1745,9 +1731,9 @@ signal_fusion:
       divergence_penalty: 0.8
       trend_proxy: SPY
 scheduler:
-  scan_interval_minutes: 10
-  monitor_interval_minutes: 0.5
-  max_positions: 5                 # RFC-055: 3→5, SHORT信号频率提升后需要更多并发位
+  scan_interval_minutes: 3
+  monitor_interval_minutes: 0.25
+  max_positions: 12                # 模拟盘: 5→12, 最大化数据采集
   # 2026-06-01: 删除 deprecated scheduler.min_confidence (0.55) — ConfigAudit 启动 BLOCKING
   # 实际生效路径: risk.signal_quality.min_confidence (本文件 line 882, 已 = 0.65)
   # CFG.SCHEDULER_MIN_CONFIDENCE = 0.65 (代码 config_defaults.py:60)
@@ -2126,25 +2112,26 @@ orb:
     - US.XLV                       # 医疗板块
   # 入场参数
   range_minutes: 15                # 开盘区间长度 (分钟)
-  min_range_width_pct: 0.3         # 最小区间宽度% (太窄=假突破)
   max_range_width_pct: 2.5         # 最大区间宽度% (太宽=过度波动)
   breakout_buffer_pct: 0.1         # 突破缓冲%
-  min_volume_ratio: 1.1            # 量能确认 (放宽, 原1.3导致零交易)
   entry_start_et: "09:45"          # 入场窗口开始
-  entry_end_et: "11:00"            # 入场窗口结束
   # 止损止盈 (ATR-relative, 日内 — 比System A更紧, 适配5秒快速响应)
   stop_loss_atr_mult: 1.0          # SL = entry ± 1.0×ATR (紧止损, 日内)
   take_profit_atr_mult: 2.0        # TP = entry ± 2.0×ATR (R/R 2:1)
   trail_activation_atr: 1.0        # 盈利 1.0 ATR 后激活追踪止损
   trail_multiplier: 1.2            # peak - 1.2×ATR (Chandelier-style)
   # 风控 (持仓上限由 strategies.orb.max_positions 统一控制, 此处仅作fallback)
-  max_positions: 3                 # 与 strategies.orb.max_positions 对齐 (双系统合计)
-  max_daily_trades: 4              # 引擎独立日限 (不与pipeline共享计数)
-  capital_pct: 0.10                # 10% 总资金分配
-  position_risk_pct: 0.005         # 0.5% 单笔风险
+  max_positions: 5                 # 模拟盘: 3→5
+  max_daily_trades: 15             # 模拟盘: 4→15, 最大化数据采集
+  capital_pct: 0.20                # 模拟盘: 0.10→0.20, 更多资金分配
+  position_risk_pct: 0.008         # 模拟盘: 0.5%→0.8%, 单笔风险提高
   # 退出
   eod_exit_time: "15:55"           # 盘末强制退出 (不隔夜)
   polling_interval_seconds: 5      # 轮询间隔 (秒)
+  # 放宽入场条件 (模拟盘数据采集)
+  min_range_width_pct: 0.2         # 模拟盘: 0.3→0.2, 允许更窄区间
+  min_volume_ratio: 0.8            # 模拟盘: 1.1→0.8, 放宽量能要求
+  entry_end_et: "14:00"            # 模拟盘: 11:00→14:00, 延长入场窗口
 
 # ─── 催化辩论引擎 (2026-05-27 RFC-Catalyst) ───
 # 盘前/盘后新闻催化事件检测 + 多模型辩论
