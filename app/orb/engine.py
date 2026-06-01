@@ -251,9 +251,30 @@ class ORBEngine:
                 # 获取 1-min klines (至少 range_minutes 根)
                 klines = self._get_1min_klines(symbol, count=self._cfg.range_minutes + 5)
                 if not klines or len(klines) < self._cfg.range_minutes:
-                    logger.info("[ORB] %s kline 不足: got %d, need %d",
-                                 symbol, len(klines) if klines else 0, self._cfg.range_minutes)
-                    continue
+                    # Fallback: 使用当前价格构建伪区间 (避免 daemon 卡死)
+                    current_price = self._get_current_price(symbol)
+                    if current_price and current_price > 0:
+                        # 假设区间宽度为 0.3% (最小宽度)
+                        width_pct = 0.3
+                        orb_high = current_price * (1 + width_pct / 200)
+                        orb_low = current_price * (1 - width_pct / 200)
+                        self._ranges[symbol] = {
+                            "high": orb_high,
+                            "low": orb_low,
+                            "ready": True,
+                            "width_pct": width_pct,
+                            "fallback": True,  # 标记为 fallback 区间
+                        }
+                        logger.warning(
+                            "[ORB] %s kline 不足 (%d/%d), 使用 fallback 区间: H=%.2f L=%.2f (当前价=%.2f)",
+                            symbol, len(klines) if klines else 0, self._cfg.range_minutes,
+                            orb_high, orb_low, current_price
+                        )
+                        continue
+                    else:
+                        logger.info("[ORB] %s kline 不足且无法获取当前价格: got %d, need %d",
+                                     symbol, len(klines) if klines else 0, self._cfg.range_minutes)
+                        continue
 
                 # 取开盘前 N 根作为区间 (klines 按时间排序, 取最早的 15 根)
                 # 如果总数 <= range_minutes, 全用; 否则取前 N 根
@@ -268,10 +289,11 @@ class ORBEngine:
                         "low": orb_low,
                         "ready": True,
                         "width_pct": width_pct,
+                        "fallback": False,
                     }
-                    logger.debug(
-                        "[ORB] %s 区间构建: H=%.2f L=%.2f W=%.2f%%",
-                        symbol, orb_high, orb_low, width_pct,
+                    logger.info(
+                        "[ORB] %s 区间构建成功: H=%.2f L=%.2f W=%.2f%% (%d 根 K 线)",
+                        symbol, orb_high, orb_low, width_pct, len(orb_bars),
                     )
             except Exception as e:
                 logger.debug("[ORB] %s 区间构建失败: %s", symbol, e)
@@ -635,7 +657,7 @@ class ORBEngine:
         return 1.0  # fallback: 不过滤
 
     def _get_1min_klines(self, symbol: str, count: int = 20) -> Optional[List[Dict]]:
-        """获取 1-min klines"""
+        """获取 1-min klines (带超时保护)"""
         if not self._data:
             return None
         try:
@@ -644,14 +666,32 @@ class ORBEngine:
                 result = self._data.get_klines(symbol, ktype="1min", count=count)
                 if result:
                     return result
-            # 路径 2: data_router.futu.get_kline (Futu LV3 provider)
+
+            # 路径 2: data_router.futu.get_kline (Futu LV3 provider) — 带超时
             futu = getattr(self._data, "futu", None)
             if futu and hasattr(futu, "get_kline"):
-                result = futu.get_kline(symbol, ktype="K_1M", count=count)
-                if result:
-                    return result
-                else:
-                    logger.info("[ORB] %s futu.get_kline 返回空", symbol)
+                # 先检查 push cache 是否有数据 (非阻塞)
+                push_cache = getattr(futu, '_push_kline_cache', {})
+                futu_symbol = symbol.replace('US.', '')  # US.IWM -> IWM
+                if futu_symbol in push_cache and push_cache[futu_symbol]:
+                    cached_data = push_cache[futu_symbol]
+                    logger.debug("[ORB] %s 使用 push cache: %d 根 K 线", symbol, len(cached_data))
+                    return cached_data[-count:] if len(cached_data) > count else cached_data
+
+                # 超时保护: 3 秒内获取 K 线，否则返回 None
+                import concurrent.futures
+                try:
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                        future = executor.submit(futu.get_kline, symbol, "K_1M", count)
+                        result = future.result(timeout=3.0)
+                        if result:
+                            return result
+                        else:
+                            logger.info("[ORB] %s futu.get_kline 返回空", symbol)
+                except concurrent.futures.TimeoutError:
+                    logger.warning("[ORB] %s futu.get_kline 超时 (3s)，跳过", symbol)
+                    return None
+
             # 路径 3: execution_engine.broker_adapter.get_kline
             if self._exec:
                 adapter = getattr(self._exec, "broker_adapter", None)
