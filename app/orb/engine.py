@@ -179,7 +179,7 @@ class ORBEngine:
         # 交易时段检查 (仅 ET 常规交易时段)
         market_open = dt_time(9, 30)
         range_end = dt_time(9, 30 + self._cfg.range_minutes)  # 09:45
-        entry_end = _parse_time(self._cfg.entry_end_et)       # 11:00
+        entry_end = _parse_time(self._cfg.entry_end_et)       # 14:00
         eod_exit = _parse_time(self._cfg.eod_exit_time)        # 15:55
         market_close = dt_time(16, 0)
 
@@ -188,11 +188,20 @@ class ORBEngine:
 
         # Phase 1: 构建开盘区间 (09:30 - 09:45)
         if market_open <= current_time < range_end:
+            ready_count = sum(1 for r in self._ranges.values() if r.get("ready"))
+            if ready_count < len(self._cfg.universe):
+                logger.info("[ORB] Phase 1: 构建区间 | %d/%d 就绪 | time=%s",
+                            ready_count, len(self._cfg.universe), current_time.strftime("%H:%M:%S"))
             self._build_ranges()
             return
 
-        # Phase 2: 入场窗口 (09:45 - 11:00) — 检测突破 + 监控已有仓位
+        # Phase 2: 入场窗口 (09:45 - entry_end) — 检测突破 + 监控已有仓位
         if range_end <= current_time < entry_end:
+            # 容错: 如果区间还没构建 (晚启动), 立即补建
+            ready_count = sum(1 for r in self._ranges.values() if r.get("ready"))
+            if ready_count == 0:
+                logger.info("[ORB] Phase 2: 区间未就绪, 延迟补建 (late start)")
+                self._build_ranges()
             self._evaluate_breakouts(now, current_time)
             self._monitor_exits(now, current_time)
             return
@@ -211,26 +220,31 @@ class ORBEngine:
     def _build_ranges(self):
         """从 1-min kline 构建每个 ETF 的开盘区间"""
         if not self._data:
+            logger.warning("[ORB] _build_ranges: data_router 不可用")
             return
 
+        # 诊断: 检查数据路径 (仅首次)
+        if not getattr(self, '_diag_logged', False):
+            futu = getattr(self._data, 'futu', None)
+            has_futu_kline = futu is not None and hasattr(futu, 'get_kline')
+            logger.info("[ORB] 数据路径: data_router=%s, has_futu=%s, futu.get_kline=%s",
+                         type(self._data).__name__, futu is not None, has_futu_kline)
+            self._diag_logged = True
+
         for symbol in self._cfg.universe:
+            if symbol in self._ranges and self._ranges[symbol].get("ready"):
+                continue  # 已构建, 跳过
             try:
                 # 获取 1-min klines (至少 range_minutes 根)
                 klines = self._get_1min_klines(symbol, count=self._cfg.range_minutes + 5)
                 if not klines or len(klines) < self._cfg.range_minutes:
+                    logger.info("[ORB] %s kline 不足: got %d, need %d",
+                                 symbol, len(klines) if klines else 0, self._cfg.range_minutes)
                     continue
 
-                # 取今天的前 N 根 (开盘区间)
-                from app.utils.timezone import now_et
-                today = now_et().strftime("%Y-%m-%d")
-                today_bars = [
-                    b for b in klines
-                    if isinstance(b, dict) and b.get("time_key", "").startswith(today)
-                ]
-                if len(today_bars) < self._cfg.range_minutes:
-                    continue
-
-                orb_bars = today_bars[:self._cfg.range_minutes]
+                # 取开盘前 N 根作为区间 (klines 按时间排序, 取最早的 15 根)
+                # 如果总数 <= range_minutes, 全用; 否则取前 N 根
+                orb_bars = klines[:self._cfg.range_minutes] if len(klines) > self._cfg.range_minutes else klines
                 orb_high = max(float(b.get("high", 0)) for b in orb_bars)
                 orb_low = min(float(b.get("low", 0)) for b in orb_bars)
 
@@ -256,14 +270,25 @@ class ORBEngine:
         for symbol, rng in list(self._ranges.items()):
             if not rng.get("ready"):
                 continue
-            # 已有仓位 → 跳过
+            # 已有仓位 → 跳过 (本引擎内部)
             if symbol in self._positions:
+                continue
+            # 2026-06-01 互斥: 主线Pipeline已有该标的持仓 → 跳过
+            # 防止 orb_pipeline 和 orb_engine 同时开仓同一ETF
+            if self._store and self._store.has(symbol):
+                logger.debug("[ORB] %s 跳过: PositionStore已有持仓 (主线或引擎)", symbol)
                 continue
             # 每日交易上限
             if self._daily_trades >= self._cfg.max_daily_trades:
                 break
-            # 最大仓位数
-            if len(self._positions) >= self._cfg.max_positions:
+            # 最大仓位数 (含引擎内部 + PositionStore中所有orb_*仓位)
+            orb_count = len(self._positions)
+            if self._store:
+                for pos in self._store.all():
+                    _owner = getattr(pos, 'owner_strategy', '') or ''
+                    if _owner.startswith('orb_') and _owner != 'orb_engine':
+                        orb_count += 1  # 计入 orb_pipeline 等其他ORB仓位
+            if orb_count >= self._cfg.max_positions:
                 break
 
             try:
@@ -418,7 +443,7 @@ class ORBEngine:
                 entry_price=price,
                 current_price=price,
             )
-            store_pos.owner_strategy = "orb"
+            store_pos.owner_strategy = "orb_engine"
             store_pos.metadata = {
                 "orb_high": rng["high"],
                 "orb_low": rng["low"],
@@ -601,10 +626,34 @@ class ORBEngine:
         if not self._data:
             return None
         try:
+            # 路径 1: data_router.get_klines (如果存在)
             if hasattr(self._data, "get_klines"):
-                return self._data.get_klines(symbol, ktype="1min", count=count)
-        except Exception:
-            pass
+                result = self._data.get_klines(symbol, ktype="1min", count=count)
+                if result:
+                    return result
+            # 路径 2: data_router.futu.get_kline (Futu LV3 provider)
+            futu = getattr(self._data, "futu", None)
+            if futu and hasattr(futu, "get_kline"):
+                try:
+                    import concurrent.futures
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                        future = pool.submit(futu.get_kline, symbol, "K_1M", count)
+                        result = future.result(timeout=3)  # 3秒超时
+                except Exception:
+                    result = None
+                if result:
+                    return result
+                else:
+                    logger.info("[ORB] %s futu.get_kline 返回空或超时", symbol)
+            # 路径 3: execution_engine.broker_adapter.get_kline
+            if self._exec:
+                adapter = getattr(self._exec, "broker_adapter", None)
+                if adapter and hasattr(adapter, "get_kline"):
+                    result = adapter.get_kline(symbol, ktype="K_1M", count=count)
+                    if result:
+                        return result
+        except Exception as e:
+            logger.warning("[ORB] %s kline 获取异常: %s", symbol, e)
         return None
 
     def _get_equity(self) -> float:
