@@ -752,6 +752,12 @@ risk:
   # 关闭时走原 fallback 逻辑 (向后兼容); 开启时 owner_strategy 缺失/未知的仓位将被跳过
   strategy_enforcement:
     strict_owner_validation: true
+  # 模拟盘数据采集: 放宽做空门禁
+  pre_trade:
+    short_min_strength: 10          # 默认50→10, 极度放宽
+    battle_plan_bonus_enabled: true
+    battle_plan_bonus: 0.5          # 计划标的再降50%
+    min_effective_strength_floor: 5 # 默认30→5
   # 模式适配 (Task #6, 2026-05-31)：模拟/实盘共享同一份风控参数易掩盖实盘风险，
   # 此处按 TradingMode 给出三套阈值，由 app/core/trading_mode.py 在运行时挑选。
   mode_adaptation:
@@ -1563,20 +1569,15 @@ strategies:
     max_positions: 5                # 模拟盘: 3→5
 
   defaults:
-    # Task #2 (2026-05-31): 提升信号入场门槛 — 0.50/40 → 0.65/50
-    # 当前胜率 30.3%, 日均亏损 -$1503, 主因之一是弱信号通过率过高
-    min_confidence: 0.50
-    # Task #2 (2026-05-31): min_strength 40 → 50, 进一步过滤弱信号
-    # 模拟盘数据采集模式: 放宽以收集更多信号
-    min_strength: 35
+    # 模拟盘数据采集模式: 极度放宽以促成交易
+    min_confidence: 0.30
+    min_strength: 15
     max_positions: 12                # 模拟盘: 5→12, 最大化数据采集
-    # Task #2 (2026-05-31): 方向偏好 — LONG 接飞刀亏损模式严重，要求更高确认度
-    # 数据驱动: SHORT 胜率显著高于 LONG
     direction_bias:
       LONG:
-        min_confidence: 0.60  # 模拟盘: 0.90→0.60, 允许LONG采集数据
+        min_confidence: 0.40  # 模拟盘: 0.60→0.40, 进一步放宽
       SHORT:
-        min_confidence: 0.45  # 模拟盘: 0.55→0.45, 最大化SHORT信号
+        min_confidence: 0.25  # 模拟盘: 0.45→0.25, 极度放宽
     # DEPRECATED (2026-05-31): strategies.defaults.signal_cooldown_seconds 不再生效
     #   实际生效路径: strategy.signal_cooldown (本文件 SoT, 见上方 strategy 段)
     #   启动时 ConfigValidator.check_deprecated_fields 会再次告警, 修改此键不会生效。
@@ -1589,8 +1590,8 @@ strategies:
     tiers:
       micro:
         max_symbols: 3
-        min_confidence: 0.7
-        min_score: 65
+        min_confidence: 0.15
+        min_score: 10
         max_price: 100
         min_price: 5
         max_volatility: 0.15
@@ -1601,8 +1602,8 @@ strategies:
         require_catalyst: false
       small:
         max_symbols: 5
-        min_confidence: 0.65
-        min_score: 60
+        min_confidence: 0.15
+        min_score: 10
         max_price: 200
         min_price: 5
         max_volatility: 0.12
@@ -1613,8 +1614,8 @@ strategies:
         require_catalyst: false
       medium:
         max_symbols: 8
-        min_confidence: 0.6
-        min_score: 55
+        min_confidence: 0.15
+        min_score: 10
         max_price: 500
         min_price: 5
         max_volatility: 0.1
@@ -1625,8 +1626,8 @@ strategies:
         require_catalyst: false
       large:
         max_symbols: 12
-        min_confidence: 0.55
-        min_score: 50
+        min_confidence: 0.15
+        min_score: 10
         max_price: 1000
         min_price: 5
         max_volatility: 0.08
@@ -1637,8 +1638,8 @@ strategies:
         require_catalyst: false
       inst:
         max_symbols: 20
-        min_confidence: 0.5
-        min_score: 50
+        min_confidence: 0.15          # 模拟盘: 0.5→0.15
+        min_score: 10                 # 模拟盘: 50→10
         max_price: 2000
         min_price: 5
         max_volatility: 0.06

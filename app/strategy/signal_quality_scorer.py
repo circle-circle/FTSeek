@@ -135,9 +135,9 @@ class SignalQualityScorer:
         agreeing = sum(1 for d in dimensions.values() if d > 0.6)
         confluence_bonus = cls.CONFLUENCE_BONUS.get(agreeing, 0.0)
 
-        # 矛盾惩罚: 多少维度 < 0.3
+        # 矛盾惩罚: 多少维度 < 0.3 (模拟盘放宽: -0.10→-0.03)
         contradicting = sum(1 for d in dimensions.values() if d < 0.3)
-        contradiction_penalty = -0.10 * contradicting
+        contradiction_penalty = -0.03 * contradicting
 
         quality_score = weighted_sum + confluence_bonus + contradiction_penalty
 

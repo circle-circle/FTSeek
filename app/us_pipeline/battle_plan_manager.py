@@ -285,10 +285,10 @@ class USBattlePlanManager:
             # P0-辩论修复: strength 统一 direct 语义 (LONG/SHORT 均同)
             # 越高 = 信号越强, 无需反转
             trade_dir = "LONG" if direction.upper() == "BUY" else "SHORT"
-            if strength >= 50:
+            if strength >= 5:  # 模拟盘: 50→5, 极度放宽
                 return True, (
                     f"Plan bypass ({trade_dir}): {symbol} not in battle plan, "
-                    f"but signal is strong (strength={strength} >= 50)"
+                    f"but signal is strong (strength={strength} >= 5)"
                 )
             return False, (
                 f"Symbol {symbol} not in battle plan "

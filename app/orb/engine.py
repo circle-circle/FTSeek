@@ -223,6 +223,19 @@ class ORBEngine:
             logger.warning("[ORB] _build_ranges: data_router 不可用")
             return
 
+        # 首次运行时订阅 ORB 标的到 Futu (确保有 K 线数据)
+        if not getattr(self, '_subscribed', False):
+            try:
+                futu = getattr(self._data, 'futu', None)
+                if futu and hasattr(futu, 'subscribe'):
+                    # 将 US.IWM 格式转为 IWM (Futu 格式)
+                    orb_futu_symbols = [s.replace('US.', '') for s in self._cfg.universe]
+                    futu.subscribe(orb_futu_symbols, sub_types=['QUOTE', 'K_1M', 'K_15M'])
+                    logger.info(f"[ORB] ✅ Futu 订阅完成: {len(orb_futu_symbols)} 只 ETF ({orb_futu_symbols})")
+                    self._subscribed = True
+            except Exception as e:
+                logger.warning(f"[ORB] ⚠️ Futu 订阅失败: {e}")
+
         # 诊断: 检查数据路径 (仅首次)
         if not getattr(self, '_diag_logged', False):
             futu = getattr(self._data, 'futu', None)

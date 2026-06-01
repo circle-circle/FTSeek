@@ -1220,7 +1220,7 @@ def _check_gates_and_conflicts(scheduler, symbol: str, signal: SignalScore, cont
                 "SHORT_EFFECTIVE_WEAK", strength=signal.strength,
                 confidence=None, direction="SHORT")
             return False
-        # 三重确认: RSI + MACD + 均线
+        # 三重确认: RSI + MACD + 均线 (模拟盘放宽: 2→0)
         rsi = context.get("rsi", 50)
         macd_signal_val = context.get("macd_signal", 0)
         price = context.get("price", 0)
@@ -1229,9 +1229,9 @@ def _check_gates_and_conflicts(scheduler, symbol: str, signal: SignalScore, cont
         triple_confirm = 0
         if rsi > 65: triple_confirm += 1
         if macd_signal_val < 0: triple_confirm += 1
-        if ma20 > 0 and price > ma20: triple_confirm += 1  # 做空入场: 价格在MA20上方(上升趋势中做空=反转机会)
+        if ma20 > 0 and price > ma20: triple_confirm += 1
 
-        if triple_confirm < 2:
+        if triple_confirm < 0:  # 模拟盘: 2→0, 禁用三重确认
             logger.warning(
                 f"🚫 [做空门禁] {symbol} 三重确认不足 ({triple_confirm}/2): "
                 f"RSI={rsi:.0f} MACD={macd_signal_val:.2f} price={price:.2f} MA20={ma20:.2f}"
@@ -2890,7 +2890,30 @@ def _update_trade_attribution(
             
             conn.commit()
             logger.debug(f"✅ 归因更新：{trace_id} | PnL={pnl:.2f} | Score={final_score}")
-            
+
+            # 2026-06-01: 修复 voting_predictions outcome 回填断裂
+            # 原问题: VotingAccuracyTracker.update_outcome 从未被调用,
+            # 导致 39 笔 voting_predictions 记录 outcome_match 全 NULL, 模型校准盲飞
+            try:
+                # 从 trade_records 查 direction (trade_attribution 没存 direction)
+                row = cursor.execute(
+                    "SELECT direction, trade_date FROM trade_records WHERE trace_id = ? LIMIT 1",
+                    (trace_id,)
+                ).fetchone()
+                if row:
+                    _direction, _trade_date = row[0], row[1]
+                    from app.analysis.voting_accuracy_tracker import get_voting_accuracy_tracker
+                    _tracker = get_voting_accuracy_tracker()
+                    _tracker.update_outcome(
+                        symbol=symbol,
+                        actual_pnl=float(pnl),
+                        actual_direction=str(_direction),
+                        trade_date=str(_trade_date),
+                    )
+                    logger.debug(f"[VotingAccuracy] 回填 {symbol} direction={_direction} pnl={pnl:.2f}")
+            except Exception as _e_voting:
+                logger.debug(f"[VotingAccuracy] 回填失败 (不影响主流程): {_e_voting}")
+
     except Exception as e:
         logger.warning(f"更新归因记录失败：{e}")
 
