@@ -30,13 +30,18 @@ logger = logging.getLogger(__name__)
 # ============================================================
 
 class ORBPosition:
-    """ORB 单仓位跟踪状态"""
+    """ORB 单仓位跟踪状态 (增强版 — RFC-056-DESIGN)"""
 
     __slots__ = (
-        "symbol", "direction", "entry_price", "quantity",
+        "symbol", "direction", "entry_price", "quantity", "initial_quantity",
         "entry_time", "orb_high", "orb_low", "orb_mid",
-        "atr_at_entry", "peak_price", "trough_price",
+        "atr_at_entry", "sl_distance", "peak_price", "trough_price",
         "trail_stop", "order_id",
+        # 分层止盈追踪
+        "layer1_done", "layer2_done",  # 是否已平仓 1/3, 2/3
+        "breakeven_activated",        # 是否已移到 breakeven
+        "trail_activated",            # 是否已激活追踪止损
+        "r_multiple",                 # 风险单位 (sl_distance)
     )
 
     def __init__(
@@ -48,23 +53,33 @@ class ORBPosition:
         orb_high: float,
         orb_low: float,
         atr_at_entry: float,
+        sl_distance: float = 0.0,  # 止损距离 (价格单位)
         order_id: str = "",
     ):
         self.symbol = symbol
         self.direction = direction  # "LONG" / "SHORT"
         self.entry_price = entry_price
         self.quantity = quantity
-        self.entry_time = datetime.now()  # 用于日志, 非关键
+        self.initial_quantity = quantity  # 初始仓位 (用于分层止盈)
+        self.entry_time = datetime.now()
         self.orb_high = orb_high
         self.orb_low = orb_low
         self.orb_mid = (orb_high + orb_low) / 2.0 if orb_high > 0 and orb_low > 0 else 0.0
         self.atr_at_entry = atr_at_entry
+        self.sl_distance = sl_distance if sl_distance > 0 else atr_at_entry  # 兜底
 
         # 追踪状态 (每轮更新)
         self.peak_price = entry_price     # LONG: 持仓最高
         self.trough_price = entry_price   # SHORT: 持仓最低
         self.trail_stop = 0.0             # 追踪止损线 (0 = 未激活)
         self.order_id = order_id
+
+        # 分层止盈状态
+        self.layer1_done = False          # 1R 平 1/3
+        self.layer2_done = False          # 2R 平 1/3
+        self.breakeven_activated = False  # 止损移到 breakeven
+        self.trail_activated = False      # 追踪止损激活
+        self.r_multiple = sl_distance     # 风险单位
 
 
 # ============================================================
@@ -218,7 +233,7 @@ class ORBEngine:
     # ── Phase 1: 构建开盘区间 ──
 
     def _build_ranges(self):
-        """从 1-min kline 构建每个 ETF 的开盘区间"""
+        """从 1-min kline 构建每个 ETF 的开盘区间 (增强版: 质量评分 + ATR + VWAP)"""
         if not self._data:
             logger.warning("[ORB] _build_ranges: data_router 不可用")
             return
@@ -258,17 +273,22 @@ class ORBEngine:
                         width_pct = 0.3
                         orb_high = current_price * (1 + width_pct / 200)
                         orb_low = current_price * (1 - width_pct / 200)
+                        # Fallback 区间质量较低
                         self._ranges[symbol] = {
                             "high": orb_high,
                             "low": orb_low,
                             "ready": True,
                             "width_pct": width_pct,
-                            "fallback": True,  # 标记为 fallback 区间
+                            "atr": current_price * 0.003,  # 假设 ATR = 0.3%
+                            "vwap": current_price,
+                            "volume_ratio": 1.0,
+                            "quality_score": 0.3,  # 低质量
+                            "fallback": True,
                         }
                         logger.warning(
-                            "[ORB] %s kline 不足 (%d/%d), 使用 fallback 区间: H=%.2f L=%.2f (当前价=%.2f)",
+                            "[ORB] %s kline 不足 (%d/%d), 使用 fallback 区间: H=%.2f L=%.2f (质量=%.2f)",
                             symbol, len(klines) if klines else 0, self._cfg.range_minutes,
-                            orb_high, orb_low, current_price
+                            orb_high, orb_low, 0.3
                         )
                         continue
                     else:
@@ -284,19 +304,62 @@ class ORBEngine:
 
                 if orb_high > 0 and orb_low > 0 and orb_high > orb_low:
                     width_pct = (orb_high - orb_low) / orb_low * 100
+
+                    # 计算 ATR (从区间 K 线)
+                    trs = []
+                    for i in range(1, len(orb_bars)):
+                        h = float(orb_bars[i].get("high", 0))
+                        l = float(orb_bars[i].get("low", 0))
+                        pc = float(orb_bars[i - 1].get("close", 0))
+                        if h > 0 and l > 0 and pc > 0:
+                            tr = max(h - l, abs(h - pc), abs(l - pc))
+                            trs.append(tr)
+                    atr = sum(trs) / len(trs) if trs else (orb_high - orb_low) / 2
+
+                    # 计算 VWAP (从区间 K 线)
+                    cum_vol = 0.0
+                    cum_pv = 0.0
+                    for b in orb_bars:
+                        h = float(b.get("high", 0))
+                        l = float(b.get("low", 0))
+                        c = float(b.get("close", 0))
+                        v = float(b.get("volume", 0))
+                        if h > 0 and l > 0 and c > 0 and v > 0:
+                            typical = (h + l + c) / 3.0
+                            cum_pv += typical * v
+                            cum_vol += v
+                    vwap = cum_pv / cum_vol if cum_vol > 0 else (orb_high + orb_low) / 2
+
+                    # 获取成交量比率
+                    volume_ratio = self._get_volume_ratio(symbol)
+
+                    # 计算质量评分 (假设 LONG 方向, 实际会在突破时重新计算)
+                    current_price = self._get_current_price(symbol) or (orb_high + orb_low) / 2
+                    quality_score = self._calculate_quality_score(
+                        orb_width_pct=width_pct,
+                        volume_ratio=volume_ratio,
+                        price=current_price,
+                        vwap=vwap,
+                        direction="LONG",  # 初始假设
+                    )
+
                     self._ranges[symbol] = {
                         "high": orb_high,
                         "low": orb_low,
                         "ready": True,
                         "width_pct": width_pct,
+                        "atr": atr,
+                        "vwap": vwap,
+                        "volume_ratio": volume_ratio,
+                        "quality_score": quality_score,
                         "fallback": False,
                     }
                     logger.info(
-                        "[ORB] %s 区间构建成功: H=%.2f L=%.2f W=%.2f%% (%d 根 K 线)",
-                        symbol, orb_high, orb_low, width_pct, len(orb_bars),
+                        "[ORB] %s 区间构建成功: H=%.2f L=%.2f W=%.2f%% ATR=%.3f VWAP=%.2f VolR=%.2f Q=%.2f",
+                        symbol, orb_high, orb_low, width_pct, atr, vwap, volume_ratio, quality_score,
                     )
             except Exception as e:
-                logger.debug("[ORB] %s 区间构建失败: %s", symbol, e)
+                logger.warning("[ORB] %s 区间构建异常: %s", symbol, e, exc_info=True)
 
     # ── Phase 2: 突破检测 ──
 
@@ -336,10 +399,10 @@ class ORBEngine:
     def _check_breakout(
         self, symbol: str, rng: Dict[str, Any]
     ) -> Optional[Dict[str, Any]]:
-        """3 层防御检测突破
+        """4 层防御检测突破 (增强版: 质量评分)
 
         Returns:
-            {"direction": "LONG"/"SHORT", "price": float, "atr": float} 或 None
+            {"direction": "LONG"/"SHORT", "price": float, "atr": float, "regime": str} 或 None
         """
         orb_high = rng["high"]
         orb_low = rng["low"]
@@ -371,6 +434,7 @@ class ORBEngine:
         # Layer 3: 突破方向检测
         buffer = price * self._cfg.breakout_buffer_pct / 100.0
 
+        direction = None
         if price > orb_high + buffer:
             # LONG 突破
             # 不追高: 价格已远离区间 > max_range_width_pct 则放弃
@@ -378,33 +442,95 @@ class ORBEngine:
             if chase_pct > self._cfg.max_range_width_pct:
                 logger.debug("[ORB] %s LONG 追高放弃: chase=%.2f%%", symbol, chase_pct)
                 return None
-            return {"direction": "LONG", "price": price, "atr": atr}
+            direction = "LONG"
 
-        if price < orb_low - buffer:
+        elif price < orb_low - buffer:
             # SHORT 突破
             chase_pct = (orb_low - price) / orb_low * 100
             if chase_pct > self._cfg.max_range_width_pct:
                 logger.debug("[ORB] %s SHORT 追高放弃: chase=%.2f%%", symbol, chase_pct)
                 return None
-            return {"direction": "SHORT", "price": price, "atr": atr}
+            direction = "SHORT"
 
-        return None
+        if not direction:
+            return None
+
+        # Layer 4: 区间质量评分 (RFC-056-DESIGN)
+        vwap = rng.get("vwap", 0.0)
+        if vwap <= 0:
+            vwap = self._get_vwap(symbol)
+
+        quality_score = self._calculate_quality_score(
+            orb_width_pct=width_pct,
+            volume_ratio=vol_ratio,
+            price=price,
+            vwap=vwap,
+            direction=direction,
+        )
+
+        # 质量门槛: < 0.5 不交易
+        if quality_score < 0.5:
+            logger.info(
+                "[ORB] %s %s 质量不足: Q=%.2f < 0.5 (W=%.2f%% VolR=%.2f VWAP=%.2f)",
+                symbol, direction, quality_score, width_pct, vol_ratio, vwap
+            )
+            return None
+
+        # 判断市场状态 (简化版: 基于 ATR 和宽度)
+        regime = "RANGE"
+        if width_pct > 1.5 and vol_ratio > 1.3:
+            regime = "TREND_UP" if direction == "LONG" else "TREND_DOWN"
+        elif atr / price > 0.02:  # ATR > 2% 价格
+            regime = "HIGH_VOL"
+        elif atr / price < 0.005:  # ATR < 0.5% 价格
+            regime = "LOW_VOL"
+
+        logger.info(
+            "[ORB] %s %s 突破确认 | Q=%.2f regime=%s W=%.2f%% VolR=%.2f",
+            symbol, direction, quality_score, regime, width_pct, vol_ratio
+        )
+
+        return {
+            "direction": direction,
+            "price": price,
+            "atr": atr,
+            "regime": regime,
+            "quality_score": quality_score,
+        }
 
     def _execute_entry(
         self, symbol: str, signal: Dict[str, Any], rng: Dict[str, Any]
     ):
-        """执行入场 (observe/shadow 记录, active 下单)"""
+        """执行入场 (增强版: 自适应止损 + 分层止盈)"""
         direction = signal["direction"]
         price = signal["price"]
         atr = signal["atr"]
+        regime = signal.get("regime", "RANGE")
+        quality_score = signal.get("quality_score", 0.5)
 
-        # 计算仓位大小: 风险金额 / 止损距离
-        sl_distance = atr * self._cfg.stop_loss_atr_mult
+        # 自适应止损计算 (RFC-056-DESIGN)
+        width_pct = rng.get("width_pct", 0.5)
+        sl_distance = self._calculate_adaptive_stop(
+            orb_width_pct=width_pct,
+            atr=atr,
+            price=price,
+            regime=regime,
+        )
+
         if sl_distance <= 0:
+            logger.warning("[ORB] %s 止损距离无效: %.4f", symbol, sl_distance)
             return
 
+        # 仓位大小: 风险金额 / 止损距离
         equity = self._get_equity()
         risk_amount = equity * self._cfg.position_risk_pct
+
+        # 质量评分调整仓位 (高质量加仓, 低质量减仓)
+        if quality_score >= 0.8:
+            risk_amount *= 1.2  # 高质量加 20%
+        elif quality_score < 0.6:
+            risk_amount *= 0.7  # 低质量减 30%
+
         quantity = int(risk_amount / sl_distance)
         if quantity <= 0:
             quantity = 1
@@ -412,13 +538,12 @@ class ORBEngine:
         orb_mid = (rng["high"] + rng["low"]) / 2.0
 
         logger.info(
-            "[ORB] 🎯 %s %s 突破信号 | price=%.2f | orb=[%.2f, %.2f] | "
-            "atr=%.4f | qty=%d | SL=%.2f | TP=%.2f | mode=%s",
+            "[ORB] 🎯 %s %s 突破入场 | price=%.2f | orb=[%.2f, %.2f] | "
+            "ATR=%.3f regime=%s Q=%.2f | qty=%d SL=%.2f (%.1f%%) | mode=%s",
             symbol, direction, price, rng["low"], rng["high"],
-            atr, quantity,
+            atr, regime, quality_score, quantity,
             price - sl_distance if direction == "LONG" else price + sl_distance,
-            price + atr * self._cfg.take_profit_atr_mult if direction == "LONG"
-                  else price - atr * self._cfg.take_profit_atr_mult,
+            sl_distance / price * 100,
             self._cfg.mode,
         )
 
@@ -435,6 +560,7 @@ class ORBEngine:
                     orb_high=rng["high"],
                     orb_low=rng["low"],
                     atr_at_entry=atr,
+                    sl_distance=sl_distance,
                     order_id=f"shadow_{uuid.uuid4().hex[:8]}",
                 )
                 self._daily_trades += 1
@@ -454,7 +580,7 @@ class ORBEngine:
             logger.warning("[ORB] %s 订单未成交, 放弃", symbol)
             return
 
-        # 创建仓位跟踪
+        # 创建仓位跟踪 (包含自适应止损和分层止盈状态)
         pos = ORBPosition(
             symbol=symbol,
             direction=direction,
@@ -463,6 +589,7 @@ class ORBEngine:
             orb_high=rng["high"],
             orb_low=rng["low"],
             atr_at_entry=atr,
+            sl_distance=sl_distance,
             order_id=order_id,
         )
         self._positions[symbol] = pos
@@ -484,6 +611,9 @@ class ORBEngine:
                 "orb_low": rng["low"],
                 "orb_mid": orb_mid,
                 "atr_at_entry": atr,
+                "sl_distance": sl_distance,
+                "regime": regime,
+                "quality_score": quality_score,
             }
             self._store.add(symbol, store_pos)
 
@@ -492,18 +622,20 @@ class ORBEngine:
             f"🟢 ORB 入场 | {symbol} {direction}\n"
             f"价格: ${price:.2f} | 数量: {quantity}\n"
             f"区间: [{rng['low']:.2f}, {rng['high']:.2f}]\n"
-            f"SL: ${price - sl_distance:.2f} | TP: ${price + atr * self._cfg.take_profit_atr_mult:.2f}"
+            f"ATR: {atr:.3f} | Regime: {regime} | Q: {quality_score:.2f}\n"
+            f"SL: ${price - sl_distance:.2f} ({sl_distance/price*100:.1f}%)"
             if direction == "LONG" else
             f"🟢 ORB 入场 | {symbol} {direction}\n"
             f"价格: ${price:.2f} | 数量: {quantity}\n"
             f"区间: [{rng['low']:.2f}, {rng['high']:.2f}]\n"
-            f"SL: ${price + sl_distance:.2f} | TP: ${price - atr * self._cfg.take_profit_atr_mult:.2f}"
+            f"ATR: {atr:.3f} | Regime: {regime} | Q: {quality_score:.2f}\n"
+            f"SL: ${price + sl_distance:.2f} ({sl_distance/price*100:.1f}%)"
         )
 
     # ── 退出监控 ──
 
     def _monitor_exits(self, now: datetime, current_time: dt_time):
-        """监控所有活跃 ORB 仓位的退出条件"""
+        """监控所有活跃 ORB 仓位的退出条件 (增强版: 分层止盈)"""
         for symbol, pos in list(self._positions.items()):
             try:
                 price = self._get_current_price(symbol)
@@ -520,12 +652,67 @@ class ORBEngine:
 
                 peak = pos.peak_price if pos.direction == "LONG" else pos.trough_price
 
-                # 更新追踪止损线 (ratchet)
-                pos.trail_stop = self._exit_stack.compute_trail_stop(
-                    pos.direction, atr, peak, pos.trail_stop, pos.entry_price,
-                )
+                # Layer 1: 分层止盈评估 (RFC-056-DESIGN)
+                layer_action = self._evaluate_layered_exits(pos, price)
 
-                # 评估退出
+                if layer_action == "LAYER1":
+                    # 1R: 平 1/3, 止损移到 breakeven
+                    close_qty = pos.initial_quantity // 3
+                    if close_qty > 0:
+                        pos.quantity -= close_qty
+                        pos.layer1_done = True
+                        pos.breakeven_activated = True
+                        logger.info(
+                            "[ORB] %s Layer 1 (1R): 平仓 %d 股, SL→breakeven (%.2f), 剩余 %d 股",
+                            symbol, close_qty, pos.entry_price, pos.quantity
+                        )
+                        if self._cfg.is_active:
+                            close_dir = "SHORT" if pos.direction == "LONG" else "LONG"
+                            self._submit_order(symbol, close_dir, price, close_qty)
+                        self._notify(f"📊 {symbol} Layer 1 (1R): 平仓 {close_qty} 股, SL→breakeven")
+                    continue
+
+                elif layer_action == "LAYER2":
+                    # 2R: 平 1/3, 激活追踪止损
+                    close_qty = pos.initial_quantity // 3
+                    if close_qty > 0:
+                        pos.quantity -= close_qty
+                        pos.layer2_done = True
+                        pos.trail_activated = True
+                        # 初始化追踪止损
+                        if pos.direction == "LONG":
+                            pos.trail_stop = peak - atr * self._cfg.trail_multiplier
+                        else:
+                            pos.trail_stop = peak + atr * self._cfg.trail_multiplier
+                        logger.info(
+                            "[ORB] %s Layer 2 (2R): 平仓 %d 股, trail激活 (%.2f), 剩余 %d 股",
+                            symbol, close_qty, pos.trail_stop, pos.quantity
+                        )
+                        if self._cfg.is_active:
+                            close_dir = "SHORT" if pos.direction == "LONG" else "LONG"
+                            self._submit_order(symbol, close_dir, price, close_qty)
+                        self._notify(f"📊 {symbol} Layer 2 (2R): 平仓 {close_qty} 股, trail激活")
+                    continue
+
+                elif layer_action == "TRAIL_HIT":
+                    # 追踪止损触发: 平剩余仓位
+                    from app.orb.exits import ORBExitDecision
+                    trail_decision = ORBExitDecision(
+                        reason="ORB_TRAIL_STOP",
+                        close_pct=100.0,
+                        detail=f"追踪止损触发: trail={pos.trail_stop:.2f} price={price:.2f}",
+                    )
+                    self._execute_exit(symbol, pos, price, trail_decision)
+                    continue
+
+                # Layer 2: 传统退出栈 (止损, 盘末等)
+                # 更新追踪止损线 (ratchet)
+                if pos.trail_activated:
+                    pos.trail_stop = self._exit_stack.compute_trail_stop(
+                        pos.direction, atr, peak, pos.trail_stop, pos.entry_price,
+                    )
+
+                # 评估传统退出 (止损, 盘末, 固定止盈)
                 decision = self._exit_stack.evaluate(
                     direction=pos.direction,
                     entry_price=pos.entry_price,
@@ -541,7 +728,7 @@ class ORBEngine:
                     self._execute_exit(symbol, pos, price, decision)
 
             except Exception as e:
-                logger.warning("[ORB] %s 退出监控异常: %s", symbol, e)
+                logger.warning("[ORB] %s 退出监控异常: %s", symbol, e, exc_info=True)
 
     def _execute_exit(
         self,
@@ -656,6 +843,38 @@ class ORBEngine:
             pass
         return 1.0  # fallback: 不过滤
 
+    def _get_vwap(self, symbol: str) -> float:
+        """获取 VWAP (Volume Weighted Average Price)"""
+        if not self._data:
+            return 0.0
+        try:
+            # 尝试从 data_router 获取
+            if hasattr(self._data, "get_vwap"):
+                vwap = self._data.get_vwap(symbol)
+                if vwap and vwap > 0:
+                    return float(vwap)
+
+            # Fallback: 从 K 线计算
+            klines = self._get_1min_klines(symbol, count=60)
+            if klines and len(klines) > 0:
+                cum_vol = 0.0
+                cum_pv = 0.0
+                for k in klines:
+                    h = float(k.get("high", 0))
+                    l = float(k.get("low", 0))
+                    c = float(k.get("close", 0))
+                    v = float(k.get("volume", 0))
+                    if h > 0 and l > 0 and c > 0 and v > 0:
+                        typical_price = (h + l + c) / 3.0
+                        cum_pv += typical_price * v
+                        cum_vol += v
+
+                if cum_vol > 0:
+                    return cum_pv / cum_vol
+        except Exception:
+            pass
+        return 0.0
+
     def _get_1min_klines(self, symbol: str, count: int = 20) -> Optional[List[Dict]]:
         """获取 1-min klines (带超时保护)"""
         if not self._data:
@@ -711,6 +930,168 @@ class ORBEngine:
         except Exception:
             pass
         return 100000.0  # fallback: 模拟盘默认 $100K
+
+    # ── 区间质量评估 (RFC-056-DESIGN) ──
+
+    def _calculate_quality_score(
+        self,
+        orb_width_pct: float,
+        volume_ratio: float,
+        price: float,
+        vwap: float,
+        direction: str,
+    ) -> float:
+        """
+        计算区间质量评分 (0.0 - 1.0)
+
+        评分模型:
+          quality = 0.4 * width_score + 0.3 * volume_score + 0.3 * vwap_score
+
+        width_score:
+          - 0.3% <= width <= 2.0%: 1.0 (理想)
+          - 0.2% <= width < 0.3%: 0.5 (偏窄)
+          - 2.0% < width <= 3.0%: 0.5 (偏宽)
+          - 其他: 0.0 (不可交易)
+
+        volume_score:
+          - ratio >= 1.5: 1.0 (放量)
+          - 1.2 <= ratio < 1.5: 0.7 (适度)
+          - 0.8 <= ratio < 1.2: 0.5 (平量)
+          - ratio < 0.8: 0.3 (缩量)
+
+        vwap_score:
+          - LONG 且 price > vwap: 1.0
+          - SHORT 且 price < vwap: 1.0
+          - 其他: 0.5
+        """
+        # Width score
+        if 0.3 <= orb_width_pct <= 2.0:
+            width_score = 1.0
+        elif 0.2 <= orb_width_pct < 0.3 or 2.0 < orb_width_pct <= 3.0:
+            width_score = 0.5
+        else:
+            width_score = 0.0
+
+        # Volume score
+        if volume_ratio >= 1.5:
+            volume_score = 1.0
+        elif volume_ratio >= 1.2:
+            volume_score = 0.7
+        elif volume_ratio >= 0.8:
+            volume_score = 0.5
+        else:
+            volume_score = 0.3
+
+        # VWAP score
+        if vwap > 0 and price > 0:
+            if direction == "LONG" and price > vwap:
+                vwap_score = 1.0
+            elif direction == "SHORT" and price < vwap:
+                vwap_score = 1.0
+            else:
+                vwap_score = 0.5
+        else:
+            vwap_score = 0.5  # 无 VWAP 数据时中性
+
+        quality = 0.4 * width_score + 0.3 * volume_score + 0.3 * vwap_score
+        return quality
+
+    def _calculate_adaptive_stop(
+        self,
+        orb_width_pct: float,
+        atr: float,
+        price: float,
+        regime: str = "RANGE",
+    ) -> float:
+        """
+        计算自适应止损距离 (价格单位)
+
+        公式:
+          sl_distance = max(
+            orb_width * sl_width_mult,
+            atr * sl_atr_mult,
+            min_sl_distance
+          )
+
+        Regime 自适应:
+          TREND_UP/DOWN: 宽松 (sl_width_mult=0.5, sl_atr_mult=1.2)
+          RANGE:         适中 (sl_width_mult=0.8, sl_atr_mult=1.5)
+          HIGH_VOL:      收紧 (sl_width_mult=0.3, sl_atr_mult=0.8)
+          LOW_VOL:       放宽 (sl_width_mult=1.0, sl_atr_mult=2.0)
+
+        兜底:
+          min_sl_distance = price * 0.5%
+          max_sl_distance = price * 3.0%
+        """
+        # Regime 参数映射
+        regime_params = {
+            "TREND_UP":   (0.5, 1.2),
+            "TREND_DOWN": (0.5, 1.2),
+            "RANGE":      (0.8, 1.5),
+            "HIGH_VOL":   (0.3, 0.8),
+            "LOW_VOL":    (1.0, 2.0),
+        }
+        sl_width_mult, sl_atr_mult = regime_params.get(regime, (0.8, 1.5))
+
+        # 计算止损距离
+        orb_width = price * orb_width_pct / 100.0
+        sl_from_width = orb_width * sl_width_mult
+        sl_from_atr = atr * sl_atr_mult
+
+        sl_distance = max(sl_from_width, sl_from_atr)
+
+        # 兜底限制
+        min_sl = price * 0.005  # 0.5%
+        max_sl = price * 0.03   # 3.0%
+
+        sl_distance = max(min_sl, min(max_sl, sl_distance))
+
+        return sl_distance
+
+    def _evaluate_layered_exits(
+        self,
+        pos: ORBPosition,
+        current_price: float,
+    ) -> Optional[str]:
+        """
+        评估分层止盈
+
+        三层机制:
+          Layer 1 (1R): 平 1/3, 止损移到 breakeven
+          Layer 2 (2R): 平 1/3, 激活追踪止损
+          Layer 3 (>2R): 剩余仓位追踪止损
+
+        Returns:
+          - "LAYER1": 需要执行 Layer 1
+          - "LAYER2": 需要执行 Layer 2
+          - "TRAIL_HIT": 追踪止损触发
+          - None: 无需操作
+        """
+        if pos.r_multiple <= 0:
+            return None
+
+        # 计算当前 R-multiple
+        if pos.direction == "LONG":
+            current_r = (current_price - pos.entry_price) / pos.r_multiple
+        else:
+            current_r = (pos.entry_price - current_price) / pos.r_multiple
+
+        # Layer 1: 1R 平 1/3
+        if not pos.layer1_done and current_r >= 1.0:
+            return "LAYER1"
+
+        # Layer 2: 2R 平 1/3
+        if not pos.layer2_done and current_r >= 2.0:
+            return "LAYER2"
+
+        # Layer 3: 追踪止损 (2R 后激活)
+        if pos.layer2_done and pos.trail_activated and pos.trail_stop > 0:
+            if pos.direction == "LONG" and current_price <= pos.trail_stop:
+                return "TRAIL_HIT"
+            elif pos.direction == "SHORT" and current_price >= pos.trail_stop:
+                return "TRAIL_HIT"
+
+        return None
 
     # ── 订单执行 ──
 
