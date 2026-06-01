@@ -178,7 +178,7 @@ class ORBEngine:
             time.sleep(self._cfg.polling_interval_seconds)
 
     def _tick(self):
-        """单轮 tick — 根据时段分派"""
+        """单轮 tick — 连续突破模式 (移除时间限制)"""
         from app.utils.timezone import now_et
 
         now = now_et()
@@ -189,50 +189,42 @@ class ORBEngine:
         if today_str != self._daily_date:
             self._daily_date = today_str
             self._daily_trades = 0
-            self._ranges.clear()
+            # 不再清除区间，允许隔夜持仓继续使用
 
         # 交易时段检查 (仅 ET 常规交易时段)
         market_open = dt_time(9, 30)
-        range_end = dt_time(9, 30 + self._cfg.range_minutes)  # 09:45
-        entry_end = _parse_time(self._cfg.entry_end_et)       # 14:00
-        eod_exit = _parse_time(self._cfg.eod_exit_time)        # 15:55
         market_close = dt_time(16, 0)
 
         if current_time < market_open or current_time >= market_close:
-            return  # 盘前/盘后, 跳过
+            # 盘前/盘后：仅监控持仓，不构建新区间或入场
+            self._monitor_exits(now, current_time)
+            return
 
-        # Phase 1: 构建开盘区间 (09:30 - 09:45)
+        # Phase 1: 开盘区间构建 (09:30 - 09:45)
+        range_end = dt_time(9, 45)
         if market_open <= current_time < range_end:
-            ready_count = sum(1 for r in self._ranges.values() if r.get("ready"))
+            ready_count = sum(1 for r in self._ranges.values()
+                            if r.get("ready") and not r.get("is_rolling"))
             if ready_count < len(self._cfg.universe):
-                logger.info("[ORB] Phase 1: 构建区间 | %d/%d 就绪 | time=%s",
+                logger.info("[ORB] Phase 1: 构建开盘区间 | %d/%d 就绪 | time=%s",
                             ready_count, len(self._cfg.universe), current_time.strftime("%H:%M:%S"))
-            self._build_ranges()
-            return
-
-        # Phase 2: 入场窗口 (09:45 - entry_end) — 检测突破 + 监控已有仓位
-        if range_end <= current_time < entry_end:
-            # 容错: 如果区间还没构建 (晚启动), 立即补建
-            ready_count = sum(1 for r in self._ranges.values() if r.get("ready"))
-            if ready_count == 0:
-                logger.info("[ORB] Phase 2: 区间未就绪, 延迟补建 (late start)")
-                self._build_ranges()
-            self._evaluate_breakouts(now, current_time)
+                self._build_opening_ranges()
+            # 同时监控持仓
             self._monitor_exits(now, current_time)
             return
 
-        # Phase 3: 持仓监控 (11:00 - 15:55) — 只监控退出, 不开新仓
-        if entry_end <= current_time < eod_exit:
-            self._monitor_exits(now, current_time)
-            return
+        # Phase 2: 连续突破模式 (09:45 - 16:00)
+        # 构建滚动区间 + 检测突破 + 监控持仓
+        self._build_rolling_ranges()
+        self._evaluate_breakouts(now, current_time)
+        self._monitor_exits(now, current_time)
 
-        # Phase 4: 盘末退出 (15:55 - 16:00)
-        if current_time >= eod_exit:
-            self._force_close_all(now, current_time)
+        # 15:30 后调整隔夜持仓止损
+        self._manage_overnight_positions(now, current_time)
 
     # ── Phase 1: 构建开盘区间 ──
 
-    def _build_ranges(self):
+    def _build_opening_ranges(self):
         """从 1-min kline 构建每个 ETF 的开盘区间 (增强版: 质量评分 + ATR + VWAP)"""
         if not self._data:
             logger.warning("[ORB] _build_ranges: data_router 不可用")
@@ -361,10 +353,201 @@ class ORBEngine:
             except Exception as e:
                 logger.warning("[ORB] %s 区间构建异常: %s", symbol, e, exc_info=True)
 
+    def _build_rolling_ranges(self):
+        """构建 15 分钟滚动区间 (连续突破模式)"""
+        if not self._data:
+            return
+
+        for symbol in self._cfg.universe:
+            # 跳过已有持仓的标的
+            if symbol in self._positions:
+                continue
+
+            try:
+                # 获取最近 20 根 1-min klines (使用最近 15 根构建区间)
+                klines = self._get_1min_klines(symbol, count=20)
+                if not klines or len(klines) < 15:
+                    continue
+
+                # 取最近 15 根作为滚动区间
+                rolling_bars = klines[-15:]
+                rolling_high = max(float(b.get("high", 0)) for b in rolling_bars)
+                rolling_low = min(float(b.get("low", 0)) for b in rolling_bars)
+
+                if rolling_high > 0 and rolling_low > 0 and rolling_high > rolling_low:
+                    width_pct = (rolling_high - rolling_low) / rolling_low * 100
+
+                    # 计算 ATR (从滚动 K 线)
+                    trs = []
+                    for i in range(1, len(rolling_bars)):
+                        h = float(rolling_bars[i].get("high", 0))
+                        l = float(rolling_bars[i].get("low", 0))
+                        pc = float(rolling_bars[i - 1].get("close", 0))
+                        if h > 0 and l > 0 and pc > 0:
+                            tr = max(h - l, abs(h - pc), abs(l - pc))
+                            trs.append(tr)
+                    atr = sum(trs) / len(trs) if trs else (rolling_high - rolling_low) / 2
+
+                    # 计算 VWAP (从滚动 K 线)
+                    cum_vol = 0.0
+                    cum_pv = 0.0
+                    for b in rolling_bars:
+                        h = float(b.get("high", 0))
+                        l = float(b.get("low", 0))
+                        c = float(b.get("close", 0))
+                        v = float(b.get("volume", 0))
+                        if h > 0 and l > 0 and c > 0 and v > 0:
+                            typical = (h + l + c) / 3.0
+                            cum_pv += typical * v
+                            cum_vol += v
+                    vwap = cum_pv / cum_vol if cum_vol > 0 else (rolling_high + rolling_low) / 2
+
+                    # 获取成交量比率
+                    volume_ratio = self._get_volume_ratio(symbol)
+
+                    # 计算质量评分
+                    current_price = self._get_current_price(symbol) or (rolling_high + rolling_low) / 2
+                    quality_score = self._calculate_quality_score(
+                        orb_width_pct=width_pct,
+                        volume_ratio=volume_ratio,
+                        price=current_price,
+                        vwap=vwap,
+                        direction="LONG",  # 初始假设
+                    )
+
+                    # 更新滚动区间
+                    self._ranges[symbol] = {
+                        "high": rolling_high,
+                        "low": rolling_low,
+                        "ready": True,
+                        "width_pct": width_pct,
+                        "atr": atr,
+                        "vwap": vwap,
+                        "volume_ratio": volume_ratio,
+                        "quality_score": quality_score,
+                        "fallback": False,
+                        "is_rolling": True,  # 标记为滚动区间
+                    }
+                    logger.debug(
+                        "[ORB] %s 滚动区间更新: H=%.2f L=%.2f W=%.2f%% Q=%.2f",
+                        symbol, rolling_high, rolling_low, width_pct, quality_score,
+                    )
+            except Exception as e:
+                logger.debug("[ORB] %s 滚动区间构建异常: %s", symbol, e)
+
+    def _calculate_max_positions(self) -> int:
+        """
+        动态计算最大持仓数 (基于账户资金)
+
+        计算逻辑:
+        - 基础持仓数 = 账户资金 / 10000 (每 1 万美元允许 1 个持仓)
+        - 最小持仓数 = 2
+        - 最大持仓数 = 配置上限 (默认 10)
+        - 隔夜持仓限制 = 最大持仓数 * 0.5 (隔夜风险更严)
+
+        Returns:
+            int: 最大允许持仓数
+        """
+        # 获取账户资金
+        equity = self._get_account_equity()
+
+        # 基础计算: 每 1 万美元允许 1 个持仓
+        base_positions = int(equity / 10000)
+
+        # 限制范围
+        min_positions = 2
+        max_positions = self._cfg.max_positions if self._cfg.max_positions > 0 else 10
+
+        # 计算当前持仓数
+        current_positions = len(self._positions)
+
+        # 判断是否接近盘末 (15:30 后)
+        from app.utils.timezone import now_et
+        current_time = now_et().time()
+        is_near_close = current_time >= dt_time(15, 30)
+
+        if is_near_close:
+            # 接近盘末: 限制新持仓 (允许隔夜但更保守)
+            allowed = min(max(base_positions, min_positions), max_positions) // 2
+            logger.debug("[ORB] 接近盘末, 持仓限制收紧: %d -> %d", max_positions, allowed)
+            return allowed
+        else:
+            # 正常时段: 使用完整限制
+            allowed = min(max(base_positions, min_positions), max_positions)
+            return allowed
+
+    def _get_account_equity(self) -> float:
+        """获取账户资金 (从 PositionStore 或配置)"""
+        # 尝试从 PositionStore 获取
+        if self._store and hasattr(self._store, 'get_account_equity'):
+            try:
+                equity = self._store.get_account_equity()
+                if equity and equity > 0:
+                    return float(equity)
+            except Exception as e:
+                logger.debug("[ORB] 获取账户资金失败: %s", e)
+
+        # Fallback: 从配置获取
+        if hasattr(self._cfg, 'initial_capital') and self._cfg.initial_capital > 0:
+            return float(self._cfg.initial_capital)
+
+        # Default: 10 万美元
+        return 100000.0
+
+    def _manage_overnight_positions(self, now: datetime, current_time: dt_time):
+        """
+        管理隔夜持仓 (15:30 后触发)
+
+        策略:
+        1. 放宽止损: 止损距离 * 1.5 (隔夜波动更大)
+        2. 追踪止损: 如果已激活, 放宽追踪距离 * 1.3
+        3. 记录日志: 标记为隔夜持仓
+        """
+        # 只在 15:30 后执行一次
+        if current_time < dt_time(15, 30):
+            return
+
+        # 检查今天是否已经调整过
+        today = now.date()
+        if hasattr(self, '_overnight_adjusted_date') and self._overnight_adjusted_date == today:
+            return
+
+        logger.info("[ORB] 15:30 后调整隔夜持仓止损")
+
+        for symbol, pos in self._positions.items():
+            # 放宽止损距离
+            original_sl_distance = pos.sl_distance
+            pos.sl_distance *= 1.5
+
+            # 放宽追踪止损距离
+            if pos.trail_stop > 0:
+                original_trail_distance = abs(pos.entry_price - pos.trail_stop)
+                new_trail_distance = original_trail_distance * 1.3
+
+                if pos.direction == "LONG":
+                    pos.trail_stop = pos.peak_price - new_trail_distance
+                else:  # SHORT
+                    pos.trail_stop = pos.trough_price + new_trail_distance
+
+            logger.info(
+                "[ORB] %s 隔夜止损调整: SL距离 %.2f -> %.2f, Trail %.2f -> %.2f",
+                symbol,
+                original_sl_distance,
+                pos.sl_distance,
+                abs(pos.entry_price - (pos.trail_stop if pos.trail_stop > 0 else pos.entry_price - original_sl_distance)),
+                abs(pos.entry_price - pos.trail_stop) if pos.trail_stop > 0 else 0
+            )
+
+        # 标记今天已调整
+        self._overnight_adjusted_date = today
+
     # ── Phase 2: 突破检测 ──
 
     def _evaluate_breakouts(self, now: datetime, current_time: dt_time):
-        """评估突破信号 — 3 层防御"""
+        """评估突破信号 — 连续突破模式"""
+        # 动态计算最大持仓数 (基于账户资金)
+        max_positions = self._calculate_max_positions()
+
         for symbol, rng in list(self._ranges.items()):
             if not rng.get("ready"):
                 continue
@@ -379,14 +562,15 @@ class ORBEngine:
             # 每日交易上限
             if self._daily_trades >= self._cfg.max_daily_trades:
                 break
-            # 最大仓位数 (含引擎内部 + PositionStore中所有orb_*仓位)
+            # 动态持仓数限制 (含引擎内部 + PositionStore中所有orb_*仓位)
             orb_count = len(self._positions)
             if self._store:
                 for pos in self._store.all():
                     _owner = getattr(pos, 'owner_strategy', '') or ''
                     if _owner.startswith('orb_') and _owner != 'orb_engine':
                         orb_count += 1  # 计入 orb_pipeline 等其他ORB仓位
-            if orb_count >= self._cfg.max_positions:
+            if orb_count >= max_positions:
+                logger.debug("[ORB] 达到动态持仓上限 %d/%d", orb_count, max_positions)
                 break
 
             try:
