@@ -392,8 +392,12 @@ class TradingScheduler:
 
             # 链路修复 (2026-05-15): 接入 CN 国产源 — 国内大陆环境优先
             # 之前问题: news_sources.cn 配置存在但 0 代码引用 (死配置)
+            # 2026-06-01: 修复 'dict' has no get_dotted —
+            #   line 223 cfg = load_short_config() 把外层 cfg 覆盖成 plain dict, 此处显式重新拿 ConfigContainer
             try:
-                _cn_cfg = cfg.get_dotted("news_sources.cn", {}) or {}
+                from app.core.config import get_config as _gc_news
+                _news_cfg = _gc_news()
+                _cn_cfg = _news_cfg.get_dotted("news_sources.cn", {}) or {}
                 _cn_added = []
 
                 if _cn_cfg.get("cailianpress", {}).get("enabled", False):
@@ -582,6 +586,34 @@ class TradingScheduler:
                 logger.info("[Scalping] 总开关关闭 (scalping.enabled=false)")
         except Exception as e:
             logger.warning("[Scalping] 初始化失败 (降级运行): %s", e)
+
+        # ── RFC-056 (2026-06-01): ORB 辅线引擎 ──
+        # Opening Range Breakout: ETF 专属标的池, 5 秒轮询, 独立退出栈
+        # 与主线零重叠, 渐进上线: observe → shadow → active
+        self.orb_engine = None
+        try:
+            from app.core.config_container import get_config as _get_cfg
+            _cfg = _get_cfg()
+            orb_cfg = _cfg.get_dotted("orb", {}) if _cfg else {}
+            if orb_cfg.get("enabled", False):
+                from app.orb.engine import get_orb_engine
+                self.orb_engine = get_orb_engine(
+                    config=orb_cfg,
+                    execution_engine=self.execution_engine,
+                    data_router=self.data_router,
+                    position_store=self.position_store,
+                    notifier=self.notifier,
+                    open_position_lock=self._open_position_lock,
+                )
+                logger.info(
+                    "[ORB] 引擎已初始化 | mode=%s | universe=%d只",
+                    orb_cfg.get("mode", "observe"),
+                    len(orb_cfg.get("universe", [])),
+                )
+            else:
+                logger.debug("[ORB] 未启用 (orb.enabled=false)")
+        except Exception as e:
+            logger.warning("[ORB] 初始化失败 (不影响主线): %s", e)
 
         # ── 智能自适应轮询控制器 (2026-04-15 新增) ──
         # 解决免费 API 限流 + 美股高波动的矛盾
@@ -1298,6 +1330,10 @@ class TradingScheduler:
             # 注意: start() 可能启动等待线程(盘前)或直接启动主循环(盘中)
             # 实际启动状态以 ScalpingEngine 日志为准
 
+        # RFC-056: ORB 辅线引擎 (2026-06-01)
+        if self.orb_engine:
+            self.orb_engine.start()
+
         # 若启动时正处于交易时间，立即触发一次扫描（不等 30 分钟冷启动）
         if self._is_market_open():
             logger.info("[调度器] 交易时间内启动，立即触发首次信号扫描")
@@ -1383,6 +1419,11 @@ class TradingScheduler:
         if self.scalping_engine:
             self.scalping_engine.stop()
             logger.info("[Scalping] 引擎已停止")
+
+        # RFC-056: 停止 ORB 辅线引擎
+        if self.orb_engine:
+            self.orb_engine.stop()
+            logger.info("[ORB] 引擎已停止")
 
         # C5 归因 (2026-05-13): 确保归因数据在关闭时刷新
         try:

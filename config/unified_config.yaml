@@ -17,7 +17,13 @@ base:
 # 数据隔离: trade_records.mode 字段标记 (sandbox/normal), 不混淆复盘
 mode:
   sandbox:
-    enabled: true               # P1-D (2026-05-15): 启用沙盒加速实验
+    # RFC-059 (2026-06-01): 暂停 sandbox 模式
+    # 数据驱动: sandbox 53 笔 13.2% wr -$28,184 vs normal 268 笔 30.6% +$13,607
+    # 重启条件 (满足全部):
+    #   1. voting_predictions 回填率 >= 80% (确认反馈链路真修好)
+    #   2. 连续 7 天 scripts/validate_strategy_health.py 无 BLOCKING
+    #   3. 沙盒 universe 经过数据复核 (移除 0% 胜率标的)
+    enabled: false              # 2026-06-01: P1-D→暂停 (was true 2026-05-15)
     # O7 (2026-05-16): rebalance — 干掉 AAPL/MSFT/META (5/15 信号 0 笔, ATR 干涸)
     # 加入 RIVN/LCID/SNDK/ARM/NIO/BWXT/MU (5/15 实际有信号触发的高波动小盘)
     # 保留 NVDA/TSLA/AMD/SPY/QQQ 作为 anchor + ETF beacon. 总 12 只.
@@ -774,6 +780,39 @@ risk:
     - US.NIO
     - US.DIA      # RFC-055: 0% 胜率, 4笔 -$507
     - US.NVDA     # RFC-055: 0% 胜率, 3笔 -$2,905 (已 disabled 但黑名单兜底)
+    - US.NFLX     # 2026-06-01: 0% 胜率, 8笔 -$122 (90天数据, 信号系统对此标的失灵)
+    - US.UNH      # 2026-06-01: 0% 胜率, 9笔 -$120 (90天数据, 同上)
+    - US.META     # 2026-06-01: 从原 pre_trade_check 硬编码迁移过来 (历史亏损归因)
+    - US.GOOGL    # 2026-06-01: 从原 pre_trade_check 硬编码迁移过来 (历史亏损归因)
+  # RFC-056 (2026-06-01): HIGH_VOL 市况 VIX 阈值多档化
+  # 数据驱动 (n=141, 90天): HIGH_VOL regime 14.9% 胜率 -$39,537, 占总亏损 271%
+  # 旧逻辑: VIX>30 才熔断, VIX 22-29 区间放任入场 → 主要亏损源
+  # 新逻辑: 4 档 — VIX<low: 不动; low-mid: 信号×0.85; mid-high: ×0.5; >=critical: 拒绝
+  # 读取者: app/risk/market_regime_filter.py::MarketRegimeFilter._load_vix_levels
+  market_regime_filter:
+    vix_levels:
+      low: 18                  # < 18: 信号 ×1.0 (正常)
+      mid: 22                  # 18-22: 信号 ×0.85 (轻度防御)
+      high: 25                 # 22-25: 信号 ×0.5 (强力削弱)
+      critical: 28             # >= 28: 完全拒绝 (从 30 降至 28)
+    short_exempt_critical: false # SHORT 在 critical 时也拒绝 (默认 false 保守)
+                                  # 数据看 SHORT 33.9% 胜率好, 后续可改 true 仅放过 SHORT
+    long_in_high_zone_strength_mult: 0.5  # mid-high 区间 LONG 削减更狠 (LONG 20.9% wr)
+    short_in_high_zone_strength_mult: 0.85 # SHORT 在 22-25 区间轻削
+  # RFC-058 (2026-06-01): LONG 方向默认削弱 30%, 仅 BULL regime 豁免
+  # 数据驱动 (n=134, 90天): LONG 20.9% wr +$2,644 vs SHORT 174 笔 33.9% +$13,016 (5×差距)
+  # 默认: LONG strength × 0.7 折扣
+  # BULL 豁免条件 (全部满足): SPY > MA50 + SPY > MA200 + VIX < 20 + 连涨 ≥ 2 日
+  # 读取者: app/risk/market_regime_filter.py::MarketRegimeFilter._apply_long_discount
+  long_direction_filter:
+    enabled: true
+    default_discount: 0.7        # LONG strength × 0.7 (削 30%)
+    bull_regime_exempt:          # 满足全部条件不打折
+      spy_above_ma50: true
+      spy_above_ma200: true
+      vix_max: 20
+      consecutive_up_days_min: 2
+    log_every_discount: true     # 每次打折记日志便于审计
   # F10 (2026-05-12): 风险单位 R 配置 — 仓位 = 风险预算 / 止损距离
   # P0-X (2026-05-15, 基于 14 日 LCID 8 笔 -$634 教训): 标的级日亏损护栏
   symbol_daily_loss_guard:
@@ -893,8 +932,8 @@ risk:
     enabled: true                    # 总开关
     vwap_filter_enabled: true        # VWAP 子开关 (LONG + strength<80 + price<VWAP → 拦截)
     vwap_threshold: -0.001           # VWAP 偏离度阈值 (<此值视为弱势)
-  stop_loss: '_deprecated: Use dynamic_exit'
-  take_profit: '_deprecated: Use dynamic_exit'
+  # stop_loss / take_profit: 已迁移到 dynamic_exit.* (regime-aware profiles)
+  # 历史字段已删除 (2026-06-01) — grep 确认无代码引用. 改动: 服务 OKR PnL ≥ 0
   circuit_breaker:
     strategy:
       consecutive_losses: 3
@@ -1692,14 +1731,9 @@ scheduler:
   scan_interval_minutes: 10
   monitor_interval_minutes: 0.5
   max_positions: 3                 # RFC-055: 5→3, 集中火力在最优信号
-  # DEPRECATED (2026-05-31): scheduler.min_confidence 不再作为入场门槛 SSOT
-  #   实际生效路径:
-  #     - 全局门槛: risk.signal_quality.min_confidence (本文件 SSOT)
-  #     - 阶段解析: app/risk/min_confidence_resolver.py:MinConfidenceResolver.for_phase("intraday")
-  #     - ConfigWriter 唯一写入: risk.signal_quality.min_confidence
-  #   启动时 ConfigValidator.check_deprecated_fields 会再次告警, 修改此键不会生效。
-  #   保留仅为避免老代码兜底失效, 一段稳定窗口后整体移除。
-  min_confidence: 0.55  # DEPRECATED, do not edit — see MinConfidenceResolver (synced with code 0.55)
+  # 2026-06-01: 删除 deprecated scheduler.min_confidence (0.55) — ConfigAudit 启动 BLOCKING
+  # 实际生效路径: risk.signal_quality.min_confidence (本文件 line 882, 已 = 0.65)
+  # CFG.SCHEDULER_MIN_CONFIDENCE = 0.65 (代码 config_defaults.py:60)
   min_signal_strength: 50  # P0-辩论修复: 99→50 (P3过度收紧导致5/23后零交易, P0守卫已兜底)
   min_consensus_level: 0.2
   adaptive_scan_enabled: true
@@ -1819,6 +1853,8 @@ scalping:
       - UBER
       - QCOM
       - NIO
+      - NFLX     # 2026-06-01: 0% 胜率 8笔 -$122
+      - UNH      # 2026-06-01: 0% 胜率 9笔 -$120
     reason: 归因数据持续亏损，暂时回避
   rsi_period: 14
   rsi_oversold: 25
@@ -2045,6 +2081,46 @@ pipeline:
       alert_drawdown: -0.10     # -10% → 仅25%仓位
       danger_drawdown: -0.20    # -20% → 不开新仓
       circuit_breaker: -0.35    # -35% → 全部平仓
+
+# ─── RFC-056 (2026-06-01): 独立 ORB 辅线 ────────────────────────
+# Opening Range Breakout: 5秒轮询, ETF专属标的池, 独立退出栈
+# 与主线零重叠: 标的是 SPY/QQQ/IWM/XLE/XLF 等 ETF
+# 上线策略: observe → shadow → active (渐进)
+# 详见: docs/decisions/RFC-056-orb-auxiliary-pipeline.md
+# ────────────────────────────────────────────────────────────────
+orb:
+  enabled: true
+  mode: observe                    # observe(仅日志) → shadow(虚拟仓位) → active(真实下单)
+  universe:
+    - US.SPY                       # 大盘基准
+    - US.QQQ                       # 科技基准
+    - US.IWM                       # 小盘 (高波动, ORB 友好)
+    - US.DIA                       # 道琼斯
+    - US.XLE                       # 能源板块
+    - US.XLF                       # 金融板块
+    - US.XLK                       # 科技板块
+    - US.XLV                       # 医疗板块
+  # 入场参数
+  range_minutes: 15                # 开盘区间长度 (分钟)
+  min_range_width_pct: 0.3         # 最小区间宽度% (太窄=假突破)
+  max_range_width_pct: 2.5         # 最大区间宽度% (太宽=过度波动)
+  breakout_buffer_pct: 0.1         # 突破缓冲%
+  min_volume_ratio: 1.1            # 量能确认 (放宽, 原1.3导致零交易)
+  entry_start_et: "09:45"          # 入场窗口开始
+  entry_end_et: "11:00"            # 入场窗口结束
+  # 止损止盈 (ATR-relative, 日内)
+  stop_loss_atr_mult: 1.0          # SL = entry ± 1.0×ATR (紧止损, 日内)
+  take_profit_atr_mult: 2.0        # TP = entry ± 2.0×ATR (R/R 2:1)
+  trail_activation_atr: 1.0        # 盈利 1.0 ATR 后激活追踪止损
+  trail_multiplier: 1.2            # peak - 1.2×ATR (Chandelier-style)
+  # 风控
+  max_positions: 2                 # 同时最多 2 个 ORB 仓位
+  max_daily_trades: 4              # 每日最多 4 笔
+  capital_pct: 0.10                # 10% 总资金分配
+  position_risk_pct: 0.005         # 0.5% 单笔风险
+  # 退出
+  eod_exit_time: "15:55"           # 盘末强制退出 (不隔夜)
+  polling_interval_seconds: 5      # 轮询间隔 (秒)
 
 # ─── 催化辩论引擎 (2026-05-27 RFC-Catalyst) ───
 # 盘前/盘后新闻催化事件检测 + 多模型辩论
