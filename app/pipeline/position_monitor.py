@@ -65,6 +65,100 @@ def _get_exit_controller_config() -> Dict[str, Any]:
         return {}
 
 
+# ─────────────────────────────────────────────────────────────────────────
+# RFC-057 (2026-06-01): grace period 入场保护
+# 数据驱动 (n=60, 90天): <30min 持仓 31.7% wr -$27,437 (占总亏损 188%)
+# 30min-1h: 25% wr +$14,970 — 放过噪声窗口反而盈利
+# 配置 SSOT: app/risk/exit_policy.yaml::global_hold_protection
+# ─────────────────────────────────────────────────────────────────────────
+
+_GRACE_CFG_CACHE: Dict[str, Any] = {}
+_GRACE_CFG_CACHE_TS: float = 0.0
+_GRACE_CFG_TTL: float = 60.0  # 配置缓存 60s, 避免每次 SQL 调用
+
+
+def _get_grace_protection_config() -> Dict[str, Any]:
+    """读取 exit_policy.yaml::global_hold_protection (60s 缓存)"""
+    global _GRACE_CFG_CACHE, _GRACE_CFG_CACHE_TS
+    now = time.time()
+    if now - _GRACE_CFG_CACHE_TS < _GRACE_CFG_TTL and _GRACE_CFG_CACHE:
+        return _GRACE_CFG_CACHE
+    try:
+        import yaml as _yaml
+        from app.core.paths import get_exit_policy_path
+        path = get_exit_policy_path()
+        if not path or not path.exists():
+            return {}
+        with open(path, 'r') as f:
+            policy = _yaml.safe_load(f)
+        cfg = (policy or {}).get("global_hold_protection", {}) or {}
+        _GRACE_CFG_CACHE = cfg if isinstance(cfg, dict) else {}
+        _GRACE_CFG_CACHE_TS = now
+        return _GRACE_CFG_CACHE
+    except Exception as e:
+        logger.debug(f"[grace_period] 配置读取失败 (规则不生效): {e}")
+        return {}
+
+
+def _check_grace_period_block(position, cur_price: float, rule_name: str) -> Optional[str]:
+    """RFC-057: 判断是否在 grace period 且当前 rule 应被屏蔽
+
+    Returns:
+        屏蔽原因字符串 (字符串非空 = 屏蔽) 或 None (放行)
+    """
+    cfg = _get_grace_protection_config()
+    if not cfg.get("enabled", False):
+        return None
+
+    min_minutes = float(cfg.get("min_hold_minutes_after_entry", 30))
+    if min_minutes <= 0:
+        return None
+
+    # 计算入场时长
+    entry_time = getattr(position, "entry_time", None)
+    if entry_time is None:
+        return None  # 没有入场时间, 放行
+    try:
+        if hasattr(entry_time, "timestamp"):
+            entry_ts = entry_time.timestamp()
+        else:
+            entry_ts = float(entry_time)
+        elapsed_min = (time.time() - entry_ts) / 60.0
+    except Exception:
+        return None
+
+    if elapsed_min >= min_minutes:
+        return None  # 已过 grace period
+
+    # max_grace_loss_pct 兜底: 浮亏 >= 此值立即解除保护
+    try:
+        max_loss = float(cfg.get("max_grace_loss_pct", 0.03))
+        entry_price = float(getattr(position, "avg_entry_price", 0) or 0)
+        if entry_price > 0 and cur_price > 0:
+            direction = getattr(position, "direction", None)
+            dir_str = direction.value if hasattr(direction, "value") else str(direction)
+            if dir_str == "LONG":
+                pnl_pct = (cur_price - entry_price) / entry_price
+            else:
+                pnl_pct = (entry_price - cur_price) / entry_price
+            if pnl_pct <= -max_loss:
+                # 浮亏达到底线, 解除保护放行所有规则
+                logger.warning(
+                    f"[grace_period·硬底解除] {getattr(position,'symbol','?')} "
+                    f"PnL={pnl_pct*100:.2f}% <= -{max_loss*100:.1f}% 解除保护"
+                )
+                return None
+    except Exception:
+        pass
+
+    # 规则白名单检查
+    allowed = cfg.get("allowed_during_grace", []) or []
+    if rule_name in allowed:
+        return None  # 白名单内规则放行
+
+    return f"grace {elapsed_min:.1f}min < {min_minutes:.0f}min, rule={rule_name} 不在白名单"
+
+
 def _build_exit_dispatcher(scheduler):
     """懒构建 ExitRuleDispatcher 单例并缓存到 scheduler"""
     cached = getattr(scheduler, "_exit_dispatcher", None)
@@ -518,6 +612,23 @@ def restore_positions_from_db(scheduler):
         if not positions:
             logger.info("[持仓恢复] DB 无未平仓记录")
             return 0
+
+        # 2026-06-01: 修复 NameError — 拉一份 broker 实盘持仓做对账, 失败时 fallback 空 dict
+        # is_anomalous 自愈逻辑 (line 568-) 需要 broker_positions_map 验证 DB qty 与 broker qty 一致
+        broker_positions_map: Dict[str, Dict[str, Any]] = {}
+        try:
+            adapter = getattr(getattr(scheduler, "execution_engine", None), "broker_adapter", None)
+            if adapter and hasattr(adapter, "get_positions"):
+                _broker_positions = adapter.get_positions() or []
+                for _bp in _broker_positions:
+                    _sym = _bp.get("symbol") if isinstance(_bp, dict) else getattr(_bp, "symbol", None)
+                    _qty = _bp.get("qty") if isinstance(_bp, dict) else getattr(_bp, "qty", None)
+                    if _sym and _qty is not None:
+                        broker_positions_map[_sym] = {"qty": float(_qty)}
+                logger.info(f"[持仓恢复] Broker 持仓对账: {len(broker_positions_map)} 个")
+        except Exception as _bpe:
+            logger.warning(f"[持仓恢复] Broker 持仓拉取失败 (降级到 _close_blocked 行为): {_bpe}")
+
         restored = 0
         for row in positions:
             try:
@@ -1023,6 +1134,12 @@ def _check_positions(scheduler):
                 # ExitRuleDispatcher 不得干预 scalping 仓位, 否则会导致双重平仓 + 状态不一致
                 if exit_monitor._is_scalping_position(position):
                     continue
+                # 2026-06-01: 过滤 orb_engine 仓位 — ORBEngine 自管退出 (ORBExitStack)
+                # orb_engine 有独立的4层退出栈 (FloorStop/Trailing/TP/EOD), DEM 不得干预
+                # orb_pipeline 仓位正常由 DEM 管理 (无独立退出栈)
+                _orb_owner = getattr(position, "owner_strategy", "") or ""
+                if _orb_owner == "orb_engine":
+                    continue
                 try:
                     cur_price = price_cache.get(position.symbol)
                     if not cur_price or cur_price <= 0:
@@ -1040,6 +1157,24 @@ def _check_positions(scheduler):
                             f"[ExitDispatcher·互斥] {position.symbol} 激活={decision.rule_name} "
                             f"压制={decision.suppressed_rules}"
                         )
+
+                    # ── RFC-057 (2026-06-01): grace period 过滤 ──
+                    # 数据驱动 (n=60): <30min 持仓占总亏损 188% (-$27,437)
+                    # grace 期内仅放行 flash_exit / circuit_breaker / earnings_guard / pre_close
+                    # 浮亏 >= max_grace_loss_pct 时立即解除保护 (硬底兜底)
+                    try:
+                        grace_block_reason = _check_grace_period_block(
+                            position, cur_price, decision.rule_name
+                        )
+                        if grace_block_reason:
+                            logger.info(
+                                f"[grace_period·RFC057] {position.symbol} 屏蔽 {decision.rule_name} "
+                                f"({grace_block_reason})"
+                            )
+                            continue
+                    except Exception as _gpe:
+                        # grace 检查异常时不阻断主流程 (保守: 让退出正常执行)
+                        logger.debug(f"[grace_period] 检查异常 (忽略): {_gpe}")
 
                     if shadow_mode_ctrl:
                         # Shadow 模式: 仅记录决策, 不实际执行
@@ -1243,11 +1378,32 @@ def _reconcile_position_store(scheduler):
                     )
             except Exception as e:
                 logger.warning(f"[持仓对账·集中度检查] 失败 (放行): {e}")
-            
+
+            # RFC-055 修复 (2026-06-01): 从 open_positions 恢复 trace_id/signal_id
+            # 防止 broker 对账重建持仓时丢失归因链路
+            recovered_trace_id = ""
+            recovered_signal_id = ""
+            try:
+                from app.core.paths import get_trade_records_db
+                import sqlite3 as _sql3
+                _conn = _sql3.connect(str(get_trade_records_db()))
+                _row = _conn.execute(
+                    "SELECT trace_id, signal_id FROM open_positions WHERE symbol=? ORDER BY updated_at DESC LIMIT 1",
+                    (symbol,)
+                ).fetchone()
+                if _row and _row[0]:
+                    recovered_trace_id = _row[0]
+                    recovered_signal_id = _row[1] or ""
+                    logger.info(f"[持仓对账] {symbol}: 恢复 trace_id={recovered_trace_id}")
+                _conn.close()
+            except Exception as e:
+                logger.debug(f"[持仓对账] {symbol}: 恢复 trace_id 失败 (放行): {e}")
+
             position = Pos(strategy_id="broker_reconcile", symbol=symbol, direction=direction, size=size,
                 avg_entry_price=cost, initial_sl=cost*sl_mult, current_sl=cost*sl_mult,
                 initial_tp=cost*(0.85 if bp['direction']=='SHORT' else 1.15),
-                take_profit_levels=[], time_stop_hours=72, market_regime=MR.RANGE)
+                take_profit_levels=[], time_stop_hours=72, market_regime=MR.RANGE,
+                trace_id=recovered_trace_id, signal_id=recovered_signal_id)
             position.trail_state = {"highest_price": cost, "lowest_price": cost, "prev_scan_price": cost}
             scheduler.position_store.add(symbol, position)
             logger.warning(f"[持仓对账] 发现 Broker 新持仓 {symbol} ({bp['direction']} {size}股 @${cost:.2f})")
