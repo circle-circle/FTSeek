@@ -872,7 +872,7 @@ risk:
         max_equity: 50000
         risk_pct: 0.035
         total_pct: 0.25
-        max_positions: 3                 # RFC-055: 5→3, 集中火力在最优信号
+        max_positions: 5                 # RFC-055: 3→5, SHORT信号频率提升后需要更多并发位
         min_trade_usd: 500
         max_position_pct: 0.3
       medium:
@@ -1575,14 +1575,14 @@ strategies:
     min_confidence: 0.65
     # Task #2 (2026-05-31): min_strength 40 → 50, 进一步过滤弱信号
     min_strength: 50
-    max_positions: 3                 # RFC-055: 5→3, 集中火力在最优信号
+    max_positions: 5                 # RFC-055: 3→5, SHORT信号频率提升后需要更多并发位
     # Task #2 (2026-05-31): 方向偏好 — LONG 接飞刀亏损模式严重，要求更高确认度
     # 数据驱动: SHORT 胜率显著高于 LONG
     direction_bias:
       LONG:
         min_confidence: 0.90  # RFC-055: 0.85→0.90 (LONG 全面亏损, 极严过滤近乎阻断)
       SHORT:
-        min_confidence: 0.60  # SHORT 阈值 0.60 (历史胜率较高，可适度放宽)
+        min_confidence: 0.55  # RFC-055: 0.60→0.55 (增加SHORT信号频率, 回测54.8%WR有冗余)
     # DEPRECATED (2026-05-31): strategies.defaults.signal_cooldown_seconds 不再生效
     #   实际生效路径: strategy.signal_cooldown (本文件 SoT, 见上方 strategy 段)
     #   启动时 ConfigValidator.check_deprecated_fields 会再次告警, 修改此键不会生效。
@@ -1739,7 +1739,7 @@ signal_fusion:
 scheduler:
   scan_interval_minutes: 10
   monitor_interval_minutes: 0.5
-  max_positions: 3                 # RFC-055: 5→3, 集中火力在最优信号
+  max_positions: 5                 # RFC-055: 3→5, SHORT信号频率提升后需要更多并发位
   # 2026-06-01: 删除 deprecated scheduler.min_confidence (0.55) — ConfigAudit 启动 BLOCKING
   # 实际生效路径: risk.signal_quality.min_confidence (本文件 line 882, 已 = 0.65)
   # CFG.SCHEDULER_MIN_CONFIDENCE = 0.65 (代码 config_defaults.py:60)
