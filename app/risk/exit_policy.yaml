@@ -66,7 +66,7 @@ global_hold_protection:
 exit_monitor:
   scan_interval_seconds: 60         # 扫描周期 (分钟以下)
   cooldown_seconds: 120             # 同一持仓退出冷却
-  min_hold_minutes: 5               # 模拟盘数据采集: 20→5min, 允许更短持仓
+  min_hold_minutes: 20              # 恢复20分钟最小持仓时间
 
 # ── Phase 3 (2026-05-31): 退出规则互斥 (新 ExitRuleDispatcher 使用) ──
 # key=高优先级触发的规则, value=被压制不再上报的规则列表

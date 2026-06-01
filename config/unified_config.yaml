@@ -2102,14 +2102,15 @@ orb:
   enabled: true
   mode: active                     # observe → shadow → active(真实下单) — 2026-06-01 启用
   universe:
-    - US.SPY                       # 大盘基准
-    - US.QQQ                       # 科技基准
-    - US.IWM                       # 小盘 (高波动, ORB 友好)
-    - US.DIA                       # 道琼斯
+    - US.IWM                       # 罗素2000小盘 (高波动, ORB友好)
+    - US.DIA                       # 道琼斯30
     - US.XLE                       # 能源板块
     - US.XLF                       # 金融板块
     - US.XLK                       # 科技板块
     - US.XLV                       # 医疗板块
+    - US.XLY                       # 消费板块 (替代SPY, 避免与主线重叠)
+    - US.XLI                       # 工业板块 (替代QQQ, 避免与主线重叠)
+    # 注: SPY/QQQ 在主线 watchlist 中已启用, 此处移除避免冲突
   # 入场参数
   range_minutes: 15                # 开盘区间长度 (分钟)
   max_range_width_pct: 2.5         # 最大区间宽度% (太宽=过度波动)
