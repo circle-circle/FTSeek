@@ -1114,11 +1114,11 @@ def _check_gates_and_conflicts(scheduler, symbol: str, signal: SignalScore, cont
     # 数据: strength 1-29 累计亏损 $18,757 (占全部亏损73%)
     # 之前 LONG 仅依赖 post-decay <30 拦截, 大量低信心信号漏过
     if not is_short:
-        _long_min = 50
+        _long_min = 35  # 修复 (2026-06-02): 50→35, 与 unified_config.yaml long_min_strength 对齐
         try:
             from app.core.config_container import get_config as _gc_long
             _lt_cfg = _gc_long().get_dotted("risk.pre_trade", {}) or {}
-            _long_min = int(_lt_cfg.get("long_min_strength", 50))
+            _long_min = int(_lt_cfg.get("long_min_strength", 35))
         except Exception:
             pass
         if signal.strength < _long_min:

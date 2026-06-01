@@ -891,14 +891,16 @@ class ExitMonitor:
             try:
                 symbol = position.symbol
                 # Phase 1 (2026-05-31): owner_strategy 严格校验 — 防双重执行竞争
+                # 修复 (2026-06-02 P1): null/unknown → 默认 "main" 而非跳过, 防止退出检查丢失
                 if _strict_owner:
                     _owner = (getattr(position, "owner_strategy", None) or "").strip().lower()
                     if not _owner or _owner in ("unknown", "none", "null"):
                         logger.warning(
-                            f"[策略隔离·跳过] {symbol} owner_strategy 为空/未知 ('{_owner}'), "
-                            f"为防跨策略误平, 本轮跳过退出检查"
+                            f"[策略隔离·兜底] {symbol} owner_strategy 为空/未知 ('{_owner}'), "
+                            f"默认赋值 'main' 以确保退出检查不丢失"
                         )
-                        continue
+                        position.owner_strategy = "main"
+                        _owner = "main"
                 direction = position.direction.value if hasattr(position.direction, 'value') else str(position.direction)
                 entry_price = position.avg_entry_price
                 if entry_price <= 0:

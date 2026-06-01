@@ -21,6 +21,23 @@ def check_flash_exit(monitor, position, current_price, atr, trail_state, now_ts,
     if atr <= 0:
         return None
 
+    # 修复 (2026-06-02 P0): 入场后 min_holding_seconds 内不触发 FLASH_EXIT
+    # 辩论共识: 76%交易为闪退(88/116), 全亏-$4,333; 开仓即闪退是核心问题
+    min_holding_sec = 120  # default fallback
+    if policy:
+        try:
+            min_holding_sec = int(
+                policy.policy.get('exit_rules', {}).get('flash_exit', {}).get('min_holding_seconds', 120)
+            )
+        except (TypeError, ValueError):
+            min_holding_sec = 120
+    entry_ts = trail_state.get("entry_time_ts", 0)
+    if entry_ts > 0 and (now_ts - entry_ts) < min_holding_sec:
+        logger.debug(
+            f"[FlashExit] {position.symbol} 持仓 {(now_ts - entry_ts):.0f}s < {min_holding_sec}s, 跳过闪退"
+        )
+        return None
+
     # P0-D3: 拆股 symbol 跳过 flash exit
     try:
         from app.data.split_event_guard import get_split_guard

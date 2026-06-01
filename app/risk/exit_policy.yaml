@@ -95,6 +95,7 @@ exit_rules:
     flash_multiplier_default: 1.0         # 优化 (2026-05-03 P0): 从 0.8 提高到 1.0, 减少噪音触发 (历史2次Flash全部亏损)
     earnings_multiplier: 1.5              # 财报期放宽到 1.5x
     min_atr: 0.5                          # ATR 底限
+    min_holding_seconds: 120              # 修复 (2026-06-02 P0): 入场后120s内不触发FLASH_EXIT, 防止开仓即闪退 (辩论共识: 76%交易为闪退且全亏)
 
   # 规则 2: ATR 动态止损 (替代固定 -8%)
   atr_stop:
