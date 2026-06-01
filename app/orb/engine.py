@@ -185,11 +185,26 @@ class ORBEngine:
         current_time = now.time()
         today_str = now.strftime("%Y-%m-%d")
 
+        # 调试日志：每 5 分钟输出一次
+        if not hasattr(self, '_last_tick_log'):
+            self._last_tick_log = 0
+        tick_count = getattr(self, '_tick_count', 0) + 1
+        self._tick_count = tick_count
+        if tick_count % 60 == 1:  # 每 60 个 tick (约 5 分钟) 输出一次
+            logger.info("[ORB] tick #%d | time=%s | positions=%d | ranges=%d",
+                       tick_count, current_time.strftime("%H:%M:%S"),
+                       len(self._positions), len(self._ranges))
+
+        # 调试：每个 tick 都输出（前 10 个）
+        if tick_count <= 10:
+            logger.info("[ORB] tick #%d 开始 | time=%s", tick_count, current_time.strftime("%H:%M:%S"))
+
         # 跨日重置
         if today_str != self._daily_date:
             self._daily_date = today_str
             self._daily_trades = 0
             # 不再清除区间，允许隔夜持仓继续使用
+            logger.info("[ORB] 跨日重置 | date=%s", today_str)
 
         # 交易时段检查 (仅 ET 常规交易时段)
         market_open = dt_time(9, 30)
@@ -197,8 +212,14 @@ class ORBEngine:
 
         if current_time < market_open or current_time >= market_close:
             # 盘前/盘后：仅监控持仓，不构建新区间或入场
+            if tick_count <= 10:
+                logger.info("[ORB] 盘前/盘后 | time=%s | 仅监控持仓", current_time.strftime("%H:%M:%S"))
             self._monitor_exits(now, current_time)
             return
+
+        # 调试：进入交易时段
+        if tick_count <= 10:
+            logger.info("[ORB] 交易时段 | time=%s | 开始构建区间和检测突破", current_time.strftime("%H:%M:%S"))
 
         # Phase 1: 开盘区间构建 (09:30 - 09:45)
         range_end = dt_time(9, 45)
@@ -356,17 +377,26 @@ class ORBEngine:
     def _build_rolling_ranges(self):
         """构建 15 分钟滚动区间 (连续突破模式)"""
         if not self._data:
+            logger.warning("[ORB] _build_rolling_ranges: data_router 不可用")
             return
 
+        built_count = 0
         for symbol in self._cfg.universe:
             # 跳过已有持仓的标的
             if symbol in self._positions:
                 continue
 
+            # 跳过已有滚动区间的标的 (每 5 分钟更新一次)
+            if symbol in self._ranges and self._ranges[symbol].get("is_rolling"):
+                last_update = self._ranges[symbol].get("last_update", 0)
+                if time.time() - last_update < 300:  # 5 分钟内不重复构建
+                    continue
+
             try:
                 # 获取最近 20 根 1-min klines (使用最近 15 根构建区间)
                 klines = self._get_1min_klines(symbol, count=20)
                 if not klines or len(klines) < 15:
+                    logger.debug("[ORB] %s klines 不足: got %d, need 15", symbol, len(klines) if klines else 0)
                     continue
 
                 # 取最近 15 根作为滚动区间
@@ -427,13 +457,18 @@ class ORBEngine:
                         "quality_score": quality_score,
                         "fallback": False,
                         "is_rolling": True,  # 标记为滚动区间
+                        "last_update": time.time(),  # 记录更新时间
                     }
-                    logger.debug(
-                        "[ORB] %s 滚动区间更新: H=%.2f L=%.2f W=%.2f%% Q=%.2f",
-                        symbol, rolling_high, rolling_low, width_pct, quality_score,
+                    built_count += 1
+                    logger.info(
+                        "[ORB] %s 滚动区间更新: H=%.2f L=%.2f W=%.2f%% ATR=%.3f Q=%.2f",
+                        symbol, rolling_high, rolling_low, width_pct, atr, quality_score,
                     )
             except Exception as e:
-                logger.debug("[ORB] %s 滚动区间构建异常: %s", symbol, e)
+                logger.warning("[ORB] %s 滚动区间构建异常: %s", symbol, e, exc_info=True)
+
+        if built_count > 0:
+            logger.info("[ORB] 滚动区间构建完成: %d/%d 个标的", built_count, len(self._cfg.universe))
 
     def _calculate_max_positions(self) -> int:
         """
