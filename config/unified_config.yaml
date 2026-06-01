@@ -780,6 +780,9 @@ risk:
     - US.NIO
     - US.DIA      # RFC-055: 0% 胜率, 4笔 -$507
     - US.NVDA     # RFC-055: 0% 胜率, 3笔 -$2,905 (已 disabled 但黑名单兜底)
+    - US.LMT      # RFC-055: 33%WR -$106, SHORT STRUCTURE_EXIT 持续亏损
+    - US.UNH      # RFC-055: 0%WR -$120, 全部 SHORT 交易亏损
+    - US.NFLX     # RFC-055: 0%WR -$122, 全部交易亏损
     - US.NFLX     # 2026-06-01: 0% 胜率, 8笔 -$122 (90天数据, 信号系统对此标的失灵)
     - US.UNH      # 2026-06-01: 0% 胜率, 9笔 -$120 (90天数据, 同上)
     - US.META     # 2026-06-01: 从原 pre_trade_check 硬编码迁移过来 (历史亏损归因)
@@ -824,6 +827,9 @@ risk:
     max_loss_rate: 0.66                 # 3 中 2 亏即触发 (从 70% 收紧)
     exempt_symbols: []                  # 手动豁免名单 (慎用)
 
+  # RFC-055 (2026-06-01): VIX 门禁阈值 — 从 25 收紧到 22
+  # 数据: HIGH_VOL regime SHORT 22.4%WR -$6,554, VIX 20-25 区间也大量亏损
+  vix_block_threshold: 22
   per_trade_risk_pct: 0.005    # 每笔 0.5% 净值基础风险
   max_trade_risk_pct: 0.010    # 极限 1.0% (高 confidence setup)
   # F17 (2026-05-12): 组合层面止损
@@ -1571,7 +1577,7 @@ strategies:
     # 数据驱动: SHORT 胜率显著高于 LONG
     direction_bias:
       LONG:
-        min_confidence: 0.85  # RFC-055: 0.80→0.85 (LONG sl_hit 仅6.9%WR, 极严过滤)
+        min_confidence: 0.90  # RFC-055: 0.85→0.90 (LONG 全面亏损, 极严过滤近乎阻断)
       SHORT:
         min_confidence: 0.60  # SHORT 阈值 0.60 (历史胜率较高，可适度放宽)
     # DEPRECATED (2026-05-31): strategies.defaults.signal_cooldown_seconds 不再生效

@@ -38,7 +38,21 @@ VIX_REGIMES = {
 }
 
 # VIX 交易门禁阈值 (市场情绪过滤)
-VIX_THRESHOLD = 25  # VIX >= 25 时禁止交易
+# RFC-055 (2026-06-01): 25→22, 数据驱动: HIGH_VOL regime SHORT 22.4%WR -$6,554
+# 可配置: risk.vix_block_threshold in unified_config.yaml (默认 22)
+def _load_vix_threshold() -> int:
+    """从 unified_config.yaml 加载 VIX 门槛, 失败回退 22"""
+    try:
+        from app.core.config_container import get_config
+        cfg = get_config()
+        if cfg:
+            val = cfg.get_dotted("risk.vix_block_threshold", 22)
+            return int(val)
+    except Exception:
+        pass
+    return 22
+
+VIX_THRESHOLD = _load_vix_threshold()
 
 
 class MarketStateChecker:
