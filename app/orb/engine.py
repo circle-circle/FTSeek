@@ -634,17 +634,11 @@ class ORBEngine:
             # 路径 2: data_router.futu.get_kline (Futu LV3 provider)
             futu = getattr(self._data, "futu", None)
             if futu and hasattr(futu, "get_kline"):
-                try:
-                    import concurrent.futures
-                    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                        future = pool.submit(futu.get_kline, symbol, "K_1M", count)
-                        result = future.result(timeout=3)  # 3秒超时
-                except Exception:
-                    result = None
+                result = futu.get_kline(symbol, ktype="K_1M", count=count)
                 if result:
                     return result
                 else:
-                    logger.info("[ORB] %s futu.get_kline 返回空或超时", symbol)
+                    logger.info("[ORB] %s futu.get_kline 返回空", symbol)
             # 路径 3: execution_engine.broker_adapter.get_kline
             if self._exec:
                 adapter = getattr(self._exec, "broker_adapter", None)
