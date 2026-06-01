@@ -150,8 +150,8 @@ def run_premarket_check() -> dict:
 
     # ── 6. 昨日交易回顾 ──
     try:
-        from datetime import timedelta
-        yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+        from app.utils.timezone import now_et, get_last_trade_date
+        yesterday = get_last_trade_date(now_et())  # ET 最后交易日, 跳过周末
 
         log_path = BASE_DIR / "logs" / "ftseek_us.log"
         trades_count = 0

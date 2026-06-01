@@ -201,6 +201,24 @@ def get_trade_date(dt: Optional[datetime] = None) -> str:
     return dt.strftime("%Y-%m-%d")
 
 
+def get_last_trade_date(dt: Optional[datetime] = None) -> str:
+    """
+    获取最近一个美股交易日 (ET naive, 跳过周末).
+
+    周日 → 上周五, 周六 → 上周五, 工作日 → 当日.
+    用于盘前预检、盘后审计等 "回顾上一交易日" 场景.
+    """
+    if dt is None:
+        dt = now_et()
+    et_naive = dt.replace(tzinfo=None) if dt.tzinfo else dt
+    weekday = et_naive.weekday()  # 0=Mon … 5=Sat 6=Sun
+    if weekday == 6:  # Sunday → Friday (-2)
+        return (et_naive - timedelta(days=2)).strftime("%Y-%m-%d")
+    elif weekday == 5:  # Saturday → Friday (-1)
+        return (et_naive - timedelta(days=1)).strftime("%Y-%m-%d")
+    return et_naive.strftime("%Y-%m-%d")
+
+
 # ═══════════════════════════════════════════════════════════════════
 #  便捷函数 (向后兼容)
 # ═══════════════════════════════════════════════════════════════════

@@ -25,7 +25,7 @@ import requests
 from pathlib import Path
 from datetime import datetime, timedelta
 from collections import defaultdict
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Tuple
 from dotenv import load_dotenv
 
 # ================== 路径配置 ==================
@@ -37,6 +37,9 @@ load_dotenv(US_ROOT / ".env.us")
 
 sys.path.insert(0, str(US_ROOT))  # US first so app.observability resolves correctly
 sys.path.insert(1, str(HK_ROOT))   # HK second (fallback for shared modules)
+
+# 时区 SSOT — 统一使用 app.utils.timezone (必须在 sys.path.insert 之后)
+from app.utils.timezone import now_et, now_cst, get_last_trade_date
 
 # ================== 交易时段判断 ==================
 
@@ -450,18 +453,37 @@ def push_to_feishu(title: str, content: str) -> bool:
 
 # ================== 主流程 ==================
 
+def _last_us_trade_date(et_now: datetime) -> str:
+    """获取最近一个美股交易日 — 代理到 app.utils.timezone.get_last_trade_date"""
+    return get_last_trade_date(et_now)
+
+
 def main():
     """每日告警汇总报告主入口
-    
+
+    时区策略 (SSOT):
+    ─────────────────────────────────────────────────────
+    | 用途               | 时区基准            | 说明          |
+    ├────────────────────┼────────────────────┼───────────────┤
+    | 报告标题 & 文件名  | CST (Asia/Shanghai) | 用户日历视角  |
+    | 日志扫描范围       | CST                 | 服务器本地时间 |
+    | 美股交易数据查询   | ET (美东)           | DB 存储基准    |
+    | 港股交易数据查询   | CST                 | DB 存储基准    |
+    ─────────────────────────────────────────────────────
+
     美股交易日跨 CST 午夜:
     - 盘中 21:30 CST (Day N-1) → 04:00 CST (Day N)
-    - 报告日期 = Day N, 扫描范围 = Day N-1 21:00 → Day N 06:00
+    - 报告日期 = CST Day N, 扫描范围 = Day N-1 21:00 → Day N 06:00
     """
 
-    # 确定报告日期 (昨日, 因为盘后 1 小时已经是次日)
-    now = datetime.now()
-    report_date = (now - timedelta(days=1)).strftime("%Y-%m-%d")
+    # ── 时区统一: CST 报告日期 + ET 交易日期 ──
+    cst_now = now_cst()
+    report_date = cst_now.strftime("%Y-%m-%d")  # CST 日历日期 (标题 & 文件名)
     report_dt = datetime.strptime(report_date, "%Y-%m-%d")
+
+    et_now = now_et()
+    us_trade_date = _last_us_trade_date(et_now)  # ET 最后交易日 (DB 查询)
+    hk_trade_date = report_date                  # 港股用 CST 日期
 
     # 日志扫描范围: 覆盖美股跨午夜的交易会话
     # since = 报告日前一天 21:00 CST (覆盖盘前)
@@ -470,6 +492,8 @@ def main():
     until = report_dt.replace(hour=6, minute=0)  # Day N 06:00
 
     print(f"[汇总报告] 生成 {report_date} 告警汇总...")
+    print(f"  时区: CST={cst_now.strftime('%H:%M')} | ET={et_now.strftime('%H:%M')}")
+    print(f"  US 交易日: {us_trade_date} | HK 交易日: {hk_trade_date}")
     print(f"  扫描范围: {since} → {until}")
 
     # 1. 解析日志 (带截止边界 + 噪音过滤)
@@ -488,9 +512,9 @@ def main():
     print(f"  US: {len(us_alerts)} 条 (盘中 {len(us_trading)}, 非盘中 {len(us_offhours)})")
     print(f"  HK: {len(hk_alerts)} 条 (盘中 {len(hk_trading)}, 非盘中 {len(hk_offhours)})")
 
-    # 2. 交易数据
-    us_summary = get_us_trade_summary(report_date)
-    hk_summary = get_hk_trade_summary(report_date)
+    # 2. 交易数据 (US 用 ET 交易日, HK 用 CST 日期)
+    us_summary = get_us_trade_summary(us_trade_date)
+    hk_summary = get_hk_trade_summary(hk_trade_date)
 
     # 3. 构建报告
     report = build_summary_report(us_alerts, hk_alerts, us_summary, hk_summary, report_date)
