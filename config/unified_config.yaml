@@ -1544,6 +1544,14 @@ strategies:
   # === ORB: Opening Range Breakout (开盘区间突破) ===
   # 数据驱动: 10:00-11:00 是盈利主力时段 (+$21K), trailing stop 是唯一赚钱退出方式
   # ORB 天然匹配: 09:45后入场 + trailing stop 退出, 只有2个核心参数
+  #
+  # 2026-06-01 双系统架构:
+  #   System A (本配置) = 主线Pipeline ORB: 10分钟扫描, regime/MACD/RSI多重确认
+  #     → owner_strategy="orb_pipeline", 退出由DEM管理
+  #   System B (orb:顶级配置) = RFC-056独立引擎: 5秒轮询, 纯突破+量能确认
+  #     → owner_strategy="orb_engine", 退出由ORBExitStack自管
+  #   互斥: 同一ETF不会被两个系统同时开仓 (PositionStore.has检查)
+  #   持仓上限: max_positions 为两系统合计上限
   orb:
     enabled: true
     observe_only: false             # 直接参与模拟交易
@@ -1565,9 +1573,9 @@ strategies:
     entry_end_et: "11:00"           # ORB入场截止时间
     no_entry_after_et: "15:30"      # 收盘前截止
 
-    # 执行约束
-    max_daily_trades: 5             # 日最大交易数
-    max_positions: 3                # 最大同时持仓
+    # 执行约束 (双系统合计上限)
+    max_daily_trades: 5             # 日最大交易数 (pipeline+engine合计)
+    max_positions: 3                # 最大同时持仓 (pipeline+engine合计)
 
   defaults:
     # Task #2 (2026-05-31): 提升信号入场门槛 — 0.50/40 → 0.65/50
@@ -2096,10 +2104,17 @@ pipeline:
 # 与主线零重叠: 标的是 SPY/QQQ/IWM/XLE/XLF 等 ETF
 # 上线策略: observe → shadow → active (渐进)
 # 详见: docs/decisions/RFC-056-orb-auxiliary-pipeline.md
+#
+# 双系统协作:
+#   System B (本配置) = RFC-056独立引擎, 5秒轮询快速捕捉突破
+#   System A (strategies.orb) = 主线Pipeline, 10分钟扫描多重确认
+#   互斥: PositionStore.has() 确保同一ETF不被双开
+#   持仓: max_positions 读取 strategies.orb.max_positions (双系统合计上限)
+#   退出: 本系统自管 (ORBExitStack 4层退出), DEM跳过 orb_engine 仓位
 # ────────────────────────────────────────────────────────────────
 orb:
   enabled: true
-  mode: observe                    # observe(仅日志) → shadow(虚拟仓位) → active(真实下单)
+  mode: active                     # observe → shadow → active(真实下单) — 2026-06-01 启用
   universe:
     - US.SPY                       # 大盘基准
     - US.QQQ                       # 科技基准
@@ -2117,14 +2132,14 @@ orb:
   min_volume_ratio: 1.1            # 量能确认 (放宽, 原1.3导致零交易)
   entry_start_et: "09:45"          # 入场窗口开始
   entry_end_et: "11:00"            # 入场窗口结束
-  # 止损止盈 (ATR-relative, 日内)
+  # 止损止盈 (ATR-relative, 日内 — 比System A更紧, 适配5秒快速响应)
   stop_loss_atr_mult: 1.0          # SL = entry ± 1.0×ATR (紧止损, 日内)
   take_profit_atr_mult: 2.0        # TP = entry ± 2.0×ATR (R/R 2:1)
   trail_activation_atr: 1.0        # 盈利 1.0 ATR 后激活追踪止损
   trail_multiplier: 1.2            # peak - 1.2×ATR (Chandelier-style)
-  # 风控
-  max_positions: 2                 # 同时最多 2 个 ORB 仓位
-  max_daily_trades: 4              # 每日最多 4 笔
+  # 风控 (持仓上限由 strategies.orb.max_positions 统一控制, 此处仅作fallback)
+  max_positions: 3                 # 与 strategies.orb.max_positions 对齐 (双系统合计)
+  max_daily_trades: 4              # 引擎独立日限 (不与pipeline共享计数)
   capital_pct: 0.10                # 10% 总资金分配
   position_risk_pct: 0.005         # 0.5% 单笔风险
   # 退出
