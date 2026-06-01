@@ -39,7 +39,7 @@ progressive_trailing:
 exit_monitor:
   scan_interval_seconds: 60         # 扫描周期 (分钟以下)
   cooldown_seconds: 120             # 同一持仓退出冷却
-  min_hold_minutes: 10              # 最小持仓时间 (低于此跳过非硬止损)
+  min_hold_minutes: 20              # RFC-055: 10→20min, 数据: <5min 162笔 -$10,689 19.1%WR
 
 # ── Phase 3 (2026-05-31): 退出规则互斥 (新 ExitRuleDispatcher 使用) ──
 # key=高优先级触发的规则, value=被压制不再上报的规则列表
@@ -196,10 +196,10 @@ exit_rules:
   # 退出时机更应由价格行为 (chandelier/SL) 决定, 而非时间. 之前 7 笔 time_stop 平均亏损 -0.53%.
   # 回退方式: enabled: true (主线), 短线 time_gate 仍生效不受影响.
   time_stop:
-    enabled: false                  # O3 (2026-05-16): 30d sharpe=-0.40, 禁用
-    max_holding_hours: 72           # 美股 3 个交易日 (保留兜底)
-    min_profit_to_hold: 2.0         # 盈利≥2% 可豁免
-    extension_hours: 24             # 每次延长 24h (最多 2 次)
+    enabled: true                   # RFC-055: 重新启用 — 甜蜜区30min-6hr, >6hr亏-$17K
+    max_holding_hours: 6            # RFC-055: 72→6h, 匹配盈利甜蜜区上限
+    min_profit_to_hold: 1.0         # RFC-055: 2.0%→1.0ATR, 盈利仓位可豁免
+    extension_hours: 2              # RFC-055: 24→2h, 短线不加长延时
 
   # 规则 6.5: 成本缓冲 (与 cost_model 联动)
   # 在最终止损线外额外让出 k × 双边总成本, 规避被噪声成本打穿
@@ -340,7 +340,7 @@ day_trade_mode:
   # 修复 (2026-05-12): 隔夜持仓重置基准时间 + 首次扫描 30min 宽限期
   time_decay:
     enabled: true
-    max_idle_minutes: 150           # 优化: 从 90min 延长到 150min (给仓位充分发展时间)
+    max_idle_minutes: 90            # RFC-055: 150→90min, 信号90min无进展即失效, 加速资金周转
     min_progress_pct: 0.5           # 优化: 从 0.2% 提到 0.5% (避免无意义进展判断)
     grace_period_minutes: 30        # 修复 (2026-05-12): 首次扫描宽限期
     overnight_reset_threshold: 60   # 修复 (2026-05-12): 持仓>60min 视为隔夜, 重置基准
@@ -353,7 +353,7 @@ day_trade_mode:
     max_loss_pct: 5.0               # 优化: 从 4.0% 放宽到 5.0%
     take_profit_tier_1: 2.0         # 优化: 从 1.5% 提到 2.0%
     take_profit_tier_2: 5.0         # 优化: 从 4.0% 提到 5.0%
-    max_idle_minutes: 120           # 优化: 从 90min 延长到 120min
+    max_idle_minutes: 90            # RFC-055: 120→90min, 与LONG对齐, 信号失效加速退出
 
 # ============================================================
 # SCALPING 策略退出参数覆写 (Task #9, 2026-05-30)

@@ -772,6 +772,8 @@ risk:
     - US.UBER
     - US.QCOM
     - US.NIO
+    - US.DIA      # RFC-055: 0% 胜率, 4笔 -$507
+    - US.NVDA     # RFC-055: 0% 胜率, 3笔 -$2,905 (已 disabled 但黑名单兜底)
   # F10 (2026-05-12): 风险单位 R 配置 — 仓位 = 风险预算 / 止损距离
   # P0-X (2026-05-15, 基于 14 日 LCID 8 笔 -$634 教训): 标的级日亏损护栏
   symbol_daily_loss_guard:
@@ -1530,7 +1532,7 @@ strategies:
     # 数据驱动: SHORT 胜率显著高于 LONG
     direction_bias:
       LONG:
-        min_confidence: 0.75  # LONG 需要 0.75 高确认度（避免追涨/接飞刀）
+        min_confidence: 0.80  # RFC-055: LONG 0.75→0.80 (33%WR vs SHORT 43%WR, 需更高确认)
       SHORT:
         min_confidence: 0.60  # SHORT 阈值 0.60 (历史胜率较高，可适度放宽)
     # DEPRECATED (2026-05-31): strategies.defaults.signal_cooldown_seconds 不再生效
