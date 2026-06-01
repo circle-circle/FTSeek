@@ -783,6 +783,9 @@ risk:
     - US.LMT      # RFC-055: 33%WR -$106, SHORT STRUCTURE_EXIT 持续亏损
     - US.UNH      # RFC-055: 0%WR -$120, 全部 SHORT 交易亏损
     - US.NFLX     # RFC-055: 0%WR -$122, 全部交易亏损
+    - US.ARM      # RFC-055 Phase 4: TRAILING_STOP 33%WR -$525 (回测场景D)
+    - US.AMD      # RFC-055 Phase 4: 1笔 -$275, 持续亏损
+    - US.BWXT     # RFC-055 Phase 4: 0%WR -$50, 小样本持续亏损
     - US.NFLX     # 2026-06-01: 0% 胜率, 8笔 -$122 (90天数据, 信号系统对此标的失灵)
     - US.UNH      # 2026-06-01: 0% 胜率, 9笔 -$120 (90天数据, 同上)
     - US.META     # 2026-06-01: 从原 pre_trade_check 硬编码迁移过来 (历史亏损归因)
