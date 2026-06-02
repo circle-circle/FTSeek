@@ -11,6 +11,7 @@ import json
 import logging
 import math
 import os
+import threading
 import time
 from datetime import datetime
 from typing import Dict, Any, List, Optional
@@ -47,6 +48,68 @@ _DISPATCHER_REASON_MAP: Dict[str, str] = {
     "scale_out": "SCALE_OUT",
     "velocity_exit": "VELOCITY_EXIT",
 }
+
+# ── P0 (2026-06-02): 退出屏障 — 防止闪退后立即再入场 ──
+# 退出执行成功后，同一标的在 barrier_seconds 内禁止开仓
+# 解决: flash_exit → 立即 signal_pipeline 再入场 → 再次 flash_exit 的死循环
+_EXIT_BARRIER: Dict[str, float] = {}  # symbol → barrier_until_timestamp
+_EXIT_BARRIER_SECONDS = 600  # 10 分钟冷却 (2026-06-02: 300→600, 数据: XLI 单只 24 次闪退)
+_EXIT_BARRIER_FILE = "/tmp/ftseek_exit_barrier.json"
+# H3 (2026-06-03): 线程安全锁 — 保护 dict 读写 + 文件持久化原子性
+_EXIT_BARRIER_LOCK = threading.Lock()
+
+# 从磁盘恢复退出屏障 (防止重启丢失)
+try:
+    if os.path.exists(_EXIT_BARRIER_FILE):
+        import json as _json
+        with open(_EXIT_BARRIER_FILE, 'r') as _f:
+            _barrier_data = _json.load(_f)
+            _now = time.time()
+            # 只恢复尚未过期的屏障
+            for _sym, _until in _barrier_data.items():
+                if _until > _now:
+                    _EXIT_BARRIER[_sym] = _until
+        if _EXIT_BARRIER:
+            logger.info(f"[退出屏障·恢复] 从磁盘恢复 {len(_EXIT_BARRIER)} 个标的屏障")
+except Exception as _e:
+    logger.debug(f"[退出屏障·恢复] 失败 (不影响启动): {_e}")
+
+
+def _save_exit_barrier():
+    """H3: 持久化退出屏障到磁盘 (线程安全, 原子写入)"""
+    try:
+        import json as _json
+        _now = time.time()
+        with _EXIT_BARRIER_LOCK:
+            # H4 关联: 顺带清理过期条目
+            _expired = [s for s, u in _EXIT_BARRIER.items() if u <= _now]
+            for s in _expired:
+                del _EXIT_BARRIER[s]
+            # 原子写入: 先写临时文件再 rename (防损坏)
+            _tmp_file = _EXIT_BARRIER_FILE + ".tmp"
+            with open(_tmp_file, 'w') as _f:
+                _json.dump(dict(_EXIT_BARRIER), _f)
+            os.replace(_tmp_file, _EXIT_BARRIER_FILE)
+    except Exception as _e:
+        logger.debug(f"[退出屏障·保存] 失败: {_e}")
+
+
+def _check_exit_barrier(symbol: str) -> bool:
+    """H3: 检查标的是否在退出屏障中 (线程安全)
+
+    Returns:
+        True = 在屏障中 (禁止入场), False = 不在 (允许入场)
+    """
+    with _EXIT_BARRIER_LOCK:
+        barrier_until = _EXIT_BARRIER.get(symbol, 0)
+    return time.time() < barrier_until
+
+
+def _set_exit_barrier(symbol: str):
+    """H3: 设置退出屏障 (线程安全)"""
+    with _EXIT_BARRIER_LOCK:
+        _EXIT_BARRIER[symbol] = time.time() + _EXIT_BARRIER_SECONDS
+    _save_exit_barrier()
 
 
 def _get_exit_controller_config() -> Dict[str, Any]:
@@ -198,12 +261,23 @@ def _build_dispatcher_position_dict(position) -> Dict[str, Any]:
             holding_hours = get_market_hours_us(position.entry_time, now_et())
     except Exception:
         pass
+    # 注入 entry_time_ts (供 ExitRuleDispatcher._eval_flash_exit 使用)
+    entry_time_ts = 0.0
+    try:
+        if getattr(position, "entry_time", None):
+            if hasattr(position.entry_time, "timestamp"):
+                entry_time_ts = position.entry_time.timestamp()
+            else:
+                entry_time_ts = float(position.entry_time)
+    except Exception:
+        pass
     return {
         "symbol": getattr(position, "symbol", ""),
         "position_id": getattr(position, "position_id", "") or getattr(position, "symbol", ""),
         "entry_price": float(getattr(position, "avg_entry_price", 0) or 0),
         "direction": direction_str,
         "holding_hours": holding_hours,
+        "entry_time_ts": entry_time_ts,
         "owner_strategy": (
             getattr(position, "owner_strategy", "")
             or getattr(position, "strategy_id", "")
@@ -214,7 +288,10 @@ def _build_dispatcher_position_dict(position) -> Dict[str, Any]:
 
 def _build_dispatcher_market_data(scheduler, position, current_price: float) -> Dict[str, Any]:
     """为 dispatcher.evaluate() 构建 market_data 字典 (ATR 来自 ATRProvider，Task #4)"""
-    md: Dict[str, Any] = {"current_price": float(current_price)}
+    md: Dict[str, Any] = {
+        "current_price": float(current_price),
+        "now_ts": time.time(),  # 供 flash_exit min_holding_seconds 使用
+    }
 
     # ATR 单一真相源
     try:
@@ -409,7 +486,9 @@ def _partial_close_position(scheduler, position: Position, current_price: float,
     try:
         if scheduler.execution_engine:
             scheduler.execution_engine.submit_order(close_order)
-            position.size -= close_qty
+            # H5 (2026-06-03): position.size 修改需持有 PositionStore 锁, 防止 scan 线程读取中间值
+            with scheduler.position_store._lock:
+                position.size -= close_qty
             logger.info(
                 f"[分批止盈·完成] {position.symbol} 仓位更新: "
                 f"{int(position.size + close_qty)} → {int(position.size)} 股"
@@ -818,6 +897,18 @@ def _monitor_option_positions(scheduler):
                 meta = getattr(position, "metadata", {}) or {}
                 if not meta.get("is_option") and not meta.get("option_code"):
                     continue
+                # Critical #2 (2026-06-02): broker 同步期权仓 — broker 自管, 不走 exit
+                #   例: 用户在 Futu 手动持有的期权 → 避免双重平仓
+                try:
+                    from app.risk.position_exit_monitor import get_exit_monitor as _get_em
+                    if _get_em()._is_broker_synced_position(position):
+                        logger.debug(
+                            f"[期权监控·broker_sync·跳过] {position.symbol} "
+                            f"(broker 自管, 防双重平仓)"
+                        )
+                        continue
+                except Exception:
+                    pass
                 option_code = meta.get("option_code", "")
                 expiry_date = meta.get("expiry_date", "")
 
@@ -980,24 +1071,25 @@ def _check_positions(scheduler):
         for risk in at_risk:
             logger.warning(f"[预估风控] {risk['symbol']} 预估触及止损 (上次价=${risk['last_price']:.2f} SL=${risk['stop_loss']:.2f} 概率={risk['risk_probability']:.0%})")
     monitored_positions = []
+    # H2 (2026-06-03): scan+monitor 竞态保护 — 跳过刚开仓的 position
+    # 如果 position 的 entry_time 在当前 monitor 周期内 (30s), 跳过退出评估
+    # 防止 scan_loop 刚开的仓被 monitor_loop 同一轮误判退出
+    _h2_now = now_et()
+    _h2_grace_seconds = 30  # monitor 间隔 30s, 跳过本周期内开仓的 position
     # P0 Karpathy fix (2026-05-13): broker-synced 仓位不执行 exit_monitor 逻辑
-    # 根因: QQQ 是 futu_sync 导入的 broker 仓位，被 exit_monitor 当作系统仓位管理，
-    #       某次平仓失败后 is_anomalous=1 永久卡死。
-    #       修复: 只让 system 仓位 (signal/scalping) 进入 exit_monitor。
+    # Critical #2 增强 (2026-06-02): 原逻辑仅过滤 strategy=='futu_sync', 遗漏了
+    #   - manual_sync (USPositionSync._sync_to_position_store_locked 写入)
+    #   - broker_sync (position_recovery.startup 写入)
+    #   - metadata.source / _from_futu_balance 标记
+    # 现使用 ExitMonitor._is_broker_synced_position 统一识别, 所有 broker 同步仓进入
+    # trail_only 列表 (仅更新追踪, 不执行 exit), 以防·双重平仓·。
     trail_only_positions = []  # broker-synced: 只更新 trail，不执行 exit
+    exit_monitor_for_filter = get_exit_monitor()
     for position in positions:
         meta = getattr(position, "metadata", {}) or {}
         if meta.get("is_option"): continue
-        # broker-synced 仓位: 跳过 exit_monitor，但加入 trail-only 列表
-        # Task #7 (2026-05-31): owner_strategy 优先, strategy_id 仅作向后兼容 fallback
-        strategy = (
-            getattr(position, 'owner_strategy', '')
-            or getattr(position, 'strategy_id', '')
-            or ''
-        )
-        if strategy in ('futu_sync',):
-            trail_only_positions.append(position)
-            continue
+        # Broker-first (2026-06-03): 不再跳过 broker-synced 仓位
+        # 所有仓位统一进入退出监控，双重平仓防护在 _close_position 执行前校验
         if meta.get("_close_blocked"):
             # P0 修复 (2026-05-13): 运行时自动恢复 — 每小时尝试一次
             last_attempt = meta.get("_close_recovery_attempt", "")
@@ -1028,6 +1120,19 @@ def _check_positions(scheduler):
                 logger.warning(f"[监控] {position.symbol} 已标记为异常持仓, 跳过监控")
                 meta["_close_warned_at"] = now_key
             continue
+        # H2 (2026-06-03): scan+monitor 竞态保护
+        _entry_time = getattr(position, 'entry_time', None)
+        if _entry_time:
+            try:
+                _age_seconds = (_h2_now - _entry_time).total_seconds()
+                if 0 <= _age_seconds < _h2_grace_seconds:
+                    logger.debug(
+                        f"[H2·竞态保护] {position.symbol} 刚开仓 {_age_seconds:.0f}s < {_h2_grace_seconds}s, "
+                        f"跳过本轮退出评估"
+                    )
+                    continue
+            except Exception:
+                pass
         monitored_positions.append(position)
     if not monitored_positions: return
     from app.pipeline.order_executor import _get_current_price
@@ -1040,6 +1145,28 @@ def _check_positions(scheduler):
             if scheduler.polling_controller:
                 change_pct = (current_price - position.avg_entry_price) / position.avg_entry_price
                 scheduler.polling_controller.update_result(position.symbol, current_price, change_pct)
+
+            # ─── MAE/MFE 跟踪 (2026-06-02: 反馈闭环修复) ───
+            # 每个 monitor tick 更新最大不利/有利偏移, 平仓时写入 trade_records
+            # 这是止损优化的核心数据: 如果 sl_hit 交易的 MAE 远小于 SL 距离,
+            # 说明止损被噪声扫掉后价格回到目标方向 → SL 太紧
+            try:
+                _entry_price = position.avg_entry_price
+                if _entry_price > 0 and position.size > 0:
+                    if position.direction == Direction.LONG:
+                        _unrealized_pnl = (current_price - _entry_price) * position.size
+                    else:
+                        _unrealized_pnl = (_entry_price - current_price) * position.size
+                    # MAE: 取历史最小 (最大浮亏, 负数越小越差)
+                    _prev_mae = getattr(position, 'max_adverse_excursion', 0.0) or 0.0
+                    if _unrealized_pnl < _prev_mae:
+                        position.max_adverse_excursion = _unrealized_pnl
+                    # MFE: 取历史最大 (最大浮盈, 正数越大越好)
+                    _prev_mfe = getattr(position, 'max_favorable_excursion', 0.0) or 0.0
+                    if _unrealized_pnl > _prev_mfe:
+                        position.max_favorable_excursion = _unrealized_pnl
+            except Exception:
+                pass  # MAE/MFE 跟踪失败不影响退出逻辑
     if not price_cache:
         metadata = getattr(scheduler, "_price_fail_metadata", {"count": 0, "last_alert": ""})
         metadata["count"] = metadata.get("count", 0) + 1
@@ -1092,6 +1219,27 @@ def _check_positions(scheduler):
                 logger.info(f"[退出冷却] {pos.symbol} 设置信号冷却 ({getattr(scheduler, 'SIGNAL_COOLDOWN_MINUTES', 60)}min)")
             except Exception as ce:
                 logger.debug(f"[退出冷却] 设置失败 {pos.symbol}: {ce}")
+            # H3 (2026-06-03): 设置退出屏障 (线程安全)
+            _set_exit_barrier(pos.symbol)
+            logger.debug(f"[退出屏障] {pos.symbol} 设置 {_EXIT_BARRIER_SECONDS}s 入场冷却")
+            # P0 修复 (2026-06-02): FLASH_EXIT 时触发系统级熔断计数
+            if reason.get("reason", "") == "FLASH_EXIT":
+                try:
+                    from app.pipeline.order_executor import record_flash_exit
+                    record_flash_exit()
+                except Exception:
+                    pass
+            # P0 修复 (2026-06-02): 更新标的日亏损计数 (防死亡螺旋)
+            try:
+                from app.pipeline.order_executor import _update_symbol_daily_loss
+                dir_str = pos.direction.value if hasattr(pos.direction, 'value') else str(pos.direction)
+                if dir_str == "LONG":
+                    est_pnl = (cp - pos.avg_entry_price) * pos.size
+                else:
+                    est_pnl = (pos.avg_entry_price - cp) * pos.size
+                _update_symbol_daily_loss(pos.symbol, est_pnl)
+            except Exception:
+                pass
             return True
         except Exception as e:
             logger.error(f"[退出监控] {pos.symbol} 平仓执行失败: {e}")
@@ -1187,6 +1335,23 @@ def _check_positions(scheduler):
                     # 正式模式: 执行平仓
                     reason_dict = _build_exit_reason_dict(position, decision, cur_price)
                     if _execute_close(position, reason_dict):
+                        # H3 (2026-06-03): 设置退出屏障 (线程安全)
+                        _set_exit_barrier(position.symbol)
+                        # P0 (2026-06-02): 更新标的日亏损 (防死亡螺旋)
+                        try:
+                            from app.pipeline.order_executor import _update_symbol_daily_loss
+                            _ep = float(getattr(position, 'avg_entry_price', 0) or 0)
+                            _sz = float(getattr(position, 'size', 0) or 0)
+                            _dir = getattr(position, 'direction', None)
+                            _dir_str = _dir.value if hasattr(_dir, 'value') else str(_dir)
+                            if _ep > 0 and _sz > 0:
+                                if _dir_str == "LONG":
+                                    _pnl = (cur_price - _ep) * _sz
+                                else:
+                                    _pnl = (_ep - cur_price) * _sz
+                                _update_symbol_daily_loss(position.symbol, _pnl)
+                        except Exception:
+                            pass
                         # Check if this was a partial close (position still exists)
                         _is_partial_close = reason_dict.get("close_qty", 0) > 0
                         if _is_partial_close:
@@ -1833,6 +1998,15 @@ def monitor_loop(scheduler):
                 last_broker_reconcile = now
                 try: _reconcile_position_store(scheduler)
                 except Exception as e: logger.debug(f"[持仓对账] 异常: {e}")
+            # M7 (2026-06-03): 定期检查 Push 数据健康状态, 数据停止时主动告警
+            if now - getattr(monitor_loop, '_last_push_health_check', 0) >= 120:
+                monitor_loop._last_push_health_check = now
+                try:
+                    _futu = getattr(scheduler, 'data_router', None)
+                    if _futu and hasattr(_futu, 'futu') and _futu.futu:
+                        _futu.futu.ensure_healthy()
+                except Exception:
+                    pass
             # P0-R2 (2026-05-14): 推送 SystemCircuitBreaker 状态到 PreTradeChecker
             try:
                 _eng = getattr(scheduler, "risk_engine", None)

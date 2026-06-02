@@ -727,6 +727,13 @@ class ExitMonitor:
             return False
         return False
 
+    # Broker-first (2026-06-03): _is_broker_synced_position 已删除
+    # 所有仓位统一进入退出监控，双重平仓防护下沉到 _close_position 的持仓校验
+    @staticmethod
+    def _is_broker_synced_position(position) -> bool:
+        """DEPRECATED: 保留方法签名供外部引用不报错，但永远返回 False。"""
+        return False
+
     # ============================================================
     #  核心：扫描所有持仓
     # ============================================================
@@ -839,11 +846,14 @@ class ExitMonitor:
         main_positions = []
         skipped_scalping = 0
         skipped_protected = 0
+        skipped_broker = 0
         for p in positions:
             # 1. scalping 自管 (重构 2026-05-28: 统一走 _is_scalping_position 助手方法)
             if self._is_scalping_position(p):
                 skipped_scalping += 1
                 continue
+            # Broker-first (2026-06-03): 不再跳过 broker_sync 仓位，全部进入退出监控
+            # 双重平仓防护下沉到 _close_position 的执行前持仓校验
             # 2. M1: PROTECTED/FROZEN 由用户管
             try:
                 if not is_strategy_managed(p):
@@ -863,6 +873,8 @@ class ExitMonitor:
 
         if skipped_scalping > 0:
             logger.debug(f"[退出监控] 跳过 {skipped_scalping} 个 scalping 仓位 (ScalpingEngine 自管)")
+        if skipped_broker > 0:
+            logger.info(f"[退出监控·broker_sync] 跳过 {skipped_broker} 个 broker 同步仓位 (防双重平仓)")
         if skipped_protected > 0:
             logger.warning(
                 f"[退出监控·M1] 跳过 {skipped_protected} 个 PROTECTED/FROZEN 仓位 "
@@ -1078,6 +1090,27 @@ class ExitMonitor:
                 # 数据：<5min 持仓胜率仅 21.7%，过早平仓是亏损主因
                 # 策略：持仓 <10min 不触发非硬止损退出（SL_HIT/硬止损除外）
                 # held_minutes 已在 L788 从 (now_ts - entry_time_ts) / 60.0 计算
+
+                # M3 (2026-06-03): Grace period 保护 — legacy 路径也需要
+                # 与 ExitRuleDispatcher._check_grace_period_block 对齐
+                _grace_minutes = 10.0
+                _grace_max_loss = 0.03
+                try:
+                    _policy = self._load_exit_policy_dict()
+                    _ghp = _policy.get("global_hold_protection", {}) or {}
+                    if _ghp.get("enabled", True):
+                        _grace_minutes = float(_ghp.get("min_hold_minutes_after_entry", 10))
+                        _grace_max_loss = float(_ghp.get("max_grace_loss_pct", 0.03))
+                except Exception:
+                    pass
+                if held_minutes < _grace_minutes:
+                    # 硬底兜底: 浮亏 >= max_loss 时解除保护
+                    if pnl_pct > -_grace_max_loss:
+                        logger.debug(
+                            f"[M3·grace] {symbol} 持仓 {held_minutes:.1f}min < {_grace_minutes}min, "
+                            f"pnl={pnl_pct:.2%} > -{_grace_max_loss:.0%}, 跳过退出评估"
+                        )
+                        continue
 
                 # ============================================================
                 # Task #53 (2026-05-28): 退出规则检查路径分发

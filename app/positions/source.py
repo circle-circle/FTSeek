@@ -64,10 +64,11 @@ class ProtectionState(Enum):
 
     @classmethod
     def default_for(cls, source: PositionSource) -> "ProtectionState":
-        """默认保护策略: AUTO 自动管理, MANUAL/LEGACY 默认 PROTECTED"""
-        if source.is_auto():
-            return cls.MANAGED
-        return cls.PROTECTED
+        """Broker-first (2026-06-03): 所有仓位统一 MANAGED
+        不再区分系统仓位/外部仓位 — 所有在 broker 中存在的仓位都由系统管理退出。
+        双重平仓防护下沉到 _close_position 的持仓校验。
+        """
+        return cls.MANAGED
 
 
 def get_position_source(position: Any) -> PositionSource:

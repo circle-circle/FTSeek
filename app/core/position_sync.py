@@ -367,6 +367,9 @@ class USPositionSync:
             return
 
         conn = sqlite3.connect(DB_PATH)
+        # M12 (2026-06-03): 与 TradeStore 对齐 WAL 模式, 防止 journal mode 冲突
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
         cursor = conn.cursor()
 
         # Ensure trader_type column exists
@@ -422,7 +425,11 @@ class USPositionSync:
                 logger.info(f"[US Sync] ✅ 确认平仓 {symbol} (Futu 已无，pending_close 完成)")
             else:
                 logger.warning("[US Sync] Ghost position: %s (DB only, closing)", symbol)
-            cursor.execute("DELETE FROM open_positions WHERE symbol=?", (symbol,))
+            # M10 (2026-06-03): 软删除保留审计记录, 替代硬 DELETE
+            cursor.execute(
+                "UPDATE open_positions SET sync_status='closed_by_sync', updated_at=? WHERE symbol=?",
+                (datetime.now().isoformat(), symbol)
+            )
 
         # 4. Update/Insert Futu positions
         # P0 fix (2026-05-21): Load PRICE_FAIL-closed set to skip re-insert/update
@@ -586,8 +593,7 @@ class USPositionSync:
         mem_symbols = set(p.symbol for p in mem_positions)
         futu_symbols = set(futu_positions.keys())
 
-        # P2 修复: 先检查 DB 中已存在的持仓，避免误报"手动开仓"
-        db_positions = self._get_db_positions()
+        # Broker-first (2026-06-03): 不再预读 DB，所有仓位以 Futu 为准
 
         # 1. 新增持仓 (Futu 有，内存没有) → 手动开仓检测
         # P0 fix (2026-05-21): Skip re-importing options that were force-closed via PRICE_FAIL.
@@ -607,15 +613,11 @@ class USPositionSync:
             if symbol in _price_fail_closed:
                 logger.warning(f"[US Sync·P0] 跳过 PRICE_FAIL 已关闭期权 {symbol} (防止重导入循环)")
                 continue
-            # P2 修复: 如果 DB 中已有该持仓，说明是已存在的仓位 (可能是部分平仓后同步延迟)
-            # 不应报告为"手动开仓"，而是直接恢复内存状态
-            if symbol in db_positions:
-                # Also check PRICE_FAIL closed for DB restore path
-                if symbol in _price_fail_closed:
-                    logger.warning(f"[US Sync·P0] 跳过 PRICE_FAIL 已关闭期权(DB) {symbol}")
-                    continue
-                self._restore_position_from_db(symbol, futu_positions[symbol])
+            # H6 (2026-06-03): tombstone 检查 — 防止刚平仓的 position 被重新创建
+            if self._is_tombstoned(symbol):
+                logger.warning(f"[US Sync·H6] 跳过 tombstoned {symbol} (刚平仓, 防止重入)")
                 continue
+            # Broker-first (2026-06-03): 不再从 DB 恢复，新发现的仓位统一用全新计算的 SL/TP
 
             info = futu_positions[symbol]
             direction = Direction.SHORT if info['direction'] == 'SHORT' else Direction.LONG
@@ -647,6 +649,14 @@ class USPositionSync:
                 sl_price = cost * sl_mult
                 tp_price = cost * tp_mult
 
+            # Broker-first (2026-06-03): SL 方向校验 — 方向错误直接重算
+            if info['direction'] == 'SHORT' and sl_price <= cost:
+                logger.error(f"[SL校验·修复] {symbol} SHORT SL=${sl_price:.2f} < entry=${cost:.2f}, 重算")
+                sl_price = cost * 1.08  # fallback 8%
+            elif info['direction'] == 'LONG' and sl_price >= cost:
+                logger.error(f"[SL校验·修复] {symbol} LONG SL=${sl_price:.2f} > entry=${cost:.2f}, 重算")
+                sl_price = cost * 0.92  # fallback 8%
+
             # P0 修复 (2026-05-20): 期权仓位归主线策略管理，避免误标为手动仓
             # 期权代码格式：US.XXX26XXXXP/C (含年月 + Put/Call)
             is_option = any(x in symbol for x in ['26', '27', '28']) and any(x in symbol for x in ['P', 'C'])
@@ -671,9 +681,15 @@ class USPositionSync:
                 "lowest_price": cost,
                 "prev_scan_price": cost,
             }
-            # P0 修复 (2026-05-20): 期权仓位设置正确的 metadata.source
+            # Broker-first (2026-06-03): 如实标记来源，不再伪装 broker_sync
             if is_option:
                 position.metadata = {"source": "voting_llm_option", "is_option": True}
+            else:
+                position.metadata = {
+                    "source": "futu_discovery",
+                    "origin": "external",
+                    "sync_origin": "position_sync",
+                }
             self.position_store.add(symbol, position)
             logger.warning(
                 f"⚠️ [US Sync] 发现手动开仓 {symbol} ({info['direction']} {size}股 @${cost:.2f})，"
@@ -1086,78 +1102,9 @@ class USPositionSync:
         logger.debug(f"[US Sync ATR] {symbol} 使用默认 ATR=${default_atr:.2f} (2% 价格)")
         return default_atr
 
-    def _restore_position_from_db(self, symbol: str, futu_info: Dict):
-        """从 DB 恢复持仓到内存 (用于部分平仓后的同步场景)
-
-        P0-2 修复 (2026-05-19): 加 tombstone 检查. 主流程刚平仓成功后会调
-        mark_closed_tombstone(), 60s 内不允许 sync 从 DB 反向恢复, 否则
-        broker 异步确认延迟期间会引发 close → ghost cleanup → restore → close 死循环.
-        """
-        if self._is_tombstoned(symbol):
-            logger.warning(
-                f"[US Sync·tombstone] 跳过恢复 {symbol} — 60s 内已平仓 "
-                f"(broker 异步确认期, 防止反向恢复死循环)"
-            )
-            return
-
-        from app.core.models import Position, Direction, MarketRegime
-        db_pos = self._get_db_positions().get(symbol)
-        if not db_pos:
-            return
-
-        existing = self.position_store.get(symbol)
-        if existing:
-            # 内存中已有，只需更新数量
-            if abs(existing.size - futu_info['qty']) > 0.1:
-                existing.size = futu_info['qty']
-                logger.debug(f"[US Sync] 恢复内存 {symbol}: size={futu_info['qty']}")
-            return
-
-        # 内存中没有，从 DB 重建
-        direction = Direction.SHORT if db_pos['direction'] == 'SHORT' else Direction.LONG
-        
-        # P0 修复 (2026-05-20): 期权仓位归主线策略管理
-        is_option = any(x in symbol for x in ['26', '27', '28']) and any(x in symbol for x in ['P', 'C'])
-        strategy_id = "voting_llm_option" if is_option else "manual_sync"
-        
-        position = Position(
-            strategy_id=strategy_id,
-            symbol=symbol,
-            direction=direction,
-            size=db_pos['size'],
-            avg_entry_price=db_pos['avg_entry_price'],
-            initial_sl=db_pos['initial_sl'],
-            current_sl=db_pos['current_sl'],
-            initial_tp=futu_info.get('cost', db_pos['avg_entry_price']) * (0.85 if direction == Direction.SHORT else 1.15),
-            take_profit_levels=[],
-            time_stop_hours=72,
-            market_regime=MarketRegime.RANGE,
-        )
-        position.owner_strategy = strategy_id
-        position.trail_state = {
-            "highest_price": db_pos['avg_entry_price'],
-            "lowest_price": futu_info.get('cost', db_pos['avg_entry_price']),
-            "prev_scan_price": futu_info.get('cost', db_pos['avg_entry_price']),
-        }
-        # P0 修复 (2026-05-20): 期权仓位设置正确的 metadata.source
-        # P0-2 修复 (2026-05-22): 期权仓位必须设置 option_code，否则 position_monitor 无法获取价格
-        if is_option:
-            # 从 option_positions 表获取 option_code
-            option_code = symbol  # 默认使用 symbol 作为 option_code
-            try:
-                import sqlite3
-                conn = sqlite3.connect(DB_PATH)
-                cursor = conn.cursor()
-                cursor.execute("SELECT option_code FROM option_positions WHERE symbol=?", (symbol,))
-                row = cursor.fetchone()
-                if row:
-                    option_code = row[0]
-                conn.close()
-            except Exception as e:
-                logger.debug(f"[US Sync] 获取 option_code 失败 {symbol}: {e}")
-            position.metadata = {"source": "voting_llm_option", "is_option": True, "option_code": option_code}
-        self.position_store.add(symbol, position)
-        logger.info(f"[US Sync] 从 DB 恢复 {symbol}: size={db_pos['size']}, SL=${db_pos['current_sl']:.2f}")
+    # Broker-first (2026-06-03): _restore_position_from_db 已删除
+    # 不再从 DB 恢复持仓到内存 — broker 是唯一真相源
+    # 新发现的仓位统一走 _sync_to_position_store_locked 的全新计算路径
 
 
 # Global instance

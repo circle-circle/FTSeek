@@ -482,6 +482,8 @@ def _notify_order(scheduler, symbol: str, signal: SignalScore, order: Order, pos
             'voting_result': voting_result or {},
             'source_type': 'MAIN_PIPELINE',  # P1 修复：标注来源
             'entry_reason': _entry_reason,   # P0 归因修复
+            # ─── P3 (2026-06-02): 入场类型标记 — reversal / trend / panic_breadth ───
+            'entry_type': (signal.metadata or {}).get("entry_type", "trend") if hasattr(signal, "metadata") else "trend",
             'signal_id': getattr(signal, 'signal_id', '') or getattr(signal, 'trace_id', '') or '',  # P0 归因
             # P1 修复 (2026-05-31): decision_id 持久化 — 平仓时用于关联 signal_snapshots
             'decision_id': _decision_id,
@@ -1169,6 +1171,54 @@ def _check_gates_and_conflicts(scheduler, symbol: str, signal: SignalScore, cont
             return False
     except Exception:
         pass
+
+    # ─── P1 (2026-06-02): Weak 状态过滤 — Muyuan 论文借鉴 ───
+    # 区分 "健康超卖" (价格回调, 均线仍上行) vs "结构性下跌" (均线死叉, 趋势向下)
+    # 结构性下跌时禁止 LONG — 避免接飞刀
+    # 条件: price < MA20 < MA50 且 MA20 斜率为负 → 标记 "Weak" → 禁止 LONG
+    if not is_short:
+        try:
+            _w_price = context.get("price", 0)
+            _w_ma20 = context.get("ma20", 0)
+            _w_ma50 = context.get("ma50", 0)
+            _w_slope = context.get("slope_5m", 0)
+            # 也检查 MACD 死叉作为辅助确认
+            _w_macd = context.get("macd", 0)
+            _w_macd_signal = context.get("macd_signal", 0)
+
+            _is_weak = False
+            _weak_reasons = []
+
+            # 核心条件: 价格在所有均线下方 (结构性下跌)
+            if _w_price > 0 and _w_ma20 > 0 and _w_ma50 > 0:
+                if _w_price < _w_ma20 and _w_ma20 < _w_ma50:
+                    _is_weak = True
+                    _weak_reasons.append(f"price<{_w_ma20:.0f}<{_w_ma50:.0f}")
+
+            # 辅助条件: 短期斜率为负 (趋势仍在下降)
+            if _w_slope < -0.3:
+                _weak_reasons.append(f"slope={_w_slope:.2f}%")
+
+            # 辅助条件: MACD 死叉且在水下
+            if _w_macd < 0 and _w_macd < _w_macd_signal:
+                _weak_reasons.append(f"MACD死叉({_w_macd:.2f})")
+
+            # 反转入场 (广度增强) 可以覆盖 Weak 过滤 — 恐慌反弹时均线必然死叉
+            _meta = getattr(signal, 'metadata', None) or {}
+            _breadth_boosted = _meta.get("breadth_boosted", False)
+
+            if _is_weak and not _breadth_boosted:
+                logger.warning(
+                    f"🚫 [Weak门禁] {symbol} 结构性下跌禁止做多: "
+                    f"{'; '.join(_weak_reasons)}"
+                )
+                get_rejection_logger().record(symbol,
+                    f"Weak structural decline blocks LONG: {'; '.join(_weak_reasons)}",
+                    "WEAK_LONG_BLOCKED", strength=signal.strength,
+                    confidence=None, direction=direction_str)
+                return False
+        except Exception:
+            pass
 
     if is_short:
         # 做空门禁 (P0-辩论修复 2026-05-26: direct语义, 无需反转)
@@ -1907,6 +1957,92 @@ def _execute_long(scheduler, symbol: str, signal: SignalScore, context: Dict[str
         tp3_pct = 0.15
         atr_mult = 1.5
 
+    # ─── P1 (2026-06-02): 反转入场风控放宽 — Muyuan 论文借鉴 ───
+    # 论文核心: 不对称止损 (SL 比 TP 更宽), 给反转留发展时间
+    # 触发条件: 广度增强 OR RSI<30 (超卖反弹)
+    _is_reversal_entry = False
+    _reversal_type = "trend"  # P3: 默认 trend, 反转时覆盖
+    _meta = getattr(signal, 'metadata', None) or {}
+    if _meta.get("breadth_boosted"):
+        _is_reversal_entry = True
+        _reversal_type = f"panic_breadth_{_meta.get('breadth_tier', 'elevated')}"
+        # 广度反转: SL 放宽到 8%, TP 适度提高到 10%/15%/25%
+        sl_pct = max(sl_pct, 0.08)
+        tp1_pct = max(tp1_pct, 0.10)
+        tp2_pct = max(tp2_pct, 0.15)
+        tp3_pct = max(tp3_pct, 0.25)
+        atr_mult = max(atr_mult, 2.5)
+        logger.info(
+            f"[反转·广度] {symbol} 反转入场风控放宽: "
+            f"SL={sl_pct*100:.1f}% TP={tp1_pct*100:.0f}/{tp2_pct*100:.0f}/{tp3_pct*100:.0f}% "
+            f"ATR×{atr_mult:.1f} | 广度层级={_meta.get('breadth_tier', '?')}"
+        )
+    elif context.get("rsi", 50) < 30 and context.get("ma20", 0) > 0:
+        _price = context.get("price", 0)
+        _ma20 = context.get("ma20", 0)
+        if _ma20 > 0 and _price > 0 and _price < _ma20:
+            _is_reversal_entry = True
+            _reversal_type = "rsi_oversold_reversal"
+            # RSI 超卖反转: SL 放宽到 6%, TP 适度提高
+            sl_pct = max(sl_pct, 0.06)
+            tp1_pct = max(tp1_pct, 0.08)
+            tp2_pct = max(tp2_pct, 0.12)
+            tp3_pct = max(tp3_pct, 0.20)
+            logger.info(
+                f"[反转·RSI超卖] {symbol} RSI={context.get('rsi', 0):.0f}<30, "
+                f"反转入场: SL={sl_pct*100:.1f}% TP={tp1_pct*100:.0f}/{tp2_pct*100:.0f}/{tp3_pct*100:.0f}%"
+            )
+    if _is_reversal_entry:
+        signal.metadata["entry_type"] = _reversal_type
+
+        # ─── P2 (2026-06-02): K15 反转确认 — Muyuan 论文借鉴 ───
+        # 1-min 超卖信号噪声大, 需 K15 级别确认后再入场
+        # 检查: K15 最近 2 根 K 线是否仍在下跌 (close < open)
+        # 如果 K15 仍在下跌 → 延迟入场 (不进场)
+        _k15_confirmed = True  # 默认允许 (降级运行)
+        try:
+            _futu = getattr(scheduler, 'data_router', None)
+            if _futu and hasattr(_futu, 'futu') and _futu.futu:
+                _k15_bars = _futu.futu.get_kline(symbol, ktype="K_15M", count=5)
+                if _k15_bars and len(_k15_bars) >= 3:
+                    # 检查最近 2 根已完成的 K15 (跳过当前未完成的)
+                    _completed = _k15_bars[-3:-1]  # 倒数第3和第2根 (已完成的)
+                    _red_count = 0
+                    for _bar in _completed:
+                        _close = float(_bar.get('close', 0))
+                        _open = float(_bar.get('open', 0))
+                        if _close < _open:
+                            _red_count += 1
+
+                    if _red_count >= 2:
+                        _k15_confirmed = False
+                        logger.warning(
+                            f"🚫 [K15确认] {symbol} K15 仍在下跌 "
+                            f"({_red_count}/2 根阴线), 延迟反转入场"
+                        )
+                    else:
+                        _current_bar = _k15_bars[-1]
+                        _cur_close = float(_current_bar.get('close', 0))
+                        _cur_open = float(_current_bar.get('open', 0))
+                        _is_green = _cur_close > _cur_open
+                        logger.info(
+                            f"[K15确认] {symbol} K15 反转确认: "
+                            f"阴线={_red_count}/2, 当前={'阳线' if _is_green else '阴线'} ✓"
+                        )
+        except Exception as _k15e:
+            logger.debug(f"[K15确认] {symbol} 检查异常 (放行): {_k15e}")
+
+        if not _k15_confirmed:
+            # K15 未确认 → 不入场
+            try:
+                get_rejection_logger().record(symbol,
+                    "K15 reversal not confirmed (still declining)",
+                    "K15_REVERSAL_BLOCKED", strength=signal.strength,
+                    confidence=signal.confidence, direction="LONG")
+            except Exception:
+                pass
+            return
+
     # LLM 策略自定义止盈止损 (优先级高于 regime 默认值)
     if signal.metadata and signal.metadata.get("custom_take_profit_pct"):
         custom_tp = signal.metadata["custom_take_profit_pct"]
@@ -2368,9 +2504,256 @@ def _check_reversal_cooldown(scheduler, symbol: str, direction) -> bool:
     return True
 
 
+# ── P0 (2026-06-02): 系统级 FLASH_EXIT 熔断器 ──
+# 数据驱动: 今日 83 笔 FLASH_EXIT 累计 -$14,251 (XLI 24 次, XLK 14 次)
+# 机制: 10 分钟内 FLASH_EXIT >= 5 次 → 全局暂停开仓 10 分钟
+# 这是标的不相关的系统性问题: 波动率飙升时所有标的同时被闪退
+import json as _json_fe
+
+_FLASH_EXIT_TIMESTAMPS: List[float] = []  # 最近 FLASH_EXIT 发生时间
+_FLASH_EXIT_WINDOW_SEC = 600   # 10 分钟滑动窗口
+_FLASH_EXIT_THRESHOLD = 5       # 窗口内 >= 5 次触发熔断
+_FLASH_EXIT_PAUSE_SEC = 600     # 熔断持续 10 分钟
+_FLASH_EXIT_PAUSE_UNTIL: float = 0.0  # 全局暂停截止时间
+_FLASH_EXIT_STATE_FILE = "/tmp/ftseek_flash_exit_circuit.json"
+
+# 从磁盘恢复 (防重启丢失)
+try:
+    if os.path.exists(_FLASH_EXIT_STATE_FILE):
+        with open(_FLASH_EXIT_STATE_FILE, 'r') as _f:
+            _state = _json_fe.load(_f)
+            _FLASH_EXIT_TIMESTAMPS.extend(_state.get("timestamps", []))
+            _FLASH_EXIT_PAUSE_UNTIL = _state.get("pause_until", 0.0)
+        # 只保留窗口内的时间戳
+        _cutoff = time.time() - _FLASH_EXIT_WINDOW_SEC
+        _FLASH_EXIT_TIMESTAMPS[:] = [t for t in _FLASH_EXIT_TIMESTAMPS if t > _cutoff]
+        if _FLASH_EXIT_TIMESTAMPS:
+            logger.info(f"[FLASH熔断·恢复] {len(_FLASH_EXIT_TIMESTAMPS)} 次闪退记录, 暂停至 {_FLASH_EXIT_PAUSE_UNTIL:.0f}")
+except Exception:
+    pass
+
+
+def _save_flash_exit_state():
+    """持久化熔断状态到磁盘"""
+    try:
+        _cutoff = time.time() - _FLASH_EXIT_WINDOW_SEC
+        _active = [t for t in _FLASH_EXIT_TIMESTAMPS if t > _cutoff]
+        with open(_FLASH_EXIT_STATE_FILE, 'w') as _f:
+            _json_fe.dump({"timestamps": _active, "pause_until": _FLASH_EXIT_PAUSE_UNTIL}, _f)
+    except Exception:
+        pass
+
+
+def record_flash_exit():
+    """记录一次 FLASH_EXIT (由 position_monitor 调用)"""
+    global _FLASH_EXIT_PAUSE_UNTIL
+    _now = time.time()
+    _FLASH_EXIT_TIMESTAMPS.append(_now)
+
+    # 清理窗口外的旧记录
+    _cutoff = _now - _FLASH_EXIT_WINDOW_SEC
+    _FLASH_EXIT_TIMESTAMPS[:] = [t for t in _FLASH_EXIT_TIMESTAMPS if t > _cutoff]
+
+    _count = len(_FLASH_EXIT_TIMESTAMPS)
+    if _count >= _FLASH_EXIT_THRESHOLD and _now > _FLASH_EXIT_PAUSE_UNTIL:
+        _FLASH_EXIT_PAUSE_UNTIL = _now + _FLASH_EXIT_PAUSE_SEC
+        logger.critical(
+            f"🚨 [FLASH_EXIT 熔断] {_count} 次闪退 / {_FLASH_EXIT_WINDOW_SEC}s "
+            f"≥ 阈值 {_FLASH_EXIT_THRESHOLD} → 全局暂停开仓 {_FLASH_EXIT_PAUSE_SEC}s "
+            f"(至 {datetime.fromtimestamp(_FLASH_EXIT_PAUSE_UNTIL).strftime('%H:%M:%S')})"
+        )
+        # 发送钉钉告警
+        try:
+            from app.notifier.dingtalk import DingTalkNotifier
+            DingTalkNotifier().send_text(
+                f"🚨 FLASH_EXIT 熔断触发\n"
+                f"{_count} 次闪退 / 10min ≥ {_FLASH_EXIT_THRESHOLD}\n"
+                f"全局暂停开仓 {_FLASH_EXIT_PAUSE_SEC//60} 分钟\n"
+                f"请检查市场波动率和入场信号质量"
+            )
+        except Exception:
+            pass
+
+    _save_flash_exit_state()
+
+
+def _check_flash_exit_circuit_breaker(symbol: str) -> bool:
+    """检查系统级 FLASH_EXIT 熔断器
+
+    Returns: True = 熔断中, 禁止入场 / False = 允许入场
+    """
+    _now = time.time()
+    if _now < _FLASH_EXIT_PAUSE_UNTIL:
+        _remaining = int(_FLASH_EXIT_PAUSE_UNTIL - _now)
+        logger.warning(
+            f"🚫 [FLASH熔断] {symbol} 系统级暂停开仓: 剩余 {_remaining}s "
+            f"(近 10min 内 {len(_FLASH_EXIT_TIMESTAMPS)} 次闪退)"
+        )
+        return True
+    return False
+
+
+# ── P0 (2026-06-02): 标的日亏损限额 — 防死亡螺旋 ──
+_symbol_daily_loss_cache: Dict[str, float] = {}  # symbol → cached daily loss (resets on date change)
+_symbol_daily_loss_date: str = ""  # 缓存日期
+
+_DAILY_LOSS_LIMIT = 500.0  # 单标的日亏损限额 $500
+
+
+def _check_symbol_daily_loss(symbol: str) -> bool:
+    """检查标的当日累计亏损是否超限
+
+    同一标的当日累计亏损 >= $500 时当日禁入 (防 SNDK 式死亡螺旋:
+    30s 内 2 次 flash_exit 累计 -$3,669)
+
+    Returns: True = 允许 / False = 亏损超限禁止入场
+    """
+    global _symbol_daily_loss_cache, _symbol_daily_loss_date
+    from datetime import date as _date
+    today = _et_trade_date(now_et())
+
+    # 日期变更时清空缓存
+    if today != _symbol_daily_loss_date:
+        _symbol_daily_loss_cache.clear()
+        _symbol_daily_loss_date = today
+
+    # 优先用缓存 (同一进程内)
+    if symbol in _symbol_daily_loss_cache:
+        loss = _symbol_daily_loss_cache[symbol]
+        if loss <= -_DAILY_LOSS_LIMIT:
+            logger.warning(
+                f"🚫 [日亏损限额] {symbol} 当日累计亏损 ${loss:.2f} "
+                f"已超限 (-${_DAILY_LOSS_LIMIT:.0f})，当日禁入"
+            )
+            return False
+        return True
+
+    # 查询 DB
+    try:
+        import sqlite3
+        from pathlib import Path
+        db_path = Path(__file__).resolve().parent.parent.parent / "data" / "ftseek_us.db"
+        with sqlite3.connect(str(db_path)) as conn:
+            row = conn.execute(
+                "SELECT COALESCE(SUM(realized_pnl), 0) FROM trade_records "
+                "WHERE symbol = ? AND trade_date = ? AND exit_price > 0",
+                (symbol, today)
+            ).fetchone()
+        daily_pnl = float(row[0]) if row else 0.0
+        _symbol_daily_loss_cache[symbol] = daily_pnl
+        if daily_pnl <= -_DAILY_LOSS_LIMIT:
+            logger.warning(
+                f"🚫 [日亏损限额·激活] {symbol} 当日累计亏损 ${daily_pnl:.2f} "
+                f"超限 (-${_DAILY_LOSS_LIMIT:.0f})，当日禁入"
+            )
+            return False
+        return True
+    except Exception as e:
+        logger.debug(f"[日亏损限额] DB 查询失败 (放行): {e}")
+        return True
+
+
+def _update_symbol_daily_loss(symbol: str, pnl: float):
+    """更新标的日亏损缓存 (由 position_monitor 在平仓后调用)"""
+    global _symbol_daily_loss_cache
+    current = _symbol_daily_loss_cache.get(symbol, 0.0)
+    _symbol_daily_loss_cache[symbol] = current + pnl
+
+
 def _submit_order(scheduler, symbol: str, signal: SignalScore, context: Dict[str, Any], voting_result: Dict = None):
     """构建订单并通过执行引擎下单 (Refactored 2026-04-29)"""
-    
+
+    # ── H3 (2026-06-03): 退出屏障 — 线程安全检查 ──
+    try:
+        from app.pipeline.position_monitor import _check_exit_barrier
+        if _check_exit_barrier(symbol):
+            logger.warning(
+                f"🚫 [退出屏障] {symbol} {_EXIT_BARRIER_SECONDS}s 内刚平仓，拒绝入场 "
+                f"(防 flash_exit→再入场 死循环)"
+            )
+            return
+    except Exception as _be:
+        logger.debug(f"[退出屏障] 检查异常 (放行): {_be}")
+
+    # ── P0 (2026-06-02): 系统级 FLASH_EXIT 熔断 ──
+    # 数据驱动: 今日 83 笔 FLASH_EXIT 累计 -$14,251 (XLI 单只 24 次)
+    # 机制: 10 分钟内 FLASH_EXIT >= 5 次 → 全局暂停开仓 10 分钟
+    if _check_flash_exit_circuit_breaker(symbol):
+        return
+
+    # ── P1 (2026-06-02): 信号冷却二次检查 — 防并发扫描遗漏 ──
+    # 外层 signal_pipeline 在循环开始时检查过 cooldown, 但退出可能在扫描进行中发生
+    try:
+        if hasattr(scheduler, '_is_in_cooldown') and scheduler._is_in_cooldown(symbol):
+            logger.debug(f"🚫 [冷却复检] {symbol} 信号冷却中，拒绝入场")
+            return
+    except Exception:
+        pass
+
+    # ── P0 (2026-06-02): 标的日亏损限额 — 防死亡螺旋 ──
+    # 同一标的当日累计亏损 >= $500 时当日禁入
+    if not _check_symbol_daily_loss(symbol):
+        return
+
+    # ── P1 (2026-06-02): 信号质量门禁 — 无有效信号禁止入场 ──
+    # 数据驱动: STRUCTURE_EXIT 33笔中全部 signal_strength<0, 累计 -$3,106
+    # strength <= 0 意味着信号数据无效/缺失，不应入场
+    try:
+        _sig_str = int(getattr(signal, 'strength', 0) or 0)
+        _sig_conf = float(getattr(signal, 'confidence', 0.0) or 0.0)
+        if _sig_str <= 0:
+            logger.warning(
+                f"🚫 [信号门禁] {symbol} signal_strength={_sig_str} 无效，拒绝入场"
+            )
+            return
+        if _sig_conf <= 0.0:
+            logger.warning(
+                f"🚫 [信号门禁] {symbol} confidence={_sig_conf:.3f} 无效，拒绝入场"
+            )
+            return
+    except Exception:
+        pass
+
+    # ─── P0 (2026-06-02): 广度信号 — Muyuan 论文核心发现 ───
+    # ≥6 只同时超卖 → LONG strength+30, confidence×1.3, 禁止 SHORT
+    # 论文数据: 恐慌时反转 alpha 11.6× 基线, 胜率 78%
+    _breadth_boost = {}
+    try:
+        from app.analysis.market_breadth import get_market_breadth
+        _breadth = get_market_breadth()
+        _breadth_boost = _breadth.get_signal_boost()
+        _sig_dir = getattr(signal, 'direction', None)
+        _dir_str = _sig_dir.value if hasattr(_sig_dir, 'value') else str(_sig_dir or "")
+
+        # 恐慌/放大模式下禁止 SHORT (反弹太暴力, 做空逆势)
+        if _breadth_boost.get("block_short") and _dir_str == "SHORT":
+            logger.warning(
+                f"🚫 [广度·{_breadth_boost['tier'].upper()}] {symbol} 禁止做空: "
+                f"{_breadth_boost['oversold_count']} 只同时超卖, 反转概率极高"
+            )
+            return
+
+        # LONG 信号增强
+        if _dir_str == "LONG" and _breadth_boost.get("strength_bonus", 0) > 0:
+            _old_str = signal.strength
+            _old_conf = signal.confidence
+            signal.strength = min(100, signal.strength + _breadth_boost["strength_bonus"])
+            signal.confidence = min(0.95, signal.confidence * _breadth_boost["confidence_mult"])
+            # 标记为反转信号 (用于后续止损调整和 entry_reason 标记)
+            if not hasattr(signal, 'metadata') or signal.metadata is None:
+                signal.metadata = {}
+            signal.metadata["breadth_boosted"] = True
+            signal.metadata["breadth_tier"] = _breadth_boost["tier"]
+            signal.metadata["breadth_oversold_count"] = _breadth_boost["oversold_count"]
+            logger.info(
+                f"📊 [广度·{_breadth_boost['tier'].upper()}] {symbol} LONG 信号增强: "
+                f"strength {_old_str}→{signal.strength}, "
+                f"confidence {_old_conf:.3f}→{signal.confidence:.3f}, "
+                f"超卖={_breadth_boost['oversold_count']}只"
+            )
+    except Exception as _bre:
+        logger.debug(f"[广度] 检查异常 (不影响入场): {_bre}")
+
     # 0. PDT 保护门禁 (P0-fix 2026-05-02: 集成到执行路径)
     # 模拟盘不受 FINRA 约束，但为实盘做准备保留此检查
     try:
@@ -2519,6 +2902,24 @@ def _submit_order(scheduler, symbol: str, signal: SignalScore, context: Dict[str
             # 金字塔加仓不算新仓 (原仓还在), lock 仍归原仓平仓时释放
             return
 
+        # 2.5 P0 (2026-06-02): 同方向重复开仓拦截
+        # 金字塔未处理 + position_store 已有同向持仓 = 信号管道并发导致的重复入场
+        # 案例: RIVN 22:11 同时开 6 仓 (qty=360×2)
+        try:
+            if scheduler.position_store.has(symbol):
+                _existing = scheduler.position_store.get(symbol)
+                _existing_dir = _existing.direction.value if hasattr(_existing.direction, 'value') else str(_existing.direction)
+                _signal_dir = signal.direction.value if hasattr(signal.direction, 'value') else str(signal.direction)
+                if _existing_dir == _signal_dir:
+                    logger.warning(
+                        f"🚫 [多仓拦截] {symbol} 已有同向{_existing_dir}持仓 "
+                        f"(qty={_existing.size}), 金字塔未触发, 拒绝重复开仓"
+                    )
+                    _r1_release_if_held()
+                    return
+        except Exception:
+            pass
+
         # 3. 按方向路由执行
         if signal.direction == Direction.SHORT:
             _execute_short(scheduler, symbol, signal, context, voting_result)
@@ -2545,6 +2946,23 @@ def _lookup_decision_id_by_trace(trace_id: str, symbol: str = "") -> str:
     用于平仓时无法从 position.metadata 获取 decision_id 的 fallback。
     Returns: decision_id or empty string.
     """
+
+
+def _build_close_metadata_json(meta: dict, position) -> Optional[str]:
+    """构建平仓时的 metadata_json (含 MFE/MAE + 执行元数据)
+
+    2026-06-02: 反馈闭环修复 — 将 MFE (最大有利偏移) 附加到 metadata_json
+    用于评估止盈是否设得太低 (MFE >> TP → 利润回吐过多)
+    """
+    _exec = meta.get("execution", {}) if isinstance(meta.get("execution"), dict) else {}
+    # 确保是 dict 的副本, 不污染原始 metadata
+    _result = dict(_exec) if _exec else {}
+    _mfe = getattr(position, 'max_favorable_excursion', 0.0) or 0.0
+    _mae = getattr(position, 'max_adverse_excursion', 0.0) or 0.0
+    if _mfe != 0.0 or _mae != 0.0:
+        _result["max_favorable_excursion"] = _mfe
+        _result["max_adverse_excursion"] = _mae
+    return json.dumps(_result) if _result else None
 
 
 def _derive_entry_reason_for_close(meta: dict) -> str:
@@ -2939,8 +3357,68 @@ def _get_contract_multiplier(symbol: str) -> int:
     return 1
 
 
+def _verify_position_still_held(scheduler, position: Position) -> bool:
+    """Broker-first (2026-06-03): 执行前校验 broker 端持仓是否仍存在。
+    
+    防止双重平仓: 如果 algo/手动已在外部门平仓，系统不再提交卖单。
+    查 Futu position_list_query 获取实时持仓数量。
+    
+    Returns:
+        True = 持仓仍在，可执行平仓
+        False = 持仓已不存在或数量不足，跳过
+    API 异常时返回 True (保守放行，系统策略仓位需要退出保护)
+    """
+    try:
+        if not scheduler.execution_engine or not scheduler.execution_engine.broker_adapter:
+            return True  # 无 broker 连接，保守放行
+        broker_adapter = scheduler.execution_engine.broker_adapter
+        if not broker_adapter.is_connected():
+            return True  # 连接断开，保守放行
+        
+        from futu import RET_OK, TrdEnv
+        trd_env = TrdEnv.SIMULATE if getattr(scheduler, 'trade_env', 1) == 1 else TrdEnv.REAL
+        ret, data = broker_adapter.trade_ctx.position_list_query(
+            code=position.symbol, trd_env=trd_env
+        )
+        if ret != RET_OK or data is None or data.empty:
+            return False  # broker 端无该持仓
+        broker_qty = abs(float(data.iloc[0].get('qty', 0)))
+        needed = position.size
+        if broker_qty < needed * 0.5:  # 容差 50% (部分平仓场景)
+            logger.warning(
+                f"[持仓校验] {position.symbol} broker_qty={broker_qty} < needed={needed}×0.5"
+            )
+            return False
+        return True
+    except Exception as e:
+        logger.debug(f"[持仓校验] API 异常 (保守放行): {e}")
+        return True
+
+
 def _close_position(scheduler, position: Position, current_price: float, exit_reason: ExitReason):
     """平仓 — 触及即全平，简洁优先"""
+    # C1 (2026-06-03): 并发重入保护 — 防止 8s 确认窗口内双重平仓
+    # ExitRuleDispatcher + legacy ExitMonitor 可能在同一监控周期对同一 position 各触发一次
+    meta = getattr(position, "metadata", {}) or {}
+    if meta.get("_close_in_progress"):
+        logger.warning(f"[平仓·重入拦截] {position.symbol} 已有平仓进行中，跳过")
+        return
+    meta["_close_in_progress"] = True
+    position.metadata = meta
+
+    # Broker-first (2026-06-03): 执行前持仓校验 — 防双重平仓
+    # 查 Futu 实时持仓，确认仓位还没被外部平仓 (algo/手动)
+    if not _verify_position_still_held(scheduler, position):
+        logger.warning(
+            f"[平仓·持仓校验] {position.symbol} broker 端已无持仓或数量不足, "
+            f"跳过平仓 (可能已被外部平仓)"
+        )
+        # 清理 _close_in_progress 标记
+        meta = getattr(position, "metadata", {}) or {}
+        meta.pop("_close_in_progress", None)
+        position.metadata = meta
+        return
+
     # Task #14 (2026-05-27): 如果该标的开仓 TWAP 还在进行中, 先取消剩余片, 避免平后被动加仓
     try:
         if cancel_active_twap(position.symbol, reason=f"close:{exit_reason.value}"):
@@ -3098,10 +3576,11 @@ def _close_position(scheduler, position: Position, current_price: float, exit_re
             trd_env_f = TrdEnv.SIMULATE if getattr(scheduler, 'trade_env', 1) == 1 else TrdEnv.REAL
             order_confirmed = False
 
-            # P1 修复 (2026-05-31): 确认窗口从 5s 缩短到 2s, 减少 FLAT_ALL 时的线程阻塞
-            # 未确认的订单标记为 STALE, 下次扫描会重新确认
-            for _attempt in range(2):
-                _time.sleep(1)
+            # P1 修复 (2026-06-02): 确认窗口从 2s 延长到 8s
+            # 根因: 21 笔平仓单全部 2s 内未确认 (Futu 模拟盘需 4-6s)
+            # 4 次轮询 × 2s 间隔 = 8s 窗口
+            for _attempt in range(4):
+                _time.sleep(2)
                 ret_q, data_q = scheduler.execution_engine.broker_adapter.trade_ctx.order_list_query(
                     order_id=close_futu_id,
                     trd_env=trd_env_f
@@ -3126,7 +3605,7 @@ def _close_position(scheduler, position: Position, current_price: float, exit_re
             if not order_confirmed:
                 logger.warning(
                     f"[平仓·未确认] {position.symbol} futu_order_id={close_futu_id} "
-                    f"2s 内未确认成交，标记为 STALE，等待下次扫描确认"
+                    f"8s 内未确认成交，标记为 STALE，等待下次扫描确认"
                 )
                 tracker.update_order_state(close_futu_id, OrderState.STALE)
                 meta['_close_order_unconfirmed'] = True
@@ -3372,7 +3851,7 @@ def _close_position(scheduler, position: Position, current_price: float, exit_re
             "model_scores":      model_scores,
             "strategy_id":       meta.get("strategy_id", "voting_llm"),
             "decision_reason":   meta.get("decision_reason", ""),
-            "max_drawdown":      meta.get("max_drawdown", 0.0),
+            "max_drawdown":      getattr(position, 'max_adverse_excursion', 0.0) or meta.get("max_drawdown", 0.0),
             # P0 修复 (2026-05-31): signal_id 归因链路 — 从 position 读取
             "signal_id":         getattr(position, "signal_id", "") or meta.get("signal_id", "") or _trace_id,
             # Phase A (2026-05-14): 持仓的 owner_strategy 必须落到 trade_records
@@ -3384,13 +3863,52 @@ def _close_position(scheduler, position: Position, current_price: float, exit_re
             # 从 position.metadata 读取开仓时写入的 entry_reason, 兜底从 strategy_id 推导
             "entry_reason":      _derive_entry_reason_for_close(meta),
             # Task #14 (2026-05-27): 执行优化元数据 (TWAP / 滑点 / 延迟)
-            "metadata_json":     (meta.get("execution") if isinstance(meta.get("execution"), dict) else None),
+            # 2026-06-02: 附加 MFE (最大有利偏移) 用于评估止盈是否太低
+            "metadata_json":     _build_close_metadata_json(meta, position),
             # P1 修复 (2026-05-31): decision_id 归因链路 — 关联 signal_snapshots + decisions
             # 优先从 position.metadata 读取 (开仓时写入), 兜底从 _decision_data 获取
             "decision_id":       meta.get("decision_id", "") or _decision_data.get("decision_id", ""),
         })
 
-        # Task #26 (2026-05-27): 回填 voting_predictions 实际结果 (异步, 不阻平仓主线)
+        # ─── 反馈闭环修复 (2026-06-02): 平仓时回写 trade_outcome → decisions.db ───
+        # 闭合 "决策→执行→结果→模型绩效" 全链路
+        # link_trade_outcome 内部会:
+        #   1. UPSERT trade_outcomes 表 (exit_price, realized_pnl, exit_reason, holding_hours)
+        #   2. 计算 outcome_correct (1=预测正确, 0=错误, -1=未平仓)
+        #   3. 触发 _update_model_performance_for_decision() 更新各模型累计绩效
+        # 这是系统从 "开环执行" 变为 "可学习系统" 的关键一步
+        try:
+            from app.storage.decision_recorder import get_decision_recorder
+            _feedback_recorder = get_decision_recorder()
+            _feedback_decision_id = meta.get("decision_id", "") or _decision_data.get("decision_id", "")
+            if _feedback_decision_id:
+                _feedback_recorder.link_trade_outcome(
+                    decision_id=_feedback_decision_id,
+                    symbol=position.symbol,
+                    direction=(
+                        position.direction.value
+                        if hasattr(position.direction, 'value')
+                        else str(position.direction)
+                    ),
+                    entry_price=position.avg_entry_price,
+                    exit_price=current_price,
+                    quantity=int(position.size),
+                    realized_pnl=float(pnl),
+                    exit_reason=(
+                        exit_reason.value
+                        if hasattr(exit_reason, 'value')
+                        else str(exit_reason)
+                    ),
+                    holding_hours=position.holding_hours,
+                    entry_session=meta.get("entry_session", ""),
+                    strategy_type=getattr(position, "owner_strategy", None) or "main",
+                )
+                logger.info(
+                    f"[反馈闭环] trade_outcome 已回写: {_feedback_decision_id} "
+                    f"{position.symbol} pnl=${pnl:.2f} reason={exit_reason.value}"
+                )
+        except Exception as _fb_e:
+            logger.debug(f"[反馈闭环] trade_outcome 回写失败 (不影响平仓): {_fb_e}")
         try:
             from app.pipeline.post_trade_hook import on_position_closed as _vap_on_close
             _vap_on_close({
