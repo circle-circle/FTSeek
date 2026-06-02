@@ -42,6 +42,8 @@ class ORBPosition:
         "breakeven_activated",        # 是否已移到 breakeven
         "trail_activated",            # 是否已激活追踪止损
         "r_multiple",                 # 风险单位 (sl_distance)
+        # Task #11 (2026-06-02): 全链路归因 ID, 贯穿信号→入场→持仓→退出→trade_records
+        "trace_id",
     )
 
     def __init__(
@@ -55,6 +57,7 @@ class ORBPosition:
         atr_at_entry: float,
         sl_distance: float = 0.0,  # 止损距离 (价格单位)
         order_id: str = "",
+        trace_id: str = "",
     ):
         self.symbol = symbol
         self.direction = direction  # "LONG" / "SHORT"
@@ -80,6 +83,15 @@ class ORBPosition:
         self.breakeven_activated = False  # 止损移到 breakeven
         self.trail_activated = False      # 追踪止损激活
         self.r_multiple = sl_distance     # 风险单位
+
+        # Task #11 (2026-06-02): trace_id 上传 — 若未传入则生成, 保证全链路不裸奔
+        if not trace_id:
+            try:
+                from app.core.trace import generate_trace_id
+                trace_id = generate_trace_id(strategy="orb_engine")
+            except Exception:
+                trace_id = ""
+        self.trace_id = trace_id
 
 
 # ============================================================
@@ -131,6 +143,9 @@ class ORBEngine:
         self._daily_trades = 0
         self._daily_date = ""
 
+        # 当日亏损退出的标的集合 (2026-06-03): 禁止同日重新入场
+        self._closed_at_loss_today: set = set()
+
         logger.info(
             "[ORB] 引擎构造 | mode=%s | universe=%d只 | "
             "SL=%.1fATR TP=%.1fATR trail=%.1f×@%.1fATR",
@@ -142,6 +157,63 @@ class ORBEngine:
             config.trail_activation_atr,
         )
 
+    # ── Futu 订阅 ──
+
+    def _subscribe_symbols(self):
+        """提前订阅 ORB 标的到 Futu (确保 K 线数据就绪)
+
+        应在 start() 之前调用，给 Futu 数据管道预热时间。
+        """
+        if getattr(self, '_subscribed', False):
+            return
+        if not self._data:
+            return
+        try:
+            futu = getattr(self._data, 'futu', None)
+            if futu and hasattr(futu, 'subscribe'):
+                orb_futu_symbols = [s.replace('US.', '') for s in self._cfg.universe]
+                futu.subscribe(orb_futu_symbols, sub_types=['QUOTE', 'K_1M', 'K_15M'])
+                logger.info("[ORB] ✅ Futu 订阅完成: %d 只 ETF (%s)",
+                           len(orb_futu_symbols), orb_futu_symbols)
+                self._subscribed = True
+        except Exception as e:
+            logger.warning("[ORB] ⚠️ Futu 订阅失败: %s", e)
+
+    # ── Kline 工具 ──
+
+    @staticmethod
+    def _extract_today_opening_bars(klines: List[Dict], range_minutes: int = 15) -> List[Dict]:
+        """从 kline 列表中提取当日开盘区间的 bar
+
+        优先匹配 09:30 起的 bar；若 09:30 不可用则用当日最早 bar。
+        返回最多 range_minutes 根。
+        """
+        if not klines:
+            return []
+        try:
+            from datetime import datetime as _dt
+            import pytz
+            now_et = _dt.now(pytz.timezone('US/Eastern'))
+            today_str = now_et.strftime("%Y-%m-%d")
+            market_open_key = f"{today_str} 09:30"
+
+            today_bars = []
+            for k in klines:
+                tk = str(k.get("time_key", k.get("time", "")))
+                if tk >= market_open_key:
+                    today_bars.append(k)
+
+            # 如果 09:30 起无数据，尝试用当日全部 bar (晚启动场景)
+            if not today_bars:
+                for k in klines:
+                    tk = str(k.get("time_key", k.get("time", "")))
+                    if tk.startswith(today_str):
+                        today_bars.append(k)
+
+            return today_bars[:range_minutes]
+        except Exception:
+            return []
+
     # ── 生命周期 ──
 
     def start(self):
@@ -149,6 +221,8 @@ class ORBEngine:
         if self._running:
             logger.warning("[ORB] 已在运行")
             return
+        # 提前订阅: 给 Futu 数据管道预热时间 (必须在 daemon 启动前)
+        self._subscribe_symbols()
         self._running = True
         self._thread = threading.Thread(
             target=self._run_forever,
@@ -185,24 +259,19 @@ class ORBEngine:
         current_time = now.time()
         today_str = now.strftime("%Y-%m-%d")
 
-        # 调试日志：每 5 分钟输出一次
-        if not hasattr(self, '_last_tick_log'):
-            self._last_tick_log = 0
+        # 状态日志：每 5 分钟输出一次
         tick_count = getattr(self, '_tick_count', 0) + 1
         self._tick_count = tick_count
-        if tick_count % 60 == 1:  # 每 60 个 tick (约 5 分钟) 输出一次
+        if tick_count % 60 == 1:
             logger.info("[ORB] tick #%d | time=%s | positions=%d | ranges=%d",
                        tick_count, current_time.strftime("%H:%M:%S"),
                        len(self._positions), len(self._ranges))
-
-        # 调试：每个 tick 都输出（前 10 个）
-        if tick_count <= 10:
-            logger.info("[ORB] tick #%d 开始 | time=%s", tick_count, current_time.strftime("%H:%M:%S"))
 
         # 跨日重置
         if today_str != self._daily_date:
             self._daily_date = today_str
             self._daily_trades = 0
+            self._closed_at_loss_today = set()  # 重置亏损标的冷却 (2026-06-03)
             # 不再清除区间，允许隔夜持仓继续使用
             logger.info("[ORB] 跨日重置 | date=%s", today_str)
 
@@ -211,15 +280,8 @@ class ORBEngine:
         market_close = dt_time(16, 0)
 
         if current_time < market_open or current_time >= market_close:
-            # 盘前/盘后：仅监控持仓，不构建新区间或入场
-            if tick_count <= 10:
-                logger.info("[ORB] 盘前/盘后 | time=%s | 仅监控持仓", current_time.strftime("%H:%M:%S"))
             self._monitor_exits(now, current_time)
             return
-
-        # 调试：进入交易时段
-        if tick_count <= 10:
-            logger.info("[ORB] 交易时段 | time=%s | 开始构建区间和检测突破", current_time.strftime("%H:%M:%S"))
 
         # Phase 1: 开盘区间构建 (09:30 - 09:45)
         range_end = dt_time(9, 45)
@@ -236,9 +298,25 @@ class ORBEngine:
 
         # Phase 2: 连续突破模式 (09:45 - 16:00)
         # 构建滚动区间 + 检测突破 + 监控持仓
+        _t0 = time.time()
         self._build_rolling_ranges()
+        _elapsed_build = time.time() - _t0
+
+        _t1 = time.time()
         self._evaluate_breakouts(now, current_time)
+        _elapsed_eval = time.time() - _t1
+
+        _t2 = time.time()
         self._monitor_exits(now, current_time)
+        _elapsed_monitor = time.time() - _t2
+
+        # 诊断日志: 每 5 分钟输出一次 (tick_count % 60 == 1 已在上方处理)
+        if tick_count % 60 == 1:
+            logger.info(
+                "[ORB] ⏱ build=%.1fs eval=%.1fs monitor=%.1fs ranges=%d positions=%d",
+                _elapsed_build, _elapsed_eval, _elapsed_monitor,
+                len(self._ranges), len(self._positions)
+            )
 
         # 15:30 后调整隔夜持仓止损
         self._manage_overnight_positions(now, current_time)
@@ -251,25 +329,13 @@ class ORBEngine:
             logger.warning("[ORB] _build_ranges: data_router 不可用")
             return
 
-        # 首次运行时订阅 ORB 标的到 Futu (确保有 K 线数据)
-        if not getattr(self, '_subscribed', False):
-            try:
-                futu = getattr(self._data, 'futu', None)
-                if futu and hasattr(futu, 'subscribe'):
-                    # 将 US.IWM 格式转为 IWM (Futu 格式)
-                    orb_futu_symbols = [s.replace('US.', '') for s in self._cfg.universe]
-                    futu.subscribe(orb_futu_symbols, sub_types=['QUOTE', 'K_1M', 'K_15M'])
-                    logger.info(f"[ORB] ✅ Futu 订阅完成: {len(orb_futu_symbols)} 只 ETF ({orb_futu_symbols})")
-                    self._subscribed = True
-            except Exception as e:
-                logger.warning(f"[ORB] ⚠️ Futu 订阅失败: {e}")
-
         # 诊断: 检查数据路径 (仅首次)
         if not getattr(self, '_diag_logged', False):
             futu = getattr(self._data, 'futu', None)
             has_futu_kline = futu is not None and hasattr(futu, 'get_kline')
-            logger.info("[ORB] 数据路径: data_router=%s, has_futu=%s, futu.get_kline=%s",
-                         type(self._data).__name__, futu is not None, has_futu_kline)
+            subscribed = getattr(self, '_subscribed', False)
+            logger.info("[ORB] 数据路径: data_router=%s, has_futu=%s, subscribed=%s",
+                         type(self._data).__name__, has_futu_kline, subscribed)
             self._diag_logged = True
 
         for symbol in self._cfg.universe:
@@ -309,9 +375,15 @@ class ORBEngine:
                                      symbol, len(klines) if klines else 0, self._cfg.range_minutes)
                         continue
 
-                # 取开盘前 N 根作为区间 (klines 按时间排序, 取最早的 15 根)
-                # 如果总数 <= range_minutes, 全用; 否则取前 N 根
-                orb_bars = klines[:self._cfg.range_minutes] if len(klines) > self._cfg.range_minutes else klines
+                # 提取当日开盘区间 bar (P0-fix: 按日期过滤, 防止使用前日数据)
+                orb_bars = self._extract_today_opening_bars(klines, self._cfg.range_minutes)
+                if not orb_bars:
+                    # 无当日数据: 使用全部 kline (晚启动 / kline 无时间戳场景)
+                    orb_bars = klines[:self._cfg.range_minutes]
+                if not orb_bars or len(orb_bars) < 5:
+                    logger.info("[ORB] %s 当日 bar 不足: %d 根 (总 kline=%d)",
+                                symbol, len(orb_bars) if orb_bars else 0, len(klines))
+                    continue
                 orb_high = max(float(b.get("high", 0)) for b in orb_bars)
                 orb_low = min(float(b.get("low", 0)) for b in orb_bars)
 
@@ -375,10 +447,16 @@ class ORBEngine:
                 logger.warning("[ORB] %s 区间构建异常: %s", symbol, e, exc_info=True)
 
     def _build_rolling_ranges(self):
-        """构建 15 分钟滚动区间 (连续突破模式)"""
+        """构建 30 分钟滚动区间 (连续突破模式)
+
+        30 分钟窗口比 15 分钟更稳定，减少区间紧贴价格导致的"零突破"问题。
+        """
         if not self._data:
             logger.warning("[ORB] _build_rolling_ranges: data_router 不可用")
             return
+
+        _ROLLING_WINDOW = 30  # 滚动区间长度 (分钟)
+        _ROLLING_FETCH = _ROLLING_WINDOW + 5  # 多取 5 根冗余
 
         built_count = 0
         for symbol in self._cfg.universe:
@@ -393,14 +471,15 @@ class ORBEngine:
                     continue
 
             try:
-                # 获取最近 20 根 1-min klines (使用最近 15 根构建区间)
-                klines = self._get_1min_klines(symbol, count=20)
-                if not klines or len(klines) < 15:
-                    logger.debug("[ORB] %s klines 不足: got %d, need 15", symbol, len(klines) if klines else 0)
+                # 获取最近 35 根 1-min klines (使用最近 30 根构建区间)
+                klines = self._get_1min_klines(symbol, count=_ROLLING_FETCH)
+                if not klines or len(klines) < _ROLLING_WINDOW:
+                    logger.debug("[ORB] %s klines 不足: got %d, need %d",
+                                symbol, len(klines) if klines else 0, _ROLLING_WINDOW)
                     continue
 
-                # 取最近 15 根作为滚动区间
-                rolling_bars = klines[-15:]
+                # 取最近 30 根作为滚动区间
+                rolling_bars = klines[-_ROLLING_WINDOW:]
                 rolling_high = max(float(b.get("high", 0)) for b in rolling_bars)
                 rolling_low = min(float(b.get("low", 0)) for b in rolling_bars)
 
@@ -580,6 +659,13 @@ class ORBEngine:
 
     def _evaluate_breakouts(self, now: datetime, current_time: dt_time):
         """评估突破信号 — 连续突破模式"""
+        # 入场窗口截止检查 (entry_end_et 配置, 默认 14:00)
+        entry_end_str = getattr(self._cfg, 'entry_end_et', '14:00')
+        _h, _m = (int(x) for x in entry_end_str.split(':'))
+        entry_end = dt_time(_h, _m)
+        if current_time >= entry_end:
+            return
+
         # 动态计算最大持仓数 (基于账户资金)
         max_positions = self._calculate_max_positions()
 
@@ -593,6 +679,11 @@ class ORBEngine:
             # 防止 orb_pipeline 和 orb_engine 同时开仓同一ETF
             if self._store and self._store.has(symbol):
                 logger.debug("[ORB] %s 跳过: PositionStore已有持仓 (主线或引擎)", symbol)
+                continue
+            # 2026-06-03: 当日亏损退出的标的冷却 — 禁止重新入场
+            if (getattr(self._cfg, 'same_symbol_loss_cooldown', False)
+                    and symbol in getattr(self, '_closed_at_loss_today', set())):
+                logger.debug("[ORB] %s 跳过: 当日亏损冷却 (禁止重新入场)", symbol)
                 continue
             # 每日交易上限
             if self._daily_trades >= self._cfg.max_daily_trades:
@@ -613,7 +704,7 @@ class ORBEngine:
                 if signal:
                     self._execute_entry(symbol, signal, rng)
             except Exception as e:
-                logger.warning("[ORB] %s 突破检测异常: %s", symbol, e)
+                logger.warning("[ORB] %s 突破检测异常: %s", symbol, e, exc_info=True)
 
     def _check_breakout(
         self, symbol: str, rng: Dict[str, Any]
@@ -633,25 +724,29 @@ class ORBEngine:
         if width_pct > self._cfg.max_range_width_pct:
             return None
 
-        # 获取当前价格
+        # 获取当前价格 (唯一必须实时获取的数据)
         price = self._get_current_price(symbol)
         if not price or price <= 0:
             return None
 
-        # 获取 ATR
-        atr = self._get_atr(symbol)
+        # ── 优先使用 rng 缓存的 ATR/volume_ratio (避免阻塞 Futu API) ──
+        atr = rng.get("atr", 0)
+        if not atr or atr <= 0:
+            atr = self._get_atr(symbol)
         if not atr or atr <= 0:
             atr = price * 0.01  # fallback: 1% 估算
 
-        # 获取量能
-        vol_ratio = self._get_volume_ratio(symbol)
+        vol_ratio = rng.get("volume_ratio", 1.0)
 
         # Layer 2: 量能确认 (≥ 1.1x)
         if vol_ratio < self._cfg.min_volume_ratio:
             return None
 
         # Layer 3: 突破方向检测
-        buffer = price * self._cfg.breakout_buffer_pct / 100.0
+        # 混合 buffer: 取 max(pct-based, 0.1×ATR), 避免在窄幅区间过于敏感
+        pct_buffer = price * self._cfg.breakout_buffer_pct / 100.0
+        atr_buffer = atr * 0.1
+        buffer = max(pct_buffer, atr_buffer)
 
         direction = None
         if price > orb_high + buffer:
@@ -704,10 +799,45 @@ class ORBEngine:
         elif atr / price < 0.005:  # ATR < 0.5% 价格
             regime = "LOW_VOL"
 
+        # ── 方向偏见 (2026-06-03): regime-aware direction filter ──
+        # 数据驱动: 昨晚真实数据 SHORT 盈利 10:1 胜过 LONG (下跌市)
+        # TREND_DOWN / LOW_VOL+下行 → 提高 LONG 突破门槛, 降低假突破损失
+        # TREND_UP → 提高 SHORT 突破门槛, 避免逆势做空
+        bias_threshold = None
+        bias_reason = ""
+
+        if direction == "LONG":
+            if regime == "TREND_DOWN":
+                bias_threshold = getattr(self._cfg, 'regime_short_bias_quality', 0.85)
+                bias_reason = f"TREND_DOWN → LONG bias Q≥{bias_threshold:.2f}"
+            elif regime == "LOW_VOL" and vwap > 0 and price < vwap:
+                # LOW_VOL+下行: 价格低于VWAP = 有下行压力, LONG 胜率低
+                bias_threshold = getattr(self._cfg, 'low_vol_short_bias_quality', 0.85)
+                bias_reason = f"LOW_VOL+下行 → LONG bias Q≥{bias_threshold:.2f}"
+        elif direction == "SHORT":
+            if regime == "TREND_UP":
+                bias_threshold = getattr(self._cfg, 'regime_long_bias_quality', 0.85)
+                bias_reason = f"TREND_UP → SHORT bias Q≥{bias_threshold:.2f}"
+
+        if bias_threshold and quality_score < bias_threshold:
+            logger.info(
+                "[ORB] %s %s 方向偏见拒绝: %s | Q=%.2f (需要≥%.2f)",
+                symbol, direction, bias_reason, quality_score, bias_threshold,
+            )
+            return None
+
         logger.info(
             "[ORB] %s %s 突破确认 | Q=%.2f regime=%s W=%.2f%% VolR=%.2f",
             symbol, direction, quality_score, regime, width_pct, vol_ratio
         )
+
+        # Task #11 (2026-06-02): 信号生成时创建 trace_id, 供后续 ORBPosition / PositionStore /
+        # TradeStore 一路携带, 实现全链路追溯
+        try:
+            from app.core.trace import generate_trace_id
+            _orb_trace_id = generate_trace_id(strategy="orb_engine")
+        except Exception:
+            _orb_trace_id = ""
 
         return {
             "direction": direction,
@@ -715,6 +845,7 @@ class ORBEngine:
             "atr": atr,
             "regime": regime,
             "quality_score": quality_score,
+            "trace_id": _orb_trace_id,
         }
 
     def _execute_entry(
@@ -726,6 +857,15 @@ class ORBEngine:
         atr = signal["atr"]
         regime = signal.get("regime", "RANGE")
         quality_score = signal.get("quality_score", 0.5)
+        # Task #11 (2026-06-02): 取出信号携带的 trace_id, 下传到 ORBPosition / PositionStore /
+        # TradeStore, 未携带时在入口补一个作为兜底
+        trace_id = signal.get("trace_id", "") or ""
+        if not trace_id:
+            try:
+                from app.core.trace import generate_trace_id
+                trace_id = generate_trace_id(strategy="orb_engine")
+            except Exception:
+                trace_id = ""
 
         # 自适应止损计算 (RFC-056-DESIGN)
         width_pct = rng.get("width_pct", 0.5)
@@ -781,8 +921,13 @@ class ORBEngine:
                     atr_at_entry=atr,
                     sl_distance=sl_distance,
                     order_id=f"shadow_{uuid.uuid4().hex[:8]}",
+                    trace_id=trace_id,
                 )
                 self._daily_trades += 1
+                logger.info(
+                    "[%s] ORB shadow 入场: %s %s @ %.2f qty=%d",
+                    trace_id or "NO_TRACE", symbol, direction, price, quantity,
+                )
             return
 
         # active 模式: 实际下单
@@ -810,9 +955,14 @@ class ORBEngine:
             atr_at_entry=atr,
             sl_distance=sl_distance,
             order_id=order_id,
+            trace_id=trace_id,
         )
         self._positions[symbol] = pos
         self._daily_trades += 1
+        logger.info(
+            "[%s] ORB 入场: %s %s @ %.2f qty=%d order_id=%s",
+            pos.trace_id or "NO_TRACE", symbol, direction, price, quantity, order_id,
+        )
 
         # 同步到 PositionStore (供退出监控使用)
         if self._store:
@@ -821,10 +971,15 @@ class ORBEngine:
                 symbol=symbol,
                 direction=ModelDirection.SHORT if direction == "SHORT" else ModelDirection.LONG,
                 size=quantity,
-                entry_price=price,
-                current_price=price,
+                avg_entry_price=price,
+                initial_sl=price - sl_distance if direction == "LONG" else price + sl_distance,
             )
             store_pos.owner_strategy = "orb_engine"
+            # Task #11 (2026-06-02): trace_id 同步到 PositionStore, 供退出 / 日报 / 归因使用
+            try:
+                store_pos.trace_id = trace_id
+            except Exception:
+                pass
             store_pos.metadata = {
                 "orb_high": rng["high"],
                 "orb_low": rng["low"],
@@ -833,6 +988,7 @@ class ORBEngine:
                 "sl_distance": sl_distance,
                 "regime": regime,
                 "quality_score": quality_score,
+                "trace_id": trace_id,
             }
             self._store.add(symbol, store_pos)
 
@@ -944,6 +1100,17 @@ class ORBEngine:
                 )
 
                 if decision and decision.should_exit:
+                    # 2026-06-03: 噪音过滤 — 持仓 < min_hold_seconds 跳过 FLOOR_STOP
+                    # 只允许 trailing/take_profit/EOD 在初期触发, 过滤假突破噪音止损
+                    if (decision.reason == "ORB_FLOOR_STOP"
+                            and getattr(self._cfg, 'min_hold_seconds', 0) > 0):
+                        hold_seconds = (datetime.now() - pos.entry_time).total_seconds()
+                        if hold_seconds < self._cfg.min_hold_seconds:
+                            logger.info(
+                                "[ORB] %s FLOOR_STOP 跳过: 持仓%.0fs < min_hold=%ds (噪音过滤)",
+                                symbol, hold_seconds, self._cfg.min_hold_seconds,
+                            )
+                            continue
                     self._execute_exit(symbol, pos, price, decision)
 
             except Exception as e:
@@ -984,6 +1151,59 @@ class ORBEngine:
         # 移除仓位跟踪
         self._positions.pop(symbol, None)
 
+        # 2026-06-03: 亏损退出 → 当日冷却, 禁止该标的重新入场
+        if pnl < 0 and getattr(self._cfg, 'same_symbol_loss_cooldown', False):
+            self._closed_at_loss_today.add(symbol)
+            logger.info(
+                "[ORB] %s 亏损退出 ($%.2f), 加入当日冷却列表 (%d 个)",
+                symbol, pnl, len(self._closed_at_loss_today),
+            )
+
+        # ── 写入 trade_records (2026-06-02 修复: ORB 交易记录缺失) ──
+        try:
+            from app.storage.trade_store import TradeStore
+            from app.core.paths import get_trade_records_db
+            import json as _json
+            _ts = TradeStore(str(get_trade_records_db()))
+            _entry_time = pos.entry_time.isoformat() if hasattr(pos.entry_time, 'isoformat') else str(pos.entry_time)
+            _exit_time = datetime.now().isoformat()
+            _trade_date = pos.entry_time.strftime("%Y-%m-%d") if hasattr(pos.entry_time, 'strftime') else datetime.now().strftime("%Y-%m-%d")
+            _holding_hours = (datetime.now() - pos.entry_time).total_seconds() / 3600 if pos.entry_time else 0
+            _ts.save_trade({
+                "trace_id": pos.trace_id or f"orb-{symbol}-{int(time.time())}",
+                "trade_date": _trade_date,
+                "symbol": symbol,
+                "direction": pos.direction,
+                "entry_time": _entry_time,
+                "exit_time": _exit_time,
+                "entry_price": pos.entry_price,
+                "exit_price": price,
+                "quantity": int(pos.quantity),
+                "realized_pnl": pnl,
+                "pnl_pct": pnl_pct / 100,
+                "exit_reason": decision.reason,
+                "holding_hours": _holding_hours,
+                "signal_strength": int(getattr(pos, 'quality_score', 0) * 100) if hasattr(pos, 'quality_score') else 65,
+                "signal_confidence": 0.65,
+                "futu_order_id": pos.order_id or "",
+                "source_type": "ORB_ENGINE",
+                "entry_reason": "orb_breakout",
+                "owner_strategy": "orb_engine",
+                "market_regime": "RANGE",
+                "mode": "normal",
+                "signal_id": pos.trace_id or "",
+                "decision_id": "",
+                "metadata_json": _json.dumps({
+                    "orb_high": pos.orb_high,
+                    "orb_low": pos.orb_low,
+                    "atr_at_entry": pos.atr_at_entry,
+                    "sl_distance": pos.sl_distance,
+                }),
+            })
+            logger.info("[ORB] %s 交易记录已写入 trade_records | pnl=$%.2f", symbol, pnl)
+        except Exception as _tre:
+            logger.warning("[ORB] %s trade_records 写入失败 (不影响退出): %s", symbol, _tre)
+
         # 通知
         emoji = "💰" if pnl > 0 else "💸"
         self._notify(
@@ -1011,9 +1231,24 @@ class ORBEngine:
     # ── 市场数据接口 ──
 
     def _get_current_price(self, symbol: str) -> Optional[float]:
-        """获取当前价格"""
+        """获取当前价格 (优先读 Push 缓存, 避免阻塞 Futu API)"""
         if not self._data:
             return None
+
+        # 路径 0: 直接读 Push quote 缓存 (零延迟, 无 API 调用)
+        try:
+            futu = getattr(self._data, 'futu', None)
+            if futu and hasattr(futu, '_push_quote_cache'):
+                with futu._push_cache_lock:
+                    cached = futu._push_quote_cache.get(symbol)
+                    if cached:
+                        _p = float(cached.get("price", 0) or cached.get("last", 0) or 0)
+                        if _p > 0:
+                            return _p
+        except Exception:
+            pass
+
+        # 路径 1: data_router.get_quote (可能触发 API 调用)
         try:
             quote = self._data.get_quote(symbol)
             if quote and isinstance(quote, dict):
@@ -1050,9 +1285,15 @@ class ORBEngine:
         return None
 
     def _get_volume_ratio(self, symbol: str) -> float:
-        """获取当前成交量 / 5 日均量"""
+        """获取当前成交量 / 均量 (从 kline 自行计算)
+
+        计算方法: 最近 5 根 K 线均量 / 全部可用 K 线均量
+        data_router 无 get_volume_ratio 方法，故从 K 线直接推算。
+        """
         if not self._data:
             return 1.0  # 无数据时不阻拦
+
+        # 路径 1: data_router 原生支持 (未来扩展)
         try:
             if hasattr(self._data, "get_volume_ratio"):
                 ratio = self._data.get_volume_ratio(symbol)
@@ -1060,6 +1301,27 @@ class ORBEngine:
                     return float(ratio)
         except Exception:
             pass
+
+        # 路径 2: 从 kline 数据计算 (近期均量 / 整体均量)
+        try:
+            klines = self._get_1min_klines(symbol, count=60)
+            if klines and len(klines) >= 10:
+                volumes = []
+                for k in klines:
+                    v = float(k.get("volume", 0))
+                    if v > 0:
+                        volumes.append(v)
+
+                if len(volumes) >= 10:
+                    recent_n = min(5, len(volumes) // 3)
+                    recent_avg = sum(volumes[-recent_n:]) / recent_n
+                    session_avg = sum(volumes) / len(volumes)
+                    if session_avg > 0:
+                        ratio = recent_avg / session_avg
+                        return max(0.1, min(ratio, 10.0))  # clamp [0.1, 10.0]
+        except Exception:
+            pass
+
         return 1.0  # fallback: 不过滤
 
     def _get_vwap(self, symbol: str) -> float:

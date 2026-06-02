@@ -53,6 +53,13 @@ class ORBConfig:
     eod_exit_time: str = "15:55"         # 盘末强制退出时间
     polling_interval_seconds: int = 5    # 轮询间隔
 
+    # ── 方向偏见 (2026-06-03): 基于真实数据, SHORT在下跌市中胜过LONG 10:1 ──
+    regime_short_bias_quality: float = 0.85  # TREND_DOWN: LONG 突破需要 Q≥0.85
+    regime_long_bias_quality: float = 0.85   # TREND_UP: SHORT 突破需要 Q≥0.85
+    low_vol_short_bias_quality: float = 0.85 # LOW_VOL+下行: LONG 突破需要 Q≥0.85
+    min_hold_seconds: int = 180              # 持仓 < N秒 跳过 FLOOR_STOP 退出 (噪音过滤)
+    same_symbol_loss_cooldown: bool = True   # 当日亏损退出的标的禁止重新入场
+
     @classmethod
     def from_dict(cls, raw: Dict[str, Any]) -> "ORBConfig":
         """从 unified_config.yaml::orb dict 构造"""

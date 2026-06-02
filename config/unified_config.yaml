@@ -740,6 +740,19 @@ OPTION_QUALITY_GATE:
   min_dte: 5
   max_dte: 45
 risk:
+  # Task #9 (2026-06-02): 风控 Pipeline 单步/总超时控制
+  # 防御场景: VIX API/Earnings DB/LLM 调用阻塞导致整条 pipeline 卡住, 后续信号错过
+  # fail-open: 非关键检查超时 → 默认通过 + WARNING; fail-close: 关键检查超时 → 拒绝交易
+  # 读取者: app/risk/us_risk_pipeline.py::USRiskPipeline.__init__
+  risk_pipeline:
+    per_check_timeout: 5.0          # 单步超时 (秒) — 每个 RiskCheck 独立线程超时
+    total_timeout: 30.0             # Pipeline 总超时 (秒) — 超过则 fail-close
+    critical_checks_fail_close:     # 关键检查 (超时 fail-close, 拒绝交易)
+      - DrawdownCheck               # 日内回撤 — 资金安全护栏
+      - PositionLimitCheck          # 仓位限制 — 集中度护栏
+      - BuyingPowerCheck            # 资金可用 — 防止超买
+      - MarketCircuitCheck          # 大盘熔断
+      - CircuitBreakerCheck         # 系统/策略/品种熔断
   # Phase 3 (2026-05-31): 退出路由统一 — ExitRuleDispatcher 影子模式开关
   # use_unified_dispatcher=true: 主路径走新 dispatcher (谨慎启用, 仅验证后切换)
   # log_comparison_mode=true: 与 legacy 并行评估, 仅记录差异 (默认 false 避免日志噪声)
@@ -2135,6 +2148,13 @@ orb:
   min_range_width_pct: 0.2         # 模拟盘: 0.3→0.2, 允许更窄区间
   min_volume_ratio: 0.8            # 模拟盘: 1.1→0.8, 放宽量能要求
   entry_end_et: "14:00"            # 模拟盘: 11:00→14:00, 延长入场窗口
+  # Regime-aware direction bias (2026-06-03): 基于真实数据
+  # ⚠ SHORT在下跌市胜过LONG 10:1 → 上涨市禁SHORT, 下跌市禁LONG
+  regime_short_bias_quality: 0.85    # TREND_DOWN: LONG 突破需要 Q≥0.85
+  regime_long_bias_quality: 0.85     # TREND_UP: SHORT 突破需要 Q≥0.85
+  low_vol_short_bias_quality: 0.85   # LOW_VOL+下行: LONG 突破需要 Q≥0.85
+  min_hold_seconds: 180              # 持仓<180s跳过FLOOR_STOP退出 (噪音过滤)
+  same_symbol_loss_cooldown: true    # 当日亏损退出的标的禁止重新入场
 
 # ─── 催化辩论引擎 (2026-05-27 RFC-Catalyst) ───
 # 盘前/盘后新闻催化事件检测 + 多模型辩论
