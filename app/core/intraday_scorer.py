@@ -215,9 +215,9 @@ def _session_multiplier() -> Tuple[float, float]:
     from app.core.shared_kernel import get_shared_kernel
     session = get_shared_kernel().get_current_session()
     multipliers = {
-        "opening_drive":  (0.75, 0.85),   # 开盘: 信号不可靠, 仓位保守
+        "opening_drive":  (0.60, 0.70),   # P0 (2026-06-03): 0.75→0.60, 开盘噪音期数据 WR=35.1% Avg=-$47
         "morning":        (0.90, 0.95),   # 盘中前段: 逐步正常化
-        "midday":         (0.85, 0.80),   # 午间: 波动低, 幅度小
+        "midday":         (0.70, 0.65),   # P0 (2026-06-03): 0.85→0.70, 午间数据 WR=23.7% Total=-$5,584
         "afternoon":      (0.95, 1.00),   # 午后: 正常
         "closing_drive":  (1.00, 1.10),   # 收盘: 趋势可靠, 适度激进
     }
