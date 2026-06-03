@@ -132,6 +132,8 @@ class ExitReason(str, Enum):
     SCALE_OUT = "SCALE_OUT"  # 2026-04-27: 分批止盈部分平仓
     PRE_CLOSE_EXIT = "PRE_CLOSE_EXIT"  # 2026-04-27: 盘末强制退出
     VELOCITY_EXIT = "VELOCITY_EXIT"  # 2026-05-31: 速度捕捉退出
+    DAY_TRADE_TP = "DAY_TRADE_TP"  # 2026-06-03: 日内止盈 (day_trade 规则 TP 触发)
+    DAY_TRADE_TIMEOUT = "DAY_TRADE_TIMEOUT"  # 2026-06-03: 日内超时退出 (day_trade 规则超时触发)
 
 
 class FailureType(str, Enum):
@@ -367,6 +369,14 @@ class Position:
     owner_strategy: Optional[str] = None
     # 仓位占总净值百分比 (用于 CapitalAllocator 释放)
     position_pct: float = 0.0
+
+    # ─── MAE/MFE 跟踪 (2026-06-02: 反馈闭环修复) ───
+    # Maximum Adverse Excursion: 持仓期间最大浮亏金额 (负数, 0=未记录)
+    # 用于评估止损是否设得太紧/太松, 是止损优化的核心数据
+    max_adverse_excursion: float = 0.0
+    # Maximum Favorable Excursion: 持仓期间最大浮盈金额 (正数, 0=未记录)
+    # 用于评估止盈是否设得太低 (MFE 远大于 TP 说明利润回吐过多)
+    max_favorable_excursion: float = 0.0
 
     # 运行时元数据 (不持久化，用于异常标记等临时状态)
     metadata: Dict[str, Any] = field(default_factory=dict)

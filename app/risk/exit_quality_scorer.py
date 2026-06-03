@@ -48,6 +48,7 @@ _REASON_TO_RULE = {
     "DAY_TRADE_TP_TIER3": "day_trade",
     "DAY_TRADE_TIME_DECAY": "day_trade",
     "DAY_TRADE_PROFIT_LOCK": "day_trade",
+    "DAY_TRADE_TIMEOUT": "day_trade",  # 2026-06-03: 新增超时退出映射
     "SCALE_OUT": "scale_out",
     "CHANDELIER_TRAIL": "trailing_stop",
     "SL_HIT": "trailing_stop",
@@ -178,7 +179,7 @@ class ExitQualityScorer:
                         "DAY_TRADE_TP_TIER2", "DAY_TRADE_TP_TIER3"}
         trail_exits = {"CHANDELIER_TRAIL", "BREAKEVEN_STOP"}
         stop_exits = {"SL_HIT", "ATR_STOP", "STOP_LOSS", "DAY_TRADE_SL", "FLASH_EXIT"}
-        time_exits = {"TIME_STOP", "DAY_TRADE_TIME_DECAY"}
+        time_exits = {"TIME_STOP", "DAY_TRADE_TIME_DECAY", "DAY_TRADE_TIMEOUT"}
 
         if reason in profit_exits:
             # 止盈退出 — 完美匹配入场逻辑

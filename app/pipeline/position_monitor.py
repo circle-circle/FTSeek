@@ -37,13 +37,14 @@ _opt_price_fail_count: Dict[str, int] = {}
 # ============================================================
 
 # Dispatcher 规则名 -> legacy ExitReason 映射 (供 _execute_close 内 reason_map 使用)
+# P0 修复 (2026-06-03): day_trade 拆分为 TP/timeout 两种语义, 由 _build_exit_reason_dict 动态判断
 _DISPATCHER_REASON_MAP: Dict[str, str] = {
     "flash_exit": "FLASH_EXIT",
     "pre_close": "PRE_CLOSE_EXIT",
     "circuit_breaker": "HARD_STOP",
     "earnings_guard": "HARD_STOP",
     "trailing_stop": "CHANDELIER",
-    "day_trade": "TIME_STOP",
+    "day_trade": "DAY_TRADE",  # 占位, 实际由 _build_exit_reason_dict 细化为 DAY_TRADE_TP / DAY_TRADE_TIMEOUT
     "time_decay": "TIME_STOP",
     "scale_out": "SCALE_OUT",
     "velocity_exit": "VELOCITY_EXIT",
@@ -351,6 +352,16 @@ def _build_dispatcher_market_data(scheduler, position, current_price: float) -> 
 def _build_exit_reason_dict(position, decision, current_price: float) -> Dict[str, Any]:
     """将 ExitDecision 转为 _execute_close 期望的 reason_dict"""
     reason_key = _DISPATCHER_REASON_MAP.get(decision.rule_name, "ATR_STOP")
+
+    # P0 修复 (2026-06-03): day_trade 区分止盈/超时两种语义
+    # ExitDecision.reason 字段包含 "Day trade TP: ..." 或 "Day trade timeout: ..."
+    if decision.rule_name == "day_trade":
+        _dt_reason = (decision.reason or "").lower()
+        if "tp" in _dt_reason or "profit" in _dt_reason or "take_profit" in _dt_reason:
+            reason_key = "DAY_TRADE_TP"
+        else:
+            reason_key = "DAY_TRADE_TIMEOUT"
+
     reason_dict: Dict[str, Any] = {
         "reason": reason_key,
         "exit_price": decision.exit_price or current_price,
@@ -1195,6 +1206,9 @@ def _check_positions(scheduler):
             reason_map = {"FLASH_EXIT": ExitReason.FLASH_EXIT, "HARD_STOP": ExitReason.HARD_STOP,
                 "ATR_STOP": ExitReason.TRAILING_STOP, "CHANDELIER": ExitReason.TRAILING_STOP,
                 "BREAKEVEN": ExitReason.BREAKEVEN_STOP, "TIME_STOP": ExitReason.TIME_STOP,
+                "DAY_TRADE_TP": ExitReason.DAY_TRADE_TP,
+                "DAY_TRADE_TIMEOUT": ExitReason.DAY_TRADE_TIMEOUT,
+                "DAY_TRADE": ExitReason.DAY_TRADE_TIMEOUT,  # fallback
                 "SCALE_OUT": ExitReason.SCALE_OUT, "PRE_CLOSE_EXIT": ExitReason.PRE_CLOSE_EXIT,
                 "PRE_CLOSE_EXIT_PARTIAL": ExitReason.PRE_CLOSE_EXIT,
                 "TECHNICAL_BREACH": ExitReason.STRUCTURE_EXIT,

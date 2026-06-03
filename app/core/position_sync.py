@@ -564,7 +564,8 @@ class USPositionSync:
             self._sync_to_position_store(futu_positions)
 
         self._last_sync_time = datetime.now()
-        logger.info("[US Sync] Done | Futu: %d | DB: %d", len(futu_positions), len(futu_positions))
+        _db_count = self.position_store.count() if self.position_store else len(futu_positions)
+        logger.info("[US Sync] Done | Futu: %d | DB: %d", len(futu_positions), _db_count)
 
         # P2 新增 (2026-04-29): 一致性校验 + 资本安全同步
         self._verify_and_sync_capital(futu_positions)
