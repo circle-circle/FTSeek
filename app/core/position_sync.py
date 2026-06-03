@@ -265,10 +265,12 @@ class USPositionSync:
                     code = str(row['code'])
                     if not code.startswith('US.'):
                         code = 'US.' + code
+                    side = str(row.get('position_side', ''))
+                    is_short = (qty < 0) or (side == 'SHORT')
                     positions[code] = {
                         'qty': abs(qty),
                         'cost': float(row.get('cost_price', 0)),
-                        'direction': 'SHORT' if qty < 0 else 'LONG'
+                        'direction': 'SHORT' if is_short else 'LONG'
                     }
             return positions
         except Exception as e:
@@ -351,7 +353,7 @@ class USPositionSync:
                         futu_positions[code] = {
                             'qty': abs(qty),
                             'cost': float(row.get('cost_price', 0)),
-                            'direction': 'SHORT' if qty < 0 else 'LONG'
+                            'direction': 'SHORT' if ((qty < 0) or (str(row.get('position_side', '')) == 'SHORT')) else 'LONG'
                         }
                 # 更新已知持仓缓存
                 self._last_known_positions = dict(futu_positions)
@@ -454,8 +456,19 @@ class USPositionSync:
             if symbol in db_positions:
                 # Update existing
                 db_info = db_positions[symbol]
-                if abs(db_info['size'] - info['qty']) > 0.1:
-                    logger.info("[US Sync] Updating %s: size %s -> %s", symbol, db_info['size'], info['qty'])
+                size_changed = abs(db_info['size'] - info['qty']) > 0.1
+                # P0 修复 (2026-06-03): 方向翻转检测 — 原代码仅检查 size 变化
+                # 根因: XLF 从 SHORT -11202 翻转为 LONG +11202 时 abs size 不变，
+                # UPDATE 被跳过 → DB 方向过期 → 平仓单变成加仓单
+                direction_changed = db_info.get('direction', '') != info['direction']
+                if size_changed or direction_changed:
+                    if direction_changed:
+                        logger.warning(
+                            f"[US Sync·方向翻转] {symbol} {db_info.get('direction','?')}→{info['direction']} "
+                            f"(size={info['qty']}, cost=${info['cost']:.2f})"
+                        )
+                    else:
+                        logger.info("[US Sync] Updating %s: size %s -> %s", symbol, db_info['size'], info['qty'])
                     cursor.execute(
                         "UPDATE open_positions SET size=?, direction=?, avg_entry_price=?, updated_at=? WHERE symbol=?",
                         (info['qty'], info['direction'], info['cost'], datetime.now().isoformat(), symbol)

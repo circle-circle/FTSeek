@@ -3363,9 +3363,12 @@ def _verify_position_still_held(scheduler, position: Position) -> bool:
     防止双重平仓: 如果 algo/手动已在外部门平仓，系统不再提交卖单。
     查 Futu position_list_query 获取实时持仓数量。
     
+    P0 修复 (2026-06-03): 增加方向校验 — 防止方向错位导致加仓
+    根因: XLF DB 记录 SHORT 但 broker 实际 LONG → BUY 平仓变成加仓
+    
     Returns:
-        True = 持仓仍在，可执行平仓
-        False = 持仓已不存在或数量不足，跳过
+        True = 持仓仍在且方向一致，可执行平仓
+        False = 持仓不存在/数量不足/方向冲突，跳过
     API 异常时返回 True (保守放行，系统策略仓位需要退出保护)
     """
     try:
@@ -3382,13 +3385,27 @@ def _verify_position_still_held(scheduler, position: Position) -> bool:
         )
         if ret != RET_OK or data is None or data.empty:
             return False  # broker 端无该持仓
-        broker_qty = abs(float(data.iloc[0].get('qty', 0)))
+        row = data.iloc[0]
+        broker_qty = abs(float(row.get('qty', 0)))
         needed = position.size
         if broker_qty < needed * 0.5:  # 容差 50% (部分平仓场景)
             logger.warning(
                 f"[持仓校验] {position.symbol} broker_qty={broker_qty} < needed={needed}×0.5"
             )
             return False
+        
+        # P0 方向校验 (2026-06-03): broker position_side vs DB direction
+        broker_side = str(row.get('position_side', '')).upper()
+        db_direction = position.direction.name if hasattr(position.direction, 'name') else str(position.direction)
+        if broker_side and broker_side != 'N/A':
+            expected_side = 'LONG' if db_direction == 'LONG' else 'SHORT'
+            if broker_side != expected_side:
+                logger.error(
+                    f"[持仓校验·方向冲突🔴] {position.symbol} DB={db_direction} vs Broker={broker_side} "
+                    f"(qty={broker_qty}) — 禁止平仓，防止方向错位加仓"
+                )
+                return False
+        
         return True
     except Exception as e:
         logger.debug(f"[持仓校验] API 异常 (保守放行): {e}")
