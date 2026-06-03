@@ -931,11 +931,11 @@ risk:
     max_order_amount: 120000
     min_liquidity_ratio: 0.5
   signal_quality:
-    # P0 (2026-06-03): 提高入场门槛 0.65 → 0.75
-    # voting_llm PF=0.43, -$30,921 → 只允许强共识信号入场
-    # Level 1 (单模型, cap 0.70) 和 Level 2 (纯技术, cap 0.60) 被自然过滤
-    min_confidence: 0.75
-    min_consensus: 0.35   # P0 (2026-06-03): 0.20→0.35, 对齐 scheduler
+    # P0 (2026-06-03): 0.65→0.55, 降低基线让 direction_bias 控制
+    # 数据: confidence 0.5-0.65 区间是唯一正期望 (+$5,712)
+    # 真正的过滤器是 signal_strength>=60 (阻断 -$18K vlow 区间)
+    min_confidence: 0.55
+    min_consensus: 0.25   # P0 (2026-06-03): 0.20→0.25, 对齐 scheduler
     min_score: 50
   # Task #6 (2026-05-30): 仓位计算ATR联动配置
   # risk_per_trade_pct: 0.005 → 0.008 (单笔风险预算放大), max_position_pct: 0.15 → 0.12 (单标的上限收紧)
@@ -1590,9 +1590,9 @@ strategies:
     max_positions: 12                # 模拟盘: 5→12, 最大化数据采集
     direction_bias:
       LONG:
-        min_confidence: 0.60  # P0 (2026-06-03): 0.40→0.60, LONG 需要更强确认
+        min_confidence: 0.55  # P0 (2026-06-03): 0.40→0.55, direction_bias 控制门槛
       SHORT:
-        min_confidence: 0.50  # P0 (2026-06-03): 0.25→0.50, SHORT 不再极度放宽
+        min_confidence: 0.45  # P0 (2026-06-03): 0.25→0.45, SHORT 数据表现优于 LONG
     # DEPRECATED (2026-05-31): strategies.defaults.signal_cooldown_seconds 不再生效
     #   实际生效路径: strategy.signal_cooldown (本文件 SoT, 见上方 strategy 段)
     #   启动时 ConfigValidator.check_deprecated_fields 会再次告警, 修改此键不会生效。
@@ -1754,7 +1754,7 @@ scheduler:
   # 实际生效路径: risk.signal_quality.min_confidence (本文件 line 882, 已 = 0.65)
   # CFG.SCHEDULER_MIN_CONFIDENCE = 0.65 (代码 config_defaults.py:60)
   min_signal_strength: 60  # P0 (2026-06-03): 50→60, 过滤最弱20%信号 (IntradayScorer range 10-90)
-  min_consensus_level: 0.35  # P0 (2026-06-03): 0.20→0.35, 要求模型间中等共识
+  min_consensus_level: 0.25  # P0 (2026-06-03): 0.20→0.25, 轻度收紧 (数据: 0.2-0.5 区间仅11笔)
   adaptive_scan_enabled: true
   scan_segments:
     09:30-09:50: 2
