@@ -53,20 +53,21 @@ progressive_trailing:
 # 安全底线: 浮亏 >= max_grace_loss_pct (-3%) 立即解除保护, 防止 grace 包过宽导致大亏
 global_hold_protection:
   enabled: true
-  min_hold_minutes_after_entry: 10  # 模拟盘: 30→10min grace period
+  min_hold_minutes_after_entry: 30  # P0 (2026-06-03): 10→30min, 减少入场后立即止损
   max_grace_loss_pct: 0.03          # 浮亏 >=3% 立即解除保护 (硬底兜底)
   allowed_during_grace:
-    - flash_exit
     - circuit_breaker
     - earnings_guard                # 财报突发也必须能逃
     - pre_close                     # 盘末退出 (避免隔夜跳空)
+    # M4 (2026-06-03): 移除 flash_exit — 数据证明入场后 120s 内闪退 173 次全部误触发
+    # flash_exit 已由 min_holding_seconds=120 独立保护, 无需穿透 grace period
   log_each_block: true              # 每次屏蔽记日志便于审计
 
 # ── Phase 3 (2026-05-31): 退出监控调度参数 ──
 exit_monitor:
   scan_interval_seconds: 60         # 扫描周期 (分钟以下)
   cooldown_seconds: 120             # 同一持仓退出冷却
-  min_hold_minutes: 20              # 恢复20分钟最小持仓时间
+  min_hold_minutes: 30              # P0 (2026-06-03): 20→30min, 匹配 grace period
 
 # ── Phase 3 (2026-05-31): 退出规则互斥 (新 ExitRuleDispatcher 使用) ──
 # key=高优先级触发的规则, value=被压制不再上报的规则列表
@@ -88,14 +89,15 @@ global:
 exit_rules:
   
   # 规则 1: Flash Exit (60秒内剧烈波动)
+  # P0 禁用 (2026-06-03): 6笔全亏 0% WR -$1,362, 纯噪音
   flash_exit:
-    enabled: true
+    enabled: false
     trigger: "adverse_move >= flash_multiplier * atr"
     scan_interval_seconds: 60             # 优化 (2026-05-03 P2): 从 30s 延长到 60s, 降低假触发率
-    flash_multiplier_default: 1.0         # 优化 (2026-05-03 P0): 从 0.8 提高到 1.0, 减少噪音触发 (历史2次Flash全部亏损)
+    flash_multiplier_default: 2.0         # 根因修复 (2026-06-02): 1.0→2.0, dispatcher 改用速度检测 (prev→current), 2×ATR_raw 才是真闪崩
     earnings_multiplier: 1.5              # 财报期放宽到 1.5x
     min_atr: 0.5                          # ATR 底限
-    min_holding_seconds: 120              # 修复 (2026-06-02 P0): 入场后120s内不触发FLASH_EXIT, 防止开仓即闪退 (辩论共识: 76%交易为闪退且全亏)
+    min_holding_seconds: 120              # 根因修复 (2026-06-02): 30s→120s, 给信号发展时间 (30s 导致 173 次误触发)
 
   # 规则 2: ATR 动态止损 (替代固定 -8%)
   atr_stop:
@@ -105,7 +107,7 @@ exit_rules:
     # 优化 (2026-05-03): 收紧整体倍数以匹配 PRE_CLOSE_EXIT 豁免节奏
     # 优化 (2026-05-30 Task#7): 3档扩展为5档, 让退出曲线更贴合波动特征, 减少"由盈转亏"
     multiplier_by_profit:
-      initial: 2.0                   # 开仓初期：2.0x ATR (保持不变)
+      initial: 3.0                   # P0 (2026-06-03): 2.0→3.0, 减少92笔1h内sl_hit
       profit_05atr: 1.8             # 新增 (2026-05-30): 盈利≥0.5ATR 即开始收紧锁利
       profit_1atr: 1.6              # 收紧 (2026-05-30): 1.8 → 1.6, 更积极锁利
       profit_2atr: 1.4              # 新增 (2026-05-30): 盈利≥2ATR 进一步收紧
@@ -158,7 +160,7 @@ exit_rules:
 
   # 规则 5.5: 速度捕捉退出 (Phase 3 2026-05-31)
   velocity_exit:
-    enabled: true
+    enabled: false                   # P0 (2026-06-03): 禁用，样本不足且与 trailing_stop 冲突
     lookback_bars: 3              # 检测最近 N 根 K 线的变动
     sigma_window: 20              # σ 计算窗口 (K 线数)
     sigma_multiplier: 2.0         # 触发阈值: 变动 > N × σ
@@ -250,7 +252,7 @@ sector_overrides:
     atr_multiplier: 2.0
     flash_multiplier: 0.6
   default:                          # 默认
-    atr_multiplier: 2.0             # 优化 (2026-05-03): 从 2.5 降至 2.0, 匹配 atr_stop.initial
+    atr_multiplier: 3.0             # P0 (2026-06-03): 2.0→3.0, 匹配 atr_stop.initial
     flash_multiplier: 1.0           # 优化 (2026-05-03): 从 0.8 提高到 1.0, 匹配 flash_exit 新基准
 
 # ── 做空差异化 ──
@@ -274,8 +276,7 @@ short_overrides:
   # 幻方 Principle: 技术破位快速平仓
   technical_breach:
     enabled: true                     # P0 修复 (2026-05-08): 显式开关
-    trigger_atr_mult: 2.0             # P3 优化 (2026-05-22): 1.0→2.0 增加破位缓冲区，减少过早 STRUCTURE_EXIT
-                                      #   数据：33笔 STRUCTURE_EXIT 亏 -$3,106，触发过于激进
+    trigger_atr_mult: 3.0             # P0 (2026-06-03): 2.0→3.0, 减少 STRUCTURE_EXIT 误触发 (33笔 30%WR -$3,106)
                                       #   注意：unified_config.yaml 的 breach_threshold_pct 不影响此处逻辑
     cover_pct: 100                    # 平仓 100%
     # P0 修复 (2026-05-08): 防呆机制
