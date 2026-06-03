@@ -37,7 +37,9 @@ from app.core.models import (
 )
 from app.core.events import EventStore
 from app.storage.trade_store import TradeStore
-from app.execution.options_selector import OptionSelector, OptionContract
+# ADR-003 (2026-06-04): 期权已禁用 (options.enabled=false), 移除 OptionSelector 初始化
+# 保留导入以兼容 position_monitor 的期权平仓代码 (处理历史残留仓位)
+# from app.execution.options_selector import OptionSelector, OptionContract
 
 logger = logging.getLogger(__name__)
 
@@ -55,38 +57,48 @@ class PositionStore:
         self._lock = threading.RLock()
 
     def add(self, symbol: str, position: Position):
+        # Critical #3 修复 (2026-06-02):
+        # 内存写入 + daily_active_pool 同步必须在同一锁内, 否则
+        # scan_loop / monitor_loop 并发调用时可能出现:
+        #   1) 内存与动态池/JSON 文件不一致
+        #   2) daily_active_pool.save() 与 remove() 交叉导致条目丢失
+        # 锁顺序: PositionStore._lock → DailyActivePool._lock
+        # (DailyActivePool 不会回调 PositionStore, 因此不存在循环依赖)
         with self._lock:
             self._positions[symbol] = position
 
-        # 自动同步动态池 (P0 修复: 传入市场前缀)
-        # Task #49 (2026-05-28): 消除 silent exception, 失败记录但不中断主流程 (非关键路径)
-        try:
-            from app.utils.daily_active_pool import get_daily_active_pool
-            pool = get_daily_active_pool(market_prefix="US.")
-            pool.add_position(symbol, metadata={
-                "direction": position.direction.value if hasattr(position.direction, 'value') else str(position.direction),
-                "quantity": position.size,
-            })
-        except Exception as e:
-            logger.error(f"[daily_active_pool] {symbol} 添加同步失败: {e}")
-            # 不中断主流程 (内存持仓已写入), 但异常向监控系统暴露
+            # 自动同步动态池 (P0 修复: 传入市场前缀)
+            # Task #49 (2026-05-28): 消除 silent exception, 失败记录但不中断主流程 (非关键路径)
+            try:
+                from app.utils.daily_active_pool import get_daily_active_pool
+                pool = get_daily_active_pool(market_prefix="US.")
+                pool.add_position(symbol, metadata={
+                    "direction": position.direction.value if hasattr(position.direction, 'value') else str(position.direction),
+                    "quantity": position.size,
+                })
+            except Exception as e:
+                logger.error(f"[daily_active_pool] {symbol} 添加同步失败: {e}")
+                # 不中断主流程 (内存持仓已写入), 但异常向监控系统暴露
 
     def get(self, symbol: str) -> Optional[Position]:
         with self._lock:
             return self._positions.get(symbol)
 
     def remove(self, symbol: str):
+        # Critical #3 修复 (2026-06-02):
+        # 内存移除与动态池移除原子化, 避免持仓闪断窗口期被其他线程读取到
+        # "已平仓但仍在动态池" 的不一致状态.
         with self._lock:
             self._positions.pop(symbol, None)
 
-        # 自动同步动态池 (P0 修复: 传入市场前缀)
-        # Task #49 (2026-05-28): 消除 silent exception, 失败记录但不中断主流程 (非关键路径)
-        try:
-            from app.utils.daily_active_pool import get_daily_active_pool
-            get_daily_active_pool(market_prefix="US.").remove_position(symbol)
-        except Exception as e:
-            logger.error(f"[daily_active_pool] {symbol} 移除同步失败: {e}")
-            # 不中断主流程 (内存持仓已移除), 但异常向监控系统暴露
+            # 自动同步动态池 (P0 修复: 传入市场前缀)
+            # Task #49 (2026-05-28): 消除 silent exception, 失败记录但不中断主流程 (非关键路径)
+            try:
+                from app.utils.daily_active_pool import get_daily_active_pool
+                get_daily_active_pool(market_prefix="US.").remove_position(symbol)
+            except Exception as e:
+                logger.error(f"[daily_active_pool] {symbol} 移除同步失败: {e}")
+                # 不中断主流程 (内存持仓已移除), 但异常向监控系统暴露
 
     def all(self) -> List[Position]:
         with self._lock:
@@ -114,11 +126,11 @@ class TradingScheduler:
     # Task #46 (2026-05-28) 配置 SSOT: 类级常量仅作 fallback,
     # 实际值在 __init__ → _load_scheduler_params 内通过 ConfigKeys 从
     # unified_config.yaml 读取。如需修改, 请改 YAML, 不要改这里。
-    SCAN_INTERVAL_MINUTES = 10     # fallback: scheduler.scan_interval_minutes
+    SCAN_INTERVAL_MINUTES = 3      # fallback: scheduler.scan_interval_minutes (同步 YAML 2026-06-03: 10→3)
     MONITOR_INTERVAL_MINUTES = 0.5  # fallback: scheduler.monitor_interval_minutes
-    MAX_POSITIONS = 5              # fallback: scheduler.max_positions
+    MAX_POSITIONS = 12             # fallback: scheduler.max_positions (同步 YAML 2026-06-03: 5→12)
     _DEFAULT_MIN_SIGNAL_STRENGTH = 50    # fallback: strategies.defaults.min_strength
-    _DEFAULT_MIN_CONFIDENCE = 0.5         # fallback: risk.signal_quality.min_confidence
+    _DEFAULT_MIN_CONFIDENCE = 0.65        # 2026-06-02: 0.5 → 0.65 (同步 YAML risk.signal_quality.min_confidence)
     _DEFAULT_MIN_CONSENSUS_LEVEL = 0.20   # fallback: scheduler.min_consensus_level
     # 兼容旧引用 (保持 self.MIN_CONFIDENCE 访问可用)
     MIN_SIGNAL_STRENGTH = _DEFAULT_MIN_SIGNAL_STRENGTH
@@ -182,10 +194,9 @@ class TradingScheduler:
         # 保留 news 属性别名，兼容旧引用
         self.news = self.news_provider
 
-        # 期权选择器（SHORT 信号 → 买入 Put 期权替代卖空）
-        # P1-3 修复 2026-04-26: 复用 broker_adapter 的 quote_ctx，避免浪费 OpenD LV3 槽位
-        self.quote_ctx_for_options = None  # 延迟到 execution_engine.initialize() 后注入
-        self.option_selector = OptionSelector(quote_ctx=None)
+        # ADR-003 (2026-06-04): 期权已禁用, 不再初始化 OptionSelector
+        self.quote_ctx_for_options = None
+        self.option_selector = None
 
         # 多模型投票
         self.voting_coordinator = VotingCoordinator(
@@ -267,13 +278,12 @@ class TradingScheduler:
                 self.risk_engine.broker_adapter = broker
                 logger.info("[调度器] broker_adapter 已注入 RiskEngine (方向敞口拆分已激活)")
 
-        # P1-3 2026-04-26: 复用 broker_adapter.quote_ctx 给 option_selector
-        if self.execution_engine:
-            ba = getattr(self.execution_engine, 'broker_adapter', None)
-            if ba and getattr(ba, 'quote_ctx', None):
-                self.quote_ctx_for_options = ba.quote_ctx
-                self.option_selector.quote_ctx = ba.quote_ctx
-                logger.info("[调度器] option_selector 已复用 broker_adapter.quote_ctx (节省 OpenD 槽位)")
+        # ADR-003 (2026-06-04): 期权已禁用, 跳过 option_selector quote_ctx 注入
+        # if self.execution_engine:
+        #     ba = getattr(self.execution_engine, 'broker_adapter', None)
+        #     if ba and getattr(ba, 'quote_ctx', None):
+        #         self.quote_ctx_for_options = ba.quote_ctx
+        #         self.option_selector.quote_ctx = ba.quote_ctx
 
         # 持久化交易记录 (F18: 走 paths.py)
         from app.core.paths import get_trade_records_db
@@ -481,6 +491,13 @@ class TradingScheduler:
         try:
             from app.risk.us_risk_pipeline import USRiskPipeline
 
+            # Task #9 (2026-06-02): 从 unified_config.yaml 读取 risk_pipeline 超时配置
+            try:
+                from app.core.config_container import get_config as _get_cfg
+                _rp_cfg = _get_cfg().get_dotted("risk.risk_pipeline") or {}
+            except Exception:
+                _rp_cfg = {}
+
             self.us_risk_pipeline = USRiskPipeline(
                 risk_engine=None,  # risk_engine 在 _process_symbol_impl 中注入
                 config={
@@ -490,6 +507,14 @@ class TradingScheduler:
                     "max_total": 0.80,
                     "max_per_direction": 0.65,  # 04/30: 从50%提升, 匹配unified_config.yaml (QQQ占45%导致连续拦截)
                     "cooldown_seconds": 120,
+                    # Task #9: 单步/总超时控制
+                    "per_check_timeout": float(_rp_cfg.get("per_check_timeout", 5.0)),
+                    "total_timeout": float(_rp_cfg.get("total_timeout", 30.0)),
+                    "critical_checks_fail_close": _rp_cfg.get(
+                        "critical_checks_fail_close",
+                        ["DrawdownCheck", "PositionLimitCheck", "BuyingPowerCheck",
+                         "MarketCircuitCheck", "CircuitBreakerCheck"],
+                    ),
                 },
             )
             logger.info("[USRiskPipeline] 已初始化 (%d 个检查)", len(self.us_risk_pipeline.checks))
@@ -717,7 +742,43 @@ class TradingScheduler:
         self._signal_cooldown: Dict[str, datetime] = {}
         self.SIGNAL_COOLDOWN_MINUTES = getattr(self, 'SIGNAL_COOLDOWN_MINUTES', 60)
 
+        # P1 (2026-06-02): 从 DB 恢复信号冷却状态 — 防止重启后冷却丢失
+        self._restore_signal_cooldown_from_db()
+
         logger.info(f"[调度器] 初始化完成，监控 {len(self.watchlist)} 只股票")
+
+    def _restore_signal_cooldown_from_db(self):
+        """从 trade_records DB 恢复最近平仓记录到 _signal_cooldown
+
+        解决: 系统频繁重启导致内存态 _signal_cooldown 清空 → 重启后立即重新入场
+        """
+        try:
+            import sqlite3
+            from pathlib import Path
+            from datetime import timedelta
+            db_path = Path(__file__).resolve().parent.parent.parent / "data" / "ftseek_us.db"
+            if not db_path.exists():
+                return
+            cooldown_min = getattr(self, 'SIGNAL_COOLDOWN_MINUTES', 60)
+            cutoff = (now_et() - timedelta(minutes=cooldown_min)).isoformat()
+            with sqlite3.connect(str(db_path)) as conn:
+                rows = conn.execute(
+                    "SELECT DISTINCT symbol, MAX(exit_time) FROM trade_records "
+                    "WHERE exit_time IS NOT NULL AND exit_time > ? GROUP BY symbol",
+                    (cutoff,)
+                ).fetchall()
+            for sym, exit_ts in rows:
+                try:
+                    self._signal_cooldown[sym] = datetime.fromisoformat(exit_ts)
+                except (ValueError, TypeError):
+                    pass
+            if rows:
+                logger.info(
+                    f"[Cooldown·DB恢复] 从 trade_records 恢复 {len(rows)} 个标的冷却 "
+                    f"(窗口={cooldown_min}min): {[r[0] for r in rows]}"
+                )
+        except Exception as e:
+            logger.debug(f"[Cooldown·DB恢复] 失败 (不影响启动): {e}")
 
     def _init_coordinator(self):
         """
@@ -832,7 +893,7 @@ class TradingScheduler:
             from app.observability.watchdog import get_watchdog
             wd = get_watchdog()
             # 根据实际调度间隔设置心跳阈值
-            scan_interval = cfg.get_dotted("scheduler.scan_interval_minutes", 10) if cfg else 10
+            scan_interval = cfg.get_dotted("scheduler.scan_interval_minutes", 3) if cfg else 3
             monitor_interval = cfg.get_dotted("scheduler.monitor_interval_minutes", 0.5) if cfg else 0.5
             wd.register("scan_loop", stale_threshold_sec=scan_interval * 60 * 5)  # 5 倍间隔
             wd.register("monitor_loop", stale_threshold_sec=monitor_interval * 60 * 5)
@@ -1171,6 +1232,21 @@ class TradingScheduler:
         if etfs:
             self.data_router.futu.subscribe(etfs, sub_types=['QUOTE', 'K_1M', 'K_15M'])
             logger.info(f"[FutuLV3] ✅ ETF Push 订阅: {len(etfs)} 只 (QUOTE+K_1M+K_15M)")
+
+        # ORB ETF 订阅 (RFC-056: 确保 ORB 标的池有 K 线数据)
+        try:
+            from app.core.config_container import get_config as _gc_orb
+            _cfg_orb = _gc_orb()
+            orb_cfg = _cfg_orb.get_dotted("strategies.orb", {}) or {} if _cfg_orb else {}
+            if orb_cfg.get("enabled", False):
+                orb_symbols = orb_cfg.get("universe", [])
+                # 过滤已订阅标的 (SPY/QQQ 可能已在 etfs 中)
+                orb_new = [s for s in orb_symbols if s not in etfs]
+                if orb_new:
+                    self.data_router.futu.subscribe(orb_new, sub_types=['QUOTE', 'K_1M', 'K_15M'])
+                    logger.info(f"[ORB] ✅ Futu 订阅: {len(orb_new)} 只 ETF ({orb_new})")
+        except Exception as e:
+            logger.warning(f"[ORB] ⚠️ Futu 订阅失败: {e}")
 
         total_slots = (len(tier1) + len(tier2)) * 7 + len(etfs) * 3
         logger.info(

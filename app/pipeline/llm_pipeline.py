@@ -442,7 +442,9 @@ def run_llm_strategy_scan(scheduler):
                 except Exception:
                     price = 0
                 
-                if (scheduler.option_selector.quote_ctx is None
+                # ADR-003 (2026-06-04): 期权已禁用, option_selector 为 None
+                if (scheduler.option_selector is not None
+                        and scheduler.option_selector.quote_ctx is None
                         and scheduler.execution_engine
                         and hasattr(scheduler.execution_engine, "broker_adapter")):
                     adapter = getattr(scheduler.execution_engine, "broker_adapter", None)
@@ -450,7 +452,7 @@ def run_llm_strategy_scan(scheduler):
                         scheduler.option_selector.quote_ctx = adapter.quote_ctx
                 
                 router = get_short_strategy_router()
-                context = {"price": price, "vix": 20.0, "option_selector": scheduler.option_selector}
+                context = {"price": price, "vix": 20.0, "option_selector": scheduler.option_selector}  # None if disabled
                 exec_result = router.execute_signal(signal_obj, context)
                 
                 if exec_result.get("success"):
