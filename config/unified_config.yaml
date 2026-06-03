@@ -839,8 +839,8 @@ risk:
 
   # 模拟盘数据采集: VIX放宽到30, 收集更多市场状态数据
   vix_block_threshold: 30
-  per_trade_risk_pct: 0.005    # 每笔 0.5% 净值基础风险
-  max_trade_risk_pct: 0.010    # 极限 1.0% (高 confidence setup)
+  per_trade_risk_pct: 0.010    # P0 (2026-06-03): 0.5%→1.0%, 固定风险仓位
+  max_trade_risk_pct: 0.010    # 极限 1.0% (不再按信号强度加码)
   # F17 (2026-05-12): 组合层面止损
   portfolio:
     warn_drawdown_pct: 0.02     # -2% 警告
@@ -2140,7 +2140,7 @@ orb:
   max_positions: 5                 # 模拟盘: 3→5
   max_daily_trades: 15             # 模拟盘: 4→15, 最大化数据采集
   capital_pct: 0.20                # 模拟盘: 0.10→0.20, 更多资金分配
-  position_risk_pct: 0.008         # 模拟盘: 0.5%→0.8%, 单笔风险提高
+  position_risk_pct: 0.010         # P0 (2026-06-03): 统一 1% 固定风险
   # 退出
   eod_exit_time: "15:55"           # 盘末强制退出 (不隔夜)
   polling_interval_seconds: 5      # 轮询间隔 (秒)
