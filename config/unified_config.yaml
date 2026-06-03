@@ -45,7 +45,7 @@ mode:
       # NIO:  低胜率, 黑名单
     # 风控放宽 (但不禁)
     overrides:
-      scheduler.scan_interval_minutes: 10      # ADR-004: 3→10min — 减少噪音信号, 好机会不会在10min内消失
+      scheduler.scan_interval_minutes: 5       # ADR-005: 10→5min — 加速数据采集, 配合紧退出保质量
       scheduler.monitor_interval_minutes: 0.25 # 0.5 → 0.25
       strategy.signal_cooldown: 30             # 120 → 30
       # Task #2 (2026-05-31): 沙盒 override 与新默认对齐, 避免 sandbox 模式实际门槛偏低
@@ -666,6 +666,45 @@ watchlist:
     enabled: true
     tier: ETF
     notes: 科技基准 | Beta对冲
+  # ADR-005 (2026-06-04): 增加行业ETF — 加速高质量数据采集
+  # 数据依据: 6/2-6/4 XLF +$4401, XLY +$462, XLK +$242, XLI +$508 (全部正EV)
+  # ETF流动性好、波动适中、DAY_TRADE_TP命中率高
+  - code: US.XLF
+    name: Financial Select Sector SPDR
+    enabled: true
+    tier: ETF
+    max_position_ratio: 0.15
+    notes: 金融板块 | 高流动性 | 3笔67%WR +$4401
+  - code: US.XLY
+    name: Consumer Discretionary Select
+    enabled: true
+    tier: ETF
+    max_position_ratio: 0.15
+    notes: 可选消费 | 2笔50%WR +$462
+  - code: US.XLK
+    name: Technology Select Sector
+    enabled: true
+    tier: ETF
+    max_position_ratio: 0.15
+    notes: 科技板块 | 3笔33%WR +$242
+  - code: US.XLI
+    name: Industrial Select Sector
+    enabled: true
+    tier: ETF
+    max_position_ratio: 0.15
+    notes: 工业板块 | 1笔100%WR +$508
+  - code: US.XLE
+    name: Energy Select Sector
+    enabled: true
+    tier: ETF
+    max_position_ratio: 0.15
+    notes: 能源板块 | 高波动适合日内
+  - code: US.IWM
+    name: iShares Russell 2000
+    enabled: true
+    tier: ETF
+    max_position_ratio: 0.15
+    notes: 小盘股基准 | 2笔50%WR
 decision:
   signal_thresholds:
     min_score: 50
@@ -1590,9 +1629,9 @@ strategies:
     max_positions: 12                # 模拟盘: 5→12, 最大化数据采集
     direction_bias:
       LONG:
-        min_confidence: 0.55  # P0 (2026-06-03): 0.40→0.55, direction_bias 控制门槛
+        min_confidence: 0.45  # ADR-005: 0.55→0.45, 配合紧退出加速数据采集
       SHORT:
-        min_confidence: 0.45  # P0 (2026-06-03): 0.25→0.45, SHORT 数据表现优于 LONG
+        min_confidence: 0.35  # ADR-005: 0.45→0.35, SHORT正EV方向, 放宽让更多信号进入
     # DEPRECATED (2026-05-31): strategies.defaults.signal_cooldown_seconds 不再生效
     #   实际生效路径: strategy.signal_cooldown (本文件 SoT, 见上方 strategy 段)
     #   启动时 ConfigValidator.check_deprecated_fields 会再次告警, 修改此键不会生效。
@@ -1747,7 +1786,7 @@ signal_fusion:
       divergence_penalty: 0.8
       trend_proxy: SPY
 scheduler:
-  scan_interval_minutes: 10              # ADR-004: 3→10min — 减少噪音信号
+  scan_interval_minutes: 5               # ADR-005: 10→5min — 加速数据采集
   monitor_interval_minutes: 0.25
   max_positions: 12                # 模拟盘: 5→12, 最大化数据采集
   # 2026-06-01: 删除 deprecated scheduler.min_confidence (0.55) — ConfigAudit 启动 BLOCKING

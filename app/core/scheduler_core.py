@@ -126,7 +126,7 @@ class TradingScheduler:
     # Task #46 (2026-05-28) 配置 SSOT: 类级常量仅作 fallback,
     # 实际值在 __init__ → _load_scheduler_params 内通过 ConfigKeys 从
     # unified_config.yaml 读取。如需修改, 请改 YAML, 不要改这里。
-    SCAN_INTERVAL_MINUTES = 10     # ADR-004: fallback (3→10, 减少噪音)
+    SCAN_INTERVAL_MINUTES = 5      # ADR-005: 10→5min, 加速数据采集
     MONITOR_INTERVAL_MINUTES = 0.5  # fallback: scheduler.monitor_interval_minutes
     MAX_POSITIONS = 12             # fallback: scheduler.max_positions (同步 YAML 2026-06-03: 5→12)
     _DEFAULT_MIN_SIGNAL_STRENGTH = 50    # fallback: strategies.defaults.min_strength
