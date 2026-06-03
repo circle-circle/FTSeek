@@ -817,6 +817,81 @@ class USPositionSync:
             if existing is None:
                 continue
 
+            # P0 修复 (2026-06-04): 方向翻转检测 — Broker-first 覆盖内存方向
+            # 根因: 6/3 XLE SHORT→DB残留LONG→平仓变加仓→仓位翻倍→亏$7255
+            #        6/3 XLF LONG→DB残留SHORT→退出方向错误→亏$4458
+            # 场景: 重启后 position_monitor 从 DB 恢复方向, 但 DB 方向已过期.
+            #       position_sync 读到 Broker 正确方向, 更新了 DB 但未修正内存.
+            # 修复: 内存方向与 Broker 不一致时, 强制以 Broker 为准覆盖.
+            broker_dir = Direction.SHORT if info['direction'] == 'SHORT' else Direction.LONG
+            mem_dir = existing.direction
+            if broker_dir != mem_dir:
+                old_dir_str = mem_dir.value if hasattr(mem_dir, 'value') else str(mem_dir)
+                new_dir_str = info['direction']
+                logger.critical(
+                    f"🔴🔴🔴 [US Sync·方向翻转·P0] {symbol} "
+                    f"内存={old_dir_str} vs Broker={new_dir_str} "
+                    f"(size={info['qty']}, cost=${info['cost']:.2f}) "
+                    f"→ 强制以 Broker 为准覆盖内存! "
+                    f"如果正在平仓, 平仓方向将自动修正."
+                )
+                existing.direction = broker_dir
+                existing.avg_entry_price = info['cost']
+                existing.size = info['qty']
+                # 重算 SL/TP (方向翻转后旧 SL 方向错误)
+                try:
+                    atr = self._get_symbol_atr(symbol, info['cost'])
+                    atr_mult = 2.5
+                    if info['direction'] == 'LONG':
+                        existing.initial_sl = info['cost'] - atr * atr_mult
+                        existing.current_sl = existing.initial_sl
+                    else:
+                        existing.initial_sl = info['cost'] + atr * atr_mult
+                        existing.current_sl = existing.initial_sl
+                except Exception:
+                    sl_mult = 1.08 if info['direction'] == 'SHORT' else 0.92
+                    existing.initial_sl = info['cost'] * sl_mult
+                    existing.current_sl = existing.initial_sl
+                # 同步 DB
+                try:
+                    import sqlite3 as _sqlite3
+                    db_path = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'ftseek_us.db')
+                    db_path = os.path.normpath(db_path)
+                    conn = _sqlite3.connect(db_path, timeout=5)
+                    conn.execute(
+                        "UPDATE open_positions SET direction=?, avg_entry_price=?, size=?, "
+                        "initial_sl=?, current_sl=?, updated_at=? WHERE symbol=?",
+                        (info['direction'], info['cost'], info['qty'],
+                         existing.initial_sl, existing.current_sl,
+                         datetime.now().isoformat(), symbol)
+                    )
+                    conn.commit()
+                    conn.close()
+                except Exception as _dbe:
+                    logger.warning(f"[US Sync·方向翻转] DB 同步失败 (不影响内存修正): {_dbe}")
+                # 同步 daily_active_pool
+                try:
+                    from app.utils.daily_active_pool import get_daily_active_pool
+                    pool = get_daily_active_pool(market_prefix="US.")
+                    pool.add_position(symbol, metadata={
+                        "direction": new_dir_str,
+                        "quantity": info['qty'],
+                    })
+                except Exception:
+                    pass
+                # 飞书告警
+                try:
+                    from app.notifier.feishu import send_text
+                    send_text(
+                        f"🔴 [方向翻转·P0] {symbol}\n"
+                        f"内存={old_dir_str} → Broker={new_dir_str}\n"
+                        f"size={info['qty']}, cost=${info['cost']:.2f}\n"
+                        f"SL 已重算, DB 已同步"
+                    )
+                except Exception:
+                    pass
+                continue  # 方向已修正, 跳过后续 qty 逻辑
+
             qty_changed = abs(existing.size - info['qty']) > 0.1
             # P0-1 修复 (2026-05-19, Karpathy 二审 v2): 区分加仓 vs 减仓, 不一刀切.
             #

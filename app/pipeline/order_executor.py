@@ -2725,6 +2725,64 @@ def _submit_order(scheduler, symbol: str, signal: SignalScore, context: Dict[str
     except Exception:
         pass
 
+    # ─── P0 (2026-06-04): 仓位硬上限 — 防巨大亏损 ───
+    # 根因: 6/3 XLF 单笔名义敞口 $114万 (106%净值) → 亏$4458
+    #        6/3 XLE 单笔名义敞口 $32万 (30%净值) → 亏$7256
+    # 规则: 同标的累计名义敞口 ≤ 净值 × risk.position.max_per_symbol
+    # 当前配置: 25% (unified_config.yaml risk.position.max_per_symbol)
+    try:
+        from app.core.config_container import get_config as _get_cfg
+        _cfg = _get_cfg()
+        _max_pct = float(_cfg.get_dotted("risk.position.max_per_symbol", 0.25))
+    except Exception:
+        _max_pct = 0.25
+
+    try:
+        from app.risk.capital_safety import get_capital_safety_system
+        _cap = get_capital_safety_system()
+        _equity = _cap._state.current_equity if _cap._state.current_equity > 0 else 100000
+    except Exception:
+        _equity = 100000
+
+    # 获取当前价格估算
+    _est_price = float(getattr(context, 'get', lambda *a: 0)('current_price', 0) or 0)
+    if _est_price <= 0:
+        _est_price = float(getattr(signal, 'price', 0) or 0)
+    if _est_price <= 0:
+        try:
+            from app.data.market_data_router import get_market_data_router
+            _md = get_market_data_router().get_latest(symbol)
+            if _md:
+                _est_price = float(_md.get('price', 0) or 0)
+        except Exception:
+            pass
+
+    if _est_price > 0:
+        # 计算已有持仓名义 (如果同标的已有仓位)
+        _existing_notional = 0.0
+        try:
+            if hasattr(scheduler, 'position_store') and scheduler.position_store:
+                _exist_pos = scheduler.position_store.get(symbol)
+                if _exist_pos:
+                    _existing_notional = _exist_pos.size * _exist_pos.avg_entry_price
+        except Exception:
+            pass
+
+        # 计算计划下单的名义 (用默认股数估算, 实际股数在后续计算)
+        _plan_qty = float(getattr(signal, 'quantity', DEFAULT_ORDER_QTY) or DEFAULT_ORDER_QTY)
+        _plan_notional = _plan_qty * _est_price
+        _total_notional = _existing_notional + _plan_notional
+        _notional_limit = _equity * _max_pct
+
+        if _total_notional > _notional_limit:
+            logger.warning(
+                f"🚫 [仓位上限·P0] {symbol} 拒绝入场: "
+                f"计划名义=${_total_notional:,.0f} > 上限=${_notional_limit:,.0f} "
+                f"(净值${_equity:,.0f}×{_max_pct:.0%}), "
+                f"已有=${_existing_notional:,.0f}"
+            )
+            return
+
     # ─── P0 (2026-06-02): 广度信号 — Muyuan 论文核心发现 ───
     # ≥6 只同时超卖 → LONG strength+30, confidence×1.3, 禁止 SHORT
     # 论文数据: 恐慌时反转 alpha 11.6× 基线, 胜率 78%
@@ -3446,6 +3504,46 @@ def _close_position(scheduler, position: Position, current_price: float, exit_re
         meta.pop("_close_in_progress", None)
         position.metadata = meta
         return
+
+    # P0 修复 (2026-06-04): 平仓前方向校验 — 防方向翻转导致平仓变加仓
+    # 根因: 6/3 XLE 内存=LONG 但 Broker=SHORT, SELL 2780 变成加仓而非平仓
+    # 验证: 内存方向与 Broker 实际方向一致, 不一致则修正内存后再平仓
+    try:
+        _adapter = getattr(getattr(scheduler, 'execution_engine', None), 'broker_adapter', None)
+        if _adapter and hasattr(_adapter, 'get_positions'):
+            _broker_positions = _adapter.get_positions() or []
+            _bp = None
+            for _b in _broker_positions:
+                _bsym = _b.get("symbol") if isinstance(_b, dict) else getattr(_b, "symbol", None)
+                if _bsym == position.symbol:
+                    _bp = _b
+                    break
+            if _bp is not None:
+                _bqty = float(_bp.get("qty", 0) if isinstance(_bp, dict) else getattr(_bp, "qty", 0))
+                _b_side = _bp.get("position_side", "") if isinstance(_bp, dict) else getattr(_bp, "position_side", "")
+                _broker_is_short = _bqty < 0 or str(_b_side).upper() == "SHORT"
+                _mem_is_short = position.direction == Direction.SHORT
+                if _broker_is_short != _mem_is_short:
+                    _old = position.direction.value if hasattr(position.direction, 'value') else str(position.direction)
+                    _correct = Direction.SHORT if _broker_is_short else Direction.LONG
+                    logger.critical(
+                        f"🔴🔴🔴 [平仓·方向校验失败·P0] {position.symbol} "
+                        f"内存={_old} vs Broker={'SHORT' if _broker_is_short else 'LONG'} "
+                        f"→ 修正内存方向后继续平仓!"
+                    )
+                    position.direction = _correct
+                    # 飞书告警
+                    try:
+                        from app.notifier.feishu import send_text
+                        send_text(
+                            f"🔴 [平仓方向校验·P0] {position.symbol}\n"
+                            f"原内存={_old} → 修正为={'SHORT' if _broker_is_short else 'LONG'}\n"
+                            f"broker_qty={_bqty}, 平仓继续执行"
+                        )
+                    except Exception:
+                        pass
+    except Exception as _dir_e:
+        logger.warning(f"[平仓·方向校验] {position.symbol} 校验异常(不阻断): {_dir_e}")
 
     # Task #14 (2026-05-27): 如果该标的开仓 TWAP 还在进行中, 先取消剩余片, 避免平后被动加仓
     try:
