@@ -28,8 +28,8 @@ class ConfigDefaults:
     # 风控 — 信号质量 (risk.signal_quality)
     # P0 优化 (2026-05-12): 降低门槛增加交易机会，模拟盘阶段优先获取数据
     # ============================================================
-    MIN_CONFIDENCE = 0.65                   # 2026-06-01: 0.55 → 0.65 (同步 YAML risk.signal_quality.min_confidence)
-    MIN_CONSENSUS = 0.2                     # P0 优化: 0.3 → 0.2
+    MIN_CONFIDENCE = 0.75                   # P0 (2026-06-03): 0.65 → 0.75 (voting_llm PF=0.43, 只允许强共识)
+    MIN_CONSENSUS = 0.35                    # P0 (2026-06-03): 0.2 → 0.35 (要求模型间中等共识)
     MIN_SIGNAL_SCORE = 50                   # Synced to YAML risk.signal_quality.min_score (2026-05-23 06:20 CST)
 
     # ============================================================
@@ -57,11 +57,11 @@ class ConfigDefaults:
     # 调度器 (scheduler)
     # P0 优化 (2026-05-12): 降低门槛增加交易机会
     # ============================================================
-    SCHEDULER_MIN_CONFIDENCE = 0.65         # 2026-06-01: 0.55 → 0.65 (同步 YAML risk.signal_quality.min_confidence)
-    SCHEDULER_MAX_POSITIONS = 5             # scheduler.max_positions
-    SCHEDULER_MIN_SIGNAL_STRENGTH = 50      # P0-辩论修复: 99→50 (P3过度收紧导致5/23后零交易, P0守卫已兜底)
-    SCHEDULER_MIN_CONSENSUS = 0.2           # scheduler.min_consensus_level
-    SCHEDULER_SCAN_INTERVAL = 10            # scheduler.scan_interval_minutes
+    SCHEDULER_MIN_CONFIDENCE = 0.75         # P0 (2026-06-03): 0.65 → 0.75 (同步 YAML)
+    SCHEDULER_MAX_POSITIONS = 12            # scheduler.max_positions (同步 YAML 2026-06-03: 5→12, 模拟盘最大化数据采集)
+    SCHEDULER_MIN_SIGNAL_STRENGTH = 60      # P0 (2026-06-03): 50→60 (过滤最弱20%信号)
+    SCHEDULER_MIN_CONSENSUS = 0.35          # P0 (2026-06-03): 0.2→0.35 (同步 YAML)
+    SCHEDULER_SCAN_INTERVAL = 3             # scheduler.scan_interval_minutes (同步 YAML 2026-06-03: 10→3)
 
     # ============================================================
     # 止损 / 止盈
