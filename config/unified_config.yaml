@@ -2198,3 +2198,17 @@ catalyst:
     ai_chip: ["NVDA", "AMD", "AVGO", "MU", "ARM", "QCOM"]
     ev: ["TSLA", "RIVN", "LCID", "NIO", "XPEV", "LI"]
     big_tech: ["AAPL", "MSFT", "GOOGL", "AMZN", "META"]
+
+# ─── 截面排名器 (Pre-Market Ranker) ───
+# 每天盘前对 watchlist 做截面排名，只交易 Top N 标的
+# 替代原来逐个评估的方式，选出相对最强的标的
+pre_market_ranker:
+  enabled: true
+  top_n: 8                    # 只允许前 8 名进入信号生成
+  weights:
+    momentum: 0.35            # 20日动量权重
+    sector: 0.25              # 行业相对强度权重
+    volume: 0.20              # 成交量配合度权重
+    volatility: 0.20          # 波动率合理性权重
+  sector_etf_lookback: 20     # 行业 ETF 回看天数
+  cache_ttl_seconds: 3600     # 排名缓存时间 (1小时)

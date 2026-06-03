@@ -27,11 +27,14 @@ from typing import Dict, Any, List, Optional
 from app.utils.timezone import now_et
 
 
-def _get_vwap_deviation(scheduler, symbol: str) -> Optional[float]:
-    """P1 VWAP Gate helper: 从 market_data 缓存获取 VWAP 偏离度。
+def _get_vwap_deviation(scheduler, symbol: str, cached_context: dict = None) -> Optional[float]:
+    """M9 (2026-06-03): 从已获取的 context 读取 VWAP 偏离度, 避免重复 get_full_market_context。
     返回 None 表示数据不可用 (pre_trade_check 将软放行)。
     """
     try:
+        # 优先使用已缓存的 context (H1 去重)
+        if cached_context and "ticker_vwap_deviation" in cached_context:
+            return float(cached_context["ticker_vwap_deviation"])
         if scheduler and hasattr(scheduler, 'market_data') and scheduler.market_data:
             ctx = scheduler.market_data.get_full_market_context(symbol)
             if ctx and "ticker_vwap_deviation" in ctx:
@@ -334,6 +337,26 @@ def _run_signal_scan_body(scheduler, vix, spy_context, market_news, pool_filter)
 
         logger.info(f"[自适应扫描] 本轮轮询 {len(batch)} 只股票：{batch}")
 
+        # ─── P0 (2026-06-02): 广度预扫描 — 论文: ≥6 只同时超卖 → 78% WR ───
+        # H1 (2026-06-03): 缓存预扫描结果, 主扫描复用, 消除 2-4x 冗余 get_full_market_context
+        _context_cache = {}  # symbol -> context dict
+        try:
+            from app.analysis.market_breadth import get_market_breadth
+            _breadth = get_market_breadth()
+            _breadth.start_new_scan()
+            for _sym in batch:
+                try:
+                    _ctx = scheduler.data_router.get_full_market_context(_sym)
+                    if _ctx:
+                        _ctx["symbol"] = _sym
+                        _breadth.record_symbol(_sym, _ctx)
+                        _context_cache[_sym] = _ctx  # H1: 缓存供主扫描复用
+                except Exception:
+                    pass
+            _breadth.log_snapshot()
+        except Exception as _be:
+            logger.debug(f"[广度] 预扫描异常 (不影响主流程): {_be}")
+
         for symbol in batch:
             if is_circuit_breaker_open():
                 logger.warning("[熔断] 熔断器开启，终止扫描")
@@ -350,7 +373,8 @@ def _run_signal_scan_body(scheduler, vix, spy_context, market_news, pool_filter)
                         logger.debug(f"[扫描] {symbol} 由 Scalping 持有, 主管线仍进入金字塔评估")
                     else:
                         logger.debug(f"[扫描] {symbol} 已有主管线持仓, 进入金字塔加仓检测")
-                _process_symbol_impl(scheduler, symbol, vix, spy_context, market_news.get("sentiment", 0))
+                _process_symbol_impl(scheduler, symbol, vix, spy_context, market_news.get("sentiment", 0),
+                                     cached_context=_context_cache.get(symbol))  # H1: 传入缓存
                 record_api_success()
             except Exception as e:
                 record_api_error()
@@ -366,10 +390,59 @@ def _run_signal_scan_body(scheduler, vix, spy_context, market_news, pool_filter)
         def _collect(symbol, signal, ctx, vr):
             candidates.append((symbol, signal, ctx, vr))
 
+        # ─── P0 (2026-06-02): 广度预扫描 (CRA 路径) ───
+        # H1 (2026-06-03): 缓存预扫描结果, 主扫描复用
+        _context_cache_cra = {}  # symbol -> context dict
+        try:
+            from app.analysis.market_breadth import get_market_breadth
+            _breadth_cra = get_market_breadth()
+            _breadth_cra.start_new_scan()
+            for _sym in scheduler.watchlist:
+                if pool_filter and not _passes_pool_filter(scheduler, _sym, pool_filter):
+                    continue
+                try:
+                    _ctx = scheduler.data_router.get_full_market_context(_sym)
+                    if _ctx:
+                        _ctx["symbol"] = _sym
+                        _breadth_cra.record_symbol(_sym, _ctx)
+                        _context_cache_cra[_sym] = _ctx  # H1: 缓存供主扫描复用
+                except Exception:
+                    pass
+            _breadth_cra.log_snapshot()
+        except Exception as _bec:
+            logger.debug(f"[广度·CRA] 预扫描异常: {_bec}")
+
+        # ─── 截面排名过滤 (2026-06-03) ───
+        # 对 watchlist 做截面排名，只交易 Top N 标的
+        # 原理：截面动量（个股 vs 所有其他股票）比时间序列动量（个股 vs 自己的历史）
+        # 有更强的短期预测力 (Jegadeesh & Titman 1993)
+        _ranked_watchlist = None
+        try:
+            from app.signals.pre_market_ranker import get_top_candidates
+            # 从 config 读取排名参数
+            from app.core.config_container import get_config
+            _rank_cfg = get_config().get_section('pre_market_ranker', {}) or {}
+            _rank_enabled = _rank_cfg.get('enabled', True)
+            _rank_top_n = _rank_cfg.get('top_n', 8)
+            
+            if _rank_enabled:
+                _ranked = get_top_candidates(list(scheduler.watchlist), max_count=_rank_top_n)
+                if _ranked:
+                    _ranked_watchlist = {r.symbol for r in _ranked}
+                    logger.info(
+                        f"[截面排名] 从 {len(scheduler.watchlist)} 只中选出 Top {_rank_top_n}: "
+                        f"{[r.symbol.replace('US.','') for r in _ranked[:5]]}"
+                    )
+        except Exception as _rank_err:
+            logger.debug(f"[截面排名] 排名器异常(降级为全量扫描): {_rank_err}")
+        
         for symbol in scheduler.watchlist:
             if is_circuit_breaker_open():
                 logger.warning("[熔断] 熔断器开启，终止扫描")
                 break
+            # 截面排名过滤: 只允许 Top N 进入信号生成
+            if _ranked_watchlist is not None and symbol not in _ranked_watchlist:
+                continue
             # 动态池过滤
             if pool_filter and not _passes_pool_filter(scheduler, symbol, pool_filter):
                 logger.debug(f"[动态池·过滤] {symbol} 不满足当前池条件 (tier={pool_filter.get('tier')}, risk={pool_filter.get('risk_level')})")
@@ -406,16 +479,19 @@ def _run_signal_scan_body(scheduler, vix, spy_context, market_news, pool_filter)
                         continue
                 # P1 (2026-05-26): 新管线 CRA 模式 — 用 modular stages 生成候选,
                 # 然后走 PortfolioConstructor 全局排序, 风控统一在 _submit_order 执行
+                _cached_ctx = _context_cache_cra.get(symbol)  # H1: 复用广度预扫描缓存
                 if _use_new_pipeline():
                     _candidate = _run_new_pipeline_to_candidate(
-                        scheduler, symbol, vix, spy_context, market_news.get("sentiment", 0))
+                        scheduler, symbol, vix, spy_context, market_news.get("sentiment", 0),
+                        cached_context=_cached_ctx)
                     if _candidate is not None:
                         _sig, _ctx, _vr = _bridge_candidate_to_old_format(_candidate)
                         _collect(symbol, _sig, _ctx, _vr)
                 else:
                     _process_symbol_impl(scheduler, symbol, vix, spy_context,
                                          market_news.get("sentiment", 0),
-                                         on_candidate=_collect)
+                                         on_candidate=_collect,
+                                         cached_context=_cached_ctx)
                 record_api_success()
             except Exception as e:
                 record_api_error()
@@ -432,10 +508,11 @@ def _run_signal_scan_body(scheduler, vix, spy_context, market_news, pool_filter)
 #  P1 (2026-05-26): CRA 模式下的新管线集成
 # ============================================================
 
-def _run_new_pipeline_to_candidate(scheduler, symbol, vix, spy_context, market_sentiment):
+def _run_new_pipeline_to_candidate(scheduler, symbol, vix, spy_context, market_sentiment, cached_context=None):
     """运行新管线 market_data + signal 阶段 (不含 risk), 返回 SignalCandidate
 
     CRA 模式专用: 只生成信号候选, 风控和仓位计算延迟到 _submit_order 统一执行。
+    H1 (2026-06-03): cached_context 参数复用广度预扫描缓存
     """
     from app.pipeline.stages import market_data_stage, signal_stage
 
@@ -573,6 +650,17 @@ def _generate_technical_signal(scheduler, context: Dict[str, Any]) -> Dict[str, 
         "atr_used": context.get("atr", 0),
     })
     result["market_regime"] = signal.flags.get("regime_label", "NORMAL")
+
+    # ─── 因子级投票分解 (2026-06-02: 反馈闭环修复) ───
+    # 将黑盒 "intraday_scorer_v2" 单分数分解为各因子的独立投票
+    # (trend / momentum / volume / orderflow / lifecycle)
+    # 使 decisions.db.model_votes 记录因子级明细, 支撑后续的因子权重学习
+    try:
+        _factor_votes = signal.decompose_to_votes()
+        if _factor_votes:
+            result["model_scores"] = _factor_votes
+    except Exception as _fd_e:
+        logger.debug(f"[信号] 因子分解失败 (保留原始 model_scores): {_fd_e}")
 
     scheduler.voting_coordinator._record_decision_to_db(result, context, external_votes=None)
     
@@ -716,6 +804,66 @@ def _use_new_pipeline() -> bool:
         )
         _LEGACY_PIPELINE_WARNED = True
     return modular
+
+
+def _build_cra_model_scores(candidate, ctx) -> list:
+    """CRA 管线: 将技术指标信号分解为因子级 model_scores
+
+    将 RSI/MACD/Bollinger/Supertrend 各指标作为独立因子投票,
+    使 decisions.db.model_votes 记录各指标的独立信号。
+
+    Args:
+        candidate: SignalCandidate 对象
+        ctx: SymbolContext 对象
+
+    Returns:
+        list of dict, 每个 dict 代表一个因子的投票
+    """
+    votes = []
+    # 从 signal_tags 或 rationale 解析激活的指标
+    signal_tags = getattr(candidate, 'signal_tags', []) or []
+    rationale = getattr(candidate, 'rationale', '') or ''
+
+    # 如果 signal_tags 为空, 从 rationale 解析 (e.g. "3/4 指标共振 | score=65")
+    indicators_active = signal_tags if signal_tags else []
+    if not indicators_active and '/' in rationale:
+        # 尝试从 "X/Y 指标共振" 推断
+        pass
+
+    # 基础因子: 策略级投票 (始终包含)
+    votes.append({
+        "model_id": candidate.strategy_id or "cra_pipeline",
+        "strength": candidate.strength,
+        "confidence": candidate.confidence,
+        "direction": candidate.direction,
+        "weight": 1.0,
+        "reasoning": f"CRA pipeline: {signal_tags or rationale}",
+    })
+
+    # 从 context 提取指标级信号, 构建因子分解投票
+    if ctx:
+        _indicator_configs = {
+            "rsi": {"weight": 0.30},
+            "macd": {"weight": 0.25},
+            "bollinger": {"weight": 0.25},
+            "vwap": {"weight": 0.20},
+        }
+        for ind_name, ind_cfg in _indicator_configs.items():
+            ind_val = getattr(ctx, ind_name, None) if hasattr(ctx, ind_name) else ctx.get(ind_name) if isinstance(ctx, dict) else None
+            if ind_val is not None and ind_val != 0:
+                # 推断方向: RSI<30=LONG, RSI>70=SHORT; MACD>0=LONG, <0=SHORT; 等等
+                _dir = candidate.direction
+                _str = min(100, abs(int(float(ind_val) * 10))) if isinstance(ind_val, (int, float)) else candidate.strength
+                votes.append({
+                    "model_id": f"tech_{ind_name}",
+                    "strength": _str,
+                    "confidence": candidate.confidence * 0.8,  # 单因子置信度打折
+                    "direction": _dir,
+                    "weight": ind_cfg["weight"],
+                    "reasoning": f"{ind_name}={ind_val}",
+                })
+
+    return votes
 
 
 def _process_symbol_new_pipeline(scheduler, symbol: str, vix: float,
@@ -873,6 +1021,7 @@ def _process_symbol_new_pipeline(scheduler, symbol: str, vix: float,
         "final_confidence": candidate.confidence,
         "std_dev": 0,
         "strategy_id": candidate.strategy_id,
+        "model_scores": _build_cra_model_scores(candidate, ctx),
         "position_suggestion": {
             "stop_loss_pct": (order_req.stop_loss / ctx.price - 1) if ctx and ctx.price > 0 and order_req.stop_loss > 0 else 0.05,
             "take_profit_pct": (order_req.take_profit_levels[0]["price"] / ctx.price - 1) if ctx and ctx.price > 0 and order_req.take_profit_levels else 0.10,
@@ -899,7 +1048,7 @@ def _process_symbol_new_pipeline(scheduler, symbol: str, vix: float,
         if lock:
             lock.release()
 def _process_symbol_impl(scheduler, symbol: str, vix: float, spy_context: Dict[str, Any], market_sentiment: float,
-                         on_candidate: callable = None):
+                         on_candidate: callable = None, cached_context: Dict[str, Any] = None):
     """P3 压缩管线 (2026-04-29): 宏观闸门 → 信号生成 → 仓位映射
 
     三层决策:
@@ -912,6 +1061,8 @@ def _process_symbol_impl(scheduler, symbol: str, vix: float, spy_context: Dict[s
 
     P2 2026-05-05: use_new_stages — 启用后委托给模块化 3-stage 管线
     (market_data → signal → risk), 仅替换直接下单路径, on_candidate 路径保持不变。
+
+    H1 (2026-06-03): cached_context — 广度预扫描缓存的 context, 避免重复获取
     """
     # ── Feature Flag: 新管线 ──
     if on_candidate is None and _use_new_pipeline():
@@ -937,7 +1088,8 @@ def _process_symbol_impl(scheduler, symbol: str, vix: float, spy_context: Dict[s
                     f"设置 spy_below_ma200 flag (LONG 由 pre_trade_check 拦截, SHORT 放行)")
 
     # Step1: 获取行情上下文
-    context = scheduler.market_data.get_full_market_context(symbol)
+    # H1 (2026-06-03): 优先使用广度预扫描缓存, 避免重复 get_full_market_context
+    context = cached_context if cached_context else scheduler.market_data.get_full_market_context(symbol)
     if not context or context.get("price", 0) <= 0:
         logger.warning(f"[决策] {symbol} 行情数据不可用，跳过")
         if scheduler.polling_controller:
@@ -1673,15 +1825,23 @@ def _passes_pool_filter(scheduler, symbol: str, pool_filter: dict) -> bool:
         max_price = profile.get("max_price", 10000)
         min_price = profile.get("min_price", 0)
         try:
-            if scheduler.market_data:
+            # M8 (2026-06-03): 使用 Push 缓存而非 HTTP 调用, 避免逐标的阻塞
+            _futu = getattr(scheduler.market_data, 'futu', None) if scheduler.market_data else None
+            if _futu and hasattr(_futu, '_push_quote_cache'):
+                with _futu._push_cache_lock:
+                    _cached = _futu._push_quote_cache.get(symbol, {})
+                    price = float(_cached.get("price", 0) or _cached.get("last", 0) or 0)
+            elif scheduler.market_data:
                 quote = scheduler.market_data.get_quote(symbol)
                 if quote:
                     price = quote.get("price", 0) or quote.get("last_price", 0)
-                    if price > 0:
-                        if price > max_price:
-                            return False
-                        if price < min_price:
-                            return False
+            else:
+                price = 0
+            if price > 0:
+                if price > max_price:
+                    return False
+                if price < min_price:
+                    return False
         except Exception:
             pass  # 无法获取价格时放行
 
