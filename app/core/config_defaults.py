@@ -61,7 +61,7 @@ class ConfigDefaults:
     SCHEDULER_MAX_POSITIONS = 12            # scheduler.max_positions (同步 YAML 2026-06-03: 5→12, 模拟盘最大化数据采集)
     SCHEDULER_MIN_SIGNAL_STRENGTH = 60      # P0 (2026-06-03): 50→60 (过滤最弱20%信号)
     SCHEDULER_MIN_CONSENSUS = 0.25          # P0 (2026-06-03): 0.2→0.25 (同步 YAML)
-    SCHEDULER_SCAN_INTERVAL = 3             # scheduler.scan_interval_minutes (同步 YAML 2026-06-03: 10→3)
+    SCHEDULER_SCAN_INTERVAL = 10            # ADR-004: scheduler.scan_interval_minutes (3→10, 减少噪音)
 
     # ============================================================
     # 止损 / 止盈
