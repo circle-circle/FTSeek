@@ -146,13 +146,74 @@ class ExecutionEngine(BaseExecutionEngine):
         5. 记录状态
         """
         # 幂等检查
-        # P1-2 修复 2026-04-26: 风控/退出订单 (metadata.is_exit=True) 跳过幂等拦截
-        is_exit_order = getattr(order, 'metadata', None) and order.metadata.get('is_exit', False)
-        if self.idempotency_manager.is_duplicate(order.client_order_id, bypass=bool(is_exit_order)):
-            existing_order_id = self.idempotency_manager.get_order_id(order.client_order_id)
-            if existing_order_id and existing_order_id in self.order_book:
-                return self.order_book[existing_order_id]
-            raise ValueError(f"Duplicate order: {order.client_order_id}")
+        # ------------------------------------------------------------------
+        # Critical 修复 2026-06-02: 退出订单与开仓订单的幂等命名空间隔离
+        #
+        # 历史问题：
+        #   旧实现仅靠 is_duplicate(bypass=True) 跳过去重，但 get_order_id()
+        #   分支与重复检测耦合在同一 if 中。一旦 bypass 失效或 client_order_id
+        #   命中旧开仓键，就会返回旧 order_id，导致退出/平仓订单未真正下发，
+        #   资金与仓位被锁定。
+        #
+        # 修复策略：
+        #   1) 一旦识别为 is_exit 订单，整个 “是否重复 → 取旧订单” 分支完全不执行；
+        #   2) 给退出订单的 client_order_id 加 'exit_' 前缀，从根本上把开仓与平仓
+        #      的幂等空间隔离开（即使 record_order 使用 INSERT OR IGNORE，
+        #      不同前缀也不会互相覆盖）；
+        #   3) 兼容模拟盘 (TRADE_ENV=1) 与实盘，行为一致。
+        # ------------------------------------------------------------------
+        is_exit_order = bool(
+            getattr(order, 'metadata', None)
+            and order.metadata.get('is_exit', False)
+        )
+
+        if is_exit_order:
+            # 命名空间隔离：避免与同 symbol 的开仓 client_order_id 冲突
+            if not order.client_order_id.startswith("exit_"):
+                order.client_order_id = f"exit_{order.client_order_id}"
+            logger.info(
+                f"[ExecutionEngine] 退出订单跳过幂等去重 symbol={order.symbol} "
+                f"client_order_id={order.client_order_id} (强制创建新订单)"
+            )
+        else:
+            # 开仓订单：保持既有幂等保护不变
+            if self.idempotency_manager.is_duplicate(order.client_order_id):
+                existing_order_id = self.idempotency_manager.get_order_id(order.client_order_id)
+                if existing_order_id and existing_order_id in self.order_book:
+                    logger.warning(
+                        f"[ExecutionEngine] 检测到重复开仓订单，返回已存在订单 "
+                        f"client_order_id={order.client_order_id} order_id={existing_order_id}"
+                    )
+                    return self.order_book[existing_order_id]
+                raise ValueError(f"Duplicate order: {order.client_order_id}")
+            
+            # P0 修复 (2026-06-03): 通用方向冲突检测 — 所有入场订单的统一关卡
+            # 根因: ORB / main pipeline / scalping 各自独立下单，
+            #       同一标的被多引擎同时操作 → broker 净仓位方向与系统认知不一致
+            # 规则: 如果 broker 已有该标的持仓，禁止新入场 (无论同向或反向)
+            #       必须先平掉旧仓再开新仓，由调用方负责
+            if self.broker_adapter and self.broker_adapter.is_connected():
+                try:
+                    from futu import RET_OK, TrdEnv
+                    trd_env = TrdEnv.SIMULATE if self.config.get("futu_trade_env", 1) == 1 else TrdEnv.REAL
+                    ret, pos_data = self.broker_adapter.trade_ctx.position_list_query(
+                        code=order.symbol, trd_env=trd_env, refresh_cache=True
+                    )
+                    if ret == RET_OK and pos_data is not None and not pos_data.empty:
+                        broker_qty = float(pos_data.iloc[0].get('qty', 0))
+                        if abs(broker_qty) > 0:
+                            broker_side = 'LONG' if broker_qty > 0 else 'SHORT'
+                            order_side = 'LONG' if order.direction == Direction.LONG else 'SHORT'
+                            logger.error(
+                                f"[ExecutionEngine·方向冲突🔴] {order.symbol} "
+                                f"broker已有 {broker_side} {abs(broker_qty):.0f}股, "
+                                f"新入场 {order_side} 被拦截 (先平旧仓再开新仓)"
+                            )
+                            order.state = OrderState.REJECTED
+                            order.failure_reason = f"方向冲突: broker已有{broker_side}持仓"
+                            return order
+                except Exception as e:
+                    logger.debug(f"[ExecutionEngine] 方向冲突检查异常 (放行): {e}")
         
         # 创建状态机
         state_machine = OrderStateMachine()
