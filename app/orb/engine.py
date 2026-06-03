@@ -1588,6 +1588,43 @@ class ORBEngine:
             from app.core.models import Order, OrderType, Direction as ModelDirection
 
             price = round(price, 2)
+
+            # P0 修复 (2026-06-04): 仓位名义上限 — ORB 与主路径统一
+            # 根因: ORB 直接调 execution_engine.submit_order, 绕过 order_executor 的所有门禁
+            # 6/3 XLF 通过 ORB 加仓 11202→22404→24285, 名义敞口 $114万 (106%净值)
+            try:
+                from app.core.config_container import get_config as _get_cfg
+                _cfg = _get_cfg()
+                _max_pct = float(_cfg.get_dotted("risk.position.max_per_symbol", 0.25))
+            except Exception:
+                _max_pct = 0.25
+            try:
+                from app.risk.capital_safety import get_capital_safety_system
+                _cap = get_capital_safety_system()
+                _equity = _cap._state.current_equity if _cap._state.current_equity > 0 else 100000
+            except Exception:
+                _equity = 100000
+            _notional_limit = _equity * _max_pct
+            _plan_notional = float(quantity) * price
+            # 加上已有持仓
+            _existing_notional = 0.0
+            try:
+                _pos_store = getattr(self, '_pos_store', None) or getattr(self, 'position_store', None)
+                if _pos_store:
+                    _ep = _pos_store.get(symbol)
+                    if _ep:
+                        _existing_notional = _ep.size * _ep.avg_entry_price
+            except Exception:
+                pass
+            _total_notional = _existing_notional + _plan_notional
+            if _total_notional > _notional_limit:
+                logger.warning(
+                    f"🚫 [ORB·仓位上限·P0] {symbol} 拒绝下单: "
+                    f"名义=${_total_notional:,.0f} > 上限=${_notional_limit:,.0f} "
+                    f"(净值${_equity:,.0f}×{_max_pct:.0%})"
+                )
+                return {"success": False, "error": "position_notional_exceeded"}
+
             order = Order(
                 client_order_id=f"orb_{symbol}_{uuid.uuid4().hex[:8]}",
                 symbol=symbol,

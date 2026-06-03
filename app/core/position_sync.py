@@ -852,6 +852,14 @@ class USPositionSync:
                     sl_mult = 1.08 if info['direction'] == 'SHORT' else 0.92
                     existing.initial_sl = info['cost'] * sl_mult
                     existing.current_sl = existing.initial_sl
+                # P0 修复 (2026-06-04): 清理旧方向 trail_state
+                # 旧 peak/highest/lowest 基于反方向计算, 方向翻转后全部失效
+                # 不清理会导 trailing stop 方向错误 (SHORT 按 LONG peak 回撤)
+                existing.trail_state = {
+                    "highest_price": info['cost'],
+                    "lowest_price": info['cost'],
+                    "prev_scan_price": info['cost'],
+                }
                 # 同步 DB
                 try:
                     import sqlite3 as _sqlite3
