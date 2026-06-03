@@ -125,6 +125,17 @@ exit_rules:
       normal: 2.5                   # 优化 (2026-05-03): 从 2.0 放宽到 2.5, 给利润更多呼吸空间
       trending: 3.5                 # 优化 (2026-05-03): 从 3.0 放宽到 3.5, 趋势市让利润奔跑
       volatile: 2.0                 # 优化 (2026-05-03): 从 1.5 放宽到 2.0, 震荡市适度收紧
+      # ADR-004 (2026-06-04): regime-aware 追踪 — 数据驱动修复
+      # RANGE: 追踪止损在震荡市结构性负 EV (46.5% WR -$3,194)
+      #   → 99x ATR = 实质禁用追踪, 退出由 day_trade_TP / time_decay / pre_close 接管
+      # TREND_UP: 放宽追踪, 让利润奔跑
+      # HIGH_VOL: 收紧追踪, 快速脱身
+      # UNKNOWN: 保守处理, 等同 RANGE
+      RANGE: 99.0                   # 震荡市: 实质禁用追踪止损
+      TREND_UP: 4.0                 # 上升趋势: 宽追踪让利润跑
+      TREND_DOWN: 4.0               # 下降趋势: 宽追踪 (做空同理)
+      HIGH_VOL: 1.5                 # 高波动: 收紧追踪快速脱身
+      UNKNOWN: 99.0                 # 未知: 禁用追踪, 由其他规则接管
     # 止损线只能上移（多头）/下移（空头），永不倒退
     ratchet: true
 
@@ -341,17 +352,19 @@ day_trade_mode:
     atr_source: "5min"
 
   # 主动止盈 — 3 档分层
+  # ADR-004 (2026-06-04): 数据驱动 — DAY_TRADE_TP 是唯一正 EV 退出 (100% WR +$13,101)
+  # 降低 TP 触发门槛让更多交易走 DAY_TRADE_TP 路径
   take_profit:
     tier_1:
-      profit_pct: 4.0               # 从 3.0% → 4.0%
-      close_pct: 33                 # 从 50% → 33% (只平 1/3)
+      profit_pct: 1.5               # ADR-004: 4.0%→1.5% — 快速锁利, 匹配系统edge
+      close_pct: 50                 # ADR-004: 33%→50% — 锁半仓利润, 心态不慌
       move_sl_to: "breakeven"
     tier_2:
-      profit_pct: 8.0               # 从 6.0% → 8.0%
-      close_pct: 33                 # 从 50% → 33%
-      move_sl_to: "chandelier_2x"   # 新增: 切换到 Chandelier 追踪
-    tier_3:                         # 新增
-      profit_pct: 15.0
+      profit_pct: 3.0               # ADR-004: 8.0%→3.0% — 适度利润即第二批退出
+      close_pct: 30                 # 保留 20% 给第三批追踪
+      move_sl_to: "chandelier_3.5x"   # 切换到 Chandelier 追踪 (RANGE 市实际不触发)
+    tier_3:                         # 彩票仓: 万一大趋势
+      profit_pct: 6.0               # ADR-004: 15.0%→6.0%
       close_pct: 100                # 剩余清仓
 
   # F12: 浮盈保护禁用 — 由 chandelier_trail 接管, 避免框死利润
@@ -363,7 +376,7 @@ day_trade_mode:
   # 修复 (2026-05-12): 隔夜持仓重置基准时间 + 首次扫描 30min 宽限期
   time_decay:
     enabled: true
-    max_idle_minutes: 60            # 模拟盘: 90→60min, 加速信号轮转
+    max_idle_minutes: 45            # ADR-004: 60→45min — 数据: 系统edge是快速方向移动, 45min无进展=信号失效
     min_progress_pct: 0.5           # 优化: 从 0.2% 提到 0.5% (避免无意义进展判断)
     grace_period_minutes: 30        # 修复 (2026-05-12): 首次扫描宽限期
     overnight_reset_threshold: 60   # 修复 (2026-05-12): 持仓>60min 视为隔夜, 重置基准
@@ -371,12 +384,13 @@ day_trade_mode:
     # 如果2.5小时内持仓没有朝有利方向移动, 说明信号已失效。
 
   # 做空加速 (沿用 short_overrides 逻辑, 阈值更紧)
+  # ADR-004 (2026-06-04): RANGE 市做空反弹快, 需要更快止盈
   short:
     initial_stop_atr: 1.5           # 优化: 从 1.2x 放宽到 1.5x
     max_loss_pct: 5.0               # 优化: 从 4.0% 放宽到 5.0%
-    take_profit_tier_1: 2.0         # 优化: 从 1.5% 提到 2.0%
-    take_profit_tier_2: 5.0         # 优化: 从 4.0% 提到 5.0%
-    max_idle_minutes: 60            # 模拟盘: 90→60min, 与LONG对齐
+    take_profit_tier_1: 1.0         # ADR-004: 2.0%→1.0% — 做空快速锁利
+    take_profit_tier_2: 2.5         # ADR-004: 5.0%→2.5%
+    max_idle_minutes: 45            # ADR-004: 60→45min, 与主线对齐
 
 # ============================================================
 # SCALPING 策略退出参数覆写 (Task #9, 2026-05-30)

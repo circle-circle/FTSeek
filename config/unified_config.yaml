@@ -45,7 +45,7 @@ mode:
       # NIO:  低胜率, 黑名单
     # 风控放宽 (但不禁)
     overrides:
-      scheduler.scan_interval_minutes: 3       # 10 → 3
+      scheduler.scan_interval_minutes: 10      # ADR-004: 3→10min — 减少噪音信号, 好机会不会在10min内消失
       scheduler.monitor_interval_minutes: 0.25 # 0.5 → 0.25
       strategy.signal_cooldown: 30             # 120 → 30
       # Task #2 (2026-05-31): 沙盒 override 与新默认对齐, 避免 sandbox 模式实际门槛偏低
@@ -1747,7 +1747,7 @@ signal_fusion:
       divergence_penalty: 0.8
       trend_proxy: SPY
 scheduler:
-  scan_interval_minutes: 3
+  scan_interval_minutes: 10              # ADR-004: 3→10min — 减少噪音信号
   monitor_interval_minutes: 0.25
   max_positions: 12                # 模拟盘: 5→12, 最大化数据采集
   # 2026-06-01: 删除 deprecated scheduler.min_confidence (0.55) — ConfigAudit 启动 BLOCKING

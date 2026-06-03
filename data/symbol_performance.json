@@ -1,0 +1,19 @@
+{
+  "generated_at": "2026-06-04T07:44:22.187570",
+  "period_days": 14,
+  "symbols": [
+    {
+      "symbol": "US.XLK",
+      "direction": "SHORT",
+      "trades": 3,
+      "wins": 1,
+      "wr_pct": 33.3,
+      "total_pnl": 242.06,
+      "avg_pnl": 80.69,
+      "best": 354.96,
+      "worst": -81.2,
+      "avg_hold_hrs": 0.2,
+      "verdict": "WATCH"
+    }
+  ]
+}

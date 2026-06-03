@@ -294,6 +294,19 @@ def _build_dispatcher_market_data(scheduler, position, current_price: float) -> 
         "now_ts": time.time(),  # 供 flash_exit min_holding_seconds 使用
     }
 
+    # ADR-004 (2026-06-04): 传递 regime 给 dispatcher — 使 chandelier_trail multiplier_by_regime 生效
+    # 根因: dispatcher._eval_trailing_stop 用 market_data.get("regime") 查 regime,
+    #        但 _build_market_data 从未传递 regime → 永远 fallback 到 "normal" (2.5x)
+    #        → RANGE 市的 99.0x 配置永远不匹配 → 追踪止损在震荡照常触发
+    try:
+        _regime = getattr(position, "market_regime", None)
+        if _regime is not None:
+            md["regime"] = _regime.value if hasattr(_regime, "value") else str(_regime)
+        else:
+            md["regime"] = "UNKNOWN"
+    except Exception:
+        md["regime"] = "UNKNOWN"
+
     # ATR 单一真相源
     try:
         from app.core.di_container import get_di_container
