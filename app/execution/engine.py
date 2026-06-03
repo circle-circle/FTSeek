@@ -134,17 +134,91 @@ class ExecutionEngine(BaseExecutionEngine):
             data={"engine": "ExecutionEngine"},
         ))
     
+    # ── 方案B: 标的级互斥 (2026-06-03) ──────────────────────────────────
+    # 每个标的永久归属一个引擎，物理上消除方向冲突。
+    # ORB 只能交易这 8 只 ETF，Main/Scalping 绝不碰它们。
+    # 来源: unified_config.yaml::orb.universe (SSOT)
+    # 注释: SPY/QQQ 在主线 watchlist 中，ORB 已移除避免冲突
+    ORB_SYMBOLS = frozenset({
+        "US.IWM", "US.DIA", "US.XLE", "US.XLF",
+        "US.XLK", "US.XLV", "US.XLY", "US.XLI",
+    })
+
+    @classmethod
+    def _get_engine_source(cls, order: "Order") -> str:
+        """从 client_order_id 前缀识别订单来源引擎"""
+        cid = getattr(order, "client_order_id", "") or ""
+        if cid.startswith("orb_"):
+            return "ORB"
+        if cid.startswith("scalping_"):
+            return "SCALPING"
+        return "MAIN"
+
+    @classmethod
+    def _is_exit_order(cls, order: "Order") -> bool:
+        """退出/平仓订单不参与标的互斥校验"""
+        if getattr(order, "metadata", None) and order.metadata.get("is_exit"):
+            return True
+        cid = getattr(order, "client_order_id", "") or ""
+        if cid.startswith("exit_"):
+            return True
+        # 冲突平仓单也是退出性质
+        if "_CLOSE_SHORT_" in cid or "_CLOSE_LONG_" in cid:
+            return True
+        return False
+
+    def _check_symbol_ownership(self, order: "Order") -> bool:
+        """方案B: 标的级互斥校验。返回 True=放行, False=REJECT。
+
+        规则:
+          - ORB 引擎只能交易 ORB_SYMBOLS (8只ETF)
+          - Main/Scalping 不能交易 ORB_SYMBOLS
+          - 退出订单(is_exit)不受此限制
+        """
+        if self._is_exit_order(order):
+            return True
+
+        symbol = getattr(order, "symbol", "")
+        if not symbol:
+            return True  # 无标的信息，保守放行
+
+        engine = self._get_engine_source(order)
+        is_orb_symbol = symbol in self.ORB_SYMBOLS
+
+        if engine == "ORB" and not is_orb_symbol:
+            logger.error(
+                f"[标的互斥🔴] ORB 引擎试图交易非 ORB 标的 {symbol} → REJECTED "
+                f"(ORB 只允许: {', '.join(sorted(self.ORB_SYMBOLS))})"
+            )
+            return False
+
+        if engine in ("MAIN", "SCALPING") and is_orb_symbol:
+            logger.error(
+                f"[标的互斥🔴] {engine} 引擎试图交易 ORB 标的 {symbol} → REJECTED "
+                f"(该标的归属 ORB 引擎)"
+            )
+            return False
+
+        return True
+
     def submit_order(self, order: Order) -> Order:
         """
         提交订单
         
         流程：
-        1. 幂等检查
-        2. 选择订单类型
-        3. 选择券商
-        4. 提交到券商
-        5. 记录状态
+        1. 标的互斥校验 (方案B)
+        2. 幂等检查
+        3. 选择订单类型
+        4. 选择券商
+        5. 提交到券商
+        6. 记录状态
         """
+        # ── 方案B: 标的级互斥校验 (最先执行) ──
+        if not self._check_symbol_ownership(order):
+            order.state = OrderState.REJECTED
+            order.failure_reason = f"标的互斥: {order.symbol} 不属于 {self._get_engine_source(order)} 引擎"
+            return order
+
         # 幂等检查
         # ------------------------------------------------------------------
         # Critical 修复 2026-06-02: 退出订单与开仓订单的幂等命名空间隔离
