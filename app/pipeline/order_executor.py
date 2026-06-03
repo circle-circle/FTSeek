@@ -319,10 +319,16 @@ def _close_short_for_long(scheduler, symbol: str, qty: float, current_price: flo
             quantity=qty,
             price=current_price,
         )
+        # P0 修复 (2026-06-03): 走 ExecutionEngine 而非直连 broker_adapter
+        # 确保幂等/方向冲突/来源标记全链路生效
+        if not hasattr(order, 'metadata') or order.metadata is None:
+            order.metadata = {}
+        order.metadata['is_exit'] = True
+        order.metadata['source_type'] = 'CONFLICT_RESOLUTION'
 
         if scheduler.execution_engine:
             try:
-                result = scheduler.execution_engine.broker_adapter.submit_order(order)
+                result = scheduler.execution_engine.submit_order(order)
                 logger.info(
                     f"[空头转多头] {symbol} 空头平仓已提交: "
                     f"qty={qty} price=${current_price:.2f} result={result}"
@@ -407,10 +413,15 @@ def _close_long_for_short(scheduler, symbol: str, qty: float, current_price: flo
             quantity=qty,
             price=current_price,
         )
+        # P0 修复 (2026-06-03): 走 ExecutionEngine 而非直连 broker_adapter
+        if not hasattr(order, 'metadata') or order.metadata is None:
+            order.metadata = {}
+        order.metadata['is_exit'] = True
+        order.metadata['source_type'] = 'CONFLICT_RESOLUTION'
 
         if scheduler.execution_engine:
             try:
-                result = scheduler.execution_engine.broker_adapter.submit_order(order)
+                result = scheduler.execution_engine.submit_order(order)
                 logger.info(
                     f"[多头转空头] {symbol} 多头平仓已提交: "
                     f"qty={qty} price=${current_price:.2f}"
