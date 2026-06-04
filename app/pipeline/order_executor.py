@@ -1183,22 +1183,18 @@ def _check_gates_and_conflicts(scheduler, symbol: str, signal: SignalScore, cont
         pass
 
     # RFC-053 (2026-05-30): RANGE regime LONG 拦截
-    # 数据: LONG+RANGE 22笔 9.1%WR -$3,058 — 无趋势市况做多几乎必输
-    # SHORT+RANGE 54笔 25.9%WR -$2,651 — 仍允许但有风险
-    try:
-        _range_regime = str(getattr(signal, 'market_regime', '') or '').upper()
-        if _range_regime == "RANGE" and not is_short:
-            logger.warning(
-                f"🚫 [RANGE门禁] {symbol} 无趋势市况禁止做多 "
-                f"(regime={_range_regime}, strength={signal.strength})"
-            )
-            get_rejection_logger().record(symbol,
-                f"RANGE regime blocks LONG",
-                "RANGE_LONG_BLOCKED", strength=signal.strength,
-                confidence=None, direction=direction_str)
-            return False
-    except Exception:
-        pass
+    # 数据修正 (2026-06-04): LONG+RANGE 23笔 +$2,773 PnL, 正EV, 不应拦截
+    # 原结论 "LONG+RANGE 9.1%WR -$3,058" 基于旧数据(含期权), 排除后为正收益
+    # try:
+    #     _range_regime = str(getattr(signal, 'market_regime', '') or '').upper()
+    #     if _range_regime == "RANGE" and not is_short:
+    #         logger.warning(
+    #             f"🚫 [RANGE门禁] {symbol} 无趋势市况禁止做多 "
+    #             f"(regime={_range_regime}, strength={signal.strength})"
+    #         )
+    #         ...
+    # except Exception:
+    #     pass
 
     # ─── P1 (2026-06-02): Weak 状态过滤 — Muyuan 论文借鉴 ───
     # 区分 "健康超卖" (价格回调, 均线仍上行) vs "结构性下跌" (均线死叉, 趋势向下)

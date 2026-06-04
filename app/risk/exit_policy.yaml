@@ -107,7 +107,7 @@ exit_rules:
     # 优化 (2026-05-03): 收紧整体倍数以匹配 PRE_CLOSE_EXIT 豁免节奏
     # 优化 (2026-05-30 Task#7): 3档扩展为5档, 让退出曲线更贴合波动特征, 减少"由盈转亏"
     multiplier_by_profit:
-      initial: 3.0                   # P0 (2026-06-03): 2.0→3.0, 减少92笔1h内sl_hit
+      initial: 4.0                   # P1 (2026-06-04): 3.0→4.0, TRAILING_STOP 2h+ 45笔 -$3,649 需更多呼吸空间
       profit_05atr: 1.8             # 新增 (2026-05-30): 盈利≥0.5ATR 即开始收紧锁利
       profit_1atr: 1.6              # 收紧 (2026-05-30): 1.8 → 1.6, 更积极锁利
       profit_2atr: 1.4              # 新增 (2026-05-30): 盈利≥2ATR 进一步收紧
@@ -149,11 +149,11 @@ exit_rules:
   scale_out:
     enabled: true
     tier_mode: atr                  # Phase 3: atr | pct (默认 ATR 模式)
-    atr_tiers:                      # RFC-055: 4层→2层, 减少过早减仓, 让利润发展
-      - profit_atr: 1.5
+    atr_tiers:                      # 数据驱动 (2026-06-04): 降低 tier1 门槛让更多交易走到止盈
+      - profit_atr: 1.0             # P0: 1.5→1.0, DAY_TRADE_TP 100%WR +$13K 是唯一正EV退出
         close_pct: 30
         ratchet_sl_pct: 0.8
-      - profit_atr: 3.0
+      - profit_atr: 2.5             # P1: 3.0→2.5, 加速锁利
         close_pct: 70
         ratchet_sl_pct: 1.5
         trailing_remainder: true
