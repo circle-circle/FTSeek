@@ -1792,7 +1792,7 @@ scheduler:
   # 2026-06-01: 删除 deprecated scheduler.min_confidence (0.55) — ConfigAudit 启动 BLOCKING
   # 实际生效路径: risk.signal_quality.min_confidence (本文件 line 882, 已 = 0.65)
   # CFG.SCHEDULER_MIN_CONFIDENCE = 0.65 (代码 config_defaults.py:60)
-  min_signal_strength: 60  # P0 (2026-06-03): 50→60, 过滤最弱20%信号 (IntradayScorer range 10-90)
+  min_signal_strength: 30  # P0 (2026-06-04): 60→30, 数据证明IntradayScorer输出范围10-59, 60门槛拦截99.7%信号
   min_consensus_level: 0.25  # P0 (2026-06-03): 0.20→0.25, 轻度收紧 (数据: 0.2-0.5 区间仅11笔)
   adaptive_scan_enabled: true
   scan_segments:

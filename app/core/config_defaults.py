@@ -59,7 +59,7 @@ class ConfigDefaults:
     # ============================================================
     SCHEDULER_MIN_CONFIDENCE = 0.55         # P0 (2026-06-03): 同步 YAML
     SCHEDULER_MAX_POSITIONS = 12            # scheduler.max_positions (同步 YAML 2026-06-03: 5→12, 模拟盘最大化数据采集)
-    SCHEDULER_MIN_SIGNAL_STRENGTH = 60      # P0 (2026-06-03): 50→60 (过滤最弱20%信号)
+    SCHEDULER_MIN_SIGNAL_STRENGTH = 30      # P0 (2026-06-04): 60→30, IntradayScorer实际范围10-59
     SCHEDULER_MIN_CONSENSUS = 0.25          # P0 (2026-06-03): 0.2→0.25 (同步 YAML)
     SCHEDULER_SCAN_INTERVAL = 5             # ADR-005: 10→5min, 加速数据采集
 
