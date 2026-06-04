@@ -18,11 +18,22 @@ logger = logging.getLogger("ftseek.exit_monitor")
 
 def check_flash_exit(monitor, position, current_price, atr, trail_state, now_ts, direction, policy, earnings_guard):
     """Flash Exit 判定逻辑 (从 ExitMonitor._check_flash_exit 原样迁移)"""
+    # P0 (2026-06-05): 读取 exit_policy.yaml enabled 开关
+    # exit_policy.yaml 已明确禁用 flash_exit (6笔全亏 0%WR), 必须尊重
+    if policy and hasattr(policy, "policy"):
+        try:
+            _fe_cfg = policy.policy.get("exit_rules", {}).get("flash_exit", {})
+            if _fe_cfg.get("enabled", True) is False:
+                return None  # YAML 明确禁用，跳过
+        except (TypeError, AttributeError):
+            pass
+
     if atr <= 0:
         return None
 
-    # 修复 (2026-06-02 P0): 入场后 min_holding_seconds 内不触发 FLASH_EXIT
-    # 辩论共识: 76%交易为闪退(88/116), 全亏-$4,333; 开仓即闪退是核心问题
+    # 修复 (2026-06-02): 入场后 min_holding_seconds 内不触发 FLASH_EXIT
+    # 2026-06-02 数据: 30s 导致 83 笔闪退 -$14,251 (XLI 单只 24 次!)
+    # 回退到 120s: 给信号发展时间, 减少噪声扫单
     min_holding_sec = 120  # default fallback
     if policy:
         try:
@@ -30,7 +41,7 @@ def check_flash_exit(monitor, position, current_price, atr, trail_state, now_ts,
                 policy.policy.get('exit_rules', {}).get('flash_exit', {}).get('min_holding_seconds', 120)
             )
         except (TypeError, ValueError):
-            min_holding_sec = 120
+            min_holding_sec = 30
     entry_ts = trail_state.get("entry_time_ts", 0)
     if entry_ts > 0 and (now_ts - entry_ts) < min_holding_sec:
         logger.debug(
