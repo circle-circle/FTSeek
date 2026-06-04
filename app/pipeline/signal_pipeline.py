@@ -337,41 +337,17 @@ def _run_signal_scan_body(scheduler, vix, spy_context, market_news, pool_filter)
 
         logger.info(f"[自适应扫描] 本轮轮询 {len(batch)} 只股票：{batch}")
 
-        # ─── P0 (2026-06-02): 广度预扫描 — 论文: ≥6 只同时超卖 → 78% WR ───
-        # H1 (2026-06-03): 缓存预扫描结果, 主扫描复用, 消除 2-4x 冗余 get_full_market_context
-        # P0 修复 (2026-06-05): 预扫描阻塞主循环 → 加超时保护
-        # 根因: get_full_market_context 可能在某些标的上阻塞30s+(rate limiter),
+        # ─── P0 修复 (2026-06-05): 禁用广度预扫描的数据获取 ───
+        # 根因: get_full_market_context 在某些标的上无限阻塞(网络/rate limiter),
         #       导致整个预扫描循环卡住, 主循环永远不执行
-        _context_cache = {}  # symbol -> context dict
+        # 修复: 预扫描只做广度初始化, 数据获取由主循环逐symbol处理(有try/except保护)
+        _context_cache = {}
         try:
             from app.analysis.market_breadth import get_market_breadth
             _breadth = get_market_breadth()
             _breadth.start_new_scan()
-            import time as _t
-            _pre_scan_start = _t.time()
-            _PRE_SCAN_TIMEOUT = 30  # 预扫描总超时 30 秒
-            for _sym in batch:
-                if _t.time() - _pre_scan_start > _PRE_SCAN_TIMEOUT:
-                    logger.warning(
-                        f"[广度] 预扫描超时 ({_PRE_SCAN_TIMEOUT}s), "
-                        f"已完成 {len(_context_cache)}/{len(batch)} 只, 跳过剩余"
-                    )
-                    break
-                try:
-                    _ctx = scheduler.data_router.get_full_market_context(_sym)
-                    if _ctx:
-                        _ctx["symbol"] = _sym
-                        _breadth.record_symbol(_sym, _ctx)
-                        _context_cache[_sym] = _ctx
-                except Exception:
-                    pass
-            _breadth.log_snapshot()
-            logger.info(
-                f"[广度] 预扫描完成: {len(_context_cache)}/{len(batch)} 只, "
-                f"耗时 {_t.time() - _pre_scan_start:.1f}s"
-            )
-        except Exception as _be:
-            logger.warning(f"[广度] 预扫描异常 (不影响主流程): {_be}")
+        except Exception:
+            pass
 
         for symbol in batch:
             if is_circuit_breaker_open():
@@ -406,34 +382,14 @@ def _run_signal_scan_body(scheduler, vix, spy_context, market_news, pool_filter)
         def _collect(symbol, signal, ctx, vr):
             candidates.append((symbol, signal, ctx, vr))
 
-        # ─── P0 (2026-06-02): 广度预扫描 (CRA 路径) ───
-        # H1 (2026-06-03): 缓存预扫描结果, 主扫描复用
-        # P0 修复 (2026-06-05): 同 polling 路径, 加超时保护
-        _context_cache_cra = {}  # symbol -> context dict
+        # ─── P0 修复 (2026-06-05): 禁用广度预扫描数据获取 (CRA 路径) ───
+        _context_cache_cra = {}
         try:
             from app.analysis.market_breadth import get_market_breadth
             _breadth_cra = get_market_breadth()
             _breadth_cra.start_new_scan()
-            import time as _t
-            _cra_pre_start = _t.time()
-            _CRA_PRE_SCAN_TIMEOUT = 30
-            for _sym in scheduler.watchlist:
-                if _t.time() - _cra_pre_start > _CRA_PRE_SCAN_TIMEOUT:
-                    logger.warning(f"[广度·CRA] 预扫描超时, 已完成 {len(_context_cache_cra)} 只")
-                    break
-                if pool_filter and not _passes_pool_filter(scheduler, _sym, pool_filter):
-                    continue
-                try:
-                    _ctx = scheduler.data_router.get_full_market_context(_sym)
-                    if _ctx:
-                        _ctx["symbol"] = _sym
-                        _breadth_cra.record_symbol(_sym, _ctx)
-                        _context_cache_cra[_sym] = _ctx
-                except Exception:
-                    pass
-            _breadth_cra.log_snapshot()
-        except Exception as _bec:
-            logger.warning(f"[广度·CRA] 预扫描异常: {_bec}")
+        except Exception:
+            pass
 
         # ─── 截面排名过滤 (2026-06-03) ───
         # 对 watchlist 做截面排名，只交易 Top N 标的
