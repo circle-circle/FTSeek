@@ -331,6 +331,19 @@ def _build_dispatcher_market_data(scheduler, position, current_price: float) -> 
                             smooth = (1 - math.cos(t * math.pi)) / 2
                             session_ratio = smooth * session_ratio + (1 - smooth) * 1.0
                         effective_atr = atr_val * max(0.35, session_ratio)  # floor at 0.35
+                        # P0 (2026-06-04): ATR 百分比限幅 — 防止 1-min ATR 数据异常
+                        # 根因: 1-min K线ATR在盘前/低流动性时可能异常小(BABA=$0.02)
+                        #       或高波股异常大(AMD ATR%=2.69% → 4xATR止损=10.77%)
+                        _min_atr_pct = 0.005   # 0.5% floor: ATR不能低于价格的0.5%
+                        _max_atr_pct = 0.025   # 2.5% ceiling: ATR不能高于价格的2.5%
+                        if current_price > 0:
+                            _atr_pct = effective_atr / current_price
+                            if _atr_pct < _min_atr_pct:
+                                effective_atr = current_price * _min_atr_pct
+                                logger.debug(f"[ATR限幅] {position.symbol} ATR%={_atr_pct:.4f}<{_min_atr_pct} → floor=${effective_atr:.4f}")
+                            elif _atr_pct > _max_atr_pct:
+                                effective_atr = current_price * _max_atr_pct
+                                logger.debug(f"[ATR限幅] {position.symbol} ATR%={_atr_pct:.4f}>{_max_atr_pct} → ceiling=${effective_atr:.4f}")
                         md["atr"] = float(effective_atr)
                         md["atr_raw"] = float(atr_val)
                     else:
