@@ -792,6 +792,41 @@ def _get_order_qty(scheduler, symbol: str, atr: float = 0, direction: str = "LON
                 logger.debug(f'[动态仓位] 获取订单数量失败: {e}，使用默认 {DEFAULT_QTY}')
                 return DEFAULT_QTY
 
+        # ═══ 根因修复 (2026-06-05): 用真实股数重新检查名义敞口上限 ═══
+        # position_sizer 按 ATR/风险算股数，不检查 max_per_symbol 限制
+        # 此处用真实 size × price 校验，超限则截断
+        try:
+            from app.core.config_container import get_config as _nc_cfg
+            _nc_max_pct = float(_nc_cfg().get_dotted("risk.position.max_per_symbol", 0.25))
+        except Exception:
+            _nc_max_pct = 0.25
+        try:
+            _nc_equity = capital._state.current_equity if capital._state.current_equity > 0 else 100000
+        except Exception:
+            _nc_equity = 100000
+        _nc_limit = _nc_equity * _nc_max_pct
+        _nc_existing = 0.0
+        try:
+            if hasattr(scheduler, 'position_store') and scheduler.position_store:
+                _ep = scheduler.position_store.get(symbol)
+                if _ep:
+                    _nc_existing = _ep.size * _ep.avg_entry_price
+        except Exception:
+            pass
+        _nc_new_notional = size * price
+        _nc_total = _nc_existing + _nc_new_notional
+        if _nc_total > _nc_limit and price > 0:
+            _nc_max_new = max(0, _nc_limit - _nc_existing)
+            _nc_capped_size = max(1, int(_nc_max_new / price))
+            if _nc_capped_size < size:
+                logger.warning(
+                    f"🚫 [仓位上限·真实] {symbol} 截断: "
+                    f"{size}股(${_nc_total:,.0f}) → {_nc_capped_size}股(${_nc_existing + _nc_capped_size*price:,.0f}) "
+                    f"| 上限=${_nc_limit:,.0f} (净值${_nc_equity:,.0f}×{_nc_max_pct:.0%}) "
+                    f"| 已有=${_nc_existing:,.0f}"
+                )
+                size = _nc_capped_size
+
         return size
 
     except Exception as e:

@@ -499,11 +499,31 @@ class USPositionSync:
                         max_per_symbol = 0.25
                     
                     if position_pct > max_per_symbol:
-                        logger.warning(
-                            f"⚠️ [US Sync] 新持仓 {symbol} 占比 {position_pct:.1%} 超限 {max_per_symbol:.0%}，"
-                            f"市值 ${position_value:,.0f} / 净值 ${total_equity:,.0f} | "
-                            f"已记录但不拦截 (Broker SSOT 原则)"
-                        )
+                        # 根因修复 (2026-06-05): 超限仓位触发自动减仓
+                        # 计算需要平掉的股数
+                        max_value = total_equity * max_per_symbol
+                        excess_value = position_value - max_value
+                        excess_shares = int(excess_value / info['cost'])
+                        
+                        if excess_shares > 0:
+                            logger.warning(
+                                f"🚫 [US Sync] {symbol} 占比 {position_pct:.1%} 超限 {max_per_symbol:.0%}，"
+                                f"触发自动减仓: {excess_shares}股 (${excess_value:,.0f}) | "
+                                f"当前 {info['qty']}股(${position_value:,.0f}) → 目标 {info['qty']-excess_shares}股(${max_value:,.0f})"
+                            )
+                            # 标记需要减仓，在 sync 循环结束后统一处理
+                            if not hasattr(self, '_pending_trims'):
+                                self._pending_trims = {}
+                            self._pending_trims[symbol] = {
+                                'shares': excess_shares,
+                                'direction': info['direction'],
+                                'reason': f'sync_over_limit_{max_per_symbol:.0%}',
+                            }
+                        else:
+                            logger.warning(
+                                f"⚠️ [US Sync] {symbol} 占比 {position_pct:.1%} 超限 {max_per_symbol:.0%}，"
+                                f"但计算减仓股数为 0 (市值 ${position_value:,.0f} / 净值 ${total_equity:,.0f})"
+                            )
                 except Exception as e:
                     logger.debug(f"[US Sync] 仓位验证失败 (不影响同步): {e}")
                 
@@ -585,6 +605,8 @@ class USPositionSync:
         conn.commit()
         conn.close()
 
+        # ═══ 根因修复 (2026-06-05): 执行超限减仓 + 扫描所有持仓 ═══
+        self._execute_pending_trims_and_check_all_oversized()
         # P0 修复 2026-04-25: 同步到 PositionStore 内存
         if self.position_store:
             self._sync_to_position_store(futu_positions)
@@ -1220,6 +1242,144 @@ class USPositionSync:
         default_atr = fallback_price * 0.02
         logger.debug(f"[US Sync ATR] {symbol} 使用默认 ATR=${default_atr:.2f} (2% 价格)")
         return default_atr
+
+    def _execute_pending_trims_and_check_all_oversized(self):
+        """根因修复 (2026-06-05): 执行超限减仓 + 扫描所有持仓
+        
+        职责:
+        1. 执行 _pending_trims 中标记的减仓 (新发现的超限仓位)
+        2. 扫描所有 open_positions，检测已有超限仓位并触发减仓
+        3. 通过 ExecutionEngine 提交部分平仓单
+        """
+        import sqlite3
+        
+        # 1. 收集所有需要减仓的 symbol + shares
+        trims_to_execute = {}
+        
+        # 1a. 从 _pending_trims 获取 (新发现的)
+        if hasattr(self, '_pending_trims') and self._pending_trims:
+            trims_to_execute.update(self._pending_trims)
+            self._pending_trims.clear()
+        
+        # 1b. 扫描所有 open_positions 检测已有超限仓位
+        try:
+            from app.risk.capital_safety import get_capital_safety_system
+            capital = get_capital_safety_system()
+            total_equity = capital._state.current_equity if capital._state.current_equity > 0 else 100000
+            
+            try:
+                from app.core.config_container import get_config
+                cfg = get_config()
+                max_per_symbol = float(cfg.get_dotted("risk.position.max_per_symbol", 0.25))
+            except Exception:
+                max_per_symbol = 0.25
+            
+            conn = sqlite3.connect(DB_PATH)
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT symbol, size, avg_entry_price, direction
+                FROM open_positions
+                WHERE sync_status IS NULL OR sync_status NOT IN (
+                    'closed_by_daemon','closed_by_scheduler','closed_by_sync',
+                    'closed_emergency','stale_not_in_broker')
+            """)
+            for row in cursor.fetchall():
+                sym, size, price, direction = row
+                if sym in trims_to_execute:
+                    continue  # 已在 pending_trims 中
+                notional = size * price
+                pct = notional / total_equity
+                if pct > max_per_symbol:
+                    max_value = total_equity * max_per_symbol
+                    excess_value = notional - max_value
+                    excess_shares = int(excess_value / price) if price > 0 else 0
+                    if excess_shares > 0:
+                        logger.warning(
+                            f"🚫 [仓位扫描] {sym} 占比 {pct:.1%} 超限 {max_per_symbol:.0%}，"
+                            f"触发减仓: {excess_shares}/{size}股 (${excess_value:,.0f})"
+                        )
+                        trims_to_execute[sym] = {
+                            'shares': excess_shares,
+                            'direction': direction,
+                            'reason': f'periodic_scan_over_limit_{max_per_symbol:.0%}',
+                        }
+            conn.close()
+        except Exception as e:
+            logger.debug(f"[仓位扫描] 扫描失败: {e}")
+        
+        # 2. 执行减仓
+        if not trims_to_execute:
+            return
+        
+        # 冷却机制: 同一 symbol 10 分钟内不重复减仓
+        if not hasattr(self, '_last_trim_time'):
+            self._last_trim_time: Dict[str, float] = {}
+        _now = time.time()
+        _trim_cooldown = 600  # 10 minutes
+        
+        # 准备 Futu 交易上下文
+        try:
+            from futu import TrdEnv, TrdMarket, SecurityFirm, OrderType as FutuOrderType, TrdSide
+            from app.core.config_container import get_config as _te_cfg
+            _trade_env_int = int(_te_cfg().get_dotted("trade_env", 1))
+            trade_env = TrdEnv.SIMULATE if _trade_env_int == 1 else TrdEnv.REAL
+        except Exception as e:
+            logger.error(f"[减仓] Futu 初始化失败: {e}")
+            return
+        
+        for symbol, trim_info in trims_to_execute.items():
+            # 冷却检查
+            if _now - self._last_trim_time.get(symbol, 0) < _trim_cooldown:
+                logger.debug(f"[减仓] {symbol} 冷却中，跳过")
+                continue
+            
+            shares = trim_info['shares']
+            direction = trim_info['direction']
+            reason = trim_info.get('reason', 'sync_over_limit')
+            try:
+                # 通过 Futu trade_ctx 直接提交市价平仓单
+                ctx = self._get_futu_context(
+                    os.getenv("FUTU_OPEND_HOST", "127.0.0.1"),
+                    int(os.getenv("FUTU_OPEND_PORT", "11111")),
+                    trade_env, TrdMarket.US, SecurityFirm.FUTUINC,
+                )
+                if ctx is None:
+                    logger.error(f"[减仓] {symbol} Futu 连接不可用")
+                    continue
+                
+                # 平仓方向: LONG→SELL, SHORT→BUY (COVER)
+                close_side = TrdSide.SELL if direction == "LONG" else TrdSide.BUY
+                
+                # 获取当前价格 (市价单需要参考价格)
+                try:
+                    from app.data.market_data_router import get_market_data_router
+                    _md = get_market_data_router().get_latest(symbol)
+                    _price = float(_md.get('price', 0) or 0) if _md else 0
+                except Exception:
+                    _price = 0
+                if _price <= 0:
+                    _price = trim_info.get('price', 0)
+                
+                ret, data = ctx.place_order(
+                    price=_price,
+                    qty=shares,
+                    code=symbol,
+                    trd_side=close_side,
+                    order_type=FutuOrderType.MARKET,
+                    trd_env=trade_env,
+                    remark=f"OVER_LIMIT_TRIM:{reason}",
+                )
+                if ret == 0:
+                    _oid = data.iloc[0].get("order_id", "?") if hasattr(data, 'iloc') else "?"
+                    logger.info(
+                        f"✅ [减仓] {symbol} {close_side} {shares}股 已提交 "
+                        f"(order_id={_oid}, reason={reason})"
+                    )
+                    self._last_trim_time[symbol] = _now  # 更新冷却时间
+                else:
+                    logger.error(f"[减仓] {symbol} 提交失败: ret={ret}, data={data}")
+            except Exception as e:
+                logger.error(f"[减仓] {symbol} 执行异常: {e}")
 
     # Broker-first (2026-06-03): _restore_position_from_db 已删除
     # 不再从 DB 恢复持仓到内存 — broker 是唯一真相源
