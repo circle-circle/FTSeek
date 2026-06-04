@@ -153,6 +153,55 @@ class FutuLV3Provider:
         t = hour * 60 + minute
         return 570 <= t < 960
 
+    def _verify_connection_alive(self) -> bool:
+        """轻量级 TCP 存活探测 — 验证 Futu OpenD 连接实际可用。
+
+        根因: Futu SDK CallClose 后 _quote_ctx 对象仍在、_connected=True，
+        但底层 TCP 已断。需要实际调用 API 验证。
+
+        使用 get_global_state() — 最轻量的 Futu API 调用，
+        仅查询 OpenD 内部状态，无网络 I/O 开销。
+        """
+        try:
+            if self._quote_ctx is None:
+                return False
+            ret, data = self._quote_ctx.get_global_state()
+            return ret == 0
+        except Exception:
+            return False
+
+    def _start_health_watchdog(self):
+        """启动后台健康守护线程 — 交易时段每 30s 自动检测断连并重连。
+
+        根因: ensure_healthy() 仅被 position_monitor 调用，
+        ORB 引擎等其他模块订阅时断连无人检测。
+        独立守护线程确保任何断连都能被发现和修复。
+        """
+        if getattr(self, '_watchdog_started', False):
+            return
+        self._watchdog_started = True
+
+        import threading
+
+        def _watchdog_loop():
+            while True:
+                try:
+                    time.sleep(30)
+                    if not self._is_us_market_open():
+                        continue
+                    # 只在有订阅时才检查（无订阅=无 push=正常）
+                    if not self._subscribed_symbols:
+                        continue
+                    if not self.is_healthy(log_change=True):
+                        logger.warning("[FutuLV3][Watchdog] 检测到不健康，触发重连")
+                        self.force_reconnect()
+                except Exception as e:
+                    logger.debug(f"[FutuLV3][Watchdog] 异常: {e}")
+
+        t = threading.Thread(target=_watchdog_loop, daemon=True, name="FutuLV3-HealthWatchdog")
+        t.start()
+        logger.info("[FutuLV3][Watchdog] 后台健康守护已启动 (30s 间隔)")
+
     def _ensure_connected(self) -> bool:
         """确保已连接到 Futu OpenD
 
@@ -162,13 +211,22 @@ class FutuLV3Provider:
             return False
 
         if self._connected and self._quote_ctx is not None:
-            return True
+            # 根因修复 (2026-06-05): 验证 TCP 连接实际存活
+            # Futu SDK CallClose 后 _quote_ctx 对象仍在但不可用
+            if self._verify_connection_alive():
+                return True
+            # 假活状态 → 标记断连，走重连路径
+            logger.warning("[FutuLV3] 连接假活 (对象存在但 TCP 已断)，触发重连")
+            self._connected = False
+            return self.force_reconnect()
 
         with self._lock:
             if not self._is_us_market_open():
                 return False
             if self._connected and self._quote_ctx is not None:
-                return True
+                if self._verify_connection_alive():
+                    return True
+                self._connected = False
 
             try:
                 os_env_set = False
@@ -508,10 +566,31 @@ class FutuLV3Provider:
             logger.info(
                 f"[FutuLV3] 总订阅: {len(self._subscribed_symbols)} 只美股"
             )
+            # 根因修复: 首次订阅成功后启动健康守护线程
+            self._start_health_watchdog()
             return True
 
         except Exception as e:
-            logger.error(f"[FutuLV3] 订阅失败: {e}")
+            # 根因修复 (2026-06-05): 订阅失败时自动重连并重试
+            # 典型场景: Futu SDK CallClose 后 _quote_ctx 假活
+            logger.error(f"[FutuLV3] 订阅失败: {e} — 尝试重连后重试")
+            if self.force_reconnect():
+                try:
+                    # 重连后 _subscribed_symbols 已清空，全部视为 new
+                    futu_symbols_retry = [self._to_futu_symbol(s) for s in symbols]
+                    for st_name in (sub_types or ['QUOTE', 'K_1M', 'K_15M', 'K_30M']):
+                        from futu import SubType as _ST
+                        _sub = {
+                            'QUOTE': _ST.QUOTE, 'K_1M': _ST.K_1M,
+                            'K_15M': _ST.K_15M, 'K_30M': _ST.K_30M,
+                        }.get(st_name)
+                        if _sub and self._quote_ctx is not None:
+                            self._quote_ctx.subscribe(futu_symbols_retry, [_sub], subscribe_push=True)
+                    self._subscribed_symbols.update(futu_symbols_retry)
+                    logger.info(f"[FutuLV3] ✅ 重连后重订阅成功: {len(futu_symbols_retry)} 只")
+                    return True
+                except Exception as e2:
+                    logger.error(f"[FutuLV3] 重连后重订阅仍失败: {e2}")
             return False
 
     # ── 期权代码检测 ────────────────────────────────────────────────
