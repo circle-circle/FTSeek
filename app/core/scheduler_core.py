@@ -696,7 +696,8 @@ class TradingScheduler:
             self.polling_controller.register_symbol(symbol, tier)
             _registered += 1
 
-        # ETF 作为市场基准，注册但低频轮询 (sandbox 下若 SPY/QQQ 在 universe 也算)
+        # ETF 注册: 可交易ETF用P1优先级, 基准ETF(SPY/QQQ)保持P2
+        _benchmark_etfs = {"US.SPY", "US.QQQ"}
         for etf in watchlist_with_tiers.get('etfs', []):
             symbol = etf.get('code', '')
             if not etf.get('enabled', True):
@@ -704,7 +705,12 @@ class TradingScheduler:
             if _sandbox_universe and symbol not in _sandbox_universe:
                 _filtered_by_sandbox += 1
                 continue
-            self.polling_controller.register_symbol(symbol, StockTier.WATCHLIST)
+            # P0 (2026-06-04): 可交易ETF (XLF/XLY/XLK/XLI/XLE/IWM) 提升到 P1
+            # 它们有独立交易信号, 30min轮询太慢会错过入场窗口
+            if symbol in _benchmark_etfs:
+                self.polling_controller.register_symbol(symbol, StockTier.WATCHLIST)
+            else:
+                self.polling_controller.register_symbol(symbol, StockTier.HIGH_VOLATILITY)
             _registered += 1
 
         if _sandbox_universe:
