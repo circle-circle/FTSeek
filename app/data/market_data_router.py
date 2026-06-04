@@ -487,31 +487,6 @@ class MarketDataRouter:
                             "data_source": "futu_lv3_quote_only",
                         }
                         logger.warning(f"[Router] {symbol} LV3 K 线数据不足 ({len(klines) if klines else 0} 条)")
-
-                        # ── P0 (2026-06-04): Finnhub K 线降级 — Futu K-line Push 断连时的救命通道 ──
-                        # 根因: Futu K_1M Push 订阅可能在盘中断连(22:17 Disconnect),
-                        #       导致所有36只股票 K 线 = 0, 技术指标全部 = 0, 信号管线瘫痪
-                        if self.fh and hasattr(self.fh, 'get_kline'):
-                            try:
-                                fh_klines = self.fh.get_kline(symbol, resolution="1", count=200)
-                                if fh_klines and len(fh_klines) >= 30:
-                                    from app.data.lv3_technical_calculator import LV3TechnicalCalculator
-                                    calc = LV3TechnicalCalculator()
-                                    fh_tech = calc.calculate_from_klines(fh_klines)
-                                    if fh_tech:
-                                        ts_ctx = fh_tech
-                                        ts_ctx["price"] = futu_quote["price"]  # 用 Futu 实时价覆盖
-                                        ts_ctx["data_source"] = "finnhub_kline_fallback"
-                                        ts_ctx["lv3_bid"] = futu_quote.get("bid", ts_ctx["price"])
-                                        ts_ctx["lv3_ask"] = futu_quote.get("ask", ts_ctx["price"])
-                                        logger.info(
-                                            f"[Router] {symbol} ★ Finnhub K线降级成功 | "
-                                            f"price=${ts_ctx['price']:.2f} RSI={ts_ctx.get('rsi', 0):.1f} "
-                                            f"MACD={ts_ctx.get('macd', 0):.4f} ATR={ts_ctx.get('atr', 0):.2f} "
-                                            f"bars={len(fh_klines)}"
-                                        )
-                            except Exception as fh_e:
-                                logger.debug(f"[Router] {symbol} Finnhub K线降级失败: {fh_e}")
             except Exception as e:
                 errors.append(f"FutuLV3: {e}")
                 logger.warning(f"[Router] Futu LV3 主通道失败 {symbol}: {e}")

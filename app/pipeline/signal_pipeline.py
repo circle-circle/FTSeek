@@ -339,23 +339,39 @@ def _run_signal_scan_body(scheduler, vix, spy_context, market_news, pool_filter)
 
         # ─── P0 (2026-06-02): 广度预扫描 — 论文: ≥6 只同时超卖 → 78% WR ───
         # H1 (2026-06-03): 缓存预扫描结果, 主扫描复用, 消除 2-4x 冗余 get_full_market_context
+        # P0 修复 (2026-06-05): 预扫描阻塞主循环 → 加超时保护
+        # 根因: get_full_market_context 可能在某些标的上阻塞30s+(rate limiter),
+        #       导致整个预扫描循环卡住, 主循环永远不执行
         _context_cache = {}  # symbol -> context dict
         try:
             from app.analysis.market_breadth import get_market_breadth
             _breadth = get_market_breadth()
             _breadth.start_new_scan()
+            import time as _t
+            _pre_scan_start = _t.time()
+            _PRE_SCAN_TIMEOUT = 30  # 预扫描总超时 30 秒
             for _sym in batch:
+                if _t.time() - _pre_scan_start > _PRE_SCAN_TIMEOUT:
+                    logger.warning(
+                        f"[广度] 预扫描超时 ({_PRE_SCAN_TIMEOUT}s), "
+                        f"已完成 {len(_context_cache)}/{len(batch)} 只, 跳过剩余"
+                    )
+                    break
                 try:
                     _ctx = scheduler.data_router.get_full_market_context(_sym)
                     if _ctx:
                         _ctx["symbol"] = _sym
                         _breadth.record_symbol(_sym, _ctx)
-                        _context_cache[_sym] = _ctx  # H1: 缓存供主扫描复用
+                        _context_cache[_sym] = _ctx
                 except Exception:
                     pass
             _breadth.log_snapshot()
+            logger.info(
+                f"[广度] 预扫描完成: {len(_context_cache)}/{len(batch)} 只, "
+                f"耗时 {_t.time() - _pre_scan_start:.1f}s"
+            )
         except Exception as _be:
-            logger.debug(f"[广度] 预扫描异常 (不影响主流程): {_be}")
+            logger.warning(f"[广度] 预扫描异常 (不影响主流程): {_be}")
 
         for symbol in batch:
             if is_circuit_breaker_open():
@@ -392,12 +408,19 @@ def _run_signal_scan_body(scheduler, vix, spy_context, market_news, pool_filter)
 
         # ─── P0 (2026-06-02): 广度预扫描 (CRA 路径) ───
         # H1 (2026-06-03): 缓存预扫描结果, 主扫描复用
+        # P0 修复 (2026-06-05): 同 polling 路径, 加超时保护
         _context_cache_cra = {}  # symbol -> context dict
         try:
             from app.analysis.market_breadth import get_market_breadth
             _breadth_cra = get_market_breadth()
             _breadth_cra.start_new_scan()
+            import time as _t
+            _cra_pre_start = _t.time()
+            _CRA_PRE_SCAN_TIMEOUT = 30
             for _sym in scheduler.watchlist:
+                if _t.time() - _cra_pre_start > _CRA_PRE_SCAN_TIMEOUT:
+                    logger.warning(f"[广度·CRA] 预扫描超时, 已完成 {len(_context_cache_cra)} 只")
+                    break
                 if pool_filter and not _passes_pool_filter(scheduler, _sym, pool_filter):
                     continue
                 try:
@@ -405,12 +428,12 @@ def _run_signal_scan_body(scheduler, vix, spy_context, market_news, pool_filter)
                     if _ctx:
                         _ctx["symbol"] = _sym
                         _breadth_cra.record_symbol(_sym, _ctx)
-                        _context_cache_cra[_sym] = _ctx  # H1: 缓存供主扫描复用
+                        _context_cache_cra[_sym] = _ctx
                 except Exception:
                     pass
             _breadth_cra.log_snapshot()
         except Exception as _bec:
-            logger.debug(f"[广度·CRA] 预扫描异常: {_bec}")
+            logger.warning(f"[广度·CRA] 预扫描异常: {_bec}")
 
         # ─── 截面排名过滤 (2026-06-03) ───
         # 对 watchlist 做截面排名，只交易 Top N 标的
@@ -1071,11 +1094,12 @@ def _process_symbol_impl(scheduler, symbol: str, vix: float, spy_context: Dict[s
 
     logger.info(f"[决策] 开始处理 {symbol}")
 
-    # ── Layer 1: 宏观闸门 (P3 2026-04-29) ──
-    # VIX>=25: 硬拦截 (与 pre_trade_check.py P1 gate 对齐)
-    if vix >= 25:
-        logger.warning(f"[宏观闸门] VIX={vix:.1f}>=25, 禁止开仓")
-        return
+    # ── Layer 1: 宏观闸门 (P3 2026-04-29 → P0 2026-06-04 简化) ──
+    # VIX>=25: 不再硬拦截，改为日志警告 + context flag。
+    # 分层防御已完整: IntradayScorer VIX自适应仓位缩放 + exit_rules ATR止损放宽 + capital_safety总敲口上限。
+    high_vix = vix >= 25
+    if high_vix:
+        logger.warning(f"[宏观闸门] VIX={vix:.1f}>=25, 高波动模式 (不拦截, 下游自适应缩仓)")
 
     # SPY < MA200: 仅设置 context flag, 不做硬拦截。
     # 方向感知的 LONG-only 拦截由 pre_trade_check.py P1 gate 权威执行,
@@ -1414,11 +1438,14 @@ def _process_symbol_impl(scheduler, symbol: str, vix: float, spy_context: Dict[s
     # Step4: 构建 SignalScore
     signal = _build_signal_from_vote(scheduler, symbol, vote_result, context)
 
-    # 信号强度过滤
-    # P0 修复 (2026-04-30): 做空 strength 本身就是做空强度，不应反转。
-    # 旧逻辑 effective = 100 - strength 导致 strength=80 → effective=20 被错误拦截。
-    # 做空专用门禁已在 _check_gates_and_conflicts 中实现 (strength<30 绝对底限 + effective>=65)。
-    effective_strength = signal.strength
+    # 信号强度过滤 (方向感知)
+    # P0 修复 (2026-06-04): 50-offset 格式下 SHORT strength<50 是正确的,
+    # 评估门槛时需转为绝对强度: SHORT → 100-strength, LONG → strength
+    # 对齐 pre_trade_check.py 的 effective 逻辑。
+    if direction == "SHORT":
+        effective_strength = 100 - signal.strength  # e.g. strength=10 → effective=90 (强空)
+    else:
+        effective_strength = signal.strength  # e.g. strength=90 → effective=90 (强多)
     if effective_strength < scheduler.MIN_SIGNAL_STRENGTH:
         logger.info(f"[决策] {symbol} 信号强度不足 (direction={direction} strength={signal.strength} effective={effective_strength}<{scheduler.MIN_SIGNAL_STRENGTH})，放弃")
         get_rejection_logger().record(symbol,
