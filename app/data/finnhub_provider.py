@@ -387,6 +387,78 @@ class FinnhubProvider:
         """
         return 20.0
 
+    def get_kline(self, symbol: str, resolution: str = "1", count: int = 100) -> Optional[List[Dict]]:
+        """
+        获取 K 线数据 — Futu K-line 断连时的降级数据源 (P0 2026-06-04)
+
+        使用 Finnhub /stock/candle 端点:
+          - 免费计划支持 1, 5, 15, 30, 60, D, W, M 分辨率
+          - 返回 OHLCV 数组, 转换为与 Futu K 线兼容的格式
+
+        Args:
+            symbol: US.NVDA 格式
+            resolution: K线分辨率 ("1"=1min, "5"=5min, "D"=日线)
+            count: 返回的K线条数
+
+        Returns:
+            K 线列表 [{"time": ..., "open": ..., "high": ..., "low": ..., "close": ..., "volume": ...}]
+            或 None (失败/无数据)
+        """
+        if not self.enabled:
+            return None
+
+        ticker = self._to_ticker(symbol)
+        cache_key = f"kline_{ticker}_{resolution}_{count}"
+
+        # 缓存 120s (K线变化较慢)
+        if self._is_cache_valid(cache_key, ttl_override=120):
+            return self._cache.get(cache_key)
+
+        import time as _time
+        now_ts = int(_time.time())
+        # 1min K线: count 条 × 60s
+        interval_sec = {"1": 60, "5": 300, "15": 900, "30": 1800, "60": 3600, "D": 86400}.get(resolution, 60)
+        from_ts = now_ts - (count * interval_sec) - 3600  # 多取 1h buffer
+
+        data = self._get("stock/candle", {
+            "symbol": ticker,
+            "resolution": resolution,
+            "from": from_ts,
+            "to": now_ts,
+        })
+
+        if not data or data.get("s") != "ok":
+            logger.debug(f"[Finnhub] {ticker} K线无数据: status={data.get('s', 'none') if data else 'no_response'}")
+            return None
+
+        # 转换为 Futu K线兼容格式
+        timestamps = data.get("t", [])
+        opens = data.get("o", [])
+        highs = data.get("h", [])
+        lows = data.get("l", [])
+        closes = data.get("c", [])
+        volumes = data.get("v", [])
+
+        if not timestamps:
+            return None
+
+        klines = []
+        for i in range(len(timestamps)):
+            klines.append({
+                "time": str(timestamps[i]),
+                "open": float(opens[i]) if i < len(opens) else 0,
+                "high": float(highs[i]) if i < len(highs) else 0,
+                "low": float(lows[i]) if i < len(lows) else 0,
+                "close": float(closes[i]) if i < len(closes) else 0,
+                "volume": float(volumes[i]) if i < len(volumes) else 0,
+            })
+
+        # 只取最后 count 条
+        klines = klines[-count:]
+        self._set_cache(cache_key, klines)
+        logger.info(f"[Finnhub] {ticker} K线获取成功: {len(klines)} 条 (resolution={resolution})")
+        return klines
+
     def get_market_news(self, limit: int = 20) -> List[Dict[str, Any]]:
         """获取通用市场新闻"""
         if not self.enabled:

@@ -109,9 +109,25 @@ class FutuLV3Provider:
         # P0 修复: K线数据持久化缓存 + TTL，避免重复请求消耗配额
         self._kline_data_cache: dict = {}       # symbol -> {"data": [...], "ts": time.time()}
         self._kline_cache_lock = threading.Lock()
-        self._kline_cache_ttl = 300             # 缓存有效期5分钟 (1分钟K线，减少配额消耗)
+        self._kline_cache_ttl = 60              # M6 (2026-06-03): 300→60s, K线缓存缩短到1分钟 (技术指标滞后从5min降到1min)
         self._kline_symbol_cooldown: dict = {}  # symbol -> last_request_time (防同一标的重复请求)
         self._kline_symbol_cooldown_sec = 30    # 同一标的最小请求间隔30秒 (10→30 降低配额压力)
+
+        # ── 连接健康监控 (2026-06-02 新增, Task #7) ──
+        # 跟踪最后一次收到任意 push 的时间，用于检测 OpenD 断线 / 数据陈旧
+        self._last_push_time: Optional[float] = None
+        self._stale_threshold_sec: float = 30.0  # 数据超过 30s 未更新视为陈旧
+        self._initial_grace_sec: float = 60.0    # 连接成功后给 60s 宽容期等待首批 push
+        # 重连指数退避: 2,4,8,16,32,60 秒
+        self._reconnect_attempts: int = 0
+        self._last_reconnect_time: float = 0.0
+        self._reconnect_min_backoff: float = 2.0
+        self._reconnect_max_backoff: float = 60.0
+        # 健康状态变化日志 + 断线统计
+        self._last_health_state: Optional[bool] = None
+        self._disconnect_start_time: Optional[float] = None
+        self._total_disconnect_count: int = 0
+        self._last_disconnect_duration_sec: float = 0.0
 
     def _is_us_market_open(self) -> bool:
         """判断当前是否为美股交易时段 (使用美东时间)
@@ -256,6 +272,7 @@ class FutuLV3Provider:
                                 updated += 1
                         if updated > 0:
                             provider._push_quote_count += updated
+                            provider._last_push_time = time.time()
                             if provider._push_quote_count <= len(data):  # 首次接收
                                 syms = data["code"].tolist()[:5]
                                 logger.info(f"[FutuLV3] ✅ Push 数据到达: {len(data)} 条, 首批: {syms}")
@@ -294,6 +311,7 @@ class FutuLV3Provider:
                                     # 保持合理大小 (最近 300 条 ≈ 5 小时 1M K 线)
                                     if len(cache_list) > 300:
                                         provider._push_kline_cache[sym] = cache_list[-300:]
+                            provider._last_push_time = time.time()
                     return ret, data
                 except Exception:
                     pass
@@ -334,6 +352,7 @@ class FutuLV3Provider:
                                 if len(buf) > self.MAX_TICKERS_PER_SYMBOL:
                                     provider._push_ticker_cache[sym] = buf[-self.MAX_TICKERS_PER_SYMBOL:]
                         provider._push_ticker_count += len(data)
+                        provider._last_push_time = time.time()
                         if provider._push_ticker_count <= len(data):  # 首次接收
                             syms = data["code"].tolist()[:5]
                             logger.info(f"[FutuLV3] ✅ Ticker 数据到达: {len(data)} 笔, 首批: {syms}")
@@ -367,6 +386,7 @@ class FutuLV3Provider:
                                     "timestamp": time.time(),
                                 }
                         provider._push_orderbook_count += 1
+                        provider._last_push_time = time.time()
                         if provider._push_orderbook_count <= 1:  # 首次接收
                             syms = data["code"].tolist()[:5]
                             logger.info(f"[FutuLV3] ✅ OrderBook 数据到达: 首批: {syms}")
@@ -875,7 +895,24 @@ class FutuLV3Provider:
                 self._set_cached_kline(symbol, klines)
                 return klines
             else:
-                logger.debug(f"[FutuLV3] {symbol} K 线获取失败: ret={ret}")
+                logger.warning(f"[FutuLV3] {symbol} K 线获取失败: ret={ret}")
+                # ── P0 (2026-06-04): K 线失败触发重连 — 检测 Push 断连 ──
+                # 根因: K_1M Push 订阅可能在盘中断连(Disconnect), 历史 K 线请求也失败
+                # 修复: 连续失败时触发 force_reconnect 恢复 Push 订阅
+                if not hasattr(self, '_kline_fail_count'):
+                    self._kline_fail_count = 0
+                    self._kline_last_reconnect = 0.0
+                self._kline_fail_count += 1
+                if self._kline_fail_count >= 3:
+                    import time as _t
+                    if _t.time() - self._kline_last_reconnect > 120:  # 2min 冷却
+                        logger.warning(
+                            f"[FutuLV3][K线] 连续 {self._kline_fail_count} 次 K 线失败, "
+                            f"触发 force_reconnect 恢复 Push 订阅"
+                        )
+                        self._kline_last_reconnect = _t.time()
+                        self._kline_fail_count = 0
+                        self.force_reconnect()
                 return self._get_cached_kline(symbol)  # 降级返回缓存
 
         except Exception as e:
@@ -902,6 +939,178 @@ class FutuLV3Provider:
             self._connected = False
             self._subscribed_symbols.clear()
             logger.info("[FutuLV3] 已断开 OpenD 连接")
+
+    # ═════════════════════════════════════════════════════════════
+    # Task #7 (2026-06-02): 连接健康检查 + 指数退避重连
+    # ═════════════════════════════════════════════════════════════
+
+    def get_last_push_age(self) -> Optional[float]:
+        """距上次收到任意 push 的秒数，从未收过返回 None"""
+        if self._last_push_time is None:
+            return None
+        return time.time() - self._last_push_time
+
+    def is_healthy(self, log_change: bool = True) -> bool:
+        """连接健康检查 — 验证 OpenD 连接与数据新鲜度。
+
+        判定规则:
+            1. 未连接 → 不健康
+            2. 非美股交易时段 / 无活跃订阅 → 仅看连接状态 (健康)
+            3. 连接后超过宽容期 (60s) 仍未收到 push → 不健康
+            4. 最后 push 超过 stale_threshold (30s) → 不健康
+
+        Args:
+            log_change: 是否在状态变化时输出 INFO/WARNING 日志
+
+        Returns:
+            True: 连接活跃且数据新鲜
+            False: 连接断开 / 数据陈旧 / 长期无推送
+        """
+        healthy = self._compute_health()
+        if log_change:
+            self._log_health_change(healthy)
+        return healthy
+
+    def _compute_health(self) -> bool:
+        """纯函数：计算当前健康状态 (不产生副作用)。"""
+        if not self._connected or self._quote_ctx is None:
+            return False
+
+        # 非美股交易时段: 不应期待推送，仅看连接
+        if not self._is_us_market_open():
+            return True
+
+        # 无有效订阅: 不会有 push，仅看连接
+        if not self._subscribed_symbols:
+            return True
+
+        now = time.time()
+        if self._last_push_time is None:
+            # 连接后从未收到 push — 给宽容期
+            if self._last_connect_time and (now - self._last_connect_time) > self._initial_grace_sec:
+                return False
+            return True
+
+        age = now - self._last_push_time
+        return age <= self._stale_threshold_sec
+
+    def _log_health_change(self, healthy: bool):
+        """健康状态变化时输出日志 + 累计统计。"""
+        prev = self._last_health_state
+        if prev is None:
+            self._last_health_state = healthy
+            return
+        if healthy == prev:
+            return
+
+        if healthy:
+            duration = (
+                time.time() - self._disconnect_start_time
+                if self._disconnect_start_time else 0.0
+            )
+            self._last_disconnect_duration_sec = duration
+            logger.info(
+                f"[FutuLV3][HEALTH] ✅ 连接恢复健康 | 本次中断 {duration:.1f}s | "
+                f"累计断线 {self._total_disconnect_count} 次"
+            )
+            self._disconnect_start_time = None
+        else:
+            self._total_disconnect_count += 1
+            self._disconnect_start_time = time.time()
+            age = self.get_last_push_age()
+            age_str = f"{age:.1f}s" if age is not None else "never"
+            logger.warning(
+                f"[FutuLV3][HEALTH] ⚠️ 连接不健康 | connected={self._connected} | "
+                f"last_push_age={age_str} | subs={len(self._subscribed_symbols)} | "
+                f"累计断线 {self._total_disconnect_count} 次"
+            )
+        self._last_health_state = healthy
+
+    def force_reconnect(self) -> bool:
+        """带指数退避的强制重连，重连后会恢复之前的订阅集合。
+
+        Returns:
+            True: 重连成功 (并尝试恢复订阅)
+            False: 退避中 / 重连失败 / 非交易时段
+        """
+        if not self._is_us_market_open():
+            logger.debug("[FutuLV3][RECONNECT] 非美股交易时段，跳过重连")
+            return False
+
+        now = time.time()
+        # 指数退避: 2,4,8,16,32,60 (封顶)
+        backoff = min(
+            self._reconnect_max_backoff,
+            self._reconnect_min_backoff * (2 ** min(self._reconnect_attempts, 6)),
+        )
+        if self._last_reconnect_time and (now - self._last_reconnect_time) < backoff:
+            logger.debug(
+                f"[FutuLV3][RECONNECT] 退避中 (剩余 {backoff - (now - self._last_reconnect_time):.1f}s)"
+            )
+            return False
+
+        self._last_reconnect_time = now
+        self._reconnect_attempts += 1
+        logger.warning(
+            f"[FutuLV3][RECONNECT] 触发强制重连 (第 {self._reconnect_attempts} 次, 退避间隔 {backoff:.0f}s)"
+        )
+
+        # 保存当前订阅，重连后恢复
+        saved_subs = list(self._subscribed_symbols)
+
+        # 强制关闭旧连接
+        with self._lock:
+            if self._quote_ctx is not None:
+                try:
+                    self._quote_ctx.close()
+                except Exception as e:
+                    logger.debug(f"[FutuLV3][RECONNECT] 关闭旧连接异常: {e}")
+                self._quote_ctx = None
+            self._connected = False
+            self._subscribed_symbols.clear()
+            self._last_push_time = None
+            with self._push_cache_lock:
+                self._push_quote_cache.clear()
+                self._push_kline_cache.clear()
+                self._push_ticker_cache.clear()
+                self._push_orderbook_cache.clear()
+
+        # 重新连接
+        if not self._ensure_connected():
+            logger.error(f"[FutuLV3][RECONNECT] ❌ 第 {self._reconnect_attempts} 次重连失败")
+            return False
+
+        # 重新订阅之前的 symbols
+        if saved_subs:
+            try:
+                ok = self.subscribe(saved_subs)
+                if ok:
+                    logger.info(
+                        f"[FutuLV3][RECONNECT] ✅ 重连成功，已恢复订阅 {len(saved_subs)} 只"
+                    )
+                else:
+                    logger.warning(f"[FutuLV3][RECONNECT] 重连成功但重订阅返回 False")
+            except Exception as e:
+                logger.error(f"[FutuLV3][RECONNECT] 重订阅异常: {e}")
+        else:
+            logger.info("[FutuLV3][RECONNECT] ✅ 重连成功 (无需恢复订阅)")
+
+        # 重连成功 — 重置计数器
+        self._reconnect_attempts = 0
+        return True
+
+    def ensure_healthy(self) -> bool:
+        """例行健康保障: 检测不健康时自动触发 force_reconnect。
+
+        调用者可在交易时段周期性调用，返回值表示当前是否健康。
+        不会阻塞数据流 — 退避期间只记录状态、不重返。
+        """
+        if self.is_healthy(log_change=True):
+            return True
+        # 负载低时才调用；force_reconnect 内部有退避保护
+        self.force_reconnect()
+        # 重连后重新评估（不重复写变化日志）
+        return self._compute_health()
 
     # ═══════════════════════════════════════════════════════════
     # P0 新增 (2026-05-09): 订单流深度数据 (ORDER_BOOK)
@@ -1193,6 +1402,11 @@ class FutuLV3Provider:
             "provider": "futu_lv3",
             "connected": self._connected,
             "enabled": self.enabled,
+            "is_healthy": self._compute_health(),
+            "last_push_age_sec": self.get_last_push_age(),
+            "reconnect_attempts": self._reconnect_attempts,
+            "total_disconnect_count": self._total_disconnect_count,
+            "last_disconnect_duration_sec": round(self._last_disconnect_duration_sec, 2),
             "subscribed_symbols": len(self._subscribed_symbols),
             "success_rate": f"{success_rate:.1f}%",
             "total_requests": total,
