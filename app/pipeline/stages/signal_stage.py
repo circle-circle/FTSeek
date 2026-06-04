@@ -167,7 +167,8 @@ def process(ctx: SymbolContext,
         return None
 
     # ── P0 (2026-06-04): 质量底线过滤 — 防御纵深 ──
-    # 在信号融合前剔除 strength<30 或 confidence<0.30 的弱信号候选
+    # 修复: 原用 AND 逻辑(strength<30 AND conf<0.30 才拦)，strength=10+conf=0.35 能过关
+    # 改为 OR 逻辑: strength<30 OR confidence<0.30 任一不足即过滤
     # 防止低质量信号通过融合加成后"洗白"
     _min_strength = 30
     _min_confidence = 0.30
@@ -175,15 +176,15 @@ def process(ctx: SymbolContext,
     for c in candidates:
         _s = int(getattr(c, 'strength', 0) or 0)
         _cf = float(getattr(c, 'confidence', 0.0) or 0.0)
-        if _s < _min_strength and _cf < _min_confidence:
+        if _s < _min_strength or _cf < _min_confidence:
             logger.info(
                 f"[Signal] {symbol} 弱信号过滤: strategy={c.strategy_id} "
-                f"strength={_s}<{_min_strength} conf={_cf:.2f}<{_min_confidence}"
+                f"strength={_s}<{_min_strength} OR conf={_cf:.2f}<{_min_confidence}"
             )
         else:
             filtered.append(c)
     if not filtered:
-        logger.info(f"[Signal] {symbol} 所有候选未通过质量底线 (strength≥{_min_strength} OR conf≥{_min_confidence})")
+        logger.info(f"[Signal] {symbol} 所有候选未通过质量底线 (strength≥{_min_strength} AND conf≥{_min_confidence})")
         return None
     candidates = filtered
 

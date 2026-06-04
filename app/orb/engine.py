@@ -1625,6 +1625,42 @@ class ORBEngine:
                 )
                 return {"success": False, "error": "position_notional_exceeded"}
 
+            # ── P1 (2026-06-04): 最小门禁注入 — 防 ORB 绕过风控 ──
+            # 根因: ORB 直连 execution_engine，不受 RiskStateMachine/PDT/cooldown 保护
+            # 修复: 在此注入三项最小门禁，拦截条件与主路径对齐
+
+            # 门禁 1: RiskStateMachine (RISK_OFF / HALT → 拒绝)
+            try:
+                from app.us_pipeline.risk_state_machine import RiskStateMachine, RiskAction
+                _rsm = RiskStateMachine()
+                if not _rsm.is_trade_allowed(RiskAction.OPEN):
+                    _state = _rsm.get_state().value
+                    logger.warning(f"🚫 [ORB·风控·P1] {symbol} 拒绝: 系统 {_state} 状态禁止开仓")
+                    return {"success": False, "error": f"risk_state_{_state}"}
+            except Exception:
+                pass
+
+            # 门禁 2: 冷却期 (同标的近期止损后禁入)
+            try:
+                _scheduler = getattr(self, '_scheduler', None) or getattr(self, 'scheduler', None)
+                if _scheduler and hasattr(_scheduler, '_is_in_cooldown') and _scheduler._is_in_cooldown(symbol):
+                    logger.warning(f"🚫 [ORB·冷却·P1] {symbol} 拒绝: 信号冷却中")
+                    return {"success": False, "error": "cooldown_active"}
+            except Exception:
+                pass
+
+            # 门禁 3: PDT 日交易限制
+            try:
+                from app.risk.pdt_guard import get_pdt_guard
+                _pdt = get_pdt_guard()
+                if _pdt:
+                    _allowed, _reason, _risk = _pdt.check_trade_permission()
+                    if not _allowed:
+                        logger.warning(f"🚫 [ORB·PDT·P1] {symbol} 拒绝: {_reason}")
+                        return {"success": False, "error": f"pdt_{_reason}"}
+            except Exception:
+                pass
+
             order = Order(
                 client_order_id=f"orb_{symbol}_{uuid.uuid4().hex[:8]}",
                 symbol=symbol,

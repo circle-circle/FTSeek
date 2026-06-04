@@ -1018,21 +1018,26 @@ def _try_direct_short_with_fallback(scheduler, symbol: str, signal: SignalScore,
 
 def _check_gates_and_conflicts(scheduler, symbol: str, signal: SignalScore, context: Dict[str, Any]) -> bool:
     """检查所有风控门禁与持仓冲突。返回 True 如果允许继续下单。"""
-    # P0 修复 (2026-06-04): 信号质量门控 — 硬拦截模式
-    # 根因: 5/30 观测模式从未收紧, 导致 88% 交易 (strength=0) 绕过门禁
-    # 修复: 无论策略来源, strength=0 AND confidence=0 → 硬拦截
+    # P0 修复 (2026-06-04): 信号质量门控 — strength < MIN_SIGNAL_STRENGTH 硬拦截
+    # 修复: 原检查 strength<=0 AND confidence<=0，低质量信号(如 strength=10)可绕过
     try:
         _sig_str = int(getattr(signal, 'strength', 0) or 0)
         _sig_conf = float(getattr(signal, 'confidence', 0.0) or 0.0)
         _strategy = getattr(signal, 'strategy_id', '') or ''
-        if _sig_str <= 0 and _sig_conf <= 0.0:
+        _min_str = 30
+        try:
+            from app.core.config_container import get_config as _get_cfg
+            _min_str = int(_get_cfg().get_dotted("scheduler.min_signal_strength", 30))
+        except Exception:
+            pass
+        if _sig_str < _min_str and _sig_conf <= 0.0:
             logger.warning(
-                f"🚫 [SignalGate] 拦截 {symbol}: strength={_sig_str}, conf={_sig_conf:.2f}, "
-                f"strategy={_strategy} (无效信号, 硬拦截)"
+                f"🚫 [SignalGate] 拦截 {symbol}: strength={_sig_str}<{_min_str}, conf={_sig_conf:.2f}, "
+                f"strategy={_strategy} (信号质量不足, 硬拦截)"
             )
             get_rejection_logger().record(symbol,
-                f"strength={_sig_str}&conf={_sig_conf:.2f}",
-                "SIGNAL_GATE_ZERO", strength=_sig_str,
+                f"strength={_sig_str}<{_min_str}&conf={_sig_conf:.2f}",
+                "SIGNAL_GATE_WEAK", strength=_sig_str,
                 confidence=_sig_conf, direction=str(getattr(signal, 'direction', '')))
             return False
     except Exception as _sg_err:
@@ -1513,6 +1518,30 @@ def _handle_pyramid_add(scheduler, symbol: str, signal: SignalScore, context: Di
             pyramid = get_pyramid_engine()
             position = scheduler.position_store.get(symbol)
             price = context.get("price", 0)
+
+            # ── P0 (2026-06-04): 加仓前检查 25% 仓位上限 ──
+            # 根因: 原代码无仓位上限检查，金字塔加仓可导致敞口远超净值
+            try:
+                from app.core.config_container import get_config as _get_cfg
+                _cfg = _get_cfg()
+                _max_pct = float(_cfg.get_dotted("risk.position.max_per_symbol", 0.25))
+            except Exception:
+                _max_pct = 0.25
+            try:
+                from app.risk.capital_safety import get_capital_safety_system
+                _cap = get_capital_safety_system()
+                _equity = _cap._state.current_equity if _cap._state.current_equity > 0 else 100000
+            except Exception:
+                _equity = 100000
+            _notional_limit = _equity * _max_pct
+            _current_notional = position.size * position.avg_entry_price if position else 0
+            _add_notional = float(context.get("max_position_size", 50.0)) * price  # 估算加仓量
+            if _current_notional + _add_notional > _notional_limit:
+                logger.warning(
+                    f"🚫 [金字塔·P0] {symbol} 加仓拒绝: "
+                    f"当前=${_current_notional:,.0f} + 加仓≈${_add_notional:,.0f} > 上限=${_notional_limit:,.0f}"
+                )
+                return False
 
             # 检查是否满足加仓条件
             max_total_size = float(context.get("max_position_size", 50.0))
@@ -2719,20 +2748,26 @@ def _submit_order(scheduler, symbol: str, signal: SignalScore, context: Dict[str
     if not _check_symbol_daily_loss(symbol):
         return
 
-    # ── P1 (2026-06-02): 信号质量门禁 — 无有效信号禁止入场 ──
-    # 数据驱动: STRUCTURE_EXIT 33笔中全部 signal_strength<0, 累计 -$3,106
-    # strength <= 0 意味着信号数据无效/缺失，不应入场
+    # ── P0 (2026-06-04): 信号质量门禁 — strength < MIN_SIGNAL_STRENGTH 禁止入场 ──
+    # 修复: 原只检查 <=0，strength=5~29 的信号可绕过门禁下单
+    # 根因: MIN_SIGNAL_STRENGTH=30 仅在 Legacy 投票路径生效，CRA 路径无检查
     try:
         _sig_str = int(getattr(signal, 'strength', 0) or 0)
         _sig_conf = float(getattr(signal, 'confidence', 0.0) or 0.0)
-        if _sig_str <= 0:
+        _min_str = 30
+        try:
+            from app.core.config_container import get_config as _get_cfg
+            _min_str = int(_get_cfg().get_dotted("scheduler.min_signal_strength", 30))
+        except Exception:
+            pass
+        if _sig_str < _min_str:
             logger.warning(
-                f"🚫 [信号门禁] {symbol} signal_strength={_sig_str} 无效，拒绝入场"
+                f"🚫 [信号门禁·P0] {symbol} signal_strength={_sig_str} < MIN={_min_str}，拒绝入场"
             )
             return
         if _sig_conf <= 0.0:
             logger.warning(
-                f"🚫 [信号门禁] {symbol} confidence={_sig_conf:.3f} 无效，拒绝入场"
+                f"🚫 [信号门禁·P0] {symbol} confidence={_sig_conf:.3f} 无效，拒绝入场"
             )
             return
     except Exception:
