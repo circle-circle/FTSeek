@@ -172,15 +172,15 @@ exit_rules:
     enabled: true
     mode: adaptive                  # adaptive | legacy
     profit_exit:
-      min_profit_atr: 1.0           # PnL >= 1.0 ATR → 锁利全平
+      min_profit_atr: 0.5           # P1 (2026-06-04): 1.0→0.5ATR, 盈利落袋为安
       close_ratio: 1.0
     breakeven_exit:
       tolerance_atr: 0.3            # |PnL| < 0.3 ATR → 持平减半仓
       close_ratio: 0.50
     loss_exit:
-      min_loss_atr: 1.5             # PnL <= -1.5 ATR → 止损全平
-      close_ratio: 1.0
-    force_close_remaining: false    # 中间地带 (0.3~1.0 / -1.5~-0.3) 不强平, 允许过夜
+      min_loss_atr: 99              # P1 (2026-06-04): 1.5→99ATR, 实质禁用亏损强平
+      close_ratio: 0.0              # 亏损保留过夜, 由atr_stop次日保护
+    force_close_remaining: false    # 中间地带不强平, 允许过夜
     window_minutes:
       trending: 10                  # 趋势市: 收盘前 10 分钟
       range_bound: 5                # 震荡市: 收盘前 5 分钟 (早平无价值持仓)
