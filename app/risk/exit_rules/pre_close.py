@@ -88,8 +88,22 @@ def check_pre_close_exit(position, current_price, atr, trail_state, direction, p
                 threshold_mult = float(pc_cfg.get("warning_threshold_mult", 0.8))
                 time_window_label = "warning"
 
-        # 层4: ≥hold_threshold ATR → 保留过夜
-        hold_threshold = float(pc_cfg.get("hold_threshold_atr", 1.0)) * threshold_mult
+        # 层4: ≥hold_threshold ATR → 保留过夜 (hold_threshold=99 时实质禁用)
+        hold_threshold = float(pc_cfg.get("hold_threshold_atr", 99)) * threshold_mult
+
+        # P1 (2026-06-04): close_profit_atr — 盈利落袋为安
+        close_profit_atr = float(pc_cfg.get("close_profit_atr", 99))
+        if profit_atr_signed >= close_profit_atr:
+            return {
+                "reason": "PRE_CLOSE_EXIT",
+                "reason_cn": f"盘末盈利落袋 (浮盈{profit_atr_signed:.1f}ATR >= {close_profit_atr}ATR)",
+                "exit_price": current_price,
+                "description": (
+                    f"浮盈 {profit_atr_signed:.1f} ATR >= {close_profit_atr} ATR, "
+                    f"盈利落袋为安, 全平"
+                ),
+                "close_ratio": 1.0,
+            }
 
         # P1 修复 (2026-05-11): 隔夜风险敞口总上限
         max_overnight_pct = float(pc_cfg.get("max_overnight_exposure_pct", 0.50))
@@ -136,7 +150,7 @@ def check_pre_close_exit(position, current_price, atr, trail_state, direction, p
         half_exit_atr = float(pc_cfg.get("half_exit_below_atr", 0.5)) * threshold_mult
         quarter_exit_atr = float(pc_cfg.get("quarter_exit_below_atr", 1.0)) * threshold_mult
 
-        # 层1: 亏损仓位 → 全平
+        # 层1: 亏损仓位
         if profit_atr_signed < 0:
             if loss_flat:
                 return {
@@ -150,6 +164,14 @@ def check_pre_close_exit(position, current_price, atr, trail_state, direction, p
                     ),
                     "close_ratio": 1.0,
                 }
+            else:
+                # P1 (2026-06-04): loss_flat=false → 亏损保留过夜
+                # 隔夜保护由 atr_stop (4.0×ATR) 在次日开盘自动执行
+                logger.info(
+                    f"[盘末退出·保留过夜] {position.symbol} 浮亏 {profit_atr_signed:.1f} ATR, "
+                    f"loss_flat=false 保留过夜, 隔夜保护由atr_stop管理"
+                )
+                return None
 
         # 层2: 0~half_exit_atr 微利 → 减半仓
         elif profit_atr_signed < half_exit_atr:

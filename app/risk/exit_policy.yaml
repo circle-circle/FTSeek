@@ -148,30 +148,22 @@ exit_rules:
     cooldown_seconds: 60          # 冷却时间
     trail_mult: 1.0               # 触发后收紧追踪止损到此 ATR 倍数
 
-  # 规则 3.5: 盘末退出 (Pre-Close Exit) — 优化 (2026-05-03 P2)
-  # 根因修复: 原单一 1 ATR 阈值导致 54% 仓位被动强平, 平均利润仅 +0.08%
-  # 新方案: 分层退出 + 时间加权 + 亏损仓位强制平仓 + 小利润仓位减仓
+  # 规则 3.5: 盘末退出 (Pre-Close Exit)
+  # P1 优化 (2026-06-04): 盈利落袋 + 亏损保留过夜(带硬止损)
+  #   数据: PRE_CLOSE_EXIT 74%是亏损仓位, 隔夜持仓71.4%WR但跳空风险大
+  #   方案: 盈利全平, 亏损保留+设-3%隔夜硬止损, 收集隔夜恢复数据
   pre_close_exit:
     enabled: true
-    window_minutes: 8               # RFC-055: 15→8min, 让利润有更多发展空间 (54%被强平)
-    # ── P1 修复 (2026-05-08): 入场后最小持有时间保护 ──
-    min_hold_minutes_before_pre_close: 30  # 持仓 <30 分钟不触发盘末退出
-    # ── 时间加权: 距收盘越近, 退出越积极 ──
-    time_weighted: true             # 优化 (2026-05-03 P2): 新增时间加权机制
-    # 距收盘 <5min: 所有阈值 ×0.6 (更积极退出, 避免隔夜跳空风险)
-    urgent_threshold_mult: 0.6      # 紧急窗口乘数 (<5min)
-    # 距收盘 5~10min: 所有阈值 ×0.8
-    warning_threshold_mult: 0.8     # 警告窗口乘数 (5~10min)
-    # 距收盘 10~15min: 所有阈值 ×1.0 (标准)
-    # ── 分层退出 ──
-    # 层1: 亏损仓位 → 全平 (不持有亏损过夜)
-    loss_flat: true
-    # 层2: 0~0.5 ATR 微利 → 减半仓 (降低隔夜风险敞口)
-    half_exit_below_atr: 0.5        # 低于 0.5 ATR 减半
-    # 层3: 0.5~1.0 ATR → 减 1/4
-    quarter_exit_below_atr: 1.0     # 低于 1.0 ATR 减1/4
-    # 层4: ≥1.0 ATR → 保留过夜 (不变)
-    hold_threshold_atr: 1.0         # 盈利≥1 ATR 可持有过夜
+    window_minutes: 8               # 收盘前8分钟开始评估
+    min_hold_minutes_before_pre_close: 30
+    time_weighted: false             # 简化: 取消时间加权, 统一处理
+    # ── 分层退出 (2026-06-04 简化) ──
+    loss_flat: false                # 关键变化: 亏损不再强制平仓, 保留过夜
+    overnight_loss_stop_pct: 0.03   # 亏损过夜硬止损: 收盘价-3%
+    close_profit_atr: 0.5           # 盈利>=0.5ATR → 全平(落袋为安)
+    half_exit_below_atr: 0.5        # 微利(0~0.5ATR) → 减半仓
+    hold_threshold_atr: 99          # 禁用: 不再保留任何仓位过夜(盈利全平, 亏损保留)
+    quarter_exit_below_atr: 99      # 不再使用
 
   # ── Task #3 (2026-05-31): 自适应分级退出 ──
   # 目标: PRE_CLOSE 占比 54% → <35%, 让利润仓位有更多时间达到目标
@@ -293,12 +285,15 @@ session_adaptation:
 # 方案: 新增 day_trade_mode, 从入场即生效的紧止损, 到小幅止盈的利润锁定,
 #       让短线策略也能主动退出而非被动等收盘。
 day_trade_mode:
-  enabled: true
-  # 适用条件: 非财报期 + 非ETF + 持仓时间<3天
+  enabled: false                  # P1 合并 (2026-06-04): day_trade_TP 与 scale_out 功能重叠
+                                  #   day_trade_TP 用固定1.5%, scale_out 用1.0ATR (波动率自适应)
+                                  #   ATR对不同股票自动调整: ETF≈1%, 大盘股≈2.5%, 高波≈5%
+                                  #   统一使用 scale_out 作为唯一止盈规则
+  # 以下为历史配置, 保留供参考
   apply_conditions:
-    exclude_etf: true               # ETF(QQQ/SPY等)不适合短线模式
-    exclude_earnings_period: true   # 财报期波动异常, 使用趋势模式
-    max_holding_days: 3             # 持有>3天自动切换趋势模式
+    exclude_etf: true
+    exclude_earnings_period: true
+    max_holding_days: 3
 
   # F11+F12 修复 (2026-05-12): R/R 从 0.6 → 2.67, profit_lock 禁用 (chandelier 接管)
   # 原 R/R = 3%/5% = 0.6 → 盈亏平衡需要 77% 胜率 → 结构性负 EV
