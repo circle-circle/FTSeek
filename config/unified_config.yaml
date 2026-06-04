@@ -806,7 +806,7 @@ risk:
     strict_owner_validation: true
   # 模拟盘数据采集: 放宽做空门禁
   pre_trade:
-    short_min_strength: 10          # 默认50→10, 极度放宽
+    short_min_strength: 30          # P0 (2026-06-04): 10→30, SHORT也需有效信号支撑
     long_min_strength: 35           # 修复 (2026-06-02 P0): 默认50→35, 解决信号空转 (辩论共识: 263决策全拒, 最高strength=41)
     battle_plan_bonus_enabled: true
     battle_plan_bonus: 0.5          # 计划标的再降50%
