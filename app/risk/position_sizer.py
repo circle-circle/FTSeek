@@ -315,3 +315,62 @@ def load_config_from_yaml(config_container=None) -> Tuple[Dict, Dict, Dict]:
 
     return tiers, water_levels, guards
 
+
+def get_sizing_method() -> str:
+    """获取当前仓位计算方法 (P3 2026-05-27)"""
+    try:
+        from app.core.config_container import get_config
+        cfg = get_config()
+        return cfg.get_dotted("risk.position_sizing.method", "fixed_risk")
+    except Exception:
+        return "fixed_risk"
+
+
+def calc_volatility_adjusted_size(
+    equity: float,
+    buying_power: float,
+    entry_price: float,
+    stop_loss_price: float,
+    atr_current: float = 0,
+    atr_mean: float = 0,
+    tiers: Optional[Dict[str, Any]] = None,
+    water_levels: Optional[Dict[str, Any]] = None,
+    drawdown_pct: float = 0.0,
+    guards: Optional[Dict[str, Any]] = None,
+) -> "SizingResult":
+    """波动率自适应仓位计算 (P3 2026-05-27)
+
+    当 ATR 高于均值时缩小仓位 (高波动期减仓),
+    当 ATR 低于均值时放大仓位 (低波动期加仓).
+
+    scale = clamp(atr_mean / atr_current, 0.5, 2.0)
+    """
+    # 先按标准方法计算基础仓位
+    base_result = calc_position_size(
+        equity=equity,
+        buying_power=buying_power,
+        entry_price=entry_price,
+        stop_loss_price=stop_loss_price,
+        tiers=tiers,
+        water_levels=water_levels,
+        drawdown_pct=drawdown_pct,
+        guards=guards,
+    )
+
+    # ATR 波动率调整
+    if atr_current > 0 and atr_mean > 0:
+        scale = max(0.5, min(2.0, atr_mean / atr_current))
+        adjusted_shares = int(base_result.shares * scale)
+        return SizingResult(
+            shares=adjusted_shares,
+            risk_amount=base_result.risk_amount * scale,
+            position_value=adjusted_shares * entry_price,
+            position_pct=base_result.position_pct * scale,
+            tier=base_result.tier,
+            water_level=base_result.water_level,
+            risk_per_share=base_result.risk_per_share,
+            warnings=base_result.warnings + [f"ATR调整: scale={scale:.2f}"],
+        )
+
+    return base_result
+
