@@ -1018,27 +1018,23 @@ def _try_direct_short_with_fallback(scheduler, symbol: str, signal: SignalScore,
 
 def _check_gates_and_conflicts(scheduler, symbol: str, signal: SignalScore, context: Dict[str, Any]) -> bool:
     """检查所有风控门禁与持仓冲突。返回 True 如果允许继续下单。"""
-    # P0 审计修复 (2026-05-30): 信号质量门控 — 观测模式
-    # 根因: 5/29 五笔交易 signal_strength=0, confidence=0.0 (voting_llm 链路未传递)
-    # 策略: 先观测(日志), 不硬拦截. 待 voting_llm 信号传播修复后收紧为 hard block.
+    # P0 修复 (2026-06-04): 信号质量门控 — 硬拦截模式
+    # 根因: 5/30 观测模式从未收紧, 导致 88% 交易 (strength=0) 绕过门禁
+    # 修复: 无论策略来源, strength=0 AND confidence=0 → 硬拦截
     try:
         _sig_str = int(getattr(signal, 'strength', 0) or 0)
         _sig_conf = float(getattr(signal, 'confidence', 0.0) or 0.0)
         _strategy = getattr(signal, 'strategy_id', '') or ''
         if _sig_str <= 0 and _sig_conf <= 0.0:
-            if 'voting_llm' not in _strategy:
-                # 非 voting_llm 策略: strength=0 & conf=0 → 拦截 (这些策略应有有效信号)
-                logger.warning(
-                    f"🚫 [SignalGate] 拦截 {symbol}: strength={_sig_str}, conf={_sig_conf:.2f}, "
-                    f"strategy={_strategy} (非voting_llm, 信号不应为0)"
-                )
-                return False
-            else:
-                # voting_llm: 已知信号传播bug, 仅记录不拦截
-                logger.warning(
-                    f"⚠️ [SignalGate·观测] {symbol}: strength={_sig_str}, conf={_sig_conf:.2f} "
-                    f"(voting_llm 信号传播bug, 放行但需修复)"
-                )
+            logger.warning(
+                f"🚫 [SignalGate] 拦截 {symbol}: strength={_sig_str}, conf={_sig_conf:.2f}, "
+                f"strategy={_strategy} (无效信号, 硬拦截)"
+            )
+            get_rejection_logger().record(symbol,
+                f"strength={_sig_str}&conf={_sig_conf:.2f}",
+                "SIGNAL_GATE_ZERO", strength=_sig_str,
+                confidence=_sig_conf, direction=str(getattr(signal, 'direction', '')))
+            return False
     except Exception as _sg_err:
         logger.debug(f"[SignalGate] 检查异常 (放行): {_sg_err}")
 
@@ -1143,6 +1139,27 @@ def _check_gates_and_conflicts(scheduler, symbol: str, signal: SignalScore, cont
                 f"long_strength={signal.strength}<{_long_min}",
                 "LONG_STRENGTH_WEAK", strength=signal.strength,
                 confidence=None, direction="LONG")
+            return False
+    else:
+        # ── P0 (2026-06-04): SHORT 方向 strength 门禁 ──
+        # 数据: 6/1后 signal_strength=0 SHORT 交易无信号支撑, 虽短期盈利但不可持续
+        # SHORT 结构优势(做空下跌快)≠无需信号, 仍需最低强度保证
+        _short_min = 30
+        try:
+            from app.core.config_container import get_config as _gc_short
+            _st_cfg = _gc_short().get_dotted("risk.pre_trade", {}) or {}
+            _short_min = int(_st_cfg.get("short_min_strength", 30))
+        except Exception:
+            pass
+        if signal.strength < _short_min:
+            logger.warning(
+                f"🚫 [做空门禁] {symbol} SHORT 信号强度不足 "
+                f"(strength={signal.strength} < {_short_min})"
+            )
+            get_rejection_logger().record(symbol,
+                f"short_strength={signal.strength}<{_short_min}",
+                "SHORT_STRENGTH_WEAK", strength=signal.strength,
+                confidence=None, direction="SHORT")
             return False
 
     # ── P0 (2026-05-29): HIGH_VOL 硬拦截 ──
