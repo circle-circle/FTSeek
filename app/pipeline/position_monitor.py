@@ -540,7 +540,8 @@ def _partial_close_position(scheduler, position: Position, current_price: float,
             # P0 修复 (2026-05-11): 亏损的部分平仓也需要更新策略熔断计数器
             if pnl < 0 and scheduler.risk_engine and hasattr(scheduler.risk_engine, "strategy_breaker"):
                 try:
-                    scheduler.risk_engine.strategy_breaker.record_loss("voting_llm")
+                    _strat_id = getattr(position, "strategy_id", "") or getattr(position, "owner_strategy", "") or "main_pipeline"
+                    scheduler.risk_engine.strategy_breaker.record_loss(_strat_id)  # P0 (2026-06-05): 真实策略名
                 except Exception:
                     pass
     except Exception as e:
@@ -617,7 +618,7 @@ def _close_option_position(scheduler, position: Position, reason: str, current_o
             "signal_strength": meta.get("signal_strength", 0),
             "signal_confidence": meta.get("signal_confidence", 0.0), "futu_order_id": option_code,
             # P0 修复 (2026-05-22): 归因字段透传 — 期权交易也需要完整归因
-            "strategy_id": meta.get("strategy_id", "voting_llm"),
+            "strategy_id": meta.get("strategy_id", "") or getattr(position, "strategy_id", "") or "main_pipeline",  # P0 (2026-06-05)
             "owner_strategy": getattr(position, "owner_strategy", None) or "main",
             "source_type": "SHORT_PROXY_OPTION",
             "market_regime": getattr(position, "market_regime", "UNKNOWN") if hasattr(getattr(position, "market_regime", "UNKNOWN"), "value") else str(getattr(position, "market_regime", "UNKNOWN") or "UNKNOWN"),
@@ -649,7 +650,8 @@ def _close_option_position(scheduler, position: Position, reason: str, current_o
     # P0 修复 (2026-05-11): 亏损的期权平仓也需要更新策略熔断计数器
     if pnl < 0 and scheduler.risk_engine and hasattr(scheduler.risk_engine, "strategy_breaker"):
         try:
-            scheduler.risk_engine.strategy_breaker.record_loss("voting_llm")
+            _opt_strat = getattr(position, "strategy_id", "") or getattr(position, "owner_strategy", "") or "main_pipeline"
+            scheduler.risk_engine.strategy_breaker.record_loss(_opt_strat)  # P0 (2026-06-05): 真实策略名
         except Exception:
             pass
 
@@ -1915,14 +1917,14 @@ def _process_pending_order(scheduler, tracker, order: dict):
                         # P0 修复 (2026-05-22): 从 position 和 trade_attribution 回填 signal_strength
                         _sig_strength = 0
                         _sig_confidence = 0.0
-                        _owner = "main"
-                        _strategy = "voting_llm"
+                        _owner = getattr(position, "owner_strategy", None) or "main"  # P0 (2026-06-05): 直接从position读
+                        _strategy = getattr(position, "strategy_id", "") or _owner  # P0 (2026-06-05): 真实策略优先
                         try:
                             _pos_meta = getattr(position, "metadata", {}) or {}
                             _sig_strength = _pos_meta.get("signal_strength", 0)
                             _sig_confidence = _pos_meta.get("signal_confidence", 0.0)
-                            _owner = getattr(position, "owner_strategy", None) or "main"
-                            _strategy = _pos_meta.get("strategy_id", "voting_llm")
+                            _owner = getattr(position, "owner_strategy", None) or _owner
+                            _strategy = _pos_meta.get("strategy_id", "") or getattr(position, "strategy_id", "") or _strategy
                             # Fallback: 从 trade_attribution DB 回填
                             if _sig_strength == 0 and position.trace_id:
                                 from app.pipeline.order_executor import _fetch_attribution_data

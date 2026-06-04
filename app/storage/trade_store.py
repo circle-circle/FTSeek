@@ -67,10 +67,21 @@ class TradeStore:
         )
     """
 
+    # M11 (2026-06-03): 单例保护 — 防止多实例创建导致锁失效
+    _instances: Dict[str, 'TradeStore'] = {}
+
+    def __new__(cls, db_path: str):
+        if db_path not in cls._instances:
+            cls._instances[db_path] = super().__new__(cls)
+        return cls._instances[db_path]
+
     def __init__(self, db_path: str):
+        if hasattr(self, '_initialized') and self._initialized:
+            return  # 已初始化, 跳过
         self.db_path = db_path
         self._lock = threading.Lock()
         self._init_db()
+        self._initialized = True
 
     def _get_conn(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path, check_same_thread=False)
@@ -142,6 +153,9 @@ class TradeStore:
                     ("market_regime", "ALTER TABLE trade_records ADD COLUMN market_regime TEXT DEFAULT 'UNKNOWN'"),
                     # Phase 1 (2026-05-31): 模拟/实盘隔离 — 根据 TRADE_ENV 填充, 默认 simulate
                     ("trade_mode", "ALTER TABLE trade_records ADD COLUMN trade_mode TEXT DEFAULT 'simulate'"),
+                    # C3 (2026-06-03): 信号归因链路 — signal_id + decision_id 必须存在
+                    ("signal_id", "ALTER TABLE trade_records ADD COLUMN signal_id TEXT DEFAULT ''"),
+                    ("decision_id", "ALTER TABLE trade_records ADD COLUMN decision_id TEXT DEFAULT ''"),
                 ]:
                     try:
                         conn.execute(col_def[1])
@@ -531,7 +545,7 @@ class TradeStore:
                         model_scores, strategy_id, decision_reason, max_drawdown, trace_id,
                         source_type, entry_reason, signal_details, metadata_json,
                         owner_strategy, mode, market_regime, trade_mode,
-                        signal_id, created_at
+                        signal_id, decision_id, created_at
                     ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """, (
                     record.get("trade_date", ""),
@@ -554,7 +568,7 @@ class TradeStore:
                     record.get("final_strength", 0),
                     record.get("consensus_level", 0.0),
                     json.dumps(record.get("model_scores", [])) if record.get("model_scores") else None,
-                    record.get("strategy_id", "voting_llm"),
+                    record.get("strategy_id", "") or record.get("owner_strategy", "main_pipeline"),  # P0 (2026-06-05): owner_strategy兜底
                     record.get("decision_reason", ""),
                     record.get("max_drawdown", 0.0),
                     record.get("trace_id", ""),
@@ -572,6 +586,9 @@ class TradeStore:
                     record.get("trade_mode") or _get_trade_mode(),
                     # P0 修复 (2026-05-31): signal_id 归因链路
                     record.get("signal_id") or record.get("trace_id") or "",
+                    # P0 修复 (2026-06-02): decision_id 归因链路 — 关联 decisions.db
+                    # 修复 "35 values for 34 columns" bug: INSERT 缺少 decision_id 列名
+                    record.get("decision_id") or "",
                     datetime.now().isoformat(),
                 ))
                 conn.commit()

@@ -190,7 +190,12 @@ def process(ctx: SymbolContext,
 
     # ── 单候选 → 直接返回 (已施加质量评分) ──
     if len(candidates) == 1:
-        return candidates[0]
+        _single = candidates[0]
+        # P0 (2026-06-05): 确保 owner_strategy 写入 metadata (下游 order_executor 依赖)
+        if isinstance(getattr(_single, 'metadata', None), dict):
+            if not _single.metadata.get("owner_strategy"):
+                _single.metadata["owner_strategy"] = getattr(_single, 'strategy_id', '')
+        return _single
 
     # ── 信号融合: 多策略命中 ──
     directions = []
@@ -210,6 +215,12 @@ def process(ctx: SymbolContext,
             best.metadata["fused"] = True
             best.metadata["fused_count"] = len(candidates)
             best.metadata["fused_strategies"] = [c.strategy_id for c in candidates]
+            # P0 (2026-06-05): 保留获胜者的策略身份，防止被下游覆盖为 "voting_llm"
+            best.metadata["owner_strategy"] = getattr(best, 'strategy_id', '') or best.metadata.get("owner_strategy", "")
+            # 汇总所有候选的 owner_strategy (用于归因分析)
+            _all_owners = list({getattr(c, 'strategy_id', '') for c in candidates if getattr(c, 'strategy_id', '')})
+            if _all_owners:
+                best.metadata["contributing_strategies"] = _all_owners
         logger.info(
             f"[SignalFusion] {symbol} {directions[0]} "
             f"fused {len(candidates)} strategies → conf={best.confidence:.3f}"
@@ -221,6 +232,8 @@ def process(ctx: SymbolContext,
     best.confidence = max(0.30, best.confidence - 0.05)
     if isinstance(getattr(best, 'metadata', None), dict):
         best.metadata["conflict"] = True
+        # P0 (2026-06-05): 冲突路径也保留策略身份
+        best.metadata["owner_strategy"] = getattr(best, 'strategy_id', '') or best.metadata.get("owner_strategy", "")
     logger.info(
         f"[SignalFusion] {symbol} conflict "
         f"({', '.join(directions)}), taking strongest with penalty"

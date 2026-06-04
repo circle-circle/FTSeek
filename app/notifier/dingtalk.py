@@ -207,7 +207,7 @@ class DingTalkNotifier:
             meta = getattr(position, "metadata", {}) or {}
             signal_strength = meta.get("signal_strength", 0)
             signal_confidence = meta.get("signal_confidence", 0.0)
-            strategy = meta.get("strategy_id", "voting_llm")
+            strategy = meta.get("strategy_id", "") or meta.get("owner_strategy", "main_pipeline")  # P0 (2026-06-05)
             source_type = meta.get("source_type", "MAIN_PIPELINE")  # 来源类型
             
             # 来源中文标注

@@ -1777,7 +1777,7 @@ def _execute_stock_short(scheduler, symbol: str, signal: SignalScore, context: D
 
     # 创建 Position
     position = Position(
-        strategy_id=signal.strategy_id or "voting_llm",
+        strategy_id=signal.strategy_id or "main_pipeline",  # P0 (2026-06-05): 统一fallback
         signal_id=signal.signal_id,
         trace_id=signal.trace_id,
         symbol=symbol,
@@ -2127,7 +2127,7 @@ def _execute_long(scheduler, symbol: str, signal: SignalScore, context: Dict[str
 
     # 创建持仓记录（本地）
     position = Position(
-        strategy_id="voting_llm",
+        strategy_id=getattr(signal, 'strategy_id', '') or "main_pipeline",  # P0 (2026-06-05): 保留信号真实来源，禁止硬编码
         signal_id=signal.signal_id,
         trace_id=signal.trace_id,
         symbol=symbol,
@@ -4023,7 +4023,7 @@ def _close_position(scheduler, position: Position, current_price: float, exit_re
             "final_strength":    _final_strength,
             "consensus_level":   _consensus_level,
             "model_scores":      model_scores,
-            "strategy_id":       meta.get("strategy_id", "voting_llm"),
+            "strategy_id":       meta.get("strategy_id", "") or getattr(position, "strategy_id", "main_pipeline"),  # P0 (2026-06-05): position真实值优先
             "decision_reason":   meta.get("decision_reason", ""),
             "max_drawdown":      getattr(position, 'max_adverse_excursion', 0.0) or meta.get("max_drawdown", 0.0),
             # P0 修复 (2026-05-31): signal_id 归因链路 — 从 position 读取
@@ -4184,7 +4184,7 @@ def _close_position(scheduler, position: Position, current_price: float, exit_re
                     exit_reason=exit_reason.value,
                     holding_hours=position.holding_hours,
                     entry_session=meta.get("entry_session"),
-                    strategy_type=meta.get("strategy_type", meta.get("strategy_id", "voting_llm")),
+                    strategy_type=meta.get("strategy_type", "") or meta.get("strategy_id", "") or getattr(position, "strategy_id", "main_pipeline"),  # P0 (2026-06-05)
                 )
                 logger.info(
                     f"[平仓·决策关联] {position.symbol} decision_id={decision_id} "
@@ -4241,7 +4241,7 @@ def _close_position(scheduler, position: Position, current_price: float, exit_re
             db_path = str(get_trade_records_db())
 
             # 从 meta 提取策略上下文
-            strategy_id = meta.get("strategy_id", "voting_llm")
+            strategy_id = meta.get("strategy_id", "") or getattr(position, "strategy_id", "main_pipeline")  # P0 (2026-06-05)
             market_regime = meta.get("market_regime", "RANGE")
             max_dd = meta.get("max_drawdown", 0.0)
 
@@ -4357,7 +4357,7 @@ def _close_position(scheduler, position: Position, current_price: float, exit_re
             'quantity': position.size,
             'pnl': pnl,
             'pnl_pct': pnl_pct,
-            'strategy': meta.get('strategy_id', 'voting_llm'),
+            'strategy': meta.get('strategy_id', '') or getattr(position, 'strategy_id', 'main_pipeline'),  # P0 (2026-06-05)
             'action': direction_str.upper(),
             'exit_reason': exit_reason.value if hasattr(exit_reason, 'value') else str(exit_reason),
             'tags': ['us_market', exit_reason.value if hasattr(exit_reason, 'value') else 'exit'],
@@ -4373,6 +4373,7 @@ def _close_position(scheduler, position: Position, current_price: float, exit_re
     # 风控：连续亏损记录
     if pnl < 0 and scheduler.risk_engine and hasattr(scheduler.risk_engine, "strategy_breaker"):
         try:
-            scheduler.risk_engine.strategy_breaker.record_loss("voting_llm")
+            _strat = getattr(position, 'strategy_id', '') or getattr(position, 'owner_strategy', '') or "main_pipeline"
+            scheduler.risk_engine.strategy_breaker.record_loss(_strat)  # P0 (2026-06-05): 用真实策略名
         except Exception as e:
             logger.debug(f"[平仓] 策略熔断记录失败: {e}")

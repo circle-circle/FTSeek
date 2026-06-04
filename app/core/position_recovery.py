@@ -207,7 +207,7 @@ def restore_positions_from_db(scheduler):
                     entry_time = datetime.fromisoformat(entry_time_str) if entry_time_str else datetime.now()
 
                     position = Position(
-                        strategy_id=snap.get("strategy_id", "voting_llm"),
+                        strategy_id=snap.get("strategy_id", "") or "main_pipeline",  # P0 (2026-06-05): 中性fallback
                         signal_id=snap.get("signal_id", ""),
                         symbol=snap["symbol"],
                         direction=direction,
@@ -347,6 +347,13 @@ def restore_positions_from_db(scheduler):
                                     market_regime=MarketRegime.RANGE,
                                 )
                                 position.owner_strategy = "broker_sync"
+                                # Critical #2 (2026-06-02): 标记 broker 同步仓 → ExitMonitor 跳过
+                                #   防止 broker 自动操作与系统下单冲突 (双重平仓风险)
+                                position.metadata = {
+                                    "source": "broker_sync",
+                                    "_from_futu_balance": True,
+                                    "sync_origin": "startup_reconcile",
+                                }
                                 scheduler.position_store.add(sym, position)
                                 scheduler.trade_store.upsert_open_position(
                                     position, source="broker_sync", action="startup_reconcile"
