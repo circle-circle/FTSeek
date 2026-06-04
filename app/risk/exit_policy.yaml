@@ -24,7 +24,7 @@ design_rationale: "ATR动态止损 + 分层止盈 + 行业差异化 + 日内短�
 # ── Phase 3 (2026-05-31): 渐进式追踪止损参数外部化 ──
 # _update_trail_state 中 4 档渐进 SL 的所有 magic number 集中到此处
 progressive_trailing:
-  enabled: true
+  enabled: false                  # P1 禁用 (2026-06-04): 第三套追踪系统, 与atr_stop/scale_out重叠
   # 各档触发的 ATR 利润阈值 (与 _update_trail_state 4 档对齐)
   tier_thresholds_atr:
     tier1_max: 0.5      # <0.5 ATR: 不动 (固定 SL)
@@ -99,75 +99,44 @@ exit_rules:
     min_atr: 0.5                          # ATR 底限
     min_holding_seconds: 120              # 根因修复 (2026-06-02): 30s→120s, 给信号发展时间 (30s 导致 173 次误触发)
 
-  # 规则 2: ATR 动态止损 (替代固定 -8%)
+  # 规则 2: ATR 固定止损
+  # P1 简化 (2026-06-04): 5档非线性状态机 → 单一固定倍数
+  #   利润锁定由 scale_out 负责, atr_stop 只管"最大亏损兜底"
   atr_stop:
     enabled: true
     method: "entry_price - atr * multiplier"
-    # 非线性状态机：根据利润深度调整 ATR 倍数
-    # 优化 (2026-05-03): 收紧整体倍数以匹配 PRE_CLOSE_EXIT 豁免节奏
-    # 优化 (2026-05-30 Task#7): 3档扩展为5档, 让退出曲线更贴合波动特征, 减少"由盈转亏"
     multiplier_by_profit:
-      initial: 4.0                   # P1 (2026-06-04): 3.0→4.0, TRAILING_STOP 2h+ 45笔 -$3,649 需更多呼吸空间
-      profit_05atr: 1.8             # 新增 (2026-05-30): 盈利≥0.5ATR 即开始收紧锁利
-      profit_1atr: 1.6              # 收紧 (2026-05-30): 1.8 → 1.6, 更积极锁利
-      profit_2atr: 1.4              # 新增 (2026-05-30): 盈利≥2ATR 进一步收紧
-      profit_5atr: 1.2              # 保持: 大盈利最紧凑 (锁定利润)
+      initial: 4.0                   # 固定4.0×ATR, 不分档
     # 硬底限：任何情况不超过成本的 -15%
     max_loss_pct: 15.0
     # 波动率底限：ATR 不能低于 200 日中位 TR 的 70%
     atr_floor_pct: 70
 
-  # 规则 3: Chandelier 追踪止损 (替代固定 3% 回撤)
+  # 规则 3: Chandelier 追踪止损
+  # P1 禁用 (2026-06-04): 92笔 46.7%WR -$34 接近零EV
+  #   RANGE市已实质禁用(99×ATR), TREND市4.0×与atr_stop initial=4.0重叠
+  #   两套追踪系统(atr_stop+chandelier)互相冲突, 保留atr_stop更简单
   chandelier_trail:
-    enabled: true
-    activation_profit_atr: 0.6      # RFC-055: 0.8→0.6ATR, 更早激活追踪锁利 (SHORT 55.8%WR)
-    multiplier_by_regime:
-      normal: 2.5                   # 优化 (2026-05-03): 从 2.0 放宽到 2.5, 给利润更多呼吸空间
-      trending: 3.5                 # 优化 (2026-05-03): 从 3.0 放宽到 3.5, 趋势市让利润奔跑
-      volatile: 2.0                 # 优化 (2026-05-03): 从 1.5 放宽到 2.0, 震荡市适度收紧
-      # ADR-004 (2026-06-04): regime-aware 追踪 — 数据驱动修复
-      # RANGE: 追踪止损在震荡市结构性负 EV (46.5% WR -$3,194)
-      #   → 99x ATR = 实质禁用追踪, 退出由 day_trade_TP / time_decay / pre_close 接管
-      # TREND_UP: 放宽追踪, 让利润奔跑
-      # HIGH_VOL: 收紧追踪, 快速脱身
-      # UNKNOWN: 保守处理, 等同 RANGE
-      RANGE: 99.0                   # 震荡市: 实质禁用追踪止损
-      TREND_UP: 4.0                 # 上升趋势: 宽追踪让利润跑
-      TREND_DOWN: 4.0               # 下降趋势: 宽追踪 (做空同理)
-      HIGH_VOL: 1.5                 # 高波动: 收紧追踪快速脱身
-      UNKNOWN: 99.0                 # 未知: 禁用追踪, 由其他规则接管
-    # 止损线只能上移（多头）/下移（空头），永不倒退
-    ratchet: true
+    enabled: false
 
   # 规则 4: 保本触发
+  # P1 禁用 (2026-06-04): 功能已合并到 scale_out (ratchet_sl_pct 止损移至成本)
+  #   3套保本机制(breakeven + progressive_trailing tier2 + scale_out ratchet)冲突
   breakeven:
-    enabled: true
-    trigger_profit_atr: 0.4         # 优化 (2026-05-30 Task#7): 从 0.5 降至 0.4, 保本触发更积极
-    buffer_pct: 0.15                # 优化 (2026-05-30 Task#7): 从 0.2% 降至 0.15%, 减少滑点摩擦 (单位: 百分比 0.15 = 0.15%)
+    enabled: false
 
-  # 规则 5: 分层止盈 (分批减仓)
+  # 规则 5: 止盈 (单一层)
+  # P1 简化 (2026-06-04): 2层ATR → 1层
+  #   DAY_TRADE_TP 100%WR +$13K 是唯一正EV退出
+  #   盈利1.0ATR → 平50% + 止损移至成本 → 剩余让atr_stop管理
   scale_out:
     enabled: true
-    tier_mode: atr                  # Phase 3: atr | pct (默认 ATR 模式)
-    atr_tiers:                      # 数据驱动 (2026-06-04): 降低 tier1 门槛让更多交易走到止盈
-      - profit_atr: 1.0             # P0: 1.5→1.0, DAY_TRADE_TP 100%WR +$13K 是唯一正EV退出
-        close_pct: 30
-        ratchet_sl_pct: 0.8
-      - profit_atr: 2.5             # P1: 3.0→2.5, 加速锁利
-        close_pct: 70
-        ratchet_sl_pct: 1.5
-        trailing_remainder: true
-    tiers:                          # pct 模式 (向后兼容, tier_mode=pct 时使用)
-      # Fix 9 (2026-05-31): 对齐代码 DEFAULT_TIERS — trigger_pct 使用小数 (0.015=1.5%)
-      - trigger_pct: 0.015           # 1.5% (was 5.0%)
-        close_pct: 25                # 25% (was 30%)
-        new_stop_pct: 0.005          # 止损上移至 entry+0.5%
-      - trigger_pct: 0.030           # 3.0% (was 10.0%)
-        close_pct: 25                # 25% (was 30%)
-        new_stop_pct: 0.015          # 止损上移至 entry+1.5%
-      - trigger_pct: 0.050           # 5.0% (was 18.0%)
-        close_pct: 25                # 25% (was 40%)
-        new_stop_pct: 0.030          # 止损上移至 entry+3.0%
+    tier_mode: atr
+    atr_tiers:
+      - profit_atr: 1.0             # 盈利1.0ATR触发
+        close_pct: 50               # 平半仓
+        ratchet_sl_pct: 0.0         # 止损移至成本 (保本)
+    tiers: []                       # pct模式不使用
 
   # 规则 5.5: 速度捕捉退出 (Phase 3 2026-05-31)
   velocity_exit:
@@ -231,17 +200,14 @@ exit_rules:
   # 退出时机更应由价格行为 (chandelier/SL) 决定, 而非时间. 之前 7 笔 time_stop 平均亏损 -0.53%.
   # 回退方式: enabled: true (主线), 短线 time_gate 仍生效不受影响.
   time_stop:
-    enabled: true                   # RFC-055: 重新启用 — 甜蜜区30min-6hr, >6hr亏-$17K
-    max_holding_hours: 6            # RFC-055: 72→6h, 匹配盈利甜蜜区上限
-    min_profit_to_hold: 1.0         # RFC-055: 2.0%→1.0ATR, 盈利仓位可豁免
-    extension_hours: 2              # RFC-055: 24→2h, 短线不加长延时
+    enabled: false                  # P1 禁用 (2026-06-04): 时间退出应由价格行为决定
+                                    #   2-5h持仓50%WR但-$5,193, pre_close已处理EOD
+                                    #   信号失效由atr_stop自然淘汰, 不需要时间强制
 
-  # 规则 6.5: 成本缓冲 (与 cost_model 联动)
-  # 在最终止损线外额外让出 k × 双边总成本, 规避被噪声成本打穿
-  # 例: cost_bps=10, current=100, k=1.5 → buffer = 100 × 10/10000 × 1.5 = 0.15
+  # 规则 6.5: 成本缓冲
+  # P1 禁用 (2026-06-04): 与breakeven/scale_out重叠, 4.0×ATR止损已远超交易成本
   cost_buffer:
-    enabled: true
-    k: 1.5                          # 让利乘子（1.0=刚好覆盖成本，1.5=留安全带）
+    enabled: false
 
   # 规则 7: 财报保护
   earnings_guard:
@@ -271,18 +237,9 @@ short_overrides:
   atr_multiplier: 2.0              # 做空止损更紧 (2.0x vs 2.5x)
   max_loss_pct: 10.0               # 最大亏损 10% (做多 15%)
 
-  # 幻方 Principle: 追踪止损加速收紧 (做空反弹更暴力)
-  trail_multiplier:
-    normal: 1.5                    # 正常市况：峰值 + 1.5x ATR
-    trending: 1.2                  # 趋势市：峰值 + 1.2x ATR (更紧)
-    volatile: 1.0                  # 震荡市：峰值 + 1.0x ATR (极紧)
-
-  # 幻方 Principle: 时间止损加速 (做空需要催化驱动)
-  time_stop:
-    max_holding_hours: 48          # 做空最大 48h (做多 72h)
-    acceleration_enabled: true
-    day2_multiplier: 0.8           # 第 2 天收紧到 80%
-    day3_multiplier: 0.6           # 第 3 天收紧到 60%
+  # P1 简化 (2026-06-04): 移除 trail_multiplier (与chandelier冲突, 已禁用)
+  #   移除 time_stop 加速 (time_stop已禁用)
+  #   做空统一使用 atr_multiplier=2.0 止损
 
   # 幻方 Principle: 技术破位快速平仓
   technical_breach:
@@ -351,37 +308,25 @@ day_trade_mode:
     max_loss_pct: 3.0               # 收紧: 从 5.0% → 3.0%
     atr_source: "5min"
 
-  # 主动止盈 — 3 档分层
-  # ADR-004 (2026-06-04): 数据驱动 — DAY_TRADE_TP 是唯一正 EV 退出 (100% WR +$13,101)
-  # 降低 TP 触发门槛让更多交易走 DAY_TRADE_TP 路径
+  # 主动止盈 — 单一层
+  # P1 简化 (2026-06-04): 3档 → 1档
+  #   DAY_TRADE_TP 100%WR, 单一触发点足够
   take_profit:
     tier_1:
-      profit_pct: 1.5               # ADR-004: 4.0%→1.5% — 快速锁利, 匹配系统edge
-      close_pct: 50                 # ADR-004: 33%→50% — 锁半仓利润, 心态不慌
-      move_sl_to: "breakeven"
-    tier_2:
-      profit_pct: 3.0               # ADR-004: 8.0%→3.0% — 适度利润即第二批退出
-      close_pct: 30                 # 保留 20% 给第三批追踪
-      move_sl_to: "chandelier_3.5x"   # 切换到 Chandelier 追踪 (RANGE 市实际不触发)
-    tier_3:                         # 彩票仓: 万一大趋势
-      profit_pct: 6.0               # ADR-004: 15.0%→6.0%
-      close_pct: 100                # 剩余清仓
+      profit_pct: 1.5               # 1.5% 止盈
+      close_pct: 50                 # 平半仓
+      move_sl_to: "breakeven"       # 止损移至成本
 
   # F12: 浮盈保护禁用 — 由 chandelier_trail 接管, 避免框死利润
   profit_lock:
     enabled: false                  # DEPRECATED 2026-05-12
     # 例: 买入$100, 涨到$102 (+2%) → 激活保护 → 回撤到$100.80 时退出, 锁定+0.8%
 
-  # 时间衰减: 持仓无进展自动退出
-  # 修复 (2026-05-12): 隔夜持仓重置基准时间 + 首次扫描 30min 宽限期
+  # 时间衰减
+  # P1 禁用 (2026-06-04): 45min grace period 与 global_hold_protection 30min冲突
+  #   信号失效由 atr_stop + pre_close 自然处理, 不需要额外时间衰减
   time_decay:
-    enabled: true
-    max_idle_minutes: 45            # ADR-004: 60→45min — 数据: 系统edge是快速方向移动, 45min无进展=信号失效
-    min_progress_pct: 0.5           # 优化: 从 0.2% 提到 0.5% (避免无意义进展判断)
-    grace_period_minutes: 30        # 修复 (2026-05-12): 首次扫描宽限期
-    overnight_reset_threshold: 60   # 修复 (2026-05-12): 持仓>60min 视为隔夜, 重置基准
-    # 幻方 Principle: 短线仓位的敌人是时间。信号强度随时间指数衰减。
-    # 如果2.5小时内持仓没有朝有利方向移动, 说明信号已失效。
+    enabled: false
 
   # 做空加速 (沿用 short_overrides 逻辑, 阈值更紧)
   # ADR-004 (2026-06-04): RANGE 市做空反弹快, 需要更快止盈
