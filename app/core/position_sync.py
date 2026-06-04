@@ -43,6 +43,9 @@ class USPositionSync:
         # 解决: 主流程平仓后在 mark_closed_tombstone(), sync 看到 tombstone 就跳过 restore
         self._closed_tombstones: Dict[str, float] = {}  # symbol → close_at_ts
         self._tombstone_ttl_sec = 60.0  # 60s 内不允许 sync 恢复
+        # 一致性告警冷却: 相同问题 10 分钟内只报一次，防止刷屏
+        self._last_consistency_warn: Dict[str, float] = {}  # issue_fingerprint → timestamp
+        self._consistency_cooldown_sec = 600.0  # 10 minutes
 
     def start(self):
         if self._running:
@@ -1007,10 +1010,22 @@ class USPositionSync:
                     issues.append(f"Memory 有幽灵仓: {missing_mem_ghost}")
 
             if issues:
-                logger.warning(
-                    "⚠️ [US Sync Consistency] 检测到 %d 个不一致:\n  %s",
-                    len(issues), "\n  ".join(issues)
-                )
+                # 冷却机制: 相同问题 10 分钟内只报一次
+                import hashlib
+                fingerprint = hashlib.md5("\n".join(sorted(issues)).encode()).hexdigest()[:8]
+                now_ts = datetime.now().timestamp()
+                last_warn = self._last_consistency_warn.get(fingerprint, 0)
+                if now_ts - last_warn >= self._consistency_cooldown_sec:
+                    logger.warning(
+                        "⚠️ [US Sync Consistency] 检测到 %d 个不一致 (冷却 %dm):\n  %s",
+                        len(issues), int(self._consistency_cooldown_sec / 60), "\n  ".join(issues)
+                    )
+                    self._last_consistency_warn[fingerprint] = now_ts
+                    # 清理过期的 fingerprint 条目
+                    expired = [k for k, v in self._last_consistency_warn.items()
+                               if now_ts - v > self._consistency_cooldown_sec * 2]
+                    for k in expired:
+                        del self._last_consistency_warn[k]
             else:
                 logger.debug(
                     "[US Sync Consistency] ✅ 三层一致 | 持仓: %s",
