@@ -112,12 +112,15 @@ class WatchlistManager:
     
     def get_stock_codes(self) -> List[str]:
         """
-        获取股票代码列表 (简化版)
+        获取所有启用标的代码列表 (股票+ETF)
+        
+        P0 (2026-06-04): 原实现仅返回股票, 遗漏8只ETF未进入信号扫描
+        修复: 使用 get_all_enabled() 返回股票+ETF 合计36只
         
         Returns:
-            ["US.TSLA", "US.NVDA", ...]
+            ["US.TSLA", "US.SPY", "US.XLF", ...]
         """
-        return [s["code"] for s in self.get_enabled_stocks()]
+        return [s["code"] for s in self.get_all_enabled()]
     
     def get_stock_symbols(self) -> List[str]:
         """
