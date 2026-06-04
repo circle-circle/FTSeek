@@ -649,11 +649,12 @@ class TradingScheduler:
         # 原则: 持仓股优先, TIER1 > TIER2, ETF 低频
         watchlist_with_tiers = get_watchlist_with_tiers()
         num_stocks = len(watchlist_with_tiers.get('us_stocks', []))
+        num_etfs = len([e for e in watchlist_with_tiers.get('etfs', []) if e.get('enabled', True)])
 
-        # 自适应 API 预算: LV3 无限制 → 设置为股票总数 (2026-04-20 升级)
-        # 原逻辑: 基于 TwelveData 8/min 限制设为 12
-        # 新逻辑: Futu LV3 本地快照无 API 限制, 可轮询全部股票
-        api_budget = num_stocks  # LV3 无限制, 覆盖全部股票
+        # 自适应 API 预算: LV3 无限制 → 设置为股票+ETF总数
+        # P0 (2026-06-05): 原 budget=num_stocks 不含 ETF，导致 ETF 被个股挤掉永远扫描不到
+        # 修复: budget 包含可交易 ETF 数量，确保 HIGH_VOL 层 ETF 能进入轮询批次
+        api_budget = num_stocks + num_etfs  # LV3 无限制, 覆盖全部标的
         self.polling_controller = AdaptivePollingController(api_budget_per_scan=api_budget)
 
         # O1 (2026-05-16): sandbox 模式下 polling_controller 也只注册 universe 内标的

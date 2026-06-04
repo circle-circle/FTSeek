@@ -383,7 +383,14 @@ class USPositionSync:
             pass  # 列已存在，正常跳过
 
         # Get current DB positions
-        cursor.execute("SELECT symbol, size, direction FROM open_positions")
+        # P0 (2026-06-05): 过滤已关闭记录，避免 ghost 仓每 30s 重复检测刷屏
+        cursor.execute(
+            "SELECT symbol, size, direction FROM open_positions "
+            "WHERE sync_status IS NULL "
+            "OR sync_status NOT IN ("
+            "'closed_by_daemon','closed_by_scheduler','closed_by_sync',"
+            "'closed_emergency','stale_not_in_broker')"
+        )
         db_positions = {}
         for row in cursor.fetchall():
             db_positions[row[0]] = {'size': row[1], 'direction': row[2]}

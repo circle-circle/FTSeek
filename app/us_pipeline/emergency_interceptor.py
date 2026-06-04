@@ -182,6 +182,8 @@ class USEmergencyInterceptor:
         # P1 修复 (2026-05-13): 关键词冷却期 — 防止同一关键词在恢复后重复触发 RISK_OFF
         self._keyword_cooldowns: Dict[str, float] = {}  # keyword -> timestamp
         self._keyword_cooldown_seconds = 3600  # 1 小时冷却
+        # P0 (2026-06-05): 持久化去重 — 防止进程重启后同一新闻事件反复触发 RISK_OFF
+        self._reason_cooldown_seconds = 7200  # 同一 reason 2 小时内不重复触发
 
         # P2 重构: 行情指标追踪 (每个持仓股票的价格/量历史)
         self._price_history: Dict[str, List[float]] = {}
@@ -396,6 +398,42 @@ class USEmergencyInterceptor:
         last_exit = self._exited_symbols.get(symbol, 0)
         return (time.time() - last_exit) < self._exit_cooldown
 
+    def _is_same_risk_off_recently(self, reason: str) -> bool:
+        """P0 (2026-06-05): 检查 risk_audit.json 中是否已有相同 reason 的 RISK_OFF
+        
+        解决进程重启后内存冷却期丢失、同一新闻反复触发 RISK_OFF 的问题。
+        扫描最近 2 小时内的审计记录，若 reason 匹配（子串包含）则返回 True。
+        """
+        import os, json as _json
+        from datetime import datetime as _dt
+        audit_path = getattr(self.state_machine, '_audit_path', '')
+        if not audit_path or not os.path.exists(audit_path):
+            return False
+        try:
+            with open(audit_path, 'r') as f:
+                logs = _json.load(f)
+            now = _dt.now()
+            # 提取 reason 中的核心标的 (e.g. "US.AVGO")
+            import re
+            symbols_in_reason = set(re.findall(r'US\.\w+', reason))
+            for rec in logs:
+                if rec.get("new_state") != "RISK_OFF":
+                    continue
+                rec_time = _dt.fromisoformat(rec.get("time", "2000-01-01"))
+                if (now - rec_time).total_seconds() > self._reason_cooldown_seconds:
+                    continue
+                # 检查是否为同一事件: reason 包含相同标的
+                rec_symbols = set(re.findall(r'US\.\w+', rec.get("reason", "")))
+                if symbols_in_reason and symbols_in_reason == rec_symbols:
+                    logger.info(
+                        f"[紧急拦截] 持久化去重命中: {symbols_in_reason} "
+                        f"在 {(now - rec_time).total_seconds()/60:.0f}min 前已触发，跳过"
+                    )
+                    return True
+            return False
+        except Exception:
+            return False
+
     async def _get_realtime_quote(self, symbol: str) -> Optional[Dict]:
         """
         获取实时报价 (Futu LV3 → Finnhub 降级)
@@ -558,6 +596,9 @@ class USEmergencyInterceptor:
                 # 高危: 立即 RISK_OFF (保持原有逻辑)
                 logger.warning(f"🚨 [新闻拦截] 高危突发: {item['headline']}")
                 reason = f"Black Swan: {', '.join(matched_keywords)} on {symbols_str}"
+                # P0 (2026-06-05): 持久化去重 — 同一事件不重复触发
+                if self._is_same_risk_off_recently(reason):
+                    continue
                 self.state_machine.set_state(RiskState.RISK_OFF, reason=reason, source="NewsInterceptor")
                 # 记录关键词冷却期
                 for kw in matched_keywords:
@@ -582,6 +623,9 @@ class USEmergencyInterceptor:
                 if llm_verdict == "RISK_OFF":
                     logger.warning(f"🚨 [新闻拦截] LLM 确认为黑天鹅: {item['headline']}")
                     reason = f"Black Swan (LLM confirmed): {', '.join(matched_keywords)} on {symbols_str}"
+                    # P0 (2026-06-05): 持久化去重 — 同一事件不重复触发
+                    if self._is_same_risk_off_recently(reason):
+                        continue
                     self.state_machine.set_state(RiskState.RISK_OFF, reason=reason, source="NewsInterceptor")
                     # 记录关键词冷却期
                     for kw in matched_keywords:

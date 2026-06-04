@@ -67,7 +67,11 @@ class RiskStateMachine:
         return cls._instance
 
     def restore_state(self):
-        """启动时检查审计日志，若近期有严重风险则保持 RISK_OFF"""
+        """启动时检查审计日志，若近期有严重风险则保持 RISK_OFF
+        
+        P0 修复 (2026-06-05): 从最后一条 RISK_OFF 向前扫描，
+        若存在手动/系统 NORMAL 重置则跳过恢复，避免已确认事件反复触发。
+        """
         if not os.path.exists(self._audit_path):
             return
 
@@ -78,22 +82,45 @@ class RiskStateMachine:
             if not logs:
                 return
 
-            # 检查最近一条记录
-            last_record = logs[-1]
-            last_state = last_record.get("new_state")
-            last_time_str = last_record.get("time")
-            
-            # 解析时间 (ISO 格式)
-            last_time = datetime.fromisoformat(last_time_str)
             now = datetime.now()
-            
-            # 如果 4 小时内发生了 RISK_OFF 或 HALT
-            if (now - last_time).total_seconds() < 14400: # 4 hours
-                if last_state in [RiskState.RISK_OFF.value, RiskState.HALT.value]:
-                    logger.warning(f"🚨 状态恢复: 检测到近期风险事件 ({last_record.get('reason', 'Unknown')})，保持 {last_state}")
-                    self._state = RiskState(last_state)
-                    self._reason = f"Restored from Audit: {last_record.get('reason', 'Unknown')}"
-                    self._state_change_time = last_time.timestamp()
+
+            # 从末尾向前找最近的 RISK_OFF/HALT 记录
+            risk_off_record = None
+            risk_off_idx = -1
+            for i in range(len(logs) - 1, -1, -1):
+                rec = logs[i]
+                if rec.get("new_state") in [RiskState.RISK_OFF.value, RiskState.HALT.value]:
+                    risk_off_record = rec
+                    risk_off_idx = i
+                    break
+
+            if not risk_off_record:
+                return  # 无 RISK_OFF 记录，无需恢复
+
+            last_time = datetime.fromisoformat(risk_off_record.get("time"))
+            if (now - last_time).total_seconds() >= 14400:
+                return  # 超过 4 小时，忽略
+
+            # P0: 检查 RISK_OFF 之后是否有手动/自动 NORMAL 重置
+            # 如果有，说明事件已被确认或冷却恢复，不应再恢复 RISK_OFF
+            for j in range(risk_off_idx + 1, len(logs)):
+                rec = logs[j]
+                if rec.get("new_state") == "NORMAL":
+                    source = rec.get("source", "")
+                    reason = rec.get("reason", "")
+                    logger.info(
+                        f"✅ 状态恢复跳过: RISK_OFF 事件后已有 {source} 重置 ({reason})"
+                    )
+                    return
+
+            # 无重置记录，确实需要恢复 RISK_OFF
+            logger.warning(
+                f"🚨 状态恢复: 检测到近期风险事件 "
+                f"({risk_off_record.get('reason', 'Unknown')})，保持 {risk_off_record['new_state']}"
+            )
+            self._state = RiskState(risk_off_record["new_state"])
+            self._reason = f"Restored from Audit: {risk_off_record.get('reason', 'Unknown')}"
+            self._state_change_time = last_time.timestamp()
                     
         except Exception as e:
             logger.error(f"状态恢复失败: {e}")
