@@ -507,60 +507,66 @@ class USPositionSync:
                 except Exception as e:
                     logger.debug(f"[US Sync] 仓位验证失败 (不影响同步): {e}")
                 
-                # 2. ATR 动态止损 (替代固定 -8%)
-                # P0 审计修复 (2026-05-30): 对 day_trade 合格标的, SL 距离上限 5% (SHORT) / 3% (LONG)
-                # 根因: broker_reconcile 用日线 ATR×2.0, RIVN 等低价股 SL 距离达 7-8%,
-                #       而 day_trade_mode 应为 5min ATR×1.5 (约 1-2%). 兜底用 max_loss_pct 封顶.
+                # 2. ATR 动态止损 (根因修复 2026-06-05)
+                # SL 与 exit_policy.yaml atr_stop.multiplier=4.0 对齐
+                # 1分钟 ATR 值小, 4× 给出合理日内止损距离 (ETF≈4%, 个股≈3-5%)
+                # TP 用百分比而非 ATR×N (ATR×4 对 ETF 是幻影目标)
                 try:
                     atr = self._get_symbol_atr(symbol, info['cost'])
-                    atr_mult = 2.0  # F32 修复: exit_policy.yaml atr_stop.initial
-                    if info['direction'] == 'LONG':
-                        initial_sl = info['cost'] - atr * atr_mult
-                        initial_tp = info['cost'] + atr * atr_mult * 2.0  # 2x ATR 初始止盈
-                    else:
-                        initial_sl = info['cost'] + atr * atr_mult
-                        initial_tp = info['cost'] - atr * atr_mult * 2.0
-                    
-                    # P0 审计修复: day_trade 合格标的 SL 封顶
-                    # ETF 列表保持宽止损, 其他标的用 day_trade max_loss_pct 封顶
+                    # SSOT: 从 exit_policy 读取 atr_stop multiplier
+                    atr_mult = 4.0  # exit_policy.yaml atr_stop.multiplier_by_profit.initial
+                    try:
+                        from app.risk.exit_policy_guardian import ExitPolicyGuardian
+                        _ep = ExitPolicyGuardian()
+                        _policy = _ep._load_exit_policy_dict()
+                        atr_mult = float(_policy.get("exit_rules", {}).get(
+                            "atr_stop", {}).get("multiplier_by_profit", {}).get("initial", 4.0))
+                    except Exception:
+                        pass
+                    # ETF vs 个股: 不同 TP 目标
                     from app.risk.position_limits import ETF_EXPOSURE_DISCOUNT
                     _is_etf = symbol in ETF_EXPOSURE_DISCOUNT
-                    if not _is_etf:
-                        _max_sl_pct = 0.03 if info['direction'] == 'LONG' else 0.05
-                        if info['direction'] == 'LONG':
-                            _sl_floor = info['cost'] * (1 - _max_sl_pct)
-                            initial_sl = max(initial_sl, _sl_floor)
-                        else:
-                            _sl_ceil = info['cost'] * (1 + _max_sl_pct)
-                            initial_sl = min(initial_sl, _sl_ceil)
-                        logger.info(
-                            f"[US Sync] {symbol} day_trade SL cap applied: "
-                            f"max_sl_pct={_max_sl_pct*100:.1f}%, capped_sl=${initial_sl:.2f}"
-                        )
+                    _tp_pct = 0.03 if _is_etf else 0.05  # ETF 3%, 个股 5%
+                    if info['direction'] == 'LONG':
+                        initial_sl = info['cost'] - atr * atr_mult
+                        initial_tp = info['cost'] * (1 + _tp_pct)
+                    else:
+                        initial_sl = info['cost'] + atr * atr_mult
+                        initial_tp = info['cost'] * (1 - _tp_pct)
                     
-                    # 硬底限保护 (-15%)
-                    hard_stop = info['cost'] * 0.85 if info['direction'] == 'LONG' else info['cost'] * 1.15
+                    # 硬底限保护: 与 exit_policy.yaml max_loss_pct=15% 对齐
+                    _max_loss_pct = 0.15  # exit_policy global max_loss_pct
+                    try:
+                        _ml = float(_policy.get("exit_rules", {}).get(
+                            "atr_stop", {}).get("max_loss_pct", 15.0))
+                        _max_loss_pct = _ml / 100.0
+                    except Exception:
+                        pass
+                    hard_stop = info['cost'] * (1 - _max_loss_pct) if info['direction'] == 'LONG' else info['cost'] * (1 + _max_loss_pct)
                     if info['direction'] == 'LONG':
                         initial_sl = max(initial_sl, hard_stop)
                     else:
                         initial_sl = min(initial_sl, hard_stop)
                     
+                    _sl_pct = abs(initial_sl - info['cost']) / info['cost'] * 100
+                    _tp_pct_actual = abs(initial_tp - info['cost']) / info['cost'] * 100
                     logger.info(
-                        f"[US Sync] {symbol} ATR 动态止损: ${initial_sl:.2f} "
-                        f"(ATR=${atr:.2f}, {atr_mult}x, 固定底限 ${hard_stop:.2f})"
+                        f"[US Sync] {symbol} SL=${initial_sl:.2f} ({_sl_pct:.1f}%) "
+                        f"TP=${initial_tp:.2f} ({_tp_pct_actual:.1f}%) "
+                        f"ATR=${atr:.2f}×{atr_mult:.0f} hard_stop=${hard_stop:.2f}"
                     )
                 except Exception as e:
-                    # Fallback: 固定百分比
+                    # Fallback: 固定百分比 (与 atr_stop 4×ATR 等效的距离)
                     logger.debug(f"[US Sync] {symbol} ATR 获取失败，使用固定止损: {e}")
                     atr = 0
-                    sl_pct = 0.08
-                    tp_pct = 0.15
+                    _fb_sl = 0.06  # 6% 止损 (约等于 4× 日均 ATR)
+                    _fb_tp = 0.05  # 5% 止盈 (ETF/个股通用)
                     if info['direction'] == 'LONG':
-                        initial_sl = info['cost'] * (1 - sl_pct)
-                        initial_tp = info['cost'] * (1 + tp_pct)
+                        initial_sl = info['cost'] * (1 - _fb_sl)
+                        initial_tp = info['cost'] * (1 + _fb_tp)
                     else:
-                        initial_sl = info['cost'] * (1 + sl_pct)
-                        initial_tp = info['cost'] * (1 - tp_pct)
+                        initial_sl = info['cost'] * (1 + _fb_sl)
+                        initial_tp = info['cost'] * (1 - _fb_tp)
 
                 logger.info("[US Sync] New position: %s %s %s @ %s", symbol, info['direction'], info['qty'], info['cost'])
                 cursor.execute("""

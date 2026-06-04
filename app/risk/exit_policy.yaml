@@ -133,7 +133,7 @@ exit_rules:
     enabled: true
     tier_mode: atr
     atr_tiers:
-      - profit_atr: 1.0             # 盈利1.0ATR触发
+      - profit_atr: 2.0             # 根因修复 (2026-06-05): 1.0→2.0 ATR, 让利润跑更远再减仓
         close_pct: 50               # 平半仓
         ratchet_sl_pct: 0.0         # 止损移至成本 (保本)
     tiers: []                       # pct模式不使用

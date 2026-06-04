@@ -1597,9 +1597,41 @@ class ExitMonitor:
             if policy_guardian is not None and hasattr(policy_guardian, "policy"):
                 policy_dict = policy_guardian.policy or {}
 
-            # ── P0 修复 (2026-05-29): 渐进式追踪止损 — 消除 0~2.0 ATR 保护死区 ──
-            # Phase 3 (2026-05-31): 4档阈值与系数完全外部化到 progressive_trailing
+            # ── 根因修复 (2026-06-05): progressive_trailing.enabled 检查 ──
             _pt_cfg = (policy_dict.get("progressive_trailing") or {}) if policy_dict else {}
+            _pt_enabled = bool(_pt_cfg.get("enabled", False))
+
+            if not _pt_enabled:
+                # progressive_trailing 禁用 → 仅使用 atr_stop 固定止损, 不移动 SL
+                # SL 由 atr_stop 规则管理 (entry ± 4×ATR), trail_state 只更新 peak
+                _old_sl = float(getattr(position, "current_sl", 0) or 0)
+                atr_mult_val = float(
+                    (policy_dict.get("exit_rules", {}).get("atr_stop", {}).get(
+                        "multiplier_by_profit", {}).get("initial", 4.0) if policy_dict else 4.0)
+                )
+                if direction == "LONG":
+                    _fixed_sl = entry_price - atr * atr_mult_val
+                    # SL 只升不降 (单调保护), 且不低于入场价下方硬底限
+                    if _old_sl > 0:
+                        position.current_sl = max(_old_sl, _fixed_sl)
+                    else:
+                        position.current_sl = _fixed_sl
+                else:  # SHORT
+                    short_mult = float(
+                        (policy_dict.get("short_overrides", {}).get(
+                            "atr_multiplier", atr_mult_val) if policy_dict else atr_mult_val)
+                    )
+                    _fixed_sl = entry_price + atr * short_mult
+                    # SHORT SL 只降不升, 且不低于入场价上方 (保护底线)
+                    _min_short_sl = entry_price * 1.001  # SL 至少在入场价上方 0.1%
+                    _fixed_sl = max(_fixed_sl, _min_short_sl)
+                    if _old_sl > 0:
+                        position.current_sl = min(_old_sl, _fixed_sl)
+                    else:
+                        position.current_sl = _fixed_sl
+                return  # 跳过渐进式追踪
+
+            # progressive_trailing 启用时才走以下逻辑
             _tier_th = _pt_cfg.get("tier_thresholds_atr") or {}
             _tier1_max = float(_tier_th.get("tier1_max", 0.5))
             _tier2_max = float(_tier_th.get("tier2_max", 1.0))
@@ -1680,7 +1712,11 @@ class ExitMonitor:
                     _new_sl = entry_price + atr * short_mult
                     _tier = f"固定(profit={_abs_profit:.1f}ATR, mult={short_mult:.1f})"
 
-                # CR-3: SHORT SL 单调降 (min)
+                # CR-3: SHORT SL 单调降 (min) + 入场价地板保护
+                # 根因修复 (2026-06-05): SHORT SL 不得低于入场价, 否则无保护
+                # AVGO 案例: lowest=407.69, atr=7.32, tier2_mult=0.8 → SL=413.55 < entry=413.87
+                _short_sl_floor = entry_price * 1.001  # SL 至少在入场价上方 0.1%
+                _new_sl = max(_new_sl, _short_sl_floor)
                 if _old_sl > 0:
                     position.current_sl = min(_old_sl, _new_sl)
                     if _new_sl > _old_sl:
