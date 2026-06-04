@@ -1625,7 +1625,7 @@ strategies:
   defaults:
     # 模拟盘数据采集模式: 极度放宽以促成交易
     min_confidence: 0.30
-    min_strength: 15
+    min_strength: 30
     max_positions: 12                # 模拟盘: 5→12, 最大化数据采集
     direction_bias:
       LONG:
