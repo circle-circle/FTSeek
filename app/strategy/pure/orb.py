@@ -231,7 +231,7 @@ def evaluate(ctx: SymbolContext, cfg: Dict[str, Any]) -> Optional[SignalCandidat
             "stop_loss_atr_mult": sl_atr_mult,
             "atr": ctx.atr,
             "regime": regime,
-            "owner_strategy": "orb",
+            "owner_strategy": "orb_pipeline",
             "volume_confirmed": volume_confirmed,
             "macd_aligned": macd_aligned,
         },

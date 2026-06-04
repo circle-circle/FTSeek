@@ -65,9 +65,17 @@ class RiskEngine(BaseRiskEngine):
         self._risk_config = risk_config
         
         # P1 2026-05-20: 加载止损 SoT 模块
+        # 2026-06-01: 修复 dynamic_exit 缺失 — di_container.py 只传 {"risk": risk_cfg},
+        # StopLossConfig 需要 dynamic_exit 子树, 此处显式从 ConfigContainer 注入
         try:
             from app.risk.stop_loss_config import StopLossConfig
-            self.stop_loss_config = StopLossConfig(self.config)
+            _stop_loss_cfg = dict(self.config) if isinstance(self.config, dict) else {}
+            try:
+                from app.core.config_container import get_config as _gc_full
+                _stop_loss_cfg["dynamic_exit"] = _gc_full().get_section("dynamic_exit", {}) or {}
+            except Exception as _e_cfg:
+                logger.warning(f"[RiskEngine] dynamic_exit 注入失败: {_e_cfg} (StopLossConfig 走默认值)")
+            self.stop_loss_config = StopLossConfig(_stop_loss_cfg)
             self._stop_loss_loaded = True
         except Exception as e:
             logger.warning(f"[RiskEngine] 止损 SoT 加载失败: {e}, 使用降级模式")
@@ -272,6 +280,15 @@ class RiskEngine(BaseRiskEngine):
                     return False
             except Exception as e:
                 logger.warning(f"[风控] 仓位检查异常 (继续执行): {e}")
+        else:
+            # M1 (2026-06-03): position_store 缺失时 fail-close + CRITICAL 告警
+            logger.critical(
+                f"[风控·M1] {signal.symbol} position_store 未注入! "
+                f"仓位限制检查被跳过, 可能导致无限开仓. "
+                f"请检查 scheduler_core.py 中 risk_engine.position_store 注入逻辑."
+            )
+            # fail-close: 拒绝开仓而非静默放行
+            return False
         
         logger.info(f"[风控] {signal.symbol} 预交易检查通过 ✓")
         return True
@@ -391,11 +408,11 @@ class RiskEngine(BaseRiskEngine):
 
         return True
     
-    def check_circuit_breakers(self) -> Dict[str, bool]:
-        """检查熔断器状态"""
+    def check_circuit_breakers(self, strategy_id: str = None, symbol: str = None) -> Dict[str, bool]:
+        """M5 (2026-06-03): 检查熔断器状态 — 接受参数以正确查询策略/标的级熔断"""
         return {
-            "strategy": False,  # 需要传入 strategy_id
-            "symbol": False,
+            "strategy": self.strategy_breaker.is_triggered(strategy_id) if strategy_id else False,
+            "symbol": self.symbol_breaker.is_triggered(symbol) if symbol else False,
             "system": self.system_breaker.is_triggered(),
         }
     

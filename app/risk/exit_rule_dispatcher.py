@@ -225,39 +225,80 @@ class ExitRuleDispatcher:
     # ------------------------------------------------------------------
 
     def _eval_flash_exit(self, cfg, position, market_data, trail_state):
-        """闪崩检测 - 价格快速下跌超过阈值"""
-        # 兼容两种 key: price_drop_pct (任务文档) | flash_multiplier_default (现 YAML)
-        threshold_pct_raw = cfg.get("price_drop_pct")
-        if threshold_pct_raw is not None:
-            threshold = float(threshold_pct_raw) / 100.0
-        else:
-            # fallback 用 ATR 倍数 * atr / entry_price
-            mult = float(cfg.get("flash_multiplier_default", 1.0))
-            atr = float(market_data.get("atr", 0.0))
-            entry_price = float(position.get("entry_price", 0))
-            if entry_price <= 0 or atr <= 0:
-                return None
-            threshold = (mult * atr) / entry_price
+        """闪崩检测 — 价格速度异常 (非累计偏移)
 
-        entry_price = float(position.get("entry_price", 0))
+        P0 根因修复 (2026-06-02):
+        ─────────────────────────
+        旧逻辑: adverse_pct = |entry - current| / entry  (累计偏移)
+        问题: 1× session-blended ATR ≈ 正常波动, 不是闪崩
+              → 今天 173 次误触发, -$11K 亏损
+
+        新逻辑: velocity = |prev_scan - current| / prev_scan  (扫描间速度)
+              真正的闪崩 = 30s 内价格暴跌 > 2× ATR
+              正常波动 ~0.5× ATR/30s, 不会触发
+        """
+        import time as _time
+
+        # ── min_holding_seconds 保护 (默认 120s, 给信号发展时间) ──
+        min_hold = int(cfg.get("min_holding_seconds", 120))
+        entry_ts = float(position.get("entry_time_ts", 0) or 0)
+        now_ts = float(market_data.get("now_ts", _time.time()))
+        if entry_ts > 0 and min_hold > 0:
+            elapsed = now_ts - entry_ts
+            if elapsed < min_hold:
+                return None
+
         current_price = float(market_data.get("current_price", 0))
-        if entry_price <= 0 or current_price <= 0:
+        if current_price <= 0:
+            return None
+
+        # ── 速度检测: 两次扫描间的价格变化 (非入场以来累计) ──
+        prev_price = float(trail_state.get("prev_scan_price", 0) or 0)
+        if prev_price <= 0:
+            # 首次扫描, 无速度数据, 不触发
             return None
 
         direction = str(position.get("direction", "LONG")).upper()
         if direction == "LONG":
-            adverse_pct = (entry_price - current_price) / entry_price
+            velocity = (prev_price - current_price) / prev_price  # 正=下跌(不利)
         else:
-            adverse_pct = (current_price - entry_price) / entry_price
+            velocity = (current_price - prev_price) / prev_price  # 正=上涨(不利)
 
-        if adverse_pct >= threshold:
+        if velocity <= 0:
+            return None  # 价格向有利方向移动, 无闪崩
+
+        # ── 阈值: 使用 raw ATR (不做 session blending) ──
+        # session blending 是为 trailing stop 设计的, 不适用于闪崩检测
+        # 闪崩是绝对速度事件, 不因"早盘波动正常"而降低警觉
+        entry_price = float(position.get("entry_price", 0))
+        atr_raw = float(market_data.get("atr_raw", 0) or market_data.get("atr", 0) or 0)
+        if atr_raw <= 0 or entry_price <= 0:
+            return None
+
+        mult = float(cfg.get("flash_multiplier_default", 2.0))  # 默认 2.0× ATR (从 1.0 提高)
+        # 将 ATR 转换为百分比阈值
+        # ATR 是 1-min bar 的平均真实波幅, 一次扫描间隔 ~15-30s
+        # 正常: 一次扫描移动 ~0.3-0.5× ATR
+        # 闪崩: 一次扫描移动 > 2.0× ATR
+        threshold = (mult * atr_raw) / entry_price
+
+        if velocity >= threshold:
             return ExitDecision(
                 should_exit=True,
                 rule_name="flash_exit",
                 priority=self.RULE_PRIORITIES["flash_exit"],
                 exit_price=current_price,
-                reason=f"Flash adverse {adverse_pct*100:.2f}% >= {threshold*100:.2f}%",
-                metadata={"adverse_pct": adverse_pct, "threshold": threshold},
+                reason=(
+                    f"Flash velocity {velocity*100:.3f}% >= {threshold*100:.3f}% "
+                    f"({mult}×ATR_raw={atr_raw:.3f})"
+                ),
+                metadata={
+                    "velocity_pct": velocity,
+                    "threshold": threshold,
+                    "atr_raw": atr_raw,
+                    "prev_price": prev_price,
+                    "elapsed_sec": (now_ts - entry_ts) if entry_ts > 0 else -1,
+                },
             )
         return None
 

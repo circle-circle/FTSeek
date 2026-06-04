@@ -125,7 +125,7 @@ def process(candidate: SignalCandidate,
                     f"({current_tf}/{max_pos}), 拒绝入场"
                 )
                 return None
-        # ── 0.06 ORB 持仓上限 ──
+        # ── 0.06 ORB 持仓上限 (统一计数: orb_pipeline + orb_engine) ──
         if strategy_id == 'orb' and position_store is not None:
             from app.core.config_container import get_config
             orb_cfg = get_config().get_dotted('strategies.orb') or {}
@@ -133,12 +133,13 @@ def process(candidate: SignalCandidate,
             current_orb = 0
             for pos in (position_store.all() if hasattr(position_store, 'all') else []):
                 owner = str(getattr(pos, 'owner_strategy', '') or getattr(pos, 'strategy_id', '') or '')
-                if owner == 'orb':
+                # 2026-06-01: 统一计数 orb_pipeline + orb_engine + 旧 "orb" 标签
+                if owner in ('orb', 'orb_pipeline', 'orb_engine'):
                     current_orb += 1
             if current_orb >= max_pos:
                 logger.warning(
                     f"[RiskStage] {symbol} ORB 持仓已达上限 "
-                    f"({current_orb}/{max_pos}), 拒绝入场"
+                    f"({current_orb}/{max_pos}, 含pipeline+engine), 拒绝入场"
                 )
                 return None
     except Exception as e:
@@ -377,6 +378,30 @@ def _compute_position_size(symbol: str, candidate: SignalCandidate, risk_engine)
         raw_qty = int(max_order_amount / price)
         # 取整到 10 股
         qty = max(10, (raw_qty // 10) * 10)
+
+        # ── P0 (2026-06-02): 仓位硬上限 — 防止异常大单 ──
+        # 案例: RIVN qty=3250 ($54K) 因 ATR 过低导致止损距离极小，反算出巨大仓位
+        # 硬上限: 单笔不超过 $20,000 或 500 股 (取较小值)
+        max_position_value = 20_000.0
+        max_shares = 500
+        capped = False
+
+        # 价值上限
+        if qty * price > max_position_value:
+            qty = int(max_position_value / price)
+            qty = max(10, (qty // 10) * 10)  # 重新取整
+            capped = True
+
+        # 股数上限
+        if qty > max_shares:
+            qty = max_shares
+            capped = True
+
+        if capped:
+            logger.warning(
+                f"[Risk] {symbol} 仓位触发硬上限: {qty}股 (${qty*price:,.0f}) | "
+                f"limits: ${max_position_value:,.0f} / {max_shares}股"
+            )
 
         logger.info(f"[Risk] {symbol} 仓位={qty}股 (${qty*price:,.0f}) | "
                     f"equity=${equity:,.0f} | tier={tier} | wl={water_level} | pct={position_pct:.1%}")

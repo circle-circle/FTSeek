@@ -56,16 +56,26 @@ class PositionLimitCheck(RiskCheck):
                 logger.warning("[PositionLimit] 无法获取账户权益，跳过仓位检查（放行）")
                 return self._pass(signal, "无法获取账户权益，跳过检查")
 
+            # M2 (2026-06-03): 计入即将开的仓位, 检查预期敞口是否超限
+            proposed_pct = float(context.get("proposed_position_pct", 0)) if context else 0
+            proposed_value = proposed_pct * equity if proposed_pct > 0 else 0
+
             # 单股检查
             symbol_positions = [p for p in positions if getattr(p, 'symbol', '') == symbol]
             if symbol_positions:
                 total_symbol_size = sum(getattr(p, 'size', 0) * getattr(p, 'avg_entry_price', 0) for p in symbol_positions)
+                total_symbol_size += proposed_value  # M2: 加上新仓位
                 if total_symbol_size / equity > self.max_per_symbol:
                     return self._reject(signal, f"单股敞口 {total_symbol_size/equity:.1%} > {self.max_per_symbol:.0%}")
 
             # 总敞口检查
             long_val = sum(getattr(p, 'size', 0) * getattr(p, 'avg_entry_price', 0) for p in positions if getattr(p, 'direction', '') == "LONG")
             short_val = sum(getattr(p, 'size', 0) * getattr(p, 'avg_entry_price', 0) for p in positions if getattr(p, 'direction', '') == "SHORT")
+            # M2: 加上新仓位到对应方向
+            if direction == "LONG":
+                long_val += proposed_value
+            else:
+                short_val += proposed_value
             total_exposure = (long_val + short_val) / equity
             if total_exposure > self.max_total:
                 return self._reject(signal, f"总敞口 {total_exposure:.1%} > {self.max_total:.0%}")

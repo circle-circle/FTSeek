@@ -43,84 +43,30 @@ class MarketRegimeFilter:
     在信号进入执行层之前, 根据大盘状态动态调整信号强度或拦截。
     """
     
-    # 配置参数
+    # 配置参数 (旧硬编码, 作为 yaml 缺失时的 fallback)
     VIX_FEAR_THRESHOLD = 30.0       # 恐惧阈值: 超过此值停止开新仓
     VIX_GREED_THRESHOLD = 12.0      # 贪婪阈值: 低于此值警告过热
     SPY_MA50_WEAKEN_PCT = 0.30      # SPY < MA50 时 LONG 信号削弱比例
     SPY_MA50_STRENGTHEN_PCT = 0.10  # SPY > MA50 + 上涨时信号增强比例
     CONSECUTIVE_DOWN_DAYS = 3       # 连续下跌天数触发防御模式
-    
+
     def __init__(self):
         self._spy_history: list = []  # 记录最近 N 天 SPY 收盘价
         self._last_regime: Optional[RegimeMode] = None
         self._prev_vix: Optional[float] = None  # VIX 跳变检测
-        logger.info(f"[大盘过滤] 初始化 | VIX恐惧={self.VIX_FEAR_THRESHOLD} | VIX贪婪={self.VIX_GREED_THRESHOLD}")
-    
-    def evaluate(self, spy_context: Dict[str, Any], vix: float, 
-                 signal_direction: str, signal_strength: int) -> Tuple[int, str]:
-        """
-        评估并调整信号强度
-        
-        Args:
-            spy_context: SPY 大盘上下文 (price, ma20, ma50, spx_change_percent, price_change_5d)
-            vix: 当前 VIX 值
-            signal_direction: 信号方向 (LONG/SHORT)
-            signal_strength: 原始信号强度 (0-100)
-        
-        Returns:
-            (调整后的信号强度, 原因说明)
-        """
-        regime = self._determine_regime(spy_context, vix)
-        self._last_regime = regime
-        
-        # ── 规则 1: VIX > 30 → 熔断级保护 ──
-        if vix > self.VIX_FEAR_THRESHOLD:
-            logger.warning(f"[大盘过滤] VIX={vix:.1f} > {self.VIX_FEAR_THRESHOLD} → 熔断模式, 拒绝新仓")
-            return 0, f"VIX恐惧 ({vix:.1f}) → 熔断"
+        logger.info(
+            f"[大盘过滤] 初始化 (仅 LLM 摘要使用) | "
+            f"VIX恐惧={self.VIX_FEAR_THRESHOLD} VIX贪婪={self.VIX_GREED_THRESHOLD}"
+        )
 
-        # ── 规则 1.5: VIX 跳变检测 (>20% 或 <20→>28 regime break) ──
-        vix_jump_reason = self._detect_vix_jump(vix)
-        if vix_jump_reason:
-            adjusted = int(signal_strength * 0.70)
-            logger.warning(f"[大盘过滤] {vix_jump_reason} → 信号强度削弱30% ({signal_strength}→{adjusted})")
-            return adjusted, vix_jump_reason
-        
-        # ── 规则 2: VIX < 12 → 过热预警 ──
-        if vix < self.VIX_GREED_THRESHOLD and signal_direction == "LONG":
-            logger.warning(f"[大盘过滤] VIX={vix:.1f} < {self.VIX_GREED_THRESHOLD} → 市场过热, 削弱追高信号")
-            adjusted = int(signal_strength * 0.6)  # 追高信号削弱 40%
-            return adjusted, f"VIX过热 ({vix:.1f}) → 追高削弱40%"
-        
-        # ── 规则 3: SPY < 50日均线 → LONG 信号削弱 ──
-        spy_price = spy_context.get("spy_price", 0)
-        spy_ma50 = spy_context.get("spy_ma50", 0)
-        
-        if spy_price > 0 and spy_ma50 > 0 and spy_price < spy_ma50:
-            if signal_direction == "LONG":
-                weaken_amount = int(signal_strength * self.SPY_MA50_WEAKEN_PCT)
-                adjusted = max(0, signal_strength - weaken_amount)
-                logger.info(f"[大盘过滤] SPY ${spy_price:.0f} < MA50 ${spy_ma50:.0f} → LONG 信号削弱 {weaken_amount} ({signal_strength}→{adjusted})")
-                return adjusted, f"SPY<MA50 → 削弱{int(self.SPY_MA50_WEAKEN_PCT*100)}%"
-        
-        # ── 规则 4: SPY 连续 3 日下跌 → 防御模式 ──
-        consecutive_down = self._check_consecutive_down(spy_context)
-        if consecutive_down >= self.CONSECUTIVE_DOWN_DAYS and signal_direction == "LONG":
-            adjusted = int(signal_strength * 0.5)  # 削弱 50%
-            logger.warning(f"[大盘过滤] SPY 连续 {consecutive_down} 日下跌 → 防御模式, LONG 信号削弱50%")
-            return adjusted, f"SPY连跌{consecutive_down}日 → 防御削弱50%"
-        
-        # ── 规则 5: SPY > MA50 + 上涨趋势 → 顺势加强 ──
-        if (spy_price > 0 and spy_ma50 > 0 and spy_price > spy_ma50 and 
-            spy_context.get("spx_change_percent", 0) > 0.005 and
-            signal_direction == "LONG"):
-            strengthen_amount = int(signal_strength * self.SPY_MA50_STRENGTHEN_PCT)
-            adjusted = min(100, signal_strength + strengthen_amount)
-            logger.info(f"[大盘过滤] SPY ${spy_price:.0f} > MA50 ${spy_ma50:.0f} + 上涨 → LONG 信号加强 {strengthen_amount} ({signal_strength}→{adjusted})")
-            return adjusted, f"顺势加强+{int(self.SPY_MA50_STRENGTHEN_PCT*100)}%"
-        
-        # 无调整
-        return signal_strength, regime.value
-    
+    # 注意: evaluate() 方法已删除 (2026-06-01)
+    # 原因: 自 5/15 P3 改造后, signal_pipeline.py 已用宏观闸门替代,
+    #       evaluate() 在主代码中 0 调用方, 多档/LONG折扣逻辑已迁移到
+    #       app/risk/pre_trade_check.py (真实生效路径).
+    # 本类保留是因为 llm_pipeline.py:289 仍在调用 get_regime_summary()
+    # 用于给盘前/盘后 LLM prompt 提供市场摘要.
+
+
     def _determine_regime(self, spy_context: Dict, vix: float) -> RegimeMode:
         """判断当前大盘运行模式"""
         spy_price = spy_context.get("spy_price", 0)

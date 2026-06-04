@@ -57,7 +57,7 @@ def _default_cfg():
         'sector_max_age_hours': 2,
         'pullback_rsi_long': [35, 55],
         'pullback_rsi_short': [45, 65],
-        'breakout_min_volume_ratio': 2.0,
+        'breakout_min_volume_ratio': 0,  # Fix 8: 0=disabled for base tests; individual tests override
         'stop_loss_atr_mult': 1.5,
         'breakout_stop_loss_atr_mult': 1.0,
         'trail_activation_atr': 1.0,

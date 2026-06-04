@@ -1,0 +1,526 @@
+{
+  "report_type": "daily",
+  "report_version": "2.0",
+  "report_date": "2026-06-01",
+  "generated_at": "2026-06-02T06:23:42.511630",
+  "summary": {
+    "total_trades": 0,
+    "closed_trades": 0,
+    "total_pnl": 0,
+    "win_rate": 0,
+    "avg_pnl": 0,
+    "equity_snapshot": {
+      "current_equity": 1081425.0,
+      "drawdown_pct": -1.35
+    }
+  },
+  "signal_funnel": {
+    "total_decisions": 263,
+    "by_direction_strength": {
+      "LONG(s=23)": 1,
+      "LONG(s=27)": 1,
+      "LONG(s=29)": 4,
+      "LONG(s=34)": 3,
+      "LONG(s=35)": 4,
+      "LONG(s=36)": 1,
+      "LONG(s=38)": 2,
+      "LONG(s=39)": 1,
+      "LONG(s=40)": 2,
+      "LONG(s=41)": 1,
+      "LONG(s=54)": 1,
+      "SHORT(s=10)": 22,
+      "SHORT(s=11)": 3,
+      "SHORT(s=13)": 2,
+      "SHORT(s=14)": 7,
+      "SHORT(s=15)": 2,
+      "SHORT(s=16)": 9,
+      "SHORT(s=17)": 16,
+      "SHORT(s=18)": 9,
+      "SHORT(s=19)": 23,
+      "SHORT(s=20)": 14,
+      "SHORT(s=21)": 12,
+      "SHORT(s=22)": 5,
+      "SHORT(s=23)": 6,
+      "SHORT(s=24)": 4,
+      "SHORT(s=25)": 3,
+      "SHORT(s=26)": 25,
+      "SHORT(s=27)": 17,
+      "SHORT(s=28)": 15,
+      "SHORT(s=29)": 6,
+      "SHORT(s=30)": 11,
+      "SHORT(s=31)": 7,
+      "SHORT(s=32)": 1,
+      "SHORT(s=33)": 1,
+      "SHORT(s=35)": 4,
+      "SHORT(s=36)": 6,
+      "SHORT(s=37)": 2,
+      "SHORT(s=38)": 2,
+      "SHORT(s=39)": 1,
+      "SHORT(s=40)": 3,
+      "SHORT(s=42)": 2,
+      "SHORT(s=44)": 1,
+      "SHORT(s=45)": 1
+    }
+  },
+  "rejection_analysis": {
+    "total": 108,
+    "by_reason": {
+      "SHORT_EFFECTIVE_WEAK": 82,
+      "SHORT_TRIPLE_CONFIRM": 18,
+      "LONG_STRENGTH_WEAK": 8
+    },
+    "by_symbol": {
+      "US.LLY": 13,
+      "US.GOOG": 8,
+      "US.META": 8,
+      "US.TSLA": 8,
+      "US.AMZN": 7
+    },
+    "top_rejector": "SHORT_EFFECTIVE_WEAK"
+  },
+  "capital_state": {
+    "current_equity": 1081425.0,
+    "cash": 1067765.0,
+    "buying_power": 2108116.0,
+    "drawdown_pct": -1.35,
+    "max_drawdown_pct": -6.07,
+    "water_level": "green"
+  },
+  "attribution_data": {
+    "total_records": 73,
+    "data_available": true,
+    "signal_scores": [],
+    "execution_scores": [],
+    "risk_scores": [],
+    "timing_scores": [],
+    "overall_scores": [],
+    "slippage_values": [],
+    "success_factors": [],
+    "failure_factors": [],
+    "scene_tags": [],
+    "five_factor": {
+      "five_factor_available": true,
+      "noise_trades_pnl": 31384.97,
+      "early_exit_pnl": 0.0,
+      "late_exit_pnl": 0.0,
+      "overtrading_pnl": 1388.27,
+      "missed_signals_pnl": 0.0,
+      "behavioral_score": {
+        "score": 84,
+        "grade": "B"
+      },
+      "rules": [
+        {
+          "rule_id": "R1",
+          "human_text": "平均持有 0.1 天，平均盈利 1.8%",
+          "entry_hour_range": [
+            9.0,
+            16.0
+          ],
+          "holding_days_range": [
+            0.1,
+            0.09051494454970987
+          ],
+          "support_count": 79,
+          "coverage_rate": 1.0,
+          "avg_pnl_pct": 0.0184,
+          "weight": 1.0
+        }
+      ],
+      "disposition_effect": {
+        "severity": "low",
+        "avg_hold_winners_days": 0.2,
+        "avg_hold_losers_days": 0.1,
+        "loser_winner_hold_ratio": 0.63,
+        "interpretation": "亏损持仓是盈利的 0.6x — 健康"
+      },
+      "chasing": {
+        "severity": "insufficient_data",
+        "avg_deviation_pct": 0
+      },
+      "anchoring": {
+        "severity": "low",
+        "anchored_ratio": 0.07,
+        "interpretation": "7% 的亏损单超过止损设计 — 止损纪律良好"
+      }
+    },
+    "signal_scores_avg": null,
+    "execution_scores_avg": null,
+    "risk_scores_avg": null,
+    "timing_scores_avg": null,
+    "overall_scores_avg": null
+  },
+  "trade_analyses": [],
+  "dimensions": {
+    "signal_quality": {
+      "score": 5.0,
+      "total_signals": 263,
+      "signal_to_trade_ratio": 0,
+      "strength_distribution": {},
+      "assessment": "no_trades"
+    },
+    "voting_consistency": {
+      "score": null,
+      "status": "no_trades",
+      "data_available": false
+    },
+    "execution_quality": {
+      "score": null,
+      "status": "no_trades",
+      "data_available": false
+    },
+    "risk_compliance": {
+      "data_available": true,
+      "current_drawdown_pct": -1.35,
+      "max_drawdown_pct": -6.07,
+      "water_level": "green",
+      "risk_score": 9.0
+    },
+    "funnel_diagnosis": {
+      "score": null,
+      "status": "overly_restrictive",
+      "total_decisions": 263,
+      "total_trades": 0,
+      "total_rejections": 108,
+      "trade_conversion_rate": 0.0,
+      "rejection_rate": 0.4106,
+      "top_rejector": "SHORT_EFFECTIVE_WEAK",
+      "by_direction_strength": {
+        "LONG(s=23)": 1,
+        "LONG(s=27)": 1,
+        "LONG(s=29)": 4,
+        "LONG(s=34)": 3,
+        "LONG(s=35)": 4,
+        "LONG(s=36)": 1,
+        "LONG(s=38)": 2,
+        "LONG(s=39)": 1,
+        "LONG(s=40)": 2,
+        "LONG(s=41)": 1,
+        "LONG(s=54)": 1,
+        "SHORT(s=10)": 22,
+        "SHORT(s=11)": 3,
+        "SHORT(s=13)": 2,
+        "SHORT(s=14)": 7,
+        "SHORT(s=15)": 2,
+        "SHORT(s=16)": 9,
+        "SHORT(s=17)": 16,
+        "SHORT(s=18)": 9,
+        "SHORT(s=19)": 23,
+        "SHORT(s=20)": 14,
+        "SHORT(s=21)": 12,
+        "SHORT(s=22)": 5,
+        "SHORT(s=23)": 6,
+        "SHORT(s=24)": 4,
+        "SHORT(s=25)": 3,
+        "SHORT(s=26)": 25,
+        "SHORT(s=27)": 17,
+        "SHORT(s=28)": 15,
+        "SHORT(s=29)": 6,
+        "SHORT(s=30)": 11,
+        "SHORT(s=31)": 7,
+        "SHORT(s=32)": 1,
+        "SHORT(s=33)": 1,
+        "SHORT(s=35)": 4,
+        "SHORT(s=36)": 6,
+        "SHORT(s=37)": 2,
+        "SHORT(s=38)": 2,
+        "SHORT(s=39)": 1,
+        "SHORT(s=40)": 3,
+        "SHORT(s=42)": 2,
+        "SHORT(s=44)": 1,
+        "SHORT(s=45)": 1
+      }
+    },
+    "attribution_learning": {
+      "data_available": true,
+      "lessons_count": 1,
+      "five_factor": {
+        "five_factor_available": true,
+        "noise_trades_pnl": 31384.97,
+        "early_exit_pnl": 0.0,
+        "late_exit_pnl": 0.0,
+        "overtrading_pnl": 1388.27,
+        "missed_signals_pnl": 0.0,
+        "behavioral_score": {
+          "score": 84,
+          "grade": "B"
+        },
+        "rules": [
+          {
+            "rule_id": "R1",
+            "human_text": "平均持有 0.1 天，平均盈利 1.8%",
+            "entry_hour_range": [
+              9.0,
+              16.0
+            ],
+            "holding_days_range": [
+              0.1,
+              0.09051494454970987
+            ],
+            "support_count": 79,
+            "coverage_rate": 1.0,
+            "avg_pnl_pct": 0.0184,
+            "weight": 1.0
+          }
+        ],
+        "disposition_effect": {
+          "severity": "low",
+          "avg_hold_winners_days": 0.2,
+          "avg_hold_losers_days": 0.1,
+          "loser_winner_hold_ratio": 0.63,
+          "interpretation": "亏损持仓是盈利的 0.6x — 健康"
+        },
+        "chasing": {
+          "severity": "insufficient_data",
+          "avg_deviation_pct": 0
+        },
+        "anchoring": {
+          "severity": "low",
+          "anchored_ratio": 0.07,
+          "interpretation": "7% 的亏损单超过止损设计 — 止损纪律良好"
+        }
+      },
+      "behavioral_score": {
+        "score": 84,
+        "grade": "B"
+      }
+    }
+  },
+  "decision_analysis": {},
+  "risk_analysis": {
+    "data_available": true,
+    "current_drawdown_pct": -1.35,
+    "max_drawdown_pct": -6.07,
+    "water_level": "green",
+    "risk_score": 9.0
+  },
+  "voting_analysis": {
+    "score": null,
+    "status": "no_trades",
+    "data_available": false
+  },
+  "error_patterns": {},
+  "review_score": {
+    "overall_score": 5.0,
+    "max_score": 10.0,
+    "status": "no_trades",
+    "breakdown": {}
+  },
+  "market_regime": {
+    "state": "unknown",
+    "confidence": "low",
+    "indicators": {
+      "drawdown_pct": 1.35
+    }
+  },
+  "plan_vs_actual": {
+    "plan_available": true,
+    "planned_targets": [
+      {
+        "symbol": "US.TSM",
+        "direction": "LONG",
+        "entry_zone": [
+          130.0,
+          132.5
+        ],
+        "stop_loss": 127.0,
+        "take_profit": 140.0,
+        "urgency": "LOW",
+        "rationale": "TSM日线形成双底结构并突破下降趋势线，半导体资金回流，技术面看多。 [降级试仓]",
+        "_price_warning": "entry_zone偏离当前价68.6%",
+        "_current_price_ref": 418.45,
+        "open_check_status": "CANCELLED",
+        "gap_pct": -0.01508732288283205,
+        "cancellation_reason": "Direction Divergence (Plan LONG but Gap -1.51%)"
+      },
+      {
+        "symbol": "US.ORCL",
+        "direction": "SHORT",
+        "entry_zone": [
+          115.0,
+          117.0
+        ],
+        "stop_loss": 119.0,
+        "take_profit": 108.0,
+        "urgency": "LOW",
+        "rationale": "ORCL反弹至前期阻力位出现射击之星形态，财报后无利好，技术面看空。 [降级试仓]",
+        "_price_warning": "entry_zone偏离当前价48.6%",
+        "_current_price_ref": 225.78,
+        "open_check_status": "CANCELLED",
+        "gap_pct": 0.10839469808541981,
+        "cancellation_reason": "Gap too large (10.84% > 3%)"
+      },
+      {
+        "symbol": "US.PDD",
+        "direction": "SHORT",
+        "entry_zone": [
+          72.0,
+          73.5
+        ],
+        "stop_loss": 75.0,
+        "take_profit": 66.0,
+        "urgency": "LOW",
+        "rationale": "PDD受中美贸易摩擦升级影响，中概承压，日线跌破关键支撑，均线空头排列。 [降级试仓]",
+        "_price_warning": "entry_zone偏离当前价13.8%",
+        "_current_price_ref": 84.44,
+        "open_check_status": "CANCELLED",
+        "gap_pct": 0.016981813802240113,
+        "cancellation_reason": "Direction Divergence (Plan SHORT but Gap 1.70%)"
+      }
+    ],
+    "executed_targets": [],
+    "missed_opportunities": [
+      "US.PDD",
+      "US.TSM",
+      "US.ORCL"
+    ],
+    "unplanned_trades": [],
+    "plan_date": "2026-06-01",
+    "execution_rate": 0.0
+  },
+  "key_learnings": [],
+  "improvement_suggestions": [
+    "产生 263 条决策但 0 笔执行，检查门禁/风控是否过严",
+    "今日 108 次信号被拒绝，TOP 原因: SHORT_EFFECTIVE_WEAK"
+  ],
+  "exit_reason_pnl": {
+    "window_days": 30,
+    "total_reasons": 26,
+    "by_reason": {
+      "TRAILING_STOP": {
+        "n": 85,
+        "win_rate": 0.471,
+        "avg_pnl_pct": 0.00421,
+        "sharpe_proxy": 0.112,
+        "recommendation": "⚠ marginal"
+      },
+      "PRE_CLOSE_EXIT": {
+        "n": 9,
+        "win_rate": 0.0,
+        "avg_pnl_pct": -0.00388,
+        "sharpe_proxy": -1.876,
+        "recommendation": "⚠ review"
+      },
+      "STRUCTURE_EXIT": {
+        "n": 32,
+        "win_rate": 0.312,
+        "avg_pnl_pct": -0.00212,
+        "sharpe_proxy": -0.417,
+        "recommendation": "⚠ review"
+      },
+      "sl_hit": {
+        "n": 123,
+        "win_rate": 0.154,
+        "avg_pnl_pct": -0.00122,
+        "sharpe_proxy": -0.544,
+        "recommendation": "⚠ review"
+      },
+      "tp_hit": {
+        "n": 5,
+        "win_rate": 1.0,
+        "avg_pnl_pct": 0.01024,
+        "sharpe_proxy": 3.317,
+        "recommendation": "✅ keep"
+      },
+      "time_stop": {
+        "n": 7,
+        "win_rate": 0.286,
+        "avg_pnl_pct": -0.00534,
+        "sharpe_proxy": -0.397,
+        "recommendation": "🚨 disable"
+      },
+      "ghost_cleanup_cruise": {
+        "n": 5,
+        "win_rate": 0.0,
+        "avg_pnl_pct": 0.0,
+        "sharpe_proxy": 0.0,
+        "recommendation": "⚠ marginal"
+      },
+      "manual_close_simulated": {
+        "n": 4,
+        "win_rate": 0.0,
+        "avg_pnl_pct": 0.0,
+        "sharpe_proxy": 0.0,
+        "recommendation": "🔍 insufficient"
+      }
+    }
+  },
+  "coordinator_summary": {
+    "window_date": "2026-06-01",
+    "owner_strategy_distribution": {},
+    "active_positions_by_owner": {
+      "futu_sync": 1
+    },
+    "arbitration": {
+      "total": 0,
+      "multi_candidate": 0,
+      "winners": {}
+    }
+  },
+  "shadow_comparison": {
+    "real": {
+      "n": 0,
+      "total_pnl": 0,
+      "win_rate": 0
+    },
+    "shadow_by_variant": [
+      {
+        "variant": "baseline",
+        "n": 55,
+        "total_pnl": 0.0,
+        "win_rate": 0.0
+      },
+      {
+        "variant": "early_chandelier",
+        "n": 39,
+        "total_pnl": 0.0,
+        "win_rate": 0.0
+      },
+      {
+        "variant": "min_hold_6min",
+        "n": 39,
+        "total_pnl": 0.0,
+        "win_rate": 0.0
+      },
+      {
+        "variant": "no_chandelier",
+        "n": 42,
+        "total_pnl": 0.0,
+        "win_rate": 0.0
+      },
+      {
+        "variant": "quick_exit",
+        "n": 42,
+        "total_pnl": 0.0,
+        "win_rate": 0.0
+      },
+      {
+        "variant": "short_only",
+        "n": 36,
+        "total_pnl": 0.0,
+        "win_rate": 0.0
+      },
+      {
+        "variant": "tighter_stop",
+        "n": 42,
+        "total_pnl": 0.0,
+        "win_rate": 0.0
+      },
+      {
+        "variant": "tp_sl_5to1",
+        "n": 39,
+        "total_pnl": 0.0,
+        "win_rate": 0.0
+      }
+    ]
+  },
+  "pnl_outliers": {
+    "n": 0,
+    "outliers": []
+  },
+  "symbol_loss_guard_triggers": {
+    "total_symbols_tracked": 0,
+    "blocked_count": 0,
+    "blocked": []
+  }
+}

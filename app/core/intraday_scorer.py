@@ -205,23 +205,19 @@ def _session_multiplier() -> Tuple[float, float]:
     """
     返回 (confidence_multiplier, strength_multiplier) 基于日内时段。
 
-    信号质量评估 (不同于 session_vol_ratio):
-      - opening_drive: 假突破率高 → 降低置信度/仓位
-      - midday:        波动低幅度小 → 降低强度
-      - closing_drive: 趋势持续性强 → 提升强度
-
-    幻方 P2 (2026-05-01): key 改为 canonical session name, 从 SharedKernel 统一 taxonomy。
+    P0 (2026-06-04): 简化为2档，减少信号死区：
+      - prime   (morning + afternoon + closing): 1.0/1.0 — 不衰减
+      - non_prime (opening_drive + midday):       0.85/0.85 — 轻度降低
+    旧版问题: 5档乘数制邠了36%时段的信号被压制过多。
     """
     from app.core.shared_kernel import get_shared_kernel
     session = get_shared_kernel().get_current_session()
-    multipliers = {
-        "opening_drive":  (0.60, 0.70),   # P0 (2026-06-03): 0.75→0.60, 开盘噪音期数据 WR=35.1% Avg=-$47
-        "morning":        (0.90, 0.95),   # 盘中前段: 逐步正常化
-        "midday":         (0.70, 0.65),   # P0 (2026-06-03): 0.85→0.70, 午间数据 WR=23.7% Total=-$5,584
-        "afternoon":      (0.95, 1.00),   # 午后: 正常
-        "closing_drive":  (1.00, 1.10),   # 收盘: 趋势可靠, 适度激进
-    }
-    return multipliers.get(session, (0.80, 0.80))
+    # prime 时段: 信号质量可靠, 不衰减
+    prime_sessions = {"morning", "afternoon", "closing_drive"}
+    if session in prime_sessions:
+        return (1.0, 1.0)
+    # non-prime (opening_drive, midday, 未知): 轻度降低
+    return (0.85, 0.85)
 
 
 # ============================================================
@@ -368,9 +364,10 @@ class IntradayScorer:
         position_pct, stop_loss_pct = self._compute_position_and_stop(
             confidence, atr, price, vix, direction
         )
-        # P0-D2 (2026-05-14): ATR=0 或 price=0 → _compute 返回 (0,0) → 拒信号
+        # P0-D2 (2026-05-14): _compute 返回 (0,0) → ATR防御层拒绝或数据缺失
         if position_pct <= 0 or stop_loss_pct <= 0:
-            return self._empty_signal(symbol, f"data_missing(atr={atr},price={price})")
+            atr_pct = (atr / price * 100) if price > 0 else 0
+            return self._empty_signal(symbol, f"atr_reject(atr={atr:.2f},price={price:.1f},atr%={atr_pct:.2f}%)")
 
         # ── Step 9: 构建信号 ──
         reasoning = "; ".join(
@@ -1183,31 +1180,51 @@ class IntradayScorer:
     ) -> Tuple[float, float]:
         """
         F10 修复 (2026-05-12): 风险单位 R 统一 — 仓位由风险预算 / 止损距离决定
-
+    
         核心原则: 每笔交易的最大可接受亏损 (R) 先确定, 再反推仓位。
         - 先算止损距离 (与仓位无关)
         - 按 confidence 确定风险预算
         - 仓位 = 风险预算 / 止损距离
         - VIX 高时主动降仓
-
-        旧版问题: 仓位和止损独立计算, 每笔交易的实际风险不可控。
+    
+        P0 (2026-06-04): ATR反向约束三层防御:
+        - Layer 1: ATR%可交易性双阈值 (0.8%-6%)
+        - Layer 2: ATR绝对值底限 ($0.30)
+        - Layer 3: 止损倍数对齐exit_policy (4.0×ATR)
         """
-        # ── P0-D2 (2026-05-14): ATR=0 或 price=0 → 拒交易 (返回 0,0 由调用方丢弃) ──
-        # 旧行为: 用 0.02 兜底, 高波动股 (TSLA 4% ATR) 用 2% 止损被噪声打掉率 70%+
-        # 新行为: 数据缺失即 NEUTRAL, 让上游补数据后重试
+        # ── P0-D2 (2026-05-14): ATR=0 或 price=0 → 拒交易 ──
         if atr <= 0 or price <= 0:
+            logger.info(f"[ATR拒绝] {direction} atr={atr} price={price} → 数据缺失")
             return 0.0, 0.0
-
-        # ── Step 1: 先确定止损距离 (与仓位无关) ──
-        stop_mult = vix_stop_multiplier(vix)
-        stop_distance_pct = max(stop_mult * atr / price, 0.02)
-
+    
+        # ── ATR Layer 1: ATR%可交易性双阈值 (P0 2026-06-04) ──
+        # ATR%太小: 费用吞噬利润, R:R结构性失衡
+        # ATR%太大: 仓位被压到极小, 交易无意义
+        atr_pct = atr / price
+        if atr_pct < 0.008:  # <0.8% → 低波动, 费用占比过高
+            logger.info(f"[ATR拒绝] ATR%={atr_pct*100:.2f}%<0.8% price=${price:.2f} atr=${atr:.2f} → 低波动拒绝")
+            return 0.0, 0.0
+        if atr_pct > 0.06:   # >6% → 极端波动, 仓位过小无效
+            logger.info(f"[ATR拒绝] ATR%={atr_pct*100:.2f}%>6% price=${price:.2f} atr=${atr:.2f} → 极端波动拒绝")
+            return 0.0, 0.0
+    
+        # ── ATR Layer 2: 绝对值底限 (P0 2026-06-04) ──
+        # 低价股ATR绝对值太小时, 滑点+spread占止损距离比例过大
+        if atr < 0.30:
+            logger.info(f"[ATR拒绝] ATR=${atr:.2f}<$0.30 price=${price:.2f} → 绝对值过小拒绝")
+            return 0.0, 0.0
+    
+        # ── ATR Layer 3: 止损倍数对齐exit_policy (P0 2026-06-04) ──
+        # 仓位定价必须基于实际止损距离(4.0×ATR), 而非较小的vix_stop_multiplier
+        # 否则真实风险 = 账面风险 × 2 (隐性杠杆)
+        EXIT_STOP_MULT = 4.0  # 与 exit_policy.yaml atr_stop.multiplier_by_profit.initial 对齐
+        stop_distance_pct = max(EXIT_STOP_MULT * atr / price, 0.02)
+    
         # 恐慌模式额外放宽
         if vix > 35:
             stop_distance_pct *= 1.3
-
+    
         # ── Step 2: 确定本笔风险预算 (按 confidence 缩放) ──
-        # F10 (2026-05-14): 从 yaml 读取, 不再硬编码 — 让 ConfigWriter 可调
         try:
             from app.core.config_container import get_config
             _cfg = get_config()
@@ -1217,21 +1234,21 @@ class IntradayScorer:
             base_risk, max_risk = 0.005, 0.010
         risk_scaler = 0.5 + min(confidence, 0.85) * 1.0  # conf=0.5→1.0R, 0.85→1.35R
         trade_risk = min(base_risk * risk_scaler, max_risk)
-
+    
         # ── Step 3: 仓位 = 风险预算 / 止损距离 ──
         if stop_distance_pct > 0:
             position_pct = trade_risk / stop_distance_pct
         else:
             position_pct = 0.10
-
+    
         # ── Step 4: VIX 阻尼 (高波动期主动降仓) ──
         vix_damp = 1.0 if vix < 22 else (0.8 if vix < 30 else 0.5)
         position_pct *= vix_damp
-
+    
         # ── Step 5: 硬上下限 ──
         position_pct = round(max(0.02, min(position_pct, 0.20)), 3)  # 2%-20%
         stop_distance_pct = round(stop_distance_pct, 3)
-
+    
         return position_pct, stop_distance_pct
 
     # ============================================================

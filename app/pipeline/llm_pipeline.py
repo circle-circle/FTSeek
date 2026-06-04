@@ -489,10 +489,20 @@ def run_llm_strategy_scan(scheduler):
                     continue
                 
                 trace_id = f"LLM-{datetime.now().strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}"
+                # 根因修复: confidence < 0.30 → strength < 30 → 被 SSOT 门禁拦截
+                # 在源头过滤, 不产生垃圾信号
+                _llm_strength = min(100, max(0, int(strategy.confidence * 100)))
+                if _llm_strength < 35:  # LONG 最低阈值
+                    logger.info(
+                        f"[LLM策略] {strategy.symbol} confidence={strategy.confidence:.2f} "
+                        f"→ strength={_llm_strength} < 35, 跳过"
+                    )
+                    strategy.status = "rejected_low_confidence"
+                    continue
                 signal = SignalScore(
                     signal_id=f"LLM-{uuid.uuid4().hex[:8].upper()}",
                     strategy_id="llm_strategy",
-                    strength=min(100, max(0, int(strategy.confidence * 100))),
+                    strength=_llm_strength,
                     confidence=strategy.confidence,
                     direction=Direction.LONG,
                     expected_horizon=60 * strategy.time_horizon_hours,

@@ -5,7 +5,7 @@
 - 盈利 8% 开始追踪止盈
 - 从最高点回撤 5% 立即平仓 (锁定利润)
 - 持仓 72h 无条件平仓 (避免时间价值损耗)
-- 亏损 25% 硬止损
+- 亏损 15% 硬止损 (2026-06-02 收紧: 原25%配置+滑点导致实际-40%~-63%亏损)
 
 使用方式:
     from app.exit.option_quick_exit import OptionQuickExitEngine
@@ -36,7 +36,7 @@ class OptionQuickExitEngine:
         self.trailing_stop = config.get("trailing_stop", 0.05)        # 5% 回撤平仓
         self.max_holding_hours = config.get("max_holding_hours", 72)  # 72h 强制平仓
         self.profit_target = config.get("profit_target_pct", 0.15)    # 15% 目标止盈
-        self.stop_loss = config.get("stop_loss_pct", 0.25)            # P3: 40% → 25% 补偿滑点（实测滑点15-23%，25%配置→实际~40%）
+        self.stop_loss = config.get("stop_loss_pct", 0.15)            # 2026-06-02: 25% → 15% (实测5笔灾难亏损 -$10,519, 滑点~15%, 15%配置→实际~30%)
         self.time_decay_warning = config.get("time_decay_warning", 0.10)  # 10% 时间价值警告
         self.min_holding_hours_for_decay = config.get("min_holding_hours_for_decay", 24)  # P3: 至少持仓 24h 才考虑时间损耗
 
@@ -56,7 +56,7 @@ class OptionQuickExitEngine:
         2. 移动止盈: 从最高点回撤 5% (锁定利润)
         3. 持仓超过 72 小时 (避免时间价值损耗)
         4. 时间价值损耗 > 10% 警告
-        5. 止损触发 -25% (硬止损)
+        5. 止损触发 -15% (硬止损, 2026-06-02 收紧)
         """
         if not self.enabled:
             return False, ""

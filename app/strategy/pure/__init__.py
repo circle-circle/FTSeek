@@ -106,13 +106,13 @@ def _enrich_candidate(sig: SignalCandidate, ctx: SymbolContext, name: str) -> No
     factor_detail 从 ctx 透传 (假设 MarketData stage 已注入).
     signal_tags 从 SignalCandidate 现有字段或 strategy_id 推断.
     """
-    # 1. trace_id (若策略未设)
+    # 1. trace_id (若策略未设) — Task #11 (2026-06-02): 统一走 app.core.trace 模块,
+    # 通过策略名 (fast_lane/technical/llm_vote/trend_first/orb) 解析为 MAIN / TECH / TF / ORB 前缀,
+    # 一眼区分候选来源, 与 ORB engine / 其他策略保持同一套生成机制。
     if not sig.trace_id:
         try:
-            from datetime import datetime, timezone, timedelta
-            import uuid
-            et_date = datetime.now(timezone(timedelta(hours=-4))).strftime("%Y%m%d")
-            sig.trace_id = f"US-{et_date}-{uuid.uuid4().hex[:6].upper()}"
+            from app.core.trace import generate_trace_id
+            sig.trace_id = generate_trace_id(strategy=name)
         except Exception:
             pass
     # 2. factor_detail 从 ctx 透传 (若策略未填)

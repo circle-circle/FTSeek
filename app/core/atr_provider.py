@@ -24,6 +24,7 @@ ATRProvider 作为统一获取入口：
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from typing import Any, Dict, Optional, Tuple
 
@@ -31,13 +32,15 @@ logger = logging.getLogger("ftseek.atr_provider")
 
 
 class ATRProvider:
-    """ATR 统一数据提供器（线程不安全；调用方需自行加锁如需并发）"""
+    """ATR 统一数据提供器（C2: 2026-06-03 线程安全修复）"""
 
     def __init__(self, market_data_router: Any, cache_ttl_seconds: int = 60):
         self._router = market_data_router
         self._cache_ttl = max(1, int(cache_ttl_seconds))
         # symbol -> (atr, timestamp)
         self._cache: Dict[str, Tuple[float, float]] = {}
+        # C2: 线程安全锁
+        self._lock = threading.Lock()
 
     # ------------------------------------------------------------------
     #  ATR 获取
@@ -57,13 +60,14 @@ class ATRProvider:
 
         now = time.time()
 
-        # 1) 缓存有效命中
-        if not force_refresh and symbol in self._cache:
-            cached_atr, cached_time = self._cache[symbol]
-            if now - cached_time < self._cache_ttl:
-                return cached_atr
+        with self._lock:
+            # 1) 缓存有效命中
+            if not force_refresh and symbol in self._cache:
+                cached_atr, cached_time = self._cache[symbol]
+                if now - cached_time < self._cache_ttl:
+                    return cached_atr
 
-        # 2) 从 MarketDataRouter 拉取
+        # 2) 从 MarketDataRouter 拉取（锁外执行，避免长时间持锁）
         try:
             context = self._router.get_full_market_context(symbol) if self._router else None
             if context is None:
@@ -73,7 +77,8 @@ class ATRProvider:
             atr_raw = context.get("atr") if isinstance(context, dict) else getattr(context, "atr", None)
             if atr_raw is not None and float(atr_raw) > 0:
                 atr = float(atr_raw)
-                self._cache[symbol] = (atr, now)
+                with self._lock:
+                    self._cache[symbol] = (atr, now)
                 return atr
 
             logger.warning(f"[ATRProvider] {symbol} ATR 无效: {atr_raw}")
@@ -84,15 +89,16 @@ class ATRProvider:
             return self._get_cached_fallback(symbol)
 
     def _get_cached_fallback(self, symbol: str) -> Optional[float]:
-        """缓存有过期数据时返回（5×TTL 宽限期），否则返回 None"""
-        cached = self._cache.get(symbol)
-        if not cached:
+        """C2: 缓存有过期数据时返回（5×TTL 宽限期），否则返回 last_good 或 None"""
+        with self._lock:
+            cached = self._cache.get(symbol)
+            if not cached:
+                return None
+            cached_atr, cached_time = cached
+            if time.time() - cached_time < self._cache_ttl * 5:
+                logger.info(f"[ATRProvider] {symbol} 使用过期缓存 ATR={cached_atr:.4f}")
+                return cached_atr
             return None
-        cached_atr, cached_time = cached
-        if time.time() - cached_time < self._cache_ttl * 5:
-            logger.info(f"[ATRProvider] {symbol} 使用过期缓存 ATR={cached_atr:.4f}")
-            return cached_atr
-        return None
 
     # ------------------------------------------------------------------
     #  ATR 百分比

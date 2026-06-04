@@ -219,10 +219,20 @@ class DecisionRecorder:
 
                 # 写入模型投票明细
                 model_scores_list = voting_result.get("model_scores", [])
-                logger.debug(f"[DecisionRecorder] DEBUG: model_scores type={type(model_scores_list)}, len={len(model_scores_list)}")
-                if model_scores_list:
-                    logger.debug(f"[DecisionRecorder] DEBUG: first model_score={model_scores_list[0]}")
-                
+
+                # ─── 诊断日志 (2026-06-02: 定位 model_votes=0 的根因) ───
+                if not model_scores_list:
+                    logger.info(
+                        f"[DecisionRecorder] ⚠️ model_scores 为空, 无 model_votes 写入: "
+                        f"decision_id={decision_id} symbol={symbol}"
+                    )
+                else:
+                    logger.info(
+                        f"[DecisionRecorder] model_scores: {len(model_scores_list)} 条, "
+                        f"ids={[ms.get('model_id', '?') for ms in model_scores_list]}"
+                    )
+
+                _votes_inserted = 0
                 for ms in model_scores_list:
                     model_id = ms.get("model_id", ms.get("model", "unknown"))
                     direction = ms.get("direction", "NEUTRAL")
@@ -232,9 +242,8 @@ class DecisionRecorder:
 
                     # Determine model role
                     role_map = {"qwen": "QWEN", "minimax": "MINIMAX", "llm_strategy": "LLM_STRATEGY"}
-                    model_role = role_map.get(model_id.lower(), "UNKNOWN")
+                    model_role = role_map.get(model_id.lower() if model_id else "unknown", "UNKNOWN")
 
-                    logger.debug(f"[DecisionRecorder] DEBUG: inserting model_vote: {model_id}, {model_role}, {ms.get('strength', 50)}")
                     conn.execute("""
                         INSERT INTO model_votes
                         (decision_id, model_id, model_role, strength, direction,
@@ -247,10 +256,14 @@ class DecisionRecorder:
                         ms.get("strength", 50),
                         direction,
                         ms.get("confidence", 0.5),
-                        ms.get("weight", 0.0),  # P1 Fix (2026-05-02): use actual weight from model_scores
+                        ms.get("weight", 0.0),
                         ms.get("reasoning", ""),
                         now,
                     ))
+                    _votes_inserted += 1
+
+                if _votes_inserted > 0:
+                    logger.info(f"[DecisionRecorder] ✅ 写入 {_votes_inserted} 条 model_votes: {decision_id}")
 
                 conn.commit()
                 logger.info(

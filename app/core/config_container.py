@@ -398,7 +398,7 @@ class ConfigContainer:
             config.get_dotted("decision.signal_thresholds.min_score")    # 50
             config.get_dotted("risk.account.max_daily_drawdown")          # 0.03
             config.get_dotted("execution.slippage.max_ratio")             # 0.005
-            config.get_dotted("scheduler.scan_interval_minutes", 10)      # 默认值 10
+            config.get_dotted("scheduler.scan_interval_minutes", 3)       # 默认值 3
         """
         parts = path.lower().split(".")
         # 直接从 YAML 原始结构中查找 (保留嵌套层级)

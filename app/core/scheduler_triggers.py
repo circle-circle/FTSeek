@@ -110,11 +110,20 @@ def is_in_cooldown(scheduler: 'TradingScheduler', symbol: str) -> bool:
 
     P1 修复 (2026-05-04): 使用 scheduler._open_position_lock 保护，
     防止 signal_pipeline 和 force_scan 线程并发读写 _signal_cooldown 导致竞态。
+    H4 (2026-06-03): 顺带清理过期条目, 防止内存泄漏
     """
     with scheduler._open_position_lock:
-        if symbol not in scheduler._signal_cooldown:
+        # H4: 清理过期条目 (每 10 次调用清理一次, 降低开销)
+        _cd = scheduler._signal_cooldown
+        if len(_cd) > 50 and hash(symbol) % 10 == 0:
+            _cutoff = now_et() - __import__('datetime').timedelta(minutes=scheduler.SIGNAL_COOLDOWN_MINUTES * 2)
+            _expired = [s for s, t in _cd.items() if t < _cutoff]
+            for s in _expired:
+                del _cd[s]
+
+        if symbol not in _cd:
             return False
-        elapsed = (now_et() - scheduler._signal_cooldown[symbol]).total_seconds() / 60
+        elapsed = (now_et() - _cd[symbol]).total_seconds() / 60
         return elapsed < scheduler.SIGNAL_COOLDOWN_MINUTES
 
 

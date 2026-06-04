@@ -6,15 +6,76 @@
 
 P0 配置统一化修复 (2026-04-06):
 - 从 config_us.py 的 RISK_CONFIG 读取 min_confidence，移除硬编码
+
+2026-06-01 重大重构 (RFC-056/058 真实接线):
+- 黑名单从硬编码改为读 unified_config.yaml::risk.global_blacklist (SSOT)
+- 加入 VIX 多档过滤 (RFC-056): VIX>=high LONG×0.5, SHORT×0.85; VIX>=mid ×0.85
+- 加入 LONG 方向折扣 (RFC-058): 默认 strength × 0.7, BULL regime 豁免
 """
 import logging
+import time
 from dataclasses import dataclass
-from typing import Optional, List
+from typing import Optional, List, Set, Dict, Any
 from app.core.models import SignalScore
 from app.analysis.market_state import can_trade as market_can_trade
 from app.risk.pdt_guard import get_pdt_guard
 
 logger = logging.getLogger(__name__)
+
+# ─────────────────────────────────────────────────────────────────────────
+# 2026-06-01: yaml 黑名单缓存 (60s TTL, 避免每次入场都读盘)
+# ─────────────────────────────────────────────────────────────────────────
+_BLACKLIST_CACHE: Set[str] = set()
+_BLACKLIST_CACHE_TS: float = 0.0
+_BLACKLIST_TTL: float = 60.0
+
+
+def _load_blacklist() -> Set[str]:
+    """读 unified_config.yaml::risk.global_blacklist (60s 缓存)"""
+    global _BLACKLIST_CACHE, _BLACKLIST_CACHE_TS
+    now = time.time()
+    if now - _BLACKLIST_CACHE_TS < _BLACKLIST_TTL and _BLACKLIST_CACHE:
+        return _BLACKLIST_CACHE
+    try:
+        from app.core.config_container import get_config
+        cfg = get_config()
+        bl = cfg.get_dotted("risk.global_blacklist", []) or []
+        _BLACKLIST_CACHE = {str(s).strip() for s in bl if s}
+        _BLACKLIST_CACHE_TS = now
+    except Exception as e:
+        logger.warning(f"[BlackList] yaml 读取失败 (用空集合保守放行): {e}")
+        _BLACKLIST_CACHE = set()
+    return _BLACKLIST_CACHE
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# RFC-056/058 配置缓存
+# ─────────────────────────────────────────────────────────────────────────
+_FILTER_CFG_CACHE: Dict[str, Any] = {}
+_FILTER_CFG_TS: float = 0.0
+
+
+def _load_filter_config() -> Dict[str, Any]:
+    """读 unified_config.yaml 中 RFC-056/058 配置 (60s 缓存)"""
+    global _FILTER_CFG_CACHE, _FILTER_CFG_TS
+    now = time.time()
+    if now - _FILTER_CFG_TS < 60 and _FILTER_CFG_CACHE:
+        return _FILTER_CFG_CACHE
+    try:
+        from app.core.config_container import get_config
+        cfg = get_config()
+        risk = cfg.get_section("risk", {}) or {}
+        _FILTER_CFG_CACHE = {
+            "vix_levels": (risk.get("market_regime_filter", {}) or {}).get("vix_levels", {}),
+            "vix_long_high_mult": (risk.get("market_regime_filter", {}) or {}).get("long_in_high_zone_strength_mult", 0.5),
+            "vix_short_high_mult": (risk.get("market_regime_filter", {}) or {}).get("short_in_high_zone_strength_mult", 0.85),
+            "long_direction_filter": risk.get("long_direction_filter", {}) or {},
+        }
+        _FILTER_CFG_TS = now
+    except Exception as e:
+        logger.warning(f"[FilterCfg] yaml 读取失败: {e}")
+        _FILTER_CFG_CACHE = {"vix_levels": {}, "long_direction_filter": {}}
+    return _FILTER_CFG_CACHE
 
 @dataclass
 class PreTradeResult:
@@ -105,9 +166,8 @@ class PreTradeChecker:
         checks_passed = []
         
         # 0. 市场状态检查 (P1 优化 2026-05-24: 方向感知 Regime Gate)
-        # 旧逻辑: market_can_trade() 一刀切拦截所有方向 (LONG+SHORT)
-        # 新逻辑: VIX>=25 拦截所有方向; SPY<MA200 仅拦截 LONG (允许 SHORT)
-        # 数据支撑: SHORT 胜率35% 盈利$12,021 vs LONG 胜率20.3% 盈利$1,933
+        # P0 (2026-06-04): VIX>=25 不再硬拦截，改为警告标记。
+        # 分层防御: IntradayScorer VIX缩仓(0.8x/0.5x) + ATR止损放宽 + capital_safety总仓上限。
         _p1_vix_ok = True
         _p1_spy_ok = True
         try:
@@ -119,11 +179,7 @@ class PreTradeChecker:
             pass  # 数据不可用时放行，避免误杀
         
         if not _p1_vix_ok:
-            return PreTradeResult(
-                allowed=False,
-                reason="P1_VIX_HIGH(VIX>=25 blocks all directions)",
-                checks_passed=checks_passed,
-            )
+            logger.warning(f"[P1-VIX] VIX>=25 高波动模式，不拦截，下游自适应缩仓")
         checks_passed.append("P1_VIX")
         
         _direction = str(getattr(signal, 'direction', '')).upper()
@@ -182,19 +238,99 @@ class PreTradeChecker:
                 checks_passed=checks_passed,
             )
         # P0-3: 持续亏损股票黑名单 (数据驱动)
-        # 注意: 不拦截 sandbox universe 中的标的 (NVDA/QQQ),
-        #       那些标的由 SignalValidator + HIGH_VOL gate 做精细化管控
-        _P0_BLACKLIST = {
-            "US.QCOM", "US.TME", "US.META",
-            "US.GOOGL", "US.UNH", "US.NFLX", "US.DIA",
-        }
-        if _symbol in _P0_BLACKLIST:
+        # 2026-06-01 重构: 删除硬编码, 改为读 unified_config.yaml::risk.global_blacklist (SSOT)
+        _blacklist = _load_blacklist()
+        if _symbol in _blacklist:
             return PreTradeResult(
                 allowed=False,
                 reason=f"P0_BLACKLISTED({_symbol})",
                 checks_passed=checks_passed,
             )
         checks_passed.append("P0_GUARD")
+
+        # ── RFC-056 (2026-06-01): VIX 多档过滤 (真实接线版, 替代 market_regime_filter.evaluate) ──
+        # 数据驱动 (n=141): HIGH_VOL regime 14.9% wr -$39,537
+        # 注意: VIX>=25 在 step 0 P1 gate 已改为警告(不拦截), 这里处理分级削弱
+        try:
+            _flt_cfg = _load_filter_config()
+            _vix_levels = _flt_cfg.get("vix_levels", {}) or {}
+            if _vix_levels:
+                _cur_vix = None
+                try:
+                    from app.analysis.market_state import MarketStateChecker as _MSC2
+                    _msc2 = _MSC2()
+                    _vd = _msc2._fetch_vix()
+                    _cur_vix = _vd[0] if isinstance(_vd, tuple) else _vd
+                except Exception:
+                    pass
+                if isinstance(_cur_vix, (int, float)) and _cur_vix > 0:
+                    _vix_critical = float(_vix_levels.get("critical", 28))
+                    _vix_high = float(_vix_levels.get("high", 25))
+                    _vix_mid = float(_vix_levels.get("mid", 22))
+                    _is_long = "LONG" in _direction and "SHORT" not in _direction
+                    if _cur_vix >= _vix_critical:
+                        # P0 (2026-06-04): 不再硬拦截，改为重度削弱 (×0.3)
+                        # 分层防御: 下游仓位已被 IntradayScorer 压到50% + ATR止损放宽1.3x
+                        _mult = 0.3
+                        _new_strength = int(signal.strength * _mult)
+                        logger.warning(
+                            f"[RFC056·VIX-critical] {_symbol} VIX={_cur_vix:.1f}>={_vix_critical} "
+                            f"strength {signal.strength}×{_mult}={_new_strength} (不拦截, 重度削弱)"
+                        )
+                        signal.strength = _new_strength
+                    elif _cur_vix >= _vix_high:
+                        # high 区间: LONG×0.5, SHORT×0.85
+                        _mult = float(_flt_cfg.get("vix_long_high_mult", 0.5)) if _is_long \
+                                else float(_flt_cfg.get("vix_short_high_mult", 0.85))
+                        _new_strength = int(signal.strength * _mult)
+                        logger.info(
+                            f"[RFC056·VIX-high] {_symbol} VIX={_cur_vix:.1f} {_direction} "
+                            f"strength {signal.strength}×{_mult}={_new_strength}"
+                        )
+                        signal.strength = _new_strength
+                    elif _cur_vix >= _vix_mid:
+                        # mid 区间: ×0.85
+                        _new_strength = int(signal.strength * 0.85)
+                        logger.info(
+                            f"[RFC056·VIX-mid] {_symbol} VIX={_cur_vix:.1f} "
+                            f"strength {signal.strength}×0.85={_new_strength}"
+                        )
+                        signal.strength = _new_strength
+        except Exception as _e_rfc056:
+            logger.debug(f"[RFC056] 异常 (规则降级): {_e_rfc056}")
+        checks_passed.append("RFC056_VIX")
+
+        # ── RFC-058 (2026-06-01): LONG 方向默认折扣 30% (BULL 豁免) ──
+        # 数据驱动 (n=134): LONG 20.9% wr +$2,644 vs SHORT 33.9% +$13,016
+        try:
+            _ldf = _flt_cfg.get("long_direction_filter", {}) if "_flt_cfg" in dir() else {}
+            _is_long = "LONG" in _direction and "SHORT" not in _direction
+            if _is_long and _ldf.get("enabled", False):
+                _discount = float(_ldf.get("default_discount", 0.7))
+                _exempt = _ldf.get("bull_regime_exempt", {}) or {}
+                # BULL 豁免: 简化版本 (仅 VIX < vix_max 即认为偏向 BULL)
+                # 完整 SPY/MA200 检查需要 spy_context, 这里 pre_trade 拿不到, 后续可扩展
+                _vix_max = float(_exempt.get("vix_max", 20))
+                _bull_exempt = isinstance(_cur_vix, (int, float)) and _cur_vix < _vix_max if "_cur_vix" in dir() else False
+                if not _bull_exempt:
+                    _new_strength = int(signal.strength * _discount)
+                    if _ldf.get("log_every_discount", True):
+                        logger.info(
+                            f"[RFC058·LONG折扣] {_symbol} BULL 豁免不满足 (vix={_cur_vix if '_cur_vix' in dir() else 'N/A'}), "
+                            f"strength {signal.strength}×{_discount}={_new_strength}"
+                        )
+                    signal.strength = _new_strength
+        except Exception as _e_rfc058:
+            logger.debug(f"[RFC058] 异常 (规则降级): {_e_rfc058}")
+        checks_passed.append("RFC058_LONG")
+
+        # 削减后强度归零 → 拒绝
+        if signal.strength <= 0:
+            return PreTradeResult(
+                allowed=False,
+                reason=f"STRENGTH_ZERO_AFTER_FILTER(symbol={_symbol})",
+                checks_passed=checks_passed,
+            )
 
         # 0.5. PDT 保护检查 (P0 2026-04-21 新增)
         # 默认所有信号为日内交易，除非 metadata 中明确标记 force_overnight=True

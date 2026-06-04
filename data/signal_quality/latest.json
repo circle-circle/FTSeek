@@ -1,37 +1,37 @@
 {
-  "as_of": "2026-05-29",
-  "generated_at": "2026-05-30T04:33:48",
+  "as_of": "2026-06-03",
+  "generated_at": "2026-06-04T07:57:51",
   "history_days": 90,
-  "total_closed_trades": 319,
+  "total_closed_trades": 341,
   "confidence_winrate_map": {
     "buckets": {
       "0-0.3": {
-        "total": 148,
-        "wins": 54,
-        "losses": 82,
-        "win_rate": 0.3649,
-        "avg_pnl": -117.2857,
-        "total_pnl": -17358.2837,
+        "total": 160,
+        "wins": 64,
+        "losses": 84,
+        "win_rate": 0.4,
+        "avg_pnl": -105.7654,
+        "total_pnl": -16922.4627,
         "max_loss": -7749.0,
         "max_win": 17882.56
       },
       "0.3-0.5": {
-        "total": 7,
-        "wins": 1,
-        "losses": 4,
-        "win_rate": 0.1429,
-        "avg_pnl": 38.2171,
-        "total_pnl": 267.5195,
-        "max_loss": -24.51,
+        "total": 11,
+        "wins": 3,
+        "losses": 6,
+        "win_rate": 0.2727,
+        "avg_pnl": 5.7562,
+        "total_pnl": 63.3185,
+        "max_loss": -275.4,
         "max_win": 307.9845
       },
       "0.5-0.7": {
-        "total": 110,
-        "wins": 17,
-        "losses": 75,
-        "win_rate": 0.1545,
-        "avg_pnl": 26.6694,
-        "total_pnl": 2933.6353,
+        "total": 116,
+        "wins": 19,
+        "losses": 79,
+        "win_rate": 0.1638,
+        "avg_pnl": 31.8179,
+        "total_pnl": 3690.8818,
         "max_loss": -787.4,
         "max_win": 3165.058
       },
@@ -53,19 +53,19 @@
       "0.7-1.0"
     ],
     "monotonic": false,
-    "total_samples": 319
+    "total_samples": 341
   },
   "strategy_performance": {
     "all_time": {
       "technical": {
-        "total": 0,
-        "wins": 0,
-        "losses": 0,
-        "win_rate": 0.0,
-        "avg_pnl": 0.0,
-        "total_pnl": 0.0,
-        "max_loss": 0.0,
-        "max_win": 0.0
+        "total": 4,
+        "wins": 1,
+        "losses": 3,
+        "win_rate": 0.25,
+        "avg_pnl": -50.5571,
+        "total_pnl": -202.2285,
+        "max_loss": -128.76,
+        "max_win": 9.5931
       },
       "llm_vote": {
         "total": 0,
@@ -108,12 +108,12 @@
         "max_win": 274.08
       },
       "其他": {
-        "total": 167,
-        "wins": 62,
-        "losses": 93,
-        "win_rate": 0.3713,
-        "avg_pnl": -77.4771,
-        "total_pnl": -12938.6746,
+        "total": 185,
+        "wins": 75,
+        "losses": 98,
+        "win_rate": 0.4054,
+        "avg_pnl": -63.5004,
+        "total_pnl": -11747.5796,
         "max_loss": -7749.0,
         "max_win": 17882.56
       }
@@ -121,14 +121,14 @@
     "rolling": {
       "7d": {
         "technical": {
-          "total": 0,
-          "wins": 0,
-          "losses": 0,
-          "win_rate": 0.0,
-          "avg_pnl": 0.0,
-          "total_pnl": 0.0,
-          "max_loss": 0.0,
-          "max_win": 0.0
+          "total": 4,
+          "wins": 1,
+          "losses": 3,
+          "win_rate": 0.25,
+          "avg_pnl": -50.5571,
+          "total_pnl": -202.2285,
+          "max_loss": -128.76,
+          "max_win": 9.5931
         },
         "llm_vote": {
           "total": 0,
@@ -161,7 +161,7 @@
           "max_win": 0.0
         },
         "scalping": {
-          "total": 5,
+          "total": 0,
           "wins": 0,
           "losses": 0,
           "win_rate": 0.0,
@@ -171,26 +171,26 @@
           "max_win": 0.0
         },
         "其他": {
-          "total": 9,
-          "wins": 3,
-          "losses": 6,
-          "win_rate": 0.3333,
-          "avg_pnl": -832.5106,
-          "total_pnl": -7492.5955,
-          "max_loss": -4664.0,
-          "max_win": 977.895
+          "total": 23,
+          "wins": 16,
+          "losses": 7,
+          "win_rate": 0.6957,
+          "avg_pnl": 125.9782,
+          "total_pnl": 2897.4995,
+          "max_loss": -7255.8,
+          "max_win": 8849.58
         }
       },
       "30d": {
         "technical": {
-          "total": 0,
-          "wins": 0,
-          "losses": 0,
-          "win_rate": 0.0,
-          "avg_pnl": 0.0,
-          "total_pnl": 0.0,
-          "max_loss": 0.0,
-          "max_win": 0.0
+          "total": 4,
+          "wins": 1,
+          "losses": 3,
+          "win_rate": 0.25,
+          "avg_pnl": -50.5571,
+          "total_pnl": -202.2285,
+          "max_loss": -128.76,
+          "max_win": 9.5931
         },
         "llm_vote": {
           "total": 0,
@@ -234,17 +234,17 @@
         },
         "其他": {
           "total": 161,
-          "wins": 58,
-          "losses": 91,
-          "win_rate": 0.3602,
-          "avg_pnl": -185.9084,
-          "total_pnl": -29931.2536,
+          "wins": 65,
+          "losses": 84,
+          "win_rate": 0.4037,
+          "avg_pnl": -177.3636,
+          "total_pnl": -28555.5402,
           "max_loss": -7749.0,
-          "max_win": 3165.058
+          "max_win": 8849.58
         }
       }
     },
-    "as_of": "2026-05-29"
+    "as_of": "2026-06-03"
   },
   "factor_contribution": {
     "top_combos": [
@@ -258,6 +258,17 @@
         "total_pnl": -247.3783,
         "max_loss": -134.145,
         "max_win": 274.08
+      },
+      {
+        "factors": "unknown",
+        "total": 11,
+        "wins": 7,
+        "losses": 4,
+        "win_rate": 0.6364,
+        "avg_pnl": -597.9851,
+        "total_pnl": -6577.8365,
+        "max_loss": -7255.8,
+        "max_win": 315.0
       },
       {
         "factors": "bollinger+rsi",
@@ -291,6 +302,17 @@
         "total_pnl": -323.2955,
         "max_loss": -153.3,
         "max_win": 43.8933
+      },
+      {
+        "factors": "orb_breakout",
+        "total": 4,
+        "wins": 1,
+        "losses": 3,
+        "win_rate": 0.25,
+        "avg_pnl": -50.5571,
+        "total_pnl": -202.2285,
+        "max_loss": -128.76,
+        "max_win": 9.5931
       },
       {
         "factors": "early_rsi_reversal",
@@ -339,6 +361,28 @@
         "max_win": 274.08
       },
       {
+        "factor": "unknown",
+        "total": 11,
+        "wins": 7,
+        "losses": 4,
+        "win_rate": 0.6364,
+        "avg_pnl": -597.9851,
+        "total_pnl": -6577.8365,
+        "max_loss": -7255.8,
+        "max_win": 315.0
+      },
+      {
+        "factor": "orb_breakout",
+        "total": 4,
+        "wins": 1,
+        "losses": 3,
+        "win_rate": 0.25,
+        "avg_pnl": -50.5571,
+        "total_pnl": -202.2285,
+        "max_loss": -128.76,
+        "max_win": 9.5931
+      },
+      {
         "factor": "early_rsi_reversal",
         "total": 6,
         "wins": 0,
@@ -350,11 +394,11 @@
         "max_win": 0.0
       }
     ],
-    "combo_count": 6,
-    "single_count": 5
+    "combo_count": 8,
+    "single_count": 7
   },
   "threshold_recommendations": {
-    "as_of": "2026-05-29",
+    "as_of": "2026-06-03",
     "suggested_min_signal_confidence": 0.5,
     "current_baseline": 0.5,
     "rationale": "近30d 无桶达到 50% 胜率, 维持基线",

@@ -1,1 +1,114 @@
-[]
+[
+  {
+    "time": "2026-06-02T23:17:50.187024",
+    "old_state": "NORMAL",
+    "new_state": "RISK_OFF",
+    "reason": "Black Swan (LLM confirmed): downgraded to sell on US.LLY, US.MU",
+    "source": "NewsInterceptor"
+  },
+  {
+    "time": "2026-06-02T23:47:58.222236",
+    "old_state": "RISK_OFF",
+    "new_state": "NORMAL",
+    "reason": "Auto Recovery: Cooldown + Market Confirmed (VIX=16.1\u2713 SPY=17.54%(\u5f02\u5e38\u503c\uff0c\u5ffd\u7565))",
+    "source": "System"
+  },
+  {
+    "time": "2026-06-02T23:52:11.158575",
+    "old_state": "NORMAL",
+    "new_state": "RISK_OFF",
+    "reason": "Black Swan (LLM confirmed): downgraded to sell on US.LLY, US.MU",
+    "source": "NewsInterceptor"
+  },
+  {
+    "time": "2026-06-03T00:22:22.966497",
+    "old_state": "RISK_OFF",
+    "new_state": "NORMAL",
+    "reason": "Auto Recovery: Cooldown + Market Confirmed (VIX=16.1\u2713 SPY=11.34%\u2713)",
+    "source": "System"
+  },
+  {
+    "time": "2026-06-03T00:36:39.326824",
+    "old_state": "NORMAL",
+    "new_state": "RISK_OFF",
+    "reason": "Black Swan (LLM confirmed): downgraded to sell on US.MU, US.LLY",
+    "source": "NewsInterceptor"
+  },
+  {
+    "time": "2026-06-03T01:06:48.303909",
+    "old_state": "RISK_OFF",
+    "new_state": "NORMAL",
+    "reason": "Auto Recovery: Cooldown + Market Confirmed (VIX=16.1\u2713 SPY=16.74%(\u5f02\u5e38\u503c\uff0c\u5ffd\u7565))",
+    "source": "System"
+  },
+  {
+    "time": "2026-06-03T01:13:36.898014",
+    "old_state": "NORMAL",
+    "new_state": "RISK_OFF",
+    "reason": "Black Swan (LLM confirmed): downgraded to sell on US.LLY, US.MU",
+    "source": "NewsInterceptor"
+  },
+  {
+    "time": "2026-06-03T01:43:43.965091",
+    "old_state": "RISK_OFF",
+    "new_state": "NORMAL",
+    "reason": "Auto Recovery: Cooldown + Market Confirmed (VIX=16.1\u2713 SPY=8.44%\u2713)",
+    "source": "System"
+  },
+  {
+    "time": "2026-06-03T02:02:43.151522",
+    "old_state": "NORMAL",
+    "new_state": "RISK_OFF",
+    "reason": "Black Swan (LLM confirmed): downgraded to sell on US.MU, US.LLY",
+    "source": "NewsInterceptor"
+  },
+  {
+    "time": "2026-06-03T02:33:04.730658",
+    "old_state": "RISK_OFF",
+    "new_state": "NORMAL",
+    "reason": "Auto Recovery: Cooldown + Market Confirmed (VIX=16.1\u2713 SPY=7.65%\u2713)",
+    "source": "System"
+  },
+  {
+    "time": "2026-06-04T23:44:56.659123",
+    "old_state": "NORMAL",
+    "new_state": "RISK_OFF",
+    "reason": "Black Swan (LLM confirmed): revenue miss on US.AVGO",
+    "source": "NewsInterceptor"
+  },
+  {
+    "time": "2026-06-04T23:52:27.461262",
+    "old_state": "RISK_OFF",
+    "new_state": "NORMAL",
+    "reason": "Manual reset - AVGO risk event evaluated, simulation mode",
+    "source": "Hermes"
+  },
+  {
+    "time": "2026-06-05T00:08:48.497133",
+    "old_state": "NORMAL",
+    "new_state": "RISK_OFF",
+    "reason": "Black Swan (LLM confirmed): revenue miss on US.AVGO",
+    "source": "NewsInterceptor"
+  },
+  {
+    "time": "2026-06-05T00:39:02.443547",
+    "old_state": "RISK_OFF",
+    "new_state": "NORMAL",
+    "reason": "Auto Recovery: Cooldown + Market Confirmed (VIX=19.6\u2713 SPY=32.48%(\u5f02\u5e38\u503c\uff0c\u5ffd\u7565))",
+    "source": "System"
+  },
+  {
+    "time": "2026-06-05T03:56:50.947528",
+    "old_state": "NORMAL",
+    "new_state": "RISK_OFF",
+    "reason": "Black Swan (LLM confirmed): revenue miss on US.AVGO",
+    "source": "NewsInterceptor"
+  },
+  {
+    "time": "2026-06-05T04:27:33.071812",
+    "old_state": "RISK_OFF",
+    "new_state": "NORMAL",
+    "reason": "Auto Recovery: Cooldown + Market Confirmed (VIX=19.3\u2713 SPY=0.38%\u2713)",
+    "source": "System"
+  }
+]

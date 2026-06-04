@@ -24,6 +24,17 @@ from .source import (
 logger = logging.getLogger(__name__)
 
 
+# Critical #3 修复 (2026-06-02): 统一 SQLite 连接配置
+# - timeout=10.0: 连接级别锁等待
+# - journal_mode=WAL: 多线程并发读写不互锁
+# - busy_timeout=5000: 语句级别锁等待 5s, 避免 "database is locked"
+def _connect_audit(db_path: str) -> sqlite3.Connection:
+    conn = sqlite3.connect(db_path, timeout=10.0)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=5000")
+    return conn
+
+
 class ProtectionController:
     """全局保护开关 (单例) — 用户/CLI 调用入口"""
 
@@ -44,7 +55,7 @@ class ProtectionController:
 
     def _ensure_audit_table(self):
         try:
-            conn = sqlite3.connect(self._audit_db)
+            conn = _connect_audit(self._audit_db)
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS position_protection_log (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -143,9 +154,9 @@ class ProtectionController:
             except Exception:
                 pass
 
-            # 审计落库
+            # 审计落库 (Critical #3: WAL+busy_timeout 保证并发写入安全)
             try:
-                conn = sqlite3.connect(self._audit_db)
+                conn = _connect_audit(self._audit_db)
                 conn.execute(
                     "INSERT INTO position_protection_log "
                     "(symbol, from_state, to_state, reason, actor) VALUES (?,?,?,?,?)",

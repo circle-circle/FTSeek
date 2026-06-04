@@ -166,7 +166,8 @@ def main():
         closed_positions = conn.execute("""
             SELECT symbol, sync_status FROM open_positions 
             WHERE sync_status IN ('closed_by_daemon', 'closed_by_scheduler',
-                                   'closed_by_sync', 'closed_emergency')
+                                   'closed_by_sync', 'closed_emergency',
+                                   'stale_not_in_broker')
               AND updated_at < datetime('now', '-5 minutes')
         """).fetchall()
         for row in closed_positions:

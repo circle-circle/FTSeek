@@ -44,6 +44,16 @@ class ISubscriptionGateway(ABC):
     def unsubscribe_all(self, codes: List[str], sub_types: List[str]) -> bool:
         ...
 
+    # ── 连接健康接口 (Task #7, 2026-06-02) ──
+    # 下面两个接口提供默认实现，避免现有适配器被迫修改。
+    def is_healthy(self) -> bool:
+        """底层连接是否健康。默认总是健康 (兼容旧实现)。"""
+        return True
+
+    def force_reconnect(self) -> bool:
+        """强制重连。默认 no-op。"""
+        return False
+
 
 # ============================================================
 #  适配器层
@@ -76,6 +86,26 @@ class FutuLV3Adapter(ISubscriptionGateway):
             logger.error(f"[FutuLV3Adapter] unsubscribe_all 失败: {e}")
             return False
 
+    def is_healthy(self) -> bool:
+        """委托给 provider 的 is_healthy() (Task #7)"""
+        try:
+            fn = getattr(self._provider, "is_healthy", None)
+            if callable(fn):
+                return bool(fn())
+        except Exception as e:
+            logger.debug(f"[FutuLV3Adapter] is_healthy 异常: {e}")
+        return True  # 未实现 → 默认健康，保持原有行为
+
+    def force_reconnect(self) -> bool:
+        """委托给 provider 的 force_reconnect() (Task #7)"""
+        try:
+            fn = getattr(self._provider, "force_reconnect", None)
+            if callable(fn):
+                return bool(fn())
+        except Exception as e:
+            logger.warning(f"[FutuLV3Adapter] force_reconnect 异常: {e}")
+        return False
+
 
 # ============================================================
 #  纯逻辑层 — SubscriptionManager (只依赖协议)
@@ -106,6 +136,10 @@ class SubscriptionManager:
         # 防抖
         self._last_action_time = 0.0
         self._min_action_interval = 30
+
+        # ── 连接健康跟踪 (Task #7, 2026-06-02) ──
+        self._last_gateway_healthy: Optional[bool] = None
+        self._unhealthy_since: Optional[float] = None
 
         logger.info("[SubscriptionManager] 美股分时段订阅管理器已初始化")
 
@@ -243,6 +277,50 @@ class SubscriptionManager:
                     pass  # 降级: 如果 phase 检测失败，继续正常流程
 
                 should_sub = self.should_be_subscribed(now)
+
+                # ── 健康检查 (Task #7, 2026-06-02): 仅在应订阅时段下检查底层连接 ──
+                if should_sub:
+                    try:
+                        healthy = self._gateway.is_healthy()
+                    except Exception as e:
+                        logger.error(f"[US] 健康检查异常: {e}")
+                        healthy = True  # 异常不阻塞主流程
+
+                    if healthy:
+                        if self._last_gateway_healthy is False:
+                            duration = (
+                                time.time() - self._unhealthy_since
+                                if self._unhealthy_since else 0.0
+                            )
+                            logger.info(
+                                f"[US][HEALTH] ✅ 底层连接恢复健康 — 不健康持续 {duration:.1f}s"
+                            )
+                            self._unhealthy_since = None
+                        self._last_gateway_healthy = True
+                    else:
+                        if self._last_gateway_healthy is not False:
+                            self._unhealthy_since = time.time()
+                            logger.warning(
+                                "[US][HEALTH] ⚠️ 底层 OpenD/Futu 连接不健康 — 触发重连与重订阅"
+                            )
+                        self._last_gateway_healthy = False
+
+                        # 尝试强制重连（退避保护由 gateway 内部处理）
+                        try:
+                            reconnected = self._gateway.force_reconnect()
+                        except Exception as e:
+                            logger.error(f"[US] force_reconnect 异常: {e}")
+                            reconnected = False
+
+                        if reconnected:
+                            # 重连后 gateway 会自行恢复订阅，清空本地订阅记录以便下轮 ensure_subscribed 全量同步
+                            self._subscribed_codes.clear()
+                            self._subscribed_types.clear()
+                            last_state = None  # 强制下一轮走“进入订阅”分支
+                            logger.info("[US][HEALTH] ✅ 重连成功，下轮将重新同步订阅状态")
+                        else:
+                            # 退避中或重连失败 — 重置 last_state 以免错过后续重新订阅
+                            last_state = None
 
                 if should_sub != last_state:
                     if should_sub and self._codes_callback:

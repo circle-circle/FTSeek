@@ -70,6 +70,8 @@ def db_connect(db_path: Optional[Path] = None, timeout: float = 10.0):
     try:
         # WAL mode for concurrent read/write
         conn.execute("PRAGMA journal_mode=WAL")
+        # Critical #3 (2026-06-02): 语句级锁等待, 避免 "database is locked"
+        conn.execute("PRAGMA busy_timeout=5000")
         conn.execute("PRAGMA foreign_keys=ON")
         yield conn
         conn.commit()
@@ -102,6 +104,8 @@ def db_connect_long(db_path: Optional[Path] = None, timeout: float = 10.0):
     conn = sqlite3.connect(str(db_path), timeout=timeout, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
+    # Critical #3 (2026-06-02): 语句级锁等待, 避免 "database is locked"
+    conn.execute("PRAGMA busy_timeout=5000")
     conn.execute("PRAGMA foreign_keys=ON")
     return conn
 

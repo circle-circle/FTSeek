@@ -107,24 +107,26 @@ class CapitalAllocator:
                 decision = "BLOCKED_TOTAL_CAP"
 
             allowed = (decision == "ALLOWED")
-            if allowed or self._observe_only:
-                # observe 模式: 即使 BLOCKED 也记账 (反映真实下单)
-                # enforce 模式: 仅 allowed 才记账 (BLOCKED 不会真实下单)
+            if allowed:
+                # H7 (2026-06-03): 只有 allowed 才记账, 避免 BLOCKED 事件累加导致账本失真
                 self._allocations[bucket] = current + position_pct
                 self._by_strategy[strategy] = self._by_strategy.get(strategy, 0.0) + position_pct
                 snapshot_after = self._allocations[bucket]
                 self._record_event(strategy, position_pct, decision, snapshot_after)
-
-                if not allowed and self._observe_only:
-                    logger.warning(
-                        f"[CapitalAllocator·OBSERVE] {strategy}->{bucket} reserve {position_pct:.3f} "
-                        f"would have been {decision} (current={current:.3f}, cap={cap:.3f}, "
-                        f"total={total:.3f}, max_total={self._max_total:.3f}) — 放行 + 记账"
-                    )
                 return True
 
-            # 强制模式 + 拒绝 (不记账)
+            # BLOCKED: 只记录事件, 不累加账本
             self._record_event(strategy, position_pct, decision, current)
+
+            if self._observe_only:
+                logger.warning(
+                    f"[CapitalAllocator·OBSERVE] {strategy}->{bucket} reserve {position_pct:.3f} "
+                    f"would have been {decision} (current={current:.3f}, cap={cap:.3f}, "
+                    f"total={total:.3f}, max_total={self._max_total:.3f}) — 放行但不记账"
+                )
+                return True  # observe 模式放行, 但不累加账本
+
+            # 强制模式 + 拒绝
             logger.warning(
                 f"[CapitalAllocator·ENFORCE] {strategy}->{bucket} reserve {position_pct:.3f} REJECTED: "
                 f"{decision} (current={current:.3f}, cap={cap:.3f})"

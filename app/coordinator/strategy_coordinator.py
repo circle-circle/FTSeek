@@ -177,6 +177,14 @@ class StrategyCoordinator:
         winner_name = arb.winner_strategy
         winner_sig = arb.winner_signal
         position_pct = float(getattr(winner_sig, "position_pct", 0.0) or 0.0)
+        # M14 (2026-06-03): 如果 signal.position_pct 为 0, 从 metadata 或估算
+        if position_pct <= 0:
+            _meta = getattr(winner_sig, 'metadata', {}) or {}
+            position_pct = float(_meta.get("position_pct", 0.0) or 0.0)
+        if position_pct <= 0:
+            # 兜底估算: 假设 10% 仓位 (避免 try_reserve 成为 no-op)
+            position_pct = 0.10
+            logger.debug(f"[Coordinator·M14] {symbol} position_pct 估算为 {position_pct}")
 
         # Step 2: 资金账本 (失败立即返回, 不再试 lock)
         cap_ok = self.capital.try_reserve(winner_name, position_pct)

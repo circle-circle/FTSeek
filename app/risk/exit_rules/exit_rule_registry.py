@@ -96,6 +96,7 @@ class ExitRulePriority(IntEnum):
     TRAILING_STOP = 40   # ATR 动态追踪 + Chandelier
     GRADUATED_STOP = 45  # Task #64: 分级减仓止损 (-0.5/-1.0/-1.5 ATR)
     TIME_STOP = 50       # 持仓时长止损
+    VELOCITY_EXIT = 55   # Phase 3: 速度捕捉退出
     SCALE_OUT = 60       # 分批止盈
 
 
@@ -129,6 +130,7 @@ RULE_PRIORITIES: Dict[str, int] = {
     "trailing_stop": ExitRulePriority.TRAILING_STOP,
     "graduated_stop": ExitRulePriority.GRADUATED_STOP,
     "time_stop": ExitRulePriority.TIME_STOP,
+    "velocity_exit": ExitRulePriority.VELOCITY_EXIT,
     "scale_out": ExitRulePriority.SCALE_OUT,
 }
 

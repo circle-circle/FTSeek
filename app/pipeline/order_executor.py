@@ -1018,30 +1018,49 @@ def _try_direct_short_with_fallback(scheduler, symbol: str, signal: SignalScore,
 
 def _check_gates_and_conflicts(scheduler, symbol: str, signal: SignalScore, context: Dict[str, Any]) -> bool:
     """检查所有风控门禁与持仓冲突。返回 True 如果允许继续下单。"""
-    # P0 修复 (2026-06-04): 信号质量门控 — strength < MIN_SIGNAL_STRENGTH 硬拦截
-    # 修复: 原检查 strength<=0 AND confidence<=0，低质量信号(如 strength=10)可绕过
+    # ═══ 唯一信号质量门禁 (SSOT) ═══
+    # 根因修复 (2026-06-05): 合并原 Gate#1(AND逻辑) + Gate#6(LONG) + Gate#7(SHORT) + Gate#11(SHORT BP)
+    # 为 ONE 硬地板检查。无 AND/OR 技巧，无 BP bonus 复杂性，无例外路径。
+    # 所有信号源 (main/voting_llm/ORB/LLM/manual) 必须通过此门禁。
     try:
-        _sig_str = int(getattr(signal, 'strength', 0) or 0)
-        _sig_conf = float(getattr(signal, 'confidence', 0.0) or 0.0)
-        _strategy = getattr(signal, 'strategy_id', '') or ''
-        _min_str = 30
+        _sq_str = int(getattr(signal, 'strength', 0) or 0)
+        _sq_conf = float(getattr(signal, 'confidence', 0.0) or 0.0)
+        _sq_dir = str(getattr(signal, 'direction', '') or '')
+        _sq_is_short = 'SHORT' in _sq_dir.upper() or 'SELL' in _sq_dir.upper()
+        # 方向特定阈值 (SSOT: config > 硬编码默认)
+        _sq_min = 30  # SHORT 默认
+        if not _sq_is_short:
+            _sq_min = 35  # LONG 默认
         try:
-            from app.core.config_container import get_config as _get_cfg
-            _min_str = int(_get_cfg().get_dotted("scheduler.min_signal_strength", 30))
+            from app.core.config_container import get_config as _sq_cfg
+            _pt = _sq_cfg().get_dotted("risk.pre_trade", {}) or {}
+            if _sq_is_short:
+                _sq_min = int(_pt.get("short_min_strength", 30))
+            else:
+                _sq_min = int(_pt.get("long_min_strength", 35))
         except Exception:
             pass
-        if _sig_str < _min_str and _sig_conf <= 0.0:
+        if _sq_str < _sq_min:
             logger.warning(
-                f"🚫 [SignalGate] 拦截 {symbol}: strength={_sig_str}<{_min_str}, conf={_sig_conf:.2f}, "
-                f"strategy={_strategy} (信号质量不足, 硬拦截)"
+                f"🚫 [SignalQuality] {symbol} {_sq_dir} strength={_sq_str} < {_sq_min} (硬拦截)"
             )
             get_rejection_logger().record(symbol,
-                f"strength={_sig_str}<{_min_str}&conf={_sig_conf:.2f}",
-                "SIGNAL_GATE_WEAK", strength=_sig_str,
-                confidence=_sig_conf, direction=str(getattr(signal, 'direction', '')))
+                f"strength={_sq_str}<{_sq_min}",
+                "SIGNAL_QUALITY_FLOOR", strength=_sq_str,
+                confidence=_sq_conf, direction=_sq_dir)
             return False
-    except Exception as _sg_err:
-        logger.debug(f"[SignalGate] 检查异常 (放行): {_sg_err}")
+        if _sq_conf <= 0.0:
+            logger.warning(
+                f"🚫 [SignalQuality] {symbol} {_sq_dir} confidence={_sq_conf:.3f} 无效 (硬拦截)"
+            )
+            get_rejection_logger().record(symbol,
+                f"confidence={_sq_conf:.3f}<=0",
+                "SIGNAL_QUALITY_FLOOR", strength=_sq_str,
+                confidence=_sq_conf, direction=_sq_dir)
+            return False
+    except Exception as _sq_err:
+        logger.debug(f"[SignalQuality] 检查异常 (不放行): {_sq_err}")
+        return False
 
     # 🔴 P0 关键修复: 全局风险状态机门禁检查
     # 在一切交易逻辑之前，检查系统是否处于 RISK_OFF 或 HALT 状态
@@ -1120,52 +1139,9 @@ def _check_gates_and_conflicts(scheduler, symbol: str, signal: SignalScore, cont
         logger.debug(f"[性能衰减] 检查失败 (不影响主流程): {e}")
 
     # ── Phase US-1: 美股盘前作战计划门禁 ──
-    # ── P0 新增 (2026-04-25): 做空专用高门槛检查 ──
     direction_str = "BUY" if signal.direction == "LONG" else "SELL"
     is_short = (direction_str == "SELL")
-
-    # ── P0 (2026-05-29): LONG 方向 strength 门禁 ──
-    # 数据: strength 1-29 累计亏损 $18,757 (占全部亏损73%)
-    # 之前 LONG 仅依赖 post-decay <30 拦截, 大量低信心信号漏过
-    if not is_short:
-        _long_min = 35  # 修复 (2026-06-02): 50→35, 与 unified_config.yaml long_min_strength 对齐
-        try:
-            from app.core.config_container import get_config as _gc_long
-            _lt_cfg = _gc_long().get_dotted("risk.pre_trade", {}) or {}
-            _long_min = int(_lt_cfg.get("long_min_strength", 35))
-        except Exception:
-            pass
-        if signal.strength < _long_min:
-            logger.warning(
-                f"🚫 [做多门禁] {symbol} LONG 信号强度不足 "
-                f"(strength={signal.strength} < {_long_min})"
-            )
-            get_rejection_logger().record(symbol,
-                f"long_strength={signal.strength}<{_long_min}",
-                "LONG_STRENGTH_WEAK", strength=signal.strength,
-                confidence=None, direction="LONG")
-            return False
-    else:
-        # ── P0 (2026-06-04): SHORT 方向 strength 门禁 ──
-        # 数据: 6/1后 signal_strength=0 SHORT 交易无信号支撑, 虽短期盈利但不可持续
-        # SHORT 结构优势(做空下跌快)≠无需信号, 仍需最低强度保证
-        _short_min = 30
-        try:
-            from app.core.config_container import get_config as _gc_short
-            _st_cfg = _gc_short().get_dotted("risk.pre_trade", {}) or {}
-            _short_min = int(_st_cfg.get("short_min_strength", 30))
-        except Exception:
-            pass
-        if signal.strength < _short_min:
-            logger.warning(
-                f"🚫 [做空门禁] {symbol} SHORT 信号强度不足 "
-                f"(strength={signal.strength} < {_short_min})"
-            )
-            get_rejection_logger().record(symbol,
-                f"short_strength={signal.strength}<{_short_min}",
-                "SHORT_STRENGTH_WEAK", strength=signal.strength,
-                confidence=None, direction="SHORT")
-            return False
+    # 信号质量已在 SSOT 门禁 (函数顶部) 统一检查, 此处不再重复
 
     # ── P0 (2026-05-29): HIGH_VOL 硬拦截 ──
     # 数据: HIGH_VOL regime 133笔, 累计亏损 $39,537
@@ -1187,19 +1163,6 @@ def _check_gates_and_conflicts(scheduler, symbol: str, signal: SignalScore, cont
     except Exception:
         pass
 
-    # RFC-053 (2026-05-30): RANGE regime LONG 拦截
-    # 数据修正 (2026-06-04): LONG+RANGE 23笔 +$2,773 PnL, 正EV, 不应拦截
-    # 原结论 "LONG+RANGE 9.1%WR -$3,058" 基于旧数据(含期权), 排除后为正收益
-    # try:
-    #     _range_regime = str(getattr(signal, 'market_regime', '') or '').upper()
-    #     if _range_regime == "RANGE" and not is_short:
-    #         logger.warning(
-    #             f"🚫 [RANGE门禁] {symbol} 无趋势市况禁止做多 "
-    #             f"(regime={_range_regime}, strength={signal.strength})"
-    #         )
-    #         ...
-    # except Exception:
-    #     pass
 
     # ─── P1 (2026-06-02): Weak 状态过滤 — Muyuan 论文借鉴 ───
     # 区分 "健康超卖" (价格回调, 均线仍上行) vs "结构性下跌" (均线死叉, 趋势向下)
@@ -1250,82 +1213,10 @@ def _check_gates_and_conflicts(scheduler, symbol: str, signal: SignalScore, cont
             pass
 
     if is_short:
-        # 做空门禁 (P0-辩论修复 2026-05-26: direct语义, 无需反转)
-        # strength 越高 = 信号越强 (LONG/SHORT 均同)
-        # P1 (2026-05-28 任务#43): 门限可配置 + 计划标的 bonus
-        # 原固定门限 (保留处理表述供回归测试识别): signal.strength < 50
-        _short_threshold = 50
-        _bp_bonus_enabled = True
-        _bp_bonus = 0.25
-        _bp_floor = 30
-        try:
-            from app.core.config_container import get_config as _gc_short
-            _pt_cfg = _gc_short().get_dotted("risk.pre_trade", {}) or {}
-            _short_threshold = int(_pt_cfg.get("short_min_strength", 50))
-            _bp_bonus_enabled = bool(_pt_cfg.get("battle_plan_bonus_enabled", True))
-            _bp_bonus = float(_pt_cfg.get("battle_plan_bonus", 0.25))
-            _bp_floor = int(_pt_cfg.get("min_effective_strength_floor", 30))
-        except Exception as _silent_e:
-            logger.debug(f"[silent_except:order_executor.py] {_silent_e}")
-        # battle_plan bonus: 计划标的降低门槛 (默认 25%, 低于 floor 则取 floor)
-        _eff_short_threshold = _short_threshold
-        _in_plan = False
-        if _bp_bonus_enabled:
-            try:
-                from app.us_pipeline.battle_plan_manager import USBattlePlanManager
-                _bp_mgr = USBattlePlanManager()
-                _info = _bp_mgr.get_target_info(symbol) or {}
-                if _info:
-                    _status = str(_info.get("status", "")).upper()
-                    _catalyst = str(_info.get("catalyst", ""))
-                    if (
-                        _status in ("ACTIVE", "VALID", "ANY", "")
-                        and "Watchlist fallback" not in _catalyst
-                    ):
-                        _in_plan = True
-                        _adj = int(round(_short_threshold * (1.0 - max(0.0, min(0.5, _bp_bonus)))))
-                        _eff_short_threshold = max(_bp_floor, _adj)
-            except Exception:
-                _in_plan = False
+        # 信号质量已在 SSOT 门禁统一检查 (LONG≥35, SHORT≥30)
+        # 此处仅保留做空特有检查: 借券成本 + 轧空风险 + 市况适配
 
-        if signal.strength < _eff_short_threshold:
-            _bp_tag = " [BP]" if _in_plan else ""
-            logger.warning(
-                f"🚫 [做空门禁] {symbol} 做空信号强度不足 "
-                f"(strength={signal.strength} < {_eff_short_threshold}{_bp_tag})"
-            )
-            get_rejection_logger().record(symbol,
-                f"short_strength={signal.strength}<{_eff_short_threshold}",
-                "SHORT_EFFECTIVE_WEAK", strength=signal.strength,
-                confidence=None, direction="SHORT")
-            return False
-        # 三重确认: RSI + MACD + 均线 (模拟盘放宽: 2→0)
-        rsi = context.get("rsi", 50)
-        macd_signal_val = context.get("macd_signal", 0)
-        price = context.get("price", 0)
-        ma20 = context.get("ma20", 0)
-
-        triple_confirm = 0
-        if rsi > 65: triple_confirm += 1
-        if macd_signal_val < 0: triple_confirm += 1
-        if ma20 > 0 and price > ma20: triple_confirm += 1
-
-        if triple_confirm < 0:  # 模拟盘: 2→0, 禁用三重确认
-            logger.warning(
-                f"🚫 [做空门禁] {symbol} 三重确认不足 ({triple_confirm}/2): "
-                f"RSI={rsi:.0f} MACD={macd_signal_val:.2f} price={price:.2f} MA20={ma20:.2f}"
-            )
-            get_rejection_logger().record(symbol,
-                f"triple_confirm={triple_confirm}/2 RSI={rsi:.0f} MACD={macd_signal_val:.2f}",
-                "SHORT_TRIPLE_CONFIRM", strength=signal.strength,
-                confidence=None, direction="SHORT")
-            return False
-        logger.info(
-            f"✅ [做空门禁] {symbol} 通过 (strength={signal.strength}, "
-            f"三重确认={triple_confirm}/3)"
-        )
-
-        # 幻方增强门禁 (2026-04-29): 借券成本 + 轧空风险 + 市况适配
+        # 幻方强化门禁
         try:
             from app.risk.short_specific_checks import (
                 check_borrow_cost_with_conviction,
@@ -2748,30 +2639,7 @@ def _submit_order(scheduler, symbol: str, signal: SignalScore, context: Dict[str
     if not _check_symbol_daily_loss(symbol):
         return
 
-    # ── P0 (2026-06-04): 信号质量门禁 — strength < MIN_SIGNAL_STRENGTH 禁止入场 ──
-    # 修复: 原只检查 <=0，strength=5~29 的信号可绕过门禁下单
-    # 根因: MIN_SIGNAL_STRENGTH=30 仅在 Legacy 投票路径生效，CRA 路径无检查
-    try:
-        _sig_str = int(getattr(signal, 'strength', 0) or 0)
-        _sig_conf = float(getattr(signal, 'confidence', 0.0) or 0.0)
-        _min_str = 30
-        try:
-            from app.core.config_container import get_config as _get_cfg
-            _min_str = int(_get_cfg().get_dotted("scheduler.min_signal_strength", 30))
-        except Exception:
-            pass
-        if _sig_str < _min_str:
-            logger.warning(
-                f"🚫 [信号门禁·P0] {symbol} signal_strength={_sig_str} < MIN={_min_str}，拒绝入场"
-            )
-            return
-        if _sig_conf <= 0.0:
-            logger.warning(
-                f"🚫 [信号门禁·P0] {symbol} confidence={_sig_conf:.3f} 无效，拒绝入场"
-            )
-            return
-    except Exception:
-        pass
+    # 信号质量已在 _check_gates_and_conflicts() SSOT 门禁统一检查
 
     # ─── P0 (2026-06-04): 仓位硬上限 — 防巨大亏损 ───
     # 根因: 6/3 XLF 单笔名义敞口 $114万 (106%净值) → 亏$4458

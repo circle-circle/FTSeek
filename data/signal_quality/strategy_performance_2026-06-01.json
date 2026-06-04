@@ -1,0 +1,191 @@
+{
+  "all_time": {
+    "technical": {
+      "total": 0,
+      "wins": 0,
+      "losses": 0,
+      "win_rate": 0.0,
+      "avg_pnl": 0.0,
+      "total_pnl": 0.0,
+      "max_loss": 0.0,
+      "max_win": 0.0
+    },
+    "llm_vote": {
+      "total": 0,
+      "wins": 0,
+      "losses": 0,
+      "win_rate": 0.0,
+      "avg_pnl": 0.0,
+      "total_pnl": 0.0,
+      "max_loss": 0.0,
+      "max_win": 0.0
+    },
+    "battle_plan": {
+      "total": 0,
+      "wins": 0,
+      "losses": 0,
+      "win_rate": 0.0,
+      "avg_pnl": 0.0,
+      "total_pnl": 0.0,
+      "max_loss": 0.0,
+      "max_win": 0.0
+    },
+    "news": {
+      "total": 0,
+      "wins": 0,
+      "losses": 0,
+      "win_rate": 0.0,
+      "avg_pnl": 0.0,
+      "total_pnl": 0.0,
+      "max_loss": 0.0,
+      "max_win": 0.0
+    },
+    "scalping": {
+      "total": 152,
+      "wins": 27,
+      "losses": 102,
+      "win_rate": 0.1776,
+      "avg_pnl": -10.7785,
+      "total_pnl": -1638.3326,
+      "max_loss": -394.68,
+      "max_win": 274.08
+    },
+    "其他": {
+      "total": 167,
+      "wins": 62,
+      "losses": 93,
+      "win_rate": 0.3713,
+      "avg_pnl": -77.4771,
+      "total_pnl": -12938.6746,
+      "max_loss": -7749.0,
+      "max_win": 17882.56
+    }
+  },
+  "rolling": {
+    "7d": {
+      "technical": {
+        "total": 0,
+        "wins": 0,
+        "losses": 0,
+        "win_rate": 0.0,
+        "avg_pnl": 0.0,
+        "total_pnl": 0.0,
+        "max_loss": 0.0,
+        "max_win": 0.0
+      },
+      "llm_vote": {
+        "total": 0,
+        "wins": 0,
+        "losses": 0,
+        "win_rate": 0.0,
+        "avg_pnl": 0.0,
+        "total_pnl": 0.0,
+        "max_loss": 0.0,
+        "max_win": 0.0
+      },
+      "battle_plan": {
+        "total": 0,
+        "wins": 0,
+        "losses": 0,
+        "win_rate": 0.0,
+        "avg_pnl": 0.0,
+        "total_pnl": 0.0,
+        "max_loss": 0.0,
+        "max_win": 0.0
+      },
+      "news": {
+        "total": 0,
+        "wins": 0,
+        "losses": 0,
+        "win_rate": 0.0,
+        "avg_pnl": 0.0,
+        "total_pnl": 0.0,
+        "max_loss": 0.0,
+        "max_win": 0.0
+      },
+      "scalping": {
+        "total": 5,
+        "wins": 0,
+        "losses": 0,
+        "win_rate": 0.0,
+        "avg_pnl": 0.0,
+        "total_pnl": 0.0,
+        "max_loss": 0.0,
+        "max_win": 0.0
+      },
+      "其他": {
+        "total": 5,
+        "wins": 3,
+        "losses": 2,
+        "win_rate": 0.6,
+        "avg_pnl": 341.2809,
+        "total_pnl": 1706.4045,
+        "max_loss": -275.4,
+        "max_win": 977.895
+      }
+    },
+    "30d": {
+      "technical": {
+        "total": 0,
+        "wins": 0,
+        "losses": 0,
+        "win_rate": 0.0,
+        "avg_pnl": 0.0,
+        "total_pnl": 0.0,
+        "max_loss": 0.0,
+        "max_win": 0.0
+      },
+      "llm_vote": {
+        "total": 0,
+        "wins": 0,
+        "losses": 0,
+        "win_rate": 0.0,
+        "avg_pnl": 0.0,
+        "total_pnl": 0.0,
+        "max_loss": 0.0,
+        "max_win": 0.0
+      },
+      "battle_plan": {
+        "total": 0,
+        "wins": 0,
+        "losses": 0,
+        "win_rate": 0.0,
+        "avg_pnl": 0.0,
+        "total_pnl": 0.0,
+        "max_loss": 0.0,
+        "max_win": 0.0
+      },
+      "news": {
+        "total": 0,
+        "wins": 0,
+        "losses": 0,
+        "win_rate": 0.0,
+        "avg_pnl": 0.0,
+        "total_pnl": 0.0,
+        "max_loss": 0.0,
+        "max_win": 0.0
+      },
+      "scalping": {
+        "total": 152,
+        "wins": 27,
+        "losses": 102,
+        "win_rate": 0.1776,
+        "avg_pnl": -10.7785,
+        "total_pnl": -1638.3326,
+        "max_loss": -394.68,
+        "max_win": 274.08
+      },
+      "其他": {
+        "total": 145,
+        "wins": 53,
+        "losses": 80,
+        "win_rate": 0.3655,
+        "avg_pnl": -204.9554,
+        "total_pnl": -29718.5362,
+        "max_loss": -7749.0,
+        "max_win": 2258.375
+      }
+    }
+  },
+  "as_of": "2026-06-01"
+}

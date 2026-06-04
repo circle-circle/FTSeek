@@ -54,3 +54,14 @@
 2026-05-19 09:11:39,069 [WARNING] ftseek_us.feishu_push: ⚠️ 飞书配置不完整
 2026-05-19 09:11:39,073 [WARNING] ftseek_us.feishu_push: ⚠️ 飞书配置不完整
 2026-05-19 09:11:39,073 [WARNING] ftseek_us.feishu_push: ⚠️ 飞书配置不完整
+2026-06-02 22:56:59,127 [INFO] ftseek_us.feishu_push: ✅ 飞书 SDK 客户端已初始化
+2026-06-02 22:56:59,129 [INFO] ftseek_us.feishu_push: ✅ 飞书 SDK 客户端已初始化
+2026-06-02 22:56:59,137 [INFO] ftseek_us.feishu_push: ✅ 飞书推送服务已初始化
+2026-06-02 22:56:59,131 [INFO] ftseek_us.feishu_push: ✅ 飞书推送服务已初始化
+2026-06-02 22:56:59,131 [INFO] ftseek_us.feishu_push: ✅ 飞书 SDK 客户端已初始化
+2026-06-02 22:56:59,142 [INFO] ftseek_us.feishu_push: ✅ 飞书推送服务已初始化
+2026-06-02 22:56:59,375 [INFO] ftseek_us.feishu_push: ✅ 飞书 Webhook 发送成功
+2026-06-02 22:56:59,385 [INFO] ftseek_us.feishu_push: ✅ 飞书 Webhook 发送成功
+2026-06-02 22:56:59,394 [INFO] ftseek_us.feishu_push: ✅ 飞书 Webhook 发送成功
+2026-06-02 22:56:59,404 [INFO] ftseek_us.feishu_push: ✅ 飞书 Webhook 发送成功
+2026-06-02 22:56:59,409 [INFO] ftseek_us.feishu_push: ✅ 飞书 Webhook 发送成功

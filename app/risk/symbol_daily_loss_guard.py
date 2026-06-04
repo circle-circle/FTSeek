@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Set
 
-from app.utils.timezone import now_et, get_trade_date, to_et
+from app.utils.timezone import now_et, now_cst, get_trade_date, to_et
 
 logger = logging.getLogger(__name__)
 
@@ -139,8 +139,10 @@ class SymbolDailyLossGuard:
                 return
 
             conn = sqlite3.connect(str(get_trade_records_db()))
-            # 取最近 36 小时的交易 (覆盖 ET/CST 跨日边界)
-            cutoff_cst = (now_et() - timedelta(hours=36)).replace(tzinfo=None)
+            # P1 修复 (2026-06-02): cutoff 必须用 CST 匹配 DB 中的 CST naive exit_time
+            # 旧 bug: now_et() 返回 ET 时间, 与 CST DB 值比较导致 12h 偏移
+            # 修复: 使用 now_cst() 计算 cutoff, 与 DB 存储格式一致
+            cutoff_cst = now_cst().replace(tzinfo=None) - timedelta(hours=36)
             rows = conn.execute(
                 "SELECT symbol, realized_pnl, exit_time FROM trade_records "
                 "WHERE exit_time >= ? AND realized_pnl IS NOT NULL "

@@ -1,0 +1,52 @@
+{
+  "buckets": {
+    "0-0.3": {
+      "total": 160,
+      "wins": 64,
+      "losses": 84,
+      "win_rate": 0.4,
+      "avg_pnl": -105.7654,
+      "total_pnl": -16922.4627,
+      "max_loss": -7749.0,
+      "max_win": 17882.56
+    },
+    "0.3-0.5": {
+      "total": 11,
+      "wins": 3,
+      "losses": 6,
+      "win_rate": 0.2727,
+      "avg_pnl": 5.7562,
+      "total_pnl": 63.3185,
+      "max_loss": -275.4,
+      "max_win": 307.9845
+    },
+    "0.5-0.7": {
+      "total": 116,
+      "wins": 19,
+      "losses": 79,
+      "win_rate": 0.1638,
+      "avg_pnl": 31.8179,
+      "total_pnl": 3690.8818,
+      "max_loss": -787.4,
+      "max_win": 3165.058
+    },
+    "0.7-1.0": {
+      "total": 54,
+      "wins": 17,
+      "losses": 34,
+      "win_rate": 0.3148,
+      "avg_pnl": -7.7755,
+      "total_pnl": -419.8783,
+      "max_loss": -172.5,
+      "max_win": 274.08
+    }
+  },
+  "ordered_labels": [
+    "0-0.3",
+    "0.3-0.5",
+    "0.5-0.7",
+    "0.7-1.0"
+  ],
+  "monotonic": false,
+  "total_samples": 341
+}
