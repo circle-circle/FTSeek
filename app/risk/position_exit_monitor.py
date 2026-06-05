@@ -1728,15 +1728,12 @@ class ExitMonitor:
                     _new_sl = entry_price + atr * tier1_mult
                     _tier = f"固定(profit={_abs_profit:.1f}ATR, mult={tier1_mult:.1f})"
 
-                # CR-3: SHORT SL 单调降 (min) + 初始SL地板保护
-                # 2026-06-06 根因修复: floor 从 entry+4.0×ATR 改为 entry-1.0×ATR
-                # 原 floor (entry+4.0×ATR) 导致 progressive trailing 100% 死代码:
-                #   trailing SL = lowest + mult×ATR 永远 < floor, max() 永远选 floor
-                # 新 floor (entry-1.0×ATR): 允许 SL 进入利润区 (entry 下方=SHORT 盈利区)
-                #   但防止过度收紧 (SL 不得进入入场价上方 1.0×ATR 风险区)
-                _floor_mult = 1.0  # entry - 1.0×ATR for SHORT
-                _short_sl_floor = entry_price - atr * _floor_mult
-                _new_sl = max(_new_sl, _short_sl_floor)
+                # CR-3: SHORT SL 单调降 (min)
+                # 2026-06-06 修正: 移除 T2-T4 的 floor, 让追踪自由收紧
+                # floor 仅保护 T1 (固定 SL = entry + 4.0×ATR, 由 atr_stop 管理)
+                # T2-T4 的单调 min() 已防止 SL 放松, 不需要额外 floor
+                # 原 floor (entry-1.0×ATR) 导致 8.1 ATR 盈利仓位仅锁定 1.0 ATR 利润
+                # 无 floor: 追踪 SL = lowest + mult×ATR, 自然收紧到合理水平
                 if _old_sl > 0:
                     position.current_sl = min(_old_sl, _new_sl)
                     if _new_sl > _old_sl:
