@@ -110,5 +110,19 @@
     "new_state": "NORMAL",
     "reason": "Auto Recovery: Cooldown + Market Confirmed (VIX=19.3\u2713 SPY=0.38%\u2713)",
     "source": "System"
+  },
+  {
+    "time": "2026-06-05T07:11:49.806574",
+    "old_state": "NORMAL",
+    "new_state": "RISK_OFF",
+    "reason": "Black Swan (LLM confirmed): revenue miss on US.AVGO",
+    "source": "NewsInterceptor"
+  },
+  {
+    "time": "2026-06-05T07:42:12.090800",
+    "old_state": "RISK_OFF",
+    "new_state": "NORMAL",
+    "reason": "Auto Recovery: Cooldown + Market Confirmed (VIX=19.3\u2713 SPY=0.38%\u2713)",
+    "source": "System"
   }
 ]

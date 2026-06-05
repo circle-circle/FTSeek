@@ -1,0 +1,21 @@
+{
+  "as_of": "2026-06-04",
+  "suggested_min_signal_confidence": 0.5,
+  "current_baseline": 0.5,
+  "rationale": "近30d 无桶达到 50% 胜率, 维持基线",
+  "strategy_actions": [
+    {
+      "category": "scalping",
+      "recent_trades": 10,
+      "recent_win_rate": 0.0,
+      "recommendation": "DISABLE_OR_REDUCE_WEIGHT",
+      "severity": "HIGH",
+      "rationale": "近 10 笔胜率 0.00% < 20% 阈值"
+    }
+  ],
+  "anomalies": [
+    "confidence 桶胜率非单调递增 — 模型置信度可能与真实胜率脱钩"
+  ],
+  "applied": false,
+  "note": "本建议仅供参考, 不会自动修改 config; 由人工或灰度流程审批后再落地"
+}

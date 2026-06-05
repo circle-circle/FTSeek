@@ -1163,12 +1163,18 @@ class ORBEngine:
         try:
             from app.storage.trade_store import TradeStore
             from app.core.paths import get_trade_records_db
+            from app.utils.timezone import now_et as _orb_now_et
             import json as _json
             _ts = TradeStore(str(get_trade_records_db()))
             _entry_time = pos.entry_time.isoformat() if hasattr(pos.entry_time, 'isoformat') else str(pos.entry_time)
-            _exit_time = datetime.now().isoformat()
-            _trade_date = pos.entry_time.strftime("%Y-%m-%d") if hasattr(pos.entry_time, 'strftime') else datetime.now().strftime("%Y-%m-%d")
-            _holding_hours = (datetime.now() - pos.entry_time).total_seconds() / 3600 if pos.entry_time else 0
+            _exit_time = _orb_now_et().isoformat()  # 2026-06-05 修复: datetime.now()→now_et()
+            _trade_date = pos.entry_time.strftime("%Y-%m-%d") if hasattr(pos.entry_time, 'strftime') else _orb_now_et().strftime("%Y-%m-%d")
+            _holding_hours = (_orb_now_et() - pos.entry_time).total_seconds() / 3600 if pos.entry_time else 0
+            # 2026-06-05 修复: ORB 不再硬编码 strength=65/confidence=0.65
+            # breakout_quality: ORB range / ATR ratio, 反映突破质量
+            _orb_range = (pos.orb_high - pos.orb_low) if (pos.orb_high and pos.orb_low) else 0
+            _orb_atr = pos.atr_at_entry if pos.atr_at_entry else 1.0
+            _breakout_quality = int(min(99, max(1, (_orb_range / _orb_atr) * 30))) if _orb_atr > 0 else None
             _ts.save_trade({
                 "trace_id": pos.trace_id or f"orb-{symbol}-{int(time.time())}",
                 "trade_date": _trade_date,
@@ -1183,8 +1189,8 @@ class ORBEngine:
                 "pnl_pct": pnl_pct / 100,
                 "exit_reason": decision.reason,
                 "holding_hours": _holding_hours,
-                "signal_strength": int(getattr(pos, 'quality_score', 0) * 100) if hasattr(pos, 'quality_score') else 65,
-                "signal_confidence": 0.65,
+                "signal_strength": _breakout_quality,  # 2026-06-05: 真实 breakout quality, 不再硬编码65
+                "signal_confidence": 0.0,              # 2026-06-05: ORB 无投票, 标0而非假数据0.65
                 "futu_order_id": pos.order_id or "",
                 "source_type": "ORB_ENGINE",
                 "entry_reason": "orb_breakout",
@@ -1199,8 +1205,46 @@ class ORBEngine:
                     "atr_at_entry": pos.atr_at_entry,
                     "sl_distance": pos.sl_distance,
                 }),
+                # 2026-06-05 数据质量修复: ORB 也写 signal_details
+                "signal_details": _json.dumps({
+                    "signal_strength": _breakout_quality,
+                    "signal_confidence": 0.0,
+                    "orb_range": _orb_range,
+                    "atr_at_entry": pos.atr_at_entry,
+                    "breakout_direction": pos.direction,
+                    "entry_reason": "orb_breakout",
+                    "exit_reason": decision.reason,
+                }, ensure_ascii=False),
             })
-            logger.info("[ORB] %s 交易记录已写入 trade_records | pnl=$%.2f", symbol, pnl)
+            logger.info("[ORB] %s 交易记录已写入 trade_records | pnl=$%.2f | strength=%s", symbol, pnl, _breakout_quality)
+
+            # 2026-06-05: ORB 也写 signal_lifecycle
+            import sqlite3 as _orb_sl
+            from app.core.paths import get_trade_records_db as _orb_sl_db
+            _orb_sl_conn = _orb_sl.connect(str(_orb_sl_db()))
+            _orb_sl_conn.execute("""
+                INSERT INTO signal_lifecycle (
+                    trade_id, symbol, signal_strength, signal_confidence,
+                    signal_direction, trade_direction, entry_price, exit_price,
+                    realized_pnl, pnl_pct, exit_reason, holding_hours,
+                    owner_strategy, source_type, trade_date, trade_mode,
+                    created_at
+                ) VALUES (
+                    (SELECT MAX(id) FROM trade_records),
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                )
+            """, (
+                symbol, _breakout_quality, 0.0,
+                pos.direction, pos.direction,
+                pos.entry_price, price,
+                pnl, pnl_pct / 100, decision.reason,
+                _holding_hours, "orb_engine", "ORB_ENGINE",
+                _trade_date, "normal",
+                _orb_now_et().isoformat(),
+            ))
+            _orb_sl_conn.commit()
+            _orb_sl_conn.close()
+
         except Exception as _tre:
             logger.warning("[ORB] %s trade_records 写入失败 (不影响退出): %s", symbol, _tre)
 

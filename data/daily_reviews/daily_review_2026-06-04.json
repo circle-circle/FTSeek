@@ -1,0 +1,690 @@
+{
+  "report_type": "daily",
+  "report_version": "2.0",
+  "report_date": "2026-06-04",
+  "generated_at": "2026-06-05T07:44:34.993339",
+  "summary": {
+    "total_trades": 5,
+    "closed_trades": 5,
+    "winning_trades": 2,
+    "losing_trades": 3,
+    "total_pnl": -548.02,
+    "win_rate": 0.4,
+    "avg_pnl": -109.6,
+    "avg_holding_period": 1.0
+  },
+  "signal_funnel": {
+    "total_decisions": 52,
+    "by_direction_strength": {
+      "LONG(s=31)": 2,
+      "LONG(s=34)": 3,
+      "LONG(s=36)": 1,
+      "LONG(s=37)": 2,
+      "LONG(s=38)": 1,
+      "LONG(s=40)": 2,
+      "LONG(s=41)": 2,
+      "LONG(s=43)": 1,
+      "LONG(s=50)": 2,
+      "LONG(s=60)": 2,
+      "LONG(s=61)": 2,
+      "SHORT(s=30)": 2,
+      "SHORT(s=31)": 2,
+      "SHORT(s=32)": 1,
+      "SHORT(s=33)": 2,
+      "SHORT(s=34)": 6,
+      "SHORT(s=35)": 5,
+      "SHORT(s=36)": 4,
+      "SHORT(s=37)": 3,
+      "SHORT(s=38)": 3,
+      "SHORT(s=40)": 1,
+      "SHORT(s=43)": 2,
+      "SHORT(s=44)": 1
+    }
+  },
+  "rejection_analysis": {
+    "total": 1,
+    "by_reason": {
+      "WEAK_LONG_BLOCKED": 1
+    },
+    "by_symbol": {
+      "US.NTES": 1
+    },
+    "top_rejector": "WEAK_LONG_BLOCKED"
+  },
+  "capital_state": {
+    "current_equity": 1070999.0,
+    "cash": 670063.0,
+    "buying_power": 1344455.0,
+    "drawdown_pct": -2.3,
+    "max_drawdown_pct": -11.85,
+    "water_level": "green"
+  },
+  "attribution_data": {
+    "total_records": 12,
+    "data_available": true,
+    "signal_scores": [],
+    "execution_scores": [],
+    "risk_scores": [],
+    "timing_scores": [],
+    "overall_scores": [
+      61,
+      60
+    ],
+    "slippage_values": [],
+    "success_factors": [],
+    "failure_factors": [],
+    "scene_tags": [],
+    "five_factor": {
+      "five_factor_available": true,
+      "noise_trades_pnl": 29722.56,
+      "early_exit_pnl": 0.0,
+      "late_exit_pnl": 0.0,
+      "overtrading_pnl": 1389.09,
+      "missed_signals_pnl": 2264.21,
+      "behavioral_score": {
+        "score": 84,
+        "grade": "B"
+      },
+      "rules": [
+        {
+          "rule_id": "R1",
+          "human_text": "平均持有 0.1 天，平均盈利 1.7%",
+          "entry_hour_range": [
+            9.0,
+            16.0
+          ],
+          "holding_days_range": [
+            0.1,
+            0.11195639065104164
+          ],
+          "support_count": 94,
+          "coverage_rate": 1.0,
+          "avg_pnl_pct": 0.0167,
+          "weight": 1.0
+        }
+      ],
+      "disposition_effect": {
+        "severity": "low",
+        "avg_hold_winners_days": 0.2,
+        "avg_hold_losers_days": 0.1,
+        "loser_winner_hold_ratio": 0.64,
+        "interpretation": "亏损持仓是盈利的 0.6x — 健康"
+      },
+      "chasing": {
+        "severity": "insufficient_data",
+        "avg_deviation_pct": 0
+      },
+      "anchoring": {
+        "severity": "low",
+        "anchored_ratio": 0.07,
+        "interpretation": "7% 的亏损单超过止损设计 — 止损纪律良好"
+      }
+    },
+    "signal_scores_avg": null,
+    "execution_scores_avg": null,
+    "risk_scores_avg": null,
+    "timing_scores_avg": null,
+    "overall_scores_avg": 60.5,
+    "overall_scores_max": 61,
+    "overall_scores_min": 60
+  },
+  "trade_analyses": [
+    {
+      "trade_id": 873,
+      "symbol": "US.IWM",
+      "direction": "SHORT",
+      "entry_price": 287.215,
+      "exit_price": 287.4,
+      "realized_pnl": -128.76,
+      "pnl_pct": -0.06,
+      "exit_reason": "ORB_FLOOR_STOP",
+      "holding_hours": 0.1,
+      "signal_strength": 65,
+      "signal_confidence": 0.65,
+      "verdict": "合理",
+      "entry_logic": "入场逻辑正常 (strength=65, conf=0.65)",
+      "exit_logic": "退出原因: ORB_FLOOR_STOP",
+      "pnl_attribution": "亏损退出 (-$128.76, ORB_FLOOR_STOP)",
+      "timing_assessment": "正常交易时段入场 (ET 11:xx)",
+      "risk_compliance": "风险合规正常",
+      "evidence": {
+        "no_decision_reason": true,
+        "verdict_reason": {
+          "unreasonable_count": 0,
+          "reasonable_count": 1,
+          "issue_count": 0
+        }
+      },
+      "issues": [],
+      "suggestions": [
+        "高信号强度但亏损 — 需检查信号有效性"
+      ],
+      "needs_debate": false,
+      "debate_reason": ""
+    },
+    {
+      "trade_id": 876,
+      "symbol": "US.XLK",
+      "direction": "SHORT",
+      "entry_price": 190.2,
+      "exit_price": 191.06,
+      "realized_pnl": -627.8,
+      "pnl_pct": -0.45,
+      "exit_reason": "ORB_FLOOR_STOP",
+      "holding_hours": 0.2,
+      "signal_strength": 65,
+      "signal_confidence": 0.65,
+      "verdict": "合理",
+      "entry_logic": "入场逻辑正常 (strength=65, conf=0.65)",
+      "exit_logic": "退出原因: ORB_FLOOR_STOP",
+      "pnl_attribution": "亏损退出 (-$627.80, ORB_FLOOR_STOP)",
+      "timing_assessment": "开盘时段入场 (ET 9:xx) — 波动大，需确认",
+      "risk_compliance": "风险合规正常",
+      "evidence": {
+        "no_decision_reason": true,
+        "verdict_reason": {
+          "unreasonable_count": 0,
+          "reasonable_count": 1,
+          "issue_count": 0
+        }
+      },
+      "issues": [],
+      "suggestions": [
+        "高信号强度但亏损 — 需检查信号有效性"
+      ],
+      "needs_debate": false,
+      "debate_reason": ""
+    },
+    {
+      "trade_id": 877,
+      "symbol": "US.XLF",
+      "direction": "LONG",
+      "entry_price": 51.885,
+      "exit_price": 51.905,
+      "realized_pnl": 50.0,
+      "pnl_pct": 0.04,
+      "exit_reason": "ORB_TRAILING_STOP",
+      "holding_hours": 0.3,
+      "signal_strength": 65,
+      "signal_confidence": 0.65,
+      "verdict": "合理",
+      "entry_logic": "入场逻辑正常 (strength=65, conf=0.65)",
+      "exit_logic": "退出原因: ORB_TRAILING_STOP",
+      "pnl_attribution": "盈利退出 (+$50.00, ORB_TRAILING_STOP)",
+      "timing_assessment": "开盘时段入场 (ET 9:xx) — 波动大，需确认",
+      "risk_compliance": "风险合规正常",
+      "evidence": {
+        "no_decision_reason": true,
+        "verdict_reason": {
+          "unreasonable_count": 0,
+          "reasonable_count": 2,
+          "issue_count": 0
+        }
+      },
+      "issues": [],
+      "suggestions": [],
+      "needs_debate": false,
+      "debate_reason": ""
+    },
+    {
+      "trade_id": 880,
+      "symbol": "US.MU",
+      "direction": "SHORT",
+      "entry_price": 1022.63,
+      "exit_price": 1035.32,
+      "realized_pnl": -393.39,
+      "pnl_pct": -1.24,
+      "exit_reason": "FLASH_EXIT",
+      "holding_hours": 0.5,
+      "signal_strength": 44,
+      "signal_confidence": 0.48,
+      "verdict": "待定观察",
+      "entry_logic": "存在问题: 信号强度偏低 (strength=44); 信心度偏低 (confidence=0.48)",
+      "exit_logic": "",
+      "pnl_attribution": "闪崩退出亏损 (-$393.39) — 市场异常波动",
+      "timing_assessment": "正常交易时段入场 (ET 12:xx)",
+      "risk_compliance": "风险合规正常",
+      "evidence": {
+        "weak_signal": true,
+        "no_decision_reason": true,
+        "verdict_reason": {
+          "unreasonable_count": 0,
+          "reasonable_count": 0,
+          "issue_count": 2
+        }
+      },
+      "issues": [
+        "信号强度偏低 (strength=44)",
+        "信心度偏低 (confidence=0.48)"
+      ],
+      "suggestions": [],
+      "needs_debate": false,
+      "debate_reason": ""
+    },
+    {
+      "trade_id": 881,
+      "symbol": "US.ARM",
+      "direction": "LONG",
+      "entry_price": 384.446,
+      "exit_price": 392.445,
+      "realized_pnl": 551.93,
+      "pnl_pct": 2.08,
+      "exit_reason": "PRE_CLOSE_EXIT",
+      "holding_hours": 3.7,
+      "signal_strength": 38,
+      "signal_confidence": 0.41,
+      "verdict": "合理",
+      "entry_logic": "存在问题: 信号强度偏低 (strength=38); 信心度偏低 (confidence=0.41)",
+      "exit_logic": "盘末微盈/微亏退出 (2.08%) — 止损未激活",
+      "pnl_attribution": "盘末微利退出 (+$551.93) — 非主动止盈",
+      "timing_assessment": "正常交易时段入场 (ET 11:xx)",
+      "risk_compliance": "风险合规正常",
+      "evidence": {
+        "weak_signal": true,
+        "no_decision_reason": true,
+        "verdict_reason": {
+          "unreasonable_count": 0,
+          "reasonable_count": 1,
+          "issue_count": 2
+        }
+      },
+      "issues": [
+        "信号强度偏低 (strength=38)",
+        "信心度偏低 (confidence=0.41)"
+      ],
+      "suggestions": [
+        "低信号强度但盈利 — 可能是运气而非策略有效"
+      ],
+      "needs_debate": false,
+      "debate_reason": ""
+    }
+  ],
+  "dimensions": {
+    "signal_quality": {
+      "score": null,
+      "total_signals": 52,
+      "total_trades": 5,
+      "signal_to_trade_ratio": 0.0962,
+      "strength_distribution": {
+        "high": 0,
+        "medium": 3,
+        "low": 2
+      },
+      "avg_signal_strength": 55.4,
+      "assessment": "mixed"
+    },
+    "voting_consistency": {
+      "score": null,
+      "status": "available",
+      "data_available": true,
+      "avg_signal_strength": 41.0,
+      "high_strength_trades": 0,
+      "medium_strength_trades": 0,
+      "low_strength_trades": 2,
+      "avg_consensus_level": 0.4465
+    },
+    "execution_quality": {
+      "total_trades": 5,
+      "data_available": false,
+      "execution_rate": 1.0,
+      "note": "trade_attribution 执行数据未填充，执行质量分析受限。"
+    },
+    "risk_compliance": {
+      "data_available": true,
+      "current_drawdown_pct": -2.3,
+      "max_drawdown_pct": -11.85,
+      "water_level": "green",
+      "risk_score": 9.0,
+      "max_single_trade_loss": 627.8,
+      "losing_trade_count": 3,
+      "losing_trade_ratio": 0.6
+    },
+    "funnel_diagnosis": {
+      "score": null,
+      "status": "normal",
+      "total_decisions": 52,
+      "total_trades": 5,
+      "total_rejections": 1,
+      "trade_conversion_rate": 0.0962,
+      "rejection_rate": 0.0192,
+      "top_rejector": "WEAK_LONG_BLOCKED",
+      "by_direction_strength": {
+        "LONG(s=31)": 2,
+        "LONG(s=34)": 3,
+        "LONG(s=36)": 1,
+        "LONG(s=37)": 2,
+        "LONG(s=38)": 1,
+        "LONG(s=40)": 2,
+        "LONG(s=41)": 2,
+        "LONG(s=43)": 1,
+        "LONG(s=50)": 2,
+        "LONG(s=60)": 2,
+        "LONG(s=61)": 2,
+        "SHORT(s=30)": 2,
+        "SHORT(s=31)": 2,
+        "SHORT(s=32)": 1,
+        "SHORT(s=33)": 2,
+        "SHORT(s=34)": 6,
+        "SHORT(s=35)": 5,
+        "SHORT(s=36)": 4,
+        "SHORT(s=37)": 3,
+        "SHORT(s=38)": 3,
+        "SHORT(s=40)": 1,
+        "SHORT(s=43)": 2,
+        "SHORT(s=44)": 1
+      }
+    },
+    "attribution_learning": {
+      "data_available": true,
+      "lessons_count": 1,
+      "five_factor": {
+        "five_factor_available": true,
+        "noise_trades_pnl": 29722.56,
+        "early_exit_pnl": 0.0,
+        "late_exit_pnl": 0.0,
+        "overtrading_pnl": 1389.09,
+        "missed_signals_pnl": 2264.21,
+        "behavioral_score": {
+          "score": 84,
+          "grade": "B"
+        },
+        "rules": [
+          {
+            "rule_id": "R1",
+            "human_text": "平均持有 0.1 天，平均盈利 1.7%",
+            "entry_hour_range": [
+              9.0,
+              16.0
+            ],
+            "holding_days_range": [
+              0.1,
+              0.11195639065104164
+            ],
+            "support_count": 94,
+            "coverage_rate": 1.0,
+            "avg_pnl_pct": 0.0167,
+            "weight": 1.0
+          }
+        ],
+        "disposition_effect": {
+          "severity": "low",
+          "avg_hold_winners_days": 0.2,
+          "avg_hold_losers_days": 0.1,
+          "loser_winner_hold_ratio": 0.64,
+          "interpretation": "亏损持仓是盈利的 0.6x — 健康"
+        },
+        "chasing": {
+          "severity": "insufficient_data",
+          "avg_deviation_pct": 0
+        },
+        "anchoring": {
+          "severity": "low",
+          "anchored_ratio": 0.07,
+          "interpretation": "7% 的亏损单超过止损设计 — 止损纪律良好"
+        }
+      },
+      "behavioral_score": {
+        "score": 84,
+        "grade": "B"
+      }
+    }
+  },
+  "decision_analysis": {
+    "distribution": {
+      "unknown": 5
+    },
+    "avg_confidence": 0.57
+  },
+  "risk_analysis": {
+    "data_available": true,
+    "current_drawdown_pct": -2.3,
+    "max_drawdown_pct": -11.85,
+    "water_level": "green",
+    "risk_score": 9.0,
+    "max_single_trade_loss": 627.8,
+    "losing_trade_count": 3,
+    "losing_trade_ratio": 0.6
+  },
+  "voting_analysis": {
+    "score": null,
+    "status": "available",
+    "data_available": true,
+    "avg_signal_strength": 41.0,
+    "high_strength_trades": 0,
+    "medium_strength_trades": 0,
+    "low_strength_trades": 2,
+    "avg_consensus_level": 0.4465
+  },
+  "error_patterns": {
+    "detected": false,
+    "patterns": []
+  },
+  "review_score": {
+    "overall_score": 5.3,
+    "max_score": 10.0,
+    "status": "needs_improvement",
+    "breakdown": {
+      "win_rate_score": 4.8,
+      "win_rate": 0.4,
+      "win_rate_weight": 0.25,
+      "signal_quality_score": 5.54,
+      "avg_signal_strength": 55.4,
+      "signal_quality_weight": 0.2,
+      "risk_compliance_score": 8.85,
+      "drawdown_pct": -2.3,
+      "risk_compliance_weight": 0.2,
+      "funnel_efficiency_score": 4.81,
+      "conversion_rate": 0.0962,
+      "funnel_efficiency_weight": 0.15,
+      "attribution_learning_score": 0,
+      "lessons_count": 0,
+      "attribution_learning_weight": 0.1,
+      "plan_execution_score": 5.0,
+      "plan_execution_weight": 0.1
+    }
+  },
+  "market_regime": {
+    "state": "unknown",
+    "confidence": "low",
+    "indicators": {
+      "drawdown_pct": 2.3
+    }
+  },
+  "plan_vs_actual": {
+    "plan_available": true,
+    "planned_targets": [
+      {
+        "symbol": "US.PG",
+        "direction": "LONG",
+        "entry_zone": [
+          160,
+          162
+        ],
+        "stop_loss": 158,
+        "take_profit": 168,
+        "urgency": "LOW",
+        "rationale": "消费必需品龙头，防御属性显著；技术面回踩20日均线获得支撑，相对大盘强；市场不确定性上升时资金倾向流入此类标的。 [降级试仓]",
+        "_price_warning": "entry_zone偏离当前价14.8%",
+        "_current_price_ref": 140.19,
+        "open_check_status": "VALID",
+        "gap_pct": -0.004473796335747731,
+        "confirmed_entry_price": 140.19
+      },
+      {
+        "symbol": "US.LLY",
+        "direction": "LONG",
+        "entry_zone": [
+          800,
+          810
+        ],
+        "stop_loss": 790,
+        "take_profit": 840,
+        "urgency": "LOW",
+        "rationale": "医药板块受宏观影响小，GLP-1药物放量持续；技术面沿50日均线上行，多头排列，避险情绪下具备独立行情可能。 [降级试仓]",
+        "_price_warning": "entry_zone偏离当前价25.4%",
+        "_current_price_ref": 1078.78,
+        "open_check_status": "VALID",
+        "gap_pct": 0.013748061833388038,
+        "confirmed_entry_price": 1078.78
+      },
+      {
+        "symbol": "US.MSFT",
+        "direction": "LONG",
+        "entry_zone": [
+          430,
+          435
+        ],
+        "stop_loss": 425,
+        "take_profit": 450,
+        "urgency": "LOW",
+        "rationale": "AI与云业务提供长期护城河；股价回调至前期突破平台，量能萎缩显示抛压衰竭，技术面有反弹需求，低吸试仓博盈亏比。 [降级试仓]",
+        "open_check_status": "CANCELLED",
+        "gap_pct": -0.03165575219233652,
+        "cancellation_reason": "Gap too large (-3.17% > 3%)"
+      }
+    ],
+    "executed_targets": [],
+    "missed_opportunities": [
+      "US.LLY",
+      "US.MSFT",
+      "US.PG"
+    ],
+    "unplanned_trades": [
+      "US.MU",
+      "US.IWM",
+      "US.XLK",
+      "US.ARM",
+      "US.XLF"
+    ],
+    "plan_date": "2026-06-04",
+    "execution_rate": 0.0
+  },
+  "key_learnings": [],
+  "improvement_suggestions": [
+    "有 2 笔低信号强度交易，建议提高入场门槛",
+    "今日 1 次信号被拒绝，TOP 原因: WEAK_LONG_BLOCKED"
+  ],
+  "exit_reason_pnl": {
+    "window_days": 30,
+    "total_reasons": 30,
+    "by_reason": {
+      "STRUCTURE_EXIT": {
+        "n": 32,
+        "win_rate": 0.312,
+        "avg_pnl_pct": -0.00212,
+        "sharpe_proxy": -0.417,
+        "recommendation": "⚠ review"
+      },
+      "sl_hit": {
+        "n": 123,
+        "win_rate": 0.154,
+        "avg_pnl_pct": -0.00122,
+        "sharpe_proxy": -0.544,
+        "recommendation": "⚠ review"
+      },
+      "TRAILING_STOP": {
+        "n": 82,
+        "win_rate": 0.463,
+        "avg_pnl_pct": 0.00427,
+        "sharpe_proxy": 0.111,
+        "recommendation": "⚠ marginal"
+      },
+      "PRE_CLOSE_EXIT": {
+        "n": 8,
+        "win_rate": 0.125,
+        "avg_pnl_pct": -0.00139,
+        "sharpe_proxy": -0.162,
+        "recommendation": "⚠ review"
+      },
+      "tp_hit": {
+        "n": 5,
+        "win_rate": 1.0,
+        "avg_pnl_pct": 0.01024,
+        "sharpe_proxy": 3.317,
+        "recommendation": "✅ keep"
+      },
+      "FLASH_EXIT": {
+        "n": 5,
+        "win_rate": 0.0,
+        "avg_pnl_pct": -0.01393,
+        "sharpe_proxy": -0.783,
+        "recommendation": "🚨 disable"
+      },
+      "time_stop": {
+        "n": 7,
+        "win_rate": 0.286,
+        "avg_pnl_pct": -0.00534,
+        "sharpe_proxy": -0.397,
+        "recommendation": "🚨 disable"
+      },
+      "ghost_cleanup_cruise": {
+        "n": 5,
+        "win_rate": 0.0,
+        "avg_pnl_pct": 0.0,
+        "sharpe_proxy": 0.0,
+        "recommendation": "⚠ marginal"
+      },
+      "manual_close_simulated": {
+        "n": 4,
+        "win_rate": 0.0,
+        "avg_pnl_pct": 0.0,
+        "sharpe_proxy": 0.0,
+        "recommendation": "🔍 insufficient"
+      },
+      "DAY_TRADE_TP": {
+        "n": 13,
+        "win_rate": 1.0,
+        "avg_pnl_pct": 0.00713,
+        "sharpe_proxy": 0.801,
+        "recommendation": "✅ keep"
+      },
+      "ORB_TRAILING_STOP": {
+        "n": 5,
+        "win_rate": 0.6,
+        "avg_pnl_pct": 4e-05,
+        "sharpe_proxy": 0.181,
+        "recommendation": "⚠ marginal"
+      },
+      "ORB_FLOOR_STOP": {
+        "n": 3,
+        "win_rate": 0.0,
+        "avg_pnl_pct": -0.00201,
+        "sharpe_proxy": -1.131,
+        "recommendation": "🔍 insufficient"
+      }
+    }
+  },
+  "coordinator_summary": {
+    "window_date": "2026-06-04",
+    "owner_strategy_distribution": {
+      "main": 1,
+      "manual_sync": 1,
+      "orb_engine": 3
+    },
+    "active_positions_by_owner": {
+      "main": 11
+    },
+    "arbitration": {
+      "total": 0,
+      "multi_candidate": 0,
+      "winners": {}
+    }
+  },
+  "shadow_comparison": {
+    "real": {
+      "n": 5,
+      "total_pnl": -548.0190000000041,
+      "win_rate": 0.4
+    },
+    "shadow_by_variant": []
+  },
+  "pnl_outliers": {
+    "n": 0,
+    "outliers": []
+  },
+  "symbol_loss_guard_triggers": {
+    "total_symbols_tracked": 4,
+    "blocked_count": 0,
+    "blocked": []
+  }
+}

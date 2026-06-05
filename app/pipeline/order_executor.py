@@ -3945,6 +3945,18 @@ def _close_position(scheduler, position: Position, current_price: float, exit_re
             # P1 修复 (2026-05-31): decision_id 归因链路 — 关联 signal_snapshots + decisions
             # 优先从 position.metadata 读取 (开仓时写入), 兜底从 _decision_data 获取
             "decision_id":       meta.get("decision_id", "") or _decision_data.get("decision_id", ""),
+            # 2026-06-05 数据质量修复: signal_details 写入 — 信号决策快照持久化
+            # 此前 MAIN_PIPELINE 从未写入此字段 (只有 scalping 写了), 导致 0% 填充率
+            "signal_details":    json.dumps({
+                "signal_strength": int(signal_strength or 0),
+                "signal_confidence": float(signal_confidence or 0.0),
+                "voting_result": voting_result or {},
+                "model_scores": model_scores or [],
+                "entry_reason": _derive_entry_reason_for_close(meta),
+                "regime": _regime,
+                "final_strength": _final_strength,
+                "consensus_level": _consensus_level,
+            }, ensure_ascii=False),
         })
 
         # ─── 反馈闭环修复 (2026-06-02): 平仓时回写 trade_outcome → decisions.db ───
@@ -4000,6 +4012,52 @@ def _close_position(scheduler, position: Position, current_price: float, exit_re
             })
         except Exception as _vae:
             logger.debug(f"[投票准确率] 更新结果失败: {_vae}")
+
+        # ─── 2026-06-05 数据质量修复: signal_lifecycle 实时写入 ───
+        # 此前 signal_lifecycle 只有独立脚本 update_signal_lifecycle.py 批量同步,
+        # 5/31 后无人执行导致全表停更。改为平仓时实时 INSERT。
+        try:
+            import sqlite3 as _sl_sql3
+            from app.core.paths import get_trade_records_db as _sl_db_path
+            _sl_conn = _sl_sql3.connect(str(_sl_db_path()))
+            _sl_direction = position.direction.value if hasattr(position.direction, 'value') else str(position.direction)
+            _sl_trade_date = _et_trade_date(position.entry_time)
+            _sl_exit_reason = exit_reason.value if hasattr(exit_reason, 'value') else str(exit_reason)
+            _sl_conn.execute("""
+                INSERT INTO signal_lifecycle (
+                    trade_id, symbol, signal_strength, signal_confidence,
+                    signal_direction, trade_direction, entry_price, exit_price,
+                    realized_pnl, pnl_pct, exit_reason, holding_hours,
+                    owner_strategy, source_type, trade_date, trade_mode,
+                    consensus_level, decision_strength, created_at
+                ) VALUES (
+                    (SELECT MAX(id) FROM trade_records),
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                )
+            """, (
+                position.symbol,
+                int(signal_strength or 0),
+                float(signal_confidence or 0.0),
+                _sl_direction,
+                _sl_direction,
+                float(position.avg_entry_price or 0),
+                float(current_price or 0),
+                float(pnl or 0),
+                float(pnl_pct or 0),
+                _sl_exit_reason,
+                float(position.holding_hours or 0),
+                getattr(position, "owner_strategy", None) or "main",
+                "MAIN_PIPELINE",
+                _sl_trade_date,
+                _mode,
+                float(_consensus_level or 0.0),
+                int(_final_strength or 0),
+                datetime.now().isoformat(),
+            ))
+            _sl_conn.commit()
+            _sl_conn.close()
+        except Exception as _sl_e:
+            logger.debug(f"[signal_lifecycle] 写入失败 (不影响平仓): {_sl_e}")
 
         # Y5 (2026-05-15): PnL 异常值监控 + 标的护栏 (主线路径)
         try:
