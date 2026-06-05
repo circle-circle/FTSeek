@@ -34,12 +34,18 @@ logger = logging.getLogger("ftseek.atr_stop_engine")
 # ============================================================
 
 # 外部可能传入的 regime 字符串 → 三档标准键
+# 2026-06-05 修复: "range"/"RANGE" 映射到 "normal" (非 "volatile"),
+# 与 trailing_stop.py 和 exit_policy_guardian 对齐.
+# range-bound = 横盘震荡 = normal stops; volatile = 高波动 = wider stops.
 _REGIME_MAP = {
-    "normal": "normal", "range": "volatile", "ranging": "volatile",
+    "normal": "normal", "range": "normal", "ranging": "normal",
+    "range_bound": "normal", "RANGE": "normal", "RANGE_BOUND": "normal",
     "volatile": "volatile", "high_vol": "volatile", "chop": "volatile",
+    "HIGH_VOL": "volatile", "high_volatility": "volatile",
     "trend": "trending", "trending": "trending",
     "uptrend": "trending", "downtrend": "trending",
     "bull": "trending", "bear": "trending",
+    "TREND_UP": "trending", "TREND_DOWN": "trending",
 }
 
 

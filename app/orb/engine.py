@@ -549,6 +549,46 @@ class ORBEngine:
         if built_count > 0:
             logger.info("[ORB] 滚动区间构建完成: %d/%d 个标的", built_count, len(self._cfg.universe))
 
+    def _is_cross_engine_cooled(self, symbol: str) -> bool:
+        """检查主线引擎是否在最近 30 分钟内退出了该标的.
+
+        防止场景: MAIN 止损 XLK LONG → ORB 立刻开 XLK SHORT → 如果 XLK 反弹则两边亏.
+        返回 True = 仍在冷却中, 应跳过.
+        """
+        _COOLDOWN_MINUTES = 30
+        try:
+            import sqlite3
+            from app.core.paths import get_trade_records_db
+            conn = sqlite3.connect(str(get_trade_records_db()))
+            row = conn.execute(
+                "SELECT exit_time FROM trade_records "
+                "WHERE symbol=? AND source_type='MAIN_PIPELINE' "
+                "ORDER BY exit_time DESC LIMIT 1",
+                (symbol,)
+            ).fetchone()
+            conn.close()
+            if not row:
+                return False
+            from datetime import datetime, timezone, timedelta
+            exit_time_str = row[0]
+            if not exit_time_str:
+                return False
+            # 解析 ISO 格式 (含时区)
+            exit_dt = datetime.fromisoformat(exit_time_str)
+            if exit_dt.tzinfo is None:
+                exit_dt = exit_dt.replace(tzinfo=timezone.utc)
+            now_utc = datetime.now(timezone.utc)
+            elapsed_minutes = (now_utc - exit_dt).total_seconds() / 60.0
+            if elapsed_minutes < _COOLDOWN_MINUTES:
+                logger.info(
+                    "[ORB·跨引擎冷却] %s 主线 %d 分钟前退出, 还需等 %d 分钟",
+                    symbol, int(elapsed_minutes), _COOLDOWN_MINUTES - int(elapsed_minutes),
+                )
+                return True
+        except Exception as e:
+            logger.debug(f"[ORB·跨引擎冷却] {symbol} 查询失败: {e}")
+        return False
+
     def _calculate_max_positions(self) -> int:
         """
         动态计算最大持仓数 (基于账户资金)
@@ -679,6 +719,11 @@ class ORBEngine:
             # 防止 orb_pipeline 和 orb_engine 同时开仓同一ETF
             if self._store and self._store.has(symbol):
                 logger.debug("[ORB] %s 跳过: PositionStore已有持仓 (主线或引擎)", symbol)
+                continue
+            # 2026-06-05 跨引擎冷却: MAIN 刚平仓的标的, ORB 30分钟内不开新仓
+            # 防止 MAIN 止损后 ORB 立刻反向开仓 (如 XLK LONG 止损 → ORB SHORT)
+            if self._is_cross_engine_cooled(symbol):
+                logger.debug("[ORB] %s 跳过: 主线最近退出, 跨引擎冷却中", symbol)
                 continue
             # 2026-06-03: 当日亏损退出的标的冷却 — 禁止重新入场
             if (getattr(self._cfg, 'same_symbol_loss_cooldown', False)

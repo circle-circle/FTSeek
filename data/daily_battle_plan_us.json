@@ -1,70 +1,55 @@
 {
-  "date": "2026-06-04",
-  "market_regime": "NORMAL",
-  "regime_reasoning": "Market open, VIX<20, normal conditions.",
+  "date": "2026-06-05",
+  "market_regime": "DEGRADED",
+  "regime_reasoning": "SPY与QQQ均处于盘整区间，VIX无显著波动，市场无明确方向信号；无重大新闻或财报驱动，资金面平静。历史教训表明在不明确阶段强行交易易亏损，宜保持观望。",
   "targets": [
     {
-      "symbol": "US.PG",
+      "symbol": "US.AAPL",
       "direction": "LONG",
       "entry_zone": [
-        160,
-        162
+        195.0,
+        200.0
       ],
-      "stop_loss": 158,
-      "take_profit": 168,
+      "stop_loss": 190.0,
+      "take_profit": 210.0,
       "urgency": "LOW",
-      "rationale": "消费必需品龙头，防御属性显著；技术面回踩20日均线获得支撑，相对大盘强；市场不确定性上升时资金倾向流入此类标的。 [降级试仓]",
-      "_price_warning": "entry_zone偏离当前价14.8%",
-      "_current_price_ref": 140.19,
+      "rationale": "技术面呈盘整突破前兆，试仓做多，止损收紧于支撑下方。 [降级试仓]",
+      "_price_warning": "entry_zone偏离当前价36.5%",
+      "_current_price_ref": 311.23,
       "open_check_status": "VALID",
-      "gap_pct": -0.004473796335747731,
-      "confirmed_entry_price": 140.19
+      "gap_pct": 0.0031264101076517352,
+      "confirmed_entry_price": 311.23
     },
     {
-      "symbol": "US.LLY",
+      "symbol": "US.AMD",
       "direction": "LONG",
       "entry_zone": [
-        800,
-        810
+        120.0,
+        125.0
       ],
-      "stop_loss": 790,
-      "take_profit": 840,
+      "stop_loss": 115.0,
+      "take_profit": 135.0,
       "urgency": "LOW",
-      "rationale": "医药板块受宏观影响小，GLP-1药物放量持续；技术面沿50日均线上行，多头排列，避险情绪下具备独立行情可能。 [降级试仓]",
-      "_price_warning": "entry_zone偏离当前价25.4%",
-      "_current_price_ref": 1078.78,
-      "open_check_status": "VALID",
-      "gap_pct": 0.013748061833388038,
-      "confirmed_entry_price": 1078.78
-    },
-    {
-      "symbol": "US.MSFT",
-      "direction": "LONG",
-      "entry_zone": [
-        430,
-        435
-      ],
-      "stop_loss": 425,
-      "take_profit": 450,
-      "urgency": "LOW",
-      "rationale": "AI与云业务提供长期护城河；股价回调至前期突破平台，量能萎缩显示抛压衰竭，技术面有反弹需求，低吸试仓博盈亏比。 [降级试仓]",
+      "rationale": "半导体板块超卖反弹预期，试仓以严格止损参与。 [降级试仓]",
+      "_price_warning": "entry_zone偏离当前价76.6%",
+      "_current_price_ref": 523.2,
       "open_check_status": "CANCELLED",
-      "gap_pct": -0.03165575219233652,
-      "cancellation_reason": "Gap too large (-3.17% > 3%)"
+      "gap_pct": -0.03561159035611579,
+      "cancellation_reason": "Gap too large (-3.56% > 3%)"
     }
   ],
-  "restricted": [
-    "US.TSLA"
-  ],
+  "restricted": [],
   "position_actions": [],
   "strategy_adjustments": [
-    "延续历史教训：市场缺乏明确方向时，不强行交易，保持空仓以保护本金。等待VIX或方向性信号出现后再入场。"
+    "延续近几日无信号空仓策略，不强行开仓，等待市场选择方向或出现高置信度信号。",
+    "对股池标的预先设定技术面突破/破位警报（如XLF突破前高或QQQ跌破支撑），以便捕捉下一阶段机会。"
   ],
   "risk_warnings": [
-    "无关键新闻或财报驱动，市场可能因流动性不足出现无序波动；VIX数据缺失，无法评估市场情绪；需警惕盘中突发消息引起的瞬时波动。",
+    "市场处于宁静期，缺乏波动率，突破可能突然发生，需警惕虚假突破。",
+    "本周无重大财报，但宏观数据公布（如有）可能引发波动，关注经济日历。",
     "⚠️ Arbiter 原判空仓 (数据缺失), 降级为试仓模式, 仓位减半"
   ],
-  "confidence": 0.7,
+  "confidence": 0.5,
   "max_positions": 2,
-  "debate_summary": " "
+  "debate_summary": " (降级: 数据缺失, 试仓模式)"
 }

@@ -29,13 +29,23 @@ def check_trailing_stop(monitor, position, current_price, entry_price, atr,
     # 1. 解析 policy dict
     policy_dict = policy.policy if (policy is not None and hasattr(policy, "policy")) else {}
 
-    # 2. ATR 倍数 (三档非线性; guardian 已处理做空 / 行业覆盖)
+    # 2. ATR 倍数 — SSOT 统一读取 (2026-06-05 修复)
+    # 此前 policy.get_atr_multiplier() 读的是 regime 差异化 multiplier (2.5),
+    # 而 position_sync 写 initial_sl 用的是 multiplier_by_profit.initial (4.0),
+    # 导致 L1/L2 显示 4.0 但 L3 触发用 2.5, SL 比预期紧 37.5%.
+    # 修复: 统一读 multiplier_by_profit.initial, 与 position_sync 对齐.
     profit_atr_abs = abs(profit_atr_signed)
+    _exit_rules = policy_dict.get("exit_rules", {}) if isinstance(policy_dict, dict) else {}
+    _atr_stop_cfg = _exit_rules.get("atr_stop", {})
+    _ssot_mult = float(_atr_stop_cfg.get("multiplier_by_profit", {}).get("initial", 4.0))
+
     if policy is not None and hasattr(policy, "get_atr_multiplier"):
         try:
             atr_mult = float(policy.get_atr_multiplier(position.symbol, direction, profit_atr_abs))
+            # 确保不低于 SSOT 配置的 initial multiplier
+            atr_mult = max(atr_mult, _ssot_mult)
         except Exception:
-            atr_mult = 2.0
+            atr_mult = _ssot_mult
     else:
         if profit_atr_signed <= 0:
             # 亏损头寸：禁止追踪止损，交由固定ATR止损管控
@@ -66,6 +76,8 @@ def check_trailing_stop(monitor, position, current_price, entry_price, atr,
                 atr_mult = 1.8 - 0.3 * t
             else:
                 atr_mult = 1.5  # 大盈利最紧凑追踪
+            # SSOT 地板: 亏损头寸追踪不得比初始止损更紧
+            atr_mult = max(atr_mult, _ssot_mult)
 
     # 3. peak/trough 更新 (LONG=最高, SHORT=最低)
     if direction == "LONG":
@@ -80,11 +92,24 @@ def check_trailing_stop(monitor, position, current_price, entry_price, atr,
         trail_state["lowest_price"] = peak_price
 
     # 4. Regime: trail_state / position 注入, 默认 normal
-    regime = "normal"
+    # 2026-06-05 修复: regime 值标准化 — DB 存 "RANGE"/"TREND_UP" 等大写枚举,
+    # 但 regime_mults 用小写键 ("normal"/"trending"), 导致查找永远命中默认值.
+    _raw_regime = ""
     if isinstance(trail_state, dict) and trail_state.get("regime"):
-        regime = str(trail_state["regime"])
+        _raw_regime = str(trail_state["regime"])
+    elif hasattr(position, "market_regime") and getattr(position, "market_regime"):
+        _raw = getattr(position, "market_regime")
+        _raw_regime = _raw.value if hasattr(_raw, "value") else str(_raw)
     elif hasattr(position, "regime") and getattr(position, "regime"):
-        regime = str(getattr(position, "regime"))
+        _raw_regime = str(getattr(position, "regime"))
+    # 标准化映射: 大写枚举 → regime_mults 键
+    _REGIME_TO_KEY = {
+        "RANGE": "normal", "range": "normal", "NORMAL": "normal", "normal": "normal",
+        "TREND_UP": "trending", "TREND_DOWN": "trending", "trending": "trending",
+        "HIGH_VOL": "volatile", "volatile": "volatile", "high_volatility": "volatile",
+        "range_bound": "normal", "RANGE_BOUND": "normal",
+    }
+    regime = _REGIME_TO_KEY.get(_raw_regime, "normal")
 
     # 4.5 Task #55 (2026-05-29): Regime 自适应 atr_mult 调整
     # 在基础 atr_mult (Task #54 修复后的分支逻辑) 之上叠加 regime 乘数；
@@ -95,12 +120,11 @@ def check_trailing_stop(monitor, position, current_price, entry_price, atr,
             "normal": 2.5,
             "trending": 3.5,
             "volatile": 3.0,
-            "range_bound": 2.0,
         })
         regime_mult = float(regime_mults.get(regime, regime_mults.get("normal", 2.5)))
         atr_mult = max(float(atr_mult), regime_mult)
     except Exception as e:
-        logger.debug(f"[regime_adjust] {position.symbol} regime={regime} 调整失败, 沿用基础 atr_mult: {e}")
+        logger.debug(f"[regime_adjust] {position.symbol} regime={regime} (raw={_raw_regime}) 调整失败, 沿用基础 atr_mult: {e}")
 
     # 5. cost_bps 估算 (可选, 失败退化为 0)
     cost_bps = 0.0

@@ -1667,7 +1667,7 @@ class ExitMonitor:
                 else:
                     # Tier 1: 不动 (正常波动区间)
                     atr_mult = float(policy_dict.get("exit_rules", {}).get("atr_stop", {}).get(
-                        "multiplier_by_profit", {}).get("initial", 2.5))
+                        "multiplier_by_profit", {}).get("initial", 4.0))  # 2026-06-05: 2.5→4.0 SSOT对齐
                     _new_sl = entry_price - atr * atr_mult
                     _tier = f"固定(profit={_abs_profit:.1f}ATR, mult={atr_mult:.1f})"
 

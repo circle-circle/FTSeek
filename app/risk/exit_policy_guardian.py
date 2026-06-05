@@ -223,7 +223,7 @@ class ExitPolicyGuardian:
         elif profit_atr >= 0.5:
             base_mult = multipliers.get('profit_05atr', 1.8)
         else:
-            base_mult = multipliers.get('initial', 2.0)
+            base_mult = multipliers.get('initial', 4.0)  # 2026-06-05: 2.0→4.0 SSOT对齐
 
         # 2. 做空更紧 (取 行业/非线性 与 short_override 的较小值)
         if direction == 'SHORT':
@@ -290,7 +290,7 @@ class ExitPolicyGuardian:
             'version': 'fallback-1.0',
             'exit_rules': {
                 'flash_exit': {'enabled': True, 'flash_multiplier_default': 0.8},
-                'atr_stop': {'enabled': True, 'multiplier_by_profit': {'initial': 2.5}},
+                'atr_stop': {'enabled': True, 'multiplier_by_profit': {'initial': 4.0}},  # 2026-06-05: 2.5→4.0 SSOT
                 'breakeven': {'enabled': True, 'trigger_profit_atr': 0.4, 'buffer_pct': 0.15},
                 'chandelier_trail': {'enabled': True, 'activation_profit_atr': 0.8},
                 'scale_out': {'enabled': False},
@@ -298,7 +298,7 @@ class ExitPolicyGuardian:
                 'earnings_guard': {'enabled': False},
             },
             'short_overrides': {'atr_multiplier': 2.0, 'max_loss_pct': 10.0},
-            'sector_overrides': {'default': {'atr_multiplier': 2.5}},
+            'sector_overrides': {'default': {'atr_multiplier': 3.0}},  # 2026-06-05: 2.5→3.0 与yaml:224对齐
         }
 
 
