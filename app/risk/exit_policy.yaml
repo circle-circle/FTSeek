@@ -40,10 +40,11 @@ progressive_trailing:
     tier2_max: 2.0      # 1.0~2.0 ATR: 紧凑追踪 (保护初步利润)
     tier3_max: 4.0      # 2.0~4.0 ATR: 标准追踪 (让利润跑)
     # >=4.0 ATR: 宽松追踪 (大趋势给更多空间)
-  tier3_compact_multiplier: 3.0    # 1.0~2.0 ATR: peak + 3.0×ATR (原1.5, 太紧)
-  tier2_compact_multiplier: 2.5    # 2.0~4.0 ATR: peak + 2.5×ATR (原2.0, 太紧)
-  tier4_loose_multiplier: 2.0      # ≥4.0 ATR: peak + 2.0×ATR (大趋势宽松)
+  tier3_compact_multiplier: 2.0    # 1.0~2.0 ATR: peak + 2.0×ATR (原3.0, 收紧追踪)
+  tier2_compact_multiplier: 2.0    # 2.0~4.0 ATR: peak + 2.0×ATR (原3.0, 收紧追踪)
+  tier4_loose_multiplier: 1.5      # ≥4.0 ATR: peak + 1.5×ATR (原2.0, 大赢家紧锁)
   breakeven_buffer_pct: 0.001       # 保本 buffer = 入场价 × 0.1%
+  # 2026-06-06: SHORT floor 从 entry+4.0×ATR → entry-1.0×ATR (代码硬编码, 非配置项)
   fallback_long_sl_pct: 0.92        # 兜底 LONG SL (无 ATR/policy 时)
   fallback_short_sl_pct: 1.08       # 兜底 SHORT SL
   # P1 修复 (2026-05-29): effective_atr 下限 (防止 session_ratio 极端缩水)
@@ -143,7 +144,7 @@ exit_rules:
     enabled: true
     tier_mode: atr
     atr_tiers:
-      - profit_atr: 2.0             # 根因修复 (2026-06-05): 1.0→2.0 ATR, 让利润跑更远再减仓
+      - profit_atr: 1.5             # 2026-06-06: 2.0→1.5 ATR, 数据证明大部分盈利交易 max profit 在 1-2 ATR
         close_pct: 50               # 平半仓
         ratchet_sl_pct: 0.0         # 止损移至成本 (保本)
     tiers: []                       # pct模式不使用
@@ -170,7 +171,8 @@ exit_rules:
     # ── 分层退出 (2026-06-04 简化) ──
     loss_flat: false                # 关键变化: 亏损不再强制平仓, 保留过夜
     overnight_loss_stop_pct: 0.03   # 亏损过夜硬止损: 收盘价-3%
-    close_profit_atr: 0.5           # 盈利>=0.5ATR → 全平(落袋为安)
+    close_profit_atr: 2.0           # 2026-06-06: 0.5→2.0 ATR, 让交易有时间跑到 scale_out
+                                     # 0.5ATR 全库306笔仅1笔 scale_out 触发过
     half_exit_below_atr: 0.5        # 微利(0~0.5ATR) → 减半仓
     hold_threshold_atr: 99          # 禁用: 不再保留任何仓位过夜(盈利全平, 亏损保留)
     quarter_exit_below_atr: 99      # 不再使用
@@ -182,7 +184,7 @@ exit_rules:
     enabled: true
     mode: adaptive                  # adaptive | legacy
     profit_exit:
-      min_profit_atr: 0.5           # P1 (2026-06-04): 1.0→0.5ATR, 盈利落袋为安
+      min_profit_atr: 2.0           # 2026-06-06: 0.5→2.0 ATR, 让交易有时间跑到 scale_out + trailing
       close_ratio: 1.0
     breakeven_exit:
       tolerance_atr: 0.3            # |PnL| < 0.3 ATR → 持平减半仓

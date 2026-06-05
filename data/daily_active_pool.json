@@ -1,41 +1,31 @@
 {
-  "timestamp": "2026-06-05T15:15:26.266246+00:00",
+  "timestamp": "2026-06-05T15:43:57.709000+00:00",
   "entries": [
-    {
-      "code": "US.SPY",
-      "source": "POSITION",
-      "added_at": "2026-06-04T17:28:15.067655+00:00",
-      "expires_at": null,
-      "metadata": {
-        "direction": "SHORT",
-        "quantity": 3.0
-      }
-    },
     {
       "code": "US.QQQ",
       "source": "MANUAL",
-      "added_at": "2026-06-05T15:15:11.854240+00:00",
+      "added_at": "2026-06-05T15:17:51.332102+00:00",
       "expires_at": null,
       "metadata": {}
     },
     {
       "code": "US.BABA",
       "source": "POSITION",
-      "added_at": "2026-06-05T15:15:11.856502+00:00",
+      "added_at": "2026-06-05T15:17:51.334526+00:00",
       "expires_at": null,
       "metadata": {}
     },
     {
       "code": "US.JD",
       "source": "MANUAL",
-      "added_at": "2026-06-05T15:15:11.854250+00:00",
+      "added_at": "2026-06-05T15:17:51.332112+00:00",
       "expires_at": null,
       "metadata": {}
     },
     {
       "code": "US.PDD",
       "source": "POSITION",
-      "added_at": "2026-06-05T15:15:11.856506+00:00",
+      "added_at": "2026-06-05T15:17:51.334529+00:00",
       "expires_at": null,
       "metadata": {
         "direction": "LONG",
@@ -43,68 +33,58 @@
       }
     },
     {
-      "code": "US.NTES",
-      "source": "POSITION",
-      "added_at": "2026-06-04T18:26:08.468212+00:00",
-      "expires_at": null,
-      "metadata": {
-        "direction": "SHORT",
-        "quantity": 65.0
-      }
-    },
-    {
       "code": "US.BIDU",
       "source": "MANUAL",
-      "added_at": "2026-06-05T15:15:11.854261+00:00",
+      "added_at": "2026-06-05T15:17:51.332123+00:00",
       "expires_at": null,
       "metadata": {}
     },
     {
       "code": "US.AAPL",
       "source": "POSITION",
-      "added_at": "2026-06-05T15:15:11.856480+00:00",
+      "added_at": "2026-06-05T15:17:51.334507+00:00",
       "expires_at": null,
       "metadata": {}
     },
     {
       "code": "US.MSFT",
       "source": "POSITION",
-      "added_at": "2026-06-05T15:15:11.856488+00:00",
+      "added_at": "2026-06-05T15:17:51.334511+00:00",
       "expires_at": null,
       "metadata": {}
     },
     {
       "code": "US.NVDA",
       "source": "POSITION",
-      "added_at": "2026-06-05T15:15:11.856475+00:00",
+      "added_at": "2026-06-05T15:17:51.334502+00:00",
       "expires_at": null,
       "metadata": {}
     },
     {
       "code": "US.AMZN",
       "source": "POSITION",
-      "added_at": "2026-06-05T15:15:11.856499+00:00",
+      "added_at": "2026-06-05T15:17:51.334522+00:00",
       "expires_at": null,
       "metadata": {}
     },
     {
       "code": "US.META",
       "source": "POSITION",
-      "added_at": "2026-06-05T15:15:11.856495+00:00",
+      "added_at": "2026-06-05T15:17:51.334519+00:00",
       "expires_at": null,
       "metadata": {}
     },
     {
       "code": "US.TSLA",
       "source": "POSITION",
-      "added_at": "2026-06-05T15:15:11.856453+00:00",
+      "added_at": "2026-06-05T15:17:51.334480+00:00",
       "expires_at": null,
       "metadata": {}
     },
     {
       "code": "US.AMD",
       "source": "MANUAL",
-      "added_at": "2026-06-05T15:15:11.854308+00:00",
+      "added_at": "2026-06-05T15:17:51.332149+00:00",
       "expires_at": null,
       "metadata": {}
     },
@@ -121,63 +101,63 @@
     {
       "code": "US.TSM",
       "source": "MANUAL",
-      "added_at": "2026-06-05T15:15:11.854317+00:00",
+      "added_at": "2026-06-05T15:17:51.332156+00:00",
       "expires_at": null,
       "metadata": {}
     },
     {
       "code": "US.NIO",
       "source": "MANUAL",
-      "added_at": "2026-06-05T15:15:11.854321+00:00",
+      "added_at": "2026-06-05T15:17:51.332188+00:00",
       "expires_at": null,
       "metadata": {}
     },
     {
       "code": "US.JPM",
       "source": "MANUAL",
-      "added_at": "2026-06-05T15:15:11.854325+00:00",
+      "added_at": "2026-06-05T15:17:51.332192+00:00",
       "expires_at": null,
       "metadata": {}
     },
     {
       "code": "US.LLY",
       "source": "MANUAL",
-      "added_at": "2026-06-05T15:15:11.854329+00:00",
+      "added_at": "2026-06-05T15:17:51.332196+00:00",
       "expires_at": null,
       "metadata": {}
     },
     {
       "code": "US.WMT",
       "source": "MANUAL",
-      "added_at": "2026-06-05T15:15:11.854332+00:00",
+      "added_at": "2026-06-05T15:17:51.332200+00:00",
       "expires_at": null,
       "metadata": {}
     },
     {
       "code": "US.MU",
       "source": "MANUAL",
-      "added_at": "2026-06-05T15:15:11.854336+00:00",
+      "added_at": "2026-06-05T15:17:51.332204+00:00",
       "expires_at": null,
       "metadata": {}
     },
     {
       "code": "US.SNDK",
       "source": "MANUAL",
-      "added_at": "2026-06-05T15:15:11.854340+00:00",
+      "added_at": "2026-06-05T15:17:51.332208+00:00",
       "expires_at": null,
       "metadata": {}
     },
     {
       "code": "US.GOOG",
       "source": "MANUAL",
-      "added_at": "2026-06-05T15:15:11.854344+00:00",
+      "added_at": "2026-06-05T15:17:51.332212+00:00",
       "expires_at": null,
       "metadata": {}
     },
     {
       "code": "US.GOOGL",
       "source": "POSITION",
-      "added_at": "2026-06-05T15:15:11.856492+00:00",
+      "added_at": "2026-06-05T15:17:51.334515+00:00",
       "expires_at": null,
       "metadata": {}
     },
@@ -188,7 +168,7 @@
       "expires_at": null,
       "metadata": {
         "direction": "SHORT",
-        "quantity": 921.0
+        "quantity": 920.0
       }
     },
     {
@@ -280,12 +260,22 @@
         "direction": "LONG",
         "quantity": 807.0
       }
+    },
+    {
+      "code": "US.XLV",
+      "source": "POSITION",
+      "added_at": "2026-06-05T15:43:57.708981+00:00",
+      "expires_at": null,
+      "metadata": {
+        "direction": "LONG",
+        "quantity": 1293.0
+      }
     }
   ],
   "summary": {
-    "total": 34,
+    "total": 33,
     "breakdown": {
-      "POSITION": 22,
+      "POSITION": 21,
       "PLAN": 0,
       "MANUAL": 12,
       "INTRADAY_ALERT": 0
