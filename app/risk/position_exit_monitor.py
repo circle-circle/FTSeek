@@ -1695,7 +1695,12 @@ class ExitMonitor:
                 else:
                     position.current_sl = _new_sl
 
-                if _tier and not _tier.startswith("固定"):
+                if _tier and _tier.startswith("固定"):
+                    logger.debug(
+                        f"[SL·渐进] {position.symbol} LONG {_tier} "
+                        f"SL: ${_old_sl:.2f}→${position.current_sl:.2f}"
+                    )
+                elif _tier:
                     logger.info(
                         f"[SL·渐进] {position.symbol} LONG {_tier} "
                         f"SL: ${_old_sl:.2f}→${position.current_sl:.2f} "
@@ -1744,7 +1749,12 @@ class ExitMonitor:
                 else:
                     position.current_sl = _new_sl
 
-                if _tier and not _tier.startswith("固定"):
+                if _tier and _tier.startswith("固定"):
+                    logger.debug(
+                        f"[SL·渐进] {position.symbol} SHORT {_tier} "
+                        f"SL: ${_old_sl:.2f}→${position.current_sl:.2f}"
+                    )
+                elif _tier:
                     logger.info(
                         f"[SL·渐进] {position.symbol} SHORT {_tier} "
                         f"SL: ${_old_sl:.2f}→${position.current_sl:.2f} "
