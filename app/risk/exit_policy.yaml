@@ -26,19 +26,23 @@ design_rationale: "ATR动态止损 + 分层止盈 + 行业差异化 + 日内短�
 progressive_trailing:
   enabled: true                   # 2026-06-05 重新启用: chandelier/breakeven已禁用, 不再冲突
   # 唯一的追踪止损机制, 让利润奔跑
-  # 4 档利润追踪:
-  #   Tier 1 (<1.0 ATR): 固定 SL = entry - 4.0×ATR (由 atr_stop 管理, 不移动)
-  #   Tier 2 (1.0-2.0 ATR): 紧凑追踪 peak - 1.5×ATR (保护初步利润)
-  #   Tier 3 (2.0-4.0 ATR): 标准追踪 peak - 2.0×ATR (让利润跑)
-  #   Tier 4 (≥4.0 ATR): 宽松追踪 peak - 2.5×ATR (大趋势不轻易退出)
+  # 4 档利润追踪 (2026-06-05 重新设计):
+  #   核心原则: SL 永远不得紧于 atr_stop.initial (4.0×ATR from entry)
+  #   因为单调保护会锁定最紧的SL, 如果追踪倍数<4.0, SL会被永久锁死在过紧位置
+  #   设计: 所有追踪点 >= 4.0×ATR (从peak计算), 确保SL至少离entry 4.0×ATR
+  #
+  #   Tier 1 (<1.0 ATR): 固定 SL = entry + 4.0×ATR (由 atr_stop 管理, 不移动)
+  #   Tier 2 (1.0-2.0 ATR): peak + 3.0×ATR (profit=1.5ATR时: SL=entry+4.5ATR ✅)
+  #   Tier 3 (2.0-4.0 ATR): peak + 2.5×ATR (profit=3.0ATR时: SL=entry+5.5ATR ✅)
+  #   Tier 4 (≥4.0 ATR): peak + 2.0×ATR (profit=5.0ATR时: SL=entry+7.0ATR ✅)
   tier_thresholds_atr:
     tier1_max: 1.0      # <1.0 ATR: 不动 (固定 SL, 让 atr_stop 管理)
     tier2_max: 2.0      # 1.0~2.0 ATR: 紧凑追踪 (保护初步利润)
     tier3_max: 4.0      # 2.0~4.0 ATR: 标准追踪 (让利润跑)
     # >=4.0 ATR: 宽松追踪 (大趋势给更多空间)
-  tier3_compact_multiplier: 1.5    # 1.0~2.0 ATR: peak - 1.5×ATR
-  tier2_compact_multiplier: 2.0    # 2.0~4.0 ATR: peak - 2.0×ATR (让利润跑)
-  tier4_loose_multiplier: 2.5      # ≥4.0 ATR: peak - 2.5×ATR (大趋势宽松)
+  tier3_compact_multiplier: 3.0    # 1.0~2.0 ATR: peak + 3.0×ATR (原1.5, 太紧)
+  tier2_compact_multiplier: 2.5    # 2.0~4.0 ATR: peak + 2.5×ATR (原2.0, 太紧)
+  tier4_loose_multiplier: 2.0      # ≥4.0 ATR: peak + 2.0×ATR (大趋势宽松)
   breakeven_buffer_pct: 0.001       # 保本 buffer = 入场价 × 0.1%
   fallback_long_sl_pct: 0.92        # 兜底 LONG SL (无 ATR/policy 时)
   fallback_short_sl_pct: 1.08       # 兜底 SHORT SL

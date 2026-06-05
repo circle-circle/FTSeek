@@ -61891,3 +61891,1009 @@ API: http://localhost:8901
 2026-06-05 23:13:50,920 [app.storage.trade_store] INFO: [TruthSource] 仓位写入 US.BWXT v62 src=auto_main action=update_trail
 2026-06-05 23:13:50,961 [app.storage.trade_store] INFO: [TruthSource] 仓位写入 US.ARM v62 src=auto_main action=update_trail
 2026-06-05 23:13:50,979 [app.storage.trade_store] INFO: [TruthSource] 仓位写入 US.XLK v62 src=auto_main action=update_trail
+2026-06-05 23:14:06,999 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:14:07,052 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:14:07,131 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:14:07,177 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:14:07,257 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:14:07,300 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:14:07,328 [ftseek.exit_monitor] INFO: [SL·渐进] US.NTES SHORT 紧凑追踪(profit=1.5ATR, mult=2.0) SL: $124.79→$124.79 entry=$123.63 low=$119.16
+2026-06-05 23:14:07,378 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:14:07,419 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:14:07,507 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:14:07,557 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:14:07,643 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:14:07,700 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:14:07,767 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:14:07,814 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:14:07,843 [ftseek.exit_monitor] INFO: [SL·渐进] US.AVGO SHORT 紧凑追踪(profit=1.3ATR, mult=2.0) SL: $414.28→$414.28 entry=$413.87 low=$397.52
+2026-06-05 23:14:07,894 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:14:07,944 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:14:08,012 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:14:08,060 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:14:08,127 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:14:08,171 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:14:08,257 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:14:08,301 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:14:08,367 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:14:08,410 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:14:08,435 [ftseek.exit_monitor] INFO: [SL·渐进] US.IWM SHORT 紧凑追踪(profit=1.1ATR, mult=2.0) SL: $294.01→$294.01 entry=$290.95 low=$285.68
+2026-06-05 23:14:08,483 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:14:08,527 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:14:08,603 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:14:08,655 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:14:08,699 [app.storage.trade_store] INFO: [TruthSource] 仓位写入 US.BWXT v63 src=auto_main action=update_trail
+2026-06-05 23:14:08,714 [app.storage.trade_store] INFO: [TruthSource] 仓位写入 US.ARM v63 src=auto_main action=update_trail
+2026-06-05 23:14:08,727 [app.storage.trade_store] INFO: [TruthSource] 仓位写入 US.XLY v36 src=auto_main action=update_trail
+2026-06-05 23:14:08,730 [app.storage.trade_store] INFO: [TruthSource] 仓位写入 US.XLK v63 src=auto_main action=update_trail
+2026-06-05 23:14:09,811 [ftseek_us.main] INFO: 收到停止信号，正在关闭...
+2026-06-05 23:14:09,811 [ftseek_us.main] INFO: [shutdown] 开始优雅关闭流程...
+2026-06-05 23:14:09,811 [app.core.scheduler_core] INFO: 停止 FTSeek-US 服务...
+2026-06-05 23:14:15,370 [app.orb.engine] INFO: [ORB] US.IWM 滚动区间更新: H=287.84 L=287.20 W=0.22% ATR=0.525 Q=0.50
+2026-06-05 23:14:15,464 [app.orb.engine] INFO: [ORB] US.DIA 滚动区间更新: H=418.67 L=416.74 W=0.46% ATR=0.268 Q=0.85
+2026-06-05 23:14:15,485 [app.orb.engine] INFO: [ORB] US.XLE 滚动区间更新: H=58.55 L=58.51 W=0.09% ATR=0.044 Q=0.45
+2026-06-05 23:14:15,544 [app.orb.engine] INFO: [ORB] US.XLF 滚动区间更新: H=52.39 L=52.36 W=0.06% ATR=0.025 Q=0.45
+2026-06-05 23:14:15,565 [app.orb.engine] INFO: [ORB] US.XLK 滚动区间更新: H=187.12 L=186.44 W=0.36% ATR=0.550 Q=0.70
+2026-06-05 23:14:15,687 [app.orb.engine] INFO: [ORB] US.XLV 滚动区间更新: H=130.72 L=130.25 W=0.37% ATR=0.125 Q=0.79
+2026-06-05 23:14:15,703 [app.orb.engine] INFO: [ORB] US.XLY 滚动区间更新: H=116.84 L=116.74 W=0.09% ATR=0.081 Q=0.30
+2026-06-05 23:14:15,721 [app.orb.engine] INFO: [ORB] US.XLI 滚动区间更新: H=176.29 L=176.13 W=0.09% ATR=0.144 Q=0.30
+2026-06-05 23:14:15,721 [app.orb.engine] INFO: [ORB] 滚动区间构建完成: 8/8 个标的
+2026-06-05 23:14:19,812 [ftseek_us.subscription_manager] INFO: [SubscriptionManager] 美股自动循环停止
+2026-06-05 23:14:20,733 [app.orb.engine] INFO: [ORB] 引擎已停止
+2026-06-05 23:14:20,734 [app.core.scheduler_core] INFO: [ORB] 引擎已停止
+2026-06-05 23:14:20,743 [app.analysis.strategy_attribution] INFO: [归因层] 已初始化, 数据目录: /root/.hermes/ftseek/data/attribution
+2026-06-05 23:14:20,745 [app.analysis.strategy_attribution] INFO: [归因层] 日报已写出: conflicts=0, main_pnl=0.0000, scalping_pnl=0.0000
+2026-06-05 23:14:20,746 [app.core.scheduler_core] INFO: [调度器] 归因数据已刷新
+2026-06-05 23:14:20,746 [app.core.scheduler_core] INFO: [调度器] 服务停止
+2026-06-05 23:14:20,746 [ftseek_us.main] INFO: [shutdown] scheduler 已停止
+2026-06-05 23:14:21,308 [ftseek_us.config_mgmt.drift_detector] INFO: [DriftDetector] 已停止 | 累计漂移=0
+2026-06-05 23:14:21,362 [ftseek_us.config_mgmt.hot_reloader] INFO: [HotReloader] 已停止 | 重载=0 次 | 错误=0 次
+2026-06-05 23:14:21,366 [ftseek_us.main] INFO: [shutdown] EventStore 连接已关闭
+2026-06-05 23:14:21,370 [app.data.alphavantage_provider] INFO: [AlphaVantage] 连接已关闭
+2026-06-05 23:14:21,373 [ftseek_us.futu_lv3] INFO: [FutuLV3] 已断开 OpenD 连接
+2026-06-05 23:14:21,378 [app.data.market_data_router] INFO: [MarketDataRouter] Futu LV3 连接已断开
+2026-06-05 23:14:21,385 [app.data.market_data_router] INFO: [MarketDataRouter] 所有连接已关闭
+2026-06-05 23:14:21,386 [ftseek_us.main] INFO: [shutdown] DataRouter 已关闭
+2026-06-05 23:14:21,386 [ftseek_us.main] INFO: [shutdown] PushHub 已关闭 (聚合桶已 flush)
+2026-06-05 23:14:21,408 | 3312672 | 140290786584128 | [open_context_base.py:516] on_disconnect: Disconnected: conn=0(8) reason=CallClose
+2026-06-05 23:14:21,420 [ftseek_us.main] INFO: [shutdown] PostTradeHook stats: {'submitted': 0, 'completed': 0, 'failed': 0}
+2026-06-05 23:14:21,468 [app.notifier.dingtalk] INFO: [钉钉] send_text 成功: [INFO] FTSeek-US 正在关闭
+2026-06-05 23:14:21,469 [ftseek_us.main] INFO: [shutdown] 执行强制退出 (os._exit)
+========================================
+  FTSeek-US 美股交易平台
+========================================
+✅ OpenD 连通性 OK (127.0.0.1:11111, via /dev/tcp)
+✅ Python venv: Python 3.8.17 @ /opt/ftseek/FTSeek-US/venv
+检查依赖（lock 模式）...
+⚠️  unified_config.yaml 校验未通过（非阻断），请稍后核查
+✅ 配置完整性 OK
+启动 FTSeek-US 服务...
+API: http://localhost:8901
+日志：logs/ftseek_us.log
+
+2026-06-05 23:14:24,357 [ftseek_us.main] INFO: [PreFlight] OpenD 连通性检查通过 (127.0.0.1:11111)
+2026-06-05 23:14:24,357 [ftseek_us.main] INFO: [安全确认] ✅ 当前运行模式: 模拟盘 (TRADE_ENV=1 | FUTU_TRADE_ENV=1)
+2026-06-05 23:14:24,357 [ftseek_us.main] INFO: [安全确认] ✅ 模拟盘验证期 — 持续收集数据、验证策略，禁止自动切换实盘
+2026-06-05 23:14:25,659 [config.config_loader] INFO: ✅ 统一配置已加载: /opt/ftseek/FTSeek-US/config/unified_config.yaml
+2026-06-05 23:14:25,891 [app.core.config_container] INFO: [ConfigContainer] 已加载 60 个配置节
+2026-06-05 23:14:25,900 [app.decision.strategies.base] INFO: [策略注册] price_break v1.0.0
+2026-06-05 23:14:25,901 [app.decision.strategies.base] INFO: [策略注册] ma_cross v1.0.0
+2026-06-05 23:14:25,903 [app.decision.strategies.base] INFO: [策略注册] rsi_rebound v1.0.0
+[Idempotency] Loaded 1 records from DB
+2026-06-05 23:14:25,972 | 3313963 | 139974866633024 | [open_context_base.py:409] _init_connect_sync: New connect ready: conn=7468681646704605598(1) context=<futu.quote.open_quote_context.OpenQuoteContext object at 0x7f4e532e23a0>
+2026-06-05 23:14:25,975 | 3313963 | 139974866633024 | [open_context_base.py:409] _init_connect_sync: New connect ready: conn=7468681646727931405(2) context=<futu.trade.open_trade_context.OpenSecTradeContext object at 0x7f4e532f07c0>
+2026-06-05 23:14:25,980 [app.execution.broker_adapter] INFO: [富途] 模拟交易环境，无需解锁
+2026-06-05 23:14:25,985 [app.execution.broker_adapter] INFO: [富途] 模拟账户验证通过: 18297050
+2026-06-05 23:14:25,986 [app.execution.broker_adapter] INFO: [富途] 连接成功 127.0.0.1:11111 env=模拟
+2026-06-05 23:14:26,013 [app.risk.circuit_breaker] INFO: [熔断器] 注册数据源: default (weight=1.0)
+2026-06-05 23:14:26,014 [ftseek_us.position_limits] INFO: [PositionLimits] 初始化: max_symbol=25%, max_direction=65%, max_total=80%
+2026-06-05 23:14:26,041 [app.data.twelvedata_provider] INFO: [TwelveData] 初始化完成 | API Key=✅ | Cache TTL=900s
+2026-06-05 23:14:26,041 [app.data.finnhub_provider] INFO: [Finnhub] 初始化完成 | API Key=✅ | Cache TTL=300s
+2026-06-05 23:14:26,042 [app.data.alphavantage_provider] INFO: [AlphaVantage] 初始化完成 | API Key=✅ | Premium=False | Cache TTL=900s
+2026-06-05 23:14:26,042 [app.data.market_data_router] INFO: [MarketDataRouter] Futu LV3 提供商已初始化
+2026-06-05 23:14:26,042 [app.data.market_data_router] INFO: [MarketDataRouter] 初始化完成 | 启用的数据源：['TwelveData', 'Finnhub', 'AlphaVantage'] | Cache TTL=900s
+2026-06-05 23:14:26,042 [app.agents.voting.voting_coordinator] INFO: [VotingCache] 初始化 ttl=300s price_threshold=0.800% max_entries=50
+2026-06-05 23:14:26,042 [app.agents.debate.debate_engine] INFO: [辩论引擎-P0优化] 已初始化: 多头=qwen-max, 空头=deepseek-v4-pro, 快速模式=True
+2026-06-05 23:14:26,045 [app.core.scheduler_core] INFO: [调度器] 配置已加载 | scan=5min monitor=0.25min max_pos=12 min_score=30 min_conf=0.30 min_consensus=0.25 cooldown=1min
+2026-06-05 23:14:26,045 [app.core.scheduler_core] INFO: [配置SSOT] min_conf=0.30 min_strength=30 max_total_pos=0.80 main_pct=0.80 scalping_pct=0.00 stop_loss=0.045 take_profit=0.025 atr_x=2.50
+2026-06-05 23:14:26,047 [app.storage.vote_tables] INFO: 投票日志表初始化完成：data/ftseek.db
+2026-06-05 23:14:26,048 [app.decision.vote_logger] INFO: VoteLogger 初始化完成
+2026-06-05 23:14:26,048 [app.decision.consensus] WARNING: [ConsensusEngine] ⚠️ 此模块当前未接入信号管线 (generate_consensus 零调用), VIX/regime 自适应阈值不生效。详见 RFC 提案。
+2026-06-05 23:14:26,065 [app.execution.short_strategy] INFO: [做空路由器] 已初始化 | 默认方法=options_put | 模拟盘强制期权=False
+2026-06-05 23:14:26,067 [app.exit.option_quick_exit] INFO: [OptionQuickExit] 从 DB 恢复 1 个期权峰值跟踪
+2026-06-05 23:14:26,068 [app.core.scheduler_core] INFO: [调度器] 做空策略路由器 + 快速退出引擎已初始化
+2026-06-05 23:14:26,080 [app.coordinator.exit_dispatcher] INFO: [ExitDispatcher] 注册 main → main_exit
+2026-06-05 23:14:26,081 [app.coordinator.exit_dispatcher] INFO: [ExitDispatcher] 注册 scalping → scalping_exit
+2026-06-05 23:14:26,081 [app.coordinator.exit_dispatcher] INFO: [ExitDispatcher] 注册 fast_lane → fast_lane_exit
+2026-06-05 23:14:26,081 [app.coordinator.exit_dispatcher] INFO: [ExitDispatcher] 注册 llm_plan → llm_plan_exit
+2026-06-05 23:14:26,091 [app.core.scheduler_core] INFO: [调度器·Coordinator] 已注册 4 个 adapter: ['main(p=5)', 'scalping(p=10)', 'fast_lane(p=8)', 'llm_plan(p=3)']
+2026-06-05 23:14:26,091 [app.core.scheduler_core] INFO: ══════════════════════════════════════════════════════════════════════
+2026-06-05 23:14:26,091 [app.core.scheduler_core] INFO: ║ Coordinator Phase A — 多策略协调层启动
+2026-06-05 23:14:26,091 [app.core.scheduler_core] INFO: ║   enabled       : True
+2026-06-05 23:14:26,091 [app.core.scheduler_core] INFO: ║   observe_only  : True  (true=不阻断只记录 / false=强制)
+2026-06-05 23:14:26,091 [app.core.scheduler_core] INFO: ║   max_total_pct : 0.8
+2026-06-05 23:14:26,091 [app.core.scheduler_core] INFO: ║   caps          : {'main': 0.8, 'scalping': 0.0, 'llm_plan': 0.0}
+2026-06-05 23:14:26,091 [app.core.scheduler_core] INFO: ║   adapters      : [('main', 5), ('scalping', 10), ('fast_lane', 8), ('llm_plan', 3)]
+2026-06-05 23:14:26,091 [app.core.scheduler_core] INFO: ║   reconcile     : every 300s
+2026-06-05 23:14:26,091 [app.core.scheduler_core] INFO: ║   audit_db      : signal_arbitration in decisions.db
+2026-06-05 23:14:26,091 [app.core.scheduler_core] INFO: ║   watchdog      : scan_loop + monitor_loop 心跳监控
+2026-06-05 23:14:26,091 [app.core.scheduler_core] INFO: ║ 开盘验证: scripts/coordinator_status.py --all
+2026-06-05 23:14:26,091 [app.core.scheduler_core] INFO: ══════════════════════════════════════════════════════════════════════
+2026-06-05 23:14:26,096 [app.observability.watchdog] INFO: [Watchdog] 注册心跳: scan_loop threshold=1500s
+2026-06-05 23:14:26,096 [app.observability.watchdog] INFO: [Watchdog] 注册心跳: monitor_loop threshold=75.0s
+2026-06-05 23:14:26,097 [app.observability.watchdog] INFO: [Watchdog] 启动 — 检查间隔 60.0s
+2026-06-05 23:14:26,097 [app.core.scheduler_core] INFO: [Watchdog] 已启动 — scan=5min, monitor=0.25min
+2026-06-05 23:14:26,097 [app.core.scheduler_core] INFO: [T6·reconcile] 后台线程已启动 (interval=300s)
+2026-06-05 23:14:26,097 [app.core.scheduler_core] INFO: [调度器] position_store 已注入 RiskEngine (仓位限制检查已激活)
+2026-06-05 23:14:26,103 [ftseek.capital_safety] INFO: [资本安全] 状态已加载 | 净值=$1,070,105 | 回撤=-2.4% | 水位=green
+2026-06-05 23:14:26,103 [ftseek.capital_safety] INFO: [资本安全] 初始化 (模拟) | 初始资金=$100,000 | 单笔最大风险=4% | 总风险上限=12%
+2026-06-05 23:14:26,103 [app.core.scheduler_core] INFO: [调度器] capital_safety 已注入 RiskEngine (总敞口计算修复)
+2026-06-05 23:14:26,103 [app.core.scheduler_core] INFO: [调度器] broker_adapter 已注入 RiskEngine (方向敞口拆分已激活)
+2026-06-05 23:14:26,106 [app.storage.trade_store] INFO: [TradeStore] 交易记录表初始化完成
+2026-06-05 23:14:26,108 [app.core.scheduler_core] INFO: [调度器] LessonInjector 已初始化 — 10 条活跃教训
+2026-06-05 23:14:26,108 [app.core.scheduler_core] INFO: [调度器] lesson_injector 已注入 RiskEngine (教训约束检查已激活)
+2026-06-05 23:14:26,110 [app.utils.watchlist_manager] INFO: ✅ 股票名单已从 unified_config.yaml 加载
+2026-06-05 23:14:26,110 [app.core.scheduler_core] INFO: [调度器] 从 watchlist_us.json 加载 36 只基础股票
+2026-06-05 23:14:26,112 [app.core.scheduler_core] INFO: [调度器] 合并动态池: 0 只活跃 -> 总计 36 只
+2026-06-05 23:14:26,129 [ftseek_us.news_v2.pipeline] INFO: [Pipeline] 添加新闻源: Finnhub 突发新闻 (finnhub_news)
+2026-06-05 23:14:26,129 [ftseek_us.news_v2.pipeline] INFO: [Pipeline] 添加新闻源: SEC EDGAR 公告 (sec_edgar)
+2026-06-05 23:14:26,130 [ftseek_us.news_v2.pipeline] INFO: [Pipeline] 添加新闻源: RSSHub 美股新闻聚合 (rsshub_us)
+2026-06-05 23:14:26,130 [app.core.scheduler_core] INFO: [NewsV2] RSSHub 美股源已添加 (WSJ/Reuters/Fed)
+2026-06-05 23:14:26,291 [ftseek_us.news_v2.pipeline] INFO: [Pipeline] 添加新闻源: HKEX 港交所披露易 (hkex_news)
+2026-06-05 23:14:26,291 [app.core.scheduler_core] INFO: [Catalyst] HKEX 港交所源已添加 (120s轮询)
+2026-06-05 23:14:26,293 [ftseek_us.news_v2.pipeline] INFO: [Pipeline] 添加新闻源: CSRC 证监会官网 (csrc_news)
+2026-06-05 23:14:26,293 [app.core.scheduler_core] INFO: [Catalyst] CSRC 证监会源已添加 (300s轮询)
+2026-06-05 23:14:26,293 [app.core.scheduler_core] WARNING: [NewsV2] CN 源添加失败 (降级运行): No module named 'app.core.config'
+2026-06-05 23:14:26,301 [app.factors.registry] INFO: [FactorRegistry] 初始化完成
+2026-06-05 23:14:26,302 [app.factors.registry] INFO: [FactorRegistry] 已注册: SSS (tf=15min, v1.0, params=56 combinations)
+2026-06-05 23:14:26,302 [app.factors.registry] INFO: [FactorRegistry] 已注册: GDIAN (tf=15min, v1.0, params=32 combinations)
+2026-06-05 23:14:26,302 [app.factors.registry] INFO: [FactorRegistry] 已注册: MFFF (tf=15min, v1.0, params=48 combinations)
+2026-06-05 23:14:26,308 [ftseek_us.news_v2.pipeline] INFO: [Pipeline] 地缘预筛器已初始化
+2026-06-05 23:14:26,308 [app.core.scheduler_core] INFO: [NewsV2] 数据收集器已挂接 + 地缘预筛器已激活
+2026-06-05 23:14:26,308 [app.core.scheduler_core] INFO: [NewsV2] 管线已初始化 (observe 模式) | watchlist=36
+2026-06-05 23:14:26,322 [ftseek_us.risk.us_risk_pipeline] INFO: [USRiskPipeline] 构建 9 个检查 | per_check_timeout=5.0s total=30.0s critical=['buyingpowercheck', 'circuitbreakercheck', 'drawdowncheck', 'marketcircuitcheck', 'positionlimitcheck']
+2026-06-05 23:14:26,322 [app.core.scheduler_core] INFO: [USRiskPipeline] 已初始化 (9 个检查)
+2026-06-05 23:14:26,324 [ftseek.us_pipeline.earnings_calendar] WARNING: [财报日历] 使用静态 KEY_US_SYMBOLS fallback
+2026-06-05 23:14:26,326 [ftseek.us_pipeline.earnings_calendar] INFO: 获取财报日历 (horizon=3month)...
+2026-06-05 23:14:35,951 [ftseek.us_pipeline.earnings_calendar] INFO: 获取到 6387 条财报数据
+2026-06-05 23:14:35,956 [ftseek_us.risk.vix_monitor] INFO: VIX 监控器已初始化 | 缓存 TTL=180s | 退避策略 60-480s
+2026-06-05 23:14:35,957 [app.core.scheduler_core] INFO: [VIX Monitor] 已初始化 (阈值: 正常<20 / 警戒<25 / 高波动<30 / 极端≥40)
+2026-06-05 23:14:35,959 [app.analysis.market_state] INFO: 市场状态检查器已初始化
+2026-06-05 23:14:35,959 [app.core.shared_kernel] INFO: [SharedKernel] 全局共享内核已初始化
+2026-06-05 23:14:35,959 [app.core.scheduler_core] INFO: [SharedKernel] 已绑定 VIX 数据源 (market_state)
+2026-06-05 23:14:35,959 [app.core.scheduler_core] INFO: [Scalping] 总开关关闭 (scalping.enabled=false)
+2026-06-05 23:14:35,967 [app.orb.engine] INFO: [ORB] 引擎构造 | mode=active | universe=8只 | SL=1.0ATR TP=2.0ATR trail=1.2×@1.0ATR
+2026-06-05 23:14:35,967 [app.core.scheduler_core] INFO: [ORB] 引擎已初始化 | mode=active | universe=8只
+2026-06-05 23:14:35,973 [ftseek.dragonhead_pool] INFO: 🐲 龙头股票池管理器已初始化: HK=44只, US=36只
+2026-06-05 23:14:35,973 [ftseek_us.adaptive_polling] INFO: [轮询注册] US.TSLA 层级=P1_HIGH_VOL 间隔=300-900s
+2026-06-05 23:14:35,973 [ftseek_us.adaptive_polling] INFO: [轮询注册] US.RIVN 层级=P1_HIGH_VOL 间隔=300-900s
+2026-06-05 23:14:35,973 [ftseek_us.adaptive_polling] INFO: [轮询注册] US.UBER 层级=P1_HIGH_VOL 间隔=300-900s
+2026-06-05 23:14:35,973 [ftseek_us.adaptive_polling] INFO: [轮询注册] US.SNDK 层级=P1_HIGH_VOL 间隔=300-900s
+2026-06-05 23:14:35,973 [ftseek_us.adaptive_polling] INFO: [轮询注册] US.ARM 层级=P1_HIGH_VOL 间隔=300-900s
+2026-06-05 23:14:35,973 [ftseek_us.adaptive_polling] INFO: [轮询注册] US.MU 层级=P1_HIGH_VOL 间隔=300-900s
+2026-06-05 23:14:35,973 [ftseek_us.adaptive_polling] INFO: [轮询注册] US.BWXT 层级=P1_HIGH_VOL 间隔=300-900s
+2026-06-05 23:14:35,973 [ftseek_us.adaptive_polling] INFO: [轮询注册] US.LLY 层级=P1_HIGH_VOL 间隔=300-900s
+2026-06-05 23:14:35,973 [ftseek_us.adaptive_polling] INFO: [轮询注册] US.AAPL 层级=P2_WATCHLIST 间隔=900-1800s
+2026-06-05 23:14:35,973 [ftseek_us.adaptive_polling] INFO: [轮询注册] US.MSFT 层级=P2_WATCHLIST 间隔=900-1800s
+2026-06-05 23:14:35,973 [ftseek_us.adaptive_polling] INFO: [轮询注册] US.GOOG 层级=P2_WATCHLIST 间隔=900-1800s
+2026-06-05 23:14:35,973 [ftseek_us.adaptive_polling] INFO: [轮询注册] US.AMZN 层级=P2_WATCHLIST 间隔=900-1800s
+2026-06-05 23:14:35,973 [ftseek_us.adaptive_polling] INFO: [轮询注册] US.META 层级=P2_WATCHLIST 间隔=900-1800s
+2026-06-05 23:14:35,973 [ftseek_us.adaptive_polling] INFO: [轮询注册] US.AVGO 层级=P2_WATCHLIST 间隔=900-1800s
+2026-06-05 23:14:35,973 [ftseek_us.adaptive_polling] INFO: [轮询注册] US.TSM 层级=P2_WATCHLIST 间隔=900-1800s
+2026-06-05 23:14:35,973 [ftseek_us.adaptive_polling] INFO: [轮询注册] US.AMD 层级=P1_HIGH_VOL 间隔=300-900s
+2026-06-05 23:14:35,973 [ftseek_us.adaptive_polling] INFO: [轮询注册] US.NFLX 层级=P2_WATCHLIST 间隔=900-1800s
+2026-06-05 23:14:35,973 [ftseek_us.adaptive_polling] INFO: [轮询注册] US.BABA 层级=P2_WATCHLIST 间隔=900-1800s
+2026-06-05 23:14:35,973 [ftseek_us.adaptive_polling] INFO: [轮询注册] US.PDD 层级=P2_WATCHLIST 间隔=900-1800s
+2026-06-05 23:14:35,973 [ftseek_us.adaptive_polling] INFO: [轮询注册] US.NTES 层级=P2_WATCHLIST 间隔=900-1800s
+2026-06-05 23:14:35,974 [ftseek_us.adaptive_polling] INFO: [轮询注册] US.ORCL 层级=P1_HIGH_VOL 间隔=300-900s
+2026-06-05 23:14:35,974 [ftseek_us.adaptive_polling] INFO: [轮询注册] US.CRM 层级=P2_WATCHLIST 间隔=900-1800s
+2026-06-05 23:14:35,974 [ftseek_us.adaptive_polling] INFO: [轮询注册] US.BA 层级=P2_WATCHLIST 间隔=900-1800s
+2026-06-05 23:14:35,974 [ftseek_us.adaptive_polling] INFO: [轮询注册] US.LMT 层级=P2_WATCHLIST 间隔=900-1800s
+2026-06-05 23:14:35,974 [ftseek_us.adaptive_polling] INFO: [轮询注册] US.UNH 层级=P2_WATCHLIST 间隔=900-1800s
+2026-06-05 23:14:35,974 [ftseek_us.adaptive_polling] INFO: [轮询注册] US.JPM 层级=P2_WATCHLIST 间隔=900-1800s
+2026-06-05 23:14:35,974 [ftseek_us.adaptive_polling] INFO: [轮询注册] US.XOM 层级=P2_WATCHLIST 间隔=900-1800s
+2026-06-05 23:14:35,974 [ftseek_us.adaptive_polling] INFO: [轮询注册] US.PG 层级=P2_WATCHLIST 间隔=900-1800s
+2026-06-05 23:14:35,974 [ftseek_us.adaptive_polling] INFO: [轮询注册] US.SPY 层级=P2_WATCHLIST 间隔=900-1800s
+2026-06-05 23:14:35,974 [ftseek_us.adaptive_polling] INFO: [轮询注册] US.QQQ 层级=P2_WATCHLIST 间隔=900-1800s
+2026-06-05 23:14:35,974 [ftseek_us.adaptive_polling] INFO: [轮询注册] US.XLF 层级=P1_HIGH_VOL 间隔=300-900s
+2026-06-05 23:14:35,974 [ftseek_us.adaptive_polling] INFO: [轮询注册] US.XLY 层级=P1_HIGH_VOL 间隔=300-900s
+2026-06-05 23:14:35,974 [ftseek_us.adaptive_polling] INFO: [轮询注册] US.XLK 层级=P1_HIGH_VOL 间隔=300-900s
+2026-06-05 23:14:35,974 [ftseek_us.adaptive_polling] INFO: [轮询注册] US.XLI 层级=P1_HIGH_VOL 间隔=300-900s
+2026-06-05 23:14:35,974 [ftseek_us.adaptive_polling] INFO: [轮询注册] US.XLE 层级=P1_HIGH_VOL 间隔=300-900s
+2026-06-05 23:14:35,974 [ftseek_us.adaptive_polling] INFO: [轮询注册] US.IWM 层级=P1_HIGH_VOL 间隔=300-900s
+2026-06-05 23:14:35,974 [app.core.scheduler_core] INFO: [自适应轮询] 已注册 36 只观察股 | API 预算=36/轮 | TIER1=10 | ETF=8
+2026-06-05 23:14:35,978 [ftseek_us.subscription_manager] INFO: [SubscriptionManager] 美股分时段订阅管理器已初始化
+2026-06-05 23:14:35,978 [app.core.scheduler_core] INFO: [调度器] 分时段订阅管理器已初始化
+2026-06-05 23:14:35,979 [app.core.scheduler_core] INFO: [调度器] 初始化完成，监控 36 只股票
+2026-06-05 23:14:35,979 [app.strategy.registry] INFO: [StrategyRegistry] 已注册: price_break (group=trend, v1.0.0)
+2026-06-05 23:14:35,979 [app.strategy.registry] INFO: [StrategyRegistry] 已注册: ma_cross (group=trend, v1.0.0)
+2026-06-05 23:14:35,979 [app.strategy.registry] INFO: [StrategyRegistry] 已注册: rsi_rebound (group=reversion, v1.0.0)
+2026-06-05 23:14:35,985 [app.core.di_container] INFO: [DIContainer] TradingScheduler 装配完成
+[Idempotency] Loaded 1 records from DB
+2026-06-05 23:14:35,991 | 3313963 | 139974866633024 | [open_context_base.py:409] _init_connect_sync: New connect ready: conn=7468681688736945636(3) context=<futu.quote.open_quote_context.OpenQuoteContext object at 0x7f4e51240850>
+2026-06-05 23:14:35,994 | 3313963 | 139974866633024 | [open_context_base.py:409] _init_connect_sync: New connect ready: conn=7468681688744358866(4) context=<futu.trade.open_trade_context.OpenSecTradeContext object at 0x7f4e512a0460>
+2026-06-05 23:14:35,998 [app.execution.broker_adapter] INFO: [富途] 模拟交易环境，无需解锁
+2026-06-05 23:14:36,003 [app.execution.broker_adapter] INFO: [富途] 模拟账户验证通过: 18297050
+2026-06-05 23:14:36,004 [app.execution.broker_adapter] INFO: [富途] 连接成功 127.0.0.1:11111 env=模拟
+2026-06-05 23:14:36,005 [app.risk.circuit_breaker] INFO: [熔断器] 注册数据源: default (weight=1.0)
+2026-06-05 23:14:36,005 [ftseek_us.position_limits] INFO: [PositionLimits] 初始化: max_symbol=25%, max_direction=65%, max_total=80%
+2026-06-05 23:14:36,005 [ftseek_us.main] INFO: [DI] 核心组件已通过DI容器装配: EventStore/Execution/Risk/Notifier
+2026-06-05 23:14:36,010 [ftseek_us.main] INFO: [Agent] 美股 Agent 桥接已初始化 | Hermes 可用=True
+2026-06-05 23:14:36,012 [ftseek_us.hermes_client] INFO: 启动 Hermes Worker: /root/.hermes/hermes-agent/venv/bin/python3 /opt/ftseek/FTSeek-US/scripts/hermes_worker.py
+2026-06-05 23:15:11,758 [ftseek_us.main] WARNING: [HermesWorker] ⚠️ Worker 预检失败 — Agent 功能将降级至 Bailian API 直连
+2026-06-05 23:15:11,758 [ftseek.us_pipeline.battle_plan_manager] INFO: ✅ 已加载美股作战计划 (2026-06-05)
+2026-06-05 23:15:11,759 [ftseek.us_pipeline.battle_plan_manager] INFO: [计划质检] ✅ 作战计划数据完整性校验通过
+2026-06-05 23:15:11,759 [ftseek_us.main] INFO: ✅ 美股作战计划已加载: /opt/ftseek/FTSeek-US/data/daily_battle_plan_us.json
+2026-06-05 23:15:11,762 [ftseek_us.config_mgmt.validator] WARNING: [ConfigValidator] ⚠️ 推荐配置缺失: exit.us.atr_multiplier
+2026-06-05 23:15:11,762 [ftseek_us.config_mgmt.validator] WARNING: [ConfigValidator] ⚠️ 推荐配置缺失: strategy.consensus.threshold
+2026-06-05 23:15:11,762 [ftseek_us.config_mgmt.validator] WARNING: [ConfigValidator] ⚠️ [Config·DEPRECATED] 'llm_models' 仍存在于配置中但已不生效, 请改用: 已移至 llm.models / llm.features (本文件) 与 app/llm/multi_model_client.py:DEFAULT_MODEL_FOR (别名兜底)
+2026-06-05 23:15:11,762 [ftseek_us.config_mgmt.validator] WARNING: [ConfigValidator] ⚠️ [Config·DEPRECATED] 'strategies.defaults.signal_cooldown_seconds' 仍存在于配置中但已不生效, 请改用: 已改为 strategy.signal_cooldown (本文件 SoT)
+2026-06-05 23:15:11,762 [ftseek_us.config_mgmt.validator] INFO: [ConfigValidator] 校验结果: ⚠️ 4 警告
+2026-06-05 23:15:11,762 [ftseek_us.main] INFO: [ConfigGov] ✅ 配置校验通过: ⚠️ 4 警告
+2026-06-05 23:15:11,799 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:15:11,812 [exit_policy_guardian] INFO: ✅ 策略校验通过: 5 条规则全部实现
+2026-06-05 23:15:11,812 [ftseek_us.main] INFO: [ExitPolicy] ✅ 退出策略校验通过: 5/5 条规则已实现 (2.5)
+2026-06-05 23:15:11,846 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:15:11,846 [ftseek_us.main] INFO: [ShortConfig] ✅ 做空配置校验通过: 全部通过
+2026-06-05 23:15:11,847 [ftseek_us.config_audit] INFO: ✅ 配置一致性审计通过 — 无漂移检测
+2026-06-05 23:15:11,847 [ftseek_us.main] INFO: [ConfigAudit] ✅ SSOT 配置一致性审计通过 — 无漂移检测
+2026-06-05 23:15:11,850 [ftseek_us.config_mgmt.drift_detector] INFO: [DriftDetector] 初始快照: hash=46c5ab23de97bde6 keys=1604
+2026-06-05 23:15:11,853 [ftseek_us.config_mgmt.drift_detector] INFO: [DriftDetector] 启动 (interval=4h)
+2026-06-05 23:15:11,853 [ftseek_us.main] INFO: [ConfigGov] ✅ 漂移检测已启动 (interval=4h)
+2026-06-05 23:15:11,853 [ftseek_us.config_mgmt.hot_reloader] INFO: [HotReloader] 启动 (cooldown=60s, files=1)
+2026-06-05 23:15:11,853 [ftseek_us.main] INFO: [ConfigGov] ✅ 热重载已启动 (cooldown=60s)
+2026-06-05 23:15:11,854 [ftseek.daily_active_pool] INFO: 📂 加载人工指定名单: 23 只
+2026-06-05 23:15:11,854 [ftseek.daily_active_pool] INFO: 📂 恢复持久化池子: 34 条记录
+2026-06-05 23:15:11,854 [ftseek.daily_active_pool] INFO: 🔍 启动对账: 动态池中有 22 只 POSITION 条目
+2026-06-05 23:15:11,856 [ftseek.daily_active_pool] INFO: ✅ 每日动态交易池 v2 已初始化: 34 只标的 (市场=US.)
+2026-06-05 23:15:11,857 [ftseek.daily_active_pool] INFO: 💼 批量注入持仓: 9 只 (跳过 0 只非本市场)
+2026-06-05 23:15:11,857 [ftseek_us.main] INFO: 💼 US 注入持仓: 9 只 -> ['US.TSLA', 'US.NVDA', 'US.AAPL', 'US.MSFT', 'US.GOOGL', 'US.META', 'US.AMZN', 'US.BABA', 'US.PDD']
+2026-06-05 23:15:11,857 [ftseek_us.main] INFO: 📝 US 注入盘前计划: 2 只
+2026-06-05 23:15:11,857 [ftseek_us.main] INFO: ✅ US 动态交易池 v2 就绪: 34 只 | {'POSITION': 22, 'PLAN': 0, 'MANUAL': 12, 'INTRADAY_ALERT': 0}
+2026-06-05 23:15:11,858 [ftseek_us.main] INFO: ✅ 交易调度器已启动（后台线程）
+2026-06-05 23:15:11,858 [ftseek_us.main] INFO: ✅ FTSeek-US 服务已启动
+2026-06-05 23:15:11,858 [ftseek_us.main] INFO: API 服务监听：http://0.0.0.0:8901  (FastAPI 待实现)
+2026-06-05 23:15:11,884 [ftseek_us.main] INFO: ✅ [PostTradeHook·wired] order_executor 已绑定 (3 处 on_position_opened 调用, 4 处 import) — 入场后将触发 thesis_inferer 等副作用
+2026-06-05 23:15:11,934 [app.notifier.dingtalk] INFO: [钉钉] send_text 成功: [INFO] FTSeek-US v2.0.0 (LV3实时行情) 已启动
+2026-06-05 23:15:11,937 [ftseek_us.intraday_heartbeat] INFO: [Heartbeat] 后台线程已启动 (interval=1800s)
+2026-06-05 23:15:11,937 [ftseek_us.main] INFO: 💓 盘中心跳后台线程已启动 (interval=30min, 仅盘中触发)
+2026-06-05 23:15:11,938 [ftseek.trading_calendar] INFO: 📅 交易日历初始化: 硬编码 HK=31天, US=22天 | Futu API=127.0.0.1:11111
+2026-06-05 23:15:11,944 [ftseek.us_pipeline.emergency_interceptor] INFO: 🛡️ 美股突发拦截器 (V3) 已初始化 | 行情主 + 新闻辅 | 间隔=30s | 闪崩阈值=-5% | 放量倍数=3.0x
+2026-06-05 23:15:11,945 [ftseek.us_pipeline.emergency_interceptor] INFO: 🚀 启动突发拦截监控循环 (富途 LV3 行情主 + 新闻辅)...
+2026-06-05 23:15:11,945 [ftseek_us.main] INFO: 🛡️ 美股突发拦截器后台线程已启动
+2026-06-05 23:15:11,949 [ftseek_us.position_sync] INFO: 🔍 [US Sync] 启动时立即执行 Broker 对账...
+2026-06-05 23:15:11,954 | 3313963 | 139973839803968 | [open_context_base.py:409] _init_connect_sync: New connect ready: conn=7468681839547139145(5) context=<futu.quote.open_quote_context.OpenQuoteContext object at 0x7f4e5008d190>
+2026-06-05 23:15:11,960 | 3313963 | 139974866633024 | [open_context_base.py:409] _init_connect_sync: New connect ready: conn=7468681839573179259(6) context=<futu.trade.open_trade_context.OpenSecTradeContext object at 0x7f4e500b3c70>
+2026-06-05 23:15:11,995 [ftseek.trading_calendar] INFO: [TradingCalendar] Futu 缓存刷新: US [2026-05-06~2026-08-04] = 62 交易日
+2026-06-05 23:15:11,996 | 3313963 | 139974552839744 | [open_context_base.py:516] on_disconnect: Disconnected: conn=0(5) reason=CallClose
+2026-06-05 23:15:12,000 [ftseek_us.position_sync] WARNING: 🚫 [仓位扫描] US.IWM 占比 25.0% 超限 25%，触发减仓: 1/921.0股 ($438)
+2026-06-05 23:15:12,193 [app.push.aggregator] INFO: [PushAggregator] 启动 (window=300s)
+2026-06-05 23:15:12,194 [app.push.health] INFO: [PushHealth] 启动 (interval=3600s)
+2026-06-05 23:15:12,194 [app.push.hub] INFO: [PushHub] 启动 — channels=['dingtalk', 'feishu', 'flag_file'] dedup_ttl=60s aggregate_window=300s async=True workers=4
+2026-06-05 23:15:12,195 [ftseek_us.intraday_heartbeat] INFO: [Heartbeat] ✅ 已推送 (429 chars)
+2026-06-05 23:15:12,241 [app.notifier.dingtalk] INFO: [钉钉] send_text 成功: ℹ️ FTSeek-US 心跳 23:15
+2026-06-05 23:15:12,302 [ftseek_us.position_sync] INFO: ✅ [减仓] US.IWM BUY 1股 已提交 (order_id=7809289, reason=periodic_scan_over_limit_25%)
+2026-06-05 23:15:12,302 [app.data.twelvedata_provider] INFO: [TwelveData] 初始化完成 | API Key=✅ | Cache TTL=300s
+2026-06-05 23:15:12,304 [ftseek_us.position_sync] WARNING: ⚠️ [US Sync] 发现手动开仓 US.PG (SHORT 224.0股 @$142.84)，已加入 ExitMonitor 监控 | SL=$149.98
+2026-06-05 23:15:12,588 [ftseek_us.position_sync] INFO: [US Sync] 飞书成交通知已发送: US.PG
+2026-06-05 23:15:12,588 [app.data.twelvedata_provider] INFO: [TwelveData] 初始化完成 | API Key=✅ | Cache TTL=300s
+2026-06-05 23:15:12,589 [ftseek_us.position_sync] WARNING: ⚠️ [US Sync] 发现手动开仓 US.ARM (SHORT 88.0股 @$362.03)，已加入 ExitMonitor 监控 | SL=$380.13
+2026-06-05 23:15:12,831 [ftseek_us.position_sync] INFO: [US Sync] 飞书成交通知已发送: US.ARM
+2026-06-05 23:15:12,832 [app.data.twelvedata_provider] INFO: [TwelveData] 初始化完成 | API Key=✅ | Cache TTL=300s
+2026-06-05 23:15:12,833 [ftseek_us.position_sync] WARNING: ⚠️ [US Sync] 发现手动开仓 US.XLY (SHORT 35.0股 @$116.81)，已加入 ExitMonitor 监控 | SL=$122.65
+2026-06-05 23:15:13,108 [ftseek_us.position_sync] INFO: [US Sync] 飞书成交通知已发送: US.XLY
+2026-06-05 23:15:13,108 [app.data.twelvedata_provider] INFO: [TwelveData] 初始化完成 | API Key=✅ | Cache TTL=300s
+2026-06-05 23:15:13,110 [ftseek_us.position_sync] WARNING: ⚠️ [US Sync] 发现手动开仓 US.SPY (SHORT 3.0股 @$754.05)，已加入 ExitMonitor 监控 | SL=$791.76
+2026-06-05 23:15:13,360 [ftseek_us.position_sync] INFO: [US Sync] 飞书成交通知已发送: US.SPY
+2026-06-05 23:15:13,361 [app.data.twelvedata_provider] INFO: [TwelveData] 初始化完成 | API Key=✅ | Cache TTL=300s
+2026-06-05 23:15:13,362 [ftseek_us.position_sync] WARNING: ⚠️ [US Sync] 发现手动开仓 US.XLK (LONG 807.0股 @$186.77)，已加入 ExitMonitor 监控 | SL=$177.43
+2026-06-05 23:15:13,598 [ftseek_us.position_sync] INFO: [US Sync] 飞书成交通知已发送: US.XLK
+2026-06-05 23:15:13,598 [app.data.twelvedata_provider] INFO: [TwelveData] 初始化完成 | API Key=✅ | Cache TTL=300s
+2026-06-05 23:15:13,599 [ftseek_us.position_sync] WARNING: ⚠️ [US Sync] 发现手动开仓 US.AVGO (SHORT 30.0股 @$413.87)，已加入 ExitMonitor 监控 | SL=$434.56
+2026-06-05 23:15:13,861 [ftseek_us.position_sync] INFO: [US Sync] 飞书成交通知已发送: US.AVGO
+2026-06-05 23:15:13,862 [app.data.twelvedata_provider] INFO: [TwelveData] 初始化完成 | API Key=✅ | Cache TTL=300s
+2026-06-05 23:15:13,863 [ftseek_us.position_sync] WARNING: ⚠️ [US Sync] 发现手动开仓 US.NTES (SHORT 65.0股 @$123.63)，已加入 ExitMonitor 监控 | SL=$129.81
+2026-06-05 23:15:14,092 [ftseek_us.position_sync] INFO: [US Sync] 飞书成交通知已发送: US.NTES
+2026-06-05 23:15:14,093 [app.data.twelvedata_provider] INFO: [TwelveData] 初始化完成 | API Key=✅ | Cache TTL=300s
+2026-06-05 23:15:14,094 [ftseek_us.position_sync] WARNING: ⚠️ [US Sync] 发现手动开仓 US.XLE (SHORT 1028.0股 @$58.51)，已加入 ExitMonitor 监控 | SL=$61.43
+2026-06-05 23:15:14,322 [ftseek_us.position_sync] INFO: [US Sync] 飞书成交通知已发送: US.XLE
+2026-06-05 23:15:14,323 [app.data.twelvedata_provider] INFO: [TwelveData] 初始化完成 | API Key=✅ | Cache TTL=300s
+2026-06-05 23:15:14,324 [ftseek_us.position_sync] WARNING: ⚠️ [US Sync] 发现手动开仓 US.IWM (SHORT 921.0股 @$290.95)，已加入 ExitMonitor 监控 | SL=$305.50
+2026-06-05 23:15:14,596 [ftseek_us.position_sync] INFO: [US Sync] 飞书成交通知已发送: US.IWM
+2026-06-05 23:15:14,597 [app.data.twelvedata_provider] INFO: [TwelveData] 初始化完成 | API Key=✅ | Cache TTL=300s
+2026-06-05 23:15:14,598 [ftseek_us.position_sync] WARNING: ⚠️ [US Sync] 发现手动开仓 US.PDD (LONG 50.0股 @$86.43)，已加入 ExitMonitor 监控 | SL=$82.11
+2026-06-05 23:15:14,845 [ftseek_us.position_sync] INFO: [US Sync] 飞书成交通知已发送: US.PDD
+2026-06-05 23:15:14,845 [app.data.twelvedata_provider] INFO: [TwelveData] 初始化完成 | API Key=✅ | Cache TTL=300s
+2026-06-05 23:15:14,847 [ftseek_us.position_sync] WARNING: ⚠️ [US Sync] 发现手动开仓 US.XLI (SHORT 30.0股 @$175.39)，已加入 ExitMonitor 监控 | SL=$184.16
+2026-06-05 23:15:15,115 [ftseek_us.position_sync] INFO: [US Sync] 飞书成交通知已发送: US.XLI
+2026-06-05 23:15:15,115 [app.data.twelvedata_provider] INFO: [TwelveData] 初始化完成 | API Key=✅ | Cache TTL=300s
+2026-06-05 23:15:15,116 [ftseek_us.position_sync] WARNING: ⚠️ [US Sync] 发现手动开仓 US.XLF (SHORT 4613.0股 @$52.05)，已加入 ExitMonitor 监控 | SL=$54.65
+2026-06-05 23:15:15,407 [ftseek_us.position_sync] INFO: [US Sync] 飞书成交通知已发送: US.XLF
+2026-06-05 23:15:15,408 [app.data.twelvedata_provider] INFO: [TwelveData] 初始化完成 | API Key=✅ | Cache TTL=300s
+2026-06-05 23:15:15,409 [ftseek_us.position_sync] WARNING: ⚠️ [US Sync] 发现手动开仓 US.BWXT (SHORT 169.0股 @$188.82)，已加入 ExitMonitor 监控 | SL=$198.26
+2026-06-05 23:15:15,672 [ftseek_us.position_sync] INFO: [US Sync] 飞书成交通知已发送: US.BWXT
+2026-06-05 23:15:15,672 [app.data.twelvedata_provider] INFO: [TwelveData] 初始化完成 | API Key=✅ | Cache TTL=300s
+2026-06-05 23:15:15,674 [ftseek_us.position_sync] WARNING: ⚠️ [US Sync] 发现手动开仓 US.LMT (SHORT 61.0股 @$515.49)，已加入 ExitMonitor 监控 | SL=$541.26
+2026-06-05 23:15:15,916 [ftseek_us.position_sync] INFO: [US Sync] 飞书成交通知已发送: US.LMT
+2026-06-05 23:15:15,918 [ftseek_us.position_sync] INFO: [US Sync] Done | Futu: 14 | DB: 14
+2026-06-05 23:15:15,920 [ftseek_us.position_sync] INFO: ✅ [US Sync] 启动对账完成
+2026-06-05 23:15:15,920 [ftseek_us.position_sync] INFO: [US Sync] Market closed, sync paused (will resume next session)
+2026-06-05 23:15:15,920 [ftseek_us.position_sync] INFO: US position sync started (interval=30s)
+2026-06-05 23:15:15,921 [ftseek_us.main] INFO: ✅ 运行时持仓同步器已启动 (30s 间隔, Broker→PositionStore 自动同步)
+2026-06-05 23:15:15,942 [app.positions.reconciler] WARNING: [Reconciler·M1.1·adopt] US.PG 识别为策略孤儿仓 → auto_main + managed (维持监控)
+2026-06-05 23:15:15,944 [app.positions.reconciler] INFO: [Reconciler] US.XLY 补 manual 标签 + managed
+2026-06-05 23:15:15,945 [app.positions.reconciler] WARNING: [Reconciler·M1.1·adopt] US.ARM 识别为策略孤儿仓 → auto_scalping + managed (维持监控)
+2026-06-05 23:15:15,946 [app.positions.reconciler] WARNING: [Reconciler·M1.1·adopt] US.SPY 识别为策略孤儿仓 → auto_main + managed (维持监控)
+2026-06-05 23:15:15,948 [app.positions.reconciler] WARNING: [Reconciler·M1.1·adopt] US.XLK 识别为策略孤儿仓 → auto_main + managed (维持监控)
+2026-06-05 23:15:15,950 [app.positions.reconciler] WARNING: [Reconciler·M1.1·adopt] US.AVGO 识别为策略孤儿仓 → auto_main + managed (维持监控)
+2026-06-05 23:15:15,951 [app.positions.reconciler] WARNING: [Reconciler·M1.1·adopt] US.NTES 识别为策略孤儿仓 → auto_main + managed (维持监控)
+2026-06-05 23:15:15,953 [app.positions.reconciler] WARNING: [Reconciler·M1.1·adopt] US.XLE 识别为策略孤儿仓 → auto_main + managed (维持监控)
+2026-06-05 23:15:15,954 [app.positions.reconciler] INFO: [Reconciler] US.IWM 补 manual 标签 + managed
+2026-06-05 23:15:15,956 [app.positions.reconciler] WARNING: [Reconciler·M1.1·adopt] US.PDD 识别为策略孤儿仓 → auto_main + managed (维持监控)
+2026-06-05 23:15:15,958 [app.positions.reconciler] WARNING: [Reconciler·M1.1·adopt] US.XLI 识别为策略孤儿仓 → auto_main + managed (维持监控)
+2026-06-05 23:15:15,959 [app.positions.reconciler] WARNING: [Reconciler·M1.1·adopt] US.XLF 识别为策略孤儿仓 → auto_main + managed (维持监控)
+2026-06-05 23:15:15,961 [app.positions.reconciler] WARNING: [Reconciler·M1.1·adopt] US.BWXT 识别为策略孤儿仓 → auto_scalping + managed (维持监控)
+2026-06-05 23:15:15,962 [app.positions.reconciler] WARNING: [Reconciler·M1.1·adopt] US.LMT 识别为策略孤儿仓 → auto_main + managed (维持监控)
+2026-06-05 23:15:15,963 [app.positions.reconciler] WARNING: ======================================================================
+2026-06-05 23:15:15,963 [app.positions.reconciler] WARNING: [Reconciler] 启动对账完成
+2026-06-05 23:15:15,963 [app.positions.reconciler] WARNING:   Broker 持仓: 14 | 本地内存: 14
+2026-06-05 23:15:15,963 [app.positions.reconciler] WARNING:   matched         : 14
+2026-06-05 23:15:15,963 [app.positions.reconciler] WARNING:   broker_only     : 0 (智能推断)
+2026-06-05 23:15:15,963 [app.positions.reconciler] WARNING:   ↳ adopted       : 12 (策略孤儿 → MANAGED, ExitMonitor 续命)
+2026-06-05 23:15:15,963 [app.positions.reconciler] WARNING:   ↳ legacy        : -10 (LEGACY/MANUAL → PROTECTED)
+2026-06-05 23:15:15,963 [app.positions.reconciler] WARNING:   local_only      : 0 (标 ghost)
+2026-06-05 23:15:15,963 [app.positions.reconciler] WARNING:   errors          : 0
+2026-06-05 23:15:15,963 [app.positions.reconciler] WARNING:   🤖 adopted 仓位 (识别为策略孤儿): ExitMonitor 续命监控, 已有 trail/SL 不变.
+2026-06-05 23:15:15,963 [app.positions.reconciler] WARNING: ======================================================================
+2026-06-05 23:15:15,964 [ftseek_us.main] INFO: [M1] 启动对账完成: matched=14 broker_only=0 local_only=0 legacy_tagged=2
+2026-06-05 23:15:15,964 [ftseek_us.main] INFO: [关键告警通道] ✅ 已配置: DingTalk, Feishu
+2026-06-05 23:15:15,968 [app.risk.symbol_daily_loss_guard] INFO: [SymbolDailyLossGuard·restore] 重建 1 symbols 状态, ET 今日(2026-06-05)已平仓 1 笔
+2026-06-05 23:15:15,971 [ftseek.order_tracker] INFO: [OrderTracker] 已初始化 | 待追踪订单: 0
+2026-06-05 23:15:15,972 [ftseek.order_tracker] INFO: [OrderTracker·restore] 启动恢复, 发现 0 笔 pending 订单
+2026-06-05 23:15:15,972 [ftseek.order_tracker] INFO: [OrderTracker·restore] 完成 — restored=0 still_pending=0 marked_stale=0
+2026-06-05 23:15:15,972 [ftseek_us.main] INFO: [启动·OrderTracker] 恢复完成: {'restored': 0, 'still_pending': 0, 'marked_stale': 0}
+2026-06-05 23:15:15,975 [app.monitoring.trading_monitor] INFO: [Monitor] ✅ 启动 (间隔=60s)
+2026-06-05 23:15:15,975 [ftseek_us.main] INFO: [监控告警] 已启动 (PnL/PDT/熔断器实时监控)
+2026-06-05 23:15:15,980 [ftseek.market_backup] INFO: 市场数据路由器已加载
+2026-06-05 23:15:15,984 [ftseek.market_backup] INFO: Alpha Vantage SDK v3 已加载 (TimeSeries 可用，GlobalQuotes 已弃用)
+2026-06-05 23:15:26,227 [ftseek_us.feishu_push] INFO: ✅ 飞书 SDK 已加载
+2026-06-05 23:15:26,231 [ftseek.intraday_attribution] INFO: [盘中归因] 已启动 (间隔=60min)
+2026-06-05 23:15:26,231 [ftseek_us.main] INFO: [盘中归因] 已启动 (每60分钟)
+2026-06-05 23:15:26,231 [app.core.scheduler_core] INFO: [调度器] 服务启动
+2026-06-05 23:15:26,231 [app.pipeline.position_monitor] INFO: [持仓恢复] PRICE_FAIL 已关闭集合: {'US.MU260605P720000', 'US.SPY260602P730000', 'US.TSLA260603P410000', 'US.RIVN260605P13000', 'US.QQQ260602P700000', 'US.QQQ260602P710000', 'US.SNDK260605P1370000'}
+2026-06-05 23:15:26,247 [app.pipeline.position_monitor] INFO: [持仓恢复] Broker 持仓对账: 14 个
+2026-06-05 23:15:26,249 [app.pipeline.position_monitor] INFO: [持仓恢复] US.NTES SHORT 65.0股 @$123.63
+2026-06-05 23:15:26,250 [app.pipeline.position_monitor] INFO: [持仓恢复] US.XLI SHORT 30.0股 @$175.39
+2026-06-05 23:15:26,252 [app.pipeline.position_monitor] INFO: [持仓恢复] US.SPY SHORT 3.0股 @$754.05
+2026-06-05 23:15:26,253 [app.pipeline.position_monitor] INFO: [持仓恢复] US.AVGO SHORT 30.0股 @$413.87
+2026-06-05 23:15:26,254 [app.pipeline.position_monitor] INFO: [持仓恢复] US.XLF SHORT 4613.0股 @$52.05
+2026-06-05 23:15:26,256 [app.pipeline.position_monitor] INFO: [持仓恢复] US.XLE SHORT 1028.0股 @$58.51
+2026-06-05 23:15:26,257 [app.pipeline.position_monitor] INFO: [持仓恢复] US.LMT SHORT 61.0股 @$515.49
+2026-06-05 23:15:26,258 [app.pipeline.position_monitor] INFO: [持仓恢复] US.PDD LONG 50.0股 @$86.43
+2026-06-05 23:15:26,260 [app.pipeline.position_monitor] INFO: [持仓恢复] US.PG SHORT 224.0股 @$142.84
+2026-06-05 23:15:26,261 [app.pipeline.position_monitor] INFO: [持仓恢复] US.IWM SHORT 921.0股 @$290.95
+2026-06-05 23:15:26,263 [app.pipeline.position_monitor] INFO: [持仓恢复] US.BWXT SHORT 169.0股 @$188.82
+2026-06-05 23:15:26,264 [app.pipeline.position_monitor] INFO: [持仓恢复] US.ARM SHORT 88.0股 @$362.03
+2026-06-05 23:15:26,266 [app.pipeline.position_monitor] INFO: [持仓恢复] US.XLY SHORT 35.0股 @$116.81
+2026-06-05 23:15:26,267 [app.pipeline.position_monitor] INFO: [持仓恢复] US.XLK LONG 807.0股 @$186.77
+2026-06-05 23:15:26,267 [app.pipeline.position_monitor] INFO: [持仓恢复] 完成：14/14 条记录恢复
+2026-06-05 23:15:26,268 [app.core.scheduler_core] INFO: [调度器] 🔍 开始启动持仓对账...
+2026-06-05 23:15:26,271 [app.core.scheduler_core] INFO: [调度器] ✅ 持仓对账完成 | DB=14 | 内存=14 | 差异=0
+2026-06-05 23:15:26,271 [app.core.scheduler_core] INFO: [调度器·Coordinator] 启动回灌完成: capital={'main': 0.0, 'scalping': 0.0, 'llm_plan': 0.0} locks={'US.PG': 'main', 'US.ARM': 'main', 'US.XLY': 'main', 'US.SPY': 'main', 'US.XLK': 'main', 'US.AVGO': 'main', 'US.NTES': 'main', 'US.XLE': 'main', 'US.IWM': 'main', 'US.PDD': 'main', 'US.XLI': 'main', 'US.XLF': 'main', 'US.BWXT': 'main', 'US.LMT': 'main'}
+2026-06-05 23:15:26,272 [app.observability.watchdog] INFO: [Watchdog] 注册心跳: monitor_loop threshold=75.0s
+2026-06-05 23:15:26,272 [app.observability.watchdog] INFO: [Watchdog] 注册心跳: scan_loop threshold=900s
+2026-06-05 23:15:26,273 [app.core.scheduler_core] INFO: [LLM策略] 策略引擎循环已启动 (按市场阶段自适应)
+2026-06-05 23:15:26,274 [app.core.scheduler_core] INFO: [NewsV2] 管线采集循环已启动 (interval=180s, observe模式)
+2026-06-05 23:15:26,275 [app.core.scheduler_core] INFO: [NewsV2] 后台采集线程已启动
+2026-06-05 23:15:26,275 [app.core.scheduler_core] INFO: [VIX Monitor] 监控循环已启动 (interval=300s)
+2026-06-05 23:15:26,277 [app.core.scheduler_core] INFO: [VIX Monitor] 后台监控线程已启动
+2026-06-05 23:15:26,277 [ftseek_us.futu_lv3] INFO: [FutuLV3] 正在连接 OpenD 127.0.0.1:11111...
+2026-06-05 23:15:26,316 | 3313963 | 139974866633024 | [open_context_base.py:409] _init_connect_sync: New connect ready: conn=7468681899697796671(7) context=<futu.quote.open_quote_context.OpenQuoteContext object at 0x7f4e01bfbd00>
+2026-06-05 23:15:26,316 [ftseek_us.futu_lv3] INFO: [FutuLV3] ✅ Push Handler 已注册 (Quote+Kline+Ticker+OrderBook)
+2026-06-05 23:15:26,320 [app.pipeline.position_monitor] INFO: [持仓对账] 更新 US.IWM: size=920.0, cost=$290.95
+2026-06-05 23:15:26,321 [app.core.scheduler_core] INFO: [分时调度] 美股交易时段，重新订阅 Push 行情
+2026-06-05 23:15:26,324 [ftseek_us.harness_audit] INFO: 🔍 开始盘前巡检 (Pre-Market Audit)...
+2026-06-05 23:15:26,324 [ftseek_us.harness_audit] INFO:    TwelveData 令牌桶初始化: 0/8
+2026-06-05 23:15:26,324 [ftseek_us.harness_audit] INFO:    Finnhub 令牌桶初始化: 0/60
+2026-06-05 23:15:26,324 [ftseek_us.harness_audit] INFO:    API 状态: TD(0), FH(0)
+2026-06-05 23:15:26,324 [ftseek_us.harness_audit] INFO:    ✅ 盘前检查通过，系统状态良好
+2026-06-05 23:15:26,326 [app.pipeline.signal_pipeline] INFO: [扫描] 开始信号扫描...
+2026-06-05 23:15:26,359 [ftseek_us.futu_lv3] INFO: [FutuLV3] ✅ 连接成功 | LV3 行情可用 | US.AAPL=$313.10 | 延迟 < 1s
+2026-06-05 23:15:26,392 [ftseek_us.news_v2.sources.csrc] INFO: [CSRC] 采集完成: 0 条监管公告
+2026-06-05 23:15:26,392 [ftseek_us.futu_lv3] INFO: [FutuLV3] ✅ 已订阅 36 只美股 QUOTE: ['TSLA', 'RIVN', 'UBER', 'SNDK', 'ARM', 'MU', 'BWXT', 'LLY', 'AMD', 'ORCL', 'AAPL', 'MSFT', 'GOOG', 'AMZN', 'META', 'AVGO', 'TSM', 'NFLX', 'BABA', 'PDD', 'NTES', 'CRM', 'BA', 'LMT', 'UNH', 'JPM', 'XOM', 'PG', 'SPY', 'QQQ', 'XLF', 'XLY', 'XLK', 'XLI', 'XLE', 'IWM']
+2026-06-05 23:15:26,430 [ftseek_us.futu_lv3] INFO: [FutuLV3] ✅ 已订阅 8 只美股 QUOTE: ['IWM', 'DIA', 'XLE', 'XLF', 'XLK', 'XLV', 'XLY', 'XLI']
+2026-06-05 23:15:26,502 [ftseek_us.futu_lv3] INFO: [FutuLV3] ✅ 已订阅 36 只美股 K_1M: ['TSLA', 'RIVN', 'UBER', 'SNDK', 'ARM', 'MU', 'BWXT', 'LLY', 'AMD', 'ORCL', 'AAPL', 'MSFT', 'GOOG', 'AMZN', 'META', 'AVGO', 'TSM', 'NFLX', 'BABA', 'PDD', 'NTES', 'CRM', 'BA', 'LMT', 'UNH', 'JPM', 'XOM', 'PG', 'SPY', 'QQQ', 'XLF', 'XLY', 'XLK', 'XLI', 'XLE', 'IWM']
+2026-06-05 23:15:26,544 [ftseek_us.futu_lv3] INFO: [FutuLV3] ✅ 已订阅 8 只美股 K_1M: ['IWM', 'DIA', 'XLE', 'XLF', 'XLK', 'XLV', 'XLY', 'XLI']
+2026-06-05 23:15:26,623 [ftseek_us.futu_lv3] INFO: [FutuLV3] ✅ 已订阅 36 只美股 K_5M: ['TSLA', 'RIVN', 'UBER', 'SNDK', 'ARM', 'MU', 'BWXT', 'LLY', 'AMD', 'ORCL', 'AAPL', 'MSFT', 'GOOG', 'AMZN', 'META', 'AVGO', 'TSM', 'NFLX', 'BABA', 'PDD', 'NTES', 'CRM', 'BA', 'LMT', 'UNH', 'JPM', 'XOM', 'PG', 'SPY', 'QQQ', 'XLF', 'XLY', 'XLK', 'XLI', 'XLE', 'IWM']
+2026-06-05 23:15:26,671 [ftseek_us.futu_lv3] INFO: [FutuLV3] ✅ 已订阅 8 只美股 K_15M: ['IWM', 'DIA', 'XLE', 'XLF', 'XLK', 'XLV', 'XLY', 'XLI']
+2026-06-05 23:15:26,671 [ftseek_us.futu_lv3] INFO: [FutuLV3] 总订阅: 8 只美股
+2026-06-05 23:15:26,671 [ftseek_us.futu_lv3] INFO: [FutuLV3][Watchdog] 后台健康守护已启动 (30s 间隔)
+2026-06-05 23:15:26,671 [app.orb.engine] INFO: [ORB] ✅ Futu 订阅完成: 8 只 ETF (['IWM', 'DIA', 'XLE', 'XLF', 'XLK', 'XLV', 'XLY', 'XLI'])
+2026-06-05 23:15:26,671 [app.orb.engine] INFO: [ORB] tick #1 | time=11:15:26 | positions=0 | ranges=0
+2026-06-05 23:15:26,671 [app.orb.engine] INFO: [ORB] 跨日重置 | date=2026-06-05
+2026-06-05 23:15:26,672 [app.orb.engine] INFO: [ORB] daemon 线程已启动 | mode=active
+2026-06-05 23:15:26,673 [app.core.scheduler_core] INFO: [调度器] 交易时间内启动，立即触发首次信号扫描
+2026-06-05 23:15:26,678 | 3313963 | 139974866633024 | [open_context_base.py:409] _init_connect_sync: New connect ready: conn=7468681901332381270(8) context=<futu.quote.open_quote_context.OpenQuoteContext object at 0x7f4e00331550>
+2026-06-05 23:15:26,772 [ftseek.trading_calendar] INFO: [TradingCalendar] Futu 缓存刷新: HK [2026-05-06~2026-08-04] = 62 交易日
+2026-06-05 23:15:26,773 [app.core.scheduler_core] INFO: [分时调度] 当前美股已收盘，暂不订阅 (自动循环将在盘前激活)
+2026-06-05 23:15:26,773 | 3313963 | 139974552839744 | [open_context_base.py:516] on_disconnect: Disconnected: conn=0(8) reason=CallClose
+2026-06-05 23:15:26,776 [ftseek_us.subscription_manager] INFO: [US] 自动订阅循环启动
+2026-06-05 23:15:26,778 [ftseek_us.subscription_manager] INFO: [SubscriptionManager] 美股自动循环启动 | 60s
+2026-06-05 23:15:26,822 [ftseek_us.futu_lv3] INFO: [FutuLV3] ✅ 已订阅 36 只美股 K_15M: ['TSLA', 'RIVN', 'UBER', 'SNDK', 'ARM', 'MU', 'BWXT', 'LLY', 'AMD', 'ORCL', 'AAPL', 'MSFT', 'GOOG', 'AMZN', 'META', 'AVGO', 'TSM', 'NFLX', 'BABA', 'PDD', 'NTES', 'CRM', 'BA', 'LMT', 'UNH', 'JPM', 'XOM', 'PG', 'SPY', 'QQQ', 'XLF', 'XLY', 'XLK', 'XLI', 'XLE', 'IWM']
+2026-06-05 23:15:26,902 [ftseek_us.futu_lv3] INFO: [FutuLV3] ✅ Push 数据到达: 1 条, 首批: ['US.NTES']
+2026-06-05 23:15:26,919 [ftseek_us.futu_lv3] INFO: [FutuLV3] ✅ 已订阅 36 只美股 K_30M: ['TSLA', 'RIVN', 'UBER', 'SNDK', 'ARM', 'MU', 'BWXT', 'LLY', 'AMD', 'ORCL', 'AAPL', 'MSFT', 'GOOG', 'AMZN', 'META', 'AVGO', 'TSM', 'NFLX', 'BABA', 'PDD', 'NTES', 'CRM', 'BA', 'LMT', 'UNH', 'JPM', 'XOM', 'PG', 'SPY', 'QQQ', 'XLF', 'XLY', 'XLK', 'XLI', 'XLE', 'IWM']
+2026-06-05 23:15:27,013 [ftseek_us.futu_lv3] INFO: [FutuLV3] ✅ 已订阅 36 只美股 ORDER_BOOK: ['TSLA', 'RIVN', 'UBER', 'SNDK', 'ARM', 'MU', 'BWXT', 'LLY', 'AMD', 'ORCL', 'AAPL', 'MSFT', 'GOOG', 'AMZN', 'META', 'AVGO', 'TSM', 'NFLX', 'BABA', 'PDD', 'NTES', 'CRM', 'BA', 'LMT', 'UNH', 'JPM', 'XOM', 'PG', 'SPY', 'QQQ', 'XLF', 'XLY', 'XLK', 'XLI', 'XLE', 'IWM']
+2026-06-05 23:15:27,084 [ftseek_us.futu_lv3] INFO: [FutuLV3] ✅ 已订阅 36 只美股 TICKER: ['TSLA', 'RIVN', 'UBER', 'SNDK', 'ARM', 'MU', 'BWXT', 'LLY', 'AMD', 'ORCL', 'AAPL', 'MSFT', 'GOOG', 'AMZN', 'META', 'AVGO', 'TSM', 'NFLX', 'BABA', 'PDD', 'NTES', 'CRM', 'BA', 'LMT', 'UNH', 'JPM', 'XOM', 'PG', 'SPY', 'QQQ', 'XLF', 'XLY', 'XLK', 'XLI', 'XLE', 'IWM']
+2026-06-05 23:15:27,085 [ftseek_us.futu_lv3] INFO: [FutuLV3] 总订阅: 38 只美股
+2026-06-05 23:15:27,085 [app.core.scheduler_core] INFO: [FutuLV3] ✅ 全量 Push 订阅: 36 只 (QUOTE+K_1M+K_5M+K_15M+K_30M+ORDER_BOOK+TICKER)
+2026-06-05 23:15:27,085 [app.core.scheduler_core] INFO: [FutuLV3] ✅ Push 订阅模式已激活 | 监控 36 只美股 | 槽位: 252/1000 | TIER1=10 TIER2=26 ETF=0
+2026-06-05 23:15:27,085 [app.core.scheduler_core] INFO: [FutuLV3] ✅ 快照验证通过 | 测试标的: US.UBER | 价格: $71.08 | 数据源: futu_lv3_push
+2026-06-05 23:15:27,113 [app.pipeline.position_monitor] INFO: [资本安全] 🟢 安全 | 净值=$1,070,627 | 回撤 -2.3% | 风险系数 1.0
+2026-06-05 23:15:27,162 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:15:27,167 [ftseek.exit_monitor] INFO: ✅ [ExitRuleDispatcher] 启用 shadow=True, main=False
+2026-06-05 23:15:27,190 [app.orb.engine] INFO: [ORB] US.IWM 滚动区间更新: H=206.37 L=204.79 W=0.77% ATR=0.260 Q=0.79
+2026-06-05 23:15:27,197 [ftseek.exit_monitor] INFO: ✅ [ExitRuleRegistry] 初始化完成, 启用规则(按优先级): ['pre_close', 'flash_exit', 'day_trade', 'trailing_stop', 'time_stop', 'velocity_exit', 'scale_out']
+2026-06-05 23:15:27,199 [ftseek.exit_monitor] INFO: ✅ [ExitMonitor] use_exit_registry=True, registry_fallback_on_error=True
+2026-06-05 23:15:27,427 [app.orb.engine] INFO: [ORB] US.DIA 滚动区间更新: H=418.67 L=416.74 W=0.46% ATR=0.268 Q=0.85
+2026-06-05 23:15:27,597 [app.orb.engine] INFO: [ORB] US.XLE 滚动区间更新: H=39.89 L=39.57 W=0.81% ATR=0.060 Q=0.85
+2026-06-05 23:15:27,771 [app.orb.engine] INFO: [ORB] US.XLF 滚动区间更新: H=49.96 L=49.68 W=0.56% ATR=0.041 Q=0.85
+2026-06-05 23:15:27,802 [ftseek_us.futu_lv3] INFO: [FutuLV3] ✅ Ticker 数据到达: 1 笔, 首批: ['US.TSLA']
+2026-06-05 23:15:27,929 [app.orb.engine] INFO: [ORB] US.XLK 滚动区间更新: H=118.28 L=117.56 W=0.62% ATR=0.128 Q=0.79
+2026-06-05 23:15:28,096 [app.orb.engine] INFO: [ORB] US.XLV 滚动区间更新: H=130.72 L=130.25 W=0.37% ATR=0.125 Q=0.79
+2026-06-05 23:15:28,097 [ftseek.exit_monitor] INFO: 📊 ExitMonitor 已初始化 (ExitMonitor 已就绪)
+2026-06-05 23:15:28,098 [ftseek.exit_monitor] INFO: ✅ [ExitMonitor 止损参数校验] 正股硬止损: -15.0% | 做空硬止损: -10.0% | 期权止损: -30% | DayTrade止损: -5.0% (ATR 1.5x)
+2026-06-05 23:15:28,102 [ftseek.exit_monitor] WARNING: ⚠️ [止损配置不一致] OptionRiskConfig.stop_loss_premium_pct=50% vs unified_config options.stop_loss_pct=-30%，请检查配置文件
+2026-06-05 23:15:28,104 [ftseek.exit_monitor] WARNING: ⚠️ WARNING: DayTrade_LONG_Tier1 exit rule R/R=0.40 < 1.0, negative expected value (TP=2.0%, SL=5.0%). R/R ratio < 1.0, mathematically unprofitable long-term.
+2026-06-05 23:15:28,105 [ftseek.exit_monitor] WARNING: ⚠️ WARNING: DayTrade_SHORT_Tier1 exit rule R/R=0.38 < 1.0, negative expected value (TP=1.5%, SL=4.0%). R/R ratio < 1.0, mathematically unprofitable long-term.
+2026-06-05 23:15:28,105 [ftseek.exit_monitor] WARNING: ⚠️ WARNING: DynamicExit_default exit rule R/R=0.56 < 1.0, negative expected value (TP=2.5%, SL=4.5%). R/R ratio < 1.0, mathematically unprofitable long-term.
+2026-06-05 23:15:28,105 [ftseek.exit_monitor] INFO: ✅ [R/R Check] Scalping_base: R/R=1.25 (TP=2.5%, SL=2.0%) — OK
+2026-06-05 23:15:28,105 [app.pipeline.position_monitor] INFO: [ExitDispatcher] ExitRuleDispatcher 已初始化 (主路径, 规则数=11)
+2026-06-05 23:15:28,112 [app.data.twelvedata_provider] INFO: [TwelveData] 初始化完成 | API Key=✅ | Cache TTL=900s
+2026-06-05 23:15:28,113 [app.data.finnhub_provider] INFO: [Finnhub] 初始化完成 | API Key=✅ | Cache TTL=300s
+2026-06-05 23:15:28,113 [app.data.alphavantage_provider] INFO: [AlphaVantage] 初始化完成 | API Key=✅ | Premium=False | Cache TTL=900s
+2026-06-05 23:15:28,113 [app.data.market_data_router] INFO: [MarketDataRouter] Futu LV3 提供商已初始化
+2026-06-05 23:15:28,113 [app.data.market_data_router] INFO: [MarketDataRouter] 初始化完成 | 启用的数据源：['TwelveData', 'Finnhub', 'AlphaVantage'] | Cache TTL=900s
+2026-06-05 23:15:28,114 [ftseek_us.futu_lv3] INFO: [FutuLV3] 正在连接 OpenD 127.0.0.1:11111...
+2026-06-05 23:15:28,150 | 3313963 | 139972996486720 | [open_context_base.py:409] _init_connect_sync: New connect ready: conn=7468681907387219481(9) context=<futu.quote.open_quote_context.OpenQuoteContext object at 0x7f4e0027e670>
+2026-06-05 23:15:28,151 [ftseek_us.futu_lv3] INFO: [FutuLV3] ✅ Push Handler 已注册 (Quote+Kline+Ticker+OrderBook)
+2026-06-05 23:15:28,210 [ftseek_us.futu_lv3] INFO: [FutuLV3] ✅ 连接成功 | LV3 行情可用 | US.AAPL=$313.11 | 延迟 < 1s
+2026-06-05 23:15:28,282 [app.orb.engine] INFO: [ORB] US.XLY 滚动区间更新: H=106.34 L=105.53 W=0.77% ATR=0.115 Q=1.00
+2026-06-05 23:15:28,510 [app.data.market_data_router] INFO: [Router] US.PG ★★★ LV3 主通道 | price=$144.72 RSI=45.9 MACD=-0.0119 ATR=0.10 trend=DOWN | ticker=N/A | ob=N/A
+2026-06-05 23:15:28,522 [app.orb.engine] INFO: [ORB] US.XLI 滚动区间更新: H=142.11 L=141.39 W=0.51% ATR=0.103 Q=0.85
+2026-06-05 23:15:28,522 [app.orb.engine] INFO: [ORB] 滚动区间构建完成: 8/8 个标的
+2026-06-05 23:15:28,538 [app.orb.engine] INFO: [ORB] ⏱ build=1.9s eval=0.0s monitor=0.0s ranges=8 positions=0
+2026-06-05 23:15:39,713 [app.data.alphavantage_provider] INFO: [Finnhub] VIX (VIXY代理): VIXY=$23.14 → VIX≈19.67
+2026-06-05 23:15:41,949 [app.data.alphavantage_provider] INFO: [Finnhub] VIX (VIXY代理): VIXY=$23.14 → VIX≈19.67
+2026-06-05 23:15:43,869 [app.data.alphavantage_provider] INFO: [Finnhub] VIX (VIXY代理): VIXY=$23.14 → VIX≈19.67
+2026-06-05 23:15:43,960 [app.data.market_data_router] INFO: [Router] US.PG price=$144.72 sentiment=0.00 vix=19.67 regime=TREND_DOWN source=futu_lv3
+2026-06-05 23:15:44,283 [app.data.market_data_router] INFO: [Router] US.ARM ★★★ LV3 主通道 | price=$358.26 RSI=6.5 MACD=-0.4132 ATR=0.22 trend=DOWN | ticker=N/A | ob=N/A
+2026-06-05 23:15:44,283 [app.data.market_data_router] INFO: [Router] US.ARM price=$358.26 sentiment=0.00 vix=19.67 regime=TREND_DOWN source=futu_lv3
+2026-06-05 23:15:44,470 [app.pipeline.signal_pipeline] INFO: [扫描] VIX=19.7 SPY=0.00% 市场情绪=-1.00
+2026-06-05 23:15:44,521 [ftseek.dynamic_pool] INFO: [动态池] tier=inst | equity=$1,070,627 | futu=safe | water=green → risk=safe | max_symbols=20 | min_confidence=0.15 | max_price=$2000.0 | catalyst=False
+2026-06-05 23:15:44,521 [app.pipeline.signal_pipeline] INFO: [降级模式] 阈值上调(更保守): 置信度 0.30→0.35 | 信号分 30→35
+2026-06-05 23:15:44,521 [app.pipeline.signal_pipeline] INFO: [自适应扫描] 本轮轮询 22 只股票：['US.TSLA', 'US.RIVN', 'US.UBER', 'US.SNDK', 'US.MU', 'US.LLY', 'US.AMD', 'US.ORCL', 'US.AAPL', 'US.MSFT', 'US.GOOG', 'US.AMZN', 'US.META', 'US.TSM', 'US.NFLX', 'US.BABA', 'US.CRM', 'US.BA', 'US.UNH', 'US.JPM', 'US.XOM', 'US.QQQ']
+2026-06-05 23:15:44,724 [app.data.market_data_router] INFO: [Router] US.TSLA ★★★ LV3 主通道 | price=$402.00 RSI=54.6 MACD=0.0037 ATR=2.20 trend=NEUTRAL | ticker=STRONG_BUY | ob=N/A
+2026-06-05 23:15:44,730 [app.data.market_data_router] INFO: [Router] US.TSLA price=$402.00 sentiment=0.00 vix=19.67 regime=RANGE source=futu_lv3
+2026-06-05 23:15:44,741 [app.data.market_data_router] INFO: [Router] US.XLY ★★★ LV3 主通道 | price=$116.53 RSI=15.3 MACD=-0.2115 ATR=0.11 trend=DOWN | ticker=N/A | ob=N/A
+2026-06-05 23:15:44,742 [app.data.market_data_router] INFO: [Router] US.XLY price=$116.53 sentiment=0.00 vix=19.67 regime=TREND_DOWN source=futu_lv3
+2026-06-05 23:15:45,028 [app.data.market_data_router] INFO: [Router] US.SPY ★★★ LV3 主通道 | price=$748.43 RSI=11.6 MACD=-0.6192 ATR=0.37 trend=DOWN | ticker=N/A | ob=N/A
+2026-06-05 23:15:45,030 [app.data.market_data_router] INFO: [Router] US.SPY price=$748.43 sentiment=0.00 vix=19.67 regime=TREND_DOWN source=futu_lv3
+2026-06-05 23:15:45,365 [app.data.market_data_router] INFO: [Router] US.XLK ★★★ LV3 主通道 | price=$185.89 RSI=10.1 MACD=-0.1917 ATR=0.09 trend=DOWN | ticker=N/A | ob=N/A
+2026-06-05 23:15:45,365 [app.data.market_data_router] INFO: [Router] US.XLK price=$185.89 sentiment=0.00 vix=19.67 regime=TREND_DOWN source=futu_lv3
+2026-06-05 23:15:45,764 [app.data.market_data_router] INFO: [Router] US.AVGO ★★★ LV3 主通道 | price=$398.75 RSI=22.0 MACD=-0.3136 ATR=0.31 trend=DOWN | ticker=N/A | ob=N/A
+2026-06-05 23:15:45,764 [app.data.market_data_router] INFO: [Router] US.AVGO price=$398.75 sentiment=0.00 vix=19.67 regime=TREND_DOWN source=futu_lv3
+2026-06-05 23:15:46,073 [app.data.market_data_router] INFO: [Router] US.NTES ★★★ LV3 主通道 | price=$119.44 RSI=27.5 MACD=-0.0638 ATR=0.08 trend=DOWN | ticker=N/A | ob=N/A
+2026-06-05 23:15:46,073 [app.data.market_data_router] INFO: [Router] US.NTES price=$119.44 sentiment=0.00 vix=19.67 regime=TREND_DOWN source=futu_lv3
+2026-06-05 23:15:46,398 [app.data.market_data_router] INFO: [Router] US.XLE ★★★ LV3 主通道 | price=$58.45 RSI=39.2 MACD=-0.0112 ATR=0.02 trend=DOWN | ticker=N/A | ob=N/A
+2026-06-05 23:15:46,399 [app.data.market_data_router] INFO: [Router] US.XLE price=$58.45 sentiment=0.00 vix=19.67 regime=TREND_DOWN source=futu_lv3
+2026-06-05 23:15:46,751 [app.data.market_data_router] INFO: [Router] US.IWM ★★★ LV3 主通道 | price=$286.38 RSI=11.2 MACD=-0.2127 ATR=0.14 trend=DOWN | ticker=N/A | ob=N/A
+2026-06-05 23:15:46,753 [app.data.market_data_router] INFO: [Router] US.IWM price=$286.38 sentiment=0.00 vix=19.67 regime=TREND_DOWN source=futu_lv3
+2026-06-05 23:15:47,097 [app.data.market_data_router] INFO: [Router] US.PDD ★★★ LV3 主通道 | price=$86.11 RSI=0.0 MACD=-0.0778 ATR=0.08 trend=DOWN | ticker=N/A | ob=N/A
+2026-06-05 23:15:47,098 [app.data.market_data_router] INFO: [Router] US.PDD price=$86.11 sentiment=0.00 vix=19.67 regime=TREND_DOWN source=futu_lv3
+2026-06-05 23:15:47,382 [app.data.market_data_router] INFO: [Router] US.XLI ★★★ LV3 主通道 | price=$175.97 RSI=14.7 MACD=-0.1227 ATR=0.08 trend=DOWN | ticker=N/A | ob=N/A
+2026-06-05 23:15:47,382 [app.data.market_data_router] INFO: [Router] US.XLI price=$175.97 sentiment=0.00 vix=19.67 regime=TREND_DOWN source=futu_lv3
+2026-06-05 23:15:47,735 [app.data.market_data_router] INFO: [Router] US.XLF ★★★ LV3 主通道 | price=$52.42 RSI=12.0 MACD=-0.0448 ATR=0.03 trend=DOWN | ticker=N/A | ob=N/A
+2026-06-05 23:15:47,737 [app.data.market_data_router] INFO: [Router] US.XLF price=$52.42 sentiment=0.00 vix=19.67 regime=TREND_DOWN source=futu_lv3
+2026-06-05 23:15:47,880 [ftseek_us.risk.vix_monitor] INFO: VIX 指数：19.67
+2026-06-05 23:15:47,881 [app.core.scheduler_core] INFO: [VIX] 当前值=19.7 | 级别=NORMAL | ✅ VIX 指数 19.67 (市场平稳)
+2026-06-05 23:15:48,034 [app.data.market_data_router] INFO: [Router] US.BWXT ★★★ LV3 主通道 | price=$188.34 RSI=18.5 MACD=-0.1955 ATR=0.10 trend=DOWN | ticker=N/A | ob=N/A
+2026-06-05 23:15:48,034 [app.data.market_data_router] INFO: [Router] US.BWXT price=$188.34 sentiment=0.00 vix=19.67 regime=TREND_DOWN source=futu_lv3
+2026-06-05 23:15:48,356 [app.data.market_data_router] INFO: [Router] US.LMT ★★★ LV3 主通道 | price=$526.78 RSI=51.2 MACD=-0.2967 ATR=0.32 trend=NEUTRAL | ticker=N/A | ob=N/A
+2026-06-05 23:15:48,356 [app.data.market_data_router] INFO: [Router] US.LMT price=$526.78 sentiment=0.00 vix=19.67 regime=RANGE source=futu_lv3
+2026-06-05 23:15:48,357 [ftseek.exit_monitor] WARNING: [策略隔离·兜底] US.PG owner_strategy 为空/未知 (''), 默认赋值 'main' 以确保退出检查不丢失
+2026-06-05 23:15:48,624 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:15:48,959 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:15:48,989 [ftseek.exit_monitor] WARNING: [策略隔离·兜底] US.ARM owner_strategy 为空/未知 (''), 默认赋值 'main' 以确保退出检查不丢失
+2026-06-05 23:15:49,268 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:15:49,310 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:15:49,346 [ftseek.exit_monitor] WARNING: [策略隔离·兜底] US.XLY owner_strategy 为空/未知 (''), 默认赋值 'main' 以确保退出检查不丢失
+2026-06-05 23:15:49,633 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:15:49,679 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:15:49,715 [ftseek.exit_monitor] WARNING: [策略隔离·兜底] US.SPY owner_strategy 为空/未知 (''), 默认赋值 'main' 以确保退出检查不丢失
+2026-06-05 23:15:49,928 [app.pipeline.signal_pipeline] INFO: [扫描] VIX=19.7 SPY=0.00% 市场情绪=-1.00
+2026-06-05 23:15:50,013 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:15:50,059 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:15:50,078 [ftseek.exit_monitor] WARNING: [策略隔离·兜底] US.XLK owner_strategy 为空/未知 (''), 默认赋值 'main' 以确保退出检查不丢失
+2026-06-05 23:15:50,100 [ftseek.dynamic_pool] INFO: [动态池] tier=inst | equity=$1,070,627 | futu=safe | water=green → risk=safe | max_symbols=20 | min_confidence=0.15 | max_price=$2000.0 | catalyst=False
+2026-06-05 23:15:50,101 [app.pipeline.signal_pipeline] INFO: [降级模式] 阈值上调(更保守): 置信度 0.35→0.40 | 信号分 35→40
+2026-06-05 23:15:50,101 [app.pipeline.signal_pipeline] INFO: [自适应扫描] 本轮轮询 22 只股票：['US.TSLA', 'US.RIVN', 'US.UBER', 'US.SNDK', 'US.MU', 'US.LLY', 'US.AMD', 'US.ORCL', 'US.AAPL', 'US.MSFT', 'US.GOOG', 'US.AMZN', 'US.META', 'US.TSM', 'US.NFLX', 'US.BABA', 'US.CRM', 'US.BA', 'US.UNH', 'US.JPM', 'US.XOM', 'US.QQQ']
+2026-06-05 23:15:50,157 [ftseek_us.news_v2.sources.hkex] INFO: [HKEX] 采集完成: 0 条公告
+2026-06-05 23:15:50,177 [app.data.market_data_router] INFO: [Router] US.TSLA ★★★ LV3 主通道 | price=$402.06 RSI=54.6 MACD=0.0037 ATR=2.20 trend=NEUTRAL | ticker=STRONG_BUY | ob=N/A
+2026-06-05 23:15:50,178 [app.data.market_data_router] INFO: [Router] US.TSLA price=$402.06 sentiment=0.00 vix=19.67 regime=RANGE source=futu_lv3
+2026-06-05 23:15:50,342 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:15:50,388 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:15:50,420 [ftseek.exit_monitor] WARNING: [策略隔离·兜底] US.AVGO owner_strategy 为空/未知 (''), 默认赋值 'main' 以确保退出检查不丢失
+2026-06-05 23:15:50,676 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:15:50,716 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:15:50,764 [ftseek.exit_monitor] INFO: [SL·渐进] US.AVGO SHORT 紧凑追踪(profit=1.3ATR, mult=2.0) SL: $443.15→$443.15 entry=$413.87 low=$397.52
+2026-06-05 23:15:50,766 [ftseek.exit_monitor] WARNING: [策略隔离·兜底] US.NTES owner_strategy 为空/未知 (''), 默认赋值 'main' 以确保退出检查不丢失
+2026-06-05 23:15:50,996 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:15:51,049 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:15:51,076 [ftseek.exit_monitor] INFO: [SL·渐进] US.NTES SHORT 紧凑追踪(profit=1.5ATR, mult=2.0) SL: $133.07→$133.07 entry=$123.63 low=$119.16
+2026-06-05 23:15:51,077 [ftseek.exit_monitor] WARNING: [策略隔离·兜底] US.XLE owner_strategy 为空/未知 (''), 默认赋值 'main' 以确保退出检查不丢失
+2026-06-05 23:15:51,308 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:15:51,351 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:15:51,380 [ftseek.exit_monitor] WARNING: [策略隔离·兜底] US.IWM owner_strategy 为空/未知 (''), 默认赋值 'main' 以确保退出检查不丢失
+2026-06-05 23:15:51,381 [ftseek.exit_monitor] WARNING: [trail_state] US.IWM highest_price异常：290.95 < entry 290.95，重置
+2026-06-05 23:15:51,617 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:15:51,684 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:15:51,704 [ftseek.exit_monitor] INFO: [SL·渐进] US.IWM SHORT 紧凑追踪(profit=1.1ATR, mult=2.0) SL: $304.83→$304.83 entry=$290.95 low=$285.68
+2026-06-05 23:15:51,706 [ftseek.exit_monitor] WARNING: [策略隔离·兜底] US.PDD owner_strategy 为空/未知 (''), 默认赋值 'main' 以确保退出检查不丢失
+2026-06-05 23:15:51,958 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:15:52,002 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:15:52,046 [ftseek.exit_monitor] WARNING: [策略隔离·兜底] US.XLI owner_strategy 为空/未知 (''), 默认赋值 'main' 以确保退出检查不丢失
+2026-06-05 23:15:52,308 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:15:52,362 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:15:52,383 [ftseek.exit_monitor] WARNING: [策略隔离·兜底] US.XLF owner_strategy 为空/未知 (''), 默认赋值 'main' 以确保退出检查不丢失
+2026-06-05 23:15:52,657 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:15:52,731 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:15:52,766 [ftseek.exit_monitor] WARNING: [策略隔离·兜底] US.BWXT owner_strategy 为空/未知 (''), 默认赋值 'main' 以确保退出检查不丢失
+2026-06-05 23:15:53,035 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:15:53,079 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:15:53,113 [ftseek.exit_monitor] WARNING: [策略隔离·兜底] US.LMT owner_strategy 为空/未知 (''), 默认赋值 'main' 以确保退出检查不丢失
+2026-06-05 23:15:53,360 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:15:53,400 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:15:53,430 [app.storage.trade_store] INFO: [TruthSource] 仓位写入 US.PG v117 src=auto_main action=update_trail
+2026-06-05 23:15:53,435 [app.storage.trade_store] INFO: [TruthSource] 仓位写入 US.ARM v64 src=auto_main action=update_trail
+2026-06-05 23:15:53,450 [app.storage.trade_store] INFO: [TruthSource] 仓位写入 US.XLY v37 src=auto_main action=update_trail
+2026-06-05 23:15:53,482 [app.storage.trade_store] INFO: [TruthSource] 仓位写入 US.SPY v45 src=auto_main action=update_trail
+2026-06-05 23:15:53,500 [app.storage.trade_store] INFO: [TruthSource] 仓位写入 US.XLK v64 src=auto_main action=update_trail
+2026-06-05 23:15:53,537 [app.storage.trade_store] INFO: [TruthSource] 仓位写入 US.AVGO v33 src=auto_main action=update_trail
+2026-06-05 23:15:53,552 [app.storage.trade_store] INFO: [TruthSource] 仓位写入 US.NTES v30 src=auto_main action=update_trail
+2026-06-05 23:15:53,595 [app.storage.trade_store] INFO: [TruthSource] 仓位写入 US.XLE v222 src=auto_main action=update_trail
+2026-06-05 23:15:53,609 [app.storage.trade_store] INFO: [TruthSource] 仓位写入 US.IWM v236 src=auto_main action=update_trail
+2026-06-05 23:15:53,634 [app.storage.trade_store] INFO: [TruthSource] 仓位写入 US.PDD v19 src=auto_main action=update_trail
+2026-06-05 23:15:53,656 [app.storage.trade_store] INFO: [TruthSource] 仓位写入 US.XLI v31 src=auto_main action=update_trail
+2026-06-05 23:15:53,667 [app.storage.trade_store] INFO: [TruthSource] 仓位写入 US.XLF v14 src=auto_main action=update_trail
+2026-06-05 23:15:53,690 [app.storage.trade_store] INFO: [TruthSource] 仓位写入 US.BWXT v64 src=auto_main action=update_trail
+2026-06-05 23:15:53,721 [app.storage.trade_store] INFO: [TruthSource] 仓位写入 US.LMT v12 src=auto_main action=update_trail
+2026-06-05 23:15:57,372 [app.pipeline.stages.market_data_stage] INFO: [MarketData] US.TSLA price=$402.00 spread=3bps rsi=55 atr=2.20 regime=caution
+2026-06-05 23:15:57,372 [app.pipeline.stages.runner] INFO: [Pipeline] US.TSLA market_data ✓ → SymbolContext(price=402.00) (12784ms)
+2026-06-05 23:15:57,376 [app.strategy.signal_quality_scorer] INFO: [SignalQuality] US.TSLA SHORT conf=0.346 str=30 dims={trend=0.00, momentum=0.90, volume=0.45, order_flow=0.00, market=0.55} confluence=-0.05 penalty=-0.06 blended(strat=0.400)
+2026-06-05 23:15:57,376 [app.pipeline.stages.signal_stage] INFO: [Signal] US.TSLA 技术面命中: 2/4 指标共振 | score=-10
+2026-06-05 23:15:57,376 [app.pipeline.stages.runner] INFO: [Pipeline] US.TSLA signal ✓ → SignalCandidate(SHORT strength=30) (4ms)
+2026-06-05 23:15:57,382 [app.pipeline.stages.risk_stage] WARNING: [RiskStage] US.TSLA 全局持仓已达上限 (14/12), 拒绝入场
+2026-06-05 23:15:57,382 [app.pipeline.stages.runner] INFO: [Pipeline] US.TSLA risk ✓ → None (拦截) (0ms)
+2026-06-05 23:15:57,382 [app.pipeline.stages.runner] INFO: [Pipeline] US.TSLA Stage 'risk' 返回 None, 管线终止
+2026-06-05 23:15:57,442 [app.data.market_data_router] INFO: [Router] US.RIVN ★★★ LV3 主通道 | price=$16.89 RSI=50.0 MACD=-0.0000 ATR=0.13 trend=NEUTRAL | ticker=STRONG_BUY | ob=N/A
+2026-06-05 23:15:57,442 [app.data.market_data_router] INFO: [Router] US.RIVN price=$16.89 sentiment=0.00 vix=19.67 regime=RANGE source=futu_lv3
+2026-06-05 23:15:57,442 [app.pipeline.stages.market_data_stage] INFO: [MarketData] US.RIVN price=$16.89 spread=3bps rsi=50 atr=0.13 regime=caution
+2026-06-05 23:15:57,443 [app.pipeline.stages.runner] INFO: [Pipeline] US.RIVN market_data ✓ → SymbolContext(price=16.89) (61ms)
+2026-06-05 23:15:57,447 [app.pipeline.stages.runner] INFO: [Pipeline] US.RIVN signal ✓ → None (拦截) (0ms)
+2026-06-05 23:15:57,447 [app.pipeline.stages.runner] INFO: [Pipeline] US.RIVN Stage 'signal' 返回 None, 管线终止
+2026-06-05 23:15:57,528 [app.data.market_data_router] INFO: [Router] US.UBER ★★★ LV3 主通道 | price=$71.09 RSI=53.1 MACD=-0.0008 ATR=0.12 trend=NEUTRAL | ticker=STRONG_BUY | ob=N/A
+2026-06-05 23:15:57,529 [app.data.market_data_router] INFO: [Router] US.UBER price=$71.09 sentiment=0.00 vix=19.67 regime=RANGE source=futu_lv3
+2026-06-05 23:15:57,529 [app.pipeline.stages.market_data_stage] INFO: [MarketData] US.UBER price=$71.09 spread=3bps rsi=53 atr=0.12 regime=caution
+2026-06-05 23:15:57,533 [app.pipeline.stages.runner] INFO: [Pipeline] US.UBER market_data ✓ → SymbolContext(price=71.09) (86ms)
+2026-06-05 23:15:57,534 [app.pipeline.stages.runner] INFO: [Pipeline] US.UBER signal ✓ → None (拦截) (0ms)
+2026-06-05 23:15:57,535 [app.pipeline.stages.runner] INFO: [Pipeline] US.UBER Stage 'signal' 返回 None, 管线终止
+2026-06-05 23:15:57,620 [app.data.market_data_router] INFO: [Router] US.SNDK ★★★ LV3 主通道 | price=$1650.95 RSI=69.8 MACD=0.3096 ATR=12.24 trend=UP | ticker=STRONG_BUY | ob=N/A
+2026-06-05 23:15:57,620 [app.data.market_data_router] INFO: [Router] US.SNDK price=$1650.95 sentiment=0.00 vix=19.67 regime=TREND_UP source=futu_lv3
+2026-06-05 23:15:57,620 [app.pipeline.stages.market_data_stage] INFO: [MarketData] US.SNDK price=$1650.95 spread=3bps rsi=70 atr=12.24 regime=caution
+2026-06-05 23:15:57,621 [app.pipeline.stages.runner] INFO: [Pipeline] US.SNDK market_data ✓ → SymbolContext(price=1650.95) (85ms)
+2026-06-05 23:15:57,631 [app.pipeline.stages.runner] INFO: [Pipeline] US.SNDK signal ✓ → None (拦截) (11ms)
+2026-06-05 23:15:57,632 [app.pipeline.stages.runner] INFO: [Pipeline] US.SNDK Stage 'signal' 返回 None, 管线终止
+2026-06-05 23:15:57,717 [app.data.market_data_router] INFO: [Router] US.MU ★★★ LV3 主通道 | price=$933.37 RSI=69.0 MACD=0.0404 ATR=7.40 trend=NEUTRAL | ticker=STRONG_BUY | ob=N/A
+2026-06-05 23:15:57,718 [app.data.market_data_router] INFO: [Router] US.MU price=$933.37 sentiment=0.00 vix=19.67 regime=RANGE source=futu_lv3
+2026-06-05 23:15:57,719 [app.pipeline.stages.market_data_stage] INFO: [MarketData] US.MU price=$933.37 spread=3bps rsi=69 atr=7.40 regime=caution
+2026-06-05 23:15:57,719 [app.pipeline.stages.runner] INFO: [Pipeline] US.MU market_data ✓ → SymbolContext(price=933.37) (86ms)
+2026-06-05 23:15:57,719 [app.pipeline.stages.runner] INFO: [Pipeline] US.MU signal ✓ → None (拦截) (0ms)
+2026-06-05 23:15:57,719 [app.pipeline.stages.runner] INFO: [Pipeline] US.MU Stage 'signal' 返回 None, 管线终止
+2026-06-05 23:15:57,799 [app.data.market_data_router] INFO: [Router] US.LLY ★★★ LV3 主通道 | price=$1157.19 RSI=44.9 MACD=-0.0265 ATR=4.31 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-06-05 23:15:57,802 [app.data.market_data_router] INFO: [Router] US.LLY price=$1157.19 sentiment=0.00 vix=19.67 regime=TREND_DOWN source=futu_lv3
+2026-06-05 23:15:57,802 [app.pipeline.stages.market_data_stage] INFO: [MarketData] US.LLY price=$1157.19 spread=3bps rsi=45 atr=4.31 regime=caution
+2026-06-05 23:15:57,802 [app.pipeline.stages.runner] INFO: [Pipeline] US.LLY market_data ✓ → SymbolContext(price=1157.19) (83ms)
+2026-06-05 23:15:57,802 [app.pipeline.stages.runner] INFO: [Pipeline] US.LLY signal ✓ → None (拦截) (0ms)
+2026-06-05 23:15:57,805 [app.pipeline.stages.runner] INFO: [Pipeline] US.LLY Stage 'signal' 返回 None, 管线终止
+2026-06-05 23:15:57,889 [app.data.market_data_router] INFO: [Router] US.AMD ★★★ LV3 主通道 | price=$487.08 RSI=55.6 MACD=0.0601 ATR=5.02 trend=UP | ticker=STRONG_BUY | ob=N/A
+2026-06-05 23:15:57,889 [app.data.market_data_router] INFO: [Router] US.AMD price=$487.08 sentiment=0.00 vix=19.67 regime=TREND_UP source=futu_lv3
+2026-06-05 23:15:57,889 [app.pipeline.stages.market_data_stage] INFO: [MarketData] US.AMD price=$487.08 spread=3bps rsi=56 atr=5.02 regime=caution
+2026-06-05 23:15:57,889 [app.pipeline.stages.runner] INFO: [Pipeline] US.AMD market_data ✓ → SymbolContext(price=487.08) (84ms)
+2026-06-05 23:15:57,890 [app.pipeline.stages.runner] INFO: [Pipeline] US.AMD signal ✓ → None (拦截) (0ms)
+2026-06-05 23:15:57,890 [app.pipeline.stages.runner] INFO: [Pipeline] US.AMD Stage 'signal' 返回 None, 管线终止
+2026-06-05 23:15:57,978 [app.data.market_data_router] INFO: [Router] US.ORCL ★★★ LV3 主通道 | price=$220.28 RSI=88.0 MACD=-0.0013 ATR=1.48 trend=NEUTRAL | ticker=STRONG_BUY | ob=N/A
+2026-06-05 23:15:57,978 [app.data.market_data_router] INFO: [Router] US.ORCL price=$220.28 sentiment=0.00 vix=19.67 regime=RANGE source=futu_lv3
+2026-06-05 23:15:57,979 [app.pipeline.stages.market_data_stage] INFO: [MarketData] US.ORCL price=$220.28 spread=3bps rsi=88 atr=1.48 regime=caution
+2026-06-05 23:15:57,979 [app.pipeline.stages.runner] INFO: [Pipeline] US.ORCL market_data ✓ → SymbolContext(price=220.28) (88ms)
+2026-06-05 23:15:57,979 [app.strategy.signal_quality_scorer] INFO: [SignalQuality] US.ORCL SHORT conf=0.510 str=40 dims={trend=0.20, momentum=0.10, volume=0.45, order_flow=0.00, market=0.55} confluence=-0.10 penalty=-0.09 blended(strat=0.800)
+2026-06-05 23:15:57,979 [app.pipeline.stages.signal_stage] INFO: [Signal] US.ORCL 技术面命中: 4/4 指标共振 | score=-14
+2026-06-05 23:15:57,979 [app.pipeline.stages.runner] INFO: [Pipeline] US.ORCL signal ✓ → SignalCandidate(SHORT strength=40) (1ms)
+2026-06-05 23:15:57,979 [app.pipeline.stages.risk_stage] WARNING: [RiskStage] US.ORCL 全局持仓已达上限 (14/12), 拒绝入场
+2026-06-05 23:15:57,980 [app.pipeline.stages.runner] INFO: [Pipeline] US.ORCL risk ✓ → None (拦截) (0ms)
+2026-06-05 23:15:57,980 [app.pipeline.stages.runner] INFO: [Pipeline] US.ORCL Stage 'risk' 返回 None, 管线终止
+2026-06-05 23:15:58,063 [app.data.market_data_router] INFO: [Router] US.AAPL ★★★ LV3 主通道 | price=$313.15 RSI=50.0 MACD=0.0042 ATR=0.33 trend=NEUTRAL | ticker=STRONG_BUY | ob=N/A
+2026-06-05 23:15:58,063 [app.data.market_data_router] INFO: [Router] US.AAPL price=$313.15 sentiment=0.00 vix=19.67 regime=RANGE source=futu_lv3
+2026-06-05 23:15:58,064 [app.pipeline.stages.market_data_stage] INFO: [MarketData] US.AAPL price=$313.15 spread=3bps rsi=50 atr=0.33 regime=caution
+2026-06-05 23:15:58,064 [app.pipeline.stages.runner] INFO: [Pipeline] US.AAPL market_data ✓ → SymbolContext(price=313.15) (84ms)
+2026-06-05 23:15:58,065 [app.strategy.signal_quality_scorer] INFO: [SignalQuality] US.AAPL SHORT conf=0.286 str=25 dims={trend=0.00, momentum=0.80, volume=0.05, order_flow=0.00, market=0.55} confluence=-0.05 penalty=-0.09 blended(strat=0.400)
+2026-06-05 23:15:58,065 [app.pipeline.stages.signal_stage] INFO: [Signal] US.AAPL 技术面命中: 2/4 指标共振 | score=-10
+2026-06-05 23:15:58,065 [app.pipeline.stages.signal_stage] INFO: [Signal] US.AAPL 弱信号过滤: strategy=TECHNICAL_MULTI_FACTOR strength=25<30 OR conf=0.29<0.3
+2026-06-05 23:15:58,065 [app.pipeline.stages.signal_stage] INFO: [Signal] US.AAPL 所有候选未通过质量底线 (strength≥30 AND conf≥0.3)
+2026-06-05 23:15:58,065 [app.pipeline.stages.runner] INFO: [Pipeline] US.AAPL signal ✓ → None (拦截) (1ms)
+2026-06-05 23:15:58,066 [app.pipeline.stages.runner] INFO: [Pipeline] US.AAPL Stage 'signal' 返回 None, 管线终止
+2026-06-05 23:15:58,175 [app.data.market_data_router] INFO: [Router] US.MSFT ★★★ LV3 主通道 | price=$422.01 RSI=46.6 MACD=-0.0052 ATR=0.64 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-06-05 23:15:58,176 [app.data.market_data_router] INFO: [Router] US.MSFT price=$422.01 sentiment=0.00 vix=19.67 regime=TREND_DOWN source=futu_lv3
+2026-06-05 23:15:58,176 [app.pipeline.stages.market_data_stage] INFO: [MarketData] US.MSFT price=$422.01 spread=3bps rsi=47 atr=0.64 regime=caution
+2026-06-05 23:15:58,177 [app.pipeline.stages.runner] INFO: [Pipeline] US.MSFT market_data ✓ → SymbolContext(price=422.01) (111ms)
+2026-06-05 23:15:58,178 [app.strategy.signal_quality_scorer] INFO: [SignalQuality] US.MSFT SHORT conf=0.349 str=33 dims={trend=0.30, momentum=0.70, volume=0.05, order_flow=0.00, market=0.70} confluence=+0.00 penalty=-0.06 blended(strat=0.400)
+2026-06-05 23:15:58,178 [app.pipeline.stages.signal_stage] INFO: [Signal] US.MSFT 技术面命中: 2/4 指标共振 | score=-10
+2026-06-05 23:15:58,178 [app.pipeline.stages.runner] INFO: [Pipeline] US.MSFT signal ✓ → SignalCandidate(SHORT strength=33) (1ms)
+2026-06-05 23:15:58,178 [app.pipeline.stages.risk_stage] WARNING: [RiskStage] US.MSFT 全局持仓已达上限 (14/12), 拒绝入场
+2026-06-05 23:15:58,178 [app.pipeline.stages.runner] INFO: [Pipeline] US.MSFT risk ✓ → None (拦截) (0ms)
+2026-06-05 23:15:58,178 [app.pipeline.stages.runner] INFO: [Pipeline] US.MSFT Stage 'risk' 返回 None, 管线终止
+2026-06-05 23:15:58,266 [app.data.market_data_router] INFO: [Router] US.GOOG ★★★ LV3 主通道 | price=$366.14 RSI=50.0 MACD=-0.0063 ATR=1.17 trend=NEUTRAL | ticker=STRONG_BUY | ob=N/A
+2026-06-05 23:15:58,267 [app.data.market_data_router] INFO: [Router] US.GOOG price=$366.14 sentiment=0.00 vix=19.67 regime=RANGE source=futu_lv3
+2026-06-05 23:15:58,269 [app.pipeline.stages.market_data_stage] INFO: [MarketData] US.GOOG price=$366.14 spread=3bps rsi=50 atr=1.17 regime=caution
+2026-06-05 23:15:58,270 [app.pipeline.stages.runner] INFO: [Pipeline] US.GOOG market_data ✓ → SymbolContext(price=366.14) (92ms)
+2026-06-05 23:15:58,272 [app.pipeline.stages.runner] INFO: [Pipeline] US.GOOG signal ✓ → None (拦截) (0ms)
+2026-06-05 23:15:58,273 [app.pipeline.stages.runner] INFO: [Pipeline] US.GOOG Stage 'signal' 返回 None, 管线终止
+2026-06-05 23:15:58,356 [app.data.market_data_router] INFO: [Router] US.AMZN ★★★ LV3 主通道 | price=$252.85 RSI=52.9 MACD=0.0013 ATR=0.59 trend=NEUTRAL | ticker=STRONG_BUY | ob=N/A
+2026-06-05 23:15:58,356 [app.data.market_data_router] INFO: [Router] US.AMZN price=$252.85 sentiment=0.00 vix=19.67 regime=RANGE source=futu_lv3
+2026-06-05 23:15:58,357 [app.pipeline.stages.market_data_stage] INFO: [MarketData] US.AMZN price=$252.85 spread=3bps rsi=53 atr=0.59 regime=caution
+2026-06-05 23:15:58,357 [app.pipeline.stages.runner] INFO: [Pipeline] US.AMZN market_data ✓ → SymbolContext(price=252.85) (84ms)
+2026-06-05 23:15:58,357 [app.pipeline.stages.runner] INFO: [Pipeline] US.AMZN signal ✓ → None (拦截) (0ms)
+2026-06-05 23:15:58,357 [app.pipeline.stages.runner] INFO: [Pipeline] US.AMZN Stage 'signal' 返回 None, 管线终止
+2026-06-05 23:15:58,449 [app.data.market_data_router] INFO: [Router] US.META ★★★ LV3 主通道 | price=$613.40 RSI=50.0 MACD=-0.0002 ATR=1.80 trend=NEUTRAL | ticker=STRONG_BUY | ob=N/A
+2026-06-05 23:15:58,450 [app.data.market_data_router] INFO: [Router] US.META price=$613.40 sentiment=0.00 vix=19.67 regime=RANGE source=futu_lv3
+2026-06-05 23:15:58,450 [app.pipeline.stages.market_data_stage] INFO: [MarketData] US.META price=$613.40 spread=3bps rsi=50 atr=1.80 regime=caution
+2026-06-05 23:15:58,450 [app.pipeline.stages.runner] INFO: [Pipeline] US.META market_data ✓ → SymbolContext(price=613.40) (93ms)
+2026-06-05 23:15:58,450 [app.pipeline.stages.runner] INFO: [Pipeline] US.META signal ✓ → None (拦截) (0ms)
+2026-06-05 23:15:58,450 [app.pipeline.stages.runner] INFO: [Pipeline] US.META Stage 'signal' 返回 None, 管线终止
+2026-06-05 23:15:58,519 [app.data.market_data_router] INFO: [Router] US.TSM ★★★ LV3 主通道 | price=$425.05 RSI=57.1 MACD=0.0254 ATR=3.58 trend=NEUTRAL | ticker=STRONG_BUY | ob=N/A
+2026-06-05 23:15:58,521 [app.data.market_data_router] INFO: [Router] US.TSM price=$425.05 sentiment=0.00 vix=19.67 regime=RANGE source=futu_lv3
+2026-06-05 23:15:58,522 [app.pipeline.stages.market_data_stage] INFO: [MarketData] US.TSM price=$425.05 spread=3bps rsi=57 atr=3.58 regime=caution
+2026-06-05 23:15:58,522 [app.pipeline.stages.runner] INFO: [Pipeline] US.TSM market_data ✓ → SymbolContext(price=425.05) (71ms)
+2026-06-05 23:15:58,523 [app.strategy.signal_quality_scorer] INFO: [SignalQuality] US.TSM SHORT conf=0.302 str=24 dims={trend=0.00, momentum=0.60, volume=0.45, order_flow=0.00, market=0.55} confluence=-0.10 penalty=-0.06 blended(strat=0.400)
+2026-06-05 23:15:58,523 [app.pipeline.stages.signal_stage] INFO: [Signal] US.TSM 技术面命中: 2/4 指标共振 | score=-10
+2026-06-05 23:15:58,523 [app.pipeline.stages.signal_stage] INFO: [Signal] US.TSM 弱信号过滤: strategy=TECHNICAL_MULTI_FACTOR strength=24<30 OR conf=0.30<0.3
+2026-06-05 23:15:58,523 [app.pipeline.stages.signal_stage] INFO: [Signal] US.TSM 所有候选未通过质量底线 (strength≥30 AND conf≥0.3)
+2026-06-05 23:15:58,523 [app.pipeline.stages.runner] INFO: [Pipeline] US.TSM signal ✓ → None (拦截) (1ms)
+2026-06-05 23:15:58,523 [app.pipeline.stages.runner] INFO: [Pipeline] US.TSM Stage 'signal' 返回 None, 管线终止
+2026-06-05 23:15:58,594 [app.data.market_data_router] INFO: [Router] US.NFLX ★★★ LV3 主通道 | price=$81.60 RSI=47.4 MACD=-0.0003 ATR=0.22 trend=NEUTRAL | ticker=STRONG_BUY | ob=N/A
+2026-06-05 23:15:58,595 [app.data.market_data_router] INFO: [Router] US.NFLX price=$81.60 sentiment=0.00 vix=19.67 regime=RANGE source=futu_lv3
+2026-06-05 23:15:58,596 [app.pipeline.stages.market_data_stage] INFO: [MarketData] US.NFLX price=$81.60 spread=3bps rsi=47 atr=0.22 regime=caution
+2026-06-05 23:15:58,596 [app.pipeline.stages.runner] INFO: [Pipeline] US.NFLX market_data ✓ → SymbolContext(price=81.60) (72ms)
+2026-06-05 23:15:58,596 [app.pipeline.stages.runner] INFO: [Pipeline] US.NFLX signal ✓ → None (拦截) (0ms)
+2026-06-05 23:15:58,596 [app.pipeline.stages.runner] INFO: [Pipeline] US.NFLX Stage 'signal' 返回 None, 管线终止
+2026-06-05 23:15:58,727 [app.data.market_data_router] INFO: [Router] US.BABA ★★★ LV3 主通道 | price=$122.58 RSI=86.8 MACD=0.0013 ATR=0.39 trend=NEUTRAL | ticker=STRONG_BUY | ob=N/A
+2026-06-05 23:15:58,727 [app.data.market_data_router] INFO: [Router] US.BABA price=$122.58 sentiment=0.00 vix=19.67 regime=RANGE source=futu_lv3
+2026-06-05 23:15:58,727 [app.pipeline.stages.market_data_stage] INFO: [MarketData] US.BABA price=$122.58 spread=6bps rsi=87 atr=0.39 regime=caution
+2026-06-05 23:15:58,728 [app.pipeline.stages.runner] INFO: [Pipeline] US.BABA market_data ✓ → SymbolContext(price=122.58) (131ms)
+2026-06-05 23:15:58,728 [app.pipeline.stages.runner] INFO: [Pipeline] US.BABA signal ✓ → None (拦截) (0ms)
+2026-06-05 23:15:58,728 [app.pipeline.stages.runner] INFO: [Pipeline] US.BABA Stage 'signal' 返回 None, 管线终止
+2026-06-05 23:15:58,779 [app.data.market_data_router] INFO: [Router] US.CRM ★★★ LV3 主通道 | price=$187.04 RSI=50.0 MACD=-0.0082 ATR=0.58 trend=NEUTRAL | ticker=STRONG_BUY | ob=N/A
+2026-06-05 23:15:58,779 [app.data.market_data_router] INFO: [Router] US.CRM price=$187.04 sentiment=0.00 vix=19.67 regime=RANGE source=futu_lv3
+2026-06-05 23:15:58,780 [app.pipeline.stages.market_data_stage] INFO: [MarketData] US.CRM price=$187.04 spread=3bps rsi=50 atr=0.58 regime=caution
+2026-06-05 23:15:58,780 [app.pipeline.stages.runner] INFO: [Pipeline] US.CRM market_data ✓ → SymbolContext(price=187.04) (51ms)
+2026-06-05 23:15:58,780 [app.strategy.signal_quality_scorer] INFO: [SignalQuality] US.CRM SHORT conf=0.314 str=28 dims={trend=0.20, momentum=0.90, volume=0.05, order_flow=0.00, market=0.55} confluence=-0.05 penalty=-0.09 blended(strat=0.400)
+2026-06-05 23:15:58,780 [app.pipeline.stages.signal_stage] INFO: [Signal] US.CRM 技术面命中: 2/4 指标共振 | score=-10
+2026-06-05 23:15:58,781 [app.pipeline.stages.signal_stage] INFO: [Signal] US.CRM 弱信号过滤: strategy=TECHNICAL_MULTI_FACTOR strength=28<30 OR conf=0.31<0.3
+2026-06-05 23:15:58,781 [app.pipeline.stages.signal_stage] INFO: [Signal] US.CRM 所有候选未通过质量底线 (strength≥30 AND conf≥0.3)
+2026-06-05 23:15:58,781 [app.pipeline.stages.runner] INFO: [Pipeline] US.CRM signal ✓ → None (拦截) (1ms)
+2026-06-05 23:15:58,781 [app.pipeline.stages.runner] INFO: [Pipeline] US.CRM Stage 'signal' 返回 None, 管线终止
+2026-06-05 23:15:58,834 [app.data.market_data_router] INFO: [Router] US.BA ★★★ LV3 主通道 | price=$217.11 RSI=50.0 MACD=0.0004 ATR=1.15 trend=NEUTRAL | ticker=BUY | ob=N/A
+2026-06-05 23:15:58,835 [app.data.market_data_router] INFO: [Router] US.BA price=$217.11 sentiment=0.00 vix=19.67 regime=RANGE source=futu_lv3
+2026-06-05 23:15:58,835 [app.pipeline.stages.market_data_stage] INFO: [MarketData] US.BA price=$217.11 spread=3bps rsi=50 atr=1.15 regime=caution
+2026-06-05 23:15:58,835 [app.pipeline.stages.runner] INFO: [Pipeline] US.BA market_data ✓ → SymbolContext(price=217.11) (54ms)
+2026-06-05 23:15:58,836 [app.pipeline.stages.runner] INFO: [Pipeline] US.BA signal ✓ → None (拦截) (1ms)
+2026-06-05 23:15:58,836 [app.pipeline.stages.runner] INFO: [Pipeline] US.BA Stage 'signal' 返回 None, 管线终止
+2026-06-05 23:15:58,909 [app.data.market_data_router] INFO: [Router] US.UNH ★★★ LV3 主通道 | price=$399.69 RSI=46.0 MACD=0.0057 ATR=0.75 trend=NEUTRAL | ticker=STRONG_BUY | ob=N/A
+2026-06-05 23:15:58,910 [app.data.market_data_router] INFO: [Router] US.UNH price=$399.69 sentiment=0.00 vix=19.67 regime=RANGE source=futu_lv3
+2026-06-05 23:15:58,911 [app.pipeline.stages.market_data_stage] INFO: [MarketData] US.UNH price=$399.69 spread=3bps rsi=46 atr=0.75 regime=caution
+2026-06-05 23:15:58,911 [app.pipeline.stages.runner] INFO: [Pipeline] US.UNH market_data ✓ → SymbolContext(price=399.69) (74ms)
+2026-06-05 23:15:58,911 [app.pipeline.stages.runner] INFO: [Pipeline] US.UNH signal ✓ → None (拦截) (0ms)
+2026-06-05 23:15:58,911 [app.pipeline.stages.runner] INFO: [Pipeline] US.UNH Stage 'signal' 返回 None, 管线终止
+2026-06-05 23:15:58,968 [app.data.market_data_router] INFO: [Router] US.JPM ★★★ LV3 主通道 | price=$313.12 RSI=52.3 MACD=0.0005 ATR=0.44 trend=NEUTRAL | ticker=STRONG_BUY | ob=N/A
+2026-06-05 23:15:58,968 [app.data.market_data_router] INFO: [Router] US.JPM price=$313.12 sentiment=0.00 vix=19.67 regime=RANGE source=futu_lv3
+2026-06-05 23:15:58,968 [app.pipeline.stages.market_data_stage] INFO: [MarketData] US.JPM price=$313.12 spread=3bps rsi=52 atr=0.44 regime=caution
+2026-06-05 23:15:58,968 [app.pipeline.stages.runner] INFO: [Pipeline] US.JPM market_data ✓ → SymbolContext(price=313.12) (57ms)
+2026-06-05 23:15:58,969 [app.pipeline.stages.runner] INFO: [Pipeline] US.JPM signal ✓ → None (拦截) (0ms)
+2026-06-05 23:15:58,969 [app.pipeline.stages.runner] INFO: [Pipeline] US.JPM Stage 'signal' 返回 None, 管线终止
+2026-06-05 23:15:59,040 [app.data.market_data_router] INFO: [Router] US.XOM ★★★ LV3 主通道 | price=$151.18 RSI=45.5 MACD=-0.0005 ATR=0.37 trend=NEUTRAL | ticker=STRONG_BUY | ob=N/A
+2026-06-05 23:15:59,041 [app.data.market_data_router] INFO: [Router] US.XOM price=$151.18 sentiment=0.00 vix=19.67 regime=RANGE source=futu_lv3
+2026-06-05 23:15:59,042 [app.pipeline.stages.market_data_stage] INFO: [MarketData] US.XOM price=$151.18 spread=3bps rsi=45 atr=0.37 regime=caution
+2026-06-05 23:15:59,043 [app.pipeline.stages.runner] INFO: [Pipeline] US.XOM market_data ✓ → SymbolContext(price=151.18) (74ms)
+2026-06-05 23:15:59,043 [app.pipeline.stages.runner] INFO: [Pipeline] US.XOM signal ✓ → None (拦截) (0ms)
+2026-06-05 23:15:59,044 [app.pipeline.stages.runner] INFO: [Pipeline] US.XOM Stage 'signal' 返回 None, 管线终止
+2026-06-05 23:15:59,164 [app.data.market_data_router] INFO: [Router] US.QQQ ★★★ LV3 主通道 | price=$722.87 RSI=45.2 MACD=-0.0115 ATR=1.66 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-06-05 23:15:59,164 [app.data.market_data_router] INFO: [Router] US.QQQ price=$722.87 sentiment=0.00 vix=19.67 regime=TREND_DOWN source=futu_lv3
+2026-06-05 23:15:59,165 [app.pipeline.stages.market_data_stage] INFO: [MarketData] US.QQQ price=$722.87 spread=3bps rsi=45 atr=1.66 regime=caution
+2026-06-05 23:15:59,165 [app.pipeline.stages.runner] INFO: [Pipeline] US.QQQ market_data ✓ → SymbolContext(price=722.87) (121ms)
+2026-06-05 23:15:59,166 [app.strategy.signal_quality_scorer] INFO: [SignalQuality] US.QQQ SHORT conf=0.349 str=33 dims={trend=0.30, momentum=0.70, volume=0.05, order_flow=0.00, market=0.70} confluence=+0.00 penalty=-0.06 blended(strat=0.400)
+2026-06-05 23:15:59,166 [app.pipeline.stages.signal_stage] INFO: [Signal] US.QQQ 技术面命中: 2/4 指标共振 | score=-10
+2026-06-05 23:15:59,166 [app.pipeline.stages.runner] INFO: [Pipeline] US.QQQ signal ✓ → SignalCandidate(SHORT strength=33) (1ms)
+2026-06-05 23:15:59,166 [app.pipeline.stages.risk_stage] WARNING: [RiskStage] US.QQQ 全局持仓已达上限 (14/12), 拒绝入场
+2026-06-05 23:15:59,166 [app.pipeline.stages.runner] INFO: [Pipeline] US.QQQ risk ✓ → None (拦截) (0ms)
+2026-06-05 23:15:59,166 [app.pipeline.stages.runner] INFO: [Pipeline] US.QQQ Stage 'risk' 返回 None, 管线终止
+2026-06-05 23:15:59,260 [app.data.market_data_router] INFO: [Router] US.PG ★★★ LV3 主通道 | price=$144.70 RSI=50.0 MACD=-0.0000 ATR=0.34 trend=NEUTRAL | ticker=STRONG_BUY | ob=N/A
+2026-06-05 23:15:59,261 [app.data.market_data_router] INFO: [Router] US.PG price=$144.70 sentiment=0.00 vix=19.67 regime=RANGE source=futu_lv3
+2026-06-05 23:15:59,312 [app.data.market_data_router] INFO: [Router] US.ARM ★★★ LV3 主通道 | price=$358.26 RSI=46.7 MACD=0.0018 ATR=1.86 trend=NEUTRAL | ticker=STRONG_BUY | ob=N/A
+2026-06-05 23:15:59,313 [app.data.market_data_router] INFO: [Router] US.ARM price=$358.26 sentiment=0.00 vix=19.67 regime=RANGE source=futu_lv3
+2026-06-05 23:15:59,449 [app.data.market_data_router] INFO: [Router] US.XLY ★★★ LV3 主通道 | price=$116.51 RSI=100.0 MACD=1.3116 ATR=0.09 trend=NEUTRAL | ticker=BUY | ob=N/A
+2026-06-05 23:15:59,449 [app.data.market_data_router] INFO: [Router] US.XLY price=$116.51 sentiment=0.00 vix=19.67 regime=RANGE source=futu_lv3
+2026-06-05 23:15:59,543 [app.data.market_data_router] INFO: [Router] US.SPY ★★★ LV3 主通道 | price=$748.42 RSI=44.8 MACD=0.0022 ATR=1.31 trend=NEUTRAL | ticker=STRONG_BUY | ob=N/A
+2026-06-05 23:15:59,543 [app.data.market_data_router] INFO: [Router] US.SPY price=$748.42 sentiment=0.00 vix=19.67 regime=RANGE source=futu_lv3
+2026-06-05 23:15:59,627 [app.data.market_data_router] INFO: [Router] US.XLK ★★★ LV3 主通道 | price=$185.92 RSI=0.0 MACD=0.0093 ATR=0.43 trend=NEUTRAL | ticker=STRONG_BUY | ob=N/A
+2026-06-05 23:15:59,627 [app.data.market_data_router] INFO: [Router] US.XLK price=$185.92 sentiment=0.00 vix=19.67 regime=RANGE source=futu_lv3
+2026-06-05 23:15:59,732 [app.data.market_data_router] INFO: [Router] US.AVGO ★★★ LV3 主通道 | price=$398.93 RSI=39.5 MACD=-0.0099 ATR=1.25 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-06-05 23:15:59,733 [app.data.market_data_router] INFO: [Router] US.AVGO price=$398.93 sentiment=0.00 vix=19.67 regime=TREND_DOWN source=futu_lv3
+2026-06-05 23:15:59,741 [app.data.market_data_router] WARNING: [Router] US.NTES LV3 K 线数据不足 (18 条)
+2026-06-05 23:15:59,741 [app.data.market_data_router] INFO: [Router] US.NTES price=$119.44 sentiment=0.00 vix=19.67 regime=RANGE source=futu_lv3_quote_only
+2026-06-05 23:15:59,797 [app.data.market_data_router] INFO: [Router] US.XLE ★★★ LV3 主通道 | price=$58.45 RSI=100.0 MACD=0.6701 ATR=0.06 trend=NEUTRAL | ticker=STRONG_BUY | ob=N/A
+2026-06-05 23:15:59,799 [app.data.market_data_router] INFO: [Router] US.XLE price=$58.45 sentiment=0.00 vix=19.67 regime=RANGE source=futu_lv3
+2026-06-05 23:15:59,872 [app.data.market_data_router] INFO: [Router] US.IWM ★★★ LV3 主通道 | price=$286.42 RSI=100.0 MACD=0.1071 ATR=0.32 trend=NEUTRAL | ticker=STRONG_BUY | ob=N/A
+2026-06-05 23:15:59,872 [app.data.market_data_router] INFO: [Router] US.IWM price=$286.42 sentiment=0.00 vix=19.67 regime=RANGE source=futu_lv3
+2026-06-05 23:15:59,981 [app.data.market_data_router] INFO: [Router] US.PDD ★★★ LV3 主通道 | price=$86.11 RSI=44.4 MACD=-0.0009 ATR=0.18 trend=NEUTRAL | ticker=STRONG_BUY | ob=N/A
+2026-06-05 23:15:59,981 [app.data.market_data_router] INFO: [Router] US.PDD price=$86.11 sentiment=0.00 vix=19.67 regime=RANGE source=futu_lv3
+2026-06-05 23:16:00,050 [app.data.market_data_router] INFO: [Router] US.XLI ★★★ LV3 主通道 | price=$175.97 RSI=75.0 MACD=1.2339 ATR=0.07 trend=NEUTRAL | ticker=BUY | ob=N/A
+2026-06-05 23:16:00,052 [app.data.market_data_router] INFO: [Router] US.XLI price=$175.97 sentiment=0.00 vix=19.67 regime=RANGE source=futu_lv3
+2026-06-05 23:16:00,174 [app.data.market_data_router] INFO: [Router] US.XLF ★★★ LV3 主通道 | price=$52.41 RSI=100.0 MACD=0.0220 ATR=0.02 trend=NEUTRAL | ticker=STRONG_BUY | ob=N/A
+2026-06-05 23:16:00,174 [app.data.market_data_router] INFO: [Router] US.XLF price=$52.41 sentiment=0.00 vix=19.67 regime=RANGE source=futu_lv3
+2026-06-05 23:16:00,252 [app.data.market_data_router] WARNING: [Router] US.BWXT LV3 K 线数据不足 (29 条)
+2026-06-05 23:16:00,253 [app.data.market_data_router] INFO: [Router] US.BWXT price=$188.34 sentiment=0.00 vix=19.67 regime=RANGE source=futu_lv3_quote_only
+2026-06-05 23:16:00,305 [app.data.market_data_router] INFO: [Router] US.LMT ★★★ LV3 主通道 | price=$526.78 RSI=50.0 MACD=-0.0187 ATR=0.75 trend=NEUTRAL | ticker=BUY | ob=N/A
+2026-06-05 23:16:00,307 [app.data.market_data_router] INFO: [Router] US.LMT price=$526.78 sentiment=0.00 vix=19.67 regime=RANGE source=futu_lv3
+2026-06-05 23:16:02,582 [app.pipeline.stages.market_data_stage] INFO: [MarketData] US.TSLA price=$402.06 spread=3bps rsi=55 atr=2.20 regime=caution
+2026-06-05 23:16:02,586 [app.pipeline.stages.runner] INFO: [Pipeline] US.TSLA market_data ✓ → SymbolContext(price=402.06) (12485ms)
+2026-06-05 23:16:02,586 [app.strategy.signal_quality_scorer] INFO: [SignalQuality] US.TSLA SHORT conf=0.346 str=30 dims={trend=0.00, momentum=0.90, volume=0.45, order_flow=0.00, market=0.55} confluence=-0.05 penalty=-0.06 blended(strat=0.400)
+2026-06-05 23:16:02,586 [app.pipeline.stages.signal_stage] INFO: [Signal] US.TSLA 技术面命中: 2/4 指标共振 | score=-10
+2026-06-05 23:16:02,587 [app.pipeline.stages.runner] INFO: [Pipeline] US.TSLA signal ✓ → SignalCandidate(SHORT strength=30) (1ms)
+2026-06-05 23:16:02,587 [app.pipeline.stages.risk_stage] WARNING: [RiskStage] US.TSLA 全局持仓已达上限 (14/12), 拒绝入场
+2026-06-05 23:16:02,592 [app.pipeline.stages.runner] INFO: [Pipeline] US.TSLA risk ✓ → None (拦截) (5ms)
+2026-06-05 23:16:02,593 [app.pipeline.stages.runner] INFO: [Pipeline] US.TSLA Stage 'risk' 返回 None, 管线终止
+2026-06-05 23:16:02,649 [app.data.market_data_router] INFO: [Router] US.RIVN ★★★ LV3 主通道 | price=$16.90 RSI=50.0 MACD=-0.0000 ATR=0.13 trend=NEUTRAL | ticker=STRONG_BUY | ob=N/A
+2026-06-05 23:16:02,650 [app.data.market_data_router] INFO: [Router] US.RIVN price=$16.90 sentiment=0.00 vix=19.67 regime=RANGE source=futu_lv3
+2026-06-05 23:16:02,651 [app.pipeline.stages.market_data_stage] INFO: [MarketData] US.RIVN price=$16.90 spread=3bps rsi=50 atr=0.13 regime=caution
+2026-06-05 23:16:02,652 [app.pipeline.stages.runner] INFO: [Pipeline] US.RIVN market_data ✓ → SymbolContext(price=16.90) (59ms)
+2026-06-05 23:16:02,653 [app.strategy.signal_quality_scorer] INFO: [SignalQuality] US.RIVN SHORT conf=0.336 str=29 dims={trend=0.00, momentum=0.90, volume=0.35, order_flow=0.00, market=0.55} confluence=-0.05 penalty=-0.06 blended(strat=0.400)
+2026-06-05 23:16:02,657 [app.pipeline.stages.signal_stage] INFO: [Signal] US.RIVN 技术面命中: 2/4 指标共振 | score=-10
+2026-06-05 23:16:02,659 [app.pipeline.stages.signal_stage] INFO: [Signal] US.RIVN 弱信号过滤: strategy=TECHNICAL_MULTI_FACTOR strength=29<30 OR conf=0.34<0.3
+2026-06-05 23:16:02,659 [app.pipeline.stages.signal_stage] INFO: [Signal] US.RIVN 所有候选未通过质量底线 (strength≥30 AND conf≥0.3)
+2026-06-05 23:16:02,659 [app.pipeline.stages.runner] INFO: [Pipeline] US.RIVN signal ✓ → None (拦截) (7ms)
+2026-06-05 23:16:02,659 [app.pipeline.stages.runner] INFO: [Pipeline] US.RIVN Stage 'signal' 返回 None, 管线终止
+2026-06-05 23:16:02,726 [app.data.market_data_router] INFO: [Router] US.UBER ★★★ LV3 主通道 | price=$71.09 RSI=53.1 MACD=-0.0008 ATR=0.12 trend=NEUTRAL | ticker=STRONG_BUY | ob=N/A
+2026-06-05 23:16:02,729 [app.data.market_data_router] INFO: [Router] US.UBER price=$71.09 sentiment=0.00 vix=19.67 regime=RANGE source=futu_lv3
+2026-06-05 23:16:02,729 [app.pipeline.stages.market_data_stage] INFO: [MarketData] US.UBER price=$71.09 spread=3bps rsi=53 atr=0.12 regime=caution
+2026-06-05 23:16:02,729 [app.pipeline.stages.runner] INFO: [Pipeline] US.UBER market_data ✓ → SymbolContext(price=71.09) (70ms)
+2026-06-05 23:16:02,730 [app.pipeline.stages.runner] INFO: [Pipeline] US.UBER signal ✓ → None (拦截) (0ms)
+2026-06-05 23:16:02,731 [app.pipeline.stages.runner] INFO: [Pipeline] US.UBER Stage 'signal' 返回 None, 管线终止
+2026-06-05 23:16:02,825 [app.data.market_data_router] INFO: [Router] US.SNDK ★★★ LV3 主通道 | price=$1649.62 RSI=69.8 MACD=0.3096 ATR=12.24 trend=UP | ticker=STRONG_BUY | ob=N/A
+2026-06-05 23:16:02,825 [app.data.market_data_router] INFO: [Router] US.SNDK price=$1649.62 sentiment=0.00 vix=19.67 regime=TREND_UP source=futu_lv3
+2026-06-05 23:16:02,826 [app.pipeline.stages.market_data_stage] INFO: [MarketData] US.SNDK price=$1649.62 spread=3bps rsi=70 atr=12.24 regime=caution
+2026-06-05 23:16:02,826 [app.pipeline.stages.runner] INFO: [Pipeline] US.SNDK market_data ✓ → SymbolContext(price=1649.62) (94ms)
+2026-06-05 23:16:02,827 [app.pipeline.stages.runner] INFO: [Pipeline] US.SNDK signal ✓ → None (拦截) (0ms)
+2026-06-05 23:16:02,834 [app.pipeline.stages.runner] INFO: [Pipeline] US.SNDK Stage 'signal' 返回 None, 管线终止
+2026-06-05 23:16:02,942 [app.data.market_data_router] INFO: [Router] US.MU ★★★ LV3 主通道 | price=$932.80 RSI=69.0 MACD=0.0404 ATR=7.40 trend=NEUTRAL | ticker=STRONG_BUY | ob=N/A
+2026-06-05 23:16:02,943 [app.data.market_data_router] INFO: [Router] US.MU price=$932.80 sentiment=0.00 vix=19.67 regime=RANGE source=futu_lv3
+2026-06-05 23:16:02,943 [app.pipeline.stages.market_data_stage] INFO: [MarketData] US.MU price=$932.80 spread=3bps rsi=69 atr=7.40 regime=caution
+2026-06-05 23:16:02,943 [app.pipeline.stages.runner] INFO: [Pipeline] US.MU market_data ✓ → SymbolContext(price=932.80) (109ms)
+2026-06-05 23:16:02,944 [app.pipeline.stages.runner] INFO: [Pipeline] US.MU signal ✓ → None (拦截) (0ms)
+2026-06-05 23:16:02,944 [app.pipeline.stages.runner] INFO: [Pipeline] US.MU Stage 'signal' 返回 None, 管线终止
+2026-06-05 23:16:02,999 [app.data.market_data_router] INFO: [Router] US.LLY ★★★ LV3 主通道 | price=$1158.37 RSI=44.9 MACD=-0.0265 ATR=4.31 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-06-05 23:16:03,000 [app.data.market_data_router] INFO: [Router] US.LLY price=$1158.37 sentiment=0.00 vix=19.67 regime=TREND_DOWN source=futu_lv3
+2026-06-05 23:16:03,000 [app.pipeline.stages.market_data_stage] INFO: [MarketData] US.LLY price=$1158.37 spread=3bps rsi=45 atr=4.31 regime=caution
+2026-06-05 23:16:03,000 [app.pipeline.stages.runner] INFO: [Pipeline] US.LLY market_data ✓ → SymbolContext(price=1158.37) (56ms)
+2026-06-05 23:16:03,001 [app.strategy.signal_quality_scorer] INFO: [SignalQuality] US.LLY SHORT conf=0.479 str=41 dims={trend=0.30, momentum=0.55, volume=0.35, order_flow=0.00, market=0.70} confluence=-0.05 penalty=-0.03 blended(strat=0.600)
+2026-06-05 23:16:03,001 [app.pipeline.stages.signal_stage] INFO: [Signal] US.LLY 技术面命中: 3/4 指标共振 | score=-15
+2026-06-05 23:16:03,001 [app.pipeline.stages.runner] INFO: [Pipeline] US.LLY signal ✓ → SignalCandidate(SHORT strength=41) (1ms)
+2026-06-05 23:16:03,002 [app.pipeline.stages.risk_stage] WARNING: [RiskStage] US.LLY 全局持仓已达上限 (14/12), 拒绝入场
+2026-06-05 23:16:03,002 [app.pipeline.stages.runner] INFO: [Pipeline] US.LLY risk ✓ → None (拦截) (0ms)
+2026-06-05 23:16:03,002 [app.pipeline.stages.runner] INFO: [Pipeline] US.LLY Stage 'risk' 返回 None, 管线终止
+2026-06-05 23:16:03,073 [app.data.market_data_router] INFO: [Router] US.AMD ★★★ LV3 主通道 | price=$487.04 RSI=55.6 MACD=0.0601 ATR=5.02 trend=UP | ticker=STRONG_BUY | ob=N/A
+2026-06-05 23:16:03,074 [app.data.market_data_router] INFO: [Router] US.AMD price=$487.04 sentiment=0.00 vix=19.67 regime=TREND_UP source=futu_lv3
+2026-06-05 23:16:03,075 [app.pipeline.stages.market_data_stage] INFO: [MarketData] US.AMD price=$487.04 spread=3bps rsi=56 atr=5.02 regime=caution
+2026-06-05 23:16:03,075 [app.pipeline.stages.runner] INFO: [Pipeline] US.AMD market_data ✓ → SymbolContext(price=487.04) (73ms)
+2026-06-05 23:16:03,076 [app.pipeline.stages.runner] INFO: [Pipeline] US.AMD signal ✓ → None (拦截) (0ms)
+2026-06-05 23:16:03,076 [app.pipeline.stages.runner] INFO: [Pipeline] US.AMD Stage 'signal' 返回 None, 管线终止
+2026-06-05 23:16:03,161 [app.data.market_data_router] INFO: [Router] US.ORCL ★★★ LV3 主通道 | price=$220.28 RSI=88.0 MACD=-0.0013 ATR=1.48 trend=NEUTRAL | ticker=STRONG_BUY | ob=N/A
+2026-06-05 23:16:03,161 [app.data.market_data_router] INFO: [Router] US.ORCL price=$220.28 sentiment=0.00 vix=19.67 regime=RANGE source=futu_lv3
+2026-06-05 23:16:03,161 [app.pipeline.stages.market_data_stage] INFO: [MarketData] US.ORCL price=$220.28 spread=3bps rsi=88 atr=1.48 regime=caution
+2026-06-05 23:16:03,161 [app.pipeline.stages.runner] INFO: [Pipeline] US.ORCL market_data ✓ → SymbolContext(price=220.28) (85ms)
+2026-06-05 23:16:03,163 [app.strategy.signal_quality_scorer] INFO: [SignalQuality] US.ORCL SHORT conf=0.510 str=40 dims={trend=0.20, momentum=0.10, volume=0.45, order_flow=0.00, market=0.55} confluence=-0.10 penalty=-0.09 blended(strat=0.800)
+2026-06-05 23:16:03,163 [app.pipeline.stages.signal_stage] INFO: [Signal] US.ORCL 技术面命中: 4/4 指标共振 | score=-14
+2026-06-05 23:16:03,163 [app.pipeline.stages.runner] INFO: [Pipeline] US.ORCL signal ✓ → SignalCandidate(SHORT strength=40) (2ms)
+2026-06-05 23:16:03,163 [app.pipeline.stages.risk_stage] WARNING: [RiskStage] US.ORCL 全局持仓已达上限 (14/12), 拒绝入场
+2026-06-05 23:16:03,163 [app.pipeline.stages.runner] INFO: [Pipeline] US.ORCL risk ✓ → None (拦截) (0ms)
+2026-06-05 23:16:03,163 [app.pipeline.stages.runner] INFO: [Pipeline] US.ORCL Stage 'risk' 返回 None, 管线终止
+2026-06-05 23:16:03,261 [app.data.market_data_router] INFO: [Router] US.AAPL ★★★ LV3 主通道 | price=$313.16 RSI=50.0 MACD=0.0042 ATR=0.33 trend=NEUTRAL | ticker=STRONG_BUY | ob=N/A
+2026-06-05 23:16:03,261 [app.data.market_data_router] INFO: [Router] US.AAPL price=$313.16 sentiment=0.00 vix=19.67 regime=RANGE source=futu_lv3
+2026-06-05 23:16:03,261 [app.pipeline.stages.market_data_stage] INFO: [MarketData] US.AAPL price=$313.16 spread=3bps rsi=50 atr=0.33 regime=caution
+2026-06-05 23:16:03,261 [app.pipeline.stages.runner] INFO: [Pipeline] US.AAPL market_data ✓ → SymbolContext(price=313.16) (98ms)
+2026-06-05 23:16:03,262 [app.strategy.signal_quality_scorer] INFO: [SignalQuality] US.AAPL SHORT conf=0.286 str=25 dims={trend=0.00, momentum=0.80, volume=0.05, order_flow=0.00, market=0.55} confluence=-0.05 penalty=-0.09 blended(strat=0.400)
+2026-06-05 23:16:03,262 [app.pipeline.stages.signal_stage] INFO: [Signal] US.AAPL 技术面命中: 2/4 指标共振 | score=-10
+2026-06-05 23:16:03,262 [app.pipeline.stages.signal_stage] INFO: [Signal] US.AAPL 弱信号过滤: strategy=TECHNICAL_MULTI_FACTOR strength=25<30 OR conf=0.29<0.3
+2026-06-05 23:16:03,263 [app.pipeline.stages.signal_stage] INFO: [Signal] US.AAPL 所有候选未通过质量底线 (strength≥30 AND conf≥0.3)
+2026-06-05 23:16:03,263 [app.pipeline.stages.runner] INFO: [Pipeline] US.AAPL signal ✓ → None (拦截) (1ms)
+2026-06-05 23:16:03,263 [app.pipeline.stages.runner] INFO: [Pipeline] US.AAPL Stage 'signal' 返回 None, 管线终止
+2026-06-05 23:16:03,347 [app.data.market_data_router] INFO: [Router] US.MSFT ★★★ LV3 主通道 | price=$422.05 RSI=46.6 MACD=-0.0052 ATR=0.64 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-06-05 23:16:03,347 [app.data.market_data_router] INFO: [Router] US.MSFT price=$422.05 sentiment=0.00 vix=19.67 regime=TREND_DOWN source=futu_lv3
+2026-06-05 23:16:03,348 [app.pipeline.stages.market_data_stage] INFO: [MarketData] US.MSFT price=$422.05 spread=3bps rsi=47 atr=0.64 regime=caution
+2026-06-05 23:16:03,348 [app.pipeline.stages.runner] INFO: [Pipeline] US.MSFT market_data ✓ → SymbolContext(price=422.05) (85ms)
+2026-06-05 23:16:03,349 [app.strategy.signal_quality_scorer] INFO: [SignalQuality] US.MSFT SHORT conf=0.349 str=33 dims={trend=0.30, momentum=0.70, volume=0.05, order_flow=0.00, market=0.70} confluence=+0.00 penalty=-0.06 blended(strat=0.400)
+2026-06-05 23:16:03,356 [app.pipeline.stages.signal_stage] INFO: [Signal] US.MSFT 技术面命中: 2/4 指标共振 | score=-10
+2026-06-05 23:16:03,356 [app.pipeline.stages.runner] INFO: [Pipeline] US.MSFT signal ✓ → SignalCandidate(SHORT strength=33) (8ms)
+2026-06-05 23:16:03,356 [app.pipeline.stages.risk_stage] WARNING: [RiskStage] US.MSFT 全局持仓已达上限 (14/12), 拒绝入场
+2026-06-05 23:16:03,356 [app.pipeline.stages.runner] INFO: [Pipeline] US.MSFT risk ✓ → None (拦截) (0ms)
+2026-06-05 23:16:03,356 [app.pipeline.stages.runner] INFO: [Pipeline] US.MSFT Stage 'risk' 返回 None, 管线终止
+2026-06-05 23:16:03,411 [app.data.market_data_router] INFO: [Router] US.GOOG ★★★ LV3 主通道 | price=$366.20 RSI=50.0 MACD=-0.0063 ATR=1.17 trend=NEUTRAL | ticker=STRONG_BUY | ob=N/A
+2026-06-05 23:16:03,412 [app.data.market_data_router] INFO: [Router] US.GOOG price=$366.20 sentiment=0.00 vix=19.67 regime=RANGE source=futu_lv3
+2026-06-05 23:16:03,412 [app.pipeline.stages.market_data_stage] INFO: [MarketData] US.GOOG price=$366.20 spread=3bps rsi=50 atr=1.17 regime=caution
+2026-06-05 23:16:03,412 [app.pipeline.stages.runner] INFO: [Pipeline] US.GOOG market_data ✓ → SymbolContext(price=366.20) (56ms)
+2026-06-05 23:16:03,413 [app.pipeline.stages.runner] INFO: [Pipeline] US.GOOG signal ✓ → None (拦截) (0ms)
+2026-06-05 23:16:03,413 [app.pipeline.stages.runner] INFO: [Pipeline] US.GOOG Stage 'signal' 返回 None, 管线终止
+2026-06-05 23:16:03,502 [app.data.market_data_router] INFO: [Router] US.AMZN ★★★ LV3 主通道 | price=$252.85 RSI=52.9 MACD=0.0013 ATR=0.59 trend=NEUTRAL | ticker=STRONG_BUY | ob=N/A
+2026-06-05 23:16:03,502 [app.data.market_data_router] INFO: [Router] US.AMZN price=$252.85 sentiment=0.00 vix=19.67 regime=RANGE source=futu_lv3
+2026-06-05 23:16:03,502 [app.pipeline.stages.market_data_stage] INFO: [MarketData] US.AMZN price=$252.85 spread=3bps rsi=53 atr=0.59 regime=caution
+2026-06-05 23:16:03,502 [app.pipeline.stages.runner] INFO: [Pipeline] US.AMZN market_data ✓ → SymbolContext(price=252.85) (89ms)
+2026-06-05 23:16:03,503 [app.pipeline.stages.runner] INFO: [Pipeline] US.AMZN signal ✓ → None (拦截) (0ms)
+2026-06-05 23:16:03,503 [app.pipeline.stages.runner] INFO: [Pipeline] US.AMZN Stage 'signal' 返回 None, 管线终止
+2026-06-05 23:16:03,608 [app.data.market_data_router] INFO: [Router] US.META ★★★ LV3 主通道 | price=$613.44 RSI=50.0 MACD=-0.0002 ATR=1.80 trend=NEUTRAL | ticker=STRONG_BUY | ob=N/A
+2026-06-05 23:16:03,610 [app.data.market_data_router] INFO: [Router] US.META price=$613.44 sentiment=0.00 vix=19.67 regime=RANGE source=futu_lv3
+2026-06-05 23:16:03,610 [app.pipeline.stages.market_data_stage] INFO: [MarketData] US.META price=$613.44 spread=3bps rsi=50 atr=1.80 regime=caution
+2026-06-05 23:16:03,610 [app.pipeline.stages.runner] INFO: [Pipeline] US.META market_data ✓ → SymbolContext(price=613.44) (107ms)
+2026-06-05 23:16:03,610 [app.pipeline.stages.runner] INFO: [Pipeline] US.META signal ✓ → None (拦截) (0ms)
+2026-06-05 23:16:03,611 [app.pipeline.stages.runner] INFO: [Pipeline] US.META Stage 'signal' 返回 None, 管线终止
+2026-06-05 23:16:03,701 [app.data.market_data_router] INFO: [Router] US.TSM ★★★ LV3 主通道 | price=$424.97 RSI=57.1 MACD=0.0254 ATR=3.58 trend=NEUTRAL | ticker=STRONG_BUY | ob=N/A
+2026-06-05 23:16:03,702 [app.data.market_data_router] INFO: [Router] US.TSM price=$424.97 sentiment=0.00 vix=19.67 regime=RANGE source=futu_lv3
+2026-06-05 23:16:03,702 [app.pipeline.stages.market_data_stage] INFO: [MarketData] US.TSM price=$424.97 spread=3bps rsi=57 atr=3.58 regime=caution
+2026-06-05 23:16:03,702 [app.pipeline.stages.runner] INFO: [Pipeline] US.TSM market_data ✓ → SymbolContext(price=424.97) (91ms)
+2026-06-05 23:16:03,703 [app.strategy.signal_quality_scorer] INFO: [SignalQuality] US.TSM SHORT conf=0.302 str=24 dims={trend=0.00, momentum=0.60, volume=0.45, order_flow=0.00, market=0.55} confluence=-0.10 penalty=-0.06 blended(strat=0.400)
+2026-06-05 23:16:03,703 [app.pipeline.stages.signal_stage] INFO: [Signal] US.TSM 技术面命中: 2/4 指标共振 | score=-10
+2026-06-05 23:16:03,703 [app.pipeline.stages.signal_stage] INFO: [Signal] US.TSM 弱信号过滤: strategy=TECHNICAL_MULTI_FACTOR strength=24<30 OR conf=0.30<0.3
+2026-06-05 23:16:03,703 [app.pipeline.stages.signal_stage] INFO: [Signal] US.TSM 所有候选未通过质量底线 (strength≥30 AND conf≥0.3)
+2026-06-05 23:16:03,703 [app.pipeline.stages.runner] INFO: [Pipeline] US.TSM signal ✓ → None (拦截) (1ms)
+2026-06-05 23:16:03,703 [app.pipeline.stages.runner] INFO: [Pipeline] US.TSM Stage 'signal' 返回 None, 管线终止
+2026-06-05 23:16:03,782 [app.data.market_data_router] INFO: [Router] US.NFLX ★★★ LV3 主通道 | price=$81.59 RSI=47.4 MACD=-0.0003 ATR=0.22 trend=NEUTRAL | ticker=STRONG_BUY | ob=N/A
+2026-06-05 23:16:03,783 [app.data.market_data_router] INFO: [Router] US.NFLX price=$81.59 sentiment=0.00 vix=19.67 regime=RANGE source=futu_lv3
+2026-06-05 23:16:03,783 [app.pipeline.stages.market_data_stage] INFO: [MarketData] US.NFLX price=$81.59 spread=3bps rsi=47 atr=0.22 regime=caution
+2026-06-05 23:16:03,783 [app.pipeline.stages.runner] INFO: [Pipeline] US.NFLX market_data ✓ → SymbolContext(price=81.59) (79ms)
+2026-06-05 23:16:03,783 [app.pipeline.stages.runner] INFO: [Pipeline] US.NFLX signal ✓ → None (拦截) (0ms)
+2026-06-05 23:16:03,783 [app.pipeline.stages.runner] INFO: [Pipeline] US.NFLX Stage 'signal' 返回 None, 管线终止
+2026-06-05 23:16:03,854 [app.data.market_data_router] INFO: [Router] US.BABA ★★★ LV3 主通道 | price=$122.62 RSI=86.8 MACD=0.0013 ATR=0.39 trend=NEUTRAL | ticker=STRONG_BUY | ob=N/A
+2026-06-05 23:16:03,855 [app.data.market_data_router] INFO: [Router] US.BABA price=$122.62 sentiment=0.00 vix=19.67 regime=RANGE source=futu_lv3
+2026-06-05 23:16:03,855 [app.pipeline.stages.market_data_stage] INFO: [MarketData] US.BABA price=$122.62 spread=3bps rsi=87 atr=0.39 regime=caution
+2026-06-05 23:16:03,855 [app.pipeline.stages.runner] INFO: [Pipeline] US.BABA market_data ✓ → SymbolContext(price=122.62) (71ms)
+2026-06-05 23:16:03,855 [app.strategy.signal_quality_scorer] INFO: [SignalQuality] US.BABA SHORT conf=0.346 str=27 dims={trend=0.20, momentum=0.20, volume=0.05, order_flow=0.00, market=0.55} confluence=-0.10 penalty=-0.12 blended(strat=0.600)
+2026-06-05 23:16:03,856 [app.pipeline.stages.signal_stage] INFO: [Signal] US.BABA 技术面命中: 3/4 指标共振 | score=-19
+2026-06-05 23:16:03,856 [app.pipeline.stages.signal_stage] INFO: [Signal] US.BABA 弱信号过滤: strategy=TECHNICAL_MULTI_FACTOR strength=27<30 OR conf=0.35<0.3
+2026-06-05 23:16:03,856 [app.pipeline.stages.signal_stage] INFO: [Signal] US.BABA 所有候选未通过质量底线 (strength≥30 AND conf≥0.3)
+2026-06-05 23:16:03,856 [app.pipeline.stages.runner] INFO: [Pipeline] US.BABA signal ✓ → None (拦截) (1ms)
+2026-06-05 23:16:03,856 [app.pipeline.stages.runner] INFO: [Pipeline] US.BABA Stage 'signal' 返回 None, 管线终止
+2026-06-05 23:16:03,932 [app.data.market_data_router] INFO: [Router] US.CRM ★★★ LV3 主通道 | price=$187.04 RSI=50.0 MACD=-0.0082 ATR=0.58 trend=NEUTRAL | ticker=STRONG_BUY | ob=N/A
+2026-06-05 23:16:03,933 [app.data.market_data_router] INFO: [Router] US.CRM price=$187.04 sentiment=0.00 vix=19.67 regime=RANGE source=futu_lv3
+2026-06-05 23:16:03,933 [app.pipeline.stages.market_data_stage] INFO: [MarketData] US.CRM price=$187.04 spread=3bps rsi=50 atr=0.58 regime=caution
+2026-06-05 23:16:03,933 [app.pipeline.stages.runner] INFO: [Pipeline] US.CRM market_data ✓ → SymbolContext(price=187.04) (76ms)
+2026-06-05 23:16:03,934 [app.strategy.signal_quality_scorer] INFO: [SignalQuality] US.CRM SHORT conf=0.314 str=28 dims={trend=0.20, momentum=0.90, volume=0.05, order_flow=0.00, market=0.55} confluence=-0.05 penalty=-0.09 blended(strat=0.400)
+2026-06-05 23:16:03,934 [app.pipeline.stages.signal_stage] INFO: [Signal] US.CRM 技术面命中: 2/4 指标共振 | score=-10
+2026-06-05 23:16:03,934 [app.pipeline.stages.signal_stage] INFO: [Signal] US.CRM 弱信号过滤: strategy=TECHNICAL_MULTI_FACTOR strength=28<30 OR conf=0.31<0.3
+2026-06-05 23:16:03,934 [app.pipeline.stages.signal_stage] INFO: [Signal] US.CRM 所有候选未通过质量底线 (strength≥30 AND conf≥0.3)
+2026-06-05 23:16:03,934 [app.pipeline.stages.runner] INFO: [Pipeline] US.CRM signal ✓ → None (拦截) (1ms)
+2026-06-05 23:16:03,934 [app.pipeline.stages.runner] INFO: [Pipeline] US.CRM Stage 'signal' 返回 None, 管线终止
+2026-06-05 23:16:03,990 [app.data.market_data_router] INFO: [Router] US.BA ★★★ LV3 主通道 | price=$217.11 RSI=50.0 MACD=0.0004 ATR=1.15 trend=NEUTRAL | ticker=BUY | ob=N/A
+2026-06-05 23:16:03,991 [app.data.market_data_router] INFO: [Router] US.BA price=$217.11 sentiment=0.00 vix=19.67 regime=RANGE source=futu_lv3
+2026-06-05 23:16:03,992 [app.pipeline.stages.market_data_stage] INFO: [MarketData] US.BA price=$217.11 spread=3bps rsi=50 atr=1.15 regime=caution
+2026-06-05 23:16:03,992 [app.pipeline.stages.runner] INFO: [Pipeline] US.BA market_data ✓ → SymbolContext(price=217.11) (57ms)
+2026-06-05 23:16:03,992 [app.pipeline.stages.runner] INFO: [Pipeline] US.BA signal ✓ → None (拦截) (0ms)
+2026-06-05 23:16:03,992 [app.pipeline.stages.runner] INFO: [Pipeline] US.BA Stage 'signal' 返回 None, 管线终止
+2026-06-05 23:16:04,062 [app.data.market_data_router] INFO: [Router] US.UNH ★★★ LV3 主通道 | price=$399.69 RSI=46.0 MACD=0.0057 ATR=0.75 trend=NEUTRAL | ticker=STRONG_BUY | ob=N/A
+2026-06-05 23:16:04,064 [app.data.market_data_router] INFO: [Router] US.UNH price=$399.69 sentiment=0.00 vix=19.67 regime=RANGE source=futu_lv3
+2026-06-05 23:16:04,065 [app.pipeline.stages.market_data_stage] INFO: [MarketData] US.UNH price=$399.69 spread=3bps rsi=46 atr=0.75 regime=caution
+2026-06-05 23:16:04,065 [app.pipeline.stages.runner] INFO: [Pipeline] US.UNH market_data ✓ → SymbolContext(price=399.69) (73ms)
+2026-06-05 23:16:04,066 [app.pipeline.stages.runner] INFO: [Pipeline] US.UNH signal ✓ → None (拦截) (0ms)
+2026-06-05 23:16:04,066 [app.pipeline.stages.runner] INFO: [Pipeline] US.UNH Stage 'signal' 返回 None, 管线终止
+2026-06-05 23:16:04,138 [app.data.market_data_router] INFO: [Router] US.JPM ★★★ LV3 主通道 | price=$313.12 RSI=52.3 MACD=0.0005 ATR=0.44 trend=NEUTRAL | ticker=STRONG_BUY | ob=N/A
+2026-06-05 23:16:04,139 [app.data.market_data_router] INFO: [Router] US.JPM price=$313.12 sentiment=0.00 vix=19.67 regime=RANGE source=futu_lv3
+2026-06-05 23:16:04,139 [app.pipeline.stages.market_data_stage] INFO: [MarketData] US.JPM price=$313.12 spread=3bps rsi=52 atr=0.44 regime=caution
+2026-06-05 23:16:04,139 [app.pipeline.stages.runner] INFO: [Pipeline] US.JPM market_data ✓ → SymbolContext(price=313.12) (71ms)
+2026-06-05 23:16:04,140 [app.pipeline.stages.runner] INFO: [Pipeline] US.JPM signal ✓ → None (拦截) (0ms)
+2026-06-05 23:16:04,140 [app.pipeline.stages.runner] INFO: [Pipeline] US.JPM Stage 'signal' 返回 None, 管线终止
+2026-06-05 23:16:04,191 [app.data.market_data_router] INFO: [Router] US.XOM ★★★ LV3 主通道 | price=$151.20 RSI=45.5 MACD=-0.0005 ATR=0.37 trend=NEUTRAL | ticker=STRONG_BUY | ob=N/A
+2026-06-05 23:16:04,191 [app.data.market_data_router] INFO: [Router] US.XOM price=$151.20 sentiment=0.00 vix=19.67 regime=RANGE source=futu_lv3
+2026-06-05 23:16:04,191 [app.pipeline.stages.market_data_stage] INFO: [MarketData] US.XOM price=$151.20 spread=3bps rsi=45 atr=0.37 regime=caution
+2026-06-05 23:16:04,191 [app.pipeline.stages.runner] INFO: [Pipeline] US.XOM market_data ✓ → SymbolContext(price=151.20) (51ms)
+2026-06-05 23:16:04,192 [app.strategy.signal_quality_scorer] INFO: [SignalQuality] US.XOM SHORT conf=0.330 str=29 dims={trend=0.00, momentum=0.70, volume=0.45, order_flow=0.00, market=0.55} confluence=-0.05 penalty=-0.06 blended(strat=0.400)
+2026-06-05 23:16:04,193 [app.pipeline.stages.signal_stage] INFO: [Signal] US.XOM 技术面命中: 2/4 指标共振 | score=-10
+2026-06-05 23:16:04,193 [app.pipeline.stages.signal_stage] INFO: [Signal] US.XOM 弱信号过滤: strategy=TECHNICAL_MULTI_FACTOR strength=29<30 OR conf=0.33<0.3
+2026-06-05 23:16:04,193 [app.pipeline.stages.signal_stage] INFO: [Signal] US.XOM 所有候选未通过质量底线 (strength≥30 AND conf≥0.3)
+2026-06-05 23:16:04,193 [app.pipeline.stages.runner] INFO: [Pipeline] US.XOM signal ✓ → None (拦截) (1ms)
+2026-06-05 23:16:04,193 [app.pipeline.stages.runner] INFO: [Pipeline] US.XOM Stage 'signal' 返回 None, 管线终止
+2026-06-05 23:16:04,281 [app.data.market_data_router] INFO: [Router] US.QQQ ★★★ LV3 主通道 | price=$722.85 RSI=45.2 MACD=-0.0115 ATR=1.66 trend=DOWN | ticker=STRONG_BUY | ob=N/A
+2026-06-05 23:16:04,281 [app.data.market_data_router] INFO: [Router] US.QQQ price=$722.85 sentiment=0.00 vix=19.67 regime=TREND_DOWN source=futu_lv3
+2026-06-05 23:16:04,281 [app.pipeline.stages.market_data_stage] INFO: [MarketData] US.QQQ price=$722.85 spread=3bps rsi=45 atr=1.66 regime=caution
+2026-06-05 23:16:04,282 [app.pipeline.stages.runner] INFO: [Pipeline] US.QQQ market_data ✓ → SymbolContext(price=722.85) (88ms)
+2026-06-05 23:16:04,282 [app.strategy.signal_quality_scorer] INFO: [SignalQuality] US.QQQ SHORT conf=0.349 str=33 dims={trend=0.30, momentum=0.70, volume=0.05, order_flow=0.00, market=0.70} confluence=+0.00 penalty=-0.06 blended(strat=0.400)
+2026-06-05 23:16:04,283 [app.pipeline.stages.signal_stage] INFO: [Signal] US.QQQ 技术面命中: 2/4 指标共振 | score=-10
+2026-06-05 23:16:04,283 [app.pipeline.stages.runner] INFO: [Pipeline] US.QQQ signal ✓ → SignalCandidate(SHORT strength=33) (1ms)
+2026-06-05 23:16:04,283 [app.pipeline.stages.risk_stage] WARNING: [RiskStage] US.QQQ 全局持仓已达上限 (14/12), 拒绝入场
+2026-06-05 23:16:04,283 [app.pipeline.stages.runner] INFO: [Pipeline] US.QQQ risk ✓ → None (拦截) (0ms)
+2026-06-05 23:16:04,283 [app.pipeline.stages.runner] INFO: [Pipeline] US.QQQ Stage 'risk' 返回 None, 管线终止
+2026-06-05 23:16:09,718 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:16:09,769 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:16:09,840 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:16:09,883 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:16:09,954 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:16:09,999 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:16:10,078 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:16:10,119 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:16:10,190 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:16:10,231 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:16:10,309 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:16:10,362 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:16:10,388 [ftseek.exit_monitor] INFO: [SL·渐进] US.AVGO SHORT 紧凑追踪(profit=1.3ATR, mult=2.0) SL: $443.15→$443.15 entry=$413.87 low=$397.52
+2026-06-05 23:16:10,448 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:16:10,491 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:16:10,518 [ftseek.exit_monitor] INFO: [SL·渐进] US.NTES SHORT 紧凑追踪(profit=1.5ATR, mult=2.0) SL: $133.07→$133.07 entry=$123.63 low=$119.16
+2026-06-05 23:16:10,562 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:16:10,603 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:16:10,681 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:16:10,720 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:16:10,755 [ftseek.exit_monitor] INFO: [SL·渐进] US.IWM SHORT 紧凑追踪(profit=1.1ATR, mult=2.0) SL: $304.83→$304.83 entry=$290.95 low=$285.68
+2026-06-05 23:16:10,796 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:16:10,851 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:16:10,929 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:16:10,979 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:16:11,065 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:16:11,110 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:16:11,191 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:16:11,241 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:16:11,314 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:16:11,354 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:16:11,397 [app.storage.trade_store] INFO: [TruthSource] 仓位写入 US.XLY v38 src=auto_main action=update_trail
+2026-06-05 23:16:11,413 [app.storage.trade_store] INFO: [TruthSource] 仓位写入 US.XLK v65 src=auto_main action=update_trail
+2026-06-05 23:16:12,330 [app.notifier.dingtalk] INFO: [钉钉] send_text 成功: 💓 FTSeek-US 通道心跳
+2026-06-05 23:16:27,418 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:16:27,468 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:16:27,558 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:16:27,604 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:16:27,681 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:16:27,726 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:16:27,816 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:16:28,156 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:16:28,230 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:16:28,276 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:16:28,345 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:16:28,388 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:16:28,410 [ftseek.exit_monitor] INFO: [SL·渐进] US.AVGO SHORT 紧凑追踪(profit=1.3ATR, mult=2.0) SL: $443.15→$443.15 entry=$413.87 low=$397.52
+2026-06-05 23:16:28,457 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:16:28,495 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:16:28,527 [ftseek.exit_monitor] INFO: [SL·渐进] US.NTES SHORT 紧凑追踪(profit=1.5ATR, mult=2.0) SL: $133.07→$133.07 entry=$123.63 low=$119.16
+2026-06-05 23:16:28,574 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:16:28,617 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:16:28,698 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:16:28,744 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:16:28,774 [ftseek.exit_monitor] INFO: [SL·渐进] US.IWM SHORT 紧凑追踪(profit=1.1ATR, mult=2.0) SL: $304.83→$304.83 entry=$290.95 low=$285.68
+2026-06-05 23:16:28,820 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:16:28,869 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:16:28,946 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:16:28,991 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:16:29,063 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:16:29,113 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:16:29,197 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:16:29,261 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:16:29,350 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:16:29,390 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-05 23:16:29,432 [app.storage.trade_store] INFO: [TruthSource] 仓位写入 US.XLK v66 src=auto_main action=update_trail
+2026-06-05 23:16:45,463 [app.data.market_data_router] INFO: [Router] US.PG ★★★ LV3 主通道 | price=$144.56 RSI=45.9 MACD=-0.0119 ATR=0.10 trend=DOWN | ticker=N/A | ob=N/A
+2026-06-05 23:16:45,554 [app.data.market_data_router] INFO: [Router] US.PG price=$144.56 sentiment=0.00 vix=19.67 regime=TREND_DOWN source=futu_lv3
+2026-06-05 23:16:45,730 [app.data.market_data_router] INFO: [Router] US.ARM ★★★ LV3 主通道 | price=$359.81 RSI=6.5 MACD=-0.4132 ATR=0.22 trend=DOWN | ticker=N/A | ob=N/A
+2026-06-05 23:16:45,731 [app.data.market_data_router] INFO: [Router] US.ARM price=$359.81 sentiment=0.00 vix=19.67 regime=TREND_DOWN source=futu_lv3
