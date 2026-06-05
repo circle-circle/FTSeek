@@ -232,7 +232,8 @@ sector_overrides:
 
 # ── 做空差异化 ──
 short_overrides:
-  atr_multiplier: 2.0              # 做空止损更紧 (2.0x vs 2.5x)
+  atr_multiplier: 4.0              # 2026-06-05 根因修复: 2.0→4.0, 与atr_stop.initial一致
+                                    # 原2.0导致T1 trailing比初始SL紧50%, 被单调锁死后过紧
   max_loss_pct: 10.0               # 最大亏损 10% (做多 15%)
 
   # P1 简化 (2026-06-04): 移除 trail_multiplier (与chandelier冲突, 已禁用)

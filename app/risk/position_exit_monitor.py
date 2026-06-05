@@ -1070,6 +1070,18 @@ class ExitMonitor:
                 min_effective_atr = atr * _eff_atr_floor_ratio
                 effective_atr = max(effective_atr, min_effective_atr)
 
+                # 2026-06-05 根因修复: ATR=0 绝对底限 (price × 0.5%)
+                # 场景: broker_reconcile 发现的仓位 (如 PG) 没有 ATR 数据
+                # 无 ATR → effective_atr=0 → SL 计算全部失效 → 无保护敞口
+                _price_atr_floor = entry_price * 0.005  # 0.5% of price
+                if effective_atr < _price_atr_floor:
+                    logger.warning(
+                        f"[ATR底限] {symbol} effective_atr={effective_atr:.4f} "
+                        f"< price_floor=${_price_atr_floor:.2f} (0.5%×${entry_price:.2f}), "
+                        f"使用底限值"
+                    )
+                    effective_atr = _price_atr_floor
+
                 # 日志: session 切换时记录
                 if abs(session_ratio - entry_ratio) > 0.1 and blend_weight > 0:
                     logger.debug(
@@ -1617,14 +1629,16 @@ class ExitMonitor:
                     else:
                         position.current_sl = _fixed_sl
                 else:  # SHORT
-                    short_mult = float(
-                        (policy_dict.get("short_overrides", {}).get(
-                            "atr_multiplier", atr_mult_val) if policy_dict else atr_mult_val)
+                    # 2026-06-05 根因修复: SHORT SL 统一使用 atr_stop.initial (4.0x)
+                    # 原用 short_overrides.atr_multiplier (2.0x), 与 atr_stop 不一致
+                    tier1_mult = float(
+                        (policy_dict.get("exit_rules", {}).get("atr_stop", {}).get(
+                            "multiplier_by_profit", {}).get("initial", 4.0) if policy_dict else 4.0)
                     )
-                    _fixed_sl = entry_price + atr * short_mult
-                    # SHORT SL 只降不升, 且不低于入场价上方 (保护底线)
-                    _min_short_sl = entry_price * 1.001  # SL 至少在入场价上方 0.1%
-                    _fixed_sl = max(_fixed_sl, _min_short_sl)
+                    _fixed_sl = entry_price + atr * tier1_mult
+                    # SHORT SL 地板: 不得紧于 atr_stop initial
+                    _short_sl_floor = entry_price + atr * tier1_mult
+                    _fixed_sl = max(_fixed_sl, _short_sl_floor)
                     if _old_sl > 0:
                         position.current_sl = min(_old_sl, _fixed_sl)
                     else:
@@ -1704,15 +1718,23 @@ class ExitMonitor:
                     _new_sl = trail_state.get("lowest_price", entry_price) + atr * _tier2_mult
                     _tier = f"紧凑追踪(profit={_abs_profit:.1f}ATR, mult={_tier2_mult:.1f})"
                 else:
-                    # Tier 1: 不动
-                    short_mult = float(policy_dict.get("short_overrides", {}).get("atr_multiplier", 2.0))
-                    _new_sl = entry_price + atr * short_mult
-                    _tier = f"固定(profit={_abs_profit:.1f}ATR, mult={short_mult:.1f})"
+                    # Tier 1: 不动 (使用 atr_stop 初始倍数, 与 initial SL 保持一致)
+                    # 2026-06-05 根因修复: 原用 short_overrides.atr_multiplier=2.0,
+                    # 与 atr_stop initial=4.0 不一致 → T1 一启动就把 SL 收紧 50%,
+                    # 然后单调降(min)锁定 → SL 永远无法回到 4x → 被正常波动震出.
+                    # 修复: T1 统一使用 atr_stop.initial (4.0x), 与开仓 SL 一致.
+                    tier1_mult = float(policy_dict.get("exit_rules", {}).get("atr_stop", {}).get(
+                        "multiplier_by_profit", {}).get("initial", 4.0))
+                    _new_sl = entry_price + atr * tier1_mult
+                    _tier = f"固定(profit={_abs_profit:.1f}ATR, mult={tier1_mult:.1f})"
 
-                # CR-3: SHORT SL 单调降 (min) + 入场价地板保护
-                # 根因修复 (2026-06-05): SHORT SL 不得低于入场价, 否则无保护
-                # AVGO 案例: lowest=407.69, atr=7.32, tier2_mult=0.8 → SL=413.55 < entry=413.87
-                _short_sl_floor = entry_price * 1.001  # SL 至少在入场价上方 0.1%
+                # CR-3: SHORT SL 单调降 (min) + 初始SL地板保护
+                # 2026-06-05 根因修复: floor 从 entry×1.001 提升到 entry+4.0×ATR
+                # 原 floor 允许 SL 收紧到入场价上方 0.1% → 正常波动就能触发
+                # 新 floor: SL 不得紧于 atr_stop initial (与开仓 SL 一致)
+                _tier1_mult_floor = float(policy_dict.get("exit_rules", {}).get("atr_stop", {}).get(
+                    "multiplier_by_profit", {}).get("initial", 4.0))
+                _short_sl_floor = entry_price + atr * _tier1_mult_floor
                 _new_sl = max(_new_sl, _short_sl_floor)
                 if _old_sl > 0:
                     position.current_sl = min(_old_sl, _new_sl)
