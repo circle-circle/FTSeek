@@ -1638,6 +1638,7 @@ class ExitMonitor:
             _tier3_max = float(_tier_th.get("tier3_max", 2.0))
             _tier3_mult = float(_pt_cfg.get("tier3_compact_multiplier", 1.2))
             _tier2_mult = float(_pt_cfg.get("tier2_compact_multiplier", 0.8))
+            _tier4_mult = float(_pt_cfg.get("tier4_loose_multiplier", 2.5))  # 2026-06-05: Tier4 宽松追踪
             _be_buffer_pct = float(_pt_cfg.get("breakeven_buffer_pct", 0.001))
 
             _old_sl = float(getattr(position, "current_sl", 0) or 0)
@@ -1651,11 +1652,9 @@ class ExitMonitor:
                 _abs_profit = profit_atr_signed  # LONG: 正=盈利, 负=亏损
 
                 if _abs_profit >= _tier3_max:
-                    # Tier 4: 标准追踪
-                    regime = trail_state.get("regime", "normal")
-                    trail_mult = resolve_trail_multiplier(policy_dict, regime, "LONG")
-                    _new_sl = trail_state.get("highest_price", entry_price) - atr * trail_mult
-                    _tier = f"标准追踪(profit={_abs_profit:.1f}ATR, mult={trail_mult:.1f})"
+                    # Tier 4: 宽松追踪 (大趋势, 给更多空间)
+                    _new_sl = trail_state.get("highest_price", entry_price) - atr * _tier4_mult
+                    _tier = f"宽松追踪(profit={_abs_profit:.1f}ATR, mult={_tier4_mult:.1f})"
                 elif _abs_profit >= _tier2_max:
                     # Tier 3: 紧凑追踪
                     _new_sl = trail_state.get("highest_price", entry_price) - atr * _tier3_mult
@@ -1693,11 +1692,9 @@ class ExitMonitor:
                 _abs_profit = profit_atr_signed
 
                 if _abs_profit >= _tier3_max:
-                    # Tier 4: 标准追踪
-                    regime = trail_state.get("regime", "normal")
-                    trail_mult = resolve_trail_multiplier(policy_dict, regime, "SHORT")
-                    _new_sl = trail_state.get("lowest_price", entry_price) + atr * trail_mult
-                    _tier = f"标准追踪(profit={_abs_profit:.1f}ATR, mult={trail_mult:.1f})"
+                    # Tier 4: 宽松追踪 (大趋势, 给更多空间)
+                    _new_sl = trail_state.get("lowest_price", entry_price) + atr * _tier4_mult
+                    _tier = f"宽松追踪(profit={_abs_profit:.1f}ATR, mult={_tier4_mult:.1f})"
                 elif _abs_profit >= _tier2_max:
                     # Tier 3: 紧凑追踪
                     _new_sl = trail_state.get("lowest_price", entry_price) + atr * _tier3_mult
