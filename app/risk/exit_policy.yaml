@@ -144,7 +144,7 @@ exit_rules:
     enabled: true
     tier_mode: atr
     atr_tiers:
-      - profit_atr: 1.5             # 2026-06-06: 2.0→1.5 ATR, 数据证明大部分盈利交易 max profit 在 1-2 ATR
+      - profit_atr: 1.0             # 2026-06-06: 1.5→1.0 ATR, 数据驱动 — 大部分交易 max profit 在 1-2 ATR, 1.5 来不及触发
         close_pct: 50               # 平半仓
         ratchet_sl_pct: 0.0         # 止损移至成本 (保本)
     tiers: []                       # pct模式不使用

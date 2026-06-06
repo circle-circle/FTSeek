@@ -108006,3 +108006,52 @@ API: http://localhost:8901
 2026-06-06 12:55:10,651 [app.orb.engine] INFO: [ORB] tick #6421 | time=00:55:10 | positions=0 | ranges=8
 2026-06-06 12:56:35,584 [ftseek_us.news_v2.sources.hkex] INFO: [HKEX] 采集完成: 0 条公告
 2026-06-06 12:57:11,539 [ftseek_us.risk.vix_monitor] INFO: VIX 指数：20.66
+2026-06-06 12:57:44,282 [app.pipeline.signal_pipeline] INFO: [扫描] weekend → 完全静默，跳过扫描
+2026-06-06 12:59:35,790 [ftseek_us.news_v2.sources.csrc] INFO: [CSRC] 采集完成: 0 条监管公告
+2026-06-06 12:59:55,405 [ftseek_us.news_v2.sources.hkex] INFO: [HKEX] 采集完成: 0 条公告
+2026-06-06 13:00:10,884 [app.orb.engine] INFO: [ORB] tick #6481 | time=01:00:10 | positions=0 | ranges=8
+2026-06-06 13:00:34,770 [app.notifier.dingtalk] INFO: [钉钉] send_text 成功: 💓 FTSeek-US 通道心跳
+2026-06-06 13:02:29,279 [ftseek_us.risk.vix_monitor] INFO: VIX 指数：20.66
+2026-06-06 13:02:44,497 [app.pipeline.signal_pipeline] INFO: [扫描] weekend → 完全静默，跳过扫描
+2026-06-06 13:03:13,075 [ftseek_us.news_v2.sources.hkex] INFO: [HKEX] 采集完成: 0 条公告
+2026-06-06 13:05:11,114 [app.orb.engine] INFO: [ORB] tick #6541 | time=01:05:11 | positions=0 | ranges=8
+2026-06-06 13:06:13,286 [ftseek_us.news_v2.sources.csrc] INFO: [CSRC] 采集完成: 0 条监管公告
+2026-06-06 13:06:32,737 [ftseek_us.news_v2.sources.hkex] INFO: [HKEX] 采集完成: 0 条公告
+2026-06-06 13:07:44,716 [app.pipeline.signal_pipeline] INFO: [扫描] weekend → 完全静默，跳过扫描
+2026-06-06 13:07:44,894 [ftseek_us.risk.vix_monitor] INFO: VIX 指数：20.66
+2026-06-06 13:09:49,452 [ftseek_us.news_v2.sources.hkex] INFO: [HKEX] 采集完成: 0 条公告
+2026-06-06 13:10:11,346 [app.orb.engine] INFO: [ORB] tick #6601 | time=01:10:11 | positions=0 | ranges=8
+2026-06-06 13:12:44,947 [app.pipeline.signal_pipeline] INFO: [扫描] weekend → 完全静默，跳过扫描
+2026-06-06 13:12:56,355 [ftseek_us.news_v2.sources.csrc] INFO: [CSRC] 采集完成: 0 条监管公告
+2026-06-06 13:12:58,391 [ftseek_us.risk.vix_monitor] INFO: VIX 指数：20.66
+2026-06-06 13:13:16,017 [ftseek_us.news_v2.sources.hkex] INFO: [HKEX] 采集完成: 0 条公告
+2026-06-06 13:15:11,574 [app.orb.engine] INFO: [ORB] tick #6661 | time=01:15:11 | positions=0 | ranges=8
+2026-06-06 13:16:32,671 [ftseek_us.news_v2.sources.hkex] INFO: [HKEX] 采集完成: 0 条公告
+2026-06-06 13:17:45,163 [app.pipeline.signal_pipeline] INFO: [扫描] weekend → 完全静默，跳过扫描
+2026-06-06 13:18:11,955 [ftseek_us.risk.vix_monitor] INFO: VIX 指数：20.66
+2026-06-06 13:19:32,879 [ftseek_us.news_v2.sources.csrc] INFO: [CSRC] 采集完成: 0 条监管公告
+2026-06-06 13:19:51,086 [ftseek_us.news_v2.sources.hkex] INFO: [HKEX] 采集完成: 0 条公告
+2026-06-06 13:20:11,805 [app.orb.engine] INFO: [ORB] tick #6721 | time=01:20:11 | positions=0 | ranges=8
+2026-06-06 13:22:45,396 [app.pipeline.signal_pipeline] INFO: [扫描] weekend → 完全静默，跳过扫描
+2026-06-06 13:23:10,817 [ftseek_us.news_v2.sources.hkex] INFO: [HKEX] 采集完成: 0 条公告
+2026-06-06 13:23:28,143 [ftseek_us.risk.vix_monitor] INFO: VIX 指数：20.66
+2026-06-06 13:25:12,019 [app.orb.engine] INFO: [ORB] tick #6781 | time=01:25:12 | positions=0 | ranges=8
+2026-06-06 13:26:11,027 [ftseek_us.news_v2.sources.csrc] INFO: [CSRC] 采集完成: 0 条监管公告
+2026-06-06 13:26:28,915 [ftseek_us.news_v2.sources.hkex] INFO: [HKEX] 采集完成: 0 条公告
+2026-06-06 13:27:45,620 [app.pipeline.signal_pipeline] INFO: [扫描] weekend → 完全静默，跳过扫描
+2026-06-06 13:28:44,778 [ftseek_us.risk.vix_monitor] INFO: VIX 指数：20.66
+2026-06-06 13:29:46,357 [ftseek_us.news_v2.sources.hkex] INFO: [HKEX] 采集完成: 0 条公告
+2026-06-06 13:30:12,260 [app.orb.engine] INFO: [ORB] tick #6841 | time=01:30:12 | positions=0 | ranges=8
+2026-06-06 13:32:45,844 [app.pipeline.signal_pipeline] INFO: [扫描] weekend → 完全静默，跳过扫描
+2026-06-06 13:32:46,573 [ftseek_us.news_v2.sources.csrc] INFO: [CSRC] 采集完成: 0 条监管公告
+2026-06-06 13:33:08,202 [ftseek_us.news_v2.sources.hkex] INFO: [HKEX] 采集完成: 0 条公告
+2026-06-06 13:33:58,919 [ftseek_us.risk.vix_monitor] INFO: VIX 指数：20.66
+2026-06-06 13:35:12,493 [app.orb.engine] INFO: [ORB] tick #6901 | time=01:35:12 | positions=0 | ranges=8
+2026-06-06 13:36:27,326 [ftseek_us.news_v2.sources.hkex] INFO: [HKEX] 采集完成: 0 条公告
+2026-06-06 13:37:46,063 [app.pipeline.signal_pipeline] INFO: [扫描] weekend → 完全静默，跳过扫描
+2026-06-06 13:39:12,555 [ftseek_us.risk.vix_monitor] INFO: VIX 指数：20.66
+2026-06-06 13:39:27,527 [ftseek_us.news_v2.sources.csrc] INFO: [CSRC] 采集完成: 0 条监管公告
+2026-06-06 13:39:45,046 [ftseek_us.news_v2.sources.hkex] INFO: [HKEX] 采集完成: 0 条公告
+2026-06-06 13:40:12,733 [app.orb.engine] INFO: [ORB] tick #6961 | time=01:40:12 | positions=0 | ranges=8
+2026-06-06 13:42:46,294 [app.pipeline.signal_pipeline] INFO: [扫描] weekend → 完全静默，跳过扫描
+2026-06-06 13:43:05,517 [ftseek_us.news_v2.sources.hkex] INFO: [HKEX] 采集完成: 0 条公告
