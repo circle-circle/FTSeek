@@ -1,0 +1,48 @@
+{
+  "date": "2026-06-05",
+  "plan_available": true,
+  "generated_at": "2026-06-06T04:05:12.397241",
+  "targets": [
+    {
+      "symbol": "US.AAPL",
+      "plan_direction": "LONG",
+      "entry_zone": [
+        195.0,
+        200.0
+      ],
+      "status": "",
+      "traded": false,
+      "entry_zone_hit": false,
+      "direction_match": false,
+      "pnl_contribution": 0.0,
+      "matched_trades": 0,
+      "actual_entry_prices": [],
+      "actual_directions": []
+    },
+    {
+      "symbol": "US.AMD",
+      "plan_direction": "LONG",
+      "entry_zone": [
+        120.0,
+        125.0
+      ],
+      "status": "",
+      "traded": false,
+      "entry_zone_hit": false,
+      "direction_match": false,
+      "pnl_contribution": 0.0,
+      "matched_trades": 0,
+      "actual_entry_prices": [],
+      "actual_directions": []
+    }
+  ],
+  "hit_rate": 0.0,
+  "traded_rate": 0.0,
+  "avg_pnl_of_planned": 0.0,
+  "unplanned_trade_count": 4,
+  "planned_count": 2,
+  "total_trades": 4,
+  "plan_date": "2026-06-05",
+  "traded_planned_count": 0,
+  "hit_count": 0
+}

@@ -53,6 +53,9 @@ class ExecutionEngine(BaseExecutionEngine):
         # 订单缓存
         self.order_book: Dict[str, Order] = {}
         self.state_machines: Dict[str, OrderStateMachine] = {}
+        
+        # 持仓缓存 (由 scheduler_core 注入, 用于替代 Futu API 方向冲突检查)
+        self.position_store = None
     
     def initialize(self):
         """初始化执行引擎"""
@@ -264,30 +267,24 @@ class ExecutionEngine(BaseExecutionEngine):
             # P0 修复 (2026-06-03): 通用方向冲突检测 — 所有入场订单的统一关卡
             # 根因: ORB / main pipeline / scalping 各自独立下单，
             #       同一标的被多引擎同时操作 → broker 净仓位方向与系统认知不一致
-            # 规则: 如果 broker 已有该标的持仓，禁止新入场 (无论同向或反向)
+            # 规则: 如果已有该标的持仓，禁止新入场 (无论同向或反向)
             #       必须先平掉旧仓再开新仓，由调用方负责
-            if self.broker_adapter and self.broker_adapter.is_connected():
-                try:
-                    from futu import RET_OK, TrdEnv
-                    trd_env = TrdEnv.SIMULATE if self.config.get("futu_trade_env", 1) == 1 else TrdEnv.REAL
-                    ret, pos_data = self.broker_adapter.trade_ctx.position_list_query(
-                        code=order.symbol, trd_env=trd_env, refresh_cache=True
-                    )
-                    if ret == RET_OK and pos_data is not None and not pos_data.empty:
-                        broker_qty = float(pos_data.iloc[0].get('qty', 0))
-                        if abs(broker_qty) > 0:
-                            broker_side = 'LONG' if broker_qty > 0 else 'SHORT'
-                            order_side = 'LONG' if order.direction == Direction.LONG else 'SHORT'
-                            logger.error(
-                                f"[ExecutionEngine·方向冲突🔴] {order.symbol} "
-                                f"broker已有 {broker_side} {abs(broker_qty):.0f}股, "
-                                f"新入场 {order_side} 被拦截 (先平旧仓再开新仓)"
-                            )
-                            order.state = OrderState.REJECTED
-                            order.failure_reason = f"方向冲突: broker已有{broker_side}持仓"
-                            return order
-                except Exception as e:
-                    logger.debug(f"[ExecutionEngine] 方向冲突检查异常 (放行): {e}")
+            # P1 性能修复 (2026-06-06): 用 position_store 内存查询替代 Futu position_list_query
+            #       原: 每次入场调 Futu API (50-200ms 网络延迟)
+            #       现: position_store.has() 内存查询 (<1ms)，30s sync 刷新足够
+            _ps = getattr(self, 'position_store', None)
+            if _ps and _ps.has(order.symbol):
+                existing = _ps.get(order.symbol)
+                existing_dir = existing.direction.value if hasattr(existing.direction, 'value') else str(existing.direction)
+                order_side = 'LONG' if order.direction == Direction.LONG else 'SHORT'
+                logger.error(
+                    f"[ExecutionEngine·方向冲突🔴] {order.symbol} "
+                    f"已有 {existing_dir} {existing.size:.0f}股 (position_store), "
+                    f"新入场 {order_side} 被拦截 (先平旧仓再开新仓)"
+                )
+                order.state = OrderState.REJECTED
+                order.failure_reason = f"方向冲突: 已有{existing_dir}持仓"
+                return order
         
         # 创建状态机
         state_machine = OrderStateMachine()

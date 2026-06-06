@@ -261,6 +261,13 @@ class TradingScheduler:
             self.risk_engine.position_store = self.position_store
             logger.info("[调度器] position_store 已注入 RiskEngine (仓位限制检查已激活)")
 
+        # P1 2026-06-06: 注入 position_store 到 ExecutionEngine，替代 Futu API 方向冲突检查
+        # 根因: engine.submit_order() 每次入场都 position_list_query(refresh_cache=True)
+        #       50-200ms 网络延迟 × 每单，position_store 内存查询 <1ms
+        if self.execution_engine:
+            self.execution_engine.position_store = self.position_store
+            logger.info("[调度器] position_store 已注入 ExecutionEngine (方向冲突检查走内存)")
+
         # P0 2026-04-21: 注入 capital_safety 到 RiskEngine，使总敞口计算使用实际净值
         try:
             from app.risk.capital_safety import get_capital_safety_system

@@ -1,0 +1,269 @@
+{
+  "report_type": "weekly",
+  "period_start": "2026-06-01",
+  "period_end": "2026-06-05",
+  "generated_at": "2026-06-06T04:05:12.533515",
+  "summary": {
+    "total_trades": 37,
+    "closed_trades": 37,
+    "winning_trades": 25,
+    "total_pnl": 5838.87,
+    "win_rate": 0.6757,
+    "avg_pnl_per_trade": 157.81
+  },
+  "daily_comparison": {
+    "daily_stats": {
+      "2026-06-02": {
+        "trades": 12,
+        "wins": 9,
+        "pnl": 11534.95
+      },
+      "2026-06-01": {
+        "trades": 1,
+        "wins": 1,
+        "pnl": 446.1
+      },
+      "2026-06-03": {
+        "trades": 8,
+        "wins": 4,
+        "pnl": -10863.42
+      },
+      "2026-06-04": {
+        "trades": 12,
+        "wins": 8,
+        "pnl": 3101.54
+      },
+      "2026-06-05": {
+        "trades": 4,
+        "wins": 3,
+        "pnl": 1619.7
+      }
+    },
+    "best_day": "2026-06-02",
+    "worst_day": "2026-06-03",
+    "trading_days": 5
+  },
+  "signal_funnel": {
+    "total_decisions": 436,
+    "by_day": {
+      "2026-06-01": 263,
+      "2026-06-02": 114,
+      "2026-06-04": 52,
+      "2026-06-05": 7
+    },
+    "by_direction_strength": {
+      "LONG(s=23)": 1,
+      "LONG(s=26)": 1,
+      "LONG(s=27)": 4,
+      "LONG(s=29)": 5,
+      "LONG(s=31)": 4,
+      "LONG(s=32)": 1,
+      "LONG(s=34)": 6,
+      "LONG(s=35)": 9,
+      "LONG(s=36)": 5,
+      "LONG(s=37)": 2,
+      "LONG(s=38)": 3,
+      "LONG(s=39)": 1,
+      "LONG(s=40)": 4,
+      "LONG(s=41)": 4,
+      "LONG(s=43)": 2,
+      "LONG(s=46)": 4,
+      "LONG(s=50)": 2,
+      "LONG(s=54)": 1,
+      "LONG(s=56)": 3,
+      "LONG(s=58)": 2,
+      "LONG(s=59)": 2,
+      "LONG(s=60)": 2,
+      "LONG(s=61)": 3,
+      "NEUTRAL(s=51)": 1,
+      "SHORT(s=10)": 22,
+      "SHORT(s=11)": 3,
+      "SHORT(s=13)": 2,
+      "SHORT(s=14)": 7,
+      "SHORT(s=15)": 2,
+      "SHORT(s=16)": 17,
+      "SHORT(s=17)": 24,
+      "SHORT(s=18)": 9,
+      "SHORT(s=19)": 23,
+      "SHORT(s=20)": 15,
+      "SHORT(s=21)": 16,
+      "SHORT(s=22)": 5,
+      "SHORT(s=23)": 6,
+      "SHORT(s=24)": 6,
+      "SHORT(s=25)": 10,
+      "SHORT(s=26)": 28,
+      "SHORT(s=27)": 19,
+      "SHORT(s=28)": 21,
+      "SHORT(s=29)": 9,
+      "SHORT(s=30)": 15,
+      "SHORT(s=31)": 12,
+      "SHORT(s=32)": 3,
+      "SHORT(s=33)": 3,
+      "SHORT(s=34)": 6,
+      "SHORT(s=35)": 10,
+      "SHORT(s=36)": 13,
+      "SHORT(s=37)": 7,
+      "SHORT(s=38)": 6,
+      "SHORT(s=39)": 4,
+      "SHORT(s=40)": 5,
+      "SHORT(s=41)": 1,
+      "SHORT(s=42)": 6,
+      "SHORT(s=43)": 2,
+      "SHORT(s=44)": 9,
+      "SHORT(s=45)": 3,
+      "SHORT(s=47)": 3,
+      "SHORT(s=48)": 3,
+      "SHORT(s=50)": 5,
+      "SHORT(s=51)": 2,
+      "SHORT(s=54)": 2
+    }
+  },
+  "rejection_trend": {
+    "total": 136,
+    "by_day": {
+      "2026-06-01": 108,
+      "2026-06-02": 19,
+      "2026-06-04": 1,
+      "2026-06-05": 8
+    },
+    "by_reason": {
+      "SHORT_EFFECTIVE_WEAK": 82,
+      "LONG_STRENGTH_WEAK": 29,
+      "SHORT_TRIPLE_CONFIRM": 18,
+      "K15_REVERSAL_BLOCKED": 4,
+      "WEAK_LONG_BLOCKED": 3
+    },
+    "by_symbol": {
+      "US.LLY": 13,
+      "US.AMZN": 11,
+      "US.PG": 10,
+      "US.GOOG": 8,
+      "US.META": 8
+    },
+    "trend": "decreasing",
+    "top_rejector": "SHORT_EFFECTIVE_WEAK"
+  },
+  "capital_curve": {
+    "start_equity": 1081425.0,
+    "end_equity": 1072158.0,
+    "weekly_pnl": -9267.69,
+    "weekly_return_pct": -0.86,
+    "max_drawdown_pct": -1.35,
+    "daily_points": [
+      {
+        "day": "2026-06-01",
+        "equity": 1081425.0,
+        "cash": 1067765.0,
+        "drawdown": -1.35
+      },
+      {
+        "day": "2026-06-02",
+        "equity": 1079718.0,
+        "cash": -224472.0,
+        "drawdown": -1.51
+      },
+      {
+        "day": "2026-06-03",
+        "equity": 1067598.0,
+        "cash": -330342.0,
+        "drawdown": -2.61
+      },
+      {
+        "day": "2026-06-04",
+        "equity": 1070999.0,
+        "cash": 670063.0,
+        "drawdown": -2.3
+      },
+      {
+        "day": "2026-06-05",
+        "equity": 1072158.0,
+        "cash": 413167.0,
+        "drawdown": -2.2
+      }
+    ]
+  },
+  "strategy_performance": {
+    "strategy_breakdown": {
+      "unknown": {
+        "trades": 37,
+        "wins": 25,
+        "pnl": 5838.87,
+        "win_rate": 0.6757
+      }
+    }
+  },
+  "voting_analysis": {
+    "avg_signal_strength": 43.54,
+    "high_strength_trades": 0,
+    "high_strength_win_rate": 0,
+    "medium_strength_trades": 25,
+    "medium_strength_win_rate": 0.64,
+    "low_strength_trades": 12,
+    "low_strength_win_rate": 0.75
+  },
+  "risk_analysis": {
+    "stop_loss_execution_rate": 1.0,
+    "max_drawdown": 0
+  },
+  "consistency_score": {
+    "score": 0.63,
+    "avg_strength": 43.54,
+    "std_strength": 10.98,
+    "interpretation": "medium"
+  },
+  "key_learnings": [],
+  "improvement_plan": [
+    {
+      "action": "有 12 笔低信号强度交易，建议提高入场门槛",
+      "priority": "medium"
+    },
+    {
+      "action": "本周 136 次信号被拒绝 (趋势: decreasing)，TOP 原因: SHORT_EFFECTIVE_WEAK",
+      "priority": "medium"
+    }
+  ],
+  "daily_reviews_summary": {
+    "daily_count": 4,
+    "days_with_trades": 3,
+    "reviews": [
+      {
+        "date": "2026-06-01",
+        "trades": 0,
+        "pnl": 0,
+        "win_rate": 0,
+        "suggestions": [
+          "产生 263 条决策但 0 笔执行，检查门禁/风控是否过严",
+          "今日 108 次信号被拒绝，TOP 原因: SHORT_EFFECTIVE_WEAK"
+        ]
+      },
+      {
+        "date": "2026-06-03",
+        "trades": 8,
+        "pnl": -10863.42,
+        "win_rate": 0.5,
+        "suggestions": [
+          "今日交易执行正常，继续保持"
+        ]
+      },
+      {
+        "date": "2026-06-04",
+        "trades": 5,
+        "pnl": -548.02,
+        "win_rate": 0.4,
+        "suggestions": [
+          "有 2 笔低信号强度交易，建议提高入场门槛",
+          "今日 1 次信号被拒绝，TOP 原因: WEAK_LONG_BLOCKED"
+        ]
+      },
+      {
+        "date": "2026-06-05",
+        "trades": 4,
+        "pnl": 1619.7,
+        "win_rate": 0.75,
+        "suggestions": [
+          "今日 8 次信号被拒绝，TOP 原因: K15_REVERSAL_BLOCKED"
+        ]
+      }
+    ]
+  }
+}

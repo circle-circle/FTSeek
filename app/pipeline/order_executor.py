@@ -3329,57 +3329,47 @@ def _get_contract_multiplier(symbol: str) -> int:
 
 
 def _verify_position_still_held(scheduler, position: Position) -> bool:
-    """Broker-first (2026-06-03): 执行前校验 broker 端持仓是否仍存在。
+    """执行前校验持仓是否仍存在 (2026-06-06: position_store 内存查询替代 Futu API)。
     
     防止双重平仓: 如果 algo/手动已在外部门平仓，系统不再提交卖单。
-    查 Futu position_list_query 获取实时持仓数量。
     
-    P0 修复 (2026-06-03): 增加方向校验 — 防止方向错位导致加仓
-    根因: XLF DB 记录 SHORT 但 broker 实际 LONG → BUY 平仓变成加仓
+    P1 性能修复 (2026-06-06): 用 position_store 内存查询替代 Futu position_list_query
+      原: 每次平仓调 Futu API (50-200ms 网络延迟)
+      现: position_store.has() 内存查询 (<1ms)
+      安全性: position_sync 30s 刷新 + _close_in_progress 防并发重入
     
     Returns:
         True = 持仓仍在且方向一致，可执行平仓
-        False = 持仓不存在/数量不足/方向冲突，跳过
-    API 异常时返回 True (保守放行，系统策略仓位需要退出保护)
+        False = 持仓不存在/方向冲突，跳过
+    异常时返回 True (保守放行，系统策略仓位需要退出保护)
     """
     try:
-        if not scheduler.execution_engine or not scheduler.execution_engine.broker_adapter:
-            return True  # 无 broker 连接，保守放行
-        broker_adapter = scheduler.execution_engine.broker_adapter
-        if not broker_adapter.is_connected():
-            return True  # 连接断开，保守放行
+        _ps = getattr(scheduler, 'position_store', None)
+        if not _ps:
+            return True  # 无 position_store，保守放行
         
-        from futu import RET_OK, TrdEnv
-        trd_env = TrdEnv.SIMULATE if getattr(scheduler, 'trade_env', 1) == 1 else TrdEnv.REAL
-        ret, data = broker_adapter.trade_ctx.position_list_query(
-            code=position.symbol, trd_env=trd_env
-        )
-        if ret != RET_OK or data is None or data.empty:
-            return False  # broker 端无该持仓
-        row = data.iloc[0]
-        broker_qty = abs(float(row.get('qty', 0)))
-        needed = position.size
-        if broker_qty < needed * 0.5:  # 容差 50% (部分平仓场景)
+        # 检查持仓是否存在
+        if not _ps.has(position.symbol):
             logger.warning(
-                f"[持仓校验] {position.symbol} broker_qty={broker_qty} < needed={needed}×0.5"
+                f"[持仓校验] {position.symbol} position_store 中无此持仓, 跳过平仓"
             )
             return False
         
-        # P0 方向校验 (2026-06-03): broker position_side vs DB direction
-        broker_side = str(row.get('position_side', '')).upper()
-        db_direction = position.direction.name if hasattr(position.direction, 'name') else str(position.direction)
-        if broker_side and broker_side != 'N/A':
-            expected_side = 'LONG' if db_direction == 'LONG' else 'SHORT'
-            if broker_side != expected_side:
+        # 方向校验: position_store 中的方向 vs 待平仓的方向
+        stored = _ps.get(position.symbol)
+        if stored:
+            stored_dir = stored.direction.name if hasattr(stored.direction, 'name') else str(stored.direction)
+            close_dir = position.direction.name if hasattr(position.direction, 'name') else str(position.direction)
+            if stored_dir != close_dir:
                 logger.error(
-                    f"[持仓校验·方向冲突🔴] {position.symbol} DB={db_direction} vs Broker={broker_side} "
-                    f"(qty={broker_qty}) — 禁止平仓，防止方向错位加仓"
+                    f"[持仓校验·方向冲突🔴] {position.symbol} "
+                    f"store={stored_dir} vs close_request={close_dir} — 禁止平仓"
                 )
                 return False
         
         return True
     except Exception as e:
-        logger.debug(f"[持仓校验] API 异常 (保守放行): {e}")
+        logger.debug(f"[持仓校验] 异常 (保守放行): {e}")
         return True
 
 

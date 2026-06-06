@@ -360,41 +360,27 @@ class FutuBrokerAdapter:
             if ret == RET_OK:
                 futu_id = str(data["order_id"].values[0])
 
-                # P0 Fix: 订单状态确认 (防止幽灵仓)
-                # 在创建内存持仓前，确认订单未失败
-                # 等待短暂时间让 Futu 更新状态，然后查询确认
+                # P0 Fix: 订单状态快速确认 (防止幽灵仓)
+                # 单次查询，不 sleep — place_order 成功返回时交易所拒单已同步返回
+                # 延迟性拒单由 position_sync (30s) 兜底
                 try:
                     from futu import TrdEnv, RET_OK as RET_OK_FUTU
-                    import time
                     
                     trd_env = TrdEnv.SIMULATE if self.trade_env == 1 else TrdEnv.REAL
                     
-                    # 循环查询 3 次，每次间隔 0.5s
-                    order_failed = False
-                    for _attempt in range(3):
-                        time.sleep(0.5)
-                        ret_q, data_q = self.trade_ctx.order_list_query(
-                            order_id=futu_id,
-                            trd_env=trd_env
-                        )
-                        if ret_q == RET_OK_FUTU and not data_q.empty:
-                            status = str(data_q.iloc[0].get('order_status', ''))
-                            # 状态：FAILED, DELETED, CANCELLED -> 失败
-                            if 'FAIL' in status or 'DEL' in status or 'CANCEL' in status:
-                                logger.error(f"🚨 [订单失败] {order.symbol} Status={status}")
-                                order_failed = True
-                                break
-                            
-                            # 状态：FILLED, PART_DEALT -> 成功，跳出循环
-                            if 'FILLED' in status or 'DEALT' in status:
-                                break
+                    ret_q, data_q = self.trade_ctx.order_list_query(
+                        order_id=futu_id,
+                        trd_env=trd_env
+                    )
+                    if ret_q == RET_OK_FUTU and not data_q.empty:
+                        status = str(data_q.iloc[0].get('order_status', ''))
+                        if 'FAIL' in status or 'DEL' in status or 'CANCEL' in status:
+                            logger.error(f"🚨 [订单失败] {order.symbol} Status={status}")
+                            raise RuntimeError(f"订单提交后失败: {order.symbol} status={status}")
                 except RuntimeError:
                     raise
                 except Exception as e:
                     logger.warning(f"[订单状态检查] 异常 (降级放行): {e}")
-
-                if order_failed:
-                    raise RuntimeError(f"订单提交后失败: {order.symbol}")
 
                 # P0 Fix: PDT 逻辑修复 (支持做空)
                 # 记录日内交易：如果非隔夜单 且 是开仓单

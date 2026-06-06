@@ -145,5 +145,26 @@
     "new_state": "RISK_OFF",
     "reason": "Black Swan (LLM confirmed): revenue miss on US.AVGO",
     "source": "NewsInterceptor"
+  },
+  {
+    "time": "2026-06-06T00:23:19.129302",
+    "old_state": "RISK_OFF",
+    "new_state": "NORMAL",
+    "reason": "Auto Recovery: Cooldown + Market Confirmed (VIX=20.2\u2713 SPY=-1.55%\u2713)",
+    "source": "System"
+  },
+  {
+    "time": "2026-06-06T02:30:03.421198",
+    "old_state": "NORMAL",
+    "new_state": "RISK_OFF",
+    "reason": "Black Swan (LLM confirmed): revenue miss on US.AVGO",
+    "source": "NewsInterceptor"
+  },
+  {
+    "time": "2026-06-06T03:00:07.020743",
+    "old_state": "RISK_OFF",
+    "new_state": "NORMAL",
+    "reason": "Auto Recovery: Cooldown + Market Confirmed (VIX=20.8\u2713 SPY=-2.39%\u2713)",
+    "source": "System"
   }
 ]

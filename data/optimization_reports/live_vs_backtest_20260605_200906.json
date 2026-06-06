@@ -1,0 +1,45 @@
+{
+  "generated_at": "2026-06-05T20:09:06Z",
+  "window": [
+    "2026-05-06",
+    "2026-06-05"
+  ],
+  "params": {
+    "min_signal_strength": 50.0,
+    "stop_loss_pct": -0.045,
+    "take_profit_pct": 0.025,
+    "trailing_stop_trigger": 0.01
+  },
+  "n_live": 0,
+  "n_backtest": 0,
+  "live_stats": {
+    "n_trades": 0,
+    "win_rate": 0.0,
+    "sharpe": 0.0,
+    "total_return": 0.0,
+    "max_drawdown": 0.0,
+    "avg_pnl": 0.0
+  },
+  "backtest_stats": {
+    "n_trades": 0,
+    "win_rate": 0.0,
+    "sharpe": 0.0,
+    "total_return": 0.0,
+    "max_drawdown": 0.0,
+    "avg_pnl": 0.0
+  },
+  "diffs": {},
+  "slippage_estimate": {
+    "avg_slippage_pct": 0.0,
+    "p95_slippage_pct": 0.0,
+    "samples": 0
+  },
+  "latency_impact": {
+    "holding_hours_mean": 0.0,
+    "holding_hours_std": 0.0,
+    "n": 0
+  },
+  "notes": [
+    "窗口内无已平仓成交, 报告为空。"
+  ]
+}
