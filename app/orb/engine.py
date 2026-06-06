@@ -1098,7 +1098,7 @@ class ORBEngine:
                         )
                         if self._cfg.is_active:
                             close_dir = "SHORT" if pos.direction == "LONG" else "LONG"
-                            self._submit_order(symbol, close_dir, price, close_qty)
+                            self._submit_order(symbol, close_dir, price, close_qty, is_exit=True)
                         self._notify(f"📊 {symbol} Layer 1 (1R): 平仓 {close_qty} 股, SL→breakeven")
                     continue
 
@@ -1120,7 +1120,7 @@ class ORBEngine:
                         )
                         if self._cfg.is_active:
                             close_dir = "SHORT" if pos.direction == "LONG" else "LONG"
-                            self._submit_order(symbol, close_dir, price, close_qty)
+                            self._submit_order(symbol, close_dir, price, close_qty, is_exit=True)
                         self._notify(f"📊 {symbol} Layer 2 (2R): 平仓 {close_qty} 股, trail激活")
                     continue
 
@@ -1197,7 +1197,7 @@ class ORBEngine:
         if self._cfg.is_active:
             # 实际平仓
             close_dir = "SHORT" if pos.direction == "LONG" else "LONG"
-            self._submit_order(symbol, close_dir, price, pos.quantity)
+            self._submit_order(symbol, close_dir, price, pos.quantity, is_exit=True)
 
             # 从 PositionStore 移除
             if self._store:
@@ -1681,9 +1681,15 @@ class ORBEngine:
     # ── 订单执行 ──
 
     def _submit_order(
-        self, symbol: str, direction: str, price: float, quantity: float
+        self, symbol: str, direction: str, price: float, quantity: float,
+        is_exit: bool = False
     ) -> Optional[Dict[str, Any]]:
-        """提交订单"""
+        """提交订单
+        
+        Args:
+            is_exit: True=平仓订单, False=开仓订单 (默认)
+                     平仓订单标记 metadata.is_exit=True, 跳过方向冲突检查
+        """
         if not self._exec:
             logger.warning("[ORB] execution_engine 不可用")
             return None
@@ -1754,6 +1760,12 @@ class ORBEngine:
                 quantity=float(quantity),
                 price=price,
             )
+            
+            # P0 修复 (2026-06-06): 平仓订单标记 is_exit=True
+            # 根因: ORB 平仓订单未标记 is_exit, 被方向冲突检查误拦截
+            # 结果: trade_records 记录已平仓, 但 broker 实际未平仓 → 幽灵仓
+            if is_exit:
+                order.metadata = {'is_exit': True}
 
             if hasattr(self._exec, "submit_order"):
                 result = self._exec.submit_order(order)

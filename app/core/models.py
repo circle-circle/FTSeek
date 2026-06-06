@@ -294,6 +294,9 @@ class Order:
     retry_count: int = 0
     last_error: Optional[str] = None
     
+    # 元数据 (P0 2026-06-06: 支持 is_exit 等标记)
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    
     def is_complete(self) -> bool:
         """订单是否已完成 (成交/取消/拒绝/过期)"""
         return self.state in [
