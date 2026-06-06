@@ -3,7 +3,7 @@ ORB 辅线退出栈 — RFC-056
 
 三层独立退出, 不走主线 exit_policy:
 
-  Layer 1: ORBFloorStop     — 硬止损 (区间中点 或 ATR×1.0, 取近者)
+  Layer 1: ORBFloorStop     — 硬止损 (区间中点 或 ATR×1.5, 取近者)
   Layer 2: ORBTrailingExit  — 追踪止损 (盈利>1ATR 激活, trail=1.2×ATR)
   Layer 3: ORBEODExit       — 盘末退出 (15:55 ET 强制全平)
 
@@ -68,7 +68,7 @@ def _breached(direction: str, current: float, stop_level: float) -> bool:
 class ORBFloorStop:
     """硬止损 — 区间中点 + ATR 兜底"""
 
-    def __init__(self, atr_mult: float = 1.0):
+    def __init__(self, atr_mult: float = 1.5):
         self._atr_mult = atr_mult
 
     def check(
@@ -255,7 +255,7 @@ class ORBExitStack:
 
     def __init__(
         self,
-        sl_atr_mult: float = 1.0,
+        sl_atr_mult: float = 1.5,
         tp_atr_mult: float = 2.0,
         trail_activation_atr: float = 1.0,
         trail_multiplier: float = 1.2,
