@@ -656,55 +656,56 @@ watchlist:
     max_position_ratio: 0.12
     notes: 消费必需品，低相关防御
   etfs:
+  # ADR-006 (2026-06-07): ETF 全部归 ORB 引擎管理，主线专注个股
+  # 原因: 主线(15-30min多因子+LLM)和ORB(1min突破+5秒轮询)在ETF上产生冲突
+  # ORB universe: SPY, QQQ, IWM, DIA, XLE, XLF, XLK, XLV, XLY, XLI
+  # 主线保留 SPY/QQQ 作为市场方向参考数据(spy_context)，不作为交易标的
   - code: US.SPY
     name: SPDR S&P 500 ETF
-    enabled: true
+    enabled: false
     tier: ETF
-    notes: 大盘基准 | Beta对冲
+    notes: "→ ORB 管理 | 主线仅用作市场方向参考"
   - code: US.QQQ
     name: Invesco QQQ Trust
-    enabled: true
+    enabled: false
     tier: ETF
-    notes: 科技基准 | Beta对冲
-  # ADR-005 (2026-06-04): 增加行业ETF — 加速高质量数据采集
-  # 数据依据: 6/2-6/4 XLF +$4401, XLY +$462, XLK +$242, XLI +$508 (全部正EV)
-  # ETF流动性好、波动适中、DAY_TRADE_TP命中率高
+    notes: "→ ORB 管理 | 主线仅用作市场方向参考"
   - code: US.XLF
     name: Financial Select Sector SPDR
-    enabled: true
+    enabled: false
     tier: ETF
     max_position_ratio: 0.15
-    notes: 金融板块 | 高流动性 | 3笔67%WR +$4401
+    notes: "→ ORB 管理 (ADR-006)"
   - code: US.XLY
     name: Consumer Discretionary Select
-    enabled: true
+    enabled: false
     tier: ETF
     max_position_ratio: 0.15
-    notes: 可选消费 | 2笔50%WR +$462
+    notes: "→ ORB 管理 (ADR-006)"
   - code: US.XLK
     name: Technology Select Sector
-    enabled: true
+    enabled: false
     tier: ETF
     max_position_ratio: 0.15
-    notes: 科技板块 | 3笔33%WR +$242
+    notes: "→ ORB 管理 (ADR-006)"
   - code: US.XLI
     name: Industrial Select Sector
-    enabled: true
+    enabled: false
     tier: ETF
     max_position_ratio: 0.15
-    notes: 工业板块 | 1笔100%WR +$508
+    notes: "→ ORB 管理 (ADR-006)"
   - code: US.XLE
     name: Energy Select Sector
-    enabled: true
+    enabled: false
     tier: ETF
     max_position_ratio: 0.15
-    notes: 能源板块 | 高波动适合日内
+    notes: "→ ORB 管理 (ADR-006)"
   - code: US.IWM
     name: iShares Russell 2000
-    enabled: true
+    enabled: false
     tier: ETF
     max_position_ratio: 0.15
-    notes: 小盘股基准 | 2笔50%WR
+    notes: "→ ORB 管理 (ADR-006)"
 decision:
   signal_thresholds:
     min_score: 50
@@ -2157,15 +2158,20 @@ orb:
   enabled: true
   mode: active                     # observe → shadow → active(真实下单) — 2026-06-01 启用
   universe:
-    - US.IWM                       # 罗素2000小盘 (高波动, ORB友好)
-    - US.DIA                       # 道琼斯30
+    # ADR-006 (2026-06-07): ETF 归 ORB，个股归主线，零重叠
+    # 宽基 (4): 最高流动性，开盘区间最清晰
+    - US.SPY                       # S&P 500 (从主线移入)
+    - US.QQQ                       # Nasdaq 100 (从主线移入)
+    - US.IWM                       # Russell 2000 (高波动, ORB友好)
+    - US.DIA                       # Dow Jones 30
+    # 板块 (6): 板块轮动驱动，成交量充足
     - US.XLE                       # 能源板块
     - US.XLF                       # 金融板块
     - US.XLK                       # 科技板块
     - US.XLV                       # 医疗板块
-    - US.XLY                       # 消费板块 (替代SPY, 避免与主线重叠)
-    - US.XLI                       # 工业板块 (替代QQQ, 避免与主线重叠)
-    # 注: SPY/QQQ 在主线 watchlist 中已启用, 此处移除避免冲突
+    - US.XLY                       # 可选消费
+    - US.XLI                       # 工业板块
+    # 不加入: XLB/XLU/XLP/XLRE — 成交量低，ORB信号稀疏
   # 入场参数
   range_minutes: 15                # 开盘区间长度 (分钟)
   max_range_width_pct: 2.5         # 最大区间宽度% (太宽=过度波动)

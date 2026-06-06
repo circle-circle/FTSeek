@@ -221,6 +221,32 @@ class ORBEngine:
         if self._running:
             logger.warning("[ORB] 已在运行")
             return
+
+        # ADR-006 (2026-06-07): 标的池互斥断言 — 防止配置漂移导致重叠
+        try:
+            from app.utils.watchlist_manager import get_watchlist_with_tiers
+            wl = get_watchlist_with_tiers()
+            main_symbols = set()
+            for item in wl.get('us_stocks', []):
+                if item.get('enabled', True):
+                    code = item.get('code', '')
+                    if code:
+                        main_symbols.add(code)
+            orb_symbols = set(f"US.{s}" if not s.startswith('US.') else s for s in self._cfg.universe)
+            overlap = orb_symbols & main_symbols
+            if overlap:
+                logger.critical(
+                    "🚨 [ORB·ADR-006] 标的池与主线重叠: %s — "
+                    "请修改 unified_config.yaml 消除重叠", overlap
+                )
+            else:
+                logger.info(
+                    "[ORB·ADR-006] ✅ 标的池零重叠 | ORB=%d ETF | Main=%d 个股",
+                    len(orb_symbols), len(main_symbols),
+                )
+        except Exception as e:
+            logger.warning("[ORB] 标的池互斥检查跳过: %s", e)
+
         # 提前订阅: 给 Futu 数据管道预热时间 (必须在 daemon 启动前)
         self._subscribe_symbols()
         self._running = True
