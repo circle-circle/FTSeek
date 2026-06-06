@@ -52,6 +52,44 @@ class FutuBrokerAdapter:
         self._heartbeat_stop_event = threading.Event()
 
     # ------------------------------------------------------------------
+    # 兜底安全门禁 (2026-06-06): broker 前最后一道墙
+    # ------------------------------------------------------------------
+
+    _NOTIONAL_HARD_CAP_PCT = 0.30  # 30% equity — 粗略硬兜底，比上游 25% 宽松
+
+    def _notional_sanity_check(self, symbol: str, qty, price: float) -> bool:
+        """
+        兜底检查: 单笔名义 ≤ equity × 30%.
+        不依赖 position_store, 只查 equity. 如果 equity 获取失败则放行 (fallback $100K).
+        这是所有路径的最后一道墙，不是主要防线。
+
+        Returns: True = 通过, False = 拒绝
+        """
+        if qty <= 0 or price <= 0:
+            return True  # 无效参数不在此拦截（上游应已处理）
+
+        notional = float(qty) * price
+        equity = 100_000.0  # fallback
+        try:
+            from app.risk.capital_safety import get_capital_safety_system
+            _cap = get_capital_safety_system()
+            if _cap._state.current_equity > 0:
+                equity = _cap._state.current_equity
+        except Exception:
+            pass
+
+        limit = equity * self._NOTIONAL_HARD_CAP_PCT
+        if notional > limit:
+            logger.error(
+                f"🛑 [BROKER·兜底] {symbol} 拒绝: "
+                f"名义=${notional:,.0f} > 兜底上限=${limit:,.0f} "
+                f"(净值${equity:,.0f}×{self._NOTIONAL_HARD_CAP_PCT:.0%}) "
+                f"— 上游门禁全部失效!"
+            )
+            return False
+        return True
+
+    # ------------------------------------------------------------------
     # 连接管理
     # ------------------------------------------------------------------
 
@@ -304,6 +342,10 @@ class FutuBrokerAdapter:
                 is_sell = (order.trd_side == TrdSide.SELL)
             elif hasattr(order, 'direction'):
                 is_sell = (order.direction != Direction.LONG)
+
+            # 兜底门禁 (2026-06-06): broker 前最后一道墙
+            if not self._notional_sanity_check(order.symbol, order.quantity, order.price):
+                return {"success": False, "error": "broker_notional_cap", "order_id": ""}
 
             ret, data = self.trade_ctx.place_order(
                 price=order.price,
@@ -645,6 +687,10 @@ class FutuBrokerAdapter:
                 futu_order_type = FutuOrderType.NORMAL if price > 0 else FutuOrderType.MARKET
                 trd_env = TrdEnv.SIMULATE if self.trade_env == 1 else TrdEnv.REAL
 
+                # 兜底门禁 (2026-06-06): broker 前最后一道墙
+                if not self._notional_sanity_check(symbol, qty, price if price > 0 else 1.0):
+                    return {"success": False, "error": "broker_notional_cap", "order_id": ""}
+
                 ret, data = self.trade_ctx.place_order(
                     price=price if price > 0 else 0,
                     qty=qty,
@@ -763,6 +809,11 @@ class FutuBrokerAdapter:
             trd_side = TrdSide.BUY if direction.upper() == "BUY" else TrdSide.SELL
             futu_order_type = FutuOrderType.NORMAL if price > 0 else FutuOrderType.MARKET
             trd_env = TrdEnv.SIMULATE if self.trade_env == 1 else TrdEnv.REAL
+
+            # 兜底门禁 (2026-06-06): 期权也过 broker 兜底 (notional = qty × 100 × premium)
+            _opt_notional = float(qty) * 100 * (price if price > 0 else 1.0)
+            if not self._notional_sanity_check(option_code, qty, _opt_notional / max(qty, 1)):
+                return {"success": False, "error": "broker_notional_cap"}
 
             ret, data = self.trade_ctx.place_order(
                 price=price if price > 0 else 0,

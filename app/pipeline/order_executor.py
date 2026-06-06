@@ -625,13 +625,8 @@ def _get_order_qty(scheduler, symbol: str, atr: float = 0, direction: str = "LON
         price = _get_current_price(scheduler, symbol)
 
         if price <= 0:
-            logger.warning(f"[动态仓位] {symbol} 无法获取价格, 使用默认 {DEFAULT_QTY} 股")
-            try:
-                from app.utils.watchlist_manager import get_order_qty
-                return get_order_qty(symbol, default_qty=DEFAULT_QTY)
-            except Exception as e:
-                logger.debug(f'[动态仓位] 获取订单数量失败: {e}，使用默认 {DEFAULT_QTY}')
-                return DEFAULT_QTY
+            logger.warning(f"[动态仓位] {symbol} 无法获取价格, 拒绝下单 (fail-close)")
+            return 0
 
         # P0 + P1-2 修复 (2026-05-01): ATR 动态止损 + session-aware 入场
         # atr 参数由调用方传入 (来自 market context)，避免重复获取
@@ -784,13 +779,8 @@ def _get_order_qty(scheduler, symbol: str, atr: float = 0, direction: str = "LON
                 logger.warning(f"[动态仓位·告警] {symbol}: {w}")
 
         if size <= 0:
-            logger.warning(f"[动态仓位] {symbol} 计算仓位为 0, 使用默认 {DEFAULT_QTY} 股")
-            try:
-                from app.utils.watchlist_manager import get_order_qty
-                return get_order_qty(symbol, default_qty=DEFAULT_QTY)
-            except Exception as e:
-                logger.debug(f'[动态仓位] 获取订单数量失败: {e}，使用默认 {DEFAULT_QTY}')
-                return DEFAULT_QTY
+            logger.warning(f"[动态仓位] {symbol} 计算仓位为 0, 拒绝下单 (fail-close)")
+            return 0
 
         # ═══ SSOT (2026-06-06): 统一安全门禁 — 替代散落 inline 检查 ═══
         # 三层检查: 单品种25% + 方向65% + 总敞口80%
@@ -820,12 +810,9 @@ def _get_order_qty(scheduler, symbol: str, atr: float = 0, direction: str = "LON
         return size
 
     except Exception as e:
-        logger.warning(f"[动态仓位] {symbol} 计算异常: {e}, 使用默认 {DEFAULT_QTY} 股")
-        try:
-            from app.utils.watchlist_manager import get_order_qty
-            return get_order_qty(symbol, default_qty=DEFAULT_QTY)
-        except Exception:
-            return DEFAULT_QTY
+        # fail-close: 仓位计算异常时拒绝下单，不绕过风控
+        logger.error(f"🚫 [动态仓位] {symbol} 计算异常: {e}, 拒绝下单 (fail-close)")
+        return 0
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -2694,7 +2681,9 @@ def _submit_order(scheduler, symbol: str, signal: SignalScore, context: Dict[str
                 logger.warning(f"{_rsn}")
                 return
     except Exception as _gate_err:
-        logger.debug(f"[安全门禁·预估] 检查异常 (放行): {_gate_err}")
+        # fail-close: 预估算异常时也拒绝，不依赖后续 _get_order_qty 兜底
+        logger.error(f"🚫 [安全门禁·预估] {symbol} 检查异常 (拒绝): {_gate_err}")
+        return
 
     # ─── P0 (2026-06-02): 广度信号 — Muyuan 论文核心发现 ───
     # ≥6 只同时超卖 → LONG strength+30, confidence×1.3, 禁止 SHORT
