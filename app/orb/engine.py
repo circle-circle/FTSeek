@@ -1700,8 +1700,10 @@ class ORBEngine:
                 if not _ok and _mq <= 0:
                     logger.warning(f"🚫 [ORB·安全门禁] {symbol} {direction} 拒绝: {_rsn}")
                     return {"success": False, "error": "pre_trade_gate_rejected", "reason": _rsn}
-            except Exception:
-                pass
+            except Exception as _gate_err:
+                # fail-close: 门禁异常时拒绝下单
+                logger.error(f"🚫 [ORB·安全门禁] {symbol} 异常 (拒绝): {_gate_err}")
+                return {"success": False, "error": "pre_trade_gate_error", "reason": str(_gate_err)}
 
             # ── P1 (2026-06-04): 最小门禁注入 — 防 ORB 绕过风控 ──
             # 根因: ORB 直连 execution_engine，不受 RiskStateMachine/PDT/cooldown 保护

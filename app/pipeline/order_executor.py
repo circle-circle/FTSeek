@@ -803,16 +803,19 @@ def _get_order_qty(scheduler, symbol: str, atr: float = 0, direction: str = "LON
                 symbol=symbol, direction=_dir, quantity=size, price=price,
                 position_store=_ps,
             )
-            if not _allowed and _max_qty < size:
+            if not _allowed:
                 if _max_qty <= 0:
                     logger.warning(f"🚫 [安全门禁·真实] {symbol} 完全拒绝: {_reason}")
-                    return DEFAULT_QTY
-                logger.warning(
-                    f"🚫 [安全门禁·真实] {symbol} 截断: {size}股 → {_max_qty}股 | {_reason}"
-                )
-                size = _max_qty
+                    return 0  # 返回 0，调用方检查后终止下单
+                if _max_qty < size:
+                    logger.warning(
+                        f"🚫 [安全门禁·真实] {symbol} 截断: {size}股 → {_max_qty}股 | {_reason}"
+                    )
+                    size = _max_qty
         except Exception as _gate_err:
-            logger.debug(f"[安全门禁] 检查异常 (放行): {_gate_err}")
+            # fail-close: 门禁异常时拒绝下单，不绕过风控
+            logger.error(f"🚫 [安全门禁] {symbol} 检查异常 (拒绝): {_gate_err}")
+            return 0
 
         return size
 
@@ -1444,8 +1447,10 @@ def _handle_pyramid_add(scheduler, symbol: str, signal: SignalScore, context: Di
                 if not _ok and _mq <= 0:
                     logger.warning(f"🚫 [金字塔·安全门禁] {symbol} 加仓拒绝: {_rsn}")
                     return False
-            except Exception:
-                pass
+            except Exception as _gate_err:
+                # fail-close: 门禁异常时拒绝加仓
+                logger.error(f"🚫 [金字塔·安全门禁] {symbol} 异常 (拒绝): {_gate_err}")
+                return False
 
             # 检查是否满足加仓条件
             max_total_size = float(context.get("max_position_size", 50.0))
@@ -1648,6 +1653,9 @@ def _execute_stock_short(scheduler, symbol: str, signal: SignalScore, context: D
 
     # 非对称仓位 (幻方 Principle 4)
     long_qty = _get_order_qty(scheduler, symbol, atr, direction="SHORT", context=context)
+    if long_qty <= 0:
+        logger.warning(f"[做空] {symbol} 仓位计算为 0 (安全门禁拒绝)，跳过")
+        return
     short_ratio = _load_short_position_ratio()
     quantity = max(1, int(long_qty * short_ratio))
 
