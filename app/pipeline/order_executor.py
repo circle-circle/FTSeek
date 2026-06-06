@@ -3400,6 +3400,7 @@ def _close_position(scheduler, position: Position, current_price: float, exit_re
     # P0 修复 (2026-06-04): 平仓前方向校验 — 防方向翻转导致平仓变加仓
     # 根因: 6/3 XLE 内存=LONG 但 Broker=SHORT, SELL 2780 变成加仓而非平仓
     # 验证: 内存方向与 Broker 实际方向一致, 不一致则修正内存后再平仓
+    # P1 修复 (2026-06-06): broker 无此持仓时拦截平仓 — 补回 B4 内存化后的安全网
     try:
         _adapter = getattr(getattr(scheduler, 'execution_engine', None), 'broker_adapter', None)
         if _adapter and hasattr(_adapter, 'get_positions'):
@@ -3410,12 +3411,21 @@ def _close_position(scheduler, position: Position, current_price: float, exit_re
                 if _bsym == position.symbol:
                     _bp = _b
                     break
-            if _bp is not None:
-                _bqty = float(_bp.get("qty", 0) if isinstance(_bp, dict) else getattr(_bp, "qty", 0))
-                _b_side = _bp.get("position_side", "") if isinstance(_bp, dict) else getattr(_bp, "position_side", "")
-                _broker_is_short = _bqty < 0 or str(_b_side).upper() == "SHORT"
-                _mem_is_short = position.direction == Direction.SHORT
-                if _broker_is_short != _mem_is_short:
+            if _bp is None:
+                # broker 端无此持仓 — 可能已被外部平仓，拦截防止创建反向仓位
+                logger.warning(
+                    f"[平仓·broker无持仓🟡] {position.symbol} broker 端未找到此持仓, "
+                    f"跳过平仓 (可能已被外部平仓, position_store 尚未同步)"
+                )
+                meta = getattr(position, "metadata", {}) or {}
+                meta.pop("_close_in_progress", None)
+                position.metadata = meta
+                return
+            _bqty = float(_bp.get("qty", 0) if isinstance(_bp, dict) else getattr(_bp, "qty", 0))
+            _b_side = _bp.get("position_side", "") if isinstance(_bp, dict) else getattr(_bp, "position_side", "")
+            _broker_is_short = _bqty < 0 or str(_b_side).upper() == "SHORT"
+            _mem_is_short = position.direction == Direction.SHORT
+            if _broker_is_short != _mem_is_short:
                     _old = position.direction.value if hasattr(position.direction, 'value') else str(position.direction)
                     _correct = Direction.SHORT if _broker_is_short else Direction.LONG
                     logger.critical(
