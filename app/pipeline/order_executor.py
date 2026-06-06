@@ -792,40 +792,27 @@ def _get_order_qty(scheduler, symbol: str, atr: float = 0, direction: str = "LON
                 logger.debug(f'[动态仓位] 获取订单数量失败: {e}，使用默认 {DEFAULT_QTY}')
                 return DEFAULT_QTY
 
-        # ═══ 根因修复 (2026-06-05): 用真实股数重新检查名义敞口上限 ═══
-        # position_sizer 按 ATR/风险算股数，不检查 max_per_symbol 限制
-        # 此处用真实 size × price 校验，超限则截断
+        # ═══ SSOT (2026-06-06): 统一安全门禁 — 替代散落 inline 检查 ═══
+        # 三层检查: 单品种25% + 方向65% + 总敞口80%
+        # 此处用真实 size × price，超限则截断
         try:
-            from app.core.config_container import get_config as _nc_cfg
-            _nc_max_pct = float(_nc_cfg().get_dotted("risk.position.max_per_symbol", 0.25))
-        except Exception:
-            _nc_max_pct = 0.25
-        try:
-            _nc_equity = capital._state.current_equity if capital._state.current_equity > 0 else 100000
-        except Exception:
-            _nc_equity = 100000
-        _nc_limit = _nc_equity * _nc_max_pct
-        _nc_existing = 0.0
-        try:
-            if hasattr(scheduler, 'position_store') and scheduler.position_store:
-                _ep = scheduler.position_store.get(symbol)
-                if _ep:
-                    _nc_existing = _ep.size * _ep.avg_entry_price
-        except Exception:
-            pass
-        _nc_new_notional = size * price
-        _nc_total = _nc_existing + _nc_new_notional
-        if _nc_total > _nc_limit and price > 0:
-            _nc_max_new = max(0, _nc_limit - _nc_existing)
-            _nc_capped_size = max(1, int(_nc_max_new / price))
-            if _nc_capped_size < size:
+            from app.risk.pre_trade_gate import pre_trade_safety_check
+            _dir = "SHORT" if direction and "SHORT" in str(direction).upper() else "LONG"
+            _ps = getattr(scheduler, 'position_store', None)
+            _allowed, _max_qty, _reason = pre_trade_safety_check(
+                symbol=symbol, direction=_dir, quantity=size, price=price,
+                position_store=_ps,
+            )
+            if not _allowed and _max_qty < size:
+                if _max_qty <= 0:
+                    logger.warning(f"🚫 [安全门禁·真实] {symbol} 完全拒绝: {_reason}")
+                    return DEFAULT_QTY
                 logger.warning(
-                    f"🚫 [仓位上限·真实] {symbol} 截断: "
-                    f"{size}股(${_nc_total:,.0f}) → {_nc_capped_size}股(${_nc_existing + _nc_capped_size*price:,.0f}) "
-                    f"| 上限=${_nc_limit:,.0f} (净值${_nc_equity:,.0f}×{_nc_max_pct:.0%}) "
-                    f"| 已有=${_nc_existing:,.0f}"
+                    f"🚫 [安全门禁·真实] {symbol} 截断: {size}股 → {_max_qty}股 | {_reason}"
                 )
-                size = _nc_capped_size
+                size = _max_qty
+        except Exception as _gate_err:
+            logger.debug(f"[安全门禁] 检查异常 (放行): {_gate_err}")
 
         return size
 
@@ -1445,29 +1432,20 @@ def _handle_pyramid_add(scheduler, symbol: str, signal: SignalScore, context: Di
             position = scheduler.position_store.get(symbol)
             price = context.get("price", 0)
 
-            # ── P0 (2026-06-04): 加仓前检查 25% 仓位上限 ──
-            # 根因: 原代码无仓位上限检查，金字塔加仓可导致敞口远超净值
+            # ── SSOT (2026-06-06): 统一安全门禁 — 加仓前检查 ──
             try:
-                from app.core.config_container import get_config as _get_cfg
-                _cfg = _get_cfg()
-                _max_pct = float(_cfg.get_dotted("risk.position.max_per_symbol", 0.25))
-            except Exception:
-                _max_pct = 0.25
-            try:
-                from app.risk.capital_safety import get_capital_safety_system
-                _cap = get_capital_safety_system()
-                _equity = _cap._state.current_equity if _cap._state.current_equity > 0 else 100000
-            except Exception:
-                _equity = 100000
-            _notional_limit = _equity * _max_pct
-            _current_notional = position.size * position.avg_entry_price if position else 0
-            _add_notional = float(context.get("max_position_size", 50.0)) * price  # 估算加仓量
-            if _current_notional + _add_notional > _notional_limit:
-                logger.warning(
-                    f"🚫 [金字塔·P0] {symbol} 加仓拒绝: "
-                    f"当前=${_current_notional:,.0f} + 加仓≈${_add_notional:,.0f} > 上限=${_notional_limit:,.0f}"
+                from app.risk.pre_trade_gate import pre_trade_safety_check
+                _add_qty = int(float(context.get("max_position_size", 50.0)))
+                _ps = getattr(scheduler, 'position_store', None)
+                _ok, _mq, _rsn = pre_trade_safety_check(
+                    symbol=symbol, direction="LONG", quantity=_add_qty, price=price,
+                    position_store=_ps,
                 )
-                return False
+                if not _ok and _mq <= 0:
+                    logger.warning(f"🚫 [金字塔·安全门禁] {symbol} 加仓拒绝: {_rsn}")
+                    return False
+            except Exception:
+                pass
 
             # 检查是否满足加仓条件
             max_total_size = float(context.get("max_position_size", 50.0))
@@ -2676,105 +2654,39 @@ def _submit_order(scheduler, symbol: str, signal: SignalScore, context: Dict[str
 
     # 信号质量已在 _check_gates_and_conflicts() SSOT 门禁统一检查
 
-    # ─── P0 (2026-06-04): 仓位硬上限 — 防巨大亏损 ───
-    # 根因: 6/3 XLF 单笔名义敞口 $114万 (106%净值) → 亏$4458
-    #        6/3 XLE 单笔名义敞口 $32万 (30%净值) → 亏$7256
-    # 规则: 同标的累计名义敞口 ≤ 净值 × risk.position.max_per_symbol
-    # 当前配置: 25% (unified_config.yaml risk.position.max_per_symbol)
+    # ─── SSOT (2026-06-06): 统一安全门禁 — 预估算快速拒绝 ───
+    # 用 signal.quantity 或默认股数做快速预检，避免后续昂贵计算
+    # 真实股数校验在 _get_order_qty 中做第二次（defense in depth）
     try:
-        from app.core.config_container import get_config as _get_cfg
-        _cfg = _get_cfg()
-        _max_pct = float(_cfg.get_dotted("risk.position.max_per_symbol", 0.25))
-    except Exception:
-        _max_pct = 0.25
-
-    try:
-        from app.risk.capital_safety import get_capital_safety_system
-        _cap = get_capital_safety_system()
-        _equity = _cap._state.current_equity if _cap._state.current_equity > 0 else 100000
-    except Exception:
-        _equity = 100000
-
-    # 获取当前价格估算
-    _est_price = float(getattr(context, 'get', lambda *a: 0)('current_price', 0) or 0)
-    if _est_price <= 0:
+        from app.risk.pre_trade_gate import pre_trade_safety_check
+        _sig_dir = getattr(signal, 'direction', None)
+        _dir_str = _sig_dir.value if hasattr(_sig_dir, 'value') else str(_sig_dir or "LONG")
         _est_price = float(getattr(signal, 'price', 0) or 0)
-    if _est_price <= 0:
-        try:
-            from app.data.market_data_router import get_market_data_router
-            _md = get_market_data_router().get_latest(symbol)
-            if _md:
-                _est_price = float(_md.get('price', 0) or 0)
-        except Exception:
-            pass
-
-    if _est_price > 0:
-        # 计算已有持仓名义 (如果同标的已有仓位)
-        _existing_notional = 0.0
-        try:
-            if hasattr(scheduler, 'position_store') and scheduler.position_store:
-                _exist_pos = scheduler.position_store.get(symbol)
-                if _exist_pos:
-                    _existing_notional = _exist_pos.size * _exist_pos.avg_entry_price
-        except Exception:
-            pass
-
-        # 计算计划下单的名义 (用默认股数估算, 实际股数在后续计算)
-        _plan_qty = float(getattr(signal, 'quantity', DEFAULT_ORDER_QTY) or DEFAULT_ORDER_QTY)
-        _plan_notional = _plan_qty * _est_price
-        _total_notional = _existing_notional + _plan_notional
-        _notional_limit = _equity * _max_pct
-
-        if _total_notional > _notional_limit:
-            logger.warning(
-                f"🚫 [仓位上限·P0] {symbol} 拒绝入场: "
-                f"计划名义=${_total_notional:,.0f} > 上限=${_notional_limit:,.0f} "
-                f"(净值${_equity:,.0f}×{_max_pct:.0%}), "
-                f"已有=${_existing_notional:,.0f}"
+        if _est_price <= 0:
+            try:
+                _est_price = float(context.get('current_price', 0) or context.get('price', 0) or 0)
+            except Exception:
+                pass
+        if _est_price <= 0:
+            try:
+                from app.data.market_data_router import get_market_data_router
+                _md = get_market_data_router().get_latest(symbol)
+                if _md:
+                    _est_price = float(_md.get('price', 0) or 0)
+            except Exception:
+                pass
+        if _est_price > 0:
+            _est_qty = int(getattr(signal, 'quantity', DEFAULT_ORDER_QTY) or DEFAULT_ORDER_QTY)
+            _ps = getattr(scheduler, 'position_store', None)
+            _ok, _mq, _rsn = pre_trade_safety_check(
+                symbol=symbol, direction=_dir_str, quantity=_est_qty, price=_est_price,
+                position_store=_ps,
             )
-            return
-
-    # ─── P1 (2026-06-06): 方向敞口上限 — 防单方向过度集中 ───
-    # 根因: 无总方向敞口实时限制, 可同时开多个 SHORT 各 15% = 总做空 150%+
-    # 规则: 同方向所有持仓名义 ≤ 净值 × max_per_direction
-    # 配置: risk.position.max_per_direction = 0.50 (unified_config.yaml)
-    try:
-        _dir_sig = getattr(signal, 'direction', None)
-        _dir_str = _dir_sig.value if hasattr(_dir_sig, 'value') else str(_dir_sig or "")
-        _dir_is_short = 'SHORT' in _dir_str.upper() or 'SELL' in _dir_str.upper()
-        _dir_target = "SHORT" if _dir_is_short else "LONG"
-
-        try:
-            from app.core.config_container import get_config as _de_cfg
-            _de_max_pct = float(_de_cfg().get_dotted("risk.position.max_per_direction", 0.50))
-        except Exception:
-            _de_max_pct = 0.50
-
-        _de_equity = _equity if '_equity' in dir() and _equity > 0 else 100000
-        _de_limit = _de_equity * _de_max_pct
-
-        # 汇总同方向已有持仓名义
-        _de_existing = 0.0
-        if hasattr(scheduler, 'position_store') and scheduler.position_store:
-            for _pos in scheduler.position_store.all():
-                _pos_dir = _pos.direction.value if hasattr(_pos.direction, 'value') else str(_pos.direction or "")
-                if ('SHORT' in _pos_dir.upper()) == _dir_is_short:
-                    _de_existing += _pos.size * _pos.avg_entry_price
-
-        # 估算本单名义
-        _de_price = float(getattr(signal, 'price', 0) or context.get('price', 0) or 0)
-        if _de_price > 0:
-            _de_plan_qty = float(getattr(signal, 'quantity', DEFAULT_ORDER_QTY) or DEFAULT_ORDER_QTY)
-            _de_plan_notional = _de_plan_qty * _de_price
-            if _de_existing + _de_plan_notional > _de_limit:
-                logger.warning(
-                    f"🚫 [方向敞口·P1] {symbol} {_dir_target} 拒绝: "
-                    f"已有=${_de_existing:,.0f} + 计划≈${_de_plan_notional:,.0f} > "
-                    f"上限=${_de_limit:,.0f} (净值${_de_equity:,.0f}×{_de_max_pct:.0%})"
-                )
+            if not _ok and _mq <= 0:
+                logger.warning(f"{_rsn}")
                 return
-    except Exception as _de_err:
-        logger.debug(f"[方向敞口] 检查异常 (放行): {_de_err}")
+    except Exception as _gate_err:
+        logger.debug(f"[安全门禁·预估] 检查异常 (放行): {_gate_err}")
 
     # ─── P0 (2026-06-02): 广度信号 — Muyuan 论文核心发现 ───
     # ≥6 只同时超卖 → LONG strength+30, confidence×1.3, 禁止 SHORT

@@ -1688,69 +1688,18 @@ class ORBEngine:
 
             price = round(price, 2)
 
-            # P0 修复 (2026-06-04): 仓位名义上限 — ORB 与主路径统一
-            # 根因: ORB 直接调 execution_engine.submit_order, 绕过 order_executor 的所有门禁
-            # 6/3 XLF 通过 ORB 加仓 11202→22404→24285, 名义敞口 $114万 (106%净值)
+            # SSOT (2026-06-06): 统一安全门禁 — 替代散落 inline 检查
+            # 三层检查: 单品种25% + 方向65% + 总敞口80%
             try:
-                from app.core.config_container import get_config as _get_cfg
-                _cfg = _get_cfg()
-                _max_pct = float(_cfg.get_dotted("risk.position.max_per_symbol", 0.25))
-            except Exception:
-                _max_pct = 0.25
-            try:
-                from app.risk.capital_safety import get_capital_safety_system
-                _cap = get_capital_safety_system()
-                _equity = _cap._state.current_equity if _cap._state.current_equity > 0 else 100000
-            except Exception:
-                _equity = 100000
-            _notional_limit = _equity * _max_pct
-            _plan_notional = float(quantity) * price
-            # 加上已有持仓
-            _existing_notional = 0.0
-            try:
-                _pos_store = getattr(self, '_pos_store', None) or getattr(self, 'position_store', None)
-                if _pos_store:
-                    _ep = _pos_store.get(symbol)
-                    if _ep:
-                        _existing_notional = _ep.size * _ep.avg_entry_price
-            except Exception:
-                pass
-            _total_notional = _existing_notional + _plan_notional
-            if _total_notional > _notional_limit:
-                logger.warning(
-                    f"🚫 [ORB·仓位上限·P0] {symbol} 拒绝下单: "
-                    f"名义=${_total_notional:,.0f} > 上限=${_notional_limit:,.0f} "
-                    f"(净值${_equity:,.0f}×{_max_pct:.0%})"
+                from app.risk.pre_trade_gate import pre_trade_safety_check
+                _ps = getattr(self, '_pos_store', None) or getattr(self, 'position_store', None)
+                _ok, _mq, _rsn = pre_trade_safety_check(
+                    symbol=symbol, direction=direction, quantity=int(quantity),
+                    price=price, position_store=_ps,
                 )
-                return {"success": False, "error": "position_notional_exceeded"}
-
-            # ── P1 (2026-06-06): 方向敞口上限 — ORB 与主路径统一 ──
-            # 根因: ORB 可独立开仓不受主路径方向敞口检查约束
-            # 规则: 同方向所有持仓名义 ≤ 净值 × max_per_direction
-            try:
-                from app.core.config_container import get_config as _de_get_cfg
-                _de_cfg = _de_get_cfg()
-                _dir_is_short = direction.upper() == "SHORT"
-                _de_max_pct = float(_de_cfg.get_dotted("risk.position.max_per_direction", 0.50))
-                _de_limit = _equity * _de_max_pct
-                _de_existing = 0.0
-                # 从 position_store 汇总同方向持仓
-                _de_store = getattr(self, '_pos_store', None) or getattr(self, 'position_store', None)
-                if _de_store:
-                    try:
-                        for _dp in _de_store.all():
-                            _dp_dir = _dp.direction.value if hasattr(_dp.direction, 'value') else str(_dp.direction or "")
-                            if ('SHORT' in _dp_dir.upper()) == _dir_is_short:
-                                _de_existing += _dp.size * _dp.avg_entry_price
-                    except Exception:
-                        pass
-                if _de_existing + _plan_notional > _de_limit:
-                    logger.warning(
-                        f"🚫 [ORB·方向敞口·P1] {symbol} {direction} 拒绝: "
-                        f"已有=${_de_existing:,.0f} + 计划=${_plan_notional:,.0f} > "
-                        f"上限=${_de_limit:,.0f} (净值${_equity:,.0f}×{_de_max_pct:.0%})"
-                    )
-                    return {"success": False, "error": "direction_exposure_exceeded"}
+                if not _ok and _mq <= 0:
+                    logger.warning(f"🚫 [ORB·安全门禁] {symbol} {direction} 拒绝: {_rsn}")
+                    return {"success": False, "error": "pre_trade_gate_rejected", "reason": _rsn}
             except Exception:
                 pass
 
