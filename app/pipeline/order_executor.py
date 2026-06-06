@@ -2734,6 +2734,48 @@ def _submit_order(scheduler, symbol: str, signal: SignalScore, context: Dict[str
             )
             return
 
+    # ─── P1 (2026-06-06): 方向敞口上限 — 防单方向过度集中 ───
+    # 根因: 无总方向敞口实时限制, 可同时开多个 SHORT 各 15% = 总做空 150%+
+    # 规则: 同方向所有持仓名义 ≤ 净值 × max_per_direction
+    # 配置: risk.position.max_per_direction = 0.50 (unified_config.yaml)
+    try:
+        _dir_sig = getattr(signal, 'direction', None)
+        _dir_str = _dir_sig.value if hasattr(_dir_sig, 'value') else str(_dir_sig or "")
+        _dir_is_short = 'SHORT' in _dir_str.upper() or 'SELL' in _dir_str.upper()
+        _dir_target = "SHORT" if _dir_is_short else "LONG"
+
+        try:
+            from app.core.config_container import get_config as _de_cfg
+            _de_max_pct = float(_de_cfg().get_dotted("risk.position.max_per_direction", 0.50))
+        except Exception:
+            _de_max_pct = 0.50
+
+        _de_equity = _equity if '_equity' in dir() and _equity > 0 else 100000
+        _de_limit = _de_equity * _de_max_pct
+
+        # 汇总同方向已有持仓名义
+        _de_existing = 0.0
+        if hasattr(scheduler, 'position_store') and scheduler.position_store:
+            for _pos in scheduler.position_store.all():
+                _pos_dir = _pos.direction.value if hasattr(_pos.direction, 'value') else str(_pos.direction or "")
+                if ('SHORT' in _pos_dir.upper()) == _dir_is_short:
+                    _de_existing += _pos.size * _pos.avg_entry_price
+
+        # 估算本单名义
+        _de_price = float(getattr(signal, 'price', 0) or context.get('price', 0) or 0)
+        if _de_price > 0:
+            _de_plan_qty = float(getattr(signal, 'quantity', DEFAULT_ORDER_QTY) or DEFAULT_ORDER_QTY)
+            _de_plan_notional = _de_plan_qty * _de_price
+            if _de_existing + _de_plan_notional > _de_limit:
+                logger.warning(
+                    f"🚫 [方向敞口·P1] {symbol} {_dir_target} 拒绝: "
+                    f"已有=${_de_existing:,.0f} + 计划≈${_de_plan_notional:,.0f} > "
+                    f"上限=${_de_limit:,.0f} (净值${_de_equity:,.0f}×{_de_max_pct:.0%})"
+                )
+                return
+    except Exception as _de_err:
+        logger.debug(f"[方向敞口] 检查异常 (放行): {_de_err}")
+
     # ─── P0 (2026-06-02): 广度信号 — Muyuan 论文核心发现 ───
     # ≥6 只同时超卖 → LONG strength+30, confidence×1.3, 禁止 SHORT
     # 论文数据: 恐慌时反转 alpha 11.6× 基线, 胜率 78%

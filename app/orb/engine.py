@@ -926,8 +926,18 @@ class ORBEngine:
             return
 
         # 仓位大小: 风险金额 / 止损距离
+        # P1 (2026-06-06): capital_pct 生效 — ORB 只用分配到的资金比例算风险
+        # 根因: capital_pct 在 unified_config.yaml 定义为 0.20 但从未应用
+        #        ORB 用全账户 $1M 算 risk_amount, 实际应为 $200K
         equity = self._get_equity()
-        risk_amount = equity * self._cfg.position_risk_pct
+        orb_capital = equity * self._cfg.capital_pct
+        risk_amount = orb_capital * self._cfg.position_risk_pct
+        logger.debug(
+            "[ORB] 仓位计算: equity=$%.0f × capital_pct=%.2f = orb_capital=$%.0f | "
+            "× risk_pct=%.3f = risk_amount=$%.0f",
+            equity, self._cfg.capital_pct, orb_capital,
+            self._cfg.position_risk_pct, risk_amount,
+        )
 
         # 质量评分调整仓位 (高质量加仓, 低质量减仓)
         if quality_score >= 0.8:
@@ -1713,6 +1723,36 @@ class ORBEngine:
                     f"(净值${_equity:,.0f}×{_max_pct:.0%})"
                 )
                 return {"success": False, "error": "position_notional_exceeded"}
+
+            # ── P1 (2026-06-06): 方向敞口上限 — ORB 与主路径统一 ──
+            # 根因: ORB 可独立开仓不受主路径方向敞口检查约束
+            # 规则: 同方向所有持仓名义 ≤ 净值 × max_per_direction
+            try:
+                from app.core.config_container import get_config as _de_get_cfg
+                _de_cfg = _de_get_cfg()
+                _dir_is_short = direction.upper() == "SHORT"
+                _de_max_pct = float(_de_cfg.get_dotted("risk.position.max_per_direction", 0.50))
+                _de_limit = _equity * _de_max_pct
+                _de_existing = 0.0
+                # 从 position_store 汇总同方向持仓
+                _de_store = getattr(self, '_pos_store', None) or getattr(self, 'position_store', None)
+                if _de_store:
+                    try:
+                        for _dp in _de_store.all():
+                            _dp_dir = _dp.direction.value if hasattr(_dp.direction, 'value') else str(_dp.direction or "")
+                            if ('SHORT' in _dp_dir.upper()) == _dir_is_short:
+                                _de_existing += _dp.size * _dp.avg_entry_price
+                    except Exception:
+                        pass
+                if _de_existing + _plan_notional > _de_limit:
+                    logger.warning(
+                        f"🚫 [ORB·方向敞口·P1] {symbol} {direction} 拒绝: "
+                        f"已有=${_de_existing:,.0f} + 计划=${_plan_notional:,.0f} > "
+                        f"上限=${_de_limit:,.0f} (净值${_equity:,.0f}×{_de_max_pct:.0%})"
+                    )
+                    return {"success": False, "error": "direction_exposure_exceeded"}
+            except Exception:
+                pass
 
             # ── P1 (2026-06-04): 最小门禁注入 — 防 ORB 绕过风控 ──
             # 根因: ORB 直连 execution_engine，不受 RiskStateMachine/PDT/cooldown 保护
