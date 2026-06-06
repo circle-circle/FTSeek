@@ -771,6 +771,7 @@ class USPositionSync:
                     signal_strength=0,
                     signal_confidence=0,
                     strategy="manual_sync",
+                    source_type="POSITION_SYNC",  # 明确标记为历史仓位同步
                 )
                 logger.info(f"[US Sync] 飞书成交通知已发送: {symbol}")
             except Exception as e:

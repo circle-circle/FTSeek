@@ -335,6 +335,7 @@ class FeishuNotifier:
             "MAIN_PIPELINE": "主线策略 (LLM投票)",
             "SCALPING": "Scalping (剥头皮)",
             "MANUAL": "人工交易",
+            "POSITION_SYNC": "🔄 历史仓位同步 (启动时发现)",
         }.get(source_type, source_type)
         
         # 止损止盈信息
@@ -431,6 +432,7 @@ class FeishuNotifier:
             "MAIN_PIPELINE": "主线策略 (LLM投票)",
             "SCALPING": "Scalping (剥头皮)",
             "MANUAL": "人工交易",
+            "POSITION_SYNC": "🔄 历史仓位同步 (启动时发现)",
         }.get(source_type, source_type)
         
         # 平仓原因中文
