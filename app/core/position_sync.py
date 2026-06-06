@@ -635,6 +635,25 @@ class USPositionSync:
         mem_symbols = set(p.symbol for p in mem_positions)
         futu_symbols = set(futu_positions.keys())
 
+        # P1 修复 (2026-06-07): 查 DB 已有仓位，区分"重启恢复"和"真正新发现"
+        # 重启恢复: DB 有 synced 记录 → 只加载到内存，不发通知
+        # 真正新发现: DB 没有 → 发通知
+        _db_known_symbols = set()
+        try:
+            conn = sqlite3.connect(DB_PATH)
+            conn.execute("PRAGMA journal_mode=WAL")
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT symbol FROM open_positions "
+                "WHERE sync_status IS NULL OR sync_status NOT IN ("
+                "'closed_by_daemon','closed_by_scheduler','closed_by_sync',"
+                "'closed_emergency','stale_not_in_broker')"
+            )
+            _db_known_symbols = set(row[0] for row in cursor.fetchall())
+            conn.close()
+        except Exception:
+            pass
+
         # Broker-first (2026-06-03): 不再预读 DB，所有仓位以 Futu 为准
 
         # 1. 新增持仓 (Futu 有，内存没有) → 手动开仓检测
@@ -750,25 +769,29 @@ class USPositionSync:
                 f"已加入 ExitMonitor 监控 | SL=${sl_price:.2f}"
             )
             
-            # P0 修复 (2026-05-07): 发送飞书成交通知
-            try:
-                from app.notifier.feishu import notify_order_filled
-                dir_str = "BUY" if info['direction'] == 'LONG' else "SELL"
-                notify_order_filled(
-                    symbol=symbol,
-                    direction=dir_str,
-                    filled_price=cost,
-                    quantity=size,
-                    stop_loss=sl_price,
-                    take_profit=[tp_price] if tp_price else [],
-                    signal_strength=0,
-                    signal_confidence=0,
-                    strategy="manual_sync",
-                    source_type="POSITION_SYNC",  # 明确标记为历史仓位同步
-                )
-                logger.info(f"[US Sync] 飞书成交通知已发送: {symbol}")
-            except Exception as e:
-                logger.warning(f"[US Sync] 飞书成交通知发送失败: {e}")
+            # P1 修复 (2026-06-07): 只在 DB 中不存在时发通知（真正新发现）
+            # 重启恢复的仓位已在 DB 中，不发通知避免刷屏
+            if symbol not in _db_known_symbols:
+                try:
+                    from app.notifier.feishu import notify_order_filled
+                    dir_str = "BUY" if info['direction'] == 'LONG' else "SELL"
+                    notify_order_filled(
+                        symbol=symbol,
+                        direction=dir_str,
+                        filled_price=cost,
+                        quantity=size,
+                        stop_loss=sl_price,
+                        take_profit=[tp_price] if tp_price else [],
+                        signal_strength=0,
+                        signal_confidence=0,
+                        strategy="manual_sync",
+                        source_type="POSITION_SYNC",  # 明确标记为历史仓位同步
+                    )
+                    logger.info(f"[US Sync] 飞书成交通知已发送: {symbol} (DB 中不存在，新发现)")
+                except Exception as e:
+                    logger.warning(f"[US Sync] 飞书成交通知发送失败: {e}")
+            else:
+                logger.debug(f"[US Sync] {symbol} 已在 DB 中，跳过通知 (重启恢复)")
 
         # 2. 幽灵持仓 (内存有，Futu 没有) → 手动平仓检测
         # P0 修复 2026-04-28: 期权持仓不在 broker 中，不应被误判为幽灵仓
