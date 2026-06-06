@@ -1692,7 +1692,7 @@ class ORBEngine:
             # 三层检查: 单品种25% + 方向65% + 总敞口80%
             try:
                 from app.risk.pre_trade_gate import pre_trade_safety_check
-                _ps = getattr(self, '_pos_store', None) or getattr(self, 'position_store', None)
+                _ps = self._store  # ORB 的 PositionStore 存在 self._store
                 _ok, _mq, _rsn = pre_trade_safety_check(
                     symbol=symbol, direction=direction, quantity=int(quantity),
                     price=price, position_store=_ps,
