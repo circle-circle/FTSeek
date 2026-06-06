@@ -533,16 +533,7 @@ class USPositionSync:
                 # TP 用百分比而非 ATR×N (ATR×4 对 ETF 是幻影目标)
                 try:
                     atr = self._get_symbol_atr(symbol, info['cost'])
-                    # SSOT: 从 exit_policy 读取 atr_stop multiplier
-                    atr_mult = 4.0  # exit_policy.yaml atr_stop.multiplier_by_profit.initial
-                    try:
-                        from app.risk.exit_policy_guardian import ExitPolicyGuardian
-                        _ep = ExitPolicyGuardian()
-                        _policy = _ep._load_exit_policy_dict()
-                        atr_mult = float(_policy.get("exit_rules", {}).get(
-                            "atr_stop", {}).get("multiplier_by_profit", {}).get("initial", 4.0))
-                    except Exception:
-                        pass
+                    atr_mult = self._get_atr_stop_mult()  # SSOT: exit_policy.yaml
                     # ETF vs 个股: 不同 TP 目标
                     from app.risk.position_limits import ETF_EXPOSURE_DISCOUNT
                     _is_etf = symbol in ETF_EXPOSURE_DISCOUNT
@@ -557,7 +548,9 @@ class USPositionSync:
                     # 硬底限保护: 与 exit_policy.yaml max_loss_pct=15% 对齐
                     _max_loss_pct = 0.15  # exit_policy global max_loss_pct
                     try:
-                        _ml = float(_policy.get("exit_rules", {}).get(
+                        from app.risk.exit_policy_guardian import ExitPolicyGuardian as _EPG
+                        _pol = _EPG()._load_exit_policy_dict()
+                        _ml = float(_pol.get("exit_rules", {}).get(
                             "atr_stop", {}).get("max_loss_pct", 15.0))
                         _max_loss_pct = _ml / 100.0
                     except Exception:
@@ -676,7 +669,7 @@ class USPositionSync:
             # P2 修复 (2026-04-30): 使用 ATR 动态止损替代固定百分比
             try:
                 atr = self._get_symbol_atr(symbol, cost)
-                atr_mult = 2.5  # exit_policy.yaml atr_stop.initial
+                atr_mult = self._get_atr_stop_mult()  # P1: SSOT 替代硬编码 2.5
                 if info['direction'] == 'LONG':
                     sl_price = cost - atr * atr_mult
                     tp_price = cost + atr * atr_mult * 2.0
@@ -889,7 +882,7 @@ class USPositionSync:
                 # 重算 SL/TP (方向翻转后旧 SL 方向错误)
                 try:
                     atr = self._get_symbol_atr(symbol, info['cost'])
-                    atr_mult = 2.5
+                    atr_mult = self._get_atr_stop_mult()  # P1: SSOT 替代硬编码 2.5
                     if info['direction'] == 'LONG':
                         existing.initial_sl = info['cost'] - atr * atr_mult
                         existing.current_sl = existing.initial_sl
@@ -1255,6 +1248,22 @@ class USPositionSync:
         default_atr = fallback_price * 0.02
         logger.debug(f"[US Sync ATR] {symbol} 使用默认 ATR=${default_atr:.2f} (2% 价格)")
         return default_atr
+
+    def _get_atr_stop_mult(self) -> float:
+        """P1 修复 (2026-06-07): SSOT 读取 ATR 止损倍数
+
+        从 exit_policy.yaml 读取 atr_stop.multiplier_by_profit.initial,
+        消除 position_sync 中 3 处硬编码 (2.5/4.0) 的不一致。
+        默认 4.0 (与 exit_policy.yaml SSOT 对齐)。
+        """
+        try:
+            from app.risk.exit_policy_guardian import ExitPolicyGuardian
+            _ep = ExitPolicyGuardian()
+            _policy = _ep._load_exit_policy_dict()
+            return float(_policy.get("exit_rules", {}).get(
+                "atr_stop", {}).get("multiplier_by_profit", {}).get("initial", 4.0))
+        except Exception:
+            return 4.0
 
     def _execute_pending_trims_and_check_all_oversized(self):
         """根因修复 (2026-06-05): 执行超限减仓 + 扫描所有持仓

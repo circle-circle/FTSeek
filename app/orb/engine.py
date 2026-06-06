@@ -1508,13 +1508,32 @@ class ORBEngine:
         return None
 
     def _get_equity(self) -> float:
-        """获取账户权益"""
+        """获取当前账户权益 — 从 capital_safety 读取实时值
+
+        P1 修复 (2026-06-07): 原代码依赖不存在的 ExecutionEngine.get_equity()，
+        始终 fallback 到 $100K，导致 ORB 仓位被低估 10 倍。
+        修复: 从 capital_safety._state.current_equity 读取，与 pre_trade_gate 对齐。
+        """
         try:
-            if hasattr(self._exec, "get_equity"):
-                return float(self._exec.get_equity())
+            from app.risk.capital_safety import get_capital_safety_system
+            capital = get_capital_safety_system()
+            equity = capital._state.current_equity
+            if equity > 0:
+                return float(equity)
+        except Exception as e:
+            logger.debug(f"[ORB] capital_safety 读取失败: {e}")
+
+        # 最终 fallback: 从配置读取初始资金
+        try:
+            from app.core.config_container import get_config
+            cfg = get_config()
+            initial_capital = cfg.get_dotted("capital.initial", 1000000.0)
+            return float(initial_capital)
         except Exception:
             pass
-        return 100000.0  # fallback: 模拟盘默认 $100K
+
+        # 极端情况: 返回模拟盘默认值
+        return 1000000.0  # 模拟盘默认 $1M (非 $100K)
 
     # ── 区间质量评估 (RFC-056-DESIGN) ──
 
