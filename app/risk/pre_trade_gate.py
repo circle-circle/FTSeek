@@ -16,6 +16,7 @@ inline 仓位校验逻辑。所有路径统一调用此函数，消除遗漏和�
 """
 
 import logging
+import time
 from typing import Tuple, Optional, Any
 
 logger = logging.getLogger(__name__)
@@ -26,6 +27,11 @@ _DEFAULTS = {
     "max_per_direction": 0.65,
     "max_total": 0.80,
 }
+
+# ── P0 (2026-06-07): Daily realized loss circuit breaker ──
+# Cache: (timestamp, daily_pnl) — 60s TTL to avoid DB query on every order
+_daily_pnl_cache = {"ts": 0, "pnl": 0.0, "date": ""}
+_DAILY_PNL_TTL = 60  # seconds
 
 
 def _load_limits(config=None) -> dict:
@@ -68,6 +74,90 @@ def _is_short(direction: str) -> bool:
     if hasattr(direction, 'value'):
         d = direction.value.upper()
     return "SHORT" in d or "SELL" in d
+
+
+def _check_daily_drawdown(equity: float) -> Tuple[bool, str]:
+    """P0 (2026-06-07): Check if daily realized loss exceeds circuit breaker.
+
+    Queries trade_records for today's realized PnL.
+    Uses 60s TTL cache to avoid DB query on every order.
+
+    Returns:
+        (allowed, reason) — False if daily loss exceeds threshold.
+    """
+    global _daily_pnl_cache
+
+    # Load threshold from config (default 3%)
+    max_daily_dd = 0.03
+    try:
+        from app.core.config_container import get_config
+        cfg = get_config()
+        max_daily_dd = float(cfg.get_dotted(
+            "risk.account.max_daily_drawdown", 0.03))
+    except Exception:
+        pass
+
+    if max_daily_dd <= 0:
+        return True, ""
+
+    # Check cache validity
+    now = time.time()
+    # Use ET date for "today"
+    from datetime import datetime, timezone, timedelta
+    _ET = timezone(timedelta(hours=-4))
+    today = datetime.now(_ET).strftime('%Y-%m-%d')
+
+    if (_daily_pnl_cache["date"] == today
+            and now - _daily_pnl_cache["ts"] < _DAILY_PNL_TTL):
+        daily_pnl = _daily_pnl_cache["pnl"]
+    else:
+        # Query DB
+        daily_pnl = 0.0
+        try:
+            import sqlite3
+            import os
+            db_path = os.path.join(
+                os.path.dirname(__file__), '..', '..', 'data', 'ftseek_us.db')
+            db_path = os.path.normpath(db_path)
+            if os.path.exists(db_path):
+                conn = sqlite3.connect(db_path)
+                conn.execute("PRAGMA journal_mode=WAL")
+                c = conn.cursor()
+                c.execute(
+                    "SELECT COALESCE(SUM(realized_pnl), 0) "
+                    "FROM trade_records "
+                    "WHERE exit_time IS NOT NULL "
+                    "AND date(exit_time) = ?",
+                    (today,)
+                )
+                row = c.fetchone()
+                if row:
+                    daily_pnl = float(row[0])
+                conn.close()
+        except Exception as e:
+            logger.debug(f"[pre_trade_gate] daily PnL query failed: {e}")
+            return True, ""  # fail-open on DB error (don't block trading)
+
+        _daily_pnl_cache = {"ts": now, "pnl": daily_pnl, "date": today}
+
+    # Check threshold
+    if equity > 0 and daily_pnl < 0:
+        dd_pct = abs(daily_pnl) / equity
+        if dd_pct >= max_daily_dd:
+            reason = (
+                f"🚫 日亏损熔断: 当日已实现亏损 ${abs(daily_pnl):,.0f} "
+                f"({dd_pct:.1%}) ≥ 阈值 {max_daily_dd:.0%}"
+            )
+            logger.critical(f"[pre_trade_gate] {reason}")
+            return False, reason
+        elif dd_pct >= max_daily_dd * 0.7:
+            # Warning at 70% of threshold
+            logger.warning(
+                f"[pre_trade_gate] ⚠️ 日亏损预警: ${abs(daily_pnl):,.0f} "
+                f"({dd_pct:.1%}) 接近熔断阈值 {max_daily_dd:.0%}"
+            )
+
+    return True, ""
 
 
 def _sum_direction_notional(position_store, short: bool) -> float:
@@ -144,6 +234,11 @@ def pre_trade_safety_check(
     reject_reason = ""
     short = _is_short(direction)
     dir_label = "SHORT" if short else "LONG"
+
+    # ═══ Check 0: Daily realized loss circuit breaker (P0 2026-06-07) ═══
+    dd_ok, dd_reason = _check_daily_drawdown(equity)
+    if not dd_ok:
+        return False, 0, dd_reason
 
     # ═══ Check 1: Per-symbol nominal cap ═══
     symbol_limit = equity * limits["max_per_symbol"]
