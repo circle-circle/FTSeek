@@ -510,6 +510,11 @@ def _notify_order(scheduler, symbol: str, signal: SignalScore, order: Order, pos
             "fused": signal.metadata.get("fused") if hasattr(signal, "metadata") and signal.metadata else None,
             "fused_count": signal.metadata.get("fused_count") if hasattr(signal, "metadata") and signal.metadata else None,
             "fused_strategies": signal.metadata.get("fused_strategies") if hasattr(signal, "metadata") and signal.metadata else None,
+            # ─── P0 归因修复 (2026-06-06): 全链路 trace_id + 因子明细 ───
+            # 确保每笔交易从信号生成到平仓全程可追溯
+            "trace_id": getattr(signal, 'trace_id', '') or '',
+            "factor_detail": (signal.metadata.get("_factor_detail") or signal.metadata.get("factor_detail") or {}) if (hasattr(signal, "metadata") and signal.metadata) else {},
+            "signal_tags": signal.metadata.get("signal_tags", "") if (hasattr(signal, "metadata") and signal.metadata) else "",
         }
 
         if hasattr(position, 'metadata') and position.metadata:
@@ -2920,20 +2925,29 @@ def _lookup_decision_id_by_trace(trace_id: str, symbol: str = "") -> str:
 
 
 def _build_close_metadata_json(meta: dict, position) -> Optional[str]:
-    """构建平仓时的 metadata_json (含 MFE/MAE + 执行元数据)
+    """构建平仓时的 metadata_json (完整归因 + MFE/MAE + 执行元数据)
 
-    2026-06-02: 反馈闭环修复 — 将 MFE (最大有利偏移) 附加到 metadata_json
-    用于评估止盈是否设得太低 (MFE >> TP → 利润回吐过多)
+    P0 归因修复 (2026-06-06): 保留 position.metadata 全部归因字段
+    此前只保留 execution 元数据 + MFE/MAE, 导致 trace_id/factor_detail/signal_tags
+    等关键归因字段在平仓时被丢弃 → trade_records.metadata_json 几乎为空
+
+    现在: 先复制 meta (position.metadata) 全量, 再叠加 execution + MFE/MAE
     """
+    # 1. 复制 position.metadata 全量 (含 trace_id, factor_detail, signal_tags, entry_reason 等)
+    _result = dict(meta) if isinstance(meta, dict) else {}
+
+    # 2. 叠加 execution 元数据 (TWAP/滑点/延迟)
     _exec = meta.get("execution", {}) if isinstance(meta.get("execution"), dict) else {}
-    # 确保是 dict 的副本, 不污染原始 metadata
-    _result = dict(_exec) if _exec else {}
+    if _exec:
+        _result["execution"] = _exec
+
+    # 3. 附加 MFE/MAE (反馈闭环)
     _mfe = getattr(position, 'max_favorable_excursion', 0.0) or 0.0
     _mae = getattr(position, 'max_adverse_excursion', 0.0) or 0.0
     if _mfe != 0.0 or _mae != 0.0:
         _result["max_favorable_excursion"] = _mfe
         _result["max_adverse_excursion"] = _mae
-    return json.dumps(_result) if _result else None
+    return json.dumps(_result, ensure_ascii=False, default=str) if _result else None
 
 
 def _derive_entry_reason_for_close(meta: dict) -> str:

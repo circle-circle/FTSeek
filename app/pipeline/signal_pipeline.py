@@ -1200,6 +1200,8 @@ def _process_symbol_impl(scheduler, symbol: str, vix: float, spy_context: Dict[s
                 symbol=symbol, direction=signal_direction, strength=strength,
                 confidence=0.85,
                 strategy_id="BATTLE_PLAN_FAST_PATH",
+                # P0 归因修复 (2026-06-06): 全链路 trace_id — fast_lane 路径之前缺失
+                trace_id=f"US-{now_et().strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}",
             )
             # 注入 metadata 供下游 trade_attribution 落库
             if hasattr(signal, "metadata") and signal.metadata is not None:
