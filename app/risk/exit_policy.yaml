@@ -41,7 +41,7 @@ progressive_trailing:
     tier3_max: 4.0      # 2.0~4.0 ATR: 标准追踪 (让利润跑)
     # >=4.0 ATR: 宽松追踪 (大趋势给更多空间)
   tier3_compact_multiplier: 2.0    # 1.0~2.0 ATR: peak + 2.0×ATR (原3.0, 收紧追踪)
-  tier2_compact_multiplier: 2.0    # 2.0~4.0 ATR: peak + 2.0×ATR (原3.0, 收紧追踪)
+  tier2_compact_multiplier: 1.5    # 2026-06-07: 2.0→1.5×ATR, 利润更大时追踪更紧 (区分 tier3)
   tier4_loose_multiplier: 1.5      # ≥4.0 ATR: peak + 1.5×ATR (原2.0, 大赢家紧锁)
   breakeven_buffer_pct: 0.001       # 保本 buffer = 入场价 × 0.1%
   # 2026-06-06: SHORT floor 从 entry+4.0×ATR → entry-1.0×ATR (代码硬编码, 非配置项)
@@ -168,9 +168,11 @@ exit_rules:
     window_minutes: 8               # 收盘前8分钟开始评估
     min_hold_minutes_before_pre_close: 30
     time_weighted: false             # 简化: 取消时间加权, 统一处理
-    # ── 分层退出 (2026-06-04 简化) ──
-    loss_flat: false                # 关键变化: 亏损不再强制平仓, 保留过夜
-    overnight_loss_stop_pct: 0.03   # 亏损过夜硬止损: 收盘价-3%
+    # ── 分层退出 (2026-06-04 简化, 2026-06-07 分级化) ──
+    loss_flat: false                # 2026-06-07: true→false, 亏损不一刀切全平
+                                     # 大亏由 adaptive pre_close.loss_exit 处理 (>0.5ATR全平)
+                                     # 小亏 (<0.5ATR) 保留过夜博反转 (数据显示隔夜总体盈利)
+    overnight_loss_stop_pct: 0.03   # 保留过夜仓位的次日保护: 开盘价跌超3%触发硬止损
     close_profit_atr: 2.0           # 2026-06-06: 0.5→2.0 ATR, 让交易有时间跑到 scale_out
                                      # 0.5ATR 全库306笔仅1笔 scale_out 触发过
     half_exit_below_atr: 0.5        # 微利(0~0.5ATR) → 减半仓
@@ -192,7 +194,7 @@ exit_rules:
     loss_exit:
       min_loss_atr: 99              # P1 (2026-06-04): 1.5→99ATR, 实质禁用亏损强平
       close_ratio: 0.0              # 亏损保留过夜, 由atr_stop次日保护
-    force_close_remaining: false    # 中间地带不强平, 允许过夜
+    force_close_remaining: false    # 中间地带 (-0.5~-0.3ATR) 不强平, 保留过夜博反转
     window_minutes:
       trending: 10                  # 趋势市: 收盘前 10 分钟
       range_bound: 5                # 震荡市: 收盘前 5 分钟 (早平无价值持仓)

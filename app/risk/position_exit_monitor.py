@@ -1617,13 +1617,18 @@ class ExitMonitor:
                 # progressive_trailing 禁用 → 仅使用 atr_stop 固定止损, 不移动 SL
                 # SL 由 atr_stop 规则管理 (entry ± 4×ATR), trail_state 只更新 peak
                 _old_sl = float(getattr(position, "current_sl", 0) or 0)
+                # ── SL 契约 (2026-06-06): initial_sl 是绝对地板, 退出永远不能放宽 ──
+                _floor_sl = float(getattr(position, "initial_sl", 0) or 0)
                 atr_mult_val = float(
                     (policy_dict.get("exit_rules", {}).get("atr_stop", {}).get(
                         "multiplier_by_profit", {}).get("initial", 4.0) if policy_dict else 4.0)
                 )
                 if direction == "LONG":
                     _fixed_sl = entry_price - atr * atr_mult_val
-                    # SL 只升不降 (单调保护), 且不低于入场价下方硬底限
+                    # SL 契约: 不得低于 initial_sl (入场的精心推理不被一刀切覆盖)
+                    if _floor_sl > 0:
+                        _fixed_sl = max(_fixed_sl, _floor_sl)
+                    # SL 只升不降 (单调保护)
                     if _old_sl > 0:
                         position.current_sl = max(_old_sl, _fixed_sl)
                     else:
@@ -1639,10 +1644,20 @@ class ExitMonitor:
                     # SHORT SL 地板: 不得紧于 atr_stop initial
                     _short_sl_floor = entry_price + atr * tier1_mult
                     _fixed_sl = max(_fixed_sl, _short_sl_floor)
+                    # SL 契约: 不得高于 initial_sl (SHORT 方向 ceiling)
+                    if _floor_sl > 0:
+                        _fixed_sl = min(_fixed_sl, _floor_sl)
                     if _old_sl > 0:
                         position.current_sl = min(_old_sl, _fixed_sl)
                     else:
                         position.current_sl = _fixed_sl
+                # SL 契约生效日志
+                if _floor_sl > 0 and _fixed_sl == _floor_sl:
+                    logger.debug(
+                        f"[SL·契约] {position.symbol} {direction} floor applied: "
+                        f"initial_sl=${_floor_sl:.2f} 阻止放宽到 "
+                        f"entry±{atr_mult_val}×ATR=${entry_price - atr * atr_mult_val:.2f}"
+                    )
                 return  # 跳过渐进式追踪
 
             # progressive_trailing 启用时才走以下逻辑
@@ -1680,9 +1695,14 @@ class ExitMonitor:
                 else:
                     # Tier 1: 不动 (正常波动区间)
                     atr_mult = float(policy_dict.get("exit_rules", {}).get("atr_stop", {}).get(
-                        "multiplier_by_profit", {}).get("initial", 4.0))  # 2026-06-05: 2.5→4.0 SSOT对齐
+                        "multiplier_by_profit", {}).get("initial", 4.0))
                     _new_sl = entry_price - atr * atr_mult
                     _tier = f"固定(profit={_abs_profit:.1f}ATR, mult={atr_mult:.1f})"
+
+                # ── SL 契约 (2026-06-06): initial_sl 是绝对地板 ──
+                _floor_sl = float(getattr(position, "initial_sl", 0) or 0)
+                if _floor_sl > 0 and _new_sl < _floor_sl:
+                    _new_sl = _floor_sl
 
                 # CR-3: LONG SL 单调升 (max), 防止放松
                 if _old_sl > 0:
@@ -1732,6 +1752,11 @@ class ExitMonitor:
                         "multiplier_by_profit", {}).get("initial", 4.0))
                     _new_sl = entry_price + atr * tier1_mult
                     _tier = f"固定(profit={_abs_profit:.1f}ATR, mult={tier1_mult:.1f})"
+
+                # ── SL 契约 (2026-06-06): initial_sl 是绝对天花板 (SHORT) ──
+                _floor_sl = float(getattr(position, "initial_sl", 0) or 0)
+                if _floor_sl > 0 and _new_sl > _floor_sl:
+                    _new_sl = _floor_sl
 
                 # CR-3: SHORT SL 单调降 (min)
                 # 2026-06-06 修正: 移除 T2-T4 的 floor, 让追踪自由收紧
@@ -1945,20 +1970,58 @@ class ExitMonitor:
     # ============================================================
 
     def _get_atr(self, symbol: str) -> float:
-        """计算 ATR + Volatility Floor (复用主进程连接)"""
-        # P0 修复 (2026-05-31): ATR 缓存 key 用美东日期, 避免周五晚 ET 缓存失效
-        today = _now_et().strftime('%Y-%m-%d')
+        """动态 ATR: 日K基线 + VIX缩放 + 日内波动底限 (2026-06-07)
+
+        修复: 原实现按日缓存, 今天开盘用昨天波动率 → 大波动日被过早止损.
+        新实现:
+          1. 日K ATR-14 作为基线 (5分钟刷新, 不再按日缓存)
+          2. VIX 缩放: VIX/20 作为波动放大因子 (VIX=30 → 1.5×)
+          3. 日内波动底限: 取当日 5min K 线的 high-low 作为 real-time TR
+        """
+        now = time.time()
         cached = self._atr_cache.get(symbol)
-        if cached and cached.get('date') == today:
+        # 5 分钟刷新 (原来按日缓存, 现在动态更新)
+        if cached and (now - cached.get('ts', 0)) < 300:
             return cached.get('value', 0.0)
 
-        atr = 0.0
+        # 1. 日K ATR 基线
+        daily_atr = 0.0
         try:
-            atr = self._calc_atr_from_kline(symbol)
+            daily_atr = self._calc_atr_from_kline(symbol)
         except Exception as e:
             logger.debug(f"ATR 获取失败 {symbol}: {e}")
 
-        self._atr_cache[symbol] = {'date': today, 'value': atr}
+        if daily_atr <= 0:
+            if cached:
+                return cached.get('value', 0.0)
+            return 0.0
+
+        # 2. VIX 缩放 (VIX=20 为基线, VIX 越高 ATR 越大)
+        vix = self._get_vix() or 20.0
+        vix_baseline = 20.0
+        vix_factor = max(1.0, vix / vix_baseline)
+        # 限制: 最多放大 2.5×, 防止 VIX 极端值过度放大
+        vix_factor = min(vix_factor, 2.5)
+        atr = daily_atr * vix_factor
+
+        # 3. 日内波动底限 (取当日 5min K 的 high-low 作为实时 TR 代理)
+        try:
+            intraday_range = self._get_intraday_range(symbol)
+            if intraday_range > 0:
+                # 日内底限 = 当日极差的 50% (保守估计, 不要求覆盖全天)
+                atr = max(atr, intraday_range * 0.5)
+        except Exception:
+            pass
+
+        self._atr_cache[symbol] = {'ts': now, 'value': atr}
+
+        # 首次或 VIX 变化时打日志
+        if not cached or abs(cached.get('value', 0) - atr) / max(cached.get('value', 1), 0.01) > 0.1:
+            logger.debug(
+                f"[ATR动态] {symbol}: daily={daily_atr:.3f} × vix_factor={vix_factor:.2f} "
+                f"(VIX={vix:.1f}) = {atr:.3f}"
+            )
+
         return atr
 
     def _get_vix(self) -> Optional[float]:
@@ -2043,6 +2106,29 @@ class ExitMonitor:
         except Exception as e:
             logger.debug(f"ATR 计算失败 {symbol}: {e}")
 
+        return 0.0
+
+    def _get_intraday_range(self, symbol: str) -> float:
+        """获取当日盘中极差 (high - low), 用作实时波动底限 (2026-06-07)
+
+        从 Futu 1min K 线取今日数据, 计算 high - low.
+        开盘前/无数据时返回 0.
+        """
+        if not self._quote_ctx:
+            return 0.0
+        try:
+            from futu import KLType, AuType
+            today_et = _now_et().strftime('%Y-%m-%d')
+            ret, data, _ = self._quote_ctx.request_history_kline(
+                symbol, ktype=KLType.K_1M, max_count=390, autype=AuType.QFQ,
+                end=f"{today_et} 23:59:59",
+            )
+            if ret == 0 and data is not None and len(data) >= 2:
+                today_high = float(data['high'].max())
+                today_low = float(data['low'].min())
+                return max(0.0, today_high - today_low)
+        except Exception:
+            pass
         return 0.0
 
     # ============================================================

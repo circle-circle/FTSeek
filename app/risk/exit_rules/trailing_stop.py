@@ -166,6 +166,14 @@ def check_trailing_stop(monitor, position, current_price, entry_price, atr,
         cost_bps=cost_bps,
     )
 
+    # ── SL 契约 (2026-06-06): initial_sl 是绝对地板, 退出永远不能放宽 ──
+    _floor_sl = float(getattr(position, "initial_sl", 0) or 0)
+    if _floor_sl > 0:
+        if direction == "LONG" and r.final_stop < _floor_sl:
+            r.final_stop = _floor_sl
+        elif direction == "SHORT" and r.final_stop > _floor_sl:
+            r.final_stop = _floor_sl
+
     # 7. 幻方增强 (2026-04-29): 做空技术破位快速平仓
     if direction == "SHORT" and atr > 0:
         try:
