@@ -380,6 +380,9 @@ class Position:
 
     # 运行时元数据 (不持久化，用于异常标记等临时状态)
     metadata: Dict[str, Any] = field(default_factory=dict)
+
+    # 分批止盈标记 (2026-06-06: 替代 trail_state 追踪, DB持久化到 open_positions.is_partially_reduced)
+    is_partially_reduced: bool = False
     
     @property
     def unrealized_pnl(self) -> float:

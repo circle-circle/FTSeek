@@ -522,18 +522,29 @@ def _partial_close_position(scheduler, position: Position, current_price: float,
 
     try:
         if scheduler.execution_engine:
-            scheduler.execution_engine.submit_order(close_order)
+            result_order = scheduler.execution_engine.submit_order(close_order)
+            # 2026-06-06: 检查 broker 结果 — 拒单时不扣 position.size
+            from app.core.models import OrderState as _OS
+            if result_order and getattr(result_order, 'state', None) == _OS.REJECTED:
+                logger.error(
+                    f"🚫 [分批止盈·拒单] {position.symbol} broker拒绝: "
+                    f"{getattr(result_order, 'failure_reason', 'unknown')} — 不修改仓位"
+                )
+                return
             # H5 (2026-06-03): position.size 修改需持有 PositionStore 锁, 防止 scan 线程读取中间值
             with scheduler.position_store._lock:
                 position.size -= close_qty
+                # 2026-06-06: 标记已部分减仓 (替代 trail_state 追踪, DB持久化)
+                position.is_partially_reduced = True
             logger.info(
                 f"[分批止盈·完成] {position.symbol} 仓位更新: "
-                f"{int(position.size + close_qty)} → {int(position.size)} 股"
+                f"{int(position.size + close_qty)} → {int(position.size)} 股 | is_partially_reduced=True"
             )
             try:
                 if hasattr(scheduler, 'trade_store') and scheduler.trade_store:
                     scheduler.trade_store.upsert_open_position(
-                        position, source="scheduler", action="partial_close"
+                        position, source="scheduler", action="partial_close",
+                        is_partially_reduced=True,
                     )
             except Exception as db_err:
                 logger.debug(f"[分批止盈] DB 同步失败: {db_err}")
@@ -777,6 +788,7 @@ def restore_positions_from_db(scheduler):
                     take_profit_levels=row.get("take_profit_levels", []) or [],
                     time_stop_hours=int(row.get("time_stop_hours", 168)),
                     market_regime=MarketRegime.RANGE,
+                    is_partially_reduced=bool(row.get("is_partially_reduced", False)),
                 )
                 entry_time_raw = row.get("entry_time")
                 if entry_time_raw and isinstance(entry_time_raw, str):

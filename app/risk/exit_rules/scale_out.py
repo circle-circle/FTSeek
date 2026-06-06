@@ -146,10 +146,28 @@ def check_scale_out(position, current_price, trail_state, direction, market_data
 
     Phase 3 (2026-05-31): 支持 ATR-relative 模式, 当 market_data 含 ATR 时
     按 ATR 倍数分档; 否则回退到 pct 百分比模式。
+    
+    2026-06-06: 根因修复 — 不再依赖 trail_state 追踪已触发 tier
+    - 用 position.is_partially_reduced (DB持久化) 判断是否已 scale_out
+    - 加 PnL 方向校验: 实际亏损时不触发止盈
     """
     entry_price = float(getattr(position, "avg_entry_price", 0) or 0)
     if entry_price <= 0 or current_price <= 0:
         return None
+
+    # ── 防护 1: 已部分减仓 → 不再触发 (替代 trail_state["triggered_tiers"]) ──
+    if getattr(position, "is_partially_reduced", False):
+        return None
+
+    # ── 防护 2: PnL 方向校验 — 实际亏损时不触发止盈 ──
+    # 根因: position_sync 可能把 entry_price 设为 broker avg cost,
+    #        effective_atr 极小时 profit_atr 虚高, 导致 PnL<0 仍触发
+    if direction == "SHORT":
+        actual_pnl_pct = (entry_price - current_price) / entry_price
+    else:
+        actual_pnl_pct = (current_price - entry_price) / entry_price
+    if actual_pnl_pct <= 0:
+        return None  # 实际亏损，不应该触发止盈
 
     # Phase 3: ATR-relative profit calculation
     profit_atr = None
@@ -229,6 +247,7 @@ def _check_scale_out_pct(position, current_price, trail_state, direction, entry_
             "new_stop_pct": new_stop_pct,
             "stop_price": applied_stop,
             "trailing_remainder": trailing_remainder,
+            "set_partially_reduced": True,  # 2026-06-06: 通知调用方标记已减仓
             "description": (
                 f"锯齿止盈 Tier {i+1}: pnl={pnl_pct*100:.2f}% ≥ {trigger_pct*100:.2f}%, "
                 f"减仓 {close_qty}/{original_size} ({close_pct:.0%}), "
@@ -307,6 +326,7 @@ def _check_scale_out_atr(position, current_price, trail_state, direction,
             "new_stop_pct": ratchet_sl_pct * atr / entry_price if entry_price > 0 else 0,
             "stop_price": applied_stop,
             "trailing_remainder": trailing_remainder,
+            "set_partially_reduced": True,  # 2026-06-06: 通知调用方标记已减仓
             "description": (
                 f"ATR锯齿止盈 Tier {i+1}: profit={profit_atr:.2f}ATR ≥ {tier_profit_atr}ATR, "
                 f"减仓 {close_qty}/{original_size} ({close_pct:.0f}%), "
