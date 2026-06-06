@@ -1259,6 +1259,11 @@ class ORBEngine:
                     "orb_low": pos.orb_low,
                     "atr_at_entry": pos.atr_at_entry,
                     "sl_distance": pos.sl_distance,
+                    "regime": "RANGE",
+                    "quality_score": _breakout_quality,
+                    "trace_id": pos.trace_id or "",
+                    "entry_reason": "orb_breakout",
+                    "strategy_id": "orb_engine",
                 }),
                 # 2026-06-05 数据质量修复: ORB 也写 signal_details
                 "signal_details": _json.dumps({

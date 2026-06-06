@@ -69,6 +69,10 @@ def derive_entry_reason(strategy_id: str = "", source: str = "", metadata: Optio
             return EntryReason.NEWS_DRIVEN.value
         elif 'earn' in _sid:
             return EntryReason.EARNINGS.value
+        elif 'voting_llm' in _sid or 'llm_vote' in _sid:
+            return EntryReason.MAIN_SIGNAL.value
+        elif 'main' in _sid:
+            return EntryReason.MAIN_SIGNAL.value
         return strategy_id
 
     return src or EntryReason.UNKNOWN.value
