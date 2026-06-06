@@ -731,13 +731,25 @@ class USPositionSync:
                 "prev_scan_price": cost,
             }
             # Broker-first (2026-06-03): 如实标记来源，不再伪装 broker_sync
+            # P1 归因修复 (2026-06-06): 补充 trace_id + entry_reason，防止 metadata 全空
+            import uuid as _sync_uuid
+            _sync_trace = f"sync-{symbol}-{int(time.time())}-{_sync_uuid.uuid4().hex[:4]}"
             if is_option:
-                position.metadata = {"source": "voting_llm_option", "is_option": True}
+                position.metadata = {
+                    "source": "voting_llm_option",
+                    "is_option": True,
+                    "trace_id": _sync_trace,
+                    "entry_reason": "option_discovery",
+                    "strategy_id": strategy_id,
+                }
             else:
                 position.metadata = {
                     "source": "futu_discovery",
                     "origin": "external",
                     "sync_origin": "position_sync",
+                    "trace_id": _sync_trace,
+                    "entry_reason": "futu_discovery",
+                    "strategy_id": strategy_id,
                 }
             self.position_store.add(symbol, position)
             logger.warning(
