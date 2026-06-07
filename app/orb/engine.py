@@ -143,8 +143,10 @@ class ORBEngine:
         self._daily_trades = 0
         self._daily_date = ""
 
-        # 当日亏损退出的标的集合 (2026-06-03): 禁止同日重新入场
-        self._closed_at_loss_today: set = set()
+        # 当日亏损记录 (2026-06-07): symbol → [timestamp, ...]
+        # 15分钟冷却 + 连续2亏封杀 (替代旧的全天禁用 set)
+        self._loss_records: Dict[str, List[float]] = {}
+        self._banned_today: set = set()  # 连续2亏 → 当日封杀
 
         logger.info(
             "[ORB] 引擎构造 | mode=%s | universe=%d只 | "
@@ -297,7 +299,8 @@ class ORBEngine:
         if today_str != self._daily_date:
             self._daily_date = today_str
             self._daily_trades = 0
-            self._closed_at_loss_today = set()  # 重置亏损标的冷却 (2026-06-03)
+            self._loss_records = {}  # 重置亏损记录 (2026-06-07)
+            self._banned_today = set()  # 重置封杀列表
             # 不再清除区间，允许隔夜持仓继续使用
             logger.info("[ORB] 跨日重置 | date=%s", today_str)
 
@@ -766,11 +769,21 @@ class ORBEngine:
             if self._is_cross_engine_cooled(symbol):
                 logger.debug("[ORB] %s 跳过: 主线最近退出, 跨引擎冷却中", symbol)
                 continue
-            # 2026-06-03: 当日亏损退出的标的冷却 — 禁止重新入场
-            if (getattr(self._cfg, 'same_symbol_loss_cooldown', False)
-                    and symbol in getattr(self, '_closed_at_loss_today', set())):
-                logger.debug("[ORB] %s 跳过: 当日亏损冷却 (禁止重新入场)", symbol)
-                continue
+            # 2026-06-07: 亏损冷却 — 15分钟临时冷却 + 连续2亏当日封杀
+            if getattr(self._cfg, 'same_symbol_loss_cooldown', False):
+                if symbol in self._banned_today:
+                    logger.debug("[ORB] %s 跳过: 连续亏损封杀 (当日不再入场)", symbol)
+                    continue
+                _losses = self._loss_records.get(symbol, [])
+                if _losses:
+                    _last_loss_ts = _losses[-1]
+                    _cooldown_secs = 900  # 15分钟
+                    if time.time() - _last_loss_ts < _cooldown_secs:
+                        _remaining = int(_cooldown_secs - (time.time() - _last_loss_ts))
+                        logger.debug(
+                            "[ORB] %s 跳过: 亏损冷却中 (%ds后解锁)", symbol, _remaining
+                        )
+                        continue
             # 每日交易上限
             if self._daily_trades >= self._cfg.max_daily_trades:
                 break
@@ -1183,6 +1196,34 @@ class ORBEngine:
                         pos.direction, atr, peak, pos.trail_stop, pos.entry_price,
                     )
 
+                # ── P0 (2026-06-07): 突破失败快速退出 (60s grace, 优先于 floor/trailing) ──
+                # 原理: ORB 突破的反面 = 价格回到区间中点 = 突破论据失效
+                # 在 min_hold_seconds (300s) 的 floor/trailing 保护期内, 这是唯一的安全网
+                # 60s grace 避免入场瞬间的噪音 (bid/ask spread, 第一个 tick 的异常)
+                _breakdown_grace = 60  # 秒
+                _hold_secs = (datetime.now() - pos.entry_time).total_seconds()
+                if _hold_secs >= _breakdown_grace and pos.orb_mid > 0:
+                    _breakdown = False
+                    if pos.direction == "LONG" and price < pos.orb_mid:
+                        _breakdown = True
+                    elif pos.direction == "SHORT" and price > pos.orb_mid:
+                        _breakdown = True
+                    if _breakdown:
+                        from app.orb.exits import ORBExitDecision
+                        _bd_decision = ORBExitDecision(
+                            reason="ORB_BREAKDOWN",
+                            close_pct=100.0,
+                            detail=f"突破失败: price={price:.2f} 回到 orb_mid={pos.orb_mid:.2f} "
+                                   f"(entry={pos.entry_price:.2f}, hold={_hold_secs:.0f}s)",
+                        )
+                        logger.warning(
+                            "[ORB] %s 突破失败退出: %s %s price=%.2f orb_mid=%.2f hold=%.0fs",
+                            symbol, pos.direction, _bd_decision.detail,
+                            price, pos.orb_mid, _hold_secs,
+                        )
+                        self._execute_exit(symbol, pos, price, _bd_decision)
+                        continue
+
                 # 评估传统退出 (止损, 盘末, 固定止盈)
                 decision = self._exit_stack.evaluate(
                     direction=pos.direction,
@@ -1249,13 +1290,24 @@ class ORBEngine:
         # 移除仓位跟踪
         self._positions.pop(symbol, None)
 
-        # 2026-06-03: 亏损退出 → 当日冷却, 禁止该标的重新入场
+        # 2026-06-07: 亏损退出 → 记录时间戳 + 连续2亏封杀
         if pnl < 0 and getattr(self._cfg, 'same_symbol_loss_cooldown', False):
-            self._closed_at_loss_today.add(symbol)
-            logger.info(
-                "[ORB] %s 亏损退出 ($%.2f), 加入当日冷却列表 (%d 个)",
-                symbol, pnl, len(self._closed_at_loss_today),
-            )
+            _now = time.time()
+            if symbol not in self._loss_records:
+                self._loss_records[symbol] = []
+            self._loss_records[symbol].append(_now)
+            _count = len(self._loss_records[symbol])
+            if _count >= 2:
+                self._banned_today.add(symbol)
+                logger.warning(
+                    "[ORB] %s 连续%d次亏损 ($%.2f), 当日封杀不再入场",
+                    symbol, _count, pnl,
+                )
+            else:
+                logger.info(
+                    "[ORB] %s 亏损退出 ($%.2f), 15分钟冷却后可重试",
+                    symbol, pnl,
+                )
 
         # ── 写入 trade_records (2026-06-02 修复: ORB 交易记录缺失) ──
         try:
