@@ -1756,6 +1756,15 @@ class ORBEngine:
                 if not _ok and _mq <= 0:
                     logger.warning(f"🚫 [ORB·安全门禁] {symbol} {direction} 拒绝: {_rsn}")
                     return {"success": False, "error": "pre_trade_gate_rejected", "reason": _rsn}
+                elif not _ok and _mq > 0:
+                    # P0 fix (2026-06-07): 执行截断，原代码只拒绝 _mq=0 而忽略截断
+                    # 根因: pre_trade_gate 返回 (False, 500, "截断原因") 时，
+                    #        旧代码不处理 _mq>0 的情况，继续用原始 quantity 下单
+                    logger.warning(
+                        f"🚫 [ORB·安全门禁·截断] {symbol} {direction}: "
+                        f"{int(quantity)}股 → {_mq}股 | {_rsn}"
+                    )
+                    quantity = _mq
             except Exception as _gate_err:
                 # fail-close: 门禁异常时拒绝下单
                 logger.error(f"🚫 [ORB·安全门禁] {symbol} 异常 (拒绝): {_gate_err}")

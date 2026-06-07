@@ -138,8 +138,12 @@ def calc_position_size(
     risk_mult = wl_cfg.get("risk_mult", 1.0)
     pos_mult = wl_cfg.get("pos_mult", 1.0)
 
-    # ── 3. 风险基数 (buying_power 优先，降级到 equity×20%) ──
-    risk_base = max(buying_power, 0) if buying_power > 0 else (equity * 0.20)
+    # ── 3. 风险基数 (P0 fix 2026-06-07: 用 equity，不用 buying_power) ──
+    # 根因: buying_power 包含保证金杠杆 (Futu SIMULATE 账户 buying_power 可达 equity×1.3)
+    #        用 buying_power 做 risk_base 导致风险预算虚高 29%，仓位失控
+    # 原则: 风险预算 = 你实际拥有的钱 × 风险比例，不包含借来的钱
+    # buying_power 仅用于 "能否买得起" 检查 (step 6 max_cap_shares)
+    risk_base = equity if equity > 0 else 0
     if risk_base <= 0:
         warnings.append("风险基数为 0，无法计算仓位")
         return SizingResult(0, 0, 0, 0, tier_name, wl_name, risk_per_share, warnings)
