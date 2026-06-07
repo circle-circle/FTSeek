@@ -832,6 +832,10 @@ class ORBEngine:
         atr = rng.get("atr", 0)
         if not atr or atr <= 0:
             atr = self._get_atr(symbol)
+            # Guard (2026-06-07): fallback ATR 无 floor, 用 range width 补底
+            if atr and rng.get("high") and rng.get("low"):
+                _w = rng["high"] - rng["low"]
+                atr = max(atr, _w * 0.5)
         if not atr or atr <= 0:
             atr = price * 0.01  # fallback: 1% 估算
 

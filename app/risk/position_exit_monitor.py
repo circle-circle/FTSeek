@@ -727,6 +727,28 @@ class ExitMonitor:
             return False
         return False
 
+    @staticmethod
+    def _is_orb_position(position) -> bool:
+        """判断仓位是否属于 ORB 策略 (由 ORBEngine._monitor_exits 自管退出)
+
+        P0 (2026-06-07): 主线 ExitMonitor 不得干预 ORB 仓位 —
+        ORB 有独立的退出栈 (ORBExitStack) 和 5秒轮询 daemon,
+        两套退出引擎并行扫同一仓位会导致归因混乱和双重平仓。
+
+        判定: owner_strategy 以 'orb_' 开头 (orb_engine / orb_pipeline)
+        """
+        try:
+            _owner = (getattr(position, 'owner_strategy', '') or '').lower()
+            if _owner.startswith('orb_'):
+                return True
+            meta = getattr(position, 'metadata', None) or {}
+            if isinstance(meta, dict):
+                if meta.get("source") == "orb" or meta.get("strategy", "").startswith("orb"):
+                    return True
+        except Exception:
+            return False
+        return False
+
     # Broker-first (2026-06-03): _is_broker_synced_position 已删除
     # 所有仓位统一进入退出监控，双重平仓防护下沉到 _close_position 的持仓校验
     @staticmethod
@@ -845,12 +867,17 @@ class ExitMonitor:
 
         main_positions = []
         skipped_scalping = 0
+        skipped_orb = 0
         skipped_protected = 0
         skipped_broker = 0
         for p in positions:
             # 1. scalping 自管 (重构 2026-05-28: 统一走 _is_scalping_position 助手方法)
             if self._is_scalping_position(p):
                 skipped_scalping += 1
+                continue
+            # 1.5 ORB 自管 (P0 2026-06-07: ORBEngine._monitor_exits 独立退出栈)
+            if self._is_orb_position(p):
+                skipped_orb += 1
                 continue
             # Broker-first (2026-06-03): 不再跳过 broker_sync 仓位，全部进入退出监控
             # 双重平仓防护下沉到 _close_position 的执行前持仓校验
@@ -873,6 +900,8 @@ class ExitMonitor:
 
         if skipped_scalping > 0:
             logger.debug(f"[退出监控] 跳过 {skipped_scalping} 个 scalping 仓位 (ScalpingEngine 自管)")
+        if skipped_orb > 0:
+            logger.debug(f"[退出监控] 跳过 {skipped_orb} 个 ORB 仓位 (ORBEngine 自管)")
         if skipped_broker > 0:
             logger.info(f"[退出监控·broker_sync] 跳过 {skipped_broker} 个 broker 同步仓位 (防双重平仓)")
         if skipped_protected > 0:
