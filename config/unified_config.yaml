@@ -2180,9 +2180,9 @@ orb:
   entry_start_et: "09:45"          # 入场窗口开始
   # 止损止盈 (ATR-relative, 日内 — 比System A更紧, 适配5秒快速响应)
   stop_loss_atr_mult: 1.5          # SL = entry ± 1.5×ATR (2026-06-07: 1.0→1.5, 避免开盘噪声扫损)
-  take_profit_atr_mult: 2.0        # TP = entry ± 2.0×ATR (R/R 2:1)
-  trail_activation_atr: 1.0        # 盈利 1.0 ATR 后激活追踪止损
-  trail_multiplier: 1.2            # peak - 1.2×ATR (Chandelier-style)
+  take_profit_atr_mult: 3.0        # TP = entry ± 3.0×ATR (2026-06-07: 2.0→3.0, R/R 2:1)
+  trail_activation_atr: 2.5        # 2026-06-07: 1.0→2.5, 盈利2.5 ATR后才追踪 (让赢家跑到2+ATR再锁利)
+  trail_multiplier: 1.5            # 2026-06-07: 1.2→1.5, peak - 1.5×ATR (更宽松追踪, 减少噪音扫出)
   # 风控 (持仓上限由 strategies.orb.max_positions 统一控制, 此处仅作fallback)
   max_positions: 5                 # 模拟盘: 3→5
   max_daily_trades: 15             # 模拟盘: 4→15, 最大化数据采集
@@ -2200,7 +2200,7 @@ orb:
   regime_short_bias_quality: 0.85    # TREND_DOWN: LONG 突破需要 Q≥0.85
   regime_long_bias_quality: 0.85     # TREND_UP: SHORT 突破需要 Q≥0.85
   low_vol_short_bias_quality: 0.85   # LOW_VOL+下行: LONG 突破需要 Q≥0.85
-  min_hold_seconds: 180              # 持仓<180s跳过FLOOR_STOP退出 (噪音过滤)
+  min_hold_seconds: 300              # 2026-06-07: 180→300 (5min), FLOOR_STOP+TRAILING 在此时间内跳过
   same_symbol_loss_cooldown: true    # 当日亏损退出的标的禁止重新入场
 
 # ─── 催化辩论引擎 (2026-05-27 RFC-Catalyst) ───
