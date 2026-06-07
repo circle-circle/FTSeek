@@ -1373,6 +1373,26 @@ class ExitMonitor:
         if not _triggered_exits:
             return None
 
+        # ── P0 (2026-06-07): scale_out 互斥 — 压制 trailing_stop ──
+        # 根因: scale_out 平50%锁利+SL移成本, trailing 同时触发会100%全平
+        # 当 SCALE_OUT 在触发列表中时, 移除所有 trailing_stop/ATR_STOP 类退出
+        _has_scale_out = any(
+            e.get("reason", "") in ("SCALE_OUT", "SCALE_OUT_TIER1", "SCALE_OUT_TIER2")
+            for e in _triggered_exits
+        )
+        if _has_scale_out and len(_triggered_exits) > 1:
+            _trail_reasons = {"ATR_STOP", "CHANDELIER_TRAIL", "SL_HIT", "BREAKEVEN_STOP", "STOP_LOSS"}
+            _before = len(_triggered_exits)
+            _triggered_exits = [
+                e for e in _triggered_exits
+                if e.get("reason", "") not in _trail_reasons
+            ]
+            if len(_triggered_exits) < _before:
+                logger.info(
+                    f"[互斥·scale_out] {symbol} scale_out 触发, 压制 trailing_stop "
+                    f"(剩余 {len(_triggered_exits)} 条规则竞争)"
+                )
+
         # ── 单规则触发 → 直接返回 ──
         if len(_triggered_exits) == 1:
             _selected = _triggered_exits[0]

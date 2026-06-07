@@ -30,10 +30,10 @@ logger = logging.getLogger("ftseek.exit_quality_scorer")
 # ============================================================
 
 _DEFAULT_RULE_PRIORITIES = {
-    "trailing_stop": 90,
-    "scale_out": 80,
-    "time_stop": 70,
-    "day_trade": 60,
+    "trailing_stop": 70,     # P0 (2026-06-07): 90→70, scale_out 止盈优先于 trailing 止损
+    "scale_out": 90,         # P0 (2026-06-07): 80→90, 锁利优先 — scale_out 是唯一正EV退出
+    "time_stop": 60,
+    "day_trade": 80,         # DAY_TRADE_TP 100%WR, 仅次于 scale_out
     "flash_exit": 50,
     "pre_close": 100,
 }

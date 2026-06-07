@@ -60,16 +60,18 @@ class ExitRuleDispatcher:
     """统一退出规则调度器 (无状态评估器, 实例可单例化)"""
 
     # 规则优先级定义 (数字越小越优先)
+    # P0 (2026-06-07): scale_out 优先级提升至 trailing_stop 之前
+    # 原理: scale_out 是唯一正EV退出(100%WR), 应优先于 trailing_stop 执行
     RULE_PRIORITIES: Dict[str, int] = {
         "flash_exit": 1,
         "pre_close": 2,
         "circuit_breaker": 3,
         "earnings_guard": 4,
-        "trailing_stop": 5,
+        "scale_out": 5,           # was 8 → 5, 止盈优先
         "day_trade": 6,
-        "time_decay": 7,
-        "scale_out": 8,
-        "velocity_exit": 9,   # Phase 3: 速度捕捉退出
+        "trailing_stop": 7,       # was 5 → 7, 让 scale_out 先锁利
+        "time_decay": 8,
+        "velocity_exit": 9,       # Phase 3: 速度捕捉退出
     }
 
     def __init__(self, config: Dict[str, Any]):
