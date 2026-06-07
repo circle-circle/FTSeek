@@ -417,6 +417,9 @@ class ORBEngine:
                     width_pct = (orb_high - orb_low) / orb_low * 100
 
                     # 计算 ATR (从区间 K 线)
+                    # P0 fix (2026-06-07): 1-min TR 对 ETF 太小 (XLF $0.04), 导致止损/追踪在分秒间被噪音触发
+                    # 修复: 取 max(1min_ATR, ORB_range_width × 0.5)
+                    # ORB range width 是 ORB 策略的天然波动率基准 (15min 价格发现结果)
                     trs = []
                     for i in range(1, len(orb_bars)):
                         h = float(orb_bars[i].get("high", 0))
@@ -425,7 +428,15 @@ class ORBEngine:
                         if h > 0 and l > 0 and pc > 0:
                             tr = max(h - l, abs(h - pc), abs(l - pc))
                             trs.append(tr)
-                    atr = sum(trs) / len(trs) if trs else (orb_high - orb_low) / 2
+                    atr_1min = sum(trs) / len(trs) if trs else (orb_high - orb_low) / 2
+                    orb_width = orb_high - orb_low
+                    atr_floor = orb_width * 0.5  # ORB range width 的 50% 作为波动率下限
+                    atr = max(atr_1min, atr_floor)
+                    if atr_floor > atr_1min:
+                        logger.debug(
+                            "[ORB] %s ATR floor applied: 1min=$%.4f → floor=$%.4f (range=$%.4f×0.5)",
+                            symbol, atr_1min, atr, orb_width,
+                        )
 
                     # 计算 VWAP (从区间 K 线)
                     cum_vol = 0.0
@@ -513,6 +524,7 @@ class ORBEngine:
                     width_pct = (rolling_high - rolling_low) / rolling_low * 100
 
                     # 计算 ATR (从滚动 K 线)
+                    # P0 fix (2026-06-07): 同开盘区间, 取 max(1min_ATR, range_width × 0.5)
                     trs = []
                     for i in range(1, len(rolling_bars)):
                         h = float(rolling_bars[i].get("high", 0))
@@ -521,7 +533,10 @@ class ORBEngine:
                         if h > 0 and l > 0 and pc > 0:
                             tr = max(h - l, abs(h - pc), abs(l - pc))
                             trs.append(tr)
-                    atr = sum(trs) / len(trs) if trs else (rolling_high - rolling_low) / 2
+                    atr_1min = sum(trs) / len(trs) if trs else (rolling_high - rolling_low) / 2
+                    rolling_width = rolling_high - rolling_low
+                    atr_floor = rolling_width * 0.5
+                    atr = max(atr_1min, atr_floor)
 
                     # 计算 VWAP (从滚动 K 线)
                     cum_vol = 0.0

@@ -39,9 +39,9 @@ class ORBConfig:
 
     # ── 止损止盈 (ATR-relative) ──
     stop_loss_atr_mult: float = 1.5      # SL = entry ± 1.5×ATR (2026-06-07: 1.0→1.5, 避免开盘噪声扫损)
-    take_profit_atr_mult: float = 2.0    # TP = entry ± 2.0×ATR (R/R 2:1)
-    trail_activation_atr: float = 1.0    # 盈利 1.0 ATR 后激活追踪
-    trail_multiplier: float = 1.2        # peak - 1.2×ATR
+    take_profit_atr_mult: float = 3.0    # TP = entry ± 3.0×ATR (2026-06-07: 2.0→3.0, R/R 2:1)
+    trail_activation_atr: float = 1.5    # 2026-06-07: 1.0→1.5, 盈利 1.5 ATR 后才激活追踪 (给交易发展空间)
+    trail_multiplier: float = 1.5        # 2026-06-07: 1.2→1.5, peak - 1.5×ATR (更宽松追踪, 减少噪音扫出)
 
     # ── 风控 ──
     max_positions: int = 2               # 同时最多 2 个 ORB 仓位
