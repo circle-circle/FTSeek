@@ -1126,7 +1126,11 @@ class ORBEngine:
                 if not price or price <= 0:
                     continue
 
-                atr = self._get_atr(symbol) or pos.atr_at_entry
+                # P0 fix (2026-06-07): 运行时 ATR 不得低于入场 ATR (含 floor)
+                # 根因: _get_atr() 返回原始 1min ATR ($0.04), 绕过了入场时的 ATR floor ($0.31)
+                # 后果: FloorStop/TrailingStop/TakeProfit 全部用 $0.04 计算 → 秒被噪音扫出
+                _raw_atr = self._get_atr(symbol)
+                atr = max(_raw_atr, pos.atr_at_entry) if _raw_atr else pos.atr_at_entry
 
                 # 更新 peak / trough
                 if pos.direction == "LONG":

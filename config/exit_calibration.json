@@ -1,0 +1,38 @@
+{
+  "generated_at": "2026-06-06T22:23:16.885204",
+  "period_days": 30,
+  "total_trades": 282,
+  "analyzed_trades": 16,
+  "noise_shakeout_count": 1,
+  "profit_giveback_count": 0,
+  "well_calibrated_count": 14,
+  "unclassified_count": 267,
+  "noise_shakeout_pct": 6.25,
+  "profit_giveback_pct": 0.0,
+  "well_calibrated_pct": 87.5,
+  "avg_mae_pct": 0.7319514059369898,
+  "avg_mfe_pct": 1.4592368608954063,
+  "avg_pnl_pct": 0.7759176488898374,
+  "win_rate": 0.6875,
+  "recommendations": {
+    "exit_reason_review": {
+      "action": "review",
+      "bad_reasons": [
+        {
+          "reason": "FLASH",
+          "count": 3,
+          "win_rate": 0.0,
+          "total_pnl": -493.01
+        }
+      ],
+      "reason": "以下退出原因胜率低且总亏损, 需检查对应退出规则参数"
+    },
+    "confidence_tier_stats": {
+      "low": {
+        "count": 16,
+        "win_rate": 0.69,
+        "avg_pnl": -342.36
+      }
+    }
+  }
+}
