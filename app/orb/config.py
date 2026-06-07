@@ -57,7 +57,9 @@ class ORBConfig:
     regime_short_bias_quality: float = 0.85  # TREND_DOWN: LONG 突破需要 Q≥0.85
     regime_long_bias_quality: float = 0.85   # TREND_UP: SHORT 突破需要 Q≥0.85
     low_vol_short_bias_quality: float = 0.85 # LOW_VOL+下行: LONG 突破需要 Q≥0.85
-    min_hold_seconds: int = 180              # 持仓 < N秒 跳过 FLOOR_STOP 退出 (噪音过滤)
+    min_hold_seconds: int = 300            # 2026-06-07: 180→300 (3→5min), ORB交易需要更多时间发展
+                                            # 数据: 旧参数下3-8min交易全部被噪音扫出
+                                            # ATR floor修复后trail激活需$0.47+, 给足时间
     same_symbol_loss_cooldown: bool = True   # 当日亏损退出的标的禁止重新入场
 
     @classmethod

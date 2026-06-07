@@ -1196,15 +1196,17 @@ class ORBEngine:
                 )
 
                 if decision and decision.should_exit:
-                    # 2026-06-03: 噪音过滤 — 持仓 < min_hold_seconds 跳过 FLOOR_STOP
-                    # 只允许 trailing/take_profit/EOD 在初期触发, 过滤假突破噪音止损
-                    if (decision.reason == "ORB_FLOOR_STOP"
+                    # P0 (2026-06-07): 噪音过滤扩展 — 持仓 < min_hold_seconds 跳过 FLOOR_STOP 和 TRAILING_STOP
+                    # 旧行为: 只保护 FLOOR_STOP, TRAILING_STOP 在入场后立即激活
+                    # 根因: 旧 ATR 太小($0.04) → trail 在几秒内激活 → 3-8分钟被 TRAILING_STOP 扫出
+                    # ATR floor 修复后 trail 激活需要 $0.47 利润, 但防御纵深仍需时间保护
+                    if (decision.reason in ("ORB_FLOOR_STOP", "ORB_TRAILING_STOP")
                             and getattr(self._cfg, 'min_hold_seconds', 0) > 0):
                         hold_seconds = (datetime.now() - pos.entry_time).total_seconds()
                         if hold_seconds < self._cfg.min_hold_seconds:
                             logger.info(
-                                "[ORB] %s FLOOR_STOP 跳过: 持仓%.0fs < min_hold=%ds (噪音过滤)",
-                                symbol, hold_seconds, self._cfg.min_hold_seconds,
+                                "[ORB] %s %s 跳过: 持仓%.0fs < min_hold=%ds (噪音过滤)",
+                                symbol, decision.reason, hold_seconds, self._cfg.min_hold_seconds,
                             )
                             continue
                     self._execute_exit(symbol, pos, price, decision)
