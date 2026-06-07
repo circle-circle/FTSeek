@@ -3392,6 +3392,35 @@ def _close_position(scheduler, position: Position, current_price: float, exit_re
     # C1 (2026-06-03): 并发重入保护 — 防止 8s 确认窗口内双重平仓
     # ExitRuleDispatcher + legacy ExitMonitor 可能在同一监控周期对同一 position 各触发一次
     meta = getattr(position, "metadata", {}) or {}
+
+    # P0 (2026-06-07): 从 open_positions.metadata_json 恢复丢失的归因数据
+    # 根因: position.metadata 仅存内存, 重启/position_sync 后清空
+    # 修复: 入场时已将 metadata 持久化到 open_positions.metadata_json
+    if not meta.get("factor_detail") and not meta.get("_factor_detail"):
+        try:
+            _ts = getattr(scheduler, 'trade_store', None)
+            if _ts:
+                _conn = _ts._get_conn()
+                try:
+                    _row = _conn.execute(
+                        "SELECT metadata_json FROM open_positions WHERE symbol = ?",
+                        (position.symbol,)
+                    ).fetchone()
+                    if _row and _row[0]:
+                        _db_meta = json.loads(_row[0])
+                        # 只补全缺失字段, 不覆盖内存中已有的值
+                        for _k, _v in _db_meta.items():
+                            if _k not in meta or not meta[_k]:
+                                meta[_k] = _v
+                        logger.debug(
+                            f"[平仓·归因恢复] {position.symbol} 从 open_positions 恢复 "
+                            f"{len(_db_meta)} 个 metadata 字段"
+                        )
+                finally:
+                    _conn.close()
+        except Exception as _meta_rec_err:
+            logger.debug(f"[平仓·归因恢复] {position.symbol} 失败 (不影响平仓): {_meta_rec_err}")
+
     if meta.get("_close_in_progress"):
         logger.warning(f"[平仓·重入拦截] {position.symbol} 已有平仓进行中，跳过")
         return
@@ -3921,7 +3950,14 @@ def _close_position(scheduler, position: Position, current_price: float, exit_re
                 "regime": _regime,
                 "final_strength": _final_strength,
                 "consensus_level": _consensus_level,
+                # P0 (2026-06-07): 因子明细落库 — 支撑因子归因分析
+                "factor_detail": meta.get("factor_detail") or meta.get("_factor_detail") or {},
             }, ensure_ascii=False),
+            # P0 (2026-06-07): factor_detail 独立列 — 方便 SQL 直接查询因子贡献
+            "factor_detail": json.dumps(
+                meta.get("factor_detail") or meta.get("_factor_detail") or {},
+                ensure_ascii=False, default=str,
+            ) if (meta.get("factor_detail") or meta.get("_factor_detail")) else None,
         })
 
         # ─── 反馈闭环修复 (2026-06-02): 平仓时回写 trade_outcome → decisions.db ───

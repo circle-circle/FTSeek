@@ -536,6 +536,13 @@ class TradeStore:
                 elif not metadata_json:
                     metadata_json = None
 
+                # P0 (2026-06-07): factor_detail 处理
+                factor_detail = record.get("factor_detail")
+                if isinstance(factor_detail, dict):
+                    factor_detail = json.dumps(factor_detail, ensure_ascii=False, default=str)
+                elif not factor_detail:
+                    factor_detail = None
+
                 cursor = conn.execute("""
                     INSERT INTO trade_records (
                         trade_date, symbol, direction, entry_time, exit_time,
@@ -545,8 +552,8 @@ class TradeStore:
                         model_scores, strategy_id, decision_reason, max_drawdown, trace_id,
                         source_type, entry_reason, signal_details, metadata_json,
                         owner_strategy, mode, market_regime, trade_mode,
-                        signal_id, decision_id, created_at
-                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                        signal_id, decision_id, factor_detail, created_at
+                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """, (
                     record.get("trade_date", ""),
                     record.get("symbol", ""),
@@ -589,6 +596,7 @@ class TradeStore:
                     # P0 修复 (2026-06-02): decision_id 归因链路 — 关联 decisions.db
                     # 修复 "35 values for 34 columns" bug: INSERT 缺少 decision_id 列名
                     record.get("decision_id") or "",
+                    factor_detail,
                     datetime.now().isoformat(),
                 ))
                 conn.commit()
@@ -789,6 +797,15 @@ class TradeStore:
                 else:
                     action_log_json = json.dumps([action_entry])
 
+                # P0 (2026-06-07): 序列化 position.metadata → open_positions.metadata_json
+                # 根因: position.metadata 仅存于内存, 重启/position_sync 后丢失
+                # 后果: 平仓时 factor_detail/trace_id/entry_reason 全部为空
+                _meta_raw = getattr(position, "metadata", None) or {}
+                try:
+                    _meta_json = json.dumps(_meta_raw, ensure_ascii=False, default=str) if _meta_raw else None
+                except Exception:
+                    _meta_json = None
+
                 conn.execute("""
                     INSERT OR REPLACE INTO open_positions (
                         symbol, direction, size, avg_entry_price,
@@ -799,8 +816,9 @@ class TradeStore:
                         version, source, sync_status, last_sync_at,
                         is_filled, is_partially_reduced, is_anomalous,
                         trace_id, action_log_json, owner_strategy, mode,
+                        metadata_json,
                         updated_at
-                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """, (
                     position.symbol,
                     str(position.direction.value) if hasattr(position.direction, "value") else str(position.direction),
@@ -829,6 +847,7 @@ class TradeStore:
                     # Phase A: 写 owner_strategy
                     getattr(position, "owner_strategy", None) or "main",
                     _get_runtime_mode(),
+                    _meta_json,
                     datetime.now().isoformat(),
                 ))
                 conn.commit()
