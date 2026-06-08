@@ -1737,7 +1737,6 @@ def _execute_stock_short(scheduler, symbol: str, signal: SignalScore, context: D
     scheduler.event_store.append(TradeEvent(
         event_type="order_submitted",
         signal_id=signal.signal_id,
-        symbol=symbol,
         order_id=order.order_id,
         data={
             "symbol": symbol, "direction": "SHORT",
