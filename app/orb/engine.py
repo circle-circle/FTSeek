@@ -407,14 +407,81 @@ class ORBEngine:
                 # 提取当日开盘区间 bar (P0-fix: 按日期过滤, 防止使用前日数据)
                 orb_bars = self._extract_today_opening_bars(klines, self._cfg.range_minutes)
                 if not orb_bars:
-                    # 无当日数据: 使用全部 kline (晚启动 / kline 无时间戳场景)
-                    orb_bars = klines[:self._cfg.range_minutes]
+                    # P0 fix (2026-06-08): 日期验证 — 拒绝非当日 K 线
+                    # 根因: Futu request_history_kline 可能返回去年数据 (2025-06-09),
+                    #   旧代码盲目 fallback 到 klines[:N] 导致区间偏离 25%+
+                    # 修复: 检查 K 线时间戳是否为当日, 否则用当前价格构建 fallback
+                    has_today_data = False
+                    try:
+                        from datetime import datetime as _dt2
+                        import pytz as _pytz2
+                        today_str_chk = _dt2.now(_pytz2.timezone('US/Eastern')).strftime("%Y-%m-%d")
+                        for k in klines[:3]:  # 检查前 3 根
+                            tk = str(k.get("time", k.get("time_key", "")))
+                            if tk.startswith(today_str_chk):
+                                has_today_data = True
+                                break
+                    except Exception:
+                        pass
+
+                    if has_today_data:
+                        # K 线确实是今天的但 _extract 没匹配到 (time_key 格式问题)
+                        orb_bars = klines[:self._cfg.range_minutes]
+                    else:
+                        # K 线不是今天的 → 用当前价格构建 fallback 区间
+                        current_price = self._get_current_price(symbol)
+                        if current_price and current_price > 0:
+                            width_pct = max(0.3, self._cfg.min_range_width_pct)
+                            orb_high = current_price * (1 + width_pct / 200)
+                            orb_low = current_price * (1 - width_pct / 200)
+                            self._ranges[symbol] = {
+                                "high": orb_high, "low": orb_low, "ready": True,
+                                "width_pct": width_pct,
+                                "atr": current_price * 0.003,
+                                "vwap": current_price, "volume_ratio": 1.0,
+                                "quality_score": 0.3, "fallback": True,
+                            }
+                            logger.warning(
+                                "[ORB] %s K线非当日 (Futu 返回旧数据), 使用当前价格 fallback: "
+                                "price=$%.2f H=%.2f L=%.2f (质量=0.30)",
+                                symbol, current_price, orb_high, orb_low
+                            )
+                            continue
+                        else:
+                            logger.warning("[ORB] %s K线非当日且无法获取当前价格, 跳过", symbol)
+                            continue
                 if not orb_bars or len(orb_bars) < 5:
                     logger.info("[ORB] %s 当日 bar 不足: %d 根 (总 kline=%d)",
                                 symbol, len(orb_bars) if orb_bars else 0, len(klines))
                     continue
                 orb_high = max(float(b.get("high", 0)) for b in orb_bars)
                 orb_low = min(float(b.get("low", 0)) for b in orb_bars)
+
+                # P0 fix (2026-06-08): 价格合理性校验 — 区间 vs 现价偏差 >10% 则拒绝
+                # 防止 K 线数据虽然日期正确但价格异常 (拆股/数据错误)
+                if orb_high > 0 and orb_low > 0:
+                    range_mid = (orb_high + orb_low) / 2
+                    current_price_check = self._get_current_price(symbol)
+                    if current_price_check and current_price_check > 0:
+                        deviation = abs(range_mid - current_price_check) / current_price_check
+                        if deviation > 0.10:  # 10% 偏差阈值
+                            logger.warning(
+                                "[ORB] %s 区间价格异常: range=[%.2f,%.2f] mid=$%.2f vs "
+                                "current=$%.2f (偏差=%.1f%%), 拒绝并使用 fallback",
+                                symbol, orb_low, orb_high, range_mid,
+                                current_price_check, deviation * 100
+                            )
+                            width_pct = max(0.3, self._cfg.min_range_width_pct)
+                            orb_high = current_price_check * (1 + width_pct / 200)
+                            orb_low = current_price_check * (1 - width_pct / 200)
+                            self._ranges[symbol] = {
+                                "high": orb_high, "low": orb_low, "ready": True,
+                                "width_pct": width_pct,
+                                "atr": current_price_check * 0.003,
+                                "vwap": current_price_check, "volume_ratio": 1.0,
+                                "quality_score": 0.3, "fallback": True,
+                            }
+                            continue
 
                 if orb_high > 0 and orb_low > 0 and orb_high > orb_low:
                     width_pct = (orb_high - orb_low) / orb_low * 100
