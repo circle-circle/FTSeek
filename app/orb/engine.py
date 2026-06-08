@@ -1089,7 +1089,30 @@ class ORBEngine:
         if quantity <= 0:
             quantity = 1
 
+        # P0 (2026-06-08): 最大仓位价值上限 — 防止紧SL导致超大仓位
+        # 数据: IWM 1499股×$286=$428K (40% equity), 0.2%回撤就亏$929
+        max_position_pct = getattr(self._cfg, 'max_position_pct', 0.15)
+        max_position_value = equity * max_position_pct
+        position_value = quantity * price
+        if position_value > max_position_value:
+            old_qty = quantity
+            quantity = int(max_position_value / price)
+            if quantity <= 0:
+                quantity = 1
+            logger.info(
+                "[ORB] %s 仓位截断: %d股($%.0f) → %d股($%.0f) [上限%.0f%%=$%.0f]",
+                symbol, old_qty, old_qty * price, quantity, quantity * price,
+                max_position_pct * 100, max_position_value,
+            )
+
         orb_mid = (rng["high"] + rng["low"]) / 2.0
+
+        # P0 (2026-06-08): 未成交冷却检查
+        import time as _t2
+        if hasattr(self, '_fill_fail_cooldown') and symbol in self._fill_fail_cooldown:
+            if _t2.time() < self._fill_fail_cooldown[symbol]:
+                logger.debug("[ORB] %s 在未成交冷却期内, 跳过", symbol)
+                return
 
         logger.info(
             "[ORB] 🎯 %s %s 突破入场 | price=%.2f | orb=[%.2f, %.2f] | "
@@ -1136,7 +1159,12 @@ class ORBEngine:
         # 等待成交
         filled = self._wait_for_fill(result, timeout=15)
         if not filled:
-            logger.warning("[ORB] %s 订单未成交, 放弃", symbol)
+            logger.warning("[ORB] %s 订单未成交, 放弃 (60s冷却)", symbol)
+            # P0 (2026-06-08): 未成交后冷却60秒, 防止每5秒重试同一标的
+            if not hasattr(self, '_fill_fail_cooldown'):
+                self._fill_fail_cooldown = {}
+            import time as _t
+            self._fill_fail_cooldown[symbol] = _t.time() + 60
             return
 
         # 创建仓位跟踪 (包含自适应止损和分层止盈状态)
@@ -1961,7 +1989,7 @@ class ORBEngine:
                 client_order_id=f"orb_{symbol}_{uuid.uuid4().hex[:8]}",
                 symbol=symbol,
                 direction=ModelDirection.SHORT if direction == "SHORT" else ModelDirection.LONG,
-                order_type=OrderType.LIMIT,
+                order_type=OrderType.MARKET,  # P0 (2026-06-08): LIMIT→MARKET, 限价单在快速行情中不成交
                 quantity=float(quantity),
                 price=price,
             )
