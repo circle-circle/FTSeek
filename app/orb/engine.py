@@ -590,6 +590,21 @@ class ORBEngine:
                 rolling_high = max(float(b.get("high", 0)) for b in rolling_bars)
                 rolling_low = min(float(b.get("low", 0)) for b in rolling_bars)
 
+                # P0 fix (2026-06-08): 价格合理性校验 — 同 _build_opening_ranges
+                # Futu 可能返回去年 K 线, 必须与现价交叉验证
+                if rolling_high > 0 and rolling_low > 0:
+                    range_mid = (rolling_high + rolling_low) / 2
+                    cp = self._get_current_price(symbol)
+                    if cp and cp > 0:
+                        dev = abs(range_mid - cp) / cp
+                        if dev > 0.10:
+                            logger.warning(
+                                "[ORB] %s 滚动区间价格异常: mid=$%.2f vs current=$%.2f "
+                                "(偏差=%.1f%%), 跳过",
+                                symbol, range_mid, cp, dev * 100,
+                            )
+                            continue
+
                 if rolling_high > 0 and rolling_low > 0 and rolling_high > rolling_low:
                     width_pct = (rolling_high - rolling_low) / rolling_low * 100
 
