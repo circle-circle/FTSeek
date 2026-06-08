@@ -1160,6 +1160,11 @@ class ORBEngine:
             return
 
         order_id = result.get("order_id", "")
+        # P0 (2026-06-09): 用实际下单数量回写, 防止安全门禁截断后 ORBPosition 仍存原始大仓位
+        actual_quantity = result.get("quantity", quantity)
+        if actual_quantity != quantity:
+            logger.warning("[ORB] %s 数量回写: 原始%d → 实际%d", symbol, quantity, actual_quantity)
+            quantity = actual_quantity
 
         # 等待成交
         filled = self._wait_for_fill(result, timeout=15)
@@ -1405,16 +1410,16 @@ class ORBEngine:
             _entry_time = pos.entry_time.isoformat() if hasattr(pos.entry_time, 'isoformat') else str(pos.entry_time)
             _exit_time = _orb_now_et().isoformat()  # 2026-06-05 修复: datetime.now()→now_et()
             _trade_date = pos.entry_time.strftime("%Y-%m-%d") if hasattr(pos.entry_time, 'strftime') else _orb_now_et().strftime("%Y-%m-%d")
-            # P0 fix (2026-06-08): timezone 对齐 — entry_time 可能是 naive datetime
+            # P0 fix (2026-06-09): timezone 对齐 — 统一为 naive datetime 再相减
+            # 根因: pos.entry_time 来自 datetime.now() (naive), now_et() 是 aware
+            #        pytz.localize 在某些时区配置下仍会失败
+            # 修法: 两边都 strip tzinfo, 因为都是 ET 时间 (ORBPosition 在 ET 环境创建)
             _exit_dt = _orb_now_et()
             _entry_dt = pos.entry_time
             if _entry_dt is not None:
-                if _entry_dt.tzinfo is None and _exit_dt.tzinfo is not None:
-                    import pytz as _pytz_h
-                    _entry_dt = _pytz_h.timezone('US/Eastern').localize(_entry_dt)
-                elif _entry_dt.tzinfo is not None and _exit_dt.tzinfo is None:
-                    _exit_dt = _exit_dt.replace(tzinfo=_entry_dt.tzinfo)
-                _holding_hours = (_exit_dt - _entry_dt).total_seconds() / 3600
+                _entry_naive = _entry_dt.replace(tzinfo=None) if _entry_dt.tzinfo else _entry_dt
+                _exit_naive = _exit_dt.replace(tzinfo=None) if _exit_dt.tzinfo else _exit_dt
+                _holding_hours = (_exit_naive - _entry_naive).total_seconds() / 3600
             else:
                 _holding_hours = 0
             # 2026-06-05 修复: ORB 不再硬编码 strength=65/confidence=0.65
@@ -1978,7 +1983,8 @@ class ORBEngine:
             if hasattr(self._exec, "submit_order"):
                 result = self._exec.submit_order(order)
                 order_id = getattr(result, "order_id", str(id(result)))
-                return {"success": True, "order_id": str(order_id), "result": result}
+                # P0 (2026-06-09): 返回实际下单数量 (安全门禁可能截断)
+                return {"success": True, "order_id": str(order_id), "result": result, "quantity": quantity}
 
         except Exception as e:
             logger.error("[ORB] %s 下单异常: %s", symbol, e, exc_info=True)
