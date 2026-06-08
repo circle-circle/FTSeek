@@ -61,7 +61,11 @@ class ORBPosition:
         self.entry_price = entry_price
         self.quantity = quantity
         self.initial_quantity = quantity  # 初始仓位 (用于分层止盈)
-        self.entry_time = datetime.now()
+        try:
+            from app.utils.timezone import now_et as _now_et
+            self.entry_time = _now_et()  # P0 (2026-06-09): datetime.now()→now_et(), 统一为 aware ET
+        except ImportError:
+            self.entry_time = datetime.now()  # fallback: 无 timezone 模块时用 server time
         self.orb_high = orb_high
         self.orb_low = orb_low
         self.orb_mid = (orb_high + orb_low) / 2.0 if orb_high > 0 and orb_low > 0 else 0.0
@@ -1292,7 +1296,8 @@ class ORBEngine:
                 # 在 min_hold_seconds (300s) 的 floor/trailing 保护期内, 这是唯一的安全网
                 # 60s grace 避免入场瞬间的噪音 (bid/ask spread, 第一个 tick 的异常)
                 _breakdown_grace = 60  # 秒
-                _hold_secs = (datetime.now() - pos.entry_time).total_seconds()
+                from app.utils.timezone import now_et as _now_et_bd
+                _hold_secs = (_now_et_bd() - pos.entry_time).total_seconds()
                 if _hold_secs >= _breakdown_grace and pos.orb_mid > 0:
                     _breakdown = False
                     if pos.direction == "LONG" and price < pos.orb_mid:
@@ -1334,7 +1339,8 @@ class ORBEngine:
                     # ATR floor 修复后 trail 激活需要 $0.47 利润, 但防御纵深仍需时间保护
                     if (decision.reason in ("ORB_FLOOR_STOP", "ORB_TRAILING_STOP")
                             and getattr(self._cfg, 'min_hold_seconds', 0) > 0):
-                        hold_seconds = (datetime.now() - pos.entry_time).total_seconds()
+                        from app.utils.timezone import now_et as _now_et_mh
+                        hold_seconds = (_now_et_mh() - pos.entry_time).total_seconds()
                         if hold_seconds < self._cfg.min_hold_seconds:
                             logger.info(
                                 "[ORB] %s %s 跳过: 持仓%.0fs < min_hold=%ds (噪音过滤)",
@@ -1410,16 +1416,24 @@ class ORBEngine:
             _entry_time = pos.entry_time.isoformat() if hasattr(pos.entry_time, 'isoformat') else str(pos.entry_time)
             _exit_time = _orb_now_et().isoformat()  # 2026-06-05 修复: datetime.now()→now_et()
             _trade_date = pos.entry_time.strftime("%Y-%m-%d") if hasattr(pos.entry_time, 'strftime') else _orb_now_et().strftime("%Y-%m-%d")
-            # P0 fix (2026-06-09): timezone 对齐 — 统一为 naive datetime 再相减
-            # 根因: pos.entry_time 来自 datetime.now() (naive), now_et() 是 aware
-            #        pytz.localize 在某些时区配置下仍会失败
-            # 修法: 两边都 strip tzinfo, 因为都是 ET 时间 (ORBPosition 在 ET 环境创建)
+            # P0 fix (2026-06-09): timezone 对齐 — 用 to_et() 统一转换为 aware ET
+            # 根因: 旧代码 entry_time=datetime.now() (naive CST), now_et() 是 aware ET
+            #        CST(UTC+8) vs ET(UTC-4) 差12h, strip tzinfo 直接相减得负数
+            # 修法: to_et() 对 naive 自动 assume CST → 转 aware ET, 对 aware 直接 astimezone
             _exit_dt = _orb_now_et()
             _entry_dt = pos.entry_time
             if _entry_dt is not None:
-                _entry_naive = _entry_dt.replace(tzinfo=None) if _entry_dt.tzinfo else _entry_dt
-                _exit_naive = _exit_dt.replace(tzinfo=None) if _exit_dt.tzinfo else _exit_dt
-                _holding_hours = (_exit_naive - _entry_naive).total_seconds() / 3600
+                try:
+                    from app.utils.timezone import to_et as _to_et
+                    _entry_et = _to_et(_entry_dt)  # naive CST → aware ET, or aware → ET
+                    _holding_hours = (_exit_dt - _entry_et).total_seconds() / 3600
+                except Exception:
+                    # fallback: 两边都 naive, 假设同时区 (新代码路径: 都是 ET)
+                    _entry_naive = _entry_dt.replace(tzinfo=None) if _entry_dt.tzinfo else _entry_dt
+                    _exit_naive = _exit_dt.replace(tzinfo=None) if _exit_dt.tzinfo else _exit_dt
+                    _holding_hours = (_exit_naive - _entry_naive).total_seconds() / 3600
+                if _holding_hours < 0:
+                    _holding_hours = abs(_holding_hours)  # 安全兜底: 不应为负
             else:
                 _holding_hours = 0
             # 2026-06-05 修复: ORB 不再硬编码 strength=65/confidence=0.65
