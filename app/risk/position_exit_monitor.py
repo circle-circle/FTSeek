@@ -2170,7 +2170,7 @@ class ExitMonitor:
             today_et = _now_et().strftime('%Y-%m-%d')
             ret, data, _ = self._quote_ctx.request_history_kline(
                 symbol, ktype=KLType.K_1M, max_count=390, autype=AuType.QFQ,
-                end=f"{today_et} 23:59:59",
+                start=today_et, end=f"{today_et} 23:59:59",
             )
             if ret == 0 and data is not None and len(data) >= 2:
                 today_high = float(data['high'].max())

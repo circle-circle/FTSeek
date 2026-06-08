@@ -952,13 +952,28 @@ class FutuLV3Provider:
 
             kl_type = kl_type_map.get(ktype, KLType.K_1M)
 
-            ret, data, _ = self._quote_ctx.request_history_kline(
-                code=futu_symbol, ktype=kl_type, max_count=count
-            )
+            # P0 fix (2026-06-09): 指定 start=today 防止 OpenD 返回去年数据
+            # 根因: request_history_kline 不带 start 参数时返回 2025 年旧数据,
+            #   导致今日过滤后 0 条 → K 线数据不足告警 (31858 条/天)
+            # 修复: 日内 K 线(K_1M~K_60M)指定 start=today_et 强制返回当日数据
+            from datetime import datetime as _dk
+            import pytz as _pz
+            today_et = _dk.now(_pz.timezone('US/Eastern')).strftime("%Y-%m-%d")
+            
+            hist_kwargs = {
+                "code": futu_symbol,
+                "ktype": kl_type,
+                "max_count": count,
+            }
+            # 日内 K 线: 指定日期范围, 防止 OpenD 返回旧年数据
+            if ktype != "K_DAY":
+                hist_kwargs["start"] = today_et
+                hist_kwargs["end"] = today_et
+
+            ret, data, _ = self._quote_ctx.request_history_kline(**hist_kwargs)
 
             if ret == 0 and data is not None and len(data) > 0:
                 klines = []
-                today_et = None
                 for _, row in data.iterrows():
                     klines.append({
                         "time": str(row.get("time_key", "")),
@@ -969,16 +984,11 @@ class FutuLV3Provider:
                         "volume": float(row.get("volume", 0)),
                         "turnover": float(row.get("turnover", 0)),
                     })
-                # P0 (2026-06-08): 只保留当日 bar, 防止 OpenD 返回旧年数据污染 cache
-                try:
-                    from datetime import datetime as _dk
-                    import pytz as _pz
-                    today_et = _dk.now(_pz.timezone('US/Eastern')).strftime("%Y-%m-%d")
+                # Safety net: K_DAY 仍做日期校验 (不设 start, 可能含历史数据)
+                if ktype == "K_DAY":
                     klines = [k for k in klines if k["time"].startswith(today_et)]
-                except Exception:
-                    pass
                 if not klines:
-                    logger.warning(f"[FutuLV3] {symbol} history kline 无当日数据 (today={today_et}), 返回 None")
+                    logger.warning(f"[FutuLV3] {symbol} history kline 无当日数据 (today={today_et}, ktype={ktype}), 返回 None")
                     return None
                 # 更新所有缓存
                 with self._push_kline_cache_lock:
