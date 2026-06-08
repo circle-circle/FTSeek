@@ -958,6 +958,7 @@ class FutuLV3Provider:
 
             if ret == 0 and data is not None and len(data) > 0:
                 klines = []
+                today_et = None
                 for _, row in data.iterrows():
                     klines.append({
                         "time": str(row.get("time_key", "")),
@@ -968,6 +969,17 @@ class FutuLV3Provider:
                         "volume": float(row.get("volume", 0)),
                         "turnover": float(row.get("turnover", 0)),
                     })
+                # P0 (2026-06-08): 只保留当日 bar, 防止 OpenD 返回旧年数据污染 cache
+                try:
+                    from datetime import datetime as _dk
+                    import pytz as _pz
+                    today_et = _dk.now(_pz.timezone('US/Eastern')).strftime("%Y-%m-%d")
+                    klines = [k for k in klines if k["time"].startswith(today_et)]
+                except Exception:
+                    pass
+                if not klines:
+                    logger.warning(f"[FutuLV3] {symbol} history kline 无当日数据 (today={today_et}), 返回 None")
+                    return None
                 # 更新所有缓存
                 with self._push_kline_cache_lock:
                     self._push_kline_cache[futu_symbol] = klines
