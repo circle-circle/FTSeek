@@ -1,18 +1,70 @@
 {
-  "generated_at": "2026-06-04T07:44:22.187570",
+  "generated_at": "2026-06-08T08:00:47.113525",
   "period_days": 14,
   "symbols": [
     {
+      "symbol": "US.XLF",
+      "direction": "LONG",
+      "trades": 3,
+      "wins": 2,
+      "wr_pct": 66.7,
+      "total_pnl": -4398.8,
+      "avg_pnl": -1466.27,
+      "best": 50.0,
+      "worst": -4458.4,
+      "avg_hold_hrs": 1.9,
+      "verdict": "WATCH"
+    },
+    {
       "symbol": "US.XLK",
       "direction": "SHORT",
-      "trades": 3,
+      "trades": 4,
       "wins": 1,
-      "wr_pct": 33.3,
-      "total_pnl": 242.06,
-      "avg_pnl": 80.69,
+      "wr_pct": 25.0,
+      "total_pnl": -385.74,
+      "avg_pnl": -96.44,
       "best": 354.96,
-      "worst": -81.2,
+      "worst": -627.8,
       "avg_hold_hrs": 0.2,
+      "verdict": "WATCH"
+    },
+    {
+      "symbol": "US.MU",
+      "direction": "SHORT",
+      "trades": 3,
+      "wins": 2,
+      "wr_pct": 66.7,
+      "total_pnl": -77.61,
+      "avg_pnl": -25.87,
+      "best": 307.98,
+      "worst": -393.39,
+      "avg_hold_hrs": 2.6,
+      "verdict": "WATCH"
+    },
+    {
+      "symbol": "US.XLY",
+      "direction": "SHORT",
+      "trades": 3,
+      "wins": 2,
+      "wr_pct": 66.7,
+      "total_pnl": 538.47,
+      "avg_pnl": 179.49,
+      "best": 513.6,
+      "worst": -51.36,
+      "avg_hold_hrs": 3.1,
+      "verdict": "WATCH"
+    },
+    {
+      "symbol": "US.IWM",
+      "direction": "SHORT",
+      "trades": 3,
+      "wins": 2,
+      "wr_pct": 66.7,
+      "total_pnl": 5594.58,
+      "avg_pnl": 1864.86,
+      "best": 5667.66,
+      "worst": -128.76,
+      "avg_hold_hrs": 4.1,
       "verdict": "WATCH"
     }
   ]

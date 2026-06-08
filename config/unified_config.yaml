@@ -2193,7 +2193,7 @@ orb:
   polling_interval_seconds: 5      # 轮询间隔 (秒)
   # 放宽入场条件 (模拟盘数据采集)
   min_range_width_pct: 0.2         # 模拟盘: 0.3→0.2, 允许更窄区间
-  min_volume_ratio: 0.8            # 模拟盘: 1.1→0.8, 放宽量能要求
+  min_volume_ratio: 1.2            # 2026-06-08: 0.8→1.2, 无量突破=假突破 (研究验证)
   entry_end_et: "14:00"            # 模拟盘: 11:00→14:00, 延长入场窗口
   # Regime-aware direction bias (2026-06-03): 基于真实数据
   # ⚠ SHORT在下跌市胜过LONG 10:1 → 上涨市禁SHORT, 下跌市禁LONG

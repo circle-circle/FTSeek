@@ -37,10 +37,7 @@ class ORBPosition:
         "entry_time", "orb_high", "orb_low", "orb_mid",
         "atr_at_entry", "sl_distance", "peak_price", "trough_price",
         "trail_stop", "order_id",
-        # 分层止盈追踪
-        "layer1_done", "layer2_done",  # 是否已平仓 1/3, 2/3
-        "breakeven_activated",        # 是否已移到 breakeven
-        "trail_activated",            # 是否已激活追踪止损
+        # 2026-06-08: 清理分层止盈死字段 (layer1/layer2/breakeven/trail_activated 已删除)
         "r_multiple",                 # 风险单位 (sl_distance)
         # Task #11 (2026-06-02): 全链路归因 ID, 贯穿信号→入场→持仓→退出→trade_records
         "trace_id",
@@ -77,11 +74,7 @@ class ORBPosition:
         self.trail_stop = 0.0             # 追踪止损线 (0 = 未激活)
         self.order_id = order_id
 
-        # 分层止盈状态
-        self.layer1_done = False          # 1R 平 1/3
-        self.layer2_done = False          # 2R 平 1/3
-        self.breakeven_activated = False  # 止损移到 breakeven
-        self.trail_activated = False      # 追踪止损激活
+        # 2026-06-08: 清理分层止盈死代码 (2R 固定止盈替代)
         self.r_multiple = sl_distance     # 风险单位
 
         # Task #11 (2026-06-02): trace_id 上传 — 若未传入则生成, 保证全链路不裸奔
@@ -147,6 +140,10 @@ class ORBEngine:
         # 15分钟冷却 + 连续2亏封杀 (替代旧的全天禁用 set)
         self._loss_records: Dict[str, List[float]] = {}
         self._banned_today: set = set()  # 连续2亏 → 当日封杀
+
+        # 2026-06-08: 仅首次突破规则 (研究: 第2/3次突破胜率仅35%)
+        # 每个标的每天只做第一次突破, 避免反复止损
+        self._first_breakout_done: set = set()
 
         logger.info(
             "[ORB] 引擎构造 | mode=%s | universe=%d只 | "
@@ -291,9 +288,10 @@ class ORBEngine:
         tick_count = getattr(self, '_tick_count', 0) + 1
         self._tick_count = tick_count
         if tick_count % 60 == 1:
-            logger.info("[ORB] tick #%d | time=%s | positions=%d | ranges=%d",
+            logger.info("[ORB] tick #%d | time=%s | pos=%d | ranges=%d | done=%d",
                        tick_count, current_time.strftime("%H:%M:%S"),
-                       len(self._positions), len(self._ranges))
+                       len(self._positions), len(self._ranges),
+                       len(self._first_breakout_done))
 
         # 跨日重置
         if today_str != self._daily_date:
@@ -301,6 +299,7 @@ class ORBEngine:
             self._daily_trades = 0
             self._loss_records = {}  # 重置亏损记录 (2026-06-07)
             self._banned_today = set()  # 重置封杀列表
+            self._first_breakout_done = set()  # 重置首次突破记录
             # 不再清除区间，允许隔夜持仓继续使用
             logger.info("[ORB] 跨日重置 | date=%s", today_str)
 
@@ -851,6 +850,11 @@ class ORBEngine:
             if self._is_cross_engine_cooled(symbol):
                 logger.debug("[ORB] %s 跳过: 主线最近退出, 跨引擎冷却中", symbol)
                 continue
+            # 2026-06-08: 仅首次突破 — 同标的每天只做第一次突破
+            # 研究: 第2/3次突破胜率降至~35%, 反复入场=反复止损
+            if symbol in self._first_breakout_done:
+                logger.debug("[ORB] %s 跳过: 今日已有突破交易 (仅首次突破规则)", symbol)
+                continue
             # 2026-06-07: 亏损冷却 — 15分钟临时冷却 + 连续2亏当日封杀
             if getattr(self._cfg, 'same_symbol_loss_cooldown', False):
                 if symbol in self._banned_today:
@@ -967,10 +971,10 @@ class ORBEngine:
             direction=direction,
         )
 
-        # 质量门槛: < 0.5 不交易
-        if quality_score < 0.5:
+        # 2026-06-08: 质量门槛 0.5→0.6 (研究: 综合过滤后胜率55-62%)
+        if quality_score < 0.6:
             logger.info(
-                "[ORB] %s %s 质量不足: Q=%.2f < 0.5 (W=%.2f%% VolR=%.2f VWAP=%.2f)",
+                "[ORB] %s %s 质量不足: Q=%.2f < 0.6 (W=%.2f%% VolR=%.2f VWAP=%.2f)",
                 symbol, direction, quality_score, width_pct, vol_ratio, vwap
             )
             return None
@@ -1142,6 +1146,7 @@ class ORBEngine:
                     trace_id=trace_id,
                 )
                 self._daily_trades += 1
+                self._first_breakout_done.add(symbol)  # 仅首次突破
                 logger.info(
                     "[%s] ORB shadow 入场: %s %s @ %.2f qty=%d",
                     trace_id or "NO_TRACE", symbol, direction, price, quantity,
@@ -1182,6 +1187,7 @@ class ORBEngine:
         )
         self._positions[symbol] = pos
         self._daily_trades += 1
+        self._first_breakout_done.add(symbol)  # 仅首次突破规则
         logger.info(
             "[%s] ORB 入场: %s %s @ %.2f qty=%d order_id=%s",
             pos.trace_id or "NO_TRACE", symbol, direction, price, quantity, order_id,
@@ -1581,7 +1587,7 @@ class ORBEngine:
         data_router 无 get_volume_ratio 方法，故从 K 线直接推算。
         """
         if not self._data:
-            return 1.0  # 无数据时不阻拦
+            return 0.0  # 2026-06-08: 无数据=拒绝入场 (旧1.0让假突破通过)
 
         # 路径 1: data_router 原生支持 (未来扩展)
         try:
@@ -1612,7 +1618,7 @@ class ORBEngine:
         except Exception:
             pass
 
-        return 1.0  # fallback: 不过滤
+        return 0.0  # 2026-06-08: 无数据=拒绝 (旧1.0让缩量假突破通过)
 
     def _get_vwap(self, symbol: str) -> float:
         """获取 VWAP (Volume Weighted Average Price)"""
@@ -1868,50 +1874,8 @@ class ORBEngine:
 
         return sl_distance
 
-    def _evaluate_layered_exits(
-        self,
-        pos: ORBPosition,
-        current_price: float,
-    ) -> Optional[str]:
-        """
-        评估分层止盈
-
-        三层机制:
-          Layer 1 (1R): 平 1/3, 止损移到 breakeven
-          Layer 2 (2R): 平 1/3, 激活追踪止损
-          Layer 3 (>2R): 剩余仓位追踪止损
-
-        Returns:
-          - "LAYER1": 需要执行 Layer 1
-          - "LAYER2": 需要执行 Layer 2
-          - "TRAIL_HIT": 追踪止损触发
-          - None: 无需操作
-        """
-        if pos.r_multiple <= 0:
-            return None
-
-        # 计算当前 R-multiple
-        if pos.direction == "LONG":
-            current_r = (current_price - pos.entry_price) / pos.r_multiple
-        else:
-            current_r = (pos.entry_price - current_price) / pos.r_multiple
-
-        # Layer 1: 1R 平 1/3
-        if not pos.layer1_done and current_r >= 1.0:
-            return "LAYER1"
-
-        # Layer 2: 2R 平 1/3
-        if not pos.layer2_done and current_r >= 2.0:
-            return "LAYER2"
-
-        # Layer 3: 追踪止损 (2R 后激活)
-        if pos.layer2_done and pos.trail_activated and pos.trail_stop > 0:
-            if pos.direction == "LONG" and current_price <= pos.trail_stop:
-                return "TRAIL_HIT"
-            elif pos.direction == "SHORT" and current_price >= pos.trail_stop:
-                return "TRAIL_HIT"
-
-        return None
+    # 2026-06-08: _evaluate_layered_exits 已删除 (2R 固定止盈替代)
+    # 数据: 8笔ORB交易中分层止盈/追踪止损从未触发, 死代码
 
     # ── 订单执行 ──
 

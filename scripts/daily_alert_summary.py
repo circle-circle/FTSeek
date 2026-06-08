@@ -476,20 +476,30 @@ def main():
     - 报告日期 = CST Day N, 扫描范围 = Day N-1 21:00 → Day N 06:00
     """
 
-    # ── 时区统一: CST 报告日期 + ET 交易日期 ──
+    # ── 时区统一: ET 交易日期为主, CST 为辅 ──
     cst_now = now_cst()
-    report_date = cst_now.strftime("%Y-%m-%d")  # CST 日历日期 (标题 & 文件名)
-    report_dt = datetime.strptime(report_date, "%Y-%m-%d")
+    cst_date = cst_now.strftime("%Y-%m-%d")  # CST 日历日期 (仅用于文件名)
 
     et_now = now_et()
-    us_trade_date = _last_us_trade_date(et_now)  # ET 最后交易日 (DB 查询)
-    hk_trade_date = report_date                  # 港股用 CST 日期
+    us_trade_date = _last_us_trade_date(et_now)  # ET 最后交易日 (DB 查询 + 报告标题)
+
+    # 港股: 5AM CST 港股尚未开盘, 查上一个港股交易日
+    hk_dt = cst_now - timedelta(days=1)
+    while hk_dt.weekday() >= 5:  # 跳过周末
+        hk_dt -= timedelta(days=1)
+    hk_trade_date = hk_dt.strftime("%Y-%m-%d")
+
+    # 报告标题用 US 交易日期 (核心数据源)
+    report_date = us_trade_date
 
     # 日志扫描范围: 覆盖美股跨午夜的交易会话
-    # since = 报告日前一天 21:00 CST (覆盖盘前)
-    # until = 报告日 06:00 CST (覆盖盘后收尾)
-    since = (report_dt - timedelta(hours=3)).replace(hour=21, minute=0)  # Day N-1 21:00
-    until = report_dt.replace(hour=6, minute=0)  # Day N 06:00
+    # since = US交易日前一天 21:00 CST (覆盖盘前)
+    # until = US交易日 06:00 CST (覆盖盘后收尾)
+    # US交易日对应的CST日期 = ET日期 + 1天 (因为跨午夜)
+    report_dt = datetime.strptime(report_date, "%Y-%m-%d")
+    cst_trade_day = report_dt + timedelta(days=1)  # ET周一交易 → CST周二凌晨
+    since = report_dt.replace(hour=21, minute=0)  # US交易日 21:00 CST (盘前)
+    until = cst_trade_day.replace(hour=6, minute=0)  # US交易日次日 06:00 CST (盘后收尾)
 
     print(f"[汇总报告] 生成 {report_date} 告警汇总...")
     print(f"  时区: CST={cst_now.strftime('%H:%M')} | ET={et_now.strftime('%H:%M')}")
