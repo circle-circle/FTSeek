@@ -2200,8 +2200,11 @@ orb:
   regime_short_bias_quality: 0.85    # TREND_DOWN: LONG 突破需要 Q≥0.85
   regime_long_bias_quality: 0.85     # TREND_UP: SHORT 突破需要 Q≥0.85
   low_vol_short_bias_quality: 0.85   # LOW_VOL+下行: LONG 突破需要 Q≥0.85
-  min_hold_seconds: 300              # 2026-06-07: 180→300 (5min), FLOOR_STOP+TRAILING 在此时间内跳过
+  min_hold_seconds: 300              # 2026-06-07: 180→300 (5min), FLOOR_STOP 在此时间内跳过
   same_symbol_loss_cooldown: true    # 当日亏损退出的标的禁止重新入场
+  # P0 (2026-06-08): 简化退出 — 2R止盈替代分层止盈+追踪止损
+  # 数据: 8笔ORB交易, 分层/追踪从未触发(死代码), FLOOR_STOP贡献99.7%亏损
+  # 退出栈: 2R止盈(2×sl_distance) > Breakdown(60s) > FloorStop > EOD(15:55)
 
 # ─── 催化辩论引擎 (2026-05-27 RFC-Catalyst) ───
 # 盘前/盘后新闻催化事件检测 + 多模型辩论

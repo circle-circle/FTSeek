@@ -1205,7 +1205,7 @@ class ORBEngine:
     # ── 退出监控 ──
 
     def _monitor_exits(self, now: datetime, current_time: dt_time):
-        """监控所有活跃 ORB 仓位的退出条件 (增强版: 分层止盈)"""
+        """监控所有活跃 ORB 仓位的退出条件 (简化版: 2R止盈 + FloorStop + Breakdown + EOD)"""
         for symbol, pos in list(self._positions.items()):
             try:
                 price = self._get_current_price(symbol)
@@ -1226,65 +1226,27 @@ class ORBEngine:
 
                 peak = pos.peak_price if pos.direction == "LONG" else pos.trough_price
 
-                # Layer 1: 分层止盈评估 (RFC-056-DESIGN)
-                layer_action = self._evaluate_layered_exits(pos, price)
-
-                if layer_action == "LAYER1":
-                    # 1R: 平 1/3, 止损移到 breakeven
-                    close_qty = pos.initial_quantity // 3
-                    if close_qty > 0:
-                        pos.quantity -= close_qty
-                        pos.layer1_done = True
-                        pos.breakeven_activated = True
-                        logger.info(
-                            "[ORB] %s Layer 1 (1R): 平仓 %d 股, SL→breakeven (%.2f), 剩余 %d 股",
-                            symbol, close_qty, pos.entry_price, pos.quantity
+                # ── P0 (2026-06-08): 简单 2R 止盈 (替代分层止盈+追踪止损) ──
+                # 数据驱动: 8 笔 ORB 交易中分层止盈/追踪从未触发 (死代码)
+                # FLOOR_STOP 贡献 99.7% 亏损, 持仓全部 3-17 分钟
+                # 新逻辑: 盈利 >= 2 × sl_distance → 全平, 简单直接
+                if pos.sl_distance > 0:
+                    if pos.direction == "LONG":
+                        _profit = price - pos.entry_price
+                    else:
+                        _profit = pos.entry_price - price
+                    _tp_target = 2.0 * pos.sl_distance
+                    if _profit >= _tp_target:
+                        from app.orb.exits import ORBExitDecision
+                        _tp_decision = ORBExitDecision(
+                            reason="ORB_TAKE_PROFIT_2R",
+                            close_pct=100.0,
+                            detail=f"2R止盈: profit=${_profit:.2f} >= 2×SL=${_tp_target:.2f} "
+                                   f"(entry={pos.entry_price:.2f}, price={price:.2f})",
                         )
-                        if self._cfg.is_active:
-                            close_dir = "SHORT" if pos.direction == "LONG" else "LONG"
-                            self._submit_order(symbol, close_dir, price, close_qty, is_exit=True)
-                        self._notify(f"📊 {symbol} Layer 1 (1R): 平仓 {close_qty} 股, SL→breakeven")
-                    continue
-
-                elif layer_action == "LAYER2":
-                    # 2R: 平 1/3, 激活追踪止损
-                    close_qty = pos.initial_quantity // 3
-                    if close_qty > 0:
-                        pos.quantity -= close_qty
-                        pos.layer2_done = True
-                        pos.trail_activated = True
-                        # 初始化追踪止损
-                        if pos.direction == "LONG":
-                            pos.trail_stop = peak - atr * self._cfg.trail_multiplier
-                        else:
-                            pos.trail_stop = peak + atr * self._cfg.trail_multiplier
-                        logger.info(
-                            "[ORB] %s Layer 2 (2R): 平仓 %d 股, trail激活 (%.2f), 剩余 %d 股",
-                            symbol, close_qty, pos.trail_stop, pos.quantity
-                        )
-                        if self._cfg.is_active:
-                            close_dir = "SHORT" if pos.direction == "LONG" else "LONG"
-                            self._submit_order(symbol, close_dir, price, close_qty, is_exit=True)
-                        self._notify(f"📊 {symbol} Layer 2 (2R): 平仓 {close_qty} 股, trail激活")
-                    continue
-
-                elif layer_action == "TRAIL_HIT":
-                    # 追踪止损触发: 平剩余仓位
-                    from app.orb.exits import ORBExitDecision
-                    trail_decision = ORBExitDecision(
-                        reason="ORB_TRAIL_STOP",
-                        close_pct=100.0,
-                        detail=f"追踪止损触发: trail={pos.trail_stop:.2f} price={price:.2f}",
-                    )
-                    self._execute_exit(symbol, pos, price, trail_decision)
-                    continue
-
-                # Layer 2: 传统退出栈 (止损, 盘末等)
-                # 更新追踪止损线 (ratchet)
-                if pos.trail_activated:
-                    pos.trail_stop = self._exit_stack.compute_trail_stop(
-                        pos.direction, atr, peak, pos.trail_stop, pos.entry_price,
-                    )
+                        logger.info("[ORB] 🎯 %s %s", symbol, _tp_decision.detail)
+                        self._execute_exit(symbol, pos, price, _tp_decision)
+                        continue
 
                 # ── P0 (2026-06-07): 突破失败快速退出 (60s grace, 优先于 floor/trailing) ──
                 # 原理: ORB 突破的反面 = 价格回到区间中点 = 突破论据失效
