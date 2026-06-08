@@ -1646,51 +1646,81 @@ class ORBEngine:
         return 0.0
 
     def _get_1min_klines(self, symbol: str, count: int = 20) -> Optional[List[Dict]]:
-        """获取 1-min klines (带超时保护)"""
+        """获取 1-min klines (带超时保护 + 日期过滤)
+
+        P0 fix (2026-06-08): 所有路径返回的 K 线统一按当日日期过滤,
+        防止 Futu 返回旧年数据 (2025) 或新旧混杂导致区间错误.
+        """
         if not self._data:
             return None
+        raw = None
         try:
             # 路径 1: data_router.get_klines (如果存在)
             if hasattr(self._data, "get_klines"):
                 result = self._data.get_klines(symbol, ktype="1min", count=count)
                 if result:
-                    return result
+                    raw = result
 
             # 路径 2: data_router.futu.get_kline (Futu LV3 provider) — 带超时
-            futu = getattr(self._data, "futu", None)
-            if futu and hasattr(futu, "get_kline"):
-                # 先检查 push cache 是否有数据 (非阻塞)
-                push_cache = getattr(futu, '_push_kline_cache', {})
-                futu_symbol = symbol.replace('US.', '')  # US.IWM -> IWM
-                if futu_symbol in push_cache and push_cache[futu_symbol]:
-                    cached_data = push_cache[futu_symbol]
-                    logger.debug("[ORB] %s 使用 push cache: %d 根 K 线", symbol, len(cached_data))
-                    return cached_data[-count:] if len(cached_data) > count else cached_data
-
-                # 超时保护: 3 秒内获取 K 线，否则返回 None
-                import concurrent.futures
-                try:
-                    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                        future = executor.submit(futu.get_kline, symbol, "K_1M", count)
-                        result = future.result(timeout=3.0)
-                        if result:
-                            return result
-                        else:
-                            logger.info("[ORB] %s futu.get_kline 返回空", symbol)
-                except concurrent.futures.TimeoutError:
-                    logger.warning("[ORB] %s futu.get_kline 超时 (3s)，跳过", symbol)
-                    return None
+            if raw is None:
+                futu = getattr(self._data, "futu", None)
+                if futu and hasattr(futu, "get_kline"):
+                    # 先检查 push cache 是否有数据 (非阻塞)
+                    push_cache = getattr(futu, '_push_kline_cache', {})
+                    futu_symbol = symbol.replace('US.', '')  # US.IWM -> IWM
+                    if futu_symbol in push_cache and push_cache[futu_symbol]:
+                        cached_data = push_cache[futu_symbol]
+                        logger.debug("[ORB] %s 使用 push cache: %d 根 K 线", symbol, len(cached_data))
+                        raw = cached_data[-count:] if len(cached_data) > count else cached_data
+                    else:
+                        # 超时保护: 3 秒内获取 K 线，否则返回 None
+                        import concurrent.futures
+                        try:
+                            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                                future = executor.submit(futu.get_kline, symbol, "K_1M", count)
+                                result = future.result(timeout=3.0)
+                                if result:
+                                    raw = result
+                                else:
+                                    logger.info("[ORB] %s futu.get_kline 返回空", symbol)
+                        except concurrent.futures.TimeoutError:
+                            logger.warning("[ORB] %s futu.get_kline 超时 (3s)，跳过", symbol)
+                            return None
 
             # 路径 3: execution_engine.broker_adapter.get_kline
-            if self._exec:
+            if raw is None and self._exec:
                 adapter = getattr(self._exec, "broker_adapter", None)
                 if adapter and hasattr(adapter, "get_kline"):
                     result = adapter.get_kline(symbol, ktype="K_1M", count=count)
                     if result:
-                        return result
+                        raw = result
+
         except Exception as e:
             logger.warning("[ORB] %s kline 获取异常: %s", symbol, e)
-        return None
+            return None
+
+        # ── P0 日期过滤 (2026-06-08): 只保留当日 bar ──
+        if raw:
+            raw = self._filter_today_bars(raw)
+            if not raw:
+                return None
+        return raw
+
+    @staticmethod
+    def _filter_today_bars(klines: List[Dict]) -> List[Dict]:
+        """过滤 K 线, 只保留当日 (ET) 的 bar. 防止 Futu 返回旧年数据."""
+        try:
+            from datetime import datetime as _dt3
+            import pytz as _pytz3
+            today_str = _dt3.now(_pytz3.timezone('US/Eastern')).strftime("%Y-%m-%d")
+            filtered = []
+            for k in klines:
+                tk = str(k.get("time", k.get("time_key", "")))
+                if tk.startswith(today_str):
+                    filtered.append(k)
+            return filtered
+        except Exception:
+            return klines  # 日期解析失败时不过滤 (保守)
 
     def _get_equity(self) -> float:
         """获取当前账户权益 — 从 capital_safety 读取实时值
