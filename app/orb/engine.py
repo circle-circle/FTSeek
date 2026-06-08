@@ -1399,7 +1399,18 @@ class ORBEngine:
             _entry_time = pos.entry_time.isoformat() if hasattr(pos.entry_time, 'isoformat') else str(pos.entry_time)
             _exit_time = _orb_now_et().isoformat()  # 2026-06-05 修复: datetime.now()→now_et()
             _trade_date = pos.entry_time.strftime("%Y-%m-%d") if hasattr(pos.entry_time, 'strftime') else _orb_now_et().strftime("%Y-%m-%d")
-            _holding_hours = (_orb_now_et() - pos.entry_time).total_seconds() / 3600 if pos.entry_time else 0
+            # P0 fix (2026-06-08): timezone 对齐 — entry_time 可能是 naive datetime
+            _exit_dt = _orb_now_et()
+            _entry_dt = pos.entry_time
+            if _entry_dt is not None:
+                if _entry_dt.tzinfo is None and _exit_dt.tzinfo is not None:
+                    import pytz as _pytz_h
+                    _entry_dt = _pytz_h.timezone('US/Eastern').localize(_entry_dt)
+                elif _entry_dt.tzinfo is not None and _exit_dt.tzinfo is None:
+                    _exit_dt = _exit_dt.replace(tzinfo=_entry_dt.tzinfo)
+                _holding_hours = (_exit_dt - _entry_dt).total_seconds() / 3600
+            else:
+                _holding_hours = 0
             # 2026-06-05 修复: ORB 不再硬编码 strength=65/confidence=0.65
             # breakout_quality: ORB range / ATR ratio, 反映突破质量
             _orb_range = (pos.orb_high - pos.orb_low) if (pos.orb_high and pos.orb_low) else 0
