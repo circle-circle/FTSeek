@@ -35,7 +35,12 @@ _DAILY_PNL_TTL = 60  # seconds
 
 
 def _load_limits(config=None) -> dict:
-    """Load position limits from config, falling back to defaults."""
+    """Load position limits from config, falling back to defaults.
+
+    TradingMode-aware (2026-06-10): limits scale with risk_multiplier.
+    LIVE_CONSERVATIVE (0.5x) → all limits halved.
+    Also loads long_max_per_direction for directional bias.
+    """
     limits = dict(_DEFAULTS)
     try:
         if config is None:
@@ -50,8 +55,26 @@ def _load_limits(config=None) -> dict:
         limits["max_total"] = float(
             config.get_dotted("risk.position.max_total", _DEFAULTS["max_total"])
         )
+        # LONG direction cap (2026-06-10): restrict LONG when data shows SHORT outperforms
+        limits["long_max_per_direction"] = float(
+            config.get_dotted("risk.position.long_max_per_direction", limits["max_per_direction"])
+        )
     except Exception:
         pass
+
+    # Scale limits by TradingMode risk_multiplier (2026-06-10)
+    try:
+        from app.core.trading_mode import TradingMode
+        tm = TradingMode()
+        mult = tm.get_risk_multiplier()
+        if mult < 1.0:
+            limits["max_per_symbol"] *= mult
+            limits["max_per_direction"] *= mult
+            limits["max_total"] *= mult
+            limits["long_max_per_direction"] *= mult
+    except Exception:
+        pass
+
     return limits
 
 
@@ -256,7 +279,11 @@ def pre_trade_safety_check(
                 return False, 0, reject_reason
 
     # ═══ Check 2: Per-direction exposure cap ═══
-    direction_limit = equity * limits["max_per_direction"]
+    # LONG direction uses separate cap (2026-06-10): data shows SHORT 10/10 WR vs LONG 1/4
+    effective_dir_limit = limits["max_per_direction"]
+    if not short and "long_max_per_direction" in limits:
+        effective_dir_limit = min(effective_dir_limit, limits["long_max_per_direction"])
+    direction_limit = equity * effective_dir_limit
     direction_existing = _sum_direction_notional(position_store, short) if position_store else 0.0
     direction_total = direction_existing + plan_notional
     if direction_total > direction_limit:

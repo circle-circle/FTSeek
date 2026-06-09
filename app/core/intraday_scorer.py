@@ -995,10 +995,10 @@ class IntradayScorer:
         raw, base_conf = lifecycle_signals.get(lifecycle, (0, 0.0))
 
         # VIX 自适应: 高波动降低生命周期信号可靠性
-        if vix > 25:
-            base_conf *= 0.80
-        elif vix > 30:
+        if vix > 30:
             base_conf *= 0.65
+        elif vix > 25:
+            base_conf *= 0.80
 
         # 加速确认: 三连增强叠加置信度
         if lifecycle == "accelerating" and len(state["momentum"]) >= self.LIFECYCLE_ACCEL_BARS:
@@ -1074,29 +1074,6 @@ class IntradayScorer:
             return {"type": "regime_break", "ratio": ratio, "prev_vix": prev}
 
         return None
-        """评估波动率环境"""
-        spy_ma50 = float(ctx.get("spy_ma50", 0))
-        spy_price = float(ctx.get("spy_price", 0))
-
-        # VIX 层级
-        if vix < 15:
-            vix_level = "LOW_VOLATILITY"
-        elif vix < 22:
-            vix_level = "NORMAL"
-        elif vix < 30:
-            vix_level = "HIGH_VOLATILITY"
-        else:
-            vix_level = "EXTREME_VOLATILITY"
-
-        # 叠加趋势方向形成完整 regime
-        if spy_price > 0 and spy_ma50 > 0:
-            spy_above = spy_price > spy_ma50
-            if "EXTREME" in vix_level:
-                return "PANIC" if not spy_above else "EUPHORIA"
-            if "HIGH" in vix_level:
-                return "HIGH_VOL_BULL" if spy_above else "HIGH_VOL_BEAR"
-
-        return vix_level
 
     def _regime_label(self, regime: str) -> str:
         labels = {
