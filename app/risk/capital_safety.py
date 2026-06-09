@@ -189,8 +189,13 @@ class CapitalSafetySystem:
         if not self._peak_initialized:
             self._state.initial_capital = current_equity
             self._state.peak_equity = current_equity
+            self._state.drawdown_pct = 0.0
+            self._state.max_drawdown_pct = 0.0
+            self._state.water_level = WaterLevel.GREEN
+            self._state.is_locked = False
+            self._state.lock_reason = ""
             self._peak_initialized = True
-            logger.info(f"[资本安全] 首次同步初始资金=${current_equity:,.0f}")
+            logger.info(f"[资本安全] 首次同步初始资金=${current_equity:,.0f} (重置回撤/水位/锁定)")
         elif current_equity > self._state.peak_equity:
             self._state.peak_equity = current_equity
         
@@ -625,11 +630,14 @@ class CapitalSafetySystem:
                 self._state.is_locked = bool(row["is_locked"])
                 self._state.lock_reason = row["lock_reason"] or ""
                 self._state.last_update = row["last_update"] or ""
-                self._peak_initialized = True
+                # 2026-06-10: 始终从 broker 重新初始化 peak，防止 DB 残留值
+                # (如模拟盘→实盘切换) 导致虚假回撤触发熔断
+                self._peak_initialized = False
                 logger.info(
-                    f"[资本安全] 状态已加载 | 净值=${self._state.current_equity:,.0f} | "
+                    f"[资本安全] 状态已加载 | DB净值=${self._state.current_equity:,.0f} | "
                     f"回撤={self._state.drawdown_pct*100:.1f}% | "
-                    f"水位={self._state.water_level.value}"
+                    f"水位={self._state.water_level.value} | "
+                    f"(peak 将从 broker 重新初始化)"
                 )
             else:
                 # P1 修复 (2026-04-16): 无历史记录时，初始资金将在首次 update_account 时从实际账户同步

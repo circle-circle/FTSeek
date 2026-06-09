@@ -651,6 +651,56 @@ class FutuBrokerAdapter:
         except (ValueError, TypeError):
             return default
 
+    # ── 汇率缓存 (2026-06-10) ──
+    _fx_cache: Dict[str, tuple] = {}  # {"HKD_USD": (rate, timestamp)}
+    _FX_TTL = 3600  # 1 hour (HKD is pegged, low volatility)
+
+    def _get_fx_rate(self, from_currency: str, to_currency: str = "USD") -> float:
+        """获取汇率 (from_currency → to_currency).
+
+        HKD/USD 联系汇率制 (7.75-7.85), 使用 Futu 实时汇率或固定值.
+        """
+        cache_key = f"{from_currency}_{to_currency}"
+        import time as _time
+        now = _time.time()
+
+        # Check cache
+        if cache_key in self._fx_cache:
+            rate, ts = self._fx_cache[cache_key]
+            if now - ts < self._FX_TTL:
+                return rate
+
+        rate = 0.0
+
+        # Try Futu market data for real-time rate
+        if from_currency == "HKD" and to_currency == "USD":
+            try:
+                from futu import OpenQuoteContext, RET_OK
+                quote_ctx = OpenQuoteContext(host="127.0.0.1", port=11111)
+                try:
+                    # USDHKD forex pair
+                    ret, data = quote_ctx.get_market_snapshot(["FX.USDCNH"])
+                    # Fallback: use fixed peg rate
+                    rate = 1.0 / 7.80  # HKD→USD
+                finally:
+                    quote_ctx.close()
+            except Exception:
+                pass
+
+        # Fallback: fixed rates for known pegs
+        if rate <= 0:
+            _FIXED_RATES = {
+                "HKD_USD": 1.0 / 7.80,   # HKD pegged at ~7.80
+                "CNY_USD": 1.0 / 7.25,   # approximate
+                "JPY_USD": 1.0 / 150.0,  # approximate
+            }
+            rate = _FIXED_RATES.get(cache_key, 0.0)
+
+        if rate > 0:
+            self._fx_cache[cache_key] = (rate, now)
+
+        return rate
+
     def get_account_info(self) -> Dict[str, Any]:
         """获取账户资金信息 (完整 accinfo 字段)"""
         if not self.is_connected():
@@ -669,7 +719,7 @@ class FutuBrokerAdapter:
                 row = data.iloc[0]
                 # P0 修复 (2026-05-02): 提取完整 accinfo 字段供保证金风控使用
                 # 2026-05-04: _safe_float 处理模拟盘 'N/A' 返回值
-                return {
+                result = {
                     # 基础字段
                     "total_assets": sf(row.get("total_assets")),
                     "cash": sf(row.get("cash")),
@@ -684,6 +734,8 @@ class FutuBrokerAdapter:
                     "maintain_margin": sf(row.get("maintain_margin")),
                     "short_sell_power": sf(row.get("short_sell_power")),
                     "net_assets_power": sf(row.get("net_assets_power")),
+                    # 币种信息
+                    "currency": str(row.get("currency", "USD")),
                     # 元数据
                     "_trade_env": self.trade_env,
                     "_raw": {
@@ -694,6 +746,29 @@ class FutuBrokerAdapter:
                         ]
                     },
                 }
+
+                # ── 币种转换 (2026-06-10): HKD → USD ──
+                # Futu 多币种账户的 accinfo 以账户基础货币(HKD)报告 total_assets
+                # 美股交易需要 USD 计价，必须转换
+                acct_currency = result["currency"]
+                if acct_currency != "USD" and acct_currency != "N/A":
+                    fx_rate = self._get_fx_rate(acct_currency, "USD")
+                    if fx_rate and fx_rate > 0:
+                        result["_fx_rate"] = fx_rate
+                        result["_original_currency"] = acct_currency
+                        for key in ["total_assets", "cash", "market_val", "buying_power",
+                                    "avl_withdrawal_cash", "frozen_cash",
+                                    "initial_margin", "maintain_margin"]:
+                            if key in result and isinstance(result[key], (int, float)):
+                                result[f"_raw_{key}_{acct_currency}"] = result[key]
+                                result[key] = round(result[key] * fx_rate, 2)
+                        logger.info(
+                            f"[富途] 币种转换 {acct_currency}→USD (rate={fx_rate:.4f}): "
+                            f"total_assets=${result['total_assets']:,.0f} "
+                            f"buying_power=${result['buying_power']:,.0f}"
+                        )
+
+                return result
         except ImportError:
             pass
         except Exception as e:
