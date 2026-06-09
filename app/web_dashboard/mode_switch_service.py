@@ -142,11 +142,13 @@ def switch_mode(target_mode: str, confirm: str = "") -> Dict[str, Any]:
     try:
         if target_mode == "simulate":
             write_env_key("TRADE_ENV", "1")
+            write_env_key("FUTU_TRADE_ENV", "1")
             write_env_key("ALLOW_REAL_TRADING", "false")
             msg = "已切换到模拟盘"
 
         elif target_mode == "live_conservative":
             write_env_key("TRADE_ENV", "0")
+            write_env_key("FUTU_TRADE_ENV", "0")
             write_env_key("ALLOW_REAL_TRADING", "true")
             write_env_key("LIVE_CONSERVATIVE", "1")
             msg = "已切换到实盘(保守)模式 — 仓位减半，风控更严"
@@ -154,6 +156,7 @@ def switch_mode(target_mode: str, confirm: str = "") -> Dict[str, Any]:
 
         elif target_mode == "live_normal":
             write_env_key("TRADE_ENV", "0")
+            write_env_key("FUTU_TRADE_ENV", "0")
             write_env_key("ALLOW_REAL_TRADING", "true")
             write_env_key("LIVE_CONSERVATIVE", "0")
             msg = "已切换到实盘(正常)模式"

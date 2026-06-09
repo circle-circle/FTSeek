@@ -95,17 +95,22 @@ def _run_new_scheduler(args):
     # 当前运行阶段: 强制模拟盘 (TRADE_ENV=1)，禁止自动切换实盘
     _trade_env = os.environ.get("TRADE_ENV", "<unset, default=1>")
     _futu_trade_env = os.environ.get("FUTU_TRADE_ENV", "<unset, default=1>")
-    if _trade_env == "0" or _futu_trade_env == "0":
+    _allow_real = os.environ.get("ALLOW_REAL_TRADING", "false").lower() == "true"
+    if (_trade_env == "0" or _futu_trade_env == "0") and not _allow_real:
         logger.critical("🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨")
-        logger.critical("🚨 [安全拦截] 检测到实盘模式配置!")
-        logger.critical("🚨 TRADE_ENV=%s | FUTU_TRADE_ENV=%s", _trade_env, _futu_trade_env)
+        logger.critical("🚨 [安全拦截] 检测到实盘模式配置但 ALLOW_REAL_TRADING!=true!")
+        logger.critical("🚨 TRADE_ENV=%s | FUTU_TRADE_ENV=%s | ALLOW_REAL_TRADING=%s", _trade_env, _futu_trade_env, _allow_real)
         logger.critical("🚨 当前阶段为模拟盘验证期，禁止运行实盘交易！")
-        logger.critical("🚨 如需切换实盘，请手动修改 .env.us 并重启服务")
+        logger.critical("🚨 如需切换实盘，请先通过 Web Dashboard 确认切换")
         logger.critical("🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨")
         sys.exit(1)
 
-    logger.info("[安全确认] ✅ 当前运行模式: 模拟盘 (TRADE_ENV=%s | FUTU_TRADE_ENV=%s)", _trade_env, _futu_trade_env)
-    logger.info("[安全确认] ✅ 模拟盘验证期 — 持续收集数据、验证策略，禁止自动切换实盘")
+    if _trade_env == "0" or _futu_trade_env == "0":
+        logger.warning("[安全确认] ⚠️ 实盘模式已启用 (TRADE_ENV=%s | FUTU_TRADE_ENV=%s | ALLOW_REAL_TRADING=%s)", _trade_env, _futu_trade_env, _allow_real)
+        logger.warning("[安全确认] ⚠️ 所有交易将使用真实账户，产生真实盈亏")
+    else:
+        logger.info("[安全确认] ✅ 当前运行模式: 模拟盘 (TRADE_ENV=%s | FUTU_TRADE_ENV=%s)", _trade_env, _futu_trade_env)
+        logger.info("[安全确认] ✅ 模拟盘验证期 — 持续收集数据、验证策略")
 
     # ── DI 容器装配核心组件 ──
     from app.core.di_container import get_di_container

@@ -180409,3 +180409,76 @@ API: http://localhost:8901
 2026-06-10 06:42:31,453 [ftseek_us.position_sync] INFO: [US Sync] Done | Futu: 12 | DB: 12
 2026-06-10 06:42:33,318 [app.orb.engine] INFO: [ORB] tick #61 | time=18:42:33 | pos=0 | ranges=0 | done=0
 2026-06-10 06:42:33,484 [ftseek_us.subscription_manager] INFO: [US] 进入盘前/交易时段，订阅 28 只...
+2026-06-10 06:42:58,261 [ftseek_us.risk.vix_monitor] INFO: VIX 指数：20.63
+2026-06-10 06:43:33,544 [ftseek_us.subscription_manager] INFO: [US] 进入盘前/交易时段，订阅 28 只...
+2026-06-10 06:44:12,134 [ftseek_us.news_v2.sources.csrc] INFO: [CSRC] 采集完成: 0 条监管公告
+2026-06-10 06:44:31,043 [ftseek_us.news_v2.sources.hkex] INFO: [HKEX] 采集完成: 0 条公告
+2026-06-10 06:44:33,604 [ftseek_us.subscription_manager] INFO: [US] 进入盘前/交易时段，订阅 28 只...
+2026-06-10 06:45:33,663 [ftseek_us.subscription_manager] INFO: [US] 进入盘前/交易时段，订阅 28 只...
+2026-06-10 06:46:33,723 [ftseek_us.subscription_manager] INFO: [US] 进入盘前/交易时段，订阅 28 只...
+2026-06-10 06:46:51,738 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：14)
+2026-06-10 06:46:51,739 [app.data.finnhub_provider] INFO: [Finnhub] US.NFLX $81.41 (-1.49%)
+2026-06-10 06:46:51,739 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.NFLX 从 Finnhub 获取报价 $81.41
+2026-06-10 06:46:51,739 [app.data.market_data_router] WARNING: [Router] US.NFLX LV3 K 线数据不足 (0 条)
+2026-06-10 06:46:52,671 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：15)
+2026-06-10 06:46:52,671 [app.data.finnhub_provider] INFO: [Finnhub] US.SPY $737.05 (-0.29%)
+2026-06-10 06:46:52,671 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.SPY 从 Finnhub 获取报价 $737.05
+2026-06-10 06:46:52,672 [app.data.market_data_router] INFO: [Router] US.NFLX price=$81.41 sentiment=0.00 vix=20.63 regime=RANGE source=futu_lv3_quote_only
+2026-06-10 06:46:53,675 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：16)
+2026-06-10 06:46:53,675 [app.data.finnhub_provider] INFO: [Finnhub] US.XLV $154.57 (+1.26%)
+2026-06-10 06:46:53,675 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.XLV 从 Finnhub 获取报价 $154.57
+2026-06-10 06:46:53,676 [app.data.market_data_router] WARNING: [Router] US.XLV LV3 K 线数据不足 (0 条)
+2026-06-10 06:46:53,676 [app.data.market_data_router] INFO: [Router] US.XLV price=$154.57 sentiment=0.00 vix=20.63 regime=RANGE source=futu_lv3_quote_only
+2026-06-10 06:46:54,640 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：17)
+2026-06-10 06:46:54,640 [app.data.finnhub_provider] INFO: [Finnhub] US.AAPL $290.55 (-3.64%)
+2026-06-10 06:46:54,640 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.AAPL 从 Finnhub 获取报价 $290.55
+2026-06-10 06:46:54,640 [app.data.market_data_router] WARNING: [Router] US.AAPL LV3 K 线数据不足 (0 条)
+2026-06-10 06:46:54,641 [app.data.market_data_router] INFO: [Router] US.AAPL price=$290.55 sentiment=0.00 vix=20.63 regime=RANGE source=futu_lv3_quote_only
+2026-06-10 06:46:55,659 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：18)
+2026-06-10 06:46:55,659 [app.data.finnhub_provider] INFO: [Finnhub] US.XLK $180.77 (-1.85%)
+2026-06-10 06:46:55,659 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.XLK 从 Finnhub 获取报价 $180.77
+2026-06-10 06:46:55,659 [app.data.market_data_router] WARNING: [Router] US.XLK LV3 K 线数据不足 (0 条)
+2026-06-10 06:46:55,659 [app.data.market_data_router] INFO: [Router] US.XLK price=$180.77 sentiment=0.00 vix=20.63 regime=RANGE source=futu_lv3_quote_only
+2026-06-10 06:46:56,715 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：19)
+2026-06-10 06:46:56,715 [app.data.finnhub_provider] INFO: [Finnhub] US.LMT $530.13 (+1.93%)
+2026-06-10 06:46:56,715 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.LMT 从 Finnhub 获取报价 $530.13
+2026-06-10 06:46:56,715 [app.data.market_data_router] WARNING: [Router] US.LMT LV3 K 线数据不足 (0 条)
+2026-06-10 06:46:56,715 [app.data.market_data_router] INFO: [Router] US.LMT price=$530.13 sentiment=0.00 vix=20.63 regime=RANGE source=futu_lv3_quote_only
+2026-06-10 06:46:57,683 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：20)
+2026-06-10 06:46:57,683 [app.data.finnhub_provider] INFO: [Finnhub] US.DIA $509.41 (+0.10%)
+2026-06-10 06:46:57,683 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.DIA 从 Finnhub 获取报价 $509.41
+2026-06-10 06:46:57,683 [app.data.market_data_router] WARNING: [Router] US.DIA LV3 K 线数据不足 (0 条)
+2026-06-10 06:46:57,683 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.SPY 从 Finnhub 获取报价 $737.05
+2026-06-10 06:46:57,683 [app.data.market_data_router] INFO: [Router] US.DIA price=$509.41 sentiment=0.00 vix=20.63 regime=RANGE source=futu_lv3_quote_only
+2026-06-10 06:46:58,613 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：21)
+2026-06-10 06:46:58,613 [app.data.finnhub_provider] INFO: [Finnhub] US.XLI $175.60 (+1.13%)
+2026-06-10 06:46:58,614 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.XLI 从 Finnhub 获取报价 $175.60
+2026-06-10 06:46:58,614 [app.data.market_data_router] WARNING: [Router] US.XLI LV3 K 线数据不足 (0 条)
+2026-06-10 06:46:58,614 [app.data.market_data_router] INFO: [Router] US.XLI price=$175.60 sentiment=0.00 vix=20.63 regime=RANGE source=futu_lv3_quote_only
+2026-06-10 06:46:59,576 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：22)
+2026-06-10 06:46:59,576 [app.data.finnhub_provider] INFO: [Finnhub] US.NTES $120.73 (+1.71%)
+2026-06-10 06:46:59,576 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.NTES 从 Finnhub 获取报价 $120.73
+2026-06-10 06:46:59,576 [app.data.market_data_router] WARNING: [Router] US.NTES LV3 K 线数据不足 (0 条)
+2026-06-10 06:46:59,576 [app.data.market_data_router] INFO: [Router] US.NTES price=$120.73 sentiment=0.00 vix=20.63 regime=RANGE source=futu_lv3_quote_only
+2026-06-10 06:47:00,545 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：23)
+2026-06-10 06:47:00,546 [app.data.finnhub_provider] INFO: [Finnhub] US.TSM $427.92 (+0.26%)
+2026-06-10 06:47:00,546 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.TSM 从 Finnhub 获取报价 $427.92
+2026-06-10 06:47:00,546 [app.data.market_data_router] WARNING: [Router] US.TSM LV3 K 线数据不足 (0 条)
+2026-06-10 06:47:00,546 [app.data.market_data_router] INFO: [Router] US.TSM price=$427.92 sentiment=0.00 vix=20.63 regime=RANGE source=futu_lv3_quote_only
+2026-06-10 06:47:01,475 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：24)
+2026-06-10 06:47:01,475 [app.data.finnhub_provider] INFO: [Finnhub] US.TSLA $396.68 (-3.00%)
+2026-06-10 06:47:01,475 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.TSLA 从 Finnhub 获取报价 $396.68
+2026-06-10 06:47:01,475 [app.data.market_data_router] WARNING: [Router] US.TSLA LV3 K 线数据不足 (0 条)
+2026-06-10 06:47:01,475 [app.data.market_data_router] INFO: [Router] US.TSLA price=$396.68 sentiment=0.00 vix=20.63 regime=RANGE source=futu_lv3_quote_only
+2026-06-10 06:47:02,466 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：25)
+2026-06-10 06:47:02,466 [app.data.finnhub_provider] INFO: [Finnhub] US.ORCL $205.81 (-2.84%)
+2026-06-10 06:47:02,466 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.ORCL 从 Finnhub 获取报价 $205.81
+2026-06-10 06:47:02,466 [app.data.market_data_router] WARNING: [Router] US.ORCL LV3 K 线数据不足 (0 条)
+2026-06-10 06:47:02,466 [app.data.market_data_router] INFO: [Router] US.ORCL price=$205.81 sentiment=0.00 vix=20.63 regime=RANGE source=futu_lv3_quote_only
+2026-06-10 06:47:03,400 [scripts.archive.api_limit_monitor] INFO: [API 监控] 记录调用：finnhub +1 (总计：26)
+2026-06-10 06:47:03,400 [app.data.finnhub_provider] INFO: [Finnhub] US.XLF $52.46 (+0.94%)
+2026-06-10 06:47:03,400 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.XLF 从 Finnhub 获取报价 $52.46
+2026-06-10 06:47:03,400 [app.data.market_data_router] WARNING: [Router] US.XLF LV3 K 线数据不足 (0 条)
+2026-06-10 06:47:03,401 [ftseek_us.futu_lv3] INFO: [FutuLV3] 🔄 降级: US.SPY 从 Finnhub 获取报价 $737.05
+2026-06-10 06:47:03,401 [app.data.market_data_router] INFO: [Router] US.XLF price=$52.46 sentiment=0.00 vix=20.63 regime=RANGE source=futu_lv3_quote_only
+2026-06-10 06:47:32,094 [ftseek_us.position_sync] INFO: [US Sync] Done | Futu: 12 | DB: 12

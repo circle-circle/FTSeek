@@ -24,6 +24,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 MODE_PRESETS: Dict[str, Dict] = {
     "simulate": {
         "TRADE_ENV": "1",
+        "FUTU_TRADE_ENV": "1",
         "LIVE_CONSERVATIVE": "0",
         "description": "模拟盘 - 全功能验证，无真实资金",
         "risk_params": {
@@ -35,6 +36,7 @@ MODE_PRESETS: Dict[str, Dict] = {
     },
     "live_conservative": {
         "TRADE_ENV": "0",
+        "FUTU_TRADE_ENV": "0",
         "LIVE_CONSERVATIVE": "1",
         "description": "实盘保守模式 - 仓位减半，风控收紧",
         "risk_params": {
@@ -46,6 +48,7 @@ MODE_PRESETS: Dict[str, Dict] = {
     },
     "live_normal": {
         "TRADE_ENV": "0",
+        "FUTU_TRADE_ENV": "0",
         "LIVE_CONSERVATIVE": "0",
         "description": "实盘正常模式 - 标准参数",
         "risk_params": {
@@ -148,6 +151,7 @@ def switch_mode(target_mode: str, force: bool = False) -> bool:
     print("  步骤 2: 更新环境变量")
     env_updates = {
         "TRADE_ENV": preset["TRADE_ENV"],
+        "FUTU_TRADE_ENV": preset["FUTU_TRADE_ENV"],
         "LIVE_CONSERVATIVE": preset["LIVE_CONSERVATIVE"],
     }
     if not update_env_file(env_path, env_updates):
