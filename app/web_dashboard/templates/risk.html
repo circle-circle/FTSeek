@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>{{ title }}</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0f1117; color: #e1e4e8; font-size: 14px; }
+        .top-nav { background: #161b22; border-bottom: 1px solid #30363d; padding: 0 16px; display: flex; align-items: center; position: sticky; top: 0; z-index: 50; }
+        .top-nav .brand { color: #58a6ff; font-weight: 700; font-size: 14px; padding: 10px 12px 10px 0; border-right: 1px solid #30363d; margin-right: 8px; }
+        .top-nav a { color: #8b949e; text-decoration: none; padding: 10px 14px; font-size: 13px; border-bottom: 2px solid transparent; }
+        .top-nav a:hover { color: #e1e4e8; }
+        .top-nav a.active { color: #58a6ff; border-bottom-color: #58a6ff; }
+        .top-nav .spacer { flex: 1; }
+        .top-nav .mode-tag { font-size: 11px; padding: 3px 8px; border-radius: 4px; margin-left: 8px; }
+        .top-nav .mode-tag.sim { background: #1a3a2a; color: #4ade80; }
+        .top-nav .mode-tag.live { background: #3a1a1a; color: #f87171; }
+        .container { max-width: 1200px; margin: 0 auto; padding: 16px; }
+        .card { background: #161b22; border: 1px solid #30363d; border-radius: 10px; padding: 20px; margin-bottom: 16px; }
+        .card h2 { font-size: 16px; margin-bottom: 14px; color: #58a6ff; display: flex; align-items: center; justify-content: space-between; }
+        .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+        .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+        .metric { background: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 14px; text-align: center; }
+        .metric .label { font-size: 11px; color: #8b949e; text-transform: uppercase; letter-spacing: 0.5px; }
+        .metric .value { font-size: 20px; font-weight: 700; margin-top: 4px; }
+        .metric .sub { font-size: 11px; color: #8b949e; margin-top: 2px; }
+        .green { color: #4ade80; }
+        .yellow { color: #fbbf24; }
+        .orange { color: #fb923c; }
+        .red { color: #f87171; }
+        .gauge { height: 8px; background: #21262d; border-radius: 4px; margin-top: 8px; overflow: hidden; }
+        .gauge-fill { height: 100%; border-radius: 4px; transition: width 0.5s; }
+        .exposure-bar { display: flex; height: 24px; border-radius: 4px; overflow: hidden; margin: 8px 0; }
+        .exposure-bar .long-bar { background: #22c55e; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 600; color: #000; }
+        .exposure-bar .short-bar { background: #ef4444; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 600; color: #fff; }
+        .stop-row { display: flex; align-items: center; padding: 8px 0; border-bottom: 1px solid #21262d; font-size: 13px; gap: 8px; }
+        .stop-row:last-child { border-bottom: none; }
+        .stop-row .sym { width: 80px; font-weight: 700; }
+        .stop-row .dir { width: 50px; font-size: 11px; font-weight: 600; }
+        .stop-row .dir.long { color: #4ade80; }
+        .stop-row .dir.short { color: #f87171; }
+        .stop-row .prices { flex: 1; display: flex; gap: 4px; align-items: center; }
+        .stop-row .sl-bar { flex: 1; height: 14px; background: #21262d; border-radius: 2px; position: relative; overflow: hidden; }
+        .stop-row .sl-fill { height: 100%; border-radius: 2px; position: absolute; left: 0; top: 0; }
+        .stop-row .pnl { width: 80px; text-align: right; font-weight: 600; font-size: 12px; }
+        .stop-row .dist { width: 55px; text-align: right; font-size: 12px; font-weight: 600; }
+        .risk-badge { display: inline-block; padding: 6px 14px; border-radius: 6px; font-weight: 700; font-size: 14px; }
+        .risk-detail { font-size: 12px; color: #8b949e; margin-top: 6px; }
+        .risk-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px; }
+        .risk-item { background: #0d1117; padding: 10px; border-radius: 6px; }
+        .risk-item .k { font-size: 11px; color: #8b949e; }
+        .risk-item .v { font-size: 16px; font-weight: 700; margin-top: 2px; }
+        .btn { padding: 6px 12px; border: 1px solid #30363d; border-radius: 6px; background: #0d1117; color: #8b949e; cursor: pointer; font-size: 12px; }
+        .btn:hover { border-color: #58a6ff; color: #58a6ff; }
+        canvas { width: 100% !important; height: 200px !important; }
+        .loading { text-align: center; padding: 20px; color: #8b949e; }
+        @media (max-width: 768px) {
+            .top-nav { overflow-x: auto; }
+            .top-nav .brand { display: none; }
+            .grid-2 { grid-template-columns: 1fr; }
+            .grid-4 { grid-template-columns: repeat(2, 1fr); }
+            .risk-grid { grid-template-columns: 1fr; }
+            .stop-row { flex-wrap: wrap; }
+            .stop-row .prices { min-width: 100%; margin-top: 4px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="top-nav">
+        <span class="brand">FTSeek-US</span>
+        <a href="/">仪表盘</a>
+        <a href="/trade">交易</a>
+        <a href="/live-status">持仓状态</a>
+        <a href="/mode-switch">模式切换</a>
+        <a href="/risk" class="active">风控</a>
+        <a href="/health">系统健康</a>
+        <span class="spacer"></span>
+        <span class="mode-tag {{ 'live' if is_live else 'sim' }}">{{ '🔴 实盘' if is_live else '🟢 模拟' }}</span>
+    </div>
+
+    <div class="container">
+        <!-- 真实 PnL -->
+        <div class="card">
+            <h2>💰 今日真实盈亏 <button class="btn" onclick="loadRisk()">🔄</button></h2>
+            <div class="grid-4" id="pnlMetrics"></div>
+        </div>
+
+        <div class="grid-2">
+            <!-- 保证金使用率 -->
+            <div class="card">
+                <h2>🏦 保证金使用率</h2>
+                <div id="marginSection"><div class="loading">加载中...</div></div>
+            </div>
+
+            <!-- 富途风控状态 -->
+            <div class="card">
+                <h2>🛡️ 富途风控状态</h2>
+                <div id="futuRisk"><div class="loading">加载中...</div></div>
+            </div>
+        </div>
+
+        <!-- 净敞口 -->
+        <div class="card">
+            <h2>⚖️ 净敞口 (多空偏向)</h2>
+            <div id="exposure"><div class="loading">加载中...</div></div>
+        </div>
+
+        <!-- 止损距离 -->
+        <div class="card">
+            <h2>🎯 止损距离 <span style="font-size:12px;color:#8b949e;font-weight:normal">按危险程度排序</span></h2>
+            <div id="stopDistances"><div class="loading">加载中...</div></div>
+        </div>
+
+        <!-- 资金曲线 -->
+        <div class="card">
+            <h2>📈 资金曲线 (近30日)</h2>
+            <canvas id="equityChart"></canvas>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script>
+        Chart.defaults.color = '#8b949e';
+        Chart.defaults.borderColor = '#21262d';
+        let equityChart = null;
+
+        function fmt(n, d=2) { return n == null || isNaN(n) ? '--' : Number(n).toLocaleString(undefined, {minimumFractionDigits:d, maximumFractionDigits:d}); }
+        function fmtK(n) { return Math.abs(n) >= 1000 ? (n/1000).toFixed(1)+'K' : n.toFixed(0); }
+
+        async function loadRisk() {
+            try {
+                const [riskRes, pnlRes] = await Promise.all([
+                    fetch('/api/risk/status'),
+                    fetch('/api/risk/pnl-history'),
+                ]);
+                const risk = await riskRes.json();
+                const pnl = await pnlRes.json();
+
+                renderPnl(risk);
+                renderMargin(risk);
+                renderFutuRisk(risk);
+                renderExposure(risk);
+                renderStopDistances(risk);
+                renderEquityChart(pnl);
+            } catch (e) {
+                console.error('Risk load failed:', e);
+            }
+        }
+
+        function renderPnl(data) {
+            const p = data.pnl || {};
+            const totalClass = (p.total||0) >= 0 ? 'green' : 'red';
+            const realClass = (p.realized||0) >= 0 ? 'green' : 'red';
+            const unrealClass = (p.unrealized||0) >= 0 ? 'green' : 'red';
+            document.getElementById('pnlMetrics').innerHTML = `
+                <div class="metric">
+                    <div class="label">今日总盈亏</div>
+                    <div class="value ${totalClass}">${(p.total||0)>=0?'+':''}$${fmt(p.total)}</div>
+                    <div class="sub">已实现 + 未实现</div>
+                </div>
+                <div class="metric">
+                    <div class="label">已实现 (策略)</div>
+                    <div class="value ${realClass}">${(p.realized||0)>=0?'+':''}$${fmt(p.realized)}</div>
+                    <div class="sub">${p.today_trades||0} 笔策略交易</div>
+                </div>
+                <div class="metric">
+                    <div class="label">未实现 (持仓)</div>
+                    <div class="value ${unrealClass}">${(p.unrealized||0)>=0?'+':''}$${fmt(p.unrealized)}</div>
+                    <div class="sub">${p.futu_today_trades||0} 笔Futu成交</div>
+                </div>
+                <div class="metric">
+                    <div class="label">总资产</div>
+                    <div class="value">$${fmtK(data.account?.total_assets||0)}</div>
+                    <div class="sub">${data.mode||'--'}</div>
+                </div>
+            `;
+        }
+
+        function renderMargin(data) {
+            const m = data.margin || {};
+            const pct = m.usage_pct || 0;
+            const color = pct > 70 ? 'red' : pct > 50 ? 'yellow' : 'green';
+            const barColor = pct > 70 ? '#ef4444' : pct > 50 ? '#f59e0b' : '#22c55e';
+            document.getElementById('marginSection').innerHTML = `
+                <div style="text-align:center;margin-bottom:12px">
+                    <div style="font-size:36px;font-weight:700;color:${barColor}">${pct.toFixed(1)}%</div>
+                    <div style="font-size:12px;color:#8b949e">初始保证金 / 总资产</div>
+                </div>
+                <div class="gauge"><div class="gauge-fill" style="width:${Math.min(pct,100)}%;background:${barColor}"></div></div>
+                <div class="risk-grid">
+                    <div class="risk-item"><div class="k">可用购买力</div><div class="v green">$${fmtK(m.available_power||0)}</div></div>
+                    <div class="risk-item"><div class="k">初始保证金</div><div class="v">$${fmtK(m.initial_margin||0)}</div></div>
+                    <div class="risk-item"><div class="k">维持保证金</div><div class="v yellow">$${fmtK(m.maintenance_margin||0)}</div></div>
+                    <div class="risk-item"><div class="k">冻结资金</div><div class="v">$${fmtK(m.frozen_cash||0)}</div></div>
+                </div>
+            `;
+        }
+
+        function renderFutuRisk(data) {
+            const fr = data.futu_risk || {};
+            const d = fr.detail || {};
+            const colorMap = { green: '#4ade80', yellow: '#fbbf24', orange: '#fb923c', red: '#f87171', gray: '#8b949e' };
+            const bgMap = { green: '#0a2a1a', yellow: '#2a2a0a', orange: '#2a1a0a', red: '#2a0a0a', gray: '#161b22' };
+            const c = d.color || 'gray';
+            document.getElementById('futuRisk').innerHTML = `
+                <div style="text-align:center;margin-bottom:16px">
+                    <div class="risk-badge" style="background:${bgMap[c]};color:${colorMap[c]};border:1px solid ${colorMap[c]}">
+                        ${d.label || 'N/A'}
+                    </div>
+                    <div class="risk-detail" style="margin-top:8px">${d.desc || ''}</div>
+                </div>
+                <div class="risk-grid">
+                    <div class="risk-item"><div class="k">风控等级</div><div class="v">${fr.risk_level || 'N/A'}</div></div>
+                    <div class="risk-item"><div class="k">累计利息</div><div class="v ${fr.interest_charged > 0 ? 'red' : ''}">$${fmt(fr.interest_charged||0)}</div></div>
+                    <div class="risk-item"><div class="k">USD 资产</div><div class="v">$${fmtK(data.account?.usd_assets||0)}</div></div>
+                    <div class="risk-item"><div class="k">USD 现金</div><div class="v">$${fmtK(data.account?.us_cash||0)}</div></div>
+                </div>
+            `;
+        }
+
+        function renderExposure(data) {
+            const e = data.exposure || {};
+            const gross = e.gross || 0;
+            const longPct = gross > 0 ? (e.long_mv / gross * 100) : 50;
+            const shortPct = gross > 0 ? (e.short_mv / gross * 100) : 50;
+            const netRatio = e.net_ratio || 0;
+            const bias = netRatio > 20 ? '偏多' : netRatio < -20 ? '偏空' : '均衡';
+            const biasColor = netRatio > 20 ? 'green' : netRatio < -20 ? 'red' : 'yellow';
+            document.getElementById('exposure').innerHTML = `
+                <div style="display:flex;justify-content:space-between;margin-bottom:6px;font-size:13px">
+                    <span class="green">LONG $${fmtK(e.long_mv||0)}</span>
+                    <span class="${biasColor}" style="font-weight:700">${bias} (${netRatio > 0 ? '+' : ''}${netRatio}%)</span>
+                    <span class="red">SHORT $${fmtK(e.short_mv||0)}</span>
+                </div>
+                <div class="exposure-bar">
+                    <div class="long-bar" style="width:${longPct}%">${longPct > 10 ? longPct.toFixed(0)+'%' : ''}</div>
+                    <div class="short-bar" style="width:${shortPct}%">${shortPct > 10 ? shortPct.toFixed(0)+'%' : ''}</div>
+                </div>
+                <div style="display:flex;justify-content:space-between;font-size:11px;color:#8b949e;margin-top:4px">
+                    <span>净值: $${fmtK(e.net||0)}</span>
+                    <span>总值: $${fmtK(gross)}</span>
+                </div>
+            `;
+        }
+
+        function renderStopDistances(data) {
+            const stops = data.stop_distances || [];
+            const el = document.getElementById('stopDistances');
+            if (!stops.length) { el.innerHTML = '<div class="loading">无持仓数据</div>'; return; }
+
+            el.innerHTML = stops.map(s => {
+                const isLong = s.direction === 'LONG';
+                const distPct = s.sl_distance_pct;
+                const distColor = distPct < 2 ? '#ef4444' : distPct < 5 ? '#f59e0b' : '#4ade80';
+                const barW = Math.max(5, Math.min(100, distPct * 5));
+                const barColor = distPct < 2 ? '#ef4444' : distPct < 5 ? '#f59e0b' : '#22c55e';
+                const pnlClass = s.unrealized_pnl >= 0 ? 'green' : 'red';
+                const dangerTag = s.danger ? ' ⚠️' : '';
+                return `<div class="stop-row">
+                    <span class="sym">${s.symbol}${dangerTag}</span>
+                    <span class="dir ${isLong ? 'long' : 'short'}">${s.direction}</span>
+                    <span style="width:40px;text-align:right;font-size:11px;color:#8b949e">${s.size}股</span>
+                    <div class="prices">
+                        <span style="font-size:11px;color:#8b949e">SL $${s.stop_loss.toFixed(2)}</span>
+                        <div class="sl-bar">
+                            <div class="sl-fill" style="width:${barW}%;background:${barColor}"></div>
+                        </div>
+                        <span style="font-size:11px;color:#8b949e">现价 $${s.current.toFixed(2)}</span>
+                    </div>
+                    <span class="dist" style="color:${distColor}">${distPct.toFixed(1)}%</span>
+                    <span class="pnl ${pnlClass}">${s.unrealized_pnl>=0?'+':''}$${fmt(s.unrealized_pnl)}</span>
+                </div>`;
+            }).join('');
+        }
+
+        function renderEquityChart(data) {
+            const history = data.equity_history || [];
+            const ctx = document.getElementById('equityChart').getContext('2d');
+            if (equityChart) equityChart.destroy();
+            equityChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: history.map(h => h.date),
+                    datasets: [{
+                        label: '总资产',
+                        data: history.map(h => h.total_assets),
+                        borderColor: '#58a6ff',
+                        backgroundColor: 'rgba(88,166,255,0.1)',
+                        fill: true, tension: 0.3, pointRadius: 2, yAxisID: 'y',
+                    }, {
+                        label: '日盈亏',
+                        data: history.map(h => h.daily_pnl),
+                        type: 'bar',
+                        backgroundColor: history.map(h => (h.daily_pnl||0) >= 0 ? 'rgba(34,197,94,0.5)' : 'rgba(239,68,68,0.5)'),
+                        borderRadius: 2, yAxisID: 'y1',
+                    }],
+                },
+                options: {
+                    responsive: true, maintainAspectRatio: false,
+                    plugins: { legend: { display: true, labels: { boxWidth: 12, font: { size: 11 } } } },
+                    scales: {
+                        x: { grid: { display: false } },
+                        y: { position: 'left', grid: { color: '#21262d' }, title: { display: true, text: '总资产', font: { size: 10 } } },
+                        y1: { position: 'right', grid: { display: false }, title: { display: true, text: '日盈亏', font: { size: 10 } } },
+                    },
+                },
+            });
+        }
+
+        loadRisk();
+        setInterval(loadRisk, 30000);
+    </script>
+</body>
+</html>

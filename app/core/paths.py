@@ -64,7 +64,10 @@ def get_rejections_db() -> Path:
 
 
 def get_trade_records_db() -> Path:
-    """获取 ftseek_us.db 路径"""
+    """获取 ftseek_us.db 路径 (实盘: ftseek_us_live.db)"""
+    # 实盘隔离 (2026-06-09): TRADE_ENV=0 时使用独立数据库文件
+    if os.getenv("TRADE_ENV", "1").strip() == "0":
+        return _get_project_root() / "data" / "ftseek_us_live.db"
     cfg = _get_config()
     relative = cfg.get_dotted("paths.trade_records_db", "data/ftseek_us.db")
     if os.path.isabs(relative):

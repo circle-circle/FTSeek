@@ -116,9 +116,8 @@ def _check_daily_drawdown(equity: float) -> Tuple[bool, str]:
         try:
             import sqlite3
             import os
-            db_path = os.path.join(
-                os.path.dirname(__file__), '..', '..', 'data', 'ftseek_us.db')
-            db_path = os.path.normpath(db_path)
+            from app.core.db_utils import get_main_db
+            db_path = str(get_main_db())
             if os.path.exists(db_path):
                 conn = sqlite3.connect(db_path)
                 conn.execute("PRAGMA journal_mode=WAL")

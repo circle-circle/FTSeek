@@ -15,6 +15,7 @@ Usage:
     self._conn = db_connect_long(get_main_db())
 """
 
+import os
 import sqlite3
 import logging
 from pathlib import Path
@@ -28,13 +29,28 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 _DATA_DIR = _PROJECT_ROOT / "data"
 
 
+def is_live_mode() -> bool:
+    """判断是否为实盘模式 (从 .env.us 实时读取, 无需重启进程)"""
+    env_file = _PROJECT_ROOT / ".env.us"
+    if env_file.exists():
+        with open(env_file) as f:
+            for line in f:
+                if line.strip().startswith("TRADE_ENV="):
+                    return line.strip().split("=", 1)[1].strip() == "0"
+    return os.getenv("TRADE_ENV", "1").strip() == "0"
+
+
 def get_main_db() -> Path:
-    """Get path to main ftseek_us.db"""
+    """Get path to main ftseek_us.db (live: ftseek_us_live.db)"""
+    if is_live_mode():
+        return _DATA_DIR / "ftseek_us_live.db"
     return _DATA_DIR / "ftseek_us.db"
 
 
 def get_trade_records_db() -> Path:
-    """Get path to trade_records.db (alias for main db in US)"""
+    """Get path to trade_records.db (alias for main db in US, live: ftseek_us_live.db)"""
+    if is_live_mode():
+        return _DATA_DIR / "ftseek_us_live.db"
     return _DATA_DIR / "ftseek_us.db"
 
 

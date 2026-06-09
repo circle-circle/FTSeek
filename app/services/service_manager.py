@@ -44,15 +44,19 @@ class ServiceManager:
     
     def _init_execution_engine(self):
         """初始化执行引擎"""
+        import os
         from app.execution.engine import ExecutionEngine
         from config_us import EXECUTION_CONFIG, OPEND_HOST, OPEND_PORT, TRADE_ENV, SIMULATE_ACCOUNT_ID
-        
+
+        # 实盘用 REAL_ACCOUNT_ID，模拟盘用 SIMULATE_ACCOUNT_ID
+        _account_id = os.getenv("REAL_ACCOUNT_ID", "") if TRADE_ENV == 0 else SIMULATE_ACCOUNT_ID
+
         exec_config = {
             **EXECUTION_CONFIG,
             "futu_host": OPEND_HOST,
             "futu_port": OPEND_PORT,
             "futu_trade_env": TRADE_ENV,
-            "account_id": SIMULATE_ACCOUNT_ID,
+            "account_id": _account_id,
         }
         
         self.engines['execution'] = ExecutionEngine(exec_config, self.event_store)

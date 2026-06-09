@@ -4,6 +4,8 @@
 统一封装 TRADE_ENV / LIVE_CONSERVATIVE 等环境变量判定逻辑，
 避免模式判定散落在 ConfigContainer / futu_trade_env 等多处。
 
+热加载: 每次访问 mode 属性时从 .env.us 文件实时读取，无需重启进程。
+
 用法:
     from app.core.trading_mode import TradingMode, TradingModeEnum
 
@@ -17,9 +19,13 @@ from __future__ import annotations
 import logging
 import os
 from enum import Enum
+from pathlib import Path
 from typing import Optional
 
 logger = logging.getLogger(__name__)
+
+# .env.us 文件路径
+_ENV_FILE = Path(__file__).resolve().parent.parent.parent / ".env.us"
 
 
 class TradingModeEnum(Enum):
@@ -28,8 +34,22 @@ class TradingModeEnum(Enum):
     LIVE_NORMAL = "live_normal"              # 实盘正常模式
 
 
+def _read_env_file(key: str, default: str = "") -> str:
+    """从 .env.us 实时读取 (每次调用都读文件，保证热加载)"""
+    try:
+        if _ENV_FILE.exists():
+            with open(_ENV_FILE) as f:
+                for line in f:
+                    stripped = line.strip()
+                    if stripped.startswith(f"{key}=") and not stripped.startswith("#"):
+                        return stripped.split("=", 1)[1].strip()
+    except Exception:
+        pass
+    return os.getenv(key, default)
+
+
 class TradingMode:
-    """全局交易模式管理器 - 单一真相源（线程安全的进程级单例）"""
+    """全局交易模式管理器 - 热加载单例 (每次访问从 .env.us 实时读取)"""
 
     _instance: Optional["TradingMode"] = None
 
@@ -43,56 +63,47 @@ class TradingMode:
         if getattr(self, "_initialized", False):
             return
         self._initialized = True
-        self._mode = self._detect_mode()
-        logger.info("TradingMode initialized: %s", self._mode.value)
+        logger.info("TradingMode initialized (hot-reload from .env.us)")
 
     # ------------------------------------------------------------------ #
-    # 模式检测
+    # 模式检测 (每次从文件读取，实现热加载)
     # ------------------------------------------------------------------ #
     def _detect_mode(self) -> TradingModeEnum:
         """
-        从环境变量检测当前模式
+        从 .env.us 实时检测当前模式 (热加载，无需重启)
         - TRADE_ENV=1  -> SIMULATE
         - TRADE_ENV=0 + LIVE_CONSERVATIVE=1 -> LIVE_CONSERVATIVE
         - TRADE_ENV=0 + LIVE_CONSERVATIVE=0 -> LIVE_NORMAL
         """
-        trade_env = os.getenv("TRADE_ENV", "1").strip()
+        trade_env = _read_env_file("TRADE_ENV", "1")
         if trade_env == "0":
-            conservative = os.getenv("LIVE_CONSERVATIVE", "1").strip()
+            conservative = _read_env_file("LIVE_CONSERVATIVE", "1")
             if conservative == "1":
                 return TradingModeEnum.LIVE_CONSERVATIVE
             return TradingModeEnum.LIVE_NORMAL
         return TradingModeEnum.SIMULATE
 
-    def reload(self) -> TradingModeEnum:
-        """重新读取环境变量（仅在切换脚本/测试中使用，运行时不应频繁调用）"""
-        old = self._mode
-        self._mode = self._detect_mode()
-        if old != self._mode:
-            logger.warning("TradingMode reload: %s -> %s", old.value, self._mode.value)
-        return self._mode
-
     # ------------------------------------------------------------------ #
-    # 状态访问
+    # 状态访问 (每次调用 _detect_mode，实时反映 .env.us 变更)
     # ------------------------------------------------------------------ #
     @property
     def mode(self) -> TradingModeEnum:
-        return self._mode
+        return self._detect_mode()
 
     @property
     def is_simulate(self) -> bool:
-        return self._mode == TradingModeEnum.SIMULATE
+        return self.mode == TradingModeEnum.SIMULATE
 
     @property
     def is_live(self) -> bool:
-        return self._mode in (
+        return self.mode in (
             TradingModeEnum.LIVE_CONSERVATIVE,
             TradingModeEnum.LIVE_NORMAL,
         )
 
     @property
     def is_conservative(self) -> bool:
-        return self._mode == TradingModeEnum.LIVE_CONSERVATIVE
+        return self.mode == TradingModeEnum.LIVE_CONSERVATIVE
 
     @property
     def mode_label(self) -> str:
@@ -102,12 +113,12 @@ class TradingMode:
             TradingModeEnum.LIVE_CONSERVATIVE: "实盘(保守)",
             TradingModeEnum.LIVE_NORMAL: "实盘(正常)",
         }
-        return labels[self._mode]
+        return labels[self.mode]
 
     @property
     def db_mode_value(self) -> str:
         """与 trade_records.mode 列对齐的取值（兼容历史 sandbox 命名）"""
-        if self._mode == TradingModeEnum.SIMULATE:
+        if self.mode == TradingModeEnum.SIMULATE:
             return "sandbox"
         return "normal"
 
@@ -121,7 +132,7 @@ class TradingMode:
             TradingModeEnum.LIVE_CONSERVATIVE: 0.5,  # 仓位减半
             TradingModeEnum.LIVE_NORMAL: 0.8,        # 仓位 80%
         }
-        return multipliers[self._mode]
+        return multipliers[self.mode]
 
     def get_max_position_size(self, base_size: float) -> float:
         """根据模式调整最大仓位"""
@@ -142,7 +153,7 @@ class TradingMode:
     # 调试
     # ------------------------------------------------------------------ #
     def __repr__(self) -> str:
-        return f"<TradingMode mode={self._mode.value} label={self.mode_label}>"
+        return f"<TradingMode mode={self.mode.value} label={self.mode_label}>"
 
 
 __all__ = ["TradingMode", "TradingModeEnum"]

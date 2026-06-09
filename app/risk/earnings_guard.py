@@ -21,9 +21,11 @@ from datetime import date, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
+from app.core.db_utils import get_main_db
+
 logger = logging.getLogger("ftseek.earnings_guard")
 
-DEFAULT_DB_PATH = Path(__file__).resolve().parent.parent / "data" / "ftseek_us.db"
+DEFAULT_DB_PATH = get_main_db()
 
 
 class EarningsGuard:

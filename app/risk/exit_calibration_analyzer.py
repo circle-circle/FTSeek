@@ -23,11 +23,13 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Tuple
 
+from app.core.db_utils import get_main_db
+
 logger = logging.getLogger("ftseek.exit_calibration")
 
 # ── 默认值 ──
 _CALIBRATION_OUTPUT = Path(__file__).resolve().parent.parent.parent / "config" / "exit_calibration.json"
-_TRADE_DB = Path(__file__).resolve().parent.parent.parent / "data" / "ftseek_us.db"
+_TRADE_DB = get_main_db()
 
 # 分类阈值 (占 entry_price 百分比)
 _MAE_NOISE_THRESHOLD = 0.02    # MAE > 2% of entry → 噪声震出风险

@@ -768,9 +768,9 @@ class TradingScheduler:
         """
         try:
             import sqlite3
-            from pathlib import Path
+            from app.core.db_utils import get_main_db
             from datetime import timedelta
-            db_path = Path(__file__).resolve().parent.parent.parent / "data" / "ftseek_us.db"
+            db_path = get_main_db()
             if not db_path.exists():
                 return
             cooldown_min = getattr(self, 'SIGNAL_COOLDOWN_MINUTES', 60)

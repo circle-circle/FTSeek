@@ -44,7 +44,11 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger("ftseek_us.benchmark_tracker")
 
-DEFAULT_DB_PATH = str(Path(__file__).resolve().parent.parent.parent / "ftseek_us.db")
+try:
+    from app.core.db_utils import get_main_db
+    DEFAULT_DB_PATH = str(get_main_db())
+except ImportError:
+    DEFAULT_DB_PATH = str(Path(__file__).resolve().parent.parent.parent / "data" / "ftseek_us.db")
 
 # 默认基准代码 (走 MarketDataRouter 的 US.<symbol> 命名空间)
 SPY_CODE = "US.SPY"

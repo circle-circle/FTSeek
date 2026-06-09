@@ -92,8 +92,8 @@ class ScalpingBudget:
         # P1 修复 (2026-05-07): 持久化路径
         self._db_path = None
         try:
-            from pathlib import Path
-            self._db_path = str(Path(__file__).resolve().parent.parent.parent / "data" / "ftseek_us.db")
+            from app.core.db_utils import get_main_db
+            self._db_path = str(get_main_db())
             self._init_persistence_db()
             self._load_persistent_state()
         except Exception as e:

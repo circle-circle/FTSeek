@@ -2,7 +2,7 @@
   "report_type": "daily",
   "report_version": "2.0",
   "report_date": "2026-06-08",
-  "generated_at": "2026-06-09T07:35:57.919327",
+  "generated_at": "2026-06-09T07:48:51.933758",
   "summary": {
     "total_trades": 0,
     "closed_trades": 0,
@@ -303,9 +303,9 @@
     ],
     "executed_targets": [],
     "missed_opportunities": [
-      "US.MSFT",
+      "US.AAPL",
       "US.XOM",
-      "US.AAPL"
+      "US.MSFT"
     ],
     "unplanned_trades": [],
     "plan_date": "2026-06-08",

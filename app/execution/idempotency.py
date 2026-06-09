@@ -28,7 +28,11 @@ class IdempotencyManager:
         self._lock = threading.Lock()
         
         # SQLite 持久化
-        self.db_path = db_path or os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'data', 'ftseek_us.db')
+        if db_path is None:
+            from app.core.db_utils import get_main_db
+            self.db_path = str(get_main_db())
+        else:
+            self.db_path = db_path
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
         self._init_db()
         self._load_from_db()

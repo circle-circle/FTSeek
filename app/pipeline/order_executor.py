@@ -1138,8 +1138,9 @@ def _check_gates_and_conflicts(scheduler, symbol: str, signal: SignalScore, cont
     # 根据近期策略胜率动态调整信号强度，防止"连败"期间继续重仓
     try:
         from app.utils.performance_decay import get_decay_factor
+        from app.core.db_utils import get_main_db
 
-        db_path = os.path.join(os.path.dirname(__file__), "..", "..", "data", "ftseek_us.db")
+        db_path = str(get_main_db())
         strategy = context.get("strategy", "unknown")
         decay = get_decay_factor(db_path, strategy, lookback_days=5)
 
@@ -2362,8 +2363,8 @@ def _check_symbol_cooldown(symbol: str, direction) -> bool:
     # P1 升级 (2026-05-11): 查询最近 24h 同方向 ANY 亏损次数（不限于 STRUCTURE_EXIT）
     try:
         import sqlite3
-        from pathlib import Path
-        db_path = Path(__file__).resolve().parent.parent.parent / "data" / "ftseek_us.db"
+        from app.core.db_utils import get_main_db
+        db_path = get_main_db()
         with sqlite3.connect(str(db_path)) as conn:
             conn.row_factory = sqlite3.Row
             cutoff = (now_et() - timedelta(hours=24)).strftime("%Y-%m-%d")
@@ -2430,8 +2431,8 @@ def _check_reversal_cooldown(scheduler, symbol: str, direction) -> bool:
     opposite = "SHORT" if direction_str == "LONG" else "LONG"
 
     try:
-        from pathlib import Path
-        db_path = Path(__file__).resolve().parent.parent.parent / "data" / "ftseek_us.db"
+        from app.core.db_utils import get_main_db
+        db_path = get_main_db()
         with sqlite3.connect(str(db_path)) as conn:
             # 最近一笔反向平仓 (跨 source_type 全量看，因为 whipsaw 可能跨策略)
             cutoff_iso = (now_et() - timedelta(seconds=cooldown_sec)).isoformat()
@@ -2587,8 +2588,8 @@ def _check_symbol_daily_loss(symbol: str) -> bool:
     # 查询 DB
     try:
         import sqlite3
-        from pathlib import Path
-        db_path = Path(__file__).resolve().parent.parent.parent / "data" / "ftseek_us.db"
+        from app.core.db_utils import get_main_db
+        db_path = get_main_db()
         with sqlite3.connect(str(db_path)) as conn:
             row = conn.execute(
                 "SELECT COALESCE(SUM(realized_pnl), 0) FROM trade_records "
@@ -3194,9 +3195,9 @@ def _update_trade_attribution(
     与 HK 标准保持一致: 记录结果标签、盈亏类别、退出原因。
     """
     import sqlite3
-    from pathlib import Path as _Path
-    
-    db_path = _Path(__file__).resolve().parent.parent.parent / "data" / "ftseek_us.db"
+    from app.core.db_utils import get_main_db
+
+    db_path = get_main_db()
     
     try:
         with sqlite3.connect(str(db_path)) as conn:
@@ -4158,9 +4159,9 @@ def _close_position(scheduler, position: Position, current_price: float, exit_re
                     f"(trace_id={position.trace_id})，写入 orphan_outcomes"
                 )
                 try:
-                    from pathlib import Path as _P
+                    from app.core.db_utils import get_main_db
                     import sqlite3 as _sq
-                    orphan_db = _P(__file__).resolve().parent.parent.parent / "data" / "ftseek_us.db"
+                    orphan_db = get_main_db()
                     oconn = _sq.connect(str(orphan_db))
                     oconn.execute("""CREATE TABLE IF NOT EXISTS orphan_outcomes (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -253,7 +253,8 @@ class UnifiedTradeStore:
 
     def __init__(self, db_path: str = None):
         if db_path is None:
-            db_path = str(Path(__file__).resolve().parent.parent.parent / "data" / "ftseek_us.db")
+            from app.core.db_utils import get_main_db
+            db_path = str(get_main_db())
         self.db_path = db_path
         self._lock = threading.Lock()
         self._init_schema()

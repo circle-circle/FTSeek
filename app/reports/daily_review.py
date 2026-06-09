@@ -136,7 +136,8 @@ def generate_daily_review(review_date: Optional[date] = None) -> str:
     date_str = review_date.strftime("%Y-%m-%d")
     weekday_cn = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"][review_date.weekday()]
 
-    db_path = str(BASE_DIR / "data" / "ftseek_us.db")
+    from app.core.db_utils import get_main_db
+    db_path = str(get_main_db())
     store = TradeStore(db_path)
     stats = store.stats_by_date(date_str)
 

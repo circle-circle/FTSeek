@@ -56,7 +56,11 @@ def restore_positions_from_db(scheduler):
 
         from app.core.config_container import get_config
         _trade_env = get_config().trade_env_int
-        _acc_id_str = _os.getenv("SIMULATE_ACCOUNT_ID", "")
+        # 实盘用 REAL_ACCOUNT_ID，模拟盘用 SIMULATE_ACCOUNT_ID
+        if _trade_env == 1:
+            _acc_id_str = _os.getenv("SIMULATE_ACCOUNT_ID", "")
+        else:
+            _acc_id_str = _os.getenv("REAL_ACCOUNT_ID", _os.getenv("SIMULATE_ACCOUNT_ID", ""))
         _acc_id = int(_acc_id_str) if _acc_id_str else 0
         trade_env = TrdEnv.SIMULATE if _trade_env == 1 else TrdEnv.REAL
         trade_ctx = OpenSecTradeContext(
@@ -81,6 +85,25 @@ def restore_positions_from_db(scheduler):
     except Exception as e:
         logger.warning(f"[恢复] Broker 预查询失败，将恢复所有 DB 持仓: {e}")
         broker_symbols = None  # None = skip broker check, restore all
+
+    # --- 0.4 实盘隔离: 过滤自管持仓 (2026-06-09) ---
+    # 从 yaml risk.self_managed_symbols 读取，这些标的由用户手动管理，系统不导入
+    _self_managed = set()
+    try:
+        from app.core.config_container import get_config as _get_cfg
+        _sm_list = _get_cfg().get("risk.self_managed_symbols", [])
+        if _sm_list:
+            _self_managed = set(_sm_list)
+    except Exception:
+        pass
+
+    if broker_symbols is not None and _self_managed:
+        _removed = broker_symbols & _self_managed
+        if _removed:
+            logger.info(f"[恢复·隔离] 跳过自管持仓，不纳入系统: {sorted(_removed)}")
+            broker_symbols -= _self_managed
+            for sym in _removed:
+                broker_positions_map.pop(sym, None)
 
     # --- 0.5 幽灵名单预计算 (必须在步骤 1 删除之前) ---
     # P0 修复 v3 (2026-04-25): 幽灵检测以 Broker 确认为最高优先级

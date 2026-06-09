@@ -837,6 +837,15 @@ risk:
     - US.LCID     # 16%胜率 (保留)
     - US.TME      # 0%胜率 (保留)
     # 模拟盘数据采集: 移除此前添加的额外黑名单项, 允许更多标的交易
+
+  # 实盘隔离 (2026-06-09): 自管持仓 — position_sync/position_recovery 跳过这些标的
+  # 这些标的存在于真实账户但不纳入系统管理，由用户自行操作
+  # 读取者: app/core/position_sync.py (每30s同步时跳过), app/core/position_recovery.py
+  self_managed_symbols:
+    - US.AMD      # 自管做空，系统不介入
+    - US.BABA     # 自管做多，系统不介入
+    - HK.00700    # 腾讯港股，自管做多，系统不介入
+
   # RFC-056 (2026-06-01): HIGH_VOL 市况 VIX 阈值多档化
   # 数据驱动 (n=141, 90天): HIGH_VOL regime 14.9% 胜率 -$39,537, 占总亏损 271%
   # 旧逻辑: VIX>30 才熔断, VIX 22-29 区间放任入场 → 主要亏损源

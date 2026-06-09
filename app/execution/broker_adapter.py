@@ -8,6 +8,7 @@
 - 实时报价
 """
 import logging
+import os
 import time
 import threading
 from typing import Optional, Dict, Any, List
@@ -40,7 +41,12 @@ class FutuBrokerAdapter:
         self.connected = False
         self.quote_ctx = None
         self.trade_ctx = None
-        self._unlock_pwd = ""  # 模拟环境无需解锁密码
+        # 实盘解锁密码: 优先 MD5 (更安全，文件里不存明文)
+        # 获取方式: echo -n "你的密码" | md5sum | awk '{print $1}'
+        self._unlock_pwd_md5 = os.getenv("FUTU_UNLOCK_PWD_MD5", "")   # 推荐: MD5 哈希
+        self._unlock_pwd_plain = os.getenv("FUTU_UNLOCK_PWD", "")      # 备选: 明文密码
+        self._unlock_pwd = self._unlock_pwd_md5 or self._unlock_pwd_plain
+        self._use_md5 = bool(self._unlock_pwd_md5)  # 有 MD5 则用 MD5，否则用明文
 
         # 心跳与重连状态
         self._last_heartbeat_time = 0.0
@@ -126,7 +132,39 @@ class FutuBrokerAdapter:
                 # 自动探测模拟账户 ID（防止 OpenD 重启后 ID 变化）
                 self._discover_simulate_account()
             else:
-                logger.warning("[富途] 真实交易环境，请确认已设置解锁密码")
+                # 实盘: 必须先解锁交易账户
+                if not self._unlock_pwd:
+                    logger.error(
+                        "[富途·实盘] ❌ 解锁密码未设置！"
+                        "无法解锁真实交易账户，下单将被拒绝。"
+                        "请在 .env.us 中设置以下任一:\n"
+                        "  推荐: FUTU_UNLOCK_PWD_MD5=<md5哈希> "
+                        "(生成: echo -n \"密码\" | md5sum | awk '{print $1}')\n"
+                        "  备选: FUTU_UNLOCK_PWD=<明文密码>"
+                    )
+                    self.connected = False
+                    return False
+                try:
+                    if self._use_md5:
+                        ret, data = self.trade_ctx.unlock_trade(
+                            password_md5=self._unlock_pwd, is_unlock=True,
+                        )
+                    else:
+                        ret, data = self.trade_ctx.unlock_trade(
+                            password=self._unlock_pwd, is_unlock=True,
+                        )
+                    if ret == RET_OK:
+                        logger.info("[富途·实盘] ✅ 真实交易账户已解锁")
+                    else:
+                        logger.error(f"[富途·实盘] ❌ 解锁失败: {data}")
+                        self.connected = False
+                        return False
+                except Exception as unlock_err:
+                    logger.error(f"[富途·实盘] ❌ 解锁异常: {unlock_err}")
+                    self.connected = False
+                    return False
+                # 实盘也自动探测账户 ID
+                self._discover_real_account()
 
             self.connected = True
             logger.info(f"[富途] 连接成功 {self.host}:{self.port} env={'模拟' if self.trade_env == 1 else '真实'}")
@@ -165,6 +203,44 @@ class FutuBrokerAdapter:
                 logger.info(f"[富途] 模拟账户验证通过: {self.account_id}")
         except Exception as e:
             logger.warning(f"[富途] 自动探测账户异常: {e}，使用配置值: {self.account_id}")
+
+    def _discover_real_account(self):
+        """自动探测真实账户 ID，优先使用 REAL_ACCOUNT_ID 环境变量指定的账户"""
+        try:
+            from futu import TrdEnv, RET_OK
+            ret, data = self.trade_ctx.get_acc_list()
+            if ret != RET_OK:
+                logger.warning(f"[富途·实盘] 无法获取账户列表，使用配置值: {self.account_id}")
+                return
+            real_rows = data[data['trd_env'] == TrdEnv.REAL]
+            if real_rows.empty:
+                logger.error("[富途·实盘] ❌ 未找到真实账户，请确认 OpenD 已登录真实账户")
+                return
+
+            real_ids = [str(r) for r in real_rows['acc_id'].tolist()]
+            # 优先使用 REAL_ACCOUNT_ID 环境变量（多账户时明确指定）
+            target_id = os.getenv("REAL_ACCOUNT_ID", "").strip()
+            if target_id and target_id in real_ids:
+                self.account_id = target_id
+                logger.info(f"[富途·实盘] ✅ 使用指定账户: {target_id}")
+            elif target_id:
+                logger.error(
+                    f"[富途·实盘] ❌ 指定账户 {target_id} 不存在！"
+                    f"可用真实账户: {real_ids}"
+                )
+                # 不 fallback，阻断连接
+                self.connected = False
+            else:
+                # 未指定则用第一个（向后兼容，但多账户时不安全）
+                actual_real_id = str(real_rows.iloc[0]['acc_id'])
+                self.account_id = actual_real_id
+                logger.warning(
+                    f"[富途·实盘] ⚠️ 未设置 REAL_ACCOUNT_ID，"
+                    f"自动使用第一个真实账户: {actual_real_id} "
+                    f"(可用账户: {real_ids})"
+                )
+        except Exception as e:
+            logger.warning(f"[富途·实盘] 自动探测真实账户异常: {e}，使用配置值: {self.account_id}")
 
     def disconnect(self):
         """断开连接"""

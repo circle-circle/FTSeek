@@ -21,7 +21,8 @@ logger = logging.getLogger("ftseek_us.event_log")
 _queue = []
 _lock = threading.Lock()
 _db_conn = None
-_db_path = str(Path(__file__).parent.parent.parent / "data" / "ftseek_us.db")
+from app.core.db_utils import get_main_db
+_db_path = str(get_main_db())
 
 def _get_conn():
     global _db_conn

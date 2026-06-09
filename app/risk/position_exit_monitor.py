@@ -474,7 +474,8 @@ class ExitMonitor:
         """
         try:
             import sqlite3, os
-            db_path = os.path.normpath(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data', 'ftseek_us.db'))
+            from app.core.db_utils import get_main_db
+            db_path = str(get_main_db())
             if not os.path.exists(db_path):
                 return False
             conn = sqlite3.connect(db_path)

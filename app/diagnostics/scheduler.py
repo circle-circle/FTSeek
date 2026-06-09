@@ -161,9 +161,8 @@ class DiagnosticScheduler:
 
         if db_path is None:
             try:
-                from app.core.config_container import get_config
-                cc = get_config()
-                db_path = cc.get_dotted("database.path", "data/ftseek_us.db")
+                from app.core.db_utils import get_main_db
+                db_path = str(get_main_db())
             except Exception:
                 db_path = "data/ftseek_us.db"
 

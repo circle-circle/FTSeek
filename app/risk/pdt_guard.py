@@ -52,7 +52,8 @@ class PDTGuard:
     ROLLING_WINDOW_DAYS = 5  # FINRA: 5 个交易日
     
     def __init__(self, db_path: str = None):
-        self._db_path = db_path or str(Path(__file__).parent.parent.parent / "data" / "ftseek_us.db")
+        from app.core.db_utils import get_main_db
+        self._db_path = db_path or str(get_main_db())
         self._ensure_db_table()
         self._state = self._load_state()
         

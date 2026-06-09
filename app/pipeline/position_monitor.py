@@ -853,7 +853,8 @@ def restore_positions_from_db(scheduler):
         # P0-2 修复 (2026-05-22): 从 option_positions 表恢复期权持仓
         try:
             import sqlite3
-            db_path = os.path.normpath(os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'ftseek_us.db'))
+            from app.core.db_utils import get_main_db
+            db_path = str(get_main_db())
             conn = sqlite3.connect(db_path)
             cursor = conn.cursor()
             cursor.execute("SELECT option_code, qty, entry_price, strike_price, expiry_date, entry_time FROM option_positions")
@@ -1548,8 +1549,8 @@ def _reconcile_position_store(scheduler):
             RECENT_CLOSE_WINDOW_MINUTES = 10
             try:
                 from app.storage.trade_store import TradeStore
-                import os
-                db_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'data', 'ftseek_us.db')
+                from app.core.db_utils import get_main_db
+                db_path = str(get_main_db())
                 ts = TradeStore(db_path)
                 conn = ts._get_conn()
                 cutoff = (now_et() - timedelta(minutes=RECENT_CLOSE_WINDOW_MINUTES)).strftime("%Y-%m-%d %H:%M:%S")
@@ -1688,8 +1689,8 @@ def _get_db_scalping_symbols() -> set:
     """从 open_positions DB 获取 Scalping 持仓标的"""
     try:
         import sqlite3
-        from pathlib import Path
-        db_path = Path(__file__).resolve().parent.parent.parent / "data" / "ftseek_us.db"
+        from app.core.db_utils import get_main_db
+        db_path = get_main_db()
         conn = sqlite3.connect(str(db_path))
         try:
             cursor = conn.cursor()
@@ -1706,8 +1707,8 @@ def _remove_from_open_positions_db(symbol: str):
     """从 open_positions DB 移除指定标的"""
     try:
         import sqlite3
-        from pathlib import Path
-        db_path = Path(__file__).resolve().parent.parent.parent / "data" / "ftseek_us.db"
+        from app.core.db_utils import get_main_db
+        db_path = get_main_db()
         conn = sqlite3.connect(str(db_path))
         try:
             conn.execute("DELETE FROM open_positions WHERE symbol=?", (symbol,))

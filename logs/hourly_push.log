@@ -65,3 +65,6 @@
 2026-06-02 22:56:59,394 [INFO] ftseek_us.feishu_push: ✅ 飞书 Webhook 发送成功
 2026-06-02 22:56:59,404 [INFO] ftseek_us.feishu_push: ✅ 飞书 Webhook 发送成功
 2026-06-02 22:56:59,409 [INFO] ftseek_us.feishu_push: ✅ 飞书 Webhook 发送成功
+2026-06-09 08:34:55,039 [INFO] app.storage.trade_store: [TradeStore] 交易记录表初始化完成
+2026-06-09 08:36:07,069 [INFO] app.storage.trade_store: [TradeStore] 交易记录表初始化完成
+2026-06-10 04:06:32,339 [INFO] app.storage.trade_store: [TradeStore] 交易记录表初始化完成

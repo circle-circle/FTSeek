@@ -114,7 +114,7 @@ class PathConfig:
             reports_dir=data_dir / "reports",
             vix_cache_dir=data_dir / "vix_cache",
             news_cache_dir=data_dir / "news_cache",
-            db_path=data_dir / "ftseek_us.db",
+            db_path=data_dir / ("ftseek_us_live.db" if os.getenv("TRADE_ENV", "1").strip() == "0" else "ftseek_us.db"),
         )
 
 

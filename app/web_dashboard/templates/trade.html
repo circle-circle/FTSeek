@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>{{ title }}</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0f1117; color: #e1e4e8; font-size: 14px; }
+        .top-nav { background: #161b22; border-bottom: 1px solid #30363d; padding: 0 16px; display: flex; align-items: center; position: sticky; top: 0; z-index: 50; }
+        .top-nav .brand { color: #58a6ff; font-weight: 700; font-size: 14px; padding: 10px 12px 10px 0; border-right: 1px solid #30363d; margin-right: 8px; }
+        .top-nav a { color: #8b949e; text-decoration: none; padding: 10px 14px; font-size: 13px; border-bottom: 2px solid transparent; }
+        .top-nav a:hover { color: #e1e4e8; }
+        .top-nav a.active { color: #58a6ff; border-bottom-color: #58a6ff; }
+        .top-nav .spacer { flex: 1; }
+        .top-nav .mode-tag { font-size: 11px; padding: 3px 8px; border-radius: 4px; margin-left: 8px; }
+        .top-nav .mode-tag.sim { background: #1a3a2a; color: #4ade80; }
+        .top-nav .mode-tag.live { background: #3a1a1a; color: #f87171; }
+        .container { max-width: 1200px; margin: 0 auto; padding: 12px; }
+        .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+        .card { background: #161b22; border: 1px solid #30363d; border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+        .card h2 { font-size: 15px; margin-bottom: 12px; color: #58a6ff; display: flex; align-items: center; justify-content: space-between; }
+        .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+        .form-group { display: flex; flex-direction: column; gap: 4px; }
+        .form-group.full { grid-column: 1 / -1; }
+        label { font-size: 11px; font-weight: 600; color: #8b949e; text-transform: uppercase; letter-spacing: 0.5px; }
+        input, select, textarea { background: #0d1117; border: 1px solid #30363d; border-radius: 6px; padding: 10px 12px; color: #e1e4e8; font-size: 14px; outline: none; }
+        input:focus, select:focus { border-color: #58a6ff; }
+        textarea { resize: vertical; min-height: 40px; }
+        .dir-group { display: flex; gap: 6px; }
+        .dir-btn { flex: 1; padding: 10px; border: 2px solid #30363d; border-radius: 6px; background: #0d1117; color: #8b949e; font-size: 13px; font-weight: 700; cursor: pointer; text-align: center; }
+        .dir-btn.active.long { border-color: #22c55e; background: #0a2a1a; color: #4ade80; }
+        .dir-btn.active.short { border-color: #ef4444; background: #2a0a0a; color: #f87171; }
+        .dir-btn.active.open { border-color: #58a6ff; background: #0a1a2a; color: #58a6ff; }
+        .dir-btn.active.close { border-color: #f59e0b; background: #2a1a0a; color: #fbbf24; }
+        .quote-box { background: #0d1117; border: 1px solid #30363d; border-radius: 6px; padding: 12px; margin: 10px 0; }
+        .quote-price { font-size: 24px; font-weight: 700; }
+        .quote-detail { font-size: 12px; color: #8b949e; margin-top: 4px; }
+        .cap-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 10px; }
+        .cap-item { background: #0d1117; border: 1px solid #30363d; border-radius: 5px; padding: 6px; text-align: center; cursor: pointer; }
+        .cap-item:hover { border-color: #58a6ff; }
+        .cap-item .cl { font-size: 9px; color: #8b949e; text-transform: uppercase; }
+        .cap-item .cv { font-size: 16px; font-weight: 700; margin-top: 1px; }
+        .cap-item .cv.g { color: #4ade80; }
+        .cap-item .cv.r { color: #f87171; }
+        .cap-item .cv.o { color: #fb923c; }
+        .cap-item .cs { font-size: 9px; color: #484f58; }
+        .btn { padding: 10px 20px; border: none; border-radius: 6px; font-size: 14px; font-weight: 700; cursor: pointer; }
+        .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+        .btn-buy { background: #22c55e; color: #000; }
+        .btn-sell { background: #ef4444; color: #fff; }
+        .btn-ghost { background: transparent; border: 1px solid #30363d; color: #8b949e; }
+        .btn-sm { padding: 4px 10px; font-size: 12px; }
+        .btn-group { display: flex; gap: 8px; margin-top: 12px; }
+        /* Table */
+        .tw { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+        table { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 500px; }
+        th { text-align: left; padding: 8px 6px; border-bottom: 1px solid #30363d; color: #8b949e; font-weight: 600; font-size: 11px; text-transform: uppercase; white-space: nowrap; }
+        td { padding: 8px 6px; border-bottom: 1px solid #21262d; white-space: nowrap; }
+        .long { color: #4ade80; font-weight: 600; }
+        .short { color: #f87171; font-weight: 600; }
+        .pnl-pos { color: #4ade80; font-weight: 600; }
+        .pnl-neg { color: #f87171; font-weight: 600; }
+        .btn-close { border: 1px solid #ef4444; color: #f87171; background: transparent; border-radius: 4px; padding: 3px 8px; font-size: 11px; cursor: pointer; }
+        .btn-close:hover { background: #2a0a0a; }
+        .btn-cancel { border: 1px solid #f59e0b; color: #fbbf24; background: transparent; border-radius: 4px; padding: 3px 8px; font-size: 11px; cursor: pointer; }
+        .result { padding: 10px; border-radius: 6px; margin-top: 10px; display: none; font-size: 13px; }
+        .result.ok { background: #0a2a1a; border: 1px solid #22c55e; color: #4ade80; }
+        .result.err { background: #2a0a0a; border: 1px solid #ef4444; color: #f87171; }
+        /* Preview modal */
+        .overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 100; align-items: center; justify-content: center; }
+        .overlay.show { display: flex; }
+        .modal { background: #161b22; border: 1px solid #30363d; border-radius: 10px; padding: 24px; max-width: 440px; width: 92%; }
+        .modal h3 { margin-bottom: 12px; font-size: 16px; }
+        .preview-row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #21262d; }
+        .preview-row:last-child { border-bottom: none; }
+        .preview-row .pk { color: #8b949e; font-size: 13px; }
+        .preview-row .pv { font-weight: 600; font-size: 14px; text-align: right; }
+        .confirm-input { width: 100%; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; padding: 10px; color: #e1e4e8; font-size: 14px; margin: 10px 0; outline: none; }
+        .confirm-input:focus { border-color: #ef4444; }
+        .loading { text-align: center; padding: 20px; color: #8b949e; }
+        @media (max-width: 768px) {
+            .top-nav { overflow-x: auto; }
+            .top-nav .brand { display: none; }
+            .top-nav a { padding: 8px 10px; font-size: 12px; }
+            .grid-2 { grid-template-columns: 1fr; }
+            .form-grid { grid-template-columns: 1fr; }
+            .cap-grid { grid-template-columns: repeat(2, 1fr); }
+            .dir-group { flex-wrap: wrap; }
+        }
+    </style>
+</head>
+<body>
+    <div class="top-nav">
+        <span class="brand">FTSeek-US</span>
+        <a href="/">仪表盘</a>
+        <a href="/trade" class="active">交易</a>
+        <a href="/risk">风控</a>
+        <a href="/mode-switch">模式</a>
+        <a href="/health">健康</a>
+        <span class="spacer"></span>
+        <span class="mode-tag {{ 'live' if is_live else 'sim' }}">{{ '🔴 实盘' if is_live else '🟢 模拟' }}</span>
+    </div>
+
+    <div class="container">
+        <div class="grid-2">
+            <!-- Left: Order form -->
+            <div>
+                <div class="card">
+                    <h2>📝 下单</h2>
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label>标的</label>
+                            <input type="text" id="symbol" placeholder="US.AAPL" autocomplete="off">
+                        </div>
+                        <div class="form-group">
+                            <label>类型</label>
+                            <select id="orderType">
+                                <option value="MARKET">市价 MARKET</option>
+                                <option value="LIMIT">限价 LIMIT</option>
+                            </select>
+                        </div>
+                        <div class="form-group full">
+                            <label>方向</label>
+                            <div class="dir-group">
+                                <div class="dir-btn long active" data-dir="LONG" onclick="setDir('LONG')">📈 做多</div>
+                                <div class="dir-btn short" data-dir="SHORT" onclick="setDir('SHORT')">📉 做空</div>
+                            </div>
+                        </div>
+                        <div class="form-group full">
+                            <label>操作</label>
+                            <div class="dir-group">
+                                <div class="dir-btn open active" data-op="OPEN" onclick="setOp('OPEN')">🔓 开仓</div>
+                                <div class="dir-btn close" data-op="CLOSE" onclick="setOp('CLOSE')">🔒 平仓</div>
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label>数量 (股)</label>
+                            <input type="number" id="quantity" min="1" max="100000" value="10">
+                        </div>
+                        <div class="form-group" id="priceGroup" style="display:none">
+                            <label>限价 ($)</label>
+                            <input type="number" id="limitPrice" step="0.01" placeholder="0.00">
+                        </div>
+                        <div class="form-group full">
+                            <label>理由 (可选)</label>
+                            <textarea id="reason" placeholder="交易逻辑..."></textarea>
+                        </div>
+                    </div>
+
+                    <div class="quote-box" id="quoteBox" style="display:none">
+                        <div class="quote-price" id="quotePrice">--</div>
+                        <div class="quote-detail" id="quoteDetail"></div>
+                        <div class="cap-grid" id="capGrid" style="display:none"></div>
+                    </div>
+
+                    <div class="btn-group">
+                        <button class="btn btn-buy" id="btnSubmit" onclick="previewOrder()">预览下单</button>
+                        <button class="btn btn-ghost" onclick="fetchQuote()">刷新报价</button>
+                    </div>
+                    <div class="result" id="result"></div>
+                </div>
+            </div>
+
+            <!-- Right: Positions -->
+            <div>
+                <div class="card">
+                    <h2>📊 持仓 <span id="posCount" style="font-size:12px;color:#8b949e"></span>
+                        <button class="btn btn-ghost btn-sm" onclick="loadPositions()">刷新</button>
+                    </h2>
+                    <div class="tw">
+                        <table>
+                            <thead><tr>
+                                <th>标的</th><th>方向</th><th>数量</th><th>成本</th><th>现价</th><th>盈亏</th><th></th>
+                            </tr></thead>
+                            <tbody id="posBody"><tr><td colspan="7" class="loading">加载中...</td></tr></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Order tracking -->
+        <div class="card">
+            <h2>📡 今日订单 <button class="btn btn-ghost btn-sm" onclick="loadOrders()">刷新</button></h2>
+            <div class="tw">
+                <table>
+                    <thead><tr>
+                        <th>订单ID</th><th>标的</th><th>方向</th><th>数量</th><th>价格</th><th>状态</th><th>时间</th><th></th>
+                    </tr></thead>
+                    <tbody id="ordersBody"><tr><td colspan="8" class="loading">加载中...</td></tr></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Preview modal -->
+    <div class="overlay" id="previewModal">
+        <div class="modal">
+            <h3 id="previewTitle">📋 订单预览</h3>
+            <div id="previewContent" style="margin:12px 0"></div>
+            <div id="confirmGroup" style="display:none">
+                <label style="font-size:12px;color:#8b949e">输入 <b>CONFIRM</b> 确认实盘下单</label>
+                <input type="text" class="confirm-input" id="confirmInput" placeholder="CONFIRM" autocomplete="off">
+            </div>
+            <div class="btn-group">
+                <button class="btn btn-buy" id="confirmBtn" onclick="executeOrder()">确认下单</button>
+                <button class="btn btn-ghost" onclick="closePreview()">取消</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let curDir = 'LONG', curOp = 'OPEN', curQuote = null, pendingOrder = null;
+        const isLive = {{ 'true' if is_live else 'false' }};
+
+        function setDir(d) {
+            curDir = d;
+            document.querySelectorAll('[data-dir]').forEach(b => b.classList.remove('active'));
+            document.querySelector(`[data-dir="${d}"]`).classList.add('active');
+        }
+        function setOp(o) {
+            curOp = o;
+            document.querySelectorAll('[data-op]').forEach(b => b.classList.remove('active'));
+            document.querySelector(`[data-op="${o}"]`).classList.add('active');
+        }
+
+        document.getElementById('orderType').addEventListener('change', function() {
+            document.getElementById('priceGroup').style.display = this.value === 'LIMIT' ? 'flex' : 'none';
+        });
+        document.getElementById('symbol').addEventListener('blur', fetchQuote);
+        document.getElementById('symbol').addEventListener('input', function() {
+            if (this.value.trim().length >= 4) {
+                clearTimeout(this._timer);
+                this._timer = setTimeout(fetchQuote, 500);
+            }
+        });
+        document.getElementById('quantity').addEventListener('input', updateEstimate);
+
+        async function fetchQuote() {
+            const sym = document.getElementById('symbol').value.trim().toUpperCase();
+            if (!sym) return;
+            document.getElementById('quoteBox').style.display = 'block';
+            document.getElementById('quotePrice').textContent = '...';
+            try {
+                const [qRes, cRes] = await Promise.all([
+                    fetch(`/api/quote/${sym}`),
+                    fetch(`/api/order-capacity/${sym}`),
+                ]);
+                const q = await qRes.json();
+                const c = await cRes.json();
+
+                if (q.cur_price) {
+                    curQuote = q;
+                    document.getElementById('quotePrice').textContent = `$${q.cur_price.toFixed(2)}`;
+                    const upd = q.update_time ? q.update_time.substring(11, 19) : '--';
+                    document.getElementById('quoteDetail').innerHTML =
+                        `高 $${q.high_price?.toFixed(2)||'--'} | 低 $${q.low_price?.toFixed(2)||'--'} | 昨收 $${q.prev_close?.toFixed(2)||'--'} | ${upd}`;
+
+                    if (c.cur_price) {
+                        const g = document.getElementById('capGrid');
+                        g.style.display = 'grid';
+                        const held = c.held_qty || 0;
+                        const heldLabel = held > 0 ? `持${held}多` : held < 0 ? `持${Math.abs(held)}空` : '无持仓';
+                        g.innerHTML = `
+                            <div class="cap-item" onclick="setQty(${c.cash_can_buy})"><div class="cl">现金可买</div><div class="cv g">${c.cash_can_buy.toLocaleString()}</div><div class="cs">$${c.cash>=1000?(c.cash/1000).toFixed(1)+'K':c.cash.toFixed(0)}</div></div>
+                            <div class="cap-item" onclick="setQty(${c.max_can_buy})"><div class="cl">最大可买</div><div class="cv g">${c.max_can_buy.toLocaleString()}</div><div class="cs">$${c.power>=1000?(c.power/1000).toFixed(1)+'K':c.power.toFixed(0)}</div></div>
+                            <div class="cap-item" onclick="setQty(${c.can_sell})"><div class="cl">持仓可卖</div><div class="cv r">${c.can_sell.toLocaleString()}</div><div class="cs">${heldLabel}</div></div>
+                            <div class="cap-item" onclick="setQty(${c.can_short})"><div class="cl">可做空</div><div class="cv o">${c.can_short.toLocaleString()}</div><div class="cs">$${c.max_short_power>=1000?(c.max_short_power/1000).toFixed(1)+'K':c.max_short_power.toFixed(0)}</div></div>
+                        `;
+                    }
+                    updateEstimate();
+                } else {
+                    document.getElementById('quotePrice').textContent = '--';
+                    document.getElementById('quoteDetail').textContent = q.error || '无数据';
+                }
+            } catch (e) {
+                document.getElementById('quotePrice').textContent = '--';
+                document.getElementById('quoteDetail').textContent = `网络异常: ${e.message}`;
+            }
+        }
+
+        function setQty(n) { if (n > 0) { document.getElementById('quantity').value = n; updateEstimate(); } }
+
+        function updateEstimate() {
+            const qty = parseInt(document.getElementById('quantity').value) || 0;
+            const btn = document.getElementById('btnSubmit');
+            if (curQuote && curQuote.cur_price && qty > 0) {
+                const val = qty * curQuote.cur_price;
+                const action = getAction();
+                btn.textContent = `预览: ${curOp === 'OPEN' ? '开仓' : '平仓'} ${curDir === 'LONG' ? '做多' : '做空'} $${val.toLocaleString(undefined,{maximumFractionDigits:0})}`;
+                btn.className = action === 'BUY' ? 'btn btn-buy' : 'btn btn-sell';
+            } else {
+                btn.textContent = '预览下单';
+                btn.className = 'btn btn-buy';
+            }
+        }
+
+        function getAction() {
+            if (curDir === 'LONG' && curOp === 'OPEN') return 'BUY';
+            if (curDir === 'LONG' && curOp === 'CLOSE') return 'SELL';
+            if (curDir === 'SHORT' && curOp === 'OPEN') return 'SELL';
+            if (curDir === 'SHORT' && curOp === 'CLOSE') return 'BUY';
+            return 'BUY';
+        }
+
+        function previewOrder() {
+            const sym = document.getElementById('symbol').value.trim().toUpperCase();
+            const qty = parseInt(document.getElementById('quantity').value);
+            const otype = document.getElementById('orderType').value;
+            const price = document.getElementById('limitPrice').value;
+            const reason = document.getElementById('reason').value.trim();
+            const action = getAction();
+
+            if (!sym || !qty) { showMsg('err', '请填写标的和数量'); return; }
+
+            const est = curQuote ? qty * curQuote.cur_price : 0;
+            pendingOrder = { symbol: sym, direction: curDir, action, quantity: qty, order_type: otype, price: price || null, reason, operation: curOp };
+
+            const el = document.getElementById('previewContent');
+            let html = '';
+            html += '<div class="preview-row"><span class="pk">标的</span><span class="pv">' + sym + '</span></div>';
+            html += '<div class="preview-row"><span class="pk">操作</span><span class="pv">' + (curOp==='OPEN'?'开仓':'平仓') + ' ' + (curDir==='LONG'?'做多':'做空') + ' → ' + action + '</span></div>';
+            html += '<div class="preview-row"><span class="pk">数量</span><span class="pv">' + qty.toLocaleString() + ' 股</span></div>';
+            html += '<div class="preview-row"><span class="pk">类型</span><span class="pv">' + otype + (price ? ' @ $'+price : '') + '</span></div>';
+            html += '<div class="preview-row"><span class="pk">预估金额</span><span class="pv">' + (est > 0 ? '$'+est.toLocaleString(undefined,{maximumFractionDigits:0}) : '--') + '</span></div>';
+            if (reason) {
+                html += '<div class="preview-row"><span class="pk">理由</span><span class="pv" style="font-size:12px">' + reason + '</span></div>';
+            }
+            el.innerHTML = html;
+
+            document.getElementById('confirmGroup').style.display = isLive ? 'block' : 'none';
+            document.getElementById('confirmBtn').className = action === 'BUY' ? 'btn btn-buy' : 'btn btn-sell';
+            document.getElementById('confirmBtn').textContent = `确认 ${action === 'BUY' ? '买入' : '卖出'} ${qty} 股`;
+            document.getElementById('previewModal').classList.add('show');
+            if (isLive) { document.getElementById('confirmInput').value = ''; setTimeout(()=>document.getElementById('confirmInput').focus(), 100); }
+        }
+
+        function closePreview() { document.getElementById('previewModal').classList.remove('show'); pendingOrder = null; }
+
+        async function executeOrder() {
+            if (!pendingOrder) return;
+            if (isLive && document.getElementById('confirmInput').value !== 'CONFIRM') {
+                showMsg('err', '请输入 CONFIRM'); return;
+            }
+            const order = pendingOrder;  // 先保存，再关闭弹窗
+            closePreview();
+            showMsg('ok', '提交中...');
+            try {
+                const res = await fetch('/api/orders', {
+                    method: 'POST', headers: {'Content-Type':'application/json'},
+                    body: JSON.stringify(order),
+                });
+                const d = await res.json();
+                if (d.success) {
+                    showMsg('ok', `✅ 订单提交成功! ID: ${d.order?.order_id || '--'}`);
+                    document.getElementById('reason').value = '';
+                    loadOrders(); loadPositions();
+                } else {
+                    showMsg('err', `❌ ${d.errors ? d.errors.join(', ') : d.error || '下单失败'}`);
+                }
+            } catch (e) { showMsg('err', `❌ ${e.message}`); }
+        }
+
+        function showMsg(type, msg) {
+            const el = document.getElementById('result');
+            el.className = `result ${type}`; el.textContent = msg; el.style.display = 'block';
+            if (type === 'ok') setTimeout(() => el.style.display = 'none', 5000);
+        }
+
+        async function loadPositions() {
+            try {
+                const res = await fetch('/api/live-account');
+                const d = await res.json();
+                const positions = (d.positions || []).filter(p => p.qty !== 0);
+                document.getElementById('posCount').textContent = `(${positions.length})`;
+                const tbody = document.getElementById('posBody');
+                if (!positions.length) { tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#8b949e">无持仓</td></tr>'; return; }
+                tbody.innerHTML = positions.map(p => {
+                    const isLong = p.qty > 0;
+                    const pnl = p.unrealized_pl || 0;
+                    const pnlCls = pnl >= 0 ? 'pnl-pos' : 'pnl-neg';
+                    return `<tr>
+                        <td><b>${p.code}</b></td>
+                        <td class="${isLong?'long':'short'}">${isLong?'LONG':'SHORT'}</td>
+                        <td>${Math.abs(p.qty)}</td>
+                        <td>$${(p.cost_price||0).toFixed(2)}</td>
+                        <td>${p.cur_price > 0 ? '$'+p.cur_price.toFixed(2) : '<span style="color:#484f58">--</span>'}</td>
+                        <td class="${pnlCls}">${pnl>=0?'+':''}$${pnl.toFixed(2)}</td>
+                        <td><button class="btn-close" onclick="closePos('${p.code}',${p.qty})">平仓</button></td>
+                    </tr>`;
+                }).join('');
+            } catch (e) { console.error(e); }
+        }
+
+        async function closePos(sym, totalQty) {
+            const absQty = Math.abs(parseInt(totalQty) || 0);
+            if (!absQty) { alert(`${sym} 无持仓`); return; }
+            const q = prompt(`平仓 ${sym}\n持仓: ${absQty} 股\n\n输入数量 (留空=${absQty} 全平):`, '');
+            if (q === null) return;
+            const closeQty = q.trim() === '' ? 0 : parseInt(q);
+            if (isNaN(closeQty) || closeQty < 0 || closeQty > absQty) { alert('无效数量'); return; }
+            const isFull = closeQty === 0 || closeQty >= absQty;
+            const reason = prompt('理由:', isFull ? '手动全平' : `部分平仓 ${closeQty}/${absQty}`);
+            if (!reason) return;
+            try {
+                const res = await fetch('/api/orders/close', {
+                    method: 'POST', headers: {'Content-Type':'application/json'},
+                    body: JSON.stringify({ symbol: sym, reason, quantity: closeQty }),
+                });
+                const d = await res.json();
+                alert(d.success ? `✅ ${sym} ${isFull?'全平':'部分平仓'}成功!` : `❌ ${d.error||'失败'}`);
+                if (d.success) { loadPositions(); loadOrders(); }
+            } catch (e) { alert(`❌ ${e.message}`); }
+        }
+
+        async function loadOrders() {
+            try {
+                const res = await fetch('/api/orders/today');
+                const d = await res.json();
+                const orders = d.orders || [];
+                const tbody = document.getElementById('ordersBody');
+                if (!orders.length) { tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:#8b949e">今日无订单</td></tr>'; return; }
+                tbody.innerHTML = orders.map(o => {
+                    const sc = o.order_status.includes('FILLED') ? '#4ade80' : o.order_status.includes('CANCEL') ? '#f87171' : '#fbbf24';
+                    const canCancel = !o.order_status.includes('FILLED') && !o.order_status.includes('CANCEL') && !o.order_status.includes('FAILED');
+                    return `<tr>
+                        <td style="font-family:monospace;font-size:11px">${(o.order_id||'').substring(0,10)}...</td>
+                        <td><b>${o.code}</b></td>
+                        <td>${o.trd_side==='BUY'?'<span style="color:#4ade80">BUY</span>':'<span style="color:#f87171">SELL</span>'}</td>
+                        <td>${o.qty}</td>
+                        <td>${o.price > 0 ? '$'+o.price.toFixed(2) : 'MKT'}</td>
+                        <td style="color:${sc};font-weight:600">${o.order_status}</td>
+                        <td style="font-size:11px;color:#8b949e">${(o.create_time||'').substring(11,19)||'--'}</td>
+                        <td>${canCancel ? `<button class="btn-cancel" onclick="cancelOrder('${o.order_id}')">撤单</button>` : ''}</td>
+                    </tr>`;
+                }).join('');
+            } catch (e) { console.error(e); }
+        }
+
+        async function cancelOrder(id) {
+            if (!confirm(`撤销 ${id}?`)) return;
+            try {
+                const res = await fetch('/api/orders/cancel', {
+                    method: 'POST', headers: {'Content-Type':'application/json'},
+                    body: JSON.stringify({ order_id: id }),
+                });
+                const d = await res.json();
+                d.success ? showMsg('ok', '✅ 已撤销') : showMsg('err', `❌ ${d.error}`);
+                loadOrders();
+            } catch (e) { showMsg('err', e.message); }
+        }
+
+        // Init
+        loadPositions();
+        loadOrders();
+        setInterval(loadPositions, 30000);
+        setInterval(loadOrders, 15000);
+        document.addEventListener('keydown', e => { if (e.key === 'Escape') closePreview(); });
+    </script>
+</body>
+</html>

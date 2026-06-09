@@ -2,151 +2,128 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>{{ title }}</title>
     <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f5f5f5; }
-        .header { background: #2c3e50; color: white; padding: 1rem 2rem; }
-        .header h1 { font-size: 1.5rem; }
-        .container { max-width: 1400px; margin: 0 auto; padding: 2rem; }
-        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin-bottom: 2rem; }
-        .card { background: white; border-radius: 8px; padding: 1.5rem; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-        .card h3 { color: #2c3e50; margin-bottom: 1rem; font-size: 1rem; }
-        .stat { font-size: 1.8rem; font-weight: bold; color: #3498db; }
-        .positive { color: #27ae60; }
-        .negative { color: #e74c3c; }
-        .section { margin-bottom: 2rem; }
-        .section h2 { color: #2c3e50; margin-bottom: 1rem; }
-        table { width: 100%; border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden; }
-        th, td { padding: 0.75rem; text-align: left; border-bottom: 1px solid #ecf0f1; }
-        th { background: #f8f9fa; font-weight: 600; }
-        .footer { text-align: center; padding: 2rem; color: #7f8c8d; }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0f1117; color: #e1e4e8; font-size: 14px; }
+        .top-nav { background: #161b22; border-bottom: 1px solid #30363d; padding: 0 16px; display: flex; align-items: center; position: sticky; top: 0; z-index: 50; }
+        .top-nav .brand { color: #58a6ff; font-weight: 700; font-size: 14px; padding: 10px 12px 10px 0; border-right: 1px solid #30363d; margin-right: 8px; }
+        .top-nav a { color: #8b949e; text-decoration: none; padding: 10px 14px; font-size: 13px; border-bottom: 2px solid transparent; }
+        .top-nav a:hover { color: #e1e4e8; }
+        .top-nav a.active { color: #58a6ff; border-bottom-color: #58a6ff; }
+        .top-nav .spacer { flex: 1; }
+        .top-nav .mode-tag { font-size: 11px; padding: 3px 8px; border-radius: 4px; margin-left: 8px; }
+        .top-nav .mode-tag.sim { background: #1a3a2a; color: #4ade80; }
+        .top-nav .mode-tag.live { background: #3a1a1a; color: #f87171; }
+        .container { max-width: 1200px; margin: 0 auto; padding: 12px; }
+        .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 16px; }
+        .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+        .card { background: #161b22; border: 1px solid #30363d; border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+        .card h2 { font-size: 15px; margin-bottom: 12px; color: #58a6ff; display: flex; align-items: center; justify-content: space-between; }
+        .metric { background: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 12px; text-align: center; }
+        .metric .label { font-size: 10px; color: #8b949e; text-transform: uppercase; letter-spacing: 0.5px; }
+        .metric .value { font-size: 20px; font-weight: 700; margin-top: 3px; }
+        .metric .sub { font-size: 11px; color: #8b949e; margin-top: 2px; }
+        .green { color: #4ade80; } .red { color: #f87171; } .yellow { color: #fbbf24; }
+        .strat-row { display: flex; align-items: center; padding: 10px 0; border-bottom: 1px solid #21262d; gap: 12px; }
+        .strat-row:last-child { border-bottom: none; }
+        .strat-row .name { flex: 1; font-weight: 600; font-size: 13px; }
+        .strat-row .stat { text-align: right; min-width: 65px; }
+        .strat-row .stat .v { font-weight: 700; font-size: 14px; }
+        .strat-row .stat .l { color: #8b949e; font-size: 10px; }
+        .signal-row { display: flex; align-items: center; padding: 6px 0; border-bottom: 1px solid #21262d; font-size: 12px; gap: 8px; }
+        .signal-row:last-child { border-bottom: none; }
+        .signal-row .time { color: #484f58; width: 60px; }
+        .signal-row .sym { font-weight: 700; width: 75px; }
+        .signal-row .dir { width: 50px; font-weight: 600; }
+        .signal-row .conf { width: 50px; text-align: right; }
+        .signal-row .str { width: 35px; text-align: right; color: #8b949e; }
+        .signal-row .status { flex: 1; text-align: right; font-weight: 600; }
+        .long { color: #4ade80; } .short { color: #f87171; }
+        .orb-box { display: flex; align-items: center; gap: 12px; padding: 12px; background: #0d1117; border-radius: 8px; }
+        .orb-dot { width: 10px; height: 10px; border-radius: 50%; }
+        .orb-dot.on { background: #4ade80; box-shadow: 0 0 6px #4ade80; }
+        .orb-dot.off { background: #484f58; }
+        .svc-badge { display: inline-block; padding: 3px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+        .svc-ok { background: #0a2a1a; color: #4ade80; }
+        .svc-err { background: #2a0a0a; color: #f87171; }
+        .btn { padding: 5px 10px; border: 1px solid #30363d; border-radius: 5px; background: #0d1117; color: #8b949e; cursor: pointer; font-size: 12px; }
+        .btn:hover { border-color: #58a6ff; color: #58a6ff; }
+        .loading { text-align: center; padding: 20px; color: #8b949e; }
+        @media (max-width: 768px) {
+            .top-nav { overflow-x: auto; } .top-nav .brand { display: none; }
+            .top-nav a { padding: 8px 10px; font-size: 12px; }
+            .grid-4 { grid-template-columns: repeat(2, 1fr); }
+            .grid-2 { grid-template-columns: 1fr; }
+        }
     </style>
 </head>
 <body>
-    <div class="header">
-        <h1>📊 FTSeek-US Dashboard</h1>
-        <p>最后更新：{{ current_time }}</p>
+    <div class="top-nav">
+        <span class="brand">FTSeek-US</span>
+        <a href="/" class="active">仪表盘</a>
+        <a href="/trade">交易</a>
+        <a href="/risk">风控</a>
+        <a href="/mode-switch">模式</a>
+        <a href="/health">健康</a>
+        <span class="spacer"></span>
+        <span class="mode-tag {{ 'live' if is_live else 'sim' }}">{{ '🔴 实盘' if is_live else '🟢 模拟' }}</span>
     </div>
-    
+
     <div class="container">
-        <!-- 统计概览 -->
-        <div class="section">
-            <h2>统计概览</h2>
-            <div class="grid">
-                <div class="card">
-                    <h3>总交易数</h3>
-                    <div class="stat">{{ stats.total_trades }}</div>
-                    <div>笔</div>
-                </div>
-                <div class="card">
-                    <h3>胜率</h3>
-                    <div class="stat">{{ "%.1f"|format(stats.win_rate * 100) }}%</div>
-                </div>
-                <div class="card">
-                    <h3>总盈亏</h3>
-                    <div class="stat {{ 'positive' if stats.total_pnl >= 0 else 'negative' }}">
-                        ${{ "%.2f"|format(stats.total_pnl) }}
-                    </div>
-                </div>
-                <div class="card">
-                    <h3>当前持仓</h3>
-                    <div class="stat">{{ stats.current_positions }}</div>
-                    <div>个</div>
-                </div>
-                <div class="card">
-                    <h3>总资产</h3>
-                    <div class="stat">${{ "%.2f"|format(stats.total_assets) }}</div>
-                </div>
-                <div class="card">
-                    <h3>可用资金</h3>
-                    <div class="stat">${{ "%.2f"|format(stats.available_cash) }}</div>
-                </div>
-            </div>
+        <div class="grid-4" id="keyStats"></div>
+
+        <div class="grid-2">
+            <div class="card"><h2>⚡ ORB 引擎</h2><div id="orbStatus"><div class="loading">...</div></div></div>
+            <div class="card"><h2>🖥️ 服务状态</h2><div id="svcStatus"><div class="loading">...</div></div></div>
         </div>
-        
-        <!-- 持仓明细 -->
-        <div class="section">
-            <h2>持仓明细</h2>
-            {% if positions %}
-            <table>
-                <thead>
-                    <tr>
-                        <th>代码</th>
-                        <th>方向</th>
-                        <th>数量</th>
-                        <th>入场价</th>
-                        <th>当前价</th>
-                        <th>盈亏</th>
-                        <th>盈亏率</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for pos in positions %}
-                    <tr>
-                        <td>{{ pos.symbol }}</td>
-                        <td>{{ pos.direction }}</td>
-                        <td>{{ pos.quantity }}</td>
-                        <td>${{ "%.2f"|format(pos.avg_entry_price) }}</td>
-                        <td>${{ "%.2f"|format(pos.current_price) }}</td>
-                        <td class="{{ 'positive' if pos.unrealized_pnl >= 0 else 'negative' }}">
-                            ${{ "%.2f"|format(pos.unrealized_pnl) }}
-                        </td>
-                        <td class="{{ 'positive' if pos.unrealized_pnl_percent >= 0 else 'negative' }}">
-                            {{ "%.2f"|format(pos.unrealized_pnl_percent) }}%
-                        </td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-            {% else %}
-            <div class="card"><p>暂无持仓</p></div>
-            {% endif %}
+
+        <div class="grid-2">
+            <div class="card"><h2>📊 今日策略</h2><div id="todayStrats"><div class="loading">...</div></div></div>
+            <div class="card"><h2>📈 近7日累计</h2><div id="weekStrats"><div class="loading">...</div></div></div>
         </div>
-        
-        <!-- 交易记录 -->
-        <div class="section">
-            <h2>最近交易</h2>
-            {% if trades %}
-            <table>
-                <thead>
-                    <tr>
-                        <th>时间</th>
-                        <th>代码</th>
-                        <th>方向</th>
-                        <th>数量</th>
-                        <th>价格</th>
-                        <th>盈亏</th>
-                        <th>盈亏率</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for trade in trades %}
-                    <tr>
-                        <td>{{ trade.trade_date }}</td>
-                        <td>{{ trade.symbol }}</td>
-                        <td>{{ trade.direction }}</td>
-                        <td>{{ trade.quantity }}</td>
-                        <td>${{ "%.2f"|format(trade.price) }}</td>
-                        <td class="{{ 'positive' if trade.pnl >= 0 else 'negative' }}">
-                            ${{ "%.2f"|format(trade.pnl) }}
-                        </td>
-                        <td class="{{ 'positive' if trade.pnl_percent >= 0 else 'negative' }}">
-                            {{ "%.2f"|format(trade.pnl_percent) }}%
-                        </td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-            {% else %}
-            <div class="card"><p>暂无交易记录</p></div>
-            {% endif %}
+
+        <div class="card">
+            <h2>📡 今日信号 <span id="sigSum" style="font-size:12px;color:#8b949e;font-weight:normal"></span>
+                <button class="btn" onclick="loadAll()">刷新</button></h2>
+            <div id="signals"><div class="loading">...</div></div>
         </div>
     </div>
-    
-    <div class="footer">
-        FTSeek-US Dashboard v1.0 (简化版) | 数据基于数据库实时查询
-    </div>
+
+    <script>
+        function fmt(n,d=2){return n==null||isNaN(n)?'--':Number(n).toLocaleString(undefined,{minimumFractionDigits:d,maximumFractionDigits:d});}
+
+        async function loadAll(){
+            try{
+                const [sR,stR,rR]=await Promise.all([fetch('/api/stats'),fetch('/api/strategy/status'),fetch('/api/risk/status')]);
+                const s=await sR.json(), st=await stR.json(), r=await rR.json();
+                // Key stats
+                const p=r.pnl||{}, tp=p.total||0, tr=p.today_trades||0, wr=s.win_rate||0, pc=(r.stop_distances||[]).length, mp=(r.margin||{}).usage_pct||0;
+                document.getElementById('keyStats').innerHTML=`
+                    <div class="metric"><div class="label">今日盈亏</div><div class="value ${tp>=0?'green':'red'}">${tp>=0?'+':''}$${fmt(tp)}</div><div class="sub">${tr} 笔策略 / ${(p.futu_today_trades)||0} 笔Futu</div></div>
+                    <div class="metric"><div class="label">总胜率</div><div class="value">${wr.toFixed(1)}%</div><div class="sub">${s.total_trades||0} 笔历史</div></div>
+                    <div class="metric"><div class="label">持仓数</div><div class="value">${pc}</div><div class="sub">活跃</div></div>
+                    <div class="metric"><div class="label">保证金</div><div class="value ${mp>70?'red':mp>50?'yellow':'green'}">${mp.toFixed(1)}%</div><div class="sub">${r.mode||'--'}</div></div>`;
+                // ORB
+                const orb=st.orb||{}, on=orb.status==='active';
+                document.getElementById('orbStatus').innerHTML=`<div class="orb-box"><div class="orb-dot ${on?'on':'off'}"></div><div style="flex:1"><div style="font-weight:600">${on?'运行中':'未活跃'}</div><div style="font-size:12px;color:#8b949e">${orb.last_range_build||'今日未构建'}</div></div><div style="text-align:right"><div style="font-size:18px;font-weight:700">${orb.ticks_today||0}</div><div style="font-size:10px;color:#8b949e">心跳</div></div></div><div style="display:flex;gap:10px;margin-top:10px"><div class="metric" style="flex:1"><div class="label">ORB交易</div><div class="value">${orb.trades_today||0}</div></div><div class="metric" style="flex:1"><div class="label">信号</div><div class="value">${(st.signals||{}).total||0}</div></div></div>`;
+                // Service
+                const svc=st.service||{}, ok=svc.ftseek_us==='active';
+                document.getElementById('svcStatus').innerHTML=`<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px"><span class="svc-badge ${ok?'svc-ok':'svc-err'}">${ok?'✅ 运行中':'❌ 停止'}</span><span style="font-weight:600">ftseek-us</span></div><div style="font-size:12px;color:#8b949e"><div>交易引擎: ${ok?'正常':'停止'}</div><div style="margin-top:4px">Dashboard: ✅ 8901</div></div>`;
+                // Today strategies
+                const ts=st.strategies||[], te=document.getElementById('todayStrats');
+                te.innerHTML=ts.length?ts.map(x=>`<div class="strat-row"><div class="name">${x.name}</div><div class="stat"><div class="v ${x.pnl>=0?'green':'red'}">${x.pnl>=0?'+':''}$${fmt(x.pnl)}</div><div class="l">盈亏</div></div><div class="stat"><div class="v">${x.trades}</div><div class="l">笔</div></div><div class="stat"><div class="v">${x.win_rate.toFixed(0)}%</div><div class="l">胜率</div></div></div>`).join(''):'<div style="text-align:center;color:#8b949e;padding:16px">今日暂无交易</div>';
+                // Weekly
+                const ws=st.weekly||[], we=document.getElementById('weekStrats');
+                we.innerHTML=ws.length?ws.map(x=>`<div class="strat-row"><div class="name">${x.name}</div><div class="stat"><div class="v ${x.pnl>=0?'green':'red'}">${x.pnl>=0?'+':''}$${fmt(x.pnl)}</div><div class="l">累计</div></div><div class="stat"><div class="v">${x.trades}</div><div class="l">笔</div></div><div class="stat"><div class="v">${x.win_rate.toFixed(0)}%</div><div class="l">胜率</div></div></div>`).join(''):'<div style="text-align:center;color:#8b949e;padding:16px">近7日暂无</div>';
+                // Signals
+                const sig=st.recent_signals||[], sm=st.signals||{};
+                document.getElementById('sigSum').textContent=sm.total?`共${sm.total} | 接受${sm.accepted} | 拒绝${sm.rejected}`:'';
+                document.getElementById('signals').innerHTML=sig.length?sig.map(x=>`<div class="signal-row"><span class="time">${x.time||'--'}</span><span class="sym">${x.symbol}</span><span class="dir ${x.direction==='LONG'?'long':'short'}">${x.direction}</span><span class="conf">${(x.confidence||0).toFixed(3)}</span><span class="str">${x.strength||0}</span><span class="status ${x.status==='ACCEPTED'?'green':'red'}">${x.status||'--'}</span></div>`).join(''):'<div style="text-align:center;color:#8b949e;padding:16px">今日暂无信号</div>';
+            }catch(e){console.error(e);}
+        }
+        loadAll(); setInterval(loadAll, 30000);
+    </script>
 </body>
 </html>

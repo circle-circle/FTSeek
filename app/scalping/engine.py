@@ -3515,8 +3515,8 @@ class ScalpingEngine:
         """将 scalping 活跃交易写入 open_positions 表"""
         try:
             import sqlite3
-            from pathlib import Path
-            db_path = Path(__file__).resolve().parent.parent.parent / "data" / "ftseek_us.db"
+            from app.core.db_utils import get_main_db
+            db_path = get_main_db()
             conn = sqlite3.connect(str(db_path))
             cursor = conn.cursor()
             import json
@@ -3528,7 +3528,7 @@ class ScalpingEngine:
                 "stop_loss": sl_price,
             })
             cursor.execute("""
-                INSERT OR REPLACE INTO open_positions 
+                INSERT OR REPLACE INTO open_positions
                     (symbol, direction, size, avg_entry_price, initial_sl, current_sl,
                      initial_tp, take_profit_json, trail_state_json, entry_time,
                      time_stop_hours, strategy_id, source, sync_status, is_filled,
@@ -3553,8 +3553,8 @@ class ScalpingEngine:
         """从 open_positions 表移除 scalping 持仓"""
         try:
             import sqlite3
-            from pathlib import Path
-            db_path = Path(__file__).resolve().parent.parent.parent / "data" / "ftseek_us.db"
+            from app.core.db_utils import get_main_db
+            db_path = get_main_db()
             conn = sqlite3.connect(str(db_path))
             cursor = conn.cursor()
             cursor.execute(
@@ -3571,9 +3571,9 @@ class ScalpingEngine:
         """启动时从 open_positions 恢复 scalping 活跃交易"""
         try:
             import sqlite3
-            from pathlib import Path
+            from app.core.db_utils import get_main_db
             import json
-            db_path = Path(__file__).resolve().parent.parent.parent / "data" / "ftseek_us.db"
+            db_path = get_main_db()
             conn = sqlite3.connect(str(db_path))
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()

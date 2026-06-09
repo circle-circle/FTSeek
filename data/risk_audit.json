@@ -166,5 +166,19 @@
     "new_state": "NORMAL",
     "reason": "Auto Recovery: Cooldown + Market Confirmed (VIX=20.8\u2713 SPY=-2.39%\u2713)",
     "source": "System"
+  },
+  {
+    "time": "2026-06-09T23:55:31.045569",
+    "old_state": "NORMAL",
+    "new_state": "RISK_OFF",
+    "reason": "Black Swan (LLM confirmed): downgraded to sell on US.MU",
+    "source": "NewsInterceptor"
+  },
+  {
+    "time": "2026-06-10T00:26:58.265071",
+    "old_state": "RISK_OFF",
+    "new_state": "NORMAL",
+    "reason": "Auto Recovery: Cooldown + Market Confirmed (VIX=21.2\u2713 SPY=-1.61%\u2713)",
+    "source": "System"
   }
 ]

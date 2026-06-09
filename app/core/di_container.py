@@ -63,7 +63,8 @@ class DIContainer:
     def event_store(self) -> "EventStore":
         """事件存储"""
         from app.core.events import EventStore
-        db_path = str(self._base_dir / "data" / "ftseek_us.db")
+        from app.core.db_utils import get_main_db
+        db_path = str(get_main_db())
         return self._get_or_create("event_store", lambda: EventStore(db_path=db_path))
 
     # ================================================================
@@ -163,14 +164,27 @@ class DIContainer:
         except Exception:
             exec_section = {}
         # P0 修复 (2026-05-11): 强制模拟盘确认，禁止自动切换实盘
+        # 2026-06-09 更新: 允许 ALLOW_REAL_TRADING=true 时通过实盘
         _trade_env = int(os.getenv("TRADE_ENV", "1"))
         _futu_env = int(os.getenv("FUTU_TRADE_ENV", "1"))
-        if _trade_env == 0 or _futu_env == 0:
+        _allow_real = os.getenv("ALLOW_REAL_TRADING", "false").lower() == "true"
+        if (_trade_env == 0 or _futu_env == 0) and not _allow_real:
             import logging
             _logger = logging.getLogger("ftseek.di_container")
-            _logger.critical("[安全拦截] 检测到实盘配置 (TRADE_ENV=%s, FUTU_TRADE_ENV=%s)，强制切换为模拟盘", _trade_env, _futu_env)
+            _logger.critical(
+                "[安全拦截] 检测到实盘配置 (TRADE_ENV=%s, FUTU_TRADE_ENV=%s) "
+                "但 ALLOW_REAL_TRADING!=true，强制切换为模拟盘",
+                _trade_env, _futu_env,
+            )
             _trade_env = 1
             _futu_env = 1
+        elif _allow_real and (_trade_env == 0 or _futu_env == 0):
+            import logging
+            _logger = logging.getLogger("ftseek.di_container")
+            _logger.warning(
+                "[实盘模式] ALLOW_REAL_TRADING=true, TRADE_ENV=%s, FUTU_TRADE_ENV=%s — 实盘已启用",
+                _trade_env, _futu_env,
+            )
 
         exec_config = {
             "market_order_min_score": exec_section.get("order_type", {}).get("market_min_score", 80),
@@ -183,7 +197,7 @@ class DIContainer:
             "futu_host": os.getenv("OPEND_HOST", "127.0.0.1"),
             "futu_port": int(os.getenv("OPEND_PORT", "11111")),
             "futu_trade_env": _futu_env,
-            "futu_account_id": os.getenv("SIMULATE_ACCOUNT_ID", ""),
+            "futu_account_id": os.getenv("REAL_ACCOUNT_ID" if _futu_env == 0 else "SIMULATE_ACCOUNT_ID", ""),
             "auto_connect_broker": True,
             "brokers": [{"name": "futu", "priority": 1, "available": True}],
         }

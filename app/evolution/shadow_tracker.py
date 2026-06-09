@@ -552,7 +552,8 @@ class ShadowTracker:
         从 trade_records 表查询指定策略线的真实 PnL
         """
         try:
-            db_path = Path(__file__).resolve().parent.parent.parent / "data" / "ftseek_us.db"
+            from app.core.db_utils import get_main_db
+            db_path = get_main_db()
             conn = sqlite3.connect(str(db_path))
             if strategy_type == "scalping":
                 row = conn.execute(

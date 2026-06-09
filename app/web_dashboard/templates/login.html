@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>登录 - FTSeek-US</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0f1117; color: #e1e4e8; display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+        .login-box { background: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 40px; width: 380px; max-width: 90vw; }
+        .logo { text-align: center; margin-bottom: 30px; }
+        .logo h1 { font-size: 22px; color: #58a6ff; }
+        .logo p { font-size: 13px; color: #8b949e; margin-top: 6px; }
+        .form-group { margin-bottom: 20px; }
+        .form-group label { display: block; font-size: 12px; color: #8b949e; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px; }
+        .form-group input { width: 100%; background: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 12px 14px; color: #e1e4e8; font-size: 15px; outline: none; transition: border-color 0.2s; }
+        .form-group input:focus { border-color: #58a6ff; }
+        .btn { width: 100%; padding: 14px; border: none; border-radius: 8px; font-size: 15px; font-weight: 700; cursor: pointer; transition: all 0.2s; }
+        .btn-primary { background: #58a6ff; color: #000; }
+        .btn-primary:hover { background: #79b8ff; }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .error { background: #2a0a0a; border: 1px solid #ef4444; color: #f87171; padding: 10px; border-radius: 6px; font-size: 13px; margin-bottom: 16px; display: none; }
+        .hint { text-align: center; margin-top: 20px; font-size: 12px; color: #484f58; }
+    </style>
+</head>
+<body>
+    <div class="login-box">
+        <div class="logo">
+            <h1>🇺🇸 FTSeek-US</h1>
+            <p>美股交易系统 · 需要登录</p>
+        </div>
+
+        <div class="error" id="error"></div>
+
+        <form id="loginForm" onsubmit="doLogin(event)">
+            <div class="form-group">
+                <label>密码</label>
+                <input type="password" id="password" placeholder="输入登录密码" autofocus autocomplete="current-password">
+            </div>
+            <button type="submit" class="btn btn-primary" id="loginBtn">登 录</button>
+        </form>
+
+        <div class="hint">首次使用请在 .env.us 中设置 DASHBOARD_PASSWORD</div>
+    </div>
+
+    <script>
+        async function doLogin(e) {
+            e.preventDefault();
+            const pwd = document.getElementById('password').value;
+            const btn = document.getElementById('loginBtn');
+            const errEl = document.getElementById('error');
+
+            if (!pwd) {
+                errEl.textContent = '请输入密码';
+                errEl.style.display = 'block';
+                return;
+            }
+
+            btn.disabled = true;
+            btn.textContent = '登录中...';
+            errEl.style.display = 'none';
+
+            try {
+                const res = await fetch('/api/auth/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ password: pwd }),
+                });
+                const data = await res.json();
+
+                if (data.success) {
+                    window.location.href = data.redirect || '/';
+                } else {
+                    errEl.textContent = data.message || '密码错误';
+                    errEl.style.display = 'block';
+                    btn.disabled = false;
+                    btn.textContent = '登 录';
+                }
+            } catch (err) {
+                errEl.textContent = '网络异常: ' + err.message;
+                errEl.style.display = 'block';
+                btn.disabled = false;
+                btn.textContent = '登 录';
+            }
+        }
+    </script>
+</body>
+</html>

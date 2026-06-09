@@ -126,7 +126,8 @@ class CapitalSafetySystem:
                 initial_capital = 100_000  # Fallback
 
         self._state = AccountState(initial_capital=initial_capital)
-        self._db_path = db_path or str(Path(__file__).parent.parent.parent / "data" / "ftseek_us.db")
+        from app.core.db_utils import get_main_db
+        self._db_path = db_path or str(get_main_db())
         self._peak_initialized = False
         
         self._ensure_db_table()

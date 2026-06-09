@@ -20,10 +20,12 @@ from typing import Dict, Tuple, Any, Optional
 from datetime import datetime
 from pathlib import Path
 
+from app.core.db_utils import get_main_db
+
 logger = logging.getLogger(__name__)
 
 # 数据库路径 (与 trail_state_store 共用)
-DEFAULT_DB_PATH = str(Path(__file__).resolve().parent.parent.parent / "data" / "ftseek_us.db")
+DEFAULT_DB_PATH = str(get_main_db())
 
 
 class OptionQuickExitEngine:

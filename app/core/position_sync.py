@@ -17,6 +17,11 @@ from typing import Dict, Optional
 
 logger = logging.getLogger("ftseek_us.position_sync")
 
+def _get_db_path():
+    from app.core.db_utils import get_main_db
+    return str(get_main_db())
+
+# Legacy module-level constant - replaced by _get_db_path() for mode isolation
 DB_PATH = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'data', 'ftseek_us.db'))
 
 
@@ -427,11 +432,11 @@ class USPositionSync:
             return
 
         # 2. Get DB positions
-        if not os.path.exists(DB_PATH):
-            logger.warning("US DB not found: %s", DB_PATH)
+        if not os.path.exists(_get_db_path()):
+            logger.warning("US DB not found: %s", _get_db_path())
             return
 
-        conn = sqlite3.connect(DB_PATH)
+        conn = sqlite3.connect(_get_db_path())
         # M12 (2026-06-03): 与 TradeStore 对齐 WAL 模式, 防止 journal mode 冲突
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA synchronous=NORMAL")
@@ -518,6 +523,16 @@ class USPositionSync:
         _today_orders = self._query_today_futu_orders()
         self._today_orders = _today_orders  # 供 _sync_to_position_store_locked 使用
 
+        # 实盘隔离: 自管持仓不纳入系统管理 (从 yaml risk.self_managed_symbols 读取)
+        _self_managed = set()
+        try:
+            from app.core.config_container import get_config
+            _sm = get_config().get("risk.self_managed_symbols", [])
+            if _sm:
+                _self_managed = set(_sm)
+        except Exception:
+            pass
+
         for symbol, info in futu_positions.items():
             # P0 fix: Skip PRICE_FAIL-closed options entirely (no DB update or insert)
             if symbol in _pf_closed:
@@ -525,6 +540,13 @@ class USPositionSync:
                 if symbol in db_positions:
                     cursor.execute("DELETE FROM open_positions WHERE symbol=?", (symbol,))
                     logger.warning(f"[US Sync·P0] 清理 PRICE_FAIL 已关闭期权(DB): {symbol}")
+                continue
+
+            # 实盘隔离: 跳过自管持仓，不录入系统
+            if _self_managed and symbol in _self_managed:
+                if symbol in db_positions:
+                    cursor.execute("DELETE FROM open_positions WHERE symbol=?", (symbol,))
+                    logger.info(f"[US Sync·隔离] 清理自管持仓(DB): {symbol}")
                 continue
 
             if symbol in db_positions:
@@ -710,7 +732,7 @@ class USPositionSync:
         # 真正新发现: DB 没有 → 发通知
         _db_known_symbols = set()
         try:
-            conn = sqlite3.connect(DB_PATH)
+            conn = sqlite3.connect(_get_db_path())
             conn.execute("PRAGMA journal_mode=WAL")
             cursor = conn.cursor()
             cursor.execute(
@@ -1038,8 +1060,7 @@ class USPositionSync:
                 # 同步 DB
                 try:
                     import sqlite3 as _sqlite3
-                    db_path = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'ftseek_us.db')
-                    db_path = os.path.normpath(db_path)
+                    db_path = _get_db_path()
                     conn = _sqlite3.connect(db_path, timeout=5)
                     conn.execute(
                         "UPDATE open_positions SET direction=?, avg_entry_price=?, size=?, "
@@ -1285,7 +1306,7 @@ class USPositionSync:
         捕获 option_positions 表中遗漏的期权 (如 SPY260602P730000).
         """
         try:
-            conn = sqlite3.connect(DB_PATH)
+            conn = sqlite3.connect(_get_db_path())
             cursor = conn.cursor()
             cursor.execute("SELECT DISTINCT option_code FROM option_positions")
             symbols = {row[0] for row in cursor.fetchall()}
@@ -1307,10 +1328,10 @@ class USPositionSync:
     def _get_db_positions(self) -> Dict[str, dict]:
         """从 DB 读取当前持仓 (用于判断是否为已存在仓位)"""
         import sqlite3
-        if not os.path.exists(DB_PATH):
+        if not os.path.exists(_get_db_path()):
             return {}
         try:
-            conn = sqlite3.connect(DB_PATH)
+            conn = sqlite3.connect(_get_db_path())
             cursor = conn.cursor()
             # 根因修复 (2026-06-05): 与 _sync_once 保持相同过滤条件
             # 排除已关闭/stale 行, 避免一致性检查重复报告已处理的 ghost 仓
@@ -1430,7 +1451,7 @@ class USPositionSync:
             except Exception:
                 max_per_symbol = 0.25
             
-            conn = sqlite3.connect(DB_PATH)
+            conn = sqlite3.connect(_get_db_path())
             cursor = conn.cursor()
             cursor.execute("""
                 SELECT symbol, size, avg_entry_price, direction

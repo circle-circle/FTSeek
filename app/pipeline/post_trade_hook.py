@@ -91,7 +91,8 @@ def on_position_opened(position: Any, signal: Any, context: dict,
         from pathlib import Path
         from datetime import datetime
         from app.pipeline.order_executor import _insert_trade_attribution
-        attr_db = Path(__file__).resolve().parent.parent.parent / "data" / "ftseek_us.db"
+        from app.core.db_utils import get_main_db
+        attr_db = get_main_db()
         factor_meta = (getattr(signal, "metadata", {}) or {}).get("_factor_detail", {}) or {}
         owner = getattr(position, "owner_strategy", None) or "main"
         regime_str = ""

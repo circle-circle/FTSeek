@@ -69,8 +69,8 @@ class OrderTracker:
     
     def __init__(self, db_path: str = None):
         if db_path is None:
-            # 使用项目根目录的 data 文件夹（与主服务一致）
-            db_path = str(Path(__file__).resolve().parent.parent.parent / "data" / "ftseek_us.db")
+            from app.core.db_utils import get_main_db
+            db_path = str(get_main_db())
         self.db_path = db_path
         self._pending_orders: Dict[str, Dict] = {}  # futu_order_id → order_info
         self._load_pending_orders()
