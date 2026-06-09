@@ -57,6 +57,38 @@ def _get_open_positions_count() -> int:
     return 0
 
 
+def _get_new_open_positions(db_path: str, date_str: str) -> List[Dict[str, Any]]:
+    """
+    P4 修复: 查询当日新开仓但未平仓的持仓。
+    
+    从 open_positions 表中查找 entry_time 在 date_str 当天的记录，
+    这些是策略开了但还没平掉的仓位。复盘报 0 交易的根因就是这些仓位
+    不在 trade_records 中（trade_records 只记已平仓的）。
+    """
+    import sqlite3
+    result = []
+    try:
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT symbol, direction, size, avg_entry_price, current_sl, "
+            "entry_time, trader_type, strategy_id, source "
+            "FROM open_positions "
+            "WHERE entry_time LIKE ? || '%' "
+            "AND (sync_status IS NULL OR sync_status NOT IN "
+            "('closed_by_daemon','closed_by_scheduler','closed_by_sync','closed_emergency','stale_not_in_broker')) "
+            "ORDER BY entry_time",
+            (date_str,)
+        )
+        for row in cursor.fetchall():
+            result.append(dict(row))
+        conn.close()
+    except Exception as e:
+        logger.debug(f"[日报·P4] 查询新开仓失败: {e}")
+    return result
+
+
 def _format_option_positions(opt_positions: List[Dict[str, Any]]) -> List[str]:
     """格式化期权持仓段落"""
     if not opt_positions:
@@ -113,8 +145,11 @@ def generate_daily_review(review_date: Optional[date] = None) -> str:
 
     sep = "━" * 24
 
-    # ── 无交易 ──
-    if stats.get("total_trades", 0) == 0:
+    # ── P4 修复 (2026-06-09): 查询今日新开仓（含未平仓），避免报"0 交易"──
+    new_open_positions = _get_new_open_positions(db_path, date_str)
+
+    # ── 无平仓交易 ──
+    if stats.get("total_trades", 0) == 0 and not new_open_positions:
         assets = _get_account_assets()
         open_pos = _get_open_positions_count()
         lines = [
@@ -134,18 +169,18 @@ def generate_daily_review(review_date: Optional[date] = None) -> str:
         lines += [sep, "FTSeek-US 模拟交易系统"]
         return "\n".join(lines)
 
-    # ── 有交易 ──
-    total   = stats["total_trades"]
-    wins    = stats["wins"]
-    losses  = stats["losses"]
-    win_rate = stats["win_rate"]
-    total_pnl = stats["total_pnl"]
-    avg_pnl   = stats["avg_pnl"]
-    avg_hold  = stats["avg_holding_hours"]
-    avg_str   = stats["avg_strength"]
-    avg_conf  = stats["avg_confidence"]
-    exit_dist = stats["exit_reason_dist"]
-    records   = stats["records"]
+    # ── 有交易或有新开仓 ──
+    total   = stats.get("total_trades", 0)
+    wins    = stats.get("wins", 0)
+    losses  = stats.get("losses", 0)
+    win_rate = stats.get("win_rate", 0.0)
+    total_pnl = stats.get("total_pnl", 0.0)
+    avg_pnl   = stats.get("avg_pnl", 0.0)
+    avg_hold  = stats.get("avg_holding_hours", 0.0)
+    avg_str   = stats.get("avg_strength", 0)
+    avg_conf  = stats.get("avg_confidence", 0.0)
+    exit_dist = stats.get("exit_reason_dist", {})
+    records   = stats.get("records", [])
 
     # 区分普通交易和期权交易
     stock_records  = [r for r in records if "OPTION" not in r.get("direction", "")]
@@ -164,9 +199,17 @@ def generate_daily_review(review_date: Optional[date] = None) -> str:
         f"【FTSeek-US 美股日报】{date_str} {weekday_cn}",
         sep,
         "[ 交易汇总 ]",
-        f"  成交笔数：{total} 笔  胜率：{win_rate:.0%}  ({wins}胜/{losses}负)",
-        f"  总盈亏：{pnl_sign}${total_pnl:.2f}  均值：{pnl_sign}${avg_pnl:.2f}/笔",
     ]
+    # P4: 头部同时展示平仓和开仓
+    _new_open_cnt = len(new_open_positions)
+    if total > 0 and _new_open_cnt > 0:
+        lines.append(f"  平仓：{total} 笔 ({wins}胜/{losses}负)  新开仓：{_new_open_cnt} 笔")
+    elif total > 0:
+        lines.append(f"  平仓：{total} 笔  胜率：{win_rate:.0%}  ({wins}胜/{losses}负)")
+    elif _new_open_cnt > 0:
+        lines.append(f"  今日无平仓  新开仓：{_new_open_cnt} 笔（持仓中）")
+    if total > 0:
+        lines.append(f"  总盈亏：{pnl_sign}${total_pnl:.2f}  均值：{pnl_sign}${avg_pnl:.2f}/笔")
     if rr_ratio > 0:
         lines.append(f"  盈亏比：{rr_ratio:.1f}:1  均持仓：{avg_hold:.1f}h")
     else:
@@ -221,6 +264,24 @@ def generate_daily_review(review_date: Optional[date] = None) -> str:
 
     # 未平仓期权持仓段
     lines += _format_option_positions(opt_positions)
+
+    # P4 修复: 今日新开仓（含未平仓）
+    if new_open_positions:
+        lines += ["", "[ 今日新开仓（未平仓）]"]
+        for p in new_open_positions:
+            sym = p["symbol"].replace("US.", "")
+            dir_cn = "做多" if p["direction"] == "LONG" else "做空"
+            entry_t = p.get("entry_time", "")
+            # 提取时间部分 HH:MM
+            if "T" in entry_t:
+                time_part = entry_t.split("T")[1][:5]
+            else:
+                time_part = "??"
+            lines.append(
+                f"  {sym:<6} {dir_cn}  {p['size']:.0f}股 @${p['avg_entry_price']:.2f}  "
+                f"入场:{time_part}  SL=${p.get('current_sl', 0):.2f}  "
+                f"[{p.get('trader_type', 'UNKNOWN')}]"
+            )
 
     # 账户状态
     lines += ["", "[ 账户状态 ]"]

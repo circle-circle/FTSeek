@@ -278,6 +278,69 @@ class USPositionSync:
             self._futu_ctx = None
             return {}
 
+    def _query_today_futu_orders(self) -> Dict[str, Dict]:
+        """
+        查询 Futu 当日已成交委托，用于区分策略开仓 vs 手动开仓。
+        
+        Returns:
+            {symbol: {'order_id': str, 'price': float, 'qty': float, 'direction': str, 'time': str}}
+        """
+        from futu import RET_OK, TrdEnv
+        from app.core.config_container import get_config
+        import os
+        
+        _trade_env = get_config().trade_env_int
+        trade_env = TrdEnv.SIMULATE if _trade_env == 1 else TrdEnv.REAL
+        
+        # 复用已有的 _futu_ctx（不新建连接）
+        if self._futu_ctx is None:
+            return {}
+        
+        today_str = datetime.now().strftime('%Y-%m-%d')
+        result = {}
+        
+        try:
+            ret, data = self._futu_ctx.history_order_list_query(
+                start=today_str,
+                end=today_str,
+                trd_env=trade_env,
+            )
+            if ret != RET_OK or data is None or data.empty:
+                return {}
+            
+            for _, order in data.iterrows():
+                code = str(order.get('code', ''))
+                if not code.startswith('US.'):
+                    code = 'US.' + code
+                dealt_qty = float(order.get('dealt_qty', 0))
+                if dealt_qty <= 0:
+                    continue  # 未成交的跳过
+                
+                order_type = str(order.get('order_type', ''))
+                trd_side = str(order.get('trd_side', ''))
+                # BUY = LONG开仓 or SHORT平仓; SELL = SHORT开仓 or LONG平仓
+                # 简化处理：记录所有已成交委托，后续用 direction 匹配
+                price = float(order.get('price', 0))
+                order_id = str(order.get('order_id', ''))
+                create_time = str(order.get('create_time', ''))
+                
+                # 保留最新的一笔（可能被多次 fill 覆盖）
+                if code not in result or create_time > result[code].get('time', ''):
+                    result[code] = {
+                        'order_id': order_id,
+                        'price': price,
+                        'qty': dealt_qty,
+                        'trd_side': trd_side,
+                        'time': create_time,
+                    }
+            
+            if result:
+                logger.info(f"[US Sync·P3] Futu 当日委托: {len(result)} 只标的有成交记录")
+        except Exception as e:
+            logger.debug(f"[US Sync·P3] 查询 Futu 当日委托失败: {e}")
+        
+        return result
+
     def _sync_once(self):
         from futu import RET_OK, TrdEnv, TrdMarket, SecurityFirm
         import os
@@ -451,6 +514,10 @@ class USPositionSync:
         except Exception:
             pass
 
+        # P3 修复 (2026-06-09): 查询 Futu 当日委托 (DB INSERT 和 position_store 共用)
+        _today_orders = self._query_today_futu_orders()
+        self._today_orders = _today_orders  # 供 _sync_to_position_store_locked 使用
+
         for symbol, info in futu_positions.items():
             # P0 fix: Skip PRICE_FAIL-closed options entirely (no DB update or insert)
             if symbol in _pf_closed:
@@ -582,6 +649,9 @@ class USPositionSync:
                         initial_tp = info['cost'] * (1 - _fb_tp)
 
                 logger.info("[US Sync] New position: %s %s %s @ %s", symbol, info['direction'], info['qty'], info['cost'])
+                # P3 修复: 根据当日委托判断 trader_type
+                _db_trader_type = "AUTO" if symbol in _today_orders else "MANUAL"
+                _db_strategy_id = "auto_main" if _db_trader_type == "AUTO" else "futu_sync"
                 cursor.execute("""
                     INSERT INTO open_positions (
                         symbol, direction, size, avg_entry_price,
@@ -592,7 +662,7 @@ class USPositionSync:
                     symbol, info['direction'], info['qty'], info['cost'],
                     initial_sl, initial_sl, initial_tp,
                     datetime.now().isoformat(), datetime.now().isoformat(),
-                    'futu_sync', 'MANUAL', 'futu_sync'
+                    _db_strategy_id, _db_trader_type, _db_strategy_id
                 ))
 
         conn.commit()
@@ -669,6 +739,10 @@ class USPositionSync:
         except Exception:
             pass
         new_symbols = futu_symbols - mem_symbols
+        
+        # _today_orders 已在上方查询 (DB INSERT 共用)
+        _today_orders = getattr(self, '_today_orders', {})
+        
         for symbol in new_symbols:
             # P0 fix: Skip PRICE_FAIL-closed options
             if symbol in _price_fail_closed:
@@ -721,7 +795,24 @@ class USPositionSync:
             # P0 修复 (2026-05-20): 期权仓位归主线策略管理，避免误标为手动仓
             # 期权代码格式：US.XXX26XXXXP/C (含年月 + Put/Call)
             is_option = any(x in symbol for x in ['26', '27', '28']) and any(x in symbol for x in ['P', 'C'])
-            strategy_id = "voting_llm_option" if is_option else "manual_sync"
+            
+            # P3 修复 (2026-06-09): 检查 Futu 当日委托，区分策略开仓 vs 手动开仓
+            # 如果该 symbol 今日有已成交委托，大概率是策略开的（SIGKILL 后 DB 丢失）
+            _has_today_order = symbol in _today_orders
+            if is_option:
+                strategy_id = "voting_llm_option"
+                trader_type = "OPTION"
+            elif _has_today_order:
+                strategy_id = "auto_main"
+                trader_type = "AUTO"
+                _order_info = _today_orders[symbol]
+                logger.info(
+                    f"[US Sync·P3] {symbol} 匹配到当日委托 (order_id={_order_info['order_id']}), "
+                    f"标记为 auto_main (非手动)"
+                )
+            else:
+                strategy_id = "manual_sync"
+                trader_type = "MANUAL"
 
             position = Position(
                 strategy_id=strategy_id,
@@ -754,6 +845,19 @@ class USPositionSync:
                     "entry_reason": "option_discovery",
                     "strategy_id": strategy_id,
                 }
+            elif _has_today_order:
+                # P3: 策略开仓恢复 — 标记为 auto_main 恢复
+                _order_info = _today_orders[symbol]
+                position.metadata = {
+                    "source": "auto_main",
+                    "origin": "sync_recovery",
+                    "sync_origin": "position_sync",
+                    "trace_id": _sync_trace,
+                    "entry_reason": "sync_recovery_matched_order",
+                    "strategy_id": strategy_id,
+                    "futu_order_id": _order_info.get('order_id', ''),
+                    "futu_order_time": _order_info.get('time', ''),
+                }
             else:
                 position.metadata = {
                     "source": "futu_discovery",
@@ -764,10 +868,17 @@ class USPositionSync:
                     "strategy_id": strategy_id,
                 }
             self.position_store.add(symbol, position)
-            logger.warning(
-                f"⚠️ [US Sync] 发现手动开仓 {symbol} ({info['direction']} {size}股 @${cost:.2f})，"
-                f"已加入 ExitMonitor 监控 | SL=${sl_price:.2f}"
-            )
+            # P3: 日志区分策略恢复 vs 手动开仓
+            if _has_today_order:
+                logger.info(
+                    f"🔄 [US Sync·P3] 策略仓位恢复 {symbol} ({info['direction']} {size}股 @${cost:.2f})，"
+                    f"匹配当日委托 → auto_main | SL=${sl_price:.2f}"
+                )
+            else:
+                logger.warning(
+                    f"⚠️ [US Sync] 发现手动开仓 {symbol} ({info['direction']} {size}股 @${cost:.2f})，"
+                    f"已加入 ExitMonitor 监控 | SL=${sl_price:.2f}"
+                )
             
             # P1 修复 (2026-06-07): 只在 DB 中不存在时发通知（真正新发现）
             # 重启恢复的仓位已在 DB 中，不发通知避免刷屏
