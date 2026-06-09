@@ -975,9 +975,6 @@ risk:
     max_per_symbol: 0.25
     max_per_direction: 0.65
     max_total: 0.8
-    # 2026-06-10: LONG方向单独上限 (数据: SHORT 10/10 +$9115 vs LONG 1/4 -$3347)
-    # 实盘保守模式下会被 TradingMode 0.5x 缩放到 0.05
-    long_max_per_direction: 0.10
   trading:
     max_daily_trades: 500
     max_order_amount: 120000

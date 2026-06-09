@@ -811,7 +811,9 @@ def check_position_snapshot(scheduler: 'TradingScheduler'):
     
     # 优化 (2026-04-27): 盘前阶段也跳过快照，避免触发无效的 API 请求
     # Pre-Market 期间行情数据稀薄且不可靠，且不需要高频更新 PnL
-    if phase in (MarketPhase.WEEKEND, MarketPhase.OVERNIGHT, MarketPhase.PRE_MARKET):
+    # 根因修复 (2026-06-10): AFTER_HOURS 也必须跳过 — 盘后无实时行情，
+    # get_full_market_context 级联产生 ~8500 条/天的噪音 WARNING
+    if phase in (MarketPhase.WEEKEND, MarketPhase.OVERNIGHT, MarketPhase.PRE_MARKET, MarketPhase.AFTER_HOURS):
         return
     
     now_et = datetime.now(ET)

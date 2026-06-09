@@ -106,6 +106,19 @@ def scan_loop(scheduler):
                     time.sleep(1)
                 continue
 
+            # ── 数据新鲜度门禁 (2026-06-10): 主数据源不健康时不开新仓 ──
+            # 根因: Futu Push 断连 → 降级到 TwelveData 5分钟缓存 → 在旧价格上生成信号 → 滑点亏损
+            # 修复: 在决策入口检查主数据源健康状态，不健康则跳过入场（退出由 position_monitor 独立处理）
+            if phase == MarketPhase.TRADING:
+                _futu = getattr(scheduler.market_data, 'futu', None)
+                if _futu and hasattr(_futu, 'is_healthy') and not _futu.is_healthy(log_change=False):
+                    logger.warning("[扫描] ⚠️ Futu LV3 数据源不健康，跳过入场扫描 (退出监控独立运行)")
+                    for _ in range(30):  # 30s 后重试
+                        if not scheduler.running:
+                            return
+                        time.sleep(1)
+                    continue
+
             # P0-fix 2026-05-02: Kill Switch 检查
             from app.us_pipeline.emergency_interceptor import check_kill_switch
             if check_kill_switch():
