@@ -123,7 +123,13 @@ class CapitalSafetySystem:
                 cfg = get_config()
                 initial_capital = float(cfg.get_dotted("capital.fixed_amount", 100_000))
             except Exception:
-                initial_capital = 100_000  # Fallback
+                # 2026-06-10: 实盘模式下 log warning (pre_trade_gate 会 fail-close)
+                import logging as _log
+                _log.getLogger("ftseek.capital_safety").warning(
+                    "[CapitalSafety] initial_capital fallback $100K — "
+                    "broker 连接后将被真实值覆盖"
+                )
+                initial_capital = 100_000  # Fallback (临时, broker 刷新后覆盖)
 
         self._state = AccountState(initial_capital=initial_capital)
         from app.core.db_utils import get_main_db
@@ -705,7 +711,7 @@ class CapitalSafetySystem:
 # 全局单例
 _capital_instance: Optional[CapitalSafetySystem] = None
 
-def get_capital_safety_system(initial_capital: float = 100000.0,
+def get_capital_safety_system(initial_capital: Optional[float] = None,
                                trade_env: int = None) -> CapitalSafetySystem:
     """获取全局资本安全系统单例
     

@@ -79,7 +79,11 @@ def _load_limits(config=None) -> dict:
 
 
 def _get_equity() -> float:
-    """Get current account equity."""
+    """Get current account equity.
+
+    实盘 fail-close (2026-06-10): equity 不可用时返回 0 → 拒绝所有交易
+    模拟盘: 保持 fallback $100K (容错开发)
+    """
     try:
         from app.risk.capital_safety import get_capital_safety_system
         cap = get_capital_safety_system()
@@ -88,7 +92,20 @@ def _get_equity() -> float:
             return eq
     except Exception:
         pass
-    return 100_000.0  # fallback
+
+    # 实盘模式: equity 不可用 → fail-close
+    try:
+        from app.core.trading_mode import TradingMode
+        if TradingMode().is_live:
+            import logging
+            logging.getLogger(__name__).critical(
+                "🚫 [pre_trade_gate] 实盘模式但 equity 不可用 — 拒绝所有交易 (fail-close)"
+            )
+            return 0.0
+    except Exception:
+        pass
+
+    return 100_000.0  # 模拟盘 fallback
 
 
 def _is_short(direction: str) -> bool:

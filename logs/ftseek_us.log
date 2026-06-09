@@ -181503,3 +181503,424 @@ API: http://localhost:8901
 2026-06-10 07:33:20,179 [ftseek_us.subscription_manager] INFO: [US] 进入盘前/交易时段，订阅 28 只...
 2026-06-10 07:34:20,237 [ftseek_us.subscription_manager] INFO: [US] 进入盘前/交易时段，订阅 28 只...
 2026-06-10 07:34:29,389 [ftseek_us.news_v2.sources.hkex] INFO: [HKEX] 采集完成: 0 条公告
+2026-06-10 07:35:01,978 [ftseek_us.main] INFO: 收到停止信号，正在关闭...
+2026-06-10 07:35:01,978 [ftseek_us.main] INFO: [shutdown] 开始优雅关闭流程...
+2026-06-10 07:35:01,978 [app.core.scheduler_core] INFO: 停止 FTSeek-US 服务...
+2026-06-10 07:35:11,979 [ftseek_us.subscription_manager] INFO: [SubscriptionManager] 美股自动循环停止
+2026-06-10 07:35:14,848 [app.orb.engine] INFO: [ORB] 引擎已停止
+2026-06-10 07:35:14,848 [app.core.scheduler_core] INFO: [ORB] 引擎已停止
+2026-06-10 07:35:14,849 [app.analysis.strategy_attribution] INFO: [归因层] 已初始化, 数据目录: /root/.hermes/ftseek/data/attribution
+2026-06-10 07:35:14,849 [app.analysis.strategy_attribution] INFO: [归因层] 日报已写出: conflicts=0, main_pnl=0.0000, scalping_pnl=0.0000
+2026-06-10 07:35:14,849 [app.core.scheduler_core] INFO: [调度器] 归因数据已刷新
+2026-06-10 07:35:14,849 [app.core.scheduler_core] INFO: [调度器] 服务停止
+2026-06-10 07:35:14,849 [ftseek_us.main] INFO: [shutdown] scheduler 已停止
+2026-06-10 07:35:15,849 [ftseek_us.config_mgmt.drift_detector] INFO: [DriftDetector] 已停止 | 累计漂移=0
+2026-06-10 07:35:16,433 [ftseek_us.config_mgmt.hot_reloader] INFO: [HotReloader] 已停止 | 重载=1 次 | 错误=0 次
+2026-06-10 07:35:16,437 [ftseek_us.main] INFO: [shutdown] EventStore 连接已关闭
+2026-06-10 07:35:16,438 [app.data.alphavantage_provider] INFO: [AlphaVantage] 连接已关闭
+2026-06-10 07:35:16,438 [ftseek_us.futu_lv3] INFO: [FutuLV3] 已断开 OpenD 连接
+2026-06-10 07:35:16,438 [app.data.market_data_router] INFO: [MarketDataRouter] Futu LV3 连接已断开
+2026-06-10 07:35:16,438 [app.data.market_data_router] INFO: [MarketDataRouter] 所有连接已关闭
+2026-06-10 07:35:16,438 [ftseek_us.main] INFO: [shutdown] DataRouter 已关闭
+2026-06-10 07:35:16,451 [app.push.aggregator] INFO: [PushAggregator] 启动 (window=300s)
+2026-06-10 07:35:16,451 [app.push.health] INFO: [PushHealth] 启动 (interval=3600s)
+2026-06-10 07:35:16,452 [app.push.hub] INFO: [PushHub] 启动 — channels=['dingtalk', 'feishu', 'flag_file'] dedup_ttl=60s aggregate_window=300s async=True workers=4
+2026-06-10 07:35:16,452 [ftseek_us.main] INFO: [shutdown] PushHub 已关闭 (聚合桶已 flush)
+2026-06-10 07:35:16,452 [ftseek_us.main] INFO: [shutdown] PostTradeHook stats: {'submitted': 0, 'completed': 0, 'failed': 0}
+2026-06-10 07:35:16,501 [app.notifier.dingtalk] INFO: [钉钉] send_text 成功: [INFO] FTSeek-US 正在关闭
+2026-06-10 07:35:16,501 [ftseek_us.main] INFO: [shutdown] 执行强制退出 (os._exit)
+========================================
+  FTSeek-US 美股交易平台
+========================================
+✅ OpenD 连通性 OK (127.0.0.1:11111, via /dev/tcp)
+✅ Python venv: Python 3.8.17 @ /opt/ftseek/FTSeek-US/venv
+检查依赖（lock 模式）...
+⚠️  unified_config.yaml 校验未通过（非阻断），请稍后核查
+✅ 配置完整性 OK
+启动 FTSeek-US 服务...
+API: http://localhost:8901
+日志：logs/ftseek_us.log
+
+2026-06-10 07:35:18,317 [ftseek_us.main] INFO: [PreFlight] OpenD 连通性检查通过 (127.0.0.1:11111)
+2026-06-10 07:35:18,318 [ftseek_us.main] INFO: [安全确认] ✅ 当前运行模式: 模拟盘 (TRADE_ENV=1 | FUTU_TRADE_ENV=1)
+2026-06-10 07:35:18,318 [ftseek_us.main] INFO: [安全确认] ✅ 模拟盘验证期 — 持续收集数据、验证策略
+2026-06-10 07:35:19,394 [config.config_loader] INFO: ✅ 统一配置已加载: /opt/ftseek/FTSeek-US/config/unified_config.yaml
+2026-06-10 07:35:19,621 [app.core.config_container] INFO: [ConfigContainer] 已加载 60 个配置节
+2026-06-10 07:35:19,625 [app.decision.strategies.base] INFO: [策略注册] price_break v1.0.0
+2026-06-10 07:35:19,625 [app.decision.strategies.base] INFO: [策略注册] ma_cross v1.0.0
+2026-06-10 07:35:19,626 [app.decision.strategies.base] INFO: [策略注册] rsi_rebound v1.0.0
+[Idempotency] Loaded 0 records from DB
+2026-06-10 07:35:19,671 | 3713653 | 139780478038336 | [open_context_base.py:409] _init_connect_sync: New connect ready: conn=7470257252516305414(1) context=<futu.quote.open_quote_context.OpenQuoteContext object at 0x7f2110b96a90>
+2026-06-10 07:35:19,674 | 3713653 | 139780478038336 | [open_context_base.py:409] _init_connect_sync: New connect ready: conn=7470257252535118042(2) context=<futu.trade.open_trade_context.OpenSecTradeContext object at 0x7f2110bac910>
+2026-06-10 07:35:19,681 [app.execution.broker_adapter] INFO: [富途] 模拟交易环境，无需解锁
+2026-06-10 07:35:19,686 [app.execution.broker_adapter] INFO: [富途] 模拟账户验证通过: 18297050
+2026-06-10 07:35:19,686 [app.execution.broker_adapter] INFO: [富途] 连接成功 127.0.0.1:11111 env=模拟
+2026-06-10 07:35:19,710 [app.risk.circuit_breaker] INFO: [熔断器] 注册数据源: default (weight=1.0)
+2026-06-10 07:35:19,710 [ftseek_us.position_limits] INFO: [PositionLimits] 初始化: max_symbol=25%, max_direction=65%, max_total=80%
+2026-06-10 07:35:19,727 [app.data.twelvedata_provider] INFO: [TwelveData] 初始化完成 | API Key=✅ | Cache TTL=900s
+2026-06-10 07:35:19,727 [app.data.finnhub_provider] INFO: [Finnhub] 初始化完成 | API Key=✅ | Cache TTL=300s
+2026-06-10 07:35:19,727 [app.data.alphavantage_provider] INFO: [AlphaVantage] 初始化完成 | API Key=✅ | Premium=False | Cache TTL=900s
+2026-06-10 07:35:19,727 [app.data.market_data_router] INFO: [MarketDataRouter] Futu LV3 提供商已初始化
+2026-06-10 07:35:19,727 [app.data.market_data_router] INFO: [MarketDataRouter] 初始化完成 | 启用的数据源：['TwelveData', 'Finnhub', 'AlphaVantage'] | Cache TTL=900s
+2026-06-10 07:35:19,727 [app.agents.voting.voting_coordinator] INFO: [VotingCache] 初始化 ttl=300s price_threshold=0.800% max_entries=50
+2026-06-10 07:35:19,727 [app.agents.debate.debate_engine] INFO: [辩论引擎-P0优化] 已初始化: 多头=qwen-max, 空头=deepseek-v4-pro, 快速模式=True
+2026-06-10 07:35:19,728 [app.core.scheduler_core] INFO: [调度器] 配置已加载 | scan=5min monitor=0.25min max_pos=12 min_score=30 min_conf=0.55 min_consensus=0.25 cooldown=1min
+2026-06-10 07:35:19,729 [app.core.scheduler_core] INFO: [配置SSOT] min_conf=0.55 min_strength=30 max_total_pos=0.80 main_pct=0.80 scalping_pct=0.00 stop_loss=0.045 take_profit=0.025 atr_x=2.50
+2026-06-10 07:35:19,729 [app.storage.vote_tables] INFO: 投票日志表初始化完成：data/ftseek.db
+2026-06-10 07:35:19,730 [app.decision.vote_logger] INFO: VoteLogger 初始化完成
+2026-06-10 07:35:19,730 [app.decision.consensus] WARNING: [ConsensusEngine] ⚠️ 此模块当前未接入信号管线 (generate_consensus 零调用), VIX/regime 自适应阈值不生效。详见 RFC 提案。
+2026-06-10 07:35:19,738 [app.execution.short_strategy] INFO: [做空路由器] 已初始化 | 默认方法=options_put | 模拟盘强制期权=False
+2026-06-10 07:35:19,741 [app.exit.option_quick_exit] INFO: [OptionQuickExit] 从 DB 恢复 1 个期权峰值跟踪
+2026-06-10 07:35:19,741 [app.core.scheduler_core] INFO: [调度器] 做空策略路由器 + 快速退出引擎已初始化
+2026-06-10 07:35:19,752 [app.coordinator.exit_dispatcher] INFO: [ExitDispatcher] 注册 main → main_exit
+2026-06-10 07:35:19,752 [app.coordinator.exit_dispatcher] INFO: [ExitDispatcher] 注册 scalping → scalping_exit
+2026-06-10 07:35:19,752 [app.coordinator.exit_dispatcher] INFO: [ExitDispatcher] 注册 fast_lane → fast_lane_exit
+2026-06-10 07:35:19,752 [app.coordinator.exit_dispatcher] INFO: [ExitDispatcher] 注册 llm_plan → llm_plan_exit
+2026-06-10 07:35:19,754 [app.core.scheduler_core] INFO: [调度器·Coordinator] 已注册 4 个 adapter: ['main(p=5)', 'scalping(p=10)', 'fast_lane(p=8)', 'llm_plan(p=3)']
+2026-06-10 07:35:19,754 [app.core.scheduler_core] INFO: ══════════════════════════════════════════════════════════════════════
+2026-06-10 07:35:19,754 [app.core.scheduler_core] INFO: ║ Coordinator Phase A — 多策略协调层启动
+2026-06-10 07:35:19,754 [app.core.scheduler_core] INFO: ║   enabled       : True
+2026-06-10 07:35:19,754 [app.core.scheduler_core] INFO: ║   observe_only  : True  (true=不阻断只记录 / false=强制)
+2026-06-10 07:35:19,754 [app.core.scheduler_core] INFO: ║   max_total_pct : 0.8
+2026-06-10 07:35:19,754 [app.core.scheduler_core] INFO: ║   caps          : {'main': 0.8, 'scalping': 0.0, 'llm_plan': 0.0}
+2026-06-10 07:35:19,754 [app.core.scheduler_core] INFO: ║   adapters      : [('main', 5), ('scalping', 10), ('fast_lane', 8), ('llm_plan', 3)]
+2026-06-10 07:35:19,754 [app.core.scheduler_core] INFO: ║   reconcile     : every 300s
+2026-06-10 07:35:19,754 [app.core.scheduler_core] INFO: ║   audit_db      : signal_arbitration in decisions.db
+2026-06-10 07:35:19,755 [app.core.scheduler_core] INFO: ║   watchdog      : scan_loop + monitor_loop 心跳监控
+2026-06-10 07:35:19,755 [app.core.scheduler_core] INFO: ║ 开盘验证: scripts/coordinator_status.py --all
+2026-06-10 07:35:19,755 [app.core.scheduler_core] INFO: ══════════════════════════════════════════════════════════════════════
+2026-06-10 07:35:19,756 [app.observability.watchdog] INFO: [Watchdog] 注册心跳: scan_loop threshold=1500s
+2026-06-10 07:35:19,756 [app.observability.watchdog] INFO: [Watchdog] 注册心跳: monitor_loop threshold=75.0s
+2026-06-10 07:35:19,757 [app.observability.watchdog] INFO: [Watchdog] 启动 — 检查间隔 60.0s
+2026-06-10 07:35:19,757 [app.core.scheduler_core] INFO: [Watchdog] 已启动 — scan=5min, monitor=0.25min
+2026-06-10 07:35:19,757 [app.core.scheduler_core] INFO: [T6·reconcile] 后台线程已启动 (interval=300s)
+2026-06-10 07:35:19,757 [app.core.scheduler_core] INFO: [调度器] position_store 已注入 RiskEngine (仓位限制检查已激活)
+2026-06-10 07:35:19,757 [app.core.scheduler_core] INFO: [调度器] position_store 已注入 ExecutionEngine (方向冲突检查走内存)
+2026-06-10 07:35:19,762 [ftseek.capital_safety] INFO: [资本安全] 状态已加载 | 净值=$1,075,521 | 回撤=-1.9% | 水位=green
+2026-06-10 07:35:19,762 [ftseek.capital_safety] INFO: [资本安全] 初始化 (模拟) | 初始资金=$100,000 | 单笔最大风险=4% | 总风险上限=12%
+2026-06-10 07:35:19,762 [app.core.scheduler_core] INFO: [调度器] capital_safety 已注入 RiskEngine (总敞口计算修复)
+2026-06-10 07:35:19,762 [app.core.scheduler_core] INFO: [调度器] broker_adapter 已注入 RiskEngine (方向敞口拆分已激活)
+2026-06-10 07:35:19,764 [app.storage.trade_store] INFO: [TradeStore] 交易记录表初始化完成
+2026-06-10 07:35:19,767 [app.core.scheduler_core] INFO: [调度器] LessonInjector 已初始化 — 10 条活跃教训
+2026-06-10 07:35:19,767 [app.core.scheduler_core] INFO: [调度器] lesson_injector 已注入 RiskEngine (教训约束检查已激活)
+2026-06-10 07:35:19,768 [app.utils.watchlist_manager] INFO: ✅ 股票名单已从 unified_config.yaml 加载
+2026-06-10 07:35:19,768 [app.core.scheduler_core] INFO: [调度器] 从 watchlist_us.json 加载 28 只基础股票
+2026-06-10 07:35:19,770 [app.core.scheduler_core] INFO: [调度器] 合并动态池: 0 只活跃 -> 总计 28 只
+2026-06-10 07:35:19,776 [ftseek_us.news_v2.pipeline] INFO: [Pipeline] 添加新闻源: Finnhub 突发新闻 (finnhub_news)
+2026-06-10 07:35:19,776 [ftseek_us.news_v2.pipeline] INFO: [Pipeline] 添加新闻源: SEC EDGAR 公告 (sec_edgar)
+2026-06-10 07:35:19,777 [ftseek_us.news_v2.pipeline] INFO: [Pipeline] 添加新闻源: RSSHub 美股新闻聚合 (rsshub_us)
+2026-06-10 07:35:19,777 [app.core.scheduler_core] INFO: [NewsV2] RSSHub 美股源已添加 (WSJ/Reuters/Fed)
+2026-06-10 07:35:19,896 [ftseek_us.news_v2.pipeline] INFO: [Pipeline] 添加新闻源: HKEX 港交所披露易 (hkex_news)
+2026-06-10 07:35:19,897 [app.core.scheduler_core] INFO: [Catalyst] HKEX 港交所源已添加 (120s轮询)
+2026-06-10 07:35:19,897 [ftseek_us.news_v2.pipeline] INFO: [Pipeline] 添加新闻源: CSRC 证监会官网 (csrc_news)
+2026-06-10 07:35:19,898 [app.core.scheduler_core] INFO: [Catalyst] CSRC 证监会源已添加 (300s轮询)
+2026-06-10 07:35:19,898 [app.core.scheduler_core] WARNING: [NewsV2] CN 源添加失败 (降级运行): No module named 'app.core.config'
+2026-06-10 07:35:19,901 [app.factors.registry] INFO: [FactorRegistry] 初始化完成
+2026-06-10 07:35:19,902 [app.factors.registry] INFO: [FactorRegistry] 已注册: SSS (tf=15min, v1.0, params=56 combinations)
+2026-06-10 07:35:19,902 [app.factors.registry] INFO: [FactorRegistry] 已注册: GDIAN (tf=15min, v1.0, params=32 combinations)
+2026-06-10 07:35:19,902 [app.factors.registry] INFO: [FactorRegistry] 已注册: MFFF (tf=15min, v1.0, params=48 combinations)
+2026-06-10 07:35:19,906 [ftseek_us.news_v2.pipeline] INFO: [Pipeline] 地缘预筛器已初始化
+2026-06-10 07:35:19,906 [app.core.scheduler_core] INFO: [NewsV2] 数据收集器已挂接 + 地缘预筛器已激活
+2026-06-10 07:35:19,906 [app.core.scheduler_core] INFO: [NewsV2] 管线已初始化 (observe 模式) | watchlist=28
+2026-06-10 07:35:19,911 [ftseek_us.risk.us_risk_pipeline] INFO: [USRiskPipeline] 构建 9 个检查 | per_check_timeout=5.0s total=30.0s critical=['buyingpowercheck', 'circuitbreakercheck', 'drawdowncheck', 'marketcircuitcheck', 'positionlimitcheck']
+2026-06-10 07:35:19,911 [app.core.scheduler_core] INFO: [USRiskPipeline] 已初始化 (9 个检查)
+2026-06-10 07:35:19,912 [ftseek.us_pipeline.earnings_calendar] WARNING: [财报日历] 使用静态 KEY_US_SYMBOLS fallback
+2026-06-10 07:35:19,913 [ftseek.us_pipeline.earnings_calendar] INFO: 获取财报日历 (horizon=3month)...
+2026-06-10 07:35:21,443 [ftseek.us_pipeline.earnings_calendar] INFO: 获取到 6468 条财报数据
+2026-06-10 07:35:21,447 [ftseek_us.risk.vix_monitor] INFO: VIX 监控器已初始化 | 缓存 TTL=180s | 退避策略 60-480s
+2026-06-10 07:35:21,448 [app.core.scheduler_core] INFO: [VIX Monitor] 已初始化 (阈值: 正常<20 / 警戒<25 / 高波动<30 / 极端≥40)
+2026-06-10 07:35:21,449 [app.analysis.market_state] INFO: 市场状态检查器已初始化
+2026-06-10 07:35:21,449 [app.core.shared_kernel] INFO: [SharedKernel] 全局共享内核已初始化
+2026-06-10 07:35:21,449 [app.core.scheduler_core] INFO: [SharedKernel] 已绑定 VIX 数据源 (market_state)
+2026-06-10 07:35:21,449 [app.core.scheduler_core] INFO: [Scalping] 总开关关闭 (scalping.enabled=false)
+2026-06-10 07:35:21,453 [app.orb.engine] INFO: [ORB] 引擎构造 | mode=active | universe=10只 | SL=1.5ATR TP=3.0ATR trail=1.5×@2.5ATR
+2026-06-10 07:35:21,453 [app.core.scheduler_core] INFO: [ORB] 引擎已初始化 | mode=active | universe=10只
+2026-06-10 07:35:21,456 [ftseek.dragonhead_pool] INFO: 🐲 龙头股票池管理器已初始化: HK=44只, US=36只
+2026-06-10 07:35:21,457 [ftseek_us.adaptive_polling] INFO: [轮询注册] US.TSLA 层级=P1_HIGH_VOL 间隔=300-900s
+2026-06-10 07:35:21,457 [ftseek_us.adaptive_polling] INFO: [轮询注册] US.RIVN 层级=P1_HIGH_VOL 间隔=300-900s
+2026-06-10 07:35:21,457 [ftseek_us.adaptive_polling] INFO: [轮询注册] US.UBER 层级=P1_HIGH_VOL 间隔=300-900s
+2026-06-10 07:35:21,457 [ftseek_us.adaptive_polling] INFO: [轮询注册] US.SNDK 层级=P1_HIGH_VOL 间隔=300-900s
+2026-06-10 07:35:21,457 [ftseek_us.adaptive_polling] INFO: [轮询注册] US.ARM 层级=P1_HIGH_VOL 间隔=300-900s
+2026-06-10 07:35:21,457 [ftseek_us.adaptive_polling] INFO: [轮询注册] US.MU 层级=P1_HIGH_VOL 间隔=300-900s
+2026-06-10 07:35:21,457 [ftseek_us.adaptive_polling] INFO: [轮询注册] US.BWXT 层级=P1_HIGH_VOL 间隔=300-900s
+2026-06-10 07:35:21,457 [ftseek_us.adaptive_polling] INFO: [轮询注册] US.LLY 层级=P1_HIGH_VOL 间隔=300-900s
+2026-06-10 07:35:21,457 [ftseek_us.adaptive_polling] INFO: [轮询注册] US.AAPL 层级=P2_WATCHLIST 间隔=900-1800s
+2026-06-10 07:35:21,457 [ftseek_us.adaptive_polling] INFO: [轮询注册] US.MSFT 层级=P2_WATCHLIST 间隔=900-1800s
+2026-06-10 07:35:21,457 [ftseek_us.adaptive_polling] INFO: [轮询注册] US.GOOG 层级=P2_WATCHLIST 间隔=900-1800s
+2026-06-10 07:35:21,457 [ftseek_us.adaptive_polling] INFO: [轮询注册] US.AMZN 层级=P2_WATCHLIST 间隔=900-1800s
+2026-06-10 07:35:21,457 [ftseek_us.adaptive_polling] INFO: [轮询注册] US.META 层级=P2_WATCHLIST 间隔=900-1800s
+2026-06-10 07:35:21,457 [ftseek_us.adaptive_polling] INFO: [轮询注册] US.AVGO 层级=P2_WATCHLIST 间隔=900-1800s
+2026-06-10 07:35:21,457 [ftseek_us.adaptive_polling] INFO: [轮询注册] US.TSM 层级=P2_WATCHLIST 间隔=900-1800s
+2026-06-10 07:35:21,457 [ftseek_us.adaptive_polling] INFO: [轮询注册] US.AMD 层级=P1_HIGH_VOL 间隔=300-900s
+2026-06-10 07:35:21,457 [ftseek_us.adaptive_polling] INFO: [轮询注册] US.NFLX 层级=P2_WATCHLIST 间隔=900-1800s
+2026-06-10 07:35:21,457 [ftseek_us.adaptive_polling] INFO: [轮询注册] US.BABA 层级=P2_WATCHLIST 间隔=900-1800s
+2026-06-10 07:35:21,457 [ftseek_us.adaptive_polling] INFO: [轮询注册] US.PDD 层级=P2_WATCHLIST 间隔=900-1800s
+2026-06-10 07:35:21,457 [ftseek_us.adaptive_polling] INFO: [轮询注册] US.NTES 层级=P2_WATCHLIST 间隔=900-1800s
+2026-06-10 07:35:21,457 [ftseek_us.adaptive_polling] INFO: [轮询注册] US.ORCL 层级=P1_HIGH_VOL 间隔=300-900s
+2026-06-10 07:35:21,457 [ftseek_us.adaptive_polling] INFO: [轮询注册] US.CRM 层级=P2_WATCHLIST 间隔=900-1800s
+2026-06-10 07:35:21,457 [ftseek_us.adaptive_polling] INFO: [轮询注册] US.BA 层级=P2_WATCHLIST 间隔=900-1800s
+2026-06-10 07:35:21,457 [ftseek_us.adaptive_polling] INFO: [轮询注册] US.LMT 层级=P2_WATCHLIST 间隔=900-1800s
+2026-06-10 07:35:21,457 [ftseek_us.adaptive_polling] INFO: [轮询注册] US.UNH 层级=P2_WATCHLIST 间隔=900-1800s
+2026-06-10 07:35:21,457 [ftseek_us.adaptive_polling] INFO: [轮询注册] US.JPM 层级=P2_WATCHLIST 间隔=900-1800s
+2026-06-10 07:35:21,457 [ftseek_us.adaptive_polling] INFO: [轮询注册] US.XOM 层级=P2_WATCHLIST 间隔=900-1800s
+2026-06-10 07:35:21,457 [ftseek_us.adaptive_polling] INFO: [轮询注册] US.PG 层级=P2_WATCHLIST 间隔=900-1800s
+2026-06-10 07:35:21,457 [app.core.scheduler_core] INFO: [自适应轮询] 已注册 28 只观察股 | API 预算=28/轮 | TIER1=10 | ETF=0
+2026-06-10 07:35:21,459 [ftseek_us.subscription_manager] INFO: [SubscriptionManager] 美股分时段订阅管理器已初始化
+2026-06-10 07:35:21,459 [app.core.scheduler_core] INFO: [调度器] 分时段订阅管理器已初始化
+2026-06-10 07:35:21,460 [app.core.scheduler_core] INFO: [调度器] 初始化完成，监控 28 只股票
+2026-06-10 07:35:21,460 [app.strategy.registry] INFO: [StrategyRegistry] 已注册: price_break (group=trend, v1.0.0)
+2026-06-10 07:35:21,460 [app.strategy.registry] INFO: [StrategyRegistry] 已注册: ma_cross (group=trend, v1.0.0)
+2026-06-10 07:35:21,460 [app.strategy.registry] INFO: [StrategyRegistry] 已注册: rsi_rebound (group=reversion, v1.0.0)
+2026-06-10 07:35:21,465 [app.core.di_container] INFO: [DIContainer] TradingScheduler 装配完成
+[Idempotency] Loaded 0 records from DB
+2026-06-10 07:35:21,472 | 3713653 | 139780478038336 | [open_context_base.py:409] _init_connect_sync: New connect ready: conn=7470257260071297041(3) context=<futu.quote.open_quote_context.OpenQuoteContext object at 0x7f2102fb1fa0>
+2026-06-10 07:35:21,475 | 3713653 | 139780478038336 | [open_context_base.py:409] _init_connect_sync: New connect ready: conn=7470257260086869156(4) context=<futu.trade.open_trade_context.OpenSecTradeContext object at 0x7f2102fb8d90>
+2026-06-10 07:35:21,478 [app.execution.broker_adapter] INFO: [富途] 模拟交易环境，无需解锁
+2026-06-10 07:35:21,483 [app.execution.broker_adapter] INFO: [富途] 模拟账户验证通过: 18297050
+2026-06-10 07:35:21,483 [app.execution.broker_adapter] INFO: [富途] 连接成功 127.0.0.1:11111 env=模拟
+2026-06-10 07:35:21,486 [app.risk.circuit_breaker] INFO: [熔断器] 注册数据源: default (weight=1.0)
+2026-06-10 07:35:21,486 [ftseek_us.position_limits] INFO: [PositionLimits] 初始化: max_symbol=25%, max_direction=65%, max_total=80%
+2026-06-10 07:35:21,486 [ftseek_us.main] INFO: [DI] 核心组件已通过DI容器装配: EventStore/Execution/Risk/Notifier
+2026-06-10 07:35:21,489 [ftseek_us.main] INFO: [Agent] 美股 Agent 桥接已初始化 | Hermes 可用=True
+2026-06-10 07:35:21,490 [ftseek_us.hermes_client] INFO: 启动 Hermes Worker: /root/.hermes/hermes-agent/venv/bin/python3 /opt/ftseek/FTSeek-US/scripts/hermes_worker.py
+2026-06-10 07:35:56,294 [ftseek_us.main] WARNING: [HermesWorker] ⚠️ Worker 预检失败 — Agent 功能将降级至 Bailian API 直连
+2026-06-10 07:35:56,295 [ftseek.us_pipeline.battle_plan_manager] INFO: ✅ 已加载美股作战计划 (2026-06-09)
+2026-06-10 07:35:56,295 [ftseek.us_pipeline.battle_plan_manager] INFO: [计划质检] ✅ 作战计划数据完整性校验通过
+2026-06-10 07:35:56,295 [ftseek_us.main] INFO: ✅ 美股作战计划已加载: /opt/ftseek/FTSeek-US/data/daily_battle_plan_us.json
+2026-06-10 07:35:56,298 [ftseek_us.config_mgmt.validator] WARNING: [ConfigValidator] ⚠️ 推荐配置缺失: exit.us.atr_multiplier
+2026-06-10 07:35:56,298 [ftseek_us.config_mgmt.validator] WARNING: [ConfigValidator] ⚠️ 推荐配置缺失: strategy.consensus.threshold
+2026-06-10 07:35:56,298 [ftseek_us.config_mgmt.validator] WARNING: [ConfigValidator] ⚠️ [Config·DEPRECATED] 'llm_models' 仍存在于配置中但已不生效, 请改用: 已移至 llm.models / llm.features (本文件) 与 app/llm/multi_model_client.py:DEFAULT_MODEL_FOR (别名兜底)
+2026-06-10 07:35:56,298 [ftseek_us.config_mgmt.validator] WARNING: [ConfigValidator] ⚠️ [Config·DEPRECATED] 'strategies.defaults.signal_cooldown_seconds' 仍存在于配置中但已不生效, 请改用: 已改为 strategy.signal_cooldown (本文件 SoT)
+2026-06-10 07:35:56,298 [ftseek_us.config_mgmt.validator] INFO: [ConfigValidator] 校验结果: ⚠️ 4 警告
+2026-06-10 07:35:56,298 [ftseek_us.main] INFO: [ConfigGov] ✅ 配置校验通过: ⚠️ 4 警告
+2026-06-10 07:35:56,334 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-10 07:35:56,348 [exit_policy_guardian] INFO: ✅ 策略校验通过: 5 条规则全部实现
+2026-06-10 07:35:56,348 [ftseek_us.main] INFO: [ExitPolicy] ✅ 退出策略校验通过: 5/5 条规则已实现 (2.5)
+2026-06-10 07:35:56,382 [exit_policy_guardian] INFO: ✅ 退出策略已加载: 2.5 (/opt/ftseek/FTSeek-US/app/risk/exit_policy.yaml)
+2026-06-10 07:35:56,382 [ftseek_us.main] INFO: [ShortConfig] ✅ 做空配置校验通过: 全部通过
+2026-06-10 07:35:56,383 [ftseek_us.config_audit] INFO: ✅ 配置一致性审计通过 — 无漂移检测
+2026-06-10 07:35:56,383 [ftseek_us.main] INFO: [ConfigAudit] ✅ SSOT 配置一致性审计通过 — 无漂移检测
+2026-06-10 07:35:56,386 [ftseek_us.config_mgmt.drift_detector] INFO: [DriftDetector] 初始快照: hash=bf3f51b3a73525c6 keys=1605
+2026-06-10 07:35:56,388 [ftseek_us.config_mgmt.drift_detector] INFO: [DriftDetector] 启动 (interval=4h)
+2026-06-10 07:35:56,389 [ftseek_us.main] INFO: [ConfigGov] ✅ 漂移检测已启动 (interval=4h)
+2026-06-10 07:35:56,389 [ftseek_us.config_mgmt.hot_reloader] INFO: [HotReloader] 启动 (cooldown=60s, files=1)
+2026-06-10 07:35:56,389 [ftseek_us.main] INFO: [ConfigGov] ✅ 热重载已启动 (cooldown=60s)
+2026-06-10 07:35:56,390 [ftseek.daily_active_pool] INFO: 📂 加载人工指定名单: 23 只
+2026-06-10 07:35:56,390 [ftseek.daily_active_pool] INFO: 📂 恢复持久化池子: 34 条记录
+2026-06-10 07:35:56,390 [ftseek.daily_active_pool] INFO: 🔍 启动对账: 动态池中有 20 只 POSITION 条目
+2026-06-10 07:35:56,391 [ftseek.daily_active_pool] INFO: ✅ 每日动态交易池 v2 已初始化: 34 只标的 (市场=US.)
+2026-06-10 07:35:56,393 [ftseek.daily_active_pool] INFO: 💼 批量注入持仓: 9 只 (跳过 0 只非本市场)
+2026-06-10 07:35:56,393 [ftseek_us.main] INFO: 💼 US 注入持仓: 9 只 -> ['US.TSLA', 'US.NVDA', 'US.AAPL', 'US.MSFT', 'US.GOOGL', 'US.META', 'US.AMZN', 'US.BABA', 'US.PDD']
+2026-06-10 07:35:56,393 [ftseek_us.main] INFO: 📝 US 注入盘前计划: 3 只
+2026-06-10 07:35:56,393 [ftseek_us.main] INFO: ✅ US 动态交易池 v2 就绪: 34 只 | {'POSITION': 20, 'PLAN': 1, 'MANUAL': 13, 'INTRADAY_ALERT': 0}
+2026-06-10 07:35:56,394 [ftseek_us.main] INFO: ✅ 交易调度器已启动（后台线程）
+2026-06-10 07:35:56,394 [ftseek_us.main] INFO: ✅ FTSeek-US 服务已启动
+2026-06-10 07:35:56,394 [ftseek_us.main] INFO: API 服务监听：http://0.0.0.0:8901  (FastAPI 待实现)
+2026-06-10 07:35:56,434 [ftseek_us.main] INFO: ✅ [PostTradeHook·wired] order_executor 已绑定 (3 处 on_position_opened 调用, 4 处 import) — 入场后将触发 thesis_inferer 等副作用
+2026-06-10 07:35:56,479 [app.notifier.dingtalk] INFO: [钉钉] send_text 成功: [INFO] FTSeek-US v2.0.0 (LV3实时行情) 已启动
+2026-06-10 07:35:56,482 [ftseek_us.intraday_heartbeat] INFO: [Heartbeat] 后台线程已启动 (interval=1800s)
+2026-06-10 07:35:56,482 [ftseek_us.main] INFO: 💓 盘中心跳后台线程已启动 (interval=30min, 仅盘中触发)
+2026-06-10 07:35:56,483 [ftseek.trading_calendar] INFO: 📅 交易日历初始化: 硬编码 HK=31天, US=22天 | Futu API=127.0.0.1:11111
+2026-06-10 07:35:56,486 [ftseek.us_pipeline.emergency_interceptor] INFO: 🛡️ 美股突发拦截器 (V3) 已初始化 | 行情主 + 新闻辅 | 间隔=30s | 闪崩阈值=-5% | 放量倍数=3.0x
+2026-06-10 07:35:56,487 [ftseek_us.main] INFO: 🛡️ 美股突发拦截器后台线程已启动
+2026-06-10 07:35:56,488 [ftseek.us_pipeline.emergency_interceptor] INFO: 🚀 启动突发拦截监控循环 (富途 LV3 行情主 + 新闻辅)...
+2026-06-10 07:35:56,490 [ftseek_us.position_sync] INFO: 🔍 [US Sync] 启动时立即执行 Broker 对账...
+2026-06-10 07:35:56,493 | 3713653 | 139779307992640 | [open_context_base.py:409] _init_connect_sync: New connect ready: conn=7470257406942553713(5) context=<futu.quote.open_quote_context.OpenQuoteContext object at 0x7f2100933b50>
+2026-06-10 07:35:56,499 | 3713653 | 139780478038336 | [open_context_base.py:409] _init_connect_sync: New connect ready: conn=7470257406974913422(6) context=<futu.trade.open_trade_context.OpenSecTradeContext object at 0x7f21009614c0>
+2026-06-10 07:35:56,529 [ftseek.trading_calendar] INFO: [TradingCalendar] Futu 缓存刷新: US [2026-05-10~2026-08-08] = 62 交易日
+2026-06-10 07:35:56,529 | 3713653 | 139780165723712 | [open_context_base.py:516] on_disconnect: Disconnected: conn=0(5) reason=CallClose
+2026-06-10 07:35:56,589 [app.data.twelvedata_provider] INFO: [TwelveData] 初始化完成 | API Key=✅ | Cache TTL=300s
+2026-06-10 07:35:56,590 [ftseek_us.position_sync] WARNING: ⚠️ [US Sync] 发现手动开仓 US.AAPL (SHORT 2.0股 @$313.46)，已加入 ExitMonitor 监控 | SL=$338.53
+2026-06-10 07:35:56,591 [app.data.twelvedata_provider] INFO: [TwelveData] 初始化完成 | API Key=✅ | Cache TTL=300s
+2026-06-10 07:35:56,592 [ftseek_us.position_sync] WARNING: ⚠️ [US Sync] 发现手动开仓 US.NFLX (SHORT 388.0股 @$82.78)，已加入 ExitMonitor 监控 | SL=$89.40
+2026-06-10 07:35:56,592 [app.data.twelvedata_provider] INFO: [TwelveData] 初始化完成 | API Key=✅ | Cache TTL=300s
+2026-06-10 07:35:56,594 [ftseek_us.position_sync] WARNING: ⚠️ [US Sync] 发现手动开仓 US.TSLA (SHORT 14.0股 @$421.76)，已加入 ExitMonitor 监控 | SL=$455.51
+2026-06-10 07:35:56,594 [app.data.twelvedata_provider] INFO: [TwelveData] 初始化完成 | API Key=✅ | Cache TTL=300s
+2026-06-10 07:35:56,595 [ftseek_us.position_sync] WARNING: ⚠️ [US Sync] 发现手动开仓 US.XLI (LONG 306.0股 @$171.63)，已加入 ExitMonitor 监控 | SL=$157.90
+2026-06-10 07:35:56,596 [app.data.twelvedata_provider] INFO: [TwelveData] 初始化完成 | API Key=✅ | Cache TTL=300s
+2026-06-10 07:35:56,597 [ftseek_us.position_sync] WARNING: ⚠️ [US Sync] 发现手动开仓 US.ORCL (LONG 63.0股 @$209.43)，已加入 ExitMonitor 监控 | SL=$192.67
+2026-06-10 07:35:56,597 [app.data.twelvedata_provider] INFO: [TwelveData] 初始化完成 | API Key=✅ | Cache TTL=300s
+2026-06-10 07:35:56,599 [ftseek_us.position_sync] WARNING: ⚠️ [US Sync] 发现手动开仓 US.NTES (SHORT 234.0股 @$120.44)，已加入 ExitMonitor 监控 | SL=$130.08
+2026-06-10 07:35:56,599 [app.data.twelvedata_provider] INFO: [TwelveData] 初始化完成 | API Key=✅ | Cache TTL=300s
+2026-06-10 07:35:56,600 [ftseek_us.position_sync] WARNING: ⚠️ [US Sync] 发现手动开仓 US.XLF (SHORT 289.0股 @$52.69)，已加入 ExitMonitor 监控 | SL=$56.91
+2026-06-10 07:35:56,601 [app.data.twelvedata_provider] INFO: [TwelveData] 初始化完成 | API Key=✅ | Cache TTL=300s
+2026-06-10 07:35:56,602 [ftseek_us.position_sync] WARNING: ⚠️ [US Sync] 发现手动开仓 US.XLK (LONG 807.0股 @$186.77)，已加入 ExitMonitor 监控 | SL=$171.83
+2026-06-10 07:35:56,602 [app.data.twelvedata_provider] INFO: [TwelveData] 初始化完成 | API Key=✅ | Cache TTL=300s
+2026-06-10 07:35:56,604 [ftseek_us.position_sync] WARNING: ⚠️ [US Sync] 发现手动开仓 US.LMT (SHORT 61.0股 @$515.49)，已加入 ExitMonitor 监控 | SL=$556.73
+2026-06-10 07:35:56,604 [app.data.twelvedata_provider] INFO: [TwelveData] 初始化完成 | API Key=✅ | Cache TTL=300s
+2026-06-10 07:35:56,605 [ftseek_us.position_sync] WARNING: ⚠️ [US Sync] 发现手动开仓 US.XLV (LONG 793.0股 @$154.43)，已加入 ExitMonitor 监控 | SL=$142.08
+2026-06-10 07:35:56,606 [app.data.twelvedata_provider] INFO: [TwelveData] 初始化完成 | API Key=✅ | Cache TTL=300s
+2026-06-10 07:35:56,607 [ftseek_us.position_sync] WARNING: ⚠️ [US Sync] 发现手动开仓 US.DIA (LONG 317.0股 @$506.68)，已加入 ExitMonitor 监控 | SL=$466.14
+2026-06-10 07:35:56,607 [app.data.twelvedata_provider] INFO: [TwelveData] 初始化完成 | API Key=✅ | Cache TTL=300s
+2026-06-10 07:35:56,609 [ftseek_us.position_sync] WARNING: ⚠️ [US Sync] 发现手动开仓 US.TSM (SHORT 38.0股 @$439.00)，已加入 ExitMonitor 监控 | SL=$474.12
+2026-06-10 07:35:56,611 [ftseek_us.position_sync] INFO: [US Sync] Done | Futu: 12 | DB: 12
+2026-06-10 07:35:56,613 [ftseek_us.position_sync] INFO: ✅ [US Sync] 启动对账完成
+2026-06-10 07:35:56,614 [ftseek_us.position_sync] INFO: US position sync started (interval=30s)
+2026-06-10 07:35:56,614 [ftseek_us.main] INFO: ✅ 运行时持仓同步器已启动 (30s 间隔, Broker→PositionStore 自动同步)
+2026-06-10 07:35:56,641 [app.positions.reconciler] WARNING: [Reconciler·M1.1·adopt] US.AAPL 识别为策略孤儿仓 → auto_main + managed (维持监控)
+2026-06-10 07:35:56,643 [app.positions.reconciler] WARNING: [Reconciler·M1.1·adopt] US.NFLX 识别为策略孤儿仓 → auto_scalping + managed (维持监控)
+2026-06-10 07:35:56,645 [app.positions.reconciler] WARNING: [Reconciler·M1.1·adopt] US.TSLA 识别为策略孤儿仓 → auto_main + managed (维持监控)
+2026-06-10 07:35:56,647 [app.positions.reconciler] WARNING: [Reconciler·M1.1·adopt] US.XLI 识别为策略孤儿仓 → auto_main + managed (维持监控)
+2026-06-10 07:35:56,649 [app.positions.reconciler] WARNING: [Reconciler·M1.1·adopt] US.ORCL 识别为策略孤儿仓 → auto_scalping + managed (维持监控)
+2026-06-10 07:35:56,650 [app.positions.reconciler] WARNING: [Reconciler·M1.1·adopt] US.NTES 识别为策略孤儿仓 → auto_main + managed (维持监控)
+2026-06-10 07:35:56,651 [app.positions.reconciler] WARNING: [Reconciler·M1.1·adopt] US.XLF 识别为策略孤儿仓 → auto_main + managed (维持监控)
+2026-06-10 07:35:56,653 [app.positions.reconciler] WARNING: [Reconciler·M1.1·adopt] US.XLK 识别为策略孤儿仓 → auto_main + managed (维持监控)
+2026-06-10 07:35:56,654 [app.positions.reconciler] WARNING: [Reconciler·M1.1·adopt] US.LMT 识别为策略孤儿仓 → auto_main + managed (维持监控)
+2026-06-10 07:35:56,656 [app.positions.reconciler] WARNING: [Reconciler·M1.1·adopt] US.XLV 识别为策略孤儿仓 → auto_main + managed (维持监控)
+2026-06-10 07:35:56,658 [app.positions.reconciler] WARNING: [Reconciler·M1.1·adopt] US.DIA 识别为策略孤儿仓 → auto_main + managed (维持监控)
+2026-06-10 07:35:56,659 [app.positions.reconciler] WARNING: [Reconciler·M1.1·adopt] US.TSM 识别为策略孤儿仓 → auto_main + managed (维持监控)
+2026-06-10 07:35:56,660 [app.positions.reconciler] WARNING: ======================================================================
+2026-06-10 07:35:56,661 [app.positions.reconciler] WARNING: [Reconciler] 启动对账完成
+2026-06-10 07:35:56,661 [app.positions.reconciler] WARNING:   Broker 持仓: 12 | 本地内存: 12
+2026-06-10 07:35:56,661 [app.positions.reconciler] WARNING:   matched         : 12
+2026-06-10 07:35:56,661 [app.positions.reconciler] WARNING:   broker_only     : 0 (智能推断)
+2026-06-10 07:35:56,661 [app.positions.reconciler] WARNING:   ↳ adopted       : 12 (策略孤儿 → MANAGED, ExitMonitor 续命)
+2026-06-10 07:35:56,661 [app.positions.reconciler] WARNING:   ↳ legacy        : -12 (LEGACY/MANUAL → PROTECTED)
+2026-06-10 07:35:56,661 [app.positions.reconciler] WARNING:   local_only      : 0 (标 ghost)
+2026-06-10 07:35:56,661 [app.positions.reconciler] WARNING:   errors          : 0
+2026-06-10 07:35:56,661 [app.positions.reconciler] WARNING:   🤖 adopted 仓位 (识别为策略孤儿): ExitMonitor 续命监控, 已有 trail/SL 不变.
+2026-06-10 07:35:56,661 [app.positions.reconciler] WARNING: ======================================================================
+2026-06-10 07:35:56,661 [ftseek_us.main] INFO: [M1] 启动对账完成: matched=12 broker_only=0 local_only=0 legacy_tagged=0
+2026-06-10 07:35:56,661 [ftseek_us.main] INFO: [关键告警通道] ✅ 已配置: DingTalk, Feishu
+2026-06-10 07:35:56,665 [app.risk.symbol_daily_loss_guard] INFO: [SymbolDailyLossGuard·restore] 重建 2 symbols 状态, ET 今日(2026-06-09)已平仓 2 笔
+2026-06-10 07:35:56,667 [ftseek.order_tracker] INFO: [OrderTracker] 已初始化 | 待追踪订单: 0
+2026-06-10 07:35:56,667 [ftseek.order_tracker] INFO: [OrderTracker·restore] 启动恢复, 发现 0 笔 pending 订单
+2026-06-10 07:35:56,667 [ftseek.order_tracker] INFO: [OrderTracker·restore] 完成 — restored=0 still_pending=0 marked_stale=0
+2026-06-10 07:35:56,667 [ftseek_us.main] INFO: [启动·OrderTracker] 恢复完成: {'restored': 0, 'still_pending': 0, 'marked_stale': 0}
+2026-06-10 07:35:56,669 [app.monitoring.trading_monitor] INFO: [Monitor] ✅ 启动 (间隔=60s)
+2026-06-10 07:35:56,669 [ftseek_us.main] INFO: [监控告警] 已启动 (PnL/PDT/熔断器实时监控)
+2026-06-10 07:35:56,670 [ftseek.market_backup] INFO: 市场数据路由器已加载
+2026-06-10 07:35:56,672 [ftseek.market_backup] INFO: Alpha Vantage SDK v3 已加载 (TimeSeries 可用，GlobalQuotes 已弃用)
+2026-06-10 07:35:56,782 [ftseek_us.position_sync] INFO: [US Sync] Done | Futu: 12 | DB: 12
+2026-06-10 07:35:59,432 [ftseek_us.feishu_push] INFO: ✅ 飞书 SDK 已加载
+2026-06-10 07:35:59,434 [ftseek.intraday_attribution] INFO: [盘中归因] 已启动 (间隔=60min)
+2026-06-10 07:35:59,434 [ftseek_us.main] INFO: [盘中归因] 已启动 (每60分钟)
+2026-06-10 07:35:59,435 [app.core.scheduler_core] INFO: [调度器] 服务启动
+2026-06-10 07:35:59,435 [app.pipeline.position_monitor] INFO: [持仓恢复] PRICE_FAIL 已关闭集合: {'US.SNDK260605P1370000', 'US.QQQ260602P700000', 'US.SPY260602P730000', 'US.TSLA260603P410000', 'US.MU260605P720000', 'US.RIVN260605P13000', 'US.QQQ260602P710000'}
+2026-06-10 07:35:59,451 [app.pipeline.position_monitor] INFO: [持仓恢复] Broker 持仓对账: 13 个
+2026-06-10 07:35:59,453 [app.pipeline.position_monitor] INFO: [持仓恢复] US.NTES SHORT 234.0股 @$120.44
+2026-06-10 07:35:59,454 [app.pipeline.position_monitor] INFO: [持仓恢复] US.NFLX SHORT 388.0股 @$82.78
+2026-06-10 07:35:59,456 [app.pipeline.position_monitor] INFO: [持仓恢复] US.XLV LONG 793.0股 @$154.43
+2026-06-10 07:35:59,457 [app.pipeline.position_monitor] INFO: [持仓恢复] US.TSM SHORT 38.0股 @$439.00
+2026-06-10 07:35:59,458 [app.pipeline.position_monitor] INFO: [持仓恢复] US.XLF SHORT 289.0股 @$52.69
+2026-06-10 07:35:59,460 [app.pipeline.position_monitor] INFO: [持仓恢复] US.LMT SHORT 61.0股 @$515.49
+2026-06-10 07:35:59,461 [app.pipeline.position_monitor] INFO: [持仓恢复] US.XLK LONG 807.0股 @$186.77
+2026-06-10 07:35:59,462 [app.pipeline.position_monitor] INFO: [持仓恢复] US.XLI LONG 306.0股 @$171.63
+2026-06-10 07:35:59,464 [app.pipeline.position_monitor] INFO: [持仓恢复] US.DIA LONG 317.0股 @$506.68
+2026-06-10 07:35:59,465 [app.pipeline.position_monitor] INFO: [持仓恢复] US.TSLA SHORT 14.0股 @$421.76
+2026-06-10 07:35:59,466 [app.pipeline.position_monitor] INFO: [持仓恢复] US.ORCL LONG 63.0股 @$209.43
+2026-06-10 07:35:59,468 [app.pipeline.position_monitor] INFO: [持仓恢复] US.AAPL SHORT 2.0股 @$313.46
+2026-06-10 07:35:59,468 [app.pipeline.position_monitor] INFO: [持仓恢复] 完成：12/12 条记录恢复
+2026-06-10 07:35:59,469 [app.core.scheduler_core] INFO: [调度器] 🔍 开始启动持仓对账...
+2026-06-10 07:35:59,472 [app.core.scheduler_core] INFO: [调度器] ✅ 持仓对账完成 | DB=12 | 内存=12 | 差异=0
+2026-06-10 07:35:59,472 [app.core.scheduler_core] INFO: [调度器·Coordinator] 启动回灌完成: capital={'main': 0.0, 'scalping': 0.0, 'llm_plan': 0.0} locks={'US.AAPL': 'main', 'US.NFLX': 'main', 'US.TSLA': 'main', 'US.XLI': 'main', 'US.ORCL': 'main', 'US.NTES': 'main', 'US.XLF': 'main', 'US.XLK': 'main', 'US.LMT': 'main', 'US.XLV': 'main', 'US.DIA': 'main', 'US.TSM': 'main'}
+2026-06-10 07:35:59,473 [app.observability.watchdog] INFO: [Watchdog] 注册心跳: monitor_loop threshold=75.0s
+2026-06-10 07:35:59,473 [app.core.scheduler_core] INFO: [LLM策略] 策略引擎循环已启动 (按市场阶段自适应)
+2026-06-10 07:35:59,474 [app.observability.watchdog] INFO: [Watchdog] 注册心跳: scan_loop threshold=900s
+2026-06-10 07:35:59,474 [app.core.scheduler_core] INFO: [NewsV2] 管线采集循环已启动 (interval=180s, observe模式)
+2026-06-10 07:35:59,474 [app.core.scheduler_core] INFO: [LLM策略] 盘后夜盘 → 新闻采集 + LLM 推荐
+2026-06-10 07:35:59,474 [app.core.scheduler_core] INFO: [NewsV2] 后台采集线程已启动
+2026-06-10 07:35:59,482 [app.core.scheduler_core] INFO: [VIX Monitor] 监控循环已启动 (interval=300s)
+2026-06-10 07:35:59,488 [app.core.scheduler_core] INFO: [VIX Monitor] 后台监控线程已启动
+2026-06-10 07:35:59,488 [app.orb.engine] INFO: [ORB·ADR-006] ✅ 标的池零重叠 | ORB=10 ETF | Main=28 个股
+2026-06-10 07:35:59,488 [app.orb.engine] INFO: [ORB] ✅ Futu 订阅完成: 10 只 ETF (['SPY', 'QQQ', 'IWM', 'DIA', 'XLE', 'XLF', 'XLK', 'XLV', 'XLY', 'XLI'])
+2026-06-10 07:35:59,488 [app.orb.engine] INFO: [ORB] tick #1 | time=19:35:59 | pos=0 | ranges=0 | done=0
+2026-06-10 07:35:59,489 [app.orb.engine] INFO: [ORB] 跨日重置 | date=2026-06-09
+2026-06-10 07:35:59,490 [app.orb.engine] INFO: [ORB] daemon 线程已启动 | mode=active
+2026-06-10 07:35:59,503 [ftseek_us.harness_audit] INFO: 🔍 开始盘前巡检 (Pre-Market Audit)...
+2026-06-10 07:35:59,503 [ftseek_us.harness_audit] INFO:    TwelveData 令牌桶初始化: 0/8
+2026-06-10 07:35:59,503 [ftseek_us.harness_audit] INFO:    Finnhub 令牌桶初始化: 0/60
+2026-06-10 07:35:59,503 [ftseek_us.harness_audit] INFO:    API 状态: TD(0), FH(0)
+2026-06-10 07:35:59,503 [ftseek_us.harness_audit] INFO:    ✅ 盘前检查通过，系统状态良好
+2026-06-10 07:35:59,521 | 3713653 | 139780478038336 | [open_context_base.py:409] _init_connect_sync: New connect ready: conn=7470257419597259319(7) context=<futu.quote.open_quote_context.OpenQuoteContext object at 0x7f20c875f400>
+2026-06-10 07:35:59,524 [ftseek_us.harness_audit] INFO: 🌙 开始盘后巡检 (Post-Market Audit)...
+2026-06-10 07:35:59,524 [ftseek_us.harness_audit] INFO:    当前持仓数: 12
+2026-06-10 07:35:59,535 [ftseek_us.signal_ic_tracker] INFO: [SignalIC] 表初始化完成: /opt/ftseek/FTSeek-US/data/signal_snapshots.db
+2026-06-10 07:35:59,548 [app.pipeline.position_monitor] INFO: [资本安全] 🟢 安全 | 净值=$1,075,509 | 回撤 -1.9% | 风险系数 1.0
+2026-06-10 07:35:59,557 [ftseek.trading_calendar] INFO: [TradingCalendar] Futu 缓存刷新: HK [2026-05-11~2026-08-09] = 62 交易日
+2026-06-10 07:35:59,558 [app.core.scheduler_core] INFO: [分时调度] 当前为美股盘前/交易时段，立即订阅 watchlist...
+2026-06-10 07:35:59,564 [ftseek_us.subscription_manager] INFO: [US] 自动订阅循环启动
+2026-06-10 07:35:59,565 | 3713653 | 139780165723712 | [open_context_base.py:516] on_disconnect: Disconnected: conn=0(7) reason=CallClose
+2026-06-10 07:35:59,570 [ftseek_us.subscription_manager] WARNING: [US][HEALTH] ⚠️ 底层 OpenD/Futu 连接不健康 — 触发重连与重订阅
+2026-06-10 07:35:59,570 [ftseek_us.subscription_manager] INFO: [US] 进入盘前/交易时段，订阅 28 只...
+2026-06-10 07:35:59,576 [ftseek_us.news_v2.sources.csrc] INFO: [CSRC] 采集完成: 0 条监管公告
+2026-06-10 07:35:59,576 [ftseek_us.subscription_manager] INFO: [SubscriptionManager] 美股自动循环启动 | 60s
+2026-06-10 07:35:59,961 [ftseek_us.harness_audit] INFO:    📊 Signal IC: -0.0383 (N=806)
+2026-06-10 07:35:59,962 [ftseek_us.harness_audit] INFO:    ✅ 盘后检查通过，无风险标记
+2026-06-10 07:35:59,997 [app.diagnostics.base] INFO: [shadow_account_v2] 开始执行...
+2026-06-10 07:36:00,034 [ftseek.obsidian_writer] INFO: 📓 ObsidianWriter 已初始化: /opt/ftseek/FTSeek-US/obsidian_vault
+2026-06-10 07:36:00,081 [app.notifier.dingtalk] INFO: [钉钉] send_text 成功: 📊 FTSeek-US 每日复盘 v2.0 (2026-06-09)
+2026-06-10 07:36:00,082 [app.core.scheduler_triggers] INFO: [日报] 复盘推送完成：2026-06-09
+2026-06-10 07:36:00,083 [ftseek_us.review.orchestrator] INFO: [Orchestrator] 开始日复盘: 2026-06-09
+2026-06-10 07:36:00,094 [ftseek_us.review.orchestrator] INFO: [Orchestrator] 采集完成: 4 笔交易
+2026-06-10 07:36:00,268 [ftseek_us.debate.planner] INFO: [DebatePlanner] 辩论配置已加载: enabled=True, rounds=2, timeout=600s, divergence=0.4
+2026-06-10 07:36:00,278 [ftseek_us.debate.planner] INFO: [DebatePlanner] 记忆注入成功 | 2592 chars
+2026-06-10 07:36:00,278 [ftseek_us.review.orchestrator] INFO: [Analyst] daily 辩论上下文构建完成 | memory=2592 chars
+2026-06-10 07:36:12,205 [app.data.alphavantage_provider] INFO: [Finnhub] VIX (VIXY代理): VIXY=$24.27 → VIX≈20.63
+2026-06-10 07:36:12,206 [rsshub_us] INFO: [RSSHub采集器] 已初始化 | 实例=1 | 源=5 | 来源=unified_config
+2026-06-10 07:36:12,207 [rsshub_us] INFO: ✅ US News DB 初始化: /opt/ftseek/FTSeek-US/data/rsshub_us/news_us.db
+2026-06-10 07:36:12,209 [rsshub_us] INFO: 去重集合加载: 389 条 (24h内)
+2026-06-10 07:36:12,307 [ftseek_us.risk.vix_monitor] INFO: VIX 指数：20.63
+2026-06-10 07:36:14,124 [rsshub_us] INFO: [RSSHub] us_bloomberg: 1 条相关新闻
+2026-06-10 07:36:16,241 [rsshub_us] WARNING: RSSHub 采集失败 us_wallstreetcn: 所有实例连接失败
+2026-06-10 07:36:16,242 [rsshub_us] INFO: [RSSHub] us_wallstreetcn: 0 条相关新闻
+2026-06-10 07:36:17,228 [ftseek_us.news_v2.sources.hkex] INFO: [HKEX] 采集完成: 0 条公告
+2026-06-10 07:36:18,046 [rsshub_us] INFO: [RSSHub] us_cls: 7 条相关新闻
+2026-06-10 07:36:19,333 [rsshub_us] INFO: [RSSHub] us_cnbc_direct: 0 条相关新闻
+2026-06-10 07:36:19,979 [rsshub_us] INFO: [RSSHub] us_seekingalpha_direct: 11 条相关新闻
+2026-06-10 07:36:19,990 [rsshub_us] INFO: [RSSHub-US] 本轮采集完成: 获取 19 条, 保存 19 条
+2026-06-10 07:36:19,991 [app.pipeline.llm_pipeline] INFO: [LLM推荐] RSSHub 新闻采集: 19 条新, 20 条可用
+2026-06-10 07:36:19,992 [ftseek.llm_strategy] INFO: [LLM策略引擎] 初始化 | 模型=qwen-max | 启用=True | 来源=unified_config
+2026-06-10 07:36:27,477 [ftseek_us.llm.agent_bridge] WARNING: [AgentBridge·LLM] JSON 解析失败: Expecting value: line 1 column 1 (char 0), raw=''
+2026-06-10 07:36:27,477 [ftseek_us.llm.agent_bridge] INFO: [AgentBridge·LLM] 重试: 限制 max_tokens=2048 获取更短响应
+2026-06-10 07:36:35,539 [ftseek_us.review.orchestrator] INFO: [DebateRunner] R1 多头分析师 (qwen3.6-plus) 成功
+2026-06-10 07:36:47,617 [ftseek_us.review.orchestrator] INFO: [DebateRunner] R1 空头审计师 (deepseek-v4-pro) 成功
+2026-06-10 07:36:59,629 [ftseek_us.subscription_manager] INFO: [US] 进入盘前/交易时段，订阅 28 只...
+2026-06-10 07:37:03,934 [ftseek_us.llm.agent_bridge] WARNING: [AgentBridge·LLM] 重试也失败: Unterminated string starting at: line 79 column 21 (char 4022)
+2026-06-10 07:37:03,934 [ftseek_us.review.orchestrator] WARNING: [DebateRunner] R1 独立风险评估师 (MiniMax-M2.5) 返回空
+2026-06-10 07:37:03,935 [ftseek_us.review.orchestrator] INFO: [DebateRunner] Round 1 完成: 2/3 成功
+2026-06-10 07:37:45,426 [app.notifier.dingtalk] INFO: [钉钉] send_text 成功: 🌆 FTSeek-US 盘后分析推荐
+2026-06-10 07:37:45,426 [app.pipeline.llm_pipeline] INFO: [LLM推荐] 推送成功 (after_hours)
+2026-06-10 07:37:45,426 [app.pipeline.llm_pipeline] INFO: [LLM推荐] 完成: after_hours, 新闻 20 条
+2026-06-10 07:37:45,720 [ftseek_us.review.orchestrator] INFO: [DebateRunner] R2 独立风险评估师 交叉反驳成功
+2026-06-10 07:37:55,902 [ftseek_us.review.orchestrator] INFO: [DebateRunner] R2 多头分析师 交叉反驳成功
+2026-06-10 07:37:59,687 [ftseek_us.subscription_manager] INFO: [US] 进入盘前/交易时段，订阅 28 只...
+2026-06-10 07:38:03,784 [ftseek_us.llm.agent_bridge] WARNING: [AgentBridge·LLM] JSON 解析失败: Unterminated string starting at: line 73 column 24 (char 2877), raw='{\n  "responses_to_others": [\n    {\n      "to_model": "多头分析师",\n      "response": "manual_sync 策略样本仅8笔，近期存在一笔 -$3578 的大额亏损（LONG US.XLK | -3578 | TRAILING_STOP），说明该策略盈亏分布极不均衡，高的平均盈亏可能由少数大盈利扭曲。在未分析其完整序列前，'
+2026-06-10 07:38:03,784 [ftseek_us.llm.agent_bridge] INFO: [AgentBridge·LLM] 重试: 限制 max_tokens=2048 获取更短响应
+2026-06-10 07:38:33,552 [ftseek_us.llm.agent_bridge] WARNING: [AgentBridge·LLM] 重试也失败: Unterminated string starting at: line 54 column 7 (char 1657)
+2026-06-10 07:38:33,552 [ftseek_us.review.orchestrator] INFO: [DebateRunner] Round 2 完成: 2/3 成功
+2026-06-10 07:38:59,741 [ftseek_us.subscription_manager] INFO: [US] 进入盘前/交易时段，订阅 28 只...
+2026-06-10 07:39:09,304 [ftseek_us.review.orchestrator] INFO: [DebateRunner] Arbiter 综合收敛成功
+2026-06-10 07:39:09,305 [ftseek_us.review.orchestrator] INFO: [DebateRunner] Arbiter 完成: 收敛度 0.8
+2026-06-10 07:39:09,305 [ftseek_us.review.orchestrator] INFO: [Analyst] 结构化辩论完成: 2 轮 | mode=partial | 收敛度=0.3 | 质量=low | (2/3 成功)
+2026-06-10 07:39:09,305 [ftseek_us.review.orchestrator] INFO: [Orchestrator] 开始 Phase 3 验证辩论结论
+2026-06-10 07:39:09,305 [ftseek_us.review.orchestrator] INFO: [Orchestrator] 验证完成: 验证完成: 0/0 个 claim 有证据支持 (可信度 0%, 证据质量: weak)
+2026-06-10 07:39:09,356 [app.notifier.dingtalk] INFO: [钉钉] send_text 成功: 📊 FTSeek-US 盘后复盘报告 (2026-06-09)
+2026-06-10 07:39:09,356 [ftseek_us.review.orchestrator] INFO: [Orchestrator] 日报已推送
+2026-06-10 07:39:09,356 [ftseek_us.review.orchestrator] INFO: [DebateExtractor] 提取 0 个 LLM Issue
+2026-06-10 07:39:09,356 [app.core.scheduler_triggers] INFO: [Orchestrator] 日复盘增强完成: mode=partial | lessons=0 | llm_issues=0
+2026-06-10 07:39:09,364 [app.core.scheduler_triggers] INFO: [教训验证] 验证完成: 有效=10, 无效=0, 更新=10
+2026-06-10 07:39:09,415 [app.notifier.dingtalk] INFO: [钉钉] send_text 成功: 📋 [教训验证] 今日更新 10 条教训: ✅ 验证 10 条, ❌ 失效 0 条
+2026-06-10 07:39:09,432 [app.analysis.signal_quality_tracker] INFO: [SignalQuality] 每日更新完成 | as_of=2026-06-09 | trades=348 | confidence: 0-0.3: 45.6%(n=160), 0.3-0.5: 37.5%(n=16), 0.5-0.7: 17.8%(n=118), 0.7-1.0: 31.5%(n=54) | 30d: technical:40.0%(n=10), scalping:4.8%(n=84), 其他:52.3%(n=65) | 推荐 min_conf=0.0 | actions=scalping->DISABLE_OR_REDUCE_WEIGHT
+2026-06-10 07:39:09,432 [app.core.scheduler_triggers] INFO: [SignalQuality] 每日反馈完成 | trades=348 | 推荐 min_conf=0.0 | 高危策略=1
+2026-06-10 07:39:09,476 [app.notifier.dingtalk] INFO: [钉钉] send_text 成功: ⚠️ [信号质量] 高危策略告警
+2026-06-10 07:39:09,479 [ftseek.analysis.plan_effectiveness] INFO: [PlanEffectiveness] 报告已保存: /opt/ftseek/FTSeek-US/data/plan_effectiveness/daily_2026-06-09.json
+2026-06-10 07:39:09,479 [ftseek.analysis.plan_effectiveness] INFO: [PlanEffectiveness] 2026-06-09 | planned=3 | hit_rate=0.00% | traded_rate=0.00% | unplanned=4
+2026-06-10 07:39:09,526 [app.notifier.dingtalk] INFO: [钉钉] send_text 成功: 📊 盘前计划效果: 命中率 0%, 执行率 0%
+2026-06-10 07:39:09,542 [ftseek_us.llm.agent_bridge] INFO: [Agent-US] 开始生成盘后归因报告...
+2026-06-10 07:39:09,544 [ftseek_us.llm.agent_bridge] INFO: [Agent-US] EOD 请求已写入: /root/.hermes/ftseek/requests/eod_us_20260610_073909.json
+2026-06-10 07:39:09,544 [ftseek_us.llm.agent_bridge] INFO: [AgentQueue] SQLite 请求队列表初始化完成
+2026-06-10 07:39:09,551 [ftseek_us.llm.agent_bridge] INFO: [AgentQueue] 入队: eod_us_20260610_073909 (generate_eod_review)
+2026-06-10 07:39:09,556 [ftseek_us.storage.daily_log] INFO: [ShadowLog] 数据库初始化完成: /opt/ftseek/FTSeek-US/data/shadow_logs.db
+2026-06-10 07:39:32,388 [ftseek_us.news_v2.sources.hkex] INFO: [HKEX] 采集完成: 0 条公告
+2026-06-10 07:39:59,801 [ftseek_us.subscription_manager] INFO: [US] 进入盘前/交易时段，订阅 28 只...
+2026-06-10 07:40:19,757 [app.coordinator.capital_allocator] WARNING: [CapitalAllocator·RECONCILE] bucket=main 账本=0.000 实际=0.585 → 修正
+2026-06-10 07:40:57,759 [ftseek_us.position_sync] INFO: [US Sync] Done | Futu: 12 | DB: 12
+2026-06-10 07:40:59,707 [app.orb.engine] INFO: [ORB] tick #61 | time=19:40:59 | pos=0 | ranges=0 | done=0
+2026-06-10 07:40:59,861 [ftseek_us.subscription_manager] INFO: [US] 进入盘前/交易时段，订阅 28 只...
+2026-06-10 07:41:25,091 [ftseek_us.risk.vix_monitor] INFO: VIX 指数：20.63
+2026-06-10 07:41:59,913 [ftseek_us.subscription_manager] INFO: [US] 进入盘前/交易时段，订阅 28 只...
+2026-06-10 07:42:32,600 [ftseek_us.news_v2.sources.csrc] INFO: [CSRC] 采集完成: 0 条监管公告
+2026-06-10 07:42:46,573 [ftseek_us.news_v2.sources.hkex] INFO: [HKEX] 采集完成: 0 条公告
+2026-06-10 07:42:59,970 [ftseek_us.subscription_manager] INFO: [US] 进入盘前/交易时段，订阅 28 只...
+2026-06-10 07:44:00,030 [ftseek_us.subscription_manager] INFO: [US] 进入盘前/交易时段，订阅 28 只...

@@ -1293,13 +1293,22 @@ def _check_gates_and_conflicts(scheduler, symbol: str, signal: SignalScore, cont
     # ── P0: 交易保护网关检查 ──
     from app.core.trade_guard import TradeGuard, GuardDecision
 
-    # 获取账户净值
+    # 获取账户净值 (2026-06-10: 实盘 fail-close)
     try:
         from app.risk.capital_safety import get_capital_safety_system
         equity = get_capital_safety_system()._state.current_equity
-        if equity <= 0: equity = 100000.0
+        if equity <= 0:
+            from app.core.trading_mode import TradingMode
+            if TradingMode().is_live:
+                logger.critical("🚫 [TradeGuard] 实盘模式但 equity ≤ 0 — 拒绝下单 (fail-close)")
+                return False
+            equity = 100000.0  # 模拟盘 fallback
     except (AttributeError, ImportError):
-        equity = 100000.0
+        from app.core.trading_mode import TradingMode
+        if TradingMode().is_live:
+            logger.critical("🚫 [TradeGuard] 实盘模式但 capital_safety 不可用 — 拒绝下单 (fail-close)")
+            return False
+        equity = 100000.0  # 模拟盘 fallback
 
     guard = TradeGuard({
         "equity": equity,
