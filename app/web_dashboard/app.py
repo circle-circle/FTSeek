@@ -163,10 +163,10 @@ def create_app() -> FastAPI:
     # 路由
     @app.get("/review", response_class=HTMLResponse)
     async def review_page(request: Request):
-        """复盘报告页面"""
+        """分析页面"""
         return templates.TemplateResponse("review.html", {
             "request": request,
-            "title": "复盘报告 - FTSeek Dashboard",
+            "title": "分析 - FTSeek US",
         })
 
     @app.get("/", response_class=HTMLResponse)
@@ -240,11 +240,8 @@ def create_app() -> FastAPI:
     
     @app.get("/health", response_class=HTMLResponse)
     async def health_page(request: Request):
-        """健康监控页面"""
-        return templates.TemplateResponse("health.html", {
-            "request": request,
-            "title": "系统健康监控 - FTSeek-US",
-        })
+        """健康监控页面 → 重定向到系统页"""
+        return RedirectResponse(url="/system", status_code=301)
     
     @app.get("/api/metrics/system")
     async def get_system_metrics():
@@ -348,7 +345,7 @@ def create_app() -> FastAPI:
             logger.error(f"告警检查失败：{e}")
             return {"status": "error", "error": str(e)}
     
-    @app.get("/health")
+    @app.get("/api/health")
     async def health_check_api():
         """健康检查 API"""
         return {"status": "ok", "timestamp": datetime.now().isoformat()}
@@ -676,14 +673,74 @@ def create_app() -> FastAPI:
 
     @app.get("/mode-switch", response_class=HTMLResponse)
     async def mode_switch_page(request: Request):
-        """模式切换页面"""
-        mode_info = get_current_mode()
-        return templates.TemplateResponse("mode_switch.html", {
+        """模式切换页面 → 重定向到系统页"""
+        return RedirectResponse(url="/system", status_code=301)
+
+    @app.get("/system", response_class=HTMLResponse)
+    async def system_page(request: Request):
+        """统一系统页面（健康监控 + 模式切换 + 日志）"""
+        return templates.TemplateResponse("system.html", {
             "request": request,
-            "title": "模式切换 - FTSeek-US",
-            "mode_info": mode_info,
-            "is_live": mode_info["mode"].startswith("live_"),
+            "title": "系统 - FTSeek-US",
         })
+
+    @app.get("/api/system/logs")
+    async def get_system_logs():
+        """读取最近 20 行日志"""
+        import subprocess as _sp
+        log_path = base_dir.parent.parent / "logs" / "ftseek_us.log"
+        try:
+            if log_path.exists():
+                proc = _sp.run(
+                    ["tail", "-n", "20", str(log_path)],
+                    capture_output=True, text=True, timeout=5,
+                )
+                lines = proc.stdout.strip().split("\n") if proc.stdout.strip() else []
+                return {"lines": lines, "count": len(lines)}
+            else:
+                return {"lines": [], "count": 0}
+        except Exception as e:
+            logger.error(f"读取日志失败: {e}")
+            return {"lines": [], "count": 0, "error": str(e)}
+
+    @app.get("/api/system/status")
+    async def get_system_status():
+        """获取系统服务状态"""
+        import subprocess as _sp
+        services = {}
+
+        for svc in ["ftseek-us", "ftseek-us-dashboard"]:
+            try:
+                proc = _sp.run(
+                    ["systemctl", "is-active", svc],
+                    capture_output=True, text=True, timeout=5,
+                )
+                key = "dashboard" if svc == "ftseek-us-dashboard" else "ftseek_us"
+                services[key] = proc.stdout.strip()
+            except Exception:
+                key = "dashboard" if svc == "ftseek-us-dashboard" else "ftseek_us"
+                services[key] = "unknown"
+
+        # Broker connection check
+        broker_connected = False
+        account_id = ""
+        try:
+            svc = get_manual_order_service()
+            broker_connected = svc.connect()
+            if broker_connected:
+                import os as _os
+                is_live_env = dashboard_is_live()
+                account_id = _os.getenv(
+                    "REAL_ACCOUNT_ID" if is_live_env else "SIMULATE_ACCOUNT_ID", ""
+                )
+        except Exception:
+            pass
+
+        return {
+            "services": services,
+            "broker_connected": broker_connected,
+            "account_id": account_id,
+        }
 
     @app.get("/api/mode")
     async def get_mode():
@@ -726,14 +783,10 @@ def create_app() -> FastAPI:
     # 风控 API (2026-06-10)
     # ─────────────────────────────────────────────────────────────
 
-    @app.get("/risk", response_class=HTMLResponse)
-    async def risk_page(request: Request):
-        """风控仪表盘页面"""
-        return templates.TemplateResponse("risk.html", {
-            "request": request,
-            "title": "风控仪表盘 - FTSeek-US",
-            "is_live": dashboard_is_live(),
-        })
+    @app.get("/risk")
+    async def risk_page():
+        """风控页面已合并到指挥中心"""
+        return RedirectResponse(url="/", status_code=301)
 
     @app.get("/api/risk/status")
     async def risk_status():
