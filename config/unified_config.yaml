@@ -219,6 +219,9 @@ llm:
     catalyst_review:     {primary: deepseek-pro, fallback: qwen-plus}      # 盘后回看
     catalyst_breaking:   {primary: qwen-flash,  fallback: qwen-plus}       # 盘中快速(低延迟)
 
+    # ⭐ 2026-06-10 个股分析 — Dashboard 个股详情页 LLM 深度分析
+    stock_analyst:       {primary: qwen-max,    fallback: deepseek-pro}    # 最强模型综合分析
+
   # 旧别名兼容映射 (2026-05-21): 原 multi_model_client 的 "qwen"/"deepseek" 等别名
   # 迁移期使用，后续代码统一改用 feature 路由后可删除
   legacy_aliases:

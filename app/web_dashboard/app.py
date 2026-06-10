@@ -1332,6 +1332,495 @@ def create_app() -> FastAPI:
 
         return {"equity_history": history}
 
+
+    # ── 个股详情页 ── (2026-06-10)
+
+    @app.get("/stock/{symbol}", response_class=HTMLResponse)
+    async def stock_detail_page(symbol: str, request: Request):
+        """个股详情页 - K线 + 盘口 + 逐笔 + 分析"""
+        symbol = symbol.upper()
+        if not symbol.startswith("US."):
+            symbol = "US." + symbol
+        return templates.TemplateResponse("stock_detail.html", {
+            "request": request,
+            "symbol": symbol,
+        })
+
+    @app.get("/api/stock/{symbol}/kline")
+    async def stock_kline(symbol: str, ktype: str = "K_5M", num: int = 100):
+        """获取K线数据"""
+        svc = get_manual_order_service()
+        if not svc.connect():
+            return JSONResponse({"error": "broker_not_connected"}, 503)
+        symbol = symbol.upper()
+        try:
+            from futu import RET_OK
+            ret, data = svc._quote_ctx.get_cur_kline(symbol, num, ktype=ktype)
+            if ret == RET_OK and not data.empty:
+                records = []
+                for _, row in data.iterrows():
+                    records.append({
+                        "time": str(row.get("time_key", "")),
+                        "open": float(row.get("open", 0)),
+                        "high": float(row.get("high", 0)),
+                        "low": float(row.get("low", 0)),
+                        "close": float(row.get("close", 0)),
+                        "volume": int(float(row.get("volume", 0))),
+                    })
+                return {"symbol": symbol, "kline": records}
+            return {"symbol": symbol, "kline": [], "error": "no_data"}
+        except Exception as e:
+            return {"symbol": symbol, "kline": [], "error": str(e)}
+
+    @app.get("/api/stock/{symbol}/orderbook")
+    async def stock_orderbook(symbol: str):
+        """获取盘口数据 (买卖各10档)"""
+        svc = get_manual_order_service()
+        if not svc.connect():
+            return JSONResponse({"error": "broker_not_connected"}, 503)
+        symbol = symbol.upper()
+        try:
+            from futu import RET_OK
+            ret, data = svc._quote_ctx.get_order_book(symbol, num=10)
+            if ret == RET_OK and data:
+                bids = data.get("Bid", [])
+                asks = data.get("Ask", [])
+                return {
+                    "symbol": symbol,
+                    "bids": [{"price": float(b[0]), "volume": int(b[1]), "order_count": int(b[2]) if len(b) > 2 else 0} for b in bids],
+                    "asks": [{"price": float(a[0]), "volume": int(a[1]), "order_count": int(a[2]) if len(a) > 2 else 0} for a in asks],
+                }
+            return {"symbol": symbol, "bids": [], "asks": [], "error": "no_data"}
+        except Exception as e:
+            return {"symbol": symbol, "bids": [], "asks": [], "error": str(e)}
+
+    @app.get("/api/stock/{symbol}/ticker")
+    async def stock_ticker(symbol: str, num: int = 100):
+        """获取逐笔成交"""
+        svc = get_manual_order_service()
+        if not svc.connect():
+            return JSONResponse({"error": "broker_not_connected"}, 503)
+        symbol = symbol.upper()
+        try:
+            from futu import RET_OK
+            ret, data = svc._quote_ctx.get_rt_ticker(symbol, num=num)
+            if ret == RET_OK and not data.empty:
+                records = []
+                for _, row in data.iterrows():
+                    records.append({
+                        "time": str(row.get("time_key", "")),
+                        "price": float(row.get("price", 0)),
+                        "volume": int(float(row.get("volume", 0))),
+                        "direction": str(row.get("ticker_direction", "")),
+                        "type": str(row.get("type", "")),
+                    })
+                return {"symbol": symbol, "ticker": records}
+            return {"symbol": symbol, "ticker": [], "error": "no_data"}
+        except Exception as e:
+            return {"symbol": symbol, "ticker": [], "error": str(e)}
+
+    @app.get("/api/stock/{symbol}/analysis")
+    async def stock_analysis(symbol: str):
+        """技术分析 + 引擎持仓 + 建议"""
+        import math
+        svc = get_manual_order_service()
+        if not svc.connect():
+            return JSONResponse({"error": "broker_not_connected"}, 503)
+        symbol = symbol.upper()
+
+        result = {"symbol": symbol, "technicals": {}, "position": None, "recommendation": {}}
+
+        # 1. K线计算技术指标
+        try:
+            from futu import RET_OK
+            ret, data = svc._quote_ctx.get_cur_kline(symbol, 120, ktype="K_DAY")
+            if ret == RET_OK and not data.empty and len(data) >= 20:
+                closes = [float(row["close"]) for _, row in data.iterrows()]
+                volumes = [float(row["volume"]) for _, row in data.iterrows()]
+
+                # MA
+                def ma(arr, n):
+                    if len(arr) < n: return None
+                    return sum(arr[-n:]) / n
+
+                ma5 = ma(closes, 5)
+                ma10 = ma(closes, 10)
+                ma20 = ma(closes, 20)
+                ma60 = ma(closes, 60) if len(closes) >= 60 else None
+                cur = closes[-1]
+
+                # RSI (14)
+                rsi = None
+                if len(closes) >= 15:
+                    gains, losses = [], []
+                    for i in range(-14, 0):
+                        diff = closes[i] - closes[i-1]
+                        gains.append(max(diff, 0))
+                        losses.append(max(-diff, 0))
+                    avg_gain = sum(gains) / 14
+                    avg_loss = sum(losses) / 14
+                    if avg_loss > 0:
+                        rs = avg_gain / avg_loss
+                        rsi = 100 - (100 / (1 + rs))
+                    else:
+                        rsi = 100.0
+
+                # MACD
+                macd_line, signal_line, histogram = None, None, None
+                if len(closes) >= 26:
+                    def ema(arr, n):
+                        k = 2 / (n + 1)
+                        val = arr[0]
+                        for p in arr[1:]:
+                            val = p * k + val * (1 - k)
+                        return val
+                    ema12_vals, ema26_vals = [], []
+                    ema12 = closes[0]
+                    ema26 = closes[0]
+                    k12, k26 = 2/13, 2/27
+                    for p in closes:
+                        ema12 = p * k12 + ema12 * (1 - k12)
+                        ema26 = p * k26 + ema26 * (1 - k26)
+                        ema12_vals.append(ema12)
+                        ema26_vals.append(ema26)
+                    # MACD line = ema12 - ema26
+                    macd_vals = [e12 - e26 for e12, e26 in zip(ema12_vals, ema26_vals)]
+                    # Signal = EMA9 of MACD
+                    k9 = 2/10
+                    sig = macd_vals[0]
+                    for m in macd_vals:
+                        sig = m * k9 + sig * (1 - k9)
+                    macd_line = round(macd_vals[-1], 4)
+                    signal_line = round(sig, 4)
+                    histogram = round(macd_line - signal_line, 4)
+
+                # Volume trend
+                vol_ma5 = ma(volumes, 5)
+                vol_cur = volumes[-1]
+
+                # ATR (14)
+                atr = None
+                if len(closes) >= 15:
+                    ret2, data2 = svc._quote_ctx.get_cur_kline(symbol, 20, ktype="K_DAY")
+                    if ret2 == RET_OK and not data2.empty:
+                        trs = []
+                        for i, row in data2.iterrows():
+                            h = float(row["high"])
+                            l = float(row["low"])
+                            pc = float(row.get("prev_close", l))
+                            tr = max(h - l, abs(h - pc), abs(l - pc))
+                            trs.append(tr)
+                        atr = sum(trs[-14:]) / 14
+
+                result["technicals"] = {
+                    "cur_price": round(cur, 2),
+                    "ma5": round(ma5, 2) if ma5 else None,
+                    "ma10": round(ma10, 2) if ma10 else None,
+                    "ma20": round(ma20, 2) if ma20 else None,
+                    "ma60": round(ma60, 2) if ma60 else None,
+                    "rsi14": round(rsi, 1) if rsi is not None else None,
+                    "macd": macd_line,
+                    "macd_signal": signal_line,
+                    "macd_hist": histogram,
+                    "atr14": round(atr, 2) if atr else None,
+                    "vol_current": int(vol_cur),
+                    "vol_ma5": int(vol_ma5) if vol_ma5 else None,
+                    "vol_ratio": round(vol_cur / vol_ma5, 2) if vol_ma5 and vol_ma5 > 0 else None,
+                }
+
+                # 2. 生成建议
+                signals = []
+                score = 0  # -100 to +100
+
+                # MA trend
+                if ma5 and ma10 and ma20:
+                    if ma5 > ma10 > ma20:
+                        signals.append(("MA多头排列", "+bullish"))
+                        score += 20
+                    elif ma5 < ma10 < ma20:
+                        signals.append(("MA空头排列", "+bearish"))
+                        score -= 20
+                    if cur > ma20:
+                        score += 10
+                    else:
+                        score -= 10
+
+                # RSI
+                if rsi is not None:
+                    if rsi > 70:
+                        signals.append((f"RSI超买({rsi:.0f})", "+bearish"))
+                        score -= 15
+                    elif rsi < 30:
+                        signals.append((f"RSI超卖({rsi:.0f})", "+bullish"))
+                        score += 15
+                    elif 40 < rsi < 60:
+                        signals.append((f"RSI中性({rsi:.0f})", "+neutral"))
+
+                # MACD
+                if histogram is not None:
+                    if histogram > 0 and macd_line > signal_line:
+                        signals.append(("MACD金叉", "+bullish"))
+                        score += 15
+                    elif histogram < 0 and macd_line < signal_line:
+                        signals.append(("MACD死叉", "+bearish"))
+                        score -= 15
+
+                # Volume
+                if vol_ma5 and vol_ma5 > 0:
+                    vratio = vol_cur / vol_ma5
+                    if vratio > 2:
+                        signals.append((f"放量{vratio:.1f}x", "+attention"))
+                    elif vratio < 0.5:
+                        signals.append((f"缩量{vratio:.1f}x", "+attention"))
+
+                # Determine recommendation
+                if score >= 30:
+                    rec = "偏多"
+                    rec_color = "green"
+                elif score <= -30:
+                    rec = "偏空"
+                    rec_color = "red"
+                else:
+                    rec = "中性观望"
+                    rec_color = "yellow"
+
+                result["recommendation"] = {
+                    "direction": rec,
+                    "color": rec_color,
+                    "score": score,
+                    "signals": signals,
+                }
+        except Exception as e:
+            result["technicals"] = {"error": str(e)}
+
+        # 3. 查引擎持仓
+        try:
+            import sqlite3 as _sqlite3
+            from app.core.paths import get_trade_records_db
+            conn = _sqlite3.connect(str(get_trade_records_db()))
+            row = conn.execute(
+                "SELECT symbol, direction, quantity, avg_entry_price, stop_loss, take_profit, current_price "
+                "FROM open_positions WHERE symbol = ? AND status = 'open'",
+                (symbol,)
+            ).fetchone()
+            if row:
+                result["position"] = {
+                    "symbol": row[0],
+                    "direction": row[1],
+                    "quantity": row[2],
+                    "entry_price": round(float(row[3]), 2) if row[3] else None,
+                    "stop_loss": round(float(row[4]), 2) if row[4] else None,
+                    "take_profit": round(float(row[5]), 2) if row[5] else None,
+                    "current_price": round(float(row[6]), 2) if row[6] else None,
+                }
+            conn.close()
+        except Exception as e:
+            pass
+
+        return result
+
+    @app.get("/api/stock/{symbol}/llm-analysis")
+    async def stock_llm_analysis(symbol: str):
+        """LLM 深度分析 — 综合技术面+盘口+逐笔，给出方向建议和理由"""
+        import asyncio
+        svc = get_manual_order_service()
+        if not svc.connect():
+            return JSONResponse({"error": "broker_not_connected"}, 503)
+        symbol = symbol.upper()
+
+        # 1. 收集所有数据
+        data_bundle = {"symbol": symbol}
+
+        # 技术指标 (复用 /analysis 的逻辑)
+        try:
+            from futu import RET_OK
+            # 日线 K线
+            ret, day_data = svc._quote_ctx.get_cur_kline(symbol, 120, ktype="K_DAY")
+            if ret == RET_OK and not day_data.empty and len(day_data) >= 20:
+                closes = [float(r["close"]) for _, r in day_data.iterrows()]
+                highs = [float(r["high"]) for _, r in day_data.iterrows()]
+                lows = [float(r["low"]) for _, r in day_data.iterrows()]
+                volumes = [float(r["volume"]) for _, r in day_data.iterrows()]
+
+                # 近5日K线摘要
+                recent_5d = []
+                for _, r in day_data.tail(5).iterrows():
+                    recent_5d.append({
+                        "date": str(r.get("time_key",""))[:10],
+                        "open": round(float(r["open"]),2),
+                        "high": round(float(r["high"]),2),
+                        "low": round(float(r["low"]),2),
+                        "close": round(float(r["close"]),2),
+                        "volume": int(float(r["volume"])),
+                    })
+
+                def ma(arr, n):
+                    return round(sum(arr[-n:])/n, 2) if len(arr) >= n else None
+
+                # RSI
+                rsi = None
+                if len(closes) >= 15:
+                    gains, losses = [], []
+                    for i in range(-14, 0):
+                        d = closes[i] - closes[i-1]
+                        gains.append(max(d,0)); losses.append(max(-d,0))
+                    ag = sum(gains)/14; al = sum(losses)/14
+                    rsi = round(100 - 100/(1 + ag/al) if al > 0 else 100, 1)
+
+                # ATR
+                trs = [max(highs[i]-lows[i], abs(highs[i]-closes[i-1]), abs(lows[i]-closes[i-1])) for i in range(1, len(closes))]
+                atr = round(sum(trs[-14:])/14, 2) if len(trs) >= 14 else None
+
+                data_bundle["daily_summary"] = {
+                    "cur_price": closes[-1],
+                    "ma5": ma(closes, 5), "ma10": ma(closes, 10),
+                    "ma20": ma(closes, 20), "ma60": ma(closes, 60),
+                    "rsi14": rsi, "atr14": atr,
+                    "recent_5d": recent_5d,
+                    "20d_high": round(max(highs[-20:]), 2),
+                    "20d_low": round(min(lows[-20:]), 2),
+                    "vol_avg_20d": int(sum(volumes[-20:])/20) if len(volumes)>=20 else None,
+                    "vol_today": int(volumes[-1]),
+                }
+
+            # 盘口
+            ret2, ob = svc._quote_ctx.get_order_book(symbol, num=5)
+            if ret2 == RET_OK and ob:
+                bids = ob.get("Bid", [])
+                asks = ob.get("Ask", [])
+                data_bundle["orderbook"] = {
+                    "top_bid": {"price": bids[0][0], "volume": bids[0][1]} if bids else None,
+                    "top_ask": {"price": asks[0][0], "volume": asks[0][1]} if asks else None,
+                    "bid_depth": sum(b[1] for b in bids),
+                    "ask_depth": sum(a[1] for a in asks),
+                    "imbalance": round((sum(b[1] for b in bids) - sum(a[1] for a in asks)) /
+                                       max(sum(b[1] for b in bids) + sum(a[1] for a in asks), 1), 3),
+                }
+
+            # 逐笔摘要
+            ret3, ticker = svc._quote_ctx.get_rt_ticker(symbol, num=200)
+            if ret3 == RET_OK and not ticker.empty:
+                buy_vol = 0; sell_vol = 0; buy_cnt = 0; sell_cnt = 0
+                for _, r in ticker.iterrows():
+                    d = str(r.get("ticker_direction", "")).lower()
+                    v = int(float(r.get("volume", 0)))
+                    if "buy" in d or d == "b":
+                        buy_vol += v; buy_cnt += 1
+                    elif "sell" in d or d == "s":
+                        sell_vol += v; sell_cnt += 1
+                total = buy_vol + sell_vol
+                data_bundle["ticker_summary"] = {
+                    "buy_volume": buy_vol,
+                    "sell_volume": sell_vol,
+                    "buy_ratio": round(buy_vol/total, 3) if total > 0 else 0.5,
+                    "buy_count": buy_cnt,
+                    "sell_count": sell_cnt,
+                    "avg_buy_size": round(buy_vol/max(buy_cnt,1), 0),
+                    "avg_sell_size": round(sell_vol/max(sell_cnt,1), 0),
+                }
+
+            # Snapshot
+            ret4, snap = svc._quote_ctx.get_market_snapshot([symbol])
+            if ret4 == RET_OK and not snap.empty:
+                row = snap.iloc[0]
+                def _f(v):
+                    try: return float(v) if v is not None and v != "N/A" else 0
+                    except: return 0
+                data_bundle["snapshot"] = {
+                    "prev_close": _f(row.get("prev_close_price")),
+                    "open": _f(row.get("open_price")),
+                    "high": _f(row.get("high_price")),
+                    "low": _f(row.get("low_price")),
+                    "volume": int(_f(row.get("volume"))),
+                    "turnover": _f(row.get("turnover")),
+                    "pe_ratio": _f(row.get("pe_ratio")),
+                    "market_cap": _f(row.get("market_cap")),
+                }
+        except Exception as e:
+            data_bundle["data_error"] = str(e)
+
+        # 引擎持仓
+        try:
+            import sqlite3 as _sqlite3
+            from app.core.paths import get_trade_records_db
+            conn = _sqlite3.connect(str(get_trade_records_db()))
+            row = conn.execute(
+                "SELECT direction, quantity, avg_entry_price, stop_loss, take_profit, current_price "
+                "FROM open_positions WHERE symbol = ? AND status = 'open'", (symbol,)
+            ).fetchone()
+            if row:
+                data_bundle["engine_position"] = {
+                    "direction": row[0], "quantity": row[1],
+                    "entry_price": round(float(row[2]),2) if row[2] else None,
+                    "stop_loss": round(float(row[3]),2) if row[3] else None,
+                    "take_profit": round(float(row[4]),2) if row[4] else None,
+                    "current_price": round(float(row[5]),2) if row[5] else None,
+                }
+            conn.close()
+        except:
+            pass
+
+        # 2. 调用 LLM
+        import json as _json
+        system_prompt = """你是 FTSeek 量化交易系统的 LLM 分析引擎。基于提供的实时市场数据，给出专业、可操作的分析建议。
+
+【核心原则】
+1. 数据驱动：每个判断必须有数据支撑，不猜测
+2. 方向明确：给出清晰的 LONG/SHORT/NEUTRAL 方向，避免模棱两可
+3. 风险优先：始终标注关键止损位和风险点
+4. 简洁有力：总分析不超过200字
+
+【返回格式】纯 JSON，不要代码块包裹:
+{
+  "direction": "LONG" | "SHORT" | "NEUTRAL",
+  "confidence": 0.0-1.0,
+  "summary": "一句话结论（20字内）",
+  "reasoning": "核心逻辑（50-100字）",
+  "key_levels": {"support": 数值, "resistance": 数值},
+  "risk_notes": "风险提示（30字内）",
+  "action": "建议操作（买入/卖出/持有/观望/加仓/减仓，10字内）"
+}"""
+
+        user_prompt = f"分析标的 {symbol} 的当前状态，给出交易建议。\n\n数据:\n{_json.dumps(data_bundle, ensure_ascii=False, indent=2)}"
+
+        try:
+            from app.llm.unified_service import UnifiedLLMService
+            llm_result = await UnifiedLLMService.call_async(
+                "stock_analyst", user_prompt,
+                system=system_prompt,
+                temperature=0.2,
+                max_tokens=500,
+                json_mode=True,
+                timeout=30,
+            )
+            if llm_result.success and llm_result.response:
+                # Parse JSON from response
+                resp_text = llm_result.response
+                if isinstance(resp_text, str):
+                    # Strip code block markers if present
+                    resp_text = resp_text.strip()
+                    if resp_text.startswith("```"):
+                        resp_text = resp_text.split("\n", 1)[1] if "\n" in resp_text else resp_text[3:]
+                    if resp_text.endswith("```"):
+                        resp_text = resp_text[:-3]
+                    resp_text = resp_text.strip()
+                    analysis = _json.loads(resp_text)
+                else:
+                    analysis = resp_text
+                return {
+                    "symbol": symbol,
+                    "analysis": analysis,
+                    "model_used": getattr(llm_result, 'model_used', 'unknown'),
+                    "latency_ms": getattr(llm_result, 'latency', 0),
+                }
+            else:
+                return {"symbol": symbol, "error": f"LLM调用失败: {getattr(llm_result, 'error', 'unknown')}"}
+        except _json.JSONDecodeError as e:
+            return {"symbol": symbol, "error": f"LLM返回解析失败: {e}", "raw": resp_text[:200] if 'resp_text' in dir() else ""}
+        except Exception as e:
+            return {"symbol": symbol, "error": f"分析异常: {e}"}
+
     logger.info("简化版 Dashboard Web 服务已创建")
 
     return app
+

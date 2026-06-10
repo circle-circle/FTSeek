@@ -374,7 +374,7 @@
                 const ownerIcon = (owner === 'manual' || owner === 'user') ? '👤' : '🤖';
 
                 return '<tr>' +
-                    '<td class="sym">' + sym.replace(/^US\./, '') + '</td>' +
+                    '<td class="sym"><a href="/stock/' + sym + '" style="color:#58a6ff;text-decoration:none">' + sym.replace(/^US\./, '') + '</a></td>' +
                     '<td class="' + (isLong ? 'long' : 'short') + '">' + dir + '</td>' +
                     '<td>' + qty + '</td>' +
                     '<td>$' + fmt(cost) + '</td>' +
