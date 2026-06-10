@@ -132,11 +132,12 @@
                             <th>市值</th>
                             <th>盈亏</th>
                             <th>盈亏%</th>
+                            <th>来源</th>
                             <th>操作</th>
                         </tr>
                     </thead>
                     <tbody id="posBody">
-                        <tr><td colspan="9" class="loading">加载中...</td></tr>
+                        <tr><td colspan="10" class="loading">加载中...</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -189,13 +190,14 @@
                 // Table view (desktop)
                 const tbody = document.getElementById('posBody');
                 if (activePositions.length === 0) {
-                    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:#8b949e">无持仓</td></tr>';
+                    tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;color:#8b949e">无持仓</td></tr>';
                 } else {
                     tbody.innerHTML = activePositions.map(p => {
                         const isLong = p.qty > 0;
                         const pnlClass = (p.unrealized_pl || 0) >= 0 ? 'pnl-pos' : 'pnl-neg';
                         const pnlSign = (p.unrealized_pl || 0) >= 0 ? '+' : '';
                         const priceClass = p.cur_price > p.cost_price ? 'price-up' : (p.cur_price < p.cost_price ? 'price-down' : '');
+                        const ownerIcon = p.owner === 'manual' ? '👤' : '🤖';
                         return `<tr>
                             <td><b>${p.code}</b></td>
                             <td class="${isLong ? 'long' : 'short'}">${isLong ? 'LONG' : 'SHORT'}</td>
@@ -205,6 +207,7 @@
                             <td>${fmtMoney(p.market_val)}</td>
                             <td class="${pnlClass}">${pnlSign}${fmtMoney(p.unrealized_pl)}</td>
                             <td class="${pnlClass}">${pnlPct(p)}</td>
+                            <td style="font-size:16px;text-align:center" title="${p.owner==='manual'?'手动下单':'系统自动'}">${ownerIcon}</td>
                             <td>
                                 <a href="/manual-trade?symbol=${p.code}" class="btn">交易</a>
                                 <button class="btn btn-close" onclick="closePos('${p.code}', ${p.qty})">平仓</button>

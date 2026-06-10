@@ -74,7 +74,8 @@ class SimpleDashboard:
             # 活跃持仓: sync_status 为空或不在已关闭状态
             rows = conn.execute("""
                 SELECT symbol, direction, size, avg_entry_price,
-                       entry_time, strategy_id, current_sl, initial_tp
+                       entry_time, strategy_id, current_sl, initial_tp,
+                       owner
                 FROM open_positions
                 WHERE sync_status IS NULL
                    OR sync_status NOT IN (
@@ -122,6 +123,7 @@ class SimpleDashboard:
                     "strategy_id": r["strategy_id"] or "",
                     "current_sl": float(r["current_sl"] or 0),
                     "initial_tp": float(r["initial_tp"] or 0),
+                    "owner": r["owner"] or "auto",
                 })
 
             return positions

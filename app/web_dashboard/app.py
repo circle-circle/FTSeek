@@ -605,6 +605,20 @@ def create_app() -> FastAPI:
                         "unrealized_pl": round(unrealized, 2),
                     })
 
+            # 从 open_positions 补充 owner 字段
+            try:
+                owner_conn = sqlite3.connect(svc._get_db_path())
+                owner_rows = owner_conn.execute(
+                    "SELECT symbol, COALESCE(owner,'auto') FROM open_positions"
+                ).fetchall()
+                owner_conn.close()
+                owner_map = {row[0]: row[1] for row in owner_rows}
+                for pos in pos_list:
+                    pos["owner"] = owner_map.get(pos["code"], "auto")
+            except Exception:
+                for pos in pos_list:
+                    pos.setdefault("owner", "auto")
+
             return {
                 "mode": svc._get_mode_label(),
                 "is_live": svc._is_live(),

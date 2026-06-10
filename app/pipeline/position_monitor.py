@@ -1311,6 +1311,35 @@ def _check_positions(scheduler):
     except Exception: pass
 
     # ============================================================
+    # 过滤手动仓位 — 用户手动下单的持仓不由系统退出监控管理
+    # owner='manual' 的持仓由用户自行决定退出时机
+    # ============================================================
+    _manual_symbols = set()
+    try:
+        if hasattr(scheduler, 'trade_store') and scheduler.trade_store:
+            _conn = scheduler.trade_store._get_conn()
+            _rows = _conn.execute(
+                "SELECT symbol FROM open_positions WHERE owner='manual'"
+            ).fetchall()
+            _conn.close()
+            _manual_symbols = {row[0] for row in _rows}
+    except Exception as _me:
+        logger.debug(f"[退出监控] 查询 manual 持仓失败: {_me}")
+
+    if _manual_symbols:
+        _before = len(monitored_positions)
+        monitored_positions = [
+            p for p in monitored_positions
+            if p.symbol not in _manual_symbols
+        ]
+        _skipped = _before - len(monitored_positions)
+        if _skipped > 0:
+            logger.info(
+                f"[退出监控] 跳过 {_skipped} 个手动持仓 (owner=manual): "
+                f"{sorted(_manual_symbols & {p.symbol for p in positions})}"
+            )
+
+    # ============================================================
     # Phase 4 (2026-05-31): ExitRuleDispatcher 主路径路由
     #   - dispatcher_enabled=True & shadow_mode=False 时先走 dispatcher
     #   - 已平仓的 symbol 从 monitored_positions 中移除避免重复触发

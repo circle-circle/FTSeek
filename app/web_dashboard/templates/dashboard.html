@@ -16,6 +16,12 @@
         .top-nav .mode-tag { font-size: 11px; padding: 3px 8px; border-radius: 4px; margin-left: 8px; }
         .top-nav .mode-tag.sim { background: #1a3a2a; color: #4ade80; }
         .top-nav .mode-tag.live { background: #3a1a1a; color: #f87171; }
+        .market-badge { font-size: 11px; padding: 3px 8px; border-radius: 4px; margin-left: 6px; font-weight: 600; }
+        .market-badge.closed { background: #2a0a0a; color: #f87171; }
+        .market-badge.pre { background: #2a1f0a; color: #fbbf24; }
+        .market-badge.open { background: #0a2a1a; color: #4ade80; }
+        .market-badge.after { background: #1a1020; color: #fb923c; }
+        .last-updated { font-size: 10px; color: #484f58; margin-left: 8px; }
         .container { max-width: 1200px; margin: 0 auto; padding: 12px; }
         .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 16px; }
         .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
@@ -68,6 +74,8 @@
         <a href="/mode-switch">模式</a>
         <a href="/health">健康</a>
         <span class="spacer"></span>
+        <span class="market-badge" id="marketBadge">🔴 休市</span>
+        <span class="last-updated" id="lastUpdated">上次刷新: --</span>
         <span class="mode-tag {{ 'live' if is_live else 'sim' }}">{{ '🔴 实盘' if is_live else '🟢 模拟' }}</span>
     </div>
 
@@ -93,6 +101,27 @@
 
     <script>
         function fmt(n,d=2){return n==null||isNaN(n)?'--':Number(n).toLocaleString(undefined,{minimumFractionDigits:d,maximumFractionDigits:d});}
+
+        function updateMarketStatus(){
+            const now=new Date();
+            const et=new Date(now.toLocaleString('en-US',{timeZone:'America/New_York'}));
+            const h=et.getHours(), m=et.getMinutes(), t=h*60+m;
+            const preOpen=4*60, mktOpen=9*60+30, mktClose=16*60, afterClose=20*60;
+            let cls, icon, label;
+            if(t>=preOpen&&t<mktOpen){cls='pre';icon='🟡';label='盘前';}
+            else if(t>=mktOpen&&t<mktClose){cls='open';icon='🟢';label='盘中';}
+            else if(t>=mktClose&&t<afterClose){cls='after';icon='🟠';label='盘后';}
+            else{cls='closed';icon='🔴';label='休市';}
+            const badge=document.getElementById('marketBadge');
+            badge.className='market-badge '+cls;
+            badge.textContent=icon+' '+label;
+        }
+
+        function updateLastUpdated(){
+            const now=new Date();
+            const ts=now.toLocaleTimeString('zh-CN',{hour12:false});
+            document.getElementById('lastUpdated').textContent='上次刷新: '+ts;
+        }
 
         async function loadAll(){
             try{
@@ -122,8 +151,10 @@
                 document.getElementById('sigSum').textContent=sm.total?`共${sm.total} | 接受${sm.accepted} | 拒绝${sm.rejected}`:'';
                 document.getElementById('signals').innerHTML=sig.length?sig.map(x=>`<div class="signal-row"><span class="time">${x.time||'--'}</span><span class="sym">${x.symbol}</span><span class="dir ${x.direction==='LONG'?'long':'short'}">${x.direction}</span><span class="conf">${(x.confidence||0).toFixed(3)}</span><span class="str">${x.strength||0}</span><span class="status ${x.status==='ACCEPTED'?'green':'red'}">${x.status||'--'}</span></div>`).join(''):'<div style="text-align:center;color:#8b949e;padding:16px">今日暂无信号</div>';
             }catch(e){console.error(e);}
+            updateLastUpdated();
         }
-        loadAll(); setInterval(loadAll, 30000);
+        updateMarketStatus();
+        loadAll(); setInterval(loadAll, 30000); setInterval(updateMarketStatus, 30000);
     </script>
 </body>
 </html>

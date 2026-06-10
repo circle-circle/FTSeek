@@ -2,49 +2,79 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>复盘报告 - FTSeek Dashboard</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>FTSeek-US 回顾报告</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f5f5f5; }
-        .header { background: #2c3e50; color: white; padding: 1rem 2rem; }
-        .header h1 { font-size: 1.5rem; }
-        .container { max-width: 1400px; margin: 0 auto; padding: 2rem; }
-        .nav { margin-bottom: 2rem; }
-        .nav a { margin-right: 1rem; color: #3498db; text-decoration: none; }
-        .nav a:hover { text-decoration: underline; }
-        .card { background: white; border-radius: 8px; padding: 1.5rem; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-bottom: 1rem; }
-        .card h3 { color: #2c3e50; margin-bottom: 1rem; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0f1117; color: #e6edf3; font-size: 14px; }
+        .top-nav { background: #161b22; border-bottom: 1px solid #30363d; padding: 0 16px; display: flex; align-items: center; position: sticky; top: 0; z-index: 50; }
+        .top-nav .brand { color: #58a6ff; font-weight: 700; font-size: 14px; padding: 10px 12px 10px 0; border-right: 1px solid #30363d; margin-right: 8px; }
+        .top-nav a { color: #8b949e; text-decoration: none; padding: 10px 14px; font-size: 13px; border-bottom: 2px solid transparent; }
+        .top-nav a:hover { color: #e6edf3; }
+        .top-nav a.active { color: #58a6ff; border-bottom-color: #58a6ff; }
+        .top-nav .spacer { flex: 1; }
+        .top-nav .mode-tag { font-size: 11px; padding: 3px 8px; border-radius: 4px; margin-left: 8px; }
+        .top-nav .mode-tag.sim { background: #1a3a2a; color: #4ade80; }
+        .top-nav .mode-tag.live { background: #3a1a1a; color: #f87171; }
+        .container { max-width: 1400px; margin: 0 auto; padding: 16px 12px; }
+        .card { background: #1a1d23; border: 1px solid #30363d; border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+        .card h3 { color: #58a6ff; margin-bottom: 12px; font-size: 15px; }
         table { width: 100%; border-collapse: collapse; }
-        th, td { padding: 0.75rem; text-align: left; border-bottom: 1px solid #ecf0f1; }
-        th { background: #f8f9fa; font-weight: 600; }
-        .badge { display: inline-block; padding: 0.25rem 0.5rem; border-radius: 4px; font-size: 0.8rem; font-weight: 600; }
-        .badge-S { background: #d4edda; color: #155724; }
-        .badge-A { background: #d1ecf1; color: #0c5460; }
-        .badge-B { background: #fff3cd; color: #856404; }
-        .badge-C { background: #f8d7da; color: #721c24; }
-        .positive { color: #27ae60; }
-        .negative { color: #e74c3c; }
-        .filters { margin-bottom: 1rem; }
-        .filters select, .filters button { padding: 0.5rem 1rem; margin-right: 0.5rem; border: 1px solid #ddd; border-radius: 4px; }
-        .filters button { background: #3498db; color: white; border: none; cursor: pointer; }
-        .filters button:hover { background: #2980b9; }
+        th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid #30363d; }
+        th { background: #0d1117; font-weight: 600; color: #8b949e; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
+        td { color: #e6edf3; font-size: 13px; }
+        tr:hover td { background: #1a1d23; }
+        .badge { display: inline-block; padding: 3px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+        .badge-S { background: #0a2a1a; color: #4ade80; }
+        .badge-A { background: #1a2a3a; color: #58a6ff; }
+        .badge-B { background: #2a2a0a; color: #fbbf24; }
+        .badge-C { background: #2a0a0a; color: #f87171; }
+        .positive { color: #4ade80; font-weight: 600; }
+        .negative { color: #f87171; font-weight: 600; }
+        .filters { margin-bottom: 4px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+        .filters select { padding: 6px 12px; border: 1px solid #30363d; border-radius: 6px; background: #0d1117; color: #e6edf3; font-size: 13px; cursor: pointer; }
+        .filters select:focus { border-color: #58a6ff; outline: none; }
+        .filters button { padding: 6px 16px; border: 1px solid #30363d; border-radius: 6px; background: #0d1117; color: #58a6ff; font-size: 13px; cursor: pointer; font-weight: 600; }
+        .filters button:hover { border-color: #58a6ff; background: #1a2a3a; }
+        .nav-links { margin-bottom: 16px; display: flex; gap: 12px; }
+        .nav-links a { color: #58a6ff; text-decoration: none; font-size: 13px; }
+        .nav-links a:hover { text-decoration: underline; }
+        .loading-text { text-align: center; color: #8b949e; padding: 24px; font-size: 13px; }
+        .error-text { color: #f87171; text-align: center; padding: 24px; }
+        @media (max-width: 768px) {
+            .top-nav { overflow-x: auto; }
+            .top-nav .brand { display: none; }
+            .top-nav a { padding: 8px 10px; font-size: 12px; }
+            .container { padding: 8px; }
+            .card { padding: 12px; border-radius: 8px; }
+            th, td { padding: 8px 6px; font-size: 11px; }
+            .filters { flex-direction: column; align-items: stretch; }
+            .filters select, .filters button { width: 100%; }
+            table { display: block; overflow-x: auto; white-space: nowrap; }
+        }
     </style>
 </head>
 <body>
-    <div class="header">
-        <h1>📊 FTSeek Dashboard - 复盘报告</h1>
+    <div class="top-nav">
+        <span class="brand">FTSeek-US</span>
+        <a href="/">仪表盘</a>
+        <a href="/trade">交易</a>
+        <a href="/risk">风控</a>
+        <a href="/reviews" class="active">回顾</a>
+        <a href="/mode-switch">模式</a>
+        <a href="/health">健康</a>
+        <span class="spacer"></span>
+        <span class="mode-tag {{ 'live' if is_live else 'sim' }}">{{ '🔴 实盘' if is_live else '🟢 模拟' }}</span>
     </div>
-    
+
     <div class="container">
-        <div class="nav">
-            <a href="/">← 返回首页</a>
-            <a href="/reviews">复盘报告</a>
+        <div class="nav-links">
+            <a href="/">← 返回仪表盘</a>
         </div>
-        
+
         <!-- 筛选器 -->
         <div class="card">
-            <h3>筛选</h3>
+            <h3>🔍 筛选</h3>
             <div class="filters">
                 <select id="type-filter">
                     <option value="daily">日复盘</option>
@@ -58,10 +88,10 @@
                 <button onclick="loadReports()">查询</button>
             </div>
         </div>
-        
+
         <!-- 复盘报告列表 -->
         <div class="card">
-            <h3>复盘报告列表</h3>
+            <h3>📊 复盘报告列表</h3>
             <table>
                 <thead>
                     <tr>
@@ -76,14 +106,14 @@
                     </tr>
                 </thead>
                 <tbody id="reports-table">
-                    <tr><td colspan="8" style="text-align:center;color:#7f8c8d;">加载中...</td></tr>
+                    <tr><td colspan="8" class="loading-text">加载中...</td></tr>
                 </tbody>
             </table>
         </div>
-        
+
         <!-- 改进建议 -->
         <div class="card">
-            <h3>改进建议</h3>
+            <h3>💡 改进建议</h3>
             <table>
                 <thead>
                     <tr>
@@ -95,23 +125,23 @@
                     </tr>
                 </thead>
                 <tbody id="improvements-table">
-                    <tr><td colspan="5" style="text-align:center;color:#7f8c8d;">加载中...</td></tr>
+                    <tr><td colspan="5" class="loading-text">加载中...</td></tr>
                 </tbody>
             </table>
         </div>
     </div>
-    
+
     <script>
         const API_BASE = window.location.protocol + '//' + window.location.host;
-        
+
         async function loadReports() {
             const type = document.getElementById('type-filter').value;
             const market = document.getElementById('market-filter').value;
-            
+
             try {
                 const response = await fetch(`${API_BASE}/api/review/reports?type=${type}&market=${market}&limit=20`);
                 const data = await response.json();
-                
+
                 const tbody = document.getElementById('reports-table');
                 if (data.reports && data.reports.length > 0) {
                     tbody.innerHTML = data.reports.map(r => `
@@ -127,19 +157,19 @@
                         </tr>
                     `).join('');
                 } else {
-                    tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:#7f8c8d;">暂无数据</td></tr>';
+                    tbody.innerHTML = '<tr><td colspan="8" class="loading-text">暂无数据</td></tr>';
                 }
             } catch (e) {
                 console.error('加载复盘报告失败:', e);
-                document.getElementById('reports-table').innerHTML = '<tr><td colspan="8" style="text-align:center;color:#e74c3c;">加载失败</td></tr>';
+                document.getElementById('reports-table').innerHTML = '<tr><td colspan="8" class="error-text">加载失败</td></tr>';
             }
         }
-        
+
         async function loadImprovements() {
             try {
                 const response = await fetch(`${API_BASE}/api/review/improvements?status=pending`);
                 const data = await response.json();
-                
+
                 const tbody = document.getElementById('improvements-table');
                 if (data.improvements && data.improvements.length > 0) {
                     tbody.innerHTML = data.improvements.map(i => `
@@ -152,13 +182,13 @@
                         </tr>
                     `).join('');
                 } else {
-                    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:#7f8c8d;">暂无改进建议</td></tr>';
+                    tbody.innerHTML = '<tr><td colspan="5" class="loading-text">暂无改进建议</td></tr>';
                 }
             } catch (e) {
                 console.error('加载改进建议失败:', e);
             }
         }
-        
+
         // 页面加载时获取数据
         loadReports();
         loadImprovements();

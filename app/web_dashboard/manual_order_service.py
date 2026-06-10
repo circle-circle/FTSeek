@@ -363,6 +363,8 @@ class ManualOrderService:
                 order.order_id = str(data.iloc[0]["order_id"]) if not data.empty else ""
                 order.status = "submitted"
                 logger.info(f"[手动下单] ✅ 订单提交成功: order_id={order.order_id}")
+                # 标记为手动持仓, 避免被系统退出监控误平
+                self._mark_position_manual(order.symbol)
             else:
                 order.status = "error"
                 order.error_msg = str(data)
@@ -463,6 +465,7 @@ class ManualOrderService:
                 order.order_id = str(data.iloc[0]["order_id"]) if not data.empty else ""
                 order.status = "submitted"
                 logger.info(f"[手动平仓] ✅ {symbol} 平仓成功: {int(qty)}股")
+                self._mark_position_manual(symbol)
             else:
                 order.status = "error"
                 order.error_msg = str(data)
@@ -588,6 +591,20 @@ class ManualOrderService:
             conn.close()
         except Exception as e:
             logger.error(f"[审计] 创建审计表失败: {e}")
+
+    def _mark_position_manual(self, symbol: str):
+        """标记持仓为手动管理，防止 ExitMonitor 误平"""
+        try:
+            conn = sqlite3.connect(self._get_db_path())
+            conn.execute(
+                "UPDATE open_positions SET owner='manual' WHERE symbol=? AND (sync_status IS NULL OR sync_status='synced')",
+                (symbol,),
+            )
+            conn.commit()
+            conn.close()
+            logger.info(f"[手动下单] {symbol} 已标记为 owner=manual (跳过系统退出监控)")
+        except Exception as e:
+            logger.error(f"[手动下单] 标记 owner=manual 失败 ({symbol}): {e}")
 
     def _write_audit(self, order: ManualOrder):
         """写审计日志到 DB"""
