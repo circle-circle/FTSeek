@@ -322,18 +322,10 @@ def create_app() -> FastAPI:
 
     from app.web_dashboard.manual_order_service import get_manual_order_service, ManualOrder
 
-    @app.get("/manual-trade", response_class=HTMLResponse)
-    async def manual_trade_page(request: Request):
-        """手动下单页面"""
-        svc = get_manual_order_service()
-        mode = svc._get_mode_label()
-        is_live = svc._is_live()
-        return templates.TemplateResponse("manual_trade.html", {
-            "request": request,
-            "title": "手动下单 - FTSeek-US",
-            "mode": mode,
-            "is_live": is_live,
-        })
+    @app.get("/manual-trade")
+    async def manual_trade_redirect(request: Request):
+        """重定向到合并后的交易页"""
+        return RedirectResponse(url="/trade", status_code=301)
 
     @app.get("/trade", response_class=HTMLResponse)
     async def trade_page(request: Request):
@@ -344,16 +336,10 @@ def create_app() -> FastAPI:
             "is_live": dashboard_is_live(),
         })
 
-    @app.get("/live-status", response_class=HTMLResponse)
-    async def live_status_page(request: Request):
-        """实盘状态页面"""
-        svc = get_manual_order_service()
-        return templates.TemplateResponse("live_status.html", {
-            "request": request,
-            "title": "实盘状态 - FTSeek-US",
-            "mode": svc._get_mode_label(),
-            "is_live": svc._is_live(),
-        })
+    @app.get("/live-status")
+    async def live_status_redirect(request: Request):
+        """重定向到合并后的交易页"""
+        return RedirectResponse(url="/trade", status_code=301)
 
     @app.post("/api/orders")
     async def place_manual_order(request: Request):
@@ -811,13 +797,15 @@ def create_app() -> FastAPI:
         }
         today = _et_today()
 
-        # 4a. DB 策略级已实现盈亏
+        # 4a. DB 策略级已实现盈亏 — 使用最新交易日而非日历日期
+        #     日历日期可能尚无交易记录 (非交易日、盘前等场景)
         try:
             from app.core.db_utils import get_main_db
             conn = _sqlite3.connect(str(get_main_db()))
             row = conn.execute(
-                "SELECT COALESCE(SUM(realized_pnl),0), COUNT(*) FROM trade_records WHERE trade_date=?",
-                (today,)
+                "SELECT COALESCE(SUM(realized_pnl),0), COUNT(*) "
+                "FROM trade_records "
+                "WHERE trade_date = (SELECT MAX(trade_date) FROM trade_records)"
             ).fetchone()
             pnl["realized"] = float(row[0]) if row else 0
             pnl["today_trades"] = int(row[1]) if row else 0
@@ -1060,7 +1048,7 @@ def create_app() -> FastAPI:
         except Exception:
             result["service"]["ftseek_us"] = "unknown"
 
-        # 2. 按策略统计今日交易
+        # 2. 按策略统计最新交易日交易 (使用 DB 最新 trade_date 而非日历日期)
         try:
             from app.core.db_utils import get_main_db
             conn = _sqlite3.connect(str(get_main_db()))
@@ -1072,10 +1060,10 @@ def create_app() -> FastAPI:
                     ROUND(SUM(realized_pnl), 2) as pnl,
                     ROUND(AVG(realized_pnl), 2) as avg_pnl
                 FROM trade_records
-                WHERE trade_date = ?
+                WHERE trade_date = (SELECT MAX(trade_date) FROM trade_records)
                 GROUP BY strategy_id
                 ORDER BY pnl DESC
-            """, (today,)).fetchall()
+            """).fetchall()
             conn.close()
 
             for r in rows:

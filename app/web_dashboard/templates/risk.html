@@ -71,10 +71,9 @@
         <span class="brand">FTSeek-US</span>
         <a href="/">仪表盘</a>
         <a href="/trade">交易</a>
-        <a href="/live-status">持仓状态</a>
-        <a href="/mode-switch">模式切换</a>
         <a href="/risk" class="active">风控</a>
-        <a href="/health">系统健康</a>
+        <a href="/mode-switch">模式</a>
+        <a href="/health">健康</a>
         <span class="spacer"></span>
         <span class="mode-tag {{ 'live' if is_live else 'sim' }}">{{ '🔴 实盘' if is_live else '🟢 模拟' }}</span>
     </div>
@@ -84,6 +83,7 @@
         <div class="card">
             <h2>💰 今日真实盈亏 <button class="btn" onclick="loadRisk()">🔄</button></h2>
             <div class="grid-4" id="pnlMetrics"></div>
+            <div style="font-size:11px;color:#484f58;margin-top:4px">* 与富途APP可能有差异：本系统不含佣金、融资利息、分红调整</div>
         </div>
 
         <div class="grid-2">
@@ -108,7 +108,7 @@
 
         <!-- 止损距离 -->
         <div class="card">
-            <h2>🎯 止损距离 <span style="font-size:12px;color:#8b949e;font-weight:normal">按危险程度排序</span></h2>
+            <h2>🎯 止损距离 <span style="font-size:12px;color:#8b949e;font-weight:normal">按危险程度排序{% if is_live %} · ⚠️ 止损价为ATR估算值{% endif %}</span></h2>
             <div id="stopDistances"><div class="loading">加载中...</div></div>
         </div>
 

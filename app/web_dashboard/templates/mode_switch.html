@@ -77,10 +77,9 @@
         <span class="brand">FTSeek-US</span>
         <a href="/">仪表盘</a>
         <a href="/trade">交易</a>
-        <a href="/live-status">持仓状态</a>
-        <a href="/mode-switch" class="active">模式切换</a>
         <a href="/risk">风控</a>
-        <a href="/health">系统健康</a>
+        <a href="/mode-switch" class="active">模式</a>
+        <a href="/health">健康</a>
         <span class="spacer"></span>
         <span class="mode-tag {{ 'live' if is_live else 'sim' }}">{{ '🔴 实盘' if is_live else '🟢 模拟' }}</span>
     </div>
@@ -124,7 +123,7 @@
                 <div class="cfg-item"><div class="k">LIVE_CONSERVATIVE</div><div class="v">{{ mode_info.LIVE_CONSERVATIVE }}</div></div>
                 <div class="cfg-item"><div class="k">REAL_ACCOUNT_ID</div><div class="v" style="font-size:10px">{{ mode_info.REAL_ACCOUNT_ID or '未设置' }}</div></div>
                 <div class="cfg-item"><div class="k">SIMULATE_ACCOUNT_ID</div><div class="v">{{ mode_info.SIMULATE_ACCOUNT_ID or '未设置' }}</div></div>
-                <div class="cfg-item"><div class="k">解锁密码</div><div class="v">{{ mode_info.FUTU_UNLOCK_PWD_MD5 }}</div></div>
+                <div class="cfg-item"><div class="k">解锁密码</div><div class="v">{{ '******' if mode_info.FUTU_UNLOCK_PWD_MD5 == '已设置' else '未设置' }}</div></div>
             </div>
         </div>
 
@@ -136,6 +135,7 @@
         <div class="modal">
             <h3 id="mTitle"></h3>
             <div class="desc" id="mDesc"></div>
+            <div id="mPosWarn"></div>
             <div id="mInputWrap" style="display:none">
                 <label style="font-size:12px;color:#8b949e">输入 <b>CONFIRM</b> 确认</label>
                 <input type="text" id="mConfirm" placeholder="CONFIRM" autocomplete="off">
@@ -152,7 +152,7 @@
         const _currentMode = '{{ mode_info.mode }}';
         const _hasPrereq = {{ 'true' if mode_info.REAL_ACCOUNT_ID and mode_info.FUTU_UNLOCK_PWD_MD5 != '未设置' else 'false' }};
 
-        function askSwitch(mode) {
+        async function askSwitch(mode) {
             // 点击当前模式 → 提示
             if (mode === _currentMode) {
                 const labels = { simulate: '模拟盘', live_conservative: '实盘(保守)', live_normal: '实盘(正常)' };
@@ -170,6 +170,26 @@
             const isLive = mode.startsWith('live_');
             const labels = { simulate: '模拟盘', live_conservative: '实盘(保守)', live_normal: '实盘(正常)' };
 
+            // ── 安全校验：查询是否有未平仓持仓 ──
+            let openPosCount = 0;
+            let posWarnHtml = '';
+            try {
+                const resp = await fetch('/api/live-account');
+                const data = await resp.json();
+                if (data.positions && data.positions.length > 0) {
+                    openPosCount = data.positions.length;
+                    const codes = data.positions.map(p => p.code).join(', ');
+                    posWarnHtml = '<div style="background:#2a0a0a;border:1px solid #f87171;border-radius:6px;padding:10px;margin-bottom:12px;font-size:12px;color:#fca5a5">' +
+                        '<b>⚠️ 安全警告：当前有 ' + openPosCount + ' 个未平仓持仓</b><br>' +
+                        '持仓标的: ' + codes + '<br>' +
+                        '切换模式将重启交易引擎，请确保这些持仓已妥善处理。' +
+                        '</div>';
+                }
+            } catch(e) {
+                // 网络异常则跳过持仓检查，不影响正常切换
+                console.warn('[模式切换] 持仓查询失败，跳过持仓警告:', e.message);
+            }
+
             document.getElementById('mTitle').textContent = isLive ? '🔴 切换到 ' + labels[mode] : '切换到 ' + labels[mode];
             document.getElementById('mTitle').style.color = isLive ? '#f87171' : '#4ade80';
 
@@ -177,6 +197,7 @@
                 ? '将使用真实账户交易，所有操作产生真实盈亏。Dashboard 即时切换，交易引擎将自动重启（约3秒）。'
                 : '将使用模拟账户交易。Dashboard 即时切换，交易引擎将自动重启（约3秒）。';
 
+            document.getElementById('mPosWarn').innerHTML = posWarnHtml;
             document.getElementById('mInputWrap').style.display = isLive ? 'block' : 'none';
             document.getElementById('mConfirm').value = '';
 
