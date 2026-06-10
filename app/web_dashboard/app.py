@@ -188,8 +188,45 @@ def create_app() -> FastAPI:
     
     @app.get("/api/positions")
     async def get_positions():
-        """获取持仓列表"""
-        return {"positions": dashboard.get_positions()}
+        """获取持仓列表 — DB优先，实盘模式下DB空则回退到broker"""
+        db_positions = dashboard.get_positions()
+        if db_positions:
+            return {"positions": db_positions, "source": "db"}
+        
+        # Fallback: live mode + empty DB → pull from broker
+        try:
+            svc = get_manual_order_service()
+            if svc.connect():
+                from futu import TrdEnv, RET_OK
+                import os as _os
+                is_live = svc._is_live()
+                trd_env = TrdEnv.REAL if is_live else TrdEnv.SIMULATE
+                acc_id = int(_os.getenv("REAL_ACCOUNT_ID" if is_live else "SIMULATE_ACCOUNT_ID", "0"))
+                ret, data = svc._broker_ctx.position_list_query(trd_env=trd_env, acc_id=acc_id, refresh_cache=True)
+                if ret == RET_OK and len(data) > 0:
+                    positions = []
+                    for _, row in data.iterrows():
+                        qty = float(row.get("qty", 0))
+                        if qty <= 0:
+                            continue
+                        side = str(row.get("position_side", ""))
+                        positions.append({
+                            "symbol": str(row.get("code", "")),
+                            "direction": "LONG" if "LONG" in side else "SHORT",
+                            "quantity": qty,
+                            "entry_price": float(row.get("cost_price", 0)),
+                            "current_price": float(row.get("cur_price", 0)),
+                            "market_value": float(row.get("market_val", 0)),
+                            "unrealized_pnl": float(row.get("unrealized_pl", 0)),
+                            "owner": "auto",
+                        })
+                    if positions:
+                        return {"positions": positions, "source": "broker"}
+        except Exception as _e:
+            import logging
+            logging.getLogger("ftseek.dashboard").debug(f"[positions] broker fallback failed: {_e}")
+        
+        return {"positions": [], "source": "empty"}
     
     @app.get("/api/trades")
     async def get_trades(limit: int = 50):
