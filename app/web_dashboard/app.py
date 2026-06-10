@@ -1829,7 +1829,7 @@ def create_app() -> FastAPI:
                 "stock_analyst", user_prompt,
                 system=system_prompt,
                 temperature=0.2,
-                max_tokens=500,
+                max_tokens=1000,
                 json_mode=True,
                 timeout=60,
             )
