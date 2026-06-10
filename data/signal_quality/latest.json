@@ -1,6 +1,6 @@
 {
-  "as_of": "2026-06-09",
-  "generated_at": "2026-06-10T08:01:11",
+  "as_of": "2026-06-10",
+  "generated_at": "2026-06-11T07:34:25",
   "history_days": 90,
   "total_closed_trades": 348,
   "confidence_winrate_map": {
@@ -171,14 +171,14 @@
           "max_win": 0.0
         },
         "其他": {
-          "total": 32,
-          "wins": 23,
-          "losses": 9,
-          "win_rate": 0.7188,
-          "avg_pnl": 191.2454,
-          "total_pnl": 6119.853,
+          "total": 20,
+          "wins": 14,
+          "losses": 6,
+          "win_rate": 0.7,
+          "avg_pnl": -270.7549,
+          "total_pnl": -5415.098,
           "max_loss": -7255.8,
-          "max_win": 8849.58
+          "max_win": 5667.66
         }
       },
       "30d": {
@@ -244,7 +244,7 @@
         }
       }
     },
-    "as_of": "2026-06-09"
+    "as_of": "2026-06-10"
   },
   "factor_contribution": {
     "top_combos": [
@@ -398,7 +398,7 @@
     "single_count": 7
   },
   "threshold_recommendations": {
-    "as_of": "2026-06-09",
+    "as_of": "2026-06-10",
     "suggested_min_signal_confidence": 0.0,
     "current_baseline": 0.5,
     "rationale": "近30d 桶 0-0.3 胜率 50.91% (n=55)",

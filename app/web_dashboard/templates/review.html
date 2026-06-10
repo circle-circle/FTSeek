@@ -1,714 +1,363 @@
-<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>FTSeek-US 分析</title>
+{% extends "base.html" %}
+{% block title %}FTSeek-US 分析{% endblock %}
+
+{% block head %}
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
-    <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-            background: #0f1117; color: #e6edf3; font-size: 14px;
-        }
+{% endblock %}
 
-        /* ── TOP NAV ── */
-        .top-nav {
-            background: #161b22; border-bottom: 1px solid #30363d;
-            padding: 0 16px; display: flex; align-items: center;
-            position: sticky; top: 0; z-index: 50;
-        }
-        .top-nav .brand { color: #58a6ff; font-weight: 700; font-size: 14px; padding: 10px 12px 10px 0; border-right: 1px solid #30363d; margin-right: 8px; }
-        .top-nav a { color: #8b949e; text-decoration: none; padding: 10px 14px; font-size: 13px; border-bottom: 2px solid transparent; white-space: nowrap; }
-        .top-nav a:hover { color: #e6edf3; }
-        .top-nav a.active { color: #58a6ff; border-bottom-color: #58a6ff; }
-        .top-nav .spacer { flex: 1; }
+{% block nav_review_class %}class="active"{% endblock %}
 
-        /* ── CONTAINER ── */
-        .container { max-width: 1400px; margin: 0 auto; padding: 12px 16px; }
+{% block extra_css %}
+        .container { max-width: 1400px; }
+        .module { margin-bottom: 16px; }
+        .module h3 { display: flex; align-items: center; gap: 8px; }
+        .module h3 .badge { font-size: 11px; padding: 2px 8px; border-radius: 3px; font-weight: 400; }
+        .module h3 .badge.live { background: #0a2a1a; color: #4ade80; }
+        .module h3 .badge.warn { background: #2a200a; color: #fbbf24; }
+        .module h3 .badge.danger { background: #2a0a0a; color: #f87171; }
 
-        /* ── CARD ── */
-        .card {
-            background: #161b22; border: 1px solid #30363d;
-            border-radius: 10px; padding: 20px; margin-bottom: 16px;
-        }
-        .card h3 { color: #58a6ff; margin-bottom: 14px; font-size: 15px; font-weight: 600; }
-        .card h3 .subtitle { font-weight: 400; font-size: 12px; color: #8b949e; margin-left: 8px; }
+        /* Summary row */
+        .summary-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; margin-bottom: 16px; }
+        .summary-item { background: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 12px; text-align: center; }
+        .summary-item .label { font-size: 11px; color: #8b949e; text-transform: uppercase; }
+        .summary-item .value { font-size: 20px; font-weight: 700; margin-top: 4px; }
+        .summary-item .sub { font-size: 11px; color: #8b949e; margin-top: 2px; }
 
-        /* ── COMMON TABLE ── */
-        table { width: 100%; border-collapse: collapse; }
-        th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid #30363d; }
-        th { background: #0d1117; font-weight: 600; color: #8b949e; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; cursor: default; }
-        th.sortable { cursor: pointer; user-select: none; }
-        th.sortable:hover { color: #58a6ff; }
-        th.sortable .sort-arrow { font-size: 10px; margin-left: 4px; opacity: 0.4; }
-        th.sortable.sorted .sort-arrow { opacity: 1; color: #58a6ff; }
-        td { color: #e6edf3; font-size: 13px; }
-        tr:hover td { background: #1a1d23; }
+        /* Chart */
+        .chart-wrap { position: relative; width: 100%; height: 300px; }
 
-        .positive { color: #4ade80 !important; font-weight: 600; }
-        .negative { color: #f87171 !important; font-weight: 600; }
-        .muted { color: #8b949e; }
-        .long { color: #4ade80; }
-        .short { color: #f87171; }
+        /* Position table */
+        .pos-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+        .pos-table th { text-align: left; padding: 8px 6px; border-bottom: 1px solid #30363d; color: #8b949e; font-size: 11px; text-transform: uppercase; }
+        .pos-table td { padding: 8px 6px; border-bottom: 1px solid #21262d; }
 
-        .pnl-green { color: #4ade80; font-weight: 700; }
-        .pnl-red { color: #f87171; font-weight: 700; }
+        /* Flow bar */
+        .flow-bar { display: flex; height: 20px; border-radius: 3px; overflow: hidden; margin: 4px 0; }
+        .flow-bar .inflow { background: #22c55e; }
+        .flow-bar .outflow { background: #ef4444; }
 
-        /* ── CHARTS ── */
-        .chart-wrap {
-            position: relative; width: 100%; height: 380px; margin-bottom: 8px;
-        }
-        .chart-wrap canvas { width: 100% !important; height: 100% !important; }
+        /* Sector heatmap */
+        .sector-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 6px; }
+        .sector-cell { border-radius: 6px; padding: 10px 8px; text-align: center; cursor: default; }
+        .sector-cell .name { font-size: 12px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .sector-cell .pct { font-size: 16px; font-weight: 700; margin-top: 2px; }
+        .sector-cell .breadth { font-size: 10px; margin-top: 2px; opacity: 0.8; }
 
-        /* ── TWO COLUMN ── */
-        .grid-2 {
-            display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px;
-        }
-        .grid-2 .card { margin-bottom: 0; }
+        /* Signal scatter */
+        .signal-row { display: flex; align-items: center; padding: 4px 0; font-size: 12px; gap: 8px; border-bottom: 1px solid #21262d; }
+        .signal-row .sym { font-weight: 700; min-width: 70px; }
+        .signal-row .bar-wrap { flex: 1; height: 12px; background: #21262d; border-radius: 2px; position: relative; }
+        .signal-row .bar-fill { height: 100%; border-radius: 2px; position: absolute; top: 0; }
 
-        /* ── DIR BARS ── */
-        .dir-compare { display: flex; gap: 20px; margin-top: 8px; }
-        .dir-compare .dir-col { flex: 1; background: #0d1117; border-radius: 8px; padding: 14px; text-align: center; }
-        .dir-col .dir-label { font-size: 18px; font-weight: 700; margin-bottom: 8px; }
-        .dir-col .dir-stat { font-size: 13px; color: #8b949e; margin-bottom: 4px; }
-        .dir-col .dir-val  { font-size: 20px; font-weight: 700; margin-bottom: 2px; }
-        .dir-col .dir-bar {
-            height: 6px; border-radius: 3px; margin: 10px 0 4px;
-            background: #30363d;
-        }
-        .dir-col .dir-bar-fill {
-            height: 100%; border-radius: 3px; transition: width 0.5s ease;
-        }
-        .dir-bar-fill.long { background: #4ade80; }
-        .dir-bar-fill.short { background: #f87171; }
+        /* Deal table */
+        .deal-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+        .deal-table th { text-align: left; padding: 6px 4px; border-bottom: 1px solid #30363d; color: #8b949e; font-size: 10px; text-transform: uppercase; }
+        .deal-table td { padding: 6px 4px; border-bottom: 1px solid #21262d; }
 
-        /* ── FILTERS ── */
-        .filters {
-            display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
-            margin-bottom: 14px;
-        }
-        .filters label { color: #8b949e; font-size: 12px; margin-right: 2px; }
-        .filters select, .filters input {
-            padding: 7px 12px; border: 1px solid #30363d; border-radius: 6px;
-            background: #0d1117; color: #e6edf3; font-size: 13px; cursor: pointer;
-        }
-        .filters select:focus, .filters input:focus { border-color: #58a6ff; outline: none; }
-        .filters .btn {
-            padding: 7px 16px; border: 1px solid #30363d; border-radius: 6px;
-            background: #0d1117; color: #58a6ff; font-size: 13px; cursor: pointer;
-            font-weight: 600;
-        }
-        .filters .btn:hover { border-color: #58a6ff; background: #1a2a3a; }
-        .filters .btn.load-more {
-            display: block; margin: 14px auto 0; padding: 10px 32px;
-        }
+        .tw { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 
-        /* ── FACTOR GRID ── */
-        .factor-grid {
-            display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px;
-        }
-        .factor-cell {
-            background: #0d1117; border: 1px solid #30363d;
-            border-radius: 8px; padding: 16px; text-align: center;
-        }
-        .factor-cell .f-name { font-size: 13px; color: #8b949e; margin-bottom: 6px; }
-        .factor-cell .f-val  { font-size: 22px; font-weight: 700; color: #484f58; }
-        .factor-cell .f-sub  { font-size: 11px; color: #484f58; margin-top: 4px; }
-
-        /* ── PLACEHOLDER ── */
-        .placeholder-msg {
-            text-align: center; color: #8b949e; padding: 12px;
-            font-size: 13px; background: #0d1117; border-radius: 8px;
-            margin-bottom: 16px;
-        }
-
-        /* ── LOADING ── */
-        .loading-text { text-align: center; color: #8b949e; padding: 24px; font-size: 13px; }
-        .error-text { color: #f87171; text-align: center; padding: 24px; }
-
-        /* ── AUTO-REFRESH INDICATOR ── */
-        .auto-refresh {
-            font-size: 10px; color: #484f58; margin-left: 8px;
-        }
-        .auto-refresh .dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; margin-right: 4px; }
-        .auto-refresh .dot.on { background: #4ade80; animation: pulse 2s infinite; }
-        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
-
-        /* ── RESPONSIVE ── */
         @media (max-width: 768px) {
-            .top-nav { overflow-x: auto; -webkit-overflow-scrolling: touch; }
-            .top-nav .brand { display: none; }
-            .top-nav a { padding: 8px 10px; font-size: 12px; }
-            .container { padding: 8px; }
-            .card { padding: 12px; border-radius: 8px; }
-            th, td { padding: 8px 6px; font-size: 11px; }
-            .filters { flex-direction: column; align-items: stretch; }
-            .filters select, .filters input, .filters .btn { width: 100%; }
-            .grid-2 { grid-template-columns: 1fr; }
-            .factor-grid { grid-template-columns: repeat(2, 1fr); }
-            .dir-compare { flex-direction: column; }
-            .chart-wrap { height: 260px; }
-            table { display: block; overflow-x: auto; white-space: nowrap; }
-            .filters .btn.load-more { width: auto; }
+            .chart-wrap { height: 220px; }
+            .sector-grid { grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); }
+            .summary-row { grid-template-columns: repeat(2, 1fr); }
         }
-    </style>
-</head>
-<body>
-    <!-- ── TOP NAV ── -->
-    <div class="top-nav">
-        <span class="brand">FTSeek-US</span>
-        <a href="/">指挥中心</a>
-        <a href="/trade">交易</a>
-        <a href="/review" class="active">分析</a>
-        <a href="/system">系统</a>
-    </div>
+{% endblock %}
 
+{% block content %}
     <div class="container">
-        <!-- ════════════════════════════════════════════════════════ -->
-        <!-- SECTION 1 — EQUITY CURVE -->
-        <!-- ════════════════════════════════════════════════════════ -->
-        <div class="card">
-            <h3>
-                📈 权益曲线
-                <span class="subtitle">近30天</span>
-                <span class="auto-refresh"><span class="dot on" id="refresh-dot"></span>自动刷新</span>
-            </h3>
-            <div class="chart-wrap">
-                <canvas id="equityChart"></canvas>
-            </div>
+
+        <!-- 模块1: 资金曲线 & 回撤 -->
+        <div class="card module">
+            <h3>📈 资金曲线 & 回撤 <span class="badge" id="eqBadge">加载中</span></h3>
+            <div class="summary-row" id="eqSummary"></div>
+            <div class="chart-wrap"><canvas id="equityChart"></canvas></div>
         </div>
 
-        <!-- ════════════════════════════════════════════════════════ -->
-        <!-- SECTION 2 — TWO COLUMNS -->
-        <!-- ════════════════════════════════════════════════════════ -->
+        <!-- 模块2 + 模块3: 并排 -->
         <div class="grid-2">
-            <!-- Left: Performance by Exit Type -->
-            <div class="card">
-                <h3>🚪 按退出类型表现</h3>
-                <table>
-                    <thead>
-                        <tr>
-                            <th>退出原因</th>
-                            <th>交易数</th>
-                            <th>总盈亏</th>
-                            <th>胜率</th>
-                        </tr>
-                    </thead>
-                    <tbody id="exit-type-table">
-                        <tr><td colspan="4" class="loading-text">加载中...</td></tr>
-                    </tbody>
-                </table>
+            <!-- 模块2: 持仓归因 -->
+            <div class="card module">
+                <h3>📊 持仓归因</h3>
+                <div class="summary-row" id="posSummary"></div>
+                <div class="tw">
+                    <table class="pos-table" id="posTable">
+                        <thead><tr><th>标的</th><th>方向</th><th>市值</th><th>浮盈亏</th><th>贡献</th><th>占比</th></tr></thead>
+                        <tbody id="posBody"><tr><td colspan="6" class="loading">加载中...</td></tr></tbody>
+                    </table>
+                </div>
             </div>
 
-            <!-- Right: Performance by Direction -->
-            <div class="card">
-                <h3>📊 按方向表现对比</h3>
-                <div id="dir-compare-area">
-                    <p class="loading-text">加载中...</p>
-                </div>
+            <!-- 模块3: 资金流向 -->
+            <div class="card module">
+                <h3>💰 资金流向 <span style="font-size:11px;color:#8b949e;font-weight:400">持仓标的</span></h3>
+                <div id="flowContent"><div class="loading">加载中...</div></div>
             </div>
         </div>
 
-        <!-- ════════════════════════════════════════════════════════ -->
-        <!-- SECTION 3 — TRADE HISTORY TABLE -->
-        <!-- ════════════════════════════════════════════════════════ -->
-        <div class="card">
-            <h3>📋 交易历史</h3>
-            <div class="filters">
-                <label>时间范围</label>
-                <select id="date-range">
-                    <option value="7">最近7天</option>
-                    <option value="30" selected>最近30天</option>
-                    <option value="0">全部</option>
-                </select>
-                <label>方向</label>
-                <select id="dir-filter">
-                    <option value="">全部</option>
-                    <option value="LONG">做多</option>
-                    <option value="SHORT">做空</option>
-                </select>
-                <button class="btn" onclick="applyFilters()">🔍 筛选</button>
+        <!-- 模块4 + 模块5: 并排 -->
+        <div class="grid-2">
+            <!-- 模块4: 执行质量 -->
+            <div class="card module">
+                <h3>⚡ 执行质量</h3>
+                <div class="summary-row" id="execSummary"></div>
+                <div class="tw">
+                    <table class="deal-table" id="dealTable">
+                        <thead><tr><th>时间</th><th>标的</th><th>方向</th><th>数量</th><th>价格</th><th>金额</th></tr></thead>
+                        <tbody id="dealBody"><tr><td colspan="6" class="loading">加载中...</td></tr></tbody>
+                    </table>
+                </div>
             </div>
-            <table>
-                <thead>
-                    <tr>
-                        <th class="sortable" data-sort="trade_date" onclick="toggleSort('trade_date')">日期 <span class="sort-arrow">▼</span></th>
-                        <th>标的</th>
-                        <th class="sortable" data-sort="direction" onclick="toggleSort('direction')">方向 <span class="sort-arrow">▼</span></th>
-                        <th class="sortable" data-sort="entry_price" onclick="toggleSort('entry_price')">入场 <span class="sort-arrow">▼</span></th>
-                        <th class="sortable" data-sort="exit_price" onclick="toggleSort('exit_price')">出场 <span class="sort-arrow">▼</span></th>
-                        <th class="sortable" data-sort="pnl" onclick="toggleSort('pnl')">盈亏 <span class="sort-arrow">▼</span></th>
-                        <th>退出原因</th>
-                        <th class="sortable" data-sort="signal_strength" onclick="toggleSort('signal_strength')">信号强度 <span class="sort-arrow">▼</span></th>
-                        <th class="sortable" data-sort="signal_confidence" onclick="toggleSort('signal_confidence')">置信度 <span class="sort-arrow">▼</span></th>
-                    </tr>
-                </thead>
-                <tbody id="trade-history-table">
-                    <tr><td colspan="9" class="loading-text">加载中...</td></tr>
-                </tbody>
-            </table>
-            <button id="load-more-btn" class="btn load-more" onclick="loadMoreTrades()" style="display:none;">加载更多...</button>
+
+            <!-- 模块5: 信号质量 -->
+            <div class="card module">
+                <h3>🎯 信号质量</h3>
+                <div class="summary-row" id="sigSummary"></div>
+                <div id="sigContent"><div class="loading">加载中...</div></div>
+            </div>
         </div>
 
-        <!-- ════════════════════════════════════════════════════════ -->
-        <!-- SECTION 4 — FACTOR ATTRIBUTION -->
-        <!-- ════════════════════════════════════════════════════════ -->
-        <div class="card">
-            <h3>🧬 因子归因</h3>
-            <div class="placeholder-msg">
-                因子归因数据将在新交易产生后可用
-            </div>
-            <div class="factor-grid">
-                <div class="factor-cell">
-                    <div class="f-name">F1 · 趋势</div>
-                    <div class="f-val">—</div>
-                    <div class="f-sub">暂无数据</div>
-                </div>
-                <div class="factor-cell">
-                    <div class="f-name">F2 · 动量</div>
-                    <div class="f-val">—</div>
-                    <div class="f-sub">暂无数据</div>
-                </div>
-                <div class="factor-cell">
-                    <div class="f-name">F3 · 波动率</div>
-                    <div class="f-val">—</div>
-                    <div class="f-sub">暂无数据</div>
-                </div>
-                <div class="factor-cell">
-                    <div class="f-name">F4 · 量价</div>
-                    <div class="f-val">—</div>
-                    <div class="f-sub">暂无数据</div>
-                </div>
-                <div class="factor-cell">
-                    <div class="f-name">F5 · 情绪</div>
-                    <div class="f-val">—</div>
-                    <div class="f-sub">暂无数据</div>
-                </div>
+        <!-- 模块6: 板块热力图 -->
+        <div class="card module">
+            <h3>🗺️ 板块热力图 <span style="font-size:11px;color:#8b949e;font-weight:400">美股行业板块</span></h3>
+            <div class="sector-grid" id="sectorGrid"><div class="loading">加载中...</div></div>
+            <div style="margin-top:12px">
+                <h3 style="font-size:13px;margin-bottom:8px">🔥 热门概念</h3>
+                <div id="conceptList"></div>
             </div>
         </div>
     </div>
+{% endblock %}
 
-    <script>
-        // ══════════════════════════════════════════════════════════════
-        // CONFIG
-        // ══════════════════════════════════════════════════════════════
-        const API_BASE = window.location.protocol + '//' + window.location.host;
-        const PAGE_SIZE = 100;
-        let allTrades = [];
-        let displayOffset = 0;
-        let currentSort = { field: 'trade_date', asc: false };
-        let equityChart = null;
+{% block scripts %}
+    const API = window.location.origin;
+    let equityChart = null;
 
-        // ══════════════════════════════════════════════════════════════
-        // SECTION 1 — EQUITY CURVE
-        // ══════════════════════════════════════════════════════════════
-        async function loadEquityCurve() {
-            try {
-                const resp = await fetch(`${API_BASE}/api/risk/pnl-history?days=30`);
-                const data = await resp.json();
-                const history = data.equity_history || [];
+    // ── 辅助 ──
+    function fmt(n, d=2) { return n == null || isNaN(n) ? '--' : Number(n).toLocaleString('en-US', {minimumFractionDigits:d, maximumFractionDigits:d}); }
+    function fmtK(n) { return n == null ? '--' : (Math.abs(n) >= 1e6 ? (n/1e6).toFixed(1)+'M' : Math.abs(n) >= 1e3 ? (n/1e3).toFixed(1)+'K' : n.toFixed(0)); }
+    function pnlCls(n) { return n >= 0 ? 'green' : 'red'; }
+    function escHtml(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 
-                if (history.length === 0) {
-                    const canvas = document.getElementById('equityChart');
-                    const ctx = canvas.getContext('2d');
-                    ctx.font = '14px sans-serif';
-                    ctx.fillStyle = '#8b949e';
-                    ctx.textAlign = 'center';
-                    ctx.fillText('暂无权益数据', canvas.width / 2, canvas.height / 2);
-                    return;
-                }
+    // ── 模块1: 资金曲线 ──
+    async function loadEquity() {
+        try {
+            const r = await fetch(`${API}/api/analytics/equity`);
+            const d = await r.json();
+            if (d.error) { document.getElementById('eqBadge').textContent = d.error; return; }
 
-                const labels = history.map(h => h.date);
-                const totalAssets = history.map(h => h.total_assets);
-                const dailyPnls = history.map(h => h.daily_pnl);
-                // Color bars green/red based on pnl sign
-                const barColors = dailyPnls.map(v => v >= 0 ? 'rgba(74, 222, 128, 0.7)' : 'rgba(248, 113, 113, 0.7)');
-                const barBorders = dailyPnls.map(v => v >= 0 ? 'rgba(74, 222, 128, 1)' : 'rgba(248, 113, 113, 1)');
+            const h = d.history || [];
+            document.getElementById('eqBadge').textContent = d.water_level || '--';
+            document.getElementById('eqBadge').className = 'badge ' + (d.water_level === 'green' ? 'live' : d.water_level === 'yellow' ? 'warn' : 'danger');
 
-                const ctx = document.getElementById('equityChart').getContext('2d');
+            document.getElementById('eqSummary').innerHTML = `
+                <div class="summary-item"><div class="label">当前权益</div><div class="value">$${fmtK(d.current_equity)}</div></div>
+                <div class="summary-item"><div class="label">峰值</div><div class="value">$${fmtK(d.peak_equity)}</div></div>
+                <div class="summary-item"><div class="label">当前回撤</div><div class="value ${pnlCls(d.current_drawdown_pct)}">${d.current_drawdown_pct.toFixed(2)}%</div></div>
+                <div class="summary-item"><div class="label">最大回撤</div><div class="value red">${d.max_drawdown_pct.toFixed(2)}%</div></div>
+                <div class="summary-item"><div class="label">购买力</div><div class="value">$${fmtK(d.buying_power)}</div></div>`;
 
-                if (equityChart) {
-                    equityChart.destroy();
-                }
+            if (h.length < 2) { document.getElementById('equityChart').parentElement.innerHTML = '<div style="text-align:center;padding:40px;color:#8b949e">数据积累中 (需 ≥2 个快照点)</div>'; return; }
 
-                equityChart = new Chart(ctx, {
-                    type: 'bar',
-                    data: {
-                        labels: labels,
-                        datasets: [
-                            {
-                                label: '每日盈亏 ($)',
-                                data: dailyPnls,
-                                backgroundColor: barColors,
-                                borderColor: barBorders,
-                                borderWidth: 1,
-                                order: 2,
-                                yAxisID: 'y1',
-                            },
-                            {
-                                label: '总资产 ($)',
-                                data: totalAssets,
-                                type: 'line',
-                                borderColor: '#58a6ff',
-                                backgroundColor: 'rgba(88, 166, 255, 0.08)',
-                                borderWidth: 2.5,
-                                pointRadius: 3,
-                                pointBackgroundColor: '#58a6ff',
-                                pointBorderColor: '#58a6ff',
-                                tension: 0.35,
-                                fill: true,
-                                order: 1,
-                                yAxisID: 'y',
-                            },
-                        ],
+            const labels = h.map(x => { const t = x.ts || ''; return t.length > 16 ? t.substring(5,16) : t; });
+            const eqData = h.map(x => x.equity);
+            const ddData = h.map(x => x.drawdown_pct);
+
+            if (equityChart) equityChart.destroy();
+            equityChart = new Chart(document.getElementById('equityChart'), {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [
+                        { label: '权益 ($)', data: eqData, borderColor: '#58a6ff', backgroundColor: 'rgba(88,166,255,0.08)', fill: true, tension: 0.3, pointRadius: 1.5, yAxisID: 'y' },
+                        { label: '回撤 (%)', data: ddData, type: 'bar', backgroundColor: ddData.map(v => v >= -1 ? 'rgba(74,222,128,0.4)' : v >= -3 ? 'rgba(251,191,36,0.4)' : 'rgba(248,113,113,0.4)'), yAxisID: 'y1' },
+                    ],
+                },
+                options: {
+                    responsive: true, maintainAspectRatio: false,
+                    interaction: { mode: 'index', intersect: false },
+                    plugins: { legend: { labels: { color: '#8b949e', font: { size: 11 } } } },
+                    scales: {
+                        x: { grid: { display: false }, ticks: { color: '#8b949e', font: { size: 10 }, maxTicksLimit: 12 } },
+                        y: { position: 'left', grid: { color: 'rgba(48,54,61,0.4)' }, ticks: { color: '#8b949e', callback: v => '$'+fmtK(v) } },
+                        y1: { position: 'right', grid: { display: false }, ticks: { color: '#8b949e', callback: v => v.toFixed(1)+'%' } },
                     },
-                    options: {
-                        responsive: true,
-                        maintainAspectRatio: false,
-                        interaction: {
-                            mode: 'index',
-                            intersect: false,
-                        },
-                        plugins: {
-                            legend: {
-                                position: 'top',
-                                labels: {
-                                    color: '#8b949e',
-                                    usePointStyle: true,
-                                    padding: 20,
-                                    font: { size: 12 },
-                                },
-                            },
-                            tooltip: {
-                                backgroundColor: '#161b22',
-                                borderColor: '#30363d',
-                                borderWidth: 1,
-                                titleColor: '#e6edf3',
-                                bodyColor: '#e6edf3',
-                                callbacks: {
-                                    label: function(ctx) {
-                                        return ctx.dataset.label + ': $' + ctx.parsed.y.toLocaleString('en-US', { minimumFractionDigits: 2 });
-                                    },
-                                },
-                            },
-                        },
-                        scales: {
-                            x: {
-                                grid: { color: 'rgba(48, 54, 61, 0.4)' },
-                                ticks: { color: '#8b949e', font: { size: 11 } },
-                            },
-                            y: {
-                                type: 'linear',
-                                position: 'left',
-                                title: {
-                                    display: true,
-                                    text: '总资产 ($)',
-                                    color: '#58a6ff',
-                                },
-                                grid: { color: 'rgba(48, 54, 61, 0.4)' },
-                                ticks: {
-                                    color: '#8b949e',
-                                    font: { size: 11 },
-                                    callback: function(v) { return '$' + v.toLocaleString('en-US'); },
-                                },
-                            },
-                            y1: {
-                                type: 'linear',
-                                position: 'right',
-                                title: {
-                                    display: true,
-                                    text: '每日盈亏 ($)',
-                                    color: '#8b949e',
-                                },
-                                grid: { drawOnChartArea: false },
-                                ticks: {
-                                    color: '#8b949e',
-                                    font: { size: 11 },
-                                    callback: function(v) { return '$' + v.toLocaleString('en-US'); },
-                                },
-                            },
-                        },
-                    },
-                });
-            } catch (e) {
-                console.error('加载权益曲线失败:', e);
-                const canvas = document.getElementById('equityChart');
-                const ctx = canvas.getContext('2d');
-                ctx.font = '14px sans-serif';
-                ctx.fillStyle = '#f87171';
-                ctx.textAlign = 'center';
-                ctx.fillText('加载失败', canvas.width / 2, canvas.height / 2);
-            }
-        }
+                },
+            });
+        } catch (e) { console.error('Equity load error:', e); }
+    }
 
-        // ══════════════════════════════════════════════════════════════
-        // SECTION 2 — EXIT TYPE & DIRECTION PERFORMANCE
-        // ══════════════════════════════════════════════════════════════
-        function buildExitTypeTable(trades) {
-            const groups = {};
-            for (const t of trades) {
-                const reason = t.exit_reason || '未知';
-                if (!groups[reason]) {
-                    groups[reason] = { count: 0, wins: 0, total_pnl: 0 };
-                }
-                groups[reason].count++;
-                groups[reason].total_pnl += (t.pnl || 0);
-                if ((t.pnl || 0) > 0) groups[reason].wins++;
-            }
+    // ── 模块2: 持仓归因 ──
+    async function loadPositions() {
+        try {
+            const r = await fetch(`${API}/api/analytics/positions-attribution`);
+            const d = await r.json();
+            if (d.error) { document.getElementById('posSummary').innerHTML = `<div class="summary-item"><div class="label">状态</div><div class="value red">${d.error}</div></div>`; return; }
 
-            const entries = Object.entries(groups).sort((a, b) => b[1].total_pnl - a[1].total_pnl);
+            const p = d.positions || [];
+            document.getElementById('posSummary').innerHTML = `
+                <div class="summary-item"><div class="label">多头</div><div class="value green">$${fmtK(d.long_mv)}</div></div>
+                <div class="summary-item"><div class="label">空头</div><div class="value red">$${fmtK(d.short_mv)}</div></div>
+                <div class="summary-item"><div class="label">净敞口</div><div class="value">$${fmtK(d.net_exposure)}</div></div>
+                <div class="summary-item"><div class="label">浮盈亏</div><div class="value ${pnlCls(d.total_unrealized)}">$${fmt(d.total_unrealized)}</div></div>`;
 
-            if (entries.length === 0) {
-                document.getElementById('exit-type-table').innerHTML =
-                    '<tr><td colspan="4" class="loading-text">暂无数据</td></tr>';
+            if (!p.length) { document.getElementById('posBody').innerHTML = '<tr><td colspan="6" style="text-align:center;color:#8b949e">无持仓</td></tr>'; return; }
+
+            document.getElementById('posBody').innerHTML = p.map(x => `
+                <tr>
+                    <td><a href="/stock/${escHtml(x.symbol)}" style="color:#58a6ff;text-decoration:none"><b>${escHtml(x.symbol)}</b></a></td>
+                    <td class="${x.direction==='LONG'?'long':'short'}">${x.direction}</td>
+                    <td>$${fmtK(x.market_value)}</td>
+                    <td class="${pnlCls(x.unrealized_pnl)}">${x.unrealized_pnl>=0?'+':''}$${fmt(x.unrealized_pnl)} (${x.pnl_pct>=0?'+':''}${x.pnl_pct}%)</td>
+                    <td class="${pnlCls(x.contribution_pct)}">${x.contribution_pct>=0?'+':''}${x.contribution_pct}%</td>
+                    <td>${x.weight_pct}%</td>
+                </tr>`).join('');
+        } catch (e) { console.error('Positions error:', e); }
+    }
+
+    // ── 模块3: 资金流向 ──
+    async function loadCapitalFlow() {
+        try {
+            const r = await fetch(`${API}/api/analytics/capital-flow`);
+            const d = await r.json();
+            if (d.error || !d.flows || !d.flows.length) {
+                document.getElementById('flowContent').innerHTML = '<div style="text-align:center;color:#8b949e;padding:20px">' + (d.error || '暂无资金流向数据 (需持仓标的)') + '</div>';
                 return;
             }
+            const maxFlow = Math.max(...d.flows.map(f => Math.max(f.super_large_in + f.large_in, f.super_large_out + f.large_out, 1)));
 
-            document.getElementById('exit-type-table').innerHTML = entries.map(([reason, g]) => {
-                const wr = g.count > 0 ? (g.wins / g.count * 100).toFixed(1) : '0.0';
-                const pnlClass = g.total_pnl >= 0 ? 'pnl-green' : 'pnl-red';
-                const pnlSign = g.total_pnl >= 0 ? '+' : '';
+            document.getElementById('flowContent').innerHTML = d.flows.map(f => {
+                const mainIn = f.super_large_in + f.large_in;
+                const mainOut = f.super_large_out + f.large_out;
+                const inW = (mainIn / maxFlow * 100).toFixed(1);
+                const outW = (mainOut / maxFlow * 100).toFixed(1);
                 return `
-                    <tr>
-                        <td><strong>${escHtml(reason)}</strong></td>
-                        <td>${g.count}</td>
-                        <td class="${pnlClass}">${pnlSign}$${g.total_pnl.toFixed(2)}</td>
-                        <td>${wr}%</td>
-                    </tr>`;
-            }).join('');
-        }
-
-        function buildDirCompare(trades) {
-            const groups = { LONG: { count: 0, wins: 0, total_pnl: 0 }, SHORT: { count: 0, wins: 0, total_pnl: 0 } };
-            for (const t of trades) {
-                const dir = t.direction || 'LONG';
-                if (!groups[dir]) groups[dir] = { count: 0, wins: 0, total_pnl: 0 };
-                groups[dir].count++;
-                groups[dir].total_pnl += (t.pnl || 0);
-                if ((t.pnl || 0) > 0) groups[dir].wins++;
-            }
-
-            const long = groups['LONG'] || { count: 0, wins: 0, total_pnl: 0 };
-            const short = groups['SHORT'] || { count: 0, wins: 0, total_pnl: 0 };
-            const maxCount = Math.max(long.count, short.count, 1);
-
-            const longWR = long.count > 0 ? (long.wins / long.count * 100).toFixed(1) : '—';
-            const shortWR = short.count > 0 ? (short.wins / short.count * 100).toFixed(1) : '—';
-
-            document.getElementById('dir-compare-area').innerHTML = `
-                <div class="dir-compare">
-                    <div class="dir-col">
-                        <div class="dir-label long">📈 做多 LONG</div>
-                        <div class="dir-stat">交易数</div>
-                        <div class="dir-val long">${long.count}</div>
-                        <div class="dir-stat">胜率</div>
-                        <div class="dir-val long">${longWR}%</div>
-                        <div class="dir-stat">总盈亏</div>
-                        <div class="dir-val ${long.total_pnl >= 0 ? 'positive' : 'negative'}">$${long.total_pnl.toFixed(2)}</div>
-                        <div class="dir-bar"><div class="dir-bar-fill long" style="width:${(long.count / maxCount * 100).toFixed(0)}%"></div></div>
+                <div style="margin-bottom:12px;padding-bottom:12px;border-bottom:1px solid #21262d">
+                    <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px">
+                        <span><b>${escHtml(f.symbol)}</b></span>
+                        <span class="${pnlCls(f.net_main)}">主力 ${f.net_main>=0?'+':''}${fmt(f.net_main)}万</span>
                     </div>
-                    <div class="dir-col">
-                        <div class="dir-label short">📉 做空 SHORT</div>
-                        <div class="dir-stat">交易数</div>
-                        <div class="dir-val short">${short.count}</div>
-                        <div class="dir-stat">胜率</div>
-                        <div class="dir-val short">${shortWR}%</div>
-                        <div class="dir-stat">总盈亏</div>
-                        <div class="dir-val ${short.total_pnl >= 0 ? 'positive' : 'negative'}">$${short.total_pnl.toFixed(2)}</div>
-                        <div class="dir-bar"><div class="dir-bar-fill short" style="width:${(short.count / maxCount * 100).toFixed(0)}%"></div></div>
+                    <div style="font-size:10px;color:#8b949e;margin-bottom:2px">主力(超大+大单)</div>
+                    <div class="flow-bar"><div class="inflow" style="width:${inW}%"></div><div class="outflow" style="width:${outW}%"></div></div>
+                    <div style="display:flex;justify-content:space-between;font-size:10px;color:#8b949e">
+                        <span>入 $${fmtK(mainIn)}</span><span>出 $${fmtK(mainOut)}</span>
+                        <span class="${pnlCls(f.net_retail)}">散户 ${f.net_retail>=0?'+':''}${fmt(f.net_retail)}万</span>
                     </div>
                 </div>`;
-        }
+            }).join('');
+        } catch (e) { console.error('Capital flow error:', e); }
+    }
 
-        // ══════════════════════════════════════════════════════════════
-        // SECTION 3 — TRADE HISTORY TABLE
-        // ══════════════════════════════════════════════════════════════
-        async function loadAllTrades() {
-            try {
-                // Load a large batch to have data for both table + section 2 aggregations
-                const resp = await fetch(`${API_BASE}/api/trades?limit=500`);
-                const data = await resp.json();
-                allTrades = (data.trades || []).map(t => ({
-                    ...t,
-                    signal_strength: t.signal_strength !== undefined ? t.signal_strength : null,
-                    signal_confidence: t.signal_confidence !== undefined ? t.signal_confidence : null,
-                }));
-            } catch (e) {
-                console.error('加载交易记录失败:', e);
-                allTrades = [];
-            }
+    // ── 模块4: 执行质量 ──
+    async function loadExecution() {
+        try {
+            const r = await fetch(`${API}/api/analytics/execution-quality`);
+            const d = await r.json();
+            if (d.error) { document.getElementById('execSummary').innerHTML = `<div class="summary-item"><div class="label">状态</div><div class="value red">${d.error}</div></div>`; return; }
 
-            // Build section 2 (exit type + direction) from full dataset
-            buildExitTypeTable(allTrades);
-            buildDirCompare(allTrades);
+            document.getElementById('execSummary').innerHTML = `
+                <div class="summary-item"><div class="label">今日成交</div><div class="value">${d.deal_count}</div></div>
+                <div class="summary-item"><div class="label">总成交额</div><div class="value">$${fmtK(d.total_amount)}</div></div>
+                <div class="summary-item"><div class="label">均额/笔</div><div class="value">$${fmtK(d.avg_amount_per_deal)}</div></div>
+                <div class="summary-item"><div class="label">平均滑点</div><div class="value ${Math.abs(d.avg_slippage_pct)>0.5?'red':''}">${d.avg_slippage_pct>=0?'+':''}${d.avg_slippage_pct.toFixed(3)}%</div><div class="sub">${d.slippage_alerts} 次告警</div></div>`;
 
-            // Reset display
-            displayOffset = 0;
-            renderTradeTable();
-        }
+            const deals = d.deals || [];
+            if (!deals.length) { document.getElementById('dealBody').innerHTML = '<tr><td colspan="6" style="text-align:center;color:#8b949e">今日无成交</td></tr>'; return; }
 
-        function applyFilters() {
-            displayOffset = 0;
-            renderTradeTable();
-        }
+            document.getElementById('dealBody').innerHTML = deals.slice(0, 20).map(x => `
+                <tr>
+                    <td style="font-size:11px;color:#8b949e">${(x.time||'').substring(5,16)}</td>
+                    <td><b>${escHtml(x.symbol)}</b></td>
+                    <td>${x.side==='BUY'?'<span style="color:#4ade80">买入</span>':x.side==='SELL'?'<span style="color:#f87171">卖出</span>':'<span style="color:#f87171">卖空</span>'}</td>
+                    <td>${x.qty}</td>
+                    <td>$${fmt(x.price,2)}</td>
+                    <td>$${fmtK(x.amount)}</td>
+                </tr>`).join('');
+        } catch (e) { console.error('Execution error:', e); }
+    }
 
-        function getFilteredTrades() {
-            const dateRange = parseInt(document.getElementById('date-range').value);
-            const dirFilter = document.getElementById('dir-filter').value;
+    // ── 模块5: 信号质量 ──
+    async function loadSignals() {
+        try {
+            const r = await fetch(`${API}/api/analytics/signal-quality`);
+            const d = await r.json();
+            if (d.error) { document.getElementById('sigSummary').innerHTML = `<div class="summary-item"><div class="label">状态</div><div class="value red">${d.error}</div></div>`; return; }
 
-            let filtered = [...allTrades];
+            const ic = d.ic_summary || {};
+            const icMean = ic.ic_mean || 0;
+            const icCls = icMean > 0.02 ? 'live' : icMean > 0 ? 'warn' : 'danger';
 
-            // Date range filter
-            if (dateRange > 0) {
-                const cutoff = new Date();
-                cutoff.setDate(cutoff.getDate() - dateRange);
-                const cutoffStr = cutoff.toISOString().slice(0, 10);
-                filtered = filtered.filter(t => (t.trade_date || '') >= cutoffStr);
-            }
+            document.getElementById('sigSummary').innerHTML = `
+                <div class="summary-item"><div class="label">30日 IC</div><div class="value ${pnlCls(icMean)}">${icMean.toFixed(4)}</div></div>
+                <div class="summary-item"><div class="label">信号数</div><div class="value">${ic.n_signals || 0}</div></div>
+                <div class="summary-item"><div class="label">IC>0 占比</div><div class="value">${((ic.ic_positive_rate||0)*100).toFixed(0)}%</div></div>
+                <div class="summary-item"><div class="label">状态</div><div class="value"><span class="badge ${icCls}">${icMean>0.02?'健康':icMean>0?'边际':'负值'}</span></div></div>`;
 
-            // Direction filter
-            if (dirFilter) {
-                filtered = filtered.filter(t => t.direction === dirFilter);
-            }
+            const signals = d.recent_signals || [];
+            if (!signals.length) { document.getElementById('sigContent').innerHTML = '<div style="text-align:center;color:#8b949e;padding:20px">暂无信号收益数据</div>'; return; }
 
-            // Sort
-            const sf = currentSort.field;
-            filtered.sort((a, b) => {
-                let va = a[sf], vb = b[sf];
-                if (sf === 'trade_date') {
-                    va = va || '';
-                    vb = vb || '';
-                } else if (sf === 'pnl' || sf === 'entry_price' || sf === 'exit_price' || sf === 'signal_confidence') {
-                    va = parseFloat(va) || 0;
-                    vb = parseFloat(vb) || 0;
-                } else if (sf === 'signal_strength') {
-                    va = parseInt(va) || 0;
-                    vb = parseInt(vb) || 0;
-                } else {
-                    va = (va || '').toString();
-                    vb = (vb || '').toString();
-                }
-                if (va < vb) return currentSort.asc ? -1 : 1;
-                if (va > vb) return currentSort.asc ? 1 : -1;
-                return 0;
-            });
+            // Show as bar chart of forward returns
+            const maxRet = Math.max(...signals.map(s => Math.abs(s.fwd_return)), 1);
+            document.getElementById('sigContent').innerHTML = '<div style="max-height:200px;overflow-y:auto">' + signals.slice(0, 30).map(s => {
+                const w = Math.min(Math.abs(s.fwd_return) / maxRet * 100, 100);
+                const color = s.fwd_return >= 0 ? '#22c55e' : '#ef4444';
+                const left = s.fwd_return >= 0 ? '50%' : `${50 - w/2}%`;
+                return `<div class="signal-row">
+                    <span class="sym">${escHtml(s.symbol.replace('US.',''))}</span>
+                    <span style="font-size:10px;color:#8b949e;min-width:40px">${s.direction}</span>
+                    <div class="bar-wrap"><div class="bar-fill" style="left:${s.fwd_return>=0?'50%':`${50-w}%`};width:${w/2}%;background:${color}"></div><div style="position:absolute;left:50%;top:0;bottom:0;width:1px;background:#484f58"></div></div>
+                    <span class="${pnlCls(s.fwd_return)}" style="min-width:55px;text-align:right">${s.fwd_return>=0?'+':''}${s.fwd_return.toFixed(2)}%</span>
+                </div>`;
+            }).join('') + '</div>';
+        } catch (e) { console.error('Signals error:', e); }
+    }
 
-            return filtered;
-        }
-
-        function renderTradeTable() {
-            const filtered = getFilteredTrades();
-            const slice = filtered.slice(0, displayOffset + PAGE_SIZE);
-            const hasMore = slice.length < filtered.length;
-
-            if (slice.length === 0) {
-                document.getElementById('trade-history-table').innerHTML =
-                    '<tr><td colspan="9" class="loading-text">暂无交易记录</td></tr>';
-                document.getElementById('load-more-btn').style.display = 'none';
+    // ── 模块6: 板块热力图 ──
+    async function loadSectors() {
+        try {
+            const r = await fetch(`${API}/api/analytics/sector-heatmap`);
+            const d = await r.json();
+            if (d.error || !d.sectors || !d.sectors.length) {
+                document.getElementById('sectorGrid').innerHTML = '<div style="text-align:center;color:#8b949e;padding:20px">' + (d.error || '板块数据加载中 (需盘中)') + '</div>';
                 return;
             }
 
-            document.getElementById('trade-history-table').innerHTML = slice.map(t => {
-                const dirClass = (t.direction || '').toUpperCase() === 'SHORT' ? 'short' : 'long';
-                const dirLabel = (t.direction || '').toUpperCase() === 'SHORT' ? '做空' : '做多';
-                const pnlClass = (t.pnl || 0) >= 0 ? 'positive' : 'negative';
-                const pnlSign = (t.pnl || 0) >= 0 ? '+' : '';
-                const ss = t.signal_strength != null ? t.signal_strength : 'N/A';
-                const sc = t.signal_confidence != null ? (t.signal_confidence * 100).toFixed(0) + '%' : 'N/A';
-
-                return `
-                    <tr>
-                        <td>${escHtml(t.trade_date || '')}</td>
-                        <td><strong>${escHtml(t.symbol || '')}</strong></td>
-                        <td class="${dirClass}">${dirLabel}</td>
-                        <td>$${fmtNum(t.entry_price)}</td>
-                        <td>$${fmtNum(t.exit_price)}</td>
-                        <td class="${pnlClass}">${pnlSign}$${fmtNum(Math.abs(t.pnl || 0))}</td>
-                        <td><span class="muted">${escHtml(t.exit_reason || '—')}</span></td>
-                        <td>${ss}</td>
-                        <td>${sc}</td>
-                    </tr>`;
+            document.getElementById('sectorGrid').innerHTML = d.sectors.map(s => {
+                const intensity = Math.min(Math.abs(s.change_pct) / 3, 1);
+                let bg, fg;
+                if (s.change_pct >= 0) {
+                    bg = `rgba(34,197,94,${0.15 + intensity * 0.45})`;
+                    fg = '#4ade80';
+                } else {
+                    bg = `rgba(239,68,68,${0.15 + intensity * 0.45})`;
+                    fg = '#f87171';
+                }
+                return `<div class="sector-cell" style="background:${bg};color:${fg}">
+                    <div class="name">${escHtml(s.name)}</div>
+                    <div class="pct">${s.change_pct>=0?'+':''}${s.change_pct.toFixed(2)}%</div>
+                    <div class="breadth">$${s.price}</div>
+                </div>`;
             }).join('');
 
-            document.getElementById('load-more-btn').style.display = hasMore ? 'block' : 'none';
-            // Update sort arrows
-            updateSortHeaders();
-        }
-
-        function loadMoreTrades() {
-            displayOffset += PAGE_SIZE;
-            const filtered = getFilteredTrades();
-            const slice = filtered.slice(0, displayOffset + PAGE_SIZE);
-            const hasMore = slice.length < filtered.length;
-
-            // Re-render full visible set
-            renderTradeTable();
-            document.getElementById('load-more-btn').style.display = hasMore ? 'block' : 'none';
-        }
-
-        function toggleSort(field) {
-            if (currentSort.field === field) {
-                currentSort.asc = !currentSort.asc;
-            } else {
-                currentSort.field = field;
-                currentSort.asc = false;
+            // Hot concepts
+            const concepts = d.hot_concepts || [];
+            if (concepts.length) {
+                document.getElementById('conceptList').innerHTML = '<div style="display:flex;flex-wrap:wrap;gap:8px">' + concepts.map(c =>
+                    `<span style="padding:4px 10px;border-radius:4px;font-size:12px;background:${c.change_pct>=0?'rgba(34,197,94,0.15)':'rgba(239,68,68,0.15)'};color:${c.change_pct>=0?'#4ade80':'#f87171'}">${escHtml(c.name)} ${c.change_pct>=0?'+':''}${c.change_pct.toFixed(1)}%</span>`
+                ).join('') + '</div>';
             }
-            displayOffset = 0;
-            renderTradeTable();
-        }
+        } catch (e) { console.error('Sectors error:', e); }
+    }
 
-        function updateSortHeaders() {
-            document.querySelectorAll('th.sortable').forEach(th => {
-                const f = th.getAttribute('data-sort');
-                th.classList.remove('sorted');
-                const arrow = th.querySelector('.sort-arrow');
-                if (arrow) arrow.textContent = '▼';
-                if (f === currentSort.field) {
-                    th.classList.add('sorted');
-                    if (arrow) arrow.textContent = currentSort.asc ? '▲' : '▼';
-                }
-            });
-        }
+    // ── Init ──
+    loadEquity();
+    loadPositions();
+    loadCapitalFlow();
+    loadExecution();
+    loadSignals();
+    loadSectors();
 
-        // ══════════════════════════════════════════════════════════════
-        // HELPERS
-        // ══════════════════════════════════════════════════════════════
-        function fmtNum(v) {
-            if (v === null || v === undefined || isNaN(v)) return '—';
-            return parseFloat(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-        }
-
-        function escHtml(s) {
-            if (!s) return '';
-            const div = document.createElement('div');
-            div.appendChild(document.createTextNode(s));
-            return div.innerHTML;
-        }
-
-        // ══════════════════════════════════════════════════════════════
-        // INIT + AUTO-REFRESH
-        // ══════════════════════════════════════════════════════════════
-        async function initAll() {
-            await Promise.all([
-                loadEquityCurve(),
-                loadAllTrades(),
-            ]);
-        }
-
-        function startAutoRefresh() {
-            // Refresh equity curve + trade data every 60 seconds
-            setInterval(async () => {
-                await Promise.all([
-                    loadEquityCurve(),
-                    loadAllTrades(),
-                ]);
-            }, 60000);
-        }
-
-        // Kick off
-        initAll();
-        startAutoRefresh();
-    </script>
-</body>
-</html>
+    // Auto-refresh: equity+positions every 30s, sectors+flow every 120s
+    setInterval(() => { loadEquity(); loadPositions(); }, 30000);
+    setInterval(() => { loadCapitalFlow(); loadSectors(); }, 120000);
+    setInterval(loadExecution, 60000);
+{% endblock %}

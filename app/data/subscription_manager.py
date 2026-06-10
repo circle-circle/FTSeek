@@ -148,18 +148,19 @@ class SubscriptionManager:
     def should_be_subscribed(self, now: Optional[datetime] = None) -> bool:
         """
         美股是否应该订阅：
-        1. 港股交易时段 → 退订 (槽位优先给港股)
+        1. 港股已停止自动交易 (2026-06-11) → 不再退订让槽位
         2. 美股盘前/交易 → 订阅
+        3. 美股收盘 → 退订
         """
-        if MarketHours.is_hk_active(now):
-            return False
+        # 港股已停用，不再因港股时段退订
         return MarketHours.is_us_active(now)
 
     def is_market_closed(self, now: Optional[datetime] = None) -> bool:
         return MarketHours.is_us_closed(now)
 
     def is_hk_trading(self, now: Optional[datetime] = None) -> bool:
-        return MarketHours.is_hk_trading_hours(now)
+        # 港股已停止自动交易 (2026-06-11) — 始终返回 False
+        return False
 
     # ===== 增量订阅 =====
 

@@ -1,29 +1,17 @@
-<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>系统 - FTSeek-US</title>
-    <style>
-        * { box-sizing: border-box; margin: 0; padding: 0; }
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0f1117; color: #e1e4e8; font-size: 14px; }
+{% extends "base.html" %}
+{% block title %}系统 - FTSeek-US{% endblock %}
+
+{% block nav_system_class %}class="active"{% endblock %}
+
+{% block nav_extra %}
+<span class="mode-tag sim" id="modeTag">🟢 模拟</span>
+{% endblock %}
+
+{% block extra_css %}
         .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
 
-        /* ── NAV ── */
-        .top-nav { background: #161b22; border-bottom: 1px solid #30363d; padding: 0 16px; display: flex; align-items: center; position: sticky; top: 0; z-index: 50; }
-        .top-nav .brand { color: #58a6ff; font-weight: 700; font-size: 14px; padding: 10px 12px 10px 0; border-right: 1px solid #30363d; margin-right: 8px; }
-        .top-nav a { color: #8b949e; text-decoration: none; padding: 10px 14px; font-size: 13px; border-bottom: 2px solid transparent; }
-        .top-nav a:hover { color: #e1e4e8; }
-        .top-nav a.active { color: #58a6ff; border-bottom-color: #58a6ff; }
-        .top-nav .spacer { flex: 1; }
-        .top-nav .mode-tag { font-size: 11px; padding: 3px 8px; border-radius: 4px; margin-left: 8px; }
-        .top-nav .mode-tag.sim { background: #1a3a2a; color: #4ade80; }
-        .top-nav .mode-tag.live { background: #3a1a1a; color: #f87171; }
-
-        /* ── SECTION HEADERS ── */
         h2.section-title { color: #58a6ff; font-size: 1.25em; margin: 28px 0 14px; padding-bottom: 8px; border-bottom: 2px solid #30363d; }
 
-        /* ── SECTION 1: STATUS CARDS ── */
         .status-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 14px; }
         .status-card { background: #1a1d23; border: 1px solid #30363d; border-radius: 10px; padding: 16px 20px; display: flex; align-items: center; gap: 14px; }
         .status-card .icon { font-size: 28px; }
@@ -36,24 +24,6 @@
         .dot.inactive { background: #f87171; }
         .dot.unknown { background: #fbbf24; }
 
-        /* ── SECTION 2: RESOURCE ── */
-        .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
-        .card { background: #1a1d23; border: 1px solid #30363d; border-radius: 10px; padding: 20px; }
-        .card h3 { color: #58a6ff; margin-bottom: 14px; font-size: 15px; }
-        .metric-row { display: flex; justify-content: space-between; align-items: center; padding: 10px 0; border-bottom: 1px solid #21262d; }
-        .metric-row:last-child { border-bottom: none; }
-        .metric-label { color: #8b949e; font-size: 13px; }
-        .metric-value { font-weight: 700; font-size: 14px; }
-        .metric-value.good { color: #4ade80; }
-        .metric-value.warning { color: #fbbf24; }
-        .metric-value.critical { color: #f87171; }
-        .progress-bar { width: 100%; height: 6px; background: #30363d; border-radius: 3px; margin-top: 4px; overflow: hidden; }
-        .progress-fill { height: 100%; border-radius: 3px; transition: width 0.3s; }
-        .progress-fill.good { background: #4ade80; }
-        .progress-fill.warning { background: #fbbf24; }
-        .progress-fill.critical { background: #f87171; }
-
-        /* ── SECTION 3: MODE SWITCH ── */
         .current-mode { text-align: center; padding: 18px; border-radius: 10px; margin-bottom: 16px; }
         .current-mode.sim { background: #0a2a1a; border: 2px solid #22c55e; }
         .current-mode.live { background: #2a0a0a; border: 2px solid #ef4444; }
@@ -74,7 +44,6 @@
         .mode-opt .check { color: #58a6ff; font-size: 16px; margin-top: 4px; display: none; }
         .mode-opt.current-opt .check { display: block; }
 
-        /* Modal */
         .overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 100; align-items: center; justify-content: center; }
         .overlay.show { display: flex; }
         .modal { background: #161b22; border: 1px solid #30363d; border-radius: 10px; padding: 24px; max-width: 400px; width: 90%; }
@@ -83,8 +52,6 @@
         .modal input { width: 100%; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; padding: 10px; color: #e1e4e8; font-size: 14px; margin-bottom: 14px; outline: none; }
         .modal input:focus { border-color: #58a6ff; }
         .btns { display: flex; gap: 8px; }
-        .btn { padding: 10px 20px; border: none; border-radius: 6px; font-size: 13px; font-weight: 700; cursor: pointer; }
-        .btn:disabled { opacity: 0.3; cursor: not-allowed; }
         .btn-go { background: #ef4444; color: #fff; }
         .btn-back { background: #21262d; color: #8b949e; }
         .btn-sim { background: #22c55e; color: #000; }
@@ -92,286 +59,78 @@
         .result.ok { background: #0a2a1a; border: 1px solid #22c55e; color: #4ade80; }
         .result.err { background: #2a0a0a; border: 1px solid #ef4444; color: #f87171; }
 
-        /* ── SECTION 4: LOGS ── */
-        .log-box { background: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 14px; font-family: "Courier New", monospace; font-size: 12px; line-height: 1.6; max-height: 500px; overflow-y: auto; white-space: pre-wrap; word-break: break-all; }
-        .log-line { display: block; }
-        .log-ERROR { color: #f87171; }
-        .log-WARNING { color: #fbbf24; }
-        .log-default { color: #8b949e; }
-        .log-refresh { text-align: right; color: #8b949e; font-size: 11px; margin-top: 6px; }
-
         @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
-        .loading { animation: pulse 1.5s ease-in-out infinite; }
 
         @media (max-width: 768px) {
-            .top-nav { overflow-x: auto; }
-            .top-nav .brand { display: none; }
-            .grid-2 { grid-template-columns: 1fr; }
+            .container { padding: 8px; }
+            .status-row { grid-template-columns: 1fr; }
+            .mode-cards { grid-template-columns: 1fr; }
+            .status-card { padding: 12px 14px; }
+            h2.section-title { font-size: 1.1em; margin: 20px 0 10px; }
         }
-    </style>
-</head>
-<body>
-    <div class="top-nav">
-        <span class="brand">FTSeek-US</span>
-        <a href="/">指挥中心</a>
-        <a href="/trade">交易</a>
-        <a href="/review">分析</a>
-        <a href="/system" class="active">系统</a>
-        <span class="spacer"></span>
-        <span class="mode-tag sim" id="modeTag">🟢 模拟</span>
-    </div>
+{% endblock %}
 
+{% block content %}
     <div class="container">
-
-        <!-- ─── SECTION 1: SYSTEM STATUS ─── -->
         <h2 class="section-title">🔧 系统状态</h2>
         <div class="status-row">
-            <div class="status-card">
-                <span class="icon">⚙️</span>
-                <div class="info">
-                    <div class="label">核心引擎</div>
-                    <div class="value" id="svcCore">--</div>
-                    <div class="detail">ftseek-us.service</div>
-                </div>
-            </div>
-            <div class="status-card">
-                <span class="icon">🖥️</span>
-                <div class="info">
-                    <div class="label">仪表盘</div>
-                    <div class="value" id="svcDashboard">--</div>
-                    <div class="detail">ftseek-dashboard</div>
-                </div>
-            </div>
-            <div class="status-card">
-                <span class="icon">📡</span>
-                <div class="info">
-                    <div class="label">Futu OpenD</div>
-                    <div class="value" id="svcFutu">--</div>
-                    <div class="detail">行情+交易网关</div>
-                </div>
-            </div>
-            <div class="status-card">
-                <span class="icon">🏦</span>
-                <div class="info">
-                    <div class="label">券商账户</div>
-                    <div class="value" id="svcBroker">--</div>
-                    <div class="detail" id="brokerDetail">--</div>
-                </div>
-            </div>
+            <div class="status-card"><span class="icon">⚙️</span><div class="info"><div class="label">核心引擎</div><div class="value" id="svcCore">--</div><div class="detail">ftseek-us.service</div></div></div>
+            <div class="status-card"><span class="icon">🖥️</span><div class="info"><div class="label">仪表盘</div><div class="value" id="svcDashboard">--</div><div class="detail">ftseek-dashboard</div></div></div>
+            <div class="status-card"><span class="icon">📡</span><div class="info"><div class="label">Futu OpenD</div><div class="value" id="svcFutu">--</div><div class="detail">行情+交易网关</div></div></div>
+            <div class="status-card"><span class="icon">🏦</span><div class="info"><div class="label">券商账户</div><div class="value" id="svcBroker">--</div><div class="detail" id="brokerDetail">--</div></div></div>
         </div>
 
-        <!-- ─── SECTION 2: RESOURCE USAGE ─── -->
-        <h2 class="section-title">📊 资源用量</h2>
-        <div class="grid-2">
-            <div class="card">
-                <h3>💻 系统资源</h3>
-                <div class="metric-row">
-                    <span class="metric-label">CPU</span>
-                    <span class="metric-value" id="cpuValue">--</span>
-                </div>
-                <div class="progress-bar"><div class="progress-fill" id="cpuBar" style="width:0%"></div></div>
-                <div class="metric-row">
-                    <span class="metric-label">内存</span>
-                    <span class="metric-value" id="memoryValue">--</span>
-                </div>
-                <div class="progress-bar"><div class="progress-fill" id="memoryBar" style="width:0%"></div></div>
-                <div class="metric-row">
-                    <span class="metric-label">磁盘</span>
-                    <span class="metric-value" id="diskValue">--</span>
-                </div>
-                <div class="progress-bar"><div class="progress-fill" id="diskBar" style="width:0%"></div></div>
-            </div>
-            <div class="card">
-                <h3>📡 API 调用统计</h3>
-                <div class="metric-row">
-                    <span class="metric-label">总调用次数</span>
-                    <span class="metric-value" id="apiTotal">--</span>
-                </div>
-                <div class="metric-row">
-                    <span class="metric-label">成功次数</span>
-                    <span class="metric-value good" id="apiSuccess">--</span>
-                </div>
-                <div class="metric-row">
-                    <span class="metric-label">失败次数</span>
-                    <span class="metric-value" id="apiFailed">--</span>
-                </div>
-                <div class="metric-row">
-                    <span class="metric-label">成功率</span>
-                    <span class="metric-value" id="apiSuccessRate">--</span>
-                </div>
-                <div class="metric-row">
-                    <span class="metric-label">平均延迟</span>
-                    <span class="metric-value" id="apiLatency">--</span>
-                </div>
-            </div>
-        </div>
-
-        <!-- ─── SECTION 3: MODE SWITCH ─── -->
         <h2 class="section-title">🔄 模式切换</h2>
         <div id="modeSection">
-            <div class="current-mode sim" id="currentModeBlock">
-                <div class="cm-label">当前模式</div>
-                <div class="cm-value" id="currentModeLabel">加载中...</div>
-            </div>
+            <div class="current-mode sim" id="currentModeBlock"><div class="cm-label">当前模式</div><div class="cm-value" id="currentModeLabel">加载中...</div></div>
             <div class="mode-cards">
-                <div class="mode-opt" id="opt-simulate" onclick="askSwitch('simulate')">
-                    <h3>🟢 模拟盘</h3>
-                    <p>Futu 模拟账户，无真实资金</p>
-                    <span class="badge b-safe">安全</span>
-                    <span class="check">✓ 当前模式</span>
-                </div>
-                <div class="mode-opt" id="opt-live_conservative" onclick="askSwitch('live_conservative')">
-                    <h3>🟡 实盘(保守)</h3>
-                    <p>真实账户，仓位 ×0.5，风控 ×0.3</p>
-                    <span class="badge b-warn">谨慎</span>
-                    <span class="check">✓ 当前模式</span>
-                </div>
-                <div class="mode-opt" id="opt-live_normal" onclick="askSwitch('live_normal')">
-                    <h3>🔴 实盘(标准)</h3>
-                    <p>真实账户，标准风控参数</p>
-                    <span class="badge b-danger">高风险</span>
-                    <span class="check">✓ 当前模式</span>
-                </div>
+                <div class="mode-opt" id="opt-simulate" onclick="askSwitch('simulate')"><h3>🟢 模拟盘</h3><p>Futu 模拟账户，无真实资金</p><span class="badge b-safe">安全</span><span class="check">✓ 当前模式</span></div>
+                <div class="mode-opt" id="opt-live_conservative" onclick="askSwitch('live_conservative')"><h3>🟡 实盘(保守)</h3><p>真实账户，仓位 ×0.5，风控 ×0.3</p><span class="badge b-warn">谨慎</span><span class="check">✓ 当前模式</span></div>
+                <div class="mode-opt" id="opt-live_normal" onclick="askSwitch('live_normal')"><h3>🔴 实盘(标准)</h3><p>真实账户，标准风控参数</p><span class="badge b-danger">高风险</span><span class="check">✓ 当前模式</span></div>
             </div>
             <div class="result" id="result"></div>
         </div>
 
-        <!-- Confirm Modal -->
         <div class="overlay" id="overlay">
             <div class="modal">
                 <h3 id="mTitle"></h3>
                 <div class="desc" id="mDesc"></div>
                 <div id="mPosWarn"></div>
-                <div id="mInputWrap" style="display:none">
-                    <label style="font-size:12px;color:#8b949e">输入 <b>CONFIRM</b> 确认</label>
-                    <input type="text" id="mConfirm" placeholder="CONFIRM" autocomplete="off">
-                </div>
-                <div class="btns">
-                    <button class="btn" id="mBtn" onclick="doSwitch()">确认</button>
-                    <button class="btn btn-back" onclick="closeModal()">取消</button>
-                </div>
+                <div id="mInputWrap" style="display:none"><label style="font-size:12px;color:#8b949e">输入 <b>CONFIRM</b> 确认</label><input type="text" id="mConfirm" placeholder="CONFIRM" autocomplete="off"></div>
+                <div class="btns"><button class="btn" id="mBtn" onclick="doSwitch()">确认</button><button class="btn btn-back" onclick="closeModal()">取消</button></div>
             </div>
         </div>
-
-        <!-- ─── SECTION 4: RECENT LOGS ─── -->
-        <h2 class="section-title">📋 近期日志</h2>
-        <div class="log-box" id="logBox">
-            <span class="log-line log-default">加载中...</span>
-        </div>
-        <div class="log-refresh" id="logRefresh">上次刷新: -- | 每 60s 自动刷新</div>
-
     </div>
+{% endblock %}
 
-    <script>
-        // ─── Helpers ───
-        function fmtNum(n, dec = 2) {
-            if (n === null || n === undefined || isNaN(n)) return '--';
-            return Number(n).toFixed(dec);
-        }
-        function fmtMoney(n) {
-            if (n === null || n === undefined || isNaN(n)) return '--';
-            return '$' + Number(n).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
-        }
-        function statusLevel(v, warn, crit, invert) {
-            if (invert) {
-                if (v <= crit) return 'critical';
-                if (v <= warn) return 'warning';
-                return 'good';
-            }
-            if (v >= crit) return 'critical';
-            if (v >= warn) return 'warning';
-            return 'good';
-        }
+{% block scripts %}
+        function fmtNum(n, dec = 2) { if (n === null || n === undefined || isNaN(n)) return '--'; return Number(n).toFixed(dec); }
 
-        // ─── Section 1: System Status ───
         async function loadSystemStatus() {
             try {
                 const res = await fetch('/api/system/status');
                 const d = await res.json();
-
-                // Core Engine
                 const core = d.services && d.services.ftseek_us;
                 const coreEl = document.getElementById('svcCore');
                 if (core === 'active') coreEl.innerHTML = '<span class="dot active"></span> 运行中';
                 else if (core === 'inactive') coreEl.innerHTML = '<span class="dot inactive"></span> 已停止';
                 else coreEl.innerHTML = '<span class="dot unknown"></span> 未知';
-
-                // Dashboard
                 const dash = d.services && d.services.dashboard;
                 const dashEl = document.getElementById('svcDashboard');
                 if (dash === 'active') dashEl.innerHTML = '<span class="dot active"></span> 运行中';
                 else if (dash === 'inactive') dashEl.innerHTML = '<span class="dot inactive"></span> 已停止';
                 else dashEl.innerHTML = '<span class="dot unknown"></span> 未知';
-
-                // Futu OpenD (from broker data)
                 const futuEl = document.getElementById('svcFutu');
                 if (d.broker_connected) futuEl.innerHTML = '<span class="dot active"></span> 已连接';
                 else futuEl.innerHTML = '<span class="dot inactive"></span> 未连接';
-
-                // Broker
                 const brokerEl = document.getElementById('svcBroker');
                 const brokerDet = document.getElementById('brokerDetail');
-                if (d.broker_connected) {
-                    brokerEl.innerHTML = '<span class="dot active"></span> 已连接';
-                    brokerDet.textContent = d.account_id ? '账户: ' + d.account_id : '';
-                } else {
-                    brokerEl.innerHTML = '<span class="dot inactive"></span> 未连接';
-                    brokerDet.textContent = '';
-                }
-            } catch(e) {
-                console.error('System status fetch failed:', e);
-            }
+                if (d.broker_connected) { brokerEl.innerHTML = '<span class="dot active"></span> 已连接'; brokerDet.textContent = d.account_id ? '账户: ' + d.account_id : ''; }
+                else { brokerEl.innerHTML = '<span class="dot inactive"></span> 未连接'; brokerDet.textContent = ''; }
+            } catch(e) { console.error('System status fetch failed:', e); }
         }
 
-        // ─── Section 2: Resource Usage ───
-        async function loadResources() {
-            try {
-                const sysRes = await fetch('/api/metrics/system');
-                const sys = await sysRes.json();
-                const apiRes = await fetch('/api/metrics/api');
-                const api = await apiRes.json();
-
-                const cpu = sys.cpu_percent || 0;
-                const mem = sys.memory_percent || 0;
-                const disk = sys.disk_percent || 0;
-
-                document.getElementById('cpuValue').textContent = fmtNum(cpu) + '%';
-                document.getElementById('cpuBar').style.width = cpu + '%';
-                document.getElementById('cpuBar').className = 'progress-fill ' + statusLevel(cpu, 70, 90);
-                document.getElementById('cpuValue').className = 'metric-value ' + statusLevel(cpu, 70, 90);
-
-                document.getElementById('memoryValue').textContent = fmtNum(mem) + '%';
-                document.getElementById('memoryBar').style.width = mem + '%';
-                document.getElementById('memoryBar').className = 'progress-fill ' + statusLevel(mem, 70, 90);
-                document.getElementById('memoryValue').className = 'metric-value ' + statusLevel(mem, 70, 90);
-
-                document.getElementById('diskValue').textContent = fmtNum(disk) + '%';
-                document.getElementById('diskBar').style.width = disk + '%';
-                document.getElementById('diskBar').className = 'progress-fill ' + statusLevel(disk, 80, 95);
-                document.getElementById('diskValue').className = 'metric-value ' + statusLevel(disk, 80, 95);
-
-                const total = api.total_requests || 0;
-                const success = api.success_requests || 0;
-                const failed = api.failed_requests || 0;
-                const rate = total > 0 ? (success / total * 100) : 100;
-
-                document.getElementById('apiTotal').textContent = fmtNum(total, 0);
-                document.getElementById('apiSuccess').textContent = fmtNum(success, 0);
-                document.getElementById('apiFailed').textContent = fmtNum(failed, 0);
-                document.getElementById('apiSuccessRate').textContent = fmtNum(rate) + '%';
-                document.getElementById('apiLatency').textContent = fmtNum(api.avg_latency_ms || 0) + 'ms';
-
-                const rateEl = document.getElementById('apiSuccessRate');
-                rateEl.className = 'metric-value ' + statusLevel(rate, 80, 50, true);
-            } catch(e) {
-                console.error('Resource fetch failed:', e);
-            }
-        }
-
-        // ─── Section 3: Mode Switch ───
-        let _currentMode = 'simulate';
-        let _targetMode = null;
-        let _hasPrereq = true;
+        let _currentMode = 'simulate', _targetMode = null, _hasPrereq = true;
 
         async function loadModeInfo() {
             try {
@@ -379,172 +138,70 @@
                 const d = await res.json();
                 _currentMode = d.mode || 'simulate';
                 _hasPrereq = !!(d.REAL_ACCOUNT_ID);
-
-                // Update current mode display
                 const block = document.getElementById('currentModeBlock');
                 const label = document.getElementById('currentModeLabel');
                 const modeTag = document.getElementById('modeTag');
-
                 if (_currentMode.startsWith('live_')) {
-                    block.className = 'current-mode live';
-                    label.textContent = d.mode_label || '实盘';
-                    modeTag.textContent = '🔴 实盘';
-                    modeTag.className = 'mode-tag live';
+                    block.className = 'current-mode live'; label.textContent = d.mode_label || '实盘';
+                    modeTag.textContent = '🔴 实盘'; modeTag.className = 'mode-tag live';
                 } else {
-                    block.className = 'current-mode sim';
-                    label.textContent = d.mode_label || '模拟盘';
-                    modeTag.textContent = '🟢 模拟';
-                    modeTag.className = 'mode-tag sim';
+                    block.className = 'current-mode sim'; label.textContent = d.mode_label || '模拟盘';
+                    modeTag.textContent = '🟢 模拟'; modeTag.className = 'mode-tag sim';
                 }
-
-                // Highlight current mode card
                 ['simulate', 'live_conservative', 'live_normal'].forEach(m => {
                     const el = document.getElementById('opt-' + m);
-                    if (el) {
-                        el.classList.toggle('current-opt', m === _currentMode);
-                    }
+                    if (el) el.classList.toggle('current-opt', m === _currentMode);
                 });
-            } catch(e) {
-                console.error('Mode fetch failed:', e);
-            }
+            } catch(e) { console.error('Mode fetch failed:', e); }
         }
 
         async function askSwitch(mode) {
-            if (mode === _currentMode) {
-                const labels = { simulate: '模拟盘', live_conservative: '实盘(保守)', live_normal: '实盘(标准)' };
-                showMsg('ok', '当前已经是 ' + labels[mode] + ' 模式');
-                return;
-            }
-            if (mode.startsWith('live_') && !_hasPrereq) {
-                showMsg('err', '无法切实盘：需要在 .env.us 中设置 REAL_ACCOUNT_ID');
-                return;
-            }
-
+            if (mode === _currentMode) { showMsg('ok', '当前已经是 ' + mode + ' 模式'); return; }
+            if (mode.startsWith('live_') && !_hasPrereq) { showMsg('err', '无法切实盘：需要在 .env.us 中设置 REAL_ACCOUNT_ID'); return; }
             _targetMode = mode;
             const isLive = mode.startsWith('live_');
             const labels = { simulate: '模拟盘', live_conservative: '实盘(保守)', live_normal: '实盘(标准)' };
-
-            // Position check
             let posWarnHtml = '';
-            try {
-                const resp = await fetch('/api/live-account');
-                const data = await resp.json();
-                if (data.positions && data.positions.length > 0) {
-                    const codes = data.positions.map(p => p.code).join(', ');
-                    posWarnHtml = '<div style="background:#2a0a0a;border:1px solid #f87171;border-radius:6px;padding:10px;margin-bottom:12px;font-size:12px;color:#fca5a5">' +
-                        '<b>⚠️ 安全警告：当前有 ' + data.positions.length + ' 个未平仓持仓</b><br>' +
-                        '持仓标的: ' + codes + '<br>' +
-                        '切换模式将重启交易引擎，请确保这些持仓已妥善处理。</div>';
-                }
-            } catch(e) { /* ignore */ }
-
+            try { const resp = await fetch('/api/live-account'); const data = await resp.json(); if (data.positions && data.positions.length > 0) { const codes = data.positions.map(p => p.code).join(', '); posWarnHtml = '<div style="background:#2a0a0a;border:1px solid #f87171;border-radius:6px;padding:10px;margin-bottom:12px;font-size:12px;color:#fca5a5"><b>⚠️ 安全警告：当前有 ' + data.positions.length + ' 个未平仓持仓</b><br>持仓标的: ' + codes + '<br>切换模式将重启交易引擎，请确保这些持仓已妥善处理。</div>'; } } catch(e) {}
             document.getElementById('mTitle').textContent = isLive ? '🔴 切换到 ' + labels[mode] : '切换到 ' + labels[mode];
             document.getElementById('mTitle').style.color = isLive ? '#f87171' : '#4ade80';
-            document.getElementById('mDesc').textContent = isLive
-                ? '将使用真实账户交易，所有操作产生真实盈亏。Dashboard 即时切换，交易引擎将自动重启（约3秒）。'
-                : '将使用模拟账户交易。Dashboard 即时切换，交易引擎将自动重启（约3秒）。';
+            document.getElementById('mDesc').textContent = isLive ? '将使用真实账户交易，所有操作产生真实盈亏。Dashboard 即时切换，交易引擎将自动重启（约3秒）。' : '将使用模拟账户交易。Dashboard 即时切换，交易引擎将自动重启（约3秒）。';
             document.getElementById('mPosWarn').innerHTML = posWarnHtml;
             document.getElementById('mInputWrap').style.display = isLive ? 'block' : 'none';
             document.getElementById('mConfirm').value = '';
-
             const btn = document.getElementById('mBtn');
             btn.className = 'btn ' + (isLive ? 'btn-go' : 'btn-sim');
             btn.textContent = isLive ? '确认切实盘' : '切换';
             btn.disabled = false;
-
             document.getElementById('overlay').classList.add('show');
             if (isLive) setTimeout(() => document.getElementById('mConfirm').focus(), 100);
         }
 
-        function closeModal() {
-            document.getElementById('overlay').classList.remove('show');
-            _targetMode = null;
-        }
+        function closeModal() { document.getElementById('overlay').classList.remove('show'); _targetMode = null; }
 
         async function doSwitch() {
             if (!_targetMode) return;
             const isLive = _targetMode.startsWith('live_');
             const confirm = document.getElementById('mConfirm').value;
-
-            if (isLive && confirm !== 'CONFIRM') {
-                showMsg('err', '请输入 CONFIRM');
-                return;
-            }
-
+            if (isLive && confirm !== 'CONFIRM') { showMsg('err', '请输入 CONFIRM'); return; }
             document.getElementById('mBtn').disabled = true;
             document.getElementById('mBtn').textContent = '⏳ 切换中，引擎重启 (约10-30秒)...';
-
             try {
                 const controller = new AbortController();
                 const timeout = setTimeout(() => controller.abort(), 75000);
-                const res = await fetch('/api/mode/switch', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ target_mode: _targetMode, confirm: confirm }),
-                    signal: controller.signal,
-                });
+                const res = await fetch('/api/mode/switch', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ target_mode: _targetMode, confirm: confirm }), signal: controller.signal });
                 clearTimeout(timeout);
                 const d = await res.json();
                 closeModal();
-
-                if (d.success) {
-                    showMsg('ok', d.message);
-                    setTimeout(() => location.reload(), 2000);
-                } else {
-                    showMsg('err', d.message);
-                    document.getElementById('mBtn').disabled = false;
-                    document.getElementById('mBtn').textContent = '确认切换';
-                }
-            } catch(e) {
-                closeModal();
-                showMsg('err', '网络异常: ' + e.message);
-            }
+                if (d.success) { showMsg('ok', d.message); setTimeout(() => location.reload(), 2000); }
+                else { showMsg('err', d.message); document.getElementById('mBtn').disabled = false; document.getElementById('mBtn').textContent = '确认切换'; }
+            } catch(e) { closeModal(); showMsg('err', '网络异常: ' + e.message); }
         }
 
-        function showMsg(type, msg) {
-            const el = document.getElementById('result');
-            el.className = 'result ' + type;
-            el.textContent = msg;
-            el.style.display = 'block';
-        }
+        function showMsg(type, msg) { const el = document.getElementById('result'); el.className = 'result ' + type; el.textContent = msg; el.style.display = 'block'; }
 
-        // ─── Section 4: Logs ───
-        async function loadLogs() {
-            try {
-                const res = await fetch('/api/system/logs');
-                const d = await res.json();
-                const box = document.getElementById('logBox');
-                if (d.lines && d.lines.length > 0) {
-                    box.innerHTML = d.lines.map(line => {
-                        let cls = 'log-default';
-                        if (line.indexOf('ERROR') !== -1 || line.indexOf('CRITICAL') !== -1) cls = 'log-ERROR';
-                        else if (line.indexOf('WARNING') !== -1 || line.indexOf('WARN') !== -1) cls = 'log-WARNING';
-                        const esc = line.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-                        return '<span class="log-line ' + cls + '">' + esc + '</span>';
-                    }).join('\n');
-                } else {
-                    box.innerHTML = '<span class="log-line log-default">(日志为空)</span>';
-                }
-                box.scrollTop = box.scrollHeight;
-                document.getElementById('logRefresh').textContent = '上次刷新: ' + new Date().toLocaleTimeString('zh-CN') + ' | 每 60s 自动刷新';
-            } catch(e) {
-                document.getElementById('logBox').innerHTML = '<span class="log-line log-ERROR">加载日志失败: ' + e.message + '</span>';
-            }
-        }
-
-        // ─── Initial load ───
         loadSystemStatus();
-        loadResources();
         loadModeInfo();
-        loadLogs();
-
-        // ─── Refresh intervals ───
         setInterval(loadSystemStatus, 30 * 1000);
-        setInterval(loadResources, 60 * 1000);
-        setInterval(loadLogs, 60 * 1000);
-
-        // ESC to close modal
         document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
-    </script>
-</body>
-</html>
+{% endblock %}

@@ -466,6 +466,20 @@ class ManualOrderService:
                 order.status = "submitted"
                 logger.info(f"[手动平仓] ✅ {symbol} 平仓成功: {int(qty)}股")
                 self._mark_position_manual(symbol)
+
+                # 2026-06-10: 写入 trade_records 形成手动交易闭环
+                try:
+                    self._record_manual_close(
+                        symbol=symbol,
+                        direction=position_dir,
+                        entry_price=float(row.get("cost_price", 0)),
+                        exit_price=float(row.get("cur_price", 0)) or float(row.get("val_price", 0)) / abs(raw_qty) if raw_qty != 0 else 0,
+                        quantity=int(qty),
+                        reason=f"[{close_type}] {reason}",
+                        order_id=order.order_id,
+                    )
+                except Exception as _rec_err:
+                    logger.warning(f"[手动平仓] trade_records 写入失败 (不影响平仓): {_rec_err}")
             else:
                 order.status = "error"
                 order.error_msg = str(data)
@@ -591,6 +605,46 @@ class ManualOrderService:
             conn.close()
         except Exception as e:
             logger.error(f"[审计] 创建审计表失败: {e}")
+
+    def _record_manual_close(self, symbol: str, direction: str, entry_price: float,
+                             exit_price: float, quantity: int, reason: str, order_id: str):
+        """手动平仓后写入 trade_records, 形成交易闭环 (P&L 追踪)"""
+        from datetime import datetime
+        try:
+            # 计算 P&L
+            if direction == "LONG":
+                pnl = (exit_price - entry_price) * quantity
+            else:
+                pnl = (entry_price - exit_price) * quantity
+            pnl_pct = (pnl / (entry_price * quantity)) if entry_price > 0 and quantity > 0 else 0
+
+            conn = sqlite3.connect(self._get_db_path())
+            now = datetime.now()
+            trade_date = now.strftime("%Y-%m-%d")
+
+            conn.execute("""
+                INSERT INTO trade_records (
+                    trade_date, symbol, direction, entry_time, exit_time,
+                    entry_price, exit_price, quantity, realized_pnl, pnl_pct,
+                    exit_reason, strategy_id, source_type, mode, trade_mode,
+                    data_quality, created_at, close_futu_order_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                trade_date, symbol, direction, now.isoformat(), now.isoformat(),
+                entry_price, exit_price, quantity, round(pnl, 2), round(pnl_pct, 4),
+                reason, "manual", "MANUAL",
+                self._get_mode_label(),
+                "live" if self._is_live() else "simulate",
+                "manual", now.isoformat(), order_id,
+            ))
+            conn.commit()
+            conn.close()
+            logger.info(
+                f"[手动交易闭环] {symbol} {direction} {quantity}股 "
+                f"P&L=${pnl:.2f} ({pnl_pct*100:.2f}%) → trade_records"
+            )
+        except Exception as e:
+            logger.warning(f"[手动交易闭环] 写入失败: {e}")
 
     def _mark_position_manual(self, symbol: str):
         """标记持仓为手动管理，防止 ExitMonitor 误平"""

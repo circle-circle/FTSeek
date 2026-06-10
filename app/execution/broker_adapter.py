@@ -66,7 +66,7 @@ class FutuBrokerAdapter:
     def _notional_sanity_check(self, symbol: str, qty, price: float) -> bool:
         """
         兜底检查: 单笔名义 ≤ equity × 30%.
-        不依赖 position_store, 只查 equity. 如果 equity 获取失败则放行 (fallback $100K).
+        不依赖 position_store, 只查 equity. 如果 equity 获取失败则 fail-close (拒绝).
         这是所有路径的最后一道墙，不是主要防线。
 
         Returns: True = 通过, False = 拒绝
@@ -75,7 +75,7 @@ class FutuBrokerAdapter:
             return True  # 无效参数不在此拦截（上游应已处理）
 
         notional = float(qty) * price
-        equity = 100_000.0  # fallback
+        equity = 0.0
         try:
             from app.risk.capital_safety import get_capital_safety_system
             _cap = get_capital_safety_system()
@@ -83,6 +83,14 @@ class FutuBrokerAdapter:
                 equity = _cap._state.current_equity
         except Exception:
             pass
+
+        # Fail-close: equity 不可用时拒绝 (防止以虚假 $100K 放行超大订单)
+        if equity <= 0:
+            logger.error(
+                f"🛑 [BROKER·兜底] {symbol} 拒绝: equity 不可用, fail-close "
+                f"(名义=${notional:,.0f}) — capital_safety 未就绪!"
+            )
+            return False
 
         limit = equity * self._NOTIONAL_HARD_CAP_PCT
         if notional > limit:

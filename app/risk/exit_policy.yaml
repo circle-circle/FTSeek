@@ -40,8 +40,8 @@ progressive_trailing:
     tier2_max: 2.0      # 1.0~2.0 ATR: 紧凑追踪 (保护初步利润)
     tier3_max: 4.0      # 2.0~4.0 ATR: 标准追踪 (让利润跑)
     # >=4.0 ATR: 宽松追踪 (大趋势给更多空间)
-  tier3_compact_multiplier: 2.0    # 1.0~2.0 ATR: peak + 2.0×ATR (原3.0, 收紧追踪)
-  tier2_compact_multiplier: 1.2    # 2026-06-10: 1.5→1.2×ATR, 收紧T2锁定利润 (数据: TRAILING avg亏$437>avg赚$329)
+  tier3_compact_multiplier: 1.5    # 2026-06-10: 2.0→1.5, 收紧 2-4 ATR 利润区追踪 (TRAILING_STOP 72笔亏$6K, 利润回吐过多)
+  tier2_compact_multiplier: 1.0    # 2026-06-10: 1.2→1.0, 收紧 1-2 ATR 利润区锁定
   tier4_loose_multiplier: 1.5      # ≥4.0 ATR: peak + 1.5×ATR (原2.0, 大赢家紧锁)
   breakeven_buffer_pct: 0.001       # 保本 buffer = 入场价 × 0.1%
   # 2026-06-06: SHORT floor 从 entry+4.0×ATR → entry-1.0×ATR (代码硬编码, 非配置项)

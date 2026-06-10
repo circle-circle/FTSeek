@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 
 # .env.us 文件路径
 _ENV_FILE = Path(__file__).resolve().parent.parent.parent / ".env.us"
+_YAML_CONFIG = Path(__file__).resolve().parent.parent.parent / "config" / "unified_config.yaml"
 
 
 class TradingModeEnum(Enum):
@@ -148,6 +149,61 @@ class TradingMode:
         if self.is_live:
             return base_loss * 0.6
         return base_loss
+
+    # ------------------------------------------------------------------ #
+    # YAML mode_adaptation 配置读取 (热加载，每次从文件读取)
+    # ------------------------------------------------------------------ #
+    _MODE_YAML_KEY = {
+        TradingModeEnum.SIMULATE: "simulate",
+        TradingModeEnum.LIVE_CONSERVATIVE: "live_conservative",
+        TradingModeEnum.LIVE_NORMAL: "live_normal",
+    }
+
+    def _read_mode_adaptation(self) -> dict:
+        """从 unified_config.yaml 读取当前模式的 mode_adaptation 参数"""
+        try:
+            if _YAML_CONFIG.exists():
+                import yaml
+                with open(_YAML_CONFIG) as f:
+                    cfg = yaml.safe_load(f)
+                mode_key = self._MODE_YAML_KEY.get(self.mode, "simulate")
+                return (cfg.get("risk", {}).get("mode_adaptation", {}).get(mode_key, {})) or {}
+        except Exception:
+            pass
+        return {}
+
+    def get_max_daily_loss_pct(self) -> float:
+        """当前模式的最大日亏损百分比 (来自 YAML mode_adaptation)"""
+        val = self._read_mode_adaptation().get("max_daily_loss_pct")
+        if val is not None:
+            return float(val) / 100.0
+        # 硬编码 fallback (与 YAML 默认值对齐)
+        defaults = {TradingModeEnum.SIMULATE: 0.05, TradingModeEnum.LIVE_CONSERVATIVE: 0.02, TradingModeEnum.LIVE_NORMAL: 0.03}
+        return defaults.get(self.mode, 0.03)
+
+    def get_max_position_pct(self) -> float:
+        """当前模式的单标的最大仓位占总资产百分比 (来自 YAML mode_adaptation)"""
+        val = self._read_mode_adaptation().get("max_position_pct")
+        if val is not None:
+            return float(val) / 100.0
+        defaults = {TradingModeEnum.SIMULATE: 0.15, TradingModeEnum.LIVE_CONSERVATIVE: 0.08, TradingModeEnum.LIVE_NORMAL: 0.12}
+        return defaults.get(self.mode, 0.15)
+
+    def get_max_total_exposure_pct(self) -> float:
+        """当前模式的最大总敞口占总资产百分比 (来自 YAML mode_adaptation)"""
+        val = self._read_mode_adaptation().get("max_total_exposure_pct")
+        if val is not None:
+            return float(val) / 100.0
+        defaults = {TradingModeEnum.SIMULATE: 0.80, TradingModeEnum.LIVE_CONSERVATIVE: 0.40, TradingModeEnum.LIVE_NORMAL: 0.60}
+        return defaults.get(self.mode, 0.80)
+
+    def get_circuit_breaker_loss_pct(self) -> float:
+        """当前模式的熔断触发百分比 (来自 YAML mode_adaptation)"""
+        val = self._read_mode_adaptation().get("circuit_breaker_loss_pct")
+        if val is not None:
+            return float(val) / 100.0
+        defaults = {TradingModeEnum.SIMULATE: 0.08, TradingModeEnum.LIVE_CONSERVATIVE: 0.03, TradingModeEnum.LIVE_NORMAL: 0.05}
+        return defaults.get(self.mode, 0.08)
 
     # ------------------------------------------------------------------ #
     # 调试

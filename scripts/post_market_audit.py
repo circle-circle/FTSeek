@@ -756,9 +756,15 @@ def build_report(today, strategy, signal, exit_attr, regime, trend,
         L.append(f"## 📌 当前持仓 ({len(risk['positions'])}只)")
         for p in risk['positions']:
             mode = f" [{p['mode']}]" if p.get('mode') else ""
+            direction = p.get('direction') or '?'
+            size = p.get('size') or 0
+            entry = p.get('avg_entry_price')
+            entry_str = f"${entry:.2f}" if entry is not None else "N/A"
+            sl = p.get('current_sl')
+            sl_str = f"${sl:.2f}" if sl is not None else "N/A"
             L.append(
-                f"  {p['symbol']} {p['direction']} {p['size']}份 "
-                f"@${p['avg_entry_price']:.2f} SL=${p['current_sl']:.2f}{mode}"
+                f"  {p['symbol']} {direction} {size}份 "
+                f"@{entry_str} SL={sl_str}{mode}"
             )
     else:
         L.append("## 📌 当前无持仓")

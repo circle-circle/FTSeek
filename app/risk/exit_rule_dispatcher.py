@@ -117,13 +117,24 @@ class ExitRuleDispatcher:
 
         # 按优先级遍历
         ordered_rules = sorted(self.RULE_PRIORITIES.keys(), key=lambda r: self.RULE_PRIORITIES[r])
+        enabled_count = 0
         for rule_name in ordered_rules:
             rule_cfg = self._rule_cfg(rule_name)
             if not rule_cfg.get("enabled", False):
                 continue
+            enabled_count += 1
             decision = self._evaluate_rule(rule_name, rule_cfg, position, market_data, trail_state or {})
             if decision and decision.should_exit:
                 triggered.append(decision)
+
+        # Fail-open 保护: 所有退出规则都禁用时告警 (legacy fallback 仍会运行, 但应引起注意)
+        if enabled_count == 0 and not getattr(self, '_alerted_no_rules', False):
+            self._alerted_no_rules = True
+            logger.critical(
+                "🚨 [ExitRuleDispatcher] 所有退出规则均禁用! "
+                "持仓将仅依赖 legacy exit_monitor 保护。"
+                "请检查 exit_policy.yaml 配置。"
+            )
 
         if not triggered:
             return None

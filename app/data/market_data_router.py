@@ -157,6 +157,10 @@ class MarketDataRouter:
         Returns:
             报价字典或 None
         """
+        # 2026-06-11: 跳过非美股标的，避免无效 API 调用和错误日志
+        if not symbol.startswith('US.') or symbol.count('.') > 1:
+            return None
+
         errors = []
 
         # 0. 尝试 Futu LV3 (实时, 毫秒级延迟) — 2026-04-17 新增

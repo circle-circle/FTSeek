@@ -1638,26 +1638,22 @@ class TradingScheduler:
     def _is_hk_trading_hours(self) -> bool:
         """判断当前是否为港股交易时段 (北京时间)
 
-        港股交易时段:
-        - 上午: 09:30 - 12:00
-        - 下午: 13:00 - 16:00
-        - 盘前预热: 08:30 - 09:30 (连接占用)
-
-        港股交易期间 FTSeek-US 应断开 OpenD 连接，释放槽位给 FTSeek 港股系统。
+        港股已停止自动交易 (2026-06-11)，始终返回 False。
+        原逻辑: 08:30-16:00 CST 期间 FTSeek-US 断开 OpenD 释放槽位。
+        如需恢复港股，取消下面的 return False 注释。
         """
-        # P1 修复 (2026-05-28): 显式使用北京时间，不依赖服务器本地时区
-        HKT = pytz.timezone("Asia/Hong_Kong")
-        now = datetime.now(HKT)
-        hour = now.hour
-        minute = now.minute
-        weekday = now.weekday()
-
-        if weekday >= 5:
-            return False
-
-        t = hour * 60 + minute
-        # 08:30 - 16:00 (含盘前预热)
-        return 510 <= t <= 960  # 08:30=510, 16:00=960
+        # 港股已停用
+        return False
+        # --- 以下为原始逻辑，恢复港股时启用 ---
+        # HKT = pytz.timezone("Asia/Hong_Kong")
+        # now = datetime.now(HKT)
+        # hour = now.hour
+        # minute = now.minute
+        # weekday = now.weekday()
+        # if weekday >= 5:
+        #     return False
+        # t = hour * 60 + minute
+        # return 510 <= t <= 960
 
     def _ensure_futu_disconnected_during_hk(self):
         """港股交易时段自动断开 Futu 连接，释放 OpenD 槽位

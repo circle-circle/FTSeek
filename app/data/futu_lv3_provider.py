@@ -635,6 +635,10 @@ class FutuLV3Provider:
                 "timestamp": float,      # Unix 时间戳
             }
         """
+        # 2026-06-11: 跳过非美股标的，避免无效 Futu 订阅和错误日志
+        if (not symbol.startswith('US.') or symbol.count('.') > 1) and not self._is_option_code(symbol):
+            return None
+
         # P0 修复 (2026-05-21): 期权代码仅通过 Futu 快照获取，跳过 Finnhub/TwelveData
         is_option = self._is_option_code(symbol)
         futu_symbol = self._to_futu_symbol(symbol)

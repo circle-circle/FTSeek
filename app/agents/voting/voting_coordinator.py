@@ -387,6 +387,24 @@ VIX > 25 时，最大 Strength 不得超过 50。
     #   Level 1: 单模型降级 (_run_single_model_vote, primary only, 30s)
     #   Level 2: 纯技术信号   (_build_technical_only_result, conf ≤0.60)
     # ------------------------------------------------------------------
+    def vote(self, symbol: str, ctx) -> Dict[str, Any]:
+        """Convenience wrapper: accept (symbol, SymbolContext) from signal_stage.
+
+        Converts SymbolContext dataclass → market_data dict, delegates to run_voting().
+        Fixes: signal_stage.py calls voting_coordinator.vote(symbol, ctx) but only
+        run_voting(market_data) existed.
+        """
+        import dataclasses
+        if hasattr(ctx, '__dataclass_fields__'):
+            market_data = dataclasses.asdict(ctx)
+        elif isinstance(ctx, dict):
+            market_data = ctx
+        else:
+            market_data = {}
+        market_data.setdefault("symbol", symbol)
+        market_data.setdefault("ticker", symbol)
+        return self.run_voting(market_data)
+
     def run_voting(
         self,
         market_data: Dict[str, Any],
@@ -590,12 +608,11 @@ VIX > 25 时，最大 Strength 不得超过 50。
                                 holding_minutes = 0
                         except Exception:
                             holding_minutes = 0
+                    # 2026-06-10 红队修复 B2: 移除 unrealized_pnl_pct/entry_price/holding_minutes
+                    # 防止 LLM 因浮亏/浮盈产生"继续持有"偏差 (行为经济学: 损失厌恶污染信号)
                     enriched["position_info"] = {
                         "held": True,
                         "direction": direction_str,
-                        "unrealized_pnl_pct": getattr(pos, "pnl_pct", 0),
-                        "entry_price": getattr(pos, "avg_entry_price", 0),
-                        "holding_minutes": holding_minutes,
                     }
                 else:
                     enriched["position_info"] = {"held": False}

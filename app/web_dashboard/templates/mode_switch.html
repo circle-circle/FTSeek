@@ -1,21 +1,11 @@
-<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>{{ title }}</title>
-    <style>
-        * { box-sizing: border-box; margin: 0; padding: 0; }
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0f1117; color: #e1e4e8; font-size: 14px; }
-        .top-nav { background: #161b22; border-bottom: 1px solid #30363d; padding: 0 16px; display: flex; align-items: center; position: sticky; top: 0; z-index: 50; }
-        .top-nav .brand { color: #58a6ff; font-weight: 700; font-size: 14px; padding: 10px 12px 10px 0; border-right: 1px solid #30363d; margin-right: 8px; }
-        .top-nav a { color: #8b949e; text-decoration: none; padding: 10px 14px; font-size: 13px; border-bottom: 2px solid transparent; }
-        .top-nav a:hover { color: #e1e4e8; }
-        .top-nav a.active { color: #58a6ff; border-bottom-color: #58a6ff; }
-        .top-nav .spacer { flex: 1; }
-        .top-nav .mode-tag { font-size: 11px; padding: 3px 8px; border-radius: 4px; margin-left: 8px; }
-        .top-nav .mode-tag.sim { background: #1a3a2a; color: #4ade80; }
-        .top-nav .mode-tag.live { background: #3a1a1a; color: #f87171; }
+{% extends "base.html" %}
+{% block title %}{{ title }}{% endblock %}
+
+{% block nav_extra %}
+<span class="mode-tag {{ 'live' if is_live else 'sim' }}">{{ '🔴 实盘' if is_live else '🟢 模拟' }}</span>
+{% endblock %}
+
+{% block extra_css %}
         .container { max-width: 600px; margin: 0 auto; padding: 20px; }
 
         .current { text-align: center; padding: 20px; border-radius: 10px; margin-bottom: 16px; }
@@ -25,9 +15,6 @@
         .current .value { font-size: 24px; font-weight: 700; margin-top: 4px; }
         .current.sim .value { color: #4ade80; }
         .current.live .value { color: #f87171; }
-
-        .card { background: #161b22; border: 1px solid #30363d; border-radius: 10px; padding: 20px; margin-bottom: 16px; }
-        .card h2 { font-size: 15px; margin-bottom: 12px; color: #58a6ff; }
 
         .opt { background: #0d1117; border: 2px solid #30363d; border-radius: 8px; padding: 14px 16px; margin-bottom: 8px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; transition: all 0.15s; }
         .opt:hover { border-color: #58a6ff; }
@@ -50,7 +37,6 @@
         .result.ok { background: #0a2a1a; border: 1px solid #22c55e; color: #4ade80; }
         .result.err { background: #2a0a0a; border: 1px solid #ef4444; color: #f87171; }
 
-        /* Modal */
         .overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 100; align-items: center; justify-content: center; }
         .overlay.show { display: flex; }
         .modal { background: #161b22; border: 1px solid #30363d; border-radius: 10px; padding: 24px; max-width: 400px; width: 90%; }
@@ -59,31 +45,18 @@
         .modal input { width: 100%; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; padding: 10px; color: #e1e4e8; font-size: 14px; margin-bottom: 14px; outline: none; }
         .modal input:focus { border-color: #58a6ff; }
         .btns { display: flex; gap: 8px; }
-        .btn { padding: 10px 20px; border: none; border-radius: 6px; font-size: 13px; font-weight: 700; cursor: pointer; }
-        .btn:disabled { opacity: 0.3; cursor: not-allowed; }
         .btn-go { background: #ef4444; color: #fff; }
         .btn-back { background: #21262d; color: #8b949e; }
         .btn-sim { background: #22c55e; color: #000; }
 
         @media (max-width: 768px) {
-            .top-nav { overflow-x: auto; }
-            .top-nav .brand { display: none; }
+            .container { padding: 8px; }
             .cfg { grid-template-columns: 1fr; }
+            .current .value { font-size: 20px; }
         }
-    </style>
-</head>
-<body>
-    <div class="top-nav">
-        <span class="brand">FTSeek-US</span>
-        <a href="/">仪表盘</a>
-        <a href="/trade">交易</a>
-        <a href="/risk">风控</a>
-        <a href="/mode-switch" class="active">模式</a>
-        <a href="/health">健康</a>
-        <span class="spacer"></span>
-        <span class="mode-tag {{ 'live' if is_live else 'sim' }}">{{ '🔴 实盘' if is_live else '🟢 模拟' }}</span>
-    </div>
+{% endblock %}
 
+{% block content %}
     <div class="container">
         <div class="current {{ 'live' if is_live else 'sim' }}">
             <div class="label">当前模式</div>
@@ -92,26 +65,17 @@
 
         <div class="card">
             <h2>切换模式</h2>
-
-            <div class="opt {% if mode_info.mode == 'simulate' %}current-opt{% endif %}"
-                 onclick="askSwitch('simulate')">
+            <div class="opt {% if mode_info.mode == 'simulate' %}current-opt{% endif %}" onclick="askSwitch('simulate')">
                 <div><h3>🟢 模拟盘</h3><p>Futu 模拟账户，无真实资金</p></div>
-                <span class="badge b-safe">安全</span>
-                <span class="check">✓</span>
+                <span class="badge b-safe">安全</span><span class="check">✓</span>
             </div>
-
-            <div class="opt {% if mode_info.mode == 'live_conservative' %}current-opt{% endif %}"
-                 onclick="askSwitch('live_conservative')">
+            <div class="opt {% if mode_info.mode == 'live_conservative' %}current-opt{% endif %}" onclick="askSwitch('live_conservative')">
                 <div><h3>🟡 实盘(保守)</h3><p>真实账户，仓位 ×0.5，风控 ×0.3</p></div>
-                <span class="badge b-warn">谨慎</span>
-                <span class="check">✓</span>
+                <span class="badge b-warn">谨慎</span><span class="check">✓</span>
             </div>
-
-            <div class="opt {% if mode_info.mode == 'live_normal' %}current-opt{% endif %}"
-                 onclick="askSwitch('live_normal')">
+            <div class="opt {% if mode_info.mode == 'live_normal' %}current-opt{% endif %}" onclick="askSwitch('live_normal')">
                 <div><h3>🔴 实盘(正常)</h3><p>真实账户，标准风控参数</p></div>
-                <span class="badge b-danger">高风险</span>
-                <span class="check">✓</span>
+                <span class="badge b-danger">高风险</span><span class="check">✓</span>
             </div>
         </div>
 
@@ -130,143 +94,65 @@
         <div class="result" id="result"></div>
     </div>
 
-    <!-- 确认弹窗 -->
     <div class="overlay" id="overlay">
         <div class="modal">
             <h3 id="mTitle"></h3>
             <div class="desc" id="mDesc"></div>
             <div id="mPosWarn"></div>
-            <div id="mInputWrap" style="display:none">
-                <label style="font-size:12px;color:#8b949e">输入 <b>CONFIRM</b> 确认</label>
-                <input type="text" id="mConfirm" placeholder="CONFIRM" autocomplete="off">
-            </div>
-            <div class="btns">
-                <button class="btn" id="mBtn" onclick="doSwitch()">确认</button>
-                <button class="btn btn-back" onclick="closeModal()">取消</button>
-            </div>
+            <div id="mInputWrap" style="display:none"><label style="font-size:12px;color:#8b949e">输入 <b>CONFIRM</b> 确认</label><input type="text" id="mConfirm" placeholder="CONFIRM" autocomplete="off"></div>
+            <div class="btns"><button class="btn" id="mBtn" onclick="doSwitch()">确认</button><button class="btn btn-back" onclick="closeModal()">取消</button></div>
         </div>
     </div>
+{% endblock %}
 
-    <script>
+{% block scripts %}
         let _target = null;
         const _currentMode = '{{ mode_info.mode }}';
         const _hasPrereq = {{ 'true' if mode_info.REAL_ACCOUNT_ID and mode_info.FUTU_UNLOCK_PWD_MD5 != '未设置' else 'false' }};
 
         async function askSwitch(mode) {
-            // 点击当前模式 → 提示
-            if (mode === _currentMode) {
-                const labels = { simulate: '模拟盘', live_conservative: '实盘(保守)', live_normal: '实盘(正常)' };
-                showMsg('ok', '当前已经是 ' + labels[mode] + ' 模式');
-                return;
-            }
-
-            // 切实盘但前置条件不满足
-            if (mode.startsWith('live_') && !_hasPrereq) {
-                showMsg('err', '无法切实盘：需要在 .env.us 中设置 REAL_ACCOUNT_ID 和 FUTU_UNLOCK_PWD_MD5');
-                return;
-            }
-
+            if (mode === _currentMode) { const labels = { simulate: '模拟盘', live_conservative: '实盘(保守)', live_normal: '实盘(正常)' }; showMsg('ok', '当前已经是 ' + labels[mode] + ' 模式'); return; }
+            if (mode.startsWith('live_') && !_hasPrereq) { showMsg('err', '无法切实盘：需要在 .env.us 中设置 REAL_ACCOUNT_ID 和 FUTU_UNLOCK_PWD_MD5'); return; }
             _target = mode;
             const isLive = mode.startsWith('live_');
             const labels = { simulate: '模拟盘', live_conservative: '实盘(保守)', live_normal: '实盘(正常)' };
-
-            // ── 安全校验：查询是否有未平仓持仓 ──
-            let openPosCount = 0;
             let posWarnHtml = '';
-            try {
-                const resp = await fetch('/api/live-account');
-                const data = await resp.json();
-                if (data.positions && data.positions.length > 0) {
-                    openPosCount = data.positions.length;
-                    const codes = data.positions.map(p => p.code).join(', ');
-                    posWarnHtml = '<div style="background:#2a0a0a;border:1px solid #f87171;border-radius:6px;padding:10px;margin-bottom:12px;font-size:12px;color:#fca5a5">' +
-                        '<b>⚠️ 安全警告：当前有 ' + openPosCount + ' 个未平仓持仓</b><br>' +
-                        '持仓标的: ' + codes + '<br>' +
-                        '切换模式将重启交易引擎，请确保这些持仓已妥善处理。' +
-                        '</div>';
-                }
-            } catch(e) {
-                // 网络异常则跳过持仓检查，不影响正常切换
-                console.warn('[模式切换] 持仓查询失败，跳过持仓警告:', e.message);
-            }
-
+            try { const resp = await fetch('/api/live-account'); const data = await resp.json(); if (data.positions && data.positions.length > 0) { const codes = data.positions.map(p => p.code).join(', '); posWarnHtml = '<div style="background:#2a0a0a;border:1px solid #f87171;border-radius:6px;padding:10px;margin-bottom:12px;font-size:12px;color:#fca5a5"><b>⚠️ 安全警告：当前有 ' + data.positions.length + ' 个未平仓持仓</b><br>持仓标的: ' + codes + '<br>切换模式将重启交易引擎，请确保这些持仓已妥善处理。</div>'; } } catch(e) { console.warn('[模式切换] 持仓查询失败:', e.message); }
             document.getElementById('mTitle').textContent = isLive ? '🔴 切换到 ' + labels[mode] : '切换到 ' + labels[mode];
             document.getElementById('mTitle').style.color = isLive ? '#f87171' : '#4ade80';
-
-            document.getElementById('mDesc').textContent = isLive
-                ? '将使用真实账户交易，所有操作产生真实盈亏。Dashboard 即时切换，交易引擎将自动重启（约3秒）。'
-                : '将使用模拟账户交易。Dashboard 即时切换，交易引擎将自动重启（约3秒）。';
-
+            document.getElementById('mDesc').textContent = isLive ? '将使用真实账户交易，所有操作产生真实盈亏。Dashboard 即时切换，交易引擎将自动重启（约3秒）。' : '将使用模拟账户交易。Dashboard 即时切换，交易引擎将自动重启（约3秒）。';
             document.getElementById('mPosWarn').innerHTML = posWarnHtml;
             document.getElementById('mInputWrap').style.display = isLive ? 'block' : 'none';
             document.getElementById('mConfirm').value = '';
-
             const btn = document.getElementById('mBtn');
             btn.className = 'btn ' + (isLive ? 'btn-go' : 'btn-sim');
             btn.textContent = isLive ? '确认切实盘' : '切换';
             btn.disabled = false;
-
             document.getElementById('overlay').classList.add('show');
             if (isLive) setTimeout(() => document.getElementById('mConfirm').focus(), 100);
         }
 
-        function closeModal() {
-            document.getElementById('overlay').classList.remove('show');
-            _target = null;
-        }
+        function closeModal() { document.getElementById('overlay').classList.remove('show'); _target = null; }
 
         async function doSwitch() {
             if (!_target) return;
-
             const isLive = _target.startsWith('live_');
             const confirm = document.getElementById('mConfirm').value;
-
-            if (isLive && confirm !== 'CONFIRM') {
-                showMsg('err', '请输入 CONFIRM');
-                return;
-            }
-
+            if (isLive && confirm !== 'CONFIRM') { showMsg('err', '请输入 CONFIRM'); return; }
             document.getElementById('mBtn').disabled = true;
             document.getElementById('mBtn').textContent = '⏳ 切换中，等待引擎重启 (约10-30秒)...';
-
             try {
                 const controller = new AbortController();
                 const timeout = setTimeout(() => controller.abort(), 75000);
-                const res = await fetch('/api/mode/switch', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ target_mode: _target, confirm: confirm }),
-                    signal: controller.signal,
-                });
+                const res = await fetch('/api/mode/switch', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ target_mode: _target, confirm: confirm }), signal: controller.signal });
                 clearTimeout(timeout);
                 const d = await res.json();
                 closeModal();
-
-                if (d.success) {
-                    showMsg('ok', d.message);
-                    setTimeout(() => location.reload(), 2000);
-                } else {
-                    showMsg('err', d.message);
-                    document.getElementById('mBtn').disabled = false;
-                    document.getElementById('mBtn').textContent = '确认切换';
-                }
-            } catch (e) {
-                closeModal();
-                showMsg('err', '网络异常: ' + e.message);
-                document.getElementById('mBtn').disabled = false;
-                document.getElementById('mBtn').textContent = '确认切换';
-            }
+                if (d.success) { showMsg('ok', d.message); setTimeout(() => location.reload(), 2000); }
+                else { showMsg('err', d.message); document.getElementById('mBtn').disabled = false; document.getElementById('mBtn').textContent = '确认切换'; }
+            } catch (e) { closeModal(); showMsg('err', '网络异常: ' + e.message); document.getElementById('mBtn').disabled = false; document.getElementById('mBtn').textContent = '确认切换'; }
         }
 
-        function showMsg(type, msg) {
-            const el = document.getElementById('result');
-            el.className = 'result ' + type;
-            el.textContent = msg;
-            el.style.display = 'block';
-        }
-
-        // ESC 关闭弹窗
+        function showMsg(type, msg) { const el = document.getElementById('result'); el.className = 'result ' + type; el.textContent = msg; el.style.display = 'block'; }
         document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
-    </script>
-</body>
-</html>
+{% endblock %}

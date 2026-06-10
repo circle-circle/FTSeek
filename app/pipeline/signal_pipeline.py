@@ -367,6 +367,16 @@ def _run_signal_scan_body(scheduler, vix, spy_context, market_news, pool_filter)
                 logger.warning("[熔断] 熔断器开启，终止扫描")
                 break
             try:
+                # Self-managed 符号过滤: 用户手动管理的标的不进入信号管线
+                try:
+                    from app.core.config_container import get_config as _sm_cfg
+                    _sm = set(_sm_cfg().get("risk.self_managed_symbols", []))
+                    # 兼容 US. 前缀
+                    if symbol in _sm or symbol.replace("US.", "") in _sm:
+                        logger.debug(f"[扫描] {symbol} 是 self_managed，跳过信号管线")
+                        continue
+                except Exception:
+                    pass
                 if scheduler._is_in_cooldown(symbol):
                     logger.debug(f"[扫描] {symbol} 处于冷却中，跳过")
                     continue

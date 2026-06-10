@@ -2,19 +2,26 @@
 简化版 Dashboard Web 服务
 """
 import logging
+import sqlite3
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
 from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from datetime import datetime, timezone, timedelta
 
-# 美东时间 (ET) 日期辅助函数 — 美股交易日以 ET 为准
-_ET_OFFSET = timedelta(hours=-4)  # EDT (夏令时), EST 为 -5
+# 美东时间 (ET) 日期辅助函数 — 美股交易日以 ET 为准 (自动处理 EDT/EST 切换)
+try:
+    from zoneinfo import ZoneInfo
+    _ET_TZ = ZoneInfo("America/New_York")
+except ImportError:
+    import pytz
+    _ET_TZ = pytz.timezone("America/New_York")
 
 def _et_now() -> datetime:
     """当前美东时间"""
-    return datetime.now(timezone.utc) + _ET_OFFSET
+    return datetime.now(_ET_TZ)
 
 def _et_today() -> str:
     """美东今日日期 (YYYY-MM-DD)，用于查询 trade_date"""
@@ -23,12 +30,162 @@ def _et_today() -> str:
 def _et_days_ago(n: int) -> str:
     """美东 N 天前日期"""
     return (_et_now() - timedelta(days=n)).strftime("%Y-%m-%d")
+
+# ── 通用工具函数 ──
+
+def _safe_float(v):
+    """安全转换为 float，处理 None / 'N/A' / 异常值"""
+    try:
+        return float(v) if v is not None and v != "N/A" else 0.0
+    except (ValueError, TypeError):
+        return 0.0
+
+
+# ── 2026-06-10: API 层 TTL 缓存 (减少 Futu RPC 重复调用) ──
+import time as _time
+import threading
+
+class _TTLCache:
+    """线程安全的内存 TTL 缓存 — 多请求共享同一份数据, 减少 Futu RPC"""
+    def __init__(self):
+        self._store = {}  # key -> (value, expire_ts)
+        self._lock = threading.Lock()
+
+    def get(self, key: str):
+        with self._lock:
+            entry = self._store.get(key)
+            if entry and _time.time() < entry[1]:
+                return entry[0]
+        return None
+
+    def set(self, key: str, value, ttl: float):
+        with self._lock:
+            self._store[key] = (value, _time.time() + ttl)
+
+    def invalidate(self, key: str = None):
+        with self._lock:
+            if key:
+                self._store.pop(key, None)
+            else:
+                self._store.clear()
+
+_api_cache = _TTLCache()
+
+
+def compute_technicals(svc, symbol: str) -> dict:
+    """
+    计算日线技术指标 (MA, RSI, MACD, ATR, 量比)
+    供 /analysis 和 /llm-analysis 共用，避免重复计算。
+    返回 dict: {closes, highs, lows, volumes, recent_5d, cur_price, ma5..60, rsi14, atr14, vol_*}
+    失败时返回 {error: str}
+    """
+    try:
+        from futu import RET_OK
+        ret, data = svc._quote_ctx.get_cur_kline(symbol, 120, ktype="K_DAY")
+        if ret != RET_OK or data.empty or len(data) < 20:
+            return {"error": "K线数据不足"}
+
+        closes = [float(r["close"]) for _, r in data.iterrows()]
+        highs = [float(r["high"]) for _, r in data.iterrows()]
+        lows = [float(r["low"]) for _, r in data.iterrows()]
+        volumes = [float(r["volume"]) for _, r in data.iterrows()]
+
+        def ma(arr, n):
+            return sum(arr[-n:]) / n if len(arr) >= n else None
+
+        # Moving averages
+        ma5 = ma(closes, 5)
+        ma10 = ma(closes, 10)
+        ma20 = ma(closes, 20)
+        ma60 = ma(closes, 60)
+
+        # RSI (14)
+        rsi = None
+        if len(closes) >= 15:
+            gains, losses = [], []
+            for i in range(-14, 0):
+                d = closes[i] - closes[i - 1]
+                gains.append(max(d, 0))
+                losses.append(max(-d, 0))
+            avg_gain = sum(gains) / 14
+            avg_loss = sum(losses) / 14
+            if avg_loss > 0:
+                rsi = 100 - (100 / (1 + avg_gain / avg_loss))
+            else:
+                rsi = 100.0
+
+        # MACD (12, 26, 9)
+        macd_line, signal_line, histogram = None, None, None
+        if len(closes) >= 26:
+            ema12 = closes[0]
+            ema26 = closes[0]
+            k12, k26 = 2 / 13, 2 / 27
+            ema12_vals, ema26_vals = [], []
+            for p in closes:
+                ema12 = p * k12 + ema12 * (1 - k12)
+                ema26 = p * k26 + ema26 * (1 - k26)
+                ema12_vals.append(ema12)
+                ema26_vals.append(ema26)
+            macd_vals = [e12 - e26 for e12, e26 in zip(ema12_vals, ema26_vals)]
+            k9 = 2 / 10
+            sig = macd_vals[0]
+            for m in macd_vals:
+                sig = m * k9 + sig * (1 - k9)
+            macd_line = round(macd_vals[-1], 4)
+            signal_line = round(sig, 4)
+            histogram = round(macd_line - signal_line, 4)
+
+        # ATR (14)
+        atr = None
+        if len(closes) >= 15:
+            trs = [max(highs[i] - lows[i], abs(highs[i] - closes[i - 1]), abs(lows[i] - closes[i - 1]))
+                   for i in range(1, len(closes))]
+            atr = sum(trs[-14:]) / 14 if len(trs) >= 14 else None
+
+        # Volume
+        vol_ma5 = ma(volumes, 5)
+        vol_cur = volumes[-1]
+
+        # Recent 5d summary
+        recent_5d = []
+        for _, r in data.tail(5).iterrows():
+            recent_5d.append({
+                "date": str(r.get("time_key", ""))[:10],
+                "open": round(float(r["open"]), 2),
+                "high": round(float(r["high"]), 2),
+                "low": round(float(r["low"]), 2),
+                "close": round(float(r["close"]), 2),
+                "volume": int(float(r["volume"])),
+            })
+
+        return {
+            "closes": closes, "highs": highs, "lows": lows, "volumes": volumes,
+            "recent_5d": recent_5d,
+            "cur_price": round(closes[-1], 2),
+            "ma5": round(ma5, 2) if ma5 else None,
+            "ma10": round(ma10, 2) if ma10 else None,
+            "ma20": round(ma20, 2) if ma20 else None,
+            "ma60": round(ma60, 2) if ma60 else None,
+            "rsi14": round(rsi, 1) if rsi is not None else None,
+            "macd": macd_line,
+            "macd_signal": signal_line,
+            "macd_hist": histogram,
+            "atr14": round(atr, 2) if atr else None,
+            "20d_high": round(max(highs[-20:]), 2),
+            "20d_low": round(min(lows[-20:]), 2),
+            "vol_current": int(vol_cur),
+            "vol_ma5": int(vol_ma5) if vol_ma5 else None,
+            "vol_ratio": round(vol_cur / vol_ma5, 2) if vol_ma5 and vol_ma5 > 0 else None,
+            "vol_avg_20d": int(sum(volumes[-20:]) / 20) if len(volumes) >= 20 else None,
+            "vol_today": int(volumes[-1]),
+        }
+    except Exception as e:
+        return {"error": str(e)}
 from typing import Dict, Any
 
 from app.simple_dashboard import SimpleDashboard
 from app.storage.metrics_tables import MetricsTables
 from app.observability.metrics_api import MetricsAPI
-from app.observability.dingtalk_alert import DingTalkAlerter
 
 logger = logging.getLogger("ftseek_us.dashboard")
 
@@ -49,11 +206,6 @@ from app.core.paths import get_trade_records_db
 db_path = str(get_trade_records_db())
 metrics_tables = MetricsTables(db_path)
 metrics_api = MetricsAPI(metrics_tables)
-
-# 钉钉告警配置 (从环境变量或配置读取)
-DINGTALK_WEBHOOK = "https://oapi.dingtalk.com/robot/send?access_token=YOUR_TOKEN"
-DINGTALK_SECRET = ""
-dingtalk_alerter = DingTalkAlerter(DINGTALK_WEBHOOK, DINGTALK_SECRET) if DINGTALK_WEBHOOK else None
 
 def create_app() -> FastAPI:
     """创建 FastAPI 应用"""
@@ -161,13 +313,10 @@ def create_app() -> FastAPI:
     # ─────────────────────────────────────────────────────────────
 
     # 路由
-    @app.get("/review", response_class=HTMLResponse)
-    async def review_page(request: Request):
-        """分析页面"""
-        return templates.TemplateResponse("review.html", {
-            "request": request,
-            "title": "分析 - FTSeek US",
-        })
+    @app.get("/review")
+    async def review_page():
+        """分析页面已合并到指挥中心"""
+        return RedirectResponse(url="/", status_code=301)
 
     @app.get("/", response_class=HTMLResponse)
     async def dashboard_home(request: Request):
@@ -183,8 +332,13 @@ def create_app() -> FastAPI:
     
     @app.get("/api/stats")
     async def get_stats():
-        """获取统计信息"""
-        return dashboard.get_stats()
+        """获取统计信息 (10s TTL 缓存)"""
+        cached = _api_cache.get("stats")
+        if cached is not None:
+            return cached
+        result = dashboard.get_stats()
+        _api_cache.set("stats", result, ttl=10)
+        return result
     
     @app.get("/api/positions")
     async def get_positions():
@@ -232,7 +386,46 @@ def create_app() -> FastAPI:
     async def get_trades(limit: int = 50):
         """获取交易记录"""
         return {"trades": dashboard.get_trades(limit)}
-    
+
+    @app.get("/api/market/temperature")
+    async def market_temperature():
+        """市场温度: SPY 涨跌 + VIX 水平 (30s TTL 缓存)"""
+        cached = _api_cache.get("market_temp")
+        if cached is not None:
+            return cached
+        result = {"spy": None, "vix": None}
+
+        # SPY from Futu snapshot
+        try:
+            svc = get_manual_order_service()
+            quote = svc.get_quote("US.SPY")
+            if quote.get("cur_price", 0) > 0 and quote.get("prev_close", 0) > 0:
+                cur = quote["cur_price"]
+                prev = quote["prev_close"]
+                result["spy"] = {
+                    "price": round(cur, 2),
+                    "change": round(cur - prev, 2),
+                    "change_pct": round((cur - prev) / prev * 100, 2),
+                }
+        except Exception:
+            pass
+
+        # VIX from cache file
+        try:
+            import json as _json
+            vix_path = base_dir.parent.parent / "data" / "vix_cache" / "vix_data.json"
+            if vix_path.exists():
+                with open(vix_path) as f:
+                    vix_data = _json.load(f)
+                vix_val = vix_data.get("vix")
+                if vix_val and vix_val > 0:
+                    result["vix"] = round(float(vix_val), 2)
+        except Exception:
+            pass
+
+        _api_cache.set("market_temp", result, ttl=30)
+        return result
+
     @app.get("/api/account")
     async def get_account():
         """获取账户信息"""
@@ -242,21 +435,7 @@ def create_app() -> FastAPI:
     async def health_page(request: Request):
         """健康监控页面 → 重定向到系统页"""
         return RedirectResponse(url="/system", status_code=301)
-    
-    @app.get("/api/metrics/system")
-    async def get_system_metrics():
-        """获取系统指标"""
-        try:
-            status = metrics_api.get_latest_system_status()
-            return {
-                "cpu_percent": status.get("cpu_percent", {}).get("value", 0),
-                "memory_percent": status.get("memory_percent", {}).get("value", 0),
-                "disk_percent": status.get("disk_percent", {}).get("value", 0),
-            }
-        except Exception as e:
-            logger.error(f"获取系统指标失败：{e}")
-            return {"cpu_percent": 0, "memory_percent": 0, "disk_percent": 0}
-    
+
     @app.get("/api/metrics/trading")
     async def get_trading_metrics():
         """获取交易指标"""
@@ -271,79 +450,6 @@ def create_app() -> FastAPI:
         except Exception as e:
             logger.error(f"获取交易指标失败：{e}")
             return {"signals_count": 0, "orders_count": 0, "fills_count": 0, "pending_orders": 0}
-    
-    @app.get("/api/metrics/api")
-    async def get_api_metrics():
-        """获取 API 调用指标"""
-        try:
-            # 从数据源指标中获取
-            status = metrics_api.get_latest_system_status()
-            # 默认返回模拟数据 (实际应从 metrics 表读取)
-            return {
-                "total_requests": int(status.get("opendata_total", {}).get("value", 0)),
-                "success_requests": int(status.get("opendata_success", {}).get("value", 0)),
-                "failed_requests": int(status.get("opendata_failed", {}).get("value", 0)),
-                "avg_latency_ms": status.get("opendata_latency", {}).get("value", 0),
-            }
-        except Exception as e:
-            logger.error(f"获取 API 指标失败：{e}")
-            return {"total_requests": 0, "success_requests": 0, "failed_requests": 0, "avg_latency_ms": 0}
-    
-    @app.get("/api/metrics/alert")
-    async def check_and_send_alerts():
-        """检查指标并发送告警"""
-        try:
-            alerts_sent = []
-            
-            # 获取系统指标
-            system_status = metrics_api.get_latest_system_status()
-            cpu = system_status.get("cpu_percent", {}).get("value", 0)
-            memory = system_status.get("memory_percent", {}).get("value", 0)
-            
-            # 检查 CPU
-            if cpu > 90:
-                if dingtalk_alerter:
-                    dingtalk_alerter.send_alert(
-                        level="CRITICAL",
-                        title="⚠️ CPU 使用率告警",
-                        content=f"CPU 使用率达到 {cpu:.1f}%，超过阈值 90%"
-                    )
-                alerts_sent.append("CPU_CRITICAL")
-            elif cpu > 70:
-                if dingtalk_alerter:
-                    dingtalk_alerter.send_alert(
-                        level="WARN",
-                        title="⚡ CPU 使用率警告",
-                        content=f"CPU 使用率达到 {cpu:.1f}%，超过阈值 70%"
-                    )
-                alerts_sent.append("CPU_WARN")
-            
-            # 检查内存
-            if memory > 90:
-                if dingtalk_alerter:
-                    dingtalk_alerter.send_alert(
-                        level="CRITICAL",
-                        title="⚠️ 内存使用率告警",
-                        content=f"内存使用率达到 {memory:.1f}%，超过阈值 90%"
-                    )
-                alerts_sent.append("MEMORY_CRITICAL")
-            elif memory > 70:
-                if dingtalk_alerter:
-                    dingtalk_alerter.send_alert(
-                        level="WARN",
-                        title="⚡ 内存使用率警告",
-                        content=f"内存使用率达到 {memory:.1f}%，超过阈值 70%"
-                    )
-                alerts_sent.append("MEMORY_WARN")
-            
-            return {
-                "status": "checked",
-                "alerts_sent": alerts_sent,
-                "timestamp": datetime.now().isoformat(),
-            }
-        except Exception as e:
-            logger.error(f"告警检查失败：{e}")
-            return {"status": "error", "error": str(e)}
     
     @app.get("/api/health")
     async def health_check_api():
@@ -410,6 +516,7 @@ def create_app() -> FastAPI:
         )
 
         result = svc.submit_order(order)
+        _api_cache.invalidate()  # 下单后清缓存, 确保下次轮询拿到最新数据
         return JSONResponse(content=result)
 
     @app.post("/api/orders/close")
@@ -423,14 +530,20 @@ def create_app() -> FastAPI:
             reason=body.get("reason", "手动平仓"),
             close_qty=close_qty,
         )
+        _api_cache.invalidate()  # 平仓后清缓存
         return JSONResponse(content=result)
 
     @app.get("/api/orders/today")
     async def get_today_orders():
-        """查询今日所有订单状态"""
+        """查询今日所有订单状态 (10s TTL 缓存)"""
+        cached = _api_cache.get("orders_today")
+        if cached is not None:
+            return cached
         svc = get_manual_order_service()
         orders = svc.get_today_orders()
-        return {"orders": orders}
+        result = {"orders": orders}
+        _api_cache.set("orders_today", result, ttl=10)
+        return result
 
     @app.post("/api/orders/cancel")
     async def cancel_order(request: Request):
@@ -438,6 +551,7 @@ def create_app() -> FastAPI:
         body = await request.json()
         svc = get_manual_order_service()
         result = svc.cancel_order(order_id=body.get("order_id", ""))
+        _api_cache.invalidate()  # 撤单后清缓存
         status_code = 200 if result.get("success") else 400
         return JSONResponse(content=result, status_code=status_code)
 
@@ -481,28 +595,23 @@ def create_app() -> FastAPI:
                 return {"symbol": symbol, "cur_price": cur_price, "error": "账户查询失败"}
 
             row = funds.iloc[0]
-            def _f(v):
-                try:
-                    return float(v) if v is not None and v != "N/A" else 0.0
-                except (ValueError, TypeError):
-                    return 0.0
 
             currency = str(row.get("currency", "")).upper()
             is_usd_account = currency in ("USD", "")
 
             if is_usd_account:
                 # USD 账户 (模拟盘通常是)
-                cash = _f(row.get("cash", 0))
-                power = _f(row.get("power", 0))
-                max_short_power = _f(row.get("max_power_short", 0))
+                cash = _safe_float(row.get("cash", 0))
+                power = _safe_float(row.get("power", 0))
+                max_short_power = _safe_float(row.get("max_power_short", 0))
             else:
                 # HKD 账户 — 美股交易用 USD 字段
-                cash = _f(row.get("us_cash", 0))
-                power = _f(row.get("usd_net_cash_power", 0))
-                max_short_power = _f(row.get("max_power_short", 0)) / 7.8  # HKD→USD 估算
+                cash = _safe_float(row.get("us_cash", 0))
+                power = _safe_float(row.get("usd_net_cash_power", 0))
+                max_short_power = _safe_float(row.get("max_power_short", 0)) / 7.8  # HKD→USD 估算
                 if power <= 0:
                     # fallback: 用 HKD power 换算
-                    power = _f(row.get("power", 0)) / 7.8
+                    power = _safe_float(row.get("power", 0)) / 7.8
                 if max_short_power <= 0:
                     max_short_power = power  # 做空购买力 ≈ 做多购买力
 
@@ -546,7 +655,10 @@ def create_app() -> FastAPI:
 
     @app.get("/api/live-account")
     async def get_live_account():
-        """获取实盘账户状态"""
+        """获取实盘账户状态 (5s TTL 缓存)"""
+        cached = _api_cache.get("live_account")
+        if cached is not None:
+            return JSONResponse(content=cached)
         svc = get_manual_order_service()
         if not svc.connect():
             return JSONResponse(content={"error": "broker_not_connected"}, status_code=503)
@@ -560,15 +672,16 @@ def create_app() -> FastAPI:
             else:
                 acc_id = int(_os.getenv("SIMULATE_ACCOUNT_ID", "0"))
 
-            ret, funds = svc._broker_ctx.accinfo_query(trd_env=trd_env, acc_id=acc_id)
+            # 2026-06-10: 并行化 Futu RPC (accinfo + position_list 同时发出)
+            with ThreadPoolExecutor(max_workers=2) as _pool:
+                _fut_acc = _pool.submit(svc._broker_ctx.accinfo_query, trd_env=trd_env, acc_id=acc_id)
+                _fut_pos = _pool.submit(svc._broker_ctx.position_list_query, trd_env=trd_env, acc_id=acc_id)
+                ret, funds = _fut_acc.result()
+                ret2, positions = _fut_pos.result()
+
             account_info = {}
             if ret == RET_OK:
                 row = funds.iloc[0]
-                def _af(v):
-                    try:
-                        return float(v) if v is not None and v != "N/A" else 0.0
-                    except (ValueError, TypeError):
-                        return 0.0
 
                 raw_cur = str(row.get("currency", "")).upper()
                 is_hkd = raw_cur == "HKD"
@@ -576,23 +689,15 @@ def create_app() -> FastAPI:
 
                 # 统一 USD
                 account_info = {
-                    "cash": round(_af(row.get("us_cash")) / 1 if is_hkd else _af(row.get("cash")), 2),
-                    "total_assets": round(_af(row.get("usd_assets")) if is_hkd else _af(row.get("total_assets")), 2),
-                    "power": round(_af(row.get("usd_net_cash_power")) if is_hkd and _af(row.get("usd_net_cash_power")) > 0 else _af(row.get("power")) / fx, 2),
-                    "market_val": round(_af(row.get("market_val")) / fx, 2),
+                    "cash": round(_safe_float(row.get("us_cash")) / 1 if is_hkd else _safe_float(row.get("cash")), 2),
+                    "total_assets": round(_safe_float(row.get("usd_assets")) if is_hkd else _safe_float(row.get("total_assets")), 2),
+                    "power": round(_safe_float(row.get("usd_net_cash_power")) if is_hkd and _safe_float(row.get("usd_net_cash_power")) > 0 else _safe_float(row.get("power")) / fx, 2),
+                    "market_val": round(_safe_float(row.get("market_val")) / fx, 2),
                     "currency": "USD",
                 }
 
-            ret2, positions = svc._broker_ctx.position_list_query(trd_env=trd_env, acc_id=acc_id)
             pos_list = []
             if ret2 == RET_OK and not positions.empty:
-                def _safe_float(v):
-                    try:
-                        if v is None or v == "N/A":
-                            return 0.0
-                        return float(v)
-                    except (ValueError, TypeError):
-                        return 0.0
 
                 # 批量获取报价 (盘后 cur_price 为 0，需要补充)
                 codes = [p.get("code", "") for _, p in positions.iterrows() if p.get("code")]
@@ -653,13 +758,15 @@ def create_app() -> FastAPI:
                 for pos in pos_list:
                     pos.setdefault("owner", "auto")
 
-            return {
+            _result = {
                 "mode": svc._get_mode_label(),
                 "is_live": svc._is_live(),
                 "account": account_info,
                 "positions": pos_list,
                 "timestamp": datetime.now().isoformat(),
             }
+            _api_cache.set("live_account", _result, ttl=5)
+            return _result
         except Exception as e:
             return JSONResponse(content={"error": str(e)}, status_code=500)
 
@@ -683,25 +790,6 @@ def create_app() -> FastAPI:
             "request": request,
             "title": "系统 - FTSeek-US",
         })
-
-    @app.get("/api/system/logs")
-    async def get_system_logs():
-        """读取最近 20 行日志"""
-        import subprocess as _sp
-        log_path = base_dir.parent.parent / "logs" / "ftseek_us.log"
-        try:
-            if log_path.exists():
-                proc = _sp.run(
-                    ["tail", "-n", "20", str(log_path)],
-                    capture_output=True, text=True, timeout=5,
-                )
-                lines = proc.stdout.strip().split("\n") if proc.stdout.strip() else []
-                return {"lines": lines, "count": len(lines)}
-            else:
-                return {"lines": [], "count": 0}
-        except Exception as e:
-            logger.error(f"读取日志失败: {e}")
-            return {"lines": [], "count": 0, "error": str(e)}
 
     @app.get("/api/system/status")
     async def get_system_status():
@@ -790,8 +878,10 @@ def create_app() -> FastAPI:
 
     @app.get("/api/risk/status")
     async def risk_status():
-        """风控状态 — 真实数据驱动"""
-        import sqlite3 as _sqlite3
+        """风控状态 — 真实数据驱动 (10s TTL 缓存)"""
+        cached = _api_cache.get("risk_status")
+        if cached is not None:
+            return JSONResponse(content=cached)
 
         svc = get_manual_order_service()
         is_live = svc._is_live()
@@ -807,32 +897,33 @@ def create_app() -> FastAPI:
             acc_id = int(svc._read_env(
                 "REAL_ACCOUNT_ID" if is_live else "SIMULATE_ACCOUNT_ID", "0"
             ))
-            ret, funds = svc._broker_ctx.accinfo_query(trd_env=trd_env, acc_id=acc_id)
+            # 2026-06-10: 并行化 3 个独立 Futu RPC (原串行 ~600ms → 并行 ~200ms)
+            with ThreadPoolExecutor(max_workers=3) as _pool:
+                _fut_acc = _pool.submit(svc._broker_ctx.accinfo_query, trd_env=trd_env, acc_id=acc_id)
+                _fut_orders = _pool.submit(svc._broker_ctx.order_list_query, trd_env=trd_env, acc_id=acc_id)
+                _fut_pos = _pool.submit(svc._broker_ctx.position_list_query, trd_env=trd_env, acc_id=acc_id)
+
+            ret, funds = _fut_acc.result()
             if ret == RET_OK:
                 row = funds.iloc[0]
-                def _f(v):
-                    try:
-                        return float(v) if v is not None and v != "N/A" else 0.0
-                    except (ValueError, TypeError):
-                        return 0.0
 
                 currency = str(row.get("currency", "")).upper()
                 is_hkd = currency == "HKD"
                 fx = 7.8 if is_hkd else 1.0  # HKD→USD 汇率
 
                 # USD 字段 (HKD 账户用 us_* 字段, USD 账户直接用)
-                usd_assets = _f(row.get("usd_assets")) if is_hkd else _f(row.get("total_assets"))
-                usd_cash = _f(row.get("us_cash")) if is_hkd else _f(row.get("cash"))
-                usd_power = _f(row.get("usd_net_cash_power")) if is_hkd else _f(row.get("power"))
+                usd_assets = _safe_float(row.get("usd_assets")) if is_hkd else _safe_float(row.get("total_assets"))
+                usd_cash = _safe_float(row.get("us_cash")) if is_hkd else _safe_float(row.get("cash"))
+                usd_power = _safe_float(row.get("usd_net_cash_power")) if is_hkd else _safe_float(row.get("power"))
                 if usd_power <= 0 and is_hkd:
-                    usd_power = _f(row.get("power")) / fx
+                    usd_power = _safe_float(row.get("power")) / fx
 
                 # long_mv / short_mv: Futu 返回的是各币种混合, HKD 账户需换算
-                long_mv = _f(row.get("long_mv"))
-                short_mv = abs(_f(row.get("short_mv")))
+                long_mv = _safe_float(row.get("long_mv"))
+                short_mv = abs(_safe_float(row.get("short_mv")))
                 if is_hkd and long_mv > 0:
                     # 用 USD assets 估算 USD 市值
-                    usd_securities = _f(row.get("securities_assets")) if not is_hkd else usd_assets
+                    usd_securities = _safe_float(row.get("securities_assets")) if not is_hkd else usd_assets
                     if usd_securities > 0:
                         long_mv = long_mv / fx  # 粗略 HKD→USD
                         short_mv = short_mv / fx
@@ -844,12 +935,12 @@ def create_app() -> FastAPI:
                     "power": round(usd_power, 2),
                     "long_mv": round(long_mv, 2),
                     "short_mv": round(short_mv, 2),
-                    "initial_margin": round(_f(row.get("initial_margin")) / fx, 2),
-                    "maintenance_margin": round(_f(row.get("maintenance_margin")) / fx, 2),
-                    "margin_call_margin": round(_f(row.get("margin_call_margin")) / fx, 2),
-                    "frozen_cash": round(_f(row.get("frozen_cash")) / fx, 2),
+                    "initial_margin": round(_safe_float(row.get("initial_margin")) / fx, 2),
+                    "maintenance_margin": round(_safe_float(row.get("maintenance_margin")) / fx, 2),
+                    "margin_call_margin": round(_safe_float(row.get("margin_call_margin")) / fx, 2),
+                    "frozen_cash": round(_safe_float(row.get("frozen_cash")) / fx, 2),
                     "risk_status": str(row.get("risk_status", "N/A")),
-                    "interest_charged": round(_f(row.get("interest_charged_amount")) / fx, 2),
+                    "interest_charged": round(_safe_float(row.get("interest_charged_amount")) / fx, 2),
                     "currency": "USD",
                     "raw_currency": currency,
                 }
@@ -905,7 +996,7 @@ def create_app() -> FastAPI:
         #     日历日期可能尚无交易记录 (非交易日、盘前等场景)
         try:
             from app.core.db_utils import get_main_db
-            conn = _sqlite3.connect(str(get_main_db()))
+            conn = sqlite3.connect(str(get_main_db()))
             row = conn.execute(
                 "SELECT COALESCE(SUM(realized_pnl),0), COUNT(*) "
                 "FROM trade_records "
@@ -917,12 +1008,10 @@ def create_app() -> FastAPI:
         except Exception:
             pass
 
-        # 4b. Futu 实际成交数
+        # 4b. Futu 实际成交数 (复用并行查询结果)
         try:
-            from futu import TrdEnv as _TE, RET_OK as _ROK
-            _trd_env = _TE.REAL if is_live else _TE.SIMULATE
-            _acc = int(svc._read_env("REAL_ACCOUNT_ID" if is_live else "SIMULATE_ACCOUNT_ID", "0"))
-            _ret, _orders = svc._broker_ctx.order_list_query(trd_env=_trd_env, acc_id=_acc)
+            from futu import RET_OK as _ROK
+            _ret, _orders = _fut_orders.result()
             if _ret == _ROK and not _orders.empty:
                 futu_today = _orders[_orders["create_time"].astype(str).str.startswith(today)]
                 filled = futu_today[futu_today["order_status"].astype(str).str.contains("FILLED")]
@@ -930,13 +1019,11 @@ def create_app() -> FastAPI:
         except Exception:
             pass
 
-        # 4c. 持仓浮盈: 统一用 Futu 持仓 + snapshot 价格 (两个模式都适用)
+        # 4c. 持仓浮盈: 统一用 Futu 持仓 + snapshot 价格 (复用并行查询结果)
         try:
-            from futu import TrdEnv as _TE2, RET_OK as _ROK2
-            _trd_env2 = _TE2.REAL if is_live else _TE2.SIMULATE
-            _acc2 = int(svc._read_env("REAL_ACCOUNT_ID" if is_live else "SIMULATE_ACCOUNT_ID", "0"))
+            from futu import RET_OK as _ROK2
 
-            _ret2, _pos = svc._broker_ctx.position_list_query(trd_env=_trd_env2, acc_id=_acc2)
+            _ret2, _pos = _fut_pos.result()
             if _ret2 == _ROK2 and not _pos.empty:
                 # 获取所有持仓代码的实时报价
                 _codes = [str(r.get("code", "")) for _, r in _pos.iterrows() if abs(float(r.get("qty", 0))) > 0]
@@ -1045,8 +1132,8 @@ def create_app() -> FastAPI:
             else:
                 # 模拟盘: 从 DB 读取 (含 SL/TP 数据)
                 from app.core.db_utils import get_main_db
-                conn = _sqlite3.connect(str(get_main_db()))
-                conn.row_factory = _sqlite3.Row
+                conn = sqlite3.connect(str(get_main_db()))
+                conn.row_factory = sqlite3.Row
                 rows = conn.execute("""
                     SELECT symbol, direction, size, avg_entry_price, current_sl, initial_tp
                     FROM open_positions
@@ -1122,7 +1209,7 @@ def create_app() -> FastAPI:
         rl = futu_risk["risk_level"]
         futu_risk["detail"] = risk_levels.get(rl, {"label": rl, "color": "gray", "desc": "未知状态"})
 
-        return {
+        _risk_result = {
             "mode": mode,
             "is_live": is_live,
             "account": account,
@@ -1132,11 +1219,12 @@ def create_app() -> FastAPI:
             "stop_distances": stop_distances,
             "futu_risk": futu_risk,
         }
+        _api_cache.set("risk_status", _risk_result, ttl=10)
+        return _risk_result
 
     @app.get("/api/strategy/status")
     async def strategy_status():
         """策略运行状态"""
-        import sqlite3 as _sqlite3
         import subprocess as _subprocess
 
         today = _et_today()
@@ -1155,7 +1243,7 @@ def create_app() -> FastAPI:
         # 2. 按策略统计最新交易日交易 (使用 DB 最新 trade_date 而非日历日期)
         try:
             from app.core.db_utils import get_main_db
-            conn = _sqlite3.connect(str(get_main_db()))
+            conn = sqlite3.connect(str(get_main_db()))
             rows = conn.execute("""
                 SELECT
                     COALESCE(strategy_id, 'unknown') as strategy,
@@ -1189,7 +1277,7 @@ def create_app() -> FastAPI:
         # 3. 最近7天策略表现
         try:
             from app.core.db_utils import get_main_db
-            conn = _sqlite3.connect(str(get_main_db()))
+            conn = sqlite3.connect(str(get_main_db()))
             rows = conn.execute("""
                 SELECT
                     COALESCE(strategy_id, 'unknown') as strategy,
@@ -1215,7 +1303,7 @@ def create_app() -> FastAPI:
         # 4. 今日信号统计
         try:
             from app.core.db_utils import get_main_db
-            conn = _sqlite3.connect(str(get_main_db()))
+            conn = sqlite3.connect(str(get_main_db()))
             rows = conn.execute("""
                 SELECT COUNT(*) as total,
                     SUM(CASE WHEN status = 'ACCEPTED' THEN 1 ELSE 0 END) as accepted,
@@ -1268,8 +1356,8 @@ def create_app() -> FastAPI:
         # 6. 最近信号明细 (最近10条)
         try:
             from app.core.db_utils import get_main_db
-            conn = _sqlite3.connect(str(get_main_db()))
-            conn.row_factory = _sqlite3.Row
+            conn = sqlite3.connect(str(get_main_db()))
+            conn.row_factory = sqlite3.Row
             rows = conn.execute("""
                 SELECT symbol, direction, confidence, strength, status,
                        substr(timestamp, 12, 8) as time
@@ -1295,12 +1383,11 @@ def create_app() -> FastAPI:
     @app.get("/api/risk/pnl-history")
     async def risk_pnl_history(days: int = 30):
         """获取近N日盈亏历史"""
-        import sqlite3 as _sqlite3
 
         history = []
         try:
             from app.core.db_utils import get_main_db
-            conn = _sqlite3.connect(str(get_main_db()))
+            conn = sqlite3.connect(str(get_main_db()))
             start_date = _et_days_ago(days)
             rows = conn.execute("""
                 SELECT trade_date,
@@ -1456,7 +1543,6 @@ def create_app() -> FastAPI:
     @app.get("/api/stock/{symbol}/analysis")
     async def stock_analysis(symbol: str):
         """技术分析 + 引擎持仓 + 建议"""
-        import math
         svc = get_manual_order_service()
         if not svc.connect():
             return JSONResponse({"error": "broker_not_connected"}, 503)
@@ -1464,177 +1550,88 @@ def create_app() -> FastAPI:
 
         result = {"symbol": symbol, "technicals": {}, "position": None, "recommendation": {}}
 
-        # 1. K线计算技术指标
-        try:
-            from futu import RET_OK
-            # 先订阅日线
-            _subscribe_symbol(svc, symbol, ["K_DAY"])
+        # 1. 计算技术指标 (共用函数)
+        _subscribe_symbol(svc, symbol, ["K_DAY"])
+        tech = compute_technicals(svc, symbol)
 
-            ret, data = svc._quote_ctx.get_cur_kline(symbol, 120, ktype="K_DAY")
-            if ret == RET_OK and not data.empty and len(data) >= 20:
-                closes = [float(row["close"]) for _, row in data.iterrows()]
-                volumes = [float(row["volume"]) for _, row in data.iterrows()]
+        if "error" in tech:
+            result["technicals"] = {"error": tech["error"]}
+        else:
+            result["technicals"] = {
+                "cur_price": tech["cur_price"],
+                "ma5": tech["ma5"], "ma10": tech["ma10"],
+                "ma20": tech["ma20"], "ma60": tech["ma60"],
+                "rsi14": tech["rsi14"],
+                "macd": tech["macd"], "macd_signal": tech["macd_signal"], "macd_hist": tech["macd_hist"],
+                "atr14": tech["atr14"],
+                "vol_current": tech["vol_current"], "vol_ma5": tech["vol_ma5"], "vol_ratio": tech["vol_ratio"],
+            }
 
-                # MA
-                def ma(arr, n):
-                    if len(arr) < n: return None
-                    return sum(arr[-n:]) / n
+            # 2. 生成规则建议
+            signals = []
+            score = 0  # -100 to +100
+            cur = tech["cur_price"]
+            ma5, ma10, ma20 = tech["ma5"], tech["ma10"], tech["ma20"]
+            rsi = tech["rsi14"]
 
-                ma5 = ma(closes, 5)
-                ma10 = ma(closes, 10)
-                ma20 = ma(closes, 20)
-                ma60 = ma(closes, 60) if len(closes) >= 60 else None
-                cur = closes[-1]
-
-                # RSI (14)
-                rsi = None
-                if len(closes) >= 15:
-                    gains, losses = [], []
-                    for i in range(-14, 0):
-                        diff = closes[i] - closes[i-1]
-                        gains.append(max(diff, 0))
-                        losses.append(max(-diff, 0))
-                    avg_gain = sum(gains) / 14
-                    avg_loss = sum(losses) / 14
-                    if avg_loss > 0:
-                        rs = avg_gain / avg_loss
-                        rsi = 100 - (100 / (1 + rs))
-                    else:
-                        rsi = 100.0
-
-                # MACD
-                macd_line, signal_line, histogram = None, None, None
-                if len(closes) >= 26:
-                    def ema(arr, n):
-                        k = 2 / (n + 1)
-                        val = arr[0]
-                        for p in arr[1:]:
-                            val = p * k + val * (1 - k)
-                        return val
-                    ema12_vals, ema26_vals = [], []
-                    ema12 = closes[0]
-                    ema26 = closes[0]
-                    k12, k26 = 2/13, 2/27
-                    for p in closes:
-                        ema12 = p * k12 + ema12 * (1 - k12)
-                        ema26 = p * k26 + ema26 * (1 - k26)
-                        ema12_vals.append(ema12)
-                        ema26_vals.append(ema26)
-                    # MACD line = ema12 - ema26
-                    macd_vals = [e12 - e26 for e12, e26 in zip(ema12_vals, ema26_vals)]
-                    # Signal = EMA9 of MACD
-                    k9 = 2/10
-                    sig = macd_vals[0]
-                    for m in macd_vals:
-                        sig = m * k9 + sig * (1 - k9)
-                    macd_line = round(macd_vals[-1], 4)
-                    signal_line = round(sig, 4)
-                    histogram = round(macd_line - signal_line, 4)
-
-                # Volume trend
-                vol_ma5 = ma(volumes, 5)
-                vol_cur = volumes[-1]
-
-                # ATR (14)
-                atr = None
-                if len(closes) >= 15:
-                    ret2, data2 = svc._quote_ctx.get_cur_kline(symbol, 20, ktype="K_DAY")
-                    if ret2 == RET_OK and not data2.empty:
-                        trs = []
-                        for i, row in data2.iterrows():
-                            h = float(row["high"])
-                            l = float(row["low"])
-                            pc = float(row.get("prev_close", l))
-                            tr = max(h - l, abs(h - pc), abs(l - pc))
-                            trs.append(tr)
-                        atr = sum(trs[-14:]) / 14
-
-                result["technicals"] = {
-                    "cur_price": round(cur, 2),
-                    "ma5": round(ma5, 2) if ma5 else None,
-                    "ma10": round(ma10, 2) if ma10 else None,
-                    "ma20": round(ma20, 2) if ma20 else None,
-                    "ma60": round(ma60, 2) if ma60 else None,
-                    "rsi14": round(rsi, 1) if rsi is not None else None,
-                    "macd": macd_line,
-                    "macd_signal": signal_line,
-                    "macd_hist": histogram,
-                    "atr14": round(atr, 2) if atr else None,
-                    "vol_current": int(vol_cur),
-                    "vol_ma5": int(vol_ma5) if vol_ma5 else None,
-                    "vol_ratio": round(vol_cur / vol_ma5, 2) if vol_ma5 and vol_ma5 > 0 else None,
-                }
-
-                # 2. 生成建议
-                signals = []
-                score = 0  # -100 to +100
-
-                # MA trend
-                if ma5 and ma10 and ma20:
-                    if ma5 > ma10 > ma20:
-                        signals.append(("MA多头排列", "+bullish"))
-                        score += 20
-                    elif ma5 < ma10 < ma20:
-                        signals.append(("MA空头排列", "+bearish"))
-                        score -= 20
-                    if cur > ma20:
-                        score += 10
-                    else:
-                        score -= 10
-
-                # RSI
-                if rsi is not None:
-                    if rsi > 70:
-                        signals.append((f"RSI超买({rsi:.0f})", "+bearish"))
-                        score -= 15
-                    elif rsi < 30:
-                        signals.append((f"RSI超卖({rsi:.0f})", "+bullish"))
-                        score += 15
-                    elif 40 < rsi < 60:
-                        signals.append((f"RSI中性({rsi:.0f})", "+neutral"))
-
-                # MACD
-                if histogram is not None:
-                    if histogram > 0 and macd_line > signal_line:
-                        signals.append(("MACD金叉", "+bullish"))
-                        score += 15
-                    elif histogram < 0 and macd_line < signal_line:
-                        signals.append(("MACD死叉", "+bearish"))
-                        score -= 15
-
-                # Volume
-                if vol_ma5 and vol_ma5 > 0:
-                    vratio = vol_cur / vol_ma5
-                    if vratio > 2:
-                        signals.append((f"放量{vratio:.1f}x", "+attention"))
-                    elif vratio < 0.5:
-                        signals.append((f"缩量{vratio:.1f}x", "+attention"))
-
-                # Determine recommendation
-                if score >= 30:
-                    rec = "偏多"
-                    rec_color = "green"
-                elif score <= -30:
-                    rec = "偏空"
-                    rec_color = "red"
+            if ma5 and ma10 and ma20:
+                if ma5 > ma10 > ma20:
+                    signals.append(("MA多头排列", "+bullish"))
+                    score += 20
+                elif ma5 < ma10 < ma20:
+                    signals.append(("MA空头排列", "+bearish"))
+                    score -= 20
+                if cur > ma20:
+                    score += 10
                 else:
-                    rec = "中性观望"
-                    rec_color = "yellow"
+                    score -= 10
 
-                result["recommendation"] = {
-                    "direction": rec,
-                    "color": rec_color,
-                    "score": score,
-                    "signals": signals,
-                }
-        except Exception as e:
-            result["technicals"] = {"error": str(e)}
+            if rsi is not None:
+                if rsi > 70:
+                    signals.append((f"RSI超买({rsi:.0f})", "+bearish"))
+                    score -= 15
+                elif rsi < 30:
+                    signals.append((f"RSI超卖({rsi:.0f})", "+bullish"))
+                    score += 15
+                elif 40 < rsi < 60:
+                    signals.append((f"RSI中性({rsi:.0f})", "+neutral"))
+
+            macd_line = tech["macd"]
+            signal_line = tech["macd_signal"]
+            histogram = tech["macd_hist"]
+            if histogram is not None:
+                if histogram > 0 and macd_line > signal_line:
+                    signals.append(("MACD金叉", "+bullish"))
+                    score += 15
+                elif histogram < 0 and macd_line < signal_line:
+                    signals.append(("MACD死叉", "+bearish"))
+                    score -= 15
+
+            vol_ma5 = tech["vol_ma5"]
+            vol_cur = tech["vol_current"]
+            if vol_ma5 and vol_ma5 > 0:
+                vratio = vol_cur / vol_ma5
+                if vratio > 2:
+                    signals.append((f"放量{vratio:.1f}x", "+attention"))
+                elif vratio < 0.5:
+                    signals.append((f"缩量{vratio:.1f}x", "+attention"))
+
+            if score >= 30:
+                rec, rec_color = "偏多", "green"
+            elif score <= -30:
+                rec, rec_color = "偏空", "red"
+            else:
+                rec, rec_color = "中性观望", "yellow"
+
+            result["recommendation"] = {
+                "direction": rec, "color": rec_color,
+                "score": score, "signals": signals,
+            }
 
         # 3. 查引擎持仓
         try:
-            import sqlite3 as _sqlite3
             from app.core.paths import get_trade_records_db
-            conn = _sqlite3.connect(str(get_trade_records_db()))
+            conn = sqlite3.connect(str(get_trade_records_db()))
             row = conn.execute(
                 "SELECT symbol, direction, quantity, avg_entry_price, stop_loss, take_profit, current_price "
                 "FROM open_positions WHERE symbol = ? AND status = 'open'",
@@ -1659,7 +1656,6 @@ def create_app() -> FastAPI:
     @app.get("/api/stock/{symbol}/llm-analysis")
     async def stock_llm_analysis(symbol: str):
         """LLM 深度分析 — 综合技术面+盘口+逐笔，给出方向建议和理由"""
-        import asyncio
         svc = get_manual_order_service()
         if not svc.connect():
             return JSONResponse({"error": "broker_not_connected"}, 503)
@@ -1668,61 +1664,25 @@ def create_app() -> FastAPI:
         # 1. 收集所有数据
         data_bundle = {"symbol": symbol}
 
-        # 技术指标 (复用 /analysis 的逻辑)
+        # 订阅数据类型
+        _subscribe_symbol(svc, symbol, ["K_DAY", "ORDER_BOOK", "TICKER", "QUOTE"])
+
+        # 技术指标 (共用函数)
+        tech = compute_technicals(svc, symbol)
+        if "error" not in tech:
+            data_bundle["daily_summary"] = {
+                "cur_price": tech["cur_price"],
+                "ma5": tech["ma5"], "ma10": tech["ma10"],
+                "ma20": tech["ma20"], "ma60": tech["ma60"],
+                "rsi14": tech["rsi14"], "atr14": tech["atr14"],
+                "recent_5d": tech["recent_5d"],
+                "20d_high": tech["20d_high"], "20d_low": tech["20d_low"],
+                "vol_avg_20d": tech["vol_avg_20d"], "vol_today": tech["vol_today"],
+            }
+
+        # 盘口
         try:
             from futu import RET_OK
-            # 先订阅所有需要的数据类型
-            _subscribe_symbol(svc, symbol, ["K_DAY", "ORDER_BOOK", "TICKER", "QUOTE"])
-            # 日线 K线
-            ret, day_data = svc._quote_ctx.get_cur_kline(symbol, 120, ktype="K_DAY")
-            if ret == RET_OK and not day_data.empty and len(day_data) >= 20:
-                closes = [float(r["close"]) for _, r in day_data.iterrows()]
-                highs = [float(r["high"]) for _, r in day_data.iterrows()]
-                lows = [float(r["low"]) for _, r in day_data.iterrows()]
-                volumes = [float(r["volume"]) for _, r in day_data.iterrows()]
-
-                # 近5日K线摘要
-                recent_5d = []
-                for _, r in day_data.tail(5).iterrows():
-                    recent_5d.append({
-                        "date": str(r.get("time_key",""))[:10],
-                        "open": round(float(r["open"]),2),
-                        "high": round(float(r["high"]),2),
-                        "low": round(float(r["low"]),2),
-                        "close": round(float(r["close"]),2),
-                        "volume": int(float(r["volume"])),
-                    })
-
-                def ma(arr, n):
-                    return round(sum(arr[-n:])/n, 2) if len(arr) >= n else None
-
-                # RSI
-                rsi = None
-                if len(closes) >= 15:
-                    gains, losses = [], []
-                    for i in range(-14, 0):
-                        d = closes[i] - closes[i-1]
-                        gains.append(max(d,0)); losses.append(max(-d,0))
-                    ag = sum(gains)/14; al = sum(losses)/14
-                    rsi = round(100 - 100/(1 + ag/al) if al > 0 else 100, 1)
-
-                # ATR
-                trs = [max(highs[i]-lows[i], abs(highs[i]-closes[i-1]), abs(lows[i]-closes[i-1])) for i in range(1, len(closes))]
-                atr = round(sum(trs[-14:])/14, 2) if len(trs) >= 14 else None
-
-                data_bundle["daily_summary"] = {
-                    "cur_price": closes[-1],
-                    "ma5": ma(closes, 5), "ma10": ma(closes, 10),
-                    "ma20": ma(closes, 20), "ma60": ma(closes, 60),
-                    "rsi14": rsi, "atr14": atr,
-                    "recent_5d": recent_5d,
-                    "20d_high": round(max(highs[-20:]), 2),
-                    "20d_low": round(min(lows[-20:]), 2),
-                    "vol_avg_20d": int(sum(volumes[-20:])/20) if len(volumes)>=20 else None,
-                    "vol_today": int(volumes[-1]),
-                }
-
-            # 盘口
             ret2, ob = svc._quote_ctx.get_order_book(symbol, num=5)
             if ret2 == RET_OK and ob:
                 bids = ob.get("Bid", [])
@@ -1762,27 +1722,23 @@ def create_app() -> FastAPI:
             ret4, snap = svc._quote_ctx.get_market_snapshot([symbol])
             if ret4 == RET_OK and not snap.empty:
                 row = snap.iloc[0]
-                def _f(v):
-                    try: return float(v) if v is not None and v != "N/A" else 0
-                    except: return 0
                 data_bundle["snapshot"] = {
-                    "prev_close": _f(row.get("prev_close_price")),
-                    "open": _f(row.get("open_price")),
-                    "high": _f(row.get("high_price")),
-                    "low": _f(row.get("low_price")),
-                    "volume": int(_f(row.get("volume"))),
-                    "turnover": _f(row.get("turnover")),
-                    "pe_ratio": _f(row.get("pe_ratio")),
-                    "market_cap": _f(row.get("market_cap")),
+                    "prev_close": _safe_float(row.get("prev_close_price")),
+                    "open": _safe_float(row.get("open_price")),
+                    "high": _safe_float(row.get("high_price")),
+                    "low": _safe_float(row.get("low_price")),
+                    "volume": int(_safe_float(row.get("volume"))),
+                    "turnover": _safe_float(row.get("turnover")),
+                    "pe_ratio": _safe_float(row.get("pe_ratio")),
+                    "market_cap": _safe_float(row.get("market_cap")),
                 }
         except Exception as e:
             data_bundle["data_error"] = str(e)
 
         # 引擎持仓
         try:
-            import sqlite3 as _sqlite3
             from app.core.paths import get_trade_records_db
-            conn = _sqlite3.connect(str(get_trade_records_db()))
+            conn = sqlite3.connect(str(get_trade_records_db()))
             row = conn.execute(
                 "SELECT direction, quantity, avg_entry_price, stop_loss, take_profit, current_price "
                 "FROM open_positions WHERE symbol = ? AND status = 'open'", (symbol,)
@@ -1829,7 +1785,7 @@ def create_app() -> FastAPI:
                 "stock_analyst", user_prompt,
                 system=system_prompt,
                 temperature=0.2,
-                max_tokens=1000,
+                max_tokens=4000,
                 json_mode=True,
                 timeout=60,
             )
@@ -1871,6 +1827,604 @@ def create_app() -> FastAPI:
             return {"symbol": symbol, "error": f"LLM返回解析失败: {e}", "raw": resp_text[:200] if 'resp_text' in dir() else ""}
         except Exception as e:
             return {"symbol": symbol, "error": f"分析异常: {e}"}
+
+    # ─────────────────────────────────────────────────────────────
+    # 分析页 API (2026-06-10: 6 模块实时交易情报)
+    # ─────────────────────────────────────────────────────────────
+
+    @app.get("/api/analytics/equity")
+    async def analytics_equity():
+        """模块1: 资金曲线 + 回撤 (from capital_state)"""
+        cached = _api_cache.get("analytics_equity")
+        if cached is not None:
+            return cached
+        try:
+            from app.core.db_utils import get_main_db
+            conn = sqlite3.connect(str(get_main_db()))
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT id, current_equity, peak_equity, drawdown_pct, max_drawdown_pct, "
+                "water_level, buying_power, last_update "
+                "FROM capital_state ORDER BY id ASC LIMIT 500"
+            ).fetchall()
+            conn.close()
+            history = []
+            for r in rows:
+                history.append({
+                    "ts": r["last_update"] or "",
+                    "equity": round(float(r["current_equity"]), 2),
+                    "peak": round(float(r["peak_equity"]), 2),
+                    "drawdown_pct": round(float(r["drawdown_pct"]) * 100, 2),
+                    "water_level": r["water_level"] or "unknown",
+                    "buying_power": round(float(r["buying_power"]), 2),
+                })
+            current = history[-1] if history else {}
+            max_dd = min(h["drawdown_pct"] for h in history) if history else 0
+            result = {
+                "history": history,
+                "current_equity": current.get("equity", 0),
+                "peak_equity": current.get("peak", 0),
+                "current_drawdown_pct": current.get("drawdown_pct", 0),
+                "max_drawdown_pct": round(max_dd, 2),
+                "water_level": current.get("water_level", "unknown"),
+                "buying_power": current.get("buying_power", 0),
+            }
+            _api_cache.set("analytics_equity", result, ttl=30)
+            return result
+        except Exception as e:
+            return {"error": str(e), "history": []}
+
+    @app.get("/api/analytics/positions-attribution")
+    async def analytics_positions():
+        """模块2: 持仓归因分析 (P&L贡献 + 多空暴露)"""
+        cached = _api_cache.get("analytics_positions")
+        if cached is not None:
+            return cached
+        try:
+            svc = get_manual_order_service()
+            if not svc.connect():
+                return {"error": "broker_not_connected", "positions": []}
+            from futu import TrdEnv, RET_OK
+            import os as _os
+            trd_env = TrdEnv.REAL if svc._is_live() else TrdEnv.SIMULATE
+            acc_id = int(_os.getenv("REAL_ACCOUNT_ID" if svc._is_live() else "SIMULATE_ACCOUNT_ID", "0"))
+
+            # Parallel: positions + account
+            with ThreadPoolExecutor(max_workers=2) as _pool:
+                _fut_pos = _pool.submit(svc._broker_ctx.position_list_query, trd_env=trd_env, acc_id=acc_id)
+                _fut_acc = _pool.submit(svc._broker_ctx.accinfo_query, trd_env=trd_env, acc_id=acc_id)
+                ret_p, pos_df = _fut_pos.result()
+                ret_a, funds = _fut_acc.result()
+
+            total_equity = 0
+            if ret_a == RET_OK and not funds.empty:
+                row = funds.iloc[0]
+                total_equity = _safe_float(row.get("total_assets", 0))
+
+            positions = []
+            long_mv = 0
+            short_mv = 0
+            total_unreal = 0
+
+            if ret_p == RET_OK and not pos_df.empty:
+                # Batch quotes for current prices
+                codes = [str(r.get("code", "")) for _, r in pos_df.iterrows() if r.get("code") and str(r.get("code", "")).startswith("US.")]
+                price_map = svc._batch_quotes(codes) if codes else {}
+
+                for _, p in pos_df.iterrows():
+                    code = str(p.get("code", ""))
+                    qty = float(p.get("qty", 0))
+                    if qty == 0 or not code.startswith("US."):
+                        continue
+                    cost = float(p.get("cost_price", 0))
+                    cur = price_map.get(code, float(p.get("cur_price", 0)))
+                    if cur <= 0:
+                        cur = float(p.get("val_price", 0)) / abs(qty) if qty != 0 else 0
+                    mv = abs(cur * qty)
+                    is_long = qty > 0
+                    unreal = (cur - cost) * qty if is_long else (cost - cur) * abs(qty)
+
+                    if is_long:
+                        long_mv += mv
+                    else:
+                        short_mv += mv
+                    total_unreal += unreal
+
+                    positions.append({
+                        "symbol": code,
+                        "direction": "LONG" if is_long else "SHORT",
+                        "qty": abs(qty),
+                        "cost": round(cost, 2),
+                        "current": round(cur, 2),
+                        "market_value": round(mv, 2),
+                        "unrealized_pnl": round(unreal, 2),
+                        "pnl_pct": round(unreal / (cost * abs(qty)) * 100, 2) if cost > 0 and qty != 0 else 0,
+                        "weight_pct": round(mv / total_equity * 100, 2) if total_equity > 0 else 0,
+                    })
+
+            # Sort by absolute unrealized PnL
+            positions.sort(key=lambda x: abs(x["unrealized_pnl"]), reverse=True)
+            # Add contribution %
+            for p in positions:
+                p["contribution_pct"] = round(p["unrealized_pnl"] / total_unreal * 100, 2) if total_unreal != 0 else 0
+
+            result = {
+                "positions": positions,
+                "total_equity": round(total_equity, 2),
+                "long_mv": round(long_mv, 2),
+                "short_mv": round(short_mv, 2),
+                "net_exposure": round(long_mv - short_mv, 2),
+                "gross_exposure": round(long_mv + short_mv, 2),
+                "total_unrealized": round(total_unreal, 2),
+                "long_short_ratio": round(long_mv / short_mv, 2) if short_mv > 0 else None,
+            }
+            _api_cache.set("analytics_positions", result, ttl=10)
+            return result
+        except Exception as e:
+            logger.error(f"[analytics/positions] {e}")
+            return {"error": str(e), "positions": []}
+
+    @app.get("/api/analytics/capital-flow")
+    async def analytics_capital_flow():
+        """模块3: 资金流向 (get_capital_flow + distribution, 对持仓标的)"""
+        cached = _api_cache.get("analytics_capital_flow")
+        if cached is not None:
+            return cached
+        try:
+            svc = get_manual_order_service()
+            if not svc.connect():
+                return {"error": "broker_not_connected", "flows": []}
+            from futu import TrdEnv, RET_OK
+            import os as _os
+            trd_env = TrdEnv.REAL if svc._is_live() else TrdEnv.SIMULATE
+            acc_id = int(_os.getenv("REAL_ACCOUNT_ID" if svc._is_live() else "SIMULATE_ACCOUNT_ID", "0"))
+
+            # Get current position codes
+            ret, pos_df = svc._broker_ctx.position_list_query(trd_env=trd_env, acc_id=acc_id)
+            codes = []
+            if ret == RET_OK and not pos_df.empty:
+                codes = [str(r.get("code", "")) for _, r in pos_df.iterrows() if r.get("code") and abs(float(r.get("qty", 0))) > 0][:8]
+
+            flows = []
+            if codes:
+                with ThreadPoolExecutor(max_workers=min(len(codes), 4)) as _pool:
+                    futures = {}
+                    for code in codes:
+                        futures[code] = _pool.submit(svc._quote_ctx.get_capital_distribution, code)
+                    for code, fut in futures.items():
+                        try:
+                            ret_cf, cf_data = fut.result()
+                            if ret_cf == RET_OK and not cf_data.empty:
+                                row = cf_data.iloc[0]
+                                flows.append({
+                                    "symbol": code,
+                                    "super_large_in": _safe_float(row.get("capital_in_super", 0)),
+                                    "super_large_out": _safe_float(row.get("capital_out_super", 0)),
+                                    "large_in": _safe_float(row.get("capital_in_big", 0)),
+                                    "large_out": _safe_float(row.get("capital_out_big", 0)),
+                                    "medium_in": _safe_float(row.get("capital_in_mid", 0)),
+                                    "medium_out": _safe_float(row.get("capital_out_mid", 0)),
+                                    "small_in": _safe_float(row.get("capital_in_small", 0)),
+                                    "small_out": _safe_float(row.get("capital_out_small", 0)),
+                                })
+                        except Exception:
+                            pass
+
+            # Calculate net flow per stock
+            for f in flows:
+                f["net_main"] = round((f["super_large_in"] - f["super_large_out"] + f["large_in"] - f["large_out"]) / 10000, 2)  # 万美元
+                f["net_retail"] = round((f["medium_in"] - f["medium_out"] + f["small_in"] - f["small_out"]) / 10000, 2)
+                f["net_total"] = round(f["net_main"] + f["net_retail"], 2)
+
+            flows.sort(key=lambda x: x["net_main"], reverse=True)
+            result = {"flows": flows, "count": len(flows)}
+            _api_cache.set("analytics_capital_flow", result, ttl=60)
+            return result
+        except Exception as e:
+            logger.error(f"[analytics/capital-flow] {e}")
+            return {"error": str(e), "flows": []}
+
+    @app.get("/api/analytics/execution-quality")
+    async def analytics_execution():
+        """模块4: 执行质量 (history_deal_list_query + 滑点统计)"""
+        cached = _api_cache.get("analytics_execution")
+        if cached is not None:
+            return cached
+        try:
+            svc = get_manual_order_service()
+            if not svc.connect():
+                return {"error": "broker_not_connected", "deals": []}
+            from futu import TrdEnv, RET_OK
+            import os as _os
+            from datetime import datetime, timedelta
+            trd_env = TrdEnv.REAL if svc._is_live() else TrdEnv.SIMULATE
+            acc_id = int(_os.getenv("REAL_ACCOUNT_ID" if svc._is_live() else "SIMULATE_ACCOUNT_ID", "0"))
+
+            # Query recent deals (today's deals, API 不支持日期过滤)
+            ret, deals_df = svc._broker_ctx.deal_list_query(
+                trd_env=trd_env, acc_id=acc_id,
+            )
+            deals = []
+            if ret == RET_OK and not deals_df.empty:
+                for _, d in deals_df.iterrows():
+                    code = str(d.get("code", ""))
+                    # 过滤非美股标的
+                    if not code.startswith("US."):
+                        continue
+                    deals.append({
+                        "time": str(d.get("create_time", "")),
+                        "symbol": code,
+                        "side": str(d.get("trd_side", "")),
+                        "qty": int(_safe_float(d.get("qty", 0))),
+                        "price": round(_safe_float(d.get("price", 0)), 4),
+                        "amount": round(_safe_float(d.get("price", 0)) * int(_safe_float(d.get("qty", 0))), 2),
+                        "order_id": str(d.get("order_id", "")),
+                    })
+
+            # Also get trade_records from DB for slippage data
+            slippage_data = []
+            try:
+                from app.core.db_utils import get_main_db
+                conn = sqlite3.connect(str(get_main_db()))
+                rows = conn.execute(
+                    "SELECT symbol, direction, metadata_json FROM trade_records "
+                    "WHERE metadata_json IS NOT NULL ORDER BY trade_date DESC LIMIT 100"
+                ).fetchall()
+                conn.close()
+                import json as _json
+                for r in rows:
+                    try:
+                        meta = _json.loads(r[2]) if r[2] else {}
+                        slip = meta.get("slippage_pct", 0)
+                        if slip:
+                            slippage_data.append({
+                                "symbol": r[0],
+                                "direction": r[1],
+                                "slippage_pct": slip,
+                                "signal_price": meta.get("signal_price", 0),
+                                "fill_price": meta.get("fill_price", 0),
+                            })
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+            avg_slippage = round(sum(s["slippage_pct"] for s in slippage_data) / len(slippage_data), 4) if slippage_data else 0
+            alert_count = sum(1 for s in slippage_data if abs(s["slippage_pct"]) > 0.5)
+
+            total_amount = sum(d["amount"] for d in deals)
+            result = {
+                "deals": deals[-50:],
+                "deal_count": len(deals),
+                "total_amount": round(total_amount, 2),
+                "avg_amount_per_deal": round(total_amount / len(deals), 2) if deals else 0,
+                "slippage_records": len(slippage_data),
+                "avg_slippage_pct": avg_slippage,
+                "slippage_alerts": alert_count,
+            }
+            _api_cache.set("analytics_execution", result, ttl=60)
+            return result
+        except Exception as e:
+            logger.error(f"[analytics/execution] {e}")
+            return {"error": str(e), "deals": []}
+
+    @app.get("/api/analytics/signal-quality")
+    async def analytics_signals():
+        """模块5: 信号质量 (signal_snapshots IC + 准确率)"""
+        cached = _api_cache.get("analytics_signals")
+        if cached is not None:
+            return cached
+        try:
+            from app.analysis.signal_ic_tracker import get_ic_summary, get_stats
+            ic_summary = get_ic_summary(min_signals=10, days_back=30)
+            stats = get_stats()
+
+            # Recent signal outcomes from signal_snapshots DB
+            try:
+                from app.analysis.signal_ic_tracker import _get_db_path as _snap_db_path
+                snap_db = str(_snap_db_path())
+                conn = sqlite3.connect(snap_db)
+                rows = conn.execute(
+                    "SELECT symbol, direction, strength, confidence, fwd_ret_t1 "
+                    "FROM signal_snapshots "
+                    "WHERE fwd_ret_t1 IS NOT NULL "
+                    "ORDER BY created_at DESC LIMIT 100"
+                ).fetchall()
+                conn.close()
+                recent = [{
+                    "symbol": r[0], "direction": r[1],
+                    "strength": r[2], "confidence": r[3],
+                    "fwd_return": round(float(r[4]) * 100, 2) if r[4] else 0,
+                } for r in rows]
+            except Exception:
+                recent = []
+
+            result = {
+                "ic_summary": ic_summary,
+                "stats": stats,
+                "recent_signals": recent,
+                "signal_count": len(recent),
+            }
+            _api_cache.set("analytics_signals", result, ttl=120)
+            return result
+        except Exception as e:
+            logger.error(f"[analytics/signals] {e}")
+            return {"error": str(e), "ic_summary": {}, "recent_signals": []}
+
+    @app.get("/api/analytics/sector-heatmap")
+    async def analytics_sectors():
+        """模块6: 板块热力图 (板块 ETF snapshot 计算涨跌幅)"""
+        cached = _api_cache.get("analytics_sectors")
+        if cached is not None:
+            return cached
+        try:
+            svc = get_manual_order_service()
+            if not svc.connect():
+                return {"error": "broker_not_connected", "sectors": []}
+            from futu import RET_OK
+
+            # 板块 ETF 映射 (SPDR Select Sector + 补充)
+            _SECTOR_ETFS = {
+                "US.XLK": "科技", "US.XLF": "金融", "US.XLE": "能源",
+                "US.XLV": "医疗", "US.XLI": "工业", "US.XLP": "必需消费",
+                "US.XLU": "公用事业", "US.XLB": "材料", "US.XLY": "可选消费",
+                "US.XLRE": "房地产", "US.XLC": "通信", "US.IWM": "小盘股",
+                "US.SPY": "标普500", "US.QQQ": "纳斯达克100", "US.DIA": "道琼斯",
+            }
+            codes = list(_SECTOR_ETFS.keys())
+            ret, snap = svc._quote_ctx.get_market_snapshot(codes)
+
+            sectors = []
+            if ret == RET_OK and not snap.empty:
+                for _, s in snap.iterrows():
+                    code = str(s.get("code", ""))
+                    name = _SECTOR_ETFS.get(code, code)
+                    cur = _safe_float(s.get("cur_price", 0))
+                    prev = _safe_float(s.get("prev_close_price", 0))
+                    # 盘后 cur_price 可能为 0，用 last_price 或 update_price 回退
+                    if cur <= 0:
+                        cur = _safe_float(s.get("last_price", 0))
+                    if cur <= 0:
+                        cur = _safe_float(s.get("update_price", 0))
+                    change_pct = ((cur - prev) / prev * 100) if prev > 0 else 0
+                    vol = int(_safe_float(s.get("volume", 0)))
+                    sectors.append({
+                        "name": name,
+                        "code": code,
+                        "change_pct": round(change_pct, 2),
+                        "price": round(cur, 2),
+                        "volume": vol,
+                    })
+
+            sectors.sort(key=lambda x: x["change_pct"], reverse=True)
+
+            # Hot concepts: 用热门主题 ETF
+            _CONCEPT_ETFS = {
+                "US.ARKW": "下一代互联网", "US.ARKK": "颠覆创新", "US.ARKG": "基因组革命",
+                "US.HACK": "网络安全", "US.TAN": "太阳能", "US.LIT": "锂电池",
+                "US.KWEB": "中概互联", "US.SMHH": "半导体",
+            }
+            hot_concepts = []
+            try:
+                concept_codes = list(_CONCEPT_ETFS.keys())
+                ret2, csnap = svc._quote_ctx.get_market_snapshot(concept_codes)
+                if ret2 == RET_OK and not csnap.empty:
+                    for _, c in csnap.iterrows():
+                        code = str(c.get("code", ""))
+                        name = _CONCEPT_ETFS.get(code, code)
+                        cur = _safe_float(c.get("cur_price", 0))
+                        prev = _safe_float(c.get("prev_close_price", 0))
+                        if cur <= 0:
+                            cur = _safe_float(c.get("last_price", 0))
+                        change_pct = ((cur - prev) / prev * 100) if prev > 0 else 0
+                        hot_concepts.append({"name": name, "change_pct": round(change_pct, 2)})
+                    hot_concepts.sort(key=lambda x: x["change_pct"], reverse=True)
+            except Exception:
+                pass
+
+            result = {
+                "sectors": sectors,
+                "hot_concepts": hot_concepts,
+                "sector_count": len(sectors),
+            }
+            _api_cache.set("analytics_sectors", result, ttl=120)
+            return result
+        except Exception as e:
+            logger.error(f"[analytics/sectors] {e}")
+            return {"error": str(e), "sectors": []}
+
+    @app.get("/api/analytics/signal-dashboard")
+    async def signal_dashboard():
+        """指挥中心信号看板: 信号漏斗 + watchlist 信号灯"""
+        cached = _api_cache.get("signal_dashboard")
+        if cached is not None:
+            return cached
+        try:
+            today = _et_today()
+
+            # 1. 今日信号数 (from signal_snapshots)
+            signal_count = 0
+            passed_count = 0
+            try:
+                from app.analysis.signal_ic_tracker import _get_db_path
+                conn = sqlite3.connect(str(_get_db_path()))
+                row = conn.execute(
+                    "SELECT COUNT(*) FROM signal_snapshots WHERE trade_date = ?", (today,)
+                ).fetchone()
+                signal_count = row[0] if row else 0
+                # Passed = strength >= 30 and confidence > 0
+                row2 = conn.execute(
+                    "SELECT COUNT(*) FROM signal_snapshots WHERE trade_date = ? AND strength >= 30 AND confidence > 0",
+                    (today,)
+                ).fetchone()
+                passed_count = row2[0] if row2 else 0
+                conn.close()
+            except Exception:
+                pass
+
+            # 2. 今日执行数 (from trade_records)
+            executed_count = 0
+            today_trades = []
+            try:
+                from app.core.db_utils import get_main_db
+                conn2 = sqlite3.connect(str(get_main_db()))
+                conn2.row_factory = sqlite3.Row
+                row3 = conn2.execute(
+                    "SELECT COUNT(*) FROM trade_records WHERE trade_date = ?", (today,)
+                ).fetchone()
+                executed_count = row3[0] if row3 else 0
+                # Recent trades (last 5)
+                rows = conn2.execute(
+                    "SELECT symbol, direction, realized_pnl, exit_reason, trade_date "
+                    "FROM trade_records ORDER BY trade_date DESC, id DESC LIMIT 5"
+                ).fetchall()
+                today_trades = [{
+                    "symbol": r["symbol"],
+                    "direction": r["direction"],
+                    "pnl": round(float(r["realized_pnl"]), 2) if r["realized_pnl"] else 0,
+                    "exit_reason": r["exit_reason"] or "",
+                    "date": r["trade_date"],
+                } for r in rows]
+                conn2.close()
+            except Exception:
+                pass
+
+            # 3. Watchlist 信号灯 (from open_positions + signal data)
+            watchlist = []
+            try:
+                svc = get_manual_order_service()
+                if svc.connect():
+                    from futu import TrdEnv, RET_OK
+                    import os as _os
+                    trd_env = TrdEnv.REAL if svc._is_live() else TrdEnv.SIMULATE
+                    acc_id = int(_os.getenv("REAL_ACCOUNT_ID" if svc._is_live() else "SIMULATE_ACCOUNT_ID", "0"))
+                    ret, pos_df = svc._broker_ctx.position_list_query(trd_env=trd_env, acc_id=acc_id)
+                    if ret == RET_OK and not pos_df.empty:
+                        for _, p in pos_df.iterrows():
+                            code = str(p.get("code", ""))
+                            qty = float(p.get("qty", 0))
+                            if qty == 0 or not code.startswith("US."):
+                                continue
+                            cost = float(p.get("cost_price", 0))
+                            cur = float(p.get("cur_price", 0))
+                            pnl_pct = ((cur - cost) / cost * 100) if cost > 0 and cur > 0 else 0
+                            # Simple signal light based on PnL
+                            if pnl_pct > 5:
+                                light = "green"
+                            elif pnl_pct > -3:
+                                light = "yellow"
+                            else:
+                                light = "red"
+                            watchlist.append({
+                                "symbol": code,
+                                "direction": "LONG" if qty > 0 else "SHORT",
+                                "qty": abs(qty),
+                                "pnl_pct": round(pnl_pct, 2),
+                                "light": light,
+                            })
+                        watchlist.sort(key=lambda x: x["pnl_pct"])
+            except Exception:
+                pass
+
+            result = {
+                "today": today,
+                "signal_count": signal_count,
+                "passed_count": passed_count,
+                "executed_count": executed_count,
+                "pass_rate": round(passed_count / signal_count * 100, 1) if signal_count > 0 else 0,
+                "recent_trades": today_trades,
+                "watchlist": watchlist,
+            }
+            _api_cache.set("signal_dashboard", result, ttl=15)
+            return result
+        except Exception as e:
+            logger.error(f"[signal-dashboard] {e}")
+            return {"error": str(e)}
+
+    @app.get("/api/analytics/manual-performance")
+    async def manual_performance():
+        """手动交易绩效分析: 胜率/P&L/对比自动交易"""
+        cached = _api_cache.get("manual_perf")
+        if cached is not None:
+            return cached
+        try:
+            from app.core.db_utils import get_main_db
+            conn = sqlite3.connect(str(get_main_db()))
+            conn.row_factory = sqlite3.Row
+
+            # 手动交易统计
+            manual = conn.execute("""
+                SELECT COUNT(*) as cnt,
+                       SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
+                       COALESCE(SUM(realized_pnl), 0) as total_pnl,
+                       COALESCE(AVG(CASE WHEN realized_pnl > 0 THEN realized_pnl END), 0) as avg_win,
+                       COALESCE(AVG(CASE WHEN realized_pnl < 0 THEN realized_pnl END), 0) as avg_loss
+                FROM trade_records
+                WHERE strategy_id = 'manual' OR source_type = 'MANUAL'
+            """).fetchone()
+
+            # 自动交易统计 (对比)
+            auto = conn.execute("""
+                SELECT COUNT(*) as cnt,
+                       SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
+                       COALESCE(SUM(realized_pnl), 0) as total_pnl,
+                       COALESCE(AVG(CASE WHEN realized_pnl > 0 THEN realized_pnl END), 0) as avg_win,
+                       COALESCE(AVG(CASE WHEN realized_pnl < 0 THEN realized_pnl END), 0) as avg_loss
+                FROM trade_records
+                WHERE (strategy_id != 'manual' OR strategy_id IS NULL)
+                  AND source_type != 'MANUAL'
+                  AND source_type NOT IN ('manual_sync', 'reconciler')
+            """).fetchone()
+
+            # 最近手动交易明细
+            recent = conn.execute("""
+                SELECT symbol, direction, realized_pnl, exit_reason, trade_date,
+                       entry_price, exit_price, quantity
+                FROM trade_records
+                WHERE strategy_id = 'manual' OR source_type = 'MANUAL'
+                ORDER BY trade_date DESC, id DESC
+                LIMIT 20
+            """).fetchall()
+            conn.close()
+
+            def _calc_stats(row):
+                cnt = row["cnt"] or 0
+                wins = row["wins"] or 0
+                total = row["total_pnl"] or 0
+                avg_w = row["avg_win"] or 0
+                avg_l = row["avg_loss"] or 0
+                pf = abs(avg_w * wins / (avg_l * (cnt - wins))) if avg_l != 0 and (cnt - wins) > 0 else 0
+                return {
+                    "count": cnt,
+                    "wins": wins,
+                    "losses": cnt - wins,
+                    "win_rate": round(wins / cnt * 100, 1) if cnt > 0 else 0,
+                    "total_pnl": round(total, 2),
+                    "avg_win": round(avg_w, 2),
+                    "avg_loss": round(avg_l, 2),
+                    "profit_factor": round(pf, 2),
+                    "avg_pnl": round(total / cnt, 2) if cnt > 0 else 0,
+                }
+
+            result = {
+                "manual": _calc_stats(manual),
+                "auto": _calc_stats(auto),
+                "recent_trades": [{
+                    "symbol": r["symbol"],
+                    "direction": r["direction"],
+                    "pnl": round(float(r["realized_pnl"] or 0), 2),
+                    "exit_reason": r["exit_reason"] or "",
+                    "date": r["trade_date"],
+                    "entry_price": round(float(r["entry_price"] or 0), 2),
+                    "exit_price": round(float(r["exit_price"] or 0), 2),
+                    "quantity": r["quantity"] or 0,
+                } for r in recent],
+            }
+            _api_cache.set("manual_perf", result, ttl=60)
+            return result
+        except Exception as e:
+            logger.error(f"[manual-performance] {e}")
+            return {"error": str(e), "manual": {}, "auto": {}, "recent_trades": []}
 
     logger.info("简化版 Dashboard Web 服务已创建")
 

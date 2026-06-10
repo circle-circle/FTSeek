@@ -395,7 +395,7 @@ data_sources:
     cache_ttl:
       quote: 300
       timeseries: 1800
-      vix: 600
+      vix: 60    # 2026-06-10: 600→60, VIX闪崩时10min缓存导致用崩盘前参数交易
       spy: 900
     batch_size: 8
   finnhub:
@@ -414,7 +414,7 @@ data_sources:
     cache_ttl:
       quote: 300
       timeseries: 1800
-      vix: 600
+      vix: 60    # 2026-06-10: 600→60, VIX闪崩时10min缓存导致用崩盘前参数交易
       spy: 900
   priority:
     primary: twelvedata+finnhub
@@ -1117,7 +1117,8 @@ dynamic_exit:
     stop_loss: -0.045
     # P7 优化 (2026-05-22): 止盈从 5% 降到 2.5%, 数据：TRAILING_STOP 85 笔平均盈利仅 0.03%
     # 归因：止盈目标过高导致利润回吐，tp_hit 仅 5 笔 (1.9%)
-    take_profit: 0.025
+    # 2026-06-10: 2.5%→5.0%, R/R 从 0.56 修正至 1.11, 配合 P0-3 trailing 收紧减少利润回吐
+    take_profit: 0.05
     partial_take_profit:
       enabled: true
       levels:
@@ -1647,7 +1648,7 @@ strategies:
     max_positions: 12                # 模拟盘: 5→12, 最大化数据采集
     direction_bias:
       LONG:
-        min_confidence: 0.45  # ADR-005: 0.55→0.45, 配合紧退出加速数据采集
+        min_confidence: 0.60  # 2026-06-10: 0.45→0.60, LONG 26.6% WR 净亏$2.9K, 收紧入场门槛
       SHORT:
         min_confidence: 0.35  # ADR-005: 0.45→0.35, SHORT正EV方向, 放宽让更多信号进入
     # DEPRECATED (2026-05-31): strategies.defaults.signal_cooldown_seconds 不再生效

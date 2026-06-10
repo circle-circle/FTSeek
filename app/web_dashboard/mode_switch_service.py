@@ -144,6 +144,7 @@ def switch_mode(target_mode: str, confirm: str = "") -> Dict[str, Any]:
             write_env_key("TRADE_ENV", "1")
             write_env_key("FUTU_TRADE_ENV", "1")
             write_env_key("ALLOW_REAL_TRADING", "false")
+            write_env_key("LIVE_CONSERVATIVE", "1")  # 安全默认值：下次切实盘时默认保守
             msg = "已切换到模拟盘"
 
         elif target_mode == "live_conservative":

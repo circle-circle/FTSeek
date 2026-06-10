@@ -81,8 +81,18 @@ def _record_execution_metrics(
     slippage_pct = 0.0
     if signal_price and signal_price > 0 and fill_price and fill_price > 0:
         slip = (float(fill_price) - float(signal_price)) / float(signal_price) * 100.0
-        # SHORT 方向: 实际价 < 参考价 = 不利 → 反转符号使 “正 = 不利”
+        # SHORT 方向: 实际价 < 参考价 = 不利 → 反转符号使 "正 = 不利"
         slippage_pct = -slip if str(direction).upper() == "SHORT" else slip
+
+    # 2026-06-10 红队修复: 滑点超阈值告警 (SlippageController 原为死代码, 此处接入)
+    _SLIPPAGE_WARN_PCT = 0.5
+    _slippage_alert = False
+    if abs(slippage_pct) > _SLIPPAGE_WARN_PCT:
+        _slippage_alert = True
+        logger.warning(
+            f"[滑点告警] {symbol} {direction} 滑点 {slippage_pct:+.2f}% "
+            f"(信号${signal_price:.2f} → 成交${fill_price:.2f}) 超过阈值 {_SLIPPAGE_WARN_PCT}%"
+        )
 
     logger.info(f"Execution latency: {latency_ms}ms for {symbol}")
 
@@ -90,6 +100,7 @@ def _record_execution_metrics(
         "signal_price": round(float(signal_price or 0.0), 4),
         "fill_price": round(float(fill_price or 0.0), 4),
         "slippage_pct": round(float(slippage_pct), 4),
+        "slippage_alert": _slippage_alert,
         "execution_latency_ms": latency_ms,
         "signal_time": datetime.fromtimestamp(signal_time).isoformat() if signal_time else None,
         "fill_time": datetime.fromtimestamp(fill_time).isoformat() if fill_time else None,
@@ -311,13 +322,15 @@ def _close_short_for_long(scheduler, symbol: str, qty: float, current_price: flo
                 return False
 
         # 构建平仓订单 (BUY 平空仓)
+        # 2026-06-10: MARKET→LIMIT ± 2% 价格保护
+        _close_short_price = round(current_price * (1 + 0.02), 2)
         order = OrderModel(
             client_order_id=f"{symbol}_CLOSE_SHORT_{int(time.time())}_{uuid.uuid4().hex[:6]}",
             symbol=symbol,
             direction=Dir.LONG,  # 买入平空
-            order_type=OT.MARKET,
+            order_type=OT.LIMIT,
             quantity=qty,
-            price=current_price,
+            price=_close_short_price,
         )
         # P0 修复 (2026-06-03): 走 ExecutionEngine 而非直连 broker_adapter
         # 确保幂等/方向冲突/来源标记全链路生效
@@ -405,13 +418,15 @@ def _close_long_for_short(scheduler, symbol: str, qty: float, current_price: flo
                 return False
 
         # 构建平仓订单 (SELL 平多仓)
+        # 2026-06-10: MARKET→LIMIT ± 2% 价格保护
+        _close_long_price = round(current_price * (1 - 0.02), 2)
         order = OrderModel(
             client_order_id=f"{symbol}_CLOSE_LONG_{int(time.time())}_{uuid.uuid4().hex[:6]}",
             symbol=symbol,
             direction=Dir.SHORT,  # 卖出平多
-            order_type=OT.MARKET,
+            order_type=OT.LIMIT,
             quantity=qty,
-            price=current_price,
+            price=_close_long_price,
         )
         # P0 修复 (2026-06-03): 走 ExecutionEngine 而非直连 broker_adapter
         if not hasattr(order, 'metadata') or order.metadata is None:
@@ -1078,6 +1093,32 @@ def _check_gates_and_conflicts(scheduler, symbol: str, signal: SignalScore, cont
     except Exception as _sq_err:
         logger.debug(f"[SignalQuality] 检查异常 (不放行): {_sq_err}")
         return False
+
+    # 2026-06-10 红队修复 B1: 信号 IC 自动暂停 — 滚动 30 日 IC < 0 时阻止新开仓
+    try:
+        from app.core.trading_mode import TradingMode
+        if TradingMode().is_live:
+            from app.analysis.signal_ic_tracker import get_ic_summary
+            _ic_summary = get_ic_summary(min_signals=30, days_back=30)
+            if _ic_summary.get("status") == "ok":
+                _ic_mean = _ic_summary.get("ic_mean", 0.0)
+                if _ic_mean < 0:
+                    logger.warning(
+                        f"🚫 [IC门禁] {symbol} 信号被拦截: "
+                        f"30日滚动IC={_ic_mean:.4f}<0 (N={_ic_summary.get('n_signals',0)}), "
+                        f"信号预测力为负, 暂停新开仓"
+                    )
+                    get_rejection_logger().record(
+                        symbol, f"IC={_ic_mean:.4f}<0", "SIGNAL_IC_NEGATIVE",
+                        strength=int(getattr(signal, 'strength', 0) or 0),
+                        confidence=float(getattr(signal, 'confidence', 0.0) or 0.0),
+                        direction=str(getattr(signal, 'direction', '') or ''),
+                    )
+                    return False
+    except ImportError:
+        pass  # signal_ic_tracker 不可用时跳过
+    except Exception as _ic_err:
+        logger.debug(f"[IC门禁] 检查异常 (不放行): {_ic_err}")
 
     # 🔴 P0 关键修复: 全局风险状态机门禁检查
     # 在一切交易逻辑之前，检查系统是否处于 RISK_OFF 或 HALT 状态
@@ -1795,6 +1836,14 @@ def _execute_long(scheduler, symbol: str, signal: SignalScore, context: Dict[str
             f"[P4·observation] {symbol} LONG strength={_strength_observed} ≥80, "
             f"5/12-18 同档位 avg=-$1/笔. 观察今晚表现. (此处仅记录, 不改行为)"
         )
+        # 2026-06-10 P1-3: 实盘保守模式下 strength≥80 封顶为 70 (数据: 80+ avg -$1 vs 60-79 avg +$11)
+        try:
+            from app.core.trading_mode import TradingMode
+            if TradingMode().is_conservative:
+                signal.strength = 70
+                logger.info(f"[P1-3] {symbol} strength {_strength_observed}→70 (conservative mode cap)")
+        except Exception:
+            pass
 
     # ⭐ Pre-Entry Signal Gate (2026-05-19) — LLM 拦截历史失败模式
     # 默认 disabled (yaml.llm_features.pre_entry_gate.enabled=false), 启用后:
@@ -3525,17 +3574,21 @@ def _close_position(scheduler, position: Position, current_price: float, exit_re
     )
 
     # 构建平仓订单
-    # P1 修复 (2026-05-11): 止损单使用 Stop Order 而非 Market Order
-    # 防止正常盘内波动误触发止损，减少滑点
-    # 注意: gap 场景下 Stop 仍会滑点，但至少避免了 scan 间隔内的额外亏损
+    # 2026-06-10 红队修复: MARKET→LIMIT ± 2% 价格保护带, 防止闪崩时市价单成交在极端价格
+    # 如果限价单未成交, 后续 scan 周期会以更新价格重试或降级为市价单
+    _exit_slippage_band = 0.02  # 2% 滑点容忍
+    if position.direction == Direction.LONG:
+        _exit_limit_price = round(current_price * (1 - _exit_slippage_band), 2)
+    else:
+        _exit_limit_price = round(current_price * (1 + _exit_slippage_band), 2)
     close_order = Order(
         client_order_id=f"{position.symbol}_close_{int(time.time())}_{uuid.uuid4().hex[:6]}",
         signal_id=position.signal_id,
         symbol=position.symbol,
         direction=Direction.SHORT if position.direction == Direction.LONG else Direction.LONG,
-        order_type=OrderType.MARKET,  # P0 修复: STOP 不在枚举中导致 AttributeError
+        order_type=OrderType.LIMIT,
         quantity=position.size,
-        price=current_price,
+        price=_exit_limit_price,
     )
     # P1-2 修复 2026-04-26: 平仓订单标记 is_exit=True，跳过幂等检查避免重复拦截
     if not hasattr(close_order, 'metadata') or close_order.metadata is None:

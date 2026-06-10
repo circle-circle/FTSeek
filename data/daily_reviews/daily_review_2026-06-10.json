@@ -1,0 +1,266 @@
+{
+  "report_type": "daily",
+  "report_version": "2.0",
+  "report_date": "2026-06-10",
+  "generated_at": "2026-06-11T07:31:30.476234",
+  "summary": {
+    "total_trades": 0,
+    "closed_trades": 0,
+    "total_pnl": 0,
+    "win_rate": 0,
+    "avg_pnl": 0,
+    "equity_snapshot": {
+      "current_equity": 82074.0,
+      "drawdown_pct": -0.23
+    }
+  },
+  "signal_funnel": {
+    "total_decisions": 45,
+    "by_direction_strength": {
+      "LONG(s=33)": 1,
+      "LONG(s=34)": 1,
+      "LONG(s=35)": 4,
+      "LONG(s=36)": 2,
+      "LONG(s=37)": 4,
+      "LONG(s=38)": 1,
+      "LONG(s=39)": 1,
+      "LONG(s=40)": 1,
+      "LONG(s=43)": 2,
+      "LONG(s=63)": 1,
+      "LONG(s=64)": 2,
+      "SHORT(s=31)": 5,
+      "SHORT(s=32)": 3,
+      "SHORT(s=33)": 1,
+      "SHORT(s=34)": 5,
+      "SHORT(s=35)": 1,
+      "SHORT(s=36)": 1,
+      "SHORT(s=37)": 3,
+      "SHORT(s=39)": 2,
+      "SHORT(s=40)": 1,
+      "SHORT(s=43)": 2,
+      "SHORT(s=45)": 1
+    }
+  },
+  "rejection_analysis": {
+    "total": 0,
+    "by_reason": {},
+    "by_symbol": {},
+    "top_rejector": "none"
+  },
+  "capital_state": {
+    "current_equity": 82074.0,
+    "cash": 46021.0,
+    "buying_power": 49157.0,
+    "drawdown_pct": -0.23,
+    "max_drawdown_pct": -0.23,
+    "water_level": "green"
+  },
+  "attribution_data": {
+    "total_records": 0,
+    "data_available": false,
+    "note": "trade_attribution 无当日数据",
+    "five_factor": {
+      "five_factor_available": false,
+      "reason": "样本不足 (n=0)"
+    },
+    "signal_scores_avg": null,
+    "execution_scores_avg": null,
+    "risk_scores_avg": null,
+    "timing_scores_avg": null,
+    "overall_scores_avg": null
+  },
+  "trade_analyses": [],
+  "dimensions": {
+    "signal_quality": {
+      "score": 5.0,
+      "total_signals": 45,
+      "signal_to_trade_ratio": 0,
+      "strength_distribution": {},
+      "assessment": "no_trades"
+    },
+    "voting_consistency": {
+      "score": null,
+      "status": "no_trades",
+      "data_available": false
+    },
+    "execution_quality": {
+      "score": null,
+      "status": "no_trades",
+      "data_available": false
+    },
+    "risk_compliance": {
+      "data_available": true,
+      "current_drawdown_pct": -0.23,
+      "max_drawdown_pct": -0.23,
+      "water_level": "green",
+      "risk_score": 9.0
+    },
+    "funnel_diagnosis": {
+      "score": null,
+      "status": "normal",
+      "total_decisions": 45,
+      "total_trades": 0,
+      "total_rejections": 0,
+      "trade_conversion_rate": 0.0,
+      "rejection_rate": 0.0,
+      "top_rejector": "none",
+      "by_direction_strength": {
+        "LONG(s=33)": 1,
+        "LONG(s=34)": 1,
+        "LONG(s=35)": 4,
+        "LONG(s=36)": 2,
+        "LONG(s=37)": 4,
+        "LONG(s=38)": 1,
+        "LONG(s=39)": 1,
+        "LONG(s=40)": 1,
+        "LONG(s=43)": 2,
+        "LONG(s=63)": 1,
+        "LONG(s=64)": 2,
+        "SHORT(s=31)": 5,
+        "SHORT(s=32)": 3,
+        "SHORT(s=33)": 1,
+        "SHORT(s=34)": 5,
+        "SHORT(s=35)": 1,
+        "SHORT(s=36)": 1,
+        "SHORT(s=37)": 3,
+        "SHORT(s=39)": 2,
+        "SHORT(s=40)": 1,
+        "SHORT(s=43)": 2,
+        "SHORT(s=45)": 1
+      }
+    },
+    "attribution_learning": {
+      "data_available": false,
+      "lessons_count": 0
+    }
+  },
+  "decision_analysis": {},
+  "risk_analysis": {
+    "data_available": true,
+    "current_drawdown_pct": -0.23,
+    "max_drawdown_pct": -0.23,
+    "water_level": "green",
+    "risk_score": 9.0
+  },
+  "voting_analysis": {
+    "score": null,
+    "status": "no_trades",
+    "data_available": false
+  },
+  "error_patterns": {},
+  "review_score": {
+    "overall_score": 5.0,
+    "max_score": 10.0,
+    "status": "no_trades",
+    "breakdown": {}
+  },
+  "market_regime": {
+    "state": "unknown",
+    "confidence": "low",
+    "indicators": {
+      "drawdown_pct": 0.23
+    }
+  },
+  "plan_vs_actual": {
+    "plan_available": true,
+    "planned_targets": [
+      {
+        "symbol": "US.ORCL",
+        "direction": "LONG",
+        "entry_zone": [
+          174.0,
+          175.5
+        ],
+        "stop_loss": 172.5,
+        "take_profit": 180.0,
+        "urgency": "LOW",
+        "rationale": "ORCL 技术面保持强势上升趋势，均线多头排列，在降级模式下选择相对抗跌且机构持仓稳定的标的，试仓严格止损。 [降级试仓]",
+        "_price_warning": "entry_zone偏离当前价15.1%",
+        "_current_price_ref": 205.81,
+        "open_check_status": "CANCELLED",
+        "gap_pct": -0.028373147011613593,
+        "cancellation_reason": "Direction Divergence (Plan LONG but Gap -2.84%)"
+      },
+      {
+        "symbol": "US.AMZN",
+        "direction": "LONG",
+        "entry_zone": [
+          234.0,
+          235.5
+        ],
+        "stop_loss": 231.5,
+        "take_profit": 242.0,
+        "urgency": "LOW",
+        "rationale": "AMZN 盘整区间上沿，若市场选择向上突破则弹性较大，当前处于关键阻力位附近，仅小量试仓跟随突破方向。 [降级试仓]",
+        "open_check_status": "VALID",
+        "gap_pct": -0.0042003099257809364,
+        "confirmed_entry_price": 244.19
+      },
+      {
+        "symbol": "US.TSM",
+        "direction": "LONG",
+        "entry_zone": [
+          163.5,
+          165.0
+        ],
+        "stop_loss": 161.0,
+        "take_profit": 170.0,
+        "urgency": "LOW",
+        "rationale": "TSM 半导体龙头，技术面高位平台整理，下方支撑显著，若SPY/QQQ未破位则有望延续上行，降级模式仅试仓且快速止损。 [降级试仓]",
+        "_price_warning": "entry_zone偏离当前价61.6%",
+        "_current_price_ref": 427.92,
+        "open_check_status": "VALID",
+        "gap_pct": 0.002624179943767583,
+        "confirmed_entry_price": 427.92
+      }
+    ],
+    "executed_targets": [],
+    "missed_opportunities": [
+      "US.AMZN",
+      "US.TSM",
+      "US.ORCL"
+    ],
+    "unplanned_trades": [],
+    "plan_date": "2026-06-10",
+    "execution_rate": 0.0
+  },
+  "key_learnings": [],
+  "improvement_suggestions": [
+    "产生 45 条决策但 0 笔执行，检查门禁/风控是否过严"
+  ],
+  "exit_reason_pnl": {
+    "window_days": 30,
+    "total_reasons": 0,
+    "by_reason": {}
+  },
+  "coordinator_summary": {
+    "window_date": "2026-06-10",
+    "owner_strategy_distribution": {},
+    "active_positions_by_owner": {
+      "<NULL>": 5,
+      "main": 2
+    },
+    "arbitration": {
+      "total": 0,
+      "multi_candidate": 0,
+      "winners": {}
+    }
+  },
+  "shadow_comparison": {
+    "real": {
+      "n": 0,
+      "total_pnl": 0,
+      "win_rate": 0
+    },
+    "shadow_by_variant": []
+  },
+  "pnl_outliers": {
+    "n": 0,
+    "outliers": []
+  },
+  "symbol_loss_guard_triggers": {
+    "total_symbols_tracked": 0,
+    "blocked_count": 0,
+    "blocked": []
+  }
+}

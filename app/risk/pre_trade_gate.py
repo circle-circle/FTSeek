@@ -72,6 +72,16 @@ def _load_limits(config=None) -> dict:
             limits["max_per_direction"] *= mult
             limits["max_total"] *= mult
             limits["long_max_per_direction"] *= mult
+
+        # Mode-adaptation caps from YAML (2026-06-10 fix): 取 YAML 阈值与缩放后值的较小者
+        mode_max_pos = tm.get_max_position_pct()
+        mode_max_exp = tm.get_max_total_exposure_pct()
+        if mode_max_pos > 0:
+            limits["max_per_symbol"] = min(limits["max_per_symbol"], mode_max_pos)
+        if mode_max_exp > 0:
+            limits["max_total"] = min(limits["max_total"], mode_max_exp)
+            limits["max_per_direction"] = min(limits["max_per_direction"], mode_max_exp)
+            limits["long_max_per_direction"] = min(limits["long_max_per_direction"], mode_max_exp)
     except Exception:
         pass
 

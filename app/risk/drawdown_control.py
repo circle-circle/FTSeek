@@ -178,7 +178,7 @@ class DrawdownController:
             logger.info(
                 f"[回撤·{source}] 记录亏损 ${pnl:.2f} | "
                 f"日内回撤: ${self.current_daily_dd_abs:.2f} "
-                f"({self.current_daily_dd:.2%} / {self.max_daily:.2%})"
+                f"({self.current_daily_dd:.2%} / {self._get_effective_max_daily():.2%})"
             )
 
         self._check_limits()
@@ -194,13 +194,24 @@ class DrawdownController:
     # ------------------------------------------------------------------
 
     def _check_limits(self):
-        """检查回撤限制"""
+        """检查回撤限制 (动态应用模式感知限额)"""
         self.block_reason = None
 
-        if self.current_daily_dd > self.max_daily:
+        # 模式感知日亏损限额: 从 TradingMode 读取 YAML mode_adaptation 配置
+        effective_daily = self._get_effective_max_daily()
+
+        if self.current_daily_dd > effective_daily:
             self.block_reason = "DAILY_DRAWDOWN"
         elif self.current_total_dd > self.max_total:
             self.block_reason = "TOTAL_DRAWDOWN"
+
+    def _get_effective_max_daily(self) -> float:
+        """获取模式感知的日亏损限额 (热加载)"""
+        try:
+            from app.core.trading_mode import TradingMode
+            return TradingMode().get_max_daily_loss_pct()
+        except Exception:
+            return self.max_daily
 
     def is_daily_limit_breached(self) -> bool:
         """检查日内回撤是否超限"""
@@ -236,7 +247,8 @@ class DrawdownController:
             "daily_drawdown_pct": round(self.current_daily_dd * 100, 2),
             "total_drawdown_abs": round(self.current_total_dd_abs, 2),
             "total_drawdown_pct": round(self.current_total_dd * 100, 2),
-            "max_daily_allowed": round(self.max_daily * 100, 2),
+            "max_daily_allowed": round(self._get_effective_max_daily() * 100, 2),
+            "max_daily_configured": round(self.max_daily * 100, 2),
             "max_total_allowed": round(self.max_total * 100, 2),
             "blocked": self.block_reason is not None,
             "block_reason": self.block_reason,
