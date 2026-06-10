@@ -1824,15 +1824,16 @@ def create_app() -> FastAPI:
 
         try:
             from app.llm.unified_service import UnifiedLLMService
-            llm_result = await UnifiedLLMService.call_async(
+            # 同步调用 (避免 run_in_executor 环境变量丢失问题)
+            llm_result = UnifiedLLMService.call(
                 "stock_analyst", user_prompt,
                 system=system_prompt,
                 temperature=0.2,
                 max_tokens=500,
                 json_mode=True,
-                timeout=30,
+                timeout=60,
             )
-            if llm_result.success and llm_result.response:
+            if llm_result and llm_result.success and llm_result.response:
                 # Parse JSON from response
                 resp_text = llm_result.response
                 if isinstance(resp_text, str):
@@ -1853,7 +1854,9 @@ def create_app() -> FastAPI:
                     "latency_ms": getattr(llm_result, 'latency', 0),
                 }
             else:
-                return {"symbol": symbol, "error": f"LLM调用失败: {getattr(llm_result, 'error', 'unknown')}"}
+                err_detail = getattr(llm_result, 'error', None) or 'unknown'
+                logger.error(f"[StockDetail] LLM分析失败 {symbol}: success={getattr(llm_result, 'success', None)}, error={err_detail}")
+                return {"symbol": symbol, "error": f"LLM调用失败: {err_detail}"}
         except _json.JSONDecodeError as e:
             return {"symbol": symbol, "error": f"LLM返回解析失败: {e}", "raw": resp_text[:200] if 'resp_text' in dir() else ""}
         except Exception as e:
