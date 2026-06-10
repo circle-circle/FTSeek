@@ -187552,3 +187552,22 @@ API: http://localhost:8901
 2026-06-10 14:01:10,152 [app.orb.engine] INFO: [ORB] tick #721 | time=02:01:10 | pos=0 | ranges=0 | done=0
 2026-06-10 14:01:37,004 [ftseek_us.news_v2.sources.csrc] INFO: [CSRC] 采集完成: 0 条监管公告
 2026-06-10 14:01:58,434 [ftseek_us.news_v2.sources.hkex] INFO: [HKEX] 采集完成: 0 条公告
+2026-06-10 14:03:59,799 [ftseek_us.risk.vix_monitor] INFO: VIX 指数：20.63
+2026-06-10 14:05:17,852 [ftseek_us.news_v2.sources.hkex] INFO: [HKEX] 采集完成: 0 条公告
+2026-06-10 14:06:10,182 [app.pipeline.signal_pipeline] INFO: [扫描] overnight → 完全静默，跳过扫描
+2026-06-10 14:06:10,419 [app.orb.engine] INFO: [ORB] tick #781 | time=02:06:10 | pos=0 | ranges=0 | done=0
+2026-06-10 14:08:18,066 [ftseek_us.news_v2.sources.csrc] INFO: [CSRC] 采集完成: 0 条监管公告
+2026-06-10 14:08:39,161 [ftseek_us.news_v2.sources.hkex] INFO: [HKEX] 采集完成: 0 条公告
+2026-06-10 14:09:15,830 [ftseek_us.risk.vix_monitor] INFO: VIX 指数：20.63
+2026-06-10 14:11:10,402 [app.pipeline.signal_pipeline] INFO: [扫描] overnight → 完全静默，跳过扫描
+2026-06-10 14:11:10,668 [app.orb.engine] INFO: [ORB] tick #841 | time=02:11:10 | pos=0 | ranges=0 | done=0
+2026-06-10 14:11:55,822 [ftseek_us.news_v2.sources.hkex] INFO: [HKEX] 采集完成: 0 条公告
+2026-06-10 14:14:28,481 [ftseek_us.risk.vix_monitor] INFO: VIX 指数：20.63
+2026-06-10 14:14:56,067 [ftseek_us.news_v2.sources.csrc] INFO: [CSRC] 采集完成: 0 条监管公告
+2026-06-10 14:15:13,653 [ftseek_us.news_v2.sources.hkex] INFO: [HKEX] 采集完成: 0 条公告
+2026-06-10 14:16:10,632 [app.pipeline.signal_pipeline] INFO: [扫描] overnight → 完全静默，跳过扫描
+2026-06-10 14:16:10,910 [app.orb.engine] INFO: [ORB] tick #901 | time=02:16:10 | pos=0 | ranges=0 | done=0
+2026-06-10 14:18:13,747 [ftseek_us.config_mgmt.hot_reloader] INFO: [HotReloader] 检测到文件变化: unified_config.yaml
+2026-06-10 14:18:14,034 [app.core.config_container] INFO: [ConfigContainer] 已加载 60 个配置节
+2026-06-10 14:18:14,034 [ftseek_us.config_mgmt.hot_reloader] INFO: [HotReloader] ✅ 配置已热重载 (第 2 次)
+2026-06-10 14:18:32,425 [ftseek_us.news_v2.sources.hkex] INFO: [HKEX] 采集完成: 0 条公告

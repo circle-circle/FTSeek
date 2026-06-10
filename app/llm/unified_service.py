@@ -93,20 +93,23 @@ class UnifiedLLMService:
         json_mode: bool = False,
         extra_body: Optional[Dict] = None,
     ) -> CallResult:
-        """异步调用 — asyncio.to_thread 包装同步调用, 不阻塞 event loop"""
-        return await asyncio.to_thread(
-            UnifiedLLMService.call,
-            feature, prompt,
-            system=system,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            schema_required=schema_required,
-            schema_optional=schema_optional,
-            schema_enums=schema_enums,
-            timeout=timeout,
-            cross_check=cross_check,
-            json_mode=json_mode,
-            extra_body=extra_body,
+        """异步调用 — run_in_executor 包装同步调用, 不阻塞 event loop (Py3.8兼容)"""
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            None,
+            lambda: UnifiedLLMService.call(
+                feature, prompt,
+                system=system,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                schema_required=schema_required,
+                schema_optional=schema_optional,
+                schema_enums=schema_enums,
+                timeout=timeout,
+                cross_check=cross_check,
+                json_mode=json_mode,
+                extra_body=extra_body,
+            ),
         )
 
     @staticmethod
