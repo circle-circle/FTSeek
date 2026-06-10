@@ -762,6 +762,16 @@ class USPositionSync:
         """在 position_store._lock 内执行的同步逻辑 (P0-4a)"""
         from app.core.models import Position, Direction, MarketRegime
 
+        # 实盘隔离: 自管持仓列表 (与 _reconcile_position_store 一致)
+        _self_managed = set()
+        try:
+            from app.core.config_container import get_config
+            _sm = get_config().get("risk.self_managed_symbols", [])
+            if _sm:
+                _self_managed = set(_sm)
+        except Exception:
+            pass
+
         mem_positions = list(self.position_store._positions.values())  # 已持有锁，直接读取
         mem_symbols = set(p.symbol for p in mem_positions)
         futu_symbols = set(futu_positions.keys())
@@ -808,6 +818,10 @@ class USPositionSync:
             # P0 fix: Skip PRICE_FAIL-closed options
             if symbol in _price_fail_closed:
                 logger.warning(f"[US Sync·P0] 跳过 PRICE_FAIL 已关闭期权 {symbol} (防止重导入循环)")
+                continue
+            # 实盘隔离: 跳过自管持仓 (startup reconcile 也需检查)
+            if _self_managed and symbol in _self_managed:
+                logger.info(f"[US Sync·隔离] 跳过自管持仓(startup): {symbol}")
                 continue
             # H6 (2026-06-03): tombstone 检查 — 防止刚平仓的 position 被重新创建
             if self._is_tombstoned(symbol):
