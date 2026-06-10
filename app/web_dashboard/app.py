@@ -1335,6 +1335,36 @@ def create_app() -> FastAPI:
 
     # ── 个股详情页 ── (2026-06-10)
 
+    # K线类型映射 (futu SubType)
+    _KTYPE_MAP = {
+        "K_1M": "K_1M", "K_5M": "K_5M", "K_15M": "K_15M",
+        "K_30M": "K_30M", "K_60M": "K_60M", "K_DAY": "K_DAY",
+        "K_WEEK": "K_WEEK", "K_MON": "K_MON",
+    }
+
+    def _subscribe_symbol(svc, symbol: str, sub_types: list) -> bool:
+        """订阅 Futu 数据类型 (必须先订阅才能获取数据)"""
+        try:
+            from futu import RET_OK, SubType
+            type_map = {
+                "K_DAY": SubType.K_DAY, "K_1M": SubType.K_1M,
+                "K_5M": SubType.K_5M, "K_15M": SubType.K_15M,
+                "K_30M": SubType.K_30M, "K_60M": SubType.K_60M,
+                "ORDER_BOOK": SubType.ORDER_BOOK,
+                "TICKER": SubType.TICKER, "QUOTE": SubType.QUOTE,
+            }
+            futu_types = [type_map[t] for t in sub_types if t in type_map]
+            if not futu_types:
+                return True
+            ret, err = svc._quote_ctx.subscribe([symbol], futu_types, subscribe_push=False)
+            if ret != RET_OK:
+                logger.warning(f"[StockDetail] 订阅失败 {symbol}: {err}")
+                return False
+            return True
+        except Exception as e:
+            logger.error(f"[StockDetail] 订阅异常 {symbol}: {e}")
+            return False
+
     @app.get("/stock/{symbol}", response_class=HTMLResponse)
     async def stock_detail_page(symbol: str, request: Request):
         """个股详情页 - K线 + 盘口 + 逐笔 + 分析"""
@@ -1355,6 +1385,8 @@ def create_app() -> FastAPI:
         symbol = symbol.upper()
         try:
             from futu import RET_OK
+            # 先订阅对应K线类型
+            _subscribe_symbol(svc, symbol, [ktype])
             ret, data = svc._quote_ctx.get_cur_kline(symbol, num, ktype=ktype)
             if ret == RET_OK and not data.empty:
                 records = []
@@ -1381,6 +1413,7 @@ def create_app() -> FastAPI:
         symbol = symbol.upper()
         try:
             from futu import RET_OK
+            _subscribe_symbol(svc, symbol, ["ORDER_BOOK"])
             ret, data = svc._quote_ctx.get_order_book(symbol, num=10)
             if ret == RET_OK and data:
                 bids = data.get("Bid", [])
@@ -1403,6 +1436,7 @@ def create_app() -> FastAPI:
         symbol = symbol.upper()
         try:
             from futu import RET_OK
+            _subscribe_symbol(svc, symbol, ["TICKER"])
             ret, data = svc._quote_ctx.get_rt_ticker(symbol, num=num)
             if ret == RET_OK and not data.empty:
                 records = []
@@ -1433,6 +1467,9 @@ def create_app() -> FastAPI:
         # 1. K线计算技术指标
         try:
             from futu import RET_OK
+            # 先订阅日线
+            _subscribe_symbol(svc, symbol, ["K_DAY"])
+
             ret, data = svc._quote_ctx.get_cur_kline(symbol, 120, ktype="K_DAY")
             if ret == RET_OK and not data.empty and len(data) >= 20:
                 closes = [float(row["close"]) for _, row in data.iterrows()]
@@ -1634,6 +1671,8 @@ def create_app() -> FastAPI:
         # 技术指标 (复用 /analysis 的逻辑)
         try:
             from futu import RET_OK
+            # 先订阅所有需要的数据类型
+            _subscribe_symbol(svc, symbol, ["K_DAY", "ORDER_BOOK", "TICKER", "QUOTE"])
             # 日线 K线
             ret, day_data = svc._quote_ctx.get_cur_kline(symbol, 120, ktype="K_DAY")
             if ret == RET_OK and not day_data.empty and len(day_data) >= 20:
