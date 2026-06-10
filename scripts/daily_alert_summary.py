@@ -278,6 +278,44 @@ def get_debouncer_status() -> List[Dict]:
         return []
 
 
+# ================== 告警去重 ==================
+
+def _dedup_alerts(alerts: List[Dict]) -> List[Dict]:
+    """将告警按归一化内容去重, 返回唯一告警 + 出现次数 + 首次时间
+    
+    归一化策略: 去掉时间戳和具体数值, 保留告警模板特征。
+    例: "🚫 [仓位扫描] US.SNDK 占比 40.5% 超限..." 和 
+         "🚫 [仓位扫描] US.SNDK 占比 38.2% 超限..." → 合并为一条
+    """
+    import re as _re
+    
+    def _normalize(content: str) -> str:
+        """提取告警模板: 去掉百分比、金额、股数等变化数值"""
+        s = content[50:] if len(content) > 50 else content  # 和展示逻辑一致截取
+        # 替换数字+单位 (40.5%, $12,769, 7/20.0股) 为占位符
+        s = _re.sub(r'\d+\.?\d*%', 'N%', s)
+        s = _re.sub(r'\$[\d,]+\.?\d*', '$N', s)
+        s = _re.sub(r'\d+/\d+\.?\d*股', 'N/N股', s)
+        return s
+    
+    groups = {}  # normalized_key -> {level, content, first_time, count}
+    for a in alerts:
+        key = (a["level"], _normalize(a["content"]))
+        if key not in groups:
+            groups[key] = {
+                "level": a["level"],
+                "content": a["content"],
+                "first_time": a["time"],
+                "count": 1,
+            }
+        else:
+            groups[key]["count"] += 1
+    
+    # 按出现次数降序
+    result = sorted(groups.values(), key=lambda x: x["count"], reverse=True)
+    return result
+
+
 # ================== 报告生成 ==================
 
 def build_summary_report(
@@ -323,13 +361,15 @@ def build_summary_report(
     if us_offhours_count > 0:
         lines.append(f"- 🔇 非盘中静默: {us_offhours_count} 条 (已过滤)")
 
-    # 美股盘中 Top 5 告警
+    # 美股盘中告警去重: 按内容归并, 展示唯一告警 + 出现次数
     if us_trading:
         lines.append("")
         lines.append("**盘中告警**:")
-        for a in us_trading[-5:]:
-            emoji = "🔴" if a["level"] == "ERROR" else "🟡"
-            lines.append(f"- {emoji} {a['time']} [{a['level']}] {a['content'][50:]}")
+        _deduped = _dedup_alerts(us_trading)
+        for item in _deduped[:8]:  # Top 8 unique
+            emoji = "🔴" if item["level"] == "ERROR" else "🟡"
+            count_suffix = f" (×{item['count']})" if item["count"] > 1 else ""
+            lines.append(f"- {emoji} {item['first_time']} [{item['level']}] {item['content'][50:]}{count_suffix}")
 
     lines += [
         "",
@@ -345,13 +385,15 @@ def build_summary_report(
     if hk_offhours_count > 0:
         lines.append(f"- 🔇 非盘中静默: {hk_offhours_count} 条 (已过滤)")
 
-    # 港股盘中 Top 5 告警
+    # 港股盘中告警去重
     if hk_trading:
         lines.append("")
         lines.append("**盘中告警**:")
-        for a in hk_trading[-5:]:
-            emoji = "🔴" if a["level"] == "ERROR" else "🟡"
-            lines.append(f"- {emoji} {a['time']} [{a['level']}] {a['content'][50:]}")
+        _deduped = _dedup_alerts(hk_trading)
+        for item in _deduped[:8]:
+            emoji = "🔴" if item["level"] == "ERROR" else "🟡"
+            count_suffix = f" (×{item['count']})" if item["count"] > 1 else ""
+            lines.append(f"- {emoji} {item['first_time']} [{item['level']}] {item['content'][50:]}{count_suffix}")
 
     # 总结
     total_errors = us_error + hk_error

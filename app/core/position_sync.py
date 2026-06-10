@@ -296,6 +296,9 @@ class USPositionSync:
                 qty = float(row.get('qty', 0))
                 if qty != 0:
                     code = str(row['code'])
+                    # 2026-06-11: 跳过非美股标的 (如 HK.00700)
+                    if not code.startswith('US.') or code.count('.') > 1:
+                        continue
                     if not code.startswith('US.'):
                         code = 'US.' + code
                     side = str(row.get('position_side', ''))
@@ -343,6 +346,9 @@ class USPositionSync:
             
             for _, order in data.iterrows():
                 code = str(order.get('code', ''))
+                # 2026-06-11: 跳过非美股标的
+                if not code.startswith('US.') or code.count('.') > 1:
+                    continue
                 if not code.startswith('US.'):
                     code = 'US.' + code
                 dealt_qty = float(order.get('dealt_qty', 0))
@@ -444,6 +450,9 @@ class USPositionSync:
                     qty = float(row.get('qty', 0))
                     if qty != 0:
                         code = str(row['code'])
+                        # 2026-06-11: 跳过非美股标的 (如 HK.00700)
+                        if not code.startswith('US.') or code.count('.') > 1:
+                            continue
                         if not code.startswith('US.'):
                             code = 'US.' + code
                         futu_positions[code] = {
@@ -562,6 +571,9 @@ class USPositionSync:
             pass
 
         for symbol, info in futu_positions.items():
+            # 2026-06-11: 跳过非美股标的 (防御性检查)
+            if not symbol.startswith('US.') or symbol.count('.') > 1:
+                continue
             # P0 fix: Skip PRICE_FAIL-closed options entirely (no DB update or insert)
             if symbol in _pf_closed:
                 # Also clean from open_positions if present (prevents _restore_position_from_db)
@@ -1513,8 +1525,16 @@ class USPositionSync:
                     'closed_by_daemon','closed_by_scheduler','closed_by_sync',
                     'closed_emergency','stale_not_in_broker')
             """)
+            # 告警冷却: 同一 symbol 5 分钟内只打一次 warning (不影响减仓执行)
+            if not hasattr(self, '_last_scan_alert_time'):
+                self._last_scan_alert_time: Dict[str, float] = {}
+            _alert_now = time.time()
+            _alert_cooldown = 300  # 5 minutes
             for row in cursor.fetchall():
                 sym, size, price, direction = row
+                # 2026-06-11: 跳过非美股标的
+                if not sym.startswith('US.') or sym.count('.') > 1:
+                    continue
                 if sym in trims_to_execute:
                     continue  # 已在 pending_trims 中
                 notional = size * price
@@ -1524,10 +1544,13 @@ class USPositionSync:
                     excess_value = notional - max_value
                     excess_shares = int(excess_value / price) if price > 0 else 0
                     if excess_shares > 0:
-                        logger.warning(
-                            f"🚫 [仓位扫描] {sym} 占比 {pct:.1%} 超限 {max_per_symbol:.0%}，"
-                            f"触发减仓: {excess_shares}/{size}股 (${excess_value:,.0f})"
-                        )
+                        # 告警冷却: 同一 symbol 5 分钟内只打一次 log
+                        if _alert_now - self._last_scan_alert_time.get(sym, 0) >= _alert_cooldown:
+                            self._last_scan_alert_time[sym] = _alert_now
+                            logger.warning(
+                                f"🚫 [仓位扫描] {sym} 占比 {pct:.1%} 超限 {max_per_symbol:.0%}，"
+                                f"触发减仓: {excess_shares}/{size}股 (${excess_value:,.0f})"
+                            )
                         trims_to_execute[sym] = {
                             'shares': excess_shares,
                             'direction': direction,
