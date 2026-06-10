@@ -183860,3 +183860,77 @@ API: http://localhost:8901
 2026-06-10 07:58:36,928 [ftseek.llm_strategy] INFO: [LLM策略引擎] 初始化 | 模型=qwen-max | 启用=True | 来源=unified_config
 2026-06-10 07:58:43,880 [ftseek_us.review.orchestrator] INFO: [DebateRunner] R1 空头审计师 (deepseek-v4-pro) 成功
 2026-06-10 07:58:53,628 [ftseek_us.review.orchestrator] INFO: [DebateRunner] R1 独立风险评估师 (MiniMax-M2.5) 成功
+2026-06-10 07:59:12,358 [app.notifier.dingtalk] INFO: [钉钉] send_text 成功: 🌆 FTSeek-US 盘后分析推荐
+2026-06-10 07:59:12,359 [app.pipeline.llm_pipeline] INFO: [LLM推荐] 推送成功 (after_hours)
+2026-06-10 07:59:12,359 [app.pipeline.llm_pipeline] INFO: [LLM推荐] 完成: after_hours, 新闻 20 条
+2026-06-10 07:59:15,691 [ftseek_us.subscription_manager] INFO: [US] 进入盘前/交易时段，订阅 28 只...
+2026-06-10 07:59:22,740 [ftseek_us.review.orchestrator] INFO: [DebateRunner] R1 多头分析师 (qwen3.6-plus) 成功
+2026-06-10 07:59:22,741 [ftseek_us.review.orchestrator] INFO: [DebateRunner] Round 1 完成: 3/3 成功
+2026-06-10 08:00:07,754 [ftseek_us.review.orchestrator] INFO: [DebateRunner] R2 独立风险评估师 交叉反驳成功
+2026-06-10 08:00:08,841 [ftseek_us.review.orchestrator] INFO: [DebateRunner] R2 空头审计师 交叉反驳成功
+2026-06-10 08:00:13,721 [ftseek_us.review.orchestrator] INFO: [DebateRunner] R2 多头分析师 交叉反驳成功
+2026-06-10 08:00:13,722 [ftseek_us.review.orchestrator] INFO: [DebateRunner] Round 2 完成: 3/3 成功
+2026-06-10 08:00:15,750 [ftseek_us.subscription_manager] INFO: [US] 进入盘前/交易时段，订阅 28 只...
+2026-06-10 08:01:11,345 [ftseek_us.review.orchestrator] INFO: [DebateRunner] Arbiter 综合收敛成功
+2026-06-10 08:01:11,345 [ftseek_us.review.orchestrator] INFO: [DebateRunner] Arbiter 完成: 收敛度 0.7
+2026-06-10 08:01:11,345 [ftseek_us.review.orchestrator] INFO: [Analyst] 结构化辩论完成: 2 轮 | mode=debate | 收敛度=0.3 | 质量=low | (3/3 成功)
+2026-06-10 08:01:11,345 [ftseek_us.review.orchestrator] INFO: [Orchestrator] 开始 Phase 3 验证辩论结论
+2026-06-10 08:01:11,345 [ftseek_us.review.orchestrator] INFO: [Orchestrator] 验证完成: 验证完成: 0/0 个 claim 有证据支持 (可信度 0%, 证据质量: weak)
+2026-06-10 08:01:11,391 [app.notifier.dingtalk] INFO: [钉钉] send_text 成功: 📊 FTSeek-US 盘后复盘报告 (2026-06-09)
+2026-06-10 08:01:11,392 [ftseek_us.review.orchestrator] INFO: [Orchestrator] 日报已推送
+2026-06-10 08:01:11,392 [ftseek_us.review.orchestrator] INFO: [DebateExtractor] 提取 0 个 LLM Issue
+2026-06-10 08:01:11,392 [app.core.scheduler_triggers] INFO: [Orchestrator] 日复盘增强完成: mode=debate | lessons=0 | llm_issues=0
+2026-06-10 08:01:11,397 [app.core.scheduler_triggers] INFO: [教训验证] 验证完成: 有效=0, 无效=0, 更新=0
+2026-06-10 08:01:11,415 [app.analysis.signal_quality_tracker] INFO: [SignalQuality] 每日更新完成 | as_of=2026-06-09 | trades=348 | confidence: 0-0.3: 45.6%(n=160), 0.3-0.5: 37.5%(n=16), 0.5-0.7: 17.8%(n=118), 0.7-1.0: 31.5%(n=54) | 30d: technical:40.0%(n=10), scalping:4.8%(n=84), 其他:52.3%(n=65) | 推荐 min_conf=0.0 | actions=scalping->DISABLE_OR_REDUCE_WEIGHT
+2026-06-10 08:01:11,416 [app.core.scheduler_triggers] INFO: [SignalQuality] 每日反馈完成 | trades=348 | 推荐 min_conf=0.0 | 高危策略=1
+2026-06-10 08:01:11,460 [app.notifier.dingtalk] INFO: [钉钉] send_text 成功: ⚠️ [信号质量] 高危策略告警
+2026-06-10 08:01:11,464 [ftseek.analysis.plan_effectiveness] INFO: [PlanEffectiveness] 报告已保存: /opt/ftseek/FTSeek-US/data/plan_effectiveness/daily_2026-06-09.json
+2026-06-10 08:01:11,464 [ftseek.analysis.plan_effectiveness] INFO: [PlanEffectiveness] 2026-06-09 | planned=3 | hit_rate=0.00% | traded_rate=0.00% | unplanned=0
+2026-06-10 08:01:11,512 [app.notifier.dingtalk] INFO: [钉钉] send_text 成功: 📊 盘前计划效果: 命中率 0%, 执行率 0%
+2026-06-10 08:01:11,519 [app.storage.trade_store] INFO: [TradeStore] 交易记录表初始化完成
+2026-06-10 08:01:11,555 [ftseek_us.llm.agent_bridge] INFO: [Agent-US] 开始生成盘后归因报告...
+2026-06-10 08:01:11,558 [ftseek_us.llm.agent_bridge] INFO: [Agent-US] EOD 请求已写入: /root/.hermes/ftseek/requests/eod_us_20260610_080111.json
+2026-06-10 08:01:11,558 [ftseek_us.llm.agent_bridge] INFO: [AgentQueue] SQLite 请求队列表初始化完成
+2026-06-10 08:01:11,566 [ftseek_us.llm.agent_bridge] INFO: [AgentQueue] 入队: eod_us_20260610_080111 (generate_eod_review)
+2026-06-10 08:01:11,572 [ftseek_us.storage.daily_log] INFO: [ShadowLog] 数据库初始化完成: /opt/ftseek/FTSeek-US/data/shadow_logs.db
+2026-06-10 08:01:15,809 [ftseek_us.subscription_manager] INFO: [US] 进入盘前/交易时段，订阅 28 只...
+2026-06-10 08:01:50,745 [ftseek_us.news_v2.sources.hkex] INFO: [HKEX] 采集完成: 0 条公告
+2026-06-10 08:02:15,869 [ftseek_us.subscription_manager] INFO: [US] 进入盘前/交易时段，订阅 28 只...
+2026-06-10 08:03:13,626 [ftseek_us.position_sync] INFO: [US Sync] Market closed, sync paused (will resume next session)
+2026-06-10 08:03:15,785 [app.orb.engine] INFO: [ORB] tick #61 | time=20:03:15 | pos=0 | ranges=0 | done=0
+2026-06-10 08:03:15,929 [ftseek_us.subscription_manager] INFO: [US] 进入盘前/交易时段，订阅 28 只...
+2026-06-10 08:03:40,349 [ftseek_us.risk.vix_monitor] INFO: VIX 指数：20.63
+2026-06-10 08:04:15,967 [ftseek_us.subscription_manager] INFO: [US] 进入盘前/交易时段，订阅 28 只...
+2026-06-10 08:04:50,948 [ftseek_us.news_v2.sources.csrc] INFO: [CSRC] 采集完成: 0 条监管公告
+2026-06-10 08:05:09,587 [ftseek_us.news_v2.sources.hkex] INFO: [HKEX] 采集完成: 0 条公告
+2026-06-10 08:05:16,028 [ftseek_us.subscription_manager] INFO: [US] 进入盘前/交易时段，订阅 28 只...
+2026-06-10 08:06:11,810 [app.pipeline.signal_pipeline] INFO: [扫描] overnight → 完全静默，跳过扫描
+2026-06-10 08:06:16,088 [ftseek_us.subscription_manager] INFO: [US] 进入盘前/交易时段，订阅 28 只...
+2026-06-10 08:07:16,148 [ftseek_us.subscription_manager] INFO: [US] 进入盘前/交易时段，订阅 28 只...
+2026-06-10 08:08:16,014 [app.orb.engine] INFO: [ORB] tick #121 | time=20:08:16 | pos=0 | ranges=0 | done=0
+2026-06-10 08:08:16,205 [ftseek_us.subscription_manager] INFO: [US] 进入盘前/交易时段，订阅 28 只...
+2026-06-10 08:08:28,435 [ftseek_us.news_v2.sources.hkex] INFO: [HKEX] 采集完成: 0 条公告
+2026-06-10 08:08:53,272 [ftseek_us.risk.vix_monitor] INFO: VIX 指数：20.63
+2026-06-10 08:09:16,265 [ftseek_us.subscription_manager] INFO: [US] 进入盘前/交易时段，订阅 28 只...
+2026-06-10 08:10:16,322 [ftseek_us.subscription_manager] INFO: [US] 进入盘前/交易时段，订阅 28 只...
+2026-06-10 08:11:12,037 [app.pipeline.signal_pipeline] INFO: [扫描] overnight → 完全静默，跳过扫描
+2026-06-10 08:11:16,382 [ftseek_us.subscription_manager] INFO: [US] 进入盘前/交易时段，订阅 28 只...
+2026-06-10 08:11:28,639 [ftseek_us.news_v2.sources.csrc] INFO: [CSRC] 采集完成: 0 条监管公告
+2026-06-10 08:11:49,279 [ftseek_us.news_v2.sources.hkex] INFO: [HKEX] 采集完成: 0 条公告
+2026-06-10 08:12:16,441 [ftseek_us.subscription_manager] INFO: [US] 进入盘前/交易时段，订阅 28 只...
+2026-06-10 08:13:16,255 [app.orb.engine] INFO: [ORB] tick #181 | time=20:13:16 | pos=0 | ranges=0 | done=0
+2026-06-10 08:13:16,502 [ftseek_us.subscription_manager] INFO: [US] 进入盘前/交易时段，订阅 28 只...
+2026-06-10 08:14:05,961 [ftseek_us.risk.vix_monitor] INFO: VIX 指数：20.63
+2026-06-10 08:14:16,560 [ftseek_us.subscription_manager] INFO: [US] 进入盘前/交易时段，订阅 28 只...
+2026-06-10 08:15:03,101 [ftseek_us.news_v2.sources.hkex] INFO: [HKEX] 采集完成: 0 条公告
+2026-06-10 08:15:16,619 [ftseek_us.subscription_manager] INFO: [US] 进入盘前/交易时段，订阅 28 只...
+2026-06-10 08:16:12,259 [app.pipeline.signal_pipeline] INFO: [扫描] overnight → 完全静默，跳过扫描
+2026-06-10 08:16:16,679 [ftseek_us.subscription_manager] INFO: [US] 进入盘前/交易时段，订阅 28 只...
+2026-06-10 08:17:16,739 [ftseek_us.subscription_manager] INFO: [US] 进入盘前/交易时段，订阅 28 只...
+2026-06-10 08:18:03,306 [ftseek_us.news_v2.sources.csrc] INFO: [CSRC] 采集完成: 0 条监管公告
+2026-06-10 08:18:16,484 [app.orb.engine] INFO: [ORB] tick #241 | time=20:18:16 | pos=0 | ranges=0 | done=0
+2026-06-10 08:18:16,799 [ftseek_us.subscription_manager] INFO: [US] 进入盘前/交易时段，订阅 28 只...
+2026-06-10 08:18:23,611 [ftseek_us.news_v2.sources.hkex] INFO: [HKEX] 采集完成: 0 条公告
+2026-06-10 08:19:16,858 [ftseek_us.subscription_manager] INFO: [US] 进入盘前/交易时段，订阅 28 只...
+2026-06-10 08:19:18,594 [ftseek_us.risk.vix_monitor] INFO: VIX 指数：20.63
+2026-06-10 08:20:16,918 [ftseek_us.subscription_manager] INFO: [US] 进入盘前/交易时段，订阅 28 只...

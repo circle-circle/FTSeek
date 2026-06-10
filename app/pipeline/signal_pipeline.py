@@ -1409,6 +1409,39 @@ def _process_symbol_impl(scheduler, symbol: str, vix: float, spy_context: Dict[s
     # Step4: 构建 SignalScore
     signal = _build_signal_from_vote(scheduler, symbol, vote_result, context)
 
+    # ── LONG entry filter (2026-06-10): LONG requires elevated dual threshold ──
+    # SHORT signals pass through (83% WR); LONG must meet BOTH:
+    #   signal_strength >= 50  AND  signal_confidence >= 0.6
+    # Fail-close: None/0 strength or confidence → rejected.
+    if direction == "LONG":
+        _long_str = int(signal.strength or 0)
+        _long_conf = float(signal.confidence or 0.0)
+        if _long_str < 50 or _long_conf < 0.6:
+            logger.warning(
+                f"[LONG过滤] {symbol} LONG信号不满足门槛: "
+                f"strength={_long_str} (需≥50), confidence={_long_conf:.2f} (需≥0.60), "
+                f"已跳过 (SHORT方向免过滤)"
+            )
+            get_rejection_logger().record(symbol,
+                f"LONG filter: strength={_long_str}<50 OR confidence={_long_conf:.2f}<0.60",
+                "LONG_FILTER_REJECTED", strength=_long_str,
+                confidence=_long_conf, direction=direction)
+            return
+
+    # ── Signal strength fail-close (2026-06-10): 无信号不开仓 ──
+    # strength=0/None 表示 scorer 未产出有效信号, 不论方向都应拒绝
+    # 防止 SHORT 方向将 strength=0 误解为 "极度看空" (100-0=100)
+    _raw_strength = signal.strength
+    if _raw_strength is None or _raw_strength == 0:
+        logger.warning(
+            f"[信号fail-close] {symbol} signal_strength={_raw_strength}, 无有效信号, 跳过开仓"
+        )
+        get_rejection_logger().record(symbol,
+            f"signal_strength fail-close: {_raw_strength}",
+            "NO_SIGNAL_STRENGTH", strength=0,
+            confidence=float(signal.confidence or 0.0), direction=direction)
+        return
+
     # 信号强度过滤 (方向感知)
     # P0 修复 (2026-06-04): 50-offset 格式下 SHORT strength<50 是正确的,
     # 评估门槛时需转为绝对强度: SHORT → 100-strength, LONG → strength

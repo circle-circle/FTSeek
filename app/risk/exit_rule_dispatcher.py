@@ -400,6 +400,16 @@ class ExitRuleDispatcher:
             return None
         current_price = float(market_data.get("current_price", 0))
         direction = str(position.get("direction", "LONG")).upper()
+        # P0: trailing stop is a pure profit-locking mechanism — never fire on losing positions
+        # Losing positions are handled exclusively by the hard ATR_STOP (4x ATR)
+        entry_price = float(position.get("entry_price", 0))
+        if entry_price > 0 and current_price > 0:
+            if direction == "LONG":
+                unrealized_pnl = current_price - entry_price
+            else:
+                unrealized_pnl = entry_price - current_price
+            if unrealized_pnl <= 0:
+                return None
 
         if direction == "LONG":
             peak = float(trail_state.get("trail_high") or trail_state.get("highest_price") or 0)
@@ -424,7 +434,6 @@ class ExitRuleDispatcher:
 
         # 激活门槛
         activation = float(cfg.get("activation_threshold_atr", cfg.get("activation_profit_atr", 0.8)))
-        entry_price = float(position.get("entry_price", 0))
         if entry_price > 0:
             if direction == "LONG":
                 profit_atr = (current_price - entry_price) / atr

@@ -543,6 +543,22 @@ class TradeStore:
                 elif not factor_detail:
                     factor_detail = None
 
+                # P1 (2026-06-10): 因子归因落库 — 从 factor_detail 提取各因子 raw score
+                # IntradayScorer 5因子: trend, momentum, volume, orderflow, lifecycle
+                _fd_raw = record.get("factor_detail")
+                if isinstance(_fd_raw, str):
+                    try:
+                        _fd_raw = json.loads(_fd_raw)
+                    except Exception:
+                        _fd_raw = {}
+                if not isinstance(_fd_raw, dict):
+                    _fd_raw = {}
+                _f1_trend = float((_fd_raw.get("trend") or {}).get("raw", 0))
+                _f2_momentum = float((_fd_raw.get("momentum") or {}).get("raw", 0))
+                _f3_volume = float((_fd_raw.get("volume") or {}).get("raw", 0))
+                _f4_orderflow = float((_fd_raw.get("orderflow") or {}).get("raw", 0))
+                _f5_lifecycle = float((_fd_raw.get("lifecycle") or {}).get("raw", 0))
+
                 cursor = conn.execute("""
                     INSERT INTO trade_records (
                         trade_date, symbol, direction, entry_time, exit_time,
@@ -552,8 +568,10 @@ class TradeStore:
                         model_scores, strategy_id, decision_reason, max_drawdown, trace_id,
                         source_type, entry_reason, signal_details, metadata_json,
                         owner_strategy, mode, market_regime, trade_mode,
-                        signal_id, decision_id, factor_detail, created_at
-                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                        signal_id, decision_id, factor_detail,
+                        f1_trend, f2_momentum, f3_volume, f4_orderflow, f5_lifecycle,
+                        created_at
+                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """, (
                     record.get("trade_date", ""),
                     record.get("symbol", ""),
@@ -575,7 +593,7 @@ class TradeStore:
                     record.get("final_strength", 0),
                     record.get("consensus_level", 0.0),
                     json.dumps(record.get("model_scores", [])) if record.get("model_scores") else None,
-                    record.get("strategy_id", "") or record.get("owner_strategy", "main_pipeline"),  # P0 (2026-06-05): owner_strategy兜底
+                    record.get("strategy_id", "") or record.get("owner_strategy", "main_pipeline"),
                     record.get("decision_reason", ""),
                     record.get("max_drawdown", 0.0),
                     record.get("trace_id", ""),
@@ -583,20 +601,14 @@ class TradeStore:
                     entry_reason,
                     signal_details,
                     metadata_json,
-                    # Phase A (2026-05-14): owner_strategy 必传 — 默认 main
                     record.get("owner_strategy") or "main",
-                    # 沙盒模式 (2026-05-14): mode 字段, 默认 normal
                     record.get("mode") or _get_runtime_mode(),
-                    # O4 (2026-05-16): market_regime 显式落库 (Y1 RegimeDetector 数据可用)
                     record.get("market_regime") or "UNKNOWN",
-                    # Phase 1 (2026-05-31): trade_mode 跳离 — 根据 TRADE_ENV 自动填充
                     record.get("trade_mode") or _get_trade_mode(),
-                    # P0 修复 (2026-05-31): signal_id 归因链路
                     record.get("signal_id") or record.get("trace_id") or "",
-                    # P0 修复 (2026-06-02): decision_id 归因链路 — 关联 decisions.db
-                    # 修复 "35 values for 34 columns" bug: INSERT 缺少 decision_id 列名
                     record.get("decision_id") or "",
                     factor_detail,
+                    _f1_trend, _f2_momentum, _f3_volume, _f4_orderflow, _f5_lifecycle,
                     datetime.now().isoformat(),
                 ))
                 conn.commit()
