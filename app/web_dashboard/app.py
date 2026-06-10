@@ -1833,10 +1833,20 @@ def create_app() -> FastAPI:
                 json_mode=True,
                 timeout=60,
             )
-            if llm_result and llm_result.success and llm_result.response:
+            if llm_result and llm_result.success:
                 # Parse JSON from response
                 resp_text = llm_result.response
-                if isinstance(resp_text, str):
+                if not resp_text:
+                    logger.error(f"[StockDetail] LLM success但response为空 {symbol}: "
+                                 f"model={getattr(llm_result,'model_used','?')} "
+                                 f"tokens_in={getattr(llm_result,'tokens_in',0)} "
+                                 f"tokens_out={getattr(llm_result,'tokens_out',0)} "
+                                 f"from_cache={getattr(llm_result,'from_cache',False)}")
+                    return {"symbol": symbol, "error": "LLM返回为空(可能token配额耗尽)"}
+                if isinstance(resp_text, dict):
+                    # 已被 call_llm 框架解析为 dict
+                    analysis = resp_text
+                elif isinstance(resp_text, str):
                     # Strip code block markers if present
                     resp_text = resp_text.strip()
                     if resp_text.startswith("```"):

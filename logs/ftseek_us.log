@@ -187586,3 +187586,6 @@ API: http://localhost:8901
 2026-06-10 14:31:11,322 [app.pipeline.signal_pipeline] INFO: [扫描] overnight → 完全静默，跳过扫描
 2026-06-10 14:31:11,682 [app.orb.engine] INFO: [ORB] tick #1081 | time=02:31:11 | pos=0 | ranges=0 | done=0
 2026-06-10 14:31:58,627 [ftseek_us.news_v2.sources.hkex] INFO: [HKEX] 采集完成: 0 条公告
+2026-06-10 14:34:58,868 [ftseek_us.news_v2.sources.csrc] INFO: [CSRC] 采集完成: 0 条监管公告
+2026-06-10 14:35:18,019 [ftseek_us.news_v2.sources.hkex] INFO: [HKEX] 采集完成: 0 条公告
+2026-06-10 14:35:26,502 [ftseek_us.risk.vix_monitor] INFO: VIX 指数：20.63
