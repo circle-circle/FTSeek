@@ -709,16 +709,16 @@ def create_app() -> FastAPI:
         import subprocess as _sp
         services = {}
 
-        for svc in ["ftseek-us", "ftseek-us-dashboard"]:
+        for svc in ["ftseek-us", "ftseek-dashboard"]:
             try:
                 proc = _sp.run(
                     ["systemctl", "is-active", svc],
                     capture_output=True, text=True, timeout=5,
                 )
-                key = "dashboard" if svc == "ftseek-us-dashboard" else "ftseek_us"
+                key = "dashboard" if svc == "ftseek-dashboard" else "ftseek_us"
                 services[key] = proc.stdout.strip()
             except Exception:
-                key = "dashboard" if svc == "ftseek-us-dashboard" else "ftseek_us"
+                key = "dashboard" if svc == "ftseek-dashboard" else "ftseek_us"
                 services[key] = "unknown"
 
         # Broker connection check
@@ -769,7 +769,7 @@ def create_app() -> FastAPI:
         import subprocess
         try:
             proc = subprocess.run(
-                ["systemctl", "restart", "ftseek-us-dashboard"],
+                ["systemctl", "restart", "ftseek-dashboard"],
                 capture_output=True, text=True, timeout=15,
             )
             if proc.returncode == 0:
