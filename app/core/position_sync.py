@@ -28,11 +28,12 @@ DB_PATH = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__
 class USPositionSync:
     """美股持仓同步器"""
 
-    def __init__(self, sync_interval: int = 30, position_store=None):
+    def __init__(self, sync_interval: int = 30, position_store=None, broker_adapter=None):
         self.sync_interval = sync_interval
         self._running = False
         self._thread: Optional[threading.Thread] = None
         self._last_sync_time: Optional[datetime] = None
+        self._broker_adapter = broker_adapter  # 复用执行引擎的 broker 连接
         self._sync_count = 0
         self._error_count = 0
         self.position_store = position_store  # P0 修复 2026-04-25: PositionStore 内存引用
@@ -216,7 +217,7 @@ class USPositionSync:
 
     def _get_futu_context(self, opend_host: str, opend_port: int, trade_env, trd_market, security_firm):
         """获取或复用 Futu 交易上下文 (避免每 30 秒新建/断开连接)"""
-        from futu import OpenSecTradeContext
+        from futu import OpenSecTradeContext, TrdEnv, RET_OK
         
         if self._futu_ctx is None:
             try:
@@ -224,8 +225,25 @@ class USPositionSync:
                     filter_trdmarket=trd_market,
                     host=opend_host,
                     port=opend_port,
-                    security_firm=security_firm,
+                    is_encrypt=False,
                 )
+                # 实盘模式需要解锁交易
+                if trade_env == TrdEnv.REAL:
+                    import os
+                    pwd_md5 = os.getenv("FUTU_UNLOCK_PWD_MD5", "")
+                    if pwd_md5:
+                        ret, data = self._futu_ctx.unlock_trade(
+                            password_md5=pwd_md5, is_unlock=True,
+                        )
+                        if ret != RET_OK:
+                            logger.error(f"[US Sync] 实盘解锁失败: {data}")
+                            self._futu_ctx = None
+                            return None
+                        logger.info("[US Sync] ✅ 实盘交易已解锁")
+                    else:
+                        logger.error("[US Sync] 实盘模式但 FUTU_UNLOCK_PWD_MD5 未设置")
+                        self._futu_ctx = None
+                        return None
             except Exception as e:
                 logger.warning(f"[US Sync] 创建 Futu 连接失败: {e}")
                 return None
@@ -236,6 +254,7 @@ class USPositionSync:
         公共方法: 查询 Broker 持仓 (复用连接，不创建/关闭新连接)
         
         供 _reconcile_position_store 等外部模块调用，避免各自创建 OpenSecTradeContext。
+        优先复用 broker_adapter 的 trade_ctx (已解锁)，失败时回退到自建连接。
         
         Returns:
             {symbol: {'qty': float, 'cost': float, 'direction': 'LONG'|'SHORT'}}
@@ -246,12 +265,21 @@ class USPositionSync:
         
         _trade_env = get_config().trade_env_int
         trade_env = TrdEnv.SIMULATE if _trade_env == 1 else TrdEnv.REAL
-        opend_host = os.getenv("FUTU_OPEND_HOST", os.getenv("OPEND_HOST", "127.0.0.1"))
-        opend_port = int(os.getenv("FUTU_OPEND_PORT", os.getenv("OPEND_PORT", "11111")))
         
-        ctx = self._get_futu_context(opend_host, opend_port, trade_env, TrdMarket.US, SecurityFirm.FUTUINC)
+        # 优先复用 broker_adapter 的已解锁连接
+        ctx = None
+        if self._broker_adapter and getattr(self._broker_adapter, 'connected', False):
+            ctx = getattr(self._broker_adapter, 'trade_ctx', None)
+            if ctx:
+                logger.debug("[US Sync] 复用 broker_adapter trade_ctx")
+        
+        # 回退: 自建连接
         if ctx is None:
-            return {}
+            opend_host = os.getenv("FUTU_OPEND_HOST", os.getenv("OPEND_HOST", "127.0.0.1"))
+            opend_port = int(os.getenv("FUTU_OPEND_PORT", os.getenv("OPEND_PORT", "11111")))
+            ctx = self._get_futu_context(opend_host, opend_port, trade_env, TrdMarket.US, SecurityFirm.FUTUINC)
+            if ctx is None:
+                return {}
         
         try:
             ret, data = ctx.position_list_query(trd_env=trade_env)
@@ -542,11 +570,22 @@ class USPositionSync:
                     logger.warning(f"[US Sync·P0] 清理 PRICE_FAIL 已关闭期权(DB): {symbol}")
                 continue
 
-            # 实盘隔离: 跳过自管持仓，不录入系统
+            # 实盘隔离: 跳过自管持仓，不纳入系统管理 (保留 DB 记录，owner='manual')
             if _self_managed and symbol in _self_managed:
+                # 确保 owner='manual' (首次发现时标记)
                 if symbol in db_positions:
-                    cursor.execute("DELETE FROM open_positions WHERE symbol=?", (symbol,))
-                    logger.info(f"[US Sync·隔离] 清理自管持仓(DB): {symbol}")
+                    db_owner = db_positions[symbol].get('owner', 'auto')
+                    if db_owner != 'manual':
+                        cursor.execute(
+                            "UPDATE open_positions SET owner='manual' WHERE symbol=?", (symbol,))
+                        logger.info(f"[US Sync·隔离] {symbol} owner→manual")
+                else:
+                    # 首次发现自管持仓，写入 DB 标 manual
+                    cursor.execute(
+                        "INSERT INTO open_positions (symbol, direction, size, avg_entry_price, owner, sync_status, updated_at) "
+                        "VALUES (?, ?, ?, ?, 'manual', 'synced', ?)",
+                        (symbol, info['direction'], info['qty'], info['cost'], datetime.now().isoformat()))
+                    logger.info(f"[US Sync·隔离] 录入自管持仓: {symbol} ({info['direction']} {info['qty']}股)")
                 continue
 
             if symbol in db_positions:
@@ -1578,9 +1617,10 @@ def get_us_position_sync() -> USPositionSync:
     return _us_sync
 
 
-def start_us_position_sync(sync_interval: int = 30, position_store=None):
+def start_us_position_sync(sync_interval: int = 30, position_store=None, broker_adapter=None):
     sync = get_us_position_sync()
     sync.sync_interval = sync_interval
     sync.position_store = position_store  # P0 修复 2026-04-25
+    sync._broker_adapter = broker_adapter  # 复用执行引擎 broker 连接
     sync.start()
     return sync

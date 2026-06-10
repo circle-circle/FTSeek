@@ -435,7 +435,8 @@ def _run_new_scheduler(args):
 
         start_us_position_sync(
             sync_interval=30,
-            position_store=scheduler.position_store  # 注入内存持仓管理器
+            position_store=scheduler.position_store,  # 注入内存持仓管理器
+            broker_adapter=getattr(scheduler.execution_engine, 'broker_adapter', None) if scheduler.execution_engine else None,
         )
         logger.info("✅ 运行时持仓同步器已启动 (30s 间隔, Broker→PositionStore 自动同步)")
     except Exception as e:
