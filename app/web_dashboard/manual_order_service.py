@@ -271,6 +271,8 @@ class ManualOrderService:
             errors.append(f"数量过大: {order.quantity} (上限 10000)")
         if order.order_type == "LIMIT" and (not order.price or order.price <= 0):
             errors.append("限价单必须指定价格")
+        if order.fill_outside_rth and order.order_type == "MARKET":
+            errors.append("盘前盘后时段不支持市价单，请使用限价单")
 
         # 2. 金额上限校验
         quote = self.get_quote(order.symbol)

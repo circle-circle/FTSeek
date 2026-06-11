@@ -393,6 +393,20 @@
         document.getElementById('orderType').addEventListener('change', function() {
             document.getElementById('priceGroup').style.display = this.value === 'LIMIT' ? 'flex' : 'none';
         });
+        // 盘前盘后强制限价单
+        document.getElementById('fillOutsideRth').addEventListener('change', function() {
+            if (this.value === 'true') {
+                var ot = document.getElementById('orderType');
+                ot.value = 'LIMIT';
+                document.getElementById('priceGroup').style.display = 'flex';
+                // 预填当前报价
+                var lp = document.getElementById('limitPrice');
+                if (!lp.value && curQuote && curQuote.cur_price) {
+                    lp.value = curQuote.cur_price.toFixed(2);
+                    updateEstimate();
+                }
+            }
+        });
         document.getElementById('symbol').addEventListener('blur', fetchQuote);
         document.getElementById('symbol').addEventListener('input', function() {
             if (this.value.trim().length >= 3) {
@@ -568,6 +582,10 @@
             const action = getAction();
 
             if (!sym || !qty) { showMsg('err', '请填写标的和数量'); return; }
+
+            // 盘前盘后不允许市价单
+            const extRthCheck = document.getElementById('fillOutsideRth').value === 'true';
+            if (extRthCheck && otype === 'MARKET') { showMsg('err', '盘前盘后不支持市价单，请切换为限价单'); return; }
 
             const est = curQuote ? qty * curQuote.cur_price : 0;
             const tif = document.getElementById('timeInForce').value;
