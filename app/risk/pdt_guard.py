@@ -194,7 +194,12 @@ class PDTGuard:
             logger.error(f"[PDT] 保存资金状态失败: {e}")
 
     def record_day_trade(self, symbol: str):
-        """记录一次日内交易 (写入 pdt_trades 表)"""
+        """记录一次日内交易 (写入 pdt_trades 表)
+        
+        注意: PDT 法规定义 day trade = 同一标的同日开+平 (round trip)。
+        应通过 record_close() 在平仓时调用，而非开仓时。
+        保留此方法供 record_close() 内部使用。
+        """
         # 模拟盘不记录 (P0 2026-05-06)
         try:
             from app.core.config_container import get_config
@@ -218,6 +223,42 @@ class PDTGuard:
         except Exception as e:
             logger.error(f"[PDT] 记录日内交易失败: {e}")
         
+    def record_close(self, symbol: str, entry_time) -> bool:
+        """平仓时调用 — 仅在 entry_date == today 时记录为 day trade (P0 2026-06-11)
+        
+        PDT 法规定义: day trade = 同一标的在同一天内开仓并平仓 (round trip)。
+        开仓时不应记录 (不知道是否会当天平仓)，只在平仓成功时判断。
+        
+        Args:
+            symbol: 标的代码
+            entry_time: 入场时间 (datetime 或 ISO 字符串)
+            
+        Returns:
+            True if recorded as day trade, False if overnight (not a day trade)
+        """
+        from datetime import datetime, date
+        
+        # 解析 entry_time
+        if isinstance(entry_time, str):
+            try:
+                entry_time = datetime.fromisoformat(entry_time)
+            except (ValueError, TypeError):
+                logger.warning(f"[PDT] {symbol} entry_time 解析失败: {entry_time}")
+                return False
+        
+        if not isinstance(entry_time, datetime):
+            logger.warning(f"[PDT] {symbol} entry_time 类型异常: {type(entry_time)}")
+            return False
+        
+        # 判断: 入场日 == 今天?
+        if entry_time.date() == date.today():
+            self.record_day_trade(symbol)
+            logger.info(f"[PDT] {symbol} 日内往返 (entry={entry_time.date()}, today={date.today()})")
+            return True
+        else:
+            logger.debug(f"[PDT] {symbol} 隔夜仓平仓, 不计入 day trade (entry={entry_time.date()})")
+            return False
+
     def check_trade_permission(self, is_overnight: bool = False) -> Tuple[bool, str, PDTRiskLevel]:
         """
         检查是否允许交易

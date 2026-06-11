@@ -33,16 +33,21 @@ class PositionSource(Enum):
         # 2. 历史字段映射 (向后兼容)
         _map = {
             "main": cls.AUTO_MAIN, "main_pipeline": cls.AUTO_MAIN,
+            "auto_main": cls.AUTO_MAIN,  # position_sync 新发现的策略仓 (P0 2026-06-11: 补漏)
             "voting_llm": cls.AUTO_MAIN,
             "voting_llm_option": cls.AUTO_MAIN,  # 期权仓位归主线策略管理
-            "manual_sync": cls.MANUAL,  # 向后兼容：同步发现的手动仓
+            "manual_sync": cls.AUTO_MAIN,  # position_sync 发现的无 today_order 仓位 → 系统管理 (止损保护)
             "scalping": cls.AUTO_SCALPING, "scalping_engine": cls.AUTO_SCALPING,
+            "auto_scalping": cls.AUTO_SCALPING,  # 补漏
             "fast_lane": cls.AUTO_FAST_LANE,
+            "auto_fast_lane": cls.AUTO_FAST_LANE,  # 补漏
             "battle_plan_fast_path": cls.AUTO_LLM_PLAN,
-            "llm_plan": cls.AUTO_LLM_PLAN,
+            "llm_plan": cls.AUTO_LLM_PLAN, "auto_llm_plan": cls.AUTO_LLM_PLAN,  # 补漏
             "manual": cls.MANUAL, "futu_manual": cls.MANUAL,
-            "broker_recovery": cls.LEGACY, "futu_sync": cls.MANUAL,
+            "broker_recovery": cls.LEGACY, "futu_sync": cls.AUTO_MAIN,  # position_sync 发现的无 today_order 仓位 → 系统管理
+            "futu_discovery": cls.AUTO_MAIN,  # Futu 发现的无 today_order 仓位 → 系统管理 (止损保护)
             "broker_reconcile": cls.AUTO_MAIN,  # P0 (2026-05-29): 对账恢复仓归主线管理
+            "recovered": cls.AUTO_MAIN,  # position_monitor restore 默认值 → 系统管理
             "simulation": cls.LEGACY,
         }
         return _map.get(s, cls.UNKNOWN)
@@ -64,10 +69,16 @@ class ProtectionState(Enum):
 
     @classmethod
     def default_for(cls, source: PositionSource) -> "ProtectionState":
-        """Broker-first (2026-06-03): 所有仓位统一 MANAGED
-        不再区分系统仓位/外部仓位 — 所有在 broker 中存在的仓位都由系统管理退出。
-        双重平仓防护下沉到 _close_position 的持仓校验。
+        """源头隔离 (2026-06-11): 按 source 决定默认保护状态
+        
+        根因修复: broker-first (2026-06-03) 把所有仓位统一 MANAGED,
+        导致手动持仓被 portfolio drawdown / exit_monitor / signal_pipeline 误操作。
+        正确做法: 源头区分 — MANUAL/LEGACY 默认 PROTECTED, 系统仓位 MANAGED。
+        
+        消费者只需调 is_strategy_managed() 即可正确过滤, 无需各自查 DB。
         """
+        if source in (PositionSource.MANUAL, PositionSource.LEGACY, PositionSource.UNKNOWN):
+            return cls.PROTECTED
         return cls.MANAGED
 
 

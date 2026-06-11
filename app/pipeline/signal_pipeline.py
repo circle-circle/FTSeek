@@ -367,10 +367,10 @@ def _run_signal_scan_body(scheduler, vix, spy_context, market_news, pool_filter)
                 logger.warning("[熔断] 熔断器开启，终止扫描")
                 break
             try:
-                # Self-managed 符号过滤: 用户手动管理的标的不进入信号管线
+                # Self-managed 符号过滤: 用户手动管理的标的不进入信号管线 (yaml + DB)
                 try:
-                    from app.core.config_container import get_config as _sm_cfg
-                    _sm = set(_sm_cfg().get("risk.self_managed_symbols", []))
+                    from app.core.config_container import get_all_manual_symbols
+                    _sm = get_all_manual_symbols()
                     # 兼容 US. 前缀
                     if symbol in _sm or symbol.replace("US.", "") in _sm:
                         logger.debug(f"[扫描] {symbol} 是 self_managed，跳过信号管线")
@@ -442,6 +442,15 @@ def _run_signal_scan_body(scheduler, vix, spy_context, market_news, pool_filter)
             if is_circuit_breaker_open():
                 logger.warning("[熔断] 熔断器开启，终止扫描")
                 break
+            # self_managed 符号过滤: CRA fallback 路径也需要隔离 (P0 2026-06-11)
+            try:
+                from app.core.config_container import get_all_manual_symbols
+                _sm = get_all_manual_symbols()
+                if symbol in _sm or symbol.replace("US.", "") in _sm:
+                    logger.debug(f"[扫描] {symbol} 是 self_managed，跳过信号管线 (CRA)")
+                    continue
+            except Exception:
+                pass
             # 截面排名过滤: 只允许 Top N 进入信号生成
             if _ranked_watchlist is not None and symbol not in _ranked_watchlist:
                 continue
@@ -1359,9 +1368,9 @@ def _process_symbol_impl(scheduler, symbol: str, vix: float, spy_context: Dict[s
             f"consensus={vote_result['consensus_level']:.2f} direction={vote_result.get('direction', 'LONG')}"
         )
 
-    # 金字塔加仓检测
-    direction = vote_result.get("direction", "LONG")
-    if scheduler.position_store.has(symbol) and direction == "LONG":
+    # 金字塔加仓检测（支持 LONG 和 SHORT, 2026-06-11）
+    direction = vote_result.get("direction", "")
+    if scheduler.position_store.has(symbol):
         try:
             from app.risk.pyramid_engine import get_pyramid_engine
             pyramid = get_pyramid_engine()

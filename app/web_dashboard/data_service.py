@@ -46,11 +46,10 @@ def et_days_ago(n: int) -> str:
     return (et_now() - timedelta(days=n)).strftime("%Y-%m-%d")
 
 
-def safe_float(v) -> float:
-    try:
-        return float(v) if v is not None and v != "N/A" else 0.0
-    except (ValueError, TypeError):
-        return 0.0
+def safe_float(v, default: float = 0.0) -> float:
+    """统一 safe_float (SSOT: app.utils.numeric) — 向后兼容 re-export"""
+    from app.utils.numeric import safe_float as _sf
+    return _sf(v, default)
 
 
 # ── 共享 TTL 缓存 ──
@@ -192,7 +191,9 @@ class DataService:
 
     async def get_market_snapshot(self, codes: list, ttl: int = 10) -> dict:
         """Futu get_market_snapshot, 返回 {code: row_dict} (带 cache)"""
-        cache_key = f"snapshot_{','.join(sorted(codes))}"
+        import hashlib
+        _h = hashlib.md5(','.join(sorted(codes)).encode()).hexdigest()[:12]
+        cache_key = f"snapshot_{_h}"
         cached = self.cache.get(cache_key)
         if cached is not None:
             return cached
@@ -218,7 +219,9 @@ class DataService:
         """批量报价 (5s cache), 返回 {symbol: price}"""
         if not symbols:
             return {}
-        cache_key = f"quotes_{','.join(sorted(symbols))}"
+        import hashlib
+        _h = hashlib.md5(','.join(sorted(symbols)).encode()).hexdigest()[:12]
+        cache_key = f"quotes_{_h}"
         cached = self.cache.get(cache_key)
         if cached is not None:
             return cached
@@ -249,6 +252,53 @@ class DataService:
             return prices
         except Exception as e:
             logger.error(f"[DataService] batch quotes failed: {e}")
+            return {}
+
+    async def get_batch_quotes_detailed(self, symbols: list) -> Dict[str, dict]:
+        """批量详细报价 (5s cache), 返回 {symbol: {cur_price, prev_close, name, ...}}"""
+        if not symbols:
+            return {}
+        import hashlib
+        _h = hashlib.md5(','.join(sorted(symbols)).encode()).hexdigest()[:12]
+        cache_key = f"quotes_d_{_h}"
+        cached = self.cache.get(cache_key)
+        if cached is not None:
+            return cached
+        result = await self._run(self._fetch_quotes_detailed, symbols)
+        if result:
+            self.cache.set(cache_key, result, ttl=5)
+        return result or {}
+
+    def _fetch_quotes_detailed(self, symbols: list) -> Dict[str, dict]:
+        svc = self.svc()
+        if not svc.connect():
+            return {}
+        try:
+            from futu import RET_OK
+            ret, snap = svc._quote_ctx.get_market_snapshot(symbols[:400])
+            if ret != RET_OK or snap.empty:
+                return {}
+            result = {}
+            for _, row in snap.iterrows():
+                code = str(row.get("code", ""))
+                cur = safe_float(row.get("cur_price"))
+                if cur <= 0:
+                    cur = safe_float(row.get("last_price"))
+                if cur <= 0:
+                    cur = safe_float(row.get("prev_close_price"))
+                if cur > 0:
+                    prev_close = safe_float(row.get("prev_close_price"))
+                    result[code] = {
+                        "cur_price": round(cur, 2),
+                        "prev_close": round(prev_close, 2) if prev_close > 0 else 0,
+                        "name": str(row.get("name_en", row.get("name", ""))),
+                        "high_price": round(safe_float(row.get("high_price")), 2),
+                        "low_price": round(safe_float(row.get("low_price")), 2),
+                        "volume": int(row.get("volume", 0)),
+                    }
+            return result
+        except Exception as e:
+            logger.error(f"[DataService] batch detailed quotes failed: {e}")
             return {}
 
     # ═══════════════════════════════════════════
@@ -309,9 +359,12 @@ class DataService:
     #  通用 async 执行器
     # ═══════════════════════════════════════════
 
-    async def _run(self, func, *args):
+    async def _run(self, func, *args, **kwargs):
         """在线程池中执行阻塞调用"""
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
+        if kwargs:
+            from functools import partial
+            return await loop.run_in_executor(self._pool, partial(func, *args, **kwargs))
         return await loop.run_in_executor(self._pool, func, *args)
 
     def invalidate_cache(self, key: str = None):

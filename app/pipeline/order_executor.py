@@ -3479,10 +3479,21 @@ def _close_position(scheduler, position: Position, current_price: float, exit_re
         except Exception as _meta_rec_err:
             logger.debug(f"[平仓·归因恢复] {position.symbol} 失败 (不影响平仓): {_meta_rec_err}")
 
-    if meta.get("_close_in_progress"):
-        logger.warning(f"[平仓·重入拦截] {position.symbol} 已有平仓进行中，跳过")
+    # ── P0 (2026-06-12): _close_in_progress 超时自动清理 ──
+    # 根因: 5个失败路径(异常/拒单/未确认/盘后/确认异常)都不清理此标记,
+    #        导致一次平仓失败后仓位永久不可平仓直到重启
+    # 修法: 改为 timestamp + 5分钟超时, 超过自动解锁允许重试
+    _cip_ts = meta.get("_close_in_progress_ts", 0)
+    _cip_timeout = 300  # 5 分钟
+    if meta.get("_close_in_progress") and _cip_ts and (time.time() - _cip_ts < _cip_timeout):
+        _remaining = int(_cip_timeout - (time.time() - _cip_ts))
+        logger.warning(
+            f"[平仓·重入拦截] {position.symbol} 已有平仓进行中 "
+            f"({_remaining}s后自动解锁)，跳过"
+        )
         return
     meta["_close_in_progress"] = True
+    meta["_close_in_progress_ts"] = time.time()
     position.metadata = meta
 
     # Broker-first (2026-06-03): 执行前持仓校验 — 防双重平仓
@@ -3605,6 +3616,15 @@ def _close_position(scheduler, position: Position, current_price: float, exit_re
                 meta["close_futu_order_id"] = close_futu_id
                 position.metadata = meta
                 logger.info(f"[平仓] 平仓单 futu_order_id={close_futu_id}")
+
+            # PDT 日内交易记录 (P0 2026-06-11): 平仓时判断是否 round trip
+            try:
+                from app.risk.pdt_guard import get_pdt_guard
+                _entry = getattr(position, 'entry_time', None)
+                if _entry:
+                    get_pdt_guard().record_close(position.symbol, _entry)
+            except Exception as _pdt_err:
+                logger.debug(f"[平仓] PDT 记录失败 (不影响平仓): {_pdt_err}")
     except Exception as e:
         # P0 修复 2026-04-23: 平仓失败退避机制 — 防止无限循环
         meta = getattr(position, "metadata", None)

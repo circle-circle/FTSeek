@@ -2,10 +2,24 @@
 Dashboard 登录认证中间件
 
 功能:
-  - 密码登录 (密码存储在 .env.us 的 DASHBOARD_PASSWORD)
+  - 密码登录 (支持 PBKDF2-SHA256 / MD5 / 明文)
   - Session cookie 认证 (HMAC-SHA256 签名)
   - 所有页面和 API 均需登录，仅 /login 和 /api/auth/* 豁免
   - 24小时自动过期
+
+密码存储格式 (.env.us):
+  DASHBOARD_PASSWORD_PBKDF2=<salt_hex>$<hash_hex>  (推荐)
+  DASHBOARD_PASSWORD_MD5=<md5_hex>                  (兼容旧版)
+  DASHBOARD_PASSWORD=<plaintext>                    (仅调试用)
+
+生成 PBKDF2 密码:
+  python3 -c "
+  import hashlib, os, binascii
+  pwd = 'your_password'
+  salt = os.urandom(32)
+  h = hashlib.pbkdf2_hmac('sha256', pwd.encode(), salt, 100000)
+  print(f'DASHBOARD_PASSWORD_PBKDF2={salt.hex()}\${h.hex()}')
+  "
 """
 
 import os
@@ -21,6 +35,7 @@ logger = logging.getLogger("ftseek_us.auth")
 
 ENV_FILE = Path(__file__).parent.parent.parent / ".env.us"
 SESSION_MAX_AGE = 86400  # 24 hours
+PBKDF2_ITERATIONS = 100_000
 
 
 def _read_env(key: str, default: str = "") -> str:
@@ -37,6 +52,11 @@ def _read_env(key: str, default: str = "") -> str:
     return os.getenv(key, default)
 
 
+def get_password_pbkdf2() -> str:
+    """获取 PBKDF2 哈希 (salt_hex$hash_hex)"""
+    return _read_env("DASHBOARD_PASSWORD_PBKDF2", "")
+
+
 def get_password_md5() -> str:
     """获取登录密码 MD5 (从 .env.us 的 DASHBOARD_PASSWORD_MD5)"""
     return _read_env("DASHBOARD_PASSWORD_MD5", "")
@@ -49,33 +69,49 @@ def get_password_plain() -> str:
 
 def has_password_configured() -> bool:
     """是否已配置登录密码"""
-    return bool(get_password_md5() or get_password_plain())
+    return bool(get_password_pbkdf2() or get_password_md5() or get_password_plain())
 
 
 def verify_password(input_password: str) -> bool:
     """
     验证用户输入的密码 (明文)
 
-    优先用 MD5 比对 (DASHBOARD_PASSWORD_MD5),
-    备选明文比对 (DASHBOARD_PASSWORD).
+    优先 PBKDF2 (推荐) → MD5 (兼容旧版) → 明文 (调试).
     未配置密码时允许登录 (首次使用).
     """
+    expected_pbkdf2 = get_password_pbkdf2()
     expected_md5 = get_password_md5()
     expected_plain = get_password_plain()
 
-    if not expected_md5 and not expected_plain:
-        logger.warning("[Auth] DASHBOARD_PASSWORD_MD5 未设置，任何密码均可登录！请在 .env.us 中配置")
+    if not expected_pbkdf2 and not expected_md5 and not expected_plain:
+        logger.warning("[Auth] DASHBOARD_PASSWORD_PBKDF2 未设置，任何密码均可登录！请在 .env.us 中配置")
         return True
 
-    # 优先 MD5 比对
+    # 优先 PBKDF2 比对 (推荐)
+    if expected_pbkdf2 and "$" in expected_pbkdf2:
+        try:
+            salt_hex, hash_hex = expected_pbkdf2.split("$", 1)
+            salt = bytes.fromhex(salt_hex)
+            expected_hash = bytes.fromhex(hash_hex)
+            input_hash = hashlib.pbkdf2_hmac(
+                "sha256", input_password.encode(), salt, PBKDF2_ITERATIONS
+            )
+            if hmac.compare_digest(input_hash, expected_hash):
+                return True
+        except (ValueError, TypeError):
+            logger.error("[Auth] PBKDF2 格式错误，应为 salt_hex$hash_hex")
+
+    # 兼容 MD5 比对 (旧版)
     if expected_md5:
         input_md5 = hashlib.md5(input_password.encode()).hexdigest()
         if hmac.compare_digest(input_md5, expected_md5):
+            logger.warning("[Auth] MD5 密码验证成功，建议升级到 PBKDF2 (见 auth.py 文档)")
             return True
 
     # 备选明文比对
     if expected_plain:
         if hmac.compare_digest(input_password, expected_plain):
+            logger.warning("[Auth] 明文密码验证成功，强烈建议升级为 PBKDF2")
             return True
 
     return False
@@ -133,4 +169,9 @@ PUBLIC_PATHS = {
 
 def is_public_path(path: str) -> bool:
     """判断路径是否无需认证"""
-    return path in PUBLIC_PATHS
+    if path in PUBLIC_PATHS:
+        return True
+    # 静态文件无需认证 (Chart.js 等本地库)
+    if path.startswith("/static/"):
+        return True
+    return False

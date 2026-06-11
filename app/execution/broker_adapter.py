@@ -466,20 +466,9 @@ class FutuBrokerAdapter:
                 except Exception as e:
                     logger.warning(f"[订单状态检查] 异常 (降级放行): {e}")
 
-                # P0 Fix: PDT 逻辑修复 (支持做空)
-                # 记录日内交易：如果非隔夜单 且 是开仓单
-                # 开仓判断：position_id 为空或 0 (假设传入的 Order 对象有此属性)
-                # 若无 position_id 属性，默认为 0 (视为开仓)
-                is_overnight = getattr(order, 'is_overnight', False)
-                position_id = getattr(order, 'position_id', 0)
-                is_opening = (position_id == 0 or position_id is None)
-                
-                if not is_overnight and is_opening:
-                    try:
-                        from app.risk.pdt_guard import get_pdt_guard
-                        get_pdt_guard().record_day_trade(order.symbol)
-                    except Exception as pdt_err:
-                        logger.debug(f"[PDT] 记录日内交易失败: {pdt_err}")
+                # P0 Fix (2026-06-11): PDT 记录移至平仓时
+                # 开仓时不记录 — PDT 法规只计 round trip (同日开+平)
+                # 记录逻辑在 order_executor._close_position() 中调用 pdt_guard.record_close()
 
                 logger.info(
                     f"[富途] 下单成功 {order.symbol} {trd_side} "

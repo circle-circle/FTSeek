@@ -802,6 +802,7 @@ class ExitMonitor:
             is_strategy_managed = lambda p: False  # P0-3: 安全侧默认 — 失败时跳过整段, 不误杀
             is_protected = lambda p: True
         managed_positions = []
+
         for p in positions:
             try:
                 # 显式排除 ghost (Reconciler 标记的 metadata.is_ghost)
@@ -811,7 +812,8 @@ class ExitMonitor:
                 # 显式排除待平仓的位置 (避免重复触发)
                 if _meta.get('_pending_close'):
                     continue
-                # 双重过滤: 必须是 MANAGED 且非 PROTECTED
+                # 源头隔离 (2026-06-11): is_strategy_managed() 基于 metadata.source 判断
+                # MANUAL/LEGACY/UNKNOWN → PROTECTED → 自动排除, 无需额外 DB 查询
                 if is_strategy_managed(p) and not is_protected(p):
                     managed_positions.append(p)
             except Exception:
@@ -850,6 +852,10 @@ class ExitMonitor:
                     closed.append({"symbol": p.symbol, "reason": "PORTFOLIO_DRAWDOWN_REDUCE", "pnl_pct": _pnl})
                 except Exception as _e:
                     logger.error(f"[组合止损] 减仓 {p.symbol} 失败: {_e}")
+            # P0 (2026-06-12): REDUCE_50 后必须 return
+            # 根因: 减仓后继续执行 per-position 检查 → 同一标的再触发全平
+            # → 两笔卖单同时到达 broker → 可能产生反向仓位 (SNDK 类事故)
+            return closed
         elif portfolio_action == "WARN":
             logger.warning("[组合止损] 触发 WARN 告警")
 
@@ -871,6 +877,8 @@ class ExitMonitor:
         skipped_orb = 0
         skipped_protected = 0
         skipped_broker = 0
+        skipped_manual = 0
+
         for p in positions:
             # 1. scalping 自管 (重构 2026-05-28: 统一走 _is_scalping_position 助手方法)
             if self._is_scalping_position(p):
@@ -897,6 +905,11 @@ class ExitMonitor:
             except Exception:
                 # M1 检查异常 → 保守放行 (不阻断)
                 pass
+            # 3. 源头隔离 (2026-06-11): is_protected() 检查 MANUAL/LEGACY → PROTECTED
+            # 替代原来的 DB get_all_manual_symbols() 查询
+            if is_protected(p):
+                skipped_manual += 1
+                continue
             main_positions.append(p)
 
         if skipped_scalping > 0:
@@ -910,6 +923,8 @@ class ExitMonitor:
                 f"[退出监控·M1] 跳过 {skipped_protected} 个 PROTECTED/FROZEN 仓位 "
                 f"(默认隔离; takeover 接管: scripts/position_takeover.py)"
             )
+        if skipped_manual > 0:
+            logger.info(f"[退出监控·manual] 跳过 {skipped_manual} 个 owner=manual 仓位 (web手动/自管)")
 
         # P0-2 (2026-05-14): ExitDispatcher 路由 — 按 owner_strategy 选 ExitPolicy
         # Phase A 多数 ExitPolicy 返回 NO_ACTION (兜底走原 6 规则), 但 thesis-driven exit 可在此抢先决断

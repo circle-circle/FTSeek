@@ -79,6 +79,7 @@ def restore_positions_from_db(scheduler):
                     broker_positions_map[code] = {
                         'qty': qty,
                         'cost_price': float(row.get('cost_price', 0)),
+                        'position_side': str(row.get('position_side', 'LONG')).upper(),
                     }
             logger.info(f"[恢复] Broker 确认 {len(broker_symbols)} 个持仓: {broker_symbols}")
         trade_ctx.close()
@@ -86,16 +87,12 @@ def restore_positions_from_db(scheduler):
         logger.warning(f"[恢复] Broker 预查询失败，将恢复所有 DB 持仓: {e}")
         broker_symbols = None  # None = skip broker check, restore all
 
-    # --- 0.4 实盘隔离: 过滤自管持仓 (2026-06-09) ---
-    # 从 yaml risk.self_managed_symbols 读取，这些标的由用户手动管理，系统不导入
-    _self_managed = set()
+    # --- 0.4 实盘隔离: 过滤自管持仓 (yaml + DB owner='manual' 合并) ---
     try:
-        from app.core.config_container import get_config as _get_cfg
-        _sm_list = _get_cfg().get("risk.self_managed_symbols", [])
-        if _sm_list:
-            _self_managed = set(_sm_list)
+        from app.core.config_container import get_all_manual_symbols
+        _self_managed = get_all_manual_symbols()
     except Exception:
-        pass
+        _self_managed = set()
 
     if broker_symbols is not None and _self_managed:
         _removed = broker_symbols & _self_managed
@@ -350,7 +347,8 @@ def restore_positions_from_db(scheduler):
                         cost = bp.get('cost_price', 0)
                         if abs(qty) > 0 and cost > 0:
                             try:
-                                is_short = qty < 0
+                                side = bp.get('position_side', 'LONG')
+                                is_short = (qty < 0) or (str(side).upper() == 'SHORT')
                                 direction = Direction.SHORT if is_short else Direction.LONG
                                 size = abs(qty)
                                 # SHORT 止损在成本上方，LONG 在下方

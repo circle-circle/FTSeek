@@ -118,48 +118,64 @@ def process(ctx: SymbolContext,
     except Exception as e:
         logger.debug(f"[Signal] TrendFirst异常 (放行): {e}")
 
-    # ── 策略 4: Technical (均值回归多因子) ──
+    # ── 策略 4: Technical (均值回归多因子) — 可配置冻结 ──
+    _technical_enabled = True
     try:
-        candidate = eval_strategy("technical", ctx)
-        if candidate is not None:
-            _apply_quality_scoring(ctx, candidate)
-            logger.info(
-                f"[Signal] {symbol} 技术面命中: {candidate.rationale}"
-            )
-            candidates.append(candidate)
-        else:
-            logger.debug(f"[Signal] {symbol} 技术面无命中")
-    except Exception as e:
-        logger.debug(f"[Signal] 技术面异常 (放行): {e}")
-
-    # ── 策略 5: LLM 投票 (无持仓时) ──
-    try:
-        if voting_coordinator and not has_position:
-            # Skip LLM vote if we already have high-confidence candidates
-            if candidates and any(c.confidence >= 0.70 for c in candidates):
-                logger.info(f"[SignalStage] Skipping LLM vote for {symbol} - already have high-confidence candidates")
+        from app.core.config_container import get_config
+        _cfg = get_config()
+        _technical_enabled = bool(_cfg.get_dotted("strategies.technical.enabled", True))
+    except Exception:
+        pass
+    if _technical_enabled:
+        try:
+            candidate = eval_strategy("technical", ctx)
+            if candidate is not None:
+                _apply_quality_scoring(ctx, candidate)
+                logger.info(
+                    f"[Signal] {symbol} 技术面命中: {candidate.rationale}"
+                )
+                candidates.append(candidate)
             else:
-                # LLM vote with timeout
-                try:
-                    import concurrent.futures
-                    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                        future = executor.submit(voting_coordinator.vote, symbol, ctx)
-                        vote_result = future.result(timeout=5.0)  # 5 second timeout
-                        if vote_result:
-                            ctx.metadata["vote_result"] = vote_result
-                            candidate = eval_strategy("llm_vote", ctx)
-                            if candidate is not None:
-                                _apply_quality_scoring(ctx, candidate)
-                                logger.info(
-                                    f"[Signal] {symbol} LLM投票命中: {candidate.rationale}"
-                                )
-                                candidates.append(candidate)
-                except concurrent.futures.TimeoutError:
-                    logger.warning(f"[SignalStage] LLM vote timeout for {symbol}")
-                except Exception as e:
-                    logger.debug(f"[SignalStage] LLM vote failed for {symbol}: {e}")
-    except Exception as e:
-        logger.debug(f"[Signal] LLM投票异常 (放行): {e}")
+                logger.debug(f"[Signal] {symbol} 技术面无命中")
+        except Exception as e:
+            logger.debug(f"[Signal] 技术面异常 (放行): {e}")
+
+    # ── 策略 5: LLM 投票 (无持仓时) — 可配置冻结 ──
+    _llm_vote_enabled = True
+    try:
+        from app.core.config_container import get_config
+        _cfg = get_config()
+        _llm_vote_enabled = bool(_cfg.get_dotted("strategies.llm_vote.enabled", True))
+    except Exception:
+        pass
+    if _llm_vote_enabled:
+        try:
+            if voting_coordinator and not has_position:
+                # Skip LLM vote if we already have high-confidence candidates
+                if candidates and any(c.confidence >= 0.70 for c in candidates):
+                    logger.info(f"[SignalStage] Skipping LLM vote for {symbol} - already have high-confidence candidates")
+                else:
+                    # LLM vote with timeout
+                    try:
+                        import concurrent.futures
+                        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                            future = executor.submit(voting_coordinator.vote, symbol, ctx)
+                            vote_result = future.result(timeout=5.0)  # 5 second timeout
+                            if vote_result:
+                                ctx.metadata["vote_result"] = vote_result
+                                candidate = eval_strategy("llm_vote", ctx)
+                                if candidate is not None:
+                                    _apply_quality_scoring(ctx, candidate)
+                                    logger.info(
+                                        f"[Signal] {symbol} LLM投票命中: {candidate.rationale}"
+                                    )
+                                    candidates.append(candidate)
+                    except concurrent.futures.TimeoutError:
+                        logger.warning(f"[SignalStage] LLM vote timeout for {symbol}")
+                    except Exception as e:
+                        logger.debug(f"[SignalStage] LLM vote failed for {symbol}: {e}")
+        except Exception as e:
+            logger.debug(f"[Signal] LLM投票异常 (放行): {e}")
 
     # ── 无候选 → 返回 None ──
     if not candidates:

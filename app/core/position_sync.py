@@ -490,7 +490,7 @@ class USPositionSync:
         # Get current DB positions
         # P0 (2026-06-05): 过滤已关闭记录，避免 ghost 仓每 30s 重复检测刷屏
         cursor.execute(
-            "SELECT symbol, size, direction FROM open_positions "
+            "SELECT symbol, size, direction, COALESCE(owner,'auto'), COALESCE(sync_status,'') FROM open_positions "
             "WHERE sync_status IS NULL "
             "OR sync_status NOT IN ("
             "'closed_by_daemon','closed_by_scheduler','closed_by_sync',"
@@ -498,7 +498,7 @@ class USPositionSync:
         )
         db_positions = {}
         for row in cursor.fetchall():
-            db_positions[row[0]] = {'size': row[1], 'direction': row[2]}
+            db_positions[row[0]] = {'size': row[1], 'direction': row[2], 'owner': row[3], 'sync_status': row[4]}
 
         futu_symbols = set(futu_positions.keys())
         db_symbols = set(db_positions.keys())
@@ -560,15 +560,12 @@ class USPositionSync:
         _today_orders = self._query_today_futu_orders()
         self._today_orders = _today_orders  # 供 _sync_to_position_store_locked 使用
 
-        # 实盘隔离: 自管持仓不纳入系统管理 (从 yaml risk.self_managed_symbols 读取)
-        _self_managed = set()
+        # 实盘隔离: 自管持仓不纳入系统管理 (yaml + DB owner='manual' 合并)
         try:
-            from app.core.config_container import get_config
-            _sm = get_config().get("risk.self_managed_symbols", [])
-            if _sm:
-                _self_managed = set(_sm)
+            from app.core.config_container import get_all_manual_symbols
+            _self_managed = get_all_manual_symbols()
         except Exception:
-            pass
+            _self_managed = set()
 
         for symbol, info in futu_positions.items():
             # 2026-06-11: 跳过非美股标的 (防御性检查)
@@ -584,13 +581,22 @@ class USPositionSync:
 
             # 实盘隔离: 跳过自管持仓，不纳入系统管理 (保留 DB 记录，owner='manual')
             if _self_managed and symbol in _self_managed:
-                # 确保 owner='manual' (首次发现时标记)
                 if symbol in db_positions:
-                    db_owner = db_positions[symbol].get('owner', 'auto')
-                    if db_owner != 'manual':
+                    db_info = db_positions[symbol]
+                    db_owner = db_info.get('owner', 'auto')
+                    # 更新 owner + 修正 stub 行的 direction/size/sync_status
+                    needs_owner_fix = db_owner != 'manual'
+                    needs_data_fix = (db_info.get('sync_status') == 'pending_sync' or
+                                      abs(db_info['size'] - info['qty']) > 0.1 or
+                                      db_info['direction'] != info['direction'])
+                    if needs_owner_fix or needs_data_fix:
                         cursor.execute(
-                            "UPDATE open_positions SET owner='manual' WHERE symbol=?", (symbol,))
-                        logger.info(f"[US Sync·隔离] {symbol} owner→manual")
+                            "UPDATE open_positions SET owner='manual', direction=?, size=?, "
+                            "avg_entry_price=?, sync_status='synced', updated_at=? WHERE symbol=?",
+                            (info['direction'], info['qty'], info['cost'],
+                             datetime.now().isoformat(), symbol))
+                        if needs_owner_fix:
+                            logger.info(f"[US Sync·隔离] {symbol} owner→manual + 数据修正")
                 else:
                     # 首次发现自管持仓，写入 DB 标 manual
                     cursor.execute(
@@ -617,7 +623,7 @@ class USPositionSync:
                     else:
                         logger.info("[US Sync] Updating %s: size %s -> %s", symbol, db_info['size'], info['qty'])
                     cursor.execute(
-                        "UPDATE open_positions SET size=?, direction=?, avg_entry_price=?, updated_at=? WHERE symbol=?",
+                        "UPDATE open_positions SET size=?, direction=?, avg_entry_price=?, updated_at=?, sync_status='synced' WHERE symbol=?",
                         (info['qty'], info['direction'], info['cost'], datetime.now().isoformat(), symbol)
                     )
             else:
@@ -774,15 +780,12 @@ class USPositionSync:
         """在 position_store._lock 内执行的同步逻辑 (P0-4a)"""
         from app.core.models import Position, Direction, MarketRegime
 
-        # 实盘隔离: 自管持仓列表 (与 _reconcile_position_store 一致)
-        _self_managed = set()
+        # 实盘隔离: 自管持仓列表 (yaml + DB owner='manual' 合并)
         try:
-            from app.core.config_container import get_config
-            _sm = get_config().get("risk.self_managed_symbols", [])
-            if _sm:
-                _self_managed = set(_sm)
+            from app.core.config_container import get_all_manual_symbols
+            _self_managed = get_all_manual_symbols()
         except Exception:
-            pass
+            _self_managed = set()
 
         mem_positions = list(self.position_store._positions.values())  # 已持有锁，直接读取
         mem_symbols = set(p.symbol for p in mem_positions)
@@ -1173,6 +1176,22 @@ class USPositionSync:
             #   3. cost == 0 (本地 avg 缺失): 用 broker cost 兜底初始化
             if qty_changed:
                 size_increased = info['qty'] > existing.size
+
+                # ── P0 (2026-06-12): Scale-out 保护 ──
+                # 根因: SNDK 灾难 — 分批止盈刚减仓, position_sync 读 broker 尚未结算,
+                #        误判为"加仓"覆盖回大值, 导致下一 tick 又触发分批止盈
+                # 修法: 如果 position 有 _scale_out_until 且 broker size > 本地 size,
+                #        跳过覆盖 (这是结算延迟, 不是真加仓)
+                _exist_meta = getattr(existing, "metadata", {}) or {}
+                _so_until = _exist_meta.get("_scale_out_until", 0)
+                if size_increased and _so_until and time.time() < _so_until:
+                    logger.warning(
+                        f"⚠️ [US Sync·scale-out保护] {symbol} 跳过加仓覆盖: "
+                        f"本地size={existing.size} broker={info['qty']} "
+                        f"(分批止盈冷却中, broker结算延迟)"
+                    )
+                    continue
+
                 if size_increased:
                     # 加仓: 用 broker 端的新加权均价 (broker 是加仓事件的 SSOT)
                     if existing.avg_entry_price > 0 and abs(existing.avg_entry_price - info['cost']) > 0.5:

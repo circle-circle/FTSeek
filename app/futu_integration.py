@@ -126,7 +126,7 @@ class FutuIntegration:
                         'market_val': float(row.get('market_val', 0)),
                         'unrealized_pl': float(row.get('unrealized_pl', 0)),
                         'pl_ratio': float(row.get('pl_ratio_avg_cost', 0)),
-                        'side': row.get('side', 'LONG')
+                        'side': str(row.get('position_side', 'LONG')).upper()
                     })
                 logger.info(f"获取持仓成功：{len(positions)} 只股票")
                 return positions
@@ -246,14 +246,16 @@ class FutuIntegration:
                     found = True
                     break
             
-            if not found and pos['qty'] > 0:
+            if not found and abs(pos['qty']) > 0:
+                is_short = (pos['qty'] < 0) or (str(pos.get('side', '')).upper() == 'SHORT')
                 # 创建新记录
                 new_record = {
                     'trade_id': f"SYNC_{pos['code']}_{datetime.now().strftime('%Y%m%d%H%M%S')}",
                     'code': pos['code'],
-                    'action': 'BUY',
+                    'direction': 'SHORT' if is_short else 'LONG',
+                    'action': 'SELL' if is_short else 'BUY',
                     'entry_price': pos['avg_cost'],
-                    'quantity': pos['qty'],
+                    'quantity': abs(pos['qty']),
                     'entry_time': datetime.now().isoformat(),
                     'exit_price': None,
                     'exit_time': None,

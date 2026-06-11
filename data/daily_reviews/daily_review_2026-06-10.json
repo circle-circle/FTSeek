@@ -2,7 +2,7 @@
   "report_type": "daily",
   "report_version": "2.0",
   "report_date": "2026-06-10",
-  "generated_at": "2026-06-11T07:31:30.476234",
+  "generated_at": "2026-06-11T07:52:13.015187",
   "summary": {
     "total_trades": 0,
     "closed_trades": 0,
@@ -216,9 +216,9 @@
     ],
     "executed_targets": [],
     "missed_opportunities": [
-      "US.AMZN",
+      "US.ORCL",
       "US.TSM",
-      "US.ORCL"
+      "US.AMZN"
     ],
     "unplanned_trades": [],
     "plan_date": "2026-06-10",

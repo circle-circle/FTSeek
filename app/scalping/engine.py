@@ -2722,7 +2722,8 @@ class ScalpingEngine:
                     p_qty = p.get("qty") if isinstance(p, dict) else getattr(p, "qty", 0)
                     if not p_qty:
                         continue
-                    p_dir = "LONG" if p_qty > 0 else "SHORT"
+                    p_side = (p.get("position_side", "") if isinstance(p, dict) else getattr(p, "position_side", "")) or ""
+                    p_dir = "SHORT" if (p_qty < 0 or str(p_side).upper() == "SHORT") else "LONG"
                     if p_dir != direction:
                         logger.warning(
                             f"[ScalpingEngine·hedge_guard] {symbol} broker 已有 {p_dir} 仓位 "

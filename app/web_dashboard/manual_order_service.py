@@ -96,10 +96,37 @@ class ManualOrderService:
     # Broker 连接管理
     # ─────────────────────────────────────────────────────────────
 
+    def _trd_env(self):
+        """获取当前交易环境 (避免重复代码)"""
+        from futu import TrdEnv
+        return TrdEnv.REAL if self._is_live() else TrdEnv.SIMULATE
+
+    def _acc_id(self) -> int:
+        """获取当前账户 ID"""
+        return int(self._read_env(
+            "REAL_ACCOUNT_ID" if self._is_live() else "SIMULATE_ACCOUNT_ID", "0"
+        ))
+
     def connect(self) -> bool:
-        """连接到 Futu broker"""
+        """连接到 Futu broker
+        
+        Auto-reconnect (2026-06-11): 如果连接断开，重置状态后重试。
+        之前 _connected 永远不重置，断连后所有 RPC 永久失败直到重启进程。
+        """
         if self._connected and self._broker_ctx:
-            return True
+            # 快速健康检查：用一个轻量调用验证连接存活
+            try:
+                from futu import RET_OK
+                ret, _ = self._broker_ctx.accinfo_query(trd_env=self._trd_env(), acc_id=self._acc_id())
+                if ret == RET_OK:
+                    return True
+                # 连接存活但查询失败 — 可能是临时问题，保持连接
+                logger.warning("[手动下单] 健康检查失败，保持连接")
+                return True
+            except Exception:
+                # 连接已死 — 重置并重连
+                logger.warning("[手动下单] 连接已断开，正在重连...")
+                self.disconnect()
 
         try:
             from futu import (
@@ -161,14 +188,7 @@ class ManualOrderService:
         if not self.connect():
             return {"symbol": symbol, "error": "broker_not_connected"}
 
-        def _f(v):
-            """安全转 float，处理 None / 'N/A' / 异常值"""
-            try:
-                if v is None or v == "N/A":
-                    return 0.0
-                return float(v)
-            except (ValueError, TypeError):
-                return 0.0
+        from app.utils.numeric import safe_float as _f
 
         try:
             from futu import RET_OK
@@ -241,6 +261,8 @@ class ManualOrderService:
             errors.append("标的代码不能为空")
         if order.direction not in ("LONG", "SHORT"):
             errors.append(f"方向无效: {order.direction} (必须 LONG 或 SHORT)")
+        if order.action not in ("BUY", "SELL"):
+            errors.append(f"操作无效: {order.action} (必须 BUY 或 SELL)")
         if order.quantity <= 0:
             errors.append(f"数量必须大于 0: {order.quantity}")
         if order.quantity > 10000:
@@ -364,7 +386,8 @@ class ManualOrderService:
                 order.status = "submitted"
                 logger.info(f"[手动下单] ✅ 订单提交成功: order_id={order.order_id}")
                 # 标记为手动持仓, 避免被系统退出监控误平
-                self._mark_position_manual(order.symbol)
+                self._mark_position_manual(order.symbol, order.direction)
+                # PDT 记录移至平仓时 — 开仓不计入 day trade (P0 2026-06-11)
             else:
                 order.status = "error"
                 order.error_msg = str(data)
@@ -420,8 +443,9 @@ class ManualOrderService:
             if raw_qty == 0:
                 return {"success": False, "error": f"{symbol} 持仓数量为 0"}
 
-            # 根据持仓方向决定平仓方向 (Futu: LONG=正数, SHORT=负数)
-            is_long = raw_qty > 0
+            # 根据持仓方向决定平仓方向
+            side = str(row.get("position_side", "")).upper()
+            is_long = not ((raw_qty < 0) or (side == "SHORT"))
             position_dir = "LONG" if is_long else "SHORT"
             total_qty = int(abs(raw_qty))
             close_side = TrdSide.SELL if is_long else TrdSide.BUY  # 平多卖, 平空买
@@ -465,7 +489,13 @@ class ManualOrderService:
                 order.order_id = str(data.iloc[0]["order_id"]) if not data.empty else ""
                 order.status = "submitted"
                 logger.info(f"[手动平仓] ✅ {symbol} 平仓成功: {int(qty)}股")
-                self._mark_position_manual(symbol)
+                self._mark_position_manual(symbol, position_dir)
+                # PDT 日内交易记录: 平仓时判断是否 round trip (P0 2026-06-11)
+                try:
+                    from app.risk.pdt_guard import get_pdt_guard
+                    get_pdt_guard().record_close(symbol, row.get("open_date", row.get("entry_time")))
+                except Exception as _pdt_err:
+                    logger.debug(f"[手动平仓] PDT 记录失败 (不影响平仓): {_pdt_err}")
 
                 # 2026-06-10: 写入 trade_records 形成手动交易闭环
                 try:
@@ -473,7 +503,7 @@ class ManualOrderService:
                         symbol=symbol,
                         direction=position_dir,
                         entry_price=float(row.get("cost_price", 0)),
-                        exit_price=float(row.get("cur_price", 0)) or float(row.get("val_price", 0)) / abs(raw_qty) if raw_qty != 0 else 0,
+                        exit_price=self._calc_exit_price(row, raw_qty),  # TODO: 精确值需从 Futu 成交回报获取
                         quantity=int(qty),
                         reason=f"[{close_type}] {reason}",
                         order_id=order.order_id,
@@ -606,6 +636,19 @@ class ManualOrderService:
         except Exception as e:
             logger.error(f"[审计] 创建审计表失败: {e}")
 
+    @staticmethod
+    def _calc_exit_price(row: dict, raw_qty: float) -> float:
+        """从持仓行估算平仓价格 (近似值, 精确值需从 Futu 成交回报获取)"""
+        if raw_qty == 0:
+            return 0.0
+        cur = float(row.get("cur_price", 0) or 0)
+        if cur > 0:
+            return cur
+        val = float(row.get("val_price", 0) or 0)
+        if val > 0:
+            return val / abs(raw_qty)
+        return 0.0
+
     def _record_manual_close(self, symbol: str, direction: str, entry_price: float,
                              exit_price: float, quantity: int, reason: str, order_id: str):
         """手动平仓后写入 trade_records, 形成交易闭环 (P&L 追踪)"""
@@ -646,17 +689,33 @@ class ManualOrderService:
         except Exception as e:
             logger.warning(f"[手动交易闭环] 写入失败: {e}")
 
-    def _mark_position_manual(self, symbol: str):
-        """标记持仓为手动管理，防止 ExitMonitor 误平"""
+    def _mark_position_manual(self, symbol: str, direction: str = "LONG"):
+        """标记持仓为手动管理，防止 ExitMonitor 误平
+        
+        Race condition fix (2026-06-11): web 下单时 open_positions 可能尚未创建
+        (position_sync 30s 后才写入)。纯 UPDATE 会 0 rows affected → 标记丢失。
+        改为 UPSERT: UPDATE + INSERT IF NOT EXISTS。
+        """
         try:
             conn = sqlite3.connect(self._get_db_path())
-            conn.execute(
-                "UPDATE open_positions SET owner='manual' WHERE symbol=? AND (sync_status IS NULL OR sync_status='synced')",
+            cursor = conn.execute(
+                "UPDATE open_positions SET owner='manual' WHERE symbol=?",
                 (symbol,),
             )
+            if cursor.rowcount == 0:
+                # Row doesn't exist yet — position_sync hasn't run.
+                # Insert stub row; position_sync will merge/update on next cycle.
+                from datetime import datetime
+                conn.execute(
+                    """INSERT INTO open_positions (symbol, direction, size, avg_entry_price, owner, sync_status, updated_at)
+                       VALUES (?, ?, 0, 0, 'manual', 'pending_sync', ?)""",
+                    (symbol, direction, datetime.now().isoformat()),
+                )
+                logger.info(f"[手动下单] {symbol} 新建 stub 行 owner=manual dir={direction} (等 position_sync 补全)")
+            else:
+                logger.info(f"[手动下单] {symbol} 已标记为 owner=manual (跳过系统退出监控)")
             conn.commit()
             conn.close()
-            logger.info(f"[手动下单] {symbol} 已标记为 owner=manual (跳过系统退出监控)")
         except Exception as e:
             logger.error(f"[手动下单] 标记 owner=manual 失败 ({symbol}): {e}")
 

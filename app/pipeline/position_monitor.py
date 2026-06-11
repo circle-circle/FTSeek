@@ -489,9 +489,77 @@ def _partial_close_position(scheduler, position: Position, current_price: float,
     """部分平仓 — 分批止盈专用，减少仓位但不全平"""
     from app.pipeline.order_executor import _close_position
 
+    # ── P0 (2026-06-12): Scale-out 重入防护 ──
+    # 根因: SNDK 灾难 — 分批止盈成功后 position_sync 覆盖 size，
+    #        下一 tick 又触发，连续 BUY 导致 SHORT→LONG 方向翻转
+    # 修法: 成功 scale-out 后 10 分钟内不再触发同一标的
+    _meta = getattr(position, "metadata", {}) or {}
+    _so_until = _meta.get("_scale_out_until", 0)
+    if time.time() < _so_until:
+        _remain = int(_so_until - time.time())
+        logger.debug(
+            f"[分批止盈·冷却] {position.symbol} scale-out 冷却中 "
+            f"(剩余 {_remain}s)，跳过"
+        )
+        return
+    # 设置冷却: 10 分钟 (足够 position_sync 完成结算)
+    _meta["_scale_out_until"] = time.time() + 600
+    position.metadata = _meta
+
+    # ── P0 (2026-06-12): Broker 仓位预检 ──
+    # 根因: SNDK 灾难 — 内存缓存 SHORT 10, 但 broker 已经 FLAT 或 LONG,
+    #        系统发 BUY 5 "平仓" 变成了新建 LONG 仓位
+    # 修法: 下单前直接查 broker 实际仓位, 方向/数量不符则中止
+    try:
+        _adapter = getattr(getattr(scheduler, 'execution_engine', None), 'broker_adapter', None)
+        if _adapter and hasattr(_adapter, 'get_positions'):
+            _broker_pos = _adapter.get_positions() or []
+            _bp = None
+            for _b in _broker_pos:
+                _bsym = _b.get("symbol") if isinstance(_b, dict) else getattr(_b, "symbol", None)
+                if _bsym == position.symbol:
+                    _bp = _b
+                    break
+            if _bp is None:
+                logger.warning(
+                    f"🚫 [分批止盈·broker预检] {position.symbol} broker 端无持仓, "
+                    f"中止 scale-out (可能已被外部平仓)"
+                )
+                return
+            _bqty = float(_b.get("qty", 0) if isinstance(_b, dict) else getattr(_b, "qty", 0))
+            _b_side = _bp.get("position_side", "") if isinstance(_bp, dict) else getattr(_bp, "position_side", "")
+            _broker_is_short = _bqty < 0 or str(_b_side).upper() == "SHORT"
+            _mem_is_short = position.direction == Direction.SHORT
+            if _broker_is_short != _mem_is_short:
+                logger.critical(
+                    f"🔴 [分批止盈·方向冲突] {position.symbol} "
+                    f"内存={position.direction.value} vs "
+                    f"Broker={'SHORT' if _broker_is_short else 'LONG'} — "
+                    f"中止 scale-out, 等待 position_sync 修正"
+                )
+                return
+            _abs_bqty = abs(_bqty)
+            if _abs_bqty < close_qty:
+                logger.warning(
+                    f"🚫 [分批止盈·数量不足] {position.symbol} "
+                    f"broker 仅有 {_abs_bqty} 股, 需要平 {close_qty} 股 — 中止"
+                )
+                return
+    except Exception as _precheck_err:
+        # 预检失败不阻断 — 宁可多发一单也不能因为网络问题卡住
+        logger.debug(f"[分批止盈·预检异常] {position.symbol}: {_precheck_err}")
+
     if close_qty <= 0 or close_qty >= position.size:
         _close_position(scheduler, position, current_price, exit_reason)
         return
+
+    # ── P0 (2026-06-12): 设置 _close_in_progress 防止并发全平 ──
+    # 根因: _partial_close_position 不设锁 → 同时触发的 hard_stop/EMERGENCY
+    #        可以发起全平 → 两笔卖单同时到达 broker → 反向仓位
+    _pc_meta = getattr(position, "metadata", {}) or {}
+    _pc_meta["_close_in_progress"] = True
+    _pc_meta["_close_in_progress_ts"] = time.time()
+    position.metadata = _pc_meta
 
     if position.direction == Direction.LONG:
         pnl = (current_price - position.avg_entry_price) * close_qty
@@ -530,6 +598,11 @@ def _partial_close_position(scheduler, position: Position, current_price: float,
                     f"🚫 [分批止盈·拒单] {position.symbol} broker拒绝: "
                     f"{getattr(result_order, 'failure_reason', 'unknown')} — 不修改仓位"
                 )
+                # 清理 _close_in_progress
+                _pc_meta2 = getattr(position, "metadata", {}) or {}
+                _pc_meta2.pop("_close_in_progress", None)
+                _pc_meta2.pop("_close_in_progress_ts", None)
+                position.metadata = _pc_meta2
                 return
             # H5 (2026-06-03): position.size 修改需持有 PositionStore 锁, 防止 scan 线程读取中间值
             with scheduler.position_store._lock:
@@ -557,6 +630,13 @@ def _partial_close_position(scheduler, position: Position, current_price: float,
                     pass
     except Exception as e:
         logger.error(f"[分批止盈·失败] {position.symbol}: {e}")
+
+    # P0 (2026-06-12): 统一清理 _close_in_progress (无论成功/失败/异常)
+    # _scale_out_until 仍然有效 (10min冷却), _close_in_progress 仅保护执行期间
+    _pc_meta_final = getattr(position, "metadata", {}) or {}
+    _pc_meta_final.pop("_close_in_progress", None)
+    _pc_meta_final.pop("_close_in_progress_ts", None)
+    position.metadata = _pc_meta_final
 
 
 def _close_option_position(scheduler, position: Position, reason: str, current_option_price: float):
@@ -759,10 +839,26 @@ def restore_positions_from_db(scheduler):
             logger.warning(f"[持仓恢复] Broker 持仓拉取失败 (降级到 _close_blocked 行为): {_bpe}")
 
         restored = 0
+
+        # 手动持仓隔离: 恢复时跳过 owner='manual' 的持仓
+        _manual_symbols = set()
+        try:
+            from app.core.config_container import get_all_manual_symbols
+            _manual_symbols = get_all_manual_symbols()
+        except Exception:
+            pass
+
+        from app.utils.numeric import safe_float as _sf
+
         for row in positions:
             try:
                 symbol = row.get("symbol", "")
                 if not symbol:
+                    continue
+
+                # 手动持仓隔离: 不纳入系统恢复
+                if _manual_symbols and symbol in _manual_symbols:
+                    logger.debug(f"[持仓恢复] 跳过手动持仓: {symbol}")
                     continue
 
                 # P0 修复 (2026-05-21): 跳过 PRICE_FAIL 已关闭的期权，阻断同步死循环
@@ -780,13 +876,13 @@ def restore_positions_from_db(scheduler):
                     strategy_id=strategy_id,
                     signal_id=row.get("signal_id", ""), trace_id=row.get("trace_id", ""),
                     symbol=symbol, direction=direction,
-                    size=float(row.get("size", row.get("quantity", 0))),
-                    avg_entry_price=float(row.get("avg_entry_price", 0)),
-                    initial_sl=float(row.get("initial_sl", 0)),
-                    initial_tp=float(row.get("initial_tp", 0)),
-                    current_sl=float(row.get("current_sl", 0)),
+                    size=_sf(row.get("size", row.get("quantity"))),
+                    avg_entry_price=_sf(row.get("avg_entry_price")),
+                    initial_sl=_sf(row.get("initial_sl")),
+                    initial_tp=_sf(row.get("initial_tp")),
+                    current_sl=_sf(row.get("current_sl")),
                     take_profit_levels=row.get("take_profit_levels", []) or [],
-                    time_stop_hours=int(row.get("time_stop_hours", 168)),
+                    time_stop_hours=int(row.get("time_stop_hours") or 168),
                     market_regime=MarketRegime.RANGE,
                     is_partially_reduced=bool(row.get("is_partially_reduced", False)),
                 )
@@ -811,7 +907,7 @@ def restore_positions_from_db(scheduler):
                     if broker_positions_map and symbol in broker_positions_map:
                         broker_qty = broker_positions_map[symbol].get("qty")
                     if broker_qty is not None:
-                        db_size = float(row.get("size", row.get("quantity", 0)))
+                        db_size = _sf(row.get("size", row.get("quantity")))
                         if abs(broker_qty - db_size) < 1:  # 允许 1 股舍入误差
                             # Broker 确认 + 数量一致 → 自动恢复
                             try:
@@ -843,6 +939,13 @@ def restore_positions_from_db(scheduler):
                         position.metadata["_close_blocked_reason"] = "DB is_anomalous=1 (历史平仓失败)"
                         position.metadata["_close_blocked_at"] = row.get("last_sync_at", "")
                         logger.warning(f"[持仓恢复] {symbol} 已标记为异常持仓, 跳过监控")
+                # 源头打标 (2026-06-11): 确保 metadata.source 正确, 下游用 store.managed() 过滤
+                from app.positions import tag_position, PositionSource
+                _src = PositionSource.from_str(strategy_id)
+                tag_position(position, _src)
+                # 保留 is_anomalous 等运行时标记 (tag_position 不覆盖已有 metadata)
+                if position.metadata.get("source") != _src.value:
+                    position.metadata["source"] = _src.value
                 scheduler.position_store.add(symbol, position)
                 restored += 1
                 logger.info(f"[持仓恢复] {symbol} {direction_str} {position.size}股 @${position.avg_entry_price:.2f}")
@@ -1112,7 +1215,7 @@ def _check_positions(scheduler):
     # 且 Futu 盘后下单可能无法成交或产生严重滑点
     if phase == MarketPhase.AFTER_HOURS:
         return
-    positions = scheduler.position_store.all()
+    positions = scheduler.position_store.managed()  # 源头隔离: 仅系统管理的仓位 (2026-06-11)
     if scheduler.polling_controller and positions:
         pos_info = {}
         for p in positions:
@@ -1311,33 +1414,9 @@ def _check_positions(scheduler):
     except Exception: pass
 
     # ============================================================
-    # 过滤手动仓位 — 用户手动下单的持仓不由系统退出监控管理
-    # owner='manual' 的持仓由用户自行决定退出时机
+    # 手动仓位隔离已在源头完成: position_store.managed() (2026-06-11)
+    # MANUAL/LEGACY/UNKNOWN source → PROTECTED → 不进入 positions 列表
     # ============================================================
-    _manual_symbols = set()
-    try:
-        if hasattr(scheduler, 'trade_store') and scheduler.trade_store:
-            _conn = scheduler.trade_store._get_conn()
-            _rows = _conn.execute(
-                "SELECT symbol FROM open_positions WHERE owner='manual'"
-            ).fetchall()
-            _conn.close()
-            _manual_symbols = {row[0] for row in _rows}
-    except Exception as _me:
-        logger.debug(f"[退出监控] 查询 manual 持仓失败: {_me}")
-
-    if _manual_symbols:
-        _before = len(monitored_positions)
-        monitored_positions = [
-            p for p in monitored_positions
-            if p.symbol not in _manual_symbols
-        ]
-        _skipped = _before - len(monitored_positions)
-        if _skipped > 0:
-            logger.info(
-                f"[退出监控] 跳过 {_skipped} 个手动持仓 (owner=manual): "
-                f"{sorted(_manual_symbols & {p.symbol for p in positions})}"
-            )
 
     # ============================================================
     # Phase 4 (2026-05-31): ExitRuleDispatcher 主路径路由
@@ -2022,8 +2101,13 @@ def _process_pending_order(scheduler, tracker, order: dict):
                 meta.pop("_close_order_submitted", None)
                 meta.pop("_close_futu_order_id", None)
                 meta.pop("_close_order_unconfirmed", None)
+                # P0 (2026-06-12): 同步清理 _close_in_progress, 允许重试
+                meta.pop("_close_in_progress", None)
+                meta.pop("_close_in_progress_ts", None)
+                meta.pop("_close_order_failed", None)
+                meta.pop("_close_order_status", None)
                 position.metadata = meta
-                logger.info(f"[订单追踪] {symbol} 订单失败，持仓继续监控")
+                logger.info(f"[订单追踪] {symbol} 订单失败，持仓继续监控 (已解锁)")
                 
         elif 'SUBMITTING' in status or 'SUBMITTED' in status or 'WAITING' in status:
             # 仍在排队

@@ -1,0 +1,64 @@
+{
+  "date": "2026-06-11",
+  "plan_available": true,
+  "generated_at": "2026-06-12T04:36:15.169022",
+  "targets": [
+    {
+      "symbol": "US.AAPL",
+      "plan_direction": "LONG",
+      "entry_zone": [
+        287.0,
+        290.0
+      ],
+      "status": "",
+      "traded": false,
+      "entry_zone_hit": false,
+      "direction_match": false,
+      "pnl_contribution": 0.0,
+      "matched_trades": 0,
+      "actual_entry_prices": [],
+      "actual_directions": []
+    },
+    {
+      "symbol": "US.MSFT",
+      "plan_direction": "LONG",
+      "entry_zone": [
+        475.0,
+        480.0
+      ],
+      "status": "",
+      "traded": false,
+      "entry_zone_hit": false,
+      "direction_match": false,
+      "pnl_contribution": 0.0,
+      "matched_trades": 0,
+      "actual_entry_prices": [],
+      "actual_directions": []
+    },
+    {
+      "symbol": "US.GOOG",
+      "plan_direction": "LONG",
+      "entry_zone": [
+        188.0,
+        191.0
+      ],
+      "status": "",
+      "traded": false,
+      "entry_zone_hit": false,
+      "direction_match": false,
+      "pnl_contribution": 0.0,
+      "matched_trades": 0,
+      "actual_entry_prices": [],
+      "actual_directions": []
+    }
+  ],
+  "hit_rate": 0.0,
+  "traded_rate": 0.0,
+  "avg_pnl_of_planned": 0.0,
+  "unplanned_trade_count": 0,
+  "planned_count": 3,
+  "total_trades": 0,
+  "plan_date": "2026-06-11",
+  "traded_planned_count": 0,
+  "hit_count": 0
+}

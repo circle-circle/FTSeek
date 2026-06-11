@@ -1748,7 +1748,7 @@ strategies:
       blackout:
         max_symbols: 0
   technical:
-    enabled: true
+    enabled: false  # 冻结 (2026-06-11): IC 为负，与 trend_first 重叠，消除噪声
     min_signals: 2
     indicators:
     - rsi
@@ -1762,7 +1762,7 @@ strategies:
       supertrend: 0.2
     min_score: 10
   llm_vote:
-    enabled: true
+    enabled: false  # 冻结 (2026-06-11): 信号噪声大，LLM 方向默认 LONG 偏见
     min_consensus: 0.3
     min_confidence: 0.5
 risk_limits:

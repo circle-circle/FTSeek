@@ -57,7 +57,9 @@ def main():
             if abs(qty) < 0.01:
                 continue
             symbol = row['code']
-            direction = 'SHORT' if qty < 0 else 'LONG'
+            side = str(row.get('position_side', 'LONG')).upper()
+            is_short = (qty < 0) or (side == 'SHORT')
+            direction = 'SHORT' if is_short else 'LONG'
             broker_positions[symbol] = {
                 'symbol': symbol, 'direction': direction, 'size': abs(qty),
                 'avg_entry_price': float(row.get('cost_price', 0)),

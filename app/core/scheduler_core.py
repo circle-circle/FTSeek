@@ -104,6 +104,29 @@ class PositionStore:
         with self._lock:
             return list(self._positions.values())
 
+    def managed(self) -> List[Position]:
+        """系统管理的持仓 (exit_monitor / signal_pipeline / drawdown 使用)
+        
+        源头隔离 (2026-06-11): 通过 is_strategy_managed() 判断,
+        手动/legacy/unknown 持仓自动排除, 消费者无需各自查 DB 过滤。
+        """
+        from app.positions import is_strategy_managed
+        with self._lock:
+            return [p for p in self._positions.values() if is_strategy_managed(p)]
+
+    def manual(self) -> List[Position]:
+        """手动持仓 (dashboard 展示 / 审计使用)"""
+        from app.positions import get_position_source, PositionSource
+        with self._lock:
+            return [p for p in self._positions.values()
+                    if get_position_source(p) == PositionSource.MANUAL]
+
+    def managed_symbols(self) -> set:
+        """系统管理的持仓 symbol 集合 (signal_pipeline 快速查找)"""
+        from app.positions import is_strategy_managed
+        with self._lock:
+            return {sym for sym, p in self._positions.items() if is_strategy_managed(p)}
+
     def has(self, symbol: str) -> bool:
         with self._lock:
             return symbol in self._positions

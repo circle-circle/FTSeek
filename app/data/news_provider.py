@@ -18,7 +18,7 @@ import feedparser
 from dotenv import load_dotenv
 
 # 加载环境变量
-_env_path = Path(__file__).resolve().parent.parent.parent.parent / ".env.us"
+_env_path = Path(__file__).resolve().parent.parent.parent / ".env.us"
 if _env_path.exists():
     load_dotenv(_env_path)
 

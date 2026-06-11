@@ -1161,6 +1161,8 @@ class ORBEngine:
         result = self._submit_order(symbol, direction, price, quantity)
         if not result or not result.get("success"):
             logger.warning("[ORB] %s 下单失败: %s", symbol, result)
+            # 风控拒绝（仓位超限等）当日不可自愈，标记完成防止每5秒重试
+            self._first_breakout_done.add(symbol)
             return
 
         order_id = result.get("order_id", "")

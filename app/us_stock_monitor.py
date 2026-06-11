@@ -78,9 +78,11 @@ class Position:
     
     def __init__(self, code: str, qty: float, entry_price: float,
                  current_price: float = 0, stop_loss: float = None,
-                 take_profit: float = None, entry_time: str = None):
+                 take_profit: float = None, entry_time: str = None,
+                 direction: str = "LONG"):
         self.code = code
         self.qty = qty
+        self.direction = direction.upper() if direction else "LONG"
         self.entry_price = entry_price
         self.current_price = current_price
         self.stop_loss = stop_loss
@@ -88,19 +90,25 @@ class Position:
         self.entry_time = entry_time or datetime.now().isoformat()
         self.unrealized_pl = 0
         self.pl_ratio = 0
-        self.peak_price = current_price  # 用于追踪止盈
+        self.peak_price = current_price  # 用于追踪止盈 (LONG: 最高价, SHORT: 最低价)
         self.updated_at = datetime.now().isoformat()
     
     def update_price(self, price: float):
         """更新当前价格并计算盈亏"""
         self.current_price = price
-        self.unrealized_pl = (price - self.entry_price) * self.qty
-        self.pl_ratio = (price - self.entry_price) / self.entry_price if self.entry_price > 0 else 0
-        
-        # 更新最高价 (用于追踪止盈)
-        if price > self.peak_price:
-            self.peak_price = price
-        
+        if self.direction == "SHORT":
+            self.unrealized_pl = (self.entry_price - price) * self.qty
+            self.pl_ratio = (self.entry_price - price) / self.entry_price if self.entry_price > 0 else 0
+            # SHORT: 追踪最低价 (用于追踪止盈)
+            if price < self.peak_price or self.peak_price <= 0:
+                self.peak_price = price
+        else:
+            self.unrealized_pl = (price - self.entry_price) * self.qty
+            self.pl_ratio = (price - self.entry_price) / self.entry_price if self.entry_price > 0 else 0
+            # LONG: 追踪最高价 (用于追踪止盈)
+            if price > self.peak_price:
+                self.peak_price = price
+
         self.updated_at = datetime.now().isoformat()
     
     def check_stop_loss(self) -> bool:
@@ -119,16 +127,23 @@ class Position:
         """检查追踪止盈"""
         if self.peak_price <= 0:
             return False
-        
-        # 计算从最高点回撤的比例
-        peak_pl_ratio = (self.peak_price - self.entry_price) / self.entry_price
-        
-        # 如果曾经盈利超过 trigger，且当前回撤超过 percent
-        if peak_pl_ratio >= trigger:
-            current_peak_ratio = (self.peak_price - self.current_price) / self.peak_price
-            if current_peak_ratio >= percent:
-                return True
-        
+
+        if self.direction == "SHORT":
+            # SHORT: entry 做空，价格下跌盈利，价格上涨回撤
+            peak_pl_ratio = (self.entry_price - self.peak_price) / self.entry_price
+            if peak_pl_ratio >= trigger:
+                # 从最低点反弹超过 percent 则触发
+                current_peak_ratio = (self.current_price - self.peak_price) / self.peak_price
+                if current_peak_ratio >= percent:
+                    return True
+        else:
+            # LONG: 价格上涨盈利，价格下跌回撤
+            peak_pl_ratio = (self.peak_price - self.entry_price) / self.entry_price
+            if peak_pl_ratio >= trigger:
+                current_peak_ratio = (self.peak_price - self.current_price) / self.peak_price
+                if current_peak_ratio >= percent:
+                    return True
+
         return False
     
     def to_dict(self) -> Dict:
@@ -136,6 +151,7 @@ class Position:
         return {
             'code': self.code,
             'qty': self.qty,
+            'direction': self.direction,
             'entry_price': self.entry_price,
             'current_price': self.current_price,
             'stop_loss': self.stop_loss,
@@ -311,23 +327,28 @@ class USStockMonitor:
             stock_config = self._load_stock_config()
             
             for record in records:
-                if record.get('exit_price') is None and record.get('qty', 0) > 0:
+                if record.get('exit_price') is None:
                     code = record['code']
-                    
+                    qty = float(record.get('quantity', record.get('qty', 0)))
+                    direction = str(record.get('direction', record.get('side', 'LONG'))).upper()
+                    if qty == 0 and direction not in ('LONG', 'SHORT'):
+                        continue
+
                     # 获取配置中的止损止盈
                     cfg = stock_config.get(code, {})
                     stop_loss = record.get('stop_loss') or cfg.get('stop_loss')
                     take_profit = record.get('take_profit') or cfg.get('take_profit')
-                    
+
                     # 创建持仓对象
                     position = Position(
                         code=code,
-                        qty=record['qty'],
+                        qty=abs(qty),
                         entry_price=record.get('entry_price', 0),
                         current_price=record.get('current_price', 0),
                         stop_loss=stop_loss,
                         take_profit=take_profit,
-                        entry_time=record.get('entry_time')
+                        entry_time=record.get('entry_time'),
+                        direction=direction
                     )
                     
                     self.positions[code] = position

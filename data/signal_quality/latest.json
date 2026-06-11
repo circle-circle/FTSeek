@@ -1,6 +1,6 @@
 {
-  "as_of": "2026-06-10",
-  "generated_at": "2026-06-11T07:34:25",
+  "as_of": "2026-06-11",
+  "generated_at": "2026-06-12T04:36:14",
   "history_days": 90,
   "total_closed_trades": 348,
   "confidence_winrate_map": {
@@ -121,12 +121,12 @@
     "rolling": {
       "7d": {
         "technical": {
-          "total": 10,
-          "wins": 4,
-          "losses": 6,
-          "win_rate": 0.4,
-          "avg_pnl": -94.9673,
-          "total_pnl": -949.6735,
+          "total": 7,
+          "wins": 3,
+          "losses": 4,
+          "win_rate": 0.4286,
+          "avg_pnl": -125.1721,
+          "total_pnl": -876.205,
           "max_loss": -627.8,
           "max_win": 553.8
         },
@@ -171,13 +171,13 @@
           "max_win": 0.0
         },
         "其他": {
-          "total": 20,
-          "wins": 14,
-          "losses": 6,
-          "win_rate": 0.7,
-          "avg_pnl": -270.7549,
-          "total_pnl": -5415.098,
-          "max_loss": -7255.8,
+          "total": 15,
+          "wins": 11,
+          "losses": 4,
+          "win_rate": 0.7333,
+          "avg_pnl": 358.3239,
+          "total_pnl": 5374.858,
+          "max_loss": -3578.46,
           "max_win": 5667.66
         }
       },
@@ -223,12 +223,12 @@
           "max_win": 0.0
         },
         "scalping": {
-          "total": 84,
+          "total": 80,
           "wins": 4,
-          "losses": 62,
-          "win_rate": 0.0476,
-          "avg_pnl": -17.942,
-          "total_pnl": -1507.1287,
+          "losses": 59,
+          "win_rate": 0.05,
+          "avg_pnl": -16.9893,
+          "total_pnl": -1359.1437,
           "max_loss": -394.68,
           "max_win": 228.5
         },
@@ -244,7 +244,7 @@
         }
       }
     },
-    "as_of": "2026-06-10"
+    "as_of": "2026-06-11"
   },
   "factor_contribution": {
     "top_combos": [
@@ -398,7 +398,7 @@
     "single_count": 7
   },
   "threshold_recommendations": {
-    "as_of": "2026-06-10",
+    "as_of": "2026-06-11",
     "suggested_min_signal_confidence": 0.0,
     "current_baseline": 0.5,
     "rationale": "近30d 桶 0-0.3 胜率 50.91% (n=55)",

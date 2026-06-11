@@ -94,7 +94,8 @@ def sync_us_positions():
                     code = f'US.{code}'
                 
                 # 区分多空
-                is_short = qty < 0
+                side = str(row.get('position_side', 'LONG')).upper()
+                is_short = (qty < 0) or (side == 'SHORT')
                 direction = 'SHORT' if is_short else 'LONG'
                 size = abs(qty)
                 

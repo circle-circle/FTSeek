@@ -983,14 +983,15 @@ class IntradayScorer:
         lifecycle = self._classify_lifecycle(momentum, prev_momentum, state["momentum"], vix)
 
         # Map lifecycle → (raw, base_conf)
+        # 对称化 (2026-06-11): 消除 LONG 偏见，LONG/SHORT 信号对等
         lifecycle_signals = {
-            "accelerating":  (75, 0.65),
-            "turning_up":    (60, 0.55),
-            "converging":    (40, 0.45),
-            "declining":     (-70, 0.60),
-            "turning_down":  (-55, 0.50),
-            "coasting":      (15, 0.30),
-            "fading":        (-15, 0.30),
+            "accelerating":  (72, 0.62),   # 动量增强 → LONG
+            "turning_up":    (57, 0.52),   # 零轴上穿 → LONG
+            "converging":    (28, 0.38),   # 下跌衰竭 → LONG
+            "declining":     (-72, 0.62),  # 动量恶化 → SHORT
+            "turning_down":  (-57, 0.52),  # 零轴下穿 → SHORT
+            "fading":        (-28, 0.38),  # 上涨衰竭 → SHORT
+            "coasting":      (0, 0.20),    # 衰减中 → 中性
         }
         raw, base_conf = lifecycle_signals.get(lifecycle, (0, 0.0))
 

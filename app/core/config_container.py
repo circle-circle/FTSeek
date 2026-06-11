@@ -584,3 +584,55 @@ def reload_config():
     global _config_instance
     _config_instance = None
     return get_config()
+
+
+# ============================================================
+#  手动/自管标的合并查询 (yaml + DB owner='manual')
+#  SSOT: 所有子系统统一调用此函数，不再各自只读 yaml
+# ============================================================
+
+_manual_symbols_cache: Optional[set] = None
+_manual_symbols_cache_ts: float = 0.0
+_MANUAL_SYMBOLS_TTL = 60.0  # 60s cache
+
+
+def get_all_manual_symbols() -> set:
+    """
+    返回当前所有手动/自管标的集合 (yaml self_managed_symbols ∪ DB owner='manual')。
+    60s TTL cache，避免每次 sync 循环都查 DB。
+    """
+    global _manual_symbols_cache, _manual_symbols_cache_ts
+    import time
+    now = time.time()
+    if _manual_symbols_cache is not None and (now - _manual_symbols_cache_ts) < _MANUAL_SYMBOLS_TTL:
+        return _manual_symbols_cache
+
+    result = set()
+
+    # 1. yaml 配置 (静态列表)
+    try:
+        cfg = get_config()
+        _sm = cfg.get("risk.self_managed_symbols", [])
+        if _sm:
+            result.update(_sm)
+    except Exception:
+        pass
+
+    # 2. DB owner='manual' (动态: web 手动下单的新标的)
+    try:
+        import sqlite3
+        from app.core.db_utils import get_main_db
+        db_path = str(get_main_db())
+        conn = sqlite3.connect(db_path, timeout=5)
+        rows = conn.execute(
+            "SELECT DISTINCT symbol FROM open_positions WHERE owner='manual'"
+        ).fetchall()
+        conn.close()
+        for row in rows:
+            result.add(row[0])
+    except Exception:
+        pass
+
+    _manual_symbols_cache = result
+    _manual_symbols_cache_ts = now
+    return result

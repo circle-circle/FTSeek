@@ -32,7 +32,7 @@ class ModelScore:
     model_id: str
     strength: int         # 0-100
     confidence: float     # 0.0-1.0
-    direction: str = "LONG"
+    direction: str = ""   # 必须显式设置，不设默认值（消除 LONG 偏见, 2026-06-11）
     reasoning: str = ""
     timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
     score_id: str = field(default_factory=lambda: str(uuid.uuid4()))
@@ -292,9 +292,20 @@ class ModelAgent:
         confidence = float(data.get("confidence", 0.5))
         confidence = max(0.0, min(1.0, confidence))
 
-        direction = str(data.get("direction", "LONG")).upper()
+        direction = str(data.get("direction", "")).upper().strip()
         if direction not in ("LONG", "SHORT"):
-            direction = "LONG" if strength > 50 else "SHORT"
+            # LLM 未提供有效方向：从 strength 推断但降低置信度 (消除 LONG 偏见, 2026-06-11)
+            logger.warning(f"[ModelAgent] {self.role}: LLM 未提供有效方向, strength={strength} 推断")
+            if strength >= 60:
+                direction = "LONG"
+                confidence *= 0.7  # 降置信度
+            elif strength <= 40:
+                direction = "SHORT"
+                confidence *= 0.7
+            else:
+                # 中性区间：标记为不确定，降置信度到接近过滤阈值
+                direction = "LONG" if strength > 50 else "SHORT"
+                confidence = min(confidence, 0.15)  # 会被下游 min_confidence 过滤
 
         reasoning = str(data.get("reasoning", ""))[:200]
 
@@ -314,12 +325,14 @@ class ModelAgent:
         """基于规则的评分（LLM 不可用时使用）"""
         base = 50
 
-        # 成交量因子
+        # 成交量因子（对称化：消除 LONG 偏见, 2026-06-11）
         volume_ratio = data.get("volume_ratio", 1.0)
         if volume_ratio > 2.0:
             base += 15
         elif volume_ratio > 1.5:
             base += 8
+        elif volume_ratio < 0.5:
+            base -= 15
         elif volume_ratio < 0.7:
             base -= 8
 
@@ -355,7 +368,14 @@ class ModelAgent:
         else:
             confidence = 0.20  # 数据不足 (从 0.35 降至 0.20)
 
-        direction = "LONG" if strength > 50 else "SHORT"
+        # 从动量推导方向（动量是方向性最强的因子，比 strength 阈值更准确, 2026-06-11）
+        momentum = data.get("momentum", 0)
+        if momentum > 0.02:
+            direction = "LONG"
+        elif momentum < -0.02:
+            direction = "SHORT"
+        else:
+            direction = "LONG" if strength > 55 else "SHORT"  # 弱信号轻微偏好（趋势市场）
 
         return ModelScore(
             model_id=self.role,

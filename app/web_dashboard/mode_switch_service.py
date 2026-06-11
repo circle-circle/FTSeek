@@ -166,6 +166,22 @@ def switch_mode(target_mode: str, confirm: str = "") -> Dict[str, Any]:
         new_mode = get_current_mode()
         logger.warning(f"[模式切换] {current['mode_label']} → {new_mode['mode_label']}")
 
+        # 清除 dashboard._is_live 30s 缓存 (2026-06-11)
+        # 否则切换后 30s 内页面仍显示旧模式标签
+        try:
+            from app.web_dashboard.routes.dashboard import _is_live
+            if hasattr(_is_live, '_cache_time'):
+                _is_live._cache_time = 0
+                _is_live._cache = None
+        except Exception:
+            pass
+        # 清除 DataService 缓存
+        try:
+            from app.web_dashboard.data_service import get_data_service
+            get_data_service().invalidate_cache()
+        except Exception:
+            pass
+
         # ftseek-us 交易引擎必须重启才能切换 broker/config/DB 连接
         # Dashboard 本身热加载，不需要重启
         restart_result = _restart_ftseek_us()
@@ -184,12 +200,27 @@ def switch_mode(target_mode: str, confirm: str = "") -> Dict[str, Any]:
 
 
 def _clear_live_db() -> None:
-    """切换到实盘时清空 live DB 的 open_positions, 避免显示旧模拟数据"""
+    """切换到实盘时清空 live DB 的 open_positions, 避免显示旧模拟数据 (C4: 先备份)"""
     try:
         live_db = ENV_FILE.parent / "data" / "ftseek_us_live.db"
         if live_db.exists():
             import sqlite3
+            from datetime import datetime
             conn = sqlite3.connect(str(live_db))
+            conn.row_factory = sqlite3.Row
+
+            # C4: 备份到 archive 表
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            for table in ("open_positions", "trade_records"):
+                try:
+                    count = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+                    if count > 0:
+                        archive_table = f"_archive_{table}_{ts}"
+                        conn.execute(f"CREATE TABLE {archive_table} AS SELECT * FROM {table}")
+                        logger.info(f"[模式切换] 备份 {count} 行到 {archive_table}")
+                except Exception as be:
+                    logger.warning(f"[模式切换] 备份 {table} 失败: {be}")
+
             conn.execute("DELETE FROM open_positions")
             conn.execute("DELETE FROM trade_records")
             conn.commit()

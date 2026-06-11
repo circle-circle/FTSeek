@@ -2,7 +2,7 @@
 {% block title %}个股分析 - {{ symbol }}{% endblock %}
 
 {% block head %}
-    <script src="https://unpkg.com/lightweight-charts@4.1.0/dist/lightweight-charts.standalone.production.js"></script>
+    <script src="/static/lightweight-charts.standalone.production.js"></script>
 {% endblock %}
 
 {% block extra_css %}
@@ -177,6 +177,7 @@
 
 {% block scripts %}
         const SYMBOL = {{ symbol | tojson }};
+        function escHtml(s) { var d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
         let chart, candleSeries, volumeSeries;
 
         function initChart() {
@@ -242,7 +243,7 @@
 
         function renderTechnicals(t) {
             const el = document.getElementById('technicalsGrid');
-            if (t.error) { el.innerHTML = '<div class="empty">❌ ' + t.error + '</div>'; return; }
+            if (t.error) { el.innerHTML = '<div class="empty">❌ ' + escHtml(String(t.error)) + '</div>'; return; }
             if (!t.cur_price) { el.innerHTML = '<div class="empty">无数据</div>'; return; }
             const items = [
                 { label: '现价', value: '$' + t.cur_price, cls: '' },
@@ -281,7 +282,7 @@
             try {
                 const res = await fetch(`/api/stock/${SYMBOL}/orderbook`);
                 const data = await res.json();
-                if (data.error) { el.innerHTML = '<div class="empty">❌ ' + data.error + '</div>'; return; }
+                if (data.error) { el.innerHTML = '<div class="empty">❌ ' + escHtml(data.error) + '</div>'; return; }
                 const asks = (data.asks || []).slice(0, 5).reverse();
                 const bids = (data.bids || []).slice(0, 5);
                 const maxVol = Math.max(...[...asks, ...bids].map(x => x.volume), 1);
@@ -299,7 +300,7 @@
             try {
                 const res = await fetch(`/api/stock/${SYMBOL}/ticker?num=100`);
                 const data = await res.json();
-                if (data.error) { el.innerHTML = '<div class="empty">❌ ' + data.error + '</div>'; return; }
+                if (data.error) { el.innerHTML = '<div class="empty">❌ ' + escHtml(data.error) + '</div>'; return; }
                 if (!data.ticker || !data.ticker.length) { el.innerHTML = '<div class="empty">无逐笔数据 (盘后)</div>'; return; }
                 const tickers = data.ticker.slice().reverse();
                 let html = '<div class="ticker-list">';
@@ -331,12 +332,12 @@
                 const res = await fetch(`/api/stock/${SYMBOL}/llm-analysis`);
                 const data = await res.json();
                 if (data.model_used) document.getElementById('llmModelLabel').textContent = '(' + data.model_used + ')';
-                if (data.error) { el.innerHTML = '<div class="empty">❌ ' + data.error + '</div>'; return; }
+                if (data.error) { el.innerHTML = '<div class="empty">❌ ' + escHtml(data.error) + '</div>'; return; }
                 const a = data.analysis || {};
                 const dirColor = a.direction === 'LONG' ? 'green' : a.direction === 'SHORT' ? 'red' : 'yellow';
                 const confPct = ((a.confidence || 0) * 100).toFixed(0);
-                el.innerHTML = '<div class="llm-grid"><div class="rec-box ' + dirColor + '" style="display:flex;flex-direction:column;justify-content:center"><div class="rec-dir ' + dirColor + '">' + (a.direction || '--') + '</div><div class="rec-score">置信度: ' + confPct + '%</div><div style="margin-top:8px;font-size:18px;font-weight:700">' + (a.action || '--') + '</div></div><div><div style="font-size:15px;font-weight:600;margin-bottom:8px">' + (a.summary || '') + '</div><div style="font-size:13px;color:#c9d1d9;line-height:1.6;margin-bottom:12px">' + (a.reasoning || '') + '</div><div style="display:flex;gap:16px;font-size:13px;margin-bottom:8px;flex-wrap:wrap">' + (a.key_levels ? '<span>支撑: <strong class="green">$' + (a.key_levels.support || '--') + '</strong></span><span>阻力: <strong class="red">$' + (a.key_levels.resistance || '--') + '</strong></span>' : '') + '</div>' + (a.risk_notes ? '<div style="font-size:12px;color:#fbbf24;padding:6px 10px;background:rgba(251,191,36,0.1);border-radius:4px">⚠ ' + a.risk_notes + '</div>' : '') + '</div></div><div style="margin-top:12px;font-size:11px;color:#484f58">模型: ' + (data.model_used || '--') + ' | 延迟: ' + ((data.latency_ms || 0)/1000).toFixed(1) + 's</div>';
-            } catch (e) { el.innerHTML = '<div class="empty">❌ 请求失败: ' + e.message + '</div>'; }
+                el.innerHTML = '<div class="llm-grid"><div class="rec-box ' + dirColor + '" style="display:flex;flex-direction:column;justify-content:center"><div class="rec-dir ' + dirColor + '">' + escHtml(a.direction || '--') + '</div><div class="rec-score">置信度: ' + confPct + '%</div><div style="margin-top:8px;font-size:18px;font-weight:700">' + escHtml(a.action || '--') + '</div></div><div><div style="font-size:15px;font-weight:600;margin-bottom:8px">' + escHtml(a.summary || '') + '</div><div style="font-size:13px;color:#c9d1d9;line-height:1.6;margin-bottom:12px">' + escHtml(a.reasoning || '') + '</div><div style="display:flex;gap:16px;font-size:13px;margin-bottom:8px;flex-wrap:wrap">' + (a.key_levels ? '<span>支撑: <strong class="green">$' + (a.key_levels.support || '--') + '</strong></span><span>阻力: <strong class="red">$' + (a.key_levels.resistance || '--') + '</strong></span>' : '') + '</div>' + (a.risk_notes ? '<div style="font-size:12px;color:#fbbf24;padding:6px 10px;background:rgba(251,191,36,0.1);border-radius:4px">⚠ ' + escHtml(a.risk_notes) + '</div>' : '') + '</div></div><div style="margin-top:12px;font-size:11px;color:#484f58">模型: ' + escHtml(data.model_used || '--') + ' | 延迟: ' + ((data.latency_ms || 0)/1000).toFixed(1) + 's</div>';
+            } catch (e) { el.innerHTML = '<div class="empty">❌ 请求失败: ' + escHtml(e.message || String(e)) + '</div>'; }
         }
 
         async function loadAll() {
@@ -347,6 +348,19 @@
             loadLLM();
         }
 
-        setInterval(() => { loadOrderbook(); loadTicker(); }, 30000);
+        // H7: visibility-aware polling
+        let _sdPollTimer = null;
+        function _startSdPolling() {
+            if (_sdPollTimer) return;
+            _sdPollTimer = setInterval(() => { loadOrderbook(); loadTicker(); }, 30000);
+        }
+        function _stopSdPolling() {
+            if (_sdPollTimer) { clearInterval(_sdPollTimer); _sdPollTimer = null; }
+        }
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden) { _stopSdPolling(); }
+            else { loadOrderbook(); loadTicker(); _startSdPolling(); }
+        });
+        _startSdPolling();
         loadAll();
 {% endblock %}
