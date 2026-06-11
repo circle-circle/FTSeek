@@ -415,8 +415,13 @@
         }
 
         async function fetchQuote() {
-            const sym = document.getElementById('symbol').value.trim().toUpperCase();
+            let sym = document.getElementById('symbol').value.trim().toUpperCase();
             if (!sym) return;
+            // Auto-prefix: bare ticker → US.TICKER (Futu format)
+            if (!sym.includes('.')) {
+                sym = 'US.' + sym;
+                document.getElementById('symbol').value = sym;
+            }
             document.getElementById('quoteBox').style.display = 'block';
             document.getElementById('quotePrice').textContent = '...';
             try {
@@ -540,7 +545,8 @@
 
         // ── Preview modal = confirmation (no CONFIRM input) ──
         function previewOrder() {
-            const sym = document.getElementById('symbol').value.trim().toUpperCase();
+            let sym = document.getElementById('symbol').value.trim().toUpperCase();
+            if (!sym.includes('.')) { sym = 'US.' + sym; document.getElementById('symbol').value = sym; }
             const qty = parseInt(document.getElementById('quantity').value);
             const otype = document.getElementById('orderType').value;
             const price = document.getElementById('limitPrice').value;
