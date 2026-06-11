@@ -302,16 +302,15 @@
         else if (marginPct > 50) { dot.className = 'dot warn'; label.textContent = '保证金偏高'; }
         else { dot.className = 'dot ok'; label.textContent = '系统正常'; }
 
-        // Mode tag (top + bottom)
-        var modeTag = document.getElementById('modeTag');
+        // Mode tag (all 3 nav variants + page footer)
+        var _modeCls = d.is_live ? 'mode-tag live' : 'mode-tag sim';
+        var _modeText = d.is_live ? '🔴 实盘' : '🟢 模拟';
+        ['modeTag', 'modeTag2', 'modeTag3'].forEach(function(id) {
+            var el = document.getElementById(id);
+            if (el) { el.className = _modeCls; el.textContent = _modeText; }
+        });
         var bottomMode = document.getElementById('bottomMode');
-        if (d.is_live) {
-            modeTag.className = 'mode-tag live'; modeTag.textContent = '🔴 实盘';
-            if (bottomMode) bottomMode.textContent = '🔴 实盘';
-        } else {
-            modeTag.className = 'mode-tag sim'; modeTag.textContent = '🟢 模拟';
-            if (bottomMode) bottomMode.textContent = '🟢 模拟';
-        }
+        if (bottomMode) bottomMode.textContent = _modeText;
 
         // Market (SPY + VIX)
         var spy = market.spy;
@@ -438,10 +437,18 @@
         var et = new Date(now.toLocaleString('en-US', {timeZone: 'America/New_York'}));
         var t = et.getHours() * 60 + et.getMinutes();
         var badge = document.getElementById('marketBadge');
-        if (t >= 570 && t < 960) { badge.className = 'market-badge open'; badge.textContent = '🟢 盘中'; }
-        else if (t >= 240 && t < 570) { badge.className = 'market-badge pre'; badge.textContent = '🟡 盘前'; }
-        else if (t >= 960 && t < 1200) { badge.className = 'market-badge after'; badge.textContent = '🟠 盘后'; }
-        else { badge.className = 'market-badge closed'; badge.textContent = '🔴 休市'; }
+        var badge2 = document.getElementById('marketBadge2');
+        if (t >= 570 && t < 960) {
+            var cls = 'market-badge open', txt = '🟢 盘中';
+        } else if (t >= 240 && t < 570) {
+            var cls = 'market-badge pre', txt = '🟡 盘前';
+        } else if (t >= 960 && t < 1200) {
+            var cls = 'market-badge after', txt = '🟠 盘后';
+        } else {
+            var cls = 'market-badge closed', txt = '🔴 休市';
+        }
+        if (badge) { badge.className = cls; badge.textContent = txt; }
+        if (badge2) { badge2.className = cls; badge2.textContent = txt; }
     }
 
     // ══════════════════════════════════════

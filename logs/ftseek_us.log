@@ -61958,3 +61958,21 @@ API: http://localhost:8901
 2026-06-12 04:51:47,448 [ftseek_us.news_v2.sources.hkex] INFO: [HKEX] 采集完成: 0 条公告
 2026-06-12 04:52:25,553 [ftseek_us.risk.vix_monitor] INFO: VIX 指数：20.75
 2026-06-12 04:53:46,816 [app.orb.engine] INFO: [ORB] tick #3061 | time=16:53:46 | pos=0 | ranges=10 | done=1
+2026-06-12 04:55:02,912 [ftseek_us.news_v2.sources.hkex] INFO: [HKEX] 采集完成: 0 条公告
+2026-06-12 04:55:29,972 [ftseek_us.position_sync] INFO: [US Sync·P3] Futu 当日委托: 3 只标的有成交记录
+2026-06-12 04:55:29,974 [ftseek_us.position_sync] WARNING: 🚫 [仓位扫描] US.BABA 占比 31.3% 超限 25%，触发减仓: 40/200.0股 ($5,069)
+2026-06-12 04:55:30,149 [ftseek_us.position_sync] INFO: ✅ [减仓] US.BABA SELL 40股 已提交 (order_id=7840520, reason=periodic_scan_over_limit_25%)
+2026-06-12 04:55:30,152 [ftseek_us.position_sync] INFO: [US Sync] Done | Futu: 6 | DB: 6
+2026-06-12 04:56:16,487 [ftseek.us_pipeline.earnings_calendar] INFO: 获取财报日历 (horizon=3month)...
+2026-06-12 04:56:16,754 [ftseek.us_pipeline.earnings_calendar] INFO: 获取到 1 条财报数据
+2026-06-12 04:57:36,329 [ftseek_us.risk.vix_monitor] INFO: VIX 指数：20.75
+2026-06-12 04:58:03,122 [ftseek_us.news_v2.sources.csrc] INFO: [CSRC] 采集完成: 0 条监管公告
+2026-06-12 04:58:15,330 [ftseek_us.news_v2.sources.hkex] INFO: [HKEX] 采集完成: 0 条公告
+2026-06-12 04:58:41,699 [app.execution.broker_adapter] INFO: [富途] 币种转换 HKD→USD (rate=0.1282): total_assets=$80,616 buying_power=$101,057
+2026-06-12 04:58:47,081 [app.orb.engine] INFO: [ORB] tick #3121 | time=16:58:47 | pos=0 | ranges=10 | done=1
+2026-06-12 05:00:30,694 [ftseek_us.position_sync] INFO: [US Sync·P3] Futu 当日委托: 3 只标的有成交记录
+2026-06-12 05:00:30,696 [ftseek_us.position_sync] WARNING: 🚫 [仓位扫描] US.BABA 占比 31.3% 超限 25%，触发减仓: 40/200.0股 ($5,065)
+2026-06-12 05:00:30,698 [ftseek_us.position_sync] INFO: [US Sync] Done | Futu: 6 | DB: 6
+2026-06-12 05:01:27,773 [ftseek_us.news_v2.sources.hkex] INFO: [HKEX] 采集完成: 0 条公告
+2026-06-12 05:02:47,079 [ftseek_us.risk.vix_monitor] INFO: VIX 指数：20.75
+2026-06-12 05:03:47,327 [app.orb.engine] INFO: [ORB] tick #3181 | time=17:03:47 | pos=0 | ranges=10 | done=1

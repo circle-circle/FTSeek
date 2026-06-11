@@ -151,10 +151,16 @@
                 const modeTag = document.getElementById('modeTag');
                 if (_currentMode.startsWith('live_')) {
                     block.className = 'current-mode live'; label.textContent = d.mode_label || '实盘';
-                    modeTag.textContent = '🔴 实盘'; modeTag.className = 'mode-tag live';
+                    ['modeTag', 'modeTag2', 'modeTag3'].forEach(function(id) {
+                        var el = document.getElementById(id);
+                        if (el) { el.textContent = '🔴 实盘'; el.className = 'mode-tag live'; }
+                    });
                 } else {
                     block.className = 'current-mode sim'; label.textContent = d.mode_label || '模拟盘';
-                    modeTag.textContent = '🟢 模拟'; modeTag.className = 'mode-tag sim';
+                    ['modeTag', 'modeTag2', 'modeTag3'].forEach(function(id) {
+                        var el = document.getElementById(id);
+                        if (el) { el.textContent = '🟢 模拟'; el.className = 'mode-tag sim'; }
+                    });
                 }
                 ['simulate', 'live_conservative', 'live_normal'].forEach(m => {
                     const el = document.getElementById('opt-' + m);
