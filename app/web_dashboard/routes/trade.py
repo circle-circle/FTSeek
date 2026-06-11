@@ -63,6 +63,8 @@ def register(app, templates):
             price=price,
             reason=body.get("reason", ""),
             mode=svc._get_mode_label(),
+            time_in_force=body.get("time_in_force", "DAY"),
+            fill_outside_rth=bool(body.get("fill_outside_rth", False)),
         )
 
         result = svc.submit_order(order)

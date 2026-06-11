@@ -38,6 +38,8 @@ class ManualOrder:
     price: Optional[float]  # None for MARKET orders
     reason: str             # 下单理由 (必填)
     mode: str               # "simulate" or "live"
+    time_in_force: str = "DAY"      # "DAY" or "GTC"
+    fill_outside_rth: bool = False  # 是否允许盘前盘后成交
     timestamp: str = ""
     order_id: str = ""
     status: str = "pending"  # pending, submitted, filled, rejected, error
@@ -335,7 +337,7 @@ class ManualOrderService:
 
         # 3. 执行下单
         try:
-            from futu import TrdEnv, TrdSide, OrderType as FutuOrderType, RET_OK
+            from futu import TrdEnv, TrdSide, OrderType as FutuOrderType, TimeInForce, RET_OK
 
             trd_env = TrdEnv.REAL if self._is_live() else TrdEnv.SIMULATE
 
@@ -365,9 +367,13 @@ class ManualOrderService:
             order.timestamp = datetime.now().isoformat()
             order.mode = self._get_mode_label()
 
+            # 有效期映射
+            tif = TimeInForce.GTC if order.time_in_force == "GTC" else TimeInForce.DAY
+
             logger.info(
                 f"[手动下单] 提交: {order.symbol} {order.action} {order.quantity}股 "
                 f"{'限价$'+str(price) if price else '市价'} "
+                f"TIF={order.time_in_force} RTH外={'是' if order.fill_outside_rth else '否'} "
                 f"环境={'实盘' if self._is_live() else '模拟'}"
             )
 
@@ -379,6 +385,8 @@ class ManualOrderService:
                 order_type=futu_order_type,
                 trd_env=trd_env,
                 acc_id=acc_id,
+                time_in_force=tif,
+                fill_outside_rth=order.fill_outside_rth,
             )
 
             if ret == RET_OK:
@@ -622,12 +630,21 @@ class ManualOrderService:
                     order_id TEXT,
                     status TEXT,
                     error_msg TEXT,
+                    time_in_force TEXT DEFAULT 'DAY',
+                    fill_outside_rth INTEGER DEFAULT 0,
                     created_at TEXT DEFAULT CURRENT_TIMESTAMP
                 )
             """)
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_manual_audit_time ON manual_order_audit(timestamp)"
             )
+            # 兼容旧表: 尝试添加新列
+            for col_sql in ["ALTER TABLE manual_order_audit ADD COLUMN time_in_force TEXT DEFAULT 'DAY'",
+                            "ALTER TABLE manual_order_audit ADD COLUMN fill_outside_rth INTEGER DEFAULT 0"]:
+                try:
+                    conn.execute(col_sql)
+                except sqlite3.OperationalError:
+                    pass  # 列已存在
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_manual_audit_symbol ON manual_order_audit(symbol)"
             )
@@ -727,14 +744,16 @@ class ManualOrderService:
             conn.execute(
                 """INSERT INTO manual_order_audit
                    (timestamp, symbol, direction, action, quantity, order_type,
-                    price, reason, mode, order_id, status, error_msg)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    price, reason, mode, order_id, status, error_msg,
+                    time_in_force, fill_outside_rth)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     order.timestamp or datetime.now().isoformat(),
                     order.symbol, order.direction, order.action,
                     order.quantity, order.order_type, order.price,
                     order.reason, order.mode, order.order_id,
                     order.status, order.error_msg,
+                    order.time_in_force, 1 if order.fill_outside_rth else 0,
                 ),
             )
             conn.commit()

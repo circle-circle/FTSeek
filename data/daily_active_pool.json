@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-06-11T20:45:28.814186+00:00",
+  "timestamp": "2026-06-11T21:10:32.056757+00:00",
   "entries": [
     {
       "code": "US.SPY",
@@ -103,16 +103,6 @@
       "added_at": "2026-06-11T16:38:03.956683+00:00",
       "expires_at": null,
       "metadata": {}
-    },
-    {
-      "code": "US.AMD",
-      "source": "POSITION",
-      "added_at": "2026-06-10T04:50:02.330788+00:00",
-      "expires_at": null,
-      "metadata": {
-        "direction": "LONG",
-        "quantity": 25.0
-      }
     },
     {
       "code": "US.AVGO",
@@ -302,9 +292,9 @@
     }
   ],
   "summary": {
-    "total": 35,
+    "total": 34,
     "breakdown": {
-      "POSITION": 24,
+      "POSITION": 23,
       "PLAN": 0,
       "MANUAL": 11,
       "INTRADAY_ALERT": 0

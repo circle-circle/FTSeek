@@ -61976,3 +61976,63 @@ API: http://localhost:8901
 2026-06-12 05:01:27,773 [ftseek_us.news_v2.sources.hkex] INFO: [HKEX] 采集完成: 0 条公告
 2026-06-12 05:02:47,079 [ftseek_us.risk.vix_monitor] INFO: VIX 指数：20.75
 2026-06-12 05:03:47,327 [app.orb.engine] INFO: [ORB] tick #3181 | time=17:03:47 | pos=0 | ranges=10 | done=1
+2026-06-12 05:04:28,007 [ftseek_us.news_v2.sources.csrc] INFO: [CSRC] 采集完成: 0 条监管公告
+2026-06-12 05:04:43,213 [ftseek_us.news_v2.sources.hkex] INFO: [HKEX] 采集完成: 0 条公告
+2026-06-12 05:05:31,310 [ftseek_us.position_sync] INFO: [US Sync·P3] Futu 当日委托: 3 只标的有成交记录
+2026-06-12 05:05:31,313 [ftseek_us.position_sync] WARNING: 🚫 [仓位扫描] US.BABA 占比 31.3% 超限 25%，触发减仓: 40/200.0股 ($5,065)
+2026-06-12 05:05:31,474 [ftseek_us.position_sync] INFO: ✅ [减仓] US.BABA SELL 40股 已提交 (order_id=7840633, reason=periodic_scan_over_limit_25%)
+2026-06-12 05:05:31,476 [ftseek_us.position_sync] INFO: [US Sync] Done | Futu: 6 | DB: 6
+2026-06-12 05:07:56,678 [ftseek_us.news_v2.sources.hkex] INFO: [HKEX] 采集完成: 0 条公告
+2026-06-12 05:07:58,579 [ftseek_us.risk.vix_monitor] INFO: VIX 指数：20.75
+2026-06-12 05:08:42,221 [app.execution.broker_adapter] INFO: [富途] 币种转换 HKD→USD (rate=0.1282): total_assets=$80,608 buying_power=$100,997
+2026-06-12 05:08:47,581 [app.orb.engine] INFO: [ORB] tick #3241 | time=17:08:47 | pos=0 | ranges=10 | done=1
+2026-06-12 05:10:32,026 [ftseek_us.position_sync] WARNING: [US Sync] Ghost position: US.AMD (DB only, closing)
+2026-06-12 05:10:32,052 [ftseek_us.position_sync] INFO: [US Sync·P3] Futu 当日委托: 4 只标的有成交记录
+2026-06-12 05:10:32,054 [ftseek_us.position_sync] WARNING: 🚫 [仓位扫描] US.BABA 占比 31.3% 超限 25%，触发减仓: 40/200.0股 ($5,067)
+2026-06-12 05:10:32,057 [ftseek.daily_active_pool] INFO: 📤 移除持仓: US.AMD (已平仓)
+2026-06-12 05:10:32,057 [ftseek_us.position_sync] INFO: 🧹 [US Sync] 清理幽灵仓 US.AMD (Futu 已平仓)
+2026-06-12 05:10:32,332 [ftseek_us.position_sync] INFO: [US Sync] 飞书幽灵仓清理通知已发送: US.AMD
+2026-06-12 05:10:32,332 [ftseek_us.position_sync] INFO: [US Sync] Done | Futu: 5 | DB: 5
+2026-06-12 05:10:56,892 [ftseek_us.news_v2.sources.csrc] INFO: [CSRC] 采集完成: 0 条监管公告
+2026-06-12 05:11:14,119 [ftseek_us.news_v2.sources.hkex] INFO: [HKEX] 采集完成: 0 条公告
+2026-06-12 05:12:28,360 [app.coordinator.capital_allocator] WARNING: [CapitalAllocator·RECONCILE] bucket=main 账本=0.626 实际=0.492 → 修正
+2026-06-12 05:13:09,329 [ftseek_us.risk.vix_monitor] INFO: VIX 指数：20.75
+2026-06-12 05:13:47,839 [app.orb.engine] INFO: [ORB] tick #3301 | time=17:13:47 | pos=0 | ranges=10 | done=1
+2026-06-12 05:14:26,568 [ftseek_us.news_v2.sources.hkex] INFO: [HKEX] 采集完成: 0 条公告
+2026-06-12 05:15:32,926 [ftseek_us.position_sync] INFO: [US Sync·P3] Futu 当日委托: 4 只标的有成交记录
+2026-06-12 05:15:32,929 [ftseek_us.position_sync] WARNING: 🚫 [仓位扫描] US.BABA 占比 31.3% 超限 25%，触发减仓: 40/200.0股 ($5,067)
+2026-06-12 05:15:33,094 [ftseek_us.position_sync] INFO: ✅ [减仓] US.BABA SELL 40股 已提交 (order_id=7840763, reason=periodic_scan_over_limit_25%)
+2026-06-12 05:15:33,097 [ftseek_us.position_sync] INFO: [US Sync] Done | Futu: 5 | DB: 5
+2026-06-12 05:17:27,040 [ftseek_us.news_v2.sources.csrc] INFO: [CSRC] 采集完成: 0 条监管公告
+2026-06-12 05:17:41,123 [ftseek_us.news_v2.sources.hkex] INFO: [HKEX] 采集完成: 0 条公告
+2026-06-12 05:18:20,514 [ftseek_us.risk.vix_monitor] INFO: VIX 指数：20.75
+2026-06-12 05:18:42,813 [app.execution.broker_adapter] INFO: [富途] 币种转换 HKD→USD (rate=0.1282): total_assets=$80,566 buying_power=$111,880
+2026-06-12 05:18:48,091 [app.orb.engine] INFO: [ORB] tick #3361 | time=17:18:48 | pos=0 | ranges=10 | done=1
+2026-06-12 05:20:33,660 [ftseek_us.position_sync] INFO: [US Sync·P3] Futu 当日委托: 4 只标的有成交记录
+2026-06-12 05:20:33,663 [ftseek_us.position_sync] WARNING: 🚫 [仓位扫描] US.BABA 占比 31.3% 超限 25%，触发减仓: 40/200.0股 ($5,077)
+2026-06-12 05:20:33,665 [ftseek_us.position_sync] INFO: [US Sync] Done | Futu: 5 | DB: 5
+2026-06-12 05:20:54,795 [ftseek_us.news_v2.sources.hkex] INFO: [HKEX] 采集完成: 0 条公告
+2026-06-12 05:23:31,280 [ftseek_us.risk.vix_monitor] INFO: VIX 指数：20.75
+2026-06-12 05:23:48,350 [app.orb.engine] INFO: [ORB] tick #3421 | time=17:23:48 | pos=0 | ranges=10 | done=1
+2026-06-12 05:23:55,065 [ftseek_us.news_v2.sources.csrc] INFO: [CSRC] 采集完成: 0 条监管公告
+2026-06-12 05:24:12,322 [ftseek_us.news_v2.sources.hkex] INFO: [HKEX] 采集完成: 0 条公告
+2026-06-12 05:25:34,263 [ftseek_us.position_sync] INFO: [US Sync·P3] Futu 当日委托: 4 只标的有成交记录
+2026-06-12 05:25:34,266 [ftseek_us.position_sync] WARNING: 🚫 [仓位扫描] US.BABA 占比 31.3% 超限 25%，触发减仓: 40/200.0股 ($5,077)
+2026-06-12 05:25:34,432 [ftseek_us.position_sync] INFO: ✅ [减仓] US.BABA SELL 40股 已提交 (order_id=7840924, reason=periodic_scan_over_limit_25%)
+2026-06-12 05:25:34,434 [ftseek_us.position_sync] INFO: [US Sync] Done | Futu: 5 | DB: 5
+2026-06-12 05:27:22,814 [ftseek_us.news_v2.sources.hkex] INFO: [HKEX] 采集完成: 0 条公告
+2026-06-12 05:28:42,013 [ftseek_us.risk.vix_monitor] INFO: VIX 指数：20.75
+2026-06-12 05:28:43,326 [app.execution.broker_adapter] INFO: [富途] 币种转换 HKD→USD (rate=0.1282): total_assets=$80,553 buying_power=$111,845
+2026-06-12 05:28:48,594 [app.orb.engine] INFO: [ORB] tick #3481 | time=17:28:48 | pos=0 | ranges=10 | done=1
+2026-06-12 05:30:23,036 [ftseek_us.news_v2.sources.csrc] INFO: [CSRC] 采集完成: 0 条监管公告
+2026-06-12 05:30:35,057 [ftseek_us.position_sync] INFO: [US Sync·P3] Futu 当日委托: 4 只标的有成交记录
+2026-06-12 05:30:35,060 [ftseek_us.position_sync] WARNING: 🚫 [仓位扫描] US.BABA 占比 31.3% 超限 25%，触发减仓: 40/200.0股 ($5,080)
+2026-06-12 05:30:35,062 [ftseek_us.position_sync] INFO: [US Sync] Done | Futu: 5 | DB: 5
+2026-06-12 05:30:37,357 [ftseek_us.news_v2.sources.hkex] INFO: [HKEX] 采集完成: 0 条公告
+2026-06-12 05:33:48,849 [app.orb.engine] INFO: [ORB] tick #3541 | time=17:33:48 | pos=0 | ranges=10 | done=1
+2026-06-12 05:33:52,934 [ftseek_us.risk.vix_monitor] INFO: VIX 指数：20.75
+2026-06-12 05:33:52,940 [ftseek_us.news_v2.sources.hkex] INFO: [HKEX] 采集完成: 0 条公告
+2026-06-12 05:35:36,311 [ftseek_us.position_sync] INFO: [US Sync·P3] Futu 当日委托: 4 只标的有成交记录
+2026-06-12 05:35:36,315 [ftseek_us.position_sync] WARNING: 🚫 [仓位扫描] US.BABA 占比 31.3% 超限 25%，触发减仓: 40/200.0股 ($5,080)
+2026-06-12 05:35:36,511 [ftseek_us.position_sync] INFO: ✅ [减仓] US.BABA SELL 40股 已提交 (order_id=7841084, reason=periodic_scan_over_limit_25%)
+2026-06-12 05:35:36,513 [ftseek_us.position_sync] INFO: [US Sync] Done | Futu: 5 | DB: 5

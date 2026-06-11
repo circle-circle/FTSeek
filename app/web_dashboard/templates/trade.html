@@ -167,6 +167,20 @@
                                 <option value="LIMIT">限价 LIMIT</option>
                             </select>
                         </div>
+                        <div class="form-group">
+                            <label>有效期</label>
+                            <select id="timeInForce">
+                                <option value="DAY">当日有效 DAY</option>
+                                <option value="GTC">撤销前有效 GTC</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>交易时段</label>
+                            <select id="fillOutsideRth">
+                                <option value="false">仅盘中 9:30-16:00</option>
+                                <option value="true">含盘前盘后 (Extended)</option>
+                            </select>
+                        </div>
                         <div class="form-group full">
                             <label>方向</label>
                             <div class="dir-group">
@@ -556,7 +570,9 @@
             if (!sym || !qty) { showMsg('err', '请填写标的和数量'); return; }
 
             const est = curQuote ? qty * curQuote.cur_price : 0;
-            pendingOrder = { symbol: sym, direction: curDir, action, quantity: qty, order_type: otype, price: price || null, reason, operation: curOp };
+            const tif = document.getElementById('timeInForce').value;
+            const extRth = document.getElementById('fillOutsideRth').value === 'true';
+            pendingOrder = { symbol: sym, direction: curDir, action, quantity: qty, order_type: otype, price: price || null, reason, operation: curOp, time_in_force: tif, fill_outside_rth: extRth };
 
             const el = document.getElementById('previewContent');
             let html = '';
@@ -564,6 +580,8 @@
             html += '<div class="preview-row"><span class="pk">操作</span><span class="pv">' + (curOp==='OPEN'?'开仓':'平仓') + ' ' + (curDir==='LONG'?'做多':'做空') + ' → ' + action + '</span></div>';
             html += '<div class="preview-row"><span class="pk">数量</span><span class="pv">' + qty.toLocaleString() + ' 股</span></div>';
             html += '<div class="preview-row"><span class="pk">类型</span><span class="pv">' + otype + (price ? ' @ $'+price : '') + '</span></div>';
+            html += '<div class="preview-row"><span class="pk">有效期</span><span class="pv">' + (tif === 'GTC' ? '撤销前有效 (GTC)' : '当日有效 (DAY)') + '</span></div>';
+            html += '<div class="preview-row"><span class="pk">交易时段</span><span class="pv">' + (extRth ? '含盘前盘后' : '仅盘中') + '</span></div>';
             html += '<div class="preview-row"><span class="pk">预估金额</span><span class="pv">' + (est > 0 ? '$'+est.toLocaleString(undefined,{maximumFractionDigits:0}) : '--') + '</span></div>';
             if (reason) {
                 html += '<div class="preview-row"><span class="pk">理由</span><span class="pv" style="font-size:12px">' + reason + '</span></div>';
