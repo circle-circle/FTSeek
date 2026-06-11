@@ -47,14 +47,14 @@
         .collapsible-body.open { display: block; }
 
         /* ── Level 2: Position Table ── */
-        .pos-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 8px; }
-        .pos-card { background: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 12px; }
-        .pos-card .pos-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
-        .pos-card .pos-header .sym { font-weight: 700; font-size: 15px; }
-        .pos-card .pos-row { display: flex; justify-content: space-between; font-size: 12px; padding: 2px 0; }
-        .pos-card .pos-row .label { color: #8b949e; }
-        .pos-card .pos-actions { margin-top: 8px; display: flex; gap: 6px; }
-        .pos-card .pos-actions .btn { flex: 1; text-align: center; font-size: 11px; padding: 6px 8px; min-height: 32px; }
+        .pos-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+        .pos-table th { text-align: left; padding: 6px 8px; border-bottom: 1px solid #30363d; color: #8b949e; font-size: 10px; text-transform: uppercase; font-weight: 600; }
+        .pos-table td { padding: 8px; border-bottom: 1px solid #21262d; }
+        .pos-table tr { cursor: pointer; }
+        .pos-table tr:hover { background: #0d1117; }
+        .pos-table .sym { font-weight: 700; color: #58a6ff; }
+        .pos-table .trade-link { font-size: 11px; color: #8b949e; text-decoration: none; padding: 4px 8px; border: 1px solid #30363d; border-radius: 4px; }
+        .pos-table .trade-link:hover { border-color: #58a6ff; color: #58a6ff; }
 
         /* ── Level 3: Analytics Tabs ── */
         .tab-bar { display: flex; gap: 4px; overflow-x: auto; border-bottom: 1px solid #30363d; margin-bottom: 12px; -webkit-overflow-scrolling: touch; }
@@ -94,7 +94,7 @@
         @media (max-width: 768px) {
             .qt-form { grid-template-columns: 1fr 1fr; }
             .qt-form .btn { grid-column: 1 / -1; }
-            .pos-grid { grid-template-columns: 1fr; }
+            .pos-table { font-size: 12px; }
             .chart-wrap { height: 200px; }
             .mini-metrics { grid-template-columns: repeat(2, 1fr); }
         }
@@ -156,7 +156,7 @@
                 <button class="btn btn-ghost btn-sm" onclick="loadAll()" style="font-size:11px">刷新</button>
             </h2>
             <div class="mini-metrics" id="posSummary"></div>
-            <div class="pos-grid" id="posGrid"><div class="loading">加载中...</div></div>
+            <div class="tw"><table class="pos-table" id="posTable"><thead><tr><th>标的</th><th>方向</th><th>数量</th><th>盈亏</th><th></th></tr></thead><tbody id="posBody"><tr><td colspan="5" class="loading">加载中...</td></tr></tbody></table></div>
         </div>
 
         <!-- ═══ Level 3: Analytics Tabs (按需展开) ═══ -->
@@ -405,27 +405,26 @@
             '<div class="mm"><div class="l">净敞口</div><div class="v">$' + fmtK(netExp) + '</div></div>' +
             '<div class="mm"><div class="l">浮盈亏</div><div class="v ' + pnlCls(totalUnreal) + '">$' + fmt(totalUnreal) + '</div></div>';
 
+        var tbody = document.getElementById('posBody');
         if (!p.length) {
-            document.getElementById('posGrid').innerHTML = '<div style="text-align:center;color:#8b949e;padding:20px">无持仓</div>';
+            tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:#8b949e;padding:16px">无持仓</td></tr>';
             return;
         }
 
-        document.getElementById('posGrid').innerHTML = p.map(function(x) {
+        tbody.innerHTML = p.map(function(x) {
+            var sym = x.symbol || x.code;
             var dirCls = x.direction === 'LONG' ? 'long' : 'short';
-            var pc = pnlCls(x.unrealized_pnl || x.unrealized_pl || 0);
             var upnl = x.unrealized_pnl || x.unrealized_pl || 0;
             var pctVal = x.pnl_pct || 0;
-            return '<div class="pos-card">' +
-                '<div class="pos-header"><span class="sym"><a href="/stock/' + escHtml(x.symbol || x.code) + '" style="color:#58a6ff;text-decoration:none">' + escHtml(x.symbol || x.code) + '</a></span>' +
-                '<span class="' + dirCls + '" style="font-size:13px">' + x.direction + ' ' + x.qty + '</span></div>' +
-                '<div class="pos-row"><span class="label">成本</span><span>$' + fmt(x.cost_price || x.cost) + '</span></div>' +
-                '<div class="pos-row"><span class="label">现价</span><span>$' + fmt(x.cur_price || x.current) + '</span></div>' +
-                '<div class="pos-row"><span class="label">市值</span><span>$' + fmtK(x.market_val || x.market_value) + '</span></div>' +
-                '<div class="pos-row"><span class="label">浮盈亏</span><span class="' + pc + '">' + (upnl>=0?'+':'') + '$' + fmt(upnl) + ' (' + (pctVal>=0?'+':'') + pctVal + '%)</span></div>' +
-                '<div class="pos-actions">' +
-                '<a href="/trade?symbol=' + escHtml(x.symbol || x.code) + '&direction=' + x.direction + '" class="btn btn-ghost">交易</a>' +
-                '<a href="/stock/' + escHtml(x.symbol || x.code) + '" class="btn btn-ghost">详情</a>' +
-                '</div></div>';
+            var pc = pnlCls(upnl);
+            var owner = x.owner === 'manual' ? '👤' : '🤖';
+            return '<tr onclick="location.href=\'/trade?symbol=' + encodeURIComponent(sym) + '&direction=' + x.direction + '\'">' +
+                '<td><span class="sym">' + escHtml(sym) + '</span> <span style="font-size:11px" title="' + (x.owner==='manual'?'手动':'系统') + '">' + owner + '</span></td>' +
+                '<td class="' + dirCls + '">' + x.direction + '</td>' +
+                '<td>' + Math.abs(x.qty) + '</td>' +
+                '<td class="' + pc + '">' + (upnl>=0?'+':'') + '$' + fmt(upnl) + ' (' + (pctVal>=0?'+':'') + pctVal.toFixed(1) + '%)</td>' +
+                '<td><a href="/trade?symbol=' + encodeURIComponent(sym) + '&direction=' + x.direction + '" class="trade-link" onclick="event.stopPropagation()">交易 →</a></td>' +
+                '</tr>';
         }).join('');
     }
 
