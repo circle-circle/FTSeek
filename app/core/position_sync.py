@@ -502,6 +502,8 @@ class USPositionSync:
         db_positions = {}
         for row in cursor.fetchall():
             db_positions[row[0]] = {'size': row[1], 'direction': row[2], 'owner': row[3], 'sync_status': row[4]}
+        # P3 修复 (2026-06-12): DB 中已有 owner='manual' 的符号，PositionStore 同步时保持 manual
+        self._db_manual_symbols = {sym for sym, info in db_positions.items() if info['owner'] == 'manual'}
 
         futu_symbols = set(futu_positions.keys())
         db_symbols = set(db_positions.keys())
@@ -753,10 +755,11 @@ class USPositionSync:
                         initial_tp = info['cost'] * (1 - _fb_tp)
 
                 logger.info("[US Sync] New position: %s %s %s @ %s", symbol, info['direction'], info['qty'], info['cost'])
-                # P3 修复: 根据当日委托判断 trader_type
-                # P3 修复 (2026-06-12): 手动订单优先于 Futu 委托判断
-                # 根因: Dashboard 手动下单也会出现在富途当日委托中，之前误标为 AUTO
-                if symbol in _manual_today:
+                # P3 修复 (2026-06-12): 三层手动判断: DB已有manual > 今日手动审计 > 富途委托
+                _db_already_manual = symbol in getattr(self, '_db_manual_symbols', set())
+                if _db_already_manual:
+                    _db_trader_type = "MANUAL"
+                elif symbol in _manual_today:
                     _db_trader_type = "MANUAL"
                 elif symbol in _today_orders:
                     _db_trader_type = "AUTO"
@@ -932,12 +935,19 @@ class USPositionSync:
             # 期权代码格式：US.XXX26XXXXP/C (含年月 + Put/Call)
             is_option = any(x in symbol for x in ['26', '27', '28']) and any(x in symbol for x in ['P', 'C'])
             
-            # P3 修复 (2026-06-12): 手动订单优先判断，防止 Dashboard 下单被误标为 auto_main
+            # P3 修复 (2026-06-12): 三层手动判断优先级: DB已有manual > 今日手动审计 > 富途委托
+            _is_db_manual = symbol in getattr(self, '_db_manual_symbols', set())
             _is_manual_today = symbol in getattr(self, '_manual_today', set())
-            _has_today_order = symbol in _today_orders and not _is_manual_today
+            _has_today_order = symbol in _today_orders and not _is_manual_today and not _is_db_manual
             if is_option:
                 strategy_id = "voting_llm_option"
                 trader_type = "OPTION"
+            elif _is_db_manual:
+                strategy_id = "manual_sync"
+                trader_type = "MANUAL"
+                logger.info(
+                    f"[US Sync·P3] {symbol} DB已有owner=manual，保持手动管理"
+                )
             elif _is_manual_today:
                 strategy_id = "manual_sync"
                 trader_type = "MANUAL"
