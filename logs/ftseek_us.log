@@ -62375,3 +62375,23 @@ API: http://localhost:8901
 2026-06-12 09:01:34,226 [app.pipeline.signal_pipeline] INFO: [扫描] overnight → 完全静默，跳过扫描
 2026-06-12 09:01:35,815 [ftseek_us.news_v2.sources.hkex] INFO: [HKEX] 采集完成: 0 条公告
 2026-06-12 09:04:00,447 [app.orb.engine] INFO: [ORB] tick #6061 | time=21:04:00 | pos=0 | ranges=10 | done=1
+2026-06-12 09:04:36,061 [ftseek_us.news_v2.sources.csrc] INFO: [CSRC] 采集完成: 0 条监管公告
+2026-06-12 09:04:47,402 [ftseek_us.news_v2.sources.hkex] INFO: [HKEX] 采集完成: 0 条公告
+2026-06-12 09:06:25,704 [ftseek_us.risk.vix_monitor] INFO: VIX 指数：20.75
+2026-06-12 09:06:34,485 [app.pipeline.signal_pipeline] INFO: [扫描] overnight → 完全静默，跳过扫描
+2026-06-12 09:08:04,045 [ftseek_us.news_v2.sources.hkex] INFO: [HKEX] 采集完成: 0 条公告
+2026-06-12 09:09:00,685 [app.orb.engine] INFO: [ORB] tick #6121 | time=21:09:00 | pos=0 | ranges=10 | done=1
+2026-06-12 09:11:04,294 [ftseek_us.news_v2.sources.csrc] INFO: [CSRC] 采集完成: 0 条监管公告
+2026-06-12 09:11:14,683 [ftseek_us.news_v2.sources.hkex] INFO: [HKEX] 采集完成: 0 条公告
+2026-06-12 09:11:34,703 [app.pipeline.signal_pipeline] INFO: [扫描] overnight → 完全静默，跳过扫描
+2026-06-12 09:11:36,462 [ftseek_us.risk.vix_monitor] INFO: VIX 指数：20.75
+2026-06-12 09:14:00,928 [app.orb.engine] INFO: [ORB] tick #6181 | time=21:14:00 | pos=0 | ranges=10 | done=1
+2026-06-12 09:14:30,247 [ftseek_us.news_v2.sources.hkex] INFO: [HKEX] 采集完成: 0 条公告
+2026-06-12 09:16:34,937 [app.pipeline.signal_pipeline] INFO: [扫描] overnight → 完全静默，跳过扫描
+2026-06-12 09:16:47,695 [ftseek_us.risk.vix_monitor] INFO: VIX 指数：20.75
+2026-06-12 09:17:30,521 [ftseek_us.news_v2.sources.csrc] INFO: [CSRC] 采集完成: 0 条监管公告
+2026-06-12 09:17:44,156 [ftseek_us.news_v2.sources.hkex] INFO: [HKEX] 采集完成: 0 条公告
+2026-06-12 09:19:01,175 [app.orb.engine] INFO: [ORB] tick #6241 | time=21:19:01 | pos=0 | ranges=10 | done=1
+2026-06-12 09:20:55,653 [ftseek_us.news_v2.sources.hkex] INFO: [HKEX] 采集完成: 0 条公告
+2026-06-12 09:21:35,159 [app.pipeline.signal_pipeline] INFO: [扫描] overnight → 完全静默，跳过扫描
+2026-06-12 09:21:58,448 [ftseek_us.risk.vix_monitor] INFO: VIX 指数：20.75

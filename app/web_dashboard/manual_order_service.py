@@ -539,12 +539,12 @@ class ManualOrderService:
     # ─────────────────────────────────────────────────────────────
 
     def get_today_orders(self) -> List[Dict[str, Any]]:
-        """查询今日所有订单状态"""
+        """查询今日所有订单状态 (按时间倒序)"""
         if not self.connect():
             return []
 
         try:
-            from futu import TrdEnv, RET_OK, OrderStatus
+            from futu import TrdEnv, RET_OK
             trd_env = TrdEnv.REAL if self._is_live() else TrdEnv.SIMULATE
             if self._is_live():
                 acc_id = int(self._read_env("REAL_ACCOUNT_ID", "0"))
@@ -557,8 +557,14 @@ class ManualOrderService:
             if ret != RET_OK or data.empty:
                 return []
 
+            # 过滤今日订单
+            today = datetime.now().strftime("%Y-%m-%d")
             orders = []
             for _, row in data.iterrows():
+                create_time = str(row.get("create_time", ""))
+                # 只保留今日创建的订单
+                if not create_time.startswith(today):
+                    continue
                 orders.append({
                     "order_id": str(row.get("order_id", "")),
                     "code": str(row.get("code", "")),
@@ -567,10 +573,13 @@ class ManualOrderService:
                     "order_type": str(row.get("order_type", "")),
                     "order_status": str(row.get("order_status", "")),
                     "trd_side": str(row.get("trd_side", "")),
-                    "create_time": str(row.get("create_time", "")),
+                    "create_time": create_time,
                     "update_time": str(row.get("update_time", "")),
                     "filled_qty": int(row.get("qty", 0)) if str(row.get("order_status", "")) in ("FILLED_ALL", "FILLED_PARTIAL") else 0,
                 })
+
+            # 按创建时间倒序 (最新在前)
+            orders.sort(key=lambda x: x["create_time"], reverse=True)
             return orders
         except Exception as e:
             logger.error(f"[订单查询] 异常: {e}")
