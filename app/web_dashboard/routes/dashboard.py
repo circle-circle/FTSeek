@@ -129,9 +129,10 @@ def register(app, templates, dashboard):
         ds = get_data_service()
 
         # 并行获取所有原始数据 (DataService 内部有 TTL cache)
-        acc_raw, pos_raw, spy_snap, vix = await asyncio.gather(
+        acc_raw, pos_raw, orders_raw, spy_snap, vix = await asyncio.gather(
             ds.get_account_raw(),
             ds.get_positions_raw(),
+            ds.get_today_orders_raw(),
             ds.get_market_snapshot(["US.SPY"], ttl=30),
             ds.get_vix(),
         )
@@ -146,7 +147,10 @@ def register(app, templates, dashboard):
         # ── 2. Positions with prices ──
         positions = await _parse_positions(ds, pos_raw)
 
-        # ── 3. Market (SPY + VIX) ──
+        # ── 2b. Today's orders ──
+        today_orders = _parse_today_orders(orders_raw)
+
+        # ── 3. Market (SPY + VIX) ─
         market = _parse_market(spy_snap, vix)
 
         # ── 4. Margin ──
@@ -167,9 +171,14 @@ def register(app, templates, dashboard):
         # ── 9. Risk level ──
         futu_risk = _parse_risk_level(account)
 
+        # ── 10. Earnings calendar for positions ──
+        position_symbols = [p["symbol"].replace("US.", "") for p in positions]
+        earnings = _get_position_earnings(position_symbols)
+
         return {
             "account": account,
             "positions": positions,
+            "today_orders": today_orders,
             "market": market,
             "margin": margin,
             "exposure": exposure,
@@ -177,6 +186,7 @@ def register(app, templates, dashboard):
             "stop_distances": stop_distances,
             "signals": signals,
             "futu_risk": futu_risk,
+            "earnings": earnings,
             "mode": mode,
             "is_live": is_live,
             "timestamp": datetime.now().isoformat(),
@@ -227,19 +237,34 @@ def _parse_account(raw: dict) -> dict:
 
     currency = str(raw.get("currency", "")).upper()
     is_hkd = currency == "HKD"
-    fx = 7.8 if is_hkd else 1.0
 
-    usd_assets = safe_float(raw.get("usd_assets")) if is_hkd else safe_float(raw.get("total_assets"))
-    usd_cash = safe_float(raw.get("us_cash")) if is_hkd else safe_float(raw.get("cash"))
-    usd_power = safe_float(raw.get("usd_net_cash_power")) if is_hkd else safe_float(raw.get("power"))
-    if usd_power <= 0 and is_hkd:
-        usd_power = safe_float(raw.get("power")) / fx
+    # 使用 Futu 官方 USD 字段计算实际汇率 (而非硬编码 7.8)
+    if is_hkd:
+        hkd_assets = safe_float(raw.get("total_assets"))
+        usd_assets_raw = safe_float(raw.get("usd_assets"))
+        fx = hkd_assets / usd_assets_raw if usd_assets_raw > 0 else 7.8
+        usd_assets = usd_assets_raw
+        usd_cash = safe_float(raw.get("us_cash"))
+        usd_power = safe_float(raw.get("usd_net_cash_power"))
+        if usd_power <= 0:
+            usd_power = safe_float(raw.get("power")) / fx
+    else:
+        fx = 1.0
+        usd_assets = safe_float(raw.get("total_assets"))
+        usd_cash = safe_float(raw.get("cash"))
+        usd_power = safe_float(raw.get("power"))
 
     long_mv = safe_float(raw.get("long_mv"))
     short_mv = abs(safe_float(raw.get("short_mv")))
     if is_hkd:
         long_mv = long_mv / fx
         short_mv = short_mv / fx
+
+    init_margin = round(safe_float(raw.get("initial_margin")) / fx, 2)
+    maint_margin = round(safe_float(raw.get("maintenance_margin")) / fx, 2)
+
+    # 保证金使用率: initial_margin / total_assets * 100
+    margin_usage = round(init_margin / usd_assets * 100, 1) if usd_assets > 0 else 0
 
     return {
         "total_assets": round(usd_assets, 2),
@@ -248,10 +273,11 @@ def _parse_account(raw: dict) -> dict:
         "power": round(usd_power, 2),
         "long_mv": round(long_mv, 2),
         "short_mv": round(short_mv, 2),
-        "initial_margin": round(safe_float(raw.get("initial_margin")) / fx, 2),
-        "maintenance_margin": round(safe_float(raw.get("maintenance_margin")) / fx, 2),
+        "initial_margin": init_margin,
+        "maintenance_margin": maint_margin,
         "margin_call_margin": round(safe_float(raw.get("margin_call_margin")) / fx, 2),
         "frozen_cash": round(safe_float(raw.get("frozen_cash")) / fx, 2),
+        "margin_usage": margin_usage,
         "risk_status": str(raw.get("risk_status", "N/A")),
         "interest_charged": round(safe_float(raw.get("interest_charged_amount")) / fx, 2),
         "currency": "USD",
@@ -264,6 +290,20 @@ async def _parse_positions(ds, pos_raw: list) -> list:
     if not pos_raw:
         return []
 
+    # ── 中文名映射 (覆盖 30+ 常用美股, 未命中 fallback 到 ticker) ──
+    _ZH_MAP = {
+        "AAPL": "苹果", "BABA": "阿里巴巴", "NVDA": "英伟达", "TSLA": "特斯拉",
+        "MSFT": "微软", "GOOG": "谷歌", "AMZN": "亚马逊", "META": "Meta",
+        "AMD": "AMD", "INTC": "英特尔", "MU": "美光科技", "TSM": "台积电",
+        "AVGO": "博通", "QCOM": "高通", "ORCL": "甲骨文", "DIS": "迪士尼",
+        "JPM": "摩根大通", "GS": "高盛", "WMT": "沃尔玛", "JNJ": "强生",
+        "PFE": "辉瑞", "MRK": "默沙东", "LLY": "礼来", "BA": "波音",
+        "PDD": "拼多多", "JD": "京东", "NIO": "蔚来", "XPEV": "小鹏",
+        "LI": "理想", "NFLX": "Netflix", "CRM": "Salesforce",
+        "F": "福特", "GM": "通用汽车", "XOM": "埃克森美孚", "CVX": "雪佛龙",
+        "BAC": "美国银行",
+    }
+
     # 提取有持仓的 codes
     codes = []
     for p in pos_raw:
@@ -275,11 +315,13 @@ async def _parse_positions(ds, pos_raw: list) -> list:
     # 批量获取报价
     price_map = await ds.get_batch_quotes(codes) if codes else {}
 
-    # 从 DB 补充 owner 字段
+    # 从 DB 补充 owner 字段 (P1-2 2026-06-12: 区分 LEGACY/managed)
     owner_map = {}
+    db_symbols = set()
     try:
         rows = await ds.db_query("SELECT symbol, COALESCE(owner,'auto') as owner FROM open_positions")
         owner_map = {r["symbol"]: r["owner"] for r in rows}
+        db_symbols = set(owner_map.keys())
     except Exception:
         pass
 
@@ -312,6 +354,13 @@ async def _parse_positions(ds, pos_raw: list) -> list:
         if cost > 0 and cur > 0:
             pnl_pct = ((cur - cost) / cost * 100) if is_long else ((cost - cur) / cost * 100)
 
+        # 今日盈亏 (Futu today_pl_val, 盘后为昨日结算盈亏)
+        today_pl = safe_float(p.get("today_pl_val", 0))
+
+        # 中文名
+        code_short = code.replace("US.", "")
+        name_cn = _ZH_MAP.get(code_short, code_short)
+
         positions.append({
             "code": code,
             "symbol": code,
@@ -324,12 +373,63 @@ async def _parse_positions(ds, pos_raw: list) -> list:
             "unrealized_pl": round(unrealized, 2),
             "unrealized_pnl": round(unrealized, 2),
             "pnl_pct": round(pnl_pct, 2),
-            "owner": owner_map.get(code, "auto"),
+            "today_pl": round(today_pl, 2),
+            "name_cn": name_cn,
+            "owner": owner_map.get(code, "legacy"),
+            "legacy": code not in db_symbols,
         })
 
     # 按浮盈绝对值排序
     positions.sort(key=lambda x: abs(x["unrealized_pnl"]), reverse=True)
     return positions
+
+
+def _parse_today_orders(orders_raw: list) -> dict:
+    """解析今日订单, 返回 {active: [...], filled: [...], stats: {...}}"""
+    if not orders_raw:
+        return {"active": [], "filled": [], "stats": {"active": 0, "filled": 0, "cancelled": 0}}
+
+    active = []
+    filled = []
+    cancelled = 0
+
+    _ACTIVE_STATUSES = {"SUBMITTED", "WAITING_TO_SUBMIT", "MODIFYING", "CANCELLING", "PART_FILLED"}
+    _FILLED_STATUSES = {"FILLED"}
+    _CANCELLED_STATUSES = {"CANCELLED", "REJECTED", "DELETED"}
+
+    for o in orders_raw:
+        status = str(o.get("order_status", "")).upper()
+        side = str(o.get("trd_side", "")).upper()
+        code = str(o.get("code", ""))
+        if not code.startswith("US."):
+            continue
+
+        entry = {
+            "symbol": code,
+            "code_short": code.replace("US.", ""),
+            "side": side,
+            "status": status,
+            "qty": float(o.get("qty", 0)),
+            "price": safe_float(o.get("price", 0)),
+            "dealt_qty": float(o.get("dealt_qty", 0)),
+            "dealt_avg_price": safe_float(o.get("dealt_avg_price", 0)),
+            "create_time": str(o.get("create_time", "")),
+            "updated_time": str(o.get("updated_time", "")),
+            "remark": str(o.get("remark", "")),
+        }
+
+        if status in _ACTIVE_STATUSES:
+            active.append(entry)
+        elif status in _FILLED_STATUSES:
+            filled.append(entry)
+        elif status in _CANCELLED_STATUSES:
+            cancelled += 1
+
+    return {
+        "active": active,
+        "filled": filled,
+        "stats": {"active": len(active), "filled": len(filled), "cancelled": cancelled},
+    }
 
 
 def _parse_market(spy_snap: dict, vix) -> dict:
@@ -412,6 +512,10 @@ async def _calc_pnl(ds, positions: list) -> dict:
     # 持仓浮盈
     pnl["unrealized"] = round(sum(p.get("unrealized_pnl", 0) for p in positions), 2)
     pnl["total"] = round(pnl["realized"] + pnl["unrealized"], 2)
+
+    # 今日盈亏 (Futu today_pl_val 汇总, 盘后为 T-1)
+    pnl["today_pl"] = round(sum(p.get("today_pl", 0) for p in positions), 2)
+
     return pnl
 
 
@@ -557,3 +661,40 @@ def _parse_risk_level(account: dict) -> dict:
         "interest_charged": account.get("interest_charged", 0) if account else 0,
         "detail": risk_levels.get(rl, {"label": rl, "color": "gray", "desc": "未知状态"}),
     }
+
+
+def _get_position_earnings(position_tickers: list) -> dict:
+    """获取持仓标的未来 7 天财报日历, 返回 {today: [...], upcoming: [...]}"""
+    result = {"today": [], "upcoming": [], "has_events": False}
+    if not position_tickers:
+        return result
+
+    try:
+        from app.data.earnings_calendar import EarningsCalendar
+        ec = EarningsCalendar()
+        events = ec.get_watchlist_earnings(
+            watchlist_symbols=[f"US.{t}" for t in position_tickers],
+            days_ahead=7,
+            force_refresh=False,
+        )
+        for ev in events:
+            days = ev.get("days_until", 999)
+            entry = {
+                "symbol": ev.get("symbol", ""),
+                "ticker": ev.get("ticker", ""),
+                "name": ev.get("name", ""),
+                "report_date": ev.get("report_date", ""),
+                "time_of_day": ev.get("time_of_day", ""),
+                "sector": ev.get("sector", ""),
+                "days_until": days,
+            }
+            if days == 0:
+                result["today"].append(entry)
+            else:
+                result["upcoming"].append(entry)
+
+        result["has_events"] = bool(result["today"] or result["upcoming"])
+    except Exception as e:
+        logger.debug(f"[snapshot] earnings calendar failed: {e}")
+
+    return result
