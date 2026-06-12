@@ -274,7 +274,6 @@ def create_app() -> FastAPI:
     from app.web_dashboard.routes import stock_detail as r_stock_detail
     from app.web_dashboard.routes import system as r_system
     from app.web_dashboard.routes import watchlist as r_watchlist
-    from app.web_dashboard.routes import signal_inbox as r_signal_inbox
     from app.web_dashboard.routes import battle_plan as r_battle_plan
     from app.web_dashboard.routes import trade_intel as r_trade_intel
     from app.web_dashboard.routes import ws as r_ws
@@ -286,7 +285,6 @@ def create_app() -> FastAPI:
     r_stock_detail.register(app, templates)
     r_system.register(app, templates)
     r_watchlist.register(app, templates)
-    r_signal_inbox.register(app, templates)
     r_battle_plan.register(app, templates)
     r_trade_intel.register(app, templates)
     r_ws.register(app)

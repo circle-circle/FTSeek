@@ -29,7 +29,6 @@ from app.data.news_provider import USNewsProvider
 from app.data.market_data_router import MarketDataRouter
 from app.agents.voting.voting_coordinator import VotingCoordinator
 from app.agents.voting.voting_config import VotingConfig
-from app.decision.consensus import ConsensusEngine
 from app.core.models import (
     SignalScore, Direction, MarketRegime,
     Order, OrderType, OrderState, Position,
@@ -237,18 +236,7 @@ class TradingScheduler:
         self._load_scheduler_params()
 
         # 共识引擎
-        # 从 ConfigContainer 统一读取策略权重 (替代 config_us.py 硬编码)
-        from app.core.config_container import get_config as get_app_config
-        app_cfg = get_app_config()
-        decision_cfg = app_cfg.get_dotted("decision.strategy_weights") or {}
-        self.consensus_engine = ConsensusEngine(
-            config={
-                "STRATEGY_WEIGHTS": decision_cfg,
-                "STRATEGY_ORTHOGONALIZATION": app_cfg.get_dotted("STRATEGY_ORTHOGONALIZATION"),
-                "COST_MODEL": app_cfg.get_dotted("COST_MODEL"),
-            },
-            event_store=event_store,
-        )
+        # [CLEANUP 2026-06-13] ConsensusEngine removed — zero calls, self-documented as disconnected
 
         # 2026-04-15: 做空策略路由器 + 快速退出引擎
         try:

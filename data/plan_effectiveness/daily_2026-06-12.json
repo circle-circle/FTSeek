@@ -1,0 +1,100 @@
+{
+  "date": "2026-06-12",
+  "plan_available": true,
+  "generated_at": "2026-06-13T04:32:27.453970",
+  "targets": [
+    {
+      "symbol": "US.AAPL",
+      "plan_direction": "LONG",
+      "entry_zone": [
+        278.0,
+        282.0
+      ],
+      "status": "",
+      "traded": true,
+      "entry_zone_hit": false,
+      "direction_match": true,
+      "pnl_contribution": -8286.52,
+      "matched_trades": 1,
+      "actual_entry_prices": [
+        285.742
+      ],
+      "actual_directions": [
+        "LONG"
+      ]
+    },
+    {
+      "symbol": "US.NVDA",
+      "plan_direction": "LONG",
+      "entry_zone": [
+        198.0,
+        202.0
+      ],
+      "status": "",
+      "traded": false,
+      "entry_zone_hit": false,
+      "direction_match": false,
+      "pnl_contribution": 0.0,
+      "matched_trades": 0,
+      "actual_entry_prices": [],
+      "actual_directions": []
+    },
+    {
+      "symbol": "US.MU",
+      "plan_direction": "SHORT",
+      "entry_zone": [
+        985.0,
+        995.0
+      ],
+      "status": "",
+      "traded": false,
+      "entry_zone_hit": false,
+      "direction_match": false,
+      "pnl_contribution": 0.0,
+      "matched_trades": 0,
+      "actual_entry_prices": [],
+      "actual_directions": []
+    },
+    {
+      "symbol": "US.AMZN",
+      "plan_direction": "LONG",
+      "entry_zone": [
+        230.0,
+        235.0
+      ],
+      "status": "",
+      "traded": false,
+      "entry_zone_hit": false,
+      "direction_match": false,
+      "pnl_contribution": 0.0,
+      "matched_trades": 0,
+      "actual_entry_prices": [],
+      "actual_directions": []
+    },
+    {
+      "symbol": "US.BABA",
+      "plan_direction": "LONG",
+      "entry_zone": [
+        120.0,
+        124.0
+      ],
+      "status": "",
+      "traded": false,
+      "entry_zone_hit": false,
+      "direction_match": false,
+      "pnl_contribution": 0.0,
+      "matched_trades": 0,
+      "actual_entry_prices": [],
+      "actual_directions": []
+    }
+  ],
+  "hit_rate": 0.0,
+  "traded_rate": 0.2,
+  "avg_pnl_of_planned": -8286.52,
+  "unplanned_trade_count": 2,
+  "planned_count": 5,
+  "total_trades": 3,
+  "plan_date": "2026-06-12",
+  "traded_planned_count": 1,
+  "hit_count": 0
+}

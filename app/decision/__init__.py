@@ -8,12 +8,10 @@ from .signal_generator import SignalGenerator
 from .signal_scorer import SignalScorer
 from .market_regime import MarketRegimeIdentifier
 from .signal_dedup import SignalDeduplicator
-from .consensus import ConsensusEngine
 
 __all__ = [
     "SignalGenerator",
     "SignalScorer",
     "MarketRegimeIdentifier",
     "SignalDeduplicator",
-    "ConsensusEngine",
 ]

@@ -1,6 +1,6 @@
 {
-  "as_of": "2026-06-11",
-  "generated_at": "2026-06-12T04:36:14",
+  "as_of": "2026-06-12",
+  "generated_at": "2026-06-13T04:32:27",
   "history_days": 90,
   "total_closed_trades": 348,
   "confidence_winrate_map": {
@@ -121,13 +121,13 @@
     "rolling": {
       "7d": {
         "technical": {
-          "total": 7,
-          "wins": 3,
-          "losses": 4,
-          "win_rate": 0.4286,
-          "avg_pnl": -125.1721,
-          "total_pnl": -876.205,
-          "max_loss": -627.8,
+          "total": 4,
+          "wins": 2,
+          "losses": 2,
+          "win_rate": 0.5,
+          "avg_pnl": -42.4112,
+          "total_pnl": -169.645,
+          "max_loss": -536.5,
           "max_win": 553.8
         },
         "llm_vote": {
@@ -171,14 +171,14 @@
           "max_win": 0.0
         },
         "其他": {
-          "total": 15,
-          "wins": 11,
-          "losses": 4,
-          "win_rate": 0.7333,
-          "avg_pnl": 358.3239,
-          "total_pnl": 5374.858,
-          "max_loss": -3578.46,
-          "max_win": 5667.66
+          "total": 4,
+          "wins": 3,
+          "losses": 1,
+          "win_rate": 0.75,
+          "avg_pnl": 421.801,
+          "total_pnl": 1687.204,
+          "max_loss": -159.5,
+          "max_win": 1169.52
         }
       },
       "30d": {
@@ -223,28 +223,28 @@
           "max_win": 0.0
         },
         "scalping": {
-          "total": 80,
-          "wins": 4,
-          "losses": 59,
-          "win_rate": 0.05,
-          "avg_pnl": -16.9893,
-          "total_pnl": -1359.1437,
+          "total": 68,
+          "wins": 3,
+          "losses": 49,
+          "win_rate": 0.0441,
+          "avg_pnl": -18.3582,
+          "total_pnl": -1248.3545,
           "max_loss": -394.68,
           "max_win": 228.5
         },
         "其他": {
-          "total": 65,
-          "wins": 34,
-          "losses": 31,
-          "win_rate": 0.5231,
-          "avg_pnl": -350.471,
-          "total_pnl": -22780.618,
+          "total": 60,
+          "wins": 32,
+          "losses": 28,
+          "win_rate": 0.5333,
+          "avg_pnl": -357.8375,
+          "total_pnl": -21470.248,
           "max_loss": -7749.0,
           "max_win": 8849.58
         }
       }
     },
-    "as_of": "2026-06-11"
+    "as_of": "2026-06-12"
   },
   "factor_contribution": {
     "top_combos": [
@@ -398,10 +398,10 @@
     "single_count": 7
   },
   "threshold_recommendations": {
-    "as_of": "2026-06-11",
+    "as_of": "2026-06-12",
     "suggested_min_signal_confidence": 0.0,
     "current_baseline": 0.5,
-    "rationale": "近30d 桶 0-0.3 胜率 50.91% (n=55)",
+    "rationale": "近30d 桶 0-0.3 胜率 52.00% (n=50)",
     "strategy_actions": [
       {
         "category": "scalping",

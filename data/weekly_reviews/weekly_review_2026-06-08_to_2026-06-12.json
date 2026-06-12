@@ -1,0 +1,199 @@
+{
+  "report_type": "weekly",
+  "period_start": "2026-06-08",
+  "period_end": "2026-06-12",
+  "generated_at": "2026-06-13T04:32:27.825888",
+  "summary": {
+    "total_trades": 3,
+    "closed_trades": 3,
+    "winning_trades": 0,
+    "total_pnl": -18739.56,
+    "win_rate": 0.0,
+    "avg_pnl_per_trade": -6246.52
+  },
+  "daily_comparison": {
+    "daily_stats": {
+      "2026-06-12": {
+        "trades": 3,
+        "wins": 0,
+        "pnl": -18739.56
+      }
+    },
+    "best_day": "2026-06-12",
+    "worst_day": "2026-06-12",
+    "trading_days": 1
+  },
+  "signal_funnel": {
+    "total_decisions": 90,
+    "by_day": {
+      "2026-06-08": 12,
+      "2026-06-10": 45,
+      "2026-06-11": 28,
+      "2026-06-12": 5
+    },
+    "by_direction_strength": {
+      "LONG(s=33)": 1,
+      "LONG(s=34)": 1,
+      "LONG(s=35)": 4,
+      "LONG(s=36)": 3,
+      "LONG(s=37)": 5,
+      "LONG(s=38)": 3,
+      "LONG(s=39)": 2,
+      "LONG(s=40)": 1,
+      "LONG(s=43)": 2,
+      "LONG(s=51)": 23,
+      "LONG(s=53)": 1,
+      "LONG(s=60)": 2,
+      "LONG(s=63)": 2,
+      "LONG(s=64)": 3,
+      "SHORT(s=31)": 6,
+      "SHORT(s=32)": 3,
+      "SHORT(s=33)": 1,
+      "SHORT(s=34)": 5,
+      "SHORT(s=35)": 2,
+      "SHORT(s=36)": 2,
+      "SHORT(s=37)": 4,
+      "SHORT(s=39)": 3,
+      "SHORT(s=40)": 1,
+      "SHORT(s=41)": 1,
+      "SHORT(s=42)": 1,
+      "SHORT(s=43)": 3,
+      "SHORT(s=45)": 4,
+      "SHORT(s=50)": 1
+    }
+  },
+  "rejection_trend": {
+    "total": 1,
+    "by_day": {
+      "2026-06-08": 1
+    },
+    "by_reason": {
+      "WEAK_LONG_BLOCKED": 1
+    },
+    "by_symbol": {
+      "US.GOOG": 1
+    },
+    "trend": "stable",
+    "top_rejector": "WEAK_LONG_BLOCKED"
+  },
+  "capital_curve": {
+    "start_equity": 82074.0,
+    "end_equity": 79826.0,
+    "weekly_pnl": -2247.73,
+    "weekly_return_pct": -2.74,
+    "max_drawdown_pct": 0,
+    "daily_points": [
+      {
+        "day": "2026-06-10",
+        "equity": 82074.0,
+        "cash": 46021.0,
+        "drawdown": -0.23
+      },
+      {
+        "day": "2026-06-11",
+        "equity": 79303.0,
+        "cash": -22304.0,
+        "drawdown": 0
+      },
+      {
+        "day": "2026-06-12",
+        "equity": 79826.0,
+        "cash": 72704.0,
+        "drawdown": 0
+      }
+    ]
+  },
+  "strategy_performance": {
+    "strategy_breakdown": {
+      "unknown": {
+        "trades": 3,
+        "wins": 0,
+        "pnl": -18739.56,
+        "win_rate": 0.0
+      }
+    }
+  },
+  "voting_analysis": {
+    "avg_signal_strength": 50.0,
+    "high_strength_trades": 0,
+    "high_strength_win_rate": 0,
+    "medium_strength_trades": 3,
+    "medium_strength_win_rate": 0.0,
+    "low_strength_trades": 0,
+    "low_strength_win_rate": 0
+  },
+  "risk_analysis": {
+    "stop_loss_execution_rate": 1.0,
+    "max_drawdown": 0
+  },
+  "consistency_score": {
+    "score": 1,
+    "avg_strength": 50.0,
+    "std_strength": 0.0,
+    "interpretation": "high"
+  },
+  "key_learnings": [],
+  "improvement_plan": [
+    {
+      "action": "胜率低于 40%，建议重新评估策略",
+      "priority": "high"
+    },
+    {
+      "action": "本周 1 次信号被拒绝 (趋势: stable)，TOP 原因: WEAK_LONG_BLOCKED",
+      "priority": "medium"
+    }
+  ],
+  "daily_reviews_summary": {
+    "daily_count": 5,
+    "days_with_trades": 1,
+    "reviews": [
+      {
+        "date": "2026-06-08",
+        "trades": 0,
+        "pnl": 0,
+        "win_rate": 0,
+        "suggestions": [
+          "产生 12 条决策但 0 笔执行，检查门禁/风控是否过严",
+          "今日 1 次信号被拒绝，TOP 原因: WEAK_LONG_BLOCKED"
+        ]
+      },
+      {
+        "date": "2026-06-09",
+        "trades": 0,
+        "pnl": 0,
+        "win_rate": 0,
+        "suggestions": [
+          "今日无交易，系统运行正常，等待交易信号"
+        ]
+      },
+      {
+        "date": "2026-06-10",
+        "trades": 0,
+        "pnl": 0,
+        "win_rate": 0,
+        "suggestions": [
+          "产生 45 条决策但 0 笔执行，检查门禁/风控是否过严"
+        ]
+      },
+      {
+        "date": "2026-06-11",
+        "trades": 0,
+        "pnl": 0,
+        "win_rate": 0,
+        "suggestions": [
+          "产生 28 条决策但 0 笔执行，检查门禁/风控是否过严"
+        ]
+      },
+      {
+        "date": "2026-06-12",
+        "trades": 3,
+        "pnl": -18739.56,
+        "win_rate": 0,
+        "suggestions": [
+          "胜率低于 40%，建议重新评估策略",
+          "亏损交易占比 100%，建议收紧入场条件"
+        ]
+      }
+    ]
+  }
+}

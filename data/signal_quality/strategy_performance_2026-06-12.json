@@ -1,0 +1,191 @@
+{
+  "all_time": {
+    "technical": {
+      "total": 10,
+      "wins": 4,
+      "losses": 6,
+      "win_rate": 0.4,
+      "avg_pnl": -94.9673,
+      "total_pnl": -949.6735,
+      "max_loss": -627.8,
+      "max_win": 553.8
+    },
+    "llm_vote": {
+      "total": 0,
+      "wins": 0,
+      "losses": 0,
+      "win_rate": 0.0,
+      "avg_pnl": 0.0,
+      "total_pnl": 0.0,
+      "max_loss": 0.0,
+      "max_win": 0.0
+    },
+    "battle_plan": {
+      "total": 0,
+      "wins": 0,
+      "losses": 0,
+      "win_rate": 0.0,
+      "avg_pnl": 0.0,
+      "total_pnl": 0.0,
+      "max_loss": 0.0,
+      "max_win": 0.0
+    },
+    "news": {
+      "total": 0,
+      "wins": 0,
+      "losses": 0,
+      "win_rate": 0.0,
+      "avg_pnl": 0.0,
+      "total_pnl": 0.0,
+      "max_loss": 0.0,
+      "max_win": 0.0
+    },
+    "scalping": {
+      "total": 150,
+      "wins": 27,
+      "losses": 102,
+      "win_rate": 0.18,
+      "avg_pnl": -10.9222,
+      "total_pnl": -1638.3326,
+      "max_loss": -394.68,
+      "max_win": 274.08
+    },
+    "其他": {
+      "total": 188,
+      "wins": 86,
+      "losses": 102,
+      "win_rate": 0.4574,
+      "avg_pnl": -33.8975,
+      "total_pnl": -6372.7216,
+      "max_loss": -7749.0,
+      "max_win": 17882.56
+    }
+  },
+  "rolling": {
+    "7d": {
+      "technical": {
+        "total": 4,
+        "wins": 2,
+        "losses": 2,
+        "win_rate": 0.5,
+        "avg_pnl": -42.4112,
+        "total_pnl": -169.645,
+        "max_loss": -536.5,
+        "max_win": 553.8
+      },
+      "llm_vote": {
+        "total": 0,
+        "wins": 0,
+        "losses": 0,
+        "win_rate": 0.0,
+        "avg_pnl": 0.0,
+        "total_pnl": 0.0,
+        "max_loss": 0.0,
+        "max_win": 0.0
+      },
+      "battle_plan": {
+        "total": 0,
+        "wins": 0,
+        "losses": 0,
+        "win_rate": 0.0,
+        "avg_pnl": 0.0,
+        "total_pnl": 0.0,
+        "max_loss": 0.0,
+        "max_win": 0.0
+      },
+      "news": {
+        "total": 0,
+        "wins": 0,
+        "losses": 0,
+        "win_rate": 0.0,
+        "avg_pnl": 0.0,
+        "total_pnl": 0.0,
+        "max_loss": 0.0,
+        "max_win": 0.0
+      },
+      "scalping": {
+        "total": 0,
+        "wins": 0,
+        "losses": 0,
+        "win_rate": 0.0,
+        "avg_pnl": 0.0,
+        "total_pnl": 0.0,
+        "max_loss": 0.0,
+        "max_win": 0.0
+      },
+      "其他": {
+        "total": 4,
+        "wins": 3,
+        "losses": 1,
+        "win_rate": 0.75,
+        "avg_pnl": 421.801,
+        "total_pnl": 1687.204,
+        "max_loss": -159.5,
+        "max_win": 1169.52
+      }
+    },
+    "30d": {
+      "technical": {
+        "total": 10,
+        "wins": 4,
+        "losses": 6,
+        "win_rate": 0.4,
+        "avg_pnl": -94.9673,
+        "total_pnl": -949.6735,
+        "max_loss": -627.8,
+        "max_win": 553.8
+      },
+      "llm_vote": {
+        "total": 0,
+        "wins": 0,
+        "losses": 0,
+        "win_rate": 0.0,
+        "avg_pnl": 0.0,
+        "total_pnl": 0.0,
+        "max_loss": 0.0,
+        "max_win": 0.0
+      },
+      "battle_plan": {
+        "total": 0,
+        "wins": 0,
+        "losses": 0,
+        "win_rate": 0.0,
+        "avg_pnl": 0.0,
+        "total_pnl": 0.0,
+        "max_loss": 0.0,
+        "max_win": 0.0
+      },
+      "news": {
+        "total": 0,
+        "wins": 0,
+        "losses": 0,
+        "win_rate": 0.0,
+        "avg_pnl": 0.0,
+        "total_pnl": 0.0,
+        "max_loss": 0.0,
+        "max_win": 0.0
+      },
+      "scalping": {
+        "total": 68,
+        "wins": 3,
+        "losses": 49,
+        "win_rate": 0.0441,
+        "avg_pnl": -18.3582,
+        "total_pnl": -1248.3545,
+        "max_loss": -394.68,
+        "max_win": 228.5
+      },
+      "其他": {
+        "total": 60,
+        "wins": 32,
+        "losses": 28,
+        "win_rate": 0.5333,
+        "avg_pnl": -357.8375,
+        "total_pnl": -21470.248,
+        "max_loss": -7749.0,
+        "max_win": 8849.58
+      }
+    }
+  },
+  "as_of": "2026-06-12"
+}

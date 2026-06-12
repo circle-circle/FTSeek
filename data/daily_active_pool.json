@@ -1,24 +1,24 @@
 {
-  "timestamp": "2026-06-12T13:36:04.037455+00:00",
+  "timestamp": "2026-06-12T23:48:08.279027+00:00",
   "entries": [
     {
       "code": "US.SPY",
       "source": "MANUAL",
-      "added_at": "2026-06-12T04:01:14.376478+00:00",
+      "added_at": "2026-06-12T23:47:58.388477+00:00",
       "expires_at": null,
       "metadata": {}
     },
     {
       "code": "US.QQQ",
       "source": "MANUAL",
-      "added_at": "2026-06-12T04:01:14.376510+00:00",
+      "added_at": "2026-06-12T23:47:58.388511+00:00",
       "expires_at": null,
       "metadata": {}
     },
     {
       "code": "US.BABA",
       "source": "POSITION",
-      "added_at": "2026-06-12T04:01:14.377850+00:00",
+      "added_at": "2026-06-12T23:47:58.391863+00:00",
       "expires_at": null,
       "metadata": {
         "direction": "LONG",
@@ -28,14 +28,14 @@
     {
       "code": "US.JD",
       "source": "MANUAL",
-      "added_at": "2026-06-12T04:01:14.376517+00:00",
+      "added_at": "2026-06-12T23:47:58.388518+00:00",
       "expires_at": null,
       "metadata": {}
     },
     {
       "code": "US.PDD",
       "source": "POSITION",
-      "added_at": "2026-06-12T04:01:14.377852+00:00",
+      "added_at": "2026-06-12T23:47:58.391866+00:00",
       "expires_at": null,
       "metadata": {}
     },
@@ -52,14 +52,14 @@
     {
       "code": "US.BIDU",
       "source": "MANUAL",
-      "added_at": "2026-06-12T04:01:14.376525+00:00",
+      "added_at": "2026-06-12T23:47:58.388526+00:00",
       "expires_at": null,
       "metadata": {}
     },
     {
       "code": "US.AAPL",
       "source": "POSITION",
-      "added_at": "2026-06-12T04:01:14.377837+00:00",
+      "added_at": "2026-06-12T23:47:58.391850+00:00",
       "expires_at": null,
       "metadata": {
         "direction": "LONG",
@@ -69,14 +69,14 @@
     {
       "code": "US.MSFT",
       "source": "POSITION",
-      "added_at": "2026-06-12T04:01:14.377840+00:00",
+      "added_at": "2026-06-12T23:47:58.391853+00:00",
       "expires_at": null,
       "metadata": {}
     },
     {
       "code": "US.NVDA",
       "source": "POSITION",
-      "added_at": "2026-06-12T04:01:14.377834+00:00",
+      "added_at": "2026-06-12T23:47:58.391846+00:00",
       "expires_at": null,
       "metadata": {
         "direction": "LONG",
@@ -86,35 +86,35 @@
     {
       "code": "US.AMZN",
       "source": "POSITION",
-      "added_at": "2026-06-12T04:01:14.377847+00:00",
+      "added_at": "2026-06-12T23:47:58.391861+00:00",
       "expires_at": null,
       "metadata": {}
     },
     {
       "code": "US.META",
       "source": "POSITION",
-      "added_at": "2026-06-12T04:01:14.377845+00:00",
+      "added_at": "2026-06-12T23:47:58.391858+00:00",
       "expires_at": null,
       "metadata": {}
     },
     {
       "code": "US.TSLA",
       "source": "POSITION",
-      "added_at": "2026-06-12T04:01:14.377826+00:00",
+      "added_at": "2026-06-12T23:47:58.391834+00:00",
       "expires_at": null,
       "metadata": {}
     },
     {
       "code": "US.AMD",
       "source": "MANUAL",
-      "added_at": "2026-06-12T04:01:14.376558+00:00",
+      "added_at": "2026-06-12T23:47:58.388558+00:00",
       "expires_at": null,
       "metadata": {}
     },
     {
       "code": "US.AVGO",
       "source": "MANUAL",
-      "added_at": "2026-06-12T04:01:14.376562+00:00",
+      "added_at": "2026-06-12T23:47:58.388562+00:00",
       "expires_at": null,
       "metadata": {}
     },
@@ -131,28 +131,28 @@
     {
       "code": "US.NIO",
       "source": "MANUAL",
-      "added_at": "2026-06-12T04:01:14.376570+00:00",
+      "added_at": "2026-06-12T23:47:58.388568+00:00",
       "expires_at": null,
       "metadata": {}
     },
     {
       "code": "US.JPM",
       "source": "MANUAL",
-      "added_at": "2026-06-12T04:01:14.376573+00:00",
+      "added_at": "2026-06-12T23:47:58.388571+00:00",
       "expires_at": null,
       "metadata": {}
     },
     {
       "code": "US.LLY",
       "source": "MANUAL",
-      "added_at": "2026-06-12T04:01:14.376575+00:00",
+      "added_at": "2026-06-12T23:47:58.388574+00:00",
       "expires_at": null,
       "metadata": {}
     },
     {
       "code": "US.WMT",
       "source": "MANUAL",
-      "added_at": "2026-06-12T04:01:14.376578+00:00",
+      "added_at": "2026-06-12T23:47:58.388576+00:00",
       "expires_at": null,
       "metadata": {}
     },
@@ -173,20 +173,20 @@
       "expires_at": null,
       "metadata": {
         "direction": "SHORT",
-        "quantity": 10.0
+        "quantity": 20.0
       }
     },
     {
       "code": "US.GOOG",
       "source": "MANUAL",
-      "added_at": "2026-06-12T04:01:14.376586+00:00",
+      "added_at": "2026-06-12T23:47:58.388585+00:00",
       "expires_at": null,
       "metadata": {}
     },
     {
       "code": "US.GOOGL",
       "source": "POSITION",
-      "added_at": "2026-06-12T04:01:14.377843+00:00",
+      "added_at": "2026-06-12T23:47:58.391855+00:00",
       "expires_at": null,
       "metadata": {}
     },
@@ -289,22 +289,12 @@
         "direction": "SHORT",
         "quantity": 289.0
       }
-    },
-    {
-      "code": "US.SNDQ",
-      "source": "POSITION",
-      "added_at": "2026-06-11T16:04:49.110605+00:00",
-      "expires_at": null,
-      "metadata": {
-        "direction": "LONG",
-        "quantity": 1.0
-      }
     }
   ],
   "summary": {
-    "total": 35,
+    "total": 34,
     "breakdown": {
-      "POSITION": 24,
+      "POSITION": 23,
       "PLAN": 0,
       "MANUAL": 11,
       "INTRADAY_ALERT": 0

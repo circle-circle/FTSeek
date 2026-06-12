@@ -113,13 +113,7 @@ class DIContainer:
         return self._get_or_create("strategy_registry", get_strategy_registry)
 
     def performance_tracker(self) -> "PerformanceTracker":
-        """策略性能追踪器"""
-        from app.strategy.performance_tracker import get_performance_tracker
-        return self._get_or_create("performance_tracker", get_performance_tracker)
-
-    def auto_tuner(self) -> "AutoTuner":
-        """策略自动调优器"""
-        from app.strategy.auto_tuner import AutoTuner
+        # [CLEANUP 2026-06-13] performance_tracker + auto_tuner removed — zero log evidence, never used
         return self._get_or_create("auto_tuner", AutoTuner)
 
     # ================================================================
@@ -134,23 +128,7 @@ class DIContainer:
             timeout_seconds=25,
         ))
 
-    def consensus_engine(self) -> "ConsensusEngine":
-        """共识决策引擎"""
-        from app.decision.consensus import ConsensusEngine
-        cfg = self.config()
-        try:
-            decision_config = cfg.get_section("decision") or cfg.get_section("DECISION_CONFIG") or {}
-        except Exception:
-            decision_config = {}
-        return self._get_or_create("consensus_engine", lambda: ConsensusEngine(
-            config={
-                "STRATEGY_WEIGHTS": decision_config.get("strategy_weights",
-                    decision_config.get("STRATEGY_WEIGHTS", {})),
-                "STRATEGY_ORTHOGONALIZATION": cfg.get_section("STRATEGY_ORTHOGONALIZATION"),
-                "COST_MODEL": cfg.get_section("COST_MODEL"),
-            },
-            event_store=self.event_store(),
-        ))
+    # [CLEANUP 2026-06-13] consensus_engine removed — zero calls, self-documented as disconnected
 
     # ================================================================
     #  执行层
@@ -273,10 +251,7 @@ class DIContainer:
         # ── 注入增强组件 ──
         # 策略注册中心
         scheduler.strategy_registry = self.strategy_registry()
-        # 性能追踪器
-        scheduler.performance_tracker = self.performance_tracker()
-        # 自动调优器
-        scheduler.auto_tuner = self.auto_tuner()
+        # [CLEANUP 2026-06-13] performance_tracker + auto_tuner injections removed
         # DI 容器引用（供后续扩展）
         scheduler.di_container = self
 

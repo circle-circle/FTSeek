@@ -1881,10 +1881,10 @@ news_v2:
       enabled: true
       interval_seconds: 180
     finnhub:
-      enabled: true
+      enabled: false             # [CLEANUP 2026-06-13] NewsV2 Finnhub never produced news
       interval_seconds: 120
     sec_edgar:
-      enabled: true
+      enabled: false             # [CLEANUP 2026-06-13] 53 log lines init-only, zero filings
       interval_seconds: 300
   quality_gate:
     max_age_minutes: 120
@@ -2251,10 +2251,10 @@ catalyst:
   # 一手信息源
   sources:
     hkex:
-      enabled: true
+      enabled: false             # [CLEANUP 2026-06-13] 1280 log lines, all zero results
       interval_seconds: 120      # 2分钟轮询 (港交所披露易)
     csrc:
-      enabled: true
+      enabled: false             # [CLEANUP 2026-06-13] 654 log lines, all zero results
       interval_seconds: 300      # 5分钟轮询 (证监会官网)
     cls_interval_minutes: 2      # 财联社从5分钟缩短到2分钟
   
