@@ -352,7 +352,8 @@ def register(app, templates):
                            COALESCE(AVG(CASE WHEN realized_pnl > 0 THEN realized_pnl END), 0) as avg_win,
                            COALESCE(AVG(CASE WHEN realized_pnl < 0 THEN realized_pnl END), 0) as avg_loss
                     FROM trade_records
-                    WHERE strategy_id = 'manual' OR source_type = 'MANUAL'
+                    WHERE (strategy_id = 'manual' OR source_type = 'MANUAL')
+                      AND trade_mode != 'simulate'
                 """)
                 auto = await ds.db_query_one("""
                     SELECT COUNT(*) as cnt,
@@ -364,12 +365,14 @@ def register(app, templates):
                     WHERE (strategy_id != 'manual' OR strategy_id IS NULL)
                       AND source_type != 'MANUAL'
                       AND source_type NOT IN ('manual_sync', 'reconciler')
+                      AND trade_mode != 'simulate'
                 """)
                 recent = await ds.db_query("""
                     SELECT symbol, direction, realized_pnl, exit_reason, trade_date,
                            entry_price, exit_price, quantity
                     FROM trade_records
-                    WHERE strategy_id = 'manual' OR source_type = 'MANUAL'
+                    WHERE (strategy_id = 'manual' OR source_type = 'MANUAL')
+                      AND trade_mode != 'simulate'
                     ORDER BY trade_date DESC, id DESC LIMIT 20
                 """)
 
