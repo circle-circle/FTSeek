@@ -113,6 +113,10 @@ class FutuLV3Provider:
         self._kline_symbol_cooldown: dict = {}  # symbol -> last_request_time (防同一标的重复请求)
         self._kline_symbol_cooldown_sec = 30    # 同一标的最小请求间隔30秒 (10→30 降低配额压力)
 
+        # Daily K线缓存 (24hr TTL, 日线每天只变一次)
+        self._daily_kline_cache: Dict[str, List[Dict]] = {}   # futu_symbol -> kline list
+        self._daily_kline_cache_time: Dict[str, float] = {}   # futu_symbol -> cache timestamp
+
         # ── 连接健康监控 (2026-06-02 新增, Task #7) ──
         # 跟踪最后一次收到任意 push 的时间，用于检测 OpenD 断线 / 数据陈旧
         self._last_push_time: Optional[float] = None
@@ -1023,6 +1027,89 @@ class FutuLV3Provider:
         except Exception as e:
             logger.debug(f"[FutuLV3] {symbol} K 线异常: {e}")
             return self._get_cached_kline(symbol)  # 降级返回缓存
+
+    def get_daily_kline(self, symbol: str, count: int = 60) -> Optional[List[Dict]]:
+        """获取日K线历史数据 (不做当日过滤，返回完整历史日线)
+
+        与 get_kline(ktype="K_DAY") 的区别:
+          - get_kline 对 K_DAY 做了当日过滤，只返回今天的1根bar
+          - 本方法直接调用 request_history_kline，返回最近 count 根日K线
+
+        Args:
+            symbol: 股票代码 (如 "NVDA" 或 "US.NVDA")
+            count:  返回的日K线数量，默认60根
+
+        Returns:
+            List of dicts: [{time, open, high, low, close, volume, turnover}, ...]
+            按时间升序排列；失败时返回缓存数据或 None
+        """
+        if not self._ensure_connected():
+            # 连接断开时降级返回缓存
+            futu_symbol = self._to_futu_symbol(symbol)
+            cached = self._daily_kline_cache.get(futu_symbol)
+            if cached:
+                logger.debug(f"[FutuLV3·DailyK] {symbol} 未连接，返回缓存 ({len(cached)} bars)")
+                return cached[-count:]
+            return None
+
+        futu_symbol = self._to_futu_symbol(symbol)
+
+        # 检查缓存 (24hr TTL = 86400s)
+        cache_ts = self._daily_kline_cache_time.get(futu_symbol, 0)
+        if time.time() - cache_ts < 86400:
+            cached = self._daily_kline_cache.get(futu_symbol)
+            if cached and len(cached) >= min(count, 5):
+                return cached[-count:]
+
+        try:
+            from futu import KLType
+
+            ret, data, _ = self._quote_ctx.request_history_kline(
+                code=futu_symbol,
+                ktype=KLType.K_DAY,
+                max_count=count,
+            )
+
+            if ret == 0 and data is not None and len(data) > 0:
+                klines = []
+                for _, row in data.iterrows():
+                    klines.append({
+                        "time": str(row.get("time_key", "")),
+                        "open": float(row.get("open", 0)),
+                        "high": float(row.get("high", 0)),
+                        "low": float(row.get("low", 0)),
+                        "close": float(row.get("close", 0)),
+                        "volume": float(row.get("volume", 0)),
+                        "turnover": float(row.get("turnover", 0)),
+                    })
+
+                if not klines:
+                    logger.warning(f"[FutuLV3·DailyK] {symbol} 日K线解析为空, 返回 None")
+                    return None
+
+                # 写入缓存
+                self._daily_kline_cache[futu_symbol] = klines
+                self._daily_kline_cache_time[futu_symbol] = time.time()
+
+                logger.debug(f"[FutuLV3·DailyK] {symbol} 获取 {len(klines)} 根日K线成功")
+                return klines[-count:]
+            else:
+                logger.warning(f"[FutuLV3·DailyK] {symbol} 日K线获取失败: ret={ret}")
+                # 降级返回缓存
+                cached = self._daily_kline_cache.get(futu_symbol)
+                if cached:
+                    logger.debug(f"[FutuLV3·DailyK] {symbol} 降级返回缓存 ({len(cached)} bars)")
+                    return cached[-count:]
+                return None
+
+        except Exception as e:
+            logger.warning(f"[FutuLV3·DailyK] {symbol} 日K线异常: {e}")
+            # 降级返回缓存
+            cached = self._daily_kline_cache.get(futu_symbol)
+            if cached:
+                logger.debug(f"[FutuLV3·DailyK] {symbol} 异常降级返回缓存 ({len(cached)} bars)")
+                return cached[-count:]
+            return None
 
     @property
     def is_connected(self) -> bool:

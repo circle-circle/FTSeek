@@ -12,7 +12,8 @@ import threading
 import time
 import sqlite3
 import os
-from datetime import datetime
+import re
+from datetime import datetime, timezone, timedelta
 from typing import Dict, Optional
 
 logger = logging.getLogger("ftseek_us.position_sync")
@@ -473,10 +474,12 @@ class USPositionSync:
             logger.warning("US DB not found: %s", _get_db_path())
             return
 
-        conn = sqlite3.connect(_get_db_path())
+        # P0-4 修复 (2026-06-12): timeout=10 + busy_timeout 防止并发写时 "database is locked"
+        conn = sqlite3.connect(_get_db_path(), timeout=10)
         # M12 (2026-06-03): 与 TradeStore 对齐 WAL 模式, 防止 journal mode 冲突
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA synchronous=NORMAL")
+        conn.execute("PRAGMA busy_timeout=5000")
         cursor = conn.cursor()
 
         # Ensure trader_type column exists
@@ -560,6 +563,23 @@ class USPositionSync:
         _today_orders = self._query_today_futu_orders()
         self._today_orders = _today_orders  # 供 _sync_to_position_store_locked 使用
 
+        # P3 修复 (2026-06-12): 查询 manual_order_audit 今日手动订单，防止被误标为 auto_main
+        _manual_today = set()
+        try:
+            today_et = (datetime.now(timezone(timedelta(hours=-4)))).strftime('%Y-%m-%d')
+            cursor.execute(
+                "SELECT DISTINCT symbol FROM manual_order_audit "
+                "WHERE status='submitted' AND date(timestamp) = ?",
+                (today_et,)
+            )
+            _manual_today = {row[0] for row in cursor.fetchall()}
+            if _manual_today:
+                logger.info(f"[US Sync·P3] 今日手动订单标的: {_manual_today}")
+            self._manual_today = _manual_today
+        except Exception as e:
+            logger.debug(f"[US Sync·P3] manual_order_audit 查询失败: {e}")
+            self._manual_today = set()
+
         # 实盘隔离: 自管持仓不纳入系统管理 (yaml + DB owner='manual' 合并)
         try:
             from app.core.config_container import get_all_manual_symbols
@@ -599,9 +619,14 @@ class USPositionSync:
                             logger.info(f"[US Sync·隔离] {symbol} owner→manual + 数据修正")
                 else:
                     # 首次发现自管持仓，写入 DB 标 manual
+                    # P0-4 修复 (2026-06-12): UPSERT 防止与 manual_order_service stub 行 UNIQUE 冲突
                     cursor.execute(
                         "INSERT INTO open_positions (symbol, direction, size, avg_entry_price, owner, sync_status, updated_at) "
-                        "VALUES (?, ?, ?, ?, 'manual', 'synced', ?)",
+                        "VALUES (?, ?, ?, ?, 'manual', 'synced', ?) "
+                        "ON CONFLICT(symbol) DO UPDATE SET "
+                        "direction=excluded.direction, size=excluded.size, "
+                        "avg_entry_price=excluded.avg_entry_price, owner='manual', "
+                        "sync_status='synced', updated_at=excluded.updated_at",
                         (symbol, info['direction'], info['qty'], info['cost'], datetime.now().isoformat()))
                     logger.info(f"[US Sync·隔离] 录入自管持仓: {symbol} ({info['direction']} {info['qty']}股)")
                 continue
@@ -729,14 +754,34 @@ class USPositionSync:
 
                 logger.info("[US Sync] New position: %s %s %s @ %s", symbol, info['direction'], info['qty'], info['cost'])
                 # P3 修复: 根据当日委托判断 trader_type
-                _db_trader_type = "AUTO" if symbol in _today_orders else "MANUAL"
+                # P3 修复 (2026-06-12): 手动订单优先于 Futu 委托判断
+                # 根因: Dashboard 手动下单也会出现在富途当日委托中，之前误标为 AUTO
+                if symbol in _manual_today:
+                    _db_trader_type = "MANUAL"
+                elif symbol in _today_orders:
+                    _db_trader_type = "AUTO"
+                else:
+                    _db_trader_type = "MANUAL"
                 _db_strategy_id = "auto_main" if _db_trader_type == "AUTO" else "futu_sync"
+                # P0-4 修复 (2026-06-12): UPSERT — 防止与 stub 行/隔离自管行 UNIQUE 冲突
+                # 根因: 之前裸 INSERT 触发 "UNIQUE constraint failed: open_positions.symbol" 持续刷屏
                 cursor.execute("""
                     INSERT INTO open_positions (
                         symbol, direction, size, avg_entry_price,
                         initial_sl, current_sl, initial_tp,
                         entry_time, updated_at, strategy_id, trader_type, owner_strategy
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(symbol) DO UPDATE SET
+                        direction=excluded.direction,
+                        size=excluded.size,
+                        avg_entry_price=excluded.avg_entry_price,
+                        initial_sl=COALESCE(open_positions.initial_sl, excluded.initial_sl),
+                        current_sl=COALESCE(open_positions.current_sl, excluded.current_sl),
+                        initial_tp=COALESCE(open_positions.initial_tp, excluded.initial_tp),
+                        updated_at=excluded.updated_at,
+                        strategy_id=COALESCE(open_positions.strategy_id, excluded.strategy_id),
+                        trader_type=COALESCE(open_positions.trader_type, excluded.trader_type),
+                        owner_strategy=COALESCE(open_positions.owner_strategy, excluded.owner_strategy)
                 """, (
                     symbol, info['direction'], info['qty'], info['cost'],
                     initial_sl, initial_sl, initial_tp,
@@ -796,8 +841,9 @@ class USPositionSync:
         # 真正新发现: DB 没有 → 发通知
         _db_known_symbols = set()
         try:
-            conn = sqlite3.connect(_get_db_path())
+            conn = sqlite3.connect(_get_db_path(), timeout=10)
             conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA busy_timeout=5000")
             cursor = conn.cursor()
             cursor.execute(
                 "SELECT symbol FROM open_positions "
@@ -886,12 +932,18 @@ class USPositionSync:
             # 期权代码格式：US.XXX26XXXXP/C (含年月 + Put/Call)
             is_option = any(x in symbol for x in ['26', '27', '28']) and any(x in symbol for x in ['P', 'C'])
             
-            # P3 修复 (2026-06-09): 检查 Futu 当日委托，区分策略开仓 vs 手动开仓
-            # 如果该 symbol 今日有已成交委托，大概率是策略开的（SIGKILL 后 DB 丢失）
-            _has_today_order = symbol in _today_orders
+            # P3 修复 (2026-06-12): 手动订单优先判断，防止 Dashboard 下单被误标为 auto_main
+            _is_manual_today = symbol in getattr(self, '_manual_today', set())
+            _has_today_order = symbol in _today_orders and not _is_manual_today
             if is_option:
                 strategy_id = "voting_llm_option"
                 trader_type = "OPTION"
+            elif _is_manual_today:
+                strategy_id = "manual_sync"
+                trader_type = "MANUAL"
+                logger.info(
+                    f"[US Sync·P3] {symbol} 今日有手动订单，标记为 manual_sync"
+                )
             elif _has_today_order:
                 strategy_id = "auto_main"
                 trader_type = "AUTO"
@@ -1129,7 +1181,8 @@ class USPositionSync:
                 try:
                     import sqlite3 as _sqlite3
                     db_path = _get_db_path()
-                    conn = _sqlite3.connect(db_path, timeout=5)
+                    conn = _sqlite3.connect(db_path, timeout=10)
+                    conn.execute("PRAGMA busy_timeout=5000")
                     conn.execute(
                         "UPDATE open_positions SET direction=?, avg_entry_price=?, size=?, "
                         "initial_sl=?, current_sl=?, updated_at=? WHERE symbol=?",
@@ -1390,7 +1443,8 @@ class USPositionSync:
         捕获 option_positions 表中遗漏的期权 (如 SPY260602P730000).
         """
         try:
-            conn = sqlite3.connect(_get_db_path())
+            conn = sqlite3.connect(_get_db_path(), timeout=10)
+            conn.execute("PRAGMA busy_timeout=5000")
             cursor = conn.cursor()
             cursor.execute("SELECT DISTINCT option_code FROM option_positions")
             symbols = {row[0] for row in cursor.fetchall()}
@@ -1415,7 +1469,8 @@ class USPositionSync:
         if not os.path.exists(_get_db_path()):
             return {}
         try:
-            conn = sqlite3.connect(_get_db_path())
+            conn = sqlite3.connect(_get_db_path(), timeout=10)
+            conn.execute("PRAGMA busy_timeout=5000")
             cursor = conn.cursor()
             # 根因修复 (2026-06-05): 与 _sync_once 保持相同过滤条件
             # 排除已关闭/stale 行, 避免一致性检查重复报告已处理的 ghost 仓
@@ -1535,7 +1590,8 @@ class USPositionSync:
             except Exception:
                 max_per_symbol = 0.25
             
-            conn = sqlite3.connect(_get_db_path())
+            conn = sqlite3.connect(_get_db_path(), timeout=10)
+            conn.execute("PRAGMA busy_timeout=5000")
             cursor = conn.cursor()
             cursor.execute("""
                 SELECT symbol, size, avg_entry_price, direction
@@ -1599,7 +1655,24 @@ class USPositionSync:
             logger.error(f"[减仓] Futu 初始化失败: {e}")
             return
         
+        # P1-1 修复 (2026-06-12): 永久跳过名单 (业务级错误后避免反复重试至重启)
+        if not hasattr(self, '_trim_permanent_skip'):
+            self._trim_permanent_skip: set = set()
+
+        # P1-1 修复 (2026-06-12): symbol 正则白名单, 拦截 US.HK.00700 这种非法代码
+        _us_symbol_re = re.compile(r'^US\.[A-Z][A-Z0-9.]*$')
+
         for symbol, trim_info in trims_to_execute.items():
+            # P1-1: 非法 symbol 永久跳过 (US.HK.00700, US.NA, etc.)
+            if not _us_symbol_re.match(symbol) or symbol.count('.') > 1:
+                if symbol not in self._trim_permanent_skip:
+                    self._trim_permanent_skip.add(symbol)
+                    logger.error(f"[减仓] {symbol} 非法美股代码, 加入永久跳过名单")
+                continue
+            # P1-1: 已知业务级错误的 symbol 直到下次重启都不再尝试
+            if symbol in self._trim_permanent_skip:
+                logger.debug(f"[减仓] {symbol} 已在永久跳过名单, 不再尝试")
+                continue
             # 冷却检查
             if _now - self._last_trim_time.get(symbol, 0) < _trim_cooldown:
                 logger.debug(f"[减仓] {symbol} 冷却中，跳过")
@@ -1649,9 +1722,24 @@ class USPositionSync:
                     )
                     self._last_trim_time[symbol] = _now  # 更新冷却时间
                 else:
-                    logger.error(f"[减仓] {symbol} 提交失败: ret={ret}, data={data}")
+                    # P1-1 修复 (2026-06-12): 失败也写冷却 + 业务错误识别
+                    self._last_trim_time[symbol] = _now
+                    _err_text = str(data).lower()
+                    _business_keywords = (
+                        "找不到", "not found", "invalid", "交叉交易", "相反方向",
+                        "不支持", "no such", "permission", "禁止", "不存在",
+                    )
+                    if any(kw in _err_text for kw in _business_keywords):
+                        self._trim_permanent_skip.add(symbol)
+                        logger.error(
+                            f"[减仓] {symbol} 业务级错误, 加入永久跳过名单: ret={ret}, data={data}"
+                        )
+                    else:
+                        logger.error(f"[减仓] {symbol} 提交失败 (10min 冷却): ret={ret}, data={data}")
             except Exception as e:
-                logger.error(f"[减仓] {symbol} 执行异常: {e}")
+                # 异常路径同样写冷却, 防止异常驱动的快速重试
+                self._last_trim_time[symbol] = _now
+                logger.error(f"[减仓] {symbol} 执行异常 (10min 冷却): {e}")
 
     # Broker-first (2026-06-03): _restore_position_from_db 已删除
     # 不再从 DB 恢复持仓到内存 — broker 是唯一真相源

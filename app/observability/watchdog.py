@@ -27,6 +27,12 @@ class Watchdog:
         self._thread: Optional[threading.Thread] = None
         self._alerted: Dict[str, float] = {}  # name -> last alert ts (避免刷屏)
         self._alert_cooldown = 600  # 10min
+        # P1-5 (2026-06-12) self-heal
+        self._heal_multiplier = 3.0
+        self._heal_history: list = []
+        self._heal_max_per_day = 3
+        self._heal_enabled = True
+        self._heal_last_attempt: float = 0
 
     def register(self, name: str, stale_threshold_sec: float):
         """注册一个心跳源"""
@@ -105,6 +111,44 @@ class Watchdog:
             send_critical(msg, async_mode=True)
         except Exception:
             pass
+        if self._heal_enabled and elapsed > threshold * self._heal_multiplier:
+            self._self_heal(name, elapsed, threshold)
+
+    def _self_heal(self, name, elapsed, threshold):
+        """P1-5 (2026-06-12) systemctl restart ftseek-us when stale > threshold*3, rate-limited."""
+        import os
+        import time as _t
+        if os.environ.get("WATCHDOG_AUTO_HEAL", "1") == "0":
+            logger.warning("[Watchdog.heal] skip: WATCHDOG_AUTO_HEAL=0")
+            return
+        now = _t.time()
+        if now - self._heal_last_attempt < 60:
+            return
+        cutoff = now - 86400
+        self._heal_history = [t for t in self._heal_history if t > cutoff]
+        if len(self._heal_history) >= self._heal_max_per_day:
+            logger.error(f"[Watchdog.heal] {name} reached daily limit, manual intervention required")
+            try:
+                from app.utils.critical_alerts import send_critical
+                send_critical(f"Watchdog heal exhausted: {name} restarted {len(self._heal_history)}x in 24h, manual intervention required", async_mode=True)
+            except Exception:
+                pass
+            return
+        self._heal_last_attempt = now
+        self._heal_history.append(now)
+        logger.error(f"[Watchdog.heal] restart: {name} stale {elapsed:.0f}s ({len(self._heal_history)}/{self._heal_max_per_day} today)")
+        try:
+            from app.utils.critical_alerts import send_critical
+            send_critical(f"Watchdog auto-heal restart ftseek-us: {name} stale {elapsed:.0f}s ({len(self._heal_history)}/{self._heal_max_per_day})", async_mode=True)
+        except Exception:
+            pass
+        def _restart():
+            import subprocess
+            try:
+                subprocess.run(["systemctl", "restart", "ftseek-us"], capture_output=True, text=True, timeout=30)
+            except Exception as e:
+                logger.error(f"[Watchdog.heal] systemctl failed: {e}")
+        threading.Thread(target=_restart, daemon=True, name="WatchdogHeal").start()
 
     def get_status(self) -> Dict[str, Dict]:
         now = time.time()

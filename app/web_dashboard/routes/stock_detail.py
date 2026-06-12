@@ -487,4 +487,25 @@ def register(app, templates):
         except Exception as e:
             return {"symbol": symbol, "error": f"分析异常: {e}"}
 
+    @router.get("/api/stock/{symbol}/sector")
+    async def stock_sector(symbol: str):
+        """股票所属板块 + 关联股票 (Futu get_owner_plate + get_referencestocklist)"""
+        from app.web_dashboard.data_service import get_data_service
+        ds = get_data_service()
+
+        symbol = symbol.upper()
+        if not symbol.startswith("US."):
+            symbol = "US." + symbol
+
+        plate_data, ref_stocks = await asyncio.gather(
+            ds.get_owner_plate(symbol),
+            ds.get_reference_stocks(symbol),
+        )
+
+        return {
+            "symbol": symbol,
+            "plates": plate_data.get("plates", []),
+            "reference_stocks": ref_stocks[:10],
+        }
+
     app.include_router(router)

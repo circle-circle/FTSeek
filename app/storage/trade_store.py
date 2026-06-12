@@ -1,5 +1,13 @@
 """
-交易记录持久化存储
+交易记录持久化存储 — SSOT (Single Source of Truth)
+
+⚠️ 这是 trade_records + open_positions 的唯一权威写入方.
+   所有交易管线 (主策略/ORB/手动/reconciler) 必须通过此模块写入.
+
+架构说明:
+  - TradeStore (本文件): ftseek_us.db — 交易 + 持仓 SSOT
+  - TradeRecorder:       trade_records.db — 评审系统专用 (独立, 有心理学字段)
+  - UnifiedTradeStore:   ⚠️ DEPRECATED — 已重定向, 勿用
 
 将每笔完整交易（开仓→平仓）写入 SQLite trade_records 表，
 重启后历史不丢失，支持日报复盘查询。

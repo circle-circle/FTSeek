@@ -328,6 +328,69 @@ class DataService:
         return None
 
     # ═══════════════════════════════════════════
+    #  Futu 扩展 API (板块/关联股票)
+    # ═══════════════════════════════════════════
+
+    async def get_owner_plate(self, symbol: str) -> dict:
+        """获取股票所属板块 (Futu get_owner_plate)"""
+        cached = self.cache.get(f"plate_{symbol}")
+        if cached is not None:
+            return cached
+        result = await self._run(self._fetch_owner_plate, symbol)
+        if result:
+            self.cache.set(f"plate_{symbol}", result, ttl=3600)  # 板块信息低频变化
+        return result or {}
+
+    def _fetch_owner_plate(self, symbol: str) -> dict:
+        svc = self.svc()
+        if not svc.connect():
+            return {}
+        try:
+            from futu import RET_OK
+            ret, data = svc._quote_ctx.get_owner_plate([symbol])
+            if ret == RET_OK and not data.empty:
+                plates = []
+                for _, row in data.iterrows():
+                    plates.append({
+                        "name": str(row.get("plate_name", "")),
+                        "code": str(row.get("plate_code", "")),
+                        "type": str(row.get("plate_type", "")),
+                    })
+                return {"symbol": symbol, "plates": plates}
+        except Exception as e:
+            logger.error(f"[DataService] owner_plate failed: {e}")
+        return {}
+
+    async def get_reference_stocks(self, symbol: str) -> list:
+        """获取关联股票 (Futu get_referencestocklist)"""
+        cached = self.cache.get(f"ref_{symbol}")
+        if cached is not None:
+            return cached
+        result = await self._run(self._fetch_reference_stocks, symbol)
+        if result:
+            self.cache.set(f"ref_{symbol}", result, ttl=1800)
+        return result or []
+
+    def _fetch_reference_stocks(self, symbol: str) -> list:
+        svc = self.svc()
+        if not svc.connect():
+            return []
+        try:
+            from futu import RET_OK
+            ret, data = svc._quote_ctx.get_referencestocklist([symbol])
+            if ret == RET_OK and not data.empty:
+                stocks = []
+                for _, row in data.iterrows():
+                    stocks.append({
+                        "symbol": str(row.get("code", "")),
+                        "name": str(row.get("name", "")),
+                    })
+                return stocks
+        except Exception as e:
+            logger.debug(f"[DataService] reference_stocks failed: {e}")
+        return []
+
+    # ═══════════════════════════════════════════
     #  DB 查询 (统一连接)
     # ═══════════════════════════════════════════
 
@@ -354,6 +417,23 @@ class DataService:
     async def db_query_one(self, sql: str, params: tuple = (), db_path: str = None) -> Optional[dict]:
         rows = await self.db_query(sql, params, db_path)
         return rows[0] if rows else None
+
+    async def db_execute(self, sql: str, params: tuple = (), db_path: str = None) -> int:
+        """执行写操作 (UPDATE/INSERT/DELETE), 返回 rowcount"""
+        return await self._run(self._db_execute_sync, sql, params, db_path)
+
+    def _db_execute_sync(self, sql: str, params: tuple = (), db_path: str = None) -> int:
+        path = db_path or self._get_db()
+        try:
+            conn = sqlite3.connect(path, timeout=10)
+            cursor = conn.execute(sql, params)
+            rowcount = cursor.rowcount
+            conn.commit()
+            conn.close()
+            return rowcount
+        except Exception as e:
+            logger.error(f"[DataService] DB execute failed: {e}")
+            raise
 
     # ═══════════════════════════════════════════
     #  通用 async 执行器

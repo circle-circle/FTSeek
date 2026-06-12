@@ -52,6 +52,10 @@
         .rec-box.yellow { background: rgba(251,191,36,0.1); border: 1px solid rgba(251,191,36,0.3); }
         .rec-dir { font-size: 24px; font-weight: 700; }
         .rec-score { font-size: 12px; color: #8b949e; margin-top: 4px; }
+        .btn-trade-bridge { display: inline-block; padding: 10px 20px; border-radius: 6px; font-size: 14px; font-weight: 600; text-decoration: none; min-height: 44px; line-height: 24px; text-align: center; transition: opacity 0.2s; }
+        .btn-trade-bridge:hover { opacity: 0.85; }
+        .btn-trade-bridge.long { background: rgba(74,222,128,0.2); color: #4ade80; border: 1px solid rgba(74,222,128,0.4); }
+        .btn-trade-bridge.short { background: rgba(248,113,113,0.2); color: #f87171; border: 1px solid rgba(248,113,113,0.4); }
         .signal-list { list-style: none; padding: 0; }
         .signal-list li { padding: 6px 0; border-bottom: 1px solid #21262d; font-size: 13px; display: flex; justify-content: space-between; }
         .signal-list li:last-child { border-bottom: none; }
@@ -152,6 +156,14 @@
             <div class="card">
                 <h2>🤖 引擎持仓</h2>
                 <div id="positionBox">
+                    <div class="loading">加载中...</div>
+                </div>
+            </div>
+
+            <!-- 板块 & 关联股票 -->
+            <div class="card" id="sectorCard" style="display:none">
+                <h2>🏷️ 板块 & 关联</h2>
+                <div id="sectorBox">
                     <div class="loading">加载中...</div>
                 </div>
             </div>
@@ -266,7 +278,9 @@
             const el = document.getElementById('recommendationBox');
             if (!r.direction) { el.innerHTML = '<div class="empty">无法生成建议</div>'; return; }
             const signalsHtml = (r.signals || []).map(s => { const cls = s[1].replace('+', ''); return '<li><span>' + s[0] + '</span><span class="tag ' + cls + '">' + cls + '</span></li>'; }).join('');
-            el.innerHTML = '<div class="rec-box ' + r.color + '"><div class="rec-dir ' + r.color + '">' + r.direction + '</div><div class="rec-score">综合评分: ' + (r.score > 0 ? '+' : '') + r.score + '</div></div><ul class="signal-list">' + signalsHtml + '</ul>';
+            const tradeDir = r.direction.includes('多') || r.direction.includes('LONG') || r.color === 'green' ? 'LONG' : (r.direction.includes('空') || r.direction.includes('SHORT') || r.color === 'red' ? 'SHORT' : '');
+            const tradeBtnHtml = tradeDir ? '<div style="text-align:center;margin-top:12px"><a href="/trade?symbol=' + encodeURIComponent(SYMBOL) + '&direction=' + tradeDir + '" class="btn-trade-bridge ' + (tradeDir === 'LONG' ? 'long' : 'short') + '">📈 按此分析交易</a></div>' : '';
+            el.innerHTML = '<div class="rec-box ' + r.color + '"><div class="rec-dir ' + r.color + '">' + r.direction + '</div><div class="rec-score">综合评分: ' + (r.score > 0 ? '+' : '') + r.score + '</div></div><ul class="signal-list">' + signalsHtml + '</ul>' + tradeBtnHtml;
         }
 
         function renderPosition(pos) {
@@ -336,16 +350,39 @@
                 const a = data.analysis || {};
                 const dirColor = a.direction === 'LONG' ? 'green' : a.direction === 'SHORT' ? 'red' : 'yellow';
                 const confPct = ((a.confidence || 0) * 100).toFixed(0);
-                el.innerHTML = '<div class="llm-grid"><div class="rec-box ' + dirColor + '" style="display:flex;flex-direction:column;justify-content:center"><div class="rec-dir ' + dirColor + '">' + escHtml(a.direction || '--') + '</div><div class="rec-score">置信度: ' + confPct + '%</div><div style="margin-top:8px;font-size:18px;font-weight:700">' + escHtml(a.action || '--') + '</div></div><div><div style="font-size:15px;font-weight:600;margin-bottom:8px">' + escHtml(a.summary || '') + '</div><div style="font-size:13px;color:#c9d1d9;line-height:1.6;margin-bottom:12px">' + escHtml(a.reasoning || '') + '</div><div style="display:flex;gap:16px;font-size:13px;margin-bottom:8px;flex-wrap:wrap">' + (a.key_levels ? '<span>支撑: <strong class="green">$' + (a.key_levels.support || '--') + '</strong></span><span>阻力: <strong class="red">$' + (a.key_levels.resistance || '--') + '</strong></span>' : '') + '</div>' + (a.risk_notes ? '<div style="font-size:12px;color:#fbbf24;padding:6px 10px;background:rgba(251,191,36,0.1);border-radius:4px">⚠ ' + escHtml(a.risk_notes) + '</div>' : '') + '</div></div><div style="margin-top:12px;font-size:11px;color:#484f58">模型: ' + escHtml(data.model_used || '--') + ' | 延迟: ' + ((data.latency_ms || 0)/1000).toFixed(1) + 's</div>';
+                el.innerHTML = '<div class="llm-grid"><div class="rec-box ' + dirColor + '" style="display:flex;flex-direction:column;justify-content:center"><div class="rec-dir ' + dirColor + '">' + escHtml(a.direction || '--') + '</div><div class="rec-score">置信度: ' + confPct + '%</div><div style="margin-top:8px;font-size:18px;font-weight:700">' + escHtml(a.action || '--') + '</div>' + ((a.direction === 'LONG' || a.direction === 'SHORT') ? '<a href="/trade?symbol=' + encodeURIComponent(SYMBOL) + '&direction=' + a.direction + (a.key_levels && a.key_levels.support ? '&sl=' + a.key_levels.support : '') + (a.key_levels && a.key_levels.resistance ? '&tp=' + a.key_levels.resistance : '') + '" class="btn-trade-bridge ' + (a.direction === 'LONG' ? 'long' : 'short') + '" style="margin-top:10px;display:block">📈 按此分析交易</a>' : '') + '</div><div><div style="font-size:15px;font-weight:600;margin-bottom:8px">' + escHtml(a.summary || '') + '</div><div style="font-size:13px;color:#c9d1d9;line-height:1.6;margin-bottom:12px">' + escHtml(a.reasoning || '') + '</div><div style="display:flex;gap:16px;font-size:13px;margin-bottom:8px;flex-wrap:wrap">' + (a.key_levels ? '<span>支撑: <strong class="green">$' + (a.key_levels.support || '--') + '</strong></span><span>阻力: <strong class="red">$' + (a.key_levels.resistance || '--') + '</strong></span>' : '') + '</div>' + (a.risk_notes ? '<div style="font-size:12px;color:#fbbf24;padding:6px 10px;background:rgba(251,191,36,0.1);border-radius:4px">⚠ ' + escHtml(a.risk_notes) + '</div>' : '') + '</div></div><div style="margin-top:12px;font-size:11px;color:#484f58">模型: ' + escHtml(data.model_used || '--') + ' | 延迟: ' + ((data.latency_ms || 0)/1000).toFixed(1) + 's</div>';
             } catch (e) { el.innerHTML = '<div class="empty">❌ 请求失败: ' + escHtml(e.message || String(e)) + '</div>'; }
         }
 
         async function loadAll() {
             document.getElementById('lastUpdate').textContent = '更新中...';
             initChart();
-            await Promise.all([loadKline('K_5M'), loadTechnicals(), loadOrderbook(), loadTicker()]);
+            await Promise.all([loadKline('K_5M'), loadTechnicals(), loadOrderbook(), loadTicker(), loadSector()]);
             document.getElementById('lastUpdate').textContent = '更新于 ' + new Date().toLocaleTimeString();
             loadLLM();
+        }
+
+        async function loadSector() {
+            try {
+                const res = await fetch('/api/stock/' + SYMBOL + '/sector');
+                const data = await res.json();
+                const plates = data.plates || [];
+                const refs = data.reference_stocks || [];
+                if (plates.length === 0 && refs.length === 0) return;
+                document.getElementById('sectorCard').style.display = '';
+                let html = '';
+                if (plates.length > 0) {
+                    html += '<div style="margin-bottom:8px"><span style="font-size:12px;color:#8b949e">所属板块: </span>';
+                    html += plates.map(p => '<span style="display:inline-block;padding:3px 8px;margin:2px;background:#21262d;border:1px solid #30363d;border-radius:12px;font-size:12px">' + escHtml(p.name) + '</span>').join('');
+                    html += '</div>';
+                }
+                if (refs.length > 0) {
+                    html += '<div><span style="font-size:12px;color:#8b949e">关联股票: </span>';
+                    html += refs.slice(0, 6).map(r => '<a href="/stock/' + encodeURIComponent(r.symbol) + '" style="display:inline-block;padding:3px 8px;margin:2px;background:#0d1117;border:1px solid #30363d;border-radius:12px;font-size:12px;color:#58a6ff;text-decoration:none">' + escHtml(r.symbol) + '</a>').join('');
+                    html += '</div>';
+                }
+                document.getElementById('sectorBox').innerHTML = html;
+            } catch (e) { /* graceful */ }
         }
 
         // H7: visibility-aware polling

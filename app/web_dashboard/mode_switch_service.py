@@ -9,8 +9,12 @@
 
 import os
 import re
+import shutil
+import fcntl
+import tempfile
 import subprocess
 import logging
+from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any
 
@@ -43,31 +47,108 @@ def read_env_file() -> Dict[str, str]:
     return env
 
 
+_ENV_LOCK_FILE = ENV_FILE.parent / ".env.us.lock"
+
+
+def _acquire_env_lock(timeout: float = 5.0):
+    """获取 .env.us 进程级文件锁 (P1-3 2026-06-12)"""
+    import time as _t
+    fd = open(_ENV_LOCK_FILE, "w")
+    deadline = _t.time() + timeout
+    while True:
+        try:
+            fcntl.flock(fd.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return fd
+        except BlockingIOError:
+            if _t.time() >= deadline:
+                fd.close()
+                raise TimeoutError(f"获取 .env.us 锁超时 ({timeout}s)")
+            _t.sleep(0.1)
+
+
+def _release_env_lock(fd) -> None:
+    try:
+        fcntl.flock(fd.fileno(), fcntl.LOCK_UN)
+    except Exception:
+        pass
+    try:
+        fd.close()
+    except Exception:
+        pass
+
+
 def write_env_key(key: str, value: str) -> None:
-    """写入或更新 .env.us 中的单个键值对"""
+    """
+    写入或更新 .env.us 中的单个键值对 (P1-3 原子写 2026-06-12)
+    保证: 进程级文件锁防并发 + tmp+fsync+os.replace 原子替换
+    """
     if not ENV_FILE.exists():
         raise FileNotFoundError(f".env.us 不存在: {ENV_FILE}")
 
-    with open(ENV_FILE) as f:
-        lines = f.readlines()
+    lock_fd = _acquire_env_lock()
+    try:
+        with open(ENV_FILE) as f:
+            lines = f.readlines()
 
-    found = False
-    new_lines = []
-    for line in lines:
-        stripped = line.strip()
-        if stripped and not stripped.startswith("#") and "=" in stripped:
-            k = stripped.split("=", 1)[0].strip()
-            if k == key:
-                new_lines.append(f"{key}={value}\n")
-                found = True
-                continue
-        new_lines.append(line)
+        found = False
+        new_lines = []
+        for line in lines:
+            stripped = line.strip()
+            if stripped and not stripped.startswith("#") and "=" in stripped:
+                k = stripped.split("=", 1)[0].strip()
+                if k == key:
+                    new_lines.append(f"{key}={value}\n")
+                    found = True
+                    continue
+            new_lines.append(line)
 
-    if not found:
-        new_lines.append(f"\n{key}={value}\n")
+        if not found:
+            new_lines.append(f"\n{key}={value}\n")
 
-    with open(ENV_FILE, "w") as f:
-        f.writelines(new_lines)
+        env_dir = ENV_FILE.parent
+        fd, tmp_path = tempfile.mkstemp(prefix=".env.us.", suffix=".tmp", dir=str(env_dir))
+        try:
+            with os.fdopen(fd, "w") as tf:
+                tf.writelines(new_lines)
+                tf.flush()
+                os.fsync(tf.fileno())
+            try:
+                st = os.stat(ENV_FILE)
+                os.chmod(tmp_path, st.st_mode)
+            except Exception:
+                pass
+            os.replace(tmp_path, ENV_FILE)
+        except Exception:
+            try:
+                os.unlink(tmp_path)
+            except Exception:
+                pass
+            raise
+    finally:
+        _release_env_lock(lock_fd)
+
+
+def _backup_env_file():
+    """切换前备份 .env.us (P1-4 2026-06-12), 仅保留最近 10 份"""
+    if not ENV_FILE.exists():
+        return None
+    ts2 = datetime.now().strftime("%Y%m%d_%H%M%S")
+    bak = ENV_FILE.parent / f".env.us.bak.{ts2}"
+    try:
+        shutil.copy2(ENV_FILE, bak)
+        try:
+            backups = sorted(ENV_FILE.parent.glob(".env.us.bak.*"), reverse=True)
+            for old in backups[10:]:
+                try:
+                    old.unlink()
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        return bak
+    except Exception as e:
+        logger.warning(f"[模式切换] 备份 .env.us 失败: {e}")
+        return None
 
 
 def get_current_mode() -> Dict[str, Any]:
@@ -116,11 +197,14 @@ def switch_mode(target_mode: str, confirm: str = "") -> Dict[str, Any]:
     current = get_current_mode()
 
     if current["mode"] == target_mode:
+        # P1-4 (2026-06-12): 同模式直接返回, 不触发 _clear_live_db / 重启 / 写文件
+        logger.info(f"[模式切换] 拒绝重复切换: 当前已是 {current['mode_label']}")
         return {
             "success": True,
-            "message": f"已经是 {current['mode_label']} 模式",
+            "message": f"已经是 {current['mode_label']} 模式 (无操作)",
             "mode": current,
             "restart_needed": False,
+            "no_op": True,
         }
 
     # 实盘切换需要确认
@@ -138,7 +222,11 @@ def switch_mode(target_mode: str, confirm: str = "") -> Dict[str, Any]:
         if not env.get("FUTU_UNLOCK_PWD_MD5"):
             return {"success": False, "message": "FUTU_UNLOCK_PWD_MD5 未设置，无法切实盘"}
 
-    # 执行切换
+    # 执行切换 (P1-4 2026-06-12: 切换前自动备份)
+    bak = _backup_env_file()
+    if bak:
+        logger.info(f"[模式切换] 已备份 .env.us → {bak.name}")
+
     try:
         if target_mode == "simulate":
             write_env_key("TRADE_ENV", "1")

@@ -10,6 +10,7 @@
 import os
 import json
 import logging
+from datetime import datetime
 from typing import Dict, Tuple, List, Any
 
 logger = logging.getLogger("ftseek.us_pipeline.battle_plan_manager")
@@ -257,6 +258,76 @@ class USBattlePlanManager:
                 return False, (
                     f"HALT_TRADING: {action_item.get('reason', 'System trading halted by battle plan')}"
                 )
+
+        # ── 修复 (2026-06-12): Dashboard 暂停/确认按钮真正生效 ──
+        # 此前 _paused 和 _confirmed 写入 JSON 后无任何模块消费，按钮形同虚设
+        # 修复: check_trade() 从磁盘实时读取这两个 flag (Dashboard 直接写文件)
+        # 注意: 不能只读内存 self._plan, 因为 Dashboard 写入文件后 singleton 不会自动刷新
+        _dashboard_flags = {}
+        try:
+            if self.plan_path and os.path.exists(self.plan_path):
+                with open(self.plan_path, 'r') as _f:
+                    _raw = json.load(_f)
+                    _dashboard_flags = {
+                        "_paused": _raw.get("_paused", False),
+                        "_paused_at": _raw.get("_paused_at", ""),
+                        "_confirmed": _raw.get("_confirmed", False),
+                        "_require_confirm": _raw.get("_require_confirm", False),
+                    }
+        except Exception:
+            # 读磁盘失败则降级用内存缓存
+            _dashboard_flags = {
+                "_paused": self._plan.get("_paused", False),
+                "_paused_at": self._plan.get("_paused_at", ""),
+                "_confirmed": self._plan.get("_confirmed", False),
+                "_require_confirm": self._plan.get("_require_confirm", False),
+            }
+
+        # 暂停: Dashboard "今日暂停" 按钮 → _paused=true → 拒绝所有新仓
+        if _dashboard_flags.get("_paused", False):
+            paused_at = _dashboard_flags.get("_paused_at", "")
+            logger.warning(f"[Plan Gate] {symbol} 被拒绝: 今日交易已暂停 (paused_at={paused_at})")
+            return False, (
+                f"Trading paused: 用户在 Dashboard 点击了「今日暂停」 "
+                f"({paused_at}). 所有新仓位被阻止。"
+            )
+
+        # 确认: 如果计划标记需要确认但尚未确认 → 阻止新仓
+        # _require_confirm 默认为 false (自动执行模式, 与现有行为兼容)
+        # 用户在 Dashboard 编辑 plan 或 LLM 输出时可设为 true (需人工审批)
+        require_confirm = _dashboard_flags.get("_require_confirm", False)
+        if require_confirm and not _dashboard_flags.get("_confirmed", False):
+            logger.warning(f"[Plan Gate] {symbol} 被拒绝: 计划需要人工确认后才能执行")
+            return False, (
+                f"Awaiting confirmation: 战前计划标记了需要人工确认 "
+                f"(_require_confirm=true). 请在 Dashboard 点击「确认执行」。"
+            )
+
+        # ── 新增 (2026-06-12): 禁止交易窗口检查 ──
+        # 经济数据发布期间 (CPI/FOMC/NFP 等), 波动率飙升, 技术分析失效
+        # no_trade_windows 由 EconomicCalendar 生成, PlanValidator 注入到 plan
+        no_trade_windows = self._plan.get("no_trade_windows", [])
+        if no_trade_windows:
+            try:
+                from datetime import datetime as _ntw_dt
+                import pytz as _ntw_pz
+                now_et = _ntw_dt.now(_ntw_pz.timezone('US/Eastern')).strftime("%H:%M")
+                for window in no_trade_windows:
+                    w_start = window.get("start", "")
+                    w_end = window.get("end", "")
+                    if w_start and w_end and w_start <= now_et <= w_end:
+                        reason = window.get("reason", "Economic event")
+                        impact = window.get("impact", "HIGH")
+                        logger.warning(
+                            f"[Plan Gate] {symbol} 处于禁止交易窗口: "
+                            f"{w_start}-{w_end} ET ({reason})"
+                        )
+                        return False, (
+                            f"No-trade window: {reason} "
+                            f"({w_start}-{w_end} ET, {impact} impact). New positions blocked."
+                        )
+            except Exception as ntw_err:
+                logger.debug(f"[Plan Gate] 禁止交易窗口检查异常 (不阻断): {ntw_err}")
 
         # P0 修复 (2026-04-22): ETF 标的 (SPY/QQQ/DIA/IWM/UVXY) 不受 restricted 限制
         # 这些 ETF 用于市场状态监测，不应被计划门禁拦截

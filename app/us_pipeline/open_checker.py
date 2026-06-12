@@ -166,6 +166,80 @@ class USOpenChecker:
         # 规则 3: 价格已进入止盈/止损区 (虽然少见)
         # 暂时跳过复杂逻辑
 
+        # ── 新增规则 4 (2026-06-12): 经济事件 30 分钟内 → CANCEL ──
+        try:
+            plan = self.plan_manager._plan or {}
+            no_trade_windows = plan.get("no_trade_windows", [])
+            if no_trade_windows:
+                from datetime import datetime as _oc_dt
+                import pytz as _oc_pz
+                now_et = _oc_dt.now(_oc_pz.timezone('US/Eastern'))
+                for window in no_trade_windows:
+                    if window.get("impact") != "HIGH":
+                        continue
+                    w_start = window.get("start", "")
+                    if not w_start:
+                        continue
+                    parts = w_start.split(":")
+                    if len(parts) == 2:
+                        event_dt = now_et.replace(
+                            hour=int(parts[0]), minute=int(parts[1]),
+                            second=0, microsecond=0
+                        )
+                        delta_min = abs((now_et - event_dt).total_seconds()) / 60
+                        if delta_min < 30:
+                            reason_text = window.get("reason", "Economic event")
+                            logger.warning(
+                                f"⚠️ [{symbol}] 经济事件 {delta_min:.0f}min 内: {reason_text}"
+                            )
+                            return {
+                                "symbol": symbol,
+                                "status": "CANCELLED",
+                                "gap_pct": gap_pct,
+                                "reason": f"Economic event within {delta_min:.0f}min: {reason_text}",
+                                "current_price": current_price,
+                            }
+        except Exception as econ_err:
+            logger.debug(f"[OpenChecker] 经济事件检查异常 (不阻断): {econ_err}")
+
+        # ── 新增规则 5 (2026-06-12): 技术 RSI 极端 → CANCEL ──
+        try:
+            # 从 plan target 中读取 technical_summary (由 PlanValidator 注入)
+            plan = self.plan_manager._plan or {}
+            for t in plan.get("targets", []):
+                if t.get("symbol") == symbol:
+                    tech_summary = t.get("technical_summary", "")
+                    if tech_summary and "RSI=" in tech_summary:
+                        import re
+                        rsi_match = re.search(r'RSI=(\d+\.?\d*)', tech_summary)
+                        if rsi_match:
+                            rsi_val = float(rsi_match.group(1))
+                            if direction == "LONG" and rsi_val > 75:
+                                logger.warning(
+                                    f"⚠️ [{symbol}] RSI={rsi_val:.1f} 超买, LONG cancelled"
+                                )
+                                return {
+                                    "symbol": symbol,
+                                    "status": "CANCELLED",
+                                    "gap_pct": gap_pct,
+                                    "reason": f"RSI={rsi_val:.1f} overbought, LONG cancelled",
+                                    "current_price": current_price,
+                                }
+                            if direction == "SHORT" and rsi_val < 25:
+                                logger.warning(
+                                    f"⚠️ [{symbol}] RSI={rsi_val:.1f} 超卖, SHORT cancelled"
+                                )
+                                return {
+                                    "symbol": symbol,
+                                    "status": "CANCELLED",
+                                    "gap_pct": gap_pct,
+                                    "reason": f"RSI={rsi_val:.1f} oversold, SHORT cancelled",
+                                    "current_price": current_price,
+                                }
+                    break
+        except Exception as tech_err:
+            logger.debug(f"[OpenChecker] 技术检查异常 (不阻断): {tech_err}")
+
         # 通过检查
         return {
             "symbol": symbol,

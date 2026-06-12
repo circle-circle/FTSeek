@@ -522,6 +522,87 @@ class FutuBrokerAdapter:
             logger.error(f"[富途] 取消订单异常 {order_id}: {e}")
             return False
 
+    def amend_order(self, order_id: str, new_price: float = None, new_qty: int = None) -> bool:
+        """改单 — 修改未成交订单的价格或数量 (ModifyOrderOp.MODIFY)"""
+        if not self.is_connected():
+            logger.warning("[富途] 未连接，模拟改单成功")
+            return True
+
+        try:
+            from futu import TrdEnv, ModifyOrderOp, RET_OK
+
+            trd_env = TrdEnv.SIMULATE if self.trade_env == 1 else TrdEnv.REAL
+
+            ret, data = self.trade_ctx.modify_order(
+                modify_order_op=ModifyOrderOp.MODIFY,
+                order_id=order_id,
+                qty=new_qty or 0,
+                price=new_price or 0,
+                trd_env=trd_env,
+                acc_id=int(self.account_id) if self.account_id else 0,
+            )
+            if ret == RET_OK:
+                logger.info(f"[富途] 改单成功 {order_id}: price={new_price}, qty={new_qty}")
+                return True
+            else:
+                logger.error(f"[富途] 改单失败 {order_id}: {data}")
+                return False
+
+        except ImportError:
+            return True
+        except Exception as e:
+            logger.error(f"[富途] 改单异常 {order_id}: {e}")
+            return False
+
+    def place_stop_order(self, symbol: str, qty: int, stop_price: float,
+                         direction: str = "LONG") -> dict:
+        """
+        Broker 层止损单 — 使用 Futu STOP 订单类型
+
+        设计:
+          - LONG 持仓: SELL STOP @ stop_price (价格跌破时触发卖出)
+          - SHORT 持仓: BUY STOP @ stop_price (价格突破时触发买入)
+          - 模拟盘降级: Futu SIMULATE 可能不支持 STOP, 返回 mock
+          - 失败时 graceful degrade (仅日志, 不阻塞主流程)
+        """
+        if not self.is_connected():
+            logger.debug(f"[富途] 未连接, 跳过止损单 {symbol}")
+            return {"success": False, "reason": "not_connected"}
+
+        try:
+            from futu import TrdEnv, TrdSide, OrderType as FutuOrderType, RET_OK
+
+            trd_env = TrdEnv.SIMULATE if self.trade_env == 1 else TrdEnv.REAL
+
+            # 模拟盘不支持 STOP — graceful degrade
+            if trd_env == TrdEnv.SIMULATE:
+                logger.debug(f"[富途] 模拟盘跳过 STOP 单 {symbol} (不支持)")
+                return {"success": False, "reason": "simulate_not_supported"}
+
+            trd_side = TrdSide.SELL if direction == "LONG" else TrdSide.BUY
+
+            ret, data = self.trade_ctx.place_order(
+                price=stop_price,
+                qty=qty,
+                code=symbol,
+                trd_side=trd_side,
+                order_type=FutuOrderType.STOP,
+                trd_env=trd_env,
+                acc_id=int(self.account_id) if self.account_id else 0,
+            )
+
+            if ret == RET_OK and not data.empty:
+                order_id = str(data.iloc[0].get("order_id", ""))
+                logger.info(f"[富途] STOP 单已挂 {symbol} {direction} qty={qty} stop=${stop_price} → {order_id}")
+                return {"success": True, "order_id": order_id}
+            else:
+                logger.warning(f"[富途] STOP 单失败 {symbol}: {data}")
+                return {"success": False, "reason": str(data)}
+
+        except Exception as e:
+            logger.warning(f"[富途] STOP 单异常 {symbol}: {e}")
+            return {"success": False, "reason": str(e)}
+
     def query_order(self, order_id: str) -> Optional[Order]:
         """查询订单状态"""
         if not self.is_connected():

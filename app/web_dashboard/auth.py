@@ -38,15 +38,40 @@ SESSION_MAX_AGE = 86400  # 24 hours
 PBKDF2_ITERATIONS = 100_000
 
 
-def _read_env(key: str, default: str = "") -> str:
-    """从 .env.us 读取配置"""
+# P2-3 (2026-06-12): 文件 mtime 缓存避免每次请求都 open .env.us
+_env_cache: dict = {"mtime": 0.0, "data": {}}
+
+
+def _refresh_env_cache():
     try:
-        if ENV_FILE.exists():
-            with open(ENV_FILE) as f:
-                for line in f:
-                    stripped = line.strip()
-                    if stripped.startswith(f"{key}=") and not stripped.startswith("#"):
-                        return stripped.split("=", 1)[1].strip()
+        if not ENV_FILE.exists():
+            _env_cache["mtime"] = 0.0
+            _env_cache["data"] = {}
+            return
+        mt = ENV_FILE.stat().st_mtime
+        if mt == _env_cache["mtime"] and _env_cache["data"]:
+            return
+        new_data = {}
+        with open(ENV_FILE) as f:
+            for line in f:
+                stripped = line.strip()
+                if not stripped or stripped.startswith("#") or "=" not in stripped:
+                    continue
+                k, v = stripped.split("=", 1)
+                new_data[k.strip()] = v.strip()
+        _env_cache["mtime"] = mt
+        _env_cache["data"] = new_data
+    except Exception:
+        pass
+
+
+def _read_env(key: str, default: str = "") -> str:
+    """从 .env.us 读取配置 (P2-3: mtime 缓存)"""
+    try:
+        _refresh_env_cache()
+        v = _env_cache["data"].get(key)
+        if v is not None:
+            return v
     except Exception:
         pass
     return os.getenv(key, default)
@@ -84,8 +109,9 @@ def verify_password(input_password: str) -> bool:
     expected_plain = get_password_plain()
 
     if not expected_pbkdf2 and not expected_md5 and not expected_plain:
-        logger.warning("[Auth] DASHBOARD_PASSWORD_PBKDF2 未设置，任何密码均可登录！请在 .env.us 中配置")
-        return True
+        # P0-1 修复 (2026-06-12): 未配置密码 → 直接拒绝登录, 不再 fallback 到任何密码均放行
+        logger.error("[Auth] 未配置 DASHBOARD_PASSWORD_PBKDF2 / DASHBOARD_PASSWORD_MD5 / DASHBOARD_PASSWORD, 拒绝所有登录")
+        return False
 
     # 优先 PBKDF2 比对 (推荐)
     if expected_pbkdf2 and "$" in expected_pbkdf2:
@@ -117,14 +143,40 @@ def verify_password(input_password: str) -> bool:
     return False
 
 
+def _ensure_secret_key_in_env() -> str:
+    """P0-1 修复 (2026-06-12): SECRET 缺失时自动生成 64 字符随机密钥并追加写入 .env.us
+    避免硬编码 fallback 被攻击者预测后伪造 session cookie。
+    """
+    import secrets
+    new_secret = secrets.token_hex(32)
+    try:
+        if ENV_FILE.exists():
+            with open(ENV_FILE, "a", encoding="utf-8") as f:
+                f.write(f"\n# P0-1 自动生成 (2026-06-12)\nDASHBOARD_SECRET={new_secret}\n")
+            logger.warning("[Auth] DASHBOARD_SECRET 缺失, 已自动生成并追加写入 .env.us, 请下次重启生效")
+    except Exception as e:
+        logger.error(f"[Auth] 写入 DASHBOARD_SECRET 到 .env.us 失败: {e}")
+    return new_secret
+
+
+_runtime_secret_cache = {"value": ""}
+
+
 def get_secret_key() -> str:
-    """获取签名密钥 (从 .env.us 的 DASHBOARD_SECRET, 无则用密码派生)"""
+    """获取签名密钥
+    P0-1 修复 (2026-06-12): 移除硬编码 fallback "ftseek-us-default-secret-change-me",
+    改为自动生成 + 持久化, 防止攻击者使用默认 SECRET 伪造 session token。
+    """
     secret = _read_env("DASHBOARD_SECRET", "")
-    if not secret:
-        pwd = get_password_md5() or get_password_plain()
-        if pwd:
-            secret = hashlib.sha256(f"ftseek-us-{pwd}".encode()).hexdigest()
-    return secret or "ftseek-us-default-secret-change-me"
+    if secret:
+        return secret
+    # 进程内缓存避免每次请求都尝试写文件
+    if _runtime_secret_cache["value"]:
+        return _runtime_secret_cache["value"]
+    # 首次发现缺失 → 自动生成并持久化
+    secret = _ensure_secret_key_in_env()
+    _runtime_secret_cache["value"] = secret
+    return secret
 
 
 def create_session_token() -> str:
@@ -159,10 +211,10 @@ def verify_session_token(token: str) -> bool:
 
 # ── 不需要认证的路径 ──
 
+# P0-1 修复 (2026-06-12): /api/auth/check 也需鉴权, 避免未登录用户探测系统状态
 PUBLIC_PATHS = {
     "/login",
     "/api/auth/login",
-    "/api/auth/check",
     "/favicon.ico",
 }
 

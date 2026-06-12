@@ -1,7 +1,11 @@
 """
 统一交易记录存储 (Unified Trade Record Store)
 
-设计原则 (Karpathy):
+⚠️ DEPRECATED (2026-06-12): Scalping 已禁用 (ADR-002), 此模块为孤儿代码.
+写入操作已重定向到 TradeStore (ftseek_us.db SSOT).
+请勿在此模块添加新功能 — 所有 trade_records 写入应统一走 TradeStore.
+
+原始设计原则 (Karpathy):
   - 所有成交、建议、预测记录在同一张表中
   - 按 source_type 标注来源分类
   - 记录下单理由 (entry_reason) 和退出理由 (exit_reason)
@@ -28,6 +32,12 @@
 """
 
 import sqlite3
+import logging as _logging
+_logger = _logging.getLogger("ftseek_us.unified_trade_store")
+_logger.warning(
+    "[DEPRECATED] UnifiedTradeStore 已废弃 — scalping 已禁用 (ADR-002). "
+    "写入重定向到 TradeStore. 请勿添加新功能."
+)
 import json
 import logging
 import threading

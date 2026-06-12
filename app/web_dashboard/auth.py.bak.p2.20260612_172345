@@ -1,0 +1,204 @@
+"""
+Dashboard 登录认证中间件
+
+功能:
+  - 密码登录 (支持 PBKDF2-SHA256 / MD5 / 明文)
+  - Session cookie 认证 (HMAC-SHA256 签名)
+  - 所有页面和 API 均需登录，仅 /login 和 /api/auth/* 豁免
+  - 24小时自动过期
+
+密码存储格式 (.env.us):
+  DASHBOARD_PASSWORD_PBKDF2=<salt_hex>$<hash_hex>  (推荐)
+  DASHBOARD_PASSWORD_MD5=<md5_hex>                  (兼容旧版)
+  DASHBOARD_PASSWORD=<plaintext>                    (仅调试用)
+
+生成 PBKDF2 密码:
+  python3 -c "
+  import hashlib, os, binascii
+  pwd = 'your_password'
+  salt = os.urandom(32)
+  h = hashlib.pbkdf2_hmac('sha256', pwd.encode(), salt, 100000)
+  print(f'DASHBOARD_PASSWORD_PBKDF2={salt.hex()}\${h.hex()}')
+  "
+"""
+
+import os
+import hashlib
+import hmac
+import time
+import json
+import logging
+from pathlib import Path
+from typing import Optional
+
+logger = logging.getLogger("ftseek_us.auth")
+
+ENV_FILE = Path(__file__).parent.parent.parent / ".env.us"
+SESSION_MAX_AGE = 86400  # 24 hours
+PBKDF2_ITERATIONS = 100_000
+
+
+def _read_env(key: str, default: str = "") -> str:
+    """从 .env.us 读取配置"""
+    try:
+        if ENV_FILE.exists():
+            with open(ENV_FILE) as f:
+                for line in f:
+                    stripped = line.strip()
+                    if stripped.startswith(f"{key}=") and not stripped.startswith("#"):
+                        return stripped.split("=", 1)[1].strip()
+    except Exception:
+        pass
+    return os.getenv(key, default)
+
+
+def get_password_pbkdf2() -> str:
+    """获取 PBKDF2 哈希 (salt_hex$hash_hex)"""
+    return _read_env("DASHBOARD_PASSWORD_PBKDF2", "")
+
+
+def get_password_md5() -> str:
+    """获取登录密码 MD5 (从 .env.us 的 DASHBOARD_PASSWORD_MD5)"""
+    return _read_env("DASHBOARD_PASSWORD_MD5", "")
+
+
+def get_password_plain() -> str:
+    """获取明文密码 (备选, 从 .env.us 的 DASHBOARD_PASSWORD)"""
+    return _read_env("DASHBOARD_PASSWORD", "")
+
+
+def has_password_configured() -> bool:
+    """是否已配置登录密码"""
+    return bool(get_password_pbkdf2() or get_password_md5() or get_password_plain())
+
+
+def verify_password(input_password: str) -> bool:
+    """
+    验证用户输入的密码 (明文)
+
+    优先 PBKDF2 (推荐) → MD5 (兼容旧版) → 明文 (调试).
+    未配置密码时允许登录 (首次使用).
+    """
+    expected_pbkdf2 = get_password_pbkdf2()
+    expected_md5 = get_password_md5()
+    expected_plain = get_password_plain()
+
+    if not expected_pbkdf2 and not expected_md5 and not expected_plain:
+        # P0-1 修复 (2026-06-12): 未配置密码 → 直接拒绝登录, 不再 fallback 到任何密码均放行
+        logger.error("[Auth] 未配置 DASHBOARD_PASSWORD_PBKDF2 / DASHBOARD_PASSWORD_MD5 / DASHBOARD_PASSWORD, 拒绝所有登录")
+        return False
+
+    # 优先 PBKDF2 比对 (推荐)
+    if expected_pbkdf2 and "$" in expected_pbkdf2:
+        try:
+            salt_hex, hash_hex = expected_pbkdf2.split("$", 1)
+            salt = bytes.fromhex(salt_hex)
+            expected_hash = bytes.fromhex(hash_hex)
+            input_hash = hashlib.pbkdf2_hmac(
+                "sha256", input_password.encode(), salt, PBKDF2_ITERATIONS
+            )
+            if hmac.compare_digest(input_hash, expected_hash):
+                return True
+        except (ValueError, TypeError):
+            logger.error("[Auth] PBKDF2 格式错误，应为 salt_hex$hash_hex")
+
+    # 兼容 MD5 比对 (旧版)
+    if expected_md5:
+        input_md5 = hashlib.md5(input_password.encode()).hexdigest()
+        if hmac.compare_digest(input_md5, expected_md5):
+            logger.warning("[Auth] MD5 密码验证成功，建议升级到 PBKDF2 (见 auth.py 文档)")
+            return True
+
+    # 备选明文比对
+    if expected_plain:
+        if hmac.compare_digest(input_password, expected_plain):
+            logger.warning("[Auth] 明文密码验证成功，强烈建议升级为 PBKDF2")
+            return True
+
+    return False
+
+
+def _ensure_secret_key_in_env() -> str:
+    """P0-1 修复 (2026-06-12): SECRET 缺失时自动生成 64 字符随机密钥并追加写入 .env.us
+    避免硬编码 fallback 被攻击者预测后伪造 session cookie。
+    """
+    import secrets
+    new_secret = secrets.token_hex(32)
+    try:
+        if ENV_FILE.exists():
+            with open(ENV_FILE, "a", encoding="utf-8") as f:
+                f.write(f"\n# P0-1 自动生成 (2026-06-12)\nDASHBOARD_SECRET={new_secret}\n")
+            logger.warning("[Auth] DASHBOARD_SECRET 缺失, 已自动生成并追加写入 .env.us, 请下次重启生效")
+    except Exception as e:
+        logger.error(f"[Auth] 写入 DASHBOARD_SECRET 到 .env.us 失败: {e}")
+    return new_secret
+
+
+_runtime_secret_cache = {"value": ""}
+
+
+def get_secret_key() -> str:
+    """获取签名密钥
+    P0-1 修复 (2026-06-12): 移除硬编码 fallback "ftseek-us-default-secret-change-me",
+    改为自动生成 + 持久化, 防止攻击者使用默认 SECRET 伪造 session token。
+    """
+    secret = _read_env("DASHBOARD_SECRET", "")
+    if secret:
+        return secret
+    # 进程内缓存避免每次请求都尝试写文件
+    if _runtime_secret_cache["value"]:
+        return _runtime_secret_cache["value"]
+    # 首次发现缺失 → 自动生成并持久化
+    secret = _ensure_secret_key_in_env()
+    _runtime_secret_cache["value"] = secret
+    return secret
+
+
+def create_session_token() -> str:
+    """创建 session token (payload.timestamp + HMAC 签名)"""
+    secret = get_secret_key()
+    payload = json.dumps({"t": int(time.time())}, separators=(",", ":"))
+    sig = hmac.new(secret.encode(), payload.encode(), hashlib.sha256).hexdigest()[:32]
+    return f"{payload}.{sig}"
+
+
+def verify_session_token(token: str) -> bool:
+    """验证 session token 是否有效且未过期"""
+    if not token or "." not in token:
+        return False
+    try:
+        payload_str, sig = token.rsplit(".", 1)
+        secret = get_secret_key()
+        expected_sig = hmac.new(secret.encode(), payload_str.encode(), hashlib.sha256).hexdigest()[:32]
+
+        if not hmac.compare_digest(sig, expected_sig):
+            return False
+
+        payload = json.loads(payload_str)
+        created_at = payload.get("t", 0)
+        if time.time() - created_at > SESSION_MAX_AGE:
+            return False
+
+        return True
+    except Exception:
+        return False
+
+
+# ── 不需要认证的路径 ──
+
+# P0-1 修复 (2026-06-12): /api/auth/check 也需鉴权, 避免未登录用户探测系统状态
+PUBLIC_PATHS = {
+    "/login",
+    "/api/auth/login",
+    "/favicon.ico",
+}
+
+
+def is_public_path(path: str) -> bool:
+    """判断路径是否无需认证"""
+    if path in PUBLIC_PATHS:
+        return True
+    # 静态文件无需认证 (Chart.js 等本地库)
+    if path.startswith("/static/"):
+        return True
+    return False

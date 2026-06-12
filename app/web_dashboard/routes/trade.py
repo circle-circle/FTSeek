@@ -3,6 +3,7 @@
 """
 import asyncio
 import logging
+from datetime import datetime
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
@@ -80,12 +81,23 @@ def register(app, templates):
             return JSONResponse(content={"success": False, "error": "请求无效"}, status_code=400)
         svc = get_manual_order_service()
         close_qty = int(body.get("quantity", 0))
-        if close_qty < 0 or close_qty > 1_000_000:
-            return JSONResponse(content={"success": False, "error": "数量无效"}, status_code=400)
+        # P0-2 修复 (2026-06-12): 100K 股已能覆盖任何合理美股持仓, broker 端会做最终校验
+        if close_qty < 0 or close_qty > 100_000:
+            return JSONResponse(content={"success": False, "error": "数量无效或超限 (上限 100,000 股)"}, status_code=400)
+        # 限价平仓 (止损/止盈) — price 为空则市价平仓
+        limit_price = body.get("price")
+        if limit_price is not None:
+            try:
+                limit_price = float(limit_price)
+                if limit_price <= 0:
+                    limit_price = None
+            except (ValueError, TypeError):
+                limit_price = None
         result = svc.close_position(
             symbol=body.get("symbol", ""),
             reason=body.get("reason", "手动平仓"),
             close_qty=close_qty,
+            price=limit_price,
         )
         ds = get_data_service()
         ds.invalidate_cache()
@@ -114,6 +126,50 @@ def register(app, templates):
             return JSONResponse(content={"success": False, "error": "order_id 格式无效"}, status_code=400)
         svc = get_manual_order_service()
         result = svc.cancel_order(order_id=order_id)
+        ds = get_data_service()
+        ds.invalidate_cache()
+        status_code = 200 if result.get("success") else 400
+        return JSONResponse(content=result, status_code=status_code)
+
+    @router.post("/api/positions/modify-sl")
+    async def modify_stop_loss(request: Request):
+        """P0-3 修复 (2026-06-12): 修改持仓止损 — 调用 service 撤旧 STOP + 下新 STOP + 更新 DB
+        实盘止损现已真正落到 broker (Futu SIMULATE 不支持 STOP, 走 graceful degrade 仅 DB)。
+        """
+        try:
+            body = await request.json()
+        except Exception:
+            return JSONResponse(content={"success": False, "error": "请求无效"}, status_code=400)
+        symbol = str(body.get("symbol", "")).strip()
+        try:
+            new_sl = float(body.get("stop_loss", 0))
+        except (ValueError, TypeError):
+            new_sl = 0.0
+        if not symbol or new_sl <= 0:
+            return JSONResponse(content={"success": False, "error": "参数无效"}, status_code=400)
+
+        svc = get_manual_order_service()
+        result = svc.modify_stop_loss(symbol=symbol, new_sl=new_sl)
+        ds = get_data_service()
+        ds.invalidate_cache()
+        status_code = 200 if result.get("success") else 400
+        return JSONResponse(content=result, status_code=status_code)
+
+    @router.post("/api/positions/takeover")
+    async def takeover_position(request: Request):
+        """P1-2 (2026-06-12): import broker LEGACY position into DB management"""
+        try:
+            body = await request.json()
+        except Exception:
+            return JSONResponse(content={"success": False, "error": "invalid request"}, status_code=400)
+        symbol = str(body.get("symbol", "")).strip()
+        owner = str(body.get("owner", "manual")).strip().lower()
+        if not symbol or not symbol.startswith("US."):
+            return JSONResponse(content={"success": False, "error": "invalid symbol"}, status_code=400)
+        if owner not in ("manual", "auto"):
+            owner = "manual"
+        svc = get_manual_order_service()
+        result = svc.takeover_position(symbol=symbol, owner=owner)
         ds = get_data_service()
         ds.invalidate_cache()
         status_code = 200 if result.get("success") else 400
@@ -214,11 +270,15 @@ def register(app, templates):
                 power = safe_float(row.get("power", 0))
                 max_short_power = safe_float(row.get("max_power_short", 0))
             else:
+                # HKD 账户: 用 Futu 官方 USD 字段 + 实际汇率
                 cash = safe_float(row.get("us_cash", 0))
                 power = safe_float(row.get("usd_net_cash_power", 0))
-                max_short_power = safe_float(row.get("max_power_short", 0)) / 7.8
+                hkd_assets = safe_float(row.get("total_assets", 0))
+                usd_assets = safe_float(row.get("usd_assets", 0))
+                fx = hkd_assets / usd_assets if usd_assets > 0 else 7.8
+                max_short_power = safe_float(row.get("max_power_short", 0)) / fx
                 if power <= 0:
-                    power = safe_float(row.get("power", 0)) / 7.8
+                    power = safe_float(row.get("power", 0)) / fx
                 if max_short_power <= 0:
                     max_short_power = power
 
@@ -321,11 +381,20 @@ def register(app, templates):
         except Exception:
             pass
 
+        # Today PnL (realized from DB)
+        pnl_data = {"today_pl": 0, "unrealized": 0}
+        try:
+            from app.web_dashboard.routes.dashboard import _calc_pnl
+            pnl_data = await _calc_pnl(ds, positions)
+        except Exception:
+            pass
+
         return {
             "positions": positions,
             "orders": orders,
             "account": account,
             "stop_distances": stop_distances,
+            "pnl": pnl_data,
         }
 
     @router.get("/api/trade/slow-data")

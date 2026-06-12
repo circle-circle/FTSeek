@@ -6,6 +6,7 @@
 - 非交易时段休眠
 """
 import sqlite3
+import sys
 import time
 import logging
 from datetime import datetime, timezone, timedelta
@@ -116,5 +117,22 @@ def main():
             logger.error(f"监控异常: {e}", exc_info=True)
             time.sleep(60)
 
+def _acquire_lock():
+    """PID 锁：防止 cron 重复启动多个实例"""
+    import fcntl, os, sys
+    lock_path = "/tmp/market_monitor_daemon.pid"
+    try:
+        lock_file = open(lock_path, 'w')
+        fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        lock_file.write(str(os.getpid()))
+        lock_file.flush()
+        return lock_file  # 保持文件句柄，进程退出时自动释放
+    except (IOError, OSError):
+        return None  # 已有实例在运行
+
 if __name__ == "__main__":
+    lock = _acquire_lock()
+    if lock is None:
+        # 已有实例运行，静默退出
+        sys.exit(0)
     main()

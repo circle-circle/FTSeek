@@ -297,6 +297,38 @@ class USPreMarketPlanner:
                 logger.debug(f"[盘前计划] 教训注入失败 (不影响主流程): {le}")
                 lesson_context = "【历史教训】教训加载失败，正常执行"
 
+            # ── 3.5 新增 (2026-06-12): 盘前扫描仪 — 技术指标 + 板块轮动 ──
+            scan_result = {"technicals": {}, "sectors": {}, "sector_symbol_map": {}}
+            scanner = None
+            try:
+                from app.us_pipeline.premarket_scanner import PreMarketScanner
+                watchlist_symbols = [w["symbol"] for w in watchlist] if watchlist else []
+                scanner = PreMarketScanner(scheduler=self.scheduler)
+                scan_result = await scanner.run_full_scan(watchlist_symbols)
+                logger.info(
+                    f"[盘前计划] 扫描完成: {len(scan_result.get('technicals', {}))} 只技术指标, "
+                    f"{len(scan_result.get('sectors', {}).get('ranked', []))} 个板块"
+                )
+            except Exception as scan_err:
+                logger.warning(f"[盘前计划] 盘前扫描失败 (不影响主流程): {scan_err}")
+
+            # ── 3.6 新增 (2026-06-12): 经济日历 — 宏观事件 + 禁止交易窗口 ──
+            econ_calendar_text = "📅 今日无重大经济数据发布。"
+            no_trade_windows = []
+            try:
+                from app.data.economic_calendar import EconomicCalendar
+                econ_cal = EconomicCalendar()
+                todays_events = econ_cal.get_todays_events()
+                no_trade_windows = econ_cal.get_no_trade_windows()
+                if todays_events:
+                    econ_calendar_text = econ_cal.format_for_llm()
+                    logger.info(f"[盘前计划] 今日经济事件: {len(todays_events)} 个")
+                else:
+                    econ_calendar_text = econ_cal.format_for_llm()  # 仍生成未来 7 天预览
+            except Exception as econ_err:
+                logger.warning(f"[盘前计划] 经济日历失败 (不影响主流程): {econ_err}")
+                todays_events = []
+
             # 4. 构建 Prompt (注入敞口约束参数)
             prompt = US_SYSTEM_PROMPT.format(
                 current_time=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -308,6 +340,25 @@ class USPreMarketPlanner:
                 available_slots=available_slots,
             )
 
+            # ── 新增 (2026-06-12): 格式化扫描数据 ──
+            tech_text = ""
+            sector_text = ""
+            constraints_text = ""
+            if scanner:
+                try:
+                    tech_text = scanner.format_technicals_for_llm(
+                        scan_result.get("technicals", {})
+                    )
+                    sector_text = scanner.format_sectors_for_llm(
+                        scan_result.get("sectors", {})
+                    )
+                    constraints_text = scanner.format_hard_constraints(
+                        scan_result.get("technicals", {}),
+                        no_trade_windows,
+                    )
+                except Exception as fmt_err:
+                    logger.warning(f"[盘前计划] 扫描数据格式化失败: {fmt_err}")
+
             user_input = f"""
 【市场数据】
 SPY Futures: {context.get('spy_futures', 'N/A')}
@@ -317,6 +368,14 @@ VIX: {context.get('vix', 'N/A')}
 DXY: {context.get('dxy', 'N/A')}
 SPY vs MA50: {context.get('spy_vs_ma50', 'N/A')}
 大盘趋势：{context.get('market_trend', 'N/A')}
+
+{tech_text}
+
+{sector_text}
+
+{econ_calendar_text}
+
+{constraints_text}
 
 【持仓盘前异动】
 {json.dumps(context.get('pre_market_changes', {}), ensure_ascii=False, indent=2)}
@@ -338,7 +397,7 @@ LONG: {exposure_long:.1f}% | SHORT: {exposure_short:.1f}% | 总敞口：{exposur
 
 {lesson_context}
 
-请根据上述信息生成 JSON 作战计划。
+请根据上述信息生成 JSON 作战计划。务必遵守【硬约束规则】中的止损和风险收益比要求。
 """
 
             # 5. 调用 LLM - v3.0升级为增强版辩论
@@ -402,8 +461,28 @@ LONG: {exposure_long:.1f}% | SHORT: {exposure_short:.1f}% | 总敞口：{exposur
             if not response:
                 raise Exception("LLM 调用失败")
 
-            # 6. 解析并保存
+            # 6. 解析并校验
             plan = self._parse_response(response)
+
+            # ── 6.5 新增 (2026-06-12): 硬校验 — PlanValidator ──
+            try:
+                from app.us_pipeline.plan_validator import PlanValidator
+                validator = PlanValidator(
+                    technicals=scan_result.get("technicals", {}),
+                    sectors=scan_result.get("sectors", {}),
+                    sector_symbol_map=scan_result.get("sector_symbol_map", {}),
+                    economic_events=todays_events,
+                    price_calibration=price_calibration,
+                )
+                plan = validator.validate_and_annotate(plan)
+                logger.info(f"[盘前计划] 校验完成: {validator.__class__.__name__}")
+            except Exception as val_err:
+                logger.warning(f"[盘前计划] 计划校验失败 (不影响保存): {val_err}")
+
+            # 注入禁止交易窗口到 plan
+            if no_trade_windows:
+                plan["no_trade_windows"] = no_trade_windows
+
             self._save_plan(plan)
 
             # P2 新增: 根据盘前分析结果更新龙头池市场阶段
@@ -638,7 +717,7 @@ LONG: {exposure_long:.1f}% | SHORT: {exposure_short:.1f}% | 总敞口：{exposur
                 user_input,
                 system=enhanced_system,
                 temperature=0.1,
-                max_tokens=4000,
+                max_tokens=5000,
                 # 不在此处加 schema_required, 因为 plan 字段较多, 用旧 _parse_response 容错抽取
                 # 关键字段校验交给 USBattlePlanManager.revalidate_on_restart (已存在)
             )

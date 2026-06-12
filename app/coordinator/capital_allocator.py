@@ -8,6 +8,8 @@ CapitalAllocator — 实时资金账本 (Phase A 2026-05-14)
 """
 from __future__ import annotations
 import logging
+import os
+import sqlite3
 import threading
 import time
 from dataclasses import dataclass, field
@@ -44,6 +46,7 @@ class CapitalAllocator:
         max_total_pct: float = 0.90,
         observe_only: bool = True,
         bucket_map: Optional[Dict[str, str]] = None,
+        db_path: Optional[str] = None,
     ):
         """
         Args:
@@ -54,6 +57,8 @@ class CapitalAllocator:
                         例 {"fast_lane": "main"} 让 fast_lane 占用计入 main 桶
                         缺省 → strategy_name = bucket_name
         """
+        # P1-7: stash db_path for _init_persist_db
+        self._persist_init_db_path = db_path
         self._caps = dict(caps)
         self._max_total = max_total_pct
         self._observe_only = observe_only
@@ -65,6 +70,20 @@ class CapitalAllocator:
         self._lock = threading.Lock()
         self._events: List[_ReserveEvent] = []
         self._max_event_history = 500
+        # P1-7 (2026-06-12): persistent ledger
+        self._db_path: Optional[str] = None
+        self._db_lock = threading.Lock()
+        if self._persist_init_db_path is not None:
+            try:
+                self._init_persist_db(self._persist_init_db_path)
+                self._load_persist_state()
+                logger.info(
+                    f"[CapitalAllocator] persist enabled db={self._db_path} "
+                    f"restored allocations={self._allocations} by_strategy={self._by_strategy}"
+                )
+            except Exception as _e:
+                logger.error(f"[CapitalAllocator] persist init failed (fallback to memory): {_e}")
+                self._db_path = None
 
     def _bucket_for(self, strategy: str) -> str:
         return self._bucket_map.get(strategy, strategy)
@@ -113,6 +132,7 @@ class CapitalAllocator:
                 self._by_strategy[strategy] = self._by_strategy.get(strategy, 0.0) + position_pct
                 snapshot_after = self._allocations[bucket]
                 self._record_event(strategy, position_pct, decision, snapshot_after)
+                self._persist_state(bucket, strategy)  # P1-7
                 return True
 
             # BLOCKED: 只记录事件, 不累加账本
@@ -142,6 +162,7 @@ class CapitalAllocator:
             self._allocations[bucket] = new_val
             self._by_strategy[strategy] = max(0.0, self._by_strategy.get(strategy, 0.0) - position_pct)
             self._record_event(strategy, -position_pct, "RELEASED", new_val)
+            self._persist_state(bucket, strategy)  # P1-7
 
     def force_set(self, strategy: str, value: float):
         """从持仓快照同步 (启动恢复 / 定期 reconcile 用) — 走 bucket"""
@@ -149,6 +170,7 @@ class CapitalAllocator:
             bucket = self._bucket_for(strategy)
             self._allocations[bucket] = max(0.0, value)
             self._record_event(strategy, 0.0, "FORCE_SET", value)
+            self._persist_state(bucket, strategy)  # P1-7
 
     def snapshot(self) -> CapitalSnapshot:
         """当前账本快照. by_strategy 字段是 bucket 视图 (向后兼容现有调用方)."""
@@ -207,6 +229,7 @@ class CapitalAllocator:
             self._allocations = {b: 0.0 for b in self._caps}
             self._by_strategy = {}
             self._record_event("__reset__", 0.0, "ENFORCE_RESET", 0.0)
+            self._persist_state_all()  # P1-7
         # 锁外调 (避免双重 lock)
         self.reconcile_with_positions(positions_by_strategy)
         logger.warning(
@@ -239,6 +262,7 @@ class CapitalAllocator:
             # 同步 by_strategy 视图
             for strat, pct in positions_by_strategy.items():
                 self._by_strategy[strat] = pct
+            self._persist_state_all()  # P1-7
 
     def get_recent_events(self, n: int = 50) -> List[Dict]:
         """最近 N 条事件 (供 daily_review 读)"""
@@ -265,18 +289,149 @@ class CapitalAllocator:
         self._events.append(e)
         if len(self._events) > self._max_event_history:
             self._events = self._events[-self._max_event_history:]
+        # P1-7: persist ledger event (best-effort)
+        if self._db_path:
+            try:
+                self._persist_event(e)
+            except Exception as _pe:
+                logger.debug(f"[CapitalAllocator] persist event failed: {_pe}")
 
+
+
+    # ====================== P1-7: persistent ledger ======================
+    def _init_persist_db(self, db_path: str) -> None:
+        d = os.path.dirname(db_path)
+        if d and not os.path.exists(d):
+            os.makedirs(d, exist_ok=True)
+        with self._db_lock:
+            conn = sqlite3.connect(db_path, timeout=10.0)
+            try:
+                conn.execute("PRAGMA journal_mode=WAL")
+                conn.execute("PRAGMA synchronous=NORMAL")
+                conn.execute("PRAGMA busy_timeout=5000")
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS capital_state (
+                        kind TEXT NOT NULL,
+                        key  TEXT NOT NULL,
+                        value REAL NOT NULL,
+                        updated_at REAL NOT NULL,
+                        PRIMARY KEY (kind, key)
+                    )
+                """)
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS capital_ledger (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        ts REAL NOT NULL,
+                        strategy TEXT NOT NULL,
+                        delta REAL NOT NULL,
+                        decision TEXT NOT NULL,
+                        snapshot_after REAL NOT NULL
+                    )
+                """)
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_capital_ledger_ts ON capital_ledger(ts)")
+                conn.commit()
+            finally:
+                conn.close()
+        self._db_path = db_path
+
+    def _load_persist_state(self) -> None:
+        if not self._db_path:
+            return
+        with self._db_lock:
+            conn = sqlite3.connect(self._db_path, timeout=10.0)
+            try:
+                cur = conn.execute("SELECT kind, key, value FROM capital_state")
+                for kind, key, val in cur.fetchall():
+                    try:
+                        v = float(val)
+                    except Exception:
+                        continue
+                    if kind == "bucket":
+                        if key in self._allocations:
+                            self._allocations[key] = max(0.0, v)
+                    elif kind == "strategy":
+                        self._by_strategy[key] = max(0.0, v)
+            finally:
+                conn.close()
+
+    def _persist_state(self, bucket: str, strategy: Optional[str] = None) -> None:
+        if not self._db_path:
+            return
+        ts = time.time()
+        rows = [("bucket", bucket, float(self._allocations.get(bucket, 0.0)), ts)]
+        if strategy is not None:
+            rows.append(("strategy", strategy, float(self._by_strategy.get(strategy, 0.0)), ts))
+        try:
+            with self._db_lock:
+                conn = sqlite3.connect(self._db_path, timeout=5.0)
+                try:
+                    conn.executemany(
+                        "INSERT INTO capital_state(kind,key,value,updated_at) VALUES (?,?,?,?) "
+                        "ON CONFLICT(kind,key) DO UPDATE SET value=excluded.value, "
+                        "updated_at=excluded.updated_at",
+                        rows,
+                    )
+                    conn.commit()
+                finally:
+                    conn.close()
+        except Exception as e:
+            logger.debug(f"[CapitalAllocator] _persist_state failed: {e}")
+
+    def _persist_state_all(self) -> None:
+        if not self._db_path:
+            return
+        ts = time.time()
+        rows = [("bucket", b, float(v), ts) for b, v in self._allocations.items()]
+        rows += [("strategy", s, float(v), ts) for s, v in self._by_strategy.items()]
+        try:
+            with self._db_lock:
+                conn = sqlite3.connect(self._db_path, timeout=5.0)
+                try:
+                    conn.executemany(
+                        "INSERT INTO capital_state(kind,key,value,updated_at) VALUES (?,?,?,?) "
+                        "ON CONFLICT(kind,key) DO UPDATE SET value=excluded.value, "
+                        "updated_at=excluded.updated_at",
+                        rows,
+                    )
+                    conn.commit()
+                finally:
+                    conn.close()
+        except Exception as e:
+            logger.debug(f"[CapitalAllocator] _persist_state_all failed: {e}")
+
+    def _persist_event(self, e) -> None:
+        if not self._db_path:
+            return
+        with self._db_lock:
+            conn = sqlite3.connect(self._db_path, timeout=5.0)
+            try:
+                conn.execute(
+                    "INSERT INTO capital_ledger(ts,strategy,delta,decision,snapshot_after) "
+                    "VALUES (?,?,?,?,?)",
+                    (e.timestamp, e.strategy, e.delta, e.decision, e.snapshot_after),
+                )
+                conn.execute(
+                    "DELETE FROM capital_ledger WHERE id <= "
+                    "(SELECT MAX(id) FROM capital_ledger) - 5000"
+                )
+                conn.commit()
+            finally:
+                conn.close()
 
 _singleton: Optional[CapitalAllocator] = None
 
 
 def get_capital_allocator(caps: Optional[Dict[str, float]] = None,
                           max_total_pct: float = 0.90,
-                          observe_only: bool = True) -> CapitalAllocator:
-    """单例. 第一次调用必须传 caps."""
+                          observe_only: bool = True,
+                          db_path: Optional[str] = None) -> CapitalAllocator:
+    """单例. 第一次调用必须传 caps. P1-7: db_path enables persistence."""
     global _singleton
     if _singleton is None:
         if caps is None:
             raise ValueError("CapitalAllocator 第一次构造必须传 caps")
-        _singleton = CapitalAllocator(caps=caps, max_total_pct=max_total_pct, observe_only=observe_only)
+        _singleton = CapitalAllocator(
+            caps=caps, max_total_pct=max_total_pct,
+            observe_only=observe_only, db_path=db_path,
+        )
     return _singleton

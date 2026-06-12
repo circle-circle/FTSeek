@@ -245,7 +245,7 @@
             <a href="/" {% block nav_home_class %}{% endblock %}><span class="nav-icon">🏠</span> 指挥中心</a>
             <a href="/trade" {% block nav_trade_class %}{% endblock %}><span class="nav-icon">💹</span> 交易</a>
             <a href="/watchlist" {% block nav_watchlist_class %}{% endblock %}><span class="nav-icon">📋</span> 股票池</a>
-            <a href="/#analytics" onclick="if(location.pathname==='/'){event.preventDefault();document.getElementById('analyticsBody')&&document.getElementById('analyticsBody').classList.add('open');document.getElementById('analyticsArrow')&&document.getElementById('analyticsArrow').classList.add('open');}" {% block nav_review_class %}{% endblock %}><span class="nav-icon">📊</span> 分析</a>
+            <a href="/#analytics" onclick="if(location.pathname==='/'){event.preventDefault();var b=document.getElementById('analyticsBody'),a=document.getElementById('analyticsArrow');if(b){b.classList.add('open');if(a)a.classList.add('open');var c=b.closest('.card');if(c)c.scrollIntoView({behavior:'smooth',block:'start'});}}" {% block nav_review_class %}{% endblock %}><span class="nav-icon">📊</span> 分析</a>
             <a href="/system" {% block nav_system_class %}{% endblock %}><span class="nav-icon">⚙️</span> 系统</a>
         </div>
         <div class="sidebar-footer">
@@ -260,7 +260,7 @@
             <a href="/" {% block nav_home_class2 %}{% endblock %}><span class="nav-icon">🏠</span> 指挥</a>
             <a href="/trade" {% block nav_trade_class2 %}{% endblock %}><span class="nav-icon">💹</span> 交易</a>
             <a href="/watchlist" {% block nav_watchlist_class2 %}{% endblock %}><span class="nav-icon">📋</span> 股票池</a>
-            <a href="/#analytics" onclick="if(location.pathname==='/'){event.preventDefault();document.getElementById('analyticsBody')&&document.getElementById('analyticsBody').classList.add('open');document.getElementById('analyticsArrow')&&document.getElementById('analyticsArrow').classList.add('open');}" {% block nav_review_class2 %}{% endblock %}><span class="nav-icon">📊</span> 分析</a>
+            <a href="/#analytics" onclick="if(location.pathname==='/'){event.preventDefault();var b=document.getElementById('analyticsBody'),a=document.getElementById('analyticsArrow');if(b){b.classList.add('open');if(a)a.classList.add('open');var c=b.closest('.card');if(c)c.scrollIntoView({behavior:'smooth',block:'start'});}}" {% block nav_review_class2 %}{% endblock %}><span class="nav-icon">📊</span> 分析</a>
             <a href="/system" {% block nav_system_class2 %}{% endblock %}><span class="nav-icon">⚙️</span> 系统</a>
         </div>
         <span class="spacer"></span>
@@ -279,7 +279,7 @@
             <a href="/" {% block nav_home_class3 %}{% endblock %}><span class="tab-icon">🏠</span>指挥</a>
             <a href="/watchlist" {% block nav_watchlist_class3 %}{% endblock %}><span class="tab-icon">📋</span>股票池</a>
             <a href="/trade" class="tab-trade" {% block nav_trade_class3 %}{% endblock %}><span class="tab-icon">💹</span>交易</a>
-            <a href="/#analytics" onclick="if(location.pathname==='/'){event.preventDefault();document.getElementById('analyticsBody')&&document.getElementById('analyticsBody').classList.add('open');}" {% block nav_review_class3 %}{% endblock %}><span class="tab-icon">📊</span>分析</a>
+            <a href="/#analytics" onclick="if(location.pathname==='/'){event.preventDefault();var b=document.getElementById('analyticsBody'),a=document.getElementById('analyticsArrow');if(b){b.classList.add('open');if(a)a.classList.add('open');var c=b.closest('.card');if(c)c.scrollIntoView({behavior:'smooth',block:'start'});}}" {% block nav_review_class3 %}{% endblock %}><span class="tab-icon">📊</span>分析</a>
             <a href="/system" {% block nav_system_class3 %}{% endblock %}><span class="tab-icon">⚙️</span>系统</a>
         </div>
     </nav>
@@ -300,6 +300,94 @@
                 });
             };
         })();
+
+        // ═══════════════════════════════════════════════════════
+        //  WebSocket 全局连接管理器 (渐进增强, 断线回退 polling)
+        // ═══════════════════════════════════════════════════════
+        window.WSManager = (function() {
+            var ws = null;
+            var reconnectDelay = 1000;
+            var maxReconnectDelay = 60000;
+            var handlers = {};
+            var connected = false;
+            var enabled = true;
+
+            function connect() {
+                if (!enabled || ws) return;
+                try {
+                    var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+                    ws = new WebSocket(proto + '//' + location.host + '/ws/events');
+
+                    ws.onopen = function() {
+                        connected = true;
+                        reconnectDelay = 1000;
+                        updateIndicator('connected');
+                        // 订阅所有事件
+                        ws.send(JSON.stringify({type: 'subscribe', events: ['*']}));
+                    };
+
+                    ws.onmessage = function(evt) {
+                        try {
+                            var msg = JSON.parse(evt.data);
+                            var type = msg.type;
+                            if (handlers[type]) {
+                                handlers[type].forEach(function(fn) { fn(msg.data, msg); });
+                            }
+                            if (handlers['*']) {
+                                handlers['*'].forEach(function(fn) { fn(msg.data, msg); });
+                            }
+                        } catch(e) {}
+                    };
+
+                    ws.onclose = function() {
+                        ws = null;
+                        connected = false;
+                        updateIndicator('polling');
+                        // 指数退避重连
+                        setTimeout(function() {
+                            reconnectDelay = Math.min(reconnectDelay * 2, maxReconnectDelay);
+                            connect();
+                        }, reconnectDelay);
+                    };
+
+                    ws.onerror = function() {
+                        if (ws) ws.close();
+                    };
+                } catch(e) {
+                    updateIndicator('polling');
+                }
+            }
+
+            function updateIndicator(status) {
+                var dots = document.querySelectorAll('.ws-dot');
+                dots.forEach(function(dot) {
+                    dot.className = 'ws-dot ' + status;
+                });
+                var labels = document.querySelectorAll('.ws-label');
+                labels.forEach(function(l) {
+                    l.textContent = status === 'connected' ? '实时' : '轮询';
+                });
+            }
+
+            function on(eventType, handler) {
+                if (!handlers[eventType]) handlers[eventType] = [];
+                handlers[eventType].push(handler);
+            }
+
+            function off(eventType, handler) {
+                if (handlers[eventType]) {
+                    handlers[eventType] = handlers[eventType].filter(function(h) { return h !== handler; });
+                }
+            }
+
+            function isConnected() { return connected; }
+
+            // 自动连接
+            setTimeout(connect, 2000);
+
+            return { on: on, off: off, isConnected: isConnected };
+        })();
+
         {% block scripts %}{% endblock %}
     </script>
 </body>

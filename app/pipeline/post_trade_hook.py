@@ -178,6 +178,51 @@ def on_position_opened(position: Any, signal: Any, context: dict,
         infer_thesis_async(symbol, signal_dict, context or {})
     hooks.append(("thesis", _hook_thesis))
 
+    # 5. broker_stop_guard — 开仓后在 broker 层挂止损单 (双保险)
+    #    系统 30s 轮询止损作为 primary, broker STOP 单作为 hard floor
+    #    模拟盘 graceful degrade (Futu SIMULATE 不支持 STOP)
+    def _hook_broker_stop_guard():
+        try:
+            initial_sl = float(getattr(position, "initial_sl", 0) or 0)
+            size = int(getattr(position, "size", 0) or 0)
+            direction = signal.direction.value if hasattr(signal.direction, "value") else str(signal.direction)
+
+            if initial_sl <= 0 or size <= 0:
+                return  # 无止损价或无数量，跳过
+
+            from app.execution.broker_adapter import FutuBrokerAdapter
+            # 获取 broker adapter 实例例
+            adapter = getattr(scheduler, "_broker_adapter", None) if scheduler else None
+            if not adapter:
+                return
+
+            result = adapter.place_stop_order(
+                symbol=symbol,
+                qty=size,
+                stop_price=initial_sl,
+                direction=direction,
+            )
+
+            if result.get("success"):
+                # 记录 stop_order_id 到 position metadata
+                stop_id = result.get("order_id", "")
+                try:
+                    import json as _json
+                    metadata = getattr(position, "metadata_json", None)
+                    meta = _json.loads(metadata) if metadata else {}
+                    meta["broker_stop_order_id"] = stop_id
+                    meta["broker_stop_price"] = initial_sl
+                    position.metadata_json = _json.dumps(meta)
+                except Exception:
+                    pass
+        except Exception as e:
+            # Graceful degrade: 不影响主流程
+            import logging as _logging
+            _logging.getLogger("ftseek_us.post_trade_hook").debug(
+                f"[broker_stop_guard] {symbol} 跳过: {e}"
+            )
+    hooks.append(("broker_stop_guard", _hook_broker_stop_guard))
+
     submit(symbol, hooks)
 
 

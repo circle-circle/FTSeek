@@ -1,6 +1,11 @@
 """
 增强交易记录器 (美股版 - 支持深度复盘)
 
+⚠️ 评审系统专用 — 独立于 TradeStore (ftseek_us.db).
+   此模块写入 trade_records.db, 包含 TradeStore 没有的复盘字段:
+   decision_confidence, emotion_state, psychological_notes, lessons_learned.
+   review/* 模块依赖此数据源. 不要将交易写入逻辑合并到此处.
+
 记录完整交易上下文，支持决策/时机/持仓/风控/心理 5 大维度复盘字段
 适配美股多 Agent 架构
 """

@@ -16,6 +16,18 @@
 {% endblock %}
 
 {% block extra_css %}
+        /* ── Trade Summary Strip ── */
+        .trade-summary { display: flex; align-items: center; gap: 4px; padding: 8px 12px; background: #161b22; border: 1px solid #30363d; border-radius: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+        .ts-item { display: flex; flex-direction: column; align-items: center; padding: 4px 12px; min-width: 70px; }
+        .ts-label { font-size: 10px; color: #8b949e; text-transform: uppercase; letter-spacing: 0.3px; }
+        .ts-val { font-size: 14px; font-weight: 700; color: #e1e4e8; margin-top: 2px; }
+        .ts-val.green { color: #4ade80; }
+        .ts-val.red { color: #f87171; }
+        .ts-val.yellow { color: #fbbf24; }
+        .ts-live { margin-left: auto; display: flex; align-items: center; }
+        .ts-dot { width: 7px; height: 7px; border-radius: 50%; background: #4ade80; box-shadow: 0 0 4px #4ade80; animation: tsPulse 2s infinite; }
+        .ts-dot.stale { background: #8b949e; box-shadow: none; animation: none; }
+        @keyframes tsPulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
         .audit-period { padding: 4px 10px; font-size: 11px; min-height: 28px; }
         .audit-period.active { border-color: #58a6ff; color: #58a6ff; }
         .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
@@ -45,15 +57,43 @@
         .quote-box { background: #0d1117; border: 1px solid #30363d; border-radius: 6px; padding: 12px; margin: 10px 0; }
         .quote-price { font-size: 24px; font-weight: 700; }
         .quote-detail { font-size: 12px; color: #8b949e; margin-top: 4px; }
-        .cap-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 10px; }
-        .cap-item { background: #0d1117; border: 1px solid #30363d; border-radius: 5px; padding: 8px; text-align: center; cursor: pointer; min-height: 44px; display: flex; flex-direction: column; justify-content: center; }
-        .cap-item:hover { border-color: #58a6ff; }
-        .cap-item .cl { font-size: 11px; color: #8b949e; text-transform: uppercase; }
-        .cap-item .cv { font-size: 16px; font-weight: 700; margin-top: 1px; }
-        .cap-item .cv.g { color: #4ade80; }
-        .cap-item .cv.r { color: #f87171; }
-        .cap-item .cv.o { color: #fb923c; }
-        .cap-item .cs { font-size: 11px; color: #8b949e; }
+        /* ── Fund info (资金信息) ── */
+        .fund-info { background: #0d1117; border: 1px solid #30363d; border-radius: 6px; padding: 10px 14px; margin: 8px 0; }
+        .fund-row { display: flex; justify-content: space-between; align-items: center; padding: 4px 0; }
+        .fund-row + .fund-row { border-top: 1px solid #21262d; }
+        .fund-label { font-size: 12px; color: #8b949e; }
+        .fund-val { font-size: 14px; font-weight: 700; }
+        .fund-val.g { color: #4ade80; }
+        .fund-val.o { color: #fb923c; }
+        .fund-val.r { color: #f87171; }
+        /* ── Symbol Intelligence Card ── */
+        .intel-card { background: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 12px 14px; margin: 10px 0; font-size: 13px; }
+        .intel-card .intel-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px solid #21262d; }
+        .intel-card .intel-title { font-weight: 700; font-size: 14px; }
+        .intel-card .intel-signal { padding: 3px 10px; border-radius: 12px; font-size: 12px; font-weight: 600; }
+        .intel-card .intel-signal.long { background: rgba(74,222,128,0.15); color: #4ade80; }
+        .intel-card .intel-signal.short { background: rgba(248,113,113,0.15); color: #f87171; }
+        .intel-card .intel-signal.neutral { background: rgba(139,148,158,0.15); color: #8b949e; }
+        .intel-card .intel-row { display: flex; justify-content: space-between; padding: 4px 0; }
+        .intel-card .intel-label { color: #8b949e; font-size: 12px; }
+        .intel-card .intel-val { font-weight: 600; }
+        .intel-card .intel-plan { margin-top: 8px; padding: 8px; background: #161b22; border-radius: 6px; border-left: 3px solid #58a6ff; }
+        .intel-card .intel-plan.cancelled { border-left-color: #f87171; opacity: 0.6; }
+        .intel-card .intel-plan .plan-dir { font-weight: 600; font-size: 12px; }
+        .intel-card .intel-plan .plan-rationale { font-size: 11px; color: #8b949e; margin-top: 4px; line-height: 1.4; }
+        /* ── Attention Priority Banner ── */
+        .attn-banner { border-radius: 8px; padding: 10px 14px; margin-bottom: 10px; display: flex; align-items: center; gap: 10px; font-size: 13px; }
+        .attn-banner.danger { background: rgba(248,113,113,0.1); border: 1px solid rgba(248,113,113,0.3); }
+        .attn-banner.warning { background: rgba(251,191,36,0.1); border: 1px solid rgba(251,191,36,0.3); }
+        .attn-banner.opportunity { background: rgba(74,222,128,0.1); border: 1px solid rgba(74,222,128,0.3); }
+        .attn-banner .attn-icon { font-size: 18px; flex-shrink: 0; }
+        .attn-banner .attn-text { flex: 1; }
+        .attn-banner .attn-text strong { font-size: 14px; }
+        .attn-banner .attn-action { flex-shrink: 0; }
+        .attn-banner .attn-btn { padding: 6px 14px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; border: none; min-height: 36px; }
+        .attn-banner.danger .attn-btn { background: #f87171; color: #fff; }
+        .attn-banner.warning .attn-btn { background: #fbbf24; color: #0d1117; }
+        .attn-banner.opportunity .attn-btn { background: #4ade80; color: #0d1117; }
         .btn-group { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
         .btn-group .btn { flex: 1; min-width: 120px; text-align: center; }
         /* Existing position hint */
@@ -139,6 +179,9 @@
             .quote-detail { word-break: break-all; }
             table { min-width: 400px; }
             .estimate-panel .est-line { gap: 8px; }
+            .trade-summary { gap: 2px; padding: 6px 8px; }
+            .ts-item { padding: 3px 8px; min-width: 55px; }
+            .ts-val { font-size: 12px; }
         }
 
         @media (max-width: 480px) {
@@ -152,9 +195,21 @@
 
 {% block content %}
     <div class="container">
-        <!-- 下单表单 — 始终展开 -->
+        <!-- ═══ 注意力优先横幅 (自动检测最紧急事项) ═══ -->
+        <div id="attentionBanner" style="display:none"></div>
+
+        <!-- ═══ 账户摘要条 (实时) ═══ -->
+        <div class="trade-summary" id="tradeSummary">
+            <div class="ts-item"><span class="ts-label">总资产</span><span class="ts-val" id="tsAssets">--</span></div>
+            <div class="ts-item"><span class="ts-label">购买力</span><span class="ts-val" id="tsPower">--</span></div>
+            <div class="ts-item"><span class="ts-label">保证金</span><span class="ts-val" id="tsMargin">--</span></div>
+            <div class="ts-item"><span class="ts-label">今日盈亏</span><span class="ts-val" id="tsPnl">--</span></div>
+            <div class="ts-item"><span class="ts-label">持仓数</span><span class="ts-val" id="tsPosCount">--</span></div>
+            <div class="ts-live" id="tsLive" title="数据刷新状态"><span class="ts-dot"></span></div>
+        </div>
+
+        <!-- ═══ 下单表单 ═══ -->
         <div class="card" id="orderFormCard">
-            <h2>📝 下单</h2>
             <div class="form-grid">
                         <div class="form-group">
                             <label>标的</label>
@@ -168,56 +223,65 @@
                             </select>
                         </div>
                         <div class="form-group">
-                            <label>有效期</label>
-                            <select id="timeInForce">
-                                <option value="DAY">当日有效 DAY</option>
-                                <option value="GTC">撤销前有效 GTC</option>
-                            </select>
-                        </div>
-                        <div class="form-group">
-                            <label>交易时段</label>
-                            <select id="fillOutsideRth">
-                                <option value="false">仅盘中 9:30-16:00</option>
-                                <option value="true">含盘前盘后 (Extended)</option>
-                            </select>
-                        </div>
-                        <div class="form-group full">
                             <label>方向</label>
                             <div class="dir-group">
                                 <div class="dir-btn long active" data-dir="LONG" onclick="setDir('LONG')">📈 做多</div>
                                 <div class="dir-btn short" data-dir="SHORT" onclick="setDir('SHORT')">📉 做空</div>
                             </div>
                         </div>
-                        <div class="form-group full">
+                        <div class="form-group">
                             <label>操作</label>
                             <div class="dir-group">
                                 <div class="dir-btn open active" data-op="OPEN" onclick="setOp('OPEN')">🔓 开仓</div>
                                 <div class="dir-btn close" data-op="CLOSE" onclick="setOp('CLOSE')">🔒 平仓</div>
                             </div>
                         </div>
-                        <div class="form-group full">
-                            <label>数量 (股)</label>
-                            <div class="qty-row">
-                                <button class="qty-step" onclick="stepQty(-10)" title="-10">−10</button>
-                                <button class="qty-step" onclick="stepQty(-1)" title="-1">−</button>
-                                <input type="number" id="quantity" min="1" max="100000" value="10">
-                                <button class="qty-step" onclick="stepQty(1)" title="+1">+</button>
-                                <button class="qty-step" onclick="stepQty(10)" title="+10">+10</button>
-                            </div>
-                            <div class="pct-row">
-                                <button class="pct-btn" onclick="setPctQty(25)">25%</button>
-                                <button class="pct-btn" onclick="setPctQty(50)">50%</button>
-                                <button class="pct-btn" onclick="setPctQty(75)">75%</button>
-                                <button class="pct-btn" onclick="setPctQty(100)">100%</button>
-                            </div>
-                        </div>
                         <div class="form-group" id="priceGroup" style="display:none">
                             <label>限价 ($)</label>
                             <input type="number" id="limitPrice" step="0.01" placeholder="0.00">
                         </div>
-                        <div class="form-group full" id="reasonGroup">
-                            <label>理由 (可选)</label>
-                            <textarea id="reason" placeholder="交易逻辑..."></textarea>
+                        <div class="form-group">
+                            <label>数量</label>
+                            <input type="number" id="quantity" min="1" max="100000" placeholder="股数">
+                        </div>
+                    </div>
+
+                    <!-- 盘前/盘后交易开关 (2026-06-12) -->
+                    <div id="extRthGroup" style="display:none;margin:8px 0;padding:8px 12px;background:#161b22;border:1px solid #30363d;border-radius:8px">
+                        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px">
+                            <input type="checkbox" id="extRthCheck" style="width:18px;height:18px;accent-color:#fbbf24;cursor:pointer">
+                            <span>允许盘前/盘后成交 (Extended Hours)</span>
+                        </label>
+                        <div id="extRthHint" style="font-size:11px;color:#8b949e;margin-top:4px;padding-left:26px">
+                            当前处于非盘中时段，仅支持限价单。流动性较低，bid-ask 价差可能扩大 3-5 倍。
+                        </div>
+                        <div id="extRthAutoHint" style="display:none;font-size:11px;color:#fbbf24;margin-top:4px;padding-left:26px;font-weight:600">
+                            ⚡ 已自动开启 — 当前处于盘前/盘后时段
+                        </div>
+                    </div>
+
+                    <!-- 系统智能卡片 (输入标的后自动加载) -->
+                    <div class="intel-card" id="intelCard" style="display:none">
+                        <div id="intelContent"></div>
+                    </div>
+
+                    <!-- 资金信息 (报价加载后显示) -->
+                    <div class="fund-info" id="fundInfo" style="display:none">
+                        <div class="fund-row">
+                            <span class="fund-label">可用现金</span>
+                            <span class="fund-val g" id="fundCash">--</span>
+                        </div>
+                        <div class="fund-row">
+                            <span class="fund-label">最大购买力</span>
+                            <span class="fund-val" id="fundPower">--</span>
+                        </div>
+                        <div class="fund-row" id="fundHeldRow" style="display:none">
+                            <span class="fund-label">当前持仓</span>
+                            <span class="fund-val" id="fundHeld">--</span>
+                        </div>
+                        <div class="fund-row" id="fundShortRow">
+                            <span class="fund-label">可做空</span>
+                            <span class="fund-val o" id="fundShort">--</span>
                         </div>
                     </div>
 
@@ -230,7 +294,6 @@
                     <div class="quote-box" id="quoteBox" style="display:none">
                         <div class="quote-price" id="quotePrice">--</div>
                         <div class="quote-detail" id="quoteDetail"></div>
-                        <div class="cap-grid" id="capGrid" style="display:none"></div>
                     </div>
 
                     <div class="estimate-panel" id="estimatePanel">
@@ -259,9 +322,9 @@
                         <div class="tw">
                             <table>
                                 <thead><tr>
-                                    <th>标的</th><th>方向</th><th>数量</th><th>成本</th><th>现价</th><th>盈亏</th><th>SL</th><th>R</th><th>信号</th><th>来源</th><th></th>
+                                    <th>代码</th><th style="text-align:right">市值/数量</th><th style="text-align:right">现价/成本</th><th style="text-align:right">今日盈亏</th><th style="text-align:right">持仓盈亏</th><th style="text-align:center">占比</th>
                                 </tr></thead>
-                                <tbody id="posBody"><tr><td colspan="11" class="loading">加载中...</td></tr></tbody>
+                                <tbody id="posBody"><tr><td colspan="6" class="loading">加载中...</td></tr></tbody>
                             </table>
                         </div>
                     </div>
@@ -308,10 +371,16 @@
             </div>
         </div>
 
-        <!-- 手动交易绩效面板 -->
+        <!-- 手动交易绩效面板 (折叠) -->
         <div class="card">
-            <h2>📊 手动交易绩效 <button class="btn btn-ghost btn-sm" onclick="loadManualPerf()">刷新</button></h2>
-            <div id="manualPerf"><div class="loading">加载中...</div></div>
+            <div style="display:flex;justify-content:space-between;align-items:center;cursor:pointer" onclick="var b=document.getElementById('manualPerfBody'),a=document.getElementById('manualPerfArrow');b.style.display=b.style.display==='none'?'block':'none';a.textContent=b.style.display==='none'?'▶':'▼'">
+                <h2 style="margin:0">📊 手动交易绩效</h2>
+                <span id="manualPerfArrow" style="font-size:12px;color:#8b949e">▶</span>
+            </div>
+            <div id="manualPerfBody" style="display:none;margin-top:8px">
+                <div id="manualPerf"><div class="loading">加载中...</div></div>
+                <button class="btn btn-ghost btn-sm" onclick="loadManualPerf()" style="margin-top:8px">刷新</button>
+            </div>
         </div>
     </div>
 
@@ -327,7 +396,7 @@
         </div>
     </div>
 
-    <!-- Close position modal -->
+    <!-- Close position modal (平仓 + 止损/止盈合一) -->
     <div class="overlay" id="closeModal">
         <div class="modal">
             <h3 id="closeTitle">🔒 平仓</h3>
@@ -338,10 +407,18 @@
                 <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid #21262d">
                     <span style="color:#8b949e">持仓</span><span id="closeTotalQty"></span>
                 </div>
+                <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid #21262d">
+                    <span style="color:#8b949e">现价</span><span id="closeCurPrice">--</span>
+                </div>
                 <div class="form-group" style="margin-top:12px">
-                    <label>平仓数量</label>
+                    <label>数量</label>
                     <input type="number" id="closeQtyInput" min="1" style="margin-top:4px">
                     <div style="font-size:11px;color:#8b949e;margin-top:4px">留空 = 全部平仓</div>
+                </div>
+                <div class="form-group" style="margin-top:10px">
+                    <label>限价 (可选)</label>
+                    <input type="number" id="closePriceInput" step="0.01" style="margin-top:4px">
+                    <div style="font-size:11px;color:#8b949e;margin-top:4px">填写 = 限价平仓 (止损/止盈)；留空 = 市价平仓</div>
                 </div>
                 <div class="form-group" style="margin-top:10px">
                     <label>理由</label>
@@ -373,7 +450,66 @@
         let curDir = 'LONG', curOp = 'OPEN', curQuote = null, curCap = null, pendingOrder = null;
         const isLive = {{ 'true' if is_live else 'false' }};
 
-        function escHtml(s) {
+        // ── 盘前/盘后自动检测 (2026-06-12) ──
+        function isExtendedHours() {
+            // 用 ET 时间判断: 盘前 04:00-09:30, 盘后 16:00-20:00
+            const now = new Date();
+            const etStr = now.toLocaleString('en-US', {timeZone: 'America/New_York', hour: 'numeric', minute: 'numeric', hour12: false});
+            const parts = etStr.split(':');
+            const etMinutes = parseInt(parts[0]) * 60 + parseInt(parts[1] || 0);
+            const weekday = now.toLocaleString('en-US', {timeZone: 'America/New_York', weekday: 'short'});
+            if (weekday === 'Sat' || weekday === 'Sun') return {extended: false, phase: 'WEEKEND'};
+            if (etMinutes >= 240 && etMinutes < 570) return {extended: true, phase: 'PRE_MARKET'};   // 04:00-09:30
+            if (etMinutes >= 960 && etMinutes < 1200) return {extended: true, phase: 'AFTER_HOURS'};  // 16:00-20:00
+            return {extended: false, phase: 'REGULAR'};
+        }
+        function updateExtRthUI() {
+            const {extended, phase} = isExtendedHours();
+            const group = document.getElementById('extRthGroup');
+            const check = document.getElementById('extRthCheck');
+            const autoHint = document.getElementById('extRthAutoHint');
+            if (extended) {
+                group.style.display = 'block';
+                check.checked = true;
+                autoHint.style.display = 'block';
+                autoHint.textContent = `⚡ 已自动开启 — 当前处于${phase === 'PRE_MARKET' ? '盘前' : '盘后'}时段`;
+                // 盘前盘后强制切换为限价单
+                const otypeEl = document.getElementById('orderType');
+                if (otypeEl && otypeEl.value === 'MARKET') {
+                    otypeEl.value = 'LIMIT';
+                    document.getElementById('priceGroup').style.display = 'flex';
+                }
+            } else {
+                group.style.display = 'none';
+                check.checked = false;
+                autoHint.style.display = 'none';
+            }
+        }
+        // 页面加载 + 每分钟刷新
+        updateExtRthUI();
+        setInterval(updateExtRthUI, 60000);
+
+        async function takeoverPos(symbol) {
+    try {
+        const resp = await fetch('/api/positions/takeover', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({symbol: symbol, owner: 'manual'})
+        });
+        const data = await resp.json();
+        if (data.success) {
+            alert('✅ ' + (data.message || symbol + ' 已纳入管理'));
+            if (typeof refreshAll === 'function') refreshAll();
+            else location.reload();
+        } else {
+            alert('❌ 失败: ' + (data.error || '未知错误'));
+        }
+    } catch (e) {
+        alert('❌ 请求失败: ' + e.message);
+    }
+}
+
+function escHtml(s) {
             return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
         }
 
@@ -393,20 +529,6 @@
         document.getElementById('orderType').addEventListener('change', function() {
             document.getElementById('priceGroup').style.display = this.value === 'LIMIT' ? 'flex' : 'none';
         });
-        // 盘前盘后强制限价单
-        document.getElementById('fillOutsideRth').addEventListener('change', function() {
-            if (this.value === 'true') {
-                var ot = document.getElementById('orderType');
-                ot.value = 'LIMIT';
-                document.getElementById('priceGroup').style.display = 'flex';
-                // 预填当前报价
-                var lp = document.getElementById('limitPrice');
-                if (!lp.value && curQuote && curQuote.cur_price) {
-                    lp.value = curQuote.cur_price.toFixed(2);
-                    updateEstimate();
-                }
-            }
-        });
         document.getElementById('symbol').addEventListener('blur', fetchQuote);
         document.getElementById('symbol').addEventListener('input', function() {
             if (this.value.trim().length >= 3) {
@@ -417,29 +539,63 @@
         document.getElementById('quantity').addEventListener('input', updateEstimate);
         document.getElementById('limitPrice').addEventListener('input', updateEstimate);
 
-        // ── ± step buttons ──
-        function stepQty(delta) {
-            const el = document.getElementById('quantity');
-            let v = parseInt(el.value) || 0;
-            v = Math.max(1, v + delta);
-            el.value = v;
-            updateEstimate();
-        }
+        // ── Symbol Intelligence ──
+        async function loadIntel(sym) {
+            const card = document.getElementById('intelCard');
+            const content = document.getElementById('intelContent');
+            card.style.display = 'block';
+            content.innerHTML = '<div style="text-align:center;color:#8b949e;padding:8px">加载系统分析...</div>';
+            try {
+                const res = await fetch(`/api/trade/symbol-intel/${encodeURIComponent(sym)}`);
+                const d = await res.json();
+                let html = '';
 
-        // ── 25%/50%/75%/100% quick buttons ──
-        function setPctQty(pct) {
-            if (!curCap) return;
-            let maxQty = 0;
-            if (curOp === 'OPEN') {
-                if (curDir === 'LONG') maxQty = curCap.max_can_buy || 0;
-                else maxQty = curCap.can_short || 0;
-            } else {
-                maxQty = curCap.can_sell || 0;
+                // Header: signal direction
+                const sig = d.signal || {};
+                const sigDir = sig.direction || '';
+                const sigCls = sigDir === 'LONG' ? 'long' : sigDir === 'SHORT' ? 'short' : 'neutral';
+                const sigLabel = sig.has_signal ? `${sigDir} ▲ 置信${(sig.confidence * 100).toFixed(0)}%` : '无近期信号';
+                html += `<div class="intel-header">
+                    <span class="intel-title">${escHtml(d.symbol)} 系统判断</span>
+                    <span class="intel-signal ${sigCls}">${sigLabel}</span>
+                </div>`;
+
+                // Recent trades
+                const trades = d.recent_trades || {};
+                if (trades.count > 0) {
+                    const pnlCls = trades.net_pnl >= 0 ? 'g' : 'r';
+                    html += `<div class="intel-row"><span class="intel-label">近 7 天交易</span>
+                        <span class="intel-val">${trades.count}笔 胜率${trades.win_rate}% <span class="${pnlCls}">${trades.net_pnl >= 0 ? '+' : ''}$${trades.net_pnl.toFixed(0)}</span></span></div>`;
+                } else {
+                    html += `<div class="intel-row"><span class="intel-label">近 7 天交易</span><span class="intel-val" style="color:#8b949e">无记录</span></div>`;
+                }
+
+                // Current position
+                const pos = d.position || {};
+                if (pos.held) {
+                    const pCls = pos.pnl >= 0 ? 'g' : 'r';
+                    const slWarn = pos.sl_distance_pct > 0 && pos.sl_distance_pct < 5
+                        ? ` <span style="color:${pos.sl_distance_pct < 2 ? '#f87171' : '#fbbf24'}">⚠️ 距止损${pos.sl_distance_pct}%</span>` : '';
+                    html += `<div class="intel-row"><span class="intel-label">当前持仓</span>
+                        <span class="intel-val">${pos.direction} ${pos.size}股 <span class="${pCls}">${pos.pnl >= 0 ? '+' : ''}$${pos.pnl.toFixed(0)} (${pos.pnl_pct >= 0 ? '+' : ''}${pos.pnl_pct.toFixed(1)}%)</span>${slWarn}</span></div>`;
+                }
+
+                // Battle plan match
+                const plan = d.plan || {};
+                if (plan.in_plan) {
+                    const planCls = plan.cancelled ? 'cancelled' : '';
+                    const statusIcon = plan.cancelled ? '❌' : '✅';
+                    const zone = plan.entry_zone ? `$${plan.entry_zone[0]}–$${plan.entry_zone[1]}` : '--';
+                    html += `<div class="intel-plan ${planCls}">
+                        <div class="plan-dir">${statusIcon} 战前计划: ${plan.direction} 入场区 ${zone}</div>
+                        ${plan.rationale ? `<div class="plan-rationale">${escHtml(plan.rationale)}</div>` : ''}
+                    </div>`;
+                }
+
+                content.innerHTML = html;
+            } catch (e) {
+                card.style.display = 'none';
             }
-            if (maxQty <= 0) return;
-            const qty = Math.max(1, Math.floor(maxQty * pct / 100));
-            document.getElementById('quantity').value = qty;
-            updateEstimate();
         }
 
         async function fetchQuote() {
@@ -472,17 +628,22 @@
                     document.getElementById('quoteDetail').innerHTML =
                         `高 $${q.high_price?.toFixed(2)||'--'} | 低 $${q.low_price?.toFixed(2)||'--'} | 昨收 $${q.prev_close?.toFixed(2)||'--'} | ${upd}`;
 
-                    if (c.cur_price) {
-                        const g = document.getElementById('capGrid');
-                        g.style.display = 'grid';
+                    // 填充资金信息
+                    if (c.cur_price || c.cash != null) {
+                        const fi = document.getElementById('fundInfo');
+                        fi.style.display = 'block';
+                        const fmtK = v => v >= 1000 ? '$' + (v/1000).toFixed(1) + 'K' : '$' + v.toFixed(0);
+                        document.getElementById('fundCash').textContent = fmtK(c.cash || 0);
+                        document.getElementById('fundPower').textContent = fmtK(c.power || 0) + (c.max_can_buy ? ` (${c.max_can_buy.toLocaleString()}股)` : '');
                         const held = c.held_qty || 0;
-                        const heldLabel = held > 0 ? `持${held}多` : held < 0 ? `持${Math.abs(held)}空` : '无持仓';
-                        g.innerHTML = `
-                            <div class="cap-item" onclick="setQty(${c.cash_can_buy})"><div class="cl">现金可买</div><div class="cv g">${c.cash_can_buy.toLocaleString()}</div><div class="cs">$${c.cash>=1000?(c.cash/1000).toFixed(1)+'K':c.cash.toFixed(0)}</div></div>
-                            <div class="cap-item" onclick="setQty(${c.max_can_buy})"><div class="cl">最大可买</div><div class="cv g">${c.max_can_buy.toLocaleString()}</div><div class="cs">$${c.power>=1000?(c.power/1000).toFixed(1)+'K':c.power.toFixed(0)}</div></div>
-                            <div class="cap-item" onclick="setQty(${c.can_sell})"><div class="cl">持仓可卖</div><div class="cv r">${c.can_sell.toLocaleString()}</div><div class="cs">${heldLabel}</div></div>
-                            <div class="cap-item" onclick="setQty(${c.can_short})"><div class="cl">可做空</div><div class="cv o">${c.can_short.toLocaleString()}</div><div class="cs">$${c.max_short_power>=1000?(c.max_short_power/1000).toFixed(1)+'K':c.max_short_power.toFixed(0)}</div></div>
-                        `;
+                        if (held !== 0) {
+                            document.getElementById('fundHeldRow').style.display = 'flex';
+                            const dir = held > 0 ? 'LONG' : 'SHORT';
+                            document.getElementById('fundHeld').textContent = `${dir} ${Math.abs(held)}股 (可卖 ${c.can_sell || 0})`;
+                        } else {
+                            document.getElementById('fundHeldRow').style.display = 'none';
+                        }
+                        document.getElementById('fundShort').textContent = c.can_short ? `${c.can_short.toLocaleString()}股` + (c.max_short_power ? ` (${fmtK(c.max_short_power)})` : '') : '--';
                     }
 
                     // Show existing position hint for same symbol
@@ -497,6 +658,7 @@
                     }
 
                     updateEstimate();
+                    loadIntel(sym);
                 } else {
                     document.getElementById('quotePrice').textContent = '--';
                     document.getElementById('quoteDetail').textContent = q.error || '无数据';
@@ -571,26 +733,23 @@
             return 'BUY';
         }
 
-        // ── Preview modal = confirmation (no CONFIRM input) ──
+        // ── Preview modal = confirmation ──
         function previewOrder() {
             let sym = document.getElementById('symbol').value.trim().toUpperCase();
             if (!sym.includes('.')) { sym = 'US.' + sym; document.getElementById('symbol').value = sym; }
             const qty = parseInt(document.getElementById('quantity').value);
             const otype = document.getElementById('orderType').value;
             const price = document.getElementById('limitPrice').value;
-            const reason = document.getElementById('reason').value.trim();
             const action = getAction();
 
             if (!sym || !qty) { showMsg('err', '请填写标的和数量'); return; }
 
-            // 盘前盘后不允许市价单
-            const extRthCheck = document.getElementById('fillOutsideRth').value === 'true';
-            if (extRthCheck && otype === 'MARKET') { showMsg('err', '盘前盘后不支持市价单，请切换为限价单'); return; }
-
             const est = curQuote ? qty * curQuote.cur_price : 0;
-            const tif = document.getElementById('timeInForce').value;
-            const extRth = document.getElementById('fillOutsideRth').value === 'true';
-            pendingOrder = { symbol: sym, direction: curDir, action, quantity: qty, order_type: otype, price: price || null, reason, operation: curOp, time_in_force: tif, fill_outside_rth: extRth };
+            const tif = 'DAY';
+            const extRth = document.getElementById('extRthCheck')?.checked || false;
+            // 盘前盘后必须限价单
+            if (extRth && otype === 'MARKET') { showMsg('err', '盘前/盘后交易仅支持限价单'); return; }
+            pendingOrder = { symbol: sym, direction: curDir, action, quantity: qty, order_type: otype, price: price || null, reason: '', operation: curOp, time_in_force: tif, fill_outside_rth: extRth };
 
             const el = document.getElementById('previewContent');
             let html = '';
@@ -598,11 +757,10 @@
             html += '<div class="preview-row"><span class="pk">操作</span><span class="pv">' + (curOp==='OPEN'?'开仓':'平仓') + ' ' + (curDir==='LONG'?'做多':'做空') + ' → ' + action + '</span></div>';
             html += '<div class="preview-row"><span class="pk">数量</span><span class="pv">' + qty.toLocaleString() + ' 股</span></div>';
             html += '<div class="preview-row"><span class="pk">类型</span><span class="pv">' + otype + (price ? ' @ $'+price : '') + '</span></div>';
-            html += '<div class="preview-row"><span class="pk">有效期</span><span class="pv">' + (tif === 'GTC' ? '撤销前有效 (GTC)' : '当日有效 (DAY)') + '</span></div>';
-            html += '<div class="preview-row"><span class="pk">交易时段</span><span class="pv">' + (extRth ? '含盘前盘后' : '仅盘中') + '</span></div>';
             html += '<div class="preview-row"><span class="pk">预估金额</span><span class="pv">' + (est > 0 ? '$'+est.toLocaleString(undefined,{maximumFractionDigits:0}) : '--') + '</span></div>';
-            if (reason) {
-                html += '<div class="preview-row"><span class="pk">理由</span><span class="pv" style="font-size:12px">' + reason + '</span></div>';
+            if (extRth) {
+                const {phase} = isExtendedHours();
+                html += '<div class="preview-row" style="color:#fbbf24"><span class="pk">⚡ 盘前/盘后</span><span class="pv">' + (phase === 'PRE_MARKET' ? '盘前时段' : '盘后时段') + ' · 限价单 · 流动性较低</span></div>';
             }
             el.innerHTML = html;
 
@@ -627,7 +785,6 @@
                 const d = await res.json();
                 if (d.success) {
                     showMsg('ok', `✅ 订单提交成功! ID: ${d.order?.order_id || '--'}`);
-                    document.getElementById('reason').value = '';
                     loadOrders(); loadPositions();
                 } else {
                     showMsg('err', `❌ ${d.errors ? d.errors.join(', ') : d.error || '下单失败'}`);
@@ -643,6 +800,7 @@
 
         let _slMap = {};
         let _diagData = {};
+        let _prevPnl = {};  // PnL 趋势: {symbol: previous_unrealized_pnl}
 
         function computeSignal(pos, slData) {
             const cost = pos.cost_price || 0;
@@ -717,14 +875,30 @@
             closeCtx = { sym, absQty };
             document.getElementById('closeSym').textContent = sym;
             document.getElementById('closeTotalQty').textContent = absQty + ' 股';
+            // 现价 (从持仓数据获取)
+            const posData = _diagData[sym];
+            const curPrice = posData ? (posData.pos.cur_price || posData.pos.current || 0) : 0;
+            document.getElementById('closeCurPrice').textContent = curPrice > 0 ? '$' + curPrice.toFixed(2) : '--';
             const preFillQty = isHalf === true ? Math.max(1, Math.floor(absQty / 2)) : null;
             document.getElementById('closeQtyInput').value = preFillQty !== null ? preFillQty : '';
             document.getElementById('closeQtyInput').max = absQty;
             document.getElementById('closeQtyInput').placeholder = absQty + ' (全部平仓)';
+            document.getElementById('closePriceInput').value = '';
             document.getElementById('closeReasonInput').value = '手动平仓';
             document.getElementById('closeError').style.display = 'none';
+            document.getElementById('closeConfirmBtn').textContent = '确认平仓';
             document.getElementById('closeModal').classList.add('show');
             setTimeout(() => document.getElementById('closeQtyInput').focus(), 100);
+        }
+
+        // 限价平仓 (止损/止盈) — 打开平仓弹窗并预填价格
+        function closePosAtPrice(sym, totalQty, presetPrice) {
+            closePos(sym, totalQty, false);
+            if (presetPrice > 0) {
+                document.getElementById('closePriceInput').value = presetPrice.toFixed(2);
+                document.getElementById('closeReasonInput').value = '止损平仓';
+                document.getElementById('closeConfirmBtn').textContent = `确认限价平仓 @ $${presetPrice.toFixed(2)}`;
+            }
         }
 
         function closeCloseModal() {
@@ -758,15 +932,19 @@
             btn.textContent = '提交中...';
 
             try {
+                const limitPrice = parseFloat(document.getElementById('closePriceInput').value) || null;
+                const body = { symbol: sym, reason, quantity: closeQty };
+                if (limitPrice && limitPrice > 0) body.price = limitPrice;
                 const res = await fetch('/api/orders/close', {
                     method: 'POST', headers: {'Content-Type':'application/json'},
-                    body: JSON.stringify({ symbol: sym, reason, quantity: closeQty }),
+                    body: JSON.stringify(body),
                 });
                 const d = await res.json();
                 closeCloseModal();
                 if (d.success) {
                     const isFull = closeQty === 0 || closeQty >= absQty;
-                    showResult('✅', `${sym} ${isFull ? '全平' : '部分平仓'}成功!`);
+                    const priceLabel = limitPrice ? ` @ $${limitPrice.toFixed(2)}` : '';
+                    showResult('✅', `${sym} ${isFull ? '全平' : '部分平仓'}成功${priceLabel}!`);
                     loadPositions(); loadOrders();
                 } else {
                     showResult('❌', d.error || '平仓失败');
@@ -799,6 +977,64 @@
         }
 
         // ══════════════════════════════════════════════════════
+        //  Attention Priority Engine (注意力优先)
+        // ══════════════════════════════════════════════════════
+        function updateAttentionBanner(positions) {
+            const banner = document.getElementById('attentionBanner');
+            if (!positions.length) { banner.style.display = 'none'; return; }
+
+            let topAlert = null, topScore = 0;
+            for (const p of positions) {
+                const sym = p.code || p.symbol;
+                const uPnl = p.unrealized_pl || p.unrealized_pnl || 0;
+                const cur = p.cur_price || p.current || 0;
+                const cost = p.cost_price || p.cost || 0;
+                const qty = Math.abs(p.qty);
+                const isLong = p.direction === 'LONG';
+                const slKey = sym + '|' + (isLong ? 'LONG' : 'SHORT');
+                const slData = _slMap[slKey];
+                const slDist = slData ? slData.sl_distance_pct : 999;
+                const prevU = _prevPnl[sym] || 0;
+                const pnlChange = prevU ? uPnl - prevU : 0;
+
+                let score = 0, type = '', msg = '', action = '', actionFn = '';
+
+                if (slDist < 2 && slDist > 0) {
+                    score = 100; type = 'danger';
+                    msg = '<strong>' + sym.replace('US.','') + '</strong> 距止损仅 ' + slDist.toFixed(1) + '%，随时可能触发';
+                    action = '立即平仓'; actionFn = "closePos('" + sym + "'," + qty + ")";
+                } else if (slDist < 5 && slDist > 0) {
+                    score = 60; type = 'warning';
+                    msg = '<strong>' + sym.replace('US.','') + '</strong> 距止损 ' + slDist.toFixed(1) + '%，注意风控';
+                    action = '查看详情'; actionFn = "showDiag('" + sym + "', this)";
+                }
+                if (pnlChange < -100 && score < 80) {
+                    score = 80; type = 'danger';
+                    msg = '<strong>' + sym.replace('US.','') + '</strong> 盈亏快速恶化，15s 内变动 $' + pnlChange.toFixed(0);
+                    action = '查看持仓'; actionFn = "showDiag('" + sym + "', this)";
+                }
+                const pnlPct = cost > 0 && cur > 0 ? ((isLong ? (cur-cost) : (cost-cur)) / cost * 100) : 0;
+                if (pnlPct > 10 && score < 50) {
+                    score = 50; type = 'opportunity';
+                    msg = '<strong>' + sym.replace('US.','') + '</strong> 浮盈 +' + pnlPct.toFixed(1) + '%（$' + uPnl.toFixed(0) + '），考虑锁利';
+                    action = '平半仓'; actionFn = "closePos('" + sym + "'," + qty + ",true)";
+                }
+                if (score > topScore) { topScore = score; topAlert = {type, msg, action, actionFn}; }
+            }
+
+            if (topAlert && topScore >= 30) {
+                banner.style.display = 'block';
+                const icon = topAlert.type === 'danger' ? '🔴' : topAlert.type === 'warning' ? '🟡' : '💰';
+                banner.innerHTML = '<div class="attn-banner ' + topAlert.type + '">' +
+                    '<span class="attn-icon">' + icon + '</span>' +
+                    '<span class="attn-text">' + topAlert.msg + '</span>' +
+                    '<span class="attn-action"><button class="attn-btn" onclick="' + topAlert.actionFn + '">' + topAlert.action + '</button></span></div>';
+            } else {
+                banner.style.display = 'none';
+            }
+        }
+
+        // ══════════════════════════════════════════════════════
         //  Optimized Polling — 2 endpoints + Visibility API
         // ══════════════════════════════════════════════════════
 
@@ -810,6 +1046,29 @@
                 const positions = (d.positions || []).filter(p => p.qty !== 0);
                 document.getElementById('posCount').textContent = `(${positions.length})`;
 
+                // ── 更新顶部摘要条 ──
+                const acc = d.account || {};
+                const totalAssets = acc.total_assets || acc.nav || 0;
+                const power = acc.power || acc.buying_power || 0;
+                const marginPct = acc.margin_ratio || acc.margin_usage || 0;
+                const todayPnl = (d.pnl || {}).today_pl || 0;
+                const unrealPnl = positions.reduce((s, p) => s + (p.unrealized_pl || p.unrealized_pnl || 0), 0);
+                const displayPnl = todayPnl || unrealPnl;
+
+                document.getElementById('tsAssets').textContent = '$' + (totalAssets >= 1000 ? (totalAssets/1000).toFixed(1) + 'K' : totalAssets.toFixed(0));
+                document.getElementById('tsPower').textContent = '$' + (power >= 1000 ? (power/1000).toFixed(1) + 'K' : power.toFixed(0));
+                const marginEl = document.getElementById('tsMargin');
+                marginEl.textContent = marginPct.toFixed(1) + '%';
+                marginEl.className = 'ts-val' + (marginPct > 50 ? ' red' : marginPct > 30 ? ' yellow' : '');
+                const pnlEl = document.getElementById('tsPnl');
+                pnlEl.textContent = (displayPnl >= 0 ? '+' : '') + '$' + Math.abs(displayPnl).toFixed(0);
+                pnlEl.className = 'ts-val ' + (displayPnl >= 0 ? 'green' : 'red');
+                document.getElementById('tsPosCount').textContent = positions.length;
+
+                // 数据新鲜度
+                const dot = document.querySelector('.ts-dot');
+                if (dot) { dot.classList.remove('stale'); }
+
                 _slMap = {};
                 (d.stop_distances || []).forEach(s => {
                     _slMap[(s.symbol||'') + '|' + (s.direction||'')] = s;
@@ -818,72 +1077,100 @@
                 const tbody = document.getElementById('posBody');
                 const cardsEl = document.getElementById('posCards');
                 if (!positions.length) {
-                    tbody.innerHTML = '<tr><td colspan="11" style="text-align:center;color:#8b949e">无持仓</td></tr>';
+                    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#8b949e;padding:20px">无持仓</td></tr>';
                     cardsEl.innerHTML = '<div style="text-align:center;color:#8b949e;padding:20px">无持仓</div>';
                 } else {
+                    const totalMv = positions.reduce((s, x) => s + (x.market_val || x.market_value || Math.abs(x.qty) * (x.cur_price || x.current || 0)), 0);
                     tbody.innerHTML = positions.map(p => {
                         const isLong = p.direction === 'LONG';
-                        const pnl = p.unrealized_pl || p.unrealized_pnl || 0;
-                        const pnlCls = pnl >= 0 ? 'pnl-pos' : 'pnl-neg';
-                        const ownerIcon = p.owner === 'manual' ? '👤' : '🤖';
                         const cost = p.cost_price || p.cost || 0;
                         const cur = p.cur_price || p.current || 0;
-                        const pnlPct = cost > 0 && cur > 0 ? (isLong ? ((cur-cost)/cost*100) : ((cost-cur)/cost*100)) : 0;
-                        const dir = isLong ? 'LONG' : 'SHORT';
-                        const slKey = (p.code || p.symbol) + '|' + dir;
-                        const slData = _slMap[slKey];
-                        let slHtml = '--', rHtml = '--';
-                        if (slData && slData.sl_distance_pct != null) {
-                            const dist = slData.sl_distance_pct;
-                            slHtml = dist < 5 ? '<span style="color:' + (dist < 2 ? '#f87171' : '#fbbf24') + '">' + dist.toFixed(1) + '%</span>' : dist.toFixed(1) + '%';
-                            if (dist > 0) {
-                                const r = pnlPct / dist;
-                                rHtml = '<span style="' + (r >= 2 ? 'color:#4ade80' : r >= 0 ? '' : r >= -0.5 ? 'color:#fbbf24' : 'color:#f87171') + ';font-weight:600">' + (r >= 0 ? '+' : '') + r.toFixed(1) + 'R</span>';
-                            }
-                        }
-                        const sig = computeSignal(p, slData);
-                        _diagData[p.code || p.symbol] = {pos: p, slData, signal: sig, qty: Math.abs(p.qty), isLong};
+                        const qty = Math.abs(p.qty);
+                        const mv = p.market_val || p.market_value || qty * cur;
+                        const tPnl = p.today_pl || 0;
+                        const uPnl = p.unrealized_pl || p.unrealized_pnl || 0;
+                        const concPct = totalMv > 0 ? (mv / totalMv * 100) : 0;
+                        const concColor = concPct > 30 ? '#f87171' : concPct > 15 ? '#fbbf24' : '#58a6ff';
                         const sym = p.code || p.symbol;
-                        return `<tr>
-                            <td><a href="/stock/${escHtml(sym)}" style="color:#58a6ff;text-decoration:none"><b>${escHtml(sym)}</b></a></td>
-                            <td class="${isLong?'long':'short'}">${dir}</td>
-                            <td>${Math.abs(p.qty)}</td>
-                            <td>$${cost.toFixed(2)}</td>
-                            <td>${cur > 0 ? '$'+cur.toFixed(2) : '<span style="color:#484f58">--</span>'}</td>
-                            <td class="${pnlCls}">${pnl>=0?'+':''}$${pnl.toFixed(2)}</td>
-                            <td>${slHtml}</td>
-                            <td>${rHtml}</td>
-                            <td><span class="sig-wrap" onclick="showDiag('${escHtml(sym)}', this)"><span class="sig ${sig.color}" title="${sig.action}"></span></span></td>
-                            <td style="font-size:16px;text-align:center" title="${p.owner==='manual'?'手动下单':'系统自动'}">${ownerIcon}</td>
-                            <td><button class="btn-close" onclick="closePos('${escHtml(sym)}',${p.qty})">平仓</button></td>
+                        const codeShort = sym.replace('US.', '');
+                        const dirIcon = isLong ? '▲' : '▼';
+                        const dirCls = isLong ? 'long' : 'short';
+                        const tCls = tPnl >= 0 ? 'pnl-pos' : 'pnl-neg';
+                        const uCls = uPnl >= 0 ? 'pnl-pos' : 'pnl-neg';
+                        // PnL 趋势: 对比上次快照
+                        const prevU = _prevPnl[sym];
+                        const pnlDelta = prevU !== undefined ? uPnl - prevU : 0;
+                        const trendIcon = prevU === undefined ? '' : pnlDelta > 5 ? ' <span style="color:#4ade80;font-size:11px" title="盈利改善 +$'+pnlDelta.toFixed(0)+'">↑</span>' : pnlDelta < -5 ? ' <span style="color:#f87171;font-size:11px" title="盈利恶化 $'+pnlDelta.toFixed(0)+'">↓</span>' : ' <span style="color:#8b949e;font-size:11px" title="横盘">→</span>';
+                        _prevPnl[sym] = uPnl;
+                        // Build diag data for signal light popper
+                        const slKey = sym + '|' + (isLong ? 'LONG' : 'SHORT');
+                        const slData = _slMap[slKey];
+                        const sig = computeSignal(p, slData);
+                        _diagData[sym] = {pos: p, slData, signal: sig, qty, isLong};
+                        const currentSl = (slData && slData.stop_loss) || p.stop_loss || 0;
+                        return `<tr onclick="showDiag('${escHtml(sym)}', this)" style="cursor:pointer">
+                            <td>
+                                <span class="sig-dir ${dirCls}" style="font-size:11px;margin-right:4px">${dirIcon}</span>
+                                <a href="/stock/${encodeURIComponent(sym)}" style="color:#e1e4e8;text-decoration:none;font-weight:700" onclick="event.stopPropagation()">${escHtml(codeShort)}</a>
+                                <span class="sig ${sig.color}" style="width:10px;height:10px;vertical-align:middle;margin-left:6px" title="${sig.action}"></span>
+                                ${p.legacy ? `<span title="broker has position but system not managing" onclick="event.stopPropagation();takeoverPos('${sym}')" style="display:inline-block;font-size:9px;padding:1px 5px;margin-left:4px;background:#7c2d12;color:#fed7aa;border:1px solid #c2410c;border-radius:3px;cursor:pointer;font-weight:700">未管理</span>` : ''}
+                            </td>
+                            <td style="text-align:right">
+                                <div style="font-weight:600">$${mv >= 1000 ? (mv/1000).toFixed(1)+'K' : mv.toFixed(0)}</div>
+                                <div style="font-size:11px;color:#8b949e">${qty}股</div>
+                            </td>
+                            <td style="text-align:right">
+                                <div style="font-weight:600">${cur > 0 ? '$'+cur.toFixed(2) : '--'}</div>
+                                <div style="font-size:11px;color:#8b949e">$${cost.toFixed(2)}</div>
+                            </td>
+                            <td style="text-align:right" class="${tCls}">${tPnl ? (tPnl>=0?'+':'')+'$'+Math.abs(tPnl).toFixed(2) : '--'}</td>
+                            <td style="text-align:right" class="${uCls}">${uPnl>=0?'+':''}$${uPnl.toFixed(2)}${trendIcon}</td>
+                            <td style="text-align:center">
+                                <div style="font-size:12px;font-weight:600">${concPct.toFixed(1)}%</div>
+                                <div style="height:3px;background:#21262d;border-radius:2px;margin-top:3px"><div style="height:100%;width:${Math.min(concPct,100)}%;background:${concColor};border-radius:2px"></div></div>
+                            </td>
                         </tr>`;
                     }).join('');
 
                     cardsEl.innerHTML = positions.map(p => {
                         const isLong = p.direction === 'LONG';
-                        const pnl = p.unrealized_pl || p.unrealized_pnl || 0;
-                        const pnlCls = pnl >= 0 ? 'pnl-pos' : 'pnl-neg';
                         const cost = p.cost_price || p.cost || 0;
                         const cur = p.cur_price || p.current || 0;
-                        const pnlPctStr = (cost > 0 && cur > 0) ? ((isLong ? ((cur-cost)/cost*100) : ((cost-cur)/cost*100)).toFixed(1)) : '--';
+                        const qty = Math.abs(p.qty);
+                        const mv = p.market_val || p.market_value || qty * cur;
+                        const tPnl = p.today_pl || 0;
+                        const uPnl = p.unrealized_pl || p.unrealized_pnl || 0;
+                        const concPct = totalMv > 0 ? (mv / totalMv * 100) : 0;
                         const sym = p.code || p.symbol;
-                        const sig = _diagData[sym] ? _diagData[sym].signal : {color: 'green', action: '安心持有'};
+                        const codeShort = sym.replace('US.', '');
+                        const dirIcon = isLong ? '▲' : '▼';
+                        const dirCls = isLong ? 'long' : 'short';
+                        const uCls = uPnl >= 0 ? 'pnl-pos' : 'pnl-neg';
+                        const prevUm = _prevPnl[sym + '_m'];
+                        const pnlDm = prevUm !== undefined ? uPnl - prevUm : 0;
+                        const trendM = prevUm === undefined ? '' : pnlDm > 5 ? ' <span style="color:#4ade80">↑</span>' : pnlDm < -5 ? ' <span style="color:#f87171">↓</span>' : ' <span style="color:#8b949e">→</span>';
+                        _prevPnl[sym + '_m'] = uPnl;
+                        const slKey = sym + '|' + (isLong ? 'LONG' : 'SHORT');
+                        const slData = _slMap[slKey];
+                        const currentSl = (slData && slData.stop_loss) || p.stop_loss || 0;
                         return `<div class="pos-card-m">
                             <div class="pos-card-m-header">
-                                <span class="code"><a href="/stock/${escHtml(sym)}" style="color:#58a6ff;text-decoration:none">${escHtml(sym)}</a></span>
-                                <span class="${isLong?'long':'short'}" style="font-size:13px">${isLong?'📈 LONG':'📉 SHORT'} ${Math.abs(p.qty)}股</span>
+                                <span><span class="sig-dir ${dirCls}" style="margin-right:4px">${dirIcon}</span><a href="/stock/${encodeURIComponent(sym)}" style="color:#e1e4e8;text-decoration:none;font-weight:700;font-size:15px">${escHtml(codeShort)}</a>${p.legacy ? `<span onclick="event.stopPropagation();takeoverPos('${sym}')" style="display:inline-block;font-size:9px;padding:1px 5px;margin-left:4px;background:#7c2d12;color:#fed7aa;border:1px solid #c2410c;border-radius:3px;cursor:pointer;font-weight:700">未管理</span>` : ''}</span>
+                                <span style="font-size:12px;color:#8b949e">${concPct.toFixed(1)}%</span>
                             </div>
-                            <div class="pos-card-m-row"><span class="label">成本</span><span>$${cost.toFixed(2)}</span></div>
-                            <div class="pos-card-m-row"><span class="label">现价</span><span>${cur > 0 ? '$'+cur.toFixed(2) : '盘后'}</span></div>
-                            <div class="pos-card-m-row"><span class="label">盈亏</span><span class="${pnlCls}">${pnl>=0?'+':''}$${pnl.toFixed(2)} (${pnl>=0?'+':''}${pnlPctStr}%)</span></div>
-                            <div class="pos-card-m-row"><span class="label">信号</span><span><span class="sig ${sig.color}" style="width:12px;height:12px;vertical-align:middle;margin-right:4px"></span>${sig.action}</span></div>
+                            <div class="pos-card-m-row"><span class="label">市值</span><span>$${mv >= 1000 ? (mv/1000).toFixed(1)+'K' : mv.toFixed(0)} · ${qty}股</span></div>
+                            <div class="pos-card-m-row"><span class="label">现价/成本</span><span>${cur > 0 ? '$'+cur.toFixed(2) : '--'} / $${cost.toFixed(2)}</span></div>
+                            <div class="pos-card-m-row"><span class="label">今日盈亏</span><span class="${tPnl >= 0 ? 'pnl-pos' : 'pnl-neg'}">${tPnl ? (tPnl>=0?'+':'')+'$'+Math.abs(tPnl).toFixed(2) : '--'}</span></div>
+                            <div class="pos-card-m-row"><span class="label">持仓盈亏</span><span class="${uCls}">${uPnl>=0?'+':''}$${uPnl.toFixed(2)}${trendM}</span></div>
                             <div class="pos-card-m-actions">
-                                <a href="/stock/${encodeURIComponent(sym)}" class="btn btn-sm btn-ghost">详情</a>
-                                <button class="btn btn-sm" style="border-color:#ef4444;color:#f87171" onclick="closePos('${escHtml(sym)}',${p.qty})">平仓</button>
+                                <button class="btn btn-sm" style="border-color:#ef4444;color:#f87171;flex:1" onclick="closePos('${escHtml(sym)}',${qty})">平仓</button>
                             </div>
                         </div>`;
                     }).join('');
                 }
+
+                // ── 注意力优先引擎: 扫描持仓，置顶最紧急事项 ──
+                updateAttentionBanner(positions);
 
                 // Orders
                 const orders = d.orders || [];
@@ -906,7 +1193,11 @@
                         </tr>`;
                     }).join('');
                 }
-            } catch (e) { console.error('Trade snapshot error:', e); }
+            } catch (e) {
+                console.error('Trade snapshot error:', e);
+                const dot = document.querySelector('.ts-dot');
+                if (dot) dot.classList.add('stale');
+            }
         }
 
         async function loadTradeSlowData() {
@@ -1080,12 +1371,33 @@
             const params = new URLSearchParams(window.location.search);
             const sym = params.get('symbol');
             const dir = params.get('direction');
+            const qty = params.get('qty');
+            const orderType = params.get('order_type');
+            const price = params.get('price');
+            const tif = params.get('tif');
+            const session = params.get('session');
+            const op = params.get('op');
             if (sym) {
                 document.getElementById('symbol').value = sym;
                 fetchQuote();
             }
             if (dir) {
                 setDir(dir.toUpperCase());
+            }
+            if (op) {
+                setOp(op.toUpperCase());
+            }
+            if (orderType) {
+                const otEl = document.getElementById('orderType');
+                if (otEl) { otEl.value = orderType.toUpperCase(); otEl.dispatchEvent(new Event('change')); }
+            }
+            if (price) {
+                const priceEl = document.getElementById('limitPrice');
+                if (priceEl) priceEl.value = parseFloat(price);
+            }
+            if (qty) {
+                const q = parseInt(qty);
+                if (q > 0) setQty(q);
             }
         })();
 {% endblock %}

@@ -872,8 +872,9 @@ class TradingScheduler:
         from app.coordinator.strategy_coordinator import get_coordinator
         from app.core.paths import get_decisions_db
 
+        # P1-7 (2026-06-12): enable persistent capital ledger
         capital = CapitalAllocator(caps=caps, max_total_pct=max_total, observe_only=observe_only,
-                                   bucket_map=bucket_map)
+                                   bucket_map=bucket_map, db_path=str(get_decisions_db()))
         symlock = SymbolLockManager(observe_only=observe_only)
         arb = SignalArbitrator(audit_db_path=str(get_decisions_db()), audit_enabled=True)
         dispatcher = ExitDispatcher()
@@ -1344,8 +1345,64 @@ class TradingScheduler:
                 if '26' in symbol or symbol.endswith('P') or symbol.endswith('C'):
                     # 期权由 position_sync 单独处理
                     continue
-                # TODO: 恢复股票持仓到 PositionStore
-                logger.debug(f"[调度器] 跳过股票持仓恢复：{symbol} (待实现)")
+                # 恢复股票持仓到 PositionStore (2026-06-12 实现)
+                try:
+                    direction = Direction.SHORT if db_pos.get("direction", "").upper() == "SHORT" else Direction.LONG
+                    try:
+                        regime = MarketRegime(db_pos.get("market_regime", "RANGE"))
+                    except (ValueError, KeyError):
+                        regime = MarketRegime.RANGE
+
+                    entry_time_str = db_pos.get("entry_time", "")
+                    if entry_time_str:
+                        try:
+                            from datetime import datetime as _dt
+                            entry_time = _dt.fromisoformat(str(entry_time_str))
+                        except (ValueError, TypeError):
+                            entry_time = __import__("datetime").datetime.now()
+                    else:
+                        entry_time = __import__("datetime").datetime.now()
+
+                    position = Position(
+                        strategy_id=db_pos.get("strategy_id", "") or "main_pipeline",
+                        signal_id=db_pos.get("signal_id", ""),
+                        symbol=symbol,
+                        direction=direction,
+                        size=float(db_pos.get("size", 0)),
+                        avg_entry_price=float(db_pos.get("avg_entry_price", 0)),
+                        initial_sl=float(db_pos.get("initial_sl", 0) or 0),
+                        initial_tp=float(db_pos.get("initial_tp", 0) or 0),
+                        current_sl=float(db_pos.get("current_sl", 0) or 0),
+                        take_profit_levels=db_pos.get("take_profit_levels", []),
+                        time_stop_hours=int(db_pos.get("time_stop_hours", 72) or 72),
+                        market_regime=regime,
+                    )
+                    position.entry_time = entry_time
+                    position.trail_state = db_pos.get("trail_state", {}) or {}
+                    position.owner_strategy = (
+                        db_pos.get("owner_strategy")
+                        or db_pos.get("strategy_id")
+                        or "main"
+                    )
+                    if db_pos.get("position_id"):
+                        position.position_id = db_pos["position_id"]
+                    if db_pos.get("trace_id"):
+                        position.trace_id = db_pos["trace_id"]
+
+                    # 异常仓位标记: 允许恢复但阻止自动平仓
+                    if db_pos.get("is_anomalous"):
+                        position.metadata = position.metadata or {}
+                        position.metadata["_close_blocked"] = True
+                        position.metadata["_close_blocked_reason"] = "DB is_anomalous=1"
+
+                    self.position_store.add(symbol, position)
+                    logger.info(
+                        f"[调度器·对账] ✅ 恢复股票持仓 {symbol} {direction.value} "
+                        f"{int(position.size)}股 @ ${position.avg_entry_price:.2f} "
+                        f"SL=${position.current_sl:.2f}"
+                    )
+                except Exception as restore_err:
+                    logger.warning(f"[调度器·对账] ❌ 恢复 {symbol} 失败: {restore_err}")
             
             # 内存有但 DB 无 → 同步到 DB（可能是内存中未持久化的新持仓）
             for symbol in mem_symbols - db_symbols:

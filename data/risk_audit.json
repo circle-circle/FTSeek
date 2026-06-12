@@ -180,5 +180,12 @@
     "new_state": "NORMAL",
     "reason": "Auto Recovery: Cooldown + Market Confirmed (VIX=21.2\u2713 SPY=-1.61%\u2713)",
     "source": "System"
+  },
+  {
+    "time": "2026-06-12T22:30:04.344098",
+    "old_state": "NORMAL",
+    "new_state": "HALT",
+    "reason": "Kill Switch activated",
+    "source": "EmergencyInterceptor"
   }
 ]

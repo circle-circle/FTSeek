@@ -1,0 +1,1177 @@
+{% extends "base.html" %}
+{% block title %}{{ title }}{% endblock %}
+
+{% block nav_trade_class %}class="active"{% endblock %}
+{% block nav_trade_class2 %}class="active"{% endblock %}
+{% block nav_trade_class3 %}class="active"{% endblock %}
+
+{% block nav_extra %}
+<span class="mode-tag {{ 'live' if is_live else 'sim' }}">{{ '🔴 实盘' if is_live else '🟢 模拟' }}</span>
+{% endblock %}
+{% block nav_extra_tablet %}
+<span class="mode-tag {{ 'live' if is_live else 'sim' }}">{{ '🔴 实盘' if is_live else '🟢 模拟' }}</span>
+{% endblock %}
+{% block nav_extra_mobile %}
+<span class="mode-tag {{ 'live' if is_live else 'sim' }}" style="margin-left:0">{{ '🔴 实盘' if is_live else '🟢 模拟' }}</span>
+{% endblock %}
+
+{% block extra_css %}
+        /* ── Trade Summary Strip ── */
+        .trade-summary { display: flex; align-items: center; gap: 4px; padding: 8px 12px; background: #161b22; border: 1px solid #30363d; border-radius: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+        .ts-item { display: flex; flex-direction: column; align-items: center; padding: 4px 12px; min-width: 70px; }
+        .ts-label { font-size: 10px; color: #8b949e; text-transform: uppercase; letter-spacing: 0.3px; }
+        .ts-val { font-size: 14px; font-weight: 700; color: #e1e4e8; margin-top: 2px; }
+        .ts-val.green { color: #4ade80; }
+        .ts-val.red { color: #f87171; }
+        .ts-val.yellow { color: #fbbf24; }
+        .ts-live { margin-left: auto; display: flex; align-items: center; }
+        .ts-dot { width: 7px; height: 7px; border-radius: 50%; background: #4ade80; box-shadow: 0 0 4px #4ade80; animation: tsPulse 2s infinite; }
+        .ts-dot.stale { background: #8b949e; box-shadow: none; animation: none; }
+        @keyframes tsPulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+        .audit-period { padding: 4px 10px; font-size: 11px; min-height: 28px; }
+        .audit-period.active { border-color: #58a6ff; color: #58a6ff; }
+        .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+        .form-group { display: flex; flex-direction: column; gap: 4px; }
+        .form-group.full { grid-column: 1 / -1; }
+        label { font-size: 11px; font-weight: 600; color: #8b949e; text-transform: uppercase; letter-spacing: 0.5px; }
+        input, select, textarea { background: #0d1117; border: 1px solid #30363d; border-radius: 6px; padding: 10px 12px; color: #e1e4e8; font-size: 14px; outline: none; }
+        input:focus, select:focus { border-color: #58a6ff; }
+        textarea { resize: vertical; min-height: 40px; }
+        .dir-group { display: flex; gap: 6px; }
+        .dir-btn { flex: 1; padding: 10px; border: 2px solid #30363d; border-radius: 6px; background: #0d1117; color: #8b949e; font-size: 13px; font-weight: 700; cursor: pointer; text-align: center; min-height: 44px; display: flex; align-items: center; justify-content: center; }
+        .dir-btn.active.long { border-color: #22c55e; background: #0a2a1a; color: #4ade80; }
+        .dir-btn.active.short { border-color: #ef4444; background: #2a0a0a; color: #f87171; }
+        .dir-btn.active.open { border-color: #58a6ff; background: #0a1a2a; color: #58a6ff; }
+        .dir-btn.active.close { border-color: #f59e0b; background: #2a1a0a; color: #fbbf24; }
+
+        /* ── Quantity controls: ±buttons + percentage shortcuts ── */
+        .qty-row { display: flex; align-items: center; gap: 6px; }
+        .qty-row input { flex: 1; text-align: center; font-size: 16px; font-weight: 700; }
+        .qty-step { width: 40px; height: 40px; border: 1px solid #30363d; border-radius: 6px; background: #0d1117; color: #e1e4e8; font-size: 18px; font-weight: 700; cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+        .qty-step:hover { border-color: #58a6ff; color: #58a6ff; }
+        .qty-step:active { background: #161b22; }
+        .pct-row { display: flex; gap: 4px; margin-top: 6px; }
+        .pct-btn { flex: 1; padding: 8px 4px; border: 1px solid #30363d; border-radius: 5px; background: #0d1117; color: #8b949e; font-size: 12px; font-weight: 600; cursor: pointer; text-align: center; min-height: 36px; }
+        .pct-btn:hover { border-color: #58a6ff; color: #58a6ff; }
+
+        .quote-box { background: #0d1117; border: 1px solid #30363d; border-radius: 6px; padding: 12px; margin: 10px 0; }
+        .quote-price { font-size: 24px; font-weight: 700; }
+        .quote-detail { font-size: 12px; color: #8b949e; margin-top: 4px; }
+        /* ── Fund info (资金信息) ── */
+        .fund-info { background: #0d1117; border: 1px solid #30363d; border-radius: 6px; padding: 10px 14px; margin: 8px 0; }
+        .fund-row { display: flex; justify-content: space-between; align-items: center; padding: 4px 0; }
+        .fund-row + .fund-row { border-top: 1px solid #21262d; }
+        .fund-label { font-size: 12px; color: #8b949e; }
+        .fund-val { font-size: 14px; font-weight: 700; }
+        .fund-val.g { color: #4ade80; }
+        .fund-val.o { color: #fb923c; }
+        .fund-val.r { color: #f87171; }
+        .btn-group { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+        .btn-group .btn { flex: 1; min-width: 120px; text-align: center; }
+        /* Existing position hint */
+        .held-hint { background: #0a1a2a; border: 1px solid #1f3a5f; border-radius: 6px; padding: 8px 12px; margin: 8px 0; font-size: 12px; color: #58a6ff; display: none; }
+        .held-hint.show { display: flex; align-items: center; gap: 8px; }
+        .held-hint .held-icon { font-size: 16px; }
+        /* Table */
+        .tw { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+        table { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 500px; }
+        th { text-align: left; padding: 8px 6px; border-bottom: 1px solid #30363d; color: #8b949e; font-weight: 600; font-size: 11px; text-transform: uppercase; white-space: nowrap; }
+        td { padding: 8px 6px; border-bottom: 1px solid #21262d; white-space: nowrap; }
+        .pnl-pos { color: #4ade80; font-weight: 600; }
+        .pnl-neg { color: #f87171; font-weight: 600; }
+        .btn-close { border: 1px solid #ef4444; color: #f87171; background: transparent; border-radius: 6px; padding: 8px 14px; font-size: 12px; cursor: pointer; min-height: 36px; }
+        .btn-close:hover { background: #2a0a0a; }
+        .btn-cancel { border: 1px solid #f59e0b; color: #fbbf24; background: transparent; border-radius: 6px; padding: 8px 14px; font-size: 12px; cursor: pointer; min-height: 36px; }
+        /* Position card view (mobile only) */
+        .pos-cards-mobile { display: none; }
+        .pos-card-m { background: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 12px; margin-bottom: 8px; }
+        .pos-card-m-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+        .pos-card-m-header .code { font-weight: 700; font-size: 15px; }
+        .pos-card-m-row { display: flex; justify-content: space-between; font-size: 12px; padding: 3px 0; }
+        .pos-card-m-row .label { color: #8b949e; }
+        .pos-card-m-actions { margin-top: 8px; display: flex; gap: 8px; }
+        .pos-card-m-actions .btn { flex: 1; text-align: center; }
+        .result { padding: 10px; border-radius: 6px; margin-top: 10px; display: none; font-size: 13px; }
+        .result.ok { background: #0a2a1a; border: 1px solid #22c55e; color: #4ade80; }
+        .result.err { background: #2a0a0a; border: 1px solid #ef4444; color: #f87171; }
+        .estimate-panel { background: #0d1117; border: 1px solid #30363d; border-radius: 6px; padding: 10px 12px; margin-top: 10px; display: none; font-size: 13px; }
+        .estimate-panel.show { display: block; }
+        .estimate-panel .est-line { padding: 3px 0; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+        .estimate-panel .est-line .est-seg { white-space: nowrap; }
+        .estimate-panel .est-line .est-k { color: #8b949e; font-size: 11px; }
+        .estimate-panel .est-line .est-v { font-weight: 600; }
+        .estimate-panel .est-line .est-v.g { color: #4ade80; }
+        .estimate-panel .est-line .est-v.y { color: #fbbf24; }
+        .estimate-panel .est-line .est-v.r { color: #f87171; }
+        .estimate-panel .est-warn { color: #fbbf24; font-weight: 600; margin-top: 6px; padding: 6px 8px; background: #2a1a0a; border: 1px solid #f59e0b; border-radius: 4px; font-size: 12px; }
+        .estimate-panel .est-danger { color: #f87171; font-weight: 600; margin-top: 6px; padding: 6px 8px; background: #2a0a0a; border: 1px solid #ef4444; border-radius: 4px; font-size: 12px; }
+        /* Signal light */
+        .sig-wrap { display: inline-block; padding: 8px; cursor: pointer; }
+        .sig { width: 16px; height: 16px; border-radius: 50%; display: inline-block; }
+        .sig.green { background: #4ade80; box-shadow: 0 0 6px rgba(74,222,128,0.5); }
+        .sig.yellow { background: #fbbf24; box-shadow: 0 0 6px rgba(251,191,36,0.5); }
+        .sig.red { background: #f87171; box-shadow: 0 0 6px rgba(248,113,113,0.5); }
+        /* Diagnostic popper */
+        .diag-overlay { display: none; position: fixed; inset: 0; z-index: 90; }
+        .diag-overlay.show { display: block; }
+        .diag-card { position: fixed; z-index: 100; background: #161b22; border: 1px solid #30363d; border-radius: 10px; padding: 16px; width: 320px; max-width: calc(100vw - 20px); box-shadow: 0 8px 24px rgba(0,0,0,0.5); display: none; }
+        .diag-card.show { display: block; }
+        .diag-card .diag-header { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+        .diag-card .diag-sym { font-size: 16px; font-weight: 700; }
+        .diag-card .diag-dir { font-size: 12px; padding: 2px 8px; border-radius: 3px; font-weight: 600; }
+        .diag-card .diag-dir.long { background: rgba(74,222,128,0.15); color: #4ade80; }
+        .diag-card .diag-dir.short { background: rgba(248,113,113,0.15); color: #f87171; }
+        .diag-card .diag-action { font-size: 13px; font-weight: 600; padding: 6px 10px; border-radius: 5px; margin-bottom: 10px; }
+        .diag-card .diag-action.hold { background: rgba(74,222,128,0.1); color: #4ade80; border: 1px solid rgba(74,222,128,0.2); }
+        .diag-card .diag-action.caution { background: rgba(251,191,36,0.1); color: #fbbf24; border: 1px solid rgba(251,191,36,0.2); }
+        .diag-card .diag-action.exit { background: rgba(248,113,113,0.1); color: #f87171; border: 1px solid rgba(248,113,113,0.2); }
+        .diag-card .diag-reason { font-size: 12px; padding: 3px 0; color: #c9d1d9; }
+        .diag-btns { display: flex; gap: 6px; margin-top: 10px; }
+        .diag-btn { flex: 1; padding: 10px 8px; border: 1px solid #30363d; border-radius: 5px; background: #0d1117; color: #8b949e; cursor: pointer; font-size: 12px; text-align: center; text-decoration: none; display: block; min-height: 44px; display: flex; align-items: center; justify-content: center; }
+        .diag-btn:hover { border-color: #58a6ff; color: #58a6ff; }
+        .diag-btn.danger { border-color: #f87171; color: #f87171; }
+        .diag-btn.danger:hover { background: #2a0a0a; }
+        /* Preview modal */
+        .overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 100; align-items: center; justify-content: center; }
+        .overlay.show { display: flex; }
+        .modal { background: #161b22; border: 1px solid #30363d; border-radius: 10px; padding: 24px; max-width: 440px; width: 92%; }
+        .modal h3 { margin-bottom: 12px; font-size: 16px; }
+        .preview-row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #21262d; }
+        .preview-row:last-child { border-bottom: none; }
+        .preview-row .pk { color: #8b949e; font-size: 13px; }
+        .preview-row .pv { font-weight: 600; font-size: 14px; text-align: right; }
+
+        @media (max-width: 768px) {
+            .form-grid { grid-template-columns: 1fr; }
+            .cap-grid { grid-template-columns: repeat(2, 1fr); }
+            .dir-group { flex-wrap: wrap; }
+            .diag-card { width: calc(100vw - 20px); left: 10px !important; right: 10px; }
+            .pos-table-wrap { display: none; }
+            .pos-cards-mobile { display: block; }
+            .quote-detail { word-break: break-all; }
+            table { min-width: 400px; }
+            .estimate-panel .est-line { gap: 8px; }
+            .trade-summary { gap: 2px; padding: 6px 8px; }
+            .ts-item { padding: 3px 8px; min-width: 55px; }
+            .ts-val { font-size: 12px; }
+        }
+
+        @media (max-width: 480px) {
+            .cap-grid { grid-template-columns: 1fr 1fr; gap: 4px; }
+            .cap-item .cv { font-size: 14px; }
+            .btn-group { flex-direction: column; }
+            .btn-group .btn { min-width: 100%; }
+            table { min-width: 350px; }
+        }
+{% endblock %}
+
+{% block content %}
+    <div class="container">
+        <!-- ═══ 账户摘要条 (实时) ═══ -->
+        <div class="trade-summary" id="tradeSummary">
+            <div class="ts-item"><span class="ts-label">总资产</span><span class="ts-val" id="tsAssets">--</span></div>
+            <div class="ts-item"><span class="ts-label">购买力</span><span class="ts-val" id="tsPower">--</span></div>
+            <div class="ts-item"><span class="ts-label">保证金</span><span class="ts-val" id="tsMargin">--</span></div>
+            <div class="ts-item"><span class="ts-label">今日盈亏</span><span class="ts-val" id="tsPnl">--</span></div>
+            <div class="ts-item"><span class="ts-label">持仓数</span><span class="ts-val" id="tsPosCount">--</span></div>
+            <div class="ts-live" id="tsLive" title="数据刷新状态"><span class="ts-dot"></span></div>
+        </div>
+
+        <!-- ═══ 下单表单 ═══ -->
+        <div class="card" id="orderFormCard">
+            <div class="form-grid">
+                        <div class="form-group">
+                            <label>标的</label>
+                            <input type="text" id="symbol" placeholder="AAPL 或 US.AAPL" autocomplete="off">
+                        </div>
+                        <div class="form-group">
+                            <label>类型</label>
+                            <select id="orderType">
+                                <option value="MARKET">市价 MARKET</option>
+                                <option value="LIMIT">限价 LIMIT</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>方向</label>
+                            <div class="dir-group">
+                                <div class="dir-btn long active" data-dir="LONG" onclick="setDir('LONG')">📈 做多</div>
+                                <div class="dir-btn short" data-dir="SHORT" onclick="setDir('SHORT')">📉 做空</div>
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label>操作</label>
+                            <div class="dir-group">
+                                <div class="dir-btn open active" data-op="OPEN" onclick="setOp('OPEN')">🔓 开仓</div>
+                                <div class="dir-btn close" data-op="CLOSE" onclick="setOp('CLOSE')">🔒 平仓</div>
+                            </div>
+                        </div>
+                        <div class="form-group" id="priceGroup" style="display:none">
+                            <label>限价 ($)</label>
+                            <input type="number" id="limitPrice" step="0.01" placeholder="0.00">
+                        </div>
+                        <div class="form-group">
+                            <label>数量</label>
+                            <input type="number" id="quantity" min="1" max="100000" placeholder="股数">
+                        </div>
+                    </div>
+
+                    <!-- 资金信息 (报价加载后显示) -->
+                    <div class="fund-info" id="fundInfo" style="display:none">
+                        <div class="fund-row">
+                            <span class="fund-label">可用现金</span>
+                            <span class="fund-val g" id="fundCash">--</span>
+                        </div>
+                        <div class="fund-row">
+                            <span class="fund-label">最大购买力</span>
+                            <span class="fund-val" id="fundPower">--</span>
+                        </div>
+                        <div class="fund-row" id="fundHeldRow" style="display:none">
+                            <span class="fund-label">当前持仓</span>
+                            <span class="fund-val" id="fundHeld">--</span>
+                        </div>
+                        <div class="fund-row" id="fundShortRow">
+                            <span class="fund-label">可做空</span>
+                            <span class="fund-val o" id="fundShort">--</span>
+                        </div>
+                    </div>
+
+                    <!-- Existing position hint for same symbol -->
+                    <div class="held-hint" id="heldHint">
+                        <span class="held-icon">📌</span>
+                        <span id="heldHintText"></span>
+                    </div>
+
+                    <div class="quote-box" id="quoteBox" style="display:none">
+                        <div class="quote-price" id="quotePrice">--</div>
+                        <div class="quote-detail" id="quoteDetail"></div>
+                    </div>
+
+                    <div class="estimate-panel" id="estimatePanel">
+                        <div class="est-line">
+                            <span class="est-seg"><span class="est-k">预估成本</span> <span class="est-v" id="estCost">--</span></span>
+                            <span class="est-seg"><span class="est-k">预估保证金</span> <span class="est-v" id="estMargin">--</span></span>
+                            <span class="est-seg"><span class="est-k">占用购买力</span> <span class="est-v" id="estBpPct">--</span></span>
+                        </div>
+                        <div id="estWarning"></div>
+                    </div>
+
+                    <div class="btn-group">
+                        <button class="btn btn-buy" id="btnSubmit" onclick="previewOrder()">预览下单</button>
+                        <button class="btn btn-ghost" onclick="fetchQuote()">刷新报价</button>
+                    </div>
+                    <div class="result" id="result"></div>
+        </div>
+
+        <!-- 持仓 -->
+        <div class="card">
+                    <h2>📊 持仓 <span id="posCount" style="font-size:12px;color:#8b949e"></span>
+                        <button class="btn btn-ghost btn-sm" onclick="loadPositions()">刷新</button>
+                    </h2>
+                    <!-- Desktop: table view -->
+                    <div class="pos-table-wrap">
+                        <div class="tw">
+                            <table>
+                                <thead><tr>
+                                    <th>代码</th><th style="text-align:right">市值/数量</th><th style="text-align:right">现价/成本</th><th style="text-align:right">今日盈亏</th><th style="text-align:right">持仓盈亏</th><th style="text-align:center">占比</th>
+                                </tr></thead>
+                                <tbody id="posBody"><tr><td colspan="6" class="loading">加载中...</td></tr></tbody>
+                            </table>
+                        </div>
+                    </div>
+                    <!-- Mobile: card view -->
+                    <div class="pos-cards-mobile" id="posCards"></div>
+                </div>
+        </div>
+
+        <!-- Order tracking -->
+        <div class="card">
+            <h2>📡 今日订单 <button class="btn btn-ghost btn-sm" onclick="loadOrders()">刷新</button></h2>
+            <div class="tw">
+                <table>
+                    <thead><tr>
+                        <th>订单ID</th><th>标的</th><th>方向</th><th>数量</th><th>价格</th><th>状态</th><th>时间</th><th></th>
+                    </tr></thead>
+                    <tbody id="ordersBody"><tr><td colspan="8" class="loading">加载中...</td></tr></tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Audit trail (collapsible) -->
+        <div class="card">
+            <button type="button" class="audit-toggle" onclick="toggleAudit()" style="display:flex;align-items:center;gap:8px;width:100%;background:none;border:none;color:#58a6ff;font-size:15px;font-weight:700;cursor:pointer;padding:0;text-align:left">
+                📋 操作记录 <span id="auditArrow" style="font-size:12px;color:#8b949e">▶</span>
+                <span id="auditHeaderInfo" style="font-size:12px;color:#8b949e;font-weight:400;margin-left:auto"></span>
+            </button>
+            <div id="auditBody" style="display:none;margin-top:10px">
+                <div style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap;align-items:center">
+                    <button class="btn btn-sm audit-period active" data-mode="latest" onclick="setAuditMode('latest', this)">最新交易日</button>
+                    <button class="btn btn-sm audit-period" data-mode="7" onclick="setAuditMode('7', this)">7天</button>
+                    <button class="btn btn-sm audit-period" data-mode="all" onclick="setAuditMode('all', this)">全部</button>
+                    <span style="flex:1"></span>
+                    <button class="btn btn-ghost btn-sm" onclick="loadAudit()">刷新</button>
+                </div>
+                <div class="tw">
+                    <table>
+                        <thead><tr>
+                            <th>时间</th><th>标的</th><th>方向</th><th>数量</th><th>类型</th><th>状态</th><th>理由</th>
+                        </tr></thead>
+                        <tbody id="auditTbody"><tr><td colspan="7" class="loading">加载中...</td></tr></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- 手动交易绩效面板 (折叠) -->
+        <div class="card">
+            <div style="display:flex;justify-content:space-between;align-items:center;cursor:pointer" onclick="var b=document.getElementById('manualPerfBody'),a=document.getElementById('manualPerfArrow');b.style.display=b.style.display==='none'?'block':'none';a.textContent=b.style.display==='none'?'▶':'▼'">
+                <h2 style="margin:0">📊 手动交易绩效</h2>
+                <span id="manualPerfArrow" style="font-size:12px;color:#8b949e">▶</span>
+            </div>
+            <div id="manualPerfBody" style="display:none;margin-top:8px">
+                <div id="manualPerf"><div class="loading">加载中...</div></div>
+                <button class="btn btn-ghost btn-sm" onclick="loadManualPerf()" style="margin-top:8px">刷新</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Preview modal — 预览即确认，无CONFIRM输入 -->
+    <div class="overlay" id="previewModal">
+        <div class="modal">
+            <h3 id="previewTitle">📋 订单预览</h3>
+            <div id="previewContent" style="margin:12px 0"></div>
+            <div class="btn-group">
+                <button class="btn btn-buy" id="confirmBtn" onclick="executeOrder()">确认下单</button>
+                <button class="btn btn-ghost" onclick="closePreview()">取消</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Close position modal (平仓 + 止损/止盈合一) -->
+    <div class="overlay" id="closeModal">
+        <div class="modal">
+            <h3 id="closeTitle">🔒 平仓</h3>
+            <div style="margin:12px 0">
+                <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid #21262d">
+                    <span style="color:#8b949e">标的</span><span id="closeSym" style="font-weight:600"></span>
+                </div>
+                <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid #21262d">
+                    <span style="color:#8b949e">持仓</span><span id="closeTotalQty"></span>
+                </div>
+                <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid #21262d">
+                    <span style="color:#8b949e">现价</span><span id="closeCurPrice">--</span>
+                </div>
+                <div class="form-group" style="margin-top:12px">
+                    <label>数量</label>
+                    <input type="number" id="closeQtyInput" min="1" style="margin-top:4px">
+                    <div style="font-size:11px;color:#8b949e;margin-top:4px">留空 = 全部平仓</div>
+                </div>
+                <div class="form-group" style="margin-top:10px">
+                    <label>限价 (可选)</label>
+                    <input type="number" id="closePriceInput" step="0.01" style="margin-top:4px">
+                    <div style="font-size:11px;color:#8b949e;margin-top:4px">填写 = 限价平仓 (止损/止盈)；留空 = 市价平仓</div>
+                </div>
+                <div class="form-group" style="margin-top:10px">
+                    <label>理由</label>
+                    <input type="text" id="closeReasonInput" style="margin-top:4px">
+                </div>
+            </div>
+            <div id="closeError" style="display:none;color:#f87171;font-size:12px;padding:6px 10px;background:#2a0a0a;border:1px solid #ef4444;border-radius:4px;margin-bottom:8px"></div>
+            <div class="btn-group">
+                <button class="btn btn-sell" id="closeConfirmBtn" onclick="executeClose()">确认平仓</button>
+                <button class="btn btn-ghost" onclick="closeCloseModal()">取消</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Result toast modal -->
+    <div class="overlay" id="resultModal">
+        <div class="modal" style="max-width:360px;text-align:center">
+            <div id="resultIcon" style="font-size:40px;margin-bottom:12px"></div>
+            <div id="resultMsg" style="font-size:15px;line-height:1.5;margin-bottom:16px"></div>
+            <button class="btn btn-ghost" onclick="document.getElementById('resultModal').classList.remove('show')">确定</button>
+        </div>
+    </div>
+
+    <div class="diag-overlay" id="diagOverlay" onclick="hideDiag()"></div>
+    <div class="diag-card" id="diagCard"></div>
+{% endblock %}
+
+{% block scripts %}
+        let curDir = 'LONG', curOp = 'OPEN', curQuote = null, curCap = null, pendingOrder = null;
+        const isLive = {{ 'true' if is_live else 'false' }};
+
+        async function takeoverPos(symbol) {
+    try {
+        const resp = await fetch('/api/positions/takeover', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({symbol: symbol, owner: 'manual'})
+        });
+        const data = await resp.json();
+        if (data.success) {
+            alert('✅ ' + (data.message || symbol + ' 已纳入管理'));
+            if (typeof refreshAll === 'function') refreshAll();
+            else location.reload();
+        } else {
+            alert('❌ 失败: ' + (data.error || '未知错误'));
+        }
+    } catch (e) {
+        alert('❌ 请求失败: ' + e.message);
+    }
+}
+
+function escHtml(s) {
+            return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+        }
+
+        function setDir(d) {
+            curDir = d;
+            document.querySelectorAll('[data-dir]').forEach(b => b.classList.remove('active'));
+            document.querySelector(`[data-dir="${d}"]`).classList.add('active');
+            updateEstimate();
+        }
+        function setOp(o) {
+            curOp = o;
+            document.querySelectorAll('[data-op]').forEach(b => b.classList.remove('active'));
+            document.querySelector(`[data-op="${o}"]`).classList.add('active');
+            updateEstimate();
+        }
+
+        document.getElementById('orderType').addEventListener('change', function() {
+            document.getElementById('priceGroup').style.display = this.value === 'LIMIT' ? 'flex' : 'none';
+        });
+        document.getElementById('symbol').addEventListener('blur', fetchQuote);
+        document.getElementById('symbol').addEventListener('input', function() {
+            if (this.value.trim().length >= 3) {
+                clearTimeout(this._timer);
+                this._timer = setTimeout(fetchQuote, 500);
+            }
+        });
+        document.getElementById('quantity').addEventListener('input', updateEstimate);
+        document.getElementById('limitPrice').addEventListener('input', updateEstimate);
+
+        async function fetchQuote() {
+            let sym = document.getElementById('symbol').value.trim().toUpperCase();
+            if (!sym) return;
+            // Auto-prefix: bare ticker → US.TICKER (Futu format)
+            if (!sym.includes('.')) {
+                sym = 'US.' + sym;
+                document.getElementById('symbol').value = sym;
+            }
+            document.getElementById('quoteBox').style.display = 'block';
+            document.getElementById('quotePrice').textContent = '...';
+            try {
+                const controller = new AbortController();
+                const timeout = setTimeout(() => controller.abort(), 8000);
+
+                const [qRes, cRes] = await Promise.all([
+                    fetch(`/api/quote/${sym}`, { signal: controller.signal }),
+                    fetch(`/api/order-capacity/${sym}`, { signal: controller.signal }),
+                ]);
+                clearTimeout(timeout);
+                const q = await qRes.json();
+                const c = await cRes.json();
+                curCap = c;
+
+                if (q.cur_price) {
+                    curQuote = q;
+                    document.getElementById('quotePrice').textContent = `$${q.cur_price.toFixed(2)}`;
+                    const upd = q.update_time ? q.update_time.substring(11, 19) : '--';
+                    document.getElementById('quoteDetail').innerHTML =
+                        `高 $${q.high_price?.toFixed(2)||'--'} | 低 $${q.low_price?.toFixed(2)||'--'} | 昨收 $${q.prev_close?.toFixed(2)||'--'} | ${upd}`;
+
+                    // 填充资金信息
+                    if (c.cur_price || c.cash != null) {
+                        const fi = document.getElementById('fundInfo');
+                        fi.style.display = 'block';
+                        const fmtK = v => v >= 1000 ? '$' + (v/1000).toFixed(1) + 'K' : '$' + v.toFixed(0);
+                        document.getElementById('fundCash').textContent = fmtK(c.cash || 0);
+                        document.getElementById('fundPower').textContent = fmtK(c.power || 0) + (c.max_can_buy ? ` (${c.max_can_buy.toLocaleString()}股)` : '');
+                        const held = c.held_qty || 0;
+                        if (held !== 0) {
+                            document.getElementById('fundHeldRow').style.display = 'flex';
+                            const dir = held > 0 ? 'LONG' : 'SHORT';
+                            document.getElementById('fundHeld').textContent = `${dir} ${Math.abs(held)}股 (可卖 ${c.can_sell || 0})`;
+                        } else {
+                            document.getElementById('fundHeldRow').style.display = 'none';
+                        }
+                        document.getElementById('fundShort').textContent = c.can_short ? `${c.can_short.toLocaleString()}股` + (c.max_short_power ? ` (${fmtK(c.max_short_power)})` : '') : '--';
+                    }
+
+                    // Show existing position hint for same symbol
+                    const heldEl = document.getElementById('heldHint');
+                    const heldTextEl = document.getElementById('heldHintText');
+                    if (c.held_qty && c.held_qty !== 0) {
+                        const dir = c.held_qty > 0 ? 'LONG (做多)' : 'SHORT (做空)';
+                        heldTextEl.textContent = `已有持仓: ${sym} ${dir} ${Math.abs(c.held_qty)} 股`;
+                        heldEl.classList.add('show');
+                    } else {
+                        heldEl.classList.remove('show');
+                    }
+
+                    updateEstimate();
+                } else {
+                    document.getElementById('quotePrice').textContent = '--';
+                    document.getElementById('quoteDetail').textContent = q.error || '无数据';
+                    document.getElementById('heldHint').classList.remove('show');
+                }
+            } catch (e) {
+                document.getElementById('quotePrice').textContent = '--';
+                document.getElementById('quoteDetail').textContent = e.name === 'AbortError' ? '报价超时 (8s)' : `网络异常: ${e.message}`;
+                document.getElementById('heldHint').classList.remove('show');
+            }
+        }
+
+        function setQty(n) { if (n > 0) { document.getElementById('quantity').value = n; updateEstimate(); } }
+
+        function updateEstimate() {
+            const qty = parseInt(document.getElementById('quantity').value) || 0;
+            const btn = document.getElementById('btnSubmit');
+            const panel = document.getElementById('estimatePanel');
+            const estCost = document.getElementById('estCost');
+            const estMargin = document.getElementById('estMargin');
+            const estBpPct = document.getElementById('estBpPct');
+            const estWarning = document.getElementById('estWarning');
+
+            if (curQuote && curQuote.cur_price && qty > 0) {
+                const val = qty * curQuote.cur_price;
+                const action = getAction();
+                btn.textContent = `预览: ${curOp === 'OPEN' ? '开仓' : '平仓'} ${curDir === 'LONG' ? '做多' : '做空'} $${val.toLocaleString(undefined,{maximumFractionDigits:0})}`;
+                btn.className = action === 'BUY' ? 'btn btn-buy' : 'btn btn-sell';
+
+                let marginRate = 0;
+                if (curOp === 'OPEN') {
+                    marginRate = curDir === 'SHORT' ? 1.0 : 0.5;
+                }
+                const marginRequired = val * marginRate;
+                const fmtCost = '$' + val.toLocaleString(undefined, {maximumFractionDigits: 0});
+                const fmtMargin = marginRequired > 0
+                    ? '$' + marginRequired.toLocaleString(undefined, {maximumFractionDigits: 0})
+                    : (curOp === 'CLOSE' ? '平仓无要求' : '--');
+
+                estCost.textContent = fmtCost;
+                estMargin.textContent = fmtMargin;
+                panel.classList.add('show');
+
+                if (curCap && curCap.power && curCap.power > 0) {
+                    const bpPct = (marginRequired / curCap.power) * 100;
+                    const pctCls = bpPct > 25 ? 'r' : bpPct > 15 ? 'y' : 'g';
+                    estBpPct.innerHTML = `<span class="est-v ${pctCls}">${bpPct.toFixed(1)}%</span>`;
+                    if (bpPct > 25) {
+                        estWarning.innerHTML = `<div class="est-danger">⚠️ 保证金占用超过购买力的25% (${bpPct.toFixed(1)}%)，请谨慎下单</div>`;
+                    } else if (bpPct > 15) {
+                        estWarning.innerHTML = `<div class="est-warn">⚠️ 保证金占用购买力的 ${bpPct.toFixed(1)}%，注意风险</div>`;
+                    } else {
+                        estWarning.innerHTML = '';
+                    }
+                } else {
+                    estBpPct.textContent = '--';
+                    estWarning.innerHTML = '';
+                }
+            } else {
+                btn.textContent = '预览下单';
+                btn.className = 'btn btn-buy';
+                panel.classList.remove('show');
+                estWarning.innerHTML = '';
+            }
+        }
+
+        function getAction() {
+            if (curDir === 'LONG' && curOp === 'OPEN') return 'BUY';
+            if (curDir === 'LONG' && curOp === 'CLOSE') return 'SELL';
+            if (curDir === 'SHORT' && curOp === 'OPEN') return 'SELL';
+            if (curDir === 'SHORT' && curOp === 'CLOSE') return 'BUY';
+            return 'BUY';
+        }
+
+        // ── Preview modal = confirmation ──
+        function previewOrder() {
+            let sym = document.getElementById('symbol').value.trim().toUpperCase();
+            if (!sym.includes('.')) { sym = 'US.' + sym; document.getElementById('symbol').value = sym; }
+            const qty = parseInt(document.getElementById('quantity').value);
+            const otype = document.getElementById('orderType').value;
+            const price = document.getElementById('limitPrice').value;
+            const action = getAction();
+
+            if (!sym || !qty) { showMsg('err', '请填写标的和数量'); return; }
+
+            const est = curQuote ? qty * curQuote.cur_price : 0;
+            const tif = 'DAY';
+            const extRth = false;
+            pendingOrder = { symbol: sym, direction: curDir, action, quantity: qty, order_type: otype, price: price || null, reason: '', operation: curOp, time_in_force: tif, fill_outside_rth: extRth };
+
+            const el = document.getElementById('previewContent');
+            let html = '';
+            html += '<div class="preview-row"><span class="pk">标的</span><span class="pv">' + sym + '</span></div>';
+            html += '<div class="preview-row"><span class="pk">操作</span><span class="pv">' + (curOp==='OPEN'?'开仓':'平仓') + ' ' + (curDir==='LONG'?'做多':'做空') + ' → ' + action + '</span></div>';
+            html += '<div class="preview-row"><span class="pk">数量</span><span class="pv">' + qty.toLocaleString() + ' 股</span></div>';
+            html += '<div class="preview-row"><span class="pk">类型</span><span class="pv">' + otype + (price ? ' @ $'+price : '') + '</span></div>';
+            html += '<div class="preview-row"><span class="pk">预估金额</span><span class="pv">' + (est > 0 ? '$'+est.toLocaleString(undefined,{maximumFractionDigits:0}) : '--') + '</span></div>';
+            el.innerHTML = html;
+
+            // Preview IS the confirmation — direct confirm button
+            document.getElementById('confirmBtn').className = action === 'BUY' ? 'btn btn-buy' : 'btn btn-sell';
+            document.getElementById('confirmBtn').textContent = `确认 ${action === 'BUY' ? '买入' : '卖出'} ${qty} 股`;
+            document.getElementById('previewModal').classList.add('show');
+        }
+
+        function closePreview() { document.getElementById('previewModal').classList.remove('show'); pendingOrder = null; }
+
+        async function executeOrder() {
+            if (!pendingOrder) return;
+            const order = pendingOrder;
+            closePreview();
+            showMsg('ok', '提交中...');
+            try {
+                const res = await fetch('/api/orders', {
+                    method: 'POST', headers: {'Content-Type':'application/json'},
+                    body: JSON.stringify(order),
+                });
+                const d = await res.json();
+                if (d.success) {
+                    showMsg('ok', `✅ 订单提交成功! ID: ${d.order?.order_id || '--'}`);
+                    loadOrders(); loadPositions();
+                } else {
+                    showMsg('err', `❌ ${d.errors ? d.errors.join(', ') : d.error || '下单失败'}`);
+                }
+            } catch (e) { showMsg('err', `❌ ${e.message}`); }
+        }
+
+        function showMsg(type, msg) {
+            const el = document.getElementById('result');
+            el.className = `result ${type}`; el.textContent = msg; el.style.display = 'block';
+            if (type === 'ok') setTimeout(() => el.style.display = 'none', 5000);
+        }
+
+        let _slMap = {};
+        let _diagData = {};
+
+        function computeSignal(pos, slData) {
+            const cost = pos.cost_price || 0;
+            const cur = pos.cur_price || 0;
+            const isLong = pos.direction === 'LONG';
+            const reasons = [];
+            let color = 'green', action = '安心持有', actionCls = 'hold';
+            if (slData) {
+                if (slData.danger || slData.sl_distance_pct < 2) {
+                    color = 'red'; action = '止损临近，注意风控'; actionCls = 'exit';
+                    reasons.push('🔴 距止损仅 ' + slData.sl_distance_pct.toFixed(1) + '%');
+                } else if (slData.sl_distance_pct < 5) {
+                    if (color !== 'red') { color = 'yellow'; action = '关注止损距离'; actionCls = 'caution'; }
+                    reasons.push('🟡 距止损 ' + slData.sl_distance_pct.toFixed(1) + '%，偏近');
+                }
+            }
+            if (cost > 0 && cur > 0 && color === 'green') {
+                const pnlPct = isLong ? ((cur - cost) / cost * 100) : ((cost - cur) / cost * 100);
+                if (pnlPct > 15) { color = 'yellow'; action = '浮盈可观，考虑移动止损锁利'; actionCls = 'caution'; reasons.push('💰 浮盈 +' + pnlPct.toFixed(1) + '%'); }
+                else if (pnlPct < -10) { color = 'yellow'; action = '浮亏较深，关注止损位'; actionCls = 'caution'; reasons.push('📉 浮亏 ' + pnlPct.toFixed(1) + '%'); }
+            }
+            if (reasons.length === 0) reasons.push('🟢 仓位健康，趋势完好');
+            return {color, action, actionCls, reasons};
+        }
+        function showDiag(sym, el) {
+            hideDiag();
+            const d = _diagData[sym];
+            if (!d) return;
+            const p = d.pos, sl = d.slData, sig = d.signal;
+            const cost = p.cost_price || 0, cur = p.cur_price || 0;
+            const upnl = p.unrealized_pl || 0;
+            const qty = d.qty, isLong = d.isLong;
+            const pnlPct = cost > 0 && cur > 0 ? (isLong ? ((cur-cost)/cost*100) : ((cost-cur)/cost*100)) : 0;
+            let html = '<div class="diag-header"><span class="diag-sym">' + sym.replace(/^US\./,'') + '</span>';
+            html += '<span class="diag-dir ' + (isLong?'long':'short') + '">' + (isLong?'LONG':'SHORT') + ' ' + qty + '</span></div>';
+            html += '<div style="font-size:13px;margin-bottom:8px"><span class="' + (upnl>=0?'long':'short') + '">' + (upnl>=0?'+':'') + '$' + upnl.toFixed(2) + ' (' + (pnlPct>=0?'+':'') + pnlPct.toFixed(1) + '%)</span>';
+            if (sl) html += ' | SL <span style="color:' + (sl.danger?'#f87171':'#fbbf24') + '">' + sl.sl_distance_pct.toFixed(1) + '%</span>';
+            html += '</div>';
+            html += '<div class="diag-action ' + sig.actionCls + '">' + sig.action + '</div>';
+            sig.reasons.forEach(r => { html += '<div class="diag-reason">' + r + '</div>'; });
+            html += '<div class="diag-btns">';
+            html += '<button class="diag-btn" onclick="closePos(\'' + sym + '\',' + qty + ',true)">平半仓</button>';
+            html += '<button class="diag-btn danger" onclick="closePos(\'' + sym + '\',' + qty + ',false)">全平</button>';
+            html += '<a class="diag-btn" href="/stock/' + sym + '">详情 →</a></div>';
+            const card = document.getElementById('diagCard');
+            card.innerHTML = html;
+            const isMobile = window.innerWidth <= 768;
+            if (isMobile) {
+                card.style.top = '80px';
+                card.style.left = '10px';
+            } else {
+                const rect = el.getBoundingClientRect();
+                let top = rect.bottom + 8, left = rect.left - 140;
+                if (left < 10) left = 10;
+                if (left + 320 > window.innerWidth) left = window.innerWidth - 330;
+                if (top + 300 > window.innerHeight) top = rect.top - 310;
+                card.style.top = top + 'px'; card.style.left = left + 'px';
+            }
+            card.classList.add('show');
+            document.getElementById('diagOverlay').classList.add('show');
+        }
+        function hideDiag() {
+            document.getElementById('diagCard').classList.remove('show');
+            document.getElementById('diagOverlay').classList.remove('show');
+        }
+
+        let closeCtx = null;
+
+        function closePos(sym, totalQty, isHalf) {
+            const absQty = Math.abs(parseInt(totalQty) || 0);
+            if (!absQty) { showResult('⚠️', `${sym} 无持仓`); return; }
+            closeCtx = { sym, absQty };
+            document.getElementById('closeSym').textContent = sym;
+            document.getElementById('closeTotalQty').textContent = absQty + ' 股';
+            // 现价 (从持仓数据获取)
+            const posData = _diagData[sym];
+            const curPrice = posData ? (posData.pos.cur_price || posData.pos.current || 0) : 0;
+            document.getElementById('closeCurPrice').textContent = curPrice > 0 ? '$' + curPrice.toFixed(2) : '--';
+            const preFillQty = isHalf === true ? Math.max(1, Math.floor(absQty / 2)) : null;
+            document.getElementById('closeQtyInput').value = preFillQty !== null ? preFillQty : '';
+            document.getElementById('closeQtyInput').max = absQty;
+            document.getElementById('closeQtyInput').placeholder = absQty + ' (全部平仓)';
+            document.getElementById('closePriceInput').value = '';
+            document.getElementById('closeReasonInput').value = '手动平仓';
+            document.getElementById('closeError').style.display = 'none';
+            document.getElementById('closeConfirmBtn').textContent = '确认平仓';
+            document.getElementById('closeModal').classList.add('show');
+            setTimeout(() => document.getElementById('closeQtyInput').focus(), 100);
+        }
+
+        // 限价平仓 (止损/止盈) — 打开平仓弹窗并预填价格
+        function closePosAtPrice(sym, totalQty, presetPrice) {
+            closePos(sym, totalQty, false);
+            if (presetPrice > 0) {
+                document.getElementById('closePriceInput').value = presetPrice.toFixed(2);
+                document.getElementById('closeReasonInput').value = '止损平仓';
+                document.getElementById('closeConfirmBtn').textContent = `确认限价平仓 @ $${presetPrice.toFixed(2)}`;
+            }
+        }
+
+        function closeCloseModal() {
+            document.getElementById('closeModal').classList.remove('show');
+            closeCtx = null;
+        }
+
+        async function executeClose() {
+            if (!closeCtx) return;
+            const { sym, absQty } = closeCtx;
+            const errEl = document.getElementById('closeError');
+            errEl.style.display = 'none';
+
+            const qVal = document.getElementById('closeQtyInput').value.trim();
+            const closeQty = qVal === '' ? 0 : parseInt(qVal);
+            if (qVal !== '' && (isNaN(closeQty) || closeQty <= 0 || closeQty > absQty)) {
+                errEl.textContent = `数量无效: 请输入 1~${absQty} 的整数`;
+                errEl.style.display = 'block';
+                return;
+            }
+
+            const reason = document.getElementById('closeReasonInput').value.trim();
+            if (!reason) {
+                errEl.textContent = '请填写理由';
+                errEl.style.display = 'block';
+                return;
+            }
+
+            const btn = document.getElementById('closeConfirmBtn');
+            btn.disabled = true;
+            btn.textContent = '提交中...';
+
+            try {
+                const limitPrice = parseFloat(document.getElementById('closePriceInput').value) || null;
+                const body = { symbol: sym, reason, quantity: closeQty };
+                if (limitPrice && limitPrice > 0) body.price = limitPrice;
+                const res = await fetch('/api/orders/close', {
+                    method: 'POST', headers: {'Content-Type':'application/json'},
+                    body: JSON.stringify(body),
+                });
+                const d = await res.json();
+                closeCloseModal();
+                if (d.success) {
+                    const isFull = closeQty === 0 || closeQty >= absQty;
+                    const priceLabel = limitPrice ? ` @ $${limitPrice.toFixed(2)}` : '';
+                    showResult('✅', `${sym} ${isFull ? '全平' : '部分平仓'}成功${priceLabel}!`);
+                    loadPositions(); loadOrders();
+                } else {
+                    showResult('❌', d.error || '平仓失败');
+                }
+            } catch (e) {
+                closeCloseModal();
+                showResult('❌', e.message);
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '确认平仓';
+            }
+        }
+
+        function showResult(icon, msg) {
+            document.getElementById('resultIcon').textContent = icon;
+            document.getElementById('resultMsg').textContent = msg;
+            document.getElementById('resultModal').classList.add('show');
+        }
+        async function cancelOrder(id) {
+            if (!confirm(`撤销 ${id}?`)) return;
+            try {
+                const res = await fetch('/api/orders/cancel', {
+                    method: 'POST', headers: {'Content-Type':'application/json'},
+                    body: JSON.stringify({ order_id: id }),
+                });
+                const d = await res.json();
+                d.success ? showMsg('ok', '✅ 已撤销') : showMsg('err', `❌ ${d.error}`);
+                loadOrders();
+            } catch (e) { showMsg('err', e.message); }
+        }
+
+        // ══════════════════════════════════════════════════════
+        //  Optimized Polling — 2 endpoints + Visibility API
+        // ══════════════════════════════════════════════════════
+
+        async function loadTradeSnapshot() {
+            try {
+                const res = await fetch('/api/trade/snapshot');
+                const d = await res.json();
+
+                const positions = (d.positions || []).filter(p => p.qty !== 0);
+                document.getElementById('posCount').textContent = `(${positions.length})`;
+
+                // ── 更新顶部摘要条 ──
+                const acc = d.account || {};
+                const totalAssets = acc.total_assets || acc.nav || 0;
+                const power = acc.power || acc.buying_power || 0;
+                const marginPct = acc.margin_ratio || acc.margin_usage || 0;
+                const todayPnl = (d.pnl || {}).today_pl || 0;
+                const unrealPnl = positions.reduce((s, p) => s + (p.unrealized_pl || p.unrealized_pnl || 0), 0);
+                const displayPnl = todayPnl || unrealPnl;
+
+                document.getElementById('tsAssets').textContent = '$' + (totalAssets >= 1000 ? (totalAssets/1000).toFixed(1) + 'K' : totalAssets.toFixed(0));
+                document.getElementById('tsPower').textContent = '$' + (power >= 1000 ? (power/1000).toFixed(1) + 'K' : power.toFixed(0));
+                const marginEl = document.getElementById('tsMargin');
+                marginEl.textContent = marginPct.toFixed(1) + '%';
+                marginEl.className = 'ts-val' + (marginPct > 50 ? ' red' : marginPct > 30 ? ' yellow' : '');
+                const pnlEl = document.getElementById('tsPnl');
+                pnlEl.textContent = (displayPnl >= 0 ? '+' : '') + '$' + Math.abs(displayPnl).toFixed(0);
+                pnlEl.className = 'ts-val ' + (displayPnl >= 0 ? 'green' : 'red');
+                document.getElementById('tsPosCount').textContent = positions.length;
+
+                // 数据新鲜度
+                const dot = document.querySelector('.ts-dot');
+                if (dot) { dot.classList.remove('stale'); }
+
+                _slMap = {};
+                (d.stop_distances || []).forEach(s => {
+                    _slMap[(s.symbol||'') + '|' + (s.direction||'')] = s;
+                });
+
+                const tbody = document.getElementById('posBody');
+                const cardsEl = document.getElementById('posCards');
+                if (!positions.length) {
+                    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#8b949e;padding:20px">无持仓</td></tr>';
+                    cardsEl.innerHTML = '<div style="text-align:center;color:#8b949e;padding:20px">无持仓</div>';
+                } else {
+                    const totalMv = positions.reduce((s, x) => s + (x.market_val || x.market_value || Math.abs(x.qty) * (x.cur_price || x.current || 0)), 0);
+                    tbody.innerHTML = positions.map(p => {
+                        const isLong = p.direction === 'LONG';
+                        const cost = p.cost_price || p.cost || 0;
+                        const cur = p.cur_price || p.current || 0;
+                        const qty = Math.abs(p.qty);
+                        const mv = p.market_val || p.market_value || qty * cur;
+                        const tPnl = p.today_pl || 0;
+                        const uPnl = p.unrealized_pl || p.unrealized_pnl || 0;
+                        const concPct = totalMv > 0 ? (mv / totalMv * 100) : 0;
+                        const concColor = concPct > 30 ? '#f87171' : concPct > 15 ? '#fbbf24' : '#58a6ff';
+                        const sym = p.code || p.symbol;
+                        const codeShort = sym.replace('US.', '');
+                        const dirIcon = isLong ? '▲' : '▼';
+                        const dirCls = isLong ? 'long' : 'short';
+                        const tCls = tPnl >= 0 ? 'pnl-pos' : 'pnl-neg';
+                        const uCls = uPnl >= 0 ? 'pnl-pos' : 'pnl-neg';
+                        // Build diag data for signal light popper
+                        const slKey = sym + '|' + (isLong ? 'LONG' : 'SHORT');
+                        const slData = _slMap[slKey];
+                        const sig = computeSignal(p, slData);
+                        _diagData[sym] = {pos: p, slData, signal: sig, qty, isLong};
+                        const currentSl = (slData && slData.stop_loss) || p.stop_loss || 0;
+                        return `<tr onclick="showDiag('${escHtml(sym)}', this)" style="cursor:pointer">
+                            <td>
+                                <span class="sig-dir ${dirCls}" style="font-size:11px;margin-right:4px">${dirIcon}</span>
+                                <a href="/stock/${encodeURIComponent(sym)}" style="color:#e1e4e8;text-decoration:none;font-weight:700" onclick="event.stopPropagation()">${escHtml(codeShort)}</a>
+                                <span class="sig ${sig.color}" style="width:10px;height:10px;vertical-align:middle;margin-left:6px" title="${sig.action}"></span>
+                                ${p.legacy ? `<span title="broker has position but system not managing" onclick="event.stopPropagation();takeoverPos('${sym}')" style="display:inline-block;font-size:9px;padding:1px 5px;margin-left:4px;background:#7c2d12;color:#fed7aa;border:1px solid #c2410c;border-radius:3px;cursor:pointer;font-weight:700">未管理</span>` : ''}
+                            </td>
+                            <td style="text-align:right">
+                                <div style="font-weight:600">$${mv >= 1000 ? (mv/1000).toFixed(1)+'K' : mv.toFixed(0)}</div>
+                                <div style="font-size:11px;color:#8b949e">${qty}股</div>
+                            </td>
+                            <td style="text-align:right">
+                                <div style="font-weight:600">${cur > 0 ? '$'+cur.toFixed(2) : '--'}</div>
+                                <div style="font-size:11px;color:#8b949e">$${cost.toFixed(2)}</div>
+                            </td>
+                            <td style="text-align:right" class="${tCls}">${tPnl ? (tPnl>=0?'+':'')+'$'+Math.abs(tPnl).toFixed(2) : '--'}</td>
+                            <td style="text-align:right" class="${uCls}">${uPnl>=0?'+':''}$${uPnl.toFixed(2)}</td>
+                            <td style="text-align:center">
+                                <div style="font-size:12px;font-weight:600">${concPct.toFixed(1)}%</div>
+                                <div style="height:3px;background:#21262d;border-radius:2px;margin-top:3px"><div style="height:100%;width:${Math.min(concPct,100)}%;background:${concColor};border-radius:2px"></div></div>
+                            </td>
+                        </tr>`;
+                    }).join('');
+
+                    cardsEl.innerHTML = positions.map(p => {
+                        const isLong = p.direction === 'LONG';
+                        const cost = p.cost_price || p.cost || 0;
+                        const cur = p.cur_price || p.current || 0;
+                        const qty = Math.abs(p.qty);
+                        const mv = p.market_val || p.market_value || qty * cur;
+                        const tPnl = p.today_pl || 0;
+                        const uPnl = p.unrealized_pl || p.unrealized_pnl || 0;
+                        const concPct = totalMv > 0 ? (mv / totalMv * 100) : 0;
+                        const sym = p.code || p.symbol;
+                        const codeShort = sym.replace('US.', '');
+                        const dirIcon = isLong ? '▲' : '▼';
+                        const dirCls = isLong ? 'long' : 'short';
+                        const uCls = uPnl >= 0 ? 'pnl-pos' : 'pnl-neg';
+                        const slKey = sym + '|' + (isLong ? 'LONG' : 'SHORT');
+                        const slData = _slMap[slKey];
+                        const currentSl = (slData && slData.stop_loss) || p.stop_loss || 0;
+                        return `<div class="pos-card-m">
+                            <div class="pos-card-m-header">
+                                <span><span class="sig-dir ${dirCls}" style="margin-right:4px">${dirIcon}</span><a href="/stock/${encodeURIComponent(sym)}" style="color:#e1e4e8;text-decoration:none;font-weight:700;font-size:15px">${escHtml(codeShort)}</a>${p.legacy ? `<span onclick="event.stopPropagation();takeoverPos('${sym}')" style="display:inline-block;font-size:9px;padding:1px 5px;margin-left:4px;background:#7c2d12;color:#fed7aa;border:1px solid #c2410c;border-radius:3px;cursor:pointer;font-weight:700">未管理</span>` : ''}</span>
+                                <span style="font-size:12px;color:#8b949e">${concPct.toFixed(1)}%</span>
+                            </div>
+                            <div class="pos-card-m-row"><span class="label">市值</span><span>$${mv >= 1000 ? (mv/1000).toFixed(1)+'K' : mv.toFixed(0)} · ${qty}股</span></div>
+                            <div class="pos-card-m-row"><span class="label">现价/成本</span><span>${cur > 0 ? '$'+cur.toFixed(2) : '--'} / $${cost.toFixed(2)}</span></div>
+                            <div class="pos-card-m-row"><span class="label">今日盈亏</span><span class="${tPnl >= 0 ? 'pnl-pos' : 'pnl-neg'}">${tPnl ? (tPnl>=0?'+':'')+'$'+Math.abs(tPnl).toFixed(2) : '--'}</span></div>
+                            <div class="pos-card-m-row"><span class="label">持仓盈亏</span><span class="${uCls}">${uPnl>=0?'+':''}$${uPnl.toFixed(2)}</span></div>
+                            <div class="pos-card-m-actions">
+                                <button class="btn btn-sm" style="border-color:#ef4444;color:#f87171;flex:1" onclick="closePos('${escHtml(sym)}',${qty})">平仓</button>
+                            </div>
+                        </div>`;
+                    }).join('');
+                }
+
+                // Orders
+                const orders = d.orders || [];
+                const ordersBody = document.getElementById('ordersBody');
+                if (!orders.length) {
+                    ordersBody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:#8b949e">今日无订单</td></tr>';
+                } else {
+                    ordersBody.innerHTML = orders.map(o => {
+                        const sc = o.order_status.includes('FILLED') ? '#4ade80' : o.order_status.includes('CANCEL') ? '#f87171' : '#fbbf24';
+                        const canCancel = !o.order_status.includes('FILLED') && !o.order_status.includes('CANCEL') && !o.order_status.includes('FAILED');
+                        return `<tr>
+                            <td style="font-family:monospace;font-size:11px">${(o.order_id||'').substring(0,10)}...</td>
+                            <td><b>${o.code}</b></td>
+                            <td>${o.trd_side==='BUY'?'<span style="color:#4ade80">BUY</span>':'<span style="color:#f87171">SELL</span>'}</td>
+                            <td>${o.qty}</td>
+                            <td>${o.price > 0 ? '$'+o.price.toFixed(2) : 'MKT'}</td>
+                            <td style="color:${sc};font-weight:600">${o.order_status}</td>
+                            <td style="font-size:11px;color:#8b949e">${(o.create_time||'').substring(11,19)||'--'}</td>
+                            <td>${canCancel ? `<button class="btn-cancel" onclick="cancelOrder('${o.order_id}')">撤单</button>` : ''}</td>
+                        </tr>`;
+                    }).join('');
+                }
+            } catch (e) {
+                console.error('Trade snapshot error:', e);
+                const dot = document.querySelector('.ts-dot');
+                if (dot) dot.classList.add('stale');
+            }
+        }
+
+        async function loadTradeSlowData() {
+            try {
+                const res = await fetch('/api/trade/slow-data');
+                const d = await res.json();
+
+                const auditData = d.audit || {};
+                _auditOrders = auditData.orders || [];
+                renderAudit();
+
+                const perfData = d.manual_perf || {};
+                const m = perfData.manual || {};
+                const a = perfData.auto || {};
+                const trades = perfData.recent_trades || [];
+                const wrCls = (wr) => wr >= 50 ? 'green' : wr >= 30 ? 'yellow' : 'red';
+                const pnlCls = (v) => v >= 0 ? 'green' : 'red';
+                const perfEl = document.getElementById('manualPerf');
+                if (perfEl) {
+                    let html = `
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
+                        <div style="background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:14px">
+                            <div style="font-size:13px;color:#58a6ff;font-weight:600;margin-bottom:10px">👤 手动交易</div>
+                            <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;text-align:center">
+                                <div><div style="font-size:10px;color:#8b949e">笔数</div><div style="font-size:18px;font-weight:700">${m.count||0}</div></div>
+                                <div><div style="font-size:10px;color:#8b949e">胜率</div><div style="font-size:18px;font-weight:700" class="${wrCls(m.win_rate||0)}">${(m.win_rate||0).toFixed(1)}%</div></div>
+                                <div><div style="font-size:10px;color:#8b949e">总盈亏</div><div style="font-size:18px;font-weight:700" class="${pnlCls(m.total_pnl||0)}">$${(m.total_pnl||0).toFixed(2)}</div></div>
+                                <div><div style="font-size:10px;color:#8b949e">均盈</div><div style="font-size:14px;font-weight:600 green">$${(m.avg_win||0).toFixed(2)}</div></div>
+                                <div><div style="font-size:10px;color:#8b949e">均亏</div><div style="font-size:14px;font-weight:600 red">$${(m.avg_loss||0).toFixed(2)}</div></div>
+                                <div><div style="font-size:10px;color:#8b949e">利润因子</div><div style="font-size:14px;font-weight:600">${(m.profit_factor||0).toFixed(2)}</div></div>
+                            </div>
+                        </div>
+                        <div style="background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:14px">
+                            <div style="font-size:13px;color:#8b949e;font-weight:600;margin-bottom:10px">🤖 自动交易 (对比)</div>
+                            <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;text-align:center">
+                                <div><div style="font-size:10px;color:#8b949e">笔数</div><div style="font-size:18px;font-weight:700">${a.count||0}</div></div>
+                                <div><div style="font-size:10px;color:#8b949e">胜率</div><div style="font-size:18px;font-weight:700" class="${wrCls(a.win_rate||0)}">${(a.win_rate||0).toFixed(1)}%</div></div>
+                                <div><div style="font-size:10px;color:#8b949e">总盈亏</div><div style="font-size:18px;font-weight:700" class="${pnlCls(a.total_pnl||0)}">$${(a.total_pnl||0).toFixed(2)}</div></div>
+                                <div><div style="font-size:10px;color:#8b949e">均盈</div><div style="font-size:14px;font-weight:600">$${(a.avg_win||0).toFixed(2)}</div></div>
+                                <div><div style="font-size:10px;color:#8b949e">均亏</div><div style="font-size:14px;font-weight:600">$${(a.avg_loss||0).toFixed(2)}</div></div>
+                                <div><div style="font-size:10px;color:#8b949e">利润因子</div><div style="font-size:14px;font-weight:600">${(a.profit_factor||0).toFixed(2)}</div></div>
+                            </div>
+                        </div>
+                    </div>`;
+                    if (trades.length) {
+                        html += `<div class="tw"><table><thead><tr>
+                            <th>日期</th><th>标的</th><th>方向</th><th>数量</th><th>入场</th><th>出场</th><th>盈亏</th><th>理由</th>
+                        </tr></thead><tbody>`;
+                        for (const t of trades) {
+                            const pc = t.pnl >= 0 ? 'pnl-pos' : 'pnl-neg';
+                            html += `<tr>
+                                <td style="font-size:11px;color:#8b949e">${t.date||''}</td>
+                                <td><b>${escHtml(t.symbol)}</b></td>
+                                <td class="${t.direction==='LONG'?'long':'short'}">${t.direction}</td>
+                                <td>${t.quantity}</td>
+                                <td>$${(t.entry_price||0).toFixed(2)}</td>
+                                <td>$${(t.exit_price||0).toFixed(2)}</td>
+                                <td class="${pc}">${t.pnl>=0?'+':''}$${t.pnl.toFixed(2)}</td>
+                                <td style="font-size:11px;color:#8b949e">${escHtml((t.exit_reason||'').substring(0,30))}</td>
+                            </tr>`;
+                        }
+                        html += '</tbody></table></div>';
+                    } else {
+                        html += '<div style="text-align:center;color:#8b949e;padding:16px;font-size:13px">暂无手动交易记录 — 手动平仓后自动追踪盈亏</div>';
+                    }
+                    perfEl.innerHTML = html;
+                }
+            } catch (e) { console.error('Slow data error:', e); }
+        }
+
+        // ── Visibility-Aware Polling ──
+        let _fastTimer = null, _slowTimer = null;
+        let _isPolling = false;
+
+        function startPolling() {
+            if (_isPolling) return;
+            _isPolling = true;
+            loadTradeSnapshot();
+            loadTradeSlowData();
+            _fastTimer = setInterval(loadTradeSnapshot, 15000);
+            _slowTimer = setInterval(loadTradeSlowData, 300000);
+        }
+
+        function stopPolling() {
+            _isPolling = false;
+            if (_fastTimer) { clearInterval(_fastTimer); _fastTimer = null; }
+            if (_slowTimer) { clearInterval(_slowTimer); _slowTimer = null; }
+        }
+
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden) stopPolling();
+            else startPolling();
+        });
+
+        const loadPositions = loadTradeSnapshot;
+        const loadOrders = loadTradeSnapshot;
+
+        // ── Audit: collapsible + period filter ──
+        var _auditOrders = [];
+        var _auditMode = 'latest';
+
+        function toggleAudit() {
+            var body = document.getElementById('auditBody');
+            var arrow = document.getElementById('auditArrow');
+            if (body.style.display === 'none') {
+                body.style.display = 'block';
+                arrow.textContent = '▼';
+                if (!_auditOrders.length) loadTradeSlowData();
+            } else {
+                body.style.display = 'none';
+                arrow.textContent = '▶';
+            }
+        }
+
+        function setAuditMode(mode, btn) {
+            _auditMode = mode;
+            document.querySelectorAll('.audit-period').forEach(function(b) { b.classList.remove('active'); });
+            btn.classList.add('active');
+            renderAudit();
+        }
+
+        function renderAudit() {
+            var tbody = document.getElementById('auditTbody');
+            if (!tbody) return;
+            var filtered;
+            if (_auditMode === 'latest') {
+                var latestDate = '';
+                for (var i = 0; i < _auditOrders.length; i++) {
+                    var d = (_auditOrders[i].timestamp || '').substring(0, 10);
+                    if (d > latestDate) latestDate = d;
+                }
+                filtered = latestDate ? _auditOrders.filter(function(o) {
+                    return (o.timestamp || '').substring(0, 10) === latestDate;
+                }) : [];
+            } else if (_auditMode === '7') {
+                var cutoff = Date.now() - 7 * 86400000;
+                filtered = _auditOrders.filter(function(o) {
+                    try { return new Date(o.timestamp).getTime() >= cutoff; } catch(e) { return true; }
+                });
+            } else {
+                filtered = _auditOrders;
+            }
+            var info = document.getElementById('auditHeaderInfo');
+            if (info) info.textContent = '(' + filtered.length + ' 条)';
+            if (!filtered.length) {
+                tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#8b949e">无记录</td></tr>';
+                return;
+            }
+            tbody.innerHTML = filtered.map(function(o) {
+                var sc = o.status === 'submitted' || o.status === 'filled' ? '#4ade80' : o.status === 'rejected' ? '#f87171' : '#fbbf24';
+                return '<tr>' +
+                    '<td style="font-size:11px;color:#8b949e">' + escHtml((o.timestamp || '').substring(5, 19)) + '</td>' +
+                    '<td><b>' + escHtml(o.symbol) + '</b></td>' +
+                    '<td>' + escHtml(o.action || '--') + '</td>' +
+                    '<td>' + escHtml(String(o.quantity)) + '</td>' +
+                    '<td>' + escHtml(o.order_type) + '</td>' +
+                    '<td style="color:' + sc + ';font-weight:600">' + escHtml(o.status) + (o.error_msg ? ' (' + escHtml(o.error_msg.substring(0, 30)) + ')' : '') + '</td>' +
+                    '<td style="font-size:11px;color:#8b949e">' + escHtml((o.reason || '').substring(0, 40)) + '</td>' +
+                    '</tr>';
+            }).join('');
+        }
+
+        const loadAudit = loadTradeSlowData;
+        const loadManualPerf = loadTradeSlowData;
+
+        // Init
+        startPolling();
+
+        // URL 参数预填
+        (function() {
+            const params = new URLSearchParams(window.location.search);
+            const sym = params.get('symbol');
+            const dir = params.get('direction');
+            const qty = params.get('qty');
+            const orderType = params.get('order_type');
+            const price = params.get('price');
+            const tif = params.get('tif');
+            const session = params.get('session');
+            const op = params.get('op');
+            if (sym) {
+                document.getElementById('symbol').value = sym;
+                fetchQuote();
+            }
+            if (dir) {
+                setDir(dir.toUpperCase());
+            }
+            if (op) {
+                setOp(op.toUpperCase());
+            }
+            if (orderType) {
+                const otEl = document.getElementById('orderType');
+                if (otEl) { otEl.value = orderType.toUpperCase(); otEl.dispatchEvent(new Event('change')); }
+            }
+            if (price) {
+                const priceEl = document.getElementById('limitPrice');
+                if (priceEl) priceEl.value = parseFloat(price);
+            }
+            if (qty) {
+                const q = parseInt(qty);
+                if (q > 0) setQty(q);
+            }
+        })();
+{% endblock %}

@@ -81,9 +81,9 @@ def register(app, templates):
         # M2: 从 capital_state 获取实际起始资金，而非硬编码 $100K
         starting_equity = 100000  # 默认值
         try:
-            first_cap = conn.execute(
+            first_cap = await ds.db_query_one(
                 "SELECT current_equity FROM capital_state ORDER BY rowid LIMIT 1"
-            ).fetchone()
+            )
             if first_cap:
                 starting_equity = float(first_cap["current_equity"])
         except Exception:
@@ -162,41 +162,200 @@ def register(app, templates):
             "pnl": float(r.get("pnl") or 0),
         } for r in weekly]
 
-        # 4. 今日信号
+        # 4. 今日信号统计 (signal_lifecycle + rejections)
         try:
             sig_row = await ds.db_query_one(
-                "SELECT COUNT(*) as total, "
-                "SUM(CASE WHEN status = 'ACCEPTED' THEN 1 ELSE 0 END) as accepted, "
-                "SUM(CASE WHEN status = 'REJECTED' THEN 1 ELSE 0 END) as rejected "
-                "FROM signal_outcomes WHERE date(timestamp) = ?",
+                "SELECT COUNT(*) as executed FROM signal_lifecycle WHERE trade_date = ?",
                 (today,),
             )
-            if sig_row:
-                result["signals"] = {
-                    "total": sig_row.get("total", 0) or 0,
-                    "accepted": sig_row.get("accepted", 0) or 0,
-                    "rejected": sig_row.get("rejected", 0) or 0,
-                }
+            from app.core.paths import get_rejections_db
+            _rej_db = str(get_rejections_db())
+            rej_row = await ds.db_query_one(
+                "SELECT COUNT(*) as rejected FROM rejections WHERE date(timestamp) = ?",
+                (today,),
+                db_path=_rej_db,
+            )
+            executed = (sig_row.get("executed", 0) or 0) if sig_row else 0
+            rejected = (rej_row.get("rejected", 0) or 0) if rej_row else 0
+            result["signals"] = {
+                "total": executed + rejected,
+                "accepted": executed,
+                "rejected": rejected,
+            }
         except Exception:
             pass
 
-        # 5. 最近信号明细
+        # 5. 最近信号明细 (signal_lifecycle 表)
         recent = await ds.db_query(
-            "SELECT symbol, direction, confidence, strength, status, "
-            "substr(timestamp, 12, 8) as time "
-            "FROM signal_outcomes WHERE date(timestamp) = ? "
-            "ORDER BY timestamp DESC LIMIT 10",
+            "SELECT symbol, signal_direction, signal_confidence, signal_strength, "
+            "source_type, substr(created_at, 12, 8) as time "
+            "FROM signal_lifecycle WHERE trade_date = ? "
+            "ORDER BY created_at DESC LIMIT 10",
             (today,),
         )
         result["recent_signals"] = [{
             "symbol": r["symbol"],
-            "direction": r["direction"],
-            "confidence": round(float(r.get("confidence") or 0), 3),
-            "strength": int(r.get("strength") or 0),
-            "status": r["status"],
-            "time": r["time"],
+            "direction": r.get("signal_direction", ""),
+            "confidence": round(float(r.get("signal_confidence") or 0), 3),
+            "strength": int(r.get("signal_strength") or 0),
+            "status": r.get("source_type", ""),
+            "time": r.get("time", ""),
         } for r in recent]
 
         return result
+
+    # ═══════════════════════════════════════════════════════
+    #  Risk Command Panel (风控中心)
+    # ═══════════════════════════════════════════════════════
+
+    @router.get("/api/risk/command")
+    async def risk_command():
+        """聚合风控数据: 保证金 + VIX + Kill Switch + 财报 + 建议"""
+        ds = get_data_service()
+        cached = ds.cache.get("risk_command")
+        if cached is not None:
+            return cached
+
+        # 并行获取数据
+        acc_raw, pos_raw, vix = await asyncio.gather(
+            ds.get_account_raw(),
+            ds.get_positions_raw(),
+            ds.get_vix(),
+        )
+
+        from app.web_dashboard.routes.dashboard import _parse_account, _parse_positions, _calc_margin
+
+        account = _parse_account(acc_raw)
+        margin = _calc_margin(account)
+        margin_pct = margin.get("usage_pct", 0)
+
+        # Kill switch 状态
+        kill_switch_active = False
+        try:
+            from app.us_pipeline.emergency_interceptor import check_kill_switch
+            kill_switch_active = check_kill_switch()
+        except Exception:
+            # Fallback: 直接检查 flag 文件
+            from pathlib import Path
+            flag = Path(__file__).parent.parent.parent.parent / "data" / "KILL_SWITCH.flag"
+            kill_switch_active = flag.exists()
+
+        # 财报预警 (持仓中有财报的)
+        earnings_count = 0
+        try:
+            from app.web_dashboard.routes.dashboard import _get_position_earnings
+            positions = await _parse_positions(ds, pos_raw)
+            earnings = _get_position_earnings(positions)
+            earnings_count = len(earnings) if earnings else 0
+        except Exception:
+            pass
+
+        # 生成建议
+        suggestions = []
+        if margin_pct > 50:
+            suggestions.append(f"保证金使用率 {margin_pct:.1f}% 偏高，建议减仓降压")
+        if vix and vix >= 25:
+            suggestions.append(f"VIX {vix:.1f} 处于高波动区，建议收紧止损或减少新开仓")
+        if kill_switch_active:
+            suggestions.append("自动交易已暂停 (Kill Switch 激活)")
+        if earnings_count > 0:
+            suggestions.append(f"{earnings_count} 只持仓近期有财报，注意事件风险")
+
+        result = {
+            "margin_pct": round(margin_pct, 1),
+            "vix": round(vix, 2) if vix else 0,
+            "kill_switch_active": kill_switch_active,
+            "earnings_count": earnings_count,
+            "suggestions": suggestions,
+        }
+        ds.cache.set("risk_command", result, ttl=15)
+        return result
+
+    @router.post("/api/risk/pause-trading")
+    async def pause_trading():
+        """激活 Kill Switch，暂停自动交易"""
+        try:
+            from app.us_pipeline.emergency_interceptor import activate_kill_switch
+            activate_kill_switch("Dashboard manual pause")
+            ds = get_data_service()
+            ds.invalidate_cache("risk_command")
+            logger.warning("[RiskCmd] Kill Switch 已激活 (Dashboard)")
+            return {"success": True, "message": "自动交易已暂停"}
+        except Exception as e:
+            logger.error(f"[RiskCmd] 暂停失败: {e}")
+            return JSONResponse(content={"success": False, "error": str(e)}, status_code=500)
+
+    @router.post("/api/risk/resume-trading")
+    async def resume_trading():
+        """解除 Kill Switch，恢复自动交易"""
+        try:
+            from app.us_pipeline.emergency_interceptor import deactivate_kill_switch
+            deactivate_kill_switch()
+            ds = get_data_service()
+            ds.invalidate_cache("risk_command")
+            logger.info("[RiskCmd] Kill Switch 已解除 (Dashboard)")
+            return {"success": True, "message": "自动交易已恢复"}
+        except Exception as e:
+            logger.error(f"[RiskCmd] 恢复失败: {e}")
+            return JSONResponse(content={"success": False, "error": str(e)}, status_code=500)
+
+    @router.post("/api/risk/emergency-close")
+    async def emergency_close(request: Request):
+        """全部平仓 — 需要 CONFIRM 确认"""
+        try:
+            body = await request.json()
+        except Exception:
+            return JSONResponse(content={"success": False, "error": "请求无效"}, status_code=400)
+
+        if body.get("confirm") != "CONFIRM":
+            return JSONResponse(content={"success": False, "error": "需要 CONFIRM 确认"}, status_code=400)
+
+        # P0-2 修复 (2026-06-12): 二次密钥校验, 防止 CSRF / 误点导致一键全平
+        # 在 .env.us 配置 EMERGENCY_CONFIRM_TOKEN=<随机字符串>, 调用方需在 body 中提供 token 字段
+        try:
+            from app.web_dashboard.auth import _read_env
+            expected_token = _read_env("EMERGENCY_CONFIRM_TOKEN", "")
+        except Exception:
+            expected_token = ""
+        if expected_token:
+            user_token = str(body.get("token", ""))
+            import hmac as _hmac
+            if not user_token or not _hmac.compare_digest(user_token, expected_token):
+                logger.warning("[RiskCmd] 紧急平仓拒绝: EMERGENCY_CONFIRM_TOKEN 校验失败")
+                return JSONResponse(
+                    content={"success": False, "error": "EMERGENCY_CONFIRM_TOKEN 校验失败"},
+                    status_code=403,
+                )
+        else:
+            logger.warning("[RiskCmd] 紧急平仓: 未配置 EMERGENCY_CONFIRM_TOKEN, 仅依赖 CONFIRM (建议在 .env.us 配置)")
+
+        ds = get_data_service()
+        pos_raw = await ds.get_positions_raw()
+        if not pos_raw:
+            return {"success": True, "message": "无持仓需要平仓", "closed": 0}
+
+        closed = 0
+        errors = []
+        from app.web_dashboard.manual_order_service import get_manual_order_service
+        svc = get_manual_order_service()
+
+        for pos in pos_raw:
+            symbol = str(pos.get("code", ""))
+            qty = int(abs(float(pos.get("qty", 0))))
+            if qty <= 0:
+                continue
+            try:
+                result = svc.close_position(symbol=symbol, reason="紧急平仓(Dashboard)", close_qty=qty)
+                if result.get("success"):
+                    closed += 1
+                else:
+                    errors.append(f"{symbol}: {result.get('error', '未知错误')}")
+            except Exception as e:
+                errors.append(f"{symbol}: {e}")
+
+        ds.invalidate_cache()
+        msg = f"平仓 {closed} 只" + (f", {len(errors)} 只失败" if errors else "")
+        logger.warning(f"[RiskCmd] 紧急平仓: {msg}")
+        return {"success": True, "message": msg, "closed": closed, "errors": errors}
 
     app.include_router(router)
