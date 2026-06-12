@@ -38,6 +38,56 @@ def _record_attempt(ip: str):
     _login_attempts[ip].append(time.time())
 
 
+# ── P2-2 (2026-06-12): per-(ip,path) 写接口限速 ──
+_RATE_BUCKETS: dict = defaultdict(list)  # (ip, path) -> [timestamps]
+_RATE_MAX_PER_MIN = 60
+_RATE_WINDOW = 60.0
+
+
+def _is_write_method(method: str) -> bool:
+    return method in ("POST", "PUT", "DELETE", "PATCH")
+
+
+def _rate_check_and_record(ip: str, path: str) -> bool:
+    """返回 True 表示放行, False 表示触发限速."""
+    now = time.time()
+    key = (ip, path)
+    bucket = _RATE_BUCKETS[key]
+    bucket[:] = [t for t in bucket if now - t < _RATE_WINDOW]
+    if len(bucket) >= _RATE_MAX_PER_MIN:
+        return False
+    bucket.append(now)
+    return True
+
+
+# ── P2-1 (2026-06-12): 写接口同源 (Origin/Referer) 校验 ──
+def _origin_allowed(request) -> bool:
+    """同源校验: Origin 或 Referer 的 hostname 必须与 Host header 的 hostname 一致.
+    比较时去掉端口，避免 nginx $host (无端口) vs 浏览器 Origin (含端口) 不匹配."""
+    raw_host = (request.headers.get("host") or "").lower().strip()
+    if not raw_host:
+        return True  # 无 Host 头时不阻断 (内网调试)
+    # 去掉端口: "ft.aitz.cc:8888" → "ft.aitz.cc"
+    host = raw_host.split(":")[0]
+    origin = request.headers.get("origin")
+    referer = request.headers.get("referer")
+    candidates = []
+    for src_url in (origin, referer):
+        if not src_url:
+            continue
+        try:
+            from urllib.parse import urlparse
+            p = urlparse(src_url)
+            if p.hostname:
+                candidates.append(p.hostname.lower())
+        except Exception:
+            pass
+    if not candidates:
+        # 浏览器写请求一般会带 Origin/Referer, 缺失视为可疑
+        return False
+    return any(c == host for c in candidates)
+
+
 def create_app() -> FastAPI:
     app = FastAPI(
         title="FTSeek-US Dashboard",
@@ -87,6 +137,30 @@ def create_app() -> FastAPI:
                 return JSONResponse(
                     content={"error": "请求体过大"},
                     status_code=413,
+                )
+
+        # ── P2-1 写接口同源校验 (CSRF 防护): /api/auth/login 豁免 ──
+        if _is_write_method(request.method) and path != "/api/auth/login":
+            if not _origin_allowed(request):
+                logger.warning(
+                    f"[CSRF] 拒绝跨域写请求 path={path} "
+                    f"origin={request.headers.get('origin')} "
+                    f"referer={request.headers.get('referer')} "
+                    f"host={request.headers.get('host')}"
+                )
+                return JSONResponse(
+                    content={"error": "跨域写请求被拒绝"},
+                    status_code=403,
+                )
+
+        # ── P2-2 写接口限速 (per-IP per-path 60/min) ──
+        if _is_write_method(request.method) and path.startswith("/api/"):
+            client_ip = request.client.host if request.client else "unknown"
+            if not _rate_check_and_record(client_ip, path):
+                logger.warning(f"[RateLimit] {client_ip} {path} 触发 60/min")
+                return JSONResponse(
+                    content={"error": "请求过于频繁, 请稍后再试"},
+                    status_code=429,
                 )
 
         # ── 认证 ──
@@ -153,7 +227,7 @@ def create_app() -> FastAPI:
             })
             response.set_cookie(
                 "ftseek_session", token, max_age=86400,
-                httponly=True, samesite="lax", secure=True,
+                httponly=True, samesite="strict", secure=True,
             )
             return response
 
@@ -162,7 +236,7 @@ def create_app() -> FastAPI:
             response = JSONResponse(content={"success": True, "redirect": "/"})
             response.set_cookie(
                 "ftseek_session", token, max_age=86400,
-                httponly=True, samesite="lax", secure=True,
+                httponly=True, samesite="strict", secure=True,
             )
             logger.info("[Auth] 用户登录成功")
             # 登录成功后清除限制
@@ -200,6 +274,10 @@ def create_app() -> FastAPI:
     from app.web_dashboard.routes import stock_detail as r_stock_detail
     from app.web_dashboard.routes import system as r_system
     from app.web_dashboard.routes import watchlist as r_watchlist
+    from app.web_dashboard.routes import signal_inbox as r_signal_inbox
+    from app.web_dashboard.routes import battle_plan as r_battle_plan
+    from app.web_dashboard.routes import trade_intel as r_trade_intel
+    from app.web_dashboard.routes import ws as r_ws
 
     r_dashboard.register(app, templates, dashboard)
     r_trade.register(app, templates)
@@ -208,6 +286,10 @@ def create_app() -> FastAPI:
     r_stock_detail.register(app, templates)
     r_system.register(app, templates)
     r_watchlist.register(app, templates)
+    r_signal_inbox.register(app, templates)
+    r_battle_plan.register(app, templates)
+    r_trade_intel.register(app, templates)
+    r_ws.register(app)
 
     logger.info("Dashboard v2.0 已创建 (路由模块化 + DataService 共享缓存)")
     return app
