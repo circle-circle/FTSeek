@@ -107,12 +107,17 @@ def register(app, templates):
     _YAML_PATH = "/opt/ftseek/FTSeek-US/config/unified_config.yaml"
 
     def _read_auto_trading() -> bool:
-        """从 YAML 读取当前自动交易开关状态"""
+        """从 YAML 直接读取当前自动交易开关状态 (绕过 ConfigContainer 缓存)"""
+        import re
         try:
-            from app.core.config_container import get_config
-            return bool(get_config().get_dotted("feature_flags.auto_trading_enabled", False))
+            with open(_YAML_PATH, "r") as f:
+                for line in f:
+                    m = re.search(r'auto_trading_enabled:\s*(true|false)', line)
+                    if m:
+                        return m.group(1) == 'true'
         except Exception:
-            return False
+            pass
+        return False
 
     def _write_auto_trading(enabled: bool) -> bool:
         """修改 YAML 文件中的 auto_trading_enabled 值 (热重载自动生效)"""
