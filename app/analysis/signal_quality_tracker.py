@@ -80,7 +80,7 @@ RECENT_TRADES_FOR_DISABLE = 10
 DISABLE_WINRATE_THRESHOLD = 0.20
 
 # 阈值调整建议: 默认基线 (与 risk 配置保持一致)
-DEFAULT_MIN_CONFIDENCE = 0.50
+DEFAULT_MIN_CONFIDENCE = 0.70
 
 
 # ---------------------------------------------------------------------------

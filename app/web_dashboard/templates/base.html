@@ -245,7 +245,6 @@
             <a href="/" {% block nav_home_class %}{% endblock %}><span class="nav-icon">🏠</span> 指挥中心</a>
             <a href="/trade" {% block nav_trade_class %}{% endblock %}><span class="nav-icon">💹</span> 交易</a>
             <a href="/watchlist" {% block nav_watchlist_class %}{% endblock %}><span class="nav-icon">📋</span> 股票池</a>
-            <a href="/#analytics" onclick="if(location.pathname==='/'){event.preventDefault();var b=document.getElementById('analyticsBody'),a=document.getElementById('analyticsArrow');if(b){b.classList.add('open');if(a)a.classList.add('open');var c=b.closest('.card');if(c)c.scrollIntoView({behavior:'smooth',block:'start'});}}" {% block nav_review_class %}{% endblock %}><span class="nav-icon">📊</span> 分析</a>
             <a href="/system" {% block nav_system_class %}{% endblock %}><span class="nav-icon">⚙️</span> 系统</a>
         </div>
         <div class="sidebar-footer">
@@ -260,7 +259,6 @@
             <a href="/" {% block nav_home_class2 %}{% endblock %}><span class="nav-icon">🏠</span> 指挥</a>
             <a href="/trade" {% block nav_trade_class2 %}{% endblock %}><span class="nav-icon">💹</span> 交易</a>
             <a href="/watchlist" {% block nav_watchlist_class2 %}{% endblock %}><span class="nav-icon">📋</span> 股票池</a>
-            <a href="/#analytics" onclick="if(location.pathname==='/'){event.preventDefault();var b=document.getElementById('analyticsBody'),a=document.getElementById('analyticsArrow');if(b){b.classList.add('open');if(a)a.classList.add('open');var c=b.closest('.card');if(c)c.scrollIntoView({behavior:'smooth',block:'start'});}}" {% block nav_review_class2 %}{% endblock %}><span class="nav-icon">📊</span> 分析</a>
             <a href="/system" {% block nav_system_class2 %}{% endblock %}><span class="nav-icon">⚙️</span> 系统</a>
         </div>
         <span class="spacer"></span>
@@ -279,7 +277,6 @@
             <a href="/" {% block nav_home_class3 %}{% endblock %}><span class="tab-icon">🏠</span>指挥</a>
             <a href="/watchlist" {% block nav_watchlist_class3 %}{% endblock %}><span class="tab-icon">📋</span>股票池</a>
             <a href="/trade" class="tab-trade" {% block nav_trade_class3 %}{% endblock %}><span class="tab-icon">💹</span>交易</a>
-            <a href="/#analytics" onclick="if(location.pathname==='/'){event.preventDefault();var b=document.getElementById('analyticsBody'),a=document.getElementById('analyticsArrow');if(b){b.classList.add('open');if(a)a.classList.add('open');var c=b.closest('.card');if(c)c.scrollIntoView({behavior:'smooth',block:'start'});}}" {% block nav_review_class3 %}{% endblock %}><span class="tab-icon">📊</span>分析</a>
             <a href="/system" {% block nav_system_class3 %}{% endblock %}><span class="tab-icon">⚙️</span>系统</a>
         </div>
     </nav>

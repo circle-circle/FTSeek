@@ -33,7 +33,7 @@ class SignalDeduplicator:
         self.event_store = event_store
         
         # 冷却时间 (秒)
-        self.cooldown_seconds = config.get("SIGNAL_COOLDOWN", 120)
+        self.cooldown_seconds = config.get("SIGNAL_COOLDOWN", 60)
         
         # 信号缓存
         self.recent_signals: Dict[str, List[SignalScore]] = {}  # symbol -> signals

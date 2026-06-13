@@ -16,7 +16,7 @@
     risk = config.risk
     is_live = config.is_live()
     trade_env = config.trade_env  # TrdEnv enum
-    value = config.get("risk", "MIN_CONFIDENCE", 0.5)
+    value = config.get("risk", "MIN_CONFIDENCE", 0.70)
 """
 import os
 import logging

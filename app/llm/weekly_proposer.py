@@ -241,7 +241,7 @@ class WeeklyProposer:
             cfg = get_config()
             risk = cfg.get_section("risk", {}).get("signal_quality", {})
             return {
-                "min_conf": risk.get("min_confidence", 0.6),
+                "min_conf": risk.get("min_confidence", 0.70),
             }
         except Exception:
             pass

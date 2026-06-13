@@ -85,7 +85,7 @@ YELLOW_PATTERNS = {
         "direction": {"LONG", "BUY"},
         "wr": 25.6, "pnl": 17982, "n": 82,
         "note": "RANGE市做多需额外确认",
-        "min_confidence": 0.6,
+        "min_confidence": 0.70,
     },
 }
 

@@ -93,7 +93,7 @@ class ConfigDefaults:
     # ============================================================
     # 决策引擎 — 信号时序 (decision.signal_timing)
     # ============================================================
-    SIGNAL_COOLDOWN = 120                   # decision.signal_timing.cooldown_seconds
+    SIGNAL_COOLDOWN = 60                    # strategy.signal_cooldown (YAML SSOT)
     SIGNAL_EXPIRE_SECONDS = 300             # decision.signal_timing.expire_seconds
 
     # ============================================================

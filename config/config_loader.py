@@ -66,7 +66,7 @@ class PositionRatios:
 
 @dataclass
 class SignalTiming:
-    cooldown_seconds: int = 120
+    cooldown_seconds: int = 60
     expire_seconds: int = 300
 
 
@@ -102,7 +102,7 @@ class TradingRisk:
 
 @dataclass
 class SignalQuality:
-    min_confidence: float = 0.6
+    min_confidence: float = 0.70
     min_consensus: float = 0.3
     min_score: int = 60
 
@@ -254,7 +254,7 @@ class ConfigLoader:
             'POSITION_RATIO_LOW': self.get('decision.position_ratios.low', 0.25),
             'POSITION_RATIO_MEDIUM': self.get('decision.position_ratios.medium', 0.50),
             'POSITION_RATIO_HIGH': self.get('decision.position_ratios.high', 1.00),
-            'SIGNAL_COOLDOWN': self.get('decision.signal_timing.cooldown_seconds', 120),
+            'SIGNAL_COOLDOWN': self.get('strategy.signal_cooldown', 60),  # 2026-06-13: 统一读 SSOT
             'SIGNAL_EXPIRE_SECONDS': self.get('decision.signal_timing.expire_seconds', 300),
             'STRATEGY_WEIGHTS': self.get('decision.strategy_weights', {}),
         }
@@ -269,7 +269,7 @@ class ConfigLoader:
             'MAX_TOTAL_POSITION': self.get('risk.position.max_total', 0.80),
             'MAX_DAILY_TRADES': self.get('risk.trading.max_daily_trades', 500),
             'MAX_ORDER_AMOUNT': self.get('risk.trading.max_order_amount', 120000),
-            'MIN_CONFIDENCE': self.get('risk.signal_quality.min_confidence', 0.6),
+            'MIN_CONFIDENCE': self.get('risk.signal_quality.min_confidence', 0.70),
             'MIN_CONSENSUS': self.get('risk.signal_quality.min_consensus', 0.3),
             'SIGNAL_MIN_SCORE': self.get('risk.signal_quality.min_score', 60),
             'DEFAULT_STOP_LOSS': self.get('risk.stop_loss.default', -0.06),
@@ -394,7 +394,7 @@ class ConfigLoader:
             errors.append("FTSEEK_US_API_TOKEN 未设置")
         
         # 检查阈值合理性
-        min_conf = self.get('risk.signal_quality.min_confidence', 0.6)
+        min_conf = self.get('risk.signal_quality.min_confidence', 0.70)
         if min_conf < 0.3 or min_conf > 0.9:
             warnings.append(f"MIN_CONFIDENCE={min_conf} 超出合理范围 (0.3-0.9)")
 

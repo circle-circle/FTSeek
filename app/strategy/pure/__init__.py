@@ -156,7 +156,7 @@ _BUILTIN_DEFAULTS = {
         "min_score": 10,
     },
     "llm_vote": {
-        "enabled": True, "min_consensus": 0.30, "min_confidence": 0.50,
+        "enabled": True, "min_consensus": 0.30, "min_confidence": 0.70,
     },
     "trend_first": {
         "enabled": True, "observe_only": True, "min_sector_score": 40,

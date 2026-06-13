@@ -152,7 +152,7 @@ class TradingScheduler:
     MONITOR_INTERVAL_MINUTES = 0.5  # fallback: scheduler.monitor_interval_minutes
     MAX_POSITIONS = 12             # fallback: scheduler.max_positions (同步 YAML 2026-06-03: 5→12)
     _DEFAULT_MIN_SIGNAL_STRENGTH = 50    # fallback: strategies.defaults.min_strength
-    _DEFAULT_MIN_CONFIDENCE = 0.65        # 2026-06-02: 0.5 → 0.65 (同步 YAML risk.signal_quality.min_confidence)
+    _DEFAULT_MIN_CONFIDENCE = 0.70        # 2026-06-13: fail-safe 统一 YAML SSOT
     _DEFAULT_MIN_CONSENSUS_LEVEL = 0.20   # fallback: scheduler.min_consensus_level
     # 兼容旧引用 (保持 self.MIN_CONFIDENCE 访问可用)
     MIN_SIGNAL_STRENGTH = _DEFAULT_MIN_SIGNAL_STRENGTH
@@ -1039,7 +1039,7 @@ class TradingScheduler:
             # 修复后读取 strategy.signal_cooldown=120 (秒)
             # 删除死配置: scheduler.signal_cooldown_minutes, decision.signal_timing.cooldown_seconds
             self.SIGNAL_COOLDOWN_MINUTES = _sb_get(
-                "strategy.signal_cooldown", 120
+                "strategy.signal_cooldown", 60
             ) / 60.0  # 秒转分钟
 
             # 沙盒模式 banner — 显眼提醒

@@ -32,7 +32,7 @@ def evaluate(ctx: SymbolContext, config: Dict[str, Any]) -> Optional[SignalCandi
 
     config:
         min_consensus: float = 0.30       # 最低共识度
-        min_confidence: float = 0.50      # 最低置信度
+        min_confidence: float = 0.70      # 2026-06-13 fail-safe 统一
 
     ctx.metadata 中传入:
         ctx.metadata["vote_result"] = {
@@ -59,7 +59,7 @@ def evaluate(ctx: SymbolContext, config: Dict[str, Any]) -> Optional[SignalCandi
         return None
 
     confidence = float(vote.get("final_confidence", 0.5))
-    min_conf = config.get("min_confidence", 0.50)
+    min_conf = config.get("min_confidence", 0.70)
     if confidence < min_conf:
         return None
 

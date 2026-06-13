@@ -161,7 +161,7 @@ def generate_dynamic_pool_profile(
         t = yaml_tiers[tier]
         base = StockFilterProfile(
             max_symbols=int(t.get("max_symbols", 5)),
-            min_confidence=float(t.get("min_confidence", 0.50)),
+            min_confidence=float(t.get("min_confidence", 0.70)),
             min_score=int(t.get("min_score", 50)),
             max_price=float(t.get("max_price", 500)),
             min_price=float(t.get("min_price", 5)),

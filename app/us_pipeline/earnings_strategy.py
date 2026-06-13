@@ -44,7 +44,7 @@ class EarningsMomentumStrategy:
     # 策略参数
     MIN_SURPRISE_PCT = 5.0  # 最低超预期百分比
     MIN_BEAT_STREAK = 2  # 最低连续 Beat 期数
-    MIN_CONFIDENCE = 0.55  # 最低置信度
+    MIN_CONFIDENCE = 0.70  # 2026-06-13 统一: fail-safe
     MAX_HOLDING_HOURS = 72  # 最大持仓时间
     
     # 仓位参数

@@ -395,7 +395,7 @@ def check_daily_review(scheduler: 'TradingScheduler'):
                         cfg = get_config()
                         if cfg is not None:
                             loop_context["MIN_CONFIDENCE"] = float(
-                                cfg.get_dotted(ConfigKeys.MIN_CONFIDENCE.value, 0.5)
+                                cfg.get_dotted(ConfigKeys.MIN_CONFIDENCE.value, 0.70)
                             )
                             loop_context["SIGNAL_MIN_SCORE"] = int(
                                 cfg.get_dotted(ConfigKeys.MIN_EFFECTIVE_STRENGTH.value, 50)
@@ -404,7 +404,7 @@ def check_daily_review(scheduler: 'TradingScheduler'):
                                 cfg.get_dotted("risk.position.max_per_symbol", 0.25)
                             )
                         else:
-                            loop_context["MIN_CONFIDENCE"] = 0.5
+                            loop_context["MIN_CONFIDENCE"] = 0.70
                             loop_context["SIGNAL_MIN_SCORE"] = 50
                             loop_context["MAX_POSITION_PER_SYMBOL"] = 0.25
                     except Exception as e:

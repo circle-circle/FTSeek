@@ -240,7 +240,7 @@ def validate_config():
     
     # 2. P0 新增：配置一致性检查
     # 检查 MIN_CONFIDENCE 在各处是否一致
-    min_confidence_risk = RISK_CONFIG.get("MIN_CONFIDENCE", 0.50)  # 2026-04-18 统一: 0.55→0.50
+    min_confidence_risk = RISK_CONFIG.get("MIN_CONFIDENCE", 0.70)  # 2026-06-13 统一: fail-safe 0.70
     try:
         from app.risk.pre_trade_check import PreTradeChecker
         checker = PreTradeChecker()

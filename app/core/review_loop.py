@@ -606,7 +606,7 @@ class ActionExecutor:
     def _tighten_entry_conditions(self, issue: DetectedIssue, context: Dict) -> ActionResult:
         """收紧入场条件 (L1: 自动执行+通知 → ConfigWriter 持久化)"""
         try:
-            current = context.get("MIN_CONFIDENCE", 0.5)
+            current = context.get("MIN_CONFIDENCE", 0.70)
             new_value = min(
                 current + self.SAFETY_BOUNDS["MIN_CONFIDENCE"]["max_delta"],
                 self.SAFETY_BOUNDS["MIN_CONFIDENCE"]["max"]

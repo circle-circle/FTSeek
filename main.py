@@ -47,7 +47,7 @@ def _run_new_scheduler(args):
     """启动 TradingScheduler: DI容器装配 + 多模型投票 + 自适应轮询 + Futu LV3"""
     import fcntl
 
-    LOCK_FILE = "/tmp/ftseek_us.lock"
+    LOCK_FILE = "/run/ftseek-us.lock"
     try:
         lock_fd = os.open(LOCK_FILE, os.O_CREAT | os.O_RDWR)
         fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
