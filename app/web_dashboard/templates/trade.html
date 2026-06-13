@@ -242,7 +242,17 @@
                         </div>
                         <div class="form-group">
                             <label>数量</label>
-                            <input type="number" id="quantity" min="1" max="100000" placeholder="股数">
+                            <div class="qty-row">
+                                <button type="button" class="qty-step" onclick="stepQty(-10)">−</button>
+                                <input type="number" id="quantity" min="1" max="100000" placeholder="股数" oninput="updateEstimate()">
+                                <button type="button" class="qty-step" onclick="stepQty(10)">+</button>
+                            </div>
+                            <div class="pct-row">
+                                <button type="button" class="pct-btn" onclick="pctQty(0.25)">25%</button>
+                                <button type="button" class="pct-btn" onclick="pctQty(0.5)">50%</button>
+                                <button type="button" class="pct-btn" onclick="pctQty(0.75)">75%</button>
+                                <button type="button" class="pct-btn" onclick="pctQty(1)">MAX</button>
+                            </div>
                         </div>
                     </div>
 
@@ -444,6 +454,18 @@
         </div>
     </div>
 
+    <!-- Generic confirm modal -->
+    <div class="overlay" id="confirmModal">
+        <div class="modal" style="max-width:380px">
+            <h3 style="margin:0 0 12px;font-size:15px">⚠️ 确认操作</h3>
+            <p id="confirmText" style="font-size:13px;color:#c9d1d9;margin:0 0 16px"></p>
+            <div class="btn-group">
+                <button class="btn btn-sell" onclick="_executeCancel()">确认</button>
+                <button class="btn btn-ghost" onclick="document.getElementById('confirmModal').classList.remove('show')">取消</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Result toast modal -->
     <div class="overlay" id="resultModal">
         <div class="modal" style="max-width:360px;text-align:center">
@@ -501,24 +523,24 @@
         setInterval(updateExtRthUI, 60000);
 
         async function takeoverPos(symbol) {
-    try {
-        const resp = await fetch('/api/positions/takeover', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({symbol: symbol, owner: 'manual'})
-        });
-        const data = await resp.json();
-        if (data.success) {
-            alert('✅ ' + (data.message || symbol + ' 已纳入管理'));
-            if (typeof refreshAll === 'function') refreshAll();
-            else location.reload();
-        } else {
-            alert('❌ 失败: ' + (data.error || '未知错误'));
+            try {
+                const resp = await fetch('/api/positions/takeover', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({symbol: symbol, owner: 'manual'})
+                });
+                const data = await resp.json();
+                if (data.success) {
+                    showMsg('ok', '✅ ' + (data.message || symbol + ' 已纳入管理'));
+                    if (typeof refreshAll === 'function') refreshAll();
+                    else loadPositions();
+                } else {
+                    showMsg('err', '❌ 失败: ' + (data.error || '未知错误'));
+                }
+            } catch (e) {
+                showMsg('err', '❌ 请求失败: ' + e.message);
+            }
         }
-    } catch (e) {
-        alert('❌ 请求失败: ' + e.message);
-    }
-}
 
 function escHtml(s) {
             return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
@@ -683,6 +705,32 @@ function escHtml(s) {
         }
 
         function setQty(n) { if (n > 0) { document.getElementById('quantity').value = n; updateEstimate(); } }
+        function stepQty(delta) {
+            const el = document.getElementById('quantity');
+            const cur = parseInt(el.value) || 0;
+            const nv = Math.max(1, cur + delta);
+            el.value = nv;
+            updateEstimate();
+        }
+        function pctQty(pct) {
+            if (!curCap) { showMsg('err', '⚠️ 请先输入标的获取报价'); return; }
+            const price = curQuote?.cur_price || curCap.cur_price;
+            if (!price || price <= 0) { showMsg('err', '⚠️ 无法获取当前价格'); return; }
+            let maxShares;
+            if (curDir === 'LONG' && curOp === 'OPEN') {
+                maxShares = curCap.max_can_buy || Math.floor((curCap.power || 0) / price);
+            } else if (curDir === 'SHORT' && curOp === 'OPEN') {
+                maxShares = curCap.can_short || Math.floor((curCap.max_short_power || 0) / price);
+            } else if (curOp === 'CLOSE') {
+                maxShares = Math.abs(curCap.held_qty || 0);
+                if (curDir === 'LONG') maxShares = curCap.can_sell || maxShares;
+            } else {
+                maxShares = curCap.max_can_buy || 100;
+            }
+            const n = Math.max(1, Math.floor(maxShares * pct));
+            document.getElementById('quantity').value = n;
+            updateEstimate();
+        }
 
         function updateEstimate() {
             const qty = parseInt(document.getElementById('quantity').value) || 0;
@@ -1004,8 +1052,16 @@ function escHtml(s) {
             }
         }
 
-        async function cancelOrder(id) {
-            if (!confirm(`撤销 ${id}?`)) return;
+        let _pendingCancelId = null;
+        function cancelOrder(id) {
+            _pendingCancelId = id;
+            document.getElementById('confirmText').textContent = `确认撤销订单 ${id}？`;
+            document.getElementById('confirmModal').classList.add('show');
+        }
+        async function _executeCancel() {
+            const id = _pendingCancelId;
+            document.getElementById('confirmModal').classList.remove('show');
+            if (!id) return;
             try {
                 const res = await fetch('/api/orders/cancel', {
                     method: 'POST', headers: {'Content-Type':'application/json'},
@@ -1015,6 +1071,7 @@ function escHtml(s) {
                 d.success ? showMsg('ok', '✅ 已撤销') : showMsg('err', `❌ ${d.error}`);
                 loadOrders();
             } catch (e) { showMsg('err', e.message); }
+            _pendingCancelId = null;
         }
 
         // ══════════════════════════════════════════════════════
@@ -1109,6 +1166,10 @@ function escHtml(s) {
                 // 数据新鲜度
                 const dot = document.querySelector('.ts-dot');
                 if (dot) { dot.classList.remove('stale'); }
+                _failCount = 0;
+                // 清除之前的错误提示
+                const errRow = document.querySelector('.api-error-row');
+                if (errRow) errRow.remove();
 
                 _slMap = {};
                 (d.stop_distances || []).forEach(s => {
@@ -1236,8 +1297,15 @@ function escHtml(s) {
                 }
             } catch (e) {
                 console.error('Trade snapshot error:', e);
+                _failCount++;
                 const dot = document.querySelector('.ts-dot');
                 if (dot) dot.classList.add('stale');
+                if (_failCount >= _MAX_FAILS_BEFORE_BANNER) {
+                    const posBody = document.getElementById('posBody');
+                    if (posBody && !posBody.querySelector('.api-error-row')) {
+                        posBody.innerHTML = '<tr class="api-error-row"><td colspan="6" style="text-align:center;color:#f87171;padding:20px">⚠️ 数据加载失败 (已重试 ' + _failCount + ' 次) — 请检查网络连接</td></tr>';
+                    }
+                }
             }
         }
 
@@ -1306,12 +1374,20 @@ function escHtml(s) {
                     }
                     perfEl.innerHTML = html;
                 }
-            } catch (e) { console.error('Slow data error:', e); }
+            } catch (e) {
+                console.error('Slow data error:', e);
+                const perfEl = document.getElementById('manualPerf');
+                if (perfEl && !perfEl.querySelector('.api-error')) {
+                    perfEl.innerHTML = '<div class="api-error" style="text-align:center;color:#f87171;padding:16px;font-size:13px">⚠️ 交易统计加载失败 — 将在下次刷新时重试</div>';
+                }
+            }
         }
 
         // ── Visibility-Aware Polling ──
         let _fastTimer = null, _slowTimer = null;
         let _isPolling = false;
+        let _failCount = 0;
+        const _MAX_FAILS_BEFORE_BANNER = 3;  // 连续失败3次(45s)后显示错误提示
 
         function startPolling() {
             if (_isPolling) return;
@@ -1403,6 +1479,30 @@ function escHtml(s) {
 
         const loadAudit = loadTradeSlowData;
         const loadManualPerf = loadTradeSlowData;
+
+        // ── WebSocket 实时事件消费 ──
+        if (window.WSManager) {
+            // 订单状态变更 → 立即刷新持仓+订单
+            WSManager.on('order_update', function(data) {
+                if (data.status === 'submitted') {
+                    showMsg('ok', '📡 ' + (data.symbol || '') + ' ' + (data.side || '') + ' ' + (data.qty || '') + '股 订单已提交');
+                } else if (data.status === 'error') {
+                    showMsg('err', '📡 订单失败: ' + (data.symbol || '') + ' ' + (data.error || ''));
+                } else if (data.status === 'filled') {
+                    showMsg('ok', '📡 ' + (data.symbol || '') + ' 订单已成交');
+                }
+                loadTradeSnapshot();
+            });
+            // 成交通知 → 刷新 + 提示
+            WSManager.on('fill', function(data) {
+                showMsg('ok', '✅ 成交: ' + (data.symbol || '') + ' ' + (data.side || '') + ' ' + (data.qty || '') + '股 @ $' + (data.price || '?'));
+                loadTradeSnapshot();
+            });
+            // 持仓变动 → 刷新
+            WSManager.on('position_update', function(data) {
+                loadTradeSnapshot();
+            });
+        }
 
         // Init
         startPolling();

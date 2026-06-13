@@ -555,11 +555,27 @@
             renderSnapshot(_lastSnapshot);
         } catch (e) {
             console.error('Snapshot error:', e);
+            _dashFailCount = (_dashFailCount || 0) + 1;
+            if (_dashFailCount >= 3) {
+                var strip = document.querySelector('.status-strip');
+                if (strip && !strip.querySelector('.api-err-banner')) {
+                    var ban = document.createElement('div');
+                    ban.className = 'api-err-banner';
+                    ban.style.cssText = 'width:100%;text-align:center;color:#f87171;font-size:12px;padding:6px;background:rgba(248,113,113,0.1);border-radius:6px;margin-top:6px';
+                    ban.textContent = '⚠️ 数据加载失败 — 请检查网络或刷新页面';
+                    strip.appendChild(ban);
+                }
+            }
         }
     }
 
+    var _dashFailCount = 0;
+
     function renderSnapshot(d) {
         if (!d) return;
+        _dashFailCount = 0;
+        var oldBan = document.querySelector('.api-err-banner');
+        if (oldBan) oldBan.remove();
         var a = d.account || {};
         var p = d.pnl || {};
         var m = d.margin || {};
@@ -1090,6 +1106,19 @@
             startPolling();
         }
     });
+
+    // ── WebSocket 实时事件 ──
+    if (window.WSManager) {
+        WSManager.on('order_update', function() { loadSnapshot(); });
+        WSManager.on('fill', function() { loadSnapshot(); });
+        WSManager.on('position_update', function() { loadSnapshot(); });
+        WSManager.on('signal_new', function() { loadSnapshot(); });
+        WSManager.on('risk_alert', function(data) {
+            if (data && data.message) {
+                console.warn('[WS Risk]', data.level, data.message);
+            }
+        });
+    }
 
     // Initial start
     updateMarketStatus();

@@ -476,10 +476,28 @@ class ManualOrderService:
                 # 标记为手动持仓, 避免被系统退出监控误平
                 self._mark_position_manual(order.symbol, order.direction)
                 # PDT 记录移至平仓时 — 开仓不计入 day trade (P0 2026-06-11)
+                # WebSocket 实时推送
+                try:
+                    from app.web_dashboard.routes.ws import publish_event_sync
+                    publish_event_sync("order_update", {
+                        "order_id": order.order_id, "status": "submitted",
+                        "symbol": order.symbol, "side": order.action,
+                        "qty": order.quantity, "price": price,
+                    })
+                except ImportError:
+                    pass
             else:
                 order.status = "error"
                 order.error_msg = str(data)
                 logger.error(f"[手动下单] ❌ 订单提交失败: {data}")
+                try:
+                    from app.web_dashboard.routes.ws import publish_event_sync
+                    publish_event_sync("order_update", {
+                        "order_id": "", "status": "error",
+                        "symbol": order.symbol, "error": str(data),
+                    })
+                except ImportError:
+                    pass
 
         except Exception as e:
             order.status = "error"

@@ -103,6 +103,19 @@ async def publish_event(event_type: str, data: dict):
     await _manager.broadcast(event_type, data)
 
 
+def publish_event_sync(event_type: str, data: dict):
+    """同步版本 — 从非 async 代码中调用 (如 ManualOrderService)"""
+    try:
+        import asyncio
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            loop.create_task(_manager.broadcast(event_type, data))
+        else:
+            loop.run_until_complete(_manager.broadcast(event_type, data))
+    except Exception:
+        pass  # WebSocket 推送失败不影响主流程
+
+
 # ═══════════════════════════════════════════════════════
 #  WebSocket Endpoint
 # ═══════════════════════════════════════════════════════
