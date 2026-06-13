@@ -772,8 +772,9 @@ class USPositionSync:
                     INSERT INTO open_positions (
                         symbol, direction, size, avg_entry_price,
                         initial_sl, current_sl, initial_tp,
-                        entry_time, updated_at, strategy_id, trader_type, owner_strategy
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        entry_time, updated_at, strategy_id, trader_type, owner_strategy,
+                        owner
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(symbol) DO UPDATE SET
                         direction=excluded.direction,
                         size=excluded.size,
@@ -784,12 +785,17 @@ class USPositionSync:
                         updated_at=excluded.updated_at,
                         strategy_id=COALESCE(open_positions.strategy_id, excluded.strategy_id),
                         trader_type=COALESCE(open_positions.trader_type, excluded.trader_type),
-                        owner_strategy=COALESCE(open_positions.owner_strategy, excluded.owner_strategy)
+                        owner_strategy=COALESCE(open_positions.owner_strategy, excluded.owner_strategy),
+                        owner=CASE
+                            WHEN open_positions.owner='manual' THEN 'manual'
+                            ELSE excluded.owner
+                        END
                 """, (
                     symbol, info['direction'], info['qty'], info['cost'],
                     initial_sl, initial_sl, initial_tp,
                     datetime.now().isoformat(), datetime.now().isoformat(),
-                    _db_strategy_id, _db_trader_type, _db_strategy_id
+                    _db_strategy_id, _db_trader_type, _db_strategy_id,
+                    'manual' if _db_trader_type == 'MANUAL' else 'auto'
                 ))
 
         conn.commit()
