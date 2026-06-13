@@ -30,15 +30,18 @@ class ConfigHotReloader:
         config_loader,
         cooldown_seconds: int = 60,
         watch_files: list = None,
+        post_reload_callback: Callable = None,
     ):
         """
         Args:
             config_loader: ConfigLoader 实例
             cooldown_seconds: 重载冷却时间 (秒)
             watch_files: 额外监控的文件列表
+            post_reload_callback: 热重载成功后的回调 (用于同步 ConfigContainer 等下游消费者)
         """
         self.config = config_loader
         self.cooldown_seconds = cooldown_seconds
+        self._post_reload_callback = post_reload_callback
 
         # 监控文件
         config_path = getattr(config_loader, '_config_path', None)
@@ -121,6 +124,13 @@ class ConfigHotReloader:
             self._last_reload_time = now
             self._reload_count += 1
             logger.info("[HotReloader] ✅ 配置已热重载 (第 %d 次)", self._reload_count)
+
+            # 通知下游消费者 (ConfigContainer 等)
+            if self._post_reload_callback:
+                try:
+                    self._post_reload_callback()
+                except Exception as cb_err:
+                    logger.warning("[HotReloader] 回调失败 (不影响主配置): %s", cb_err)
 
         except Exception as e:
             self._error_count += 1

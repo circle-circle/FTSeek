@@ -318,10 +318,16 @@ def _run_new_scheduler(args):
         drift_detector.start()
         logger.info("[ConfigGov] ✅ 漂移检测已启动 (interval=4h)")
 
-        # Layer 3: 热重载 (60s 冷却)
-        hot_reloader = ConfigHotReloader(loader, cooldown_seconds=60)
+        # Layer 3: 热重载 (60s 冷却) — 同步 ConfigContainer
+        def _on_config_reload():
+            """热重载后同步 ConfigContainer._config_dict"""
+            from app.core.config_container import ConfigContainer
+            ConfigContainer().reload()
+            logger.info("[HotReloader] ✅ ConfigContainer 已同步")
+
+        hot_reloader = ConfigHotReloader(loader, cooldown_seconds=60, post_reload_callback=_on_config_reload)
         hot_reloader.start()
-        logger.info("[ConfigGov] ✅ 热重载已启动 (cooldown=60s)")
+        logger.info("[ConfigGov] ✅ 热重载已启动 (cooldown=60s, 含ConfigContainer同步)")
 
         # 存储引用供 scheduler 访问
         scheduler.config_validator = validator
