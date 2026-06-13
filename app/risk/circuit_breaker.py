@@ -1,24 +1,17 @@
-"""熔断器系统 - 四级熔断
+"""熔断器系统 - 三级熔断
 
-P0 修复：添加交易频率限制（与 USER.md 一致）
-- 单日最大交易数：5 笔
-- 单只股票日交易上限：2 笔
+StrategyCircuitBreaker: 策略级连续亏损熔断
+SymbolCircuitBreaker: 品种级波动率冻结
+SystemCircuitBreaker: 系统级数据源健康度
 
-P0 修复 (2026-04-17):
-- SystemCircuitBreaker 引入数据源健康度评分
-- 区分"降级模式"和"完全恢复"
-- 熔断器状态变更记录至 EventStore
-
-P1 修复 (2026-05-31): 时区统一
-- 所有日期判断使用美东时间 (app.utils.timezone)
-- TradingFrequencyLimiter 日重置基于 ET 日期
+2026-06-14: 删除 TradingFrequencyLimiter (零生产消费者)
 """
 import logging
-from datetime import datetime, timedelta, date
+from datetime import datetime, timedelta
 from typing import Dict, Optional, Any, List
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
-from app.utils.timezone import now_et, get_trade_date
+from app.utils.timezone import now_et
 
 logger = logging.getLogger(__name__)
 
@@ -30,13 +23,6 @@ class CircuitBreakerState:
     triggered_at: Optional[datetime] = None
     pause_until: Optional[datetime] = None
 
-
-@dataclass
-class DailyTradeRecord:
-    """每日交易记录"""
-    trade_count: int = 0
-    symbol_trades: Dict[str, int] = field(default_factory=dict)
-    last_reset_date: Optional[str] = None  # ET 日期字符串 YYYY-MM-DD
 
 
 class StrategyCircuitBreaker:
@@ -296,124 +282,3 @@ class SystemCircuitBreaker:
             "recent_changes": self.state_history[-5:],
         }
 
-
-class TradingFrequencyLimiter:
-    """
-    交易频率限制器 (P0 修复)
-    
-    与 USER.md 一致：
-    - 单日最大交易数：5 笔
-    - 单只股票日交易上限：2 笔
-    - 连续亏损熔断：连续亏损 2 笔后暂停交易 24 小时
-    
-    SSOT: 参数应从 unified_config.yaml -> risk.trading.max_daily_trades 加载
-          使用 from_config() 类方法确保配置一致性
-
-    P1 修复 (2026-05-31): 日重置使用 ET 日期, 避免 CST 跨日 bug
-    """
-    
-    def __init__(
-        self,
-        max_daily_trades: int = 500,  # SSOT: YAML=500
-        max_symbol_trades: int = 2,
-        consecutive_loss_threshold: int = 2,
-        loss_pause_hours: int = 24,
-    ):
-        self.max_daily_trades = max_daily_trades
-        self.max_symbol_trades = max_symbol_trades
-        self.consecutive_loss_threshold = consecutive_loss_threshold
-        self.loss_pause_hours = loss_pause_hours
-        
-        self.daily_record = DailyTradeRecord()
-        self.consecutive_losses = 0
-        self.pause_until: Optional[datetime] = None
-    
-    @classmethod
-    def from_config(cls, config_dict: Dict = None) -> 'TradingFrequencyLimiter':
-        """
-        从 unified_config.yaml 创建实例 (SSOT)
-        """
-        if config_dict is None:
-            try:
-                from config.unified_config import get_config
-                uc = get_config()
-                config_dict = uc.configs.get('unified_config', {}).get('risk', {}).get('trading', {})
-            except Exception:
-                config_dict = {}
-        
-        return cls(
-            max_daily_trades=config_dict.get('max_daily_trades', 500),  # SSOT: YAML=500
-            max_symbol_trades=config_dict.get('max_symbol_trades', 2),
-        )
-    
-    def _reset_if_new_day(self):
-        """如果是新的 ET 交易日，重置日交易计数"""
-        today_et = get_trade_date()
-        if self.daily_record.last_reset_date != today_et:
-            self.daily_record = DailyTradeRecord()
-            self.daily_record.last_reset_date = today_et
-            logger.info(f"[TradingFrequencyLimiter] ET 新交易日重置 → {today_et}")
-    
-    def record_trade(self, symbol: str) -> bool:
-        """
-        记录交易并检查是否允许
-        
-        Returns:
-            是否允许交易
-        """
-        self._reset_if_new_day()
-        
-        # 检查是否处于暂停期
-        if self.pause_until and now_et() < self.pause_until:
-            return False
-        
-        # 检查单日总交易数
-        if self.daily_record.trade_count >= self.max_daily_trades:
-            return False
-        
-        # 检查单票交易数
-        symbol_count = self.daily_record.symbol_trades.get(symbol, 0)
-        if symbol_count >= self.max_symbol_trades:
-            return False
-        
-        # 允许交易，更新记录
-        self.daily_record.trade_count += 1
-        self.daily_record.symbol_trades[symbol] = symbol_count + 1
-        
-        return True
-    
-    def record_loss(self):
-        """记录亏损"""
-        self.consecutive_losses += 1
-        
-        # 检查是否触发连续亏损熔断
-        if self.consecutive_losses >= self.consecutive_loss_threshold:
-            self.pause_until = now_et() + timedelta(hours=self.loss_pause_hours)
-    
-    def record_profit(self):
-        """记录盈利（重置连续亏损计数）"""
-        self.consecutive_losses = 0
-    
-    def is_paused(self) -> bool:
-        """检查是否处于暂停期"""
-        if self.pause_until and now_et() < self.pause_until:
-            return True
-        return False
-    
-    def get_status(self) -> Dict[str, Any]:
-        """获取当前状态"""
-        self._reset_if_new_day()
-        
-        remaining_pause = 0
-        if self.pause_until:
-            remaining_pause = max(0, int((self.pause_until - now_et()).total_seconds()))
-        
-        return {
-            "daily_trades": self.daily_record.trade_count,
-            "max_daily_trades": self.max_daily_trades,
-            "symbol_trades": self.daily_record.symbol_trades.copy(),
-            "max_symbol_trades": self.max_symbol_trades,
-            "consecutive_losses": self.consecutive_losses,
-            "is_paused": self.is_paused(),
-            "remaining_pause_seconds": remaining_pause,
-        }

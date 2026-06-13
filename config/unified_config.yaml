@@ -980,7 +980,7 @@ risk:
     max_per_direction: 0.65
     max_total: 0.8
   trading:
-    max_daily_trades: 500
+    # max_daily_trades: 已删除 (2026-06-14) — TradingFrequencyLimiter 零消费者已删除
     max_order_amount: 120000
     min_liquidity_ratio: 0.5
   signal_quality:
