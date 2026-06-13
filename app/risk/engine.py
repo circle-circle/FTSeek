@@ -21,18 +21,18 @@ class RiskEngine(BaseRiskEngine):
         risk_config = self.config.get("risk", {})
         
         # 熔断器
-        strategy_cfg = risk_config.get("CIRCUIT_BREAKER", {}).get("strategy", {})
+        strategy_cfg = risk_config.get("circuit_breaker", {}).get("strategy", {})  # SSOT: YAML lowercase
         self.strategy_breaker = StrategyCircuitBreaker(
             consecutive_losses_threshold=strategy_cfg.get("consecutive_losses", 5),
             pause_duration_seconds=strategy_cfg.get("pause_duration", 1800),
         )
         
-        symbol_cfg = risk_config.get("CIRCUIT_BREAKER", {}).get("symbol", {})
+        symbol_cfg = risk_config.get("circuit_breaker", {}).get("symbol", {})
         self.symbol_breaker = SymbolCircuitBreaker(
             volatility_threshold=symbol_cfg.get("volatility_threshold", 0.05),
         )
         
-        system_cfg = risk_config.get("CIRCUIT_BREAKER", {}).get("system", {})
+        system_cfg = risk_config.get("circuit_breaker", {}).get("system", {})
         self.system_breaker = SystemCircuitBreaker(
             market_data_timeout_seconds=system_cfg.get("market_data_timeout", 60),
         )

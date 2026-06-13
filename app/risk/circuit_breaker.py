@@ -42,7 +42,7 @@ class DailyTradeRecord:
 class StrategyCircuitBreaker:
     """策略级熔断器"""
     
-    def __init__(self, consecutive_losses_threshold: int = 5, pause_duration_seconds: int = 1800):
+    def __init__(self, consecutive_losses_threshold: int = 3, pause_duration_seconds: int = 1800):  # SSOT: YAML=3
         self.threshold = consecutive_losses_threshold
         self.pause_duration = timedelta(seconds=pause_duration_seconds)
         self.states: Dict[str, CircuitBreakerState] = {}
@@ -314,7 +314,7 @@ class TradingFrequencyLimiter:
     
     def __init__(
         self,
-        max_daily_trades: int = 5,
+        max_daily_trades: int = 500,  # SSOT: YAML=500
         max_symbol_trades: int = 2,
         consecutive_loss_threshold: int = 2,
         loss_pause_hours: int = 24,
@@ -342,7 +342,7 @@ class TradingFrequencyLimiter:
                 config_dict = {}
         
         return cls(
-            max_daily_trades=config_dict.get('max_daily_trades', 5),
+            max_daily_trades=config_dict.get('max_daily_trades', 500),  # SSOT: YAML=500
             max_symbol_trades=config_dict.get('max_symbol_trades', 2),
         )
     

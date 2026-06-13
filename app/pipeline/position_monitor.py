@@ -1713,7 +1713,7 @@ def _reconcile_position_store(scheduler):
                     cs = get_capital_safety_system()
                     account_equity = getattr(cs._state, 'current_equity', 1000000)
                 except Exception:
-                    account_equity = float(cfg.get_dotted("capital.fixed_amount", 1000000))
+                    account_equity = float(cfg.get_dotted("capital.fixed_amount", 82_000))  # SSOT: YAML=82000
                 position_value = size * cost
                 position_pct = position_value / account_equity if account_equity > 0 else 999
                 if position_pct > max_pos_pct:

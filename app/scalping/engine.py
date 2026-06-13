@@ -395,7 +395,7 @@ class ScalpingEngine:
             try:
                 from app.core.config_container import get_config
                 cfg = get_config()
-                base_equity = float(cfg.get_dotted("capital.fixed_amount", 500_000))
+                base_equity = float(cfg.get_dotted("capital.fixed_amount", 82_000))  # SSOT: YAML=82000
             except Exception:
                 base_equity = 500_000
             

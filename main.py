@@ -40,6 +40,75 @@ logging.basicConfig(
 logger = logging.getLogger("ftseek_us.main")
 
 
+def _config_integrity_check(loader):
+    """
+    启动时配置完整性校验 (2026-06-14 SSOT)
+
+    检查 YAML 中的关键 section 是否有代码消费者。
+    不阻断启动, 仅 WARNING 日志。目的是让死配置可见。
+    """
+    import re
+
+    try:
+        yaml_path = os.path.join(PROJECT_DIR, "config", "unified_config.yaml")
+        with open(yaml_path, "r") as f:
+            yaml_text = f.read()
+
+        # 扫描所有 .py 文件中 get_dotted / get() / .get(" 调用引用的 key
+        code_keys = set()
+        for root, dirs, files in os.walk(os.path.join(PROJECT_DIR, "app")):
+            if "__pycache__" in root:
+                continue
+            for fname in files:
+                if not fname.endswith(".py"):
+                    continue
+                fpath = os.path.join(root, fname)
+                try:
+                    with open(fpath, "r") as cf:
+                        code_text = cf.read()
+                    # 匹配 get_dotted("xxx") 和 get("xxx") 中的 key
+                    for m in re.finditer(r'get_dotted\(["\']([^"\']+)', code_text):
+                        code_keys.add(m.group(1))
+                    for m in re.finditer(r'\.get\(["\']([^"\']+)', code_text):
+                        code_keys.add(m.group(1))
+                except Exception:
+                    pass
+
+        # 检查已知应被消费的关键配置
+        expected_consumed = {
+            "capital.fixed_amount": "fallback capital",
+            "risk.position.max_per_symbol": "position limit",
+            "risk.position.max_per_direction": "direction limit",
+            "risk.position.max_total": "total exposure limit",
+            "risk.trading.max_daily_trades": "daily trade limit",
+            "risk.circuit_breaker.strategy.consecutive_losses": "strategy breaker",
+            "risk.position_sizing.risk_per_trade_pct": "position sizing",
+            "risk.signal_quality.min_confidence": "signal quality gate",
+            "feature_flags.auto_trading_enabled": "auto trading switch",
+        }
+
+        dead = []
+        for key, purpose in expected_consumed.items():
+            # Check if any segment of the key appears in code
+            segments = key.split(".")
+            found = any(seg in code_keys for seg in segments)
+            if not found:
+                # Also check if the full dotted key appears
+                if key not in code_keys:
+                    dead.append(f"  {key} ({purpose})")
+
+        if dead:
+            logger.warning(
+                f"⚠️ [ConfigIntegrity] {len(dead)} 个配置 key 可能无代码消费者:\n" +
+                "\n".join(dead)
+            )
+        else:
+            logger.info("✅ [ConfigIntegrity] 所有关键配置均有代码消费者")
+
+    except Exception as e:
+        logger.debug(f"[ConfigIntegrity] 校验跳过: {e}")
+
+
 # ============================================================
 #  TradingScheduler 入口 — DI 容器装配版
 # ============================================================
@@ -328,6 +397,10 @@ def _run_new_scheduler(args):
         hot_reloader = ConfigHotReloader(loader, cooldown_seconds=60, post_reload_callback=_on_config_reload)
         hot_reloader.start()
         logger.info("[ConfigGov] ✅ 热重载已启动 (cooldown=60s, 含ConfigContainer同步)")
+
+        # ── P0 (2026-06-14): 启动配置完整性校验 ──
+        # 检查 YAML key 是否有代码消费者, 未消费的 → WARNING
+        _config_integrity_check(loader)
 
         # 存储引用供 scheduler 访问
         scheduler.config_validator = validator

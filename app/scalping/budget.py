@@ -66,7 +66,7 @@ class ScalpingBudget:
                 from app.core.config_container import get_config
                 cfg = get_config()
                 # 优先使用 capital.fixed_amount，其次 fallback 到 scalping 配置
-                total_equity = float(cfg.get_dotted("capital.fixed_amount", 500_000))
+                total_equity = float(cfg.get_dotted("capital.fixed_amount", 82_000))  # SSOT: YAML=82000
             except Exception:
                 total_equity = 500_000  # Fallback 值
 

@@ -7,7 +7,7 @@ base:
   market: US
   currency: USD
   timezone: America/New_York
-  trade_env: 1
+  trade_env: 0  # 2026-06-14: 与 .env.us TRADE_ENV=0 对齐 (实盘)
   simulate_account_id: ''
 
 # 运行模式 (2026-05-14, karpathy MVP):
@@ -897,13 +897,9 @@ risk:
 
   # 模拟盘数据采集: VIX放宽到30, 收集更多市场状态数据
   vix_block_threshold: 30
-  per_trade_risk_pct: 0.010    # P0 (2026-06-03): 0.5%→1.0%, 固定风险仓位
+  # per_trade_risk_pct: 已统一为 risk.position_sizing.risk_per_trade_pct (2026-06-14 SSOT)
   max_trade_risk_pct: 0.010    # 极限 1.0% (不再按信号强度加码)
-  # F17 (2026-05-12): 组合层面止损
-  portfolio:
-    warn_drawdown_pct: 0.02     # -2% 警告
-    reduce_drawdown_pct: 0.025  # -2.5% 减半
-    stop_drawdown_pct: 0.03     # -3% 全平
+  # portfolio: 已删除 (2026-06-14) — 死配置, capital_safety水位系统替代
   capital_safety:
     water_levels:
       green:
@@ -978,8 +974,7 @@ risk:
   account:
     max_daily_drawdown: 0.03
     max_total_drawdown: 0.08
-    max_leverage: 2.0
-    min_margin_ratio: 1.5
+    # max_leverage / min_margin_ratio: 已删除 (2026-06-14) — 零代码消费
   position:
     max_per_symbol: 0.25
     max_per_direction: 0.65
@@ -1014,14 +1009,7 @@ risk:
       hourly_loss_threshold: -0.02
       daily_loss_threshold: -0.03
       pause_duration: 1800
-    symbol:
-      volatility_threshold: 0.05
-      spread_threshold: 0.005
-      volume_drop_threshold: 0.5
-    system:
-      market_data_timeout: 60
-      order_latency_threshold: 5
-      missing_fill_timeout: 3
+    # symbol/system: 已删除 (2026-06-14) — 零代码消费, 代码用硬编码默认值
 # Phase 4 (2026-05-31): ExitRuleDispatcher 正式路由控制器
 # 由 app/pipeline/position_monitor.py::_check_positions 读取
 # 与 risk.exit_routing 共存：本控制器决定 dispatcher 是否参与主路径执行；
@@ -1316,21 +1304,9 @@ agents:
     model: bailian/qwen-max
     role: monitor
 feature_flags:
-  enable_decision_engine: true
-  enable_risk_engine: true
-  # DELETED (2026-06-13): enable_execution_engine 是死配置，代码中零引用
-  # enable_execution_engine: false  # ← 已删除，避免虚假安全感
-  #
-  # 替代: auto_trading_enabled — 真正的自动交易总开关
-  # false = 仅手动交易 (信号生成+数据采集正常运行，但不下单)
-  # true  = 允许自动交易 (通过信号管道+风控门禁后自动下单)
-  # 代码位置: app/pipeline/order_executor.py _submit_order() 第一道门控
-  auto_trading_enabled: false        # 2026-06-13: 初始手动交易阶段
-  enable_observability_engine: true
-  enable_multi_agent: true
-  enable_simulation_mode: true
-  enable_backtest: true
-  enable_paper_trading: true
+  # 2026-06-14 SSOT清理: 删除7个死配置(零代码消费)
+  # 仅保留唯一有消费者的flag:
+  auto_trading_enabled: false        # 自动交易总开关 (order_executor._submit_order)
 strategy_enhancements:
   pivotal_points:
     enabled: true
@@ -1823,15 +1799,7 @@ scheduler:
   min_signal_strength: 60  # 高确信度门槛 (2026-06-13): 30→60
   min_consensus_level: 0.25  # P0 (2026-06-03): 0.20→0.25, 轻度收紧 (数据: 0.2-0.5 区间仅11笔)
   adaptive_scan_enabled: true
-  scan_segments:
-    09:30-09:50: 2
-    09:50-10:30: 3
-    10:30-11:30: 8
-    11:30-13:30: 12
-    13:30-14:00: 10
-    14:00-15:00: 5
-    15:00-15:45: 3
-    15:45-16:00: 2
+  # scan_segments: 已删除 (2026-06-14) — 从未被代码解析, 实际由adaptive_polling控制
   event_day_interval_minutes: 3
   event_day_symbols: []
   debate:
@@ -2092,8 +2060,8 @@ scalping:
     max_atr_pct: 0.04
   capital_source: capital.fixed_amount
 capital:
-  mode: simulation
-  fixed_amount: 1000000
+  # mode: 已删除 (2026-06-14) — 零消费者, 交易模式由.env.us TRADE_ENV控制
+  fixed_amount: 82000  # fallback capital when broker equity unavailable  # 2026-06-14: 实际账户约$82K
   description: 'Capital mode for adaptive risk. "simulation": uses fixed_amount. "live":
     reads from broker.'
   tiers: *id001

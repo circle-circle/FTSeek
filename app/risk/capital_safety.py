@@ -121,7 +121,7 @@ class CapitalSafetySystem:
             try:
                 from app.core.config_container import get_config
                 cfg = get_config()
-                initial_capital = float(cfg.get_dotted("capital.fixed_amount", 100_000))
+                initial_capital = float(cfg.get_dotted("capital.fixed_amount", 82_000))  # SSOT: YAML=82000
             except Exception:
                 # 2026-06-10: 实盘模式下 log warning (pre_trade_gate 会 fail-close)
                 import logging as _log

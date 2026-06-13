@@ -968,7 +968,7 @@ def run_premarket_planning(scheduler):
         try:
             from app.core.config_container import get_config
             cfg = get_config()
-            default_equity = float(cfg.get_dotted("capital.fixed_amount", 500_000))
+            default_equity = float(cfg.get_dotted("capital.fixed_amount", 82_000))  # SSOT: YAML=82000
         except Exception:
             default_equity = 500_000
         equity = cs._state.current_equity if cs._state else default_equity

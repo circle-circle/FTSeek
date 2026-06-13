@@ -1206,7 +1206,7 @@ class IntradayScorer:
         try:
             from app.core.config_container import get_config
             _cfg = get_config()
-            base_risk = float(_cfg.get_dotted("risk.per_trade_risk_pct", 0.005))
+            base_risk = float(_cfg.get_dotted("risk.position_sizing.risk_per_trade_pct", 0.008))  # SSOT: 统一路径
             max_risk = float(_cfg.get_dotted("risk.max_trade_risk_pct", 0.010))
         except Exception:
             base_risk, max_risk = 0.005, 0.010
