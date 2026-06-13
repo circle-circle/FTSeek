@@ -436,7 +436,8 @@ def get_ic_summary(
             f = [r[forward_col] for r in group]
             try:
                 g_ic, _ = spearmanr(s, f)
-                by_strategy[sid] = {"ic": round(g_ic, 4), "n": len(group)}
+                import math
+                by_strategy[sid] = {"ic": round(g_ic, 4) if not math.isnan(g_ic) else 0.0, "n": len(group)}
             except Exception:
                 pass
         
@@ -452,7 +453,8 @@ def get_ic_summary(
             f = [r[forward_col] for r in group]
             try:
                 g_ic, _ = spearmanr(s, f)
-                by_direction[d] = {"ic": round(g_ic, 4), "n": len(group)}
+                import math
+                by_direction[d] = {"ic": round(g_ic, 4) if not math.isnan(g_ic) else 0.0, "n": len(group)}
             except Exception:
                 pass
         
