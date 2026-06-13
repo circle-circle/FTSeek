@@ -103,4 +103,68 @@ def register(app, templates):
         except Exception as e:
             return {"success": False, "message": f"重启失败: {e}"}
 
+    # ── 自动交易开关 (2026-06-13) ──
+    _YAML_PATH = "/opt/ftseek/FTSeek-US/config/unified_config.yaml"
+
+    def _read_auto_trading() -> bool:
+        """从 YAML 读取当前自动交易开关状态"""
+        try:
+            from app.core.config_container import get_config
+            return bool(get_config().get_dotted("feature_flags.auto_trading_enabled", False))
+        except Exception:
+            return False
+
+    def _write_auto_trading(enabled: bool) -> bool:
+        """修改 YAML 文件中的 auto_trading_enabled 值 (热重载自动生效)"""
+        import re
+        try:
+            with open(_YAML_PATH, "r") as f:
+                content = f.read()
+            # 精确替换 auto_trading_enabled 行
+            pattern = r'(  auto_trading_enabled:\s*)(true|false)'
+            replacement = f'\\g<1>{"true" if enabled else "false"}'
+            new_content = re.sub(pattern, replacement, content)
+            if new_content == content:
+                return False  # 未找到匹配
+            with open(_YAML_PATH, "w") as f:
+                f.write(new_content)
+            return True
+        except Exception as e:
+            logger.error(f"[自动交易开关] YAML 写入失败: {e}")
+            return False
+
+    @router.get("/api/auto-trading")
+    async def get_auto_trading():
+        enabled = _read_auto_trading()
+        return {"enabled": enabled}
+
+    @router.post("/api/auto-trading/toggle")
+    async def toggle_auto_trading(request: Request):
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        target = body.get("enabled", None) if isinstance(body, dict) else None
+
+        if target is None:
+            return JSONResponse(
+                content={"success": False, "message": "缺少 enabled 参数 (true/false)"},
+                status_code=400)
+
+        target = bool(target)
+        current = _read_auto_trading()
+
+        if target == current:
+            return {"success": True, "enabled": current, "message": f"已经是{'开启' if current else '关闭'}状态"}
+
+        ok = _write_auto_trading(target)
+        if not ok:
+            return JSONResponse(
+                content={"success": False, "message": "YAML 写入失败"},
+                status_code=500)
+
+        label = "🟢 已开启" if target else "🔒 已关闭"
+        logger.warning(f"[自动交易开关] {label} (由 {'关闭' if target else '开启'} 切换)")
+        return {"success": True, "enabled": target, "message": f"自动交易{label}"}
+
     app.include_router(router)

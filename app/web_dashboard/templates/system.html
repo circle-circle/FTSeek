@@ -88,6 +88,15 @@
             <div class="status-card"><span class="icon">🏦</span><div class="info"><div class="label">券商账户</div><div class="value" id="svcBroker">--</div><div class="detail" id="brokerDetail">--</div></div></div>
         </div>
 
+        <h2 class="section-title">🔒 自动交易开关</h2>
+        <div style="background:#161b22;border:1px solid #30363d;border-radius:10px;padding:16px;margin-bottom:20px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px">
+            <div style="flex:1;min-width:200px">
+                <div style="font-size:14px;font-weight:600;margin-bottom:4px" id="autoTradeLabel">加载中...</div>
+                <div style="font-size:11px;color:#8b949e">控制信号管道是否自动下单。信号生成和数据采集不受影响。</div>
+            </div>
+            <button class="btn" id="autoTradeBtn" onclick="toggleAutoTrade()" style="min-width:120px;text-align:center" disabled>...</button>
+        </div>
+
         <h2 class="section-title">🔄 模式切换</h2>
         <div id="modeSection">
             <div class="current-mode sim" id="currentModeBlock"><div class="cm-label">当前模式</div><div class="cm-value" id="currentModeLabel">加载中...</div></div>
@@ -214,8 +223,54 @@
 
         function showMsg(type, msg) { const el = document.getElementById('result'); el.className = 'result ' + type; el.textContent = msg; el.style.display = 'block'; }
 
+        // ── 自动交易开关 ──
+        var _autoTradeEnabled = false;
+
+        async function loadAutoTrade() {
+            try {
+                const res = await fetch('/api/auto-trading');
+                const data = await res.json();
+                _autoTradeEnabled = data.enabled;
+                var label = document.getElementById('autoTradeLabel');
+                var btn = document.getElementById('autoTradeBtn');
+                if (_autoTradeEnabled) {
+                    label.innerHTML = '<span style="color:#4ade80">🟢 自动交易已开启</span>';
+                    btn.textContent = '🔒 关闭自动交易';
+                    btn.className = 'btn btn-sell';
+                } else {
+                    label.innerHTML = '<span style="color:#8b949e">🔒 自动交易已关闭</span> <span style="font-size:11px;color:#484f58">(仅手动下单)</span>';
+                    btn.textContent = '🟢 开启自动交易';
+                    btn.className = 'btn btn-buy';
+                }
+                btn.disabled = false;
+            } catch(e) {
+                document.getElementById('autoTradeLabel').textContent = '加载失败';
+            }
+        }
+
+        async function toggleAutoTrade() {
+            var btn = document.getElementById('autoTradeBtn');
+            var target = !_autoTradeEnabled;
+            btn.disabled = true;
+            btn.textContent = '⏳ 切换中...';
+            try {
+                var res = await fetch('/api/auto-trading/toggle', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({enabled: target})
+                });
+                var data = await res.json();
+                showMsg(data.success ? 'ok' : 'err', data.message);
+                loadAutoTrade();
+            } catch(e) {
+                showMsg('err', '网络异常: ' + e.message);
+                btn.disabled = false;
+            }
+        }
+
         loadSystemStatus();
         loadModeInfo();
+        loadAutoTrade();
         setInterval(loadSystemStatus, 30 * 1000);
         document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
 {% endblock %}
