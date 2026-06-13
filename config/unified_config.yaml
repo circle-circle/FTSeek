@@ -839,6 +839,8 @@ risk:
     - US.QCOM     # 44笔 22.7%胜率 -$3.8K (保留)
     - US.LCID     # 16%胜率 (保留)
     - US.TME      # 0%胜率 (保留)
+    - HK.00700    # [Phase A 2026-06-13] 跨市场符号，阻断数据/交易管道
+    - US.HK.00700 # [Phase A 2026-06-13] Futu US格式，同上
     # 模拟盘数据采集: 移除此前添加的额外黑名单项, 允许更多标的交易
 
   # 实盘隔离 (2026-06-09): 自管持仓 — position_sync/position_recovery 跳过这些标的
@@ -2227,7 +2229,7 @@ orb:
 # 盘前/盘后新闻催化事件检测 + 多模型辩论
 # 盘中不介入 (避免影响交易延迟)
 catalyst:
-  enabled: true
+  enabled: false              # [Phase A 2026-06-13] 辩论引擎产出0条action，暂停
   
   # 盘前扫描
   premarket:
@@ -2239,7 +2241,7 @@ catalyst:
   # 盘后回看
   postmarket:
     enabled: true
-    generate_lessons: true       # 生成教训写入 lessons DB
+    generate_lessons: false      # [Phase A 2026-06-13] lesson_count=0，暂停
   
   # 反向催化: 行情先行 → 新闻确认
   reverse_catalyst:
