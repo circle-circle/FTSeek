@@ -362,6 +362,21 @@ class ManualOrderService:
         except Exception as _dd_err:
             logger.debug(f"[手动下单] 回撤检查跳过: {_dd_err}")
 
+        # 9. [P0 2026-06-13] 资本安全水位检查 (手动下单也须尊重 BLACKOUT 硬熔断)
+        # 设计: BLACKOUT(>-35%) 硬阻断; RED/ORANGE 仅警告不阻断 (手动=人风控层)
+        try:
+            from app.risk.capital_safety import get_capital_safety_system, WaterLevel
+            _cs = get_capital_safety_system()
+            _cs_ok, _cs_msg = _cs.can_open_position()
+            if not _cs_ok:
+                _wl = getattr(_cs._state, 'water_level', None)
+                if _wl == WaterLevel.BLACKOUT:
+                    errors.append(f"🚨 资本安全 BLACKOUT 熔断: {_cs_msg}")
+                elif _wl == WaterLevel.RED:
+                    logger.warning(f"[手动下单] ⚠️ 资本安全 RED 警告: {_cs_msg} (不阻断手动)")
+        except Exception as _cs_err:
+            logger.debug(f"[手动下单] 资本安全检查跳过: {_cs_err}")
+
         return errors
 
     def _count_today_manual_orders(self) -> int:

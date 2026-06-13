@@ -2678,6 +2678,20 @@ def _update_symbol_daily_loss(symbol: str, pnl: float):
 def _submit_order(scheduler, symbol: str, signal: SignalScore, context: Dict[str, Any], voting_result: Dict = None):
     """构建订单并通过执行引擎下单 (Refactored 2026-04-29)"""
 
+    # ── P0 (2026-06-13): 自动交易总开关 — 替代已删除的 enable_execution_engine ──
+    # 信号生成/数据采集不受影响，仅阻断订单提交
+    # 切换: config/unified_config.yaml → feature_flags.auto_trading_enabled
+    try:
+        from app.core.config_container import get_config
+        _auto = get_config().get_dotted("feature_flags.auto_trading_enabled", False)
+        if not _auto:
+            logger.debug(f"🔒 [自动交易·关闭] {symbol} 信号已记录，但自动交易开关=off，跳过下单")
+            return
+    except Exception as _at_err:
+        # 配置读取失败 → fail-safe: 不交易 (安全优先)
+        logger.warning(f"🔒 [自动交易·fail-safe] {symbol} 配置读取失败，跳过下单: {_at_err}")
+        return
+
     # ── H3 (2026-06-03): 退出屏障 — 线程安全检查 ──
     try:
         from app.pipeline.position_monitor import _check_exit_barrier

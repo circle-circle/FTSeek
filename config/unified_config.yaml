@@ -1319,8 +1319,13 @@ feature_flags:
   enable_decision_engine: true
   enable_risk_engine: true
   # DELETED (2026-06-13): enable_execution_engine 是死配置，代码中零引用
-  # 实际控制自动交易的方式: Kill Switch (最高优先级) 或 TRADE_ENV=1 (模拟盘)
   # enable_execution_engine: false  # ← 已删除，避免虚假安全感
+  #
+  # 替代: auto_trading_enabled — 真正的自动交易总开关
+  # false = 仅手动交易 (信号生成+数据采集正常运行，但不下单)
+  # true  = 允许自动交易 (通过信号管道+风控门禁后自动下单)
+  # 代码位置: app/pipeline/order_executor.py _submit_order() 第一道门控
+  auto_trading_enabled: false        # 2026-06-13: 初始手动交易阶段
   enable_observability_engine: true
   enable_multi_agent: true
   enable_simulation_mode: true
