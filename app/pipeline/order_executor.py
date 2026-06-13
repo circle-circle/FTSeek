@@ -2680,10 +2680,23 @@ def _submit_order(scheduler, symbol: str, signal: SignalScore, context: Dict[str
 
     # ── P0 (2026-06-13): 自动交易总开关 — 替代已删除的 enable_execution_engine ──
     # 信号生成/数据采集不受影响，仅阻断订单提交
-    # 切换: config/unified_config.yaml → feature_flags.auto_trading_enabled
+    # 直接读 YAML 文件而非 ConfigContainer 内存缓存 (热重载只刷新 ConfigLoader,
+    # ConfigContainer._config_dict 是启动时快照，不会同步更新)
+    # 信号触发频率低 (每小时 0-3 次), 用正则读单行 (<0.1ms) 无性能影响
     try:
-        from app.core.config_container import get_config
-        _auto = get_config().get_dotted("feature_flags.auto_trading_enabled", False)
+        import re as _re
+        _yaml_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+            "config", "unified_config.yaml"
+        )
+        with open(_yaml_path, "r") as _f:
+            for _line in _f:
+                _m = _re.match(r'\s+auto_trading_enabled:\s*(true|false)', _line)
+                if _m:
+                    _auto = _m.group(1) == 'true'
+                    break
+            else:
+                _auto = False  # 未找到 → 默认关闭
         if not _auto:
             logger.debug(f"🔒 [自动交易·关闭] {symbol} 信号已记录，但自动交易开关=off，跳过下单")
             return
