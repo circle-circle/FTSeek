@@ -376,10 +376,17 @@ class ExecutionEngine(BaseExecutionEngine):
                     state_machine.transition(OrderState.SENT)
                     order.sent_at = now_et()
             else:
-                # 模拟模式直接成交 (无 broker 连接)
-                # P0 修复 (2026-05-11): 也走完整链路
+                # 无 broker 连接 — 区分模拟/实盘
                 is_sim = self.config.get("futu_trade_env", 1) == 1
                 simulate_realistic = self.config.get("simulate_realistic_flow", True)
+
+                # 🔴 P0 (2026-06-13): 实盘无 broker 时必须 REJECT, 绝不允许假装成交
+                if not is_sim:
+                    order.state = OrderState.REJECTED
+                    order.failure_reason = "实盘模式下 broker 未连接, 拒绝下单"
+                    state_machine.transition(OrderState.REJECTED)
+                    logger.error(f"[ExecutionEngine] 🔴 REJECTED: {order.symbol} — broker 未连接, 实盘拒绝模拟成交")
+                    return order
 
                 if is_sim and simulate_realistic:
                     # 完整链路模式

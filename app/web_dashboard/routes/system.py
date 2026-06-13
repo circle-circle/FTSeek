@@ -120,8 +120,10 @@ def register(app, templates):
         return False
 
     def _write_auto_trading(enabled: bool) -> bool:
-        """修改 YAML 文件中的 auto_trading_enabled 值 (热重载自动生效)"""
+        """修改 YAML 文件中的 auto_trading_enabled 值 (原子写入, 热重载自动生效)"""
         import re
+        import os
+        import tempfile
         try:
             with open(_YAML_PATH, "r") as f:
                 content = f.read()
@@ -131,8 +133,16 @@ def register(app, templates):
             new_content = re.sub(pattern, replacement, content)
             if new_content == content:
                 return False  # 未找到匹配
-            with open(_YAML_PATH, "w") as f:
-                f.write(new_content)
+            # 原子写入: 先写临时文件再 os.replace, 防止 HotReloader 读到半截文件
+            dir_name = os.path.dirname(_YAML_PATH)
+            fd, tmp_path = tempfile.mkstemp(dir=dir_name, suffix=".tmp")
+            try:
+                with os.fdopen(fd, "w") as tmp_f:
+                    tmp_f.write(new_content)
+                os.replace(tmp_path, _YAML_PATH)
+            except Exception:
+                os.unlink(tmp_path)
+                raise
             return True
         except Exception as e:
             logger.error(f"[自动交易开关] YAML 写入失败: {e}")

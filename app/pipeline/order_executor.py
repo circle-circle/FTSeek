@@ -149,12 +149,20 @@ def _submit_order_optimized(
         if scheduler.execution_engine:
             submitted = scheduler.execution_engine.submit_order(order)
         else:
-            order.state = OrderState.FILLED
-            order.filled_quantity = order.quantity
-            order.avg_fill_price = signal_price or order.price
-            order.fill_price = order.avg_fill_price
-            order.filled_at = now_et()
-            submitted = order
+            # 🔴 P0 (2026-06-13): 无执行引擎时, 实盘必须拒绝
+            _env = int(scheduler.config_loader.get_dotted("TRADE_ENV", 1) if hasattr(scheduler, "config_loader") else 1)
+            if _env == 0:
+                order.state = OrderState.REJECTED
+                order.failure_reason = "实盘模式下无执行引擎, 拒绝下单"
+                logger.error(f"[OrderExecutor] 🔴 REJECTED: {symbol} — execution_engine 不存在, 实盘拒绝模拟成交")
+                submitted = order
+            else:
+                order.state = OrderState.FILLED
+                order.filled_quantity = order.quantity
+                order.avg_fill_price = signal_price or order.price
+                order.fill_price = order.avg_fill_price
+                order.filled_at = now_et()
+                submitted = order
 
         fill_price = float(
             getattr(submitted, "fill_price", 0)
@@ -1468,6 +1476,33 @@ def _check_gates_and_conflicts(scheduler, symbol: str, signal: SignalScore, cont
 
     return True
 
+def _real_pyramid_order(scheduler, symbol: str, signal: SignalScore, kwargs: Dict) -> Dict:
+    """金字塔加仓的真实下单 — 通过 execution_engine 提交, 而非假装成功 (2026-06-13 P0 fix)"""
+    try:
+        from app.core.models import Order, OrderType, Direction
+        order = Order(
+            order_id=f"PYR_{symbol}_{int(time.time())}",
+            symbol=symbol,
+            direction=signal.direction if hasattr(signal, 'direction') else Direction.LONG,
+            order_type=OrderType.MARKET,
+            quantity=kwargs.get('quantity', kwargs.get('qty', 0)),
+            price=kwargs.get('price', 0),
+            metadata={'source': 'pyramid_add_on'},
+        )
+        if scheduler.execution_engine:
+            result = scheduler.execution_engine.submit_order(order)
+            return {
+                "success": result.state in (OrderState.FILLED, OrderState.SENT),
+                "order_id": order.order_id,
+            }
+        else:
+            logger.error(f"[金字塔] 🔴 无 execution_engine, 拒绝加仓 {symbol}")
+            return {"success": False, "error": "no_execution_engine"}
+    except Exception as e:
+        logger.error(f"[金字塔] 加仓失败 {symbol}: {e}")
+        return {"success": False, "error": str(e)}
+
+
 def _handle_pyramid_add(scheduler, symbol: str, signal: SignalScore, context: Dict[str, Any]) -> bool:
     """处理 Livermore 金字塔加仓。返回 True 如果执行了加仓。"""
     # ── Livermore 金字塔加仓处理 (P1-1) ──
@@ -1508,7 +1543,7 @@ def _handle_pyramid_add(scheduler, symbol: str, signal: SignalScore, context: Di
                 add_result = pyramid.execute_add_on(
                     position=position,
                     add_params=add_params,
-                    order_func=lambda **kwargs: {"success": True, "order_id": f"ADD_{symbol}_{int(time.time())}"},
+                    order_func=lambda **kwargs: _real_pyramid_order(scheduler, symbol, signal, kwargs),
                 )
 
                 if add_result["success"]:

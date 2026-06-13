@@ -1600,11 +1600,18 @@ class USPositionSync:
             except Exception:
                 max_per_symbol = 0.25
             
+            # 🔴 P0 (2026-06-13): 周期扫描必须过滤 self_managed, 防止对手动仓位触发减仓
+            try:
+                from app.utils.watchlist_manager import get_all_manual_symbols
+                _scan_self_managed = get_all_manual_symbols()
+            except Exception:
+                _scan_self_managed = set()
+
             conn = sqlite3.connect(_get_db_path(), timeout=10)
             conn.execute("PRAGMA busy_timeout=5000")
             cursor = conn.cursor()
             cursor.execute("""
-                SELECT symbol, size, avg_entry_price, direction
+                SELECT symbol, size, avg_entry_price, direction, trader_type
                 FROM open_positions
                 WHERE sync_status IS NULL OR sync_status NOT IN (
                     'closed_by_daemon','closed_by_scheduler','closed_by_sync',
@@ -1616,9 +1623,14 @@ class USPositionSync:
             _alert_now = time.time()
             _alert_cooldown = 300  # 5 minutes
             for row in cursor.fetchall():
-                sym, size, price, direction = row
+                sym, size, price, direction, trader_type = row[0], row[1], row[2], row[3], (row[4] if len(row) > 4 else None)
                 # 2026-06-11: 跳过非美股标的
                 if not sym.startswith('US.') or sym.count('.') > 1:
+                    continue
+                # 🔴 P0 (2026-06-13): 跳过 self_managed / manual 仓位 — 系统不碰手动仓
+                if _scan_self_managed and sym in _scan_self_managed:
+                    continue
+                if trader_type and str(trader_type).upper() == 'MANUAL':
                     continue
                 if sym in trims_to_execute:
                     continue  # 已在 pending_trims 中
