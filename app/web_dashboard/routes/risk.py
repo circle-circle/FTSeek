@@ -257,7 +257,7 @@ def register(app, templates):
         if vix and vix >= 25:
             suggestions.append(f"VIX {vix:.1f} 处于高波动区，建议收紧止损或减少新开仓")
         if kill_switch_active:
-            suggestions.append("自动交易已暂停 (Kill Switch 激活)")
+            suggestions.append("紧急制动已激活，一切扫描和下单已停止")
         if earnings_count > 0:
             suggestions.append(f"{earnings_count} 只持仓近期有财报，注意事件风险")
 

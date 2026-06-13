@@ -436,9 +436,10 @@
                     <div class="risk-cmd-cell"><div class="label">财报预警</div><div class="value" id="rcEarnings">--</div><div class="action-btn" id="rcEarningsAction"></div></div>
                 </div>
                 <div id="rcSuggestions" style="font-size:12px;color:#8b949e;margin-bottom:8px"></div>
+                <div style="font-size:11px;color:#484f58;margin-bottom:6px">⚠️ 紧急制动 = 停止一切(扫描+信号+下单)，60分钟自动恢复。<br>日常开关自动交易请到 <a href="/system" style="color:#58a6ff">系统页</a>（信号照常，仅停下单）。</div>
                 <div class="risk-cmd-actions">
                     <button class="btn btn-sm" style="background:#3a1a1a;color:#f87171;border:1px solid rgba(248,113,113,0.3)" onclick="riskCmdEmergencyClose()">🔴 全部平仓</button>
-                    <button class="btn btn-sm" style="background:#2a1f0a;color:#fbbf24;border:1px solid rgba(251,191,36,0.3)" id="rcPauseBtn" onclick="riskCmdTogglePause()">⚠️ 暂停自动交易</button>
+                    <button class="btn btn-sm" style="background:#2a1f0a;color:#fbbf24;border:1px solid rgba(251,191,36,0.3)" id="rcPauseBtn" onclick="riskCmdTogglePause()">⚠️ 紧急制动</button>
                 </div>
             </div>
         </div>
@@ -1503,10 +1504,10 @@
         // Kill switch
         const killEl = document.getElementById('rcKill');
         _riskCmdPaused = data.kill_switch_active || false;
-        killEl.textContent = _riskCmdPaused ? '🔴 已暂停' : '🟢 运行中';
+        killEl.textContent = _riskCmdPaused ? '🔴 已制动' : '🟢 运行中';
         killEl.className = 'value ' + (_riskCmdPaused ? 'red' : 'green');
         document.getElementById('rcKillAction').innerHTML = '';
-        document.getElementById('rcPauseBtn').textContent = _riskCmdPaused ? '▶️ 恢复自动交易' : '⚠️ 暂停自动交易';
+        document.getElementById('rcPauseBtn').textContent = _riskCmdPaused ? '▶️ 解除制动' : '⚠️ 紧急制动';
 
         // Earnings
         const earnings = data.earnings_count || 0;
@@ -1522,8 +1523,11 @@
     }
 
     async function riskCmdTogglePause() {
-        const action = _riskCmdPaused ? '恢复' : '暂停';
-        if (!confirm(`确认${action}自动交易？`)) return;
+        const action = _riskCmdPaused ? '解除制动' : '紧急制动';
+        const detail = _riskCmdPaused
+            ? '解除后扫描和下单将恢复正常。'
+            : '制动后一切停止（扫描+信号+下单），60分钟后自动恢复。';
+        if (!confirm(`确认${action}？\n${detail}`)) return;
         try {
             const endpoint = _riskCmdPaused ? '/api/risk/resume-trading' : '/api/risk/pause-trading';
             const res = await fetch(endpoint, { method: 'POST' });
