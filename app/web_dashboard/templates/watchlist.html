@@ -39,9 +39,30 @@
     .wl-table .sym { font-weight: 600; color: #58a6ff; }
     .wl-table .name { color: #8b949e; font-size: 12px; }
     .wl-table .price { font-weight: 600; font-variant-numeric: tabular-nums; }
-    .wl-table .note { color: #8b949e; font-size: 12px; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .wl-table .actions { white-space: nowrap; }
     .wl-table .actions .btn { margin-left: 4px; }
+
+    /* ── Signal badge ── */
+    .sig-badge {
+        display: inline-block; padding: 2px 8px; border-radius: 4px;
+        font-size: 11px; font-weight: 700; letter-spacing: 0.3px;
+    }
+    .sig-LONG { background: rgba(63,185,80,0.15); color: #3fb950; }
+    .sig-SHORT { background: rgba(248,81,73,0.15); color: #f85149; }
+    .sig-none { color: #484f58; }
+
+    /* ── Strength bar ── */
+    .str-bar { display: inline-flex; align-items: center; gap: 4px; }
+    .str-fill { height: 6px; border-radius: 3px; min-width: 2px; max-width: 60px; }
+    .str-label { font-size: 11px; color: #8b949e; font-variant-numeric: tabular-nums; }
+
+    /* ── Win rate ── */
+    .wr-cell { font-variant-numeric: tabular-nums; }
+    .wr-cell .wr-pct { font-weight: 600; }
+    .wr-cell .wr-cnt { font-size: 11px; color: #8b949e; }
+
+    /* ── PnL ── */
+    .pnl-cell { font-variant-numeric: tabular-nums; font-weight: 600; font-size: 12px; }
 
     /* ── Empty ── */
     .wl-empty { text-align: center; padding: 48px 20px; color: #484f58; }
@@ -64,14 +85,14 @@
 
     /* ── Mobile ── */
     @media (max-width: 768px) {
-        .wl-table th:nth-child(4), .wl-table td:nth-child(4),
-        .wl-table th:nth-child(5), .wl-table td:nth-child(5) { display: none; }
+        .wl-table th:nth-child(2), .wl-table td:nth-child(2),
+        .wl-table th:nth-child(6), .wl-table td:nth-child(6) { display: none; }
         .wl-header { flex-direction: column; align-items: stretch; }
         .wl-add { min-width: 0; }
         .wl-table .actions .btn { padding: 6px 8px; font-size: 11px; }
     }
     @media (max-width: 480px) {
-        .wl-table th:nth-child(3), .wl-table td:nth-child(3) { display: none; }
+        .wl-table th:nth-child(5), .wl-table td:nth-child(5) { display: none; }
     }
 {% endblock %}
 
@@ -98,7 +119,8 @@
                     <th>名称</th>
                     <th>现价</th>
                     <th>涨跌</th>
-                    <th>备注</th>
+                    <th>信号</th>
+                    <th>胜率</th>
                     <th>操作</th>
                 </tr>
             </thead>
@@ -158,14 +180,43 @@
             var chg = it.change_pct || 0;
             var chgStr = chg > 0 ? '+' + chg.toFixed(2) + '%' : chg < 0 ? chg.toFixed(2) + '%' : '--';
             var priceStr = it.cur_price > 0 ? '$' + fmt(it.cur_price) : '--';
-            var noteHtml = it.note ? escHtml(it.note) : '<span style="color:#30363d">—</span>';
+
+            // Signal badge
+            var sigDir = it.signal_direction || '';
+            var sigStr = it.signal_strength || 0;
+            var sigHtml;
+            if (sigDir && sigStr > 0) {
+                var barW = Math.min(sigStr, 100) * 0.6;
+                var barColor = sigStr >= 50 ? '#3fb950' : sigStr >= 30 ? '#d29922' : '#484f58';
+                sigHtml = '<span class="sig-badge sig-' + sigDir + '">' + sigDir + '</span>' +
+                    ' <span class="str-bar"><span class="str-fill" style="width:' + barW + 'px;background:' + barColor + '"></span>' +
+                    '<span class="str-label">' + sigStr + '</span></span>';
+            } else {
+                sigHtml = '<span class="sig-none">—</span>';
+            }
+
+            // Win rate + trade stats
+            var wrHtml;
+            var tc = it.trade_count || 0;
+            if (tc > 0) {
+                var wr = it.win_rate || 0;
+                var wrCls = wr >= 50 ? 'green' : wr >= 30 ? '' : 'red';
+                var pnl = it.total_pnl || 0;
+                var pnlCls = pnl > 0 ? 'green' : pnl < 0 ? 'red' : '';
+                wrHtml = '<span class="wr-cell"><span class="wr-pct ' + wrCls + '">' + wr.toFixed(0) + '%</span>' +
+                    ' <span class="wr-cnt">(' + tc + '笔)</span></span>' +
+                    '<br><span class="pnl-cell ' + pnlCls + '">' + (pnl >= 0 ? '+' : '') + '$' + fmt(pnl, 0) + '</span>';
+            } else {
+                wrHtml = '<span style="color:#484f58">无交易</span>';
+            }
 
             html += '<tr>' +
                 '<td><a href="/stock/' + encodeURIComponent(it.symbol) + '" class="sym" style="text-decoration:none">' + escHtml(it.symbol) + '</a></td>' +
                 '<td><span class="name">' + escHtml(it.name || '') + '</span></td>' +
                 '<td><span class="price">' + priceStr + '</span></td>' +
                 '<td><span class="' + pctCls(chg) + '">' + chgStr + '</span></td>' +
-                '<td><span class="note" title="' + escHtml(it.note || '') + '">' + noteHtml + '</span></td>' +
+                '<td>' + sigHtml + '</td>' +
+                '<td>' + wrHtml + '</td>' +
                 '<td class="actions">' +
                     '<a href="/trade?symbol=' + encodeURIComponent(it.symbol) + '" class="btn btn-sm btn-buy">交易</a>' +
                     '<button class="btn btn-sm btn-ghost" onclick="removeStock(\'' + escHtml(it.symbol) + '\')">删除</button>' +

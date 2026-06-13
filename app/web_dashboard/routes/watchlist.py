@@ -18,6 +18,97 @@ def _get_db():
     return str(get_main_db())
 
 
+def _get_latest_signals(symbols: list) -> dict:
+    """从 signal_snapshots.db 获取每只股票最新信号"""
+    import os
+    result = {}
+    db_path = os.path.join(os.path.dirname(_get_db()), "signal_snapshots.db")
+    if not os.path.exists(db_path):
+        return result
+    try:
+        conn = sqlite3.connect(db_path, timeout=5)
+        conn.row_factory = sqlite3.Row
+        placeholders = ",".join(["?"] * len(symbols))
+        rows = conn.execute(f"""
+            SELECT s.symbol, s.direction, s.strength, s.confidence, s.created_at
+            FROM signal_snapshots s
+            INNER JOIN (
+                SELECT symbol, MAX(created_at) as max_ts
+                FROM signal_snapshots
+                WHERE symbol IN ({placeholders})
+                GROUP BY symbol
+            ) latest ON s.symbol = latest.symbol AND s.created_at = latest.max_ts
+        """, symbols).fetchall()
+        for r in rows:
+            result[r["symbol"]] = {
+                "direction": r["direction"],
+                "strength": r["strength"],
+                "confidence": round(r["confidence"], 2) if r["confidence"] else 0,
+                "created_at": r["created_at"],
+            }
+        conn.close()
+    except Exception as e:
+        logger.debug(f"[watchlist] signal_snapshots query failed: {e}")
+    return result
+
+
+def _get_trade_stats(symbols: list) -> dict:
+    """从 trade_records 获取每只股票历史交易统计"""
+    result = {}
+    for db_name in ["ftseek_us_live.db", "ftseek_us.db"]:
+        import os
+        db_path = os.path.join(os.path.dirname(_get_db()), db_name)
+        if not os.path.exists(db_path):
+            continue
+        try:
+            conn = sqlite3.connect(db_path, timeout=5)
+            conn.row_factory = sqlite3.Row
+            placeholders = ",".join(["?"] * len(symbols))
+            rows = conn.execute(f"""
+                SELECT symbol,
+                       COUNT(*) as cnt,
+                       SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
+                       ROUND(AVG(realized_pnl), 2) as avg_pnl,
+                       ROUND(SUM(realized_pnl), 2) as total_pnl
+                FROM trade_records
+                WHERE symbol IN ({placeholders})
+                  AND realized_pnl IS NOT NULL
+                GROUP BY symbol
+            """, symbols).fetchall()
+            for r in rows:
+                sym = r["symbol"]
+                cnt = r["cnt"]
+                wins = r["wins"]
+                # 合并多个 DB 的统计
+                if sym in result:
+                    old = result[sym]
+                    old_total = old["total_pnl"] + (r["total_pnl"] or 0)
+                    old_cnt = old["count"] + cnt
+                    old_wins = old["_wins"] + wins
+                    result[sym] = {
+                        "count": old_cnt,
+                        "win_rate": round(old_wins / old_cnt * 100, 1) if old_cnt > 0 else 0,
+                        "avg_pnl": round(old_total / old_cnt, 2) if old_cnt > 0 else 0,
+                        "total_pnl": round(old_total, 2),
+                        "_wins": old_wins,
+                    }
+                else:
+                    result[sym] = {
+                        "count": cnt,
+                        "win_rate": round(wins / cnt * 100, 1) if cnt > 0 else 0,
+                        "avg_pnl": r["avg_pnl"] or 0,
+                        "total_pnl": r["total_pnl"] or 0,
+                        "_wins": wins,
+                    }
+            conn.close()
+        except Exception as e:
+            logger.debug(f"[watchlist] trade_records query failed ({db_name}): {e}")
+    # 清理内部字段
+    for v in result.values():
+        v.pop("_wins", None)
+    return result
+
+
 def _ensure_table():
     """确保 user_watchlist 表存在"""
     db_path = _get_db()
@@ -73,6 +164,10 @@ def register(app, templates):
         ds = get_data_service()
         quotes = await ds.get_batch_quotes_detailed(symbols)
 
+        # 批量获取信号快照 + 交易统计
+        signal_data = _get_latest_signals(symbols)
+        trade_stats = _get_trade_stats(symbols)
+
         for it in items:
             q = quotes.get(it["symbol"], {})
             it["cur_price"] = q.get("cur_price", 0)
@@ -90,6 +185,20 @@ def register(app, templates):
                 )
             else:
                 it["change_pct"] = 0
+
+            # 信号数据
+            sig = signal_data.get(it["symbol"], {})
+            it["signal_direction"] = sig.get("direction", "")
+            it["signal_strength"] = sig.get("strength", 0)
+            it["signal_confidence"] = sig.get("confidence", 0)
+            it["signal_created_at"] = sig.get("created_at", "")
+
+            # 交易统计
+            ts = trade_stats.get(it["symbol"], {})
+            it["trade_count"] = ts.get("count", 0)
+            it["win_rate"] = ts.get("win_rate", 0)
+            it["avg_pnl"] = ts.get("avg_pnl", 0)
+            it["total_pnl"] = ts.get("total_pnl", 0)
 
         return {"items": items}
 

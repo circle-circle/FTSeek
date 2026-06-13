@@ -86978,3 +86978,19 @@ API: http://localhost:8901
 2026-06-13 08:02:32,860 [app.notifier.dingtalk] INFO: [钉钉] send_text 成功: 🌙 FTSeek-US 深夜洞察推荐
 2026-06-13 08:02:32,861 [app.pipeline.llm_pipeline] INFO: [LLM推荐] 推送成功 (overnight)
 2026-06-13 08:02:32,861 [app.pipeline.llm_pipeline] INFO: [LLM推荐] 完成: overnight, 新闻 20 条
+2026-06-13 08:05:42,091 [app.coordinator.capital_allocator] WARNING: [CapitalAllocator·RECONCILE] bucket=main 账本=0.000 实际=1.109 → 修正
+2026-06-13 08:06:28,876 [app.orb.engine] INFO: [ORB] tick #61 | time=20:06:28 | pos=0 | ranges=0 | done=0
+2026-06-13 08:06:28,897 [app.pipeline.signal_pipeline] INFO: [扫描] overnight → 完全静默，跳过扫描
+2026-06-13 08:06:39,358 [ftseek_us.risk.vix_monitor] INFO: VIX 指数：19.80
+2026-06-13 08:11:29,106 [app.orb.engine] INFO: [ORB] tick #121 | time=20:11:29 | pos=0 | ranges=0 | done=0
+2026-06-13 08:11:29,157 [app.pipeline.signal_pipeline] INFO: [扫描] overnight → 完全静默，跳过扫描
+2026-06-13 08:11:50,142 [ftseek_us.risk.vix_monitor] INFO: VIX 指数：19.80
+2026-06-13 08:16:29,353 [app.orb.engine] INFO: [ORB] tick #181 | time=20:16:29 | pos=0 | ranges=0 | done=0
+2026-06-13 08:16:29,372 [app.pipeline.signal_pipeline] INFO: [扫描] overnight → 完全静默，跳过扫描
+2026-06-13 08:17:00,893 [ftseek_us.risk.vix_monitor] INFO: VIX 指数：19.80
+2026-06-13 08:21:29,595 [app.pipeline.signal_pipeline] INFO: [扫描] overnight → 完全静默，跳过扫描
+2026-06-13 08:21:29,603 [app.orb.engine] INFO: [ORB] tick #241 | time=20:21:29 | pos=0 | ranges=0 | done=0
+2026-06-13 08:22:11,605 [ftseek_us.risk.vix_monitor] INFO: VIX 指数：19.80
+2026-06-13 08:26:29,829 [app.pipeline.signal_pipeline] INFO: [扫描] overnight → 完全静默，跳过扫描
+2026-06-13 08:26:29,858 [app.orb.engine] INFO: [ORB] tick #301 | time=20:26:29 | pos=0 | ranges=0 | done=0
+2026-06-13 08:27:22,866 [ftseek_us.risk.vix_monitor] INFO: VIX 指数：19.80
