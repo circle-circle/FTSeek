@@ -620,12 +620,12 @@ async def _calc_signals(ds) -> dict:
         from app.analysis.signal_ic_tracker import _get_db_path
         snap_db = str(_get_db_path())
         row = await ds.db_query_one(
-            "SELECT COUNT(*) as cnt FROM signal_snapshots WHERE trade_date = ?",
+            "SELECT COUNT(*) as cnt FROM signal_snapshots WHERE trade_date = ? AND COALESCE(trade_mode, 'simulate') = 'live'",
             (today,), db_path=snap_db,
         )
         result["signal_count"] = row["cnt"] if row else 0
         row2 = await ds.db_query_one(
-            "SELECT COUNT(*) as cnt FROM signal_snapshots WHERE trade_date = ? AND strength >= 30 AND confidence > 0",
+            "SELECT COUNT(*) as cnt FROM signal_snapshots WHERE trade_date = ? AND strength >= 30 AND confidence > 0 AND COALESCE(trade_mode, 'simulate') = 'live'",
             (today,), db_path=snap_db,
         )
         result["passed_count"] = row2["cnt"] if row2 else 0

@@ -169,18 +169,25 @@ def record_signal_snapshot(
         
         now_snap = datetime.now().isoformat()
         
+        # 判断当前交易模式 (实盘/模拟)
+        try:
+            from app.core.db_utils import is_live_mode
+            _trade_mode = 'live' if is_live_mode() else 'simulate'
+        except Exception:
+            _trade_mode = 'simulate'
+        
         conn = _conn()
         try:
             conn.execute("""
                 INSERT OR IGNORE INTO signal_snapshots
                 (decision_id, symbol, direction, strength, confidence,
                  consensus_level, strategy_id, created_at, trade_date,
-                 created_at_snap)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 created_at_snap, trade_mode)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 decision_id, symbol, direction, strength, confidence,
                 consensus_level, strategy_id, created_at, trade_date,
-                now_snap,
+                now_snap, _trade_mode,
             ))
             conn.commit()
         finally:
@@ -377,6 +384,7 @@ def get_ic_summary(
             FROM signal_snapshots
             WHERE {forward_col} IS NOT NULL
               AND strength IS NOT NULL
+              AND COALESCE(trade_mode, 'simulate') = 'live'
             ORDER BY trade_date DESC
         """).fetchall()
         

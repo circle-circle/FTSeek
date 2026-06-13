@@ -305,6 +305,7 @@ def register(app, templates):
             rows = await ds.db_query(
                 "SELECT symbol, direction, strength, confidence, fwd_ret_t1 "
                 "FROM signal_snapshots WHERE fwd_ret_t1 IS NOT NULL "
+                "AND COALESCE(trade_mode, 'simulate') = 'live' "
                 "ORDER BY created_at DESC LIMIT 100",
                 db_path=snap_db,
             )
@@ -401,12 +402,12 @@ def register(app, templates):
                 from app.analysis.signal_ic_tracker import _get_db_path
                 snap_db = str(_get_db_path())
                 row = await ds.db_query_one(
-                    "SELECT COUNT(*) as cnt FROM signal_snapshots WHERE trade_date = ?",
+                    "SELECT COUNT(*) as cnt FROM signal_snapshots WHERE trade_date = ? AND COALESCE(trade_mode, 'simulate') = 'live'",
                     (today,), db_path=snap_db,
                 )
                 signal_count = row["cnt"] if row else 0
                 row2 = await ds.db_query_one(
-                    "SELECT COUNT(*) as cnt FROM signal_snapshots WHERE trade_date = ? AND strength >= 30 AND confidence > 0",
+                    "SELECT COUNT(*) as cnt FROM signal_snapshots WHERE trade_date = ? AND strength >= 30 AND confidence > 0 AND COALESCE(trade_mode, 'simulate') = 'live'",
                     (today,), db_path=snap_db,
                 )
                 passed_count = row2["cnt"] if row2 else 0

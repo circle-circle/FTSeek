@@ -55,7 +55,7 @@ def _get_latest_signals(symbols: list) -> dict:
 def _get_trade_stats(symbols: list) -> dict:
     """从 trade_records 获取每只股票历史交易统计"""
     result = {}
-    for db_name in ["ftseek_us_live.db", "ftseek_us.db"]:
+    for db_name in ["ftseek_us_live.db"]:
         import os
         db_path = os.path.join(os.path.dirname(_get_db()), db_name)
         if not os.path.exists(db_path):
