@@ -2740,6 +2740,21 @@ def _submit_order(scheduler, symbol: str, signal: SignalScore, context: Dict[str
         logger.warning(f"🔒 [自动交易·fail-safe] {symbol} 配置读取失败，跳过下单: {_at_err}")
         return
 
+    # ── P0 (2026-06-14): 时段门禁 — opening_drive 禁止入场 ──
+    # 数据驱动: 136 笔 opening_drive 退出, 18.4% WR, -366.6% 累计亏损 (占总亏损 116%)
+    # 开盘前30分钟波动 2-3x ATR, 信号在此时段入场 ≈ 送钱
+    try:
+        from app.core.shared_kernel import get_shared_kernel
+        _current_session = get_shared_kernel().get_current_session()
+        if _current_session == "opening_drive":
+            logger.info(
+                f"⛔ [时段门禁] {symbol} opening_drive 禁止入场 "
+                f"(数据: 136笔 -366.6%, 信号已记录但不执行)"
+            )
+            return
+    except Exception as _sess_err:
+        logger.debug(f"[时段门禁] 检查异常 (放行): {_sess_err}")
+
     # ── H3 (2026-06-03): 退出屏障 — 线程安全检查 ──
     try:
         from app.pipeline.position_monitor import _check_exit_barrier

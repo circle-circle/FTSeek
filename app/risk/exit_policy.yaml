@@ -24,8 +24,9 @@ design_rationale: "ATR动态止损 + 分层止盈 + 行业差异化 + 日内短�
 # ── Phase 3 (2026-05-31): 渐进式追踪止损参数外部化 ──
 # _update_trail_state 中 4 档渐进 SL 的所有 magic number 集中到此处
 progressive_trailing:
-  enabled: true                   # 2026-06-05 重新启用: chandelier/breakeven已禁用, 不再冲突
-  # 唯一的追踪止损机制, 让利润奔跑
+  enabled: false                  # P1 (2026-06-14): 禁用 — current_sl 写入17次读取0次, 死代码
+  # 唯一活跃止损机制: atr_stop (entry ± 4×ATR), 由 trailing_stop.py 独立计算
+  # progressive_trailing 的 4 档追踪写入 position.current_sl 但无任何退出规则消费
   # 4 档利润追踪 (2026-06-05 重新设计):
   #   核心原则: SL 永远不得紧于 atr_stop.initial (4.0×ATR from entry)
   #   因为单调保护会锁定最紧的SL, 如果追踪倍数<4.0, SL会被永久锁死在过紧位置
@@ -64,7 +65,7 @@ progressive_trailing:
 # 安全底线: 浮亏 >= max_grace_loss_pct (-3%) 立即解除保护, 防止 grace 包过宽导致大亏
 global_hold_protection:
   enabled: true
-  min_hold_minutes_after_entry: 30  # P0 (2026-06-03): 10→30min, 减少入场后立即止损
+  min_hold_minutes_after_entry: 45  # P0 (2026-06-14): 30→45min, 数据驱动: opening_drive 136笔-366.6%
   max_grace_loss_pct: 0.03          # 浮亏 >=3% 立即解除保护 (硬底兜底)
   allowed_during_grace:
     - circuit_breaker
@@ -78,7 +79,7 @@ global_hold_protection:
 exit_monitor:
   scan_interval_seconds: 60         # 扫描周期 (分钟以下)
   cooldown_seconds: 120             # 同一持仓退出冷却
-  min_hold_minutes: 30              # P0 (2026-06-03): 20→30min, 匹配 grace period
+  min_hold_minutes: 45              # P1 (2026-06-14): 30→45min, 匹配 grace period
 
 # ── Phase 3 (2026-05-31): 退出规则互斥 (新 ExitRuleDispatcher 使用) ──
 # key=高优先级触发的规则, value=被压制不再上报的规则列表
@@ -147,9 +148,9 @@ exit_rules:
     enabled: true
     tier_mode: atr
     atr_tiers:
-      - profit_atr: 1.0             # 2026-06-06: 1.5→1.0 ATR, 数据驱动 — 大部分交易 max profit 在 1-2 ATR, 1.5 来不及触发
-        close_pct: 50               # 平半仓
-        ratchet_sl_pct: 0.0         # 止损移至成本 (保本)
+      - profit_atr: 1.0             # 2026-06-14: 全平 (was 50%, ratchet从未执行)
+        close_pct: 100              # 数据: SCALE_OUT 19笔 100%WR +59.1%, 剩余仓位后续被止损打掉
+        ratchet_sl_pct: 0.0         # 全平后无剩余仓位, ratchet 无意义
     tiers: []                       # pct模式不使用
 
   # 规则 5.5: 速度捕捉退出 (Phase 3 2026-05-31)
