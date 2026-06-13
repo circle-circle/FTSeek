@@ -303,6 +303,15 @@ class ExitMonitor:
             )
         except Exception as _ve_err:
             logger.warning(f"[ExitRuleRegistry] velocity_exit 注册失败: {_ve_err}")
+
+        # [P0 2026-06-13] 读取 exit_policy.yaml enabled 字段，禁用 yaml 中标记为 false 的规则
+        _exit_rules_cfg = self._cached_exit_policy.get("exit_rules", {}) if hasattr(self, "_cached_exit_policy") else {}
+        for _rule_name in list(self._rule_registry._enabled_rules):
+            _rule_cfg = _exit_rules_cfg.get(_rule_name, {})
+            if isinstance(_rule_cfg, dict) and _rule_cfg.get("enabled") is False:
+                self._rule_registry.disable(_rule_name)
+                logger.info(f"[ExitRuleRegistry] {_rule_name} disabled by exit_policy.yaml (enabled=false)")
+
         logger.info(
             f"\u2705 [ExitRuleRegistry] \u521d\u59cb\u5316\u5b8c\u6210, \u542f\u7528\u89c4\u5219(\u6309\u4f18\u5148\u7ea7): "
             f"{self._rule_registry.list_enabled()}"

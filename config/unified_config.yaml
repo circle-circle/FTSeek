@@ -2174,7 +2174,7 @@ pipeline:
 # ────────────────────────────────────────────────────────────────
 orb:
   enabled: true
-  mode: active                     # observe → shadow → active(真实下单) — 2026-06-01 启用
+  mode: observe                    # [P2 2026-06-13] 100+ attempts all rejected by pre_trade_gate, switch to observe
   universe:
     # ADR-006 (2026-06-07): ETF 归 ORB，个股归主线，零重叠
     # 宽基 (4): 最高流动性，开盘区间最清晰

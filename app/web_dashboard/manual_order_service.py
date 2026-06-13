@@ -318,6 +318,41 @@ class ManualOrderService:
             if allow != "true":
                 errors.append("ALLOW_REAL_TRADING 未设为 true，实盘下单被拦截")
 
+        # 6. [P1 2026-06-13] PDT Guard (实盘 only)
+        if self._is_live() and cur_price > 0:
+            try:
+                from app.risk.pdt_guard import PDTGuard
+                _pdt = PDTGuard()
+                _pdt_ok, _pdt_reason, _pdt_level = _pdt.check_trade_permission(is_overnight=False)
+                if not _pdt_ok:
+                    errors.append(f"PDT 风控拦截: {_pdt_reason}")
+            except Exception as _pdt_err:
+                logger.debug(f"[手动下单] PDT 检查跳过: {_pdt_err}")
+
+        # 7. [P1 2026-06-13] 仓位集中度检查 (25%/65%/80%)
+        if cur_price > 0 and order.action in ("BUY",):
+            try:
+                from app.risk.pre_trade_gate import pre_trade_safety_check
+                _dir = order.direction
+                _ok, _max_qty, _reason = pre_trade_safety_check(
+                    symbol=order.symbol, direction=_dir,
+                    quantity=order.quantity, price=cur_price,
+                )
+                if not _ok:
+                    errors.append(f"仓位限制: {_reason}")
+            except Exception as _pt_err:
+                logger.debug(f"[手动下单] 仓位检查跳过: {_pt_err}")
+
+        # 8. [P1 2026-06-13] 日回撤熔断 (已实现亏损 > 3% equity)
+        try:
+            from app.risk.drawdown_control import DrawdownController
+            _dd = DrawdownController()
+            if not _dd.is_trading_allowed():
+                _dd_reason = _dd.get_block_reason() or "日回撤超限"
+                errors.append(f"回撤熔断: {_dd_reason}")
+        except Exception as _dd_err:
+            logger.debug(f"[手动下单] 回撤检查跳过: {_dd_err}")
+
         return errors
 
     def _count_today_manual_orders(self) -> int:
