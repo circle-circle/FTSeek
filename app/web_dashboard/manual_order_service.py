@@ -277,6 +277,15 @@ class ManualOrderService:
         """校验订单，返回错误列表 (空列表 = 通过)"""
         errors = []
 
+        # 0. [P0 2026-06-13] Kill Switch 检查 (最高优先级)
+        try:
+            from app.us_pipeline.emergency_interceptor import check_kill_switch
+            if check_kill_switch():
+                errors.append("🚨 紧急停止开关已激活，所有交易被拦截")
+                return errors
+        except Exception as _ks_err:
+            logger.debug(f"[手动下单] Kill Switch 检查跳过: {_ks_err}")
+
         # 1. 基础参数校验
         if not order.symbol:
             errors.append("标的代码不能为空")
@@ -665,6 +674,12 @@ class ManualOrderService:
                             conn.commit()
                         finally:
                             conn.close()
+                        
+                        # 推送归因报告到飞书
+                        try:
+                            self._push_attribution_to_feishu(attr.to_dict())
+                        except Exception as _push_err:
+                            logger.debug(f"[归因] 飞书推送失败 (不影响主流程): {_push_err}")
                     except Exception as _attr_err:
                         logger.debug(f"[归因] 生成失败 (不影响平仓): {_attr_err}")
                 except Exception as _rec_err:
@@ -1058,6 +1073,47 @@ class ManualOrderService:
                     pass
         return None
 
+
+    def _push_attribution_to_feishu(self, attr) -> bool:
+        """推送归因报告到飞书"""
+        try:
+            import os
+            from app.observability.feishu_bot import FeishuBotAlerter
+            
+            webhook_url = os.getenv("FEISHU_WEBHOOK_URL_US")
+            if not webhook_url:
+                return False
+            
+            alerter = FeishuBotAlerter(webhook_url)
+            
+            # 构建消息
+            pnl_emoji = "🟢" if attr["pnl"] >= 0 else "🔴"
+            title = f"{pnl_emoji} FTSeek 平仓归因: {attr['symbol']}"
+            
+            # 主体内容
+            content_lines = [
+                f"{attr['direction']} | 盈亏: ${attr['pnl']:.2f} ({attr['pnl_pct']:.1f}%)",
+                f"入场: ${attr['entry_price']:.2f} → 出场: ${attr['exit_price']:.2f}",
+                f"持仓: {attr['holding_hours']:.1f}小时",
+                "",
+                "📊 归因分析:"
+            ]
+            
+            for dim in attr["dimensions"]:
+                icon = {"✅": "✅", "⚠️": "⚠️", "❌": "❌"}.get(dim["verdict"], "•")
+                content_lines.append(f"{icon} {dim['name']}: {dim['detail']}")
+            
+            if attr.get("improvement"):
+                content_lines.append("")
+                content_lines.append(f"💡 改进: {attr['improvement']}")
+            
+            content = "\n".join(content_lines)
+            
+            return alerter.send_info(title=title, content=content)
+            
+        except Exception as e:
+            print(f"飞书归因推送失败: {e}")
+            return False
 
     def _record_manual_close(self, symbol: str, direction: str, entry_price: float,
                              exit_price: float, quantity: int, reason: str, order_id: str):

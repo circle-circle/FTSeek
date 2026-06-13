@@ -810,8 +810,8 @@ risk:
     strict_owner_validation: true
   # 模拟盘数据采集: 放宽做空门禁
   pre_trade:
-    short_min_strength: 30          # P0 (2026-06-04): 10→30, SHORT也需有效信号支撑
-    long_min_strength: 35           # 修复 (2026-06-02 P0): 默认50→35, 解决信号空转 (辩论共识: 263决策全拒, 最高strength=41)
+    short_min_strength: 60          # 高确信度门槛 (2026-06-13): 30→60
+    long_min_strength: 60           # 高确信度门槛 (2026-06-13): 35→60
     battle_plan_bonus_enabled: true
     battle_plan_bonus: 0.5          # 计划标的再降50%
     min_effective_strength_floor: 5 # 默认30→5
@@ -990,7 +990,7 @@ risk:
     # P0 (2026-06-03): 0.65→0.55, 降低基线让 direction_bias 控制
     # 数据: confidence 0.5-0.65 区间是唯一正期望 (+$5,712)
     # 真正的过滤器是 signal_strength>=60 (阻断 -$18K vlow 区间)
-    min_confidence: 0.55
+    min_confidence: 0.70
     min_consensus: 0.25   # P0 (2026-06-03): 0.20→0.25, 对齐 scheduler
     min_score: 50
   # Task #6 (2026-05-30): 仓位计算ATR联动配置
@@ -1316,7 +1316,7 @@ agents:
 feature_flags:
   enable_decision_engine: true
   enable_risk_engine: true
-  enable_execution_engine: true
+  enable_execution_engine: false
   enable_observability_engine: true
   enable_multi_agent: true
   enable_simulation_mode: true
@@ -1643,8 +1643,8 @@ strategies:
   defaults:
     # 2026-06-07: 0.30→0.55, 数据证明 0.65-0.80 置信度区间胜率仅 13% (-$2,317)
     # 0.55 与 risk.signal_quality.min_confidence 对齐, 过滤弱信号
-    min_confidence: 0.55
-    min_strength: 30
+    min_confidence: 0.70
+    min_strength: 60
     max_positions: 12                # 模拟盘: 5→12, 最大化数据采集
     direction_bias:
       LONG:
@@ -1811,7 +1811,7 @@ scheduler:
   # 2026-06-01: 删除 deprecated scheduler.min_confidence (0.55) — ConfigAudit 启动 BLOCKING
   # 实际生效路径: risk.signal_quality.min_confidence (本文件 line 882, 已 = 0.65)
   # CFG.SCHEDULER_MIN_CONFIDENCE = 0.65 (代码 config_defaults.py:60)
-  min_signal_strength: 30  # P0 (2026-06-04): 与 strategies.defaults.min_strength=30 对齐
+  min_signal_strength: 60  # 高确信度门槛 (2026-06-13): 30→60
   min_consensus_level: 0.25  # P0 (2026-06-03): 0.20→0.25, 轻度收紧 (数据: 0.2-0.5 区间仅11笔)
   adaptive_scan_enabled: true
   scan_segments:

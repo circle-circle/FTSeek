@@ -28,7 +28,7 @@ class ConfigDefaults:
     # 风控 — 信号质量 (risk.signal_quality)
     # P0 优化 (2026-05-12): 降低门槛增加交易机会，模拟盘阶段优先获取数据
     # ============================================================
-    MIN_CONFIDENCE = 0.55                   # P0 (2026-06-03): 0.65→0.55, strength=60做主过滤
+    MIN_CONFIDENCE = 0.70                   # 高确信度门槛 (2026-06-13): 0.55→0.70
     MIN_CONSENSUS = 0.25                    # P0 (2026-06-03): 0.2→0.25 (轻度收紧)
     MIN_SIGNAL_SCORE = 50                   # Synced to YAML risk.signal_quality.min_score (2026-05-23 06:20 CST)
 
@@ -57,9 +57,9 @@ class ConfigDefaults:
     # 调度器 (scheduler)
     # P0 优化 (2026-05-12): 降低门槛增加交易机会
     # ============================================================
-    SCHEDULER_MIN_CONFIDENCE = 0.55         # P0 (2026-06-03): 同步 YAML
+    SCHEDULER_MIN_CONFIDENCE = 0.70         # 高确信度门槛 (2026-06-13): 0.55→0.70
     SCHEDULER_MAX_POSITIONS = 12            # scheduler.max_positions (同步 YAML 2026-06-03: 5→12, 模拟盘最大化数据采集)
-    SCHEDULER_MIN_SIGNAL_STRENGTH = 30      # P0 (2026-06-04): 60→30, IntradayScorer实际范围10-59
+    SCHEDULER_MIN_SIGNAL_STRENGTH = 60      # 高确信度门槛 (2026-06-13): 30→60
     SCHEDULER_MIN_CONSENSUS = 0.25          # P0 (2026-06-03): 0.2→0.25 (同步 YAML)
     SCHEDULER_SCAN_INTERVAL = 5             # ADR-005: 10→5min, 加速数据采集
 
