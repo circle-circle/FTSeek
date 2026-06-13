@@ -2,6 +2,7 @@
 系统路由 — 服务状态 + 模式切换 + 重启
 """
 import logging
+import os
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
@@ -180,6 +181,15 @@ def register(app, templates):
 
         label = "🟢 已开启" if target else "🔒 已关闭"
         logger.warning(f"[自动交易开关] {label} (由 {'关闭' if target else '开启'} 切换)")
-        return {"success": True, "enabled": target, "message": f"自动交易{label}"}
+
+        # P0 (2026-06-14): 实盘环境额外提示硬锁状态
+        extra_msg = ""
+        if target and os.getenv("TRADE_ENV", "1").strip() == "0":
+            extra_msg = (
+                " ⚠️ 注意: 实盘自动交易有代码级硬锁 (AUTO_TRADING_LIVE_ALLOWED=False), "
+                "即使开关打开也不会执行实盘自动交易。"
+                "需信号 IC 验证 + 模拟盘测试 + 人工审批后解锁。"
+            )
+        return {"success": True, "enabled": target, "message": f"自动交易{label}{extra_msg}"}
 
     app.include_router(router)

@@ -2718,6 +2718,12 @@ def _submit_order(scheduler, symbol: str, signal: SignalScore, context: Dict[str
     # 直接读 YAML 文件而非 ConfigContainer 内存缓存 (热重载只刷新 ConfigLoader,
     # ConfigContainer._config_dict 是启动时快照，不会同步更新)
     # 信号触发频率低 (每小时 0-3 次), 用正则读单行 (<0.1ms) 无性能影响
+    #
+    # ── P0 (2026-06-14): 实盘自动交易硬锁 ──
+    # 双钥匙系统: Dashboard 开关 + 代码常量，两个都为 true 才允许实盘自动交易
+    # 防止: 用户在 Dashboard 误触开关 → 未经测试策略直接实盘 → 大亏
+    # 解锁条件: 信号 IC > 0.1 + 模拟盘验证 2 周 + 人工审批后改代码提交
+    AUTO_TRADING_LIVE_ALLOWED = False  # ⚠️ 硬编码 false, 改 true 需 git commit + 审批
     try:
         import re as _re
         _yaml_path = os.path.join(
@@ -2734,6 +2740,14 @@ def _submit_order(scheduler, symbol: str, signal: SignalScore, context: Dict[str
                 _auto = False  # 未找到 → 默认关闭
         if not _auto:
             logger.debug(f"🔒 [自动交易·关闭] {symbol} 信号已记录，但自动交易开关=off，跳过下单")
+            return
+        # 开关开了但实盘硬锁未解锁 → 拒绝
+        _is_live_env = os.getenv("TRADE_ENV", "1").strip() == "0"
+        if _is_live_env and not AUTO_TRADING_LIVE_ALLOWED:
+            logger.warning(
+                f"🚨 [实盘硬锁] {symbol} 自动交易开关=on 但 AUTO_TRADING_LIVE_ALLOWED=False, "
+                f"实盘自动交易被代码级硬锁拦截 (需信号IC验证+人工审批后解锁)"
+            )
             return
     except Exception as _at_err:
         # 配置读取失败 → fail-safe: 不交易 (安全优先)
