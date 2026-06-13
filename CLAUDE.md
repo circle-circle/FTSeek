@@ -4,34 +4,29 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## ⚠️ 治理规范 (必读，优先级最高)
 
-开始任何工作前，先读 `SYSTEM_OBJECTIVE.md`。该文件定义了：
-- 当前阶段和北极星指标
-- 当前焦点 (Top 3，超范围需提案)
-- Agent 自主边界 (🟢🟡🔴🚫)
-- 决策铁律 (5 问检验)
-- 反指标和历史教训
+`SYSTEM_OBJECTIVE.md` 定义了项目宪法（如存在）。
 
-`SYSTEM_OBJECTIVE.md` 是本项目的宪法，所有 Agent (包括 Claude) 的工作必须在其框架内执行。
-
-## 📋 必读 — 开始工作前必须执行
-
-1. `cat SYSTEM_OBJECTIVE.md` — 项目宪法
-2. `cat AGENT_INTERACTION.md` — Agent 交互手册（5 问模板 + 审批流程 + git hooks 说明）
-3. `python3 scripts/governance_check.py` — 当前治理状态
-4. `git log --oneline -5` — 最近提交
-
-不读以上 4 个文件就开始改代码 = 违规。
+开始工作前必读:
+1. `cat CLAUDE.md` — 本文件 (项目上下文)
+2. `git log --oneline -5` — 最近提交
+3. `cat app/risk/exit_policy.yaml` (前30行) — 当前退出策略 SSOT
 
 ## 🚧 Git Hooks（已启用）
 
-- **pre-commit**: 拦截 .env 修改、治理文件删除、yaml enabled→true、Python 语法错误
+- **pre-commit**: 拦截 .env 修改、yaml enabled→true、Python 语法错误
 - **commit-msg**: 高风险改动必须引用 [ADR-XXX]/[RFC-XXX]/[hotfix]
 
 ---
 
 ## Overview
 
-FTSeek-US is the US market trading system, part of the FTSeek dual-market architecture. Independent pipeline (Planner → Gate → Interceptor) with RiskStateMachine V2 + idempotent interceptor. Uses Futu OpenD shared with HK market (global 1000 slot limit). Currently paper trading (TRADE_ENV=1).
+FTSeek-US 是美股实盘交易系统。双线路架构：自动交易（信号管线）+ 手动交易（Dashboard），共享统一风控层。
+
+**当前状态 (2026-06-14):**
+- 交易环境: **实盘** (TRADE_ENV=0, ALLOW_REAL_TRADING=true)
+- 自动交易: **关闭** (auto_trading_enabled=false, 信号生成但不执行)
+- 手动交易: **实盘运行** (Dashboard 下单 → Futu broker)
+- 账户: 281756480166019917, ~$82K equity
 
 ## Commands
 
@@ -39,65 +34,107 @@ FTSeek-US is the US market trading system, part of the FTSeek dual-market archit
 # Start/Stop
 systemctl start ftseek-us           # Start US service
 systemctl status ftseek-us          # Check status
+systemctl restart ftseek-us         # Restart after config change
+systemctl start ftseek-dashboard    # Dashboard (FastAPI:8901, nginx:8888)
+
+# Logs
+tail -f logs/ftseek_us.log          # Main service log
 
 # Quick checks
-curl http://localhost:8899/health   # Shared health endpoint with HK
+curl http://localhost:8899/health   # Health endpoint
 ```
 
 ## Architecture
+
+### 交易双线路
+
+```
+入场:
+  自动线: signal_pipeline → voting → portfolio_constructor → _submit_order()
+  手动线: Dashboard UI → ManualOrderService.submit_order()
+
+共享风控层 (_submit_order / validate_order):
+  [P0] Kill Switch (紧急制动, 双路统一)
+  [P0] 同标的反向仓位硬拦截 (查 broker 真实持仓)
+  [P0] 账户级回撤 3% (含手动仓, peak→current)
+  [P1] 单标的敞口 ≥20% 禁止自动加仓 (auto+manual 合并)
+  [P1] 手动平仓 → 清理 trail_state + position_store
+
+自动线专属:
+  opening_drive 时段门禁 (禁止入场)
+  auto_trading_enabled 总开关
+  信号冷却 / 标的日亏限额 / pre_trade_safety
+
+手动线专属:
+  单笔 $50K 上限 / 日限 20 次 / PDT Guard / Capital Safety BLACKOUT
+```
+
+### 退出策略 (极简三件套)
+
+```
+ExitMonitor (每60s扫描):
+  [1] ATR 硬止损: entry ± 4.0×ATR, max 3% → 全平
+  [2] 目标止盈: profit ≥ 1.0 ATR → 全平 (scale_out, close_pct=100)
+  [3] 盘末退出: 收盘前 8min → 盈利落袋 / 亏损保留过夜
+
+保护:
+  Grace Period: 入场后 45min 仅允许硬止损
+  退出冷却: 120s
+  手动仓位隔离: PROTECTED, ExitMonitor 不碰
+
+配置 SSOT: app/risk/exit_policy.yaml
+```
 
 ### Core Modules
 
 ```
 app/
-├── main.py                  # Entry point
+├── main.py                       # Entry point
 ├── core/
-│   ├── scheduler_core.py    # Main scheduler: voting, risk, exit monitoring
-│   ├── scheduler_tasks.py   # Signal scanning, position checks, exit monitoring
-│   ├── scheduler_triggers.py # Time-based triggers
-│   ├── models.py            # Data models (SignalScore, Position, Order, etc.)
-│   ├── config.py            # Config loading from unified_config.yaml
-│   └── position_recovery.py # Ghost position recovery
+│   ├── scheduler_core.py         # Main scheduler + PositionStore
+│   ├── models.py                 # SignalScore, Position, Order
+│   └── position_sync.py          # Broker ↔ PositionStore 同步
+├── pipeline/
+│   ├── signal_pipeline.py        # Signal generation + voting
+│   ├── order_executor.py         # _submit_order (自动线入口)
+│   └── portfolio_constructor.py  # Portfolio scoring + allocation
 ├── risk/
-│   ├── engine.py            # RiskEngine: circuit breakers, drawdown, pre-trade checks
-│   ├── position_exit_monitor.py # Exit monitoring (merged from stoploss_daemon)
-│   ├── circuit_breaker.py   # Strategy/symbol/system circuit breakers
-│   └── pre_trade_check.py   # Pre-trade validation
-├── voting/                  # Multi-model voting system
-│   ├── voting_coordinator.py # Coordinates model agents
-│   ├── voting_config.py     # Voting configuration
-│   └── model_agent.py       # Individual model agent
-├── debate/                  # Model debate engine
-├── agents/                  # Agent subsystem (voting only)
-├── data/                    # Market data providers
-├── llm/                     # LLM integration
-├── push/                    # Feishu/DingTalk notifications
-└── exit/                    # Option quick exit engine
+│   ├── position_exit_monitor.py  # ExitMonitor (退出三件套)
+│   ├── exit_policy.yaml          # 退出策略 SSOT ★
+│   ├── atr_stop_engine.py        # ATR 止损定价 (纯函数)
+│   ├── exit_rules/               # 各退出规则实现
+│   │   ├── trailing_stop.py      # ATR 止损 + Chandelier (已禁用)
+│   │   ├── scale_out.py          # 分批止盈 (现全平)
+│   │   └── pre_close.py          # 盘末退出
+│   ├── capital_safety.py         # 资本安全水位
+│   ├── circuit_breaker.py        # 熔断器
+│   └── pdt_guard.py              # PDT 日内交易规则
+├── web_dashboard/
+│   ├── manual_order_service.py   # 手动下单服务 (手动线入口)
+│   └── routes/                   # FastAPI routes
+├── execution/
+│   └── broker_adapter.py         # Futu broker 连接
+├── positions/
+│   ├── source.py                 # PositionSource + ProtectionState
+│   ├── reconciler.py             # 启动对账
+│   └── risk_aggregator.py        # 跨 source 风险聚合
+└── positions/                    # 持仓生命周期管理
 ```
 
 ### Key Notes
 
-- **`app/risk/exit_engine.py`** — DELETED (deprecated, use `PositionExitMonitor`)
-- **`app/llm/agent_processor.py`** — DELETED (no imports, dead code)
-- **`app/core/signal_arbitrator.py`** — DELETED (deprecated, no imports)
-- **`stoploss_daemon`** — RETIRED. Exit logic merged into main process `PositionExitMonitor`
-- **Configuration SSOT**: `config/unified_config.yaml`
-
-### Data Flow
-
-```
-Market Data → Signal Generation → VotingCoordinator → RiskEngine → Order Execution
-                                                    ↓
-                                        PositionExitMonitor (exit logic)
-                                                    ↓
-                                              Feishu/DingTalk
-```
+- **配置 SSOT**: `config/unified_config.yaml` (全局), `app/risk/exit_policy.yaml` (退出策略)
+- **信号 IC ≈ 0.02**: 信号对收益无预测力，自动交易关闭，手动观察为主
+- **唯一 alpha**: SHORT + closing_drive (77.1% WR, +46.2%)
+- **opening_drive 禁止入场**: 136 笔 -366.6%, 数据驱动
+- **progressive_trailing 已禁用**: current_sl 写入 17 次但无任何退出规则读取
+- **手动仓位无自动止损**: PROTECTED 状态, ExitMonitor 不干预 (P1-6 待做)
 
 ## Configuration
 
 - **SSOT**: `config/unified_config.yaml`
-- **Env**: `.env.us` for secrets
-- **TRADE_ENV=1**: Paper trading (模拟盘)
+- **退出策略**: `app/risk/exit_policy.yaml`
+- **Env**: `.env.us` for secrets (TRADE_ENV=0 实盘)
 
 ## Testing
 
@@ -105,14 +142,10 @@ Market Data → Signal Generation → VotingCoordinator → RiskEngine → Order
 pytest tests/                    # All tests
 ```
 
-## Documentation
+## 开发原则
 
-Current docs in `docs/`. Archived docs (pre-2026-04-20) are in `docs/archive/`.
-Archived scripts are in `scripts/archive/`.
-
-
-
-1. 不要假设用户清楚自己想要什么，不清晰时停下来讨论
+1. 不假设用户清楚自己想要什么，不清晰时停下来讨论
 2. 目标清晰但路径不是最优时，直接建议更好的办法
 3. 遇到问题追根因，不打补丁，每个决策要能回答"为什么"
 4. 输出说重点，砍掉一切不改变决策的信息
+5. 做减法优先: 删代码消除根因 > 加校验打补丁

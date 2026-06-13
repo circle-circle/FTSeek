@@ -1,15 +1,31 @@
 # ============================================================
 # FTSeek-US 退出策略 — 主线生产 SSOT (Single Source of Truth)
 # ============================================================
-# 适用范围: 主线 ExitRuleDispatcher / ExitMonitor / atr_stop_engine
+# 适用范围: ExitMonitor + atr_stop_engine + trailing_stop.py
 # 读取者: app/risk/position_exit_monitor.py, app/risk/exit_rule_dispatcher.py
 #         app/pipeline/position_monitor.py
 #
 # ⚠️ 不要与以下 yaml 混淆:
 #   - config/exit_profiles.yaml — harness/shadow_bridge 影子系统专用 (回测/辩论)
-#                                  即使参数名相同 (如 activation_profit_atr) 也是
-#                                  独立配置, 改这里不会影响 shadow, 反之亦然
 #   - config/unified_config.yaml::dynamic_exit — regime-aware 兜底参数, 优先级低于本表
+#
+# ── 当前活跃规则 (2026-06-14 极简三件套) ──
+# [1] ATR 硬止损: entry ± 4.0×ATR, max 3% (atr_stop)
+# [2] 目标止盈: profit ≥ 1.0 ATR → 全平 (scale_out, close_pct=100)
+# [3] 盘末退出: 收盘前 8min → 盈利落袋/亏损保留 (pre_close)
+#
+# ── 已禁用规则 (数据证明无效) ──
+# flash_exit: 6笔全亏 0%WR -$1,362
+# chandelier_trail: 92笔 46.7%WR -$34 近零EV
+# breakeven: 功能合并到 scale_out
+# velocity_exit: 样本不足
+# day_trade_mode: 与 scale_out 重叠
+# time_stop: 30天 sharpe=-0.40
+# progressive_trailing: current_sl 写17次读0次, 死代码
+#
+# ── 入场约束 ──
+# opening_drive (09:30-10:00): 禁止入场 (136笔 -366.6%)
+# Grace Period: 入场后 45min 仅允许硬止损
 #
 # 设计原则:
 # 1. 主线退出参数只在此文件定义, 代码只读取不硬编码
