@@ -129,6 +129,10 @@
         .activity-panel { display: none; }
         .activity-panel.active { display: block; }
 
+        /* ── Tab hint ── */
+        .tab-hint { font-size: 11px; color: #6e7681; padding: 4px 0 8px; line-height: 1.5; border-bottom: 1px solid #21262d; margin-bottom: 8px; }
+        .tab-hint b { color: #8b949e; font-weight: 600; }
+
         /* ── Refresh indicator ── */
         .refresh-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: #30363d; margin-right: 4px; vertical-align: middle; transition: background 0.3s; }
         .refresh-dot.updated { background: #4ade80; box-shadow: 0 0 6px #4ade80; }
@@ -462,26 +466,32 @@
 
                 <!-- Tab: Performance -->
                 <div class="tab-panel active" id="tab-perf">
+                    <div class="tab-hint">手动 vs 自动交易对比。<b>胜率</b>=盈利笔数/总笔数，<b>利润因子</b>=总盈利/总亏损（>1.5为优秀），<b>信号漏斗</b>=今日信号→通过风控→实际执行。</div>
                     <div id="perfContent"><div class="loading">加载中...</div></div>
                 </div>
                 <!-- Tab: Equity -->
                 <div class="tab-panel" id="tab-equity">
+                    <div class="tab-hint">账户净值走势 + 回撤幅度。<b>回撤</b>=从峰值下跌的百分比，绿色柱=回撤<1%（健康），黄色=1-3%，红色=>3%。</div>
                     <div class="chart-wrap"><canvas id="equityChart"></canvas></div>
                 </div>
                 <!-- Tab: Signals -->
                 <div class="tab-panel" id="tab-signals">
+                    <div class="tab-hint"><b>IC（信息系数）</b>=信号强度与次日收益的相关性。IC>0.05说明信号有预测力，≈0为噪音，<0为反向。下方柱状图=每个信号发出后的实际涨跌幅。</div>
                     <div id="sigContent"><div class="loading">加载中...</div></div>
                 </div>
                 <!-- Tab: Execution -->
                 <div class="tab-panel" id="tab-execution">
+                    <div class="tab-hint"><b>滑点</b>=实际成交价 vs 信号价格的偏差，衡量下单速度和市场冲击。<0.3%为正常，>0.5%需关注。</div>
                     <div id="execContent"><div class="loading">加载中...</div></div>
                 </div>
                 <!-- Tab: Capital Flow -->
                 <div class="tab-panel" id="tab-flow">
+                    <div class="tab-hint">持仓标的的主力资金（超大单+大单）净流入/流出。<b>主力净流入</b>=大资金方向，<b>散户净流入</b>=中小单方向。</div>
                     <div id="flowContent"><div class="loading">加载中...</div></div>
                 </div>
                 <!-- Tab: Sectors -->
                 <div class="tab-panel" id="tab-sectors">
+                    <div class="tab-hint">11大板块 + 热门概念 ETF 今日涨跌幅。颜色深度=涨跌强度。</div>
                     <div class="sector-grid" id="sectorGrid"><div class="loading">加载中...</div></div>
                 </div>
             </div>
