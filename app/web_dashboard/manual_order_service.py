@@ -595,6 +595,7 @@ class ManualOrderService:
 
                 # 2026-06-10: 写入 trade_records 形成手动交易闭环
                 # P1-6 (2026-06-12): 优先用 broker dealt_avg_price 精确回填 exit_price
+                # 2026-06-13: 先验证订单是否真正成交 (防止 cancelled 订单写入虚假记录)
                 try:
                     import time as _t
                     # 等待 1s 让 broker 成交回报写入 (市价单一般立即成交, 限价单可能延迟)
@@ -605,11 +606,28 @@ class ManualOrderService:
                     if _precise_exit and _precise_exit > 0:
                         _exit_px = _precise_exit
                     else:
+                        # 检查订单状态: 如果已取消则不写入 trade_records
+                        try:
+                            _ret2, _data2 = self._broker_ctx.order_list_query(
+                                order_id=order.order_id, trd_env=trd_env, acc_id=acc_id
+                            )
+                            if _ret2 == RET_OK and not _data2.empty:
+                                _order_status = str(_data2.iloc[0].get("order_status", ""))
+                                _dealt_qty = float(_data2.iloc[0].get("dealt_qty", 0) or 0)
+                                if "CANCEL" in _order_status.upper() and _dealt_qty == 0:
+                                    logger.warning(
+                                        f"[手动平仓] {symbol} 订单已取消 ({_order_status}), "
+                                        f"不写入 trade_records"
+                                    )
+                                    raise ValueError(f"Order cancelled: {_order_status}")
+                        except ValueError:
+                            raise
+                        except Exception:
+                            pass
                         _exit_px = self._calc_exit_price(row, raw_qty)
                         if _exit_px <= 0:
                             # 最后兜底: 用 Futu 实时报价
                             try:
-                                from futu import RET_OK
                                 ret, snap = self._broker_ctx._quote_ctx.get_market_snapshot([symbol])
                                 if ret == RET_OK and not snap.empty:
                                     _exit_px = float(snap.iloc[0].get("cur_price", 0) or 0)
