@@ -14,7 +14,7 @@
 {% endblock %}
 
 {% block extra_css %}
-    /* ── Watchlist ── */
+    /* ── Watchlist v2: Decision Intelligence ── */
     .wl-header { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; }
     .wl-header h1 { font-size: 18px; font-weight: 700; }
     .wl-add { display: flex; gap: 8px; flex: 1; min-width: 240px; }
@@ -26,43 +26,81 @@
     .wl-input:focus { border-color: #58a6ff; }
     .wl-input::placeholder { color: #484f58; }
 
-    /* ── Table ── */
-    .wl-table { width: 100%; border-collapse: collapse; }
-    .wl-table th {
-        text-align: left; font-size: 11px; color: #8b949e; text-transform: uppercase;
-        letter-spacing: 0.5px; padding: 8px 10px; border-bottom: 1px solid #30363d;
-    }
-    .wl-table td {
-        padding: 10px; border-bottom: 1px solid #21262d; font-size: 13px; vertical-align: middle;
-    }
-    .wl-table tr:hover { background: #1c2128; }
-    .wl-table .sym { font-weight: 600; color: #58a6ff; }
-    .wl-table .name { color: #8b949e; font-size: 12px; }
-    .wl-table .price { font-weight: 600; font-variant-numeric: tabular-nums; }
-    .wl-table .actions { white-space: nowrap; }
-    .wl-table .actions .btn { margin-left: 4px; }
+    /* ── Card Grid ── */
+    .wl-grid { display: grid; gap: 12px; grid-template-columns: 1fr; }
+    @media (min-width: 768px) { .wl-grid { grid-template-columns: 1fr 1fr; } }
+    @media (min-width: 1200px) { .wl-grid { grid-template-columns: 1fr 1fr 1fr; } }
 
-    /* ── Signal badge ── */
-    .sig-badge {
+    .wl-card {
+        background: #161b22; border: 1px solid #30363d; border-radius: 10px;
+        padding: 14px; position: relative; transition: border-color 0.2s;
+    }
+    .wl-card:hover { border-color: #58a6ff; }
+    .wl-card.has-edge-long { border-left: 3px solid #3fb950; }
+    .wl-card.has-edge-short { border-left: 3px solid #f85149; }
+
+    /* Card header */
+    .card-top { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px; }
+    .card-sym { font-size: 15px; font-weight: 700; color: #58a6ff; text-decoration: none; }
+    .card-sym:hover { text-decoration: underline; }
+    .card-name { font-size: 11px; color: #8b949e; margin-top: 2px; }
+    .card-price { text-align: right; }
+    .card-price .price { font-size: 16px; font-weight: 700; font-variant-numeric: tabular-nums; }
+    .card-price .chg { font-size: 12px; font-variant-numeric: tabular-nums; }
+
+    /* Day state badge */
+    .day-badge {
         display: inline-block; padding: 2px 8px; border-radius: 4px;
-        font-size: 11px; font-weight: 700; letter-spacing: 0.3px;
+        font-size: 10px; font-weight: 600; margin-top: 4px;
+    }
+    .day-strong_up { background: rgba(63,185,80,0.2); color: #3fb950; }
+    .day-up { background: rgba(63,185,80,0.1); color: #56d364; }
+    .day-strong_down { background: rgba(248,81,73,0.2); color: #f85149; }
+    .day-down { background: rgba(248,81,73,0.1); color: #ff7b72; }
+    .day-flat { background: rgba(139,148,158,0.1); color: #8b949e; }
+    .day-no_data { background: rgba(139,148,158,0.05); color: #484f58; }
+
+    /* Edge panel */
+    .edge-panel {
+        background: #0d1117; border-radius: 6px; padding: 10px; margin-bottom: 10px;
+    }
+    .edge-title { font-size: 11px; color: #8b949e; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px; }
+    .edge-badge {
+        display: inline-block; padding: 3px 10px; border-radius: 4px;
+        font-size: 13px; font-weight: 700; margin-right: 8px;
+    }
+    .edge-LONG { background: rgba(63,185,80,0.2); color: #3fb950; }
+    .edge-SHORT { background: rgba(248,81,73,0.2); color: #f85149; }
+    .edge-none { background: rgba(139,148,158,0.1); color: #8b949e; font-weight: 500; }
+    .edge-insufficient { background: rgba(139,148,158,0.05); color: #484f58; font-weight: 500; }
+
+    /* Split bars */
+    .split-row { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
+    .split-label { font-size: 11px; font-weight: 600; width: 42px; flex-shrink: 0; }
+    .split-label.long-label { color: #3fb950; }
+    .split-label.short-label { color: #f85149; }
+    .split-bar-wrap { flex: 1; height: 8px; background: #21262d; border-radius: 4px; overflow: hidden; }
+    .split-bar { height: 100%; border-radius: 4px; transition: width 0.3s; }
+    .split-bar.long-bar { background: #3fb950; }
+    .split-bar.short-bar { background: #f85149; }
+    .split-val { font-size: 11px; color: #8b949e; width: 80px; text-align: right; flex-shrink: 0; font-variant-numeric: tabular-nums; }
+
+    /* Signal row (secondary info) */
+    .sig-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 12px; }
+    .sig-label { color: #8b949e; font-size: 11px; }
+    .sig-badge {
+        display: inline-block; padding: 1px 6px; border-radius: 3px;
+        font-size: 10px; font-weight: 600;
     }
     .sig-LONG { background: rgba(63,185,80,0.15); color: #3fb950; }
     .sig-SHORT { background: rgba(248,81,73,0.15); color: #f85149; }
-    .sig-none { color: #484f58; }
+    .sig-str-bar { display: inline-flex; align-items: center; gap: 3px; }
+    .sig-str-fill { height: 4px; border-radius: 2px; min-width: 2px; max-width: 40px; }
+    .sig-str-num { font-size: 10px; color: #8b949e; }
 
-    /* ── Strength bar ── */
-    .str-bar { display: inline-flex; align-items: center; gap: 4px; }
-    .str-fill { height: 6px; border-radius: 3px; min-width: 2px; max-width: 60px; }
-    .str-label { font-size: 11px; color: #8b949e; font-variant-numeric: tabular-nums; }
-
-    /* ── Win rate ── */
-    .wr-cell { font-variant-numeric: tabular-nums; }
-    .wr-cell .wr-pct { font-weight: 600; }
-    .wr-cell .wr-cnt { font-size: 11px; color: #8b949e; }
-
-    /* ── PnL ── */
-    .pnl-cell { font-variant-numeric: tabular-nums; font-weight: 600; font-size: 12px; }
+    /* Card actions */
+    .card-actions { display: flex; gap: 8px; margin-top: 8px; }
+    .card-actions .btn { flex: 1; text-align: center; }
 
     /* ── Empty ── */
     .wl-empty { text-align: center; padding: 48px 20px; color: #484f58; }
@@ -70,8 +108,16 @@
     .wl-empty p { font-size: 13px; line-height: 1.6; }
 
     /* ── Bottom ── */
-    .wl-bottom { display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: #484f58; margin-top: 8px; padding: 0 4px; }
+    .wl-bottom { display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: #484f58; margin-top: 12px; padding: 0 4px; }
     .wl-count { font-weight: 600; }
+
+    /* ── Legend ── */
+    .wl-legend { display: flex; gap: 16px; margin-bottom: 12px; flex-wrap: wrap; }
+    .wl-legend span { font-size: 11px; color: #8b949e; }
+    .wl-legend .dot { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 4px; vertical-align: middle; }
+    .wl-legend .dot-long { background: #3fb950; }
+    .wl-legend .dot-short { background: #f85149; }
+    .wl-legend .dot-none { background: #484f58; }
 
     /* ── Toast ── */
     .wl-toast {
@@ -83,16 +129,12 @@
     .wl-toast.show { opacity: 1; }
     .wl-toast.error { background: #da3633; }
 
-    /* ── Mobile ── */
-    @media (max-width: 768px) {
-        .wl-table th:nth-child(2), .wl-table td:nth-child(2),
-        .wl-table th:nth-child(6), .wl-table td:nth-child(6) { display: none; }
+    /* ── Mobile tweaks ── */
+    @media (max-width: 480px) {
         .wl-header { flex-direction: column; align-items: stretch; }
         .wl-add { min-width: 0; }
-        .wl-table .actions .btn { padding: 6px 8px; font-size: 11px; }
-    }
-    @media (max-width: 480px) {
-        .wl-table th:nth-child(5), .wl-table td:nth-child(5) { display: none; }
+        .card-actions .btn { padding: 8px 6px; font-size: 12px; }
+        .split-val { width: 70px; font-size: 10px; }
     }
 {% endblock %}
 
@@ -106,27 +148,18 @@
         </div>
     </div>
 
-    <div class="card" id="listCard">
-        <div id="loadingState" class="loading">加载中...</div>
-        <div id="emptyState" class="wl-empty" style="display:none">
-            <div class="icon">📋</div>
-            <p>股票池为空<br>输入股票代码开始添加</p>
-        </div>
-        <table class="wl-table" id="wlTable" style="display:none">
-            <thead>
-                <tr>
-                    <th>代码</th>
-                    <th>名称</th>
-                    <th>现价</th>
-                    <th>涨跌</th>
-                    <th>信号</th>
-                    <th>胜率</th>
-                    <th>操作</th>
-                </tr>
-            </thead>
-            <tbody id="wlBody"></tbody>
-        </table>
+    <div class="wl-legend">
+        <span><span class="dot dot-long"></span>LONG 历史优势</span>
+        <span><span class="dot dot-short"></span>SHORT 历史优势</span>
+        <span><span class="dot dot-none"></span>无方向优势</span>
     </div>
+
+    <div id="loadingState" class="loading">加载中...</div>
+    <div id="emptyState" class="wl-empty" style="display:none">
+        <div class="icon">📋</div>
+        <p>股票池为空<br>输入股票代码开始添加</p>
+    </div>
+    <div class="wl-grid" id="wlGrid" style="display:none"></div>
 
     <div class="wl-bottom">
         <span>共 <span class="wl-count" id="wlCount">0</span> 只</span>
@@ -141,7 +174,6 @@
     var _pollTimer = null;
     var _items = [];
 
-    // ── Helpers ──
     function fmt(n, d) { d = d || 2; return n == null || isNaN(n) ? '--' : Number(n).toLocaleString('en-US', {minimumFractionDigits: d, maximumFractionDigits: d}); }
     function pctCls(n) { return n > 0 ? 'green' : n < 0 ? 'red' : ''; }
     function escHtml(s) { var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
@@ -153,77 +185,130 @@
         setTimeout(function() { t.className = 'wl-toast'; }, 2500);
     }
 
-    // ── Render ──
+    function renderCard(it) {
+        var chg = it.change_pct || 0;
+        var chgStr = chg > 0 ? '+' + chg.toFixed(2) + '%' : chg < 0 ? chg.toFixed(2) + '%' : '0.00%';
+        var priceStr = it.cur_price > 0 ? '$' + fmt(it.cur_price) : '--';
+        var dayState = it.day_state || 'no_data';
+        var dayLabel = it.day_label || '';
+
+        // Edge panel
+        var edgeDir = it.edge_direction || '';
+        var edgeConf = it.edge_confidence || '';
+        var edgeDetail = it.edge_detail || '';
+        var edgeBadgeCls = edgeDir ? ('edge-' + edgeDir) : ('edge-' + (edgeConf || 'insufficient'));
+        var edgeText = edgeDetail || (edgeConf === 'insufficient' ? '数据不足' : '无方向优势');
+        var edgeCardCls = edgeDir === 'LONG' ? 'has-edge-long' : edgeDir === 'SHORT' ? 'has-edge-short' : '';
+
+        // Split bars (LONG vs SHORT historical performance)
+        var longD = it.long_stats || {};
+        var shortD = it.short_stats || {};
+        var longWr = longD.win_rate || 0;
+        var shortWr = shortD.win_rate || 0;
+        var longTotal = longD.total || 0;
+        var shortTotal = shortD.total || 0;
+        var longAvgRet = longD.avg_ret;
+        var shortAvgRet = shortD.avg_ret;
+
+        var longBarW = Math.min(longWr, 100);
+        var shortBarW = Math.min(shortWr, 100);
+
+        var longRetStr = longAvgRet != null ? (longAvgRet >= 0 ? '+' : '') + longAvgRet.toFixed(2) + '%' : '--';
+        var shortRetStr = shortAvgRet != null ? (shortAvgRet >= 0 ? '+' : '') + shortAvgRet.toFixed(2) + '%' : '--';
+
+        var longValStr = longTotal > 0 ? (longWr.toFixed(0) + '% (' + longTotal + ') ' + longRetStr) : '无数据';
+        var shortValStr = shortTotal > 0 ? (shortWr.toFixed(0) + '% (' + shortTotal + ') ' + shortRetStr) : '无数据';
+
+        // Signal (secondary)
+        var sigDir = it.signal_direction || '';
+        var sigStr = it.signal_strength || 0;
+        var sigHtml = '';
+        if (sigDir && sigStr > 0) {
+            var barW = Math.min(sigStr, 100) * 0.4;
+            var barColor = sigStr >= 50 ? '#58a6ff' : sigStr >= 30 ? '#d29922' : '#484f58';
+            sigHtml = '<span class="sig-label">最新信号:</span> ' +
+                '<span class="sig-badge sig-' + sigDir + '">' + sigDir + '</span> ' +
+                '<span class="sig-str-bar"><span class="sig-str-fill" style="width:' + barW + 'px;background:' + barColor + '"></span>' +
+                '<span class="sig-str-num">' + sigStr + '</span></span>';
+        } else {
+            sigHtml = '<span class="sig-label">最新信号: <span style="color:#484f58">—</span></span>';
+        }
+
+        // Trade stats
+        var tradeHtml = '';
+        if (it.trade_count > 0) {
+            var pnl = it.total_pnl || 0;
+            var pnlCls = pnl > 0 ? 'green' : pnl < 0 ? 'red' : '';
+            tradeHtml = '<span style="font-size:11px;color:#8b949e">实盘: ' +
+                it.win_rate.toFixed(0) + '% (' + it.trade_count + '笔) ' +
+                '<span class="' + pnlCls + '">' + (pnl >= 0 ? '+' : '') + '$' + fmt(pnl, 0) + '</span></span>';
+        }
+
+        var card = '<div class="wl-card ' + edgeCardCls + '">' +
+            '<div class="card-top">' +
+                '<div><a href="/stock/' + encodeURIComponent(it.symbol) + '" class="card-sym">' + escHtml(it.symbol) + '</a>' +
+                '<div class="card-name">' + escHtml(it.name || '') + '</div></div>' +
+                '<div class="card-price"><div class="price">' + priceStr + '</div>' +
+                '<div class="chg ' + pctCls(chg) + '">' + chgStr + '</div>' +
+                '<span class="day-badge day-' + dayState + '">' + dayLabel + '</span></div>' +
+            '</div>' +
+            '<div class="edge-panel">' +
+                '<div class="edge-title">历史方向优势</div>' +
+                '<span class="edge-badge ' + edgeBadgeCls + '">' + edgeText + '</span>' +
+                (tradeHtml ? ' ' + tradeHtml : '') +
+                '<div class="split-row">' +
+                    '<span class="split-label long-label">LONG</span>' +
+                    '<div class="split-bar-wrap"><div class="split-bar long-bar" style="width:' + longBarW + '%"></div></div>' +
+                    '<span class="split-val">' + longValStr + '</span>' +
+                '</div>' +
+                '<div class="split-row">' +
+                    '<span class="split-label short-label">SHORT</span>' +
+                    '<div class="split-bar-wrap"><div class="split-bar short-bar" style="width:' + shortBarW + '%"></div></div>' +
+                    '<span class="split-val">' + shortValStr + '</span>' +
+                '</div>' +
+            '</div>' +
+            '<div class="sig-row">' + sigHtml + '</div>' +
+            '<div class="card-actions">' +
+                '<a href="/trade?symbol=' + encodeURIComponent(it.symbol) + '" class="btn btn-sm btn-buy">交易</a>' +
+                '<button class="btn btn-sm btn-ghost" onclick="removeStock(\'' + escHtml(it.symbol) + '\')">删除</button>' +
+            '</div>' +
+        '</div>';
+        return card;
+    }
+
     function render(items) {
         _items = items;
-        var body = document.getElementById('wlBody');
-        var table = document.getElementById('wlTable');
+        var grid = document.getElementById('wlGrid');
         var empty = document.getElementById('emptyState');
         var loading = document.getElementById('loadingState');
 
         loading.style.display = 'none';
 
         if (!items || items.length === 0) {
-            table.style.display = 'none';
+            grid.style.display = 'none';
             empty.style.display = 'block';
             document.getElementById('wlCount').textContent = '0';
             return;
         }
 
         empty.style.display = 'none';
-        table.style.display = 'table';
+        grid.style.display = 'grid';
         document.getElementById('wlCount').textContent = items.length;
+
+        // Sort: edge stocks first (strong > moderate > none > insufficient)
+        var edgeOrder = {strong: 0, moderate: 1, none: 2, insufficient: 3, '': 4};
+        items.sort(function(a, b) {
+            var ea = edgeOrder[a.edge_confidence] != null ? edgeOrder[a.edge_confidence] : 4;
+            var eb = edgeOrder[b.edge_confidence] != null ? edgeOrder[b.edge_confidence] : 4;
+            if (ea !== eb) return ea - eb;
+            return (a.symbol > b.symbol) ? 1 : -1;
+        });
 
         var html = '';
         for (var i = 0; i < items.length; i++) {
-            var it = items[i];
-            var chg = it.change_pct || 0;
-            var chgStr = chg > 0 ? '+' + chg.toFixed(2) + '%' : chg < 0 ? chg.toFixed(2) + '%' : '--';
-            var priceStr = it.cur_price > 0 ? '$' + fmt(it.cur_price) : '--';
-
-            // Signal badge
-            var sigDir = it.signal_direction || '';
-            var sigStr = it.signal_strength || 0;
-            var sigHtml;
-            if (sigDir && sigStr > 0) {
-                var barW = Math.min(sigStr, 100) * 0.6;
-                var barColor = sigStr >= 50 ? '#3fb950' : sigStr >= 30 ? '#d29922' : '#484f58';
-                sigHtml = '<span class="sig-badge sig-' + sigDir + '">' + sigDir + '</span>' +
-                    ' <span class="str-bar"><span class="str-fill" style="width:' + barW + 'px;background:' + barColor + '"></span>' +
-                    '<span class="str-label">' + sigStr + '</span></span>';
-            } else {
-                sigHtml = '<span class="sig-none">—</span>';
-            }
-
-            // Win rate + trade stats
-            var wrHtml;
-            var tc = it.trade_count || 0;
-            if (tc > 0) {
-                var wr = it.win_rate || 0;
-                var wrCls = wr >= 50 ? 'green' : wr >= 30 ? '' : 'red';
-                var pnl = it.total_pnl || 0;
-                var pnlCls = pnl > 0 ? 'green' : pnl < 0 ? 'red' : '';
-                wrHtml = '<span class="wr-cell"><span class="wr-pct ' + wrCls + '">' + wr.toFixed(0) + '%</span>' +
-                    ' <span class="wr-cnt">(' + tc + '笔)</span></span>' +
-                    '<br><span class="pnl-cell ' + pnlCls + '">' + (pnl >= 0 ? '+' : '') + '$' + fmt(pnl, 0) + '</span>';
-            } else {
-                wrHtml = '<span style="color:#484f58">无交易</span>';
-            }
-
-            html += '<tr>' +
-                '<td><a href="/stock/' + encodeURIComponent(it.symbol) + '" class="sym" style="text-decoration:none">' + escHtml(it.symbol) + '</a></td>' +
-                '<td><span class="name">' + escHtml(it.name || '') + '</span></td>' +
-                '<td><span class="price">' + priceStr + '</span></td>' +
-                '<td><span class="' + pctCls(chg) + '">' + chgStr + '</span></td>' +
-                '<td>' + sigHtml + '</td>' +
-                '<td>' + wrHtml + '</td>' +
-                '<td class="actions">' +
-                    '<a href="/trade?symbol=' + encodeURIComponent(it.symbol) + '" class="btn btn-sm btn-buy">交易</a>' +
-                    '<button class="btn btn-sm btn-ghost" onclick="removeStock(\'' + escHtml(it.symbol) + '\')">删除</button>' +
-                '</td>' +
-                '</tr>';
+            html += renderCard(items[i]);
         }
-        body.innerHTML = html;
+        grid.innerHTML = html;
 
         var now = new Date();
         document.getElementById('wlUpdated').textContent = '上次刷新: ' +
@@ -232,7 +317,6 @@
             String(now.getSeconds()).padStart(2, '0');
     }
 
-    // ── Fetch ──
     async function fetchData() {
         try {
             var resp = await fetch('/api/watchlist');
@@ -244,7 +328,6 @@
         }
     }
 
-    // ── Add ──
     async function addStock() {
         var input = document.getElementById('addInput');
         var symbol = input.value.trim();
@@ -276,10 +359,8 @@
         }
     }
 
-    // ── Remove ──
     async function removeStock(symbol) {
         if (!confirm('确认从股票池移除 ' + symbol + '？')) return;
-
         try {
             var resp = await fetch('/api/watchlist/' + encodeURIComponent(symbol), {method: 'DELETE'});
             if (!resp.ok) {
@@ -294,12 +375,10 @@
         }
     }
 
-    // ── Enter key ──
     document.getElementById('addInput').addEventListener('keydown', function(e) {
         if (e.key === 'Enter') { e.preventDefault(); addStock(); }
     });
 
-    // ── Polling (15s, visibility-aware) ──
     function startPolling() {
         stopPolling();
         _pollTimer = setInterval(fetchData, 15000);
@@ -313,7 +392,6 @@
         else { fetchData(); startPolling(); }
     });
 
-    // ── Init ──
     fetchData();
     startPolling();
 {% endblock %}

@@ -86994,3 +86994,12 @@ API: http://localhost:8901
 2026-06-13 08:26:29,829 [app.pipeline.signal_pipeline] INFO: [扫描] overnight → 完全静默，跳过扫描
 2026-06-13 08:26:29,858 [app.orb.engine] INFO: [ORB] tick #301 | time=20:26:29 | pos=0 | ranges=0 | done=0
 2026-06-13 08:27:22,866 [ftseek_us.risk.vix_monitor] INFO: VIX 指数：19.80
+2026-06-13 08:31:30,102 [app.pipeline.signal_pipeline] INFO: [扫描] overnight → 完全静默，跳过扫描
+2026-06-13 08:31:30,106 [app.orb.engine] INFO: [ORB] tick #361 | time=20:31:30 | pos=0 | ranges=0 | done=0
+2026-06-13 08:32:34,136 [ftseek_us.risk.vix_monitor] INFO: VIX 指数：19.80
+2026-06-13 08:36:30,317 [app.pipeline.signal_pipeline] INFO: [扫描] overnight → 完全静默，跳过扫描
+2026-06-13 08:36:30,353 [app.orb.engine] INFO: [ORB] tick #421 | time=20:36:30 | pos=0 | ranges=0 | done=0
+2026-06-13 08:37:46,218 [ftseek_us.risk.vix_monitor] INFO: VIX 指数：19.80
+2026-06-13 08:41:30,536 [app.pipeline.signal_pipeline] INFO: [扫描] overnight → 完全静默，跳过扫描
+2026-06-13 08:41:30,603 [app.orb.engine] INFO: [ORB] tick #481 | time=20:41:30 | pos=0 | ranges=0 | done=0
+2026-06-13 08:42:57,007 [ftseek_us.risk.vix_monitor] INFO: VIX 指数：19.80
