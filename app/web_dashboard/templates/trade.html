@@ -433,6 +433,17 @@
         </div>
     </div>
 
+    <!-- Attribution display -->
+    <div class="overlay" id="attrModal">
+        <div class="modal" style="max-width:420px">
+            <h3 style="margin:0 0 12px;font-size:15px">📊 交易归因</h3>
+            <div id="attrContent" style="font-size:13px;line-height:1.8"></div>
+            <div style="margin-top:16px;text-align:right">
+                <button class="btn btn-ghost" onclick="document.getElementById('attrModal').classList.remove('show')">关闭</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Result toast modal -->
     <div class="overlay" id="resultModal">
         <div class="modal" style="max-width:360px;text-align:center">
@@ -946,6 +957,8 @@ function escHtml(s) {
                     const priceLabel = limitPrice ? ` @ $${limitPrice.toFixed(2)}` : '';
                     showResult('✅', `${sym} ${isFull ? '全平' : '部分平仓'}成功${priceLabel}!`);
                     loadPositions(); loadOrders();
+                    // 延迟获取归因 (等后端写入完成)
+                    setTimeout(() => fetchAttribution(sym), 2000);
                 } else {
                     showResult('❌', d.error || '平仓失败');
                 }
@@ -963,6 +976,34 @@ function escHtml(s) {
             document.getElementById('resultMsg').textContent = msg;
             document.getElementById('resultModal').classList.add('show');
         }
+
+        async function fetchAttribution(symbol) {
+            try {
+                const res = await fetch('/api/trade/attribution?symbol=' + encodeURIComponent(symbol) + '&limit=1');
+                const data = await res.json();
+                const attrs = data.attributions || [];
+                if (attrs.length === 0) return;
+                const a = attrs[0];
+                let html = '<div style="margin-bottom:8px">';
+                const pnlCls = a.pnl >= 0 ? 'green' : 'red';
+                const pnlSign = a.pnl >= 0 ? '+' : '';
+                html += `<strong>${a.symbol}</strong> ${a.direction} <span class="${pnlCls}">${pnlSign}$${Math.abs(a.pnl).toFixed(0)} (${pnlSign}${a.pnl_pct.toFixed(1)}%)</span></div>`;
+                html += `<div style="font-size:11px;color:#8b949e;margin-bottom:8px">持仓 ${a.holding_minutes.toFixed(0)}分钟 | $${a.entry_price.toFixed(2)} → $${a.exit_price.toFixed(2)}</div>`;
+                html += '<div style="border-top:1px solid #30363d;padding-top:8px">';
+                for (const d of a.dimensions) {
+                    html += `<div>${d.verdict} <strong>${d.label}</strong>: ${d.detail}</div>`;
+                }
+                if (a.improvement) {
+                    html += `<div style="margin-top:8px;padding:6px 10px;background:#1c2128;border-radius:4px;font-size:12px">💡 ${a.improvement}</div>`;
+                }
+                html += '</div>';
+                document.getElementById('attrContent').innerHTML = html;
+                document.getElementById('attrModal').classList.add('show');
+            } catch (e) {
+                console.debug('attribution fetch failed:', e);
+            }
+        }
+
         async function cancelOrder(id) {
             if (!confirm(`撤销 ${id}?`)) return;
             try {

@@ -182,6 +182,51 @@ def register(app, templates):
         history = svc.get_audit_history(limit)
         return {"orders": history}
 
+    @router.get("/api/trade/attribution")
+    async def get_trade_attribution(symbol: str = "", limit: int = 10):
+        """获取最近已平仓交易的归因分析"""
+        import sqlite3, json
+        from app.core.db_utils import get_main_db
+        db_path = str(get_main_db())
+        conn = sqlite3.connect(db_path, timeout=10)
+        conn.row_factory = sqlite3.Row
+        try:
+            if symbol:
+                rows = conn.execute(
+                    "SELECT * FROM trade_records WHERE symbol=? AND exit_price>0 ORDER BY exit_time DESC LIMIT ?",
+                    (symbol, limit),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM trade_records WHERE exit_price>0 ORDER BY exit_time DESC LIMIT ?",
+                    (limit,),
+                ).fetchall()
+
+            results = []
+            for row in rows:
+                row_dict = dict(row)
+                # 尝试从 metadata_json 读取已缓存的归因
+                meta = {}
+                if row_dict.get("metadata_json"):
+                    try:
+                        meta = json.loads(row_dict["metadata_json"])
+                    except Exception:
+                        pass
+                if "attribution" in meta:
+                    results.append(meta["attribution"])
+                else:
+                    # 实时生成
+                    try:
+                        from app.analysis.trade_attribution import attribute_from_db
+                        attr = attribute_from_db(row_dict)
+                        if attr:
+                            results.append(attr.to_dict())
+                    except Exception:
+                        pass
+            return {"attributions": results}
+        finally:
+            conn.close()
+
     @router.post("/api/orders/audit/archive")
     async def archive_audit(request: Request):
         """归档旧审计记录到独立表，保留最近 N 天"""

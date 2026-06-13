@@ -14,115 +14,50 @@
 {% endblock %}
 
 {% block extra_css %}
-    .wl-header { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; }
+    .wl-header { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
     .wl-header h1 { font-size: 18px; font-weight: 700; }
-    .wl-add { display: flex; gap: 8px; flex: 1; min-width: 240px; }
+    .wl-add { display: flex; gap: 8px; flex: 1; min-width: 200px; }
     .wl-input {
-        flex: 1; padding: 8px 12px; border: 1px solid #30363d; border-radius: 6px;
-        background: #0d1117; color: #e1e4e8; font-size: 13px; outline: none; min-height: 44px;
+        flex: 1; padding: 6px 10px; border: 1px solid #30363d; border-radius: 6px;
+        background: #0d1117; color: #e1e4e8; font-size: 13px; outline: none; min-height: 36px;
     }
     .wl-input:focus { border-color: #58a6ff; }
     .wl-input::placeholder { color: #484f58; }
 
-    /* Grid */
-    .wl-grid { display: grid; gap: 12px; grid-template-columns: 1fr; }
-    @media (min-width: 768px) { .wl-grid { grid-template-columns: 1fr 1fr; } }
-    @media (min-width: 1200px) { .wl-grid { grid-template-columns: 1fr 1fr 1fr; } }
-
-    .wl-card {
-        background: #161b22; border: 1px solid #30363d; border-radius: 10px;
-        padding: 14px; position: relative; transition: border-color 0.2s;
+    /* List */
+    .wl-list { border: 1px solid #30363d; border-radius: 8px; overflow: hidden; }
+    .wl-row {
+        display: flex; align-items: center; gap: 8px; padding: 8px 12px;
+        border-bottom: 1px solid #21262d; font-size: 13px; transition: background 0.15s;
     }
-    .wl-card:hover { border-color: #58a6ff; }
-    .wl-card.card-long { border-left: 3px solid #3fb950; }
-    .wl-card.card-short { border-left: 3px solid #f85149; }
-    .wl-card.card-neutral { border-left: 3px solid #30363d; }
+    .wl-row:last-child { border-bottom: none; }
+    .wl-row:hover { background: #161b22; }
+
+    .wl-sym { font-weight: 700; color: #58a6ff; text-decoration: none; min-width: 64px; }
+    .wl-sym:hover { text-decoration: underline; }
+    .wl-price { font-variant-numeric: tabular-nums; min-width: 60px; text-align: right; }
+    .wl-chg { font-variant-numeric: tabular-nums; min-width: 56px; text-align: right; font-size: 12px; }
+    .wl-signal { min-width: 80px; font-size: 12px; font-weight: 600; }
+    .wl-signal.sig-long { color: #3fb950; }
+    .wl-signal.sig-short { color: #f85149; }
+    .wl-signal.sig-neutral { color: #484f58; }
+    .wl-stats { font-size: 11px; color: #8b949e; flex: 1; text-align: right; min-width: 80px; }
+    .wl-acts { display: flex; gap: 4px; flex-shrink: 0; }
+    .wl-acts a, .wl-acts button { font-size: 11px; color: #8b949e; text-decoration: none; padding: 2px 6px; border: none; background: none; cursor: pointer; }
+    .wl-acts a:hover, .wl-acts button:hover { color: #58a6ff; }
 
     /* Header row */
-    .card-top { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px; }
-    .card-sym { font-size: 15px; font-weight: 700; color: #58a6ff; text-decoration: none; }
-    .card-sym:hover { text-decoration: underline; }
-    .card-name { font-size: 11px; color: #8b949e; margin-top: 2px; }
-    .card-price { text-align: right; }
-    .card-price .price { font-size: 16px; font-weight: 700; font-variant-numeric: tabular-nums; }
-    .card-price .chg { font-size: 12px; font-variant-numeric: tabular-nums; }
+    .wl-head { display: flex; align-items: center; gap: 8px; padding: 6px 12px;
+        font-size: 11px; color: #484f58; border-bottom: 1px solid #30363d; background: #0d1117; }
+    .wl-head span { min-width: 64px; }
+    .wl-head .h-price { min-width: 60px; text-align: right; }
+    .wl-head .h-chg { min-width: 56px; text-align: right; }
+    .wl-head .h-signal { min-width: 80px; }
+    .wl-head .h-stats { flex: 1; text-align: right; min-width: 80px; }
+    .wl-head .h-acts { min-width: 60px; }
 
-    /* Direction advice - THE hero element */
-    .advice-box {
-        border-radius: 8px; padding: 12px; margin-bottom: 10px;
-    }
-    .advice-box.advice-long { background: rgba(63,185,80,0.08); border: 1px solid rgba(63,185,80,0.2); }
-    .advice-box.advice-short { background: rgba(248,81,73,0.08); border: 1px solid rgba(248,81,73,0.2); }
-    .advice-box.advice-neutral { background: #0d1117; border: 1px solid #21262d; }
-
-    .advice-dir {
-        font-size: 22px; font-weight: 800; letter-spacing: 1px;
-    }
-    .advice-dir.dir-long { color: #3fb950; }
-    .advice-dir.dir-short { color: #f85149; }
-    .advice-dir.dir-neutral { color: #8b949e; }
-
-    .advice-conf {
-        display: inline-block; padding: 2px 8px; border-radius: 4px;
-        font-size: 11px; font-weight: 600; margin-left: 8px; vertical-align: middle;
-    }
-    .conf-高 { background: rgba(63,185,80,0.2); color: #3fb950; }
-    .conf-中 { background: rgba(210,153,34,0.2); color: #d29922; }
-    .conf-低 { background: rgba(139,148,158,0.1); color: #8b949e; }
-
-    .advice-reason { font-size: 12px; color: #c9d1d9; margin-top: 6px; line-height: 1.5; }
-    .advice-ma { font-size: 11px; color: #8b949e; margin-top: 4px; }
-
-    /* Indicator pills */
-    .ind-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
-    .ind-pill {
-        display: inline-flex; align-items: center; gap: 4px;
-        background: #21262d; border-radius: 4px; padding: 3px 8px;
-        font-size: 11px; color: #8b949e;
-    }
-    .ind-pill .ind-val { color: #e1e4e8; font-weight: 600; font-variant-numeric: tabular-nums; }
-    .ind-pill .ind-val.bullish { color: #3fb950; }
-    .ind-pill .ind-val.bearish { color: #f85149; }
-
-    /* Score bar */
-    .score-bar { display: flex; align-items: center; gap: 6px; margin-top: 8px; }
-    .score-label { font-size: 11px; color: #8b949e; width: 28px; }
-    .score-track { flex: 1; height: 6px; background: #21262d; border-radius: 3px; overflow: hidden; display: flex; }
-    .score-fill-bull { height: 100%; background: #3fb950; }
-    .score-fill-bear { height: 100%; background: #f85149; margin-left: auto; }
-
-    /* Trade stats */
-    .trade-line { font-size: 11px; color: #8b949e; margin-top: 6px; }
-
-    /* Actions */
-    .card-actions { display: flex; gap: 8px; margin-top: 10px; }
-    .card-actions .btn { flex: 1; text-align: center; }
-
-    /* Day badge */
-    .day-badge {
-        display: inline-block; padding: 2px 8px; border-radius: 4px;
-        font-size: 10px; font-weight: 600; margin-top: 4px;
-    }
-    .day-strong_up { background: rgba(63,185,80,0.2); color: #3fb950; }
-    .day-up { background: rgba(63,185,80,0.1); color: #56d364; }
-    .day-strong_down { background: rgba(248,81,73,0.2); color: #f85149; }
-    .day-down { background: rgba(248,81,73,0.1); color: #ff7b72; }
-    .day-flat { background: rgba(139,148,158,0.1); color: #8b949e; }
-    .day-no_data { display: none; }
-
-    /* Legend */
-    .wl-legend { display: flex; gap: 16px; margin-bottom: 12px; flex-wrap: wrap; font-size: 11px; color: #8b949e; }
-    .wl-legend .dot { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 4px; vertical-align: middle; }
-    .dot-long { background: #3fb950; }
-    .dot-short { background: #f85149; }
-    .dot-watch { background: #484f58; }
-
-    /* Empty */
-    .wl-empty { text-align: center; padding: 48px 20px; color: #484f58; }
-    .wl-empty .icon { font-size: 36px; margin-bottom: 12px; }
-
-    .wl-bottom { display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: #484f58; margin-top: 12px; padding: 0 4px; }
-
+    .wl-empty { text-align: center; padding: 40px 20px; color: #484f58; }
+    .wl-bottom { display: flex; justify-content: space-between; align-items: center; font-size: 11px; color: #484f58; margin-top: 8px; padding: 0 4px; }
     .wl-toast {
         position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%);
         background: #1f6feb; color: #fff; padding: 8px 20px; border-radius: 6px;
@@ -130,13 +65,14 @@
     }
     .wl-toast.show { opacity: 1; }
     .wl-toast.error { background: #da3633; }
-
-    .loading-text { text-align: center; padding: 40px; color: #8b949e; font-size: 13px; }
+    .loading-text { text-align: center; padding: 30px; color: #8b949e; font-size: 13px; }
 
     @media (max-width: 480px) {
         .wl-header { flex-direction: column; align-items: stretch; }
         .wl-add { min-width: 0; }
-        .advice-dir { font-size: 18px; }
+        .wl-stats { display: none; }
+        .wl-head .h-stats { display: none; }
+        .wl-signal { min-width: 60px; }
     }
 {% endblock %}
 
@@ -145,30 +81,30 @@
     <div class="wl-header">
         <h1>📋 股票池</h1>
         <div class="wl-add">
-            <input type="text" class="wl-input" id="addInput" placeholder="输入股票代码，如 AAPL 或 US.AAPL" autocomplete="off">
+            <input type="text" class="wl-input" id="addInput" placeholder="AAPL" autocomplete="off">
             <button class="btn btn-buy btn-sm" id="addBtn" onclick="addStock()">+ 添加</button>
         </div>
     </div>
 
-    <div class="wl-legend">
-        <span><span class="dot dot-long"></span>建议做多</span>
-        <span><span class="dot dot-short"></span>建议做空</span>
-        <span><span class="dot dot-watch"></span>观望</span>
-    </div>
+    <div id="loadingState" class="loading-text">加载中...</div>
+    <div id="emptyState" class="wl-empty" style="display:none">股票池为空，输入代码添加</div>
 
-    <div id="loadingState" class="loading-text">加载中 (首次加载需获取技术指标, 约10秒)...</div>
-    <div id="emptyState" class="wl-empty" style="display:none">
-        <div class="icon">📋</div>
-        <p>股票池为空<br>输入股票代码开始添加</p>
+    <div class="wl-list" id="wlList" style="display:none">
+        <div class="wl-head">
+            <span>标的</span>
+            <span class="h-price">价格</span>
+            <span class="h-chg">涨跌</span>
+            <span class="h-signal">信号</span>
+            <span class="h-stats">历史</span>
+            <span class="h-acts"></span>
+        </div>
     </div>
-    <div class="wl-grid" id="wlGrid" style="display:none"></div>
 
     <div class="wl-bottom">
-        <span>共 <span id="wlCount">0</span> 只</span>
-        <span id="wlUpdated">上次刷新: --</span>
+        <span><span id="wlCount">0</span> 只</span>
+        <span id="wlUpdated"></span>
     </div>
 </div>
-
 <div class="wl-toast" id="toast"></div>
 {% endblock %}
 
@@ -184,103 +120,55 @@
         setTimeout(function() { t.className = 'wl-toast'; }, 2500);
     }
 
-    function renderCard(it) {
+    function renderRow(it) {
         var chg = it.change_pct || 0;
         var chgStr = chg > 0 ? '+' + chg.toFixed(2) + '%' : chg.toFixed(2) + '%';
         var priceStr = it.cur_price > 0 ? '$' + fmt(it.cur_price) : '--';
-        var dayState = it.day_state || 'no_data';
-        var dayLabel = it.day_label || '';
 
-        // Advice
+        // Signal from advice engine
         var dir = it.advice_direction || '';
         var conf = it.advice_confidence || '';
-        var reason = it.advice_reason || '分析中...';
-        var ma = it.advice_ma || '';
-        var ind = it.advice_indicators || {};
+        var sigCls = dir === 'LONG' ? 'sig-long' : dir === 'SHORT' ? 'sig-short' : 'sig-neutral';
+        var sigText = dir === 'LONG' ? '↑ 做多' : dir === 'SHORT' ? '↓ 做空' : '—';
+        if (conf) sigText += ' ' + conf;
 
-        var cardCls = dir === 'LONG' ? 'card-long' : dir === 'SHORT' ? 'card-short' : 'card-neutral';
-        var adviceCls = dir === 'LONG' ? 'advice-long' : dir === 'SHORT' ? 'advice-short' : 'advice-neutral';
-        var dirCls = dir === 'LONG' ? 'dir-long' : dir === 'SHORT' ? 'dir-short' : 'dir-neutral';
-        var dirText = dir === 'LONG' ? '做多 LONG' : dir === 'SHORT' ? '做空 SHORT' : '观望';
-
-        var confHtml = conf ? '<span class="advice-conf conf-' + conf + '">' + conf + '置信</span>' : '';
-
-        // Indicator pills
-        var rsi = ind.rsi;
-        var rsiCls = rsi > 70 ? 'bearish' : rsi < 30 ? 'bullish' : '';
-        var macdHist = ind.macd_hist;
-        var macdCls = macdHist > 0 ? 'bullish' : macdHist < 0 ? 'bearish' : '';
-        var volR = ind.vol_ratio;
-        var volCls = volR > 1.3 ? 'bullish' : volR < 0.7 ? 'bearish' : '';
-        var mom = ind.momentum;
-        var momCls = mom > 2 ? 'bullish' : mom < -2 ? 'bearish' : '';
-
-        var pills = '<div class="ind-row">';
-        if (rsi != null) pills += '<span class="ind-pill">RSI <span class="ind-val ' + rsiCls + '">' + rsi.toFixed(0) + '</span></span>';
-        if (macdHist != null) pills += '<span class="ind-pill">MACD <span class="ind-val ' + macdCls + '">' + (macdHist >= 0 ? '+' : '') + macdHist.toFixed(3) + '</span></span>';
-        if (volR != null) pills += '<span class="ind-pill">量比 <span class="ind-val ' + volCls + '">' + volR.toFixed(1) + 'x</span></span>';
-        if (mom != null) pills += '<span class="ind-pill">动量 <span class="ind-val ' + momCls + '">' + (mom >= 0 ? '+' : '') + mom.toFixed(1) + '%</span></span>';
-        pills += '</div>';
-
-        // Score bar (bull vs bear)
-        var bull = ind.bull_score || 0;
-        var bear = ind.bear_score || 0;
-        var total = bull + bear || 1;
-        var bullPct = Math.round(bull / (total || 1) * 100);
-        var scoreBar = '<div class="score-bar">' +
-            '<span class="score-label" style="color:#3fb950">' + bull + '/4</span>' +
-            '<div class="score-track"><div class="score-fill-bull" style="width:' + bullPct + '%"></div><div class="score-fill-bear" style="width:' + (100 - bullPct) + '%"></div></div>' +
-            '<span class="score-label" style="color:#f85149;text-align:right">' + bear + '/4</span>' +
-            '</div>';
-
-        // Trade stats (secondary)
-        var tradeHtml = '';
+        // Trade stats compact
+        var statsHtml = '';
         if (it.trade_count > 0) {
             var pnl = it.total_pnl || 0;
-            var pnlCls = pnl > 0 ? 'green' : pnl < 0 ? 'red' : '';
-            tradeHtml = '<div class="trade-line">实盘交易: ' + it.win_rate.toFixed(0) + '% 胜率 (' + it.trade_count + '笔) ' +
-                '<span class="' + pnlCls + '">' + (pnl >= 0 ? '+' : '') + '$' + fmt(pnl, 0) + '</span></div>';
+            statsHtml = it.win_rate.toFixed(0) + '% · ' + it.trade_count + '笔 · ' +
+                '<span class="' + (pnl >= 0 ? 'green' : 'red') + '">' + (pnl >= 0 ? '+' : '') + '$' + fmt(pnl, 0) + '</span>';
         }
 
-        return '<div class="wl-card ' + cardCls + '">' +
-            '<div class="card-top">' +
-                '<div><a href="/stock/' + encodeURIComponent(it.symbol) + '" class="card-sym">' + esc(it.symbol) + '</a>' +
-                '<div class="card-name">' + esc(it.name || '') + '</div></div>' +
-                '<div class="card-price"><div class="price">' + priceStr + '</div>' +
-                '<div class="chg ' + pctCls(chg) + '">' + chgStr + '</div>' +
-                (dayLabel ? '<span class="day-badge day-' + dayState + '">' + dayLabel + '</span>' : '') +
-                '</div>' +
-            '</div>' +
-            '<div class="advice-box ' + adviceCls + '">' +
-                '<span class="advice-dir ' + dirCls + '">' + dirText + '</span>' + confHtml +
-                '<div class="advice-reason">' + esc(reason) + '</div>' +
-                (ma ? '<div class="advice-ma">均线: ' + esc(ma) + '</div>' : '') +
-                scoreBar +
-                pills +
-            '</div>' +
-            tradeHtml +
-            '<div class="card-actions">' +
-                '<a href="/trade?symbol=' + encodeURIComponent(it.symbol) + '" class="btn btn-sm btn-buy">交易</a>' +
-                '<button class="btn btn-sm btn-ghost" onclick="removeStock(\'' + esc(it.symbol) + '\')">删除</button>' +
-            '</div>' +
+        return '<div class="wl-row">' +
+            '<a href="/stock/' + encodeURIComponent(it.symbol) + '" class="wl-sym">' + esc(it.symbol.replace('US.','')) + '</a>' +
+            '<span class="wl-price">' + priceStr + '</span>' +
+            '<span class="wl-chg ' + pctCls(chg) + '">' + chgStr + '</span>' +
+            '<span class="wl-signal ' + sigCls + '">' + sigText + '</span>' +
+            '<span class="wl-stats">' + statsHtml + '</span>' +
+            '<span class="wl-acts">' +
+                '<a href="/trade?symbol=' + encodeURIComponent(it.symbol) + '&direction=LONG" title="做多">🟢</a>' +
+                '<a href="/trade?symbol=' + encodeURIComponent(it.symbol) + '&direction=SHORT" title="做空">🔴</a>' +
+                '<button onclick="removeStock(\'' + esc(it.symbol) + '\')" title="移除">✕</button>' +
+            '</span>' +
         '</div>';
     }
 
     function render(items) {
-        var grid = document.getElementById('wlGrid');
+        var list = document.getElementById('wlList');
         var empty = document.getElementById('emptyState');
         var loading = document.getElementById('loadingState');
         loading.style.display = 'none';
 
         if (!items || items.length === 0) {
-            grid.style.display = 'none'; empty.style.display = 'block';
+            list.style.display = 'none'; empty.style.display = 'block';
             document.getElementById('wlCount').textContent = '0'; return;
         }
 
-        empty.style.display = 'none'; grid.style.display = 'grid';
+        empty.style.display = 'none'; list.style.display = 'block';
         document.getElementById('wlCount').textContent = items.length;
 
-        // Sort: LONG high > LONG med > SHORT high > SHORT med > neutral
+        // Sort: LONG > SHORT > neutral, then by confidence
         var dirOrder = {LONG: 0, SHORT: 1, '': 2};
         var confOrder = {'高': 0, '中': 1, '低': 2, '': 3};
         items.sort(function(a, b) {
@@ -293,12 +181,16 @@
             return a.symbol > b.symbol ? 1 : -1;
         });
 
+        // Keep header, replace rows
+        var head = list.querySelector('.wl-head');
         var html = '';
-        for (var i = 0; i < items.length; i++) html += renderCard(items[i]);
-        grid.innerHTML = html;
+        for (var i = 0; i < items.length; i++) html += renderRow(items[i]);
+        list.innerHTML = ''; 
+        if (head) list.appendChild(head);
+        list.insertAdjacentHTML('beforeend', html);
 
         var now = new Date();
-        document.getElementById('wlUpdated').textContent = '刷新: ' +
+        document.getElementById('wlUpdated').textContent = '刷新 ' +
             String(now.getHours()).padStart(2, '0') + ':' +
             String(now.getMinutes()).padStart(2, '0') + ':' +
             String(now.getSeconds()).padStart(2, '0');
@@ -310,17 +202,15 @@
             if (!resp.ok) throw new Error('HTTP ' + resp.status);
             var data = await resp.json();
             render(data.items || []);
-        } catch (e) {
-            console.error('watchlist fetch error:', e);
-        }
+        } catch (e) { console.error('watchlist fetch:', e); }
     }
 
     async function addStock() {
         var input = document.getElementById('addInput');
         var symbol = input.value.trim();
-        if (!symbol) { showToast('请输入股票代码', true); return; }
+        if (!symbol) { showToast('输入代码', true); return; }
         var btn = document.getElementById('addBtn');
-        btn.disabled = true; btn.textContent = '添加中...';
+        btn.disabled = true; btn.textContent = '...';
         try {
             var resp = await fetch('/api/watchlist', {
                 method: 'POST', headers: {'Content-Type': 'application/json'},
@@ -329,18 +219,18 @@
             var data = await resp.json();
             if (!resp.ok) { showToast(data.error || '添加失败', true); return; }
             input.value = '';
-            showToast('✅ 已添加 ' + data.symbol);
+            showToast('✅ ' + data.symbol);
             await fetchData();
         } catch (e) { showToast('网络错误', true); }
         finally { btn.disabled = false; btn.textContent = '+ 添加'; }
     }
 
     async function removeStock(symbol) {
-        if (!confirm('确认移除 ' + symbol + '？')) return;
+        if (!confirm('移除 ' + symbol + '？')) return;
         try {
             var resp = await fetch('/api/watchlist/' + encodeURIComponent(symbol), {method: 'DELETE'});
-            if (!resp.ok) { showToast('删除失败', true); return; }
-            showToast('已移除 ' + symbol); await fetchData();
+            if (!resp.ok) { showToast('失败', true); return; }
+            showToast('已移除'); await fetchData();
         } catch (e) { showToast('网络错误', true); }
     }
 

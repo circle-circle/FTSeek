@@ -87012,3 +87012,59 @@ API: http://localhost:8901
 2026-06-13 08:56:31,233 [app.pipeline.signal_pipeline] INFO: [扫描] overnight → 完全静默，跳过扫描
 2026-06-13 08:56:31,334 [app.orb.engine] INFO: [ORB] tick #661 | time=20:56:31 | pos=0 | ranges=0 | done=0
 2026-06-13 08:58:29,391 [ftseek_us.risk.vix_monitor] INFO: VIX 指数：19.80
+2026-06-13 09:01:31,465 [app.pipeline.signal_pipeline] INFO: [扫描] overnight → 完全静默，跳过扫描
+2026-06-13 09:01:31,568 [app.orb.engine] INFO: [ORB] tick #721 | time=21:01:31 | pos=0 | ranges=0 | done=0
+2026-06-13 09:03:40,390 [ftseek_us.risk.vix_monitor] INFO: VIX 指数：19.80
+2026-06-13 09:06:31,693 [app.pipeline.signal_pipeline] INFO: [扫描] overnight → 完全静默，跳过扫描
+2026-06-13 09:06:31,831 [app.orb.engine] INFO: [ORB] tick #781 | time=21:06:31 | pos=0 | ranges=0 | done=0
+2026-06-13 09:08:51,307 [ftseek_us.risk.vix_monitor] INFO: VIX 指数：19.80
+2026-06-13 09:11:31,905 [app.pipeline.signal_pipeline] INFO: [扫描] overnight → 完全静默，跳过扫描
+2026-06-13 09:11:32,086 [app.orb.engine] INFO: [ORB] tick #841 | time=21:11:32 | pos=0 | ranges=0 | done=0
+2026-06-13 09:14:02,066 [ftseek_us.risk.vix_monitor] INFO: VIX 指数：19.80
+2026-06-13 09:16:32,117 [app.pipeline.signal_pipeline] INFO: [扫描] overnight → 完全静默，跳过扫描
+2026-06-13 09:16:32,346 [app.orb.engine] INFO: [ORB] tick #901 | time=21:16:32 | pos=0 | ranges=0 | done=0
+2026-06-13 09:19:12,784 [ftseek_us.risk.vix_monitor] INFO: VIX 指数：19.80
+2026-06-13 09:21:32,343 [app.pipeline.signal_pipeline] INFO: [扫描] overnight → 完全静默，跳过扫描
+2026-06-13 09:21:32,604 [app.orb.engine] INFO: [ORB] tick #961 | time=21:21:32 | pos=0 | ranges=0 | done=0
+2026-06-13 09:24:23,888 [ftseek_us.risk.vix_monitor] INFO: VIX 指数：19.80
+2026-06-13 09:26:32,561 [app.pipeline.signal_pipeline] INFO: [扫描] overnight → 完全静默，跳过扫描
+2026-06-13 09:26:32,843 [app.orb.engine] INFO: [ORB] tick #1021 | time=21:26:32 | pos=0 | ranges=0 | done=0
+2026-06-13 09:29:34,638 [ftseek_us.risk.vix_monitor] INFO: VIX 指数：19.80
+2026-06-13 09:31:32,779 [app.pipeline.signal_pipeline] INFO: [扫描] overnight → 完全静默，跳过扫描
+2026-06-13 09:31:33,100 [app.orb.engine] INFO: [ORB] tick #1081 | time=21:31:33 | pos=0 | ranges=0 | done=0
+2026-06-13 09:34:45,363 [ftseek_us.risk.vix_monitor] INFO: VIX 指数：19.80
+2026-06-13 09:36:32,998 [app.pipeline.signal_pipeline] INFO: [扫描] overnight → 完全静默，跳过扫描
+2026-06-13 09:36:33,362 [app.orb.engine] INFO: [ORB] tick #1141 | time=21:36:33 | pos=0 | ranges=0 | done=0
+2026-06-13 09:39:56,081 [ftseek_us.risk.vix_monitor] INFO: VIX 指数：19.80
+2026-06-13 09:41:33,211 [app.pipeline.signal_pipeline] INFO: [扫描] overnight → 完全静默，跳过扫描
+2026-06-13 09:41:33,606 [app.orb.engine] INFO: [ORB] tick #1201 | time=21:41:33 | pos=0 | ranges=0 | done=0
+2026-06-13 09:45:07,016 [ftseek_us.risk.vix_monitor] INFO: VIX 指数：19.80
+2026-06-13 09:46:33,435 [app.pipeline.signal_pipeline] INFO: [扫描] overnight → 完全静默，跳过扫描
+2026-06-13 09:46:33,852 [app.orb.engine] INFO: [ORB] tick #1261 | time=21:46:33 | pos=0 | ranges=0 | done=0
+2026-06-13 09:50:17,815 [ftseek_us.risk.vix_monitor] INFO: VIX 指数：19.80
+2026-06-13 09:51:33,648 [app.pipeline.signal_pipeline] INFO: [扫描] overnight → 完全静默，跳过扫描
+2026-06-13 09:51:34,098 [app.orb.engine] INFO: [ORB] tick #1321 | time=21:51:34 | pos=0 | ranges=0 | done=0
+2026-06-13 09:55:28,580 [ftseek_us.risk.vix_monitor] INFO: VIX 指数：19.80
+2026-06-13 09:56:33,867 [app.pipeline.signal_pipeline] INFO: [扫描] overnight → 完全静默，跳过扫描
+2026-06-13 09:56:34,356 [app.orb.engine] INFO: [ORB] tick #1381 | time=21:56:34 | pos=0 | ranges=0 | done=0
+2026-06-13 10:00:39,427 [ftseek_us.risk.vix_monitor] INFO: VIX 指数：19.80
+2026-06-13 10:01:34,129 [app.pipeline.signal_pipeline] INFO: [扫描] overnight → 完全静默，跳过扫描
+2026-06-13 10:01:34,614 [app.orb.engine] INFO: [ORB] tick #1441 | time=22:01:34 | pos=0 | ranges=0 | done=0
+2026-06-13 10:05:50,163 [ftseek_us.risk.vix_monitor] INFO: VIX 指数：19.80
+2026-06-13 10:06:34,371 [app.pipeline.signal_pipeline] INFO: [扫描] overnight → 完全静默，跳过扫描
+2026-06-13 10:06:34,860 [app.orb.engine] INFO: [ORB] tick #1501 | time=22:06:34 | pos=0 | ranges=0 | done=0
+2026-06-13 10:11:00,894 [ftseek_us.risk.vix_monitor] INFO: VIX 指数：19.80
+2026-06-13 10:11:34,587 [app.pipeline.signal_pipeline] INFO: [扫描] overnight → 完全静默，跳过扫描
+2026-06-13 10:11:35,110 [app.orb.engine] INFO: [ORB] tick #1561 | time=22:11:35 | pos=0 | ranges=0 | done=0
+2026-06-13 10:16:11,695 [ftseek_us.risk.vix_monitor] INFO: VIX 指数：19.80
+2026-06-13 10:16:34,801 [app.pipeline.signal_pipeline] INFO: [扫描] overnight → 完全静默，跳过扫描
+2026-06-13 10:16:35,379 [app.orb.engine] INFO: [ORB] tick #1621 | time=22:16:35 | pos=0 | ranges=0 | done=0
+2026-06-13 10:21:22,447 [ftseek_us.risk.vix_monitor] INFO: VIX 指数：19.80
+2026-06-13 10:21:35,010 [app.pipeline.signal_pipeline] INFO: [扫描] overnight → 完全静默，跳过扫描
+2026-06-13 10:21:35,642 [app.orb.engine] INFO: [ORB] tick #1681 | time=22:21:35 | pos=0 | ranges=0 | done=0
+2026-06-13 10:26:33,215 [ftseek_us.risk.vix_monitor] INFO: VIX 指数：19.80
+2026-06-13 10:26:35,250 [app.pipeline.signal_pipeline] INFO: [扫描] overnight → 完全静默，跳过扫描
+2026-06-13 10:26:35,895 [app.orb.engine] INFO: [ORB] tick #1741 | time=22:26:35 | pos=0 | ranges=0 | done=0
+2026-06-13 10:31:35,576 [app.pipeline.signal_pipeline] INFO: [扫描] overnight → 完全静默，跳过扫描
+2026-06-13 10:31:36,166 [app.orb.engine] INFO: [ORB] tick #1801 | time=22:31:36 | pos=0 | ranges=0 | done=0
+2026-06-13 10:31:44,137 [ftseek_us.risk.vix_monitor] INFO: VIX 指数：19.80

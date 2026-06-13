@@ -596,11 +596,25 @@ class ManualOrderService:
                 # 2026-06-10: 写入 trade_records 形成手动交易闭环
                 # P1-6 (2026-06-12): 优先用 broker dealt_avg_price 精确回填 exit_price
                 try:
+                    import time as _t
+                    # 等待 1s 让 broker 成交回报写入 (市价单一般立即成交, 限价单可能延迟)
+                    _t.sleep(1.0)
                     _precise_exit = self._fetch_dealt_avg_price(
-                        order.order_id, trd_env, acc_id
+                        order.order_id, trd_env, acc_id, retries=3, delay=1.0
                     )
-                    _exit_px = _precise_exit if (_precise_exit and _precise_exit > 0) \
-                        else self._calc_exit_price(row, raw_qty)
+                    if _precise_exit and _precise_exit > 0:
+                        _exit_px = _precise_exit
+                    else:
+                        _exit_px = self._calc_exit_price(row, raw_qty)
+                        if _exit_px <= 0:
+                            # 最后兜底: 用 Futu 实时报价
+                            try:
+                                from futu import RET_OK
+                                ret, snap = self._broker_ctx._quote_ctx.get_market_snapshot([symbol])
+                                if ret == RET_OK and not snap.empty:
+                                    _exit_px = float(snap.iloc[0].get("cur_price", 0) or 0)
+                            except Exception:
+                                pass
                     self._record_manual_close(
                         symbol=symbol,
                         direction=position_dir,
@@ -610,6 +624,31 @@ class ManualOrderService:
                         reason=f"[{close_type}] {reason}",
                         order_id=order.order_id,
                     )
+                    # 自动生成交易归因
+                    try:
+                        from app.analysis.trade_attribution import compute_attribution
+                        attr = compute_attribution(
+                            symbol=symbol, direction=position_dir,
+                            entry_price=float(row.get("cost_price", 0)),
+                            exit_price=_exit_px, quantity=int(qty),
+                            entry_time=row.get("entry_time", row.get("updated_at", "")),
+                            exit_time=datetime.now().isoformat(),
+                        )
+                        logger.info(f"[归因] {symbol} {position_dir}: {attr.summary} | {attr.improvement}")
+                        # 写入归因到 trade_records.metadata_json
+                        conn = self._db()
+                        try:
+                            import json as _json
+                            meta_json = _json.dumps({"attribution": attr.to_dict()}, ensure_ascii=False)
+                            conn.execute(
+                                "UPDATE trade_records SET metadata_json=? WHERE close_futu_order_id=? ORDER BY id DESC LIMIT 1",
+                                (meta_json, order.order_id),
+                            )
+                            conn.commit()
+                        finally:
+                            conn.close()
+                    except Exception as _attr_err:
+                        logger.debug(f"[归因] 生成失败 (不影响平仓): {_attr_err}")
                 except Exception as _rec_err:
                     logger.warning(f"[手动平仓] trade_records 写入失败 (不影响平仓): {_rec_err}")
             else:
@@ -1018,6 +1057,32 @@ class ManualOrderService:
             now = datetime.now()
             trade_date = now.strftime("%Y-%m-%d")
 
+            # 查开仓时间 (从 open_positions 或 manual_order_audit)
+            entry_time = None
+            try:
+                cursor = conn.execute(
+                    "SELECT MIN(updated_at) FROM open_positions WHERE symbol=? AND owner='manual'",
+                    (symbol,)
+                )
+                row = cursor.fetchone()
+                if row and row[0]:
+                    entry_time = row[0]
+            except Exception:
+                pass
+            if not entry_time:
+                try:
+                    cursor = conn.execute(
+                        "SELECT MIN(order_time) FROM manual_order_audit WHERE symbol=? AND side='BUY'",
+                        (symbol,)
+                    )
+                    row = cursor.fetchone()
+                    if row and row[0]:
+                        entry_time = row[0]
+                except Exception:
+                    pass
+            if not entry_time:
+                entry_time = now.isoformat()
+
             conn.execute("""
                 INSERT INTO trade_records (
                     trade_date, symbol, direction, entry_time, exit_time,
@@ -1026,7 +1091,7 @@ class ManualOrderService:
                     data_quality, created_at, close_futu_order_id
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
-                trade_date, symbol, direction, now.isoformat(), now.isoformat(),
+                trade_date, symbol, direction, entry_time, now.isoformat(),
                 entry_price, exit_price, quantity, round(pnl, 2), round(pnl_pct, 4),
                 reason, "manual", "MANUAL",
                 self._get_mode_label(),
