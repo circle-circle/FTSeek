@@ -32,34 +32,24 @@ logger = logging.getLogger('config_audit')
 # ============================================================
 AUDIT_RULES = [
     # --- 置信度类 ---
-    ('risk_limits.min_confidence', '全局最小置信度',
-     r"min_confidence\D*=\s*(0\.\d+)", float,
+    ('risk.signal_quality.min_confidence', '全局最小置信度',
+     r"min_confidence\D*[:=]\s*(0\.\d+)", float,
      r'(_llm_review|llm_review|review_min|_fallback)'),
 
     # --- 仓位类 ---
-    ('risk_limits.max_single_position', '单股最大仓位',
-     r"max_single_position\D*[:=]\s*(0\.\d+)", float, None),
+    ('risk.position.max_per_symbol', '单股最大仓位',
+     r"max_per_symbol\D*[:=]\s*(0\.\d+)", float, None),
     ('risk_limits.max_total_position', '总仓位上限',
      r"max_total_position\D*[:=]\s*(0\.\d+)", float, None),
 
-    # --- 日/周/月亏损 ---
-    ('risk_limits.max_daily_loss', '日最大亏损',
-     r"max_daily_loss\D*[:=]\s*(0\.\d+)", float,
-     r'(pct|PCT|percentage|%|\d+\.\d+.*#.*%)'),
-    ('risk_limits.max_weekly_loss', '周最大亏损',
-     r"max_weekly_loss\D*[:=]\s*(0\.\d+)", float,
-     r'(pct|PCT|percentage|%|\d+\.\d+.*#.*%)'),
-    ('risk_limits.max_monthly_loss', '月最大亏损',
-     r"max_monthly_loss\D*[:=]\s*(0\.\d+)", float,
-     r'(pct|PCT|percentage|%|\d+\.\d+.*#.*%)'),
-
-    # --- 最大回撤 ---
-    ('risk_limits.max_drawdown', '最大回撤',
-     r"max_drawdown\D*[:=]\s*(0\.\d+)", float,
-     r'(daily|DAILY|pct|PCT|= 0\.0\b|_max_drawdown_loss)'),
+    # --- 回撤 ---
+    ('risk.account.max_daily_drawdown', '日最大回撤',
+     r"max_daily_drawdown\D*[:=]\s*(0\.\d+)", float, None),
+    ('risk.account.max_total_drawdown', '总最大回撤',
+     r"max_total_drawdown\D*[:=]\s*(0\.\d+)", float, None),
 
     # --- 日交易次数 ---
-    ('risk_limits.max_daily_trades', '日最大交易次数',
+    ('risk.trading.max_daily_trades', '日最大交易次数',
      r"max_daily_trades\D*[:=]\s*(\d+)", int, None),
 ]
 

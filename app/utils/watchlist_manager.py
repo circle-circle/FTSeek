@@ -87,7 +87,7 @@ class WatchlistManager:
 
     def get_enabled_stocks(self) -> List[Dict[str, Any]]:
         """
-        获取启用的股票列表 (双重过滤: enabled + 不在全局黑名单)
+        获取启用的股票列表 (三重过滤: enabled + 不在全局黑名单 + 不在自管列表)
         
         Returns:
             [
@@ -99,15 +99,31 @@ class WatchlistManager:
         enabled = [s for s in stocks if s.get("enabled", False)]
         # P0 (2026-05-30): 双重过滤 — enabled 且不在全局黑名单
         blacklist = self._get_global_blacklist()
-        if not blacklist:
-            return enabled
         filtered = [
             s for s in enabled
             if s.get("code", "").replace("US.", "") not in blacklist
-        ]
+        ] if blacklist else enabled
         blocked = [s.get("code") for s in enabled if s not in filtered]
         if blocked:
             logger.info(f"[BLACKLIST] watchlist 过滤拦截 {len(blocked)} 个黑名单标的: {blocked}")
+        
+        # 2026-06-13: 三重过滤 — 排除 self_managed_symbols (AMD/AAPL等用户自管)
+        # 防止这些标的进入扫描池浪费API预算，或绕过信号管道的self_managed检查
+        try:
+            from app.core.config_container import get_config
+            self_managed = get_config().get_dotted("risk.self_managed_symbols", []) or []
+            if self_managed:
+                before = len(filtered)
+                filtered = [
+                    s for s in filtered
+                    if s.get("code", "") not in self_managed
+                ]
+                skipped = before - len(filtered)
+                if skipped:
+                    logger.info(f"[SELF_MANAGED] watchlist 过滤 {skipped} 个自管标的")
+        except Exception:
+            pass
+        
         return filtered
     
     def get_stock_codes(self) -> List[str]:

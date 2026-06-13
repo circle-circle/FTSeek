@@ -994,7 +994,7 @@ risk:
     # 真正的过滤器是 signal_strength>=60 (阻断 -$18K vlow 区间)
     min_confidence: 0.70
     min_consensus: 0.25   # P0 (2026-06-03): 0.20→0.25, 对齐 scheduler
-    min_score: 50
+    min_score: 60         # 2026-06-13: 50→60 对齐所有 min_strength 路径 (pre_trade/strategies/scheduler均为60)
   # Task #6 (2026-05-30): 仓位计算ATR联动配置
   # risk_per_trade_pct: 0.005 → 0.008 (单笔风险预算放大), max_position_pct: 0.15 → 0.12 (单标的上限收紧)
   position_sizing:
@@ -1318,7 +1318,9 @@ agents:
 feature_flags:
   enable_decision_engine: true
   enable_risk_engine: true
-  enable_execution_engine: false
+  # DELETED (2026-06-13): enable_execution_engine 是死配置，代码中零引用
+  # 实际控制自动交易的方式: Kill Switch (最高优先级) 或 TRADE_ENV=1 (模拟盘)
+  # enable_execution_engine: false  # ← 已删除，避免虚假安全感
   enable_observability_engine: true
   enable_multi_agent: true
   enable_simulation_mode: true
