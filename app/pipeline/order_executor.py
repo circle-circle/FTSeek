@@ -2774,28 +2774,26 @@ def _submit_order(scheduler, symbol: str, signal: SignalScore, context: Dict[str
                         f"自动信号方向={_signal_dir}, 拒绝反向开仓"
                     )
                     return
-                # P1-4: 同方向已有仓位 → 检查合并敞口是否超限
+                # P1-4: 同方向已有仓位 → 检查已有敞口是否已近上限
+                # SignalScore 无 quantity/price 字段, 无法预知新增量
+                # 策略: 已有仓位 ≥ 20% equity → 禁止自动加仓 (留 5% 余量)
                 _bp_price = float(_bp.get("cost_price", 0) or _bp.get("current_price", 0) or 0)
                 if _bp_price > 0:
                     _existing_value = abs(_bp_qty) * _bp_price
-                    _est_new_value = getattr(signal, 'price', 0) or _bp_price
-                    _est_new_qty = getattr(signal, 'quantity', 0) or 0
-                    if _est_new_qty > 0:
-                        _total_value = _existing_value + _est_new_qty * _est_new_value
-                        try:
-                            from app.risk.capital_safety import get_capital_safety_system
-                            _eq = float(get_capital_safety_system()._state.current_equity or 0)
-                            if _eq > 0:
-                                _total_pct = _total_value / _eq
-                                if _total_pct > 0.25:
-                                    logger.warning(
-                                        f"🚫 [敞口拦截] {symbol} 合并敞口 ${_total_value:,.0f} "
-                                        f"({_total_pct:.1%}) > 25% 上限 "
-                                        f"(已有{abs(_bp_qty):.0f}股×${_bp_price:.2f} + 新增{_est_new_qty}股)"
-                                    )
-                                    return
-                        except Exception:
-                            pass
+                    try:
+                        from app.risk.capital_safety import get_capital_safety_system
+                        _eq = float(get_capital_safety_system()._state.current_equity or 0)
+                        if _eq > 0:
+                            _existing_pct = _existing_value / _eq
+                            if _existing_pct >= 0.20:
+                                logger.warning(
+                                    f"🚫 [敞口拦截] {symbol} 已有 {_signal_dir} {abs(_bp_qty):.0f}股 "
+                                    f"(${_existing_value:,.0f} = {_existing_pct:.1%}) ≥ 20%, "
+                                    f"禁止自动同向加仓"
+                                )
+                                return
+                    except Exception:
+                        pass
     except Exception as _rv_err:
         logger.debug(f"[反向/敞口拦截] 检查异常 (放行): {_rv_err}")
 
