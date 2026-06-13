@@ -628,6 +628,28 @@ class ManualOrderService:
                 order.status = "submitted"
                 logger.info(f"[手动平仓] ✅ {symbol} 平仓成功: {int(qty)}股")
                 self._mark_position_manual(symbol, position_dir)
+
+                # P1-5 (2026-06-14): 通知 ExitMonitor 清理 trail_state
+                # 防止: 手动平仓后 trail_state 残留 → 重启 ghost 恢复时带旧状态触发错误退出
+                try:
+                    from app.risk.trail_state_store import get_trail_state_store
+                    _ts_store = get_trail_state_store()
+                    _ts_store.delete(symbol)
+                    logger.info(f"[手动平仓] {symbol} trail_state 已清理")
+                except Exception as _ts_err:
+                    logger.debug(f"[手动平仓] trail_state 清理跳过: {_ts_err}")
+
+                # P1-5 (2026-06-14): 从 position_store 移除 (如果存在)
+                # position_sync 周期性运行也会清理, 这里是即时通知减少延迟窗口
+                try:
+                    import importlib
+                    _sc_mod = importlib.import_module("app.core.scheduler_core")
+                    _sched = getattr(_sc_mod, "_scheduler_instance", None)
+                    if _sched and hasattr(_sched, 'position_store') and _sched.position_store.has(symbol):
+                        _sched.position_store.remove(symbol)
+                        logger.info(f"[手动平仓] {symbol} 已从 position_store 移除")
+                except Exception as _ps_err:
+                    logger.debug(f"[手动平仓] position_store 清理跳过 (position_sync 会兜底): {_ps_err}")
                 # PDT 日内交易记录: 平仓时判断是否 round trip (P0 2026-06-11)
                 try:
                     from app.risk.pdt_guard import get_pdt_guard

@@ -679,6 +679,26 @@ class ExitMonitor:
             return None
         drawdown = -total_pnl / denominator
 
+        # P0 (2026-06-14): 账户级回撤补充检查 — 含手动仓的 broker 真实浮亏
+        # 原问题: total_pnl 只算 managed 仓位, 手动大仓位亏损不触发 FLAT_ALL
+        # 修复: 额外查 broker unrealized PnL, 如果账户级回撤超限也触发
+        _broker_drawdown = 0.0
+        try:
+            from app.risk.capital_safety import get_capital_safety_system
+            _cs = get_capital_safety_system()
+            _cs_equity = float(_cs._state.current_equity or 0)
+            _cs_peak = float(_cs._state.peak_equity or _cs_equity)
+            if _cs_peak > 0 and _cs_equity > 0:
+                _broker_drawdown = (_cs_peak - _cs_equity) / _cs_peak
+                if _broker_drawdown > drawdown:
+                    logger.info(
+                        f"[组合止损·账户级] broker_drawdown={_broker_drawdown*100:.2f}% "
+                        f"> managed_drawdown={drawdown*100:.2f}%, 使用账户级回撤"
+                    )
+                    drawdown = _broker_drawdown
+        except Exception as _bd_err:
+            logger.debug(f"[组合止损·账户级] 检查跳过: {_bd_err}")
+
         action = None
         if drawdown >= stop_pct:
             action = "FLAT_ALL"

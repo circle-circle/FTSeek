@@ -2740,6 +2740,65 @@ def _submit_order(scheduler, symbol: str, signal: SignalScore, context: Dict[str
         logger.warning(f"🔒 [自动交易·fail-safe] {symbol} 配置读取失败，跳过下单: {_at_err}")
         return
 
+    # ── P0 (2026-06-14): Kill Switch 统一 — 自动线也必须尊重紧急制动 ──
+    # 原问题: 手动线检查 check_kill_switch()，自动线只检查 auto_trading_enabled
+    # Kill Switch 是最高优先级，激活后所有交易（自动+手动）必须停止
+    try:
+        from app.us_pipeline.emergency_interceptor import check_kill_switch
+        if check_kill_switch():
+            logger.warning(f"🚨 [Kill Switch] {symbol} 紧急制动已激活，自动下单被拦截")
+            return
+    except Exception as _ks_err:
+        logger.debug(f"[Kill Switch] 检查异常 (放行): {_ks_err}")
+
+    # ── P0 (2026-06-14): 同标的反向仓位硬拦截 ──
+    # 风险: 手动持 AAPL LONG, 自动生成 SHORT 信号 → 反向开仓
+    #   → 净敞口归零但占双倍保证金, 或 broker 直接对冲掉手动仓
+    # P1-4 (2026-06-14): 同标的同方向叠加 → 隐性超仓 (手动25% + 自动6% = 31%)
+    # 修复: 查 broker 真实持仓, 反向→拒绝, 同向→检查合并敞口
+    try:
+        _signal_dir = signal.direction.value if hasattr(signal.direction, 'value') else str(signal.direction)
+        _adapter = getattr(getattr(scheduler, 'execution_engine', None), 'broker_adapter', None)
+        if _adapter and hasattr(_adapter, 'get_positions'):
+            _broker_pos = _adapter.get_positions() or []
+            for _bp in _broker_pos:
+                if _bp.get("symbol") != symbol:
+                    continue
+                _bp_qty = float(_bp.get("qty", 0))
+                if _bp_qty == 0:
+                    continue
+                _bp_dir = "LONG" if _bp_qty > 0 else "SHORT"
+                if _bp_dir != _signal_dir:
+                    logger.warning(
+                        f"🚫 [反向拦截] {symbol} broker 已有 {_bp_dir} {abs(_bp_qty):.0f}股, "
+                        f"自动信号方向={_signal_dir}, 拒绝反向开仓"
+                    )
+                    return
+                # P1-4: 同方向已有仓位 → 检查合并敞口是否超限
+                _bp_price = float(_bp.get("cost_price", 0) or _bp.get("current_price", 0) or 0)
+                if _bp_price > 0:
+                    _existing_value = abs(_bp_qty) * _bp_price
+                    _est_new_value = getattr(signal, 'price', 0) or _bp_price
+                    _est_new_qty = getattr(signal, 'quantity', 0) or 0
+                    if _est_new_qty > 0:
+                        _total_value = _existing_value + _est_new_qty * _est_new_value
+                        try:
+                            from app.risk.capital_safety import get_capital_safety_system
+                            _eq = float(get_capital_safety_system()._state.current_equity or 0)
+                            if _eq > 0:
+                                _total_pct = _total_value / _eq
+                                if _total_pct > 0.25:
+                                    logger.warning(
+                                        f"🚫 [敞口拦截] {symbol} 合并敞口 ${_total_value:,.0f} "
+                                        f"({_total_pct:.1%}) > 25% 上限 "
+                                        f"(已有{abs(_bp_qty):.0f}股×${_bp_price:.2f} + 新增{_est_new_qty}股)"
+                                    )
+                                    return
+                        except Exception:
+                            pass
+    except Exception as _rv_err:
+        logger.debug(f"[反向/敞口拦截] 检查异常 (放行): {_rv_err}")
+
     # ── P0 (2026-06-14): 时段门禁 — opening_drive 禁止入场 ──
     # 数据驱动: 136 笔 opening_drive 退出, 18.4% WR, -366.6% 累计亏损 (占总亏损 116%)
     # 开盘前30分钟波动 2-3x ATR, 信号在此时段入场 ≈ 送钱
