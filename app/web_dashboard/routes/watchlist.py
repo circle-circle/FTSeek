@@ -252,6 +252,143 @@ def _get_day_state(quote: dict) -> dict:
     }
 
 
+def _get_direction_advice(symbols: list) -> dict:
+    """基于实时市场结构给出方向建议 (非历史回测, 纯当前状态)
+    
+    逻辑:
+      多头条件: price>MA50 + MACD>signal + RSI在合理区间(35-70) + 量比>1
+      空头条件: price<MA50 + MACD<signal + RSI在合理区间(30-65) + 量比>1
+      每个条件匹配 +1 分, 4分为高, 3分为中, ≤2分为观望
+    
+    输出: {symbol: {direction, confidence, reason, indicators}}
+    """
+    import logging as _log
+    result = {}
+    try:
+        from app.data.twelvedata_provider import TwelveDataProvider
+        td = TwelveDataProvider()
+    except Exception:
+        return result
+    
+    for sym in symbols:
+        try:
+            ts = td.get_time_series(sym)
+            if not ts:
+                result[sym] = {"direction": "", "confidence": "", "reason": "数据不可用", "indicators": {}}
+                continue
+            
+            price = ts.get("price", 0)
+            ma20 = ts.get("ma20", 0)
+            ma50 = ts.get("ma50", 0)
+            rsi = ts.get("rsi_14", 50)
+            macd = ts.get("macd", 0)
+            macd_sig = ts.get("macd_signal", 0)
+            vol_ratio = ts.get("volume_ratio", 1.0)
+            momentum = ts.get("momentum", 0)
+            
+            # Score bullish
+            bull = 0
+            bull_reasons = []
+            if ma50 > 0 and price > ma50:
+                bull += 1
+                bull_reasons.append("价格在MA50上方")
+            if macd > macd_sig:
+                bull += 1
+                bull_reasons.append("MACD金叉")
+            if 35 <= rsi <= 70:
+                bull += 1
+                if rsi >= 40 and rsi <= 60:
+                    bull_reasons.append(f"RSI {rsi:.0f} 中性偏多")
+                else:
+                    bull_reasons.append(f"RSI {rsi:.0f}")
+            if vol_ratio > 1.0:
+                bull += 1
+                bull_reasons.append(f"放量{vol_ratio:.1f}x")
+            
+            # Score bearish
+            bear = 0
+            bear_reasons = []
+            if ma50 > 0 and price < ma50:
+                bear += 1
+                bear_reasons.append("价格在MA50下方")
+            if macd < macd_sig:
+                bear += 1
+                bear_reasons.append("MACD死叉")
+            if 30 <= rsi <= 65:
+                bear += 1
+                if rsi >= 40 and rsi <= 60:
+                    bear_reasons.append(f"RSI {rsi:.0f} 中性偏空")
+                else:
+                    bear_reasons.append(f"RSI {rsi:.0f}")
+            if vol_ratio > 1.0:
+                bear += 1
+                bear_reasons.append(f"放量{vol_ratio:.1f}x")
+            
+            # Decide direction
+            if bull > bear and bull >= 3:
+                direction = "LONG"
+                if bull == 4:
+                    confidence = "高"
+                else:
+                    confidence = "中"
+                reason = " + ".join(bull_reasons[:3])
+            elif bear > bull and bear >= 3:
+                direction = "SHORT"
+                if bear == 4:
+                    confidence = "高"
+                else:
+                    confidence = "中"
+                reason = " + ".join(bear_reasons[:3])
+            elif bull == bear and bull >= 2:
+                direction = ""
+                confidence = "低"
+                reason = "多空交织, 方向不明"
+            else:
+                direction = ""
+                confidence = ""
+                if bull == 0 and bear == 0:
+                    reason = "无明显结构特征"
+                else:
+                    reason = "信号不足, 建议观望"
+            
+            # MA alignment detail
+            if ma20 > 0 and ma50 > 0:
+                if price > ma20 > ma50:
+                    ma_detail = "多头排列"
+                elif price < ma20 < ma50:
+                    ma_detail = "空头排列"
+                elif price > ma20:
+                    ma_detail = "短期偏多"
+                elif price < ma20:
+                    ma_detail = "短期偏空"
+                else:
+                    ma_detail = "均线交织"
+            else:
+                ma_detail = ""
+            
+            result[sym] = {
+                "direction": direction,
+                "confidence": confidence,
+                "reason": reason,
+                "ma_detail": ma_detail,
+                "indicators": {
+                    "rsi": round(rsi, 1),
+                    "macd_hist": round(macd - macd_sig, 4),
+                    "ma20": round(ma20, 2),
+                    "ma50": round(ma50, 2),
+                    "vol_ratio": round(vol_ratio, 2),
+                    "momentum": round(momentum * 100, 2),
+                    "bull_score": bull,
+                    "bear_score": bear,
+                },
+            }
+        except Exception as e:
+            _log.getLogger("ftseek_us.routes.watchlist").debug(f"[direction_advice] {sym} error: {e}")
+            result[sym] = {"direction": "", "confidence": "", "reason": "计算异常", "indicators": {}}
+    
+    return result
+
+
 def _ensure_table():
     """确保 user_watchlist 表存在"""
     db_path = _get_db()
@@ -344,20 +481,30 @@ def register(app, templates):
             it["avg_pnl"] = ts.get("avg_pnl", 0)
             it["total_pnl"] = ts.get("total_pnl", 0)
 
-            # 历史方向优势 (signal_snapshots forward returns)
+            # 方向建议 (实时市场结构)
+        advice_data = _get_direction_advice(symbols)
+
+        for idx, it in enumerate(items):
+            # 历史方向优势 (保留但降级)
             edge = edge_data.get(it["symbol"], {})
-            it["edge_direction"] = edge.get("edge_direction", "")
-            it["edge_confidence"] = edge.get("edge_confidence", "")
-            it["edge_detail"] = edge.get("edge_detail", "")
             it["long_stats"] = edge.get("long", {})
             it["short_stats"] = edge.get("short", {})
 
             # 当日状态
+            q = quotes.get(it["symbol"], {})
             day = _get_day_state(q)
             it["day_state"] = day["state"]
             it["day_label"] = day["label"]
             it["day_position"] = day.get("day_position", 50)
             it["intraday_range"] = day.get("intraday_range", 0)
+
+            # 方向建议 (核心输出)
+            adv = advice_data.get(it["symbol"], {})
+            it["advice_direction"] = adv.get("direction", "")
+            it["advice_confidence"] = adv.get("confidence", "")
+            it["advice_reason"] = adv.get("reason", "")
+            it["advice_ma"] = adv.get("ma_detail", "")
+            it["advice_indicators"] = adv.get("indicators", {})
 
         return {"items": items}
 
