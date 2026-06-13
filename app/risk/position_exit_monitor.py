@@ -1677,26 +1677,6 @@ class ExitMonitor:
 
         position.trail_state = trail_state
 
-        # ── 持久化 trail_state 到 trail_state_store (2026-05-27) ──
-        # P0 修复 (2026-05-29): 提升日志级别 + 重试机制，防止静默丢失导致重启后 peak_price 重置
-        try:
-            import time as _time_mod
-            from app.risk.trail_state_store import save_trail_state
-            _persist_ok = False
-            for _retry_i in range(3):  # 最多尝试 3 次 (首次 + 2 次重试)
-                if save_trail_state(position.symbol, trail_state):
-                    _persist_ok = True
-                    break
-                if _retry_i < 2:
-                    _time_mod.sleep(0.1)  # 重试间隔 100ms
-            if not _persist_ok:
-                logger.warning(
-                    f"[trail_state] {position.symbol} 持久化失败(重试3次均失败)，"
-                    f"重启可能导致 peak_price 重置"
-                )
-        except Exception as _persist_err:
-            logger.warning(f"[trail_state] {position.symbol} 持久化异常: {_persist_err}")
-
         if atr > 0:
             profit_atr_signed = compute_profit_atr_signed(direction, entry_price, current_price, atr)
             policy_dict = {}
@@ -1771,6 +1751,31 @@ class ExitMonitor:
             else:
                 _new_sl = entry_price * _fb_short
                 position.current_sl = min(_old_sl, _new_sl) if _old_sl > 0 else _new_sl
+
+        # ── P0 (2026-06-14): 持久化 trail_state + current_sl 到 trail_state_store ──
+        # 原问题: current_sl 是 Position 属性，不在 trail_state dict 中，
+        #   save_trail_state 只存 highest/lowest/prev_scan → 重启后 current_sl=0
+        # 修复: 将 current_sl + initial_sl 注入 trail_state dict 后再持久化
+        #   重启时 position restore 从 trail_state 恢复 current_sl
+        trail_state["current_sl"] = float(getattr(position, "current_sl", 0) or 0)
+        trail_state["initial_sl"] = float(getattr(position, "initial_sl", 0) or 0)
+        try:
+            import time as _time_mod
+            from app.risk.trail_state_store import save_trail_state
+            _persist_ok = False
+            for _retry_i in range(3):
+                if save_trail_state(position.symbol, trail_state):
+                    _persist_ok = True
+                    break
+                if _retry_i < 2:
+                    _time_mod.sleep(0.1)
+            if not _persist_ok:
+                logger.warning(
+                    f"[trail_state] {position.symbol} 持久化失败(重试3次均失败)，"
+                    f"重启可能导致 peak_price/current_sl 重置"
+                )
+        except Exception as _persist_err:
+            logger.warning(f"[trail_state] {position.symbol} 持久化异常: {_persist_err}")
 
     # ============================================================
     #  执行退出

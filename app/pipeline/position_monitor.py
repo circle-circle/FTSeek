@@ -895,6 +895,24 @@ def restore_positions_from_db(scheduler):
                     position.entry_time = now_et()
                 position.trail_state = row.get("trail_state", {}) or {}
                 position.metadata = {}
+
+                # P0 (2026-06-14): 从 trail_state_store 恢复 current_sl + peak
+                try:
+                    from app.risk.trail_state_store import get_trail_state_store
+                    _ts = get_trail_state_store().load(symbol)
+                    if _ts:
+                        _ts_sl = float(_ts.get("current_sl", 0) or 0)
+                        if _ts_sl > 0:
+                            position.current_sl = _ts_sl
+                        _ts_isl = float(_ts.get("initial_sl", 0) or 0)
+                        if _ts_isl > 0 and position.initial_sl <= 0:
+                            position.initial_sl = _ts_isl
+                        for _k in ("highest_price", "lowest_price", "prev_scan_price",
+                                   "last_trigger_time", "entry_time_ts", "entry_session"):
+                            if _k in _ts:
+                                position.trail_state[_k] = _ts[_k]
+                except Exception:
+                    pass
                 # P0 修复 (2026-05-20): 期权仓位设置正确的 metadata.source
                 is_option = any(x in symbol for x in ['26', '27', '28']) and any(x in symbol for x in ['P', 'C'])
                 if is_option:

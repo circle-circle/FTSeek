@@ -1383,6 +1383,27 @@ class TradingScheduler:
                         position.metadata["_close_blocked"] = True
                         position.metadata["_close_blocked_reason"] = "DB is_anomalous=1"
 
+                    # P0 (2026-06-14): 从 trail_state_store 恢复 current_sl
+                    # open_positions.current_sl 可能过期 (ExitMonitor 只更新内存),
+                    # trail_state_store 每 60s 持久化一次, 数据更新
+                    try:
+                        from app.risk.trail_state_store import get_trail_state_store
+                        _ts = get_trail_state_store().load(symbol)
+                        if _ts:
+                            _ts_sl = float(_ts.get("current_sl", 0) or 0)
+                            if _ts_sl > 0:
+                                position.current_sl = _ts_sl
+                            _ts_isl = float(_ts.get("initial_sl", 0) or 0)
+                            if _ts_isl > 0 and position.initial_sl <= 0:
+                                position.initial_sl = _ts_isl
+                            # 恢复 trail_state dict (peak prices etc.)
+                            for _k in ("highest_price", "lowest_price", "prev_scan_price",
+                                       "last_trigger_time", "entry_time_ts", "entry_session"):
+                                if _k in _ts:
+                                    position.trail_state[_k] = _ts[_k]
+                    except Exception as _ts_err:
+                        logger.debug(f"[调度器·对账] trail_state 恢复跳过 {symbol}: {_ts_err}")
+
                     self.position_store.add(symbol, position)
                     logger.info(
                         f"[调度器·对账] ✅ 恢复股票持仓 {symbol} {direction.value} "
