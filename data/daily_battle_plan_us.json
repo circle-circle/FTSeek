@@ -249,6 +249,7 @@
     "confidence": 0.45
   },
   "debate_summary": "Hermes 计划 (5标的) + Claude 风险审计 (10受限)",
-  "_paused": true,
-  "_paused_at": "2026-06-12T20:40:22.776429"
+  "_paused": false,
+  "_paused_at": "",
+  "_resumed_at": "2026-06-13T15:02:27.550190"
 }

@@ -2765,51 +2765,26 @@ def _submit_order(scheduler, symbol: str, signal: SignalScore, context: Dict[str
     except Exception as _ks_err:
         logger.debug(f"[Kill Switch] 检查异常 (放行): {_ks_err}")
 
-    # ── P0 (2026-06-14): 同标的反向仓位硬拦截 ──
-    # 风险: 手动持 AAPL LONG, 自动生成 SHORT 信号 → 反向开仓
-    #   → 净敞口归零但占双倍保证金, 或 broker 直接对冲掉手动仓
-    # P1-4 (2026-06-14): 同标的同方向叠加 → 隐性超仓 (手动25% + 自动6% = 31%)
-    # 修复: 查 broker 真实持仓, 反向→拒绝, 同向→检查合并敞口
+    # ── P0 (2026-06-14): 持仓去重 — 已有仓位直接跳过 ──
+    # 原则: 该标的已有持仓(不管方向/大小/手动自动) → 跳过此信号
+    # 根因消除: 双重平仓竞态 / position_sync幽灵复活 / _close_in_progress覆盖
+    # 旧逻辑(反向拦截+20%敞口)过于复杂且漏场景, 简化为"有就跳过"
     try:
-        _signal_dir = signal.direction.value if hasattr(signal.direction, 'value') else str(signal.direction)
         _adapter = getattr(getattr(scheduler, 'execution_engine', None), 'broker_adapter', None)
         if _adapter and hasattr(_adapter, 'get_positions'):
             _broker_pos = _adapter.get_positions() or []
             for _bp in _broker_pos:
-                if _bp.get("symbol") != symbol:
-                    continue
-                _bp_qty = float(_bp.get("qty", 0))
-                if _bp_qty == 0:
-                    continue
-                _bp_dir = "LONG" if _bp_qty > 0 else "SHORT"
-                if _bp_dir != _signal_dir:
-                    logger.warning(
-                        f"🚫 [反向拦截] {symbol} broker 已有 {_bp_dir} {abs(_bp_qty):.0f}股, "
-                        f"自动信号方向={_signal_dir}, 拒绝反向开仓"
+                if _bp.get("symbol") == symbol and float(_bp.get("qty", 0)) != 0:
+                    _qty = abs(float(_bp["qty"]))
+                    _dir = "LONG" if float(_bp["qty"]) > 0 else "SHORT"
+                    logger.info(
+                        f"⏭️ [持仓去重] {symbol} 已有 {_dir} {_qty:.0f}股, 跳过此信号"
                     )
                     return
-                # P1-4: 同方向已有仓位 → 检查已有敞口是否已近上限
-                # SignalScore 无 quantity/price 字段, 无法预知新增量
-                # 策略: 已有仓位 ≥ 20% equity → 禁止自动加仓 (留 5% 余量)
-                _bp_price = float(_bp.get("cost_price", 0) or _bp.get("current_price", 0) or 0)
-                if _bp_price > 0:
-                    _existing_value = abs(_bp_qty) * _bp_price
-                    try:
-                        from app.risk.capital_safety import get_capital_safety_system
-                        _eq = float(get_capital_safety_system()._state.current_equity or 0)
-                        if _eq > 0:
-                            _existing_pct = _existing_value / _eq
-                            if _existing_pct >= 0.20:
-                                logger.warning(
-                                    f"🚫 [敞口拦截] {symbol} 已有 {_signal_dir} {abs(_bp_qty):.0f}股 "
-                                    f"(${_existing_value:,.0f} = {_existing_pct:.1%}) ≥ 20%, "
-                                    f"禁止自动同向加仓"
-                                )
-                                return
-                    except Exception:
-                        pass
     except Exception as _rv_err:
-        logger.debug(f"[反向/敞口拦截] 检查异常 (放行): {_rv_err}")
+        # fail-close: broker 查询失败时不交易 (安全优先)
+        logger.warning(f"🔒 [持仓去重·fail-close] {symbol} broker 查询异常，跳过下单: {_rv_err}")
+        return
 
     # ── P0 (2026-06-14): 时段门禁 — opening_drive 禁止入场 ──
     # 数据驱动: 136 笔 opening_drive 退出, 18.4% WR, -366.6% 累计亏损 (占总亏损 116%)

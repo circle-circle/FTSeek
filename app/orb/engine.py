@@ -1919,6 +1919,24 @@ class ORBEngine:
 
             price = round(price, 2)
 
+            # ── P0 (2026-06-14): 持仓去重 — 已有仓位直接跳过 (仅开仓) ──
+            if not is_exit:
+                try:
+                    _adapter = getattr(self._exec, 'broker_adapter', None)
+                    if _adapter and hasattr(_adapter, 'get_positions'):
+                        _broker_pos = _adapter.get_positions() or []
+                        for _bp in _broker_pos:
+                            if _bp.get("symbol") == symbol and float(_bp.get("qty", 0)) != 0:
+                                _qty = abs(float(_bp["qty"]))
+                                _dir = "LONG" if float(_bp["qty"]) > 0 else "SHORT"
+                                logger.info(
+                                    f"⏭️ [ORB·持仓去重] {symbol} 已有 {_dir} {_qty:.0f}股, 跳过"
+                                )
+                                return {"success": False, "error": "already_held"}
+                except Exception as _rv_err:
+                    logger.warning(f"🔒 [ORB·持仓去重·fail-close] {symbol} broker 查询异常，拒绝下单: {_rv_err}")
+                    return {"success": False, "error": "position_check_failed"}
+
             # SSOT (2026-06-06): 统一安全门禁 — 替代散落 inline 检查
             # 三层检查: 单品种25% + 方向65% + 总敞口80%
             try:
