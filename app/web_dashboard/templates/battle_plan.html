@@ -154,6 +154,10 @@ function render(d) {
             trigger_condition: t.trigger_condition || '',
             invalidation: t.invalidation || '',
             position_size: t.position_size_pct || 0,
+            model_used: t.model_used || '',
+            verdict: (t.verdict || '').toUpperCase(),
+            factor_score: t.factor_score || 0,
+            composite_rank: t.composite_rank || 0,
         });
     });
 
@@ -187,7 +191,10 @@ function render(d) {
     html += '<div class="ap-header">';
     html += '<span class="ap-regime ' + regime + '">' + regime + '</span>';
     html += '<span class="ap-brief">' + esc(brief) + '</span>';
-    html += '<span class="ap-meta">' + esc(d.date || '') + ' · 置信度 ' + (confidence * 100).toFixed(0) + '%</span>';
+    html += '<span class="ap-meta">' + esc(d.date || '') + ' · 置信度 ' + (confidence * 100).toFixed(0) + '%';
+    if (d.arbiter_mode) html += ' · ' + esc({factor_pipeline:'Factor Pipeline',debate:'双Agent辩论',fallback:'单Agent降级'}[d.arbiter_mode] || d.arbiter_mode);
+    if (d.pipeline_stats && d.pipeline_stats.total_sec) html += ' · ' + d.pipeline_stats.total_sec.toFixed(0) + 's';
+    html += '</span>';
     html += '</div>';
 
     // Non-trading day banner
@@ -220,6 +227,7 @@ function render(d) {
             html += '<span class="ap-badge ' + o.strength + '">' + ({strong:'强',medium:'中',weak:'弱'}[o.strength]||'?') + '</span>';
             html += '<span class="ap-sym">' + esc(sym) + '</span>';
             html += '<span class="ap-dir ' + o.direction + '">' + o.direction + '</span>';
+            if (o.verdict) html += '<span class="ap-chip" style="font-size:9px">' + esc(o.verdict) + '</span>';
             if (o.confidence > 0) html += '<span style="font-size:11px;color:#8b949e">' + (o.confidence*100).toFixed(0) + '%</span>';
             if (o.rr > 0) html += '<span style="font-size:11px;color:#8b949e">R:R ' + o.rr.toFixed(1) + '</span>';
             if (o.source) html += '<span class="ap-chip" style="font-size:9px;margin-left:4px">' + esc(o.source) + '</span>';
@@ -251,6 +259,12 @@ function render(d) {
                 });
                 html += '</div>';
             }
+            // Pipeline metadata
+            var meta = [];
+            if (o.model_used) meta.push('🧠 ' + esc(o.model_used));
+            if (o.factor_score > 0) meta.push('因子 ' + (o.factor_score * 100).toFixed(0) + '分');
+            if (o.composite_rank > 0) meta.push('排序 ' + o.composite_rank.toFixed(3));
+            if (meta.length) html += '<div style="margin-top:6px;font-size:11px;color:#484f58">' + meta.join(' · ') + '</div>';
             // Action button
             html += '<div class="ap-btns"><a href="/trade?symbol=' + o.symbol + '" class="ap-btn go" onclick="event.stopPropagation()">交易页</a></div>';
             html += '</div></div>';
