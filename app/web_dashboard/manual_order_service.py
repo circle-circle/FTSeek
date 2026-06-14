@@ -339,7 +339,12 @@ class ManualOrderService:
                 logger.debug(f"[手动下单] PDT 检查跳过: {_pdt_err}")
 
         # 7. [P1 2026-06-13] 仓位集中度检查 (25%/65%/80%)
-        if cur_price > 0 and order.action in ("BUY",):
+        # P0-fix (2026-06-14): 扩展到 SELL+SHORT (开新空仓), 原仅 BUY 被绕过
+        _is_opening = (
+            (order.action == "BUY" and order.direction == "LONG")
+            or (order.action == "SELL" and order.direction == "SHORT")
+        )
+        if cur_price > 0 and _is_opening:
             try:
                 from app.risk.pre_trade_gate import pre_trade_safety_check
                 _dir = order.direction
@@ -352,11 +357,28 @@ class ManualOrderService:
             except Exception as _pt_err:
                 logger.debug(f"[手动下单] 仓位检查跳过: {_pt_err}")
 
+        # 7.5. [P0 2026-06-14] 购买力检查 (开仓前必须有足够 buying_power)
+        if cur_price > 0 and _is_opening:
+            try:
+                from app.risk.capital_safety import get_capital_safety_system
+                _bp = get_capital_safety_system()._state.buying_power
+                _order_value = order.quantity * cur_price
+                if _bp > 0 and _order_value > _bp:
+                    errors.append(
+                        f"购买力不足: 订单 ${_order_value:,.0f} > 可用 ${_bp:,.0f}"
+                    )
+            except Exception as _bp_err:
+                logger.debug(f"[手动下单] 购买力检查跳过: {_bp_err}")
+
         # 8. [P1 2026-06-13] 日回撤熔断 (已实现亏损 > 3% equity)
+        # P0-fix (2026-06-14): 使用 scheduler 的共享 DrawdownController 实例,
+        # 而非 fresh instance (零历史, 永远放行)
         try:
-            from app.risk.drawdown_control import DrawdownController
-            _dd = DrawdownController()
-            if not _dd.is_trading_allowed():
+            import importlib
+            _sc_mod = importlib.import_module("app.core.scheduler_core")
+            _sched = getattr(_sc_mod, "_scheduler_instance", None)
+            _dd = getattr(getattr(_sched, "risk_engine", None), "drawdown_controller", None) if _sched else None
+            if _dd is not None and not _dd.is_trading_allowed():
                 _dd_reason = _dd.get_block_reason() or "日回撤超限"
                 errors.append(f"回撤熔断: {_dd_reason}")
         except Exception as _dd_err:
@@ -1184,7 +1206,10 @@ class ManualOrderService:
 
             conn = self._db()
             now = datetime.now()
-            trade_date = now.strftime("%Y-%m-%d")
+            # trade_date 用美东时间 (EDT=UTC-4), 避免服务器时区导致交易日偏移
+            from datetime import timezone, timedelta
+            et_now = datetime.now(timezone(timedelta(hours=-4)))
+            trade_date = et_now.strftime("%Y-%m-%d")
 
             # 查开仓时间 (从 open_positions 或 manual_order_audit)
             entry_time = None

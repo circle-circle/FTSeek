@@ -178,10 +178,61 @@ def register(app, templates, dashboard):
         # ── 11. Lifecycle (thesis + recommendations) ──
         lifecycle = await _calc_lifecycle(ds, positions, stop_distances, earnings)
 
+        # ── 12. Enrich lifecycle with equity_pct, pnl_usd, take_profit ──
+        equity = float(account.get("total_assets", 0) or 0)
+        sd_map = {s["symbol"]: s for s in stop_distances}
+        for lc in lifecycle:
+            sym = lc.get("symbol", "")
+            sd = sd_map.get(sym, {})
+            qty = float(lc.get("quantity", 0) or 0)
+            entry = float(lc.get("entry_price", 0) or 0)
+            cur = float(lc.get("current_price", 0) or 0)
+            direction = lc.get("direction", "LONG")
+            # PnL USD
+            if entry > 0 and cur > 0 and qty > 0:
+                if direction == "LONG":
+                    lc["pnl_usd"] = round((cur - entry) * qty, 2)
+                else:
+                    lc["pnl_usd"] = round((entry - cur) * qty, 2)
+            else:
+                lc["pnl_usd"] = float(lc.get("unrealized_pnl", 0) or 0)
+            # Equity % (position value / total equity)
+            mv = cur * qty if cur > 0 and qty > 0 else 0
+            lc["equity_pct"] = round(mv / equity * 100, 1) if equity > 0 else 0
+            # Take profit from stop_distances
+            lc["take_profit"] = sd.get("take_profit", 0)
+            lc["tp_distance_pct"] = sd.get("tp_distance_pct", 0)
+
+        # ── 13. Exposure ratio (gross / equity) ──
+        gross = float(exposure.get("gross", 0) or 0)
+        exposure["equity_ratio"] = round(gross / equity * 100, 1) if equity > 0 else 0
+
+        # ── 14. Today's closed trades ──
+        today_closed = []
+        try:
+            rows = await ds.db_query(
+                "SELECT symbol, direction, entry_price, exit_price, pnl_pct, realized_pnl, "
+                "exit_reason, exit_time FROM trade_records "
+                "WHERE exit_time IS NOT NULL AND DATE(exit_time) = DATE('now') "
+                "ORDER BY exit_time DESC LIMIT 10"
+            )
+            for r in rows:
+                today_closed.append({
+                    "symbol": (r.get("symbol") or "").replace("US.", ""),
+                    "direction": r.get("direction", ""),
+                    "pnl_pct": round(float(r.get("pnl_pct", 0) or 0) * 100, 1),
+                    "pnl_usd": round(float(r.get("realized_pnl", 0) or 0), 2),
+                    "exit_reason": r.get("exit_reason", ""),
+                    "exit_time": (r.get("exit_time") or "")[-8:-3],  # HH:MM
+                })
+        except Exception:
+            pass
+
         return {
             "account": account,
             "positions": positions,
             "today_orders": today_orders,
+            "today_closed": today_closed,
             "market": market,
             "margin": margin,
             "exposure": exposure,
@@ -652,16 +703,17 @@ def _calc_exposure(account: dict) -> dict:
 async def _calc_pnl(ds, positions: list) -> dict:
     pnl = {
         "realized": 0,
+        "realized_all": 0,
         "unrealized": 0,
         "total": 0,
         "today_trades": 0,
     }
-    # DB 已实现盈亏
+    # 今日已实现盈亏
     try:
         row = await ds.db_query_one(
             "SELECT COALESCE(SUM(realized_pnl),0) as pnl, COUNT(*) as cnt "
             "FROM trade_records "
-            "WHERE trade_date = (SELECT MAX(trade_date) FROM trade_records)"
+            "WHERE trade_date = DATE('now')"
         )
         if row:
             pnl["realized"] = float(row.get("pnl", 0))
@@ -669,9 +721,20 @@ async def _calc_pnl(ds, positions: list) -> dict:
     except Exception:
         pass
 
+    # 全部已实现盈亏 (all-time)
+    try:
+        row = await ds.db_query_one(
+            "SELECT COALESCE(SUM(realized_pnl),0) as pnl FROM trade_records WHERE trade_mode != 'simulate'"
+        )
+        if row:
+            pnl["realized_all"] = float(row.get("pnl", 0))
+    except Exception:
+        pass
+
     # 持仓浮盈
     pnl["unrealized"] = round(sum(p.get("unrealized_pnl", 0) for p in positions), 2)
-    pnl["total"] = round(pnl["realized"] + pnl["unrealized"], 2)
+    # 总盈亏 = 全部已实现 + 浮盈
+    pnl["total"] = round(pnl["realized_all"] + pnl["unrealized"], 2)
 
     # 今日盈亏 (Futu today_pl_val 汇总, 盘后为 T-1)
     pnl["today_pl"] = round(sum(p.get("today_pl", 0) for p in positions), 2)
