@@ -490,7 +490,8 @@
         pnlEl.className = 'v ' + pnlCls(pnl);
 
         document.getElementById('pillPositions').textContent = positions.length;
-        document.getElementById('pillSignals').textContent = sig.signal_count || 0;
+        var _sigEl = document.getElementById('pillSignals');
+        if (_sigEl) _sigEl.textContent = sig.signal_count || 0;
 
         // System dot
         var marginPct = m.usage_pct || 0;
