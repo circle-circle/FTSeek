@@ -126,12 +126,12 @@ function render(d) {
             var risk = t.direction === 'SHORT' ? sl - mid : mid - sl;
             rr = risk > 0 ? reward / risk : 0;
         }
-        // Strength: confidence × data sources
+        // Strength: confidence × data sources (confidence is 0-100 integer)
         var src = t.discovery_source || '';
         var dataCount = (t.data_cited || []).length;
         var strength = 'weak';
-        if (conf >= 0.7 && rr >= 2) strength = 'strong';
-        else if (conf >= 0.5 || (rr >= 1.5 && dataCount >= 2)) strength = 'medium';
+        if (conf >= 70 && rr >= 2) strength = 'strong';
+        else if (conf >= 50 || (rr >= 1.5 && dataCount >= 2)) strength = 'medium';
 
         var cur = t._current_price || 0;
         var triggerStatus = '';
@@ -191,7 +191,7 @@ function render(d) {
     html += '<div class="ap-header">';
     html += '<span class="ap-regime ' + regime + '">' + regime + '</span>';
     html += '<span class="ap-brief">' + esc(brief) + '</span>';
-    html += '<span class="ap-meta">' + esc(d.date || '') + ' · 置信度 ' + (confidence * 100).toFixed(0) + '%';
+    html += '<span class="ap-meta">' + esc(d.date || '') + ' · <span title="所有target平均置信度">置信度 ' + (confidence * 100).toFixed(0) + '%</span>';
     if (d.arbiter_mode) html += ' · ' + esc({factor_pipeline:'Factor Pipeline',debate:'双Agent辩论',fallback:'单Agent降级'}[d.arbiter_mode] || d.arbiter_mode);
     if (d.pipeline_stats && d.pipeline_stats.total_sec) html += ' · ' + d.pipeline_stats.total_sec.toFixed(0) + 's';
     html += '</span>';
@@ -228,8 +228,8 @@ function render(d) {
             html += '<span class="ap-sym">' + esc(sym) + '</span>';
             html += '<span class="ap-dir ' + o.direction + '">' + o.direction + '</span>';
             if (o.verdict) html += '<span class="ap-chip" style="font-size:9px">' + esc(o.verdict) + '</span>';
-            if (o.confidence > 0) html += '<span style="font-size:11px;color:#8b949e">' + (o.confidence*100).toFixed(0) + '%</span>';
-            if (o.rr > 0) html += '<span style="font-size:11px;color:#8b949e">R:R ' + o.rr.toFixed(1) + '</span>';
+            if (o.confidence > 0) html += '<span style="font-size:11px;color:#8b949e" title="LLM验证置信度">' + o.confidence + '%</span>';
+            if (o.rr > 0) html += '<span style="font-size:11px;color:#8b949e" title="盈亏比 = (止盈-入场)/(入场-止损)，≥2:1为优">R:R ' + o.rr.toFixed(1) + '</span>';
             if (o.source) html += '<span class="ap-chip" style="font-size:9px;margin-left:4px">' + esc(o.source) + '</span>';
             if (o.trigger) html += '<span style="font-size:11px;margin-left:auto;color:' + (o.trigger.indexOf('✅')>=0?'#4ade80':'#fbbf24') + '">' + esc(o.trigger) + '</span>';
             else html += '<span class="ap-reason">' + esc((o.reason||'').substring(0,60)) + '</span>';
@@ -238,11 +238,11 @@ function render(d) {
             html += '<div class="ap-detail" id="' + uid + '">';
             // Key params
             var params = [];
-            if (o.entry.length === 2) params.push('入场 $' + o.entry[0].toFixed(2) + ' - $' + o.entry[1].toFixed(2));
-            if (o.sl) params.push('止损 $' + o.sl.toFixed(2));
-            if (o.tp) params.push('止盈 $' + o.tp.toFixed(2));
-            if (o.rr > 0) params.push('盈亏比 ' + o.rr.toFixed(1) + ':1');
-            if (o.position_size) params.push('仓位 ' + o.position_size + '%');
+            if (o.entry.length === 2) params.push('<span title="建议限价挂单区间">入场 $' + o.entry[0].toFixed(2) + ' - $' + o.entry[1].toFixed(2) + '</span>');
+            if (o.sl) params.push('<span title="条件止损价，跌破即平仓">止损 $' + o.sl.toFixed(2) + '</span>');
+            if (o.tp) params.push('<span title="目标止盈价">止盈 $' + o.tp.toFixed(2) + '</span>');
+            if (o.rr > 0) params.push('<span title="盈亏比 = (止盈-入场) / (入场-止损)，≥2:1为优">盈亏比 ' + o.rr.toFixed(1) + ':1</span>');
+            if (o.position_size) params.push('<span title="建议仓位占总资金比例">仓位 ' + o.position_size + '%</span>');
             if (params.length) html += '<div style="margin-bottom:6px;color:#e1e4e8">' + params.join(' · ') + '</div>';
             // Rationale
             if (o.reason) html += '<div style="line-height:1.6;margin-bottom:6px">' + esc(o.reason) + '</div>';
@@ -261,9 +261,9 @@ function render(d) {
             }
             // Pipeline metadata
             var meta = [];
-            if (o.model_used) meta.push('🧠 ' + esc(o.model_used));
-            if (o.factor_score > 0) meta.push('因子 ' + (o.factor_score * 100).toFixed(0) + '分');
-            if (o.composite_rank > 0) meta.push('排序 ' + o.composite_rank.toFixed(3));
+            if (o.model_used) meta.push('<span title="验证此标的的LLM模型">🧠 ' + esc(o.model_used) + '</span>');
+            if (o.factor_score > 0) meta.push('<span title="5因子量化评分(0-100)：动量+波动+板块+趋势+量能加权">因子 ' + (o.factor_score * 100).toFixed(0) + '</span>');
+            if (o.composite_rank > 0) meta.push('<span title="综合排序分 = 因子分×60% + LLM置信度×40%，越高越优先">排序 ' + o.composite_rank.toFixed(3) + '</span>');
             if (meta.length) html += '<div style="margin-top:6px;font-size:11px;color:#484f58">' + meta.join(' · ') + '</div>';
             // Action button
             html += '<div class="ap-btns"><a href="/trade?symbol=' + o.symbol + '" class="ap-btn go" onclick="event.stopPropagation()">交易页</a></div>';
