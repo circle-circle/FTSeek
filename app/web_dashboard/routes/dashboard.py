@@ -175,6 +175,9 @@ def register(app, templates, dashboard):
         position_symbols = [p["symbol"].replace("US.", "") for p in positions]
         earnings = _get_position_earnings(position_symbols)
 
+        # ── 11. Lifecycle (thesis + recommendations) ──
+        lifecycle = await _calc_lifecycle(ds, positions, stop_distances, earnings)
+
         return {
             "account": account,
             "positions": positions,
@@ -187,10 +190,152 @@ def register(app, templates, dashboard):
             "signals": signals,
             "futu_risk": futu_risk,
             "earnings": earnings,
+            "lifecycle": lifecycle,
             "mode": mode,
             "is_live": is_live,
             "timestamp": datetime.now().isoformat(),
         }
+
+    # ── Thesis CRUD (持仓生命周期) ──
+
+    @router.post("/api/positions/{symbol}/thesis")
+    async def update_position_thesis(symbol: str, request: Request):
+        """更新持仓thesis/失效价/预期天数"""
+        ds = get_data_service()
+        body = await request.json()
+        from app.lifecycle.engine import update_thesis
+        result = await update_thesis(
+            ds,
+            symbol=symbol,
+            thesis=body.get("thesis"),
+            invalidation_price=body.get("invalidation_price"),
+            expected_hold_days=body.get("expected_hold_days"),
+        )
+        return result
+
+    @router.get("/api/positions/{symbol}/thesis")
+    async def get_position_thesis(symbol: str):
+        """获取持仓thesis数据"""
+        ds = get_data_service()
+        from app.lifecycle.engine import get_lifecycle_map
+        lc_map = await get_lifecycle_map(ds)
+        data = lc_map.get(symbol, {})
+        return {"symbol": symbol, **data}
+
+    @router.post("/api/positions/{symbol}/challenge")
+    async def challenge_thesis_api(symbol: str, request: Request):
+        """LLM审视thesis — 结构化输出，4h缓存"""
+        ds = get_data_service()
+        body = await request.json() if request.headers.get("content-type") == "application/json" else {}
+        thesis = body.get("thesis", "")
+        force = body.get("force", False)
+
+        if not thesis:
+            # Read from DB
+            from app.lifecycle.engine import get_lifecycle_map
+            lc_map = await get_lifecycle_map(ds)
+            thesis = lc_map.get(symbol, {}).get("thesis", "")
+
+        if not thesis or thesis.strip() == "":
+            return {"error": "无thesis可审视，请先填写进场理由"}
+
+        from app.llm.thesis_challenge import challenge_thesis, get_cached_challenge
+
+        # Check cache (unless force refresh)
+        if not force:
+            cached = get_cached_challenge(symbol)
+            if cached:
+                return cached
+
+        # Get position context
+        from app.lifecycle.engine import get_lifecycle_map
+        lc_map = await get_lifecycle_map(ds)
+        lc = lc_map.get(symbol, {})
+
+        # Get bear cases from battle plan if available
+        bear_cases = ""
+        try:
+            import json as _json
+            bp_path = Path(__file__).parent.parent.parent.parent / "data" / "daily_battle_plan_us.json"
+            if bp_path.exists():
+                with open(bp_path) as f:
+                    bp = _json.load(f)
+                for t in (bp.get("targets") or []):
+                    if t.get("symbol", "").upper() == symbol.upper():
+                        bear_cases = t.get("rationale", "") or ""
+                        break
+        except Exception:
+            pass
+
+        # Call LLM (in thread pool to not block event loop)
+        import asyncio
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(
+            None,
+            lambda: challenge_thesis(
+                symbol=symbol,
+                thesis=thesis,
+                direction=lc.get("direction", ""),
+                cur_price=lc.get("cur_price", 0),
+                cost_price=lc.get("cost_price", 0),
+                pnl_pct=lc.get("pnl_pct", 0),
+                hold_days=lc.get("hold_days") or 0,
+                bear_cases=bear_cases,
+            )
+        )
+        return result
+
+    @router.get("/api/positions/{symbol}/challenge")
+    async def get_challenge_api(symbol: str):
+        """获取已缓存的thesis挑战结果"""
+        from app.llm.thesis_challenge import get_cached_challenge
+        cached = get_cached_challenge(symbol)
+        return cached or {"cached": False}
+
+    # ── Protection API (止损/追踪止盈 — 人工确认模式) ──
+
+    @router.post("/api/protection/stoploss/{symbol}")
+    async def set_stop_loss(symbol: str, request: Request):
+        """设置/更新止损价"""
+        ds = get_data_service()
+        body = await request.json()
+        price = body.get("price")
+        if price is None:
+            return {"success": False, "error": "price required"}
+        await ds.db_execute(
+            "UPDATE open_positions SET stop_loss_price = ?, stop_loss_triggered = 0 WHERE symbol = ?",
+            (float(price), symbol)
+        )
+        return {"success": True, "symbol": symbol, "stop_loss_price": float(price)}
+
+    @router.post("/api/protection/confirm/{symbol}")
+    async def confirm_protection(symbol: str, request: Request):
+        """确认止损/追踪止盈 → 执行平仓"""
+        from app.web_dashboard.manual_order_service import get_manual_order_service
+        svc = get_manual_order_service()
+        # 判断触发类型
+        body = await request.json() if request.headers.get("content-type") == "application/json" else {}
+        reason = body.get("reason", "stop_loss")
+        result = svc.close_position(symbol, reason=reason)
+        if result.get("success"):
+            # 发飞书通知已执行
+            try:
+                from scripts.protection_monitor import send_feishu
+                bare = symbol.replace("US.", "")
+                send_feishu(f"✅ {bare} 已确认平仓\n理由: {reason}\n订单: {result.get('order_id', 'N/A')}")
+            except Exception:
+                pass
+        return result
+
+    @router.post("/api/protection/cancel/{symbol}")
+    async def cancel_protection(symbol: str):
+        """取消告警（清除triggered标记，继续监控）"""
+        ds = get_data_service()
+        await ds.db_execute(
+            "UPDATE open_positions SET stop_loss_triggered = 0, trailing_stop_triggered = 0 WHERE symbol = ?",
+            (symbol,)
+        )
+        return {"success": True, "symbol": symbol}
 
     app.include_router(router)
 
@@ -315,13 +460,23 @@ async def _parse_positions(ds, pos_raw: list) -> list:
     # 批量获取报价
     price_map = await ds.get_batch_quotes(codes) if codes else {}
 
-    # 从 DB 补充 owner 字段 (P1-2 2026-06-12: 区分 LEGACY/managed)
+    # 从 DB 补充 owner + protection 字段
     owner_map = {}
     db_symbols = set()
+    protection_map = {}
     try:
         rows = await ds.db_query("SELECT symbol, COALESCE(owner,'auto') as owner FROM open_positions")
         owner_map = {r["symbol"]: r["owner"] for r in rows}
         db_symbols = set(owner_map.keys())
+    except Exception:
+        pass
+    try:
+        prot_rows = await ds.db_query(
+            "SELECT symbol, stop_loss_price, trailing_stop_price, "
+            "stop_loss_triggered, trailing_stop_triggered "
+            "FROM open_positions"
+        )
+        protection_map = {r["symbol"]: r for r in prot_rows}
     except Exception:
         pass
 
@@ -361,6 +516,7 @@ async def _parse_positions(ds, pos_raw: list) -> list:
         code_short = code.replace("US.", "")
         name_cn = _ZH_MAP.get(code_short, code_short)
 
+        prot = protection_map.get(code, {})
         positions.append({
             "code": code,
             "symbol": code,
@@ -377,6 +533,10 @@ async def _parse_positions(ds, pos_raw: list) -> list:
             "name_cn": name_cn,
             "owner": owner_map.get(code, "legacy"),
             "legacy": code not in db_symbols,
+            "stop_loss_price": prot.get("stop_loss_price"),
+            "trailing_stop_price": prot.get("trailing_stop_price"),
+            "stop_loss_triggered": bool(prot.get("stop_loss_triggered")),
+            "trailing_stop_triggered": bool(prot.get("trailing_stop_triggered")),
         })
 
     # 按浮盈绝对值排序
@@ -524,16 +684,26 @@ async def _calc_stop_distances(ds, positions: list, is_live: bool) -> list:
     stop_distances = []
 
     if is_live:
-        # 实盘: 用 ATR 估算 (DB 中无 SL/TP)
+        # 实盘: 使用 ExitMonitor 的真实 ATR (与止损逻辑一致)
+        try:
+            from app.risk.position_exit_monitor import get_cached_atr as _get_atr
+        except Exception:
+            _get_atr = lambda _sym: 0.0
+
         for p in positions:
             cur = p.get("cur_price", 0)
             cost = p.get("cost_price", 0)
             if cur <= 0 or cost <= 0:
                 continue
             direction = p["direction"]
-            atr_est = cur * 0.02
-            sl = cost - atr_est * 2 if direction == "LONG" else cost + atr_est * 2
-            tp = cost + atr_est * 4 if direction == "LONG" else cost - atr_est * 4
+            # 优先用 ExitMonitor 缓存的真实 ATR, fallback 到 2% 估算
+            atr = _get_atr(p["code"])
+            if atr <= 0:
+                atr = cur * 0.02
+            # SL: entry ± 4.0×ATR (与 atr_stop 一致)
+            # TP: entry ± 1.0×ATR (与 scale_out 一致)
+            sl = cost - atr * 4 if direction == "LONG" else cost + atr * 4
+            tp = cost + atr * 1 if direction == "LONG" else cost - atr * 1
 
             if direction == "LONG":
                 sl_dist = (cur - sl) / cur * 100
@@ -646,6 +816,92 @@ async def _calc_signals(ds) -> dict:
 
     return result
 
+
+async def _calc_lifecycle(ds, positions: list, stop_distances: list, earnings: list) -> list:
+    """生成持仓生命周期数据 (thesis + recommendations + sector peers + sentiment)"""
+    try:
+        from app.lifecycle.engine import get_lifecycle_map, generate_recommendations, collect_all_peer_symbols
+        lifecycle_map = await get_lifecycle_map(ds)
+        results = generate_recommendations(positions, stop_distances, earnings, lifecycle_map)
+
+        # Batch-fetch peer quotes and attach to each lifecycle item
+        peer_symbols = collect_all_peer_symbols(results, max_per_position=4)
+        if peer_symbols:
+            peer_codes = [f"US.{s}" for s in peer_symbols]
+            peer_quotes = await ds.get_batch_quotes_detailed(peer_codes)
+        else:
+            peer_quotes = {}
+
+        # Attach peer price data to each result
+        for r in results:
+            for group in r.get("sector_peers", []):
+                enriched_peers = []
+                for peer_ticker in group["peers"][:4]:
+                    code = f"US.{peer_ticker}"
+                    q = peer_quotes.get(code, {})
+                    cur_price = q.get("cur_price", 0)
+                    prev_close = q.get("prev_close", 0)
+                    change_pct = 0
+                    if cur_price and prev_close:
+                        change_pct = round((cur_price - prev_close) / prev_close * 100, 2)
+                    enriched_peers.append({
+                        "ticker": peer_ticker,
+                        "price": round(cur_price, 2) if cur_price else None,
+                        "change_pct": change_pct,
+                    })
+                group["peers"] = enriched_peers
+
+        # Attach social sentiment from cache (populated by cron job)
+        sentiment_map = _load_sentiment_cache([r["symbol"] for r in results])
+        for r in results:
+            short = r["symbol"].replace("US.", "")
+            r["sentiment"] = sentiment_map.get(short, {})
+
+        # Attach protection data from positions
+        pos_map = {p["symbol"]: p for p in positions}
+        for r in results:
+            p = pos_map.get(r["symbol"], {})
+            r["stop_loss_price"] = p.get("stop_loss_price")
+            r["trailing_stop_price"] = p.get("trailing_stop_price")
+            r["stop_loss_triggered"] = p.get("stop_loss_triggered", False)
+            r["trailing_stop_triggered"] = p.get("trailing_stop_triggered", False)
+
+        return results
+    except Exception as e:
+        logger.error(f"[snapshot] lifecycle calc failed: {e}")
+        return []
+
+
+def _load_sentiment_cache(symbols: list) -> dict:
+    """Read social sentiment from SQLite cache. Non-blocking, returns {} on any error."""
+    try:
+        import sqlite3, json
+        from pathlib import Path
+        db_path = Path(__file__).parent.parent.parent.parent / "data" / "social_sentiment.db"
+        if not db_path.exists():
+            return {}
+        conn = sqlite3.connect(str(db_path))
+        conn.row_factory = sqlite3.Row
+        result = {}
+        for sym in symbols:
+            short = sym.replace("US.", "")
+            row = conn.execute(
+                "SELECT data_json FROM sentiment_cache WHERE symbol = ?", (short,)
+            ).fetchone()
+            if row:
+                data = json.loads(row["data_json"])
+                # Only return summary + hot_topics (not full items)
+                result[short] = {
+                    "summary": data.get("summary", {}),
+                    "hot_topics": data.get("summary", {}).get("hot_topics", []),
+                    "reddit_count": data.get("summary", {}).get("reddit_count", 0),
+                    "hn_count": data.get("summary", {}).get("hn_count", 0),
+                    "fetched_at": data.get("fetched_at", 0),
+                }
+        conn.close()
+        return result
+    except Exception:
+        return {}
 
 def _parse_risk_level(account: dict) -> dict:
     rl = account.get("risk_status", "N/A") if account else "N/A"

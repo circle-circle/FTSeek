@@ -134,6 +134,17 @@
         .lc-concentration .conc-pill.warn { border-color: #fbbf24; color: #fbbf24; }
         .lc-concentration .conc-pill.danger { border-color: #f87171; color: #f87171; }
         /* Compact position rows */
+        /* Thesis Challenge */
+        .challenge-result { margin-top: 8px; padding: 8px 10px; border-radius: 6px; font-size: 12px; }
+        .challenge-result.valid { background: rgba(74,222,128,0.08); border: 1px solid rgba(74,222,128,0.3); }
+        .challenge-result.invalid { background: rgba(248,113,113,0.08); border: 1px solid rgba(248,113,113,0.3); }
+        .challenge-verdict { font-weight: 700; font-size: 13px; display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+        .challenge-weakness { color: #d1d5db; margin-bottom: 4px; }
+        .challenge-fatal { color: #f87171; font-size: 11px; }
+        .challenge-conf { font-size: 10px; color: #8b949e; }
+        .challenge-btn { font-size: 11px; padding: 3px 10px; background: #161b22; border: 1px solid #30363d; color: #58a6ff; border-radius: 4px; cursor: pointer; margin-left: 8px; }
+        .challenge-btn:hover { border-color: #58a6ff; }
+        .challenge-btn:disabled { opacity: 0.5; cursor: not-allowed; }
         .pos-compact { border-bottom: 1px solid #21262d; }
         .pos-compact:hover { background: rgba(22,27,34,0.5); }
         .pos-compact-row { display: flex; align-items: center; gap: 8px; padding: 8px 4px; }
@@ -880,6 +891,10 @@
             html += '<div class="lc-thesis empty" onclick="editThesis(\'' + lc.symbol + '\', this)">📝 点击填写进场理由 (无thesis=无退出依据)</div>';
         }
 
+        // Thesis Challenge
+        html += '<div id="challenge_' + lc.symbol + '" style="display:none"></div>';
+        html += '<div style="margin-top:4px"><button class="challenge-btn" onclick="loadChallenge(\'' + lc.symbol + '\', this)">🔍 AI审视</button><span id="challengeStatus_' + lc.symbol + '" style="font-size:10px;color:#484f58;margin-left:6px"></span></div>';
+
         // Recommendations (only for danger/warning)
         var recs = lc.recommendations || [];
         if (recs.length) {
@@ -905,6 +920,72 @@
             '</div>';
 
         return html;
+    }
+
+    // ── Thesis Challenge ──
+    async function loadChallenge(symbol, btn) {
+        var statusEl = document.getElementById('challengeStatus_' + symbol);
+        var resultEl = document.getElementById('challenge_' + symbol);
+        if (!resultEl) return;
+
+        // Show if already rendered (cached)
+        if (resultEl.style.display !== 'none' && resultEl.innerHTML) {
+            resultEl.style.display = resultEl.style.display === 'none' ? 'block' : 'none';
+            return;
+        }
+
+        if (btn) { btn.disabled = true; btn.textContent = '⏳ 审视中...'; }
+        if (statusEl) statusEl.textContent = '调用LLM中...';
+
+        try {
+            // First check cache
+            var cached = await fetch('/api/positions/' + encodeURIComponent(symbol) + '/challenge');
+            var cacheData = await cached.json();
+            if (cacheData && cacheData.verdict) {
+                renderChallenge(symbol, cacheData);
+                if (btn) { btn.textContent = '🔍 AI审视'; btn.disabled = false; }
+                return;
+            }
+
+            // Call LLM
+            var res = await fetch('/api/positions/' + encodeURIComponent(symbol) + '/challenge', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({})
+            });
+            var data = await res.json();
+            if (data.error) {
+                if (statusEl) statusEl.textContent = '❌ ' + data.error;
+                if (btn) { btn.textContent = '🔍 AI审视'; btn.disabled = false; }
+                return;
+            }
+            renderChallenge(symbol, data);
+            if (statusEl) statusEl.textContent = data.cached ? '(缓存)' : '(新)';
+        } catch (e) {
+            if (statusEl) statusEl.textContent = '❌ 网络错误';
+        }
+        if (btn) { btn.textContent = '🔍 AI审视'; btn.disabled = false; }
+    }
+
+    function renderChallenge(symbol, data) {
+        var el = document.getElementById('challenge_' + symbol);
+        if (!el) return;
+        var isValid = data.verdict === 'VALID';
+        var cls = isValid ? 'valid' : 'invalid';
+        var icon = isValid ? '✅' : '❌';
+        var verdictText = isValid ? '理由成立' : '理由不成立';
+        var confColor = data.confidence >= 70 ? '#4ade80' : data.confidence >= 40 ? '#fbbf24' : '#f87171';
+
+        el.className = 'challenge-result ' + cls;
+        el.style.display = 'block';
+        el.innerHTML = 
+            '<div class="challenge-verdict">' + icon + ' <span style="color:' + (isValid ? '#4ade80' : '#f87171') + '">' + verdictText + '</span>' +
+            '<span class="challenge-conf">置信度 <span style="color:' + confColor + ';font-weight:700">' + data.confidence + '%</span></span>' +
+            (data.model_used ? '<span class="challenge-conf">' + data.model_used + '</span>' : '') +
+            '</div>' +
+            (data.weakness ? '<div class="challenge-weakness">漏洞: ' + escHtml(data.weakness) + '</div>' : '') +
+            (data.fatal_if ? '<div class="challenge-fatal">致命条件: ' + escHtml(data.fatal_if) + '</div>' : '') +
+            (data.created_at ? '<div class="challenge-conf">' + (data.cached ? '缓存' : '生成') + '于 ' + data.created_at.substring(5, 16) + '</div>' : '');
     }
 
     function togglePosExpand(symbol) {

@@ -182,45 +182,52 @@ llm:
   features:
     # 延迟敏感 (FLASH, 单模型, 失败仅日志)
     news_classifier:    qwen-flash
-    thesis_inferer:     qwen-plus              # 2026-05-21: 改用 dashscope
+    thesis_inferer:     qwen-max               # 2026-06-14: 升级至最强
+    thesis_challenge:   qwen-max               # 2026-06-14: thesis审视，结构化输出
     sentiment:          qwen-flash
 
-    # 质量敏感 (PRO, 主备 + 缓存兜底)
-    premarket_planner:  {primary: qwen-plus,     fallback: deepseek-pro, cache_on_fail: true}
-    daily_review:       {primary: deepseek-pro,  fallback: qwen-plus,    cache_on_fail: true}
-    weekly_proposer:    {primary: deepseek-pro,  fallback: qwen-plus}
-    daily_auto_tuner:   {primary: deepseek-pro,  fallback: qwen-plus}
-    regime_classifier:  {primary: qwen-plus,     fallback: deepseek-pro}
-    attribution_engine: {primary: qwen-plus,     fallback: deepseek-pro}  # RFC-050: LLM 逐笔归因
+    premarket_planner:  {primary: qwen-max,      fallback: deepseek-pro, cache_on_fail: true}
+    daily_review:       {primary: deepseek-pro,  fallback: qwen-max,     cache_on_fail: true}
+    weekly_proposer:    {primary: deepseek-pro,  fallback: qwen-max}
+    daily_auto_tuner:   {primary: deepseek-pro,  fallback: qwen-max}
+    regime_classifier:  {primary: qwen-max,      fallback: deepseek-pro}
+    attribution_engine: {primary: qwen-max,      fallback: deepseek-pro}  # RFC-050: LLM 逐笔归因
 
     # 关键决策 (PRO + critique 双调, 通过 cross_check 字段控制)
-    earnings_analyst:        {primary: qwen-plus,    fallback: deepseek-pro}
-    large_position_review:   {primary: qwen-plus,    fallback: deepseek-pro}
-    emergency_review:        {primary: deepseek-pro, fallback: qwen-plus}
+    # 2026-06-14: 升级至最强模型
+    earnings_analyst:        {primary: qwen-max,     fallback: deepseek-pro}
+    large_position_review:   {primary: qwen-max,     fallback: deepseek-pro}
+    emergency_review:        {primary: deepseek-pro, fallback: qwen-max}
 
     # ⭐ NEW 2026-05-19 — 真正影响交易决策的 LLM features
     # 第一性原则: LLM 只做量化做不到的事 (跨时间模式 + 多源综合 + 因果推理)
-    pre_entry_gate:          {primary: deepseek-pro, fallback: qwen-plus, cache_on_fail: false}
-    failure_mode_miner:      {primary: deepseek-pro, fallback: qwen-plus}
-    adaptive_tuner:          {primary: deepseek-pro, fallback: qwen-plus}
+    # 2026-06-14: 升级至最强模型
+    pre_entry_gate:          {primary: deepseek-pro, fallback: qwen-max, cache_on_fail: false}
+    failure_mode_miner:      {primary: deepseek-pro, fallback: qwen-max}
+    adaptive_tuner:          {primary: deepseek-pro, fallback: qwen-max}
 
     # ⭐ 2026-05-21 统一迁移 — 原散在 _call_llm 模块
-    llm_strategy_engine:     {primary: qwen-plus,     fallback: deepseek-pro}   # json_mode, 策略打分
-    model_agent:             {primary: deepseek-pro,  fallback: qwen-plus}      # json_mode, 投票评分
-    debate_engine:           {primary: qwen-plus,     fallback: deepseek-pro}   # enable_thinking=false
-    agent_bridge:            {primary: deepseek-pro,  fallback: qwen-plus}      # json_mode, 辩论桥接
-    claude_code:             {primary: deepseek-pro,  fallback: qwen-plus}      # 代码生成
+    # 2026-06-14: 全面升级至最强模型, 不限制输出质量
+    llm_strategy_engine:     {primary: qwen-max,      fallback: deepseek-pro}   # json_mode, 策略打分
+    model_agent:             {primary: deepseek-pro,  fallback: qwen-max}      # json_mode, 投票评分
+    debate_engine:           {primary: qwen-max,      fallback: deepseek-pro}   # 核心辩论, 最强模型
+    debate_bull:             {primary: qwen-max,      fallback: deepseek-pro}   # 多头策略师角色
+    debate_bear:             {primary: deepseek-pro,  fallback: qwen-max}       # 空头审计师角色
+    debate_arbiter:          {primary: qwen-max,      fallback: deepseek-pro}   # 仲裁综合角色
+    agent_bridge:            {primary: deepseek-pro,  fallback: qwen-max}      # json_mode, 辩论桥接
+    claude_code:             {primary: deepseek-pro,  fallback: qwen-max}      # 代码生成/审计
 
     # ⭐ 2026-05-27 催化辩论 — 3视角各用最强模型 (不同家族: 阿里/DeepSeek/月之暗面)
-    catalyst_macro:      {primary: qwen-max,    fallback: qwen-plus}       # qwen3.7-max: 宏观传导
-    catalyst_risk:       {primary: deepseek-pro, fallback: qwen-plus}      # deepseek-v4-pro: 风控质疑
-    catalyst_sentiment:  {primary: kimi-k2,     fallback: qwen-plus}       # kimi-k2.6: 行业情绪
-    catalyst_classifier: {primary: qwen-max,    fallback: qwen-plus}       # 催化分类+中文翻译
-    catalyst_review:     {primary: deepseek-pro, fallback: qwen-plus}      # 盘后回看
-    catalyst_breaking:   {primary: qwen-flash,  fallback: qwen-plus}       # 盘中快速(低延迟)
+    # 2026-06-14: fallback 全部升级为 qwen-max
+    catalyst_macro:      {primary: qwen-max,    fallback: deepseek-pro}    # qwen3.7-max: 宏观传导
+    catalyst_risk:       {primary: deepseek-pro, fallback: qwen-max}      # deepseek-v4-pro: 风控质疑
+    catalyst_sentiment:  {primary: kimi-k2,     fallback: qwen-max}      # kimi-k2.6: 行业情绪
+    catalyst_classifier: {primary: qwen-max,    fallback: deepseek-pro}   # 催化分类+中文翻译
+    catalyst_review:     {primary: deepseek-pro, fallback: qwen-max}     # 盘后回看
+    catalyst_breaking:   {primary: qwen-flash,  fallback: qwen-max}      # 盘中快速(低延迟)
 
     # ⭐ 2026-06-10 个股分析 — Dashboard 个股详情页 LLM 深度分析
-    stock_analyst:       {primary: deepseek-pro,  fallback: qwen-plus}    # 最强模型综合分析
+    stock_analyst:       {primary: deepseek-pro,  fallback: qwen-max}    # 最强模型综合分析
 
   # 旧别名兼容映射 (2026-05-21): 原 multi_model_client 的 "qwen"/"deepseek" 等别名
   # 迁移期使用，后续代码统一改用 feature 路由后可删除
