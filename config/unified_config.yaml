@@ -106,18 +106,8 @@ llm_voting:
   price_change_threshold: 0.008   # 行情变动阈值，超过则强制重新投票，原0.003→0.008
   max_cache_entries: 50           # 最大缓存条目数 (超出后按LRU淘汰)
 
-# 异构模型配置 (2026-05-13)
-# DEPRECATED (2026-05-31): llm_models 配置不再生效 (0 代码引用)
-#   实际生效路径:
-#     - 业务 feature → 模型 路由: llm.features.<feature> (本文件下方)
-#     - 别名 → 实例 兜底映射: app/llm/multi_model_client.py:DEFAULT_MODEL_FOR
-#   启动时 ConfigValidator.check_deprecated_fields 会再次告警, 修改本节点不会生效。
-#   保留此 section 仅为兼容性参考, 一段稳定窗口后整体移除。
-llm_models:
-  attribution: "qwen"          # DEPRECATED — 实际由 DEFAULT_MODEL_FOR 控制
-  proposal: "deepseek"         # DEPRECATED
-  sentiment: "minimax"         # DEPRECATED
-  fallback: "qwen"             # DEPRECATED
+# llm_models: 已删除 (2026-06-14) — DEPRECATED, 0 代码引用
+#   实际生效: llm.features.<feature> (路由) + llm.models.<alias> (实例)
 
 # ─── 统一 LLM 路由 (2026-05-17, model_call.py SoT) ───
 # 切换模型只动这里: llm.models.<alias>.model_name
@@ -184,6 +174,7 @@ llm:
     news_classifier:    qwen-flash
     thesis_inferer:     qwen-max               # 2026-06-14: 升级至最强
     thesis_challenge:   qwen-max               # 2026-06-14: thesis审视，结构化输出
+    plan_validator:     qwen-max               # 2026-06-14: 作战计划候选验证
     sentiment:          qwen-flash
 
     premarket_planner:  {primary: qwen-max,      fallback: deepseek-pro, cache_on_fail: true}
@@ -1822,41 +1813,11 @@ scheduler:
     - minimax-m2.5
     claude_cli_timeout_seconds: 600
     claude_max_turns: 12
-portfolio:
-  collect_rank_allocate: true
-  net_exposure_target:
-    trending_up: 0.15             # RFC-055: 0.3→0.15 (减少LONG暴露)
-    trending_down: -0.4           # RFC-055: -0.2→-0.4 (SHORT优势方向加码)
-    range: -0.15                  # RFC-055: 0→-0.15 (SHORT 42.9%WR > LONG 33.3%WR)
-    high_vol: -0.2                # RFC-055: -0.1→-0.2 (高波偏空)
-    crisis: 0.0
-    normal: -0.05                 # RFC-055: 0.1→-0.05 (默认微偏空)
-  score_weights:
-    strength: 0.35
-    confidence: 0.25
-    session: 0.2
-    direction: 0.2
-  session_strategy_alignment:
-    opening_drive:
-      trend_following: 0.7
-      mean_reversion: 1.0
-      breakout: 0.6
-    morning:
-      trend_following: 1.0
-      mean_reversion: 0.8
-      breakout: 0.9
-    midday:
-      trend_following: 0.5
-      mean_reversion: 0.7
-      breakout: 0.4
-    afternoon:
-      trend_following: 1.0
-      mean_reversion: 0.7
-      breakout: 0.8
-    closing_drive:
-      trend_following: 1.0
-      mean_reversion: 0.5
-      breakout: 0.9
+# portfolio: 已删除 (2026-06-14) — DEAD CONFIG, 0 代码引用
+#   net_exposure_target / score_weights / session_strategy_alignment
+#   全部硬编码在 portfolio_constructor.py (REGIME_NET_EXPOSURE_TARGET / SCORE_WEIGHTS / SESSION_STRATEGY_ALIGNMENT)
+#   且 YAML 值与代码值严重分歧 (e.g. trending_up: YAML=0.15 vs code=0.30)
+#   如需修改请改 portfolio_constructor.py, 不要在此恢复
 news_v2:
   enabled: true
   mode: observe

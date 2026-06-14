@@ -1237,6 +1237,21 @@ class ManualOrderService:
             if not entry_time:
                 entry_time = now.isoformat()
 
+            # Check if this trade matches today's battle plan targets
+            strategy_id = "manual"
+            try:
+                plan_path = Path(__file__).parent.parent.parent / "data" / "daily_battle_plan_us.json"
+                if plan_path.exists():
+                    import json as _json
+                    _plan = _json.loads(plan_path.read_text())
+                    _plan_targets = {t.get("symbol", ""): t for t in _plan.get("targets", [])}
+                    if symbol in _plan_targets:
+                        _pt = _plan_targets[symbol]
+                        if _pt.get("direction") == direction:
+                            strategy_id = "battle_plan"
+            except Exception:
+                pass
+
             conn.execute("""
                 INSERT INTO trade_records (
                     trade_date, symbol, direction, entry_time, exit_time,
@@ -1247,7 +1262,7 @@ class ManualOrderService:
             """, (
                 trade_date, symbol, direction, entry_time, now.isoformat(),
                 entry_price, exit_price, quantity, round(pnl, 2), round(pnl_pct, 4),
-                reason, "manual", "MANUAL",
+                reason, strategy_id, "MANUAL",
                 self._get_mode_label(),
                 "live" if self._is_live() else "simulate",
                 "manual", now.isoformat(), order_id,

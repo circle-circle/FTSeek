@@ -850,6 +850,28 @@ def _build_debate_context(scheduler, exposure_context=None, earnings_exit_plan=N
     except Exception as e:
         logger.warning(f"[盘前计划] 记忆上下文加载失败 (不影响主流程): {e}")
 
+    # ── P0 (2026-06-14): Pre-Market Data Enrichment ──
+    # 6 维度高质量数据: Sector Rotation, Treasury Yields, Pre-Market Movers,
+    # Economic Calendar, Relative Strength, Market Breadth
+    premarket_enrichment = ""
+    try:
+        from app.data.premarket_enrichment import collect_premarket_data, format_for_debate
+        _wl_symbols = []
+        for s in (watchlist or []):
+            if isinstance(s, dict):
+                code = s.get('code', s.get('symbol', ''))
+            else:
+                code = str(s)
+            if code:
+                # Strip US. prefix for yfinance
+                _wl_symbols.append(code.replace('US.', ''))
+        _enrichment = collect_premarket_data(watchlist_symbols=_wl_symbols[:15])
+        premarket_enrichment = format_for_debate(_enrichment)
+        if premarket_enrichment:
+            logger.info(f"[盘前计划] 📊 Pre-market enrichment 注入成功 ({len(premarket_enrichment)} chars)")
+    except Exception as e:
+        logger.warning(f"[盘前计划] Pre-market enrichment 失败 (不影响主流程): {e}")
+
     earnings_info = ""
     if earnings_exit_plan:
         earnings_info = "\n".join(
@@ -867,6 +889,7 @@ def _build_debate_context(scheduler, exposure_context=None, earnings_exit_plan=N
         "memory": memory_context,
         "exposure_context": exposure_context or {},
         "price_calibration": price_calibration,
+        "premarket_enrichment": premarket_enrichment,
     }
 
 
@@ -1037,17 +1060,36 @@ def run_premarket_planning(scheduler):
     if catalyst_verdicts:
         debate_context["catalyst_events"] = [v.to_dict() for v in catalyst_verdicts]
 
-    # ── Level 1: 双 Agent 辩论 ──
+    # ── Level 0: Factor Pipeline (量化预筛 → LLM验证 → 确定性排序) ──
     plan = None
     try:
-        from app.agents.debate.debate_planner import get_debate_planner
-        planner = get_debate_planner(agent_bridge=getattr(scheduler, 'agent_bridge', None))
-        plan = planner.generate_premarket_plan(debate_context)
-        
-        if plan:
-            logger.info("[盘前计划] ✅ 双 Agent 辩论成功")
+        from app.plan.pipeline import run_pipeline as run_factor_pipeline
+        logger.info("[盘前计划] Level 0: 尝试 Factor Pipeline (量化预筛→LLM验证)...")
+        plan = run_factor_pipeline()
+        if plan and plan.get("targets"):
+            logger.info(
+                f"[盘前计划] ✅ Factor Pipeline 成功: "
+                f"{len(plan['targets'])} targets, "
+                f"regime={plan.get('market_regime')}, "
+                f"total={plan.get('pipeline_stats',{}).get('total_sec',0)}s"
+            )
+        else:
+            plan = None  # Empty targets = fall through
+            logger.warning("[盘前计划] Factor Pipeline 返回空 targets (降级)")
     except Exception as e:
-        logger.warning(f"[盘前计划] 双 Agent 辩论失败 (降级): {e}")
+        logger.warning(f"[盘前计划] Factor Pipeline 失败 (降级): {e}")
+
+    # ── Level 1: 双 Agent 辩论 ──
+    if not plan:
+        try:
+            from app.agents.debate.debate_planner import get_debate_planner
+            planner = get_debate_planner(agent_bridge=getattr(scheduler, 'agent_bridge', None))
+            plan = planner.generate_premarket_plan(debate_context)
+            
+            if plan:
+                logger.info("[盘前计划] ✅ 双 Agent 辩论成功")
+        except Exception as e:
+            logger.warning(f"[盘前计划] 双 Agent 辩论失败 (降级): {e}")
 
     # ── Level 2: Fallback (仅 Hermes 单 Agent) ──
     if not plan:
