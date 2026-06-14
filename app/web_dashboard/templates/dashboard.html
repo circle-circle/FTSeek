@@ -133,6 +133,15 @@
         .lc-concentration .conc-pill { font-size: 10px; padding: 2px 8px; border-radius: 10px; background: #161b22; border: 1px solid #30363d; color: #8b949e; white-space: nowrap; font-variant-numeric: tabular-nums; }
         .lc-concentration .conc-pill.warn { border-color: #fbbf24; color: #fbbf24; }
         .lc-concentration .conc-pill.danger { border-color: #f87171; color: #f87171; }
+        /* Compact position rows */
+        .pos-compact { border-bottom: 1px solid #21262d; }
+        .pos-compact:hover { background: rgba(22,27,34,0.5); }
+        .pos-compact-row { display: flex; align-items: center; gap: 8px; padding: 8px 4px; }
+        .sig-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+        .sig-dot.ok { background: #4ade80; }
+        .sig-dot.warn { background: #fbbf24; }
+        .sig-dot.danger { background: #f87171; }
+        .pos-expand-detail { padding: 8px 12px 12px; background: #0d1117; border-top: 1px solid #21262d; }
 
         /* ── Collapsible ── */
         .collapsible-header { display: flex; align-items: center; justify-content: space-between; cursor: pointer; padding: 10px 0; user-select: none; }
@@ -219,25 +228,6 @@
         /* ── Inline action buttons ── */
 
         /* ── Modal ── */
-        /* ── Signal Inbox (信号收件箱) ── */
-        .signal-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-        .signal-table th { text-align: left; padding: 8px 6px; border-bottom: 1px solid #30363d; color: #8b949e; font-size: 11px; text-transform: uppercase; font-weight: 500; }
-        .signal-table td { padding: 8px 6px; border-bottom: 1px solid #21262d; }
-        .signal-table tr:hover { background: rgba(88,166,255,0.05); }
-        .sig-badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; }
-        .sig-badge.executed { background: rgba(74,222,128,0.15); color: #4ade80; }
-        .sig-badge.rejected { background: rgba(248,113,113,0.15); color: #f87171; }
-        .sig-badge.pending { background: rgba(251,191,36,0.15); color: #fbbf24; }
-        .sig-dir { font-weight: 700; font-size: 12px; }
-        .sig-dir.long { color: #4ade80; }
-        .sig-dir.short { color: #f87171; }
-        .sig-stats { display: flex; gap: 16px; padding: 10px 0; font-size: 12px; color: #8b949e; border-top: 1px solid #30363d; margin-top: 4px; }
-        .sig-stats span { display: flex; align-items: center; gap: 4px; }
-        .sig-reason { font-size: 11px; color: #8b949e; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-        .sig-cards-mobile { display: none; }
-        .sig-card-m { background: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 10px; margin-bottom: 8px; }
-        .sig-card-m .sig-card-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
-        .sig-card-m .sig-card-body { font-size: 12px; color: #8b949e; }
 
         /* ── Battle Plan (战前计划) ── */
         .bp-regime { display: inline-block; padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: 600; }
@@ -276,16 +266,6 @@
         .bp-rr-bad { color: #f87171; font-weight: 600; }
 
         /* ── Risk Command Panel (风控中心) ── */
-        .risk-cmd-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 12px; }
-        .risk-cmd-cell { background: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 12px; text-align: center; }
-        .risk-cmd-cell .label { font-size: 11px; color: #8b949e; text-transform: uppercase; margin-bottom: 4px; }
-        .risk-cmd-cell .value { font-size: 20px; font-weight: 700; }
-        .risk-cmd-cell .value.green { color: #4ade80; }
-        .risk-cmd-cell .value.yellow { color: #fbbf24; }
-        .risk-cmd-cell .value.red { color: #f87171; }
-        .risk-cmd-cell .action-btn { margin-top: 8px; }
-        .risk-cmd-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
-        .risk-cmd-actions .btn { font-size: 12px; padding: 8px 14px; }
 
         /* ── WebSocket 连接指示 ── */
         .ws-indicator { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: #8b949e; }
@@ -295,43 +275,30 @@
         .ws-dot.connecting { background: #fbbf24; animation: pulse 1s infinite; }
 
         @media (max-width: 768px) {
-            .signal-table { display: none; }
-            .sig-cards-mobile { display: block; }
-            .bp-targets { display: none; }
+                    .bp-targets { display: none; }
             .bp-cards-mobile { display: block; }
-            .risk-cmd-grid { grid-template-columns: 1fr 1fr; }
         }
         @media (max-width: 480px) {
-            .risk-cmd-grid { grid-template-columns: 1fr 1fr; gap: 6px; }
-            .risk-cmd-cell .value { font-size: 16px; }
-            .sig-stats { flex-wrap: wrap; gap: 8px; }
-        }
+            }
 {% endblock %}
 
 {% block content %}
     <div class="container">
 
-        <!-- ═══ Level 0: Status Strip (双行: 账户 + 市场) ═══ -->
+        <!-- ═══ Status Strip (单行高密度) ═══ -->
         <div class="status-strip" id="statusStrip">
             <div class="status-row">
-                <span class="row-label">账户</span>
-                <div class="pill"><div class="dot ok" id="sysDot"></div><span id="sysLabel">系统正常</span></div>
+                <div class="pill"><div class="dot ok" id="sysDot"></div><span id="sysLabel">正常</span></div>
                 <div class="pill">💰 <span class="v" id="pillEquity">--</span></div>
-                <div class="pill" id="pillPnlWrap">📈 <span class="v" id="pillPnl">--</span></div>
-                <div class="pill"> <span class="v" id="pillPositions">0</span> 持仓</div>
-            </div>
-            <div class="status-row">
-                <span class="row-label">市场</span>
+                <div class="pill" id="pillPnlWrap"><span class="v" id="pillPnl">--</span></div>
+                <div class="pill"><span class="v" id="pillPositions">0</span>仓</div>
                 <div class="pill" id="pillSpy">SPY --</div>
                 <div class="pill" id="pillVix">VIX --</div>
-                <div class="pill">🎯 <span class="v" id="pillSignals">0</span> 信号</div>
-            </div>
-            <div class="status-row">
-                <span class="row-label">风控</span>
-                <div class="pill" id="pillMargin">📊 <span class="v" id="pillMarginVal">--</span></div>
+                <div class="pill" id="pillMargin">保证金 <span class="v" id="pillMarginVal">--</span></div>
                 <div class="pill" id="pillKillSwitch">🛡️ <span id="pillKillVal">--</span></div>
                 <div class="pill" id="pillEarnings" style="display:none">⚠️ <span id="pillEarningsVal">--</span></div>
                 <div class="pill" id="pillActivity" style="display:none">📋 <span id="pillActivityVal">--</span></div>
+                <div class="pill" id="pillEmergency" style="display:none;cursor:pointer;border-color:rgba(248,113,113,0.4)" onclick="riskCmdEmergencyClose()">🔴 制动</div>
             </div>
         </div>
 
@@ -371,82 +338,39 @@
             <div id="riskList"></div>
         </div>
 
-        <!-- ═══ Battle Plan (战前计划 — 摘要+跳转) ═══ -->
-        <div class="card" id="battlePlanCard" style="display:none">
-            <div style="display:flex;align-items:center;justify-content:space-between;padding:4px 0">
-                <div style="display:flex;align-items:center;gap:10px">
+        <!-- ═══ Plan Tracker (战前计划追踪器) ═══ -->
+        <div class="card" id="planTrackerCard" style="display:none">
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:4px 0 8px">
+                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
                     <span style="font-size:14px">📋</span>
-                    <span id="bpRegimeBadge" style="font-size:12px;font-weight:600;padding:2px 8px;border-radius:4px;background:#161b22;border:1px solid #30363d"></span>
-                    <span id="bpSummaryText" style="font-size:12px;color:#8b949e"></span>
-                    <span id="bpStatusBadge" style="font-size:11px;padding:2px 6px;border-radius:3px;display:none"></span>
+                    <span id="ptRegimeBadge" style="font-size:11px;font-weight:600;padding:2px 8px;border-radius:4px;background:#161b22;border:1px solid #30363d"></span>
+                    <span id="ptConfidence" style="font-size:11px;color:#8b949e"></span>
+                    <span id="ptStatusBadge" style="font-size:10px;padding:1px 6px;border-radius:3px;display:none"></span>
                 </div>
-                <a href="/plan" style="font-size:12px;color:#58a6ff;text-decoration:none;white-space:nowrap">查看完整计划 →</a>
+                <a href="/plan" style="font-size:11px;color:#58a6ff;text-decoration:none;white-space:nowrap">完整计划 →</a>
             </div>
+            <div id="ptTargets"></div>
         </div>
 
-        <!-- ═══ Level 1: Action Queue (需要行动) ═══ -->
-        <div class="card" id="actionQueueCard">
-            <div class="collapsible-header" onclick="toggleSection('aq')">
-                <h2>⚡ 需要行动 <span style="font-size:12px;color:#8b949e;font-weight:normal" id="aqCount"></span></h2>
-                <span class="arrow open" id="aqArrow">▶</span>
-            </div>
-            <div class="collapsible-body open" id="aqBody">
-                <div id="actionQueue"><div class="loading">加载中...</div></div>
-            </div>
-        </div>
-
-        <!-- ═══ Level 2: Position Lifecycle (持仓管理) ═══ -->
-        <div class="card" id="lifecycleCard">
-            <div class="collapsible-header" onclick="toggleSection('lc')">
-                <h2>💼 持仓管理 <span style="font-size:12px;color:#8b949e;font-weight:normal" id="lcCount"></span></h2>
+        <!-- ═══ Unified Positions (持仓统一视图) ═══ -->
+        <div class="card" id="positionsCard">
+            <div class="collapsible-header" onclick="toggleSection('pos')">
+                <h2>💼 持仓 <span style="font-size:12px;color:#8b949e;font-weight:normal" id="posCount"></span></h2>
                 <div class="lc-concentration" id="lcConcentration"></div>
-                <span class="arrow open" id="lcArrow">▶</span>
+                <span class="arrow open" id="posArrow">▶</span>
             </div>
-            <div class="collapsible-body open" id="lcBody">
-                <div id="lifecycleList"><div class="loading">加载中...</div></div>
-            </div>
-        </div>
-
-        <!-- ═══ Signal Inbox (信号收件箱, 折叠) ═══ -->
-        <div class="card" id="signalInboxCard">
-            <div class="collapsible-header" onclick="toggleSection('sig')">
-                <h2>📡 今日信号 <span style="font-size:12px;color:#8b949e;font-weight:normal" id="sigCount"></span></h2>
-                <span class="arrow" id="sigArrow">▶</span>
-            </div>
-            <div class="collapsible-body" id="sigBody">
-                <div id="sigLoading" style="text-align:center;padding:20px;color:#8b949e;font-size:13px">加载中...</div>
-                <table class="signal-table" id="sigTable">
-                    <thead><tr><th>时间</th><th>标的</th><th>方向</th><th>置信度</th><th>策略</th><th>状态</th><th>盈亏</th><th></th></tr></thead>
-                    <tbody id="sigTableBody"></tbody>
-                </table>
-                <div class="sig-cards-mobile" id="sigCardsMobile"></div>
-                <div class="sig-stats" id="sigStats"></div>
+            <div class="collapsible-body open" id="posBody">
+                <div id="positionsList"><div class="loading">加载中...</div></div>
             </div>
         </div>
 
-        <!-- ═══ Risk Command Panel (风控中心) ═══ -->
-        <div class="card" id="riskCmdCard">
-            <div class="collapsible-header" onclick="toggleSection('riskCmd')">
-                <h2>🛡️ 风控中心</h2>
-                <span class="arrow" id="riskCmdArrow">▶</span>
-            </div>
-            <div class="collapsible-body" id="riskCmdBody">
-                <div class="risk-cmd-grid" id="riskCmdGrid">
-                    <div class="risk-cmd-cell"><div class="label">保证金</div><div class="value" id="rcMargin">--</div><div class="action-btn" id="rcMarginAction"></div></div>
-                    <div class="risk-cmd-cell"><div class="label">VIX</div><div class="value" id="rcVix">--</div><div class="action-btn" id="rcVixAction"></div></div>
-                    <div class="risk-cmd-cell"><div class="label">Kill Switch</div><div class="value" id="rcKill">--</div><div class="action-btn" id="rcKillAction"></div></div>
-                    <div class="risk-cmd-cell"><div class="label">财报预警</div><div class="value" id="rcEarnings">--</div><div class="action-btn" id="rcEarningsAction"></div></div>
-                </div>
-                <div id="rcSuggestions" style="font-size:12px;color:#8b949e;margin-bottom:8px"></div>
-                <div style="font-size:11px;color:#484f58;margin-bottom:6px">⚠️ 紧急制动 = 停止一切(扫描+信号+下单)，60分钟自动恢复。<br>日常开关自动交易请到 <a href="/system" style="color:#58a6ff">系统页</a>（信号照常，仅停下单）。</div>
-                <div class="risk-cmd-actions">
-                    <button class="btn btn-sm" style="background:#3a1a1a;color:#f87171;border:1px solid rgba(248,113,113,0.3)" onclick="riskCmdEmergencyClose()">🔴 全部平仓</button>
-                    <button class="btn btn-sm" style="background:#2a1f0a;color:#fbbf24;border:1px solid rgba(251,191,36,0.3)" id="rcPauseBtn" onclick="riskCmdTogglePause()">⚠️ 紧急制动</button>
-                </div>
-            </div>
+        <!-- ═══ Signal Summary (1行摘要) ═══ -->
+        <div id="signalSummary" style="display:flex;align-items:center;gap:8px;padding:6px 14px;font-size:12px;color:#8b949e;border-bottom:1px solid #21262d;margin-bottom:12px">
+            <span>📡</span>
+            <span id="sigSummaryText">信号加载中...</span>
         </div>
 
-        <!-- ═══ Level 3: Analytics Tabs (按需展开) ═══ -->
+        <!-- ═══ Analytics (2 tabs) ═══ -->
         <div class="card">
             <div class="collapsible-header" onclick="toggleSection('analytics')">
                 <h2>📈 复盘分析</h2>
@@ -454,43 +378,16 @@
             </div>
             <div class="collapsible-body" id="analyticsBody">
                 <div class="tab-bar" id="analyticsTabs">
-                    <div class="tab active" data-tab="perf" onclick="switchTab('perf')">绩效</div>
-                    <div class="tab" data-tab="equity" onclick="switchTab('equity')">资金曲线</div>
-                    <div class="tab" data-tab="signals" onclick="switchTab('signals')">信号质量</div>
-                    <div class="tab" data-tab="execution" onclick="switchTab('execution')">执行质量</div>
-                    <div class="tab" data-tab="flow" onclick="switchTab('flow')">资金流向</div>
-                    <div class="tab" data-tab="sectors" onclick="switchTab('sectors')">板块热力</div>
+                    <div class="tab active" data-tab="equity" onclick="switchTab('equity')">资金曲线</div>
+                    <div class="tab" data-tab="review" onclick="switchTab('review')">决策复盘</div>
                 </div>
-
-                <!-- Tab: Performance -->
-                <div class="tab-panel active" id="tab-perf">
-                    <div class="tab-hint">手动 vs 自动交易对比。<b>胜率</b>=盈利笔数/总笔数，<b>利润因子</b>=总盈利/总亏损（>1.5为优秀），<b>信号漏斗</b>=今日信号→通过风控→实际执行。</div>
-                    <div id="perfContent"><div class="loading">加载中...</div></div>
-                </div>
-                <!-- Tab: Equity -->
-                <div class="tab-panel" id="tab-equity">
-                    <div class="tab-hint">账户净值走势 + 回撤幅度。<b>回撤</b>=从峰值下跌的百分比，绿色柱=回撤<1%（健康），黄色=1-3%，红色=>3%。</div>
+                <div class="tab-panel active" id="tab-equity">
+                    <div class="tab-hint">账户净值走势 + 回撤幅度。<b>回撤</b>=从峰值下跌的百分比。</div>
                     <div class="chart-wrap"><canvas id="equityChart"></canvas></div>
                 </div>
-                <!-- Tab: Signals -->
-                <div class="tab-panel" id="tab-signals">
-                    <div class="tab-hint"><b>IC（信息系数）</b>=信号强度与次日收益的相关性。IC>0.05说明信号有预测力，≈0为噪音，<0为反向。下方柱状图=每个信号发出后的实际涨跌幅。</div>
-                    <div id="sigContent"><div class="loading">加载中...</div></div>
-                </div>
-                <!-- Tab: Execution -->
-                <div class="tab-panel" id="tab-execution">
-                    <div class="tab-hint"><b>滑点</b>=实际成交价 vs 信号价格的偏差，衡量下单速度和市场冲击。<0.3%为正常，>0.5%需关注。</div>
-                    <div id="execContent"><div class="loading">加载中...</div></div>
-                </div>
-                <!-- Tab: Capital Flow -->
-                <div class="tab-panel" id="tab-flow">
-                    <div class="tab-hint">持仓标的的主力资金（超大单+大单）净流入/流出。<b>主力净流入</b>=大资金方向，<b>散户净流入</b>=中小单方向。</div>
-                    <div id="flowContent"><div class="loading">加载中...</div></div>
-                </div>
-                <!-- Tab: Sectors -->
-                <div class="tab-panel" id="tab-sectors">
-                    <div class="tab-hint">11大板块 + 热门概念 ETF 今日涨跌幅。颜色深度=涨跌强度。</div>
-                    <div class="sector-grid" id="sectorGrid"><div class="loading">加载中...</div></div>
+                <div class="tab-panel" id="tab-review">
+                    <div class="tab-hint">交易绩效 + 信号质量 + 归因分析综合视图。</div>
+                    <div id="reviewContent"><div class="loading">加载中...</div></div>
                 </div>
             </div>
         </div>
@@ -534,7 +431,7 @@
         if (!_tabLoaded[name]) { _tabLoaded[name] = true; loadTabContent(name); }
     }
     function loadTabContent(name) {
-        var loaders = { perf: loadPerf, equity: loadEquity, signals: loadSignals, execution: loadExecution, flow: loadFlow, sectors: loadSectors };
+        var loaders = { equity: loadEquity, review: loadReview };
         if (loaders[name]) loaders[name]();
     }
     function switchToAnalytics() {
@@ -628,10 +525,9 @@
         // Market status badge
         updateMarketStatus();
 
-        // ── Action Queue + Lifecycle ──
+        // ── Unified Positions ──
         var lifecycle = d.lifecycle || [];
-        renderActionQueue(lifecycle);
-        renderLifecycle(lifecycle);
+        renderUnifiedPositions(lifecycle, positions);
 
         // ── Today's Summary ──
         renderTodaySummary(p, market);
@@ -677,7 +573,7 @@
             }
         }
 
-        // ── 持仓数据 (供 attention list 使用, 不再渲染 UI) ──
+        // ── 持仓数据 ──
         _posData = positions;
         _totalMv = positions.reduce(function(s,p){ return s + (p.market_val || p.market_value || 0); }, 0);
 
@@ -878,191 +774,142 @@
         }).join('');
     }
 
-    // ═════════════════════════════════════
-    //  Position Mini-List (摘要视图, 操作在交易页)
-    // ═════════════════════════════════════
-
     // ══════════════════════════════════════
-    //  Action Queue (需要行动 — danger/warning only)
+    //  Unified Positions (统一视图: danger展开 + routine紧凑)
     // ══════════════════════════════════════
-    function renderActionQueue(lifecycle) {
-        var el = document.getElementById('actionQueue');
-        var countEl = document.getElementById('aqCount');
-        var actions = (lifecycle || []).filter(function(l) { return l.alert_level === 'danger' || l.alert_level === 'warning'; });
-
-        countEl.textContent = actions.length ? '(' + actions.length + ')' : '';
-        if (!actions.length) {
-            el.innerHTML = '<div style="text-align:center;padding:16px;color:#4ade80;font-size:13px">✅ 无需行动</div>';
-            return;
-        }
-
-        el.innerHTML = actions.map(function(lc) {
-            var sym = (lc.symbol || '').replace(/^US\./, '');
-            var cls = lc.alert_level === 'danger' ? 'red' : 'yellow';
-            var recs = (lc.recommendations || []).slice(0, 2).map(function(r) {
-                return '<div style="font-size:12px;color:#d1d5db;padding:2px 0">' + r + '</div>';
-            }).join('');
-            return '<div class="attn-row">' +
-                '<span class="sig ' + cls + '"></span>' +
-                '<a href="/stock/' + lc.symbol + '" style="color:#58a6ff;text-decoration:none;font-weight:700;min-width:60px">' + sym + '</a>' +
-                '<span class="' + (lc.direction==='LONG'?'long':'short') + '" style="font-size:12px">' + lc.direction + ' ' + lc.qty + '</span>' +
-                '<span style="flex:1">' + recs + '</span>' +
-                '<span class="' + pnlCls(lc.pnl_pct) + '" style="font-weight:600;font-size:12px">' + (lc.pnl_pct>=0?'+':'') + lc.pnl_pct.toFixed(1) + '%</span>' +
-                '<a href="/trade?symbol=' + lc.symbol + '&direction=' + lc.direction + '" class="btn btn-sm" style="font-size:11px;padding:4px 10px;min-height:auto;text-decoration:none">交易</a>' +
-                '</div>';
-        }).join('');
-    }
-
-    // ══════════════════════════════════════
-    //  Lifecycle Cards (持仓管理 — all positions)
-    // ══════════════════════════════════════
-    function renderLifecycle(lifecycle) {
-        var el = document.getElementById('lifecycleList');
-        var countEl = document.getElementById('lcCount');
+    function renderUnifiedPositions(lifecycle, rawPositions) {
+        var el = document.getElementById('positionsList');
+        var countEl = document.getElementById('posCount');
 
         if (!lifecycle || !lifecycle.length) {
-            el.innerHTML = '<div style="text-align:center;padding:16px;color:#8b949e;font-size:13px">无持仓</div>';
+            el.innerHTML = '<div style="text-align:center;padding:16px;color:#8b949e;font-size:13px">暂无持仓</div>';
             countEl.textContent = '';
+            // Update plan tracker with empty positions
+            if (typeof updatePlanTargetPrices === 'function') updatePlanTargetPrices([]);
             return;
         }
 
-        countEl.textContent = '(' + lifecycle.length + ')';
-        el.innerHTML = lifecycle.map(function(lc) {
-            var sym = (lc.symbol || '').replace(/^US\./, '');
-            var cardCls = lc.alert_level === 'danger' ? 'danger' : lc.alert_level === 'warning' ? 'warning' : '';
-            var dirCls = lc.direction === 'LONG' ? 'long' : 'short';
-            var pc = lc.pnl_pct >= 0 ? 'green' : 'red';
+        // Sort by urgency: danger first, then warning, then routine
+        var sorted = lifecycle.slice().sort(function(a, b) {
+            var order = { danger: 0, warning: 1, normal: 2 };
+            return (order[a.alert_level] || 2) - (order[b.alert_level] || 2);
+        });
 
-            // Thesis
-            var thesis = lc.thesis || '';
-            var thesisHtml;
-            if (thesis) {
-                thesisHtml = '<div class="lc-thesis" onclick="editThesis(\'' + lc.symbol + '\', this)">' + thesis + '</div>';
-            } else {
-                thesisHtml = '<div class="lc-thesis empty" onclick="editThesis(\'' + lc.symbol + '\', this)">点击填写进场理由...</div>';
-            }
+        var dangerCount = sorted.filter(function(l){ return l.alert_level === 'danger'; }).length;
+        var warnCount = sorted.filter(function(l){ return l.alert_level === 'warning'; }).length;
+        countEl.textContent = '(' + sorted.length + ')' + 
+            (dangerCount > 0 ? ' <span style="color:#f87171">' + dangerCount + '⚠</span>' : '') +
+            (warnCount > 0 ? ' <span style="color:#fbbf24">' + warnCount + '⚡</span>' : '');
 
-            // Hold days
-            var holdHtml = '';
-            if (lc.hold_days !== null && lc.hold_days !== undefined) {
-                var holdCls = lc.hold_days > lc.expected_hold_days ? 'hold-warn' : 'hold-ok';
-                holdHtml = '<span class="' + holdCls + '">Day ' + lc.hold_days + '/' + lc.expected_hold_days + '</span>';
-            } else {
-                holdHtml = '<span style="color:#484f58">持仓天数未知</span>';
-            }
-
-            // Thesis validity
-            var validHtml = '';
-            if (lc.thesis_valid === true) validHtml = '<span style="color:#4ade80">✅ thesis</span>';
-            else if (lc.thesis_valid === false) validHtml = '<span style="color:#f87171">❌ thesis失效</span>';
-            else validHtml = '<span style="color:#484f58">— thesis</span>';
-
-            // SL info
-            var slHtml = '';
-            if (lc.stop_loss && lc.stop_loss > 0) {
-                if (lc.sl_distance_pct < 0) {
-                    slHtml = '<span class="lc-sl"><span class="danger-text">⚠ 已跌破止损 $' + lc.stop_loss.toFixed(2) + ' (' + Math.abs(lc.sl_distance_pct).toFixed(1) + '%)</span></span>';
-                } else {
-                    var slCls = lc.sl_distance_pct < 2 ? 'danger-text' : lc.sl_distance_pct < 5 ? 'warn-text' : '';
-                    slHtml = '<span class="lc-sl">SL $' + lc.stop_loss.toFixed(2) + ' <span class="' + slCls + '">(' + lc.sl_distance_pct.toFixed(1) + '%)</span></span>';
-                }
-            }
-
-            // Recommendations
-            var recsHtml = '';
-            if (lc.recommendations && lc.recommendations.length) {
-                recsHtml = '<ul class="lc-recs">' + lc.recommendations.map(function(r) { return '<li>' + r + '</li>'; }).join('') + '</ul>';
-            }
-
-            // Sector peers
-            var peersHtml = '';
-            var sectorPeers = lc.sector_peers || [];
-            if (sectorPeers.length) {
-                peersHtml = '<div class="lc-peers">';
-                sectorPeers.forEach(function(group) {
-                    var peers = (group.peers || []).filter(function(p) { return p.price; }).slice(0, 4);
-                    if (!peers.length) return;
-                    var chips = peers.map(function(p) {
-                        var cls = p.change_pct > 0 ? 'green' : p.change_pct < 0 ? 'red' : '';
-                        return '<a href="/stock/US.' + p.ticker + '" class="lc-peer-chip ' + cls + '">' +
-                            p.ticker + ' <span>' + (p.change_pct >= 0 ? '+' : '') + p.change_pct.toFixed(1) + '%</span></a>';
-                    }).join('');
-                    peersHtml += '<div class="lc-peer-group"><span class="lc-peer-label">' + group.sector.replace('_', ' ') + '</span>' + chips + '</div>';
-                });
-                peersHtml += '</div>';
-            }
-
-            // Social sentiment
-            var sentimentHtml = '';
-            var sentiment = lc.sentiment || {};
-            var hotTopics = sentiment.hot_topics || [];
-            var redditCount = sentiment.reddit_count || 0;
-            var hnCount = sentiment.hn_count || 0;
-            if (hotTopics.length || redditCount || hnCount) {
-                sentimentHtml = '<div class="lc-sentiment">';
-                if (redditCount || hnCount) {
-                    sentimentHtml += '<div class="lc-sentiment-counts">';
-                    if (redditCount) sentimentHtml += '<span class="lc-sentiment-badge reddit">📌 Reddit ' + redditCount + '</span>';
-                    if (hnCount) sentimentHtml += '<span class="lc-sentiment-badge hn">🔶 HN ' + hnCount + '</span>';
-                    sentimentHtml += '</div>';
-                }
-                if (hotTopics.length) {
-                    sentimentHtml += '<div class="lc-sentiment-topics">' + hotTopics.map(function(t) {
-                        return '<div class="lc-sentiment-topic">' + t.replace(/</g, '&lt;') + '</div>';
-                    }).join('') + '</div>';
-                }
-                sentimentHtml += '</div>';
-            }
-
-            // Protection UI (止损/追踪止盈)
-            var protHtml = '';
-            // Alert bar (triggered)
-            if (lc.stop_loss_triggered) {
-                protHtml += '<div class="prot-alert danger">' +
-                    '🔴 已触发止损（现价 $' + (lc.current_price||0).toFixed(2) + ' ≤ 止损 $' + (lc.stop_loss_price||0).toFixed(2) + '）' +
-                    '<div class="prot-btns">' +
-                    '<button class="btn prot-confirm" onclick="confirmProtection(\'' + lc.symbol + '\', \'stop_loss\')">确认平仓</button>' +
-                    '<button class="btn prot-cancel" onclick="cancelProtection(\'' + lc.symbol + '\')">取消</button>' +
-                    '</div></div>';
-            }
-            if (lc.trailing_stop_triggered) {
-                protHtml += '<div class="prot-alert warning">' +
-                    '🟢 已触发追踪止盈（现价 $' + (lc.current_price||0).toFixed(2) + ' ≤ 止盈 $' + (lc.trailing_stop_price||0).toFixed(2) + '）' +
-                    '<div class="prot-btns">' +
-                    '<button class="btn prot-confirm" onclick="confirmProtection(\'' + lc.symbol + '\', \'trailing_stop\')">确认平仓</button>' +
-                    '<button class="btn prot-cancel" onclick="cancelProtection(\'' + lc.symbol + '\')">取消</button>' +
-                    '</div></div>';
-            }
-            // Protection settings row
-            protHtml += '<div class="prot-settings">';
-            protHtml += '<label>止损 <input type="number" step="0.01" class="prot-input" value="' + (lc.stop_loss_price||'') + '" onchange="setStopLoss(\'' + lc.symbol + '\', this.value)" placeholder="' + (lc.cost_price ? (lc.direction==='LONG' ? (lc.cost_price*0.95).toFixed(2) : (lc.cost_price*1.05).toFixed(2)) : '') + '"></label>';
-            if (lc.trailing_stop_price) {
-                protHtml += '<span class="prot-trail active">🚀 追踪 $' + lc.trailing_stop_price.toFixed(2) + '</span>';
-            } else {
-                protHtml += '<span class="prot-trail">追踪: 浮盈8%后激活</span>';
-            }
-            protHtml += '</div>';
-
-            return '<div class="lc-card ' + cardCls + '">' +
-                protHtml +
-                '<div class="lc-header">' +
-                    '<div style="display:flex;align-items:center;gap:8px">' +
-                        '<a href="/stock/' + lc.symbol + '" class="lc-sym">' + sym + '</a>' +
-                        '<span class="lc-dir ' + dirCls + '">' + lc.direction + ' ' + lc.qty + '</span>' +
-                    '</div>' +
-                    '<span class="lc-pnl ' + pc + '">' + (lc.pnl_pct>=0?'+':'') + lc.pnl_pct.toFixed(1) + '%</span>' +
-                '</div>' +
-                '<div class="lc-meta">' + holdHtml + validHtml + slHtml + '</div>' +
-                thesisHtml +
-                recsHtml +
-                peersHtml +
-                sentimentHtml +
-                '<div class="lc-actions">' +
-                    '<a href="/trade?symbol=' + lc.symbol + '&direction=' + lc.direction + '" class="btn" style="background:#21262d;border:1px solid #30363d;color:#e1e4e8">交易</a>' +
-                    (lc.pnl_pct > 5 ? '<a href="/trade?symbol=' + lc.symbol + '&action=close" class="btn" style="background:rgba(248,113,113,0.1);border:1px solid #f87171;color:#f87171">平仓</a>' : '') +
-                '</div>' +
-                '</div>';
+        el.innerHTML = sorted.map(function(lc) {
+            return renderPositionItem(lc);
         }).join('');
+
+        // Update plan tracker with position data
+        if (typeof updatePlanTargetPrices === 'function') updatePlanTargetPrices(rawPositions || lifecycle);
+    }
+
+    function renderPositionItem(lc) {
+        var sym = (lc.symbol || '').replace(/^US\./, '');
+        var isUrgent = lc.alert_level === 'danger' || lc.alert_level === 'warning';
+        var cardCls = lc.alert_level === 'danger' ? 'danger' : lc.alert_level === 'warning' ? 'warning' : '';
+        var dirCls = lc.direction === 'LONG' ? 'long' : 'short';
+        var pc = lc.pnl_pct >= 0 ? 'green' : 'red';
+        var dirIcon = lc.direction === 'LONG' ? '▲' : '▼';
+        var pnlStr = (lc.pnl_pct >= 0 ? '+' : '') + lc.pnl_pct.toFixed(1) + '%';
+
+        if (!isUrgent) {
+            // ── Compact mode (1 line) ──
+            var holdStr = lc.hold_days != null ? 'D' + lc.hold_days : '';
+            var thesisDot = lc.thesis ? '' : '<span title="无进场理由" style="color:#fbbf24;font-size:10px;margin-left:4px">●</span>';
+            return '<div class="pos-compact" onclick="togglePosExpand(\'' + lc.symbol + '\')" style="cursor:pointer">' +
+                '<div class="pos-compact-row">' +
+                '<span class="sig-dot ' + (lc.alert_level === 'normal' ? 'ok' : '') + '"></span>' +
+                '<a href="/stock/' + lc.symbol + '" onclick="event.stopPropagation()" style="color:#e1e4e8;text-decoration:none;font-weight:600;font-size:13px;min-width:48px">' + sym + '</a>' +
+                '<span class="lc-dir ' + dirCls + '" style="font-size:10px;padding:1px 5px">' + dirIcon + ' ' + (lc.quantity || 0) + '</span>' +
+                '<span class="' + pc + '" style="font-weight:600;font-size:13px;min-width:55px;text-align:right">' + pnlStr + '</span>' +
+                (holdStr ? '<span style="font-size:11px;color:#8b949e">' + holdStr + '</span>' : '') +
+                thesisDot +
+                '<span style="margin-left:auto;font-size:11px;color:#484f58">▶</span>' +
+                '</div>' +
+                '<div class="pos-expand-detail" id="posDetail_' + lc.symbol + '" style="display:none">' +
+                    renderExpandedContent(lc) +
+                '</div>' +
+            '</div>';
+        } else {
+            // ── Expanded mode (full card for danger/warning) ──
+            return '<div class="lc-card ' + cardCls + '">' +
+                renderExpandedContent(lc) +
+            '</div>';
+        }
+    }
+
+    function renderExpandedContent(lc) {
+        var sym = (lc.symbol || '').replace(/^US\./, '');
+        var dirCls = lc.direction === 'LONG' ? 'long' : 'short';
+        var pc = lc.pnl_pct >= 0 ? 'green' : 'red';
+        var pnlStr = (lc.pnl_pct >= 0 ? '+' : '') + lc.pnl_pct.toFixed(1) + '%';
+
+        // Header
+        var html = '<div class="lc-header">' +
+            '<div style="display:flex;align-items:center;gap:8px">' +
+            '<a href="/stock/' + lc.symbol + '" class="lc-sym">' + sym + '</a>' +
+            '<span class="lc-dir ' + dirCls + '">' + (lc.direction === 'LONG' ? '▲ LONG' : '▼ SHORT') + ' ' + (lc.quantity || 0) + '</span>' +
+            '</div>' +
+            '<span class="lc-pnl ' + pc + '">' + pnlStr + '</span>' +
+            '</div>';
+
+        // Meta line
+        var holdHtml = '';
+        if (lc.hold_days !== null && lc.hold_days !== undefined) {
+            var holdCls = lc.hold_days > (lc.expected_hold_days || 99) ? 'hold-warn' : 'hold-ok';
+            holdHtml = '<span class="' + holdCls + '">Day ' + lc.hold_days + '/' + (lc.expected_hold_days || '?') + '</span>';
+        }
+        html += '<div class="lc-meta">' + holdHtml + '</div>';
+
+        // Thesis
+        var thesis = lc.thesis || '';
+        if (thesis) {
+            var validTag = '';
+            if (lc.thesis_valid === true) validTag = ' <span style="color:#4ade80;font-size:10px">✅</span>';
+            else if (lc.thesis_valid === false) validTag = ' <span style="color:#f87171;font-size:10px">❌失效</span>';
+            html += '<div class="lc-thesis" onclick="editThesis(\'' + lc.symbol + '\', this)">' + escHtml(thesis) + validTag + '</div>';
+        } else {
+            html += '<div class="lc-thesis empty" onclick="editThesis(\'' + lc.symbol + '\', this)">📝 点击填写进场理由 (无thesis=无退出依据)</div>';
+        }
+
+        // Recommendations (only for danger/warning)
+        var recs = lc.recommendations || [];
+        if (recs.length) {
+            html += '<ul class="lc-recs">';
+            recs.slice(0, 3).forEach(function(r) { html += '<li>' + r + '</li>'; });
+            html += '</ul>';
+        }
+
+        // SL info
+        if (lc.stop_loss && lc.stop_loss > 0) {
+            if (lc.sl_distance_pct < 0) {
+                html += '<div class="lc-sl"><span class="danger-text">⚠ 已跌破止损 $' + lc.stop_loss.toFixed(2) + '</span></div>';
+            } else {
+                var slCls = lc.sl_distance_pct < 2 ? 'danger-text' : lc.sl_distance_pct < 5 ? 'warn-text' : '';
+                html += '<div class="lc-sl">SL $' + lc.stop_loss.toFixed(2) + ' <span class="' + slCls + '">(' + lc.sl_distance_pct.toFixed(1) + '%)</span></div>';
+            }
+        }
+
+        // Action buttons
+        html += '<div class="lc-actions">' +
+            '<a href="/trade?symbol=' + lc.symbol + '&op=CLOSE" class="btn" style="background:#3a1a1a;color:#f87171;border:1px solid rgba(248,113,113,0.3)">平仓</a>' +
+            '<a href="/trade?symbol=' + lc.symbol + '" class="btn" style="background:#161b22;color:#8b949e;border:1px solid #30363d">交易</a>' +
+            '</div>';
+
+        return html;
+    }
+
+    function togglePosExpand(symbol) {
+        var el = document.getElementById('posDetail_' + symbol);
+        if (el) {
+            el.style.display = el.style.display === 'none' ? 'block' : 'none';
+        }
     }
 
     // ══════════════════════════════════════
@@ -1181,179 +1028,102 @@
     }
 
     // ══════════════════════════════════════
-    //  Analytics Tab Loaders (lazy, on-demand)
+    //  Analytics Tab Loaders (2 tabs)
     // ══════════════════════════════════════
 
-    // -- Performance (manual vs auto) --
-    async function loadPerf() {
-        try {
-            var r1 = await fetch('/api/analytics/manual-performance');
-            var r2 = await fetch('/api/analytics/signal-dashboard');
-            var man = await r1.json();
-            var sig = await r2.json();
-            var m = man.manual || {}, a = man.auto || {};
-            var wrCls = function(wr){ return wr >= 50 ? 'green' : wr >= 30 ? 'yellow' : 'red'; };
-
-            var html = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px">';
-            html += '<div style="background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:12px">';
-            html += '<div style="font-size:13px;color:#58a6ff;font-weight:600;margin-bottom:8px">👤 手动交易</div>';
-            html += '<div class="mini-metrics" style="margin:0">';
-            html += '<div class="mm"><div class="l">笔数</div><div class="v">' + (m.count||0) + '</div></div>';
-            html += '<div class="mm"><div class="l">胜率</div><div class="v ' + wrCls(m.win_rate||0) + '">' + (m.win_rate||0).toFixed(1) + '%</div></div>';
-            html += '<div class="mm"><div class="l">盈亏</div><div class="v ' + pnlCls(m.total_pnl||0) + '">$' + fmt(m.total_pnl) + '</div></div>';
-            html += '<div class="mm"><div class="l">利润因子</div><div class="v">' + (m.profit_factor||0).toFixed(2) + '</div></div>';
-            html += '</div></div>';
-            html += '<div style="background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:12px">';
-            html += '<div style="font-size:13px;color:#8b949e;font-weight:600;margin-bottom:8px">🤖 自动交易</div>';
-            html += '<div class="mini-metrics" style="margin:0">';
-            html += '<div class="mm"><div class="l">笔数</div><div class="v">' + (a.count||0) + '</div></div>';
-            html += '<div class="mm"><div class="l">胜率</div><div class="v ' + wrCls(a.win_rate||0) + '">' + (a.win_rate||0).toFixed(1) + '%</div></div>';
-            html += '<div class="mm"><div class="l">盈亏</div><div class="v ' + pnlCls(a.total_pnl||0) + '">$' + fmt(a.total_pnl) + '</div></div>';
-            html += '<div class="mm"><div class="l">利润因子</div><div class="v">' + (a.profit_factor||0).toFixed(2) + '</div></div>';
-            html += '</div></div></div>';
-
-            html += '<div style="background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:12px;margin-bottom:12px">';
-            html += '<div style="font-size:13px;color:#8b949e;font-weight:600;margin-bottom:8px">🎯 今日信号漏斗</div>';
-            html += '<div style="display:flex;gap:16px;align-items:center;justify-content:center;font-size:14px">';
-            html += '<span>' + (sig.signal_count||0) + ' 信号</span>';
-            html += '<span style="color:#8b949e">→</span>';
-            html += '<span>' + (sig.passed_count||0) + ' 通过 <span style="font-size:11px;color:#8b949e">(' + (sig.pass_rate||0) + '%)</span></span>';
-            html += '<span style="color:#8b949e">→</span>';
-            html += '<span class="green">' + (sig.executed_count||0) + ' 执行</span>';
-            html += '</div></div>';
-
-            var trades = man.recent_trades || [];
-            if (trades.length) {
-                html += '<div class="tw"><table><thead><tr><th>日期</th><th>标的</th><th>方向</th><th>盈亏</th><th>理由</th></tr></thead><tbody>';
-                trades.slice(0,10).forEach(function(t) {
-                    html += '<tr><td style="font-size:11px;color:#8b949e">' + (t.date||'') + '</td><td><b>' + escHtml(t.symbol) + '</b></td>';
-                    html += '<td class="' + (t.direction==='LONG'?'long':'short') + '">' + t.direction + '</td>';
-                    html += '<td class="' + pnlCls(t.pnl) + '">' + (t.pnl>=0?'+':'') + '$' + fmt(t.pnl) + '</td>';
-                    html += '<td style="font-size:11px;color:#8b949e">' + escHtml((t.exit_reason||'').substring(0,25)) + '</td></tr>';
-                });
-                html += '</tbody></table></div>';
-            }
-            document.getElementById('perfContent').innerHTML = html;
-        } catch (e) { document.getElementById('perfContent').innerHTML = '<div style="color:#f87171">' + escHtml(String(e)) + '</div>'; }
-    }
-
     // -- Equity Curve --
-    var equityChart = null;
+    var _equityChart = null;
     async function loadEquity() {
         try {
             var res = await fetch('/api/analytics/equity');
             var d = await res.json();
-            var h = d.history || [];
-            if (h.length < 2) { document.getElementById('tab-equity').innerHTML = '<div style="text-align:center;padding:40px;color:#8b949e">数据积累中</div>'; return; }
-            var labels = h.map(function(x){ var t=x.ts||''; return t.length>16?t.substring(5,16):t; });
-            var eqData = h.map(function(x){ return x.equity; });
-            var ddData = h.map(function(x){ return x.drawdown_pct; });
-            if (equityChart) equityChart.destroy();
-            equityChart = new Chart(document.getElementById('equityChart'), {
-                type: 'line',
-                data: { labels: labels, datasets: [
-                    { label: '权益 ($)', data: eqData, borderColor: '#58a6ff', backgroundColor: 'rgba(88,166,255,0.08)', fill: true, tension: 0.3, pointRadius: 1, yAxisID: 'y' },
-                    { label: '回撤 (%)', data: ddData, type: 'bar', backgroundColor: ddData.map(function(v){ return v >= -1 ? 'rgba(74,222,128,0.4)' : v >= -3 ? 'rgba(251,191,36,0.4)' : 'rgba(248,113,113,0.4)'; }), yAxisID: 'y1' },
-                ]},
-                options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
-                    plugins: { legend: { labels: { color: '#8b949e', font: { size: 11 } } } },
+            var history = d.history || [];
+            if (!history.length || typeof Chart === 'undefined') return;
+
+            var ctx = document.getElementById('equityChart');
+            if (!ctx) return;
+            if (_equityChart) _equityChart.destroy();
+
+            var labels = history.map(function(h){ return (h.date || '').substring(5); });
+            var equity = history.map(function(h){ return h.total_assets || h.equity || 0; });
+            var drawdowns = history.map(function(h){ return h.drawdown_pct || 0; });
+            var ddColors = drawdowns.map(function(d){ return Math.abs(d) < 1 ? '#4ade80' : Math.abs(d) < 3 ? '#fbbf24' : '#f87171'; });
+
+            _equityChart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: labels,
+                    datasets: [
+                        { type: 'line', label: '净值', data: equity, borderColor: '#58a6ff', backgroundColor: 'transparent', borderWidth: 2, pointRadius: 0, yAxisID: 'y', tension: 0.3, order: 0 },
+                        { type: 'bar', label: '回撤%', data: drawdowns, backgroundColor: ddColors, yAxisID: 'y1', order: 1 }
+                    ]
+                },
+                options: {
+                    responsive: true, maintainAspectRatio: false,
+                    plugins: { legend: { display: false } },
                     scales: {
-                        x: { grid: { display: false }, ticks: { color: '#8b949e', font: { size: 10 }, maxTicksLimit: 10 } },
-                        y: { position: 'left', grid: { color: 'rgba(48,54,61,0.4)' }, ticks: { color: '#8b949e', callback: function(v){ return '$'+fmtK(v); } } },
-                        y1: { position: 'right', grid: { display: false }, ticks: { color: '#8b949e', callback: function(v){ return v.toFixed(1)+'%'; } } },
+                        x: { ticks: { color: '#8b949e', font: { size: 10 } }, grid: { color: '#21262d' } },
+                        y: { position: 'left', ticks: { color: '#58a6ff', font: { size: 10 }, callback: function(v){ return '$' + (v/1000).toFixed(0) + 'K'; } }, grid: { color: '#21262d' } },
+                        y1: { position: 'right', ticks: { color: '#f87171', font: { size: 10 }, callback: function(v){ return v.toFixed(1) + '%'; } }, grid: { display: false } }
                     }
                 }
             });
-        } catch (e) { console.error('Equity error:', e); }
+        } catch (e) { /* silent */ }
     }
 
-    // -- Signal Quality --
-    async function loadSignals() {
+    // -- Decision Review (merged: perf + signals + recent trades) --
+    async function loadReview() {
         try {
-            var res = await fetch('/api/analytics/signal-quality');
+            var res = await fetch('/api/analytics/manual-performance');
             var d = await res.json();
-            var ic = d.ic_summary || {};
-            var icMean = ic.ic_mean || 0;
+            var manual = d.manual || {};
+            var auto = d.auto || {};
+            var recent = d.recent_trades || [];
+            
             var html = '<div class="mini-metrics">';
-            html += '<div class="mm"><div class="l">30日 IC</div><div class="v ' + pnlCls(icMean) + '">' + icMean.toFixed(4) + '</div></div>';
-            html += '<div class="mm"><div class="l">信号数</div><div class="v">' + (ic.n_signals||0) + '</div></div>';
-            html += '<div class="mm"><div class="l">IC>0 占比</div><div class="v">' + ((ic.ic_positive_rate||0)*100).toFixed(0) + '%</div></div>';
+            html += '<div class="mm"><div class="l">手动交易</div><div class="v">' + (manual.count || 0) + '</div></div>';
+            html += '<div class="mm"><div class="l">胜率</div><div class="v ' + ((manual.win_rate||0)>0.5?'green':'red') + '">' + ((manual.win_rate||0)*100).toFixed(0) + '%</div></div>';
+            html += '<div class="mm"><div class="l">总盈亏</div><div class="v ' + ((manual.total_pnl||0)>=0?'green':'red') + '">$' + (manual.total_pnl||0).toFixed(0) + '</div></div>';
+            html += '<div class="mm"><div class="l">利润因子</div><div class="v">' + ((manual.profit_factor||0) > 0 ? (manual.profit_factor).toFixed(1) : '--') + '</div></div>';
             html += '</div>';
-            var signals = d.recent_signals || [];
-            if (signals.length) {
-                var maxR = Math.max.apply(null, signals.map(function(s){ return Math.abs(s.fwd_return); }).concat([1]));
-                html += '<div style="max-height:200px;overflow-y:auto">';
-                signals.slice(0,20).forEach(function(s) {
-                    var w = Math.min(Math.abs(s.fwd_return) / maxR * 100, 100) / 2;
-                    var color = s.fwd_return >= 0 ? '#22c55e' : '#ef4444';
-                    html += '<div style="display:flex;align-items:center;padding:3px 0;font-size:12px;gap:6px;border-bottom:1px solid #21262d">';
-                    html += '<span style="font-weight:700;min-width:60px">' + escHtml(s.symbol.replace('US.','')) + '</span>';
-                    html += '<div style="flex:1;height:10px;background:#21262d;border-radius:2px;position:relative"><div style="position:absolute;left:50%;top:0;bottom:0;width:1px;background:#484f58"></div>';
-                    html += '<div style="height:100%;border-radius:2px;position:absolute;' + (s.fwd_return>=0?'left:50%':'right:50%') + ';width:' + w + '%;background:' + color + '"></div></div>';
-                    html += '<span class="' + pnlCls(s.fwd_return) + '" style="min-width:50px;text-align:right">' + (s.fwd_return>=0?'+':'') + s.fwd_return.toFixed(2) + '%</span></div>';
-                });
+            
+            // Signal IC summary
+            try {
+                var sigRes = await fetch('/api/analytics/signal-quality');
+                var sigData = await sigRes.json();
+                var ic = sigData.ic_summary || {};
+                var ic30 = parseFloat(ic.ic_30d || 0);
+                var sigCount = ic.total_signals || 0;
+                var icLabel = ic30 >= 0.05 ? '✅ 有预测力' : ic30 >= 0.02 ? '⚠️ 弱' : '❌ 无预测力(噪音)';
+                html += '<div style="font-size:12px;color:#8b949e;padding:8px 0;border-bottom:1px solid #21262d">';
+                html += '<b style="color:#e1e4e8">信号质量:</b> IC=' + ic30.toFixed(3) + ' (' + sigCount + '个信号) — ' + icLabel;
                 html += '</div>';
-            }
-            document.getElementById('sigContent').innerHTML = html;
-        } catch (e) { document.getElementById('sigContent').innerHTML = '<div style="color:#f87171">' + escHtml(String(e)) + '</div>'; }
-    }
-
-    // -- Execution Quality --
-    async function loadExecution() {
-        try {
-            var res = await fetch('/api/analytics/execution-quality');
-            var d = await res.json();
-            var html = '<div class="mini-metrics">';
-            html += '<div class="mm"><div class="l">今日成交</div><div class="v">' + (d.deal_count||0) + '</div></div>';
-            html += '<div class="mm"><div class="l">总成交额</div><div class="v">$' + fmtK(d.total_amount) + '</div></div>';
-            html += '<div class="mm"><div class="l">平均滑点</div><div class="v ' + (Math.abs(d.avg_slippage_pct||0)>0.5?'red':'') + '">' + (d.avg_slippage_pct>=0?'+':'') + (d.avg_slippage_pct||0).toFixed(3) + '%</div></div>';
-            html += '<div class="mm"><div class="l">滑点告警</div><div class="v">' + (d.slippage_alerts||0) + '</div></div>';
-            html += '</div>';
-            var deals = d.deals || [];
-            if (deals.length) {
-                html += '<div class="tw"><table><thead><tr><th>时间</th><th>标的</th><th>方向</th><th>数量</th><th>价格</th><th>金额</th></tr></thead><tbody>';
-                deals.slice(0,15).forEach(function(x) {
-                    var sideLabel = x.side==='BUY'?'<span style="color:#4ade80">买入</span>':'<span style="color:#f87171">卖出</span>';
-                    html += '<tr><td style="font-size:11px;color:#8b949e">' + (x.time||'').substring(5,16) + '</td><td><b>' + escHtml(x.symbol) + '</b></td><td>' + sideLabel + '</td><td>' + x.qty + '</td><td>$' + fmt(x.price,2) + '</td><td>$' + fmtK(x.amount) + '</td></tr>';
+            } catch(e) {}
+            
+            // Recent trades
+            if (recent.length) {
+                html += '<div style="font-size:12px;color:#8b949e;padding:8px 0 4px">最近交易:</div>';
+                html += '<div class="tw"><table style="font-size:12px;width:100%"><thead><tr>';
+                html += '<th style="text-align:left">标的</th><th>方向</th><th>盈亏</th><th>时间</th>';
+                html += '</tr></thead><tbody>';
+                recent.slice(0, 8).forEach(function(t) {
+                    var pnlCls = (t.realized_pnl || 0) >= 0 ? 'green' : 'red';
+                    var dir = t.direction === 'LONG' ? '<span style="color:#4ade80">▲</span>' : '<span style="color:#f87171">▼</span>';
+                    var dateStr = (t.close_time || t.exit_time || '').substring(0, 10);
+                    html += '<tr><td style="color:#e1e4e8">' + escHtml((t.symbol||'').replace('US.','')) + '</td>';
+                    html += '<td>' + dir + '</td>';
+                    html += '<td class="' + pnlCls + '">$' + (t.realized_pnl || 0).toFixed(2) + '</td>';
+                    html += '<td style="color:#8b949e">' + dateStr + '</td></tr>';
                 });
                 html += '</tbody></table></div>';
+            } else {
+                html += '<div style="text-align:center;color:#484f58;padding:16px;font-size:12px">暂无交易记录</div>';
             }
-            document.getElementById('execContent').innerHTML = html;
-        } catch (e) { document.getElementById('execContent').innerHTML = '<div style="color:#f87171">' + escHtml(String(e)) + '</div>'; }
-    }
-
-    // -- Capital Flow --
-    async function loadFlow() {
-        try {
-            var res = await fetch('/api/analytics/capital-flow');
-            var d = await res.json();
-            if (!d.flows || !d.flows.length) { document.getElementById('flowContent').innerHTML = '<div style="text-align:center;color:#8b949e;padding:20px">暂无资金流向数据</div>'; return; }
-            var maxF = Math.max.apply(null, d.flows.map(function(f){ return Math.max(f.super_large_in+f.large_in, f.super_large_out+f.large_out, 1); }));
-            document.getElementById('flowContent').innerHTML = d.flows.map(function(f) {
-                var mainIn = f.super_large_in + f.large_in;
-                var mainOut = f.super_large_out + f.large_out;
-                var inW = (mainIn/maxF*100).toFixed(1), outW = (mainOut/maxF*100).toFixed(1);
-                return '<div style="margin-bottom:12px;padding-bottom:12px;border-bottom:1px solid #21262d">' +
-                    '<div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px"><span><b>' + escHtml(f.symbol) + '</b></span><span class="' + pnlCls(f.net_main) + '">主力 ' + (f.net_main>=0?'+':'') + fmt(f.net_main) + '万</span></div>' +
-                    '<div class="flow-bar" style="display:flex;height:16px;border-radius:3px;overflow:hidden"><div style="background:#22c55e;width:' + inW + '%"></div><div style="background:#ef4444;width:' + outW + '%"></div></div>' +
-                    '<div style="display:flex;justify-content:space-between;font-size:10px;color:#8b949e;margin-top:2px"><span>入 $' + fmtK(mainIn) + '</span><span>出 $' + fmtK(mainOut) + '</span></div></div>';
-            }).join('');
-        } catch (e) { document.getElementById('flowContent').innerHTML = '<div style="color:#f87171">' + escHtml(String(e)) + '</div>'; }
-    }
-
-    // -- Sectors --
-    async function loadSectors() {
-        try {
-            var res = await fetch('/api/analytics/sector-heatmap');
-            var d = await res.json();
-            if (!d.sectors || !d.sectors.length) { document.getElementById('sectorGrid').innerHTML = '<div style="text-align:center;color:#8b949e;padding:20px">板块数据需盘中加载</div>'; return; }
-            document.getElementById('sectorGrid').innerHTML = d.sectors.map(function(s) {
-                var intensity = Math.min(Math.abs(s.change_pct) / 3, 1);
-                var bg = s.change_pct >= 0 ? 'rgba(34,197,94,' + (0.15+intensity*0.45) + ')' : 'rgba(239,68,68,' + (0.15+intensity*0.45) + ')';
-                var fg = s.change_pct >= 0 ? '#4ade80' : '#f87171';
-                return '<div class="sector-cell" style="background:' + bg + ';color:' + fg + '"><div class="name">' + escHtml(s.name) + '</div><div class="pct">' + (s.change_pct>=0?'+':'') + s.change_pct.toFixed(2) + '%</div></div>';
-            }).join('');
-        } catch (e) { document.getElementById('sectorGrid').innerHTML = '<div style="color:#f87171">' + escHtml(String(e)) + '</div>'; }
+            
+            document.getElementById('reviewContent').innerHTML = html;
+        } catch (e) {
+            document.getElementById('reviewContent').innerHTML = '<div style="color:#f87171;font-size:12px">加载失败</div>';
+        }
     }
 
     // ══════════════════════════════════════
@@ -1450,128 +1220,148 @@
     })();
 
     // ═══════════════════════════════════════════════════════
-    //  Signal Inbox (信号收件箱)
+    //  Signal Summary (1行摘要)
     // ═══════════════════════════════════════════════════════
 
-    async function loadSignalInbox() {
+    async function loadSignalSummary() {
         try {
             const res = await fetch('/api/signals/inbox');
             const data = await res.json();
-            renderSignalInbox(data);
+            const signals = data.signals || [];
+            const stats = data.stats || {};
+            const total = signals.length;
+            const longCount = signals.filter(function(s){ return s.direction === 'LONG'; }).length;
+            const shortCount = signals.filter(function(s){ return s.direction === 'SHORT'; }).length;
+            const executed = stats.executed || 0;
+            
+            var icText = '';
+            try {
+                var icRes = await fetch('/api/analytics/signal-quality');
+                var icData = await icRes.json();
+                var ic = icData.ic_summary ? icData.ic_summary.ic_30d : null;
+                if (ic !== null && ic !== undefined) {
+                    var icVal = parseFloat(ic);
+                    var icCls = icVal >= 0.05 ? '' : 'color:#fbbf24';
+                    var icLabel = icVal >= 0.05 ? '有预测力' : icVal >= 0.02 ? '弱' : '⚠️ 无预测力';
+                    icText = ' | IC=' + icVal.toFixed(2) + ' <span style="' + icCls + '">' + icLabel + '</span>';
+                }
+            } catch(e) {}
+
+            var el = document.getElementById('sigSummaryText');
+            if (!el) return;
+            if (total === 0) {
+                el.innerHTML = '今日无信号' + icText;
+            } else {
+                el.innerHTML = '今日 <b style="color:#e1e4e8">' + total + '</b> 信号' +
+                    (longCount > 0 ? ' | <span style="color:#4ade80">' + longCount + ' LONG</span>' : '') +
+                    (shortCount > 0 ? ' | <span style="color:#f87171">' + shortCount + ' SHORT</span>' : '') +
+                    (executed > 0 ? ' | ' + executed + ' 已执行' : '') +
+                    icText;
+            }
         } catch (e) {
-            document.getElementById('sigLoading').textContent = '加载失败: ' + (e.message || '');
+            var el = document.getElementById('sigSummaryText');
+            if (el) el.textContent = '信号加载失败';
         }
     }
 
-    function renderSignalInbox(data) {
-        const signals = data.signals || [];
-        const stats = data.stats || {};
-        document.getElementById('sigLoading').style.display = 'none';
-        document.getElementById('sigCount').textContent = signals.length > 0 ? `(${stats.executed || 0} 执行 / ${stats.rejected || 0} 拒绝)` : '';
-
-        // Desktop table
-        const tbody = document.getElementById('sigTableBody');
-        if (signals.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:#8b949e;padding:16px">今日暂无信号</td></tr>';
-        } else {
-            tbody.innerHTML = signals.slice(0, 30).map(s => {
-                const dir = s.direction || '';
-                const dirCls = dir === 'LONG' ? 'long' : dir === 'SHORT' ? 'short' : '';
-                const pnlCls = (s.pnl || 0) >= 0 ? 'green' : 'red';
-                const statusLabel = s.status === 'executed' ? '✅ 已执行' : s.status === 'rejected' ? '❌ 拒绝' : '⏳ 待处理';
-                const timeStr = (s.time || '').substring(11, 19);
-                const tradeLink = s.status !== 'rejected' ? `<a href="/trade?symbol=${encodeURIComponent(s.symbol)}&direction=${dir}" style="color:#58a6ff;font-size:12px">交易</a>` : '';
-                const reason = s.reject_reason ? `<span class="sig-reason" title="${escHtml(s.reject_reason)}">${escHtml(s.reject_reason)}</span>` : '';
-                return `<tr>
-                    <td style="color:#8b949e;font-size:12px">${timeStr}</td>
-                    <td><a href="/stock/${encodeURIComponent(s.symbol)}" style="color:#58a6ff">${escHtml(s.symbol)}</a></td>
-                    <td><span class="sig-dir ${dirCls}">${dir === 'LONG' ? '▲' : dir === 'SHORT' ? '▼' : ''} ${dir}</span></td>
-                    <td>${s.confidence ? (s.confidence * 100).toFixed(0) + '%' : '--'}</td>
-                    <td style="font-size:12px;color:#8b949e">${escHtml(s.strategy || '')}</td>
-                    <td><span class="sig-badge ${s.status}">${statusLabel}</span> ${reason}</td>
-                    <td class="${pnlCls}">${s.pnl ? '$' + s.pnl.toFixed(2) : '--'}</td>
-                    <td>${tradeLink}</td>
-                </tr>`;
-            }).join('');
-        }
-
-        // Mobile cards
-        const cardsEl = document.getElementById('sigCardsMobile');
-        cardsEl.innerHTML = signals.slice(0, 20).map(s => {
-            const dir = s.direction || '';
-            const dirCls = dir === 'LONG' ? 'long' : 'short';
-            const statusLabel = s.status === 'executed' ? '✅' : s.status === 'rejected' ? '❌' : '⏳';
-            const timeStr = (s.time || '').substring(11, 19);
-            return `<div class="sig-card-m">
-                <div class="sig-card-head">
-                    <span><span class="sig-dir ${dirCls}">${dir === 'LONG' ? '▲' : '▼'} ${dir}</span> <strong>${escHtml(s.symbol)}</strong></span>
-                    <span class="sig-badge ${s.status}">${statusLabel}</span>
-                </div>
-                <div class="sig-card-body">
-                    ${timeStr} | 置信${s.confidence ? (s.confidence * 100).toFixed(0) + '%' : '--'} | ${s.pnl ? 'PnL $' + s.pnl.toFixed(2) : s.reject_reason ? escHtml(s.reject_reason).substring(0, 40) : '--'}
-                </div>
-            </div>`;
-        }).join('');
-
-        // Stats
-        const statsEl = document.getElementById('sigStats');
-        statsEl.innerHTML = `
-            <span>信号: <strong>${stats.total || 0}</strong></span>
-            <span class="green">执行: <strong>${stats.executed || 0}</strong></span>
-            <span class="red">拒绝: <strong>${stats.rejected || 0}</strong></span>
-            <span>通过率: <strong>${stats.pass_rate || 0}%</strong></span>
-            <span class="${(stats.total_pnl || 0) >= 0 ? 'green' : 'red'}">总盈亏: <strong>$${(stats.total_pnl || 0).toFixed(2)}</strong></span>
-        `;
-    }
-
     // ═══════════════════════════════════════════════════════
-    //  Battle Plan (战前计划 — 摘要模式, 详情去 /plan)
+    //  Plan Tracker (战前计划追踪器)
     // ═══════════════════════════════════════════════════════
 
-    async function loadBattlePlan() {
+    var _planTargets = [];
+    var _planPositions = {};
+
+    async function loadPlanTracker() {
         try {
             const res = await fetch('/api/battle-plan');
             const data = await res.json();
-            if (data.error) { document.getElementById('battlePlanCard').style.display = 'none'; return; }
-            document.getElementById('battlePlanCard').style.display = '';
+            if (data.error) { document.getElementById('planTrackerCard').style.display = 'none'; return; }
+            document.getElementById('planTrackerCard').style.display = '';
 
             const regime = data.market_regime || 'UNKNOWN';
-            const regimeEl = document.getElementById('bpRegimeBadge');
+            const regimeEl = document.getElementById('ptRegimeBadge');
             regimeEl.textContent = regime;
-            regimeEl.className = 'bp-regime ' + regime.toLowerCase();
-            regimeEl.style.fontSize = '12px';
-            regimeEl.style.fontWeight = '600';
-            regimeEl.style.padding = '2px 8px';
-            regimeEl.style.borderRadius = '4px';
+            const regimeColors = { RISK_ON: '#4ade80', RISK_OFF: '#f87171', NEUTRAL: '#fbbf24', DEGRADED: '#fb923c' };
+            regimeEl.style.color = regimeColors[regime] || '#8b949e';
+            regimeEl.style.borderColor = regimeColors[regime] || '#30363d';
 
-            const targets = data.targets || [];
-            const targetCount = targets.length;
-            const confirmed = data._status === 'confirmed';
-            const paused = data._status === 'paused';
-            const summaryEl = document.getElementById('bpSummaryText');
-            summaryEl.textContent = targetCount + ' 个目标' + (data.confidence ? ' (置信度 ' + (data.confidence * 100).toFixed(0) + '%)' : '');
+            const conf = data.confidence ? Math.round(data.confidence * 100) + '%' : '';
+            document.getElementById('ptConfidence').textContent = conf ? '置信度 ' + conf : '';
 
-            const statusEl = document.getElementById('bpStatusBadge');
-            if (confirmed) {
-                statusEl.style.display = '';
-                statusEl.textContent = '✅ 已确认';
-                statusEl.style.background = 'rgba(74,222,128,0.15)';
-                statusEl.style.color = '#4ade80';
-            } else if (paused) {
-                statusEl.style.display = '';
-                statusEl.textContent = '⏸ 已暂停';
-                statusEl.style.background = 'rgba(248,113,113,0.15)';
-                statusEl.style.color = '#f87171';
-            } else {
-                statusEl.style.display = 'none';
-            }
+            const statusEl = document.getElementById('ptStatusBadge');
+            if (data._status === 'confirmed') { statusEl.style.display = ''; statusEl.textContent = '✅ 已确认'; statusEl.style.cssText = 'font-size:10px;padding:1px 6px;border-radius:3px;background:rgba(74,222,128,0.15);color:#4ade80'; }
+            else if (data._status === 'paused') { statusEl.style.display = ''; statusEl.textContent = '⏸ 暂停'; statusEl.style.cssText = 'font-size:10px;padding:1px 6px;border-radius:3px;background:rgba(248,113,113,0.15);color:#f87171'; }
+            else { statusEl.style.display = 'none'; }
+
+            _planTargets = data.targets || [];
+            renderPlanTargets();
         } catch (e) {
-            document.getElementById('battlePlanCard').style.display = 'none';
+            document.getElementById('planTrackerCard').style.display = 'none';
+        }
+    }
+
+    function renderPlanTargets() {
+        var el = document.getElementById('ptTargets');
+        if (!_planTargets.length) { el.innerHTML = '<div style="font-size:12px;color:#484f58;padding:4px 0">今日无战前计划</div>'; return; }
+
+        el.innerHTML = _planTargets.map(function(t) {
+            var sym = (t.symbol || '').replace(/^US\./, '');
+            var dir = t.direction || '';
+            var dirIcon = dir === 'LONG' ? '▲' : '▼';
+            var dirColor = dir === 'LONG' ? '#4ade80' : '#f87171';
+            var entryLow = t.entry_price_low || t.entry_zone_low || 0;
+            var entryHigh = t.entry_price_high || t.entry_zone_high || 0;
+            var curPrice = t._current_price || 0;
+            var entryLabel = entryLow && entryHigh ? '$' + entryLow.toFixed(0) + '-' + entryHigh.toFixed(0) : (entryLow ? '$' + entryLow.toFixed(0) : '--');
+
+            // Determine status
+            var status, statusIcon, statusColor;
+            if (t._in_position) {
+                status = '已持仓'; statusIcon = '✅'; statusColor = '#4ade80';
+            } else if (t.cancelled) {
+                status = '已放弃'; statusIcon = '⛔'; statusColor = '#484f58';
+            } else if (curPrice > 0 && entryHigh > 0 && curPrice >= entryLow && curPrice <= entryHigh) {
+                status = '🎯 触发中'; statusIcon = '🟢'; statusColor = '#4ade80';
+            } else if (curPrice > 0 && entryLow > 0 && Math.abs(curPrice - entryLow) / entryLow < 0.02) {
+                status = '接近'; statusIcon = '🟡'; statusColor = '#fbbf24';
+            } else {
+                status = '等待'; statusIcon = '⚫'; statusColor = '#8b949e';
+            }
+
+            var priceInfo = curPrice > 0 ? '$' + curPrice.toFixed(1) : '--';
+            var distHtml = '';
+            if (curPrice > 0 && entryLow > 0) {
+                var dist = ((curPrice - entryLow) / entryLow * 100);
+                var distCls = Math.abs(dist) < 2 ? 'color:#fbbf24' : 'color:#8b949e';
+                distHtml = '<span style="font-size:10px;' + distCls + '">' + (dist >= 0 ? '+' : '') + dist.toFixed(1) + '%</span>';
+            }
+
+            return '<div style="display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid #21262d;font-size:12px">' +
+                '<span style="color:' + dirColor + ';font-weight:700;font-size:11px">' + dirIcon + '</span>' +
+                '<a href="/stock/US.' + sym + '" style="color:#e1e4e8;text-decoration:none;font-weight:600;min-width:48px">' + sym + '</a>' +
+                '<span style="color:#8b949e;min-width:70px">' + entryLabel + '</span>' +
+                '<span style="color:#e1e4e8;min-width:55px;font-variant-numeric:tabular-nums">' + priceInfo + '</span>' +
+                distHtml +
+                '<span style="margin-left:auto;color:' + statusColor + ';font-size:11px;white-space:nowrap">' + statusIcon + ' ' + status + '</span>' +
+                '</div>';
+        }).join('');
+    }
+
+    // Update plan targets when snapshot provides current prices
+    function updatePlanTargetPrices(positions) {
+        _planPositions = {};
+        (positions || []).forEach(function(p) { _planPositions[p.symbol || p.code] = true; });
+        // Re-render if plan is loaded
+        if (_planTargets.length) {
+            _planTargets.forEach(function(t) {
+                t._in_position = !!_planPositions[t.symbol];
+            });
+            renderPlanTargets();
         }
     }
 
     // ═══════════════════════════════════════════════════════
-    //  Risk Command Panel (风控中心)
+    //  Risk Command (pills only — card removed)
     // ═══════════════════════════════════════════════════════
 
     let _riskCmdPaused = false;
@@ -1580,98 +1370,52 @@
         try {
             const res = await fetch('/api/risk/command');
             const data = await res.json();
-            renderRiskCommand(data);
-        } catch (e) {
-            // Graceful: leave as "--"
-        }
-    }
-
-    function renderRiskCommand(data) {
-        // Margin
-        const marginPct = data.margin_pct || 0;
-        const marginEl = document.getElementById('rcMargin');
-        marginEl.textContent = marginPct.toFixed(1) + '%';
-        marginEl.className = 'value ' + (marginPct < 30 ? 'green' : marginPct < 50 ? 'yellow' : 'red');
-        document.getElementById('rcMarginAction').innerHTML = marginPct > 50 ? '<button class="btn btn-sm btn-ghost" onclick="riskCmdReduceMargin()">减仓降压</button>' : '';
-
-        // VIX
-        const vix = data.vix || 0;
-        const vixEl = document.getElementById('rcVix');
-        vixEl.textContent = vix > 0 ? vix.toFixed(1) : '--';
-        vixEl.className = 'value ' + (vix < 20 ? 'green' : vix < 25 ? 'yellow' : 'red');
-        document.getElementById('rcVixAction').innerHTML = vix >= 25 ? '<span style="font-size:11px;color:#fbbf24">高波动模式</span>' : '';
-
-        // Kill switch
-        const killEl = document.getElementById('rcKill');
-        // Also update Status Strip pill
-        var pillKillVal = document.getElementById('pillKillVal');
-        var pillKillSwitch = document.getElementById('pillKillSwitch');
-        _riskCmdPaused = data.kill_switch_active || false;
-        killEl.textContent = _riskCmdPaused ? '🔴 已制动' : '🟢 运行中';
-        if (pillKillVal) {
-            pillKillVal.textContent = _riskCmdPaused ? '🔴 已制动' : '🟢 运行';
-            if (pillKillSwitch) pillKillSwitch.style.borderColor = _riskCmdPaused ? '#f87171' : '#30363d';
-        }
-        killEl.className = 'value ' + (_riskCmdPaused ? 'red' : 'green');
-        document.getElementById('rcKillAction').innerHTML = '';
-        document.getElementById('rcPauseBtn').textContent = _riskCmdPaused ? '▶️ 解除制动' : '⚠️ 紧急制动';
-
-        // Earnings
-        const earnings = data.earnings_count || 0;
-        const earnEl = document.getElementById('rcEarnings');
-        earnEl.textContent = earnings > 0 ? earnings + '只' : '无';
-        earnEl.className = 'value ' + (earnings > 0 ? 'yellow' : 'green');
-
-        // Suggestions
-        const suggestions = data.suggestions || [];
-        document.getElementById('rcSuggestions').innerHTML = suggestions.length > 0
-            ? suggestions.map(s => `<div style="padding:3px 0">💡 ${escHtml(s)}</div>`).join('')
-            : '';
+            _riskCmdPaused = data.kill_switch_active || false;
+            
+            // Update pills
+            var pillKillVal = document.getElementById('pillKillVal');
+            var pillKillSwitch = document.getElementById('pillKillSwitch');
+            if (pillKillVal) {
+                pillKillVal.textContent = _riskCmdPaused ? '🔴 制动中' : '🟢 运行';
+                if (pillKillSwitch) pillKillSwitch.style.borderColor = _riskCmdPaused ? '#f87171' : '#30363d';
+            }
+            
+            // Show emergency button if kill switch is active
+            var pillEmergency = document.getElementById('pillEmergency');
+            if (pillEmergency) {
+                pillEmergency.style.display = _riskCmdPaused ? '' : 'none';
+            }
+        } catch (e) { /* silent */ }
     }
 
     async function riskCmdTogglePause() {
-        const action = _riskCmdPaused ? '解除制动' : '紧急制动';
-        const detail = _riskCmdPaused
-            ? '解除后扫描和下单将恢复正常。'
-            : '制动后一切停止（扫描+信号+下单），60分钟后自动恢复。';
-        if (!confirm(`确认${action}？\n${detail}`)) return;
+        var action = _riskCmdPaused ? '/api/risk/resume-trading' : '/api/risk/pause-trading';
         try {
-            const endpoint = _riskCmdPaused ? '/api/risk/resume-trading' : '/api/risk/pause-trading';
-            const res = await fetch(endpoint, { method: 'POST' });
-            const data = await res.json();
-            if (data.success) {
-                loadRiskCommand();
-            } else {
-                alert('❌ ' + (data.error || '操作失败'));
-            }
-        } catch (e) { alert('❌ 请求失败: ' + e.message); }
+            await fetch(action, { method: 'POST' });
+            loadRiskCommand();
+        } catch (e) { /* silent */ }
     }
 
     async function riskCmdEmergencyClose() {
-        const input = prompt('确认全部平仓？请输入 CONFIRM:');
-        if (input !== 'CONFIRM') return;
+        if (!confirm('⚠️ 确认紧急制动？\n将停止一切交易活动（扫描+信号+下单），60分钟后自动恢复。')) return;
         try {
-            const res = await fetch('/api/risk/emergency-close', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ confirm: 'CONFIRM' })
-            });
-            const data = await res.json();
-            alert(data.success ? '✅ 全部平仓指令已发送' : '❌ ' + (data.error || '操作失败'));
-        } catch (e) { alert('❌ 请求失败: ' + e.message); }
+            await fetch('/api/risk/pause-trading', { method: 'POST' });
+            loadRiskCommand();
+        } catch (e) { /* silent */ }
     }
 
     // ═══════════════════════════════════════════════════════
     //  初始化加载 + 轮询
     // ═══════════════════════════════════════════════════════
 
-    loadSignalInbox();
-    loadBattlePlan();
+    loadSignalSummary();
+    loadPlanTracker();
     loadRiskCommand();
 
-    // 每 60 秒刷新信号收件箱
-    setInterval(loadSignalInbox, 60000);
-    // 每 2 分钟刷新风控面板
+    // 每 60 秒刷新信号摘要 + 计划追踪器
+    setInterval(loadSignalSummary, 60000);
+    setInterval(loadPlanTracker, 60000);
+    // 每 2 分钟刷新风控pills
     setInterval(loadRiskCommand, 120000);
 
 {% endblock %}
