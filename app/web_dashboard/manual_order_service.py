@@ -848,10 +848,10 @@ class ManualOrderService:
         if owner not in ("manual", "auto"):
             owner = "manual"
         try:
-            self._ensure_broker_ctx()
+            self.connect()
             if self._broker_ctx is None:
                 return {"success": False, "error": "broker not connected"}
-            trd_env, acc_id = self._get_trd_env_and_acc()
+            trd_env, acc_id = self._trd_env(), self._acc_id()
             ret, positions = self._broker_ctx.position_list_query(trd_env=trd_env, acc_id=acc_id)
             if ret != 0:
                 return {"success": False, "error": f"position query failed: {positions}"}
@@ -1201,7 +1201,7 @@ class ManualOrderService:
             if not entry_time:
                 try:
                     cursor = conn.execute(
-                        "SELECT MIN(order_time) FROM manual_order_audit WHERE symbol=? AND side='BUY'",
+                        "SELECT MIN(timestamp) FROM manual_order_audit WHERE symbol=? AND action='BUY'",
                         (symbol,)
                     )
                     row = cursor.fetchone()

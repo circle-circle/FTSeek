@@ -406,6 +406,8 @@ class DataService:
         path = db_path or self._get_db()
         try:
             conn = sqlite3.connect(path)
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA busy_timeout=5000")
             conn.row_factory = sqlite3.Row
             rows = conn.execute(sql, params).fetchall()
             conn.close()
