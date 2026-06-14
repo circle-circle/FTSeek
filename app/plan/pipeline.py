@@ -104,6 +104,7 @@ def _build_target_entry(validated: Dict, factor_data: Dict) -> Dict:
         "execution_rules": validated.get("execution_rules", {}),
         "factor_validation": fv,
         "data_cited": [f.get("detail", "") for f in factors.values() if f.get("score", 0) >= 0.6],
+        "model_used": validated.get("model_used", ""),
     }
     return entry
 
@@ -152,7 +153,7 @@ def _generate_narrative(factor_screen: Dict, validation_result: Dict, targets: L
             temperature=0,
             max_tokens=300,
             json_mode=True,
-            timeout=60,
+            timeout=300,
         )
 
         if result.success:

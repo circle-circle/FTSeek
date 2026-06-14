@@ -145,7 +145,7 @@ llm:
       api_key_env: DEEPSEEK_API_KEY
       base_url: https://api.deepseek.com
       model_name: deepseek-v4-pro
-      timeout: 30
+      timeout: 300
       cost_in: 0.002
       cost_out: 0.008
     # ─── 催化辩论专用强模型 (2026-05-27 RFC-Catalyst) ───
@@ -154,7 +154,7 @@ llm:
       api_key_env: DASHSCOPE_API_KEY
       base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
       model_name: qwen3.7-max           # 最强Qwen: 宏观传导推理
-      timeout: 60
+      timeout: 300
       cost_in: 0.008
       cost_out: 0.024
     kimi-k2:

@@ -1,7 +1,7 @@
 {
   "date": "2026-06-14",
   "market_regime": "NEUTRAL",
-  "regime_reasoning": "SPY 20日涨幅仅+0.3%表明大盘缺乏明确趋势，处于窄幅震荡状态。板块涨幅温和且分化（金融+1.4%领涨），未出现极端的风险偏好或避险情绪，符合中性市场特征。",
+  "regime_reasoning": "SPY 20日涨跌幅仅为+0.3%，表明大盘处于横盘震荡状态，缺乏明确的单边趋势。各板块涨幅温和且表现分化，最高仅1.4%，进一步确认了市场当前处于无方向的NEUTRAL环境。",
   "targets": [
     {
       "symbol": "US.JPM",
@@ -10,14 +10,14 @@
         313.0,
         316.0
       ],
-      "stop_loss": 308.5,
-      "take_profit": 329.5,
+      "stop_loss": 306.5,
+      "take_profit": 330.0,
       "urgency": "MEDIUM",
-      "rationale": "✅ sector_momentum: Financials +1.4% | ✅ relative_strength: +7.7% vs SPY +0.3% | ✅ ma_alignment: MA5=313 MA10=309 MA20=305\n验证: sector_momentum=confirmed, relative_strength=confirmed, ma_alignment=confirmed, volume_breakout=false_positive, rsi_sweet_spot=weak\n风险: 缩量逼近20日高点321.30，存在假突破风险; 量价背离明显，追高极易被套，必须等待回踩确认",
-      "trigger_condition": "回踩313-316区间后出现5分钟放量阳线，或带量突破20日高点321.30",
-      "risk_reward": 2.5,
+      "rationale": "✅ sector_momentum: Financials +1.4% | ✅ relative_strength: +7.7% vs SPY +0.3% | ✅ ma_alignment: MA5=313 MA10=309 MA20=305\n验证: sector_momentum=confirmed, relative_strength=confirmed, ma_alignment=confirmed, volume_breakout=false_positive, rsi_sweet_spot=confirmed\n风险: 缩量(0.8x)逼近20日高点321.30，假突破与动能衰竭风险极高; 缺乏成交量确认，严禁在320上方追高，必须等待回踩或放量突破",
+      "trigger_condition": "价格回踩313-316区间(MA5附近)并出现5分钟级别看涨吞没/长下影线，或带量(>1.2x)突破20日高点321.30",
+      "risk_reward": 1.94,
       "position_size_pct": 4,
-      "invalidation": "收盘价跌破MA20(305)或Financials板块指数转跌",
+      "invalidation": "放量跌破MA10(309)或日线收盘价低于MA20(305)，或金融板块(Financials)整体转跌",
       "confidence": 65,
       "factor_score": 0.711,
       "composite_rank": 0.481,
@@ -32,51 +32,15 @@
         "relative_strength": "CONFIRMED",
         "ma_alignment": "CONFIRMED",
         "volume_breakout": "FALSE_POSITIVE",
-        "rsi_sweet_spot": "WEAK"
+        "rsi_sweet_spot": "CONFIRMED"
       },
       "data_cited": [
         "Financials +1.4%",
         "+7.7% vs SPY +0.3%",
         "MA5=313 MA10=309 MA20=305",
         "RSI=64"
-      ]
-    },
-    {
-      "symbol": "US.PG",
-      "direction": "LONG",
-      "entry_zone": [
-        147.5,
-        148.5
       ],
-      "stop_loss": 144.8,
-      "take_profit": 154.4,
-      "urgency": "MEDIUM",
-      "rationale": "⚠️ sector_momentum: N/A | ✅ relative_strength: +5.7% vs SPY +0.3% | ✅ ma_alignment: MA5=148 MA10=145 MA20=144\n验证: sector_momentum=weak, relative_strength=confirmed, ma_alignment=confirmed, volume_breakout=false_positive, rsi_sweet_spot=confirmed\n风险: 缩量上涨(量比0.8x)导致突破20日高点150.43的可靠性存疑，存在假突破风险; 板块动量缺失(N/A)，个股独立走强易受大盘中性情绪拖累",
-      "trigger_condition": "价格回踩MA5(148)附近并出现5分钟级别看涨K线反转形态(如长下影线或看涨吞没)",
-      "risk_reward": 2.0,
-      "position_size_pct": 4,
-      "invalidation": "日线收盘价跌破MA20(144)或盘中放量跌破MA10(145)关键支撑",
-      "confidence": 65,
-      "factor_score": 0.661,
-      "composite_rank": 0.46,
-      "verdict": "CONDITIONAL",
-      "execution_rules": {
-        "gap_up_over_2pct": "SKIP",
-        "gap_down_over_2pct": "WAIT_RECOVERY",
-        "hit_zone_then_drop": "WAIT_5MIN_CANDLE_ABOVE"
-      },
-      "factor_validation": {
-        "sector_momentum": "WEAK",
-        "relative_strength": "CONFIRMED",
-        "ma_alignment": "CONFIRMED",
-        "volume_breakout": "FALSE_POSITIVE",
-        "rsi_sweet_spot": "CONFIRMED"
-      },
-      "data_cited": [
-        "+5.7% vs SPY +0.3%",
-        "MA5=148 MA10=145 MA20=144",
-        "RSI=59"
-      ]
+      "model_used": "qwen3.7-max"
     },
     {
       "symbol": "US.LLY",
@@ -85,17 +49,17 @@
         1115.0,
         1125.0
       ],
-      "stop_loss": 1082.0,
+      "stop_loss": 1078.0,
       "take_profit": 1182.0,
       "urgency": "MEDIUM",
-      "rationale": "⚠️ sector_momentum: Healthcare -0.2% | ✅ relative_strength: +12.8% vs SPY +0.3% | ✅ ma_alignment: MA5=1145 MA10=1121 MA20=1086\n验证: sector_momentum=weak, relative_strength=confirmed, ma_alignment=confirmed, volume_breakout=false_positive, rsi_sweet_spot=confirmed\n风险: 板块整体弱势缺乏协同效应; 量比仅0.8x，缩量状态下突破动能存疑",
-      "trigger_condition": "价格回踩MA10(1121)附近后，出现5分钟级别放量阳线且收盘站上1125",
-      "risk_reward": 1.63,
+      "rationale": "⚠️ sector_momentum: Healthcare -0.2% | ✅ relative_strength: +12.8% vs SPY +0.3% | ✅ ma_alignment: MA5=1145 MA10=1121 MA20=1086\n验证: sector_momentum=weak, relative_strength=confirmed, ma_alignment=confirmed, volume_breakout=false_positive, rsi_sweet_spot=confirmed\n风险: 量比仅0.8x，缩量回踩缺乏增量资金确认; 板块Healthcare整体疲软，个股独立行情易受大盘拖累",
+      "trigger_condition": "价格回踩MA10(1121)附近企稳，5分钟K线放量收阳并突破分时均价线",
+      "risk_reward": 1.47,
       "position_size_pct": 4,
       "invalidation": "日线收盘价跌破MA20(1086)或Healthcare板块单日跌幅超过1.5%",
-      "confidence": 60,
+      "confidence": 65,
       "factor_score": 0.647,
-      "composite_rank": 0.44,
+      "composite_rank": 0.454,
       "verdict": "CONDITIONAL",
       "execution_rules": {
         "gap_up_over_2pct": "SKIP",
@@ -113,7 +77,46 @@
         "+12.8% vs SPY +0.3%",
         "MA5=1145 MA10=1121 MA20=1086",
         "RSI=62"
-      ]
+      ],
+      "model_used": "qwen3.7-max"
+    },
+    {
+      "symbol": "US.PG",
+      "direction": "LONG",
+      "entry_zone": [
+        147.5,
+        148.2
+      ],
+      "stop_loss": 144.5,
+      "take_profit": 154.0,
+      "urgency": "LOW",
+      "rationale": "⚠️ sector_momentum: N/A | ✅ relative_strength: +5.7% vs SPY +0.3% | ✅ ma_alignment: MA5=148 MA10=145 MA20=144\n验证: sector_momentum=weak, relative_strength=confirmed, ma_alignment=confirmed, volume_breakout=false_positive, rsi_sweet_spot=confirmed\n风险: 缩量(0.8x)逼近20日高点150.43阻力位，假突破风险极高; 缺乏板块动量共振(N/A)，个股独立上涨动能存疑",
+      "trigger_condition": "价格回踩MA5(148.00)附近企稳，且15分钟级别K线放量收阳确认支撑",
+      "risk_reward": 1.8,
+      "position_size_pct": 3,
+      "invalidation": "日线收盘跌破MA20(144.00)或盘中放量跌破145.00关键支撑",
+      "confidence": 45,
+      "factor_score": 0.661,
+      "composite_rank": 0.404,
+      "verdict": "CONDITIONAL",
+      "execution_rules": {
+        "gap_up_over_2pct": "SKIP",
+        "gap_down_over_2pct": "WAIT_RECOVERY",
+        "hit_zone_then_drop": "WAIT_5MIN_CANDLE_ABOVE"
+      },
+      "factor_validation": {
+        "sector_momentum": "WEAK",
+        "relative_strength": "CONFIRMED",
+        "ma_alignment": "CONFIRMED",
+        "volume_breakout": "FALSE_POSITIVE",
+        "rsi_sweet_spot": "CONFIRMED"
+      },
+      "data_cited": [
+        "+5.7% vs SPY +0.3%",
+        "MA5=148 MA10=145 MA20=144",
+        "RSI=59"
+      ],
+      "model_used": "qwen3.7-max"
     },
     {
       "symbol": "US.LMT",
@@ -122,17 +125,17 @@
         530.0,
         535.0
       ],
-      "stop_loss": 514.0,
-      "take_profit": 558.0,
+      "stop_loss": 515.0,
+      "take_profit": 563.0,
       "urgency": "LOW",
-      "rationale": "⚠️ sector_momentum: N/A | ✅ relative_strength: +5.4% vs SPY +0.3% | ✅ ma_alignment: MA5=533 MA10=525 MA20=525\n验证: sector_momentum=weak, relative_strength=confirmed, ma_alignment=confirmed, volume_breakout=false_positive, rsi_sweet_spot=weak\n风险: 无量上涨(0.9x)暗示突破缺乏资金共识，假突破风险极高; RSI=56处于中性区，缺乏短期动量加速特征",
-      "trigger_condition": "价格回踩530-535区间后，出现15分钟级别放量(>1.2x)阳线站稳MA5",
-      "risk_reward": 1.38,
+      "rationale": "⚠️ sector_momentum: N/A | ✅ relative_strength: +5.4% vs SPY +0.3% | ✅ ma_alignment: MA5=533 MA10=525 MA20=525\n验证: sector_momentum=weak, relative_strength=confirmed, ma_alignment=confirmed, volume_breakout=false_positive, rsi_sweet_spot=weak\n风险: 量比仅0.9x，缩量上涨缺乏资金确认，假突破风险极高; RSI=56处于中性区，未进入强势多头区间(60-70)",
+      "trigger_condition": "价格回踩MA5(533)附近企稳，且5分钟级别出现放量阳线反包",
+      "risk_reward": 1.7,
       "position_size_pct": 3,
-      "invalidation": "日线收盘价跌破MA20(525)且成交量>1.2x avg，或SPY出现>1.5%的破位下跌",
-      "confidence": 45,
+      "invalidation": "收盘价跌破MA20(525)且伴随放量，或大盘SPY出现>1.5%的破位下跌",
+      "confidence": 40,
       "factor_score": 0.669,
-      "composite_rank": 0.407,
+      "composite_rank": 0.393,
       "verdict": "CONDITIONAL",
       "execution_rules": {
         "gap_up_over_2pct": "SKIP",
@@ -150,26 +153,27 @@
         "+5.4% vs SPY +0.3%",
         "MA5=533 MA10=525 MA20=525",
         "RSI=56"
-      ]
+      ],
+      "model_used": "qwen3.7-max"
     },
     {
-      "symbol": "US.MU",
+      "symbol": "US.SNDK",
       "direction": "LONG",
       "entry_zone": [
-        951.0,
-        979.0
+        1742.0,
+        1780.0
       ],
-      "stop_loss": 920.0,
-      "take_profit": 1085.0,
-      "urgency": "MEDIUM",
-      "rationale": "⚠️ sector_momentum: Semiconductors +0.0% | ✅ relative_strength: +35.5% vs SPY +0.3% | ⚠️ ma_alignment: MA5=951 MA10=979 MA20=893\n验证: sector_momentum=weak, relative_strength=confirmed, ma_alignment=confirmed, volume_breakout=false_positive, rsi_sweet_spot=confirmed\n风险: 缩量上涨(0.7x)缺乏资金确认，突破有效性存疑; 板块零动量，个股独立行情持续性面临考验",
-      "trigger_condition": "价格回踩MA10(979)至MA5(951)区间企稳，且伴随5分钟级别成交量放大(>1.2x avg)的阳线确认",
-      "risk_reward": 1.8,
-      "position_size_pct": 4,
-      "invalidation": "收盘价跌破MA20(893)或半导体板块指数出现>2%的放量下跌",
-      "confidence": 55,
-      "factor_score": 0.552,
-      "composite_rank": 0.386,
+      "stop_loss": 1615.0,
+      "take_profit": 2180.0,
+      "urgency": "LOW",
+      "rationale": "⚠️ sector_momentum: N/A | ✅ relative_strength: +40.7% vs SPY +0.3% | ✅ ma_alignment: MA5=1759 MA10=1742 MA20=1624\n验证: sector_momentum=weak, relative_strength=confirmed, ma_alignment=confirmed, volume_breakout=false_positive, rsi_sweet_spot=false_positive\n风险: 现价1980严重偏离MA5(1759)达12.5%，存在极高均值回归风险; 量比仅1.1x属于无量空涨，突破有效性存疑",
+      "trigger_condition": "价格回落至1742-1780区间并出现5分钟级别看涨吞没或长下影线企稳信号",
+      "risk_reward": 2.9,
+      "position_size_pct": 3,
+      "invalidation": "日线收盘价跌破MA20(1624)或回踩区间时出现放量跌破(量比>2.0x)",
+      "confidence": 40,
+      "factor_score": 0.613,
+      "composite_rank": 0.369,
       "verdict": "CONDITIONAL",
       "execution_rules": {
         "gap_up_over_2pct": "SKIP",
@@ -181,39 +185,42 @@
         "relative_strength": "CONFIRMED",
         "ma_alignment": "CONFIRMED",
         "volume_breakout": "FALSE_POSITIVE",
-        "rsi_sweet_spot": "CONFIRMED"
+        "rsi_sweet_spot": "FALSE_POSITIVE"
       },
       "data_cited": [
-        "+35.5% vs SPY +0.3%",
-        "RSI=64"
-      ]
+        "+40.7% vs SPY +0.3%",
+        "MA5=1759 MA10=1742 MA20=1624"
+      ],
+      "model_used": "qwen3.7-max"
     }
   ],
   "restricted": [
-    "US.AMD"
+    "US.AMD",
+    "US.TSM"
   ],
   "restricted_reasons": {
-    "US.AMD": "无量上涨(1.0x avg)极易形成诱多假突破; 短期均线(MA5<MA10)未多头对齐且现价(511)偏离度过大"
+    "US.AMD": "无量上涨缺乏资金确认; 短期均线(MA5<MA10)未完全理顺",
+    "US.TSM": "无量反弹，缺乏板块共振支持; 均线交织且受MA10(428)压制，假突破风险极高"
   },
   "position_actions": [],
   "strategy_adjustments": [
-    "重点关注JPM（金融板块领涨+1.4%且置信度65%）和PG（必需消费防御属性且置信度65%）。",
-    "建议在entry区间下沿限价接多，避免追高，并严格执行条件止损以应对震荡洗盘。"
+    "重点关注JPM和LLY：两者置信度最高（65%），且JPM所属的金融板块今日领涨（+1.4%），具备相对强度优势，适合区间操作。",
+    "规避或缩减PG、LMT和SNDK的仓位：这三只标的置信度仅为40%-45%，在震荡市中极易触发宽幅止损，盈亏比不佳。"
   ],
   "risk_warnings": [
-    "大盘缺乏趋势动能，个股突破易遭遇假突破和流动性陷阱。",
-    "所有标的均为CONDITIONAL且置信度最高仅65%，震荡市中扫损概率较高。"
+    "震荡市中假突破风险较高，条件单容易被扫损后反转。",
+    "部分标的（如SNDK、LMT）置信度偏低且止损空间较大，在缺乏大盘共振时下行风险加剧。"
   ],
-  "confidence": 0.58,
+  "confidence": 0.51,
   "arbiter_mode": "factor_pipeline",
   "pipeline_stats": {
     "pool_size": 26,
     "scored_count": 26,
-    "factor_screen_sec": 8.8,
-    "validation_sec": 97.6,
+    "factor_screen_sec": 8.7,
+    "validation_sec": 101.2,
     "valid_count": 0,
-    "conditional_count": 7,
-    "total_sec": 130.9
+    "conditional_count": 6,
+    "total_sec": 136.6
   },
   "sector_momentum": {
     "Technology": 0.87,

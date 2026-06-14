@@ -204,21 +204,21 @@ def _try_single_model(
             cost = (r["tokens_in"] / 1000.0 * cost_in_per_1k +
                     r["tokens_out"] / 1000.0 * cost_out_per_1k)
             return CallResult(
-                success=True, response=r["text"], model_used=alias,
+                success=True, response=r["text"], model_used=f"{model_name}",
                 latency_ms=elapsed_ms, cost_usd=cost,
                 tokens_in=r["tokens_in"], tokens_out=r["tokens_out"],
             )
         except Exception as e:
             last_error = str(e)
             if attempt == 0:
-                logger.debug(f"[ModelCall·{alias}] 第 {attempt+1} 次失败, 重试: {e}")
+                logger.debug(f"[ModelCall·{alias}({model_name})] 第 {attempt+1} 次失败, 重试: {e}")
                 time.sleep(1)  # 短暂退避
             else:
-                logger.warning(f"[ModelCall·{alias}] 全部 2 次失败: {e}")
+                logger.warning(f"[ModelCall·{alias}({model_name})] 全部 2 次失败: {e}")
 
     elapsed_ms = (time.time() - start) * 1000
     return CallResult(
-        success=False, model_used=alias, latency_ms=elapsed_ms, error=last_error,
+        success=False, model_used=f"{model_name}", latency_ms=elapsed_ms, error=last_error,
     )
 
 
@@ -420,6 +420,16 @@ def _cross_check_call(
     primary = route["primary"]
     critic = route["fallback"]
 
+    # Resolve real model names for reporting
+    def _real_name(alias):
+        try:
+            mc = cfg.get("models", {}).get(alias, {})
+            return mc.get("model_name", alias)
+        except Exception:
+            return alias
+    primary_real = _real_name(primary)
+    critic_real = _real_name(critic)
+
     # Step 1: primary 出方案
     res_primary = _try_single_model(
         primary, cfg, system, prompt,
@@ -476,7 +486,7 @@ def _cross_check_call(
         return CallResult(
             success=False,
             error="cross_check_rejected",
-            model_used=f"{primary}+{critic}",
+            model_used=f"{primary_real}+{critic_real}",
             latency_ms=res_primary.latency_ms + res_critic.latency_ms,
             cost_usd=res_primary.cost_usd + res_critic.cost_usd,
             cross_check={
@@ -488,7 +498,7 @@ def _cross_check_call(
         )
 
     # 通过 → 返回 primary (附 critique 元数据)
-    res_primary.model_used = f"{primary}+critique_by_{critic}"
+    res_primary.model_used = f"{primary_real}+critique_by_{critic_real}"
     res_primary.latency_ms += res_critic.latency_ms
     res_primary.cost_usd += res_critic.cost_usd
     res_primary.cross_check = {
