@@ -41,29 +41,81 @@ def register(app, templates):
         if cached is not None:
             return cached
         try:
+            # 1. Read historical data, filter out garbage records
+            #    (early records may contain HK-account or sim-mode values >200K)
             rows = await ds.db_query(
                 "SELECT id, current_equity, peak_equity, drawdown_pct, max_drawdown_pct, "
                 "water_level, buying_power, last_update "
-                "FROM capital_state ORDER BY id ASC LIMIT 500"
+                "FROM capital_state WHERE current_equity > 0 AND current_equity < 200000 "
+                "ORDER BY id ASC LIMIT 1000"
             )
             history = [{
                 "ts": r.get("last_update", ""),
+                "date": (r.get("last_update", "") or "")[:10],
                 "equity": round(float(r["current_equity"]), 2),
                 "peak": round(float(r["peak_equity"]), 2),
                 "drawdown_pct": round(float(r["drawdown_pct"]) * 100, 2),
                 "water_level": r.get("water_level", "unknown"),
                 "buying_power": round(float(r["buying_power"]), 2),
             } for r in rows]
-            current = history[-1] if history else {}
-            max_dd = min(h["drawdown_pct"] for h in history) if history else 0
+
+            # 2. Deduplicate by date — keep last record per day for cleaner chart
+            seen_dates = {}
+            for h in history:
+                seen_dates[h["date"]] = h
+            daily_history = sorted(seen_dates.values(), key=lambda x: x["ts"])
+
+            # 3. Get real-time current equity from Futu broker
+            try:
+                svc = ds.svc()
+                if svc.connect():
+                    acc_raw = await ds.get_account_raw()
+                    if acc_raw is not None and not (hasattr(acc_raw, 'empty') and acc_raw.empty):
+                        from app.web_dashboard.routes.dashboard import _parse_account
+                        live_acc = _parse_account(acc_raw)
+                        live_equity = live_acc.get("total_assets", 0)
+                        if live_equity > 0:
+                            now_ts = __import__('datetime').datetime.now().isoformat()
+                            today_str = now_ts[:10]
+                            live_point = {
+                                "ts": now_ts,
+                                "date": today_str,
+                                "equity": round(live_equity, 2),
+                                "peak": max((h["peak"] for h in daily_history), default=live_equity),
+                                "drawdown_pct": 0,
+                                "water_level": "green",
+                                "buying_power": round(live_acc.get("buying_power", 0), 2),
+                            }
+                            # Update or append today's live point
+                            if daily_history and daily_history[-1]["date"] == today_str:
+                                daily_history[-1] = live_point
+                            else:
+                                daily_history.append(live_point)
+            except Exception:
+                pass  # Broker unavailable — use DB data only
+
+            # 4. Recalculate peak + drawdown from clean history
+            peak = 0
+            for h in daily_history:
+                if h["equity"] > peak:
+                    peak = h["equity"]
+                h["peak"] = round(peak, 2)
+                if peak > 0:
+                    h["drawdown_pct"] = round((h["equity"] - peak) / peak * 100, 2)
+                else:
+                    h["drawdown_pct"] = 0
+
+            current = daily_history[-1] if daily_history else {}
+            max_dd = min(h["drawdown_pct"] for h in daily_history) if daily_history else 0
             result = {
-                "history": history,
+                "history": daily_history,
                 "current_equity": current.get("equity", 0),
                 "peak_equity": current.get("peak", 0),
                 "current_drawdown_pct": current.get("drawdown_pct", 0),
                 "max_drawdown_pct": round(max_dd, 2),
                 "water_level": current.get("water_level", "unknown"),
                 "buying_power": current.get("buying_power", 0),
+                "currency": "USD",
             }
             ds.cache.set("analytics_equity", result, ttl=30)
             return result

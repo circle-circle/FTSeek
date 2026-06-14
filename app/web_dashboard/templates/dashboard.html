@@ -382,7 +382,8 @@
                     <div class="tab" data-tab="review" onclick="switchTab('review')">决策复盘</div>
                 </div>
                 <div class="tab-panel active" id="tab-equity">
-                    <div class="tab-hint">账户净值走势 + 回撤幅度。<b>回撤</b>=从峰值下跌的百分比。</div>
+                    <div class="tab-hint">账户净值走势 + 回撤幅度。<b>回撤</b>=从峰值下跌的百分比。数据源: 实盘账户 (USD)。</div>
+                    <div id="equityStats" style="display:flex;gap:16px;margin-bottom:12px;font-size:13px;flex-wrap:wrap"></div>
                     <div class="chart-wrap"><canvas id="equityChart"></canvas></div>
                 </div>
                 <div class="tab-panel" id="tab-review">
@@ -1039,6 +1040,25 @@
             var res = await fetch('/api/analytics/equity');
             var d = await res.json();
             var history = d.history || [];
+            
+            // Stats bar
+            var statsEl = document.getElementById('equityStats');
+            if (statsEl) {
+                var ce = d.current_equity || 0;
+                var pe = d.peak_equity || 0;
+                var dd = d.current_drawdown_pct || 0;
+                var mdd = d.max_drawdown_pct || 0;
+                var bp = d.buying_power || 0;
+                var ddCls = Math.abs(dd) < 1 ? 'color:#4ade80' : Math.abs(dd) < 3 ? 'color:#fbbf24' : 'color:#f87171';
+                var mddCls = Math.abs(mdd) < 1 ? 'color:#4ade80' : Math.abs(mdd) < 3 ? 'color:#fbbf24' : 'color:#f87171';
+                statsEl.innerHTML = 
+                    '<span>当前净值 <b style="color:#e1e4e8">$' + ce.toLocaleString('en-US', {minimumFractionDigits:0, maximumFractionDigits:0}) + '</b> USD</span>' +
+                    '<span>峰值 <b style="color:#e1e4e8">$' + pe.toLocaleString('en-US', {minimumFractionDigits:0, maximumFractionDigits:0}) + '</b></span>' +
+                    '<span style="' + ddCls + '">回撤 ' + dd.toFixed(2) + '%</span>' +
+                    '<span style="' + mddCls + '">最大回撤 ' + mdd.toFixed(2) + '%</span>' +
+                    '<span>购买力 <b style="color:#e1e4e8">$' + bp.toLocaleString('en-US', {minimumFractionDigits:0, maximumFractionDigits:0}) + '</b></span>';
+            }
+            
             if (!history.length || typeof Chart === 'undefined') return;
 
             var ctx = document.getElementById('equityChart');
