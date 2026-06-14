@@ -798,7 +798,7 @@
 
         var dangerCount = sorted.filter(function(l){ return l.alert_level === 'danger'; }).length;
         var warnCount = sorted.filter(function(l){ return l.alert_level === 'warning'; }).length;
-        countEl.textContent = '(' + sorted.length + ')' + 
+        countEl.innerHTML = '(' + sorted.length + ')' + 
             (dangerCount > 0 ? ' <span style="color:#f87171">' + dangerCount + '⚠</span>' : '') +
             (warnCount > 0 ? ' <span style="color:#fbbf24">' + warnCount + '⚡</span>' : '');
 
