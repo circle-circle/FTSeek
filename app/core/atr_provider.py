@@ -48,6 +48,12 @@ class ATRProvider:
     def get_atr(self, symbol: str, force_refresh: bool = False) -> Optional[float]:
         """获取标的 ATR 值，优先走缓存
 
+        优先级 (2026-06-14 ATR 统一修复):
+          1. ExitMonitor 日线 ATR 缓存 (含 VIX 缩放 + 底限保护) — 与止损逻辑同源
+          2. 自身内存缓存 (60s TTL)
+          3. MarketDataRouter (1-min K线, 量级可能偏差)
+          4. 过期缓存 fallback (5×TTL 宽限期)
+
         Args:
             symbol: 标的代码 (e.g. 'US.AAPL')
             force_refresh: True 时跳过缓存强制从 Router 重新拉取
@@ -59,6 +65,20 @@ class ATRProvider:
             return None
 
         now = time.time()
+
+        # ── P0 (2026-06-14): 优先读 ExitMonitor 日线 ATR ──
+        # ExitMonitor._get_atr() 使用 K_DAY + VIX 缩放 + 三层底限,
+        # 与止损决策同源。避免 1-min ATR 量级偏差 (10-50×) 导致止损错位。
+        if not force_refresh:
+            try:
+                from app.risk.position_exit_monitor import get_cached_atr
+                _exit_atr = get_cached_atr(symbol)
+                if _exit_atr > 0:
+                    with self._lock:
+                        self._cache[symbol] = (_exit_atr, now)
+                    return _exit_atr
+            except Exception:
+                pass  # ExitMonitor 未初始化或导入失败, fallback 到原逻辑
 
         with self._lock:
             # 1) 缓存有效命中

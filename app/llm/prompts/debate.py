@@ -60,7 +60,9 @@ ARBITER_PROMPT = """你是 FTSeek-US 首席仲裁师。
       "stop_loss": 0,
       "take_profit": 0,
       "urgency": "HIGH/MEDIUM/LOW",
+      "confidence": 0.75,
       "rationale": "推理链",
+      "discovery_source": "sector_rotation/premarket_mover/catalyst/watchlist/analyst",
       "arbiter_note": "综合双方观点的说明"
     }}
   ],
@@ -68,13 +70,6 @@ ARBITER_PROMPT = """你是 FTSeek-US 首席仲裁师。
   "restricted_reasons": {{
     "US.TSLA": "原因"
   }},
-  "position_actions": [
-    {{
-      "symbol": "US.QQQ",
-      "action": "HOLD/ADJUST_SL/EXIT/ADD",
-      "reason": "理由"
-    }}
-  ],
   "strategy_adjustments": ["具体调整"],
   "risk_warnings": ["风险点"],
   "debate_summary": "辩论核心分歧与共识 (1-2句话)",

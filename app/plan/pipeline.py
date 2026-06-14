@@ -152,7 +152,7 @@ def _generate_narrative(factor_screen: Dict, validation_result: Dict, targets: L
             temperature=0,
             max_tokens=300,
             json_mode=True,
-            timeout=30,
+            timeout=60,
         )
 
         if result.success:

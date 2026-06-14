@@ -392,6 +392,18 @@
                 <button class="btn btn-ghost btn-sm" onclick="loadManualPerf()" style="margin-top:8px">刷新</button>
             </div>
         </div>
+
+        <!-- 执行质量面板 (折叠) -->
+        <div class="card">
+            <div style="display:flex;justify-content:space-between;align-items:center;cursor:pointer" onclick="var b=document.getElementById('execQualityBody'),a=document.getElementById('execQualityArrow');b.style.display=b.style.display==='none'?'block':'none';a.textContent=b.style.display==='none'?'▶':'▼'">
+                <h2 style="margin:0">⚡ 执行质量</h2>
+                <span id="execQualityArrow" style="font-size:12px;color:#8b949e">▶</span>
+            </div>
+            <div id="execQualityBody" style="display:none;margin-top:8px">
+                <div id="execQuality"><div class="loading">加载中...</div></div>
+                <button class="btn btn-ghost btn-sm" onclick="loadExecQuality()" style="margin-top:8px">刷新</button>
+            </div>
+        </div>
     </div>
 
     <!-- Preview modal — 预览即确认，无CONFIRM输入 -->
@@ -598,7 +610,7 @@ function escHtml(s) {
                 if (trades.count > 0) {
                     const pnlCls = trades.net_pnl >= 0 ? 'g' : 'r';
                     html += `<div class="intel-row"><span class="intel-label">近 7 天交易</span>
-                        <span class="intel-val">${trades.count}笔 胜率${trades.win_rate}% <span class="${pnlCls}">${trades.net_pnl >= 0 ? '+' : ''}$${trades.net_pnl.toFixed(0)}</span></span></div>`;
+                        <span class="intel-val">${trades.count}笔 胜率${trades.win_rate}% <span class="${pnlCls}">${trades.net_pnl >= 0 ? '+$' : '-$'}${Math.abs(trades.net_pnl).toFixed(0)}</span></span></div>`;
                 } else {
                     html += `<div class="intel-row"><span class="intel-label">近 7 天交易</span><span class="intel-val" style="color:#8b949e">无记录</span></div>`;
                 }
@@ -610,7 +622,7 @@ function escHtml(s) {
                     const slWarn = pos.sl_distance_pct > 0 && pos.sl_distance_pct < 5
                         ? ` <span style="color:${pos.sl_distance_pct < 2 ? '#f87171' : '#fbbf24'}">⚠️ 距止损${pos.sl_distance_pct}%</span>` : '';
                     html += `<div class="intel-row"><span class="intel-label">当前持仓</span>
-                        <span class="intel-val">${pos.direction} ${pos.size}股 <span class="${pCls}">${pos.pnl >= 0 ? '+' : ''}$${pos.pnl.toFixed(0)} (${pos.pnl_pct >= 0 ? '+' : ''}${pos.pnl_pct.toFixed(1)}%)</span>${slWarn}</span></div>`;
+                        <span class="intel-val">${pos.direction} ${pos.size}股 <span class="${pCls}">${pos.pnl >= 0 ? '+$' : '-$'}${Math.abs(pos.pnl).toFixed(0)} (${pos.pnl_pct >= 0 ? '+' : ''}${pos.pnl_pct.toFixed(1)}%)</span>${slWarn}</span></div>`;
                 }
 
                 // Battle plan match
@@ -895,7 +907,7 @@ function escHtml(s) {
             const pnlPct = cost > 0 && cur > 0 ? (isLong ? ((cur-cost)/cost*100) : ((cost-cur)/cost*100)) : 0;
             let html = '<div class="diag-header"><span class="diag-sym">' + sym.replace(/^US\./,'') + '</span>';
             html += '<span class="diag-dir ' + (isLong?'long':'short') + '">' + (isLong?'LONG':'SHORT') + ' ' + qty + '</span></div>';
-            html += '<div style="font-size:13px;margin-bottom:8px"><span class="' + (upnl>=0?'long':'short') + '">' + (upnl>=0?'+':'') + '$' + upnl.toFixed(2) + ' (' + (pnlPct>=0?'+':'') + pnlPct.toFixed(1) + '%)</span>';
+            html += '<div style="font-size:13px;margin-bottom:8px"><span class="' + (upnl>=0?'long':'short') + '">' + (upnl>=0?'+$':'-$') + Math.abs(upnl).toFixed(2) + ' (' + (pnlPct>=0?'+':'') + pnlPct.toFixed(1) + '%)</span>';
             if (sl) html += ' | SL <span style="color:' + (sl.danger?'#f87171':'#fbbf24') + '">' + sl.sl_distance_pct.toFixed(1) + '%</span>';
             html += '</div>';
             html += '<div class="diag-action ' + sig.actionCls + '">' + sig.action + '</div>';
@@ -1034,8 +1046,9 @@ function escHtml(s) {
                 const a = attrs[0];
                 let html = '<div style="margin-bottom:8px">';
                 const pnlCls = a.pnl >= 0 ? 'green' : 'red';
-                const pnlSign = a.pnl >= 0 ? '+' : '';
-                html += `<strong>${a.symbol}</strong> ${a.direction} <span class="${pnlCls}">${pnlSign}$${Math.abs(a.pnl).toFixed(0)} (${pnlSign}${a.pnl_pct.toFixed(1)}%)</span></div>`;
+                const pnlSign = a.pnl >= 0 ? '+$' : '-$';
+                const pctSign = a.pnl_pct >= 0 ? '+' : '';
+                html += `<strong>${a.symbol}</strong> ${a.direction} <span class="${pnlCls}">${pnlSign}${Math.abs(a.pnl).toFixed(0)} (${pctSign}${a.pnl_pct.toFixed(1)}%)</span></div>`;
                 html += `<div style="font-size:11px;color:#8b949e;margin-bottom:8px">持仓 ${a.holding_minutes.toFixed(0)}分钟 | $${a.entry_price.toFixed(2)} → $${a.exit_price.toFixed(2)}</div>`;
                 html += '<div style="border-top:1px solid #30363d;padding-top:8px">';
                 for (const d of a.dimensions) {
@@ -1159,7 +1172,7 @@ function escHtml(s) {
                 marginEl.textContent = marginPct.toFixed(1) + '%';
                 marginEl.className = 'ts-val' + (marginPct > 50 ? ' red' : marginPct > 30 ? ' yellow' : '');
                 const pnlEl = document.getElementById('tsPnl');
-                pnlEl.textContent = (displayPnl >= 0 ? '+' : '') + '$' + Math.abs(displayPnl).toFixed(0);
+                pnlEl.textContent = (displayPnl >= 0 ? '+$' : '-$') + Math.abs(displayPnl).toFixed(0);
                 pnlEl.className = 'ts-val ' + (displayPnl >= 0 ? 'green' : 'red');
                 document.getElementById('tsPosCount').textContent = positions.length;
 
@@ -1225,8 +1238,8 @@ function escHtml(s) {
                                 <div style="font-weight:600">${cur > 0 ? '$'+cur.toFixed(2) : '--'}</div>
                                 <div style="font-size:11px;color:#8b949e">$${cost.toFixed(2)}</div>
                             </td>
-                            <td style="text-align:right" class="${tCls}">${tPnl ? (tPnl>=0?'+':'')+'$'+Math.abs(tPnl).toFixed(2) : '--'}</td>
-                            <td style="text-align:right" class="${uCls}">${uPnl>=0?'+':''}$${uPnl.toFixed(2)}${trendIcon}</td>
+                            <td style="text-align:right" class="${tCls}">${tPnl ? (tPnl>=0?'+$':'-$')+Math.abs(tPnl).toFixed(2) : '--'}</td>
+                            <td style="text-align:right" class="${uCls}">${uPnl>=0?'+$':'-$'}${Math.abs(uPnl).toFixed(2)}${trendIcon}</td>
                             <td style="text-align:center">
                                 <div style="font-size:12px;font-weight:600">${concPct.toFixed(1)}%</div>
                                 <div style="height:3px;background:#21262d;border-radius:2px;margin-top:3px"><div style="height:100%;width:${Math.min(concPct,100)}%;background:${concColor};border-radius:2px"></div></div>
@@ -1262,8 +1275,8 @@ function escHtml(s) {
                             </div>
                             <div class="pos-card-m-row"><span class="label">市值</span><span>$${mv >= 1000 ? (mv/1000).toFixed(1)+'K' : mv.toFixed(0)} · ${qty}股</span></div>
                             <div class="pos-card-m-row"><span class="label">现价/成本</span><span>${cur > 0 ? '$'+cur.toFixed(2) : '--'} / $${cost.toFixed(2)}</span></div>
-                            <div class="pos-card-m-row"><span class="label">今日盈亏</span><span class="${tPnl >= 0 ? 'pnl-pos' : 'pnl-neg'}">${tPnl ? (tPnl>=0?'+':'')+'$'+Math.abs(tPnl).toFixed(2) : '--'}</span></div>
-                            <div class="pos-card-m-row"><span class="label">持仓盈亏</span><span class="${uCls}">${uPnl>=0?'+':''}$${uPnl.toFixed(2)}${trendM}</span></div>
+                            <div class="pos-card-m-row"><span class="label">今日盈亏</span><span class="${tPnl >= 0 ? 'pnl-pos' : 'pnl-neg'}">${tPnl ? (tPnl>=0?'+$':'-$')+Math.abs(tPnl).toFixed(2) : '--'}</span></div>
+                            <div class="pos-card-m-row"><span class="label">持仓盈亏</span><span class="${uCls}">${uPnl>=0?'+$':'-$'}${Math.abs(uPnl).toFixed(2)}${trendM}</span></div>
                             <div class="pos-card-m-actions">
                                 <button class="btn btn-sm" style="border-color:#ef4444;color:#f87171;flex:1" onclick="closePos('${escHtml(sym)}',${qty})">平仓</button>
                             </div>
@@ -1364,7 +1377,7 @@ function escHtml(s) {
                                 <td>${t.quantity}</td>
                                 <td>$${(t.entry_price||0).toFixed(2)}</td>
                                 <td>$${(t.exit_price||0).toFixed(2)}</td>
-                                <td class="${pc}">${t.pnl>=0?'+':''}$${t.pnl.toFixed(2)}</td>
+                                <td class="${pc}">${t.pnl>=0?'+$':'-$'}${Math.abs(t.pnl).toFixed(2)}</td>
                                 <td style="font-size:11px;color:#8b949e">${escHtml((t.exit_reason||'').substring(0,30))}</td>
                             </tr>`;
                         }
@@ -1383,6 +1396,67 @@ function escHtml(s) {
             }
         }
 
+        async function loadExecQuality() {
+            const el = document.getElementById('execQuality');
+            if (!el) return;
+            try {
+                const res = await fetch('/api/analytics/execution-quality');
+                if (!res.ok) throw new Error('HTTP ' + res.status);
+                const d = await res.json();
+                if (d.error) { el.innerHTML = '<div style="text-align:center;color:#8b949e;padding:16px;font-size:12px">' + escHtml(d.error) + '</div>'; return; }
+
+                const deals = d.deals || [];
+                const slipRecs = d.slippage_records || 0;
+                const avgSlip = d.avg_slippage_pct || 0;
+                const slipAlerts = d.slippage_alerts || 0;
+                const slipCls = Math.abs(avgSlip) > 0.3 ? 'red' : Math.abs(avgSlip) > 0.1 ? 'yellow' : 'green';
+                const alertCls = slipAlerts > 5 ? 'red' : slipAlerts > 0 ? 'yellow' : 'green';
+
+                let html = '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;text-align:center;margin-bottom:12px">';
+                html += '<div style="background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:10px">';
+                html += '<div style="font-size:10px;color:#8b949e">成交笔数</div>';
+                html += '<div style="font-size:18px;font-weight:700">' + (d.deal_count||0) + '</div></div>';
+                html += '<div style="background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:10px">';
+                html += '<div style="font-size:10px;color:#8b949e">总成交额</div>';
+                html += '<div style="font-size:18px;font-weight:700">$' + ((d.total_amount||0)/1000).toFixed(1) + 'K</div></div>';
+                html += '<div style="background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:10px">';
+                html += '<div style="font-size:10px;color:#8b949e">平均滑点</div>';
+                html += '<div style="font-size:18px;font-weight:700" class="' + slipCls + '">' + avgSlip.toFixed(3) + '%</div></div>';
+                html += '<div style="background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:10px">';
+                html += '<div style="font-size:10px;color:#8b949e">滑点告警</div>';
+                html += '<div style="font-size:18px;font-weight:700" class="' + alertCls + '">' + slipAlerts + '</div></div>';
+                html += '</div>';
+
+                if (deals.length) {
+                    html += '<div style="font-size:12px;color:#8b949e;margin-bottom:6px">最近成交 (最新 ' + Math.min(deals.length, 20) + ' 笔)</div>';
+                    html += '<div class="tw"><table><thead><tr>';
+                    html += '<th>时间</th><th>标的</th><th>方向</th><th>数量</th><th>价格</th><th>金额</th>';
+                    html += '</tr></thead><tbody>';
+                    const recent = deals.slice(-20).reverse();
+                    for (const d of recent) {
+                        const sideCls = (d.side||'').includes('BUY') || (d.side||'').includes('LONG') ? 'long' : 'short';
+                        const sideLabel = (d.side||'').includes('BUY') || (d.side||'').includes('LONG') ? '买入' : '卖出';
+                        const timeShort = (d.time||'').substring(5, 16);
+                        html += '<tr>';
+                        html += '<td style="font-size:11px;color:#8b949e">' + timeShort + '</td>';
+                        html += '<td><b>' + escHtml((d.symbol||'').replace('US.','')) + '</b></td>';
+                        html += '<td class="' + sideCls + '">' + sideLabel + '</td>';
+                        html += '<td>' + (d.qty||0) + '</td>';
+                        html += '<td>$' + (d.price||0).toFixed(2) + '</td>';
+                        html += '<td>$' + (d.amount||0).toLocaleString() + '</td>';
+                        html += '</tr>';
+                    }
+                    html += '</tbody></table></div>';
+                } else {
+                    html += '<div style="text-align:center;color:#484f58;padding:12px;font-size:12px">暂无成交记录</div>';
+                }
+                el.innerHTML = html;
+            } catch (e) {
+                console.error('Exec quality error:', e);
+                el.innerHTML = '<div style="text-align:center;color:#8b949e;padding:16px;font-size:12px">加载失败</div>';
+            }
+        }
+
         // ── Visibility-Aware Polling ──
         let _fastTimer = null, _slowTimer = null;
         let _isPolling = false;
@@ -1394,8 +1468,9 @@ function escHtml(s) {
             _isPolling = true;
             loadTradeSnapshot();
             loadTradeSlowData();
+            loadExecQuality();
             _fastTimer = setInterval(loadTradeSnapshot, 15000);
-            _slowTimer = setInterval(loadTradeSlowData, 300000);
+            _slowTimer = setInterval(function() { loadTradeSlowData(); loadExecQuality(); }, 300000);
         }
 
         function stopPolling() {

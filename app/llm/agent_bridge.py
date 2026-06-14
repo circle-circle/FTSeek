@@ -1016,7 +1016,7 @@ DXY: {ctx.get('market_context', {}).get('dxy', 'N/A')}
             "agent_bridge", prompt,
             system=system_prompt or "",
             temperature=0.3,
-            max_tokens=4096,
+            max_tokens=16000,  # 2026-06-14: 4096→16000, 充分输出
             json_mode=True,
             timeout=timeout,
         )

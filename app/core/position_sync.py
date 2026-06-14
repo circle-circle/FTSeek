@@ -48,8 +48,10 @@ class USPositionSync:
         # 根因: broker 异步确认延迟期间, sync 看到 broker 暂无该仓位 → 走 ghost 清理,
         # 下一轮 broker 又报有 → 走"从 DB 恢复" → 内存又有了 ARM → 引发新 close 循环
         # 解决: 主流程平仓后在 mark_closed_tombstone(), sync 看到 tombstone 就跳过 restore
-        self._closed_tombstones: Dict[str, float] = {}  # symbol → close_at_ts
-        self._tombstone_ttl_sec = 60.0  # 60s 内不允许 sync 恢复
+        # P0-3 修复 (2026-06-14): 存储格式从 float 改为 tuple (ts, ttl),
+        #   支持 confirm_tombstone 延长 TTL (60s → 300s)
+        self._closed_tombstones: Dict[str, tuple] = {}  # symbol → (close_at_ts, ttl_sec)
+        self._tombstone_ttl_sec = 60.0  # 默认 TTL: 60s
 
     def start(self):
         if self._running:
@@ -81,18 +83,44 @@ class USPositionSync:
         """主流程平仓成功后调用. sync 在 ttl 内不允许从 DB 恢复此 symbol."""
         if not symbol:
             return
-        self._closed_tombstones[symbol] = time.time()
+        self._closed_tombstones[symbol] = (time.time(), self._tombstone_ttl_sec)
         logger.debug(f"[US Sync] tombstone 标记 {symbol} (ttl={self._tombstone_ttl_sec:.0f}s)")
 
     def _is_tombstoned(self, symbol: str) -> bool:
         """检查 symbol 是否在 tombstone ttl 内 (期间不允许 sync 恢复). 顺带清理过期项."""
-        ts = self._closed_tombstones.get(symbol)
-        if ts is None:
+        entry = self._closed_tombstones.get(symbol)
+        if entry is None:
             return False
-        if time.time() - ts > self._tombstone_ttl_sec:
+        # 兼容旧格式 (float) 和新格式 (tuple)
+        if isinstance(entry, (list, tuple)):
+            ts, ttl = entry[0], entry[1]
+        else:
+            ts, ttl = entry, self._tombstone_ttl_sec
+        if time.time() - ts > ttl:
             self._closed_tombstones.pop(symbol, None)
             return False
         return True
+
+    # P0-3 修复 (2026-06-14): confirm_tombstone — 延长已确认平仓的 tombstone TTL
+    # 场景: order_executor 通过 broker 确认成交后调用, 将 tombstone TTL 从 60s 延长至 300s
+    #   broker 异步结算延迟可能超过默认 60s, 延长至 5min 防止 sync 在结算窗口内误恢复
+    # 此前该方法不存在, order_executor.py 调用被 except Exception: pass 静默吞掉
+    _CONFIRMED_TOMBSTONE_TTL_SEC = 300.0  # 已确认平仓: 5 分钟
+
+    def confirm_tombstone(self, symbol: str) -> None:
+        """确认平仓已完成 — 将 tombstone TTL 从默认 60s 延长至 300s.
+
+        由 order_executor 在 broker 确认成交后调用.
+        防止 broker 结算延迟期间 position_sync 误将刚平仓的 symbol 恢复.
+        """
+        if not symbol:
+            return
+        # 使用延长 TTL, 刷新时间戳
+        self._closed_tombstones[symbol] = (time.time(), self._CONFIRMED_TOMBSTONE_TTL_SEC)
+        logger.info(
+            f"[US Sync] tombstone 确认 {symbol} "
+            f"(TTL={self._CONFIRMED_TOMBSTONE_TTL_SEC:.0f}s)"
+        )
 
     def _sync_loop(self):
         """同步循环 (后台线程运行) — 根据市场阶段动态调整频率"""
@@ -1515,10 +1543,11 @@ class USPositionSync:
 
     def _get_symbol_atr(self, symbol: str, fallback_price: float) -> float:
         """P2 修复 (2026-04-30): 获取股票 ATR 用于动态止损计算
-        
-        优先级:
-        1. TwelveData 历史数据 (盘前/盘后可用)
-        2. Futu LV3 K 线 (交易时段可用)
+
+        优先级 (2026-06-14 ATR 统一修复):
+        0. ExitMonitor 日线 ATR 缓存 (含 VIX 缩放, 与止损同源)
+        1. TwelveData 历史数据 × VIX 缩放 (盘前/盘后可用)
+        2. Futu LV3 K 线 × VIX 缩放 (交易时段可用)
         3. Fallback: 2% 价格 (保守估计)
         """
         # P0 修复 (2026-05-21): 期权代码不走 TwelveData/MarketDataRouter（不支持期权格式）
@@ -1529,6 +1558,20 @@ class USPositionSync:
             logger.debug(f"[US Sync ATR] {symbol} 期权代码，使用默认 ATR=${default_atr:.2f} (3%)")
             return default_atr
 
+        # ── P0 (2026-06-14): 优先读 ExitMonitor 日线 ATR (含 VIX 缩放) ──
+        # 与 ExitMonitor 止损决策同源, 避免 initial_sl 与 trailing SL 不一致
+        try:
+            from app.risk.position_exit_monitor import get_cached_atr
+            _exit_atr = get_cached_atr(symbol)
+            if _exit_atr > 0:
+                logger.debug(f"[US Sync ATR] {symbol} ATR=${_exit_atr:.3f} (ExitMonitor cache)")
+                return _exit_atr
+        except Exception:
+            pass
+
+        # ── VIX 缩放因子 (与 ExitMonitor._get_atr 对齐) ──
+        vix_factor = self._get_vix_factor()
+
         # 尝试从 TwelveData 获取
         try:
             from app.data.twelvedata_provider import TwelveDataProvider
@@ -1537,27 +1580,59 @@ class USPositionSync:
             if ts_data and 'atr' in ts_data:
                 atr = float(ts_data['atr'])
                 if atr > 0:
-                    logger.debug(f"[US Sync ATR] {symbol} ATR=${atr:.2f} (TwelveData)")
-                    return atr
+                    atr_scaled = atr * vix_factor
+                    logger.debug(
+                        f"[US Sync ATR] {symbol} ATR=${atr:.2f} × vix={vix_factor:.2f} "
+                        f"= ${atr_scaled:.2f} (TwelveData)"
+                    )
+                    return atr_scaled
         except Exception as e:
             logger.debug(f"[US Sync ATR] TwelveData 获取失败: {e}")
-        
-        # 尝试从市场数据路由器获取
+
+        # 尝试从市场数据路由器获取 (1-min K线, 量级可能偏差, 需谨慎)
         try:
             from app.data.market_data_router import get_market_data_router
             router = get_market_data_router()
             context = router.get_full_market_context(symbol)
             if context and context.get('atr', 0) > 0:
-                atr = float(context['atr'])
-                logger.debug(f"[US Sync ATR] {symbol} ATR=${atr:.2f} (MarketDataRouter)")
-                return atr
+                atr_raw = float(context['atr'])
+                # 1-min ATR 量级远小于日线 ATR, 用价格百分比限幅
+                atr_pct = atr_raw / fallback_price if fallback_price > 0 else 0
+                if atr_pct < 0.005:  # < 0.5% → 可能是 1-min ATR, 使用 fallback
+                    logger.debug(
+                        f"[US Sync ATR] {symbol} MarketDataRouter ATR%={atr_pct:.4f} < 0.5%, "
+                        f"疑似1-min ATR, 跳过"
+                    )
+                else:
+                    atr_scaled = atr_raw * vix_factor
+                    logger.debug(
+                        f"[US Sync ATR] {symbol} ATR=${atr_raw:.2f} × vix={vix_factor:.2f} "
+                        f"= ${atr_scaled:.2f} (MarketDataRouter)"
+                    )
+                    return atr_scaled
         except Exception as e:
             logger.debug(f"[US Sync ATR] MarketDataRouter 获取失败: {e}")
-        
+
         # Fallback: 使用 2% 价格作为保守 ATR 估计
         default_atr = fallback_price * 0.02
         logger.debug(f"[US Sync ATR] {symbol} 使用默认 ATR=${default_atr:.2f} (2% 价格)")
         return default_atr
+
+    def _get_vix_factor(self) -> float:
+        """获取 VIX 缩放因子 (与 ExitMonitor._get_atr 逻辑对齐)
+
+        VIX/20 作为波动放大因子, 上限 2.5×, 下限 1.0×.
+        获取失败时返回 1.0 (不缩放).
+        """
+        try:
+            from app.data.alphavantage_provider import AlphaVantageProvider
+            vix = AlphaVantageProvider().get_vix()
+            if vix and vix > 0:
+                factor = max(1.0, min(float(vix) / 20.0, 2.5))
+                return factor
+        except Exception:
+            pass
+        return 1.0
 
     def _get_atr_stop_mult(self) -> float:
         """P1 修复 (2026-06-07): SSOT 读取 ATR 止损倍数

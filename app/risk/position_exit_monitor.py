@@ -201,6 +201,8 @@ class ExitMonitor:
         self._quote_ctx = None
         self._initialized = False
         self._exit_cooldowns: Dict[str, float] = {}  # {symbol: last_exit_timestamp} 类级别冷却，防position对象重建后trail_state丢失
+        # 接近止损预警去重: {symbol: last_alert_ts}
+        self._approaching_stop_alerts: Dict[str, float] = {}
         # Task #24 (2026-05-27): 财报退出去重集合，防止同一标的在同一批财报计划下被重复触发
         self._earnings_exit_handled: set = set()
         # 成本模型（可选；注入失败则 cost_bps=0，退化为无 buffer）
@@ -1189,14 +1191,21 @@ class ExitMonitor:
                         _grace_max_loss = float(_ghp.get("max_grace_loss_pct", 0.03))
                 except Exception:
                     pass
+                # P0 修复 (2026-06-14): Grace period 不应阻断硬止损 (atr_stop/SL_HIT)
+                # 旧逻辑: continue 跳过全部退出评估 → 持仓在 grace 期间即使触及 ATR 硬止损也不平
+                # 新逻辑: 移除 continue, 让代码 fall through 到 _check_exit_for_position()
+                #   - Registry 路径: ExitRuleContext 已有 should_skip_non_hard_exits + is_hard_stop,
+                #     只放行 hard_stop_reasons 中的退出 (含 ATR_STOP / SL_HIT)
+                #   - Legacy 路径: _check_via_legacy 接收 _in_grace=True, 对 trailing_stop 结果
+                #     精确过滤 — 仅保留 ATR_STOP/SL_HIT, 压制 CHANDELIER/BREAKEVEN 等非硬止损
+                _in_grace = False
                 if held_minutes < _grace_minutes:
-                    # 硬底兜底: 浮亏 >= max_loss 时解除保护
                     if pnl_pct > -_grace_max_loss:
+                        _in_grace = True
                         logger.debug(
                             f"[M3·grace] {symbol} 持仓 {held_minutes:.1f}min < {_grace_minutes}min, "
-                            f"pnl={pnl_pct:.2%} > -{_grace_max_loss:.0%}, 跳过退出评估"
+                            f"pnl={pnl_pct:.2%} > -{_grace_max_loss:.0%}, 仅允许硬止损 (atr_stop/SL_HIT)"
                         )
-                        continue
 
                 # ============================================================
                 # Task #53 (2026-05-28): 退出规则检查路径分发
@@ -1217,6 +1226,7 @@ class ExitMonitor:
                     held_minutes=held_minutes,
                     policy_guardian=policy_guardian,
                     earnings_guard=earnings_guard,
+                    _in_grace=_in_grace,
                 )
 
                 if selected_decision:
@@ -1244,6 +1254,11 @@ class ExitMonitor:
                     entry_price, effective_atr, policy_guardian,
                 )
 
+                # 接近止损预警 (不干预退出逻辑, 仅通知)
+                self._check_approaching_stop(
+                    position, current_price, effective_atr, entry_price, direction,
+                )
+
             except Exception as e:
                 logger.error(f"[退出监控] {position.symbol} 检查异常: {e}", exc_info=True)
 
@@ -1267,8 +1282,14 @@ class ExitMonitor:
         held_minutes,
         policy_guardian=None,
         earnings_guard=None,
+        _in_grace=False,
     ) -> Optional[Dict]:
         """单个持仓的退出检查路径分发 (Registry vs Legacy)
+
+        Args:
+            _in_grace: True 表示持仓处于 Grace Period (入场后 <grace_minutes 且浮亏 < max_loss).
+                       Registry 路径通过 ExitRuleContext 自行处理 grace;
+                       Legacy 路径需要此标志以精确放行 atr_stop/SL_HIT.
 
         返回:
             退出决策 dict 或 None (None 表示本轮不退出)
@@ -1291,12 +1312,14 @@ class ExitMonitor:
                         position, current_price, entry_price, effective_atr,
                         profit_atr_signed, trail_state, now_ts, direction, pnl_pct,
                         held_minutes, policy_guardian, earnings_guard,
+                        _in_grace=_in_grace,
                     )
                 return None
         return self._check_via_legacy(
             position, current_price, entry_price, effective_atr,
             profit_atr_signed, trail_state, now_ts, direction, pnl_pct,
             held_minutes, policy_guardian, earnings_guard,
+            _in_grace=_in_grace,
         )
 
     def _check_via_registry(
@@ -1374,6 +1397,7 @@ class ExitMonitor:
         held_minutes,
         policy_guardian=None,
         earnings_guard=None,
+        _in_grace=False,
     ) -> Optional[Dict]:
         """旧的逐条退出检查逻辑 (保留作为永久 fallback, 不删除)
 
@@ -1382,6 +1406,10 @@ class ExitMonitor:
           2. 逐条检查 flash/day_trade/scale_out/trailing/time_stop
           3. Pre-Close 优先级最高 (不参与评分)
           4. 多规则触发 → ExitQualityScorer 选最优
+
+        P0 修复 (2026-06-14): _in_grace=True 时, trailing_stop 结果精确过滤:
+          - 保留 ATR_STOP / SL_HIT (硬止损, 必须始终评估)
+          - 压制 CHANDELIER_TRAIL / BREAKEVEN_STOP / STOP_LOSS (非硬止损)
         """
         symbol = getattr(position, 'symbol', '?')
 
@@ -1394,6 +1422,10 @@ class ExitMonitor:
                 f"仅允许硬止损 / Pre-Close 退出"
             )
 
+        # P0 修复 (2026-06-14): _in_grace 时强制压制所有非硬止损规则
+        # 即使 _skip_non_hard_exits=False (min_hold_minutes 已过), grace 期间仍不允许
+        _suppress_non_hard = _skip_non_hard_exits or _in_grace
+
         # ── 收集所有触发的退出建议 ──
         _triggered_exits: List[Dict[str, Any]] = []
 
@@ -1401,34 +1433,46 @@ class ExitMonitor:
             position, current_price, effective_atr, trail_state,
             now_ts, direction, policy_guardian, earnings_guard,
         )
-        if flash_result and not _skip_non_hard_exits:
+        if flash_result and not _suppress_non_hard:
             _triggered_exits.append(flash_result)
 
         daytrade_result = self._check_day_trade_exit(
             position, current_price, entry_price, effective_atr,
             trail_state, now_ts, direction, pnl_pct, policy_guardian,
         )
-        if daytrade_result and not _skip_non_hard_exits:
+        if daytrade_result and not _suppress_non_hard:
             _triggered_exits.append(daytrade_result)
 
         scale_result = self._check_scale_out(
             position, current_price, trail_state, direction,
             market_data={"current_price": current_price, "atr": effective_atr, "direction": direction},
         )
-        if scale_result and not _skip_non_hard_exits:
+        if scale_result and not _suppress_non_hard:
             _triggered_exits.append(scale_result)
 
         stop_result = self._check_trailing_stop(
             position, current_price, entry_price, effective_atr,
             profit_atr_signed, trail_state, now_ts, direction, policy_guardian,
         )
-        if stop_result and not _skip_non_hard_exits:
-            _triggered_exits.append(stop_result)
+        if stop_result:
+            # P0 修复 (2026-06-14): Grace period 精确过滤 trailing_stop 结果
+            # 硬止损 (ATR_STOP / SL_HIT) 始终放行; 非硬止损 (CHANDELIER / BREAKEVEN) 被压制
+            _GRACE_HARD_STOP_REASONS = {"ATR_STOP", "SL_HIT"}
+            _stop_reason = stop_result.get("reason", "")
+            if _in_grace:
+                if _stop_reason in _GRACE_HARD_STOP_REASONS:
+                    _triggered_exits.append(stop_result)
+                    logger.info(
+                        f"[M3·grace·hard_stop] {symbol} grace 期间硬止损放行: {_stop_reason}"
+                    )
+                # else: 非硬止损, grace 期间压制 (不 append)
+            elif not _skip_non_hard_exits:
+                _triggered_exits.append(stop_result)
 
         time_result = self._check_time_stop(
             position, current_price, now_ts, direction, policy_guardian,
         )
-        if time_result and not _skip_non_hard_exits:
+        if time_result and not _suppress_non_hard:
             _triggered_exits.append(time_result)
 
         # Pre-Close (P1-7 互斥保护)
@@ -1937,8 +1981,113 @@ class ExitMonitor:
                 )
             except Exception as e:
                 logger.debug("[归因] trade_attribution 更新失败 (不影响退出): %s", e)
+
+            # WebSocket 实时通知 Dashboard
+            try:
+                from app.web_dashboard.routes.ws import publish_event_sync
+                publish_event_sync("position_update", {
+                    "action": "exit",
+                    "symbol": position.symbol,
+                    "direction": direction_str,
+                    "reason": reason.get("reason", "UNKNOWN"),
+                    "reason_cn": reason.get("reason_cn", ""),
+                    "pnl_pct": round(pnl_pct * 100, 2),
+                    "exit_price": exit_price,
+                })
+            except Exception:
+                pass
         else:
             logger.error(f"[EXIT]{_trace_pair} ❌ Close failed: {position.symbol} | {reason.get('reason', '')}")
+
+    # ============================================================
+    #  接近止损预警 (Dashboard + Push 通知)
+    # ============================================================
+
+    def _check_approaching_stop(
+        self, position, current_price: float, effective_atr: float,
+        entry_price: float, direction: str,
+    ) -> None:
+        """接近止损预警 — 当价格距 atr_stop 线 < 1.5 ATR 时发出告警
+
+        不干预退出逻辑, 仅发送通知到:
+          - WebSocket risk_alert (Dashboard 实时展示)
+          - PushHub RISK_ALERT (DingTalk/飞书)
+        """
+        if effective_atr <= 0 or entry_price <= 0:
+            return
+
+        symbol = getattr(position, 'symbol', '?')
+
+        # 计算 atr_stop 线 (与 trailing_stop.py 一致: entry ± 4.0×ATR)
+        atr_mult = 4.0
+        try:
+            _policy = self._load_exit_policy_dict()
+            atr_mult = float(
+                _policy.get("exit_rules", {}).get("atr_stop", {}).get(
+                    "multiplier_by_profit", {}).get("initial", 4.0)
+            )
+        except Exception:
+            pass
+
+        if direction == "LONG":
+            atr_stop = entry_price - effective_atr * atr_mult
+            sl_distance = current_price - atr_stop  # 正=安全, 负=已穿
+        else:
+            atr_stop = entry_price + effective_atr * atr_mult
+            sl_distance = atr_stop - current_price  # 正=安全, 负=已穿
+
+        sl_distance_atr = sl_distance / effective_atr if effective_atr > 0 else 99.0
+        sl_distance_pct = sl_distance / current_price * 100 if current_price > 0 else 99.0
+
+        # 阈值: < 1.5 ATR 触发预警
+        if sl_distance_atr >= 1.5:
+            return
+
+        # 分级
+        severity = "CRITICAL" if sl_distance_atr < 0.5 else "WARNING"
+
+        # 去重: 300s cooldown per symbol
+        now = time.time()
+        last_alert = self._approaching_stop_alerts.get(symbol, 0)
+        if (now - last_alert) < 300:
+            return
+        self._approaching_stop_alerts[symbol] = now
+
+        logger.warning(
+            f"[接近止损] {symbol} {direction} "
+            f"current=${current_price:.2f} atr_stop=${atr_stop:.2f} "
+            f"distance={sl_distance_atr:.1f}ATR ({sl_distance_pct:.1f}%) "
+            f"severity={severity}"
+        )
+
+        # 通知 1: WebSocket → Dashboard 实时展示
+        try:
+            from app.web_dashboard.routes.ws import publish_event_sync
+            publish_event_sync("risk_alert", {
+                "level": severity,
+                "symbol": symbol,
+                "direction": direction,
+                "message": f"距止损 {sl_distance_pct:.1f}% ({sl_distance_atr:.1f}×ATR)",
+                "current_price": round(current_price, 2),
+                "atr_stop": round(atr_stop, 2),
+                "sl_distance_atr": round(sl_distance_atr, 2),
+            })
+        except Exception:
+            pass
+
+        # 通知 2: PushHub → DingTalk/飞书
+        try:
+            from app.push import get_push_hub, approaching_stop
+            msg = approaching_stop(
+                symbol=symbol,
+                direction=direction,
+                sl_distance_pct=sl_distance_pct,
+                sl_distance_atr=sl_distance_atr,
+                severity=severity,
+            )
+            get_push_hub().push(msg)
+        except Exception as _push_err:
+            logger.debug(f"[接近止损] PushHub 推送失败: {_push_err}")
 
     # ============================================================
     #  ATR 获取 (复用主进程 quote_ctx)
@@ -1990,6 +2139,9 @@ class ExitMonitor:
 
         self._atr_cache[symbol] = {'ts': now, 'value': atr}
 
+        # 持久化 ATR 到 DB (供 protection_monitor cron 读取)
+        self._persist_atr_to_db(symbol, atr)
+
         # 首次或 VIX 变化时打日志
         if not cached or abs(cached.get('value', 0) - atr) / max(cached.get('value', 1), 0.01) > 0.1:
             logger.debug(
@@ -2000,24 +2152,18 @@ class ExitMonitor:
         return atr
 
     def _get_vix(self) -> Optional[float]:
-        """获取当前 VIX (缓存 5 分钟) — 幻方增强"""
+        """获取当前 VIX 现货指数 (缓存 5 分钟)
+
+        优先级 (2026-06-14 修复: VIXY → ^VIX 现货):
+          1. AlphaVantage ^VIX 现货指数 (精确值, 5min 缓存)
+          2. Futu US.VIXY (VIX 期货 ETF, 有期限结构偏移, 仅作为降级)
+          3. 旧缓存
+        """
         now = time.time()
         if self._vix_cached and (now - self._vix_ts) < 300:
             return self._vix_cached
-        try:
-            if self._quote_ctx:
-                from futu import KLType, AuType
-                ret, data, _ = self._quote_ctx.request_history_kline(
-                    "US.VIXY", ktype=KLType.K_DAY, max_count=3, autype=AuType.QFQ
-                )
-                if ret == 0 and data is not None and len(data) > 0:
-                    vix_close = float(data["close"].values[-1])
-                    self._vix_cached = vix_close
-                    self._vix_ts = now
-                    return vix_close
-        except Exception as _silent_e:
-            logger.warning(f"[silent_except:position_exit_monitor.py] {_silent_e}")
-        # 降级: 从 MarketDataRouter / alphavantage 获取
+
+        # ── 优先: AlphaVantage ^VIX 现货 (精确值) ──
         try:
             from app.data.alphavantage_provider import AlphaVantageProvider
             provider = AlphaVantageProvider()
@@ -2026,8 +2172,30 @@ class ExitMonitor:
                 self._vix_cached = float(vix)
                 self._vix_ts = now
                 return self._vix_cached
+        except Exception as _av_err:
+            logger.debug(f"[VIX] AlphaVantage 获取失败: {_av_err}")
+
+        # ── 降级: Futu VIXY (期货 ETF, 有 contango/backwardation 偏移) ──
+        try:
+            if self._quote_ctx:
+                from futu import KLType, AuType
+                ret, data, _ = self._quote_ctx.request_history_kline(
+                    "US.VIXY", ktype=KLType.K_DAY, max_count=3, autype=AuType.QFQ
+                )
+                if ret == 0 and data is not None and len(data) > 0:
+                    vixy_close = float(data["close"].values[-1])
+                    # VIXY ≈ VIX × 0.85~1.15 (期限结构), 粗略校正
+                    vix_estimated = vixy_close * 1.05  # 经验校正因子
+                    logger.debug(
+                        f"[VIX] VIXY=${vixy_close:.2f} → 估计 VIX≈{vix_estimated:.2f} "
+                        f"(降级源, 精度有限)"
+                    )
+                    self._vix_cached = vix_estimated
+                    self._vix_ts = now
+                    return self._vix_cached
         except Exception as _silent_e:
             logger.warning(f"[silent_except:position_exit_monitor.py] {_silent_e}")
+
         return self._vix_cached  # 返回旧缓存或 None
 
     def _calc_atr_from_kline(self, symbol: str) -> float:
@@ -2106,6 +2274,27 @@ class ExitMonitor:
             pass
         return 0.0
 
+    def _persist_atr_to_db(self, symbol: str, atr: float) -> None:
+        """持久化 ATR 到 SQLite (供 protection_monitor cron 读取)
+
+        DB: data/atr_cache.db, 表: atr_cache (symbol PK, atr, ts)
+        """
+        try:
+            db_path = str(BASE_DIR / "data" / "atr_cache.db")
+            conn = sqlite3.connect(db_path, timeout=5)
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS atr_cache "
+                "(symbol TEXT PRIMARY KEY, atr REAL, ts REAL)"
+            )
+            conn.execute(
+                "INSERT OR REPLACE INTO atr_cache (symbol, atr, ts) VALUES (?, ?, ?)",
+                (symbol, atr, time.time()),
+            )
+            conn.commit()
+            conn.close()
+        except Exception as _atr_db_err:
+            logger.debug(f"[ATR缓存] {symbol} 写入失败: {_atr_db_err}")
+
     # ============================================================
     #  辅助: 清理 trail_state 脏数据
     # ============================================================
@@ -2140,3 +2329,16 @@ def get_exit_monitor() -> ExitMonitor:
     if _exit_monitor is None:
         _exit_monitor = ExitMonitor()
     return _exit_monitor
+
+
+def get_cached_atr(symbol: str) -> float:
+    """暴露 ATR 缓存供 Dashboard 等外部模块使用
+
+    返回 ExitMonitor 最近计算的 ATR 值 (含 VIX 缩放 + 日内底限).
+    缓存未命中或 ExitMonitor 未初始化时返回 0.0.
+    """
+    if _exit_monitor is not None:
+        cached = _exit_monitor._atr_cache.get(symbol)
+        if cached:
+            return float(cached.get('value', 0.0))
+    return 0.0

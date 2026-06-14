@@ -118,6 +118,11 @@ EXCLUSIVE_RULES: Dict[str, Set[str]] = {
     "graduated_stop": {"trailing_stop"},
     # Task #75: 入场论文失效后全平 → 不再触发慢速管理类规则
     "thesis_failure": {"trailing_stop", "graduated_stop", "time_stop", "scale_out"},
+    # P0 修复 (2026-06-14): scale_out 触发后压制 trailing_stop / graduated_stop
+    # 与 legacy 路径 _check_via_legacy 中的 _has_scale_out 互斥逻辑对齐
+    # 根因: Registry 路径缺少此互斥 → scale_out (全平) 与 trailing_stop 可能同时触发,
+    #   导致已平仓位被 trailing_stop 重复处理
+    "scale_out": {"trailing_stop", "graduated_stop"},
 }
 
 

@@ -205,7 +205,7 @@ class ResearcherAgent:
             "debate_engine", prompt,
             system=self.system_prompt,
             temperature=0.3,
-            max_tokens=500,
+            max_tokens=16000,  # 2026-06-14: 500→16000, 给 LLM 充分空间输出高质量辩论
             extra_body={"enable_thinking": False},
         )
     

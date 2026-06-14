@@ -40,7 +40,7 @@ class UnifiedLLMService:
         *,
         system: str = "",
         temperature: float = 0.1,
-        max_tokens: int = 2000,
+        max_tokens: int = 8000,  # 2026-06-14: 2000→8000, 默认不设限制
         schema_required: Optional[Dict[str, type]] = None,
         schema_optional: Optional[Dict[str, type]] = None,
         schema_enums: Optional[Dict[str, List[Any]]] = None,
@@ -84,7 +84,7 @@ class UnifiedLLMService:
         *,
         system: str = "",
         temperature: float = 0.1,
-        max_tokens: int = 2000,
+        max_tokens: int = 8000,  # 2026-06-14: 2000→8000, 默认不设限制
         schema_required: Optional[Dict[str, type]] = None,
         schema_optional: Optional[Dict[str, type]] = None,
         schema_enums: Optional[Dict[str, List[Any]]] = None,
@@ -119,7 +119,7 @@ class UnifiedLLMService:
         *,
         system: str = "",
         temperature: float = 0.1,
-        max_tokens: int = 2000,
+        max_tokens: int = 8000,  # 2026-06-14: 2000→8000, 默认不设限制
         json_mode: bool = False,
         extra_body: Optional[Dict] = None,
         timeout: Optional[int] = None,
@@ -150,7 +150,7 @@ class UnifiedLLMService:
         *,
         system: str = "",
         temperature: float = 0.1,
-        max_tokens: int = 2000,
+        max_tokens: int = 8000,  # 2026-06-14: 2000→8000, 默认不设限制
         json_mode: bool = False,
         extra_body: Optional[Dict] = None,
         timeout: Optional[int] = None,

@@ -1503,6 +1503,14 @@ class TradingScheduler:
             self._vix_thread.start()
             logger.info("[VIX Monitor] 后台监控线程已启动")
 
+        # ManualPositionGuard 线程 (2026-06-14): 手动仓位风险监控
+        # 解决 P0: PROTECTED 仓位在 ExitMonitor 中被跳过, 无任何保护
+        self._manual_guard_thread = threading.Thread(
+            target=self._manual_guard_loop, name="ManualGuardLoop", daemon=True
+        )
+        self._manual_guard_thread.start()
+        logger.info("[ManualGuard] 手动仓位风险监控线程已启动")
+
         # Scalping 均值回归线程 (2026-04-29 新增)
         if self.scalping_engine:
             self.scalping_engine.start()
@@ -1718,6 +1726,11 @@ class TradingScheduler:
         """持仓监控主循环 - 在 position_monitor.py 中实现"""
         from app.pipeline.position_monitor import monitor_loop
         monitor_loop(self)
+
+    def _manual_guard_loop(self):
+        """手动仓位风险监控主循环 - 在 manual_position_guard.py 中实现"""
+        from app.risk.manual_position_guard import manual_guard_loop
+        manual_guard_loop(self)
 
     def _is_market_open(self) -> bool:
         """判断美东交易时间（09:30 - 16:00 周一到周五） - 在 scheduler_triggers.py 中实现"""

@@ -174,7 +174,7 @@ llm:
     news_classifier:    qwen-flash
     thesis_inferer:     qwen-max               # 2026-06-14: 升级至最强
     thesis_challenge:   qwen-max               # 2026-06-14: thesis审视，结构化输出
-    plan_validator:     qwen-max               # 2026-06-14: 作战计划候选验证
+    plan_validator:     {primary: qwen-max, fallback: deepseek-pro}  # 2026-06-15: 作战计划候选验证+fallback
     sentiment:          qwen-flash
 
     premarket_planner:  {primary: qwen-max,      fallback: deepseek-pro, cache_on_fail: true}

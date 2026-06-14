@@ -150,7 +150,7 @@ def _validate_single(candidate: Dict, context: Dict) -> Dict:
             temperature=0,
             max_tokens=500,
             json_mode=True,
-            timeout=45,
+            timeout=90,
         )
 
         if result.success:

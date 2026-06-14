@@ -67,6 +67,8 @@ class CapitalAllocator:
         self._allocations: Dict[str, float] = {s: 0.0 for s in caps}
         # _by_strategy 仅供查看/报表 — 同 bucket 内多策略各自累加
         self._by_strategy: Dict[str, float] = {}
+        # Phase 1 (2026-06-14): 手动仓位市值占比 — 不占 bucket cap, 但占 total cap
+        self._manual_reserved: float = 0.0
         self._lock = threading.Lock()
         self._events: List[_ReserveEvent] = []
         self._max_event_history = 500
@@ -117,7 +119,7 @@ class CapitalAllocator:
             bucket = self._bucket_for(strategy)
             current = self._allocations.get(bucket, 0.0)
             cap = self._caps.get(bucket, 0.0)
-            total = sum(self._allocations.values())
+            total = sum(self._allocations.values()) + self._manual_reserved
 
             decision = "ALLOWED"
             if cap > 0 and current + position_pct > cap:
@@ -173,10 +175,12 @@ class CapitalAllocator:
             self._persist_state(bucket, strategy)  # P1-7
 
     def snapshot(self) -> CapitalSnapshot:
-        """当前账本快照. by_strategy 字段是 bucket 视图 (向后兼容现有调用方)."""
+        """当前账本快照. by_strategy 字段是 bucket 视图 (向后兼容现有调用方).
+        Phase 1 (2026-06-14): total_reserved 包含 manual_reserved, headroom 扣除手动占用."""
         with self._lock:
             by_s = dict(self._allocations)
-            total = sum(by_s.values())
+            auto_total = sum(by_s.values())
+            total = auto_total + self._manual_reserved
             return CapitalSnapshot(
                 timestamp=time.time(),
                 by_strategy=by_s,
@@ -208,11 +212,11 @@ class CapitalAllocator:
             bucket = self._bucket_for(strategy)
             current = self._allocations.get(bucket, 0.0)
             cap = self._caps.get(bucket, 0.0)
-            total = sum(self._allocations.values())
+            total = sum(self._allocations.values()) + self._manual_reserved
 
             # bucket 剩余
             bucket_headroom = max(0.0, cap - current) if cap > 0 else float('inf')
-            # 总敞口剩余
+            # 总敞口剩余 (扣除手动仓位占用)
             total_headroom = max(0.0, self._max_total - total)
             allowed = min(bucket_headroom, total_headroom, position_pct)
             scale = 0.0 if position_pct == 0 else max(0.0, min(1.0, allowed / position_pct))
@@ -235,6 +239,22 @@ class CapitalAllocator:
         logger.warning(
             f"[CapitalAllocator·RESET] 账本已清零 + reconcile, 现状: {self.snapshot().by_strategy}"
         )
+
+    def set_manual_reserved(self, pct: float):
+        """Phase 1 (2026-06-14): 设置手动仓位市值占比.
+
+        手动仓位不占 bucket cap (不影响 auto 的 80% 上限),
+        但占 total cap (auto 可用 = total_cap - manual_reserved - auto_reserved).
+        由 StrategyCoordinator.reconcile() 定期更新.
+        """
+        with self._lock:
+            old = self._manual_reserved
+            self._manual_reserved = max(0.0, pct)
+            if abs(old - pct) > 0.005:
+                logger.info(
+                    f"[CapitalAllocator] manual_reserved: {old:.3f} → {pct:.3f} "
+                    f"(auto headroom: {self._max_total - sum(self._allocations.values()) - pct:.3f})"
+                )
 
     def reconcile_with_positions(self, positions_by_strategy: Dict[str, float]):
         """

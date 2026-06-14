@@ -118,20 +118,27 @@ class DebatePlanner:
         """
         生成盘前作战计划 (完整辩论流程)
         
-        Args:
-            context: {
-                "market_data": {"vix": ..., "spy": ..., "qqq": ..., "dxy": ...},
-                "positions": [...],
-                "capital_state": {"current_equity": ..., "drawdown_pct": ..., ...},
-                "earnings_info": "...",
-                "overnight_news": "...",
-                "watchlist_info": [...],
-                "memory": {...},  # 仅 Hermes 使用
-            }
-        
-        Returns:
-            BattlePlan dict (与现有 USBattlePlanManager 格式兼容)
+        2026-06-14: 优先使用 UnifiedDebateEngine (干净架构 + UnifiedLLMService)
+        失败时回退到原有 _run_hermes/_run_claude 流程。
         """
+        # ── 优先: UnifiedDebateEngine ──
+        try:
+            from app.agents.debate.unified_debate_engine import get_unified_debate_engine
+            engine = get_unified_debate_engine()
+            plan = engine.generate_premarket_plan(context)
+            if plan and plan.get("targets"):
+                logger.info("[DebatePlanner] ✅ UnifiedDebateEngine 成功")
+                return plan
+            else:
+                logger.warning("[DebatePlanner] UnifiedDebateEngine 返回空，降级到旧流程")
+        except Exception as e:
+            logger.warning(f"[DebatePlanner] UnifiedDebateEngine 异常，降级: {e}")
+        
+        # ── 降级: 原有流程 ──
+        return self._generate_premarket_plan_legacy(context)
+    
+    def _generate_premarket_plan_legacy(self, context: dict) -> Optional[Dict]:
+        """原有辩论流程 (Hermes + Claude via agent_bridge/CLI)"""
         start_time = time.time()
         logger.info("[DebatePlanner] === 盘前辩论开始 ===")
         
@@ -206,12 +213,18 @@ class DebatePlanner:
     
     def _run_hermes(self, context: dict, round_num: int = 1,
                     opponent: dict = None) -> Optional[Dict]:
-        """通过 AgentBridge 运行 Hermes"""
+        """
+        运行 Hermes (多头策略师)
+        
+        2026-06-14 修复: 直接调用 UnifiedLLMService，不再依赖 agent_bridge。
+        路由: debate_engine feature (primary: qwen3.7-max, fallback: deepseek-pro)
+        """
         try:
             from app.agents.debate.agent_roles import (
                 HERMES_PREMARKET_PROMPT_ROUND1,
                 CROSS_VALIDATION_PROMPT_HERMES,
             )
+            from app.llm.unified_service import UnifiedLLMService
             
             if round_num == 1:
                 prompt = HERMES_PREMARKET_PROMPT_ROUND1.format(**context)
@@ -222,15 +235,35 @@ class DebatePlanner:
                 )
                 system_prompt = DEBATE_HERMES_R2_PROMPT
             
-            if self.agent_bridge:
-                return self.agent_bridge._call_llm_direct(
-                    prompt=prompt,
-                    system_prompt=system_prompt,
-                    round_num=round_num,
-                    model=os.getenv("HERMES_DEBATE_MODEL", getattr(self, "hermes_model", os.getenv("HERMES_DEBATE_MODEL", "qwen-max"))),
-                )
-            else:
-                logger.warning("[DebatePlanner] AgentBridge 不可用，跳过 Hermes")
+            # 直接调用 UnifiedLLMService (不依赖 agent_bridge)
+            res = UnifiedLLMService.call(
+                "debate_engine", prompt,
+                system=system_prompt or "",
+                temperature=0.3,
+                max_tokens=16000,
+                json_mode=True,
+                timeout=120,
+            )
+            if not res or not res.success:
+                logger.warning(f"[DebatePlanner] Hermes R{round_num} 调用失败: {res.error if res else 'unknown'}")
+                return None
+            
+            text = res.response or ""
+            if isinstance(text, dict):
+                return text
+            text = text.strip()
+            if text.startswith("```json"):
+                text = text[7:]
+            if text.startswith("```"):
+                text = text[3:]
+            if text.endswith("```"):
+                text = text[:-3]
+            text = text.strip()
+            
+            try:
+                return json.loads(text)
+            except json.JSONDecodeError as e:
+                logger.warning(f"[DebatePlanner] Hermes R{round_num} JSON 解析失败: {e}")
                 return None
                 
         except Exception as e:
@@ -247,7 +280,8 @@ class DebatePlanner:
         """
         通过 Claude Agent 运行分析
         
-        优先级: CLI Agent (claude -p) → API fallback (ClaudeCodeRunner)
+        优先级: CLI Agent (claude -p) → API Runner → 直调 UnifiedLLMService
+        2026-06-14: 新增 Level 3 直调 fallback (deepseek-v4-pro)
         """
         try:
             from app.agents.debate.agent_roles import (
@@ -264,7 +298,7 @@ class DebatePlanner:
             else:
                 return self._run_claude_validation(context, hermes_r1=opponent, hermes_r2=None)
             
-            # ── 优先使用 CLI Agent (真正的 claude -p) ──
+            # ── Level 1: CLI Agent (真正的 claude -p) ──
             cli_result = None
             try:
                 cli_result = self.claude_cli.run_analysis(
@@ -279,13 +313,52 @@ class DebatePlanner:
                 logger.info("[DebatePlanner] Claude CLI Agent 成功")
                 return cli_result
             
-            # ── CLI 失败，降级到 API ──
+            # ── Level 2: API Runner ──
             logger.warning("[DebatePlanner] CLI 不可用，降级到 API Runner")
-            return self.claude_runner.run_analysis(
-                prompt=prompt,
-                system_prompt=system_prompt,
-                round_num=round_num,
+            try:
+                api_result = self.claude_runner.run_analysis(
+                    prompt=prompt,
+                    system_prompt=system_prompt,
+                    round_num=round_num,
+                )
+                if api_result is not None:
+                    logger.info("[DebatePlanner] Claude API Runner 成功")
+                    return api_result
+            except Exception as api_err:
+                logger.warning(f"[DebatePlanner] API Runner 失败: {api_err}")
+            
+            # ── Level 3: 直调 UnifiedLLMService (deepseek-pro) ──
+            logger.warning("[DebatePlanner] API Runner 不可用，降级到直调 LLM (claude_code feature)")
+            from app.llm.unified_service import UnifiedLLMService
+            res = UnifiedLLMService.call(
+                "claude_code", prompt,
+                system=system_prompt or "",
+                temperature=0.3,
+                max_tokens=16000,
+                json_mode=True,
+                timeout=120,
             )
+            if not res or not res.success:
+                logger.warning(f"[DebatePlanner] Claude 直调 LLM 失败: {res.error if res else 'unknown'}")
+                return None
+            
+            text = res.response or ""
+            if isinstance(text, dict):
+                return text
+            text = text.strip()
+            if text.startswith("```json"):
+                text = text[7:]
+            if text.startswith("```"):
+                text = text[3:]
+            if text.endswith("```"):
+                text = text[:-3]
+            text = text.strip()
+            
+            try:
+                return json.loads(text)
+            except json.JSONDecodeError as e:
+                logger.warning(f"[DebatePlanner] Claude 直调 JSON 解析失败: {e}")
+                return None
             
         except Exception as e:
             logger.error(f"[DebatePlanner] Claude 调用异常: {e}", exc_info=True)
@@ -294,7 +367,8 @@ class DebatePlanner:
     def _run_claude_validation(self, context: dict, hermes_r1: dict = None,
                                 hermes_r2: dict = None) -> Optional[Dict]:
         """
-        Claude 审计 Hermes 的回应 (P1 修复: 统一 CLI→API 降级链)
+        Claude 审计 Hermes 的回应
+        2026-06-14: CLI → API → 直调 UnifiedLLMService 三级降级
         """
         try:
             from app.agents.debate.agent_roles import CROSS_VALIDATION_PROMPT_CLAUDE
@@ -306,7 +380,7 @@ class DebatePlanner:
             
             system_prompt = DEBATE_CLAUDE_VALIDATION_PROMPT
             
-            # ── 优先使用 CLI Agent (与 Round1 一致) ──
+            # ── Level 1: CLI Agent ──
             cli_result = None
             try:
                 cli_result = self.claude_cli.run_analysis(
@@ -321,13 +395,52 @@ class DebatePlanner:
                 logger.info("[DebatePlanner] Claude CLI 验证成功")
                 return cli_result
             
-            # ── CLI 失败，降级到 API ──
+            # ── Level 2: API Runner ──
             logger.warning("[DebatePlanner] CLI 不可用，降级到 API Runner")
-            return self.claude_runner.run_analysis(
-                prompt=prompt,
-                system_prompt=system_prompt,
-                round_num=2,
+            try:
+                api_result = self.claude_runner.run_analysis(
+                    prompt=prompt,
+                    system_prompt=system_prompt,
+                    round_num=2,
+                )
+                if api_result is not None:
+                    logger.info("[DebatePlanner] Claude API 验证成功")
+                    return api_result
+            except Exception as api_err:
+                logger.warning(f"[DebatePlanner] API Runner 验证失败: {api_err}")
+            
+            # ── Level 3: 直调 UnifiedLLMService (deepseek-pro) ──
+            logger.warning("[DebatePlanner] API Runner 不可用，降级到直调 LLM (claude_code feature)")
+            from app.llm.unified_service import UnifiedLLMService
+            res = UnifiedLLMService.call(
+                "claude_code", prompt,
+                system=system_prompt or "",
+                temperature=0.3,
+                max_tokens=16000,
+                json_mode=True,
+                timeout=120,
             )
+            if not res or not res.success:
+                logger.warning(f"[DebatePlanner] Claude 直调验证失败: {res.error if res else 'unknown'}")
+                return None
+            
+            text = res.response or ""
+            if isinstance(text, dict):
+                return text
+            text = text.strip()
+            if text.startswith("```json"):
+                text = text[7:]
+            if text.startswith("```"):
+                text = text[3:]
+            if text.endswith("```"):
+                text = text[:-3]
+            text = text.strip()
+            
+            try:
+                return json.loads(text)
+            except json.JSONDecodeError as e:
+                logger.warning(f"[DebatePlanner] Claude 验证 JSON 解析失败: {e}")
+                return None
             
         except Exception as e:
             logger.error(f"[DebatePlanner] Claude 验证异常: {e}", exc_info=True)
@@ -349,11 +462,19 @@ class DebatePlanner:
         """
         确定性综合: Hermes 的 targets + Claude 的 restricted
         如果双方方向冲突，降低目标置信度。
+        保存双方视角和分歧点供 Dashboard 展示。
         """
         if not hermes and not claude:
             return None
         if hermes and not claude:
-            return hermes
+            merged = hermes.copy()
+            merged["hermes_perspective"] = {
+                "targets": hermes.get("targets", []),
+                "regime_reasoning": hermes.get("regime_reasoning", ""),
+                "key_disagreements": hermes.get("key_disagreements", []),
+                "confidence": hermes.get("confidence", 0.5),
+            }
+            return merged
         
         # 以 Hermes 为基础
         merged = hermes.copy() if hermes else {}
@@ -364,7 +485,8 @@ class DebatePlanner:
             existing_restricted = set(merged.get("restricted", []))
             merged["restricted"] = list(existing_restricted | claude_restricted)
             
-            # 2. 检查方向冲突并降低置信度
+            # 2. 检查方向冲突并降低置信度，同时记录分歧
+            disagreements = []
             claude_targets = {t.get("symbol"): t.get("direction", "") for t in claude.get("targets", [])}
             for t in merged.get("targets", []):
                 sym = t.get("symbol", "")
@@ -376,16 +498,60 @@ class DebatePlanner:
                     t["confidence"] = max(orig_conf * 0.5, 0.1)
                     t["rationale"] = t.get("rationale", "") + f" [与空头观点冲突: Hermes={hermes_dir} vs Claude={claude_dir}, 置信度已降低]"
                     t["flag"] = "CONFLICT_REDUCED"
+                    disagreements.append({
+                        "symbol": sym,
+                        "hermes_view": f"{hermes_dir} @ {t.get('entry_zone', '?')}",
+                        "claude_view": f"{claude_dir}",
+                        "resolution": "置信度减半，建议观望或轻仓",
+                    })
             
-            # 3. 记录综合来源
+            # 3. 检查 Hermes target 是否在 Claude bear_cases 中 (空头 vs 多头冲突)
+            claude_bear_syms = {bc.get("symbol"): bc for bc in claude.get("bear_cases", [])}
+            for t in merged.get("targets", []):
+                sym = t.get("symbol", "")
+                if sym in claude_bear_syms and t.get("direction") == "LONG":
+                    bc = claude_bear_syms[sym]
+                    disagreements.append({
+                        "symbol": sym,
+                        "hermes_view": f"LONG @ {t.get('entry_zone', '?')}",
+                        "claude_view": f"SHORT (bear case: {bc.get('risk_level', '?')} risk)",
+                        "resolution": "方向严重冲突，建议回避或极轻仓",
+                    })
+                    t["flag"] = "SEVERE_CONFLICT"
+                    t["confidence"] = max(t.get("confidence", 0.5) * 0.3, 0.05)
+            
+            # 4. 保存 Hermes 视角 (独立记录，不被 Claude 覆盖)
+            merged["hermes_perspective"] = {
+                "targets": hermes.get("targets", []),
+                "regime_reasoning": hermes.get("regime_reasoning", ""),
+                "key_disagreements": hermes.get("key_disagreements", []),
+                "responses_to_claude": hermes.get("responses_to_claude", []),
+                "confidence": hermes.get("confidence", 0.5),
+            }
+            
+            # 5. 保存分歧摘要
+            merged["disagreements"] = disagreements
+            merged["agreement_count"] = len([
+                t for t in merged.get("targets", [])
+                if t.get("flag") not in ("CONFLICT_REDUCED", "SEVERE_CONFLICT")
+            ])
+            merged["conflict_count"] = len(disagreements)
+            
+            # 6. 记录综合来源
             merged["arbiter_mode"] = "deterministic_rule_based"
             merged["claude_audit"] = claude
-            merged["debate_summary"] = f"Hermes 计划 ({len(hermes.get('targets', []))}标的) + Claude 风险审计 ({len(claude_restricted)}受限)"
+            merged["debate_summary"] = (
+                f"Hermes 计划 ({len(hermes.get('targets', []))}标的) + "
+                f"Claude 风险审计 ({len(claude_restricted)}受限, "
+                f"{len(claude.get('bear_cases', []))}做空) | "
+                f"共识={merged['agreement_count']} 分歧={merged['conflict_count']}"
+            )
             
             logger.info(
                 f"[DebatePlanner] 确定性综合完成: "
                 f"{len(merged.get('targets', []))} targets, "
-                f"{len(merged.get('restricted', []))} restricted"
+                f"{len(merged.get('restricted', []))} restricted, "
+                f"{len(disagreements)} disagreements"
             )
         
         return merged
@@ -470,6 +636,9 @@ class DebatePlanner:
             "watchlist_json": json.dumps(raw_context.get("watchlist_info", [])[:10], ensure_ascii=False, indent=2),
             "memory_context": raw_context.get("memory", ""),
             "memory_section": "",  # P3 新增: 长期记忆注入
+            # 2026-06-14: 注入盘前 enrichment 数据 (7 源) + 价格校准
+            "premarket_enrichment": raw_context.get("premarket_enrichment", "盘前数据不可用"),
+            "price_calibration": json.dumps(raw_context.get("price_calibration", {}), ensure_ascii=False, indent=2) or "价格校准数据不可用",
         }
     
     def enrich_with_memory(self, raw_context: dict) -> dict:

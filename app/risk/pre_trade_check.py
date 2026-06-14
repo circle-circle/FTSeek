@@ -510,7 +510,7 @@ class PreTradeChecker:
             from app.core.config_container import get_config
 
             # 取 equity + 当前持仓
-            equity = float(get_capital_safety_system()._state.total_equity or 0)
+            equity = float(get_capital_safety_system()._state.current_equity or 0)
             if equity <= 0:
                 return True, None  # 无 equity 数据 → 跳过 (不阻断)
 

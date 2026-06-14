@@ -143,6 +143,37 @@ def critical_alert(title: str, body: str, dedup_key: Optional[str] = None) -> Pu
     )
 
 
+def approaching_stop(symbol: str, direction: str, sl_distance_pct: float,
+                    sl_distance_atr: float, severity: str = "WARNING") -> PushMessage:
+    """接近止损预警 (HIGH, 立即推送)
+
+    Args:
+        symbol: 标的
+        direction: LONG / SHORT
+        sl_distance_pct: 距止损百分比
+        sl_distance_atr: 距止损 ATR 倍数
+        severity: WARNING (< 1.0 ATR) 或 CRITICAL (< 0.5 ATR)
+    """
+    lvl = Level.CRITICAL if severity == "CRITICAL" else Level.HIGH
+    icon = "🚨" if severity == "CRITICAL" else "⚠️"
+    return PushMessage(
+        title=f"{icon} {symbol} 接近止损",
+        body=(
+            f"{direction} 距止损线 {sl_distance_pct:.1f}% ({sl_distance_atr:.1f}×ATR)\n"
+            f"级别: {severity}"
+        ),
+        level=lvl,
+        category=Category.RISK_ALERT,
+        dedup_key=f"approaching_stop:{symbol}",
+        payload={
+            "symbol": symbol, "direction": direction,
+            "sl_distance_pct": round(sl_distance_pct, 2),
+            "sl_distance_atr": round(sl_distance_atr, 2),
+            "severity": severity,
+        },
+    )
+
+
 def daily_review(date: str, body: str) -> PushMessage:
     """每日复盘 (NORMAL + 同日去重)"""
     return PushMessage(

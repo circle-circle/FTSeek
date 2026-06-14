@@ -160,7 +160,7 @@ def process(ctx: SymbolContext,
                         import concurrent.futures
                         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
                             future = executor.submit(voting_coordinator.vote, symbol, ctx)
-                            vote_result = future.result(timeout=5.0)  # 5 second timeout
+                            vote_result = future.result(timeout=5.0)  # 5s timeout — LLM 盘中投票已废弃, 盘前 battle plan 取代
                             if vote_result:
                                 ctx.metadata["vote_result"] = vote_result
                                 candidate = eval_strategy("llm_vote", ctx)
@@ -203,6 +203,30 @@ def process(ctx: SymbolContext,
         logger.info(f"[Signal] {symbol} 所有候选未通过质量底线 (strength≥{_min_strength} AND conf≥{_min_confidence})")
         return None
     candidates = filtered
+
+    # ── P0 (2026-06-14): SPY 方向门禁 — 牛市抑制 SHORT 噪音 ──
+    # 数据驱动: LONG IC=0.188(p<0.05), SHORT IC=-0.056(噪音)
+    # 84% 信号是 SHORT 但 SHORT 无预测力 → SPY>MA200 时过滤弱 SHORT
+    # 极端 SHORT 信号 (strength≥70, 即 RSI>80+单日暴涨) 仍保留
+    _spy_below = getattr(ctx, 'spy_below_ma200', False)
+    if not _spy_below and len(filtered) > 0:
+        _short_filtered = []
+        for c in candidates:
+            _dir = c.direction if isinstance(c.direction, str) else (
+                c.direction.value if hasattr(c.direction, 'value') else str(c.direction)
+            )
+            if _dir == "SHORT":
+                _str = int(getattr(c, 'strength', 0) or 0)
+                if _str < 70:
+                    logger.info(
+                        f"[Signal] {symbol} SHORT 噪音过滤 (SPY>MA200): "
+                        f"strategy={c.strategy_id} strength={_str}<70"
+                    )
+                    continue
+            _short_filtered.append(c)
+        if _short_filtered:
+            candidates = _short_filtered
+        # 如果全部 SHORT 被过滤且无 LONG 候选, candidates 为空 → 下方自然返回 None
 
     # ── 单候选 → 直接返回 (已施加质量评分) ──
     if len(candidates) == 1:

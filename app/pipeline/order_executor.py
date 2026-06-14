@@ -670,10 +670,18 @@ def _get_order_qty(scheduler, symbol: str, atr: float = 0, direction: str = "LON
                 session_ratio = 1.0  # 降级
 
             effective_atr = atr * session_ratio
-            # F32 修复 (2026-05-12): 从 exit_policy.yaml 读取, 不再硬编码
-            atr_mult = 2.0  # exit_policy.yaml atr_stop.initial (默认)
+            # F32 修复 (2026-05-12 → 2026-06-14 SSOT): 从 exit_policy.yaml 读取, 不再硬编码
+            # BUG FIX: 原硬编码 2.0 与 exit_policy.yaml atr_stop.initial=4.0 不一致
+            # 导致入场止损定价 (用于仓位计算) 与退出止损 (ExitMonitor) 脱节
+            try:
+                from app.risk.exit_policy_guardian import ExitPolicyGuardian as _EPG
+                _exit_policy = _EPG()._load_exit_policy_dict()
+                atr_mult = float(_exit_policy.get("exit_rules", {}).get(
+                    "atr_stop", {}).get("multiplier_by_profit", {}).get("initial", 4.0))
+            except Exception:
+                atr_mult = 4.0  # exit_policy.yaml atr_stop.initial 默认
             if hasattr(scheduler, 'position_store') and scheduler.position_store.has(symbol):
-                atr_mult = 1.8  # 已有持仓 → 更紧止损 (加仓场景)
+                atr_mult = atr_mult * 0.9  # 已有持仓 → 收紧 10% (加仓场景, 原比例 1.8/2.0=0.9)
 
             # 入场方向: 做多止损在下方，做空止损在上方
             if hasattr(direction, 'value'):
@@ -2752,6 +2760,37 @@ def _submit_order(scheduler, symbol: str, signal: SignalScore, context: Dict[str
     except Exception as _at_err:
         # 配置读取失败 → fail-safe: 不交易 (安全优先)
         logger.warning(f"🔒 [自动交易·fail-safe] {symbol} 配置读取失败，跳过下单: {_at_err}")
+        return
+
+    # ── P0 (2026-06-14): 信号质量门禁 — IC < 阈值时物理阻止自动交易 ──
+    # 原理: 信号 IC (Spearman rank correlation) 衡量信号强度与实际收益的相关性
+    # IC < 0.05 = 信号无预测能力 ≈ 噪音 → 自动交易 = 随机赌博
+    # 此门禁独立于 YAML 开关和硬锁, 即使两者都解锁, IC 不达标仍阻止
+    _IC_MIN_THRESHOLD = 0.05
+    _IC_MIN_SIGNALS = 30  # 至少 30 个已回填信号才有统计意义
+    try:
+        from app.analysis.signal_ic_tracker import get_ic_summary
+        _ic = get_ic_summary(min_signals=_IC_MIN_SIGNALS, days_back=30)
+        _ic_status = _ic.get("status", "unknown")
+        if _ic_status == "insufficient_data":
+            _n = _ic.get("n_signals", 0)
+            logger.warning(
+                f"🔒 [IC门禁] {symbol} 信号数据不足 ({_n}/{_IC_MIN_SIGNALS}), "
+                f"自动交易暂停 (需更多交易日积累数据)"
+            )
+            return
+        _ic_mean = _ic.get("ic_mean", 0.0)
+        if _ic_mean is not None and _ic_mean < _IC_MIN_THRESHOLD:
+            logger.warning(
+                f"🔒 [IC门禁] {symbol} 信号IC={_ic_mean:.3f} < {_IC_MIN_THRESHOLD}, "
+                f"信号无预测能力, 自动交易被拦截 (需IC≥{_IC_MIN_THRESHOLD}解锁)"
+            )
+            return
+        # IC 达标 — 记录通过 (debug 级别, 不刷屏)
+        logger.debug(f"[IC门禁] {symbol} IC={_ic_mean:.3f} ≥ {_IC_MIN_THRESHOLD} ✅")
+    except Exception as _ic_err:
+        # IC 检查失败 → fail-safe: 不交易 (安全优先)
+        logger.warning(f"🔒 [IC门禁·fail-safe] {symbol} IC检查异常, 跳过下单: {_ic_err}")
         return
 
     # ── P0 (2026-06-14): Kill Switch 统一 — 自动线也必须尊重紧急制动 ──

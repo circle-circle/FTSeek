@@ -37,8 +37,9 @@ version: "2.5"
 last_updated: "2026-05-31"
 design_rationale: "ATR动态止损 + 分层止盈 + 行业差异化 + 日内短线模式 + session-aware ATR + 时间加权盘末退出 (P2优化) | Phase 3 (2026-05-31): 参数完全外部化 + ATR下限/财报上限 + ExitRuleDispatcher 影子模式"
 
-# ── Phase 3 (2026-05-31): 渐进式追踪止损参数外部化 ──
-# _update_trail_state 中 4 档渐进 SL 的所有 magic number 集中到此处
+# ── DEAD RULE: progressive_trailing ──
+# current_sl 写入17次读取0次, 无任何退出规则消费, 纯死代码
+# P1 (2026-06-14): 禁用 — 保留参数供历史参考
 progressive_trailing:
   enabled: false                  # P1 (2026-06-14): 禁用 — current_sl 写入17次读取0次, 死代码
   # 唯一活跃止损机制: atr_stop (entry ± 4×ATR), 由 trailing_stop.py 独立计算
@@ -119,6 +120,7 @@ global:
 # ── 退出规则定义 (唯一真相源) ──
 exit_rules:
   
+  # ── DEAD RULE: flash_exit ──
   # 规则 1: Flash Exit (60秒内剧烈波动)
   # P0 禁用 (2026-06-03): 6笔全亏 0% WR -$1,362, 纯噪音
   flash_exit:
@@ -143,6 +145,7 @@ exit_rules:
     # 波动率底限：ATR 不能低于 200 日中位 TR 的 70%
     atr_floor_pct: 70
 
+  # ── DEAD RULE: chandelier_trail ──
   # 规则 3: Chandelier 追踪止损
   # P1 禁用 (2026-06-04): 92笔 46.7%WR -$34 接近零EV
   #   RANGE市已实质禁用(99×ATR), TREND市4.0×与atr_stop initial=4.0重叠
@@ -150,6 +153,7 @@ exit_rules:
   chandelier_trail:
     enabled: false
 
+  # ── DEAD RULE: breakeven ──
   # 规则 4: 保本触发
   # P1 禁用 (2026-06-04): 功能已合并到 scale_out (ratchet_sl_pct 止损移至成本)
   #   3套保本机制(breakeven + progressive_trailing tier2 + scale_out ratchet)冲突
@@ -169,6 +173,7 @@ exit_rules:
         ratchet_sl_pct: 0.0         # 全平后无剩余仓位, ratchet 无意义
     tiers: []                       # pct模式不使用
 
+  # ── DEAD RULE: velocity_exit ──
   # 规则 5.5: 速度捕捉退出 (Phase 3 2026-05-31)
   velocity_exit:
     enabled: false                   # P0 (2026-06-03): 禁用，样本不足且与 trailing_stop 冲突
@@ -221,6 +226,7 @@ exit_rules:
       high_vol: 15                  # 高波动: 收盘前 15 分钟 (保守)
       default: 10
 
+  # ── DEAD RULE: time_stop ──
   # 规则 6: 时间止损
   # O3 (2026-05-16): 禁用 — 30天 sharpe=-0.40, win_rate=29% (5/15 exit_reason_pnl 报告)
   # 退出时机更应由价格行为 (chandelier/SL) 决定, 而非时间. 之前 7 笔 time_stop 平均亏损 -0.53%.
@@ -314,11 +320,8 @@ session_adaptation:
     enabled: true
     rule: "低置信度 session 入场 (opening_drive) → 止损收紧 0.85x"
 
-# ── 日内/短线主动管理模式 (P1 2026-05-01 新增) ──
-# 问题: 趋势跟踪模式 (v2.1) 的 exit 阈值太高 (2ATR激活追踪, 8%分层止盈),
-#       实际1-3天短线持仓永远达不到触发条件, 导致所有退出都是 PRE_CLOSE_EXIT 强制平仓。
-# 方案: 新增 day_trade_mode, 从入场即生效的紧止损, 到小幅止盈的利润锁定,
-#       让短线策略也能主动退出而非被动等收盘。
+# ── DEAD RULE: day_trade_mode ──
+# P1 合并 (2026-06-04): day_trade_TP 和 time_decay 与 scale_out/grace_period 重叠, 统一使用后者
 day_trade_mode:
   enabled: false                  # P1 合并 (2026-06-04): day_trade_TP 与 scale_out 功能重叠
                                   #   day_trade_TP 用固定1.5%, scale_out 用1.0ATR (波动率自适应)
@@ -368,15 +371,19 @@ day_trade_mode:
     max_idle_minutes: 45            # ADR-004: 60→45min, 与主线对齐
 
 # ============================================================
-# SCALPING 策略退出参数覆写 (Task #9, 2026-05-30)
+# INACTIVE — SCALPING 引擎已禁用 (ADR-002, 2026-05-31)
+# unified_config.yaml scalping.enabled=false, 无 scalping 持仓产生
+# 本 section 由 exits.py 加载但实际不会被执行路径消费
+# 保留供 scalping 重启后使用
 # ============================================================
+# SCALPING 策略退出参数覆写 (Task #9, 2026-05-30)
 # SCALPING 使用独立退出引擎 (app/scalping/exits.py) 但配置统一到此文件管理
 # - 启动时由 _load_scalping_exit_config() 一次性加载, 缓存到模块级 _SCALPING_EXIT_CONFIG
 # - enabled: false 时所有 SCALPING 类回退到代码默认值 (向后兼容)
 # - 修改参数无需改 Python 代码
 # ------------------------------------------------------------
 scalping_overrides:
-  enabled: true
+  enabled: true                     # 注意: 虽此处 enabled=true, 但 scalping 引擎整体已禁用
 
   # ── ATRExit (app/scalping/exits.py::ATRExit) ──
   atr_exit:

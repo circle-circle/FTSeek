@@ -1113,7 +1113,12 @@ class IntradayScorer:
     # ============================================================
 
     def _aggregate_direction(self, factors: Dict[str, FactorScore]) -> Tuple[str, float]:
-        """加权聚合方向 + 原始强度"""
+        """加权聚合方向 + 原始强度
+        
+        P2 (2026-06-14): 一致性惩罚 — strength>50 胜率反而下降 (数据: [50-60)=47%, [60-70)=45%)
+        根因: 因子方向矛盾但绝对值大 → strength 虚高
+        修复: 统计同向因子数, <3/5 时 strength × 0.70
+        """
         total_contribution = sum(f.contribution for f in factors.values())
 
         if abs(total_contribution) < 3:  # 噪声阈值
@@ -1121,6 +1126,17 @@ class IntradayScorer:
 
         direction = "LONG" if total_contribution > 0 else "SHORT"
         raw_strength = min(abs(total_contribution) * 0.8, 45)  # 0-45, 映射到 50±45
+
+        # P2: 一致性检查 — 统计与最终方向同向的因子数
+        _n_factors = len(factors)
+        if _n_factors >= 3:
+            _same_dir = sum(
+                1 for f in factors.values()
+                if (direction == "LONG" and f.contribution > 0) or
+                   (direction == "SHORT" and f.contribution < 0)
+            )
+            if _same_dir < 3:
+                raw_strength *= 0.70  # 不一致惩罚: 多因子矛盾 → 压缩强度
 
         return direction, raw_strength
 

@@ -1,0 +1,230 @@
+{
+  "generated_at": "2026-06-14T01:01:55.666361",
+  "window_days": 90,
+  "data_counts": {
+    "signals": 879,
+    "trades": 335,
+    "debate_logs": 4
+  },
+  "ic_by_mode": {
+    "live": {
+      "n": 73,
+      "ic_t1": 0.0276,
+      "wr_t1": 0.4384,
+      "ic_t5": null,
+      "wr_t5": null,
+      "avg_ret_t1": 0.0066
+    },
+    "simulate": {
+      "n": 806,
+      "ic_t1": -0.0459,
+      "wr_t1": 0.5099,
+      "ic_t5": 0.2944,
+      "wr_t5": 0.6497,
+      "avg_ret_t1": 0.001
+    }
+  },
+  "ic_by_direction": {
+    "LONG": {
+      "n": 141,
+      "ic_t1": 0.2024,
+      "wr_t1": 0.617,
+      "ic_t5": 0.106,
+      "wr_t5": 0.573,
+      "avg_ret_t1": 0.0039
+    },
+    "NEUTRAL": {
+      "n": 2,
+      "ic_t1": null,
+      "wr_t1": null,
+      "ic_t5": null,
+      "wr_t5": null,
+      "avg_ret_t1": -0.0157
+    },
+    "SHORT": {
+      "n": 736,
+      "ic_t1": -0.0621,
+      "wr_t1": 0.5082,
+      "ic_t5": 0.406,
+      "wr_t5": 0.6901,
+      "avg_ret_t1": 0.0011
+    }
+  },
+  "factor_ic": {
+    "signal_strength": {
+      "ic": 0.0825,
+      "wr": 0.3994,
+      "n": 333
+    },
+    "signal_confidence": {
+      "ic": -0.0021,
+      "wr": 0.4054,
+      "n": 333
+    },
+    "consensus_level": {
+      "ic": 0.0652,
+      "wr": 0.5534,
+      "n": 206
+    },
+    "f1_trend": {
+      "ic": 0.0427,
+      "wr": 0.6507,
+      "n": 335
+    },
+    "f2_momentum": {
+      "ic": 0.0427,
+      "wr": 0.6507,
+      "n": 335
+    },
+    "f3_volume": {
+      "ic": 0.0427,
+      "wr": 0.6507,
+      "n": 335
+    },
+    "f4_orderflow": {
+      "ic": 0.0427,
+      "wr": 0.6507,
+      "n": 335
+    },
+    "f5_lifecycle": {
+      "ic": 0.0427,
+      "wr": 0.6507,
+      "n": 335
+    }
+  },
+  "llm_feature_ic": {
+    "direction_LONG": {
+      "n": 141,
+      "ic_t1": 0.2024,
+      "wr_t1": 0.617,
+      "avg_ret": 0.0039
+    },
+    "direction_SHORT": {
+      "n": 736,
+      "ic_t1": -0.0621,
+      "wr_t1": 0.5082,
+      "avg_ret": 0.0011
+    },
+    "confidence_low_conf": {
+      "n": 325,
+      "ic_t1": -0.1075,
+      "wr_t1": 0.4492,
+      "avg_ret": 0.0033
+    },
+    "confidence_mid_conf": {
+      "n": 444,
+      "ic_t1": -0.0319,
+      "wr_t1": 0.5495,
+      "avg_ret": 0.0008
+    },
+    "confidence_high_conf": {
+      "n": 110,
+      "ic_t1": 0.1679,
+      "wr_t1": 0.5182,
+      "avg_ret": -0.0012
+    },
+    "strategy_TECHNICAL_MULTI_FACTOR": {
+      "n": 480,
+      "ic_t1": -0.0682,
+      "wr_t1": 0.5083,
+      "avg_ret": 0.0046
+    },
+    "strategy_trend_first": {
+      "n": 16,
+      "ic_t1": -0.2118,
+      "wr_t1": 0.5,
+      "avg_ret": 0.0031
+    },
+    "strategy_unknown": {
+      "n": 383,
+      "ic_t1": -0.0958,
+      "wr_t1": 0.5039,
+      "avg_ret": -0.0025
+    },
+    "trade_strategy_reconciler": {
+      "n": 1,
+      "wr": 1.0,
+      "avg_pnl": 0.0732,
+      "total_pnl": 0.0732
+    },
+    "trade_strategy_voting_llm": {
+      "n": 182,
+      "wr": 0.4231,
+      "avg_pnl": -0.0425,
+      "total_pnl": -7.7308
+    },
+    "trade_strategy_scalping": {
+      "n": 137,
+      "wr": 0.1971,
+      "avg_pnl": -0.001,
+      "total_pnl": -0.1341
+    },
+    "trade_strategy_manual_sync": {
+      "n": 8,
+      "wr": 0.875,
+      "avg_pnl": 0.0297,
+      "total_pnl": 0.2373
+    },
+    "trade_strategy_futu_sync": {
+      "n": 1,
+      "wr": 1.0,
+      "avg_pnl": 0.0172,
+      "total_pnl": 0.0172
+    },
+    "trade_strategy_broker_reconcile": {
+      "n": 2,
+      "wr": 1.0,
+      "avg_pnl": 0.046,
+      "total_pnl": 0.092
+    },
+    "trade_strategy_MAIN_PIPELINE": {
+      "n": 2,
+      "wr": 0.5,
+      "avg_pnl": -0.0103,
+      "total_pnl": -0.0207
+    },
+    "trade_strategy_orb_engine": {
+      "n": 2,
+      "wr": 0.5,
+      "avg_pnl": 0.0006,
+      "total_pnl": 0.0012
+    }
+  },
+  "regime_pnl": {
+    "RANGE": {
+      "n": 95,
+      "wr": 0.3895,
+      "avg_pnl": 0.0003,
+      "total_pnl": 0.0291
+    },
+    "HIGH_VOL": {
+      "n": 141,
+      "wr": 0.1489,
+      "avg_pnl": -0.0583,
+      "total_pnl": -8.2184
+    },
+    "TREND_UP": {
+      "n": 81,
+      "wr": 0.5556,
+      "avg_pnl": 0.0062,
+      "total_pnl": 0.5055
+    },
+    "UNKNOWN": {
+      "n": 18,
+      "wr": 0.7778,
+      "avg_pnl": 0.0122,
+      "total_pnl": 0.219
+    }
+  },
+  "key_findings": [
+    "direction_LONG: IC=0.2024 (positive ✅)",
+    "confidence_low_conf: IC=-0.1075 (negative ❌)",
+    "confidence_high_conf: IC=0.1679 (positive ✅)",
+    "strategy_trend_first: IC=-0.2118 (negative ❌)"
+  ],
+  "recommendations": [
+    "✅ LONG 信号有预测力 (IC=0.2024), 应优先做多",
+    "❌ SHORT 信号 IC=-0.0621, 做空逻辑需要重构",
+    "✅ 高置信度信号 IC 高于低置信度, 信心度校准有效"
+  ]
+}

@@ -1,255 +1,234 @@
 {
-  "date": "2026-06-12",
+  "date": "2026-06-14",
   "market_regime": "NEUTRAL",
-  "regime_reasoning": "VIX和SPY数据缺失，QQQ在717附近横盘，无隔夜新闻和重要财报，市场处于低波动收敛阶段。连续多日无信号，需警惕突破可能。",
+  "regime_reasoning": "SPY 20日涨幅仅+0.3%表明大盘缺乏明确趋势，处于窄幅震荡状态。板块涨幅温和且分化（金融+1.4%领涨），未出现极端的风险偏好或避险情绪，符合中性市场特征。",
   "targets": [
     {
-      "symbol": "US.AAPL",
+      "symbol": "US.JPM",
       "direction": "LONG",
       "entry_zone": [
-        278.0,
-        282.0
+        313.0,
+        316.0
       ],
-      "stop_loss": 275.0,
-      "take_profit": 290.0,
-      "urgency": "LOW",
-      "rationale": "前持仓均价285.7，当前接近支撑，区间震荡策略下逢低做多，放宽入场区间10-15%以适应低波动，若突破290则趋势转强。",
-      "open_check_status": "VALID",
-      "gap_pct": 0.01388984155291862,
-      "confirmed_entry_price": 295.63
+      "stop_loss": 308.5,
+      "take_profit": 329.5,
+      "urgency": "MEDIUM",
+      "rationale": "✅ sector_momentum: Financials +1.4% | ✅ relative_strength: +7.7% vs SPY +0.3% | ✅ ma_alignment: MA5=313 MA10=309 MA20=305\n验证: sector_momentum=confirmed, relative_strength=confirmed, ma_alignment=confirmed, volume_breakout=false_positive, rsi_sweet_spot=weak\n风险: 缩量逼近20日高点321.30，存在假突破风险; 量价背离明显，追高极易被套，必须等待回踩确认",
+      "trigger_condition": "回踩313-316区间后出现5分钟放量阳线，或带量突破20日高点321.30",
+      "risk_reward": 2.5,
+      "position_size_pct": 4,
+      "invalidation": "收盘价跌破MA20(305)或Financials板块指数转跌",
+      "confidence": 65,
+      "factor_score": 0.711,
+      "composite_rank": 0.481,
+      "verdict": "CONDITIONAL",
+      "execution_rules": {
+        "gap_up_over_2pct": "SKIP",
+        "gap_down_over_2pct": "WAIT_RECOVERY",
+        "hit_zone_then_drop": "WAIT_5MIN_CANDLE_ABOVE"
+      },
+      "factor_validation": {
+        "sector_momentum": "CONFIRMED",
+        "relative_strength": "CONFIRMED",
+        "ma_alignment": "CONFIRMED",
+        "volume_breakout": "FALSE_POSITIVE",
+        "rsi_sweet_spot": "WEAK"
+      },
+      "data_cited": [
+        "Financials +1.4%",
+        "+7.7% vs SPY +0.3%",
+        "MA5=313 MA10=309 MA20=305",
+        "RSI=64"
+      ]
     },
     {
-      "symbol": "US.NVDA",
+      "symbol": "US.PG",
       "direction": "LONG",
       "entry_zone": [
-        198.0,
-        202.0
+        147.5,
+        148.5
       ],
-      "stop_loss": 195.0,
-      "take_profit": 210.0,
+      "stop_loss": 144.8,
+      "take_profit": 154.4,
+      "urgency": "MEDIUM",
+      "rationale": "⚠️ sector_momentum: N/A | ✅ relative_strength: +5.7% vs SPY +0.3% | ✅ ma_alignment: MA5=148 MA10=145 MA20=144\n验证: sector_momentum=weak, relative_strength=confirmed, ma_alignment=confirmed, volume_breakout=false_positive, rsi_sweet_spot=confirmed\n风险: 缩量上涨(量比0.8x)导致突破20日高点150.43的可靠性存疑，存在假突破风险; 板块动量缺失(N/A)，个股独立走强易受大盘中性情绪拖累",
+      "trigger_condition": "价格回踩MA5(148)附近并出现5分钟级别看涨K线反转形态(如长下影线或看涨吞没)",
+      "risk_reward": 2.0,
+      "position_size_pct": 4,
+      "invalidation": "日线收盘价跌破MA20(144)或盘中放量跌破MA10(145)关键支撑",
+      "confidence": 65,
+      "factor_score": 0.661,
+      "composite_rank": 0.46,
+      "verdict": "CONDITIONAL",
+      "execution_rules": {
+        "gap_up_over_2pct": "SKIP",
+        "gap_down_over_2pct": "WAIT_RECOVERY",
+        "hit_zone_then_drop": "WAIT_5MIN_CANDLE_ABOVE"
+      },
+      "factor_validation": {
+        "sector_momentum": "WEAK",
+        "relative_strength": "CONFIRMED",
+        "ma_alignment": "CONFIRMED",
+        "volume_breakout": "FALSE_POSITIVE",
+        "rsi_sweet_spot": "CONFIRMED"
+      },
+      "data_cited": [
+        "+5.7% vs SPY +0.3%",
+        "MA5=148 MA10=145 MA20=144",
+        "RSI=59"
+      ]
+    },
+    {
+      "symbol": "US.LLY",
+      "direction": "LONG",
+      "entry_zone": [
+        1115.0,
+        1125.0
+      ],
+      "stop_loss": 1082.0,
+      "take_profit": 1182.0,
+      "urgency": "MEDIUM",
+      "rationale": "⚠️ sector_momentum: Healthcare -0.2% | ✅ relative_strength: +12.8% vs SPY +0.3% | ✅ ma_alignment: MA5=1145 MA10=1121 MA20=1086\n验证: sector_momentum=weak, relative_strength=confirmed, ma_alignment=confirmed, volume_breakout=false_positive, rsi_sweet_spot=confirmed\n风险: 板块整体弱势缺乏协同效应; 量比仅0.8x，缩量状态下突破动能存疑",
+      "trigger_condition": "价格回踩MA10(1121)附近后，出现5分钟级别放量阳线且收盘站上1125",
+      "risk_reward": 1.63,
+      "position_size_pct": 4,
+      "invalidation": "日线收盘价跌破MA20(1086)或Healthcare板块单日跌幅超过1.5%",
+      "confidence": 60,
+      "factor_score": 0.647,
+      "composite_rank": 0.44,
+      "verdict": "CONDITIONAL",
+      "execution_rules": {
+        "gap_up_over_2pct": "SKIP",
+        "gap_down_over_2pct": "WAIT_RECOVERY",
+        "hit_zone_then_drop": "WAIT_5MIN_CANDLE_ABOVE"
+      },
+      "factor_validation": {
+        "sector_momentum": "WEAK",
+        "relative_strength": "CONFIRMED",
+        "ma_alignment": "CONFIRMED",
+        "volume_breakout": "FALSE_POSITIVE",
+        "rsi_sweet_spot": "CONFIRMED"
+      },
+      "data_cited": [
+        "+12.8% vs SPY +0.3%",
+        "MA5=1145 MA10=1121 MA20=1086",
+        "RSI=62"
+      ]
+    },
+    {
+      "symbol": "US.LMT",
+      "direction": "LONG",
+      "entry_zone": [
+        530.0,
+        535.0
+      ],
+      "stop_loss": 514.0,
+      "take_profit": 558.0,
       "urgency": "LOW",
-      "rationale": "前持仓均价205.17，股价在200附近盘整，区间下沿做多，止损紧凑，捕捉反弹至210。",
-      "open_check_status": "VALID",
-      "gap_pct": 0.02220337291687465,
-      "confirmed_entry_price": 204.87
+      "rationale": "⚠️ sector_momentum: N/A | ✅ relative_strength: +5.4% vs SPY +0.3% | ✅ ma_alignment: MA5=533 MA10=525 MA20=525\n验证: sector_momentum=weak, relative_strength=confirmed, ma_alignment=confirmed, volume_breakout=false_positive, rsi_sweet_spot=weak\n风险: 无量上涨(0.9x)暗示突破缺乏资金共识，假突破风险极高; RSI=56处于中性区，缺乏短期动量加速特征",
+      "trigger_condition": "价格回踩530-535区间后，出现15分钟级别放量(>1.2x)阳线站稳MA5",
+      "risk_reward": 1.38,
+      "position_size_pct": 3,
+      "invalidation": "日线收盘价跌破MA20(525)且成交量>1.2x avg，或SPY出现>1.5%的破位下跌",
+      "confidence": 45,
+      "factor_score": 0.669,
+      "composite_rank": 0.407,
+      "verdict": "CONDITIONAL",
+      "execution_rules": {
+        "gap_up_over_2pct": "SKIP",
+        "gap_down_over_2pct": "WAIT_RECOVERY",
+        "hit_zone_then_drop": "WAIT_5MIN_CANDLE_ABOVE"
+      },
+      "factor_validation": {
+        "sector_momentum": "WEAK",
+        "relative_strength": "CONFIRMED",
+        "ma_alignment": "CONFIRMED",
+        "volume_breakout": "FALSE_POSITIVE",
+        "rsi_sweet_spot": "WEAK"
+      },
+      "data_cited": [
+        "+5.4% vs SPY +0.3%",
+        "MA5=533 MA10=525 MA20=525",
+        "RSI=56"
+      ]
     },
     {
       "symbol": "US.MU",
-      "direction": "SHORT",
-      "entry_zone": [
-        985.0,
-        995.0
-      ],
-      "stop_loss": 1010.0,
-      "take_profit": 960.0,
-      "urgency": "LOW",
-      "rationale": "前SHORT持仓均价980，历史高位阻力，若反弹至985-995区间可再次做空，利用区间震荡高抛。",
-      "open_check_status": "CANCELLED",
-      "gap_pct": 0.11659640310355654,
-      "cancellation_reason": "Gap too large (11.66% > 3%)"
-    },
-    {
-      "symbol": "US.AMZN",
       "direction": "LONG",
       "entry_zone": [
-        230.0,
-        235.0
+        951.0,
+        979.0
       ],
-      "stop_loss": 225.0,
-      "take_profit": 245.0,
-      "urgency": "LOW",
-      "rationale": "股池中权重股，技术面假设在230-245区间震荡，下沿做多，博反弹。",
-      "open_check_status": "VALID",
-      "gap_pct": 0.014747899159663827,
-      "confirmed_entry_price": 241.51
-    },
-    {
-      "symbol": "US.BABA",
-      "direction": "LONG",
-      "entry_zone": [
-        120.0,
-        124.0
-      ],
-      "stop_loss": 117.0,
-      "take_profit": 130.0,
-      "urgency": "LOW",
-      "rationale": "前持仓均价126.1，股价可能回踩120-124支撑区间，中概无额外利空下，区间下沿做多。",
-      "open_check_status": "CANCELLED",
-      "gap_pct": -0.023314265903969473,
-      "cancellation_reason": "Direction Divergence (Plan LONG but Gap -2.33%)"
+      "stop_loss": 920.0,
+      "take_profit": 1085.0,
+      "urgency": "MEDIUM",
+      "rationale": "⚠️ sector_momentum: Semiconductors +0.0% | ✅ relative_strength: +35.5% vs SPY +0.3% | ⚠️ ma_alignment: MA5=951 MA10=979 MA20=893\n验证: sector_momentum=weak, relative_strength=confirmed, ma_alignment=confirmed, volume_breakout=false_positive, rsi_sweet_spot=confirmed\n风险: 缩量上涨(0.7x)缺乏资金确认，突破有效性存疑; 板块零动量，个股独立行情持续性面临考验",
+      "trigger_condition": "价格回踩MA10(979)至MA5(951)区间企稳，且伴随5分钟级别成交量放大(>1.2x avg)的阳线确认",
+      "risk_reward": 1.8,
+      "position_size_pct": 4,
+      "invalidation": "收盘价跌破MA20(893)或半导体板块指数出现>2%的放量下跌",
+      "confidence": 55,
+      "factor_score": 0.552,
+      "composite_rank": 0.386,
+      "verdict": "CONDITIONAL",
+      "execution_rules": {
+        "gap_up_over_2pct": "SKIP",
+        "gap_down_over_2pct": "WAIT_RECOVERY",
+        "hit_zone_then_drop": "WAIT_5MIN_CANDLE_ABOVE"
+      },
+      "factor_validation": {
+        "sector_momentum": "WEAK",
+        "relative_strength": "CONFIRMED",
+        "ma_alignment": "CONFIRMED",
+        "volume_breakout": "FALSE_POSITIVE",
+        "rsi_sweet_spot": "CONFIRMED"
+      },
+      "data_cited": [
+        "+35.5% vs SPY +0.3%",
+        "RSI=64"
+      ]
     }
   ],
   "restricted": [
-    "US.DIA",
-    "US.LMT",
-    "US.QQQ",
-    "US.XOM",
-    "US.TSLA260603P410000",
-    "US.CVX",
-    "US.TME",
-    "US.UBER",
-    "US.RIVN260605P13000"
+    "US.AMD"
   ],
-  "position_actions": [
-    {
-      "symbol": "US.SNDQ",
-      "action": "EXIT",
-      "reason": "持仓数量为0，已无实际头寸。"
-    },
-    {
-      "symbol": "US.MU",
-      "action": "EXIT",
-      "reason": "持仓数量为0，已无实际头寸。"
-    },
-    {
-      "symbol": "US.BABA",
-      "action": "EXIT",
-      "reason": "持仓数量为0，已无实际头寸。"
-    },
-    {
-      "symbol": "US.AAPL",
-      "action": "EXIT",
-      "reason": "持仓数量为0，已无实际头寸。"
-    },
-    {
-      "symbol": "US.NVDA",
-      "action": "EXIT",
-      "reason": "持仓数量为0，已无实际头寸。"
-    }
-  ],
+  "restricted_reasons": {
+    "US.AMD": "无量上涨(1.0x avg)极易形成诱多假突破; 短期均线(MA5<MA10)未多头对齐且现价(511)偏离度过大"
+  },
+  "position_actions": [],
   "strategy_adjustments": [
-    "根据连续4日无信号的历史教训，今日放宽入场条件10-15%，即支撑和阻力区间放宽10-15%。",
-    "切换至区间震荡策略，在股池关键支撑做多、阻力做空，直至出现明确突破信号。",
-    "开盘前重点监控SPX/NDX量价异动，若出现放量突破，立即切换为趋势跟随策略。"
+    "重点关注JPM（金融板块领涨+1.4%且置信度65%）和PG（必需消费防御属性且置信度65%）。",
+    "建议在entry区间下沿限价接多，避免追高，并严格执行条件止损以应对震荡洗盘。"
   ],
   "risk_warnings": [
-    "低波动收敛末端突破往往剧烈，方向不明，存在突破后快速反转的风险。",
-    "无隔夜新闻支撑，市场可能继续横盘，区间交易可能被突破止损。",
-    "放宽入场条件可能增加虚假信号概率，需严格执行止损。"
+    "大盘缺乏趋势动能，个股突破易遭遇假突破和流动性陷阱。",
+    "所有标的均为CONDITIONAL且置信度最高仅65%，震荡市中扫损概率较高。"
   ],
-  "confidence": 0.5,
-  "arbiter_mode": "deterministic_rule_based",
-  "claude_audit": {
-    "bear_cases": [
-      {
-        "symbol": "US.XLK",
-        "direction": "SHORT",
-        "entry_zone": [
-          228,
-          232
-        ],
-        "stop_loss": 237,
-        "take_profit": 218,
-        "rationale": "推理链: (1)系统自身交易US.XLK胜率仅33%，6笔亏损$3944，说明系统对该标的方向判断持续偏差; (2)当前持仓LONG XLK 111份，但同时SHORT NTES/TSM/MU等半导体，形成矛盾的sector bet; (3)voting_llm策略整体胜率42%、均亏$-171，该策略产生的XLK多头信号不可信; (4)科技板块处于历史极低波动收敛区间(battle_plan确认)，向上空间有限而下行风险更大; (5)做空XLK可对冲现有过度科技多头敞口。风险: 若收敛向上突破则止损。",
-        "risk_level": "MEDIUM"
-      },
-      {
-        "symbol": "US.NFLX",
-        "direction": "SHORT",
-        "entry_zone": [
-          1080,
-          1100
-        ],
-        "stop_loss": 1140,
-        "take_profit": 1020,
-        "rationale": "推理链: (1)系统已持有SHORT NFLX 249股，验证做空逻辑已被内部采纳; (2)NFLX作为高估值流媒体龙头，PE远超行业均值，在VIX=20.75环境下估值压缩风险高; (3)无财报催化但用户增长预期已被充分定价; (4)收敛区间末端高beta股往往率先走弱; (5)做空NFLX与现有SHORT仓位方向一致，增强组合一致性。风险: 若市场情绪突然转多则止损。",
-        "risk_level": "HIGH"
-      },
-      {
-        "symbol": "US.QQQ",
-        "direction": "SHORT",
-        "entry_zone": [
-          540,
-          548
-        ],
-        "stop_loss": 558,
-        "take_profit": 520,
-        "rationale": "推理链: (1)当前组合净多头科技暴露极高(BABA+AAPL+NVDA+ORCL+XLK+HK00700共8只科技多头)，做空QQQ是最有效的系统性对冲; (2)battle_plan明确指出'收敛末端突破可能剧烈'，方向未明时做空QQQ的尾部收益凸性优于个股; (3)VIX从cache读取为20.75但系统报告N/A，说明数据管道断裂，实际波动率可能被低估; (4)QQQ空头可对冲47%的科技集中度风险。风险: 市场向上突破则止损，需严格执行。",
-        "risk_level": "MEDIUM"
-      }
-    ],
-    "position_risks": [
-      {
-        "symbol": "US.BABA",
-        "risk_type": "CONCENTRATION",
-        "description": "LONG 200股BABA + LONG 200股HK.00700(腾讯)形成双重中国科技暴露。中美地缘风险随时可能触发暴跌，且两笔仓位方向相同、相关性极高。一旦中概股利空，将同时承受双倍损失。",
-        "suggested_action": "REDUCE"
-      },
-      {
-        "symbol": "US.NVDA",
-        "risk_type": "TECHNICAL",
-        "description": "历史教训#1: 盘前入场US.NVDA亏损$1302(-649%)。当前仍持有LONG 30股。NVDA作为AI龙头波动剧烈，系统已证明无法有效交易该标的。此外LONG NVDA与SHORT TSM/MU形成半导体内矛盾仓位。",
-        "suggested_action": "EXIT"
-      },
-      {
-        "symbol": "US.XLK",
-        "risk_type": "CONCENTRATION",
-        "description": "LONG XLK 111份叠加LONG AAPL/NVDA/ORCL/NTES，科技板块总暴露占比47%(8/17仓位)。sector ETF与成分股高度重叠，实际集中度远高于表面分散度。",
-        "suggested_action": "REDUCE"
-      },
-      {
-        "symbol": "US.NFLX",
-        "risk_type": "TECHNICAL",
-        "description": "SHORT NFLX 249股是最大单一空头仓位。NFLX为高动量股，空头挤压风险极高。在无财报催化环境下，做空动量股的风险收益比不利。需确认止损是否足够紧凑。",
-        "suggested_action": "ADJUST_SL"
-      },
-      {
-        "symbol": "US.PG",
-        "risk_type": "TECHNICAL",
-        "description": "SHORT PG 224股。PG作为防御性消费股，在市场不确定性增加时通常获得避险资金流入。做空防御股与做空动量股(NFLX)形成风格矛盾，在市场regime切换时可能两面受敌。",
-        "suggested_action": "HOLD"
-      },
-      {
-        "symbol": "US.XLF",
-        "risk_type": "CONCENTRATION",
-        "description": "SHORT XLF 289股为最大单一仓位(按股数)。symbol_performance显示XLF近期3笔交易胜率67%但总PnL=-$4398，说明虽然频繁获胜但单次大亏吞没全部利润。止损机制可能过宽。",
-        "suggested_action": "ADJUST_SL"
-      },
-      {
-        "symbol": "US.ORCL",
-        "risk_type": "EARNINGS",
-        "description": "LONG ORCL 63股。ORCL财报周期需密切关注(虽然本周日历显示无重要财报，但battle_plan为6/11日期，可能存在日历数据滞后)。ORCL云服务增速预期已充分反映，上行空间有限。",
-        "suggested_action": "HOLD"
-      }
-    ],
-    "restricted": [
-      "US.NVDA",
-      "US.TSLA260603P410000",
-      "US.RIVN260605P13000",
-      "US.QQQ",
-      "US.LMT",
-      "US.XOM",
-      "US.CVX",
-      "US.DIA",
-      "US.UBER",
-      "US.TME"
-    ],
-    "restricted_reasons": {
-      "US.NVDA": "历史亏损$1302(-649%)，系统无法有效交易该标的，盘前入场教训",
-      "US.TSLA260603P410000": "期权交易总亏$10806，2笔0%胜率，策略完全失效",
-      "US.RIVN260605P13000": "期权交易总亏$7632，2笔0%胜率，策略完全失效",
-      "US.QQQ": "3笔交易0%胜率总亏$6002，系统方向判断完全错误",
-      "US.LMT": "盘前入场亏损$27.54，高信号强度(68)仍亏损，信号不可靠",
-      "US.XOM": "盘前入场亏损$67，高信号强度(63)仍亏损，信号不可靠",
-      "US.CVX": "盘前入场亏损$30.80，高信号强度(63)仍亏损，信号不可靠",
-      "US.DIA": "盘前入场亏损$142.25，持仓6.1h未触发止损/止盈，参数过宽",
-      "US.UBER": "盘前入场亏损$510(-637%)，系统完全无法管理该标的",
-      "US.TME": "盘前入场亏损$302(-3166%)，极端亏损案例"
-    },
-    "systemic_risks": [
-      "【CRITICAL-数据管道断裂】上下文报告positions=[]、VIX=N/A、stock_pool=[]，但实际数据库显示17个持仓、VIX=20.75、19个股池条目。信号聚合层与交易数据库严重脱节，所有基于上下文的投资决策均可能基于不完整信息。这是最高优先级的系统性风险。",
-      "【HIGH-Battle Plan过期】当前使用的battle_plan日期为2026-06-11(昨日)，今日为2026-06-12。入场区间严重偏离实际价格(GOOG偏离46.4%、MSFT偏离20.2%)，意味着价格参考数据陈旧或价格获取模块故障。",
-      "【HIGH-策略失效未熔断】voting_llm策略182笔胜率42%、均亏$-171; scalping策略150笔胜率18%。两个策略长期亏损但未触发自动熔断，系统缺少策略级kill switch。建议立即暂停voting_llm和scalping策略。",
-      "【HIGH-NewsInterceptor误报泛滥】risk_audit.json显示6/2-6/5期间多次因US.LLY/US.MU/US.AVGO触发Black Swan RISK_OFF，但均在30分钟后自动恢复。高频false-positive稀释了真实风险信号的响应优先级。",
-      "【MEDIUM-期权策略灾难性失败】TSLA期权亏$10806、RIVN期权亏$7632，2笔均为0%胜率。期权定价/时机选择存在根本性缺陷，但系统未见期权交易禁制措施。",
-      "【MEDIUM-盘前交易禁令未执行】全部10条历史教训均指向盘前入场亏损(NVDA/UBER/TME/DIA/SPY等)，但需确认系统是否已在代码层面硬编码了盘前交易禁令，而非仅依赖策略层过滤。",
-      "【LOW-收敛突破风险】market_regime='DEGRADED'，SPX/NDX处于历史极低波动收敛区间。VIX实际为20.75但系统认为N/A，可能低估了当前波动率环境。收敛末端的方向性突破可能导致所有现有仓位的止损同时被触发。"
-    ],
-    "market_bias": "NEUTRAL",
-    "confidence": 0.45
+  "confidence": 0.58,
+  "arbiter_mode": "factor_pipeline",
+  "pipeline_stats": {
+    "pool_size": 26,
+    "scored_count": 26,
+    "factor_screen_sec": 8.8,
+    "validation_sec": 97.6,
+    "valid_count": 0,
+    "conditional_count": 7,
+    "total_sec": 130.9
   },
-  "debate_summary": "Hermes 计划 (5标的) + Claude 风险审计 (10受限)",
+  "sector_momentum": {
+    "Technology": 0.87,
+    "Financials": 1.37,
+    "Energy": 0.75,
+    "Healthcare": -0.18,
+    "Industrials": 0.59,
+    "Consumer": 0.26,
+    "Consumer Staples": 0.65,
+    "Communication": -0.42
+  },
+  "spy_change_20d": 0.35,
   "_paused": false,
-  "_paused_at": "",
-  "_resumed_at": "2026-06-13T15:02:27.550190"
+  "_paused_at": null,
+  "_resumed_at": null,
+  "debate_summary": "Factor pipeline: 5 targets from 26 pool",
+  "claude_audit": null
 }

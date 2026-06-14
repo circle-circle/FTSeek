@@ -137,7 +137,7 @@
         if (it.trade_count > 0) {
             var pnl = it.total_pnl || 0;
             statsHtml = it.win_rate.toFixed(0) + '% · ' + it.trade_count + '笔 · ' +
-                '<span class="' + (pnl >= 0 ? 'green' : 'red') + '">' + (pnl >= 0 ? '+' : '') + '$' + fmt(pnl, 0) + '</span>';
+                '<span class="' + (pnl >= 0 ? 'green' : 'red') + '">' + (pnl >= 0 ? '+$' : '-$') + fmt(Math.abs(pnl), 0) + '</span>';
         }
 
         return '<div class="wl-row">' +

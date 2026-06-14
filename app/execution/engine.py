@@ -222,6 +222,56 @@ class ExecutionEngine(BaseExecutionEngine):
             order.failure_reason = f"标的互斥: {order.symbol} 不属于 {self._get_engine_source(order)} 引擎"
             return order
 
+        # ── P0 通用安全闸门 (2026-06-14): 所有引擎的统一关卡 ──
+        # 退出订单始终放行 (紧急平仓不可阻断), 入场订单受 kill_switch + auto_trading 控制
+        if not self._is_exit_order(order):
+            # 1. Kill Switch — 最高优先级, 阻断一切入场
+            try:
+                from app.us_pipeline.emergency_interceptor import check_kill_switch
+                if check_kill_switch():
+                    order.state = OrderState.REJECTED
+                    order.failure_reason = "Kill Switch 激活, 所有入场订单被阻断"
+                    logger.critical(
+                        f"[ExecutionEngine·KillSwitch] {order.symbol} 入场被阻断 "
+                        f"(source={self._get_engine_source(order)})"
+                    )
+                    return order
+            except Exception:
+                pass  # kill switch 检查异常不阻断 (fail-open for safety check)
+
+            # 2. auto_trading_enabled — 阻断 ORB/Scalping/Main 自动引擎的入场
+            #    手动订单 (client_order_id 以 "manual_" 开头) 不受此限制
+            _source = self._get_engine_source(order)
+            _cid = getattr(order, "client_order_id", "") or ""
+            _is_manual = _cid.startswith("manual_")
+            if _source in ("ORB", "SCALPING", "MAIN") and not _is_manual:
+                try:
+                    import re as _re
+                    import os as _os
+                    _yaml_path = _os.path.join(
+                        _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))),
+                        "config", "unified_config.yaml"
+                    )
+                    _auto_enabled = False
+                    with open(_yaml_path, "r") as _f:
+                        for _line in _f:
+                            _m = _re.match(r'\s+auto_trading_enabled:\s*(true|false)', _line)
+                            if _m:
+                                _auto_enabled = _m.group(1) == 'true'
+                                break
+                    if not _auto_enabled:
+                        order.state = OrderState.REJECTED
+                        order.failure_reason = (
+                            f"auto_trading_enabled=false, {_source} 引擎入场被阻断"
+                        )
+                        logger.warning(
+                            f"[ExecutionEngine·AutoGate] {order.symbol} {_source} 入场被阻断 "
+                            f"(auto_trading_enabled=false)"
+                        )
+                        return order
+                except Exception:
+                    pass  # YAML 读取异常不阻断 (order_executor 有自己的独立检查)
+
         # 幂等检查
         # ------------------------------------------------------------------
         # Critical 修复 2026-06-02: 退出订单与开仓订单的幂等命名空间隔离

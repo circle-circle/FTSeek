@@ -114,7 +114,7 @@ class StrategyCoordinator:
             equity = 0.0
             try:
                 from app.risk.capital_safety import get_capital_safety_system
-                equity = float(get_capital_safety_system()._state.total_equity or 0)
+                equity = float(get_capital_safety_system()._state.current_equity or 0)
             except Exception:
                 pass
             for p in positions:
@@ -277,6 +277,9 @@ class StrategyCoordinator:
         从 PositionRegistry 拉真实持仓, 修正 capital 账本 + 符号锁.
         建议每 5 分钟跑一次.
 
+        Phase 1 (2026-06-14): 手动/受保护仓位单独计入 manual_reserved,
+        不占 auto bucket cap, 但占 total cap. 确保 auto 可用额度 = total - manual.
+
         position_pct=0 的兜底: 用 size * avg_entry_price / equity 估算
         """
         if not self._enabled:
@@ -287,29 +290,72 @@ class StrategyCoordinator:
             _equity = 0.0
             try:
                 from app.risk.capital_safety import get_capital_safety_system
-                _equity = float(get_capital_safety_system()._state.total_equity or 0)
+                _equity = float(get_capital_safety_system()._state.current_equity or 0)
+            except Exception:
+                pass
+
+            # Phase 1: 分离手动 vs 自动仓位
+            _is_protected_fn = None
+            try:
+                from app.positions.source import is_protected as _ip
+                _is_protected_fn = _ip
             except Exception:
                 pass
 
             by_strat_pct: Dict[str, float] = {}
             by_strat_sym: Dict[str, List[str]] = {}
+            manual_total_pct = 0.0
+            manual_count = 0
+
             for p in positions:
-                owner = getattr(p, "owner_strategy", None) or "main"
+                # Phase 1: 判断是否为手动/受保护仓位
+                is_manual = False
+                if _is_protected_fn is not None:
+                    try:
+                        is_manual = _is_protected_fn(p)
+                    except Exception:
+                        pass
+                if not is_manual:
+                    # fallback: 检查 metadata
+                    meta = getattr(p, "metadata", {}) or {}
+                    source = meta.get("source", "")
+                    owner = getattr(p, "owner_strategy", None) or ""
+                    if source in ("manual", "legacy", "unknown") or owner == "manual":
+                        is_manual = True
+
                 pct = float(getattr(p, "position_pct", 0.0) or 0.0)
                 if pct == 0.0 and _equity > 0:
-                    # 兜底: cost / equity
-                    _cost = float(getattr(p, "size", 0) or 0) * float(getattr(p, "avg_entry_price", 0) or 0)
+                    _cost = abs(float(getattr(p, "size", 0) or 0)) * float(getattr(p, "avg_entry_price", 0) or 0)
                     if _cost > 0:
                         pct = _cost / _equity
-                        # 顺便回写到 position 对象 (内存), 下次精确
                         try:
                             setattr(p, "position_pct", round(pct, 4))
                         except Exception:
                             pass
-                by_strat_pct[owner] = by_strat_pct.get(owner, 0.0) + pct
-                by_strat_sym.setdefault(owner, []).append(p.symbol)
+
+                if is_manual:
+                    # 手动仓位: 累计到 manual_reserved, 不进 bucket
+                    manual_total_pct += pct
+                    manual_count += 1
+                else:
+                    # 自动仓位: 正常进 bucket
+                    owner = getattr(p, "owner_strategy", None) or "main"
+                    by_strat_pct[owner] = by_strat_pct.get(owner, 0.0) + pct
+                    by_strat_sym.setdefault(owner, []).append(p.symbol)
+
+            # 同步自动仓位到 bucket 账本
             self.capital.reconcile_with_positions(by_strat_pct)
             self.lock.reconcile_with_positions(by_strat_sym)
+
+            # Phase 1: 同步手动仓位市值到 manual_reserved
+            if hasattr(self.capital, "set_manual_reserved"):
+                self.capital.set_manual_reserved(manual_total_pct)
+
+            if manual_count > 0:
+                logger.debug(
+                    f"[Coordinator·reconcile] manual={manual_count} pos ({manual_total_pct:.1%}) | "
+                    f"auto={len(positions)-manual_count} pos ({sum(by_strat_pct.values()):.1%})"
+                )
         except Exception as e:
             logger.warning(f"[Coordinator·reconcile] 失败: {e}")
 

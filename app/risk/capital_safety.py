@@ -630,15 +630,27 @@ class CapitalSafetySystem:
                 self._state.is_locked = bool(row["is_locked"])
                 self._state.lock_reason = row["lock_reason"] or ""
                 self._state.last_update = row["last_update"] or ""
-                # 2026-06-10: 始终从 broker 重新初始化 peak，防止 DB 残留值
-                # (如模拟盘→实盘切换) 导致虚假回撤触发熔断
-                self._peak_initialized = False
-                logger.info(
-                    f"[资本安全] 状态已加载 | DB净值=${self._state.current_equity:,.0f} | "
-                    f"回撤={self._state.drawdown_pct*100:.1f}% | "
-                    f"水位={self._state.water_level.value} | "
-                    f"(peak 将从 broker 重新初始化)"
-                )
+                # P0 修复 (2026-06-14): 保留 peak_equity 跨重启, 防止回撤归零
+                # 原问题: _peak_initialized=False 导致首次 update_account 重置 peak 为当前净值
+                #   → 重启后回撤从 0% 开始, 丢失历史亏损记忆
+                # 修复: trade_env 未变时保留 DB 中的 peak, 标记已初始化
+                #   trade_env 变化已在 L613 单独处理 (重置 _peak_initialized=False)
+                if self._state.peak_equity > 0:
+                    self._peak_initialized = True
+                    logger.info(
+                        f"[资本安全] 状态已加载 | DB净值=${self._state.current_equity:,.0f} | "
+                        f"peak=${self._state.peak_equity:,.0f} (保留) | "
+                        f"回撤={self._state.drawdown_pct*100:.1f}% | "
+                        f"水位={self._state.water_level.value}"
+                    )
+                else:
+                    self._peak_initialized = False
+                    logger.info(
+                        f"[资本安全] 状态已加载 | DB净值=${self._state.current_equity:,.0f} | "
+                        f"peak=0 (将从 broker 初始化) | "
+                        f"回撤={self._state.drawdown_pct*100:.1f}% | "
+                        f"水位={self._state.water_level.value}"
+                    )
             else:
                 # P1 修复 (2026-04-16): 无历史记录时，初始资金将在首次 update_account 时从实际账户同步
                 self._peak_initialized = False
