@@ -1,21 +1,21 @@
 {
-  "timestamp": "2026-06-14T23:30:42.031386+00:00",
+  "timestamp": "2026-06-15T00:05:58.657331+00:00",
   "regime": "NEUTRAL",
   "validated": [
     {
-      "verdict": "CONDITIONAL",
+      "verdict": "VALID",
       "direction": "LONG",
-      "confidence": 65,
+      "confidence": 72,
       "entry_zone": [
         313.0,
-        316.0
+        316.5
       ],
-      "stop_loss": 306.5,
-      "take_profit": 330.0,
-      "risk_reward": 1.94,
-      "position_size_pct": 4,
-      "invalidation": "放量跌破MA10(309)或日线收盘价低于MA20(305)，或金融板块(Financials)整体转跌",
-      "trigger_condition": "价格回踩313-316区间(MA5附近)并出现5分钟级别看涨吞没/长下影线，或带量(>1.2x)突破20日高点321.30",
+      "stop_loss": 305.5,
+      "take_profit": 329.0,
+      "risk_reward": 1.64,
+      "position_size_pct": 5,
+      "invalidation": "收盘价跌破MA20($305)或Financials板块转跌超-1.0%",
+      "trigger_condition": "价格回踩MA5($313)附近出现15分钟级别看涨反转K线(锤子线/吞没)",
       "execution_rules": {
         "gap_up_over_2pct": "SKIP",
         "gap_down_over_2pct": "WAIT_RECOVERY",
@@ -29,8 +29,9 @@
         "rsi_sweet_spot": "CONFIRMED"
       },
       "audit_flags": [
-        "缩量(0.8x)逼近20日高点321.30，假突破与动能衰竭风险极高",
-        "缺乏成交量确认，严禁在320上方追高，必须等待回踩或放量突破"
+        "量比仅0.8x，突破缺乏成交量确认，假突破风险存在",
+        "现价$320.72紧贴20日高点$321.30，追高风险较大，需等待回踩",
+        "市场Regime为NEUTRAL，系统性支撑有限"
       ],
       "symbol": "US.JPM",
       "model_used": "qwen3.7-max",
@@ -39,17 +40,17 @@
     {
       "verdict": "CONDITIONAL",
       "direction": "LONG",
-      "confidence": 40,
+      "confidence": 55,
       "entry_zone": [
-        530.0,
-        535.0
+        530,
+        535
       ],
-      "stop_loss": 515.0,
-      "take_profit": 563.0,
-      "risk_reward": 1.7,
-      "position_size_pct": 3,
-      "invalidation": "收盘价跌破MA20(525)且伴随放量，或大盘SPY出现>1.5%的破位下跌",
-      "trigger_condition": "价格回踩MA5(533)附近企稳，且5分钟级别出现放量阳线反包",
+      "stop_loss": 521,
+      "take_profit": 551,
+      "risk_reward": 1.5,
+      "position_size_pct": 4,
+      "invalidation": "收盘价跌破MA20($525)且伴随放量(量比>1.2x)，setup完全失效",
+      "trigger_condition": "价格回踩$530-535区间(MA5附近)后出现5分钟级别看涨吞没或锤子线确认",
       "execution_rules": {
         "gap_up_over_2pct": "SKIP",
         "gap_down_over_2pct": "WAIT_RECOVERY",
@@ -63,28 +64,29 @@
         "rsi_sweet_spot": "WEAK"
       },
       "audit_flags": [
-        "量比仅0.9x，缩量上涨缺乏资金确认，假突破风险极高",
-        "RSI=56处于中性区，未进入强势多头区间(60-70)",
-        "板块动能缺失，个股独立行情易受大盘情绪拖累"
+        "量比仅0.9x，突破缺乏成交量确认，假突破风险较高",
+        "板块动量N/A，缺乏行业共振支撑",
+        "RSI=56偏中性，动能不足以驱动快速拉升",
+        "NEUTRAL市场环境下防御股弹性有限，上行空间受压"
       ],
       "symbol": "US.LMT",
       "model_used": "qwen3.7-max",
       "factor_score": 0.669
     },
     {
-      "verdict": "CONDITIONAL",
+      "verdict": "VALID",
       "direction": "LONG",
-      "confidence": 45,
+      "confidence": 62,
       "entry_zone": [
         147.5,
-        148.2
+        149.0
       ],
-      "stop_loss": 144.5,
-      "take_profit": 154.0,
-      "risk_reward": 1.8,
-      "position_size_pct": 3,
-      "invalidation": "日线收盘跌破MA20(144.00)或盘中放量跌破145.00关键支撑",
-      "trigger_condition": "价格回踩MA5(148.00)附近企稳，且15分钟级别K线放量收阳确认支撑",
+      "stop_loss": 145.2,
+      "take_profit": 153.5,
+      "risk_reward": 1.72,
+      "position_size_pct": 4,
+      "invalidation": "收盘价跌破MA20($144)或连续两日缩量阴线跌破MA10($145)",
+      "trigger_condition": "价格回踩entry_zone后出现5分钟级别看涨吞没或锤子线，且该K线成交量>前一根K线",
       "execution_rules": {
         "gap_up_over_2pct": "SKIP",
         "gap_down_over_2pct": "WAIT_RECOVERY",
@@ -98,27 +100,29 @@
         "rsi_sweet_spot": "CONFIRMED"
       },
       "audit_flags": [
-        "缩量(0.8x)逼近20日高点150.43阻力位，假突破风险极高",
-        "缺乏板块动量共振(N/A)，个股独立上涨动能存疑"
+        "量比仅0.8x，上涨缺乏成交量确认，突破可靠性存疑",
+        "板块动量数据缺失，无法验证板块共振",
+        "现价$149.61逼近20日高点$150.43，上方阻力密集",
+        "NEUTRAL市场环境下防御股领涨可能暗示风险偏好下降"
       ],
       "symbol": "US.PG",
       "model_used": "qwen3.7-max",
       "factor_score": 0.661
     },
     {
-      "verdict": "CONDITIONAL",
+      "verdict": "VALID",
       "direction": "LONG",
       "confidence": 65,
       "entry_zone": [
-        1115.0,
-        1125.0
+        1121,
+        1135
       ],
-      "stop_loss": 1078.0,
-      "take_profit": 1182.0,
-      "risk_reward": 1.47,
+      "stop_loss": 1083,
+      "take_profit": 1183,
+      "risk_reward": 1.24,
       "position_size_pct": 4,
-      "invalidation": "日线收盘价跌破MA20(1086)或Healthcare板块单日跌幅超过1.5%",
-      "trigger_condition": "价格回踩MA10(1121)附近企稳，5分钟K线放量收阳并突破分时均价线",
+      "invalidation": "收盘价跌破MA20($1086)且伴随放量(量比>1.2x)，趋势结构破坏",
+      "trigger_condition": "价格回踩MA10($1121)附近出现5分钟级别看涨反转K线(锤子线/吞没)，或价格放量突破MA5($1145)确认反弹",
       "execution_rules": {
         "gap_up_over_2pct": "SKIP",
         "gap_down_over_2pct": "WAIT_RECOVERY",
@@ -132,28 +136,29 @@
         "rsi_sweet_spot": "CONFIRMED"
       },
       "audit_flags": [
-        "量比仅0.8x，缩量回踩缺乏增量资金确认",
-        "板块Healthcare整体疲软，个股独立行情易受大盘拖累",
-        "现价1133低于MA5(1145)，短期上攻动能已衰减"
+        "量比仅0.8x，缩量回踩缺乏买盘确认，突破MA5需放量验证",
+        "Healthcare板块-0.2%拖累，个股独立行情持续性存疑",
+        "5日涨跌-1.4%显示短期动能衰减，需观察MA10支撑有效性",
+        "Risk/Reward仅1.24偏低，依赖高胜率弥补"
       ],
       "symbol": "US.LLY",
       "model_used": "qwen3.7-max",
       "factor_score": 0.647
     },
     {
-      "verdict": "INVALID",
+      "verdict": "CONDITIONAL",
       "direction": "LONG",
-      "confidence": 25,
+      "confidence": 55,
       "entry_zone": [
-        496.0,
-        502.0
+        495,
+        505
       ],
-      "stop_loss": 475.0,
-      "take_profit": 546.44,
-      "risk_reward": 1.98,
-      "position_size_pct": 3,
-      "invalidation": "收盘价跌破MA20(482)或半导体板块指数转负",
-      "trigger_condition": "价格回踩MA10(498)附近并伴随成交量放大至1.5x以上",
+      "stop_loss": 479,
+      "take_profit": 545,
+      "risk_reward": 2.14,
+      "position_size_pct": 4,
+      "invalidation": "AMD收盘价跌破MA20($482)且伴随放量(量比>1.3x)，或Semiconductors板块连续2日跌幅超-1.5%",
+      "trigger_condition": "价格回踩至$495-$505区间后，15分钟K线出现看涨吞没或锤子线，且该K线成交量高于前3根K线均值",
       "execution_rules": {
         "gap_up_over_2pct": "SKIP",
         "gap_down_over_2pct": "WAIT_RECOVERY",
@@ -167,9 +172,10 @@
         "rsi_sweet_spot": "CONFIRMED"
       },
       "audit_flags": [
-        "无量上涨缺乏资金确认",
-        "短期均线(MA5<MA10)未完全理顺",
-        "半导体板块零增长缺乏共振"
+        "量比仅1.0x，上涨缺乏成交量确认，突破可靠性存疑",
+        "MA5(484)<MA10(498)短期均线倒挂，暗示近期存在回调压力",
+        "Semiconductors板块+0.0%持平，个股强势缺乏板块共振支撑",
+        "20日涨幅+20.6%已较大，距20日高点$546仅-6.4%，均值回归风险上升"
       ],
       "symbol": "US.AMD",
       "model_used": "qwen3.7-max",
@@ -178,17 +184,17 @@
     {
       "verdict": "CONDITIONAL",
       "direction": "LONG",
-      "confidence": 40,
+      "confidence": 48,
       "entry_zone": [
-        1742.0,
-        1780.0
+        1850,
+        1920
       ],
-      "stop_loss": 1615.0,
-      "take_profit": 2180.0,
-      "risk_reward": 2.9,
-      "position_size_pct": 3,
-      "invalidation": "日线收盘价跌破MA20(1624)或回踩区间时出现放量跌破(量比>2.0x)",
-      "trigger_condition": "价格回落至1742-1780区间并出现5分钟级别看涨吞没或长下影线企稳信号",
+      "stop_loss": 1740,
+      "take_profit": 2080,
+      "risk_reward": 1.39,
+      "position_size_pct": 4,
+      "invalidation": "收盘价跌破MA10(1742)或单日放量(>2.5x)阴线跌幅超8%",
+      "trigger_condition": "价格回调至1850-1920区间后出现5分钟级别看涨吞没或锤子线，且RSI回落至65以下",
       "execution_rules": {
         "gap_up_over_2pct": "SKIP",
         "gap_down_over_2pct": "WAIT_RECOVERY",
@@ -198,66 +204,34 @@
         "sector_momentum": "WEAK",
         "relative_strength": "CONFIRMED",
         "ma_alignment": "CONFIRMED",
-        "volume_breakout": "FALSE_POSITIVE",
-        "rsi_sweet_spot": "FALSE_POSITIVE"
+        "volume_breakout": "WEAK",
+        "rsi_sweet_spot": "WEAK"
       },
       "audit_flags": [
-        "现价1980严重偏离MA5(1759)达12.5%，存在极高均值回归风险",
-        "量比仅1.1x属于无量空涨，突破有效性存疑",
-        "RSI高达72已进入超买区，非量化模型定义的sweet_spot"
+        "RSI=72处于超买区，追高风险大",
+        "20日涨幅+40.7%极度延伸，均值回归风险高",
+        "量比仅1.1x缺乏放量确认",
+        "板块动量N/A无法验证行业共振",
+        "价格远离MA20达22%，橡皮筋效应风险"
       ],
       "symbol": "US.SNDK",
       "model_used": "qwen3.7-max",
       "factor_score": 0.613
     },
     {
-      "verdict": "INVALID",
+      "verdict": "CONDITIONAL",
       "direction": "LONG",
-      "confidence": 20,
+      "confidence": 42,
       "entry_zone": [
         418.0,
         421.0
       ],
-      "stop_loss": 412.5,
-      "take_profit": 432.0,
-      "risk_reward": 1.78,
+      "stop_loss": 402.0,
+      "take_profit": 445.0,
+      "risk_reward": 1.44,
       "position_size_pct": 3,
-      "invalidation": "跌破MA20(418)且板块Semiconductors转弱，或成交量持续低于0.5x",
-      "trigger_condition": "价格回踩MA20(418)-MA5(421)区间并出现放量看涨吞没K线",
-      "execution_rules": {
-        "gap_up_over_2pct": "SKIP",
-        "gap_down_over_2pct": "SKIP",
-        "hit_zone_then_drop": "WAIT_5MIN_CANDLE_ABOVE"
-      },
-      "factor_validation": {
-        "sector_momentum": "WEAK",
-        "relative_strength": "CONFIRMED",
-        "ma_alignment": "WEAK",
-        "volume_breakout": "FALSE_POSITIVE",
-        "rsi_sweet_spot": "WEAK"
-      },
-      "audit_flags": [
-        "无量反弹，缺乏板块共振支持",
-        "均线交织且受MA10(428)压制，假突破风险极高"
-      ],
-      "symbol": "US.TSM",
-      "model_used": "qwen3.7-max",
-      "factor_score": 0.56
-    },
-    {
-      "verdict": "CONDITIONAL",
-      "direction": "LONG",
-      "confidence": 45,
-      "entry_zone": [
-        975.0,
-        982.0
-      ],
-      "stop_loss": 945.0,
-      "take_profit": 1050.0,
-      "risk_reward": 2.13,
-      "position_size_pct": 4,
-      "invalidation": "放量跌破MA10(979)且收盘价低于970，或半导体板块指数出现显著破位下跌",
-      "trigger_condition": "价格回踩979-982区间并出现5分钟级别看涨吞没，或成交量放大至1.2x以上突破990",
+      "invalidation": "收盘价跌破MA20($418)且半导体板块转负，或连续2日缩量阴线跌破$415",
+      "trigger_condition": "价格回踩MA5($421)附近出现5分钟级别看涨吞没或锤子线，且量比回升至≥1.0x",
       "execution_rules": {
         "gap_up_over_2pct": "SKIP",
         "gap_down_over_2pct": "WAIT_RECOVERY",
@@ -271,17 +245,54 @@
         "rsi_sweet_spot": "CONFIRMED"
       },
       "audit_flags": [
-        "缩量上涨(0.7x)暗示动能不足或诱多风险",
-        "板块零动量，个股独立行情易受大盘情绪拖累",
-        "短期均线(MA5/MA10)过于密集，支撑结构脆弱"
+        "量比仅0.8x，缺乏资金确认，突破可信度低",
+        "MA10(428)压制现价，均线空头交叉(MA5<MA10)未修复",
+        "半导体板块零动量，无板块共振支撑",
+        "综合评分0.560偏低，系统建议NEUTRAL，做多边际优势不足"
+      ],
+      "symbol": "US.TSM",
+      "model_used": "qwen3.7-max",
+      "factor_score": 0.56
+    },
+    {
+      "verdict": "CONDITIONAL",
+      "direction": "LONG",
+      "confidence": 48,
+      "entry_zone": [
+        975,
+        985
+      ],
+      "stop_loss": 920,
+      "take_profit": 1085,
+      "risk_reward": 1.82,
+      "position_size_pct": 4,
+      "invalidation": "收盘价跌破MA20($893)或盘中跌破$920且30分钟内未收回",
+      "trigger_condition": "价格在MA10($979)上方企稳，出现5分钟级别看涨吞没或放量阳线",
+      "execution_rules": {
+        "gap_up_over_2pct": "SKIP",
+        "gap_down_over_2pct": "WAIT_RECOVERY",
+        "hit_zone_then_drop": "WAIT_5MIN_CANDLE_ABOVE"
+      },
+      "factor_validation": {
+        "sector_momentum": "WEAK",
+        "relative_strength": "CONFIRMED",
+        "ma_alignment": "WEAK",
+        "volume_breakout": "FALSE_POSITIVE",
+        "rsi_sweet_spot": "CONFIRMED"
+      },
+      "audit_flags": [
+        "量比0.7x缩量上涨缺乏成交量确认",
+        "半导体板块+0.0%无板块共振支撑",
+        "MA5(951)<MA10(979)短期均线未完全多头排列",
+        "20日涨幅+35.5%存在获利回吐压力"
       ],
       "symbol": "US.MU",
       "model_used": "qwen3.7-max",
       "factor_score": 0.552
     }
   ],
-  "valid_count": 0,
-  "conditional_count": 6,
-  "invalid_count": 2,
-  "elapsed_sec": 101.2
+  "valid_count": 3,
+  "conditional_count": 5,
+  "invalid_count": 0,
+  "elapsed_sec": 64.4
 }

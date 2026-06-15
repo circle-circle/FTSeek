@@ -109,8 +109,218 @@ def _build_target_entry(validated: Dict, factor_data: Dict) -> Dict:
     return entry
 
 
+def _generate_position_actions(factor_screen: Dict, validation: Dict, targets: List[Dict]) -> List[Dict]:
+    """Stage 4.5: 为现有持仓生成管理建议 (hold/reduce/exit)
+
+    Logic:
+    - Position in factor top candidates + VALID → HOLD (or ADD if strong)
+    - Position NOT in factor top candidates → check if factor score is low → REDUCE
+    - Position in restricted list → EXIT
+    - Position with negative factor trend → REDUCE
+    """
+    actions = []
+
+    # Get current positions from Futu
+    positions = []
+    try:
+        from app.web_dashboard.manual_order_service import ManualOrderService
+        from futu import RET_OK, TrdEnv
+        svc = ManualOrderService()
+        if svc.connect():
+            is_live = svc._is_live()
+            trd_env = TrdEnv.REAL if is_live else TrdEnv.SIMULATE
+            acc_id = int(svc._read_env(
+                "REAL_ACCOUNT_ID" if is_live else "SIMULATE_ACCOUNT_ID", "0"
+            ))
+            ret, data = svc._broker_ctx.position_list_query(
+                trd_env=trd_env, acc_id=acc_id,
+            )
+            svc.disconnect()
+            if ret == RET_OK and not data.empty:
+                for _, row in data.iterrows():
+                    code = str(row.get("code", ""))
+                    if code and code.startswith("US."):
+                        positions.append({
+                            "symbol": code,
+                            "qty": int(float(row.get("qty", 0))),
+                            "avg_cost": float(row.get("average_cost", 0)),
+                            "market_val": float(row.get("market_val", 0)),
+                            "unrealized_pnl": float(row.get("unrealized_pl", 0)),
+                            "pnl_pct": float(row.get("pl_ratio_avg_cost", 0)),
+                        })
+    except Exception as e:
+        logger.debug(f"[Pipeline] position fetch error: {e}")
+
+    if not positions:
+        return actions
+
+    # Build lookups
+    factor_lookup = {c["symbol"]: c for c in factor_screen.get("candidates", [])}
+    validated_lookup = {v["symbol"]: v for v in validation.get("validated", [])}
+    restricted_set = {r["symbol"] for r in validation.get("validated", [])
+                      if r.get("verdict") == "INVALID"}
+    target_set = {t["symbol"] for t in targets}
+
+    for pos in positions:
+        sym = pos["symbol"]
+        bare = sym.replace("US.", "")
+
+        # Check if in restricted list
+        if sym in restricted_set:
+            actions.append({
+                "symbol": sym,
+                "action": "EXIT",
+                "reason": f"因子验证INVALID — {'; '.join(validated_lookup.get(sym, {}).get('audit_flags', ['风险过高'])[:2])}",
+                "urgency": "HIGH",
+                "current_pnl_pct": pos.get("pnl_pct", 0),
+            })
+            continue
+
+        # Check factor score
+        fc = factor_lookup.get(sym, {})
+        factor_score = fc.get("composite_score", 0)
+        val = validated_lookup.get(sym, {})
+        verdict = val.get("verdict", "")
+        conf = val.get("confidence", 0)
+
+        if sym in target_set and verdict in ("VALID", "CONDITIONAL") and conf >= 50:
+            # Position is a recommended target — HOLD
+            actions.append({
+                "symbol": sym,
+                "action": "HOLD",
+                "reason": f"因子{factor_score*100:.0f}分, LLM验证{verdict}(conf={conf}%), 在推荐列表中",
+                "urgency": "LOW",
+                "current_pnl_pct": pos.get("pnl_pct", 0),
+                "factor_score": round(factor_score, 3),
+            })
+        elif factor_score < 0.3:
+            # Weak factor score — reduce
+            actions.append({
+                "symbol": sym,
+                "action": "REDUCE",
+                "reason": f"因子分仅{factor_score*100:.0f}, 不在Top候选中, 动量衰减",
+                "urgency": "MEDIUM",
+                "current_pnl_pct": pos.get("pnl_pct", 0),
+                "factor_score": round(factor_score, 3),
+            })
+        elif pos.get("pnl_pct", 0) < -5:
+            # Significant loss — review
+            actions.append({
+                "symbol": sym,
+                "action": "REDUCE",
+                "reason": f"浮亏{pos.get('pnl_pct', 0):.1f}%, 因子{factor_score*100:.0f}分, 考虑减仓止损",
+                "urgency": "MEDIUM",
+                "current_pnl_pct": pos.get("pnl_pct", 0),
+                "factor_score": round(factor_score, 3),
+            })
+        else:
+            # Default: HOLD with context
+            actions.append({
+                "symbol": sym,
+                "action": "HOLD",
+                "reason": f"因子{factor_score*100:.0f}分, {'LLM未验证但因子尚可' if factor_score >= 0.4 else '关注因子变化'}",
+                "urgency": "LOW",
+                "current_pnl_pct": pos.get("pnl_pct", 0),
+                "factor_score": round(factor_score, 3),
+            })
+
+    return actions
+
+
+def _generate_orb_status(factor_screen: Dict) -> List[Dict]:
+    """Stage 4.6: Check ORB ETF breakout signals (lightweight)
+
+    For each of the 10 ORB ETFs, check if there's a potential breakout setup.
+    Returns a brief status list, not full factor scoring.
+    """
+    orb_etfs = [
+        "US.SPY", "US.QQQ", "US.IWM", "US.DIA",
+        "US.XLE", "US.XLF", "US.XLK", "US.XLV", "US.XLY", "US.XLI",
+    ]
+
+    status_list = []
+    sector_momentum = factor_screen.get("sector_momentum", {})
+
+    # Map ORB ETFs to sector names for context
+    etf_sector = {
+        "US.XLK": "Technology", "US.XLF": "Financials", "US.XLE": "Energy",
+        "US.XLV": "Healthcare", "US.XLI": "Industrials", "US.XLY": "Consumer",
+    }
+
+    try:
+        from app.web_dashboard.manual_order_service import ManualOrderService
+        svc = ManualOrderService()
+        if not svc.connect():
+            return status_list
+
+        from futu import RET_OK, SubType
+        for etf in orb_etfs:
+            try:
+                svc._quote_ctx.subscribe([etf], [SubType.K_DAY])
+            except Exception:
+                pass
+
+        import time; time.sleep(0.5)
+
+        for etf in orb_etfs:
+            try:
+                ret, data = svc._quote_ctx.get_cur_kline(etf, 5, ktype="K_DAY")
+                if ret != RET_OK or data.empty or len(data) < 3:
+                    continue
+
+                closes = [float(r["close"]) for _, r in data.iterrows()]
+                highs = [float(r["high"]) for _, r in data.iterrows()]
+                lows = [float(r["low"]) for _, r in data.iterrows()]
+
+                cur = closes[-1]
+                prev_high = max(highs[:-1]) if len(highs) > 1 else highs[0]
+                prev_low = min(lows[:-1]) if len(lows) > 1 else lows[0]
+
+                # Simple breakout check: price near 5-day high or low
+                range_5d = prev_high - prev_low
+                if range_5d <= 0:
+                    continue
+
+                pos_in_range = (cur - prev_low) / range_5d if range_5d > 0 else 0.5
+                chg_1d = (closes[-1] - closes[-2]) / closes[-2] * 100 if len(closes) >= 2 else 0
+
+                signal = ""
+                if pos_in_range > 0.9 and chg_1d > 0.3:
+                    signal = "BREAKOUT_UP"
+                elif pos_in_range < 0.1 and chg_1d < -0.3:
+                    signal = "BREAKOUT_DOWN"
+                elif abs(chg_1d) < 0.2:
+                    signal = "CONSOLIDATION"
+                else:
+                    signal = "NEUTRAL"
+
+                sector = etf_sector.get(etf, "")
+                sector_chg = sector_momentum.get(sector, 0)
+
+                status_list.append({
+                    "symbol": etf,
+                    "signal": signal,
+                    "price": round(cur, 2),
+                    "chg_1d": round(chg_1d, 2),
+                    "pos_in_range": round(pos_in_range, 2),
+                    "sector_chg": sector_chg,
+                })
+            except Exception:
+                pass
+
+        svc.disconnect()
+    except Exception as e:
+        logger.debug(f"[Pipeline] ORB status error: {e}")
+
+    # Sort: breakouts first
+    priority = {"BREAKOUT_UP": 0, "BREAKOUT_DOWN": 1, "CONSOLIDATION": 2, "NEUTRAL": 3}
+    status_list.sort(key=lambda x: priority.get(x.get("signal", "NEUTRAL"), 3))
+
+    return status_list
+
+
 def _generate_narrative(factor_screen: Dict, validation_result: Dict, targets: List[Dict]) -> Dict:
-    """Stage 4: 1次LLM调用生成人类可读摘要"""
+    """Stage 5: 1次LLM调用生成人类可读摘要"""
     regime = factor_screen.get("regime", "NEUTRAL")
     spy_chg = factor_screen.get("spy_change_20d", 0)
     sector_data = factor_screen.get("sector_momentum", {})
@@ -269,8 +479,18 @@ def run_pipeline() -> Optional[Dict]:
         if r["validated"].get("verdict") == "INVALID"
     ]
 
-    # ── Stage 4: Narrative ──
-    logger.info("[Pipeline] ✍️ Stage 4: 生成摘要...")
+    # ── Stage 4.5: Position Actions (现有持仓管理) ──
+    logger.info("[Pipeline] 📊 Stage 4.5: 生成持仓管理建议...")
+    position_actions = _generate_position_actions(factor_screen, validation, targets)
+    logger.info(f"[Pipeline] Stage 4.5 ✅ {len(position_actions)} position actions")
+
+    # ── Stage 4.6: ORB ETF Status ──
+    logger.info("[Pipeline] 📈 Stage 4.6: ORB ETF状态...")
+    orb_status = _generate_orb_status(factor_screen)
+    logger.info(f"[Pipeline] Stage 4.6 ✅ {len(orb_status)} ORB ETFs checked")
+
+    # ── Stage 5: Narrative ──
+    logger.info("[Pipeline] ✍️ Stage 5: 生成摘要...")
     narrative = _generate_narrative(factor_screen, validation, targets)
 
     # ── Assemble final plan ──
@@ -284,7 +504,8 @@ def run_pipeline() -> Optional[Dict]:
             r["validated"]["symbol"]: "; ".join(r["validated"].get("audit_flags", [])[:2])
             for r in ranked if r["validated"].get("verdict") == "INVALID"
         },
-        "position_actions": [],  # TODO: derive from existing positions + factor signals
+        "position_actions": position_actions,
+        "orb_status": orb_status,
         "strategy_adjustments": narrative.get("strategy_adjustments", []),
         "risk_warnings": narrative.get("risk_warnings", []),
         "confidence": round(

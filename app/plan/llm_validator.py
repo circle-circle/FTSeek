@@ -36,10 +36,14 @@ SYSTEM_PROMPT = """你是一个严苛的量化交易审计师。量化系统选�
 4. 给出执行规则 (跳空高开/低开怎么办)
 5. 评估CONFIDENCE (0-100)
 
-## 判定规则
-- 因子≥3个确认 + 技术面支持 → VALID
-- 因子≥3个可疑/否定 → INVALID
-- 部分确认部分可疑 → CONDITIONAL (降低position_size)
+## 判定规则 (必须严格遵守)
+- 因子验证中 ≥3个CONFIRMED → **verdict=VALID** (即使有1-2个FALSE_POSITIVE)
+- 因子验证中 ≥3个WEAK或FALSE_POSITIVE → verdict=INVALID
+- 2个CONFIRMED + 2个WEAK + 1个FALSE_POSITIVE → verdict=CONDITIONAL
+
+**重要**: volume_breakout因子容易被判为FALSE_POSITIVE (因为量比<1.0x很常见)。
+如果其他4个因子中有3个CONFIRMED，即使volume_breakout是FALSE_POSITIVE，仍然应该给VALID。
+将量价疑虑写入audit_flags和降低confidence，但不要因为缩量就拒绝VALID。
 
 ## 输出格式 (严格JSON)
 {

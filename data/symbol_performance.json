@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-06-08T08:00:47.113525",
+  "generated_at": "2026-06-15T08:00:17.335726",
   "period_days": 14,
   "symbols": [
     {
@@ -26,19 +26,6 @@
       "best": 354.96,
       "worst": -627.8,
       "avg_hold_hrs": 0.2,
-      "verdict": "WATCH"
-    },
-    {
-      "symbol": "US.MU",
-      "direction": "SHORT",
-      "trades": 3,
-      "wins": 2,
-      "wr_pct": 66.7,
-      "total_pnl": -77.61,
-      "avg_pnl": -25.87,
-      "best": 307.98,
-      "worst": -393.39,
-      "avg_hold_hrs": 2.6,
       "verdict": "WATCH"
     },
     {

@@ -538,6 +538,33 @@ def check_daily_review(scheduler: 'TradingScheduler'):
                     logger.debug(f"[计划效果] 评估失败: {pe}")
                 # ── 盘前计划命中率追踪结束 ──
 
+                # ── Factor Pipeline 收盘反馈闭环 ──
+                try:
+                    from app.plan.plan_feedback import run_feedback
+                    fb = run_feedback(now_et.date().isoformat())
+                    if fb:
+                        eff = fb.get("plan_effectiveness", {})
+                        ic = fb.get("factor_ic", {})
+                        if eff.get("count", 0) > 0:
+                            msg = (
+                                f"🔄 [Plan Feedback] 胜率={eff.get('win_rate',0):.1f}% "
+                                f"(n={eff['count']}) | "
+                                f"avg_pnl={eff.get('avg_pnl_pct',0):+.2f}%"
+                            )
+                            if ic:
+                                top_factors = sorted(
+                                    [(k, v) for k, v in ic.items() if v is not None],
+                                    key=lambda x: abs(x[1]), reverse=True
+                                )[:3]
+                                ic_str = ", ".join(f"{k}={v:+.3f}" for k, v in top_factors)
+                                msg += f" | IC: {ic_str}"
+                            logger.info(msg)
+                            if scheduler.notifier and eff.get("count", 0) >= 3:
+                                scheduler.notifier.send_text(msg)
+                except Exception as fb_err:
+                    logger.debug(f"[PlanFeedback] 收盘反馈失败 (不影响主流程): {fb_err}")
+                # ── Factor Pipeline 收盘反馈闭环结束 ──
+
                 # Phase 5: 通过 Agent 桥接触发盘后全链路归因
                 if hasattr(scheduler, 'agent_bridge') and scheduler.agent_bridge:
                     try:
