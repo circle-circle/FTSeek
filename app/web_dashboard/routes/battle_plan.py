@@ -238,13 +238,18 @@ def register(app, templates):
         _is_stale = _plan_date != _now.strftime("%Y-%m-%d") if _plan_date else False
 
         if _is_weekend or _is_stale:
-            # 非交易日或过期计划: 跳过所有外部 API 调用, 直接返回原始数据
+            # 非交易日或过期计划: 跳过 enrichment/技术指标等外部 API
+            # 但 position_actions 仍需刷新 (Futu 周末仍可查持仓)
             plan["_is_trading_day"] = False
             plan["_weekend"] = _is_weekend
             plan["_stale"] = _is_stale
             plan["_confirmed"] = plan.get("_confirmed", False)
             plan["_paused"] = plan.get("_paused", False)
             plan["_is_live"] = __import__("os").getenv("TRADE_ENV", "1").strip() == "0"
+            try:
+                _refresh_position_actions(plan)
+            except Exception as e:
+                logger.debug(f"[BattlePlan] non-trading-day position refresh failed: {e}")
             return plan
 
         # ── 以下仅在交易日执行 ──
