@@ -154,8 +154,9 @@ def _generate_position_actions(factor_screen: Dict, validation: Dict, targets: L
     if not positions:
         return actions
 
-    # Build lookups
+    # Build lookups — use all_scores for factor scores (covers all scored stocks, not just top_n)
     factor_lookup = {c["symbol"]: c for c in factor_screen.get("candidates", [])}
+    all_scores_lookup = {s["symbol"]: s.get("composite_score", 0) for s in factor_screen.get("all_scores", [])}
     validated_lookup = {v["symbol"]: v for v in validation.get("validated", [])}
     restricted_set = {r["symbol"] for r in validation.get("validated", [])
                       if r.get("verdict") == "INVALID"}
@@ -164,65 +165,51 @@ def _generate_position_actions(factor_screen: Dict, validation: Dict, targets: L
     for pos in positions:
         sym = pos["symbol"]
         bare = sym.replace("US.", "")
+        direction = "SHORT" if pos.get("qty", 0) < 0 else "LONG"
 
         # Check if in restricted list
         if sym in restricted_set:
             actions.append({
-                "symbol": sym,
-                "action": "EXIT",
+                "symbol": sym, "action": "EXIT",
                 "reason": f"因子验证INVALID — {'; '.join(validated_lookup.get(sym, {}).get('audit_flags', ['风险过高'])[:2])}",
                 "urgency": "HIGH",
-                "current_pnl_pct": pos.get("pnl_pct", 0),
+                "current_pnl_pct": round(pos.get("pnl_pct", 0), 2),
+                "current_price": round(pos.get("avg_cost", 0), 2),
+                "qty": pos.get("qty", 0),
+                "direction": direction,
+                "factor_score": round(all_scores_lookup.get(sym, 0), 3),
             })
             continue
 
-        # Check factor score
+        # Check factor score — use candidates first, fallback to all_scores
         fc = factor_lookup.get(sym, {})
-        factor_score = fc.get("composite_score", 0)
+        factor_score = fc.get("composite_score", 0) or all_scores_lookup.get(sym, 0)
         val = validated_lookup.get(sym, {})
         verdict = val.get("verdict", "")
         conf = val.get("confidence", 0)
+        pnl = round(pos.get("pnl_pct", 0), 2)
+
+        _base = {
+            "symbol": sym, "direction": direction, "qty": pos.get("qty", 0),
+            "current_pnl_pct": pnl,
+            "current_price": round(pos.get("avg_cost", 0) * (1 + pnl / 100), 2) if pos.get("avg_cost", 0) > 0 else 0,
+            "factor_score": round(factor_score, 3),
+        }
 
         if sym in target_set and verdict in ("VALID", "CONDITIONAL") and conf >= 50:
-            # Position is a recommended target — HOLD
-            actions.append({
-                "symbol": sym,
-                "action": "HOLD",
-                "reason": f"因子{factor_score*100:.0f}分, LLM验证{verdict}(conf={conf}%), 在推荐列表中",
-                "urgency": "LOW",
-                "current_pnl_pct": pos.get("pnl_pct", 0),
-                "factor_score": round(factor_score, 3),
-            })
+            _base.update({"action": "HOLD", "urgency": "LOW",
+                "reason": f"因子{factor_score*100:.0f}分, LLM验证{verdict}(conf={conf}%), 在推荐列表中"})
         elif factor_score < 0.3:
-            # Weak factor score — reduce
-            actions.append({
-                "symbol": sym,
-                "action": "REDUCE",
-                "reason": f"因子分仅{factor_score*100:.0f}, 不在Top候选中, 动量衰减",
-                "urgency": "MEDIUM",
-                "current_pnl_pct": pos.get("pnl_pct", 0),
-                "factor_score": round(factor_score, 3),
-            })
-        elif pos.get("pnl_pct", 0) < -5:
-            # Significant loss — review
-            actions.append({
-                "symbol": sym,
-                "action": "REDUCE",
-                "reason": f"浮亏{pos.get('pnl_pct', 0):.1f}%, 因子{factor_score*100:.0f}分, 考虑减仓止损",
-                "urgency": "MEDIUM",
-                "current_pnl_pct": pos.get("pnl_pct", 0),
-                "factor_score": round(factor_score, 3),
-            })
+            _base.update({"action": "REDUCE", "urgency": "MEDIUM",
+                "reason": f"因子分仅{factor_score*100:.0f}, 不在Top候选中, 动量衰减"})
+        elif pnl < -5:
+            _base.update({"action": "REDUCE", "urgency": "MEDIUM",
+                "reason": f"浮亏{pnl:.1f}%, 因子{factor_score*100:.0f}分, 考虑减仓止损"})
         else:
-            # Default: HOLD with context
-            actions.append({
-                "symbol": sym,
-                "action": "HOLD",
-                "reason": f"因子{factor_score*100:.0f}分, {'LLM未验证但因子尚可' if factor_score >= 0.4 else '关注因子变化'}",
-                "urgency": "LOW",
-                "current_pnl_pct": pos.get("pnl_pct", 0),
-                "factor_score": round(factor_score, 3),
-            })
+            _base.update({"action": "HOLD", "urgency": "LOW",
+                "reason": f"因子{factor_score*100:.0f}分, {'LLM未验证但因子尚可' if factor_score >= 0.4 else '关注因子变化'}"})
+
+        actions.append(_base)
 
     return actions
 

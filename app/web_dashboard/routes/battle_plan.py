@@ -43,6 +43,170 @@ async def _atomic_save_plan(plan: dict):
             raise
 
 
+def _refresh_position_actions(plan: dict):
+    """实时刷新 position_actions 的 pnl/价格/方向 (每次API调用时执行)
+
+    pipeline 只在盘前跑一次, JSON 里的 pnl_pct 是过时的。
+    此函数从 Futu 拉取实时持仓数据, 覆盖每个 action 的:
+    - current_pnl_pct (真实浮盈比, Futu pl_ratio_avg_cost)
+    - current_price (实时价格)
+    - qty (持仓数量, 负数=做空)
+    - direction (LONG/SHORT)
+    - factor_score (从 all_scores 查找, 不只 top_n)
+    """
+    position_actions = plan.get("position_actions", [])
+    if not position_actions:
+        return
+
+    # 加载因子评分 (all_scores 包含全部股票, 不只是 top_n)
+    factor_scores = {}
+    try:
+        _FACTOR_PATH = _PLAN_PATH.parent / "factor_screen_latest.json"
+        if _FACTOR_PATH.exists():
+            with open(_FACTOR_PATH) as ff:
+                fdata = json.load(ff)
+            for s in fdata.get("all_scores", []):
+                sym = s.get("symbol", "")
+                if sym:
+                    factor_scores[sym] = round(s.get("composite_score", 0), 3)
+            for c in fdata.get("candidates", []):
+                sym = c.get("symbol", "")
+                if sym and sym not in factor_scores:
+                    factor_scores[sym] = round(c.get("composite_score", 0), 3)
+    except Exception:
+        pass
+
+    # 从 Futu 拉取实时持仓
+    live_positions = {}
+    try:
+        from app.web_dashboard.manual_order_service import ManualOrderService
+        from futu import RET_OK, TrdEnv
+        svc = ManualOrderService()
+        if svc.connect():
+            is_live = svc._is_live()
+            trd_env = TrdEnv.REAL if is_live else TrdEnv.SIMULATE
+            acc_id = int(svc._read_env(
+                "REAL_ACCOUNT_ID" if is_live else "SIMULATE_ACCOUNT_ID", "0"
+            ))
+            ret, data = svc._broker_ctx.position_list_query(
+                trd_env=trd_env, acc_id=acc_id,
+            )
+            svc.disconnect()
+            if ret == RET_OK and not data.empty:
+                for _, row in data.iterrows():
+                    code = str(row.get("code", ""))
+                    if code and code.startswith("US."):
+                        live_positions[code] = {
+                            "qty": int(float(row.get("qty", 0))),
+                            "avg_cost": float(row.get("average_cost", 0)),
+                            "current_price": float(row.get("nominal_price", 0)),
+                            "pnl_pct": float(row.get("pl_ratio_avg_cost", 0)),
+                            "unrealized_pl": float(row.get("unrealized_pl", 0)),
+                            "market_val": float(row.get("market_val", 0)),
+                        }
+    except Exception as e:
+        logger.debug(f"[BattlePlan] position refresh fetch error: {e}")
+        return
+
+    if not live_positions:
+        return
+
+    # 更新每个 position_action
+    target_set = {t.get("symbol", "") for t in plan.get("targets", [])}
+    restricted_set = set(plan.get("restricted", []))
+
+    for pa in position_actions:
+        sym = pa.get("symbol", "")
+        live = live_positions.get(sym)
+        if live:
+            pa["current_pnl_pct"] = round(live["pnl_pct"], 2)
+            pa["current_price"] = round(live["current_price"], 2)
+            pa["qty"] = live["qty"]
+            pa["direction"] = "SHORT" if live["qty"] < 0 else "LONG"
+            pa["unrealized_pl"] = round(live["unrealized_pl"], 2)
+            pa["market_val"] = round(live["market_val"], 2)
+        # 更新因子评分 (用全量 all_scores)
+        if sym in factor_scores:
+            pa["factor_score"] = factor_scores[sym]
+
+        # 重新生成 reason (用实时数据, 不用pipeline的旧文本)
+        fs = pa.get("factor_score", 0)
+        pnl = pa.get("current_pnl_pct", 0)
+        if sym in restricted_set:
+            pa["action"] = "EXIT"
+            pa["urgency"] = "HIGH"
+            pa["reason"] = "因子验证INVALID, 在restricted列表中"
+        elif sym in target_set:
+            # Find verdict/conf from plan targets
+            tgt = next((t for t in plan.get("targets", []) if t.get("symbol") == sym), {})
+            verdict = tgt.get("verdict", "")
+            conf = tgt.get("confidence", 0)
+            pa["action"] = "HOLD"
+            pa["urgency"] = "LOW"
+            pa["reason"] = f"因子{fs*100:.0f}分, LLM验证{verdict}(conf={conf}%), 在推荐列表中"
+        elif fs < 0.3:
+            pa["action"] = "REDUCE"
+            pa["urgency"] = "MEDIUM"
+            pa["reason"] = f"因子分仅{fs*100:.0f}, 不在Top候选中, 动量衰减"
+        elif pnl < -5:
+            pa["action"] = "REDUCE"
+            pa["urgency"] = "MEDIUM"
+            pa["reason"] = f"浮亏{pnl:.1f}%, 因子{fs*100:.0f}分, 考虑减仓止损"
+        else:
+            pa["action"] = "HOLD"
+            pa["urgency"] = "LOW"
+            pa["reason"] = f"因子{fs*100:.0f}分, {'LLM未验证但因子尚可' if fs >= 0.4 else '关注因子变化'}"
+
+    # 检查是否有新持仓不在 position_actions 中 (盘中新开的仓)
+    existing_syms = {pa.get("symbol", "") for pa in position_actions}
+
+    for sym, live in live_positions.items():
+        if sym in existing_syms:
+            continue
+        fs = factor_scores.get(sym, 0)
+        direction = "SHORT" if live["qty"] < 0 else "LONG"
+        pnl = round(live["pnl_pct"], 2)
+
+        if sym in restricted_set:
+            action = "EXIT"
+            reason = "持仓在restricted列表中"
+            urgency = "HIGH"
+        elif sym in target_set:
+            action = "HOLD"
+            reason = f"因子{fs*100:.0f}分, 在今日计划targets中"
+            urgency = "LOW"
+        elif fs < 0.3:
+            action = "REDUCE"
+            reason = f"因子分仅{fs*100:.0f}, 不在Top候选中, 动量衰减"
+            urgency = "MEDIUM"
+        elif pnl < -5:
+            action = "REDUCE"
+            reason = f"浮亏{pnl:.1f}%, 因子{fs*100:.0f}分, 考虑减仓止损"
+            urgency = "MEDIUM"
+        else:
+            action = "HOLD"
+            reason = f"因子{fs*100:.0f}分, {'LLM未验证但因子尚可' if fs >= 0.4 else '关注因子变化'}"
+            urgency = "LOW"
+
+        position_actions.append({
+            "symbol": sym,
+            "action": action,
+            "reason": reason,
+            "urgency": urgency,
+            "current_pnl_pct": pnl,
+            "current_price": round(live["current_price"], 2),
+            "qty": live["qty"],
+            "direction": direction,
+            "unrealized_pl": round(live["unrealized_pl"], 2),
+            "market_val": round(live["market_val"], 2),
+            "factor_score": round(fs, 3),
+        })
+
+    # Re-sort: EXIT first, then REDUCE, then HOLD
+    _act_order = {"EXIT": 0, "REDUCE": 1, "HOLD": 2, "ADD": 3}
+    position_actions.sort(key=lambda a: _act_order.get(a.get("action", "HOLD"), 9))
+
+
 def register(app, templates):
     @router.get("/plan")
     async def battle_plan_page(request: Request):
@@ -177,6 +341,12 @@ def register(app, templates):
             plan["_enrichment_time"] = enrichment.get("collected_at", "")
         except Exception as e:
             logger.debug(f"[BattlePlan] enrichment attach failed: {e}")
+
+        # ── 实时刷新 position_actions (每次API调用都更新pnl/价格) ──
+        try:
+            _refresh_position_actions(plan)
+        except Exception as e:
+            logger.debug(f"[BattlePlan] position_actions refresh failed: {e}")
 
         # Mark live mode for frontend modeTag sync
         import os as _os
