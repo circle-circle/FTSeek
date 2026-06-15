@@ -216,43 +216,12 @@ class DataService:
         return {}
 
     async def get_batch_quotes(self, symbols: list) -> Dict[str, float]:
-        """批量报价 (5s cache), 返回 {symbol: price}"""
-        if not symbols:
-            return {}
-        import hashlib
-        _h = hashlib.md5(','.join(sorted(symbols)).encode()).hexdigest()[:12]
-        cache_key = f"quotes_{_h}"
-        cached = self.cache.get(cache_key)
-        if cached is not None:
-            return cached
-        result = await self._run(self._fetch_quotes, symbols)
-        if result:
-            self.cache.set(cache_key, result, ttl=5)
-        return result or {}
-
-    def _fetch_quotes(self, symbols: list) -> Dict[str, float]:
-        svc = self.svc()
-        if not svc.connect():
-            return {}
-        try:
-            from futu import RET_OK
-            ret, snap = svc._quote_ctx.get_market_snapshot(symbols[:400])
-            if ret != RET_OK or snap.empty:
-                return {}
-            prices = {}
-            for _, row in snap.iterrows():
-                code = row.get("code", "")
-                cur = safe_float(row.get("cur_price"))
-                if cur <= 0:
-                    cur = safe_float(row.get("last_price"))
-                if cur <= 0:
-                    cur = safe_float(row.get("prev_close_price"))
-                if cur > 0:
-                    prices[code] = cur
-            return prices
-        except Exception as e:
-            logger.error(f"[DataService] batch quotes failed: {e}")
-            return {}
+        """批量报价 (5s cache), 返回 {symbol: price}
+        
+        统一从 detailed 缓存派生, 避免同一组 symbols 产生 2 次 Futu RPC。
+        """
+        detailed = await self.get_batch_quotes_detailed(symbols)
+        return {sym: d["cur_price"] for sym, d in detailed.items() if d.get("cur_price", 0) > 0}
 
     async def get_batch_quotes_detailed(self, symbols: list) -> Dict[str, dict]:
         """批量详细报价 (5s cache), 返回 {symbol: {cur_price, prev_close, name, ...}}"""
@@ -436,6 +405,88 @@ class DataService:
         except Exception as e:
             logger.error(f"[DataService] DB execute failed: {e}")
             raise
+
+    # ═══════════════════════════════════════════
+    #  K线 / 盘口 / 逐笔 (带缓存)
+    # ═══════════════════════════════════════════
+
+    async def get_kline(self, symbol: str, num: int = 60, ktype: str = "K_DAY") -> list:
+        """K线数据 (缓存: 日K=300s, 分钟K=15s)"""
+        ttl = 300 if ktype == "K_DAY" else 15
+        cache_key = f"kline_{symbol}_{ktype}_{num}"
+        cached = self.cache.get(cache_key)
+        if cached is not None:
+            return cached
+        result = await self._run(self._fetch_kline, symbol, num, ktype)
+        if result:
+            self.cache.set(cache_key, result, ttl=ttl)
+        return result or []
+
+    def _fetch_kline(self, symbol: str, num: int, ktype: str) -> list:
+        svc = self.svc()
+        if not svc.connect():
+            return []
+        try:
+            from futu import RET_OK
+            svc._quote_ctx.subscribe([symbol], [ktype])
+            import time; time.sleep(0.3)
+            ret, data = svc._quote_ctx.get_cur_kline(symbol, num, ktype=ktype)
+            if ret == RET_OK and not data.empty:
+                return [dict(row) for _, row in data.iterrows()]
+        except Exception as e:
+            logger.debug(f"[DataService] kline {symbol} failed: {e}")
+        return []
+
+    async def get_orderbook(self, symbol: str, num: int = 10) -> dict:
+        """盘口数据 (5s cache)"""
+        cache_key = f"orderbook_{symbol}"
+        cached = self.cache.get(cache_key)
+        if cached is not None:
+            return cached
+        result = await self._run(self._fetch_orderbook, symbol, num)
+        if result:
+            self.cache.set(cache_key, result, ttl=5)
+        return result or {}
+
+    def _fetch_orderbook(self, symbol: str, num: int) -> dict:
+        svc = self.svc()
+        if not svc.connect():
+            return {}
+        try:
+            from futu import RET_OK
+            ret, data = svc._quote_ctx.get_order_book(symbol, num=num)
+            if ret == RET_OK:
+                return {
+                    "Bid": data.get("Bid", []),
+                    "Ask": data.get("Ask", []),
+                }
+        except Exception as e:
+            logger.debug(f"[DataService] orderbook {symbol} failed: {e}")
+        return {}
+
+    async def get_rt_ticker(self, symbol: str, num: int = 100) -> list:
+        """逐笔成交 (5s cache)"""
+        cache_key = f"ticker_{symbol}"
+        cached = self.cache.get(cache_key)
+        if cached is not None:
+            return cached
+        result = await self._run(self._fetch_ticker, symbol, num)
+        if result:
+            self.cache.set(cache_key, result, ttl=5)
+        return result or []
+
+    def _fetch_ticker(self, symbol: str, num: int) -> list:
+        svc = self.svc()
+        if not svc.connect():
+            return []
+        try:
+            from futu import RET_OK
+            ret, data = svc._quote_ctx.get_rt_ticker(symbol, num=num)
+            if ret == RET_OK and not data.empty:
+                return [dict(row) for _, row in data.iterrows()]
+        except Exception as e:
+            logger.debug(f"[DataService] ticker {symbol} failed: {e}")
+        return []
 
     # ═══════════════════════════════════════════
     #  通用 async 执行器

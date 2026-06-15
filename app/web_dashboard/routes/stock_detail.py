@@ -148,23 +148,18 @@ def register(app, templates):
     @router.get("/api/stock/{symbol}/kline")
     async def stock_kline(symbol: str, ktype: str = "K_5M", num: int = 100):
         ds = get_data_service()
-        svc = ds.svc()
-        if not svc.connect():
-            return JSONResponse({"error": "broker_not_connected"}, 503)
         symbol = symbol.upper()
         try:
-            from futu import RET_OK
-            await ds._run(_subscribe_symbol, svc, symbol, [ktype])
-            ret, data = await ds._run(svc._quote_ctx.get_cur_kline, symbol, num, ktype=ktype)
-            if ret == RET_OK and not data.empty:
+            raw = await ds.get_kline(symbol, num=num, ktype=ktype)
+            if raw:
                 records = [{
-                    "time": str(row.get("time_key", "")),
-                    "open": float(row.get("open", 0)),
-                    "high": float(row.get("high", 0)),
-                    "low": float(row.get("low", 0)),
-                    "close": float(row.get("close", 0)),
-                    "volume": int(float(row.get("volume", 0))),
-                } for _, row in data.iterrows()]
+                    "time": str(r.get("time_key", "")),
+                    "open": float(r.get("open", 0)),
+                    "high": float(r.get("high", 0)),
+                    "low": float(r.get("low", 0)),
+                    "close": float(r.get("close", 0)),
+                    "volume": int(float(r.get("volume", 0))),
+                } for r in raw]
                 return {"symbol": symbol, "kline": records}
             return {"symbol": symbol, "kline": [], "error": "no_data"}
         except Exception as e:
@@ -173,15 +168,10 @@ def register(app, templates):
     @router.get("/api/stock/{symbol}/orderbook")
     async def stock_orderbook(symbol: str):
         ds = get_data_service()
-        svc = ds.svc()
-        if not svc.connect():
-            return JSONResponse({"error": "broker_not_connected"}, 503)
         symbol = symbol.upper()
         try:
-            from futu import RET_OK
-            await ds._run(_subscribe_symbol, svc, symbol, ["ORDER_BOOK"])
-            ret, data = await ds._run(svc._quote_ctx.get_order_book, symbol, num=10)
-            if ret == RET_OK and data:
+            data = await ds.get_orderbook(symbol, num=10)
+            if data:
                 bids = data.get("Bid", [])
                 asks = data.get("Ask", [])
                 return {
@@ -196,22 +186,17 @@ def register(app, templates):
     @router.get("/api/stock/{symbol}/ticker")
     async def stock_ticker(symbol: str, num: int = 100):
         ds = get_data_service()
-        svc = ds.svc()
-        if not svc.connect():
-            return JSONResponse({"error": "broker_not_connected"}, 503)
         symbol = symbol.upper()
         try:
-            from futu import RET_OK
-            await ds._run(_subscribe_symbol, svc, symbol, ["TICKER"])
-            ret, data = await ds._run(svc._quote_ctx.get_rt_ticker, symbol, num=num)
-            if ret == RET_OK and not data.empty:
+            raw = await ds.get_rt_ticker(symbol, num=num)
+            if raw:
                 records = [{
-                    "time": str(row.get("time_key", "")),
-                    "price": float(row.get("price", 0)),
-                    "volume": int(float(row.get("volume", 0))),
-                    "direction": str(row.get("ticker_direction", "")),
-                    "type": str(row.get("type", "")),
-                } for _, row in data.iterrows()]
+                    "time": str(r.get("time_key", "")),
+                    "price": float(r.get("price", 0)),
+                    "volume": int(float(r.get("volume", 0))),
+                    "direction": str(r.get("ticker_direction", "")),
+                    "type": str(r.get("type", "")),
+                } for r in raw]
                 return {"symbol": symbol, "ticker": records}
             return {"symbol": symbol, "ticker": [], "error": "no_data"}
         except Exception as e:

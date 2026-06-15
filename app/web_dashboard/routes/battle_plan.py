@@ -43,16 +43,11 @@ async def _atomic_save_plan(plan: dict):
             raise
 
 
-def _refresh_position_actions(plan: dict):
+async def _refresh_position_actions(plan: dict):
     """实时刷新 position_actions 的 pnl/价格/方向 (每次API调用时执行)
 
+    通过 DataService 共享缓存获取持仓 (5s TTL), 避免绕过缓存层直调 Futu。
     pipeline 只在盘前跑一次, JSON 里的 pnl_pct 是过时的。
-    此函数从 Futu 拉取实时持仓数据, 覆盖每个 action 的:
-    - current_pnl_pct (真实浮盈比, Futu pl_ratio_avg_cost)
-    - current_price (实时价格)
-    - qty (持仓数量, 负数=做空)
-    - direction (LONG/SHORT)
-    - factor_score (从 all_scores 查找, 不只 top_n)
     """
     position_actions = plan.get("position_actions", [])
     if not position_actions:
@@ -76,34 +71,23 @@ def _refresh_position_actions(plan: dict):
     except Exception:
         pass
 
-    # 从 Futu 拉取实时持仓
+    # 通过 DataService 共享缓存获取持仓 (与 dashboard/trade 共用 5s TTL 缓存)
     live_positions = {}
     try:
-        from app.web_dashboard.manual_order_service import ManualOrderService
-        from futu import RET_OK, TrdEnv
-        svc = ManualOrderService()
-        if svc.connect():
-            is_live = svc._is_live()
-            trd_env = TrdEnv.REAL if is_live else TrdEnv.SIMULATE
-            acc_id = int(svc._read_env(
-                "REAL_ACCOUNT_ID" if is_live else "SIMULATE_ACCOUNT_ID", "0"
-            ))
-            ret, data = svc._broker_ctx.position_list_query(
-                trd_env=trd_env, acc_id=acc_id,
-            )
-            svc.disconnect()
-            if ret == RET_OK and not data.empty:
-                for _, row in data.iterrows():
-                    code = str(row.get("code", ""))
-                    if code and code.startswith("US."):
-                        live_positions[code] = {
-                            "qty": int(float(row.get("qty", 0))),
-                            "avg_cost": float(row.get("average_cost", 0)),
-                            "current_price": float(row.get("nominal_price", 0)),
-                            "pnl_pct": float(row.get("pl_ratio_avg_cost", 0)),
-                            "unrealized_pl": float(row.get("unrealized_pl", 0)),
-                            "market_val": float(row.get("market_val", 0)),
-                        }
+        from app.web_dashboard.data_service import get_data_service
+        ds = get_data_service()
+        raw_positions = await ds.get_positions_raw()
+        for row in raw_positions:
+            code = str(row.get("code", ""))
+            if code and code.startswith("US."):
+                live_positions[code] = {
+                    "qty": int(float(row.get("qty", 0))),
+                    "avg_cost": float(row.get("average_cost", 0)),
+                    "current_price": float(row.get("nominal_price", 0)),
+                    "pnl_pct": float(row.get("pl_ratio_avg_cost", 0)),
+                    "unrealized_pl": float(row.get("unrealized_pl", 0)),
+                    "market_val": float(row.get("market_val", 0)),
+                }
     except Exception as e:
         logger.debug(f"[BattlePlan] position refresh fetch error: {e}")
         return
@@ -247,7 +231,7 @@ def register(app, templates):
             plan["_paused"] = plan.get("_paused", False)
             plan["_is_live"] = __import__("os").getenv("TRADE_ENV", "1").strip() == "0"
             try:
-                _refresh_position_actions(plan)
+                await _refresh_position_actions(plan)
             except Exception as e:
                 logger.debug(f"[BattlePlan] non-trading-day position refresh failed: {e}")
             return plan
@@ -349,7 +333,7 @@ def register(app, templates):
 
         # ── 实时刷新 position_actions (每次API调用都更新pnl/价格) ──
         try:
-            _refresh_position_actions(plan)
+            await _refresh_position_actions(plan)
         except Exception as e:
             logger.debug(f"[BattlePlan] position_actions refresh failed: {e}")
 

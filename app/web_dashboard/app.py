@@ -98,10 +98,18 @@ def create_app() -> FastAPI:
     # ── 路径 ──
     base_dir = Path(__file__).parent
 
-    # ── 静态文件 (Chart.js 等本地库) ──
+    # ── 静态文件 (Chart.js 等本地库, 30天缓存) ──
     from fastapi.staticfiles import StaticFiles
+    from starlette.middleware.base import BaseHTTPMiddleware
     static_dir = base_dir / "static"
     if static_dir.exists():
+        class StaticCacheMiddleware(BaseHTTPMiddleware):
+            async def dispatch(self, request, call_next):
+                response = await call_next(request)
+                if request.url.path.startswith("/static/"):
+                    response.headers["Cache-Control"] = "public, max-age=2592000, immutable"
+                return response
+        app.add_middleware(StaticCacheMiddleware)
         app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
     # ── 模板 ──
