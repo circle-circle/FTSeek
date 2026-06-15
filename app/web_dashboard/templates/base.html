@@ -302,6 +302,22 @@
         })();
 
         // ═══════════════════════════════════════════════════════
+        //  统一 API 响应解析 — 兼容新旧格式
+        //  新: {ok: true, data: {...}} → 返回 data
+        //  旧: {...} → 直接返回
+        // ═══════════════════════════════════════════════════════
+        async function apiFetch(url, opts) {
+            var res = await fetch(url, opts);
+            var d = await res.json();
+            // 新格式: {ok, data}
+            if (d && 'ok' in d) {
+                if (!d.ok) throw {code: d.error && d.error.code, message: d.error && d.error.message};
+                return d.data != null ? d.data : d;
+            }
+            return d;  // 旧格式兼容
+        }
+
+        // ═══════════════════════════════════════════════════════
         //  WebSocket 全局连接管理器 (渐进增强, 断线回退 polling)
         // ═══════════════════════════════════════════════════════
         window.WSManager = (function() {

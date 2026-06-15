@@ -1400,9 +1400,7 @@ function escHtml(s) {
             const el = document.getElementById('execQuality');
             if (!el) return;
             try {
-                const res = await fetch('/api/analytics/execution-quality');
-                if (!res.ok) throw new Error('HTTP ' + res.status);
-                const d = await res.json();
+                const d = await apiFetch('/api/analytics/execution-quality');
                 if (d.error) { el.innerHTML = '<div style="text-align:center;color:#8b949e;padding:16px;font-size:12px">' + escHtml(d.error) + '</div>'; return; }
 
                 const deals = d.deals || [];
@@ -1469,7 +1467,20 @@ function escHtml(s) {
             loadTradeSnapshot();
             loadTradeSlowData();
             loadExecQuality();
-            _fastTimer = setInterval(loadTradeSnapshot, 15000);
+            // WS 在线: 30s safety net, 离线: 15s (交易页需要更快)
+            var fastInterval = (window.WSManager && WSManager.isConnected()) ? 30000 : 15000;
+            _fastTimer = setInterval(function() {
+                // 动态调整: WS 状态变化时切换间隔
+                var desired = (window.WSManager && WSManager.isConnected()) ? 30000 : 15000;
+                if (desired !== fastInterval) {
+                    fastInterval = desired;
+                    clearInterval(_fastTimer);
+                    _fastTimer = setInterval(arguments.callee, desired);
+                }
+                // WS 10s 内推送过 → 跳过 HTTP
+                if (typeof _tradeWsLastPush !== 'undefined' && _tradeWsLastPush && (Date.now() - _tradeWsLastPush < 10000)) return;
+                loadTradeSnapshot();
+            }, fastInterval);
             _slowTimer = setInterval(function() { loadTradeSlowData(); loadExecQuality(); }, 300000);
         }
 
@@ -1575,6 +1586,17 @@ function escHtml(s) {
             });
             // 持仓变动 → 刷新
             WSManager.on('position_update', function(data) {
+                loadTradeSnapshot();
+            });
+
+            // DataService 缓存刷新推送 — 即时刷新交易页
+            var _tradeWsLastPush = 0;
+            WSManager.on('positions_update', function() {
+                _tradeWsLastPush = Date.now();
+                loadTradeSnapshot();
+            });
+            WSManager.on('account_update', function() {
+                _tradeWsLastPush = Date.now();
                 loadTradeSnapshot();
             });
         }

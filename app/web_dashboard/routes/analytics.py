@@ -10,6 +10,7 @@ from datetime import datetime
 from fastapi import APIRouter
 
 from app.web_dashboard.data_service import get_data_service, safe_float, et_today, et_days_ago
+from app.web_dashboard.api_response import api_ok, api_error, err_broker_unavailable
 
 logger = logging.getLogger("ftseek_us.routes.analytics")
 router = APIRouter()
@@ -39,7 +40,7 @@ def register(app, templates):
         ds = get_data_service()
         cached = ds.cache.get("analytics_equity")
         if cached is not None:
-            return cached
+            return api_ok(cached)
         try:
             # 1. Read historical data, filter out garbage records
             #    (early records may contain HK-account or sim-mode values >200K)
@@ -118,20 +119,22 @@ def register(app, templates):
                 "currency": "USD",
             }
             ds.cache.set("analytics_equity", result, ttl=30)
-            return result
+            return api_ok(result)
         except Exception as e:
-            return {"error": str(e), "history": []}
+            logger.error(f"[analytics/equity] {e}")
+            return api_error("ANALYTICS_ERROR", str(e), retryable=True,
+                             data={"history": []})
 
     @router.get("/api/analytics/positions-attribution")
     async def analytics_positions():
         ds = get_data_service()
         cached = ds.cache.get("analytics_positions")
         if cached is not None:
-            return cached
+            return api_ok(cached)
         try:
             svc = ds.svc()
             if not svc.connect():
-                return {"error": "broker_not_connected", "positions": []}
+                return err_broker_unavailable()
 
             acc_raw, pos_raw = await asyncio.gather(
                 ds.get_account_raw(),
@@ -196,21 +199,22 @@ def register(app, templates):
                 "long_short_ratio": round(long_mv / short_mv, 2) if short_mv > 0 else None,
             }
             ds.cache.set("analytics_positions", result, ttl=10)
-            return result
+            return api_ok(result)
         except Exception as e:
             logger.error(f"[analytics/positions] {e}")
-            return {"error": str(e), "positions": []}
+            return api_error("ANALYTICS_ERROR", str(e), retryable=True,
+                             data={"positions": []})
 
     @router.get("/api/analytics/capital-flow")
     async def analytics_capital_flow():
         ds = get_data_service()
         cached = ds.cache.get("analytics_capital_flow")
         if cached is not None:
-            return cached
+            return api_ok(cached)
         try:
             svc = ds.svc()
             if not svc.connect():
-                return {"error": "broker_not_connected", "flows": []}
+                return err_broker_unavailable()
 
             from futu import TrdEnv, RET_OK
             is_live = svc._is_live()
@@ -261,21 +265,22 @@ def register(app, templates):
             flows.sort(key=lambda x: x["net_main"], reverse=True)
             result = {"flows": flows, "count": len(flows)}
             ds.cache.set("analytics_capital_flow", result, ttl=60)
-            return result
+            return api_ok(result)
         except Exception as e:
             logger.error(f"[analytics/capital-flow] {e}")
-            return {"error": str(e), "flows": []}
+            return api_error("ANALYTICS_ERROR", str(e), retryable=True,
+                             data={"flows": []})
 
     @router.get("/api/analytics/execution-quality")
     async def analytics_execution():
         ds = get_data_service()
         cached = ds.cache.get("analytics_execution")
         if cached is not None:
-            return cached
+            return api_ok(cached)
         try:
             svc = ds.svc()
             if not svc.connect():
-                return {"error": "broker_not_connected", "deals": []}
+                return err_broker_unavailable()
             from futu import TrdEnv, RET_OK
             is_live = svc._is_live()
             trd_env = TrdEnv.REAL if is_live else TrdEnv.SIMULATE
@@ -337,17 +342,18 @@ def register(app, templates):
                 "slippage_alerts": alert_count,
             }
             ds.cache.set("analytics_execution", result, ttl=60)
-            return result
+            return api_ok(result)
         except Exception as e:
             logger.error(f"[analytics/execution] {e}")
-            return {"error": str(e), "deals": []}
+            return api_error("ANALYTICS_ERROR", str(e), retryable=True,
+                             data={"deals": []})
 
     @router.get("/api/analytics/signal-quality")
     async def analytics_signals():
         ds = get_data_service()
         cached = ds.cache.get("analytics_signals")
         if cached is not None:
-            return cached
+            return api_ok(cached)
         try:
             from app.analysis.signal_ic_tracker import get_ic_summary, get_stats, _get_db_path
             ic_summary = get_ic_summary(min_signals=10, days_back=30)
@@ -374,21 +380,22 @@ def register(app, templates):
                 "signal_count": len(recent),
             }
             ds.cache.set("analytics_signals", result, ttl=120)
-            return result
+            return api_ok(result)
         except Exception as e:
             logger.error(f"[analytics/signals] {e}")
-            return {"error": str(e), "ic_summary": {}, "recent_signals": []}
+            return api_error("ANALYTICS_ERROR", str(e), retryable=True,
+                             data={"ic_summary": {}, "recent_signals": []})
 
     @router.get("/api/analytics/sector-heatmap")
     async def analytics_sectors():
         ds = get_data_service()
         cached = ds.cache.get("analytics_sectors")
         if cached is not None:
-            return cached
+            return api_ok(cached)
         try:
             svc = ds.svc()
             if not svc.connect():
-                return {"error": "broker_not_connected", "sectors": []}
+                return err_broker_unavailable()
             from futu import RET_OK
 
             _SECTOR_ETFS = {
@@ -434,17 +441,18 @@ def register(app, templates):
 
             result = {"sectors": sectors, "hot_concepts": hot_concepts, "sector_count": len(sectors)}
             ds.cache.set("analytics_sectors", result, ttl=120)
-            return result
+            return api_ok(result)
         except Exception as e:
             logger.error(f"[analytics/sectors] {e}")
-            return {"error": str(e), "sectors": []}
+            return api_error("ANALYTICS_ERROR", str(e), retryable=True,
+                             data={"sectors": []})
 
     @router.get("/api/analytics/signal-dashboard")
     async def signal_dashboard():
         ds = get_data_service()
         cached = ds.cache.get("signal_dashboard")
         if cached is not None:
-            return cached
+            return api_ok(cached)
         try:
             today = et_today()
 
@@ -523,17 +531,17 @@ def register(app, templates):
                 "watchlist": watchlist,
             }
             ds.cache.set("signal_dashboard", result, ttl=15)
-            return result
+            return api_ok(result)
         except Exception as e:
             logger.error(f"[signal-dashboard] {e}")
-            return {"error": str(e)}
+            return api_error("ANALYTICS_ERROR", str(e), retryable=True)
 
     @router.get("/api/analytics/manual-performance")
     async def manual_performance():
         ds = get_data_service()
         cached = ds.cache.get("manual_perf")
         if cached is not None:
-            return cached
+            return api_ok(cached)
         try:
             manual = await ds.db_query_one("""
                 SELECT COUNT(*) as cnt,
@@ -600,9 +608,10 @@ def register(app, templates):
                 } for r in recent],
             }
             ds.cache.set("manual_perf", result, ttl=60)
-            return result
+            return api_ok(result)
         except Exception as e:
             logger.error(f"[manual-performance] {e}")
-            return {"error": str(e), "manual": {}, "auto": {}, "recent_trades": []}
+            return api_error("ANALYTICS_ERROR", str(e), retryable=True,
+                             data={"manual": {}, "auto": {}, "recent_trades": []})
 
     app.include_router(router)

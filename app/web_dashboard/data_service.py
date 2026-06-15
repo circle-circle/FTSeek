@@ -92,6 +92,83 @@ class DataService:
     def __init__(self):
         self.cache = _SharedCache()
         self._pool = ThreadPoolExecutor(max_workers=8)
+        self._last_snapshot: Dict[str, Any] = {}  # delta 检测用
+
+    async def _emit_change(self, key: str, new_value: Any):
+        """缓存刷新后发 WS 事件 (非阻塞, 失败静默)"""
+        try:
+            from app.web_dashboard.routes.ws import publish_event
+            old = self._last_snapshot.get(key)
+            if not self._has_meaningful_change(key, old, new_value):
+                return
+            self._last_snapshot[key] = new_value
+            # 构造推送 payload
+            event_type = self._key_to_event(key)
+            if event_type:
+                await publish_event(event_type, self._build_payload(key, new_value))
+        except Exception:
+            pass  # WS 推送失败不影响主流程
+
+    def _has_meaningful_change(self, key: str, old: Any, new: Any) -> bool:
+        """智能 delta 过滤 — 避免无意义推送"""
+        if old is None:
+            return True  # 首次数据, 必须推
+        if key == "positions_raw":
+            # 持仓数量变化 或 任何 unrealized_pnl 变 > $1
+            if len(old or []) != len(new or []):
+                return True
+            for o, n in zip(old, new):
+                if abs(safe_float(n.get("unrealized_pl", 0)) - safe_float(o.get("unrealized_pl", 0))) > 1:
+                    return True
+            return False
+        elif key == "account_raw":
+            # NAV 变 > $1
+            old_nav = safe_float((old or {}).get("nav", 0))
+            new_nav = safe_float((new or {}).get("nav", 0))
+            return abs(new_nav - old_nav) > 1
+        elif key.startswith("quotes_d_"):
+            # 任何价格变 > $0.01
+            for sym in (new or {}):
+                old_p = safe_float((old or {}).get(sym, {}).get("cur_price", 0))
+                new_p = safe_float(new.get(sym, {}).get("cur_price", 0))
+                if abs(new_p - old_p) > 0.01:
+                    return True
+            return False
+        return old != new
+
+    @staticmethod
+    def _key_to_event(key: str) -> str:
+        _MAP = {
+            "positions_raw": "positions_update",
+            "account_raw": "account_update",
+        }
+        if key in _MAP:
+            return _MAP[key]
+        if key.startswith("quotes_d_"):
+            return "quote_update"
+        return None
+
+    @staticmethod
+    def _build_payload(key: str, value: Any) -> dict:
+        """构造精简推送 payload"""
+        if key == "positions_raw":
+            return {"positions": [
+                {"code": p.get("code"), "qty": p.get("qty"),
+                 "unrealized_pl": round(safe_float(p.get("unrealized_pl", 0)), 2),
+                 "cur_price": round(safe_float(p.get("cur_price", 0)), 2)}
+                for p in (value or [])
+            ]}
+        elif key == "account_raw":
+            v = value or {}
+            return {"nav": round(safe_float(v.get("nav", 0)), 2),
+                    "cash": round(safe_float(v.get("cash", 0)), 2),
+                    "power": round(safe_float(v.get("power", 0)), 2)}
+        elif key.startswith("quotes_d_"):
+            return {"quotes": {
+                sym: {"cur_price": d.get("cur_price"), "prev_close": d.get("prev_close")}
+                for sym, d in (value or {}).items()
+            }}
+        return {"data": value}
 
     # ── 获取 ManualOrderService 单例 ──
     @staticmethod
@@ -124,6 +201,7 @@ class DataService:
         result = await self._run(self._fetch_account)
         if result:
             self.cache.set("account_raw", result, ttl=10)
+            await self._emit_change("account_raw", result)
         return result or {}
 
     def _fetch_account(self) -> dict:
@@ -147,6 +225,7 @@ class DataService:
         result = await self._run(self._fetch_positions)
         if result:
             self.cache.set("positions_raw", result, ttl=5)
+            await self._emit_change("positions_raw", result)
         return result or []
 
     def _fetch_positions(self) -> list:
@@ -236,6 +315,7 @@ class DataService:
         result = await self._run(self._fetch_quotes_detailed, symbols)
         if result:
             self.cache.set(cache_key, result, ttl=5)
+            await self._emit_change(cache_key, result)
         return result or {}
 
     def _fetch_quotes_detailed(self, symbols: list) -> Dict[str, dict]:

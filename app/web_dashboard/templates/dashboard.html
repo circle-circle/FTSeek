@@ -746,8 +746,7 @@
     async function drawEquitySparkline() {
         try {
             if (!_sparkData) {
-                var res = await fetch('/api/analytics/equity');
-                var d = await res.json();
+                var d = await apiFetch('/api/analytics/equity');
                 _sparkData = d.history || [];
                 // Refresh every 5 min
                 setTimeout(function(){ _sparkData = null; }, 300000);
@@ -1456,8 +1455,7 @@
     var _equityChart = null;
     async function loadEquity() {
         try {
-            var res = await fetch('/api/analytics/equity');
-            var d = await res.json();
+            var d = await apiFetch('/api/analytics/equity');
             var history = d.history || [];
             
             // Stats bar
@@ -1514,8 +1512,7 @@
     // -- Decision Review (merged: perf + signals + recent trades) --
     async function loadReview() {
         try {
-            var res = await fetch('/api/analytics/manual-performance');
-            var d = await res.json();
+            var d = await apiFetch('/api/analytics/manual-performance');
             var manual = d.manual || {};
             var auto = d.auto || {};
             var recent = d.recent_trades || [];
@@ -1529,8 +1526,7 @@
             
             // Signal IC summary
             try {
-                var sigRes = await fetch('/api/analytics/signal-quality');
-                var sigData = await sigRes.json();
+                var sigData = await apiFetch('/api/analytics/signal-quality');
                 var ic = sigData.ic_summary || {};
                 var ic30 = parseFloat(ic.ic_30d || 0);
                 var sigCount = ic.total_signals || 0;
@@ -1573,13 +1569,34 @@
     var _pollTimer = null;
     var _isPolling = false;
 
-    function loadAll() { loadSnapshot(); }
+    function loadAll() {
+        // WS 10s 内推送过 → 跳过 HTTP poll (safety net only)
+        if (window.WSManager && WSManager.isConnected() && (Date.now() - _wsLastPush < 10000)) {
+            return;
+        }
+        loadSnapshot();
+    }
+
+    function _getPollInterval() {
+        // WS 在线时降低 polling 频率 (60s safety net), 断线恢复 30s
+        return (window.WSManager && WSManager.isConnected()) ? 60000 : 30000;
+    }
 
     function startPolling() {
         if (_isPolling) return;
         _isPolling = true;
         loadAll();  // immediate first load
-        _pollTimer = setInterval(loadAll, 30000);
+        _pollTimer = setInterval(function() {
+            // 动态调整间隔: WS 在线 60s, 离线 30s
+            var desired = _getPollInterval();
+            if (_pollTimer && _currentInterval !== desired) {
+                clearInterval(_pollTimer);
+                _currentInterval = desired;
+                _pollTimer = setInterval(arguments.callee, desired);
+            }
+            loadAll();
+        }, 30000);
+        var _currentInterval = 30000;
     }
 
     function stopPolling() {
@@ -1597,10 +1614,26 @@
     });
 
     // ── WebSocket 实时事件 ──
+    var _wsLastPush = 0;  // WS 最近推送时间戳 (ms)
+
     if (window.WSManager) {
         WSManager.on('order_update', function() { loadSnapshot(); });
         WSManager.on('fill', function() { loadSnapshot(); });
         WSManager.on('signal_new', function() { loadSnapshot(); });
+
+        // DataService 缓存刷新推送 — 即时刷新 snapshot
+        WSManager.on('positions_update', function() {
+            _wsLastPush = Date.now();
+            loadSnapshot();
+        });
+        WSManager.on('account_update', function() {
+            _wsLastPush = Date.now();
+            loadSnapshot();
+        });
+        WSManager.on('quote_update', function() {
+            _wsLastPush = Date.now();
+            loadSnapshot();
+        });
 
         // 退出事件 → toast + 刷新
         WSManager.on('position_update', function(data) {
@@ -1679,8 +1712,7 @@
             
             var icText = '';
             try {
-                var icRes = await fetch('/api/analytics/signal-quality');
-                var icData = await icRes.json();
+                var icData = await apiFetch('/api/analytics/signal-quality');
                 var ic = icData.ic_summary ? icData.ic_summary.ic_30d : null;
                 if (ic !== null && ic !== undefined) {
                     var icVal = parseFloat(ic);
