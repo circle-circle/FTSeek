@@ -411,6 +411,8 @@ def run_factor_screen(top_n: int = 8) -> Dict:
         "sector_momentum": sector_momentum,
         "spy_change_20d": spy_change_20d,
         "elapsed_sec": round(time.time() - t0, 1),
+        # all_scores: lightweight list for watchlist/dashboard (symbol + score only)
+        "all_scores": [{"symbol": c["symbol"], "composite_score": c["composite_score"], "direction_hint": c.get("direction_hint", "")} for c in candidates],
     }
 
     # 8. Save to file

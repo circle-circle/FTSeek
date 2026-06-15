@@ -1040,8 +1040,7 @@
         // Update heatmap if visible
         if (_heatmapVisible) renderHeatmap();
 
-        // Update plan tracker with position data
-        if (typeof updatePlanTargetPrices === 'function') updatePlanTargetPrices(rawPositions || lifecycle);
+
     }
 
     function renderPositionItem(lc) {
@@ -1708,104 +1707,7 @@
         }
     }
 
-    // ═══════════════════════════════════════════════════════
-    //  Plan Tracker (战前计划追踪器)
-    // ═══════════════════════════════════════════════════════
 
-    var _planTargets = [];
-    var _planPositions = {};
-
-    async function loadPlanTracker() {
-        // PlanTracker 已移至独立页面 /plan, Dashboard 不再内嵌
-        if (!document.getElementById('planTrackerCard')) return;
-        try {
-            const res = await fetch('/api/battle-plan');
-            const data = await res.json();
-            if (data.error) { document.getElementById('planTrackerCard').style.display = 'none'; return; }
-            document.getElementById('planTrackerCard').style.display = '';
-
-            const regime = data.market_regime || 'UNKNOWN';
-            const regimeEl = document.getElementById('ptRegimeBadge');
-            regimeEl.textContent = regime;
-            const regimeColors = { RISK_ON: '#4ade80', RISK_OFF: '#f87171', NEUTRAL: '#fbbf24', DEGRADED: '#fb923c' };
-            regimeEl.style.color = regimeColors[regime] || '#8b949e';
-            regimeEl.style.borderColor = regimeColors[regime] || '#30363d';
-
-            const conf = data.confidence ? Math.round(data.confidence * 100) + '%' : '';
-            document.getElementById('ptConfidence').textContent = conf ? '置信度 ' + conf : '';
-
-            const statusEl = document.getElementById('ptStatusBadge');
-            if (data._status === 'confirmed') { statusEl.style.display = ''; statusEl.textContent = '✅ 已确认'; statusEl.style.cssText = 'font-size:10px;padding:1px 6px;border-radius:3px;background:rgba(74,222,128,0.15);color:#4ade80'; }
-            else if (data._status === 'paused') { statusEl.style.display = ''; statusEl.textContent = '⏸ 暂停'; statusEl.style.cssText = 'font-size:10px;padding:1px 6px;border-radius:3px;background:rgba(248,113,113,0.15);color:#f87171'; }
-            else { statusEl.style.display = 'none'; }
-
-            _planTargets = data.targets || [];
-            renderPlanTargets();
-        } catch (e) {
-            var el = document.getElementById('planTrackerCard');
-            if (el) el.style.display = 'none';
-        }
-    }
-
-    function renderPlanTargets() {
-        var el = document.getElementById('ptTargets');
-        if (!_planTargets.length) { el.innerHTML = '<div style="font-size:12px;color:#484f58;padding:4px 0">今日无战前计划</div>'; return; }
-
-        el.innerHTML = _planTargets.map(function(t) {
-            var sym = (t.symbol || '').replace(/^US\./, '');
-            var dir = t.direction || '';
-            var dirIcon = dir === 'LONG' ? '▲' : '▼';
-            var dirColor = dir === 'LONG' ? '#4ade80' : '#f87171';
-            var entryLow = t.entry_price_low || t.entry_zone_low || 0;
-            var entryHigh = t.entry_price_high || t.entry_zone_high || 0;
-            var curPrice = t._current_price || 0;
-            var entryLabel = entryLow && entryHigh ? '$' + entryLow.toFixed(0) + '-' + entryHigh.toFixed(0) : (entryLow ? '$' + entryLow.toFixed(0) : '--');
-
-            // Determine status
-            var status, statusIcon, statusColor;
-            if (t._in_position) {
-                status = '已持仓'; statusIcon = '✅'; statusColor = '#4ade80';
-            } else if (t.cancelled) {
-                status = '已放弃'; statusIcon = '⛔'; statusColor = '#484f58';
-            } else if (curPrice > 0 && entryHigh > 0 && curPrice >= entryLow && curPrice <= entryHigh) {
-                status = '🎯 触发中'; statusIcon = '🟢'; statusColor = '#4ade80';
-            } else if (curPrice > 0 && entryLow > 0 && Math.abs(curPrice - entryLow) / entryLow < 0.02) {
-                status = '接近'; statusIcon = '🟡'; statusColor = '#fbbf24';
-            } else {
-                status = '等待'; statusIcon = '⚫'; statusColor = '#8b949e';
-            }
-
-            var priceInfo = curPrice > 0 ? '$' + curPrice.toFixed(1) : '--';
-            var distHtml = '';
-            if (curPrice > 0 && entryLow > 0) {
-                var dist = ((curPrice - entryLow) / entryLow * 100);
-                var distCls = Math.abs(dist) < 2 ? 'color:#fbbf24' : 'color:#8b949e';
-                distHtml = '<span style="font-size:10px;' + distCls + '">' + (dist >= 0 ? '+' : '') + dist.toFixed(1) + '%</span>';
-            }
-
-            return '<div style="display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid #21262d;font-size:12px">' +
-                '<span style="color:' + dirColor + ';font-weight:700;font-size:11px">' + dirIcon + '</span>' +
-                '<a href="/stock/US.' + sym + '" style="color:#e1e4e8;text-decoration:none;font-weight:600;min-width:48px">' + sym + '</a>' +
-                '<span style="color:#8b949e;min-width:70px">' + entryLabel + '</span>' +
-                '<span style="color:#e1e4e8;min-width:55px;font-variant-numeric:tabular-nums">' + priceInfo + '</span>' +
-                distHtml +
-                '<span style="margin-left:auto;color:' + statusColor + ';font-size:11px;white-space:nowrap">' + statusIcon + ' ' + status + '</span>' +
-                '</div>';
-        }).join('');
-    }
-
-    // Update plan targets when snapshot provides current prices
-    function updatePlanTargetPrices(positions) {
-        _planPositions = {};
-        (positions || []).forEach(function(p) { _planPositions[p.symbol || p.code] = true; });
-        // Re-render if plan is loaded
-        if (_planTargets.length) {
-            _planTargets.forEach(function(t) {
-                t._in_position = !!_planPositions[t.symbol];
-            });
-            renderPlanTargets();
-        }
-    }
 
     // ═══════════════════════════════════════════════════════
     //  Risk Command (pills only — card removed)
@@ -1856,12 +1758,10 @@
     // ═══════════════════════════════════════════════════════
 
     loadSignalSummary();
-    loadPlanTracker();
     loadRiskCommand();
 
-    // 每 60 秒刷新信号摘要 + 计划追踪器
+    // 每 60 秒刷新信号摘要
     setInterval(loadSignalSummary, 60000);
-    setInterval(loadPlanTracker, 60000);
     // 每 2 分钟刷新风控pills
     setInterval(loadRiskCommand, 120000);
 

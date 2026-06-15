@@ -185,6 +185,30 @@ def register(app, templates):
 
         return plan
 
+    @router.get("/api/pipeline/factor-scores")
+    async def get_factor_scores():
+        """从factor_screen_latest.json读取所有股票的因子评分，供watchlist等页面使用"""
+        _FACTOR_PATH = Path(__file__).parent.parent.parent.parent / "data" / "factor_screen_latest.json"
+        if not _FACTOR_PATH.exists():
+            return JSONResponse(content={})
+        try:
+            with open(_FACTOR_PATH) as f:
+                data = json.load(f)
+            scores = {}
+            for c in data.get("candidates", []):
+                sym = c.get("symbol", "")
+                if sym:
+                    scores[sym] = round(c.get("composite_score", 0), 3)
+            # Also include all scored symbols (not just top N)
+            for s in data.get("all_scores", []):
+                sym = s.get("symbol", "")
+                if sym and sym not in scores:
+                    scores[sym] = round(s.get("composite_score", 0), 3)
+            return JSONResponse(content=scores)
+        except Exception as e:
+            logger.warning(f"[factor-scores] read error: {e}")
+            return JSONResponse(content={})
+
     @router.put("/api/battle-plan/targets/{symbol:path}")
     async def update_target(symbol: str, request: Request):
         """修改单个 target 的参数"""

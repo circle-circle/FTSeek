@@ -210,6 +210,18 @@ function render(d) {
         html += '<div style="font-size:12px;color:#8b949e;padding:4px 0 10px;line-height:1.5">' + esc(reasoning.substring(0, 200)) + (reasoning.length > 200 ? '...' : '') + '</div>';
     }
 
+    // Sector momentum strip
+    var sectors = d.sector_momentum || {};
+    var sectorEntries = Object.entries(sectors).sort(function(a,b){ return b[1]-a[1]; });
+    if (sectorEntries.length) {
+        html += '<div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:10px">';
+        sectorEntries.forEach(function(s) {
+            var v = s[1]; var cls = v > 0.5 ? 'color:#4ade80' : v < -0.5 ? 'color:#f87171' : 'color:#8b949e';
+            html += '<span class="ap-chip" style="border-color:' + (v>0.5?'rgba(74,222,128,0.3)':v<-0.5?'rgba(248,113,113,0.3)':'#30363d') + ';font-size:10px">' + esc(s[0].substring(0,4)) + ' <span style="' + cls + '">' + (v>=0?'+':'') + v.toFixed(1) + '%</span></span>';
+        });
+        html += '</div>';
+    }
+
     // Pass banner
     if (shouldPass) {
         html += '<div class="ap-pass">📋 今日无高确信度机会，建议观望为主</div>';
@@ -286,6 +298,46 @@ function render(d) {
     // Empty state
     if (!opps.length && !avoid.length) {
         html += '<div class="loading">今日无作战计划</div>';
+    }
+
+    // Position actions (existing holdings)
+    var pa = d.position_actions || [];
+    if (pa.length) {
+        html += '<div class="ap-layer"><div class="ap-layer-hd">持仓管理<span class="cnt">(' + pa.length + ')</span></div>';
+        // Sort: EXIT first, then REDUCE, then HOLD
+        var actOrder = {EXIT: 0, REDUCE: 1, HOLD: 2, ADD: 3};
+        pa.sort(function(a,b){ return (actOrder[a.action]||9) - (actOrder[b.action]||9); });
+        pa.forEach(function(p) {
+            var actCls = p.action === 'EXIT' ? 'exit' : p.action === 'REDUCE' ? 'r' : p.action === 'ADD' ? 'g' : '';
+            var pnl = p.current_pnl_pct || 0;
+            var pnlStr = pnl >= 0 ? '+' + pnl.toFixed(1) + '%' : pnl.toFixed(1) + '%';
+            var pnlCls = pnl >= 0 ? 'color:#4ade80' : 'color:#f87171';
+            html += '<div class="ap-card" style="padding:8px 12px">';
+            html += '<div class="ap-row">';
+            html += '<span class="ap-chip ' + actCls + '" style="font-size:10px;font-weight:700">' + esc(p.action) + '</span>';
+            html += '<a href="/stock/' + encodeURIComponent(p.symbol) + '" class="ap-sym" style="font-size:13px">' + esc((p.symbol||'').replace('US.','')) + '</a>';
+            html += '<span style="font-size:11px;' + pnlCls + '">' + pnlStr + '</span>';
+            if (p.factor_score > 0) html += '<span class="ap-chip" style="font-size:9px" title="因子评分">因子 ' + (p.factor_score*100).toFixed(0) + '</span>';
+            html += '<span class="ap-reason" style="max-width:60%">' + esc((p.reason||'').substring(0,80)) + '</span>';
+            html += '</div></div>';
+        });
+        html += '</div>';
+    }
+
+    // ORB ETF status
+    var orb = d.orb_status || [];
+    if (orb.length) {
+        var breakouts = orb.filter(function(o){ return o.signal && o.signal !== 'NEUTRAL'; });
+        if (breakouts.length) {
+            html += '<div class="ap-layer"><div class="ap-layer-hd">ORB 板块信号<span class="cnt">(' + breakouts.length + ')</span></div>';
+            html += '<div style="display:flex;gap:4px;flex-wrap:wrap;padding:4px 0">';
+            breakouts.forEach(function(o) {
+                var sigCls = o.signal === 'BREAKOUT_UP' ? 'g' : o.signal === 'BREAKOUT_DOWN' ? 'r' : '';
+                var label = {BREAKOUT_UP:'↑突破',BREAKOUT_DOWN:'↓破位',CONSOLIDATION:'横盘'}[o.signal] || o.signal;
+                html += '<span class="ap-chip ' + sigCls + '" title="' + esc(o.symbol) + ' $' + o.price.toFixed(2) + ' chg=' + o.chg_1d.toFixed(1) + '% pos=' + (o.pos_in_range*100).toFixed(0) + '%">' + esc(o.symbol.replace('US.','')) + ' ' + label + '</span>';
+            });
+            html += '</div></div>';
+        }
     }
 
     // Strategy adjustments

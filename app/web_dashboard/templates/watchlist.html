@@ -42,6 +42,11 @@
     .wl-signal.sig-short { color: #f85149; }
     .wl-signal.sig-neutral { color: #484f58; }
     .wl-stats { font-size: 11px; color: #8b949e; flex: 1; text-align: right; min-width: 80px; }
+    .wl-factor { min-width: 50px; text-align: center; font-size: 11px; font-weight: 600; }
+    .wl-factor.f-high { color: #4ade80; }
+    .wl-factor.f-med { color: #fbbf24; }
+    .wl-factor.f-low { color: #8b949e; }
+    .wl-factor.f-plan { background: rgba(96,165,250,0.12); color: #60a5fa; border-radius: 3px; padding: 1px 4px; }
     .wl-acts { display: flex; gap: 4px; flex-shrink: 0; }
     .wl-acts a, .wl-acts button { font-size: 11px; color: #8b949e; text-decoration: none; padding: 2px 6px; border: none; background: none; cursor: pointer; }
     .wl-acts a:hover, .wl-acts button:hover { color: #58a6ff; }
@@ -95,6 +100,7 @@
             <span class="h-price">价格</span>
             <span class="h-chg">涨跌</span>
             <span class="h-signal">信号</span>
+            <span class="h-factor" style="min-width:50px;text-align:center">因子</span>
             <span class="h-stats">历史</span>
             <span class="h-acts"></span>
         </div>
@@ -132,6 +138,17 @@
         var sigText = dir === 'LONG' ? '↑ 做多' : dir === 'SHORT' ? '↓ 做空' : '—';
         if (conf) sigText += ' ' + conf;
 
+        // Factor score from pipeline
+        var fs = it.factor_score;
+        var factorHtml = '';
+        if (fs != null && fs > 0) {
+            var fCls = fs >= 0.6 ? 'f-high' : fs >= 0.4 ? 'f-med' : 'f-low';
+            if (it.in_plan) fCls += ' f-plan';
+            factorHtml = '<span class="wl-factor ' + fCls + '" title="因子评分 (0-100)">' + (fs*100).toFixed(0) + (it.in_plan ? ' ★' : '') + '</span>';
+        } else {
+            factorHtml = '<span class="wl-factor">—</span>';
+        }
+
         // Trade stats compact
         var statsHtml = '';
         if (it.trade_count > 0) {
@@ -145,6 +162,7 @@
             '<span class="wl-price">' + priceStr + '</span>' +
             '<span class="wl-chg ' + pctCls(chg) + '">' + chgStr + '</span>' +
             '<span class="wl-signal ' + sigCls + '">' + sigText + '</span>' +
+            factorHtml +
             '<span class="wl-stats">' + statsHtml + '</span>' +
             '<span class="wl-acts">' +
                 '<a href="/trade?symbol=' + encodeURIComponent(it.symbol) + '&direction=LONG" title="做多">🟢</a>' +
@@ -196,12 +214,37 @@
             String(now.getSeconds()).padStart(2, '0');
     }
 
+    var _factorScores = {};
+    var _planTargets = {};
+
+    async function loadPipelineData() {
+        try {
+            // Load factor scores
+            var r1 = await fetch('/api/pipeline/factor-scores');
+            if (r1.ok) _factorScores = await r1.json();
+            // Load plan targets
+            var r2 = await fetch('/api/battle-plan');
+            if (r2.ok) {
+                var plan = await r2.json();
+                _planTargets = {};
+                (plan.targets || []).forEach(function(t) { _planTargets[t.symbol] = true; });
+            }
+        } catch(e) {}
+    }
+
     async function fetchData() {
         try {
             var resp = await fetch('/api/watchlist');
             if (!resp.ok) throw new Error('HTTP ' + resp.status);
             var data = await resp.json();
-            render(data.items || []);
+            var items = data.items || [];
+            // Inject pipeline data
+            items.forEach(function(it) {
+                var sym = it.symbol;
+                it.factor_score = _factorScores[sym] || null;
+                it.in_plan = !!_planTargets[sym];
+            });
+            render(items);
         } catch (e) { console.error('watchlist fetch:', e); }
     }
 
@@ -244,6 +287,6 @@
         if (document.hidden) stopPolling(); else { fetchData(); startPolling(); }
     });
 
-    fetchData();
+    loadPipelineData().then(fetchData);
     startPolling();
 {% endblock %}
