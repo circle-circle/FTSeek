@@ -23,33 +23,42 @@
 
 ---
 
-## P2.1 PerformanceTracker → 投票权重 🔴🔴 最高杠杆
+## P2.1 投票准确率闭环通电 ✅ 已实施 (2026-06-17)
 
-### 目标
-让多模型投票权重（当前硬编码 Qwen 70% / MiniMax 30%）**随真实胜率自适应调整**。这是「让系统能学习」的第一步。
+> **⚠️ 前提修正（实施时发现）**：原提纲假设要"接 `VotingPerformanceTracker`"。深查后发现**该 tracker 已被更强的 `VotingAccuracyTracker` 取代**，且闭环已建好 90%——真正缺的只是"准确率喂回权重"这一环。
 
-### 关键接入点
-- **逻辑已实现但零消费**：`app/agents/voting/performance_tracker.py:108` `get_model_weights_adjustment()`
-- **接入点 A（读）**：`app/agents/voting/voting_aggregator.py:28` 附近，`weights = self.config.model_weights.copy()` 之后调用
-  ```python
-  from .performance_tracker import tracker
-  for role, adj in tracker.get_model_weights_adjustment().items():
-      if role in weights:
-          weights[role] *= adj  # 胜率>0.6 加20%, <0.4 降20%
-  ```
-- **接入点 B（写）**：`VotingCoordinator._run_full_voting()` 结尾调 `tracker.record_vote_result()`；交易退出时（`order_executor.py` 退出分支）调 `tracker.update_outcome()`
+### 真实现状（实施时核查确认）
+投票准确率闭环**已通过 `VotingAccuracyTracker` 建好 90%**：
+| 环节 | 位置 | 状态 |
+|------|------|------|
+| 记录预测 | `voting_coordinator.py:891` `record_prediction(...)`（含每个模型方向明细）| ✅ 已闭环 |
+| 回填实际结果 | `order_executor.py:4337` `update_outcome(...)`（平仓时按实际方向对错）| ✅ 已闭环 |
+| per-model 准确率 | `VotingAccuracyTracker.get_model_benchmark(model_id)` | ✅ 已产出 |
+| **准确率→权重** | `voting_aggregator.aggregate()` | ❌ **此前断裂**（权重永远固定 70/30）|
 
-### 预期收益
-- 模型权重从「静态配置」→「动态自适应」，长期胜率提升的杠杆点
-- 暴露 MiniMax/Qwen 的真实表现差异（当前被硬编码 0.75 偏差校正掩盖）
+对比：`VotingPerformanceTracker`（内存、零调用、di_container:254 已注明 removed）是**早期冗余实现**。
 
-### 依赖
-- 无强依赖；建议 P1.1 模拟盘修复后做（否则 update_outcome 学到的是假数据）
+### 实际落地方案（已实施）
+1. **`voting_aggregator.aggregate()`**：VIX 动态权重块之后，插入"准确率→权重系数"块——读 `get_model_benchmark(model_id, 30)`，按方向准确率映射系数（≥0.6→×1.2 / >0.5→×1.0 / >0.4→×0.9 / ≤0.4→×0.8），乘入 `weights[role]`。
+2. **冷启动安全**：`total_votes < 20` 或 `accuracy is None` → 不调整（保持默认 70/30）。防小样本噪音。
+3. **无需显式归一化**：weights 用于加权平均（sum/total），乘系数即改变相对比例。
+4. **标记 `VotingPerformanceTracker` 废弃**：指向 VotingAccuracyTracker，待 P3 清理时删除。
 
-### 待细化项（进入实施时补）
-- [ ] 冷启动期（样本 <50）权重不调整，避免过拟合
-- [ ] 权重调整的边界（防止某模型权重→0 永久踢出）
-- [ ] update_outcome 的"胜"判定标准（T+1 收益 vs 退出收益）
+### 验证结果（已通过）
+- ✅ py_compile 通过
+- ✅ 端到端 `aggregate([qwen60, minimax85])` 成功（LONG, strength=61），闭环块无异常
+- ✅ 冷启动安全：当前 qwen/minimax `total_votes=0` → 不调整
+- ✅ 真实数据可跑：`get_model_benchmark("qwen"/"minimax", 30)` 返回 accuracy/total_votes/by_direction
+
+### 触发条件（通电生效后）
+当某模型累积 ≥20 个已回填预测且方向准确率显著偏离 0.5 时，权重会自动调整。**目标验证（Gate 2→3）**：部署后 7 天内至少发生 1 次权重自适应变化。
+
+### 回滚
+`git revert`（voting_aggregator.py 改动）；权重恢复固定 70/30。
+
+### 风险
+- ⚠️ 当前信号 IC 为负（噪音），模型准确率数据少且可能不准 → 冷启动 20 样本门槛 + P1.5 IC 门禁先过滤噪音信号，降低过拟合风险
+- ⚠️ 权重系数（1.2/0.8）较温和，避免某模型被永久踢出
 
 ---
 
@@ -109,28 +118,29 @@ IC 低/负时**自动禁用对应策略/方向**（7 天），而非只输出报
 
 ---
 
-## P2.4 辩论引擎：接 or 删 🟡
+## P2.4 辩论引擎：删 ✅ 已实施 (2026-06-17)
 
-### 目标
-处理纯死代码决策。当前 `DebateEngine` 在 `voting_coordinator` 创建后**从未被调用**（已确认）。
+### 决策与现状
+**决定：删**（用户拍板）。`DebateEngine` 在 `voting_coordinator.py` 创建后**从未被调用**——debate_engine.py:479 自述"辩论降级/结论持久化/中性降级全部不可达"。且 Bear=DeepSeek 与 Bull=Qwen 同源（中国大模型生态），接通也只是假分歧。
 
-### 关键接入点
-- **死代码位置**：`app/agents/voting/voting_coordinator.py:355-363`
-- **决策 A（删）**：去掉初始化，减复杂度。若团队认为当前投票足够，直接删
-- **决策 B（接）**：在 `voting_aggregator.py:218` 的 `auto_debate_triggered=True` 处调用 `debate_engine.run_debate()`
-  - ⚠️ **前提**：bear_model 必须换成真正差异化的模型（当前 Bull=Qwen / Bear=DeepSeek，同属中国大模型生态，训练数据高度重叠，辩论会「假分歧」）
-  - 可用 `hermes_client` 接 Claude/GPT 作为 Bear，产生真正的对立视角
+### 实际落地（已实施）
+- 删除 `voting_coordinator.py:357-363` 的 `DebateEngine` 实例化（死代码对象）
+- 删除 2 个未用 import：`DebateEngine` / `DebateSummary`（line 13-14）
+- **保留**：
+  - `enable_debate` 参数（默认 True）——兼容调用方，不破坏签名
+  - `auto_debate_triggered` 标志——`voting_aggregator` 仍计算分歧度，且被 `decision_recorder.py:214` 持久化到决策 DB（诊断用，非未用）
 
-### 预期收益
-- 删：消除维护负担，避免「以为有辩论其实没有」的错觉
-- 接：高置信度分歧信号时增加一道独立审计（与 P4.4 Thesis Challenge 互补）
+### 验证结果（已通过）
+- ✅ py_compile 通过；VotingCoordinator 可 import，`enable_debate` 参数保留
+- ✅ `self.debate_engine` 赋值已清除（死代码移除）
+- ✅ `auto_debate_triggered` 仍保留（有下游消费）
+- ✅ debate 模块（debate_engine.py / debate_models.py）保留，供 `catalyst/detector.py`、`review/review_orchestrator.py` 等其他路径使用，不受影响
 
-### 依赖
-- 无
+### 回滚
+`git revert`（voting_coordinator.py 改动）
 
-### 待细化项
-- [ ] **决策点（需拍板）**：接还是删？建议：除非能接入差异化模型，否则先删
-- [ ] 若接：触发条件（仅在 `auto_debate_triggered`）、结论如何影响最终决策
+### 未来重引入条件
+当能通过 hermes 接入真正差异化模型（Claude/GPT）作 Bear 时，可重新引入——届时在 `auto_debate_triggered=True` 处调 `run_debate()`，产生真分歧审计（与 P4.4 Thesis Challenge 互补）。
 
 ---
 

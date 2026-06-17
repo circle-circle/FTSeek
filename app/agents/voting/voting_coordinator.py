@@ -10,8 +10,8 @@ from dataclasses import dataclass
 from .voting_config import VotingConfig, ModelRole
 from .model_agent import ModelAgent, ModelScore
 from .voting_aggregator import VotingAggregator
-from ..debate.debate_engine import DebateEngine
-from ..debate.debate_models import DebateSummary
+# P2.4 (RFC-060): DebateEngine / DebateSummary import 已移除 (DebateEngine 创建后从未调用,
+# 见下方注释); 模块仍保留供 catalyst/review 等其他路径使用.
 
 # P0 清理 2026-04-25: 移除已废弃的 agent 导入
 # TraderAgent, RiskAgent, FinalDecision 等已废弃
@@ -350,17 +350,13 @@ VIX > 25 时，最大 Strength 不得超过 50。
         self._news_provider = None
         self._md_router = None
         
-        # P0优化: 辩论引擎 - 快速模式 (1轮,非3轮)
-        # 2026-05-28 精简: bull/bear 模型同步为 qwen3.7-max + deepseek-v4-pro
+        # P2.4 (RFC-060): 辩论引擎已移除 — DebateEngine 此前创建后从未被调用
+        # (run_debate 零引用; 见 debate_engine.py:479 自述 "辩论降级/结论持久化/中性降级全部不可达").
+        # 且 bear_model=DeepSeek 与 bull=Qwen 同源 (中国大模型生态), 即使接通也只是假分歧.
+        # 待能接入真正差异化模型 (Claude/GPT) 作 Bear 时, 再用 hermes 重新引入.
+        # 注: auto_debate_triggered 标志保留 (voting_aggregator 仍计算分歧度 +
+        #     decision_recorder.py:214 持久化供诊断). enable_debate 参数保留以兼容调用方.
         self.enable_debate = enable_debate
-        if enable_debate:
-            self.debate_engine = DebateEngine(
-                max_rounds=1,  # 2模型架构: 1轮快速辩论
-                bull_model=f"bailian/{os.getenv('BAILIAN_MODEL_STRATEGY', 'qwen-max')}",       # Qwen 综合专家 (多头)
-                bear_model="bailian/deepseek-v4-pro",   # DeepSeek 风控专家 (空头质疑)
-                fast_mode=True,
-            )
-            pass  # Removed legacy agents
     
     def _create_model_agents(self) -> Dict[ModelRole, ModelAgent]:
         """创建模型 Agent（各角色使用专属差异化提示词）"""

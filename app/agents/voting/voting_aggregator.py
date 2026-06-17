@@ -46,7 +46,48 @@ class VotingAggregator:
                 weights[ModelRole.QWEN] = max(0.15, weights[ModelRole.QWEN] - self.config.VIX_WEIGHT_ADJUSTMENT)
                 weights[ModelRole.MINIMAX] = min(0.50, weights[ModelRole.MINIMAX] + self.config.VIX_WEIGHT_ADJUSTMENT)
                 logger.info(f"[动态权重] VIX={vix:.1f} > {self.config.VIX_HIGH_THRESHOLD}, 降低宏观模型权重，提高情绪模型权重")
-        
+
+        # P2.1 (RFC-060): 接通投票准确率闭环 — 按各模型历史方向准确率调整权重
+        # 数据源: VotingAccuracyTracker (持久化; 已在 voting_coordinator.record_prediction +
+        #         order_executor.update_outcome 闭环记录预测↔实际结果)
+        # 此前断点: 准确率算了但从未喂回权重 → 权重永远固定 Qwen70/MiniMax30
+        # 冷启动: 样本不足(<MIN)或无数据 → 不调整 (multiplier=1.0), 安全
+        # 注: weights 用于加权平均 (sum/total), 故乘系数即改变相对比例, 无需显式归一化
+        try:
+            from app.analysis.voting_accuracy_tracker import get_voting_accuracy_tracker
+            _acc_tracker = get_voting_accuracy_tracker()
+            _ACC_PERIOD_DAYS = 30
+            _ACC_MIN_SAMPLES = 20  # 每模型至少 20 个已回填样本才调权, 防小样本噪音
+            for _role in list(weights.keys()):
+                _mid = _role.value if hasattr(_role, "value") else str(_role)  # ModelRole.value="qwen"/"minimax"
+                try:
+                    _bench = _acc_tracker.get_model_benchmark(_mid, _ACC_PERIOD_DAYS)
+                except Exception:
+                    continue
+                if not isinstance(_bench, dict):
+                    continue
+                _acc = _bench.get("accuracy")
+                _n = int(_bench.get("total_votes") or 0)
+                if _acc is None or _n < _ACC_MIN_SAMPLES:
+                    continue  # 冷启动/样本不足, 保持默认权重
+                # 准确率 → 权重系数 (沿用 PerformanceTracker 已验证方案)
+                if _acc >= 0.60:
+                    _mult = 1.2
+                elif _acc > 0.50:
+                    _mult = 1.0
+                elif _acc > 0.40:
+                    _mult = 0.9
+                else:
+                    _mult = 0.8
+                if _mult != 1.0:
+                    weights[_role] *= _mult
+                    logger.info(
+                        f"[闭环权重] {_mid} acc={_acc:.2f}(n={_n}) → ×{_mult} "
+                        f"(weight={weights[_role]:.2f})"
+                    )
+        except Exception as _p2_err:
+            logger.debug(f"[闭环权重] 准确率调整失败 (用默认权重): {_p2_err}")
+
         # P0 优化 (2026-04-17): 分离内部投票和外部投票 (LLM 策略)
         internal_scores = []
         external_scores = []

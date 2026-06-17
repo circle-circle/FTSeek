@@ -1,4 +1,13 @@
-"""投票性能追踪器 - 追踪模型表现并持续优化"""
+"""投票性能追踪器 - 追踪模型表现并持续优化
+
+⚠️ 已废弃 (P2.1 / RFC-060, 2026-06-17):
+    本类是早期内存实现, 已被 app/analysis/voting_accuracy_tracker.py 取代:
+      - VotingAccuracyTracker 持久化 (SQLite), 不会被重启清空
+      - 已在 voting_coordinator.record_prediction + order_executor.update_outcome 闭环
+      - 产出 get_model_benchmark (per-model 准确率/方向)
+    P2.1 已将 VotingAccuracyTracker 准确率接进 voting_aggregator 权重 (闭环通电).
+    本文件保留仅为兼容; tracker 全局实例不再被消费. 待 P3 清理时删除.
+"""
 import logging
 from datetime import datetime
 from typing import Dict, Any, List, Optional
