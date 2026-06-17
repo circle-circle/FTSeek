@@ -122,7 +122,7 @@ def register(app, templates):
             return api_ok(result)
         except Exception as e:
             logger.error(f"[analytics/equity] {e}")
-            return api_error("ANALYTICS_ERROR", str(e), retryable=True,
+            return api_error("ANALYTICS_ERROR", "数据查询异常", retryable=True,
                              data={"history": []})
 
     @router.get("/api/analytics/positions-attribution")
@@ -202,7 +202,7 @@ def register(app, templates):
             return api_ok(result)
         except Exception as e:
             logger.error(f"[analytics/positions] {e}")
-            return api_error("ANALYTICS_ERROR", str(e), retryable=True,
+            return api_error("ANALYTICS_ERROR", "数据查询异常", retryable=True,
                              data={"positions": []})
 
     @router.get("/api/analytics/capital-flow")
@@ -268,7 +268,7 @@ def register(app, templates):
             return api_ok(result)
         except Exception as e:
             logger.error(f"[analytics/capital-flow] {e}")
-            return api_error("ANALYTICS_ERROR", str(e), retryable=True,
+            return api_error("ANALYTICS_ERROR", "数据查询异常", retryable=True,
                              data={"flows": []})
 
     @router.get("/api/analytics/execution-quality")
@@ -345,7 +345,7 @@ def register(app, templates):
             return api_ok(result)
         except Exception as e:
             logger.error(f"[analytics/execution] {e}")
-            return api_error("ANALYTICS_ERROR", str(e), retryable=True,
+            return api_error("ANALYTICS_ERROR", "数据查询异常", retryable=True,
                              data={"deals": []})
 
     @router.get("/api/analytics/signal-quality")
@@ -383,7 +383,7 @@ def register(app, templates):
             return api_ok(result)
         except Exception as e:
             logger.error(f"[analytics/signals] {e}")
-            return api_error("ANALYTICS_ERROR", str(e), retryable=True,
+            return api_error("ANALYTICS_ERROR", "数据查询异常", retryable=True,
                              data={"ic_summary": {}, "recent_signals": []})
 
     @router.get("/api/analytics/sector-heatmap")
@@ -444,7 +444,7 @@ def register(app, templates):
             return api_ok(result)
         except Exception as e:
             logger.error(f"[analytics/sectors] {e}")
-            return api_error("ANALYTICS_ERROR", str(e), retryable=True,
+            return api_error("ANALYTICS_ERROR", "数据查询异常", retryable=True,
                              data={"sectors": []})
 
     @router.get("/api/analytics/signal-dashboard")
@@ -521,6 +521,59 @@ def register(app, templates):
                 })
             watchlist.sort(key=lambda x: x["pnl_pct"])
 
+            # RFC-060 决策辅助: 按策略×方向的历史胜率给信号打信任度 (人工执行参考)
+            # 诊断依据: TECHNICAL_MULTI_FACTOR SHORT 58.7%WR (真edge); voting_llm 40.8%WR (出血源)
+            strategy_quality = {}
+            try:
+                q_rows = await ds.db_query(
+                    "SELECT COALESCE(strategy_id,'(无标签)') sid, direction, "
+                    "COUNT(*) n, ROUND(AVG(fwd_ret_t1)*100,2) fwd_pct, "
+                    "ROUND(100.0*SUM(CASE WHEN fwd_ret_t1>0 THEN 1 ELSE 0 END)/COUNT(*),1) winrate "
+                    "FROM signal_snapshots "
+                    "WHERE fwd_ret_t1 IS NOT NULL AND ABS(fwd_ret_t1)<0.5 "
+                    "GROUP BY strategy_id, direction",
+                    db_path=snap_db,
+                )
+                for r in q_rows:
+                    key = f"{r['sid']}|{r['direction']}"
+                    wr = float(r.get("winrate") or 0)  # 百分制 (0-100)
+                    # 信任度阈值用百分制: ≥55% trust / 45-55% neutral / <45% caution
+                    badge = "trust" if wr >= 55 else ("neutral" if wr >= 45 else "caution")
+                    strategy_quality[key] = {
+                        "n": r["n"], "winrate": wr, "fwd_pct": r.get("fwd_pct"),
+                        "badge": badge,
+                    }
+            except Exception:
+                pass
+
+            # 近期候选信号 (带策略信任度, 排序: trust>neutral>caution)
+            decision_candidates = []
+            try:
+                cand_rows = await ds.db_query(
+                    "SELECT decision_id, symbol, direction, strength, "
+                    "COALESCE(strategy_id,'(无标签)') sid, created_at "
+                    "FROM signal_snapshots "
+                    "WHERE trade_date >= date('now','-3 days') "
+                    "ORDER BY created_at DESC LIMIT 25",
+                    db_path=snap_db,
+                )
+                _rank = {"trust": 0, "neutral": 1, "caution": 2}
+                for c in cand_rows:
+                    q = strategy_quality.get(f"{c['sid']}|{c['direction']}", {})
+                    decision_candidates.append({
+                        "symbol": c["symbol"], "direction": c["direction"],
+                        "strength": c["strength"], "strategy": c["sid"],
+                        "created_at": c["created_at"],
+                        "winrate": q.get("winrate"), "n": q.get("n"),
+                        "badge": q.get("badge", "unknown"),
+                        "note": ("已验证edge" if q.get("badge") == "trust"
+                                 else "历史低胜率,慎入" if q.get("badge") == "caution"
+                                 else "样本不足/中性"),
+                    })
+                decision_candidates.sort(key=lambda x: (_rank.get(x["badge"], 3), -(x.get("strength") or 0)))
+            except Exception:
+                pass
+
             result = {
                 "today": today,
                 "signal_count": signal_count,
@@ -529,12 +582,15 @@ def register(app, templates):
                 "pass_rate": round(passed_count / signal_count * 100, 1) if signal_count > 0 else 0,
                 "recent_trades": today_trades,
                 "watchlist": watchlist,
+                # RFC-060 决策辅助: 让人工一眼分清信任信号 vs 出血源
+                "strategy_quality": strategy_quality,
+                "decision_candidates": decision_candidates,
             }
             ds.cache.set("signal_dashboard", result, ttl=15)
             return api_ok(result)
         except Exception as e:
             logger.error(f"[signal-dashboard] {e}")
-            return api_error("ANALYTICS_ERROR", str(e), retryable=True)
+            return api_error("ANALYTICS_ERROR", "数据查询异常", retryable=True)
 
     @router.get("/api/analytics/manual-performance")
     async def manual_performance():
@@ -552,6 +608,7 @@ def register(app, templates):
                 FROM trade_records
                 WHERE (strategy_id = 'manual' OR source_type = 'MANUAL')
                   AND trade_mode != 'simulate'
+                  AND exit_price > 0
             """)
 
             auto = await ds.db_query_one("""
@@ -565,6 +622,7 @@ def register(app, templates):
                   AND source_type != 'MANUAL'
                   AND source_type NOT IN ('manual_sync', 'reconciler')
                   AND trade_mode != 'simulate'
+                  AND exit_price > 0
             """)
 
             recent = await ds.db_query("""
@@ -573,6 +631,7 @@ def register(app, templates):
                 FROM trade_records
                 WHERE (strategy_id = 'manual' OR source_type = 'MANUAL')
                   AND trade_mode != 'simulate'
+                  AND exit_price > 0
                 ORDER BY trade_date DESC, id DESC LIMIT 20
             """)
 
@@ -611,7 +670,327 @@ def register(app, templates):
             return api_ok(result)
         except Exception as e:
             logger.error(f"[manual-performance] {e}")
-            return api_error("ANALYTICS_ERROR", str(e), retryable=True,
+            return api_error("ANALYTICS_ERROR", "数据查询异常", retryable=True,
                              data={"manual": {}, "auto": {}, "recent_trades": []})
+
+    # ── Trade Analysis (多维交易分析) ──
+
+    @router.get("/api/analytics/trade-analysis")
+    async def trade_analysis(days: int = 30):
+        """按 entry/exit context 多维度切分交易绩效"""
+        ds = get_data_service()
+        try:
+            rows = await ds.db_query(
+                "SELECT symbol, direction, entry_price, exit_price, quantity, "
+                "realized_pnl, pnl_pct, entry_time, exit_time, trade_date, "
+                "metadata_json FROM trade_records "
+                "WHERE trade_date >= date('now', ? || ' days') "
+                "AND trade_mode != 'simulate' "
+                "AND exit_time IS NOT NULL "
+                "ORDER BY trade_date DESC",
+                (str(days),),
+            )
+
+            import json as _json
+
+            trades = []
+            for r in rows:
+                meta = {}
+                try:
+                    meta = _json.loads(r.get("metadata_json") or "{}")
+                except Exception:
+                    pass
+
+                entry_ctx = (meta.get("thesis") or {}).get("entry_context") or {}
+                exit_ctx = meta.get("exit_context") or {}
+
+                trades.append({
+                    "symbol": r.get("symbol", ""),
+                    "direction": r.get("direction", ""),
+                    "pnl": round(float(r.get("realized_pnl") or 0), 2),
+                    "pnl_pct": round(float(r.get("pnl_pct") or 0) * 100, 1),
+                    "hold_hours": exit_ctx.get("hold_hours"),
+                    "entry_session": entry_ctx.get("session_phase", "unknown"),
+                    "exit_session": exit_ctx.get("session_phase", "unknown"),
+                    "plan_match": entry_ctx.get("plan_match", False),
+                    "vix_entry": entry_ctx.get("vix"),
+                    "vix_exit": exit_ctx.get("vix"),
+                    "trade_date": r.get("trade_date", ""),
+                })
+
+            def _stats(subset):
+                if not subset:
+                    return {"count": 0, "win_rate": 0, "avg_pnl": 0, "total_pnl": 0, "avg_hold_hours": 0}
+                wins = sum(1 for t in subset if t["pnl"] > 0)
+                cnt = len(subset)
+                holds = [t["hold_hours"] for t in subset if t.get("hold_hours")]
+                return {
+                    "count": cnt,
+                    "win_rate": round(wins / cnt * 100, 1) if cnt else 0,
+                    "avg_pnl": round(sum(t["pnl"] for t in subset) / cnt, 2),
+                    "total_pnl": round(sum(t["pnl"] for t in subset), 2),
+                    "avg_hold_hours": round(sum(holds) / len(holds), 1) if holds else 0,
+                }
+
+            # 按维度切分
+            by_session = {}
+            for t in trades:
+                s = t["entry_session"]
+                by_session.setdefault(s, []).append(t)
+
+            by_plan = {
+                "plan": _stats([t for t in trades if t["plan_match"]]),
+                "non_plan": _stats([t for t in trades if not t["plan_match"]]),
+            }
+
+            by_direction = {}
+            for t in trades:
+                d = t["direction"]
+                by_direction.setdefault(d, []).append(t)
+
+            by_vix = {"low": [], "normal": [], "high": [], "panic": []}
+            for t in trades:
+                v = t.get("vix_entry")
+                if v is None:
+                    continue
+                if v < 15:
+                    by_vix["low"].append(t)
+                elif v < 25:
+                    by_vix["normal"].append(t)
+                elif v < 35:
+                    by_vix["high"].append(t)
+                else:
+                    by_vix["panic"].append(t)
+
+            result = {
+                "days": days,
+                "total_trades": len(trades),
+                "overall": _stats(trades),
+                "by_session": {k: _stats(v) for k, v in by_session.items()},
+                "by_plan": by_plan,
+                "by_direction": {k: _stats(v) for k, v in by_direction.items()},
+                "by_vix": {k: _stats(v) for k, v in by_vix.items()},
+                "recent": trades[:10],
+            }
+            return api_ok(result)
+        except Exception as e:
+            logger.error(f"[trade-analysis] {e}")
+            return api_error("ANALYTICS_ERROR", "数据查询异常", retryable=True)
+
+    # ── Trade Review (深度复盘) ──
+
+    @router.get("/api/trade/review")
+    async def trade_review(days: int = 0):
+        """深度复盘：维度热力图 + 计划vs非计划 + 趋势 + 最弱维度"""
+        import glob as _glob
+        import json as _json
+        import os as _os
+
+        ds = get_data_service()
+        try:
+            # Build date filter
+            if days > 0:
+                date_filter = f"AND trade_date >= date('now', '-{days} days')"
+            else:
+                date_filter = ""
+
+            rows = await ds.db_query(
+                f"SELECT id, symbol, direction, realized_pnl, pnl_pct, trade_date, "
+                f"entry_price, exit_price, quantity, exit_reason, metadata_json, source_type "
+                f"FROM trade_records "
+                f"WHERE trade_mode != 'simulate' AND exit_price > 0 {date_filter} "
+                f"ORDER BY trade_date DESC, id DESC"
+            )
+
+            trades = []
+            for r in rows:
+                meta = {}
+                try:
+                    meta = _json.loads(r.get("metadata_json") or "{}")
+                except Exception:
+                    pass
+                trades.append({
+                    "id": r.get("id"),
+                    "symbol": r.get("symbol", ""),
+                    "direction": r.get("direction", ""),
+                    "pnl": round(float(r.get("realized_pnl") or 0), 2),
+                    "pnl_pct": round(float(r.get("pnl_pct") or 0), 4),
+                    "trade_date": r.get("trade_date", ""),
+                    "meta": meta,
+                    "source_type": r.get("source_type", ""),
+                })
+
+            trade_count = len(trades)
+
+            # ── Load plan effectiveness data ──
+            plan_symbols = set()
+            plan_files = sorted(_glob.glob("/opt/ftseek/FTSeek-US/data/plan_effectiveness/daily_*.json"))
+            if plan_files:
+                try:
+                    with open(plan_files[-1]) as f:
+                        pe = _json.load(f)
+                    for t in pe.get("targets", []):
+                        if t.get("traded"):
+                            plan_symbols.add(t.get("symbol", ""))
+                except Exception:
+                    pass
+
+            # ── Dimension stats from metadata_json attribution ──
+            dimensions = ["direction", "entry", "exit", "duration", "efficiency"]
+            dim_stats = {}
+            for dim in dimensions:
+                dim_stats[dim] = {"pass": 0, "warn": 0, "fail": 0, "accuracy": 0.0, "avg_score": 0.0}
+
+            for t in trades:
+                attr = t["meta"].get("attribution", {})
+                dims = attr.get("dimensions", [])
+                for d in dims:
+                    name = d.get("name", d.get("dimension", "")).lower()
+                    if name in dim_stats:
+                        verdict = d.get("verdict", "")
+                        score = float(d.get("score", 0) or 0)
+                        if verdict == "✅":
+                            dim_stats[name]["pass"] += 1
+                        elif verdict == "⚠️":
+                            dim_stats[name]["warn"] += 1
+                        elif verdict == "❌":
+                            dim_stats[name]["fail"] += 1
+                        dim_stats[name]["avg_score"] += score
+
+            # Calculate accuracy per dimension
+            weakest_dim = "entry"
+            weakest_acc = 100.0
+            for dim in dimensions:
+                ds_stats = dim_stats[dim]
+                total = ds_stats["pass"] + ds_stats["warn"] + ds_stats["fail"]
+                if total > 0:
+                    ds_stats["accuracy"] = round(ds_stats["pass"] / total * 100, 1)
+                    ds_stats["avg_score"] = round(ds_stats["avg_score"] / total, 2)
+                if ds_stats["accuracy"] < weakest_acc:
+                    weakest_acc = ds_stats["accuracy"]
+                    weakest_dim = dim
+
+            # ── Plan vs Unplanned ──
+            planned_trades = []
+            unplanned_trades = []
+            for t in trades:
+                sym = t.get("symbol", "")
+                if sym in plan_symbols:
+                    planned_trades.append(t)
+                else:
+                    unplanned_trades.append(t)
+
+            def _calc_group(pts):
+                if not pts:
+                    return {"count": 0, "win_rate": 0.0, "avg_pnl": 0.0, "profit_factor": 0.0}
+                cnt = len(pts)
+                wins = sum(1 for t in pts if t["pnl"] > 0)
+                total_pnl = sum(t["pnl"] for t in pts)
+                win_pnl = sum(t["pnl"] for t in pts if t["pnl"] > 0)
+                loss_pnl = abs(sum(t["pnl"] for t in pts if t["pnl"] < 0))
+                pf = round(win_pnl / loss_pnl, 2) if loss_pnl > 0 else (99.99 if win_pnl > 0 else 0.0)
+                return {
+                    "count": cnt,
+                    "win_rate": round(wins / cnt * 100, 1) if cnt > 0 else 0.0,
+                    "avg_pnl": round(total_pnl / cnt, 2),
+                    "profit_factor": pf,
+                }
+
+            plan_vs_unplanned = {
+                "planned": _calc_group(planned_trades),
+                "unplanned": _calc_group(unplanned_trades),
+            }
+
+            # ── Trend: Compare current period vs previous period ──
+            # For trend, we need to calculate metrics for current and previous period
+            trend = {
+                "decision_quality": {"current": 0, "previous": 0, "delta": 0, "direction": "neutral"},
+                "profit_factor": {"current": 0.0, "previous": 0.0, "delta": 0.0, "direction": "neutral"},
+                "total_trades": {"current": trade_count, "previous": 0},
+            }
+
+            # Calculate profit factor for current period
+            if trades:
+                win_pnl = sum(t["pnl"] for t in trades if t["pnl"] > 0)
+                loss_pnl = abs(sum(t["pnl"] for t in trades if t["pnl"] < 0))
+                pf = round(win_pnl / loss_pnl, 2) if loss_pnl > 0 else (99.99 if win_pnl > 0 else 0.0)
+                trend["profit_factor"]["current"] = pf
+
+            # Get decision quality from trade_attribution
+            prev_days = 60
+            try:
+                if days > 0:
+                    prev_days = days * 2
+
+                # Current period
+                attr_rows = await ds.db_query(
+                    f"SELECT overall_score FROM trade_attribution "
+                    f"WHERE trade_date >= date('now', '-{days if days > 0 else 30} days') "
+                    f"ORDER BY created_at DESC LIMIT 50"
+                )
+                if attr_rows:
+                    scores = [r["overall_score"] for r in attr_rows if r.get("overall_score")]
+                    if scores:
+                        trend["decision_quality"]["current"] = round(sum(scores) / len(scores), 1)
+
+                # Previous period
+                prev_rows = await ds.db_query(
+                    f"SELECT overall_score FROM trade_attribution "
+                    f"WHERE trade_date >= date('now', '-{prev_days} days') "
+                    f"AND trade_date < date('now', '-{days if days > 0 else 30} days') "
+                    f"ORDER BY created_at DESC LIMIT 50"
+                )
+                if prev_rows:
+                    prev_scores = [r["overall_score"] for r in prev_rows if r.get("overall_score")]
+                    if prev_scores:
+                        trend["decision_quality"]["previous"] = round(sum(prev_scores) / len(prev_scores), 1)
+            except Exception:
+                pass
+
+            # Calculate previous period profit factor
+            if days > 0:
+                prev_rows = await ds.db_query(
+                    f"SELECT id, realized_pnl FROM trade_records "
+                    f"WHERE trade_mode != 'simulate' AND exit_price > 0 "
+                    f"AND trade_date >= date('now', '-{prev_days} days') "
+                    f"AND trade_date < date('now', '-{days} days') "
+                    f"ORDER BY trade_date DESC"
+                )
+                if prev_rows:
+                    prev_trades = [{"pnl": float(r.get("realized_pnl") or 0)} for r in prev_rows]
+                    trend["total_trades"]["previous"] = len(prev_trades)
+                    win_pnl_prev = sum(t["pnl"] for t in prev_trades if t["pnl"] > 0)
+                    loss_pnl_prev = abs(sum(t["pnl"] for t in prev_trades if t["pnl"] < 0))
+                    pf_prev = round(win_pnl_prev / loss_pnl_prev, 2) if loss_pnl_prev > 0 else (99.99 if win_pnl_prev > 0 else 0.0)
+                    trend["profit_factor"]["previous"] = pf_prev
+
+            # Calculate deltas
+            for key in ("decision_quality", "profit_factor"):
+                cur = trend[key]["current"]
+                prev = trend[key]["previous"]
+                delta = round(cur - prev, 2)
+                trend[key]["delta"] = delta
+                if delta > 0:
+                    trend[key]["direction"] = "up"
+                elif delta < 0:
+                    trend[key]["direction"] = "down"
+                else:
+                    trend[key]["direction"] = "neutral"
+
+            period_label = "all" if days == 0 else f"{days}d"
+
+            result = {
+                "dimension_stats": dim_stats,
+                "weakest_dimension": weakest_dim,
+                "plan_vs_unplanned": plan_vs_unplanned,
+                "trend": trend,
+                "period": period_label,
+                "trade_count": trade_count,
+            }
+            return api_ok(result)
+        except Exception as e:
+            logger.error(f"[trade/review] {e}")
+            return api_error("ANALYTICS_ERROR", "数据查询异常", retryable=True,
+                             data={"dimension_stats": {}, "trade_count": 0})
 
     app.include_router(router)
