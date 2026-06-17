@@ -371,7 +371,18 @@ class FTSeekUSAgentBridge:
             except Exception as e:
                 logger.debug(f"[Agent-US] 退出质量数据加载失败 (不影响计划生成): {e}")
                 session_quality_context = ""
-        
+
+        # P2.2 (RFC-060): 注入历史教训 (复盘→次日计划闭环)
+        # generate_battle_plan_injection() 此前零调用 — 接通让昨日亏钱教训影响今日策略
+        lessons_context = ctx.get("historical_lessons", "")
+        if not lessons_context:
+            try:
+                from app.review.lesson_injector import LessonInjector
+                lessons_context = LessonInjector().generate_battle_plan_injection()
+            except Exception as e:
+                logger.debug(f"[Agent-US] 历史教训加载失败 (不影响计划生成): {e}")
+                lessons_context = ""
+
         request = {
             "id": request_id,
             "type": "generate_battle_plan",
@@ -390,11 +401,15 @@ class FTSeekUSAgentBridge:
                 "decision_funnel": ctx.get("decision_funnel", {}),
                 "rejection_analysis": ctx.get("rejection_analysis", {}),
                 "session_exit_quality": session_quality_context,  # P2 G3
+                "lessons": lessons_context,  # P2.2 历史教训 (复盘→计划闭环)
             },
             "prompt": f"""你是 FTSeek-US 美股盘前策略师。核心目标：**稳定赚钱**。
 
 【历史记忆与教训】(美股)
 {memory_context}
+
+【历史教训 (复盘提炼 — 来自亏损经验, 务必参考)】
+{lessons_context}
 
 【昨日复盘结论】
 {ctx.get('yesterday_review', '无昨日复盘数据')}

@@ -68,25 +68,27 @@
 打通「盘后复盘 → 提炼教训 → 注入次日作战计划 prompt」的闭环。让昨天的亏钱经验真的影响今天的决策。
 
 ### 关键接入点
-- **逻辑已实现但零调用**：`app/review/lesson_injector.py:83` `generate_battle_plan_injection()`
-- **闭环已通一半**：复盘→教训入库（`ExperienceAccumulator.accumulate()`）✅；教训→**风控约束**（`pre_trade_check.py:428`）✅；但教训→**盘前计划 prompt** ❌
-- **接入点**：`app/plan/pipeline.py`（或 `battle_plan_manager`）生成作战计划的 LLM prompt 处，拼入：
-  ```python
-  from app.review.lesson_injector import LessonInjector
-  lesson_text = LessonInjector().generate_battle_plan_injection()
-  prompt = base_prompt + "\n\n## 历史教训\n" + lesson_text
-  ```
+- **逻辑已实现但零调用**：`app/review/lesson_injector.py:95` `generate_battle_plan_injection()` ✅ 已接通
+- **闭环已通一半**：复盘→教训入库（`ExperienceAccumulator.accumulate()`）✅；教训→**风控约束**（`pre_trade_check.py:433` / `signal_pipeline.py:227` / `min_confidence_resolver.py:74`）✅；教训→**盘前计划 prompt** ✅ 已接通
+
+### 实际落地（已实施）
+在 `app/llm/agent_bridge.py::generate_battle_plan()` 接通（仿 `session_exit_quality` 注入模式，P2 G3）：
+1. **构建**：`lessons_context = LessonInjector().generate_battle_plan_injection()`（无活跃教训时安全返回"今日正常执行"默认文案）
+2. **进 context dict**：`"lessons": lessons_context`（供 LLM worker 也可读）
+3. **渲染进 prompt**：在【历史记忆与教训】后新增【历史教训(复盘提炼)】section，`{lessons_context}` 直接渲染——保证 LLM 真的看到
+
+### 验证结果（已通过）
+- ✅ py_compile 通过；`generate_battle_plan_injection` 现已有消费者（agent_bridge:381）
+- ✅ 三处接入就位（构建/context/prompt 渲染）；无活跃教训时安全降级（默认文案）
 
 ### 预期收益
-- 复盘真正闭环（当前是开环：报告写完就归档）
-- 例如教训「NVDA 财报前 1 天易 run-up」「midday 时段胜率低」能进入次日策略
+- 复盘真正闭环：昨日亏钱教训进入今日作战计划 prompt，影响次日策略
 
-### 依赖
-- 无；建议 P1.4 get_plan 修复后做（作战计划链路先正确）
+### 回滚
+`git revert`（agent_bridge.py 改动）；恢复开环
 
-### 待细化项
-- [ ] 教训注入是否会污染 prompt（过长？需限制条数/字数）
-- [ ] 注入的教训是否需要按 regime/标的筛选（避免无关教训）
+### 待续
+- 教训注入长度管控（条数/字数上限）——若 lessons 过多污染 prompt，后续加 cap（当前无活跃教训时仅默认文案，暂不急）
 
 ---
 
