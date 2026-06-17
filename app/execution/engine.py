@@ -170,6 +170,44 @@ class ExecutionEngine(BaseExecutionEngine):
             return True
         return False
 
+    def _apply_sim_slippage(self, order: "Order") -> None:
+        """P1.1 (RFC-060): 模拟盘成交价施加现实方向性滑点.
+
+        原模拟: fill_price = order.price (零滑点 → 策略盈利假象, 实盘往往亏损).
+        现: BUY 成交价上浮 (吃 ask), SELL 下浮 (吃 bid), 幅度 = base_bps + depth_cost_bps.
+        方向推断: 未平仓 LONG=BUY / SHORT=SELL; 平仓 LONG→SELL / SHORT→BUY.
+        就地修改 order.fill_price; 滑点 bps 记入 order.metadata 供归因.
+        配置 (config): simulate_slippage_bps / simulate_depth_cost_bps (默认 5/2 bps).
+        """
+        cfg = self.config or {}
+        base_bps = float(cfg.get("simulate_slippage_bps", 5.0))
+        depth_bps = float(cfg.get("simulate_depth_cost_bps", 2.0))
+        total_bps = base_bps + depth_bps
+        if total_bps <= 0 or not getattr(order, "price", None):
+            order.fill_price = order.price
+            return
+        is_exit = self._is_exit_order(order)
+        dir_val = getattr(getattr(order, "direction", None), "value", "") or ""
+        # 推断订单 side (BUY/SELL): 未平仓 LONG/SHORT→BUY/SELL; 平仓反转
+        if dir_val == "LONG":
+            is_buy = not is_exit
+        elif dir_val == "SHORT":
+            is_buy = is_exit
+        else:
+            order.fill_price = order.price
+            return
+        slip = total_bps / 10000.0
+        mult = (1 + slip) if is_buy else (1 - slip)
+        order.fill_price = round(order.price * mult, 2)
+        try:
+            md = getattr(order, "metadata", None) or {}
+            md["sim_slippage_bps"] = round(total_bps, 1)
+            md["sim_is_buy"] = is_buy
+            if hasattr(order, "metadata"):
+                order.metadata = md
+        except Exception:
+            pass
+
     def _check_symbol_ownership(self, order: "Order") -> bool:
         """方案B: 标的级互斥校验。返回 True=放行, False=REJECT。
 
@@ -236,8 +274,16 @@ class ExecutionEngine(BaseExecutionEngine):
                         f"(source={self._get_engine_source(order)})"
                     )
                     return order
-            except Exception:
-                pass  # kill switch 检查异常不阻断 (fail-open for safety check)
+            except Exception as _ks_err:
+                # P1.2 (RFC-060): fail-close — Kill Switch 是最高优先级紧急制动,
+                # 检查本身异常时, 安全起见拒绝入场 (原 fail-open 会静默绕过紧急停止)
+                logger.critical(
+                    f"[ExecutionEngine·KillSwitch] {order.symbol} kill switch 检查异常, "
+                    f"fail-close 拒绝入场: {_ks_err}"
+                )
+                order.state = OrderState.REJECTED
+                order.failure_reason = f"Kill Switch 检查异常 (fail-close): {_ks_err}"
+                return order
 
             # 2. auto_trading_enabled — 阻断 ORB/Scalping/Main 自动引擎的入场
             #    手动订单 (client_order_id 以 "manual_" 开头) 不受此限制
@@ -414,7 +460,7 @@ class ExecutionEngine(BaseExecutionEngine):
                     order.state = OrderState.FILLED
                     state_machine.transition(OrderState.FILLED)
                     order.filled_at = now_et()
-                    order.fill_price = order.price
+                    self._apply_sim_slippage(order)  # P1.1: 方向性滑点 (原 fill_price=order.price 零滑点)
                     order.filled_quantity = order.quantity
                     logger.debug(f"[ExecutionEngine] 模拟成交 (完整链路): {order.symbol} {order.direction.value} @ ${order.fill_price:.2f}")
                 else:
@@ -465,7 +511,7 @@ class ExecutionEngine(BaseExecutionEngine):
                     order.state = OrderState.FILLED
                     state_machine.transition(OrderState.FILLED)
                     order.filled_at = now_et()
-                    order.fill_price = order.price
+                    self._apply_sim_slippage(order)  # P1.1: 方向性滑点 (原 fill_price=order.price 零滑点)
                     order.filled_quantity = order.quantity
                     logger.debug(f"[ExecutionEngine] 模拟成交 (离线·完整链路): {order.symbol} {order.direction.value} @ ${order.fill_price:.2f}")
                 else:
@@ -474,7 +520,7 @@ class ExecutionEngine(BaseExecutionEngine):
                     state_machine.transition(OrderState.FILLED)
                     order.sent_at = now_et()
                     order.filled_at = now_et()
-                    order.fill_price = order.price
+                    self._apply_sim_slippage(order)  # P1.1: 方向性滑点 (原 fill_price=order.price 零滑点)
                     order.filled_quantity = order.quantity
                     logger.debug(f"[ExecutionEngine] 模拟成交 (离线·兼容模式): {order.symbol} {order.direction.value} @ ${order.fill_price:.2f}")
         except Exception as e:

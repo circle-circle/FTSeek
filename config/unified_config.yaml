@@ -186,8 +186,6 @@ llm:
 
     # 关键决策 (PRO + critique 双调, 通过 cross_check 字段控制)
     # 2026-06-14: 升级至最强模型
-    earnings_analyst:        {primary: qwen-max,     fallback: deepseek-pro}
-    large_position_review:   {primary: qwen-max,     fallback: deepseek-pro}
     emergency_review:        {primary: deepseek-pro, fallback: qwen-max}
 
     # ⭐ NEW 2026-05-19 — 真正影响交易决策的 LLM features
@@ -219,6 +217,36 @@ llm:
 
     # ⭐ 2026-06-10 个股分析 — Dashboard 个股详情页 LLM 深度分析
     stock_analyst:       {primary: deepseek-pro,  fallback: qwen-max}    # 最强模型综合分析
+
+    # ⭐ 2026-06-16 深度目标分析 — 作战计划每个 target 的多空辩论分析
+    deep_target_analysis:
+      primary: "qwen-max"
+      fallback: "deepseek-pro"
+      temperature: 0.4
+      max_tokens: 3000
+      cache_on_fail: true
+
+    # ⭐ 2026-06-16 Stage 7: 多空辩论 — 对抗性推理 (deepseek-pro 擅长)
+    dr_debate:
+      primary: "deepseek-pro"
+      fallback: "qwen-max"
+      temperature: 0.3
+      max_tokens: 2500
+      cache_on_fail: true
+
+    # ⭐ 2026-06-16 Stage 8.5: 风险辩论 — 三方结构性分析 (deepseek-pro 擅长)
+    dr_risk_debate:
+      primary: "deepseek-pro"
+      fallback: "qwen-max"
+      temperature: 0.4
+      max_tokens: 800
+      cache_on_fail: false
+    web_search_fundamental:
+      primary: "qwen-max"
+      fallback: "deepseek-pro"
+      temperature: 0.2
+      max_tokens: 1500
+      cache_on_fail: true
 
   # 旧别名兼容映射 (2026-05-21): 原 multi_model_client 的 "qwen"/"deepseek" 等别名
   # 迁移期使用，后续代码统一改用 feature 路由后可删除
@@ -281,26 +309,6 @@ llm_features:
     timeout_sec: 15
     daily_max_usd: 0.40
 
-  # ─── L4 Earnings analyst — DEPRECATED 2026-05-19 ───
-  # 砍掉理由: 财报日期是公开数据, 用日历 + RSS 即可, LLM 多余.
-  # 第一性原则: LLM 应做量化做不到的事, 财报日历不属于此类.
-  earnings_analyst:
-    enabled: false              # DEPRECATED — 不要重新启用, 见 docs/LLM_FIRST_PRINCIPLES_2026-05-19.md
-    model: qwen
-    timeout_sec: 30
-    daily_max_usd: 0.40
-
-  # ─── L5 多模型分歧仲裁 — DEPRECATED 2026-05-19 ───
-  # 砍掉理由: 主线 voting 已是 5 model agent (technical/sentiment/momentum/regime/risk),
-  # 再加 LLM 仲裁是"在多模型上加多模型", 不是真正解决决策问题.
-  disagreement_arbitrator:
-    enabled: false              # DEPRECATED — voting 多模型已足够
-    arbitrator_model: qwen
-    disagreement_threshold: 0.5
-    daily_max_calls: 10
-    timeout_sec: 30
-    daily_max_usd: 0.30
-
   # ─── L6 场景分类器 — 暂保留 (但不启用) 2026-05-19 ───
   # 现状: market_data_router 已用 RSI/MACD 规则给出 regime (TREND_UP/DOWN/RANGE),
   # 5/18 实测 regime 准确率约 70-80%. LLM regime_classifier 30min 一次频率太高 + 成本 ~$1/日.
@@ -310,17 +318,6 @@ llm_features:
     model: qwen
     interval_minutes: 30
     timeout_sec: 20
-    daily_max_usd: 0.30
-
-  # ─── L7 大仓位 LLM 确认 — DEPRECATED 2026-05-19 ───
-  # 砍掉理由: max_position_pct 已是硬约束 (yaml.risk.max_position_pct=0.25),
-  # LLM 入场前复审反而拖慢 100ms+, 在快速行情中增加 missed alpha 风险.
-  large_position_review:
-    enabled: false              # DEPRECATED — 风控硬约束已经够
-    model: qwen
-    position_pct_threshold: 0.05
-    cooldown_sec: 3600
-    timeout_sec: 60
     daily_max_usd: 0.30
 
   # ─── L8 日级 AutoTuner — 待重构启用 2026-05-19 ───
@@ -336,21 +333,6 @@ llm_features:
   replay_dialog:
     enabled: true               # 默认开 (CLI 工具无副作用)
     daily_max_usd: 1.00
-
-  # ─── L11 行业关联推理 — DEPRECATED 2026-05-19 ───
-  # 砍掉理由: 信号已含 SPY 对冲信息, 行业关联是 nice-to-have, ROI 不明确.
-  # 5/12-5/18 数据看, 单 symbol 模式 (LCID LONG 14 笔全亏) 比行业关联更直接.
-  sector_correlation:
-    enabled: false              # DEPRECATED — ROI 不明确, 优先做 Pre-Entry Gate
-    model: qwen
-    anchor_move_threshold: 0.02
-    cooldown_sec: 1800
-    timeout_sec: 30
-    daily_max_usd: 0.30
-
-  # ─── L13 紧急风控 LLM 复审 — DEPRECATED 2026-05-19 ───
-  # 砍掉理由: 风控触发时必须立刻平仓, LLM 反应慢 100x. 与第一性原则矛盾 (在快速决策路径加慢调用).
-  # 见 yaml.llm_features.emergency_review (line 192)
 
   # ─── L14 ⭐ Pre-Entry Signal Gate — NEW 2026-05-19 ───
   # 新增: 在 main entry 前用 LLM 拦截"看历史就该拒"的入场信号.
@@ -381,7 +363,7 @@ trading_hours:
   pre_market_open: 04:00
   after_market_close: '20:00'
 opend:
-  host: ${OPEND_HOST}
+  host: ${FUTU_OPEND_HOST}
   port: 11111
   login_account: ${FUTU_LOGIN_ACCOUNT}
   login_password: ${FUTU_LOGIN_PWD}
@@ -781,6 +763,16 @@ OPTION_QUALITY_GATE:
   min_dte: 5
   max_dte: 45
 risk:
+  # Task #2 (2026-06-17): VIX 统一4档阈值
+  # <18: 宽松 (relaxed)   | 18-22: 正常 (normal)
+  # 22-28: 收紧 (tightened) | >28: 禁止新仓 (blocked)
+  # <25持续15min: 解封 (unblock hysteresis)
+  vix_thresholds:
+    relaxed: 18        # <18 宽松
+    normal: 22         # 18-22 正常
+    tightened: 28      # 22-28 收紧
+    blocked: 28        # >28 禁止新仓
+    unblock: 25        # <25持续15min 解封
   # Task #9 (2026-06-02): 风控 Pipeline 单步/总超时控制
   # 防御场景: VIX API/Earnings DB/LLM 调用阻塞导致整条 pipeline 卡住, 后续信号错过
   # fail-open: 非关键检查超时 → 默认通过 + WARNING; fail-close: 关键检查超时 → 拒绝交易
@@ -893,8 +885,20 @@ risk:
     max_loss_rate: 0.66                 # 3 中 2 亏即触发 (从 70% 收紧)
     exempt_symbols: []                  # 手动豁免名单 (慎用)
 
-  # 模拟盘数据采集: VIX放宽到30, 收集更多市场状态数据
-  vix_block_threshold: 30
+  # Task #2 (2026-06-17): VIX block 阈值统一为28 (was 30)
+  vix_block_threshold: 28
+  # Task #3 (2026-06-17): 策略IC监控与负IC策略降权
+  # 三级响应: ACTIVE(IC>0且显著) / REDUCED(仓位×0.5) / SUSPENDED(暂停新仓)
+  # 受 deployment.feature_flags.ic_hard_blocking 控制 (false=WARN模式)
+  strategy_health:
+    enabled: true
+    evaluation_interval_seconds: 3600
+    min_signals_for_ic: 30
+    ic_active_threshold: 0.0
+    ic_recovery_threshold: 0.02
+    ic_suspend_threshold: -0.08
+    win_rate_suspend: 0.30
+    data_accumulation_days: 30  # 前30天仅日志不执行
   # per_trade_risk_pct: 已统一为 risk.position_sizing.risk_per_trade_pct (2026-06-14 SSOT)
   max_trade_risk_pct: 0.010    # 极限 1.0% (不再按信号强度加码)
   # portfolio: 已删除 (2026-06-14) — 死配置, capital_safety水位系统替代
@@ -978,7 +982,7 @@ risk:
     max_per_direction: 0.65
     max_total: 0.8
   trading:
-    # max_daily_trades: 已删除 (2026-06-14) — TradingFrequencyLimiter 零消费者已删除
+    max_daily_trades: 500            # 2026-06-16: 恢复 — config_audit CRITICAL_KEY, 全局安全护栏
     max_order_amount: 120000
     min_liquidity_ratio: 0.5
   signal_quality:
@@ -1201,10 +1205,6 @@ symbol_cooldown:
     consecutive_losses: 3           # 审计建议: 3次/24h (2次过紧，频繁触发冷却)
     cooldown_hours: 24              # 审计建议: 24h足够覆盖单日连续亏损
     direction: same_only
-  # Y3: scalping sl_hit 也收紧 (105 笔 18% WR -$1632)
-  scalping_sl_hit:
-    daily_limit: 2                  # 从 3 → 2
-    cooldown: until_next_day
   # F1 (2026-05-16): whipsaw 反向冷却 — 平仓后 N 秒内禁止反向开仓
   # 实证 5/14-5/15: SNDK 90s / CRM 173s / LCID 127s 反向都亏
   # 默认 180s (覆盖 3 案例), sandbox 60s 加速实验
@@ -1213,6 +1213,12 @@ execution:
   simulate_realistic_flow: true
   simulate_fill_delay_seconds: 0.5
   simulate_partial_fill: false
+  # P1.1 (RFC-060): 模拟盘方向性滑点 (原 fill_price=order.price 零滑点 → 策略盈利假象)
+  # 读取者: app/execution/engine.py::ExecutionEngine._apply_sim_slippage
+  # BUY 上浮吃 ask / SELL 下浮吃 bid, 幅度 = base + depth_cost (bps)
+  simulate_slippage_bps: 5.0          # 基础滑点 (半边), 默认 5bps
+  simulate_depth_cost_bps: 2.0        # 深度/冲击成本 (半边), 默认 2bps
+  # 注: 设为 0 可禁用滑点 (调试用); 默认 round-trip 成本 ≈ 14bps (2×(5+2))
   order_type:
     market_min_score: 80
     limit_max_score: 60
@@ -1242,7 +1248,7 @@ service:
     enabled: true
   feishu:
     webhook_url: ${FEISHU_WEBHOOK_URL_US}
-    secret: ${FEISHU_SECRET_US}
+    secret: ${FEISHU_APP_SECRET}
     enabled: true
 observability:
   metrics:
@@ -1304,7 +1310,7 @@ agents:
 feature_flags:
   # 2026-06-14 SSOT清理: 删除7个死配置(零代码消费)
   # 仅保留唯一有消费者的flag:
-  auto_trading_enabled: false        # 自动交易总开关 (order_executor._submit_order)
+  auto_trading_enabled: true        # 自动交易总开关 (order_executor._submit_order)
 strategy_enhancements:
   pivotal_points:
     enabled: true
@@ -1513,18 +1519,10 @@ strategies:
     # 当 ExitDispatcher 4 policy 各自稳定 7+ 天后, 切 true 启用统一 ExitDecision 优先级仲裁
     # 启用前置条件: PositionExitMonitor 与 ExitDispatcher 决策一致率 > 95%
     unified_dispatcher_enabled: false
-  # === ADR-002 (2026-05-31): 暂停 scalping, 聚焦主线 ===
-  # 决策依据: scalping 150笔 18% WR 持续负收益, 主线 SHORT+trailing 42.9% WR +$13K 已验证
-  # 资金重新分配: main 0.65→0.80, scalping 0.15→0.0
-  # 代码保留, 后续可通过 enabled:true 恢复
+  # ADR-002 (2026-05-31): scalping 已删除, 资金全部归 main
   main:
-    capital_pct: 0.80          # ADR-002: 0.65→0.80 (收回 scalping 15% 资金)
+    capital_pct: 0.80
     priority: 5
-  scalping:
-    capital_pct: 0.0           # ADR-002: 0.15→0.0 (暂停, 资金归还主线)
-    priority: 10               # 高于 main, 时效性更强
-    direction_preference: SHORT  # P6: 数据驱动 - SHORT 胜率 37.0% vs LONG 20.9%
-    enabled: false             # ADR-002 (2026-05-31): 暂停 scalping, 聚焦已验证的主线 SHORT+trailing edge
   # P10 优化 (2026-05-22): 连续亏损后动态降仓
   # 数据：1 连败后胜率 20%，4 连败后胜率 40%（反转）
   # 策略：连续 3 次亏损后降仓 50%，避免情绪化交易
@@ -1545,9 +1543,11 @@ strategies:
     priority: 3
 
   # === RFC-054: Trend-First 趋势优先策略 ===
-  # 通过"趋势方向+板块龙头"组合，修正均值回归在动量市场的失效
+  # ADR-007 (2026-06-16): 全局禁用 — IC=-0.24, 历史验证有害
+  # 原因: 15 笔信号 IC=-0.24, 越用越亏。复杂度引入噪音/过拟合。
+  # 替代: Regime Filter + TECHNICAL_MULTI_FACTOR 回撤入场
   trend_first:
-    enabled: true
+    enabled: false                # ADR-007: true→false (IC=-0.24)
     observe_only: false             # Task #19: 开放模拟交易执行 (从 true → false)
     min_volume_ratio: 2.0           # Fix 12 (2026-05-31): 显式声明, 与 breakout_min_volume_ratio 对齐
 
@@ -1731,7 +1731,12 @@ strategies:
       blackout:
         max_symbols: 0
   technical:
-    enabled: false  # 冻结 (2026-06-11): IC 为负，与 trend_first 重叠，消除噪声
+    enabled: true   # ADR-007 (2026-06-16): 重新启用 — 唯一正IC策略(+0.23), 已改造为动量+回撤入场
+    # ── ADR-007 新参数 ──
+    require_pullback: true        # 强制回撤入场 (不追高/不追低)
+    min_pullback_quality: 0.5     # 最低回调质量 (0.0-1.0)
+    min_strength: 40              # 最低信号强度
+    # ── 旧参数 (保留兼容, 新版不使用) ──
     min_signals: 2
     indicators:
     - rsi
@@ -1748,6 +1753,25 @@ strategies:
     enabled: false  # 冻结 (2026-06-11): 信号噪声大，LLM 方向默认 LONG 偏见
     min_consensus: 0.3
     min_confidence: 0.5
+  # === ADR-007 (2026-06-16): 内部人集群买入信号 ===
+  # SEC Form 4 数据: 30天内 ≥2 位内部人净买入, 每人 > $50K
+  # 学术IC: 0.20-0.35, 低频高质
+  insider:
+    enabled: true
+    min_buy_amount: 50000          # 单人最低买入金额
+    min_buyers: 2                  # 最低不同内部人数
+    min_strength: 50               # 最低信号强度
+    window_days: 30                # 回溯窗口
+  # === ADR-007 (2026-06-16): 分析师修正动量信号 ===
+  # Yahoo Finance earningsTrend + upgradeDowngradeHistory
+  # PEAD效应: 分析师上调 → 机构跟进 → 数周漂移
+  earnings_revision:
+    enabled: true
+    min_upgrades: 2                # 30天内最低升级数
+    min_revision_score: 0.15       # 最低综合修正分
+    min_analysts: 15               # 最低分析师覆盖
+    min_eps_growth: 0.05           # 最低EPS增长预期 (5%)
+    min_strength: 45               # 最低信号强度
 risk_limits:
   # Task #1 (2026-05-31): 总敞口对齐 — main 0.65 (含子策略) + scalping 0.15 = 0.80
   # 子策略 (trend_first/fast_lane) 走 capital_source: main, 不再单独累加
@@ -1762,11 +1786,6 @@ strategy_budgets:
   main_pipeline:
     max_concurrent_positions: 5
     risk_budget_pct: 0.01
-    max_daily_loss_pct: 0.01
-  scalping:
-    max_daily_loss: 'DEPRECATED: Use max_daily_loss_pct'
-    max_concurrent_positions: 5
-    risk_budget_pct: 0.004
     max_daily_loss_pct: 0.01
   system:
     max_total_daily_loss: 6000
@@ -1791,9 +1810,7 @@ scheduler:
   scan_interval_minutes: 5               # ADR-005: 10→5min — 加速数据采集
   monitor_interval_minutes: 0.25
   max_positions: 12                # 模拟盘: 5→12, 最大化数据采集
-  # 2026-06-01: 删除 deprecated scheduler.min_confidence (0.55) — ConfigAudit 启动 BLOCKING
-  # 实际生效路径: risk.signal_quality.min_confidence (本文件 line 882, 已 = 0.65)
-  # CFG.SCHEDULER_MIN_CONFIDENCE = 0.65 (代码 config_defaults.py:60)
+  min_confidence: 0.70             # 2026-06-16: 恢复 — config_audit CRITICAL_KEY, 与 risk.signal_quality.min_confidence 对齐
   min_signal_strength: 60  # 高确信度门槛 (2026-06-13): 30→60
   min_consensus_level: 0.25  # P0 (2026-06-03): 0.20→0.25, 轻度收紧 (数据: 0.2-0.5 区间仅11笔)
   adaptive_scan_enabled: true
@@ -1847,186 +1864,6 @@ news_v2:
     log_rejected: true
     data_dir: ~/.hermes/ftseek/data/v2_collection_us/
     report_interval: 10
-scalping:
-  enabled: false              # ADR-002 (2026-05-31): 暂停 scalping, 聚焦主线 SHORT+trailing edge
-  mode: live
-  budget_pct: 0.0             # ADR-002: 0.25→0.0 (暂停, 资金归还主线)
-  max_position_pct: 0.1
-  max_daily_loss_pct: 0.03
-  max_concurrent: 10
-  signal_cooldown_sec: 60
-  daily_max_trades_per_symbol: 2    # P0 审计修复 (2026-05-30): 5→2, 防止5/7式死亡螺旋(QCOM单日19笔-$1433)
-  use_atr_exit: true
-  atr_tp_multiplier: 1.5
-  atr_sl_multiplier: 1.5
-  trail_stop:
-    # P0 重写 (2026-05-20): 对齐盈利模式
-    # 归因: 22/33笔盈利靠trailing stop, 66%盈利交易依赖此机制
-    enabled: true
-    trail_mult: 0.8              # 1.5 → 0.8 (回撤0.8%平仓, 更紧锁定利润)
-    min_profit_to_activate: 0.015  # 1.0% → 1.5% (盈利1.5%后才激活追踪)
-  # P0 新增 (2026-05-20): 亏损标的黑名单
-  # 归因: LCID -$913 (14笔), TME -$913 (7笔), UBER -$233 (3笔) — 持续亏损
-  # P0 扩展 (2026-05-30): 增加 QCOM (44笔 22.7%胜率) 与 NIO (低胜率)
-  blacklist:
-    symbols:
-      - LCID
-      - TME
-      - UBER
-      - QCOM
-      - NIO
-      - NFLX     # 2026-06-01: 0% 胜率 8笔 -$122
-      - UNH      # 2026-06-01: 0% 胜率 9笔 -$120
-    reason: 归因数据持续亏损，暂时回避
-  rsi_period: 14
-  rsi_oversold: 25
-  rsi_overbought: 75
-  vwap_deviation_pct: 0.012
-  bollinger_period: 20
-  bollinger_std: 2.0
-  min_signals: 2
-  # P0 新增 (2026-05-20): LONG 接飞刀防护
-  # 归因数据: vwap+bollinger 无 RSI 31笔亏$850, VWAP>2% below 39笔仅3胜
-  long_guard:
-    enabled: true
-    require_rsi_confirmation: true   # LONG 必须有 RSI 超卖确认
-    knife_catch_vwap_pct: 0.03       # VWAP偏离>3%拒绝做多 (接飞刀)
-  order_book_filter:
-    enabled: true
-    min_bid_ask_ratio: 1.5
-    min_ask_bid_ratio: 1.5
-    fallback_enabled: true
-  multi_timeframe:
-    enabled: true
-    higher_tf: K_5M
-    trend_confirm: true
-    fallback_enabled: true
-  ticker_flow:
-    enabled: true
-    large_order_threshold: 10000
-    window_size: 50
-    imbalance_ratio: 2.0
-    fallback_enabled: true
-  stock_selector:
-    min_daily_volume: 500000
-    min_amplitude: 0.025
-    max_targets: 25
-    exclude_earnings_blackout: true
-  dynamic_pool_expansion:
-    enabled: true
-    premarket_momentum: true
-    news_related_expansion: true
-    max_expansion_targets: 10
-  momentum:
-    breakout_threshold: 0.005
-    breakdown_threshold: 0.005
-    volume_surge: 1.2
-    rsi_overbought: 70
-  phases:
-    # P0 重写 (2026-05-20): 数据驱动参数对齐盈利模式
-    # 归因: 0.7% SL + 4min hold → 10笔全部0分钟sl_hit
-    # 盈利模式: SHORT + TRAILING_STOP + 平均91min持仓 → 61%胜率
-    base_params:
-      tp_pct: 0.025          # 1.2% → 2.5% (给足盈利空间)
-      sl_pct: 0.020          # 0.7% → 2.0% (消除0分钟sl_hit)
-      position_pct: 0.08
-      max_hold_minutes: 60   # 4min → 60min (匹配盈利持仓周期)
-    opening_drive:
-      enabled: true
-      start_minutes: 575
-      end_minutes: 600
-      directions:
-      - LONG
-      - SHORT
-      signals:
-      - momentum
-      - breakout
-      tp_scale: 1.5
-      sl_scale: 1.5
-      pos_scale: 0.5
-      hold_scale: 1.5
-      extra_filter: 顺SPY开盘方向，逆SPY方向不做
-    morning:
-      enabled: true
-      start_minutes: 600
-      end_minutes: 690
-      directions:
-      - LONG
-      - SHORT
-      signals:
-      - rsi
-      - vwap
-      - momentum
-      tp_scale: 1.2
-      sl_scale: 1.2
-      pos_scale: 1.0
-      hold_scale: 1.2
-    midday:
-      enabled: true
-      start_minutes: 690
-      end_minutes: 840
-      directions:
-      - LONG
-      - SHORT
-      signals:
-      - rsi
-      - bollinger
-      tp_scale: 0.7
-      sl_scale: 0.5
-      pos_scale: 1.0
-      hold_scale: 1.0
-      extra_filter: SPY偏离VWAP>0.3%时只做顺趋势方向
-    afternoon:
-      enabled: true
-      start_minutes: 840
-      end_minutes: 930
-      directions:
-      - LONG
-      - SHORT                # P0 新增 (2026-05-20): SHORT 61%胜率，数据驱动加入
-      signals:
-      - rsi
-      - vwap
-      - momentum
-      tp_scale: 1.0
-      sl_scale: 1.0
-      pos_scale: 0.9
-      hold_scale: 1.0
-    closing_drive:
-      enabled: true
-      start_minutes: 930
-      end_minutes: 960
-      directions:
-      - LONG
-      - SHORT
-      signals:
-      - rsi
-      tp_scale: 0.5
-      sl_scale: 0.7
-      pos_scale: 0.3
-      hold_scale: 0.5
-      force_close_at: 955
-      no_new_entry_after: 950
-    transition_smoothing_minutes: 2
-  trend_filter:
-    spy_threshold: 0.03
-    vix_threshold: 35
-  circuit_breaker:
-    max_consecutive_losses: 2
-    cooldown_minutes: 60
-  polling_interval_seconds: 5
-  # P0 Karpathy fix (2026-05-13): 每日强制交易标的 + 策略精准度验证
-  forced_tickers:
-  - code: US.SNDK
-    min_trades_per_day: 3
-    max_daily_loss_usd: 100
-    validation: true
-  pool:
-    min_volume: 5000000
-    min_price: 10
-    max_price: 500
-    min_atr_pct: 0.008
-    max_atr_pct: 0.04
-  capital_source: capital.fixed_amount
 capital:
   # mode: 已删除 (2026-06-14) — 零消费者, 交易模式由.env.us TRADE_ENV控制
   fixed_amount: 82000  # fallback capital when broker equity unavailable  # 2026-06-14: 实际账户约$82K
@@ -2224,3 +2061,97 @@ pre_market_ranker:
     volatility: 0.20          # 波动率合理性权重
   sector_etf_lookback: 20     # 行业 ETF 回看天数
   cache_ttl_seconds: 3600     # 排名缓存时间 (1小时)
+
+# ===== 双链路并行模式配置 (Dual Mode) =====
+dual_mode:
+  # 自动交易默认状态
+  auto_enabled: true
+  # 默认激进程度: conservative / normal / aggressive
+  default_aggression: conservative
+
+  # 谨慎模式参数 (conservative)
+  conservative:
+    position_scale_factor: 0.5        # 仓位缩减至标准的50%
+    max_position_pct: 0.06            # 单标最多6% (标准12%)
+    max_total_exposure: 0.30          # 自动总敞口最多30%
+    min_signal_strength: 70           # 信号强度门槛 (标准50)
+    min_confidence: 0.70              # 置信度门槛 (标准0.55)
+    # 临时收紧：IC验证为正后恢复为 5笔/$10K (PM建议 2026-06-17)
+    max_per_trade_usd: 5000           # 单笔最多$5K (原$10K, 标准$20K)
+    max_daily_auto_trades: 3          # 每日最多3笔自动交易
+    stop_loss_tighten_factor: 0.7     # 止损收紧30%
+
+  # 标准模式参数 (normal)
+  normal:
+    position_scale_factor: 1.0
+    max_position_pct: 0.12
+    max_total_exposure: 0.60
+    min_signal_strength: 50
+    min_confidence: 0.55
+    max_per_trade_usd: 20000
+    max_daily_auto_trades: 4
+    stop_loss_tighten_factor: 1.0
+
+  # 激进模式参数 (aggressive) - 仅建议模拟盘使用
+  aggressive:
+    position_scale_factor: 1.5
+    max_position_pct: 0.20
+    max_total_exposure: 0.75
+    min_signal_strength: 40
+    min_confidence: 0.45
+    max_per_trade_usd: 30000
+    max_daily_auto_trades: 5
+    stop_loss_tighten_factor: 1.2
+
+  # 手动持仓安全网
+  manual_safety_net:
+    # 浮亏超过此比例时发送通知
+    loss_alert_threshold: -0.08
+    # 收盘前提醒时间 (ET)
+    pre_close_alert_time: "15:50"
+    # RED水位时是否强平手动持仓
+    force_close_on_red: true
+
+  # 敞口管控
+  exposure_control:
+    # 全局总敞口上限 (auto + manual 合计)
+    global_max_total: 0.80
+    # 单标的上限 (auto + manual 合计)
+    global_max_per_symbol: 0.25
+    # 单方向上限 (auto + manual 合计)
+    global_max_per_direction: 0.40
+
+# ═══════════════════════════════════════════════════════════════
+# 部署控制 (Task #1, 2026-06-17): Feature Flags + Shadow Mode
+# ═══════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════
+# P1.3 (RFC-060): Regime 仓位缩放 (HIGH_VOL 强化)
+# 读取者: app/strategy/regime_adapter.py (RegimeAdapter._load_config)
+# VIX>=25 → HIGH_VOL → 仓位 × high_vol_position_scale
+# 数据依据: PM审计 HIGH_VOL(VIX>25) 141笔 -154K 占总亏71% (原默认 0.5 缩放力度不足)
+# ═══════════════════════════════════════════════════════════════
+regime_adaptation:
+  enabled: true
+  high_vol_position_scale: 0.3     # HIGH_VOL 仓位缩放 (0.5→0.3, P1.3 强化)
+  position_scales:                 # 各 regime 仓位缩放 (与 signal 评分权重正交)
+    TREND_UP: 1.0
+    TREND_DOWN: 0.8
+    RANGE: 0.7
+    HIGH_VOL: 0.3                  # 与 high_vol_position_scale 一致 (双路径覆盖)
+
+deployment:
+  feature_flags:
+    event_driven_scan: false      # Task 1 - 事件驱动扫描
+    weight_v2_active: false       # Task 2 - 新评分权重
+    ic_hard_blocking: true        # Task 3 - IC硬阻断 (2026-06-17 启用: 审查确认SUSPENDED策略应实际拦截)
+    vix_hard_blocking: true       # Task 4 - VIX硬拒 | P1.3 (RFC-060) 启用: 激活 VIXGuard VIX>28 硬阻 (was WARN模式, 仅记日志不拦截)
+  shadow_mode:
+    enabled: true                 # shadow记录所有新逻辑决策但不执行
+    compare_with_legacy: true     # 新旧对比日志
+
+# ═════════════════════════════════════════════════════════════════
+# Task #4 (2026-06-17): 信号评分权重版本管理
+# ═════════════════════════════════════════════════════════════════
+signal_scoring:
+  active_version: "v1"             # 当前激活版本 (由 feature_flags.weight_v2_active 控制)
+  weights_v2: null                 # 审计完成后填入修复权重 (格式同 base_factor_weights)

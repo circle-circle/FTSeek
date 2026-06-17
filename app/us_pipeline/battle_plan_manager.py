@@ -71,11 +71,17 @@ class USBattlePlanManager:
                         # 降级: 将所有 watchlist 标的加入 targets (status=ACTIVE)
                         self._activate_all_watchlist()
                         self._loaded = True
+                        # Task #19: confidence 统一 + ConvictionTracker 初始化 (过期路径)
+                        self._normalize_confidence()
+                        self._init_conviction_tracker()
                         return True
                 except ValueError:
                     logger.debug(f"[计划] 日期格式解析失败: {plan_date}")
             
             self._loaded = True
+            # Task #19: confidence 统一为 0-100 整数 + 初始化 ConvictionTracker
+            self._normalize_confidence()
+            self._init_conviction_tracker()
             return True
         except Exception as e:
             logger.error(f"❌ 加载作战计划失败: {e}")
@@ -162,44 +168,9 @@ class USBattlePlanManager:
             logger.warning("[计划降级] watchlist_manager 不可用，跳过降级")
         except Exception as e:
             logger.error(f"[计划降级] 降级失败: {e}")
-    
-    def get_plan(self) -> Dict:
-        """P0 修复 (2026-04-22): 将过期计划降级为宽松模式
-        
-        当作战计划过期时，不严格限制标的，而是允许 watchlist 中的所有股票。
-        """
-        try:
-            from app.utils.watchlist_manager import get_stock_codes
-            codes = get_stock_codes()
-            if self._plan and "targets" in self._plan:
-                existing = {t.get("symbol") for t in self._plan["targets"]}
-            else:
-                existing = set()
-            
-            new_targets = []
-            for code in codes:
-                if code not in existing:
-                    new_targets.append({
-                        "symbol": code,
-                        "direction": "ANY",
-                        "status": "ACTIVE",
-                        "entry_zone": [],
-                        "stop_loss": 0,
-                        "take_profit": 0,
-                        "urgency": "NORMAL",
-                        "catalyst": "Watchlist fallback (plan expired)"
-                    })
-            
-            if self._plan and "targets" in self._plan:
-                self._plan["targets"].extend(new_targets)
-            else:
-                self._plan = {"date": "Fallback", "targets": new_targets, "restricted": []}
-            
-            logger.info(f"[计划降级] 已激活 {len(new_targets)} 只 watchlist 标的 (计划过期)")
-        except Exception as e:
-            logger.warning(f"[计划降级] 失败: {e}")
 
-
+    # P1.4 (RFC-060): 已删除重复的死代码 get_plan (与 _activate_all_watchlist 重复, 且无 return).
+    # 过期计划降级在 load() (见 _activate_all_watchlist 调用) 正常生效; get_plan() 唯一定义在后段 (只读 getter).
     def _generate_sim_fallback(self):
         """生成模拟期兜底计划"""
         try:
@@ -232,6 +203,51 @@ class USBattlePlanManager:
                 )
         return False, ""
 
+    # ===== Task #19: 决策引擎集成辅助 =====
+    def _normalize_confidence(self) -> None:
+        """统一 confidence 为 0-100 整数 (向后兼容 0-1 浮点)。"""
+        if not self._plan:
+            return
+        try:
+            for target in self._plan.get("targets", []) or []:
+                if not isinstance(target, dict):
+                    continue
+                conf = target.get("confidence", 0)
+                if isinstance(conf, bool):
+                    continue
+                if isinstance(conf, float):
+                    if 0 < conf < 1.0:
+                        target["confidence"] = int(round(conf * 100))
+                    else:
+                        target["confidence"] = int(round(conf))
+                elif isinstance(conf, int):
+                    # 如果是 0/1 但可能是诡异代码路径，保留
+                    target["confidence"] = conf
+
+            plan_conf = self._plan.get("confidence", 0)
+            if isinstance(plan_conf, float):
+                if 0 < plan_conf < 1.0:
+                    self._plan["confidence"] = int(round(plan_conf * 100))
+                else:
+                    self._plan["confidence"] = int(round(plan_conf))
+        except Exception as _e:
+            logger.debug(f"[计划] confidence 统一化异常(忽略): {_e}")
+
+    def _init_conviction_tracker(self) -> None:
+        """从当前 plan 初始化 ConvictionTracker (失败不阻断)。"""
+        if not self._plan:
+            return
+        try:
+            from app.plan.conviction_tracker import get_conviction_tracker
+            tracker = get_conviction_tracker()
+            tracker.init_from_plan(self._plan)
+            logger.info(
+                f"[ConvictionTracker] 已从 plan 初始化 "
+                f"{len(self._plan.get('targets', []) or [])} targets"
+            )
+        except Exception as _e:
+            logger.debug(f"[ConvictionTracker] 初始化异常(忽略): {_e}")
+
     def check_trade(self, symbol: str, direction: str, strength: int = 0, confidence: float = 0.0) -> Tuple[bool, str]:
         """
         检查是否允许交易
@@ -258,6 +274,22 @@ class USBattlePlanManager:
                 return False, (
                     f"HALT_TRADING: {action_item.get('reason', 'System trading halted by battle plan')}"
                 )
+
+        # Task #19: Day Score 门禁 (graceful) — 今日市场适合度低于 AVOID 则拒绝新仓
+        try:
+            from app.plan.day_score import calculate_day_score
+            day = calculate_day_score(
+                available_cash=getattr(self, '_available_cash', 100000),
+                position_count=getattr(self, '_position_count', 0),
+            )
+            if day.level == "AVOID":
+                _reason_brief = '; '.join(day.reasons[:2]) if day.reasons else day.level
+                logger.warning(
+                    f"[DayScore] {symbol} 被拒绝: 今日评分{day.score}/100 (AVOID) - {_reason_brief}"
+                )
+                return False, f"[DayScore] 今日评分{day.score}/100 ({day.level}): {_reason_brief}"
+        except Exception as _de:
+            logger.debug(f"[DayScore] 计算异常(忽略): {_de}")
 
         # ── 修复 (2026-06-12): Dashboard 暂停/确认按钮真正生效 ──
         # 此前 _paused 和 _confirmed 写入 JSON 后无任何模块消费，按钮形同虚设

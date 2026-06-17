@@ -37,6 +37,552 @@ DEFAULT_ORDER_QTY = 50  # 默认下单股数 (watchlist_us.json 可覆盖)
 
 
 # ══════════════════════════════════════════════════════════════════
+#  Task #34 (P0, 2026-06-16): 平仓重入与持仓不足级联失败修复
+# ──────────────────────────────────────────────────────────────────
+#  问题根因:
+#    - 21:30:20 下单 success+订单ID, 21:30:29 立即"持仓不足"
+#    - 23:07:01 "不支持交叉交易, 有待成交订单" — 旧订单未清算
+#    - 重试无 backoff, 每 tick 重触发, 6 次失败 → is_anomalous → 8h 不可平仓
+#  修复策略:
+#    1. 平仓前强制刷新 broker.get_position(symbol)
+#    2. 检测待成交订单 (broker.get_open_orders), 等待结算最多 60s
+#    3. 指数退避 (2 次→5min, 3 次→30min, 5 次→永久阻塞+告警)
+#    4. 退避计数按 (symbol, direction) 维度独立维护
+#    5. 提供 manual_unblock(symbol) 后端方法供 Dashboard 解锁
+# ══════════════════════════════════════════════════════════════════
+
+# (symbol, direction) → {fail_count, cooldown_until, last_reason, last_failed_at, blocked}
+_close_retry_state: Dict[Tuple[str, str], Dict[str, Any]] = {}
+
+# ─────────────────────────────────────────────────────────────────────
+# P1-追加 (2026-06-16): _close_retry_state SQLite 持久化
+# 根因: 退避状态仅存内存, 进程重启 (OOM/crash/deploy) 后归零,
+#       导致距永久阻塞仅 1 次的股票重启后重新进入失败循环.
+# 方案: 每次 record_failure / clear_retry 时持久化到 close_retry_state 表,
+#       模块加载时自动恢复.
+# ─────────────────────────────────────────────────────────────────────
+_CLOSE_RETRY_TABLE = "close_retry_state"
+_CLOSE_RETRY_LOADED = False  # 延迟加载标记 (首次访问时从 DB 恢复)
+
+
+def _get_retry_db_path() -> str:
+    """获取持久化 DB 路径 (复用主库)"""
+    try:
+        from app.core.paths import get_main_db
+        return str(get_main_db())
+    except Exception:
+        return str(Path(__file__).resolve().parent.parent.parent / "data" / "ftseek_us.db")
+
+
+def _ensure_retry_table(conn) -> None:
+    """确保 close_retry_state 表存在"""
+    conn.execute(f"""
+        CREATE TABLE IF NOT EXISTS {_CLOSE_RETRY_TABLE} (
+            symbol TEXT NOT NULL,
+            direction TEXT NOT NULL,
+            fail_count INTEGER NOT NULL DEFAULT 0,
+            cooldown_until TEXT,
+            last_reason TEXT,
+            last_failed_at TEXT,
+            blocked INTEGER NOT NULL DEFAULT 0,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (symbol, direction)
+        )
+    """)
+
+
+def _load_close_retry_state() -> None:
+    """从 SQLite 恢复退避状态 (首次访问时调用, 幂等)"""
+    global _CLOSE_RETRY_LOADED
+    if _CLOSE_RETRY_LOADED:
+        return
+    _CLOSE_RETRY_LOADED = True
+    try:
+        import sqlite3
+        db_path = _get_retry_db_path()
+        with sqlite3.connect(db_path, timeout=5) as conn:
+            _ensure_retry_table(conn)
+            rows = conn.execute(
+                f"SELECT symbol, direction, fail_count, cooldown_until, "
+                f"last_reason, last_failed_at, blocked FROM {_CLOSE_RETRY_TABLE}"
+            ).fetchall()
+        for row in rows:
+            _sym, _dir, _fc, _cd_str, _reason, _lfa_str, _blocked = row
+            _state = {
+                "fail_count": _fc,
+                "cooldown_until": None,
+                "last_reason": _reason or "",
+                "last_failed_at": None,
+                "blocked": bool(_blocked),
+            }
+            if _cd_str:
+                try:
+                    _state["cooldown_until"] = datetime.fromisoformat(_cd_str)
+                except Exception:
+                    pass
+            if _lfa_str:
+                try:
+                    _state["last_failed_at"] = datetime.fromisoformat(_lfa_str)
+                except Exception:
+                    pass
+            _close_retry_state[(_sym, _dir)] = _state
+        if rows:
+            logger.info(
+                f"[平仓·退避·持久化] 从 DB 恢复 {len(rows)} 条退避状态 "
+                f"(blocked={sum(1 for r in rows if r[6])})"
+            )
+    except Exception as _e:
+        logger.debug(f"[平仓·退避·持久化] 加载失败 (降级为内存模式): {_e}")
+
+
+def _persist_close_retry_state() -> None:
+    """将当前 _close_retry_state 全量持久化到 SQLite"""
+    try:
+        import sqlite3
+        db_path = _get_retry_db_path()
+        with sqlite3.connect(db_path, timeout=5) as conn:
+            _ensure_retry_table(conn)
+            # 全量覆盖: 先删除再插入 (简单可靠, 条目数 <100)
+            conn.execute(f"DELETE FROM {_CLOSE_RETRY_TABLE}")
+            _now_iso = now_et().isoformat()
+            for (_sym, _dir), _state in _close_retry_state.items():
+                _cd = _state.get("cooldown_until")
+                _lfa = _state.get("last_failed_at")
+                conn.execute(
+                    f"INSERT INTO {_CLOSE_RETRY_TABLE} "
+                    f"(symbol, direction, fail_count, cooldown_until, last_reason, "
+                    f"last_failed_at, blocked, updated_at) VALUES (?,?,?,?,?,?,?,?)",
+                    (
+                        _sym, _dir,
+                        _state.get("fail_count", 0),
+                        _cd.isoformat() if _cd else None,
+                        _state.get("last_reason", ""),
+                        _lfa.isoformat() if _lfa else None,
+                        1 if _state.get("blocked") else 0,
+                        _now_iso,
+                    )
+                )
+            conn.commit()
+    except Exception as _e:
+        logger.debug(f"[平仓·退避·持久化] 保存失败 (不影响运行): {_e}")
+
+# 触发退避的错误关键字
+_CLOSE_BACKOFF_ERR_PATTERNS = (
+    "持仓不足", "insufficient", "not enough",
+    "待成交订单", "未完成订单", "pending order",
+    "不支持交叉交易",
+)
+
+# 退避阶梯: fail_count → cooldown_minutes (None=永久阻塞)
+_CLOSE_BACKOFF_LADDER = {
+    2: 5,
+    3: 30,
+    4: 30,
+    5: None,  # 5 次 → 永久阻塞 + 告警
+}
+
+_CLOSE_BLOCK_THRESHOLD = 5  # 达到此次数 → block + 推送告警
+
+
+def _close_retry_key(symbol: str, direction) -> Tuple[str, str]:
+    """生成 (symbol, direction) 的退避计数键"""
+    _dir = direction.value if hasattr(direction, "value") else str(direction)
+    return (str(symbol), str(_dir).upper())
+
+
+def _is_backoff_error(err_msg: str) -> bool:
+    """判断错误信息是否属于触发退避的类别 (持仓不足/待成交订单)"""
+    if not err_msg:
+        return False
+    _msg = str(err_msg).lower()
+    for _pat in _CLOSE_BACKOFF_ERR_PATTERNS:
+        if _pat in err_msg or _pat.lower() in _msg:
+            return True
+    return False
+
+
+def _check_close_cooldown(symbol: str, direction) -> Optional[str]:
+    """检查 (symbol, direction) 当前是否在冷却中, 返回剩余原因字符串或 None"""
+    _load_close_retry_state()  # 首次调用时从 DB 恢复
+    _key = _close_retry_key(symbol, direction)
+    _state = _close_retry_state.get(_key)
+    if not _state:
+        return None
+    if _state.get("blocked"):
+        return f"已永久阻塞 (fails={_state.get('fail_count', 0)}, reason={_state.get('last_reason', '')})"
+    _cd_until = _state.get("cooldown_until")
+    if _cd_until:
+        try:
+            _now = now_et()
+            # now_et() 和 cooldown_until 均为 ET timezone-aware, 直接比较
+            if _cd_until > _now:
+                _remain = (_cd_until - _now).total_seconds()
+                return f"冷却中 (剩余 {int(_remain)}s, fails={_state.get('fail_count', 0)})"
+        except Exception as _e:
+            logger.debug(f"[平仓·退避] 冷却时间比较异常: {_e}")
+    return None
+
+
+def _record_close_failure(
+    scheduler,
+    position,
+    err_msg: str,
+    is_backoff_category: bool = True,
+) -> Tuple[int, Optional[int], bool]:
+    """记录一次平仓失败, 推进退避阶梯.
+
+    Returns:
+        (fail_count, cooldown_minutes_or_none, is_blocked)
+    """
+    _load_close_retry_state()  # 首次调用时从 DB 恢复
+    _key = _close_retry_key(position.symbol, position.direction)
+    _state = _close_retry_state.setdefault(_key, {
+        "fail_count": 0, "cooldown_until": None,
+        "last_reason": "", "last_failed_at": None, "blocked": False,
+    })
+    _state["fail_count"] = _state.get("fail_count", 0) + 1
+    _state["last_reason"] = str(err_msg)[:300]
+    _state["last_failed_at"] = now_et()
+    fail_count = _state["fail_count"]
+
+    cooldown_min: Optional[int] = None
+    blocked = False
+    if is_backoff_category:
+        cooldown_min = _CLOSE_BACKOFF_LADDER.get(
+            fail_count,
+            _CLOSE_BACKOFF_LADDER.get(min(fail_count, 4), None),
+        )
+    else:
+        if fail_count >= 3:
+            cooldown_min = 1
+
+    if fail_count >= _CLOSE_BLOCK_THRESHOLD:
+        blocked = True
+        _state["blocked"] = True
+        _state["cooldown_until"] = None
+    elif cooldown_min:
+        _start = now_et()
+        _state["cooldown_until"] = _start + timedelta(minutes=cooldown_min)
+        logger.warning(
+            f"[平仓·退避] {position.symbol} {_key[1]} fails={fail_count} → 冷却 {cooldown_min}min "
+            f"({_start.isoformat()} → {_state['cooldown_until'].isoformat()}) reason={str(err_msg)[:120]!r}"
+        )
+
+    _persist_close_retry_state()  # P1-追加: 持久化到 SQLite
+    return fail_count, cooldown_min, blocked
+
+
+def _clear_close_retry(symbol: str, direction) -> None:
+    """平仓成功后清零 (symbol, direction) 退避计数"""
+    _load_close_retry_state()
+    _key = _close_retry_key(symbol, direction)
+    if _key in _close_retry_state:
+        _state = _close_retry_state.pop(_key)
+        if _state.get("fail_count", 0) > 0:
+            logger.info(
+                f"[平仓·退避] {symbol} {_key[1]} 平仓成功 → 清零退避计数 "
+                f"(累计 fails={_state.get('fail_count', 0)})"
+            )
+        _persist_close_retry_state()  # P1-追加: 持久化清零
+
+
+def _refresh_broker_position_qty(scheduler, symbol: str) -> Optional[float]:
+    """强制查询 broker, 返回该 symbol 的当前持仓数量 (绝对值).
+
+    返回 None 表示查询失败 (无法判定); 0.0 表示 broker 已无持仓.
+    """
+    try:
+        _engine = getattr(scheduler, "execution_engine", None)
+        _adapter = getattr(_engine, "broker_adapter", None) if _engine else None
+        if not _adapter or not hasattr(_adapter, "get_positions"):
+            return None
+        _positions = _adapter.get_positions() or []
+        for _p in _positions:
+            _sym = _p.get("symbol") if isinstance(_p, dict) else getattr(_p, "symbol", None)
+            if _sym == symbol:
+                _qty = _p.get("qty", 0) if isinstance(_p, dict) else getattr(_p, "qty", 0)
+                try:
+                    return abs(float(_qty))
+                except Exception:
+                    return 0.0
+        return 0.0  # broker 列表中无此 symbol → 持仓为 0
+    except Exception as _e:
+        logger.debug(f"[平仓·broker持仓刷新] {symbol} 异常: {_e}")
+        return None
+
+
+def _query_broker_open_orders(scheduler, symbol: str) -> List[Dict[str, Any]]:
+    """查询 broker 端该 symbol 的待成交订单 (status 为 SUBMITTED/SUBMITTING/WAITING_SUBMIT).
+
+    返回 [{"order_id", "status", "qty", "dealt_qty"}, ...]; 失败返回 [].
+    """
+    try:
+        _engine = getattr(scheduler, "execution_engine", None)
+        _adapter = getattr(_engine, "broker_adapter", None) if _engine else None
+        if not _adapter or not getattr(_adapter, "trade_ctx", None):
+            return []
+        from futu import TrdEnv, RET_OK as _RET_OK
+        _trd_env = TrdEnv.SIMULATE if getattr(_adapter, "trade_env", 1) == 1 else TrdEnv.REAL
+        _ret, _data = _adapter.trade_ctx.order_list_query(
+            code=symbol,
+            trd_env=_trd_env,
+            acc_id=int(_adapter.account_id) if getattr(_adapter, "account_id", None) else 0,
+        )
+        if _ret != _RET_OK or _data is None or _data.empty:
+            return []
+        _open: List[Dict[str, Any]] = []
+        # 富途未结订单状态
+        _open_status_keys = ("SUBMITTED", "SUBMITTING", "WAITING_SUBMIT")
+        for _idx in range(len(_data)):
+            _row = _data.iloc[_idx]
+            _status = str(_row.get("order_status", "")).upper()
+            if any(_k in _status for _k in _open_status_keys):
+                _open.append({
+                    "order_id": str(_row.get("order_id", "")),
+                    "status": _status,
+                    "qty": float(_row.get("qty", 0) or 0),
+                    "dealt_qty": float(_row.get("dealt_qty", 0) or 0),
+                })
+        return _open
+    except ImportError:
+        return []
+    except Exception as _e:
+        logger.debug(f"[平仓·open_orders] {symbol} 查询异常: {_e}")
+        return []
+
+
+def _wait_or_cancel_open_orders(
+    scheduler, symbol: str, timeout_sec: int = 60, poll_interval_sec: int = 5,
+) -> Tuple[bool, List[str]]:
+    """若存在未完成订单, 轮询等待最多 timeout_sec 秒; 超时则取消未完成订单.
+
+    Returns:
+        (是否安全可发新单, 已取消订单列表)
+    """
+    _open = _query_broker_open_orders(scheduler, symbol)
+    if not _open:
+        return True, []
+    logger.warning(
+        f"[平仓·待成交] {symbol} 检测到 {len(_open)} 个未结订单, "
+        f"等待结算最多 {timeout_sec}s (poll={poll_interval_sec}s)"
+    )
+    _waited = 0
+    while _waited < timeout_sec:
+        time.sleep(poll_interval_sec)
+        _waited += poll_interval_sec
+        _open = _query_broker_open_orders(scheduler, symbol)
+        if not _open:
+            logger.info(f"[平仓·待成交] {symbol} 未结订单已结算 (耗时 {_waited}s)")
+            return True, []
+    # 超时, 取消旧订单
+    _canceled: List[str] = []
+    _adapter = getattr(getattr(scheduler, "execution_engine", None), "broker_adapter", None)
+    for _od in _open:
+        _oid = _od.get("order_id", "")
+        if not _oid or not _adapter:
+            continue
+        try:
+            if _adapter.cancel_order(_oid):
+                _canceled.append(_oid)
+                logger.warning(
+                    f"[平仓·待成交] {symbol} 超时取消旧订单 {_oid} "
+                    f"(status={_od.get('status', '')})"
+                )
+        except Exception as _ce:
+            logger.warning(f"[平仓·待成交] {symbol} 取消订单 {_oid} 失败: {_ce}")
+    if _canceled:
+        # P1-追加 (2026-06-16): 取消后验证 — 等待 broker 完成清算 (原 1s 不足)
+        # Futu cancel 到清算通常需 3-5s, 用 poll_interval 做验证轮询
+        _verify_waited = 0
+        _verify_max = min(poll_interval_sec * 3, 15)  # 最多等 15s
+        while _verify_waited < _verify_max:
+            time.sleep(poll_interval_sec)
+            _verify_waited += poll_interval_sec
+            _remaining = _query_broker_open_orders(scheduler, symbol)
+            if not _remaining:
+                logger.info(
+                    f"[平仓·待成交] {symbol} 取消后验证通过 ({_verify_waited}s), "
+                    f"已取消 {len(_canceled)} 单"
+                )
+                return True, _canceled
+        # 验证超时 (仍有未结订单), 警告但仍返回 (调用方会再尝试)
+        logger.warning(
+            f"[平仓·待成交] {symbol} 取消后 {_verify_max}s 仍有未结订单, "
+            f"已取消 {len(_canceled)} 单 (继续尝试)"
+        )
+    return True, _canceled
+
+
+# ─────────────────────────────────────────────────────────────────────
+# P0-追加 (2026-06-16): broker=0 路径的 coordinator 释放 + DB 同步
+# 根因: _close_pre_check 发现 broker 端无持仓时, 仅清理 position_store,
+#       未通知 CapitalAllocator 释放资金, 也未写 trade_records,
+#       导致 auto_pool 账本累计失真 + 交易记录缺失.
+# ─────────────────────────────────────────────────────────────────────
+
+def _release_coordinator_on_broker_zero(scheduler, position) -> None:
+    """broker=0 路径: 通知 coordinator 释放资金 (与正常平仓路径 4563-4573 对齐)"""
+    try:
+        _coord = getattr(scheduler, "coordinator", None)
+        if _coord is not None and getattr(_coord, "enabled", False):
+            _coord.on_position_closed(
+                symbol=position.symbol,
+                strategy=getattr(position, "owner_strategy", None),
+                position_pct=float(getattr(position, "position_pct", 0.0) or 0.0),
+            )
+            logger.info(
+                f"[平仓·broker0] {position.symbol} coordinator 资金已释放 "
+                f"(strategy={getattr(position, 'owner_strategy', '?')}, "
+                f"pct={float(getattr(position, 'position_pct', 0.0) or 0.0):.4f})"
+            )
+    except Exception as _ce:
+        logger.debug(f"[平仓·broker0] {position.symbol} coordinator 释放失败 (忽略): {_ce}")
+
+
+def _sync_trade_store_on_broker_zero(scheduler, position) -> None:
+    """broker=0 路径: 同步 trade_store (DB) — 标记仓位已关闭"""
+    try:
+        _ts = getattr(scheduler, "trade_store", None)
+        if _ts:
+            # 先标记 closed 状态再 upsert
+            _meta = getattr(position, "metadata", {}) or {}
+            _meta["_broker_zero_cleanup"] = True
+            _meta["_broker_zero_at"] = now_et().isoformat()
+            position.metadata = _meta
+            _ts.upsert_open_position(
+                position, source="broker_zero_cleanup", action="close_broker_zero",
+            )
+            logger.info(f"[平仓·broker0] {position.symbol} trade_store 已同步 (action=close_broker_zero)")
+    except Exception as _tse:
+        logger.debug(f"[平仓·broker0] {position.symbol} trade_store 同步失败 (忽略): {_tse}")
+
+
+def _close_pre_check(scheduler, position) -> Optional[str]:
+    """平仓前安全检查: 冷却 / broker 持仓刷新 / 待成交订单清算.
+
+    Returns:
+        如果应该跳过, 返回原因字符串 (调用方负责清理 _close_in_progress 并 return);
+        None 表示安全, 可继续后续平仓流程.
+    """
+    # 1. 冷却检查
+    _cd_reason = _check_close_cooldown(position.symbol, position.direction)
+    if _cd_reason:
+        return f"退避冷却: {_cd_reason}"
+
+    # 2. 强制刷新 broker 端持仓
+    _broker_qty = _refresh_broker_position_qty(scheduler, position.symbol)
+    if _broker_qty is not None and _broker_qty <= 0:
+        try:
+            _ps = getattr(scheduler, "position_store", None)
+            if _ps and _ps.has(position.symbol):
+                _ps.remove(position.symbol)
+                logger.warning(
+                    f"[平仓·broker0持仓] {position.symbol} broker 端已无持仓, "
+                    f"内存标记已平仓 (清理 position_store)"
+                )
+        except Exception as _re:
+            logger.debug(f"[平仓·broker0持仓] {position.symbol} 清理 position_store 异常: {_re}")
+        # P0-追加 (2026-06-16): 通知 coordinator 释放资金 + DB 同步
+        # 根因: 仅清理 position_store 但不清 CapitalAllocator 账本, 导致 auto_pool 持续失真
+        _release_coordinator_on_broker_zero(scheduler, position)
+        _sync_trade_store_on_broker_zero(scheduler, position)
+        _clear_close_retry(position.symbol, position.direction)
+        return "broker 端已无持仓 (已标记内存平仓)"
+
+    # 3. 待成交订单清算
+    _safe, _canceled = _wait_or_cancel_open_orders(
+        scheduler, position.symbol, timeout_sec=60, poll_interval_sec=5,
+    )
+    if _canceled:
+        # 取消旧订单后, 再次刷新一次持仓
+        _broker_qty2 = _refresh_broker_position_qty(scheduler, position.symbol)
+        if _broker_qty2 is not None and _broker_qty2 <= 0:
+            try:
+                _ps = getattr(scheduler, "position_store", None)
+                if _ps and _ps.has(position.symbol):
+                    _ps.remove(position.symbol)
+            except Exception:
+                pass
+            # P0-追加 (2026-06-16): 通知 coordinator 释放资金 + DB 同步
+            _release_coordinator_on_broker_zero(scheduler, position)
+            _sync_trade_store_on_broker_zero(scheduler, position)
+            _clear_close_retry(position.symbol, position.direction)
+            return "取消旧订单后 broker 持仓为 0 (已平仓)"
+
+    return None
+
+
+def manual_unblock(
+    scheduler,
+    symbol: str,
+    direction: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Dashboard "人工解锁" 后端方法.
+
+    清除 (symbol, direction) 维度的退避状态 + position.metadata 上的
+    _close_blocked / _close_in_progress 标记, 允许下一轮 scan 重新尝试平仓.
+
+    Args:
+        scheduler: scheduler 实例 (用于访问 position_store)
+        symbol: 标的代码 (如 "US.MU")
+        direction: "LONG" / "SHORT"; 不传则同时解锁 LONG/SHORT
+
+    Returns:
+        {"unblocked": bool, "cleared_keys": [...], "position_unblocked": bool, "reason": str}
+    """
+    _result: Dict[str, Any] = {
+        "unblocked": False, "cleared_keys": [],
+        "position_unblocked": False, "reason": "",
+    }
+
+    # 1. 清除退避状态
+    _load_close_retry_state()
+    _dirs = [direction.upper()] if direction else ["LONG", "SHORT"]
+    for _d in _dirs:
+        _key = (str(symbol), _d)
+        if _key in _close_retry_state:
+            _close_retry_state.pop(_key, None)
+            _result["cleared_keys"].append(_key)
+    if _result["cleared_keys"]:
+        _persist_close_retry_state()  # P1-追加: 持久化解锁
+
+    # 2. 清除 position.metadata 上的阻塞标记
+    try:
+        _ps = getattr(scheduler, "position_store", None)
+        if _ps and _ps.has(symbol):
+            _pos = _ps.get(symbol)
+            if _pos:
+                _meta = getattr(_pos, "metadata", {}) or {}
+                _was_blocked = bool(_meta.get("_close_blocked"))
+                for _k in (
+                    "_close_blocked", "_close_blocked_reason", "_close_blocked_at",
+                    "_close_in_progress", "_close_in_progress_ts",
+                    "_close_fail_count",
+                ):
+                    _meta.pop(_k, None)
+                _pos.metadata = _meta
+                _result["position_unblocked"] = _was_blocked
+                try:
+                    _ts = getattr(scheduler, "trade_store", None)
+                    if _ts:
+                        _ts.upsert_open_position(
+                            _pos, source="manual_unblock", action="manual_unblock",
+                        )
+                except Exception as _dbe:
+                    logger.debug(f"[manual_unblock] DB 同步失败 (忽略): {_dbe}")
+    except Exception as _e:
+        _result["reason"] = f"position_store 访问异常: {_e}"
+        logger.warning(f"[manual_unblock] {symbol} {_e}")
+
+    _result["unblocked"] = bool(_result["cleared_keys"]) or _result["position_unblocked"]
+    logger.warning(
+        f"[manual_unblock] {symbol} dirs={_dirs} cleared_keys={_result['cleared_keys']} "
+        f"position_unblocked={_result['position_unblocked']}"
+    )
+    return _result
+
+
+# ══════════════════════════════════════════════════════════════════
 #  执行优化: TWAP 拆单 + 延迟/滑点监控 (Task #14, 2026-05-27)
 # ══════════════════════════════════════════════════════════════════
 
@@ -148,13 +694,22 @@ def _submit_order_optimized(
         # 普通路径
         if scheduler.execution_engine:
             submitted = scheduler.execution_engine.submit_order(order)
+            # P1: 部分成交检查 — 非 TWAP 路径也需记录实际成交量
+            _actual_filled = float(getattr(submitted, 'filled_quantity', 0) or 0)
+            if 0 < _actual_filled < order.quantity:
+                logger.warning(
+                    f"[部分成交] {order.symbol} 请求 {order.quantity} "
+                    f"实际成交 {_actual_filled}"
+                )
+                order.filled_quantity = _actual_filled
+                order.state = OrderState.PARTIALLY_FILLED
         else:
             # 🔴 P0 (2026-06-13): 无执行引擎时, 实盘必须拒绝
             _env = int(scheduler.config_loader.get_dotted("TRADE_ENV", 1) if hasattr(scheduler, "config_loader") else 1)
             if _env == 0:
                 order.state = OrderState.REJECTED
                 order.failure_reason = "实盘模式下无执行引擎, 拒绝下单"
-                logger.error(f"[OrderExecutor] 🔴 REJECTED: {symbol} — execution_engine 不存在, 实盘拒绝模拟成交")
+                logger.error(f"[OrderExecutor] 🔴 REJECTED: {order.symbol} — execution_engine 不存在, 实盘拒绝模拟成交")
                 submitted = order
             else:
                 order.state = OrderState.FILLED
@@ -495,6 +1050,15 @@ def _notify_order(scheduler, symbol: str, signal: SignalScore, order: Order, pos
       修复: 将 position.metadata 写入提到外层, 与 notifier 解耦, 确保投票结果
       始终落到持仓元数据上.
     """
+    # ── 双链路并行 (Task #3 2026-06-15): 递增当日自动交易计数 ──
+    # 调用达到此处表示订单已成功提交(走主双链路路径)，计入当日自动交易额度。
+    try:
+        from app.coordinator.dual_mode_params import increment_today_auto_trade_count
+        _new_cnt = increment_today_auto_trade_count(1)
+        logger.debug(f"[CONSERVATIVE] {symbol} today_auto_trade_count -> {_new_cnt}")
+    except Exception as _ic_err:
+        logger.debug(f"[CONSERVATIVE] increment counter failed (忽略): {_ic_err}")
+
     # ── Task #42: 始终先写 position.metadata, 不依赖 notifier 是否启用 ──
     try:
         # P0 修复 (2026-05-27): 推导 entry_reason 并写入 position.metadata
@@ -699,6 +1263,32 @@ def _get_order_qty(scheduler, symbol: str, atr: float = 0, direction: str = "LON
                 hard_stop = price * 0.85
                 stop_loss_price = max(stop_loss_price, hard_stop)
 
+            # ── 双链路并行 (Task #3): 谨慎模式止损收紧 ──
+            # conservative: factor=0.7 → 止损距离缩窄30% (更早触发, 减少单笔亏损)
+            # normal: factor=1.0 → 不调整
+            # aggressive: factor=1.2 → 止损距离放宽20% (给更多波动空间)
+            try:
+                from app.coordinator.dual_mode_params import get_conservative_param
+                _sl_factor = get_conservative_param("stop_loss_tighten_factor")
+                if _sl_factor and float(_sl_factor) != 1.0:
+                    _orig_sl = stop_loss_price
+                    _stop_distance = abs(stop_loss_price - price)
+                    _new_distance = _stop_distance * float(_sl_factor)
+                    if is_short:
+                        stop_loss_price = price + _new_distance
+                        hard_stop_adj = price * 1.15
+                        stop_loss_price = min(stop_loss_price, hard_stop_adj)
+                    else:
+                        stop_loss_price = price - _new_distance
+                        hard_stop_adj = price * 0.85
+                        stop_loss_price = max(stop_loss_price, hard_stop_adj)
+                    logger.info(
+                        f"[CONSERVATIVE] {symbol} SL tightened: ${_orig_sl:.2f} → "
+                        f"${stop_loss_price:.2f} (factor={_sl_factor})"
+                    )
+            except Exception as _sl_err:
+                logger.debug(f"[CONSERVATIVE] {symbol} SL tighten skipped: {_sl_err}")
+
             logger.debug(
                 f"[动态仓位] {symbol} ATR=${atr:.2f} session_ratio={session_ratio:.2f} "
                 f"effective_atr=${effective_atr:.2f}, 动态止损 ${stop_loss_price:.2f} ({atr_mult}x)"
@@ -808,6 +1398,61 @@ def _get_order_qty(scheduler, symbol: str, atr: float = 0, direction: str = "LON
                 )
         except Exception as _tme:
             logger.debug(f"[动态仓位·TradingMode] 应用风控倍数失败 (忽略): {_tme}")
+
+        # ── 双链路并行 (Task #3 2026-06-15): 谨慎模式仓位缩放 ──
+        # 根据 ModeSwitchService 当前 aggression level 应用缩放因子,
+        # 并按单笔金额上限再次截断 (max_per_trade_usd)。
+        try:
+            from app.coordinator.dual_mode_params import get_conservative_param
+            scale_factor = get_conservative_param("position_scale_factor")
+            if scale_factor and float(scale_factor) != 1.0 and size > 0:
+                _orig_size = size
+                size = max(1, int(size * float(scale_factor)))
+                # 同时检查单笔金额上限
+                max_per_trade = get_conservative_param("max_per_trade_usd")
+                if max_per_trade and price > 0 and size * price > float(max_per_trade):
+                    size = max(1, int(float(max_per_trade) / price))
+                if size != _orig_size:
+                    logger.info(
+                        f"[CONSERVATIVE] {symbol} qty scaled: {_orig_size} -> {size} "
+                        f"(factor={scale_factor})"
+                    )
+        except Exception as _ce:
+            logger.warning(f"[CONSERVATIVE] {symbol} Failed to apply scaling: {_ce}")
+
+        # ── Task #19: position_scale_override (决策引擎下发) ──
+        # 由 signal_pipeline Fast Lane 组合相关性检查设置 (如 0.5 表示半仓)
+        try:
+            _override = (context or {}).get("position_scale_override")
+            if _override is not None and size > 0:
+                _f = float(_override)
+                if 0 < _f < 1.0:
+                    _orig_size = size
+                    size = max(1, int(size * _f))
+                    if size != _orig_size:
+                        logger.info(
+                            f"[Portfolio] {symbol} 仓位缩减: {_orig_size} -> {size} (×{_f:.2f})"
+                        )
+        except Exception as _oe:
+            logger.debug(f"[Portfolio] position_scale_override 应用异常(忽略): {_oe}")
+
+        # ── Task #3 (2026-06-17): IC监控策略健康仓位缩放 ──
+        # REDUCED策略仓位×0.5, SUSPENDED策略已在signal_pipeline被拦截(此处兜底)
+        try:
+            from app.risk.strategy_health_monitor import get_strategy_health_monitor
+            _health_monitor = get_strategy_health_monitor()
+            _strat_id = (context or {}).get("strategy_id", "") or "unknown"
+            _ic_scale = _health_monitor.get_position_scale(_strat_id)
+            if _ic_scale < 1.0 and size > 0:
+                _orig_size = size
+                size = max(1, int(size * _ic_scale))
+                if size != _orig_size:
+                    logger.info(
+                        f"[IC_Monitor] {symbol} 仓位缩放 ×{_ic_scale} "
+                        f"(策略{_strat_id}): {_orig_size} → {size}"
+                    )
+        except Exception as _ic_err:
+            logger.debug(f"[IC_Monitor] {symbol} 仓位缩放失败 (忽略): {_ic_err}")
 
         # W5 修复 (2026-05-02): 仅在 shares==0 时 fallback，warning 仅记录不阻断
         if sizing_result.warnings:
@@ -1627,6 +2272,14 @@ def _execute_short(scheduler, symbol: str, signal: SignalScore, context: Dict[st
     if signal.direction != Direction.SHORT:
         return
 
+    # Task #3 (2026-06-17): 注入 strategy_id 到 context (供 _get_order_qty IC缩放使用)
+    if voting_result and "strategy_id" not in context:
+        context["strategy_id"] = (
+            voting_result.get("strategy_id", "")
+            or getattr(signal, "strategy_id", "")
+            or ""
+        )
+
     # P0 加固 (2026-05-24): 做空路由修复 — 模拟盘也走正股做空
     # 根因: 旧逻辑 `stock_short_enabled and not is_sim` 导致模拟盘永远跳过正股做空，
     #        直接走 _submit_put_option → 被硬封锁 return → SHORT 信号静默丢弃
@@ -1808,6 +2461,13 @@ def _execute_stock_short(scheduler, symbol: str, signal: SignalScore, context: D
     if isinstance(context, dict):
         context["_r1_position_created"] = True
 
+    # ── P1 (2026-06-16): 开仓后即时 sync (5s debounce) ──
+    try:
+        from app.core.position_sync import get_us_position_sync
+        get_us_position_sync().request_immediate_sync()
+    except Exception:
+        pass
+
     # PostTradeHook (2026-05-16): SHORT 也走统一钩子 (替代散乱 mirror try/except)
     try:
         from app.pipeline.post_trade_hook import on_position_opened
@@ -1865,6 +2525,14 @@ def _execute_long(scheduler, symbol: str, signal: SignalScore, context: Dict[str
     """
     price = round(context.get("price", 0), 2)
     atr = context.get("atr", price * 0.02)
+
+    # Task #3 (2026-06-17): 注入 strategy_id 到 context (供 _get_order_qty IC缩放使用)
+    if voting_result and "strategy_id" not in context:
+        context["strategy_id"] = (
+            voting_result.get("strategy_id", "")
+            or getattr(signal, "strategy_id", "")
+            or ""
+        )
 
     if price <= 0:
         logger.warning(f"[下单] {symbol} 价格为 0，取消下单")
@@ -2286,6 +2954,19 @@ def _execute_long(scheduler, symbol: str, signal: SignalScore, context: Dict[str
             position.owner_strategy = "main"
             position.position_pct = 0.0
 
+        # Task #6 (2026-06-15): 根据 owner_strategy 反向推导 PositionSource 源头标记
+        # 主线默认 AUTO_MAIN; 如果 signal.metadata.owner_strategy 是 scalping/orb/fast_lane,
+        # from_str 会自动映射到对应的 AUTO_* 枚举值
+        try:
+            from app.positions import tag_position, PositionSource
+            _src_label = getattr(position, "owner_strategy", None) or "main"
+            _src_enum = PositionSource.from_str(_src_label)
+            if _src_enum == PositionSource.UNKNOWN:
+                _src_enum = PositionSource.AUTO_MAIN  # fallback: 主线下单默认主管线
+            tag_position(position, _src_enum)
+        except Exception as _tag_err:
+            logger.debug(f"[order_executor] tag_position 跳过: {_tag_err}")
+
         # P0-1 (2026-05-14): 原子化 — 先 DB upsert (持久化), 再 in-memory add, 失败回滚.
         # 防 scheduler crash 在 add 与 upsert 之间 → broker 已有仓位但本地全丢.
         _db_persisted = False
@@ -2315,6 +2996,13 @@ def _execute_long(scheduler, symbol: str, signal: SignalScore, context: Dict[str
         # R1: 标记仓位创建成功
         if isinstance(context, dict):
             context["_r1_position_created"] = True
+
+        # ── P1 (2026-06-16): 开仓后即时 sync (5s debounce) ──
+        try:
+            from app.core.position_sync import get_us_position_sync
+            get_us_position_sync().request_immediate_sync()
+        except Exception:
+            pass
 
         # PostTradeHook (2026-05-16): 4 个副作用异步统一执行 (替代 ~75 行散乱 try/except)
         # 顺序: attribution → mirror → push → thesis_inferer
@@ -2721,46 +3409,106 @@ def _update_symbol_daily_loss(symbol: str, pnl: float):
 def _submit_order(scheduler, symbol: str, signal: SignalScore, context: Dict[str, Any], voting_result: Dict = None):
     """构建订单并通过执行引擎下单 (Refactored 2026-04-29)"""
 
-    # ── P0 (2026-06-13): 自动交易总开关 — 替代已删除的 enable_execution_engine ──
-    # 信号生成/数据采集不受影响，仅阻断订单提交
-    # 直接读 YAML 文件而非 ConfigContainer 内存缓存 (热重载只刷新 ConfigLoader,
-    # ConfigContainer._config_dict 是启动时快照，不会同步更新)
-    # 信号触发频率低 (每小时 0-3 次), 用正则读单行 (<0.1ms) 无性能影响
-    #
-    # ── P0 (2026-06-14): 实盘自动交易硬锁 ──
-    # 双钥匙系统: Dashboard 开关 + 代码常量，两个都为 true 才允许实盘自动交易
-    # 防止: 用户在 Dashboard 误触开关 → 未经测试策略直接实盘 → 大亏
-    # 解锁条件: 信号 IC > 0.1 + 模拟盘验证 2 周 + 人工审批后改代码提交
-    AUTO_TRADING_LIVE_ALLOWED = False  # ⚠️ 硬编码 false, 改 true 需 git commit + 审批
+    # ══════════════════════════════════════════════════════════════════════════
+    # Task #1 (2026-06-17): 绝对风控底线 — 最先检查, 不受任何 feature flag 控制
+    # ══════════════════════════════════════════════════════════════════════════
+    # ── P0: AbsoluteCircuitBreaker (Daily/Hourly/Consecutive Loss 硬熔断) ──
+    # 此检查必须是第一个, 不受任何开关控制, 是最后防线
     try:
-        import re as _re
-        _yaml_path = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-            "config", "unified_config.yaml"
-        )
-        with open(_yaml_path, "r") as _f:
-            for _line in _f:
-                _m = _re.match(r'\s+auto_trading_enabled:\s*(true|false)', _line)
-                if _m:
-                    _auto = _m.group(1) == 'true'
-                    break
-            else:
-                _auto = False  # 未找到 → 默认关闭
-        if not _auto:
-            logger.debug(f"🔒 [自动交易·关闭] {symbol} 信号已记录，但自动交易开关=off，跳过下单")
-            return
-        # 开关开了但实盘硬锁未解锁 → 拒绝
-        _is_live_env = os.getenv("TRADE_ENV", "1").strip() == "0"
-        if _is_live_env and not AUTO_TRADING_LIVE_ALLOWED:
+        from app.risk.absolute_circuit_breaker import get_absolute_circuit_breaker
+        _acb = get_absolute_circuit_breaker()
+        _strategy_id = ""
+        if voting_result:
+            _strategy_id = voting_result.get("strategy_id", "") or voting_result.get("model", "")
+        if not _strategy_id and hasattr(signal, "metadata"):
+            _strategy_id = (signal.metadata or {}).get("strategy_id", "")
+        _acb_allowed, _acb_reason = _acb.can_open_new_position(_strategy_id)
+        if not _acb_allowed:
             logger.warning(
-                f"🚨 [实盘硬锁] {symbol} 自动交易开关=on 但 AUTO_TRADING_LIVE_ALLOWED=False, "
-                f"实盘自动交易被代码级硬锁拦截 (需信号IC验证+人工审批后解锁)"
+                f"🚨 [AbsoluteCircuitBreaker] {symbol} 新仓被拒: {_acb_reason}"
             )
             return
-    except Exception as _at_err:
-        # 配置读取失败 → fail-safe: 不交易 (安全优先)
-        logger.warning(f"🔒 [自动交易·fail-safe] {symbol} 配置读取失败，跳过下单: {_at_err}")
+    except Exception as _acb_err:
+        # fail-close: 熔断器检查异常 → 不交易 (安全优先)
+        logger.warning(f"🚨 [AbsoluteCircuitBreaker·fail-close] {symbol} 检查异常, 跳过下单: {_acb_err}")
         return
+
+    # ── P0: VIX 数据新鲜度 fail-close (Task #1) ──
+    # VIX 数据不可用时拒绝新仓 (宁可错过, 不可放错)
+    try:
+        from app.analysis.market_state import MarketStateChecker
+        _vix_checker = MarketStateChecker()
+        _vix_val = _vix_checker._fetch_vix_data()
+        if _vix_val is None:
+            logger.warning(
+                f"🔒 [VIX_FAILCLOSE] {symbol} VIX数据不可用，拒绝新仓"
+            )
+            return
+    except Exception as _vix_err:
+        # fail-close: VIX 获取异常 → 不交易
+        logger.warning(
+            f"🔒 [VIX_FAILCLOSE] {symbol} VIX数据获取异常，拒绝新仓: {_vix_err}"
+        )
+        return
+    # ── P0: VIX>28 硬拒新仓 (Task #2) — 含 Hysteresis 防抖 ──
+    try:
+        from app.risk.vix_guard import VIXGuard
+        from app.core.feature_flags import FeatureFlags
+        _vix_guard = VIXGuard()
+        _vix_blocked, _vix_block_reason = _vix_guard.should_block(_vix_val)
+        if FeatureFlags().is_enabled("vix_hard_blocking") and _vix_blocked:
+            logger.warning(f"🚫 [VIX_HARD_BLOCK] {symbol} {_vix_block_reason}")
+            return
+        elif _vix_blocked:
+            logger.info(f"⚠️ [VIX_WARN] {symbol} {_vix_block_reason} (WARN模式，未拦截)")
+    except Exception as _vhb_err:
+        # VIXGuard 异常不阻塞下单 (fail-open for guard logic only)
+        logger.warning(f"⚠️ [VIX_GUARD_ERR] {symbol} VIXGuard异常: {_vhb_err}")
+    # ══════════════════════════════ End Task #2 VIX硬拒 ══════════════════════════════
+
+    # ── 自动交易总开关 (Dashboard 单一控制点) ──
+    # ModeSwitchService 是唯一的开关来源 (Dashboard toggle 同时写内存+YAML).
+    # 关闭时: 信号生成/数据采集不受影响, 仅阻断订单提交
+    # 已持仓的退出规则继续生效 (由 position_monitor 处理)
+    try:
+        from app.web_dashboard.mode_switch_service import get_mode_switch_service
+        if not get_mode_switch_service().is_auto_enabled():
+            logger.debug(f"🔒 [AUTO] {symbol} 自动交易已关闭 (Dashboard), 跳过下单")
+            return
+    except Exception as _ae_err:
+        # 开关检查异常 → fail-safe: 不交易 (安全优先)
+        logger.warning(f"🔒 [AUTO·fail-safe] {symbol} 开关检查异常, 跳过下单: {_ae_err}")
+        return
+
+
+    # ── 双链路并行 (Task #3 2026-06-15): 谨慎模式·每日自动交易次数限制 ──
+    try:
+        from app.coordinator.dual_mode_params import (
+            get_conservative_param, get_today_auto_trade_count,
+        )
+        max_daily = get_conservative_param("max_daily_auto_trades")
+        if max_daily:
+            today_auto_count = get_today_auto_trade_count()
+            if today_auto_count >= int(max_daily):
+                logger.info(
+                    f"[CONSERVATIVE] {symbol} Daily auto trade limit reached: "
+                    f"{today_auto_count}/{max_daily}, skip"
+                )
+                return
+    except Exception as _dl_err:
+        logger.warning(f"[CONSERVATIVE] {symbol} daily limit check failed: {_dl_err}")
+
+    # ── 双链路并行 (Task #4): 自动交易预算门禁 ──
+    # 检查自动交易敞口是否已达激进度上限 (conservative=30%, normal=60%, aggressive=75%)
+    # 同时检查全局 80% 硬约束 (auto + manual 合计)
+    try:
+        from app.risk.capital_safety import get_capital_safety_system
+        _budget = get_capital_safety_system().get_available_budget_for_auto()
+        if _budget <= 0:
+            logger.info(f"[BUDGET] {symbol} Auto budget exhausted, skip order")
+            return
+    except Exception as _bg_err:
+        logger.debug(f"[BUDGET] {symbol} budget check skipped: {_bg_err}")
 
     # ── P0 (2026-06-14): 信号质量门禁 — IC < 阈值时物理阻止自动交易 ──
     # 原理: 信号 IC (Spearman rank correlation) 衡量信号强度与实际收益的相关性
@@ -2780,14 +3528,40 @@ def _submit_order(scheduler, symbol: str, signal: SignalScore, context: Dict[str
             )
             return
         _ic_mean = _ic.get("ic_mean", 0.0)
+        _ic_p = _ic.get("ic_p_value")  # P1.5: get_ic_summary 已算好 p_value, 现接入门禁
         if _ic_mean is not None and _ic_mean < _IC_MIN_THRESHOLD:
             logger.warning(
                 f"🔒 [IC门禁] {symbol} 信号IC={_ic_mean:.3f} < {_IC_MIN_THRESHOLD}, "
                 f"信号无预测能力, 自动交易被拦截 (需IC≥{_IC_MIN_THRESHOLD}解锁)"
             )
             return
-        # IC 达标 — 记录通过 (debug 级别, 不刷屏)
-        logger.debug(f"[IC门禁] {symbol} IC={_ic_mean:.3f} ≥ {_IC_MIN_THRESHOLD} ✅")
+        # P1.5 (RFC-060): 显著性门禁 — IC 看似达标但不显著 (p>=0.05, 无法拒绝 IC<=0)
+        # = 噪音而非真实预测力 → 保守拦截 (PM审计: IC 从-0.04缓降至-0.10 时系统仍出血)
+        if _ic_p is not None and _ic_p >= 0.05 and _ic_mean is not None:
+            logger.warning(
+                f"🔒 [IC门禁·显著性] {symbol} IC={_ic_mean:.3f} 但 p={_ic_p:.3f}≥0.05 不显著 "
+                f"(n={_ic.get('n_signals', 0)}, 疑似噪音), 保守拦截"
+            )
+            return
+        # P1.5 (RFC-060): 方向感知 — 该信号方向的独立 IC 若为负, 单独拦截此方向
+        # (PM审计数据: LONG 25% 胜率反向 / SHORT 有正向 → 不应一刀切, 按方向分别评估)
+        _sig_dir = (
+            getattr(getattr(signal, "direction", None), "value", None)
+            or str(getattr(signal, "direction", "") or "")
+        )
+        _by_dir = _ic.get("by_direction", {}) or {}
+        _dir_stat = _by_dir.get(_sig_dir) if isinstance(_by_dir, dict) else None
+        if isinstance(_dir_stat, dict):
+            _dir_ic = _dir_stat.get("ic")
+            _dir_n = int(_dir_stat.get("n", 0) or 0)
+            if _dir_ic is not None and _dir_ic < 0 and _dir_n >= 10:
+                logger.warning(
+                    f"🔒 [IC门禁·方向] {symbol} 方向 {_sig_dir} 独立IC={_dir_ic:.3f} (n={_dir_n}) "
+                    f"为负 → 该方向信号反向, 拦截此方向下单"
+                )
+                return
+        # IC 达标且显著 — 记录通过 (debug 级别, 不刷屏)
+        logger.debug(f"[IC门禁] {symbol} IC={_ic_mean:.3f} p={_ic_p} ≥{_IC_MIN_THRESHOLD} ✅")
     except Exception as _ic_err:
         # IC 检查失败 → fail-safe: 不交易 (安全优先)
         logger.warning(f"🔒 [IC门禁·fail-safe] {symbol} IC检查异常, 跳过下单: {_ic_err}")
@@ -2802,7 +3576,10 @@ def _submit_order(scheduler, symbol: str, signal: SignalScore, context: Dict[str
             logger.warning(f"🚨 [Kill Switch] {symbol} 紧急制动已激活，自动下单被拦截")
             return
     except Exception as _ks_err:
-        logger.debug(f"[Kill Switch] 检查异常 (放行): {_ks_err}")
+        # P1.2 (RFC-060): fail-close — 自动线同样 fail-safe, 检查异常即不下单
+        # (原 fail-open logger.debug 会静默绕过紧急制动)
+        logger.warning(f"🚨 [Kill Switch] {symbol} 检查异常, fail-safe 不下单: {_ks_err}")
+        return
 
     # ── P0 (2026-06-14): 持仓去重 — 已有仓位直接跳过 ──
     # 原则: 该标的已有持仓(不管方向/大小/手动自动) → 跳过此信号
@@ -3115,6 +3892,36 @@ def _submit_order(scheduler, symbol: str, signal: SignalScore, context: Dict[str
                     return
         except Exception:
             pass
+
+        # ── P0 (2026-06-17): CapitalAllocator enforce — 策略级资金上限强制执行 ──
+        # 审计发现: try_reserve() 从未在下单路径调用, 策略级资金上限形同虚设
+        # 修复: 在方向路由前强制调用 try_reserve, 超限直接拒绝
+        try:
+            from app.coordinator.capital_allocator import get_capital_allocator
+            _ca = get_capital_allocator()
+            if not _ca.is_observe_only():
+                _strat_id = ""
+                if voting_result:
+                    _strat_id = voting_result.get("strategy_id", "") or voting_result.get("model", "")
+                if not _strat_id and hasattr(signal, "metadata") and signal.metadata:
+                    _strat_id = signal.metadata.get("strategy_id", "main")
+                if not _strat_id:
+                    _strat_id = "main"
+                # 估算仓位占比: 用 signal.position_pct 或保守默认值
+                _pos_pct = float(getattr(signal, "position_pct", 0) or 0)
+                if _pos_pct <= 0:
+                    # 从 context 或默认值估算
+                    _pos_pct = float(context.get("estimated_position_pct", 0.10))
+                if not _ca.try_reserve(_strat_id, _pos_pct):
+                    logger.warning(
+                        f"🚫 [CapitalAllocator·ENFORCE] {symbol} 策略={_strat_id} "
+                        f"资金预留 {_pos_pct:.1%} 被拒 (bucket/total cap 超限)"
+                    )
+                    _r1_release_if_held()
+                    return
+        except Exception as _ca_err:
+            # CapitalAllocator 异常 → 记录但不阻断 (enforce 模式下的 fail-close 由 allocator 自身处理)
+            logger.warning(f"[CapitalAllocator] {symbol} 预留检查异常 (放行): {_ca_err}")
 
         # 3. 按方向路由执行
         if signal.direction == Direction.SHORT:
@@ -3641,22 +4448,38 @@ def _close_position(scheduler, position: Position, current_price: float, exit_re
         except Exception as _meta_rec_err:
             logger.debug(f"[平仓·归因恢复] {position.symbol} 失败 (不影响平仓): {_meta_rec_err}")
 
+    # ── P0 (2026-06-15): _close_blocked 检查 — broker 连续拒绝后停止重试 ──
+    if meta.get("_close_blocked"):
+        _reason = meta.get("_close_blocked_reason", "未知")
+        logger.warning(
+            f"[平仓·锁定] {position.symbol} 平仓已被锁定: {_reason} (跳过, 需人工介入)"
+        )
+        return
+
     # ── P0 (2026-06-12): _close_in_progress 超时自动清理 ──
     # 根因: 5个失败路径(异常/拒单/未确认/盘后/确认异常)都不清理此标记,
     #        导致一次平仓失败后仓位永久不可平仓直到重启
     # 修法: 改为 timestamp + 5分钟超时, 超过自动解锁允许重试
-    _cip_ts = meta.get("_close_in_progress_ts", 0)
-    _cip_timeout = 300  # 5 分钟
-    if meta.get("_close_in_progress") and _cip_ts and (time.time() - _cip_ts < _cip_timeout):
-        _remaining = int(_cip_timeout - (time.time() - _cip_ts))
-        logger.warning(
-            f"[平仓·重入拦截] {position.symbol} 已有平仓进行中 "
-            f"({_remaining}s后自动解锁)，跳过"
-        )
-        return
-    meta["_close_in_progress"] = True
-    meta["_close_in_progress_ts"] = time.time()
-    position.metadata = meta
+    # P0-fix (2026-06-15): 用 position_store._lock 保护 check-and-set 原子性
+    _ps_lock = getattr(getattr(scheduler, 'position_store', None), '_lock', None)
+    if _ps_lock:
+        _ps_lock.acquire()
+    try:
+        _cip_ts = meta.get("_close_in_progress_ts", 0)
+        _cip_timeout = 300  # 5 分钟
+        if meta.get("_close_in_progress") and _cip_ts and (time.time() - _cip_ts < _cip_timeout):
+            _remaining = int(_cip_timeout - (time.time() - _cip_ts))
+            logger.warning(
+                f"[平仓·重入拦截] {position.symbol} 已有平仓进行中 "
+                f"({_remaining}s后自动解锁)，跳过"
+            )
+            return
+        meta["_close_in_progress"] = True
+        meta["_close_in_progress_ts"] = time.time()
+        position.metadata = meta
+    finally:
+        if _ps_lock:
+            _ps_lock.release()
 
     # Broker-first (2026-06-03): 执行前持仓校验 — 防双重平仓
     # 查 Futu 实时持仓，确认仓位还没被外部平仓 (algo/手动)
@@ -3720,6 +4543,24 @@ def _close_position(scheduler, position: Position, current_price: float, exit_re
                         pass
     except Exception as _dir_e:
         logger.warning(f"[平仓·方向校验] {position.symbol} 校验异常(不阻断): {_dir_e}")
+
+    # ── Task #34 (P0, 2026-06-16): 平仓前安全检查 ──
+    # 1) 退避冷却检查; 2) 强制刷新 broker 持仓 (0 则跳过下单);
+    # 3) 检测/等待/取消待成交订单 (最多 60s, 5s 轮询)
+    try:
+        _skip_reason = _close_pre_check(scheduler, position)
+        if _skip_reason:
+            logger.warning(
+                f"[平仓·安全检查] {position.symbol} {position.direction.value} "
+                f"跳过下单: {_skip_reason}"
+            )
+            _meta = getattr(position, "metadata", {}) or {}
+            _meta.pop("_close_in_progress", None)
+            _meta.pop("_close_in_progress_ts", None)
+            position.metadata = _meta
+            return
+    except Exception as _pcerr:
+        logger.warning(f"[平仓·安全检查] {position.symbol} 异常(保守放行): {_pcerr}")
 
     # Task #14 (2026-05-27): 如果该标的开仓 TWAP 还在进行中, 先取消剩余片, 避免平后被动加仓
     try:
@@ -3788,23 +4629,54 @@ def _close_position(scheduler, position: Position, current_price: float, exit_re
             except Exception as _pdt_err:
                 logger.debug(f"[平仓] PDT 记录失败 (不影响平仓): {_pdt_err}")
     except Exception as e:
-        # P0 修复 2026-04-23: 平仓失败退避机制 — 防止无限循环
+        # ── Task #34 (P0, 2026-06-16): 指数退避重试 ──
+        # 2 次 → 5min 冷却; 3-4 次 → 30min 冷却; 5 次 → 永久阻塞
+        # 仅"持仓不足/待成交订单"类错误走指数退避, 其它错误使用较短冷却
         meta = getattr(position, "metadata", None)
         if meta is None:
             meta = {}
             position.metadata = meta
-        close_fail_count = meta.get("_close_fail_count", 0) + 1
-        meta["_close_fail_count"] = close_fail_count
+        _err_msg = str(e)
+        _is_backoff = _is_backoff_error(_err_msg)
 
-        max_retries = 3
-        if close_fail_count >= max_retries:
+        # ── P0 (2026-06-16): 幽灵仓即时收敛 ──
+        # 根因: broker 说"持仓不足"= broker 端已无此仓位。
+        # 修法: 查 broker 实际持仓, 为 0 则立即收敛 (移除 PositionStore + 标 anomalous),
+        #        不再走退避重试循环。一条规则消灭整类幽灵仓问题。
+        _ghost_insufficient = ("持仓不足" in _err_msg or "insufficient" in _err_msg.lower())
+        if _ghost_insufficient:
+            _broker_qty = _refresh_broker_position_qty(scheduler, position.symbol)
+            if _broker_qty is not None and _broker_qty <= 0:
+                logger.warning(
+                    f"[平仓·幽灵收敛] {position.symbol} broker 确认无持仓 (qty=0), "
+                    f"立即从 PositionStore 移除, 不再重试"
+                )
+                meta["_ghost_converged"] = True
+                meta["_ghost_converged_at"] = now_et().isoformat()
+                meta["_ghost_reason"] = _err_msg[:200]
+                # 标记 DB anomalous + 移除内存
+                try:
+                    if hasattr(scheduler, "trade_store") and scheduler.trade_store:
+                        scheduler.trade_store.upsert_open_position(
+                            position, source="scheduler", action="ghost_converged"
+                        )
+                except Exception:
+                    pass
+                scheduler.position_store.remove(position.symbol)
+                _clear_close_retry(position.symbol, position.direction)
+                return
+
+
+        if _blocked:
             meta["_close_blocked"] = True
-            meta["_close_blocked_reason"] = str(e)
+            meta["_close_blocked_reason"] = (
+                f"{'退避类' if _is_backoff else '其它'}错误累计 {fail_count} 次: {_err_msg[:200]}"
+            )
             meta["_close_blocked_at"] = now_et().isoformat()
             logger.critical(
-                f"[平仓·异常] {position.symbol} 连续 {close_fail_count} 次平仓失败，"
-                f"已标记为异常持仓 (blocked=True)，需人工介入。"
-                f"最后错误: {e}"
+                f"[平仓·阻塞] {position.symbol} {position.direction.value} "
+                f"连续 {fail_count} 次平仓失败 → 标记为异常持仓 (blocked=True), 需人工介入 (调用 manual_unblock). "
+                f"最后错误: {_err_msg}"
             )
             try:
                 if hasattr(scheduler, 'trade_store') and scheduler.trade_store:
@@ -3813,27 +4685,41 @@ def _close_position(scheduler, position: Position, current_price: float, exit_re
                     )
             except Exception as db_err:
                 logger.debug(f"[平仓·异常] DB 同步失败: {db_err}")
-            # 发送钉钉告警
             try:
                 if hasattr(scheduler, 'dingtalk') and scheduler.dingtalk:
                     scheduler.dingtalk.send_text(
-                        f"🚨 P0 异常持仓告警\n"
+                        f"🚨 P0 异常持仓告警 (Task #34)\n"
                         f"标的: {position.symbol}\n"
                         f"方向: {position.direction.value}\n"
                         f"数量: {position.size}\n"
                         f"入场价: ${position.avg_entry_price:.2f}\n"
                         f"当前价: ${current_price:.2f}\n"
                         f"PnL: ${pnl:.2f} ({pnl_pct:.2%})\n"
-                        f"失败次数: {close_fail_count}\n"
-                        f"最后错误: {e}\n"
-                        f"操作: 请在富途牛牛 APP 中手动平仓"
+                        f"失败次数: {fail_count}\n"
+                        f"错误类别: {'退避类' if _is_backoff else '其它'}\n"
+                        f"最后错误: {_err_msg}\n"
+                        f"操作: 请在 Dashboard 点击人工解锁或手动平仓"
                     )
             except Exception as notify_err:
                 logger.debug(f"[平仓·告警] 钉钉通知失败: {notify_err}")
+            try:
+                from app.notifier.feishu import send_text as _feishu
+                _feishu(
+                    f"🚨 [平仓阻塞·Task#34] {position.symbol} {position.direction.value} "
+                    f"连续{fail_count}次平仓失败→标记blocked\n原因: {_err_msg[:120]}"
+                )
+            except Exception:
+                pass
+        elif cooldown_min:
+            logger.error(
+                f"[平仓] {position.symbol} {position.direction.value} 下单失败 "
+                f"({fail_count}/{_CLOSE_BLOCK_THRESHOLD}) → 冷却 {cooldown_min}min, "
+                f"保留本地持仓状态: {e}"
+            )
         else:
             logger.error(
-                f"[平仓] {position.symbol} 下单失败 ({close_fail_count}/{max_retries})，"
-                f"保留本地持仓状态: {e}"
+                f"[平仓] {position.symbol} {position.direction.value} 下单失败 "
+                f"({fail_count}/{_CLOSE_BLOCK_THRESHOLD})，保留本地持仓状态: {e}"
             )
         return
 
@@ -3920,27 +4806,83 @@ def _close_position(scheduler, position: Position, current_price: float, exit_re
             if not order_confirmed:
                 logger.warning(
                     f"[平仓·未确认] {position.symbol} futu_order_id={close_futu_id} "
-                    f"8s 内未确认成交，标记为 STALE，等待下次扫描确认"
+                    f"8s 内未确认成交，取消 LIMIT 并降级为 MARKET 单"
                 )
-                tracker.update_order_state(close_futu_id, OrderState.STALE)
-                meta['_close_order_unconfirmed'] = True
-                meta['_close_order_submitted'] = True
-                meta['_close_futu_order_id'] = close_futu_id
-                meta['_close_exit_reason'] = exit_reason.value
-                meta['_close_pnl'] = pnl
-                meta['_close_pnl_pct'] = pnl_pct
-                meta['_close_current_price'] = current_price
-                position.metadata = meta
-                
-                # 同步到 DB（保持持仓状态）
+                # P0-fix (2026-06-15): 取消未成交 LIMIT 单，提交 MARKET 单兜底
                 try:
-                    if hasattr(scheduler, 'trade_store') and scheduler.trade_store:
-                        scheduler.trade_store.upsert_open_position(
-                            position, source="scheduler", action="close_order_unconfirmed"
+                    from futu import ModifyOrderOp
+                    scheduler.execution_engine.broker_adapter.trade_ctx.modify_order(
+                        modify_order_op=ModifyOrderOp.CANCEL,
+                        order_id=close_futu_id,
+                        qty=0, price=0,
+                        trd_env=trd_env_f,
+                    )
+                    logger.info(f"[平仓·降级] {position.symbol} LIMIT 单 {close_futu_id} 已取消")
+                except Exception as _cancel_err:
+                    logger.debug(f"[平仓·降级] 取消 LIMIT 失败 (可能已成交): {_cancel_err}")
+
+                # 提交 MARKET 兜底单
+                try:
+                    _mkt_order = Order(
+                        client_order_id=f"{position.symbol}_mkt_close_{int(time.time())}_{uuid.uuid4().hex[:6]}",
+                        signal_id=position.signal_id,
+                        symbol=position.symbol,
+                        direction=Direction.SHORT if position.direction == Direction.LONG else Direction.LONG,
+                        order_type=OrderType.MARKET,
+                        quantity=position.size,
+                        price=0,
+                    )
+                    _mkt_order.metadata = {'is_exit': True}
+                    _mkt_result = scheduler.execution_engine.submit_order(_mkt_order)
+                    _mkt_id = getattr(_mkt_result, 'futu_order_id', '') or ''
+                    logger.info(f"[平仓·降级] {position.symbol} MARKET 兜底单已提交: {_mkt_id}")
+
+                    # 快速确认 MARKET 单 (4s)
+                    for _mkt_attempt in range(2):
+                        _time.sleep(2)
+                        _ret_mq, _data_mq = scheduler.execution_engine.broker_adapter.trade_ctx.order_list_query(
+                            order_id=_mkt_id, trd_env=trd_env_f,
                         )
-                except Exception as e:
-                    logger.warning(f"[平仓·未确认] DB 同步失败：{e}")
-                return  # 未确认，不执行后续的持仓清理和通知
+                        if _ret_mq == RET_OK_FUTU and not _data_mq.empty:
+                            _mkt_status = str(_data_mq.iloc[0].get('order_status', ''))
+                            if 'FILLED' in _mkt_status or 'DEALT' in _mkt_status:
+                                order_confirmed = True
+                                close_futu_id = _mkt_id
+                                logger.info(f"[平仓·降级] {position.symbol} MARKET 单已成交 ✓")
+                                break
+                except Exception as _mkt_err:
+                    logger.warning(f"[平仓·降级] {position.symbol} MARKET 兜底失败: {_mkt_err}")
+                    # P0 (2026-06-16): "持仓不足" = 原 LIMIT 单已成交, 视为平仓成功
+                    # 根因: 6/15 MU LIMIT@999.6 即时成交但 8s 内未检测到,
+                    #        取消后 MARKET 单报"持仓不足"被误判为失败
+                    _mkt_err_str = str(_mkt_err)
+                    if '持仓不足' in _mkt_err_str or 'insufficient' in _mkt_err_str.lower():
+                        logger.info(
+                            f"[平仓·降级] {position.symbol} MARKET 报持仓不足 → "
+                            f"原 LIMIT 单已成交, 视为平仓成功"
+                        )
+                        order_confirmed = True
+                        # 使用原 LIMIT 单的 futu_id
+                        close_futu_id = meta.get('close_futu_order_id', close_futu_id)
+
+                if not order_confirmed:
+                    tracker.update_order_state(close_futu_id, OrderState.STALE)
+                    meta['_close_order_unconfirmed'] = True
+                    meta['_close_order_submitted'] = True
+                    meta['_close_futu_order_id'] = close_futu_id
+                    meta['_close_exit_reason'] = exit_reason.value
+                    meta['_close_pnl'] = pnl
+                    meta['_close_pnl_pct'] = pnl_pct
+                    meta['_close_current_price'] = current_price
+                    position.metadata = meta
+                    try:
+                        if hasattr(scheduler, 'trade_store') and scheduler.trade_store:
+                            scheduler.trade_store.upsert_open_position(
+                                position, source="scheduler", action="close_order_unconfirmed"
+                            )
+                    except Exception as e:
+                        logger.warning(f"[平仓·未确认] DB 同步失败：{e}")
+                    return
         except Exception as confirm_err:
             logger.warning(f"[平仓·确认异常] {position.symbol}: {confirm_err}")
             meta['_close_confirm_failed'] = str(confirm_err)
@@ -3949,6 +4891,17 @@ def _close_position(scheduler, position: Position, current_price: float, exit_re
             return
 
     # 只有确认成交后才执行后续的持仓清理和通知
+    # ── Task #34 (P0, 2026-06-16): 成交确认 → 清零退避计数 ──
+    try:
+        _clear_close_retry(position.symbol, position.direction)
+        # 同时清除 metadata 上的历史计数 (避免老记录干扰 dashboard)
+        _meta_now = getattr(position, "metadata", {}) or {}
+        for _k in ("_close_fail_count", "_close_last_error", "_close_last_failed_at"):
+            _meta_now.pop(_k, None)
+        position.metadata = _meta_now
+    except Exception as _ce:
+        logger.debug(f"[平仓·成交] {position.symbol} 清零退避计数异常: {_ce}")
+
     # 更新持仓 (标记为已平仓)
     # P0 修复 (2026-05-31): exit_time 统一用美东时间, 避免 CST 导致日期错位
     position.exit_time = now_et()
@@ -3977,8 +4930,10 @@ def _close_position(scheduler, position: Position, current_price: float, exit_re
         _sync.mark_closed_tombstone(position.symbol)
         # P0-3 加固 (2026-05-27): 立即确认 tombstone (broker 已确认成交)
         _sync.confirm_tombstone(position.symbol)
+        # ── P1 (2026-06-16): 成交后即时 sync (5s debounce) ──
+        _sync.request_immediate_sync()
     except Exception as _te:
-        logger.debug(f"[平仓] tombstone 标记失败 (不影响平仓): {_te}")
+        logger.debug(f"[平仓] tombstone/sync 标记失败 (不影响平仓): {_te}")
 
     # Phase A (2026-05-14): 通知 coordinator 释放资金 + 锁
     try:
