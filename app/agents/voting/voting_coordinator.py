@@ -826,6 +826,15 @@ VIX > 25 时，最大 Strength 不得超过 50。
             recorder = get_decision_recorder()
             symbol = result.get("symbol") or market_data.get("symbol") or market_data.get("ticker") or "UNKNOWN"
 
+            # P2.6 修复 (RFC-060): LLM投票信号此前漏挂 strategy_id
+            # 根因: voting_aggregator.aggregate() 不产出 strategy_id, decision_recorder:285
+            # 读 voting_result.get("strategy_id") 永远为 None → 338笔盘后LLM信号无标签,
+            # 把整体 IC 拖成负的假象 (实测: 无标签SHORT 40.8%WR -0.42%, 其余57%WR +0.5%).
+            # 补挂 voting_llm 标签 (与 signal_pipeline:2021 一致), 使 IC监控/策略归因/strategy_health
+            # 能识别并针对该劣质信号源动作 (P1.5门禁 + ic_hard_blocking 现可生效).
+            if not result.get("strategy_id"):
+                result["strategy_id"] = "voting_llm"
+
             # 准备 LLM 投票信息
             llm_vote = None
             if external_votes:
