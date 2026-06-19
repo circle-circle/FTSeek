@@ -13,7 +13,7 @@ from typing import Dict, Any
 from app.core.models import (
     Direction, MarketRegime, Position,
 )
-from app.execution.options_selector import OptionSelector
+from app.execution.options_selector import days_to_expiry
 
 logger = logging.getLogger(__name__)
 
@@ -508,7 +508,7 @@ def restore_positions_from_db(scheduler):
                     entry_time = datetime.fromisoformat(entry_time_str) if entry_time_str else datetime.now()
 
                     # 到期检查
-                    dte_remaining = OptionSelector.days_to_expiry(expiry_date)
+                    dte_remaining = days_to_expiry(expiry_date)
                     force_dte = int(_oc.get("FORCE_CLOSE_DTE", 2))
                     if dte_remaining <= force_dte:
                         logger.warning(

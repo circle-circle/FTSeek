@@ -34,11 +34,9 @@ from app.pipeline.signal_pipeline import (
     scan_loop,
     run_signal_scan,
     process_symbol,
-    _build_signal_from_vote,
 )
 from app.pipeline.order_executor import (
     _submit_order,
-    _submit_put_option,
     _get_order_qty,
     _get_current_price,
     _close_position,
@@ -49,10 +47,6 @@ from app.pipeline.position_monitor import (
     monitor_loop,
     restore_positions_from_db,
     _check_positions,
-    _monitor_option_positions,
-    _get_option_price,
-    _close_option_position,
-    _execute_option_close_order,
     _notify_risk_blocked,
 )
 
@@ -84,15 +78,9 @@ __all__ = [
     
     # 内部函数（保持兼容）
     "_check_positions",
-    "_monitor_option_positions",
     "_get_current_price",
-    "_get_option_price",
     "_close_position",
-    "_close_option_position",
-    "_execute_option_close_order",
     "_submit_order",
-    "_submit_put_option",
-    "_build_signal_from_vote",
     "_get_order_qty",
     "_notify_order",
     "_notify_exit",

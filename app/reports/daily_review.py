@@ -94,7 +94,7 @@ def _format_option_positions(opt_positions: List[Dict[str, Any]]) -> List[str]:
     if not opt_positions:
         return []
 
-    from app.execution.options_selector import OptionSelector
+    from app.execution.options_selector import days_to_expiry
 
     lines = ["", "[ Put期权持仓（空头代理） ]"]
     for op in opt_positions:
@@ -108,7 +108,7 @@ def _format_option_positions(opt_positions: List[Dict[str, Any]]) -> List[str]:
         is_sim       = op.get("is_simulated", False)
         sim_tag      = "[模拟]" if is_sim else "[真实]"
 
-        dte = OptionSelector.days_to_expiry(expiry) if expiry else "?"
+        dte = days_to_expiry(expiry) if expiry else "?"
         lines.append(
             f"  {symbol:<6} Put {sim_tag}  "
             f"K={strike:.0f}  到期:{expiry}(DTE={dte})\n"

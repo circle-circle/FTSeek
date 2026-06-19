@@ -427,7 +427,7 @@ def run_llm_strategy_scan(scheduler):
         validator.mark_executed(strategy.symbol, strategy.direction)
         strategy.status = "validated"
         
-        if strategy.direction in ("SHORT", "OPTIONS_PUT"):
+        if strategy.direction == "SHORT":
             try:
                 from app.execution.short_strategy import get_short_strategy_router
                 from app.core.models import SignalScore, Direction
@@ -441,18 +441,8 @@ def run_llm_strategy_scan(scheduler):
                     price = quote.get("price", 0) if quote else 0
                 except Exception:
                     price = 0
-                
-                # ADR-003 (2026-06-04): 期权已禁用, option_selector 为 None
-                if (scheduler.option_selector is not None
-                        and scheduler.option_selector.quote_ctx is None
-                        and scheduler.execution_engine
-                        and hasattr(scheduler.execution_engine, "broker_adapter")):
-                    adapter = getattr(scheduler.execution_engine, "broker_adapter", None)
-                    if adapter and adapter.is_connected() and adapter.quote_ctx:
-                        scheduler.option_selector.quote_ctx = adapter.quote_ctx
-                
                 router = get_short_strategy_router()
-                context = {"price": price, "vix": 20.0, "option_selector": scheduler.option_selector}  # None if disabled
+                context = {"price": price, "vix": 20.0}
                 exec_result = router.execute_signal(signal_obj, context)
                 
                 if exec_result.get("success"):
@@ -463,7 +453,7 @@ def run_llm_strategy_scan(scheduler):
             except Exception as e:
                 strategy.status = "pending_options"
                 logger.error(f"[LLM策略] 执行异常 {strategy.symbol}: {e}")
-        elif strategy.direction in ("LONG", "OPTIONS_CALL"):
+        elif strategy.direction == "LONG":
             try:
                 from app.core.models import SignalScore, Direction, MarketRegime
                 
@@ -483,8 +473,13 @@ def run_llm_strategy_scan(scheduler):
                 
                 if has_short_proxy and short_proxy_pos:
                     logger.info(f"[LLM策略] 正在自动平仓 Short Proxy: {short_proxy_pos.symbol}")
-                    from app.pipeline.position_monitor import _close_option_position
-                    _close_option_position(scheduler, short_proxy_pos, reason="LOGIC_REVERSAL", current_option_price=0)
+                    from app.pipeline.order_executor import _close_position, _get_current_price
+                    from app.core.models import ExitReason
+                    _cp = _get_current_price(scheduler, short_proxy_pos.symbol)
+                    if _cp and _cp > 0:
+                        _close_position(scheduler, short_proxy_pos, _cp, ExitReason.STRUCTURE_EXIT)
+                    else:
+                        logger.warning(f"[LLM策略] 无法获取 {short_proxy_pos.symbol} 当前价格, 跳过平仓")
                     strategy.status = "closed_short_proxy"
                     continue
                 

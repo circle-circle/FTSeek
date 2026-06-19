@@ -23,7 +23,7 @@ from app.core.models import (
     Order, OrderType, OrderState, Position,
     TradeEvent, ExitReason, AlertLevel,
 )
-from app.execution.options_selector import OptionSelector
+
 from app.data.adaptive_polling import StockTier
 from app.storage.rejection_logger import get_rejection_logger
 from app.execution.twap_executor import (
@@ -1502,191 +1502,9 @@ def _get_order_qty(scheduler, symbol: str, atr: float = 0, direction: str = "LON
 
 
 # ═══════════════════════════════════════════════════════════════════
-#  期权下单
+#  [DEPRECATED] 期权下单已禁用 (ADR-003, 2026-05-21)
 # ═══════════════════════════════════════════════════════════════════
-
-def _submit_put_option(scheduler, symbol: str, signal: SignalScore, context: Dict[str, Any]):
-    """SHORT 信号处理：买入 ATM Put 期权替代卖空"""
-    try:
-        from app.core.config_container import get_config
-        _oc = get_config().get_section("options", {})
-    except Exception:
-        _oc = {}
-
-    # P0 加固 (2026-05-24): 期权硬封锁 — options.enabled=False 时绝对禁止期权下单
-    # 根因: 旧逻辑在 enabled=False + stock_short=True 时仍继续执行期权下单，
-    #        导致 5/21-5/22 期间 SHORT_PROXY_OPTION 仍产生 $30,237 亏损。
-    # 修复: enabled=False 直接 return，做空路由由上层调用方处理（正股做空路径）。
-    if not _oc.get("ENABLED", True):
-        logger.warning(
-            f"[期权·硬封锁] {symbol} OPTIONS_ENABLED=False，禁止期权下单。"
-            f"做空请使用正股做空路径。"
-        )
-        return
-
-    price = context.get("price", 0)
-    if price <= 0:
-        logger.warning(f"[期权] {symbol} 价格为 0，取消期权下单")
-        return
-
-    # 资金 SSOT 修复 (2026-04-30): 优先使用百分比，自动适配模拟盘/实盘
-    max_cost_pct = float(_oc.get("MAX_COST_PCT", 0.005))  # 默认 0.5% 总资金
-    max_cost_abs = float(_oc.get("MAX_OPTION_COST", 2000))  # 向下兼容
-    # 如果配置了百分比，从 capital_safety 获取总资金
-    try:
-        from app.risk.capital_safety import get_capital_safety_system
-        capital = get_capital_safety_system()
-        total_equity = capital._state.current_equity if capital._state.current_equity > 0 else max_cost_abs / max_cost_pct
-        max_cost = max(max_cost_abs, total_equity * max_cost_pct)
-    except Exception:
-        max_cost = max_cost_abs
-    min_dte   = int(_oc.get("MIN_DTE", 7))
-    max_dte   = int(_oc.get("MAX_DTE", 21))
-
-    # 尝试注入 quote_ctx（execution_engine 已连接时）
-    if (scheduler.option_selector.quote_ctx is None
-            and scheduler.execution_engine
-            and hasattr(scheduler.execution_engine, "broker_adapter")):
-        adapter = getattr(scheduler.execution_engine, "broker_adapter", None)
-        if adapter and adapter.is_connected() and adapter.quote_ctx:
-            scheduler.option_selector.quote_ctx = adapter.quote_ctx
-
-    # 查询 ATM Put 合约
-    contract = scheduler.option_selector.get_atm_put(
-        symbol, price, min_dte=min_dte, max_dte=max_dte
-    )
-    if contract is None:
-        logger.error(f"[期权] {symbol} 无法获取 Put 期权合约，放弃 SHORT 信号")
-        return
-
-    # 计算手数
-    qty = OptionSelector.calc_option_cost(contract, max_cost)
-    cost_total = qty * contract.last_price * 100
-
-    logger.info(
-        f"[期权] {symbol} 买入 Put {contract.option_code} "
-        f"qty={qty} price=${contract.last_price:.2f} "
-        f"K={contract.strike_price} expiry={contract.expiry_date} "
-        f"DTE={contract.dte} cost≈${cost_total:.0f} "
-        f"{'[模拟]' if contract.is_simulated else '[真实]'}"
-    )
-
-    # 下单
-    try:
-        adapter = None
-        if scheduler.execution_engine and hasattr(scheduler.execution_engine, "broker_adapter"):
-            adapter = getattr(scheduler.execution_engine, "broker_adapter", None)
-
-        if adapter:
-            order_result = adapter.submit_option_order(
-                option_code=contract.option_code,
-                qty=qty,
-                price=contract.ask,  # 以 ask 价买入（确保成交）
-                direction="BUY",
-            )
-        else:
-            order_result = {
-                "order_id": f"OPT_{contract.option_code}_BUY",
-                "futu_order_id": f"SIM_{contract.option_code[:20]}",
-                "status": "simulated_fill",
-            }
-
-        logger.info(f"[期权] 下单结果：{order_result}")
-
-        # 只有真实成交/提交成功才创建持仓，拒绝/失败时跳过防止幽灵仓
-        if order_result.get("status") not in ("submitted", "filled", "simulated_fill"):
-            logger.warning(f"[期权] {symbol} 下单未成功 (status={order_result.get('status')})，跳过持仓创建")
-            return
-
-    except Exception as e:
-        logger.error(f"[期权] {symbol} 期权下单异常：{e}", exc_info=True)
-        return
-
-    # 写入 option_positions 表
-    try:
-        scheduler.trade_store.upsert_option_position({
-            "symbol":             symbol,
-            "option_code":        contract.option_code,
-            "direction":          "SHORT_PROXY",
-            "qty":                qty,
-            "entry_price":        contract.last_price,
-            "strike_price":       contract.strike_price,
-            "expiry_date":        contract.expiry_date,
-            "entry_time":         now_et().isoformat(),
-            "cost_total":         cost_total,
-            "signal_strength":    signal.strength,
-            "signal_confidence":  signal.confidence,
-            "is_simulated":       contract.is_simulated,
-        })
-    except Exception as e:
-        logger.warning(f"[期权] 写入期权持仓记录失败：{e}")
-
-    # 在 position_store 中登记占位持仓（供监控循环识别）
-    try:
-        position = Position(
-            strategy_id="voting_llm_option",
-            # Task #15 (2026-05-27): 期权路径补 trace_id / signal_id 以贯通全链路
-            signal_id=getattr(signal, "signal_id", "") or "",
-            trace_id=getattr(signal, "trace_id", "") or "",
-            symbol=symbol,
-            direction=Direction.SHORT,
-            size=float(qty),
-            avg_entry_price=contract.last_price,
-            initial_sl=contract.last_price * (1 - float(_oc.get("STOP_LOSS_RATIO", 0.3))),
-            initial_tp=contract.last_price * float(_oc.get("TAKE_PROFIT_RATIO", 2.0)),
-            current_sl=contract.last_price * (1 - float(_oc.get("STOP_LOSS_RATIO", 0.3))),
-            take_profit_levels=[
-                {"ratio": 1.0, "price": contract.last_price * float(_oc.get("TAKE_PROFIT_RATIO", 2.0))},
-            ],
-            time_stop_hours=contract.dte * 24,
-            market_regime=signal.market_regime,
-        )
-        position.entry_time = now_et()
-        # 在 metadata 中标记为期权持仓 + 来源
-        position.metadata = {
-            "is_option":    True,
-            "option_code":  contract.option_code,
-            "strike_price": contract.strike_price,
-            "expiry_date":  contract.expiry_date,
-            "dte":          contract.dte,
-            "cost_total":   cost_total,
-            "is_simulated": contract.is_simulated,
-            "source":       "voting_llm_option",  # P0 修复：使用规范命名，确保正确识别为 AUTO_MAIN
-        }
-        scheduler.position_store.add(symbol, position)
-    except Exception as e:
-        logger.warning(f"[期权] 登记期权持仓到内存失败：{e}")
-
-    # P0 修复 (2026-05-21): 期权路径缺少 post_trade_hook 调用
-    # 与 _submit_order LONG/SHORT 对齐，确保归因/mirror/push 副作用执行
-    try:
-        from app.pipeline.post_trade_hook import on_position_opened
-        on_position_opened(position, signal, context or {}, scheduler)
-    except Exception as _pte:
-        logger.debug(f"[PostTradeHook·Option] 提交失败 (不影响下单): {_pte}")
-
-    # 冷却
-    scheduler._set_cooldown(symbol)
-
-    # 事件记录
-    scheduler.event_store.append(TradeEvent(
-        event_type="option_order_submitted",
-        signal_id=signal.signal_id,
-        order_id=order_result.get("order_id", ""),
-        data={
-            "symbol":        symbol,
-            "option_code":   contract.option_code,
-            "direction":     "SHORT_PROXY",
-            "qty":           qty,
-            "price":         contract.last_price,
-            "strike":        contract.strike_price,
-            "expiry":        contract.expiry_date,
-            "dte":           contract.dte,
-            "cost_total":    cost_total,
-        },
-        source="scheduler",
-        severity=AlertLevel.INFO,
-    ))
+# _submit_put_option 函数已删除。做空仅支持正股做空路径。
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -1700,13 +1518,8 @@ def _try_direct_short_only(scheduler, symbol: str, signal: SignalScore, context:
 
 
 def _try_direct_short_with_fallback(scheduler, symbol: str, signal: SignalScore, context: Dict[str, Any]):
-    """优先直接卖空，失败降级买 Put"""
-    try:
-        # 尝试直接卖空
-        _submit_order(scheduler, symbol, signal, context, None)
-    except Exception as e:
-        logger.warning(f"[SHORT] {symbol} 直接卖空失败，降级买 Put: {e}")
-        _submit_put_option(scheduler, symbol, signal, context)
+    """直接卖空（期权降级路径已移除）"""
+    _submit_order(scheduler, symbol, signal, context, None)
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -2280,63 +2093,11 @@ def _execute_short(scheduler, symbol: str, signal: SignalScore, context: Dict[st
             or ""
         )
 
-    # P0 加固 (2026-05-24): 做空路由修复 — 模拟盘也走正股做空
-    # 根因: 旧逻辑 `stock_short_enabled and not is_sim` 导致模拟盘永远跳过正股做空，
-    #        直接走 _submit_put_option → 被硬封锁 return → SHORT 信号静默丢弃
-    # 修复: simulated_mode_force_options=false 时，模拟盘也尝试正股做空
-    try_direct = False
-    options_disabled = False
+    # SHORT 做空路由：仅支持正股做空（期权路径已移除）
     try:
-        from app.core.config_container import get_config
-        cfg = get_config()
-        stock_short_enabled = cfg.get_dotted("options.short_strategy.stock_short.enabled", False)
-        force_options = cfg.get_dotted("options.short_strategy.simulated_mode_force_options", False)
-        options_enabled = cfg.get_dotted("options.enabled", True)
-        options_disabled = not options_enabled
-        is_sim = cfg.is_simulated() if hasattr(cfg, 'is_simulated') else True
-        if stock_short_enabled:
-            # 非模拟盘 → 直接做空
-            # 模拟盘 + force_options=false → 也直接做空 (Futu 模拟盘已支持)
-            # 模拟盘 + force_options=true → 走期权路径
-            if not is_sim or not force_options:
-                try_direct = True
-    except Exception as _silent_e:
-        logger.debug(f"[silent_except:order_executor.py] {_silent_e}")
-
-    if try_direct:
-        try:
-            _execute_stock_short(scheduler, symbol, signal, context, voting_result)
-            return
-        except Exception as e:
-            logger.warning(f"[做空] {symbol} 正股做空失败，降级到 Put 期权: {e}")
-            # P0-3 同步修复 (2026-05-03): 清理可能已添加的幽灵仓
-            try:
-                scheduler.position_store.remove(symbol)
-            except (KeyError, Exception) as _silent_e:
-                logger.debug(f"[silent_except:order_executor.py] {_silent_e}")
-
-    # 降级路径: Put 期权 (仅在期权启用时有效)
-    if options_disabled:
-        logger.warning(
-            f"[做空·路由终止] {symbol} 正股做空不可用/失败，且期权已禁用(options.enabled=False)，"
-            f"SHORT 信号放弃执行"
-        )
-        return
-    try:
-        if hasattr(scheduler, 'option_selector') and scheduler.option_selector is not None:
-            if (scheduler.option_selector.quote_ctx is None
-                    and scheduler.execution_engine
-                    and hasattr(scheduler.execution_engine, "broker_adapter")):
-                adapter = getattr(scheduler.execution_engine, "broker_adapter", None)
-                if adapter and adapter.is_connected() and adapter.quote_ctx:
-                    scheduler.option_selector.quote_ctx = adapter.quote_ctx
-            context["option_selector"] = scheduler.option_selector
-        else:
-            logger.debug(f"[做空] {symbol} option_selector 未初始化，将使用模拟模式")
-
-        _submit_put_option(scheduler, symbol, signal, context)
+        _execute_stock_short(scheduler, symbol, signal, context, voting_result)
     except Exception as e:
-        logger.error(f"[做空] {symbol} Put 期权降级也失败: {e}", exc_info=True)
+        logger.error(f"[做空] {symbol} 正股做空失败: {e}", exc_info=True)
 
 
 def _execute_stock_short(scheduler, symbol: str, signal: SignalScore, context: Dict[str, Any], voting_result: Dict = None) -> None:

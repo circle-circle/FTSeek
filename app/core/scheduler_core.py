@@ -220,10 +220,6 @@ class TradingScheduler:
         # 保留 news 属性别名，兼容旧引用
         self.news = self.news_provider
 
-        # ADR-003 (2026-06-04): 期权已禁用, 不再初始化 OptionSelector
-        self.quote_ctx_for_options = None
-        self.option_selector = None
-
         # 多模型投票
         self.voting_coordinator = VotingCoordinator(
             config=VotingConfig.get_default_config(),
@@ -299,13 +295,6 @@ class TradingScheduler:
             if broker:
                 self.risk_engine.broker_adapter = broker
                 logger.info("[调度器] broker_adapter 已注入 RiskEngine (方向敞口拆分已激活)")
-
-        # ADR-003 (2026-06-04): 期权已禁用, 跳过 option_selector quote_ctx 注入
-        # if self.execution_engine:
-        #     ba = getattr(self.execution_engine, 'broker_adapter', None)
-        #     if ba and getattr(ba, 'quote_ctx', None):
-        #         self.quote_ctx_for_options = ba.quote_ctx
-        #         self.option_selector.quote_ctx = ba.quote_ctx
 
         # 持久化交易记录 (F18: 走 paths.py)
         from app.core.paths import get_trade_records_db
@@ -1572,20 +1561,6 @@ class TradingScheduler:
             logger.info("[调度器] 归因数据已刷新")
         except Exception as _silent_e:
             logger.warning(f"[silent_except:scheduler_core.py] {_silent_e}")
-        # P0 修复 (2026-04-30): 关闭 Futu 连接设超时，防止网络调用阻塞 shutdown
-        if hasattr(self, 'quote_ctx_for_options') and self.quote_ctx_for_options:
-            try:
-                import threading
-                def _close_ctx():
-                    try:
-                        self.quote_ctx_for_options.close()
-                    except Exception as e:
-                        logger.debug("[调度器] 关闭期权行情上下文失败: %s", e)
-                t = threading.Thread(target=_close_ctx, daemon=True)
-                t.start()
-                t.join(timeout=3)
-            except Exception as e:
-                logger.debug("[调度器] 期权行情上下文关闭线程异常: %s", e)
         logger.info("[调度器] 服务停止")
 
     def trigger_immediate_scan(self, symbol: str, reason: str = "event"):

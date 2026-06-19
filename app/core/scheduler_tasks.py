@@ -39,7 +39,6 @@ from app.pipeline.order_executor import (
     _close_position,
     _get_current_price,
     _get_order_qty,
-    _submit_put_option,
     _close_position_for_conflict,
     _close_short_for_long,
     _close_long_for_short,
@@ -57,10 +56,6 @@ from app.pipeline.position_monitor import (
     restore_positions_from_db,
     _update_capital_safety,
     _check_positions,
-    _monitor_option_positions,
-    _get_option_price,
-    _close_option_position,
-    _execute_option_close_order,
     _notify_risk_blocked,
 )
 
@@ -84,7 +79,7 @@ __all__ = [
     "_run_signal_scan_impl", "_generate_technical_signal",
     # order_executor
     "_submit_order", "_close_position", "_get_current_price",
-    "_get_order_qty", "_submit_put_option",
+    "_get_order_qty",
     "_close_position_for_conflict", "_close_short_for_long", "_close_long_for_short",
     "_try_direct_short_only", "_try_direct_short_with_fallback",
     "_update_trade_attribution", "_insert_trade_attribution",
@@ -92,8 +87,6 @@ __all__ = [
     # position_monitor
     "monitor_loop", "restore_positions_from_db",
     "_update_capital_safety", "_check_positions",
-    "_monitor_option_positions", "_get_option_price",
-    "_close_option_position", "_execute_option_close_order",
     "_notify_risk_blocked",
     # llm_pipeline
     "run_llm_strategy_scan", "run_llm_backtest",

@@ -29,7 +29,6 @@ logger = logging.getLogger(__name__)
 # ============================================================
 class ShortMethod(str, Enum):
     """做空实现方式"""
-    OPTIONS_PUT = "options_put"       # 买入 Put 期权 (模拟盘/实盘)
     STOCK_SHORT = "stock_short"       # 直接做空正股 (实盘专用)
 
 
@@ -73,26 +72,7 @@ def load_short_config() -> Dict[str, Any]:
 
     # 最终降级 (仅当 ConfigContainer 完全不可用时)
     return {
-        "default_method": "options_put",
-        "simulated_mode_force_options": True,
-        "market_condition_overrides": {
-            "high_volatility": "options_put",
-            "low_liquidity": "options_put",
-            "earnings_season": "options_put",
-            "normal": None,
-        },
-        "options": {
-            "max_holding_hours": 72,
-            "profit_target_pct": 0.15,
-            "stop_loss_pct": -0.25,
-            "preferred_dte": 30,
-            "min_days_to_expiry": 7,
-            "delta_range": [-0.40, -0.30],
-            "min_open_interest": 100,
-            "max_bid_ask_spread_pct": 0.05,
-            "price_range": [0.50, 5.00],
-            "quick_exit": {"enabled": True, "trigger_profit": 0.08, "trailing_stop": 0.05},
-        },
+        "default_method": "stock_short",
         "stock_short": {
             "enabled": True,
             "stop_loss_pct": -0.08,
@@ -109,176 +89,6 @@ def load_short_config() -> Dict[str, Any]:
         },
     }
 
-
-# ============================================================
-#  期权做空策略 (快进快出)
-# ============================================================
-class OptionsShortStrategy:
-    """期权做空策略 - 快进快出"""
-
-    @property
-    def method(self) -> ShortMethod:
-        return ShortMethod.OPTIONS_PUT
-
-    def __init__(self, config: Dict[str, Any]):
-        self.config = config.get("options", {})
-        self.max_holding_hours = self.config.get("max_holding_hours", 72)
-        self.profit_target_pct = self.config.get("profit_target_pct", 0.15)
-        self.stop_loss_pct = abs(self.config.get("stop_loss_pct", -0.25))
-        self.quick_exit_config = self.config.get("quick_exit", {})
-        self._peak_profits: Dict[str, float] = {}  # symbol -> peak_pnl_pct
-
-    def can_execute(self, symbol: str, signal: Any, context: Dict) -> Tuple[bool, str]:
-        """检查是否可以执行期权做空"""
-        # 模拟盘总是可以
-        try:
-            from app.core.config_container import get_config
-            if get_config().is_simulated():
-                return True, "模拟盘模式"
-        except Exception:
-            pass
-
-        # 实盘检查期权权限
-        # TODO: 检查账户是否支持期权交易
-        return True, "期权交易可用"
-
-    def execute(self, symbol: str, signal: Any, context: Dict) -> Dict[str, Any]:
-        """
-        执行期权做空
-
-        流程:
-        1. 选择合适 Put 合约 (DTE 30-45 天, Delta -0.30 ~ -0.40)
-        2. 计算购买数量
-        3. 下单
-        4. 记录持仓
-        """
-        from app.execution.options_selector import OptionSelector
-
-        # 选择合约
-        option_selector = context.get("option_selector")
-        if option_selector is None:
-            return {"success": False, "reason": "期权选择器不可用"}
-        max_cost = self.config.get("max_cost_per_contract", 2000)
-
-        # 获取正股当前价格（用于期权 ATM 匹配）
-        current_price = context.get("price", 0)
-
-        # 获取 ATM Put (注: get_atm_put 接受 min_dte/max_dte, 不接受 dte_target)
-        preferred_dte = self.config.get("preferred_dte", 30)
-        min_dte = self.config.get("min_days_to_expiry", 7)
-        contract = option_selector.get_atm_put(
-            symbol=symbol,
-            current_price=current_price,
-            min_dte=min_dte,
-            max_dte=preferred_dte + 10,  # 放宽上限让选择器有空间
-        )
-
-        if contract is None:
-            return {"success": False, "reason": "无法获取 Put 期权合约"}
-
-        # 计算数量
-        qty = OptionSelector.calc_option_cost(contract, max_cost)
-        if qty <= 0:
-            return {"success": False, "reason": f"计算数量为 0 (max_cost=${max_cost})"}
-
-        # 构建订单信息
-        order_info = {
-            "success": True,
-            "method": "options_put",
-            "symbol": symbol,
-            "option_code": contract.option_code,
-            "strike": contract.strike_price,
-            "expiry": contract.expiry_date,
-            "quantity": qty,
-            "estimated_cost": contract.ask * qty * 100,
-            "stop_loss_pct": self.stop_loss_pct,
-            "profit_target_pct": self.profit_target_pct,
-            "max_holding_hours": self.max_holding_hours,
-            "entry_price": current_price,
-            "entry_time": datetime.now().isoformat(),
-            "contract_type": "PUT",
-            "direction": "BUY",
-        }
-
-        logger.info(
-            f"[期权做空] {symbol} 买入 Put {contract.option_code} "
-            f"数量={qty}  Strike=${contract.strike_price:.2f} "
-            f"到期={contract.expiry_date} 预估成本=${order_info['estimated_cost']:.2f}"
-        )
-
-        return order_info
-
-    def close(self, position: Dict) -> Dict[str, Any]:
-        """平仓期权持仓"""
-        symbol = position.get("symbol", "")
-        option_code = position.get("option_code", "")
-
-        logger.info(f"[期权平仓] {symbol} 平仓 {option_code}")
-
-        # 清除峰值跟踪
-        self._peak_profits.pop(symbol, None)
-
-        return {
-            "success": True,
-            "symbol": symbol,
-            "option_code": option_code,
-            "close_time": datetime.now().isoformat(),
-        }
-
-    def check_exit(self, position: Dict, current_price: float) -> Tuple[bool, str]:
-        """
-        检查是否应该退出期权持仓
-
-        退出条件 (满足任一即退出):
-        1. 达到目标盈利 15%
-        2. 从最高点回撤 5% (移动止盈)
-        3. 持仓超过 72 小时
-        4. 触发止损 25%
-        """
-        symbol = position.get("symbol", "")
-        entry_price = position.get("entry_price", 0)
-        entry_time_str = position.get("entry_time", "")
-        current_pnl_pct = position.get("pnl_pct", 0)
-
-        if entry_price <= 0:
-            return False, ""
-
-        # 计算持仓时间
-        holding_hours = 0
-        if entry_time_str:
-            try:
-                entry_time = datetime.fromisoformat(entry_time_str)
-                holding_hours = (datetime.now() - entry_time).total_seconds() / 3600
-            except (ValueError, TypeError):
-                pass
-
-        # 更新最高盈利
-        if current_pnl_pct > self._peak_profits.get(symbol, 0):
-            self._peak_profits[symbol] = current_pnl_pct
-        peak = self._peak_profits.get(symbol, 0)
-
-        # 1. 目标盈利达到
-        if current_pnl_pct >= self.profit_target_pct:
-            return True, f"目标盈利达到 ({current_pnl_pct:.1%} >= {self.profit_target_pct:.1%})"
-
-        # 2. 移动止盈触发
-        if self.quick_exit_config.get("enabled", True):
-            trigger = self.quick_exit_config.get("trigger_profit", 0.08)
-            trailing = self.quick_exit_config.get("trailing_stop", 0.05)
-            if peak >= trigger:
-                drawdown = peak - current_pnl_pct
-                if drawdown >= trailing:
-                    return True, f"移动止盈 (最高 {peak:.1%} → 当前 {current_pnl_pct:.1%}, 回撤 {drawdown:.1%})"
-
-        # 3. 持仓超时
-        if holding_hours >= self.max_holding_hours:
-            return True, f"持仓超时 ({holding_hours:.1f}h >= {self.max_holding_hours}h)"
-
-        # 4. 止损触发
-        if current_pnl_pct <= -self.stop_loss_pct:
-            return True, f"止损触发 ({current_pnl_pct:.1%} <= -{self.stop_loss_pct:.1%})"
-
-        return False, ""
 
 
 # ============================================================
@@ -623,83 +433,24 @@ class ShortStrategyRouter:
     """
     做空策略路由器
 
-    根据配置和市场条件动态选择做空策略。
-    模拟盘强制使用期权，实盘可切换。
+    ADR-003: 期权已禁用，仅使用正股做空。
     """
 
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         self.config = config or load_short_config()
 
-        # 策略实例
+        # 策略实例 — 仅正股做空
         self.strategies: Dict[ShortMethod, ShortExecutionStrategy] = {
-            ShortMethod.OPTIONS_PUT: OptionsShortStrategy(self.config),
             ShortMethod.STOCK_SHORT: StockShortStrategy(self.config),
         }
 
         logger.info(
-            f"[做空路由器] 已初始化 | "
-            f"默认方法={self.config.get('default_method', self.config.get('default_short_method', 'N/A'))} | "
-            f"模拟盘强制期权={self.config['simulated_mode_force_options']}"
+            f"[做空路由器] 已初始化 | 方法=stock_short"
         )
 
     def select_strategy(self, symbol: str, signal: Any, context: Dict) -> ShortExecutionStrategy:
-        """
-        动态选择做空策略
-
-        选择逻辑:
-        1. 模拟盘 → 强制期权
-        2. 市场条件覆盖 (高波动/低流动性 → 期权)
-        3. 使用默认配置
-        """
-        # 模拟盘强制使用期权
-        if self._is_simulated_mode():
-            return self.strategies[ShortMethod.OPTIONS_PUT]
-
-        # 市场条件覆盖
-        market_condition = self._assess_market_conditions(symbol, context)
-        override_str = self.config.get("market_condition_overrides", {}).get(market_condition)
-
-        if override_str:
-            method = ShortMethod(override_str)
-            logger.info(f"[做空路由器] {symbol} 市场条件={market_condition} → 覆盖为 {method.value}")
-            return self.strategies[method]
-
-        # 使用默认
-        default = ShortMethod(self.config.get("default_method", self.config.get("default_short_method", "options_put")))
-        return self.strategies[default]
-
-    def _is_simulated_mode(self) -> bool:
-        """检查是否为模拟盘模式"""
-        if self.config.get("simulated_mode_force_options", True):
-            return True
-        try:
-            from app.core.config_container import get_config
-            if get_config().is_simulated():
-                return True
-        except Exception:
-            pass
-        return False
-
-    def _assess_market_conditions(self, symbol: str, context: Dict) -> str:
-        """评估市场条件"""
-        vix = context.get("vix", 20)
-        volume_ratio = context.get("volume_ratio", 1.0)
-
-        if vix > 30:
-            return "high_volatility"
-        if volume_ratio < 0.5:
-            return "low_liquidity"
-
-        # 检查是否在财报季
-        try:
-            from datetime import datetime
-            month = datetime.now().month
-            if month in [1, 4, 7, 10]:  # 财报月
-                return "earnings_season"
-        except Exception:
-            pass
-
-        return "normal"
+        """返回正股做空策略（期权路径已移除）"""
+        return self.strategies[ShortMethod.STOCK_SHORT]
 
     def execute_signal(self, signal, context: Optional[Dict] = None) -> Dict[str, Any]:
         """P0 修复 (2026-04-16): 便捷方法，供 app.pipeline 直接调用

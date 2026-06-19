@@ -134735,3 +134735,4 @@ API: http://localhost:8901
 2026-06-19 18:45:11,309 [ftseek_us.config_mgmt.hot_reloader] INFO: [HotReloader] ✅ 配置已热重载 (第 2 次)
 2026-06-19 18:45:11,448 [app.core.config_container] INFO: [ConfigContainer] 已加载 62 个配置节
 2026-06-19 18:45:11,448 [ftseek_us.main] INFO: [HotReloader] ✅ ConfigContainer 已同步
+2026-06-19 21:49:31,002 [ftseek_us.config_mgmt.drift_detector] WARNING: [DriftDetector] ⚠️ 检测到配置漂移! hash: 49bcac7565a1450f → 70ddf7766d121b8b | keys: 1501 → 1501

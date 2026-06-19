@@ -38,14 +38,12 @@ class StrategyNotifier:
             logger.warning("[策略通知] Webhook 未配置, 跳过推送")
             return False
         
-        direction_emoji = {"LONG": "📈", "SHORT": "📉", "OPTIONS_PUT": "🔻", "OPTIONS_CALL": "🔺"}
+        direction_emoji = {"LONG": "📈", "SHORT": "📉"}
         emoji = direction_emoji.get(strategy.get("direction", ""), "📊")
         
         direction_cn = {
             "LONG": "买入正股",
-            "SHORT": "看跌(期权)",
-            "OPTIONS_PUT": "买入Put",
-            "OPTIONS_CALL": "买入Call",
+            "SHORT": "看跌(正股)",
         }.get(strategy.get("direction", ""), strategy.get("direction", ""))
         
         confidence_pct = int(strategy.get("confidence", 0) * 100)

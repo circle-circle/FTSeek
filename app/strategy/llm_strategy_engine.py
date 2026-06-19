@@ -72,7 +72,7 @@ class OrderStrategy:
     
     # 策略核心
     symbol: str = ""                    # US.AAPL
-    direction: str = ""                 # LONG / SHORT / OPTIONS_PUT / OPTIONS_CALL
+    direction: str = ""                 # LONG / SHORT
     confidence: float = 0.0             # 0-1
     reasoning: str = ""                 # LLM 推理摘要 (对应 second_order_insight)
     
@@ -112,10 +112,10 @@ class OrderStrategy:
     
     def to_vote_dict(self) -> Dict[str, Any]:
         """转换为投票系统兼容格式 (用于注入共识引擎)"""
-        # 方向映射: LONG → +1, SHORT/OPTIONS_PUT → -1
-        if self.direction in ("LONG", "OPTIONS_CALL"):
+        # 方向映射: LONG → +1, SHORT → -1
+        if self.direction == "LONG":
             vote_direction = 1
-        elif self.direction in ("SHORT", "OPTIONS_PUT"):
+        elif self.direction == "SHORT":
             vote_direction = -1
         else:
             vote_direction = 0
