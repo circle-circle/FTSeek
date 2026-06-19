@@ -44,6 +44,9 @@ class SignalScorer:
             "risk_reward": 0.10,
         }
         
+        # Task #4: 权重版本缓存
+        self._weight_version_cache: Optional[str] = None
+        
         # 负面因子 (优化版 - 分阶段扣分)
         self.negative_factors = {
             "major_event_upcoming": -10,  # 重大事件 (分阶段)
@@ -183,8 +186,15 @@ class SignalScorer:
         return signal
     
     def _get_adaptive_weights(self, market_regime: str, strategy_id: str) -> Dict[str, float]:
-        """根据市场状态和策略类型返回自适应权重"""
-        weights = self.base_factor_weights.copy()
+        """根据市场状态、策略类型和历史 IC 表现返回自适应权重
+        
+        IC 反馈闭环 (2026-06-16):
+        1. regime-based 权重作为基底
+        2. 查询历史因子 IC → 负 IC 因子置零, 高 IC 因子 boost
+        3. 归一化
+        """
+        # Task #4: 使用版本化权重作为基底
+        weights = self._get_versioned_weights().copy()
         
         # 趋势市：提高趋势确认权重
         if market_regime in ["TREND_UP", "TREND_DOWN"]:
@@ -211,9 +221,96 @@ class SignalScorer:
         elif strategy_id == "ma_cross":
             weights["trend_confirm"] = 0.25
         
+        # ── IC 反馈闭环 (2026-06-16): 历史表现自动调整权重 ──
+        weights = self._apply_ic_adaptation(weights)
+        
         # 归一化
         total = sum(weights.values())
-        return {k: v/total for k, v in weights.items()}
+        if total > 0:
+            return {k: v/total for k, v in weights.items()}
+        return weights
+    
+    def _apply_ic_adaptation(self, weights: Dict[str, float]) -> Dict[str, float]:
+        """根据历史因子 IC 自动调整评分权重
+        
+        逻辑:
+        - IC < -0.05 (负相关): 权重置零 (因子方向错误，不再贡献)
+        - IC > 0.08 (正相关且显著): 权重 × 1.5 (boost 有效因子)
+        - IC 0~0.08: 保持原权重
+        - 数据不足 (<20 信号): 不调整 (保守，等积累)
+        
+        缓存: 5 分钟 TTL，避免每次评分都查 DB
+        """
+        import time as _time
+        
+        # 缓存检查 (5 min TTL)
+        _now = _time.time()
+        _cache = getattr(self, '_ic_adapt_cache', None)
+        if _cache and (_now - _cache.get('ts', 0)) < 300:
+            ic_map = _cache.get('ic_map', {})
+        else:
+            ic_map = self._fetch_factor_ic_map()
+            self._ic_adapt_cache = {'ts': _now, 'ic_map': ic_map}
+        
+        if not ic_map:
+            return weights  # 无 IC 数据，不调整
+        
+        adapted = weights.copy()
+        adjustments_log = []
+        
+        for factor, ic_data in ic_map.items():
+            ic = ic_data.get('ic', 0)
+            n = ic_data.get('count', 0)
+            
+            if n < 20:
+                continue  # 样本不足，不调整
+            
+            if ic < -0.05:
+                # 负相关因子：置零 (方向错误)
+                if adapted.get(factor, 0) > 0:
+                    adapted[factor] = 0.0
+                    adjustments_log.append(f"{factor}: IC={ic:.3f} → ZERO")
+            elif ic > 0.08:
+                # 强正相关：boost 1.5x
+                old_w = adapted.get(factor, 0.1)
+                adapted[factor] = old_w * 1.5
+                adjustments_log.append(f"{factor}: IC={ic:.3f} → BOOST ×1.5")
+        
+        if adjustments_log:
+            logger.info("[scorer·IC闭环] 权重自适应: %s", "; ".join(adjustments_log))
+        
+        return adapted
+    
+    def _fetch_factor_ic_map(self) -> Dict[str, Dict]:
+        """从 scoring_audit 获取因子级 IC 数据
+        
+        Returns: {factor_name: {"ic": float, "count": int, "pval": float}}
+        """
+        try:
+            from app.analysis.scoring_audit import ScoringAudit
+            audit = ScoringAudit()
+            factor_results = audit.audit_factor_ic(days_back=30)
+            
+            ic_map = {}
+            for item in factor_results:
+                factor = item.get("factor", "")
+                if factor:
+                    ic_map[factor] = {
+                        "ic": item.get("ic", 0),
+                        "count": item.get("count", 0),
+                        "pval": item.get("pval", 1.0),
+                        "recommendation": item.get("recommendation", "keep"),
+                    }
+            
+            if ic_map:
+                logger.debug("[scorer·IC闭环] 加载 %d 个因子 IC: %s",
+                    len(ic_map),
+                    {k: round(v['ic'], 3) for k, v in ic_map.items()}
+                )
+            return ic_map
+        except Exception as e:
+            logger.debug("[scorer·IC闭环] 因子 IC 查询失败 (静默): %s", e)
+            return {}
     
     def _apply_negative_factors_optimized(self, signal: SignalScore, context: Dict) -> int:
         """应用负面因子 - 优化版 (分阶段扣分，不过度惩罚)"""
@@ -391,3 +488,38 @@ class SignalScorer:
         confidence = max(0.3, min(0.95, 1.0 - (std_dev / 40)))
         
         return round(confidence, 2)
+
+    # ═══════════════════════════════════════════════════════════════════
+    #  Task #4: 权重版本化能力
+    # ═══════════════════════════════════════════════════════════════════
+
+    def _get_weight_version(self) -> str:
+        """获取当前使用的权重版本"""
+        try:
+            from app.core.feature_flags import FeatureFlags
+            if FeatureFlags().is_enabled("weight_v2_active"):
+                return "v2"
+        except Exception:
+            pass
+        return "v1"
+
+    def _get_versioned_weights(self) -> dict:
+        """根据版本返回对应权重"""
+        version = self._get_weight_version()
+        if version == "v2":
+            return self._get_v2_weights()
+        return self.base_factor_weights
+
+    def _get_v2_weights(self) -> dict:
+        """v2 权重 - 基于审计结果修复反向因子"""
+        # 从配置读取 v2 权重
+        try:
+            from app.core.config_container import get_config
+            config = get_config()
+            v2_weights = config.get("signal_scoring", {}).get("weights_v2", None)
+            if v2_weights and isinstance(v2_weights, dict):
+                return v2_weights
+        except Exception:
+            pass
+        # fallback 到 v1
+        return self.base_factor_weights

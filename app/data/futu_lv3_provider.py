@@ -157,6 +157,30 @@ class FutuLV3Provider:
         t = hour * 60 + minute
         return 570 <= t < 960
 
+    def _is_us_pre_market(self) -> bool:
+        """判断当前是否为美股盘前时段 (使用美东时间)
+
+        盘前交易: 美东 04:00-09:30，周一至周五
+        用于允许 _ensure_connected() 在盘前建立连接，
+        避免系统重启后 subscribe 被阻塞导致 watchdog 无法启动。
+        """
+        import pytz
+        from datetime import datetime
+
+        ET = pytz.timezone("America/New_York")
+        now_et = datetime.now(ET)
+        hour = now_et.hour
+        minute = now_et.minute
+        weekday = now_et.weekday()
+
+        # 周一至周五
+        if weekday >= 5:
+            return False
+
+        # 美东 04:00-09:30 (240-570 分钟)
+        t = hour * 60 + minute
+        return 240 <= t < 570
+
     def _verify_connection_alive(self) -> bool:
         """轻量级 TCP 存活探测 — 验证 Futu OpenD 连接实际可用。
 
@@ -210,14 +234,18 @@ class FutuLV3Provider:
         """确保已连接到 Futu OpenD
 
         非美股交易时段拒绝连接，不消耗 OpenD 槽位。
+        2026-06-17 修复: 盘前时段 (4:00-9:30 ET) 也允许连接，
+        避免系统重启后 subscribe() 被阻塞导致 watchdog 无法启动。
         """
-        if not self._is_us_market_open():
+        if not self._is_us_market_open() and not self._is_us_pre_market():
             return False
 
         if self._connected and self._quote_ctx is not None:
             # 根因修复 (2026-06-05): 验证 TCP 连接实际存活
             # Futu SDK CallClose 后 _quote_ctx 对象仍在但不可用
             if self._verify_connection_alive():
+                # 确保 watchdog 已启动（即使 subscribe 尚未调用）
+                self._start_health_watchdog()
                 return True
             # 假活状态 → 标记断连，走重连路径
             logger.warning("[FutuLV3] 连接假活 (对象存在但 TCP 已断)，触发重连")
@@ -225,7 +253,7 @@ class FutuLV3Provider:
             return self.force_reconnect()
 
         with self._lock:
-            if not self._is_us_market_open():
+            if not self._is_us_market_open() and not self._is_us_pre_market():
                 return False
             if self._connected and self._quote_ctx is not None:
                 if self._verify_connection_alive():
@@ -258,6 +286,10 @@ class FutuLV3Provider:
 
                 # 注册轻量 Push Handler (报价 + K 线累积)
                 self._setup_push_handlers()
+
+                # 启动健康守护线程 — 连接建立后立即运行
+                # 即使 subscribe() 尚未调用（如 pre-market 重连场景）
+                self._start_health_watchdog()
 
                 # 验证 LV3 权限 (获取美股快照)
                 test_ret, test_data = self._quote_ctx.get_market_snapshot(["US.AAPL"])
@@ -570,8 +602,6 @@ class FutuLV3Provider:
             logger.info(
                 f"[FutuLV3] 总订阅: {len(self._subscribed_symbols)} 只美股"
             )
-            # 根因修复: 首次订阅成功后启动健康守护线程
-            self._start_health_watchdog()
             return True
 
         except Exception as e:
@@ -960,22 +990,27 @@ class FutuLV3Provider:
 
             kl_type = kl_type_map.get(ktype, KLType.K_1M)
 
-            # P0 fix (2026-06-09): 指定 start=today 防止 OpenD 返回去年数据
-            # 根因: request_history_kline 不带 start 参数时返回 2025 年旧数据,
-            #   导致今日过滤后 0 条 → K 线数据不足告警 (31858 条/天)
-            # 修复: 日内 K 线(K_1M~K_60M)指定 start=today_et 强制返回当日数据
-            from datetime import datetime as _dk
+            # P0 fix (2026-06-09): 指定 start 防止 OpenD 返回去年数据
+            # P0 fix (2026-06-17): 放宽至 T-1 交易日, 解决开盘前 30 分钟 K 线不足 30 条
+            #   根因: start=today 在 09:30-10:00 只能获取 ≤30 条 1min K 线,
+            #   导致技术指标无法计算 → quote_only → IC 死锁
+            from datetime import datetime as _dk, timedelta as _td
             import pytz as _pz
-            today_et = _dk.now(_pz.timezone('US/Eastern')).strftime("%Y-%m-%d")
-            
+            _now_et = _dk.now(_pz.timezone('US/Eastern'))
+            today_et = _now_et.strftime("%Y-%m-%d")
+            # 计算前一交易日: Mon→Fri(-3), Tue-Fri→前一日(-1)
+            _weekday = _now_et.weekday()  # 0=Mon, 6=Sun
+            _back_days = 3 if _weekday == 0 else (2 if _weekday == 6 else 1)
+            prev_trading_day = (_now_et - _td(days=_back_days)).strftime("%Y-%m-%d")
+
             hist_kwargs = {
                 "code": futu_symbol,
                 "ktype": kl_type,
                 "max_count": count,
             }
-            # 日内 K 线: 指定日期范围, 防止 OpenD 返回旧年数据
+            # 日内 K 线: start=T-1 获取前一交易日尾盘 K 线补充缓冲区, end=today 防止未来数据
             if ktype != "K_DAY":
-                hist_kwargs["start"] = today_et
+                hist_kwargs["start"] = prev_trading_day
                 hist_kwargs["end"] = today_et
 
             ret, data, _ = self._quote_ctx.request_history_kline(**hist_kwargs)
@@ -992,9 +1027,17 @@ class FutuLV3Provider:
                         "volume": float(row.get("volume", 0)),
                         "turnover": float(row.get("turnover", 0)),
                     })
-                # Safety net: K_DAY 仍做日期校验 (不设 start, 可能含历史数据)
+                # 日期过滤:
+                # 日内 K 线: start=T-1 会包含前一交易日尾盘, 保留全部用于技术指标计算
+                #   (ORB 引擎有独立的 today 校验; 技术指标需要 ≥30 条连续 K 线)
+                # 日 K 线: 不设 start, 可能含过旧数据, 做基本过滤
                 if ktype == "K_DAY":
                     klines = [k for k in klines if k["time"].startswith(today_et)]
+                elif klines:
+                    # 日内 K 线: 仅排除非当日和非前一交易日的异常旧数据
+                    _valid_prefixes = (today_et, prev_trading_day)
+                    klines = [k for k in klines
+                              if k["time"][:10] in _valid_prefixes]
                 if not klines:
                     logger.warning(f"[FutuLV3] {symbol} history kline 无当日数据 (today={today_et}, ktype={ktype}), 返回 None")
                     return None

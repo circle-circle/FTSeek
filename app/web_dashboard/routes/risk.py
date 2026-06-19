@@ -283,7 +283,7 @@ def register(app, templates):
             return {"success": True, "message": "自动交易已暂停"}
         except Exception as e:
             logger.error(f"[RiskCmd] 暂停失败: {e}")
-            return JSONResponse(content={"success": False, "error": str(e)}, status_code=500)
+            return JSONResponse(content={"success": False, "error": "操作失败，请稍后重试"}, status_code=500)
 
     @router.post("/api/risk/resume-trading")
     async def resume_trading():
@@ -297,7 +297,7 @@ def register(app, templates):
             return {"success": True, "message": "自动交易已恢复"}
         except Exception as e:
             logger.error(f"[RiskCmd] 恢复失败: {e}")
-            return JSONResponse(content={"success": False, "error": str(e)}, status_code=500)
+            return JSONResponse(content={"success": False, "error": "操作失败，请稍后重试"}, status_code=500)
 
     @router.post("/api/risk/emergency-close")
     async def emergency_close(request: Request):
@@ -327,7 +327,12 @@ def register(app, templates):
                     status_code=403,
                 )
         else:
-            logger.warning("[RiskCmd] 紧急平仓: 未配置 EMERGENCY_CONFIRM_TOKEN, 仅依赖 CONFIRM (建议在 .env.us 配置)")
+            # P0 2026-06-15: 未配置 token 时拒绝执行, 防止误触/CSRF 一键全平
+            logger.error("[RiskCmd] 紧急平仓被拒绝: 未配置 EMERGENCY_CONFIRM_TOKEN")
+            return JSONResponse(
+                content={"success": False, "error": "紧急平仓需要先在 .env.us 配置 EMERGENCY_CONFIRM_TOKEN"},
+                status_code=503,
+            )
 
         ds = get_data_service()
         pos_raw = await ds.get_positions_raw()

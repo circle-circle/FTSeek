@@ -137,7 +137,7 @@ class TradeAnalyzer:
         try:
             # 获取当日所有已平仓交易
             trades = conn.execute(
-                "SELECT * FROM trade_records WHERE trade_date = ? AND exit_price IS NOT NULL ORDER BY id",
+                "SELECT * FROM trade_records WHERE trade_date = ? AND exit_price > 0 ORDER BY id",
                 (date,)
             ).fetchall()
             

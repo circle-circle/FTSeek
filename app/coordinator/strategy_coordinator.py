@@ -294,34 +294,37 @@ class StrategyCoordinator:
             except Exception:
                 pass
 
-            # Phase 1: 分离手动 vs 自动仓位
-            _is_protected_fn = None
+            # Task #35 (2026-06-16): 三类资本隔离 — auto / legacy_protected / manual
+            # 替代旧 "is_manual" 二分逻辑, 字段缺失 fallback 为 legacy_protected (保护用户)
             try:
-                from app.positions.source import is_protected as _ip
-                _is_protected_fn = _ip
-            except Exception:
-                pass
+                from app.positions.source import (
+                    classify_owner,
+                    OWNER_AUTO, OWNER_LEGACY_PROTECTED,
+                    OWNER_MANUAL, OWNER_MANUAL_ORPHAN,
+                )
+            except Exception as _ce:
+                logger.warning(f"[Coordinator·reconcile] classify_owner 不可用: {_ce}")
+                classify_owner = lambda _p: "legacy_protected"
+                OWNER_AUTO = "auto"
+                OWNER_LEGACY_PROTECTED = "legacy_protected"
+                OWNER_MANUAL = "manual"
+                OWNER_MANUAL_ORPHAN = "manual_orphan"
 
             by_strat_pct: Dict[str, float] = {}
             by_strat_sym: Dict[str, List[str]] = {}
+            legacy_total_pct = 0.0
             manual_total_pct = 0.0
+            auto_total_pct = 0.0
+            legacy_count = 0
             manual_count = 0
+            orphan_count = 0
+            auto_count = 0
 
             for p in positions:
-                # Phase 1: 判断是否为手动/受保护仓位
-                is_manual = False
-                if _is_protected_fn is not None:
-                    try:
-                        is_manual = _is_protected_fn(p)
-                    except Exception:
-                        pass
-                if not is_manual:
-                    # fallback: 检查 metadata
-                    meta = getattr(p, "metadata", {}) or {}
-                    source = meta.get("source", "")
-                    owner = getattr(p, "owner_strategy", None) or ""
-                    if source in ("manual", "legacy", "unknown") or owner == "manual":
-                        is_manual = True
+                try:
+                    cls = classify_owner(p)
+                except Exception:
+                    cls = OWNER_LEGACY_PROTECTED  # 兜底保护
 
                 pct = float(getattr(p, "position_pct", 0.0) or 0.0)
                 if pct == 0.0 and _equity > 0:
@@ -333,28 +336,61 @@ class StrategyCoordinator:
                         except Exception:
                             pass
 
-                if is_manual:
-                    # 手动仓位: 累计到 manual_reserved, 不进 bucket
-                    manual_total_pct += pct
-                    manual_count += 1
-                else:
-                    # 自动仓位: 正常进 bucket
+                if cls == OWNER_AUTO:
                     owner = getattr(p, "owner_strategy", None) or "main"
                     by_strat_pct[owner] = by_strat_pct.get(owner, 0.0) + pct
                     by_strat_sym.setdefault(owner, []).append(p.symbol)
+                    auto_total_pct += pct
+                    auto_count += 1
+                elif cls == OWNER_LEGACY_PROTECTED:
+                    legacy_total_pct += pct
+                    legacy_count += 1
+                elif cls == OWNER_MANUAL:
+                    manual_total_pct += pct
+                    manual_count += 1
+                elif cls == OWNER_MANUAL_ORPHAN:
+                    # manual_orphan 视同 manual 隔离 (但记录孤儿计数, 待后续补登记)
+                    manual_total_pct += pct
+                    manual_count += 1
+                    orphan_count += 1
 
-            # 同步自动仓位到 bucket 账本
+            # 同步 auto 仓位到 bucket 账本
             self.capital.reconcile_with_positions(by_strat_pct)
             self.lock.reconcile_with_positions(by_strat_sym)
 
-            # Phase 1: 同步手动仓位市值到 manual_reserved
-            if hasattr(self.capital, "set_manual_reserved"):
-                self.capital.set_manual_reserved(manual_total_pct)
+            # Task #35: 一次性更新 legacy + manual 占比 (原子, 避免 auto_pool 短暂为负)
+            if hasattr(self.capital, "set_owner_pools"):
+                self.capital.set_owner_pools(legacy_total_pct, manual_total_pct)
+            elif hasattr(self.capital, "set_manual_reserved"):
+                # 向后兼容: 老版本只有 manual 入口 → 把 legacy 也累入 manual 池, 至少
+                # 保证不被算到 auto_pool, 不会再出现负 headroom
+                self.capital.set_manual_reserved(manual_total_pct + legacy_total_pct)
 
-            if manual_count > 0:
+            # Task #35: 生成并缓存 USD 维度 auto 容量报告 (供 dashboard 读 / 验收用)
+            try:
+                if hasattr(self.capital, "auto_capacity_report") and _equity > 0:
+                    rep = self.capital.auto_capacity_report(_equity, positions)
+                    logger.info(
+                        f"[Coordinator·reconcile·Task#35] equity=${rep.total_equity:,.0f} "
+                        f"legacy={legacy_count}笔/${rep.legacy_protected_value:,.0f} "
+                        f"manual={manual_count}笔/${rep.manual_value:,.0f} "
+                        f"auto={auto_count}笔/${rep.current_auto_exposure:,.0f} "
+                        f"→ auto_pool=${rep.auto_pool:,.0f} "
+                        f"auto_headroom=${rep.auto_headroom:,.0f} ({rep.auto_headroom_pct:.1%})"
+                    )
+                    if orphan_count > 0:
+                        logger.warning(
+                            f"[Coordinator·reconcile·Task#35] manual_orphan={orphan_count} 笔 "
+                            f"(MANUAL 来源但未在 ManualHoldRegistry 注册, 已隔离, 建议补登记)"
+                        )
+            except Exception as _re:
+                logger.debug(f"[Coordinator·reconcile·Task#35] report 生成失败: {_re}")
+
+            if (legacy_count + manual_count) > 0:
                 logger.debug(
-                    f"[Coordinator·reconcile] manual={manual_count} pos ({manual_total_pct:.1%}) | "
-                    f"auto={len(positions)-manual_count} pos ({sum(by_strat_pct.values()):.1%})"
+                    f"[Coordinator·reconcile] legacy={legacy_count} ({legacy_total_pct:.1%}) | "
+                    f"manual={manual_count} ({manual_total_pct:.1%}) | "
+                    f"auto={auto_count} ({auto_total_pct:.1%})"
                 )
         except Exception as e:
             logger.warning(f"[Coordinator·reconcile] 失败: {e}")

@@ -86,22 +86,65 @@ class StrategyCircuitBreaker:
 
 
 class SymbolCircuitBreaker:
-    """品种级熔断器"""
-    
+    """品种级熔断器
+
+    P1 (2026-06-17): 添加自动解冻机制
+    审计发现: frozen_symbols dict 只增不减, 一旦冻结永不自动解冻 → 内存泄漏 + 操作风险
+    修复: 冻结 24h 后自动解冻, 下次检查波动率时重新评估
+    """
+
+    # 自动解冻时间 (秒): 24 小时后自动解冻
+    AUTO_UNFREEZE_SECONDS: int = 86400
+
     def __init__(self, volatility_threshold: float = 0.05):
         self.volatility_threshold = volatility_threshold
         self.frozen_symbols: Dict[str, datetime] = {}
-    
+
     def check_volatility(self, symbol: str, volatility: float) -> bool:
         """检查波动率，返回是否可交易"""
         if volatility > self.volatility_threshold:
             self.frozen_symbols[symbol] = now_et()
             return False
         return True
-    
+
     def is_frozen(self, symbol: str) -> bool:
-        """检查品种是否被冻结"""
-        return symbol in self.frozen_symbols
+        """检查品种是否被冻结
+
+        P1 (2026-06-17): 超过 AUTO_UNFREEZE_SECONDS 后自动解冻
+        """
+        if symbol not in self.frozen_symbols:
+            return False
+
+        frozen_at = self.frozen_symbols[symbol]
+        elapsed = (now_et() - frozen_at).total_seconds()
+
+        # 超过 24h 自动解冻
+        if elapsed > self.AUTO_UNFREEZE_SECONDS:
+            del self.frozen_symbols[symbol]
+            logger.info(
+                f"[SymbolCircuitBreaker] {symbol} 自动解冻 "
+                f"(冻结 {elapsed/3600:.1f}h > {self.AUTO_UNFREEZE_SECONDS/3600:.0f}h)"
+            )
+            return False
+
+        return True
+
+    def unfreeze(self, symbol: str) -> bool:
+        """手动解冻指定品种"""
+        if symbol in self.frozen_symbols:
+            del self.frozen_symbols[symbol]
+            logger.info(f"[SymbolCircuitBreaker] {symbol} 手动解冻")
+            return True
+        return False
+
+    def get_frozen_symbols(self) -> Dict[str, datetime]:
+        """获取当前所有冻结品种 (供 Dashboard /system 页面展示)"""
+        # 触发一次清理 (惰性清理过期冻结)
+        expired = [s for s in self.frozen_symbols
+                   if (now_et() - self.frozen_symbols[s]).total_seconds() > self.AUTO_UNFREEZE_SECONDS]
+        for s in expired:
+            del self.frozen_symbols[s]
+        return dict(self.frozen_symbols)
 
 
 class DataSourceHealth:

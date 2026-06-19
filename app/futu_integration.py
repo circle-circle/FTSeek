@@ -16,6 +16,9 @@ from pathlib import Path
 
 logger = logging.getLogger("ftseek.futu_integration")
 
+# Task #38 (2026-06-16): 统一 retry-with-backoff
+from app.utils.retry import retry_with_backoff
+
 # 导入富途 SDK
 try:
     from futu import OpenQuoteContext, OpenSecTradeContext, TrdEnv, TrdMarket, RET_OK
@@ -98,7 +101,7 @@ class FutuIntegration:
             return []
     
     def get_positions(self, acc_id: Optional[int] = None) -> List[Dict]:
-        """获取当前持仓"""
+        """获取当前持仓 (Task #38: 3 次重试 + 1/3/10s 退避)"""
         if not self.trd_ctx:
             return []
         
@@ -108,16 +111,22 @@ class FutuIntegration:
             return []
         
         try:
-            ret, data = self.trd_ctx.position_list_query(
+            ret, data = self._position_list_query_with_retry(
                 acc_id=target_acc_id,
-                trd_env=self.trd_env
+                trd_env=self.trd_env,
             )
             
             if ret == RET_OK:
                 positions = []
                 for _, row in data.iterrows():
+                    code = str(row['code'])
+                    # Filter out options: codes like US.SNDK260620C75000 have digits after ticker
+                    if code.startswith("US."):
+                        bare = code[3:]
+                        if any(c.isdigit() for c in bare):
+                            continue  # option code, skip
                     positions.append({
-                        'code': row['code'],
+                        'code': code,
                         'name': row.get('name', ''),
                         'qty': float(row['qty']),
                         'can_sell_qty': float(row.get('can_sell_qty', 0)),
@@ -136,7 +145,21 @@ class FutuIntegration:
         except Exception as e:
             logger.error(f"获取持仓异常：{e}")
             return []
-    
+
+    # Task #38 (2026-06-16): position_list_query 包一层重试
+    @retry_with_backoff(
+        retries=3,
+        delays=(1.0, 3.0, 10.0),
+        log_label="FutuIntegration.position_list_query",
+    )
+    def _position_list_query_with_retry(self, **kwargs):
+        """包装 trd_ctx.position_list_query 提供 3 次重试。
+
+        仅重试异常路径；SDK 返回 (ret, data) 原样透传，调用方根据
+        ret 判断业务失败。重试用尽后抖原异常。
+        """
+        return self.trd_ctx.position_list_query(**kwargs)
+
     def get_funds(self, acc_id: Optional[int] = None) -> Optional[Dict]:
         """获取账户资金"""
         if not self.trd_ctx:
@@ -237,7 +260,7 @@ class FutuIntegration:
             # 查找是否已有记录
             found = False
             for record in existing_records:
-                if record.get('code') == pos['code'] and record.get('exit_price') is None:
+                if record.get('code') == pos['code'] and (not record.get('exit_price') or record.get('exit_price') == 0):
                     # 更新现有记录的当前价格和盈亏
                     record['current_price'] = pos['current_price']
                     record['unrealized_pl'] = pos['unrealized_pl']
@@ -275,7 +298,7 @@ class FutuIntegration:
         with open(local_file, 'w', encoding='utf-8') as f:
             json.dump(existing_records, f, indent=2, ensure_ascii=False)
         
-        logger.info(f"同步持仓完成：{len([r for r in existing_records if r.get('exit_price') is None])} 个持仓")
+        logger.info(f"同步持仓完成：{len([r for r in existing_records if not r.get('exit_price') or r.get('exit_price') == 0])} 个持仓")
         return True
     
     def _ensure_connected(self) -> bool:

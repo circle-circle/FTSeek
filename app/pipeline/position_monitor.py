@@ -489,6 +489,26 @@ def _partial_close_position(scheduler, position: Position, current_price: float,
     """部分平仓 — 分批止盈专用，减少仓位但不全平"""
     from app.pipeline.order_executor import _close_position
 
+    # ── P1 (2026-06-16): 手动持仓防护 — 与 _execute_close 的 DB 检查一致 ──
+    # 作为安全网: 即使被绕过 _execute_close 直接调用, 也能拦截
+    try:
+        _pc_sym = getattr(position, "symbol", "")
+        if _pc_sym:
+            from app.core.db_utils import get_main_db
+            import sqlite3 as _pc_sql
+            _pc_conn = _pc_sql.connect(str(get_main_db()), timeout=3)
+            _pc_owner = _pc_conn.execute(
+                "SELECT owner FROM open_positions WHERE symbol=?", (_pc_sym,)
+            ).fetchone()
+            _pc_conn.close()
+            if _pc_owner and (_pc_owner[0] or "").lower() == "manual":
+                logger.warning(
+                    f"[分批止盈·拒绝] {position.symbol} owner=manual, 跳过自动分批止盈"
+                )
+                return
+    except Exception:
+        pass  # DB 不可用时不阻断 (fail open for partial — less risky than full close)
+
     # ── P0 (2026-06-12): Scale-out 重入防护 ──
     # 根因: SNDK 灾难 — 分批止盈成功后 position_sync 覆盖 size，
     #        下一 tick 又触发，连续 BUY 导致 SHORT→LONG 方向翻转
@@ -836,7 +856,8 @@ def restore_positions_from_db(scheduler):
                         broker_positions_map[_sym] = {"qty": float(_qty)}
                 logger.info(f"[持仓恢复] Broker 持仓对账: {len(broker_positions_map)} 个")
         except Exception as _bpe:
-            logger.warning(f"[持仓恢复] Broker 持仓拉取失败 (降级到 _close_blocked 行为): {_bpe}")
+            logger.error(f"[持仓恢复] Broker 持仓拉取失败, 放弃 DB 恢复 (空仓等待): {_bpe}")
+            return 0  # Broker 不可用 → 不恢复任何仓位, 避免幽灵仓
 
         restored = 0
 
@@ -859,6 +880,13 @@ def restore_positions_from_db(scheduler):
                 # 手动持仓隔离: 不纳入系统恢复
                 if _manual_symbols and symbol in _manual_symbols:
                     logger.debug(f"[持仓恢复] 跳过手动持仓: {symbol}")
+                    continue
+
+                # ── P0 (2026-06-16): Broker-gated — 仅恢复 Broker 确认的持仓 ──
+                if broker_positions_map and symbol not in broker_positions_map:
+                    logger.warning(
+                        f"[持仓恢复·Broker-gated] 跳过 {symbol} (DB 有记录但 Broker 无持仓)"
+                    )
                     continue
 
                 # P0 修复 (2026-05-21): 跳过 PRICE_FAIL 已关闭的期权，阻断同步死循环
@@ -974,9 +1002,9 @@ def restore_positions_from_db(scheduler):
         # P0-2 修复 (2026-05-22): 从 option_positions 表恢复期权持仓
         try:
             import sqlite3
-            from app.core.db_utils import get_main_db
+            from app.core.db_utils import get_main_db, safe_sqlite_connect
             db_path = str(get_main_db())
-            conn = sqlite3.connect(db_path)
+            conn = safe_sqlite_connect(db_path)
             cursor = conn.cursor()
             cursor.execute("SELECT option_code, qty, entry_price, strike_price, expiry_date, entry_time FROM option_positions")
             option_rows = cursor.fetchall()
@@ -1218,6 +1246,107 @@ def _monitor_option_positions(scheduler):
         logger.error(f"[期权监控] 全局异常：{e}", exc_info=True)
 
 # ═══════════════════════════════════════════════════════════════════
+#  Task #5 (2026-06-15): 手动持仓安全网 (双链路并行)
+#  - 手动持仓 (source == MANUAL): 不执行自动 SL/TP/trailing, 仅做安全网告警
+#  - 自动持仓: 走原有 ExitMonitor / Dispatcher 完整退出流程
+#  - 设计原则: 不干预手动决策, 仅在达到警戒线时通知
+# ═══════════════════════════════════════════════════════════════════
+
+_MANUAL_ALERT_COOLDOWN: Dict[tuple, float] = {}  # {(symbol, alert_type): last_alert_ts}
+_MANUAL_ALERT_COOLDOWN_SECONDS = 3600  # 每标的每类型通知冷却 1 小时
+_MANUAL_ALERT_LOCK = threading.Lock()
+
+
+def _should_send_manual_alert(symbol: str, alert_type: str) -> bool:
+    """检查是否应该发送手动持仓告警 (防刷屏冷却)"""
+    try:
+        key = (symbol, alert_type)
+        now = time.time()
+        with _MANUAL_ALERT_LOCK:
+            last = _MANUAL_ALERT_COOLDOWN.get(key, 0)
+            if now - last > _MANUAL_ALERT_COOLDOWN_SECONDS:
+                _MANUAL_ALERT_COOLDOWN[key] = now
+                return True
+        return False
+    except Exception:
+        return False
+
+
+def _is_pre_close_time() -> bool:
+    """判断是否处于收盘前提醒时段 (15:50-16:00 ET)"""
+    try:
+        now_e = now_et()
+        return now_e.hour == 15 and now_e.minute >= 50
+    except Exception:
+        return False
+
+
+def _get_unrealized_pnl_pct(position, current_price: Optional[float] = None) -> Optional[float]:
+    """计算持仓的未实现盈亏百分比 (LONG/SHORT 自适应)"""
+    try:
+        if current_price is None:
+            current_price = getattr(position, "current_price", None)
+        entry_price = getattr(position, "avg_entry_price", None)
+        if entry_price is None:
+            entry_price = getattr(position, "entry_price", None)
+        if current_price is None or entry_price in (None, 0):
+            meta = getattr(position, "metadata", None) or {}
+            if isinstance(meta, dict):
+                v = meta.get("unrealized_pnl_pct")
+                if v is not None:
+                    return float(v)
+            return None
+        entry_price = float(entry_price)
+        current_price = float(current_price)
+        if entry_price <= 0 or current_price <= 0:
+            return None
+        direction = getattr(position, "direction", None)
+        dir_str = direction.value.upper() if hasattr(direction, "value") else str(direction).upper()
+        if dir_str == "SHORT":
+            return (entry_price - current_price) / entry_price
+        return (current_price - entry_price) / entry_price
+    except Exception:
+        return None
+
+
+def _send_manual_alert(message: str, position) -> None:
+    """发送手动持仓预警通知 (复用钉钉, 异常兜底不影响主流程)"""
+    try:
+        logger.warning(f"[ManualSafetyNet] {message}")
+        try:
+            from app.notifier.dingtalk import DingTalkNotifier
+            DingTalkNotifier().send_text(message)
+        except Exception as e:
+            logger.debug(f"[ManualSafetyNet] 钉钉告警发送失败: {e}")
+    except Exception as e:
+        logger.warning(f"[ManualSafetyNet] Failed to send alert: {e}")
+
+
+def _check_manual_safety_net(scheduler, position) -> None:
+    """手动持仓安全网检查 — 不干预决策, 仅在收盘前发送提醒
+
+    浮亏告警已由 ManualPositionGuard 独立线程覆盖 (5%/10% 分级 + 组合级),
+    本函数仅保留收盘前提醒 (ManualPositionGuard 不含此功能).
+    """
+    try:
+        symbol = getattr(position, "symbol", "?")
+
+        # 收盘前提醒 (15:50 ET 之后)
+        if _is_pre_close_time():
+            if _should_send_manual_alert(symbol, "pre_close"):
+                _send_manual_alert(
+                    f"📢 收盘提醒: 手动持仓 {symbol} 仍在持有，是否需要平仓？",
+                    position,
+                )
+    except Exception as e:
+        try:
+            sym = getattr(position, "symbol", "?")
+        except Exception:
+            sym = "?"
+        logger.warning(f"[ManualSafetyNet] Error checking {sym}: {e}")
+
+
+# ═══════════════════════════════════════════════════════════════════
 #  持仓检查 (ExitMonitor 驱动)
 # ═══════════════════════════════════════════════════════════════════
 
@@ -1233,6 +1362,31 @@ def _check_positions(scheduler):
     # 且 Futu 盘后下单可能无法成交或产生严重滑点
     if phase == MarketPhase.AFTER_HOURS:
         return
+
+    # ── Task #5 (2026-06-15): 手动持仓安全网 (双链路并行) ──
+    # 手动持仓不在 managed() 列表中, 但仍需安全网监控:
+    # - 不执行自动 SL/TP/trailing
+    # - 浮亏超 8% / 收盘前提醒
+    # - 出错时不阻断主流程 (managed() 自动持仓继续走原有逻辑)
+    try:
+        from app.positions.source import PositionSource
+        for _mp in scheduler.position_store.all():
+            try:
+                _meta = getattr(_mp, "metadata", None) or {}
+                _src_raw = (_meta.get("source") if isinstance(_meta, dict) else None) \
+                    or getattr(_mp, "owner_strategy", "") or ""
+                _src = PositionSource.from_str(_src_raw)
+                if _src.is_manual():
+                    # 手动持仓: 仅安全网检查, 不进入自动退出流程
+                    _check_manual_safety_net(scheduler, _mp)
+            except Exception as e:
+                logger.warning(
+                    f"[DualMode] Failed to check position source for "
+                    f"{getattr(_mp, 'symbol', '?')}: {e}"
+                )
+    except Exception as e:
+        logger.debug(f"[ManualSafetyNet] Outer pass error: {e}")
+    # ── 自动持仓: 沿用源头隔离, 走原有完整退出逻辑 ──
     positions = scheduler.position_store.managed()  # 源头隔离: 仅系统管理的仓位 (2026-06-11)
     if scheduler.polling_controller and positions:
         pos_info = {}
@@ -1264,12 +1418,38 @@ def _check_positions(scheduler):
         # Broker-first (2026-06-03): 不再跳过 broker-synced 仓位
         # 所有仓位统一进入退出监控，双重平仓防护在 _close_position 执行前校验
         if meta.get("_close_blocked"):
-            # P0 修复 (2026-05-13): 运行时自动恢复 — 每小时尝试一次
+            # P0 修复 (2026-05-13, 增强 2026-06-16): 运行时自动恢复
+            # 增强: 恢复前必须确认 broker 仍有持仓, 否则直接收敛移除
             last_attempt = meta.get("_close_recovery_attempt", "")
             now_key = now_et().strftime("%Y-%m-%d %H:")
             hour_bucket = now_et().strftime("%Y-%m-%d %H")
             if last_attempt != hour_bucket:
                 meta["_close_recovery_attempt"] = hour_bucket
+                # ── P0 (2026-06-16): 恢复前查 broker, 无仓则收敛 ──
+                _broker_qty = None
+                try:
+                    from app.pipeline.order_executor import _refresh_broker_position_qty
+                    _broker_qty = _refresh_broker_position_qty(scheduler, position.symbol)
+                except Exception:
+                    pass
+                if _broker_qty is not None and _broker_qty <= 0:
+                    logger.warning(
+                        f"[监控·幽灵收敛] {position.symbol} broker 已无持仓, "
+                        f"直接从 PositionStore 移除 (不再恢复)"
+                    )
+                    try:
+                        scheduler.trade_store.upsert_open_position(
+                            position, source="scheduler", action="ghost_converged"
+                        )
+                    except Exception:
+                        pass
+                    scheduler.position_store.remove(position.symbol)
+                    try:
+                        from app.pipeline.order_executor import _clear_close_retry
+                        _clear_close_retry(position.symbol, position.direction)
+                    except Exception:
+                        pass
+                    continue
                 logger.info(
                     f"[监控·自动恢复尝试] {position.symbol} 尝试清除 is_anomalous..."
                 )
@@ -1277,7 +1457,6 @@ def _check_positions(scheduler):
                     result = scheduler.trade_store.unmark_anomalous(
                         position.symbol, reason="runtime_self_heal"
                     )
-                    # result=True: 成功清除; result=False: 可能已清除或无记录 (也视为可恢复)
                     meta["_close_blocked"] = False
                     meta["_close_blocked_reason"] = ""
                     monitored_positions.append(position)
@@ -1364,6 +1543,60 @@ def _check_positions(scheduler):
         return price_cache.get(sym)
     def _execute_close(pos, reason):
         from app.pipeline.order_executor import _close_position
+
+        # P0 终极防护 (2026-06-15): DB 级手动持仓检查 — 不依赖内存状态
+        # 根因: 进程未重启时, 内存中 Position 可能仍被错误分类为 auto_main
+        # 直接查 DB + 手动审计, 确保手动仓位绝不被自动平仓
+        try:
+            _sym = getattr(pos, 'symbol', '')
+            if _sym:
+                from app.core.db_utils import get_main_db
+                import sqlite3 as _sql3
+                _conn = _sql3.connect(str(get_main_db()), timeout=3)
+
+                # 检查 1: manual_order_audit 今日是否有手动订单
+                _today = datetime.now().strftime("%Y-%m-%d")
+                _manual_cnt = _conn.execute(
+                    "SELECT COUNT(*) FROM manual_order_audit WHERE symbol=? AND timestamp LIKE ?",
+                    (_sym, f"{_today}%")
+                ).fetchone()[0]
+
+                # 检查 2: open_positions.owner='manual'
+                _owner_row = _conn.execute(
+                    "SELECT owner FROM open_positions WHERE symbol=?", (_sym,)
+                ).fetchone()
+                _db_owner = (_owner_row[0] or '').lower() if _owner_row else ''
+
+                _conn.close()
+
+                if _manual_cnt > 0 or _db_owner == 'manual':
+                    # 同时修正 DB owner (防止 INSERT OR REPLACE 腐蚀)
+                    if _db_owner != 'manual' and _manual_cnt > 0:
+                        try:
+                            _fix_conn = _sql3.connect(str(get_main_db()), timeout=3)
+                            _fix_conn.execute(
+                                "UPDATE open_positions SET owner='manual' WHERE symbol=?",
+                                (_sym,)
+                            )
+                            _fix_conn.commit()
+                            _fix_conn.close()
+                            logger.warning(f"[退出防护] {pos.symbol} DB owner 已修正为 'manual'")
+                        except Exception:
+                            pass
+                    logger.warning(
+                        f"[退出防护] {pos.symbol} 拒绝自动平仓: "
+                        f"手动审计={_manual_cnt}笔, DB owner={_db_owner}"
+                    )
+                    return False
+        except Exception as _guard_err:
+            # ── P1 (2026-06-16): FAIL CLOSED — 防护检查异常时拒绝平仓 ──
+            # 根因: 原逻辑 catch 后继续执行平仓, 等于防护形同虚设
+            logger.error(
+                f"[退出防护·FAIL_CLOSED] {getattr(pos, 'symbol', '?')} "
+                f"DB 检查异常, 拒绝自动平仓: {_guard_err}"
+            )
+            return False
+
         try:
             reason_map = {"FLASH_EXIT": ExitReason.FLASH_EXIT, "HARD_STOP": ExitReason.HARD_STOP,
                 "ATR_STOP": ExitReason.TRAILING_STOP, "CHANDELIER": ExitReason.TRAILING_STOP,
@@ -1459,10 +1692,6 @@ def _check_positions(scheduler):
             logger.warning("[ExitDispatcher] 不可用，回退到 legacy 路径")
         else:
             for position in list(monitored_positions):
-                # C1 fix (2026-05-31): 过滤 scalping 仓位 — ScalpingEngine 自管退出
-                # ExitRuleDispatcher 不得干预 scalping 仓位, 否则会导致双重平仓 + 状态不一致
-                if exit_monitor._is_scalping_position(position):
-                    continue
                 # 2026-06-01: 过滤 orb_engine 仓位 — ORBEngine 自管退出 (ORBExitStack)
                 # orb_engine 有独立的4层退出栈 (FloorStop/Trailing/TP/EOD), DEM 不得干预
                 # orb_pipeline 仓位正常由 DEM 管理 (无独立退出栈)
@@ -1599,16 +1828,86 @@ def _check_positions(scheduler):
     except Exception as e:
         logger.debug(f"[退出监控] trail_state DB 同步失败: {e}")
 
+
+# ── P0 (2026-06-15): 手动持仓识别 — 防止运行时对账纳入自动管理 ──
+_manual_position_cache: dict = {}
+_manual_position_cache_ts: float = 0
+_MANUAL_CACHE_TTL = 120  # 2 min cache
+
+
+def _is_manual_position_for_reconcile(symbol: str) -> bool:
+    """检查仓位是否为手动开仓 (三层检查 + 2min 缓存).
+
+    SNDK/MU 事件修复: 运行时 broker 对账每 5min 调用,
+    必须在 add 到 position_store 前排除手动仓位.
+    """
+    import time as _t
+    now = _t.time()
+    if symbol in _manual_position_cache and (now - _manual_position_cache_ts) < _MANUAL_CACHE_TTL:
+        return _manual_position_cache[symbol]
+
+    result = False
+
+    # 1. ManualHoldRegistry (内存)
+    try:
+        from app.coordinator.manual_hold_registry import manual_hold_registry
+        if manual_hold_registry.is_manual_held(symbol):
+            result = True
+    except Exception:
+        pass
+
+    # 2. DB open_positions.owner = 'manual'
+    if not result:
+        try:
+            from app.core.db_utils import get_main_db
+            import sqlite3 as _sql3
+            _conn = _sql3.connect(str(get_main_db()), timeout=5)
+            _row = _conn.execute(
+                "SELECT owner, trader_type, strategy_id FROM open_positions WHERE symbol=? LIMIT 1",
+                (symbol,)
+            ).fetchone()
+            _conn.close()
+            if _row:
+                owner = (_row[0] or "").lower()
+                trader_type = (_row[1] or "").upper()
+                strat = (_row[2] or "").lower()
+                if owner == "manual":
+                    result = True
+                elif trader_type == "MANUAL" and not any(
+                    s in strat for s in ("auto_", "main_pipeline", "voting_llm", "orb")
+                ):
+                    result = True
+        except Exception:
+            pass
+
+    # 3. manual_order_audit (今日有手动订单)
+    if not result:
+        try:
+            from app.core.db_utils import get_main_db
+            import sqlite3 as _sql3
+            from datetime import datetime as _dt
+            _conn = _sql3.connect(str(get_main_db()), timeout=5)
+            _today = _dt.now().strftime("%Y-%m-%d")
+            _cnt = _conn.execute(
+                "SELECT COUNT(*) FROM manual_order_audit WHERE symbol=? AND timestamp LIKE ?",
+                (symbol, f"{_today}%")
+            ).fetchone()[0]
+            _conn.close()
+            if _cnt > 0:
+                result = True
+        except Exception:
+            pass
+
+    _manual_position_cache[symbol] = result
+    _manual_position_cache_ts = now
+    return result
+
+
 def _reconcile_position_store(scheduler):
     """P0: 强制 Broker 对账并同步到 PositionStore
-    
+
     P0 修复 (2026-05-01): 复用 USPositionSync 的 Futu 连接，不再每次创建/关闭 OpenSecTradeContext。
-    之前每次调用都新建连接 → query → close()，导致 CallClose 日志刷屏 + 浪费 OpenD 槽位。
-    
-    P0 增强 (2026-05-09): 
-      - 跨 open_positions DB (Scalping) 交叉对账
-      - 发现 discrepancies 时推送钉钉/飞书告警
-      - 检测 "账面已平但券商仍在" (Scalping平仓未实际提交订单的Bug)
+    之前每次调用都新建连接 → query → close()，导致 CallClose 日志刷屏 + 浪费 OpenD 槽位.
     """
     from app.core.models import Position as Pos, Direction as Dir, MarketRegime as MR
     
@@ -1624,168 +1923,177 @@ def _reconcile_position_store(scheduler):
     # 2. 获取内存 PositionStore
     mem_positions = list(scheduler.position_store.all())
     mem_symbols = set(p.symbol for p in mem_positions)
-    
-    # 3. 获取 open_positions DB 中的 Scalping 记录
-    db_scalping_symbols = _get_db_scalping_symbols()
-    
+
     broker_symbols = set(broker_positions.keys()) if broker_positions else set()
-    
-    # ── 对账分析 ──
-    discrepancies = []
-    
-    # 3a. Broker 有但内存无 → 可能是 Scalping 仓位 (内存已清但 open_positions 有)
+
     # P0 修复 (2026-05-23): 加载 PRICE_FAIL 已关闭集合，防止期权重导入循环
-    # 根因: position_sync 正确跳过 PRICE_FAIL 期权，但对账函数未过滤，
-    #       导致期权被重新加入 position_store → signal pipeline 扫描 → ERROR 循环
     _pf_closed = _load_price_fail_closed_set()
 
+    # ── 对账分析 ──
+    discrepancies = []
+
+    # 3a. Broker 有但内存无 → 未知新持仓
     new_symbols = broker_symbols - mem_symbols
     for symbol in new_symbols:
         # P0 修复 (2026-05-23): 跳过 PRICE_FAIL 已关闭的期权，与 position_sync 保持一致
         if symbol in _pf_closed:
             logger.warning(f"[持仓对账] 跳过 PRICE_FAIL 已关闭期权 {symbol} (防止重导入循环)")
             continue
-        bp = broker_positions[symbol]
-        is_scalping_in_db = symbol in db_scalping_symbols
-        
-        if is_scalping_in_db:
-            # Scalping 在 open_positions 有记录但 PositionStore 已清 → 恢复
-            direction = Dir.SHORT if bp['direction'] == 'SHORT' else Dir.LONG
-            cost, size = bp['cost'], bp['qty']
-            sl_mult = 1.08 if bp['direction'] == 'SHORT' else 0.92
-            position = Pos(strategy_id="scalping", symbol=symbol, direction=direction, size=size,
-                avg_entry_price=cost, initial_sl=cost*sl_mult, current_sl=cost*sl_mult,
-                initial_tp=cost*(0.85 if bp['direction']=='SHORT' else 1.15),
-                take_profit_levels=[], time_stop_hours=72, market_regime=MR.RANGE)
-            position.trail_state = {"highest_price": cost, "lowest_price": cost, "prev_scan_price": cost}
-            position.metadata = {"source": "scalping", "source_type": "SCALPING", "reconciled": True}
-            scheduler.position_store.add(symbol, position)
-            logger.warning(f"[持仓对账] 恢复 Scalping 持仓 {symbol} ({bp['direction']} {size}股 @${cost:.2f})")
-            discrepancies.append({
-                "type": "recovered_scalping",
-                "symbol": symbol,
-                "direction": bp['direction'],
-                "size": size,
-                "cost": cost,
-            })
-        else:
-            # 完全未知的新持仓 → 可能是漏记，也可能是 Futu 结算延迟
-            # P0 修复 (2026-05-11): 检查是否刚刚被系统平仓（Futu 结算延迟窗口）
-            from datetime import datetime, timedelta
-            RECENT_CLOSE_WINDOW_MINUTES = 10
-            try:
-                from app.storage.trade_store import TradeStore
-                from app.core.db_utils import get_main_db
-                db_path = str(get_main_db())
-                ts = TradeStore(db_path)
-                conn = ts._get_conn()
-                cutoff = (now_et() - timedelta(minutes=RECENT_CLOSE_WINDOW_MINUTES)).strftime("%Y-%m-%d %H:%M:%S")
-                recent_exits = conn.execute(
-                    "SELECT COUNT(*) FROM trade_records WHERE symbol=? AND exit_time>=? AND exit_reason IS NOT NULL",
-                    (symbol, cutoff)
-                ).fetchone()[0]
-                # 也检查 open_positions 表是否有同标的 recent close 标记
-                recent_pos_closes = conn.execute(
-                    "SELECT COUNT(*) FROM open_positions WHERE symbol=? AND sync_status='closed' AND updated_at>=?",
-                    (symbol, cutoff)
-                ).fetchone()[0]
-                if recent_exits > 0 or recent_pos_closes > 0:
-                    logger.info(
-                        f"[持仓对账] {symbol}: Broker 有持仓但本地无记录，但 {RECENT_CLOSE_WINDOW_MINUTES}min 内"
-                        f"有退出记录（{recent_exits}+{recent_pos_closes}），判定为 Futu 结算延迟，跳过创建"
-                    )
-                    continue
-            except Exception as check_err:
-                logger.debug(f"[持仓对账] {symbol}: 冷却期检查失败，继续按新持仓处理: {check_err}")
 
-            direction = Dir.SHORT if bp['direction'] == 'SHORT' else Dir.LONG
-            cost, size = bp['cost'], bp['qty']
-            sl_mult = 1.08 if bp['direction'] == 'SHORT' else 0.92
-            
+        # P0 修复 (2026-06-15): 跳过手动持仓 — 防止运行时对账将手动仓位纳入自动管理
+        # SNDK/MU 事件根因: broker 对账每 5min 运行, 不检查手动标记直接 add 到 position_store
+        if _is_manual_position_for_reconcile(symbol):
+            logger.info(f"[持仓对账] 跳过手动持仓 {symbol} (不纳入自动管理)")
+            continue
+
+        bp = broker_positions[symbol]
+
+        # 完全未知的新持仓 → 可能是漏记，也可能是 Futu 结算延迟
+        # P0 修复 (2026-05-11): 检查是否刚刚被系统平仓（Futu 结算延迟窗口）
+        from datetime import datetime, timedelta
+        RECENT_CLOSE_WINDOW_MINUTES = 10
+        try:
+            from app.storage.trade_store import TradeStore
+            from app.core.db_utils import get_main_db
+            db_path = str(get_main_db())
+            ts = TradeStore(db_path)
+            conn = ts._get_conn()
+            cutoff = (now_et() - timedelta(minutes=RECENT_CLOSE_WINDOW_MINUTES)).strftime("%Y-%m-%d %H:%M:%S")
+            recent_exits = conn.execute(
+                "SELECT COUNT(*) FROM trade_records WHERE symbol=? AND exit_time>=? AND exit_reason IS NOT NULL",
+                (symbol, cutoff)
+            ).fetchone()[0]
+                # 也检查 open_positions 表是否有同标的 recent close 标记
+            recent_pos_closes = conn.execute(
+                "SELECT COUNT(*) FROM open_positions WHERE symbol=? AND sync_status='closed' AND updated_at>=?",
+                (symbol, cutoff)
+            ).fetchone()[0]
+            if recent_exits > 0 or recent_pos_closes > 0:
+                logger.info(
+                    f"[持仓对账] {symbol}: Broker 有持仓但本地无记录，但 {RECENT_CLOSE_WINDOW_MINUTES}min 内"
+                    f"有退出记录（{recent_exits}+{recent_pos_closes}），判定为 Futu 结算延迟，跳过创建"
+                )
+                continue
+        except Exception as check_err:
+            logger.debug(f"[持仓对账] {symbol}: 冷却期检查失败，继续按新持仓处理: {check_err}")
+
+        direction = Dir.SHORT if bp['direction'] == 'SHORT' else Dir.LONG
+        cost, size = bp['cost'], bp['qty']
+        sl_mult = 1.08 if bp['direction'] == 'SHORT' else 0.92
+        
             # P0 修复 (2026-05-11): 仓位集中度门禁 — 防止单只持仓超限
-            from app.core.config_container import get_config
+        from app.core.config_container import get_config
+        try:
+            cfg = get_config()
+            max_pos_pct = cfg.get_dotted("risk.position.max_position_pct", 0.15)
+            account_equity = 0.0
             try:
-                cfg = get_config()
-                max_pos_pct = cfg.get_dotted("risk.position.max_position_pct", 0.15)
-                account_equity = 0.0
-                try:
-                    from app.risk.capital_safety import get_capital_safety_system
-                    cs = get_capital_safety_system()
-                    account_equity = getattr(cs._state, 'current_equity', 1000000)
-                except Exception:
-                    account_equity = float(cfg.get_dotted("capital.fixed_amount", 82_000))  # SSOT: YAML=82000
-                position_value = size * cost
-                position_pct = position_value / account_equity if account_equity > 0 else 999
-                if position_pct > max_pos_pct:
-                    logger.critical(
-                        f"[持仓对账·超限] {symbol} ({bp['direction']}) 仓位 {position_pct:.0%} "
-                        f"超过上限 {max_pos_pct:.0%} (${position_value:,.0f} / ${account_equity:,.0f})。"
-                        f"恢复真实持仓但标记告警，建议立即减仓。"
-                    )
-            except Exception as e:
-                logger.warning(f"[持仓对账·集中度检查] 失败 (放行): {e}")
+                from app.risk.capital_safety import get_capital_safety_system
+                cs = get_capital_safety_system()
+                account_equity = getattr(cs._state, 'current_equity', 1000000)
+            except Exception:
+                account_equity = float(cfg.get_dotted("capital.fixed_amount", 82_000))  # SSOT: YAML=82000
+            position_value = size * cost
+            position_pct = position_value / account_equity if account_equity > 0 else 999
+            if position_pct > max_pos_pct:
+                logger.critical(
+                    f"[持仓对账·超限] {symbol} ({bp['direction']}) 仓位 {position_pct:.0%} "
+                    f"超过上限 {max_pos_pct:.0%} (${position_value:,.0f} / ${account_equity:,.0f})。"
+                    f"恢复真实持仓但标记告警，建议立即减仓。"
+                )
+        except Exception as e:
+            logger.warning(f"[持仓对账·集中度检查] 失败 (放行): {e}")
 
             # RFC-055 修复 (2026-06-01): 从 open_positions 恢复 trace_id/signal_id
             # 防止 broker 对账重建持仓时丢失归因链路
-            recovered_trace_id = ""
-            recovered_signal_id = ""
-            try:
-                from app.core.paths import get_trade_records_db
-                import sqlite3 as _sql3
-                _conn = _sql3.connect(str(get_trade_records_db()))
-                _row = _conn.execute(
-                    "SELECT trace_id, signal_id FROM open_positions WHERE symbol=? ORDER BY updated_at DESC LIMIT 1",
-                    (symbol,)
-                ).fetchone()
-                if _row and _row[0]:
-                    recovered_trace_id = _row[0]
-                    recovered_signal_id = _row[1] or ""
-                    logger.info(f"[持仓对账] {symbol}: 恢复 trace_id={recovered_trace_id}")
-                _conn.close()
-            except Exception as e:
-                logger.debug(f"[持仓对账] {symbol}: 恢复 trace_id 失败 (放行): {e}")
+        recovered_trace_id = ""
+        recovered_signal_id = ""
+        try:
+            from app.core.paths import get_trade_records_db
+            import sqlite3 as _sql3
+            _conn = _sql3.connect(str(get_trade_records_db()))
+            _row = _conn.execute(
+                "SELECT trace_id, signal_id FROM open_positions WHERE symbol=? ORDER BY updated_at DESC LIMIT 1",
+                (symbol,)
+            ).fetchone()
+            if _row and _row[0]:
+                recovered_trace_id = _row[0]
+                recovered_signal_id = _row[1] or ""
+                logger.info(f"[持仓对账] {symbol}: 恢复 trace_id={recovered_trace_id}")
+            _conn.close()
+        except Exception as e:
+            logger.debug(f"[持仓对账] {symbol}: 恢复 trace_id 失败 (放行): {e}")
 
-            position = Pos(strategy_id="broker_reconcile", symbol=symbol, direction=direction, size=size,
-                avg_entry_price=cost, initial_sl=cost*sl_mult, current_sl=cost*sl_mult,
-                initial_tp=cost*(0.85 if bp['direction']=='SHORT' else 1.15),
-                take_profit_levels=[], time_stop_hours=72, market_regime=MR.RANGE,
-                trace_id=recovered_trace_id, signal_id=recovered_signal_id)
-            position.trail_state = {"highest_price": cost, "lowest_price": cost, "prev_scan_price": cost}
-            scheduler.position_store.add(symbol, position)
-            logger.warning(f"[持仓对账] 发现 Broker 新持仓 {symbol} ({bp['direction']} {size}股 @${cost:.2f})")
-            discrepancies.append({
-                "type": "unknown_position",
-                "symbol": symbol,
-                "direction": bp['direction'],
-                "size": size,
-                "cost": cost,
-            })
+        position = Pos(strategy_id="broker_reconcile", symbol=symbol, direction=direction, size=size,
+            avg_entry_price=cost, initial_sl=cost*sl_mult, current_sl=cost*sl_mult,
+            initial_tp=cost*(0.85 if bp['direction']=='SHORT' else 1.15),
+            take_profit_levels=[], time_stop_hours=72, market_regime=MR.RANGE,
+            trace_id=recovered_trace_id, signal_id=recovered_signal_id)
+        position.trail_state = {"highest_price": cost, "lowest_price": cost, "prev_scan_price": cost}
+        scheduler.position_store.add(symbol, position)
+        logger.warning(f"[持仓对账] 发现 Broker 新持仓 {symbol} ({bp['direction']} {size}股 @${cost:.2f})")
+        discrepancies.append({
+            "type": "unknown_position",
+            "symbol": symbol,
+            "direction": bp['direction'],
+            "size": size,
+            "cost": cost,
+        })
     
-    # 3b. 内存/DB 有但 Broker 无 → 幽灵仓
-    all_local_symbols = mem_symbols | db_scalping_symbols
-    ghost_symbols = all_local_symbols - broker_symbols
+    # 3b. 内存有但 Broker 无 → 区分外部平仓 vs 真幽灵仓
+    # 根因修复 (2026-06-16): 与 position_sync 同一逻辑 — 查 broker 今日成交
+    ghost_symbols = mem_symbols - broker_symbols
     try:
         from app.core.position_sync import get_us_position_sync
-        option_symbols = get_us_position_sync()._get_option_position_symbols()
+        _ps = get_us_position_sync()
+        option_symbols = _ps._get_option_position_symbols()
+        _pm_today_orders = getattr(_ps, '_today_orders', {})
     except Exception:
         option_symbols = set()
+        _pm_today_orders = {}
     cleaned = 0
     for symbol in ghost_symbols:
-        if symbol in option_symbols: continue
-        
-        # 判断是主管线还是Scalping
-        is_scalping = symbol in db_scalping_symbols and symbol not in mem_symbols
-        
+        if symbol in option_symbols:
+            continue
+
         if symbol in mem_symbols:
+            existing_pos = scheduler.position_store.get(symbol)
             scheduler.position_store.remove(symbol)
-        _remove_from_open_positions_db(symbol)
-        cleaned += 1
-        logger.info(f"[持仓对账] 清理幽灵仓 {symbol} ({'Scalping' if is_scalping else 'Main'})")
-        discrepancies.append({
-            "type": "ghost_cleaned",
-            "symbol": symbol,
-            "source": "scalping" if is_scalping else "main_pipeline",
-        })
+            _remove_from_open_positions_db(symbol)
+            cleaned += 1
+            
+            # 检查是否为外部平仓 (broker 今日有平仓方向的成交)
+            _deal = _pm_today_orders.get(symbol)
+            _is_ext_close = False
+            if _deal and existing_pos:
+                _trd = str(_deal.get('trd_side', '')).upper()
+                _dir = existing_pos.direction.name if hasattr(existing_pos.direction, 'name') else str(existing_pos.direction)
+                if (_dir == 'LONG' and 'SELL' in _trd) or (_dir == 'SHORT' and 'BUY' in _trd):
+                    _is_ext_close = True
+            
+            if _is_ext_close and existing_pos:
+                _exit_p = float(_deal.get('price', 0))
+                _entry_p = existing_pos.avg_entry_price
+                _size = existing_pos.size
+                _dir_name = existing_pos.direction.name if hasattr(existing_pos.direction, 'name') else str(existing_pos.direction)
+                if _dir_name == 'LONG':
+                    _pnl = (_exit_p - _entry_p) * _size
+                    _pnl_pct = (_exit_p - _entry_p) / _entry_p if _entry_p > 0 else 0
+                else:
+                    _pnl = (_entry_p - _exit_p) * _size
+                    _pnl_pct = (_entry_p - _exit_p) / _entry_p if _entry_p > 0 else 0
+                
+                logger.info(f"[持仓对账] 外部平仓 {symbol} (出${_exit_p:.2f}, PnL=${_pnl:.2f})")
+                discrepancies.append({
+                    "type": "external_close",
+                    "symbol": symbol,
+                    "source": "main_pipeline",
+                    "exit_price": _exit_p,
+                    "pnl": round(_pnl, 2),
+                })
+            else:
+                logger.info(f"[持仓对账] 清理真幽灵仓 {symbol} (无今日成交记录)")
+                # 真幽灵不进 discrepancies，不触发告警
     
     # 3c. 共同持仓 → 检查数量/成本价差异
     common_symbols = mem_symbols & broker_symbols
@@ -1805,28 +2113,10 @@ def _reconcile_position_store(scheduler):
     
     # ── 告警推送 ──
     if discrepancies:
-        _send_reconcile_alert(scheduler, discrepancies, broker_positions, mem_positions, db_scalping_symbols)
+        _send_reconcile_alert(scheduler, discrepancies, broker_positions, mem_positions)
     
     if new_symbols or cleaned:
         logger.info(f"[持仓对账] 完成: +{len(new_symbols)} 新增, -{cleaned} 清理, 内存共 {scheduler.position_store.count()} 个")
-
-
-def _get_db_scalping_symbols() -> set:
-    """从 open_positions DB 获取 Scalping 持仓标的"""
-    try:
-        import sqlite3
-        from app.core.db_utils import get_main_db
-        db_path = get_main_db()
-        conn = sqlite3.connect(str(db_path))
-        try:
-            cursor = conn.cursor()
-            cursor.execute("SELECT DISTINCT symbol FROM open_positions WHERE strategy_id='scalping'")
-            symbols = set(row[0] for row in cursor.fetchall())
-            return symbols
-        finally:
-            conn.close()
-    except Exception:
-        return set()
 
 
 def _remove_from_open_positions_db(symbol: str):
@@ -1846,47 +2136,38 @@ def _remove_from_open_positions_db(symbol: str):
 
 
 def _send_reconcile_alert(scheduler, discrepancies: list, broker_positions: dict,
-                          mem_positions: list, db_scalping_symbols: set):
+                          mem_positions: list):
     """对账发现差异时推送钉钉/飞书告警"""
     try:
         # 统计
-        recovered = [d for d in discrepancies if d['type'] == 'recovered_scalping']
         unknown = [d for d in discrepancies if d['type'] == 'unknown_position']
         ghosts = [d for d in discrepancies if d['type'] == 'ghost_cleaned']
-        
+
         broker_count = len(broker_positions)
         mem_count = len(mem_positions)
-        db_count = len(db_scalping_symbols)
-        
+
         lines = [
             f"### [FTSeek-US] 🔍 持仓对账告警\n\n",
             f"**📊 对账摘要**:\n\n",
             f"- 券商实际持仓: {broker_count} 只\n\n",
             f"- 内存 PositionStore: {mem_count} 只\n\n",
-            f"- DB open_positions (Scalping): {db_count} 只\n\n",
         ]
-        
-        if recovered:
-            lines.append(f"**🟡 已恢复 Scalping 持仓**:\n\n")
-            for d in recovered:
-                lines.append(f"- {d['symbol']} {d['direction']} {d['size']}股 @${d['cost']:.2f}\n\n")
-        
+
         if unknown:
             lines.append(f"**🔴 未知新持仓 (需人工确认)**:\n\n")
             for d in unknown:
                 lines.append(f"- {d['symbol']} {d['direction']} {d['size']}股 @${d['cost']:.2f}\n\n")
-        
+
         if ghosts:
             lines.append(f"**⚪ 已清理幽灵仓**:\n\n")
             for d in ghosts:
-                src = "Scalping" if d.get('source') == 'scalping' else 'Main'
-                lines.append(f"- {d['symbol']} ({src})\n\n")
-        
+                lines.append(f"- {d['symbol']} (Main)\n\n")
+
         lines.append(f"> 时间: {now_et().strftime('%Y-%m-%d %H:%M')}")
-        
+
         if scheduler.notifier:
             scheduler.notifier.send_text("\n".join(lines))
-            logger.info(f"[持仓对账] 告警已推送: {len(recovered)}恢复 + {len(unknown)}未知 + {len(ghosts)}幽灵")
+            logger.info(f"[持仓对账] 告警已推送: {len(unknown)}未知 + {len(ghosts)}幽灵")
     except Exception as e:
         logger.warning(f"[持仓对账] 告警推送失败: {e}")
 
@@ -1979,8 +2260,14 @@ def _check_pending_orders(scheduler):
             if phase == MarketPhase.TRADING:
                 _process_pending_order(scheduler, tracker, order)
             elif state in (OrderState.PENDING_CONFIRM.value, OrderState.SUBMITTED.value):
-                # 非交易时段检查超时
-                tracker.check_stale_orders()
+                # 非交易时段检查超时 (Task #37: 传入 broker_adapter 供超时自动撤单)
+                _broker = None
+                try:
+                    if scheduler.execution_engine and scheduler.execution_engine.broker_adapter:
+                        _broker = scheduler.execution_engine.broker_adapter
+                except Exception:
+                    _broker = None
+                tracker.check_stale_orders(broker_adapter=_broker)
                 
     except Exception as e:
         logger.warning(f"[订单追踪] 检查待确认订单失败: {e}")
@@ -2111,11 +2398,23 @@ def _process_pending_order(scheduler, tracker, order: dict):
             # 订单失败/被拒绝
             logger.warning(f"[订单追踪] {symbol} 订单被拒绝，状态={status}")
             tracker.update_order_state(futu_id, OrderState.FAILED, {"futu_status": status})
-            
+
             # 清除 pending 标记，让持仓继续被监控
             position = scheduler.position_store.get(symbol)
             if position:
                 meta = getattr(position, "metadata", {}) or {}
+                # P0 (2026-06-15): 递增拒绝计数, 防止"持仓不足"等 broker 拒绝导致无限重试
+                reject_count = meta.get("_close_reject_count", 0) + 1
+                meta["_close_reject_count"] = reject_count
+                if reject_count >= 2:
+                    # 连续 2 次被拒绝 → 锁定, 不再自动重试
+                    meta["_close_blocked"] = True
+                    meta["_close_blocked_reason"] = f"broker 连续 {reject_count} 次拒绝"
+                    meta["_close_blocked_at"] = time.time()
+                    logger.warning(
+                        f"[订单追踪] {symbol} 平仓被锁定: broker 连续 {reject_count} 次拒绝 "
+                        f"(不再自动重试, 需人工介入)"
+                    )
                 meta.pop("_close_order_submitted", None)
                 meta.pop("_close_futu_order_id", None)
                 meta.pop("_close_order_unconfirmed", None)
@@ -2125,7 +2424,8 @@ def _process_pending_order(scheduler, tracker, order: dict):
                 meta.pop("_close_order_failed", None)
                 meta.pop("_close_order_status", None)
                 position.metadata = meta
-                logger.info(f"[订单追踪] {symbol} 订单失败，持仓继续监控 (已解锁)")
+                if reject_count < 2:
+                    logger.info(f"[订单追踪] {symbol} 订单失败，持仓继续监控 (已解锁, 拒绝计数={reject_count})")
                 
         elif 'SUBMITTING' in status or 'SUBMITTED' in status or 'WAITING' in status:
             # 仍在排队

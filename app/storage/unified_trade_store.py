@@ -582,7 +582,7 @@ class UnifiedTradeStore:
                 ...
             }
         """
-        conditions = ["exit_price IS NOT NULL", "source_type IS NOT NULL"]
+        conditions = ["exit_price > 0", "source_type IS NOT NULL"]
         params = []
 
         if trade_date:
@@ -664,7 +664,7 @@ class UnifiedTradeStore:
         
         用于归因分析: 哪些信号类型表现最好?
         """
-        conditions = ["exit_price IS NOT NULL", "entry_reason IS NOT NULL"]
+        conditions = ["exit_price > 0", "entry_reason IS NOT NULL"]
         params = []
 
         if source_type:
@@ -726,7 +726,7 @@ class UnifiedTradeStore:
         
         对比 LLM 预测 (entry_price, direction) 与实际成交结果的偏差
         """
-        conditions = ["source_type = ?", "exit_price IS NOT NULL"]
+        conditions = ["source_type = ?", "exit_price > 0"]
         params = [source_type]
 
         if trade_date:

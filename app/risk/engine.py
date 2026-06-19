@@ -280,6 +280,11 @@ class RiskEngine(BaseRiskEngine):
                     return False
             except Exception as e:
                 logger.warning(f"[风控] 仓位检查异常 (继续执行): {e}")
+                try:
+                    from app.core.degradation_monitor import get_degradation_monitor
+                    get_degradation_monitor().record("risk_engine_position_check", str(e))
+                except Exception:
+                    pass
         else:
             # M1 (2026-06-03): position_store 缺失时 fail-close + CRITICAL 告警
             logger.critical(

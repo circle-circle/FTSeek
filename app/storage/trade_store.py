@@ -519,6 +519,59 @@ class TradeStore:
                 f"source={record.get('source_type', 'UNKNOWN')} | "
                 f"trace_id={record.get('trace_id', 'NONE')}"
             )
+
+        # Task #36 (2026-06-16): signal_strength + signal_id 强制存在 (NOT NULL).
+        # 手动单允许 signal_strength=0 + signal_id="manual:<id>"; 策略单必须含真值.
+        # 完全缺失 (None) → 拒绝写库 (ERROR + raise), 防止 NULL 沉默蔓延.
+        _src_type = (record.get("source_type") or "").upper()
+        _is_manual_src = _src_type in ("MANUAL", "MANUAL_CLOSE", "")
+        _ss = record.get("signal_strength")
+        _sid = record.get("signal_id")
+        if _ss is None:
+            if _is_manual_src:
+                record["signal_strength"] = 0  # 手动单缺省值
+            else:
+                _logger.error(
+                    f"[Task#36·signal_strength守卫] {_symbol} 拒绝写库: "
+                    f"signal_strength=None | source_type={_src_type} | "
+                    f"trace_id={record.get('trace_id', 'NONE')}"
+                )
+                raise ValueError(
+                    f"trade_records.signal_strength 不可为 None (symbol={_symbol}, "
+                    f"source_type={_src_type}); 调用方必须显式提供 signal_strength."
+                )
+        if not _sid:
+            if _is_manual_src:
+                _futu_id = record.get("futu_order_id") or record.get("close_futu_order_id") or ""
+                record["signal_id"] = f"manual:{_futu_id}" if _futu_id else "manual"
+            else:
+                # 策略单允许 trace_id 兜底 (line 616 已实现), 但若两者皆空则 raise
+                if not record.get("trace_id"):
+                    _logger.error(
+                        f"[Task#36·signal_id守卫] {_symbol} 拒绝写库: "
+                        f"signal_id 与 trace_id 均缺失 | source_type={_src_type}"
+                    )
+                    raise ValueError(
+                        f"trade_records.signal_id 不可为空 (symbol={_symbol}, "
+                        f"source_type={_src_type}); 必须提供 signal_id 或 trace_id."
+                    )
+
+        # ── P3 (2026-06-16): exit_price 数据质量守卫 ──
+        # 根因: NVDA 手动平仓 exit_price=0 → 假亏损 $6155 → 触发日熔断 → 整晚无法开仓
+        # 修法: exit_price ≤ 0 的交易记录拒绝写入, 避免假亏损污染熔断计算
+        _exit_px = record.get("exit_price", 0)
+        _exit_reason = (record.get("exit_reason") or "").upper()
+        _is_open_only = _exit_reason in ("", "OPEN", "ENTRY")  # 仅开仓无平仓
+        if _exit_px is not None and float(_exit_px) <= 0 and not _is_open_only:
+            _logger.error(
+                f"[exit_price守卫] {_symbol} 拒绝写入: exit_price={_exit_px} ≤ 0 "
+                f"| exit_reason={_exit_reason} | source_type={_src_type} | "
+                f"realized_pnl={record.get('realized_pnl', '?')}"
+            )
+            raise ValueError(
+                f"trade_records.exit_price 不可为 0 (symbol={_symbol}); "
+                f"必须从 Broker 成交回报或订单限价获取实际成交价."
+            )
         
         with self._lock:
             conn = self._get_conn()
@@ -778,11 +831,27 @@ class TradeStore:
             conn = self._get_conn()
             try:
                 # 先读取当前版本号和 is_anomalous 标记 (乐观锁)
+                # P0 修复 (2026-06-15): 同时读取 owner/thesis/entry_context 等列
+                # INSERT OR REPLACE 会删除旧行重建, 不显式写入的列会丢失为默认值
+                # SNDK/MU 事件根因: owner='manual' 被重置为默认 'auto'
                 row = conn.execute(
-                    "SELECT version, is_anomalous FROM open_positions WHERE symbol = ?",
+                    "SELECT version, is_anomalous, owner, thesis, entry_context_json, "
+                    "trader_type, invalidation_price, expected_hold_days, "
+                    "stop_loss_price, trailing_stop_price, sl_broker_order_id "
+                    "FROM open_positions WHERE symbol = ?",
                     (position.symbol,)
                 ).fetchone()
                 current_version = (row[0] if row else 0) + 1
+                # P0 (2026-06-15): 保留 INSERT OR REPLACE 会丢失的列
+                _preserved_owner = row[2] if (row and row[2]) else 'auto'
+                _preserved_thesis = row[3] if (row and row[3]) else ''
+                _preserved_entry_ctx = row[4] if (row and row[4]) else '{}'
+                _preserved_trader_type = row[5] if (row and row[5]) else 'MANUAL'
+                _preserved_invalidation = row[6] if (row and row[6] is not None) else 0
+                _preserved_hold_days = row[7] if (row and row[7] is not None) else 5
+                _preserved_sl_price = row[8]  # can be None
+                _preserved_trail_price = row[9]  # can be None
+                _preserved_sl_broker_id = row[10] if (row and row[10]) else ''
                 # P0 修复 (2026-05-12): 防止 update_trail 等操作覆盖 mark_anomalous 设置的 is_anomalous=1
                 # 如果 DB 中已标记异常且当前 position 未显式设置 _close_blocked，保留原值
                 existing_is_anomalous = bool(row[1]) if (row and len(row) > 1) else False
@@ -837,8 +906,11 @@ class TradeStore:
                         is_filled, is_partially_reduced, is_anomalous,
                         trace_id, action_log_json, owner_strategy, mode,
                         metadata_json,
+                        owner, thesis, entry_context_json, trader_type,
+                        invalidation_price, expected_hold_days,
+                        stop_loss_price, trailing_stop_price, sl_broker_order_id,
                         updated_at
-                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """, (
                     position.symbol,
                     str(position.direction.value) if hasattr(position.direction, "value") else str(position.direction),
@@ -868,6 +940,16 @@ class TradeStore:
                     getattr(position, "owner_strategy", None) or "main",
                     _get_runtime_mode(),
                     _meta_json,
+                    # P0 (2026-06-15): 保留 INSERT OR REPLACE 会丢失的列
+                    _preserved_owner,
+                    _preserved_thesis,
+                    _preserved_entry_ctx,
+                    _preserved_trader_type,
+                    _preserved_invalidation,
+                    _preserved_hold_days,
+                    _preserved_sl_price,
+                    _preserved_trail_price,
+                    _preserved_sl_broker_id,
                     datetime.now().isoformat(),
                 ))
                 conn.commit()

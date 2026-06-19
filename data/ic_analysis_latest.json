@@ -1,37 +1,37 @@
 {
-  "generated_at": "2026-06-14T01:01:55.666361",
+  "generated_at": "2026-06-18T20:00:37.977638",
   "window_days": 90,
   "data_counts": {
-    "signals": 879,
+    "signals": 1002,
     "trades": 335,
     "debate_logs": 4
   },
   "ic_by_mode": {
     "live": {
-      "n": 73,
-      "ic_t1": 0.0276,
-      "wr_t1": 0.4384,
-      "ic_t5": null,
-      "wr_t5": null,
-      "avg_ret_t1": 0.0066
+      "n": 196,
+      "ic_t1": -0.2266,
+      "wr_t1": 0.4133,
+      "ic_t5": 0.091,
+      "wr_t5": 0.5111,
+      "avg_ret_t1": -0.0018
     },
     "simulate": {
       "n": 806,
       "ic_t1": -0.0459,
       "wr_t1": 0.5099,
-      "ic_t5": 0.2944,
-      "wr_t5": 0.6497,
+      "ic_t5": 0.2951,
+      "wr_t5": 0.639,
       "avg_ret_t1": 0.001
     }
   },
   "ic_by_direction": {
     "LONG": {
-      "n": 141,
-      "ic_t1": 0.2024,
-      "wr_t1": 0.617,
-      "ic_t5": 0.106,
-      "wr_t5": 0.573,
-      "avg_ret_t1": 0.0039
+      "n": 259,
+      "ic_t1": -0.1358,
+      "wr_t1": 0.4208,
+      "ic_t5": 0.143,
+      "wr_t5": 0.5826,
+      "avg_ret_t1": -0.001
     },
     "NEUTRAL": {
       "n": 2,
@@ -42,19 +42,19 @@
       "avg_ret_t1": -0.0157
     },
     "SHORT": {
-      "n": 736,
-      "ic_t1": -0.0621,
-      "wr_t1": 0.5082,
-      "ic_t5": 0.406,
-      "wr_t5": 0.6901,
-      "avg_ret_t1": 0.0011
+      "n": 741,
+      "ic_t1": -0.061,
+      "wr_t1": 0.5074,
+      "ic_t5": 0.3698,
+      "wr_t5": 0.6839,
+      "avg_ret_t1": 0.001
     }
   },
   "factor_ic": {
     "signal_strength": {
-      "ic": 0.0825,
-      "wr": 0.3994,
-      "n": 333
+      "ic": 0.0836,
+      "wr": 0.4,
+      "n": 335
     },
     "signal_confidence": {
       "ic": -0.0021,
@@ -94,16 +94,16 @@
   },
   "llm_feature_ic": {
     "direction_LONG": {
-      "n": 141,
-      "ic_t1": 0.2024,
-      "wr_t1": 0.617,
-      "avg_ret": 0.0039
+      "n": 259,
+      "ic_t1": -0.1358,
+      "wr_t1": 0.4208,
+      "avg_ret": -0.001
     },
     "direction_SHORT": {
-      "n": 736,
-      "ic_t1": -0.0621,
-      "wr_t1": 0.5082,
-      "avg_ret": 0.0011
+      "n": 741,
+      "ic_t1": -0.061,
+      "wr_t1": 0.5074,
+      "avg_ret": 0.001
     },
     "confidence_low_conf": {
       "n": 325,
@@ -112,34 +112,40 @@
       "avg_ret": 0.0033
     },
     "confidence_mid_conf": {
-      "n": 444,
-      "ic_t1": -0.0319,
-      "wr_t1": 0.5495,
-      "avg_ret": 0.0008
+      "n": 534,
+      "ic_t1": -0.1112,
+      "wr_t1": 0.5056,
+      "avg_ret": -0.0002
     },
     "confidence_high_conf": {
-      "n": 110,
-      "ic_t1": 0.1679,
-      "wr_t1": 0.5182,
-      "avg_ret": -0.0012
-    },
-    "strategy_TECHNICAL_MULTI_FACTOR": {
-      "n": 480,
-      "ic_t1": -0.0682,
-      "wr_t1": 0.5083,
-      "avg_ret": 0.0046
+      "n": 143,
+      "ic_t1": -0.0806,
+      "wr_t1": 0.4965,
+      "avg_ret": -0.0034
     },
     "strategy_trend_first": {
-      "n": 16,
-      "ic_t1": -0.2118,
-      "wr_t1": 0.5,
-      "avg_ret": 0.0031
+      "n": 21,
+      "ic_t1": -0.0831,
+      "wr_t1": 0.5238,
+      "avg_ret": 0.0023
+    },
+    "strategy_TECHNICAL_MULTI_FACTOR": {
+      "n": 481,
+      "ic_t1": -0.0697,
+      "wr_t1": 0.5073,
+      "avg_ret": 0.0045
     },
     "strategy_unknown": {
       "n": 383,
-      "ic_t1": -0.0958,
+      "ic_t1": -0.0948,
       "wr_t1": 0.5039,
-      "avg_ret": -0.0025
+      "avg_ret": -0.0024
+    },
+    "strategy_EARNINGS_REVISION_MOMENTUM": {
+      "n": 116,
+      "ic_t1": -0.0483,
+      "wr_t1": 0.6121,
+      "avg_ret": -0.0069
     },
     "trade_strategy_reconciler": {
       "n": 1,
@@ -217,14 +223,12 @@
     }
   },
   "key_findings": [
-    "direction_LONG: IC=0.2024 (positive ✅)",
+    "direction_LONG: IC=-0.1358 (negative ❌)",
     "confidence_low_conf: IC=-0.1075 (negative ❌)",
-    "confidence_high_conf: IC=0.1679 (positive ✅)",
-    "strategy_trend_first: IC=-0.2118 (negative ❌)"
+    "confidence_mid_conf: IC=-0.1112 (negative ❌)"
   ],
   "recommendations": [
-    "✅ LONG 信号有预测力 (IC=0.2024), 应优先做多",
-    "❌ SHORT 信号 IC=-0.0621, 做空逻辑需要重构",
+    "❌ SHORT 信号 IC=-0.061, 做空逻辑需要重构",
     "✅ 高置信度信号 IC 高于低置信度, 信心度校准有效"
   ]
 }

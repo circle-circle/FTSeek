@@ -65,7 +65,7 @@ class WeeklyReviewGenerator:
             "SELECT * FROM trade_records WHERE trade_date >= ? AND trade_date <= ? ORDER BY created_at",
             (week_start, week_end)
         )
-        closed_trades = [t for t in trades if t.get('exit_price') is not None]
+        closed_trades = [t for t in trades if t.get('exit_price') and t.get('exit_price') > 0]
         
         if account_type:
             trades = [t for t in trades if t.get('account_type') == account_type]

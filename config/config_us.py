@@ -81,7 +81,7 @@ AFTER_MARKET_CLOSE = "20:00"
 # ============================================================
 #  OpenD / 券商配置
 # ============================================================
-OPEND_HOST = os.getenv("OPEND_HOST", "127.0.0.1")
+FUTU_OPEND_HOST = os.getenv("FUTU_OPEND_HOST", "127.0.0.1")
 
 
 def _safe_int_env(key: str, default: int) -> int:
@@ -100,7 +100,7 @@ def _safe_int_env(key: str, default: int) -> int:
         return default
 
 
-OPEND_PORT = _safe_int_env("OPEND_PORT", 11111)
+FUTU_OPEND_PORT = _safe_int_env("FUTU_OPEND_PORT", 11111)
 
 # 富途账号
 FUTU_LOGIN_ACCOUNT = os.getenv("FUTU_LOGIN_ACCOUNT", "")
@@ -316,10 +316,10 @@ DATA_SOURCE_FALLBACK = "alphavantage"
 #  飞书推送配置
 # ============================================================
 import os
-FEISHU_WEBHOOK_URL = os.getenv("FEISHU_WEBHOOK_URL")
-FEISHU_SECRET = os.getenv("FEISHU_SECRET")
+FEISHU_WEBHOOK_URL_US = os.getenv("FEISHU_WEBHOOK_URL_US")
+FEISHU_APP_SECRET = os.getenv("FEISHU_APP_SECRET")
 
-if not FEISHU_WEBHOOK_URL:
-    FEISHU_WEBHOOK_URL = os.getenv("FEISHU_WEBHOOK_URL_DEFAULT", "")
-if not FEISHU_SECRET:
-    FEISHU_SECRET = os.getenv("FEISHU_SECRET_DEFAULT", "")
+if not FEISHU_WEBHOOK_URL_US:
+    FEISHU_WEBHOOK_URL_US = os.getenv("FEISHU_WEBHOOK_URL_US_DEFAULT", "")
+if not FEISHU_APP_SECRET:
+    FEISHU_APP_SECRET = os.getenv("FEISHU_APP_SECRET_DEFAULT", "")

@@ -3,6 +3,11 @@
 飞书 Webhook 推送模块
 
 用于 FTSeek-US 美股复盘推送 + 实时成交通知
+
+限流策略 (2026-06-16):
+  - 滑动窗口: 最多 4 条/秒 (飞书 webhook 限制 5 条/秒)
+  - 内容去重: 60s 内相同消息体不重复发送
+  - 限频退避: 收到 error 11232 后指数退避 (2s → 4s → 8s, 上限 60s)
 """
 import logging
 import requests
@@ -11,6 +16,8 @@ import hashlib
 import base64
 import time
 import os
+import threading
+from collections import deque
 from typing import Dict, List, Optional, Any
 from datetime import datetime
 from pathlib import Path
@@ -24,14 +31,20 @@ if _env_path.exists():
 logger = logging.getLogger("ftseek_us.feishu")
 logger.propagate = False
 
+# ── 限流常量 ──
+_MAX_PER_SECOND = 4          # 飞书 webhook 限制 5/s，留 1 条余量
+_DEDUP_TTL_SEC = 60          # 内容去重窗口
+_BACKOFF_BASE_SEC = 2        # 限频退避基数
+_BACKOFF_MAX_SEC = 60        # 退避上限
+
 
 class FeishuNotifier:
     """飞书 Webhook 推送器"""
-    
+
     def __init__(self, webhook_url: str = None, secret: str = None):
         """
         初始化飞书推送器
-        
+
         Args:
             webhook_url: 飞书 Webhook URL
             secret: 加签密钥
@@ -40,29 +53,100 @@ class FeishuNotifier:
         self.webhook_url = webhook_url or os.getenv("FEISHU_WEBHOOK_URL_US")
         self.secret = secret or os.getenv("FEISHU_APP_SECRET")
         self.chat_id = os.getenv("FEISHU_CHAT_ID")
-        self._send_times = []  # 限流记录
-        
+        self._send_times = []  # 限流记录 (保留兼容)
+
+        # ── 限流状态 (线程安全) ──
+        self._rate_lock = threading.Lock()
+        self._send_window: deque = deque()        # 滑动窗口: 发送时间戳
+        self._dedup_cache: Dict[str, float] = {}   # {content_hash: last_send_ts}
+        self._backoff_until: float = 0.0           # 退避截止时间戳
+        self._consecutive_429: int = 0             # 连续限频计数
+
         logger.info(f"飞书推送器已初始化")
         logger.info(f"   Webhook: {'已配置' if self.webhook_url else '未配置'}")
         logger.info(f"   Chat ID: {'已配置' if self.chat_id else '未配置'}")
-        
+        logger.info(f"   限流: {_MAX_PER_SECOND}/s, 去重: {_DEDUP_TTL_SEC}s")
+
+    def _check_rate_limit(self, payload: dict) -> Optional[str]:
+        """检查限流/去重状态.
+
+        Returns:
+            None  → 允许发送
+            str   → 拒绝原因 (用于日志)
+        """
+        now = time.time()
+        with self._rate_lock:
+            # 1) 退避中?
+            if now < self._backoff_until:
+                remaining = self._backoff_until - now
+                return f"backoff ({remaining:.0f}s remaining)"
+
+            # 2) 内容去重
+            raw = str(payload.get("content", ""))
+            content_hash = hashlib.md5(raw.encode()).hexdigest()[:12]
+            last_ts = self._dedup_cache.get(content_hash, 0)
+            if now - last_ts < _DEDUP_TTL_SEC:
+                return f"dedup (hash={content_hash}, {now - last_ts:.0f}s ago)"
+
+            # 3) 滑动窗口
+            while self._send_window and self._send_window[0] < now - 1.0:
+                self._send_window.popleft()
+            if len(self._send_window) >= _MAX_PER_SECOND:
+                return f"rate_window ({len(self._send_window)}/{_MAX_PER_SECOND} in 1s)"
+
+            # 通过 → 记录
+            self._send_window.append(now)
+            self._dedup_cache[content_hash] = now
+            # 定期清理过期去重条目
+            if len(self._dedup_cache) > 200:
+                cutoff = now - _DEDUP_TTL_SEC
+                self._dedup_cache = {k: v for k, v in self._dedup_cache.items() if v > cutoff}
+            return None
+
+    def _apply_backoff(self):
+        """收到 11232 限频错误后指数退避."""
+        with self._rate_lock:
+            self._consecutive_429 += 1
+            delay = min(_BACKOFF_BASE_SEC * (2 ** (self._consecutive_429 - 1)), _BACKOFF_MAX_SEC)
+            self._backoff_until = time.time() + delay
+            logger.warning(f"[飞书] 限频退避: {delay}s (连续 {self._consecutive_429} 次)")
+
+    def _reset_backoff(self):
+        """成功发送后重置退避."""
+        with self._rate_lock:
+            if self._consecutive_429 > 0:
+                logger.info("[飞书] 限频退避已重置")
+            self._consecutive_429 = 0
+            self._backoff_until = 0.0
+
     def _send(self, payload: dict) -> bool:
-        """执行发送"""
+        """执行发送 (含限流/去重/退避)"""
         if not self.webhook_url:
             logger.error("飞书 Webhook URL 未配置")
             return False
-        
+
+        # 限流检查
+        reject_reason = self._check_rate_limit(payload)
+        if reject_reason:
+            logger.info(f"[飞书] 跳过发送: {reject_reason}")
+            return False
+
         try:
-            # 发送
             headers = {"Content-Type": "application/json"}
             resp = requests.post(self.webhook_url, json=payload, headers=headers, timeout=10)
             result = resp.json()
-            
+
             # 飞书返回格式：{"code":0,"msg":"success",...}
             if result.get("code") == 0 or result.get("StatusCode") == 0 or result.get("msg") == "success":
                 logger.info(f"飞书推送成功")
                 self._send_times.append(time.time())
+                self._reset_backoff()
                 return True
+            elif result.get("code") == 11232 or "frequency" in str(result.get("msg", "")).lower():
+                # 飞书限频错误 → 指数退避
+                logger.warning(f"[飞书] 限频错误: {result}")
+                self._apply_backoff()
+                return False
             else:
                 logger.error(f"飞书推送失败：{result}")
                 return False
@@ -599,6 +683,64 @@ class FeishuNotifier:
         
         return "\n".join(lines)
 
+    def notify_top_opportunities(self, targets: List[Dict], pool_meta: Dict = None) -> bool:
+        """推送 Top N 高概率机会到飞书
+        
+        Args:
+            targets: pipeline 输出的 targets 列表 (已按 composite_rank 排序)
+            pool_meta: 池元数据 (core_pool_size, event_discovered, final_pool_size)
+        """
+        if not targets:
+            return True  # 无目标不算失败
+        
+        from datetime import datetime
+        now = datetime.now().strftime("%H:%M")
+        
+        # 只推 VALID + HIGH/MEDIUM urgency
+        top = [t for t in targets if t.get("verdict") in ("VALID", "CONDITIONAL") and t.get("urgency") in ("HIGH", "MEDIUM")][:5]
+        if not top:
+            top = targets[:3]  # fallback: 前3
+        
+        lines = [f"[FTSeek-US] 🎯 Top 机会 ({now})"]
+        if pool_meta:
+            lines.append(f"池: {pool_meta.get('core_pool_size',0)}核心 + {pool_meta.get('event_discovered',0)}异动 → {pool_meta.get('final_pool_size',0)}终池")
+        lines.append("")
+        
+        for i, t in enumerate(top):
+            sym = t.get("symbol", "?").replace("US.", "")
+            fs = t.get("factor_score", 0)
+            conf = t.get("confidence", 0)
+            urg = t.get("urgency", "?")
+            direction = t.get("direction", "?")
+            entry = t.get("entry_zone", [0, 0])
+            sl = t.get("stop_loss", 0)
+            tp = t.get("take_profit", 0)
+            
+            # 计算 R:R
+            mid = (entry[0] + entry[1]) / 2 if entry[0] > 0 else 0
+            risk = mid - sl if mid > sl else 0
+            reward = tp - mid if tp > mid else 0
+            rr = reward / risk if risk > 0 else 0
+            
+            urg_emoji = {"HIGH": "🔥", "MEDIUM": "⚡", "LOW": "💤"}.get(urg, "❓")
+            dir_emoji = "🟢" if direction == "LONG" else "🔴"
+            
+            lines.append(f"{urg_emoji}{dir_emoji} #{i+1} {sym} | {direction} | 因子{fs:.0%} | 置信{conf}%")
+            if entry[0] > 0:
+                lines.append(f"   入场 ${entry[0]:.1f}-${entry[1]:.1f} | 止损 ${sl:.1f} | 目标 ${tp:.1f} | R:R {rr:.1f}")
+            
+            # 催化事件
+            catalyst = t.get("catalyst", {})
+            if catalyst and catalyst.get("type") and catalyst.get("type") != "NONE":
+                lines.append(f"   催化: {catalyst.get('type','')} {catalyst.get('headline','')[:40]}")
+            
+            lines.append("")
+        
+        # Dashboard 链接
+        lines.append("📊 https://ft.aitz.cc:8888")
+        
+        return self.send_text("\n".join(lines))
+
 
 # 全局实例
 _notifier: Optional[FeishuNotifier] = None
@@ -635,3 +777,8 @@ def notify_order_filled(**kwargs) -> bool:
 def notify_exit(**kwargs) -> bool:
     """发送平仓通知"""
     return get_notifier().notify_exit(**kwargs)
+
+
+def notify_top_opportunities(targets: list, pool_meta: dict = None) -> bool:
+    """推送 Top 机会到飞书"""
+    return get_notifier().notify_top_opportunities(targets, pool_meta)

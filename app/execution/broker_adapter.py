@@ -63,14 +63,21 @@ class FutuBrokerAdapter:
 
     _NOTIONAL_HARD_CAP_PCT = 0.30  # 30% equity — 粗略硬兜底，比上游 25% 宽松
 
-    def _notional_sanity_check(self, symbol: str, qty, price: float) -> bool:
+    def _notional_sanity_check(self, symbol: str, qty, price: float, is_close: bool = False) -> bool:
         """
         兜底检查: 单笔名义 ≤ equity × 30%.
         不依赖 position_store, 只查 equity. 如果 equity 获取失败则 fail-close (拒绝).
         这是所有路径的最后一道墙，不是主要防线。
 
+        P0 (2026-06-16): is_close=True 时绕过检查 — 平仓单不受名义上限约束
+        根因: 6/15 SNDK $43K > 30% equity 被拒, FLAT_ALL 无法执行紧急平仓
+
         Returns: True = 通过, False = 拒绝
         """
+        # P0 (2026-06-16): 平仓单一律放行 — 紧急退出不能被门禁阻断
+        if is_close:
+            return True
+
         if qty <= 0 or price <= 0:
             return True  # 无效参数不在此拦截（上游应已处理）
 
@@ -404,6 +411,12 @@ class FutuBrokerAdapter:
         """
         # 2. 提交订单
         if not self.is_connected():
+            # P0: 实盘模式下 Broker 断连时拒绝订单，不允许模拟成交
+            if os.environ.get("TRADE_ENV", "1") == "0":
+                raise RuntimeError(
+                    f"[实盘安全] Broker 未连接, 拒绝提交 {order.symbol} 订单 — "
+                    f"请勿在断连状态下交易"
+                )
             return self._simulate_fill(order)
 
         try:
@@ -428,7 +441,10 @@ class FutuBrokerAdapter:
                 is_sell = (order.direction != Direction.LONG)
 
             # 兜底门禁 (2026-06-06): broker 前最后一道墙
-            if not self._notional_sanity_check(order.symbol, order.quantity, order.price):
+            # P0 (2026-06-16): 平仓单 (is_exit=True) 绕过门禁 — 紧急退出不能被阻断
+            _order_meta = getattr(order, 'metadata', None) or {}
+            _is_close_order = _order_meta.get('is_exit', False) if isinstance(_order_meta, dict) else False
+            if not self._notional_sanity_check(order.symbol, order.quantity, order.price, is_close=_is_close_order):
                 return {"success": False, "error": "broker_notional_cap", "order_id": ""}
 
             ret, data = self.trade_ctx.place_order(
@@ -485,6 +501,10 @@ class FutuBrokerAdapter:
                 raise RuntimeError(f"下单失败: {data}")
 
         except ImportError:
+            if os.environ.get("TRADE_ENV", "1") == "0":
+                raise RuntimeError(
+                    f"[实盘安全] futu-api 未安装, 拒绝提交 {order.symbol} 订单"
+                )
             return self._simulate_fill(order)
         except Exception as e:
             logger.error(f"[富途] 下单异常 {order.symbol}: {e}")
@@ -825,21 +845,47 @@ class FutuBrokerAdapter:
                     },
                 }
 
-                # ── 币种转换 (2026-06-10): HKD → USD ──
-                # Futu 多币种账户的 accinfo 以账户基础货币(HKD)报告 total_assets
-                # 美股交易需要 USD 计价，必须转换
+                # ── 币种转换 (2026-06-15 修复): HKD → USD ──
+                # 优先使用账户内置汇率 (usd_assets/total_assets), 回退到固定 7.80
                 acct_currency = result["currency"]
                 if acct_currency != "USD" and acct_currency != "N/A":
-                    fx_rate = self._get_fx_rate(acct_currency, "USD")
+                    # 计算实际汇率: HKD total_assets / USD usd_assets
+                    _usd_assets = sf(row.get("usd_assets"))
+                    _hkd_assets = sf(row.get("total_assets"))
+                    if _usd_assets > 0 and _hkd_assets > 0:
+                        fx_rate = 1.0 / (_hkd_assets / _usd_assets)  # HKD→USD = usd/hkd
+                    else:
+                        fx_rate = self._get_fx_rate(acct_currency, "USD")
+
                     if fx_rate and fx_rate > 0:
                         result["_fx_rate"] = fx_rate
                         result["_original_currency"] = acct_currency
-                        for key in ["total_assets", "cash", "market_val", "buying_power",
-                                    "avl_withdrawal_cash", "frozen_cash",
+
+                        # 核心字段: 优先使用 USD 子账户字段 (更精准)
+                        _usd_cash = sf(row.get("us_cash"))
+                        _usd_avl = sf(row.get("us_avl_withdrawal_cash"))
+                        _usd_power = sf(row.get("usd_net_cash_power"))
+
+                        if _usd_assets > 0:
+                            result["total_assets"] = round(_usd_assets, 2)
+                        else:
+                            result["total_assets"] = round(result["total_assets"] * fx_rate, 2)
+
+                        result["cash"] = round(_usd_cash * 1 if _usd_cash > 0 else result["cash"] * fx_rate, 2)
+                        result["avl_withdrawal_cash"] = round(_usd_avl if _usd_avl > 0 else result["avl_withdrawal_cash"] * fx_rate, 2)
+
+                        if _usd_power > 0:
+                            result["buying_power"] = round(_usd_power, 2)
+                        else:
+                            result["buying_power"] = round(result["buying_power"] * fx_rate, 2)
+
+                        # 其余字段按比例折算
+                        for key in ["market_val", "frozen_cash",
                                     "initial_margin", "maintain_margin"]:
                             if key in result and isinstance(result[key], (int, float)):
                                 result[f"_raw_{key}_{acct_currency}"] = result[key]
                                 result[key] = round(result[key] * fx_rate, 2)
+
                         logger.info(
                             f"[富途] 币种转换 {acct_currency}→USD (rate={fx_rate:.4f}): "
                             f"total_assets=${result['total_assets']:,.0f} "

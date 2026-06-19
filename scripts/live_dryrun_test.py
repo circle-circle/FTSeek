@@ -211,8 +211,8 @@ def test_broker_unlock():
     try:
         from futu import OpenSecTradeContext, TrdMarket, TrdEnv, RET_OK
 
-        host = os.getenv("OPEND_HOST", "127.0.0.1")
-        port = int(os.getenv("OPEND_PORT", "11111"))
+        host = os.getenv("FUTU_OPEND_HOST", "127.0.0.1")
+        port = int(os.getenv("FUTU_OPEND_PORT", "11111"))
 
         ctx = OpenSecTradeContext(
             filter_trdmarket=TrdMarket.NONE, host=host, port=port,
@@ -466,8 +466,8 @@ def test_env_config():
         "FUTU_UNLOCK_PWD_MD5": ("已设置", lambda v: len(v) == 32),
         "REAL_ACCOUNT_ID": ("已设置", lambda v: len(v) > 0),
         "SIMULATE_ACCOUNT_ID": ("已设置", lambda v: len(v) > 0),
-        "OPEND_HOST": ("127.0.0.1", lambda v: True),
-        "OPEND_PORT": ("11111", lambda v: v.isdigit()),
+        "FUTU_OPEND_HOST": ("127.0.0.1", lambda v: True),
+        "FUTU_OPEND_PORT": ("11111", lambda v: v.isdigit()),
         "TRADE_ENV": ("1 (当前模拟盘)", lambda v: v == "1"),
         "LIVE_CONSERVATIVE": ("1", lambda v: v == "1"),
     }

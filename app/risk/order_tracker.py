@@ -24,12 +24,82 @@ P0 根因修复 (2026-05-14):
 import logging
 import sqlite3
 import time
+import warnings
 from datetime import datetime, timedelta
 from typing import Dict, Any, Optional, List
 from pathlib import Path
 from enum import Enum
 
 logger = logging.getLogger("ftseek.order_tracker")
+
+# ═══════════════════════════════════════════════════════════════════
+#  Task #37 (2026-06-16): 时段感知超时管理
+#  根因: 盘后/闭市订单挂单 8 小时无人撤; 实盘 US.MU 案例 21:30 提交
+#        挂到次日凌晨, 持仓无法清算
+#  修复: 按 ET 时段动态选择超时 + 超时即撤 + Dashboard 推送 + 信号重排队
+# ═══════════════════════════════════════════════════════════════════
+
+# 盘前: 04:00-09:30 ET
+PREMARKET_CONFIRM_TIMEOUT = 300       # 5 分钟
+# 盘中: 09:30-16:00 ET
+DAY_TRADING_CONFIRM_TIMEOUT = 120     # 2 分钟
+# 盘后: 16:00-20:00 ET
+AFTER_HOURS_CONFIRM_TIMEOUT = 600     # 10 分钟 (Task #37 用户要求)
+# 闭市: 20:00 ET 之后 / 周末 / 节假日
+CLOSED_CONFIRM_TIMEOUT = 1800         # 30 分钟
+
+# 时段 → 超时映射 (键值对齐 app.utils.timezone.get_market_session)
+_TIMEOUT_BY_SESSION = {
+    "pre_market":  PREMARKET_CONFIRM_TIMEOUT,
+    "regular":     DAY_TRADING_CONFIRM_TIMEOUT,
+    "after_hours": AFTER_HOURS_CONFIRM_TIMEOUT,
+    "closed":      CLOSED_CONFIRM_TIMEOUT,
+}
+
+
+def get_dynamic_timeout(now_et_dt=None) -> int:
+    """根据当前 ET 时间返回适当的订单确认超时秒数 (Task #37).
+
+    时段边界 (与 app.utils.timezone.get_market_session 一致):
+      - pre_market:  04:00 <= t < 09:30  → 300s
+      - regular:     09:30 <= t <= 16:00 → 120s   (16:00 整点算盘中)
+      - after_hours: 16:00 <  t <= 20:00 → 600s
+      - closed:      其余 (含周末/节假日)→ 1800s
+
+    注: 16:00 整点归属 regular (与上游 get_market_session 保持一致),
+        16:00 之后第一秒进入 after_hours.
+
+    Args:
+        now_et_dt: 指定 ET 时间 (默认取当前 ET);
+                   也可传入订单 submit_time 用以按提交时段决定超时,
+                   便于单测构造历史时间.
+
+    Returns:
+        超时秒数; 异常情况 fallback 为 CLOSED_CONFIRM_TIMEOUT (保守值).
+    """
+    try:
+        from app.utils.timezone import get_market_session
+        session = get_market_session(now_et_dt)
+    except Exception as exc:  # pragma: no cover - 防御性
+        logger.warning(f"[OrderTracker] 时段判定失败, 回退 CLOSED 超时: {exc}")
+        return CLOSED_CONFIRM_TIMEOUT
+    return _TIMEOUT_BY_SESSION.get(session, CLOSED_CONFIRM_TIMEOUT)
+
+
+class _DeprecatedClassAttr:
+    """Task #37: 旧字段访问时打 DeprecationWarning, 兼容外部调用方."""
+    def __init__(self, value, old_name: str, alternative: str):
+        self._value = value
+        self._old_name = old_name
+        self._alternative = alternative
+
+    def __get__(self, obj, objtype=None):
+        warnings.warn(
+            f"OrderTracker.{self._old_name} 已弃用, 请改用 {self._alternative}",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self._value
 
 
 class OrderState(Enum):
@@ -61,11 +131,19 @@ class OrderTracker:
     5. 确认成交后才允许发送平仓通知
     """
     
-    # 订单确认超时 (秒)
-    CONFIRM_TIMEOUT_SECONDS = 300  # 5分钟
-    
-    # 盘后订单最大等待时间 (秒)
-    AFTER_HOURS_MAX_WAIT = 28800   # 8小时 (覆盖盘后+深夜)
+    # Task #37 (2026-06-16): 原静态常量已弃用, 请使用模块级 get_dynamic_timeout()
+    # 保留为 alias 仅为兼容那些可能在老代码路径上读取该字段的调用方.
+    # 访问时会触发 DeprecationWarning. 内部超时判断一律走 get_dynamic_timeout().
+    CONFIRM_TIMEOUT_SECONDS = _DeprecatedClassAttr(
+        AFTER_HOURS_CONFIRM_TIMEOUT,
+        old_name="CONFIRM_TIMEOUT_SECONDS",
+        alternative="get_dynamic_timeout()",
+    )
+    AFTER_HOURS_MAX_WAIT = _DeprecatedClassAttr(
+        AFTER_HOURS_CONFIRM_TIMEOUT,
+        old_name="AFTER_HOURS_MAX_WAIT",
+        alternative="get_dynamic_timeout()",
+    )
     
     def __init__(self, db_path: str = None):
         if db_path is None:
@@ -399,36 +477,196 @@ class OrderTracker:
         )
         return {"restored": restored, "still_pending": still_pending, "marked_stale": marked_stale}
 
-    def check_stale_orders(self) -> List[Dict]:
-        """
-        检查超时未确认的订单
-        
+    def check_stale_orders(self, broker_adapter=None) -> List[Dict]:
+        """检查超时未确认的订单 (Task #37 重构).
+
+        超时阈值不再是定值, 而是按订单 submit_time 所属的 ET 时段动态取:
+          pre_market=300s / regular=120s / after_hours=600s / closed=1800s
+
+        对于 AFTER_HOURS_PENDING 订单: 仍使用提交时段超时 (仍会取到 600/1800)
+        避免原本 28800s 的 8 小时黑洞.
+
+        超时后动作 (逐个调用 _handle_timeout_order):
+          1) 调 broker_adapter.cancel_order 撤单 (失败只记 ERROR 不抛异常)
+          2) 推送 WebSocket 事件 order_timeout_canceled
+          3) 写入 signal_requeue_queue 供下次开盘重新评估
+          4) 订单状态置为 CANCELLED + metadata 记录撤单时间戳
+
+        Args:
+            broker_adapter: 可选; 为 None 时仍会打状态为 CANCELLED + 推 WS 提醒,
+                            但跳过 broker 撤单调用 (调用方责任保证下游人工介入).
+
         Returns:
-            超时的订单列表
+            被识别为超时的订单列表 (含处理后状态).
         """
         now = datetime.now()
-        stale_orders = []
-        
+        stale_orders: List[Dict] = []
+
         for oid, order in list(self._pending_orders.items()):
-            submit_time = datetime.fromisoformat(order["submit_time"])
+            try:
+                submit_time = datetime.fromisoformat(order["submit_time"])
+            except Exception:
+                continue
+            if order["state"] not in (
+                OrderState.AFTER_HOURS_PENDING.value,
+                OrderState.PENDING_CONFIRM.value,
+                OrderState.SUBMITTED.value,
+            ):
+                continue
+
             elapsed = (now - submit_time).total_seconds()
-            
-            if order["state"] == OrderState.AFTER_HOURS_PENDING.value:
-                # 盘后订单等待超时
-                if elapsed > self.AFTER_HOURS_MAX_WAIT:
-                    stale_orders.append(order)
-            elif order["state"] in (OrderState.PENDING_CONFIRM.value, OrderState.SUBMITTED.value):
-                # 正常订单确认超时
-                if elapsed > self.CONFIRM_TIMEOUT_SECONDS:
-                    stale_orders.append(order)
-        
+            # 按提交时所在 ET 时段取超时 (避免跨时段误判)
+            try:
+                from app.utils.timezone import to_et
+                submit_et = to_et(submit_time)
+            except Exception:
+                submit_et = None
+            timeout_sec = get_dynamic_timeout(submit_et)
+
+            if elapsed > timeout_sec:
+                order["_elapsed_at_timeout"] = elapsed
+                order["_timeout_threshold"] = timeout_sec
+                stale_orders.append(order)
+
         for order in stale_orders:
-            self.update_order_state(order["futu_order_id"], OrderState.STALE)
-            logger.warning(f"[OrderTracker] 订单超时 | {order['symbol']} {order['futu_order_id']} "
-                         f"已等待 {elapsed:.0f}s")
-        
+            self._handle_timeout_order(order, broker_adapter)
+
         return stale_orders
-    
+
+    # ─── Task #37 超时处理辅助函数 ───
+    def _handle_timeout_order(self, order: Dict, broker_adapter) -> None:
+        """超时单笔订单处理: 撤单 + 推送告警 + 入队重评 (Task #37).
+
+        任何环节异常都不会抛到上层 monitor loop, 仅记 ERROR/WARNING 日志.
+        """
+        oid = order["futu_order_id"]
+        symbol = order["symbol"]
+        elapsed = order.get("_elapsed_at_timeout", 0.0)
+        threshold = order.get("_timeout_threshold", 0)
+        canceled_at = datetime.now().isoformat()
+
+        logger.warning(
+            f"[OrderTracker·Timeout] 订单超时 | {symbol} {oid} 已等 {elapsed:.0f}s "
+            f"(阈值 {threshold}s, state={order['state']}) → 准备撤单"
+        )
+
+        # 1) 调 broker 撤单 (失败不阻塞后续推送/重排队)
+        cancel_ok = False
+        cancel_err: Optional[str] = None
+        if broker_adapter is not None and hasattr(broker_adapter, "cancel_order"):
+            try:
+                cancel_ok = bool(broker_adapter.cancel_order(oid))
+                if not cancel_ok:
+                    logger.error(
+                        f"[OrderTracker·Timeout] {symbol} {oid} broker.cancel_order 返回 False"
+                    )
+            except Exception as e:
+                cancel_err = str(e)
+                logger.error(
+                    f"[OrderTracker·Timeout] {symbol} {oid} 撤单异常 (忍受不抛): {e}"
+                )
+        else:
+            cancel_err = "broker_adapter_unavailable"
+            logger.warning(
+                f"[OrderTracker·Timeout] {symbol} {oid} 无 broker_adapter, 跳过撤单调用"
+            )
+
+        # 2) 保存 metadata + 状态 → CANCELLED (源于超时自动撤单路径)
+        meta_patch = {
+            "timeout_canceled": True,
+            "timeout_threshold_sec": threshold,
+            "timeout_elapsed_sec": round(elapsed, 1),
+            "auto_canceled_at": canceled_at,
+            "cancel_reason": "order_confirm_timeout",
+            "broker_cancel_ok": cancel_ok,
+        }
+        if cancel_err:
+            meta_patch["broker_cancel_error"] = cancel_err
+        self.update_order_state(oid, OrderState.CANCELLED, meta_patch)
+
+        # 3) 写入 signal_requeue_queue 供下次开盘重评估
+        try:
+            self._enqueue_for_next_open(order, canceled_at)
+        except Exception as e:
+            logger.error(f"[OrderTracker·Timeout] {symbol} {oid} 重排队写入失败: {e}")
+
+        # 4) 推送 Dashboard WebSocket 事件
+        try:
+            from app.web_dashboard.routes.ws import publish_event_sync
+            publish_event_sync("order_timeout_canceled", {
+                "futu_order_id": oid,
+                "symbol": symbol,
+                "direction": order.get("direction"),
+                "quantity": order.get("quantity"),
+                "exit_reason": order.get("exit_reason"),
+                "elapsed_sec": round(elapsed, 1),
+                "timeout_threshold_sec": threshold,
+                "auto_canceled_at": canceled_at,
+                "broker_cancel_ok": cancel_ok,
+                "cancel_error": cancel_err,
+            })
+        except Exception as e:
+            logger.error(f"[OrderTracker·Timeout] {symbol} {oid} WS 推送失败 (忽略): {e}")
+
+    def _enqueue_for_next_open(self, order: Dict, canceled_at: str) -> None:
+        """将被撤订单对应信号入队下次开盘重评估 (Task #37).
+
+        使用轻量表 signal_requeue_queue: 代码下游 (开盘前 plan 环节)
+        写一次 SELECT * FROM signal_requeue_queue WHERE consumed=0 AND symbol=...
+        即可拿到需要重新下单的信号. close 类信号会被下次 plan 直接重新挂入
+        平仓队列; open 类信号需重走信号管道. 表设计为追加式, GC 交给上游.
+        """
+        conn = sqlite3.connect(self.db_path)
+        try:
+            cur = conn.cursor()
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS signal_requeue_queue (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    futu_order_id TEXT NOT NULL,
+                    symbol TEXT NOT NULL,
+                    direction TEXT,
+                    quantity INTEGER,
+                    exit_reason TEXT,
+                    signal_kind TEXT,        -- 'close' | 'open' | 'unknown'
+                    canceled_at TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    consumed INTEGER NOT NULL DEFAULT 0,
+                    consumed_at TEXT,
+                    metadata_json TEXT
+                )
+            """)
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_requeue_consumed ON signal_requeue_queue(consumed, symbol)"
+            )
+            # close 类信号: exit_reason 非空意味着这是一笔平仓订单
+            signal_kind = "close" if order.get("exit_reason") else "open"
+            cur.execute(
+                """
+                INSERT INTO signal_requeue_queue
+                (futu_order_id, symbol, direction, quantity, exit_reason,
+                 signal_kind, canceled_at, created_at, consumed, metadata_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
+                """,
+                (
+                    order["futu_order_id"],
+                    order["symbol"],
+                    order.get("direction"),
+                    order.get("quantity"),
+                    order.get("exit_reason"),
+                    signal_kind,
+                    canceled_at,
+                    datetime.now().isoformat(),
+                    self._to_json(order.get("metadata", {})),
+                ),
+            )
+            conn.commit()
+            logger.info(
+                f"[OrderTracker·Requeue] {order['symbol']} {order['futu_order_id']} "
+                f"已入 next-open 重排队 (kind={signal_kind})"
+            )
+        finally:
+            conn.close()
+
     def get_pending_orders(self, symbol: str = None) -> List[Dict]:
         """获取所有待处理的订单"""
         if symbol:

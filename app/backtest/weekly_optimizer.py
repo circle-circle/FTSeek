@@ -219,7 +219,7 @@ def load_trade_rows(
         ):
             pick(c)
 
-        where = ["exit_price IS NOT NULL"]
+        where = ["exit_price > 0"]
         params: List[Any] = []
         if start_date:
             where.append("trade_date >= ?")

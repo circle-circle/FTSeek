@@ -28,9 +28,8 @@ def _get_conn():
     global _db_conn
     if _db_conn is None:
         try:
-            _db_conn = sqlite3.connect(_db_path, check_same_thread=False)
-            _db_conn.execute("PRAGMA journal_mode=WAL")
-            _db_conn.execute("PRAGMA synchronous=NORMAL")
+            from app.core.db_utils import db_connect_long
+            _db_conn = db_connect_long(_db_path)
         except Exception as e:
             logger.error(f"无法连接 Event Log DB: {e}")
     return _db_conn

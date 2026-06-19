@@ -1,0 +1,53 @@
+screening_factors:
+  insider_cluster_buy:
+    weight: 5
+    description: Insider cluster buy (SECForm4Provider cluster score > 0.5)
+  insider_net_buy:
+    weight: 2
+    description: Insider net buy (non-cluster)
+  rsi_oversold:
+    weight: 2
+    condition: rsi_14 < 40
+    description: RSI oversold pullback
+  above_ma20:
+    weight: 2
+    condition: price > ma20
+    description: Price above 20-day MA
+  macd_golden_cross:
+    weight: 1
+    description: MACD golden cross
+  news_positive:
+    weight: 1
+    condition: sentiment_score > 0
+    description: Positive news sentiment (last 3 days)
+  earnings_beat_streak:
+    weight: 1
+    condition: beat_rate > 0.5
+    description: Earnings beat rate > 50%
+  volume_expansion:
+    weight: 1
+    condition: volume_5d_avg_ratio > 1.2
+    description: Volume expansion
+  pe_below_industry:
+    weight: 1
+    description: PE below industry average
+  rsi_overbought:
+    weight: -2
+    condition: rsi_14 > 70
+    description: RSI overbought
+  insider_net_sell:
+    weight: -2
+    description: Insider net sell
+  news_negative:
+    weight: -1
+    condition: sentiment_score < -0.3
+    description: Negative news sentiment
+  earnings_imminent:
+    weight: -3
+    condition: days_until_earnings < 3
+    description: Earnings < 3 days, too volatile
+weight_adjustments:
+- date: '2026-06-18'
+  factor: insider_cluster_buy
+  delta: 1
+  reason: '正收益因子: 贝叶斯胜率72%, CI [55%-85%]'

@@ -2,22 +2,196 @@
 Signal Stage — 信号生成 (策略编排层)
 
 职责:
-  1. 收集所有策略候选 (collect-all) + 质量评分 + 信号融合
-  2. 快车道 → ORB → 趋势优先 → 技术面 → LLM 投票
-  3. 同方向多策略汇合 → 置信度加成; 方向冲突 → 取最强 + 惩罚
+  1. Regime Filter 门禁 (ADR-007: 2026-06-16) — 先判环境, 再选策略
+  2. 收集所有策略候选 (collect-all) + 质量评分 + 信号融合
+  3. 快车道 → ORB → 技术面 (trend_first 已禁用, IC=-0.24)
 
 策略本身是纯函数 (app/strategy/pure/), 本 Stage 只负责编排调用顺序。
+
+ADR-007 核心变更:
+  - 新增 Regime Filter 作为所有策略的前置门禁
+  - trend_first 全局禁用 (IC=-0.24, 历史验证有害)
+  - TECHNICAL_MULTI_FACTOR 受 regime 准入门控
+  - 信号门槛随 regime 动态调整 (STRONG_BULL 宽松, CAUTION 严格)
 """
 
 from __future__ import annotations
 
 import logging
+import time
 from typing import Optional
 
 from app.core.pipeline_contracts import SymbolContext, SignalCandidate
 from app.strategy.pure import evaluate as eval_strategy
 
 logger = logging.getLogger(__name__)
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  P1 (2026-06-17): 日均信号数量监控 — 防止过度过滤
+#  跟踪每日信号放行/过滤数量, 信号过少时发出警告
+# ═══════════════════════════════════════════════════════════════════
+
+class _SignalCounter:
+    """信号计数器 (进程内, 按交易日重置)"""
+
+    _MIN_DAILY_SIGNALS = 3      # 日均信号低于此数发出警告
+    _MIN_DAILY_CANDIDATES = 5   # 日均候选低于此数说明选股池过窄
+
+    def __init__(self):
+        self._date: str = ""
+        self._generated: int = 0
+        self._filtered_by_quality: int = 0
+        self._filtered_by_regime: int = 0
+        self._filtered_by_direction: int = 0
+        self._total_candidates: int = 0
+        self._warned: bool = False
+
+    def _check_date_reset(self):
+        """检查并重置日期"""
+        try:
+            from app.utils.timezone import now_et
+            today = now_et().strftime("%Y-%m-%d")
+        except Exception:
+            from datetime import datetime
+            today = datetime.now().strftime("%Y-%m-%d")
+        if today != self._date:
+            if self._date and self._total_candidates > 0:
+                self._emit_summary()
+            self._date = today
+            self._generated = 0
+            self._filtered_by_quality = 0
+            self._filtered_by_regime = 0
+            self._filtered_by_direction = 0
+            self._total_candidates = 0
+            self._warned = False
+
+    def record_generated(self):
+        self._check_date_reset()
+        self._generated += 1
+
+    def record_filtered(self, reason: str = "quality"):
+        self._check_date_reset()
+        if reason == "regime":
+            self._filtered_by_regime += 1
+        elif reason == "direction":
+            self._filtered_by_direction += 1
+        else:
+            self._filtered_by_quality += 1
+
+    def record_candidates(self, count: int):
+        self._check_date_reset()
+        self._total_candidates += count
+
+    def _emit_summary(self):
+        """输出前一日信号统计"""
+        total_filtered = self._filtered_by_quality + self._filtered_by_regime + self._filtered_by_direction
+        logger.info(
+            f"[SignalCounter] {self._date} 日终统计: "
+            f"生成={self._generated} 候选={self._total_candidates} "
+            f"过滤={total_filtered} (质量={self._filtered_by_quality}, "
+            f"regime={self._filtered_by_regime}, 方向={self._filtered_by_direction})"
+        )
+
+    def check_warning(self):
+        """检查是否需要发出过度过滤警告"""
+        self._check_date_reset()
+        if self._warned:
+            return
+        if self._total_candidates >= 10 and self._generated < self._MIN_DAILY_SIGNALS:
+            self._warned = True
+            total_filtered = self._filtered_by_quality + self._filtered_by_regime + self._filtered_by_direction
+            logger.warning(
+                f"⚠️ [SignalCounter·过度过滤] {self._date}: "
+                f"候选={self._total_candidates} 但生成仅={self._generated} "
+                f"(过滤={total_filtered}). "
+                f"建议检查 Regime 门槛/VIX折扣/LONG折扣是否过于严格"
+            )
+        if self._total_candidates >= 20 and self._generated == 0:
+            self._warned = True
+            logger.warning(
+                f"⚠️ [SignalCounter·零信号] {self._date}: "
+                f"已扫描 {self._total_candidates} 个候选但 0 信号生成. "
+                f"可能原因: Regime=CRISIS/BEAR, VIX>=28, 或所有策略IC为负"
+            )
+
+
+_signal_counter = _SignalCounter()
+
+
+def _get_regime_verdict(ctx: SymbolContext):
+    """从 SymbolContext 中提取数据, 调用 Regime Filter 评估当前环境
+
+    P0 (2026-06-17): 支持 rapid_regime_override — scan_loop 检测到急变时注入
+    """
+    try:
+        from app.strategy.regime_filter import evaluate_regime_with_hysteresis, RegimeVerdict, Regime
+        from app.analysis.market_breadth import get_market_breadth
+
+        breadth = get_market_breadth()
+        # P1 (2026-06-17): 使用滞回版本, 防止边界震荡
+        verdict = evaluate_regime_with_hysteresis(
+            spy_price=getattr(ctx, 'spy_price', 0) or 0,
+            spy_ma200=getattr(ctx, 'spy_ma200', 0) or 0,
+            vix=getattr(ctx, 'vix', 20) or 20,
+            oversold_count=breadth.get_oversold_count(),
+            scanned_count=getattr(breadth, '_scan_count', 0),
+        )
+
+        # P0: 如果 scan_loop 检测到快速 regime 切换, 强制收紧到更保守的 regime
+        _rapid = getattr(ctx, '_rapid_regime_override', None)
+        if _rapid and verdict:
+            # 只允许收紧 (升级到更保守), 不允许放松
+            _severity = {
+                Regime.STRONG_BULL: 0, Regime.BULL: 1,
+                Regime.CAUTION: 2, Regime.BEAR: 3, Regime.CRISIS: 4,
+            }
+            _target_map = {
+                "CAUTION": Regime.CAUTION,
+                "BEAR": Regime.BEAR,
+            }
+            _target_regime = _target_map.get(_rapid)
+            if _target_regime and _severity.get(_target_regime, 0) > _severity.get(verdict.regime, 0):
+                logger.warning(
+                    f"[RegimeQuickSwitch] 强制收紧: {verdict.regime.value} → {_target_regime.value}"
+                )
+                # 重新评估, 用更保守的 regime 参数覆盖
+                # 简单方式: 收紧 min_strength/min_confidence 和 position_scale
+                if _target_regime == Regime.CAUTION:
+                    verdict = RegimeVerdict(
+                        regime=Regime.CAUTION,
+                        allow_momentum=True,
+                        allow_trend_first=False,
+                        allow_orb=True,
+                        allow_fast_lane=True,
+                        allow_insider=True,
+                        allow_earnings_revision=True,
+                        position_scale=min(verdict.position_scale, 0.50),
+                        min_strength=max(verdict.min_strength, 55),
+                        min_confidence=max(verdict.min_confidence, 0.55),
+                        allowed_directions=["LONG", "SHORT"],
+                        rationale=f"RAPID_SWITCH→CAUTION (原{verdict.regime.value})",
+                    )
+                elif _target_regime == Regime.BEAR:
+                    verdict = RegimeVerdict(
+                        regime=Regime.BEAR,
+                        allow_momentum=False,
+                        allow_trend_first=False,
+                        allow_orb=False,
+                        allow_fast_lane=True,
+                        allow_insider=True,
+                        allow_earnings_revision=True,
+                        position_scale=min(verdict.position_scale, 0.25),
+                        min_strength=max(verdict.min_strength, 75),
+                        min_confidence=max(verdict.min_confidence, 0.70),
+                        allowed_directions=["SHORT"],
+                        rationale=f"RAPID_SWITCH→BEAR (原{verdict.regime.value})",
+                    )
+
+        return verdict
+    except Exception as e:
+        logger.warning(f"[SignalStage] Regime Filter 评估异常, 放行: {e}")
+        return None
 
 
 def _apply_quality_scoring(ctx: SymbolContext, candidate: SignalCandidate) -> None:
@@ -44,14 +218,20 @@ def process(ctx: SymbolContext,
             battle_plan_manager=None,
             voting_coordinator=None) -> Optional[SignalCandidate]:
     """
-    策略编排: collect-all + 质量评分 + 信号融合.
+    策略编排: Regime Filter → collect-all → 质量评分 → 信号融合.
 
-    顺序:
-      1. 快车道 (作战计划匹配, 最高优先级)
-      2. ORB (开盘区间突破, 09:45-11:00)
-      3. Trend-First (趋势方向 + RSI回调, 10:00+)
-      4. Technical (均值回归多因子)
-      5. LLM 投票 (盘前/盘后)
+    ADR-007 (2026-06-16): Regime Filter 作为第一道门禁
+      - STRONG_BULL: 全策略放行, 门槛宽松
+      - BULL: 动量策略放行, 门槛适中
+      - CAUTION: 仅快车道+ORB, 门槛严格
+      - BEAR/CRISIS: 仅快车道(人审), 基本停止
+
+    策略顺序:
+      1. 快车道 (作战计划匹配, 永远放行)
+      2. ORB (开盘区间突破, regime 准许时)
+      3. Technical (多因子动量, regime 准许时)
+      — trend_first 已全局禁用 (IC=-0.24) —
+      4. LLM 投票 (盘前/盘后, regime 准许时)
 
     所有命中策略收集后:
       - 每个候选施加 SignalQualityScorer 多维评分
@@ -59,6 +239,18 @@ def process(ctx: SymbolContext,
       - 方向冲突 → 取最强候选 + 惩罚
     """
     symbol = ctx.symbol
+
+    # ── ADR-007: Regime Filter — 环境门禁 ──
+    regime_verdict = _get_regime_verdict(ctx)
+    if regime_verdict:
+        logger.info(
+            f"[Regime] {symbol} regime={regime_verdict.regime.value} "
+            f"pos_scale={regime_verdict.position_scale} | {regime_verdict.rationale}"
+        )
+        # 将 regime 注入 ctx 供下游使用
+        ctx.market_regime = regime_verdict.regime.value
+    else:
+        logger.debug(f"[Regime] {symbol} 无法评估, 默认放行")
 
     # ── 持仓检查 (快车道和LLM投票共用) ──
     try:
@@ -72,7 +264,7 @@ def process(ctx: SymbolContext,
 
     candidates: list[SignalCandidate] = []
 
-    # ── 策略 1: 快车道 (作战计划, 无持仓时) ──
+    # ── 策略 1: 快车道 (作战计划, 永远放行 — 人已审核) ──
     if not has_position:
         try:
             if battle_plan_manager:
@@ -93,8 +285,12 @@ def process(ctx: SymbolContext,
         except Exception as e:
             logger.debug(f"[Signal] 快车道检查异常 (放行): {e}")
 
-    # ── 策略 2: ORB (开盘区间突破, 无持仓时) ──
-    if not has_position:
+    # ── 策略 2: ORB (开盘区间突破, regime 准许时) ──
+    _orb_allowed = True
+    if regime_verdict and regime_verdict.blocks("orb"):
+        _orb_allowed = False
+        logger.debug(f"[Regime] {symbol} ORB 被 {regime_verdict.regime.value} 阻止")
+    if _orb_allowed and not has_position:
         try:
             candidate = eval_strategy("orb", ctx)
             if candidate is not None:
@@ -106,19 +302,29 @@ def process(ctx: SymbolContext,
         except Exception as e:
             logger.debug(f"[Signal] ORB异常 (放行): {e}")
 
-    # ── 策略 3: Trend-First (趋势方向 + RSI回调) ──
+    # ── 策略 3: trend_first — ADR-007 全局禁用 (IC=-0.24, 历史验证有害) ──
+    # 保留代码路径但默认不执行。如需恢复: 设 config strategies.trend_first.enabled=true
+    # 且 regime 准许 (当前 regime_filter 永远阻止 trend_first)
+    _trend_first_enabled = False
     try:
-        candidate = eval_strategy("trend_first", ctx)
-        if candidate is not None:
-            _apply_quality_scoring(ctx, candidate)
-            logger.info(
-                f"[Signal] {symbol} TrendFirst命中: {candidate.rationale}"
-            )
-            candidates.append(candidate)
-    except Exception as e:
-        logger.debug(f"[Signal] TrendFirst异常 (放行): {e}")
+        from app.core.config_container import get_config
+        _cfg = get_config()
+        _trend_first_enabled = bool(_cfg.get_dotted("strategies.trend_first.enabled", False))
+    except Exception:
+        pass
+    if _trend_first_enabled and regime_verdict and regime_verdict.allow_trend_first:
+        try:
+            candidate = eval_strategy("trend_first", ctx)
+            if candidate is not None:
+                _apply_quality_scoring(ctx, candidate)
+                logger.info(
+                    f"[Signal] {symbol} TrendFirst命中: {candidate.rationale}"
+                )
+                candidates.append(candidate)
+        except Exception as e:
+            logger.debug(f"[Signal] TrendFirst异常 (放行): {e}")
 
-    # ── 策略 4: Technical (均值回归多因子) — 可配置冻结 ──
+    # ── 策略 4: Technical (多因子动量) — regime 准入门控 ──
     _technical_enabled = True
     try:
         from app.core.config_container import get_config
@@ -126,7 +332,11 @@ def process(ctx: SymbolContext,
         _technical_enabled = bool(_cfg.get_dotted("strategies.technical.enabled", True))
     except Exception:
         pass
-    if _technical_enabled:
+    _technical_regime_ok = True
+    if regime_verdict and regime_verdict.blocks("TECHNICAL_MULTI_FACTOR"):
+        _technical_regime_ok = False
+        logger.debug(f"[Regime] {symbol} TECHNICAL 被 {regime_verdict.regime.value} 阻止")
+    if _technical_enabled and _technical_regime_ok:
         try:
             candidate = eval_strategy("technical", ctx)
             if candidate is not None:
@@ -140,7 +350,7 @@ def process(ctx: SymbolContext,
         except Exception as e:
             logger.debug(f"[Signal] 技术面异常 (放行): {e}")
 
-    # ── 策略 5: LLM 投票 (无持仓时) — 可配置冻结 ──
+    # ── 策略 5: LLM 投票 (无持仓时, regime 准许时) ──
     _llm_vote_enabled = True
     try:
         from app.core.config_container import get_config
@@ -148,7 +358,10 @@ def process(ctx: SymbolContext,
         _llm_vote_enabled = bool(_cfg.get_dotted("strategies.llm_vote.enabled", True))
     except Exception:
         pass
-    if _llm_vote_enabled:
+    _llm_regime_ok = True
+    if regime_verdict and regime_verdict.regime.value in ("BEAR", "CRISIS"):
+        _llm_regime_ok = False
+    if _llm_vote_enabled and _llm_regime_ok:
         try:
             if voting_coordinator and not has_position:
                 # Skip LLM vote if we already have high-confidence candidates
@@ -160,7 +373,7 @@ def process(ctx: SymbolContext,
                         import concurrent.futures
                         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
                             future = executor.submit(voting_coordinator.vote, symbol, ctx)
-                            vote_result = future.result(timeout=5.0)  # 5s timeout — LLM 盘中投票已废弃, 盘前 battle plan 取代
+                            vote_result = future.result(timeout=5.0)
                             if vote_result:
                                 ctx.metadata["vote_result"] = vote_result
                                 candidate = eval_strategy("llm_vote", ctx)
@@ -177,17 +390,64 @@ def process(ctx: SymbolContext,
         except Exception as e:
             logger.debug(f"[Signal] LLM投票异常 (放行): {e}")
 
+    # ── 策略 6: 内部人集群买入 (ADR-007, SEC Form 4) ──
+    # 独立于 regime — 内部人买入是基本面信号, 任何环境都有效
+    _insider_enabled = True
+    try:
+        from app.core.config_container import get_config
+        _cfg = get_config()
+        _insider_enabled = bool(_cfg.get_dotted("strategies.insider.enabled", True))
+    except Exception:
+        pass
+    if _insider_enabled and not has_position:
+        try:
+            candidate = eval_strategy("insider", ctx)
+            if candidate is not None:
+                _apply_quality_scoring(ctx, candidate)
+                logger.info(
+                    f"[Signal] {symbol} 内部人集群买入命中: {candidate.rationale}"
+                )
+                candidates.append(candidate)
+        except Exception as e:
+            logger.debug(f"[Signal] 内部人信号异常 (放行): {e}")
+
+    # ── 策略 7: 分析师修正动量 (ADR-007, Yahoo Finance) ──
+    _erev_enabled = True
+    try:
+        from app.core.config_container import get_config
+        _cfg = get_config()
+        _erev_enabled = bool(_cfg.get_dotted("strategies.earnings_revision.enabled", True))
+    except Exception:
+        pass
+    if _erev_enabled and not has_position:
+        try:
+            candidate = eval_strategy("earnings_revision", ctx)
+            if candidate is not None:
+                _apply_quality_scoring(ctx, candidate)
+                logger.info(
+                    f"[Signal] {symbol} 分析师修正动量命中: {candidate.rationale}"
+                )
+                candidates.append(candidate)
+        except Exception as e:
+            logger.debug(f"[Signal] 分析师修正信号异常 (放行): {e}")
+
     # ── 无候选 → 返回 None ──
     if not candidates:
         logger.debug(f"[Signal] {symbol} 无策略命中")
+        _signal_counter.check_warning()
         return None
 
-    # ── P0 (2026-06-04): 质量底线过滤 — 防御纵深 ──
-    # 修复: 原用 AND 逻辑(strength<30 AND conf<0.30 才拦)，strength=10+conf=0.35 能过关
-    # 改为 OR 逻辑: strength<30 OR confidence<0.30 任一不足即过滤
-    # 防止低质量信号通过融合加成后"洗白"
+    # P1: 记录本轮候选数量
+    _signal_counter.record_candidates(len(candidates))
+
+    # ── ADR-007: Regime-aware 质量底线 (动态门槛) ──
+    # 原固定门槛: strength<30 OR confidence<0.30
+    # 新动态门槛: 由 regime 决定
     _min_strength = 30
     _min_confidence = 0.30
+    if regime_verdict:
+        _min_strength = regime_verdict.min_strength
+        _min_confidence = regime_verdict.min_confidence
     filtered = []
     for c in candidates:
         _s = int(getattr(c, 'strength', 0) or 0)
@@ -195,21 +455,41 @@ def process(ctx: SymbolContext,
         if _s < _min_strength or _cf < _min_confidence:
             logger.info(
                 f"[Signal] {symbol} 弱信号过滤: strategy={c.strategy_id} "
-                f"strength={_s}<{_min_strength} OR conf={_cf:.2f}<{_min_confidence}"
+                f"strength={_s}<{_min_strength} OR conf={_cf:.2f}<{_min_confidence} "
+                f"(regime={regime_verdict.regime.value if regime_verdict else 'unknown'})"
             )
+            _signal_counter.record_filtered("quality")
         else:
+            # ADR-007: regime 方向门禁
+            if regime_verdict:
+                _dir = c.direction if isinstance(c.direction, str) else (
+                    c.direction.value if hasattr(c.direction, 'value') else str(c.direction)
+                )
+                if regime_verdict.blocks_direction(_dir):
+                    logger.info(
+                        f"[Regime] {symbol} 方向 {_dir} 被 {regime_verdict.regime.value} 阻止 "
+                        f"(allowed={regime_verdict.allowed_directions})"
+                    )
+                    _signal_counter.record_filtered("direction")
+                    continue
             filtered.append(c)
     if not filtered:
-        logger.info(f"[Signal] {symbol} 所有候选未通过质量底线 (strength≥{_min_strength} AND conf≥{_min_confidence})")
+        logger.info(f"[Signal] {symbol} 所有候选未通过质量底线 "
+                    f"(strength≥{_min_strength} AND conf≥{_min_confidence}, "
+                    f"regime={regime_verdict.regime.value if regime_verdict else 'unknown'})")
+        _signal_counter.check_warning()
         return None
     candidates = filtered
 
-    # ── P0 (2026-06-14): SPY 方向门禁 — 牛市抑制 SHORT 噪音 ──
-    # 数据驱动: LONG IC=0.188(p<0.05), SHORT IC=-0.056(噪音)
-    # 84% 信号是 SHORT 但 SHORT 无预测力 → SPY>MA200 时过滤弱 SHORT
-    # 极端 SHORT 信号 (strength≥70, 即 RSI>80+单日暴涨) 仍保留
+    # ── ADR-007: Regime 仓位缩放注入 metadata ──
+    if regime_verdict and regime_verdict.position_scale < 1.0:
+        for c in candidates:
+            if isinstance(getattr(c, 'metadata', None), dict):
+                c.metadata["regime_position_scale"] = regime_verdict.position_scale
+
+    # ── SPY 方向门禁 (保留: 牛市抑制弱 SHORT 噪音) ──
     _spy_below = getattr(ctx, 'spy_below_ma200', False)
-    if not _spy_below and len(filtered) > 0:
+    if not _spy_below and len(candidates) > 0:
         _short_filtered = []
         for c in candidates:
             _dir = c.direction if isinstance(c.direction, str) else (
@@ -226,7 +506,6 @@ def process(ctx: SymbolContext,
             _short_filtered.append(c)
         if _short_filtered:
             candidates = _short_filtered
-        # 如果全部 SHORT 被过滤且无 LONG 候选, candidates 为空 → 下方自然返回 None
 
     # ── 单候选 → 直接返回 (已施加质量评分) ──
     if len(candidates) == 1:
@@ -235,6 +514,8 @@ def process(ctx: SymbolContext,
         if isinstance(getattr(_single, 'metadata', None), dict):
             if not _single.metadata.get("owner_strategy"):
                 _single.metadata["owner_strategy"] = getattr(_single, 'strategy_id', '')
+        _signal_counter.record_generated()
+        _signal_counter.check_warning()
         return _single
 
     # ── 信号融合: 多策略命中 ──
@@ -265,6 +546,8 @@ def process(ctx: SymbolContext,
             f"[SignalFusion] {symbol} {directions[0]} "
             f"fused {len(candidates)} strategies → conf={best.confidence:.3f}"
         )
+        _signal_counter.record_generated()
+        _signal_counter.check_warning()
         return best
 
     # 方向冲突 → 取最强候选 + 惩罚
@@ -278,4 +561,6 @@ def process(ctx: SymbolContext,
         f"[SignalFusion] {symbol} conflict "
         f"({', '.join(directions)}), taking strongest with penalty"
     )
+    _signal_counter.record_generated()
+    _signal_counter.check_warning()
     return best

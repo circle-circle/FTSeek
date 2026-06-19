@@ -37,8 +37,8 @@ class TradeAnalyzer:
         
         # 1. 基础统计
         total_trades = len(trades)
-        closed_trades = [t for t in trades if t.get('exit_price') is not None]
-        open_trades = [t for t in trades if t.get('exit_price') is None]
+        closed_trades = [t for t in trades if t.get('exit_price') and t.get('exit_price') > 0]
+        open_trades = [t for t in trades if not t.get('exit_price') or t.get('exit_price') == 0]
         
         # 2. 盈亏统计
         total_pnl = sum(t.get('pnl', 0) for t in closed_trades)

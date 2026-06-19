@@ -149,8 +149,8 @@ def check_futu_connection():
         from futu import OpenQuoteContext, OpenSecTradeContext, TrdEnv, RET_OK
         import futu
 
-        opend_host = os.getenv("OPEND_HOST", "127.0.0.1")
-        opend_port = int(os.getenv("OPEND_PORT", "11111"))
+        opend_host = os.getenv("FUTU_OPEND_HOST", "127.0.0.1")
+        opend_port = int(os.getenv("FUTU_OPEND_PORT", "11111"))
 
         # 行情连接测试
         info(f"连接行情服务器 {opend_host}:{opend_port}...")

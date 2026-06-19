@@ -29,12 +29,12 @@ except ImportError:
 try:
     from app.core.config_container import get_config
     config = get_config()
-    OPEND_HOST = os.environ.get('OPEND_HOST', config.opend.host)
-    OPEND_PORT = os.environ.get('OPEND_PORT', config.opend.port)
+    FUTU_OPEND_HOST = os.environ.get('FUTU_OPEND_HOST', config.opend.host)
+    FUTU_OPEND_PORT = os.environ.get('FUTU_OPEND_PORT', config.opend.port)
 except Exception as e:
     print(f"⚠️ Config load failed: {e}, using defaults")
-    OPEND_HOST = '127.0.0.1'
-    OPEND_PORT = 11111
+    FUTU_OPEND_HOST = '127.0.0.1'
+    FUTU_OPEND_PORT = 11111
 
 DB_PATH = os.path.join(Path(__file__).resolve().parent.parent, 'data', 'ftseek_us.db')
 
@@ -71,12 +71,12 @@ def sync_us_positions():
     server_positions = []
     
     try:
-        logger.info(f"📡 连接富途 {OPEND_HOST}:{OPEND_PORT}...")
+        logger.info(f"📡 连接富途 {FUTU_OPEND_HOST}:{FUTU_OPEND_PORT}...")
         trade_env = TrdEnv.SIMULATE if os.environ.get('TRADE_ENV', '1') == '1' else TrdEnv.REAL
         ctx = OpenSecTradeContext(
             filter_trdmarket=TrdMarket.US,
-            host=OPEND_HOST,
-            port=int(OPEND_PORT),
+            host=FUTU_OPEND_HOST,
+            port=int(FUTU_OPEND_PORT),
             security_firm=SecurityFirm.FUTUINC,
         )
         ret, data = ctx.position_list_query(trd_env=trade_env)

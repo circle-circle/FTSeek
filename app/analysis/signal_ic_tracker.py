@@ -105,7 +105,9 @@ def _ensure_table():
                     -- 状态
                     realized        INTEGER DEFAULT 0,      -- 0=待回填, 1=T1已回填, 2=T5已回填, 3=全部回填
                     ic_batch_date   TEXT,                   -- 最近回填日期
-                    created_at_snap TEXT NOT NULL            -- 快照创建时间
+                    created_at_snap TEXT NOT NULL,           -- 快照创建时间
+                    trade_mode      TEXT DEFAULT 'simulate',  -- live / simulate (P0 fix 2026-06-16)
+                    weight_version  TEXT DEFAULT 'v1'          -- Task #4: 权重版本追踪
                 )
             """)
             conn.execute("CREATE INDEX IF NOT EXISTS idx_snap_symbol ON signal_snapshots(symbol)")
@@ -113,6 +115,18 @@ def _ensure_table():
             conn.execute("CREATE INDEX IF NOT EXISTS idx_snap_realized ON signal_snapshots(realized)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_snap_strategy ON signal_snapshots(strategy_id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_snap_decision ON signal_snapshots(decision_id)")
+            # P0 fix (2026-06-16): 为已有表添加缺失的 trade_mode 列
+            try:
+                conn.execute("ALTER TABLE signal_snapshots ADD COLUMN trade_mode TEXT DEFAULT 'simulate'")
+                logger.info("[SignalIC] 已添加 trade_mode 列")
+            except Exception:
+                pass  # 列已存在
+            # Task #4 (2026-06-17): 为已有表添加 weight_version 列
+            try:
+                conn.execute("ALTER TABLE signal_snapshots ADD COLUMN weight_version TEXT DEFAULT 'v1'")
+                logger.info("[SignalIC] 已添加 weight_version 列")
+            except Exception:
+                pass  # 列已存在
             conn.commit()
             _INITIALIZED = True
             logger.info(f"[SignalIC] 表初始化完成: {_get_db_path()}")
@@ -176,18 +190,25 @@ def record_signal_snapshot(
         except Exception:
             _trade_mode = 'simulate'
         
+        # Task #4: 记录当前权重版本
+        try:
+            from app.core.feature_flags import FeatureFlags
+            _weight_version = "v2" if FeatureFlags().is_enabled("weight_v2_active") else "v1"
+        except Exception:
+            _weight_version = "v1"
+        
         conn = _conn()
         try:
             conn.execute("""
                 INSERT OR IGNORE INTO signal_snapshots
                 (decision_id, symbol, direction, strength, confidence,
                  consensus_level, strategy_id, created_at, trade_date,
-                 created_at_snap, trade_mode)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 created_at_snap, trade_mode, weight_version)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 decision_id, symbol, direction, strength, confidence,
                 consensus_level, strategy_id, created_at, trade_date,
-                now_snap, _trade_mode,
+                now_snap, _trade_mode, _weight_version,
             ))
             conn.commit()
         finally:
@@ -349,6 +370,7 @@ def get_ic_summary(
     min_signals: int = 20,
     forward_col: str = "fwd_ret_t1",
     days_back: int = 30,
+    weight_version: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     获取 Signal IC 摘要 — 供盘后审计报告使用
@@ -379,12 +401,21 @@ def get_ic_summary(
     conn = _conn()
     try:
         # 获取已回填的信号
+        # 2026-06-16 修复: days_back 参数原来被声明但从未注入 WHERE 子句
+        from datetime import datetime as _dt, timedelta as _td
+        _cutoff = (_dt.now() - _td(days=days_back)).strftime("%Y-%m-%d")
+        # Task #4: 支持按 weight_version 过滤
+        _wv_clause = ""
+        if weight_version:
+            _wv_clause = f" AND COALESCE(weight_version, 'v1') = '{weight_version}'"
         rows = conn.execute(f"""
             SELECT strength, {forward_col}, strategy_id, direction, trade_date
             FROM signal_snapshots
             WHERE {forward_col} IS NOT NULL
               AND strength IS NOT NULL
               AND COALESCE(trade_mode, 'simulate') = 'live'
+              AND trade_date >= '{_cutoff}'
+              {_wv_clause}
             ORDER BY trade_date DESC
         """).fetchall()
         
@@ -395,6 +426,29 @@ def get_ic_summary(
                 "min_required": min_signals,
             }
         
+        # Task #1 (2026-06-17): 数据质量校验 — 过滤 NaN/inf/NULL
+        import math
+        _clean_rows = [
+            r for r in rows
+            if r["strength"] is not None
+            and r[forward_col] is not None
+            and not math.isnan(float(r["strength"]))
+            and not math.isnan(float(r[forward_col]))
+            and not math.isinf(float(r["strength"]))
+            and not math.isinf(float(r[forward_col]))
+        ]
+        
+        # 清洗后重新检查样本量
+        if len(_clean_rows) < min_signals:
+            return {
+                "status": "insufficient_data",
+                "n_signals": len(_clean_rows),
+                "min_required": min_signals,
+                "note": f"cleaned from {len(rows)} to {len(_clean_rows)} after NaN/inf filter",
+            }
+        
+        rows = _clean_rows
+
         # 全局 IC
         strengths = [r["strength"] for r in rows]
         fwd_rets = [r[forward_col] for r in rows]
@@ -435,9 +489,13 @@ def get_ic_summary(
             s = [r["strength"] for r in group]
             f = [r[forward_col] for r in group]
             try:
-                g_ic, _ = spearmanr(s, f)
+                g_ic, g_pval = spearmanr(s, f)
                 import math
-                by_strategy[sid] = {"ic": round(g_ic, 4) if not math.isnan(g_ic) else 0.0, "n": len(group)}
+                by_strategy[sid] = {
+                    "ic": round(g_ic, 4) if not math.isnan(g_ic) else 0.0,
+                    "pval": round(g_pval, 4) if not math.isnan(g_pval) else 1.0,
+                    "n": len(group),
+                }
             except Exception:
                 pass
         

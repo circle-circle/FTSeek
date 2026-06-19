@@ -1,0 +1,236 @@
+"""
+基本面数据 Provider
+
+聚合多个数据源，按优先级降级：
+  1. Finnhub (主) - 财务指标 + 分析师评级 + 新闻 + 财报日历
+  2. Yahoo Finance (备) - 补充财务数据
+  3. Alpha Vantage (备) - 最终降级
+
+对外接口统一，下游不关心具体数据源。
+"""
+import os
+import logging
+import requests
+import urllib3
+from typing import Dict, Any, Optional
+from datetime import datetime, timedelta
+from pathlib import Path
+from dotenv import load_dotenv
+
+from app.data.providers.base import BaseDataProvider
+
+# 抑制 TLS 警告
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+# 加载环境变量
+load_dotenv(Path(__file__).resolve().parent.parent.parent.parent / ".env.us")
+
+logger = logging.getLogger(__name__)
+
+
+class FundamentalProvider(BaseDataProvider):
+    """基本面数据 Provider（多源聚合）"""
+
+    def __init__(self):
+        super().__init__(name="fundamental", cache_ttl_seconds=3600)
+        self.api_key = os.getenv("FINNHUB_API_KEY", "")
+        self.base_url = "https://finnhub.io/api/v1"
+
+    def _finnhub_get(self, endpoint: str, params: Dict, timeout: int = 15) -> Optional[Any]:
+        """低层 Finnhub GET"""
+        if not self.api_key or self.api_key == "***":
+            return None
+        headers = {"X-Finnhub-Token": self.api_key}
+        try:
+            resp = requests.get(
+                f"{self.base_url}/{endpoint}",
+                params=params, headers=headers, timeout=timeout, verify=False,
+            )
+            if resp.status_code == 429:
+                logger.warning(f"[FundamentalProvider] Finnhub 429 on {endpoint}")
+                return None
+            resp.raise_for_status()
+            return resp.json()
+        except Exception as e:
+            logger.debug(f"[FundamentalProvider] Finnhub {endpoint} error: {e}")
+            return None
+
+    def get_data(self, symbol: str, **kwargs) -> Dict[str, Any]:
+        """获取基本面数据（自动降级）"""
+        now_iso = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+        
+        # 尝试数据源 1: Finnhub
+        result = self._fetch_finnhub(symbol)
+        if result and result.get("status") == "ok":
+            return result
+        
+        # 降级 2: Yahoo Finance
+        logger.info(f"[FundamentalProvider] Finnhub failed, trying Yahoo: {symbol}")
+        result = self._fetch_yahoo(symbol)
+        if result and result.get("status") == "ok":
+            return result
+        
+        # 降级 3: Alpha Vantage
+        logger.info(f"[FundamentalProvider] Yahoo failed, trying AlphaVantage: {symbol}")
+        result = self._fetch_alphavantage(symbol)
+        if result and result.get("status") == "ok":
+            return result
+        
+        # 全部失败
+        return {
+            "status": "failed",
+            "error": "All data sources failed",
+            "data_source": "none",
+            "fetched_at": now_iso,
+        }
+
+    def _fetch_finnhub(self, symbol: str) -> Optional[Dict[str, Any]]:
+        """从 Finnhub 获取（主数据源）"""
+        bare = symbol.replace("US.", "").replace("HK.", "").upper()
+        now_iso = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+        
+        # 并行获取 4 个维度（串行实现，可优化为 ThreadPoolExecutor）
+        metric = self._finnhub_get("stock/metric", {"symbol": bare, "metric": "all"})
+        recommendations = self._finnhub_get("stock/recommendation", {"symbol": bare})
+        
+        end_d = datetime.utcnow().strftime("%Y-%m-%d")
+        start_d = (datetime.utcnow() - timedelta(days=7)).strftime("%Y-%m-%d")
+        news = self._finnhub_get("company-news", {
+            "symbol": bare, "from": start_d, "to": end_d,
+        })
+        
+        today = datetime.utcnow().date()
+        end = today + timedelta(days=90)
+        earnings = self._finnhub_get("calendar/earnings", {
+            "symbol": bare,
+            "from": today.strftime("%Y-%m-%d"),
+            "to": end.strftime("%Y-%m-%d"),
+        })
+
+        # 解析财务指标
+        financials = {"source": "finnhub/stock/metric", "fetched_at": now_iso}
+        if metric and "metric" in metric:
+            m = metric["metric"]
+            financials.update({
+                "market_cap": m.get("marketCapitalization", 0),
+                "pe_ttm": m.get("peNormalizedAnnual", 0),
+                "forward_pe": m.get("peExclExtraAnnual", 0),
+                "pb": m.get("pbAnnual", 0),
+                "roe": m.get("roeTTM", 0),
+                "eps_ttm": m.get("epsNormalizedAnnual", 0),
+                "revenue_yoy": m.get("revenueGrowth5Y", 0),
+                "gross_margin": m.get("grossMarginTTM", 0),
+                "net_margin": m.get("netProfitMarginTTM", 0),
+                "beta": m.get("beta", 0),
+                "52w_high": m.get("52WeekHigh", 0),
+                "52w_low": m.get("52WeekLow", 0),
+            })
+        else:
+            return None  # Finnhub 失败
+
+        # 解析分析师评级
+        analyst = {"source": "finnhub/recommendation_trends", "fetched_at": now_iso}
+        if recommendations and len(recommendations) > 0:
+            latest = recommendations[0]
+            total = (latest.get("strongBuy", 0) + latest.get("buy", 0) 
+                    + latest.get("hold", 0) + latest.get("sell", 0) 
+                    + latest.get("strongSell", 0))
+            if total > 0:
+                buy_pct = (latest.get("strongBuy", 0) + latest.get("buy", 0)) / total * 100
+                hold_pct = latest.get("hold", 0) / total * 100
+                sell_pct = (latest.get("sell", 0) + latest.get("strongSell", 0)) / total * 100
+                analyst.update({
+                    "buy_pct": buy_pct,
+                    "hold_pct": hold_pct,
+                    "sell_pct": sell_pct,
+                    "total_analysts": total,
+                    "trend": "bullish" if buy_pct > 60 else "bearish" if sell_pct > 40 else "neutral",
+                })
+
+        # 解析新闻
+        recent_news = []
+        if news and isinstance(news, list):
+            recent_news = [
+                {
+                    "headline": n.get("headline", ""),
+                    "source": n.get("source", ""),
+                    "datetime": n.get("datetime", 0),
+                }
+                for n in news[:5]
+            ]
+
+        # 解析财报日历
+        next_catalyst = {"source": "finnhub/earnings_calendar", "fetched_at": now_iso}
+        if earnings and "earningsCalendar" in earnings and len(earnings["earningsCalendar"]) > 0:
+            next_earnings = earnings["earningsCalendar"][0]
+            next_catalyst.update({
+                "event": "Q Earnings",
+                "date": next_earnings.get("date", ""),
+            })
+
+        # 统计成功/失败
+        sources = {
+            "financials": "ok" if metric else "failed",
+            "analyst": "ok" if recommendations else "failed",
+            "news": "ok" if news else "failed",
+            "catalyst": "ok" if earnings else "failed",
+        }
+
+        return {
+            "status": "ok",
+            "data": {
+                "financials": financials,
+                "analyst": analyst,
+                "recent_news": recent_news,
+                "next_catalyst": next_catalyst,
+                "_sources": sources,
+            },
+            "data_source": "finnhub",
+            "fetched_at": now_iso,
+        }
+
+    def _fetch_yahoo(self, symbol: str) -> Optional[Dict[str, Any]]:
+        """从 Yahoo Finance 获取（降级数据源）"""
+        try:
+            from app.data.yahoo_provider import YahooFinanceProvider
+            yf = YahooFinanceProvider()
+            bare = symbol.replace("US.", "").replace("HK.", "").upper()
+            
+            market_data = yf.get_market_data(bare)
+            
+            if market_data and market_data.get("fundamentals"):
+                now_iso = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+                fund = market_data["fundamentals"]
+                return {
+                    "status": "ok",
+                    "data": {
+                        "financials": {
+                            "market_cap": fund.get("market_cap", 0),
+                            "pe_ttm": fund.get("pe_ratio", 0),
+                            "eps_ttm": fund.get("eps", 0),
+                            "source": "yahoo",
+                            "fetched_at": now_iso,
+                        },
+                        "_sources": {"financials": "ok"},
+                    },
+                    "data_source": "yahoo",
+                    "fetched_at": now_iso,
+                }
+        except Exception as e:
+            logger.debug(f"[FundamentalProvider] Yahoo error: {e}")
+        
+        return None
+
+    def _fetch_alphavantage(self, symbol: str) -> Optional[Dict[str, Any]]:
+        """从 Alpha Vantage 获取（最终降级）"""
+        try:
+            from app.data.alphavantage_provider import AlphaVantageProvider
+            av = AlphaVantageProvider()
+            bare = symbol.replace("US.", "").replace("HK.", "").upper()
+            
+            # AlphaVantage 没有直接的基本面 API，跳过
+            return None
+        except Exception as e:
+            logger.debug(f"[FundamentalProvider] AlphaVantage error: {e}")
+        
+        return None

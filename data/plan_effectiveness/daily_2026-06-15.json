@@ -1,0 +1,96 @@
+{
+  "date": "2026-06-15",
+  "plan_available": true,
+  "generated_at": "2026-06-16T04:35:46.885290",
+  "targets": [
+    {
+      "symbol": "US.PG",
+      "plan_direction": "LONG",
+      "entry_zone": [
+        147.5,
+        149.0
+      ],
+      "status": "",
+      "traded": false,
+      "entry_zone_hit": false,
+      "direction_match": false,
+      "pnl_contribution": 0.0,
+      "matched_trades": 0,
+      "actual_entry_prices": [],
+      "actual_directions": []
+    },
+    {
+      "symbol": "US.LLY",
+      "plan_direction": "LONG",
+      "entry_zone": [
+        1121,
+        1135
+      ],
+      "status": "",
+      "traded": false,
+      "entry_zone_hit": false,
+      "direction_match": false,
+      "pnl_contribution": 0.0,
+      "matched_trades": 0,
+      "actual_entry_prices": [],
+      "actual_directions": []
+    },
+    {
+      "symbol": "US.LMT",
+      "plan_direction": "LONG",
+      "entry_zone": [
+        533,
+        540
+      ],
+      "status": "",
+      "traded": false,
+      "entry_zone_hit": false,
+      "direction_match": false,
+      "pnl_contribution": 0.0,
+      "matched_trades": 0,
+      "actual_entry_prices": [],
+      "actual_directions": []
+    },
+    {
+      "symbol": "US.JPM",
+      "plan_direction": "LONG",
+      "entry_zone": [
+        313.0,
+        318.0
+      ],
+      "status": "",
+      "traded": false,
+      "entry_zone_hit": false,
+      "direction_match": false,
+      "pnl_contribution": 0.0,
+      "matched_trades": 0,
+      "actual_entry_prices": [],
+      "actual_directions": []
+    },
+    {
+      "symbol": "US.AMD",
+      "plan_direction": "LONG",
+      "entry_zone": [
+        495,
+        508
+      ],
+      "status": "",
+      "traded": false,
+      "entry_zone_hit": false,
+      "direction_match": false,
+      "pnl_contribution": 0.0,
+      "matched_trades": 0,
+      "actual_entry_prices": [],
+      "actual_directions": []
+    }
+  ],
+  "hit_rate": 0.0,
+  "traded_rate": 0.0,
+  "avg_pnl_of_planned": 0.0,
+  "unplanned_trade_count": 1,
+  "planned_count": 5,
+  "total_trades": 1,
+  "plan_date": "2026-06-15",
+  "traded_planned_count": 0,
+  "hit_count": 0
+}

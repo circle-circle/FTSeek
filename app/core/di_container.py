@@ -84,17 +84,8 @@ class DIContainer:
             enable_futu_lv3=os.getenv("ENABLE_FUTU_LV3", "true").lower() in ("true", "1", "yes"),
         ))
 
-    def news_provider(self) -> "USNewsProvider":
-        """新闻情绪提供商"""
-        from app.data.news_provider import USNewsProvider
-        return self._get_or_create("news_provider", USNewsProvider)
-
     def atr_provider(self) -> "ATRProvider":
-        """ATR 单一真相源 (Single Source of Truth)
-
-        所有 ATR 消费方（TrendFirst / ATRStopEngine / ExitRuleDispatcher 等）
-        统一从该 Provider 读取，避免多处独立计算导致的数据不一致。
-        """
+        """ATR 单一真相源 (Single Source of Truth)"""
         from app.core.atr_provider import ATRProvider
         return self._get_or_create(
             "atr_provider",
@@ -104,6 +95,19 @@ class DIContainer:
             ),
         )
 
+    def database_pool(self) -> "DatabasePool":
+        """统一 SQLite 连接池 (SSOT).
+
+        新代码应通过 DI 容器获取 DatabasePool，避免模块级全局变量。
+        """
+        from app.storage.db_pool import get_pool
+        return self._get_or_create("database_pool", get_pool)
+
+    def shared_kernel(self) -> "SharedKernel":
+        """共享内核 (VIX/市场状态/风控参数)."""
+        from app.core.shared_kernel import get_shared_kernel
+        return self._get_or_create("shared_kernel", get_shared_kernel)
+
     # ================================================================
     #  策略层
     # ================================================================
@@ -111,10 +115,6 @@ class DIContainer:
         """策略注册中心"""
         from app.strategy.registry import get_strategy_registry
         return self._get_or_create("strategy_registry", get_strategy_registry)
-
-    def performance_tracker(self) -> "PerformanceTracker":
-        # [CLEANUP 2026-06-13] performance_tracker + auto_tuner removed — zero log evidence, never used
-        return self._get_or_create("auto_tuner", AutoTuner)
 
     # ================================================================
     #  投票 & 共识
@@ -172,8 +172,8 @@ class DIContainer:
             "retry_delay_seconds": exec_section.get("retry", {}).get("delay_seconds", 5),
             "max_slippage_ratio": exec_section.get("slippage", {}).get("max_ratio", 0.005),
             "idempotency_window": exec_section.get("idempotency", {}).get("window_seconds", 3600),
-            "futu_host": os.getenv("OPEND_HOST", "127.0.0.1"),
-            "futu_port": int(os.getenv("OPEND_PORT", "11111")),
+            "futu_host": os.getenv("FUTU_OPEND_HOST", "127.0.0.1"),
+            "futu_port": int(os.getenv("FUTU_OPEND_PORT", "11111")),
             "futu_trade_env": _futu_env,
             "futu_account_id": os.getenv("REAL_ACCOUNT_ID" if _futu_env == 0 else "SIMULATE_ACCOUNT_ID", ""),
             "auto_connect_broker": True,

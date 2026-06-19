@@ -93,25 +93,53 @@ class ConnectionManager:
 # 全局单例
 _manager = ConnectionManager()
 
+# 主事件循环引用 — 用于跨线程调度 (run_coroutine_threadsafe)
+# Task #11: position_exit_monitor / DataService executor 等后台线程通过它
+# 安全地把 broadcast 协程投递到 FastAPI 的 event loop。
+_main_loop: "asyncio.AbstractEventLoop | None" = None
+
 
 def get_ws_manager() -> ConnectionManager:
     return _manager
 
 
+def _capture_loop():
+    """捕获当前运行的 event loop (供后台线程跨线程发布事件)"""
+    global _main_loop
+    try:
+        _main_loop = asyncio.get_running_loop()
+    except RuntimeError:
+        _main_loop = None
+
+
 async def publish_event(event_type: str, data: dict):
-    """发布事件到 WebSocket 总线 (供其他模块调用)"""
+    """发布事件到 WebSocket 总线 (async 上下文专用)"""
+    if _main_loop is None:
+        _capture_loop()
     await _manager.broadcast(event_type, data)
 
 
 def publish_event_sync(event_type: str, data: dict):
-    """同步版本 — 从非 async 代码中调用 (如 ManualOrderService)"""
+    """线程安全的事件发布 — 任意线程可调用 (ManualOrderService / ExitMonitor 等)
+
+    Task #11: 修复跨线程调用问题。原实现用 loop.create_task() 在非 loop 线程会失败。
+    现优先用 run_coroutine_threadsafe 投递到主 loop。
+    """
     try:
-        import asyncio
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            loop.create_task(_manager.broadcast(event_type, data))
-        else:
-            loop.run_until_complete(_manager.broadcast(event_type, data))
+        # 路径 1: 当前线程内有 running loop (典型: async route handler 直接调用)
+        try:
+            cur = asyncio.get_running_loop()
+            cur.create_task(_manager.broadcast(event_type, data))
+            return
+        except RuntimeError:
+            pass
+
+        # 路径 2: 非 loop 线程 → 投递到主 loop
+        loop = _main_loop
+        if loop is not None and loop.is_running():
+            asyncio.run_coroutine_threadsafe(
+                _manager.broadcast(event_type, data), loop
+            )
     except Exception:
         pass  # WebSocket 推送失败不影响主流程
 
@@ -121,8 +149,24 @@ def publish_event_sync(event_type: str, data: dict):
 # ═══════════════════════════════════════════════════════
 
 def register(app):
+    # 启动时捕获 event loop, 供后台线程 (ExitMonitor / DataService executor) 发事件
+    @app.on_event("startup")
+    async def _ws_capture_main_loop():
+        _capture_loop()
+        logger.info("[WS] 主 event loop 已捕获, 跨线程事件发布就绪")
+
     @app.websocket("/ws/events")
     async def websocket_events(websocket: WebSocket):
+        # P0 2026-06-15: WebSocket 认证 — 未登录连接直接拒绝
+        from app.web_dashboard.auth import verify_session_token
+        session_token = websocket.cookies.get("ftseek_session", "")
+        if not session_token or not verify_session_token(session_token):
+            await websocket.close(code=1008, reason="Unauthorized")
+            return
+
+        # 兜底: 首次连接也捕获一次, 避免 startup 钩子未触发
+        if _main_loop is None:
+            _capture_loop()
         connected = await _manager.connect(websocket)
         if not connected:
             return

@@ -105,7 +105,7 @@ if __name__ == "__main__":
     load_dotenv(".env.us")
     
     # 使用 webhook 方式测试
-    webhook_url = os.getenv("FEISHU_WEBHOOK_URL")
+    webhook_url = os.getenv("FEISHU_WEBHOOK_URL_US")
     
     if webhook_url:
         alerter = FeishuBotAlerter(webhook_url)
@@ -123,4 +123,4 @@ if __name__ == "__main__":
             print("❌ 测试推送失败")
     else:
         print("❌ 缺少飞书 Webhook URL 配置")
-        print("请在 .env.us 中设置 FEISHU_WEBHOOK_URL")
+        print("请在 .env.us 中设置 FEISHU_WEBHOOK_URL_US")

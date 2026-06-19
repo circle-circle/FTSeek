@@ -13,6 +13,10 @@ Usage:
 
     # For class __init__ (long-lived connections)
     self._conn = db_connect_long(get_main_db())
+
+Global Safety Hook (2026-06-16):
+    All sqlite3.connect() calls are automatically patched with WAL + busy_timeout.
+    This ensures 211+ raw calls across 90+ files get safe defaults without changes.
 """
 
 import os
@@ -27,6 +31,31 @@ logger = logging.getLogger(__name__)
 # Default paths
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 _DATA_DIR = _PROJECT_ROOT / "data"
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  Global Safety Hook — monkey-patch sqlite3.connect
+#  All sqlite3.connect() calls automatically get WAL + busy_timeout
+# ═══════════════════════════════════════════════════════════════════
+
+_original_connect = sqlite3.connect
+
+
+def _safe_connect(*args, **kwargs):
+    """Wraps sqlite3.connect to apply WAL + busy_timeout on every connection."""
+    conn = _original_connect(*args, **kwargs)
+    try:
+        db_path = str(args[0]) if args else ""
+        # Skip pragmas for in-memory databases
+        if ":memory:" not in db_path:
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA busy_timeout=5000")
+    except Exception:
+        pass  # Pragmas are best-effort; never block connection
+    return conn
+
+
+sqlite3.connect = _safe_connect
 
 
 def is_live_mode() -> bool:
@@ -124,6 +153,11 @@ def db_connect_long(db_path: Optional[Path] = None, timeout: float = 10.0):
     conn.execute("PRAGMA busy_timeout=5000")
     conn.execute("PRAGMA foreign_keys=ON")
     return conn
+
+
+def safe_sqlite_connect(db_path: Optional[Path] = None, timeout: float = 10.0):
+    """Alias for db_connect_long() — 统一推荐名."""
+    return db_connect_long(db_path, timeout=timeout)
 
 
 def safe_query(db_path: Path, sql: str, params: tuple = (), fetchone: bool = False):

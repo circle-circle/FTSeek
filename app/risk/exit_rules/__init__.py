@@ -31,15 +31,9 @@ from .day_trade_exit import (
 )
 from .scale_out import ScaleOutRule, check_scale_out
 from .velocity_exit import check_velocity_exit
-from .graduated_stop import GraduatedStopRule, check_graduated_stop
 from .trailing_stop import TrailingStopRule, check_trailing_stop
 from .time_stop import TimeStopRule, check_time_stop
 from .pre_close import PreCloseExitRule, check_pre_close_exit, check_adaptive_pre_close_exit
-from .thesis_failure import (
-    ThesisFailureRule,
-    THESIS_FAILURE_MAP,
-    check_thesis_failure,
-)
 
 # Task #48: 退出原因枚举 + 优先级注册表
 from .exit_reason_enum import ExitReason
@@ -57,24 +51,19 @@ __all__ = [
     "FlashExitRule",
     "DayTradeExitRule",
     "ScaleOutRule",
-    "GraduatedStopRule",
     "TrailingStopRule",
     "TimeStopRule",
     "PreCloseExitRule",
-    "ThesisFailureRule",
-    "THESIS_FAILURE_MAP",
     "check_flash_exit",
     "check_day_trade_exit",
     "check_atr_day_trade_exit",
     "should_use_day_trade_mode",
     "check_scale_out",
     "check_velocity_exit",
-    "check_graduated_stop",
     "check_trailing_stop",
     "check_time_stop",
     "check_pre_close_exit",
     "check_adaptive_pre_close_exit",
-    "check_thesis_failure",
     # Task #48
     "ExitReason",
     "ExitRulePriority",

@@ -132,30 +132,6 @@ class MainPipelineExitPolicy(_BaseExitPolicy):
         )
 
 
-class ScalpingExitPolicy(_BaseExitPolicy):
-    """
-    R3 (2026-05-15): SAFETY NET — 实际运行时几乎不会被调用.
-    PositionExitMonitor:304 已过滤 scalping 仓位 (C2 修复, 2026-05-13),
-    Scalping 仓位由 ScalpingEngine._monitor_loop 自管退出.
-    本 policy 保留作为安全网 (若有人误改 C2 过滤逻辑, 这里仍能兜住短线时间限制).
-    任何修改请同步检查 ScalpingEngine 自管退出逻辑.
-    """
-    name = "scalping_exit"
-    owner = "scalping"
-
-    def _evaluate_by_thesis(self, position: Any, ctx: Any, thesis: str) -> ExitDecision:
-        """Scalping 紧 ATR — 任何 thesis 下持仓 > 30min 强平 (短线本质)"""
-        holding_hours = float(getattr(position, "holding_hours", 0) or 0)
-        if holding_hours > 0.5:  # 30min
-            return ExitDecision(
-                action="CLOSE", qty_pct=1.0,
-                reason="SCALPING_TIME_LIMIT_30MIN",
-                priority=10,
-                metadata={"thesis": thesis},
-            )
-        return ExitDecision(action="NO_ACTION", reason=f"scalping_within_30min_thesis={thesis}")
-
-
 class FastLaneExitPolicy(_BaseExitPolicy):
     name = "fast_lane_exit"
     owner = "fast_lane"

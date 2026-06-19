@@ -59,8 +59,8 @@ class HourlyTradePush:
         """初始化组件"""
         try:
             self.futu = get_futu_integration(
-                host=os.getenv("FUTU_HOST", "127.0.0.1"),
-                port=int(os.getenv("FUTU_PORT", "11111")),
+                host=os.getenv("FUTU_OPEND_HOST", "127.0.0.1"),
+                port=int(os.getenv("FUTU_OPEND_PORT", "11111")),
                 trd_env="SIMULATE"
             )
             self.market_backup = get_market_backup()
@@ -119,7 +119,7 @@ class HourlyTradePush:
             
             positions = []
             for record in all_records:
-                if record.get('exit_price') is None and record.get('quantity', 0) > 0:
+                if (not record.get('exit_price') or record.get('exit_price') == 0) and record.get('quantity', 0) > 0:
                     positions.append(record)
             
             return positions

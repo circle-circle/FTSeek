@@ -3,7 +3,6 @@ FTSeek-US Harness — 策略进化与桥接层
 
 模块:
 - us_audit: 系统审计 (熔断器/健康检查)
-- shadow_bridge: Shadow 交易桥接器 (新因子→shadow_trades)
 - market_context: 市场上下文提供器 (VIX/SPY/资本水位/风险状态)
 - strategy_router: 策略路由器 (新旧链路切换枢纽)
 - pipeline_adapter: 管线适配器 (旧scheduler与新框架桥接)

@@ -178,14 +178,9 @@ class ImprovementPipeline:
             
             logger.info(f"[Pipeline] 提议已提交: {proposal.proposal_id} ({proposal.target_param})")
             
-            # 【新增】自动启动影子测试
-            try:
-                from app.evolution.shadow_tracker import ShadowTracker
-                tracker = ShadowTracker()
-                tracker.start_shadow_test(proposal.proposal_id)
-            except Exception as se:
-                logger.warning(f"[Pipeline] 影子测试启动失败 (不影响主流程): {se}")
-                
+            # REMOVED (2026-06-19): ShadowTracker 变体测试不再使用
+            # 改用 Playbook shadow 模式做策略验证
+            
             return proposal.proposal_id
             
         except Exception as e:

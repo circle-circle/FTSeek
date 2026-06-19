@@ -108,6 +108,10 @@ class PositionStore:
         
         源头隔离 (2026-06-11): 通过 is_strategy_managed() 判断,
         手动/legacy/unknown 持仓自动排除, 消费者无需各自查 DB 过滤。
+
+        幽灵仓防护: 由 position_sync 的 broker-first 机制在源头阻止幽灵仓进入
+        PositionStore (Futu 无此持仓 → 不同步到内存)。DB 层 is_anomalous 标记
+        仅用于 Dashboard (data_service.py) 和审计, 不影响交易引擎内存视图。
         """
         from app.positions import is_strategy_managed
         with self._lock:
@@ -263,7 +267,7 @@ class TradingScheduler:
             logger.warning(f"[调度器·Coordinator] 初始化失败 (降级运行): {_ce}")
 
         # P0 2026-04-30: 跨引擎开仓互斥锁 (P1 修复 2026-05-11: 改为 RLock 防止死锁)
-        # Scalping 和主管线共用此锁保护开仓临界区，防止竞态导致同标的重复开仓
+        # 主管线与 ORB 辅线共用此锁保护开仓临界区，防止同标的重复开仓
         self._open_position_lock = threading.RLock()
 
         # P0 2026-04-20: 注入 position_store 到 RiskEngine，使仓位限制检查生效
@@ -366,8 +370,26 @@ class TradingScheduler:
                 name = stock.get("name", "") if isinstance(stock, dict) else ""
                 if code:
                     wl_codes.add(code)
+                    # P2b (2026-06-16): 同时添加裸代码 (去掉 US. 前缀)
+                    # 根因: 新闻文本中出现 "AAPL" 而非 "US.AAPL", 导致 relevance=0
+                    if code.startswith("US."):
+                        bare = code[3:]
+                        if bare:
+                            wl_codes.add(bare)
                 if name:
                     wl_names.add(name)
+
+            # P2b (2026-06-16): 从 Futu 查询公司名称注入 watchlist_names
+            # 根因: self.watchlist 是纯字符串列表, 无公司名 → wl_names 永远为空
+            try:
+                _adapter = getattr(getattr(self, "execution_engine", None), "broker_adapter", None)
+                if _adapter and hasattr(_adapter, "get_stock_names"):
+                    _names = _adapter.get_stock_names(list(wl_codes))
+                    if _names:
+                        wl_names.update(_names.values())
+                        logger.info(f"[NewsV2] 从 Broker 注入 {len(_names)} 个公司名")
+            except Exception as _name_err:
+                logger.debug(f"[NewsV2] 公司名注入跳过: {_name_err}")
 
             self.news_pipeline_v2 = NewsPipelineV2(
                 watchlist_codes=wl_codes,
@@ -588,48 +610,6 @@ class TradingScheduler:
         except Exception as e:
             logger.warning("[SharedKernel] 初始化失败 (将使用默认 VIX 值): %s", e)
 
-        # ── Scalping 均值回归引擎 (2026-04-29 新增) ──
-        self.scalping_engine = None
-        self._scalping_thread = None
-        try:
-            from app.core.config_container import get_config as get_app_config
-            cfg = get_app_config()
-            scalping_cfg = cfg.get_dotted("scalping", {})
-
-            if scalping_cfg.get("enabled", False):
-                from app.scalping.engine import get_scalping_engine
-                from app.utils.daily_active_pool import get_daily_active_pool
-
-                pool = get_daily_active_pool(market_prefix="US.")
-
-                # 2026-05-09: 告警防抖器 (观察期 30min, 重复 3 次升级)
-                from app.observability.alert_debouncer import AlertDebouncer
-                debouncer = AlertDebouncer(
-                    observation_window_sec=1800,
-                    escalate_threshold=3,
-                )
-
-                self.scalping_engine = get_scalping_engine(
-                    execution_engine=self.execution_engine,
-                    data_router=self.data_router,
-                    risk_engine=self.risk_engine,
-                    notifier=self.notifier,
-                    daily_active_pool=pool,
-                    debouncer=debouncer,
-                    mode=scalping_cfg.get("mode", "observe"),
-                    polling_interval=scalping_cfg.get("polling_interval_seconds", 5),
-                    open_position_lock=self._open_position_lock,
-                )
-                # P1-A (2026-05-15): 注入 scheduler 引用 → ScalpingEngine 可调 coordinator
-                self.scalping_engine.scheduler = self
-                logger.info(
-                    f"[Scalping] 引擎已初始化 | 模式: {scalping_cfg.get('mode', 'observe')} | scheduler 已注入"
-                )
-            else:
-                logger.info("[Scalping] 总开关关闭 (scalping.enabled=false)")
-        except Exception as e:
-            logger.warning("[Scalping] 初始化失败 (降级运行): %s", e)
-
         # ── RFC-056 (2026-06-01): ORB 辅线引擎 ──
         # Opening Range Breakout: ETF 专属标的池, 5 秒轮询, 独立退出栈
         # 与主线零重叠, 渐进上线: observe → shadow → active
@@ -824,7 +804,6 @@ class TradingScheduler:
         max_total = float(cfg.get_dotted("strategies.coordinator.max_total_pct", 0.90)) if cfg else 0.90
 
         # T4 (2026-05-16): sandbox 模式强制 SymbolLock + SignalArbitrator enforce
-        # 5/15 同标的 ARM 三笔 (692/693 SCALPING + 706 MAIN) 共占 2 桶 — 总敞口 2× 名义.
         # sandbox 是实验环境, 应该用更严的约束验证 enforce 行为, 而非沿用宽松 observe_only.
         # 主入口: 在 sandbox 下 observe_only 强制为 False (但 enabled 仍依赖 yaml).
         _sandbox_force_enforce = False
@@ -841,10 +820,8 @@ class TradingScheduler:
 
         # 各 bucket cap (从 yaml). B.3 (2026-05-14): bucket 而非 strategy
         # fast_lane / trend_first 走 main bucket → 不在 caps 里 (避免重复加总)
-        # ADR-002 (2026-05-31): scalping 暂停, main 0.65→0.80, scalping 0.15→0.0
         caps = {
             "main":     float(cfg.get_dotted("strategies.main.capital_pct", 0.80)) if cfg else 0.80,
-            "scalping": float(cfg.get_dotted("strategies.scalping.capital_pct", 0.0)) if cfg else 0.0,
             "llm_plan": float(cfg.get_dotted("strategies.llm_plan.capital_pct", 0.0)) if cfg else 0.0,
         }
         # B.3: bucket_map — 让 fast_lane / trend_first 占用计入 main bucket
@@ -866,14 +843,13 @@ class TradingScheduler:
         symlock = SymbolLockManager(observe_only=observe_only)
         arb = SignalArbitrator(audit_db_path=str(get_decisions_db()), audit_enabled=True)
         dispatcher = ExitDispatcher()
-        # B.5 (2026-05-14): 注册 4 个最小 ExitPolicy (Phase A 全部委托 PositionExitMonitor)
+        # B.5 (2026-05-14): 注册 3 个最小 ExitPolicy (Phase A 全部委托 PositionExitMonitor)
         try:
             from app.strategy.exit_policies import (
-                MainPipelineExitPolicy, ScalpingExitPolicy,
+                MainPipelineExitPolicy,
                 FastLaneExitPolicy, LLMPlanExitPolicy,
             )
             dispatcher.register("main", MainPipelineExitPolicy())
-            dispatcher.register("scalping", ScalpingExitPolicy())
             dispatcher.register("fast_lane", FastLaneExitPolicy())
             dispatcher.register("llm_plan", LLMPlanExitPolicy())
         except Exception as _ee:
@@ -928,54 +904,13 @@ class TradingScheduler:
         except Exception as _we:
             logger.warning(f"[Watchdog] 启动失败 (不影响交易): {_we}")
 
-        # T6 (2026-05-16): CapitalAllocator 周期性 reconcile (5min)
-        # 修复 5/15 同标的多桶占用 (ARM 692/693 SCALPING + 706 MAIN 总敞口 2× 名义)
-        # observe_only=true 时只记录漂移, enforce 时主动 reset_and_reconcile
-        try:
-            _reconcile_interval = int(cfg.get_dotted("strategies.coordinator.reconcile_interval_sec", 300)) if cfg else 300
-            import threading as _th_t6
-            def _t6_reconcile_loop():
-                while True:
-                    try:
-                        _th_t6.Event().wait(_reconcile_interval)
-                        # 从 PositionStore 拉真实持仓, 按 owner_strategy 分组算 pct
-                        _ps = getattr(self, "position_store", None)
-                        if _ps is None:
-                            continue
-                        _equity = 0.0
-                        try:
-                            from app.risk.capital_safety import get_capital_safety_system as _gcs
-                            _cs = _gcs()
-                            if _cs._state and _cs._state.current_equity > 0:
-                                _equity = _cs._state.current_equity
-                        except Exception as _silent_e:
-                            logger.warning(f"[silent_except:scheduler_core.py] {_silent_e}")
-                        if _equity <= 0:
-                            continue
-                        _by_strategy: Dict[str, float] = {}
-                        for _p in _ps.all():
-                            _owner = getattr(_p, "owner_strategy", None) or "main"
-                            _mv = float(getattr(_p, "avg_entry_price", 0) or 0) * float(getattr(_p, "size", 0) or 0)
-                            _pct = _mv / _equity if _equity > 0 else 0
-                            _by_strategy[_owner] = _by_strategy.get(_owner, 0.0) + _pct
-                        # 走 coordinator (reconcile 内部会校正 cap 漂移)
-                        _coord = getattr(self, "coordinator", None)
-                        if _coord is not None and getattr(_coord, "enabled", False):
-                            try:
-                                _coord.capital.reconcile_with_positions(_by_strategy)
-                            except Exception as _re:
-                                logger.debug(f"[T6·reconcile] capital.reconcile 失败: {_re}")
-                        _log_fn = logger.info if self._is_market_open() else logger.debug
-                        _log_fn(
-                            f"[T6·reconcile] 资金对账完成: by_strategy={_by_strategy} equity=${_equity:,.0f}"
-                        )
-                    except Exception as _le:
-                        logger.debug(f"[T6·reconcile_loop] 异常 (继续): {_le}")
-            _t6_thread = _th_t6.Thread(target=_t6_reconcile_loop, daemon=True, name="T6CapitalReconcile")
-            _t6_thread.start()
-            logger.info(f"[T6·reconcile] 后台线程已启动 (interval={_reconcile_interval}s)")
-        except Exception as _t6e:
-            logger.warning(f"[T6·reconcile] 启动失败 (不影响交易): {_t6e}")
+        # T6 (2026-05-16, 禁用 2026-06-18): CapitalAllocator 周期性 reconcile
+        # 根因修复: T6 线程与 strategy_coordinator.reconcile() 双重 reconcile
+        # T6 从 PositionStore 按 owner_strategy 分组 → 算出 0 或 0.643
+        # strategy_coordinator 从完整持仓分类 auto/legacy/manual → 算出另一个值
+        # 两者交替执行导致账本在 0↔0.643 之间震荡
+        # 修复: 删除 T6，只保留 strategy_coordinator.reconcile() 作为唯一 reconcile 入口
+        # (strategy_coordinator 已有完整持仓分类 + reconcile 逻辑，T6 是冗余)
 
     def _load_scheduler_params(self):
         """
@@ -1066,12 +1001,11 @@ class TradingScheduler:
             try:
                 logger.info(
                     "[配置SSOT] min_conf=%.2f min_strength=%d max_total_pos=%.2f "
-                    "main_pct=%.2f scalping_pct=%.2f stop_loss=%.3f take_profit=%.3f atr_x=%.2f",
+                    "main_pct=%.2f stop_loss=%.3f take_profit=%.3f atr_x=%.2f",
                     self.MIN_CONFIDENCE,
                     int(self.MIN_SIGNAL_STRENGTH),
                     float(cfg.get_dotted(ConfigKeys.MAX_TOTAL_POSITION.value, 0.80)),
                     float(cfg.get_dotted(ConfigKeys.MAIN_BUDGET_PCT.value, 0.80)),
-                    float(cfg.get_dotted(ConfigKeys.SCALPING_BUDGET_PCT.value, 0.0)),
                     float(cfg.get_dotted(ConfigKeys.STOP_LOSS_PCT.value, 0.045)),
                     float(cfg.get_dotted(ConfigKeys.TAKE_PROFIT_PCT.value, 0.025)),
                     float(cfg.get_dotted(ConfigKeys.ATR_MULTIPLIER.value, 2.5)),
@@ -1469,56 +1403,67 @@ class TradingScheduler:
         except Exception as _ce:
             logger.warning(f"[调度器·Coordinator] 启动回灌失败: {_ce}")
 
-        # 信号扫描线程
-        self._scan_thread = threading.Thread(
-            target=self._scan_loop, name="SignalScanLoop", daemon=True
-        )
-        self._scan_thread.start()
+        # ── P0 (2026-06-19): 假日/周末最小化启动 ──
+        # 根因: 假日时启动全部后台线程 → 每个循环各自空跑
+        #       (Juneteenth: ORB 1221 ticks, News 1864, VIX 761, Signal 798)
+        # 修复: 假日/周末只启动必要线程 (position_sync + watchdog)
+        #       其他线程根本不启动 → 零空跑可能
+        #       未来新增线程也自动受保护 (只需加到 _MARKET_DEPENDENT_THREADS)
+        from app.core.scheduler_triggers import get_market_phase, MarketPhase
+        _is_market_closed = get_market_phase() == MarketPhase.WEEKEND
+        if _is_market_closed:
+            logger.info(
+                "[调度器] 🏖️ 假日/周末 — 最小化启动模式 "
+                "(仅 position_sync, 跳过信号扫描/ORB/LLM/VIX/新闻)"
+            )
 
-        # 持仓监控线程
-        self._monitor_thread = threading.Thread(
-            target=self._monitor_loop, name="PositionMonitorLoop", daemon=True
-        )
-        self._monitor_thread.start()
+        # 信号扫描线程 (假日不启动)
+        if not _is_market_closed:
+            self._scan_thread = threading.Thread(
+                target=self._scan_loop, name="SignalScanLoop", daemon=True
+            )
+            self._scan_thread.start()
 
-        # LLM 策略引擎线程 (2026-04-16 新增)
-        self._llm_thread = threading.Thread(
-            target=self._llm_strategy_loop, name="LLMStrategyLoop", daemon=True
-        )
-        self._llm_thread.start()
+        # 持仓监控线程 (假日不启动 — position_sync 独立处理)
+        if not _is_market_closed:
+            self._monitor_thread = threading.Thread(
+                target=self._monitor_loop, name="PositionMonitorLoop", daemon=True
+            )
+            self._monitor_thread.start()
 
-        # 新闻管线 V2 线程 (2026-04-29 新增，observe 模式)
-        if self.news_pipeline_v2:
+        # LLM 策略引擎线程 (假日不启动)
+        if not _is_market_closed:
+            self._llm_thread = threading.Thread(
+                target=self._llm_strategy_loop, name="LLMStrategyLoop", daemon=True
+            )
+            self._llm_thread.start()
+
+        # 新闻管线 V2 线程 (假日不启动)
+        if not _is_market_closed and self.news_pipeline_v2:
             self._news_v2_thread = threading.Thread(
                 target=self._news_v2_loop, name="NewsV2Loop", daemon=True
             )
             self._news_v2_thread.start()
             logger.info("[NewsV2] 后台采集线程已启动")
 
-        # VIX 监控线程 (2026-04-29 新增)
-        if self.vix_monitor:
+        # VIX 监控线程 (假日不启动)
+        if not _is_market_closed and self.vix_monitor:
             self._vix_thread = threading.Thread(
                 target=self._vix_monitor_loop, name="VIXMonitorLoop", daemon=True
             )
             self._vix_thread.start()
             logger.info("[VIX Monitor] 后台监控线程已启动")
 
-        # ManualPositionGuard 线程 (2026-06-14): 手动仓位风险监控
-        # 解决 P0: PROTECTED 仓位在 ExitMonitor 中被跳过, 无任何保护
-        self._manual_guard_thread = threading.Thread(
-            target=self._manual_guard_loop, name="ManualGuardLoop", daemon=True
-        )
-        self._manual_guard_thread.start()
-        logger.info("[ManualGuard] 手动仓位风险监控线程已启动")
+        # ManualPositionGuard 线程 (假日不启动)
+        if not _is_market_closed:
+            self._manual_guard_thread = threading.Thread(
+                target=self._manual_guard_loop, name="ManualGuardLoop", daemon=True
+            )
+            self._manual_guard_thread.start()
+            logger.info("[ManualGuard] 手动仓位风险监控线程已启动")
 
-        # Scalping 均值回归线程 (2026-04-29 新增)
-        if self.scalping_engine:
-            self.scalping_engine.start()
-            # 注意: start() 可能启动等待线程(盘前)或直接启动主循环(盘中)
-            # 实际启动状态以 ScalpingEngine 日志为准
-
-        # RFC-056: ORB 辅线引擎 (2026-06-01)
-        if self.orb_engine:
+        # RFC-056: ORB 辅线引擎 (假日不启动)
+        if not _is_market_closed and self.orb_engine:
             self.orb_engine.start()
 
         # 若启动时正处于交易时间，立即触发一次扫描（不等 30 分钟冷启动）
@@ -1537,7 +1482,10 @@ class TradingScheduler:
             # 根据当前时段决定：立即订阅 / 等待自动循环激活
             if self._subscription_mgr.should_be_subscribed():
                 logger.info("[分时调度] 当前为美股盘前/交易时段，立即订阅 watchlist...")
-                self._subscription_mgr.ensure_subscribed(self.watchlist)
+                self._subscription_mgr.ensure_subscribed(
+                    self.watchlist,
+                    sub_types=["QUOTE", "K_1M", "K_15M", "K_30M", "ORDER_BOOK", "TICKER"],
+                )
             else:
                 reason = "港股交易时段" if self._subscription_mgr.is_hk_trading() else "美股已收盘"
                 logger.info(f"[分时调度] 当前{reason}，暂不订阅 (自动循环将在盘前激活)")
@@ -1601,11 +1549,6 @@ class TradingScheduler:
                 t.join(timeout=t_timeout)
                 if t.is_alive():
                     logger.warning(f"[调度器] 线程 {t.name} 未能在 {t_timeout}s 内退出，跳过")
-
-        # 停止 Scalping 引擎
-        if self.scalping_engine:
-            self.scalping_engine.stop()
-            logger.info("[Scalping] 引擎已停止")
 
         # RFC-056: 停止 ORB 辅线引擎
         if self.orb_engine:
@@ -1834,6 +1777,20 @@ class TradingScheduler:
                 now = datetime.now(ET)
 
                 if phase == MarketPhase.TRADING:
+                    # Playbook: 盘中自动执行 triggered 指令 (OKR Week 1: 数据积累)
+                    # 每30分钟检查一次是否有新的 triggered 指令需要自动执行
+                    if not hasattr(self, '_playbook_auto_execute_last_run'):
+                        self._playbook_auto_execute_last_run = None
+                    
+                    if (self._playbook_auto_execute_last_run is None or 
+                        (now - self._playbook_auto_execute_last_run).total_seconds() >= 1800):
+                        try:
+                            from app.playbook.pipeline import run_playbook_auto_execute
+                            run_playbook_auto_execute(self)
+                            self._playbook_auto_execute_last_run = now
+                        except Exception as _e:
+                            logger.debug(f"[Playbook] 盘中自动执行异常 (已隔离): {_e}")
+                    
                     # 🚨 盘中休眠：禁止主动扫描，LLM 进入待机状态
                     # LLM 仅作为异步风控员响应触发请求
                     for _ in range(60):
@@ -1881,6 +1838,13 @@ class TradingScheduler:
                     # 原因: Futu LV3 盘前无数据，轮询无意义，观察模式已退役。
                     # 盘前阶段仅保留: 作战计划生成 (08:30-09:25) + 新闻采集 + LLM 推荐
 
+                    # Playbook Layer 0+1 盘前生成 (每日幂等, 自带节假日/时间窗口 guard)
+                    try:
+                        from app.playbook.pipeline import run_playbook_generate
+                        run_playbook_generate(self)
+                    except Exception as _e:
+                        logger.debug(f"[LLM策略] playbook 盘前生成异常 (已隔离): {_e}")
+
                 elif phase == MarketPhase.AFTER_HOURS:
                     # 盘后: 处理盘中排队的 LLM 审计
                     self._process_deferred_audit_queue()
@@ -1890,6 +1854,14 @@ class TradingScheduler:
                         logger.info("[LLM策略] 盘后夜盘 → 新闻采集 + LLM 推荐")
                         run_after_hours_llm_scan(self, phase=phase)
                         last_afterhours_run = now
+
+                    # Playbook Layer 3 每日盘后追踪 (每日幂等)
+                    try:
+                        from app.playbook.pipeline import run_playbook_track, run_playbook_weekly
+                        run_playbook_track(self)
+                        run_playbook_weekly(self)  # 周级幂等, 仅周五实际出周报
+                    except Exception as _e:
+                        logger.debug(f"[LLM策略] playbook 盘后追踪异常 (已隔离): {_e}")
 
                 elif phase == MarketPhase.OVERNIGHT:
                     # 深夜: 每6小时采集新闻 + LLM 推荐 (最低频率)
@@ -1947,6 +1919,11 @@ class TradingScheduler:
         try:
             while self._news_v2_running and self.running:
                 try:
+                    # 第二层防线: 服务跨午夜进入假日时，运行时守卫
+                    from app.core.scheduler_triggers import sleep_if_market_closed
+                    if sleep_if_market_closed(180, lambda: self._news_v2_running and self.running):
+                        continue
+
                     if self.news_pipeline_v2:
                         passed = loop.run_until_complete(self.news_pipeline_v2.run_once())
                         if passed:
@@ -1970,6 +1947,11 @@ class TradingScheduler:
 
         while self.running:
             try:
+                # 第二层防线: 服务跨午夜进入假日时，运行时守卫
+                from app.core.scheduler_triggers import sleep_if_market_closed
+                if sleep_if_market_closed(300, lambda: self.running):
+                    continue
+
                 if self.vix_monitor:
                     vix_data = self.vix_monitor.check_vix_level()
                     vix = vix_data.get("vix")

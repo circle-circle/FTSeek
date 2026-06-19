@@ -16,10 +16,13 @@
 非阻塞: 单次启动调用, 失败降级 (不阻断主流程).
 """
 from __future__ import annotations
+import hashlib
+import json
 import logging
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple  # Tuple 用于 _infer_source 返回值
 
 from .source import (
@@ -28,6 +31,33 @@ from .source import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+# Task #36 (2026-06-16) 幂等保护:
+# 启动期 reconciler 会反复把已知的 broker_only 持仓 (如 US.SNDK) 标为
+# "新发现 / broker_only 补录" 并在 WARNING 日志/飞书刷屏. 真正的状态变化
+# 只发生在 (symbol, direction, qty, source, owner_strategy) 五元组
+# 变化时. 此处用一份持久化签名缓存做去重: 签名一致 → 静默 (DEBUG); 变化
+# 才走原有的 INFO/WARNING 路径.
+_SIGNATURE_FILE_NAME = "reconcile_signatures.json"
+
+
+def _signature_for(
+    symbol: str,
+    direction: str,
+    qty: float,
+    source: str = "",
+    owner_strategy: str = "",
+) -> str:
+    """对 (symbol, direction, qty, source, owner_strategy) 生成稳定签名 (sha256[:16]).
+
+    qty 取整到 4 位小数避免浮点抖动 (2026-06-16 Task #36).
+    """
+    raw = (
+        f"{symbol}|{(direction or '').upper()}|{round(float(qty or 0), 4)}|"
+        f"{(source or '').lower()}|{(owner_strategy or '').lower()}"
+    )
+    return hashlib.sha256(raw.encode('utf-8')).hexdigest()[:16]
 
 
 @dataclass
@@ -51,10 +81,44 @@ class StartupReconciler:
                 from app.core.paths import get_trade_records_db
                 db_path = str(get_trade_records_db())
             except Exception:
-                from pathlib import Path
                 db_path = str(Path(__file__).resolve().parent.parent.parent /
                              "data" / "ftseek_us.db")
         self._db_path = db_path
+        # Task #36: 幂等签名缓存 (持久化到 data/reconcile_signatures.json)
+        self._signature_path: Path = (
+            Path(db_path).resolve().parent / _SIGNATURE_FILE_NAME
+        )
+        self._last_seen_signature: Dict[str, str] = self._load_signatures()
+        # 本轮活跃签名集合, _save_signatures() 用 (剔除消失的 symbol)
+        self._current_signature: Dict[str, str] = {}
+
+    # ───────────────────── Task #36: 签名持久化 ─────────────────────
+    def _load_signatures(self) -> Dict[str, str]:
+        try:
+            if self._signature_path.exists():
+                with open(self._signature_path, 'r', encoding='utf-8') as f:
+                    raw = json.load(f) or {}
+                if isinstance(raw, dict):
+                    return {str(k): str(v) for k, v in raw.items()}
+        except Exception as e:
+            logger.debug(f"[Reconciler·sig] 加载签名缓存失败 (忽略): {e}")
+        return {}
+
+    def _save_signatures(self) -> None:
+        try:
+            self._signature_path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = self._signature_path.with_suffix('.json.tmp')
+            with open(tmp, 'w', encoding='utf-8') as f:
+                json.dump(self._current_signature, f, ensure_ascii=False, indent=2)
+            tmp.replace(self._signature_path)
+        except Exception as e:
+            logger.debug(f"[Reconciler·sig] 保存签名缓存失败 (忽略): {e}")
+
+    def _signature_changed(self, symbol: str, signature: str) -> bool:
+        """True 表示状态变化 (新发现/数量/方向/来源 变化), False 表示与上次完全一致."""
+        prev = self._last_seen_signature.get(symbol)
+        self._current_signature[symbol] = signature
+        return prev != signature
 
     def run(self) -> ReconcileResult:
         """执行启动对账 — 安全降级 (任何步骤失败不阻断主流程)"""
@@ -67,6 +131,9 @@ class StartupReconciler:
         except Exception as e:
             logger.warning(f"[Reconciler] 启动对账异常 (降级运行): {e}", exc_info=True)
             result.errors += 1
+        finally:
+            # Task #36: 持久化本轮签名 — 即便部分失败也保留已计算的部分
+            self._save_signatures()
         return result
 
     # ─────────────────────────────────────────────────────────────
@@ -124,6 +191,8 @@ class StartupReconciler:
                 result.errors += 1
 
         # 2. broker_only — broker 有 + 本地无 → 启动期统一标 LEGACY + PROTECTED
+        # Task #36 (2026-06-16): 已知签名 (上一轮已记录) 跳过 "新发现" 告警, 仅
+        #   静默补录到内存即可; 真正的状态变化 (qty/方向/来源) 才打 WARNING.
         for sym in (broker_syms - local_syms):
             try:
                 info = broker_positions[sym]
@@ -132,6 +201,24 @@ class StartupReconciler:
             except Exception as e:
                 logger.warning(f"[Reconciler·broker_only] {sym}: {e}")
                 result.errors += 1
+
+        # Task #36: 已 matched 的持仓也写入签名 (供下次对账判断 "未变化")
+        for sym in (broker_syms & local_syms):
+            try:
+                info = broker_positions[sym]
+                pos = local_positions.get(sym)
+                src = (
+                    (getattr(pos, 'metadata', {}) or {}).get('source', '')
+                    or getattr(pos, 'source', '')
+                )
+                owner = getattr(pos, 'owner_strategy', '') or ''
+                sig = _signature_for(
+                    sym, info.get('direction', 'LONG'), info.get('qty', 0),
+                    str(src), str(owner),
+                )
+                self._current_signature[sym] = sig
+            except Exception:
+                pass
 
         # 3. local_only — 本地有 + broker 无 → 幽灵, 标记保留 (用户决定清理)
         # 2026-05-20 修复: 期权持仓不在 broker 中 (模拟期权), 跳过 ghost 检测
@@ -194,11 +281,21 @@ class StartupReconciler:
         若一刀切标 LEGACY+PROTECTED, ExitMonitor 跳过监控, 用户保利的 SL 失效.
 
         优先级:
+        0. 手动持仓检查 (ManualHoldRegistry + DB owner=manual) → MANUAL + PROTECTED
         1. trade_records 历史 (有入场记录 → 是策略仓)
         2. action_log_json 监控痕迹 (ExitMonitor 已在管)
         3. strategy_id 启发式 (futu_sync 之外的策略名)
         4. 兜底: LEGACY + PROTECTED
         """
+        # P0 线索 0 (2026-06-15): 手动持仓优先 — 防止被误判为策略孤儿
+        # MU 事件: 手动 SHORT 被 _infer_source 误判为 AUTO_MAIN, ExitMonitor 自动平仓
+        try:
+            if self._is_manual_position(symbol, position):
+                logger.info(f"[Reconciler·_infer_source] {symbol}: 识别为手动持仓 → MANUAL+PROTECTED")
+                return PositionSource.MANUAL, ProtectionState.PROTECTED
+        except Exception as e:
+            logger.debug(f"[Reconciler·_infer_source·manual_check] {symbol}: {e}")
+
         # 线索 1: trade_records 历史
         try:
             hist = self._lookup_trade_records_source(symbol)
@@ -290,6 +387,51 @@ class StartupReconciler:
         except Exception:
             return False
 
+    def _is_manual_position(self, symbol: str, position: Any) -> bool:
+        """P0 线索 0 (2026-06-15): 判断仓位是否为手动开仓.
+
+        三层检查 (任一命中即返回 True):
+        1. ManualHoldRegistry 内存注册表
+        2. DB open_positions.owner = 'manual'
+        3. DB open_positions.trader_type = 'MANUAL' 且 strategy_id 不含 'auto'
+        """
+        # 检查 1: ManualHoldRegistry
+        try:
+            from app.coordinator.manual_hold_registry import manual_hold_registry
+            if manual_hold_registry.is_manual_held(symbol):
+                return True
+        except Exception:
+            pass
+
+        # 检查 2+3: DB open_positions
+        try:
+            conn = sqlite3.connect(self._db_path)
+            row = conn.execute(
+                "SELECT owner, trader_type, strategy_id, source FROM open_positions WHERE symbol = ? LIMIT 1",
+                (symbol,)
+            ).fetchone()
+            conn.close()
+            if row:
+                owner = (row[0] or "").lower()
+                trader_type = (row[1] or "").upper()
+                strategy_id = (row[2] or "").lower()
+                source = (row[3] or "").lower()
+                # owner='manual' 是手动持仓的明确标记
+                if owner == "manual":
+                    return True
+                # trader_type=MANUAL 且 strategy_id 非自动策略
+                if trader_type == "MANUAL" and not any(
+                    s in strategy_id for s in ("auto_", "main_pipeline", "voting_llm", "scalping", "orb")
+                ):
+                    return True
+                # source 字段标记为 manual
+                if source in ("manual", "futu_manual", "manual_sync"):
+                    return True
+        except Exception:
+            pass
+
+        return False
+
     def _add_legacy_position(self, symbol: str, info: Dict):
         """broker_only — 启动期补录. M1.1: 多线索推断, 不一刀切."""
         from app.core.models import Position, Direction, MarketRegime
@@ -299,6 +441,11 @@ class StartupReconciler:
         if size <= 0 or cost <= 0:
             logger.debug(f"[Reconciler] {symbol} 跳过 (size/cost 非法 size={size} cost={cost})")
             return
+
+        # Task #36: 先用 broker 信息算 "轻签名" 判断是否真正 "新发现";
+        # 完整 source/owner 在 _infer_source 后才确定 → 用于本轮签名持久化.
+        sig_basic = _signature_for(symbol, direction, size, "broker_only", "")
+        is_new_or_changed = self._signature_changed(symbol, sig_basic)
 
         pos = Position(
             symbol=symbol,
@@ -315,12 +462,32 @@ class StartupReconciler:
         # M1.1: 智能推断 — 即使 broker_only, 仍可能是策略孤儿仓 (例: QQQ 5/3 入场, trade_records 丢)
         inferred_src, inferred_protection = self._infer_source(symbol, pos)
         tag_position(pos, inferred_src, inferred_protection)
-        # 额外信息
+        # 额外信息 — 时间戳走 utils.timezone.now_et (Task #36 约束)
         meta = pos.metadata
-        meta["reconciled_at"] = datetime.now().isoformat()
+        try:
+            from app.utils.timezone import now_et
+            meta["reconciled_at"] = now_et().isoformat()
+        except Exception:
+            meta["reconciled_at"] = datetime.now().isoformat()
         meta["reconcile_reason"] = "broker_only_at_startup"
 
         self.position_store.add(symbol, pos)
+
+        # Task #36: 完整签名 (含 source/owner) 覆盖 sig_basic, 留作下一轮对比依据
+        full_sig = _signature_for(
+            symbol, direction, size, inferred_src.value,
+            getattr(pos, "owner_strategy", "") or inferred_src.value,
+        )
+        self._current_signature[symbol] = full_sig
+
+        # Task #36: 仅在 "真正状态变化" (新发现 / qty 变 / 方向变 / 来源变) 时
+        #          走原有 WARNING 路径; 已知持仓静默 (DEBUG) 防止 5 分钟刷屏.
+        if not is_new_or_changed:
+            logger.debug(
+                f"[Reconciler·idempotent] {symbol} {direction} qty={size} "
+                f"签名未变 (sig={sig_basic}), 跳过 broker_only 告警"
+            )
+            return
 
         if inferred_src.is_auto():
             logger.warning(
@@ -337,7 +504,17 @@ class StartupReconciler:
             )
 
     def _mark_ghost(self, position: Any):
-        """local_only — broker 无, 内存有 → 标记 ghost"""
+        """local_only — broker 无, 内存有 → 标记 ghost (幂等: 签名未变则静默)"""
+        symbol = getattr(position, "symbol", "?")
+        # Task #36 幂等: 签名未变 → DEBUG 静默 (防启动期刷屏)
+        sig = _signature_for(
+            symbol,
+            getattr(position, "direction", ""),
+            getattr(position, "size", 0),
+            "ghost", "",
+        )
+        is_new_or_changed = self._signature_changed(symbol, sig)
+
         meta = getattr(position, "metadata", None) or {}
         if not isinstance(meta, dict):
             meta = {}
@@ -347,8 +524,15 @@ class StartupReconciler:
             position.metadata = meta
         except Exception:
             pass
+
+        if not is_new_or_changed:
+            logger.debug(
+                f"[Reconciler·idempotent] {symbol} 幽灵签名未变 (sig={sig}), 跳过告警"
+            )
+            return
+
         logger.warning(
-            f"[Reconciler] 👻 local_only 幽灵: {position.symbol} qty={getattr(position,'size',0)} "
+            f"[Reconciler] 👻 local_only 幽灵: {symbol} qty={getattr(position,'size',0)} "
             f"(broker 无对应持仓, 已标 is_ghost; 30s position_sync 会清理)"
         )
 

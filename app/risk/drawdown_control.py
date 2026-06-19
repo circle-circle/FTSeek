@@ -4,12 +4,20 @@ P0 修复 (2026-04-17):
 - 支持动态资产基准（启动时查询真实资产）
 - 支持入金/出金后的基准更新
 - 保存基准变更历史，用于复盘审计
+
+P0-fix (2026-06-15):
+- 日内回撤状态持久化到 SQLite, 防止重启归零绕过 3% 日限
 """
 from datetime import datetime, date
 from typing import Optional, List, Dict, Any
 import logging
+import os
+import sqlite3
 
 logger = logging.getLogger(__name__)
+
+# DB 路径: data/drawdown_state.db
+_DB_PATH = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'drawdown_state.db')
 
 
 class DrawdownBaselineRecord:
@@ -80,6 +88,78 @@ class DrawdownController:
         # P2 修复 (2026-05-11): 入金/出金自动检测阈值 (净值突变倍数)
         self.auto_reset_threshold = 5.0  # 当前资产 vs 基准差异 >5x 时自动重置
 
+        # P0-fix (2026-06-15): 从 SQLite 恢复日内状态
+        self._ensure_table()
+        self._load_state()
+
+    # ------------------------------------------------------------------
+    # SQLite 持久化 (P0-fix 2026-06-15)
+    # ------------------------------------------------------------------
+
+    def _ensure_table(self):
+        try:
+            os.makedirs(os.path.dirname(_DB_PATH), exist_ok=True)
+            conn = sqlite3.connect(_DB_PATH, timeout=5)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS drawdown_state (
+                    trade_date TEXT PRIMARY KEY,
+                    daily_start_assets REAL,
+                    current_daily_dd_abs REAL,
+                    block_reason TEXT,
+                    baseline REAL,
+                    current_assets REAL,
+                    updated_at TEXT
+                )
+            """)
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            logger.debug(f"[回撤持久化] 建表失败: {e}")
+
+    def _load_state(self):
+        """从 DB 恢复今日状态 (防止重启归零)"""
+        try:
+            conn = sqlite3.connect(_DB_PATH, timeout=5)
+            today = date.today().isoformat()
+            row = conn.execute(
+                "SELECT daily_start_assets, current_daily_dd_abs, block_reason, "
+                "baseline, current_assets FROM drawdown_state WHERE trade_date=?",
+                (today,),
+            ).fetchone()
+            conn.close()
+            if row:
+                self.daily_start_assets = float(row[0])
+                self.current_daily_dd_abs = float(row[1])
+                self.block_reason = row[2] if row[2] else None
+                if float(row[3]) > 0:
+                    self.baseline = float(row[3])
+                if float(row[4]) > 0:
+                    self.current_assets = float(row[4])
+                logger.info(
+                    f"[回撤持久化] 恢复今日状态: daily_start=${self.daily_start_assets:,.0f} "
+                    f"dd_abs=${self.current_daily_dd_abs:,.0f} block={self.block_reason}"
+                )
+        except Exception as e:
+            logger.debug(f"[回撤持久化] 加载失败 (使用默认值): {e}")
+
+    def _save_state(self):
+        """持久化当前状态到 DB"""
+        try:
+            conn = sqlite3.connect(_DB_PATH, timeout=5)
+            today = date.today().isoformat()
+            conn.execute(
+                "INSERT OR REPLACE INTO drawdown_state "
+                "(trade_date, daily_start_assets, current_daily_dd_abs, block_reason, "
+                "baseline, current_assets, updated_at) VALUES (?,?,?,?,?,?,?)",
+                (today, self.daily_start_assets, self.current_daily_dd_abs,
+                 self.block_reason or "", self.baseline, self.current_assets,
+                 datetime.now().isoformat()),
+            )
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            logger.debug(f"[回撤持久化] 保存失败: {e}")
+
     # ------------------------------------------------------------------
     # 基准管理
     # ------------------------------------------------------------------
@@ -103,6 +183,7 @@ class DrawdownController:
         self.current_daily_dd = 0.0
         self.current_total_dd = 0.0
         self._check_limits()
+        self._save_state()
 
     def reset_daily_baseline(self, reason: str = "daily_open"):
         """每日开盘前重置日内基准"""
@@ -114,6 +195,7 @@ class DrawdownController:
         logger.info(
             f"[回撤基准] 日内基准重置: {old:.2f} -> {self.daily_start_assets:.2f} ({reason})"
         )
+        self._save_state()
 
     # ------------------------------------------------------------------
     # 资产更新
@@ -152,6 +234,7 @@ class DrawdownController:
         self.current_daily_dd = self.current_daily_dd_abs / self.daily_start_assets
 
         self._check_limits()
+        self._save_state()
 
     def record_trade_pnl(self, pnl: float, source: str = "unknown"):
         """C4 fix (2026-05-31): 记录单笔交易 P&L, 累加到日内回撤
@@ -182,6 +265,7 @@ class DrawdownController:
             )
 
         self._check_limits()
+        self._save_state()
 
     def update_drawdown(self, daily_dd: float, total_dd: float):
         """兼容旧接口：直接传入回撤百分比"""

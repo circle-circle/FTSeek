@@ -326,7 +326,7 @@ class ConfigLoader:
             "ALERT_PROVIDER": "dingtalk",
             "DINGTALK_WEBHOOK_URL_US": self.get('service.dingtalk.webhook_url', ''),
             "DINGTALK_SECRET_US": self.get('service.dingtalk.secret', ''),
-            "FEISHU_WEBHOOK_URL": self.get('service.feishu.webhook_url', ''),
+            "FEISHU_WEBHOOK_URL_US": self.get('service.feishu.webhook_url', ''),
             "FEISHU_APP_ID": self.get('service.feishu.app_id', ''),
             "FEISHU_APP_SECRET": self.get('service.feishu.app_secret', ''),
             # 失败追踪

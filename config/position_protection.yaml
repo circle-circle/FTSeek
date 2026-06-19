@@ -17,4 +17,4 @@ trailing_stop:
 check_interval: 300  # 5分钟
 
 # 飞书告警
-feishu_webhook: "${FEISHU_WEBHOOK_URL}"
+feishu_webhook: "${FEISHU_WEBHOOK_URL_US}"

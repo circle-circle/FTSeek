@@ -70,7 +70,7 @@ class FeishuChannel(Channel):
             self._notifier = FeishuNotifier()
             # FeishuNotifier 自身判断 enabled
             self._available = bool(getattr(self._notifier, "webhook_url", None)
-                                   or os.getenv("FEISHU_WEBHOOK_URL"))
+                                   or os.getenv("FEISHU_WEBHOOK_URL_US"))
         except Exception as e:
             logger.warning(f"[PushChannel·feishu] 初始化失败: {e}")
             self._notifier = None

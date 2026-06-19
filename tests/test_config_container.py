@@ -61,8 +61,8 @@ class TestOpenDConfig:
     def test_from_env_with_custom_values(self):
         """测试从环境变量创建 OpenD 配置（自定义值）"""
         with patch.dict(os.environ, {
-            "OPEND_HOST": "192.168.1.100",
-            "OPEND_PORT": "22222",
+            "FUTU_OPEND_HOST": "192.168.1.100",
+            "FUTU_OPEND_PORT": "22222",
             "FUTU_LOGIN_ACCOUNT": "test123",
             "SIMULATE_ACCOUNT_ID": "888888",
         }, clear=False):

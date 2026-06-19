@@ -61,7 +61,7 @@ def register(app, templates):
         return {
             "services": services,
             "broker_connected": broker_connected,
-            "account_id": account_id,
+            "account_id": f"****{account_id[-4:]}" if len(account_id) > 4 else "****",
         }
 
     @router.get("/api/mode")
@@ -73,7 +73,7 @@ def register(app, templates):
         try:
             body = await request.json()
         except Exception as e:
-            return JSONResponse(content={"success": False, "message": f"请求体无效: {e}"}, status_code=400)
+            return JSONResponse(content={"success": False, "message": "请求体无效"}, status_code=400)
 
         target = body.get("target_mode", "") if isinstance(body, dict) else ""
         confirm = body.get("confirm", "") if isinstance(body, dict) else ""
@@ -182,14 +182,13 @@ def register(app, templates):
         label = "🟢 已开启" if target else "🔒 已关闭"
         logger.warning(f"[自动交易开关] {label} (由 {'关闭' if target else '开启'} 切换)")
 
-        # P0 (2026-06-14): 实盘环境额外提示硬锁状态
-        extra_msg = ""
-        if target and os.getenv("TRADE_ENV", "1").strip() == "0":
-            extra_msg = (
-                " ⚠️ 注意: 实盘自动交易有代码级硬锁 (AUTO_TRADING_LIVE_ALLOWED=False), "
-                "即使开关打开也不会执行实盘自动交易。"
-                "需信号 IC 验证 + 模拟盘测试 + 人工审批后解锁。"
-            )
-        return {"success": True, "enabled": target, "message": f"自动交易{label}{extra_msg}"}
+        # 同步更新 ModeSwitchService (内存开关, 控制信号扫描)
+        try:
+            from app.web_dashboard.mode_switch_service import get_mode_switch_service
+            get_mode_switch_service().set_auto_enabled(target)
+        except Exception as _sync_err:
+            logger.warning(f"[自动交易开关] ModeSwitchService 同步失败: {_sync_err}")
+
+        return {"success": True, "enabled": target, "message": f"自动交易{label}"}
 
     app.include_router(router)

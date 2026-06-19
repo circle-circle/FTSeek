@@ -52,8 +52,8 @@ def _safe_float(key: str, default: float) -> float:
         return default
 
 
-OPEND_HOST = os.getenv("OPEND_HOST", "127.0.0.1")
-OPEND_PORT = _safe_int("OPEND_PORT", 11111)
+FUTU_OPEND_HOST = os.getenv("FUTU_OPEND_HOST", "127.0.0.1")
+FUTU_OPEND_PORT = _safe_int("FUTU_OPEND_PORT", 11111)
 TRADE_ENV = _safe_int("TRADE_ENV", 1)
 SIMULATE_ACCOUNT_ID = os.getenv("SIMULATE_ACCOUNT_ID", "8246818")
 

@@ -1,8 +1,8 @@
 """
-配置一致性审计 — FTSeek-US SSOT v1.0 (2026-05-06)
+配置一致性审计 — FTSeek-US SSOT v2.0 (2026-06-16)
 
 检测 unified_config.yaml / 环境变量 / 代码默认值之间的漂移。
-在 main.py 启动时调用，输出配置一致性报告到日志。
+在 main.py 启动时调用，strict=True 模式下关键键不一致直接 raise。
 
 用法:
     from app.core.config_audit import print_config_audit, ConfigAuditError
@@ -10,18 +10,18 @@
     # 观察模式 (只打日志)
     print_config_audit(yaml_data, strict=False)
 
-    # 严格模式 (BLOCKING 会 raise)
+    # 严格模式 (BLOCKING 会 raise) — 实盘启动必须使用
     print_config_audit(yaml_data, strict=True)
 """
 import logging
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Tuple
 
 logger = logging.getLogger("ftseek_us.config_audit")
 
 
 # 需要审计的关键配置项: (yaml_key, cfg_attr, description)
 # yaml_key 使用 ConfigContainer 的 get() 路径格式 (小写，点分隔)
-_AUDIT_ITEMS = [
+_AUDIT_ITEMS: List[Tuple[str, str, str]] = [
     # 风控 — 信号质量
     ("risk.signal_quality.min_confidence", "MIN_CONFIDENCE", "最小置信度"),
     ("risk.signal_quality.min_consensus", "MIN_CONSENSUS", "最小共识度"),
@@ -44,6 +44,10 @@ _AUDIT_ITEMS = [
     ("scheduler.min_signal_strength", "SCHEDULER_MIN_SIGNAL_STRENGTH", "最小信号强度"),
     ("scheduler.min_consensus_level", "SCHEDULER_MIN_CONSENSUS", "调度器最小共识"),
     ("scheduler.scan_interval_minutes", "SCHEDULER_SCAN_INTERVAL", "扫描间隔(分钟)"),
+    # 信号冷却 — SoT 是 strategy.signal_cooldown (非 decision.signal_timing.cooldown_seconds)
+    ("strategy.signal_cooldown", "SIGNAL_COOLDOWN", "信号冷却时间"),
+    # 信号过期
+    ("decision.signal_timing.expire_seconds", "SIGNAL_EXPIRE_SECONDS", "信号过期时间"),
     # 止损止盈
     ("stop_loss.default_stop_loss_pct", "DEFAULT_STOP_LOSS_PCT", "默认止损比例"),
     ("take_profit.default_take_profit_pct", "DEFAULT_TAKE_PROFIT_PCT", "默认止盈比例"),
@@ -55,8 +59,6 @@ _AUDIT_ITEMS = [
     ("decision.signal_thresholds.min_score", "DECISION_MIN_SCORE", "决策最低分数"),
     ("decision.signal_thresholds.medium_score", "DECISION_MEDIUM_SCORE", "决策中等分数"),
     ("decision.signal_thresholds.high_score", "DECISION_HIGH_SCORE", "决策高分分数"),
-    ("decision.signal_timing.cooldown_seconds", "SIGNAL_COOLDOWN", "信号冷却时间"),
-    ("decision.signal_timing.expire_seconds", "SIGNAL_EXPIRE_SECONDS", "信号过期时间"),
     # 期权
     ("options.stop_loss_pct", "OPTIONS_STOP_LOSS_PCT", "期权止损比例"),
     ("options.take_profit_ratio", "OPTIONS_TAKE_PROFIT_RATIO", "期权止盈比例"),
@@ -74,7 +76,6 @@ _AUDIT_ITEMS = [
     ("execution.idempotency.window_seconds", "EXEC_IDEMPOTENCY_WINDOW", "幂等窗口(秒)"),
     # 策略预算
     ("strategy_budgets.main_pipeline.max_concurrent_positions", "BUDGET_MAIN_MAX_POSITIONS", "主管线最大并发"),
-    ("strategy_budgets.scalping.max_concurrent_positions", "BUDGET_SCALPING_MAX_POSITIONS", "剥头皮最大并发"),
     ("strategy_budgets.system.max_total_daily_loss", "BUDGET_SYSTEM_MAX_DAILY_LOSS", "系统最大日亏损"),
 ]
 
@@ -101,19 +102,39 @@ def audit_config_consistency(yaml_data: Dict[str, Any]) -> List[str]:
     Returns:
         冲突/警告信息列表，空列表表示无问题
     """
-    from app.core.config_defaults import CFG
+    from app.core.config_defaults import CFG, CRITICAL_KEYS
 
     warnings = []
 
     for yaml_key, cfg_attr, desc in _AUDIT_ITEMS:
         yaml_value = _get_nested(yaml_data, yaml_key)
         expected_default = getattr(CFG, cfg_attr, None)
+        is_critical = cfg_attr in CRITICAL_KEYS
 
-        if yaml_value is not None and expected_default is not None and yaml_value != expected_default:
-            warnings.append(
-                f"🔴 [BLOCKING] CFG.{cfg_attr}({expected_default}) ≠ "
-                f"YAML {yaml_key}({yaml_value}) — {desc}必须同步修改!"
-            )
+        if yaml_value is None:
+            # YAML 中缺少该键
+            if is_critical:
+                warnings.append(
+                    f"🔴 [BLOCKING] YAML 缺少关键键 {yaml_key} "
+                    f"(CFG.{cfg_attr}={expected_default}) — {desc}"
+                )
+            else:
+                warnings.append(
+                    f"⚠️ [INFO] YAML 缺少键 {yaml_key} "
+                    f"(将使用 CFG.{cfg_attr}={expected_default} 兜底) — {desc}"
+                )
+        elif expected_default is not None and yaml_value != expected_default:
+            # YAML 值与代码默认值不一致
+            if is_critical:
+                warnings.append(
+                    f"🔴 [BLOCKING] CFG.{cfg_attr}({expected_default}) ≠ "
+                    f"YAML {yaml_key}({yaml_value}) — {desc}必须同步修改!"
+                )
+            else:
+                warnings.append(
+                    f"⚠️ [DRIFT] CFG.{cfg_attr}({expected_default}) ≠ "
+                    f"YAML {yaml_key}({yaml_value}) — {desc} (非关键，仅记录)"
+                )
 
     # 检查 YAML 内部 min_confidence 一致性
     _check_yaml_internal_consistency(yaml_data, warnings)
@@ -124,25 +145,6 @@ def audit_config_consistency(yaml_data: Dict[str, Any]) -> List[str]:
 def _check_yaml_internal_consistency(yaml_data: Dict, warnings: List[str]):
     """检查 YAML 内部同一参数在不同位置的值一致性"""
     # min_confidence 出现在多处，应保持一致
-    min_conf_locations = {
-        "risk.signal_quality.min_confidence": _get_nested(yaml_data, "risk.signal_quality.min_confidence"),
-        "scheduler.min_confidence": _get_nested(yaml_data, "scheduler.min_confidence"),
-        "signal_fusion.us": None,  # not a direct min_confidence
-    }
-
-    # 检查 signal_fusion 内部
-    fusion = _get_nested(yaml_data, "signal_fusion.us")
-    if isinstance(fusion, dict):
-        if "min_confidence" in fusion:
-            min_conf_locations["signal_fusion.us.min_confidence"] = fusion["min_confidence"]
-
-    # 检查 decision.risk 内部是否有 min_confidence
-    dec_risk = _get_nested(yaml_data, "decision.risk.signal_quality.min_confidence")
-    if dec_risk is not None:
-        min_conf_locations["decision.risk.signal_quality.min_confidence"] = dec_risk
-
-    # 如果有 scheduler min_confidence 且与 risk 不同，属于正常（不同场景不同阈值）
-    # 只检查明显异常：同一节内出现矛盾
     risk_mc = _get_nested(yaml_data, "risk.signal_quality.min_confidence")
     decision_mc = _get_nested(yaml_data, "decision.risk.signal_quality.min_confidence")
 
@@ -152,6 +154,19 @@ def _check_yaml_internal_consistency(yaml_data: Dict, warnings: List[str]):
             f"decision.risk.signal_quality.min_confidence({decision_mc})"
         )
 
+    # signal_cooldown 内部一致性检查
+    strategy_cooldown = _get_nested(yaml_data, "strategy.signal_cooldown")
+    decision_cooldown = _get_nested(yaml_data, "decision.signal_timing.cooldown_seconds")
+    if (strategy_cooldown is not None and decision_cooldown is not None
+            and strategy_cooldown != decision_cooldown):
+        # 这是已知的设计: strategy.signal_cooldown 是主线 SoT,
+        # decision.signal_timing.cooldown_seconds 仅供 LLM 子系统
+        logger.info(
+            "ℹ️ strategy.signal_cooldown(%s) ≠ decision.signal_timing.cooldown_seconds(%s) "
+            "— 已知设计差异 (主线 vs LLM子系统)",
+            strategy_cooldown, decision_cooldown
+        )
+
 
 def print_config_audit(yaml_data: Dict[str, Any], strict: bool = False) -> int:
     """
@@ -159,7 +174,7 @@ def print_config_audit(yaml_data: Dict[str, Any], strict: bool = False) -> int:
 
     Args:
         yaml_data: 小写化后的 YAML 原始数据
-        strict: True 时 BLOCKING 错误会 raise ConfigAuditError
+        strict: True 时 BLOCKING 错误会 raise ConfigAuditError (实盘必须使用)
 
     Returns:
         BLOCKING 错误数量
@@ -187,7 +202,8 @@ def print_config_audit(yaml_data: Dict[str, Any], strict: bool = False) -> int:
                 logger.critical(f"  {w}")
             if strict:
                 raise ConfigAuditError(
-                    f"FTSeek-US 配置一致性审计: {len(blocking)} 个 BLOCKING 错误",
+                    f"FTSeek-US 配置一致性审计: {len(blocking)} 个 BLOCKING 错误 — "
+                    f"关键配置不一致, 实盘启动已阻止",
                     blocking
                 )
             logger.critical("⛔ [观察模式] BLOCKING 错误已记录但未阻止启动 (使用 strict=True 启用阻止)")
@@ -196,7 +212,7 @@ def print_config_audit(yaml_data: Dict[str, Any], strict: bool = False) -> int:
 
 
 class ConfigAuditError(Exception):
-    """配置审计失败异常"""
+    """配置审计失败异常 — 关键配置不一致，实盘启动被阻止"""
     def __init__(self, message: str, errors: list):
         super().__init__(message)
         self.errors = errors

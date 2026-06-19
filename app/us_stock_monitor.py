@@ -327,7 +327,7 @@ class USStockMonitor:
             stock_config = self._load_stock_config()
             
             for record in records:
-                if record.get('exit_price') is None:
+                if not record.get('exit_price') or record.get('exit_price') == 0:
                     code = record['code']
                     qty = float(record.get('quantity', record.get('qty', 0)))
                     direction = str(record.get('direction', record.get('side', 'LONG'))).upper()
@@ -485,7 +485,7 @@ class USStockMonitor:
             # 更新已平仓的记录
             for code, position in self.positions.items():
                 for record in records:
-                    if record.get('code') == code and record.get('exit_price') is None:
+                    if record.get('code') == code and (not record.get('exit_price') or record.get('exit_price') == 0):
                         record['exit_price'] = position.exit_price
                         record['exit_time'] = position.exit_time
                         record['exit_reason'] = position.exit_reason

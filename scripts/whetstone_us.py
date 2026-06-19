@@ -772,8 +772,8 @@ class WhetstoneRunner:
     def _connect(self):
         if self.dry_run: return True
         from futu import OpenQuoteContext
-        host = os.getenv("OPEND_HOST", "127.0.0.1")
-        port = int(os.getenv("OPEND_PORT", "11111"))
+        host = os.getenv("FUTU_OPEND_HOST", "127.0.0.1")
+        port = int(os.getenv("FUTU_OPEND_PORT", "11111"))
         self.quote_ctx = OpenQuoteContext(host=host, port=port)
         logger.info(f"Futu 已连接 {host}:{port}")
         return True

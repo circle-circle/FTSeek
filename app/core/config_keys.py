@@ -23,7 +23,6 @@ class ConfigKeys(str, Enum):
 
     # ── 资金预算 ────────────────────────────────────────────
     MAIN_BUDGET_PCT = "strategies.main.capital_pct"
-    SCALPING_BUDGET_PCT = "scalping.budget_pct"
     MAX_TOTAL_POSITION = "risk_limits.max_total_position"
 
     # ── 推荐系统 ────────────────────────────────────────────

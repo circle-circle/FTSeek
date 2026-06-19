@@ -30,25 +30,49 @@ CRITICAL_PNL_PCT = -0.10      # -10%
 PORTFOLIO_WARNING_PCT = -0.05  # 组合浮亏 -5%
 
 # ── 冷却 ──
-ALERT_COOLDOWN_SECONDS = 1800  # 30 分钟
+ALERT_COOLDOWN_SECONDS = 1800  # 30 分钟 (基础冷却)
+MAX_COOLDOWN_MULTIPLIER = 4    # 最大冷却倍数 (30min → 2h)
 SCAN_INTERVAL_SECONDS = 60     # 60 秒
 
 # ── 状态 ──
 _alert_cooldowns: Dict[str, float] = {}  # "symbol:level" → last_alert_timestamp
+_alert_counts: Dict[str, int] = {}       # "symbol:level" → consecutive alert count (衰减用)
 _lock = threading.Lock()
 
 
 def _should_alert(key: str) -> bool:
-    """检查是否可以发送告警 (冷却期外)"""
+    """检查是否可以发送告警 (冷却期外, 含衰减逻辑)
+
+    衰减规则 (2026-06-17 P2 fix):
+      - 前 3 次: 30 分钟冷却
+      - 第 4-5 次: 60 分钟冷却 (×2)
+      - 第 6 次+: 120 分钟冷却 (×4)
+    避免长期浮亏仓位无限重复告警导致告警疲劳。
+    """
     with _lock:
         last = _alert_cooldowns.get(key, 0)
-        return (time.time() - last) >= ALERT_COOLDOWN_SECONDS
+        count = _alert_counts.get(key, 0)
+        # 衰减: 连续 3 次后冷却翻倍
+        if count < 3:
+            cooldown = ALERT_COOLDOWN_SECONDS
+        elif count < 6:
+            cooldown = ALERT_COOLDOWN_SECONDS * 2
+        else:
+            cooldown = ALERT_COOLDOWN_SECONDS * MAX_COOLDOWN_MULTIPLIER
+        return (time.time() - last) >= cooldown
 
 
 def _mark_alerted(key: str):
-    """标记已发送告警"""
+    """标记已发送告警, 并累加连续计数"""
     with _lock:
         _alert_cooldowns[key] = time.time()
+        _alert_counts[key] = _alert_counts.get(key, 0) + 1
+
+
+def _get_alert_count(key: str) -> int:
+    """获取当前连续告警次数 (用于摘要判断)"""
+    with _lock:
+        return _alert_counts.get(key, 0)
 
 
 def _calc_pnl_pct(entry_price: float, current_price: float, is_long: bool) -> float:
@@ -72,7 +96,7 @@ def _send_alert(message: str):
 
 
 def _is_protected_position(position) -> bool:
-    """判断是否为手动/受保护仓位"""
+    """判断是否为手动/受保护仓位 (manual / legacy / manual_orphan / unknown)"""
     try:
         from app.positions.source import is_protected, get_protection_state, ProtectionState
         state = get_protection_state(position)
@@ -82,6 +106,31 @@ def _is_protected_position(position) -> bool:
         meta = getattr(position, "metadata", {}) or {}
         source = meta.get("source", "")
         return source in ("manual", "legacy", "unknown")
+
+
+def _owner_label(position) -> str:
+    """Task #35 (2026-06-16): 返回 LEGACY/MANUAL/MANUAL_ORPHAN/UNKNOWN 标签 (仅用于告警文案).
+
+    ManualGuard 对所有受保护仓位都只监控+告警, 不自动平仓 — 此处只做文案区分,
+    让用户知道是历史遗留 (LEGACY) 还是显式手工 (MANUAL).
+    """
+    try:
+        from app.positions.source import (
+            classify_owner, OWNER_AUTO, OWNER_LEGACY_PROTECTED,
+            OWNER_MANUAL, OWNER_MANUAL_ORPHAN,
+        )
+        cls = classify_owner(position)
+        if cls == OWNER_LEGACY_PROTECTED:
+            return "LEGACY"
+        if cls == OWNER_MANUAL:
+            return "MANUAL"
+        if cls == OWNER_MANUAL_ORPHAN:
+            return "MANUAL_ORPHAN"
+        if cls == OWNER_AUTO:
+            return "AUTO"  # 不应进入 ManualGuard, 兜底
+    except Exception:
+        pass
+    return "UNKNOWN"
 
 
 def _get_direction_str(position) -> str:
@@ -162,30 +211,56 @@ def manual_guard_loop(scheduler):
                 total_unrealized_pnl += unrealized_pnl
 
                 # 检查阈值
+                # Task #35: 标识 owner 类型, LEGACY 是历史遗留 (启动时已存在), MANUAL 是用户手工
+                _owner = _owner_label(pos)
+                _owner_note = {
+                    "LEGACY": "⚠️ 此仓位为启动时已存在的历史持仓 (legacy_protected), 策略不会自动操作, 请手工处理!",
+                    "MANUAL": "⚠️ 此仓位为手动持仓, 无自动止损保护, 请立即处理!",
+                    "MANUAL_ORPHAN": "⚠️ 此仓位为手动持仓 (未在 ManualHoldRegistry 注册), 请补登记并立即处理!",
+                }.get(_owner, "⚠️ 此仓位受保护, 策略不会自动操作, 请确认状态!")
+
                 if pnl_pct <= CRITICAL_PNL_PCT:
                     key = f"{symbol}:critical"
                     if _should_alert(key):
+                        _alert_n = _get_alert_count(key) + 1  # 本次是第几次
                         stop_suggestion = _suggest_stop_price(entry_price, current_price, is_long, pnl_pct)
-                        msg = (
-                            f"🚨 [ManualGuard·紧急] {symbol}\n"
-                            f"方向: {dir_str} | 数量: {size:.0f}\n"
-                            f"入场: ${entry_price:.2f} | 现价: ${current_price:.2f}\n"
-                            f"浮亏: {pnl_pct*100:.2f}% | 金额: ${unrealized_pnl:.2f}\n"
-                            f"{stop_suggestion}\n"
-                            f"⚠️ 此仓位为手动持仓, 无自动止损保护, 请立即处理!"
-                        )
+                        if _alert_n <= 3:
+                            # 前 3 次: 完整紧急告警
+                            msg = (
+                                f"🚨 [ManualGuard·紧急·{_owner}] {symbol}\n"
+                                f"方向: {dir_str} | 数量: {size:.0f}\n"
+                                f"入场: ${entry_price:.2f} | 现价: ${current_price:.2f}\n"
+                                f"浮亏: {pnl_pct*100:.2f}% | 金额: ${unrealized_pnl:.2f}\n"
+                                f"{stop_suggestion}\n"
+                                f"{_owner_note}"
+                            )
+                        else:
+                            # 第 4 次+: 衰减摘要 (冷却已延长, 减少信息密度)
+                            _next_cd = 60 if _alert_n < 6 else 120
+                            msg = (
+                                f"🔄 [ManualGuard·持续告警 #{_alert_n}] {symbol}\n"
+                                f"浮亏: {pnl_pct*100:.2f}% | ${unrealized_pnl:.2f}\n"
+                                f"现价: ${current_price:.2f} (入场 ${entry_price:.2f})\n"
+                                f"已告警 {_alert_n} 次, 下次冷却 {_next_cd} 分钟\n"
+                                f"请尽快手动处理此 {_owner} 仓位"
+                            )
                         alerts.append(("critical", msg))
                         _mark_alerted(key)
 
                 elif pnl_pct <= WARNING_PNL_PCT:
                     key = f"{symbol}:warning"
                     if _should_alert(key):
+                        _label_cn = {
+                            "LEGACY": "历史遗留",
+                            "MANUAL": "手动",
+                            "MANUAL_ORPHAN": "手动(未登记)",
+                        }.get(_owner, "受保护")
                         msg = (
-                            f"⚠️ [ManualGuard·警告] {symbol}\n"
+                            f"⚠️ [ManualGuard·警告·{_owner}] {symbol}\n"
                             f"方向: {dir_str} | 数量: {size:.0f}\n"
                             f"入场: ${entry_price:.2f} | 现价: ${current_price:.2f}\n"
                             f"浮亏: {pnl_pct*100:.2f}% | 金额: ${unrealized_pnl:.2f}\n"
-                            f"请关注此手动仓位, 接近 -10% 将触发紧急告警。"
+                            f"请关注此{_label_cn}仓位, 接近 -10% 将触发紧急告警。"
                         )
                         alerts.append(("warning", msg))
                         _mark_alerted(key)

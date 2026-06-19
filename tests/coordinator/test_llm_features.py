@@ -17,7 +17,6 @@ def test_feature_flags_default_disabled():
     from app.llm.features.feature_flags import is_enabled
     # 这些必须默认 disabled (高成本/风险/影响下单决策)
     assert is_enabled("emergency_review") is False
-    assert is_enabled("earnings_analyst") is False
     # thesis_inferer PB-1 (2026-05-15) 已启用 (Phase B.6)
     # news_classifier P1-B (2026-05-15) 已启用 (修复 0 LLM 调用)
 
@@ -137,74 +136,13 @@ def test_l9_news_signal_disabled():
     assert sigs == []
 
 
-# ─── L2 emergency review ───────────────────────────────────
-def test_l2_emergency_review_disabled():
-    from app.risk.llm_emergency_review import review
-    result = review("NVDA", "price_drop", {"unrealized_pnl_pct": -0.05})
-    assert result is None
-
-
-def test_l2_emergency_should_trigger_price_drop():
-    from app.risk.llm_emergency_review import should_trigger
-    trigger = should_trigger("NVDA", {"pnl_5m": -0.04})
-    assert trigger == "price_drop"
-
-
-def test_l2_emergency_should_trigger_vix_spike():
-    from app.risk.llm_emergency_review import should_trigger
-    trigger = should_trigger("NVDA", {"vix_change_5m": 0.25})
-    assert trigger == "vix_spike"
-
-
-def test_l2_emergency_no_trigger():
-    from app.risk.llm_emergency_review import should_trigger
-    trigger = should_trigger("NVDA", {"pnl_5m": -0.01, "vix_change_5m": 0.05})
-    assert trigger is None
-
+# ─── (L2 emergency review removed — module deleted 2026-06-15) ───
 
 # ─── L3 thesis inferer ─────────────────────────────────────
 def test_l3_thesis_disabled_does_not_run():
     from app.llm.thesis_inferer import infer_thesis_async
     # disabled → 不会调 LLM (无报错即 OK)
     infer_thesis_async("NVDA", {"trace_id": "test"}, {})
-
-
-# ─── L4 earnings analyst ────────────────────────────────────
-def test_l4_earnings_disabled():
-    from app.llm.earnings_analyst import analyze_earnings
-    result = analyze_earnings("NVDA", {}, {"direction": "LONG"})
-    assert result is None
-
-
-# ─── L5 disagreement arbitrator ──────────────────────────────
-def test_l5_compute_disagreement_consensus():
-    from app.llm.disagreement_arbitrator import compute_disagreement
-    views = [
-        {"direction": "LONG", "confidence": 0.7},
-        {"direction": "LONG", "confidence": 0.75},
-    ]
-    d = compute_disagreement(views)
-    assert d < 0.3  # 一致 → 低分歧
-
-
-def test_l5_compute_disagreement_split():
-    from app.llm.disagreement_arbitrator import compute_disagreement
-    views = [
-        {"direction": "LONG", "confidence": 0.8},
-        {"direction": "SHORT", "confidence": 0.7},
-    ]
-    d = compute_disagreement(views)
-    assert d > 0.3  # 分歧大
-
-
-def test_l5_arbitrate_disabled():
-    from app.llm.disagreement_arbitrator import arbitrate
-    views = [
-        {"direction": "LONG", "confidence": 0.8},
-        {"direction": "SHORT", "confidence": 0.7},
-    ]
-    result = arbitrate("NVDA", views)
-    assert result is None  # disabled
 
 
 # ─── L6 regime classifier ────────────────────────────────────
@@ -227,28 +165,6 @@ def test_l6_regime_unknown_returns_empty():
     assert adj == {}
 
 
-# ─── L7 large position review ────────────────────────────────
-def test_l7_large_position_disabled():
-    from app.llm.large_position_review import review_large_position
-    result = review_large_position("NVDA", {"position_pct": 0.10}, {})
-    assert result is None  # disabled
-
-
-def test_l7_below_threshold_returns_none():
-    """即使 enabled, 仓位低于阈值也不调"""
-    # 改用 monkeypatch 模拟 enabled
-    import app.llm.features.feature_flags as ff
-    orig = ff.is_enabled
-    ff.is_enabled = lambda f: f == "large_position_review"
-    try:
-        from app.llm.large_position_review import review_large_position
-        # position_pct=0.03 < 默认 threshold 0.05
-        result = review_large_position("NVDA", {"position_pct": 0.03, "direction": "LONG"}, {})
-        assert result is None
-    finally:
-        ff.is_enabled = orig
-
-
 # ─── L8 daily auto tuner ─────────────────────────────────────
 def test_l8_auto_tuner_disabled():
     from app.llm.daily_auto_tuner import propose_from_daily_review
@@ -263,26 +179,6 @@ def test_l8_pending_proposals_query():
     assert isinstance(proposals, list)
 
 
-# ─── L11 sector correlation ──────────────────────────────────
-def test_l11_correlation_disabled():
-    from app.llm.sector_correlation_reasoner import reason_about
-    result = reason_about("NVDA", -0.03, ["AMD", "INTC"])
-    assert result is None
-
-
-def test_l11_below_threshold_no_call():
-    """anchor 变动小于阈值不触发"""
-    import app.llm.features.feature_flags as ff
-    orig = ff.is_enabled
-    ff.is_enabled = lambda f: f == "sector_correlation"
-    try:
-        from app.llm.sector_correlation_reasoner import reason_about
-        result = reason_about("NVDA", 0.005, ["AMD"])  # 0.5% < 2%
-        assert result is None
-    finally:
-        ff.is_enabled = orig
-
-
 # ─── 整体可控性测试 ──────────────────────────────────────────
 def test_high_risk_llm_features_default_disabled():
     """高成本/高风险 features 必须默认 disabled (即使其他 enabled)"""
@@ -291,8 +187,7 @@ def test_high_risk_llm_features_default_disabled():
         cfg = yaml.safe_load(f)
     features = cfg.get("llm_features", {})
     # 这些可能影响下单决策的 features 不允许默认 enabled
-    HIGH_RISK = ["emergency_review", "earnings_analyst",
-                 "large_position_review", "daily_auto_tuner"]
+    HIGH_RISK = ["emergency_review", "daily_auto_tuner"]
     for f in HIGH_RISK:
         assert features.get(f, {}).get("enabled", False) is False, \
             f"高风险 feature {f} 不应默认 enabled"
@@ -309,14 +204,9 @@ def test_all_l_modules_importable():
         "app.news_v2.processor.llm_classifier",
         "app.news_v2.processor.event_signal_generator",
         "app.news_v2.processor.news_attribution",
-        "app.risk.llm_emergency_review",
         "app.llm.thesis_inferer",
-        "app.llm.earnings_analyst",
-        "app.llm.disagreement_arbitrator",
         "app.llm.regime_classifier",
-        "app.llm.large_position_review",
         "app.llm.daily_auto_tuner",
-        "app.llm.sector_correlation_reasoner",
     ]
     failed = []
     for m in modules:

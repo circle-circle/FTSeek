@@ -64,6 +64,11 @@ _close_retry_state: Dict[Tuple[str, str], Dict[str, Any]] = {}
 _CLOSE_RETRY_TABLE = "close_retry_state"
 _CLOSE_RETRY_LOADED = False  # 延迟加载标记 (首次访问时从 DB 恢复)
 
+# IC 门禁缓存 — 同一进程周期内 get_ic_summary() 只算一次 (避免 N symbols × SQL 查询)
+_ic_summary_cache: Dict[str, Any] = {}
+_ic_summary_cache_ts: float = 0.0
+_IC_CACHE_TTL_SEC = 300.0  # 5 分钟
+
 
 def _get_retry_db_path() -> str:
     """获取持久化 DB 路径 (复用主库)"""
@@ -1754,32 +1759,6 @@ def _check_gates_and_conflicts(scheduler, symbol: str, signal: SignalScore, cont
     except Exception as _sq_err:
         logger.debug(f"[SignalQuality] 检查异常 (不放行): {_sq_err}")
         return False
-
-    # 2026-06-10 红队修复 B1: 信号 IC 自动暂停 — 滚动 30 日 IC < 0 时阻止新开仓
-    try:
-        from app.core.trading_mode import TradingMode
-        if TradingMode().is_live:
-            from app.analysis.signal_ic_tracker import get_ic_summary
-            _ic_summary = get_ic_summary(min_signals=30, days_back=30)
-            if _ic_summary.get("status") == "ok":
-                _ic_mean = _ic_summary.get("ic_mean", 0.0)
-                if _ic_mean < 0:
-                    logger.warning(
-                        f"🚫 [IC门禁] {symbol} 信号被拦截: "
-                        f"30日滚动IC={_ic_mean:.4f}<0 (N={_ic_summary.get('n_signals',0)}), "
-                        f"信号预测力为负, 暂停新开仓"
-                    )
-                    get_rejection_logger().record(
-                        symbol, f"IC={_ic_mean:.4f}<0", "SIGNAL_IC_NEGATIVE",
-                        strength=int(getattr(signal, 'strength', 0) or 0),
-                        confidence=float(getattr(signal, 'confidence', 0.0) or 0.0),
-                        direction=str(getattr(signal, 'direction', '') or ''),
-                    )
-                    return False
-    except ImportError:
-        pass  # signal_ic_tracker 不可用时跳过
-    except Exception as _ic_err:
-        logger.debug(f"[IC门禁] 检查异常 (不放行): {_ic_err}")
 
     # 🔴 P0 关键修复: 全局风险状态机门禁检查
     # 在一切交易逻辑之前，检查系统是否处于 RISK_OFF 或 HALT 状态
@@ -3510,15 +3489,21 @@ def _submit_order(scheduler, symbol: str, signal: SignalScore, context: Dict[str
     except Exception as _bg_err:
         logger.debug(f"[BUDGET] {symbol} budget check skipped: {_bg_err}")
 
-    # ── P0 (2026-06-14): 信号质量门禁 — IC < 阈值时物理阻止自动交易 ──
-    # 原理: 信号 IC (Spearman rank correlation) 衡量信号强度与实际收益的相关性
-    # IC < 0.05 = 信号无预测能力 ≈ 噪音 → 自动交易 = 随机赌博
-    # 此门禁独立于 YAML 开关和硬锁, 即使两者都解锁, IC 不达标仍阻止
+    # ── P0 (2026-06-14, 修复 2026-06-18): 信号质量门禁 — 按 strategy_id 分别检查 IC ──
+    # 根因修复: 旧逻辑用全局 IC 一刀切，一个坏策略 (IC=-0.23) 拖垮全局 → 好策略也被拦截
+    # 修复: 按 strategy_id 分别检查，坏策略拦截、好策略放行
+    # 性能修复 (2026-06-18): 加模块级缓存，同一轮次 25 symbols 只算一次 SQL
     _IC_MIN_THRESHOLD = 0.05
-    _IC_MIN_SIGNALS = 30  # 至少 30 个已回填信号才有统计意义
+    _IC_MIN_SIGNALS = 30
     try:
         from app.analysis.signal_ic_tracker import get_ic_summary
-        _ic = get_ic_summary(min_signals=_IC_MIN_SIGNALS, days_back=30)
+        global _ic_summary_cache, _ic_summary_cache_ts
+        import time as _time
+        _now = _time.monotonic()
+        if not _ic_summary_cache or (_now - _ic_summary_cache_ts) > _IC_CACHE_TTL_SEC:
+            _ic_summary_cache = get_ic_summary(min_signals=_IC_MIN_SIGNALS, days_back=30)
+            _ic_summary_cache_ts = _now
+        _ic = _ic_summary_cache
         _ic_status = _ic.get("status", "unknown")
         if _ic_status == "insufficient_data":
             _n = _ic.get("n_signals", 0)
@@ -3527,24 +3512,42 @@ def _submit_order(scheduler, symbol: str, signal: SignalScore, context: Dict[str
                 f"自动交易暂停 (需更多交易日积累数据)"
             )
             return
-        _ic_mean = _ic.get("ic_mean", 0.0)
-        _ic_p = _ic.get("ic_p_value")  # P1.5: get_ic_summary 已算好 p_value, 现接入门禁
-        if _ic_mean is not None and _ic_mean < _IC_MIN_THRESHOLD:
-            logger.warning(
-                f"🔒 [IC门禁] {symbol} 信号IC={_ic_mean:.3f} < {_IC_MIN_THRESHOLD}, "
-                f"信号无预测能力, 自动交易被拦截 (需IC≥{_IC_MIN_THRESHOLD}解锁)"
-            )
-            return
-        # P1.5 (RFC-060): 显著性门禁 — IC 看似达标但不显著 (p>=0.05, 无法拒绝 IC<=0)
-        # = 噪音而非真实预测力 → 保守拦截 (PM审计: IC 从-0.04缓降至-0.10 时系统仍出血)
-        if _ic_p is not None and _ic_p >= 0.05 and _ic_mean is not None:
-            logger.warning(
-                f"🔒 [IC门禁·显著性] {symbol} IC={_ic_mean:.3f} 但 p={_ic_p:.3f}≥0.05 不显著 "
-                f"(n={_ic.get('n_signals', 0)}, 疑似噪音), 保守拦截"
-            )
-            return
-        # P1.5 (RFC-060): 方向感知 — 该信号方向的独立 IC 若为负, 单独拦截此方向
-        # (PM审计数据: LONG 25% 胜率反向 / SHORT 有正向 → 不应一刀切, 按方向分别评估)
+        
+        # 根因修复: 按 strategy_id 分别检查 IC，不再全局一刀切
+        _by_strategy = _ic.get("by_strategy", {}) or {}
+        _sig_strategy = getattr(signal, "strategy_id", None) or "unknown"
+        
+        if _by_strategy and _sig_strategy in _by_strategy:
+            # 有该策略的 IC 数据 → 用策略级 IC 判断
+            _strat_stat = _by_strategy[_sig_strategy]
+            _strat_ic = _strat_stat.get("ic", 0.0)
+            _strat_n = _strat_stat.get("n", 0)
+            _strat_pval = _strat_stat.get("pval", 1.0)
+            
+            if _strat_ic is not None and _strat_ic < _IC_MIN_THRESHOLD and _strat_n >= 10:
+                logger.warning(
+                    f"🔒 [IC门禁] {symbol} 策略 {_sig_strategy} IC={_strat_ic:.3f} < {_IC_MIN_THRESHOLD} "
+                    f"(n={_strat_n}), 该策略信号无预测能力, 拦截"
+                )
+                return
+            if _strat_pval is not None and _strat_pval >= 0.05 and _strat_ic is not None and _strat_n >= 10:
+                logger.warning(
+                    f"🔒 [IC门禁·显著性] {symbol} 策略 {_sig_strategy} IC={_strat_ic:.3f} 但 "
+                    f"p={_strat_pval:.3f}≥0.05 不显著 (n={_strat_n}), 保守拦截"
+                )
+                return
+        else:
+            # 没有该策略的 IC 数据 → fallback 到全局 IC (但放宽阈值，避免误杀新策略)
+            _ic_mean = _ic.get("ic_mean", 0.0)
+            if _ic_mean is not None and _ic_mean < -0.10:
+                # 只有全局 IC 严重为负时才拦截 (不再用 0.05 严格阈值)
+                logger.warning(
+                    f"🔒 [IC门禁·全局] {symbol} 全局IC={_ic_mean:.3f} (策略 {_sig_strategy} 无独立数据), "
+                    f"信号整体无预测能力, 拦截"
+                )
+                return
+        
+        # 方向感知: 该信号方向的独立 IC 若为负, 单独拦截此方向
         _sig_dir = (
             getattr(getattr(signal, "direction", None), "value", None)
             or str(getattr(signal, "direction", "") or "")
@@ -5299,17 +5302,8 @@ def _close_position(scheduler, position: Position, current_price: float, exit_re
                 )
         except Exception as _le:
             logger.debug(f"[教训验证] 异常 (不影响平仓): {_le}")
-        # Z1 (2026-05-15): Shadow 镜像同步平仓
-        try:
-            from app.evolution.shadow_mirror import get_shadow_mirror
-            get_shadow_mirror().mirror_exit(
-                real_trace_id=position.trace_id or position.position_id,
-                symbol=position.symbol,
-                exit_price=float(current_price),
-                exit_reason=str(exit_reason.value if hasattr(exit_reason, "value") else exit_reason),
-            )
-        except Exception as _silent_e:
-            logger.debug(f"[silent_except:order_executor.py] {_silent_e}")
+        # REMOVED (2026-06-19): ShadowMirror 不再使用
+        # 改用 Playbook shadow 模式做策略验证
         try:
             from app.risk.pnl_outlier_monitor import get_pnl_outlier_monitor
             get_pnl_outlier_monitor().check(position.symbol, float(pnl), {

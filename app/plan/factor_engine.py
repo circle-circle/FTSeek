@@ -53,23 +53,33 @@ for _sec, _tickers in _SECTOR_MEMBERS.items():
 
 # ── Regime权重矩阵 ──
 REGIME_WEIGHTS = {
-    "RISK_ON":  {"sector_momentum": 0.30, "relative_strength": 0.25, "ma_alignment": 0.20, "volume_breakout": 0.15, "rsi_sweet_spot": 0.10},
-    "RISK_OFF": {"sector_momentum": 0.10, "relative_strength": 0.10, "ma_alignment": 0.30, "volume_breakout": 0.10, "rsi_sweet_spot": 0.40},
-    "ROTATION": {"sector_momentum": 0.40, "relative_strength": 0.20, "ma_alignment": 0.15, "volume_breakout": 0.15, "rsi_sweet_spot": 0.10},
-    "NEUTRAL":  {"sector_momentum": 0.20, "relative_strength": 0.20, "ma_alignment": 0.20, "volume_breakout": 0.20, "rsi_sweet_spot": 0.20},
+    "RISK_ON":  {"sector_momentum": 0.25, "relative_strength": 0.20, "ma_alignment": 0.15, "volume_breakout": 0.15, "rsi_sweet_spot": 0.10, "insider_signal": 0.15},
+    "RISK_OFF": {"sector_momentum": 0.10, "relative_strength": 0.10, "ma_alignment": 0.25, "volume_breakout": 0.10, "rsi_sweet_spot": 0.30, "insider_signal": 0.15},
+    "ROTATION": {"sector_momentum": 0.30, "relative_strength": 0.15, "ma_alignment": 0.15, "volume_breakout": 0.10, "rsi_sweet_spot": 0.10, "insider_signal": 0.20},
+    "NEUTRAL":  {"sector_momentum": 0.17, "relative_strength": 0.17, "ma_alignment": 0.17, "volume_breakout": 0.17, "rsi_sweet_spot": 0.17, "insider_signal": 0.15},
 }
 
 
-def _get_stock_pool() -> List[str]:
-    """获取候选股票池: active_pool - ETFs - 非美股"""
+# ── 质量闸门常量 ──
+_QUALITY_GATE_MIN_PRICE = 5.0       # 最低价格 $5
+_LEVERAGED_KEYWORDS = {"3X", "2X", "BULL", "BEAR", "ULTRA", "INVERSE"}
+
+
+def _load_active_pool() -> Tuple[List[str], set]:
+    """加载核心活跃池 (原 _get_stock_pool 逻辑)
+    
+    Returns:
+        (symbols, position_symbols): 过滤后的符号列表 + 持仓符号集合(闸门豁免用)
+    """
     pool_path = Path(__file__).parent.parent.parent / "data" / "daily_active_pool.json"
     if not pool_path.exists():
         logger.warning("[FactorEngine] daily_active_pool.json not found")
-        return []
+        return [], set()
     try:
         data = json.loads(pool_path.read_text())
         entries = data.get("entries", [])
         symbols = []
+        position_symbols = set()
         for e in entries:
             code = e.get("code", "")
             if not code or code in _EXCLUDE_SYMBOLS:
@@ -79,10 +89,239 @@ def _get_stock_pool() -> List[str]:
             if not code.startswith("US."):
                 continue
             symbols.append(code)
-        return sorted(set(symbols))
+            if e.get("source") == "POSITION":
+                position_symbols.add(code)
+        return sorted(set(symbols)), position_symbols
     except Exception as e:
         logger.error(f"[FactorEngine] pool read error: {e}")
+        return [], set()
+
+
+def _discover_finnhub_movers() -> List[str]:
+    """多源异动标的发现 (v3 — 2026-06-17 重构)
+    
+    数据源 (按优先级):
+      1. premarket_enrichment 缓存 — 已有 gainers/losers 数据, 零 API 消耗
+      2. Finnhub quote 异动检测 — MOVER_POOL + dragonhead_pool 全量扫描 (>2%)
+      3. Finnhub general_news related — 新闻中高频提及
+    
+    降级: 每个源独立失败不影响其他源
+    约束: Finnhub API ≤ 30次 (免费 60次/分钟), 总超时 20s
+    """
+    discovered = set()
+    sources_hit = []  # 用于日志
+    t0 = time.time()
+    
+    # ── Source 1: 复用 premarket_enrichment 缓存 (零API消耗) ──
+    try:
+        from app.data.premarket_enrichment import _cache as pm_cache
+        movers = pm_cache.get("premarket_movers", {})
+        if movers and isinstance(movers, dict):
+            for entry in movers.get("gainers", []) + movers.get("losers", []):
+                sym = entry.get("symbol", "").upper()
+                if sym and len(sym) <= 5:
+                    code = f"US.{sym}"
+                    if code not in _EXCLUDE_SYMBOLS:
+                        discovered.add(code)
+            if discovered:
+                sources_hit.append(f"premarket_cache({len(discovered)})")
+    except Exception as e:
+        logger.debug(f"[FactorEngine] premarket cache read error: {e}")
+    
+    # ── Source 2: Finnhub quote 异动扫描 (MOVER_POOL + dragonhead_pool) ──
+    try:
+        from app.data.premarket_enrichment import _get_finnhub_client, MOVER_POOL
+        client = _get_finnhub_client()
+        if client and (time.time() - t0 < 18):
+            # 合并扫描池: MOVER_POOL + dragonhead US stocks
+            scan_pool = set(MOVER_POOL)
+            try:
+                from app.utils.dragonhead_pool import US_DRAGON_HEADS
+                for sector_data in US_DRAGON_HEADS.values():
+                    if isinstance(sector_data, dict):
+                        for stock in sector_data.get("stocks", []):
+                            code = stock.get("code", "")
+                            if code.startswith("US."):
+                                scan_pool.add(code.replace("US.", ""))
+            except Exception:
+                pass
+            
+            api_calls = 0
+            quote_hits = 0
+            for sym in scan_pool:
+                if api_calls >= 30 or (time.time() - t0 > 18):
+                    break
+                code = f"US.{sym}"
+                if code in _EXCLUDE_SYMBOLS:
+                    continue
+                try:
+                    q = client.quote(sym)
+                    api_calls += 1
+                    pc = q.get("pc", 0)
+                    c = q.get("c", 0)
+                    if pc and c and pc > 0:
+                        change_pct = abs((c - pc) / pc * 100)
+                        if change_pct >= 2.0:  # 降低阈值从 3% 到 2%
+                            discovered.add(code)
+                            quote_hits += 1
+                except Exception:
+                    pass
+                time.sleep(0.05)  # rate limit: ~20 calls/sec
+            if quote_hits:
+                sources_hit.append(f"finnhub_quote({quote_hits}/{api_calls})")
+    except Exception as e:
+        logger.debug(f"[FactorEngine] finnhub mover scan error: {e}")
+    
+    # ── Source 3: Finnhub general news related symbols ──
+    try:
+        from app.data.premarket_enrichment import _get_finnhub_client
+        client = _get_finnhub_client()
+        if client and (time.time() - t0 < 19):
+            news_count = 0
+            try:
+                news = client.general_news('general', min_id=0)
+                if news and isinstance(news, list):
+                    for article in news[:50]:
+                        related = article.get("related", "")
+                        if related:
+                            for sym in related.split(","):
+                                sym = sym.strip().upper()
+                                if sym and len(sym) <= 5 and sym.isalpha():
+                                    code = f"US.{sym}"
+                                    if code not in _EXCLUDE_SYMBOLS:
+                                        discovered.add(code)
+                                        news_count += 1
+            except Exception as e:
+                logger.debug(f"[FactorEngine] finnhub news error: {e}")
+            if news_count:
+                sources_hit.append(f"finnhub_news({news_count})")
+    except Exception as e:
+        logger.debug(f"[FactorEngine] finnhub discovery failed: {e}")
+    
+    logger.info(
+        f"[FactorEngine] 多源发现: {len(discovered)}只标的, "
+        f"来源=[{', '.join(sources_hit)}] ({time.time()-t0:.1f}s)"
+    )
+    
+    return list(discovered)
+
+
+def _apply_quality_gate(symbols: List[str], position_symbols: set) -> List[str]:
+    """质量闸门 v2 (对标 market_scan 的过闸逻辑)
+    
+    剔除规则:
+      - price < $5 (仙股)
+      - ETF/杠杆/反向基金
+      - market_cap < $2B (新增: 流动性不足)
+    豁免: 持仓标的 (position_symbols) 不受闸门影响
+    降级: API失败的标的保留 (宁可多不可漏)
+    """
+    _QUALITY_GATE_MIN_MCAP = 2_000_000_000  # $2B 市值闸值
+    
+    if not symbols:
         return []
+    
+    passed = []
+    rejected_reasons = {}  # 用于日志
+    try:
+        from app.data.premarket_enrichment import _get_finnhub_client
+        client = _get_finnhub_client()
+        
+        for code in symbols:
+            # 持仓标的直接通过
+            if code in position_symbols:
+                passed.append(code)
+                continue
+            
+            # 已知 ETF 排除
+            if code in _EXCLUDE_SYMBOLS:
+                rejected_reasons[code] = "excluded_etf"
+                continue
+            
+            short = code.replace("US.", "")
+            
+            # 杠杆/反向 ETF 关键词检测
+            if any(kw in short.upper() for kw in _LEVERAGED_KEYWORDS):
+                rejected_reasons[code] = "leveraged"
+                continue
+            
+            # 如果无 client，跳过API检查直接通过
+            if not client:
+                passed.append(code)
+                continue
+            
+            # 价格检查 + 市值检查 (使用 Finnhub quote + profile2)
+            try:
+                q = client.quote(short)
+                price = q.get("c", 0)
+                if price and price < _QUALITY_GATE_MIN_PRICE:
+                    rejected_reasons[code] = f"price_${price:.1f}"
+                    continue
+            except Exception:
+                pass  # API失败则保留
+            
+            # 市值检查 (仅对非核心池发现的标的, 避免过多API调用)
+            # Finnhub profile2 提供 marketCapitalization (M)
+            try:
+                profile = client.company_profile2(symbol=short)
+                if profile and isinstance(profile, dict):
+                    mcap = profile.get("marketCapitalization", 0)
+                    # Finnhub 返回的是百万美元单位
+                    if mcap and (mcap * 1_000_000) < _QUALITY_GATE_MIN_MCAP:
+                        rejected_reasons[code] = f"mcap_${mcap:.0f}M"
+                        continue
+            except Exception:
+                pass  # profile失败则保留
+            
+            time.sleep(0.05)  # rate limit
+            passed.append(code)
+    except Exception as e:
+        logger.debug(f"[FactorEngine] quality gate error: {e}, passing all")
+        return symbols
+    
+    if rejected_reasons:
+        logger.info(
+            f"[QualityGate] 剔除{len(rejected_reasons)}只: "
+            f"{dict(list(rejected_reasons.items())[:10])}"
+        )
+    
+    return passed
+
+
+def _get_stock_pool() -> Tuple[List[str], Dict]:
+    """获取候选股票池: active_pool + Finnhub异动 → 质量闸门
+    
+    Returns:
+        (filtered_pool, pool_meta): 过滤后的池 + 发现元数据
+    """
+    # 1. 核心池 (现有逻辑)
+    core_pool, position_symbols = _load_active_pool()
+    
+    # 2. Finnhub 异动发现 (新增, 失败不影响核心池)
+    event_pool = _discover_finnhub_movers()
+    
+    # 3. 合并去重
+    combined = list(set(core_pool + event_pool))
+    
+    # 4. 质量闸门 (持仓豁免)
+    filtered = _apply_quality_gate(combined, position_symbols)
+    
+    # 5. 池元数据 (供 pipeline discovery_meta 使用)
+    pool_meta = {
+        "core_pool_size": len(core_pool),
+        "event_discovered": len(event_pool),
+        "event_symbols": [s for s in event_pool if s not in core_pool],
+        "quality_gate_removed": len(combined) - len(filtered),
+        "final_pool_size": len(filtered),
+        "position_symbols": list(position_symbols),
+    }
+    
+    logger.info(
+        f"[FactorEngine] 池构建: 核心{len(core_pool)} + 异动{len(event_pool)} "
+        f"→ 合并{len(combined)} → 过闸{len(filtered)}"
+    )
+    
+    return sorted(filtered), pool_meta
 
 
 def _get_sector_momentum() -> Dict[str, float]:
@@ -274,10 +513,10 @@ def run_factor_screen(top_n: int = 8) -> Dict:
     """
     t0 = time.time()
 
-    # 1. Get stock pool
-    pool = _get_stock_pool()
+    # 1. Get stock pool (with discovery + quality gate)
+    pool, pool_meta = _get_stock_pool()
     if not pool:
-        return {"error": "empty_pool", "candidates": [], "timestamp": datetime.now(timezone.utc).isoformat()}
+        return {"error": "empty_pool", "candidates": [], "pool_meta": {}, "timestamp": datetime.now(timezone.utc).isoformat()}
 
     # 2. Get sector momentum
     sector_momentum = _get_sector_momentum()
@@ -376,6 +615,42 @@ def run_factor_screen(top_n: int = 8) -> Dict:
             "detail": f"RSI={rsi:.0f}",
         }
 
+        # F6: Insider signal (from enrichment_router)
+        insider_score = 0.5  # 默认中性
+        insider_detail = "no data"
+        try:
+            from app.data.enrichment_router import get_insider
+            insider_data = get_insider(symbol)
+            if insider_data.get("status") == "ok":
+                d = insider_data["data"]
+                buy_count = d.get("buy_count_30d", 0)
+                sell_count = d.get("sell_count_30d", 0)
+                net_shares = d.get("net_shares_30d", 0)
+                signal = d.get("insider_signal", "neutral")
+                
+                # 评分逻辑：strong_buy=1.0, buy=0.8, neutral=0.5, sell=0.2
+                if signal == "strong_buy":
+                    insider_score = 1.0
+                    insider_detail = f"STRONG BUY: {buy_count} buys, {net_shares:+,} shares"
+                elif signal == "buy":
+                    insider_score = 0.8
+                    insider_detail = f"BUY: {buy_count} buys, {net_shares:+,} shares"
+                elif sell_count > buy_count:
+                    insider_score = 0.2
+                    insider_detail = f"SELL: {sell_count} sells > {buy_count} buys"
+                else:
+                    insider_score = 0.5
+                    insider_detail = f"NEUTRAL: {buy_count}B/{sell_count}S"
+        except Exception as e:
+            logger.debug(f"[FactorEngine] insider fetch failed for {symbol}: {e}")
+        
+        factor_results["insider_signal"] = {
+            "raw": insider_score,
+            "score": insider_score,
+            "weight": weights.get("insider_signal", 0.15),
+            "detail": insider_detail,
+        }
+
         # Composite score
         composite = sum(f["score"] * f["weight"] for f in factor_results.values())
 
@@ -401,12 +676,18 @@ def run_factor_screen(top_n: int = 8) -> Dict:
     # 7. Sort by composite score (descending)
     candidates.sort(key=lambda c: c["composite_score"], reverse=True)
 
+    # Mark discovery source on each candidate
+    event_set = set(pool_meta.get("event_symbols", []))
+    for c in candidates:
+        c["discovery_source"] = "event_discovery" if c["symbol"] in event_set else "core_pool"
+
     result = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "regime": regime,
         "regime_weights": weights,
         "candidates": candidates[:top_n],
         "pool_size": len(pool),
+        "pool_meta": pool_meta,
         "scored_count": len(candidates),
         "sector_momentum": sector_momentum,
         "spy_change_20d": spy_change_20d,

@@ -42,6 +42,8 @@ from datetime import datetime, timedelta
 from typing import Dict, Any, Optional, List
 from pathlib import Path
 
+from app.core.db_utils import safe_sqlite_connect
+
 # ATR 止损定价引擎（纯函数）
 from .atr_stop_engine import compute_stop_lines, compute_profit_atr_signed, resolve_trail_multiplier
 
@@ -194,6 +196,10 @@ class ExitMonitor:
     SCAN_INTERVAL_SECONDS = 60  # 优化 (2026-05-03 P2): 从 30s 延长到 60s, 降低假触发率
     COOLDOWN_SECONDS = 120  # 防振荡 (从60→120, 防止DIA 63s双重退出复发)
 
+    # P0 (2026-06-16): FLAT_ALL 锁存 — 触发后 30 分钟内不重复触发
+    # 根因: 6/15 实盘 FLAT_ALL 触发 95 次 (21:30~23:00), 因平仓失败后每 tick 重触发
+    FLAT_ALL_COOLDOWN_SECONDS = 1800  # 30 分钟
+
     def __init__(self):
         self._atr_cache: Dict[str, Dict] = {}  # {symbol: {date, value}}
         self._vix_cached: Optional[float] = None  # VIX 缓存 (5min TTL)
@@ -201,6 +207,8 @@ class ExitMonitor:
         self._quote_ctx = None
         self._initialized = False
         self._exit_cooldowns: Dict[str, float] = {}  # {symbol: last_exit_timestamp} 类级别冷却，防position对象重建后trail_state丢失
+        # P0 (2026-06-16): FLAT_ALL 锁存时间戳
+        self._flat_all_last_triggered_ts: float = 0.0
         # 接近止损预警去重: {symbol: last_alert_ts}
         self._approaching_stop_alerts: Dict[str, float] = {}
         # Task #24 (2026-05-27): 财报退出去重集合，防止同一标的在同一批财报计划下被重复触发
@@ -489,7 +497,7 @@ class ExitMonitor:
             db_path = str(get_main_db())
             if not os.path.exists(db_path):
                 return False
-            conn = sqlite3.connect(db_path)
+            conn = safe_sqlite_connect(db_path)
             cursor = conn.cursor()
             cutoff = (_now_et() - __import__('datetime', fromlist=['timedelta']).timedelta(minutes=max_minutes)).isoformat()
             cursor.execute(
@@ -609,17 +617,6 @@ class ExitMonitor:
             except Exception as _silent_e:
                 logger.warning(f"[silent_except:position_exit_monitor.py] {_silent_e}")
 
-            # 3. Scalping base_params
-            try:
-                from app.core.config_container import get_config
-                scalp_cfg = get_config().get_section("scalping", {}).get("phases", {}).get("base_params", {})
-                scalp_sl = float(scalp_cfg.get("sl_pct", 0.02)) * 100
-                scalp_tp = float(scalp_cfg.get("tp_pct", 0.025)) * 100
-                scalp_rr = scalp_tp / scalp_sl if scalp_sl > 0 else 0
-                checks.append(("Scalping_base", scalp_tp, scalp_sl, scalp_rr))
-            except Exception as _silent_e:
-                logger.warning(f"[silent_except:position_exit_monitor.py] {_silent_e}")
-
             # 输出校验结果
             has_warning = False
             for rule_name, tp, sl, rr in checks:
@@ -729,37 +726,6 @@ class ExitMonitor:
     # ============================================================
 
     @staticmethod
-    def _is_scalping_position(position) -> bool:
-        """判断仓位是否属于 scalping 策略 (由 ScalpingEngine 自行管理退出)
-
-        这里是主线 ExitMonitor 与 ScalpingEngine 退出职责划分的唯一闸门 —
-        其他代码路径不得重复实现同名逻辑。
-
-        判定优先级 (Task #7 2026-05-31: owner_strategy 优先):
-          1. position.metadata['source'] == 'scalping' (orderbook 中最可靠的记号)
-          2. position.metadata['strategy'] == 'scalping' (历史兼容)
-          3. position.owner_strategy == 'scalping' (Task #7: 优先读取新字段)
-          4. position.strategy_id == 'scalping' (向后兼容, 老字段)
-
-        对于空列表、缺失属性、类型异常等场景需保守返回 False (不过滤)。
-        """
-        try:
-            meta = getattr(position, 'metadata', None) or {}
-            if isinstance(meta, dict):
-                if meta.get("source") == "scalping":
-                    return True
-                if meta.get("strategy") == "scalping":
-                    return True
-            # Task #7 (2026-05-31): owner_strategy 优先, strategy_id 仅作向后兼容 fallback
-            if getattr(position, 'owner_strategy', '') == "scalping":
-                return True
-            if getattr(position, 'strategy_id', '') == "scalping":
-                return True
-        except Exception:
-            return False
-        return False
-
-    @staticmethod
     def _is_orb_position(position) -> bool:
         """判断仓位是否属于 ORB 策略 (由 ORBEngine._monitor_exits 自管退出)
 
@@ -843,6 +809,8 @@ class ExitMonitor:
                 # 显式排除待平仓的位置 (避免重复触发)
                 if _meta.get('_pending_close'):
                     continue
+                # 幽灵仓过滤已由 PositionStore.managed() SSOT 网关统一处理 (2026-06-16)
+                # 消费者无需各自过滤 stale_not_in_broker / is_anomalous
                 # 源头隔离 (2026-06-11): is_strategy_managed() 基于 metadata.source 判断
                 # MANUAL/LEGACY/UNKNOWN → PROTECTED → 自动排除, 无需额外 DB 查询
                 if is_strategy_managed(p) and not is_protected(p):
@@ -854,6 +822,19 @@ class ExitMonitor:
         # 在单仓位扫描之前, 先检查组合整体亏损
         portfolio_action = self._check_portfolio_drawdown(managed_positions, get_price_fn)
         if portfolio_action == "FLAT_ALL":
+            # P0 (2026-06-16): FLAT_ALL 锁存 — 30 分钟内不重复触发
+            # 根因: 6/15 实盘 FLAT_ALL 触发 95 次, 平仓失败后每 tick 重触发形成死循环
+            _elapsed = time.time() - self._flat_all_last_triggered_ts
+            if self._flat_all_last_triggered_ts > 0 and _elapsed < self.FLAT_ALL_COOLDOWN_SECONDS:
+                _remaining = int(self.FLAT_ALL_COOLDOWN_SECONDS - _elapsed)
+                logger.warning(
+                    f"[组合止损·锁存] FLAT_ALL 已在 {_elapsed:.0f}s 前触发, "
+                    f"冷却中 (剩余 {_remaining}s), 跳过重复触发"
+                )
+                portfolio_action = None  # 降级为不执行
+
+        if portfolio_action == "FLAT_ALL":
+            self._flat_all_last_triggered_ts = time.time()
             logger.critical("[组合止损] 触发 FLAT_ALL, 全平所有持仓")
             for p in managed_positions:
                 try:
@@ -890,10 +871,7 @@ class ExitMonitor:
         elif portfolio_action == "WARN":
             logger.warning("[组合止损] 触发 WARN 告警")
 
-        # ── C2 修复 (2026-05-13): 过滤 scalping 仓位 ──
-        # Scalping 仓位由 ScalpingEngine._monitor_loop 自管退出，
-        # 主线 ExitMonitor 不得干预，否则两套退出引擎并行扫同一仓位导致归因混乱
-        # M1 (2026-05-16): 同时过滤 PROTECTED/FROZEN 仓位 (用户手动仓默认隔离)
+        # M1 (2026-05-16): 过滤 PROTECTED/FROZEN 仓位 (用户手动仓默认隔离)
         try:
             from app.positions import is_strategy_managed, get_position_source, get_protection_state
             from app.positions.source import PositionSource
@@ -904,18 +882,13 @@ class ExitMonitor:
             PositionSource = None
 
         main_positions = []
-        skipped_scalping = 0
         skipped_orb = 0
         skipped_protected = 0
         skipped_broker = 0
         skipped_manual = 0
 
         for p in positions:
-            # 1. scalping 自管 (重构 2026-05-28: 统一走 _is_scalping_position 助手方法)
-            if self._is_scalping_position(p):
-                skipped_scalping += 1
-                continue
-            # 1.5 ORB 自管 (P0 2026-06-07: ORBEngine._monitor_exits 独立退出栈)
+            # 1. ORB 自管 (P0 2026-06-07: ORBEngine._monitor_exits 独立退出栈)
             if self._is_orb_position(p):
                 skipped_orb += 1
                 continue
@@ -943,8 +916,6 @@ class ExitMonitor:
                 continue
             main_positions.append(p)
 
-        if skipped_scalping > 0:
-            logger.debug(f"[退出监控] 跳过 {skipped_scalping} 个 scalping 仓位 (ScalpingEngine 自管)")
         if skipped_orb > 0:
             logger.debug(f"[退出监控] 跳过 {skipped_orb} 个 ORB 仓位 (ORBEngine 自管)")
         if skipped_broker > 0:
@@ -2281,7 +2252,7 @@ class ExitMonitor:
         """
         try:
             db_path = str(BASE_DIR / "data" / "atr_cache.db")
-            conn = sqlite3.connect(db_path, timeout=5)
+            conn = safe_sqlite_connect(db_path, timeout=5)
             conn.execute(
                 "CREATE TABLE IF NOT EXISTS atr_cache "
                 "(symbol TEXT PRIMARY KEY, atr REAL, ts REAL)"
@@ -2303,7 +2274,7 @@ class ExitMonitor:
     def clean_trail_state(db_path: str, active_symbols: List[str]) -> int:
         """清理 trail_state 中已平仓的脏记录"""
         try:
-            conn = sqlite3.connect(db_path, timeout=10)
+            conn = safe_sqlite_connect(db_path, timeout=10)
             cursor = conn.cursor()
             cursor.execute("SELECT symbol FROM trail_state")
             all_symbols = [row[0] for row in cursor.fetchall()]

@@ -140,16 +140,16 @@ class OpenDConfig:
         否则 .env 任一字段异常 → 整个 yaml 读取失效 → 所有依赖 get_config() 的模块全挂.
         """
         try:
-            port = int(os.getenv("OPEND_PORT", "11111"))
+            port = int(os.getenv("FUTU_OPEND_PORT", "11111"))
         except (ValueError, TypeError):
             import logging as _lg
             _lg.getLogger(__name__).warning(
-                "[OpenDConfig] OPEND_PORT 解析失败 (raw=%r), 用默认 11111",
-                os.getenv("OPEND_PORT"),
+                "[OpenDConfig] FUTU_OPEND_PORT 解析失败 (raw=%r), 用默认 11111",
+                os.getenv("FUTU_OPEND_PORT"),
             )
             port = 11111
         return cls(
-            host=os.getenv("OPEND_HOST", "127.0.0.1"),
+            host=os.getenv("FUTU_OPEND_HOST", "127.0.0.1"),
             port=port,
             dir=os.getenv("OPEND_DIR", "/opt/ftseek/Futu_OpenD_9.6.5618_Centos7/Futu_OpenD_9.6.5618_Centos7"),
             login_account=os.getenv("FUTU_LOGIN_ACCOUNT", ""),

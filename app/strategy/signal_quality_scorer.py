@@ -18,6 +18,86 @@ logger = logging.getLogger(__name__)
 
 # Module-level cache to avoid file I/O on every call
 _WEIGHTS_CACHE = None
+_CALIBRATION_CACHE = None  # {bucket_label: calibration_factor}
+_CALIBRATION_LOADED_AT = None
+
+# Bucket definitions (must match signal_quality_tracker.CONFIDENCE_BUCKETS)
+_CALIBRATION_BUCKETS = [
+    (0.0, 0.3, "0-0.3"),
+    (0.3, 0.5, "0.3-0.5"),
+    (0.5, 0.7, "0.5-0.7"),
+    (0.7, 1.0001, "0.7-1.0"),
+]
+
+
+def _bucket_for_conf(c: float) -> str:
+    for lo, hi, label in _CALIBRATION_BUCKETS:
+        if lo <= c < hi:
+            return label
+    return _CALIBRATION_BUCKETS[-1][2]
+
+
+def _load_calibration():
+    """Load historical winrate calibration from signal_quality_tracker output.
+
+    P0 修复 (2026-06-19): 置信度与历史胜率脱钩
+    根因: confidence 是即时评分，没有历史反馈校准
+    → 0.5-0.7 桶胜率仅17.8%但 confidence 很高
+    修复: 对胜率异常低的桶施加校准惩罚因子
+
+    校准因子: min(1.0, bucket_winrate / overall_winrate)
+    如果某桶胜率低于整体，confidence 被等比压缩
+    """
+    global _CALIBRATION_CACHE, _CALIBRATION_LOADED_AT
+    from datetime import date
+    today = date.today().isoformat()
+    if _CALIBRATION_CACHE is not None and _CALIBRATION_LOADED_AT == today:
+        return _CALIBRATION_CACHE
+
+    _CALIBRATION_LOADED_AT = today
+    _CALIBRATION_CACHE = {label: 1.0 for _, _, label in _CALIBRATION_BUCKETS}
+
+    try:
+        import json, os
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        sq_path = os.path.join(project_root, 'data', 'signal_quality', 'latest.json')
+        if not os.path.exists(sq_path):
+            logger.debug("[Calibration] No signal_quality/latest.json, using no-op calibration")
+            return _CALIBRATION_CACHE
+
+        with open(sq_path, 'r') as f:
+            data = json.load(f)
+
+        # Extract bucket winrates from all_time stats or confidence_map
+        confidence_map = data.get("confidence_map", {})
+        buckets = confidence_map.get("buckets", {})
+
+        # Compute overall winrate
+        total_wins = sum(b.get("wins", 0) for b in buckets.values())
+        total_trades = sum(b.get("total", 0) for b in buckets.values())
+        if total_trades < 30:
+            logger.debug(f"[Calibration] Insufficient samples ({total_trades}), using no-op")
+            return _CALIBRATION_CACHE
+
+        overall_wr = total_wins / total_trades if total_trades > 0 else 0.3
+
+        # Per-bucket calibration: factor = min(1.0, bucket_wr / overall_wr)
+        # Only apply to buckets with sufficient samples (>= 10)
+        for label, bucket_data in buckets.items():
+            n = bucket_data.get("total", 0)
+            wr = bucket_data.get("win_rate", 0)
+            if n >= 10 and overall_wr > 0:
+                factor = min(1.0, wr / overall_wr)
+                _CALIBRATION_CACHE[label] = round(factor, 3)
+
+        logger.info(
+            f"[Calibration] Loaded: overall_wr={overall_wr:.2%} "
+            f"factors={_CALIBRATION_CACHE}"
+        )
+    except Exception as e:
+        logger.debug(f"[Calibration] Load failed (no-op): {e}")
+
+    return _CALIBRATION_CACHE
 
 def _load_weights():
     """Load signal quality weights from unified_config.yaml, with fallback to defaults.
@@ -151,6 +231,19 @@ class SignalQualityScorer:
             raw_confidence = quality_score
 
         confidence = max(0.10, min(0.95, raw_confidence))
+
+        # P0 修复 (2026-06-19): 历史胜率校准
+        # 对胜率异常低的 confidence 桶施加惩罚因子
+        # 例如: 0.5-0.7 桶胜率仅17.8% (整体35%) → factor=0.51 → confidence 被压缩
+        calibration = _load_calibration()
+        bucket_label = _bucket_for_conf(confidence)
+        cal_factor = calibration.get(bucket_label, 1.0)
+        if cal_factor < 1.0:
+            confidence = max(0.10, confidence * cal_factor)
+            logger.debug(
+                f"[Calibration] {bucket_label} factor={cal_factor:.2f} "
+                f"→ conf {raw_confidence:.3f} → {confidence:.3f}"
+            )
 
         # Strength: 从 confidence 映射到 0-99，考虑汇合程度
         base_strength = int(confidence * 80) + agreeing * 3

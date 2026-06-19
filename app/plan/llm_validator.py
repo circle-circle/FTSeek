@@ -109,6 +109,26 @@ def _build_candidate_prompt(candidate: Dict, context: Dict) -> str:
 - SPY 20日涨跌: {context.get('spy_change_20d', 0):+.1f}%
 """
 
+    # Catalyst context (from Stage 1.5, v2: 10分制)
+    catalyst = candidate.get("catalyst", {})
+    if catalyst and catalyst.get("type") and catalyst.get("type") != "NONE":
+        cat_score = catalyst.get('score', 0)
+        prompt += f"\n## 催化剂 (强度 {cat_score}/10)\n"
+        prompt += f"- 类型: {catalyst.get('type', 'N/A')}\n"
+        prompt += f"- 强度分: {cat_score}/10 ({catalyst.get('strength', 'N/A')})\n"
+        prompt += f"- 标题: {catalyst.get('headline', 'N/A')}\n"
+        if catalyst.get('price_change_pct'):
+            prompt += f"- 价格确认: 已移动 {catalyst['price_change_pct']:+.1f}% (催化剂已被市场反映)\n"
+        if catalyst.get('source_count', 0) > 1:
+            prompt += f"- 多源确认: {catalyst['source_count']}条新闻命中同一催化剂\n"
+        if catalyst.get('direction_hint'):
+            prompt += f"- 催化剂方向暗示: {catalyst['direction_hint']}\n"
+
+    # Discovery source context
+    discovery_source = candidate.get("discovery_source", "")
+    if discovery_source == "event_discovery":
+        prompt += "\n- 发现来源: Finnhub异动发现 (核心池外新发现, 需更严格验证)\n"
+
     # Sector peers
     sector_momentum = context.get("sector_momentum", {})
     if sectors:
@@ -140,57 +160,250 @@ def _build_candidate_prompt(candidate: Dict, context: Dict) -> str:
     return prompt
 
 
-def _validate_single(candidate: Dict, context: Dict) -> Dict:
-    """验证单个候选 (在线程池中执行)"""
+def _validate_single_deterministic(candidate: Dict, context: Dict) -> Dict:
+    """P0 (2026-06-17): 确定性规则引擎验证 — 替代 LLM 调用。
+
+    将原 LLM prompt 中用自然语言写清的判定规则「编译」为确定性代码。
+    仅当判定为 CONDITIONAL (边界案例) 时才降级到 LLM 做深度判断。
+
+    规则来源: 原 SYSTEM_PROMPT 中的判定规则 + 实盘数据校准。
+    """
     sym = candidate["symbol"]
-    try:
-        from app.llm.unified_service import UnifiedLLMService
-        prompt = _build_candidate_prompt(candidate, context)
+    factors = candidate.get("factors", {})
+    tech = candidate.get("technicals", {})
+    catalyst = candidate.get("catalyst", {})
+    composite = candidate.get("composite_score", 0)
+    direction_hint = candidate.get("direction_hint", "LONG")
 
-        result = UnifiedLLMService.call(
-            "plan_validator",
-            prompt,
-            system=SYSTEM_PROMPT,
-            temperature=0,
-            max_tokens=500,
-            json_mode=True,
-            timeout=300,
-        )
+    # ── Step 1: 因子验证 (逐因子判定 CONFIRMED / WEAK / FALSE_POSITIVE) ──
+    factor_validation = {}
+    for fname, fdata in factors.items():
+        score = fdata.get("score", 0)
+        weight = fdata.get("weight", 0)
+        detail = fdata.get("detail", "")
 
-        if result.success:
-            raw = result.response
-            if isinstance(raw, str):
-                raw = raw.strip()
-                if raw.startswith("```"):
-                    raw = raw.split("\n", 1)[1] if "\n" in raw else raw[3:]
-                if raw.endswith("```"):
-                    raw = raw[:-3]
-                raw = raw.strip()
-                try:
-                    parsed = json.loads(raw)
-                except json.JSONDecodeError:
-                    parsed = {"verdict": "INVALID", "confidence": 0,
-                              "factor_validation": {}, "execution_rules": {},
-                              "audit_flags": ["LLM输出解析失败"]}
+        if fname == "volume_breakout":
+            # 特殊规则: volume_breakout 容易被误判 (原 prompt 明确说明)
+            # 量比 < 1.0 不直接判 FALSE_POSITIVE, 给 WEAK
+            vol_ratio = tech.get("vol_ratio", 1.0)
+            if score >= 0.7 and vol_ratio >= 1.2:
+                factor_validation[fname] = "CONFIRMED"
+            elif score >= 0.4 or vol_ratio >= 0.8:
+                factor_validation[fname] = "WEAK"
             else:
-                parsed = raw if isinstance(raw, dict) else {"verdict": "INVALID", "confidence": 0}
-
-            # Validate & normalize
-            if parsed.get("verdict") not in ("VALID", "INVALID", "CONDITIONAL"):
-                parsed["verdict"] = "INVALID"
-            parsed["confidence"] = max(0, min(100, int(parsed.get("confidence", 0))))
-            parsed["symbol"] = sym
-            parsed["model_used"] = result.model_used or ""
-            parsed["factor_score"] = candidate["composite_score"]
-            return parsed
+                factor_validation[fname] = "FALSE_POSITIVE"
+        elif fname == "sector_momentum":
+            # 板块动量: 需要板块实际涨跌确认
+            sectors = candidate.get("sectors", [])
+            sector_momentum = context.get("sector_momentum", {})
+            sector_chgs = [sector_momentum.get(s, 0) for s in sectors if s in sector_momentum]
+            avg_sector_chg = sum(sector_chgs) / len(sector_chgs) if sector_chgs else 0
+            if score >= 0.6 and avg_sector_chg > 0:
+                factor_validation[fname] = "CONFIRMED"
+            elif score >= 0.3 or avg_sector_chg > -0.5:
+                factor_validation[fname] = "WEAK"
+            else:
+                factor_validation[fname] = "FALSE_POSITIVE"
+        elif fname == "relative_strength":
+            # 相对强度: 与 SPY 对比
+            spy_chg = context.get("spy_change_20d", 0)
+            stock_chg = tech.get("change_20d", 0)
+            if score >= 0.6 and stock_chg > spy_chg:
+                factor_validation[fname] = "CONFIRMED"
+            elif score >= 0.3:
+                factor_validation[fname] = "WEAK"
+            else:
+                factor_validation[fname] = "FALSE_POSITIVE"
         else:
-            return {"symbol": sym, "verdict": "INVALID", "confidence": 0,
-                    "error": result.error, "factor_score": candidate["composite_score"]}
+            # 通用规则: ma_alignment, rsi_sweet_spot 等
+            if score >= 0.7:
+                factor_validation[fname] = "CONFIRMED"
+            elif score >= 0.4:
+                factor_validation[fname] = "WEAK"
+            else:
+                factor_validation[fname] = "FALSE_POSITIVE"
 
-    except Exception as e:
-        logger.error(f"[Validator] {sym} error: {e}")
-        return {"symbol": sym, "verdict": "INVALID", "confidence": 0,
-                "error": str(e), "factor_score": candidate["composite_score"]}
+    # ── Step 2: 统计因子判定结果 ──
+    confirmed_count = sum(1 for v in factor_validation.values() if v == "CONFIRMED")
+    weak_count = sum(1 for v in factor_validation.values() if v == "WEAK")
+    fp_count = sum(1 for v in factor_validation.values() if v == "FALSE_POSITIVE")
+    total_factors = len(factor_validation)
+
+    # ── Step 3: 判定 verdict (原 prompt 规则的代码化) ──
+    # 规则 1: ≥3 CONFIRMED → VALID (即使有 1-2 个 FALSE_POSITIVE)
+    # 特殊: volume_breakout FP 不阻止 VALID (原 prompt 明确说明)
+    non_vol_fp = sum(1 for k, v in factor_validation.items()
+                     if v == "FALSE_POSITIVE" and k != "volume_breakout")
+
+    if confirmed_count >= 3:
+        verdict = "VALID"
+        confidence = min(95, 55 + confirmed_count * 10)
+        # volume_breakout FP → 降 confidence 但不阻止 VALID
+        if factor_validation.get("volume_breakout") == "FALSE_POSITIVE":
+            confidence = max(40, confidence - 15)
+    # 规则 2: ≥3 WEAK 或 FALSE_POSITIVE → INVALID
+    elif weak_count + fp_count >= 3:
+        verdict = "INVALID"
+        confidence = max(10, 70 - (weak_count + fp_count) * 10)
+    # 规则 3: 2 CONFIRMED + 强催化剂 → VALID
+    elif confirmed_count >= 2 and catalyst.get("score", 0) >= 7:
+        verdict = "VALID"
+        confidence = min(85, 50 + catalyst.get("score", 0) * 4)
+    # 规则 4: 2 CONFIRMED → CONDITIONAL (边界案例 → 可走 LLM)
+    elif confirmed_count >= 2:
+        verdict = "CONDITIONAL"
+        confidence = min(70, 40 + confirmed_count * 10)
+    # 规则 5: 高 composite + 催化剂 → CONDITIONAL
+    elif composite >= 0.6 and catalyst.get("score", 0) >= 5:
+        verdict = "CONDITIONAL"
+        confidence = 45
+    # 默认: INVALID
+    else:
+        verdict = "INVALID"
+        confidence = max(10, 30 + int(composite * 30))
+
+    # ── Step 4: 历史交易惩罚 ──
+    hist = context.get("trade_history", {}).get(sym)
+    if hist and hist.get("count", 0) >= 3:
+        wr = hist.get("win_rate", 50)
+        total_pnl = hist.get("total_pnl", 0)
+        if wr < 25 and total_pnl < -200:
+            confidence = max(10, confidence - 15)
+            if verdict == "VALID":
+                verdict = "CONDITIONAL"
+
+    # ── Step 5: Regime 调整 ──
+    regime = context.get("regime", "NEUTRAL")
+    if regime in ("RISK_OFF", "HIGH_VOL") and direction_hint == "LONG":
+        confidence = max(10, confidence - 10)
+
+    # ── Step 6: 入场/止损/止盈 (从技术指标计算) ──
+    cur_price = tech.get("cur_price", 0)
+    atr = tech.get("atr14", cur_price * 0.02 if cur_price > 0 else 1)
+    entry_zone = [round(cur_price - atr * 0.5, 2), round(cur_price + atr * 0.3, 2)] if cur_price > 0 else [0, 0]
+    stop_loss = round(cur_price - atr * 1.8, 2) if cur_price > 0 else 0
+    take_profit = round(cur_price + atr * 3.0, 2) if cur_price > 0 else 0
+    risk_reward = round(abs(take_profit - cur_price) / max(abs(stop_loss - cur_price), 0.01), 1)
+
+    # ── Step 7: 审计标记 ──
+    audit_flags = []
+    if factor_validation.get("volume_breakout") == "FALSE_POSITIVE":
+        audit_flags.append("缩量突破,警惕假突破")
+    if non_vol_fp >= 1:
+        audit_flags.append(f"{non_vol_fp}个非量因子FALSE_POSITIVE")
+    if regime in ("RISK_OFF", "HIGH_VOL"):
+        audit_flags.append(f"Regime={regime},LONG方向受限")
+    if hist and hist.get("win_rate", 50) < 30:
+        audit_flags.append(f"历史胜率仅{hist['win_rate']:.0f}%")
+
+    return {
+        "symbol": sym,
+        "verdict": verdict,
+        "direction": direction_hint,
+        "confidence": confidence,
+        "entry_zone": entry_zone,
+        "stop_loss": stop_loss,
+        "take_profit": take_profit,
+        "risk_reward": risk_reward,
+        "position_size_pct": min(8, max(3, int(composite * 8))),
+        "invalidation": f"收盘破 {stop_loss:.2f} (1.8x ATR)",
+        "trigger_condition": f"价格进入 {entry_zone[0]:.2f}-{entry_zone[1]:.2f} 区间",
+        "execution_rules": {
+            "gap_up_over_2pct": "SKIP",
+            "gap_down_over_2pct": "SKIP",
+            "hit_zone_then_drop": "WAIT_5MIN_CANDLE_ABOVE",
+        },
+        "factor_validation": factor_validation,
+        "audit_flags": audit_flags,
+        "factor_score": composite,
+        "model_used": "deterministic_rules",
+        "_needs_llm": (verdict == "CONDITIONAL"),
+    }
+
+
+def _validate_single(candidate: Dict, context: Dict) -> Dict:
+    """验证单个候选 — 确定性规则引擎优先, CONDITIONAL 走 LLM 深度判断。
+
+    P0 (2026-06-17): 从纯 LLM 改为 代码优先 + LLM 补充。
+    - VALID/INVALID: 确定性规则直接判定 (0 LLM, <1ms)
+    - CONDITIONAL: 规则判定后追加 LLM 深度分析 (1 LLM, ~5-15s)
+    """
+    # Step 1: 确定性规则引擎 (必走)
+    result = _validate_single_deterministic(candidate, context)
+
+    # Step 2: CONDITIONAL → LLM 深度判断 (边界案例需要更细致的分析)
+    if result.get("_needs_llm"):
+        try:
+            from app.llm.unified_service import UnifiedLLMService
+            prompt = _build_candidate_prompt(candidate, context)
+            # 附加确定性分析的初步结论, 让 LLM 做 confirm/override
+            prompt += f"\n\n## 确定性规则引擎初步判定\n"
+            prompt += f"- verdict: CONDITIONAL (边界案例)\n"
+            prompt += f"- confidence: {result['confidence']}\n"
+            prompt += f"- factor_validation: {json.dumps(result['factor_validation'], ensure_ascii=False)}\n"
+            prompt += f"- audit_flags: {result['audit_flags']}\n"
+            prompt += f"\n请基于以上信息, 给出你的最终判定。可以升级为 VALID 或降级为 INVALID。"
+
+            llm_result = UnifiedLLMService.call(
+                "plan_validator",
+                prompt,
+                system=SYSTEM_PROMPT,
+                temperature=0,
+                max_tokens=500,
+                json_mode=True,
+                timeout=60,  # 从 300s 降到 60s (仅处理边界案例)
+            )
+
+            if llm_result.success:
+                raw = llm_result.response
+                if isinstance(raw, str):
+                    raw = raw.strip()
+                    if raw.startswith("```"):
+                        raw = raw.split("\n", 1)[1] if "\n" in raw else raw[3:]
+                    if raw.endswith("```"):
+                        raw = raw[:-3]
+                    raw = raw.strip()
+                    try:
+                        parsed = json.loads(raw)
+                    except json.JSONDecodeError:
+                        parsed = None
+                elif isinstance(raw, dict):
+                    parsed = raw
+                else:
+                    parsed = None
+
+                if parsed and isinstance(parsed, dict):
+                    # LLM 可以升级或降级 CONDITIONAL
+                    llm_verdict = parsed.get("verdict", "")
+                    if llm_verdict in ("VALID", "INVALID"):
+                        result["verdict"] = llm_verdict
+                        result["confidence"] = max(0, min(100, int(parsed.get("confidence", result["confidence"]))))
+                        # 采用 LLM 的入场参数 (通常更精确, 引用了具体支撑阻力)
+                        if parsed.get("entry_zone") and len(parsed["entry_zone"]) >= 2:
+                            result["entry_zone"] = parsed["entry_zone"]
+                        if parsed.get("stop_loss"):
+                            result["stop_loss"] = parsed["stop_loss"]
+                        if parsed.get("take_profit"):
+                            result["take_profit"] = parsed["take_profit"]
+                        if parsed.get("risk_reward"):
+                            result["risk_reward"] = parsed["risk_reward"]
+                        if parsed.get("factor_validation"):
+                            result["factor_validation"] = parsed["factor_validation"]
+                        if parsed.get("audit_flags"):
+                            result["audit_flags"] = parsed["audit_flags"]
+                        if parsed.get("execution_rules"):
+                            result["execution_rules"] = parsed["execution_rules"]
+                        if parsed.get("invalidation"):
+                            result["invalidation"] = parsed["invalidation"]
+                    result["model_used"] = llm_result.model_used or "deterministic+llm"
+
+        except Exception as e:
+            logger.warning(f"[Validator] {candidate['symbol']} LLM fallback failed: {e}, keeping deterministic result")
+            # LLM 失败 → 保留确定性结果 (CONDITIONAL), 不阻断
+
+    # 清理内部标记
+    result.pop("_needs_llm", None)
+    return result
 
 
 def _get_peer_changes(candidates: List[Dict]) -> Dict[str, Dict]:

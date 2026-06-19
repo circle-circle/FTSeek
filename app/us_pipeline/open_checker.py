@@ -44,8 +44,8 @@ class USOpenChecker:
             twelvedata_api_key=os.environ.get("TWELVEDATA_API_KEY"),
             finnhub_api_key=os.environ.get("FINNHUB_API_KEY"),
             alphavantage_api_key=os.environ.get("ALPHAVANTAGE_API_KEY"),
-            futu_opend_host=os.environ.get("OPEND_HOST", "127.0.0.1"),
-            futu_opend_port=int(os.environ.get("OPEND_PORT", "11111")),
+            futu_opend_host=os.environ.get("FUTU_OPEND_HOST", "127.0.0.1"),
+            futu_opend_port=int(os.environ.get("FUTU_OPEND_PORT", "11111")),
             enable_futu_lv3=True
         )
 
@@ -82,6 +82,15 @@ class USOpenChecker:
                 target["cancellation_reason"] = result["reason"]
             else:
                 target["confirmed_entry_price"] = result.get("current_price")
+                # P0 修复 (2026-06-19): OpenChecker VALID → 设置 status=ACTIVE
+                # 根因: signal_pipeline.py:1320 和 signal_stage.py:276 检查
+                # target.get("status") == "ACTIVE" 来决定是否走快车道
+                # 但之前 OpenChecker 只设置 open_check_status，不设置 status
+                # → 所有 VALID 标的 status=None → 快车道从未激活
+                # 修复: open_check_status=VALID 的 target 自动获得 status=ACTIVE
+                if result["status"] == "VALID":
+                    target["status"] = "ACTIVE"
+                    logger.info(f"✅ [{symbol}] status → ACTIVE (open_check VALID)")
 
         # 3. 保存更新后的计划
         self._save_plan(plan)

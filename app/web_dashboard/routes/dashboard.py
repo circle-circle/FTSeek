@@ -86,6 +86,11 @@ def register(app, templates, dashboard):
     async def get_account():
         return dashboard.get_account_summary()
 
+    @router.get("/health")
+    async def health_check_root():
+        # 监控/负载均衡探针 (公开, 无需鉴权) — 2026-06-18 修复监控 400
+        return {"status": "ok", "timestamp": datetime.now().isoformat()}
+
     @router.get("/api/health")
     async def health_check_api():
         return {"status": "ok", "timestamp": datetime.now().isoformat()}
@@ -202,6 +207,7 @@ def register(app, templates, dashboard):
             # Take profit from stop_distances
             lc["take_profit"] = sd.get("take_profit", 0)
             lc["tp_distance_pct"] = sd.get("tp_distance_pct", 0)
+            lc["atr_estimated"] = sd.get("atr_estimated", False)
 
         # ── 13. Exposure ratio (gross / equity) ──
         gross = float(exposure.get("gross", 0) or 0)
@@ -210,11 +216,13 @@ def register(app, templates, dashboard):
         # ── 14. Today's closed trades ──
         today_closed = []
         try:
+            _today_et = et_today()
             rows = await ds.db_query(
                 "SELECT symbol, direction, entry_price, exit_price, pnl_pct, realized_pnl, "
                 "exit_reason, exit_time FROM trade_records "
-                "WHERE exit_time IS NOT NULL AND DATE(exit_time) = DATE('now') "
-                "ORDER BY exit_time DESC LIMIT 10"
+                "WHERE exit_time IS NOT NULL AND exit_price > 0 AND DATE(exit_time) = ? "
+                "ORDER BY exit_time DESC LIMIT 10",
+                (_today_et,),
             )
             for r in rows:
                 today_closed.append({
@@ -227,6 +235,15 @@ def register(app, templates, dashboard):
                 })
         except Exception:
             pass
+
+        # ── 15. Weekly PnL (本周已实现盈亏) ──
+        weekly_pnl = await _calc_weekly_pnl(ds)
+
+        # ── 16. Decision summary (决策摘要) ──
+        decision = _calc_decision_summary(market, margin, pnl, weekly_pnl)
+
+        # ── 17. Concentration (行业集中度) ──
+        concentration = _calc_concentration(positions, equity)
 
         return {
             "account": account,
@@ -242,6 +259,9 @@ def register(app, templates, dashboard):
             "futu_risk": futu_risk,
             "earnings": earnings,
             "lifecycle": lifecycle,
+            "decision": decision,
+            "weekly_pnl": weekly_pnl,
+            "concentration": concentration,
             "mode": mode,
             "is_live": is_live,
             "timestamp": datetime.now().isoformat(),
@@ -440,7 +460,9 @@ def _parse_account(raw: dict) -> dict:
         usd_assets_raw = safe_float(raw.get("usd_assets"))
         fx = hkd_assets / usd_assets_raw if usd_assets_raw > 0 else 7.8
         usd_assets = usd_assets_raw
-        usd_cash = safe_float(raw.get("us_cash"))
+        usd_cash = safe_float(raw.get("us_avl_withdrawal_cash"))
+        if usd_cash <= 0:
+            usd_cash = safe_float(raw.get("us_cash"))  # fallback
         usd_power = safe_float(raw.get("usd_net_cash_power"))
         if usd_power <= 0:
             usd_power = safe_float(raw.get("power")) / fx
@@ -506,6 +528,10 @@ async def _parse_positions(ds, pos_raw: list) -> list:
         code = str(p.get("code", ""))
         qty = float(p.get("qty", 0))
         if qty != 0 and code.startswith("US."):
+            # Filter out options: codes with digits after ticker (e.g. US.SNDK260620C75000)
+            bare = code[3:]
+            if any(c.isdigit() for c in bare):
+                continue
             codes.append(code)
 
     # 批量获取报价
@@ -515,10 +541,12 @@ async def _parse_positions(ds, pos_raw: list) -> list:
     owner_map = {}
     db_symbols = set()
     protection_map = {}
+    entry_time_map = {}
     try:
-        rows = await ds.db_query("SELECT symbol, COALESCE(owner,'auto') as owner FROM open_positions")
+        rows = await ds.db_query("SELECT symbol, COALESCE(owner,'auto') as owner, entry_time FROM open_positions")
         owner_map = {r["symbol"]: r["owner"] for r in rows}
         db_symbols = set(owner_map.keys())
+        entry_time_map = {r["symbol"]: r.get("entry_time") for r in rows}
     except Exception:
         pass
     try:
@@ -537,6 +565,10 @@ async def _parse_positions(ds, pos_raw: list) -> list:
         qty = float(p.get("qty", 0))
         if qty == 0 or not code.startswith("US."):
             continue
+        # Filter out options: codes with digits after ticker (e.g. US.SNDK260620C75000)
+        bare = code[3:]
+        if any(c.isdigit() for c in bare):
+            continue
 
         cost = safe_float(p.get("cost_price", 0))
         cur = price_map.get(code, safe_float(p.get("cur_price", 0)))
@@ -548,9 +580,14 @@ async def _parse_positions(ds, pos_raw: list) -> list:
         is_long = not is_short
         mv = abs(cur * qty)
 
-        # 手动计算盈亏 (Futu 盘后返回 0)
+        # 手动计算盈亏 (优先用 pl_val=总盈亏, Futu 盘后返回 0)
+        # pl_val = unrealized_pl + realized_pl (包含分批平仓的已实现部分)
+        pl_val = safe_float(p.get("pl_val", 0))
         unrealized = safe_float(p.get("unrealized_pl", 0))
-        if unrealized == 0 and cur > 0 and cost > 0:
+        if pl_val != 0:
+            # pl_val 是 Futu 计算的总盈亏 (含分批已实现), 与 App 显示一致
+            unrealized = pl_val
+        elif unrealized == 0 and cur > 0 and cost > 0:
             if is_long:
                 unrealized = (cur - cost) * abs(qty)
             else:
@@ -567,6 +604,9 @@ async def _parse_positions(ds, pos_raw: list) -> list:
         code_short = code.replace("US.", "")
         name_cn = _ZH_MAP.get(code_short, code_short)
 
+        # 行业分类
+        sector = _SECTOR_MAP.get(code_short, "其他")
+
         prot = protection_map.get(code, {})
         positions.append({
             "code": code,
@@ -582,8 +622,10 @@ async def _parse_positions(ds, pos_raw: list) -> list:
             "pnl_pct": round(pnl_pct, 2),
             "today_pl": round(today_pl, 2),
             "name_cn": name_cn,
+            "sector": sector,
             "owner": owner_map.get(code, "legacy"),
             "legacy": code not in db_symbols,
+            "created_at": entry_time_map.get(code),
             "stop_loss_price": prot.get("stop_loss_price"),
             "trailing_stop_price": prot.get("trailing_stop_price"),
             "stop_loss_triggered": bool(prot.get("stop_loss_triggered")),
@@ -708,12 +750,14 @@ async def _calc_pnl(ds, positions: list) -> dict:
         "total": 0,
         "today_trades": 0,
     }
-    # 今日已实现盈亏
+    # 今日已实现盈亏 (使用 ET 日期, 非 UTC 的 DATE('now'))
+    today_et = et_today()
     try:
         row = await ds.db_query_one(
             "SELECT COALESCE(SUM(realized_pnl),0) as pnl, COUNT(*) as cnt "
             "FROM trade_records "
-            "WHERE trade_date = DATE('now')"
+            "WHERE trade_date = ? AND exit_price > 0",
+            (today_et,),
         )
         if row:
             pnl["realized"] = float(row.get("pnl", 0))
@@ -724,7 +768,8 @@ async def _calc_pnl(ds, positions: list) -> dict:
     # 全部已实现盈亏 (all-time)
     try:
         row = await ds.db_query_one(
-            "SELECT COALESCE(SUM(realized_pnl),0) as pnl FROM trade_records WHERE trade_mode != 'simulate'"
+            "SELECT COALESCE(SUM(realized_pnl),0) as pnl FROM trade_records "
+            "WHERE trade_mode != 'simulate' AND exit_price > 0"
         )
         if row:
             pnl["realized_all"] = float(row.get("pnl", 0))
@@ -736,8 +781,20 @@ async def _calc_pnl(ds, positions: list) -> dict:
     # 总盈亏 = 全部已实现 + 浮盈
     pnl["total"] = round(pnl["realized_all"] + pnl["unrealized"], 2)
 
-    # 今日盈亏 (Futu today_pl_val 汇总, 盘后为 T-1)
+    # 今日盈亏 (Futu today_pl_val 汇总)
+    # 注意: 盘后 Futu 返回的是 T-1 结算盈亏, 非当日实时盈亏
     pnl["today_pl"] = round(sum(p.get("today_pl", 0) for p in positions), 2)
+
+    # 标记 today_pl 语义 (前端可用于提示用户)
+    from app.web_dashboard.data_service import et_now
+    _et = et_now()
+    _et_mins = _et.hour * 60 + _et.minute
+    if 570 <= _et_mins < 960:  # 09:30 ~ 16:00 ET
+        pnl["today_pl_label"] = "今日浮动"
+    elif 960 <= _et_mins < 1200:  # 16:00 ~ 20:00 ET
+        pnl["today_pl_label"] = "盘后(T-1结算)"
+    else:
+        pnl["today_pl_label"] = "昨日结算"
 
     return pnl
 
@@ -761,8 +818,10 @@ async def _calc_stop_distances(ds, positions: list, is_live: bool) -> list:
             direction = p["direction"]
             # 优先用 ExitMonitor 缓存的真实 ATR, fallback 到 2% 估算
             atr = _get_atr(p["code"])
+            atr_estimated = False
             if atr <= 0:
                 atr = cur * 0.02
+                atr_estimated = True
             # SL: entry ± 4.0×ATR (与 atr_stop 一致)
             # TP: entry ± 1.0×ATR (与 scale_out 一致)
             sl = cost - atr * 4 if direction == "LONG" else cost + atr * 4
@@ -787,6 +846,7 @@ async def _calc_stop_distances(ds, positions: list, is_live: bool) -> list:
                 "tp_distance_pct": round(tp_dist, 2),
                 "unrealized_pnl": p.get("unrealized_pnl", 0),
                 "danger": sl_dist < 2,
+                "atr_estimated": atr_estimated,
             })
     else:
         # 模拟盘: 从 DB 读取 SL/TP
@@ -868,7 +928,7 @@ async def _calc_signals(ds) -> dict:
     # 执行数
     try:
         row3 = await ds.db_query_one(
-            "SELECT COUNT(*) as cnt FROM trade_records WHERE trade_date = ?", (today,),
+            "SELECT COUNT(*) as cnt FROM trade_records WHERE trade_date = ? AND exit_price > 0", (today,),
         )
         result["executed_count"] = row3["cnt"] if row3 else 0
     except Exception:
@@ -1017,3 +1077,184 @@ def _get_position_earnings(position_tickers: list) -> dict:
         logger.debug(f"[snapshot] earnings calendar failed: {e}")
 
     return result
+
+
+# ── 行业分类 (静态映射, 覆盖 50+ 常用美股) ──
+_SECTOR_MAP = {
+    "AAPL": "科技", "MSFT": "科技", "GOOGL": "科技", "META": "科技",
+    "CRM": "科技", "ORCL": "科技", "ADBE": "科技", "CSCO": "科技", "IBM": "科技",
+    "NOW": "科技", "INTU": "科技", "PANW": "科技", "SNOW": "科技", "PLTR": "科技",
+    "NVDA": "半导体", "AMD": "半导体", "INTC": "半导体", "TSM": "半导体", "MU": "半导体",
+    "AVGO": "半导体", "QCOM": "半导体", "MRVL": "半导体", "ARM": "半导体", "ASML": "半导体",
+    "AMZN": "消费", "TSLA": "消费", "NKE": "消费", "MCD": "消费", "SBUX": "消费",
+    "WMT": "消费", "COST": "消费", "HD": "消费", "LOW": "消费", "TGT": "消费",
+    "JPM": "金融", "BAC": "金融", "GS": "金融", "MS": "金融", "WFC": "金融",
+    "C": "金融", "BLK": "金融", "SCHW": "金融", "AXP": "金融", "V": "金融", "MA": "金融",
+    "JNJ": "医疗", "UNH": "医疗", "PFE": "医疗", "MRK": "医疗", "ABBV": "医疗",
+    "LLY": "医疗", "TMO": "医疗", "ABT": "医疗", "BMY": "医疗",
+    "XOM": "能源", "CVX": "能源", "COP": "能源", "SLB": "能源",
+    "CAT": "工业", "BA": "工业", "HON": "工业", "GE": "工业", "UNP": "工业", "RTX": "工业",
+    "T": "通信", "VZ": "通信", "TMUS": "通信", "DIS": "通信", "NFLX": "通信", "CMCSA": "通信",
+    "BABA": "中概", "JD": "中概", "PDD": "中概", "NIO": "中概", "XPEV": "中概",
+    "LI": "中概", "BIDU": "中概", "TME": "中概", "BILI": "中概",
+    "F": "汽车", "GM": "汽车", "RIVN": "汽车", "LCID": "汽车",
+    "NEE": "公用事业", "DUK": "公用事业", "SO": "公用事业",
+    "AMT": "地产", "PLD": "地产", "SPG": "地产",
+    "NEM": "材料", "FCX": "材料", "DOW": "材料",
+    "SPY": "指数ETF", "QQQ": "指数ETF", "IWM": "指数ETF", "DIA": "指数ETF",
+    "XLE": "能源ETF", "XLF": "金融ETF", "XLK": "科技ETF", "XLV": "医疗ETF",
+    "SOXX": "半导体ETF", "SMH": "半导体ETF", "ARKK": "创新ETF",
+    "TLT": "债券ETF", "GLD": "黄金ETF", "USO": "原油ETF",
+}
+
+
+def _calc_concentration(positions: list, equity: float) -> dict:
+    """计算行业集中度 + 方向聚集"""
+    if not positions:
+        return {"sectors": [], "direction": {"LONG": 0, "SHORT": 0},
+                "same_direction": False, "warnings": [], "has_data": False}
+
+    sector_mv = {}
+    direction_count = {"LONG": 0, "SHORT": 0}
+    total_mv = 0
+
+    for p in positions:
+        code_short = p.get("symbol", "").replace("US.", "")
+        sector = _SECTOR_MAP.get(code_short, "其他")
+        mv = p.get("market_val", 0) or p.get("market_value", 0) or 0
+        sector_mv[sector] = sector_mv.get(sector, 0) + mv
+        total_mv += mv
+        d = p.get("direction", "LONG")
+        direction_count[d] = direction_count.get(d, 0) + 1
+
+    # 行业占比
+    sectors = []
+    warnings = []
+    denom = equity if equity > 0 else total_mv
+    for name, mv in sorted(sector_mv.items(), key=lambda x: x[1], reverse=True):
+        pct = round(mv / denom * 100, 1) if denom > 0 else 0
+        sectors.append({"name": name, "market_val": round(mv, 2), "pct": pct})
+        if pct > 40:
+            warnings.append(f"{name} 占比 {pct}% > 40%")
+
+    # 方向聚集
+    long_n = direction_count.get("LONG", 0)
+    short_n = direction_count.get("SHORT", 0)
+    total = long_n + short_n
+    same_direction = total > 1 and (long_n == total or short_n == total)
+    if same_direction:
+        dir_label = "LONG" if long_n == total else "SHORT"
+        warnings.append(f"全部 {total} 仓同向 ({dir_label})")
+
+    return {
+        "sectors": sectors,
+        "direction": direction_count,
+        "same_direction": same_direction,
+        "warnings": warnings,
+        "has_data": True,
+    }
+
+
+async def _calc_weekly_pnl(ds) -> dict:
+    """本周 (周一至今) 已实现盈亏 + 胜率"""
+    result = {"realized": 0, "trades": 0, "wins": 0, "win_rate": 0}
+    try:
+        from datetime import timedelta, date as _date
+        today_str = et_today()
+        d = _date.fromisoformat(today_str)
+        monday = d - timedelta(days=d.weekday())
+        row = await ds.db_query_one(
+            "SELECT COALESCE(SUM(realized_pnl),0) as pnl, COUNT(*) as cnt, "
+            "SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins "
+            "FROM trade_records WHERE trade_date >= ? AND trade_mode != 'simulate' "
+            "AND exit_price > 0",
+            (monday.isoformat(),),
+        )
+        if row:
+            result["realized"] = round(float(row.get("pnl", 0) or 0), 2)
+            result["trades"] = int(row.get("cnt", 0) or 0)
+            result["wins"] = int(row.get("wins", 0) or 0)
+            if result["trades"] > 0:
+                result["win_rate"] = round(
+                    result["wins"] / result["trades"] * 100, 1
+                )
+    except Exception:
+        pass
+    return result
+
+
+def _calc_decision_summary(market: dict, margin: dict, pnl: dict, weekly_pnl: dict) -> dict:
+    """构造 3 行决策摘要数据 (纯内存/文件, 无 broker 调用)"""
+    # 读 battle plan 文件
+    plan_actions = {"must_do": 0, "opportunities": 0, "regime": "UNKNOWN", "brief": ""}
+    try:
+        from pathlib import Path as _Path
+        import json as _json
+
+        _plan_path = (
+            _Path(__file__).resolve().parent.parent.parent.parent
+            / "data"
+            / "daily_battle_plan_us.json"
+        )
+        if _plan_path.exists():
+            with open(_plan_path) as f:
+                plan = _json.load(f)
+            targets = plan.get("targets", [])
+            position_actions = plan.get("position_actions", [])
+            restricted = set(plan.get("restricted", []))
+
+            must_do = sum(
+                1
+                for pa in position_actions
+                if pa.get("action", "").upper() in ("EXIT", "CLOSE", "REDUCE")
+            )
+            opps = sum(
+                1
+                for t in targets
+                if t.get("symbol", "").replace("US.", "") not in restricted
+                and t.get("symbol", "") not in restricted
+                and float(t.get("confidence", 0) or 0) >= 0.5
+            )
+            plan_actions["must_do"] = must_do
+            plan_actions["opportunities"] = opps
+            plan_actions["regime"] = plan.get("market_regime", "UNKNOWN")
+            plan_actions["brief"] = plan.get("morning_brief", "")
+    except Exception:
+        pass
+
+    # VIX 等级
+    vix = float(market.get("vix", 0) or 0)
+    vix_label = "低波" if vix < 15 else "正常" if vix < 25 else "偏高" if vix < 35 else "恐慌"
+
+    # 水位
+    water_level = "unknown"
+    try:
+        from app.risk.capital_safety import get_capital_safety_system
+
+        cs = get_capital_safety_system()
+        if cs and cs._state and cs._state.water_level:
+            water_level = cs._state.water_level.value
+    except Exception:
+        pass
+
+    # 能否开仓
+    margin_pct = float(margin.get("usage_pct", 0) or 0)
+    can_trade = margin_pct < 70 and water_level not in ("red", "blackout")
+
+    return {
+        "actions": plan_actions,
+        "risk": {
+            "vix": round(vix, 1),
+            "vix_label": vix_label,
+            "margin_pct": round(margin_pct, 1),
+            "water_level": water_level,
+            "can_trade": can_trade,
+        },
+        "performance": {
+            "today_pl": float(pnl.get("today_pl", 0) or 0),
+            "today_realized": float(pnl.get("realized", 0) or 0),
+            "week_realized": weekly_pnl.get("realized", 0),
+            "week_trades": weekly_pnl.get("trades", 0),
+            "week_win_rate": weekly_pnl.get("win_rate", 0),
+        },
+    }

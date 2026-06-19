@@ -23,6 +23,10 @@ load_dotenv(os.path.join(PROJECT_DIR, '.env.us'))
 # 导入配置
 import config
 
+# 全局 SQLite 安全钩子 — 必须在所有 DB 操作之前加载
+# monkey-patch sqlite3.connect → 自动应用 WAL + busy_timeout
+import app.core.db_utils  # noqa: F401
+
 # ============================================================
 #  日志配置
 # ============================================================
@@ -145,8 +149,8 @@ def _run_new_scheduler(args):
 
     # ── 启动前 OpenD 连通性检查 (P0 修复 2026-05-01) ──
     # 防止 OpenD 不可用时, Futu SDK _init_connect_sync 无限重试阻塞启动
-    _opend_host = os.environ.get("FUTU_HOST", "127.0.0.1")
-    _opend_port = int(os.environ.get("FUTU_PORT", 11111))
+    _opend_host = os.environ.get("FUTU_OPEND_HOST", "127.0.0.1")
+    _opend_port = int(os.environ.get("FUTU_OPEND_PORT", 11111))
     import socket
     _sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     _sock.settimeout(5)
@@ -180,6 +184,18 @@ def _run_new_scheduler(args):
     else:
         logger.info("[安全确认] ✅ 当前运行模式: 模拟盘 (TRADE_ENV=%s | FUTU_TRADE_ENV=%s)", _trade_env, _futu_trade_env)
         logger.info("[安全确认] ✅ 模拟盘验证期 — 持续收集数据、验证策略")
+
+    # ── Task #36 (2026-06-16): trade_records schema 迁移 (幂等) ──
+    # 在 scheduler/trade_store 初始化前先确保 schema 完整, 防止
+    # 实盘 ftseek_us_live.db 缺表/缺列时 INSERT 失败.
+    try:
+        from scripts.migrate_trade_records import ensure_trade_records_schema
+        from app.core.paths import get_trade_records_db
+        _migrate_db = get_trade_records_db()
+        _mig_result = ensure_trade_records_schema(_migrate_db)
+        logger.info(f"[Task#36·migration] {_mig_result}")
+    except Exception as _mig_err:
+        logger.warning(f"⚠️ [Task#36·migration] 失败 (降级运行): {_mig_err}")
 
     # ── DI 容器装配核心组件 ──
     from app.core.di_container import get_di_container
@@ -319,11 +335,21 @@ def _run_new_scheduler(args):
             from app.core.config_container import get_config as _get_loader
             loader = _get_loader()
 
-        validator = ConfigValidator(loader, strict_mode=False)
+        # P1-追加 (2026-06-16): strict_mode=True 防止 config_audit 被意外删除后
+        # 配置强制校验静默消失 (双层防御: Validator + audit 均为 blocking)
+        validator = ConfigValidator(loader, strict_mode=True)
         validation_result = validator.validate_all()
 
         if not validation_result.is_valid:
-            logger.warning("[ConfigGov] ⚠️ 配置校验发现 %d 个错误 (降级模式允许启动)", len(validation_result.errors))
+            logger.critical(
+                "[ConfigGov] ❌ 配置校验失败 %d 个错误 — 实盘启动已阻止: %s",
+                len(validation_result.errors),
+                "; ".join(validation_result.errors[:5]),
+            )
+            raise RuntimeError(
+                f"ConfigValidator 发现 {len(validation_result.errors)} 个阻塞错误, "
+                f"请修复配置后重试"
+            )
         else:
             logger.info("[ConfigGov] ✅ 配置校验通过: %s", validation_result.summary)
 
@@ -365,20 +391,16 @@ def _run_new_scheduler(args):
         except Exception as e:
             logger.error("[ShortConfig] 做空配置校验异常 (降级运行): %s", e)
 
-        # Layer 1.7: SSOT 配置一致性审计 (YAML vs CFG 默认值, 观察模式)
+        # Layer 1.7: SSOT 配置一致性审计 (YAML vs CFG 默认值, 严格模式)
         try:
             from app.core.config_audit import print_config_audit, ConfigAuditError
             _yaml_data = loader._raw_config
-            _blocking = print_config_audit(_yaml_data, strict=False)
+            _blocking = print_config_audit(_yaml_data, strict=True)
             if _blocking == 0:
                 logger.info("[ConfigAudit] ✅ SSOT 配置一致性审计通过 — 无漂移检测")
-            else:
-                logger.warning(
-                    "[ConfigAudit] ⚠️ 观察模式: %d 个 BLOCKING 差异已记录但未阻止启动",
-                    _blocking
-                )
-        except ConfigAuditError:
-            logger.critical("[ConfigAudit] ❌ 配置一致性审计失败 (已记录)")
+        except ConfigAuditError as e:
+            logger.critical("[ConfigAudit] ❌ 配置一致性审计失败 — 实盘启动已阻止: %s", e)
+            raise
         except Exception as e:
             logger.warning("[ConfigAudit] 配置审计异常 (降级运行): %s", e)
 
@@ -542,13 +564,13 @@ def _run_new_scheduler(args):
     # ── P1-C (2026-05-15): 关键告警通道启动检测 — 至少 1 通道可用 ──
     try:
         _has_dingtalk = bool(os.getenv("DINGTALK_WEBHOOK_URL_US", "").strip())
-        _has_feishu = bool(os.getenv("FEISHU_WEBHOOK_URL", "").strip()) or bool(
+        _has_feishu = bool(os.getenv("FEISHU_WEBHOOK_URL_US", "").strip()) or bool(
             os.getenv("FEISHU_APP_ID", "").strip()
         )
         if not (_has_dingtalk or _has_feishu):
             logger.warning("=" * 70)
             logger.warning("⚠️  [关键告警通道] 未检测到 DingTalk/Feishu webhook!")
-            logger.warning("⚠️  环境变量需配置 DINGTALK_WEBHOOK_URL_US 或 FEISHU_WEBHOOK_URL")
+            logger.warning("⚠️  环境变量需配置 DINGTALK_WEBHOOK_URL_US 或 FEISHU_WEBHOOK_URL_US")
             logger.warning("⚠️  风险: RISK_OFF / KILL_SWITCH / 标的护栏触发时告警将丢失")
             logger.warning("⚠️  当前会写 data/critical_alerts.flag 文件作为兜底")
             logger.warning("=" * 70)
@@ -588,6 +610,22 @@ def _run_new_scheduler(args):
             logger.warning("[启动·OrderTracker] broker_adapter 不可用, 跳过 pending 恢复")
     except Exception as _ote:
         logger.warning(f"[启动·OrderTracker] 恢复失败 (降级运行): {_ote}")
+
+    # ── Task #8 (2026-06-15): ManualHoldRegistry 启动恢复 ──
+    # 必须在 position_sync 启动对账完成之后、scheduler.run_forever()
+    # (signal_pipeline / orb_engine 启动) 之前调用, 避免重启后 auto pipeline
+    # 在首次扫描时误触手动持仓标的.
+    try:
+        from app.coordinator.manual_hold_registry import manual_hold_registry
+        manual_hold_registry.sync_from_positions()
+        _mh_count = manual_hold_registry.get_manual_count()
+        _mh_symbols = manual_hold_registry.get_all_manual_symbols()
+        logger.info(
+            f"[启动·ManualHoldRegistry] ✅ 已恢复 {_mh_count} 个手动持仓标的: "
+            f"{sorted(_mh_symbols) if _mh_symbols else '(空)'}"
+        )
+    except Exception as _mh_e:
+        logger.warning(f"[启动·ManualHoldRegistry] 恢复失败 (降级运行): {_mh_e}")
 
     # ── 启动交易监控告警 (P2 2026-05-20) ──
     # 必须在 scheduler.run_forever() 之前启动，因为 run_forever 是阻塞的

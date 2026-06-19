@@ -14,6 +14,11 @@
             background: #0f1117; color: #e1e4e8; font-size: 14px;
             -webkit-text-size-adjust: 100%;
         }
+        /* ── MOBILE: 消除 iOS 300ms tap delay (全局, 2026-06-18) ── */
+        button, .btn, input, select, textarea, a, [onclick], [role="button"], label {
+            touch-action: manipulation;
+            -webkit-tap-highlight-color: transparent;
+        }
 
         /* ══════════════════════════════════════════════════
            NAVIGATION — 3-device adaptive
@@ -165,6 +170,7 @@
         .yellow { color: #fbbf24; }
         .orange { color: #fb923c; }
         .red { color: #f87171; }
+        .settlement { color: #8b949e; opacity: 0.8; }
         .long { color: #4ade80; }
         .short { color: #f87171; }
         .amber { color: #fbbf24; }
@@ -188,6 +194,44 @@
         .loading { text-align: center; padding: 20px; color: #8b949e; }
         .empty-state { text-align: center; padding: 20px; color: #8b949e; font-size: 13px; }
         .last-updated { font-size: 11px; color: #484f58; margin-left: 8px; white-space: nowrap; }
+
+        /* ── TOAST NOTIFICATIONS ── */
+        .toast-container {
+            position: fixed; top: 12px; right: 12px; z-index: 9999;
+            display: flex; flex-direction: column; gap: 8px;
+            pointer-events: none; max-width: 360px; width: calc(100vw - 24px);
+        }
+        @media (min-width: 1024px) { .toast-container { right: 20px; top: 16px; } }
+        @media (max-width: 767px) { .toast-container { top: auto; bottom: 72px; right: 8px; left: 8px; max-width: none; } }
+        .toast {
+            pointer-events: auto;
+            display: flex; align-items: flex-start; gap: 10px;
+            padding: 12px 14px; border-radius: 10px;
+            background: #1c2128; border: 1px solid #30363d;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.4), 0 2px 8px rgba(0,0,0,0.3);
+            font-size: 13px; color: #e1e4e8; line-height: 1.4;
+            animation: toastIn 0.3s ease-out;
+            transition: opacity 0.3s, transform 0.3s;
+        }
+        .toast.removing { opacity: 0; transform: translateX(80px); }
+        .toast-icon { font-size: 18px; flex-shrink: 0; line-height: 1; margin-top: 1px; }
+        .toast-body { flex: 1; min-width: 0; }
+        .toast-title { font-weight: 700; font-size: 12px; margin-bottom: 2px; }
+        .toast-msg { color: #b1bac4; font-size: 12px; word-break: break-word; }
+        .toast-close {
+            flex-shrink: 0; background: none; border: none; color: #484f58;
+            cursor: pointer; font-size: 16px; padding: 0 2px; line-height: 1;
+        }
+        .toast-close:hover { color: #e1e4e8; }
+        .toast.t-fill { border-left: 3px solid #4ade80; }
+        .toast.t-fill .toast-title { color: #4ade80; }
+        .toast.t-order { border-left: 3px solid #58a6ff; }
+        .toast.t-order .toast-title { color: #58a6ff; }
+        .toast.t-risk { border-left: 3px solid #f87171; }
+        .toast.t-risk .toast-title { color: #f87171; }
+        .toast.t-target { border-left: 3px solid #fbbf24; }
+        .toast.t-target .toast-title { color: #fbbf24; }
+        @keyframes toastIn { from { opacity:0; transform:translateX(40px); } to { opacity:1; transform:translateX(0); } }
 
         /* ══════════════════════════════════════════════
            RESPONSIVE BREAKPOINTS
@@ -244,6 +288,7 @@
         <div class="nav-links">
             <a href="/" {% block nav_home_class %}{% endblock %}><span class="nav-icon">🏠</span> 指挥中心</a>
             <a href="/plan" {% block nav_plan_class %}{% endblock %}><span class="nav-icon">🎯</span> 作战计划</a>
+            <a href="/playbook" {% block nav_playbook_class %}{% endblock %}><span class="nav-icon">📋</span> Playbook</a>
             <a href="/trade" {% block nav_trade_class %}{% endblock %}><span class="nav-icon">💹</span> 交易</a>
             <a href="/watchlist" {% block nav_watchlist_class %}{% endblock %}><span class="nav-icon">📋</span> 股票池</a>
             <a href="/system" {% block nav_system_class %}{% endblock %}><span class="nav-icon">⚙️</span> 系统</a>
@@ -259,6 +304,7 @@
         <div class="nav-links">
             <a href="/" {% block nav_home_class2 %}{% endblock %}><span class="nav-icon">🏠</span> 指挥</a>
             <a href="/plan" {% block nav_plan_class2 %}{% endblock %}><span class="nav-icon">🎯</span> 计划</a>
+            <a href="/playbook" {% block nav_playbook_class2 %}{% endblock %}><span class="nav-icon">📋</span> Playbook</a>
             <a href="/trade" {% block nav_trade_class2 %}{% endblock %}><span class="nav-icon">💹</span> 交易</a>
             <a href="/watchlist" {% block nav_watchlist_class2 %}{% endblock %}><span class="nav-icon">📋</span> 股票池</a>
             <a href="/system" {% block nav_system_class2 %}{% endblock %}><span class="nav-icon">⚙️</span> 系统</a>
@@ -286,6 +332,10 @@
 
     {% block content %}{% endblock %}
 
+    <!-- ══ TOAST NOTIFICATION CONTAINER ══ -->
+    <div class="toast-container" id="toastContainer"></div>
+
+    <script src="/static/js/utils.js"></script>
     <script>
         // ── M3: 全局 401 处理 — session 过期自动跳转登录 ──
         (function() {
@@ -404,7 +454,111 @@
             return { on: on, off: off, isConnected: isConnected };
         })();
 
+        // ═══════════════════════════════════════════════════════
+        //  全局 Toast 通知 — 消费 WebSocket 事件
+        // ═══════════════════════════════════════════════════════
+        window.Toast = (function() {
+            var MAX_TOASTS = 5;
+            var container = null;
+
+            function getContainer() {
+                if (!container) container = document.getElementById('toastContainer');
+                return container;
+            }
+
+            function show(opts) {
+                // opts: { type, icon, title, msg, duration }
+                var c = getContainer();
+                if (!c) return;
+                // 限制数量
+                while (c.children.length >= MAX_TOASTS) {
+                    c.removeChild(c.firstChild);
+                }
+                var el = document.createElement('div');
+                el.className = 'toast t-' + (opts.type || 'order');
+                el.innerHTML = '<span class="toast-icon">' + (opts.icon || '🔔') + '</span>' +
+                    '<div class="toast-body"><div class="toast-title">' + (opts.title || '') + '</div>' +
+                    '<div class="toast-msg">' + (opts.msg || '') + '</div></div>' +
+                    '<button class="toast-close" onclick="this.parentElement.remove()">&times;</button>';
+                c.appendChild(el);
+                // 自动消失
+                var dur = opts.duration || 6000;
+                setTimeout(function() {
+                    el.classList.add('removing');
+                    setTimeout(function() { if (el.parentNode) el.remove(); }, 300);
+                }, dur);
+            }
+
+            return { show: show };
+        })();
+
+        // ── WS 事件 → Toast 映射 ──
+        (function() {
+            if (!window.WSManager) return;
+
+            WSManager.on('fill', function(d) {
+                var side = (d.side || '').toUpperCase();
+                var icon = side === 'BUY' ? '🟢' : '🔴';
+                var sideLabel = side === 'BUY' ? '买入' : '卖出';
+                Toast.show({
+                    type: 'fill', icon: icon,
+                    title: '成交通知',
+                    msg: (d.symbol || '?') + ' ' + sideLabel + ' ' + (d.qty || '') + '股 @ $' + (d.price || '--')
+                });
+            });
+
+            WSManager.on('order_update', function(d) {
+                var statusMap = { SUBMITTED: '已提交', FILLED: '已成交', CANCELLED: '已撤销', REJECTED: '被拒绝' };
+                var st = statusMap[(d.status || '').toUpperCase()] || d.status || '更新';
+                Toast.show({
+                    type: 'order', icon: '📋',
+                    title: '订单' + st,
+                    msg: (d.symbol || '') + (d.status === 'REJECTED' ? ' ⚠️ 请检查' : '')
+                });
+            });
+
+            WSManager.on('risk_alert', function(d) {
+                var lvl = (d.level || '').toUpperCase();
+                var icon = lvl === 'CRITICAL' ? '🚨' : '⚠️';
+                Toast.show({
+                    type: 'risk', icon: icon,
+                    title: '风控警报',
+                    msg: d.message || '请检查持仓风险',
+                    duration: 10000
+                });
+            });
+
+            WSManager.on('target_update', function(d) {
+                var statusMap = { in_zone: '进入触发区间 🎯', above_zone: '突破上方', below_zone: '跌破下方' };
+                var st = statusMap[d.trigger_status] || d.trigger_status || '';
+                Toast.show({
+                    type: 'target', icon: '🎯',
+                    title: '目标状态变化',
+                    msg: (d.symbol || '') + ' ' + st + (d.current_price ? ' ($' + d.current_price + ')' : '')
+                });
+            });
+        })();
+
+        // ═══════════════════════════════════════════════════════
+        //  localStorage 偏好持久化管理器
+        // ═══════════════════════════════════════════════════════
+        window.Prefs = (function() {
+            var PREFIX = 'ftseek_';
+            function get(key, fallback) {
+                try { var v = localStorage.getItem(PREFIX + key); return v !== null ? JSON.parse(v) : fallback; }
+                catch(e) { return fallback; }
+            }
+            function set(key, value) {
+                try { localStorage.setItem(PREFIX + key, JSON.stringify(value)); } catch(e) {}
+            }
+            function remove(key) {
+                try { localStorage.removeItem(PREFIX + key); } catch(e) {}
+            }
+            return { get: get, set: set, remove: remove };
+        })();
+
         {% block scripts %}{% endblock %}
     </script>
+    {% block external_scripts %}{% endblock %}
 </body>
 </html>

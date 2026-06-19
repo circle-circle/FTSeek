@@ -13,8 +13,8 @@ if os.path.exists(env_file):
 
 from futu import OpenSecTradeContext, TrdMarket, TrdEnv, RET_OK
 
-host = os.getenv("OPEND_HOST", "127.0.0.1")
-port = int(os.getenv("OPEND_PORT", "11111"))
+host = os.getenv("FUTU_OPEND_HOST", "127.0.0.1")
+port = int(os.getenv("FUTU_OPEND_PORT", "11111"))
 pwd_md5 = os.getenv("FUTU_UNLOCK_PWD_MD5", "")
 
 trd_ctx = OpenSecTradeContext(

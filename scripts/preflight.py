@@ -98,7 +98,7 @@ def check_header(title: str):
 def check_env():
     """Check environment variables and dependencies."""
     check_header("环境检查 [ENVIRONMENT]")
-    required_vars = ['OPEND_HOST', 'OPEND_PORT', 'TRADE_ENV', 'DINGTALK_WEBHOOK_URL_US']
+    required_vars = ['FUTU_OPEND_HOST', 'FUTU_OPEND_PORT', 'TRADE_ENV', 'DINGTALK_WEBHOOK_URL_US']
     missing = [v for v in required_vars if not os.environ.get(v)]
     if missing:
         print(f"  [FAIL] 缺失环境变量: {', '.join(missing)}")
@@ -119,8 +119,8 @@ def check_env():
 def check_opend():
     """检查 OpenD 是否运行"""
     check_header("服务检查 [OPEND]")
-    host = os.environ.get('OPEND_HOST', '127.0.0.1')
-    port = int(os.environ.get('OPEND_PORT', 11111))
+    host = os.environ.get('FUTU_OPEND_HOST', '127.0.0.1')
+    port = int(os.environ.get('FUTU_OPEND_PORT', 11111))
     
     try:
         with socket.create_connection((host, port), timeout=3):

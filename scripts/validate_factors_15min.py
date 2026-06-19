@@ -35,8 +35,8 @@ def fetch_15min_klines(symbols: List[str], days: int = 60) -> Dict[str, List[Dic
         print("❌ futu-api 未安装。尝试 pip install futu-api")
         return {}
 
-    host = os.environ.get("FUTU_HOST", "127.0.0.1")
-    port = int(os.environ.get("FUTU_PORT", "11111"))
+    host = os.environ.get("FUTU_OPEND_HOST", "127.0.0.1")
+    port = int(os.environ.get("FUTU_OPEND_PORT", "11111"))
 
     print(f"🔌 连接 Futu OpenD {host}:{port}...")
     quote_ctx = OpenQuoteContext(host=host, port=port)

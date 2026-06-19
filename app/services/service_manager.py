@@ -46,15 +46,15 @@ class ServiceManager:
         """初始化执行引擎"""
         import os
         from app.execution.engine import ExecutionEngine
-        from config_us import EXECUTION_CONFIG, OPEND_HOST, OPEND_PORT, TRADE_ENV, SIMULATE_ACCOUNT_ID
+        from config_us import EXECUTION_CONFIG, FUTU_OPEND_HOST, FUTU_OPEND_PORT, TRADE_ENV, SIMULATE_ACCOUNT_ID
 
         # 实盘用 REAL_ACCOUNT_ID，模拟盘用 SIMULATE_ACCOUNT_ID
         _account_id = os.getenv("REAL_ACCOUNT_ID", "") if TRADE_ENV == 0 else SIMULATE_ACCOUNT_ID
 
         exec_config = {
             **EXECUTION_CONFIG,
-            "futu_host": OPEND_HOST,
-            "futu_port": OPEND_PORT,
+            "futu_host": FUTU_OPEND_HOST,
+            "futu_port": FUTU_OPEND_PORT,
             "futu_trade_env": TRADE_ENV,
             "account_id": _account_id,
         }

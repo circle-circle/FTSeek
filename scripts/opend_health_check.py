@@ -50,8 +50,8 @@ logger = logging.getLogger("opend_health_check")
 # 配置
 # ============================================================
 OPEND_PATH = "/opt/ftseek/Futu_OpenD_10.3.6308_Centos7/Futu_OpenD_10.3.6308_Centos7/FutuOpenD"
-OPEND_PORT = 11111
-OPEND_HOST = "127.0.0.1"
+FUTU_OPEND_PORT = 11111
+FUTU_OPEND_HOST = "127.0.0.1"
 CHECK_TIMEOUT = 5  # 每次检测超时 (秒)
 MAX_CHECK_TIME = 10  # 总检测时间上限 (秒)
 
@@ -197,11 +197,11 @@ def check_port_connection() -> bool:
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(CHECK_TIMEOUT)
-        result = sock.connect_ex((OPEND_HOST, OPEND_PORT))
+        result = sock.connect_ex((FUTU_OPEND_HOST, FUTU_OPEND_PORT))
         sock.close()
         
         elapsed = time.time() - start_time
-        logger.info(f"[{elapsed:.2f}s] 检测端口 {OPEND_HOST}:{OPEND_PORT}")
+        logger.info(f"[{elapsed:.2f}s] 检测端口 {FUTU_OPEND_HOST}:{FUTU_OPEND_PORT}")
         
         return result == 0
         
@@ -226,7 +226,7 @@ def check_futu_api() -> bool:
         from futu import OpenQuoteContext
         
         # 尝试创建连接
-        quote_ctx = OpenQuoteContext(host=OPEND_HOST, port=OPEND_PORT)
+        quote_ctx = OpenQuoteContext(host=FUTU_OPEND_HOST, port=FUTU_OPEND_PORT)
         
         # 尝试获取简单数据 (测试连接)
         ret_code, ret_data = quote_ctx.get_market_snapshot("HK.00700")
@@ -328,10 +328,10 @@ def main():
         
         # 2. 检测端口连接
         if not check_port_connection():
-            issues.append(f"端口 {OPEND_PORT} 无法连接")
-            logger.error(f"❌ 端口 {OPEND_PORT} 无法连接")
+            issues.append(f"端口 {FUTU_OPEND_PORT} 无法连接")
+            logger.error(f"❌ 端口 {FUTU_OPEND_PORT} 无法连接")
         else:
-            logger.info(f"✅ 端口 {OPEND_PORT} 连接正常")
+            logger.info(f"✅ 端口 {FUTU_OPEND_PORT} 连接正常")
         
         # 3. 检测富途 API
         if not check_futu_api():

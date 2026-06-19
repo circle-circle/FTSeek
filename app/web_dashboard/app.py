@@ -14,6 +14,10 @@ import logging
 import time
 from collections import defaultdict
 from pathlib import Path
+
+# 全局 SQLite 安全钩子 — 在所有 DB 操作之前加载
+import app.core.db_utils  # noqa: F401
+
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
@@ -66,7 +70,7 @@ def _origin_allowed(request) -> bool:
     比较时去掉端口，避免 nginx $host (无端口) vs 浏览器 Origin (含端口) 不匹配."""
     raw_host = (request.headers.get("host") or "").lower().strip()
     if not raw_host:
-        return True  # 无 Host 头时不阻断 (内网调试)
+        return False  # 无 Host 头 → 拒绝 (防止 CSRF 旁路)
     # 去掉端口: "ft.aitz.cc:8888" → "ft.aitz.cc"
     host = raw_host.split(":")[0]
     origin = request.headers.get("origin")
@@ -228,16 +232,11 @@ def create_app() -> FastAPI:
         password = body.get("password", "")
 
         if not has_password_configured():
-            token = create_session_token()
-            response = JSONResponse(content={
-                "success": True, "redirect": "/",
-                "message": "未设置密码，请尽快在 .env.us 中配置 DASHBOARD_PASSWORD_MD5",
-            })
-            response.set_cookie(
-                "ftseek_session", token, max_age=86400,
-                httponly=True, samesite="strict", secure=True,
+            logger.error("[Auth] ⚠️ 未配置 DASHBOARD_PASSWORD_MD5，拒绝登录")
+            return JSONResponse(
+                content={"success": False, "message": "系统未配置密码，请联系管理员设置 DASHBOARD_PASSWORD_MD5"},
+                status_code=503,
             )
-            return response
 
         if verify_password(password):
             token = create_session_token()
@@ -284,6 +283,7 @@ def create_app() -> FastAPI:
     from app.web_dashboard.routes import watchlist as r_watchlist
     from app.web_dashboard.routes import battle_plan as r_battle_plan
     from app.web_dashboard.routes import trade_intel as r_trade_intel
+    from app.web_dashboard.routes import playbook as r_playbook
     from app.web_dashboard.routes import ws as r_ws
 
     r_dashboard.register(app, templates, dashboard)
@@ -295,6 +295,7 @@ def create_app() -> FastAPI:
     r_watchlist.register(app, templates)
     r_battle_plan.register(app, templates)
     r_trade_intel.register(app, templates)
+    r_playbook.register(app, templates)
     r_ws.register(app)
 
     logger.info("Dashboard v2.0 已创建 (路由模块化 + DataService 共享缓存)")

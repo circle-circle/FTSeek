@@ -1,5 +1,4 @@
-"""
-手动下单服务 — Web Dashboard 后端
+"""手动下单服务 — Web Dashboard 后端 (薄门面 / Facade).
 
 功能:
   - 连接 Futu broker 执行手动订单
@@ -12,19 +11,24 @@
   - 每日手动下单次数限制
   - 所有操作写 audit log
   - 实盘下单需二次确认
+
+架构 (Task #26 重构, 2026-06-15):
+  本文件是 Facade — 公共方法签名保持不变, 内部逻辑委派到 ``order/`` 子模块:
+    - app.web_dashboard.order.validator : 风控/参数校验
+    - app.web_dashboard.order.executor  : Futu API 调用 (下单/平仓/撤单/止损)
+    - app.web_dashboard.order.audit     : DB 写入 / WebSocket 推送
+    - app.web_dashboard.order.thesis    : auto-thesis 入场/出场上下文
 """
 
 import os
-import json
-import sqlite3
 import logging
+import sqlite3
+import threading
 import time
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Any, Optional, List
-from dataclasses import dataclass, asdict
-
-SQL_TAKEOVER = """INSERT INTO open_positions (symbol, direction, size, avg_entry_price, owner, sync_status, updated_at) VALUES (?, ?, ?, ?, ?, 'synced', ?) ON CONFLICT(symbol) DO UPDATE SET direction=excluded.direction, size=excluded.size, avg_entry_price=excluded.avg_entry_price, owner=excluded.owner, sync_status='synced', updated_at=excluded.updated_at"""
+from typing import Any, Dict, List, Optional
 
 
 logger = logging.getLogger("ftseek_us.manual_order_service")
@@ -32,7 +36,7 @@ logger = logging.getLogger("ftseek_us.manual_order_service")
 
 @dataclass
 class ManualOrder:
-    """手动订单数据结构"""
+    """手动订单数据结构."""
     symbol: str
     direction: str          # "LONG" or "SHORT"
     action: str             # "BUY" or "SELL"
@@ -43,6 +47,9 @@ class ManualOrder:
     mode: str               # "simulate" or "live"
     time_in_force: str = "DAY"      # "DAY" or "GTC"
     fill_outside_rth: bool = False  # 是否允许盘前盘后成交
+    stop_loss: float = 0.0          # 止损价 (成交后自动挂 STOP 单)
+    take_profit: float = 0.0        # 止盈价 (成交后自动挂 LIMIT 单)
+    acknowledge_price_warning: bool = False  # 前端确认价格偏离警告
     timestamp: str = ""
     order_id: str = ""
     status: str = "pending"  # pending, submitted, filled, rejected, error
@@ -50,14 +57,21 @@ class ManualOrder:
 
 
 class ManualOrderService:
-    """手动下单服务"""
+    """手动下单服务 (Facade).
 
-    # 安全限制
+    所有公共方法签名与原实现保持一致, 业务逻辑委派到 ``app.web_dashboard.order``
+    下的子模块。共享状态 (broker 连接 / 锁 / 幂等表) 仍由本类持有, 子模块通过
+    ``service`` 参数访问。
+    """
+
+    # ── 安全限制 ──────────────────────────────────────────────
     MAX_ORDER_VALUE_USD = 50_000       # 单笔最大金额 $50K
     # P0-2 修复 (2026-06-12): 平仓金额上限 (单笔), 防止误操作一次性平掉超大仓位
     MAX_CLOSE_VALUE_USD = 200_000      # 平仓单笔金额上限 $200K
     MAX_DAILY_MANUAL_ORDERS = 20       # 每日最大手动下单次数
     LIVE_CONFIRM_KEYWORD = "CONFIRM"   # 实盘确认关键词
+    PRICE_DEVIATION_WARN_PCT = 5.0     # 限价偏离市价 ≥5% 警告
+    PRICE_DEVIATION_HARD_PCT = 10.0    # 限价偏离市价 ≥10% 硬拦截
 
     def __init__(self):
         self._broker_ctx = None
@@ -66,23 +80,30 @@ class ManualOrderService:
         self._db_path = None
         self._last_health_check = 0  # 健康检查时间戳
         self._health_check_ttl = 10  # 健康检查间隔 (秒)
+        # P0 2026-06-15: 并发保护 — 防止双击/网络重试导致重复下单
+        self._order_lock = threading.Lock()
+        self._close_lock = threading.Lock()
+        self._recent_keys: Dict[str, float] = {}  # idempotency_key → timestamp
+        self._idempotency_ttl = 60  # 幂等 key 有效期 (秒)
+
+    # ── 基础工具 (DB / 环境 / 模式) ───────────────────────────
 
     def _db(self) -> sqlite3.Connection:
-        """P0-4 修复 (2026-06-12): 统一安全 SQLite 连接 (timeout + WAL + busy_timeout)"""
+        """P0-4 修复 (2026-06-12): 统一安全 SQLite 连接 (timeout + WAL + busy_timeout)."""
         conn = sqlite3.connect(self._get_db_path(), timeout=10)
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA busy_timeout=5000")
         return conn
 
     def _get_db_path(self) -> str:
-        """获取当前模式对应的 DB 路径"""
+        """获取当前模式对应的 DB 路径."""
         if self._db_path is None:
             from app.core.db_utils import get_main_db
             self._db_path = str(get_main_db())
         return self._db_path
 
     def _is_live(self) -> bool:
-        """从 .env.us 实时读取 (无需重启进程)"""
+        """从 .env.us 实时读取 (无需重启进程)."""
         env_file = Path(__file__).parent.parent.parent / ".env.us"
         if env_file.exists():
             with open(env_file) as f:
@@ -92,7 +113,7 @@ class ManualOrderService:
         return os.getenv("TRADE_ENV", "1").strip() == "0"
 
     def _read_env(self, key: str, default: str = "") -> str:
-        """从 .env.us 读取环境变量 (无需重启进程)"""
+        """从 .env.us 读取环境变量 (无需重启进程)."""
         env_file = Path(__file__).parent.parent.parent / ".env.us"
         if env_file.exists():
             with open(env_file) as f:
@@ -108,54 +129,36 @@ class ManualOrderService:
             return "live_conservative" if conservative else "live_normal"
         return "simulate"
 
-    # ─────────────────────────────────────────────────────────────
-    # Broker 连接管理
-    # ─────────────────────────────────────────────────────────────
-
     def _trd_env(self):
-        """获取当前交易环境 (避免重复代码)"""
+        """获取当前交易环境 (避免重复代码)."""
         from futu import TrdEnv
         return TrdEnv.REAL if self._is_live() else TrdEnv.SIMULATE
 
     def _acc_id(self) -> int:
-        """获取当前账户 ID"""
+        """获取当前账户 ID."""
         return int(self._read_env(
             "REAL_ACCOUNT_ID" if self._is_live() else "SIMULATE_ACCOUNT_ID", "0"
         ))
 
-    def connect(self) -> bool:
-        """连接到 Futu broker
+    # ── Broker 连接管理 ──────────────────────────────────────
 
-        Auto-reconnect (2026-06-11): 如果连接断开，重置状态后重试。
-        健康检查 TTL (2026-06-12): 10s 内不重复 ping, 减少 RPC 调用。
+    def connect(self) -> bool:
+        """连接到 Futu broker.
+
+        简化版: 仅检查 _connected 标志，不做 accinfo_query 健康探测。
+        连接断了由调用方 catch 异常后 disconnect+reconnect。
         """
         if self._connected and self._broker_ctx:
-            # TTL 健康检查: 10s 内跳过, 避免每次调用都 ping accinfo
-            import time as _time
-            now = _time.time()
-            if now - self._last_health_check < self._health_check_ttl:
-                return True
-
-            try:
-                from futu import RET_OK
-                ret, _ = self._broker_ctx.accinfo_query(trd_env=self._trd_env(), acc_id=self._acc_id())
-                self._last_health_check = now
-                if ret == RET_OK:
-                    return True
-                logger.warning("[手动下单] 健康检查失败，保持连接")
-                return True
-            except Exception:
-                logger.warning("[手动下单] 连接已断开，正在重连...")
-                self.disconnect()
+            return True
 
         try:
             from futu import (
                 OpenQuoteContext, OpenSecTradeContext,
-                TrdMarket, TrdEnv, RET_OK,
+                TrdMarket, RET_OK,
             )
 
-            host = os.getenv("OPEND_HOST", "127.0.0.1")
-            port = int(os.getenv("OPEND_PORT", "11111"))
+            host = os.getenv("FUTU_OPEND_HOST", "127.0.0.1")
+            port = int(os.getenv("FUTU_OPEND_PORT", "11111"))
 
             self._quote_ctx = OpenQuoteContext(host=host, port=port)
             self._broker_ctx = OpenSecTradeContext(
@@ -177,8 +180,14 @@ class ManualOrderService:
                     return False
                 logger.info("[手动下单] ✅ 实盘已解锁")
 
+            # 注册 OCO handler（事件驱动止损止盈配对取消）
+            from app.web_dashboard.order.oco_handler import OCOHandler
+            self._oco_handler = OCOHandler(self)
+            self._broker_ctx.set_handler(self._oco_handler)
+
             self._connected = True
             self._last_health_check = time.time()
+            self._ensure_lifecycle_columns()  # 幂等确保 lifecycle 列存在
             logger.info(f"[手动下单] 连接成功 ({'实盘' if self._is_live() else '模拟盘'})")
             return True
 
@@ -187,7 +196,7 @@ class ManualOrderService:
             return False
 
     def disconnect(self):
-        """断开连接"""
+        """断开连接."""
         if self._quote_ctx:
             try:
                 self._quote_ctx.close()
@@ -200,12 +209,10 @@ class ManualOrderService:
                 pass
         self._connected = False
 
-    # ─────────────────────────────────────────────────────────────
-    # 报价查询
-    # ─────────────────────────────────────────────────────────────
+    # ── 报价查询 ─────────────────────────────────────────────
 
     def get_quote(self, symbol: str) -> Dict[str, Any]:
-        """获取报价 (snapshot 稳定可靠, 盘中盘后均可用)"""
+        """获取报价 (snapshot 稳定可靠, 盘中盘后均可用)."""
         if not self.connect():
             return {"symbol": symbol, "error": "broker_not_connected"}
 
@@ -234,11 +241,11 @@ class ManualOrderService:
                 }
 
             return {"symbol": symbol, "error": "no_data"}
-        except Exception as e:
-            return {"symbol": symbol, "error": str(e)}
+        except Exception:
+            return {"symbol": symbol, "error": "quote_fetch_failed"}
 
     def _batch_quotes(self, symbols: list) -> Dict[str, float]:
-        """批量获取报价，返回 {symbol: price}"""
+        """批量获取报价，返回 {symbol: price}."""
         if not symbols or not self.connect():
             return {}
         try:
@@ -269,1083 +276,136 @@ class ManualOrderService:
             logger.error(f"[批量报价] 失败: {e}")
             return {}
 
-    # ─────────────────────────────────────────────────────────────
-    # 风控校验
-    # ─────────────────────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────
+    # 委派到 validator
+    # ─────────────────────────────────────────────────────────
 
     def validate_order(self, order: ManualOrder) -> List[str]:
-        """校验订单，返回错误列表 (空列表 = 通过)"""
-        errors = []
-
-        # 0. [P0 2026-06-13] Kill Switch 检查 (最高优先级)
-        try:
-            from app.us_pipeline.emergency_interceptor import check_kill_switch
-            if check_kill_switch():
-                errors.append("🚨 紧急停止开关已激活，所有交易被拦截")
-                return errors
-        except Exception as _ks_err:
-            logger.debug(f"[手动下单] Kill Switch 检查跳过: {_ks_err}")
-
-        # 1. 基础参数校验
-        if not order.symbol:
-            errors.append("标的代码不能为空")
-        if order.direction not in ("LONG", "SHORT"):
-            errors.append(f"方向无效: {order.direction} (必须 LONG 或 SHORT)")
-        if order.action not in ("BUY", "SELL"):
-            errors.append(f"操作无效: {order.action} (必须 BUY 或 SELL)")
-        if order.quantity <= 0:
-            errors.append(f"数量必须大于 0: {order.quantity}")
-        if order.quantity > 10000:
-            errors.append(f"数量过大: {order.quantity} (上限 10000)")
-        if order.order_type == "LIMIT" and (not order.price or order.price <= 0):
-            errors.append("限价单必须指定价格")
-        if order.fill_outside_rth and order.order_type == "MARKET":
-            errors.append("盘前盘后时段不支持市价单，请使用限价单")
-
-        # 2. 金额上限校验
-        quote = self.get_quote(order.symbol)
-        cur_price = quote.get("cur_price", 0)
-        if cur_price > 0:
-            order_value = order.quantity * cur_price
-            if order_value > self.MAX_ORDER_VALUE_USD:
-                errors.append(
-                    f"订单金额 ${order_value:,.0f} 超过上限 ${self.MAX_ORDER_VALUE_USD:,.0f}"
-                )
-
-        # 3. 每日手动下单次数限制
-        daily_count = self._count_today_manual_orders()
-        if daily_count >= self.MAX_DAILY_MANUAL_ORDERS:
-            errors.append(
-                f"今日手动下单已达 {daily_count} 次 (上限 {self.MAX_DAILY_MANUAL_ORDERS})"
-            )
-
-        # 4. 理由可选 (不再强制)
-
-        # 5. 实盘额外校验
-        if self._is_live():
-            allow = self._read_env("ALLOW_REAL_TRADING", "false").lower()
-            if allow != "true":
-                errors.append("ALLOW_REAL_TRADING 未设为 true，实盘下单被拦截")
-
-        # 6. [P1 2026-06-13] PDT Guard (实盘 only)
-        if self._is_live() and cur_price > 0:
-            try:
-                from app.risk.pdt_guard import PDTGuard
-                _pdt = PDTGuard()
-                _pdt_ok, _pdt_reason, _pdt_level = _pdt.check_trade_permission(is_overnight=False)
-                if not _pdt_ok:
-                    errors.append(f"PDT 风控拦截: {_pdt_reason}")
-            except Exception as _pdt_err:
-                logger.debug(f"[手动下单] PDT 检查跳过: {_pdt_err}")
-
-        # 7. [P1 2026-06-13] 仓位集中度检查 (25%/65%/80%)
-        # P0-fix (2026-06-14): 扩展到 SELL+SHORT (开新空仓), 原仅 BUY 被绕过
-        _is_opening = (
-            (order.action == "BUY" and order.direction == "LONG")
-            or (order.action == "SELL" and order.direction == "SHORT")
-        )
-        if cur_price > 0 and _is_opening:
-            try:
-                from app.risk.pre_trade_gate import pre_trade_safety_check
-                _dir = order.direction
-                _ok, _max_qty, _reason = pre_trade_safety_check(
-                    symbol=order.symbol, direction=_dir,
-                    quantity=order.quantity, price=cur_price,
-                )
-                if not _ok:
-                    errors.append(f"仓位限制: {_reason}")
-            except Exception as _pt_err:
-                logger.debug(f"[手动下单] 仓位检查跳过: {_pt_err}")
-
-        # 7.5. [P0 2026-06-14] 购买力检查 (开仓前必须有足够 buying_power)
-        if cur_price > 0 and _is_opening:
-            try:
-                from app.risk.capital_safety import get_capital_safety_system
-                _bp = get_capital_safety_system()._state.buying_power
-                _order_value = order.quantity * cur_price
-                if _bp > 0 and _order_value > _bp:
-                    errors.append(
-                        f"购买力不足: 订单 ${_order_value:,.0f} > 可用 ${_bp:,.0f}"
-                    )
-            except Exception as _bp_err:
-                logger.debug(f"[手动下单] 购买力检查跳过: {_bp_err}")
-
-        # 8. [P1 2026-06-13] 日回撤熔断 (已实现亏损 > 3% equity)
-        # P0-fix (2026-06-14): 使用 scheduler 的共享 DrawdownController 实例,
-        # 而非 fresh instance (零历史, 永远放行)
-        try:
-            import importlib
-            _sc_mod = importlib.import_module("app.core.scheduler_core")
-            _sched = getattr(_sc_mod, "_scheduler_instance", None)
-            _dd = getattr(getattr(_sched, "risk_engine", None), "drawdown_controller", None) if _sched else None
-            if _dd is not None and not _dd.is_trading_allowed():
-                _dd_reason = _dd.get_block_reason() or "日回撤超限"
-                errors.append(f"回撤熔断: {_dd_reason}")
-        except Exception as _dd_err:
-            logger.debug(f"[手动下单] 回撤检查跳过: {_dd_err}")
-
-        # 9. [P0 2026-06-13] 资本安全水位检查 (手动下单也须尊重 BLACKOUT 硬熔断)
-        # 设计: BLACKOUT(>-35%) 硬阻断; RED/ORANGE 仅警告不阻断 (手动=人风控层)
-        try:
-            from app.risk.capital_safety import get_capital_safety_system, WaterLevel
-            _cs = get_capital_safety_system()
-            _cs_ok, _cs_msg = _cs.can_open_position()
-            if not _cs_ok:
-                _wl = getattr(_cs._state, 'water_level', None)
-                if _wl == WaterLevel.BLACKOUT:
-                    errors.append(f"🚨 资本安全 BLACKOUT 熔断: {_cs_msg}")
-                elif _wl == WaterLevel.RED:
-                    logger.warning(f"[手动下单] ⚠️ 资本安全 RED 警告: {_cs_msg} (不阻断手动)")
-        except Exception as _cs_err:
-            logger.debug(f"[手动下单] 资本安全检查跳过: {_cs_err}")
-
-        return errors
+        """校验订单, 返回错误列表 (空列表 = 通过)."""
+        from app.web_dashboard.order.validator import validate_order
+        return validate_order(self, order)
 
     def _count_today_manual_orders(self) -> int:
-        """统计今日手动下单次数"""
-        try:
-            conn = self._db()
-            today = datetime.now().strftime("%Y-%m-%d")
-            count = conn.execute(
-                "SELECT COUNT(*) FROM manual_order_audit WHERE timestamp LIKE ?",
-                (f"{today}%",)
-            ).fetchone()[0]
-            conn.close()
-            return count
-        except Exception:
-            return 0
+        from app.web_dashboard.order.validator import count_today_manual_orders
+        return count_today_manual_orders(self)
 
-    # ─────────────────────────────────────────────────────────────
-    # 订单执行
-    # ─────────────────────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────
+    # 委派到 executor
+    # ─────────────────────────────────────────────────────────
 
-    def submit_order(self, order: ManualOrder) -> Dict[str, Any]:
-        """提交订单到 Futu broker"""
+    def submit_order(self, order: ManualOrder, idempotency_key: str = None) -> Dict[str, Any]:
+        """提交订单到 Futu broker (带锁 + 幂等保护)."""
+        from app.web_dashboard.order.executor import submit_order
+        return submit_order(self, order, idempotency_key)
 
-        # 1. 风控校验
-        errors = self.validate_order(order)
-        if errors:
-            order.status = "rejected"
-            order.error_msg = "; ".join(errors)
-            self._write_audit(order)
-            return {"success": False, "errors": errors, "order": asdict(order)}
-
-        # 2. 连接 broker
-        if not self.connect():
-            order.status = "error"
-            order.error_msg = "Broker 连接失败"
-            self._write_audit(order)
-            return {"success": False, "error": "broker_connection_failed"}
-
-        # 3. 执行下单
-        try:
-            from futu import TrdEnv, TrdSide, OrderType as FutuOrderType, TimeInForce, RET_OK
-
-            trd_env = TrdEnv.REAL if self._is_live() else TrdEnv.SIMULATE
-
-            # 方向映射
-            if order.action == "BUY":
-                trd_side = TrdSide.BUY
-            elif order.action == "SELL":
-                trd_side = TrdSide.SELL
-            else:
-                # 从 direction 推断
-                trd_side = TrdSide.BUY if order.direction == "LONG" else TrdSide.SELL
-
-            # 订单类型
-            if order.order_type == "LIMIT" and order.price:
-                futu_order_type = FutuOrderType.NORMAL
-                price = order.price
-            else:
-                futu_order_type = FutuOrderType.MARKET
-                price = 0  # MARKET 单价格为 0
-
-            # 获取账户 ID
-            if self._is_live():
-                acc_id = int(self._read_env("REAL_ACCOUNT_ID", "0"))
-            else:
-                acc_id = int(self._read_env("SIMULATE_ACCOUNT_ID", "0"))
-
-            order.timestamp = datetime.now().isoformat()
-            order.mode = self._get_mode_label()
-
-            # 有效期映射
-            tif = TimeInForce.GTC if order.time_in_force == "GTC" else TimeInForce.DAY
-
-            logger.info(
-                f"[手动下单] 提交: {order.symbol} {order.action} {order.quantity}股 "
-                f"{'限价$'+str(price) if price else '市价'} "
-                f"TIF={order.time_in_force} RTH外={'是' if order.fill_outside_rth else '否'} "
-                f"环境={'实盘' if self._is_live() else '模拟'}"
-            )
-
-            ret, data = self._broker_ctx.place_order(
-                price=price,
-                qty=order.quantity,
-                code=order.symbol,
-                trd_side=trd_side,
-                order_type=futu_order_type,
-                trd_env=trd_env,
-                acc_id=acc_id,
-                time_in_force=tif,
-                fill_outside_rth=order.fill_outside_rth,
-            )
-
-            if ret == RET_OK:
-                order.order_id = str(data.iloc[0]["order_id"]) if not data.empty else ""
-                order.status = "submitted"
-                logger.info(f"[手动下单] ✅ 订单提交成功: order_id={order.order_id}")
-                # 标记为手动持仓, 避免被系统退出监控误平
-                self._mark_position_manual(order.symbol, order.direction)
-                # PDT 记录移至平仓时 — 开仓不计入 day trade (P0 2026-06-11)
-                # WebSocket 实时推送
-                try:
-                    from app.web_dashboard.routes.ws import publish_event_sync
-                    publish_event_sync("order_update", {
-                        "order_id": order.order_id, "status": "submitted",
-                        "symbol": order.symbol, "side": order.action,
-                        "qty": order.quantity, "price": price,
-                    })
-                except ImportError:
-                    pass
-            else:
-                order.status = "error"
-                order.error_msg = str(data)
-                logger.error(f"[手动下单] ❌ 订单提交失败: {data}")
-                try:
-                    from app.web_dashboard.routes.ws import publish_event_sync
-                    publish_event_sync("order_update", {
-                        "order_id": "", "status": "error",
-                        "symbol": order.symbol, "error": str(data),
-                    })
-                except ImportError:
-                    pass
-
-        except Exception as e:
-            order.status = "error"
-            order.error_msg = str(e)
-            logger.error(f"[手动下单] 下单异常: {e}")
-
-        # 4. 写审计日志
-        self._write_audit(order)
-
-        return {
-            "success": order.status == "submitted",
-            "order": asdict(order),
-        }
-
-    def close_position(self, symbol: str, reason: str, close_qty: int = 0, price: float = None) -> Dict[str, Any]:
-        """
-        平仓指定持仓
-
-        Args:
-            symbol: 标的代码
-            reason: 平仓理由
-            close_qty: 平仓数量 (0=全平, >0=部分平仓)
-            price: 限价 (None=市价平仓, >0=限价平仓用于止损/止盈)
-        """
-        if not self.connect():
-            return {"success": False, "error": "broker_connection_failed"}
-
-        # P0-2 修复 (2026-06-12): 实盘平仓也需要 ALLOW_REAL_TRADING=true 兜底
-        # 防止切回模拟盘后 broker_ctx 仍活跃造成误下实盘单
-        if self._is_live():
-            allow = self._read_env("ALLOW_REAL_TRADING", "false").lower()
-            if allow != "true":
-                logger.error(f"[手动平仓] {symbol} 拦截: ALLOW_REAL_TRADING != true (实盘平仓被拒绝)")
-                return {"success": False, "error": "ALLOW_REAL_TRADING 未设为 true，实盘平仓被拦截"}
-
-        try:
-            from futu import TrdEnv, TrdSide, OrderType as FutuOrderType, RET_OK
-
-            trd_env = TrdEnv.REAL if self._is_live() else TrdEnv.SIMULATE
-            if self._is_live():
-                acc_id = int(self._read_env("REAL_ACCOUNT_ID", "0"))
-            else:
-                acc_id = int(self._read_env("SIMULATE_ACCOUNT_ID", "0"))
-
-            # 查询当前持仓
-            ret, positions = self._broker_ctx.position_list_query(
-                trd_env=trd_env, acc_id=acc_id,
-            )
-            if ret != RET_OK:
-                return {"success": False, "error": f"持仓查询失败: {positions}"}
-
-            pos = positions[positions["code"] == symbol]
-            if pos.empty:
-                return {"success": False, "error": f"未找到 {symbol} 的持仓"}
-
-            row = pos.iloc[0]
-            raw_qty = float(row.get("qty", 0))
-            if raw_qty == 0:
-                return {"success": False, "error": f"{symbol} 持仓数量为 0"}
-
-            # 根据持仓方向决定平仓方向
-            side = str(row.get("position_side", "")).upper()
-            is_long = not ((raw_qty < 0) or (side == "SHORT"))
-            position_dir = "LONG" if is_long else "SHORT"
-            total_qty = int(abs(raw_qty))
-            close_side = TrdSide.SELL if is_long else TrdSide.BUY  # 平多卖, 平空买
-
-            # 部分平仓 vs 全平
-            if close_qty <= 0 or close_qty >= total_qty:
-                qty = total_qty
-                close_type = "全平"
-            else:
-                qty = close_qty
-                close_type = f"部分({qty}/{total_qty})"
-
-            logger.info(
-                f"[手动平仓] {symbol}: {close_type} {position_dir}, "
-                f"平仓动作={'SELL' if is_long else 'BUY'}, 数量={qty}"
-            )
-
-            # 限价 or 市价
-            is_limit = price is not None and price > 0
-            futu_order_type = FutuOrderType.NORMAL if is_limit else FutuOrderType.MARKET
-            order_price = price if is_limit else 0
-            order_type_label = f"LIMIT@${price:.2f}" if is_limit else "MARKET"
-
-            # P0-2 修复 (2026-06-12): 平仓金额上限校验 (限价单按指定价, 市价单按持仓成本估算)
-            try:
-                _ref_price = price if is_limit else float(row.get("cost_price", 0) or 0)
-                if _ref_price > 0:
-                    _est_value = qty * _ref_price
-                    if _est_value > self.MAX_CLOSE_VALUE_USD:
-                        logger.error(
-                            f"[手动平仓] {symbol} 拦截: 估算金额 ${_est_value:,.0f} "
-                            f"超过平仓上限 ${self.MAX_CLOSE_VALUE_USD:,.0f}"
-                        )
-                        return {
-                            "success": False,
-                            "error": f"平仓金额 ${_est_value:,.0f} 超过单笔上限 ${self.MAX_CLOSE_VALUE_USD:,.0f}",
-                        }
-            except Exception as _check_err:
-                logger.warning(f"[手动平仓] 金额校验失败 (放行): {_check_err}")
-
-            # 构造审计订单
-            order = ManualOrder(
-                symbol=symbol,
-                direction=position_dir,
-                action="SELL" if is_long else "BUY",
-                quantity=qty,
-                order_type="LIMIT" if is_limit else "MARKET",
-                price=price if is_limit else None,
-                reason=f"[{close_type}] {reason}",
-                mode=self._get_mode_label(),
-            )
-
-            ret, data = self._broker_ctx.place_order(
-                price=order_price,
-                qty=qty,
-                code=symbol,
-                trd_side=close_side,
-                order_type=futu_order_type,
-                trd_env=trd_env,
-                acc_id=acc_id,
-            )
-
-            if ret == RET_OK:
-                order.order_id = str(data.iloc[0]["order_id"]) if not data.empty else ""
-                order.status = "submitted"
-                logger.info(f"[手动平仓] ✅ {symbol} 平仓成功: {int(qty)}股")
-                self._mark_position_manual(symbol, position_dir)
-
-                # P1-5 (2026-06-14): 通知 ExitMonitor 清理 trail_state
-                # 防止: 手动平仓后 trail_state 残留 → 重启 ghost 恢复时带旧状态触发错误退出
-                try:
-                    from app.risk.trail_state_store import get_trail_state_store
-                    _ts_store = get_trail_state_store()
-                    _ts_store.delete(symbol)
-                    logger.info(f"[手动平仓] {symbol} trail_state 已清理")
-                except Exception as _ts_err:
-                    logger.debug(f"[手动平仓] trail_state 清理跳过: {_ts_err}")
-
-                # P1-5 (2026-06-14): 从 position_store 移除 (如果存在)
-                # position_sync 周期性运行也会清理, 这里是即时通知减少延迟窗口
-                try:
-                    import importlib
-                    _sc_mod = importlib.import_module("app.core.scheduler_core")
-                    _sched = getattr(_sc_mod, "_scheduler_instance", None)
-                    if _sched and hasattr(_sched, 'position_store') and _sched.position_store.has(symbol):
-                        _sched.position_store.remove(symbol)
-                        logger.info(f"[手动平仓] {symbol} 已从 position_store 移除")
-                except Exception as _ps_err:
-                    logger.debug(f"[手动平仓] position_store 清理跳过 (position_sync 会兜底): {_ps_err}")
-                # PDT 日内交易记录: 平仓时判断是否 round trip (P0 2026-06-11)
-                try:
-                    from app.risk.pdt_guard import get_pdt_guard
-                    get_pdt_guard().record_close(symbol, row.get("open_date", row.get("entry_time")))
-                except Exception as _pdt_err:
-                    logger.debug(f"[手动平仓] PDT 记录失败 (不影响平仓): {_pdt_err}")
-
-                # 2026-06-10: 写入 trade_records 形成手动交易闭环
-                # P1-6 (2026-06-12): 优先用 broker dealt_avg_price 精确回填 exit_price
-                # 2026-06-13: 先验证订单是否真正成交 (防止 cancelled 订单写入虚假记录)
-                try:
-                    import time as _t
-                    # 等待 1s 让 broker 成交回报写入 (市价单一般立即成交, 限价单可能延迟)
-                    _t.sleep(1.0)
-                    _precise_exit = self._fetch_dealt_avg_price(
-                        order.order_id, trd_env, acc_id, retries=3, delay=1.0
-                    )
-                    if _precise_exit and _precise_exit > 0:
-                        _exit_px = _precise_exit
-                    else:
-                        # 检查订单状态: 如果已取消则不写入 trade_records
-                        try:
-                            _ret2, _data2 = self._broker_ctx.order_list_query(
-                                order_id=order.order_id, trd_env=trd_env, acc_id=acc_id
-                            )
-                            if _ret2 == RET_OK and not _data2.empty:
-                                _order_status = str(_data2.iloc[0].get("order_status", ""))
-                                _dealt_qty = float(_data2.iloc[0].get("dealt_qty", 0) or 0)
-                                if "CANCEL" in _order_status.upper() and _dealt_qty == 0:
-                                    logger.warning(
-                                        f"[手动平仓] {symbol} 订单已取消 ({_order_status}), "
-                                        f"不写入 trade_records"
-                                    )
-                                    raise ValueError(f"Order cancelled: {_order_status}")
-                        except ValueError:
-                            raise
-                        except Exception:
-                            pass
-                        _exit_px = self._calc_exit_price(row, raw_qty)
-                        if _exit_px <= 0:
-                            # 最后兜底: 用 Futu 实时报价
-                            try:
-                                ret, snap = self._broker_ctx._quote_ctx.get_market_snapshot([symbol])
-                                if ret == RET_OK and not snap.empty:
-                                    _exit_px = float(snap.iloc[0].get("cur_price", 0) or 0)
-                            except Exception:
-                                pass
-                    self._record_manual_close(
-                        symbol=symbol,
-                        direction=position_dir,
-                        entry_price=float(row.get("cost_price", 0)),
-                        exit_price=_exit_px,
-                        quantity=int(qty),
-                        reason=f"[{close_type}] {reason}",
-                        order_id=order.order_id,
-                    )
-                    # 自动生成交易归因
-                    try:
-                        from app.analysis.trade_attribution import compute_attribution
-                        attr = compute_attribution(
-                            symbol=symbol, direction=position_dir,
-                            entry_price=float(row.get("cost_price", 0)),
-                            exit_price=_exit_px, quantity=int(qty),
-                            entry_time=row.get("entry_time", row.get("updated_at", "")),
-                            exit_time=datetime.now().isoformat(),
-                        )
-                        logger.info(f"[归因] {symbol} {position_dir}: {attr.summary} | {attr.improvement}")
-                        # 写入归因到 trade_records.metadata_json
-                        conn = self._db()
-                        try:
-                            import json as _json
-                            meta_json = _json.dumps({"attribution": attr.to_dict()}, ensure_ascii=False)
-                            conn.execute(
-                                "UPDATE trade_records SET metadata_json=? WHERE close_futu_order_id=? ORDER BY id DESC LIMIT 1",
-                                (meta_json, order.order_id),
-                            )
-                            conn.commit()
-                        finally:
-                            conn.close()
-                        
-                        # 推送归因报告到飞书
-                        try:
-                            self._push_attribution_to_feishu(attr.to_dict())
-                        except Exception as _push_err:
-                            logger.debug(f"[归因] 飞书推送失败 (不影响主流程): {_push_err}")
-                    except Exception as _attr_err:
-                        logger.debug(f"[归因] 生成失败 (不影响平仓): {_attr_err}")
-                except Exception as _rec_err:
-                    logger.warning(f"[手动平仓] trade_records 写入失败 (不影响平仓): {_rec_err}")
-            else:
-                order.status = "error"
-                order.error_msg = str(data)
-
-            self._write_audit(order)
-            return {
-                "success": order.status == "submitted",
-                "order": asdict(order),
-            }
-
-        except Exception as e:
-            logger.error(f"[手动平仓] 异常: {e}")
-            return {"success": False, "error": str(e)}
-
-    # ─────────────────────────────────────────────────────────────
-    # 订单状态查询和撤单
-    # ─────────────────────────────────────────────────────────────
+    def close_position(self, symbol: str, reason: str,
+                       close_qty: int = 0, price: float = None) -> Dict[str, Any]:
+        """平仓指定持仓 (close_qty=0 全平, 否则部分平仓)."""
+        from app.web_dashboard.order.executor import close_position
+        return close_position(self, symbol, reason, close_qty, price)
 
     def get_today_orders(self) -> List[Dict[str, Any]]:
-        """查询今日所有订单状态 (按时间倒序)"""
-        if not self.connect():
-            return []
-
-        try:
-            from futu import TrdEnv, RET_OK
-            trd_env = TrdEnv.REAL if self._is_live() else TrdEnv.SIMULATE
-            if self._is_live():
-                acc_id = int(self._read_env("REAL_ACCOUNT_ID", "0"))
-            else:
-                acc_id = int(self._read_env("SIMULATE_ACCOUNT_ID", "0"))
-
-            ret, data = self._broker_ctx.order_list_query(
-                trd_env=trd_env, acc_id=acc_id,
-            )
-            if ret != RET_OK or data.empty:
-                return []
-
-            # 过滤今日订单
-            today = datetime.now().strftime("%Y-%m-%d")
-            orders = []
-            for _, row in data.iterrows():
-                create_time = str(row.get("create_time", ""))
-                # 只保留今日创建的订单
-                if not create_time.startswith(today):
-                    continue
-                orders.append({
-                    "order_id": str(row.get("order_id", "")),
-                    "code": str(row.get("code", "")),
-                    "qty": int(row.get("qty", 0)),
-                    "price": float(row.get("price", 0)),
-                    "order_type": str(row.get("order_type", "")),
-                    "order_status": str(row.get("order_status", "")),
-                    "trd_side": str(row.get("trd_side", "")),
-                    "create_time": create_time,
-                    "update_time": str(row.get("update_time", "")),
-                    "filled_qty": int(row.get("qty", 0)) if str(row.get("order_status", "")) in ("FILLED_ALL", "FILLED_PARTIAL") else 0,
-                })
-
-            # 按创建时间倒序 (最新在前)
-            orders.sort(key=lambda x: x["create_time"], reverse=True)
-            return orders
-        except Exception as e:
-            logger.error(f"[订单查询] 异常: {e}")
-            return []
+        """查询今日所有订单状态 (按时间倒序)."""
+        from app.web_dashboard.order.executor import get_today_orders
+        return get_today_orders(self)
 
     def cancel_order(self, order_id: str) -> Dict[str, Any]:
-        """撤销指定订单"""
-        if not self.connect():
-            return {"success": False, "error": "broker_connection_failed"}
+        """撤销指定订单."""
+        from app.web_dashboard.order.executor import cancel_order
+        return cancel_order(self, order_id)
 
-        try:
-            from futu import TrdEnv, RET_OK, ModifyOrderOp
-            trd_env = TrdEnv.REAL if self._is_live() else TrdEnv.SIMULATE
-            if self._is_live():
-                acc_id = int(self._read_env("REAL_ACCOUNT_ID", "0"))
-            else:
-                acc_id = int(self._read_env("SIMULATE_ACCOUNT_ID", "0"))
-
-            ret, data = self._broker_ctx.modify_order(
-                modify_order_op=ModifyOrderOp.CANCEL,
-                order_id=order_id,
-                qty=0,
-                price=0,
-                trd_env=trd_env,
-                acc_id=acc_id,
-            )
-
-            if ret == RET_OK:
-                logger.info(f"[撤单] ✅ {order_id} 撤销成功")
-                return {"success": True, "message": f"订单 {order_id} 已撤销"}
-            else:
-                logger.error(f"[撤单] ❌ {order_id} 撤销失败: {data}")
-                return {"success": False, "error": str(data)}
-
-        except Exception as e:
-            logger.error(f"[撤单] 异常: {e}")
-            return {"success": False, "error": str(e)}
-
-    # ─────────────────────────────────────────────────────────────
-    # LEGACY 持仓托管 (P1-2 修复 2026-06-12)
-    # ─────────────────────────────────────────────────────────────
-
-    def takeover_position(self, symbol, owner="manual"):
+    def takeover_position(self, symbol, owner: str = "manual"):
         """P1-2 (2026-06-12): import broker LEGACY position into open_positions."""
-        if not symbol or not symbol.startswith("US."):
-            return {"success": False, "error": "invalid symbol"}
-        if owner not in ("manual", "auto"):
-            owner = "manual"
-        try:
-            self.connect()
-            if self._broker_ctx is None:
-                return {"success": False, "error": "broker not connected"}
-            trd_env, acc_id = self._trd_env(), self._acc_id()
-            ret, positions = self._broker_ctx.position_list_query(trd_env=trd_env, acc_id=acc_id)
-            if ret != 0:
-                return {"success": False, "error": f"position query failed: {positions}"}
-            pos = positions[positions["code"] == symbol]
-            if pos.empty:
-                return {"success": False, "error": f"no broker position for {symbol}"}
-            row = pos.iloc[0]
-            qty = float(row.get("qty", 0))
-            if qty == 0:
-                return {"success": False, "error": f"{symbol} qty=0"}
-            cost = float(row.get("cost_price", 0)) or float(row.get("nominal_price", 0))
-            side = str(row.get("position_side", "")).upper()
-            direction = "SHORT" if (qty < 0 or side == "SHORT") else "LONG"
-            qty_abs = abs(qty)
-        except Exception as e:
-            return {"success": False, "error": f"read broker pos failed: {e}"}
-        try:
-            with self._db() as conn:
-                exist = conn.execute("SELECT symbol, owner FROM open_positions WHERE symbol=?", (symbol,)).fetchone()
-                if exist:
-                    return {"success": False, "error": f"{symbol} already in DB (owner={exist[1]})"}
-                now = datetime.now().isoformat()
-                conn.execute(SQL_TAKEOVER, (symbol, direction, qty_abs, cost, owner, now))
-                conn.commit()
-        except Exception as e:
-            return {"success": False, "error": f"DB write failed: {e}"}
-        logger.warning(f"[Takeover] {symbol} imported dir={direction} qty={qty_abs} cost={cost} owner={owner}")
-        return {"success": True, "symbol": symbol, "direction": direction, "quantity": qty_abs, "cost_price": cost, "owner": owner, "message": f"{symbol} imported ({owner})"}
-
-    # ─────────────────────────────────────────────────────────────
-    # 止损单管理 (P0-3 修复 2026-06-12)
-    # ─────────────────────────────────────────────────────────────
-
-    def _ensure_sl_column(self):
-        """运行时为 open_positions 添加 sl_broker_order_id 列 (幂等)"""
-        try:
-            conn = self._db()
-            try:
-                conn.execute("ALTER TABLE open_positions ADD COLUMN sl_broker_order_id TEXT")
-                conn.commit()
-                logger.info("[止损] open_positions 表已添加 sl_broker_order_id 列")
-            except sqlite3.OperationalError:
-                pass  # 列已存在
-            conn.close()
-        except Exception as e:
-            logger.warning(f"[止损] 添加 sl_broker_order_id 列失败 (不影响业务): {e}")
-
-    def _cancel_broker_order(self, order_id: str) -> bool:
-        """内部辅助: 撤销 broker 订单, 返回是否成功 (用于 SL 单替换)"""
-        try:
-            from futu import TrdEnv, RET_OK, ModifyOrderOp
-            trd_env = TrdEnv.REAL if self._is_live() else TrdEnv.SIMULATE
-            if self._is_live():
-                acc_id = int(self._read_env("REAL_ACCOUNT_ID", "0"))
-            else:
-                acc_id = int(self._read_env("SIMULATE_ACCOUNT_ID", "0"))
-            ret, _ = self._broker_ctx.modify_order(
-                modify_order_op=ModifyOrderOp.CANCEL,
-                order_id=order_id, qty=0, price=0,
-                trd_env=trd_env, acc_id=acc_id,
-            )
-            return ret == RET_OK
-        except Exception:
-            return False
+        from app.web_dashboard.order.executor import takeover_position
+        return takeover_position(self, symbol, owner)
 
     def modify_stop_loss(self, symbol: str, new_sl: float) -> Dict[str, Any]:
-        """修改持仓止损 — 撤销旧 STOP 单 + 下新 STOP 单 + 更新 DB
+        """修改持仓止损 — 撤销旧 STOP 单 + 下新 STOP 单 + 更新 DB."""
+        from app.web_dashboard.order.executor import modify_stop_loss
+        return modify_stop_loss(self, symbol, new_sl)
 
-        关键: 之前 routes/trade.py 仅 UPDATE DB current_sl, 不下 broker 单 →
-        程序退出后止损不存在, 实盘风险极高。
-        模拟盘: Futu SIMULATE 不支持 STOP, 仅更新 DB (graceful degrade)。
-        """
-        if new_sl <= 0:
-            return {"success": False, "error": "止损价必须 > 0"}
+    def _check_idempotency(self, key: Optional[str]) -> bool:
+        from app.web_dashboard.order.executor import check_idempotency
+        return check_idempotency(self, key)
 
-        # 1. 确保 DB 列存在
-        self._ensure_sl_column()
-
-        # 2. 查询当前持仓 (从 broker 拿 size + direction)
-        if not self.connect():
-            return {"success": False, "error": "broker_connection_failed"}
-
-        try:
-            from futu import TrdEnv, TrdSide, OrderType as FutuOrderType, RET_OK
-
-            trd_env = TrdEnv.REAL if self._is_live() else TrdEnv.SIMULATE
-            if self._is_live():
-                acc_id = int(self._read_env("REAL_ACCOUNT_ID", "0"))
-            else:
-                acc_id = int(self._read_env("SIMULATE_ACCOUNT_ID", "0"))
-
-            ret, positions = self._broker_ctx.position_list_query(trd_env=trd_env, acc_id=acc_id)
-            if ret != RET_OK:
-                return {"success": False, "error": f"持仓查询失败: {positions}"}
-
-            pos = positions[positions["code"] == symbol]
-            if pos.empty:
-                return {"success": False, "error": f"未找到 {symbol} 的持仓"}
-
-            row = pos.iloc[0]
-            raw_qty = float(row.get("qty", 0))
-            if raw_qty == 0:
-                return {"success": False, "error": f"{symbol} 持仓为 0"}
-
-            side = str(row.get("position_side", "")).upper()
-            is_long = not ((raw_qty < 0) or (side == "SHORT"))
-            direction = "LONG" if is_long else "SHORT"
-            qty = int(abs(raw_qty))
-
-            # 3. 查 DB 取旧 sl_broker_order_id
-            old_sl_oid = None
-            try:
-                conn = self._db()
-                cur = conn.execute(
-                    "SELECT sl_broker_order_id FROM open_positions WHERE symbol=?",
-                    (symbol,),
-                ).fetchone()
-                if cur and cur[0]:
-                    old_sl_oid = str(cur[0])
-                conn.close()
-            except Exception:
-                pass
-
-            # 4. 撤旧 STOP 单 (如果存在)
-            if old_sl_oid:
-                cancelled = self._cancel_broker_order(old_sl_oid)
-                logger.info(f"[止损·替换] {symbol} 旧 STOP 单 {old_sl_oid} 撤销{'成功' if cancelled else '失败 (可能已成交/不存在)'}")
-
-            # 5. 下新 STOP 单
-            new_oid = None
-            sl_status = "db_only"  # 默认状态 (若 broker 失败)
-            if trd_env == TrdEnv.SIMULATE:
-                logger.info(f"[止损] {symbol} 模拟盘不支持 STOP, 仅更新 DB")
-                sl_status = "simulate_db_only"
-            else:
-                # LONG → SELL STOP, SHORT → BUY STOP
-                trd_side = TrdSide.SELL if is_long else TrdSide.BUY
-                try:
-                    ret2, data2 = self._broker_ctx.place_order(
-                        price=new_sl, qty=qty, code=symbol,
-                        trd_side=trd_side,
-                        order_type=FutuOrderType.STOP,
-                        trd_env=trd_env, acc_id=acc_id,
-                    )
-                    if ret2 == RET_OK and not data2.empty:
-                        new_oid = str(data2.iloc[0].get("order_id", ""))
-                        sl_status = "broker_attached"
-                        logger.info(f"[止损] ✅ {symbol} {direction} STOP@${new_sl} qty={qty} → {new_oid}")
-                    else:
-                        logger.error(f"[止损] {symbol} STOP 单失败 (DB 仍更新): {data2}")
-                except Exception as e:
-                    logger.error(f"[止损] {symbol} 下 STOP 单异常 (DB 仍更新): {e}")
-
-            # 6. 更新 DB
-            try:
-                conn = self._db()
-                conn.execute(
-                    "UPDATE open_positions SET current_sl=?, sl_broker_order_id=?, updated_at=? WHERE symbol=?",
-                    (new_sl, new_oid, datetime.now().isoformat(), symbol),
-                )
-                conn.commit()
-                conn.close()
-            except Exception as e:
-                logger.warning(f"[止损] DB 更新失败: {e}")
-
-            return {
-                "success": True,
-                "symbol": symbol,
-                "new_sl": new_sl,
-                "broker_order_id": new_oid,
-                "status": sl_status,
-            }
-
-        except Exception as e:
-            logger.error(f"[止损] modify_stop_loss 异常: {e}")
-            return {"success": False, "error": str(e)}
-
-    # ─────────────────────────────────────────────────────────────
-    # 审计日志
-    # ─────────────────────────────────────────────────────────────
-
-    def _ensure_audit_table(self):
-        """确保审计表存在"""
-        try:
-            conn = self._db()
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS manual_order_audit (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    timestamp TEXT NOT NULL,
-                    symbol TEXT NOT NULL,
-                    direction TEXT,
-                    action TEXT,
-                    quantity INTEGER,
-                    order_type TEXT,
-                    price REAL,
-                    reason TEXT,
-                    mode TEXT,
-                    order_id TEXT,
-                    status TEXT,
-                    error_msg TEXT,
-                    time_in_force TEXT DEFAULT 'DAY',
-                    fill_outside_rth INTEGER DEFAULT 0,
-                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_manual_audit_time ON manual_order_audit(timestamp)"
-            )
-            # 兼容旧表: 尝试添加新列
-            for col_sql in ["ALTER TABLE manual_order_audit ADD COLUMN time_in_force TEXT DEFAULT 'DAY'",
-                            "ALTER TABLE manual_order_audit ADD COLUMN fill_outside_rth INTEGER DEFAULT 0"]:
-                try:
-                    conn.execute(col_sql)
-                except sqlite3.OperationalError:
-                    pass  # 列已存在
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_manual_audit_symbol ON manual_order_audit(symbol)"
-            )
-            conn.commit()
-            conn.close()
-        except Exception as e:
-            logger.error(f"[审计] 创建审计表失败: {e}")
-
-    @staticmethod
-    def _calc_exit_price(row: dict, raw_qty: float) -> float:
-        """从持仓行估算平仓价格 (近似值, 精确值需从 Futu 成交回报获取)"""
-        if raw_qty == 0:
-            return 0.0
-        cur = float(row.get("cur_price", 0) or 0)
-        if cur > 0:
-            return cur
-        val = float(row.get("val_price", 0) or 0)
-        if val > 0:
-            return val / abs(raw_qty)
-        return 0.0
+    def _cancel_broker_order(self, order_id: str) -> bool:
+        from app.web_dashboard.order.executor import cancel_broker_order
+        return cancel_broker_order(self, order_id)
 
     def _fetch_dealt_avg_price(self, order_id: str, trd_env, acc_id: int,
                                retries: int = 2, delay: float = 0.4):
-        """P1-6: 用 broker 成交回报获取精确平仓价 (dealt_avg_price)
+        from app.web_dashboard.order.executor import fetch_dealt_avg_price
+        return fetch_dealt_avg_price(self, order_id, trd_env, acc_id, retries, delay)
 
-        市价单一般立即成交,限价单可能挂单中.
-        - 仅当 dealt_qty>0 且 dealt_avg_price>0 时返回精确值
-        - 否则返回 None,调用方回退 _calc_exit_price 估算
-        """
-        if not order_id:
-            return None
-        try:
-            from futu import RET_OK
-        except Exception:
-            return None
-        for i in range(max(1, retries)):
-            try:
-                ret, data = self._broker_ctx.order_list_query(
-                    order_id=str(order_id),
-                    trd_env=trd_env, acc_id=acc_id,
-                )
-                if ret == RET_OK and not data.empty:
-                    row = data.iloc[0]
-                    dealt_qty = float(row.get("dealt_qty", 0) or 0)
-                    dealt_avg = float(row.get("dealt_avg_price", 0) or 0)
-                    if dealt_qty > 0 and dealt_avg > 0:
-                        logger.info(
-                            f"[exit_price] order={order_id} dealt_qty={dealt_qty} "
-                            f"dealt_avg_price={dealt_avg}"
-                        )
-                        return dealt_avg
-            except Exception as _e:
-                logger.debug(f"[exit_price] query attempt {i+1} failed: {_e}")
-            if i + 1 < retries:
-                try:
-                    import time as _t
-                    _t.sleep(delay)
-                except Exception:
-                    pass
-        return None
+    @staticmethod
+    def _calc_exit_price(row: dict, raw_qty: float) -> float:
+        from app.web_dashboard.order.executor import calc_exit_price
+        return calc_exit_price(row, raw_qty)
 
+    def _place_protective_stop(self, order: ManualOrder):
+        from app.web_dashboard.order.executor import place_protective_stop
+        return place_protective_stop(self, order)
 
-    def _push_attribution_to_feishu(self, attr) -> bool:
-        """推送归因报告到飞书"""
-        try:
-            import os
-            from app.observability.feishu_bot import FeishuBotAlerter
-            
-            webhook_url = os.getenv("FEISHU_WEBHOOK_URL_US")
-            if not webhook_url:
-                return False
-            
-            alerter = FeishuBotAlerter(webhook_url)
-            
-            # 构建消息
-            pnl_emoji = "🟢" if attr["pnl"] >= 0 else "🔴"
-            title = f"{pnl_emoji} FTSeek 平仓归因: {attr['symbol']}"
-            
-            # 主体内容
-            content_lines = [
-                f"{attr['direction']} | 盈亏: ${attr['pnl']:.2f} ({attr['pnl_pct']:.1f}%)",
-                f"入场: ${attr['entry_price']:.2f} → 出场: ${attr['exit_price']:.2f}",
-                f"持仓: {attr['holding_hours']:.1f}小时",
-                "",
-                "📊 归因分析:"
-            ]
-            
-            for dim in attr["dimensions"]:
-                icon = {"✅": "✅", "⚠️": "⚠️", "❌": "❌"}.get(dim["verdict"], "•")
-                content_lines.append(f"{icon} {dim['name']}: {dim['detail']}")
-            
-            if attr.get("improvement"):
-                content_lines.append("")
-                content_lines.append(f"💡 改进: {attr['improvement']}")
-            
-            content = "\n".join(content_lines)
-            
-            return alerter.send_info(title=title, content=content)
-            
-        except Exception as e:
-            print(f"飞书归因推送失败: {e}")
-            return False
+    # ─────────────────────────────────────────────────────────
+    # 委派到 audit
+    # ─────────────────────────────────────────────────────────
+
+    def get_audit_history(self, limit: int = 50) -> List[Dict]:
+        """获取审计历史."""
+        from app.web_dashboard.order.audit import get_audit_history
+        return get_audit_history(self, limit)
+
+    def _ensure_audit_table(self):
+        from app.web_dashboard.order.audit import ensure_audit_table
+        return ensure_audit_table(self)
+
+    def _ensure_sl_column(self):
+        from app.web_dashboard.order.audit import ensure_sl_column
+        return ensure_sl_column(self)
+
+    def _ensure_lifecycle_columns(self):
+        from app.web_dashboard.order.audit import ensure_lifecycle_columns
+        return ensure_lifecycle_columns(self)
+
+    def _write_audit(self, order: ManualOrder):
+        from app.web_dashboard.order.audit import write_audit
+        return write_audit(self, order)
+
+    def _record_manual_open(self, order: "ManualOrder"):
+        from app.web_dashboard.order.audit import record_manual_open
+        return record_manual_open(self, order)
 
     def _record_manual_close(self, symbol: str, direction: str, entry_price: float,
                              exit_price: float, quantity: int, reason: str, order_id: str):
-        """手动平仓后写入 trade_records, 形成交易闭环 (P&L 追踪)"""
-        from datetime import datetime
-        try:
-            # 计算 P&L
-            if direction == "LONG":
-                pnl = (exit_price - entry_price) * quantity
-            else:
-                pnl = (entry_price - exit_price) * quantity
-            pnl_pct = (pnl / (entry_price * quantity)) if entry_price > 0 and quantity > 0 else 0
-
-            conn = self._db()
-            now = datetime.now()
-            # trade_date 用美东时间 (EDT=UTC-4), 避免服务器时区导致交易日偏移
-            from datetime import timezone, timedelta
-            et_now = datetime.now(timezone(timedelta(hours=-4)))
-            trade_date = et_now.strftime("%Y-%m-%d")
-
-            # 查开仓时间 (从 open_positions 或 manual_order_audit)
-            entry_time = None
-            try:
-                cursor = conn.execute(
-                    "SELECT MIN(updated_at) FROM open_positions WHERE symbol=? AND owner='manual'",
-                    (symbol,)
-                )
-                row = cursor.fetchone()
-                if row and row[0]:
-                    entry_time = row[0]
-            except Exception:
-                pass
-            if not entry_time:
-                try:
-                    cursor = conn.execute(
-                        "SELECT MIN(timestamp) FROM manual_order_audit WHERE symbol=? AND action='BUY'",
-                        (symbol,)
-                    )
-                    row = cursor.fetchone()
-                    if row and row[0]:
-                        entry_time = row[0]
-                except Exception:
-                    pass
-            if not entry_time:
-                entry_time = now.isoformat()
-
-            # Check if this trade matches today's battle plan targets
-            strategy_id = "manual"
-            try:
-                plan_path = Path(__file__).parent.parent.parent / "data" / "daily_battle_plan_us.json"
-                if plan_path.exists():
-                    import json as _json
-                    _plan = _json.loads(plan_path.read_text())
-                    _plan_targets = {t.get("symbol", ""): t for t in _plan.get("targets", [])}
-                    if symbol in _plan_targets:
-                        _pt = _plan_targets[symbol]
-                        if _pt.get("direction") == direction:
-                            strategy_id = "battle_plan"
-            except Exception:
-                pass
-
-            conn.execute("""
-                INSERT INTO trade_records (
-                    trade_date, symbol, direction, entry_time, exit_time,
-                    entry_price, exit_price, quantity, realized_pnl, pnl_pct,
-                    exit_reason, strategy_id, source_type, mode, trade_mode,
-                    data_quality, created_at, close_futu_order_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                trade_date, symbol, direction, entry_time, now.isoformat(),
-                entry_price, exit_price, quantity, round(pnl, 2), round(pnl_pct, 4),
-                reason, strategy_id, "MANUAL",
-                self._get_mode_label(),
-                "live" if self._is_live() else "simulate",
-                "manual", now.isoformat(), order_id,
-            ))
-            conn.commit()
-            conn.close()
-            logger.info(
-                f"[手动交易闭环] {symbol} {direction} {quantity}股 "
-                f"P&L=${pnl:.2f} ({pnl_pct*100:.2f}%) → trade_records"
-            )
-        except Exception as e:
-            logger.warning(f"[手动交易闭环] 写入失败: {e}")
+        from app.web_dashboard.order.audit import record_manual_close
+        return record_manual_close(
+            self, symbol, direction, entry_price, exit_price,
+            quantity, reason, order_id,
+        )
 
     def _mark_position_manual(self, symbol: str, direction: str = "LONG"):
-        """标记持仓为手动管理，防止 ExitMonitor 误平
-        
-        Race condition fix (2026-06-11): web 下单时 open_positions 可能尚未创建
-        (position_sync 30s 后才写入)。纯 UPDATE 会 0 rows affected → 标记丢失。
-        改为 UPSERT: UPDATE + INSERT IF NOT EXISTS。
-        """
-        try:
-            conn = self._db()
-            cursor = conn.execute(
-                "UPDATE open_positions SET owner='manual' WHERE symbol=?",
-                (symbol,),
-            )
-            if cursor.rowcount == 0:
-                # Row doesn't exist yet — position_sync hasn't run.
-                # Insert stub row; position_sync will merge/update on next cycle.
-                from datetime import datetime
-                conn.execute(
-                    """INSERT INTO open_positions (symbol, direction, size, avg_entry_price, owner, sync_status, updated_at)
-                       VALUES (?, ?, 0, 0, 'manual', 'pending_sync', ?)""",
-                    (symbol, direction, datetime.now().isoformat()),
-                )
-                logger.info(f"[手动下单] {symbol} 新建 stub 行 owner=manual dir={direction} (等 position_sync 补全)")
-            else:
-                logger.info(f"[手动下单] {symbol} 已标记为 owner=manual (跳过系统退出监控)")
-            conn.commit()
-            conn.close()
-        except Exception as e:
-            logger.error(f"[手动下单] 标记 owner=manual 失败 ({symbol}): {e}")
+        from app.web_dashboard.order.audit import mark_position_manual
+        return mark_position_manual(self, symbol, direction)
 
-    def _write_audit(self, order: ManualOrder):
-        """写审计日志到 DB"""
-        try:
-            self._ensure_audit_table()
-            conn = self._db()
-            conn.execute(
-                """INSERT INTO manual_order_audit
-                   (timestamp, symbol, direction, action, quantity, order_type,
-                    price, reason, mode, order_id, status, error_msg,
-                    time_in_force, fill_outside_rth)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    order.timestamp or datetime.now().isoformat(),
-                    order.symbol, order.direction, order.action,
-                    order.quantity, order.order_type, order.price,
-                    order.reason, order.mode, order.order_id,
-                    order.status, order.error_msg,
-                    order.time_in_force, 1 if order.fill_outside_rth else 0,
-                ),
-            )
-            conn.commit()
-            conn.close()
-        except Exception as e:
-            logger.error(f"[审计] 写入失败: {e}")
+    def _push_attribution_to_feishu(self, attr) -> bool:
+        from app.web_dashboard.order.audit import push_attribution_to_feishu
+        return push_attribution_to_feishu(self, attr)
 
-    def get_audit_history(self, limit: int = 50) -> List[Dict]:
-        """获取审计历史"""
-        try:
-            self._ensure_audit_table()
-            conn = self._db()
-            conn.row_factory = sqlite3.Row
-            rows = conn.execute(
-                "SELECT * FROM manual_order_audit ORDER BY timestamp DESC LIMIT ?",
-                (limit,),
-            ).fetchall()
-            conn.close()
-            return [dict(r) for r in rows]
-        except Exception as e:
-            logger.error(f"[审计] 查询失败: {e}")
-            return []
+    # ─────────────────────────────────────────────────────────
+    # 委派到 thesis
+    # ─────────────────────────────────────────────────────────
+
+    def _auto_generate_thesis(self, order: ManualOrder) -> dict:
+        from app.web_dashboard.order.thesis import auto_generate_thesis
+        return auto_generate_thesis(self, order)
+
+    def _save_thesis_to_db(self, order: ManualOrder, thesis_ctx: dict):
+        from app.web_dashboard.order.thesis import save_thesis_to_db
+        return save_thesis_to_db(self, order, thesis_ctx)
+
+    def _build_exit_context(self, symbol: str, entry_time_str: str, thesis_ctx: dict) -> dict:
+        from app.web_dashboard.order.thesis import build_exit_context
+        return build_exit_context(self, symbol, entry_time_str, thesis_ctx)
 
 
 # ─────────────────────────────────────────────────────────────────

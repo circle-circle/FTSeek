@@ -24,7 +24,30 @@ from typing import Dict, List, Optional, Set, Callable
 # Via symlink: app/shared → ../../FTSeek/app/shared
 from app.shared.market_hours import MarketHours
 
+# ── 项目统一 ET 时区工具 (Task #32, 2026-06-16) ──
+# 用于 stop_auto_loop 时段保护 / watchdog 时间判断 — 必须使用 ET，
+# 避免服务器本地时区或 UTC 误判（参考记忆: 美东时间ET在数据管道中的统一应用）
+try:
+    from app.utils.timezone import now_et
+except Exception:  # pragma: no cover — 极端降级路径
+    import pytz as _pytz
+    _ET_TZ = _pytz.timezone("America/New_York")
+    def now_et() -> datetime:  # type: ignore
+        return datetime.now(_ET_TZ)
+
 logger = logging.getLogger("ftseek_us.subscription_manager")
+
+# Task #38 (2026-06-16): 模块级单例 — 供跨模块上报/读取访问
+# (避免循环依赖与各模块重复查找 scheduler)
+_last_instance: Optional["SubscriptionManager"] = None
+
+
+def get_active_subscription_manager() -> Optional["SubscriptionManager"]:
+    """返回最后创建的 SubscriptionManager 单例 (Task #38)。
+
+    供 ORB 等信号产生模块上报行情质量 / 读取门控。未初始化返 None。
+    """
+    return _last_instance
 
 
 # ============================================================
@@ -45,7 +68,7 @@ class ISubscriptionGateway(ABC):
         ...
 
     # ── 连接健康接口 (Task #7, 2026-06-02) ──
-    # 下面两个接口提供默认实现，避免现有适配器被迫修改。
+    # 下面几个接口提供默认实现，避免现有适配器被迫修改。
     def is_healthy(self) -> bool:
         """底层连接是否健康。默认总是健康 (兼容旧实现)。"""
         return True
@@ -53,6 +76,15 @@ class ISubscriptionGateway(ABC):
     def force_reconnect(self) -> bool:
         """强制重连。默认 no-op。"""
         return False
+
+    # ── 轻量 ping 接口 (Task #38, 2026-06-16) ──
+    # 默认委托给 is_healthy()，适配器可覆盖为更轻量的控制面探测 (e.g. get_global_state)。
+    def ping(self) -> bool:
+        """轻量存活探测。默认以 is_healthy() 作为 fallback。"""
+        try:
+            return bool(self.is_healthy())
+        except Exception:
+            return False
 
 
 # ============================================================
@@ -106,6 +138,20 @@ class FutuLV3Adapter(ISubscriptionGateway):
             logger.warning(f"[FutuLV3Adapter] force_reconnect 异常: {e}")
         return False
 
+    def ping(self) -> bool:
+        """委托给 provider 的 ping() (Task #38, 2026-06-16)。
+
+        provider 未实现 ping() 时降级为 is_healthy()，保持兼容。
+        """
+        try:
+            fn = getattr(self._provider, "ping", None)
+            if callable(fn):
+                return bool(fn())
+        except Exception as e:
+            logger.debug(f"[FutuLV3Adapter] ping 异常: {e}")
+        # 降级为 is_healthy()
+        return self.is_healthy()
+
 
 # ============================================================
 #  纯逻辑层 — SubscriptionManager (只依赖协议)
@@ -141,7 +187,53 @@ class SubscriptionManager:
         self._last_gateway_healthy: Optional[bool] = None
         self._unhealthy_since: Optional[float] = None
 
+        # ── Watchdog & 降级标记 (Task #32, 2026-06-16) ──
+        # 防止主循环意外退出导致盘中无订阅 / 信号扫描中断
+        self._watchdog_thread: Optional[threading.Thread] = None
+        self._watchdog_running: bool = False
+        self._watchdog_interval: int = 60  # 每分钟检查一次
+        self._reconnect_failures: int = 0
+        self._degraded: bool = False
+        self._degraded_reason: Optional[str] = None
+
+        # ── stop_auto_loop 拒绝计数 (Task #10, 2026-06-16) ──
+        # 盘中 stop 被拒绝是正常保护行为，不应标记 degraded。
+        # 用独立计数 + 时间戳供 Dashboard 展示，避免误报"系统降级"。
+        self._stop_rejected_count: int = 0
+        self._stop_rejected_last_at: Optional[datetime] = None
+
+        # ── OpenD ping 健康检查 (Task #38, 2026-06-16) ──
+        # ping 与 force_reconnect 独立计数:
+        #   - ping 连续失败 ≥ _ping_fail_reconnect_threshold → 触发 force_reconnect
+        #   - ping 连续失败 ≥ _ping_fail_degraded_threshold → 标记 degraded
+        #   - reconnect_failures ≥ _reconnect_fail_recommend_threshold → recommend_opend_restart
+        # 参数选型: 60s 检查周期下，2 次失败 = 2 分钟压力后才重连，
+        # 5 次 = 5 分钟后标 degraded，与 Dashboard "degraded 持续超 5min 提示" 需求一致。
+        self._ping_consecutive_fails: int = 0
+        self._ping_fail_reconnect_threshold: int = 2
+        self._ping_fail_degraded_threshold: int = 5
+        self._reconnect_fail_recommend_threshold: int = 5
+        self._degraded_recommend_after_sec: float = 300.0  # 5min
+        self._degraded_since: Optional[float] = None
+        self._last_ping_ok: Optional[bool] = None
+
+        # ── 行情质量门控 (Task #38, 2026-06-16) ──
+        # 行情质量评分 < quality_threshold 时：
+        #   - is_data_quality_acceptable() 返 False (供信号管道门控)
+        #   - 记录 stale 告警日志
+        #   - last_known_good_quote 供 Dashboard 贯穿显示 (标记 stale=True)
+        self._quality_threshold: float = 0.5
+        self._last_known_good_quote: Optional[Dict] = None
+        self._last_quality_score: Optional[float] = None
+        self._last_quality_stale: bool = False
+        self._stale_alert_count: int = 0
+
         logger.info("[SubscriptionManager] 美股分时段订阅管理器已初始化")
+
+        # Task #38 (2026-06-16): 注册到模块级单例供跨模块读取
+        # (e.g. ORB 引擎上报质量, Dashboard 读取状态)
+        global _last_instance
+        _last_instance = self
 
     # ===== 时段判断 (委托给共享 MarketHours) =====
 
@@ -171,7 +263,9 @@ class SubscriptionManager:
             return {"success": False, "new_subs": 0, "already_subscribed": 0}
 
         if sub_types is None:
-            sub_types = ["QUOTE", "K_1M"]
+            # 2026-06-16 修复: 增加 ORDER_BOOK + TICKER (原默认仅 QUOTE+K_1M)
+            # ORDER_BOOK 和 TICKER 为 order_flow 维度提供数据, 缺失导致 scorer 退化
+            sub_types = ["QUOTE", "K_1M", "ORDER_BOOK", "TICKER"]
 
         if not self._check_cooldown():
             return {"success": False, "new_subs": 0, "already_subscribed": 0}
@@ -233,7 +327,7 @@ class SubscriptionManager:
 
     def start_auto_loop(self, codes_callback: Callable = None,
                         interval: int = 60):
-        """启动自动订阅循环"""
+        """启动自动订阅循环 (并连带启动 watchdog 协程)"""
         if self._auto_running:
             return
 
@@ -246,14 +340,195 @@ class SubscriptionManager:
             name="subscription-us-auto",
         )
         self._auto_thread.start()
+
+        # ── Watchdog 协程随主循环一并启动 (Task #32) ──
+        if not self._watchdog_running:
+            self._watchdog_running = True
+            self._watchdog_thread = threading.Thread(
+                target=self._watchdog_loop, daemon=True,
+                name="subscription-us-watchdog",
+            )
+            self._watchdog_thread.start()
+            logger.info(
+                f"[SubscriptionManager] 美股 watchdog 已注册 | {self._watchdog_interval}s"
+            )
+
         logger.info(f"[SubscriptionManager] 美股自动循环启动 | {interval}s")
 
-    def stop_auto_loop(self):
+    def stop_auto_loop(self, force: bool = False):
+        """停止自动订阅循环。
+
+        Task #32 时段保护 (2026-06-16):
+          - 默认 (force=False): 交易时段 09:30-16:00 ET 拒绝执行 stop，
+            避免昨日 14:28 ET 盘中循环退出导致 5 个 plan 0% 执行率的故障复现。
+          - force=True: 用于运维强制下线，跳过时段保护。
+          - 盘后 / 盘前 / 周末: 正常停止 (兼容现有 scheduler.stop() 调用路径)。
+
+        Returns:
+            bool: True=已停止 / False=被时段保护拒绝
+        """
+        # ── 时段保护 ──
+        if not force:
+            try:
+                _now = now_et()
+                if MarketHours.is_us_trading_hours(_now):
+                    # Task #10 (2026-06-16): 盘中 stop 被拒绝是正常保护行为，
+                    # 不应标记 degraded（会导致 Dashboard 误报"系统降级"）。
+                    # 改用独立计数 + 时间戳供运维参考。
+                    self._stop_rejected_count += 1
+                    self._stop_rejected_last_at = _now
+                    logger.warning(
+                        "[SubscriptionManager] ⛔ 交易时段拒绝 stop_auto_loop "
+                        f"| ET={_now.strftime('%Y-%m-%d %H:%M:%S %Z')} "
+                        "| 如需强制停止请显式传入 force=True "
+                        f"| 累计拒绝 {self._stop_rejected_count} 次"
+                    )
+                    return False
+            except Exception as e:
+                # 时段判断异常时降级允许停止，避免反向阻塞下线流程
+                logger.error(
+                    f"[SubscriptionManager] stop 时段判断异常 (降级允许停止): {e}"
+                )
+
+        # ── 优雅关闭 ──
         self._auto_running = False
+        self._watchdog_running = False
+
         if self._auto_thread:
             self._auto_thread.join(timeout=10)
             self._auto_thread = None
-        logger.info("[SubscriptionManager] 美股自动循环停止")
+        if self._watchdog_thread:
+            self._watchdog_thread.join(timeout=5)
+            self._watchdog_thread = None
+
+        try:
+            et_str = now_et().strftime('%Y-%m-%d %H:%M:%S %Z')
+        except Exception:
+            et_str = "unknown"
+        reason = "force=True (运维强制下线)" if force else "盘后正常下线"
+        logger.info(
+            f"[SubscriptionManager] 美股自动循环停止 | ET={et_str} | reason={reason}"
+        )
+        return True
+
+    # ===== Watchdog (Task #32, 2026-06-16) =====
+
+    def _watchdog_loop(self):
+        """每分钟检查订阅状态：
+          1) 主循环线程存活监控 — 已死亡则盘中自动重启
+          2) OpenD ping 轻量健康检查 (Task #38, 每 60s) —
+             连续 2 次失败 → force_reconnect；连续 5 次 → degraded
+          3) 重连失败计数 — 连续失败 ≥ _reconnect_fail_recommend_threshold →
+             recommend_opend_restart=True
+          4) 底层连接健康 — is_healthy() 作为 ping 补充检查
+
+        与 _auto_loop 内置健康检查互为冗余：主循环负责常规重订阅，
+        watchdog 负责"主循环本身挂掉"的极端场景，兼容已有网络异常处理。
+        """
+        logger.info("[Watchdog] 美股订阅 watchdog 启动")
+        while self._watchdog_running:
+            try:
+                _now = now_et()
+                should_sub = self.should_be_subscribed(_now)
+
+                # 1) 主循环线程存活监控 — 仅在应订阅时段重启，避免盘后误启动
+                if should_sub and self._auto_running:
+                    alive = bool(self._auto_thread and self._auto_thread.is_alive())
+                    if not alive:
+                        logger.error(
+                            "[Watchdog] ⚠️ 主自动循环线程已死亡且仍在交易时段 "
+                            f"| ET={_now.strftime('%H:%M')} — 自动重启"
+                        )
+                        self._auto_thread = threading.Thread(
+                            target=self._auto_loop, daemon=True,
+                            name="subscription-us-auto",
+                        )
+                        self._auto_thread.start()
+
+                # 2) OpenD ping 检查已移除 (2026-06-17): 不再实时探测 OpenD 健康状态
+
+                # 3) 连接健康 + 重连失败计数 (原 Task #32 逻辑)
+                if should_sub:
+                    try:
+                        healthy = self._gateway.is_healthy()
+                    except Exception as e:
+                        logger.debug(f"[Watchdog] is_healthy 异常 (忽略): {e}")
+                        healthy = True  # 兼容旧 gateway，异常不阻塞
+
+                    if healthy:
+                        if self._reconnect_failures > 0:
+                            logger.info(
+                                f"[Watchdog] ✅ 连接已恢复，清零失败计数 "
+                                f"(此前 {self._reconnect_failures} 次)"
+                            )
+                        self._reconnect_failures = 0
+                        # 健康恢复后清除 degraded 标记 (仅自动设置的)
+                        self._maybe_clear_degraded()
+                    else:
+                        # 由 ping 路径 或主循环负责重连, watchdog 仅计数 + 告警
+                        try:
+                            ok = self._gateway.force_reconnect()
+                        except Exception as e:
+                            logger.error(f"[Watchdog] force_reconnect 异常: {e}")
+                            ok = False
+
+                        if ok:
+                            self._reconnect_failures = 0
+                            # 重连成功 — 清空本地订阅以便下轮主循环全量同步
+                            self._subscribed_codes.clear()
+                            self._subscribed_types.clear()
+                            logger.info("[Watchdog] ✅ 重连成功，下轮主循环将全量同步订阅")
+                            self._maybe_clear_degraded()
+                        else:
+                            self._reconnect_failures += 1
+                            self._maybe_mark_degraded(
+                                threshold=3,
+                                reason=f"reconnect_failed_x{self._reconnect_failures}",
+                                level="reconnect",
+                            )
+            except Exception as e:
+                logger.error(f"[Watchdog] 循环异常 (吞掉避免协程退出): {e}")
+
+            time.sleep(self._watchdog_interval)
+
+        logger.info("[Watchdog] 美股订阅 watchdog 结束")
+
+    # ===== Task #38 (2026-06-16): OpenD ping 健康检查已移除 (2026-06-17) =====
+    # 不再实时探测 OpenD 健康状态，由调用方 catch 异常处理
+
+    def _maybe_mark_degraded(self, threshold: int, reason: str, level: str) -> None:
+        """设置 degraded=True 并记录起始时间。
+
+        Args:
+            threshold: 仅识别用，以便日志体现阈值。
+            reason: 设置的原因标签 (degraded_reason)。
+            level: "ping" / "reconnect" / "manual" — 仅仅为了日志表达。
+        """
+        # 首次标记 → 记录 _degraded_since
+        if not self._degraded:
+            self._degraded_since = time.time()
+        was_degraded = self._degraded
+        self._degraded = True
+        self._degraded_reason = reason
+        if not was_degraded:
+            logger.error(
+                f"[Watchdog] ⛔ 标记 degraded=True | level={level} | reason={reason} | "
+                f"推送 Dashboard 告警，请人工介入"
+            )
+
+    def _maybe_clear_degraded(self) -> None:
+        """连接/ping 恢复后清除自动设置的 degraded 标记。
+
+        Task #10 (2026-06-16): stop_rejected_intraday_* 已不再设置 degraded
+        (改用 _stop_rejected_count 独立计数)，此处仅处理 reconnect/ping 类。
+        """
+        if not self._degraded or not self._degraded_reason:
+            return
+        auto_prefixes = ("reconnect_failed", "opend_ping_failed")
+        if self._degraded_reason.startswith(auto_prefixes):
+            self._degraded = False
+            self._degraded_reason = None
+            self._degraded_since = None
 
     def _auto_loop(self):
         logger.info("[US] 自动订阅循环启动")
@@ -317,11 +592,11 @@ class SubscriptionManager:
                             # 重连后 gateway 会自行恢复订阅，清空本地订阅记录以便下轮 ensure_subscribed 全量同步
                             self._subscribed_codes.clear()
                             self._subscribed_types.clear()
-                            last_state = None  # 强制下一轮走“进入订阅”分支
+                            last_state = None  # 强制下一轮走"进入订阅"分支
                             logger.info("[US][HEALTH] ✅ 重连成功，下轮将重新同步订阅状态")
-                        else:
-                            # 退避中或重连失败 — 重置 last_state 以免错过后续重新订阅
-                            last_state = None
+                        # P2a (2026-06-16): 重连失败时不重置 last_state
+                        # 根因: 重连失败 → last_state=None → should_sub≠None → 每分钟重复日志
+                        # 修法: 失败时保持 last_state, 仅成功重连时才重置
 
                 if should_sub != last_state:
                     if should_sub and self._codes_callback:
@@ -366,6 +641,19 @@ class SubscriptionManager:
         return len(self._subscribed_codes)
 
     def get_status(self) -> Dict:
+        # Task #38: 计算推荐重启标记
+        # 触发条件:
+        #   1) degraded=True 且 持续超 _degraded_recommend_after_sec (默认 5min)
+        #   2) reconnect_failures ≥ _reconnect_fail_recommend_threshold (默认 5)
+        recommend_restart = False
+        degraded_for_sec: Optional[float] = None
+        if self._degraded and self._degraded_since:
+            degraded_for_sec = max(0.0, time.time() - self._degraded_since)
+            if degraded_for_sec >= self._degraded_recommend_after_sec:
+                recommend_restart = True
+        if self._reconnect_failures >= self._reconnect_fail_recommend_threshold:
+            recommend_restart = True
+
         return {
             "subscribed_codes": list(self._subscribed_codes),
             "subscribed_count": len(self._subscribed_codes),
@@ -374,4 +662,118 @@ class SubscriptionManager:
             "is_hk_trading": self.is_hk_trading(),
             "should_be_subscribed": self.should_be_subscribed(),
             "auto_running": self._auto_running,
+            # Task #32: Dashboard 据此渲染告警条
+            "watchdog_running": self._watchdog_running,
+            "degraded": self._degraded,
+            "degraded_reason": self._degraded_reason,
+            "degraded_since": self._degraded_since,
+            "degraded_for_sec": (
+                round(degraded_for_sec, 1) if degraded_for_sec is not None else None
+            ),
+            "reconnect_failures": self._reconnect_failures,
+            # Task #10 (2026-06-16): stop_auto_loop 拒绝计数 (非 degraded)
+            "stop_rejected_count": self._stop_rejected_count,
+            "stop_rejected_last_at": (
+                self._stop_rejected_last_at.isoformat()
+                if self._stop_rejected_last_at else None
+            ),
+            # Task #38 (2026-06-16): OpenD ping + 重启推荐 + 行情质量
+            "ping_consecutive_fails": self._ping_consecutive_fails,
+            "ping_fail_reconnect_threshold": self._ping_fail_reconnect_threshold,
+            "ping_fail_degraded_threshold": self._ping_fail_degraded_threshold,
+            "last_ping_ok": self._last_ping_ok,
+            "recommend_opend_restart": recommend_restart,
+            "data_quality_score": self._last_quality_score,
+            "data_quality_stale": self._last_quality_stale,
+            "data_quality_threshold": self._quality_threshold,
+            "stale_alert_count": self._stale_alert_count,
+            "last_known_good_quote": (
+                dict(self._last_known_good_quote)
+                if self._last_known_good_quote else None
+            ),
         }
+
+    # ===== Task #38 (2026-06-16): 行情质量门控 =====
+
+    def update_data_quality(
+        self,
+        score: float,
+        snapshot: Optional[Dict] = None,
+        symbol: Optional[str] = None,
+    ) -> None:
+        """上报一次行情质量评分。
+
+        Args:
+            score: 质量评分 [0, 1]。
+            snapshot: 本次评分对应的行情快照 (K 线 / quote)，可选。
+                      质量达阈时会被存为 last_known_good 供 Dashboard 贯穿。
+            symbol: 标的代码，仅用于日志。
+
+        质量低于阈值时会记录 stale 告警。供信号管道入口
+        is_data_quality_acceptable() 门控。
+        """
+        try:
+            score_f = float(score)
+        except (TypeError, ValueError):
+            score_f = 0.0
+        self._last_quality_score = score_f
+
+        if score_f < self._quality_threshold:
+            # P0 修复 (2026-06-18): 只在状态变化时告警，避免每60秒重复告警
+            was_stale = self._last_quality_stale
+            self._last_quality_stale = True
+            self._stale_alert_count += 1
+            
+            # 只在首次进入 stale 状态时告警，后续静默
+            if not was_stale:
+                logger.warning(
+                    f"[DataQuality] ⚠️ STALE 行情质量低于阈值 "
+                    f"| symbol={symbol or '-'} | score={score_f:.2f} "
+                    f"< {self._quality_threshold:.2f} | 跳过信号管道 "
+                    f"| 累计 stale 告警 {self._stale_alert_count} 次"
+                )
+            else:
+                # 已处于 stale 状态，仅 debug 级别记录
+                logger.debug(
+                    f"[DataQuality] STALE 持续 | symbol={symbol or '-'} | score={score_f:.2f}"
+                )
+            # 低质量不覆盖 last_known_good；仅作 stale 补充标记
+            return
+
+        # 质量达阈 → 更新 last_known_good 快照
+        self._last_quality_stale = False
+        if snapshot is not None:
+            try:
+                snap = dict(snapshot)
+                snap.setdefault("_captured_at", time.time())
+                snap.setdefault("_quality_score", score_f)
+                if symbol:
+                    snap.setdefault("_symbol", symbol)
+                self._last_known_good_quote = snap
+            except Exception:
+                pass
+
+    def is_data_quality_acceptable(self, score: Optional[float] = None) -> bool:
+        """信号管道入口门控—低于 _quality_threshold 返 False。
+
+        Args:
+            score: 本次传入的评分；传 None 时用最近一次上报。
+
+        Returns:
+            True: 质量足够，可进入信号管道。
+            False: 质量不足，调用方应跳过。
+        """
+        s = score if score is not None else self._last_quality_score
+        if s is None:
+            return True  # 未上报过 → 不阻塞 (默认信任上游)
+        try:
+            return float(s) >= self._quality_threshold
+        except (TypeError, ValueError):
+            return True
+
+    def get_last_known_good_quote(self) -> Optional[Dict]:
+        """返回最后一份质量达阈的行情快照 (供 Dashboard 贯穿)。
+
+        调用方可读取 status["data_quality_stale"] 判断是否需在 UI 上打 stale 标。
+        """
+        return dict(self._last_known_good_quote) if self._last_known_good_quote else None

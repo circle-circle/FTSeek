@@ -43,21 +43,10 @@ def _try_dingtalk(content: str) -> bool:
 
 def _try_feishu(content: str) -> bool:
     try:
-        # 尝试两种位置
-        try:
-            from app.push.feishu_push_service import get_feishu_push_service as _gp
-            service = _gp()
-            if hasattr(service, "send_text"):
-                return bool(service.send_text(content))
-        except Exception:
-            pass
-        try:
-            from app.reports.feishu_push_service import get_feishu_push_service as _gpr
-            service = _gpr()
-            if hasattr(service, "send_text"):
-                return bool(service.send_text(content))
-        except Exception:
-            pass
+        from app.reports.feishu_push_service import get_feishu_push_service as _gp
+        service = _gp()
+        if hasattr(service, "send_text"):
+            return bool(service.send_text(content))
     except Exception as e:
         logger.debug(f"[CriticalNotifier] Feishu fail: {e}")
     return False

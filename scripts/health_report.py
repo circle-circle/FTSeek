@@ -53,8 +53,8 @@ except Exception:
 DB_PATH = BASE_DIR / "data" / "ftseek_us.db"
 LOG_DIR = BASE_DIR / "logs"
 
-OPEND_HOST = os.getenv("OPEND_HOST", "127.0.0.1")
-OPEND_PORT = int(os.getenv("OPEND_PORT", "11111"))
+FUTU_OPEND_HOST = os.getenv("FUTU_OPEND_HOST", "127.0.0.1")
+FUTU_OPEND_PORT = int(os.getenv("FUTU_OPEND_PORT", "11111"))
 
 
 # ============================================================
@@ -74,10 +74,10 @@ def _warn(name: str, detail: str) -> Dict[str, Any]:
 
 def _check_opend() -> Dict[str, Any]:
     try:
-        with socket.create_connection((OPEND_HOST, OPEND_PORT), timeout=3):
-            return _check("OpenD 连通性", True, f"{OPEND_HOST}:{OPEND_PORT}")
+        with socket.create_connection((FUTU_OPEND_HOST, FUTU_OPEND_PORT), timeout=3):
+            return _check("OpenD 连通性", True, f"{FUTU_OPEND_HOST}:{FUTU_OPEND_PORT}")
     except Exception as e:
-        return _check("OpenD 连通性", False, f"{OPEND_HOST}:{OPEND_PORT} 不可达: {e}")
+        return _check("OpenD 连通性", False, f"{FUTU_OPEND_HOST}:{FUTU_OPEND_PORT} 不可达: {e}")
 
 
 def _check_db() -> Tuple[Dict[str, Any], Optional[sqlite3.Connection]]:

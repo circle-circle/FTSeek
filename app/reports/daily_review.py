@@ -23,8 +23,8 @@ def _get_account_assets() -> float:
         acc_id = int(_os.getenv("SIMULATE_ACCOUNT_ID", "8246816"))
         ctx = OpenSecTradeContext(
             filter_trdmarket=TrdMarket.US,
-            host=_os.getenv("OPEND_HOST", "127.0.0.1"),
-            port=int(_os.getenv("OPEND_PORT", "11111")),
+            host=_os.getenv("FUTU_OPEND_HOST", "127.0.0.1"),
+            port=int(_os.getenv("FUTU_OPEND_PORT", "11111")),
             is_encrypt=False,
         )
         ret, info = ctx.accinfo_query(trd_env=TrdEnv.SIMULATE, acc_id=acc_id)
@@ -44,8 +44,8 @@ def _get_open_positions_count() -> int:
         acc_id = int(_os.getenv("SIMULATE_ACCOUNT_ID", "8246816"))
         ctx = OpenSecTradeContext(
             filter_trdmarket=TrdMarket.US,
-            host=_os.getenv("OPEND_HOST", "127.0.0.1"),
-            port=int(_os.getenv("OPEND_PORT", "11111")),
+            host=_os.getenv("FUTU_OPEND_HOST", "127.0.0.1"),
+            port=int(_os.getenv("FUTU_OPEND_PORT", "11111")),
             is_encrypt=False,
         )
         ret, pos = ctx.position_list_query(trd_env=TrdEnv.SIMULATE, acc_id=acc_id)

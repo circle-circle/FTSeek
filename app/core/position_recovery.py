@@ -18,6 +18,58 @@ from app.execution.options_selector import OptionSelector
 logger = logging.getLogger(__name__)
 
 
+def _check_external_close(symbol: str, direction: str, broker_positions_map: dict = None):
+    """
+    查询 Broker 近 7 天成交记录，判断是否为外部平仓。
+    
+    Returns: (exit_price, exit_time) 或 None
+    """
+    try:
+        from futu import OpenSecTradeContext, TrdEnv, TrdMarket, SecurityFirm, RET_OK
+        from app.core.config_container import get_config
+        import os
+        from datetime import timedelta
+        
+        _trade_env = get_config().trade_env_int
+        trade_env = TrdEnv.SIMULATE if _trade_env == 1 else TrdEnv.REAL
+        host = os.getenv("FUTU_OPEND_HOST", "127.0.0.1")
+        port = int(os.getenv("FUTU_OPEND_PORT", "11111"))
+        
+        ctx = OpenSecTradeContext(
+            filter_trdmarket=TrdMarket.NONE,
+            host=host, port=port,
+            security_firm=SecurityFirm.FUTUSECURITIES,
+        )
+        try:
+            now = datetime.now()
+            start = (now - timedelta(days=7)).strftime('%Y-%m-%d')
+            end = now.strftime('%Y-%m-%d')
+            
+            ret, data = ctx.history_deal_list_query(
+                start=start, end=end, trd_env=trade_env
+            )
+            if ret != RET_OK or data is None or data.empty:
+                return None
+            
+            # 查找该标的的平仓方向成交
+            close_side = 'SELL' if direction == 'LONG' else 'BUY'
+            for _, deal in data.iterrows():
+                code = str(deal.get('code', ''))
+                if code == symbol or code == symbol.replace('US.', ''):
+                    trd_side = str(deal.get('trd_side', '')).upper()
+                    if close_side in trd_side:
+                        price = float(deal.get('price', 0))
+                        time_str = str(deal.get('create_time', ''))
+                        if price > 0:
+                            return (price, time_str)
+        finally:
+            ctx.close()
+    except Exception as e:
+        logger.debug(f"[恢复·外部平仓检测] {symbol} 查询失败: {e}")
+    
+    return None
+
+
 def _load_price_fail_closed_set() -> set:
     """加载 PRICE_FAIL 已关闭的期权代码集合，防止 broker_sync 重导入循环"""
     try:
@@ -84,8 +136,8 @@ def restore_positions_from_db(scheduler):
             logger.info(f"[恢复] Broker 确认 {len(broker_symbols)} 个持仓: {broker_symbols}")
         trade_ctx.close()
     except Exception as e:
-        logger.warning(f"[恢复] Broker 预查询失败，将恢复所有 DB 持仓: {e}")
-        broker_symbols = None  # None = skip broker check, restore all
+        logger.error(f"[恢复] Broker 预查询失败，放弃 DB 恢复 (空仓等待): {e}")
+        return 0  # Broker 不可用 → 不恢复任何仓位, 避免幽灵仓
 
     # --- 0.4 实盘隔离: 过滤自管持仓 (yaml + DB owner='manual' 合并) ---
     try:
@@ -198,6 +250,50 @@ def restore_positions_from_db(scheduler):
                         f"可能是 reconciler 残留)"
                     )
                     skipped_ghost_count += 1
+                    
+                    # ── 根因修复 (2026-06-16): 跨日外部平仓检测 ──
+                    # 场景: 用户周五通过 Futu App 平仓 → 引擎关停 → 周一重启
+                    # Broker 无持仓 + DB 有记录 → 查近 7 天成交判断是否外部平仓
+                    _entry_p = snap.get("avg_entry_price", 0)
+                    _size = snap.get("size", 0)
+                    _dir_str = snap.get("direction", "")
+                    _snap_entry_time = snap.get("entry_time", "")
+                    _ext_closed = _check_external_close(
+                        sym, _dir_str, broker_positions_map
+                    )
+                    if _ext_closed:
+                        _exit_p, _exit_time = _ext_closed
+                        if _dir_str == 'LONG':
+                            _pnl = round((_exit_p - _entry_p) * _size, 2)
+                            _pnl_pct = round((_exit_p - _entry_p) / _entry_p, 4) if _entry_p > 0 else 0
+                        else:
+                            _pnl = round((_entry_p - _exit_p) * _size, 2)
+                            _pnl_pct = round((_entry_p - _exit_p) / _entry_p, 4) if _entry_p > 0 else 0
+                        
+                        logger.info(
+                            f"[恢复·外部平仓] {sym}: 入${_entry_p:.2f} → 出${_exit_p:.2f} "
+                            f"({_size}股, PnL=${_pnl}, {_pnl_pct*100:.2f}%)"
+                        )
+                        # 写入 trade_record
+                        try:
+                            from datetime import timezone, timedelta
+                            _et_now = datetime.now(timezone(timedelta(hours=-4)))
+                            scheduler.trade_store._get_conn().execute(
+                                "INSERT INTO trade_records "
+                                "(trade_date, symbol, direction, entry_time, exit_time, "
+                                "entry_price, exit_price, quantity, realized_pnl, pnl_pct, "
+                                "exit_reason, source_type, mode, created_at) "
+                                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                                (_et_now.strftime('%Y-%m-%d'), sym, _dir_str,
+                                 _snap_entry_time, _exit_time or _et_now.isoformat(),
+                                 _entry_p, _exit_p, int(_size),
+                                 _pnl, _pnl_pct,
+                                 'external_close', 'RECOVERY', 'manual',
+                                 _et_now.isoformat())
+                            ).connection.commit()
+                        except Exception as _e:
+                            logger.warning(f"[恢复·外部平仓] {sym} trade_record 写入失败: {_e}")
+                    
                     # 从 DB 清理孤儿记录
                     try:
                         scheduler.trade_store._get_conn().execute(

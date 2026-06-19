@@ -71,7 +71,7 @@ class AttributionScheduler:
 
         判定条件:
           - exit_time 落在 target_date 当天
-          - exit_price IS NOT NULL
+          - exit_price > 0
           - 不存在 trade_attribution.trade_id 等于 trade_records.id 且 key_decision_factor 已写入
         """
         if target_date is None:
@@ -94,7 +94,7 @@ class AttributionScheduler:
                 LEFT JOIN trade_attribution a
                        ON CAST(t.id AS TEXT) = a.trade_id
                       AND a.key_decision_factor IS NOT NULL
-                WHERE t.exit_price IS NOT NULL
+                WHERE t.exit_price > 0
                   AND t.exit_time IS NOT NULL
                   AND substr(t.exit_time, 1, 10) = ?
                   AND a.trade_id IS NULL

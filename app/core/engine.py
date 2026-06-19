@@ -1,7 +1,7 @@
 """
-四大引擎基类
+三大引擎基类
 
-定义 Decision/Risk/Execution/Observability 引擎的统一接口
+定义 Risk/Execution/Observability 引擎的统一接口
 """
 from abc import ABC, abstractmethod
 from typing import Optional, Dict, Any, List
@@ -54,50 +54,6 @@ class BaseEngine(ABC):
     def record_failure(self, failure: FailureRecord):
         """记录失败"""
         self.event_store.record_failure(failure)
-
-
-class DecisionEngine(BaseEngine):
-    """
-    决策引擎
-    
-    职责:
-    - 策略信号生成
-    - 多策略投票/打分
-    - 市场状态识别
-    - 信号去重、过滤、降噪
-    """
-    
-    def initialize(self):
-        """初始化决策引擎"""
-        self.signal_cache: Dict[str, SignalScore] = {}
-        self.strategy_scores: Dict[str, List[SignalScore]] = {}
-        self.market_regime = None
-        self.last_regime_check = None
-    
-    def shutdown(self):
-        """关闭决策引擎"""
-        self.enabled = False
-        self.signal_cache.clear()
-    
-    @abstractmethod
-    def generate_signal(self, symbol: str, data: Dict[str, Any]) -> Optional[SignalScore]:
-        """生成信号"""
-        pass
-    
-    @abstractmethod
-    def score_signal(self, signal: SignalScore) -> SignalScore:
-        """评分信号"""
-        pass
-    
-    @abstractmethod
-    def identify_market_regime(self) -> str:
-        """识别市场状态"""
-        pass
-    
-    @abstractmethod
-    def deduplicate_signals(self, signals: List[SignalScore]) -> List[SignalScore]:
-        """信号去重"""
-        pass
 
 
 class RiskEngine(BaseEngine):

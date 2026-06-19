@@ -5,7 +5,7 @@ Livermore 大盘联动过滤器 (Market Regime Signal Filter)
 
 规则:
 1. SPY < 50日均线 → 所有 LONG 信号强度 -30%
-2. VIX > 30 → 停止所有新仓 (熔断级保护)
+2. VIX > 28 → 停止所有新仓 (熔断级保护, Task #2: 统一为28)
 3. VIX < 12 → 市场过热预警, 不追高
 4. SPY 连续 3 日下跌 → 防御模式, 只减不加
 5. SPY > 50日均线 + 上涨趋势 → 信号强度 +10% (顺势而为)
@@ -44,7 +44,7 @@ class MarketRegimeFilter:
     """
     
     # 配置参数 (旧硬编码, 作为 yaml 缺失时的 fallback)
-    VIX_FEAR_THRESHOLD = 30.0       # 恐惧阈值: 超过此值停止开新仓
+    VIX_FEAR_THRESHOLD = 28.0       # Task #2: 统一为28 (was 30). 超过此值停止开新仓
     VIX_GREED_THRESHOLD = 12.0      # 贪婪阈值: 低于此值警告过热
     SPY_MA50_WEAKEN_PCT = 0.30      # SPY < MA50 时 LONG 信号削弱比例
     SPY_MA50_STRENGTHEN_PCT = 0.10  # SPY > MA50 + 上涨时信号增强比例

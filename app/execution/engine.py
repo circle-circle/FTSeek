@@ -153,8 +153,7 @@ class ExecutionEngine(BaseExecutionEngine):
         cid = getattr(order, "client_order_id", "") or ""
         if cid.startswith("orb_"):
             return "ORB"
-        if cid.startswith("scalping_"):
-            return "SCALPING"
+        # P1 修复 (2026-06-19): scalping 已删除，scalping_ 前缀不再产生
         return "MAIN"
 
     @classmethod

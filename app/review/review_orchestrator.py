@@ -76,7 +76,7 @@ class ReviewDataCollector:
             "SELECT * FROM trade_records WHERE trade_date = ? ORDER BY created_at",
             (date,)
         )
-        closed = [t for t in trades if t.get('exit_price') is not None]
+        closed = [t for t in trades if t.get('exit_price') and t.get('exit_price') > 0]
         
         # P0 修复 (2026-05-08): 按来源分类统计
         by_source = {}
@@ -131,7 +131,7 @@ class ReviewDataCollector:
             "SELECT * FROM trade_records WHERE trade_date BETWEEN ? AND ? ORDER BY trade_date",
             (week_start, week_end)
         )
-        closed = [t for t in trades if t.get('exit_price') is not None]
+        closed = [t for t in trades if t.get('exit_price') and t.get('exit_price') > 0]
         
         # 逐日分布
         daily_counts = self._query(
@@ -163,7 +163,7 @@ class ReviewDataCollector:
             "SELECT * FROM trade_records WHERE trade_date >= ? AND trade_date < ? ORDER BY trade_date",
             (start, end)
         )
-        closed = [t for t in trades if t.get('exit_price') is not None]
+        closed = [t for t in trades if t.get('exit_price') and t.get('exit_price') > 0]
         
         return {
             "report_type": "monthly",
@@ -1914,7 +1914,7 @@ class ValidationAgent:
             hits = self._query(
                 "SELECT COUNT(*) as total, "
                 "SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins "
-                "FROM trade_records WHERE trade_date = ?",
+                "FROM trade_records WHERE trade_date = ? AND exit_price > 0",
                 (date,)
             )
             if hits and hits[0]["total"] > 0:
@@ -2035,7 +2035,7 @@ class ValidationAgent:
         if date:
             trades = self._query(
                 "SELECT COUNT(*) as total, SUM(realized_pnl) as pnl "
-                "FROM trade_records WHERE trade_date = ?",
+                "FROM trade_records WHERE trade_date = ? AND exit_price > 0",
                 (date,)
             )
             if trades and trades[0]["total"] > 0:

@@ -1,0 +1,140 @@
+{% extends "base.html" %}
+
+{% block title %}📋 Playbook — FTSeek-US{% endblock %}
+
+{% block nav_trade_class %}class="active"{% endblock %}
+{% block nav_trade_class2 %}class="active"{% endblock %}
+{% block nav_trade_class3 %}class="active"{% endblock %}
+
+{% block head %}
+<style>
+    .pb-container { max-width: 800px; margin: 0 auto; padding: 12px; }
+    .pb-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+    .pb-header h2 { font-size: 18px; color: #e1e4e8; }
+    .pb-regime-badge { padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: 600; }
+    .pb-regime-RISK_ON { background: #16a34a22; color: #4ade80; border: 1px solid #16a34a; }
+    .pb-regime-CAUTIOUS { background: #eab30822; color: #facc15; border: 1px solid #eab308; }
+    .pb-regime-RISK_OFF { background: #ef444422; color: #f87171; border: 1px solid #ef4444; }
+    .pb-regime-NO_TRADE { background: #6b728022; color: #9ca3af; border: 1px solid #6b7280; }
+
+    .pb-summary-bar { display: flex; gap: 16px; padding: 12px; background: #161b22; border-radius: 8px; margin-bottom: 16px; flex-wrap: wrap; }
+    .pb-stat { text-align: center; }
+    .pb-stat-value { font-size: 20px; font-weight: 700; color: #58a6ff; }
+    .pb-stat-label { font-size: 11px; color: #8b949e; margin-top: 2px; }
+
+    .pb-card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 16px; margin-bottom: 12px; transition: border-color 0.2s; }
+    .pb-card:hover { border-color: #58a6ff; }
+    .pb-card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+    .pb-symbol { font-size: 16px; font-weight: 700; color: #e1e4e8; }
+    .pb-direction { padding: 3px 10px; border-radius: 4px; font-size: 12px; font-weight: 600; }
+    .pb-dir-BUY { background: #16a34a33; color: #4ade80; }
+    .pb-dir-SELL_SHORT { background: #ef444433; color: #f87171; }
+    .pb-dir-SKIP { background: #6b728033; color: #9ca3af; }
+
+    .pb-confidence { display: inline-flex; align-items: center; gap: 4px; }
+    .pb-conf-bar { width: 60px; height: 6px; background: #30363d; border-radius: 3px; overflow: hidden; }
+    .pb-conf-fill { height: 100%; border-radius: 3px; }
+    .pb-conf-high { background: #4ade80; }
+    .pb-conf-mid { background: #facc15; }
+    .pb-conf-low { background: #f87171; }
+
+    .pb-params { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; margin-bottom: 12px; }
+    .pb-param { background: #0d1117; padding: 8px; border-radius: 4px; }
+    .pb-param-label { font-size: 10px; color: #8b949e; text-transform: uppercase; }
+    .pb-param-value { font-size: 14px; font-weight: 600; color: #e1e4e8; margin-top: 2px; }
+
+    .pb-conditions { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 12px; }
+    .pb-tag { padding: 2px 8px; background: #1f6feb22; color: #79c0ff; border-radius: 4px; font-size: 11px; }
+
+    .pb-thesis { font-size: 13px; color: #c9d1d9; margin-bottom: 12px; line-height: 1.5; }
+    .pb-risks { font-size: 12px; color: #f0883e; margin-bottom: 12px; }
+
+    .pb-actions { display: flex; gap: 8px; }
+    .pb-btn { padding: 8px 16px; border: none; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer; transition: all 0.2s; }
+    .pb-btn-execute { background: #238636; color: #fff; }
+    .pb-btn-execute:hover { background: #2ea043; }
+    .pb-btn-skip { background: #30363d; color: #c9d1d9; }
+    .pb-btn-skip:hover { background: #3d444d; }
+    .pb-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    .pb-skip-section { margin-top: 12px; padding: 12px; background: #0d1117; border-radius: 6px; display: none; }
+    .pb-skip-options { display: flex; flex-direction: column; gap: 6px; }
+    .pb-skip-option { padding: 6px 10px; background: #161b22; border: 1px solid #30363d; border-radius: 4px; cursor: pointer; font-size: 12px; color: #c9d1d9; }
+    .pb-skip-option:hover { border-color: #58a6ff; }
+    .pb-skip-custom { margin-top: 6px; }
+    .pb-skip-custom input { width: 100%; padding: 6px 10px; background: #0d1117; border: 1px solid #30363d; border-radius: 4px; color: #e1e4e8; font-size: 12px; }
+
+    .pb-confirm-modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); z-index: 1000; justify-content: center; align-items: center; }
+    .pb-confirm-content { background: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 24px; max-width: 400px; width: 90%; }
+    .pb-confirm-title { font-size: 16px; font-weight: 700; margin-bottom: 16px; }
+    .pb-confirm-detail { font-size: 13px; color: #c9d1d9; margin-bottom: 8px; }
+    .pb-confirm-actions { display: flex; gap: 8px; margin-top: 16px; justify-content: flex-end; }
+
+    .pb-result-msg { padding: 8px 12px; border-radius: 6px; margin-top: 8px; font-size: 13px; display: none; }
+    .pb-result-success { background: #16a34a22; color: #4ade80; border: 1px solid #16a34a; }
+    .pb-result-error { background: #ef444422; color: #f87171; border: 1px solid #ef4444; }
+
+    .pb-section-title { font-size: 14px; color: #8b949e; margin: 16px 0 8px; padding-bottom: 4px; border-bottom: 1px solid #21262d; }
+    .pb-skip-item { padding: 8px 12px; background: #0d1117; border-radius: 6px; margin-bottom: 6px; font-size: 13px; color: #8b949e; }
+    .pb-skip-reason { color: #f0883e; font-size: 12px; }
+
+    .pb-empty { text-align: center; padding: 40px; color: #8b949e; }
+    .pb-loading { text-align: center; padding: 40px; color: #58a6ff; }
+    .pb-executed-badge { background: #16a34a33; color: #4ade80; padding: 2px 8px; border-radius: 4px; font-size: 11px; }
+    .pb-feedback-badge { font-size: 11px; color: #8b949e; margin-left: 8px; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="pb-container">
+    <!-- Header -->
+    <div class="pb-header">
+        <h2>📋 今日交易指令</h2>
+        <div>
+            <span id="regimeBadge" class="pb-regime-badge">--</span>
+            <button onclick="loadPlaybook()" style="margin-left:8px;padding:4px 12px;background:#30363d;border:none;border-radius:4px;color:#c9d1d9;cursor:pointer;font-size:12px;">🔄 刷新</button>
+        </div>
+    </div>
+
+    <!-- Summary Bar -->
+    <div class="pb-summary-bar" id="summaryBar" style="display:none;">
+        <div class="pb-stat"><div class="pb-stat-value" id="statTotal">-</div><div class="pb-stat-label">总指令</div></div>
+        <div class="pb-stat"><div class="pb-stat-value" id="statBuy">-</div><div class="pb-stat-label">买入</div></div>
+        <div class="pb-stat"><div class="pb-stat-value" id="statShort">-</div><div class="pb-stat-label">做空</div></div>
+        <div class="pb-stat"><div class="pb-stat-value" id="statSkip">-</div><div class="pb-stat-label">跳过</div></div>
+        <div class="pb-stat"><div class="pb-stat-value" id="statExecuted">-</div><div class="pb-stat-label">已执行</div></div>
+        <div class="pb-stat"><div class="pb-stat-value" id="statWinRate">-</div><div class="pb-stat-label">30日胜率</div></div>
+    </div>
+
+    <!-- Active Instructions -->
+    <div id="activeInstructions">
+        <div class="pb-loading">加载指令中...</div>
+    </div>
+
+    <!-- Skipped Instructions -->
+    <div id="skippedSection" style="display:none;">
+        <div class="pb-section-title">── 已跳过 ──</div>
+        <div id="skippedInstructions"></div>
+    </div>
+
+    <!-- Result Message -->
+    <div id="resultMsg" class="pb-result-msg"></div>
+</div>
+
+<!-- Execute Confirm Modal -->
+<div id="confirmModal" class="pb-confirm-modal" onclick="if(event.target===this)closeConfirmModal()">
+    <div class="pb-confirm-content">
+        <div class="pb-confirm-title" id="confirmTitle">确认执行</div>
+        <div id="confirmDetails"></div>
+        <div class="pb-confirm-actions">
+            <button class="pb-btn pb-btn-skip" onclick="closeConfirmModal()">取消</button>
+            <button class="pb-btn pb-btn-execute" id="confirmBtn" onclick="confirmExecute()">确认执行</button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}{% endblock %}
+{% block external_scripts %}
+<script src="/static/js/playbook.js?v=20260618a"></script>
+{% endblock %}

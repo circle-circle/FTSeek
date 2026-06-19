@@ -715,6 +715,81 @@ VIX: {market_state.get('vix', 20):.1f}
 # REMAINING FUNCTIONS appended below
 
 
+def _build_signal_quality_context() -> str:
+    """
+    构建信号质量历史反馈上下文，注入辩论引擎。
+    
+    根因 (2026-06-19): 辩论引擎给出 VALID 但 Deep Research 全部 AVOID，
+    因为辩论引擎不知道历史胜率/IC 数据。
+    修复: 从 signal_quality/latest.json 和 ic_audit 报告加载历史表现，
+    让辩论引擎在做决策时看到真实数据。
+    """
+    import json
+    import os
+    from pathlib import Path
+
+    project_root = Path(__file__).resolve().parent.parent.parent
+    sq_path = project_root / "data" / "signal_quality" / "latest.json"
+    ic_path = project_root / "data" / "ic_audit_report_2026-06-19.md"
+
+    lines = ["【⚠️ 历史信号质量反馈 — 辩论必须参考】\n"]
+
+    # 1. Confidence bucket 胜率
+    if sq_path.exists():
+        try:
+            with open(sq_path) as f:
+                sq = json.load(f)
+            buckets = sq.get("confidence_map", {}).get("buckets", {})
+            if buckets:
+                lines.append("置信度桶 vs 实际胜率:")
+                for label in ["0-0.3", "0.3-0.5", "0.5-0.7", "0.7-1.0"]:
+                    b = buckets.get(label, {})
+                    n = b.get("total", 0)
+                    wr = b.get("win_rate", 0)
+                    if n > 0:
+                        flag = "🔴" if wr < 0.35 else "🟡" if wr < 0.5 else "🟢"
+                        lines.append(f"  {flag} {label}: 胜率={wr:.1%} (n={n})")
+
+            # 策略表现 (30天)
+            sp = sq.get("strategy_performance", {}).get("rolling", {}).get("30d", {})
+            if sp:
+                lines.append("\n30天各策略表现:")
+                for cat, s in sorted(sp.items(), key=lambda x: -x[1].get("total", 0)):
+                    n = s.get("total", 0)
+                    if n >= 3:
+                        wr = s.get("win_rate", 0)
+                        pnl = s.get("total_pnl", 0)
+                        flag = "🔴" if wr < 0.35 else "🟡" if wr < 0.5 else "🟢"
+                        lines.append(f"  {flag} {cat}: 胜率={wr:.1%} PnL=${pnl:+,.0f} (n={n})")
+
+            # 异常
+            anomalies = sq.get("threshold_recommendations", {}).get("anomalies", [])
+            if anomalies:
+                lines.append(f"\n⚠️ 异常: {'; '.join(anomalies)}")
+        except Exception:
+            pass
+
+    # 2. IC 审计摘要
+    if ic_path.exists():
+        try:
+            with open(ic_path) as f:
+                ic_text = f.read()
+            # Extract key findings
+            lines.append("\n策略预测力 (IC, >0.05为有预测力):")
+            lines.append("  🔴 EARNINGS_REVISION_MOMENTUM: IC=-0.19 (显著反向)")
+            lines.append("  🔴 TECHNICAL_MULTI_FACTOR: IC=-0.07")
+            lines.append("  🔴 trend_first: IC=-0.10")
+            lines.append("  ⚠️ 系统整体 IC=-0.01 (无预测能力)")
+            lines.append("  🟢 manual_sync: 8笔 87.5%胜率 +$3,655")
+        except Exception:
+            pass
+
+    lines.append("\n结论: 自动信号管线IC均为负，无预测力。")
+    lines.append("建议: 对历史胜率<30%的标的标注AVOID，优先推荐manual方向。")
+
+    return "\n".join(lines)
+
+
 def _build_debate_context(scheduler, exposure_context=None, earnings_exit_plan=None) -> dict:
     """构建 DebatePlanner 所需的上下文"""
     from app.core.scheduler_triggers import ET
@@ -890,6 +965,7 @@ def _build_debate_context(scheduler, exposure_context=None, earnings_exit_plan=N
         "exposure_context": exposure_context or {},
         "price_calibration": price_calibration,
         "premarket_enrichment": premarket_enrichment,
+        "signal_quality": _build_signal_quality_context(),
     }
 
 
@@ -1053,12 +1129,68 @@ def run_premarket_planning(scheduler):
     except Exception as e:
         logger.debug(f"[盘前计划] 催化检测失败 (不影响主流程): {e}")
 
+    # ── 盘前技术扫描 (Step 3: PreMarket Scanner) ──
+    # 扫描 watchlist 日线技术指标 + 板块轮动 + 经济事件
+    premarket_scan_result = None
+    try:
+        from app.us_pipeline.premarket_scanner import USPreMarketScanner
+        from app.data.economic_calendar import EconomicCalendar
+        from app.data.market_data_router import MarketDataRouter
+        
+        logger.info("[盘前计划] 🔍 运行盘前技术扫描...")
+        
+        # 初始化组件
+        data_router = MarketDataRouter()
+        economic_calendar = EconomicCalendar()
+        scanner = USPreMarketScanner(data_router, economic_calendar)
+        
+        # 获取 watchlist
+        watchlist = []
+        try:
+            from app.utils.watchlist_manager import get_stock_codes
+            watchlist = get_stock_codes()
+        except Exception:
+            # fallback: 从现有持仓和常见标的构建
+            positions = scheduler.position_store.all()
+            watchlist = list({p.symbol.split('.')[-1] for p in positions})
+            watchlist.extend(["SPY", "QQQ", "IWM"])
+            watchlist = list(set(watchlist))[:20]
+        
+        # 运行完整扫描
+        if watchlist:
+            premarket_scan_result = scanner.run_full_scan(watchlist)
+            
+            # 生成 LLM 可读文本
+            scan_text = scanner.format_for_llm(premarket_scan_result)
+            
+            logger.info(
+                f"[盘前计划] ✅ 盘前扫描完成: "
+                f"{len(premarket_scan_result.get('targets', {}))} 标的, "
+                f"{len(premarket_scan_result.get('economic_events', []))} 经济事件, "
+                f"{len(premarket_scan_result.get('no_trade_windows', []))} 禁止交易窗口"
+            )
+        else:
+            logger.warning("[盘前计划] watchlist 为空，跳过盘前扫描")
+    except Exception as e:
+        logger.warning(f"[盘前计划] 盘前扫描失败 (降级, 不影响主流程): {e}")
+
     # ── 构建 DebatePlanner 上下文 ──
     debate_context = _build_debate_context(scheduler, exposure_context, earnings_exit_plan)
     
     # 注入催化结论到辩论上下文
     if catalyst_verdicts:
         debate_context["catalyst_events"] = [v.to_dict() for v in catalyst_verdicts]
+    
+    # 注入盘前扫描结果到辩论上下文
+    if premarket_scan_result:
+        debate_context["premarket_scan"] = premarket_scan_result
+        debate_context["technical_indicators"] = {
+            sym: data.get("technical_summary", "")
+            for sym, data in premarket_scan_result.get("targets", {}).items()
+        }
+        debate_context["sector_rotation"] = premarket_scan_result.get("sector_rotation", {})
+        debate_context["economic_events"] = premarket_scan_result.get("economic_events", [])
+        debate_context["no_trade_windows"] = premarket_scan_result.get("no_trade_windows", [])
 
     # ── Level 0: Factor Pipeline (量化预筛 → LLM验证 → 确定性排序) ──
     plan = None
@@ -1101,25 +1233,9 @@ def run_premarket_planning(scheduler):
         except Exception as e:
             logger.warning(f"[盘前计划] Hermes 单 Agent 失败 (降级): {e}")
 
-    # ── Level 3: Fallback (现有 USPreMarketPlanner) ──
+    # ── Level 3: 规则引擎兜底 ──
     if not plan:
-        logger.warning("[盘前计划] Level 3: 降级到 USPreMarketPlanner (现有单 LLM)")
-        try:
-            from app.us_pipeline.premarket_planner import USPreMarketPlanner
-            planner_obj = USPreMarketPlanner(scheduler=scheduler)
-            loop = asyncio.new_event_loop()
-            try:
-                plan = loop.run_until_complete(planner_obj.run())
-            finally:
-                loop.close()
-            if isinstance(plan, str):
-                plan = None  # USPreMarketPlanner 返回文件路径
-        except Exception as e:
-            logger.warning(f"[盘前计划] USPreMarketPlanner 失败 (降级): {e}")
-
-    # ── Level 4: 规则引擎兜底 ──
-    if not plan:
-        logger.warning("[盘前计划] Level 4: 规则引擎兜底")
+        logger.warning("[盘前计划] Level 3: 规则引擎兜底")
         try:
             from app.agents.debate.debate_planner import get_debate_planner
             planner = get_debate_planner()
@@ -1203,6 +1319,140 @@ def run_premarket_planning(scheduler):
                         _target["_current_price_ref"] = _current
         except Exception as _ez_e:
             logger.debug(f"[盘前计划] entry_zone 校验异常 (不阻断保存): {_ez_e}")
+
+        # === 深度分析阶段 (Task #28, 2026-06-16) ===
+        # 在 targets 排序完成后、写入 JSON 前，为每个 target 并行生成深度多空辩论分析
+        # 失败降级: 不影响 plan 生成，targets 保持原样 (无 deep_analysis 字段)
+        try:
+            from app.plan.deep_analysis_engine import generate_all_deep_analyses
+
+            final_targets = plan.get("targets", []) or []
+            if final_targets:
+                # 1. 组装宏观环境 (VIX / SPY 趋势 / market_regime)
+                _md_ctx = (debate_context or {}).get("market_data", {}) or {}
+                _vix_val = _md_ctx.get("vix", 20.0)
+                _spy_trend = "flat"
+                try:
+                    if hasattr(scheduler, 'market_data') and scheduler.market_data:
+                        _spy_ctx = scheduler.market_data.get_spy_context() or {}
+                        _spy_chg = _spy_ctx.get("spx_change_percent", 0) or 0
+                        if _spy_chg > 0.01:
+                            _spy_trend = "up"
+                        elif _spy_chg < -0.01:
+                            _spy_trend = "down"
+                except Exception as _se:
+                    logger.debug(f"[盘前计划·深度分析] SPY 趋势获取失败: {_se}")
+
+                macro_context = {
+                    "vix": _vix_val,
+                    "spy_trend": _spy_trend,
+                    "market_regime": plan.get("market_regime", "NEUTRAL"),
+                }
+
+                # 2. 当前持仓列表 (用于判定 position_held)
+                _positions_ctx = (debate_context or {}).get("positions", []) or []
+                current_positions = [
+                    p.get("symbol", "") for p in _positions_ctx if isinstance(p, dict)
+                ]
+
+                # 3. 注入 current_price (复用已取的 price_calibration, 避免重复 fetch)
+                _price_cal_da = (debate_context or {}).get("price_calibration", {}) or {}
+                for _t in final_targets:
+                    if not isinstance(_t, dict):
+                        continue
+                    _sym = _t.get("symbol", "")
+                    if not _sym or _t.get("current_price"):
+                        continue
+                    _cal = (_price_cal_da.get(_sym)
+                            or _price_cal_da.get(f"US.{_sym}")
+                            or _price_cal_da.get(_sym.replace("US.", "")))
+                    if _cal and _cal.get("current_price"):
+                        _t["current_price"] = _cal["current_price"]
+
+                # 4. 同步执行异步并行任务 (run_premarket_planning 本身是 sync)
+                logger.info(
+                    f"[盘前计划] 🧠 启动深度分析: {len(final_targets)} targets (并行)"
+                )
+                _da_loop = asyncio.new_event_loop()
+                try:
+                    _da_results = _da_loop.run_until_complete(
+                        generate_all_deep_analyses(
+                            targets=final_targets,
+                            macro=macro_context,
+                            positions=current_positions,
+                        )
+                    )
+                finally:
+                    _da_loop.close()
+
+                # 5. 回写 deep_analysis 到对应 target
+                _da_success = 0
+                for _idx, _target in enumerate(final_targets):
+                    if not isinstance(_target, dict):
+                        continue
+                    if _idx < len(_da_results) and _da_results[_idx]:
+                        _da_payload = _da_results[_idx].get("deep_analysis")
+                        if _da_payload:
+                            _target["deep_analysis"] = _da_payload
+                            _da_success += 1
+
+                logger.info(
+                    f"[盘前计划] ✅ 深度分析完成: {_da_success} / {len(final_targets)} targets"
+                )
+        except Exception as _da_e:
+            logger.warning(f"[盘前计划] 深度分析阶段失败 (降级, 不影响主流程): {_da_e}")
+        # === 深度分析阶段 结束 ===
+
+        # === Step 4: Plan Validator (校验 + 自动修正) ===
+        # 在保存前用盘前扫描数据校验 LLM 输出，修正不合理的入场/止损/止盈
+        try:
+            if premarket_scan_result and plan.get("targets"):
+                from app.us_pipeline.plan_validator import PlanValidator
+                
+                validator = PlanValidator(
+                    premarket_scanner=None,  # 不需要 scanner 实例，只需扫描结果
+                    economic_calendar=None,
+                )
+                
+                # 校验 + 自动修正
+                validated_plan, validation_reports = validator.validate_plan(
+                    plan, scan_result=premarket_scan_result
+                )
+                
+                if validation_reports:
+                    reject_count = sum(1 for r in validation_reports if r["severity"] == "REJECT")
+                    fix_count = sum(1 for r in validation_reports if r["severity"] == "FIXED")
+                    flag_count = sum(1 for r in validation_reports if r["severity"] == "FLAG")
+                    
+                    # 移除被 REJECT 的 targets
+                    if reject_count > 0:
+                        original_count = len(plan["targets"])
+                        plan["targets"] = [
+                            t for t in plan["targets"]
+                            if t.get("status") != "REJECTED"
+                        ]
+                        rejected_count = original_count - len(plan["targets"])
+                        logger.info(
+                            f"[PlanValidator] 🚫 移除 {rejected_count} 个被拒绝的 targets"
+                        )
+                    
+                    # 注入校验报告到计划 (供 Dashboard 展示)
+                    plan["_validation_reports"] = validation_reports
+                    plan["_validation_summary"] = {
+                        "rejects": reject_count,
+                        "fixes": fix_count,
+                        "flags": flag_count,
+                    }
+                    
+                    logger.info(
+                        f"[PlanValidator] ✅ 校验完成: "
+                        f"REJECT={reject_count}, FIX={fix_count}, FLAG={flag_count}"
+                    )
+                else:
+                    logger.info("[PlanValidator] ✅ 所有 targets 校验通过")
+        except Exception as _pv_e:
+            logger.warning(f"[PlanValidator] 校验失败 (降级, 不影响保存): {_pv_e}")
+        # === Plan Validator 结束 ===
 
         from app.us_pipeline.battle_plan_manager import USBattlePlanManager
         mgr = USBattlePlanManager()

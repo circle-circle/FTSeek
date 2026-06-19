@@ -215,6 +215,7 @@ def verify_session_token(token: str) -> bool:
 PUBLIC_PATHS = {
     "/login",
     "/api/auth/login",
+    "/health",
     "/favicon.ico",
 }
 

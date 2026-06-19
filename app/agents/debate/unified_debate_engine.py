@@ -155,6 +155,9 @@ DXY: {dxy}
 【个股价格校准】
 {price_calibration}
 
+【历史信号质量反馈 — 必读】
+{signal_quality}
+
 ═══════════════════════════════════════════
 【任务】生成多头作战计划
 ═══════════════════════════════════════════
@@ -230,6 +233,9 @@ DXY: {dxy}
 
 【个股价格校准】
 {price_calibration}
+
+【历史信号质量反馈 — 必读】
+{signal_quality}
 
 ═══════════════════════════════════════════
 【任务】独立风险审计 + 做空分析
@@ -660,6 +666,7 @@ class UnifiedDebateEngine:
             "positions_json": "[]", "current_equity": "N/A",
             "drawdown_pct": "0", "water_level": "N/A",
             "watchlist_json": "[]", "price_calibration": "暂无校准数据",
+            "signal_quality": "历史数据加载中...",
         }
         for k, v in defaults.items():
             if k not in enriched or enriched[k] is None:

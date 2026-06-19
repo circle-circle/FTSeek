@@ -218,6 +218,14 @@ llm:
     # ⭐ 2026-06-10 个股分析 — Dashboard 个股详情页 LLM 深度分析
     stock_analyst:       {primary: deepseek-pro,  fallback: qwen-max}    # 最强模型综合分析
 
+    # ⭐ 2026-06-18 Playbook System — 每日交易指令生成 (反幻觉架构)
+    playbook_generator:
+      primary: "qwen-max"
+      fallback: "deepseek-pro"
+      temperature: 0
+      max_tokens: 2048
+      cache_on_fail: true
+
     # ⭐ 2026-06-16 深度目标分析 — 作战计划每个 target 的多空辩论分析
     deep_target_analysis:
       primary: "qwen-max"
@@ -1311,6 +1319,15 @@ feature_flags:
   # 2026-06-14 SSOT清理: 删除7个死配置(零代码消费)
   # 仅保留唯一有消费者的flag:
   auto_trading_enabled: true        # 自动交易总开关 (order_executor._submit_order)
+
+# ⭐ 2026-06-18 Playbook System 总开关
+# enabled=false: pipeline 三个入口(generate/track/weekly)早退, 不调任何 Provider/LLM, 不入库不推送
+# execute_mode=simulate: Dashboard [执行] 按钮走模拟 (默认 shadow 安全); =live 需额外二次确认
+playbook:
+  enabled: true                     # 上线闸门: true=进入 shadow 验证 (生成指令+追踪+飞书, 但执行仍 simulate)
+  execute_mode: simulate            # execute_instruction 的下单模式: simulate | live
+  auto_execute: true                # Phase 1: 自动执行 triggered 指令 (paper trade, OKR加速)
+  enable_weekly: true               # 是否跑周度复盘 (冷启动期可关, 节省 LLM)
 strategy_enhancements:
   pivotal_points:
     enabled: true
@@ -1766,7 +1783,7 @@ strategies:
   # Yahoo Finance earningsTrend + upgradeDowngradeHistory
   # PEAD效应: 分析师上调 → 机构跟进 → 数周漂移
   earnings_revision:
-    enabled: true
+    enabled: false  # 2026-06-19 Phase 0: 禁用 — IC=-0.19, p=0.0014, 275 信号显著反向
     min_upgrades: 2                # 30天内最低升级数
     min_revision_score: 0.15       # 最低综合修正分
     min_analysts: 15               # 最低分析师覆盖

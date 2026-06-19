@@ -66,9 +66,12 @@ def register(app, templates):
             mode=svc._get_mode_label(),
             time_in_force=body.get("time_in_force", "DAY"),
             fill_outside_rth=bool(body.get("fill_outside_rth", False)),
+            stop_loss=float(body.get("stop_loss", 0) or 0),
+            take_profit=float(body.get("take_profit", 0) or 0),
+            acknowledge_price_warning=bool(body.get("acknowledge_price_warning", False)),
         )
 
-        result = svc.submit_order(order)
+        result = svc.submit_order(order, idempotency_key=body.get("idempotency_key"))
         ds = get_data_service()
         ds.invalidate_cache()
         return JSONResponse(content=result)
@@ -271,7 +274,7 @@ def register(app, templates):
             return {"success": True, "archived": moved, "cutoff_date": cutoff[:10]}
         except Exception as e:
             logger.error(f"[审计归档] 失败: {e}")
-            return JSONResponse(content={"error": str(e)}, status_code=500)
+            return JSONResponse(content={"error": "操作失败，请稍后重试"}, status_code=500)
         finally:
             conn.close()
 
@@ -315,8 +318,11 @@ def register(app, templates):
                 power = safe_float(row.get("power", 0))
                 max_short_power = safe_float(row.get("max_power_short", 0))
             else:
-                # HKD 账户: 用 Futu 官方 USD 字段 + 实际汇率
-                cash = safe_float(row.get("us_cash", 0))
+                # HKD 账户: 用 Futu 官方 USD 字段
+                # 可用现金 = us_avl_withdrawal_cash (扣除保证金后的真实可用)
+                cash = safe_float(row.get("us_avl_withdrawal_cash", 0))
+                if cash <= 0:
+                    cash = safe_float(row.get("us_cash", 0))  # fallback
                 power = safe_float(row.get("usd_net_cash_power", 0))
                 hkd_assets = safe_float(row.get("total_assets", 0))
                 usd_assets = safe_float(row.get("usd_assets", 0))
@@ -360,7 +366,7 @@ def register(app, templates):
             }
         except Exception as e:
             logger.error(f"[order-capacity] {symbol}: {e}")
-            return {"symbol": symbol, "error": str(e)}
+            return {"symbol": symbol, "error": "数据查询异常"}
 
     @router.get("/api/live-account")
     async def get_live_account():
@@ -434,100 +440,312 @@ def register(app, templates):
         except Exception:
             pass
 
-        return {
+        # Audit orders (for unified trade records)
+        audit_orders = []
+        try:
+            audit_orders = svc.get_audit_history(50)
+        except Exception:
+            pass
+
+        result = {
             "positions": positions,
             "orders": orders,
             "account": account,
             "stop_distances": stop_distances,
             "pnl": pnl_data,
+            "audit": {"orders": audit_orders},
         }
+        # Debug: 记录返回数据量
+        import json
+        logger.info(f"[trade/snapshot] positions={len(positions)}, orders={len(orders)}, account_keys={list(account.keys()) if account else 'empty'}")
+        return result
 
     @router.get("/api/trade/slow-data")
     async def trade_slow_data():
         """
-        交易页慢速数据端点 (5min)
-        合并 audit + manual-performance, 低频变化数据
+        交易决策质量 — 统一端点 (5min cache)
+        返回: audit + decision_quality + behavioral + plan_adherence + profit_factor + trade_cards
         """
+        import glob as _glob
+        import json as _json
+        import os as _os
+
         svc = get_manual_order_service()
         audit = svc.get_audit_history(50)
 
         ds = get_data_service()
-        cached = ds.cache.get("manual_perf")
-        manual_perf = None
+        cached = ds.cache.get("decision_quality_v2")
         if cached is not None:
-            manual_perf = cached
-        else:
-            # Fetch inline (reuse analytics logic)
-            try:
-                manual = await ds.db_query_one("""
-                    SELECT COUNT(*) as cnt,
-                           SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
-                           COALESCE(SUM(realized_pnl), 0) as total_pnl,
-                           COALESCE(AVG(CASE WHEN realized_pnl > 0 THEN realized_pnl END), 0) as avg_win,
-                           COALESCE(AVG(CASE WHEN realized_pnl < 0 THEN realized_pnl END), 0) as avg_loss
-                    FROM trade_records
-                    WHERE (strategy_id = 'manual' OR source_type = 'MANUAL')
-                      AND trade_mode != 'simulate'
-                """)
-                auto = await ds.db_query_one("""
-                    SELECT COUNT(*) as cnt,
-                           SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
-                           COALESCE(SUM(realized_pnl), 0) as total_pnl,
-                           COALESCE(AVG(CASE WHEN realized_pnl > 0 THEN realized_pnl END), 0) as avg_win,
-                           COALESCE(AVG(CASE WHEN realized_pnl < 0 THEN realized_pnl END), 0) as avg_loss
-                    FROM trade_records
-                    WHERE (strategy_id != 'manual' OR strategy_id IS NULL)
-                      AND source_type != 'MANUAL'
-                      AND source_type NOT IN ('manual_sync', 'reconciler')
-                      AND trade_mode != 'simulate'
-                """)
-                recent = await ds.db_query("""
-                    SELECT symbol, direction, realized_pnl, exit_reason, trade_date,
-                           entry_price, exit_price, quantity
-                    FROM trade_records
-                    WHERE (strategy_id = 'manual' OR source_type = 'MANUAL')
-                      AND trade_mode != 'simulate'
-                    ORDER BY trade_date DESC, id DESC LIMIT 20
-                """)
+            return {**cached, "audit": {"orders": audit}}
 
-                def _calc(row):
-                    if not row:
-                        return {"count": 0, "wins": 0, "losses": 0, "win_rate": 0, "total_pnl": 0, "avg_win": 0, "avg_loss": 0, "profit_factor": 0, "avg_pnl": 0}
-                    cnt = row.get("cnt", 0) or 0
-                    wins = row.get("wins", 0) or 0
-                    total = row.get("total_pnl", 0) or 0
-                    avg_w = row.get("avg_win", 0) or 0
-                    avg_l = row.get("avg_loss", 0) or 0
-                    pf = abs(avg_w * wins / (avg_l * (cnt - wins))) if avg_l != 0 and (cnt - wins) > 0 else 0
-                    return {
-                        "count": cnt, "wins": wins, "losses": cnt - wins,
-                        "win_rate": round(wins / cnt * 100, 1) if cnt > 0 else 0,
-                        "total_pnl": round(total, 2),
-                        "avg_win": round(avg_w, 2), "avg_loss": round(avg_l, 2),
-                        "profit_factor": round(pf, 2),
-                        "avg_pnl": round(total / cnt, 2) if cnt > 0 else 0,
-                    }
-
-                manual_perf = {
-                    "manual": _calc(manual), "auto": _calc(auto),
-                    "recent_trades": [{
-                        "symbol": r["symbol"], "direction": r["direction"],
-                        "pnl": round(float(r.get("realized_pnl") or 0), 2),
-                        "exit_reason": r.get("exit_reason", ""),
-                        "date": r["trade_date"],
-                        "entry_price": round(float(r.get("entry_price") or 0), 2),
-                        "exit_price": round(float(r.get("exit_price") or 0), 2),
-                        "quantity": r.get("quantity", 0),
-                    } for r in recent],
-                }
-                ds.cache.set("manual_perf", manual_perf, ttl=60)
-            except Exception as e:
-                logger.error(f"[trade/slow-data] manual perf failed: {e}")
-                manual_perf = {"manual": {}, "auto": {}, "recent_trades": []}
-
-        return {
-            "audit": {"orders": audit},
-            "manual_perf": manual_perf,
+        result = {
+            "decision_quality": {"score": 0, "grade": "--", "sample_size": 0, "sample_sufficient": False},
+            "behavioral": {"available": False, "score": 0, "grade": "--", "disposition": {}, "anchoring": {}, "chasing": {}},
+            "plan_adherence": {"available": False, "traded_rate": 0, "hit_rate": 0, "planned_count": 0, "date": ""},
+            "profit_factor": 0,
+            "trade_cards": [],
         }
+
+        try:
+            # ── 1. Trade cards with attribution ──
+            trades = await ds.db_query("""
+                SELECT id, symbol, direction, realized_pnl, pnl_pct, trade_date,
+                       entry_price, exit_price, quantity, exit_reason, entry_time, exit_time,
+                       metadata_json, source_type
+                FROM trade_records
+                WHERE trade_mode != 'simulate' AND exit_price > 0
+                ORDER BY id DESC LIMIT 20
+            """)
+
+            # Load latest plan effectiveness for planned matching
+            plan_targets = set()
+            plan_date = ""
+            plan_traded_rate = 0.0
+            plan_hit_rate = 0.0
+            plan_count = 0
+            plan_files = sorted(_glob.glob("/opt/ftseek/FTSeek-US/data/plan_effectiveness/daily_*.json"))
+            if plan_files:
+                try:
+                    with open(plan_files[-1]) as f:
+                        pe = _json.load(f)
+                    plan_date = pe.get("date", "")
+                    plan_traded_rate = pe.get("traded_rate", 0)
+                    plan_hit_rate = pe.get("hit_rate", 0)
+                    plan_count = pe.get("planned_count", 0)
+                    for t in pe.get("targets", []):
+                        if t.get("traded"):
+                            plan_targets.add(t.get("symbol", ""))
+                except Exception:
+                    pass
+
+            cards = []
+            total_win_pnl = 0.0
+            total_loss_pnl = 0.0
+            attr_scores = []
+
+            for r in trades:
+                pnl = round(float(r.get("realized_pnl") or 0), 2)
+                if pnl > 0:
+                    total_win_pnl += pnl
+                else:
+                    total_loss_pnl += abs(pnl)
+
+                # Parse attribution from metadata_json
+                attr = None
+                meta_raw = r.get("metadata_json")
+                if meta_raw:
+                    try:
+                        meta = _json.loads(meta_raw)
+                        a = meta.get("attribution")
+                        if a:
+                            attr = {
+                                "dimensions": a.get("dimensions", []),
+                                "summary": a.get("summary", ""),
+                            }
+                            # Collect dimension scores for decision quality
+                            for dim in a.get("dimensions", []):
+                                s = dim.get("score")
+                                if s is not None:
+                                    attr_scores.append(float(s))
+                    except Exception:
+                        pass
+
+                # Also check trade_attribution table for overall_score
+                sym = r.get("symbol", "")
+                td = r.get("trade_date", "")
+
+                # Calculate holding hours
+                holding_h = None
+                entry_t = r.get("entry_time")
+                exit_t = r.get("exit_time")
+                if entry_t and exit_t:
+                    try:
+                        from datetime import datetime as _dt
+                        # Handle various formats
+                        for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M:%S.%f", "%Y-%m-%d %H:%M:%S"):
+                            try:
+                                et = _dt.strptime(str(entry_t)[:26], fmt)
+                                xt = _dt.strptime(str(exit_t)[:26], fmt)
+                                holding_h = round((xt - et).total_seconds() / 3600, 1)
+                                break
+                            except ValueError:
+                                continue
+                    except Exception:
+                        pass
+
+                planned = sym in plan_targets
+
+                cards.append({
+                    "id": r.get("id"),
+                    "symbol": sym,
+                    "direction": r.get("direction", ""),
+                    "pnl": pnl,
+                    "pnl_pct": round(float(r.get("pnl_pct") or 0), 4),
+                    "date": td,
+                    "entry_price": round(float(r.get("entry_price") or 0), 2),
+                    "exit_price": round(float(r.get("exit_price") or 0), 2),
+                    "quantity": r.get("quantity", 0),
+                    "exit_reason": r.get("exit_reason", ""),
+                    "holding_hours": holding_h,
+                    "attribution": attr,
+                    "planned": planned,
+                })
+
+            result["trade_cards"] = cards
+
+            # ── 2. Profit factor ──
+            pf = round(total_win_pnl / total_loss_pnl, 2) if total_loss_pnl > 0 else (99.99 if total_win_pnl > 0 else 0)
+            result["profit_factor"] = pf
+
+            # ── 3. Decision quality from trade_attribution ──
+            try:
+                attr_rows = await ds.db_query("""
+                    SELECT overall_score FROM trade_attribution
+                    WHERE trade_date >= date('now', '-30 days')
+                    ORDER BY created_at DESC LIMIT 20
+                """)
+                if attr_rows:
+                    scores = [r["overall_score"] for r in attr_rows if r.get("overall_score")]
+                    if scores:
+                        avg_score = round(sum(scores) / len(scores), 1)
+                        sample = len(scores)
+                        if avg_score >= 90: grade = "A+"
+                        elif avg_score >= 80: grade = "A"
+                        elif avg_score >= 70: grade = "B+"
+                        elif avg_score >= 60: grade = "B"
+                        elif avg_score >= 50: grade = "C+"
+                        elif avg_score >= 40: grade = "C"
+                        else: grade = "D"
+                        result["decision_quality"] = {
+                            "score": avg_score, "grade": grade,
+                            "sample_size": sample, "sample_sufficient": sample >= 5,
+                        }
+            except Exception:
+                pass
+
+            # ── 4. Behavioral from diagnostic_results ──
+            try:
+                diag = await ds.db_query_one("""
+                    SELECT data FROM diagnostic_results
+                    WHERE module_name = 'shadow_account_v2' AND status = 'success'
+                    ORDER BY created_at DESC LIMIT 1
+                """)
+                if diag and diag.get("data"):
+                    bdata = _json.loads(diag["data"])
+                    bs = bdata.get("behavioral_score", {})
+                    if bs:
+                        result["behavioral"] = {
+                            "available": True,
+                            "score": bs.get("score", 0),
+                            "grade": bs.get("grade", "--"),
+                            "disposition": bdata.get("disposition_effect", {}),
+                            "anchoring": bdata.get("anchoring", {}),
+                            "chasing": bdata.get("chasing", {}),
+                        }
+            except Exception:
+                pass
+
+            # ── 5. Plan adherence ──
+            if plan_files:
+                result["plan_adherence"] = {
+                    "available": True,
+                    "traded_rate": plan_traded_rate,
+                    "hit_rate": plan_hit_rate,
+                    "planned_count": plan_count,
+                    "date": plan_date,
+                }
+
+            ds.cache.set("decision_quality_v2", result, ttl=60)
+        except Exception as e:
+            logger.error(f"[trade/slow-data] error: {e}")
+
+        return {**result, "audit": {"orders": audit}}
+
+
+    # ═══════════════════════════════════════════════════════════
+    #  Auto Trade — Dashboard 一键开关 + 激进程度 (Task #2)
+    # ═══════════════════════════════════════════════════════════
+    from app.web_dashboard.mode_switch_service import get_mode_switch_service
+
+    _YAML_PATH = "/opt/ftseek/FTSeek-US/config/unified_config.yaml"
+
+    def _write_yaml_auto_trading(enabled: bool) -> bool:
+        """同步写入 YAML auto_trading_enabled (原子替换, 与 _submit_order 直读对齐)"""
+        import re, os, tempfile
+        try:
+            with open(_YAML_PATH, "r") as f:
+                content = f.read()
+            pattern = r'(  auto_trading_enabled:\s*)(true|false)'
+            replacement = f'\\g<1>{"true" if enabled else "false"}'
+            new_content = re.sub(pattern, replacement, content)
+            if new_content == content:
+                return False
+            dir_name = os.path.dirname(_YAML_PATH)
+            fd, tmp_path = tempfile.mkstemp(dir=dir_name, suffix=".tmp")
+            try:
+                with os.fdopen(fd, "w") as tmp_f:
+                    tmp_f.write(new_content)
+                os.replace(tmp_path, _YAML_PATH)
+            except Exception:
+                os.unlink(tmp_path)
+                raise
+            return True
+        except Exception as e:
+            logger.error(f"[auto-trade] YAML 写入失败: {e}")
+            return False
+
+    @router.post("/api/auto-trade/toggle")
+    async def toggle_auto_trade(request: Request):
+        """Dashboard 一键开关自动交易 (不影响手动链路).
+
+        同时写入内存 (ModeSwitchService) + YAML 文件,
+        确保信号扫描和订单提交两道门控同步切换.
+        """
+        try:
+            body = await request.json()
+        except Exception:
+            return JSONResponse(
+                content={"success": False, "error": "请求体无效 (需要 JSON)"},
+                status_code=400,
+            )
+        enabled = bool(body.get("enabled", False))
+
+        # 1. 内存开关 (控制信号扫描 + 订单提交 Gate)
+        result = get_mode_switch_service().set_auto_enabled(enabled)
+
+        # 2. 持久化到 YAML (重启后 ModeSwitchService 从此恢复)
+        _write_yaml_auto_trading(enabled)
+
+        # 模式状态变化后清缓存, 让 Dashboard 立即看到新状态
+        try:
+            get_data_service().invalidate_cache()
+        except Exception:
+            pass
+        status_code = 200 if result.get("success") else 400
+        return JSONResponse(content=result, status_code=status_code)
+
+    @router.post("/api/auto-trade/level")
+    async def set_auto_level(request: Request):
+        """设置自动交易激进程度: conservative / normal / aggressive."""
+        try:
+            body = await request.json()
+        except Exception:
+            return JSONResponse(
+                content={"success": False, "error": "请求体无效 (需要 JSON)"},
+                status_code=400,
+            )
+        level = str(body.get("level", "conservative")).strip().lower()
+        result = get_mode_switch_service().set_auto_aggression(level)
+        try:
+            get_data_service().invalidate_cache()
+        except Exception:
+            pass
+        status_code = 200 if result.get("success") else 400
+        return JSONResponse(content=result, status_code=status_code)
+
+    @router.get("/api/auto-trade/status")
+    async def get_auto_status():
+        """获取自动交易当前状态 (开关 + 激进程度 + 最近切换时间)."""
+        return get_mode_switch_service().get_mode_status()
 
     app.include_router(router)

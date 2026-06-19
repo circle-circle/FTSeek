@@ -132,7 +132,7 @@ def compute_technicals(svc, symbol: str) -> dict:
             "vol_today": int(volumes[-1]),
         }
     except Exception as e:
-        return {"error": str(e)}
+        return {"error": "数据查询异常"}
 
 
 def register(app, templates):
@@ -163,7 +163,7 @@ def register(app, templates):
                 return {"symbol": symbol, "kline": records}
             return {"symbol": symbol, "kline": [], "error": "no_data"}
         except Exception as e:
-            return {"symbol": symbol, "kline": [], "error": str(e)}
+            return {"symbol": symbol, "kline": [], "error": "数据查询异常"}
 
     @router.get("/api/stock/{symbol}/orderbook")
     async def stock_orderbook(symbol: str):
@@ -181,7 +181,7 @@ def register(app, templates):
                 }
             return {"symbol": symbol, "bids": [], "asks": [], "error": "no_data"}
         except Exception as e:
-            return {"symbol": symbol, "bids": [], "asks": [], "error": str(e)}
+            return {"symbol": symbol, "bids": [], "asks": [], "error": "数据查询异常"}
 
     @router.get("/api/stock/{symbol}/ticker")
     async def stock_ticker(symbol: str, num: int = 100):
@@ -200,7 +200,7 @@ def register(app, templates):
                 return {"symbol": symbol, "ticker": records}
             return {"symbol": symbol, "ticker": [], "error": "no_data"}
         except Exception as e:
-            return {"symbol": symbol, "ticker": [], "error": str(e)}
+            return {"symbol": symbol, "ticker": [], "error": "数据查询异常"}
 
     @router.get("/api/stock/{symbol}/analysis")
     async def stock_analysis(symbol: str):
@@ -385,7 +385,7 @@ def register(app, templates):
                     "market_cap": safe_float(row.get("market_cap")),
                 }
         except Exception as e:
-            data_bundle["data_error"] = str(e)
+            data_bundle["data_error"] = "data_fetch_failed"
 
         # 引擎持仓
         try:

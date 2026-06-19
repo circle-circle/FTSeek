@@ -22,6 +22,8 @@ import uuid
 from datetime import datetime, time as dt_time
 from typing import Any, Dict, List, Optional
 
+from app.coordinator.manual_hold_registry import manual_hold_registry
+
 logger = logging.getLogger(__name__)
 
 
@@ -282,6 +284,11 @@ class ORBEngine:
 
     def _tick(self):
         """单轮 tick — 连续突破模式 (移除时间限制)"""
+        # 运行时守卫 (服务跨午夜进入假日)
+        from app.core.scheduler_triggers import sleep_if_market_closed
+        if sleep_if_market_closed(300, lambda: self._running):
+            return
+
         from app.utils.timezone import now_et
 
         now = now_et()
@@ -536,6 +543,7 @@ class ORBEngine:
                         price=current_price,
                         vwap=vwap,
                         direction="LONG",  # 初始假设
+                        symbol=symbol,
                     )
 
                     self._ranges[symbol] = {
@@ -552,6 +560,18 @@ class ORBEngine:
                     logger.info(
                         "[ORB] %s 区间构建成功: H=%.2f L=%.2f W=%.2f%% ATR=%.3f VWAP=%.2f VolR=%.2f Q=%.2f",
                         symbol, orb_high, orb_low, width_pct, atr, vwap, volume_ratio, quality_score,
+                    )
+                    # Task #38 (2026-06-16): 上报质量达阈以更新 last_known_good 供 Dashboard 贯穿
+                    self._report_data_quality(
+                        symbol, quality_score,
+                        snapshot={
+                            "symbol": symbol,
+                            "orb_high": orb_high, "orb_low": orb_low,
+                            "width_pct": width_pct, "atr": atr,
+                            "vwap": vwap, "volume_ratio": volume_ratio,
+                            "price": current_price,
+                        },
+                        stale=False,
                     )
             except Exception as e:
                 logger.warning("[ORB] %s 区间构建异常: %s", symbol, e, exc_info=True)
@@ -570,6 +590,9 @@ class ORBEngine:
 
         built_count = 0
         for symbol in self._cfg.universe:
+            # ManualHold 闸门: 手动占用标的, 不浪费配额构建 ORB 区间
+            if manual_hold_registry.is_manual_held(symbol):
+                continue
             # 跳过已有持仓的标的
             if symbol in self._positions:
                 continue
@@ -651,6 +674,7 @@ class ORBEngine:
                         price=current_price,
                         vwap=vwap,
                         direction="LONG",  # 初始假设
+                        symbol=symbol,
                     )
 
                     # 更新滚动区间
@@ -841,6 +865,10 @@ class ORBEngine:
         for symbol, rng in list(self._ranges.items()):
             if not rng.get("ready"):
                 continue
+            # ManualHold 闸门: 手动占用标的, ORB 引擎跳过
+            if manual_hold_registry.is_manual_held(symbol):
+                logger.debug("[ORB] %s 跳过: 手动持仓已占用 (ManualHoldRegistry)", symbol)
+                continue
             # 已有仓位 → 跳过 (本引擎内部)
             if symbol in self._positions:
                 continue
@@ -903,6 +931,30 @@ class ORBEngine:
         Returns:
             {"direction": "LONG"/"SHORT", "price": float, "atr": float, "regime": str} 或 None
         """
+        # ── Task #38 (2026-06-16): 行情质量门控 (信号管道入口) ──
+        # 区间评分 < 0.5 或 fallback (前一日缓存凑的伪区间) 不进信号管道:
+        #   - 记录 stale 告警日志
+        #   - 上报 SubscriptionManager.update_data_quality 供 Dashboard 渲染
+        #   - 返 None 跳过本轮突破评估
+        rng_quality = float(rng.get("quality_score", 1.0) or 0.0)
+        is_fallback = bool(rng.get("fallback", False))
+        if rng_quality < 0.5 or is_fallback:
+            # STALE 日志降频: 每标的每 300 秒最多 1 条 (避免 5s×10标的=3600条/小时)
+            if not hasattr(self, "_stale_log_ts"):
+                self._stale_log_ts: Dict[str, float] = {}  # type: ignore[attr-defined]
+            _now = time.time()
+            _last_log = self._stale_log_ts.get(symbol, 0.0)
+            if _now - _last_log >= 300.0:
+                logger.warning(
+                    "[ORB][STALE] %s 区间质量不足跳过信号管道 "
+                    "| Q=%.2f fallback=%s W=%.2f%% — 可能为 OpenD K 线缺失的降级快照",
+                    symbol, rng_quality, is_fallback, rng.get("width_pct", 0.0),
+                )
+                self._stale_log_ts[symbol] = _now
+            # 上报质量到 SubscriptionManager (记录 stale 告警 + 供 Dashboard 渲染)
+            self._report_data_quality(symbol, rng_quality, rng, stale=True)
+            return None
+
         orb_high = rng["high"]
         orb_low = rng["low"]
         width_pct = rng["width_pct"]
@@ -973,6 +1025,7 @@ class ORBEngine:
             price=price,
             vwap=vwap,
             direction=direction,
+            symbol=symbol,
         )
 
         # 2026-06-08: 质量门槛 0.5→0.6 (研究: 综合过滤后胜率55-62%)
@@ -1040,6 +1093,61 @@ class ORBEngine:
             "quality_score": quality_score,
             "trace_id": _orb_trace_id,
         }
+
+    # ── Task #38 (2026-06-16): 质量上报助手 —跨模块共享 ──
+    def _report_data_quality(
+        self,
+        symbol: str,
+        score: float,
+        snapshot: Optional[Dict[str, Any]],
+        stale: bool,
+    ) -> None:
+        """上报一次行情质量到 SubscriptionManager (供 Dashboard 渲染 stale 标记)。
+
+        含去重限流 (per-symbol 60s 间隔)：ORB 每 5s 轮询，避免为同一限仓
+        重复打 stale 告警。失败不会中断信号逻辑 (完全静默降级)。
+        """
+        try:
+            # per-symbol 限流缓存 (60s)
+            if not hasattr(self, "_quality_report_ts"):
+                self._quality_report_ts: Dict[str, float] = {}  # type: ignore[attr-defined]
+            now = time.time()
+            last = self._quality_report_ts.get(symbol, 0.0)
+            if now - last < 60.0:
+                return
+            self._quality_report_ts[symbol] = now
+
+            mgr = self._get_subscription_manager()
+            if mgr is None or not hasattr(mgr, "update_data_quality"):
+                return
+            mgr.update_data_quality(
+                score=score,
+                snapshot=snapshot if snapshot is not None else None,
+                symbol=symbol,
+            )
+        except Exception as _e:
+            logger.debug(f"[ORB][quality] 上报质量异常 (忽略): {_e}")
+
+    def _get_subscription_manager(self):
+        """懒加载 SubscriptionManager 单例。
+
+        使用 app.data.subscription_manager.get_active_subscription_manager()
+        避免循环依赖；查不到返 None。
+        """
+        # 缓存 — 仅查找一次
+        if hasattr(self, "_cached_subscription_mgr"):
+            return self._cached_subscription_mgr
+        mgr = None
+        try:
+            from app.data.subscription_manager import get_active_subscription_manager
+            mgr = get_active_subscription_manager()
+        except Exception:
+            mgr = None
+        try:
+            self._cached_subscription_mgr = mgr  # type: ignore[attr-defined]
+        except Exception:
+            pass
+        return mgr
 
     def _execute_entry(
         self, symbol: str, signal: Dict[str, Any], rng: Dict[str, Any]
@@ -1230,6 +1338,13 @@ class ORBEngine:
                 "quality_score": quality_score,
                 "trace_id": trace_id,
             }
+            # Task #6 (2026-06-15): 显式打 PositionSource.AUTO_ORB 源头标记
+            # 顺序重要 — 必须在 metadata 赋值后调用, 避免被覆盖
+            try:
+                from app.positions import tag_position, PositionSource
+                tag_position(store_pos, PositionSource.AUTO_ORB)
+            except Exception:
+                pass
             self._store.add(symbol, store_pos)
 
         # 通知
@@ -1682,6 +1797,8 @@ class ORBEngine:
         if not self._data:
             return None
         raw = None
+        # P2c (2026-06-16): 盘中首次获取失败时输出诊断日志
+        _diag_log = getattr(self, '_kline_diag_logged', set())
         try:
             # 路径 1: data_router.get_klines (如果存在)
             if hasattr(self._data, "get_klines"):
@@ -1787,6 +1904,7 @@ class ORBEngine:
         price: float,
         vwap: float,
         direction: str,
+        symbol: str = "",
     ) -> float:
         """
         计算区间质量评分 (0.0 - 1.0)
@@ -1794,11 +1912,22 @@ class ORBEngine:
         评分模型:
           quality = 0.4 * width_score + 0.3 * volume_score + 0.3 * vwap_score
 
-        width_score:
-          - 0.3% <= width <= 2.0%: 1.0 (理想)
-          - 0.2% <= width < 0.3%: 0.5 (偏窄)
-          - 2.0% < width <= 3.0%: 0.5 (偏宽)
-          - 其他: 0.0 (不可交易)
+        width_score (自适应阈值, 2026-06-17):
+          大盘 ETF (SPY/QQQ/DIA/IWM):
+            - 0.05% <= width <= 2.0%: 1.0 (理想)
+            - 0.03% <= width < 0.05%: 0.5 (偏窄)
+            - 2.0% < width <= 3.0%: 0.5 (偏宽)
+            - 其他: 0.0
+          行业 ETF (XLK/XLF/XLE/XLV 等):
+            - 0.10% <= width <= 2.0%: 1.0
+            - 0.05% <= width < 0.10%: 0.5
+            - 2.0% < width <= 3.0%: 0.5
+            - 其他: 0.0
+          个股:
+            - 0.30% <= width <= 2.0%: 1.0
+            - 0.20% <= width < 0.30%: 0.5
+            - 2.0% < width <= 3.0%: 0.5
+            - 其他: 0.0
 
         volume_score:
           - ratio >= 1.5: 1.0 (放量)
@@ -1811,10 +1940,24 @@ class ORBEngine:
           - SHORT 且 price < vwap: 1.0
           - 其他: 0.5
         """
+        # ── 自适应宽度阈值 (2026-06-17 P0 fix) ──
+        # 大盘 ETF 流动性好, 开盘区间天然窄 (0.01-0.05%), 不应惩罚
+        _MAJOR_ETFS = {"SPY", "QQQ", "DIA", "IWM"}
+        _SECTOR_ETFS = {"XLK", "XLF", "XLE", "XLV", "XLI", "XLY", "XLP",
+                        "XLB", "XLRE", "XLU", "XLC"}
+        _sym_base = symbol.replace("US.", "").split(".")[0] if symbol else ""
+
+        if _sym_base in _MAJOR_ETFS:
+            _w_ideal_lo, _w_partial_lo = 0.05, 0.03
+        elif _sym_base in _SECTOR_ETFS:
+            _w_ideal_lo, _w_partial_lo = 0.10, 0.05
+        else:
+            _w_ideal_lo, _w_partial_lo = 0.30, 0.20
+
         # Width score
-        if 0.3 <= orb_width_pct <= 2.0:
+        if _w_ideal_lo <= orb_width_pct <= 2.0:
             width_score = 1.0
-        elif 0.2 <= orb_width_pct < 0.3 or 2.0 < orb_width_pct <= 3.0:
+        elif _w_partial_lo <= orb_width_pct < _w_ideal_lo or 2.0 < orb_width_pct <= 3.0:
             width_score = 0.5
         else:
             width_score = 0.0

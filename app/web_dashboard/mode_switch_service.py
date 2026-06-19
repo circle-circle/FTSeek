@@ -1,10 +1,11 @@
 """
-交易模式切换服务 — 安全地修改 .env.us 中的交易模式参数
+交易模式切换服务
 
-支持:
-  - 读取当前模式配置
-  - 切换到 simulate / live_conservative / live_normal
-  - 修改后提示重启服务生效
+包含两层职责:
+  1. .env.us 文件层模式切换 (simulate / live_conservative / live_normal)
+     —— 模块级函数 get_current_mode / switch_mode 等, 需要重启交易引擎生效
+  2. 运行时 auto/manual 双链路并行控制 (ModeSwitchService 类)
+     —— Dashboard 一键开关自动交易 + 激进程度切换, 不影响手动链路
 """
 
 import os
@@ -13,10 +14,11 @@ import shutil
 import fcntl
 import tempfile
 import subprocess
+import threading
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 logger = logging.getLogger("ftseek_us.mode_switch")
 
@@ -362,3 +364,165 @@ def _restart_ftseek_us() -> Dict[str, Any]:
     logger.warning(f"[模式切换] ftseek-us 等待超时 ({max_wait}s)")
     return {"success": False, "message": f"  ⚠️ 交易引擎启动超时 ({max_wait}s)，请手动检查: systemctl status ftseek-us"}
 
+
+# ============================================================
+#  ModeSwitchService — 双链路并行模式管理 (auto + manual)
+# ============================================================
+#
+# 旧逻辑: auto/manual 互斥切换
+# 新逻辑: 两者独立运行, 各自有开关控制
+#   - 自动交易: 可通过 Dashboard 随时开启/关闭, 默认以谨慎模式运行
+#   - 手动交易: 始终可用 (Dashboard 随时可操作)
+# ============================================================
+
+
+class ModeSwitchService:
+    """双链路并行模式管理服务 (运行时态, 内存级开关)."""
+
+    VALID_LEVELS = ("conservative", "normal", "aggressive")
+
+    def __init__(self, scheduler=None):
+        self._lock = threading.RLock()
+        self._auto_enabled: bool = self._read_yaml_auto_trading()  # 从 YAML 恢复, 重启后状态一致
+        self._auto_aggression: str = "conservative"  # 默认保守模式
+        self._scheduler = scheduler
+        self._last_toggle_time: Optional[datetime] = None
+        self._toggle_history: list = []
+        logger.info(
+            f"[ModeSwitchService] Initialized: auto={self._auto_enabled} "
+            f"(from YAML), level={self._auto_aggression}"
+        )
+
+    @staticmethod
+    def _read_yaml_auto_trading() -> bool:
+        """从 unified_config.yaml 读取 auto_trading_enabled (启动时恢复状态)"""
+        import re as _re
+        try:
+            _yaml_path = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+                "config", "unified_config.yaml"
+            )
+            with open(_yaml_path, "r") as _f:
+                for _line in _f:
+                    _m = _re.match(r'\s+auto_trading_enabled:\s*(true|false)', _line)
+                    if _m:
+                        return _m.group(1) == 'true'
+        except Exception:
+            pass
+        return False  # 读取失败 → 默认关闭 (安全优先)
+
+    # ---- Dashboard 控制接口 -------------------------------------------------
+
+    def set_auto_enabled(self, enabled: bool) -> dict:
+        """Dashboard 一键开启/关闭自动交易 (不影响手动).
+
+        关闭时: 停止新信号扫描, 但现有自动持仓的退出规则继续生效
+        开启时: 以当前设定的激进程度恢复扫描
+        """
+        enabled = bool(enabled)
+        with self._lock:
+            old_state = self._auto_enabled
+            self._auto_enabled = enabled
+            self._last_toggle_time = datetime.now()
+            self._toggle_history.append({
+                "time": self._last_toggle_time,
+                "from": old_state,
+                "to": enabled,
+            })
+            # 仅保留最近 20 条
+            if len(self._toggle_history) > 20:
+                self._toggle_history = self._toggle_history[-20:]
+
+            logger.info(
+                f"[ModeSwitchService] Auto trading "
+                f"{'ENABLED' if enabled else 'DISABLED'} "
+                f"(level={self._auto_aggression})"
+            )
+
+            return {
+                "success": True,
+                "auto_enabled": enabled,
+                "auto_level": self._auto_aggression,
+                "toggled_at": self._last_toggle_time.isoformat(),
+            }
+
+    def set_auto_aggression(self, level: str) -> dict:
+        """设置自动交易激进程度.
+
+        - conservative (默认): 仓位缩减 50%, 资金上限 30%, 仅高置信度信号 (70/0.70)
+        - normal: 标准参数运行
+        - aggressive: 满配参数 (仅模拟盘建议使用)
+        """
+        if level not in self.VALID_LEVELS:
+            return {
+                "success": False,
+                "error": f"Invalid level: {level}. Must be one of {self.VALID_LEVELS}",
+            }
+
+        with self._lock:
+            old_level = self._auto_aggression
+            self._auto_aggression = level
+            logger.info(
+                f"[ModeSwitchService] Auto aggression changed: {old_level} -> {level}"
+            )
+            return {
+                "success": True,
+                "level": level,
+                "previous_level": old_level,
+            }
+
+    # ---- Pipeline / 查询接口 ------------------------------------------------
+
+    def is_auto_enabled(self) -> bool:
+        """自动交易 pipeline 调用: 检查是否允许扫描新信号."""
+        with self._lock:
+            return self._auto_enabled
+
+    def get_auto_aggression(self) -> str:
+        """获取当前自动交易激进程度."""
+        with self._lock:
+            return self._auto_aggression
+
+    def get_mode_status(self) -> dict:
+        """获取完整模式状态 (供 Dashboard 展示)."""
+        with self._lock:
+            return {
+                "auto_enabled": self._auto_enabled,
+                "auto_level": self._auto_aggression,
+                "manual_enabled": True,  # 手动始终可用
+                "last_toggle_time": (
+                    self._last_toggle_time.isoformat()
+                    if self._last_toggle_time else None
+                ),
+            }
+
+    def get_toggle_history(self, limit: int = 20) -> list:
+        """获取自动交易开关历史 (最近 limit 条)."""
+        with self._lock:
+            history = self._toggle_history[-limit:]
+            return [
+                {
+                    "time": h["time"].isoformat() if hasattr(h["time"], "isoformat") else str(h["time"]),
+                    "from": h["from"],
+                    "to": h["to"],
+                }
+                for h in history
+            ]
+
+# ---- 进程内单例 ---------------------------------------------------------
+
+_mode_switch_service_singleton: Optional[ModeSwitchService] = None
+_mode_switch_service_lock = threading.Lock()
+
+
+def get_mode_switch_service(scheduler=None) -> ModeSwitchService:
+    """获取 ModeSwitchService 进程内单例.
+
+    首次调用允许传入 scheduler 注入, 后续调用忽略参数返回已有实例.
+    """
+    global _mode_switch_service_singleton
+    if _mode_switch_service_singleton is None:
+        with _mode_switch_service_lock:
+            if _mode_switch_service_singleton is None:
+                _mode_switch_service_singleton = ModeSwitchService(scheduler=scheduler)
+    return _mode_switch_service_singleton

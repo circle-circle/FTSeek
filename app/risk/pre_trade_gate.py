@@ -176,7 +176,8 @@ def _check_daily_drawdown(equity: float) -> Tuple[bool, str]:
                     "SELECT COALESCE(SUM(realized_pnl), 0) "
                     "FROM trade_records "
                     "WHERE exit_time IS NOT NULL "
-                    "AND date(exit_time) = ?",
+                    "AND date(exit_time) = ? "
+                    "AND COALESCE(source_type, '') NOT IN ('MANUAL', 'MANUAL_CLOSE')",
                     (today,)
                 )
                 row = c.fetchone()
@@ -184,8 +185,17 @@ def _check_daily_drawdown(equity: float) -> Tuple[bool, str]:
                     daily_pnl = float(row[0])
                 conn.close()
         except Exception as e:
-            logger.debug(f"[pre_trade_gate] daily PnL query failed: {e}")
-            return True, ""  # fail-open on DB error (don't block trading)
+            # P0 (2026-06-17): fail-close on DB error — 亏损数据库损坏时停止交易而非继续
+            # 审计发现: 原代码 return True (fail-open) 与系统 fail-close 哲学矛盾
+            logger.error(
+                f"[pre_trade_gate] 🚨 daily PnL query failed: {e} — fail-close (拒绝交易)"
+            )
+            try:
+                from app.core.degradation_monitor import get_degradation_monitor
+                get_degradation_monitor().record("daily_pnl_query", str(e))
+            except Exception:
+                pass
+            return False, f"DB_ERROR: daily PnL query failed ({e})"
 
         _daily_pnl_cache = {"ts": now, "pnl": daily_pnl, "date": today}
 

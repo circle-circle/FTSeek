@@ -35,12 +35,12 @@ try:
     _vix_config = VotingConfig.get_default_config()
     VIX_NORMAL_THRESHOLD = _vix_config.VIX_LOW_THRESHOLD    # 20
     VIX_WARNING_THRESHOLD = _vix_config.VIX_MID_THRESHOLD   # 25
-    VIX_HIGH_THRESHOLD = _vix_config.VIX_HIGH_THRESHOLD     # 30
+    VIX_HIGH_THRESHOLD = _vix_config.VIX_HIGH_THRESHOLD     # 28 (Task #2: 统一)
     VIX_CRITICAL_THRESHOLD = 40.0
 except Exception:
     VIX_NORMAL_THRESHOLD = 20.0
     VIX_WARNING_THRESHOLD = 25.0
-    VIX_HIGH_THRESHOLD = 30.0
+    VIX_HIGH_THRESHOLD = 28.0  # Task #2: 统一为28 (was 30)
     VIX_CRITICAL_THRESHOLD = 40.0
 
 # 缓存配置

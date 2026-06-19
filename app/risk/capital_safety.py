@@ -234,8 +234,8 @@ class CapitalSafetySystem:
         # 新逻辑：当水位恢复到 GREEN/YELLOW 且回撤低于熔断线时自动解锁
         if self._state.is_locked:
             if self._state.water_level in (WaterLevel.GREEN, WaterLevel.YELLOW):
-                # 确认回撤已恢复到熔断线以下
-                if abs(self._state.drawdown_pct) < self.config.red_threshold:
+                # 确认回撤已恢复到熔断线以下 (使用绝对值比较)
+                if abs(self._state.drawdown_pct) < abs(self.config.red_threshold):
                     self._state.is_locked = False
                     old_reason = self._state.lock_reason
                     self._state.lock_reason = ""
@@ -500,6 +500,202 @@ class CapitalSafetySystem:
             "lock_reason": self._state.lock_reason,
         }
     
+    # ═══════════════════════════════════════════════════════════════════
+    #  Task #4 (2026-06-15): 双链路统一敞口上限管控
+    # ═══════════════════════════════════════════════════════════════════
+    #
+    #  规则:
+    #    1. 全局上限 (auto + manual 合计) — 硬约束, 取自
+    #       config.dual_mode.exposure_control.global_max_total (默认 80%)
+    #    2. 自动交易额外受激进程度上限约束:
+    #         conservative=30% / normal=60% / aggressive=75%
+    #    3. 手动交易仅受全局上限约束 (不受 auto 激进度限制)
+    #
+    #  所有方法均带 try/except 兜底, 失败返回 0.0 不阻塞主流程
+    # ═══════════════════════════════════════════════════════════════════
+
+    # 自动交易激进度对应的总敞口上限
+    _AUTO_LEVEL_CAPS = {
+        "conservative": 0.30,
+        "normal": 0.60,
+        "aggressive": 0.75,
+    }
+
+    def _get_global_exposure_cap(self) -> float:
+        """读取 config.dual_mode.exposure_control.global_max_total (默认 80%)"""
+        try:
+            from app.core.config_container import get_config
+            cfg = get_config()
+            cap = cfg.get_dotted("dual_mode.exposure_control.global_max_total", 0.80)
+            return float(cap) if cap else 0.80
+        except Exception:
+            return 0.80
+
+    def _get_position_store(self):
+        """获取 PositionStore 单例 (通过 USPositionSync), 失败返回 None"""
+        try:
+            from app.core.position_sync import get_us_position_sync
+            sync = get_us_position_sync()
+            return getattr(sync, "position_store", None)
+        except Exception as e:
+            logger.debug(f"[DualMode] PositionStore 不可用: {e}")
+            return None
+
+    def _calculate_manual_exposure(self) -> float:
+        """计算当前手动交易总敞口金额 (USD).
+
+        优先级:
+          1. PositionStore 有该 symbol → 用 size × avg_entry_price (成本基)
+          2. 否则用 manual_hold_registry 中记录的 quantity × avg_entry_price (若可得)
+          3. 兜底 0
+        """
+        try:
+            from app.coordinator.manual_hold_registry import manual_hold_registry
+        except Exception:
+            return 0.0
+
+        store = self._get_position_store()
+        total = 0.0
+        try:
+            holdings = manual_hold_registry.get_all_holdings()
+        except Exception:
+            holdings = {}
+
+        for symbol, info in holdings.items():
+            try:
+                # 优先从 PositionStore 取真实持仓 (size × cost)
+                pos = store.get(symbol) if store else None
+                if pos is not None and getattr(pos, "avg_entry_price", 0) > 0:
+                    qty = abs(float(getattr(pos, "size", 0) or 0))
+                    price = float(pos.avg_entry_price)
+                    total += qty * price
+                else:
+                    # 兜底: registry 自带的 quantity (无价格 → 跳过)
+                    qty = abs(float(getattr(info, "quantity", 0) or 0))
+                    if qty > 0 and pos is not None:
+                        price = float(getattr(pos, "avg_entry_price", 0) or 0)
+                        total += qty * price
+            except Exception:
+                continue
+        return total
+
+    def _calculate_auto_exposure(self) -> float:
+        """计算当前自动交易总敞口金额 (USD).
+
+        从 PositionStore 中筛选非手动持仓 (排除 manual_hold_registry 中的 symbol
+        以及 source=MANUAL 的 Position), 用 size × avg_entry_price 求和.
+        """
+        store = self._get_position_store()
+        if store is None:
+            return 0.0
+
+        manual_symbols = set()
+        try:
+            from app.coordinator.manual_hold_registry import manual_hold_registry
+            manual_symbols = manual_hold_registry.get_all_manual_symbols()
+        except Exception:
+            pass
+
+        try:
+            from app.positions import get_position_source, PositionSource
+        except Exception:
+            get_position_source = None
+            PositionSource = None
+
+        total = 0.0
+        try:
+            positions = store.all()
+        except Exception:
+            positions = []
+
+        for pos in positions:
+            try:
+                symbol = getattr(pos, "symbol", "")
+                if symbol in manual_symbols:
+                    continue
+                # 双重过滤: 排除 source=MANUAL 的仓位
+                if get_position_source is not None and PositionSource is not None:
+                    if get_position_source(pos) == PositionSource.MANUAL:
+                        continue
+                qty = abs(float(getattr(pos, "size", 0) or 0))
+                price = float(getattr(pos, "avg_entry_price", 0) or 0)
+                if qty > 0 and price > 0:
+                    total += qty * price
+            except Exception:
+                continue
+        return total
+
+    def get_available_budget_for_auto(self) -> float:
+        """计算自动交易可用预算 (USD).
+
+        规则:
+          1. 全局上限 (默认 80%) 是硬约束 (auto + manual 合计不可超)
+          2. 自动交易额外受激进度上限约束 (conservative=30% / normal=60% / aggressive=75%)
+          3. 返回 max(0, min(global_remaining, auto_remaining))
+        """
+        try:
+            equity = float(self._state.current_equity or 0)
+            if equity <= 0:
+                return 0.0
+
+            manual_exposure = self._calculate_manual_exposure()
+            auto_exposure = self._calculate_auto_exposure()
+
+            # 全局剩余 = equity × 80% - 已用 (auto + manual)
+            global_cap_pct = self._get_global_exposure_cap()
+            global_max = equity * global_cap_pct
+            global_remaining = global_max - manual_exposure - auto_exposure
+
+            # 自动交易自身上限 (按激进度)
+            try:
+                from app.web_dashboard.mode_switch_service import get_mode_switch_service
+                level = get_mode_switch_service().get_auto_aggression()
+            except Exception:
+                level = "conservative"
+            auto_cap_pct = self._AUTO_LEVEL_CAPS.get(level, 0.30)
+            auto_cap = equity * auto_cap_pct
+            auto_remaining = auto_cap - auto_exposure
+
+            available = max(0.0, min(global_remaining, auto_remaining))
+            logger.debug(
+                f"[DualMode] auto_budget: equity=${equity:,.0f} | "
+                f"manual=${manual_exposure:,.0f} | auto=${auto_exposure:,.0f} | "
+                f"global_remain=${global_remaining:,.0f} | "
+                f"auto_cap({level})=${auto_cap:,.0f} | available=${available:,.0f}"
+            )
+            return available
+        except Exception as e:
+            logger.warning(f"[DualMode] Failed to calculate auto budget: {e}")
+            return 0.0
+
+    def get_available_budget_for_manual(self) -> float:
+        """计算手动交易可用预算 (USD).
+
+        规则:
+          1. 手动不受 auto 的 cap 限制
+          2. 仅受全局上限 (默认 80%) 约束
+        """
+        try:
+            equity = float(self._state.current_equity or 0)
+            if equity <= 0:
+                return 0.0
+
+            auto_exposure = self._calculate_auto_exposure()
+            manual_exposure = self._calculate_manual_exposure()
+
+            global_cap_pct = self._get_global_exposure_cap()
+            global_max = equity * global_cap_pct
+            available = max(0.0, global_max - auto_exposure - manual_exposure)
+            logger.debug(
+                f"[DualMode] manual_budget: equity=${equity:,.0f} | "
+                f"auto=${auto_exposure:,.0f} | manual=${manual_exposure:,.0f} | "
+                f"global_max=${global_max:,.0f} | available=${available:,.0f}"
+            )
+            return available
+        except Exception as e:
+            logger.warning(f"[DualMode] Failed to calculate manual budget: {e}")
+            return 0.0
+
     def _determine_water_level(self) -> WaterLevel:
         """根据回撤确定水位等级
         

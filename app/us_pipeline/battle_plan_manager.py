@@ -383,15 +383,29 @@ class USBattlePlanManager:
                 target = t
                 break
         
+        # P1 修复 (2026-06-19): Deep Research AVOID 生效
+        # 根因: deep_research 给出 AVOID 结论 (如"历史胜率0%"、"估值极度透支")
+        # 但 check_trade() 完全不读此字段，导致 AVOID 形同虚设
+        # 6/18 NTES/AMD/LMT 三个 VALID 标的的 deep_research 全部 AVOID，但都通过了
+        if target:
+            dr_verdict = target.get("deep_research", {}).get("verdict", {})
+            if dr_verdict.get("action") == "AVOID":
+                reason = dr_verdict.get("reason", "Deep research recommends AVOID")
+                logger.warning(f"[Plan Gate] {symbol} blocked by Deep Research AVOID: {reason}")
+                return False, f"Deep Research AVOID: {reason}"
+        
         if not target:
             # 方案 A: 计划外标的 → 技术面高评分后门
             # P0-辩论修复: strength 统一 direct 语义 (LONG/SHORT 均同)
             # 越高 = 信号越强, 无需反转
             trade_dir = "LONG" if direction.upper() == "BUY" else "SHORT"
-            if strength >= 5:  # 模拟盘: 50→5, 极度放宽
+            # P2 修复 (2026-06-19): 模拟盘 bypass 阈值从 5 提高到 50
+            # 根因: strength >= 5 几乎等于无条件放行，导致计划外交易泛滥
+            # 6/18 有 5 笔计划外交易 (AAPL/MU 等)，全是低质量信号
+            if strength >= 50:
                 return True, (
                     f"Plan bypass ({trade_dir}): {symbol} not in battle plan, "
-                    f"but signal is strong (strength={strength} >= 5)"
+                    f"but signal is strong (strength={strength} >= 50)"
                 )
             return False, (
                 f"Symbol {symbol} not in battle plan "

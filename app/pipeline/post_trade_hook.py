@@ -109,8 +109,8 @@ def on_position_opened(position: Any, signal: Any, context: dict,
             or ""
         )
         direction_str = signal.direction.value if hasattr(signal.direction, "value") else str(signal.direction)
-        conn = sqlite3.connect(str(attr_db))
-        try:
+        from app.core.db_utils import db_connect
+        with db_connect(attr_db) as conn:
             cur = conn.cursor()
             trace_id = getattr(signal, "trace_id", "") or ""
             cur.execute("SELECT trace_id FROM trade_attribution WHERE trace_id = ?", (trace_id,))
@@ -130,25 +130,10 @@ def on_position_opened(position: Any, signal: Any, context: dict,
                     vix_at_entry=vix_entry,
                     signal_tags=sig_tags,
                 )
-                conn.commit()
-        finally:
-            conn.close()
     hooks.append(("attribution", _hook_attribution))
 
-    # 2. ShadowMirror
-    def _hook_mirror():
-        from app.evolution.shadow_mirror import get_shadow_mirror
-        get_shadow_mirror().mirror_entry(
-            real_trace_id=getattr(signal, "trace_id", "") or getattr(position, "position_id", ""),
-            symbol=symbol,
-            direction=signal.direction.value if hasattr(signal.direction, "value") else str(signal.direction),
-            entry_price=float(position.avg_entry_price),
-            quantity=int(position.size),
-            signal_strength=int(getattr(signal, "strength", 0) or 0),
-            signal_confidence=float(getattr(signal, "confidence", 0) or 0),
-            owner_strategy=getattr(position, "owner_strategy", None) or "main",
-        )
-    hooks.append(("mirror", _hook_mirror))
+    # 2. REMOVED (2026-06-19): ShadowMirror 不再使用
+    # 改用 Playbook shadow 模式做策略验证
 
     # 3. PushHub
     def _hook_push():

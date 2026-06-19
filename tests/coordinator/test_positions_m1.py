@@ -12,7 +12,7 @@ from app.positions import (
     PositionSource, ProtectionState,
     get_position_source, get_protection_state, tag_position,
     is_strategy_managed, is_protected,
-    StartupReconciler, RiskAggregator,
+    StartupReconciler,
 )
 from app.positions.protection import ProtectionController
 
@@ -224,46 +224,6 @@ def test_reconciler_local_only_marked_ghost():
     result = rec._reconcile(broker_positions={}, local_positions={"DEAD": p})
     assert result.local_only_ghosted == 1
     assert p.metadata.get("is_ghost") is True
-
-
-# ─── RiskAggregator ───
-def test_risk_snapshot_includes_all_sources():
-    p1 = MockPosition("NVDA", direction="LONG", size=100, price=150,
-                       metadata={"source": "auto_main", "protection": "managed"})
-    p2 = MockPosition("AAPL", direction="LONG", size=50, price=200,
-                       metadata={"source": "manual", "protection": "protected"})
-    store = MockPositionStore([p1, p2])
-    agg = RiskAggregator(store)
-    snap = agg.snapshot(equity=100000)
-
-    # 总敞口 = 100*150 + 50*200 = 15000 + 10000 = 25000
-    assert snap.total_market_value == 25000
-    assert snap.n_positions == 2
-    assert snap.n_managed == 1
-    assert snap.n_protected == 1
-    # 受保护占用 = 10000 (AAPL manual)
-    assert snap.protected_locked_value == 10000
-    # 策略可用 = 100000 - 10000 = 90000
-    assert snap.strategy_available_value == 90000
-
-
-def test_risk_snapshot_long_short_split():
-    p1 = MockPosition("L", direction="LONG", size=100, price=10, metadata={"source": "auto_main"})
-    p2 = MockPosition("S", direction="SHORT", size=50, price=20, metadata={"source": "auto_scalping"})
-    store = MockPositionStore([p1, p2])
-    snap = RiskAggregator(store).snapshot(equity=10000)
-    assert snap.long_value == 1000
-    assert snap.short_value == 1000
-
-
-def test_strategy_budget_excludes_protected():
-    p = MockPosition("MANUAL_HOLD", size=100, price=100, metadata={"source": "manual"})
-    store = MockPositionStore([p])
-    agg = RiskAggregator(store)
-    # equity=100000, total_cap=0.9 = 90000
-    # protected_locked = 10000 → 占 10% → 策略可用 = 0.9 - 0.1 = 0.8
-    budget = agg.get_strategy_budget_pct(equity=100000, total_cap_pct=0.9)
-    assert abs(budget - 0.8) < 1e-6
 
 
 # ─── M1.1 智能 source 推断 ───

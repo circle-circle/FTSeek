@@ -47,8 +47,63 @@ from app.core.models import (
     SignalScore, Direction, MarketRegime,
 )
 from app.storage.rejection_logger import get_rejection_logger
+from app.coordinator.manual_hold_registry import manual_hold_registry
 
 logger = logging.getLogger(__name__)
+
+# ── Rapid Regime Change 历史缓冲区 (P0 2026-06-17) ──
+# 保留最近 5 分钟的 VIX/SPY 采样, 供 check_rapid_regime_change 检测急变
+_VIX_HISTORY: list = []   # [(timestamp, vix_value), ...]
+_SPY_HISTORY: list = []   # [(timestamp, spy_value), ...]
+_HISTORY_MAX_SECONDS: float = 360.0  # 保留最近 6 分钟 (略大于 5 分钟窗口)
+_HISTORY_MAX_ENTRIES: int = 30       # 最多 30 个采样点
+
+
+# ============================================================
+# 决策引擎辅助 (Task #19)
+# ============================================================
+def _check_execution_rules(rules: dict, symbol: str, context: dict) -> bool:
+    """检查 execution_rules 是否允许执行。
+
+    返回 True=允许, False=阻止。规则缺失或无法判定时一律放行。
+    """
+    if not rules or not isinstance(rules, dict):
+        return True
+
+    try:
+        prev_close = float(context.get("prev_close", 0) or 0)
+        open_price = float(context.get("open_price", 0) or 0)
+        current_price = float(context.get("current_price", context.get("price", 0)) or 0)
+    except (TypeError, ValueError):
+        return True
+
+    if prev_close > 0 and open_price > 0:
+        gap_pct = (open_price - prev_close) / prev_close
+
+        # 高开超 2%
+        if gap_pct > 0.02:
+            action = str(rules.get("gap_up_over_2pct", "") or "").upper()
+            if action == "SKIP":
+                logger.info(
+                    f"[ExecRules] {symbol} 高开{gap_pct*100:.1f}%, 规则SKIP"
+                )
+                return False
+
+        # 低开超 2%
+        if gap_pct < -0.02:
+            action = str(rules.get("gap_down_over_2pct", "") or "").upper()
+            if action == "WAIT_RECOVERY":
+                # 检查现价是否已恢复至开盘价以上
+                if current_price > 0 and current_price <= open_price:
+                    logger.info(
+                        f"[ExecRules] {symbol} 低开{gap_pct*100:.1f}%, "
+                        f"等待恢复(现价{current_price:.2f}≤开盘{open_price:.2f})"
+                    )
+                    return False
+                # 已恢复 → 允许
+
+    # hit_zone_then_drop: 已在 entry_zone 内才会进入 Fast Lane, 这里默认通过
+    return True
 
 
 # ============================================================
@@ -88,6 +143,20 @@ def scan_loop(scheduler):
                 get_watchdog().ping("scan_loop")
             except Exception:
                 pass
+
+            # ── 双链路并行 (Task #3 2026-06-15): Dashboard 自动交易总开关 ──
+            # 关闭时: 跳过本轮信号扫描 (信号生成/数据采集/退出监控不受影响)
+            try:
+                from app.web_dashboard.mode_switch_service import get_mode_switch_service
+                if not get_mode_switch_service().is_auto_enabled():
+                    logger.debug("[AUTO] Auto trading disabled via Dashboard, skip scan")
+                    for _ in range(int(scheduler.SCAN_INTERVAL_MINUTES * 60)):
+                        if not scheduler.running:
+                            return
+                        time.sleep(1)
+                    continue
+            except Exception as _ae_err:
+                logger.debug(f"[AUTO] auto_enabled 检查异常 (放行): {_ae_err}")
             from app.core.scheduler_triggers import get_market_phase, MarketPhase
             phase = get_market_phase()
             if phase in (MarketPhase.WEEKEND, MarketPhase.OVERNIGHT):
@@ -300,6 +369,41 @@ def _run_signal_scan_impl(scheduler):
         f"市场情绪={market_news.get('sentiment', 0):.2f}"
     )
 
+    # ── P0 (2026-06-17): Rapid Regime Change 检测 ──
+    # 记录 VIX/SPY 历史采样, 检测 5 分钟内的急变 (VIX 涨>15% 或 SPY 跌>1%)
+    _now_ts = time.time()
+    _spy_price = spy_context.get("price", 0) or spy_context.get("spx_price", 0) or 0
+    _VIX_HISTORY.append((_now_ts, float(vix)))
+    if _spy_price > 0:
+        _SPY_HISTORY.append((_now_ts, float(_spy_price)))
+    # 清理过期数据
+    _cutoff = _now_ts - _HISTORY_MAX_SECONDS
+    while _VIX_HISTORY and _VIX_HISTORY[0][0] < _cutoff:
+        _VIX_HISTORY.pop(0)
+    while _SPY_HISTORY and _SPY_HISTORY[0][0] < _cutoff:
+        _SPY_HISTORY.pop(0)
+    # 限制最大条目数
+    if len(_VIX_HISTORY) > _HISTORY_MAX_ENTRIES:
+        _VIX_HISTORY[:] = _VIX_HISTORY[-_HISTORY_MAX_ENTRIES:]
+    if len(_SPY_HISTORY) > _HISTORY_MAX_ENTRIES:
+        _SPY_HISTORY[:] = _SPY_HISTORY[-_HISTORY_MAX_ENTRIES:]
+    # 调用快速切换检测
+    try:
+        from app.strategy.regime_filter import check_rapid_regime_change
+        _rapid = check_rapid_regime_change(
+            vix_history=[v for _, v in _VIX_HISTORY],
+            spy_history=[s for _, s in _SPY_HISTORY],
+        )
+        if _rapid:
+            logger.warning(f"[RegimeQuickSwitch] 检测到快速切换 → {_rapid}, 本轮强制收紧")
+            # 注入到 scheduler 供下游 signal_stage 读取
+            scheduler._rapid_regime_override = _rapid
+        else:
+            scheduler._rapid_regime_override = None
+    except Exception as _rre:
+        logger.debug(f"[RegimeQuickSwitch] 检测异常 (不影响主流程): {_rre}")
+        scheduler._rapid_regime_override = None
+
     # ── P4 2026-05-02: 动态选股池 ──
     # 根据 tier + 风控等级动态过滤 watchlist
     pool_filter = _get_dynamic_pool_filter(scheduler)
@@ -320,6 +424,13 @@ def _run_signal_scan_impl(scheduler):
             )
     except Exception:
         pass
+
+    # ── Task #3 (2026-06-17): 策略健康评估 (每小时一次) ──
+    try:
+        from app.risk.strategy_health_monitor import get_strategy_health_monitor
+        get_strategy_health_monitor().evaluate_all_strategies()
+    except Exception as _sh_err:
+        logger.debug(f"[StrategyHealth] 评估调用失败 (不影响主流程): {_sh_err}")
 
     try:
         _run_signal_scan_body(scheduler, vix, spy_context, market_news, pool_filter)
@@ -719,10 +830,36 @@ def _execute_portfolio_plan(scheduler, candidates: list, vix: float):
     except Exception as e:
         logger.debug(f"[组合构建] 作战计划加载失败 (不影响评分): {e}")
 
+    # ── Task #3 (2026-06-17): IC监控策略健康过滤 ──
+    _ic_filtered_count = 0
+    try:
+        from app.risk.strategy_health_monitor import get_strategy_health_monitor
+        _health_monitor = get_strategy_health_monitor()
+    except Exception:
+        _health_monitor = None
+
     for symbol, signal, context, vote_result in candidates:
+        # 策略健康检查: SUSPENDED 策略的信号不进入组合构建
+        if _health_monitor:
+            _strat_id = (
+                vote_result.get("strategy_id", "")
+                or getattr(signal, "strategy_id", "")
+                or "unknown"
+            )
+            _allowed, _reason = _health_monitor.should_allow_signal(_strat_id)
+            if not _allowed:
+                logger.info(
+                    f"[IC_Monitor] 跳过 {symbol} 策略{_strat_id}: {_reason}")
+                _ic_filtered_count += 1
+                continue
+
         plan_dir = battle_plan_targets.get(symbol, "")
         pc.add_candidate(symbol, signal, context, vote_result,
                          battle_plan_direction=plan_dir)
+
+    if _ic_filtered_count > 0:
+        logger.info(
+            f"[IC_Monitor] 本轮过滤 {_ic_filtered_count} 个候选 (策略健康降级)")
 
     # 获取评分所需上下文
     kernel = get_shared_kernel()
@@ -918,6 +1055,8 @@ def _process_symbol_new_pipeline(scheduler, symbol: str, vix: float,
         "voting_coordinator": getattr(scheduler, 'voting_coordinator', None),
         "execution_engine": scheduler.execution_engine,
         "polling_controller": getattr(scheduler, 'polling_controller', None),
+        # P0 (2026-06-17): 快速 Regime 切换覆盖 — 由 scan_loop 检测注入
+        "_rapid_regime_override": getattr(scheduler, '_rapid_regime_override', None),
     }
 
     # ── 执行管线 ──
@@ -1015,6 +1154,11 @@ def _process_symbol_new_pipeline(scheduler, symbol: str, vix: float,
             "is_earnings_blackout": ctx.earnings_blackout,
             "data_source": ctx.source,
         }
+        # ADR-007: Regime position_scale 传递到 order_executor
+        _regime_scale = (getattr(candidate, 'metadata', {}) or {}).get("regime_position_scale")
+        if _regime_scale is not None and 0 < _regime_scale < 1.0:
+            context["position_scale_override"] = _regime_scale
+            logger.info(f"[Regime] {symbol} 仓位缩放: ×{_regime_scale}")
     else:
         # fallback: context from raw data_router
         try:
@@ -1075,6 +1219,11 @@ def _process_symbol_impl(scheduler, symbol: str, vix: float, spy_context: Dict[s
 
     H1 (2026-06-03): cached_context — 广度预扫描缓存的 context, 避免重复获取
     """
+    # ── ManualHold 闸门: 手动占用标的, 自动管线整体跳过 ──
+    if manual_hold_registry.is_manual_held(symbol):
+        logger.info(f"[SKIP] {symbol} held by manual trader, auto pipeline skip")
+        return
+
     # ── Feature Flag: 新管线 ──
     if on_candidate is None and _use_new_pipeline():
         _process_symbol_new_pipeline(scheduler, symbol, vix, spy_context, market_sentiment)
@@ -1266,10 +1415,104 @@ def _process_symbol_impl(scheduler, symbol: str, vix: float, spy_context: Dict[s
                 logger.error(f"[资本安全] 检查异常，安全起见拦截交易: {e}")
                 return
 
-            if scheduler.risk_engine:
+            # P0 (2026-06-16): 快车道统一走完整风控 Pipeline (USRiskPipeline + legacy fallback)
+            # 之前只调 legacy RiskEngine.pre_trade_check，缺少 CoolDown/VIX/Circuit 等 9 步检查
+            _risk_passed = False
+            if scheduler.us_risk_pipeline:
+                try:
+                    pipeline_ctx = {
+                        "risk_engine": scheduler.risk_engine,
+                        "position_store": scheduler.position_store,
+                        "vix": context.get("vix", 0),
+                        "spy_change_pct": spy_context.get("spx_change_percent", 0),
+                        "symbol": symbol,
+                    }
+                    pipeline_result = scheduler.us_risk_pipeline.run(signal, pipeline_ctx)
+                    if not pipeline_result.passed:
+                        logger.warning("[USRiskPipeline·FastLane] ❌ %s 被 %s 拦截: %s",
+                            symbol, pipeline_result.rejected_by, pipeline_result.reason)
+                        from app.pipeline.position_monitor import _notify_risk_blocked
+                        _notify_risk_blocked(scheduler, symbol, f"us_risk_pipeline: {pipeline_result.rejected_by}")
+                        return
+                    logger.debug("[USRiskPipeline·FastLane] ✅ %s 全部通过 (%d/%d)",
+                        symbol, pipeline_result.checks_passed, pipeline_result.checks_run)
+                    _risk_passed = True
+                except Exception as _e:
+                    logger.warning("[USRiskPipeline·FastLane] 执行异常 (降级到旧 RiskEngine): %s", _e)
+
+            if not _risk_passed and scheduler.risk_engine:
                 if not scheduler.risk_engine.pre_trade_check(signal):
                     logger.info(f"[风控] 拦截 {symbol} (计划内)")
                     return
+
+            # ===== 决策引擎增强检查 (Task #19, graceful) =====
+            # Check 1: 动态确信度
+            try:
+                from app.plan.conviction_tracker import get_conviction_tracker
+                tracker = get_conviction_tracker()
+                if not tracker.should_still_execute(symbol):
+                    conv = tracker.get_conviction(symbol)
+                    live_conf = conv.live_confidence if conv else 0
+                    logger.info(
+                        f"[Conviction] {symbol} 确信度已衰减至{live_conf}, 跳过Fast Lane"
+                    )
+                    return
+            except Exception as _e:
+                logger.debug(f"[Conviction] 检查异常(忽略): {_e}")
+
+            # Check 2: execution_rules 自动执行
+            try:
+                _exec_rules = battle_plan_match.get("execution_rules", {}) or {}
+                if _exec_rules and not _check_execution_rules(_exec_rules, symbol, context):
+                    return
+            except Exception as _e:
+                logger.debug(f"[ExecRules] 检查异常(忽略): {_e}")
+
+            # Check 3: 实时量能确认
+            try:
+                _factor_validation = battle_plan_match.get("factor_validation", {}) or {}
+                if _factor_validation.get("volume_breakout") == "FALSE_POSITIVE":
+                    _vol_ratio = float(context.get("volume_ratio", 1.0) or 1.0)
+                    if _vol_ratio < 0.8:
+                        logger.info(
+                            f"[Volume] {symbol} 量能{_vol_ratio:.2f}x未确认(FALSE_POSITIVE), 跳过Fast Lane"
+                        )
+                        return
+            except Exception as _e:
+                logger.debug(f"[Volume] 检查异常(忽略): {_e}")
+
+            # Check 4: 组合相关性
+            try:
+                from app.plan.portfolio_check import check_portfolio_fit
+                _positions_list = []
+                if hasattr(scheduler, 'position_store') and scheduler.position_store is not None:
+                    try:
+                        _all_pos = scheduler.position_store.get_all()
+                        for _pos in (_all_pos or []):
+                            _ps = getattr(_pos, 'symbol', None) or (
+                                _pos.get('symbol') if isinstance(_pos, dict) else None
+                            )
+                            _pd = getattr(_pos, 'direction', None) or (
+                                _pos.get('direction') if isinstance(_pos, dict) else None
+                            )
+                            if _ps:
+                                _positions_list.append({
+                                    "symbol": _ps,
+                                    "direction": str(_pd or "LONG").upper(),
+                                })
+                    except Exception as _pe:
+                        logger.debug(f"[Portfolio] 获取持仓列表异常: {_pe}")
+
+                _new_dir = battle_plan_match.get("direction", "LONG")
+                _alert = check_portfolio_fit(symbol, _new_dir, _positions_list)
+                if _alert.level == "HIGH":
+                    logger.warning(
+                        f"[Portfolio] {symbol} 集中度过高: {_alert.message}, 仓位缩减50%"
+                    )
+                    # 不阻止执行, 仅标记半仓 (供 order_executor 读取)
+                    context["position_scale_override"] = 0.5
+            except Exception as _e:
+                logger.debug(f"[Portfolio] 检查异常(忽略): {_e}")
 
             # 委托下单 (延迟导入避免循环依赖)
             # P0: 跨引擎互斥锁保护开仓临界区
@@ -1512,35 +1755,64 @@ def _process_symbol_impl(scheduler, symbol: str, vix: float, spy_context: Dict[s
             confidence=signal.confidence, direction=direction)
         return
 
+    # ── 双链路并行 (Task #3 2026-06-15): 谨慎模式信号门槛 ──
+    # 读取 ModeSwitchService 当前 aggression level 对应的阈值, 比基础门槛更严。
+    # 方向感知与上方一致: SHORT 用 100-strength 转为 effective。
+    try:
+        from app.coordinator.dual_mode_params import get_conservative_param
+        min_strength_override = get_conservative_param("min_signal_strength")
+        min_conf_override = get_conservative_param("min_confidence")
+        if min_strength_override is not None:
+            if effective_strength < float(min_strength_override):
+                logger.info(
+                    f"[CONSERVATIVE] {symbol} signal effective_strength={effective_strength} "
+                    f"< threshold {min_strength_override}, skip"
+                )
+                get_rejection_logger().record(symbol,
+                    f"effective={effective_strength}<{min_strength_override} (conservative)",
+                    "CONSERVATIVE_STRENGTH", strength=signal.strength,
+                    confidence=signal.confidence, direction=direction)
+                return
+        if min_conf_override is not None:
+            if signal.confidence < float(min_conf_override):
+                logger.info(
+                    f"[CONSERVATIVE] {symbol} confidence={signal.confidence:.2f} "
+                    f"< threshold {min_conf_override}, skip"
+                )
+                get_rejection_logger().record(symbol,
+                    f"confidence={signal.confidence:.2f}<{min_conf_override} (conservative)",
+                    "CONSERVATIVE_CONFIDENCE", strength=signal.strength,
+                    confidence=signal.confidence, direction=direction)
+                return
+    except Exception as _ce:
+        logger.warning(f"[CONSERVATIVE] {symbol} Failed to check thresholds: {_ce}")
+
     # ====== P0 修复 (2026-05-04): 信号持久化到 signals 表 ======
     # 修复前: signals 表永远为空 (0 rows)，信号→成交归因链路断链
     # 修复后: 所有通过强度/置信度过滤的信号都写入 signals 表
     try:
-        import sqlite3
         from datetime import datetime as _dt
+        from app.core.db_utils import db_connect
         from app.core.paths import get_trade_records_db
-        db_path = str(get_trade_records_db())
-        conn = sqlite3.connect(db_path)
-        conn.execute(
-            "INSERT INTO signals "
-            "(signal_date, symbol, direction, signal_strength, confidence, "
-            " entry_price, stop_loss, take_profit, strategy, status) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                _dt.now().strftime("%Y-%m-%d"),
-                symbol,
-                direction,
-                signal.strength,
-                signal.confidence,
-                context.get("price", 0.0),
-                vote_result.get("position_suggestion", {}).get("stop_loss_pct", 0),
-                vote_result.get("position_suggestion", {}).get("take_profit_pct", 0),
-                vote_result.get("strategy_id", "voting_llm"),
-                "PENDING",
-            ),
-        )
-        conn.commit()
-        conn.close()
+        with db_connect(get_trade_records_db()) as conn:
+            conn.execute(
+                "INSERT INTO signals "
+                "(signal_date, symbol, direction, signal_strength, confidence, "
+                " entry_price, stop_loss, take_profit, strategy, status) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    _dt.now().strftime("%Y-%m-%d"),
+                    symbol,
+                    direction,
+                    signal.strength,
+                    signal.confidence,
+                    context.get("price", 0.0),
+                    vote_result.get("position_suggestion", {}).get("stop_loss_pct", 0),
+                    vote_result.get("position_suggestion", {}).get("take_profit_pct", 0),
+                    vote_result.get("strategy_id", "voting_llm"),
+                    "PENDING",
+                ),
+            )
         logger.info(f"[P0·信号持久化] {symbol} 已写入 signals 表: strength={signal.strength} confidence={signal.confidence:.2f}")
     except Exception as e:
         logger.error(f"[P0·信号持久化] {symbol} 写入 signals 表失败: {e}")
@@ -1608,6 +1880,20 @@ def _process_symbol_impl(scheduler, symbol: str, vix: float, spy_context: Dict[s
             logger.warning(f"[风控] {symbol} 检查异常：{e}")
 
     # Step6: 下单 (P0: 跨引擎互斥锁保护开仓临界区)
+    # ── Task #1 (2026-06-17): 信号去重检查 ──
+    try:
+        from app.risk.signal_dedup import get_signal_deduplicator
+        _direction = str(getattr(signal, 'direction', '')).upper()
+        _strat_id = ""
+        if vote_result:
+            _strat_id = vote_result.get("strategy_id", "") or vote_result.get("model", "")
+        if not _strat_id and hasattr(signal, 'metadata'):
+            _strat_id = (signal.metadata or {}).get("strategy_id", "")
+        if get_signal_deduplicator().is_duplicate(symbol, _direction, _strat_id):
+            return
+    except Exception as _dedup_err:
+        logger.debug(f"[SignalDedup] 检查异常 (放行): {_dedup_err}")
+
     from app.pipeline.order_executor import _submit_order
     lock = getattr(scheduler, '_open_position_lock', None)
     if lock:

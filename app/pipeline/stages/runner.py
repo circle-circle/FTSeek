@@ -247,6 +247,10 @@ class PipelineRunner:
             base["position_store"] = self._shared_state.get("position_store")
             base["battle_plan_manager"] = self._shared_state.get("battle_plan_manager")
             base["voting_coordinator"] = self._shared_state.get("voting_coordinator")
+            # P0 (2026-06-17): 将 rapid regime override 注入 SymbolContext
+            _rapid = self._shared_state.get("_rapid_regime_override")
+            if _rapid and isinstance(context, SymbolContext):
+                context._rapid_regime_override = _rapid
 
         elif stage_name == "risk":
             base["candidate"] = context  # SignalCandidate

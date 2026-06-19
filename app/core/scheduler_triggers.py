@@ -10,9 +10,11 @@ FTSeek-US 核心调度器 - 触发器
 """
 import logging
 import os
+import time
+import threading
 from datetime import datetime, date, timedelta
 from app.utils.timezone import now_et
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 from enum import Enum
 from app.core.paths import get_decisions_db, get_project_root
 
@@ -102,6 +104,40 @@ def is_market_open() -> bool:
         bool: 是否在交易时间内
     """
     return get_market_phase() == MarketPhase.TRADING
+
+
+def sleep_if_market_closed(
+    interval_seconds: int,
+    running_check: "Callable[[], bool] | None" = None,
+) -> bool:
+    """
+    统一假日/休市守卫 — 所有后台循环的单一入口 (2026-06-19)
+
+    根因: 之前每个循环单独检查 get_market_phase()，新增循环容易遗漏，
+    导致假日/周末空跑 (Juneteenth 当天 ORB 1221 ticks, News 1864 次, VIX 761 次)。
+
+    修复: 提供统一守卫函数，任何循环只需一行:
+        if sleep_if_market_closed(60, lambda: self.running): continue
+
+    Args:
+        interval_seconds: 休眠时长 (秒)
+        running_check: 检查循环是否仍在运行的 callable (默认始终 True)
+
+    Returns:
+        True = 市场关闭，已休眠，调用方应 continue
+        False = 市场开放，调用方应继续执行
+    """
+    phase = get_market_phase()
+    if phase != MarketPhase.WEEKEND:
+        return False
+
+    # 市场关闭 — 休眠 interval_seconds (可中断)
+    _check = running_check or (lambda: True)
+    for _ in range(int(interval_seconds)):
+        if not _check():
+            break
+        time.sleep(1)
+    return True
 
 
 def is_in_cooldown(scheduler: 'TradingScheduler', symbol: str) -> bool:
@@ -572,44 +608,12 @@ def check_daily_review(scheduler: 'TradingScheduler'):
                     except Exception as ae:
                         logger.debug(f"[Agent] 触发盘后归因失败 (不影响主流程): {ae}")
                 
-                # Phase 6: 影子策略测试评估 (按策略线分别评估)
-                try:
-                    from app.evolution.shadow_tracker import ShadowTracker
-                    
-                    tracker = ShadowTracker()
-                    target_symbol = "SPY"
-                    date_str = now_et.date().isoformat()
-                    
-                    # 遍历主线和 Scalping 两条策略线
-                    for strategy_type in ["main", "scalping"]:
-                        results = tracker.run_daily_eval(strategy_type, target_symbol, date_str)
-                        
-                        for res in results:
-                            if res['decision'] == 'promoted':
-                                if scheduler.notifier:
-                                    scheduler.notifier.send_text(
-                                        f"🚀 [自动优化] {strategy_type.upper()} 策略影子胜出!\\n"
-                                        f"提议: {res['proposal_id']}\\n"
-                                        f"参数已自动更新并生效。"
-                                    )
-                                logger.info(f"✅ [Shadow] {strategy_type} 提议 {res['proposal_id']} 胜出，自动转正!")
-                except Exception as ste:
-                    logger.debug(f"[Shadow] 影子测试评估失败 (不影响主流程): {ste}")
+                # Phase 6: REMOVED (2026-06-19) — ShadowTracker 变体测试不再使用
+                # 改用 Playbook shadow 模式做策略验证
                 
-                # Phase 7 (P0-3 2026-05-27): Shadow Trades EOD 批量关闭
-                # 每日收盘后自动关闭所有超过 24h 未关闭的 shadow_trades
-                try:
-                    from app.core.position_sync import get_us_position_sync
-                    sync = get_us_position_sync()
-                    eod_result = sync.close_stale_shadow_trades(max_age_hours=24)
-                    if eod_result.get('closed', 0) > 0:
-                        logger.info(
-                            f"[ShadowEOD] 收盘批量关闭: "
-                            f"closed={eod_result['closed']}, errors={eod_result.get('errors', 0)}"
-                        )
-                except Exception as se:
-                    logger.debug(f"[ShadowEOD] EOD 关闭失败 (不影响主流程): {se}")
-                
+                # Phase 7: REMOVED (2026-06-19) — Shadow EOD 批量关闭不再需要
+                # shadow_trades 表已无数据，Playbook shadow 走独立生命周期
+
 
             except Exception as e:
                 logger.error(f"[日报] 复盘推送失败：{e}", exc_info=True)

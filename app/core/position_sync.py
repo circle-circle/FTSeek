@@ -14,7 +14,10 @@ import sqlite3
 import os
 import re
 from datetime import datetime, timezone, timedelta
+from pathlib import Path
 from typing import Dict, Optional
+
+from app.core.db_utils import safe_sqlite_connect
 
 logger = logging.getLogger("ftseek_us.position_sync")
 
@@ -52,6 +55,13 @@ class USPositionSync:
         #   支持 confirm_tombstone 延长 TTL (60s → 300s)
         self._closed_tombstones: Dict[str, tuple] = {}  # symbol → (close_at_ts, ttl_sec)
         self._tombstone_ttl_sec = 60.0  # 默认 TTL: 60s
+        # ── P1 (2026-06-16): 即时 sync 触发 (5s debounce) ──
+        self._immediate_sync_requested = False
+        self._last_immediate_sync_time: float = 0.0
+        self._immediate_sync_debounce_sec = 5.0
+        
+        # P0 修复 (2026-06-18): 幽灵仓告警缓存，避免相同幽灵仓每30秒重复告警
+        self._last_reported_ghosts = frozenset()
 
     def start(self):
         if self._running:
@@ -122,6 +132,22 @@ class USPositionSync:
             f"(TTL={self._CONFIRMED_TOMBSTONE_TTL_SEC:.0f}s)"
         )
 
+    def request_immediate_sync(self) -> None:
+        """请求立即执行一次 sync (5s debounce, 合并连续成交).
+
+        由 order_executor 在成交确认后调用. 多次快速调用只触发一次 sync.
+        """
+        now = time.time()
+        if now - self._last_immediate_sync_time < self._immediate_sync_debounce_sec:
+            logger.debug(
+                f"[US Sync] 即时 sync debounce: 距上次 {now - self._last_immediate_sync_time:.1f}s < "
+                f"{self._immediate_sync_debounce_sec}s, 跳过"
+            )
+            return
+        self._immediate_sync_requested = True
+        self._last_immediate_sync_time = now
+        logger.info("[US Sync] 即时 sync 已请求 (5s debounce)")
+
     def _sync_loop(self):
         """同步循环 (后台线程运行) — 根据市场阶段动态调整频率"""
         consecutive_skips = 0
@@ -149,9 +175,13 @@ class USPositionSync:
                 consecutive_skips = 0
                 self._sync_once()
                 self._sync_count += 1
-                # 休眠 interval 秒
+                self._immediate_sync_requested = False  # 清除即时 sync 标记
+                # 休眠 interval 秒 (每 0.1s 检查即时 sync 请求)
                 for _ in range(interval * 10):
                     if not self._running:
+                        break
+                    if self._immediate_sync_requested:
+                        logger.info("[US Sync] 即时 sync 触发, 中断休眠")
                         break
                     time.sleep(0.1)
             except Exception as e:
@@ -304,8 +334,8 @@ class USPositionSync:
         
         # 回退: 自建连接
         if ctx is None:
-            opend_host = os.getenv("FUTU_OPEND_HOST", os.getenv("OPEND_HOST", "127.0.0.1"))
-            opend_port = int(os.getenv("FUTU_OPEND_PORT", os.getenv("OPEND_PORT", "11111")))
+            opend_host = os.getenv("FUTU_OPEND_HOST", os.getenv("FUTU_OPEND_HOST", "127.0.0.1"))
+            opend_port = int(os.getenv("FUTU_OPEND_PORT", os.getenv("FUTU_OPEND_PORT", "11111")))
             ctx = self._get_futu_context(opend_host, opend_port, trade_env, TrdMarket.US, SecurityFirm.FUTUINC)
             if ctx is None:
                 return {}
@@ -417,8 +447,8 @@ class USPositionSync:
         from app.core.config_container import get_config
         _trade_env = get_config().trade_env_int
         trade_env = TrdEnv.SIMULATE if _trade_env == 1 else TrdEnv.REAL
-        opend_host = os.getenv("FUTU_OPEND_HOST", os.getenv("OPEND_HOST", "127.0.0.1"))
-        opend_port = int(os.getenv("FUTU_OPEND_PORT", os.getenv("OPEND_PORT", "11111")))
+        opend_host = os.getenv("FUTU_OPEND_HOST", os.getenv("FUTU_OPEND_HOST", "127.0.0.1"))
+        opend_port = int(os.getenv("FUTU_OPEND_PORT", os.getenv("FUTU_OPEND_PORT", "11111")))
 
         # 1. Get Futu positions (复用连接)
         futu_positions = {}
@@ -503,11 +533,8 @@ class USPositionSync:
             return
 
         # P0-4 修复 (2026-06-12): timeout=10 + busy_timeout 防止并发写时 "database is locked"
-        conn = sqlite3.connect(_get_db_path(), timeout=10)
-        # M12 (2026-06-03): 与 TradeStore 对齐 WAL 模式, 防止 journal mode 冲突
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA synchronous=NORMAL")
-        conn.execute("PRAGMA busy_timeout=5000")
+        from app.core.db_utils import safe_sqlite_connect
+        conn = safe_sqlite_connect(_get_db_path(), timeout=10)
         cursor = conn.cursor()
 
         # Ensure trader_type column exists
@@ -878,7 +905,7 @@ class USPositionSync:
         # 真正新发现: DB 没有 → 发通知
         _db_known_symbols = set()
         try:
-            conn = sqlite3.connect(_get_db_path(), timeout=10)
+            conn = safe_sqlite_connect(_get_db_path(), timeout=10)
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute("PRAGMA busy_timeout=5000")
             cursor = conn.cursor()
@@ -1044,6 +1071,19 @@ class USPositionSync:
                     "futu_order_id": _order_info.get('order_id', ''),
                     "futu_order_time": _order_info.get('time', ''),
                 }
+            elif _is_db_manual or _is_manual_today:
+                # Task #10 (2026-06-15): DB/审计已确认是手动开仓 →
+                # metadata.source 必须是 'manual', 让 PositionSource.MANUAL 生效,
+                # ManualHoldRegistry.sync_from_positions 启动恢复才会注册.
+                position.metadata = {
+                    "source": "manual",
+                    "origin": "manual_recovery" if _is_db_manual else "manual_today",
+                    "sync_origin": "position_sync",
+                    "trace_id": _sync_trace,
+                    "entry_reason": "manual_open",
+                    "strategy_id": strategy_id,
+                    "protection": "protected",
+                }
             else:
                 position.metadata = {
                     "source": "futu_discovery",
@@ -1121,10 +1161,7 @@ class USPositionSync:
                             or getattr(existing_pos, 'strategy_id', '')
                             or ''
                         )
-                        if _owner == 'scalping':
-                            meta = getattr(existing_pos, 'metadata', {}) or {}
-                            max_hold_min = meta.get('max_hold_minutes', 5)
-                            grace_period = max(max_hold_min * 60 * 2, 300)
+                        # P1 修复 (2026-06-19): scalping 已删除，不再特殊处理
                         if age_seconds < grace_period:
                             logger.info(
                                 "[US Sync] 跳过新持仓 %s (创建 %.0fs 前 < %.0fs 保护窗口, 等待 Futu 确认成交)",
@@ -1133,42 +1170,148 @@ class USPositionSync:
                             continue
                     except (TypeError, ValueError):
                         pass
+                # ── 根因修复 (2026-06-16): 区分「外部平仓」vs「真幽灵仓」──
+                # 根因: 用户通过 Futu App 手动平仓 → broker 无持仓 → 系统误判为幽灵仓
+                #       → exit_price=0 → 假通知 + 假 trade_record
+                # 修法: 先查 broker 今日成交记录，有平仓成交 → 外部平仓，用实际价格
+                #       无成交记录 → 真幽灵仓，静默移除，不发通知
                 self.position_store.remove(symbol)
-                logger.info(f"🧹 [US Sync] 清理幽灵仓 {symbol} (Futu 已平仓)")
+                _today_orders = getattr(self, '_today_orders', {})
+                _deal_info = _today_orders.get(symbol)
                 
-                # P0 修复 (2026-05-27): 幽灵通知冷却 — 同一 symbol 30分钟内仅通知一次
-                # 防止 position_monitor 重导入→position_sync 再清理的死循环通知轰炸
-                _ghost_cooldown = getattr(self, '_ghost_notify_cooldown', {})
-                _last_notify = _ghost_cooldown.get(symbol, 0)
-                _now_cd = time.time()
-                if _now_cd - _last_notify < 1800:  # 30 min cooldown
-                    logger.debug(f"[US Sync] 幽灵通知冷却中: {symbol} (距上次 {_now_cd - _last_notify:.0f}s)")
-                    continue
-                _ghost_cooldown[symbol] = _now_cd
-                self._ghost_notify_cooldown = _ghost_cooldown
+                # 判断是否为平仓方向的成交 (LONG 平仓=SELL, SHORT 平仓=BUY)
+                _is_external_close = False
+                _exit_price = 0.0
+                _exit_qty = 0.0
+                if _deal_info and existing_pos:
+                    _trd_side = str(_deal_info.get('trd_side', '')).upper()
+                    _mem_dir = existing_pos.direction.name if hasattr(existing_pos.direction, 'name') else str(existing_pos.direction)
+                    # LONG 持仓 + SELL 成交 = 平仓; SHORT 持仓 + BUY 成交 = 平仓
+                    if (_mem_dir == 'LONG' and 'SELL' in _trd_side) or \
+                       (_mem_dir == 'SHORT' and 'BUY' in _trd_side):
+                        _is_external_close = True
+                        _exit_price = float(_deal_info.get('price', 0))
+                        _exit_qty = float(_deal_info.get('qty', 0))
                 
-                # P0 修复 (2026-05-07 / 2026-05-12): 幽灵仓清理不发零值通知
-                # 2026-05-12: exit_price=0 说明无真实成交确认，通知是误导
-                if existing_pos and existing_pos.avg_entry_price > 0:
+                if _is_external_close and _exit_price > 0 and existing_pos:
+                    # ── 外部平仓: 用实际成交价创建正确的 trade record + 通知 ──
+                    _entry = existing_pos.avg_entry_price
+                    _size = existing_pos.size
+                    _dir_name = existing_pos.direction.name if hasattr(existing_pos.direction, 'name') else str(existing_pos.direction)
+                    if _dir_name == 'LONG':
+                        _pnl = (_exit_price - _entry) * _size
+                        _pnl_pct = (_exit_price - _entry) / _entry if _entry > 0 else 0
+                    else:
+                        _pnl = (_entry - _exit_price) * _size
+                        _pnl_pct = (_entry - _exit_price) / _entry if _entry > 0 else 0
+                    
+                    logger.info(
+                        f"📤 [US Sync] 外部平仓检测: {symbol} "
+                        f"(入${_entry:.2f} → 出${_exit_price:.2f}, {_size}股, "
+                        f"PnL=${_pnl:.2f}/{_pnl_pct*100:.1f}%)"
+                    )
+                    
+                    # 写入 trade_records (使用真实数据)
+                    try:
+                        import sqlite3 as _sqlite3
+                        _db_path = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'ftseek_us_live.db')
+                        _conn = _sqlite3.connect(_db_path)
+                        _et_now = datetime.now(timezone(timedelta(hours=-4)))
+                        _entry_time = getattr(existing_pos, 'entry_time', None) or _et_now
+                        _entry_time_str = _entry_time.isoformat() if hasattr(_entry_time, 'isoformat') else str(_entry_time)
+                        _cursor = _conn.execute(
+                            "INSERT INTO trade_records "
+                            "(trade_date, symbol, direction, entry_time, exit_time, entry_price, exit_price, "
+                            "quantity, realized_pnl, pnl_pct, exit_reason, source_type, mode, trade_mode, created_at, "
+                            "trace_id, signal_id, futu_order_id) "
+                            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                            (_et_now.strftime('%Y-%m-%d'), symbol, _dir_name,
+                             _entry_time_str, _et_now.isoformat(),
+                             _entry, _exit_price, int(_size),
+                             round(_pnl, 2), round(_pnl_pct, 4),
+                             'external_close', 'POSITION_SYNC', 'manual', 'live',
+                             _et_now.isoformat(),
+                             getattr(existing_pos, 'trace_id', None),
+                             getattr(existing_pos, 'signal_id', None),
+                             getattr(existing_pos, 'futu_order_id', None))
+                        )
+                        _trade_id = _cursor.lastrowid
+                        _conn.commit()
+                        _conn.close()
+
+                        # ── 归因分析: 为外部平仓生成5维度归因 ──
+                        try:
+                            from app.analysis.trade_attribution import attribute_from_db
+                            import json as _attribution_json
+                            _trade_row = {
+                                "symbol": symbol,
+                                "direction": _dir_name,
+                                "entry_price": _entry,
+                                "exit_price": _exit_price,
+                                "quantity": int(_size),
+                                "entry_time": _entry_time_str,
+                                "exit_time": _et_now.isoformat(),
+                            }
+                            _attr_result = attribute_from_db(_trade_row)
+                            if _attr_result is not None:
+                                _meta = {"attribution": _attr_result.to_dict()}
+                                _meta_json = _attribution_json.dumps(_meta, ensure_ascii=False)
+                                _conn2 = _sqlite3.connect(_db_path)
+                                _conn2.execute(
+                                    "UPDATE trade_records SET metadata_json=? WHERE id=?",
+                                    (_meta_json, _trade_id),
+                                )
+                                _conn2.commit()
+                                _conn2.close()
+                                logger.info(f"📊 [US Sync] 归因已生成: {symbol} {_attr_result.summary}")
+                        except Exception as _attr_e:
+                            logger.warning(f"[US Sync] 归因生成失败 {symbol}: {_attr_e}")
+                    except Exception as _e:
+                        logger.warning(f"[US Sync] trade_record 写入失败 {symbol}: {_e}")
+                    
+                    # 从 open_positions DB 移除
+                    try:
+                        _db_path = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'ftseek_us_live.db')
+                        import sqlite3 as _sqlite3
+                        _conn = _sqlite3.connect(_db_path)
+                        _conn.execute("DELETE FROM open_positions WHERE symbol=?", (symbol,))
+                        _conn.commit()
+                        _conn.close()
+                    except Exception:
+                        pass
+                    
+                    # 发送正确的飞书通知 (有真实 PnL)
                     try:
                         from app.notifier.feishu import notify_exit
                         notify_exit(
                             symbol=symbol,
-                            direction="BUY" if existing_pos and existing_pos.direction.name == "SHORT" else "SELL",
-                            entry_price=existing_pos.avg_entry_price,
-                            exit_price=0,  # 未知平仓价 — 非真实退出
-                            quantity=existing_pos.size if existing_pos else 0,
-                            pnl=0,
-                            pnl_pct=0,
-                            exit_reason="ghost_cleaned",
+                            direction="SELL" if _dir_name == "LONG" else "BUY",
+                            entry_price=_entry,
+                            exit_price=_exit_price,
+                            quantity=int(_size),
+                            pnl=round(_pnl, 2),
+                            pnl_pct=round(_pnl_pct * 100, 2),
+                            exit_reason="external_close",
                             holding_hours=0,
                             source_type="POSITION_SYNC",
                         )
-                        logger.info(f"[US Sync] 飞书幽灵仓清理通知已发送: {symbol}")
-                    except Exception as e:
-                        logger.warning(f"[US Sync] 飞书幽灵仓清理通知发送失败: {e}")
+                    except Exception as _e:
+                        logger.warning(f"[US Sync] 外部平仓通知发送失败 {symbol}: {_e}")
+                
                 else:
-                    logger.debug(f"[US Sync] 幽灵仓清理跳过通知: {symbol} (无有效 entry_price)")
+                    # ── 真幽灵仓: 静默移除，不发通知，不写 trade_record ──
+                    logger.info(f"🧹 [US Sync] 清理真幽灵仓 {symbol} (broker 无持仓且无今日成交记录)")
+                    # 从 open_positions DB 移除
+                    try:
+                        _db_path = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'ftseek_us_live.db')
+                        import sqlite3 as _sqlite3
+                        _conn = _sqlite3.connect(_db_path)
+                        _conn.execute("DELETE FROM open_positions WHERE symbol=?", (symbol,))
+                        _conn.commit()
+                        _conn.close()
+                    except Exception:
+                        pass
+                    # ⛔ 不发通知 — 真幽灵仓没有真实成交，通知只会误导
 
         # 3. 数量变化 (部分成交/加仓) → 更新内存
         common_symbols = mem_symbols & futu_symbols
@@ -1225,7 +1368,7 @@ class USPositionSync:
                 try:
                     import sqlite3 as _sqlite3
                     db_path = _get_db_path()
-                    conn = _sqlite3.connect(db_path, timeout=10)
+                    conn = safe_sqlite_connect(Path(db_path), timeout=10)
                     conn.execute("PRAGMA busy_timeout=5000")
                     conn.execute(
                         "UPDATE open_positions SET direction=?, avg_entry_price=?, size=?, "
@@ -1356,6 +1499,15 @@ class USPositionSync:
             db_set = set(db_positions.keys())
             mem_set = set(mem_positions.keys())
 
+            # 获取自管持仓列表 — 用于 Memory 比较时排除
+            # 根因 (2026-06-17): _sync_to_position_store_locked 正确排除自管持仓,
+            #   但此处 futu_set 包含自管持仓 → 永久误报 "Memory 缺少 Broker 持仓"
+            try:
+                from app.core.config_container import get_all_manual_symbols
+                _self_managed = get_all_manual_symbols()
+            except Exception:
+                _self_managed = set()
+
             # 检查不一致
             issues = []
             if futu_set != db_set:
@@ -1366,15 +1518,25 @@ class USPositionSync:
                 if missing_futu:
                     issues.append(f"DB 有多余持仓 (Broker 已无): {missing_futu}")
 
-            if futu_set != mem_set and self.position_store:
-                missing_mem = futu_set - mem_set
-                missing_mem_ghost = mem_set - futu_set
+            # Memory 比较时排除自管持仓 (自管持仓故意不写入 position_store)
+            futu_set_for_mem = futu_set - (_self_managed or set())
+            if futu_set_for_mem != mem_set and self.position_store:
+                missing_mem = futu_set_for_mem - mem_set
+                missing_mem_ghost = mem_set - futu_set_for_mem
                 opt_symbols = self._get_option_position_symbols()
                 missing_mem_ghost = {s for s in missing_mem_ghost if s not in opt_symbols}
                 if missing_mem:
                     issues.append(f"Memory 缺少 Broker 持仓: {missing_mem}")
                 if missing_mem_ghost:
-                    issues.append(f"Memory 有幽灵仓: {missing_mem_ghost}")
+                    # P0 修复 (2026-06-18): 只有新出现的幽灵仓才告警，已知的静默
+                    ghost_set = frozenset(missing_mem_ghost)
+                    new_ghosts = ghost_set - self._last_reported_ghosts
+                    if new_ghosts:
+                        issues.append(f"Memory 有幽灵仓: {set(new_ghosts)}")
+                        self._last_reported_ghosts = ghost_set  # 更新缓存
+                    # 如果幽灵仓消失了（被清理了），重置缓存
+                    if not ghost_set:
+                        self._last_reported_ghosts = frozenset()
 
             if issues:
                 logger.warning(
@@ -1407,17 +1569,42 @@ class USPositionSync:
 
             broker_data = {}
             try:
-                ret, funds_data = ctx.acc_cash_info_query(trd_env=trade_env)
-                if ret == 0 and funds_data is not None and not funds_data.empty:
+                # 优先使用 accinfo_query (字段更完整, 含 USD 子账户字段)
+                from futu import RET_OK as _RET_OK
+                ret, funds_data = ctx.accinfo_query(trd_env=trade_env)
+                if ret == _RET_OK and funds_data is not None and not funds_data.empty:
                     row = funds_data.iloc[0]
-                    broker_data = {
-                        'cash': float(row.get('cash', 0)),
-                        'market_value': float(row.get('market_val', 0)),
-                        'total_assets': float(row.get('total_assets', 0)),
-                        'buying_power': float(row.get('max_power_short', 0)),
-                    }
+                    _currency = str(row.get('currency', '')).upper()
+                    _is_hkd = _currency == 'HKD'
+
+                    if _is_hkd:
+                        # HKD 账户: 使用 USD 子账户字段 (与交易页面一致)
+                        _usd_assets = float(row.get('usd_assets', 0))
+                        _hkd_assets = float(row.get('total_assets', 0))
+                        _fx = _hkd_assets / _usd_assets if _usd_assets > 0 else 7.8
+                        _cash = float(row.get('us_avl_withdrawal_cash', 0))
+                        if _cash <= 0:
+                            _cash = float(row.get('us_cash', 0))
+                        _bp = float(row.get('usd_net_cash_power', 0))
+                        if _bp <= 0:
+                            _bp = float(row.get('power', 0)) / _fx
+                        broker_data = {
+                            'cash': _cash,
+                            'market_value': float(row.get('market_val', 0)) / _fx,
+                            'total_assets': _usd_assets,
+                            'buying_power': _bp,
+                        }
+                    else:
+                        # USD 账户: 直接使用
+                        _bp = float(row.get('power', 0))
+                        broker_data = {
+                            'cash': float(row.get('cash', 0)),
+                            'market_value': float(row.get('market_val', 0)),
+                            'total_assets': float(row.get('total_assets', 0)),
+                            'buying_power': _bp,
+                        }
             except (AttributeError, Exception) as e:
-                logger.debug("[US Sync Capital] acc_cash_info_query 不可用 (%s)，"
+                logger.debug("[US Sync Capital] accinfo_query 不可用 (%s)，"
                              "由 position_monitor 统一更新资金", e)
 
             # Fallback: 如果 API 不支持，跳过资金更新 (由 position_monitor 统一处理)
@@ -1487,7 +1674,7 @@ class USPositionSync:
         捕获 option_positions 表中遗漏的期权 (如 SPY260602P730000).
         """
         try:
-            conn = sqlite3.connect(_get_db_path(), timeout=10)
+            conn = safe_sqlite_connect(_get_db_path(), timeout=10)
             conn.execute("PRAGMA busy_timeout=5000")
             cursor = conn.cursor()
             cursor.execute("SELECT DISTINCT option_code FROM option_positions")
@@ -1513,7 +1700,7 @@ class USPositionSync:
         if not os.path.exists(_get_db_path()):
             return {}
         try:
-            conn = sqlite3.connect(_get_db_path(), timeout=10)
+            conn = safe_sqlite_connect(_get_db_path(), timeout=10)
             conn.execute("PRAGMA busy_timeout=5000")
             cursor = conn.cursor()
             # 根因修复 (2026-06-05): 与 _sync_once 保持相同过滤条件
@@ -1688,7 +1875,7 @@ class USPositionSync:
             except Exception:
                 _scan_self_managed = set()
 
-            conn = sqlite3.connect(_get_db_path(), timeout=10)
+            conn = safe_sqlite_connect(_get_db_path(), timeout=10)
             conn.execute("PRAGMA busy_timeout=5000")
             cursor = conn.cursor()
             cursor.execute("""

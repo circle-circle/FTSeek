@@ -15,8 +15,8 @@ from pathlib import Path
 from datetime import datetime
 
 sys.path.insert(0, '/opt/ftseek/FTSeek-US')
-os.environ.setdefault('FUTU_HOST', '127.0.0.1')
-os.environ.setdefault('FUTU_PORT', '11111')
+os.environ.setdefault('FUTU_OPEND_HOST', '127.0.0.1')
+os.environ.setdefault('FUTU_OPEND_PORT', '11111')
 
 from futu import *
 
@@ -24,8 +24,8 @@ from futu import *
 def create_us_trade_context(trd_env=TrdEnv.REAL):
     """创建美股交易上下文"""
     ctx = OpenUSTradeContext(
-        host=os.getenv('FUTU_HOST', '127.0.0.1'),
-        port=int(os.getenv('FUTU_PORT', '11111'))
+        host=os.getenv('FUTU_OPEND_HOST', '127.0.0.1'),
+        port=int(os.getenv('FUTU_OPEND_PORT', '11111'))
     )
     return ctx
 

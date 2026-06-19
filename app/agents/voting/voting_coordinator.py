@@ -744,7 +744,7 @@ VIX > 25 时，最大 Strength 不得超过 50。
                         SELECT direction, realized_pnl, entry_price, exit_price,
                                trade_date, entry_time, exit_time, signal_confidence
                         FROM trade_records
-                        WHERE symbol LIKE ? AND exit_price IS NOT NULL
+                        WHERE symbol LIKE ? AND exit_price > 0
                         ORDER BY created_at DESC LIMIT ?
                         """,
                         (f"%{ticker}%", history_max_trades),

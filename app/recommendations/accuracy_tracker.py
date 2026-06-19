@@ -347,8 +347,8 @@ class AccuracyTracker:
                 twelvedata_api_key=os.environ.get("TWELVEDATA_API_KEY"),
                 finnhub_api_key=os.environ.get("FINNHUB_API_KEY"),
                 alphavantage_api_key=os.environ.get("ALPHAVANTAGE_API_KEY"),
-                futu_opend_host=os.environ.get("OPEND_HOST", "127.0.0.1"),
-                futu_opend_port=int(os.environ.get("OPEND_PORT", "11111")),
+                futu_opend_host=os.environ.get("FUTU_OPEND_HOST", "127.0.0.1"),
+                futu_opend_port=int(os.environ.get("FUTU_OPEND_PORT", "11111")),
                 enable_futu_lv3=True,
             )
         except Exception as e:

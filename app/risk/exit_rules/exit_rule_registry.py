@@ -83,18 +83,13 @@ class ExitRulePriority(IntEnum):
     与 exit_policy.yaml / position_exit_monitor.scan_positions 的实际语义对齐:
       - PRE_CLOSE 在原代码中即被单独前置处理, 优先级最高
       - FLASH_EXIT 是异常动量平仓, 触发后立即清仓
-      - DAY_TRADE / TRAILING_STOP / GRADUATED_STOP / TIME_STOP 是常态止损止盈
+      - DAY_TRADE / TRAILING_STOP / TIME_STOP 是常态止损止盈
       - SCALE_OUT 仅做分批减仓, 优先级最低
-
-    Task #64 (2026-05-29): 引入 GRADUATED_STOP=45, 介于 TRAILING_STOP(40)
-    与 TIME_STOP(50) 之间; 整体改用 ×10 步进, 便于后续在两规则之间插入新规则。
     """
     PRE_CLOSE = 10       # 盘末强制退出, 优先级最高
     FLASH_EXIT = 20      # 异常动量平仓
     DAY_TRADE = 30       # 日内短线止损止盈
-    THESIS_FAILURE = 35  # Task #75: 入场论文失效结构性止损 (DAY_TRADE 与 TRAILING_STOP 之间)
     TRAILING_STOP = 40   # ATR 动态追踪 + Chandelier
-    GRADUATED_STOP = 45  # Task #64: 分级减仓止损 (-0.5/-1.0/-1.5 ATR)
     TIME_STOP = 50       # 持仓时长止损
     VELOCITY_EXIT = 55   # Phase 3: 速度捕捉退出
     SCALE_OUT = 60       # 分批止盈
@@ -102,27 +97,19 @@ class ExitRulePriority(IntEnum):
 
 # 互斥规则定义: 如果 key 触发了, 则 value 中的规则不再检查
 #   - pre_close 触发后清仓, 互斥所有其他规则
-#   - flash_exit 触发后清仓, 不再做 trailing/graduated/time stop 等慢速管理
-#   - Task #64: graduated_stop 与 trailing_stop 双向互斥 —
-#     同一仓位、同一轮次内, 任一触发后另一方都不再触发,
-#     避免 ATR 动态止损与分级减仓在相邻 ATR 区间内重复减仓。
-#   - Task #64: scale_out 与 day_trade 不互斥 (Profit Lock 与分批止盈可共存)。
+#   - flash_exit 触发后清仓, 不再做 trailing/time stop 等慢速管理
+#   - scale_out 与 day_trade 不互斥 (Profit Lock 与分批止盈可共存)。
 EXCLUSIVE_RULES: Dict[str, Set[str]] = {
     "pre_close": {
         "flash_exit", "day_trade", "trailing_stop",
-        "graduated_stop", "time_stop", "scale_out",
-        "thesis_failure",
+        "time_stop", "scale_out",
     },
-    "flash_exit": {"trailing_stop", "graduated_stop", "time_stop", "thesis_failure"},
-    "trailing_stop": {"graduated_stop"},
-    "graduated_stop": {"trailing_stop"},
-    # Task #75: 入场论文失效后全平 → 不再触发慢速管理类规则
-    "thesis_failure": {"trailing_stop", "graduated_stop", "time_stop", "scale_out"},
-    # P0 修复 (2026-06-14): scale_out 触发后压制 trailing_stop / graduated_stop
+    "flash_exit": {"trailing_stop", "time_stop"},
+    # P0 修复 (2026-06-14): scale_out 触发后压制 trailing_stop
     # 与 legacy 路径 _check_via_legacy 中的 _has_scale_out 互斥逻辑对齐
     # 根因: Registry 路径缺少此互斥 → scale_out (全平) 与 trailing_stop 可能同时触发,
     #   导致已平仓位被 trailing_stop 重复处理
-    "scale_out": {"trailing_stop", "graduated_stop"},
+    "scale_out": {"trailing_stop"},
 }
 
 
@@ -131,9 +118,7 @@ RULE_PRIORITIES: Dict[str, int] = {
     "pre_close": ExitRulePriority.PRE_CLOSE,
     "flash_exit": ExitRulePriority.FLASH_EXIT,
     "day_trade": ExitRulePriority.DAY_TRADE,
-    "thesis_failure": ExitRulePriority.THESIS_FAILURE,
     "trailing_stop": ExitRulePriority.TRAILING_STOP,
-    "graduated_stop": ExitRulePriority.GRADUATED_STOP,
     "time_stop": ExitRulePriority.TIME_STOP,
     "velocity_exit": ExitRulePriority.VELOCITY_EXIT,
     "scale_out": ExitRulePriority.SCALE_OUT,

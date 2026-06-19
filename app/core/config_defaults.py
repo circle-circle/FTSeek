@@ -12,13 +12,38 @@
 2. 修改配置值: 只改 YAML，本文件保持同步 (config_audit.py 会校验)
 3. 本文件中的值必须与 YAML 一致，标注 "最后同步: YYYY-MM-DD"
 4. config_audit.py 启动时自动验证一致性
+5. CRITICAL_KEYS 中的键必须在 YAML 中存在，缺失时 strict 模式启动 raise
 
 用法:
-    from app.core.config_defaults import CFG
+    from app.core.config_defaults import CFG, CRITICAL_KEYS
 
     self.min_confidence = cfg.get('risk.signal_quality.min_confidence', CFG.MIN_CONFIDENCE)
     self.max_daily = cfg.get('risk.trading.max_daily_trades', CFG.MAX_DAILY_TRADES)
 """
+
+# ============================================================
+# 关键配置键集合 — 影响交易行为，YAML 中必须存在
+# strict=True 时缺失或不一致均 raise ConfigAuditError
+# ============================================================
+CRITICAL_KEYS = {
+    "MIN_SIGNAL_SCORE",
+    "MIN_CONFIDENCE",
+    "MIN_CONSENSUS",
+    "MAX_DAILY_TRADES",
+    "MAX_ORDER_AMOUNT",
+    "MAX_PER_SYMBOL",
+    "MAX_PER_DIRECTION",
+    "MAX_TOTAL_POSITION",
+    "SIGNAL_COOLDOWN",
+    "CB_CONSECUTIVE_LOSSES",
+    "CB_PAUSE_DURATION",
+    "SCHEDULER_MIN_CONFIDENCE",
+    "SCHEDULER_MAX_POSITIONS",
+    "SCHEDULER_MIN_SIGNAL_STRENGTH",
+    "DEFAULT_STOP_LOSS_PCT",
+    "DEFAULT_TAKE_PROFIT_PCT",
+    "BUDGET_SYSTEM_MAX_DAILY_LOSS",
+}
 
 
 class ConfigDefaults:
@@ -30,7 +55,7 @@ class ConfigDefaults:
     # ============================================================
     MIN_CONFIDENCE = 0.70                   # 高确信度门槛 (2026-06-13): 0.55→0.70
     MIN_CONSENSUS = 0.25                    # P0 (2026-06-03): 0.2→0.25 (轻度收紧)
-    MIN_SIGNAL_SCORE = 50                   # Synced to YAML risk.signal_quality.min_score (2026-05-23 06:20 CST)
+    MIN_SIGNAL_SCORE = 60                   # Synced to YAML risk.signal_quality.min_score (2026-06-16: 50→60)
 
     # ============================================================
     # 风控 — 交易限制 (risk.trading)
@@ -93,7 +118,7 @@ class ConfigDefaults:
     # ============================================================
     # 决策引擎 — 信号时序 (decision.signal_timing)
     # ============================================================
-    SIGNAL_COOLDOWN = 60                    # strategy.signal_cooldown (YAML SSOT)
+    SIGNAL_COOLDOWN = 60                    # strategy.signal_cooldown (YAML SSOT, synced 2026-06-16)
     SIGNAL_EXPIRE_SECONDS = 300             # decision.signal_timing.expire_seconds
 
     # ============================================================
@@ -121,7 +146,6 @@ class ConfigDefaults:
     # 策略预算 (strategy_budgets)
     # ============================================================
     BUDGET_MAIN_MAX_POSITIONS = 5           # strategy_budgets.main_pipeline.max_concurrent_positions
-    BUDGET_SCALPING_MAX_POSITIONS = 5       # strategy_budgets.scalping.max_concurrent_positions
     BUDGET_SYSTEM_MAX_DAILY_LOSS = 6000     # strategy_budgets.system.max_total_daily_loss
 
 

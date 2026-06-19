@@ -26,6 +26,35 @@ class CapitalSnapshot:
     total_reserved: float
     max_total: float
     headroom: float  # max_total - total_reserved
+    # Task #35 (2026-06-16): auto 资本隔离 — 关键诊断字段
+    legacy_protected_pct: float = 0.0   # 历史持仓占总权益比例
+    manual_pct: float = 0.0             # 手动持仓占总权益比例
+    auto_pool_pct: float = 0.0          # auto 可用资金池占比 (= max_total - legacy - manual, 截 [0,1])
+    auto_exposure_pct: float = 0.0      # auto 当前敞口占总权益比例
+    auto_headroom_pct: float = 0.0      # auto 余量占 auto_pool 比例 (≥0; auto_pool=0 时为 0)
+
+
+@dataclass
+class AutoCapacityReport:
+    """Task #35 (2026-06-16): auto 资本容量报告 — 用于 dashboard / daily_review / 单测验证.
+
+    所有金额字段单位均为 USD; pct 字段为比例 (0~1).
+    auto_pool = total_equity - legacy_protected_value - manual_value
+    auto_headroom = auto_pool - current_auto_exposure  (不会为负)
+    auto_headroom_pct = auto_headroom / auto_pool      (auto_pool=0 时为 0)
+    """
+    timestamp: float
+    total_equity: float
+    legacy_protected_value: float
+    manual_value: float
+    auto_pool: float
+    current_auto_exposure: float
+    auto_headroom: float
+    auto_headroom_pct: float
+    legacy_count: int = 0
+    manual_count: int = 0
+    auto_count: int = 0
+    manual_orphan_count: int = 0
 
 
 @dataclass
@@ -50,7 +79,7 @@ class CapitalAllocator:
     ):
         """
         Args:
-            caps: {bucket_name: max_pct}, 例 {"main": 0.65, "scalping": 0.25}
+            caps: {bucket_name: max_pct}, 例 {"main": 0.80, "llm_plan": 0.0}
             max_total_pct: 全局上限 (所有 bucket 加总)
             observe_only: True=观察模式 (Phase A 默认), False=强制
             bucket_map: {strategy_name: bucket_name} — 多策略共享 bucket 时用
@@ -69,6 +98,11 @@ class CapitalAllocator:
         self._by_strategy: Dict[str, float] = {}
         # Phase 1 (2026-06-14): 手动仓位市值占比 — 不占 bucket cap, 但占 total cap
         self._manual_reserved: float = 0.0
+        # Task #35 (2026-06-16): legacy_protected 仓位市值占比 — 与 manual 并列, 均不占 auto_pool
+        # 隔离公式: auto_pool = max_total - legacy_protected - manual  (≥ 0)
+        self._legacy_protected_reserved: float = 0.0
+        # Task #35: 最近一次 auto 容量报告 (供 dashboard / daily_review 读)
+        self._last_auto_report: Optional[AutoCapacityReport] = None
         self._lock = threading.Lock()
         self._events: List[_ReserveEvent] = []
         self._max_event_history = 500
@@ -119,7 +153,10 @@ class CapitalAllocator:
             bucket = self._bucket_for(strategy)
             current = self._allocations.get(bucket, 0.0)
             cap = self._caps.get(bucket, 0.0)
-            total = sum(self._allocations.values()) + self._manual_reserved
+            # Task #35: total 同时包含 legacy_protected (与 manual 一样占用 max_total 总配额)
+            total = (sum(self._allocations.values())
+                     + self._manual_reserved
+                     + self._legacy_protected_reserved)
 
             decision = "ALLOWED"
             if cap > 0 and current + position_pct > cap:
@@ -176,17 +213,29 @@ class CapitalAllocator:
 
     def snapshot(self) -> CapitalSnapshot:
         """当前账本快照. by_strategy 字段是 bucket 视图 (向后兼容现有调用方).
-        Phase 1 (2026-06-14): total_reserved 包含 manual_reserved, headroom 扣除手动占用."""
+        Phase 1 (2026-06-14): total_reserved 包含 manual_reserved, headroom 扣除手动占用.
+        Task #35 (2026-06-16): 同时暴露 legacy_protected / auto_pool / auto_headroom 字段."""
         with self._lock:
             by_s = dict(self._allocations)
             auto_total = sum(by_s.values())
-            total = auto_total + self._manual_reserved
+            legacy = self._legacy_protected_reserved
+            manual = self._manual_reserved
+            total = auto_total + manual + legacy
+            # Task #35: auto_pool = max_total - legacy - manual  (截 ≥0)
+            auto_pool = max(0.0, self._max_total - legacy - manual)
+            auto_headroom = max(0.0, auto_pool - auto_total)
+            auto_headroom_pct = (auto_headroom / auto_pool) if auto_pool > 0 else 0.0
             return CapitalSnapshot(
                 timestamp=time.time(),
                 by_strategy=by_s,
                 total_reserved=total,
                 max_total=self._max_total,
-                headroom=self._max_total - total,
+                headroom=max(0.0, self._max_total - total),
+                legacy_protected_pct=legacy,
+                manual_pct=manual,
+                auto_pool_pct=auto_pool,
+                auto_exposure_pct=auto_total,
+                auto_headroom_pct=auto_headroom_pct,
             )
 
     def by_strategy_snapshot(self) -> Dict[str, float]:
@@ -212,7 +261,10 @@ class CapitalAllocator:
             bucket = self._bucket_for(strategy)
             current = self._allocations.get(bucket, 0.0)
             cap = self._caps.get(bucket, 0.0)
-            total = sum(self._allocations.values()) + self._manual_reserved
+            # Task #35: total 同时包含 legacy_protected
+            total = (sum(self._allocations.values())
+                     + self._manual_reserved
+                     + self._legacy_protected_reserved)
 
             # bucket 剩余
             bucket_headroom = max(0.0, cap - current) if cap > 0 else float('inf')
@@ -251,10 +303,146 @@ class CapitalAllocator:
             old = self._manual_reserved
             self._manual_reserved = max(0.0, pct)
             if abs(old - pct) > 0.005:
+                auto_total = sum(self._allocations.values())
                 logger.info(
                     f"[CapitalAllocator] manual_reserved: {old:.3f} → {pct:.3f} "
-                    f"(auto headroom: {self._max_total - sum(self._allocations.values()) - pct:.3f})"
+                    f"(auto_pool={max(0.0, self._max_total - self._legacy_protected_reserved - pct):.3f} "
+                    f"auto_exposure={auto_total:.3f})"
                 )
+
+    def set_legacy_protected_reserved(self, pct: float):
+        """Task #35 (2026-06-16): 设置启动时已存在的历史 (legacy_protected) 仓位市值占比.
+
+        与 manual 对称: 同样不占 bucket cap, 但占 total cap.
+        auto_pool = max_total - legacy_protected - manual  (≥0)
+        由 StrategyCoordinator.reconcile() 定期更新.
+        """
+        with self._lock:
+            old = self._legacy_protected_reserved
+            self._legacy_protected_reserved = max(0.0, pct)
+            if abs(old - pct) > 0.005:
+                auto_total = sum(self._allocations.values())
+                logger.info(
+                    f"[CapitalAllocator] legacy_protected_reserved: {old:.3f} → {pct:.3f} "
+                    f"(auto_pool={max(0.0, self._max_total - pct - self._manual_reserved):.3f} "
+                    f"auto_exposure={auto_total:.3f})"
+                )
+
+    def set_owner_pools(self, legacy_protected_pct: float,
+                         manual_pct: float) -> None:
+        """Task #35 (2026-06-16): 一次性设置 legacy + manual 占比 (原子).
+
+        StrategyCoordinator.reconcile() 推荐入口 — 与历史 set_manual_reserved 兼容,
+        但能在同一锁内更新两个池子, 避免 auto_pool 短暂为负.
+        """
+        with self._lock:
+            old_legacy = self._legacy_protected_reserved
+            old_manual = self._manual_reserved
+            self._legacy_protected_reserved = max(0.0, float(legacy_protected_pct or 0.0))
+            self._manual_reserved = max(0.0, float(manual_pct or 0.0))
+            auto_total = sum(self._allocations.values())
+            auto_pool = max(0.0, self._max_total
+                            - self._legacy_protected_reserved
+                            - self._manual_reserved)
+            auto_headroom = max(0.0, auto_pool - auto_total)
+            if (abs(old_legacy - self._legacy_protected_reserved) > 0.005
+                    or abs(old_manual - self._manual_reserved) > 0.005):
+                logger.info(
+                    f"[CapitalAllocator·set_owner_pools] "
+                    f"legacy={old_legacy:.3f}→{self._legacy_protected_reserved:.3f} "
+                    f"manual={old_manual:.3f}→{self._manual_reserved:.3f} "
+                    f"auto_pool={auto_pool:.3f} auto_exposure={auto_total:.3f} "
+                    f"auto_headroom={auto_headroom:.3f}"
+                )
+
+    def auto_capacity_report(self,
+                              total_equity: float,
+                              positions: Optional[List] = None,
+                              ) -> AutoCapacityReport:
+        """Task #35 (2026-06-16): 生成 auto 资本容量报告 (USD 维度).
+
+        Args:
+            total_equity: 账户净资产 (broker)
+            positions: 当前持仓快照 (Optional). 若提供, 则按 owner 分类直接累计市值;
+                       否则用内部 pct 字段 × equity 估算.
+        """
+        eq = float(total_equity or 0.0)
+        legacy_val = 0.0
+        manual_val = 0.0
+        auto_val = 0.0
+        legacy_cnt = 0
+        manual_cnt = 0
+        auto_cnt = 0
+        orphan_cnt = 0
+
+        if positions:
+            try:
+                from app.positions.source import (
+                    classify_owner,
+                    OWNER_AUTO, OWNER_LEGACY_PROTECTED,
+                    OWNER_MANUAL, OWNER_MANUAL_ORPHAN,
+                )
+                for p in positions:
+                    try:
+                        size = abs(float(getattr(p, "size", 0) or 0))
+                        # 优先用当前价/市值, 次选 entry_price * size
+                        cur = float(getattr(p, "current_price", 0) or 0)
+                        if cur <= 0:
+                            cur = float(getattr(p, "avg_entry_price", 0) or 0)
+                        mv = size * cur
+                        cls = classify_owner(p)
+                        if cls == OWNER_AUTO:
+                            auto_val += mv
+                            auto_cnt += 1
+                        elif cls == OWNER_LEGACY_PROTECTED:
+                            legacy_val += mv
+                            legacy_cnt += 1
+                        elif cls == OWNER_MANUAL:
+                            manual_val += mv
+                            manual_cnt += 1
+                        elif cls == OWNER_MANUAL_ORPHAN:
+                            # manual_orphan 视同 manual 隔离
+                            manual_val += mv
+                            manual_cnt += 1
+                            orphan_cnt += 1
+                    except Exception:
+                        continue
+            except Exception as _e:
+                logger.debug(f"[CapitalAllocator·auto_capacity_report] classify err: {_e}")
+        else:
+            # 从内部 pct 字段估算 (兜底)
+            with self._lock:
+                legacy_val = self._legacy_protected_reserved * eq
+                manual_val = self._manual_reserved * eq
+                auto_val = sum(self._allocations.values()) * eq
+
+        auto_pool = max(0.0, eq - legacy_val - manual_val)
+        # Task #35 约束: auto_headroom ≥ 0
+        auto_headroom = max(0.0, auto_pool - auto_val)
+        auto_headroom_pct = (auto_headroom / auto_pool) if auto_pool > 0 else 0.0
+
+        report = AutoCapacityReport(
+            timestamp=time.time(),
+            total_equity=eq,
+            legacy_protected_value=legacy_val,
+            manual_value=manual_val,
+            auto_pool=auto_pool,
+            current_auto_exposure=auto_val,
+            auto_headroom=auto_headroom,
+            auto_headroom_pct=auto_headroom_pct,
+            legacy_count=legacy_cnt,
+            manual_count=manual_cnt,
+            auto_count=auto_cnt,
+            manual_orphan_count=orphan_cnt,
+        )
+        with self._lock:
+            self._last_auto_report = report
+        return report
+
+    def get_last_auto_report(self) -> Optional[AutoCapacityReport]:
+        """Task #35: 返回最近一次 auto_capacity_report 结果 (供 daily_review 读)."""
+        with self._lock:
+            return self._last_auto_report
 
     def reconcile_with_positions(self, positions_by_strategy: Dict[str, float]):
         """

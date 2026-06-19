@@ -477,7 +477,7 @@ class TradeRecorder:
         conn = self._get_conn()
         try:
             cursor = conn.execute(
-                "SELECT * FROM trade_records WHERE exit_price IS NOT NULL ORDER BY exit_time DESC"
+                "SELECT * FROM trade_records WHERE exit_price > 0 ORDER BY exit_time DESC"
             )
             return [dict(row) for row in cursor.fetchall()]
         finally:
@@ -487,7 +487,7 @@ class TradeRecorder:
         """获取复盘统计数据"""
         conn = self._get_conn()
         try:
-            query = "SELECT * FROM trade_records WHERE exit_price IS NOT NULL"
+            query = "SELECT * FROM trade_records WHERE exit_price > 0"
             params = []
             
             if start_date:

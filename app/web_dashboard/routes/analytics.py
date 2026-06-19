@@ -479,7 +479,7 @@ def register(app, templates):
             today_trades = []
             try:
                 row3 = await ds.db_query_one(
-                    "SELECT COUNT(*) as cnt FROM trade_records WHERE trade_date = ?", (today,),
+                    "SELECT COUNT(*) as cnt FROM trade_records WHERE trade_date = ? AND exit_price > 0", (today,),
                 )
                 executed_count = row3["cnt"] if row3 else 0
                 recent_rows = await ds.db_query(
@@ -625,12 +625,14 @@ def register(app, templates):
                   AND exit_price > 0
             """)
 
+            # 最近交易: 所有来源 (手动+自动+外部平仓), 按时间倒序
             recent = await ds.db_query("""
                 SELECT symbol, direction, realized_pnl, exit_reason, trade_date,
-                       entry_price, exit_price, quantity
+                       entry_price, exit_price, quantity, source_type, strategy_id,
+                       COALESCE(signal_id, '') as signal_id,
+                       COALESCE(trace_id, '') as trace_id
                 FROM trade_records
-                WHERE (strategy_id = 'manual' OR source_type = 'MANUAL')
-                  AND trade_mode != 'simulate'
+                WHERE trade_mode != 'simulate'
                   AND exit_price > 0
                 ORDER BY trade_date DESC, id DESC LIMIT 20
             """)
@@ -664,9 +666,11 @@ def register(app, templates):
                     "entry_price": round(float(r.get("entry_price") or 0), 2),
                     "exit_price": round(float(r.get("exit_price") or 0), 2),
                     "quantity": r.get("quantity", 0),
+                    "source_type": r.get("source_type", ""),
+                    "signal_id": r.get("signal_id", ""),
                 } for r in recent],
             }
-            ds.cache.set("manual_perf", result, ttl=60)
+            ds.cache.set("manual_perf", result, ttl=15)
             return api_ok(result)
         except Exception as e:
             logger.error(f"[manual-performance] {e}")
@@ -979,6 +983,72 @@ def register(app, templates):
 
             period_label = "all" if days == 0 else f"{days}d"
 
+            # ── Behavioral diagnostics (shadow_account_v2) ──
+            behavioral = {"available": False}
+            try:
+                beh_rows = await ds.db_query(
+                    "SELECT result_json FROM diagnostic_results "
+                    "WHERE module_name = 'shadow_account_v2' "
+                    "ORDER BY created_at DESC LIMIT 1"
+                )
+                if beh_rows:
+                    import json as _json2
+                    beh_data = _json2.loads(beh_rows[0].get("result_json") or "{}")
+                    behavioral = {
+                        "available": True,
+                        "disposition": beh_data.get("disposition", {}),
+                        "anchoring": beh_data.get("anchoring", {}),
+                        "chasing": beh_data.get("chasing", {}),
+                        "five_factor": beh_data.get("five_factor_attribution", {}),
+                    }
+            except Exception:
+                pass
+
+            # ── Attribution cards (recent 5 closed trades with attribution) ──
+            attribution_cards = []
+            try:
+                card_rows = await ds.db_query(
+                    "SELECT tr.symbol, tr.direction, tr.realized_pnl, tr.pnl_pct, "
+                    "tr.entry_price, tr.exit_price, tr.quantity, tr.trade_date, "
+                    "ta.overall_score, ta.grade, ta.dim_direction, ta.dim_entry, "
+                    "ta.dim_exit, ta.dim_duration, ta.dim_efficiency "
+                    "FROM trade_records tr "
+                    "LEFT JOIN trade_attribution ta ON tr.id = ta.trade_id "
+                    "WHERE tr.trade_mode != 'simulate' AND tr.exit_price > 0 "
+                    "ORDER BY tr.trade_date DESC, tr.id DESC LIMIT 5"
+                )
+                _dim_labels = {"direction": "方向", "entry": "入场", "exit": "离场",
+                               "duration": "持仓", "efficiency": "效率"}
+                for cr in card_rows:
+                    dims = []
+                    for dk, dl in _dim_labels.items():
+                        verdict_raw = cr.get(f"dim_{dk}")
+                        if verdict_raw:
+                            # verdict is stored as JSON or plain text
+                            try:
+                                vd = _json.loads(verdict_raw) if isinstance(verdict_raw, str) else verdict_raw
+                                verdict = vd.get("verdict", "✅") if isinstance(vd, dict) else str(vd)
+                            except Exception:
+                                verdict = "✅"
+                        else:
+                            verdict = "—"
+                        dims.append({"label": dl, "verdict": verdict})
+                    attribution_cards.append({
+                        "symbol": (cr.get("symbol") or "").replace("US.", ""),
+                        "direction": cr.get("direction", ""),
+                        "pnl": round(float(cr.get("realized_pnl") or 0), 2),
+                        "pnl_pct": round(float(cr.get("pnl_pct") or 0), 4),
+                        "entry_price": round(float(cr.get("entry_price") or 0), 2),
+                        "exit_price": round(float(cr.get("exit_price") or 0), 2),
+                        "quantity": int(cr.get("quantity") or 0),
+                        "date": cr.get("trade_date", ""),
+                        "grade": cr.get("grade") or "—",
+                        "score": round(float(cr.get("overall_score") or 0), 1),
+                        "dimensions": dims,
+                    })
+            except Exception:
+                pass
+
             result = {
                 "dimension_stats": dim_stats,
                 "weakest_dimension": weakest_dim,
@@ -986,6 +1056,8 @@ def register(app, templates):
                 "trend": trend,
                 "period": period_label,
                 "trade_count": trade_count,
+                "behavioral": behavioral,
+                "attribution_cards": attribution_cards,
             }
             return api_ok(result)
         except Exception as e:

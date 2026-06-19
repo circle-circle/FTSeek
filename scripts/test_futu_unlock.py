@@ -21,8 +21,8 @@ if not pwd_md5:
 
 from futu import OpenSecTradeContext, TrdMarket, TrdEnv, RET_OK
 
-host = os.getenv("OPEND_HOST", "127.0.0.1")
-port = int(os.getenv("OPEND_PORT", "11111"))
+host = os.getenv("FUTU_OPEND_HOST", "127.0.0.1")
+port = int(os.getenv("FUTU_OPEND_PORT", "11111"))
 
 trd_ctx = OpenSecTradeContext(
     filter_trdmarket=TrdMarket.US,

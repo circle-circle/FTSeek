@@ -104,8 +104,8 @@ def get_prices(symbols: list) -> dict:
     """Get realtime prices via Futu get_market_snapshot."""
     try:
         from futu import OpenQuoteContext, RET_OK
-        host = os.getenv("FUTU_HOST", "127.0.0.1")
-        port = int(os.getenv("FUTU_PORT", "11111"))
+        host = os.getenv("FUTU_OPEND_HOST", "127.0.0.1")
+        port = int(os.getenv("FUTU_OPEND_PORT", "11111"))
         ctx = OpenQuoteContext(host=host, port=port)
         try:
             ret, data = ctx.get_market_snapshot(symbols)

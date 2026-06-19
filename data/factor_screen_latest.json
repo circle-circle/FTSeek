@@ -1,313 +1,703 @@
 {
-  "timestamp": "2026-06-15T00:16:53.048782+00:00",
+  "timestamp": "2026-06-18T13:16:33.178862+00:00",
   "regime": "NEUTRAL",
   "regime_weights": {
-    "sector_momentum": 0.2,
-    "relative_strength": 0.2,
-    "ma_alignment": 0.2,
-    "volume_breakout": 0.2,
-    "rsi_sweet_spot": 0.2
+    "sector_momentum": 0.17,
+    "relative_strength": 0.17,
+    "ma_alignment": 0.17,
+    "volume_breakout": 0.17,
+    "rsi_sweet_spot": 0.17,
+    "insider_signal": 0.15
   },
   "candidates": [
     {
-      "symbol": "US.JPM",
+      "symbol": "US.NTES",
+      "composite_score": 0.825,
+      "factors": {
+        "sector_momentum": {
+          "raw": 0,
+          "score": 0.5,
+          "weight": 0.17,
+          "detail": "China_ADR +0.0%"
+        },
+        "relative_strength": {
+          "raw": 4.14,
+          "score": 0.914,
+          "weight": 0.17,
+          "detail": "+4.1% vs SPY -0.0%"
+        },
+        "ma_alignment": {
+          "raw": "BULLISH",
+          "score": 1.0,
+          "weight": 0.17,
+          "detail": "MA5=124 MA10=123 MA20=122"
+        },
+        "volume_breakout": {
+          "raw": 2.0,
+          "score": 1,
+          "weight": 0.17,
+          "detail": "2.0x avg"
+        },
+        "rsi_sweet_spot": {
+          "raw": 44.3,
+          "score": 1.0,
+          "weight": 0.17,
+          "detail": "RSI=44"
+        },
+        "insider_signal": {
+          "raw": 0.5,
+          "score": 0.5,
+          "weight": 0.15,
+          "detail": "NEUTRAL: 0B/0S"
+        }
+      },
+      "technicals": {
+        "cur_price": 120.9,
+        "change_20d": 4.1,
+        "change_5d": -3.75,
+        "ma5": 124.01,
+        "ma10": 122.65,
+        "ma20": 121.59,
+        "ma_alignment": "BULLISH",
+        "vol_ratio": 2.0,
+        "rsi14": 44.3,
+        "high_20d": 127.94,
+        "low_20d": 105.44
+      },
+      "sectors": [
+        "China_ADR"
+      ],
+      "direction_hint": "LONG",
+      "discovery_source": "core_pool"
+    },
+    {
+      "symbol": "US.AMD",
       "composite_score": 0.711,
       "factors": {
         "sector_momentum": {
-          "raw": 1.37,
-          "score": 0.7283333333333334,
-          "weight": 0.2,
-          "detail": "Financials +1.4%"
-        },
-        "relative_strength": {
-          "raw": 7.34,
-          "score": 1,
-          "weight": 0.2,
-          "detail": "+7.7% vs SPY +0.3%"
-        },
-        "ma_alignment": {
-          "raw": "BULLISH",
-          "score": 1.0,
-          "weight": 0.2,
-          "detail": "MA5=313 MA10=309 MA20=305"
-        },
-        "volume_breakout": {
-          "raw": 0.84,
-          "score": 0.22666666666666666,
-          "weight": 0.2,
-          "detail": "0.8x avg"
-        },
-        "rsi_sweet_spot": {
-          "raw": 64.4,
-          "score": 0.6,
-          "weight": 0.2,
-          "detail": "RSI=64"
-        }
-      },
-      "technicals": {
-        "cur_price": 320.72,
-        "change_20d": 7.69,
-        "change_5d": 3.09,
-        "ma5": 313.43,
-        "ma10": 308.88,
-        "ma20": 304.82,
-        "ma_alignment": "BULLISH",
-        "vol_ratio": 0.84,
-        "rsi14": 64.4,
-        "high_20d": 321.3,
-        "low_20d": 293.67
-      },
-      "sectors": [
-        "Financials"
-      ],
-      "direction_hint": "LONG"
-    },
-    {
-      "symbol": "US.LMT",
-      "composite_score": 0.669,
-      "factors": {
-        "sector_momentum": {
           "raw": 0,
           "score": 0.5,
-          "weight": 0.2,
-          "detail": "N/A"
+          "weight": 0.17,
+          "detail": "Technology +0.0%"
         },
         "relative_strength": {
-          "raw": 5.05,
+          "raw": 14.54,
           "score": 1,
-          "weight": 0.2,
-          "detail": "+5.4% vs SPY +0.3%"
+          "weight": 0.17,
+          "detail": "+14.5% vs SPY -0.0%"
         },
         "ma_alignment": {
           "raw": "BULLISH",
           "score": 1.0,
-          "weight": 0.2,
-          "detail": "MA5=533 MA10=525 MA20=525"
+          "weight": 0.17,
+          "detail": "MA5=513 MA10=497 MA20=497"
         },
         "volume_breakout": {
-          "raw": 0.87,
-          "score": 0.24666666666666667,
-          "weight": 0.2,
+          "raw": 0.86,
+          "score": 0.24,
+          "weight": 0.17,
           "detail": "0.9x avg"
         },
         "rsi_sweet_spot": {
-          "raw": 55.7,
-          "score": 0.6,
-          "weight": 0.2,
-          "detail": "RSI=56"
+          "raw": 49.1,
+          "score": 1.0,
+          "weight": 0.17,
+          "detail": "RSI=49"
+        },
+        "insider_signal": {
+          "raw": 0.5,
+          "score": 0.5,
+          "weight": 0.15,
+          "detail": "NEUTRAL: 0B/0S"
         }
       },
       "technicals": {
-        "cur_price": 540.33,
-        "change_20d": 5.4,
-        "change_5d": 3.9,
-        "ma5": 532.85,
-        "ma10": 524.9,
-        "ma20": 524.8,
+        "cur_price": 512.48,
+        "change_20d": 14.5,
+        "change_5d": 4.92,
+        "ma5": 513.41,
+        "ma10": 497.49,
+        "ma20": 497.37,
         "ma_alignment": "BULLISH",
-        "vol_ratio": 0.87,
-        "rsi14": 55.7,
-        "high_20d": 550.99,
-        "low_20d": 509.43
+        "vol_ratio": 0.86,
+        "rsi14": 49.1,
+        "high_20d": 558.37,
+        "low_20d": 426.05
       },
-      "sectors": [],
-      "direction_hint": "LONG"
+      "sectors": [
+        "Technology",
+        "Semiconductors"
+      ],
+      "direction_hint": "LONG",
+      "discovery_source": "core_pool"
     },
     {
-      "symbol": "US.PG",
-      "composite_score": 0.661,
+      "symbol": "US.LMT",
+      "composite_score": 0.684,
       "factors": {
         "sector_momentum": {
           "raw": 0,
           "score": 0.5,
-          "weight": 0.2,
+          "weight": 0.17,
           "detail": "N/A"
         },
         "relative_strength": {
-          "raw": 5.33,
-          "score": 1,
-          "weight": 0.2,
-          "detail": "+5.7% vs SPY +0.3%"
+          "raw": 2.57,
+          "score": 0.757,
+          "weight": 0.17,
+          "detail": "+2.5% vs SPY -0.0%"
         },
         "ma_alignment": {
           "raw": "BULLISH",
           "score": 1.0,
-          "weight": 0.2,
-          "detail": "MA5=148 MA10=145 MA20=144"
+          "weight": 0.17,
+          "detail": "MA5=538 MA10=531 MA20=527"
         },
         "volume_breakout": {
-          "raw": 0.81,
-          "score": 0.2066666666666667,
-          "weight": 0.2,
+          "raw": 0.99,
+          "score": 0.32666666666666666,
+          "weight": 0.17,
+          "detail": "1.0x avg"
+        },
+        "rsi_sweet_spot": {
+          "raw": 49.3,
+          "score": 1.0,
+          "weight": 0.17,
+          "detail": "RSI=49"
+        },
+        "insider_signal": {
+          "raw": 0.5,
+          "score": 0.5,
+          "weight": 0.15,
+          "detail": "NEUTRAL: 0B/0S"
+        }
+      },
+      "technicals": {
+        "cur_price": 532.32,
+        "change_20d": 2.53,
+        "change_5d": -2.98,
+        "ma5": 537.53,
+        "ma10": 530.57,
+        "ma20": 526.69,
+        "ma_alignment": "BULLISH",
+        "vol_ratio": 0.99,
+        "rsi14": 49.3,
+        "high_20d": 550.99,
+        "low_20d": 510.1
+      },
+      "sectors": [],
+      "direction_hint": "LONG",
+      "discovery_source": "core_pool"
+    },
+    {
+      "symbol": "US.TSM",
+      "composite_score": 0.647,
+      "factors": {
+        "sector_momentum": {
+          "raw": 0,
+          "score": 0.5,
+          "weight": 0.17,
+          "detail": "Semiconductors +0.0%"
+        },
+        "relative_strength": {
+          "raw": 7.89,
+          "score": 1,
+          "weight": 0.17,
+          "detail": "+7.8% vs SPY -0.0%"
+        },
+        "ma_alignment": {
+          "raw": "BULLISH",
+          "score": 1.0,
+          "weight": 0.17,
+          "detail": "MA5=429 MA10=426 MA20=423"
+        },
+        "volume_breakout": {
+          "raw": 0.9,
+          "score": 0.26666666666666666,
+          "weight": 0.17,
+          "detail": "0.9x avg"
+        },
+        "rsi_sweet_spot": {
+          "raw": 52.4,
+          "score": 0.6,
+          "weight": 0.17,
+          "detail": "RSI=52"
+        },
+        "insider_signal": {
+          "raw": 0.5,
+          "score": 0.5,
+          "weight": 0.15,
+          "detail": "NEUTRAL: 0B/0S"
+        }
+      },
+      "technicals": {
+        "cur_price": 432.15,
+        "change_20d": 7.85,
+        "change_5d": 2.63,
+        "ma5": 428.88,
+        "ma10": 426.3,
+        "ma20": 423.19,
+        "ma_alignment": "BULLISH",
+        "vol_ratio": 0.9,
+        "rsi14": 52.4,
+        "high_20d": 449.11,
+        "low_20d": 395.02
+      },
+      "sectors": [
+        "Semiconductors"
+      ],
+      "direction_hint": "LONG",
+      "discovery_source": "core_pool"
+    },
+    {
+      "symbol": "US.ARM",
+      "composite_score": 0.645,
+      "factors": {
+        "sector_momentum": {
+          "raw": 0,
+          "score": 0.5,
+          "weight": 0.17,
+          "detail": "N/A"
+        },
+        "relative_strength": {
+          "raw": 63.2,
+          "score": 1,
+          "weight": 0.17,
+          "detail": "+63.2% vs SPY -0.0%"
+        },
+        "ma_alignment": {
+          "raw": "BULLISH",
+          "score": 1.0,
+          "weight": 0.17,
+          "detail": "MA5=390 MA10=367 MA20=353"
+        },
+        "volume_breakout": {
+          "raw": 0.88,
+          "score": 0.25333333333333335,
+          "weight": 0.17,
+          "detail": "0.9x avg"
+        },
+        "rsi_sweet_spot": {
+          "raw": 62.2,
+          "score": 0.6,
+          "weight": 0.17,
+          "detail": "RSI=62"
+        },
+        "insider_signal": {
+          "raw": 0.5,
+          "score": 0.5,
+          "weight": 0.15,
+          "detail": "NEUTRAL: 0B/0S"
+        }
+      },
+      "technicals": {
+        "cur_price": 418.88,
+        "change_20d": 63.16,
+        "change_5d": 22.4,
+        "ma5": 390.16,
+        "ma10": 366.59,
+        "ma20": 353.16,
+        "ma_alignment": "BULLISH",
+        "vol_ratio": 0.88,
+        "rsi14": 62.2,
+        "high_20d": 444.8,
+        "low_20d": 226.09
+      },
+      "sectors": [],
+      "direction_hint": "LONG",
+      "discovery_source": "event_discovery"
+    },
+    {
+      "symbol": "US.MU",
+      "composite_score": 0.643,
+      "factors": {
+        "sector_momentum": {
+          "raw": 0,
+          "score": 0.5,
+          "weight": 0.17,
+          "detail": "Semiconductors +0.0%"
+        },
+        "relative_strength": {
+          "raw": 42.55,
+          "score": 1,
+          "weight": 0.17,
+          "detail": "+42.5% vs SPY -0.0%"
+        },
+        "ma_alignment": {
+          "raw": "BULLISH",
+          "score": 1.0,
+          "weight": 0.17,
+          "detail": "MA5=1026 MA10=977 MA20=945"
+        },
+        "volume_breakout": {
+          "raw": 0.86,
+          "score": 0.24,
+          "weight": 0.17,
+          "detail": "0.9x avg"
+        },
+        "rsi_sweet_spot": {
+          "raw": 57.2,
+          "score": 0.6,
+          "weight": 0.17,
+          "detail": "RSI=57"
+        },
+        "insider_signal": {
+          "raw": 0.5,
+          "score": 0.5,
+          "weight": 0.15,
+          "detail": "NEUTRAL: 0B/0S"
+        }
+      },
+      "technicals": {
+        "cur_price": 1043.19,
+        "change_20d": 42.51,
+        "change_5d": 4.75,
+        "ma5": 1025.88,
+        "ma10": 976.65,
+        "ma20": 945.48,
+        "ma_alignment": "BULLISH",
+        "vol_ratio": 0.86,
+        "rsi14": 57.2,
+        "high_20d": 1110.4,
+        "low_20d": 700.66
+      },
+      "sectors": [
+        "Semiconductors"
+      ],
+      "direction_hint": "LONG",
+      "discovery_source": "core_pool"
+    },
+    {
+      "symbol": "US.SNDK",
+      "composite_score": 0.642,
+      "factors": {
+        "sector_momentum": {
+          "raw": 0,
+          "score": 0.5,
+          "weight": 0.17,
+          "detail": "N/A"
+        },
+        "relative_strength": {
+          "raw": 40.7,
+          "score": 1,
+          "weight": 0.17,
+          "detail": "+40.7% vs SPY -0.0%"
+        },
+        "ma_alignment": {
+          "raw": "BULLISH",
+          "score": 1.0,
+          "weight": 0.17,
+          "detail": "MA5=1984 MA10=1817 MA20=1720"
+        },
+        "volume_breakout": {
+          "raw": 0.85,
+          "score": 0.2333333333333333,
+          "weight": 0.17,
+          "detail": "0.8x avg"
+        },
+        "rsi_sweet_spot": {
+          "raw": 62.6,
+          "score": 0.6,
+          "weight": 0.17,
+          "detail": "RSI=63"
+        },
+        "insider_signal": {
+          "raw": 0.5,
+          "score": 0.5,
+          "weight": 0.15,
+          "detail": "NEUTRAL: 0B/0S"
+        }
+      },
+      "technicals": {
+        "cur_price": 1958.8,
+        "change_20d": 40.66,
+        "change_5d": 4.11,
+        "ma5": 1983.96,
+        "ma10": 1817.06,
+        "ma20": 1720.47,
+        "ma_alignment": "BULLISH",
+        "vol_ratio": 0.85,
+        "rsi14": 62.6,
+        "high_20d": 2167.33,
+        "low_20d": 1366.98
+      },
+      "sectors": [],
+      "direction_hint": "LONG",
+      "discovery_source": "core_pool"
+    },
+    {
+      "symbol": "US.PG",
+      "composite_score": 0.639,
+      "factors": {
+        "sector_momentum": {
+          "raw": 0,
+          "score": 0.5,
+          "weight": 0.17,
+          "detail": "N/A"
+        },
+        "relative_strength": {
+          "raw": 5.74,
+          "score": 1,
+          "weight": 0.17,
+          "detail": "+5.7% vs SPY -0.0%"
+        },
+        "ma_alignment": {
+          "raw": "BULLISH",
+          "score": 1.0,
+          "weight": 0.17,
+          "detail": "MA5=150 MA10=148 MA20=146"
+        },
+        "volume_breakout": {
+          "raw": 0.83,
+          "score": 0.21999999999999997,
+          "weight": 0.17,
           "detail": "0.8x avg"
         },
         "rsi_sweet_spot": {
           "raw": 59.2,
           "score": 0.6,
-          "weight": 0.2,
+          "weight": 0.17,
           "detail": "RSI=59"
+        },
+        "insider_signal": {
+          "raw": 0.5,
+          "score": 0.5,
+          "weight": 0.15,
+          "detail": "NEUTRAL: 0B/0S"
         }
       },
       "technicals": {
-        "cur_price": 149.61,
-        "change_20d": 5.68,
-        "change_5d": 3.11,
-        "ma5": 148.15,
-        "ma10": 144.94,
-        "ma20": 144.24,
+        "cur_price": 150.56,
+        "change_20d": 5.7,
+        "change_5d": 1.5,
+        "ma5": 150.29,
+        "ma10": 148.16,
+        "ma20": 145.65,
         "ma_alignment": "BULLISH",
-        "vol_ratio": 0.81,
+        "vol_ratio": 0.83,
         "rsi14": 59.2,
-        "high_20d": 150.43,
+        "high_20d": 153.02,
         "low_20d": 138.86
       },
       "sectors": [],
-      "direction_hint": "LONG"
+      "direction_hint": "LONG",
+      "discovery_source": "core_pool"
     }
   ],
-  "pool_size": 26,
-  "scored_count": 26,
-  "sector_momentum": {
-    "Technology": 0.87,
-    "Financials": 1.37,
-    "Energy": 0.75,
-    "Healthcare": -0.18,
-    "Industrials": 0.59,
-    "Consumer": 0.26,
-    "Consumer Staples": 0.65,
-    "Communication": -0.42
+  "pool_size": 35,
+  "pool_meta": {
+    "core_pool_size": 26,
+    "event_discovered": 16,
+    "event_symbols": [
+      "US.BWXT",
+      "US.UBER",
+      "US.COIN",
+      "US.COST",
+      "US.CRM",
+      "US.RIVN",
+      "US.ARM",
+      "US.SMCI",
+      "US.MSTR"
+    ],
+    "quality_gate_removed": 0,
+    "final_pool_size": 35,
+    "position_symbols": [
+      "US.META",
+      "US.NFLX",
+      "US.AAPL",
+      "US.PDD",
+      "US.AMZN",
+      "US.SNDK",
+      "US.LMT",
+      "US.BABA",
+      "US.TSLA",
+      "US.ORCL",
+      "US.PG",
+      "US.TSM",
+      "US.MU",
+      "US.GOOGL",
+      "US.MSFT",
+      "US.NVDA"
+    ]
   },
-  "spy_change_20d": 0.35,
-  "elapsed_sec": 8.8,
+  "scored_count": 35,
+  "sector_momentum": {},
+  "spy_change_20d": -0.04,
+  "elapsed_sec": 49.4,
   "all_scores": [
     {
-      "symbol": "US.JPM",
+      "symbol": "US.NTES",
+      "composite_score": 0.825,
+      "direction_hint": "LONG"
+    },
+    {
+      "symbol": "US.AMD",
       "composite_score": 0.711,
       "direction_hint": "LONG"
     },
     {
       "symbol": "US.LMT",
-      "composite_score": 0.669,
-      "direction_hint": "LONG"
-    },
-    {
-      "symbol": "US.PG",
-      "composite_score": 0.661,
-      "direction_hint": "LONG"
-    },
-    {
-      "symbol": "US.LLY",
-      "composite_score": 0.647,
-      "direction_hint": "LONG"
-    },
-    {
-      "symbol": "US.AMD",
-      "composite_score": 0.614,
-      "direction_hint": "LONG"
-    },
-    {
-      "symbol": "US.SNDK",
-      "composite_score": 0.613,
+      "composite_score": 0.684,
       "direction_hint": "LONG"
     },
     {
       "symbol": "US.TSM",
-      "composite_score": 0.56,
-      "direction_hint": "NEUTRAL"
+      "composite_score": 0.647,
+      "direction_hint": "LONG"
+    },
+    {
+      "symbol": "US.ARM",
+      "composite_score": 0.645,
+      "direction_hint": "LONG"
     },
     {
       "symbol": "US.MU",
-      "composite_score": 0.552,
+      "composite_score": 0.643,
+      "direction_hint": "LONG"
+    },
+    {
+      "symbol": "US.SNDK",
+      "composite_score": 0.642,
+      "direction_hint": "LONG"
+    },
+    {
+      "symbol": "US.PG",
+      "composite_score": 0.639,
+      "direction_hint": "LONG"
+    },
+    {
+      "symbol": "US.JPM",
+      "composite_score": 0.629,
+      "direction_hint": "LONG"
+    },
+    {
+      "symbol": "US.LLY",
+      "composite_score": 0.613,
+      "direction_hint": "LONG"
+    },
+    {
+      "symbol": "US.RIVN",
+      "composite_score": 0.578,
+      "direction_hint": "LONG"
+    },
+    {
+      "symbol": "US.WMT",
+      "composite_score": 0.534,
       "direction_hint": "NEUTRAL"
     },
     {
-      "symbol": "US.NTES",
-      "composite_score": 0.54,
+      "symbol": "US.BWXT",
+      "composite_score": 0.512,
       "direction_hint": "NEUTRAL"
     },
     {
-      "symbol": "US.ORCL",
-      "composite_score": 0.516,
+      "symbol": "US.COIN",
+      "composite_score": 0.467,
       "direction_hint": "NEUTRAL"
+    },
+    {
+      "symbol": "US.MSTR",
+      "composite_score": 0.466,
+      "direction_hint": "SHORT"
     },
     {
       "symbol": "US.TSLA",
-      "composite_score": 0.439,
+      "composite_score": 0.466,
       "direction_hint": "SHORT"
     },
     {
-      "symbol": "US.AAPL",
-      "composite_score": 0.397,
+      "symbol": "US.COST",
+      "composite_score": 0.448,
       "direction_hint": "SHORT"
     },
     {
-      "symbol": "US.MSFT",
-      "composite_score": 0.385,
-      "direction_hint": "SHORT"
-    },
-    {
-      "symbol": "US.META",
-      "composite_score": 0.37,
-      "direction_hint": "SHORT"
-    },
-    {
-      "symbol": "US.GOOGL",
-      "composite_score": 0.364,
+      "symbol": "US.UBER",
+      "composite_score": 0.447,
       "direction_hint": "SHORT"
     },
     {
       "symbol": "US.GOOG",
-      "composite_score": 0.362,
+      "composite_score": 0.437,
       "direction_hint": "SHORT"
     },
     {
-      "symbol": "US.JD",
-      "composite_score": 0.352,
+      "symbol": "US.AAPL",
+      "composite_score": 0.42,
+      "direction_hint": "SHORT"
+    },
+    {
+      "symbol": "US.CRM",
+      "composite_score": 0.41,
       "direction_hint": "SHORT"
     },
     {
       "symbol": "US.AVGO",
-      "composite_score": 0.351,
+      "composite_score": 0.407,
+      "direction_hint": "SHORT"
+    },
+    {
+      "symbol": "US.META",
+      "composite_score": 0.4,
+      "direction_hint": "SHORT"
+    },
+    {
+      "symbol": "US.MSFT",
+      "composite_score": 0.4,
+      "direction_hint": "SHORT"
+    },
+    {
+      "symbol": "US.ORCL",
+      "composite_score": 0.39,
+      "direction_hint": "SHORT"
+    },
+    {
+      "symbol": "US.JD",
+      "composite_score": 0.366,
+      "direction_hint": "SHORT"
+    },
+    {
+      "symbol": "US.SMCI",
+      "composite_score": 0.362,
+      "direction_hint": "SHORT"
+    },
+    {
+      "symbol": "US.GOOGL",
+      "composite_score": 0.361,
       "direction_hint": "SHORT"
     },
     {
       "symbol": "US.NVDA",
-      "composite_score": 0.348,
-      "direction_hint": "SHORT"
-    },
-    {
-      "symbol": "US.WMT",
-      "composite_score": 0.335,
-      "direction_hint": "SHORT"
-    },
-    {
-      "symbol": "US.BIDU",
-      "composite_score": 0.311,
-      "direction_hint": "SHORT"
-    },
-    {
-      "symbol": "US.AMZN",
-      "composite_score": 0.286,
+      "composite_score": 0.357,
       "direction_hint": "SHORT"
     },
     {
       "symbol": "US.NIO",
-      "composite_score": 0.227,
-      "direction_hint": "SHORT"
-    },
-    {
-      "symbol": "US.BABA",
-      "composite_score": 0.213,
-      "direction_hint": "SHORT"
-    },
-    {
-      "symbol": "US.NFLX",
-      "composite_score": 0.199,
+      "composite_score": 0.341,
       "direction_hint": "SHORT"
     },
     {
       "symbol": "US.PDD",
-      "composite_score": 0.181,
+      "composite_score": 0.33,
+      "direction_hint": "SHORT"
+    },
+    {
+      "symbol": "US.BABA",
+      "composite_score": 0.31,
+      "direction_hint": "SHORT"
+    },
+    {
+      "symbol": "US.NFLX",
+      "composite_score": 0.296,
+      "direction_hint": "SHORT"
+    },
+    {
+      "symbol": "US.AMZN",
+      "composite_score": 0.291,
+      "direction_hint": "SHORT"
+    },
+    {
+      "symbol": "US.BIDU",
+      "composite_score": 0.244,
       "direction_hint": "SHORT"
     }
   ]

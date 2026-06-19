@@ -1,0 +1,70 @@
+{
+  "date": "2026-06-18",
+  "plan_available": true,
+  "generated_at": "2026-06-19T04:35:12.153316",
+  "targets": [
+    {
+      "symbol": "US.NTES",
+      "plan_direction": "LONG",
+      "entry_zone": [
+        119.69,
+        121.63
+      ],
+      "status": "",
+      "traded": true,
+      "entry_zone_hit": false,
+      "direction_match": true,
+      "pnl_contribution": 0.0,
+      "matched_trades": 2,
+      "actual_entry_prices": [
+        119.0,
+        119.0
+      ],
+      "actual_directions": [
+        "LONG",
+        "LONG"
+      ]
+    },
+    {
+      "symbol": "US.AMD",
+      "plan_direction": "LONG",
+      "entry_zone": [
+        507.36,
+        515.55
+      ],
+      "status": "",
+      "traded": false,
+      "entry_zone_hit": false,
+      "direction_match": false,
+      "pnl_contribution": 0.0,
+      "matched_trades": 0,
+      "actual_entry_prices": [],
+      "actual_directions": []
+    },
+    {
+      "symbol": "US.LMT",
+      "plan_direction": "LONG",
+      "entry_zone": [
+        527.0,
+        535.51
+      ],
+      "status": "",
+      "traded": false,
+      "entry_zone_hit": false,
+      "direction_match": false,
+      "pnl_contribution": 0.0,
+      "matched_trades": 0,
+      "actual_entry_prices": [],
+      "actual_directions": []
+    }
+  ],
+  "hit_rate": 0.0,
+  "traded_rate": 0.3333333333333333,
+  "avg_pnl_of_planned": 0.0,
+  "unplanned_trade_count": 5,
+  "planned_count": 3,
+  "total_trades": 7,
+  "plan_date": "2026-06-18",
+  "traded_planned_count": 1,
+  "hit_count": 0
+}

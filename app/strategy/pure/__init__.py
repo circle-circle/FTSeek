@@ -142,6 +142,8 @@ from app.strategy.pure import technical    # noqa: E402, F401
 from app.strategy.pure import llm_vote     # noqa: E402, F401
 from app.strategy.pure import trend_first  # noqa: E402, F401  # RFC-054
 from app.strategy.pure import orb          # noqa: E402, F401  # ORB Opening Range Breakout
+from app.strategy.pure import insider      # noqa: E402, F401  # ADR-007: SEC Form 4 内部人集群买入
+from app.strategy.pure import earnings_revision  # noqa: E402, F401  # ADR-007: 分析师修正动量
 
 
 # 注册内置默认配置 (供 YAML 不可用时)
@@ -150,7 +152,12 @@ _BUILTIN_DEFAULTS = {
         "enabled": True, "min_confidence": 0.70, "require_entry_zone": True,
     },
     "technical": {
-        "enabled": True, "min_signals": 2,
+        "enabled": True,
+        "require_pullback": True,
+        "min_pullback_quality": 0.5,
+        "min_strength": 40,
+        # 旧参数兼容
+        "min_signals": 2,
         "indicators": ["rsi", "macd", "bollinger", "supertrend"],
         "weights": {"rsi": 0.30, "macd": 0.25, "bollinger": 0.25, "supertrend": 0.20},
         "min_score": 10,
@@ -173,5 +180,20 @@ _BUILTIN_DEFAULTS = {
         "min_volume_ratio": 0,
         "entry_end_et": "11:00",
         "no_entry_after_et": "15:30",
+    },
+    "insider": {
+        "enabled": True,
+        "min_buy_amount": 50000,
+        "min_buyers": 2,
+        "min_strength": 50,
+        "window_days": 30,
+    },
+    "earnings_revision": {
+        "enabled": True,
+        "min_upgrades": 2,
+        "min_revision_score": 0.15,
+        "min_analysts": 15,
+        "min_eps_growth": 0.05,
+        "min_strength": 45,
     },
 }

@@ -71,7 +71,7 @@ class DailyReviewGenerator:
             "SELECT * FROM trade_records WHERE trade_date = ? ORDER BY created_at",
             (date,)
         )
-        closed_trades = [t for t in trades if t.get('exit_price') is not None]
+        closed_trades = [t for t in trades if t.get('exit_price') and t.get('exit_price') > 0]
         
         # ── 数据源采集 ──
         signal_funnel = self._get_signal_funnel(date)
@@ -444,7 +444,7 @@ class DailyReviewGenerator:
         
         # 1. 胜率表现 (25%)
         winning = [t for t in trades if (t.get('realized_pnl') or 0) > 0]
-        closed = [t for t in trades if t.get('exit_price') is not None]
+        closed = [t for t in trades if t.get('exit_price') and t.get('exit_price') > 0]
         win_rate = len(winning) / len(closed) if closed else 0
         # 映射: 0%→0, 50%→5, 70%→8, 90%+→10
         wr_score = min(10, win_rate * 12)
@@ -1050,7 +1050,7 @@ class DailyReviewGenerator:
             
             results = []
             for t in trades:
-                if t.get('exit_price') is None:
+                if not t.get('exit_price') or t.get('exit_price') == 0:
                     continue
                 analysis = analyzer._analyze_single_trade(dict(t), {})
                 results.append(analysis.to_dict())
@@ -1072,12 +1072,8 @@ class DailyReviewGenerator:
                 "FROM trade_records WHERE date(exit_time)=? AND realized_pnl IS NOT NULL",
                 (date,)
             ).fetchone()
-            shadow_rows = conn.execute(
-                "SELECT strategy, COUNT(*), COALESCE(SUM(realized_pnl),0), "
-                "COALESCE(AVG(CASE WHEN realized_pnl>0 THEN 1.0 ELSE 0.0 END),0) "
-                "FROM shadow_trades WHERE date(exit_time)=? AND closed=1 GROUP BY strategy",
-                (date,)
-            ).fetchall()
+            # REMOVED (2026-06-19): shadow_trades 变体测试不再使用
+            shadow_rows = []
             conn.close()
             return {
                 "real": {

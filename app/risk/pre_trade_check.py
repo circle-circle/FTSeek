@@ -251,6 +251,8 @@ class PreTradeChecker:
         # ── RFC-056 (2026-06-01): VIX 多档过滤 (真实接线版, 替代 market_regime_filter.evaluate) ──
         # 数据驱动 (n=141): HIGH_VOL regime 14.9% wr -$39,537
         # 注意: VIX>=25 在 step 0 P1 gate 已改为警告(不拦截), 这里处理分级削弱
+        # P0 (2026-06-17): 不修改 signal.strength (消除副作用), 改用 metadata 传递调整值
+        _rfc_strength = signal.strength  # 本地工作副本, 不修改原始信号
         try:
             _flt_cfg = _load_filter_config()
             _vix_levels = _flt_cfg.get("vix_levels", {}) or {}
@@ -269,35 +271,36 @@ class PreTradeChecker:
                     _vix_mid = float(_vix_levels.get("mid", 22))
                     _is_long = "LONG" in _direction and "SHORT" not in _direction
                     if _cur_vix >= _vix_critical:
-                        # P0 (2026-06-04): 不再硬拦截，改为重度削弱 (×0.3)
-                        # 分层防御: 下游仓位已被 IntradayScorer 压到50% + ATR止损放宽1.3x
                         _mult = 0.3
-                        _new_strength = int(signal.strength * _mult)
+                        _new_strength = int(_rfc_strength * _mult)
                         logger.warning(
                             f"[RFC056·VIX-critical] {_symbol} VIX={_cur_vix:.1f}>={_vix_critical} "
-                            f"strength {signal.strength}×{_mult}={_new_strength} (不拦截, 重度削弱)"
+                            f"strength {_rfc_strength}×{_mult}={_new_strength} (不拦截, 重度削弱)"
                         )
-                        signal.strength = _new_strength
+                        _rfc_strength = _new_strength
                     elif _cur_vix >= _vix_high:
-                        # high 区间: LONG×0.5, SHORT×0.85
                         _mult = float(_flt_cfg.get("vix_long_high_mult", 0.5)) if _is_long \
                                 else float(_flt_cfg.get("vix_short_high_mult", 0.85))
-                        _new_strength = int(signal.strength * _mult)
+                        _new_strength = int(_rfc_strength * _mult)
                         logger.info(
                             f"[RFC056·VIX-high] {_symbol} VIX={_cur_vix:.1f} {_direction} "
-                            f"strength {signal.strength}×{_mult}={_new_strength}"
+                            f"strength {_rfc_strength}×{_mult}={_new_strength}"
                         )
-                        signal.strength = _new_strength
+                        _rfc_strength = _new_strength
                     elif _cur_vix >= _vix_mid:
-                        # mid 区间: ×0.85
-                        _new_strength = int(signal.strength * 0.85)
+                        _new_strength = int(_rfc_strength * 0.85)
                         logger.info(
                             f"[RFC056·VIX-mid] {_symbol} VIX={_cur_vix:.1f} "
-                            f"strength {signal.strength}×0.85={_new_strength}"
+                            f"strength {_rfc_strength}×0.85={_new_strength}"
                         )
-                        signal.strength = _new_strength
+                        _rfc_strength = _new_strength
         except Exception as _e_rfc056:
             logger.debug(f"[RFC056] 异常 (规则降级): {_e_rfc056}")
+            try:
+                from app.core.degradation_monitor import get_degradation_monitor
+                get_degradation_monitor().record("rfc056_vix_filter", str(_e_rfc056))
+            except Exception:
+                pass
         checks_passed.append("RFC056_VIX")
 
         # ── RFC-058 (2026-06-01): LONG 方向默认折扣 30% (BULL 豁免) ──
@@ -308,24 +311,34 @@ class PreTradeChecker:
             if _is_long and _ldf.get("enabled", False):
                 _discount = float(_ldf.get("default_discount", 0.7))
                 _exempt = _ldf.get("bull_regime_exempt", {}) or {}
-                # BULL 豁免: 简化版本 (仅 VIX < vix_max 即认为偏向 BULL)
-                # 完整 SPY/MA200 检查需要 spy_context, 这里 pre_trade 拿不到, 后续可扩展
                 _vix_max = float(_exempt.get("vix_max", 20))
                 _bull_exempt = isinstance(_cur_vix, (int, float)) and _cur_vix < _vix_max if "_cur_vix" in dir() else False
                 if not _bull_exempt:
-                    _new_strength = int(signal.strength * _discount)
+                    _new_strength = int(_rfc_strength * _discount)
                     if _ldf.get("log_every_discount", True):
                         logger.info(
                             f"[RFC058·LONG折扣] {_symbol} BULL 豁免不满足 (vix={_cur_vix if '_cur_vix' in dir() else 'N/A'}), "
-                            f"strength {signal.strength}×{_discount}={_new_strength}"
+                            f"strength {_rfc_strength}×{_discount}={_new_strength}"
                         )
-                    signal.strength = _new_strength
+                    _rfc_strength = _new_strength
         except Exception as _e_rfc058:
             logger.debug(f"[RFC058] 异常 (规则降级): {_e_rfc058}")
+            try:
+                from app.core.degradation_monitor import get_degradation_monitor
+                get_degradation_monitor().record("rfc058_long_filter", str(_e_rfc058))
+            except Exception:
+                pass
         checks_passed.append("RFC058_LONG")
 
+        # P0 (2026-06-17): 将 RFC 调整后的 strength 存入 metadata (供下游读取, 不污染原始信号)
+        if _rfc_strength != signal.strength:
+            if signal.metadata is None:
+                signal.metadata = {}
+            signal.metadata["rfc_adjusted_strength"] = _rfc_strength
+            signal.metadata["rfc_original_strength"] = signal.strength
+
         # 削减后强度归零 → 拒绝
-        if signal.strength <= 0:
+        if _rfc_strength <= 0:
             return PreTradeResult(
                 allowed=False,
                 reason=f"STRENGTH_ZERO_AFTER_FILTER(symbol={_symbol})",
@@ -358,15 +371,14 @@ class PreTradeChecker:
         # 1. 信号强度检查
         # P0-辩论修复 (2026-05-26): strength 统一为 direct 语义
         # 越高 = 信号越强 (LONG/SHORT 均同), 无需反转
-        # 数据: SHORT strength=70 → 70%看空强度, 应放行 (非反转后的30)
+        # P0 (2026-06-17): 使用 RFC 调整后的 strength (不修改原始信号)
         direction_str = str(signal.direction).upper()
         is_short = "SHORT" in direction_str
-        # Direct语义: strength 直接作为 effective, 不反转
-        effective_strength = signal.strength
+        effective_strength = _rfc_strength  # 使用 RFC-056/058 调整后的值
         if effective_strength < eff_strength:
             return PreTradeResult(
                 allowed=False,
-                reason=f"SIGNAL_TOO_WEAK(dir={direction_str} strength={signal.strength}<{eff_strength})",
+                reason=f"SIGNAL_TOO_WEAK(dir={direction_str} rfc_strength={_rfc_strength}<{eff_strength})",
                 checks_passed=checks_passed,
             )
         checks_passed.append("SIGNAL_STRENGTH")
@@ -382,7 +394,7 @@ class PreTradeChecker:
             _p1_vwap_enabled = _gc3().get_dotted("risk.p1_regime_gate.vwap_filter_enabled", True)
         except Exception:
             pass
-        if _p1_vwap_enabled and _is_long and signal.strength < 80:
+        if _p1_vwap_enabled and _is_long and _rfc_strength < 80:
             _vwap_dev = None
             try:
                 _meta = getattr(signal, 'metadata', None) or {}
@@ -394,7 +406,7 @@ class PreTradeChecker:
                 if float(_vwap_dev) < _vwap_threshold:
                     return PreTradeResult(
                         allowed=False,
-                        reason=f"P1_VWAP_WEAK(strength={signal.strength}<80, vwap_dev={_vwap_dev:.4f}<{_vwap_threshold})",
+                        reason=f"P1_VWAP_WEAK(rfc_strength={_rfc_strength}<80, vwap_dev={_vwap_dev:.4f}<{_vwap_threshold})",
                         checks_passed=checks_passed,
                     )
                 checks_passed.append("P1_VWAP")

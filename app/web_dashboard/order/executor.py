@@ -1,0 +1,1351 @@
+"""订单执行 — Futu API 调用层 (下单/平仓/撤单/止损/查询).
+
+公开函数 (供 ManualOrderService facade 委派):
+    - submit_order(service, order, idempotency_key)
+    - close_position(service, symbol, reason, close_qty, price)
+    - get_today_orders(service)
+    - cancel_order(service, order_id)
+    - takeover_position(service, symbol, owner)
+    - modify_stop_loss(service, symbol, new_sl)
+    - check_idempotency(service, key)
+    - cancel_broker_order(service, order_id)
+    - fetch_dealt_avg_price(service, order_id, trd_env, acc_id, retries, delay)
+    - calc_exit_price(row, raw_qty)              # static-style
+    - place_protective_stop(service, order)
+"""
+
+from __future__ import annotations
+
+import logging
+import time
+from dataclasses import asdict
+from datetime import datetime
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
+
+from app.coordinator.manual_hold_registry import manual_hold_registry
+
+if TYPE_CHECKING:  # pragma: no cover
+    from app.web_dashboard.manual_order_service import ManualOrder, ManualOrderService
+
+logger = logging.getLogger("ftseek_us.manual_order_service.executor")
+
+# ── 延迟挂单注册表: 开仓单未成交时, SL/TP 排队等待 ──
+# {order_id: {"order": ManualOrder, "service": ManualOrderService, "registered_at": datetime}}
+_pending_protections: Dict[str, dict] = {}
+_protection_monitor_started = False
+
+SQL_TAKEOVER = (
+    "INSERT INTO open_positions "
+    "(symbol, direction, size, avg_entry_price, owner, sync_status, updated_at) "
+    "VALUES (?, ?, ?, ?, ?, 'synced', ?) "
+    "ON CONFLICT(symbol) DO UPDATE SET "
+    "direction=excluded.direction, size=excluded.size, "
+    "avg_entry_price=excluded.avg_entry_price, owner=excluded.owner, "
+    "sync_status='synced', updated_at=excluded.updated_at"
+)
+
+
+# ─────────────────────────────────────────────────────────────
+# Idempotency
+# ─────────────────────────────────────────────────────────────
+
+def check_idempotency(service: "ManualOrderService", key: Optional[str]) -> bool:
+    """检查幂等 key 是否已使用. 返回 True = 重复请求应拒绝."""
+    if not key:
+        return False  # 无 key 时不做去重 (向后兼容)
+    now = time.time()
+    # 清理过期 key
+    expired = [k for k, ts in service._recent_keys.items()
+               if now - ts > service._idempotency_ttl]
+    for k in expired:
+        del service._recent_keys[k]
+    if key in service._recent_keys:
+        return True  # 重复
+    service._recent_keys[key] = now
+    return False
+
+
+# ─────────────────────────────────────────────────────────────
+# 下单
+# ─────────────────────────────────────────────────────────────
+
+def submit_order(service: "ManualOrderService", order: "ManualOrder",
+                 idempotency_key: str = None) -> Dict[str, Any]:
+    """提交订单到 Futu broker (带锁 + 幂等保护)."""
+
+    # 0. 幂等去重 (防止双击/网络重试)
+    with service._order_lock:
+        if check_idempotency(service, idempotency_key):
+            logger.warning(f"[手动下单] 重复请求被拒绝: key={idempotency_key}")
+            return {"success": False, "error": "重复提交，请勿连续点击"}
+
+        # 1. 风控校验
+        errors = service.validate_order(order)
+        if errors:
+            order.status = "rejected"
+            order.error_msg = "; ".join(errors)
+            service._write_audit(order)
+            return {"success": False, "errors": errors, "order": asdict(order)}
+
+        # 2. 连接 broker
+        if not service.connect():
+            order.status = "error"
+            order.error_msg = "Broker 连接失败"
+            service._write_audit(order)
+            return {"success": False, "error": "broker_connection_failed"}
+
+        # 3. 执行下单
+        try:
+            from futu import TrdEnv, TrdSide, OrderType as FutuOrderType, TimeInForce, RET_OK
+
+            trd_env = TrdEnv.REAL if service._is_live() else TrdEnv.SIMULATE
+
+            # 方向映射
+            if order.action == "BUY":
+                trd_side = TrdSide.BUY
+            elif order.action == "SELL":
+                trd_side = TrdSide.SELL
+            else:
+                # 从 direction 推断
+                trd_side = TrdSide.BUY if order.direction == "LONG" else TrdSide.SELL
+
+            # 订单类型
+            if order.order_type == "LIMIT" and order.price:
+                futu_order_type = FutuOrderType.NORMAL
+                price = order.price
+            else:
+                futu_order_type = FutuOrderType.MARKET
+                price = 0  # MARKET 单价格为 0
+
+            # 获取账户 ID
+            if service._is_live():
+                acc_id = int(service._read_env("REAL_ACCOUNT_ID", "0"))
+            else:
+                acc_id = int(service._read_env("SIMULATE_ACCOUNT_ID", "0"))
+
+            order.timestamp = datetime.now().isoformat()
+            order.mode = service._get_mode_label()
+
+            # 有效期映射
+            tif = TimeInForce.GTC if order.time_in_force == "GTC" else TimeInForce.DAY
+
+            logger.info(
+                f"[手动下单] 提交: {order.symbol} {order.action} {order.quantity}股 "
+                f"{'限价$'+str(price) if price else '市价'} "
+                f"TIF={order.time_in_force} RTH外={'是' if order.fill_outside_rth else '否'} "
+                f"环境={'实盘' if service._is_live() else '模拟'}"
+            )
+
+            ret, data = service._broker_ctx.place_order(
+                price=price,
+                qty=order.quantity,
+                code=order.symbol,
+                trd_side=trd_side,
+                order_type=futu_order_type,
+                trd_env=trd_env,
+                acc_id=acc_id,
+                time_in_force=tif,
+                fill_outside_rth=order.fill_outside_rth,
+            )
+
+            if ret == RET_OK:
+                order.order_id = str(data.iloc[0]["order_id"]) if not data.empty else ""
+                order.status = "submitted"
+                logger.info(f"[手动下单] ✅ 订单提交成功: order_id={order.order_id}")
+                # 标记为手动持仓, 避免被系统退出监控误平
+                service._mark_position_manual(order.symbol, order.direction)
+                # 注册到 ManualHoldRegistry: 自动管线扫描时跳过此标的 (实时, 无延迟)
+                try:
+                    manual_hold_registry.register(
+                        order.symbol, order.direction, int(order.quantity),
+                        reason=f"manual_order:{order.reason}",
+                    )
+                except Exception as _reg_err:
+                    logger.warning(f"[手动下单] ManualHoldRegistry 注册失败 (不影响下单): {_reg_err}")
+                # PDT 记录移至平仓时 — 开仓不计入 day trade (P0 2026-06-11)
+
+                # P1-6: 注册延迟保护挂单 — 等开仓单成交后再挂 SL/TP
+                if order.stop_loss > 0 or order.take_profit > 0:
+                    _register_pending_protection(service, order)
+
+                # Auto-thesis: 自动组装入场决策上下文
+                try:
+                    thesis_ctx = service._auto_generate_thesis(order)
+                    service._save_thesis_to_db(order, thesis_ctx)
+                except Exception as _thesis_err:
+                    logger.debug(f"[auto-thesis] 生成失败 (不影响下单): {_thesis_err}")
+
+                # 手动开仓写入 trade_records (exit_price=0, 平仓时 UPDATE 闭环)
+                try:
+                    service._record_manual_open(order)
+                except Exception as _open_err:
+                    logger.debug(f"[手动交易闭环] 开仓写入失败 (不影响下单): {_open_err}")
+
+                # WebSocket 实时推送
+                try:
+                    from app.web_dashboard.routes.ws import publish_event_sync
+                    publish_event_sync("order_update", {
+                        "order_id": order.order_id, "status": "submitted",
+                        "symbol": order.symbol, "side": order.action,
+                        "qty": order.quantity, "price": price,
+                    })
+                except ImportError:
+                    pass
+            else:
+                order.status = "error"
+                order.error_msg = str(data)
+                logger.error(f"[手动下单] ❌ 订单提交失败: {data}")
+                try:
+                    from app.web_dashboard.routes.ws import publish_event_sync
+                    publish_event_sync("order_update", {
+                        "order_id": "", "status": "error",
+                        "symbol": order.symbol, "error": "订单提交失败",
+                    })
+                except ImportError:
+                    pass
+
+        except Exception as e:
+            order.status = "error"
+            order.error_msg = "订单提交异常"
+            logger.error(f"[手动下单] 下单异常: {e}")
+
+        # 4. 写审计日志
+        service._write_audit(order)
+
+        return {
+            "success": order.status == "submitted",
+            "order": asdict(order),
+        }
+
+
+# ─────────────────────────────────────────────────────────────
+# 平仓
+# ─────────────────────────────────────────────────────────────
+
+def close_position(service: "ManualOrderService", symbol: str, reason: str,
+                   close_qty: int = 0, price: float = None) -> Dict[str, Any]:
+    """平仓指定持仓.
+
+    Args:
+        symbol: 标的代码
+        reason: 平仓理由
+        close_qty: 平仓数量 (0=全平, >0=部分平仓)
+        price: 限价 (None=市价平仓, >0=限价平仓用于止损/止盈)
+    """
+    from app.web_dashboard.manual_order_service import ManualOrder
+
+    with service._close_lock:  # P0 2026-06-15: 防止手动/自动平仓竞态
+        if not service.connect():
+            return {"success": False, "error": "broker_connection_failed"}
+
+        # P0-2 修复 (2026-06-12): 实盘平仓也需要 ALLOW_REAL_TRADING=true 兜底
+        # 防止切回模拟盘后 broker_ctx 仍活跃造成误下实盘单
+        if service._is_live():
+            allow = service._read_env("ALLOW_REAL_TRADING", "false").lower()
+            if allow != "true":
+                logger.error(f"[手动平仓] {symbol} 拦截: ALLOW_REAL_TRADING != true (实盘平仓被拒绝)")
+                return {"success": False, "error": "ALLOW_REAL_TRADING 未设为 true，实盘平仓被拦截"}
+
+        try:
+            from futu import TrdEnv, TrdSide, OrderType as FutuOrderType, RET_OK
+
+            trd_env = TrdEnv.REAL if service._is_live() else TrdEnv.SIMULATE
+            if service._is_live():
+                acc_id = int(service._read_env("REAL_ACCOUNT_ID", "0"))
+            else:
+                acc_id = int(service._read_env("SIMULATE_ACCOUNT_ID", "0"))
+
+            # 查询当前持仓
+            ret, positions = service._broker_ctx.position_list_query(
+                trd_env=trd_env, acc_id=acc_id,
+            )
+            if ret != RET_OK:
+                return {"success": False, "error": f"持仓查询失败: {positions}"}
+
+            pos = positions[positions["code"] == symbol]
+            if pos.empty:
+                return {"success": False, "error": f"未找到 {symbol} 的持仓"}
+
+            row = pos.iloc[0]
+            raw_qty = float(row.get("qty", 0))
+            if raw_qty == 0:
+                return {"success": False, "error": f"{symbol} 持仓数量为 0"}
+
+            # 根据持仓方向决定平仓方向
+            side = str(row.get("position_side", "")).upper()
+            is_long = not ((raw_qty < 0) or (side == "SHORT"))
+            position_dir = "LONG" if is_long else "SHORT"
+            total_qty = int(abs(raw_qty))
+            close_side = TrdSide.SELL if is_long else TrdSide.BUY  # 平多卖, 平空买
+
+            # 部分平仓 vs 全平
+            if close_qty <= 0 or close_qty >= total_qty:
+                qty = total_qty
+                close_type = "全平"
+            else:
+                qty = close_qty
+                close_type = f"部分({qty}/{total_qty})"
+
+            logger.info(
+                f"[手动平仓] {symbol}: {close_type} {position_dir}, "
+                f"平仓动作={'SELL' if is_long else 'BUY'}, 数量={qty}"
+            )
+
+            # 限价 or 市价
+            is_limit = price is not None and price > 0
+            futu_order_type = FutuOrderType.NORMAL if is_limit else FutuOrderType.MARKET
+            order_price = price if is_limit else 0
+            order_type_label = f"LIMIT@${price:.2f}" if is_limit else "MARKET"
+
+            # P0-2 修复 (2026-06-12): 平仓金额上限校验 (限价单按指定价, 市价单按持仓成本估算)
+            try:
+                _ref_price = price if is_limit else float(row.get("cost_price", 0) or 0)
+                if _ref_price > 0:
+                    _est_value = qty * _ref_price
+                    if _est_value > service.MAX_CLOSE_VALUE_USD:
+                        logger.error(
+                            f"[手动平仓] {symbol} 拦截: 估算金额 ${_est_value:,.0f} "
+                            f"超过平仓上限 ${service.MAX_CLOSE_VALUE_USD:,.0f}"
+                        )
+                        return {
+                            "success": False,
+                            "error": f"平仓金额 ${_est_value:,.0f} 超过单笔上限 ${service.MAX_CLOSE_VALUE_USD:,.0f}",
+                        }
+            except Exception as _check_err:
+                logger.warning(f"[手动平仓] 金额校验失败 (放行): {_check_err}")
+
+            # 构造审计订单
+            order = ManualOrder(
+                symbol=symbol,
+                direction=position_dir,
+                action="SELL" if is_long else "BUY",
+                quantity=qty,
+                order_type="LIMIT" if is_limit else "MARKET",
+                price=price if is_limit else None,
+                reason=f"[{close_type}] {reason}",
+                mode=service._get_mode_label(),
+            )
+
+            # P0: 平仓竞态锁 — 在提交 broker 订单前标记，阻止 ExitMonitor 同时平仓
+            _lock_acquired = False
+            try:
+                import importlib as _il
+                _sc_mod = _il.import_module("app.core.scheduler_core")
+                _sched = getattr(_sc_mod, "_scheduler_instance", None)
+                if _sched and hasattr(_sched, 'position_store') and _sched.position_store.has(symbol):
+                    _pos = _sched.position_store.get(symbol)
+                    _meta = getattr(_pos, 'metadata', {}) or {}
+                    _meta['_close_in_progress'] = True
+                    _meta['_close_in_progress_ts'] = time.time()
+                    _meta['_pending_close'] = True
+                    _pos.metadata = _meta
+                    _lock_acquired = True
+                    logger.info(f"[手动平仓] {symbol} 已设置 _close_in_progress 竞态锁")
+            except Exception as _lock_err:
+                logger.warning(f"[手动平仓] 设置竞态锁失败 (非致命): {_lock_err}")
+
+            ret, data = service._broker_ctx.place_order(
+                price=order_price,
+                qty=qty,
+                code=symbol,
+                trd_side=close_side,
+                order_type=futu_order_type,
+                trd_env=trd_env,
+                acc_id=acc_id,
+            )
+
+            if ret == RET_OK:
+                order.order_id = str(data.iloc[0]["order_id"]) if not data.empty else ""
+                order.status = "submitted"
+                logger.info(f"[手动平仓] ✅ {symbol} 平仓成功: {int(qty)}股")
+                service._mark_position_manual(symbol, position_dir)
+
+                # Task #11: WebSocket 实时推送 — 平仓 order_update + position_update
+                try:
+                    from app.web_dashboard.routes.ws import publish_event_sync
+                    publish_event_sync("order_update", {
+                        "order_id": order.order_id, "status": "submitted",
+                        "symbol": symbol, "side": order.action,
+                        "qty": qty, "price": order_price,
+                        "close": True, "close_type": close_type,
+                    })
+                    publish_event_sync("position_update", {
+                        "action": "exit" if close_type == "全平" else "partial_exit",
+                        "symbol": symbol,
+                        "direction": position_dir,
+                        "qty": qty, "total_qty": total_qty,
+                        "reason": reason,
+                        "source": "manual",
+                    })
+                except ImportError:
+                    pass
+                except Exception as _ws_err:
+                    logger.debug(f"[手动平仓] WS 推送失败 (不影响主流程): {_ws_err}")
+
+                # P1-5 (2026-06-14): 通知 ExitMonitor 清理 trail_state
+                # 防止: 手动平仓后 trail_state 残留 → 重启 ghost 恢复时带旧状态触发错误退出
+                try:
+                    from app.risk.trail_state_store import get_trail_state_store
+                    _ts_store = get_trail_state_store()
+                    _ts_store.delete(symbol)
+                    logger.info(f"[手动平仓] {symbol} trail_state 已清理")
+                except Exception as _ts_err:
+                    logger.debug(f"[手动平仓] trail_state 清理跳过: {_ts_err}")
+
+                # P1-5 (2026-06-14): 全平时从 position_store 移除
+                # 部分平仓时不移除 — position_sync 30s 内会更新 size
+                if close_type == "全平":
+                    try:
+                        import importlib
+                        _sc_mod = importlib.import_module("app.core.scheduler_core")
+                        _sched = getattr(_sc_mod, "_scheduler_instance", None)
+                        if _sched and hasattr(_sched, 'position_store') and _sched.position_store.has(symbol):
+                            _sched.position_store.remove(symbol)
+                            logger.info(f"[手动平仓] {symbol} 已从 position_store 移除")
+                    except Exception as _ps_err:
+                        logger.debug(f"[手动平仓] position_store 清理跳过 (position_sync 会兜底): {_ps_err}")
+                    # 全平时从 ManualHoldRegistry 注销, 释放标的给自动管线
+                    try:
+                        manual_hold_registry.unregister(symbol)
+                    except Exception as _unreg_err:
+                        logger.warning(f"[手动平仓] ManualHoldRegistry 注销失败 (不影响平仓): {_unreg_err}")
+
+                # P1-6: 取消保护性订单组 (SL + TP)
+                try:
+                    cancel_order_group(service, symbol)
+                except Exception:
+                    pass
+
+                # PDT 日内交易记录: 平仓时判断是否 round trip (P0 2026-06-11)
+                try:
+                    from app.risk.pdt_guard import get_pdt_guard
+                    get_pdt_guard().record_close(symbol, row.get("open_date", row.get("entry_time")))
+                except Exception as _pdt_err:
+                    logger.debug(f"[手动平仓] PDT 记录失败 (不影响平仓): {_pdt_err}")
+
+                # 2026-06-10: 写入 trade_records 形成手动交易闭环
+                # P1-6 (2026-06-12): 优先用 broker dealt_avg_price 精确回填 exit_price
+                # 2026-06-13: 先验证订单是否真正成交 (防止 cancelled 订单写入虚假记录)
+                try:
+                    import time as _t
+                    # 等待 1s 让 broker 成交回报写入 (市价单一般立即成交, 限价单可能延迟)
+                    _t.sleep(1.0)
+                    _precise_exit = service._fetch_dealt_avg_price(
+                        order.order_id, trd_env, acc_id, retries=3, delay=1.0
+                    )
+                    if _precise_exit and _precise_exit > 0:
+                        _exit_px = _precise_exit
+                    else:
+                        # 检查订单状态: 如果已取消则不写入 trade_records
+                        try:
+                            _ret2, _data2 = service._broker_ctx.order_list_query(
+                                order_id=order.order_id, trd_env=trd_env, acc_id=acc_id
+                            )
+                            if _ret2 == RET_OK and not _data2.empty:
+                                _order_status = str(_data2.iloc[0].get("order_status", ""))
+                                _dealt_qty = float(_data2.iloc[0].get("dealt_qty", 0) or 0)
+                                if "CANCEL" in _order_status.upper() and _dealt_qty == 0:
+                                    logger.warning(
+                                        f"[手动平仓] {symbol} 订单已取消 ({_order_status}), "
+                                        f"不写入 trade_records"
+                                    )
+                                    raise ValueError(f"Order cancelled: {_order_status}")
+                        except ValueError:
+                            raise
+                        except Exception:
+                            pass
+                        _exit_px = service._calc_exit_price(row, raw_qty)
+                        if _exit_px <= 0:
+                            # 最后兜底: 用 Futu 实时报价
+                            try:
+                                ret, snap = service._broker_ctx._quote_ctx.get_market_snapshot([symbol])
+                                if ret == RET_OK and not snap.empty:
+                                    _exit_px = float(snap.iloc[0].get("cur_price", 0) or 0)
+                            except Exception:
+                                pass
+                        # ── P0 (2026-06-16): 终极兜底 — 用订单限价 ──
+                        # 根因: NVDA 手动平仓 exit_price=0 → 假亏损 $6155 → 触发日熔断
+                        # 当 broker 成交回报、position 行、Futu snapshot 全部失败时,
+                        # 用户设定的限价是最接近实际成交价的合理代理。
+                        if _exit_px <= 0 and order_price and order_price > 0:
+                            _exit_px = float(order_price)
+                            logger.warning(
+                                f"[手动平仓] {symbol} 所有成交价查询失败, "
+                                f"使用订单限价 ${order_price:.2f} 作为 exit_price"
+                            )
+                    # ADR-007: 读取入场理由 (thesis/rationale) 供平仓时写入 entry_reason
+                    _entry_reason_text = ""
+                    try:
+                        _conn_er = service._db()
+                        _row_er = _conn_er.execute(
+                            "SELECT thesis, entry_context_json FROM open_positions WHERE symbol=?",
+                            (symbol,),
+                        ).fetchone()
+                        if _row_er:
+                            _entry_reason_text = _row_er[0] or ""  # thesis text
+                            if _row_er[1]:
+                                import json as _j2
+                                try:
+                                    _ec = _j2.loads(_row_er[1])
+                                    _plan_rationale = (_ec.get("plan", {}).get("rationale", "") or "")
+                                    if _plan_rationale and not _entry_reason_text:
+                                        _entry_reason_text = _plan_rationale[:300]
+                                except Exception:
+                                    pass
+                        _conn_er.close()
+                    except Exception:
+                        pass
+
+                    service._record_manual_close(
+                        symbol=symbol,
+                        direction=position_dir,
+                        entry_price=float(row.get("cost_price", 0)),
+                        exit_price=_exit_px,
+                        quantity=int(qty),
+                        reason=f"[{close_type}] {reason}",
+                        order_id=order.order_id,
+                        entry_reason=_entry_reason_text,
+                    )
+                    # 自动生成交易归因
+                    try:
+                        from app.analysis.trade_attribution import compute_attribution
+                        attr = compute_attribution(
+                            symbol=symbol, direction=position_dir,
+                            entry_price=float(row.get("cost_price", 0)),
+                            exit_price=_exit_px, quantity=int(qty),
+                            entry_time=row.get("entry_time", row.get("updated_at", "")),
+                            exit_time=datetime.now().isoformat(),
+                        )
+                        logger.info(f"[归因] {symbol} {position_dir}: {attr.summary} | {attr.improvement}")
+                        # 写入归因 + thesis 到 trade_records.metadata_json
+                        conn = service._db()
+                        try:
+                            import json as _json
+                            # 读取入场 thesis + entry_time (open_positions 行尚在, sync 还未清理)
+                            _thesis_data = None
+                            _entry_time_str = ""
+                            _entry_ctx = None
+                            try:
+                                _trow = conn.execute(
+                                    "SELECT thesis, entry_context_json, entry_time FROM open_positions WHERE symbol=?",
+                                    (symbol,),
+                                ).fetchone()
+                                if _trow:
+                                    _entry_ctx = _json.loads(_trow[1]) if _trow[1] else None
+                                    _thesis_data = {
+                                        "thesis_text": _trow[0] or "",
+                                        "entry_context": _entry_ctx,
+                                    }
+                                    _entry_time_str = _trow[2] or ""
+                            except Exception:
+                                pass
+
+                            # 构建 exit context
+                            _exit_ctx = service._build_exit_context(symbol, _entry_time_str, _entry_ctx)
+
+                            meta = {"attribution": attr.to_dict()}
+                            if _thesis_data:
+                                meta["thesis"] = _thesis_data
+                            meta["exit_context"] = _exit_ctx
+                            meta_json = _json.dumps(meta, ensure_ascii=False)
+                            conn.execute(
+                                "UPDATE trade_records SET metadata_json=? WHERE close_futu_order_id=? ORDER BY id DESC LIMIT 1",
+                                (meta_json, order.order_id),
+                            )
+                            conn.commit()
+                        finally:
+                            conn.close()
+
+                        # 推送归因报告到飞书
+                        try:
+                            service._push_attribution_to_feishu(attr.to_dict())
+                        except Exception as _push_err:
+                            logger.debug(f"[归因] 飞书推送失败 (不影响主流程): {_push_err}")
+                    except Exception as _attr_err:
+                        logger.debug(f"[归因] 生成失败 (不影响平仓): {_attr_err}")
+                except Exception as _rec_err:
+                    logger.warning(f"[手动平仓] trade_records 写入失败 (不影响平仓): {_rec_err}")
+            else:
+                order.status = "error"
+                order.error_msg = str(data)
+                # 平仓失败 — 释放竞态锁，允许 ExitMonitor 重试
+                if _lock_acquired:
+                    try:
+                        import importlib as _il2
+                        _sc_mod2 = _il2.import_module("app.core.scheduler_core")
+                        _sched2 = getattr(_sc_mod2, "_scheduler_instance", None)
+                        if _sched2 and hasattr(_sched2, 'position_store') and _sched2.position_store.has(symbol):
+                            _pos2 = _sched2.position_store.get(symbol)
+                            _meta2 = getattr(_pos2, 'metadata', {}) or {}
+                            _meta2.pop('_close_in_progress', None)
+                            _meta2.pop('_close_in_progress_ts', None)
+                            _meta2.pop('_pending_close', None)
+                            _pos2.metadata = _meta2
+                            logger.info(f"[手动平仓] {symbol} 竞态锁已释放 (平仓失败)")
+                    except Exception:
+                        pass
+
+            service._write_audit(order)
+            return {
+                "success": order.status == "submitted",
+                "order": asdict(order),
+            }
+
+        except Exception as e:
+            logger.error(f"[手动平仓] 异常: {e}")
+            return {"success": False, "error": "操作失败，请稍后重试"}
+
+
+# ─────────────────────────────────────────────────────────────
+# 订单查询 / 撤单
+# ─────────────────────────────────────────────────────────────
+
+def get_today_orders(service: "ManualOrderService") -> List[Dict[str, Any]]:
+    """查询今日所有订单状态 (按时间倒序).
+
+    优先查 Futu broker, 失败或为空时 fallback 到本地审计 DB.
+    """
+    orders = []
+
+    # ── 1. 尝试 Futu broker 查询 ──
+    try:
+        if service.connect():
+            from futu import TrdEnv, RET_OK
+            trd_env = TrdEnv.REAL if service._is_live() else TrdEnv.SIMULATE
+            if service._is_live():
+                acc_id = int(service._read_env("REAL_ACCOUNT_ID", "0"))
+            else:
+                acc_id = int(service._read_env("SIMULATE_ACCOUNT_ID", "0"))
+
+            ret, data = service._broker_ctx.order_list_query(
+                trd_env=trd_env, acc_id=acc_id,
+            )
+            if ret == RET_OK and not data.empty:
+                # Use ET timezone for today filter (Futu returns ET timestamps)
+                from datetime import timezone, timedelta
+                et_tz = timezone(timedelta(hours=-4))
+                today_et = datetime.now(et_tz).strftime("%Y-%m-%d")
+                for _, row in data.iterrows():
+                    create_time = str(row.get("create_time", ""))
+                    # Extract date part from "2026-06-17 23:36:13.188"
+                    order_date = create_time.split(" ")[0] if create_time else ""
+                    if order_date != today_et:
+                        continue
+                    _st = str(row.get("order_status", "")).upper()
+                    _is_filled = "FILLED" in _st
+                    orders.append({
+                        "order_id": str(row.get("order_id", "")),
+                        "code": str(row.get("code", "")),
+                        "qty": int(row.get("qty", 0)),
+                        "price": float(row.get("price", 0)),
+                        "order_type": str(row.get("order_type", "")),
+                        "order_status": str(row.get("order_status", "")),
+                        "trd_side": str(row.get("trd_side", "")),
+                        "create_time": create_time,
+                        "update_time": str(row.get("update_time", "")),
+                        "filled_qty": int(row.get("qty", 0)) if _is_filled else 0,
+                    })
+    except Exception as e:
+        logger.warning(f"[订单查询] Broker 查询异常, 降级到审计 DB: {e}")
+
+    # ── 2. Broker 为空时 fallback 到本地审计 DB ──
+    if not orders:
+        try:
+            import sqlite3
+            from app.core.db_utils import get_main_db
+            db_path = get_main_db()
+            conn = sqlite3.connect(str(db_path))
+            conn.row_factory = sqlite3.Row
+            # 用 timestamp 字段 (本地时间) 做今日过滤
+            today = datetime.now().strftime("%Y-%m-%d")
+            rows = conn.execute(
+                "SELECT * FROM manual_order_audit "
+                "WHERE timestamp LIKE ? ORDER BY timestamp DESC LIMIT 50",
+                (today + "%",),
+            ).fetchall()
+            conn.close()
+            for r in rows:
+                r = dict(r)
+                _status = (r.get("status") or "submitted").upper()
+                _is_filled = "FILLED" in _status
+                orders.append({
+                    "order_id": str(r.get("order_id", "")),
+                    "code": str(r.get("symbol", "")),
+                    "qty": int(r.get("quantity", 0)),
+                    "price": float(r.get("price") or 0),
+                    "order_type": str(r.get("order_type", "LIMIT")),
+                    "order_status": _status,
+                    "trd_side": str(r.get("action", "BUY")),
+                    "create_time": (r.get("timestamp") or "").replace("T", " ")[:19],
+                    "update_time": "",
+                    "filled_qty": 0,
+                })
+            logger.info(f"[订单查询] Broker 无数据, 从审计 DB 加载 {len(orders)} 条")
+        except Exception as e:
+            logger.warning(f"[订单查询] 审计 DB fallback 失败: {e}")
+
+    # 按创建时间倒序
+    orders.sort(key=lambda x: x["create_time"], reverse=True)
+    return orders
+
+
+def cancel_order(service: "ManualOrderService", order_id: str) -> Dict[str, Any]:
+    """撤销指定订单."""
+    if not service.connect():
+        return {"success": False, "error": "broker_connection_failed"}
+
+    try:
+        from futu import TrdEnv, RET_OK, ModifyOrderOp
+        trd_env = TrdEnv.REAL if service._is_live() else TrdEnv.SIMULATE
+        if service._is_live():
+            acc_id = int(service._read_env("REAL_ACCOUNT_ID", "0"))
+        else:
+            acc_id = int(service._read_env("SIMULATE_ACCOUNT_ID", "0"))
+
+        ret, data = service._broker_ctx.modify_order(
+            modify_order_op=ModifyOrderOp.CANCEL,
+            order_id=order_id,
+            qty=0,
+            price=0,
+            trd_env=trd_env,
+            acc_id=acc_id,
+        )
+
+        if ret == RET_OK:
+            logger.info(f"[撤单] ✅ {order_id} 撤销成功")
+            # 更新审计 DB 状态, 防止 DB fallback 仍显示 submitted
+            try:
+                import sqlite3
+                from app.core.db_utils import get_main_db
+                conn = sqlite3.connect(str(get_main_db()))
+                conn.execute(
+                    "UPDATE manual_order_audit SET status='cancelled' WHERE order_id=?",
+                    (order_id,),
+                )
+                conn.commit()
+                conn.close()
+            except Exception as _ae:
+                logger.warning(f"[撤单] 审计 DB 更新失败 (非致命): {_ae}")
+            # Task #11: WebSocket 推送撤单事件
+            try:
+                from app.web_dashboard.routes.ws import publish_event_sync
+                publish_event_sync("order_update", {
+                    "order_id": order_id, "status": "cancelled",
+                })
+            except ImportError:
+                pass
+            except Exception:
+                pass
+            return {"success": True, "message": f"订单 {order_id} 已撤销"}
+        else:
+            logger.error(f"[撤单] ❌ {order_id} 撤销失败: {data}")
+            return {"success": False, "error": "订单撤销失败"}
+
+    except Exception as e:
+        logger.error(f"[撤单] 异常: {e}")
+        return {"success": False, "error": "操作失败，请稍后重试"}
+
+
+def cancel_broker_order(service: "ManualOrderService", order_id: str) -> bool:
+    """内部辅助: 撤销 broker 订单, 返回是否成功 (用于 SL 单替换)."""
+    try:
+        from futu import TrdEnv, RET_OK, ModifyOrderOp
+        trd_env = TrdEnv.REAL if service._is_live() else TrdEnv.SIMULATE
+        if service._is_live():
+            acc_id = int(service._read_env("REAL_ACCOUNT_ID", "0"))
+        else:
+            acc_id = int(service._read_env("SIMULATE_ACCOUNT_ID", "0"))
+        ret, _ = service._broker_ctx.modify_order(
+            modify_order_op=ModifyOrderOp.CANCEL,
+            order_id=order_id, qty=0, price=0,
+            trd_env=trd_env, acc_id=acc_id,
+        )
+        return ret == RET_OK
+    except Exception:
+        return False
+
+
+# ─────────────────────────────────────────────────────────────
+# LEGACY 持仓托管
+# ─────────────────────────────────────────────────────────────
+
+def takeover_position(service: "ManualOrderService", symbol: str,
+                      owner: str = "manual") -> Dict[str, Any]:
+    """P1-2 (2026-06-12): import broker LEGACY position into open_positions."""
+    if not symbol or not symbol.startswith("US."):
+        return {"success": False, "error": "invalid symbol"}
+    if owner not in ("manual", "auto"):
+        owner = "manual"
+    try:
+        service.connect()
+        if service._broker_ctx is None:
+            return {"success": False, "error": "broker not connected"}
+        trd_env, acc_id = service._trd_env(), service._acc_id()
+        ret, positions = service._broker_ctx.position_list_query(trd_env=trd_env, acc_id=acc_id)
+        if ret != 0:
+            return {"success": False, "error": f"position query failed: {positions}"}
+        pos = positions[positions["code"] == symbol]
+        if pos.empty:
+            return {"success": False, "error": f"no broker position for {symbol}"}
+        row = pos.iloc[0]
+        qty = float(row.get("qty", 0))
+        if qty == 0:
+            return {"success": False, "error": f"{symbol} qty=0"}
+        cost = float(row.get("cost_price", 0)) or float(row.get("nominal_price", 0))
+        side = str(row.get("position_side", "")).upper()
+        direction = "SHORT" if (qty < 0 or side == "SHORT") else "LONG"
+        qty_abs = abs(qty)
+    except Exception as e:
+        return {"success": False, "error": f"read broker pos failed: {e}"}
+    try:
+        with service._db() as conn:
+            exist = conn.execute(
+                "SELECT symbol, owner FROM open_positions WHERE symbol=?",
+                (symbol,),
+            ).fetchone()
+            if exist:
+                return {"success": False, "error": f"{symbol} already in DB (owner={exist[1]})"}
+            now = datetime.now().isoformat()
+            conn.execute(SQL_TAKEOVER, (symbol, direction, qty_abs, cost, owner, now))
+            conn.commit()
+    except Exception as e:
+        return {"success": False, "error": f"DB write failed: {e}"}
+    logger.warning(
+        f"[Takeover] {symbol} imported dir={direction} qty={qty_abs} cost={cost} owner={owner}"
+    )
+    return {
+        "success": True, "symbol": symbol, "direction": direction,
+        "quantity": qty_abs, "cost_price": cost, "owner": owner,
+        "message": f"{symbol} imported ({owner})",
+    }
+
+
+# ─────────────────────────────────────────────────────────────
+# 止损单管理
+# ─────────────────────────────────────────────────────────────
+
+def modify_stop_loss(service: "ManualOrderService", symbol: str,
+                     new_sl: float) -> Dict[str, Any]:
+    """修改持仓止损 — 撤销旧 STOP 单 + 下新 STOP 单 + 更新 DB.
+
+    关键: 之前 routes/trade.py 仅 UPDATE DB current_sl, 不下 broker 单 →
+    程序退出后止损不存在, 实盘风险极高。
+    模拟盘: Futu SIMULATE 不支持 STOP, 仅更新 DB (graceful degrade)。
+    """
+    if new_sl <= 0:
+        return {"success": False, "error": "止损价必须 > 0"}
+
+    # 1. 确保 DB 列存在
+    service._ensure_sl_column()
+
+    # 2. 查询当前持仓 (从 broker 拿 size + direction)
+    if not service.connect():
+        return {"success": False, "error": "broker_connection_failed"}
+
+    try:
+        from futu import TrdEnv, TrdSide, OrderType as FutuOrderType, RET_OK
+
+        trd_env = TrdEnv.REAL if service._is_live() else TrdEnv.SIMULATE
+        if service._is_live():
+            acc_id = int(service._read_env("REAL_ACCOUNT_ID", "0"))
+        else:
+            acc_id = int(service._read_env("SIMULATE_ACCOUNT_ID", "0"))
+
+        ret, positions = service._broker_ctx.position_list_query(trd_env=trd_env, acc_id=acc_id)
+        if ret != RET_OK:
+            return {"success": False, "error": f"持仓查询失败: {positions}"}
+
+        pos = positions[positions["code"] == symbol]
+        if pos.empty:
+            return {"success": False, "error": f"未找到 {symbol} 的持仓"}
+
+        row = pos.iloc[0]
+        raw_qty = float(row.get("qty", 0))
+        if raw_qty == 0:
+            return {"success": False, "error": f"{symbol} 持仓为 0"}
+
+        side = str(row.get("position_side", "")).upper()
+        is_long = not ((raw_qty < 0) or (side == "SHORT"))
+        direction = "LONG" if is_long else "SHORT"
+        qty = int(abs(raw_qty))
+
+        # 3. 查 DB 取旧 sl_broker_order_id
+        old_sl_oid = None
+        try:
+            conn = service._db()
+            cur = conn.execute(
+                "SELECT sl_broker_order_id FROM open_positions WHERE symbol=?",
+                (symbol,),
+            ).fetchone()
+            if cur and cur[0]:
+                old_sl_oid = str(cur[0])
+            conn.close()
+        except Exception:
+            pass
+
+        # 4. 撤旧 STOP 单 (如果存在)
+        if old_sl_oid:
+            cancelled = service._cancel_broker_order(old_sl_oid)
+            logger.info(
+                f"[止损·替换] {symbol} 旧 STOP 单 {old_sl_oid} "
+                f"撤销{'成功' if cancelled else '失败 (可能已成交/不存在)'}"
+            )
+
+        # 5. 下新 STOP 单
+        new_oid = None
+        sl_status = "db_only"  # 默认状态 (若 broker 失败)
+        if trd_env == TrdEnv.SIMULATE:
+            logger.info(f"[止损] {symbol} 模拟盘不支持 STOP, 仅更新 DB")
+            sl_status = "simulate_db_only"
+        else:
+            # LONG → SELL STOP, SHORT → BUY STOP
+            trd_side = TrdSide.SELL if is_long else TrdSide.BUY
+            try:
+                ret2, data2 = service._broker_ctx.place_order(
+                    price=new_sl, qty=qty, code=symbol,
+                    trd_side=trd_side,
+                    order_type=FutuOrderType.STOP,
+                    trd_env=trd_env, acc_id=acc_id,
+                )
+                if ret2 == RET_OK and not data2.empty:
+                    new_oid = str(data2.iloc[0].get("order_id", ""))
+                    sl_status = "broker_attached"
+                    logger.info(
+                        f"[止损] ✅ {symbol} {direction} STOP@${new_sl} qty={qty} → {new_oid}"
+                    )
+                else:
+                    logger.error(f"[止损] {symbol} STOP 单失败 (DB 仍更新): {data2}")
+            except Exception as e:
+                logger.error(f"[止损] {symbol} 下 STOP 单异常 (DB 仍更新): {e}")
+
+        # 6. 更新 DB
+        try:
+            conn = service._db()
+            conn.execute(
+                "UPDATE open_positions SET current_sl=?, sl_broker_order_id=?, updated_at=? WHERE symbol=?",
+                (new_sl, new_oid, datetime.now().isoformat(), symbol),
+            )
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            logger.warning(f"[止损] DB 更新失败: {e}")
+
+        return {
+            "success": True,
+            "symbol": symbol,
+            "new_sl": new_sl,
+            "broker_order_id": new_oid,
+            "status": sl_status,
+        }
+
+    except Exception as e:
+        logger.error(f"[止损] modify_stop_loss 异常: {e}")
+        return {"success": False, "error": "操作失败，请稍后重试"}
+
+
+# ─────────────────────────────────────────────────────────────
+# 价格/订单成交辅助
+# ─────────────────────────────────────────────────────────────
+
+def calc_exit_price(row: dict, raw_qty: float) -> float:
+    """从持仓行估算平仓价格 (近似值, 精确值需从 Futu 成交回报获取)."""
+    if raw_qty == 0:
+        return 0.0
+    cur = float(row.get("cur_price", 0) or 0)
+    if cur > 0:
+        return cur
+    val = float(row.get("val_price", 0) or 0)
+    if val > 0:
+        return val / abs(raw_qty)
+    return 0.0
+
+
+def fetch_dealt_avg_price(service: "ManualOrderService", order_id: str,
+                          trd_env, acc_id: int,
+                          retries: int = 2, delay: float = 0.4):
+    """P1-6: 用 broker 成交回报获取精确平仓价 (dealt_avg_price).
+
+    市价单一般立即成交,限价单可能挂单中.
+    - 仅当 dealt_qty>0 且 dealt_avg_price>0 时返回精确值
+    - 否则返回 None,调用方回退 calc_exit_price 估算
+    """
+    if not order_id:
+        return None
+    try:
+        from futu import RET_OK
+    except Exception:
+        return None
+    for i in range(max(1, retries)):
+        try:
+            ret, data = service._broker_ctx.order_list_query(
+                order_id=str(order_id),
+                trd_env=trd_env, acc_id=acc_id,
+            )
+            if ret == RET_OK and not data.empty:
+                row = data.iloc[0]
+                dealt_qty = float(row.get("dealt_qty", 0) or 0)
+                dealt_avg = float(row.get("dealt_avg_price", 0) or 0)
+                if dealt_qty > 0 and dealt_avg > 0:
+                    logger.info(
+                        f"[exit_price] order={order_id} dealt_qty={dealt_qty} "
+                        f"dealt_avg_price={dealt_avg}"
+                    )
+                    return dealt_avg
+        except Exception as _e:
+            logger.debug(f"[exit_price] query attempt {i+1} failed: {_e}")
+        if i + 1 < retries:
+            try:
+                import time as _t
+                _t.sleep(delay)
+            except Exception:
+                pass
+    return None
+
+
+# ─────────────────────────────────────────────────────────────
+# 延迟保护挂单 (等开仓成交后挂 SL/TP)
+# ─────────────────────────────────────────────────────────────
+
+def _register_pending_protection(service: "ManualOrderService", order: "ManualOrder") -> None:
+    """注册延迟保护挂单: 开仓单可能未成交 (GTC 排队), 等成交后再挂 SL/TP."""
+    global _protection_monitor_started
+
+    order_id = order.order_id
+    if not order_id:
+        logger.warning(f"[延迟挂单] {order.symbol} 无 order_id, 跳过")
+        return
+
+    # 只有限价单才需要延迟 (市价单通常秒级成交)
+    if order.order_type != "LIMIT":
+        # 市价单: 延迟 3 秒后直接挂
+        import threading
+        threading.Timer(3.0, _try_place_protection, args=[service, order]).start()
+        return
+
+    _pending_protections[order_id] = {
+        "order": order,
+        "service": service,
+        "registered_at": datetime.now(),
+    }
+    logger.info(
+        f"[延迟挂单] ✅ 注册 {order.symbol} {order.direction} "
+        f"order_id={order_id} SL=${order.stop_loss} TP=${order.take_profit}"
+    )
+
+    # 启动监控线程 (只启动一次)
+    if not _protection_monitor_started:
+        import threading
+        _protection_monitor_started = True
+        t = threading.Thread(target=_protection_monitor_loop, daemon=True, name="protection-monitor")
+        t.start()
+        logger.info("[延迟挂单] 监控线程已启动 (30s 轮询)")
+
+
+def _try_place_protection(service: "ManualOrderService", order: "ManualOrder") -> None:
+    """尝试挂保护单 (市价单延迟调用)."""
+    try:
+        place_protective_stop(service, order)
+    except Exception as e:
+        logger.warning(f"[延迟挂单] {order.symbol} 市价单保护挂单失败: {e}")
+
+
+def _protection_monitor_loop() -> None:
+    """后台线程: 每 30s 检查待处理保护挂单, 开仓成交后立即挂 SL/TP."""
+    while True:
+        time.sleep(30)
+        if not _pending_protections:
+            continue
+
+        # 复制一份, 避免迭代时修改
+        pending = list(_pending_protections.items())
+        for order_id, entry in pending:
+            order = entry["order"]
+            service = entry["service"]
+            registered_at = entry["registered_at"]
+
+            # 超时: 超过 24 小时自动放弃
+            if (datetime.now() - registered_at).total_seconds() > 86400:
+                logger.warning(f"[延迟挂单] {order.symbol} 超时 24h, 移除")
+                _pending_protections.pop(order_id, None)
+                continue
+
+            try:
+                # 检查开仓单状态
+                if not service._broker_ctx or not service._connected:
+                    if not service.connect():
+                        continue
+
+                from futu import TrdEnv, RET_OK
+                trd_env = TrdEnv.REAL if service._is_live() else TrdEnv.SIMULATE
+                ret, data = service._broker_ctx.order_list_query(
+                    order_id=order_id,
+                    trd_env=trd_env,
+                )
+                if ret != RET_OK or data.empty:
+                    continue
+
+                status = str(data.iloc[0].get("order_status", ""))
+                dealt_qty = int(data.iloc[0].get("dealt_qty", 0))
+
+                if "FILLED" in status.upper() or dealt_qty > 0:
+                    # 开仓单已成交! 立即挂 SL/TP
+                    logger.info(
+                        f"[延迟挂单] 🎯 {order.symbol} 开仓单已成交 "
+                        f"(status={status}, dealt={dealt_qty}), 挂 SL/TP..."
+                    )
+                    # 用实际成交数量
+                    if dealt_qty > 0:
+                        order.quantity = dealt_qty
+                    # 用实际成交均价 (如果有)
+                    dealt_avg = float(data.iloc[0].get("dealt_avg_price", 0))
+                    if dealt_avg > 0:
+                        order.price = dealt_avg
+
+                    place_protective_stop(service, order)
+                    _pending_protections.pop(order_id, None)
+                    logger.info(f"[延迟挂单] ✅ {order.symbol} SL/TP 已挂, 从队列移除")
+
+                elif "CANCEL" in status.upper() or "FAIL" in status.upper() or "DEL" in status.upper():
+                    # 开仓单被取消/失败, 移除
+                    logger.info(f"[延迟挂单] {order.symbol} 开仓单 {status}, 移除")
+                    _pending_protections.pop(order_id, None)
+
+                # 其他状态 (SUBMITTED, WAITING 等): 继续等待
+
+            except Exception as e:
+                logger.warning(f"[延迟挂单] {order.symbol} 检查异常: {e}")
+
+
+# ─────────────────────────────────────────────────────────────
+# 保护性止损 (开仓成交后挂 STOP + LIMIT)
+# ─────────────────────────────────────────────────────────────
+
+def place_protective_stop(service: "ManualOrderService", order: "ManualOrder") -> None:
+    """P1-6: 手动开仓后自动挂保护性 STOP 单 + 止盈 LIMIT 单 (broker 端).
+    
+    实盘环境：
+    - 止损：STOP 单（市价止损）
+    - 止盈：LIMIT 单（限价止盈）
+    - 订单组管理：SL/TP 成交时自动取消另一个（模拟 OCO）
+    
+    模拟盘环境：
+    - Futu 不支持 STOP 单，改为在 DB 中记录 SL/TP
+    - 由 ExitMonitor 轮询检查价格并触发平仓
+    """
+    try:
+        if not service._broker_ctx or not service._connected:
+            return
+        if order.direction not in ("LONG", "SHORT"):
+            return
+
+        _entry = float(order.price or 0)
+        _qty = int(order.quantity or 0)
+        if _entry <= 0 or _qty <= 0:
+            return
+
+        # ── 止损价: 优先用作战计划的 SL，fallback 3% ──
+        _sl_price = float(order.stop_loss or 0)
+        _sl_pct_limit_min = 0.01  # SL 至少距入场 1%
+        _sl_pct_limit_max = 0.15  # SL 最远距入场 15%
+        _sl_source = "fallback"
+        
+        if _sl_price > 0:
+            # 校验: SL 方向和距离是否合理
+            if order.direction == "LONG" and _sl_price >= _entry:
+                logger.warning(f"[保护止损] {order.symbol} SL ${_sl_price} >= 入场 ${_entry}, 方向错误, fallback 3%")
+                _sl_price = 0
+            elif order.direction == "SHORT" and _sl_price <= _entry:
+                logger.warning(f"[保护止损] {order.symbol} SL ${_sl_price} <= 入场 ${_entry}, 方向错误, fallback 3%")
+                _sl_price = 0
+            else:
+                sl_dist = abs(_entry - _sl_price) / _entry
+                if sl_dist < _sl_pct_limit_min:
+                    logger.warning(f"[保护止损] {order.symbol} SL 距入场仅 {sl_dist:.1%} (<{_sl_pct_limit_min:.0%}), 自动放宽到 {_sl_pct_limit_min:.0%}")
+                    _sl_price = round(_entry * (1 - _sl_pct_limit_min), 2) if order.direction == "LONG" else round(_entry * (1 + _sl_pct_limit_min), 2)
+                elif sl_dist > _sl_pct_limit_max:
+                    logger.warning(f"[保护止损] {order.symbol} SL 距入场 {sl_dist:.1%} (>{_sl_pct_limit_max:.0%}), 自动收紧到 {_sl_pct_limit_max:.0%}")
+                    _sl_price = round(_entry * (1 - _sl_pct_limit_max), 2) if order.direction == "LONG" else round(_entry * (1 + _sl_pct_limit_max), 2)
+                _sl_source = "作战计划"
+
+        if _sl_price <= 0:
+            _sl_pct = 0.03  # fallback 3%
+            _sl_price = round(_entry * (1 - _sl_pct), 2) if order.direction == "LONG" else round(_entry * (1 + _sl_pct), 2)
+            _sl_source = "默认3%"
+        _sl_side_name = "SELL" if order.direction == "LONG" else "BUY"
+
+        # ── 止盈价: 从作战计划获取 + 校验 ──
+        _tp_price = float(order.take_profit or 0)
+        _tp_pct_limit_min = 0.02  # TP 至少距入场 2%
+        _tp_pct_limit_max = 0.50  # TP 最远距入场 50%
+        
+        if _tp_price > 0:
+            if order.direction == "LONG" and _tp_price <= _entry:
+                logger.warning(f"[保护止盈] {order.symbol} TP ${_tp_price} <= 入场 ${_entry}, 方向错误, 跳过")
+                _tp_price = 0
+            elif order.direction == "SHORT" and _tp_price >= _entry:
+                logger.warning(f"[保护止盈] {order.symbol} TP ${_tp_price} >= 入场 ${_entry}, 方向错误, 跳过")
+                _tp_price = 0
+            else:
+                tp_dist = abs(_tp_price - _entry) / _entry
+                if tp_dist < _tp_pct_limit_min:
+                    logger.warning(f"[保护止盈] {order.symbol} TP 距入场仅 {tp_dist:.1%} (<{_tp_pct_limit_min:.0%}), 跳过")
+                    _tp_price = 0
+                elif tp_dist > _tp_pct_limit_max:
+                    logger.warning(f"[保护止盈] {order.symbol} TP 距入场 {tp_dist:.1%} (>{_tp_pct_limit_max:.0%}), 自动收紧")
+                    _tp_price = round(_entry * (1 + _tp_pct_limit_max), 2) if order.direction == "LONG" else round(_entry * (1 - _tp_pct_limit_max), 2)
+        _tp_side_name = "SELL" if order.direction == "LONG" else "BUY"
+
+        from futu import TrdEnv, TrdSide, OrderType as FutuOrderType, TimeInForce, RET_OK
+        trd_env = service._trd_env()
+        trd_side_sl = TrdSide.SELL if _sl_side_name == "SELL" else TrdSide.BUY
+
+        # ── 模拟盘：仅记录到 DB ──
+        if trd_env == TrdEnv.SIMULATE:
+            logger.info(f"[保护止损] 模拟盘不支持 STOP 单，已记录 SL=${_sl_price} TP=${_tp_price} 到 DB")
+            try:
+                service._ensure_sl_column()
+                conn = service._db()
+                conn.execute(
+                    "UPDATE open_positions SET current_sl=?, initial_tp=? WHERE symbol=?",
+                    (_sl_price, _tp_price, order.symbol),
+                )
+                conn.commit()
+                conn.close()
+            except Exception as e:
+                logger.warning(f"[保护止损] 模拟盘 DB 更新失败: {e}")
+            return
+
+        # ── 实盘：挂止损 STOP 单 ──
+        _sl_order_id = None
+        ret, data = service._broker_ctx.place_order(
+            price=0,  # STOP 单触发后市价成交
+            qty=_qty,
+            code=order.symbol,
+            trd_side=trd_side_sl,
+            order_type=FutuOrderType.STOP,
+            trd_env=trd_env,
+            acc_id=service._acc_id(),
+            time_in_force=TimeInForce.GTC,
+            aux_price=_sl_price,  # 触发价 (Futu STOP 单必须用 aux_price)
+            trail_spread=0,  # 非追踪止损
+        )
+
+        if ret == RET_OK and not data.empty:
+            _sl_order_id = str(data.iloc[0].get("order_id", ""))
+            logger.info(
+                f"[保护止损] ✅ {order.symbol} {order.direction} "
+                f"STOP ${_sl_price} ({_sl_source}) qty={_qty} → order_id={_sl_order_id}"
+            )
+        else:
+            error_msg = str(data) if not data.empty else "Empty response"
+            logger.error(f"[保护止损] ❌ {order.symbol} STOP 单失败: {error_msg}")
+
+        # ── 挂止盈 LIMIT 单 (GTC) ──
+        _tp_order_id = None
+        if _tp_price > 0:
+            trd_side_tp = TrdSide.SELL if _tp_side_name == "SELL" else TrdSide.BUY
+
+            # 等待持仓确认 (买入后 broker 可能尚未入账, 直接 SELL 会被拒绝为"做空")
+            _pos_confirmed = False
+            if trd_side_tp == TrdSide.SELL:
+                for _wait_i in range(6):  # 最多等 18 秒 (6 × 3s)
+                    try:
+                        _ret_pos, _pos_data = service._broker_ctx.position_list_query(
+                            trd_env=trd_env, acc_id=service._acc_id(),
+                        )
+                        if _ret_pos == RET_OK and not _pos_data.empty:
+                            _sym_pos = _pos_data[_pos_data["code"] == order.symbol]
+                            if not _sym_pos.empty and float(_sym_pos.iloc[0].get("qty", 0)) >= _qty:
+                                _pos_confirmed = True
+                                break
+                    except Exception:
+                        pass
+                    if _wait_i < 5:
+                        time.sleep(3)
+                if not _pos_confirmed:
+                    logger.warning(f"[保护止盈] {order.symbol} 持仓未确认 (等了18s), TP 单延后由监控线程重试")
+
+            if _pos_confirmed or trd_side_tp == TrdSide.BUY:
+                try:
+                    ret_tp, data_tp = service._broker_ctx.place_order(
+                        price=_tp_price,
+                        qty=_qty,
+                        code=order.symbol,
+                        trd_side=trd_side_tp,
+                        order_type=FutuOrderType.NORMAL,  # LIMIT
+                        trd_env=trd_env,
+                        acc_id=service._acc_id(),
+                        time_in_force=TimeInForce.GTC,
+                    )
+                    if ret_tp == RET_OK and not data_tp.empty:
+                        _tp_order_id = str(data_tp.iloc[0].get("order_id", ""))
+                        logger.info(
+                            f"[保护止盈] ✅ {order.symbol} {order.direction} "
+                            f"LIMIT ${_tp_price} qty={_qty} → order_id={_tp_order_id}"
+                        )
+                    else:
+                        logger.warning(f"[保护止盈] {order.symbol} LIMIT 单失败: {data_tp}")
+                except Exception as _tp_err:
+                    logger.warning(f"[保护止盈] {order.symbol} 止盈单异常 (非致命): {_tp_err}")
+
+        # ── 存储订单 ID 到 DB ──
+        if _sl_order_id or _tp_order_id:
+            try:
+                service._ensure_sl_column()
+                conn = service._db()
+                conn.execute(
+                    "UPDATE open_positions SET current_sl=?, sl_broker_order_id=?, initial_tp=?, tp_broker_order_id=? WHERE symbol=?",
+                    (_sl_price, _sl_order_id, _tp_price, _tp_order_id, order.symbol),
+                )
+                conn.commit()
+                conn.close()
+                logger.info(f"[订单组] {order.symbol} SL/TP 订单已记录到 DB")
+            except Exception as e:
+                logger.error(f"[订单组] DB 存储失败: {e}")
+
+
+
+    except Exception as _sl_err:
+        logger.warning(f"[保护止损] {order.symbol} 自动止损/止盈异常 (非致命): {_sl_err}")
+
+
+# ── 订单组管理（OCO：One-Cancels-Other） ──
+# 事件驱动实现：见 oco_handler.py + TradeOrderHandlerBase
+# 手动平仓时取消订单组：见 cancel_order_group()
+
+
+def cancel_order_group(service: "ManualOrderService", symbol: str) -> None:
+    """手动平仓时取消订单组（SL + TP）."""
+    try:
+        service._ensure_sl_column()
+        conn = service._db()
+        row = conn.execute(
+            "SELECT sl_broker_order_id, tp_broker_order_id FROM open_positions WHERE symbol=?",
+            (symbol,),
+        ).fetchone()
+        conn.close()
+        
+        if not row:
+            return
+        
+        sl_id, tp_id = row
+        
+        if sl_id:
+            logger.info(f"[平仓] {symbol} 取消止损单 {sl_id}")
+            service._cancel_broker_order(sl_id)
+        
+        if tp_id:
+            logger.info(f"[平仓] {symbol} 取消止盈单 {tp_id}")
+            service._cancel_broker_order(tp_id)
+        
+        # 清除 DB 记录
+        conn = service._db()
+        conn.execute(
+            "UPDATE open_positions SET sl_broker_order_id=NULL, tp_broker_order_id=NULL WHERE symbol=?",
+            (symbol,),
+        )
+        conn.commit()
+        conn.close()
+        
+    except Exception as e:
+        logger.warning(f"[平仓] {symbol} 取消订单组失败 (非致命): {e}")

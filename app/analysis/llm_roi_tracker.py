@@ -176,7 +176,7 @@ class LLMROITracker:
                 """
                 SELECT symbol, direction, realized_pnl, trace_id
                 FROM trade_records
-                WHERE trade_date = ? AND exit_price IS NOT NULL
+                WHERE trade_date = ? AND exit_price > 0
                 """,
                 (date,),
             ).fetchall()

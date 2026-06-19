@@ -21,7 +21,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 logger = logging.getLogger("ftseek_us.data_service")
 
@@ -89,10 +89,16 @@ class DataService:
     - DB 查询统一走这里, 避免散落各处的 sqlite3.connect
     """
 
+    # 哨兵值: 区分 "未缓存" 与 "缓存了 None/空结果"
+    _CACHE_MISS = object()
+
     def __init__(self):
         self.cache = _SharedCache()
+        # 请求级去重: 防 Thundering Herd (缓存 TTL 过期时多协程穿透到 Futu RPC)
+        self._fetch_locks: Dict[str, asyncio.Lock] = {}
         self._pool = ThreadPoolExecutor(max_workers=8)
         self._last_snapshot: Dict[str, Any] = {}  # delta 检测用
+        self._last_reconcile_time: float = 0.0  # 幽灵仓对账限流 (5min)
 
     async def _emit_change(self, key: str, new_value: Any):
         """缓存刷新后发 WS 事件 (非阻塞, 失败静默)"""
@@ -195,14 +201,83 @@ class DataService:
 
     async def get_account_raw(self) -> dict:
         """Futu accinfo_query (10s cache), 返回原始 row dict"""
-        cached = self.cache.get("account_raw")
-        if cached is not None:
-            return cached
-        result = await self._run(self._fetch_account)
-        if result:
-            self.cache.set("account_raw", result, ttl=10)
-            await self._emit_change("account_raw", result)
+        async def _fetch():
+            # 添加超时: 10秒内必须返回
+            try:
+                r = await asyncio.wait_for(self._run(self._fetch_account), timeout=10)
+            except asyncio.TimeoutError:
+                logger.warning("[DataService] _fetch_account timeout (10s)")
+                r = None
+            if not r:
+                return None
+            await self._emit_change("account_raw", r)
+            return r
+
+        result = await self._deduplicated_fetch("account_raw", _fetch, ttl=10)
         return result or {}
+
+    @staticmethod
+    def to_usd(raw: dict) -> dict:
+        """将 Futu accinfo_query 原始行统一转换为 USD。
+
+        HKD 账户: 使用 usd_assets/us_cash/usd_net_cash_power 等 USD 子账户字段，
+                  其余字段按实际汇率 (hkd_assets / usd_assets) 折算。
+        USD 账户: 直接返回原始值。
+
+        返回 dict 所有金额字段均为 USD。
+        """
+        if not raw:
+            return {}
+        currency = str(raw.get("currency", "")).upper()
+        is_hkd = currency == "HKD"
+
+        if not is_hkd:
+            return {
+                "total_assets": safe_float(raw.get("total_assets")),
+                "cash": safe_float(raw.get("cash")),
+                "avl_cash": safe_float(raw.get("avl_withdrawal_cash")),
+                "power": safe_float(raw.get("power")),
+                "market_val": safe_float(raw.get("market_val")),
+                "long_mv": safe_float(raw.get("long_mv")),
+                "short_mv": abs(safe_float(raw.get("short_mv"))),
+                "initial_margin": safe_float(raw.get("initial_margin")),
+                "maintenance_margin": safe_float(raw.get("maintenance_margin")),
+                "frozen_cash": safe_float(raw.get("frozen_cash")),
+                "currency": "USD",
+                "fx": 1.0,
+                "_raw": raw,
+            }
+
+        # HKD → USD 转换
+        hkd_assets = safe_float(raw.get("total_assets"))
+        usd_assets = safe_float(raw.get("usd_assets"))
+        fx = hkd_assets / usd_assets if usd_assets > 0 else 7.8
+
+        # 可用现金: 优先 us_avl_withdrawal_cash (扣除保证金后)
+        avl_cash = safe_float(raw.get("us_avl_withdrawal_cash"))
+        if avl_cash <= 0:
+            avl_cash = safe_float(raw.get("us_cash"))
+
+        # 购买力: 优先 usd_net_cash_power
+        power = safe_float(raw.get("usd_net_cash_power"))
+        if power <= 0:
+            power = safe_float(raw.get("power")) / fx
+
+        return {
+            "total_assets": usd_assets,
+            "cash": safe_float(raw.get("us_cash")),
+            "avl_cash": avl_cash,
+            "power": power,
+            "market_val": safe_float(raw.get("market_val")) / fx,
+            "long_mv": safe_float(raw.get("long_mv")) / fx,
+            "short_mv": abs(safe_float(raw.get("short_mv"))) / fx,
+            "initial_margin": safe_float(raw.get("initial_margin")) / fx,
+            "maintenance_margin": safe_float(raw.get("maintenance_margin")) / fx,
+            "frozen_cash": safe_float(raw.get("frozen_cash")) / fx,
+            "currency": "USD",
+            "fx": round(fx, 4),
+            "_raw": raw,
+        }
 
     def _fetch_account(self) -> dict:
         svc, trd_env, acc_id = self._get_env_ctx()
@@ -219,38 +294,91 @@ class DataService:
 
     async def get_positions_raw(self) -> list:
         """Futu position_list_query (5s cache), 返回原始 row dict 列表"""
-        cached = self.cache.get("positions_raw")
-        if cached is not None:
-            return cached
-        result = await self._run(self._fetch_positions)
-        if result:
-            self.cache.set("positions_raw", result, ttl=5)
-            await self._emit_change("positions_raw", result)
+        async def _fetch():
+            # 添加超时: 10秒内必须返回，否则使用 DB fallback
+            try:
+                r = await asyncio.wait_for(self._run(self._fetch_positions), timeout=10)
+            except asyncio.TimeoutError:
+                logger.warning("[DataService] _fetch_positions timeout (10s), using DB fallback")
+                r = self._fetch_positions_from_db()
+            if not r:
+                return None
+            await self._emit_change("positions_raw", r)
+            return r
+
+        result = await self._deduplicated_fetch("positions_raw", _fetch, ttl=5)
         return result or []
 
     def _fetch_positions(self) -> list:
         svc, trd_env, acc_id = self._get_env_ctx()
         if not svc:
-            return []
+            logger.warning("[DataService] svc is None, using DB fallback")
+            return self._fetch_positions_from_db()
         try:
             from futu import RET_OK
+            logger.info(f"[DataService] calling position_list_query(trd_env={trd_env}, acc_id={acc_id})")
             ret, data = svc._broker_ctx.position_list_query(
                 trd_env=trd_env, acc_id=acc_id,
             )
+            logger.info(f"[DataService] position_list_query ret={ret}, data.empty={data.empty if hasattr(data, 'empty') else 'N/A'}")
             if ret == RET_OK and not data.empty:
-                return [dict(row) for _, row in data.iterrows()]
+                positions = [dict(row) for _, row in data.iterrows()]
+                logger.info(f"[DataService] Futu API returned {len(positions)} positions")
+                return positions
+            else:
+                logger.warning(f"[DataService] Futu API returned empty or error, using DB fallback")
         except Exception as e:
             logger.error(f"[DataService] positions failed: {e}")
-        return []
+        # Fallback: 从 DB 读取持仓 (盘后或 Futu 不可用时)
+        return self._fetch_positions_from_db()
+
+    def _fetch_positions_from_db(self) -> list:
+        """从 ftseek_us_live.db 读取持仓作为 fallback"""
+        import sqlite3
+        import os
+        db_path = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'ftseek_us_live.db')
+        if not os.path.exists(db_path):
+            return []
+        try:
+            conn = sqlite3.connect(db_path)
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT symbol, direction, size, avg_entry_price
+                FROM open_positions
+                WHERE size > 0
+            """)
+            rows = cur.fetchall()
+            conn.close()
+            # 转换为 Futu API 格式
+            positions = []
+            for symbol, direction, size, avg_entry_price in rows:
+                code = f"US.{symbol}" if not symbol.startswith("US.") else symbol
+                qty = size if direction == "LONG" else -size
+                cost = avg_entry_price or 0
+                positions.append({
+                    "code": code,
+                    "qty": qty,
+                    "cost_price": cost,
+                    "cur_price": cost,  # Fallback: 使用成本价（盘后无法获取实时价格）
+                    "val_price": cost * abs(qty),  # 用于 _parse_positions 的 fallback
+                    "position_side": direction,
+                    "pl_val": 0,
+                    "unrealized_pl": 0,
+                    "today_pl_val": 0,
+                })
+            if positions:
+                logger.info(f"[DataService] positions fallback from DB: {len(positions)} positions")
+            return positions
+        except Exception as e:
+            logger.error(f"[DataService] positions DB fallback failed: {e}")
+            return []
 
     async def get_today_orders_raw(self) -> list:
         """Futu order_list_query (10s cache)"""
-        cached = self.cache.get("orders_raw")
-        if cached is not None:
-            return cached
-        result = await self._run(self._fetch_orders)
-        if result is not None:
-            self.cache.set("orders_raw", result, ttl=10)
+        async def _fetch():
+            return await self._run(self._fetch_orders)
+
+        result = await self._deduplicated_fetch("orders_raw", _fetch, ttl=10)
         return result or []
 
     def _fetch_orders(self) -> list:
@@ -273,12 +401,12 @@ class DataService:
         import hashlib
         _h = hashlib.md5(','.join(sorted(codes)).encode()).hexdigest()[:12]
         cache_key = f"snapshot_{_h}"
-        cached = self.cache.get(cache_key)
-        if cached is not None:
-            return cached
-        result = await self._run(self._fetch_snapshot, codes)
-        if result:
-            self.cache.set(cache_key, result, ttl=ttl)
+
+        async def _fetch():
+            r = await self._run(self._fetch_snapshot, codes)
+            return r or None
+
+        result = await self._deduplicated_fetch(cache_key, _fetch, ttl=ttl)
         return result or {}
 
     def _fetch_snapshot(self, codes: list) -> dict:
@@ -309,13 +437,15 @@ class DataService:
         import hashlib
         _h = hashlib.md5(','.join(sorted(symbols)).encode()).hexdigest()[:12]
         cache_key = f"quotes_d_{_h}"
-        cached = self.cache.get(cache_key)
-        if cached is not None:
-            return cached
-        result = await self._run(self._fetch_quotes_detailed, symbols)
-        if result:
-            self.cache.set(cache_key, result, ttl=5)
-            await self._emit_change(cache_key, result)
+
+        async def _fetch():
+            r = await self._run(self._fetch_quotes_detailed, symbols)
+            if not r:
+                return None
+            await self._emit_change(cache_key, r)
+            return r
+
+        result = await self._deduplicated_fetch(cache_key, _fetch, ttl=5)
         return result or {}
 
     def _fetch_quotes_detailed(self, symbols: list) -> Dict[str, dict]:
@@ -355,18 +485,20 @@ class DataService:
     # ═══════════════════════════════════════════
 
     async def get_vix(self) -> Optional[float]:
-        cached = self.cache.get("vix")
-        if cached is not None:
-            return cached
-        result = await self._run(self._fetch_vix)
-        if result is not None:
-            self.cache.set("vix", result, ttl=30)
-        return result
+        async def _fetch():
+            return await self._run(self._fetch_vix)
+
+        return await self._deduplicated_fetch("vix", _fetch, ttl=30)
 
     def _fetch_vix(self) -> Optional[float]:
         try:
             vix_path = Path(__file__).parent.parent.parent / "data" / "vix_cache" / "vix_data.json"
             if vix_path.exists():
+                # 新鲜度校验: 文件修改时间超过 10 分钟视为 stale (返回 None, 前端显示"--")
+                file_age = time.time() - vix_path.stat().st_mtime
+                if file_age > 600:  # 10min
+                    logger.debug(f"[DataService] VIX cache stale ({file_age:.0f}s old)")
+                    return None
                 with open(vix_path) as f:
                     data = json.load(f)
                 v = data.get("vix")
@@ -382,12 +514,13 @@ class DataService:
 
     async def get_owner_plate(self, symbol: str) -> dict:
         """获取股票所属板块 (Futu get_owner_plate)"""
-        cached = self.cache.get(f"plate_{symbol}")
-        if cached is not None:
-            return cached
-        result = await self._run(self._fetch_owner_plate, symbol)
-        if result:
-            self.cache.set(f"plate_{symbol}", result, ttl=3600)  # 板块信息低频变化
+        cache_key = f"plate_{symbol}"
+
+        async def _fetch():
+            r = await self._run(self._fetch_owner_plate, symbol)
+            return r or None
+
+        result = await self._deduplicated_fetch(cache_key, _fetch, ttl=3600)  # 板块信息低频变化
         return result or {}
 
     def _fetch_owner_plate(self, symbol: str) -> dict:
@@ -412,12 +545,13 @@ class DataService:
 
     async def get_reference_stocks(self, symbol: str) -> list:
         """获取关联股票 (Futu get_referencestocklist)"""
-        cached = self.cache.get(f"ref_{symbol}")
-        if cached is not None:
-            return cached
-        result = await self._run(self._fetch_reference_stocks, symbol)
-        if result:
-            self.cache.set(f"ref_{symbol}", result, ttl=1800)
+        cache_key = f"ref_{symbol}"
+
+        async def _fetch():
+            r = await self._run(self._fetch_reference_stocks, symbol)
+            return r or None
+
+        result = await self._deduplicated_fetch(cache_key, _fetch, ttl=1800)
         return result or []
 
     def _fetch_reference_stocks(self, symbol: str) -> list:
@@ -494,12 +628,12 @@ class DataService:
         """K线数据 (缓存: 日K=300s, 分钟K=15s)"""
         ttl = 300 if ktype == "K_DAY" else 15
         cache_key = f"kline_{symbol}_{ktype}_{num}"
-        cached = self.cache.get(cache_key)
-        if cached is not None:
-            return cached
-        result = await self._run(self._fetch_kline, symbol, num, ktype)
-        if result:
-            self.cache.set(cache_key, result, ttl=ttl)
+
+        async def _fetch():
+            r = await self._run(self._fetch_kline, symbol, num, ktype)
+            return r or None
+
+        result = await self._deduplicated_fetch(cache_key, _fetch, ttl=ttl)
         return result or []
 
     def _fetch_kline(self, symbol: str, num: int, ktype: str) -> list:
@@ -520,12 +654,12 @@ class DataService:
     async def get_orderbook(self, symbol: str, num: int = 10) -> dict:
         """盘口数据 (5s cache)"""
         cache_key = f"orderbook_{symbol}"
-        cached = self.cache.get(cache_key)
-        if cached is not None:
-            return cached
-        result = await self._run(self._fetch_orderbook, symbol, num)
-        if result:
-            self.cache.set(cache_key, result, ttl=5)
+
+        async def _fetch():
+            r = await self._run(self._fetch_orderbook, symbol, num)
+            return r or None
+
+        result = await self._deduplicated_fetch(cache_key, _fetch, ttl=5)
         return result or {}
 
     def _fetch_orderbook(self, symbol: str, num: int) -> dict:
@@ -547,12 +681,12 @@ class DataService:
     async def get_rt_ticker(self, symbol: str, num: int = 100) -> list:
         """逐笔成交 (5s cache)"""
         cache_key = f"ticker_{symbol}"
-        cached = self.cache.get(cache_key)
-        if cached is not None:
-            return cached
-        result = await self._run(self._fetch_ticker, symbol, num)
-        if result:
-            self.cache.set(cache_key, result, ttl=5)
+
+        async def _fetch():
+            r = await self._run(self._fetch_ticker, symbol, num)
+            return r or None
+
+        result = await self._deduplicated_fetch(cache_key, _fetch, ttl=5)
         return result or []
 
     def _fetch_ticker(self, symbol: str, num: int) -> list:
@@ -569,8 +703,267 @@ class DataService:
         return []
 
     # ═══════════════════════════════════════════
+    #  单一持仓网关 (修复幽灵仓 2026-06-15)
+    # ═══════════════════════════════════════════
+
+    async def get_enriched_positions(self) -> List[Dict]:
+        """统一持仓视图: 以 Futu 实时持仓为权威, SQLite open_positions 仅供元数据 (SL/TP/created_at)。
+
+        修复幽灵仓: Dashboard 之前从两源各自读取后拼接, 不同步时会显示已平仓品种
+        (例如 EXIT AMD 但实际无 AMD 持仓)。本方法保证只输出 Futu 中真实存在的持仓。
+        顺便触发幽灵记录对账 (限流 5min)。
+
+        返回字段对齐 position_intelligence.analyze_all_positions() 的输入要求。
+
+        请求级去重: 复用 positions_raw 的 5s 缓存策略, 避免并发调用重复加载元数据。
+        """
+        result = await self._deduplicated_fetch(
+            "enriched_positions", self._build_enriched_positions, ttl=5
+        )
+        return result or []
+
+    async def _build_enriched_positions(self) -> List[Dict]:
+        """实际构建 enriched 持仓视图 (供 _deduplicated_fetch 调用)"""
+        raw_positions = await self.get_positions_raw()
+        # 加载全量元数据 (含 is_anomalous), 同时用于合并与对账
+        meta_map_full = await self._run(self._load_position_meta, False)
+
+        enriched: List[Dict] = []
+        futu_symbols: Set[str] = set()
+
+        for p in (raw_positions or []):
+            code = str(p.get("code", "") or "")
+            if not code or not code.startswith("US."):
+                continue
+            # 过滤期权 (代码尾部含数字)
+            bare = code[3:]
+            if any(c.isdigit() for c in bare):
+                continue
+            qty = int(safe_float(p.get("qty", 0)))
+            if qty == 0:
+                continue
+
+            avg_cost = safe_float(p.get("average_cost"))
+            cur_price = safe_float(p.get("nominal_price"))
+            # 优先用 pl_val (总盈亏, 含分批已实现), 与 Futu App 一致
+            pl_val = safe_float(p.get("pl_val"))
+            unrealized = pl_val if pl_val != 0 else safe_float(p.get("unrealized_pl"))
+            direction = "SHORT" if qty < 0 else "LONG"
+            futu_symbols.add(code)
+
+            meta = meta_map_full.get(code) or {}
+            # 异常记录 (is_anomalous=1) 不参与元数据合并 — 防止过期 SL/TP 误导决策
+            if int(meta.get("is_anomalous", 0) or 0) == 1:
+                meta = {}
+
+            enriched.append({
+                "symbol": code,
+                "direction": direction,
+                "size": abs(qty),
+                "avg_entry_price": avg_cost,
+                "current_price": cur_price,
+                "unrealized_pnl": round(unrealized, 2),
+                "stop_loss_price": meta.get("stop_loss_price"),
+                "take_profit_price": meta.get("take_profit_price"),
+                "created_at": meta.get("created_at", "") or "",
+            })
+
+        # 对账 (内部限流, 失败静默)
+        try:
+            await self._run(self._reconcile_ghosts, futu_symbols, meta_map_full)
+        except Exception as e:
+            logger.debug(f"[DataService] reconcile_ghosts skipped: {e}")
+
+        # 即使空列表也返回 (会被缓存): 0 持仓账户避免重复 DB 加载
+        return enriched
+
+    def _load_position_meta(self, exclude_anomalous: bool = True) -> Dict[str, Dict]:
+        """读取 open_positions 元数据映射 {symbol: {sl, tp, created_at, is_anomalous, updated_at}}.
+
+        - 仅返回 size > 0 的真实持仓记录
+        - exclude_anomalous=True 时过滤掉 is_anomalous=1 的记录
+        - 使用实际 schema 列名: current_sl → stop_loss, initial_tp → take_profit, entry_time → created_at
+        """
+        sql = (
+            "SELECT symbol, current_sl AS stop_loss_price, initial_tp AS take_profit_price, "
+            "entry_time AS created_at, updated_at, is_anomalous "
+            "FROM open_positions WHERE size > 0"
+        )
+        if exclude_anomalous:
+            sql += " AND COALESCE(is_anomalous, 0) = 0"
+
+        result: Dict[str, Dict] = {}
+        path = self._get_db()
+        try:
+            conn = sqlite3.connect(path)
+            conn.execute("PRAGMA busy_timeout=5000")
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(sql).fetchall()
+            conn.close()
+            for r in rows:
+                sym = r["symbol"] or ""
+                if not sym:
+                    continue
+                sl = r["stop_loss_price"]
+                tp = r["take_profit_price"]
+                result[sym] = {
+                    "stop_loss_price": float(sl) if sl else None,
+                    "take_profit_price": float(tp) if tp else None,
+                    "created_at": r["created_at"] or "",
+                    "updated_at": r["updated_at"] or "",
+                    "is_anomalous": int(r["is_anomalous"] or 0),
+                }
+        except Exception as e:
+            logger.error(f"[DataService] _load_position_meta failed: {e}")
+        return result
+
+    def _reconcile_ghosts(self, futu_symbols: Set[str], meta_map: Dict[str, Dict]) -> None:
+        """对账: 处理 SQLite 有但 Futu 无 的幽灵记录。
+
+        - 限流: 5 分钟内最多执行一次
+        - 未标记的 → 标 is_anomalous=1, updated_at=now
+        - 已标记且 updated_at 超过 24h 的 → 直接 DELETE
+        """
+        now = time.time()
+        if now - self._last_reconcile_time < 300:
+            return
+        self._last_reconcile_time = now
+
+        ghosts_to_mark: List[str] = []
+        ghosts_to_delete: List[str] = []
+
+        for sym, meta in (meta_map or {}).items():
+            if sym in futu_symbols:
+                continue
+            if int(meta.get("is_anomalous", 0) or 0) == 1:
+                if self._is_meta_older_than(meta.get("updated_at", ""), hours=24):
+                    ghosts_to_delete.append(sym)
+            else:
+                ghosts_to_mark.append(sym)
+
+        if not ghosts_to_mark and not ghosts_to_delete:
+            return
+
+        now_iso = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+        path = self._get_db()
+        try:
+            conn = sqlite3.connect(path, timeout=10)
+            conn.execute("PRAGMA busy_timeout=5000")
+            for sym in ghosts_to_mark:
+                conn.execute(
+                    "UPDATE open_positions SET is_anomalous = 1, updated_at = ? "
+                    "WHERE symbol = ?",
+                    (now_iso, sym),
+                )
+            for sym in ghosts_to_delete:
+                conn.execute("DELETE FROM open_positions WHERE symbol = ?", (sym,))
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            logger.error(f"[DataService] reconcile_ghosts DB write failed: {e}")
+            return
+
+        if ghosts_to_mark:
+            logger.warning(
+                f"[GhostReconcile] 标记幽灵仓 is_anomalous=1 ({len(ghosts_to_mark)}): {ghosts_to_mark}"
+            )
+        if ghosts_to_delete:
+            logger.warning(
+                f"[GhostReconcile] 删除已确认幽灵仓 (>24h, {len(ghosts_to_delete)}): {ghosts_to_delete}"
+            )
+
+    @staticmethod
+    def _is_meta_older_than(updated_at: str, hours: int = 24) -> bool:
+        """判断 SQLite updated_at 字符串是否早于 now-hours (UTC 比较, 容错多种格式)"""
+        if not updated_at:
+            return False
+        s = str(updated_at).strip().replace("T", " ")
+        for sep in ("+", "Z"):
+            if sep in s:
+                s = s.split(sep)[0].strip()
+        if "." in s:
+            s = s.split(".")[0].strip()
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+            try:
+                ts = datetime.strptime(s, fmt)
+                return (datetime.utcnow() - ts).total_seconds() > hours * 3600
+            except ValueError:
+                continue
+        return False
+
+    # ═══════════════════════════════════════════
     #  通用 async 执行器
     # ═══════════════════════════════════════════
+
+    async def _deduplicated_fetch(self, cache_key: str, fetch_fn, ttl: float):
+        """请求级去重: 缓存失效时只允许一个请求穿透到底层 (Thundering Herd 防护).
+
+        使用 double-check locking 模式:
+          1. 快速路径: 缓存命中直接返回 (无锁)
+          2. 否则获取/创建该 key 的 asyncio.Lock
+          3. 锁内 double-check: 其他协程可能已填充缓存
+          4. 真正调用 fetch_fn 并写入缓存
+
+        P0 修复 (2026-06-16):
+          - 空结果也缓存 (哨兵值), 防止空数据时穿透
+          - 锁获取超时 (30s), 防止 Futu 挂起时协程永久阻塞
+          - 异常隔离: 穿透请求失败时缓存短 TTL 错误哨兵, 防止级联重试
+          - setdefault 防锁字典竞态
+
+        Args:
+            cache_key: 缓存键 (与 self.cache 复用)
+            fetch_fn: 无参 async 可调用对象, 返回拉取结果或 None
+            ttl: 缓存有效期 (秒)
+        """
+        # 快速路径: 缓存命中直接返回 (用 _CACHE_MISS 区分 None 和未缓存)
+        cached = self.cache.get(cache_key)
+        if cached is not None:
+            if cached is self._CACHE_MISS:
+                return None
+            return cached
+
+        # 获取/创建该 key 的锁 (setdefault 防止竞态创建重复锁)
+        lock = self._fetch_locks.setdefault(cache_key, asyncio.Lock())
+
+        # 标准 try/finally 模式: 确保锁始终释放, 防止 CancelledError 导致锁泄漏
+        acquired = False
+        try:
+            await asyncio.wait_for(lock.acquire(), timeout=30)
+            acquired = True
+
+            # Double-check: 锁内再查一次, 可能其他协程已填充
+            cached = self.cache.get(cache_key)
+            if cached is not None:
+                if cached is self._CACHE_MISS:
+                    return None
+                logger.debug(
+                    f"[DataService] dedup hit (Thundering Herd avoided): {cache_key}"
+                )
+                return cached
+
+            # 真正执行获取
+            result = await fetch_fn()
+            if result is not None:
+                self.cache.set(cache_key, result, ttl=ttl)
+            else:
+                # 空结果也缓存 (短 TTL), 防止空数据穿透
+                self.cache.set(cache_key, self._CACHE_MISS, ttl=min(ttl, 5))
+            return result
+        except asyncio.TimeoutError:
+            # 锁获取超时 (Futu RPC 挂起), 降级返回 None
+            logger.warning(f"[DataService] 锁超时 30s, 降级: {cache_key}")
+            return None
+        except Exception as e:
+            # 异常隔离: 缓存短 TTL 错误哨兵, 防止级联重试
+            logger.warning(f"[DataService] fetch 异常 {cache_key}: {e}")
+            self.cache.set(cache_key, self._CACHE_MISS, ttl=2)
+            return None
+        finally:
+            if acquired:
+                lock.release()
+                # LRU: 释放后若无竞争者, 从字典移除, 防止长期运行内存泄漏
+                if not lock.locked():
+                    self._fetch_locks.pop(cache_key, None)
 
     async def _run(self, func, *args, **kwargs):
         """在线程池中执行阻塞调用"""

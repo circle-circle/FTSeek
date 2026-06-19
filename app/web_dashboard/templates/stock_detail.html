@@ -191,6 +191,7 @@
         const SYMBOL = {{ symbol | tojson }};
         function escHtml(s) { var d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
         let chart, candleSeries, volumeSeries;
+        let _priceLines = [];
 
         function initChart() {
             const container = document.getElementById('chartContainer');
@@ -217,6 +218,39 @@
             window.addEventListener('resize', () => {
                 chart.applyOptions({ width: container.clientWidth });
             });
+        }
+
+        function drawPositionLines(position) {
+            // Clear existing price lines
+            _priceLines.forEach(function(line) {
+                try { candleSeries.removePriceLine(line); } catch(e) {}
+            });
+            _priceLines = [];
+
+            if (!position || !candleSeries) return;
+
+            var entry = parseFloat(position.entry_price);
+            var sl = parseFloat(position.stop_loss);
+            var tp = parseFloat(position.take_profit);
+
+            if (entry > 0) {
+                _priceLines.push(candleSeries.createPriceLine({
+                    price: entry, color: '#58a6ff', lineWidth: 1, lineStyle: 2,
+                    axisLabelVisible: true, title: '入场 $' + entry.toFixed(2),
+                }));
+            }
+            if (sl > 0) {
+                _priceLines.push(candleSeries.createPriceLine({
+                    price: sl, color: '#f87171', lineWidth: 1, lineStyle: 2,
+                    axisLabelVisible: true, title: '止损 $' + sl.toFixed(2),
+                }));
+            }
+            if (tp > 0) {
+                _priceLines.push(candleSeries.createPriceLine({
+                    price: tp, color: '#4ade80', lineWidth: 1, lineStyle: 2,
+                    axisLabelVisible: true, title: '止盈 $' + tp.toFixed(2),
+                }));
+            }
         }
 
         function parseFutuTime(t) {
@@ -250,6 +284,7 @@
                 renderTechnicals(data.technicals || {});
                 renderRecommendation(data.recommendation || {});
                 renderPosition(data.position);
+                drawPositionLines(data.position);
             } catch (e) { console.error('Analysis error:', e); }
         }
 
@@ -279,7 +314,7 @@
             if (!r.direction) { el.innerHTML = '<div class="empty">无法生成建议</div>'; return; }
             const signalsHtml = (r.signals || []).map(s => { const cls = s[1].replace('+', ''); return '<li><span>' + s[0] + '</span><span class="tag ' + cls + '">' + cls + '</span></li>'; }).join('');
             const tradeDir = r.direction.includes('多') || r.direction.includes('LONG') || r.color === 'green' ? 'LONG' : (r.direction.includes('空') || r.direction.includes('SHORT') || r.color === 'red' ? 'SHORT' : '');
-            const tradeBtnHtml = tradeDir ? '<div style="text-align:center;margin-top:12px"><a href="/trade?symbol=' + encodeURIComponent(SYMBOL) + '&direction=' + tradeDir + '" class="btn-trade-bridge ' + (tradeDir === 'LONG' ? 'long' : 'short') + '">📈 按此分析交易</a></div>' : '';
+            const tradeBtnHtml = tradeDir ? '<div style="text-align:center;margin-top:12px"><a href="/trade?symbol=' + encodeURIComponent(SYMBOL) + '&direction=' + tradeDir + (r.entry_price ? '&entry=' + r.entry_price + '&price=' + r.entry_price : '') + (r.stop_loss ? '&sl=' + r.stop_loss : '') + (r.take_profit ? '&tp=' + r.take_profit : '') + '" class="btn-trade-bridge ' + (tradeDir === 'LONG' ? 'long' : 'short') + '">📈 按此分析交易</a></div>' : '';
             el.innerHTML = '<div class="rec-box ' + r.color + '"><div class="rec-dir ' + r.color + '">' + r.direction + '</div><div class="rec-score">综合评分: ' + (r.score > 0 ? '+' : '') + r.score + '</div></div><ul class="signal-list">' + signalsHtml + '</ul>' + tradeBtnHtml;
         }
 
@@ -350,7 +385,7 @@
                 const a = data.analysis || {};
                 const dirColor = a.direction === 'LONG' ? 'green' : a.direction === 'SHORT' ? 'red' : 'yellow';
                 const confPct = ((a.confidence || 0) * 100).toFixed(0);
-                el.innerHTML = '<div class="llm-grid"><div class="rec-box ' + dirColor + '" style="display:flex;flex-direction:column;justify-content:center"><div class="rec-dir ' + dirColor + '">' + escHtml(a.direction || '--') + '</div><div class="rec-score">置信度: ' + confPct + '%</div><div style="margin-top:8px;font-size:18px;font-weight:700">' + escHtml(a.action || '--') + '</div>' + ((a.direction === 'LONG' || a.direction === 'SHORT') ? '<a href="/trade?symbol=' + encodeURIComponent(SYMBOL) + '&direction=' + a.direction + (a.key_levels && a.key_levels.support ? '&sl=' + a.key_levels.support : '') + (a.key_levels && a.key_levels.resistance ? '&tp=' + a.key_levels.resistance : '') + '" class="btn-trade-bridge ' + (a.direction === 'LONG' ? 'long' : 'short') + '" style="margin-top:10px;display:block">📈 按此分析交易</a>' : '') + '</div><div><div style="font-size:15px;font-weight:600;margin-bottom:8px">' + escHtml(a.summary || '') + '</div><div style="font-size:13px;color:#c9d1d9;line-height:1.6;margin-bottom:12px">' + escHtml(a.reasoning || '') + '</div><div style="display:flex;gap:16px;font-size:13px;margin-bottom:8px;flex-wrap:wrap">' + (a.key_levels ? '<span>支撑: <strong class="green">$' + (a.key_levels.support || '--') + '</strong></span><span>阻力: <strong class="red">$' + (a.key_levels.resistance || '--') + '</strong></span>' : '') + '</div>' + (a.risk_notes ? '<div style="font-size:12px;color:#fbbf24;padding:6px 10px;background:rgba(251,191,36,0.1);border-radius:4px">⚠ ' + escHtml(a.risk_notes) + '</div>' : '') + '</div></div><div style="margin-top:12px;font-size:11px;color:#484f58">模型: ' + escHtml(data.model_used || '--') + ' | 延迟: ' + ((data.latency_ms || 0)/1000).toFixed(1) + 's</div>';
+                el.innerHTML = '<div class="llm-grid"><div class="rec-box ' + dirColor + '" style="display:flex;flex-direction:column;justify-content:center"><div class="rec-dir ' + dirColor + '">' + escHtml(a.direction || '--') + '</div><div class="rec-score">置信度: ' + confPct + '%</div><div style="margin-top:8px;font-size:18px;font-weight:700">' + escHtml(a.action || '--') + '</div>' + ((a.direction === 'LONG' || a.direction === 'SHORT') ? '<a href="/trade?symbol=' + encodeURIComponent(SYMBOL) + '&direction=' + a.direction + (a.entry_price ? '&entry=' + a.entry_price + '&price=' + a.entry_price : '') + (a.key_levels && a.key_levels.support ? '&sl=' + a.key_levels.support : '') + (a.key_levels && a.key_levels.resistance ? '&tp=' + a.key_levels.resistance : '') + '" class="btn-trade-bridge ' + (a.direction === 'LONG' ? 'long' : 'short') + '" style="margin-top:10px;display:block">📈 按此分析交易</a>' : '') + '</div><div><div style="font-size:15px;font-weight:600;margin-bottom:8px">' + escHtml(a.summary || '') + '</div><div style="font-size:13px;color:#c9d1d9;line-height:1.6;margin-bottom:12px">' + escHtml(a.reasoning || '') + '</div><div style="display:flex;gap:16px;font-size:13px;margin-bottom:8px;flex-wrap:wrap">' + (a.key_levels ? '<span>支撑: <strong class="green">$' + (a.key_levels.support || '--') + '</strong></span><span>阻力: <strong class="red">$' + (a.key_levels.resistance || '--') + '</strong></span>' : '') + '</div>' + (a.risk_notes ? '<div style="font-size:12px;color:#fbbf24;padding:6px 10px;background:rgba(251,191,36,0.1);border-radius:4px">⚠ ' + escHtml(a.risk_notes) + '</div>' : '') + '</div></div><div style="margin-top:12px;font-size:11px;color:#484f58">模型: ' + escHtml(data.model_used || '--') + ' | 延迟: ' + ((data.latency_ms || 0)/1000).toFixed(1) + 's</div>';
             } catch (e) { el.innerHTML = '<div class="empty">❌ 请求失败: ' + escHtml(e.message || String(e)) + '</div>'; }
         }
 

@@ -88,13 +88,38 @@
             <div class="status-card"><span class="icon">🏦</span><div class="info"><div class="label">券商账户</div><div class="value" id="svcBroker">--</div><div class="detail" id="brokerDetail">--</div></div></div>
         </div>
 
-        <h2 class="section-title">🔒 自动交易开关</h2>
-        <div style="background:#161b22;border:1px solid #30363d;border-radius:10px;padding:16px;margin-bottom:20px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px">
-            <div style="flex:1;min-width:200px">
-                <div style="font-size:14px;font-weight:600;margin-bottom:4px" id="autoTradeLabel">加载中...</div>
-                <div style="font-size:11px;color:#8b949e">控制信号管道是否自动下单。信号生成和数据采集不受影响。</div>
+        <h2 class="section-title">🔒 自动交易控制</h2>
+        <div id="atBar" style="background:linear-gradient(180deg,#11161e 0%,#0d1117 100%);border:1px solid #30363d;border-radius:10px;padding:16px;margin-bottom:8px;display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+            <div style="display:flex;align-items:center;gap:10px;padding-right:14px;border-right:1px solid #21262d">
+                <span id="atPulse" style="width:10px;height:10px;border-radius:50%;background:#484f58;flex-shrink:0"></span>
+                <div style="line-height:1.1">
+                    <div style="font-size:9px;letter-spacing:1.6px;color:#6e7681;text-transform:uppercase;font-weight:700">AUTO-TRADE</div>
+                    <div style="font-size:13px;color:#e1e4e8;font-weight:700;margin-top:2px" id="atStateName">已停止</div>
+                </div>
             </div>
-            <button class="btn" id="autoTradeBtn" onclick="toggleAutoTrade()" style="min-width:120px;text-align:center" disabled>...</button>
+            <div style="display:flex;align-items:center;gap:10px">
+                <span style="font-size:9px;letter-spacing:1.4px;color:#6e7681;text-transform:uppercase;font-weight:700">SWITCH</span>
+                <button class="btn" id="atToggleBtn" onclick="toggleAutoTrade()" style="min-width:80px;padding:5px 14px;font-size:12px">...</button>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px">
+                <span style="font-size:9px;letter-spacing:1.4px;color:#6e7681;text-transform:uppercase;font-weight:700">MODE</span>
+                <button class="btn btn-sm" data-level="conservative" onclick="setAutoLevel('conservative')" id="lvl-conservative" style="font-size:11px;padding:4px 10px">保守</button>
+                <button class="btn btn-sm" data-level="normal" onclick="setAutoLevel('normal')" id="lvl-normal" style="font-size:11px;padding:4px 10px">标准</button>
+                <button class="btn btn-sm" data-level="aggressive" onclick="setAutoLevel('aggressive')" id="lvl-aggressive" style="font-size:11px;padding:4px 10px">激进</button>
+            </div>
+            <div style="margin-left:auto;text-align:right;line-height:1.3">
+                <div style="font-size:9px;letter-spacing:1.4px;color:#6e7681;text-transform:uppercase;font-weight:700">STATUS</div>
+                <div style="font-size:13px;font-weight:700;margin-top:2px" id="auto-status-text">--</div>
+            </div>
+        </div>
+        <!-- 激进度真实说明 -->
+        <div style="background:#161b22;border:1px solid #21262d;border-radius:8px;padding:12px 16px;margin-bottom:20px;font-size:11px;color:#8b949e;line-height:1.6">
+            <div id="atLevelDesc" style="margin-bottom:6px">选择模式查看详细参数说明</div>
+            <div style="border-top:1px solid #21262d;padding-top:6px;color:#6e7681">
+                <b style="color:#8b949e">两层模式叠加关系：</b>
+                最终仓位 = 基础仓位 × <span id="atEnvMult">环境倍数</span> × <span id="atAggMult">激进度倍数</span>
+                &nbsp;|&nbsp; 环境模式（下方）需重启生效，激进度（上方）即时生效
+            </div>
         </div>
 
         <h2 class="section-title">🔄 模式切换</h2>
@@ -223,54 +248,175 @@
 
         function showMsg(type, msg) { const el = document.getElementById('result'); el.className = 'result ' + type; el.textContent = msg; el.style.display = 'block'; }
 
-        // ── 自动交易开关 ──
-        var _autoTradeEnabled = false;
+        // ── 自动交易控制 (开关 + 激进度) ──
+        var _atEnabled = false;
+        var _atLevel = 'conservative';
+        var _atBusy = false;
+
+        var LEVEL_DESC = {
+            conservative:
+                '<b style="color:#60a5fa">🛡️ 保守模式</b> — 低频精选，只在高确信度机会出手<br>' +
+                '• 仓位缩放 <b>×0.5</b>，单笔上限 <b>$10,000</b>，总敞口上限 <b>30%</b><br>' +
+                '• 信号门槛: 强度 ≥ <b>70</b>，置信度 ≥ <b>0.70</b>（仅高质量信号）<br>' +
+                '• 止损收紧 <b>30%</b>（更早止损），每日最多 <b>3</b> 笔自动交易',
+            normal:
+                '<b style="color:#e1e4e8">⚖️ 标准模式</b> — 正常参数运行<br>' +
+                '• 仓位缩放 <b>×1.0</b>，单笔上限 <b>$20,000</b>，总敞口上限 <b>60%</b><br>' +
+                '• 信号门槛: 强度 ≥ <b>50</b>，置信度 ≥ <b>0.55</b><br>' +
+                '• 标准止损，每日最多 <b>4</b> 笔自动交易',
+            aggressive:
+                '<b style="color:#fbbf24">🔥 激进模式</b> — 满配参数，更多出手机会<br>' +
+                '• 仓位缩放 <b>×1.5</b>，单笔上限 <b>$30,000</b>，总敞口上限 <b>75%</b><br>' +
+                '• 信号门槛: 强度 ≥ <b>40</b>，置信度 ≥ <b>0.45</b>（放宽准入）<br>' +
+                '• 止损放宽 <b>20%</b>（给更多波动空间），每日最多 <b>5</b> 笔'
+        };
+
+        var ENV_MULT_MAP = {simulate: 1.0, live_conservative: 0.5, live_normal: 0.8};
+        var AGG_MULT_MAP = {conservative: 0.5, normal: 1.0, aggressive: 1.5};
+        var ENV_LABEL = {simulate: '模拟盘 ×1.0', live_conservative: '实盘保守 ×0.5', live_normal: '实盘标准 ×0.8'};
 
         async function loadAutoTrade() {
             try {
-                const res = await fetch('/api/auto-trading');
-                const data = await res.json();
-                _autoTradeEnabled = data.enabled;
-                var label = document.getElementById('autoTradeLabel');
-                var btn = document.getElementById('autoTradeBtn');
-                if (_autoTradeEnabled) {
-                    label.innerHTML = '<span style="color:#4ade80">🟢 自动交易已开启</span>';
-                    btn.textContent = '🔒 关闭自动交易';
-                    btn.className = 'btn btn-sell';
+                const res = await fetch('/api/auto-trade/status');
+                if (!res.ok) throw new Error('HTTP ' + res.status);
+                const d = await res.json();
+                _atEnabled = !!d.auto_enabled;
+                _atLevel = (d.auto_level || 'conservative').toLowerCase();
+
+                var pulse = document.getElementById('atPulse');
+                var stateName = document.getElementById('atStateName');
+                var toggleBtn = document.getElementById('atToggleBtn');
+                var statusText = document.getElementById('auto-status-text');
+
+                if (_atEnabled) {
+                    pulse.style.background = '#4ade80';
+                    pulse.style.boxShadow = '0 0 8px rgba(74,222,128,0.7)';
+                    stateName.textContent = {conservative:'保守模式', normal:'标准模式', aggressive:'激进模式'}[_atLevel] || _atLevel;
+                    toggleBtn.textContent = '🔒 关闭';
+                    toggleBtn.className = 'btn btn-sell';
+                    statusText.textContent = '运行中';
+                    statusText.style.color = '#4ade80';
                 } else {
-                    label.innerHTML = '<span style="color:#8b949e">🔒 自动交易已关闭</span> <span style="font-size:11px;color:#484f58">(仅手动下单)</span>';
-                    btn.textContent = '🟢 开启自动交易';
-                    btn.className = 'btn btn-buy';
+                    pulse.style.background = '#484f58';
+                    pulse.style.boxShadow = 'none';
+                    stateName.textContent = '已停止';
+                    toggleBtn.textContent = '🟢 开启';
+                    toggleBtn.className = 'btn btn-buy';
+                    statusText.textContent = '已停止';
+                    statusText.style.color = '#8b949e';
                 }
-                btn.disabled = false;
+                toggleBtn.disabled = false;
+
+                // 高亮当前激进度按钮
+                ['conservative','normal','aggressive'].forEach(function(lv) {
+                    var btn = document.getElementById('lvl-' + lv);
+                    if (btn) {
+                        if (lv === _atLevel) {
+                            btn.style.borderColor = lv === 'conservative' ? '#60a5fa' : lv === 'aggressive' ? '#fbbf24' : '#e1e4e8';
+                            btn.style.color = lv === 'conservative' ? '#60a5fa' : lv === 'aggressive' ? '#fbbf24' : '#e1e4e8';
+                        } else {
+                            btn.style.borderColor = '#30363d';
+                            btn.style.color = '#8b949e';
+                        }
+                    }
+                });
+
+                // 更新激进度说明
+                var descEl = document.getElementById('atLevelDesc');
+                if (descEl) descEl.innerHTML = LEVEL_DESC[_atLevel] || '';
+
+                // 更新叠加倍数
+                updateStackInfo();
             } catch(e) {
-                document.getElementById('autoTradeLabel').textContent = '加载失败';
+                console.warn('[auto-trade] loadAutoTrade failed:', e);
+                var stateName = document.getElementById('atStateName');
+                if (stateName) stateName.textContent = '连接中...';
+                var toggleBtn = document.getElementById('atToggleBtn');
+                if (toggleBtn) { toggleBtn.disabled = false; toggleBtn.textContent = '🟢 开启'; toggleBtn.className = 'btn btn-buy'; }
             }
         }
 
-        async function toggleAutoTrade() {
-            var btn = document.getElementById('autoTradeBtn');
-            var target = !_autoTradeEnabled;
-            btn.disabled = true;
-            btn.textContent = '⏳ 切换中...';
+        function updateStackInfo() {
             try {
-                var res = await fetch('/api/auto-trading/toggle', {
+                var envLabel = document.getElementById('currentModeLabel');
+                var envKey = 'simulate';
+                if (envLabel) {
+                    var txt = envLabel.textContent || '';
+                    if (txt.indexOf('保守') >= 0) envKey = 'live_conservative';
+                    else if (txt.indexOf('标准') >= 0 || txt.indexOf('normal') >= 0) envKey = 'live_normal';
+                }
+                var envMult = ENV_MULT_MAP[envKey] || 1.0;
+                var aggMult = AGG_MULT_MAP[_atLevel] || 0.5;
+                var combined = (envMult * aggMult).toFixed(2);
+                var envEl = document.getElementById('atEnvMult');
+                var aggEl = document.getElementById('atAggMult');
+                if (envEl) envEl.innerHTML = '<b>' + (ENV_LABEL[envKey] || envKey) + '</b>';
+                if (aggEl) {
+                    aggEl.innerHTML = '<b>' + _atLevel + ' ×' + aggMult + '</b>';
+                    var stackLine = aggEl.parentNode;
+                    var existing = stackLine.querySelector('.combined-mult');
+                    if (existing) existing.remove();
+                    var span = document.createElement('span');
+                    span.className = 'combined-mult';
+                    span.innerHTML = ' → 最终 <b style="color:#e1e4e8">×' + combined + '</b>';
+                    stackLine.appendChild(span);
+                }
+            } catch(e) { /* non-critical */ }
+        }
+
+        async function toggleAutoTrade() {
+            if (_atBusy) return;
+            _atBusy = true;
+            var btn = document.getElementById('atToggleBtn');
+            var statusText = document.getElementById('auto-status-text');
+            btn.disabled = true;
+            btn.textContent = '⏳ ...';
+            if (statusText) { statusText.textContent = '切换中...'; statusText.style.color = '#fbbf24'; }
+            var target = !_atEnabled;
+            try {
+                var res = await fetch('/api/auto-trade/toggle', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({enabled: target})
                 });
-                var data = await res.json();
-                showMsg(data.success ? 'ok' : 'err', data.message);
-                loadAutoTrade();
+                var d = await res.json();
+                if (!res.ok && !d.success) {
+                    console.warn('[auto-trade] toggle rejected:', d);
+                    if (statusText) { statusText.textContent = d.error || d.message || '被拒绝'; statusText.style.color = '#f87171'; }
+                }
             } catch(e) {
-                showMsg('err', '网络异常: ' + e.message);
-                btn.disabled = false;
+                console.warn('[auto-trade] toggle error:', e);
+                if (statusText) { statusText.textContent = '网络错误'; statusText.style.color = '#f87171'; }
             }
+            _atBusy = false;
+            // 无论成功失败都刷新状态
+            setTimeout(function(){ loadAutoTrade(); }, 300);
+        }
+
+        async function setAutoLevel(level) {
+            if (_atBusy) return;
+            _atBusy = true;
+            try {
+                var res = await fetch('/api/auto-trade/level', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({level: level})
+                });
+                var d = await res.json();
+                if (!res.ok && !d.success) {
+                    console.warn('[auto-trade] set level rejected:', d);
+                }
+            } catch(e) {
+                console.warn('[auto-trade] level error:', e);
+            }
+            _atBusy = false;
+            setTimeout(function(){ loadAutoTrade(); }, 300);
         }
 
         loadSystemStatus();
         loadModeInfo();
         loadAutoTrade();
         setInterval(loadSystemStatus, 30 * 1000);
+        setInterval(loadAutoTrade, 30 * 1000);
         document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
 {% endblock %}

@@ -7,15 +7,11 @@ LLM Feature Flags (L0 2026-05-14)
 - news_classifier (L1)
 - news_signal_gen (L9, 依赖 L1)
 - news_multilang (L12, 依赖 L1)
-- emergency_review (L2)
+- emergency_review (L2) — DEPRECATED
 - thesis_inferer (L3)
-- earnings_analyst (L4)
-- disagreement_arbitrator (L5)
 - regime_classifier (L6)
-- large_position_review (L7)
 - daily_auto_tuner (L8)
 - replay_dialog (L10)
-- sector_correlation (L11)
 """
 from __future__ import annotations
 import logging
@@ -30,13 +26,9 @@ _DEFAULT_FLAGS = {
     "news_multilang": False,
     "emergency_review": False,         # DEPRECATED 2026-05-19
     "thesis_inferer": False,
-    "earnings_analyst": False,         # DEPRECATED 2026-05-19
-    "disagreement_arbitrator": False,  # DEPRECATED 2026-05-19
     "regime_classifier": False,
-    "large_position_review": False,    # DEPRECATED 2026-05-19
     "daily_auto_tuner": False,
     "replay_dialog": True,
-    "sector_correlation": False,       # DEPRECATED 2026-05-19
     # 2026-05-19 新增 — 真正影响交易决策的 LLM features
     "pre_entry_gate": False,            # 默认 off, 等观察 audit raw 数据后启用
     "failure_mode_miner": False,        # 周日 cron 触发, 默认 off 等数据

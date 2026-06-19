@@ -33,7 +33,7 @@ LV3 降级策略：
 """
 import logging
 from typing import Dict, Any, Optional, List
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from app.data.futu_lv3_provider import FutuLV3Provider
 from app.data.twelvedata_provider import TwelveDataProvider
@@ -141,6 +141,12 @@ class MarketDataRouter:
             f"启用的数据源：{enabled_sources if enabled_sources else ['无']} | "
             f"Cache TTL={cache_ttl_seconds}s"
         )
+
+        # ── SPY MA200 缓存 (2026-06-16 修复: spy_ma200=0 bug) ──
+        # MA200 变化极慢 (每日仅增 1 个数据点), 30 分钟缓存足够
+        self._spy_ma200_cache: Optional[float] = None
+        self._spy_ma200_cache_time: Optional[datetime] = None
+        self._spy_ma200_cache_ttl = timedelta(minutes=30)
 
         if not enabled_sources:
             logger.error("[MarketDataRouter] ⚠️ 未配置任何数据源，服务将不可用!")
@@ -495,18 +501,38 @@ class MarketDataRouter:
                 errors.append(f"FutuLV3: {e}")
                 logger.warning(f"[Router] Futu LV3 主通道失败 {symbol}: {e}")
         
-        # Step 2: TwelveData 降级 (仅当 LV3 不可用时)
+        # Step 2: TwelveData 降级 (LV3 不可用 或 K线不足时)
         # P0 修复 (2026-05-23): 期权代码仅 Futu 支持，跳过 TwelveData/Finnhub
         # 根因: TwelveData 不支持期权符号格式，每次调用浪费 API 配额并产生 ERROR
         if is_option and (not ts_ctx or ts_ctx.get("price", 0) <= 0):
             logger.debug(f"[Router] {symbol} 期权代码 Futu 无数据 (非交易时段/已过期)，跳过 TwelveData")
             return None
-        if not ts_ctx or ts_ctx.get("data_source") not in ("futu_lv3", "futu_lv3_quote_only"):
+        # P1 修复 (2026-06-17): quote_only 也允许 TwelveData 降级获取技术指标
+        # 根因: K线<30条时 data_source=quote_only (无 RSI/MACD/ATR),
+        #   但原代码将 quote_only 视为"已完成"跳过 TwelveData → IC 死锁
+        _needs_td_fallback = (
+            not ts_ctx
+            or ts_ctx.get("data_source") not in ("futu_lv3", "futu_lv3_quote_only")
+            or ts_ctx.get("data_source") == "futu_lv3_quote_only"
+        )
+        if _needs_td_fallback:
             if self.td:
                 try:
-                    ts_ctx = self.td.get_full_market_context(symbol)
-                    if ts_ctx and ts_ctx.get("price", 0) > 0:
-                        logger.debug(f"[Router] {symbol} 从 TwelveData 获取技术指标 (LV3 降级)")
+                    td_ctx = self.td.get_full_market_context(symbol)
+                    if td_ctx and td_ctx.get("price", 0) > 0:
+                        if ts_ctx and ts_ctx.get("data_source") == "futu_lv3_quote_only":
+                            # 合并: 保留 Futu LV3 实时报价, 补充 TwelveData 技术指标
+                            _futu_price_keys = {"price", "change_percent", "volume",
+                                                "lv3_bid", "lv3_ask", "lv3_bid_vol",
+                                                "lv3_ask_vol", "lv3_delay_ms"}
+                            for _k, _v in td_ctx.items():
+                                if _k not in _futu_price_keys:
+                                    ts_ctx[_k] = _v
+                            ts_ctx["data_source"] = "futu_lv3+td"
+                            logger.debug(f"[Router] {symbol} LV3 报价 + TwelveData 技术指标合并成功")
+                        else:
+                            ts_ctx = td_ctx
+                            logger.debug(f"[Router] {symbol} 从 TwelveData 获取技术指标 (LV3 降级)")
                 except Exception as e:
                     errors.append(f"TwelveData: {e}")
                     logger.warning(f"[Router] TwelveData 获取技术指标失败 {symbol}: {e}")
@@ -535,17 +561,20 @@ class MarketDataRouter:
         else:
             ts_ctx.setdefault("vix", 20.0)
 
-        # Step 6: SPY 大盘 (LV3 快照优先 → TwelveData → Alpha Vantage)
+        # Step 6: SPY 大盘 — 复用 get_spy_context() (含 MA200 缓存逻辑)
+        # 2026-06-16 修复: 原来内联构建 spy_ctx 缺少 spy_ma200,
+        # 导致 per-symbol context 的 spy_ma200 永远为 0
         spy_ctx = None
-        if self.futu:
-            try:
-                spy_quote = self.futu.get_quote("US.SPY")
-                if spy_quote and spy_quote.get("price", 0) > 0:
-                    spy_ctx = {"spy_price": spy_quote["price"]}
-                    logger.debug(f"[Router] SPY 从 LV3 获取: ${spy_quote['price']:.2f}")
-            except Exception as e:
-                logger.debug(f"[Router] LV3 获取 SPY 失败: {e}")
-        
+        try:
+            spy_ctx = self.get_spy_context()
+            if spy_ctx:
+                logger.debug(
+                    f"[Router] SPY 上下文: price=${spy_ctx.get('spy_price', 0):.2f} "
+                    f"ma200=${spy_ctx.get('spy_ma200', 0):.2f}"
+                )
+        except Exception as e:
+            logger.debug(f"[Router] get_spy_context() 失败: {e}")
+
         if not spy_ctx and self.td:
             try:
                 spy_ctx = self.td.get_spy_context()
@@ -557,6 +586,7 @@ class MarketDataRouter:
         if spy_ctx:
             ts_ctx.update({
                 "spy_price": spy_ctx.get("spy_price", 0.0),
+                "spy_ma200": spy_ctx.get("spy_ma200", 0.0),
                 "spy_ma20": spy_ctx.get("spy_ma20", 0.0),
                 "spy_ma50": spy_ctx.get("spy_ma50", 0.0),
                 "spx_change_percent": spy_ctx.get("spx_change_percent", 0.0),
@@ -642,19 +672,66 @@ class MarketDataRouter:
         return 20.0
 
     def get_spy_context(self) -> Dict[str, Any]:
-        """SPY 大盘上下文：仅 LV3 快照 (2026-04-24 移除 AlphaVantage SPY 轮询)"""
-        # ★ 优先: LV3 快照获取 SPY 实时价格
+        """SPY 大盘上下文：LV3 快照 + MA200 (2026-06-16 修复: 补充 spy_ma200 计算)
+
+        P0 修复: 原来仅返回 {"spy_price": ...}, 导致 spy_ma200 永远为 0,
+        regime_filter 始终 FALLBACK→CAUTION (position_scale=0.50, min_strength=55)。
+
+        修复: 从 Futu LV3 获取 250 根日 K 线计算 MA200, 结果缓存 30 分钟。
+        """
+        result: Dict[str, Any] = {}
+
+        # ★ Step 1: LV3 快照获取 SPY 实时价格
         if self.futu:
             try:
                 spy_quote = self.futu.get_quote("US.SPY")
                 if spy_quote and spy_quote.get("price", 0) > 0:
-                    return {"spy_price": spy_quote["price"]}
+                    result["spy_price"] = spy_quote["price"]
             except Exception as e:
-                logger.debug(f"[Router] LV3 获取 SPY 失败: {e}")
+                logger.debug(f"[Router] LV3 获取 SPY 报价失败: {e}")
+
+        # ★ Step 2: MA200 计算 (30 分钟缓存, 避免每次扫描都拉 250 根日 K)
+        # MA200 每日仅变化 1 个数据点, 30 分钟刷新完全足够
+        now = datetime.now()
+        cache_valid = (
+            self._spy_ma200_cache is not None
+            and self._spy_ma200_cache_time is not None
+            and (now - self._spy_ma200_cache_time) < self._spy_ma200_cache_ttl
+        )
+        if cache_valid:
+            result["spy_ma200"] = self._spy_ma200_cache
+            logger.debug(f"[Router] SPY MA200 使用缓存: {self._spy_ma200_cache:.2f}")
+        elif self.futu:
+            try:
+                # 2026-06-16 修复: get_kline() 对 K_DAY 过滤到仅当日, 只剩 1 根
+                # 改用 Futu request_history_kline 直接拉取 250 根完整日 K
+                from futu import KLType
+                if self.futu._ensure_connected() and self.futu._quote_ctx:
+                    ret, data, _ = self.futu._quote_ctx.request_history_kline(
+                        code="US.SPY", ktype=KLType.K_DAY, max_count=250
+                    )
+                    if ret == 0 and data is not None and len(data) >= 50:
+                        closes = [float(row["close"]) for _, row in data.iterrows() if float(row["close"]) > 0]
+                        if len(closes) >= 50:
+                            # 使用全部可用日 K 计算 MA (理想 200, 最少 50)
+                            ma200 = sum(closes[-200:]) / min(len(closes), 200)
+                            self._spy_ma200_cache = ma200
+                            self._spy_ma200_cache_time = now
+                            result["spy_ma200"] = ma200
+                            logger.info(
+                                f"[Router] SPY MA200 已计算: {ma200:.2f} "
+                                f"(从 {len(closes)} 根日 K, 缓存 30min)"
+                            )
+                        else:
+                            logger.debug("[Router] SPY MA200 收盘价不足")
+                    else:
+                        logger.debug(f"[Router] SPY MA200 history_kline 失败: ret={ret}")
+            except Exception as e:
+                logger.warning(f"[Router] SPY MA200 计算失败: {e}")
 
         # 2026-04-24: AlphaVantage SPY 已禁用，盘前/盘后无新增技术指标
         # TwelveData key 无效，跳过
-        return {}
+        return result
 
     def get_technical_indicators(
         self,
