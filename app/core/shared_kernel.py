@@ -28,7 +28,6 @@ import logging
 import threading
 from datetime import datetime
 from typing import Dict, Optional, Tuple
-from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 
@@ -42,17 +41,6 @@ VIX_REGIMES = {
     "fear":      (30, 40),    # VIX 30-40: 恐慌
     "crisis":    (40, 100),   # VIX > 40: 危机
 }
-
-# ============================================================
-# 基础参数 (全局默认，所有时段参数由此派生)
-# ============================================================
-@dataclass
-class BaseScalpingParams:
-    """Scalping 基础参数 — 时段参数通过 scaler 自动生成"""
-    tp_pct: float = 0.012          # 基础止盈 (1.2%)
-    sl_pct: float = 0.007          # 基础止损 (0.7%)
-    position_pct: float = 0.08     # 基础单笔仓位 (8% of budget)
-    max_hold_minutes: int = 4      # 基础最大持仓 (4 分钟)
 
 # ============================================================
 # 时段缩放因子 (从历史振幅比率推导)
@@ -154,7 +142,6 @@ class SharedKernel:
     使用方法:
       kernel = SharedKernel(vix_provider)
       multipliers = kernel.get_vix_multipliers()
-      phase_params = kernel.derive_phase_params("morning", base_params)
     """
 
     def __init__(self, vix_provider=None):
@@ -318,44 +305,7 @@ class SharedKernel:
         session = self.normalize_session(session)
         return DEFAULT_SESSION_VOL_RATIO.get(session, 1.0)
 
-    # ── 时段参数派生 (用 scaler 替代独立参数) ──
-
-    def derive_phase_params(self, phase: str, base: Optional[BaseScalpingParams] = None,
-                            scalers: Optional[Dict] = None) -> Dict:
-        """
-        从基础参数 + 时段缩放因子 派生时段特定参数
-
-        Args:
-            phase: 时段名称
-            base: 基础参数 (默认 BaseScalpingParams())
-            scalers: 时段缩放因子 (默认 DEFAULT_PHASE_SCALERS)
-
-        Returns:
-            {"take_profit": ..., "stop_loss": ..., "position_pct": ...,
-             "max_hold_minutes": ...}
-        """
-        if base is None:
-            base = BaseScalpingParams()
-        if scalers is None:
-            scalers = DEFAULT_PHASE_SCALERS
-
-        s = scalers.get(phase, {"tp_scale": 1.0, "sl_scale": 1.0,
-                                "pos_scale": 1.0, "hold_scale": 1.0})
-
-        tp = base.tp_pct * s["tp_scale"]
-        sl = base.sl_pct * s["sl_scale"]
-        pos = base.position_pct * s["pos_scale"]
-        hold = int(base.max_hold_minutes * s["hold_scale"])
-
-        # VIX 自适应止损叠加
-        sl = self.get_phase_adjusted_sl(sl, phase)
-
-        return {
-            "take_profit": round(tp, 4),
-            "stop_loss": round(sl, 4),
-            "position_pct": round(pos, 4),
-            "max_hold_minutes": max(1, hold),
-        }
+    # ── 时段参数派生: 已随 scalping 引擎删除移除 (BaseScalpingParams/derive_phase_params 无调用方) ──
 
     def calibrate_scalers_from_data(self, phase_amplitudes: Dict[str, float]):
         """

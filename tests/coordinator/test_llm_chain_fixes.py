@@ -73,25 +73,8 @@ def test_l2b_api_failure_also_records_audit():
 
 
 # ─────────────────────────────────────────────────────
-# L3: scalping 接 thesis_inferer
+# L3: scalping 接 thesis_inferer — 已随 scalping 引擎移除 (2026-06-19)
 # ─────────────────────────────────────────────────────
-
-def test_l3_scalping_triggers_thesis_inferer():
-    """L3: scalping _execute_trade 入场后必须触发 thesis_inferer (异步)."""
-    src = _read_src("app/scalping/engine.py")
-
-    assert "from app.llm.thesis_inferer import infer_thesis_async" in src, (
-        "L3: scalping 必须 import infer_thesis_async"
-    )
-    assert "infer_thesis_async(symbol, _signal_dict" in src, (
-        "L3: scalping 必须显式调用 infer_thesis_async"
-    )
-    # 必须在 attribution 写入之后 (不抢资源)
-    attribution_idx = src.find("[T3·attribution·scalping]")
-    thesis_idx = src.find("L3·thesis·scalping")
-    assert attribution_idx > 0 and thesis_idx > attribution_idx, (
-        "L3: thesis 必须在 attribution 之后调用"
-    )
 
 
 # ─────────────────────────────────────────────────────

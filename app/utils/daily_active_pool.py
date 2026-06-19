@@ -37,21 +37,18 @@ SOURCE_POSITION = "POSITION"        # 持仓股 (最高优先级)
 SOURCE_PLAN = "PLAN"               # 盘前计划目标
 SOURCE_MANUAL = "MANUAL"           # 人工指定
 SOURCE_INTRADAY = "INTRADAY_ALERT"  # 盘中异动
-SOURCE_SCALPING = "SCALPING"       # 剥头皮专属标的 (P2 新增)
 
 # 来源优先级 (数字越小优先级越高，用于容量淘汰)
 SOURCE_PRIORITY = {
     SOURCE_POSITION: 0,
     SOURCE_MANUAL: 1,
     SOURCE_PLAN: 2,
-    SOURCE_SCALPING: 2,  # 与 PLAN 同级，但独立隔离
     SOURCE_INTRADAY: 3,
 }
 
 # 默认 TTL
 TTL_PLAN_HOURS = 24          # 盘前计划: 24 小时
 TTL_INTRADAY_HOURS = 2       # 盘中异动: 2 小时
-TTL_SCALPING_HOURS = 12      # 剥头皮: 12 小时 (盘前配置，收盘后过期)
 TTL_MANUAL_HOURS = None      # 人工指定: 永久
 TTL_POSITION_HOURS = None    # 持仓: 永久 (直到平仓)
 
@@ -463,7 +460,6 @@ class DailyActivePool:
                 SOURCE_PLAN: [],
                 SOURCE_MANUAL: [],
                 SOURCE_INTRADAY: [],
-                SOURCE_SCALPING: [],  # P2 新增
             }
             for entry in self._entries.values():
                 if entry.source in breakdown:

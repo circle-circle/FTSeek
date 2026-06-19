@@ -231,7 +231,7 @@ class ExecutionEngine(BaseExecutionEngine):
             )
             return False
 
-        if engine in ("MAIN", "SCALPING") and is_orb_symbol:
+        if engine == "MAIN" and is_orb_symbol:
             logger.error(
                 f"[标的互斥🔴] {engine} 引擎试图交易 ORB 标的 {symbol} → REJECTED "
                 f"(该标的归属 ORB 引擎)"
@@ -283,12 +283,12 @@ class ExecutionEngine(BaseExecutionEngine):
                 order.failure_reason = f"Kill Switch 检查异常 (fail-close): {_ks_err}"
                 return order
 
-            # 2. auto_trading_enabled — 阻断 ORB/Scalping/Main 自动引擎的入场
+            # 2. auto_trading_enabled — 阻断 ORB/Main 自动引擎的入场
             #    手动订单 (client_order_id 以 "manual_" 开头) 不受此限制
             _source = self._get_engine_source(order)
             _cid = getattr(order, "client_order_id", "") or ""
             _is_manual = _cid.startswith("manual_")
-            if _source in ("ORB", "SCALPING", "MAIN") and not _is_manual:
+            if _source in ("ORB", "MAIN") and not _is_manual:
                 try:
                     import re as _re
                     import os as _os

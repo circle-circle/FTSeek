@@ -417,7 +417,6 @@ class FeishuNotifier:
         # 来源标注
         source_cn = {
             "MAIN_PIPELINE": "主线策略 (LLM投票)",
-            "SCALPING": "Scalping (剥头皮)",
             "MANUAL": "人工交易",
             "POSITION_SYNC": "🔄 历史仓位同步 (启动时发现)",
         }.get(source_type, source_type)
@@ -514,7 +513,6 @@ class FeishuNotifier:
         # 来源标注
         source_cn = {
             "MAIN_PIPELINE": "主线策略 (LLM投票)",
-            "SCALPING": "Scalping (剥头皮)",
             "MANUAL": "人工交易",
             "POSITION_SYNC": "🔄 历史仓位同步 (启动时发现)",
         }.get(source_type, source_type)

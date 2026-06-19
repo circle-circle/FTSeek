@@ -213,7 +213,6 @@ class DingTalkNotifier:
             # 来源中文标注
             source_cn = {
                 "MAIN_PIPELINE": "主线策略 (LLM投票)",
-                "SCALPING": "Scalping (剥头皮)",
                 "MANUAL": "人工交易",
             }.get(source_type, source_type)
 
@@ -309,7 +308,6 @@ class DingTalkNotifier:
             # 来源中文标注
             source_cn = {
                 "MAIN_PIPELINE": "主线策略 (LLM投票)",
-                "SCALPING": "Scalping (剥头皮)",
                 "MANUAL": "人工交易",
             }.get(source_type, source_type)
 

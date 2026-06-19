@@ -66,12 +66,7 @@ def test_y4_breakeven_short_above_entry():
     assert plus_count >= 2, "SHORT 也应用 (1 + buffer_pct)"
 
 
-def test_y2_bb_filter_logic_in_source():
-    """通过源码验证 BB sanity check 已加 (避开 pytz 间接依赖)"""
-    src = open("app/scalping/signals.py").read()
-    assert "Y2" in src
-    assert "bandwidth < price * 0.001" in src
-    assert "数据异常" in src or "数据异常" in src
+# test_y2_bb_filter_logic_in_source — 已随 scalping 引擎移除 (2026-06-19)
 
 
 # ─── Y5 PnL 异常值监控 ────────────────────────────

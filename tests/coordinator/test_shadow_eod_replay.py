@@ -87,12 +87,7 @@ def test_t_test_correctness():
     assert p2 > 0.99, f"相同样本 p≈1, 实际 p={p2}"
 
 
-def test_p1_vwap_deviation_tightened():
-    """P1 (2026-05-19): scalping vwap_deviation 默认 1.2 → 2.0% (收紧)."""
-    src = _read_src("app/scalping/engine.py")
-    assert 'vwap_deviation_pct", 0.020' in src, (
-        "P1: scalping vwap_deviation_pct 默认必须为 0.020 (从 0.012 收紧)"
-    )
+# test_p1_vwap_deviation_tightened — 已随 scalping 引擎移除 (2026-06-19)
 
 
 def test_p4_observation_log_exists():

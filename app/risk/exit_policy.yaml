@@ -371,57 +371,7 @@ day_trade_mode:
     max_idle_minutes: 45            # ADR-004: 60→45min, 与主线对齐
 
 # ============================================================
-# INACTIVE — SCALPING 引擎已禁用 (ADR-002, 2026-05-31)
-# unified_config.yaml scalping.enabled=false, 无 scalping 持仓产生
-# 本 section 由 exits.py 加载但实际不会被执行路径消费
-# 保留供 scalping 重启后使用
+# (已删除) SCALPING 引擎退出参数 — 2026-06-19 随 scalping 引擎彻底移除
+# app/scalping/ 目录、_load_scalping_exit_config()、BaseScalpingParams 均已清理.
+# 如需重启 scalping, 从 git 历史恢复本块.
 # ============================================================
-# SCALPING 策略退出参数覆写 (Task #9, 2026-05-30)
-# SCALPING 使用独立退出引擎 (app/scalping/exits.py) 但配置统一到此文件管理
-# - 启动时由 _load_scalping_exit_config() 一次性加载, 缓存到模块级 _SCALPING_EXIT_CONFIG
-# - enabled: false 时所有 SCALPING 类回退到代码默认值 (向后兼容)
-# - 修改参数无需改 Python 代码
-# ------------------------------------------------------------
-scalping_overrides:
-  enabled: true                     # 注意: 虽此处 enabled=true, 但 scalping 引擎整体已禁用
-
-  # ── ATRExit (app/scalping/exits.py::ATRExit) ──
-  atr_exit:
-    tp_multiplier: 1.5              # TP = entry ± 1.5×ATR
-    sl_multiplier: 1.0              # SL = entry ∓ 1.0×ATR
-    min_tp_pct: 0.005               # 最低止盈 0.5% (ATR 太小时兜底)
-    max_tp_pct: 0.05                # 最高止盈 5%   (ATR 太大时限制)
-    min_sl_pct: 0.003               # 最低止损 0.3%
-    max_sl_pct: 0.03                # 最高止损 3%
-
-  # ── 轻量追踪止损 (ATRExit.check_exit 内嵌) ──
-  trailing:
-    enabled: true
-    activation_profit_pct: 0.015    # 盈利 ≥1.5% 时激活追踪
-    trail_multiplier: 0.8           # 回撤 0.8×ATR 触发
-    min_trail_pct: 0.008            # 最小追踪距离 0.8% (ATR 极小时兜底)
-
-  # ── 时间退出 (TimeExit) ──
-  time_exit:
-    max_hold_minutes: 60            # 最大持仓 60 分钟
-    profit_extension_minutes: 30    # 盈利时可延长 30 分钟
-
-  # ── 时段缩放 (覆盖 base 参数, 与 time_gate.py / unified_config.scalping.phases 对齐) ──
-  # 物理含义: phase_amplitude / global_amplitude
-  # SSOT: unified_config.yaml::scalping.phases (此处仅作为退出系统兜底)
-  phase_scaling:
-    opening_drive:
-      tp_scale: 1.5
-      sl_scale: 1.5
-    morning:
-      tp_scale: 1.2
-      sl_scale: 1.2
-    midday:
-      tp_scale: 0.7
-      sl_scale: 0.5
-    afternoon:
-      tp_scale: 1.0
-      sl_scale: 1.0
-    closing_drive:
-      tp_scale: 0.5
-      sl_scale: 0.7
