@@ -67,13 +67,13 @@ def normalize_regime(regime: Any) -> str:
 # 权重矩阵: regime → {strategy_group: weight (0~1)}
 # 1.0 = 完全信任, 0.3 = 强烈降权但保留, 0 = 不参与
 DEFAULT_REGIME_WEIGHTS: Dict[str, Dict[str, float]] = {
-    "TREND_UP":   {"trend_following": 1.0, "mean_reversion": 0.3, "scalping": 0.5,
+    "TREND_UP":   {"trend_following": 1.0, "mean_reversion": 0.3,
                    "sentiment": 0.7, "other": 0.6},
-    "TREND_DOWN": {"trend_following": 1.0, "mean_reversion": 0.3, "scalping": 0.5,
+    "TREND_DOWN": {"trend_following": 1.0, "mean_reversion": 0.3,
                    "sentiment": 0.7, "other": 0.6},
-    "RANGE":      {"trend_following": 0.3, "mean_reversion": 1.0, "scalping": 0.8,
+    "RANGE":      {"trend_following": 0.3, "mean_reversion": 1.0,
                    "sentiment": 0.5, "other": 0.6},
-    "HIGH_VOL":   {"trend_following": 0.5, "mean_reversion": 0.2, "scalping": 0.3,
+    "HIGH_VOL":   {"trend_following": 0.5, "mean_reversion": 0.2,
                    "sentiment": 0.4, "other": 0.3},
 }
 
@@ -83,7 +83,6 @@ DEFAULT_GROUP_REGIME_SUPPORT: Dict[str, List[str]] = {
     "trend_following": ["TREND_UP", "TREND_DOWN"],
     "reversion": ["RANGE"],
     "mean_reversion": ["RANGE"],
-    "scalping": ["RANGE", "TREND_UP", "TREND_DOWN"],
     "sentiment": ["TREND_UP", "TREND_DOWN", "RANGE"],
     "other": ["TREND_UP", "TREND_DOWN", "RANGE", "HIGH_VOL"],
 }
@@ -94,7 +93,6 @@ GROUP_NAME_NORMALIZE: Dict[str, str] = {
     "trend_following": "trend_following",
     "reversion": "mean_reversion",
     "mean_reversion": "mean_reversion",
-    "scalping": "scalping",
     "sentiment": "sentiment",
     "news": "sentiment",
     "llm": "sentiment",

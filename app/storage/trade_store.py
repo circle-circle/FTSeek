@@ -7,7 +7,6 @@
 架构说明:
   - TradeStore (本文件): ftseek_us.db — 交易 + 持仓 SSOT
   - TradeRecorder:       trade_records.db — 评审系统专用 (独立, 有心理学字段)
-  - UnifiedTradeStore:   ⚠️ DEPRECATED — 已重定向, 勿用
 
 将每笔完整交易（开仓→平仓）写入 SQLite trade_records 表，
 重启后历史不丢失，支持日报复盘查询。
@@ -147,8 +146,8 @@ class TradeStore:
 
                 # Karpathy 统一记录: 添加来源分类 + 理由字段 (2026-04-29)
                 # Phase A (2026-05-14): 加 owner_strategy 列, 与 source_type 互补
-                #   - source_type: 来源大类 (MAIN_PIPELINE/SCALPING/...)
-                #   - owner_strategy: 具体 strategy.name (main/scalping/fast_lane/llm_plan)
+                #   - source_type: 来源大类 (MAIN_PIPELINE/...)
+                #   - owner_strategy: 具体 strategy.name (main/fast_lane/llm_plan)
                 for col_def in [
                     ("source_type", "ALTER TABLE trade_records ADD COLUMN source_type TEXT DEFAULT 'MAIN_PIPELINE'"),
                     ("entry_reason", "ALTER TABLE trade_records ADD COLUMN entry_reason TEXT"),

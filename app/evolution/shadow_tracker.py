@@ -551,7 +551,6 @@ class ShadowTracker:
         """
         从 trade_records 表查询指定策略线的真实 PnL
         """
-        # 2026-06-19 修复: scalping 已删除，不再区分策略类型，统一查询
         try:
             from app.core.db_utils import get_main_db
             db_path = get_main_db()
@@ -611,7 +610,6 @@ class ShadowTracker:
             from app.core.config_container import get_config
             cfg = get_config()
 
-            # 2026-06-19 修复: scalping 已删除，统一使用主线配置
             risk_cfg = cfg.get_section("risk")
             params["min_score"] = risk_cfg.get("signal_quality", {}).get("min_score", 50)
             exit_cfg = cfg.get_section("dynamic_exit")

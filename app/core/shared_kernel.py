@@ -8,7 +8,7 @@
   - VIX regime 查询 (统一市场阶段分级)
   - 仓位乘数 (基于 VIX 的仓位调整系数)
   - 止损宽度调整 (基于 VIX 的止损距离系数)
-  - BB 投票权重调整 (基于 VIX 的布林带权重，仅 scalping 使用)
+  - BB 投票权重调整 (基于 VIX 的布林带权重)
   - 时段缩放因子 (从基础参数生成时段特定参数)
   - 统一时段分类 (entry + exit 共用一套 taxonomy)
   - session_vol_ratio (所有退出规则通过 ATR × ratio 获得时段感知)
@@ -209,7 +209,7 @@ class SharedKernel:
                 "regime": str,
                 "position_multiplier": float,     # 仓位调整 (0.0-1.0)
                 "stop_loss_multiplier": float,    # 止损距离调整
-                "bb_weight": float,               # BB 投票权重 (仅 scalping)
+                "bb_weight": float,               # BB 投票权重
             }
         """
         regime = self.get_vix_regime()
@@ -368,7 +368,7 @@ class SharedKernel:
                               每个时段的平均历史振幅
 
         同步更新:
-          - DEFAULT_PHASE_SCALERS (scalping 用)
+          - DEFAULT_PHASE_SCALERS
           - DEFAULT_SESSION_VOL_RATIO (退出规则用 effective_atr = atr × ratio)
         """
         if not phase_amplitudes:

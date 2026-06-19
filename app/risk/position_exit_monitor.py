@@ -785,7 +785,7 @@ class ExitMonitor:
         current_session_ratio = kernel.get_session_vol_ratio(current_session)
 
         # ── P2 (2026-05-18): 组合止损仅针对系统管理的仓位 ──
-        # futu_sync/scalping 仓位不参与组合止损计算，避免幽灵仓触发误杀
+        # futu_sync 仓位不参与组合止损计算，避免幽灵仓触发误杀
         # P0-3 修复 (2026-05-19): 双重过滤 (managed AND not protected) + 显式排除 ghost.
         # 5/18 ARM 紊乱: WARN×23 + REDUCE×3 + FLAT_ALL×7 在 PROTECTED 仓位上误触发,
         # 根因是 import fallback `lambda p: True` 一旦触发, 所有 PROTECTED 全进 portfolio.

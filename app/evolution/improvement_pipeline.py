@@ -53,7 +53,7 @@ class ProposalRecord:
     shadow_total_count: float = 0.0
     test_mode: str = "level3"      # level2 (exit) or level3 (full)
     rollback_until: str = ""       # 观察截止日期
-    strategy_type: str = "main"    # "main" or "scalping"
+    strategy_type: str = "main"
     
     def __post_init__(self):
         if not self.created_at:
@@ -105,7 +105,7 @@ class ImprovementPipeline:
                     shadow_total_count REAL DEFAULT 0.0,
                     test_mode TEXT DEFAULT 'level3',
                     rollback_until TEXT,
-                    strategy_type TEXT DEFAULT 'main'  -- 'main' or 'scalping'
+                    strategy_type TEXT DEFAULT 'main'
                 )
             """)
             conn.commit()

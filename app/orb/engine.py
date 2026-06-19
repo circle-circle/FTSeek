@@ -2169,7 +2169,7 @@ class ORBEngine:
         return {"success": False, "error": "submit_order not available"}
 
     def _wait_for_fill(self, order_result: Dict, timeout: int = 15) -> bool:
-        """等待订单成交确认 (与 scalping 同模式)"""
+        """等待订单成交确认"""
         result = order_result.get("result")
         if result is None:
             return False

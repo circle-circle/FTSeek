@@ -16,7 +16,6 @@ Phase 列表 (语义):
 - "intraday"     盘中信号 (主路径) — strategies.defaults.min_confidence
 - "premarket"    盘前 LLM 投票门槛 — strategies.llm_vote.min_confidence
 - "fast_lane"    快车道 (高质量短线) — strategies.fast_lane.min_confidence
-- "scalping"     超短策略
 - "shadow"       影子账户 (放宽门槛验证假设)
 - "ssot"         全局 SSOT (ConfigWriter 唯一可调) — risk.signal_quality.min_confidence
 - "default"      未分类 → 等同 "ssot"
@@ -33,7 +32,6 @@ _PHASE_YAML_MAP = {
     "intraday":   "strategies.defaults.min_confidence",
     "premarket":  "strategies.llm_vote.min_confidence",
     "fast_lane":  "strategies.fast_lane.min_confidence",
-    "scalping":   "strategies.defaults.min_confidence",  # 复用 defaults
     "shadow":     "strategies.defaults.min_confidence",
 }
 

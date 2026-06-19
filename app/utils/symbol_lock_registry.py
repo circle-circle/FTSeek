@@ -1,7 +1,7 @@
 """
 Per-symbol lock registry (P1-4 2026-05-14)
 
-替代 scheduler._open_position_lock 的全局 RLock — 主线慢策略持锁时, scalping 信号被全部阻塞.
+替代 scheduler._open_position_lock 的全局 RLock — 慢策略持锁时, 其他信号被全部阻塞.
 
 行为:
 - 每个 symbol 一把 RLock (按需创建)

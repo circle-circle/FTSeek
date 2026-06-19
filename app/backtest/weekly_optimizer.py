@@ -183,7 +183,7 @@ def load_trade_rows(
     page_size: int = 2000,
 ) -> List[TradeRow]:
     """
-    从 trade_records.db 中读取已平仓成交, 兼容 trade_recorder / unified_trade_store 两套 schema。
+    从 trade_records.db 中读取已平仓成交, 兼容 trade_recorder schema。
 
     返回归一化 TradeRow 列表, 以日期升序排列。
     """

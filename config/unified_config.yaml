@@ -28,7 +28,7 @@ mode:
     # 加入 RIVN/LCID/SNDK/ARM/NIO/BWXT/MU (5/15 实际有信号触发的高波动小盘)
     # 保留 NVDA/TSLA/AMD/SPY/QQQ 作为 anchor + ETF beacon. 总 12 只.
     universe:                   # 沙盒仅交易这些 symbol (覆盖 watchlist)
-      # ── 高波动小盘 (Scalping 友好, 信号易触发) ──
+      # ── 高波动小盘 (信号易触发) ──
       - TSLA                    # EV 龙头, 计划频繁出现
       - AMD                     # 半导体二线, ATR 中等 (已升级 TIER1)
       - RIVN                    # ATR%≈0.20%, 5/15 实际有 LONG 触发
@@ -455,7 +455,7 @@ watchlist:
     enabled: true
     tier: TIER1
     max_position_ratio: 0.08
-    notes: 高波动存储芯片 | ATR%高 | Scalping 每日交易标的
+    notes: 高波动存储芯片 | ATR%高 | 每日交易标的
   - code: US.ARM
     name: Arm Holdings
     sector: Semiconductors
@@ -831,7 +831,7 @@ risk:
       max_daily_loss_pct: 3.0
       max_total_exposure_pct: 60.0
       circuit_breaker_loss_pct: 5.0
-  # P0 全局黑名单 (2026-05-30): 跨策略统一拦截亏损标的，不仅限于Scalping
+  # P0 全局黑名单 (2026-05-30): 跨策略统一拦截亏损标的
   # 实施在 app/pipeline/stages/risk_stage.py 的入场校验最早期
   global_blacklist:
     - US.QCOM     # 44笔 22.7%胜率 -$3.8K (保留)
@@ -1336,7 +1336,7 @@ feature_flags:
 # execute_mode=simulate: Dashboard [执行] 按钮走模拟 (默认 shadow 安全); =live 需额外二次确认
 playbook:
   enabled: true                     # 上线闸门: true=进入 shadow 验证 (生成指令+追踪+飞书, 但执行仍 simulate)
-  execute_mode: simulate            # execute_instruction 的下单模式: simulate | live
+  execute_mode: live                # 方案B: shadow + 最小实盘验证 (保守模式已就位)
   auto_execute: true                # Phase 1: 自动执行 triggered 指令 (paper trade, OKR加速)
   enable_weekly: true               # 是否跑周度复盘 (冷启动期可关, 节省 LLM)
 strategy_enhancements:
@@ -1547,7 +1547,7 @@ strategies:
     # 当 ExitDispatcher 4 policy 各自稳定 7+ 天后, 切 true 启用统一 ExitDecision 优先级仲裁
     # 启用前置条件: PositionExitMonitor 与 ExitDispatcher 决策一致率 > 95%
     unified_dispatcher_enabled: false
-  # ADR-002 (2026-05-31): scalping 已删除, 资金全部归 main
+  # ADR-002 (2026-05-31): 资金全部归 main
   main:
     capital_pct: 0.80
     priority: 5
@@ -1801,10 +1801,10 @@ strategies:
     min_eps_growth: 0.05           # 最低EPS增长预期 (5%)
     min_strength: 45               # 最低信号强度
 risk_limits:
-  # Task #1 (2026-05-31): 总敞口对齐 — main 0.65 (含子策略) + scalping 0.15 = 0.80
+  # Task #1 (2026-05-31): 总敞口对齐 — main 0.65 (含子策略) = 0.80
   # 子策略 (trend_first/fast_lane) 走 capital_source: main, 不再单独累加
   max_total_position: 0.80
-  # Capital allocation: main=0.65 (含 trend_first 35% + fast_lane 25%) + scalping=0.15 = 0.80
+  # Capital allocation: main=0.65 (含 trend_first 35% + fast_lane 25%) = 0.80
   end_of_day:
     no_new_entry_after_et: "15:50"
     force_close_loss_at_et: "15:55"

@@ -1,7 +1,7 @@
 """
 共享 EOD (End-of-Day) 配置 — 单一真相源
 
-C4 修复 (2026-05-13): 主线 pre_close_exit 和 scalping force_close_at
+C4 修复 (2026-05-13): 主线 pre_close_exit 和 force_close_at
 从同一全局配置读取，消除两套引擎收盘行为不一致的问题。
 
 配置来源: unified_config.yaml → risk_limits.end_of_day

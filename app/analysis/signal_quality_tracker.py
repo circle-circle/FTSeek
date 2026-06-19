@@ -63,7 +63,6 @@ CONFIDENCE_BUCKETS: List[Tuple[float, float, str]] = [
 ]
 
 # 策略类别归一化 (entry_reason / owner_strategy / source_type 联合分类)
-# P1 修复 (2026-06-19): 移除 "scalping" — 策略已删除，但旧DB记录被硬归类导致虚假告警
 KNOWN_CATEGORIES = (
     "technical",
     "llm_vote",
@@ -119,12 +118,10 @@ def _classify_strategy(
 ) -> str:
     """
     将单笔交易归类到 KNOWN_CATEGORIES 之一
-    P1 修复 (2026-06-19): 移除 scalping 硬归类，旧记录归入"其他"
     优先级: entry_reason 关键词 > 其他
     """
     owner = (owner_strategy or "").lower()
     src = (source_type or "").lower()
-    # scalping 已删除，旧记录不再硬归类
 
     joined = " ".join(entry_reasons + [decision_reason or ""]).lower()
 

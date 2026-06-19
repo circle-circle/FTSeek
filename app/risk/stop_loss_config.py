@@ -103,7 +103,7 @@ class StopLossConfig:
         优先级: custom_sl > regime > strategy_default > system_default
 
         Args:
-            strategy_id: 策略 ID (如 "voting_llm", "scalping")
+            strategy_id: 策略 ID (如 "voting_llm")
             market_regime: 市场状态 (如 "strong_trend_up", "range_bound")
             custom_sl: LLM 策略自定义止损 (最高优先级)
 

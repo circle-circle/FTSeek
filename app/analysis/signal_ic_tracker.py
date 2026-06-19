@@ -86,7 +86,7 @@ def _ensure_table():
                     strength        INTEGER,                -- 0-100
                     confidence      REAL,
                     consensus_level REAL,
-                    strategy_id     TEXT,                   -- main / scalping / fast_lane / llm_plan
+                    strategy_id     TEXT,                   -- main / fast_lane / llm_plan
                     created_at      TEXT NOT NULL,          -- 信号生成时间 (ISO format)
                     trade_date      TEXT NOT NULL,          -- 交易日 (YYYY-MM-DD, ET)
                     

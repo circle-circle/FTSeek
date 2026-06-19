@@ -10,14 +10,9 @@ Phase A 默认观察模式 (各组件 observe_only=True), 不阻断现有流程.
 
 Phase B/C/D 待加: run_open_cycle 主循环, OrderGateway 注入, ExecutionMode.
 
-⚠️ observe_only + Scalping 已知局限 (2026-05-26 记录):
-- observe_only=True 时 SymbolLock 完全不强制 → Scalping + Main 可能在同一标的上竞争
-- Scalping 引擎有独立风控栈 (_verify_global_risk_gate + pre_trade_check),
-  不走 _check_gates_and_conflicts → VIX regime / ADR 集中度 / 价格动量门控 / TradeGuard
-  对 Scalping 不生效
-- 唯一保护: _open_position_lock (RLock) 仅保护 position_store 写入瞬间,
-  不阻止两个引擎在同一秒内各自决策开仓
-- Phase B 切 enforce 时需评估: Scalping 是否应接入完整 _check_gates_and_conflicts
+⚠️ observe_only 已知局限 (2026-06-19 更新):
+- observe_only=True 时 SymbolLock 完全不强制 → 多策略可能在同标的上竞争
+- Phase B 切 enforce 时需评估各策略是否应接入完整 _check_gates_and_conflicts
 """
 from __future__ import annotations
 import logging
@@ -227,11 +222,11 @@ class StrategyCoordinator:
         Phase A: 入场后登记 owner + reserve capital (幂等).
 
         使用 symbol 锁作为"是否已 reserve 过"的真实代理 — 避免按 by_strategy 差额检查
-        漏掉同 strategy 多次 entry 的情况 (5/18 scalping 13 笔 entry, capital 漂移 111 次根因).
+        漏掉同 strategy 多次 entry 的情况
 
         - 主线 (走 pre_trade_arbitrate): 已 acquire+reserve → lock.owner==strategy → 直接 return
-        - scalping (不走 arbitrate): 第 1 次 lock.owner==None → acquire+reserve
-        - scalping 平仓后再开同 symbol: on_position_closed 已 release → lock.owner==None → 走完整路径
+        - 其他策略 (不走 arbitrate): 第 1 次 lock.owner==None → acquire+reserve
+        - 平仓后再开同 symbol: on_position_closed 已 release → lock.owner==None → 走完整路径
         """
         if not self._enabled:
             return

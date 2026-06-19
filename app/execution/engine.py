@@ -153,7 +153,6 @@ class ExecutionEngine(BaseExecutionEngine):
         cid = getattr(order, "client_order_id", "") or ""
         if cid.startswith("orb_"):
             return "ORB"
-        # P1 修复 (2026-06-19): scalping 已删除，scalping_ 前缀不再产生
         return "MAIN"
 
     @classmethod
@@ -360,7 +359,7 @@ class ExecutionEngine(BaseExecutionEngine):
                 raise ValueError(f"Duplicate order: {order.client_order_id}")
             
             # P0 修复 (2026-06-03): 通用方向冲突检测 — 所有入场订单的统一关卡
-            # 根因: ORB / main pipeline / scalping 各自独立下单，
+            # 根因: ORB / main pipeline 各自独立下单，
             #       同一标的被多引擎同时操作 → broker 净仓位方向与系统认知不一致
             # 规则: 如果已有该标的持仓，禁止新入场 (无论同向或反向)
             #       必须先平掉旧仓再开新仓，由调用方负责

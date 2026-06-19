@@ -351,52 +351,8 @@ class DailyActivePool:
             logger.info(f"👤 人工添加: {code}")
             return True
 
-    # ─── 剥头皮专属操作 (P2 新增) ────────────────────────────
-
-    def add_scalping_target(self, code: str, metadata: Optional[Dict] = None):
-        """
-        添加剥头皮专属标的 (12h TTL)
-        
-        设计: 主管线扫描自动跳过 SCALPING 来源的标的，
-        Scalping 线程只扫描 SCALPING 来源的标的。
-        天然隔离，不冲突。
-        """
-        with self._lock:
-            existing = self._entries.get(code)
-            if existing:
-                # 如果是 POSITION 或 MANUAL，不覆盖
-                if existing.source in (SOURCE_POSITION, SOURCE_MANUAL):
-                    return False
-                # 其他来源，更新为 SCALPING
-            if not self._can_add(SOURCE_SCALPING):
-                self._evict_lowest_priority()
-            self._entries[code] = PoolEntry(
-                code=code,
-                source=SOURCE_SCALPING,
-                added_at=_now_iso(),
-                expires_at=_make_expiry(TTL_SCALPING_HOURS),
-                metadata=metadata or {}
-            )
-            self.save()
-            logger.info(f"⚡ 添加剥头皮标的: {code}")
-            return True
-
-    def get_scalping_codes(self) -> List[str]:
-        """获取所有剥头皮专属标的"""
-        self._cleanup_expired()
-        with self._lock:
-            return [e.code for e in self._entries.values() if e.source == SOURCE_SCALPING]
-
-    def remove_scalping(self, code: str):
-        """移除剥头皮标的"""
-        with self._lock:
-            entry = self._entries.get(code)
-            if entry and entry.source == SOURCE_SCALPING:
-                del self._entries[code]
-                self.save()
-                logger.info(f"📤 移除剥头皮标的: {code}")
-                return True
-            return False
+    # 以下方法已移除（策略已删除）
+    # 如有需要，调用方应改为直接调用 add_manual / get_codes 等通用方法。
 
     def remove_manual(self, code: str):
         """人工移除标的"""

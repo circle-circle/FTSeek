@@ -13,7 +13,6 @@ import uuid
 class EntryReason(str, Enum):
     """入场原因枚举 (2026-05-30: 支持归因系统 entry_reason 推导)"""
     MAIN_SIGNAL = "main_signal"
-    SCALPING = "scalping_signal"
     CROSS_MARKET = "cross_market"
     NEWS_DRIVEN = "news_driven"
     EARNINGS = "earnings"
@@ -43,9 +42,7 @@ def derive_entry_reason(strategy_id: str = "", source: str = "", metadata: Optio
 
     # 从 source 推导
     src = source or metadata.get('source_type', '') or metadata.get('source', '')
-    if src == 'SCALPING':
-        return EntryReason.SCALPING.value
-    elif src == 'MAIN_PIPELINE':
+    if src == 'MAIN_PIPELINE':
         return metadata.get('signal_source', EntryReason.MAIN_SIGNAL.value)
     elif src == 'CROSS_MARKET':
         return EntryReason.CROSS_MARKET.value
@@ -55,9 +52,7 @@ def derive_entry_reason(strategy_id: str = "", source: str = "", metadata: Optio
     # 从 strategy_id 推导
     if strategy_id:
         _sid = strategy_id.lower()
-        if 'scalp' in _sid:
-            return EntryReason.SCALPING.value
-        elif 'orb' in _sid:
+        if 'orb' in _sid:
             return EntryReason.ORB_BREAKOUT.value
         elif 'fast_lane' in _sid or 'battle_plan' in _sid:
             return EntryReason.FAST_LANE.value
@@ -371,7 +366,7 @@ class Position:
     add_on_records: List[Dict[str, Any]] = field(default_factory=list)
 
     # Phase A (2026-05-14): 多策略归属
-    # owner_strategy: "main" | "scalping" | "fast_lane" | "llm_plan"
+    # owner_strategy: "main" | "fast_lane" | "llm_plan"
     # 用于 ExitDispatcher 路由 + daily_review 按策略分组
     owner_strategy: Optional[str] = None
     # 仓位占总净值百分比 (用于 CapitalAllocator 释放)

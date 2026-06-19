@@ -2934,8 +2934,6 @@ def _execute_long(scheduler, symbol: str, signal: SignalScore, context: Dict[str
             position.position_pct = 0.0
 
         # Task #6 (2026-06-15): 根据 owner_strategy 反向推导 PositionSource 源头标记
-        # 主线默认 AUTO_MAIN; 如果 signal.metadata.owner_strategy 是 scalping/orb/fast_lane,
-        # from_str 会自动映射到对应的 AUTO_* 枚举值
         try:
             from app.positions import tag_position, PositionSource
             _src_label = getattr(position, "owner_strategy", None) or "main"
@@ -5142,7 +5140,6 @@ def _close_position(scheduler, position: Position, current_price: float, exit_re
             # 优先从 position.metadata 读取 (开仓时写入), 兜底从 _decision_data 获取
             "decision_id":       meta.get("decision_id", "") or _decision_data.get("decision_id", ""),
             # 2026-06-05 数据质量修复: signal_details 写入 — 信号决策快照持久化
-            # 此前 MAIN_PIPELINE 从未写入此字段 (只有 scalping 写了), 导致 0% 填充率
             "signal_details":    json.dumps({
                 "signal_strength": int(signal_strength or 0),
                 "signal_confidence": float(signal_confidence or 0.0),

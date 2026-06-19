@@ -1161,7 +1161,7 @@ class USPositionSync:
                             or getattr(existing_pos, 'strategy_id', '')
                             or ''
                         )
-                        # P1 修复 (2026-06-19): scalping 已删除，不再特殊处理
+                        # 检查是否为活跃策略的持仓
                         if age_seconds < grace_period:
                             logger.info(
                                 "[US Sync] 跳过新持仓 %s (创建 %.0fs 前 < %.0fs 保护窗口, 等待 Futu 确认成交)",

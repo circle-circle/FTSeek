@@ -89,7 +89,7 @@ def generate_attribution_report(
                 from app.risk.position_limits import get_etf_discount
 
                 # P0 修复 (2026-05-09): 按来源分类展示持仓
-                # 2026-06-19: scalping 已删除，简化为 主线 + 其他
+        # 按来源分类展示持仓
                 main_positions = []
                 other_positions = []
                 

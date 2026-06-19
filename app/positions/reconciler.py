@@ -421,7 +421,7 @@ class StartupReconciler:
                     return True
                 # trader_type=MANUAL 且 strategy_id 非自动策略
                 if trader_type == "MANUAL" and not any(
-                    s in strategy_id for s in ("auto_", "main_pipeline", "voting_llm", "scalping", "orb")
+                    s in strategy_id for s in ("auto_", "main_pipeline", "voting_llm", "orb")
                 ):
                     return True
                 # source 字段标记为 manual

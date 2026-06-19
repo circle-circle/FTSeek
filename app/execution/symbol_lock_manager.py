@@ -1,11 +1,10 @@
 """符号+方向级互斥锁 - 确保同一标的同方向不被多个策略同时持有
 
-Task #50 (2026-05-28): Main/Scalping 策略互斥锁
+Task #50 (2026-05-28): 策略互斥锁
 
 与现有 ``app/coordinator/symbol_lock.py`` (symbol 级) 的区别:
 - 本模块按 (symbol, direction) 两元组锁定, 允许对冲场景
-  (同标的 Main LONG + Scalping SHORT 不冲突)
-- 由 ``signal_pipeline``/``order_executor``/``scalping.engine`` 在
+- 由 ``signal_pipeline``/``order_executor`` 在
   入场前调用 ``try_acquire``, 平仓时调用 ``release``
 - 单例 + 线程安全 (RLock)
 """
@@ -57,7 +56,7 @@ class SymbolLockManager:
         Args:
             symbol:    股票代码 (如 "AAPL")
             direction: 方向 ("LONG" 或 "SHORT")
-            owner:     策略所有者 ("main" 或 "scalping" 等)
+            owner:     策略所有者 ("main" 等)
 
         Returns:
             True  获取成功 (或同策略幂等重入)

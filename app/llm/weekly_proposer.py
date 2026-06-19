@@ -25,7 +25,7 @@ class ImprovementProposal:
     proposal_id: str = ""              # "prop-YYYYMMDD-HHMM"
     proposer: str = "llm:weekly"       # "llm:weekly" / "rule:low_win_rate" / "human"
     target_param: str = ""             # "day_trade_mode.take_profit.tier_1.profit_pct"
-    strategy_type: str = "main"        # "main" or "scalping"
+    strategy_type: str = "main"
     current_value: Any = None
     proposed_value: Any = None
     rationale: str = ""                # 为什么这么改

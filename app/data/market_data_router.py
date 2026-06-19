@@ -739,9 +739,9 @@ class MarketDataRouter:
         indicators: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """
-        获取技术指标 (供 Scalping Engine 使用)
+        获取技术指标
 
-        P0 修复 (2026-05-02): 原方法不存在导致 scalping 信号链路完全断裂。
+        P0 修复 (2026-05-02): 原方法不存在导致信号链路完全断裂。
         内部复用 get_full_market_context() 的 LV3 K 线→技术指标计算链路。
 
         Args:
@@ -759,7 +759,7 @@ class MarketDataRouter:
             logger.warning(f"[Router] {symbol} 技术指标获取失败: 无行情数据")
             return result
 
-        # 映射: full context 字段 → scalping 期望字段
+        # 映射: full context 字段
         field_map = {
             "rsi": "rsi_14",
             "vwap": "vwap",

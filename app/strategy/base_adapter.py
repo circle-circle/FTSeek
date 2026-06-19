@@ -16,8 +16,8 @@ from typing import Any, List, Optional
 @dataclass
 class AdapterMeta:
     """策略元数据 (用于 Coordinator 调度决策)"""
-    name: str                      # "main" | "scalping" | "fast_lane" | "llm_plan"
-    priority: int                  # 高优先级先决断 (用户决定: scalping=10 > main=5)
+    name: str                      # "main" | "fast_lane" | "llm_plan"
+    priority: int                  # 高优先级先决断
     capital_pct: float             # 该策略最大资金占比 (实施 enforce 时强制)
     # B.3 (2026-05-14): 资金桶 — 多策略共享同一资金 bucket
     # 例: fast_lane.capital_bucket="main" → fast_lane 占用计入 main 的 0.65 总额
@@ -43,7 +43,7 @@ class StrategyAdapter:
     - 实现 select_universe(ctx) 返回 [symbol]
     - 实现 get_exit_policy() 返回 ExitPolicy 实例 (Phase B 填充, 现可返回 None)
 
-    内部可以 wrap 现有 BaseStrategy / signal_pipeline / scalping/engine.
+    内部可以 wrap 现有 BaseStrategy / signal_pipeline.
     """
 
     meta: AdapterMeta
@@ -64,8 +64,8 @@ class StrategyAdapter:
         """T8b (2026-05-16): regime-aware 动态 priority.
 
         子类可 override 此方法, 根据 ctx.regime 调整 priority:
-        - RANGING / HIGH_VOL_CHOP → scalping 友好, 反转策略 +5
-        - TRENDING_UP / TRENDING_DOWN → main 友好, 趋势策略 +5
+        - RANGING / HIGH_VOL_CHOP → 反转策略 +5
+        - TRENDING_UP / TRENDING_DOWN → 趋势策略 +5
         - 默认: 返回静态 self.priority
 
         SignalArbitrator 调 priority × confidence 时使用此值.

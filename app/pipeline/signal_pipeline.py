@@ -492,13 +492,8 @@ def _run_signal_scan_body(scheduler, vix, spy_context, market_news, pool_filter)
                     logger.debug(f"[扫描] {symbol} 处于冷却中，跳过")
                     continue
                 if scheduler.position_store.has(symbol):
-                    # C3 修复 (2026-05-13): 区分 scalping 持仓 vs 主管线持仓
-                    existing = scheduler.position_store.get(symbol)
-                    existing_source = (getattr(existing, 'metadata', None) or {}).get("source", "")
-                    if existing_source == "scalping":
-                        logger.debug(f"[扫描] {symbol} 由 Scalping 持有, 主管线仍进入金字塔评估")
-                    else:
-                        logger.debug(f"[扫描] {symbol} 已有主管线持仓, 进入金字塔加仓检测")
+                    # P1 修复 (2026-06-19)
+                    logger.debug(f"[扫描] {symbol} 已有持仓, 进入金字塔加仓检测")
                 _process_symbol_impl(scheduler, symbol, vix, spy_context, market_news.get("sentiment", 0),
                                      cached_context=_context_cache.get(symbol))  # H1: 传入缓存
                 record_api_success()
@@ -573,32 +568,9 @@ def _run_signal_scan_body(scheduler, vix, spy_context, market_news, pool_filter)
                 if scheduler._is_in_cooldown(symbol):
                     continue
                 if scheduler.position_store.has(symbol):
-                    # C3 修复 (2026-05-13): 检查是否 scalping 持有
-                    # 如果是 scalping 仓位, 主管线仍可评估 (由跨引擎锁和风险检查决定)
-                    existing = scheduler.position_store.get(symbol)
-                    existing_source = (getattr(existing, 'metadata', None) or {}).get("source", "")
-                    existing_dir = getattr(existing, 'direction', None)
-                    existing_dir_str = existing_dir.value if hasattr(existing_dir, 'value') else str(existing_dir)
-                    if existing_source == "scalping":
-                        logger.info(
-                            f"[跨引擎] {symbol} 由 Scalping 持有({existing_dir_str}), "
-                            f"主管线仍评估信号 (方向冲突由风险层裁决)"
-                        )
-                        # C5 归因 (2026-05-13): 记录互斥事件
-                        try:
-                            from app.analysis.strategy_attribution import get_attribution
-                            get_attribution().record_interference(
-                                symbol=symbol,
-                                interference_type="main_blocked_by_scalping",
-                                blocked_strategy="main",
-                                blocked_direction="",  # 尚不知道主线的信号方向
-                                detail={"scalping_direction": existing_dir_str},
-                            )
-                        except Exception:
-                            pass
-                        # 不 skip, 让主管线继续评估 — 方向冲突由后续风险检查处理
-                    else:
-                        continue
+                    # P1 修复 (2026-06-19)
+                    # 已有持仓，跳过（进入金字塔加仓流程）
+                    continue
                 # P1 (2026-05-26): 新管线 CRA 模式 — 用 modular stages 生成候选,
                 # 然后走 PortfolioConstructor 全局排序, 风控统一在 _submit_order 执行
                 _cached_ctx = _context_cache_cra.get(symbol)  # H1: 复用广度预扫描缓存

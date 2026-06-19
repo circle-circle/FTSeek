@@ -258,3 +258,55 @@ IF 周PnL连续2周为正:
 | 6/19 | INSIDER min_cluster: 3→2 | 降低门槛, 2人同买已强信号 |
 | 6/19 | SHORT_PROXY 7层禁用 | 期权灾难, 彻底封死 |
 | 6/19 | LONG方向折扣0.7 | 历史数据: LONG胜率26.6%远低于SHORT |
+| 6/19 | **Scalping 完全清理** | 删除800行代码+配置, 消除认知负担 |
+| 6/19 | **AVGO Entry Price 修复** | shadow_tracker使用actual_entry_price而非decision_price |
+| 6/19 | **触发窗口 ±3%→±5%** | AVGO案例: $392.9→$409.25超出±3%上限 |
+
+---
+
+## 九、今日关键决策 (2026-06-19)
+
+### 1. Scalping 策略完全清理
+- **动作**: 删除 `app/scalping/` 目录、清理 `unified_config.yaml`、移除14处代码引用
+- **影响**: 代码库减少约800行，消除"已删除策略"的认知负担
+- **保留**: DB历史查询（`strategy_id='scalping'`）用于归因分析
+- **验证**: `grep -r "scalping" app/` 返回0结果
+
+### 2. AVGO Entry Price 计算修复
+- **问题**: 信号显示entry=$392.9，实际成交=$409.25，差异4.2%
+- **根因**: `instruction_generator.py` 使用理论价而非实际成交价
+- **修复**: `shadow_tracker.py` 优先使用 `trade_store.get_actual_entry_price()`
+- **影响**: Shadow PnL计算更准确，反映真实交易成本
+
+### 3. voting_llm 策略深度审计
+- **发现**:
+  - 命名不一致：`voting_llm` vs `llm_vote` 混用
+  - 重复触发：同一symbol同天可能触发多次（signal_dedup未覆盖）
+  - IC门禁覆盖不全：只拦截main策略，voting_llm独立运行
+- **数据**: 30天48笔交易，-$11,504，胜率35.4%
+- **下一步**: 统一命名、扩展signal_dedup、IC门禁覆盖所有策略
+- **详细报告**: `docs/voting_llm_audit_20260619.md`
+
+### 4. 触发窗口调整 (±3% → ±5%)
+- **背景**: AVGO案例中价格超出±3%窗口导致未触发
+- **决策**: 放宽到±5%，平衡触发率与价格合理性
+- **验证**: 需下一个交易日监控触发率变化
+
+---
+
+## 十、待办事项 (Next Actions)
+
+### 高优先级 (P0)
+- [ ] **voting_llm 命名统一**: 全局grep `llm_vote` → `voting_llm`
+- [ ] **扩展signal_dedup**: 覆盖voting_llm路径，防止重复触发
+- [ ] **IC门禁扩展**: 覆盖所有策略（包括voting_llm）
+
+### 中优先级 (P1)
+- [ ] **触发率监控**: 添加实时指标，验证±5%窗口效果
+- [ ] **Shadow PnL验证**: 下个交易日确认actual_entry_price生效
+- [ ] **OKR追踪**: 完成5维度评分系统实现
+
+### 低优先级 (P2)
+- [ ] **voting_llm 策略优化**: 分析30天48笔交易，识别失败模式
+- [ ] **信号质量评估**: 建立signal_quality_tracker，关联IC与胜率
+

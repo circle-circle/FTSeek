@@ -239,11 +239,11 @@ class DrawdownController:
     def record_trade_pnl(self, pnl: float, source: str = "unknown"):
         """C4 fix (2026-05-31): 记录单笔交易 P&L, 累加到日内回撤
 
-        供 scalping 和主线在平仓时调用, 确保所有策略的亏损都计入共享日回撤池。
+        供主线在平仓时调用, 确保所有策略的亏损都计入共享日回撤池。
 
         Args:
             pnl: 交易净盈亏 (正=盈利, 负=亏损), 单位: 美元
-            source: 来源标识 ("scalping" / "main" / etc.)
+            source: 来源标识 ("main" / etc.)
         """
         if self.daily_start_assets <= 0:
             logger.debug(f"[回撤] record_trade_pnl 跳过: daily_start_assets={self.daily_start_assets}")
