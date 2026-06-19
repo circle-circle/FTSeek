@@ -1478,6 +1478,7 @@ def _get_order_qty(scheduler, symbol: str, atr: float = 0, direction: str = "LON
             _allowed, _max_qty, _reason = pre_trade_safety_check(
                 symbol=symbol, direction=_dir, quantity=size, price=price,
                 position_store=_ps,
+                broker_adapter=getattr(getattr(scheduler, 'execution_engine', None), 'broker_adapter', None),
             )
             if not _allowed:
                 if _max_qty <= 0:
@@ -1987,6 +1988,7 @@ def _handle_pyramid_add(scheduler, symbol: str, signal: SignalScore, context: Di
                 _ok, _mq, _rsn = pre_trade_safety_check(
                     symbol=symbol, direction="LONG", quantity=_add_qty, price=price,
                     position_store=_ps,
+                    broker_adapter=getattr(getattr(scheduler, 'execution_engine', None), 'broker_adapter', None),
                 )
                 if not _ok and _mq <= 0:
                     logger.warning(f"🚫 [金字塔·安全门禁] {symbol} 加仓拒绝: {_rsn}")
@@ -3461,6 +3463,7 @@ def _submit_order(scheduler, symbol: str, signal: SignalScore, context: Dict[str
             _ok, _mq, _rsn = pre_trade_safety_check(
                 symbol=symbol, direction=_dir_str, quantity=_est_qty, price=_est_price,
                 position_store=_ps,
+                broker_adapter=getattr(getattr(scheduler, 'execution_engine', None), 'broker_adapter', None),
             )
             if not _ok and _mq <= 0:
                 logger.warning(f"{_rsn}")
@@ -3768,7 +3771,7 @@ def _derive_entry_reason_for_close(meta: dict) -> str:
       2. 从 strategy_id + source_type 推导
       3. 兜底 'unknown'
     """
-    from app.core.models import derive_entry_reason, EntryReason
+    from app.core.models import derive_entry_reason
 
     # 1. 直接读取开仓时写入的 entry_reason
     existing = meta.get("entry_reason", "")
@@ -3778,9 +3781,7 @@ def _derive_entry_reason_for_close(meta: dict) -> str:
     # 2. 推导
     strategy_id = meta.get("strategy_id", "")
     source = meta.get("source", "") or meta.get("source_type", "")
-    # source_type 可能是 MAIN_PIPELINE/SCALPING 等
-    if source == "SCALPING":
-        return EntryReason.SCALPING.value
+    # source_type 可能是 MAIN_PIPELINE 等 (SCALPING 引擎已删除, 历史记录兜底为 unknown)
     return derive_entry_reason(
         strategy_id=strategy_id,
         source=source,
@@ -4697,6 +4698,13 @@ def _close_position(scheduler, position: Position, current_price: float, exit_re
     position.metadata = meta
 
     scheduler.position_store.remove(position.symbol)
+    # P1 (2026-06-19): 自动平仓也清 trail_state, 与手动平仓路径对齐, 防同标的再开仓时
+    # position_monitor 从旧 trail_state 恢复幽灵止损线/峰值
+    try:
+        from app.risk.trail_state_store import get_trail_state_store
+        get_trail_state_store().delete(position.symbol)
+    except Exception as _tse:
+        logger.debug(f"[平仓] trail_state 清理失败 (不影响平仓): {_tse}")
     try:
         if hasattr(scheduler, 'trade_store') and scheduler.trade_store:
             scheduler.trade_store.upsert_open_position(

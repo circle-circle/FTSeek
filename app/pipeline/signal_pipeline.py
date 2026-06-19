@@ -883,6 +883,16 @@ def _execute_portfolio_plan(scheduler, candidates: list, vix: float):
     lock = getattr(scheduler, '_open_position_lock', None)
 
     for c in execution_plan:
+        # ── P0 (2026-06-19): signal_dedup — CRA 组合路径与 polling 路径对齐 ──
+        try:
+            from app.risk.signal_dedup import get_signal_deduplicator
+            _direction = str(getattr(c.signal, 'direction', '')).upper()
+            _strat_id = getattr(c.signal, 'strategy_id', '') or ''
+            if get_signal_deduplicator().is_duplicate(c.symbol, _direction, _strat_id):
+                logger.info(f"[组合执行] {c.symbol} signal_dedup: 重复信号, 跳过")
+                continue
+        except Exception as _dedup_err:
+            logger.debug(f"[组合执行] {c.symbol} signal_dedup 检查异常 (放行): {_dedup_err}")
         try:
             if lock:
                 lock.acquire()

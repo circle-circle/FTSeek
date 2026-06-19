@@ -142,6 +142,33 @@ class PlaybookService:
         if inst.get("direction") == "SKIP":
             return {"success": False, "message": "SKIP 指令不可执行"}
 
+        # 读取下单模式: 默认 simulate (shadow 安全); live 需在 unified_config.yaml playbook.execute_mode=live
+        try:
+            from app.core.config_container import get_config
+            _exec_mode = get_config().get_dotted("playbook.execute_mode", "simulate")
+        except Exception:
+            _exec_mode = "simulate"
+
+        # ── P0 (2026-06-19): paper/live 代码级隔离 gate ──
+        # 审计发现: ManualOrderService 无条件 place_order, mode=simulate 仅是元数据,
+        # 会被 web_dashboard/order/executor.py 覆写, broker 路由只看 TRADE_ENV.
+        # 因此 simulate 模式下若 broker 是 live(TRADE_ENV=0), 必须拒绝 — 否则
+        # paper 单会下到真实账户. 只允许 execute_mode=live 且 TRADE_ENV=0 一致组合.
+        import os as _os
+        _broker_live = str(_os.getenv("TRADE_ENV", "1")).strip() == "0"
+        if _exec_mode != "live" and _broker_live:
+            logger.error(
+                f"[playbook] 🚫 paper/live 不一致: execute_mode={_exec_mode} 但 TRADE_ENV=0(live broker) "
+                f"— 拒绝下单以防 paper 单下到真实账户. 若要 live 执行需显式设 playbook.execute_mode=live"
+            )
+            return {
+                "success": False,
+                "message": (
+                    f"paper/live 隔离拒绝: execute_mode={_exec_mode} 与 live broker 不一致. "
+                    f"若确认要在真实账户执行, 请在 unified_config.yaml 显式设 playbook.execute_mode=live"
+                ),
+            }
+
         # 2. 构建 ManualOrder
         try:
             from app.web_dashboard.manual_order_service import (
@@ -161,12 +188,6 @@ class PlaybookService:
         mos_direction = "LONG" if direction == "BUY" else "SHORT"
         mos_action = "BUY" if direction == "BUY" else "SELL"
 
-        # 读取下单模式: 默认 simulate (shadow 安全); live 需在 unified_config.yaml playbook.execute_mode=live
-        try:
-            from app.core.config_container import get_config
-            _exec_mode = get_config().get_dotted("playbook.execute_mode", "simulate")
-        except Exception:
-            _exec_mode = "simulate"
         order = ManualOrder(
             symbol=symbol,
             direction=mos_direction,

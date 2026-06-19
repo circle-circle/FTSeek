@@ -126,14 +126,18 @@ def _is_short(direction: str) -> bool:
     return "SHORT" in d or "SELL" in d
 
 
-def _check_daily_drawdown(equity: float) -> Tuple[bool, str]:
-    """P0 (2026-06-07): Check if daily realized loss exceeds circuit breaker.
+def _check_daily_drawdown(equity: float, broker_adapter=None) -> Tuple[bool, str]:
+    """P0 (2026-06-07): Check if daily drawdown exceeds circuit breaker.
 
-    Queries trade_records for today's realized PnL.
+    P0 (2026-06-19): 含手动仓已实现亏损 + 当前未实现浮亏 (对齐 CLAUDE.md
+    "账户级回撤 3% (含手动仓, peak→current)" 规格)。
+      - 已实现: 当日 trade_records 全部平仓 pnl (含 MANUAL/MANUAL_CLOSE)
+      - 未实现: broker 真实持仓净 unrealized_pnl (含手动仓, 因 broker 看到全部持仓)
+
     Uses 60s TTL cache to avoid DB query on every order.
 
     Returns:
-        (allowed, reason) — False if daily loss exceeds threshold.
+        (allowed, reason) — False if drawdown exceeds threshold.
     """
     global _daily_pnl_cache
 
@@ -161,8 +165,8 @@ def _check_daily_drawdown(equity: float) -> Tuple[bool, str]:
             and now - _daily_pnl_cache["ts"] < _DAILY_PNL_TTL):
         daily_pnl = _daily_pnl_cache["pnl"]
     else:
-        # Query DB
-        daily_pnl = 0.0
+        # Query DB — 当日已实现亏损 (含手动仓)
+        realized_pnl = 0.0
         try:
             import sqlite3
             import os
@@ -172,17 +176,17 @@ def _check_daily_drawdown(equity: float) -> Tuple[bool, str]:
                 conn = sqlite3.connect(db_path)
                 conn.execute("PRAGMA journal_mode=WAL")
                 c = conn.cursor()
+                # P0 (2026-06-19): 移除 MANUAL/MANUAL_CLOSE 排除 — 手动仓亏损必须计入回撤
                 c.execute(
                     "SELECT COALESCE(SUM(realized_pnl), 0) "
                     "FROM trade_records "
                     "WHERE exit_time IS NOT NULL "
-                    "AND date(exit_time) = ? "
-                    "AND COALESCE(source_type, '') NOT IN ('MANUAL', 'MANUAL_CLOSE')",
+                    "AND date(exit_time) = ?",
                     (today,)
                 )
                 row = c.fetchone()
                 if row:
-                    daily_pnl = float(row[0])
+                    realized_pnl = float(row[0])
                 conn.close()
         except Exception as e:
             # P0 (2026-06-17): fail-close on DB error — 亏损数据库损坏时停止交易而非继续
@@ -197,6 +201,22 @@ def _check_daily_drawdown(equity: float) -> Tuple[bool, str]:
                 pass
             return False, f"DB_ERROR: daily PnL query failed ({e})"
 
+        # 未实现浮亏 (broker 真实持仓净 unrealized_pnl, 含手动仓)
+        unrealized_pnl = 0.0
+        if broker_adapter is not None:
+            try:
+                _positions = broker_adapter.get_positions() or []
+                for _p in _positions:
+                    if abs(float(_p.get("qty", 0) or 0)) > 0:
+                        unrealized_pnl += float(_p.get("unrealized_pnl", 0) or 0)
+            except Exception as e:
+                # 浮亏不可知时 fail-close — 无法评估真实回撤就不放行
+                logger.error(
+                    f"[pre_trade_gate] 🚨 broker unrealized query failed: {e} — fail-close (拒绝交易)"
+                )
+                return False, f"DB_ERROR: broker unrealized query failed ({e})"
+
+        daily_pnl = realized_pnl + unrealized_pnl
         _daily_pnl_cache = {"ts": now, "pnl": daily_pnl, "date": today}
 
     # Check threshold
@@ -204,15 +224,15 @@ def _check_daily_drawdown(equity: float) -> Tuple[bool, str]:
         dd_pct = abs(daily_pnl) / equity
         if dd_pct >= max_daily_dd:
             reason = (
-                f"🚫 日亏损熔断: 当日已实现亏损 ${abs(daily_pnl):,.0f} "
-                f"({dd_pct:.1%}) ≥ 阈值 {max_daily_dd:.0%}"
+                f"🚫 日回撤熔断: 当日已实现+未实现亏损 ${abs(daily_pnl):,.0f} "
+                f"({dd_pct:.1%}) ≥ 阈值 {max_daily_dd:.0%} (含手动仓)"
             )
             logger.critical(f"[pre_trade_gate] {reason}")
             return False, reason
         elif dd_pct >= max_daily_dd * 0.7:
             # Warning at 70% of threshold
             logger.warning(
-                f"[pre_trade_gate] ⚠️ 日亏损预警: ${abs(daily_pnl):,.0f} "
+                f"[pre_trade_gate] ⚠️ 日回撤预警: ${abs(daily_pnl):,.0f} "
                 f"({dd_pct:.1%}) 接近熔断阈值 {max_daily_dd:.0%}"
             )
 
@@ -251,6 +271,7 @@ def pre_trade_safety_check(
     position_store: Optional[Any] = None,
     equity: Optional[float] = None,
     config: Optional[Any] = None,
+    broker_adapter: Optional[Any] = None,
 ) -> Tuple[bool, int, str]:
     """
     Unified pre-trade safety gate. SSOT for all position limit checks.
@@ -294,8 +315,8 @@ def pre_trade_safety_check(
     short = _is_short(direction)
     dir_label = "SHORT" if short else "LONG"
 
-    # ═══ Check 0: Daily realized loss circuit breaker (P0 2026-06-07) ═══
-    dd_ok, dd_reason = _check_daily_drawdown(equity)
+    # ═══ Check 0: Daily drawdown circuit breaker (含手动仓+浮亏, P0 2026-06-19) ═══
+    dd_ok, dd_reason = _check_daily_drawdown(equity, broker_adapter)
     if not dd_ok:
         return False, 0, dd_reason
 
