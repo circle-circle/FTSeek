@@ -65,7 +65,7 @@ CONFIDENCE_BUCKETS: List[Tuple[float, float, str]] = [
 # 策略类别归一化 (entry_reason / owner_strategy / source_type 联合分类)
 KNOWN_CATEGORIES = (
     "technical",
-    "llm_vote",
+    "voting_llm",
     "battle_plan",
     "news",
     "其他",
@@ -126,8 +126,8 @@ def _classify_strategy(
     joined = " ".join(entry_reasons + [decision_reason or ""]).lower()
 
     # 优先关键字匹配
-    if any(k in joined for k in ("llm_vote", "vote", "consensus")):
-        return "llm_vote"
+    if any(k in joined for k in ("voting_llm", "vote", "consensus")):
+        return "voting_llm"
     if any(k in joined for k in ("battle_plan", "battle", "plan")):
         return "battle_plan"
     if any(k in joined for k in ("news", "catalyst", "earning")):

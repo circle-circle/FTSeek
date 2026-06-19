@@ -1183,6 +1183,17 @@ def _process_symbol_new_pipeline(scheduler, symbol: str, vix: float,
         except Exception as _rec_err:
             logger.debug(f"[新管线] 决策记录失败 (不影响主流程): {_rec_err}")
 
+    # ── P0 (2026-06-19): signal_dedup — CRA路径与legacy路径对齐 ──
+    try:
+        from app.risk.signal_dedup import get_signal_deduplicator
+        _direction = str(getattr(signal, 'direction', '')).upper()
+        _strat_id = getattr(signal, 'strategy_id', '') or ''
+        if get_signal_deduplicator().is_duplicate(symbol, _direction, _strat_id):
+            logger.info(f"[CRA] {symbol} signal_dedup: 重复信号, 跳过")
+            return
+    except Exception as _dedup_err:
+        logger.debug(f"[CRA] signal_dedup 检查异常 (放行): {_dedup_err}")
+
     # ── 委托给现有执行路径 (PDT → Gates → Pyramid → Execute) ──
     from app.pipeline.order_executor import _submit_order
     lock = getattr(scheduler, '_open_position_lock', None)

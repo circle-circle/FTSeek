@@ -42,7 +42,7 @@ def evaluate(name: str, ctx: SymbolContext, config: Optional[Dict[str, Any]] = N
     执行指定策略纯函数 (单策略入口).
 
     Args:
-        name: "fast_lane" / "technical" / "llm_vote" 等已注册策略名
+        name: "fast_lane" / "technical" / "voting_llm" 等已注册策略名
         ctx: SymbolContext 增强行情快照
         config: 策略参数 (从 unified_config.yaml > strategies.<name> 加载)
 
@@ -107,7 +107,7 @@ def _enrich_candidate(sig: SignalCandidate, ctx: SymbolContext, name: str) -> No
     signal_tags 从 SignalCandidate 现有字段或 strategy_id 推断.
     """
     # 1. trace_id (若策略未设) — Task #11 (2026-06-02): 统一走 app.core.trace 模块,
-    # 通过策略名 (fast_lane/technical/llm_vote/trend_first/orb) 解析为 MAIN / TECH / TF / ORB 前缀,
+    # 通过策略名 (fast_lane/technical/voting_llm/trend_first/orb) 解析为 MAIN / TECH / TF / ORB 前缀,
     # 一眼区分候选来源, 与 ORB engine / 其他策略保持同一套生成机制。
     if not sig.trace_id:
         try:
@@ -139,7 +139,7 @@ def _load_yaml_config(name: str) -> Dict[str, Any]:
 # 延迟导入 — 触发 @register 装饰器, 填充 REGISTRY
 from app.strategy.pure import fast_lane    # noqa: E402, F401
 from app.strategy.pure import technical    # noqa: E402, F401
-from app.strategy.pure import llm_vote     # noqa: E402, F401
+from app.strategy.pure import voting_llm     # noqa: E402, F401
 from app.strategy.pure import trend_first  # noqa: E402, F401  # RFC-054
 from app.strategy.pure import orb          # noqa: E402, F401  # ORB Opening Range Breakout
 from app.strategy.pure import insider      # noqa: E402, F401  # ADR-007: SEC Form 4 内部人集群买入
@@ -162,7 +162,7 @@ _BUILTIN_DEFAULTS = {
         "weights": {"rsi": 0.30, "macd": 0.25, "bollinger": 0.25, "supertrend": 0.20},
         "min_score": 10,
     },
-    "llm_vote": {
+    "voting_llm": {
         "enabled": True, "min_consensus": 0.30, "min_confidence": 0.70,
     },
     "trend_first": {

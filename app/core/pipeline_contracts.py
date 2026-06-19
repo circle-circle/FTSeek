@@ -201,7 +201,7 @@ class SignalCandidate:
     strength: int = 0                   # 0-100
     confidence: float = 0.0             # 0.0-1.0
     strategy_id: str = ""               # 策略标识
-    source: str = ""                    # "fast_lane" | "technical" | "llm_vote"
+    source: str = ""                    # "fast_lane" | "technical" | "voting_llm"
 
     # 策略附加上下文
     rationale: str = ""                 # 策略决策理由
@@ -258,8 +258,8 @@ class SignalCandidate:
             direction=str(vote.get("direction", "NEUTRAL")).upper(),
             strength=int(vote.get("final_strength", 50)),
             confidence=float(vote.get("consensus_level", 0.0)),
-            strategy_id="LLM_VOTE",
-            source="llm_vote",
+            strategy_id="voting_llm",
+            source="voting_llm",
             rationale=str(vote.get("summary", "")),
         )
 

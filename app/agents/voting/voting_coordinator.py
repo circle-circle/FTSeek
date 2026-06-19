@@ -836,11 +836,11 @@ VIX > 25 时，最大 Strength 不得超过 50。
                 result["strategy_id"] = "voting_llm"
 
             # 准备 LLM 投票信息
-            llm_vote = None
+            voting_llm = None
             if external_votes:
                 for ev in external_votes:
                     if ev.get("model") == "llm_strategy":
-                        llm_vote = {
+                        voting_llm = {
                             "strength": ev.get("strength", 50),
                             "weight": self.config.LLM_EXTERNAL_VOTE_WEIGHT,
                         }
@@ -865,7 +865,7 @@ VIX > 25 时，最大 Strength 不得超过 50。
                     ),
                     "vix": market_data.get("vix"),
                 },
-                llm_vote=llm_vote,
+                voting_llm=voting_llm,
             )
             # 将 decision_id 写回 result 供下游使用
             result["decision_id"] = decision_id

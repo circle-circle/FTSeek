@@ -351,17 +351,17 @@ def process(ctx: SymbolContext,
             logger.debug(f"[Signal] 技术面异常 (放行): {e}")
 
     # ── 策略 5: LLM 投票 (无持仓时, regime 准许时) ──
-    _llm_vote_enabled = True
+    _voting_llm_enabled = True
     try:
         from app.core.config_container import get_config
         _cfg = get_config()
-        _llm_vote_enabled = bool(_cfg.get_dotted("strategies.llm_vote.enabled", True))
+        _voting_llm_enabled = bool(_cfg.get_dotted("strategies.voting_llm.enabled", True))
     except Exception:
         pass
     _llm_regime_ok = True
     if regime_verdict and regime_verdict.regime.value in ("BEAR", "CRISIS"):
         _llm_regime_ok = False
-    if _llm_vote_enabled and _llm_regime_ok:
+    if _voting_llm_enabled and _llm_regime_ok:
         try:
             if voting_coordinator and not has_position:
                 # Skip LLM vote if we already have high-confidence candidates
@@ -376,7 +376,7 @@ def process(ctx: SymbolContext,
                             vote_result = future.result(timeout=5.0)
                             if vote_result:
                                 ctx.metadata["vote_result"] = vote_result
-                                candidate = eval_strategy("llm_vote", ctx)
+                                candidate = eval_strategy("voting_llm", ctx)
                                 if candidate is not None:
                                     _apply_quality_scoring(ctx, candidate)
                                     logger.info(

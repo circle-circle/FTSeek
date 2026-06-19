@@ -2,7 +2,7 @@
 
 每个 adapter 仅声明 AdapterMeta + T8b effective_priority(ctx).
 实际策略逻辑在:
-  - app/strategy/pure/{technical,fast_lane,llm_vote}.py (TICK 类纯函数)
+  - app/strategy/pure/{technical,fast_lane,voting_llm}.py (TICK 类纯函数)
   - app/us_pipeline/premarket_planner.py (AUTONOMOUS, 盘前一次性)
 """
 from .main_pipeline import MainPipelineAdapter

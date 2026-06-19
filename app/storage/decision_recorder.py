@@ -171,8 +171,8 @@ class DecisionRecorder:
         self,
         symbol: str,
         voting_result: Dict[str, Any],
-        market_data: Dict[str, Any] = None,
-        llm_vote: Dict[str, Any] = None,
+        market_data: Optional[Dict[str, Any]] = None,
+        voting_llm: Optional[Dict[str, Any]] = None,
     ) -> str:
         """
         记录一次完整投票决策 (含所有模型明细)
@@ -181,7 +181,7 @@ class DecisionRecorder:
             symbol: US.AAPL
             voting_result: aggregator.aggregate() 返回结果
             market_data: 市场状态快照
-            llm_vote: LLM 外部投票信息
+            voting_llm: LLM 外部投票信息
 
         Returns:
             decision_id
@@ -209,8 +209,8 @@ class DecisionRecorder:
                     voting_result.get("final_strength", 50),
                     voting_result.get("consensus_level", 0),
                     voting_result.get("std_dev", 0),
-                    llm_vote.get("weight") if llm_vote else None,
-                    llm_vote.get("strength") if llm_vote else None,
+                    voting_llm.get("weight") if voting_llm else None,
+                    voting_llm.get("strength") if voting_llm else None,
                     1 if voting_result.get("auto_debate_triggered", False) else 0,
                     market_data.get("regime") if market_data else None,
                     market_data.get("vix") if market_data else None,

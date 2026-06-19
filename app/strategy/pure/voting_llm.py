@@ -25,7 +25,7 @@ _REGIME_NORMALIZE = {
 }
 
 
-@register("llm_vote")
+@register("voting_llm")
 def evaluate(ctx: SymbolContext, config: Dict[str, Any]) -> Optional[SignalCandidate]:
     """
     从 LLM 投票结果构建 SignalCandidate。
@@ -80,8 +80,8 @@ def evaluate(ctx: SymbolContext, config: Dict[str, Any]) -> Optional[SignalCandi
         direction=direction_str,
         strength=strength,
         confidence=round(confidence, 4),
-        strategy_id="LLM_VOTE",
-        source="llm_vote",
+        strategy_id="voting_llm",
+        source="voting_llm",
         rationale=rationale,
         context=ctx,
         metadata={
