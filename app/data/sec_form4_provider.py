@@ -528,6 +528,29 @@ class SECForm4Provider:
             return None
         try:
             data = json.loads(path.read_text())
+            # 6/19 fix: 反序列化回 InsiderTransaction 对象
+            # _write_cache 序列化为 dict, 读取时必须还原
+            if isinstance(data, list) and data and isinstance(data[0], dict) and "transaction_code" in data[0]:
+                data = [
+                    InsiderTransaction(
+                        symbol=d.get("symbol", ""),
+                        company_name=d.get("company_name", ""),
+                        insider_name=d.get("insider_name", ""),
+                        insider_cik=d.get("insider_cik", ""),
+                        insider_role=d.get("insider_role", ""),
+                        officer_title=d.get("officer_title", ""),
+                        transaction_code=d.get("transaction_code", ""),
+                        transaction_date=d.get("transaction_date", ""),
+                        shares=d.get("shares", 0.0),
+                        price_per_share=d.get("price_per_share", 0.0),
+                        dollar_amount=d.get("dollar_amount", 0.0),
+                        shares_after=d.get("shares_after", 0.0),
+                        ownership_type=d.get("ownership_type", "D"),
+                        filing_date=d.get("filing_date", ""),
+                        accession_number=d.get("accession_number", ""),
+                    )
+                    for d in data
+                ]
             return data
         except Exception:
             return None

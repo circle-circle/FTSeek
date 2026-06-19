@@ -522,6 +522,11 @@ class HeartbeatLoop:
 
         while self._running:
             try:
+                # 假日/周末: 跳过心跳推送 (市场关闭无需心跳)
+                from app.core.scheduler_triggers import sleep_if_market_closed
+                if sleep_if_market_closed(self.interval_sec, lambda: self._running):
+                    continue
+
                 time.sleep(self.interval_sec)
                 if not self._running:
                     break

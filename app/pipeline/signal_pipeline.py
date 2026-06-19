@@ -674,6 +674,25 @@ def _run_new_pipeline_to_candidate(scheduler, symbol, vix, spy_context, market_s
         battle_plan_manager=battle_plan_manager,
         voting_coordinator=getattr(scheduler, 'voting_coordinator', None),
     )
+    
+    # Phase 1: Shadow 信号记录 - 追踪所有生成的信号（包括未执行的）
+    if candidate is not None:
+        try:
+            from app.storage.shadow_signal_logger import get_shadow_signal_logger
+            shadow_logger = get_shadow_signal_logger()
+            shadow_logger.record(
+                candidate=candidate,
+                context={
+                    "price": ctx.price if ctx else None,
+                    "volume": ctx.volume if ctx else None,
+                    "vix": vix,
+                    "regime": getattr(candidate, 'regime', None),
+                    "market_sentiment": market_sentiment,
+                }
+            )
+        except Exception as e:
+            logger.warning(f"[ShadowSignal] 记录失败（不影响主流程）: {e}")
+    
     return candidate
 
 

@@ -1462,6 +1462,16 @@ class TradingScheduler:
             self._manual_guard_thread.start()
             logger.info("[ManualGuard] 手动仓位风险监控线程已启动")
 
+        # 内部人集群买入每日扫描线程 (假日不启动)
+        # 6/19: SEC EDGAR 缓存反序列化 bug 修复后启用
+        # 低频扫描: 每天盘前 1 次, 覆盖 watchlist + ORB universe (~40 symbols)
+        if not _is_market_closed:
+            self._insider_scan_thread = threading.Thread(
+                target=self._insider_scan_loop, name="InsiderScanLoop", daemon=True
+            )
+            self._insider_scan_thread.start()
+            logger.info("[InsiderScan] 每日内部人集群扫描线程已启动")
+
         # RFC-056: ORB 辅线引擎 (假日不启动)
         if not _is_market_closed and self.orb_engine:
             self.orb_engine.start()
@@ -1982,6 +1992,84 @@ class TradingScheduler:
                 time.sleep(1)
 
         logger.info("[VIX Monitor] 监控循环已停止")
+
+    def _insider_scan_loop(self):
+        """内部人集群买入每日扫描 — 每天盘前 1 次, SEC EDGAR Form 4 数据
+
+        扫描 watchlist + ORB universe (~40 symbols), 发现集群买入信号时:
+          1. 记入日志
+          2. 通知推送 (如有 notifier)
+          3. 信号在下次 signal_stage.process() 时被 insider 策略自然消费
+        """
+        logger.info("[InsiderScan] 每日扫描循环已启动 (interval=4h)")
+        _scanned_today: str = ""
+
+        while self.running:
+            try:
+                # 假日守卫
+                from app.core.scheduler_triggers import sleep_if_market_closed
+                if sleep_if_market_closed(3600, lambda: self.running):
+                    continue
+
+                # 每日只扫一次 (ET 06:00-09:30 之间触发, 给盘前留时间)
+                from app.utils.timezone import now_et
+                today = now_et().strftime("%Y-%m-%d")
+                hour = now_et().hour
+
+                # 每天 ET 6-9 点之间执行一次扫描
+                if today == _scanned_today or hour < 6 or hour >= 10:
+                    # 等待 1 小时后再次检查
+                    for _ in range(3600):
+                        if not self.running:
+                            return
+                        time.sleep(1)
+                    continue
+
+                _scanned_today = today
+
+                # 收集扫描列表: watchlist + ORB universe
+                symbols_to_scan = list(set(self.watchlist))
+                try:
+                    from app.core.config_container import get_config
+                    _cfg = get_config()
+                    orb_universe = _cfg.get_dotted("orb.universe", [])
+                    symbols_to_scan = list(set(symbols_to_scan + orb_universe))
+                except Exception:
+                    pass
+
+                logger.info(f"[InsiderScan] 开始扫描 {len(symbols_to_scan)} 只标的...")
+
+                from app.data.sec_form4_provider import get_sec_form4_provider
+                provider = get_sec_form4_provider()
+                clusters = provider.scan_watchlist(symbols_to_scan)
+
+                if clusters:
+                    logger.info(f"[InsiderScan] 🟢 发现 {len(clusters)} 个集群买入信号!")
+                    for c in clusters:
+                        msg = (
+                            f"🟢 内部人集群买入: {c.symbol}\n"
+                            f"   {c.rationale}\n"
+                            f"   Score: {c.score:.2f}"
+                        )
+                        logger.info(f"[InsiderScan] {msg}")
+                        if self.notifier:
+                            try:
+                                self.notifier.send_text(msg)
+                            except Exception as _e:
+                                logger.debug(f"[InsiderScan] 通知失败: {_e}")
+                else:
+                    logger.info(f"[InsiderScan] 扫描完成, 未发现集群买入信号")
+
+            except Exception as e:
+                logger.warning(f"[InsiderScan] 扫描异常: {e}")
+
+            # 等待 1 小时后再次检查是否到扫描时间
+            for _ in range(3600):
+                if not self.running:
+                    return
+                time.sleep(1)
+
+        logger.info("[InsiderScan] 扫描循环已停止")
 
 
     def _process_deferred_audit_queue(self):

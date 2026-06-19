@@ -237,6 +237,12 @@ class IntradayAttributionScheduler:
     def _loop(self):
         next_run = time.time() + self._interval
         while self._running:
+            # 假日/周末: 跳过归因报告 (市场关闭无需归因)
+            from app.core.scheduler_triggers import sleep_if_market_closed
+            if sleep_if_market_closed(60, lambda: self._running):
+                next_run = time.time() + self._interval
+                continue
+
             # 用短间隔轮询代替长 sleep, 确保 stop() 能快速响应
             time.sleep(min(10, self._interval))
             if not self._running:

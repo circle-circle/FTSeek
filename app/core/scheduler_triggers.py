@@ -119,6 +119,8 @@ def sleep_if_market_closed(
     修复: 提供统一守卫函数，任何循环只需一行:
         if sleep_if_market_closed(60, lambda: self.running): continue
 
+    这是唯一被允许的循环休眠方式。直接用 time.sleep() 或 for+sleep 是反模式。
+
     Args:
         interval_seconds: 休眠时长 (秒)
         running_check: 检查循环是否仍在运行的 callable (默认始终 True)
@@ -138,6 +140,63 @@ def sleep_if_market_closed(
             break
         time.sleep(1)
     return True
+
+
+def interruptible_sleep(
+    seconds: int,
+    running_check: "Callable[[], bool] | None" = None,
+) -> bool:
+    """
+    统一的可中断休眠 — 所有后台循环的 sleep 原语 (2026-06-19)
+
+    这是唯一被允许的循环休眠方式。替代:
+      ❌ for _ in range(N): time.sleep(1)
+      ❌ time.sleep(N)
+      ✅ interruptible_sleep(N, lambda: self.running)
+
+    自动包含假日/周末守卫: 市场关闭时不消耗 CPU，直接跳过。
+
+    Args:
+        seconds: 休眠时长 (秒)
+        running_check: 检查循环是否仍在运行的 callable (默认始终 True)
+
+    Returns:
+        True = 被中断 (running_check 返回 False)，调用方应 return/break
+        False = 正常休眠完成，调用方应继续下一轮
+    """
+    _check = running_check or (lambda: True)
+
+    # 假日/周末: 直接跳过，不消耗任何资源
+    if get_market_phase() == MarketPhase.WEEKEND:
+        return False
+
+    # 正常休眠: 可中断
+    for _ in range(int(seconds)):
+        if not _check():
+            return True  # 被中断
+        time.sleep(1)
+    return False
+
+
+class MarketClosedError(Exception):
+    """当市场关闭时抛出，用于提前退出循环体"""
+    pass
+
+
+def assert_market_open():
+    """
+    断言市场当前开放。如果关闭则抛出 MarketClosedError。
+
+    用于循环体开头的守卫:
+        while self.running:
+            try:
+                assert_market_open()
+                # ... 交易逻辑 ...
+            except MarketClosedError:
+                interruptible_sleep(300, lambda: self.running)
+    """
+    if get_market_phase() == MarketPhase.WEEKEND:
+        raise MarketClosedError("Market is closed (weekend/holiday)")
 
 
 def is_in_cooldown(scheduler: 'TradingScheduler', symbol: str) -> bool:

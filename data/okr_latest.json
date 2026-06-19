@@ -1,18 +1,18 @@
 {
-  "timestamp": "2026-06-19T11:06:18.390014",
-  "overall_score": 6.7,
+  "timestamp": "2026-06-19T16:30:54.188395",
+  "overall_score": 8.0,
   "kr_scores": {
     "kr1_win_rate": 0,
     "kr2_weekly_pnl": 0.0,
     "kr3_sample": 0.0,
     "kr4_ic": 0,
-    "kr5_trigger": 33.3
+    "kr5_trigger": 40.0
   },
   "pipeline": {
-    "total": 9,
-    "skip": 3,
-    "active": 6,
-    "with_entry": 2,
+    "total": 11,
+    "skip": 6,
+    "active": 5,
+    "with_entry": 1,
     "triggered": 1,
     "executed": 0,
     "wins": 0,

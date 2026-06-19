@@ -88,6 +88,14 @@ class Watchdog:
             time.sleep(check_interval)
 
     def _check_all(self):
+        # 假日/周末: 跳过所有心跳检查 (后台线程故意不启动，无心跳是正常的)
+        try:
+            from app.core.scheduler_triggers import get_market_phase, MarketPhase
+            if get_market_phase() == MarketPhase.WEEKEND:
+                return
+        except Exception:
+            pass  # 导入失败时正常检查
+        
         now = time.time()
         with self._lock:
             items = list(self._heartbeats.items())

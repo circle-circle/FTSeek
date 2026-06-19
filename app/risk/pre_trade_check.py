@@ -305,22 +305,80 @@ class PreTradeChecker:
 
         # ── RFC-058 (2026-06-01): LONG 方向默认折扣 30% (BULL 豁免) ──
         # 数据驱动 (n=134): LONG 20.9% wr +$2,644 vs SHORT 33.9% +$13,016
+        #
+        # Phase 1 (2026-06-19): 动态折扣 — 根据 regime 调整
+        # 原固定 0.7 折扣导致 LONG 信号过少 (39% WR vs SHORT 53% WR)
+        # 改进: BULL/STRONG_BULL 不惩罚, CAUTION 15%, BEAR 30%
         try:
             _ldf = _flt_cfg.get("long_direction_filter", {}) if "_flt_cfg" in dir() else {}
             _is_long = "LONG" in _direction and "SHORT" not in _direction
             if _is_long and _ldf.get("enabled", False):
-                _discount = float(_ldf.get("default_discount", 0.7))
-                _exempt = _ldf.get("bull_regime_exempt", {}) or {}
-                _vix_max = float(_exempt.get("vix_max", 20))
-                _bull_exempt = isinstance(_cur_vix, (int, float)) and _cur_vix < _vix_max if "_cur_vix" in dir() else False
-                if not _bull_exempt:
-                    _new_strength = int(_rfc_strength * _discount)
-                    if _ldf.get("log_every_discount", True):
-                        logger.info(
-                            f"[RFC058·LONG折扣] {_symbol} BULL 豁免不满足 (vix={_cur_vix if '_cur_vix' in dir() else 'N/A'}), "
-                            f"strength {_rfc_strength}×{_discount}={_new_strength}"
-                        )
-                    _rfc_strength = _new_strength
+                _use_dynamic = _ldf.get("use_dynamic", False)
+                
+                if _use_dynamic:
+                    # Phase 1: 动态折扣
+                    _dynamic_discounts = _ldf.get("dynamic_discounts", {}) or {}
+                    
+                    # 获取当前 regime (优先从信号 metadata, 否则从 evaluate_regime 计算)
+                    _current_regime = None
+                    if hasattr(signal, "metadata") and signal.metadata:
+                        _current_regime = signal.metadata.get("regime")
+                    
+                    if not _current_regime:
+                        # 从 VIX + SPY 推导 regime
+                        try:
+                            if "_cur_vix" in dir() and isinstance(_cur_vix, (int, float)):
+                                if _cur_vix >= 35:
+                                    _current_regime = "CRISIS"
+                                elif _cur_vix >= 25:
+                                    _current_regime = "BEAR"
+                                elif _cur_vix >= 20:
+                                    _current_regime = "CAUTION"
+                                else:
+                                    # VIX < 20, 检查 SPY
+                                    if "_p1_spy_ok" in dir() and _p1_spy_ok:
+                                        _current_regime = "BULL" if _cur_vix >= 15 else "STRONG_BULL"
+                                    else:
+                                        _current_regime = "CAUTION"
+                        except Exception:
+                            pass
+                    
+                    # 应用动态折扣
+                    if _current_regime and _current_regime in _dynamic_discounts:
+                        _discount = float(_dynamic_discounts[_current_regime])
+                        if _discount < 1.0:
+                            _new_strength = int(_rfc_strength * _discount)
+                            if _ldf.get("log_every_discount", True):
+                                logger.info(
+                                    f"[RFC058·LONG折扣·动态] {_symbol} regime={_current_regime}, "
+                                    f"strength {_rfc_strength}×{_discount:.2f}={_new_strength}"
+                                )
+                            _rfc_strength = _new_strength
+                        # discount >= 1.0 不打折
+                    else:
+                        # regime 无法判断, 使用默认折扣
+                        _discount = float(_ldf.get("default_discount", 0.7))
+                        _new_strength = int(_rfc_strength * _discount)
+                        if _ldf.get("log_every_discount", True):
+                            logger.info(
+                                f"[RFC058·LONG折扣·默认] {_symbol} regime=UNKNOWN, "
+                                f"strength {_rfc_strength}×{_discount}={_new_strength}"
+                            )
+                        _rfc_strength = _new_strength
+                else:
+                    # 原固定折扣模式 (向后兼容)
+                    _discount = float(_ldf.get("default_discount", 0.7))
+                    _exempt = _ldf.get("bull_regime_exempt", {}) or {}
+                    _vix_max = float(_exempt.get("vix_max", 20))
+                    _bull_exempt = isinstance(_cur_vix, (int, float)) and _cur_vix < _vix_max if "_cur_vix" in dir() else False
+                    if not _bull_exempt:
+                        _new_strength = int(_rfc_strength * _discount)
+                        if _ldf.get("log_every_discount", True):
+                            logger.info(
+                                f"[RFC058·LONG折扣] {_symbol} BULL 豁免不满足 (vix={_cur_vix if '_cur_vix' in dir() else 'N/A'}), "
+                                f"strength {_rfc_strength}×{_discount}={_new_strength}"
+                            )
+                        _rfc_strength = _new_strength
         except Exception as _e_rfc058:
             logger.debug(f"[RFC058] 异常 (规则降级): {_e_rfc058}")
             try:

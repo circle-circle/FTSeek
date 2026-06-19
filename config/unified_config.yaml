@@ -873,10 +873,21 @@ risk:
   # 默认: LONG strength × 0.7 折扣
   # BULL 豁免条件 (全部满足): SPY > MA50 + SPY > MA200 + VIX < 20 + 连涨 ≥ 2 日
   # 读取者: app/risk/market_regime_filter.py::MarketRegimeFilter._apply_long_discount
+  #
+  # Phase 1 (2026-06-19): 动态折扣 — 根据 regime 调整
+  # 原固定 0.7 折扣导致 LONG 信号过少 (39% WR vs SHORT 53% WR)
+  # 改进: BULL/STRONG_BULL 不惩罚, CAUTION 15%, BEAR 30%
   long_direction_filter:
     enabled: true
-    default_discount: 0.7        # LONG strength × 0.7 (削 30%)
-    bull_regime_exempt:          # 满足全部条件不打折
+    default_discount: 0.7        # 兜底折扣 (regime 无法判断时使用)
+    dynamic_discounts:           # Phase 1 新增: regime-aware 动态折扣
+      STRONG_BULL: 1.0           # 不惩罚
+      BULL: 1.0                  # 不惩罚
+      CAUTION: 0.85              # 15% 惩罚
+      BEAR: 0.70                 # 30% 惩罚
+      CRISIS: 0.0                # 禁止 (实际已被 regime_filter 拦截)
+    use_dynamic: true            # Phase 1 开关: true=使用动态折扣, false=回退到固定折扣
+    bull_regime_exempt:          # 满足全部条件不打折 (固定折扣模式的兜底)
       spy_above_ma50: true
       spy_above_ma200: true
       vix_max: 20
