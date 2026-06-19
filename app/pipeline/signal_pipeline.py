@@ -898,44 +898,8 @@ def _execute_portfolio_plan(scheduler, candidates: list, vix: float):
 
 
 # ============================================================
-#  核心决策管线: _process_symbol_impl
+#  CRA 管线辅助函数
 # ============================================================
-
-_LEGACY_PIPELINE_WARNED = False  # 进程内仅告警一次, 避免日志洪流
-
-
-def _use_new_pipeline() -> bool:
-    """信号管线路由决策
-
-    2026-05-31 (Task #7): 默认使用 CRA 新管线 (modular stages),
-    旧管线保留为 fallback (仅当配置显式关闭时启用)。
-
-    配置优先级 (任一为 False 时禁用新管线):
-      1. pipeline.use_modular_stages (官方配置, 默认 True)
-      2. pipeline.use_new_stages      (旧字段, 向后兼容, 默认 True)
-
-    使用旧管线时输出 DEPRECATED 警告 (进程内仅一次)。
-    """
-    global _LEGACY_PIPELINE_WARNED
-    try:
-        from app.core.config_container import get_config
-        cfg = get_config()
-        # 新字段优先, 缺省回退到旧字段; 两者均默认 True (CRA 优先)
-        modular = cfg.get_dotted("pipeline.use_modular_stages", None)
-        if modular is None:
-            modular = cfg.get_dotted("pipeline.use_new_stages", True)
-        modular = bool(modular)
-    except Exception:
-        # 配置读取异常时也默认走 CRA, 防止退化为旧链路
-        modular = True
-
-    if not modular and not _LEGACY_PIPELINE_WARNED:
-        logger.warning(
-            "[DEPRECATED] 正在使用旧信号管线, 建议切换到 CRA 模式 "
-            "(pipeline.use_modular_stages=true). 旧管线已进入退役窗口, 后续版本将移除."
-        )
-        _LEGACY_PIPELINE_WARNED = True
-    return modular
 
 
 def _build_cra_model_scores(candidate, ctx) -> list:
