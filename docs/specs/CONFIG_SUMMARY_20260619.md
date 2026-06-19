@@ -261,6 +261,7 @@ IF 周PnL连续2周为正:
 | 6/19 | **Scalping 完全清理** | 删除800行代码+配置, 消除认知负担 |
 | 6/19 | **AVGO Entry Price 修复** | shadow_tracker使用actual_entry_price而非decision_price |
 | 6/19 | **触发窗口 ±3%→±5%** | AVGO案例: $392.9→$409.25超出±3%上限 |
+| 6/19 | **voting_llm P0修复** | 命名统一(llm_vote→voting_llm) + CRA路径signal_dedup补齐 |
 
 ---
 
@@ -296,10 +297,17 @@ IF 周PnL连续2周为正:
 
 ## 十、待办事项 (Next Actions)
 
+### ✅ 已完成 (2026-06-19)
+- [x] **voting_llm 命名统一**: llm_vote→voting_llm 全局替换, 13+文件 (commit 37ba98a0)
+- [x] **CRA路径signal_dedup**: _process_symbol_new_pipeline 补齐dedup逻辑
+- [x] **IC gate覆盖验证**: 确认_submit_order() L3490覆盖所有路径, 无需额外修复
+- [x] **Scalping 完全清理**: 800行代码+配置删除, grep返回0结果
+- [x] **触发窗口 ±3%→±5%**: shadow_tracker entry_low/high调整
+- [x] **AVGO entry_price修复**: shadow_tracker使用actual_entry_price
+
 ### 高优先级 (P0)
-- [ ] **voting_llm 命名统一**: 全局grep `llm_vote` → `voting_llm`
-- [ ] **扩展signal_dedup**: 覆盖voting_llm路径，防止重复触发
-- [ ] **IC门禁扩展**: 覆盖所有策略（包括voting_llm）
+- [ ] **置信度模型校准**: 0.5-0.7区间胜率仅17.8%, 低于0-0.3区间47.1%
+- [ ] **作战计划执行率**: 计划3笔仅执行1笔(33%), 需分析脱节原因
 
 ### 中优先级 (P1)
 - [ ] **触发率监控**: 添加实时指标，验证±5%窗口效果

@@ -3,7 +3,7 @@
 ## Meta
 - **Project**: Trading Playbook System
 - **Spec**: [trading-playbook-system.md](./trading-playbook-system.md) (v2.0)
-- **Last Updated**: 2026-06-19T18:15:00Z (trigger fix + scalping cleanup + OKR update)
+- **Last Updated**: 2026-06-19T20:30:00Z (voting_llm P0 fixes: naming + signal_dedup)
 - **Updated By**: hermes (current session)
 
 ## Current Status

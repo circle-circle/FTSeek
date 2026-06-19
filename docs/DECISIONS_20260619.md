@@ -117,3 +117,31 @@
   - 启动新策略验证（提升kr2, kr3）
   - 实现IC计算（提升kr4）
   - 添加trigger rate监控（提升kr5）
+
+### 2026-06-19: voting_llm P0 Fixes - 命名统一 + CRA路径signal_dedup
+- **Decision Maker**: hermes
+- **Status**: ✅ 已提交 (37ba98a0)
+- **Fixes**:
+  
+  1. **命名统一 (llm_vote → voting_llm)**:
+     - 文件: `app/strategy/pure/llm_vote.py` → `voting_llm.py`
+     - @register: `"llm_vote"` → `"voting_llm"`
+     - 影响文件: 13+ (signal_stage, signal_pipeline, decision_recorder, voting_coordinator, etc.)
+     - 保留: `models.py:67` `'llm_vote' in _sid` 兼容历史DB记录
+  
+  2. **CRA路径 signal_dedup 补齐 (P0)**:
+     - 位置: `app/pipeline/signal_pipeline.py` L1186-1197
+     - 问题: `_process_symbol_new_pipeline()` 调用 `_submit_order()` 前缺少 signal_dedup 检查
+     - legacy路径 L1876 已有，CRA路径之前缺失
+     - 修复: 添加与legacy路径相同的 dedup 逻辑
+  
+  3. **IC gate 覆盖验证**:
+     - 确认: IC gate 在 `_submit_order()` L3490-3565
+     - CRA 和 legacy 路径都调用 `_submit_order()`，IC gate 已覆盖所有策略
+     - 无需额外修复
+
+- **Impact**: 
+  - 消除命名分裂导致的IC追踪数据分散
+  - 防止CRA路径产生重复订单
+  - 确认所有策略受IC gate保护
+- **Verification**: `grep -r "llm_vote" app/` 仅返回 models.py 的兼容检查
