@@ -241,6 +241,7 @@ class PipelineRunner:
             base["spy_context"] = self._shared_state.get("spy_context", {})
             base["earnings_guard"] = self._shared_state.get("earnings_guard")
             base["shared_kernel"] = self._shared_state.get("shared_kernel")
+            base["news_provider"] = self._shared_state.get("news_provider")
 
         elif stage_name == "signal":
             base["ctx"] = context  # SymbolContext

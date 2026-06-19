@@ -9,7 +9,7 @@
 
 from app.pipeline.signal_pipeline import (
     scan_loop, run_signal_scan, process_symbol,
-    _run_signal_scan_impl, _process_symbol_impl, _build_signal_from_vote,
+    _run_signal_scan_impl,
 )
 from app.pipeline.order_executor import (
     _submit_order, _close_position, _get_current_price,

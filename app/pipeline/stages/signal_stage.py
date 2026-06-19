@@ -240,6 +240,35 @@ def process(ctx: SymbolContext,
     """
     symbol = ctx.symbol
 
+    # ── P0 (2026-05-02): 时段门禁 — 盘前/盘后禁止新开仓 ──
+    # 迁移自 Legacy L1675-1685
+    # 只有 TRADING 时段允许新建持仓。盘前/盘后仅允许已有持仓的退出监控。
+    # 快车道(fast_lane)是例外 — 人已审核, 任何时段都放行
+    try:
+        from app.core.scheduler_triggers import get_market_phase, MarketPhase
+        _current_phase = get_market_phase()
+    except Exception:
+        _current_phase = None
+
+    # ── 持仓检查 (快车道和LLM投票共用) ──
+    try:
+        has_position = bool(
+            position_store
+            and hasattr(position_store, 'has')
+            and position_store.has(symbol)
+        )
+    except Exception:
+        has_position = False
+
+    # 时段门禁: 非TRADING + 无持仓 → 只允许快车道, 其他策略全部跳过
+    _non_trading_block_auto = False
+    if _current_phase is not None and _current_phase != MarketPhase.TRADING and not has_position:
+        logger.info(
+            f"[时段门禁] {symbol} 当前阶段={_current_phase.value} 且无现有持仓，"
+            f"仅允许快车道 (等待 TRADING 时段)"
+        )
+        _non_trading_block_auto = True
+
     # ── ADR-007: Regime Filter — 环境门禁 ──
     regime_verdict = _get_regime_verdict(ctx)
     if regime_verdict:
@@ -251,16 +280,6 @@ def process(ctx: SymbolContext,
         ctx.market_regime = regime_verdict.regime.value
     else:
         logger.debug(f"[Regime] {symbol} 无法评估, 默认放行")
-
-    # ── 持仓检查 (快车道和LLM投票共用) ──
-    try:
-        has_position = bool(
-            position_store
-            and hasattr(position_store, 'has')
-            and position_store.has(symbol)
-        )
-    except Exception:
-        has_position = False
 
     candidates: list[SignalCandidate] = []
 
@@ -290,7 +309,7 @@ def process(ctx: SymbolContext,
     if regime_verdict and regime_verdict.blocks("orb"):
         _orb_allowed = False
         logger.debug(f"[Regime] {symbol} ORB 被 {regime_verdict.regime.value} 阻止")
-    if _orb_allowed and not has_position:
+    if _orb_allowed and not has_position and not _non_trading_block_auto:
         try:
             candidate = eval_strategy("orb", ctx)
             if candidate is not None:
@@ -336,7 +355,7 @@ def process(ctx: SymbolContext,
     if regime_verdict and regime_verdict.blocks("TECHNICAL_MULTI_FACTOR"):
         _technical_regime_ok = False
         logger.debug(f"[Regime] {symbol} TECHNICAL 被 {regime_verdict.regime.value} 阻止")
-    if _technical_enabled and _technical_regime_ok:
+    if _technical_enabled and _technical_regime_ok and not _non_trading_block_auto:
         try:
             candidate = eval_strategy("technical", ctx)
             if candidate is not None:
@@ -361,7 +380,7 @@ def process(ctx: SymbolContext,
     _llm_regime_ok = True
     if regime_verdict and regime_verdict.regime.value in ("BEAR", "CRISIS"):
         _llm_regime_ok = False
-    if _voting_llm_enabled and _llm_regime_ok:
+    if _voting_llm_enabled and _llm_regime_ok and not _non_trading_block_auto:
         try:
             if voting_coordinator and not has_position:
                 # Skip LLM vote if we already have high-confidence candidates
@@ -399,7 +418,7 @@ def process(ctx: SymbolContext,
         _insider_enabled = bool(_cfg.get_dotted("strategies.insider.enabled", True))
     except Exception:
         pass
-    if _insider_enabled and not has_position:
+    if _insider_enabled and not has_position and not _non_trading_block_auto:
         try:
             candidate = eval_strategy("insider", ctx)
             if candidate is not None:
@@ -419,7 +438,7 @@ def process(ctx: SymbolContext,
         _erev_enabled = bool(_cfg.get_dotted("strategies.earnings_revision.enabled", True))
     except Exception:
         pass
-    if _erev_enabled and not has_position:
+    if _erev_enabled and not has_position and not _non_trading_block_auto:
         try:
             candidate = eval_strategy("earnings_revision", ctx)
             if candidate is not None:

@@ -106,6 +106,21 @@ def process(candidate: SignalCandidate,
     if _check_global_blacklist(symbol):
         return None
 
+    # ── 0.01 Restricted 列表拦截 (Legacy 独有逻辑, 迁移自 _process_symbol_impl L1352-1365) ──
+    # 来自作战计划 plan.json 的 restricted 字段，人审级别的禁入名单
+    try:
+        from app.us_pipeline.battle_plan_manager import USBattlePlanManager
+        _bp_mgr = USBattlePlanManager()
+        if not _bp_mgr._plan:
+            _bp_mgr.load(_bp_mgr.plan_path)
+        _plan = _bp_mgr.get_plan()
+        _restricted = _plan.get("restricted", []) if _plan else []
+        if symbol in _restricted:
+            logger.warning(f"🚫 [Restricted] {symbol} 在限制列表中，拒绝交易")
+            return None
+    except Exception as e:
+        logger.debug(f"[Restricted] 检查异常 (放行): {e}")
+
     # ── 0.05 Trend-First 持仓上限 (Task #19) ──
     # observe_only=false 后需控制其独立的并发持仓数, 避免资金超限
     try:

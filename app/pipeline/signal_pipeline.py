@@ -494,8 +494,7 @@ def _run_signal_scan_body(scheduler, vix, spy_context, market_news, pool_filter)
                 if scheduler.position_store.has(symbol):
                     # P1 修复 (2026-06-19)
                     logger.debug(f"[扫描] {symbol} 已有持仓, 进入金字塔加仓检测")
-                _process_symbol_impl(scheduler, symbol, vix, spy_context, market_news.get("sentiment", 0),
-                                     cached_context=_context_cache.get(symbol))  # H1: 传入缓存
+                _process_symbol_new_pipeline(scheduler, symbol, vix, spy_context, market_news.get("sentiment", 0))
                 record_api_success()
             except Exception as e:
                 record_api_error()
@@ -574,18 +573,12 @@ def _run_signal_scan_body(scheduler, vix, spy_context, market_news, pool_filter)
                 # P1 (2026-05-26): 新管线 CRA 模式 — 用 modular stages 生成候选,
                 # 然后走 PortfolioConstructor 全局排序, 风控统一在 _submit_order 执行
                 _cached_ctx = _context_cache_cra.get(symbol)  # H1: 复用广度预扫描缓存
-                if _use_new_pipeline():
-                    _candidate = _run_new_pipeline_to_candidate(
-                        scheduler, symbol, vix, spy_context, market_news.get("sentiment", 0),
-                        cached_context=_cached_ctx)
-                    if _candidate is not None:
-                        _sig, _ctx, _vr = _bridge_candidate_to_old_format(_candidate)
-                        _collect(symbol, _sig, _ctx, _vr)
-                else:
-                    _process_symbol_impl(scheduler, symbol, vix, spy_context,
-                                         market_news.get("sentiment", 0),
-                                         on_candidate=_collect,
-                                         cached_context=_cached_ctx)
+                _candidate = _run_new_pipeline_to_candidate(
+                    scheduler, symbol, vix, spy_context, market_news.get("sentiment", 0),
+                    cached_context=_cached_ctx)
+                if _candidate is not None:
+                    _sig, _ctx, _vr = _bridge_candidate_to_old_format(_candidate)
+                    _collect(symbol, _sig, _ctx, _vr)
                 record_api_success()
             except Exception as e:
                 record_api_error()
@@ -744,7 +737,7 @@ def run_signal_scan(scheduler):
 
 def process_symbol(scheduler, symbol: str, vix: float, spy_context: Dict[str, Any], market_sentiment: float):
     """处理单只股票：数据获取 → 信号生成 → 风控 → 下单"""
-    _process_symbol_impl(scheduler, symbol, vix, spy_context, market_sentiment)
+    _process_symbol_new_pipeline(scheduler, symbol, vix, spy_context, market_sentiment)
 
 
 # ============================================================
@@ -1046,6 +1039,7 @@ def _process_symbol_new_pipeline(scheduler, symbol: str, vix: float,
         "voting_coordinator": getattr(scheduler, 'voting_coordinator', None),
         "execution_engine": scheduler.execution_engine,
         "polling_controller": getattr(scheduler, 'polling_controller', None),
+        "news_provider": getattr(scheduler, 'news_provider', None),
         # P0 (2026-06-17): 快速 Regime 切换覆盖 — 由 scan_loop 检测注入
         "_rapid_regime_override": getattr(scheduler, '_rapid_regime_override', None),
     }
@@ -1105,6 +1099,21 @@ def _process_symbol_new_pipeline(scheduler, symbol: str, vix: float,
             "vwap_deviation": _get_vwap_deviation(scheduler, symbol),
         },
     )
+
+    # ── Degradation cap (迁移自 Legacy _build_signal_from_vote L1918-1928) ──
+    # 降级信号置信度封顶 0.60 — voting_coordinator 标记 degraded 时生效
+    _vote_result = (candidate.context.metadata if candidate.context else {}).get("vote_result", {}) or {}
+    _is_degraded = bool(_vote_result.get("degraded"))
+    if _is_degraded and signal.confidence > 0.60:
+        logger.warning(
+            f"[降级信号] {symbol} confidence {signal.confidence:.2f} → 0.60 "
+            f"(level={_vote_result.get('degradation_level', 0)}, "
+            f"reason={_vote_result.get('degradation_reason', '')})"
+        )
+        signal.confidence = 0.60
+        signal.metadata["degraded"] = True
+        signal.metadata["degradation_level"] = _vote_result.get("degradation_level", 0)
+        signal.metadata["degradation_reason"] = _vote_result.get("degradation_reason", "")
 
     # ── 构建 context dict (桥接 SymbolContext → 旧格式) ──
     ctx = candidate.context
@@ -1194,604 +1203,7 @@ def _process_symbol_new_pipeline(scheduler, symbol: str, vix: float,
     except Exception as _dedup_err:
         logger.debug(f"[CRA] signal_dedup 检查异常 (放行): {_dedup_err}")
 
-    # ── 委托给现有执行路径 (PDT → Gates → Pyramid → Execute) ──
-    from app.pipeline.order_executor import _submit_order
-    lock = getattr(scheduler, '_open_position_lock', None)
-    if lock:
-        lock.acquire()
-    try:
-        _submit_order(scheduler, symbol, signal, context, voting_result)
-    finally:
-        if lock:
-            lock.release()
-def _process_symbol_impl(scheduler, symbol: str, vix: float, spy_context: Dict[str, Any], market_sentiment: float,
-                         on_candidate: callable = None, cached_context: Dict[str, Any] = None):
-    """P3 压缩管线 (2026-04-29): 宏观闸门 → 信号生成 → 仓位映射
-
-    三层决策:
-    1. 宏观闸门: VIX>=25 → 直接拒绝; SPY<MA200 → context flag (LONG 由 pre_trade_check 拦截)
-    2. 信号生成: 盘中纯技术面 / 盘前盘后 LLM 投票
-    3. 仓位映射: ATR → 仓位大小，不做信号二次衰减
-
-    P2 2026-05-01: on_candidate 回调 — 传入时收集候选而非立即下单,
-    供 PortfolioConstructor 统一排序分配。
-
-    P2 2026-05-05: use_new_stages — 启用后委托给模块化 3-stage 管线
-    (market_data → signal → risk), 仅替换直接下单路径, on_candidate 路径保持不变。
-
-    H1 (2026-06-03): cached_context — 广度预扫描缓存的 context, 避免重复获取
-    """
-    # ── ManualHold 闸门: 手动占用标的, 自动管线整体跳过 ──
-    if manual_hold_registry.is_manual_held(symbol):
-        logger.info(f"[SKIP] {symbol} held by manual trader, auto pipeline skip")
-        return
-
-    # ── Feature Flag: 新管线 ──
-    if on_candidate is None and _use_new_pipeline():
-        _process_symbol_new_pipeline(scheduler, symbol, vix, spy_context, market_sentiment)
-        return
-
-    logger.info(f"[决策] 开始处理 {symbol}")
-
-    # ── Layer 1: 宏观闸门 (P3 2026-04-29 → P0 2026-06-04 简化) ──
-    # VIX>=25: 不再硬拦截，改为日志警告 + context flag。
-    # 分层防御已完整: IntradayScorer VIX自适应仓位缩放 + exit_rules ATR止损放宽 + capital_safety总敲口上限。
-    high_vix = vix >= 25
-    if high_vix:
-        logger.warning(f"[宏观闸门] VIX={vix:.1f}>=25, 高波动模式 (不拦截, 下游自适应缩仓)")
-
-    # SPY < MA200: 仅设置 context flag, 不做硬拦截。
-    # 方向感知的 LONG-only 拦截由 pre_trade_check.py P1 gate 权威执行,
-    # SHORT 候选不受此限制。
-    spy_price = spy_context.get("spy_price", 0)
-    spy_ma200 = spy_context.get("spy_ma200", 0)
-    spy_below_ma200 = bool(spy_price > 0 and spy_ma200 > 0 and spy_price < spy_ma200)
-    if spy_below_ma200:
-        logger.info(f"[宏观闸门] SPY ${spy_price:.2f} < MA200 ${spy_ma200:.2f}, "
-                    f"设置 spy_below_ma200 flag (LONG 由 pre_trade_check 拦截, SHORT 放行)")
-
-    # Step1: 获取行情上下文
-    # H1 (2026-06-03): 优先使用广度预扫描缓存, 避免重复 get_full_market_context
-    context = cached_context if cached_context else scheduler.market_data.get_full_market_context(symbol)
-    if not context or context.get("price", 0) <= 0:
-        logger.warning(f"[决策] {symbol} 行情数据不可用，跳过")
-        if scheduler.polling_controller:
-            scheduler.polling_controller.update_result(symbol, 0, 0)
-        return
-
-    context["symbol"] = symbol
-    context["spy_below_ma200"] = spy_below_ma200
-    context["spy_price"] = spy_price
-    context["spy_ma200"] = spy_ma200
-
-    # 动态成本参数注入
-    price = context.get("price", 0)
-    bid = context.get("lv3_bid", context.get("bid", 0))
-    ask = context.get("lv3_ask", context.get("ask", 0))
-    if bid > 0 and ask > 0 and price > 0:
-        mid = (bid + ask) / 2.0
-        if mid > 0:
-            spread_bps = (ask - bid) / mid * 1e4
-            context["spread_bps"] = round(spread_bps, 2)
-    volume = context.get("volume", 0)
-    if volume and volume > 0:
-        context["adv_shares"] = volume * 3
-
-    if scheduler.polling_controller:
-        price = context.get("price", 0)
-        change_pct = context.get("change_percent", 0) / 100.0 if context.get("change_percent") else 0
-        scheduler.polling_controller.update_result(symbol, price, change_pct, context)
-
-    # 财报感知注入
-    earnings_guard = getattr(scheduler, 'earnings_risk_guard', None)
-    if earnings_guard:
-        earnings_status = earnings_guard.get_earnings_status(symbol)
-        context["earnings_status"] = earnings_status
-        context["is_earnings_period"] = earnings_status.get("is_earnings_period", False)
-        context["is_earnings_blackout"] = earnings_status.get("is_blackout", False)
-        context["earnings_atr_multiplier"] = earnings_status.get("atr_multiplier", 2.5)
-        if earnings_status.get("is_blackout") and not scheduler.position_store.has(symbol):
-            logger.info(f"[财报拦截] {symbol} 处于禁建期: {earnings_status.get('blackout_reason', '')}")
-            return
-
-    # VIX Regime 注入 (通过 SharedKernel SSOT, 两个引擎共用)
-    try:
-        from app.core.shared_kernel import get_shared_kernel
-        kernel = get_shared_kernel()
-        multipliers = kernel.get_vix_multipliers()
-        context["vix_regime"] = multipliers["regime"]
-        context["vix_position_multiplier"] = multipliers["position_multiplier"]
-        context["vix_stop_loss_adjustment"] = multipliers["stop_loss_multiplier"]
-    except Exception as e:
-        logger.debug("[VIX Regime] 注入失败 (使用默认值): %s", e)
-        context["vix_regime"] = "normal"
-        context["vix_position_multiplier"] = 1.0
-        context["vix_stop_loss_adjustment"] = 1.0
-
-    # 作战计划快车道
-    battle_plan_match = None
-    if not scheduler.position_store.has(symbol):
-        try:
-            from app.us_pipeline.battle_plan_manager import USBattlePlanManager
-            mgr = USBattlePlanManager()
-            target = mgr.get_target_info(symbol)
-            if target:
-                if target.get("status") == "CANCELLED":
-                    logger.info(f"🚫 [作战计划] {symbol} 计划已取消，拒绝新仓")
-                    return
-                if target.get("status") == "ACTIVE":
-                    current_price = context.get("price", 0)
-                    entry_zone = target.get("entry_zone", [])
-                    direction = target.get("direction", "").upper()
-                    rsi = context.get("rsi", 0)
-                    is_technical_match = False
-                    match_reason = ""
-                    if entry_zone and len(entry_zone) == 2:
-                        low, high = entry_zone
-                        if direction == "SHORT":
-                            if low <= current_price <= high:
-                                is_technical_match = True
-                                match_reason = f"计划内做空 | 价格 {current_price:.2f} ∈ [{low}-{high}]"
-                                if rsi < 40:
-                                    match_reason += f" | ⚠️ RSI {rsi:.0f} 偏低(做空偏早)"
-                        elif direction == "LONG":
-                            if low <= current_price <= high:
-                                is_technical_match = True
-                                match_reason = f"计划内做多 | 价格 {current_price:.2f} ∈ [{low}-{high}]"
-                                if rsi > 60:
-                                    match_reason += f" | ⚠️ RSI {rsi:.0f} 偏高(做多偏晚)"
-                    if is_technical_match:
-                        logger.warning(
-                            f"🚀 [快车道] {symbol} 匹配作战计划技术指标!\n"
-                            f"   原因: {match_reason}\n   动作: 跳过投票/LLM，直接执行"
-                        )
-                        battle_plan_match = target
-        except Exception as e:
-            logger.debug(f"[作战计划] 检查异常 (放行): {e}")
-
-    # P0: 检查 restricted 列表 (2026-05-02 修复: NVDA restricted 违规-$1302)
-    try:
-        from app.us_pipeline.battle_plan_manager import USBattlePlanManager
-        _bp_mgr = USBattlePlanManager()
-        # P2 (2026-05-26): 不再每次 symbol 重新 load 文件, singleton 已缓存
-        if not _bp_mgr._plan:
-            _bp_mgr.load(_bp_mgr.plan_path)
-        _plan = _bp_mgr.get_plan()
-        _restricted = _plan.get("restricted", []) if _plan else []
-        if symbol in _restricted:
-            logger.warning(f"🚫 [Restricted拦截] {symbol} 在限制列表中, 拒绝交易")
-            return
-    except Exception as e:
-        logger.debug(f"[Restricted检查] 异常 (放行): {e}")
-
-    # 执行快车道逻辑
-    if battle_plan_match:
-        try:
-            from app.core.models import SignalScore, Direction as SignalDirection
-            from app.risk.capital_safety import get_capital_safety_system
-
-            plan_dir = battle_plan_match.get("direction", "LONG").upper()
-            signal_direction = SignalDirection.LONG if plan_dir == "LONG" else SignalDirection.SHORT
-            strength = int(float(battle_plan_match.get("confidence", 0.7)) * 100)
-
-            # T9b (2026-05-16): 把 LLM Plan 的 factors_used 透传到 signal.metadata
-            # 后续 _insert_trade_attribution 写入 trade_attribution.signal_tags
-            _factors_used = battle_plan_match.get("factors_used", []) or []
-            _signal_tags = "/".join(_factors_used) if _factors_used else "llm_plan"
-
-            signal = SignalScore(
-                symbol=symbol, direction=signal_direction, strength=strength,
-                confidence=0.85,
-                strategy_id="BATTLE_PLAN_FAST_PATH",
-                # P0 归因修复 (2026-06-06): 全链路 trace_id — fast_lane 路径之前缺失
-                trace_id=f"US-{now_et().strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}",
-            )
-            # 注入 metadata 供下游 trade_attribution 落库
-            if hasattr(signal, "metadata") and signal.metadata is not None:
-                signal.metadata["factors_used"] = _factors_used
-                signal.metadata["signal_tags"] = _signal_tags
-                signal.metadata["catalyst"] = battle_plan_match.get("catalyst", "")
-            else:
-                signal.metadata = {
-                    "factors_used": _factors_used,
-                    "signal_tags": _signal_tags,
-                    "catalyst": battle_plan_match.get("catalyst", ""),
-                }
-
-            try:
-                from app.us_pipeline.risk_state_machine import RiskStateMachine, RiskAction
-                sm = RiskStateMachine()
-                if not sm.is_trade_allowed(RiskAction.OPEN):
-                    logger.warning(f"🚫 [快车道·风控拦截] {symbol} 系统处于 {sm.get_state().value}")
-                    return
-            except Exception as e:
-                logger.error(f"⚠️ [快车道] 风险状态机检查失败 (放行): {e}")
-
-            try:
-                capital = get_capital_safety_system()
-                allowed, reason = capital.can_open_position()
-                if not allowed:
-                    logger.warning(f"[资本安全] 拦截 {symbol} (计划内): {reason}")
-                    return
-            except Exception as e:
-                logger.error(f"[资本安全] 检查异常，安全起见拦截交易: {e}")
-                return
-
-            # P0 (2026-06-16): 快车道统一走完整风控 Pipeline (USRiskPipeline + legacy fallback)
-            # 之前只调 legacy RiskEngine.pre_trade_check，缺少 CoolDown/VIX/Circuit 等 9 步检查
-            _risk_passed = False
-            if scheduler.us_risk_pipeline:
-                try:
-                    pipeline_ctx = {
-                        "risk_engine": scheduler.risk_engine,
-                        "position_store": scheduler.position_store,
-                        "vix": context.get("vix", 0),
-                        "spy_change_pct": spy_context.get("spx_change_percent", 0),
-                        "symbol": symbol,
-                    }
-                    pipeline_result = scheduler.us_risk_pipeline.run(signal, pipeline_ctx)
-                    if not pipeline_result.passed:
-                        logger.warning("[USRiskPipeline·FastLane] ❌ %s 被 %s 拦截: %s",
-                            symbol, pipeline_result.rejected_by, pipeline_result.reason)
-                        from app.pipeline.position_monitor import _notify_risk_blocked
-                        _notify_risk_blocked(scheduler, symbol, f"us_risk_pipeline: {pipeline_result.rejected_by}")
-                        return
-                    logger.debug("[USRiskPipeline·FastLane] ✅ %s 全部通过 (%d/%d)",
-                        symbol, pipeline_result.checks_passed, pipeline_result.checks_run)
-                    _risk_passed = True
-                except Exception as _e:
-                    logger.warning("[USRiskPipeline·FastLane] 执行异常 (降级到旧 RiskEngine): %s", _e)
-
-            if not _risk_passed and scheduler.risk_engine:
-                if not scheduler.risk_engine.pre_trade_check(signal):
-                    logger.info(f"[风控] 拦截 {symbol} (计划内)")
-                    return
-
-            # ===== 决策引擎增强检查 (Task #19, graceful) =====
-            # Check 1: 动态确信度
-            try:
-                from app.plan.conviction_tracker import get_conviction_tracker
-                tracker = get_conviction_tracker()
-                if not tracker.should_still_execute(symbol):
-                    conv = tracker.get_conviction(symbol)
-                    live_conf = conv.live_confidence if conv else 0
-                    logger.info(
-                        f"[Conviction] {symbol} 确信度已衰减至{live_conf}, 跳过Fast Lane"
-                    )
-                    return
-            except Exception as _e:
-                logger.debug(f"[Conviction] 检查异常(忽略): {_e}")
-
-            # Check 2: execution_rules 自动执行
-            try:
-                _exec_rules = battle_plan_match.get("execution_rules", {}) or {}
-                if _exec_rules and not _check_execution_rules(_exec_rules, symbol, context):
-                    return
-            except Exception as _e:
-                logger.debug(f"[ExecRules] 检查异常(忽略): {_e}")
-
-            # Check 3: 实时量能确认
-            try:
-                _factor_validation = battle_plan_match.get("factor_validation", {}) or {}
-                if _factor_validation.get("volume_breakout") == "FALSE_POSITIVE":
-                    _vol_ratio = float(context.get("volume_ratio", 1.0) or 1.0)
-                    if _vol_ratio < 0.8:
-                        logger.info(
-                            f"[Volume] {symbol} 量能{_vol_ratio:.2f}x未确认(FALSE_POSITIVE), 跳过Fast Lane"
-                        )
-                        return
-            except Exception as _e:
-                logger.debug(f"[Volume] 检查异常(忽略): {_e}")
-
-            # Check 4: 组合相关性
-            try:
-                from app.plan.portfolio_check import check_portfolio_fit
-                _positions_list = []
-                if hasattr(scheduler, 'position_store') and scheduler.position_store is not None:
-                    try:
-                        _all_pos = scheduler.position_store.get_all()
-                        for _pos in (_all_pos or []):
-                            _ps = getattr(_pos, 'symbol', None) or (
-                                _pos.get('symbol') if isinstance(_pos, dict) else None
-                            )
-                            _pd = getattr(_pos, 'direction', None) or (
-                                _pos.get('direction') if isinstance(_pos, dict) else None
-                            )
-                            if _ps:
-                                _positions_list.append({
-                                    "symbol": _ps,
-                                    "direction": str(_pd or "LONG").upper(),
-                                })
-                    except Exception as _pe:
-                        logger.debug(f"[Portfolio] 获取持仓列表异常: {_pe}")
-
-                _new_dir = battle_plan_match.get("direction", "LONG")
-                _alert = check_portfolio_fit(symbol, _new_dir, _positions_list)
-                if _alert.level == "HIGH":
-                    logger.warning(
-                        f"[Portfolio] {symbol} 集中度过高: {_alert.message}, 仓位缩减50%"
-                    )
-                    # 不阻止执行, 仅标记半仓 (供 order_executor 读取)
-                    context["position_scale_override"] = 0.5
-            except Exception as _e:
-                logger.debug(f"[Portfolio] 检查异常(忽略): {_e}")
-
-            # 委托下单 (延迟导入避免循环依赖)
-            # P0: 跨引擎互斥锁保护开仓临界区
-            # P0-fix: 补传 vote_result 参数; fast-path 无投票数据故传 None
-            from app.pipeline.order_executor import _submit_order
-            lock = getattr(scheduler, '_open_position_lock', None)
-            if lock:
-                lock.acquire()
-            try:
-                _submit_order(scheduler, symbol, signal, context, None)
-            finally:
-                if lock:
-                    lock.release()
-            return
-        except Exception as e:
-            logger.error(f"[快车道] {symbol} 执行异常: {e}", exc_info=True)
-            return
-
-    # 非快车道：门禁检查
-    if not battle_plan_match:
-        if not scheduler.position_store.has(symbol):
-            try:
-                from app.us_pipeline.battle_plan_manager import USBattlePlanManager
-                mgr = USBattlePlanManager()
-                target = mgr.get_target_info(symbol)
-                if target and target.get("status") == "CANCELLED":
-                    logger.info(f"🚫 [作战计划] {symbol} 计划已取消，拒绝新仓")
-                    return
-            except Exception as e:
-                logger.debug(f"[作战计划] 检查异常 (放行): {e}")
-
-    # Step2: 注入新闻情绪
-    try:
-        from app.core.scheduler_triggers import get_market_phase, MarketPhase
-        current_phase = get_market_phase()
-    except Exception:
-        current_phase = None
-
-    if current_phase == MarketPhase.TRADING:
-        news_sentiment = 0.0
-        logger.debug(f"[情绪·盘中] {symbol} 跳过新闻获取 (TECHNICAL_ONLY)")
-    else:
-        rss_sentiment = scheduler.news_provider.get_sentiment_score(symbol)
-        fh_sentiment = scheduler.data_router.get_sentiment_score(symbol)
-        if rss_sentiment != 0.0 and fh_sentiment != 0.0:
-            news_sentiment = round((rss_sentiment * 0.6 + fh_sentiment * 0.4), 3)
-        else:
-            news_sentiment = rss_sentiment if rss_sentiment != 0.0 else fh_sentiment
-        logger.debug(f"[情绪] {symbol} rss={rss_sentiment:.2f} finnhub={fh_sentiment:.2f} merged={news_sentiment:.2f}")
-    context["news_sentiment"] = news_sentiment
-    context["vix"] = vix
-    context.update({
-        "spy_price": spy_context.get("spy_price", context.get("spy_price", 0)),
-        "spy_ma20": spy_context.get("spy_ma20", 0),
-        "spy_ma50": spy_context.get("spy_ma50", 0),
-        "spx_change_percent": spy_context.get("spx_change_percent", 0),
-        "qqq_change_percent": spy_context.get("qqq_change_percent", 0),
-        "price_change_5d": spy_context.get("price_change_5d", 0),
-    })
-
-    # 做空信号触发检测
-    rsi = context.get("rsi", 0)
-    macd = context.get("macd", 0)
-    price = context.get("price", 0)
-    ma20 = context.get("ma20", 0)
-    change_pct = context.get("change_percent", 0)
-    short_trigger = False
-    short_reasons = []
-    if rsi > 85:
-        short_trigger = True
-        short_reasons.append(f"RSI 极端超买 {rsi:.1f}")
-    if ma20 > 0 and price > ma20 * 1.15 and rsi > 75:
-        short_trigger = True
-        short_reasons.append(f"价格偏离 MA20 +{(price/ma20-1)*100:.1f}% + RSI {rsi:.1f}")
-    if macd < 0 and rsi > 70:
-        short_trigger = True
-        short_reasons.append(f"MACD 死叉 {macd:.2f} + RSI {rsi:.1f}")
-    if change_pct > 5.0 and rsi > 70:
-        short_trigger = True
-        short_reasons.append(f"单日暴涨 +{change_pct:.1f}% + RSI {rsi:.1f}")
-    if short_trigger:
-        logger.warning(f"[做空触发] {symbol}: {'; '.join(short_reasons)} → 强制注入 SHORT 信号")
-        context["short_signal_triggered"] = True
-        context["short_reasons"] = short_reasons
-        if news_sentiment > 0:
-            context["news_sentiment"] = -news_sentiment * 0.5
-            logger.info(f"[做空触发] {symbol} 新闻情绪反转为 {context['news_sentiment']:.2f}")
-
-    # Step3: 信号生成 (P3: market_regime_filter 已由宏观闸门替代，不再做二次衰减)
-    if current_phase == MarketPhase.TRADING:
-        vote_result = _generate_technical_signal(scheduler, context)
-    else:
-        vote_result = scheduler.voting_coordinator.run_voting(context, external_votes=[])
-        logger.info(
-            f"[投票] {symbol} strength={vote_result['final_strength']} "
-            f"consensus={vote_result['consensus_level']:.2f} direction={vote_result.get('direction', 'LONG')}"
-        )
-
-    # 金字塔加仓检测（支持 LONG 和 SHORT, 2026-06-11）
-    direction = vote_result.get("direction", "")
-    if scheduler.position_store.has(symbol):
-        try:
-            from app.risk.pyramid_engine import get_pyramid_engine
-            pyramid = get_pyramid_engine()
-            position = scheduler.position_store.get(symbol)
-            price = context.get("price", 0)
-            max_total_size = float(context.get("max_position_size", 50.0))
-            can_add, add_reason, add_params = pyramid.can_add_position(
-                position=position, current_price=price, max_total_size=max_total_size,
-            )
-            if can_add:
-                logger.info(f"[金字塔加仓] {symbol} 满足加仓条件: {add_reason} | 加仓 {add_params['add_size']:.0f} 股 @ ${price:.2f}")
-                if not hasattr(vote_result, 'get') or not vote_result.get('is_add_on'):
-                    vote_result['is_add_on'] = True
-                    vote_result['add_on_params'] = add_params
-            else:
-                logger.debug(f"[金字塔加仓] {symbol} 不满足加仓条件: {add_reason}")
-        except Exception as e:
-            logger.warning(f"[金字塔加仓] {symbol} 检测异常: {e}")
-
-    # 一致性检查
-    if current_phase != MarketPhase.TRADING:
-        logger.info(
-            f"[投票] {symbol} strength={vote_result['final_strength']} "
-            f"consensus={vote_result['consensus_level']:.2f} "
-            f"direction={vote_result.get('direction', 'LONG')} "
-            f"(threshold={scheduler.MIN_CONSENSUS_LEVEL})"
-        )
-        # ── P0 修复 (2026-05-02): 盘前/盘后禁止新开仓 ──
-        # 只有 TRADING 时段允许新建持仓。盘前/盘后仅允许已有持仓的退出监控。
-        if not scheduler.position_store.has(symbol):
-            logger.info(
-                f"[时段门禁] {symbol} 当前阶段={current_phase.value} 且无现有持仓，"
-                f"禁止新建仓位 (等待 TRADING 时段)"
-            )
-            get_rejection_logger().record(symbol, f"phase={current_phase.value}",
-                "PHASE_BLOCKED", strength=vote_result['final_strength'],
-                confidence=None, direction=vote_result.get('direction'))
-            return
-    if vote_result["consensus_level"] < scheduler.MIN_CONSENSUS_LEVEL:
-        if current_phase != MarketPhase.TRADING:
-            logger.info(f"[投票] {symbol} 模型意见分歧 (consensus={vote_result['consensus_level']:.2f}<{scheduler.MIN_CONSENSUS_LEVEL})，放弃")
-        get_rejection_logger().record(symbol, f"consensus={vote_result['consensus_level']:.2f}",
-            "CONSENSUS_LOW", strength=vote_result['final_strength'],
-            confidence=None, direction=vote_result.get('direction'))
-        return
-
-    if vote_result.get("is_neutral", False):
-        if current_phase != MarketPhase.TRADING:
-            logger.info(f"[投票] {symbol} 中性信号 (strength={vote_result['final_strength']} std={vote_result['std_dev']:.1f})，无明确方向，跳过")
-        get_rejection_logger().record(symbol, f"neutral std={vote_result.get('std_dev', 0):.1f}",
-            "NEUTRAL", strength=vote_result['final_strength'],
-            confidence=None, direction=vote_result.get('direction'))
-        return
-
-    # Step4: 构建 SignalScore
-    signal = _build_signal_from_vote(scheduler, symbol, vote_result, context)
-
-    # ── LONG entry filter (2026-06-10): LONG requires elevated dual threshold ──
-    # SHORT signals pass through (83% WR); LONG must meet BOTH:
-    #   signal_strength >= 50  AND  signal_confidence >= 0.6
-    # Fail-close: None/0 strength or confidence → rejected.
-    if direction == "LONG":
-        _long_str = int(signal.strength or 0)
-        _long_conf = float(signal.confidence or 0.0)
-        if _long_str < 50 or _long_conf < 0.6:
-            logger.warning(
-                f"[LONG过滤] {symbol} LONG信号不满足门槛: "
-                f"strength={_long_str} (需≥50), confidence={_long_conf:.2f} (需≥0.60), "
-                f"已跳过 (SHORT方向免过滤)"
-            )
-            get_rejection_logger().record(symbol,
-                f"LONG filter: strength={_long_str}<50 OR confidence={_long_conf:.2f}<0.60",
-                "LONG_FILTER_REJECTED", strength=_long_str,
-                confidence=_long_conf, direction=direction)
-            return
-
-    # ── Signal strength fail-close (2026-06-10): 无信号不开仓 ──
-    # strength=0/None 表示 scorer 未产出有效信号, 不论方向都应拒绝
-    # 防止 SHORT 方向将 strength=0 误解为 "极度看空" (100-0=100)
-    _raw_strength = signal.strength
-    if _raw_strength is None or _raw_strength == 0:
-        logger.warning(
-            f"[信号fail-close] {symbol} signal_strength={_raw_strength}, 无有效信号, 跳过开仓"
-        )
-        get_rejection_logger().record(symbol,
-            f"signal_strength fail-close: {_raw_strength}",
-            "NO_SIGNAL_STRENGTH", strength=0,
-            confidence=float(signal.confidence or 0.0), direction=direction)
-        return
-
-    # 信号强度过滤 (方向感知)
-    # P0 修复 (2026-06-04): 50-offset 格式下 SHORT strength<50 是正确的,
-    # 评估门槛时需转为绝对强度: SHORT → 100-strength, LONG → strength
-    # 对齐 pre_trade_check.py 的 effective 逻辑。
-    if direction == "SHORT":
-        effective_strength = 100 - signal.strength  # e.g. strength=10 → effective=90 (强空)
-    else:
-        effective_strength = signal.strength  # e.g. strength=90 → effective=90 (强多)
-    if effective_strength < scheduler.MIN_SIGNAL_STRENGTH:
-        logger.info(f"[决策] {symbol} 信号强度不足 (direction={direction} strength={signal.strength} effective={effective_strength}<{scheduler.MIN_SIGNAL_STRENGTH})，放弃")
-        get_rejection_logger().record(symbol,
-            f"effective={effective_strength}<{scheduler.MIN_SIGNAL_STRENGTH}",
-            "STRENGTH_WEAK", strength=signal.strength,
-            confidence=signal.confidence, direction=direction)
-        return
-
-    # ── Degradation-aware + direction-aware confidence gate ──
-    # Base threshold: scheduler.MIN_CONFIDENCE (已含 DEGRADED 模式上调)
-    # degraded_confidence_offset: 降级信号额外降低阈值 (config 默认 -0.1)
-    # direction_bias: LONG 需 0.75, SHORT 需 0.60 (从 yaml 读取)
-    effective_min_conf = scheduler.MIN_CONFIDENCE
-    try:
-        from app.core.config_container import get_config as _get_cfg
-        _cfg = _get_cfg()
-    except Exception:
-        _cfg = None
-
-    # Degraded offset: 降级信号允许更低的置信度
-    _sig_meta = signal.metadata if isinstance(signal.metadata, dict) else {}
-    is_degraded = bool(_sig_meta.get("degraded", False))
-    if is_degraded and _cfg:
-        degraded_offset = float(_cfg.get_dotted('strategies.defaults.degraded_confidence_offset', -0.1) or -0.1)
-        effective_min_conf += degraded_offset
-
-    # Direction-aware threshold: 从 yaml 的 direction_bias 读取方向专用阈值
-    if _cfg:
-        direction_str = signal.direction.value if hasattr(signal.direction, 'value') else str(signal.direction)
-        dir_bias_key = f'strategies.defaults.direction_bias.{direction_str}.min_confidence'
-        dir_threshold = _cfg.get_dotted(dir_bias_key, None)
-        if dir_threshold is not None:
-            effective_min_conf = max(effective_min_conf, float(dir_threshold))
-
-    if signal.confidence < effective_min_conf:
-        logger.info(f"[决策] {symbol} 置信度不足 ({signal.confidence:.2f}<{effective_min_conf:.2f}, "
-                    f"base={scheduler.MIN_CONFIDENCE:.2f}, degraded={is_degraded})，放弃")
-        get_rejection_logger().record(symbol,
-            f"confidence={signal.confidence:.2f}<{effective_min_conf:.2f}",
-            "CONFIDENCE_LOW", strength=signal.strength,
-            confidence=signal.confidence, direction=direction)
-        return
-
-    # ── 双链路并行 (Task #3 2026-06-15): 谨慎模式信号门槛 ──
-    # 读取 ModeSwitchService 当前 aggression level 对应的阈值, 比基础门槛更严。
-    # 方向感知与上方一致: SHORT 用 100-strength 转为 effective。
-    try:
-        from app.coordinator.dual_mode_params import get_conservative_param
-        min_strength_override = get_conservative_param("min_signal_strength")
-        min_conf_override = get_conservative_param("min_confidence")
-        if min_strength_override is not None:
-            if effective_strength < float(min_strength_override):
-                logger.info(
-                    f"[CONSERVATIVE] {symbol} signal effective_strength={effective_strength} "
-                    f"< threshold {min_strength_override}, skip"
-                )
-                get_rejection_logger().record(symbol,
-                    f"effective={effective_strength}<{min_strength_override} (conservative)",
-                    "CONSERVATIVE_STRENGTH", strength=signal.strength,
-                    confidence=signal.confidence, direction=direction)
-                return
-        if min_conf_override is not None:
-            if signal.confidence < float(min_conf_override):
-                logger.info(
-                    f"[CONSERVATIVE] {symbol} confidence={signal.confidence:.2f} "
-                    f"< threshold {min_conf_override}, skip"
-                )
-                get_rejection_logger().record(symbol,
-                    f"confidence={signal.confidence:.2f}<{min_conf_override} (conservative)",
-                    "CONSERVATIVE_CONFIDENCE", strength=signal.strength,
-                    confidence=signal.confidence, direction=direction)
-                return
-    except Exception as _ce:
-        logger.warning(f"[CONSERVATIVE] {symbol} Failed to check thresholds: {_ce}")
-
-    # ====== P0 修复 (2026-05-04): 信号持久化到 signals 表 ======
-    # 修复前: signals 表永远为空 (0 rows)，信号→成交归因链路断链
-    # 修复后: 所有通过强度/置信度过滤的信号都写入 signals 表
+    # ── P0 (2026-05-04): 信号持久化到 signals 表 (迁移自 Legacy L1792-1822) ──
     try:
         from datetime import datetime as _dt
         from app.core.db_utils import db_connect
@@ -1805,256 +1217,30 @@ def _process_symbol_impl(scheduler, symbol: str, vix: float, spy_context: Dict[s
                 (
                     _dt.now().strftime("%Y-%m-%d"),
                     symbol,
-                    direction,
+                    str(signal.direction),
                     signal.strength,
                     signal.confidence,
                     context.get("price", 0.0),
-                    vote_result.get("position_suggestion", {}).get("stop_loss_pct", 0),
-                    vote_result.get("position_suggestion", {}).get("take_profit_pct", 0),
-                    vote_result.get("strategy_id", "voting_llm"),
+                    voting_result.get("position_suggestion", {}).get("stop_loss_pct", 0),
+                    voting_result.get("position_suggestion", {}).get("take_profit_pct", 0),
+                    signal.strategy_id or "voting_llm",
                     "PENDING",
                 ),
             )
         logger.info(f"[P0·信号持久化] {symbol} 已写入 signals 表: strength={signal.strength} confidence={signal.confidence:.2f}")
     except Exception as e:
         logger.error(f"[P0·信号持久化] {symbol} 写入 signals 表失败: {e}")
-    # ============================================================
 
-    # Step5: 风控检查 (P2 2026-05-01: 收集模式下跳过, 由 _check_gates_and_conflicts 统一执行)
-    if on_candidate is not None:
-        # 收集模式: 仅做轻量资本安全预检，完整门禁在 _submit_order 时执行
-        try:
-            from app.risk.capital_safety import get_capital_safety_system
-            capital = get_capital_safety_system()
-            allowed, reason = capital.can_open_position()
-            if not allowed:
-                logger.warning(f"[资本安全] {symbol} 禁止开仓: {reason}")
-                from app.pipeline.position_monitor import _notify_risk_blocked
-                _notify_risk_blocked(scheduler, symbol, f"capital_safety: {reason}")
-                return
-        except Exception as e:
-            logger.warning(f"[资本安全] 检查异常 (继续执行): {e}")
-        on_candidate(symbol, signal, context, vote_result)
-        return
-
-    # 直接下单模式 (向后兼容: 作战计划快车道等)
-    try:
-        from app.risk.capital_safety import get_capital_safety_system
-        capital = get_capital_safety_system()
-        allowed, reason = capital.can_open_position()
-        if not allowed:
-            logger.warning(f"[资本安全] {symbol} 禁止开仓: {reason}")
-            from app.pipeline.position_monitor import _notify_risk_blocked
-            _notify_risk_blocked(scheduler, symbol, f"capital_safety: {reason}")
-            return
-    except Exception as e:
-        logger.warning(f"[资本安全] 检查异常 (继续执行): {e}")
-
-    if scheduler.us_risk_pipeline:
-        try:
-            pipeline_ctx = {
-                "risk_engine": scheduler.risk_engine,
-                "position_store": scheduler.position_store,
-                "vix": context.get("vix", 0),
-                "spy_change_pct": spy_context.get("spx_change_percent", 0),
-                "symbol": symbol,
-            }
-            pipeline_result = scheduler.us_risk_pipeline.run(signal, pipeline_ctx)
-            if not pipeline_result.passed:
-                logger.warning("[USRiskPipeline] ❌ %s 被 %s 拦截: %s",
-                    symbol, pipeline_result.rejected_by, pipeline_result.reason)
-                from app.pipeline.position_monitor import _notify_risk_blocked
-                _notify_risk_blocked(scheduler, symbol, f"us_risk_pipeline: {pipeline_result.rejected_by}")
-                return
-            logger.debug("[USRiskPipeline] ✅ %s 全部通过 (%d/%d)",
-                symbol, pipeline_result.checks_passed, pipeline_result.checks_run)
-        except Exception as e:
-            logger.warning("[USRiskPipeline] 执行异常 (降级到旧 RiskEngine): %s", e)
-
-    if scheduler.risk_engine:
-        try:
-            if not scheduler.risk_engine.pre_trade_check(signal):
-                logger.info(f"[风控] {symbol} 预交易检查未通过")
-                from app.pipeline.position_monitor import _notify_risk_blocked
-                _notify_risk_blocked(scheduler, symbol, "pre_trade_check failed")
-                return
-        except Exception as e:
-            logger.warning(f"[风控] {symbol} 检查异常：{e}")
-
-    # Step6: 下单 (P0: 跨引擎互斥锁保护开仓临界区)
-    # ── Task #1 (2026-06-17): 信号去重检查 ──
-    try:
-        from app.risk.signal_dedup import get_signal_deduplicator
-        _direction = str(getattr(signal, 'direction', '')).upper()
-        _strat_id = ""
-        if vote_result:
-            _strat_id = vote_result.get("strategy_id", "") or vote_result.get("model", "")
-        if not _strat_id and hasattr(signal, 'metadata'):
-            _strat_id = (signal.metadata or {}).get("strategy_id", "")
-        if get_signal_deduplicator().is_duplicate(symbol, _direction, _strat_id):
-            return
-    except Exception as _dedup_err:
-        logger.debug(f"[SignalDedup] 检查异常 (放行): {_dedup_err}")
-
+    # ── 委托给现有执行路径 (PDT → Gates → Pyramid → Execute) ──
     from app.pipeline.order_executor import _submit_order
     lock = getattr(scheduler, '_open_position_lock', None)
     if lock:
         lock.acquire()
     try:
-        _submit_order(scheduler, symbol, signal, context, vote_result)
+        _submit_order(scheduler, symbol, signal, context, voting_result)
     finally:
         if lock:
             lock.release()
-
-
-# ============================================================
-#  投票结果 → SignalScore
-# ============================================================
-def _build_signal_from_vote(scheduler, symbol: str, vote_result: Dict[str, Any], context: Dict[str, Any]) -> SignalScore:
-    """将投票结果转换为 SignalScore"""
-    direction_str = vote_result.get("direction", "LONG")
-    direction = Direction.LONG if direction_str == "LONG" else Direction.SHORT
-
-    # Task #9 (2026-05-31): 降级信号置信度封顶 0.60
-    is_degraded = bool(vote_result.get("degraded"))
-    degradation_level = vote_result.get("degradation_level", 0)
-    degradation_reason = vote_result.get("degradation_reason", "")
-    raw_confidence = float(vote_result.get("final_confidence", 0.5) or 0.5)
-    if is_degraded and raw_confidence > 0.60:
-        logger.warning(
-            f"[降级信号] {symbol} confidence {raw_confidence:.2f} → 0.60 "
-            f"(level={degradation_level}, reason={degradation_reason})"
-        )
-        raw_confidence = 0.60
-
-    # ── Signal Quality Scorer integration (2026-05-31) ──
-    # Build a ctx-like object from the context dict so SignalQualityScorer can
-    # read attributes (it uses getattr extensively). Take max of vote-based and
-    # quality-based confidence to avoid being overly aggressive in either direction.
-    quality_factors = None
-    try:
-        from app.strategy.signal_quality_scorer import SignalQualityScorer
-
-        class _ScorerCtx:
-            """Minimal attribute wrapper so SignalQualityScorer.score() works on a dict."""
-            def __init__(self, d: dict):
-                for k, v in d.items():
-                    setattr(self, k, v)
-
-        scorer_ctx = _ScorerCtx(context)
-        # Ensure required attributes have safe defaults
-        for _attr, _default in (
-            ('symbol', ''), ('price', 0), ('ma5', 0), ('ma20', 0), ('ma50', 0),
-            ('rsi', 50), ('macd', 0), ('macd_signal', 0), ('volume', 0),
-            ('avg_volume', 0), ('vix', 20), ('vix_regime', 'normal'),
-            ('spy_price', 0), ('spy_ma200', 0), ('market_regime', ''),
-            ('trend', ''), ('volume_ratio', 1.0), ('slope_5m', 0.0),
-            ('order_flow_imbalance', 0.0), ('ticker_buy_sell_ratio', 1.0),
-            ('metadata', {}),
-        ):
-            if not hasattr(scorer_ctx, _attr):
-                setattr(scorer_ctx, _attr, _default)
-
-        quality = SignalQualityScorer.score(
-            scorer_ctx, direction_str,
-            strategy_confidence=raw_confidence,
-        )
-        raw_confidence = quality.confidence
-        quality_factors = quality.to_dict()
-    except Exception as e:
-        logger.debug(f"[SignalPipeline] quality scoring failed: {e}")
-
-    regime_raw = vote_result.get("market_regime", context.get("market_regime", "RANGE"))
-    # market_regime 可能来自多个路径:
-    # 1. vote_result["market_regime"] 可能是字符串 (如 "TREND_UP") 或字典 (如 {"regime": "NORMAL", ...})
-    # 2. context["market_regime"] 可能是 IntradayScorer 输出的字符串
-    # 3. 兜底值为 "RANGE"
-    if isinstance(regime_raw, dict):
-        regime_str = regime_raw.get("regime", "RANGE")
-    else:
-        regime_str = str(regime_raw) if regime_raw else "RANGE"
-    # 规范化: 将可能的中文/非标准值映射到 MarketRegime 枚举
-    _REGIME_MAP = {
-        "正常": "RANGE", "neutral": "RANGE", "NORMAL": "RANGE",
-        "上涨": "TREND_UP", "bullish": "TREND_UP",
-        "下跌": "TREND_DOWN", "bearish": "TREND_DOWN",
-        "高波动": "HIGH_VOL", "high_volatility": "HIGH_VOL",
-        "低波动": "LOW_VOL", "low_volatility": "LOW_VOL",
-    }
-    regime_str = _REGIME_MAP.get(regime_str, regime_str)
-    try:
-        regime = MarketRegime(regime_str)
-    except ValueError:
-        logger.debug(f"[regime 规范化] 无法解析 '{regime_str}'，降级为 RANGE")
-        regime = MarketRegime.RANGE
-
-    # P1-1 (2026-05-14): phase-aware 过期 (opening 5min / midday 15min / closing 3min)
-    from app.utils.datetime_utils import signal_expires_at
-    expires_at = signal_expires_at()
-
-    account_equity = 0.0
-    try:
-        from app.risk.capital_safety import get_capital_safety_system
-        cs = get_capital_safety_system()
-        if cs._state and cs._state.current_equity > 0:
-            account_equity = cs._state.current_equity
-    except Exception:
-        pass
-
-    # P1-2 (2026-05-14): 注入当前持仓 — sector check 才能工作
-    _current_positions = []
-    try:
-        ps = getattr(scheduler, "position_store", None)
-        if ps is not None:
-            for p in ps.all():
-                _entry = float(getattr(p, "avg_entry_price", 0) or 0)
-                _size = float(getattr(p, "size", 0) or 0)
-                _current_positions.append({
-                    "symbol": p.symbol,
-                    "market_value": _entry * _size,
-                    "owner_strategy": getattr(p, "owner_strategy", "main"),
-                })
-    except Exception:
-        pass
-
-    signal = SignalScore(
-        signal_id=str(uuid.uuid4())[:8],
-        trace_id=f"US-{now_et().strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}",
-        strategy_id="voting_llm",
-        symbol=symbol,
-        direction=direction,
-        strength=int(vote_result.get("final_strength", 50)),
-        confidence=float(raw_confidence),
-        expected_horizon=60 * 24,
-        volatility_fit=True,
-        market_regime=regime,
-        risk_reward_estimate=2.5,
-        expires_at=expires_at,
-        metadata={
-            "consensus_level": vote_result.get("consensus_level", 0),
-            "std_dev": vote_result.get("std_dev", 0),
-            "news_sentiment": context.get("news_sentiment", 0),
-            "vix": context.get("vix", 20),
-            "model_scores": vote_result.get("model_scores", []),
-            "decision_id": vote_result.get("decision_id"),
-            "account_equity": account_equity,
-            "_current_positions": _current_positions,  # P1-2: sector_check 用
-            # T5 (2026-05-16): 把 IntradayScorer 的 _factor_detail 透传到 SignalScorer
-            # SignalScorer 检测到 trend/volume 已上游计算 → 二层权重置 0, 避免双计
-            "_factor_detail": vote_result.get("_factor_detail", {}) or {},
-            # P1 VWAP Gate (2026-05-24): 透传 VWAP 偏离度供 pre_trade_check 过滤低强度多头
-            "vwap_deviation": context.get("ticker_vwap_deviation"),
-            # Task #9 (2026-05-31): 降级标记透传供下游使用
-            "degraded": is_degraded,
-            "degradation_level": degradation_level,
-            "degradation_reason": degradation_reason,
-            # Signal Quality Scorer (2026-05-31): 多维质量评分明细
-            "quality_factors": quality_factors,
-        },
-    )
-    return signal
-
-
 # ============================================================
 #  P4 2026-05-02: 动态选股池 — 风控驱动的选股过滤
 # ============================================================

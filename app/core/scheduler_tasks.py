@@ -30,9 +30,7 @@ from app.pipeline.signal_pipeline import (
     run_signal_scan,
     process_symbol,
     _run_signal_scan_impl,
-    _process_symbol_impl,
     _generate_technical_signal,
-    _build_signal_from_vote,
 )
 
 # ── order_executor ───────────────────────────────────────────────────
@@ -83,8 +81,7 @@ from app.pipeline.llm_pipeline import (
 __all__ = [
     # signal_pipeline
     "scan_loop", "run_signal_scan", "process_symbol",
-    "_run_signal_scan_impl", "_process_symbol_impl",
-    "_generate_technical_signal", "_build_signal_from_vote",
+    "_run_signal_scan_impl", "_generate_technical_signal",
     # order_executor
     "_submit_order", "_close_position", "_get_current_price",
     "_get_order_qty", "_submit_put_option",

@@ -1760,6 +1760,27 @@ def _check_gates_and_conflicts(scheduler, symbol: str, signal: SignalScore, cont
         logger.debug(f"[SignalQuality] 检查异常 (不放行): {_sq_err}")
         return False
 
+    # ── LONG entry filter (2026-06-10): LONG requires elevated dual threshold ──
+    # SHORT signals pass through (83% WR); LONG must meet BOTH:
+    #   signal_strength >= 50  AND  signal_confidence >= 0.6
+    # Fail-close: None/0 strength or confidence → rejected.
+    _sq_dir = str(getattr(signal, 'direction', '') or '')
+    _sq_str = int(getattr(signal, 'strength', 0) or 0)
+    _sq_conf = float(getattr(signal, 'confidence', 0.0) or 0.0)
+    
+    if _sq_dir == "LONG":
+        if _sq_str < 50 or _sq_conf < 0.6:
+            logger.warning(
+                f"[LONG过滤] {symbol} LONG信号不满足门槛: "
+                f"strength={_sq_str} (需≥50), confidence={_sq_conf:.2f} (需≥0.60), "
+                f"已跳过 (SHORT方向免过滤)"
+            )
+            get_rejection_logger().record(symbol,
+                f"LONG filter: strength={_sq_str}<50 OR confidence={_sq_conf:.2f}<0.60",
+                "LONG_FILTER_REJECTED", strength=_sq_str,
+                confidence=_sq_conf, direction=_sq_dir)
+            return False
+
     # 🔴 P0 关键修复: 全局风险状态机门禁检查
     # 在一切交易逻辑之前，检查系统是否处于 RISK_OFF 或 HALT 状态
     try:
