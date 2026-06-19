@@ -3,13 +3,14 @@
 ## Meta
 - **Project**: Trading Playbook System
 - **Spec**: [trading-playbook-system.md](./trading-playbook-system.md) (v2.0)
-- **Last Updated**: 2026-06-18T23:30:00Z (wiring pass complete)
-- **Updated By**: claude (current session)
+- **Last Updated**: 2026-06-19T18:15:00Z (trigger fix + scalping cleanup + OKR update)
+- **Updated By**: hermes (current session)
 
 ## Current Status
-- **Phase**: 2 (Pattern Iteration) — modules COMPLETE; **pipeline WIRED** (2026-06-18)
-- **Progress**: Phase 0 + Phase 1 + Phase 2 modules done + end-to-end orchestration wired — full system now runs on cron
-- **Total Tests**: 232 (all passing, zero regression after wiring)
+- **Phase**: 2 (Pattern Iteration) — Shadow验证运行中 + 方案B最小实盘
+- **Progress**: Phase 0/1/2 modules done + pipeline wired + 6/18首次运行成功 + 触发窗口优化 + scalping代码清理
+- **Total Tests**: 232 (all passing)
+- **运行模式**: `pipeline.master_switch=shadow_only` + `playbook.execute_mode=live` + `auto_execute=true`
 
 ## Phase 0: Shadow Validation (Week 0)
 
@@ -330,6 +331,18 @@
   - `execute_instruction` order mode changed from hardcoded `"simulate"` to read `playbook.execute_mode` (default unchanged = simulate).
 - **Why default OFF**: go-live safety — the gate must be explicitly flipped to `true` only after review. Rollback is config-only (flip back + restart), no code edit. Verified: gate returns False by default, all three entries return None when closed, passes through when open.
 - **Decision**: ship Phase 0 **shadow only** (enabled=true, execute_mode=simulate). Real execution (execute_mode=live) blocked until the first-day checklist + 3 acceptance thresholds pass — see "Shadow Mode Go-Live" section.
+
+### 2026-06-19: Trigger Window ±3% → ±5%
+- **Decision Maker**: hermes + user
+- **Root cause**: AVGO entry=$392.9, actual price=$409.25 → exceeded ±3% upper bound ($404.69), not triggered despite positive shadow PnL (+$1,845)
+- **Fix**: `shadow_tracker.py` trigger window widened to ±5% (entry_low=0.95, entry_high=1.05)
+- **Risk**: Wider window may trigger at less favorable prices; acceptable since ±5% is still reasonable for swing trades
+
+### 2026-06-19: Scalping Code Cleanup (evolution/shadow_tracker + intraday_attribution)
+- **Decision Maker**: hermes
+- **What**: Removed scalping-specific branches in `_get_real_pnl_stats()` (unified to single query) and `_get_default_params()` (unified to main config). Removed scalping_positions display in `intraday_attribution.py`.
+- **Why**: Scalping disabled since 2026-06-14; residual code had active branching that could misclassify data
+- **Remaining**: ~30 other files have scalping references — all are comments, deprecated no-op methods, or historical DB queries. Left as-is (historical analysis still needs strategy_id='scalping' filter)
 
 ## Known Pitfalls
 

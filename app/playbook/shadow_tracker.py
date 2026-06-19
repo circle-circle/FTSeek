@@ -125,14 +125,14 @@ class ShadowTracker:
 
         updates = {}
 
-        # 1. 检查是否触发 (价格进入入场区间 ±3%)
-        # OKR Week 1: 从 ±2% 放宽到 ±3%，提升触发率
+        # 1. 检查是否触发 (价格进入入场区间 ±5%)
+        # OKR Week 1: 从 ±2% 放宽到 ±3%，再到 ±5%，提升触发率
         entry_price = inst.get("entry_price")
         if entry_price and entry_price > 0:
             day_low = day_data.get("low", 0)
             day_high = day_data.get("high", 0)
-            entry_low = entry_price * 0.97
-            entry_high = entry_price * 1.03
+            entry_low = entry_price * 0.95
+            entry_high = entry_price * 1.05
             updates["triggered"] = 1 if (entry_low <= day_high and day_low <= entry_high) else 0
 
         # 2. 检查是否执行了 (匹配 trade_records)

@@ -89,16 +89,14 @@ def generate_attribution_report(
                 from app.risk.position_limits import get_etf_discount
 
                 # P0 修复 (2026-05-09): 按来源分类展示持仓
+                # 2026-06-19: scalping 已删除，简化为 主线 + 其他
                 main_positions = []
-                scalping_positions = []
                 other_positions = []
                 
                 for p in positions:
                     meta = getattr(p, 'metadata', {}) or {}
                     source = meta.get('source_type', 'MAIN_PIPELINE')
-                    if source == 'SCALPING':
-                        scalping_positions.append(p)
-                    elif source == 'MAIN_PIPELINE':
+                    if source == 'MAIN_PIPELINE':
                         main_positions.append(p)
                     else:
                         other_positions.append(p)
@@ -109,19 +107,6 @@ def generate_attribution_report(
                 if main_positions:
                     lines.append("  🟢 主线策略 (LLM投票):")
                     for p in main_positions:
-                        value = p.size * p.avg_entry_price
-                        total_value += value
-                        direction = p.direction.value if hasattr(p.direction, 'value') else str(p.direction)
-                        pnl_str = f" SL=${p.current_sl:.2f}" if hasattr(p, 'current_sl') and p.current_sl > 0 else ""
-                        lines.append(
-                            f"    {p.symbol:25s} {direction:5s} "
-                            f"{p.size:>6.0f}股 @ ${p.avg_entry_price:>8.2f} = ${value:>10,.0f}{pnl_str}"
-                        )
-                
-                # Scalping 持仓
-                if scalping_positions:
-                    lines.append("  🟡 Scalping (剥头皮):")
-                    for p in scalping_positions:
                         value = p.size * p.avg_entry_price
                         total_value += value
                         direction = p.direction.value if hasattr(p.direction, 'value') else str(p.direction)
@@ -145,7 +130,7 @@ def generate_attribution_report(
                             f"{p.size:>6.0f}股 @ ${p.avg_entry_price:>8.2f} = ${value:>10,.0f} [{source}]{pnl_str}"
                         )
 
-                lines.append(f"  ── 持仓数: 主线{len(main_positions)} + Scalping{len(scalping_positions)} + 其他{len(other_positions)} = {len(positions)} | 总市值: ${total_value:,.0f}")
+                lines.append(f"  ── 持仓数: 主线{len(main_positions)} + 其他{len(other_positions)} = {len(positions)} | 总市值: ${total_value:,.0f}")
             else:
                 lines.append("  (无持仓)")
         except Exception as e:

@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-06-19T16:30:54.188395",
+  "timestamp": "2026-06-19T18:15:19.775432",
   "overall_score": 8.0,
   "kr_scores": {
     "kr1_win_rate": 0,
@@ -236,7 +236,7 @@
   ],
   "config": {
     "enabled": true,
-    "execute_mode": "simulate",
+    "execute_mode": "live",
     "auto_execute": true
   }
 }

@@ -551,28 +551,18 @@ class ShadowTracker:
         """
         从 trade_records 表查询指定策略线的真实 PnL
         """
+        # 2026-06-19 修复: scalping 已删除，不再区分策略类型，统一查询
         try:
             from app.core.db_utils import get_main_db
             db_path = get_main_db()
             conn = sqlite3.connect(str(db_path))
-            if strategy_type == "scalping":
-                row = conn.execute(
-                    """SELECT COALESCE(SUM(realized_pnl), 0) as total_pnl,
-                              COUNT(*) as trade_count
-                       FROM trade_records
-                       WHERE trade_date = ? AND symbol = ?
-                       AND strategy_id = 'scalping'""",
-                    (date_str, symbol)
-                ).fetchone()
-            else:
-                row = conn.execute(
-                    """SELECT COALESCE(SUM(realized_pnl), 0) as total_pnl,
-                              COUNT(*) as trade_count
-                       FROM trade_records
-                       WHERE trade_date = ? AND symbol = ?
-                       AND (strategy_id != 'scalping' OR strategy_id IS NULL)""",
-                    (date_str, symbol)
-                ).fetchone()
+            row = conn.execute(
+                """SELECT COALESCE(SUM(realized_pnl), 0) as total_pnl,
+                          COUNT(*) as trade_count
+                   FROM trade_records
+                   WHERE trade_date = ? AND symbol = ?""",
+                (date_str, symbol)
+            ).fetchone()
             conn.close()
             if row:
                 return {"pnl": float(row[0]), "trade_count": int(row[1])}
@@ -621,29 +611,18 @@ class ShadowTracker:
             from app.core.config_container import get_config
             cfg = get_config()
 
-            if strategy_type == "scalping":
-                scalping_cfg = cfg.get_section("scalping")
-                risk_cfg = cfg.get_section("risk")
-                params["min_score"] = risk_cfg.get("signal_quality", {}).get("min_score", 60)
-                # Scalping 使用 ATR 乘数模式，base params 提供百分比基准
-                base = scalping_cfg.get("phases", {}).get("base_params", {})
-                params["tp1"] = base.get("tp_pct", 0.012)
-                params["sl"] = base.get("sl_pct", 0.007)
-            else:
-                risk_cfg = cfg.get_section("risk")
-                params["min_score"] = risk_cfg.get("signal_quality", {}).get("min_score", 50)
-                exit_cfg = cfg.get_section("dynamic_exit")
-                default_exit = exit_cfg.get("default", {})
-                params["tp1"] = abs(float(default_exit.get("take_profit", 0.10)))
-                params["sl"] = abs(float(default_exit.get("stop_loss", -0.03)))
+            # 2026-06-19 修复: scalping 已删除，统一使用主线配置
+            risk_cfg = cfg.get_section("risk")
+            params["min_score"] = risk_cfg.get("signal_quality", {}).get("min_score", 50)
+            exit_cfg = cfg.get_section("dynamic_exit")
+            default_exit = exit_cfg.get("default", {})
+            params["tp1"] = abs(float(default_exit.get("take_profit", 0.10)))
+            params["sl"] = abs(float(default_exit.get("stop_loss", -0.03)))
         except Exception as e:
             logger.debug(f"[Shadow] 配置读取失败，使用硬编码回退: {e}")
 
         # 硬编码回退（与 unified_config.yaml 保持一致）
         if not params:
-            if strategy_type == "scalping":
-                params = {"min_score": 60, "tp1": 0.012, "sl": 0.007}
-            else:
-                params = {"min_score": 50, "tp1": 0.10, "sl": 0.03}
+            params = {"min_score": 50, "tp1": 0.10, "sl": 0.03}
 
         return params
