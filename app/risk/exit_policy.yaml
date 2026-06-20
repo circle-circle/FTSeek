@@ -262,15 +262,10 @@ exit_rules:
       high_vol: 15                  # 高波动: 收盘前 15 分钟 (保守)
       default: 10
 
-  # ── DEAD RULE: time_stop ──
-  # 规则 6: 时间止损
-  # O3 (2026-05-16): 禁用 — 30天 sharpe=-0.40, win_rate=29% (5/15 exit_reason_pnl 报告)
-  # 退出时机更应由价格行为 (chandelier/SL) 决定, 而非时间. 之前 7 笔 time_stop 平均亏损 -0.53%.
-  # 回退方式: enabled: true (主线), 短线 time_gate 仍生效不受影响.
-  time_stop:
-    enabled: false                  # P1 禁用 (2026-06-04): 时间退出应由价格行为决定
-                                    #   2-5h持仓50%WR但-$5,193, pre_close已处理EOD
-                                    #   信号失效由atr_stop自然淘汰, 不需要时间强制
+  # ── REMOVED RULE: time_stop (2026-06-20) ──
+  # 时间止损, P1 禁用 (30天 sharpe=-0.40, 退出应由价格行为决定), 代码+接线已删。
+  # 注: time_stop_hours (Position 字段) 与 dynamic_risk 的 reason="TIME_STOP" 是不同概念, 保留。
+
 
   # 规则 6.5: 成本缓冲
   # P1 禁用 (2026-06-04): 与breakeven/scale_out重叠, 4.0×ATR止损已远超交易成本

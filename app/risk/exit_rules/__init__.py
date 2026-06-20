@@ -8,7 +8,6 @@ Task #19 拆分自 position_exit_monitor.py 巨石模块。
   - day_trade_exit   规则 1.5 : Day Trade Mode (含 profit_lock)
   - scale_out        规则 2.5 : 分批止盈
   - trailing_stop    规则 2   : ATR 动态止损 + Chandelier 追踪
-  - time_stop        规则 3   : 持仓时长止损
   - pre_close        规则 3.5 : 盘末分层强制退出
 
 每条规则继承 BaseExitRule, 实现 should_exit(position, market_data, trail_state)
@@ -31,7 +30,6 @@ from .day_trade_exit import (
 )
 from .scale_out import ScaleOutRule, check_scale_out
 from .trailing_stop import TrailingStopRule, check_trailing_stop
-from .time_stop import TimeStopRule, check_time_stop
 from .pre_close import PreCloseExitRule, check_pre_close_exit, check_adaptive_pre_close_exit
 
 # Task #48: 退出原因枚举 + 优先级注册表
@@ -51,7 +49,6 @@ __all__ = [
     "DayTradeExitRule",
     "ScaleOutRule",
     "TrailingStopRule",
-    "TimeStopRule",
     "PreCloseExitRule",
     "check_flash_exit",
     "check_day_trade_exit",
@@ -59,7 +56,6 @@ __all__ = [
     "should_use_day_trade_mode",
     "check_scale_out",
     "check_trailing_stop",
-    "check_time_stop",
     "check_pre_close_exit",
     "check_adaptive_pre_close_exit",
     # Task #48

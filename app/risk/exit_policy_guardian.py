@@ -138,10 +138,6 @@ class ExitPolicyGuardian:
                 'required_code': 'scale_out / tier / close_pct',
                 'check': lambda: self._grep_in_daemon('scale_out') or self._grep_in_daemon('take_profit_levels'),
             },
-            'time_stop': {
-                'required_code': 'held_hours >= max_holding_hours',
-                'check': lambda: self._grep_in_daemon('time_stop') or self._grep_in_daemon('held_hours'),
-            },
             'cost_buffer': {
                 'required_code': 'cost_buffer_price = current_price * cost_bps/1e4 * k',
                 'check': lambda: self._grep_in_daemon('cost_buffer_price') or self._grep_in_daemon('cost_buffer'),
@@ -290,7 +286,6 @@ class ExitPolicyGuardian:
                 'breakeven': {'enabled': True, 'trigger_profit_atr': 0.4, 'buffer_pct': 0.15},
                 'chandelier_trail': {'enabled': True, 'activation_profit_atr': 0.8},
                 'scale_out': {'enabled': False},
-                'time_stop': {'enabled': True, 'max_holding_hours': 72},
                 'earnings_guard': {'enabled': False},
             },
             'short_overrides': {'atr_multiplier': 2.0, 'max_loss_pct': 10.0},

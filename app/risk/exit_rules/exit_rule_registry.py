@@ -90,7 +90,6 @@ class ExitRulePriority(IntEnum):
     FLASH_EXIT = 20      # 异常动量平仓
     DAY_TRADE = 30       # 日内短线止损止盈
     TRAILING_STOP = 40   # ATR 动态追踪 + Chandelier
-    TIME_STOP = 50       # 持仓时长止损
     SCALE_OUT = 60       # 分批止盈
 
 
@@ -101,9 +100,9 @@ class ExitRulePriority(IntEnum):
 EXCLUSIVE_RULES: Dict[str, Set[str]] = {
     "pre_close": {
         "flash_exit", "day_trade", "trailing_stop",
-        "time_stop", "scale_out",
+        "scale_out",
     },
-    "flash_exit": {"trailing_stop", "time_stop"},
+    "flash_exit": {"trailing_stop"},
     # P0 修复 (2026-06-14): scale_out 触发后压制 trailing_stop
     # 与 legacy 路径 _check_via_legacy 中的 _has_scale_out 互斥逻辑对齐
     # 根因: Registry 路径缺少此互斥 → scale_out (全平) 与 trailing_stop 可能同时触发,
@@ -118,7 +117,6 @@ RULE_PRIORITIES: Dict[str, int] = {
     "flash_exit": ExitRulePriority.FLASH_EXIT,
     "day_trade": ExitRulePriority.DAY_TRADE,
     "trailing_stop": ExitRulePriority.TRAILING_STOP,
-    "time_stop": ExitRulePriority.TIME_STOP,
     "scale_out": ExitRulePriority.SCALE_OUT,
 }
 

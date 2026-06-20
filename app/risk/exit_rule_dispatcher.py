@@ -184,7 +184,7 @@ class ExitRuleDispatcher:
         "earnings_guard": ["earnings_guard"],
         "trailing_stop": ["trailing_stop", "chandelier_trail"],
         "day_trade": ["day_trade", "day_trade_mode"],
-        "time_decay": ["time_decay", "time_stop"],
+        "time_decay": ["time_decay"],
         "scale_out": ["scale_out"],
     }
 

@@ -54,14 +54,12 @@ from .exit_rules import (
     DayTradeExitRule,
     ScaleOutRule,
     TrailingStopRule,
-    TimeStopRule,
     PreCloseExitRule,
     check_flash_exit as _impl_flash_exit,
     check_day_trade_exit as _impl_day_trade_exit,
     should_use_day_trade_mode as _impl_should_use_day_trade_mode,
     check_scale_out as _impl_scale_out,
     check_trailing_stop as _impl_trailing_stop,
-    check_time_stop as _impl_time_stop,
     check_pre_close_exit as _impl_pre_close_exit,
     # Task #48: 优先级注册表 (渐进式引入, 现仅作为辅助入口)
     ExitRuleRegistry,
@@ -250,7 +248,6 @@ class ExitMonitor:
         self._rule_day_trade = DayTradeExitRule(self)
         self._rule_scale_out = ScaleOutRule(self)
         self._rule_trailing_stop = TrailingStopRule(self)
-        self._rule_time_stop = TimeStopRule(self)
         self._rule_pre_close = PreCloseExitRule(self)
 
         # Task #48 (2026-05-28): 退出规则优先级注册表 (渐进式引入)
@@ -287,13 +284,6 @@ class ExitMonitor:
                 pos, md.get("current_price"), md.get("entry_price"),
                 md.get("effective_atr", 0.0), md.get("profit_atr_signed", 0.0),
                 ts, md.get("now_ts"), md.get("direction"), pg,
-            ),
-        )
-        self._rule_registry.register(
-            "time_stop",
-            lambda pos, md, ts, pg: self._check_time_stop(
-                pos, md.get("current_price"), md.get("now_ts"),
-                md.get("direction"), pg,
             ),
         )
         self._rule_registry.register(
@@ -1448,12 +1438,6 @@ class ExitMonitor:
             elif not _skip_non_hard_exits:
                 _triggered_exits.append(stop_result)
 
-        time_result = self._check_time_stop(
-            position, current_price, now_ts, direction, policy_guardian,
-        )
-        if time_result and not _suppress_non_hard:
-            _triggered_exits.append(time_result)
-
         # Pre-Close (P1-7 互斥保护)
         _meta = getattr(position, "metadata", None) or {}
         _preclose_locked = _meta.get("_exit_locked", False)
@@ -1657,10 +1641,6 @@ class ExitMonitor:
     # ============================================================
     #  规则 3: Time Stop
     # ============================================================
-
-    def _check_time_stop(self, position, current_price, now_ts, direction, policy_guardian=None):
-        """Time Stop 委托 (实现在 exit_rules/time_stop.py)"""
-        return _impl_time_stop(self, position, current_price, now_ts, direction, policy_guardian)
 
     # ============================================================
     #  规则 3.5: Pre-Close Exit 盘末强制退出
