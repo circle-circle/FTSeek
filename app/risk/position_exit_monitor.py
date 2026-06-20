@@ -51,13 +51,10 @@ from .atr_stop_engine import compute_stop_lines, compute_profit_atr_signed, reso
 # ExitMonitor 自身只负责编排 (规则调度 + 质量评分 + 执行平仓)
 from .exit_rules import (
     FlashExitRule,
-    DayTradeExitRule,
     ScaleOutRule,
     TrailingStopRule,
     PreCloseExitRule,
     check_flash_exit as _impl_flash_exit,
-    check_day_trade_exit as _impl_day_trade_exit,
-    should_use_day_trade_mode as _impl_should_use_day_trade_mode,
     check_scale_out as _impl_scale_out,
     check_trailing_stop as _impl_trailing_stop,
     check_pre_close_exit as _impl_pre_close_exit,
@@ -245,7 +242,6 @@ class ExitMonitor:
         # 注意: 顺序决定了规则在 scan_positions 中的遍历顺序;
         #       Pre-Close 仍由编排器单独优先处理 (不参与质量评分竞争)
         self._rule_flash_exit = FlashExitRule(self)
-        self._rule_day_trade = DayTradeExitRule(self)
         self._rule_scale_out = ScaleOutRule(self)
         self._rule_trailing_stop = TrailingStopRule(self)
         self._rule_pre_close = PreCloseExitRule(self)
@@ -268,14 +264,6 @@ class ExitMonitor:
                 pos, md.get("current_price"), md.get("effective_atr", 0.0),
                 ts, md.get("now_ts"), md.get("direction"), pg,
                 md.get("earnings_guard"),
-            ),
-        )
-        self._rule_registry.register(
-            "day_trade",
-            lambda pos, md, ts, pg: self._check_day_trade_exit(
-                pos, md.get("current_price"), md.get("entry_price"),
-                md.get("effective_atr", 0.0), ts, md.get("now_ts"),
-                md.get("direction"), md.get("pnl_pct", 0.0), pg,
             ),
         )
         self._rule_registry.register(
@@ -1400,13 +1388,6 @@ class ExitMonitor:
         if flash_result and not _suppress_non_hard:
             _triggered_exits.append(flash_result)
 
-        daytrade_result = self._check_day_trade_exit(
-            position, current_price, entry_price, effective_atr,
-            trail_state, now_ts, direction, pnl_pct, policy_guardian,
-        )
-        if daytrade_result and not _suppress_non_hard:
-            _triggered_exits.append(daytrade_result)
-
         scale_result = self._check_scale_out(
             position, current_price, trail_state, direction,
             market_data={
@@ -1621,18 +1602,8 @@ class ExitMonitor:
         return _impl_flash_exit(self, position, current_price, atr, trail_state, now_ts, direction, policy, earnings_guard)
 
     # ============================================================
-    #  规则 1.5: Day Trade Mode (短线主动管理)
+    #  规则 1.5: Day Trade Mode — 已删除 (2026-06-20), 规则代码+接线移除
     # ============================================================
-
-    def _should_use_day_trade_mode(self, position, policy_guardian=None) -> bool:
-        """委托 (实现在 exit_rules/day_trade_exit.py)"""
-        return _impl_should_use_day_trade_mode(position, policy_guardian)
-
-    def _check_day_trade_exit(self, position, current_price, entry_price, atr, trail_state, now_ts,
-                               direction, pnl_pct, policy_guardian=None):
-        """Day Trade Mode 委托 (实现在 exit_rules/day_trade_exit.py, 含 profit_lock)"""
-        return _impl_day_trade_exit(position, current_price, entry_price, atr, trail_state, now_ts,
-                                     direction, pnl_pct, policy_guardian)
 
     def _check_scale_out(self, position, current_price, trail_state, direction, market_data=None):
         """分批止盈委托 (实现在 exit_rules/scale_out.py)"""

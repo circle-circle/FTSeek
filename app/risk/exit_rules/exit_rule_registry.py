@@ -88,7 +88,6 @@ class ExitRulePriority(IntEnum):
     """
     PRE_CLOSE = 10       # 盘末强制退出, 优先级最高
     FLASH_EXIT = 20      # 异常动量平仓
-    DAY_TRADE = 30       # 日内短线止损止盈
     TRAILING_STOP = 40   # ATR 动态追踪 + Chandelier
     SCALE_OUT = 60       # 分批止盈
 
@@ -99,7 +98,7 @@ class ExitRulePriority(IntEnum):
 #   - scale_out 与 day_trade 不互斥 (Profit Lock 与分批止盈可共存)。
 EXCLUSIVE_RULES: Dict[str, Set[str]] = {
     "pre_close": {
-        "flash_exit", "day_trade", "trailing_stop",
+        "flash_exit", "trailing_stop",
         "scale_out",
     },
     "flash_exit": {"trailing_stop"},
@@ -115,7 +114,6 @@ EXCLUSIVE_RULES: Dict[str, Set[str]] = {
 RULE_PRIORITIES: Dict[str, int] = {
     "pre_close": ExitRulePriority.PRE_CLOSE,
     "flash_exit": ExitRulePriority.FLASH_EXIT,
-    "day_trade": ExitRulePriority.DAY_TRADE,
     "trailing_stop": ExitRulePriority.TRAILING_STOP,
     "scale_out": ExitRulePriority.SCALE_OUT,
 }

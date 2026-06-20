@@ -68,7 +68,6 @@ class ExitRuleDispatcher:
         "circuit_breaker": 3,
         "earnings_guard": 4,
         "scale_out": 5,           # was 8 → 5, 止盈优先
-        "day_trade": 6,
         "trailing_stop": 7,       # was 5 → 7, 让 scale_out 先锁利
         "time_decay": 8,
     }
@@ -183,7 +182,6 @@ class ExitRuleDispatcher:
         "circuit_breaker": ["circuit_breaker"],
         "earnings_guard": ["earnings_guard"],
         "trailing_stop": ["trailing_stop", "chandelier_trail"],
-        "day_trade": ["day_trade", "day_trade_mode"],
         "time_decay": ["time_decay"],
         "scale_out": ["scale_out"],
     }
@@ -217,7 +215,6 @@ class ExitRuleDispatcher:
             "circuit_breaker": self._eval_circuit_breaker,
             "earnings_guard": self._eval_earnings_guard,
             "trailing_stop": self._eval_trailing_stop,
-            "day_trade": self._eval_day_trade,
             "time_decay": self._eval_time_decay,
             "scale_out": self._eval_scale_out,
         }
@@ -463,46 +460,6 @@ class ExitRuleDispatcher:
                 exit_price=current_price,
                 reason=f"Trailing stop: drop from peak={peak:.2f}, distance={trail_dist:.2f}",
                 metadata={"trail_high": peak, "trail_distance": trail_dist},
-            )
-        return None
-
-    def _eval_day_trade(self, cfg, position, market_data, trail_state):
-        """日内止盈 / 超时"""
-        atr = float(market_data.get("atr", 0))
-        entry_price = float(position.get("entry_price", 0))
-        current_price = float(market_data.get("current_price", 0))
-        holding_hours = float(position.get("holding_hours", 0))
-        direction = str(position.get("direction", "LONG")).upper()
-        if entry_price <= 0 or current_price <= 0:
-            return None
-
-        # 目标价止盈 (ATR 倍数)
-        if atr > 0:
-            tp_target_atr = float(cfg.get("tp1_target_atr", 1.5))
-            if direction == "LONG":
-                profit = current_price - entry_price
-            else:
-                profit = entry_price - current_price
-            if profit >= tp_target_atr * atr:
-                return ExitDecision(
-                    should_exit=True,
-                    rule_name="day_trade",
-                    priority=self.RULE_PRIORITIES["day_trade"],
-                    exit_price=current_price,
-                    reason=f"Day trade TP: profit={profit:.2f} >= {tp_target_atr}*ATR({atr:.2f})",
-                    metadata={"profit": profit, "tp_target_atr": tp_target_atr},
-                )
-
-        # 超时
-        max_hours = float(cfg.get("max_holding_hours", 6))
-        if holding_hours >= max_hours:
-            return ExitDecision(
-                should_exit=True,
-                rule_name="day_trade",
-                priority=self.RULE_PRIORITIES["day_trade"],
-                exit_price=current_price,
-                reason=f"Day trade timeout: {holding_hours:.1f}h >= {max_hours}h",
-                metadata={"holding_hours": holding_hours, "max_hours": max_hours},
             )
         return None
 

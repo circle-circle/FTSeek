@@ -110,32 +110,8 @@ class ConfigWriter:
             "yaml_path": "risk.portfolio.stop_drawdown_pct",
             "min": 0.02, "max": 0.05, "max_delta": 0.005,
         },
-        # ── F27 新增: Day Trade Mode TP (写 exit_policy.yaml) ──
-        "DAYTRADE_TP1_PCT": {
-            "yaml_file": "exit_policy",
-            "yaml_path": "day_trade_mode.take_profit.tier_1.profit_pct",
-            "min": 2.0, "max": 8.0, "max_delta": 1.0,
-        },
-        "DAYTRADE_TP2_PCT": {
-            "yaml_file": "exit_policy",
-            "yaml_path": "day_trade_mode.take_profit.tier_2.profit_pct",
-            "min": 5.0, "max": 15.0, "max_delta": 2.0,
-        },
-        "DAYTRADE_TP3_PCT": {
-            "yaml_file": "exit_policy",
-            "yaml_path": "day_trade_mode.take_profit.tier_3.profit_pct",
-            "min": 10.0, "max": 25.0, "max_delta": 3.0,
-        },
-        "DAYTRADE_INITIAL_STOP_ATR": {
-            "yaml_file": "exit_policy",
-            "yaml_path": "day_trade_mode.initial_stop.atr_multiplier",
-            "min": 1.0, "max": 3.0, "max_delta": 0.3,
-        },
-        "DAYTRADE_MAX_LOSS_PCT": {
-            "yaml_file": "exit_policy",
-            "yaml_path": "day_trade_mode.initial_stop.max_loss_pct",
-            "min": 1.5, "max": 6.0, "max_delta": 0.5,
-        },
+        # ── F27 Day Trade Mode TP 调参已删除 (2026-06-20): day_trade 规则代码已移除,
+        #    auto-tuner 不应再调 disabled 死配置。day_trade_mode yaml 块保留 (time_decay 依赖)。
         # ── F27 新增: Chandelier 追踪 (F14 配套, 让 trail 更早接管 PRE_CLOSE) ──
         "CHANDELIER_ACTIVATION_ATR": {
             "yaml_file": "exit_policy",

@@ -3,9 +3,8 @@ FTSeek-US 退出规则包 (Exit Rules Package)
 
 Task #19 拆分自 position_exit_monitor.py 巨石模块。
 
-将原 6 种退出规则按职责拆分到独立文件:
+将原退出规则按职责拆分到独立文件:
   - flash_exit       规则 1   : 异常动量平仓
-  - day_trade_exit   规则 1.5 : Day Trade Mode (含 profit_lock)
   - scale_out        规则 2.5 : 分批止盈
   - trailing_stop    规则 2   : ATR 动态止损 + Chandelier 追踪
   - pre_close        规则 3.5 : 盘末分层强制退出
@@ -22,12 +21,6 @@ Task #19 拆分自 position_exit_monitor.py 巨石模块。
 """
 from .base import BaseExitRule, ExitDecision
 from .flash_exit import FlashExitRule, check_flash_exit
-from .day_trade_exit import (
-    DayTradeExitRule,
-    check_day_trade_exit,
-    check_atr_day_trade_exit,
-    should_use_day_trade_mode,
-)
 from .scale_out import ScaleOutRule, check_scale_out
 from .trailing_stop import TrailingStopRule, check_trailing_stop
 from .pre_close import PreCloseExitRule, check_pre_close_exit, check_adaptive_pre_close_exit
@@ -46,14 +39,10 @@ __all__ = [
     "BaseExitRule",
     "ExitDecision",
     "FlashExitRule",
-    "DayTradeExitRule",
     "ScaleOutRule",
     "TrailingStopRule",
     "PreCloseExitRule",
     "check_flash_exit",
-    "check_day_trade_exit",
-    "check_atr_day_trade_exit",
-    "should_use_day_trade_mode",
     "check_scale_out",
     "check_trailing_stop",
     "check_pre_close_exit",
