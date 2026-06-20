@@ -29,15 +29,6 @@ class TestExitRulePriority:
         }
         return ExitRuleDispatcher(config)
 
-    def test_flash_exit_highest_priority(self, dispatcher):
-        """闪崩应该是最高优先级"""
-        position = {'symbol': 'AAPL', 'entry_price': 100, 'position_id': 'p1', 'holding_hours': 50}
-        market = {'current_price': 96, 'minutes_to_close': 10, 'atr': 2.0}
-
-        result = dispatcher.evaluate(position, market)
-        assert result is not None
-        assert result.rule_name == 'flash_exit'
-
     def test_pre_close_over_trailing(self, dispatcher):
         """收盘前强平优先于追踪止损"""
         position = {'symbol': 'AAPL', 'entry_price': 100, 'position_id': 'p2', 'holding_hours': 2}
@@ -76,36 +67,6 @@ class TestExitRulePriority:
         result = dispatcher.evaluate(position, market)
         assert result is not None
         assert result.rule_name == 'time_decay'
-
-
-class TestExitRuleExclusivity:
-    """测试互斥规则"""
-
-    @pytest.fixture
-    def dispatcher(self):
-        config = {
-            'exit_rules': {
-                'flash_exit': {'enabled': True, 'price_drop_pct': 3.0},
-                'day_trade': {'enabled': True, 'tp1_target_atr': 1.5, 'max_holding_hours': 6},
-                'trailing_stop': {'enabled': True, 'activation_threshold_atr': 0.8, 'trail_distance_atr': 1.2},
-            },
-            'exit_rules_exclusivity': {
-                'flash_exit': ['day_trade', 'trailing_stop'],
-                'day_trade': ['trailing_stop'],
-            }
-        }
-        return ExitRuleDispatcher(config)
-
-    def test_flash_suppresses_day_trade_and_trailing(self, dispatcher):
-        """闪崩触发时，day_trade和trailing_stop被压制"""
-        position = {'symbol': 'AAPL', 'entry_price': 100, 'position_id': 'p5', 'holding_hours': 7}
-        market = {'current_price': 96, 'minutes_to_close': 200, 'atr': 2.0}
-        trail_state = {'trail_status': 'ACTIVE', 'trail_high': 105}
-
-        result = dispatcher.evaluate(position, market, trail_state)
-        assert result.rule_name == 'flash_exit'
-        # 被压制的规则应该被记录
-        assert 'day_trade' in result.suppressed_rules or 'trailing_stop' in result.suppressed_rules
 
 
 class TestATRConstraints:

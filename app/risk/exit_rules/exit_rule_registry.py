@@ -3,8 +3,8 @@
 Task #48: 退出规则优先级注册表 — 编码化优先级与互斥关系
 
 背景:
-  FTSeek-US 现有 6 条退出规则 (flash_exit, day_trade, trailing_stop,
-  pre_close, time_stop, scale_out)。在原 position_exit_monitor.scan_positions
+  FTSeek-US 现有退出规则 (trailing_stop, pre_close, scale_out)。
+  在原 position_exit_monitor.scan_positions
   中按"先触发先行"的顺序执行检查, 多规则同时触发时缺乏明确的优先级与
   互斥规则约束。本模块统一管理:
     - 各规则的优先级 (ExitRulePriority, IntEnum, 值越小优先级越高)
@@ -87,7 +87,6 @@ class ExitRulePriority(IntEnum):
       - SCALE_OUT 仅做分批减仓, 优先级最低
     """
     PRE_CLOSE = 10       # 盘末强制退出, 优先级最高
-    FLASH_EXIT = 20      # 异常动量平仓
     TRAILING_STOP = 40   # ATR 动态追踪 + Chandelier
     SCALE_OUT = 60       # 分批止盈
 
@@ -98,10 +97,9 @@ class ExitRulePriority(IntEnum):
 #   - scale_out 与 day_trade 不互斥 (Profit Lock 与分批止盈可共存)。
 EXCLUSIVE_RULES: Dict[str, Set[str]] = {
     "pre_close": {
-        "flash_exit", "trailing_stop",
+        "trailing_stop",
         "scale_out",
     },
-    "flash_exit": {"trailing_stop"},
     # P0 修复 (2026-06-14): scale_out 触发后压制 trailing_stop
     # 与 legacy 路径 _check_via_legacy 中的 _has_scale_out 互斥逻辑对齐
     # 根因: Registry 路径缺少此互斥 → scale_out (全平) 与 trailing_stop 可能同时触发,
@@ -113,7 +111,6 @@ EXCLUSIVE_RULES: Dict[str, Set[str]] = {
 # 规则名称到优先级的映射 (与 ExitRulePriority 对齐)
 RULE_PRIORITIES: Dict[str, int] = {
     "pre_close": ExitRulePriority.PRE_CLOSE,
-    "flash_exit": ExitRulePriority.FLASH_EXIT,
     "trailing_stop": ExitRulePriority.TRAILING_STOP,
     "scale_out": ExitRulePriority.SCALE_OUT,
 }
@@ -135,7 +132,7 @@ class ExitRuleRegistry:
     使用方式:
         registry = ExitRuleRegistry()
         registry.register("pre_close", check_pre_close_fn)
-        registry.register("flash_exit", check_flash_exit_fn)
+        registry.register("trailing_stop", check_trailing_stop_fn)
         ...
         decision = registry.check_all_rules(position, market_data,
                                             trail_state, policy_guardian)

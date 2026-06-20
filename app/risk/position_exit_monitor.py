@@ -50,11 +50,9 @@ from .atr_stop_engine import compute_stop_lines, compute_profit_atr_signed, reso
 # Task #19 (2026-05-27): 退出规则模块化 — 各规则已拆分到 exit_rules/
 # ExitMonitor 自身只负责编排 (规则调度 + 质量评分 + 执行平仓)
 from .exit_rules import (
-    FlashExitRule,
     ScaleOutRule,
     TrailingStopRule,
     PreCloseExitRule,
-    check_flash_exit as _impl_flash_exit,
     check_scale_out as _impl_scale_out,
     check_trailing_stop as _impl_trailing_stop,
     check_pre_close_exit as _impl_pre_close_exit,
@@ -241,7 +239,6 @@ class ExitMonitor:
         # Task #19: 初始化退出规则实例 (注入 monitor 引用以复用 ATR/VIX/cost_model)
         # 注意: 顺序决定了规则在 scan_positions 中的遍历顺序;
         #       Pre-Close 仍由编排器单独优先处理 (不参与质量评分竞争)
-        self._rule_flash_exit = FlashExitRule(self)
         self._rule_scale_out = ScaleOutRule(self)
         self._rule_trailing_stop = TrailingStopRule(self)
         self._rule_pre_close = PreCloseExitRule(self)
@@ -256,14 +253,6 @@ class ExitMonitor:
             lambda pos, md, ts, pg: self._check_pre_close_exit(
                 pos, md.get("current_price"), md.get("effective_atr", 0.0),
                 ts, md.get("direction"), pg,
-            ),
-        )
-        self._rule_registry.register(
-            "flash_exit",
-            lambda pos, md, ts, pg: self._check_flash_exit(
-                pos, md.get("current_price"), md.get("effective_atr", 0.0),
-                ts, md.get("now_ts"), md.get("direction"), pg,
-                md.get("earnings_guard"),
             ),
         )
         self._rule_registry.register(
@@ -1381,13 +1370,6 @@ class ExitMonitor:
         # ── 收集所有触发的退出建议 ──
         _triggered_exits: List[Dict[str, Any]] = []
 
-        flash_result = self._check_flash_exit(
-            position, current_price, effective_atr, trail_state,
-            now_ts, direction, policy_guardian, earnings_guard,
-        )
-        if flash_result and not _suppress_non_hard:
-            _triggered_exits.append(flash_result)
-
         scale_result = self._check_scale_out(
             position, current_price, trail_state, direction,
             market_data={
@@ -1593,16 +1575,8 @@ class ExitMonitor:
             logger.debug(f"[财报退出] 检查异常: {e}")
         return None
 
-    def _check_flash_exit(self, position, current_price, atr, trail_state, now_ts, direction, policy, earnings_guard):
-        """Flash Exit 委托 (实现在 exit_rules/flash_exit.py)
-
-        Task #19 拆分后: 保留原方法签名以兑现现有测试/编排调用。
-        实际逻辑以 monitor 为首参传入 check_flash_exit。
-        """
-        return _impl_flash_exit(self, position, current_price, atr, trail_state, now_ts, direction, policy, earnings_guard)
-
     # ============================================================
-    #  规则 1.5: Day Trade Mode — 已删除 (2026-06-20), 规则代码+接线移除
+    #  规则 1: Flash Exit — 已删除 (2026-06-20), 规则代码+接线移除
     # ============================================================
 
     def _check_scale_out(self, position, current_price, trail_state, direction, market_data=None):

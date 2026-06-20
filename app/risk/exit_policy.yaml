@@ -101,9 +101,8 @@ exit_monitor:
 # ── Phase 3 (2026-05-31): 退出规则互斥 (新 ExitRuleDispatcher 使用) ──
 # key=高优先级触发的规则, value=被压制不再上报的规则列表
 exit_rules_exclusivity:
-  pre_close: [day_trade, trailing_stop, scale_out, time_decay]
-  flash_exit: [day_trade, trailing_stop, scale_out]
-  earnings_guard: [day_trade, trailing_stop, scale_out, time_decay]
+  pre_close: [trailing_stop, scale_out, time_decay]
+  earnings_guard: [trailing_stop, scale_out, time_decay]
   scale_out: [trailing_stop]          # P0 (2026-06-07): scale_out 触发时压制 trailing_stop
                                        # 根因: scale_out 平50%锁利+SL移成本,
                                        #       trailing 同时触发会100%全平, 消灭剩余利润空间
@@ -119,18 +118,12 @@ global:
 
 # ── 退出规则定义 (唯一真相源) ──
 exit_rules:
-  
-  # ── DEAD RULE: flash_exit ──
-  # 规则 1: Flash Exit (60秒内剧烈波动)
-  # P0 禁用 (2026-06-03): 6笔全亏 0% WR -$1,362, 纯噪音
-  flash_exit:
-    enabled: false
-    trigger: "adverse_move >= flash_multiplier * atr"
-    scan_interval_seconds: 60             # 优化 (2026-05-03 P2): 从 30s 延长到 60s, 降低假触发率
-    flash_multiplier_default: 2.0         # 根因修复 (2026-06-02): 1.0→2.0, dispatcher 改用速度检测 (prev→current), 2×ATR_raw 才是真闪崩
-    earnings_multiplier: 1.5              # 财报期放宽到 1.5x
-    min_atr: 0.5                          # ATR 底限
-    min_holding_seconds: 120              # 根因修复 (2026-06-02): 30s→120s, 给信号发展时间 (30s 导致 173 次误触发)
+
+  # ── REMOVED RULE: flash_exit (2026-06-20) ──
+  # Flash Exit (60秒内剧烈波动), P0 禁用 (6笔全亏 0%WR 纯噪音), 代码+接线已删。
+  # 注: entry-side 系统级 FLASH_EXIT 熔断器 (order_executor record_flash_exit /
+  #   _check_flash_exit_circuit_breaker) 保留为 dormant — 规则删除后 count 永远 0,
+  #   永不触发, 拆它触及下单门序列, 留待后续单独清理。
 
   # 规则 2: ATR 固定止损
   # P1 简化 (2026-06-04): 5档非线性状态机 → 单一固定倍数
@@ -342,7 +335,6 @@ session_adaptation:
   enabled: true
   source: "shared_kernel"          # 参数值从 SharedKernel 取，不在此定义
   apply_to:
-    - flash_exit                   # Flash Exit 乘数 × session_vol_ratio
     - atr_stop                     # ATR 止损距离 × session_vol_ratio
     - chandelier_trail             # Chandelier 追踪 × session_vol_ratio
     - day_trade_initial_stop       # 短线初始止损 × session_vol_ratio

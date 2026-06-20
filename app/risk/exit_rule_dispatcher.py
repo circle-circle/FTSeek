@@ -5,14 +5,12 @@
 所有退出决策的唯一入口 — 影子模式优先, 验证一致性后再切主路径。
 
 优先级 (从高到低):
-  1. flash_exit       (闪崩紧急退出)
-  2. pre_close        (收盘前强平)
-  3. circuit_breaker  (组合熔断)
-  4. earnings_guard   (财报前/后强制退出)
+  1. pre_close        (收盘前强平)
+  2. circuit_breaker  (组合熔断)
+  3. earnings_guard   (财报前/后强制退出)
+  4. scale_out        (分批止盈)
   5. trailing_stop    (Chandelier 追踪止损)
-  6. day_trade        (日内止盈/超时)
-  7. time_decay       (时间衰减)
-  8. scale_out        (分批止盈)
+  6. time_decay       (时间衰减, dormant)
 
 互斥定义来源 exit_policy.yaml :: exit_rules_exclusivity
 """
@@ -63,7 +61,6 @@ class ExitRuleDispatcher:
     # P0 (2026-06-07): scale_out 优先级提升至 trailing_stop 之前
     # 原理: scale_out 是唯一正EV退出(100%WR), 应优先于 trailing_stop 执行
     RULE_PRIORITIES: Dict[str, int] = {
-        "flash_exit": 1,
         "pre_close": 2,
         "circuit_breaker": 3,
         "earnings_guard": 4,
@@ -177,7 +174,6 @@ class ExitRuleDispatcher:
     # ------------------------------------------------------------------
 
     _RULE_KEY_ALIASES = {
-        "flash_exit": ["flash_exit"],
         "pre_close": ["pre_close", "pre_close_exit"],
         "circuit_breaker": ["circuit_breaker"],
         "earnings_guard": ["earnings_guard"],
@@ -210,7 +206,6 @@ class ExitRuleDispatcher:
         trail_state: Dict[str, Any],
     ) -> Optional[ExitDecision]:
         evaluators: Dict[str, Callable[..., Optional[ExitDecision]]] = {
-            "flash_exit": self._eval_flash_exit,
             "pre_close": self._eval_pre_close,
             "circuit_breaker": self._eval_circuit_breaker,
             "earnings_guard": self._eval_earnings_guard,
@@ -230,84 +225,6 @@ class ExitRuleDispatcher:
     # ------------------------------------------------------------------
     # 各规则实现 (尽量保守、只读 — 与 ExitMonitor.legacy 路径并行运行)
     # ------------------------------------------------------------------
-
-    def _eval_flash_exit(self, cfg, position, market_data, trail_state):
-        """闪崩检测 — 价格速度异常 (非累计偏移)
-
-        P0 根因修复 (2026-06-02):
-        ─────────────────────────
-        旧逻辑: adverse_pct = |entry - current| / entry  (累计偏移)
-        问题: 1× session-blended ATR ≈ 正常波动, 不是闪崩
-              → 今天 173 次误触发, -$11K 亏损
-
-        新逻辑: velocity = |prev_scan - current| / prev_scan  (扫描间速度)
-              真正的闪崩 = 30s 内价格暴跌 > 2× ATR
-              正常波动 ~0.5× ATR/30s, 不会触发
-        """
-        import time as _time
-
-        # ── min_holding_seconds 保护 (默认 120s, 给信号发展时间) ──
-        min_hold = int(cfg.get("min_holding_seconds", 120))
-        entry_ts = float(position.get("entry_time_ts", 0) or 0)
-        now_ts = float(market_data.get("now_ts", _time.time()))
-        if entry_ts > 0 and min_hold > 0:
-            elapsed = now_ts - entry_ts
-            if elapsed < min_hold:
-                return None
-
-        current_price = float(market_data.get("current_price", 0))
-        if current_price <= 0:
-            return None
-
-        # ── 速度检测: 两次扫描间的价格变化 (非入场以来累计) ──
-        prev_price = float(trail_state.get("prev_scan_price", 0) or 0)
-        if prev_price <= 0:
-            # 首次扫描, 无速度数据, 不触发
-            return None
-
-        direction = str(position.get("direction", "LONG")).upper()
-        if direction == "LONG":
-            velocity = (prev_price - current_price) / prev_price  # 正=下跌(不利)
-        else:
-            velocity = (current_price - prev_price) / prev_price  # 正=上涨(不利)
-
-        if velocity <= 0:
-            return None  # 价格向有利方向移动, 无闪崩
-
-        # ── 阈值: 使用 raw ATR (不做 session blending) ──
-        # session blending 是为 trailing stop 设计的, 不适用于闪崩检测
-        # 闪崩是绝对速度事件, 不因"早盘波动正常"而降低警觉
-        entry_price = float(position.get("entry_price", 0))
-        atr_raw = float(market_data.get("atr_raw", 0) or market_data.get("atr", 0) or 0)
-        if atr_raw <= 0 or entry_price <= 0:
-            return None
-
-        mult = float(cfg.get("flash_multiplier_default", 2.0))  # 默认 2.0× ATR (从 1.0 提高)
-        # 将 ATR 转换为百分比阈值
-        # ATR 是 1-min bar 的平均真实波幅, 一次扫描间隔 ~15-30s
-        # 正常: 一次扫描移动 ~0.3-0.5× ATR
-        # 闪崩: 一次扫描移动 > 2.0× ATR
-        threshold = (mult * atr_raw) / entry_price
-
-        if velocity >= threshold:
-            return ExitDecision(
-                should_exit=True,
-                rule_name="flash_exit",
-                priority=self.RULE_PRIORITIES["flash_exit"],
-                exit_price=current_price,
-                reason=(
-                    f"Flash velocity {velocity*100:.3f}% >= {threshold*100:.3f}% "
-                    f"({mult}×ATR_raw={atr_raw:.3f})"
-                ),
-                metadata={
-                    "velocity_pct": velocity,
-                    "threshold": threshold,
-                    "atr_raw": atr_raw,
-                    "prev_price": prev_price,
-                    "elapsed_sec": (now_ts - entry_ts) if entry_ts > 0 else -1,
-                },
-            )
-        return None
 
     def _eval_pre_close(self, cfg, position, market_data, trail_state):
         """收盘前退出 (Task #3, 2026-05-31): 调用自适应分级退出.

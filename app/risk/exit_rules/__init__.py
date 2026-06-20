@@ -3,8 +3,7 @@ FTSeek-US 退出规则包 (Exit Rules Package)
 
 Task #19 拆分自 position_exit_monitor.py 巨石模块。
 
-将原退出规则按职责拆分到独立文件:
-  - flash_exit       规则 1   : 异常动量平仓
+将退出规则按职责拆分到独立文件:
   - scale_out        规则 2.5 : 分批止盈
   - trailing_stop    规则 2   : ATR 动态止损 + Chandelier 追踪
   - pre_close        规则 3.5 : 盘末分层强制退出
@@ -20,7 +19,6 @@ Task #19 拆分自 position_exit_monitor.py 巨石模块。
   5. 执行平仓 + 记录归因 / trace_id / 钉钉推送
 """
 from .base import BaseExitRule, ExitDecision
-from .flash_exit import FlashExitRule, check_flash_exit
 from .scale_out import ScaleOutRule, check_scale_out
 from .trailing_stop import TrailingStopRule, check_trailing_stop
 from .pre_close import PreCloseExitRule, check_pre_close_exit, check_adaptive_pre_close_exit
@@ -38,11 +36,9 @@ from .exit_rule_registry import (
 __all__ = [
     "BaseExitRule",
     "ExitDecision",
-    "FlashExitRule",
     "ScaleOutRule",
     "TrailingStopRule",
     "PreCloseExitRule",
-    "check_flash_exit",
     "check_scale_out",
     "check_trailing_stop",
     "check_pre_close_exit",

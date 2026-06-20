@@ -251,112 +251,6 @@ class TestSessionAwareATR:
         # midday 下"看起来"盈利更多 → 更容易激活保本/追踪 → 更积极锁利润
 
 
-# ============================================================
-#  3. Flash Exit — Session-Aware Threshold
-# ============================================================
-
-class TestFlashExitSessionAwareness:
-    """验证 Flash Exit 时段感知逻辑"""
-
-    def _make_position(self, symbol="US.AAPL", direction="LONG", entry_price=150.0):
-        from unittest.mock import MagicMock
-        pos = MagicMock()
-        pos.symbol = symbol
-        pos.direction = MagicMock()
-        pos.direction.value = direction
-        pos.avg_entry_price = entry_price
-        pos.size = 100
-        pos.trail_state = {}
-        return pos
-
-    def test_flash_exit_not_triggered_normal_move_opening(self, exit_monitor):
-        """OPEN: 0.8x ATR 逆向不应触发 (因为 effective_atr 更大)"""
-        pos = self._make_position()
-        # raw atr=2.0, opening ratio=1.5 → effective_atr=3.0
-        # flash_threshold = 0.8 × 3.0 = 2.40
-        # adverse_move = 1.6 (which is 0.8 × raw_atr=2.0)
-        # 1.6 < 2.40 → 不触发!
-        effective_atr = 3.0
-        trail_state = {"prev_scan_price": 151.6}  # 上一笔 151.6
-        current_price = 150.0  # 当前 150.0, 逆向 = 1.6
-
-        result = exit_monitor._check_flash_exit(
-            pos, current_price, effective_atr, trail_state, time.time(), "LONG", None, None
-        )
-        assert result is None, f"OPEN 下 0.8x raw ATR 逆向不应触发 Flash Exit, 但触发了: {result}"
-
-    def test_flash_exit_triggered_large_move_even_opening(self, exit_monitor):
-        """OPEN: 1.5x raw ATR 逆向应该触发 (足够大)"""
-        pos = self._make_position()
-        # effective_atr=3.0, flash_threshold=2.40
-        # adverse_move=3.0 > 2.40 → 触发
-        effective_atr = 3.0
-        trail_state = {"prev_scan_price": 153.0}
-        current_price = 150.0  # adverse = 3.0
-        result = exit_monitor._check_flash_exit(
-            pos, current_price, effective_atr, trail_state, time.time(), "LONG", None, None
-        )
-        assert result is not None, "OPEN 下 1.5x raw ATR 逆向应该触发"
-        assert result["reason"] == "FLASH_EXIT"
-
-    def test_flash_exit_triggered_small_move_midday(self, exit_monitor):
-        """LUNCH: 0.5x raw ATR 逆向应该触发 (因为 effective_atr 更小)"""
-        pos = self._make_position()
-        # raw atr=2.0, midday ratio=0.6 → effective_atr=1.2
-        # flash_threshold = 0.8 × 1.2 = 0.96
-        # adverse_move = 1.0 (0.5x raw_atr) → 1.0 > 0.96 → 触发!
-        effective_atr = 1.2
-        trail_state = {"prev_scan_price": 151.0}
-        current_price = 150.0  # adverse = 1.0
-        result = exit_monitor._check_flash_exit(
-            pos, current_price, effective_atr, trail_state, time.time(), "LONG", None, None
-        )
-        assert result is not None, f"LUNCH 下 0.5x raw ATR 逆向应该触发 (更敏感), 实际: {result}"
-        assert result["reason"] == "FLASH_EXIT"
-
-    def test_flash_exit_short_vix_high_tightens(self, exit_monitor):
-        """做空 + VIX>30 → flash_multiplier 收紧到 0.6"""
-        pos = self._make_position(direction="SHORT")
-        # Mock VIX > 30
-        exit_monitor._get_vix = MagicMock(return_value=32.0)
-        effective_atr = 2.0
-        trail_state = {"prev_scan_price": 148.0}
-        current_price = 149.5  # SHORT: adverse = 1.5 (价格上涨)
-
-        # 默认 0.8x: 1.5 < 1.6 不触发
-        # 收紧 0.6x: 1.5 > 1.2 触发
-        from unittest.mock import MagicMock as MM
-        policy_mock = MM()
-        policy_mock.get_flash_multiplier = MM(return_value=0.8)
-
-        result = exit_monitor._check_flash_exit(
-            pos, current_price, effective_atr, trail_state, time.time(), "SHORT", policy_mock, None
-        )
-        assert result is not None, f"SHORT+VIX>30 收紧到 0.6x → 1.5 > 1.2 应触发, 实际: {result}"
-        exit_monitor._get_vix = MagicMock(return_value=None)  # cleanup
-
-    def test_flash_exit_no_prev_price(self, exit_monitor):
-        """首次扫描 (无 prev_scan_price) → 不触发"""
-        pos = self._make_position()
-        effective_atr = 2.0
-        trail_state = {}  # 无 prev_scan_price
-        result = exit_monitor._check_flash_exit(
-            pos, 150.0, effective_atr, trail_state, time.time(), "LONG", None, None
-        )
-        assert result is None, "首次扫描不应触发 Flash Exit"
-
-    def test_flash_exit_zero_atr_skips(self, exit_monitor):
-        """ATR=0 (数据不可用) → 跳过, 不崩溃"""
-        pos = self._make_position()
-        result = exit_monitor._check_flash_exit(
-            pos, 150.0, 0.0, {"prev_scan_price": 151.0}, time.time(), "LONG", None, None
-        )
-        assert result is None
-
-
-# ============================================================
-#  5. ATR Stop Engine — Regime × Session Orthogonality
-# ============================================================
 
 class TestATRStopEngineOrthogonality:
     """验证 regime 和 session 维度的正交性 — session 影响 ATR 量纲, regime 影响 multiplier 选择"""
@@ -722,7 +616,8 @@ class TestIntegrationSanity:
         sa = policy["session_adaptation"]
         assert sa.get("enabled") is True
         assert sa.get("source") == "shared_kernel"
-        assert len(sa.get("apply_to", [])) >= 5, "apply_to 应覆盖 5 条退出规则"
+        # flash_exit 已删除 (2026-06-20), apply_to 从 5 项降为 4 项
+        assert len(sa.get("apply_to", [])) >= 4, "apply_to 应覆盖退出规则"
 
 
 # ============================================================
