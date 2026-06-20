@@ -30,7 +30,6 @@ from .day_trade_exit import (
     should_use_day_trade_mode,
 )
 from .scale_out import ScaleOutRule, check_scale_out
-from .velocity_exit import check_velocity_exit
 from .trailing_stop import TrailingStopRule, check_trailing_stop
 from .time_stop import TimeStopRule, check_time_stop
 from .pre_close import PreCloseExitRule, check_pre_close_exit, check_adaptive_pre_close_exit
@@ -59,7 +58,6 @@ __all__ = [
     "check_atr_day_trade_exit",
     "should_use_day_trade_mode",
     "check_scale_out",
-    "check_velocity_exit",
     "check_trailing_stop",
     "check_time_stop",
     "check_pre_close_exit",

@@ -44,7 +44,6 @@ _DISPATCHER_REASON_MAP: Dict[str, str] = {
     "day_trade": "DAY_TRADE",  # 占位, 实际由 _build_exit_reason_dict 细化为 DAY_TRADE_TP / DAY_TRADE_TIMEOUT
     "time_decay": "TIME_STOP",
     "scale_out": "SCALE_OUT",
-    "velocity_exit": "VELOCITY_EXIT",
 }
 
 # ── P0 (2026-06-02): 退出屏障 — 防止闪退后立即再入场 ──
@@ -1212,8 +1211,7 @@ def _check_positions(scheduler):
                 "DAY_TRADE": ExitReason.DAY_TRADE_TIMEOUT,  # fallback
                 "SCALE_OUT": ExitReason.SCALE_OUT, "PRE_CLOSE_EXIT": ExitReason.PRE_CLOSE_EXIT,
                 "PRE_CLOSE_EXIT_PARTIAL": ExitReason.PRE_CLOSE_EXIT,
-                "TECHNICAL_BREACH": ExitReason.STRUCTURE_EXIT,
-                "VELOCITY_EXIT": ExitReason.VELOCITY_EXIT}
+                "TECHNICAL_BREACH": ExitReason.STRUCTURE_EXIT}
             er = reason_map.get(reason.get("reason", ""), ExitReason.TRAILING_STOP)
             cp = reason.get("exit_price", pos.avg_entry_price)
             close_qty = reason.get("close_qty", 0)

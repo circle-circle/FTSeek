@@ -217,16 +217,8 @@ exit_rules:
 
     tiers: []                       # pct模式不使用
 
-  # ── DEAD RULE: velocity_exit ──
-  # 规则 5.5: 速度捕捉退出 (Phase 3 2026-05-31)
-  velocity_exit:
-    enabled: false                   # P0 (2026-06-03): 禁用，样本不足且与 trailing_stop 冲突
-    lookback_bars: 3              # 检测最近 N 根 K 线的变动
-    sigma_window: 20              # σ 计算窗口 (K 线数)
-    sigma_multiplier: 2.0         # 触发阈值: 变动 > N × σ
-    close_pct: 30                 # 平仓比例 (%)
-    cooldown_seconds: 60          # 冷却时间
-    trail_mult: 1.0               # 触发后收紧追踪止损到此 ATR 倍数
+  # ── REMOVED RULE: velocity_exit (2026-06-20) ──
+  # 速度捕捉退出 (Phase 3), P0 禁用 (样本不足且与 trailing_stop 冲突), 代码+接线已删。
 
   # 规则 3.5: 盘末退出 (Pre-Close Exit)
   # P1 优化 (2026-06-04): 盈利落袋 + 亏损保留过夜(带硬止损)

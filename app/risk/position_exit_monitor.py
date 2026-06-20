@@ -302,17 +302,6 @@ class ExitMonitor:
                 pos, md.get("current_price"), ts, md.get("direction"), market_data=md,
             ),
         )
-        # Phase 3 (2026-05-31): 速度捕捉退出
-        try:
-            from app.risk.exit_rules.velocity_exit import check_velocity_exit as _impl_velocity_exit
-            _velocity_cfg = (self._policy_guardian.policy if hasattr(self, "_policy_guardian") and self._policy_guardian else {}) or {}
-            _ve_cfg = _velocity_cfg.get("exit_rules", {}).get("velocity_exit", {}) if isinstance(_velocity_cfg, dict) else {}
-            self._rule_registry.register(
-                "velocity_exit",
-                lambda pos, md, ts, pg: _impl_velocity_exit(pos, md, ts, _ve_cfg),
-            )
-        except Exception as _ve_err:
-            logger.warning(f"[ExitRuleRegistry] velocity_exit 注册失败: {_ve_err}")
 
         # [P0 2026-06-13] 读取 exit_policy.yaml enabled 字段，禁用 yaml 中标记为 false 的规则
         # ⚠️ 已知不一致 (2026-06-20): trailing_stop 规则在 exit_rules 无对应 yaml key。

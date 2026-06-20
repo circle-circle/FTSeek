@@ -71,7 +71,6 @@ class ExitRuleDispatcher:
         "day_trade": 6,
         "trailing_stop": 7,       # was 5 → 7, 让 scale_out 先锁利
         "time_decay": 8,
-        "velocity_exit": 9,       # Phase 3: 速度捕捉退出
     }
 
     def __init__(self, config: Dict[str, Any]):
@@ -187,7 +186,6 @@ class ExitRuleDispatcher:
         "day_trade": ["day_trade", "day_trade_mode"],
         "time_decay": ["time_decay", "time_stop"],
         "scale_out": ["scale_out"],
-        "velocity_exit": ["velocity_exit"],
     }
 
     def _rule_cfg(self, rule_name: str) -> Dict[str, Any]:
@@ -222,7 +220,6 @@ class ExitRuleDispatcher:
             "day_trade": self._eval_day_trade,
             "time_decay": self._eval_time_decay,
             "scale_out": self._eval_scale_out,
-            "velocity_exit": self._eval_velocity_exit,
         }
         evaluator = evaluators.get(rule_name)
         if evaluator is None:
@@ -555,28 +552,6 @@ class ExitRuleDispatcher:
                     metadata={"level": level, "close_pct": t.get("close_pct"), "profit_pct": profit_pct},
                 )
         return None
-
-    def _eval_velocity_exit(self, cfg, position, market_data, trail_state):
-        """速度捕捉退出 (Phase 3, 2026-05-31)"""
-        try:
-            from app.risk.exit_rules.velocity_exit import check_velocity_exit
-        except Exception as e:
-            logger.warning("velocity_exit import failed: %s", e)
-            return None
-        result = check_velocity_exit(position, market_data, trail_state, cfg)
-        if not result:
-            return None
-        close_pct = float(result.get("close_pct", 30))
-        meta = dict(result.get("metadata") or {})
-        meta.setdefault("close_pct", close_pct)
-        return ExitDecision(
-            should_exit=True,
-            rule_name="velocity_exit",
-            priority=self.RULE_PRIORITIES["velocity_exit"],
-            exit_price=result.get("exit_price") or market_data.get("current_price"),
-            reason=str(result.get("reason_cn") or result.get("reason") or "velocity_exit"),
-            metadata=meta,
-        )
 
 
 # ============================================================

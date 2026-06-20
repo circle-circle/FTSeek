@@ -91,7 +91,6 @@ class ExitRulePriority(IntEnum):
     DAY_TRADE = 30       # 日内短线止损止盈
     TRAILING_STOP = 40   # ATR 动态追踪 + Chandelier
     TIME_STOP = 50       # 持仓时长止损
-    VELOCITY_EXIT = 55   # Phase 3: 速度捕捉退出
     SCALE_OUT = 60       # 分批止盈
 
 
@@ -120,7 +119,6 @@ RULE_PRIORITIES: Dict[str, int] = {
     "day_trade": ExitRulePriority.DAY_TRADE,
     "trailing_stop": ExitRulePriority.TRAILING_STOP,
     "time_stop": ExitRulePriority.TIME_STOP,
-    "velocity_exit": ExitRulePriority.VELOCITY_EXIT,
     "scale_out": ExitRulePriority.SCALE_OUT,
 }
 
