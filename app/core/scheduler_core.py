@@ -11,7 +11,7 @@ import os
 import threading
 import time
 from datetime import datetime, timedelta, date
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Set
 from pathlib import Path
 import sys
 
@@ -54,6 +54,11 @@ class PositionStore:
         # P0-4a 修复 (2026-05-03): 改用 RLock 允许 sync 线程重入
         # sync 线程获取锁后调用 add/remove (内部也获取锁) 不会死锁
         self._lock = threading.RLock()
+        # P0 修复 (2026-06-20): pending 集合防止重复开仓
+        # broker_sync 5s debounce 窗口内, 多个 signal_pipeline 线程可能同时
+        # 检查 has() 返回 False, 导致重复开仓. pending 即时锁定 symbol,
+        # 订单提交/失败后释放. 纯内存操作, 零 IO 开销.
+        self._pending: Set[str] = set()
 
     def add(self, symbol: str, position: Position):
         # Critical #3 修复 (2026-06-02):
@@ -65,6 +70,7 @@ class PositionStore:
         # (DailyActivePool 不会回调 PositionStore, 因此不存在循环依赖)
         with self._lock:
             self._positions[symbol] = position
+            self._pending.discard(symbol)  # 开仓成功，清除pending标记
 
             # 自动同步动态池 (P0 修复: 传入市场前缀)
             # Task #49 (2026-05-28): 消除 silent exception, 失败记录但不中断主流程 (非关键路径)
@@ -89,6 +95,7 @@ class PositionStore:
         # "已平仓但仍在动态池" 的不一致状态.
         with self._lock:
             self._positions.pop(symbol, None)
+            self._pending.discard(symbol)  # 清理 pending 状态（安全起见）
 
             # 自动同步动态池 (P0 修复: 传入市场前缀)
             # Task #49 (2026-05-28): 消除 silent exception, 失败记录但不中断主流程 (非关键路径)
@@ -131,8 +138,19 @@ class PositionStore:
             return {sym for sym, p in self._positions.items() if is_strategy_managed(p)}
 
     def has(self, symbol: str) -> bool:
+        """检查是否已有持仓或pending开仓"""
         with self._lock:
-            return symbol in self._positions
+            return symbol in self._positions or symbol in self._pending
+
+    def mark_pending(self, symbol: str):
+        """标记symbol为pending开仓状态"""
+        with self._lock:
+            self._pending.add(symbol)
+
+    def clear_pending(self, symbol: str):
+        """清除symbol的pending状态"""
+        with self._lock:
+            self._pending.discard(symbol)
 
     def count(self) -> int:
         with self._lock:
@@ -515,42 +533,9 @@ class TradingScheduler:
             logger.warning("[NewsV2] 初始化失败 (降级运行): %s", e)
             self.news_pipeline_v2 = None
 
-        # ── 美股风控 Pipeline (2026-04-29 新增，模块化 Chain-of-Responsibility) ──
-        self.us_risk_pipeline = None
-        try:
-            from app.risk.us_risk_pipeline import USRiskPipeline
-
-            # Task #9 (2026-06-02): 从 unified_config.yaml 读取 risk_pipeline 超时配置
-            try:
-                from app.core.config_container import get_config as _get_cfg
-                _rp_cfg = _get_cfg().get_dotted("risk.risk_pipeline") or {}
-            except Exception:
-                _rp_cfg = {}
-
-            self.us_risk_pipeline = USRiskPipeline(
-                risk_engine=None,  # risk_engine 在 _process_symbol_impl 中注入
-                config={
-                    "min_confidence": getattr(self, 'MIN_CONFIDENCE', type(self)._DEFAULT_MIN_CONFIDENCE),
-                    "min_score": getattr(self, 'MIN_SIGNAL_STRENGTH', type(self)._DEFAULT_MIN_SIGNAL_STRENGTH),
-                    "max_per_symbol": 0.25,
-                    "max_total": 0.80,
-                    "max_per_direction": 0.65,  # 04/30: 从50%提升, 匹配unified_config.yaml (QQQ占45%导致连续拦截)
-                    "cooldown_seconds": 120,
-                    # Task #9: 单步/总超时控制
-                    "per_check_timeout": float(_rp_cfg.get("per_check_timeout", 5.0)),
-                    "total_timeout": float(_rp_cfg.get("total_timeout", 30.0)),
-                    "critical_checks_fail_close": _rp_cfg.get(
-                        "critical_checks_fail_close",
-                        ["DrawdownCheck", "PositionLimitCheck", "BuyingPowerCheck",
-                         "MarketCircuitCheck", "CircuitBreakerCheck"],
-                    ),
-                },
-            )
-            logger.info("[USRiskPipeline] 已初始化 (%d 个检查)", len(self.us_risk_pipeline.checks))
-        except Exception as e:
-            logger.warning("[USRiskPipeline] 初始化失败 (降级使用旧 RiskEngine): %s", e)
-
         # ── 财报日历 (2026-04-29 新增) ──
+        # 注: 原 USRiskPipeline (app/risk/us_risk_pipeline.py + app/risk/checks/) 已于
+        # 2026-06-20 删除 — 实例化后 .run() 从未被调用, 实际风控走 order_executor 内联门。
         self.earnings_calendar = None
         self.earnings_risk_guard = None
         try:

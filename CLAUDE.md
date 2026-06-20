@@ -8,8 +8,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 开始工作前必读:
 1. `cat CLAUDE.md` — 本文件 (项目上下文)
-2. `git log --oneline -5` — 最近提交
-3. `cat app/risk/exit_policy.yaml` (前30行) — 当前退出策略 SSOT
+2. `cat docs/ARCHITECTURE.md` — **真实在跑的链路** (yaml 声称 ≠ 实际代码)
+3. `git log --oneline -5` — 最近提交
+4. `cat app/risk/exit_policy.yaml` (前30行) — 当前退出策略 SSOT
 
 ## 🚧 Git Hooks（已启用）
 
@@ -71,16 +72,24 @@ curl http://localhost:8899/health   # Health endpoint
 
 ### 退出策略 (极简三件套)
 
-```
-ExitMonitor (每60s扫描):
+三层级联 (非竞争, 详见 docs/ARCHITECTURE.md §4):
+  [1] ExitRuleDispatcher  ← 主路径 (dispatcher_enabled=true)
+  [2] ExitMonitor+Registry ← 处理剩余仓位
+  [3] legacy _check_via_legacy ← 仅 registry 出错兜底
+
+LIVE 规则 (只3条):
   [1] ATR 硬止损: entry ± 4.0×ATR, max 3% → 全平
-  [2] 目标止盈: profit ≥ 1.0 ATR → 全平 (scale_out, close_pct=100)
+  [2] 目标止盈: profit ≥ 1.0 ATR → scale_out 分层 (SHORT|TECHNICAL 让利润跑, LONG 快平)
   [3] 盘末退出: 收盘前 8min → 盈利落袋 / 亏损保留过夜
 
 保护:
   Grace Period: 入场后 45min 仅允许硬止损
   退出冷却: 120s
   手动仓位隔离: PROTECTED, ExitMonitor 不碰
+
+⚠️ Landmine: trailing_stop 规则(即ATR硬止损)在 exit_rules 无 yaml key,
+   仅靠 registry 内层路径存活。position_exit_monitor.py 的 registry 禁用逻辑
+   必须保持"缺省=启用", 切勿改 fail-close, 否则关掉实盘 ATR 止损。
 
 配置 SSOT: app/risk/exit_policy.yaml
 ```

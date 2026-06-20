@@ -82,8 +82,7 @@ class DecisionConfig:
 class AccountRisk:
     max_daily_drawdown: float = 0.03
     max_total_drawdown: float = 0.08
-    max_leverage: float = 2.0
-    min_margin_ratio: float = 1.5
+    # max_leverage / min_margin_ratio 已删除 (2026-06-20): 零代码消费
 
 
 @dataclass
@@ -278,16 +277,8 @@ class ConfigLoader:
             'DEFAULT_TAKE_PROFIT_3': self.get('risk.take_profit.tier3', 0.25),
             'TIME_STOP_HOURS': self.get('risk.stop_loss.time_stop_hours', 72),
             'CIRCUIT_BREAKER': self.get('risk.circuit_breaker', {}),
-            'OPTIONS_CONFIG': {
-                'ENABLED': self.get('options.enabled', False),
-                'MAX_OPTION_COST': self.get('options.max_cost_per_contract', 2000),
-                'MIN_DTE': self.get('options.min_dte', 7),
-                'MAX_DTE': self.get('options.max_dte', 45),
-                'TAKE_PROFIT_RATIO': self.get('options.take_profit_ratio', 2.0),
-                'STOP_LOSS_RATIO': self.get('options.stop_loss_ratio', 0.5),
-                'FORCE_CLOSE_DTE': self.get('options.force_close_dte', 2),
-                'MAX_HOLDING_HOURS': self.get('options.max_holding_hours', 72),
-            }
+            # OPTIONS_CONFIG 已删除 (2026-06-20): 零消费者。期权已永久禁用,
+            # 活跃的 options.short_strategy/quick_exit 由各自模块直接读 yaml。
         }
     
     @property

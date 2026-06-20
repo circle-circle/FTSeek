@@ -72,10 +72,11 @@ class StopLinesResult:
     atr_stop: float
     chandelier_stop: float          # 0 表示未激活
     breakeven_stop: float           # 0 表示未激活
+    scale_out_floor: float          # 2026-06-20: scale_out ratchet 下限 (0=未激活)
     cost_buffer_price: float        # 绝对价格空间
     final_stop: float
     triggered: bool
-    reason_code: str                # HARD_STOP / ATR_STOP / CHANDELIER / BREAKEVEN / NONE
+    reason_code: str                # HARD_STOP / ATR_STOP / CHANDELIER / BREAKEVEN / SCALE_OUT_FLOOR / NONE
     reason_cn: str
 
     def to_dict(self) -> Dict[str, Any]:
@@ -88,6 +89,7 @@ class StopLinesResult:
             "atr_stop": round(self.atr_stop, 4),
             "chandelier_stop": round(self.chandelier_stop, 4),
             "breakeven_stop": round(self.breakeven_stop, 4),
+            "scale_out_floor": round(self.scale_out_floor, 4),
             "cost_buffer_price": round(self.cost_buffer_price, 4),
             "final_stop": round(self.final_stop, 4),
             "triggered": self.triggered,
@@ -236,6 +238,7 @@ def compute_stop_lines(
     regime: Optional[str] = "normal",
     atr_mult: float = 2.5,
     cost_bps: float = 0.0,
+    scale_out_floor: float = 0.0,
 ) -> StopLinesResult:
     """核心 API：计算全部候选止损线 + 最终止损线 + 触发判定
 
@@ -250,6 +253,9 @@ def compute_stop_lines(
     regime        : 当前市况标签（normal/trending/volatile 或其别名）
     atr_mult      : ATR 动态止损倍数（由 guardian.get_atr_multiplier 给出）
     cost_bps      : 预期双边总成本（bp），用于 cost buffer
+    scale_out_floor: 2026-06-20 scale_out ratchet 下限 (绝对价). >0 时作为候选止损线,
+                    利用 max(LONG)/min(SHORT) "最保护优先" 聚合收紧剩余仓位止损.
+                    来源: trail_state["scale_out_stop_floor"], 由 scale_out.py 写入.
 
     关键修正
     --------
@@ -289,7 +295,9 @@ def compute_stop_lines(
     pt_cfg = (policy or {}).get("progressive_trailing", {}) or {}
     tier2_mult = float(pt_cfg.get("tier2_compact_multiplier", 0.8))
     tier3_mult = float(pt_cfg.get("tier3_compact_multiplier", 1.2))
-    if ch_cfg.get("enabled", True) and atr > 0 and profit_atr_signed >= activation:
+    # fail-safe (2026-06-20): 缺省=禁用。原 get("enabled", True) 会在 yaml key 被删时
+    # 静默重新启用已证明亏损的 chandelier(-$34)/breakeven。显式 enabled:true 才启用。
+    if ch_cfg.get("enabled", False) and atr > 0 and profit_atr_signed >= activation:
         if direction == "LONG":
             if profit_atr_signed < 1.0:
                 _effective_mult = tier2_mult
@@ -315,7 +323,8 @@ def compute_stop_lines(
     breakeven_stop = 0.0
     be_trigger = float(be_cfg.get("trigger_profit_atr", 0.4))  # Fix 11: was 0.5, matches YAML 0.4
     buffer_pct = float(be_cfg.get("buffer_pct", 0.15)) / 100.0  # Fix 11: was 0.2, matches YAML 0.15
-    if be_cfg.get("enabled", True) and profit_atr_signed >= be_trigger:
+    # fail-safe (2026-06-20): 缺省=禁用，同 chandelier。显式 enabled:true 才启用。
+    if be_cfg.get("enabled", False) and profit_atr_signed >= be_trigger:
         if direction == "LONG":
             # LONG: 价格回到 entry 附近 (略高于 entry) 触发保利
             breakeven_stop = entry_price * (1 + buffer_pct)
@@ -325,12 +334,17 @@ def compute_stop_lines(
             breakeven_stop = entry_price * (1 + buffer_pct)
 
     # === 6. 聚合候选止损线 ===
+    # 2026-06-20: scale_out_floor (ratchet 下限) 作为候选, 利用 max(LONG)/min(SHORT)
+    # "最保护优先" 聚合. 使 scale_out 部分平仓后剩余仓位止损从 entry±4×ATR 收紧到 ratchet 水位.
+    _so_floor = float(scale_out_floor or 0.0)
     if direction == "LONG":
         candidates = [hard_stop, atr_stop]
         if chandelier_stop > 0:
             candidates.append(chandelier_stop)
         if breakeven_stop > 0:
             candidates.append(breakeven_stop)
+        if _so_floor > 0:
+            candidates.append(_so_floor)
         stop_line = max(candidates)
     else:
         candidates = [hard_stop, atr_stop]
@@ -338,6 +352,8 @@ def compute_stop_lines(
             candidates.append(chandelier_stop)
         if breakeven_stop > 0:
             candidates.append(breakeven_stop)
+        if _so_floor > 0:
+            candidates.append(_so_floor)
         stop_line = min(candidates)
 
     # === 7. 成本缓冲：让出 k × cost_bps ===
@@ -351,6 +367,8 @@ def compute_stop_lines(
     # === 8. 归因：由哪条止损线"触顶"（未计成本缓冲） ===
     if stop_line == hard_stop:
         reason_code, reason_cn = "HARD_STOP", f"硬止损({max_loss_pct*100:.0f}%)"
+    elif _so_floor > 0 and stop_line == _so_floor:
+        reason_code, reason_cn = "SCALE_OUT_FLOOR", f"scale_out ratchet下限({_so_floor:.4f})"
     elif stop_line == atr_stop:
         reason_code, reason_cn = "ATR_STOP", f"ATR动态止损({atr_mult:.1f}x)"
     elif chandelier_stop > 0 and stop_line == chandelier_stop:
@@ -375,6 +393,7 @@ def compute_stop_lines(
         atr_stop=atr_stop,
         chandelier_stop=chandelier_stop,
         breakeven_stop=breakeven_stop,
+        scale_out_floor=_so_floor,
         cost_buffer_price=cost_buffer_price,
         final_stop=final_stop,
         triggered=triggered,
@@ -398,7 +417,7 @@ if __name__ == "__main__":
                 "activation_profit_atr": 0.8,
                 "multiplier_by_regime": {"normal": 2.0, "trending": 3.0, "volatile": 1.5},
             },
-            "breakeven": {"enabled": True, "trigger_profit_atr": 0.4, "buffer_pct": 0.15},
+            "breakeven": {"enabled": True, "trigger_profit_atr": 0.6, "buffer_pct": 0.15},
             "cost_buffer": {"k": 1.5},
         },
         "short_overrides": {"max_loss_pct": 10.0, "trail_multiplier": 1.5},
@@ -474,5 +493,35 @@ if __name__ == "__main__":
     print(f"[case7 trending final={r7_trending.final_stop:.4f} reason={r7_trending.reason_code or 'live'}]")
     print(f"[case7 volatile final={r7_volatile.final_stop:.4f} reason={r7_volatile.reason_code or 'live'}]")
     assert r7_trending.final_stop < r7_volatile.final_stop, "trending 止损线应更松（更低）"
+
+    # case8 scale_out_floor (ratchet 下限) — 2026-06-20 接通测试
+    # LONG: 无 floor 时 final_stop=entry-4ATR(92); floor=entry(100) 时收紧到保本
+    r8_nofloor = compute_stop_lines(
+        direction="LONG", entry_price=100.0, current_price=99.0, atr=2.0, peak_price=100.0,
+        policy=policy, regime="normal", atr_mult=4.0, cost_bps=0.0, scale_out_floor=0.0,
+    )
+    r8_floor = compute_stop_lines(
+        direction="LONG", entry_price=100.0, current_price=99.0, atr=2.0, peak_price=100.0,
+        policy=policy, regime="normal", atr_mult=4.0, cost_bps=0.0, scale_out_floor=100.0,
+    )
+    print(f"[case8 LONG no_floor final={r8_nofloor.final_stop:.4f}]")
+    print(f"[case8 LONG floor=100 final={r8_floor.final_stop:.4f} reason={r8_floor.reason_code}]")
+    assert r8_floor.final_stop > r8_nofloor.final_stop, "scale_out_floor 应收紧 LONG 止损 (抬高)"
+    assert r8_floor.final_stop >= 100.0, "floor=entry 时 LONG final_stop 应≥entry (保本)"
+    assert r8_floor.reason_code == "SCALE_OUT_FLOOR", "归因应为 SCALE_OUT_FLOOR"
+
+    # case9 SHORT scale_out_floor — 收紧 (降低止损线)
+    r9_nofloor = compute_stop_lines(
+        direction="SHORT", entry_price=100.0, current_price=101.0, atr=2.0, peak_price=100.0,
+        policy=policy, regime="normal", atr_mult=4.0, cost_bps=0.0, scale_out_floor=0.0,
+    )
+    r9_floor = compute_stop_lines(
+        direction="SHORT", entry_price=100.0, current_price=101.0, atr=2.0, peak_price=100.0,
+        policy=policy, regime="normal", atr_mult=4.0, cost_bps=0.0, scale_out_floor=98.0,
+    )
+    print(f"[case9 SHORT no_floor final={r9_nofloor.final_stop:.4f}]")
+    print(f"[case9 SHORT floor=98  final={r9_floor.final_stop:.4f} reason={r9_floor.reason_code}]")
+    assert r9_floor.final_stop < r9_nofloor.final_stop, "scale_out_floor 应收紧 SHORT 止损 (降低)"
+    assert r9_floor.final_stop <= 98.0, "floor=entry-1ATR 时 SHORT final_stop 应≤floor"
 
     print("\natr_stop_engine self-test 全部通过")

@@ -160,17 +160,61 @@ exit_rules:
   breakeven:
     enabled: false
 
-  # 规则 5: 止盈 (单一层)
-  # P1 简化 (2026-06-04): 2层ATR → 1层
-  #   DAY_TRADE_TP 100%WR +$13K 是唯一正EV退出
-  #   盈利1.0ATR → 平50% + 止损移至成本 → 剩余让atr_stop管理
+  # 规则 5: 止盈 (direction×strategy 差异化)
+  # 2026-06-20 重设计 (P0 修复后): 按 {direction}_{strategy}_atr_tiers 分层
+  #   数据依据 (direction_attribution_20260620):
+  #     SHORT|TECHNICAL_MULTI_FACTOR t5=70.2%/+3.11% → 放长持有 (分层+ratchet)
+  #     LONG|TECHNICAL_MULTI_FACTOR  t5=34.1%/-1.10% → 快平 (单层全平)
+  #     LONG|EARNINGS_REVISION_MOMENTUM t5 n=0       → 暂单层全平, 待补 t5 决策
+  #   ratchet 接线: scale_out 写 trail_state["scale_out_stop_floor"],
+  #     atr_stop_engine.compute_stop_lines 读之作下限 clamp (收紧剩余仓位止损).
+  #   multi-tier 可达: 已移除 scale_out is_partially_reduced 广域早退,
+  #     per-tier 去重依赖 trail_state["triggered_tiers"] (trail_state_store 持久化).
   scale_out:
     enabled: true
     tier_mode: atr
+
+    # ── SHORT|TECHNICAL_MULTI_FACTOR: 让利润跑 (t5=70%/+3.11% 唯一有证据) ──
+    short_technical_multi_factor_atr_tiers:
+      - profit_atr: 1.0             # T1: 锁30% + SL→entry(保本)
+        close_pct: 30
+        ratchet_sl_pct: 0.0
+      - profit_atr: 2.0             # T2: 再锁30% + SL→entry-1.0ATR
+        close_pct: 30
+        ratchet_sl_pct: 1.0
+      - profit_atr: 3.0             # T3: 剩余40% trailing, SL→entry-1.5ATR
+        close_pct: 0
+        ratchet_sl_pct: 1.5
+        trailing_remainder: true
+
+    # ── LONG|TECHNICAL_MULTI_FACTOR: 快平 (t5=34%/-1.10% 持有越久越亏) ──
+    long_technical_multi_factor_atr_tiers:
+      - profit_atr: 1.0
+        close_pct: 100
+        ratchet_sl_pct: 0.0
+
+    # ── LONG|EARNINGS_REVISION_MOMENTUM: 暂快平 (t5 n=0, 待补数据后决策) ──
+    long_earnings_revision_momentum_atr_tiers:
+      - profit_atr: 1.0
+        close_pct: 100
+        ratchet_sl_pct: 0.0
+
+    # ── 方向级兜底 (其他小样本 strategy) ──
+    long_atr_tiers:
+      - profit_atr: 1.0
+        close_pct: 100
+        ratchet_sl_pct: 0.0
+    short_atr_tiers:
+      - profit_atr: 1.0
+        close_pct: 100
+        ratchet_sl_pct: 0.0
+
+    # ── 通用兜底 (direction 也未知时) ──
     atr_tiers:
-      - profit_atr: 1.0             # 2026-06-14: 全平 (was 50%, ratchet从未执行)
-        close_pct: 100              # 数据: SCALE_OUT 19笔 100%WR +59.1%, 剩余仓位后续被止损打掉
-        ratchet_sl_pct: 0.0         # 全平后无剩余仓位, ratchet 无意义
+      - profit_atr: 1.0
+        close_pct: 100
+        ratchet_sl_pct: 0.0
+
     tiers: []                       # pct模式不使用
 
   # ── DEAD RULE: velocity_exit ──

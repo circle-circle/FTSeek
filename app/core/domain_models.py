@@ -112,7 +112,7 @@ class ExitDecision:
 class GateResult:
     """门禁结果统一模型.
 
-    合并来源: factors/* / risk/options_quality_gate.py / debate/statistical_gate.py
+    合并来源: factors/* / debate/statistical_gate.py
     字段取各实现的交集 + metadata 保留扩展性.
     """
     passed: bool = False

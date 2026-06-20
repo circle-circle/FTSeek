@@ -106,7 +106,7 @@ llm_voting:
   price_change_threshold: 0.008   # 行情变动阈值，超过则强制重新投票，原0.003→0.008
   max_cache_entries: 50           # 最大缓存条目数 (超出后按LRU淘汰)
 
-# llm_models: 已删除 (2026-06-14) — DEPRECATED, 0 代码引用
+# llm_models: 已删除 (2026-06-14 + 2026-06-20) — DEPRECATED, 0 代码引用
 #   实际生效: llm.features.<feature> (路由) + llm.models.<alias> (实例)
 
 # ─── 统一 LLM 路由 (2026-05-17, model_call.py SoT) ───
@@ -781,19 +781,8 @@ risk:
     tightened: 28      # 22-28 收紧
     blocked: 28        # >28 禁止新仓
     unblock: 25        # <25持续15min 解封
-  # Task #9 (2026-06-02): 风控 Pipeline 单步/总超时控制
-  # 防御场景: VIX API/Earnings DB/LLM 调用阻塞导致整条 pipeline 卡住, 后续信号错过
-  # fail-open: 非关键检查超时 → 默认通过 + WARNING; fail-close: 关键检查超时 → 拒绝交易
-  # 读取者: app/risk/us_risk_pipeline.py::USRiskPipeline.__init__
-  risk_pipeline:
-    per_check_timeout: 5.0          # 单步超时 (秒) — 每个 RiskCheck 独立线程超时
-    total_timeout: 30.0             # Pipeline 总超时 (秒) — 超过则 fail-close
-    critical_checks_fail_close:     # 关键检查 (超时 fail-close, 拒绝交易)
-      - DrawdownCheck               # 日内回撤 — 资金安全护栏
-      - PositionLimitCheck          # 仓位限制 — 集中度护栏
-      - BuyingPowerCheck            # 资金可用 — 防止超买
-      - MarketCircuitCheck          # 大盘熔断
-      - CircuitBreakerCheck         # 系统/策略/品种熔断
+  # risk_pipeline: 已删除 (2026-06-20) — USRiskPipeline (.run() 从不调用) 已移除,
+  #   实际风控走 order_executor._submit_order_inner 的 ~25 道内联门。
   # Phase 3 (2026-05-31): 退出路由统一 — ExitRuleDispatcher 影子模式开关
   # use_unified_dispatcher=true: 主路径走新 dispatcher (谨慎启用, 仅验证后切换)
   # log_comparison_mode=true: 与 legacy 并行评估, 仅记录差异 (默认 false 避免日志噪声)
@@ -808,7 +797,7 @@ risk:
     strict_owner_validation: true
   # 模拟盘数据采集: 放宽做空门禁
   pre_trade:
-    short_min_strength: 60          # 高确信度门槛 (2026-06-13): 30→60
+    short_min_strength: 45          # SHORT门槛降低 (2026-06-20): 60→45, SHORT是唯一alpha源
     long_min_strength: 60           # 高确信度门槛 (2026-06-13): 35→60
     battle_plan_bonus_enabled: true
     battle_plan_bonus: 0.5          # 计划标的再降50%
@@ -995,7 +984,7 @@ risk:
   account:
     max_daily_drawdown: 0.03
     max_total_drawdown: 0.08
-    # max_leverage / min_margin_ratio: 已删除 (2026-06-14) — 零代码消费
+    # max_leverage / min_margin_ratio 已删除 (2026-06-20): 零代码消费
   position:
     max_per_symbol: 0.25
     max_per_direction: 0.65
@@ -1336,8 +1325,8 @@ feature_flags:
 # execute_mode=simulate: Dashboard [执行] 按钮走模拟 (默认 shadow 安全); =live 需额外二次确认
 playbook:
   enabled: true                     # 上线闸门: true=进入 shadow 验证 (生成指令+追踪+飞书, 但执行仍 simulate)
-  execute_mode: live                # 方案B: shadow + 最小实盘验证 (保守模式已就位)
-  auto_execute: true                # Phase 1: 自动执行 triggered 指令 (paper trade, OKR加速)
+  execute_mode: simulate            # 2026-06-19: live → simulate (代码清理后先 shadow 验证全链路)
+  auto_execute: true                # 2026-06-20: 开启自动执行 (shadow_only模式下安全验证全链路)
   enable_weekly: true               # 是否跑周度复盘 (冷启动期可关, 节省 LLM)
 strategy_enhancements:
   pivotal_points:
@@ -1662,11 +1651,7 @@ strategies:
         min_confidence: 0.60  # 2026-06-10: 0.45→0.60, LONG 26.6% WR 净亏$2.9K, 收紧入场门槛
       SHORT:
         min_confidence: 0.35  # ADR-005: 0.45→0.35, SHORT正EV方向, 放宽让更多信号进入
-    # DEPRECATED (2026-05-31): strategies.defaults.signal_cooldown_seconds 不再生效
-    #   实际生效路径: strategy.signal_cooldown (本文件 SoT, 见上方 strategy 段)
-    #   启动时 ConfigValidator.check_deprecated_fields 会再次告警, 修改此键不会生效。
-    #   保留以兼容旧导出脚本, 一段稳定窗口后整体移除。
-    signal_cooldown_seconds: 120
+    # signal_cooldown_seconds 已删除 (2026-06-20): 死键, SoT 是 strategy.signal_cooldown
     signal_expire_seconds: 300
     degraded_confidence_offset: -0.1
     degraded_strength_offset: -10
@@ -1800,6 +1785,11 @@ strategies:
     min_analysts: 15               # 最低分析师覆盖
     min_eps_growth: 0.05           # 最低EPS增长预期 (5%)
     min_strength: 45               # 最低信号强度
+  # === 2026-06-20: LLM投票信号归因止血 ===
+  # 归因数据: n=338, WR=40.8%, avg_ret=-0.42%, 无strategy_id标记(unknown)
+  # 根因: 盘后批量扫描全symbol, confidence/strength固定值, 无差异化判断
+  voting_llm:
+    enabled: false  # 2026-06-20: 归因止血 — WR=40.8% 系统性亏损
 risk_limits:
   # Task #1 (2026-05-31): 总敞口对齐 — main 0.65 (含子策略) = 0.80
   # 子策略 (trend_first/fast_lane) 走 capital_source: main, 不再单独累加
@@ -1842,7 +1832,6 @@ scheduler:
   min_signal_strength: 60  # 高确信度门槛 (2026-06-13): 30→60
   min_consensus_level: 0.25  # P0 (2026-06-03): 0.20→0.25, 轻度收紧 (数据: 0.2-0.5 区间仅11笔)
   adaptive_scan_enabled: true
-  # scan_segments: 已删除 (2026-06-14) — 从未被代码解析, 实际由adaptive_polling控制
   event_day_interval_minutes: 3
   event_day_symbols: []
   debate:
@@ -1858,11 +1847,8 @@ scheduler:
     - minimax-m2.5
     claude_cli_timeout_seconds: 600
     claude_max_turns: 12
-# portfolio: 已删除 (2026-06-14) — DEAD CONFIG, 0 代码引用
-#   net_exposure_target / score_weights / session_strategy_alignment
-#   全部硬编码在 portfolio_constructor.py (REGIME_NET_EXPOSURE_TARGET / SCORE_WEIGHTS / SESSION_STRATEGY_ALIGNMENT)
-#   且 YAML 值与代码值严重分歧 (e.g. trending_up: YAML=0.15 vs code=0.30)
-#   如需修改请改 portfolio_constructor.py, 不要在此恢复
+# portfolio: 已删除 (2026-06-14) — DEAD CONFIG, 0 代码引用。
+#   权重 map 硬编码在 portfolio_constructor.py (见 docs/ARCHITECTURE.md §2, 待外部化)。
 news_v2:
   enabled: true
   mode: observe

@@ -88,12 +88,9 @@ class ConfigWriter:
             "max_delta": 12,
         },
         # ── F27 (2026-05-14) 新增: 风险预算 ──
-        "PER_TRADE_RISK_PCT": {
-            "yaml_path": "risk.per_trade_risk_pct",
-            "min": 0.002,        # 0.2% — 最低风险, 避免不交易
-            "max": 0.015,        # 1.5% — 上限保护
-            "max_delta": 0.002,  # 单次调整 0.2%, 避免过快变化
-        },
+        # PER_TRADE_RISK_PCT 已删除 (2026-06-20): risk.per_trade_risk_pct 是死路径
+        # (yaml 注释为 "已删除", SoT 是 risk.position_sizing.risk_per_trade_pct)。
+        # auto-tuner 若提议会写入死路径, 故移除 PARAM_MAP 项。
         "MAX_TRADE_RISK_PCT": {
             "yaml_path": "risk.max_trade_risk_pct",
             "min": 0.005,

@@ -315,10 +315,23 @@ class ExitMonitor:
             logger.warning(f"[ExitRuleRegistry] velocity_exit 注册失败: {_ve_err}")
 
         # [P0 2026-06-13] 读取 exit_policy.yaml enabled 字段，禁用 yaml 中标记为 false 的规则
+        # ⚠️ 已知不一致 (2026-06-20): trailing_stop 规则在 exit_rules 无对应 yaml key。
+        #   - Dispatcher 主路径要求显式 enabled (缺省=禁用) → 跳过 trailing_stop
+        #   - Registry 内层路径此处缺省=不禁用 → trailing_stop 仅靠此路径存活
+        #   trailing_stop 即 ATR 硬止损 (compute_stop_lines), 故此处保持"缺省=启用"语义
+        #   切勿改为"缺省=禁用", 否则会关掉实盘 ATR 止损。根因修复(让 dispatcher 也跑
+        #   trailing_stop) 属架构变更, 见 docs/ARCHITECTURE.md 已知问题。
         _exit_rules_cfg = self._cached_exit_policy.get("exit_rules", {}) if hasattr(self, "_cached_exit_policy") else {}
         for _rule_name in list(self._rule_registry._enabled_rules):
             _rule_cfg = _exit_rules_cfg.get(_rule_name, {})
-            if isinstance(_rule_cfg, dict) and _rule_cfg.get("enabled") is False:
+            if not isinstance(_rule_cfg, dict) or "enabled" not in _rule_cfg:
+                # missing key = 仍启用 (维持现状), 但显式告警让不一致可观测
+                logger.warning(
+                    f"[ExitRuleRegistry] {_rule_name} 无 exit_rules.<name>.enabled 配置, "
+                    f"按现状保持启用 (注意: 删除其 yaml key 不会禁用此规则)"
+                )
+                continue
+            if _rule_cfg.get("enabled") is False:
                 self._rule_registry.disable(_rule_name)
                 logger.info(f"[ExitRuleRegistry] {_rule_name} disabled by exit_policy.yaml (enabled=false)")
 
@@ -1325,6 +1338,7 @@ class ExitMonitor:
             "direction": direction,
             "pnl_pct": pnl_pct,
             "earnings_guard": earnings_guard,
+            "strategy": getattr(position, "owner_strategy", "") or getattr(position, "strategy_id", ""),
         }
 
         # P1-7 互斥保护: 其他规则锁定时 临时禁用 pre_close (检查后恢复)
@@ -1416,7 +1430,12 @@ class ExitMonitor:
 
         scale_result = self._check_scale_out(
             position, current_price, trail_state, direction,
-            market_data={"current_price": current_price, "atr": effective_atr, "direction": direction},
+            market_data={
+                "current_price": current_price,
+                "atr": effective_atr,
+                "direction": direction,
+                "strategy": getattr(position, "owner_strategy", "") or getattr(position, "strategy_id", ""),
+            },
         )
         if scale_result and not _suppress_non_hard:
             _triggered_exits.append(scale_result)

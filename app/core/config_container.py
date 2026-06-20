@@ -173,17 +173,16 @@ class RiskConfig:
     vix_warning_threshold: float = 30.0
     vix_critical_threshold: float = 40.0
     vix_cache_ttl_seconds: int = 180  # 3 分钟
-    
-    # 冷却时间
-    signal_cooldown_seconds: int = 300  # 5 分钟
-    
+
+    # signal_cooldown_seconds 已删除 (2026-06-20): 死字段, SoT 是 strategy.signal_cooldown
+
     # 仓位限制
     max_position_pct: float = 0.25  # 单只股票最大仓位 25%
     max_total_position_pct: float = 0.80  # 总仓位上限 80%
-    
+
     # 止损
     stop_loss_pct: float = -0.08  # -8% 止损
-    
+
     @classmethod
     def from_env(cls) -> 'RiskConfig':
         """从环境变量创建风控配置"""
@@ -193,7 +192,6 @@ class RiskConfig:
             vix_warning_threshold=float(os.getenv("VIX_WARNING_THRESHOLD", "30.0")),
             vix_critical_threshold=float(os.getenv("VIX_CRITICAL_THRESHOLD", "40.0")),
             vix_cache_ttl_seconds=int(os.getenv("VIX_CACHE_TTL_SECONDS", "180")),
-            signal_cooldown_seconds=int(os.getenv("SIGNAL_COOLDOWN_SECONDS", "300")),
             max_position_pct=float(os.getenv("MAX_POSITION_PCT", "0.25")),
             max_total_position_pct=float(os.getenv("MAX_TOTAL_POSITION_PCT", "0.80")),
             stop_loss_pct=float(os.getenv("STOP_LOSS_PCT", "-0.08")),
