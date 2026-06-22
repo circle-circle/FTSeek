@@ -172,6 +172,7 @@ class PlaybookDataCollector:
         finnhub_provider,
         insider_provider,
         earnings_calendar,
+        futu_extended=None,
     ):
         """
         Args:
@@ -179,11 +180,13 @@ class PlaybookDataCollector:
             finnhub_provider: FinnhubProvider 实例
             insider_provider: InsiderProvider 实例 (SEC EDGAR Form 4)
             earnings_calendar: EarningsCalendar 实例
+            futu_extended: FutuExtendedProvider 实例 (空头/分析师/内部人, 可选)
         """
         self.fundamental = fundamental_provider
         self.finnhub = finnhub_provider
         self.sec = insider_provider
         self.earnings = earnings_calendar
+        self.futu_ext = futu_extended
 
     def collect(self, symbol: str) -> PlaybookData:
         """收集单只股票的 6 维度数据"""
@@ -223,30 +226,37 @@ class PlaybookDataCollector:
         """
         委托 FundamentalProvider.get_data(symbol)
 
-        返回标准化基本面数据
+        Provider 返回 {"status": "ok", "financials": {...}, "next_catalyst": {...}, ...}
         """
         try:
             raw = self.fundamental.get_data(symbol)
             if raw.get("status") != "ok":
                 return FundamentalData(quality="missing")
 
-            data = raw.get("data", {})
-            
-            # 提取字段（Finnhub 字段名非直觉）
-            pe = data.get("peTTM") or data.get("pe")
-            market_cap = data.get("marketCapitalization")
-            industry = data.get("industry") or data.get("sector")
-            revenue_growth = data.get("revenueGrowthTTMYoy") or data.get("revenueGrowth")
-            roe = data.get("roeTTM") or data.get("returnOnEquity")
-            debt_to_equity = data.get("debtToEquity")
-            high_52w = data.get("52WeekHigh") or data.get("high52w")
-            low_52w = data.get("52WeekLow") or data.get("low52w")
+            # 根因修复 (2026-06-22): Provider 返回 "financials" 不是 "data"
+            fin = raw.get("financials") or raw.get("data") or {}
+
+            # 字段映射: Provider 用 snake_case, 原代码期望 Finnhub camelCase
+            pe = fin.get("pe_ttm") or fin.get("peTTM") or fin.get("pe_ratio") or fin.get("pe")
+            market_cap = fin.get("market_cap") or fin.get("marketCapitalization")
+            # industry 不在 financials 里, 从 next_catalyst 或 Futu snapshot 取
+            industry = fin.get("industry") or fin.get("sector") or ""
+            revenue_growth = fin.get("revenue_yoy") or fin.get("revenueGrowthTTMYoy") or fin.get("revenueGrowth")
+            roe = fin.get("roe") or fin.get("roeTTM") or fin.get("returnOnEquity")
+            debt_to_equity = fin.get("debt_to_equity") or fin.get("debtToEquity")
+            high_52w = fin.get("52w_high") or fin.get("52WeekHigh") or fin.get("high52w")
+            low_52w = fin.get("52w_low") or fin.get("52WeekLow") or fin.get("low52w")
+
+            # 如果 financials 没有 industry, 尝试从 Futu snapshot 补充
+            if not industry:
+                nc = raw.get("next_catalyst", {})
+                industry = nc.get("industry") or nc.get("sector") or ""
 
             # 判断 quality
             key_fields = [pe, market_cap, industry]
-            if all(f is not None for f in key_fields):
+            if all(f is not None and f != 0 for f in key_fields):
                 quality = "ok"
-            elif any(f is not None for f in key_fields):
+            elif any(f is not None and f != 0 for f in key_fields):
                 quality = "partial"
             else:
                 quality = "missing"
@@ -339,7 +349,44 @@ class PlaybookDataCollector:
                 quality = "partial"
             else:
                 quality = "missing"
-            
+
+            # 根因修复 (2026-06-22): RSI 缺失时用日K线补算
+            # 盘后/非交易时段 K_1M 分钟线获取失败 → RSI=None → technical quality=partial
+            # 修复: 从 Futu get_daily_kline 取日K线, 计算 RSI(14)
+            if rsi is None and router and router.futu:
+                try:
+                    dklines = router.futu.get_daily_kline(symbol, count=30)
+                    if dklines and len(dklines) >= 15:
+                        closes = [k['close'] for k in dklines]
+                        gains = []
+                        losses = []
+                        for i in range(1, len(closes)):
+                            change = closes[i] - closes[i-1]
+                            gains.append(max(0, change))
+                            losses.append(max(0, -change))
+                        if len(gains) >= 14:
+                            avg_gain = sum(gains[:14]) / 14
+                            avg_loss = sum(losses[:14]) / 14
+                            for i in range(14, len(gains)):
+                                avg_gain = (avg_gain * 13 + gains[i]) / 14
+                                avg_loss = (avg_loss * 13 + losses[i]) / 14
+                            if avg_loss == 0:
+                                rsi = 100.0
+                            else:
+                                rs = avg_gain / avg_loss
+                                rsi = round(100 - (100 / (1 + rs)), 2)
+                            # 也从日K线补 MA20/MA50
+                            if ma20 is None and len(closes) >= 20:
+                                ma20 = round(sum(closes[-20:]) / 20, 2)
+                            if ma50 is None and len(closes) >= 50:
+                                ma50 = round(sum(closes[-50:]) / 50, 2)
+                            # 重新判断质量
+                            ok_count = sum(1 for f in [price, ma20, rsi] if f is not None and f > 0)
+                            quality = "ok" if ok_count >= 3 else "partial" if ok_count >= 1 else "missing"
+                            logger.debug(f"[data_collector] {symbol} RSI from daily kline: {rsi:.1f}")
+                except Exception as dk_err:
+                    logger.debug(f"[data_collector] {symbol} daily kline RSI fallback failed: {dk_err}")
+
             return TechnicalData(
                 price=price,
                 ma20=ma20,
@@ -496,39 +543,98 @@ class PlaybookDataCollector:
 
     def _collect_earnings(self, symbol: str) -> EarningsData:
         """
-        委托 EarningsCalendar: get_this_week_earnings 反查 + get_earnings_history
+        Finnhub 主数据源 + AlphaVantage fallback
+
+        根因修复 (2026-06-22):
+        1. AlphaVantage API 25次/天额度耗尽 → get_earnings_history 返回空 → earnings 永久 missing
+        2. AlphaVantage 返回 surprise="0.45" (str), data_collector 做 > 0 比较 TypeError
+        修复: Finnhub get_company_earnings (24h缓存, 无额度限制) 作为主源,
+              surprise 做 float() 安全转换
         """
         try:
             bare = symbol.replace("US.", "").upper()
-            
-            # 获取本周财报日历，反查该标的
-            week_earnings = self.earnings.get_this_week_earnings()
+
+            # 源 1: Finnhub earnings calendar (未来财报日期)
             next_date = None
             days_until = None
-            
-            if isinstance(week_earnings, dict):
-                for date_str, items in week_earnings.items():
-                    for item in items:
-                        if item.get("symbol", "").upper() == bare:
-                            next_date = date_str
-                            from datetime import datetime
+            quality = "missing"
+
+            try:
+                # 用 Finnhub calendar/earnings 查该标的未来财报
+                import datetime as _dt
+                today = _dt.date.today()
+                end = today + _dt.timedelta(days=90)
+                fh_data = self.finnhub._get("calendar/earnings", {
+                    "symbol": bare,
+                    "from": today.isoformat(),
+                    "to": end.isoformat(),
+                })
+                if fh_data and isinstance(fh_data, dict):
+                    cal = fh_data.get("earningsCalendar", [])
+                    if cal:
+                        next_date = cal[0].get("date", "")
+                        if next_date:
                             try:
-                                next_dt = datetime.strptime(date_str, "%Y-%m-%d")
-                                days_until = (next_dt - datetime.now()).days
+                                next_dt = _dt.datetime.strptime(next_date, "%Y-%m-%d")
+                                days_until = (next_dt.date() - today).days
                             except Exception:
                                 pass
-                            break
-                    if next_date:
-                        break
+                        quality = "ok"
+            except Exception as e:
+                logger.debug(f"Finnhub earnings calendar failed for {symbol}: {e}")
 
-            # 获取历史财报（最近4季）
-            history = self.earnings.get_earnings_history(bare, limit=4)
-            
-            # 计算超预期率
-            beat_count = sum(1 for h in history if h.get("surprise", 0) > 0)
-            beat_rate = beat_count / len(history) if history else 0.0
+            # 源 2: Finnhub stock/earnings (历史财报 + surprise)
+            history = []
+            beat_rate = 0.0
+            try:
+                history = self.finnhub.get_company_earnings(symbol, quarters=4)
 
-            quality = "ok" if (next_date or history) else "partial"
+                # 安全转换 surprise (可能为 str 或 None)
+                beat_count = 0
+                valid_count = 0
+                for h in history:
+                    actual = h.get("epsActual")
+                    estimate = h.get("epsEstimate")
+                    if actual is not None and estimate is not None:
+                        try:
+                            surprise = float(actual) - float(estimate)
+                        except (TypeError, ValueError):
+                            surprise = 0
+                        if surprise > 0:
+                            beat_count += 1
+                            valid_count += 1
+                        else:
+                            valid_count += 1
+                beat_rate = beat_count / valid_count if valid_count > 0 else 0.0
+
+                if history and quality != "ok":
+                    quality = "partial"
+            except Exception as e:
+                logger.debug(f"Finnhub earnings history failed for {symbol}: {e}")
+
+            # 源 3: AlphaVantage fallback (仅当 Finnhub 全失败)
+            if quality == "missing":
+                try:
+                    av_history = self.earnings.get_earnings_history(bare, limit=4)
+                    if av_history:
+                        history = av_history
+                        beat_count = 0
+                        valid_count = 0
+                        for h in history:
+                            surprise = h.get("surprise", 0)
+                            try:
+                                surprise = float(surprise) if surprise else 0
+                            except (TypeError, ValueError):
+                                surprise = 0
+                            if surprise > 0:
+                                beat_count += 1
+                                valid_count += 1
+                            elif surprise < 0:
+                                valid_count += 1
+                        beat_rate = beat_count / valid_count if valid_count > 0 else 0.0
+                        quality = "partial"
+                except Exception as e:
+                    logger.debug(f"AlphaVantage earnings fallback failed for {symbol}: {e}")
 
             return EarningsData(
                 next_date=next_date,
@@ -544,29 +650,53 @@ class PlaybookDataCollector:
 
     def _collect_sentiment(self, symbol: str) -> SentimentData:
         """
-        Finnhub get_sentiment_score + VIX from AlphaVantage
+        三源融合情绪：Finnhub新闻情绪 + Futu分析师评级 + VIX
 
-        2026-06-19 Phase 0: 对接 FinnhubProvider.get_sentiment_score()
+        2026-06-21: 新增 Futu 分析师评级共识 (get_research_analyst_consensus)
         """
         try:
-            # Finnhub 新闻情绪 [-1, 1]
+            # 1. Finnhub 新闻情绪 [-1, 1]
             news_sentiment = 0.0
             articles_count = 0
             sentiment_quality = "missing"
             try:
                 news_sentiment = self.finnhub.get_sentiment_score(symbol)
-                # get_sentiment_score 返回 float, 非零即有数据
                 if news_sentiment != 0.0:
-                    articles_count = 1  # Finnhub 内部分析了多条, 这里标记为有数据
+                    articles_count = 1
                     sentiment_quality = "ok"
                 else:
-                    # 可能真的无情绪数据 (无相关新闻)
                     sentiment_quality = "partial"
             except Exception as e:
                 logger.debug(f"Finnhub sentiment failed for {symbol}: {e}")
 
-            # 获取 VIX
-            vix = 20.0  # 默认值
+            # 2. Futu 分析师评级共识 (如果有 futu_ext)
+            analyst_rating = None
+            analyst_target_avg = None
+            analyst_buy_pct = None
+            try:
+                if self.futu_ext:
+                    ac = self.futu_ext.get_analyst_consensus(symbol)
+                    if ac.get("status") == "ok":
+                        d = ac.get("data", {})
+                        analyst_rating = d.get("rating")  # 1-5
+                        analyst_target_avg = d.get("target_avg")
+                        analyst_buy_pct = d.get("buy_pct")
+                        if analyst_rating is not None:
+                            # 分析师评级转情绪分数: rating 4-5 → 正面, 3 → 中性, 1-2 → 负面
+                            analyst_sentiment = (analyst_rating - 3) / 2.0  # 1→-1, 3→0, 5→1
+                            # 如果新闻情绪为空，用分析师评级替代
+                            if sentiment_quality == "partial" or sentiment_quality == "missing":
+                                news_sentiment = analyst_sentiment
+                                articles_count = d.get("total_analysts", 0)
+                                sentiment_quality = "ok"
+                            else:
+                                # 两者都有，取加权平均
+                                news_sentiment = (news_sentiment * 0.4 + analyst_sentiment * 0.6)
+            except Exception as e:
+                logger.debug(f"Futu analyst consensus failed for {symbol}: {e}")
+
+            # 3. VIX
+            vix = 20.0
             vix_quality = "missing"
             try:
                 from app.data.alphavantage_provider import AlphaVantageProvider
@@ -576,7 +706,7 @@ class PlaybookDataCollector:
             except Exception as e:
                 logger.debug(f"Failed to get VIX: {e}")
 
-            # 综合质量: 两者都 ok → ok, 有一个 ok → partial, 都 missing → missing
+            # 综合质量
             if sentiment_quality == "ok" and vix_quality == "ok":
                 quality = "ok"
             elif sentiment_quality in ("ok", "partial") or vix_quality == "ok":
