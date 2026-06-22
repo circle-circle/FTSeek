@@ -36,6 +36,7 @@ class ORBConfig:
     min_volume_ratio: float = 1.1        # 最低量能倍数 (放宽, 原1.3太严)
     entry_start_et: str = "09:45"        # 入场窗口开始
     entry_end_et: str = "11:00"          # 入场窗口结束
+    min_quality_score: float = 0.6       # RFC-060 (2026-06-22): 突破质量门禁 (原 engine.py 硬编码 0.6; yaml shadow 段设 0.75)
 
     # ── 止损止盈 (ATR-relative) ──
     stop_loss_atr_mult: float = 1.5      # SL = entry ± 1.5×ATR (2026-06-07: 1.0→1.5, 避免开盘噪声扫损)

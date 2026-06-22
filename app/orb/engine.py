@@ -285,8 +285,16 @@ class ORBEngine:
     def _tick(self):
         """单轮 tick — 连续突破模式 (移除时间限制)"""
         # 运行时守卫 (服务跨午夜进入假日)
-        from app.core.scheduler_triggers import sleep_if_market_closed
+        from app.core.scheduler_triggers import (
+            sleep_if_market_closed, get_market_phase, MarketPhase, interruptible_sleep,
+        )
         if sleep_if_market_closed(300, lambda: self._running):
+            return
+        # RFC-060 (2026-06-22): PRE_MARKET/OVERNIGHT 无持仓时长睡 300s, 停止盘前空转.
+        # 不"禁用 daemon 线程" — 隔夜持仓的退出监控仍需常驻; 有持仓时仍 5s 跑 _monitor_exits.
+        _phase = get_market_phase()
+        if _phase in (MarketPhase.PRE_MARKET, MarketPhase.OVERNIGHT) and not self._positions:
+            interruptible_sleep(300, lambda: self._running)
             return
 
         from app.utils.timezone import now_et
@@ -852,6 +860,13 @@ class ORBEngine:
 
     def _evaluate_breakouts(self, now: datetime, current_time: dt_time):
         """评估突破信号 — 连续突破模式"""
+        # RFC-060 (2026-06-22): 入场窗口开始检查 (entry_start_et, 原 dead field 现启用)
+        entry_start_str = getattr(self._cfg, 'entry_start_et', '09:45')
+        _sh, _sm = (int(x) for x in entry_start_str.split(':'))
+        entry_start = dt_time(_sh, _sm)
+        if current_time < entry_start:
+            return
+
         # 入场窗口截止检查 (entry_end_et 配置, 默认 14:00)
         entry_end_str = getattr(self._cfg, 'entry_end_et', '14:00')
         _h, _m = (int(x) for x in entry_end_str.split(':'))
@@ -1029,10 +1044,12 @@ class ORBEngine:
         )
 
         # 2026-06-08: 质量门槛 0.5→0.6 (研究: 综合过滤后胜率55-62%)
-        if quality_score < 0.6:
+        # RFC-060 (2026-06-22): 改读 config (yaml shadow 段设 0.75, 宁缺毋滥)
+        _min_quality = getattr(self._cfg, 'min_quality_score', 0.6)
+        if quality_score < _min_quality:
             logger.info(
-                "[ORB] %s %s 质量不足: Q=%.2f < 0.6 (W=%.2f%% VolR=%.2f VWAP=%.2f)",
-                symbol, direction, quality_score, width_pct, vol_ratio, vwap
+                "[ORB] %s %s 质量不足: Q=%.2f < %.2f (W=%.2f%% VolR=%.2f VWAP=%.2f)",
+                symbol, direction, quality_score, _min_quality, width_pct, vol_ratio, vwap
             )
             return None
 
@@ -1579,7 +1596,7 @@ class ORBEngine:
                 "entry_reason": "orb_breakout",
                 "owner_strategy": "orb_engine",
                 "market_regime": "RANGE",
-                "mode": "normal",
+                "mode": self._cfg.mode,     # RFC-060 (2026-06-22): shadow/observe/active 区分, 便于过滤统计 (原硬编码 "normal")
                 "signal_id": pos.trace_id or "",
                 "decision_id": "",
                 "metadata_json": _json.dumps({

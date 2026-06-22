@@ -107,7 +107,6 @@ llm_voting:
   max_cache_entries: 50           # 最大缓存条目数 (超出后按LRU淘汰)
 
 # llm_models: 已删除 (2026-06-14 + 2026-06-20) — DEPRECATED, 0 代码引用
-#   实际生效: llm.features.<feature> (路由) + llm.models.<alias> (实例)
 
 # ─── 统一 LLM 路由 (2026-05-17, model_call.py SoT) ───
 # 切换模型只动这里: llm.models.<alias>.model_name
@@ -141,9 +140,9 @@ llm:
       cost_in: 0.0002
       cost_out: 0.0008
     deepseek-pro:
-      provider: deepseek
-      api_key_env: DEEPSEEK_API_KEY
-      base_url: https://api.deepseek.com
+      provider: dashscope
+      api_key_env: DASHSCOPE_API_KEY
+      base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
       model_name: deepseek-v4-pro
       timeout: 300
       cost_in: 0.002
@@ -157,6 +156,15 @@ llm:
       timeout: 300
       cost_in: 0.008
       cost_out: 0.024
+    # ─── GLM-5.2 (2026-06-21): 智谱AI, dashscope hosted, 第3模型 ───
+    glm-5:
+      provider: dashscope
+      api_key_env: DASHSCOPE_API_KEY
+      base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+      model_name: glm-5.2
+      timeout: 300
+      cost_in: 0.006
+      cost_out: 0.020
     kimi-k2:
       provider: dashscope
       api_key_env: DASHSCOPE_API_KEY
@@ -216,7 +224,7 @@ llm:
     catalyst_breaking:   {primary: qwen-flash,  fallback: qwen-max}      # 盘中快速(低延迟)
 
     # ⭐ 2026-06-10 个股分析 — Dashboard 个股详情页 LLM 深度分析
-    stock_analyst:       {primary: deepseek-pro,  fallback: qwen-max}    # 最强模型综合分析
+    stock_analyst:       {primary: glm-5,          fallback: qwen-max}    # GLM-5.2: 第3模型视角
 
     # ⭐ 2026-06-18 Playbook System — 每日交易指令生成 (反幻觉架构)
     playbook_generator:
@@ -782,10 +790,6 @@ risk:
     blocked: 28        # >28 禁止新仓
     unblock: 25        # <25持续15min 解封
   # risk_pipeline: 已删除 (2026-06-20) — USRiskPipeline (.run() 从不调用) 已移除,
-  #   实际风控走 order_executor._submit_order_inner 的 ~25 道内联门。
-  # Phase 3 (2026-05-31): 退出路由统一 — ExitRuleDispatcher 影子模式开关
-  # use_unified_dispatcher=true: 主路径走新 dispatcher (谨慎启用, 仅验证后切换)
-  # log_comparison_mode=true: 与 legacy 并行评估, 仅记录差异 (默认 false 避免日志噪声)
   exit_routing:
     use_unified_dispatcher: false
     # 注意: 此为 ExitMonitor 内部的对比日志开关，与 exit_rules_controller (Dispatcher 主路径) 是独立的两套系统
@@ -1020,10 +1024,6 @@ risk:
       daily_loss_threshold: -0.03
       pause_duration: 1800
     # symbol/system: 已删除 (2026-06-14) — 零代码消费, 代码用硬编码默认值
-# Phase 4 (2026-05-31): ExitRuleDispatcher 正式路由控制器
-# 由 app/pipeline/position_monitor.py::_check_positions 读取
-# 与 risk.exit_routing 共存：本控制器决定 dispatcher 是否参与主路径执行；
-# risk.exit_routing 仅控制 position_exit_monitor 内部的 shadow 评估日志。
 exit_rules_controller:
   dispatcher_enabled: true        # 启用 ExitRuleDispatcher 主路径
   shadow_mode: false              # false=正式执行；true=仅记录决策
@@ -1111,10 +1111,17 @@ options:
       borrow_fee_max_pct: 0.05
       require_borrow_availability: true
 dynamic_exit:
+  # P0 修复 (2026-06-21): dynamic_exit.atr_stop.multiplier 是死配置, 0代码引用
+  # 真正的ATR止损倍数由 exit_policy.yaml → exit_policy_guardian.get_atr_multiplier() 管理
+  # dynamic_exit 的 stop_loss/take_profit 仍被 stop_loss_config.py 和 risk_stage.py 读取
+  # 但其中的 atr_stop.multiplier 从未被任何代码消费 — 标注为 DEPRECATED
   default:
     # RFC-0001 Phase0 止血 (2026-05-21): 止损从 -3% 放宽到 -4.5%, 减少噪声扫单
     # 归因：115 笔 sl_hit 胜率 16.5% 亏-$2,023, 美股日内 2-3% 波动是常态
-    stop_loss: -0.045
+    # 2026-06-21 SSOT对齐: -4.5% → -2.0%, 与 exit_policy.yaml atr_stop.max_loss_pct 一致
+    #   原因: atr_stop_engine hard_stop=2.0% 是实际盘中止损上限,
+    #         initial_sl 也应为 2.0% 以保持一致 (旧值4.5%是历史遗留,从未被读到因路径bug)
+    stop_loss: -0.02
     # P7 优化 (2026-05-22): 止盈从 5% 降到 2.5%, 数据：TRAILING_STOP 85 笔平均盈利仅 0.03%
     # 归因：止盈目标过高导致利润回吐，tp_hit 仅 5 笔 (1.9%)
     # 2026-06-10: 2.5%→5.0%, R/R 从 0.56 修正至 1.11, 配合 P0-3 trailing 收紧减少利润回吐
@@ -1848,7 +1855,6 @@ scheduler:
     claude_cli_timeout_seconds: 600
     claude_max_turns: 12
 # portfolio: 已删除 (2026-06-14) — DEAD CONFIG, 0 代码引用。
-#   权重 map 硬编码在 portfolio_constructor.py (见 docs/ARCHITECTURE.md §2, 待外部化)。
 news_v2:
   enabled: true
   mode: observe
@@ -1928,7 +1934,6 @@ pipeline:
 
   # 旧管线 stage 配置 (保留)
   use_modular_stages: true     # CRA 模块化管线 (SSOT, 代码中 use_new_stages 向后兼容)
-  use_new_stages: true         # DEPRECATED alias — 请使用 use_modular_stages
   stages:
   - name: market_data
     enabled: true
@@ -1970,7 +1975,7 @@ pipeline:
 # ────────────────────────────────────────────────────────────────
 orb:
   enabled: true
-  mode: observe                    # [P2 2026-06-13] 100+ attempts all rejected by pre_trade_gate, switch to observe
+  mode: shadow                    # [RFC-060 2026-06-22] observe→shadow: 创建虚拟仓位跟踪, 不真实下单, 绕过 pre_trade_gate (原 observe 因 100+ attempts 被 gate 全拒)
   universe:
     # ADR-006 (2026-06-07): ETF 归 ORB，个股归主线，零重叠
     # 宽基 (4): 最高流动性，开盘区间最清晰
@@ -1990,15 +1995,15 @@ orb:
   range_minutes: 15                # 开盘区间长度 (分钟)
   max_range_width_pct: 2.5         # 最大区间宽度% (太宽=过度波动)
   breakout_buffer_pct: 0.1         # 突破缓冲%
-  entry_start_et: "09:45"          # 入场窗口开始
+  entry_start_et: "09:50"          # [RFC-060] 09:45→09:50: 跳过开盘前5分钟最噪区间
   # 止损止盈 (ATR-relative, 日内 — 比System A更紧, 适配5秒快速响应)
   stop_loss_atr_mult: 1.5          # SL = entry ± 1.5×ATR (2026-06-07: 1.0→1.5, 避免开盘噪声扫损)
   take_profit_atr_mult: 3.0        # TP = entry ± 3.0×ATR (2026-06-07: 2.0→3.0, R/R 2:1)
   trail_activation_atr: 2.5        # 2026-06-07: 1.0→2.5, 盈利2.5 ATR后才追踪 (让赢家跑到2+ATR再锁利)
   trail_multiplier: 1.5            # 2026-06-07: 1.2→1.5, peak - 1.5×ATR (更宽松追踪, 减少噪音扫出)
   # 风控 (持仓上限由 strategies.orb.max_positions 统一控制, 此处仅作fallback)
-  max_positions: 5                 # 模拟盘: 3→5
-  max_daily_trades: 15             # 模拟盘: 4→15, 最大化数据采集
+  max_positions: 2                 # [RFC-060] 5→2: shadow 同时跟踪2个虚拟仓位足够 (config 默认值)
+  max_daily_trades: 5             # [RFC-060] 15→5: shadow 高质量数据采集, 配合 Q≥0.75+首次突破, 实际有效信号3-5个
   capital_pct: 0.20                # 模拟盘: 0.10→0.20, 更多资金分配
   position_risk_pct: 0.010         # P0 (2026-06-03): 统一 1% 固定风险
   # 退出
@@ -2007,7 +2012,8 @@ orb:
   # 放宽入场条件 (模拟盘数据采集)
   min_range_width_pct: 0.2         # 模拟盘: 0.3→0.2, 允许更窄区间
   min_volume_ratio: 1.2            # 2026-06-08: 0.8→1.2, 无量突破=假突破 (研究验证)
-  entry_end_et: "14:00"            # 模拟盘: 11:00→14:00, 延长入场窗口
+  entry_end_et: "10:45"            # [RFC-060] 14:00→10:45: 精选 morning 高质量窗口, 给 trail 留发展空间
+  min_quality_score: 0.75         # [RFC-060] 新增: shadow 宁缺毋滥, 只做高质量突破 (原 engine.py 硬编码 0.6)
   # Regime-aware direction bias (2026-06-03): 基于真实数据
   # ⚠ SHORT在下跌市胜过LONG 10:1 → 上涨市禁SHORT, 下跌市禁LONG
   regime_short_bias_quality: 0.85    # TREND_DOWN: LONG 突破需要 Q≥0.85
