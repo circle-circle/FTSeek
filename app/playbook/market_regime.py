@@ -49,7 +49,8 @@ class RegimeContext:
     top_n: int  # Screener 筛选数量
     position_multiplier: float  # 仓位倍率
     min_strength: int  # 最低信号强度要求
-    
+    vix_uncertain: bool = False  # RFC-060: VIX 取不到真实值时为 True, regime 判定不可信
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "regime": self.regime.value,
@@ -63,6 +64,7 @@ class RegimeContext:
             "top_n": self.top_n,
             "position_multiplier": self.position_multiplier,
             "min_strength": self.min_strength,
+            "vix_uncertain": self.vix_uncertain,
         }
 
 
@@ -149,21 +151,48 @@ class MarketRegimeGate:
                 logger.warning(f"[Regime] Failed to get SPY from AlphaVantage: {e}")
         
         # 获取 VIX
-        vix = 20.0  # 默认值
-        vix_from_router = False
+        # RFC-060 (2026-06-22): 区分真实值与兜底值.
+        # 旧代码: vix = 20.0 默认值, router.get_vix() 失败回退 20.0 →
+        #   盘前生成时若 FRED 尚未就绪, regime 用兜底 20.0 误判 CAUTIOUS
+        #   (20.0 卡 NORMAL/CAUTIOUS 边界). 实测 06-22: regime 16:02:20 拿 20.0,
+        #   真值 18.44 在 16:02:21 才到缓存.
+        # 修复: 用 get_vix_or_none(), 拿不到真实值则重试一次 (等 FRED 缓存刷新),
+        #   仍拿不到则标记 vix_uncertain, regime 判定降级保守.
+        vix = None
+        vix_uncertain = False
         if self.router:
             try:
-                vix = self.router.get_vix()
-                vix_from_router = True
-                logger.info(f"[Regime] VIX from Router: {vix:.2f}")
+                vix = self.router.get_vix_or_none()
+                if vix is not None:
+                    logger.info(f"[Regime] VIX from Router: {vix:.2f}")
             except Exception as e:
                 logger.warning(f"[Regime] Failed to get VIX from Router: {e}")
-        if not vix_from_router and self.av:
+        if vix is None and self.av:
             try:
-                vix = self.av.get_vix()
-                logger.info(f"[Regime] VIX from AlphaVantage: {vix:.2f}")
+                vix = self.av.get_vix_or_none()
+                if vix is not None:
+                    logger.info(f"[Regime] VIX from AlphaVantage: {vix:.2f}")
             except Exception as e:
                 logger.warning(f"[Regime] Failed to get VIX from AlphaVantage: {e}")
+        if vix is None:
+            # 重试一次: 盘前 FRED 首次请求可能未就绪, 1-2s 后缓存刷新即可拿到
+            import time as _time
+            _time.sleep(2)
+            if self.router:
+                try:
+                    vix = self.router.get_vix_or_none()
+                except Exception:
+                    pass
+            if vix is None and self.av:
+                try:
+                    vix = self.av.get_vix_or_none()
+                except Exception:
+                    pass
+        if vix is None:
+            # 所有源失败: 用 20.0 兜底但标记不确定, 避免 regime 误判
+            vix = 20.0
+            vix_uncertain = True
+            logger.warning("[Regime] VIX 所有源均失败, 使用兜底 20.0 (regime 判定不可信)")
         
         # 评分计算
         # 1. 短期趋势 (SPY vs MA20)
@@ -194,7 +223,10 @@ class MarketRegimeGate:
                 logger.debug(f"[Regime] SPY < MA200: -1")
         
         # 4. 波动率 (VIX)
-        if vix < 15:
+        # RFC-060: VIX 不确定时跳过 VIX 评分 — 兜底 20.0 会给 -2 误判 CAUTIOUS.
+        if vix_uncertain:
+            logger.debug("[Regime] VIX uncertain, 跳过 VIX 评分")
+        elif vix < 15:
             score += 3
             logger.debug(f"[Regime] VIX < 15: +3")
         elif vix <= 20:
@@ -206,7 +238,7 @@ class MarketRegimeGate:
         else:
             score -= 5
             logger.debug(f"[Regime] VIX > 30: -5")
-        
+
         # Regime 映射
         if score >= 5:
             regime = MarketRegime.RISK_ON
@@ -228,16 +260,26 @@ class MarketRegimeGate:
             top_n = 0
             position_multiplier = 0.0
             min_strength = 999
-        
+
+        # RFC-060: VIX 不确定时 regime 降一级保守 (RISK_ON→CAUTIOUS, CAUTIOUS→CAUTIOUS)
+        # 理由: 缺 VIX 时无法确认波动环境, 不应给激进仓位.
+        if vix_uncertain and regime == MarketRegime.RISK_ON:
+            regime = MarketRegime.CAUTIOUS
+            top_n = 5
+            position_multiplier = 0.5
+            min_strength = 60
+            logger.info("[Regime] VIX uncertain, RISK_ON 降级为 CAUTIOUS (保守)")
+
         logger.info(
             f"[Regime] Assessment: {regime.value} (score={score}) | "
             f"SPY={spy_price:.2f} MA20={spy_ma20:.2f} MA50={spy_ma50:.2f} MA200={spy_ma200:.2f} | "
-            f"VIX={vix:.2f} | top_n={top_n} multiplier={position_multiplier}"
+            f"VIX={vix:.2f}{'(uncertain)' if vix_uncertain else ''} | top_n={top_n} multiplier={position_multiplier}"
         )
-        
+
         return RegimeContext(
             regime=regime,
             vix=vix,
+            vix_uncertain=vix_uncertain,
             spy_price=spy_price,
             spy_ma20=spy_ma20,
             spy_ma50=spy_ma50,

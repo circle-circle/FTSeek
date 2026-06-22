@@ -663,13 +663,22 @@ class MarketDataRouter:
     # ── VIX / SPY ─────────────────────────────────────────────────
 
     def get_vix(self) -> float:
-        """VIX: Alpha Vantage 真实数据 → 默认 20.0"""
+        """VIX: Alpha Vantage 真实数据 → 默认 20.0 (向后兼容)"""
+        vix = self.get_vix_or_none()
+        return vix if vix is not None else 20.0
+
+    def get_vix_or_none(self) -> Optional[float]:
+        """VIX 真实值; 拿不到返回 None (不兜底 20.0).
+
+        RFC-060 (2026-06-22): market_regime 等对 VIX 敏感的场景需区分真实值与兜底,
+        20.0 卡在 NORMAL/CAUTIOUS 边界, 兜底会误判 regime.
+        """
         if self.av:
             try:
-                return self.av.get_vix()
+                return self.av.get_vix_or_none()
             except Exception as e:
                 logger.warning(f"[Router] AlphaVantage 获取 VIX 失败：{e}")
-        return 20.0
+        return None
 
     def get_spy_context(self) -> Dict[str, Any]:
         """SPY 大盘上下文：LV3 快照 + MA200 (2026-06-16 修复: 补充 spy_ma200 计算)

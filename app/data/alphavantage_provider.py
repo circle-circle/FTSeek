@@ -479,81 +479,116 @@ class AlphaVantageProvider:
         return results
     
     def get_vix(self) -> float:
+        """获取 VIX 恐慌指数 (向后兼容: 失败时返回默认值 20.0).
+
+        新代码应优先用 get_vix_or_none() 以区分"真实值"与"兜底值" —
+        market_regime 等对 VIX 敏感的场景不能把兜底 20.0 当真值用 (会误判 regime).
         """
-        获取 VIX 恐慌指数
-        
-        尝试多种数据源：
-        1. Alpha Vantage (^VIX)
-        2. FRED API (VIXCLS) - 更稳定
-        3. 默认值 20.0
-        
+        vix = self.get_vix_or_none()
+        if vix is not None:
+            return vix
+        logger.warning("[AlphaVantage] VIX 数据获取失败，使用默认值 20.0")
+        return 20.0  # 默认值
+
+    def get_vix_or_none(self) -> Optional[float]:
+        """
+        获取 VIX 恐慌指数, 拿不到真实值时返回 None (不返回兜底 20.0).
+
+        P0 修复 (2026-06-21): 交易时段优先 Finnhub VIXY 实时代理
+        根因: FRED VIXCLS 是日频序列，盘中永不变 → Rapid Regime Change 检测失效
+        修复: 交易时段先用 VIXY 实时代理(每tick变动), FRED 降为盘后 fallback
+
+        RFC-060 (2026-06-22): 区分真实值与兜底值.
+        原因: get_vix() 失败返回 20.0, 而 20.0 恰好卡在 NORMAL/CAUTIOUS 边界
+        (market_regime 阈值 VIX 15-20=+1, 20-30=-2). 盘前生成时若 FRED 请求尚未
+        就绪, regime 会用兜底 20.0 误判 CAUTIOUS (06-22 实测: regime 16:02:20 拿到
+        20.0, 真值 18.44 在 16:02:21 才到缓存).
+
+        优先级:
+        交易时段: Finnhub VIXY (实时) → FRED (日频 fallback) → None
+        非交易时段: FRED (日频) → Finnhub VIXY → None
+
         Returns:
-            VIX 值或默认值 20.0
+            VIX 真实值, 或 None (所有源均失败).
         """
         try:
             cache_key = "vix"
-            if self._is_cache_valid(cache_key, min_age_seconds=600):
-                return self.cache.get(cache_key, {}).get("vix", 20.0)
-            
-            # 方法1：尝试 Alpha Vantage ^VIX
-            data = self._request("GLOBAL_QUOTE", {"symbol": "^VIX"})
-            if data and data.get("Global Quote"):
-                vix_str = data["Global Quote"].get("05. price", "")
-                if vix_str:
-                    vix = float(vix_str)
-                    result = {"vix": vix}
-                    self.cache[cache_key] = result
-                    self.cache_time[cache_key] = datetime.now()
-                    logger.info(f"[AlphaVantage] 获取 VIX 成功: {vix:.2f}")
+            # 交易时段缩短缓存至 60s (原 600s)，确保能捕捉 VIX 急变
+            from app.core.scheduler_triggers import get_market_phase, MarketPhase
+            phase = get_market_phase()
+            is_trading = phase == MarketPhase.TRADING
+            cache_ttl = 60 if is_trading else 600
+            if self._is_cache_valid(cache_key, min_age_seconds=cache_ttl):
+                # cache 仅在真实获取成功时写入, 故命中即为真值
+                return self.cache.get(cache_key, {}).get("vix")
+
+            if is_trading:
+                # ── 交易时段: 优先 Finnhub VIXY 实时代理 ──
+                vix = self._fetch_finnhub_vixy(cache_key)
+                if vix is not None:
                     return vix
-            
-            # 方法2：尝试 FRED API VIX (VIXCLS)
-            try:
-                fred_url = f"https://fred.stlouisfed.org/graph/fredgraph.csv?id=VIXCLS"
-                response = requests.get(fred_url, timeout=10)
-                if response.status_code == 200:
-                    lines = response.text.strip().split('\n')
-                    if len(lines) > 1:
-                        # 获取最后一行数据
-                        last_line = lines[-1]
-                        parts = last_line.split(',')
-                        if len(parts) >= 2 and parts[1]:
-                            vix = float(parts[1])
-                            result = {"vix": vix}
-                            self.cache[cache_key] = result
-                            self.cache_time[cache_key] = datetime.now()
-                            logger.info(f"[FRED] 获取 VIX 成功: {vix:.2f}")
-                            return vix
-            except Exception as fred_e:
-                logger.debug(f"[FRED] VIX 获取失败: {fred_e}")
-            
-            # 方法3: Finnhub VIXY 代理 (P1-1: 中国服务器 FRED/CBOE 不可达)
-            try:
-                finnhub_key = os.environ.get("FINNHUB_API_KEY", "")
-                if finnhub_key:
-                    fh_resp = requests.get(
-                        f"https://finnhub.io/api/v1/quote?symbol=VIXY&token={finnhub_key}",
-                        timeout=8,
-                    )
-                    fh_resp.raise_for_status()
-                    fh_data = fh_resp.json()
-                    fh_price = fh_data.get("c", 0)
-                    if fh_price and fh_price > 0:
-                        vix_est = round(fh_price * 0.85, 2)  # VIXY→VIX contango校准
-                        result = {"vix": vix_est, "source": "finnhub_vixy"}
+                # VIXY 失败 → FRED 日频 fallback
+                vix = self._fetch_fred_vix(cache_key)
+                if vix is not None:
+                    return vix
+            else:
+                # ── 非交易时段: FRED 日频优先 (稳定) → Finnhub VIXY fallback ──
+                vix = self._fetch_fred_vix(cache_key)
+                if vix is not None:
+                    return vix
+                vix = self._fetch_finnhub_vixy(cache_key)
+                if vix is not None:
+                    return vix
+
+        except Exception as e:
+            logger.warning(f"[AlphaVantage] 获取 VIX 异常：{e}")
+
+        return None
+
+    def _fetch_finnhub_vixy(self, cache_key: str) -> Optional[float]:
+        """Finnhub VIXY 实时报价 → VIX 估算 (VIXY×0.85 contango 校准). 失败返回 None."""
+        try:
+            finnhub_key = os.environ.get("FINNHUB_API_KEY", "")
+            if not finnhub_key:
+                return None
+            fh_resp = requests.get(
+                f"https://finnhub.io/api/v1/quote?symbol=VIXY&token={finnhub_key}",
+                timeout=8,
+            )
+            fh_resp.raise_for_status()
+            fh_data = fh_resp.json()
+            fh_price = fh_data.get("c", 0)
+            if fh_price and fh_price > 0:
+                vix_est = round(fh_price * 0.85, 2)
+                result = {"vix": vix_est, "source": "finnhub_vixy"}
+                self.cache[cache_key] = result
+                self.cache_time[cache_key] = datetime.now()
+                logger.info(f"[Finnhub] VIX (VIXY代理): VIXY=${fh_price:.2f} → VIX≈{vix_est:.2f}")
+                return vix_est
+        except Exception as fh_e:
+            logger.debug(f"[Finnhub] VIXY 代理获取失败: {fh_e}")
+        return None
+
+    def _fetch_fred_vix(self, cache_key: str) -> Optional[float]:
+        """从 FRED VIXCLS 获取日频 VIX (非交易时段主源 / 交易时段 fallback)"""
+        try:
+            fred_url = "https://fred.stlouisfed.org/graph/fredgraph.csv?id=VIXCLS"
+            response = requests.get(fred_url, timeout=10)
+            if response.status_code == 200:
+                lines = response.text.strip().split('\n')
+                if len(lines) > 1:
+                    last_line = lines[-1]
+                    parts = last_line.split(',')
+                    if len(parts) >= 2 and parts[1]:
+                        vix = float(parts[1])
+                        result = {"vix": vix, "source": "fred"}
                         self.cache[cache_key] = result
                         self.cache_time[cache_key] = datetime.now()
-                        logger.info(f"[Finnhub] VIX (VIXY代理): VIXY=${fh_price:.2f} → VIX≈{vix_est:.2f}")
-                        return vix_est
-            except Exception as fh_e:
-                logger.debug(f"[Finnhub] VIXY 代理获取失败: {fh_e}")
-
-            logger.warning("[AlphaVantage] VIX 数据获取失败，使用默认值 20.0")
-            
-        except Exception as e:
-            logger.warning(f"[AlphaVantage] 获取 VIX 异常，使用默认值 20.0：{e}")
-        
-        return 20.0  # 默认值
+                        logger.info(f"[FRED] 获取 VIX 成功: {vix:.2f}")
+                        return vix
+        except Exception as fred_e:
+            logger.debug(f"[FRED] VIX 获取失败: {fred_e}")
+        return None
     
     def get_spy_context(self) -> Dict[str, Any]:
         """
