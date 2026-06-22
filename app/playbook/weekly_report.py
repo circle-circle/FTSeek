@@ -82,19 +82,25 @@ class WeeklyReportGenerator:
 
     def format_report(self, report: Dict[str, Any]) -> str:
         """格式化周报为文本"""
-        week = report.get("week_stats", {})
-        factors = report.get("factor_report", {})
-        adjustments = report.get("adjustments", [])
-        skip_analysis = report.get("skip_analysis", {})
+        def _num(d, k, default=0):
+            # .get(k, default) 在 key 存在但值为 None 时返回 None → {None:.0%} 报错.
+            # 因子统计字段在样本不足时可能为 DB NULL, 统一兜底.
+            v = d.get(k, default) if isinstance(d, dict) else default
+            return v if isinstance(v, (int, float)) else default
+
+        week = report.get("week_stats", {}) or {}
+        factors = report.get("factor_report", {}) or {}
+        adjustments = report.get("adjustments", []) or []
+        skip_analysis = report.get("skip_analysis", {}) or {}
 
         date_str = report.get("date", "")
         lines = [
             f"📊 周度因子复盘 ({date_str})",
             "━" * 20,
             "",
-            f"本周交易: {week.get('total', 0)} 笔 | "
-            f"胜率 {week.get('win_rate', 0):.0f}% | "
-            f"净盈亏 {'+' if week.get('net_pnl', 0) >= 0 else ''}${week.get('net_pnl', 0):.0f}",
+            f"本周交易: {_num(week, 'total', 0)} 笔 | "
+            f"胜率 {_num(week, 'win_rate', 0):.0f}% | "
+            f"净盈亏 {'+' if _num(week, 'net_pnl', 0) >= 0 else ''}${_num(week, 'net_pnl', 0):.0f}",
             "",
         ]
 
@@ -103,12 +109,12 @@ class WeeklyReportGenerator:
         if pos_singles:
             lines.append("🟢 正收益单因子 (强化):")
             for f in pos_singles:
-                wr = f.get("bayesian_win_rate", 0)
-                lower = f.get("bayesian_lower", 0)
-                upper = f.get("bayesian_upper", 0)
-                avg = f.get("avg_pnl", 0)
-                total = f.get("total_trades", 0)
-                lines.append(f"   {f['factor_key']}: {total}笔, "
+                wr = _num(f, "bayesian_win_rate")
+                lower = _num(f, "bayesian_lower")
+                upper = _num(f, "bayesian_upper")
+                avg = _num(f, "avg_pnl")
+                total = _num(f, "total_trades")
+                lines.append(f"   {f.get('factor_key', '?')}: {total}笔, "
                              f"贝叶斯胜率{wr:.0%} [{lower:.0%}-{upper:.0%}], "
                              f"avg {'+' if avg >= 0 else ''}${avg:.0f}")
             lines.append("")
@@ -118,10 +124,10 @@ class WeeklyReportGenerator:
         if pos_pairs:
             lines.append("🟢 正收益条件对:")
             for f in pos_pairs:
-                wr = f.get("bayesian_win_rate", 0)
-                avg = f.get("avg_pnl", 0)
-                total = f.get("total_trades", 0)
-                lines.append(f"   {f['factor_key']}: {total}笔, 胜率{wr:.0%}, "
+                wr = _num(f, "bayesian_win_rate")
+                avg = _num(f, "avg_pnl")
+                total = _num(f, "total_trades")
+                lines.append(f"   {f.get('factor_key', '?')}: {total}笔, 胜率{wr:.0%}, "
                              f"avg {'+' if avg >= 0 else ''}${avg:.0f}")
             lines.append("")
 
@@ -130,9 +136,9 @@ class WeeklyReportGenerator:
         if neg_singles:
             lines.append("🔴 负收益单因子 (弱化):")
             for f in neg_singles:
-                wr = f.get("bayesian_win_rate", 0)
-                avg = f.get("avg_pnl", 0)
-                lines.append(f"   {f['factor_key']}: 胜率{wr:.0%}, "
+                wr = _num(f, "bayesian_win_rate")
+                avg = _num(f, "avg_pnl")
+                lines.append(f"   {f.get('factor_key', '?')}: 胜率{wr:.0%}, "
                              f"avg {'+' if avg >= 0 else ''}${avg:.0f}")
             lines.append("")
 
@@ -141,9 +147,9 @@ class WeeklyReportGenerator:
         if observing:
             lines.append("⚠️ 观察中 (样本不足):")
             for f in observing:
-                lower = f.get("bayesian_lower", 0)
-                upper = f.get("bayesian_upper", 0)
-                lines.append(f"   {f['factor_key']}: {f.get('total_trades', 0)}笔, "
+                lower = _num(f, "bayesian_lower")
+                upper = _num(f, "bayesian_upper")
+                lines.append(f"   {f.get('factor_key', '?')}: {_num(f, 'total_trades')}笔, "
                              f"贝叶斯CI [{lower:.0%}-{upper:.0%}]")
             lines.append("")
 
