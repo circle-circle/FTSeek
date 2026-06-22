@@ -33,6 +33,13 @@ class Watchdog:
         self._heal_max_per_day = 3
         self._heal_enabled = True
         self._heal_last_attempt: float = 0
+        # RFC-060 (2026-06-22): 初始化 grace window
+        # monitor_loop / scan_loop 线程在主初始化完成后才 start, 期间主线程可能被
+        # 飞书 SDK / OpenD 连接等同步调用阻塞 (实测 06-19 Juneteenth 卡 104s).
+        # watchdog 检查线程先于工作线程启动 → 误判 stale → systemctl restart 循环.
+        # start() 后 INIT_GRACE_SEC 内不报 stale, 给初始化 + 首次 ping 留时间.
+        self._started_at: float = 0.0
+        self._init_grace_sec = 300.0
 
     def register(self, name: str, stale_threshold_sec: float):
         """注册一个心跳源"""
@@ -69,12 +76,13 @@ class Watchdog:
         if self._running:
             return
         self._running = True
+        self._started_at = time.time()
         self._thread = threading.Thread(
             target=self._loop, args=(check_interval_sec,),
             daemon=True, name="Watchdog",
         )
         self._thread.start()
-        logger.info(f"[Watchdog] 启动 — 检查间隔 {check_interval_sec}s")
+        logger.info(f"[Watchdog] 启动 — 检查间隔 {check_interval_sec}s (init grace {self._init_grace_sec:.0f}s)")
 
     def stop(self):
         self._running = False
@@ -89,13 +97,22 @@ class Watchdog:
 
     def _check_all(self):
         # 假日/周末: 跳过所有心跳检查 (后台线程故意不启动，无心跳是正常的)
+        # get_market_phase() 已把假日 (is_us_holiday) 归为 WEEKEND.
         try:
             from app.core.scheduler_triggers import get_market_phase, MarketPhase
             if get_market_phase() == MarketPhase.WEEKEND:
                 return
         except Exception:
             pass  # 导入失败时正常检查
-        
+
+        # RFC-060 (2026-06-22): 初始化 grace window
+        # 工作线程 (monitor_loop/scan_loop) 在主初始化完成后才 .start(), 期间主线程
+        # 可能被飞书 SDK / OpenD 同步调用阻塞 (06-19 Juneteenth 实测卡 104s).
+        # watchdog 检查线程先于工作线程启动 → 误判 stale → systemctl restart 循环.
+        # start() 后 grace 内不报 stale, 给初始化 + 首次 ping 留时间.
+        if self._started_at and (time.time() - self._started_at) < self._init_grace_sec:
+            return
+
         now = time.time()
         with self._lock:
             items = list(self._heartbeats.items())
