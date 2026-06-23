@@ -42,13 +42,14 @@ from app.storage.db_pool import get_db
 conn = get_db("ftseek_us").connection()
 try:
     cursor = conn.execute("""
-        SELECT 
+        SELECT
             COUNT(*) as cnt,
-            SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END) as wins,
-            SUM(CASE WHEN pnl < 0 THEN 1 ELSE 0 END) as losses,
-            SUM(pnl) as total_pnl
-        FROM trade_records 
+            SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
+            SUM(CASE WHEN realized_pnl < 0 THEN 1 ELSE 0 END) as losses,
+            SUM(realized_pnl) as total_pnl
+        FROM trade_records
         WHERE trade_date >= date('now', '-30 days')
+          AND source_type != 'SCALPING'  -- 已禁用策略, 不纳入 OKR 统计
     """)
     row = cursor.fetchone()
     trade_stats = dict(row) if row else {}
@@ -58,14 +59,14 @@ except Exception as e:
 # 4. By source
 try:
     cursor2 = conn.execute("""
-        SELECT 
-            source,
+        SELECT
+            source_type,
             COUNT(*) as cnt,
-            SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END) as wins,
-            SUM(pnl) as total_pnl
-        FROM trade_records 
+            SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
+            SUM(realized_pnl) as total_pnl
+        FROM trade_records
         WHERE trade_date >= date('now', '-30 days')
-        GROUP BY source
+        GROUP BY source_type
     """)
     by_source = [dict(r) for r in cursor2.fetchall()]
 except Exception as e:
@@ -118,7 +119,7 @@ for src in by_source:
         print(f"  Error: {src['error']}")
     else:
         wr = src['wins']/src['cnt']*100 if src['cnt'] > 0 else 0
-        print(f"  {src.get('source', 'unknown')}: {src['cnt']} trades, WR={wr:.0f}%, PnL=${src.get('total_pnl',0):.2f}")
+        print(f"  {src.get('source_type', 'unknown')}: {src['cnt']} trades, WR={wr:.0f}%, PnL=${src.get('total_pnl',0):.2f}")
 
 print(f"\n【Config State】")
 print(f"  playbook.enabled: {playbook_enabled}")

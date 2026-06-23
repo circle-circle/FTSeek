@@ -305,8 +305,6 @@ class SharedKernel:
         session = self.normalize_session(session)
         return DEFAULT_SESSION_VOL_RATIO.get(session, 1.0)
 
-    # ── 时段参数派生: 已随 scalping 引擎删除移除 (BaseScalpingParams/derive_phase_params 无调用方) ──
-
     def calibrate_scalers_from_data(self, phase_amplitudes: Dict[str, float]):
         """
         从历史振幅数据自动校准时段缩放因子

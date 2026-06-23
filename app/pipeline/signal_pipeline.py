@@ -285,8 +285,6 @@ def _get_scan_wait_seconds(scheduler) -> int:
     """
     P3 优化 (2026-05-05): 时间轮转协调器 - 根据时段动态调整主通道扫描频率。
     核心理念: 不在错误的时间用错误的策略。
-    
-    配合 Scalping 的活跃时段，实现策略轮转 (Time Rotation)。
     """
     try:
         import pytz
@@ -322,25 +320,25 @@ def _get_scan_wait_seconds(scheduler) -> int:
     # 依据: 市场微观结构 (Opening Drive, Morning, Midday, Afternoon, Closing)
     t = hour * 60 + minute  # 当前时间的分钟数 (ET)
 
-    # 1. 开盘爆发期 (09:30-10:00): Scalping Primary, 主通道减少扫描 (防止噪音)
-    if 570 <= t < 600:    
+    # 1. 开盘爆发期 (09:30-10:00): 主通道减少扫描 (防噪音)
+    if 570 <= t < 600:
         return 10 * 60    # 10min (Reduced)
 
-    # 2. 上午趋势期 (10:00-11:30): 双引擎活跃
-    if 600 <= t < 690:    
+    # 2. 上午趋势期 (10:00-11:30): 主通道 Standard
+    if 600 <= t < 690:
         return 5 * 60     # 5min (Standard)
 
-    # 3. 午盘量谷期 (11:30-14:00): Scalping Primary (均值回归), 主通道 Reduced
-    if 690 <= t < 840:    
+    # 3. 午盘量谷期 (11:30-14:00): 主通道 Reduced
+    if 690 <= t < 840:
         return 12 * 60    # 12min (Reduced)
 
-    # 4. 下午趋势期 (14:00-15:30): 趋势再起，双引擎活跃
-    if 840 <= t < 930:    
+    # 4. 下午趋势期 (14:00-15:30): 主通道 Standard
+    if 840 <= t < 930:
         return 5 * 60     # 5min (Standard)
 
-    # 5. 尾盘 MOC 窗口 (15:30-16:00): Scalping ONLY, 主通道禁止开新仓
+    # 5. 尾盘 MOC 窗口 (15:30-16:00): 主通道禁止开新仓
     # 这里我们保持 60min 扫描以监控平仓逻辑，但不处理新信号 (信号阶段会拦截)
-    if 930 <= t < 960:    
+    if 930 <= t < 960:
         return 60 * 60    # 60min (Off/Minimal)
 
     # 盘前/盘后: 使用默认间隔

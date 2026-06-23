@@ -139,7 +139,7 @@ class ExecutionEngine(BaseExecutionEngine):
     
     # ── 方案B: 标的级互斥 (2026-06-03) ──────────────────────────────────
     # 每个标的永久归属一个引擎，物理上消除方向冲突。
-    # ORB 只能交易这 8 只 ETF，Main/Scalping 绝不碰它们。
+    # ORB 只能交易这 8 只 ETF，Main 绝不碰它们。
     # 来源: unified_config.yaml::orb.universe (SSOT)
     # 注释: SPY/QQQ 在主线 watchlist 中，ORB 已移除避免冲突
     ORB_SYMBOLS = frozenset({
@@ -211,7 +211,7 @@ class ExecutionEngine(BaseExecutionEngine):
 
         规则:
           - ORB 引擎只能交易 ORB_SYMBOLS (8只ETF)
-          - Main/Scalping 不能交易 ORB_SYMBOLS
+          - Main 不能交易 ORB_SYMBOLS
           - 退出订单(is_exit)不受此限制
         """
         if self._is_exit_order(order):

@@ -335,13 +335,19 @@ def run_playbook_track(scheduler, *, force: bool = False) -> Optional[Dict[str, 
                 logger.debug(f"[playbook] {today} 非交易日, 跳过盘后追踪")
                 return None
             # 根因修复 (2026-06-18): 幂等检查改为查询 DB
+            # 2026-06-23 修复: any→all. 原逻辑 any(...) = 批次内任意一条到终态即跳过整批,
+            #   导致 (a) 盘后追踪后才生成的指令永久不追踪 (b) 'holding' 仓位被同批的终态指令
+            #   连带跳过, 无法每日重追踪直到产生最终 outcome. 改为 all: 仅当全部指令到终态
+            #   (win/loss/skipped/missed 或有 shadow_pnl) 才跳过, 否则重跑追踪未终态的.
             try:
                 from app.playbook.db import PlaybookDB
                 db = PlaybookDB()
                 instructions = db.get_instructions_by_date(today)
-                # 检查是否已追踪：任意指令有 shadow_pnl 或 outcome
-                tracked = any(
-                    inst.get("shadow_pnl") is not None or inst.get("outcome")
+                # 检查是否已追踪：所有指令均有 shadow_pnl 或 终态 outcome (win/loss/skipped/missed)
+                # 2026-06-23: outcome="holding" 不算终态 — 持仓中仓位需每日重追踪直到平仓
+                tracked = bool(instructions) and all(
+                    inst.get("shadow_pnl") is not None or
+                    inst.get("outcome") in ("win", "loss", "skipped", "missed")
                     for inst in instructions
                 )
                 if tracked:

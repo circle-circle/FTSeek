@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class EODConfig:
-    """全局收盘协议 — 主线 + Scalping 共享"""
+    """全局收盘协议 — 主线 + ORB 共享"""
 
     no_new_entry_after_et: str = "15:50"
     force_close_loss_at_et: str = "15:55"
