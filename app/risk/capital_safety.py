@@ -199,24 +199,21 @@ class CapitalSafetySystem:
         elif current_equity > self._state.peak_equity:
             self._state.peak_equity = current_equity
         
-        # P0 修复 (2026-05-01): 资金量突变检测 — 如果当前净值与历史峰值差异 >5x，
-        # 说明可能切换了账户/重置了资金，自动重置基准避免误判为 90%+ 回撤
+        # P0 修复 (2026-06-23): 删除运行时 ">5x 突变自动重置 peak" 后门.
+        #   原逻辑 (2026-05-01) 在净值与 peak 差异 >5x 时自动重置 peak/drawdown/water_level,
+        #   意图处理账户切换 — 但该场景已在 _load_state 的 trade_env 检测中处理 (L807-814).
+        #   运行时 >5x 必然是数据源 bug (如曾发生的双路径查不同 Futu 账户), 自动重置会让
+        #   真实回撤被当成"基准重置"吞掉 → 回撤 3% 熔断静默失效 (fail-dangerous).
+        #   现改为只告警不重置: 宁可触发误熔断 (fail-safe), 也不静默吞掉真实回撤.
         if self._state.peak_equity > 0 and current_equity > 0:
-            ratio = max(current_equity / self._state.peak_equity, 
+            ratio = max(current_equity / self._state.peak_equity,
                         self._state.peak_equity / current_equity)
             if ratio > 5.0:
-                logger.warning(
-                    f"[资本安全] 资金量突变检测: 当前=${current_equity:,.0f} vs "
-                    f"历史峰值=${self._state.peak_equity:,.0f} (差异 {ratio:.1f}x)，"
-                    f"自动重置基准"
+                logger.error(
+                    f"[资本安全] 净值与峰值差异 {ratio:.1f}x 异常 — 疑似数据源错误, "
+                    f"当前=${current_equity:,.0f} vs peak=${self._state.peak_equity:,.0f}, "
+                    f"不重置基准 (drawdown 计算照常, 可能触发熔断)"
                 )
-                self._state.initial_capital = current_equity
-                self._state.peak_equity = current_equity
-                self._state.drawdown_pct = 0.0
-                self._state.max_drawdown_pct = 0.0
-                self._state.water_level = WaterLevel.GREEN
-                self._state.is_locked = False
-                self._state.lock_reason = ""
         
         # 计算回撤
         if self._state.peak_equity > 0:

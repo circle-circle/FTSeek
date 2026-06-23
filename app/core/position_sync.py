@@ -581,7 +581,7 @@ class USPositionSync:
                     pass
 
             # P0 修复 (2026-05-04 / 2026-05-12): 新持仓保护窗口 — 给 Futu 180s 确认成交
-            # 2026-05-12 延长 60s→180s: Scalping 开仓后 Futu SIMULATE 延迟明显，60s 不足
+            # 2026-05-12 延长 60s→180s: 模拟盘 Futu SIMULATE 延迟明显，60s 不足
             if row and row[1]:
                 try:
                     entry_dt = datetime.fromisoformat(str(row[1]))
@@ -1146,14 +1146,12 @@ class USPositionSync:
                     logger.debug(f"[US Sync] 跳过期权仓 {symbol} (不在 broker 中，正常)")
                     continue
                 # P0 修复 (2026-05-04 / 2026-05-12 / 2026-05-13): 新持仓保护窗口
-                # 2026-05-13: Scalping 持仓使用动态保护窗口 (基于 max_hold_minutes)
-                # 根因: 模拟盘 Futu 延迟可达 10 分钟，固定 180s 不够
+                # 根因: 模拟盘 Futu 延迟可达 10 分钟, 固定 180s 保护窗口, 期间不清理幽灵仓
                 existing_pos = self.position_store.get(symbol)
                 if existing_pos and hasattr(existing_pos, 'entry_time'):
                     try:
                         age_seconds = (_now_sync - existing_pos.entry_time).total_seconds()
-                        # Scalping 持仓: 保护窗口 = max(max_hold_minutes * 2, 5min)
-                        # 例: max_hold=5min → 保护 10min = 600s
+                        # 保护窗口 180s (主管线), 期间等待 Futu 确认成交不清理
                         grace_period = 180  # 默认 (主管线)
                         # Task #7 (2026-05-31): owner_strategy 优先, strategy_id 仅作向后兼容 fallback
                         _owner = (
@@ -1550,64 +1548,30 @@ class USPositionSync:
                 )
 
             # --- 2. 从 Broker 获取实时资金数据 ---
-            # 注意: futu-opend 部分版本不支持 acc_cash_info_query，
-            # 此时降级使用 position_monitor 的资金更新逻辑，不在此处重复估算。
-            from futu import TrdEnv, TrdMarket, SecurityFirm
-            from app.core.config_container import get_config
-            trade_env = TrdEnv.SIMULATE if get_config().trade_env_int == 1 else TrdEnv.REAL
-
-            ctx = self._get_futu_context(
-                os.getenv("FUTU_OPEND_HOST", "127.0.0.1"),
-                int(os.getenv("FUTU_OPEND_PORT", "11111")),
-                trade_env,
-                TrdMarket.US,
-                SecurityFirm.FUTUINC,
-            )
-            if ctx is None:
-                logger.debug("[US Sync Capital] Futu 连接不可用，跳过资金更新")
-                return
-
+            # P0 修复 (2026-06-23): 复用 broker_adapter.get_account_info() 取代自开 Futu ctx + accinfo_query.
+            #   旧实现 accinfo_query(trd_env) 未传 acc_id → Futu 返回默认账户 (HKD), 与 broker_adapter
+            #   查询的配置 US 账户不一致, 两条净值轮流灌进 capital_safety, 触发 ">5x 突变检测" 反复重置 peak,
+            #   导致回撤 3% 熔断静默失效. get_account_info() 已用运行时发现的 acc_id + 完成 HKD→USD 转换,
+            #   与 position_monitor / order_executor 同源 SSOT.
+            adapter = self._broker_adapter
             broker_data = {}
-            try:
-                # 优先使用 accinfo_query (字段更完整, 含 USD 子账户字段)
-                from futu import RET_OK as _RET_OK
-                ret, funds_data = ctx.accinfo_query(trd_env=trade_env)
-                if ret == _RET_OK and funds_data is not None and not funds_data.empty:
-                    row = funds_data.iloc[0]
-                    _currency = str(row.get('currency', '')).upper()
-                    _is_hkd = _currency == 'HKD'
-
-                    if _is_hkd:
-                        # HKD 账户: 使用 USD 子账户字段 (与交易页面一致)
-                        _usd_assets = float(row.get('usd_assets', 0))
-                        _hkd_assets = float(row.get('total_assets', 0))
-                        _fx = _hkd_assets / _usd_assets if _usd_assets > 0 else 7.8
-                        _cash = float(row.get('us_avl_withdrawal_cash', 0))
-                        if _cash <= 0:
-                            _cash = float(row.get('us_cash', 0))
-                        _bp = float(row.get('usd_net_cash_power', 0))
-                        if _bp <= 0:
-                            _bp = float(row.get('power', 0)) / _fx
+            if adapter and getattr(adapter, 'connected', False):
+                try:
+                    info = adapter.get_account_info()
+                    if info and info.get("total_assets", 0) > 0:
                         broker_data = {
-                            'cash': _cash,
-                            'market_value': float(row.get('market_val', 0)) / _fx,
-                            'total_assets': _usd_assets,
-                            'buying_power': _bp,
+                            'cash': info.get("cash", 0),
+                            'market_value': info.get("market_val", 0),
+                            'total_assets': info.get("total_assets", 0),
+                            'buying_power': info.get("buying_power", 0),
                         }
-                    else:
-                        # USD 账户: 直接使用
-                        _bp = float(row.get('power', 0))
-                        broker_data = {
-                            'cash': float(row.get('cash', 0)),
-                            'market_value': float(row.get('market_val', 0)),
-                            'total_assets': float(row.get('total_assets', 0)),
-                            'buying_power': _bp,
-                        }
-            except (AttributeError, Exception) as e:
-                logger.debug("[US Sync Capital] accinfo_query 不可用 (%s)，"
-                             "由 position_monitor 统一更新资金", e)
+                except Exception as e:
+                    logger.debug("[US Sync Capital] adapter.get_account_info 失败 (%s)，"
+                                 "由 position_monitor 统一更新资金", e)
+            else:
+                logger.debug("[US Sync Capital] broker_adapter 未连接，跳过资金更新 (由 position_monitor 处理)")
 
-            # Fallback: 如果 API 不支持，跳过资金更新 (由 position_monitor 统一处理)
+            # Fallback: 无资金数据时跳过 (由 position_monitor 统一处理)
             if not broker_data.get('total_assets', 0):
                 logger.debug("[US Sync Capital] 无 Broker 资金数据，跳过 (由 position_monitor 处理)")
                 return
