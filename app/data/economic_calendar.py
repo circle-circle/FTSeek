@@ -205,9 +205,13 @@ class EconomicCalendar:
     #  公开 API
     # ------------------------------------------------------------------
 
-    def get_todays_events(self) -> List[Dict]:
+    def get_todays_events(self, date_str: str = None) -> List[Dict]:
         """
-        获取今日的经济事件列表
+        获取指定日期(默认今日 ET)的经济事件列表
+
+        Args:
+            date_str: 'YYYY-MM-DD' 格式日期, 默认今日 ET.
+                      (premarket_scanner 按扫描日期查, 传入; 其他场景默认今日.)
 
         每个事件:
         {
@@ -220,14 +224,19 @@ class EconomicCalendar:
         }
 
         Returns:
-            今日事件列表, 非交易日返回空列表
+            指定日期事件列表, 非交易日返回空列表
         """
-        today = self._today_et()
-        if not self._is_trading_day(today):
+        if date_str:
+            try:
+                target = datetime.strptime(date_str, "%Y-%m-%d").date()
+            except ValueError:
+                target = self._today_et()
+        else:
+            target = self._today_et()
+        if not self._is_trading_day(target):
             return []
 
-        date_str = today.strftime("%Y-%m-%d")
-        events = ECONOMIC_EVENTS_2026.get(date_str, [])
+        events = ECONOMIC_EVENTS_2026.get(target.strftime("%Y-%m-%d"), [])
         return events
 
     def get_upcoming_events(self, days: int = 7) -> List[Dict]:
@@ -256,9 +265,12 @@ class EconomicCalendar:
         result.sort(key=lambda e: (e["date"], e["time"]))
         return result
 
-    def get_no_trade_windows(self) -> List[Dict]:
+    def get_no_trade_windows(self, date_str: str = None) -> List[Dict]:
         """
-        获取今日禁止开仓的时间窗口
+        获取指定日期(默认今日 ET)禁止开仓的时间窗口
+
+        Args:
+            date_str: 'YYYY-MM-DD' 格式日期, 默认今日 ET.
 
         HIGH 影响事件: T-15min 到 T+30min
         MEDIUM 影响事件: T-10min 到 T+15min
@@ -274,7 +286,7 @@ class EconomicCalendar:
                 },
             ]
         """
-        today_events = self.get_todays_events()
+        today_events = self.get_todays_events(date_str)
         if not today_events:
             return []
 
