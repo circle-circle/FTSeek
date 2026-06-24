@@ -167,6 +167,26 @@ def scan_loop(scheduler):
                     time.sleep(1)
                 continue
 
+            # 2026-06-24 清理 (策略不混为一谈): TRADING 阶段新单执行由 playbook futu_simulate 独占
+            # (run_playbook_auto_execute 每30min, 带 ATR SL/TP + IC + OKR 打磨层).
+            # 本 scan_loop 的投票信号执行 (legacy voting_llm 路径, 同一 VotingCoordinator 信号)
+            # 与 playbook 同信号同账户会重复下单 → TRADING 跳过新单扫描, 避免双重执行.
+            # scan_loop 仍负责 PRE_MARKET/AFTER_HOURS 的信号生成/分析 (供 battle_plan, 不执行).
+            if phase == MarketPhase.TRADING:
+                try:
+                    from app.core.config_container import get_config as _get_cfg
+                    _pb_enabled = _get_cfg().get_dotted("playbook.enabled", False)
+                    _pb_exec = _get_cfg().get_dotted("playbook.execute_mode", "simulate")
+                except Exception:
+                    _pb_enabled, _pb_exec = False, "simulate"
+                if _pb_enabled and _pb_exec in ("futu_simulate", "live"):
+                    logger.debug("[扫描] TRADING 阶段 — 新单执行由 playbook 独占, scan_loop 跳过 (避免同信号重复)")
+                    for _ in range(int(scheduler.SCAN_INTERVAL_MINUTES * 60)):
+                        if not scheduler.running:
+                            return
+                        time.sleep(1)
+                    continue
+
             if is_circuit_breaker_open():
                 logger.warning("[熔断] API 熔断器已开启，暂停扫描...")
                 for _ in range(int(scheduler.SCAN_INTERVAL_MINUTES * 60)):
@@ -754,6 +774,12 @@ def _generate_technical_signal(scheduler, context: Dict[str, Any]) -> Dict[str, 
         "atr_used": context.get("atr", 0),
     })
     result["market_regime"] = signal.flags.get("regime_label", "NORMAL")
+
+    # P1 (2026-06-24): _factor_detail 透传到 context, 供 _enrich_candidate → candidate.factor_detail → trade_records
+    # 此前 _factor_detail 只在 result dict 里 (写 decisions.db), 未透传到执行链 → trade_records.factor_detail 恒 NULL (0/376)
+    _fd = result.get("_factor_detail") or getattr(signal, "factor_detail", None)
+    if _fd and isinstance(context, dict):
+        context["_factor_detail"] = _fd
 
     # ─── 因子级投票分解 (2026-06-02: 反馈闭环修复) ───
     # 将黑盒 "intraday_scorer_v2" 单分数分解为各因子的独立投票

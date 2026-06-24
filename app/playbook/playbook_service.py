@@ -503,7 +503,28 @@ class PlaybookService:
             })
             logger.info(f"[playbook] {_mode_label} trade_record 已写入: {symbol} @ {_fill} futu_id={_futu_id}")
         except Exception as _tre:
-            logger.warning(f"[playbook] {_mode_label} trade_record 写入失败: {_tre}")
+            # P0 (2026-06-24): broker 已下单但 trade_record 写失败 → 反向平仓回滚, 防孤儿仓
+            # (否则 monitor 查不到该仓位, 永不被自动平仓). 首跑 sim 最高危断点.
+            logger.error(f"[playbook] {_mode_label} trade_record 写入失败, 回滚平仓 {symbol}: {_tre}")
+            try:
+                _dual_rb = get_dual_broker()
+                _rb = _dual_rb.close_position(symbol, int(position_size), mos_direction, target_env=target_env)
+                if _rb.get("success"):
+                    logger.warning(
+                        f"[playbook] {_mode_label} 回滚平仓成功 {symbol} @ {_rb.get('filled_price')} "
+                        f"(孤儿仓已防)"
+                    )
+                else:
+                    logger.error(
+                        f"[playbook] {_mode_label} 回滚平仓失败 {symbol}: {_rb.get('error')} "
+                        f"— ⚠️ 需手动处理 sim 账户孤儿仓"
+                    )
+            except Exception as _rbe:
+                logger.error(
+                    f"[playbook] {_mode_label} 回滚平仓异常 {symbol}: {_rbe} "
+                    f"— ⚠️ 需手动处理 sim 账户孤儿仓"
+                )
+            return {"success": False, "message": f"{_mode_label} trade_record 写入失败已回滚平仓: {_tre}"}
 
         # 注册 ManualHoldRegistry (防 auto pipeline 干扰)
         try:

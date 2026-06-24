@@ -133,6 +133,8 @@ class ExitReason(str, Enum):
     VELOCITY_EXIT = "VELOCITY_EXIT"  # 2026-05-31: 速度捕捉退出
     DAY_TRADE_TP = "DAY_TRADE_TP"  # 2026-06-03: 日内止盈 (day_trade 规则 TP 触发)
     DAY_TRADE_TIMEOUT = "DAY_TRADE_TIMEOUT"  # 2026-06-03: 日内超时退出 (day_trade 规则超时触发)
+    MAX_HOLD_T5 = "MAX_HOLD_T5"  # RFC-061 (2026-06-24): cohort B 持仓≥5 交易日强平
+    TIME_EXIT = "TIME_EXIT"  # RFC-061 (2026-06-24): 持仓>2h 且亏损保本退出
 
 
 class FailureType(str, Enum):

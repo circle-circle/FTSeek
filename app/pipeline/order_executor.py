@@ -1106,7 +1106,12 @@ def _notify_order(scheduler, symbol: str, signal: SignalScore, order: Order, pos
             # ─── P0 归因修复 (2026-06-06): 全链路 trace_id + 因子明细 ───
             # 确保每笔交易从信号生成到平仓全程可追溯
             "trace_id": getattr(signal, 'trace_id', '') or '',
-            "factor_detail": (signal.metadata.get("_factor_detail") or signal.metadata.get("factor_detail") or {}) if (hasattr(signal, "metadata") and signal.metadata) else {},
+            "factor_detail": (
+                (signal.metadata.get("_factor_detail") or signal.metadata.get("factor_detail")
+                 or getattr(signal, "factor_detail", None) or getattr(signal, "score_breakdown", None) or {})
+                if (hasattr(signal, "metadata") and signal.metadata)
+                else (getattr(signal, "factor_detail", None) or getattr(signal, "score_breakdown", None) or {})
+            ),
             "signal_tags": signal.metadata.get("signal_tags", "") if (hasattr(signal, "metadata") and signal.metadata) else "",
             # ─── RFC-061 (2026-06-24): A/B cohort 注入 position.metadata ───
             # 供退出链 pre_close.py 读取: cohort B 盈利仓跳过 EOD 持夜到 ~T+5.

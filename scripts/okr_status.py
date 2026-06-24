@@ -82,12 +82,32 @@ except:
     pass
 
 # ─── 3. IC ───
+# P1 (2026-06-24): 主源改 signal_snapshots (1375+ 实测数据), playbook_instructions.fwd_return 基本空 (1 行)
+# 否则 KR4 IC 永远 null. signal_snapshots 无 t3 列, 用 t1/t5 (alpha 在 T+5, 见 docs/ic_report_2026-06-24.md)
 ic_data = {}
 try:
-    from app.playbook.ic_tracker import compute_playbook_ic
-    ic_data = compute_playbook_ic(db, days=30)
+    from app.analysis.signal_ic_tracker import get_ic_summary
+    _ic_t1 = get_ic_summary(min_signals=20, forward_col="fwd_ret_t1", days_back=60)
+    _ic_t5 = get_ic_summary(min_signals=20, forward_col="fwd_ret_t5", days_back=60)
+    ic_data = {
+        "overall_ic_t1": _ic_t1.get("ic_mean") if _ic_t1.get("status") == "ok" else None,
+        "sample_t1": _ic_t1.get("n_signals", 0),
+        "overall_ic_t5": _ic_t5.get("ic_mean") if _ic_t5.get("status") == "ok" else None,
+        "sample_t5": _ic_t5.get("n_signals", 0),
+        "by_strategy_t5": _ic_t5.get("by_strategy", {}),
+        "source": "signal_snapshots",
+    }
+    # 兼容旧字段 overall_ic_t3: signal_snapshots 无 t3, 用 t5 代 (alpha 在 T+5)
+    ic_data["overall_ic_t3"] = ic_data.get("overall_ic_t5")
+    ic_data["sample_t3"] = ic_data.get("sample_t5", 0)
 except Exception as e:
     ic_data = {"error": str(e)}
+    # fallback: 旧 playbook IC (基本空, 仅兜底)
+    try:
+        from app.playbook.ic_tracker import compute_playbook_ic
+        ic_data.update(compute_playbook_ic(db, days=30))
+    except Exception:
+        pass
 
 # ─── 4. Config ───
 config_state = {}

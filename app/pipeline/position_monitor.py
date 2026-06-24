@@ -208,8 +208,8 @@ def _check_grace_period_block(position, cur_price: float, rule_name: str) -> Opt
                     f"PnL={pnl_pct*100:.2f}% <= -{max_loss*100:.1f}% 解除保护"
                 )
                 return None
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"[grace_period] 检查异常 (放行): {e}")
 
     # 规则白名单检查
     allowed = cfg.get("allowed_during_grace", []) or []
@@ -399,8 +399,8 @@ def _build_exit_reason_dict(position, decision, current_price: float) -> Dict[st
             close_pct = float(md.get("close_pct") or 0)
             if 0 < close_pct < 100 and size_int > 0:
                 reason_dict["close_qty"] = max(1, int(size_int * close_pct / 100.0))
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"[退出] scale_out close_qty 计算失败 {position.symbol}: {e}")
     # pre_close: 自适应分级 close_ratio (0.0~1.0)
     elif decision.rule_name == "pre_close":
         try:
@@ -409,8 +409,8 @@ def _build_exit_reason_dict(position, decision, current_price: float) -> Dict[st
                 cr_f = float(cr)
                 if 0 < cr_f < 1.0 and size_int > 0:
                     reason_dict["close_qty"] = max(1, int(size_int * cr_f))
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"[退出] pre_close close_qty 计算失败 {position.symbol}: {e}")
     # For pre_close with close_ratio < 1.0, use PARTIAL reason
     if decision.rule_name == "pre_close":
         md2 = decision.metadata or {}
@@ -586,8 +586,8 @@ def _partial_close_position(scheduler, position: Position, current_price: float,
                 try:
                     _strat_id = getattr(position, "strategy_id", "") or getattr(position, "owner_strategy", "") or "main_pipeline"
                     scheduler.risk_engine.strategy_breaker.record_loss(_strat_id)  # P0 (2026-06-05): 真实策略名
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"[策略熔断] record_loss 失败 {_strat_id}: {e}")
     except Exception as e:
         logger.error(f"[分批止盈·失败] {position.symbol}: {e}")
 
@@ -722,8 +722,8 @@ def restore_positions_from_db(scheduler):
                                    "last_trigger_time", "entry_time_ts", "entry_session"):
                             if _k in _ts:
                                 position.trail_state[_k] = _ts[_k]
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"[持仓恢复] trail_state 恢复失败 {symbol}: {e}")
                 # P0 修复 (2026-05-20): 期权仓位设置正确的 metadata.source
                 is_option = any(x in symbol for x in ['26', '27', '28']) and any(x in symbol for x in ['P', 'C'])
                 if is_option:
@@ -1035,8 +1035,8 @@ def _check_positions(scheduler):
                 try:
                     from app.pipeline.order_executor import _refresh_broker_position_qty
                     _broker_qty = _refresh_broker_position_qty(scheduler, position.symbol)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"[幽灵收敛] broker qty 查询失败 {position.symbol}: {e}")
                 if _broker_qty is not None and _broker_qty <= 0:
                     logger.warning(
                         f"[监控·幽灵收敛] {position.symbol} broker 已无持仓, "
@@ -1046,14 +1046,14 @@ def _check_positions(scheduler):
                         scheduler.trade_store.upsert_open_position(
                             position, source="scheduler", action="ghost_converged"
                         )
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.debug(f"[幽灵收敛] DB upsert 失败 {position.symbol}: {e}")
                     scheduler.position_store.remove(position.symbol)
                     try:
                         from app.pipeline.order_executor import _clear_close_retry
                         _clear_close_retry(position.symbol, position.direction)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.debug(f"[幽灵收敛] clear_close_retry 失败 {position.symbol}: {e}")
                     continue
                 logger.info(
                     f"[监控·自动恢复尝试] {position.symbol} 尝试清除 is_anomalous..."
@@ -1088,8 +1088,8 @@ def _check_positions(scheduler):
                         f"跳过本轮退出评估"
                     )
                     continue
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"[H2·竞态保护] 检查异常 {position.symbol}: {e}")
         monitored_positions.append(position)
     if not monitored_positions: return
     from app.pipeline.order_executor import _get_current_price
@@ -1186,8 +1186,8 @@ def _check_positions(scheduler):
                             _fix_conn.commit()
                             _fix_conn.close()
                             logger.warning(f"[退出防护] {pos.symbol} DB owner 已修正为 'manual'")
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            logger.debug(f"[退出防护] DB owner 修正失败 {pos.symbol}: {e}")
                     logger.warning(
                         f"[退出防护] {pos.symbol} 拒绝自动平仓: "
                         f"手动审计={_manual_cnt}笔, DB owner={_db_owner}"
@@ -1211,7 +1211,10 @@ def _check_positions(scheduler):
                 "DAY_TRADE": ExitReason.DAY_TRADE_TIMEOUT,  # fallback
                 "SCALE_OUT": ExitReason.SCALE_OUT, "PRE_CLOSE_EXIT": ExitReason.PRE_CLOSE_EXIT,
                 "PRE_CLOSE_EXIT_PARTIAL": ExitReason.PRE_CLOSE_EXIT,
-                "TECHNICAL_BREACH": ExitReason.STRUCTURE_EXIT}
+                "TECHNICAL_BREACH": ExitReason.STRUCTURE_EXIT,
+                # RFC-061 (2026-06-24): 新增退出原因正确归因 (否则 fallback 到 TRAILING_STOP)
+                "MAX_HOLD_T5": ExitReason.MAX_HOLD_T5, "TIME_EXIT": ExitReason.TIME_EXIT,
+                "SL_ATR_STOP": ExitReason.TRAILING_STOP, "EOD_FORCE_CLOSE": ExitReason.TIME_STOP}
             er = reason_map.get(reason.get("reason", ""), ExitReason.TRAILING_STOP)
             cp = reason.get("exit_price", pos.avg_entry_price)
             close_qty = reason.get("close_qty", 0)
@@ -1240,8 +1243,8 @@ def _check_positions(scheduler):
                 try:
                     from app.pipeline.order_executor import record_flash_exit
                     record_flash_exit()
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"[FLASH_EXIT] record_flash_exit 失败: {e}")
             # P0 修复 (2026-06-02): 更新标的日亏损计数 (防死亡螺旋)
             try:
                 from app.pipeline.order_executor import _update_symbol_daily_loss
@@ -1251,8 +1254,8 @@ def _check_positions(scheduler):
                 else:
                     est_pnl = (pos.avg_entry_price - cp) * pos.size
                 _update_symbol_daily_loss(pos.symbol, est_pnl)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"[日亏损计数] _update_symbol_daily_loss 失败 {pos.symbol}: {e}")
             return True
         except Exception as e:
             logger.error(f"[退出监控] {pos.symbol} 平仓执行失败: {e}")
@@ -1364,8 +1367,8 @@ def _check_positions(scheduler):
                                 else:
                                     _pnl = (_ep - cur_price) * _sz
                                 _update_symbol_daily_loss(position.symbol, _pnl)
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            logger.debug(f"[日亏损计数] exit path _update_symbol_daily_loss 失败 {position.symbol}: {e}")
                         # Check if this was a partial close (position still exists)
                         _is_partial_close = reason_dict.get("close_qty", 0) > 0
                         if _is_partial_close:
@@ -1735,8 +1738,8 @@ def _remove_from_open_positions_db(symbol: str):
             conn.commit()
         finally:
             conn.close()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"[持仓移除] DB DELETE 失败 {symbol}: {e}")
 
 
 def _send_reconcile_alert(scheduler, discrepancies: list, broker_positions: dict,
@@ -1963,8 +1966,8 @@ def _process_pending_order(scheduler, tracker, order: dict):
                                     symbol=symbol,
                                     trade_date=_et_trade_date(position.entry_time),
                                 )
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            logger.debug(f"[归因] _fetch_attribution_data 失败 {symbol}: {e}")
                         scheduler.trade_store.save_trade({
                             "trace_id": position.trace_id,
                             "trade_date": _et_trade_date(position.entry_time),
@@ -2187,7 +2190,4 @@ def monitor_loop(scheduler):
             _check_pending_orders(scheduler)
         except Exception as e:
             logger.error(f"[监控] 异常：{e}", exc_info=True)
-        _wait = scheduler.MONITOR_INTERVAL_MINUTES * 60
-        _start = time.time()
-        while scheduler.running and (time.time() - _start) < _wait:
-            time.sleep(1)
+        time.sleep(scheduler.MONITOR_INTERVAL_MINUTES * 60)
