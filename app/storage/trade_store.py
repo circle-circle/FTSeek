@@ -14,11 +14,24 @@
 import sqlite3
 import threading
 import logging
+import json
 from datetime import datetime, date
 from typing import List, Optional, Dict, Any
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+
+def assign_cohort(symbol: str, trade_date: str) -> str:
+    """A/B cohort 分配 (RFC-061). 确定性: 同 symbol+date 必同组, 幂等可重算.
+
+    用于"盈利 shadow 仓位过夜持有到 T+5"实验: cohort B 跳过 EOD 强平,
+    cohort A 维持现有日内行为 (对照). 无 trade_date 时落 A 组 (保守, 不改变行为).
+    """
+    if not symbol or not trade_date:
+        return "A"
+    return "B" if (hash(f"{symbol}-{trade_date}") % 2 == 1) else "A"
+
 
 
 def _get_runtime_mode() -> str:
@@ -351,7 +364,7 @@ class TradeStore:
                     CREATE TABLE IF NOT EXISTS exit_reason_glossary (
                         reason_code        TEXT PRIMARY KEY,
                         category           TEXT NOT NULL,
-                        description        TEXT,
+                        description       TEXT,
                         total_count        INTEGER DEFAULT 0,
                         win_count          INTEGER DEFAULT 0,
                         avg_pnl            REAL DEFAULT 0,
@@ -359,6 +372,21 @@ class TradeStore:
                         last_updated       TEXT DEFAULT (datetime('now'))
                     )
                 """)
+
+                # P0 (2026-06-23): 因子归因列 — save_trade INSERT 引用但从未 ALTER ADD
+                for col_def in [
+                    ("factor_detail", "ALTER TABLE trade_records ADD COLUMN factor_detail TEXT"),
+                    ("f1_trend",      "ALTER TABLE trade_records ADD COLUMN f1_trend REAL DEFAULT 0"),
+                    ("f2_momentum",   "ALTER TABLE trade_records ADD COLUMN f2_momentum REAL DEFAULT 0"),
+                    ("f3_volume",     "ALTER TABLE trade_records ADD COLUMN f3_volume REAL DEFAULT 0"),
+                    ("f4_orderflow",  "ALTER TABLE trade_records ADD COLUMN f4_orderflow REAL DEFAULT 0"),
+                    ("f5_lifecycle",  "ALTER TABLE trade_records ADD COLUMN f5_lifecycle REAL DEFAULT 0"),
+                ]:
+                    try:
+                        conn.execute(col_def[1])
+                        logger.info(f"[TradeStore] 新增因子归因列: {col_def[0]}")
+                    except Exception:
+                        pass  # 列已存在
 
                 conn.commit()
                 logger.info("[TradeStore] 交易记录表初始化完成")
@@ -471,7 +499,7 @@ class TradeStore:
         Args:
             record: dict，包含交易信息和投票详情
                 新增支持:
-                  - source_type: 来源分类 (MAIN_PIPELINE/SCALPING/LLM_PLAN/LLM_RECOMMEND)
+                  - source_type: 来源分类 (MAIN_PIPELINE/ORB_ENGINE/PLAYBOOK_SHADOW/LLM_PLAN/LLM_RECOMMEND)
                   - entry_reason: 下单理由 (JSON 数组或字符串)
                   - signal_details: 信号详情 (JSON 对象)
                   - metadata_json: 扩展元数据 (JSON 对象)
@@ -589,12 +617,21 @@ class TradeStore:
                 elif not signal_details:
                     signal_details = None
 
-                # 处理 metadata_json
+                # 处理 metadata_json (RFC-061: 注入 A/B cohort)
                 metadata_json = record.get("metadata_json")
-                if isinstance(metadata_json, dict):
-                    metadata_json = json.dumps(metadata_json, ensure_ascii=False)
-                elif not metadata_json:
-                    metadata_json = None
+                if isinstance(metadata_json, str):
+                    try:
+                        metadata_json = json.loads(metadata_json)
+                    except (ValueError, TypeError):
+                        metadata_json = {}
+                if not isinstance(metadata_json, dict):
+                    metadata_json = {}
+                # 注入 cohort (确定性 hash, 幂等) — 无 symbol/trade_date 时落 A 组
+                metadata_json["cohort"] = assign_cohort(
+                    record.get("symbol", "") or "",
+                    record.get("trade_date", "") or "",
+                )
+                metadata_json = json.dumps(metadata_json, ensure_ascii=False, default=str)
 
                 # P0 (2026-06-07): factor_detail 处理
                 factor_detail = record.get("factor_detail")
@@ -631,7 +668,7 @@ class TradeStore:
                         signal_id, decision_id, factor_detail,
                         f1_trend, f2_momentum, f3_volume, f4_orderflow, f5_lifecycle,
                         created_at
-                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """, (
                     record.get("trade_date", ""),
                     record.get("symbol", ""),
@@ -699,7 +736,7 @@ class TradeStore:
                         SELECT id, trade_date, symbol, direction, entry_time, exit_time,
                                entry_price, exit_price, quantity, realized_pnl, pnl_pct,
                                exit_reason, holding_hours, signal_strength, signal_confidence,
-                               futu_order_id, created_at
+                               futu_order_id, source_type, created_at
                         FROM trade_records
                         WHERE trade_date = ? AND trade_mode = ?
                         ORDER BY entry_time ASC
@@ -709,7 +746,7 @@ class TradeStore:
                         SELECT id, trade_date, symbol, direction, entry_time, exit_time,
                                entry_price, exit_price, quantity, realized_pnl, pnl_pct,
                                exit_reason, holding_hours, signal_strength, signal_confidence,
-                               futu_order_id, created_at
+                               futu_order_id, source_type, created_at
                         FROM trade_records
                         WHERE trade_date = ?
                         ORDER BY entry_time ASC
@@ -1476,5 +1513,6 @@ class TradeStore:
             "signal_strength":   row[13],
             "signal_confidence": row[14],
             "futu_order_id":     row[15],
-            "created_at":        row[16],
+            "source_type":       row[16],
+            "created_at":        row[17],
         }
