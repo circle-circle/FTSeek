@@ -9,8 +9,8 @@ Signal IC 盘后回填脚本
 
 数据源优先级:
   1. backtest_cache CSV (已有数据, 零 API 开销)
-  2. yfinance (免费, 无 token)
-  3. AlphaVantage (需 API key, 作 fallback)
+  2. MarketDataRouter (Futu 历史日K 盘后可用 → TwelveData 含令牌桶限流)  ← 主路径
+  3. yfinance (免费, 无 token, 最终兜底)
 
 用法:
   python scripts/backfill_forward_returns.py              # 全量回填
@@ -40,6 +40,47 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 logger = logging.getLogger("backfill_ic")
+
+
+# 加载 .env.us → 环境变量 (MarketDataRouter / FutuLV3 / TwelveDataProvider 都从 env 读 key)
+# 与 scripts/lifecycle_monitor.py 同模式, 确保独立 cron 进程能与 scheduler 用同一套配置.
+_ENV_FILE = PROJECT_ROOT / ".env.us"
+if _ENV_FILE.exists():
+    for _line in _ENV_FILE.read_text().splitlines():
+        _line = _line.strip()
+        if not _line or _line.startswith("#") or "=" not in _line:
+            continue
+        _k, _v = _line.split("=", 1)
+        os.environ.setdefault(_k.strip(), _v.strip().strip('"').strip("'"))
+
+# 模块级 router 单例 (复用 Futu 连接 + TwelveData 缓存/限流, 避免每 symbol 重建)
+_DATA_ROUTER = None
+
+
+def _get_data_router():
+    """懒加载 MarketDataRouter (Futu LV3 → TwelveData fallback, 盘后历史K线可用).
+
+    2026-06-24 修复: 本脚本原先裸调 TwelveData / yfinance, 非交易时段 Futu 不可达时
+    TwelveData 429 / yfinance 失效 → 前瞻收益永不回填 → IC 永远 None. 走 router
+    统一 fallback 链, 且 TwelveDataProvider 内置令牌桶限流, 无需脚本层 sleep.
+    """
+    global _DATA_ROUTER
+    if _DATA_ROUTER is None:
+        try:
+            from app.data.market_data_router import MarketDataRouter
+            _DATA_ROUTER = MarketDataRouter(
+                twelvedata_api_key=os.environ.get("TWELVEDATA_API_KEY"),
+                finnhub_api_key=os.environ.get("FINNHUB_API_KEY"),
+                alphavantage_api_key=os.environ.get("ALPHAVANTAGE_API_KEY"),
+                cache_ttl_seconds=900,
+                futu_opend_host=os.environ.get("FUTU_OPEND_HOST", "127.0.0.1"),
+                futu_opend_port=int(os.environ.get("FUTU_OPEND_PORT", "11111")),
+                enable_futu_lv3=os.environ.get("ENABLE_FUTU_LV3", "true").lower() in ("true", "1", "yes"),
+            )
+        except Exception as e:
+            logger.warning(f"MarketDataRouter 初始化失败, 降级到 backtest_cache/yfinance: {e}")
+            _DATA_ROUTER = False  # 标记不可用, 避免重复尝试
+    return _DATA_ROUTER or None
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -149,58 +190,35 @@ def _load_backtest_cache(symbol: str) -> Optional[Dict[str, float]]:
     return result if result else None
 
 
-def _fetch_twelvedata_daily(symbol: str, outputsize: int = 45) -> Optional[Dict[str, float]]:
+def _fetch_router_daily(symbol: str, count: int = 45) -> Optional[Dict[str, float]]:
+    """走 MarketDataRouter 拉日 K 收盘 (Futu → TwelveData, 盘后历史K线可用).
+
+    Returns: {date_str: close_price} 或 None. TwelveData 限流由
+    TwelveDataProvider 内置令牌桶处理 (8/分钟), 本层不再 sleep.
     """
-    用 TwelveData API 拉取日收盘价
-    
-    Returns: {date_str: close_price} 或 None
-    """
-    import requests
-    
-    # 从 .env.us 或环境变量获取 key
-    api_key = os.environ.get("TWELVEDATA_API_KEY", "")
-    if not api_key:
-        # 尝试从 .env.us 读取
-        env_us = PROJECT_ROOT / ".env.us"
-        if env_us.exists():
-            for line in env_us.read_text().splitlines():
-                if line.startswith("TWELVEDATA_API_KEY="):
-                    api_key = line.split("=", 1)[1].strip().strip('"').strip("'")
-                    break
-    if not api_key:
-        logger.debug("TwelveData API key 未配置")
+    router = _get_data_router()
+    if not router:
         return None
-    
-    ticker = _symbol_to_yf_ticker(symbol)
-    
     try:
-        resp = requests.get(
-            "https://api.twelvedata.com/time_series",
-            params={
-                "symbol": ticker,
-                "interval": "1day",
-                "outputsize": outputsize,
-                "order": "ASC",
-                "apikey": api_key,
-            },
-            timeout=15,
-        )
-        data = resp.json()
-        if "values" not in data:
-            logger.debug(f"TwelveData: {ticker} 无数据: {data.get('message', 'unknown')}")
+        bars = router.get_daily_bars(symbol, count=count)
+        if not bars:
             return None
-        
-        result = {}
-        for v in data["values"]:
-            date_str = v.get("datetime", "")
-            close = v.get("close")
-            if date_str and close:
-                result[date_str] = float(close)
-        
-        logger.debug(f"TwelveData: {ticker} 获取 {len(result)} 天")
-        return result if result else None
+        result: Dict[str, float] = {}
+        for bar in bars:
+            t = bar.get("time")
+            close = bar.get("close")
+            if t and close:
+                # router 已把 time 归一化为 "YYYY-MM-DD" (见 _normalize_bar_times)
+                date_str = str(t)[:10]
+                try:
+                    result[date_str] = float(close)
+                except (TypeError, ValueError):
+                    continue
+        if result:
+            logger.debug(f"router: {symbol} 获取 {len(result)} 天")
+        return result or None
     except Exception as e:
-        logger.debug(f"TwelveData: {ticker} 失败: {e}")
+        logger.debug(f"router: {symbol} 失败: {e}")
         return None
 
 
@@ -240,8 +258,12 @@ def _fetch_yfinance_daily(symbol: str, days: int = 30) -> Optional[Dict[str, flo
 
 def get_daily_closes(symbol: str, extra_days: int = 25) -> Optional[Dict[str, float]]:
     """
-    获取日收盘价 (优先级: backtest_cache > TwelveData > yfinance)
-    
+    获取日收盘价 (优先级: backtest_cache > MarketDataRouter(Futu→TwelveData) > yfinance)
+
+    2026-06-24: 接入 MarketDataRouter 作为主数据源. Futu 历史日K盘后可用且无 API 限流,
+    是非交易时段回填的最可靠来源; TwelveData 作为 router 内部 fallback (含令牌桶限流);
+    yfinance 仅作最终兜底.
+
     Returns: {date_str: close_price} 按日期升序
     """
     # 1. backtest_cache (零 API 开销, 但需验证日期覆盖)
@@ -253,17 +275,17 @@ def get_daily_closes(symbol: str, extra_days: int = 25) -> Optional[Dict[str, fl
         if days_ago < 10:
             return dict(sorted(data.items()))
         # 缓存太旧, 跳过, 走 API
-    
-    # 2. TwelveData (生产环境首选)
-    data = _fetch_twelvedata_daily(symbol, outputsize=extra_days + 20)
+
+    # 2. MarketDataRouter (Futu → TwelveData, 主路径)
+    data = _fetch_router_daily(symbol, count=extra_days + 20)
     if data:
         return dict(sorted(data.items()))
-    
-    # 3. yfinance (fallback)
+
+    # 3. yfinance (最终兜底)
     data = _fetch_yfinance_daily(symbol, days=extra_days)
     if data:
         return dict(sorted(data.items()))
-    
+
     return None
 
 
@@ -286,7 +308,7 @@ def backfill_forward_returns(dry_run: bool = False) -> Dict[str, int]:
     
     # 获取所有待回填快照
     today_str = datetime.now().strftime("%Y-%m-%d")
-    pending = get_pending_snapshots(trade_date_before=today_str, limit=1000)
+    pending = get_pending_snapshots(trade_date_before=today_str, limit=5000)
     
     if not pending:
         logger.info("无待回填快照")
@@ -312,11 +334,10 @@ def backfill_forward_returns(dry_run: bool = False) -> Dict[str, int]:
         if not closes:
             logger.warning(f"⚠️ {symbol}: 无法获取日 K 线, 跳过")
             continue
-        
-        # TwelveData 限流: 免费版 8 次/分钟, 每次调用后等待 8 秒
-        import time
-        time.sleep(8)
-        
+
+        # TwelveData 限流现由 TwelveDataProvider 内置令牌桶处理 (8/分钟),
+        # 走 Futu 时无任何 API 配额消耗, 无需脚本层 sleep.
+
         sorted_dates = _get_trading_dates_sorted(list(closes.keys()))
         date_to_idx = {d: i for i, d in enumerate(sorted_dates)}
         
