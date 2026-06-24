@@ -53,6 +53,33 @@ def _is_trading_day_today() -> bool:
         return True
 
 
+def _cohort_b_max_hold_hit(entry_time_str: str) -> bool:
+    """RFC-061: cohort B 持仓是否已到 ≥5 交易日 (MAX_HOLD_T5 触发).
+
+    用交易日历 (nth_trading_day_after) 算 entry_date + 5 交易日, 遇假期自动跳过
+    (如 Juneteenth). 比日历日准. now 用 ET 日期. 异常时返回 False (不强平, 保守).
+    """
+    if not entry_time_str:
+        return False
+    try:
+        from datetime import datetime
+        from app.utils.holiday_calendar import nth_trading_day_after
+        _et = _now_et()
+        _entry = datetime.fromisoformat(entry_time_str)
+        # entry_time 可能 naive (CST 服务器存), 取 date; 若 tz-aware 转 ET
+        if hasattr(_entry, "tzinfo") and _entry.tzinfo is not None:
+            _entry_date = _entry.astimezone(_et).date()
+        else:
+            _entry_date = _entry.date()
+        deadline = nth_trading_day_after("US", _entry_date, 5)
+        if deadline is None:
+            return False
+        return datetime.now(_et).date() >= deadline
+    except Exception as e:
+        logger.debug(f"[playbook·RFC-061] MAX_HOLD_T5 日期计算异常 (不强平): {e}")
+        return False
+
+
 def _playbook_enabled() -> bool:
     """总闸门: 读取 config playbook.enabled (默认 False)。
     关闭时三个 pipeline 入口全部早退, 不调 Provider/LLM/DB/飞书。
@@ -1143,15 +1170,14 @@ def monitor_playbook_shadow_exits(scheduler) -> int:
                 exit_reason = "TIME_EXIT"
                 exit_price = current_price  # 市价退出
 
-            # 规则5 (RFC-061): cohort B 硬上限 — 持仓 ≥7 日历日 (≈5 交易日, IC T+5 峰值后) 强制了结
-            # 仅对 cohort B (过夜组) 生效; A 组日内已平, 不会触及
+            # 规则5 (RFC-061 v2): cohort B 硬上限 — 持仓 ≥5 交易日 (trading calendar, 遇假期跳过) 强制了结
+            # 仅 cohort B (过夜组); A 组日内已平. shadow 是 PLAYBOOK_SHADOW, cohort_b_skip_allowed 默认 True.
             if not exit_reason and _cohort == "B" and _held_minutes > 0:
-                _days_held = _held_minutes / 60 / 24
-                if _days_held >= 7:
+                if _cohort_b_max_hold_hit(_entry_time_str):
                     exit_reason = "MAX_HOLD_T5"
                     exit_price = current_price
                     logger.info(
-                        f"[playbook shadow] {symbol} cohort=B days_held={_days_held:.1f} → MAX_HOLD_T5 强平 (RFC-061)"
+                        f"[playbook shadow] {symbol} cohort=B → MAX_HOLD_T5 强平 (5 交易日, RFC-061 v2)"
                     )
 
 
@@ -1337,21 +1363,20 @@ def _force_close_orphaned_shadow_positions(scheduler) -> int:
                 except Exception:
                     pass
 
-            # RFC-061 A/B: cohort B 盈利仓跳过 EOD 兜底强平, 持有过夜.
-            # 但 cohort B 持仓 ≥7 日历日 (MAX_HOLD_T5) 仍须强平 (硬上限).
+            # RFC-061 v2: cohort B 盈利仓跳过 EOD 兜底强平, 持过夜; 5 交易日 (MAX_HOLD_T5) 仍平.
             # cohort B 亏损仓不跳过 (维持安全兜底). cohort A 维持原行为.
             try:
                 _meta = _json.loads(r["metadata_json"]) if r["metadata_json"] else {}
             except Exception:
                 _meta = {}
             _cohort = _meta.get("cohort", "A")
-            _days_held = holding_hours / 24
-            if _cohort == "B" and pnl > 0 and _days_held < 7:
+            _max_hold_hit = _cohort_b_max_hold_hit(r["entry_time"]) if _cohort == "B" else False
+            if _cohort == "B" and pnl > 0 and not _max_hold_hit:
                 logger.info(
                     f"[playbook] EOD 兜底跳过 {symbol} cohort=B profit={pnl_pct:.2f}% 持有过夜 (RFC-061)"
                 )
                 continue
-            _eod_reason = "MAX_HOLD_T5" if (_cohort == "B" and _days_held >= 7) else "EOD_FORCE_CLOSE"
+            _eod_reason = "MAX_HOLD_T5" if (_cohort == "B" and _max_hold_hit) else "EOD_FORCE_CLOSE"
 
             conn.execute("""
                 UPDATE trade_records
@@ -1489,30 +1514,32 @@ def monitor_playbook_sim_exits(scheduler) -> int:
             except Exception:
                 pass
 
-            # 退出判断
-            # RFC-061 A/B: cohort B 盈利仓跳过 PRE_CLOSE 持过夜; cohort A 维持原 if/elif 优先级不变
+            # 退出判断 (RFC-061 v2: SL-first 对齐 shadow + LIVE 守卫 + 交易日历 MAX_HOLD)
+            # [1] SL_ATR_STOP 最高优先级 (此前 sim 是 PRE_CLOSE>TIME>SL, 收盘窗口掩盖 SL — 修正)
+            # [2] PRE_CLOSE (cohort B 盈利且允许 → 跳过持夜)
+            # [3] TIME_EXIT  [4] MAX_HOLD_T5 (cohort B, 5 交易日)
             _cohort = meta.get("cohort", "A")
-            _days_held = held_minutes / 60 / 24
-            _skip_pre_close = (_cohort == "B" and profit_pct > 0)
+            _src = r["source_type"]
+            from app.storage.trade_store import cohort_b_skip_allowed as _skip_ok
+            _skip_allowed = (_cohort == "B" and _skip_ok(_src))  # LIVE 需显式开
             exit_reason = ""
-            if not _skip_pre_close and 0 <= minutes_to_close <= 8 and minutes_from_open > 0:
-                exit_reason = "PRE_CLOSE_EXIT"
-            elif held_minutes > 120 and profit_pct < -0.5:  # 2026-06-24: 1h/0.3%→2h/-0.5%
-                exit_reason = "TIME_EXIT"
-            elif stop_loss > 0:
+            if stop_loss > 0:
                 if direction == "LONG" and current_price <= stop_loss:
                     exit_reason = "SL_ATR_STOP"
                 elif direction == "SHORT" and current_price >= stop_loss:
                     exit_reason = "SL_ATR_STOP"
-
-            # RFC-061: cohort B 硬上限 — 持仓 ≥7 日历日 (≈5 交易日) 强制 broker 平仓
-            if not exit_reason and _cohort == "B" and held_minutes > 0 and _days_held >= 7:
+            if not exit_reason and 0 <= minutes_to_close <= 8 and minutes_from_open > 0:
+                if _skip_allowed and profit_pct > 0:
+                    logger.info(
+                        f"[playbook sim] {symbol} cohort=B profit={profit_pct:.2f}% → 跳过 PRE_CLOSE 持过夜 (RFC-061)"
+                    )
+                else:
+                    exit_reason = "PRE_CLOSE_EXIT"
+            if not exit_reason and held_minutes > 120 and profit_pct < -0.5:  # 2026-06-24: 2h/-0.5%
+                exit_reason = "TIME_EXIT"
+            # RFC-061 v2: cohort B 5 交易日硬上限 (trading calendar, 非日历日)
+            if not exit_reason and _skip_allowed and _cohort_b_max_hold_hit(r["entry_time"]):
                 exit_reason = "MAX_HOLD_T5"
-
-            if _skip_pre_close and not exit_reason:
-                logger.info(
-                    f"[playbook sim] {symbol} cohort=B profit={profit_pct:.2f}% → 跳过 PRE_CLOSE 持过夜 (RFC-061)"
-                )
 
             if not exit_reason:
                 continue
@@ -1616,24 +1643,19 @@ def _force_close_orphaned_sim_positions(scheduler) -> int:
             if entry_price <= 0 or qty <= 0:
                 continue
 
-            # RFC-061 A/B: cohort B 盈利仓跳过 EOD broker 兜底 (持过夜); ≥7 日历日仍平 (MAX_HOLD_T5).
-            # 仅对 PLAYBOOK_SIM/LIVE 生效; ORB_ENGINE 即使被 save_trade 注入 cohort 也强制平 (日内语义, 不过夜).
+            # RFC-061 v2: cohort B 盈利仓跳过 EOD broker 兜底 (持过夜); 5 交易日仍平 (MAX_HOLD_T5).
+            # 仅 PLAYBOOK_SIM/LIVE 且 cohort_b_skip_allowed (LIVE 需显式开); ORB 强制平 (日内语义).
             try:
                 _meta = _json.loads(r["metadata_json"]) if r["metadata_json"] else {}
             except Exception:
                 _meta = {}
             _cohort = _meta.get("cohort", "A")
-            _is_pb_sim = r["source_type"] in ("PLAYBOOK_SIM", "PLAYBOOK_LIVE")
-            holding_hours = 0.0
-            try:
-                holding_hours = (datetime.now() - datetime.fromisoformat(r["entry_time"])).total_seconds() / 3600
-            except Exception:
-                pass
-            _days_held = holding_hours / 24
+            from app.storage.trade_store import cohort_b_skip_allowed as _skip_ok
+            _skip_allowed = (_cohort == "B" and _skip_ok(r["source_type"]))
             _eod_reason = "EOD_FORCE_CLOSE"
-            if _is_pb_sim and _cohort == "B" and _days_held >= 7:
-                _eod_reason = "MAX_HOLD_T5"  # 硬上限, 仍须 broker 平仓
-            elif _is_pb_sim and _cohort == "B":
+            if _skip_allowed and _cohort_b_max_hold_hit(r["entry_time"]):
+                _eod_reason = "MAX_HOLD_T5"  # 5 交易日硬上限, 仍须 broker 平仓
+            elif _skip_allowed:
                 # 估算盈利决定是否跳过 (取当前报价)
                 _est_price = 0.0
                 try:
@@ -1675,6 +1697,11 @@ def _force_close_orphaned_sim_positions(scheduler) -> int:
 
             pnl = (exit_price - entry_price) * qty if direction == "LONG" else (entry_price - exit_price) * qty
             pnl_pct = (exit_price - entry_price) / entry_price * 100 if direction == "LONG" else (entry_price - exit_price) / entry_price * 100
+            holding_hours = 0.0
+            try:
+                holding_hours = (datetime.now() - datetime.fromisoformat(r["entry_time"])).total_seconds() / 3600
+            except Exception:
+                pass
 
             conn.execute("""
                 UPDATE trade_records SET exit_price=?, exit_time=?, exit_reason=?, realized_pnl=?, pnl_pct=?, holding_hours=?

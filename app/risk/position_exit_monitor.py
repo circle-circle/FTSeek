@@ -65,7 +65,7 @@ from .exit_rules import (
 # 共享内核 — session-aware ATR (P2 2026-05-01)
 from app.core.shared_kernel import get_shared_kernel
 
-# C4 修复 (2026-05-13): 全局 EOD 配置 — 主线 + Scalping 共享
+# C4 修复 (2026-05-13): 全局 EOD 配置 — 主线 + ORB 共享
 from app.risk.eod_config import load_eod_config
 
 # 退出质量追踪 (P2 2026-05-01)
@@ -1240,6 +1240,7 @@ class ExitMonitor:
                     position, current_price, entry_price, effective_atr,
                     profit_atr_signed, trail_state, now_ts, direction, pnl_pct,
                     held_minutes, policy_guardian, earnings_guard,
+                    _in_grace_context=_in_grace,
                 )
             except Exception as e:
                 logger.error(
@@ -1276,6 +1277,7 @@ class ExitMonitor:
         held_minutes,
         policy_guardian=None,
         earnings_guard=None,
+        _in_grace_context=False,
     ) -> Optional[Dict]:
         """通过 ExitRuleRegistry 检查退出 (Task #53 新路径)
 
@@ -1299,6 +1301,17 @@ class ExitMonitor:
 
         # P1-7 互斥保护: 其他规则锁定时 临时禁用 pre_close (检查后恢复)
         _meta = getattr(position, "metadata", None) or {}
+
+        # ── RFC-061 (2026-06-24): MAX_HOLD_T5 — cohort B 持仓≥5 交易日强制了结 ──
+        # 优先于 registry 所有规则 (cohort B 跳过 EOD 后的硬上限).
+        try:
+            from app.risk.exit_rules.pre_close import check_max_hold_t5
+            _max_hold = check_max_hold_t5(position, current_price)
+            if _max_hold:
+                return _max_hold
+        except Exception as _e:
+            logger.debug(f"[exit_monitor·registry·RFC-061] MAX_HOLD_T5 异常: {_e}")
+
         _preclose_locked = bool(_meta.get("_exit_locked", False))
         _preclose_was_enabled = self._rule_registry.is_enabled("pre_close")
         if _preclose_locked and _preclose_was_enabled:
@@ -1315,6 +1328,15 @@ class ExitMonitor:
                 self._rule_registry.enable("pre_close")
 
         if not result:
+            # 2026-06-21: Registry 未触发 → 检查 time_exit (仅 legacy 路径有)
+            # 根因: Registry 只注册了 pre_close/trailing_stop/scale_out,
+            # time_exit 是新增规则, 未注册到 Registry.
+            if not _in_grace_context:
+                _time_result = self._check_time_exit(
+                    position, current_price, entry_price, direction, held_minutes, policy_guardian,
+                )
+                if _time_result:
+                    return _time_result
             return None
 
         symbol = getattr(position, 'symbol', '?')
@@ -1401,9 +1423,30 @@ class ExitMonitor:
             elif not _skip_non_hard_exits:
                 _triggered_exits.append(stop_result)
 
+        # ── 2026-06-21: 时间退出 (1h无进展→保本退出) ──
+        # 数据: 1-4h持仓 59笔 -$9,508 (47.5%WR), 入场后1h无进展=信号失效
+        # 仅在非grace期间检查 (grace已通过上面的_skip_non_hard_exits过滤)
+        if not _suppress_non_hard:
+            _time_result = self._check_time_exit(
+                position, current_price, entry_price, direction, held_minutes, policy_guardian,
+            )
+            if _time_result:
+                _triggered_exits.append(_time_result)
+
         # Pre-Close (P1-7 互斥保护)
         _meta = getattr(position, "metadata", None) or {}
         _preclose_locked = _meta.get("_exit_locked", False)
+
+        # ── RFC-061 (2026-06-24): MAX_HOLD_T5 — cohort B 持仓≥5 交易日强制了结 ──
+        # 优先于 pre_close (cohort B 跳过 EOD 后的硬上限). ATR_STOP 独立引擎并行生效.
+        try:
+            from app.risk.exit_rules.pre_close import check_max_hold_t5
+            _max_hold = check_max_hold_t5(position, current_price)
+            if _max_hold:
+                return self._post_process_preclose(position, _max_hold)
+        except Exception as _e:
+            logger.debug(f"[exit_monitor·RFC-061] MAX_HOLD_T5 检查异常: {_e}")
+
         preclose_result = None
         if not _preclose_locked:
             preclose_result = self._check_pre_close_exit(
@@ -1605,6 +1648,65 @@ class ExitMonitor:
                                     profit_atr_signed, trail_state, now_ts, direction, policy)
 
     # ============================================================
+    #  规则 1.5: Time Exit — 持仓超时且无进展 → 保本退出 (2026-06-21)
+    # ============================================================
+
+    def _check_time_exit(self, position, current_price, entry_price, direction, held_minutes, policy_guardian=None):
+        """时间退出: 持仓>1h 且 盈利<0.3% → 保本退出
+
+        数据依据: 1-4h持仓 59笔 -$9,508 (47.5%WR)
+        逻辑: 入场后1h无进展=信号失效, 保本退出释放资金
+        """
+        try:
+            _policy = {}
+            if policy_guardian is not None and hasattr(policy_guardian, "policy"):
+                _policy = policy_guardian.policy or {}
+            _te_cfg = (_policy.get("exit_rules", {})).get("time_exit", {})
+            if not _te_cfg.get("enabled", False):
+                return None
+
+            _holding_hours = float(_te_cfg.get("holding_hours", 1.0))
+            _max_profit_pct = float(_te_cfg.get("max_profit_pct", 0.3))
+
+            # held_minutes → hours
+            _held_hours = held_minutes / 60.0
+            if _held_hours < _holding_hours:
+                return None
+
+            # 计算盈利百分比
+            if entry_price <= 0 or current_price <= 0:
+                return None
+            if direction == "LONG":
+                _profit_pct = (current_price - entry_price) / entry_price * 100
+            else:
+                _profit_pct = (entry_price - current_price) / entry_price * 100
+
+            # 盈利 >= max_profit_pct → 信号在发展, 不退出
+            if _profit_pct >= _max_profit_pct:
+                return None
+
+            # 触发: 持仓>1h 且 盈利<0.3%
+            _symbol = getattr(position, "symbol", "?")
+            logger.info(
+                f"[TIME_EXIT] {_symbol} 持仓{_held_hours:.1f}h 盈利{_profit_pct:.2f}% "
+                f"< {_max_profit_pct}% → 保本退出"
+            )
+            return {
+                "reason": "TIME_EXIT",
+                "reason_cn": f"时间退出: {_held_hours:.1f}h无进展(盈利{_profit_pct:.2f}%)",
+                "exit_price": current_price,
+                "pnl_pct": _profit_pct / 100.0,
+                "stop_price": entry_price,
+                "description": (
+                    f"持仓{_held_hours:.1f}h ≥ {_holding_hours}h 且 "
+                    f"盈利{_profit_pct:.2f}% < {_max_profit_pct}%"
+                ),
+            }
+        except Exception as e:
+            logger.debug(f"[time_exit] 检查失败 {getattr(position, 'symbol', '?')}: {e}")
+            return None
+
+    # ============================================================
     #  trail_state 更新
     # ============================================================
 
@@ -1643,7 +1745,7 @@ class ExitMonitor:
                 _floor_sl = float(getattr(position, "initial_sl", 0) or 0)
                 atr_mult_val = float(
                     (policy_dict.get("exit_rules", {}).get("atr_stop", {}).get(
-                        "multiplier_by_profit", {}).get("initial", 4.0) if policy_dict else 4.0)
+                        "multiplier_by_profit", {}).get("initial", 2.0) if policy_dict else 2.0)
                 )
                 if direction == "LONG":
                     _fixed_sl = entry_price - atr * atr_mult_val
@@ -1660,7 +1762,7 @@ class ExitMonitor:
                     # 原用 short_overrides.atr_multiplier (2.0x), 与 atr_stop 不一致
                     tier1_mult = float(
                         (policy_dict.get("exit_rules", {}).get("atr_stop", {}).get(
-                            "multiplier_by_profit", {}).get("initial", 4.0) if policy_dict else 4.0)
+                            "multiplier_by_profit", {}).get("initial", 2.0) if policy_dict else 2.0)
                     )
                     _fixed_sl = entry_price + atr * tier1_mult
                     # SHORT SL 地板: 不得紧于 atr_stop initial
@@ -1928,7 +2030,7 @@ class ExitMonitor:
             _policy = self._load_exit_policy_dict()
             atr_mult = float(
                 _policy.get("exit_rules", {}).get("atr_stop", {}).get(
-                    "multiplier_by_profit", {}).get("initial", 4.0)
+                    "multiplier_by_profit", {}).get("initial", 2.0)
             )
         except Exception:
             pass

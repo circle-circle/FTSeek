@@ -1,6 +1,6 @@
 # RFC-061: 盈利 Shadow 仓位过夜持有 A/B 实验
 
-> **状态**: 已实施 (v1, PLAYBOOK_SHADOW + PLAYBOOK_SIM/LIVE)
+> **状态**: 已实施 (v2, PLAYBOOK_SHADOW/SIM/LIVE + MAIN_PIPELINE)
 > **日期**: 2026-06-24
 > **作者**: Claude (深度数据驱动 review)
 > **审批人**: 项目所有者
@@ -10,7 +10,14 @@
 
 ## 摘要
 
-IC 实测发现信号 T+5 IC=+0.265 (强正) 而 T+1 IC=-0.114 (反预测), alpha 是周级; 但系统平均持仓 2.9h、仅 1 笔超 1 天, EOD 强制全平砍掉周级盈利。本 RFC 对 `PLAYBOOK_SHADOW` + `PLAYBOOK_SIM/LIVE` 仓位做 A/B: cohort B 盈利仓跳过 EOD 强平、持有到 ~T+5 (7 日历日硬上限), cohort A 维持日内对照。**关键**: 系统当前 `execute_mode=futu_simulate` → 活跃产 `PLAYBOOK_SIM`, 故 cohort 退出逻辑必须覆盖 sim 监控 (`monitor_playbook_sim_exits` + `_force_close_orphaned_sim_positions`) 才能在活跃路径上生效; shadow 监控同步覆盖以兼容 `simulate` 模式。ORB 排除 (日内语义)。
+IC 实测发现信号 T+5 IC=+0.265 (强正) 而 T+1 IC=-0.114 (反预测), alpha 是周级; 但系统平均持仓 2.9h、仅 1 笔超 1 天, EOD 强制全平砍掉周级盈利。本 RFC 做 A/B: cohort B 盈利仓跳过 EOD 强平、持有到 ~T+5, cohort A 维持日内对照。
+
+**v2 (2026-06-24) 5 项改进**:
+1. **扩到 MAIN_PIPELINE** (IC 实测群体、有吞吐量) — 入场注入 cohort 到 position.metadata, pre_close.py 两函数读 cohort 跳过, position_exit_monitor 调 check_max_hold_t5
+2. **LIVE 独立门禁** — `cohort_b_skip_allowed(source_type)`: PLAYBOOK_LIVE 默认不跳过 (须 env `RFC061_LIVE_OVERNIGHT_ENABLED=1`), 不从 sim 自动继承
+3. **SL 优先级修复** — sim monitor 改 SL-first (对齐 shadow, 修原 PRE_CLOSE>TIME>SL 掩盖 SL 的 quirk)
+4. **MAX_HOLD 用交易日历** — `nth_trading_day_after("US", entry, 5)` 5 交易日 (遇 Juneteenth 等假期跳过), 替代原 7 日历日
+5. **决策门禁细化** — FAIL 区分"隔夜跳空亏 (SL+holding>24h)"vs"信号方向错 (SL+holding<24h)"vs"MAX_HOLD_T5 了结", 各对应不同动作
 
 ---
 
@@ -108,12 +115,27 @@ SELECT json_extract(metadata_json,'$.cohort') cohort,
        SUM(CASE WHEN pnl_pct>0 THEN 1 ELSE 0 END)*100.0/COUNT(*) wr_pct,
        ROUND(AVG(holding_hours),1) avg_hold_h
 FROM trade_records
-WHERE source_type IN ('PLAYBOOK_SHADOW','PLAYBOOK_SIM','PLAYBOOK_LIVE') AND exit_time!=''
+WHERE source_type IN ('PLAYBOOK_SHADOW','PLAYBOOK_SIM','PLAYBOOK_LIVE','MAIN_PIPELINE') AND exit_time!=''
 GROUP BY json_extract(metadata_json,'$.cohort');
 ```
-按 exit_reason 看 cohort B 的 MAX_HOLD_T5 / SL_ATR_STOP / 隔夜 SL 分布。
+**cohort B 退出分类 (v2 改动 5)** — 区分失败模式:
+```sql
+SELECT
+  CASE WHEN exit_reason='MAX_HOLD_T5' THEN 'a_T5了结'
+       WHEN exit_reason='SL_ATR_STOP' AND holding_hours>24 THEN 'b_隔夜跳空亏'
+       WHEN exit_reason='SL_ATR_STOP' AND holding_hours<=24 THEN 'c_信号方向错'
+       ELSE 'd_其他' END AS fail_mode,
+  COUNT(*) n, ROUND(AVG(pnl_pct)*100,2) avg_pnl
+FROM trade_records
+WHERE json_extract(metadata_json,'$.cohort')='B' AND exit_time!=''
+GROUP BY fail_mode ORDER BY fail_mode;
+```
 
-**决策门禁**: B sum_pnl > A 且 wr 不降 → PASS → Phase 2 (MAIN_PIPELINE); B 隔夜跳空亏损 → FAIL → 回滚; 不显著 → 延长 4 周。
+**决策门禁 (v2 三分支)**:
+- **PASS**: B sum_pnl > A 且 wr 不降 → 推广 (MAIN_PIPELINE 已在 v2 覆盖, 下一步考虑放开 LIVE 或调权重)
+- **FAIL-隔夜跳空** (b 模式主导): alpha 存在但隔夜风险盖过 → **不放弃持夜**, 动作: 加隔夜对冲 / 选低波标的 / 收紧 overnight_loss_stop
+- **FAIL-信号方向错** (c 模式主导): 信号本身无 T+5 alpha → 放弃持夜 / 降权该 source
+- **不显著**: 延长到 4 周 / 100 笔
 
 ---
 
@@ -143,7 +165,8 @@ GROUP BY json_extract(metadata_json,'$.cohort');
 
 ## 实施记录
 **实施日期**: 2026-06-24
-**Commit**: `<待提交>`
-**v1 范围**: PLAYBOOK_SHADOW + PLAYBOOK_SIM/LIVE (4 个监控函数: shadow/sim 各 monitor + force_close)
-**验证结果**: assign_cohort 确定性+均衡(99/101); shadow EOD 兜底隔离测试通过; sim EOD 兜底隔离测试通过 (A→EOD_FORCE_CLOSE / B盈利当天→跳过持过夜 / B盈利8天→MAX_HOLD_T5 / ORB+B→强制平仓不跳过); 待 A/B 数据积累 (2 周 / 每组 ≥30 笔)
-**配置前置**: `execute_mode: futu_simulate` (working tree, 未提交) 须为今晚进程加载值, 否则活跃路径产 PLAYBOOK_SHADOW 而非 PLAYBOOK_SIM (cohort 仍生效, 因 shadow 监控也覆盖)
+**Commit**: `<待提交 v2>`
+**v1 范围**: PLAYBOOK_SHADOW + PLAYBOOK_SIM/LIVE (4 个监控函数)
+**v2 范围 (2026-06-24)**: + MAIN_PIPELINE (order_executor 入场 cohort + pre_close.py 跳过 + check_max_hold_t5 + position_exit_monitor 调用); LIVE 独立门禁 (cohort_b_skip_allowed); sim monitor SL-first; MAX_HOLD 用交易日历 (nth_trading_day_after); 决策门禁三分支
+**验证结果**: assign_cohort/nth_trading_day_after/live_overnight_enabled 单测通过; check_max_hold_t5 隔离测试 (B 6/16→命中/6/23→未到/A→None/LIVE→None); sim force_close v2 隔离测试 (A→EOD / B盈利当天→跳过 / B 8天→MAX_HOLD_T5 / LIVE B→EOD不跳过); 待 A/B 数据积累
+**配置前置**: `execute_mode: futu_simulate` (已 commit 07be5325); LIVE 隔夜须 env `RFC061_LIVE_OVERNIGHT_ENABLED=1` (默认关)

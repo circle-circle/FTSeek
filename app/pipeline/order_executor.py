@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Dict, Any, List, Optional, Tuple
 
 from app.utils.timezone import _et_trade_date, now_et
+from app.storage.trade_store import assign_cohort
 
 from app.core.models import (
     SignalScore, Direction, MarketRegime,
@@ -1107,6 +1108,10 @@ def _notify_order(scheduler, symbol: str, signal: SignalScore, order: Order, pos
             "trace_id": getattr(signal, 'trace_id', '') or '',
             "factor_detail": (signal.metadata.get("_factor_detail") or signal.metadata.get("factor_detail") or {}) if (hasattr(signal, "metadata") and signal.metadata) else {},
             "signal_tags": signal.metadata.get("signal_tags", "") if (hasattr(signal, "metadata") and signal.metadata) else "",
+            # ─── RFC-061 (2026-06-24): A/B cohort 注入 position.metadata ───
+            # 供退出链 pre_close.py 读取: cohort B 盈利仓跳过 EOD 持夜到 ~T+5.
+            # assign_cohort 确定性 hash, 与 save_trade 同源 (保证 trade_records 与 position.metadata 一致).
+            "cohort": assign_cohort(symbol, now_et().strftime("%Y-%m-%d")),
         }
 
         if hasattr(position, 'metadata') and position.metadata:
@@ -1533,7 +1538,7 @@ def _check_gates_and_conflicts(scheduler, symbol: str, signal: SignalScore, cont
     # ═══ 唯一信号质量门禁 (SSOT) ═══
     # 根因修复 (2026-06-05): 合并原 Gate#1(AND逻辑) + Gate#6(LONG) + Gate#7(SHORT) + Gate#11(SHORT BP)
     # 为 ONE 硬地板检查。无 AND/OR 技巧，无 BP bonus 复杂性，无例外路径。
-    # 所有信号源 (main/voting_llm/ORB/LLM/manual) 必须通过此门禁。
+    # 所有信号源 (main/ORB/TECHNICAL/INSIDER/manual) 必须通过此门禁。
     try:
         _sq_str = int(getattr(signal, 'strength', 0) or 0)
         _sq_conf = float(getattr(signal, 'confidence', 0.0) or 0.0)
@@ -3170,6 +3175,24 @@ def _update_symbol_daily_loss(symbol: str, pnl: float):
 def _submit_order(scheduler, symbol: str, signal: SignalScore, context: Dict[str, Any], voting_result: Dict = None):
     """构建订单并通过执行引擎下单 (Refactored 2026-04-29)"""
 
+    # ── P0 (2026-06-20): pending 防重锁 — 防止 broker_sync 5s 窗口期重复开仓 ──
+    # 立即标记 pending, 订单完成/失败后清除. 纯内存操作, 零 IO 开销.
+    if hasattr(scheduler, 'position_store'):
+        scheduler.position_store.mark_pending(symbol)
+
+    try:
+        return _submit_order_inner(scheduler, symbol, signal, context, voting_result)
+    finally:
+        # 订单完成后清除 pending (无论成功/失败)
+        # 成功时: add() 会写入 _positions 并清除 pending
+        # 失败时: 这里兜底清除, 防止永久锁定
+        if hasattr(scheduler, 'position_store'):
+            scheduler.position_store.clear_pending(symbol)
+
+
+def _submit_order_inner(scheduler, symbol: str, signal: SignalScore, context: Dict[str, Any], voting_result: Dict = None):
+    """内部实现: 构建订单并通过执行引擎下单"""
+
     # ══════════════════════════════════════════════════════════════════════════
     # Task #1 (2026-06-17): 绝对风控底线 — 最先检查, 不受任何 feature flag 控制
     # ══════════════════════════════════════════════════════════════════════════
@@ -3275,8 +3298,23 @@ def _submit_order(scheduler, symbol: str, signal: SignalScore, context: Dict[str
     # 根因修复: 旧逻辑用全局 IC 一刀切，一个坏策略 (IC=-0.23) 拖垮全局 → 好策略也被拦截
     # 修复: 按 strategy_id 分别检查，坏策略拦截、好策略放行
     # 性能修复 (2026-06-18): 加模块级缓存，同一轮次 25 symbols 只算一次 SQL
+    # P0-2 (2026-06-21): shadow_only 模式 pass-through — 记录不拦截, 让Paper Trade积累数据
+    # 原因: OKR Week 1 目标是积累≥30笔交易数据验证IC, 但IC门禁在shadow模式下拦截所有信号
+    #       → 零成交 → 零outcome → IC无法改善 → 自我锁死
+    # 安全底线: Kill Switch / 仓位限制 / VIX风控 仍然正常拦截 (不受此改动影响)
     _IC_MIN_THRESHOLD = 0.05
     _IC_MIN_SIGNALS = 30
+
+    # 检查是否shadow_only模式
+    _is_shadow = False
+    try:
+        from app.core.config_container import get_config
+        _cfg = get_config()
+        _pipeline_cfg = _cfg.get_section("pipeline", {})
+        _is_shadow = _pipeline_cfg.get("master_switch") == "shadow_only"
+    except Exception:
+        pass
+
     try:
         from app.analysis.signal_ic_tracker import get_ic_summary
         global _ic_summary_cache, _ic_summary_cache_ts
@@ -3287,7 +3325,7 @@ def _submit_order(scheduler, symbol: str, signal: SignalScore, context: Dict[str
             _ic_summary_cache_ts = _now
         _ic = _ic_summary_cache
         _ic_status = _ic.get("status", "unknown")
-        if _ic_status == "insufficient_data":
+        if _ic_status == "insufficient_data" and not _is_shadow:
             _n = _ic.get("n_signals", 0)
             logger.warning(
                 f"🔒 [IC门禁] {symbol} 信号数据不足 ({_n}/{_IC_MIN_SIGNALS}), "
@@ -3295,61 +3333,77 @@ def _submit_order(scheduler, symbol: str, signal: SignalScore, context: Dict[str
             )
             return
         
-        # 根因修复: 按 strategy_id 分别检查 IC，不再全局一刀切
-        _by_strategy = _ic.get("by_strategy", {}) or {}
-        _sig_strategy = getattr(signal, "strategy_id", None) or "unknown"
-        
-        if _by_strategy and _sig_strategy in _by_strategy:
-            # 有该策略的 IC 数据 → 用策略级 IC 判断
-            _strat_stat = _by_strategy[_sig_strategy]
-            _strat_ic = _strat_stat.get("ic", 0.0)
-            _strat_n = _strat_stat.get("n", 0)
-            _strat_pval = _strat_stat.get("pval", 1.0)
-            
-            if _strat_ic is not None and _strat_ic < _IC_MIN_THRESHOLD and _strat_n >= 10:
-                logger.warning(
-                    f"🔒 [IC门禁] {symbol} 策略 {_sig_strategy} IC={_strat_ic:.3f} < {_IC_MIN_THRESHOLD} "
-                    f"(n={_strat_n}), 该策略信号无预测能力, 拦截"
-                )
-                return
-            if _strat_pval is not None and _strat_pval >= 0.05 and _strat_ic is not None and _strat_n >= 10:
-                logger.warning(
-                    f"🔒 [IC门禁·显著性] {symbol} 策略 {_sig_strategy} IC={_strat_ic:.3f} 但 "
-                    f"p={_strat_pval:.3f}≥0.05 不显著 (n={_strat_n}), 保守拦截"
-                )
-                return
-        else:
-            # 没有该策略的 IC 数据 → fallback 到全局 IC (但放宽阈值，避免误杀新策略)
+        # shadow_only模式: 记录IC但不拦截, 让信号通过积累数据
+        if _is_shadow:
+            _ic_p = _ic.get("ic_p_value", "N/A")
             _ic_mean = _ic.get("ic_mean", 0.0)
-            if _ic_mean is not None and _ic_mean < -0.10:
-                # 只有全局 IC 严重为负时才拦截 (不再用 0.05 严格阈值)
-                logger.warning(
-                    f"🔒 [IC门禁·全局] {symbol} 全局IC={_ic_mean:.3f} (策略 {_sig_strategy} 无独立数据), "
-                    f"信号整体无预测能力, 拦截"
-                )
-                return
+            logger.info(
+                f"📊 [IC门禁·shadow] {symbol} IC={_ic_mean:.3f} p={_ic_p} "
+                f"(shadow_only pass-through, 积累数据)"
+            )
+        else:
+            _by_strategy = _ic.get("by_strategy", {}) or {}
+            _sig_strategy = getattr(signal, "strategy_id", None) or "unknown"
+            
+            if _by_strategy and _sig_strategy in _by_strategy:
+                _strat_stat = _by_strategy[_sig_strategy]
+                _strat_ic = _strat_stat.get("ic", 0.0)
+                _strat_n = _strat_stat.get("n", 0)
+                _strat_pval = _strat_stat.get("pval", 1.0)
+                
+                if _strat_ic is not None and _strat_ic < _IC_MIN_THRESHOLD and _strat_n >= 10:
+                    logger.warning(
+                        f"🔒 [IC门禁] {symbol} 策略 {_sig_strategy} IC={_strat_ic:.3f} < {_IC_MIN_THRESHOLD} "
+                        f"(n={_strat_n}), 该策略信号无预测能力, 拦截"
+                    )
+                    return
+                if _strat_pval is not None and _strat_pval >= 0.05 and _strat_ic is not None and _strat_n >= 10:
+                    logger.warning(
+                        f"🔒 [IC门禁·显著性] {symbol} 策略 {_sig_strategy} IC={_strat_ic:.3f} 但 "
+                        f"p={_strat_pval:.3f}≥0.05 不显著 (n={_strat_n}), 保守拦截"
+                    )
+                    return
+            else:
+                _ic_mean = _ic.get("ic_mean", 0.0)
+                if _ic_mean is not None and _ic_mean < -0.10:
+                    logger.warning(
+                        f"🔒 [IC门禁·全局] {symbol} 全局IC={_ic_mean:.3f} (策略 {_sig_strategy} 无独立数据), "
+                        f"信号整体无预测能力, 拦截"
+                    )
+                    return
+            
+            _sig_dir = (
+                getattr(getattr(signal, "direction", None), "value", None)
+                or str(getattr(signal, "direction", "") or "")
+            )
+            _by_dir = _ic.get("by_direction", {}) or {}
+            _dir_stat = _by_dir.get(_sig_dir) if isinstance(_by_dir, dict) else None
+            if isinstance(_dir_stat, dict):
+                _dir_ic = _dir_stat.get("ic")
+                _dir_n = int(_dir_stat.get("n", 0) or 0)
+                if _dir_ic is not None and _dir_ic < 0 and _dir_n >= 10:
+                    logger.warning(
+                        f"🔒 [IC门禁·方向] {symbol} 方向 {_sig_dir} 独立IC={_dir_ic:.3f} (n={_dir_n}) "
+                        f"为负 → 该方向信号反向, 拦截此方向下单"
+                    )
+                    return
         
-        # 方向感知: 该信号方向的独立 IC 若为负, 单独拦截此方向
-        _sig_dir = (
-            getattr(getattr(signal, "direction", None), "value", None)
-            or str(getattr(signal, "direction", "") or "")
-        )
-        _by_dir = _ic.get("by_direction", {}) or {}
-        _dir_stat = _by_dir.get(_sig_dir) if isinstance(_by_dir, dict) else None
-        if isinstance(_dir_stat, dict):
-            _dir_ic = _dir_stat.get("ic")
-            _dir_n = int(_dir_stat.get("n", 0) or 0)
-            if _dir_ic is not None and _dir_ic < 0 and _dir_n >= 10:
-                logger.warning(
-                    f"🔒 [IC门禁·方向] {symbol} 方向 {_sig_dir} 独立IC={_dir_ic:.3f} (n={_dir_n}) "
-                    f"为负 → 该方向信号反向, 拦截此方向下单"
-                )
-                return
-        # IC 达标且显著 — 记录通过 (debug 级别, 不刷屏)
-        logger.debug(f"[IC门禁] {symbol} IC={_ic_mean:.3f} p={_ic_p} ≥{_IC_MIN_THRESHOLD} ✅")
+        _ic_p = _ic.get("ic_p_value", "N/A")
+        logger.debug(f"[IC门禁] {symbol} IC={_ic.get('ic_mean', 0.0):.3f} p={_ic_p} ≥{_IC_MIN_THRESHOLD} ✅")
     except Exception as _ic_err:
         # IC 检查失败 → fail-safe: 不交易 (安全优先)
         logger.warning(f"🔒 [IC门禁·fail-safe] {symbol} IC检查异常, 跳过下单: {_ic_err}")
+        return
+
+    # ── P0 (2026-06-21): shadow_only 模式下单拦截 ──
+    # IC门禁pass-through让信号通过IC检查, 但shadow_only模式下不真正下单
+    # 信号已在signal_pipeline.py L646-648被shadow_signal_logger记录, 积累数据用于IC验证
+    # 这里只阻止真正下单, 不影响shadow数据积累
+    if _is_shadow:
+        logger.info(
+            f"📊 [shadow_only] {symbol} 信号通过IC门禁, 但shadow_only模式不真正下单 "
+            f"(已记录到shadow_signal_logger供IC验证)"
+        )
         return
 
     # ── P0 (2026-06-14): Kill Switch 统一 — 自动线也必须尊重紧急制动 ──
@@ -3548,7 +3602,7 @@ def _submit_order(scheduler, symbol: str, signal: SignalScore, context: Dict[str
 
     # Task #50 (2026-05-28): symbol+direction 级互斥锁
     # 在 coordinator 仲裁前先做 (symbol, direction) 级阻断:
-    # - 避免 Main 与 Scalping 在同一标的同方向重复入场
+    # - 避免多策略在同一标的同方向重复入场
     # - 不同方向 (对冲) 仍放行
     _sym_dir_owner = "main"
     try:
@@ -3781,7 +3835,7 @@ def _derive_entry_reason_for_close(meta: dict) -> str:
     # 2. 推导
     strategy_id = meta.get("strategy_id", "")
     source = meta.get("source", "") or meta.get("source_type", "")
-    # source_type 可能是 MAIN_PIPELINE 等 (SCALPING 引擎已删除, 历史记录兜底为 unknown)
+    # source_type 为来源分类, 如 MAIN_PIPELINE/ORB_ENGINE/PLAYBOOK_SHADOW 等
     return derive_entry_reason(
         strategy_id=strategy_id,
         source=source,
@@ -4886,7 +4940,7 @@ def _close_position(scheduler, position: Position, current_price: float, exit_re
             f"qty={position.size}, pnl=${pnl:.2f})"
         )
         
-        scheduler.trade_store.save_trade({
+        _close_trade_id = scheduler.trade_store.save_trade({
             "trace_id":          _trace_id,
             # Task #15 (2026-05-27): 持久化 exit_trace_id，与 entry trace_id 配对, 支撑全链路复盘
             "exit_trace_id":     _exit_trace_id,
@@ -5021,10 +5075,10 @@ def _close_position(scheduler, position: Position, current_price: float, exit_re
                     owner_strategy, source_type, trade_date, trade_mode,
                     consensus_level, decision_strength, created_at
                 ) VALUES (
-                    (SELECT MAX(id) FROM trade_records),
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
                 )
             """, (
+                _close_trade_id,
                 position.symbol,
                 int(signal_strength or 0),
                 float(signal_confidence or 0.0),

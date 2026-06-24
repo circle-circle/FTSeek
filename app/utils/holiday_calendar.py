@@ -315,6 +315,25 @@ class TradingHolidayCalendar:
             d -= timedelta(days=1)
         return None
 
+    def nth_trading_day_after(self, market: str, from_date: date, n: int, max_days: int = 30) -> Optional[date]:
+        """RFC-061: 从 from_date 起第 n 个交易日后的日期 (from_date 本身不计入).
+
+        用于 MAX_HOLD_T5 (5 交易日后强平), 自动跳过周末/假期 (如 Juneteenth).
+        例: from_date=6/16(周一), n=5 → 6/17,18,19(假期跳过),22,23 → 返回 6/23.
+        max_days 防死循环 (节假日数据异常时兜底).
+        """
+        if n <= 0 or from_date is None:
+            return from_date
+        d = from_date
+        count = 0
+        for _ in range(max_days):
+            d += timedelta(days=1)
+            if self.is_trading_day(market, d):
+                count += 1
+                if count >= n:
+                    return d
+        return None
+
     def trading_days_in_range(self, market: str, start: date, end: date) -> List[date]:
         """获取日期范围内的所有交易日"""
         days = []
@@ -392,3 +411,8 @@ class TradingHolidayCalendar:
 def get_holiday_calendar() -> TradingHolidayCalendar:
     """获取交易日历单例"""
     return TradingHolidayCalendar()
+
+
+def nth_trading_day_after(market: str, from_date: date, n: int, max_days: int = 30) -> Optional[date]:
+    """RFC-061 便捷函数: 从 from_date 起第 n 个交易日后的日期 (模块级, 复用单例)."""
+    return get_holiday_calendar().nth_trading_day_after(market, from_date, n, max_days)

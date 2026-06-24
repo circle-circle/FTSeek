@@ -5,12 +5,13 @@ Task #19 拆分自 position_exit_monitor.py。
 盘末强制退出: 分层退出 + 时间加权策略 (2026-05-03 P2 优化)。
 """
 import logging
-from datetime import datetime
+from datetime import datetime, date
 from typing import Optional, Dict, Any
 
 from .base import BaseExitRule
 from ..atr_stop_engine import compute_profit_atr_signed
 from ..eod_config import load_eod_config
+from app.storage.trade_store import cohort_b_skip_allowed
 
 logger = logging.getLogger("ftseek.exit_monitor")
 
@@ -74,6 +75,22 @@ def check_pre_close_exit(position, current_price, atr, trail_state, direction, p
         trail_state['_last_pre_close_check'] = now_ts
 
         profit_atr_signed = compute_profit_atr_signed(direction, position.avg_entry_price, current_price, atr)
+
+        # ── RFC-061 (2026-06-24): cohort B 盈利仓跳过 EOD 持夜到 ~T+5 ──
+        # MAIN_PIPELINE 的 ATR_STOP 是独立引擎 (atr_stop_engine), 不进本函数的判定链,
+        # 故跳过 pre_close 不影响硬止损. LIVE 需 live_overnight_enabled() 显式开 (不从 sim 继承).
+        try:
+            _meta = getattr(position, "metadata", None) or {}
+            _cohort = _meta.get("cohort", "A")
+            _src = _meta.get("source_type", "")
+            if _cohort == "B" and profit_atr_signed > 0 and cohort_b_skip_allowed(_src):
+                logger.info(
+                    f"[pre_close·RFC-061] {position.symbol} cohort=B profit={profit_atr_signed:.2f}ATR "
+                    f"→ 跳过 EOD 持夜 (MAX_HOLD_T5 兜底)"
+                )
+                return None
+        except Exception as _e:
+            logger.debug(f"[pre_close·RFC-061] cohort 检查异常 (降级为 A): {_e}")
 
         # P2 优化 (2026-05-03): 时间加权阈值
         time_weighted = pc_cfg.get("time_weighted", False)
@@ -388,6 +405,19 @@ def check_adaptive_pre_close_exit(
             profit = current_price - entry_price
         profit_atr = profit / atr
 
+        # ── RFC-061 (2026-06-24): cohort B 盈利仓跳过 EOD 持夜 (adaptive 路径同 legacy) ──
+        try:
+            _meta = position.get("metadata", {}) if isinstance(position, dict) else (getattr(position, "metadata", None) or {})
+            _cohort = _meta.get("cohort", "A") if isinstance(_meta, dict) else "A"
+            _src = _meta.get("source_type", "") if isinstance(_meta, dict) else ""
+            if _cohort == "B" and profit_atr > 0 and cohort_b_skip_allowed(_src):
+                logger.info(
+                    f"[pre_close·adaptive·RFC-061] {symbol} cohort=B profit={profit_atr:.2f}ATR → 跳过 EOD 持夜"
+                )
+                return None
+        except Exception as _e:
+            logger.debug(f"[pre_close·adaptive·RFC-061] cohort 检查异常 (降级 A): {_e}")
+
         # ── 5. 四分支自适应判定 ──
         profit_cfg = cfg.get("profit_exit", {}) or {}
         breakeven_cfg = cfg.get("breakeven_exit", {}) or {}
@@ -488,4 +518,60 @@ def check_adaptive_pre_close_exit(
 
     except Exception as e:
         logger.warning(f"[adaptive_pre_close·异常] {e}", exc_info=True)
+        return None
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  RFC-061 (2026-06-24): MAX_HOLD_T5 — cohort B 持仓 ≥5 交易日强制了结
+# ═══════════════════════════════════════════════════════════════════
+# cohort B 盈利仓跳过 EOD 持夜后的硬上限. 用交易日历算 5 交易日后 (遇假期自动跳过,
+# 如 Juneteenth), 比日历日准. 仅 cohort B; A 组日内已平不会触及.
+# 由 position_exit_monitor 在 pre_close 之前调用 (优先级高于 pre_close).
+
+def check_max_hold_t5(position, current_price=None) -> Optional[Dict]:
+    """RFC-061: cohort B 持仓 ≥5 交易日后强制了结 (MAX_HOLD_T5).
+
+    Returns: 命中则返回 exit decision dict (close_ratio=1.0, 全平); 否则 None.
+    仅对 cohort B 生效. MAIN_PIPELINE 的 ATR_STOP 独立引擎仍并行生效 (不冲突).
+    """
+    try:
+        meta = getattr(position, "metadata", None) or {}
+        if not isinstance(meta, dict):
+            return None
+        if meta.get("cohort") != "B":
+            return None
+        # LIVE 守卫: 实盘需显式开 (不从 sim 继承)
+        if not cohort_b_skip_allowed(meta.get("source_type", "")):
+            return None
+        entry_time = getattr(position, "entry_time", None)
+        if not entry_time:
+            return None
+        # 归一化为 ET date
+        try:
+            if hasattr(entry_time, "tzinfo") and entry_time.tzinfo is not None:
+                _entry_date = entry_time.astimezone(ET).date() if ET else entry_time.date()
+            else:
+                _entry_date = entry_time.date()
+        except Exception:
+            return None
+        from app.utils.holiday_calendar import nth_trading_day_after
+        deadline = nth_trading_day_after("US", _entry_date, 5)
+        if deadline is None:
+            return None  # 日历异常, 不强平 (保守)
+        now_et = datetime.now(ET) if ET else datetime.now()
+        if now_et.date() < deadline:
+            return None  # 未到 5 交易日, 继续 hold
+        symbol = getattr(position, "symbol", "?")
+        logger.info(
+            f"[MAX_HOLD_T5·RFC-061] {symbol} cohort=B 持仓至 {_entry_date}+5交易日 (deadline={deadline}) → 强制了结"
+        )
+        return {
+            "reason": "MAX_HOLD_T5",
+            "reason_cn": f"cohort B 持仓≥5交易日 (RFC-061) 强制了结",
+            "exit_price": current_price if current_price else 0,
+            "close_ratio": 1.0,
+            "description": f"MAX_HOLD_T5: cohort B held since {_entry_date}, deadline {deadline}",
+        }
+    except Exception as e:
+        logger.warning(f"[MAX_HOLD_T5·RFC-061] 异常 (降级不触发): {e}")
         return None
