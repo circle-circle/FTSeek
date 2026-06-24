@@ -5,6 +5,7 @@ Caches results in SQLite for dashboard integration.
 """
 import json
 import logging
+import os
 import sqlite3
 import subprocess
 import time
@@ -13,9 +14,17 @@ from typing import Dict, List, Optional
 
 logger = logging.getLogger("ftseek_us.social_sentiment")
 
-# Paths
-LAST30DAYS_SCRIPT = "/root/last30days-skill/skills/last30days/scripts/last30days.py"
-LAST30DAYS_ROOT = "/root/last30days-skill"
+# Paths — env-overridable. last30days-skill is an external subproject that may
+# live elsewhere or be absent on this host; _run_last30days skips gracefully
+# when the entry script is missing (set LAST30DAYS_SCRIPT / LAST30DAYS_ROOT to override).
+LAST30DAYS_SCRIPT = os.environ.get(
+    "LAST30DAYS_SCRIPT",
+    "/root/last30days-skill/skills/last30days/scripts/last30days.py",
+)
+LAST30DAYS_ROOT = os.environ.get(
+    "LAST30DAYS_ROOT",
+    "/root/last30days-skill",
+)
 FTSEEK_ROOT = Path("/opt/ftseek/FTSeek-US")
 CACHE_DB = FTSEEK_ROOT / "data" / "social_sentiment.db"
 UV_BIN = "uv"  # uv manages the last30days venv
@@ -77,6 +86,15 @@ def _save_cache(symbol: str, data: dict):
 
 def _run_last30days(query: str, sources: str = "reddit,hackernews,polymarket", days: int = 7) -> dict:
     """Run last30days as subprocess, return parsed JSON."""
+    # Graceful skip when the external skill isn't deployed on this host.
+    # Avoids repeated subprocess failures + ERROR noise; returns {} so callers
+    # fall back to other sentiment sources. Set LAST30DAYS_SCRIPT to enable.
+    if not LAST30DAYS_SCRIPT or not os.path.exists(LAST30DAYS_SCRIPT):
+        logger.warning(
+            "last30days skill not found at %s (set LAST30DAYS_SCRIPT env to enable); skipping",
+            LAST30DAYS_SCRIPT or "<empty>",
+        )
+        return {}
     cmd = [
         UV_BIN, "run", "python3",
         LAST30DAYS_SCRIPT,

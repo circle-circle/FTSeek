@@ -56,26 +56,32 @@ class FundamentalProvider(BaseDataProvider):
             return None
 
     def get_data(self, symbol: str, **kwargs) -> Dict[str, Any]:
-        """获取基本面数据（自动降级）"""
+        """获取基本面数据（自动降级: Futu → Finnhub → Yahoo → AlphaVantage）"""
         now_iso = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
-        
-        # 尝试数据源 1: Finnhub
+
+        # 尝试数据源 0: Futu (主数据源 — 真实数据，无需API key)
+        result = self._fetch_futu(symbol)
+        if result and result.get("status") == "ok":
+            return result
+
+        # 降级 1: Finnhub
+        logger.debug(f"[FundamentalProvider] Futu failed, trying Finnhub: {symbol}")
         result = self._fetch_finnhub(symbol)
         if result and result.get("status") == "ok":
             return result
-        
+
         # 降级 2: Yahoo Finance
         logger.info(f"[FundamentalProvider] Finnhub failed, trying Yahoo: {symbol}")
         result = self._fetch_yahoo(symbol)
         if result and result.get("status") == "ok":
             return result
-        
+
         # 降级 3: Alpha Vantage
         logger.info(f"[FundamentalProvider] Yahoo failed, trying AlphaVantage: {symbol}")
         result = self._fetch_alphavantage(symbol)
         if result and result.get("status") == "ok":
             return result
-        
+
         # 全部失败
         return {
             "status": "failed",
@@ -83,6 +89,97 @@ class FundamentalProvider(BaseDataProvider):
             "data_source": "none",
             "fetched_at": now_iso,
         }
+
+    def _fetch_futu(self, symbol: str) -> Optional[Dict[str, Any]]:
+        """从 Futu get_market_snapshot 获取基本面（主数据源 — 真实数据）"""
+        now_iso = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+        try:
+            from app.web_dashboard.manual_order_service import ManualOrderService
+            svc = ManualOrderService()
+            if not svc.connect():
+                logger.warning("[FundamentalProvider] Futu connect failed")
+                return None
+
+            from futu import RET_OK
+            ret, data = svc._quote_ctx.get_market_snapshot([symbol])
+            svc.disconnect()
+
+            if ret != RET_OK or data.empty:
+                logger.warning(f"[FundamentalProvider] Futu snapshot failed: {data}")
+                return None
+
+            row = data.iloc[0].to_dict()
+            eps = row.get("earning_per_share", 0)
+            net_asset = row.get("net_asset", 0)
+            net_profit = row.get("net_profit", 0)
+            pe_ttm = row.get("pe_ttm_ratio", 0)
+            pe_ratio = row.get("pe_ratio", 0)
+            pb_ratio = row.get("pb_ratio", 0)
+            market_cap = row.get("total_market_val", 0)
+            dividend_ttm = row.get("dividend_ttm", 0)
+            dividend_yield = row.get("dividend_ratio_ttm", 0)
+            volume_ratio = row.get("volume_ratio", 1.0)
+
+            # ROE = net_profit / net_asset (if both available)
+            roe = round(net_profit / net_asset * 100, 2) if net_asset and net_asset > 0 else 0
+
+            financials = {
+                "source": "futu/market_snapshot",
+                "fetched_at": now_iso,
+                "market_cap": market_cap,
+                "pe_ttm": pe_ttm,
+                "pe_ratio": pe_ratio,
+                "forward_pe": 0,  # Futu doesn't provide forward PE
+                "pb_ratio": pb_ratio,
+                "roe": roe,
+                "eps_ttm": eps,
+                "net_asset_per_share": row.get("net_asset_per_share", 0),
+                "revenue_yoy": 0,  # Not available from snapshot
+                "beta": 0,  # Not available from snapshot
+                "dividend_yield": dividend_yield,
+                "dividend_ttm": dividend_ttm,
+                "52w_high": row.get("highest52weeks_price", 0),
+                "52w_low": row.get("lowest52weeks_price", 0),
+                "volume_ratio": volume_ratio,
+                "bid_ask_ratio": row.get("bid_ask_ratio", 0),
+                "turnover_rate": row.get("turnover_rate", 0),
+                "pre_price": row.get("pre_price", 0),
+                "pre_change_rate": row.get("pre_change_rate", 0),
+                "after_price": row.get("after_price", 0),
+                "after_change_rate": row.get("after_change_rate", 0),
+            }
+
+            # Earnings calendar: not available from Futu, mark as unknown
+            next_catalyst = {
+                "source": "futu/market_snapshot",
+                "fetched_at": now_iso,
+                "event": "Unknown",
+                "date": "",
+                "eps_estimate": None,
+                "revenue_estimate": None,
+            }
+
+            return {
+                "status": "ok",
+                "data": {
+                    "financials": financials,
+                    "analyst": {"source": "none", "fetched_at": now_iso},
+                    "recent_news": [],  # News fetched separately in deep_research
+                    "next_catalyst": next_catalyst,
+                    "_sources": {
+                        "financials": "ok",
+                        "analyst": "none",
+                        "news": "none",
+                        "catalyst": "ok",
+                    },
+                },
+                "data_source": "futu",
+                "fetched_at": now_iso,
+            }
+
+        except Exception as e:
+            logger.warning(f"[FundamentalProvider] Futu error: {e}")
+            return None
 
     def _fetch_finnhub(self, symbol: str) -> Optional[Dict[str, Any]]:
         """从 Finnhub 获取（主数据源）"""
