@@ -7,7 +7,7 @@ base:
   market: US
   currency: USD
   timezone: America/New_York
-  trade_env: 0  # 2026-06-14: 与 .env.us TRADE_ENV=0 对齐 (实盘)
+  trade_env: 1  # 2026-06-23: shadow模拟阶段, 与 .env.us TRADE_ENV=1 对齐
   simulate_account_id: ''
 
 # 运行模式 (2026-05-14, karpathy MVP):
@@ -1329,11 +1329,21 @@ feature_flags:
 
 # ⭐ 2026-06-18 Playbook System 总开关
 # enabled=false: pipeline 三个入口(generate/track/weekly)早退, 不调任何 Provider/LLM, 不入库不推送
-# execute_mode=simulate: Dashboard [执行] 按钮走模拟 (默认 shadow 安全); =live 需额外二次确认
+# execute_mode=simulate: 虚拟 shadow (不调 broker); =futu_simulate: 真实下单富途模拟账户 (Phase 1); =live: 实盘 (需 graduation, Phase 2)
+# execute_mode 分类法 (2026-06-24 清理, 不混为一谈):
+#   simulate      = 虚拟离线 (不调 broker, 仅写虚拟 trade_record; 用于无 OpenD 时的离线测试, 非验证)
+#   futu_simulate = 模拟验证 (真实下单富途模拟账户, OKR 度量真实成交; 默认验证态)
+#   live          = 实盘自动 (真实下单实盘账户, 需 graduation 门禁 + flat-switch; 毕业后)
+# 策略分类 (source_type):
+#   模拟类 = PLAYBOOK_SIM (playbook 自动模拟验证)
+#   实盘类 = MANUAL (手动) + PLAYBOOK_LIVE (playbook 自动实盘, 毕业后)
+#   独立策略 = ORB_ENGINE (开盘突破, ETF universe, 与 playbook 不重叠)
+#   已退役 = voting_llm / scalping / main_pipeline / playbook_shadow (legacy 投票执行路径, TRADING 禁扫)
 playbook:
-  enabled: true                     # 上线闸门: true=进入 shadow 验证 (生成指令+追踪+飞书, 但执行仍 simulate)
-  execute_mode: simulate            # 2026-06-19: live → simulate (代码清理后先 shadow 验证全链路)
-  auto_execute: true                # 2026-06-20: 开启自动执行 (shadow_only模式下安全验证全链路)
+  enabled: true                     # 上线闸门: true=进入 playbook 链路 (生成指令+追踪+飞书)
+  execute_mode: futu_simulate       # 2026-06-24: 默认模拟验证态 (simulate=虚拟离线, live=实盘需毕业)
+  auto_execute: true                # 盘中每30分钟自动执行 triggered 指令
+  live_trial: true                  # 2026-06-24 Phase 2: LIVE_TRIAL — target_env=real 时仓位×0.5; 验证 sim≈live PnL 后关此项放全量
   enable_weekly: true               # 是否跑周度复盘 (冷启动期可关, 节省 LLM)
 strategy_enhancements:
   pivotal_points:
@@ -1975,7 +1985,7 @@ pipeline:
 # ────────────────────────────────────────────────────────────────
 orb:
   enabled: true
-  mode: shadow                    # [RFC-060 2026-06-22] observe→shadow: 创建虚拟仓位跟踪, 不真实下单, 绕过 pre_trade_gate (原 observe 因 100+ attempts 被 gate 全拒)
+  mode: active                    # [2026-06-24] shadow→active: 真实下单富途模拟账户 (AUTO_TRADE_ACCOUNT=sim, target=sim). 原 shadow 仅虚拟跟踪无 broker 调用, 不采集真实成交数据
   universe:
     # ADR-006 (2026-06-07): ETF 归 ORB，个股归主线，零重叠
     # 宽基 (4): 最高流动性，开盘区间最清晰
@@ -1998,9 +2008,12 @@ orb:
   entry_start_et: "09:50"          # [RFC-060] 09:45→09:50: 跳过开盘前5分钟最噪区间
   # 止损止盈 (ATR-relative, 日内 — 比System A更紧, 适配5秒快速响应)
   stop_loss_atr_mult: 1.5          # SL = entry ± 1.5×ATR (2026-06-07: 1.0→1.5, 避免开盘噪声扫损)
-  take_profit_atr_mult: 3.0        # TP = entry ± 3.0×ATR (2026-06-07: 2.0→3.0, R/R 2:1)
-  trail_activation_atr: 2.5        # 2026-06-07: 1.0→2.5, 盈利2.5 ATR后才追踪 (让赢家跑到2+ATR再锁利)
-  trail_multiplier: 1.5            # 2026-06-07: 1.2→1.5, peak - 1.5×ATR (更宽松追踪, 减少噪音扫出)
+  # 2026-06-23: 止盈改为 R-multiple (盈利 × sl_distance). 原 take_profit_atr_mult(3.0×ATR) 为死配置
+  #   (engine 一直用 2R 硬止盈先触发, stack 的 TP 永不到达). 现与实际行为一致且可调.
+  take_profit_r_mult: 2.0          # TP = profit ≥ 2.0 × sl_distance (2:1 R/R)
+  # 2026-06-23: 删除 trail_activation_atr / trail_multiplier —
+  #   trailing 未经验证 (SSOT 主线 trailing -$3,773), ratchet 字段从不更新, 与 2R TP 抢优先级.
+  #   退出路径收敛为: 2R止盈 + breakdown + FloorStop + EOD.
   # 风控 (持仓上限由 strategies.orb.max_positions 统一控制, 此处仅作fallback)
   max_positions: 2                 # [RFC-060] 5→2: shadow 同时跟踪2个虚拟仓位足够 (config 默认值)
   max_daily_trades: 5             # [RFC-060] 15→5: shadow 高质量数据采集, 配合 Q≥0.75+首次突破, 实际有效信号3-5个
