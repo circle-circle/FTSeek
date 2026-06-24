@@ -42,6 +42,22 @@ class USPositionSync:
         self._error_count = 0
         self.position_store = position_store  # P0 修复 2026-04-25: PositionStore 内存引用
         self._futu_ctx = None  # P2 修复: 复用 Futu 连接，避免每 30 秒新建/断开
+        # P0 修复 (2026-06-24): _reset_futu_ctx 初始化的属性 (_consecutive_empty_queries /
+        # _last_known_positions / _closed_tombstones 等) 此前只在 reset 时才赋值, 连接
+        # 正常、从未 reset 的实例首次跑到空查询计数 (line ~482) 会 AttributeError →
+        # "Failed to get Futu US positions" 告警。__init__ 末尾调一次保证属性就位。
+        # _futu_ctx 为 None 时 close 块是 no-op, 仅走属性初始化, 无副作用。
+        self._reset_futu_ctx("init")
+
+    def _reset_futu_ctx(self, reason: str = ""):
+        """安全重置 Futu 连接: 先关闭旧连接再置 None，防止连接泄漏到 OpenD"""
+        if self._futu_ctx is not None:
+            try:
+                self._futu_ctx.close()
+            except Exception:
+                pass
+            logger.info(f"[US Sync] Futu 连接已关闭并重置 ({reason})")
+            self._futu_ctx = None
         # P0 修复 (2026-05-11): 添加已知持仓缓存，防止连接瞬断时误删幽灵仓
         self._last_known_positions: Dict[str, Dict] = {}
         self._consecutive_empty_queries = 0
@@ -296,12 +312,12 @@ class USPositionSync:
                         )
                         if ret != RET_OK:
                             logger.error(f"[US Sync] 实盘解锁失败: {data}")
-                            self._futu_ctx = None
+                            self._reset_futu_ctx("实盘解锁失败")
                             return None
                         logger.info("[US Sync] ✅ 实盘交易已解锁")
                     else:
                         logger.error("[US Sync] 实盘模式但 FUTU_UNLOCK_PWD_MD5 未设置")
-                        self._futu_ctx = None
+                        self._reset_futu_ctx("缺少解锁密码")
                         return None
             except Exception as e:
                 logger.warning(f"[US Sync] 创建 Futu 连接失败: {e}")
@@ -344,7 +360,7 @@ class USPositionSync:
             ret, data = ctx.position_list_query(trd_env=trade_env)
             if ret != RET_OK:
                 logger.warning(f"[US Sync] query_broker_positions 查询失败 (ret={ret})，重置连接")
-                self._futu_ctx = None
+                self._reset_futu_ctx("query失败")
                 return {}
             if data is None or data.empty:
                 # 空持仓可能是真实的，不重置连接
@@ -370,7 +386,7 @@ class USPositionSync:
             return positions
         except Exception as e:
             logger.warning(f"[US Sync] query_broker_positions 异常: {e}")
-            self._futu_ctx = None
+            self._reset_futu_ctx("query异常")
             return {}
 
     def _query_today_futu_orders(self) -> Dict[str, Dict]:
@@ -464,7 +480,7 @@ class USPositionSync:
             # P0 修复: 查询失败或返回异常 → 重置连接 + 跳过本轮，防止误删持仓
             if ret != 0:
                 logger.warning(f"[US Sync] Futu 持仓查询失败 (ret={ret})，重置连接，跳过本轮")
-                self._futu_ctx = None
+                self._reset_futu_ctx("position查询失败")
                 return
             # P0 修复 (2026-05-11): 空持仓处理 — 使用连续空查询计数器 + 已知持仓缓存
             # 之前问题: 连接瞬断时返回空持仓列表，导致真实持仓被误删为幽灵仓
@@ -486,7 +502,7 @@ class USPositionSync:
                             f"[US Sync] Futu 返回空持仓列表 (连续{self._consecutive_empty_queries}次), "
                             f"无已知持仓缓存，跳过本轮"
                         )
-                        self._futu_ctx = None
+                        self._reset_futu_ctx("空持仓无缓存")
                         return
                 else:
                     # 连续多次空查询，认为真实空仓
@@ -524,7 +540,7 @@ class USPositionSync:
         except Exception as e:
             logger.warning("Failed to get Futu US positions: %s", e)
             # 连接异常时重置，下次同步会重新创建
-            self._futu_ctx = None
+            self._reset_futu_ctx("position查询异常")
             return
 
         # 2. Get DB positions
@@ -678,12 +694,12 @@ class USPositionSync:
                     # 首次发现自管持仓，写入 DB 标 manual
                     # P0-4 修复 (2026-06-12): UPSERT 防止与 manual_order_service stub 行 UNIQUE 冲突
                     cursor.execute(
-                        "INSERT INTO open_positions (symbol, direction, size, avg_entry_price, owner, sync_status, updated_at) "
-                        "VALUES (?, ?, ?, ?, 'manual', 'synced', ?) "
+                        "INSERT INTO open_positions (symbol, direction, size, avg_entry_price, owner, sync_status, updated_at, account_type) "
+                        "VALUES (?, ?, ?, ?, 'manual', 'synced', ?, 'real') "
                         "ON CONFLICT(symbol) DO UPDATE SET "
                         "direction=excluded.direction, size=excluded.size, "
                         "avg_entry_price=excluded.avg_entry_price, owner='manual', "
-                        "sync_status='synced', updated_at=excluded.updated_at",
+                        "sync_status='synced', updated_at=excluded.updated_at, account_type='real'",
                         (symbol, info['direction'], info['qty'], info['cost'], datetime.now().isoformat()))
                     logger.info(f"[US Sync·隔离] 录入自管持仓: {symbol} ({info['direction']} {info['qty']}股)")
                 continue
