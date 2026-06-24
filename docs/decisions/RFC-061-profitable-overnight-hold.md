@@ -1,6 +1,6 @@
 # RFC-061: 盈利 Shadow 仓位过夜持有 A/B 实验
 
-> **状态**: 已实施 (v1, PLAYBOOK_SHADOW)
+> **状态**: 已实施 (v1, PLAYBOOK_SHADOW + PLAYBOOK_SIM/LIVE)
 > **日期**: 2026-06-24
 > **作者**: Claude (深度数据驱动 review)
 > **审批人**: 项目所有者
@@ -10,7 +10,7 @@
 
 ## 摘要
 
-IC 实测发现信号 T+5 IC=+0.265 (强正) 而 T+1 IC=-0.114 (反预测), alpha 是周级; 但系统平均持仓 2.9h、仅 1 笔超 1 天, EOD 强制全平砍掉周级盈利。本 RFC 对 `PLAYBOOK_SHADOW` 仓位做 A/B: cohort B 盈利仓跳过 EOD 强平、持有到 ~T+5 (7 日历日硬上限), cohort A 维持日内对照。验证 PASS 后 Phase 2 扩 MAIN_PIPELINE。
+IC 实测发现信号 T+5 IC=+0.265 (强正) 而 T+1 IC=-0.114 (反预测), alpha 是周级; 但系统平均持仓 2.9h、仅 1 笔超 1 天, EOD 强制全平砍掉周级盈利。本 RFC 对 `PLAYBOOK_SHADOW` + `PLAYBOOK_SIM/LIVE` 仓位做 A/B: cohort B 盈利仓跳过 EOD 强平、持有到 ~T+5 (7 日历日硬上限), cohort A 维持日内对照。**关键**: 系统当前 `execute_mode=futu_simulate` → 活跃产 `PLAYBOOK_SIM`, 故 cohort 退出逻辑必须覆盖 sim 监控 (`monitor_playbook_sim_exits` + `_force_close_orphaned_sim_positions`) 才能在活跃路径上生效; shadow 监控同步覆盖以兼容 `simulate` 模式。ORB 排除 (日内语义)。
 
 ---
 
@@ -46,9 +46,9 @@ IC 实测发现信号 T+5 IC=+0.265 (强正) 而 T+1 IC=-0.114 (反预测), alph
 
 ## 提议方案
 
-### 方案 A (推荐, 已实施 v1): PLAYBOOK_SHADOW cohort B 盈利仓过夜
+### 方案 A (推荐, 已实施 v1): cohort B 盈利仓过夜 (覆盖 shadow + sim 两条路径)
 
-**Cohort 分配** — `app/storage/trade_store.py:save_trade()` 统一注入:
+**Cohort 分配** — `app/storage/trade_store.py:save_trade()` 统一注入 (所有 source_type):
 ```python
 def assign_cohort(symbol, trade_date):
     if not symbol or not trade_date: return "A"
@@ -57,16 +57,16 @@ def assign_cohort(symbol, trade_date):
 ```
 确定性 hash, 幂等; 存 metadata_json (零 schema migration, 用 `json_extract` 查)。
 
-**退出规则** — `monitor_playbook_shadow_exits`:
-- 规则4: cohort B + `profit_pct>0` → 跳过 `PRE_CLOSE_EXIT` (持过夜); 否则原行为
-- 规则5 (新): cohort B + 持仓 ≥7 日历日 → `MAX_HOLD_T5` 强平
-- EOD 兜底: cohort B + 盈利 + <7日 → 跳过; cohort B + ≥7日 → `MAX_HOLD_T5`; 亏损仓仍兜底
+**退出规则 (4 个监控函数, 同一套 cohort 语义)**:
+- `monitor_playbook_shadow_exits` (PLAYBOOK_SHADOW, DB 平仓): cohort B + 盈利 → 跳过 `PRE_CLOSE_EXIT`; ≥7 日 → `MAX_HOLD_T5`; EOD 兜底 `_force_close_orphaned_shadow_positions` 同理
+- `monitor_playbook_sim_exits` (PLAYBOOK_SIM/LIVE, **broker 平仓, 活跃路径**): cohort B + 盈利 → 跳过 `PRE_CLOSE_EXIT` (不调 broker.close_position, 持过夜); ≥7 日 → `MAX_HOLD_T5` broker 平; EOD 兜底 `_force_close_orphaned_sim_positions` 同理 (先取报价估盈利, 决定是否跳过 broker close)
+- **ORB 守卫**: sim 兜底用 `source_type in ('PLAYBOOK_SIM','PLAYBOOK_LIVE')` 限制 cohort 跳过, ORB_ENGINE 即便被注入 cohort 也强制 EOD 平仓 (维持日内语义)
 
-**保留约束** (不变): ATR 止损 (规则1, 跨日有效) + breakeven ratchet (盈利≥1.5%→SL 移至 entry) + overnight_loss_stop_pct 0.03。
+**保留约束** (不变): ATR 止损 (SL_ATR_STOP, 跨日有效, 最高优先级) + breakeven ratchet (盈利≥1.5%→SL 移至 entry) + overnight_loss_stop_pct 0.03。cohort B 亏损仓不跳过 (维持安全兜底)。
 
 ### 影响范围
 - 服务焦点: F3 (退出执行)
-- 改动指标: PLAYBOOK_SHADOW 持仓时长分布、realized PnL by cohort
+- 改动指标: PLAYBOOK_SIM/LIVE/SHADOW 持仓时长分布、realized PnL by cohort
 - 预期变化: cohort B 持仓中位数 2.9h → 1-5 天; 若假设成立 sum_pnl(B) > sum_pnl(A)
 
 ---
@@ -86,7 +86,7 @@ def assign_cohort(symbol, trade_date):
 ## 实验设计 (A/B)
 
 - **分组**: `assign_cohort(symbol, trade_date)` hash → A (对照, 日内全平) / B (试验, 盈利过夜)
-- **范围**: v1 仅 `PLAYBOOK_SHADOW` (OKR 焦点层, 自有监控, 入场即写 metadata)。ORB/MAIN_PIPELINE/SCALPING 排除 (见范围说明)
+- **范围**: v1 覆盖 `PLAYBOOK_SHADOW` + `PLAYBOOK_SIM/LIVE` (两条 playbook 退出路径, 确保 simulate / futu_simulate 模式下 cohort 都生效)。ORB/MAIN_PIPELINE/SCALPING 排除。
 - **周期**: 跑满 2 周 或 每组 ≥30 笔
 - **主指标**: sum_pnl by cohort, win_rate by cohort, holding 中位数迁移
 - **提前终止**: cohort B 单笔亏损 > max_loss 2% ×3 (跳空穿透止损) → 立即回滚
@@ -108,7 +108,7 @@ SELECT json_extract(metadata_json,'$.cohort') cohort,
        SUM(CASE WHEN pnl_pct>0 THEN 1 ELSE 0 END)*100.0/COUNT(*) wr_pct,
        ROUND(AVG(holding_hours),1) avg_hold_h
 FROM trade_records
-WHERE source_type='PLAYBOOK_SHADOW' AND exit_time!=''
+WHERE source_type IN ('PLAYBOOK_SHADOW','PLAYBOOK_SIM','PLAYBOOK_LIVE') AND exit_time!=''
 GROUP BY json_extract(metadata_json,'$.cohort');
 ```
 按 exit_reason 看 cohort B 的 MAX_HOLD_T5 / SL_ATR_STOP / 隔夜 SL 分布。
@@ -144,5 +144,6 @@ GROUP BY json_extract(metadata_json,'$.cohort');
 ## 实施记录
 **实施日期**: 2026-06-24
 **Commit**: `<待提交>`
-**v1 范围**: PLAYBOOK_SHADOW only
-**验证结果**: 待 A/B 数据积累 (2 周 / 每组 ≥30 笔)
+**v1 范围**: PLAYBOOK_SHADOW + PLAYBOOK_SIM/LIVE (4 个监控函数: shadow/sim 各 monitor + force_close)
+**验证结果**: assign_cohort 确定性+均衡(99/101); shadow EOD 兜底隔离测试通过; sim EOD 兜底隔离测试通过 (A→EOD_FORCE_CLOSE / B盈利当天→跳过持过夜 / B盈利8天→MAX_HOLD_T5 / ORB+B→强制平仓不跳过); 待 A/B 数据积累 (2 周 / 每组 ≥30 笔)
+**配置前置**: `execute_mode: futu_simulate` (working tree, 未提交) 须为今晚进程加载值, 否则活跃路径产 PLAYBOOK_SHADOW 而非 PLAYBOOK_SIM (cohort 仍生效, 因 shadow 监控也覆盖)

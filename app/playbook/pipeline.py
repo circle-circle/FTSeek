@@ -1490,8 +1490,12 @@ def monitor_playbook_sim_exits(scheduler) -> int:
                 pass
 
             # 退出判断
+            # RFC-061 A/B: cohort B 盈利仓跳过 PRE_CLOSE 持过夜; cohort A 维持原 if/elif 优先级不变
+            _cohort = meta.get("cohort", "A")
+            _days_held = held_minutes / 60 / 24
+            _skip_pre_close = (_cohort == "B" and profit_pct > 0)
             exit_reason = ""
-            if 0 <= minutes_to_close <= 8 and minutes_from_open > 0:
+            if not _skip_pre_close and 0 <= minutes_to_close <= 8 and minutes_from_open > 0:
                 exit_reason = "PRE_CLOSE_EXIT"
             elif held_minutes > 120 and profit_pct < -0.5:  # 2026-06-24: 1h/0.3%→2h/-0.5%
                 exit_reason = "TIME_EXIT"
@@ -1500,6 +1504,15 @@ def monitor_playbook_sim_exits(scheduler) -> int:
                     exit_reason = "SL_ATR_STOP"
                 elif direction == "SHORT" and current_price >= stop_loss:
                     exit_reason = "SL_ATR_STOP"
+
+            # RFC-061: cohort B 硬上限 — 持仓 ≥7 日历日 (≈5 交易日) 强制 broker 平仓
+            if not exit_reason and _cohort == "B" and held_minutes > 0 and _days_held >= 7:
+                exit_reason = "MAX_HOLD_T5"
+
+            if _skip_pre_close and not exit_reason:
+                logger.info(
+                    f"[playbook sim] {symbol} cohort=B profit={profit_pct:.2f}% → 跳过 PRE_CLOSE 持过夜 (RFC-061)"
+                )
 
             if not exit_reason:
                 continue
@@ -1603,6 +1616,42 @@ def _force_close_orphaned_sim_positions(scheduler) -> int:
             if entry_price <= 0 or qty <= 0:
                 continue
 
+            # RFC-061 A/B: cohort B 盈利仓跳过 EOD broker 兜底 (持过夜); ≥7 日历日仍平 (MAX_HOLD_T5).
+            # 仅对 PLAYBOOK_SIM/LIVE 生效; ORB_ENGINE 即使被 save_trade 注入 cohort 也强制平 (日内语义, 不过夜).
+            try:
+                _meta = _json.loads(r["metadata_json"]) if r["metadata_json"] else {}
+            except Exception:
+                _meta = {}
+            _cohort = _meta.get("cohort", "A")
+            _is_pb_sim = r["source_type"] in ("PLAYBOOK_SIM", "PLAYBOOK_LIVE")
+            holding_hours = 0.0
+            try:
+                holding_hours = (datetime.now() - datetime.fromisoformat(r["entry_time"])).total_seconds() / 3600
+            except Exception:
+                pass
+            _days_held = holding_hours / 24
+            _eod_reason = "EOD_FORCE_CLOSE"
+            if _is_pb_sim and _cohort == "B" and _days_held >= 7:
+                _eod_reason = "MAX_HOLD_T5"  # 硬上限, 仍须 broker 平仓
+            elif _is_pb_sim and _cohort == "B":
+                # 估算盈利决定是否跳过 (取当前报价)
+                _est_price = 0.0
+                try:
+                    _q = data_router.get_quote(symbol)
+                    if _q and isinstance(_q, dict):
+                        _est_price = float(_q.get("last", 0) or _q.get("price", 0) or 0)
+                except Exception:
+                    pass
+                if _est_price > 0:
+                    _est_pnl_pct = ((_est_price - entry_price) / entry_price * 100) if direction == "LONG" \
+                        else ((entry_price - _est_price) / entry_price * 100)
+                    if _est_pnl_pct > 0:
+                        logger.info(
+                            f"[playbook sim] EOD 兜底跳过 {symbol} cohort=B profit~{_est_pnl_pct:.2f}% 持过夜 (RFC-061)"
+                        )
+                        continue
+                # 报价缺失或亏损 → 不跳过, 走兜底平仓 (保守)
+
             _row_target = "real" if r["source_type"] == "PLAYBOOK_LIVE" else "sim"
             try:
                 close_res = dual.close_position(symbol, qty, direction, target_env=_row_target)
@@ -1626,31 +1675,25 @@ def _force_close_orphaned_sim_positions(scheduler) -> int:
 
             pnl = (exit_price - entry_price) * qty if direction == "LONG" else (entry_price - exit_price) * qty
             pnl_pct = (exit_price - entry_price) / entry_price * 100 if direction == "LONG" else (entry_price - exit_price) / entry_price * 100
-            holding_hours = 0.0
-            try:
-                holding_hours = (datetime.now() - datetime.fromisoformat(r["entry_time"])).total_seconds() / 3600
-            except Exception:
-                pass
 
             conn.execute("""
                 UPDATE trade_records SET exit_price=?, exit_time=?, exit_reason=?, realized_pnl=?, pnl_pct=?, holding_hours=?
                 WHERE id=?
-            """, (exit_price, now_iso, "EOD_FORCE_CLOSE", pnl, pnl_pct / 100, holding_hours, r["id"]))
+            """, (exit_price, now_iso, _eod_reason, pnl, pnl_pct / 100, holding_hours, r["id"]))
             try:
-                meta = _json.loads(r["metadata_json"]) if r["metadata_json"] else {}
-                inst_id = meta.get("playbook_instruction_id")
+                inst_id = _meta.get("playbook_instruction_id")
                 if inst_id:
                     conn.execute(
                         "UPDATE playbook_instructions SET outcome=?, exit_price=?, exit_reason=?, pnl=?, pnl_pct=?, "
                         "holding_period_hours=? WHERE id=? AND outcome NOT IN ('win','loss')",
-                        ("win" if pnl > 0 else "loss", exit_price, "EOD_FORCE_CLOSE", round(pnl, 2), round(pnl_pct, 2),
+                        ("win" if pnl > 0 else "loss", exit_price, _eod_reason, round(pnl, 2), round(pnl_pct, 2),
                          round(holding_hours, 1), inst_id),
                     )
             except Exception as _e:
                 logger.debug(f"[playbook sim] EOD 同步 instruction 失败 {symbol}: {_e}")
             conn.commit()
             closed += 1
-            logger.info(f"[playbook sim] EOD 兜底平仓: {symbol} exit={exit_price} pnl=${pnl:.2f}")
+            logger.info(f"[playbook sim] EOD 兜底平仓: {symbol} reason={_eod_reason} exit={exit_price} pnl=${pnl:.2f}")
 
         conn.close()
         return closed
