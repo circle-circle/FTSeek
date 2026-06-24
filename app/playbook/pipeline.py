@@ -80,6 +80,27 @@ def _cohort_b_max_hold_hit(entry_time_str: str) -> bool:
         return False
 
 
+def _is_overnight_position(entry_time_str: str) -> bool:
+    """RFC-061 #6: 仓位是否隔夜 (entry 在之前的交易日, 非今日入场).
+
+    用于隔夜跳空止损: cohort B 持夜仓次日开盘若跳空 >3% 快平 (OVERNIGHT_GAP_STOP).
+    用 ET 日期判断. 异常返回 False (不触发, 保守).
+    """
+    if not entry_time_str:
+        return False
+    try:
+        from datetime import datetime
+        _et = _now_et()
+        _entry = datetime.fromisoformat(entry_time_str)
+        if hasattr(_entry, "tzinfo") and _entry.tzinfo is not None:
+            _entry_date = _entry.astimezone(_et).date()
+        else:
+            _entry_date = _entry.date()
+        return _entry_date < datetime.now(_et).date()
+    except Exception:
+        return False
+
+
 def _playbook_enabled() -> bool:
     """总闸门: 读取 config playbook.enabled (默认 False)。
     关闭时三个 pipeline 入口全部早退, 不调 Provider/LLM/DB/飞书。
@@ -1152,9 +1173,18 @@ def monitor_playbook_shadow_exits(scheduler) -> int:
                     exit_reason = "SL_ATR_STOP"
                     exit_price = effective_sl
 
+            # 规则2 (RFC-061 #6): 隔夜跳空止损 — cohort B 持夜仓, 次日跳空亏损>3% (ATR 止损可能因宽 ATR 未触) → 快平
+            # 实现 exit_policy.yaml overnight_loss_stop_pct: 0.03 (此前死配置)
+            _cohort = meta.get("cohort", "A")
+            if not exit_reason and _cohort == "B" and _is_overnight_position(_entry_time_str) and profit_pct <= -3.0:
+                exit_reason = "OVERNIGHT_GAP_STOP"
+                exit_price = current_price
+                logger.warning(
+                    f"[playbook shadow] {symbol} cohort=B 隔夜跳空 profit={profit_pct:.2f}% ≤ -3% → OVERNIGHT_GAP_STOP (RFC-061 #6)"
+                )
+
             # 规则4: 盘末退出 (收盘前8min)
             # RFC-061 A/B: cohort B 盈利仓跳过 EOD 强平, 持有过夜到 ~T+5 (capture 周级 alpha)
-            _cohort = meta.get("cohort", "A")
             if not exit_reason and 0 <= minutes_to_close <= 8 and minutes_from_open > 0:
                 if _cohort == "B" and profit_pct > 0:
                     logger.info(
@@ -1516,8 +1546,8 @@ def monitor_playbook_sim_exits(scheduler) -> int:
 
             # 退出判断 (RFC-061 v2: SL-first 对齐 shadow + LIVE 守卫 + 交易日历 MAX_HOLD)
             # [1] SL_ATR_STOP 最高优先级 (此前 sim 是 PRE_CLOSE>TIME>SL, 收盘窗口掩盖 SL — 修正)
-            # [2] PRE_CLOSE (cohort B 盈利且允许 → 跳过持夜)
-            # [3] TIME_EXIT  [4] MAX_HOLD_T5 (cohort B, 5 交易日)
+            # [2] OVERNIGHT_GAP_STOP (RFC-061 #6: cohort B 持夜仓次日跳空>3% 快平)
+            # [3] PRE_CLOSE (cohort B 盈利且允许 → 跳过持夜)  [4] TIME_EXIT  [5] MAX_HOLD_T5
             _cohort = meta.get("cohort", "A")
             _src = r["source_type"]
             from app.storage.trade_store import cohort_b_skip_allowed as _skip_ok
@@ -1528,6 +1558,13 @@ def monitor_playbook_sim_exits(scheduler) -> int:
                     exit_reason = "SL_ATR_STOP"
                 elif direction == "SHORT" and current_price >= stop_loss:
                     exit_reason = "SL_ATR_STOP"
+            # RFC-061 #6: 隔夜跳空止损 — cohort B 持夜仓, 次日开盘跳空亏损>3% (ATR 止损可能因宽 ATR 未触) → 快平
+            # 实现 exit_policy.yaml overnight_loss_stop_pct: 0.03 (此前死配置, 0 代码读取)
+            if not exit_reason and _skip_allowed and _is_overnight_position(r["entry_time"]) and profit_pct <= -3.0:
+                exit_reason = "OVERNIGHT_GAP_STOP"
+                logger.warning(
+                    f"[playbook sim] {symbol} cohort=B 隔夜跳空 profit={profit_pct:.2f}% ≤ -3% → OVERNIGHT_GAP_STOP (RFC-061 #6)"
+                )
             if not exit_reason and 0 <= minutes_to_close <= 8 and minutes_from_open > 0:
                 if _skip_allowed and profit_pct > 0:
                     logger.info(

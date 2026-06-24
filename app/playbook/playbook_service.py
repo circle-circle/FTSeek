@@ -29,6 +29,18 @@ logger = logging.getLogger(__name__)
 _service_instance = None
 
 
+def _parse_json_field(val: Any, default: Any) -> Any:
+    """安全解析 JSON 字段 (conditions_json / data_quality_json 可能是 str 或已解析)."""
+    if val is None:
+        return default
+    if isinstance(val, (list, dict)):
+        return val
+    try:
+        return json.loads(val)
+    except (ValueError, TypeError):
+        return default
+
+
 def _extract_atr_from_instruction(inst: Dict[str, Any]) -> float:
     """从 playbook 指令提取 ATR 数值, 写入 trade_records.metadata_json.atr (诊断用).
 
@@ -270,6 +282,9 @@ class PlaybookService:
                         "atr": _extract_atr_from_instruction(inst),
                         "thesis": inst.get("thesis", "")[:200],
                         "peak_price": float(entry_price) if entry_price else 0,  # 初始化peak = entry
+                        # P1 (2026-06-24): 因子归因 (同 dual_broker 路径)
+                        "conditions": _parse_json_field(inst.get("conditions_json"), []),
+                        "data_quality": _parse_json_field(inst.get("data_quality_json"), {}),
                     }),
                     "signal_details": _json.dumps({
                         "source": "playbook_shadow",
@@ -492,6 +507,10 @@ class PlaybookService:
                     "atr": _extract_atr_from_instruction(inst),
                     "thesis": inst.get("thesis", "")[:200],
                     "peak_price": float(_fill),
+                    # P1 (2026-06-24): 因子归因 — Playbook 路径此前不写 factor 数据 (trade_records.factor_detail 恒 NULL)
+                    # 写入触发条件 + 数据质量, 供 OKR 按 source/factor 拆分 (与 MAIN_PIPELINE factor_detail 同用途)
+                    "conditions": _parse_json_field(inst.get("conditions_json"), []),
+                    "data_quality": _parse_json_field(inst.get("data_quality_json"), {}),
                 }),
                 "signal_details": _json.dumps({
                     "source": f"playbook_{_mode_label}",

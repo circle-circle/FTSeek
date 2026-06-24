@@ -1214,7 +1214,8 @@ def _check_positions(scheduler):
                 "TECHNICAL_BREACH": ExitReason.STRUCTURE_EXIT,
                 # RFC-061 (2026-06-24): 新增退出原因正确归因 (否则 fallback 到 TRAILING_STOP)
                 "MAX_HOLD_T5": ExitReason.MAX_HOLD_T5, "TIME_EXIT": ExitReason.TIME_EXIT,
-                "SL_ATR_STOP": ExitReason.TRAILING_STOP, "EOD_FORCE_CLOSE": ExitReason.TIME_STOP}
+                "SL_ATR_STOP": ExitReason.TRAILING_STOP, "EOD_FORCE_CLOSE": ExitReason.TIME_STOP,
+                "OVERNIGHT_GAP_STOP": ExitReason.OVERNIGHT_GAP_STOP}
             er = reason_map.get(reason.get("reason", ""), ExitReason.TRAILING_STOP)
             cp = reason.get("exit_price", pos.avg_entry_price)
             close_qty = reason.get("close_qty", 0)
