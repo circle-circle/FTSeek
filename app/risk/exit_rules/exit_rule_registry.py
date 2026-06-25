@@ -80,15 +80,13 @@ class ExitRuleContext:
 class ExitRulePriority(IntEnum):
     """退出规则优先级 (值越小优先级越高)
 
-    与 exit_policy.yaml / position_exit_monitor.scan_positions 的实际语义对齐:
-      - PRE_CLOSE 在原代码中即被单独前置处理, 优先级最高
-      - FLASH_EXIT 是异常动量平仓, 触发后立即清仓
-      - DAY_TRADE / TRAILING_STOP / TIME_STOP 是常态止损止盈
-      - SCALE_OUT 仅做分批减仓, 优先级最低
+    Phase B (2026-06): velocity_exit / time_stop / day_trade_mode / flash_exit
+      规则代码与接线已陆续删除, 枚举现仅保留实际在用的三项。
+      SHORT 方向的 trailing_stop 动态优先级 (30) 见 _get_priorities_for。
     """
     PRE_CLOSE = 10       # 盘末强制退出, 优先级最高
     TRAILING_STOP = 40   # ATR 动态追踪 + Chandelier
-    SCALE_OUT = 60       # 分批止盈
+    SCALE_OUT = 60       # 分批止盈, 优先级最低
 
 
 # 互斥规则定义: 如果 key 触发了, 则 value 中的规则不再检查
@@ -205,7 +203,10 @@ class ExitRuleRegistry:
             direction.value if hasattr(direction, "value") else str(direction or "")
         ).upper()
         if direction_str == "SHORT":
-            priorities["trailing_stop"] = int(ExitRulePriority.DAY_TRADE)  # 30
+            # SHORT 方向 trailing_stop 优先级 40→30, 确保 trailing 成为空头主退出路径,
+            # 避免被下游低优先级规则抢先触发。注: DAY_TRADE 枚举已在 Phase B.3 删除,
+            # 这里直接用字面量 30 (原 int(ExitRulePriority.DAY_TRADE) 会抛 AttributeError)。
+            priorities["trailing_stop"] = 30
         return priorities
 
     # ------------------------------------------------------------------
