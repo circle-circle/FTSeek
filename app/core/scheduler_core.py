@@ -528,10 +528,21 @@ class TradingScheduler:
 
             self.news_pipeline_v2.on_news_passed = _on_news_v2_passed
 
-            logger.info("[NewsV2] 管线已初始化 (observe 模式) | watchlist=%d", len(wl_codes))
+            # P0 (2026-06-26): 盘中停止定时采集；突发新闻应走主动推送，轮询仅在盘前/盘后运行。
+            try:
+                from app.core.config_container import get_config as _news_cfg_getter
+                self._news_v2_skip_market_hours = bool(
+                    _news_cfg_getter().get_dotted("news_v2.skip_market_hours", True)
+                )
+            except Exception:
+                self._news_v2_skip_market_hours = True
+
+            logger.info("[NewsV2] 管线已初始化 (observe 模式) | watchlist=%d | skip_market_hours=%s",
+                        len(wl_codes), self._news_v2_skip_market_hours)
         except Exception as e:
             logger.warning("[NewsV2] 初始化失败 (降级运行): %s", e)
             self.news_pipeline_v2 = None
+            self._news_v2_skip_market_hours = True
 
         # ── 财报日历 (2026-04-29 新增) ──
         # 注: 原 USRiskPipeline (app/risk/us_risk_pipeline.py + app/risk/checks/) 已于
@@ -1377,77 +1388,56 @@ class TradingScheduler:
         except Exception as _ce:
             logger.warning(f"[调度器·Coordinator] 启动回灌失败: {_ce}")
 
-        # ── P0 (2026-06-19): 假日/周末最小化启动 ──
-        # 根因: 假日时启动全部后台线程 → 每个循环各自空跑
-        #       (Juneteenth: ORB 1221 ticks, News 1864, VIX 761, Signal 798)
-        # 修复: 假日/周末只启动必要线程 (position_sync + watchdog)
-        #       其他线程根本不启动 → 零空跑可能
-        #       未来新增线程也自动受保护 (只需加到 _MARKET_DEPENDENT_THREADS)
-        from app.core.scheduler_triggers import get_market_phase, MarketPhase
-        _is_market_closed = get_market_phase() == MarketPhase.WEEKEND
-        if _is_market_closed:
-            logger.info(
-                "[调度器] 🏖️ 假日/周末 — 最小化启动模式 "
-                "(仅 position_sync, 跳过信号扫描/ORB/LLM/VIX/新闻)"
-            )
+        # 信号扫描线程 (循环内部自带 WEEKEND/OVERNIGHT 守卫)
+        self._scan_thread = threading.Thread(
+            target=self._scan_loop, name="SignalScanLoop", daemon=True
+        )
+        self._scan_thread.start()
 
-        # 信号扫描线程 (假日不启动)
-        if not _is_market_closed:
-            self._scan_thread = threading.Thread(
-                target=self._scan_loop, name="SignalScanLoop", daemon=True
-            )
-            self._scan_thread.start()
+        # 持仓监控线程 (循环内部自带 WEEKEND/OVERNIGHT 守卫)
+        self._monitor_thread = threading.Thread(
+            target=self._monitor_loop, name="PositionMonitorLoop", daemon=True
+        )
+        self._monitor_thread.start()
 
-        # 持仓监控线程 (假日不启动 — position_sync 独立处理)
-        if not _is_market_closed:
-            self._monitor_thread = threading.Thread(
-                target=self._monitor_loop, name="PositionMonitorLoop", daemon=True
-            )
-            self._monitor_thread.start()
+        # LLM 策略引擎线程 (循环内部自带 WEEKEND 守卫)
+        self._llm_thread = threading.Thread(
+            target=self._llm_strategy_loop, name="LLMStrategyLoop", daemon=True
+        )
+        self._llm_thread.start()
 
-        # LLM 策略引擎线程 (假日不启动)
-        if not _is_market_closed:
-            self._llm_thread = threading.Thread(
-                target=self._llm_strategy_loop, name="LLMStrategyLoop", daemon=True
-            )
-            self._llm_thread.start()
-
-        # 新闻管线 V2 线程 (假日不启动)
-        if not _is_market_closed and self.news_pipeline_v2:
+        # 新闻管线 V2 线程 (循环内部自带 sleep_if_market_closed 守卫)
+        if self.news_pipeline_v2:
             self._news_v2_thread = threading.Thread(
                 target=self._news_v2_loop, name="NewsV2Loop", daemon=True
             )
             self._news_v2_thread.start()
             logger.info("[NewsV2] 后台采集线程已启动")
 
-        # VIX 监控线程 (假日不启动)
-        if not _is_market_closed and self.vix_monitor:
+        # VIX 监控线程 (循环内部自带 sleep_if_market_closed 守卫)
+        if self.vix_monitor:
             self._vix_thread = threading.Thread(
                 target=self._vix_monitor_loop, name="VIXMonitorLoop", daemon=True
             )
             self._vix_thread.start()
             logger.info("[VIX Monitor] 后台监控线程已启动")
 
-        # ManualPositionGuard 线程 (假日不启动)
-        if not _is_market_closed:
-            self._manual_guard_thread = threading.Thread(
-                target=self._manual_guard_loop, name="ManualGuardLoop", daemon=True
-            )
-            self._manual_guard_thread.start()
-            logger.info("[ManualGuard] 手动仓位风险监控线程已启动")
+        # ManualPositionGuard 线程 (循环内部自带 WEEKEND/OVERNIGHT 守卫)
+        self._manual_guard_thread = threading.Thread(
+            target=self._manual_guard_loop, name="ManualGuardLoop", daemon=True
+        )
+        self._manual_guard_thread.start()
+        logger.info("[ManualGuard] 手动仓位风险监控线程已启动")
 
-        # 内部人集群买入每日扫描线程 (假日不启动)
-        # 6/19: SEC EDGAR 缓存反序列化 bug 修复后启用
-        # 低频扫描: 每天盘前 1 次, 覆盖 watchlist + ORB universe (~40 symbols)
-        if not _is_market_closed:
-            self._insider_scan_thread = threading.Thread(
-                target=self._insider_scan_loop, name="InsiderScanLoop", daemon=True
-            )
-            self._insider_scan_thread.start()
-            logger.info("[InsiderScan] 每日内部人集群扫描线程已启动")
+        # 内部人集群买入每日扫描线程 (循环内部自带 sleep_if_market_closed 守卫)
+        self._insider_scan_thread = threading.Thread(
+            target=self._insider_scan_loop, name="InsiderScanLoop", daemon=True
+        )
+        self._insider_scan_thread.start()
+        logger.info("[InsiderScan] 每日内部人集群扫描线程已启动")
 
-        # RFC-056: ORB 辅线引擎 (假日不启动)
-        if not _is_market_closed and self.orb_engine:
+        # RFC-056: ORB 辅线引擎 (循环内部自带 sleep_if_market_closed 守卫)
+        if self.orb_engine:
             self.orb_engine.start()
 
         # 若启动时正处于交易时间，立即触发一次扫描（不等 30 分钟冷启动）
@@ -1747,6 +1737,13 @@ class TradingScheduler:
                 now = datetime.now(ET)
 
                 if phase == MarketPhase.TRADING:
+                    # Catch-up: 盘前因重启/超时错过生成时的补救 (DB幂等, 已有指令则跳过)
+                    try:
+                        from app.playbook.pipeline import run_playbook_generate
+                        run_playbook_generate(self)
+                    except Exception as _e:
+                        logger.debug(f"[playbook] TRADING catch-up生成异常 (已隔离): {_e}")
+
                     # Playbook: 盘中自动执行 triggered 指令 (OKR Week 1: 数据积累)
                     # 每30分钟检查一次是否有新的 triggered 指令需要自动执行
                     if not hasattr(self, '_playbook_auto_execute_last_run'):
@@ -1760,7 +1757,14 @@ class TradingScheduler:
                             self._playbook_auto_execute_last_run = now
                         except Exception as _e:
                             logger.debug(f"[Playbook] 盘中自动执行异常 (已隔离): {_e}")
-                    
+
+                    # Phase 1 (2026-06-24): futu_simulate 真实模拟仓位退出监控 (broker 平仓)
+                    try:
+                        from app.playbook.pipeline import monitor_playbook_sim_exits
+                        monitor_playbook_sim_exits(self)
+                    except Exception as _e:
+                        logger.debug(f"[Playbook] sim exit monitor 异常 (已隔离): {_e}")
+
                     # 🚨 盘中休眠：禁止主动扫描，LLM 进入待机状态
                     # LLM 仅作为异步风控员响应触发请求
                     for _ in range(60):
@@ -1877,12 +1881,17 @@ class TradingScheduler:
     def _news_v2_loop(self):
         """新闻管线 V2 后台采集循环 (observe 模式，零副作用)
         P0-5 修复 (2026-05-03): 持久化 event loop，不再每 180s 创建/销毁
+        P0 (2026-06-26): 盘中 (09:30-16:00 ET) 跳过定时采集，突发新闻走主动推送。
         """
         import asyncio
-        
-        logger.info("[NewsV2] 管线采集循环已启动 (interval=180s, observe模式)")
+        from app.core.scheduler_triggers import (
+            get_market_phase, MarketPhase, sleep_if_market_closed, interruptible_sleep
+        )
+
+        logger.info("[NewsV2] 管线采集循环已启动 (interval=180s, observe模式, skip_market_hours=%s)",
+                    getattr(self, "_news_v2_skip_market_hours", True))
         self._news_v2_running = True
-        
+
         # P0-5: 创建一次 event loop 并复用
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
@@ -1890,8 +1899,14 @@ class TradingScheduler:
             while self._news_v2_running and self.running:
                 try:
                     # 第二层防线: 服务跨午夜进入假日时，运行时守卫
-                    from app.core.scheduler_triggers import sleep_if_market_closed
                     if sleep_if_market_closed(180, lambda: self._news_v2_running and self.running):
+                        continue
+
+                    # P0 (2026-06-26): 盘中跳过定时轮询，仅盘前/盘后/周末采集
+                    if self._news_v2_skip_market_hours and get_market_phase() == MarketPhase.TRADING:
+                        logger.info("[NewsV2] 交易时段跳过定时采集，等待下一轮")
+                        if interruptible_sleep(180, lambda: self._news_v2_running and self.running):
+                            return
                         continue
 
                     if self.news_pipeline_v2:
@@ -1900,12 +1915,10 @@ class TradingScheduler:
                             logger.info("[NewsV2] 本轮通过 %d 条新闻", len(passed))
                 except Exception as e:
                     logger.warning("[NewsV2] 采集异常: %s", e)
-                
+
                 # 等待 180 秒
-                for _ in range(180):
-                    if not self._news_v2_running or not self.running:
-                        return
-                    time.sleep(1)
+                if interruptible_sleep(180, lambda: self._news_v2_running and self.running):
+                    return
         finally:
             loop.close()
         

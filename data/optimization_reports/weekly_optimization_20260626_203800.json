@@ -1,0 +1,273 @@
+{
+  "generated_at": "2026-06-26T20:38:00Z",
+  "train_window": [
+    "2026-05-20",
+    "2026-06-19"
+  ],
+  "valid_window": [
+    "2026-06-19",
+    "2026-06-26"
+  ],
+  "train_size": 0,
+  "valid_size": 0,
+  "best_params": {
+    "min_signal_strength": 50.0,
+    "stop_loss_pct": -0.045,
+    "take_profit_pct": 0.025,
+    "trailing_stop_trigger": 0.01
+  },
+  "best_score": -999.0,
+  "best_is_stats": {
+    "n_trades": 0,
+    "win_rate": 0.0,
+    "sharpe": 0.0,
+    "total_return": 0.0,
+    "max_drawdown": 0.0,
+    "avg_pnl": 0.0
+  },
+  "best_oos_stats": {
+    "n_trades": 0,
+    "win_rate": 0.0,
+    "sharpe": 0.0,
+    "total_return": 0.0,
+    "max_drawdown": 0.0,
+    "avg_pnl": 0.0
+  },
+  "live_params": {
+    "min_signal_strength": 50.0,
+    "stop_loss_pct": -0.045,
+    "take_profit_pct": 0.025,
+    "trailing_stop_trigger": 0.01
+  },
+  "overfit_warning": false,
+  "degradation_ratio": 0.0,
+  "sensitivity": {
+    "min_signal_strength": [
+      {
+        "delta_pct": -10.0,
+        "value": 45.0,
+        "sharpe": 0.0,
+        "win_rate": 0.0,
+        "max_drawdown": 0.0,
+        "n_trades": 0
+      },
+      {
+        "delta_pct": -5.0,
+        "value": 47.5,
+        "sharpe": 0.0,
+        "win_rate": 0.0,
+        "max_drawdown": 0.0,
+        "n_trades": 0
+      },
+      {
+        "delta_pct": 0.0,
+        "value": 50.0,
+        "sharpe": 0.0,
+        "win_rate": 0.0,
+        "max_drawdown": 0.0,
+        "n_trades": 0
+      },
+      {
+        "delta_pct": 5.0,
+        "value": 52.5,
+        "sharpe": 0.0,
+        "win_rate": 0.0,
+        "max_drawdown": 0.0,
+        "n_trades": 0
+      },
+      {
+        "delta_pct": 10.0,
+        "value": 55.0,
+        "sharpe": 0.0,
+        "win_rate": 0.0,
+        "max_drawdown": 0.0,
+        "n_trades": 0
+      }
+    ],
+    "stop_loss_pct": [
+      {
+        "delta_pct": -10.0,
+        "value": -0.15,
+        "sharpe": 0.0,
+        "win_rate": 0.0,
+        "max_drawdown": 0.0,
+        "n_trades": 0
+      },
+      {
+        "delta_pct": -5.0,
+        "value": -0.15,
+        "sharpe": 0.0,
+        "win_rate": 0.0,
+        "max_drawdown": 0.0,
+        "n_trades": 0
+      },
+      {
+        "delta_pct": 0.0,
+        "value": -0.15,
+        "sharpe": 0.0,
+        "win_rate": 0.0,
+        "max_drawdown": 0.0,
+        "n_trades": 0
+      },
+      {
+        "delta_pct": 5.0,
+        "value": -0.15,
+        "sharpe": 0.0,
+        "win_rate": 0.0,
+        "max_drawdown": 0.0,
+        "n_trades": 0
+      },
+      {
+        "delta_pct": 10.0,
+        "value": -0.15,
+        "sharpe": 0.0,
+        "win_rate": 0.0,
+        "max_drawdown": 0.0,
+        "n_trades": 0
+      }
+    ],
+    "take_profit_pct": [
+      {
+        "delta_pct": -10.0,
+        "value": 0.03,
+        "sharpe": 0.0,
+        "win_rate": 0.0,
+        "max_drawdown": 0.0,
+        "n_trades": 0
+      },
+      {
+        "delta_pct": -5.0,
+        "value": 0.03,
+        "sharpe": 0.0,
+        "win_rate": 0.0,
+        "max_drawdown": 0.0,
+        "n_trades": 0
+      },
+      {
+        "delta_pct": 0.0,
+        "value": 0.03,
+        "sharpe": 0.0,
+        "win_rate": 0.0,
+        "max_drawdown": 0.0,
+        "n_trades": 0
+      },
+      {
+        "delta_pct": 5.0,
+        "value": 0.03,
+        "sharpe": 0.0,
+        "win_rate": 0.0,
+        "max_drawdown": 0.0,
+        "n_trades": 0
+      },
+      {
+        "delta_pct": 10.0,
+        "value": 0.03,
+        "sharpe": 0.0,
+        "win_rate": 0.0,
+        "max_drawdown": 0.0,
+        "n_trades": 0
+      }
+    ],
+    "trailing_stop_trigger": [
+      {
+        "delta_pct": -10.0,
+        "value": 0.02,
+        "sharpe": 0.0,
+        "win_rate": 0.0,
+        "max_drawdown": 0.0,
+        "n_trades": 0
+      },
+      {
+        "delta_pct": -5.0,
+        "value": 0.02,
+        "sharpe": 0.0,
+        "win_rate": 0.0,
+        "max_drawdown": 0.0,
+        "n_trades": 0
+      },
+      {
+        "delta_pct": 0.0,
+        "value": 0.02,
+        "sharpe": 0.0,
+        "win_rate": 0.0,
+        "max_drawdown": 0.0,
+        "n_trades": 0
+      },
+      {
+        "delta_pct": 5.0,
+        "value": 0.02,
+        "sharpe": 0.0,
+        "win_rate": 0.0,
+        "max_drawdown": 0.0,
+        "n_trades": 0
+      },
+      {
+        "delta_pct": 10.0,
+        "value": 0.02,
+        "sharpe": 0.0,
+        "win_rate": 0.0,
+        "max_drawdown": 0.0,
+        "n_trades": 0
+      }
+    ]
+  },
+  "bootstrap_ci": {
+    "is_sharpe": {
+      "low": 0.0,
+      "high": 0.0,
+      "median": 0.0
+    },
+    "oos_sharpe": {
+      "low": 0.0,
+      "high": 0.0,
+      "median": 0.0
+    },
+    "is_total_return": {
+      "low": 0.0,
+      "high": 0.0,
+      "median": 0.0
+    },
+    "oos_total_return": {
+      "low": 0.0,
+      "high": 0.0,
+      "median": 0.0
+    }
+  },
+  "safe_zones": {
+    "min_signal_strength": [
+      45.0,
+      55.0
+    ],
+    "stop_loss_pct": [
+      -0.15,
+      -0.15
+    ],
+    "take_profit_pct": [
+      0.03,
+      0.03
+    ],
+    "trailing_stop_trigger": [
+      0.02,
+      0.02
+    ]
+  },
+  "top_candidates": [
+    {
+      "params": {
+        "min_signal_strength": 50.0,
+        "stop_loss_pct": -0.045,
+        "take_profit_pct": 0.025,
+        "trailing_stop_trigger": 0.01
+      },
+      "score": -999.0,
+      "is_sharpe": 0.0,
+      "oos_sharpe": 0.0,
+      "is_max_dd": 0.0
+    }
+  ],
+  "notes": [
+    "训练集样本不足 (0 < 20), 回退到使用最近 60 天全部数据进行训练。",
+    "网格搜索空间: 480 个候选 (上限 200)",
+    "所有候选参数均被淘汰, 返回当前实盘参数作为占位。"
+  ]
+}

@@ -82,10 +82,9 @@ def validate_order(service: "ManualOrderService", order: "ManualOrder") -> List[
     # 4. 理由可选 (不再强制)
 
     # 5. 实盘额外校验
-    if service._is_live():
-        allow = service._read_env("ALLOW_REAL_TRADING", "false").lower()
-        if allow != "true":
-            errors.append("ALLOW_REAL_TRADING 未设为 true，实盘下单被拦截")
+    # 2026-06-24: ALLOW_REAL_TRADING 是 AUTO pipeline (playbook/ORB) 的安全锁,
+    # 手动交易不受此限制 — 用户通过 dashboard 下单是显式行为, 已有 kill switch + PDT + 金额上限保护.
+    # 仅保留 PDT + 仓位 + 回撤 等风控检查 (下方).
 
     # 6. [P1 2026-06-13] PDT Guard (实盘 only)
     if service._is_live() and cur_price > 0:
@@ -98,24 +97,13 @@ def validate_order(service: "ManualOrderService", order: "ManualOrder") -> List[
         except Exception as _pdt_err:
             logger.debug(f"[手动下单] PDT 检查跳过: {_pdt_err}")
 
-    # 7. [P1 2026-06-13] 仓位集中度检查 (25%/65%/80%)
-    # P0-fix (2026-06-14): 扩展到 SELL+SHORT (开新空仓), 原仅 BUY 被绕过
+    # 仓位集中度检查已移除 (2026-06-26): 手动 Dashboard 下单由用户决策,
+    # 已有 kill switch + 金额上限 + 购买力 + 回撤 + BLACKOUT + 预算80% + 价格偏离 足够保护.
+    # pre_trade_safety_check 的单品种/方向/总敞口上限适用于自动 pipeline, 不适用于手动下单.
     _is_opening = (
         (order.action == "BUY" and order.direction == "LONG")
         or (order.action == "SELL" and order.direction == "SHORT")
     )
-    if cur_price > 0 and _is_opening:
-        try:
-            from app.risk.pre_trade_gate import pre_trade_safety_check
-            _dir = order.direction
-            _ok, _max_qty, _reason = pre_trade_safety_check(
-                symbol=order.symbol, direction=_dir,
-                quantity=order.quantity, price=cur_price,
-            )
-            if not _ok:
-                errors.append(f"仓位限制: {_reason}")
-        except Exception as _pt_err:
-            logger.debug(f"[手动下单] 仓位检查跳过: {_pt_err}")
 
     # 7.5. [P0 2026-06-14] 购买力检查 (开仓前必须有足够 buying_power)
     # 修复 (2026-06-15): capital_safety 缓存可能滞后 30s,
@@ -196,13 +184,21 @@ def validate_order(service: "ManualOrderService", order: "ManualOrder") -> List[
 
     # 11. [P0 2026-06-15] 限价单价格偏离检测 (防止输错价格导致意外成交)
     # SNDK 事故复盘: 买入限价远高于/远低于市价时无警告, 立即成交导致亏损
-    if (order.order_type == "LIMIT" and order.price
+    # 2026-06-25: 盘前/夜盘 cur_price 为上次常规收盘价, 不反映盘外报价 → 跳过检测
+    # 2026-06-25: ≥10% 从硬拦截改为软拦截 (与前端 2026-06-24 strong-warn 改动对齐)
+    _skip_deviation = False
+    try:
+        from app.core.scheduler_triggers import get_market_phase, MarketPhase
+        _skip_deviation = get_market_phase() != MarketPhase.TRADING
+    except Exception:
+        pass
+
+    if (not _skip_deviation and order.order_type == "LIMIT" and order.price
             and order.price > 0 and cur_price > 0):
         _deviation = abs(order.price - cur_price) / cur_price * 100
-        _is_hard = _deviation >= service.PRICE_DEVIATION_HARD_PCT
         _is_warn = _deviation >= service.PRICE_DEVIATION_WARN_PCT
 
-        if _is_hard or _is_warn:
+        if _is_warn:
             # 构造场景化消息
             if order.action == "BUY":
                 if order.price > cur_price:
@@ -227,15 +223,11 @@ def validate_order(service: "ManualOrderService", order: "ManualOrder") -> List[
                         f"达 {_deviation:.1f}%，订单不会立即成交（请确认是否输入正确）"
                     )
 
-            _prefix = "🛑" if _is_hard else "⚠️"
+            _prefix = "🛑" if _deviation >= service.PRICE_DEVIATION_HARD_PCT else "⚠️"
             _msg = f"{_prefix} 价格偏离: {_scenario}"
 
-            if _is_hard:
-                # ≥10% 硬拦截, 不可绕过
-                errors.append(_msg)
-                logger.warning(f"[价格偏离] 硬拦截: {order.symbol} {_scenario}")
-            elif not order.acknowledge_price_warning:
-                # ≥5% 软拦截, 需前端确认
+            if not order.acknowledge_price_warning:
+                # 软拦截: 需前端确认 (≥5% 和 ≥10% 统一逻辑)
                 errors.append(_msg + " (如需继续请在前端确认)")
                 logger.info(f"[价格偏离] 软拦截: {order.symbol} {_scenario}")
 

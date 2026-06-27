@@ -245,3 +245,68 @@
 2026-06-19 04:00:45,630 [PostAudit] INFO: [ConfigContainer] 已加载 62 个配置节
 2026-06-19 04:00:45,631 [PostAudit] INFO: [CatalystReview] 今日无催化事件, 跳过回看
 2026-06-19 04:00:45,631 [PostAudit] INFO: 🧪 催化回看: 无数据或已禁用
+2026-06-23 04:00:27,587 [PostAudit] INFO: 🚀 开始美股盘后归因辩论报告...
+2026-06-23 04:00:27,590 [PostAudit] INFO: 📊 收集归因数据...
+2026-06-23 04:00:27,593 [PostAudit] INFO: 🔥 交叉验证归因视角...
+2026-06-23 04:00:28,106 [PostAudit] INFO: [飞书] 推送成功
+2026-06-23 04:00:28,449 [PostAudit] INFO: [钉钉] send_text 成功: **2026-06-22**
+2026-06-23 04:00:28,450 [PostAudit] INFO: [钉钉] 推送成功
+2026-06-23 04:00:28,450 [PostAudit] INFO: ✅ 归因辩论报告已推送 (飞书:✓ 钉钉:✓)
+2026-06-23 04:00:28,450 [PostAudit] INFO: 📄 报告已保存: /opt/ftseek/FTSeek-US/logs/audit/attribution_debate_2026-06-22.md
+2026-06-23 04:00:28,457 [PostAudit] INFO: 🧪 开始催化回看...
+2026-06-23 04:00:28,836 [PostAudit] INFO: ✅ 统一配置已加载: /opt/ftseek/FTSeek-US/config/unified_config.yaml
+2026-06-23 04:00:29,149 [PostAudit] INFO: [ConfigContainer] 已加载 62 个配置节
+2026-06-23 04:00:29,151 [PostAudit] INFO: [CatalystReview] 今日无催化事件, 跳过回看
+2026-06-23 04:00:29,151 [PostAudit] INFO: 🧪 催化回看: 无数据或已禁用
+2026-06-24 04:00:36,949 [PostAudit] INFO: 🚀 开始美股盘后归因辩论报告...
+2026-06-24 04:00:36,952 [PostAudit] INFO: 📊 收集归因数据...
+2026-06-24 04:00:36,966 [PostAudit] INFO: 🔥 交叉验证归因视角...
+2026-06-24 04:00:37,400 [PostAudit] INFO: [飞书] 推送成功
+2026-06-24 04:00:37,738 [PostAudit] INFO: [钉钉] send_text 成功: **2026-06-23** (美东) | equity=$79,679
+2026-06-24 04:00:37,739 [PostAudit] INFO: [钉钉] 推送成功
+2026-06-24 04:00:37,739 [PostAudit] INFO: ✅ 归因辩论报告已推送 (飞书:✓ 钉钉:✓)
+2026-06-24 04:00:37,739 [PostAudit] INFO: 📄 报告已保存: /opt/ftseek/FTSeek-US/logs/audit/attribution_debate_2026-06-23.md
+2026-06-24 04:00:37,747 [PostAudit] INFO: 🧪 开始催化回看...
+2026-06-24 04:00:37,960 [PostAudit] INFO: ✅ 统一配置已加载: /opt/ftseek/FTSeek-US/config/unified_config.yaml
+2026-06-24 04:00:38,188 [PostAudit] INFO: [ConfigContainer] 已加载 62 个配置节
+2026-06-24 04:00:38,190 [PostAudit] INFO: [CatalystReview] 今日无催化事件, 跳过回看
+2026-06-24 04:00:38,190 [PostAudit] INFO: 🧪 催化回看: 无数据或已禁用
+2026-06-25 04:00:46,682 [PostAudit] INFO: 🚀 开始美股盘后归因辩论报告...
+2026-06-25 04:00:46,685 [PostAudit] INFO: 📊 收集归因数据...
+2026-06-25 04:00:46,690 [PostAudit] INFO: 🔥 交叉验证归因视角...
+2026-06-25 04:00:47,182 [PostAudit] INFO: [飞书] 推送成功
+2026-06-25 04:00:47,485 [PostAudit] INFO: [钉钉] send_text 成功: **2026-06-24** (美东) | equity=$99,938
+2026-06-25 04:00:47,485 [PostAudit] INFO: [钉钉] 推送成功
+2026-06-25 04:00:47,485 [PostAudit] INFO: ✅ 归因辩论报告已推送 (飞书:✓ 钉钉:✓)
+2026-06-25 04:00:47,485 [PostAudit] INFO: 📄 报告已保存: /opt/ftseek/FTSeek-US/logs/audit/attribution_debate_2026-06-24.md
+2026-06-25 04:00:47,490 [PostAudit] INFO: 🧪 开始催化回看...
+2026-06-25 04:00:47,681 [PostAudit] INFO: ✅ 统一配置已加载: /opt/ftseek/FTSeek-US/config/unified_config.yaml
+2026-06-25 04:00:47,836 [PostAudit] INFO: [ConfigContainer] 已加载 62 个配置节
+2026-06-25 04:00:47,838 [PostAudit] INFO: [CatalystReview] 今日无催化事件, 跳过回看
+2026-06-25 04:00:47,838 [PostAudit] INFO: 🧪 催化回看: 无数据或已禁用
+2026-06-26 04:00:11,054 [PostAudit] INFO: 🚀 开始美股盘后归因辩论报告...
+2026-06-26 04:00:11,056 [PostAudit] INFO: 📊 收集归因数据...
+2026-06-26 04:00:11,060 [PostAudit] INFO: 🔥 交叉验证归因视角...
+2026-06-26 04:00:11,552 [PostAudit] INFO: [飞书] 推送成功
+2026-06-26 04:00:11,889 [PostAudit] INFO: [钉钉] send_text 成功: **2026-06-25** (美东) | equity=$100,902
+2026-06-26 04:00:11,890 [PostAudit] INFO: [钉钉] 推送成功
+2026-06-26 04:00:11,890 [PostAudit] INFO: ✅ 归因辩论报告已推送 (飞书:✓ 钉钉:✓)
+2026-06-26 04:00:11,890 [PostAudit] INFO: 📄 报告已保存: /opt/ftseek/FTSeek-US/logs/audit/attribution_debate_2026-06-25.md
+2026-06-26 04:00:11,894 [PostAudit] INFO: 🧪 开始催化回看...
+2026-06-26 04:00:12,092 [PostAudit] INFO: ✅ 统一配置已加载: /opt/ftseek/FTSeek-US/config/unified_config.yaml
+2026-06-26 04:00:12,251 [PostAudit] INFO: [ConfigContainer] 已加载 62 个配置节
+2026-06-26 04:00:12,252 [PostAudit] INFO: [CatalystReview] 今日无催化事件, 跳过回看
+2026-06-26 04:00:12,252 [PostAudit] INFO: 🧪 催化回看: 无数据或已禁用
+2026-06-27 04:00:33,919 [PostAudit] INFO: 🚀 开始美股盘后归因辩论报告...
+2026-06-27 04:00:33,923 [PostAudit] INFO: 📊 收集归因数据...
+2026-06-27 04:00:33,928 [PostAudit] INFO: 🔥 交叉验证归因视角...
+2026-06-27 04:00:34,411 [PostAudit] INFO: [飞书] 推送成功
+2026-06-27 04:00:34,739 [PostAudit] INFO: [钉钉] send_text 成功: **2026-06-26** (美东) | equity=$99,098
+2026-06-27 04:00:34,739 [PostAudit] INFO: [钉钉] 推送成功
+2026-06-27 04:00:34,739 [PostAudit] INFO: ✅ 归因辩论报告已推送 (飞书:✓ 钉钉:✓)
+2026-06-27 04:00:34,739 [PostAudit] INFO: 📄 报告已保存: /opt/ftseek/FTSeek-US/logs/audit/attribution_debate_2026-06-26.md
+2026-06-27 04:00:34,748 [PostAudit] INFO: 🧪 开始催化回看...
+2026-06-27 04:00:35,184 [PostAudit] INFO: ✅ 统一配置已加载: /opt/ftseek/FTSeek-US/config/unified_config.yaml
+2026-06-27 04:00:35,511 [PostAudit] INFO: [ConfigContainer] 已加载 62 个配置节
+2026-06-27 04:00:35,512 [PostAudit] INFO: [CatalystReview] 今日无催化事件, 跳过回看
+2026-06-27 04:00:35,513 [PostAudit] INFO: 🧪 催化回看: 无数据或已禁用

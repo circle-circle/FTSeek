@@ -154,14 +154,30 @@ class VIXMonitor:
                 return self._cache.get("vix")
 
         # 网络请求在锁外执行 (避免阻塞其他线程)
-        # 多级 fallback: FRED → AlphaVantage → Finnhub(VIXY代理) → Yahoo
-        vix = self._fetch_vix_fred()
-        if vix is None:
-            vix = self._fetch_vix_alphavantage()
-        if vix is None:
+        # P0 修复 (2026-06-21): 交易时段优先 Finnhub VIXY (实时), FRED 降为 fallback
+        # 根因: FRED VIXCLS 是日频序列, 盘中永不变 → Rapid Regime Change 检测失效
+        from app.core.scheduler_triggers import get_market_phase, MarketPhase
+        phase = get_market_phase()
+        is_trading = phase == MarketPhase.TRADING
+
+        if is_trading:
+            # 交易时段: VIXY 实时 → FRED 日频 fallback
             vix = self._fetch_vix_finnhub()
-        if vix is None:
-            vix = self._fetch_vix_fallback()
+            if vix is None:
+                vix = self._fetch_vix_fred()
+            if vix is None:
+                vix = self._fetch_vix_alphavantage()
+            if vix is None:
+                vix = self._fetch_vix_fallback()
+        else:
+            # 非交易时段: FRED 日频 → VIXY fallback
+            vix = self._fetch_vix_fred()
+            if vix is None:
+                vix = self._fetch_vix_alphavantage()
+            if vix is None:
+                vix = self._fetch_vix_finnhub()
+            if vix is None:
+                vix = self._fetch_vix_fallback()
 
         if vix:
             self._mark_success()

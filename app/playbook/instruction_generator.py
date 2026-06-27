@@ -28,6 +28,7 @@ from app.playbook.condition_taxonomy import (
     validate_conditions,
     get_taxonomy_for_prompt,
 )
+from app.playbook.config import get_playbook_config
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +91,11 @@ class Instruction:
     # 数据来源追溯
     entry_price_source: str = ""  # e.g. "technical.price (Futu LV3, 2026-06-18T09:30:00)"
     atr_source: str = ""
+    decision_id: str = ""  # 关联 VotingCoordinator 的 decision_id (IC 归因链路)
+    # Horizon 决策 (2026-06-26)
+    horizon: str = "short"
+    horizon_confidence: float = 0.0
+    horizon_reasoning: Dict[str, Any] = field(default_factory=dict)
 
 
 # ========== 数值计算引擎 (纯 Python, 确定性) ==========
@@ -100,92 +106,128 @@ def compute_instruction_values(
     total_equity: float,
     risk_pct: float = 1.0,
     regime_multiplier: float = 1.0,
-    rr_ratio: float = 2.0,
-    atr_multiplier: float = 1.5,
+    rr_ratio: float = None,
+    atr_multiplier: float = None,
+    horizon: str = "short",
 ) -> Dict[str, Any]:
     """
     基于 LLM 决策 + 原始数据，确定性计算所有数值。
-    
+
     LLM 不参与任何数值计算。所有公式都在这里，可测试、可追溯。
-    
+
     Args:
         decision: LLM 输出 {symbol, direction, selected_conditions, thesis_template}
         data: 该标的的 PlaybookData (6 维度原始数据)
         total_equity: 总资金
         risk_pct: 单笔风险占比 (默认 1%)
         regime_multiplier: Regime 仓位乘数
-        rr_ratio: 风险回报比 (默认 2:1)
-        atr_multiplier: ATR 止损倍数 (默认 1.5x)
-    
+        rr_ratio: 风险回报比, None 时读配置
+        atr_multiplier: ATR 止损倍数, None 时读配置 (当前未使用, 保留兼容)
+        horizon: 持有周期 ("short" / "long"), 影响 rr_ratio
+
     Returns:
         计算后的数值字段 dict
     """
+    # 读取配置 (未显式传入时使用统一配置)
+    pb_cfg = get_playbook_config()
+    # 2026-06-26: 按 horizon 取 R:R 和止损参数, 优先从 playbook_horizon.yaml 读取
+    _horizon_params = pb_cfg.get_horizon_params(horizon)
+    if rr_ratio is None:
+        rr_ratio = float(_horizon_params.get("rr_ratio", 1.0 if horizon == "short" else 2.5))
+    if atr_multiplier is None:
+        atr_multiplier = float(_horizon_params.get("atr_multiplier", 2.0))
+
     result = {}
     tech = data.technical
     price = tech.price or 0
-    
+
     if price <= 0 or decision["direction"] == "SKIP":
         return result
-    
-    # ── 入场价 = 当前价 (确定性，不猜) ──
-    entry_price = price
-    result["entry_price"] = round(entry_price, 2)
-    result["entry_price_source"] = f"technical.price={price:.2f} (quality={tech.quality})"
-    
-    # ── 止损 = entry - ATR × multiplier ──
-    # ⚠️ Router 的 ATR 来自 K_1M (1分钟K线), 远小于日级 ATR
-    # Playbook 是日级策略, SL/TP 必须用日K ATR
-    atr = tech.atr_14
-    atr_source_label = "technical.atr_14"
-    if atr is not None and atr > 0 and atr < price * 0.005:
-        # ATR 太小 (< 0.5% 价格), 说明是分钟级数据, 拉日K重算
-        try:
-            from app.data.futu_lv3_provider import FutuLV3Provider
-            futu = FutuLV3Provider()
-            sym = getattr(data, 'symbol', '')
-            if sym.startswith('US.'):
-                daily_bars = futu.get_daily_kline(sym, count=30)
-                if daily_bars and len(daily_bars) >= 15:
-                    highs = [b['high'] for b in daily_bars[-14:]]
-                    lows = [b['low'] for b in daily_bars[-14:]]
-                    closes = [b['close'] for b in daily_bars[-14:]]
-                    prev_closes = [b['close'] for b in daily_bars[-15:-1]]
-                    trs = []
-                    for h, l, pc in zip(highs, lows, prev_closes):
-                        trs.append(max(h - l, abs(h - pc), abs(l - pc)))
-                    daily_atr = sum(trs) / len(trs)
-                    if daily_atr > atr:
-                        atr = daily_atr
-                        atr_source_label = "daily_kline.atr_14"
-        except Exception:
-            pass  # 降级用分钟 ATR
-    if atr is None or atr <= 0:
-        # ATR 缺失时用 2% 价格作为 fallback
-        atr = entry_price * 0.02
-        result["atr_source"] = f"FALLBACK: price×2%={atr:.2f} (ATR missing)"
+
+    # ── 入场价 = 可成交价 (BUY 用 ask, SELL_SHORT 用 bid) ──
+    # 2026-06-25 修复: 盘前/非交易时段 last_price 可能严重滞后, 导致 entry/stop 全部失效.
+    # 例如 MU last_price=$1048 但 bid/ask=$1242, 按旧价做空止损瞬间击穿.
+    if decision["direction"] == "BUY":
+        entry_price = tech.ask or price or 0
+    elif decision["direction"] == "SELL_SHORT":
+        entry_price = tech.bid or price or 0
     else:
-        result["atr_source"] = f"{atr_source_label}={atr:.2f} (quality={tech.quality})"
-    
-    sl_distance = atr * atr_multiplier
-    stop_loss = entry_price - sl_distance if decision["direction"] == "BUY" else entry_price + sl_distance
+        entry_price = price or 0
+
+    if entry_price <= 0 or decision["direction"] == "SKIP":
+        return result
+
+    result["entry_price"] = round(entry_price, 2)
+    result["entry_price_source"] = (
+        f"direction={decision['direction']}, "
+        f"price={price:.2f}, bid={getattr(tech, 'bid', 0) or 0:.2f}, ask={getattr(tech, 'ask', 0) or 0:.2f}"
+    )
+
+    # ── 止损 = 固定百分比 (配置化, 方向差异化) ──
+    # 2026-06-25: 删 ATR 计算链, 92%被cap覆盖, ATR空转
+    # 2026-06-27 辩论DEB-20260627: BUY 2%太紧(6笔0%WR, 开盘噪声扫损), 改2.5%
+    #   SHORT保持2.0% (SHORT SL 2笔-$110, 损失可控)
+    #   配置来源: playbook_horizon.yaml short_horizon.buy_fixed_stop_loss_pct
+    _direction = decision["direction"]
+    if _direction == "BUY":
+        _max_loss_pct = float(_horizon_params.get("buy_fixed_stop_loss_pct",
+                            pb_cfg.get("fixed_stop_loss_pct", 2.5)))
+    else:
+        _max_loss_pct = float(_horizon_params.get("sell_fixed_stop_loss_pct",
+                            pb_cfg.get("fixed_stop_loss_pct", 2.0)))
+    sl_distance = entry_price * (_max_loss_pct / 100.0)
+    if _direction == "BUY":
+        stop_loss = entry_price - sl_distance
+    else:
+        stop_loss = entry_price + sl_distance
+
     result["stop_loss"] = round(stop_loss, 2)
-    
+    result["atr_source"] = f"FIXED_{_max_loss_pct}%: sl_distance={sl_distance:.2f}"
+
     # ── 止盈 = entry + R:R × sl_distance ──
     tp_distance = sl_distance * rr_ratio
     take_profit = entry_price + tp_distance if decision["direction"] == "BUY" else entry_price - tp_distance
     result["take_profit"] = round(take_profit, 2)
     result["risk_reward"] = rr_ratio
-    
+
     # ── 仓位 = risk_amount / per_share_risk ──
-    risk_amount = total_equity * (risk_pct / 100) * regime_multiplier
+    # P0: 用配置 risk_base_capital (默认 $82K) 作为 risk_base, 不读 sim BP ($313K)
+    # 原因: sim BP 是 $313K → 单仓 $25K → 切实盘后仓位缩3.8x, PnL不可比
+    # 用 $82K: sim 和 live 仓位 1:1, OKR 数据直接代表实盘表现
+    from app.risk.capital_safety import get_capital_safety_system
+    _water_mult = 1.0
+    _risk_base = float(pb_cfg.get("risk_base_capital", 82000.0))
+    try:
+        _cs = get_capital_safety_system()
+        _pos_mult = _cs.get_position_multiplier()
+        _risk_mult = _cs.get_risk_multiplier()
+        _water_mult = min(_pos_mult, _risk_mult)
+    except Exception:
+        pass
+
+    risk_amount = _risk_base * (risk_pct / 100) * regime_multiplier * _water_mult
     per_share_risk = abs(entry_price - stop_loss)
     if per_share_risk > 0:
         position_size = int(risk_amount / per_share_risk)
     else:
         position_size = 0
+
+    # P0: max_position_pct 截断 — 单仓位不超过 risk_base 的配置比例
+    _max_position_pct = float(pb_cfg.get("max_position_pct", 0.08))
+    _max_position_value = _risk_base * _max_position_pct
+    _position_value = position_size * entry_price
+    if _position_value > _max_position_value:
+        _old_qty = position_size
+        position_size = max(1, int(_max_position_value / entry_price))
+        logger.info(
+            f"[Playbook] {decision.get('symbol','')} 仓位截断: {_old_qty}股(${_position_value:,.0f}) "
+            f"→ {position_size}股(${position_size*entry_price:,.0f}) [上限{_max_position_pct*100:.0f}%=${_max_position_value:,.0f}]"
+        )
+
     result["position_size"] = max(1, position_size)
     result["risk_amount"] = round(risk_amount, 2)
-    
+    result["horizon"] = horizon
+
     return result
 
 

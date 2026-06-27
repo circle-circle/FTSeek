@@ -276,14 +276,17 @@ def process(candidate: SignalCandidate,
         if _ptp and float(_ptp) > 0:
             plan_tp = float(_ptp)
 
-    # SL/TP defaults from config (risk.dynamic_exit.default), fallback to -4.5% / +2.5%
+    # SL/TP defaults from config (dynamic_exit at top-level, NOT under risk.)
+    # 2026-06-21: 修复路径 — get_dotted('risk.dynamic_exit...') 永远命中 fallback,
+    #   因 dynamic_exit 在 yaml top-level 而非 risk 子树. 去掉 'risk.' 前缀.
+    #   同时对齐 exit_policy.yaml: max_loss_pct=2.0% (was -0.045)
     try:
         from app.core.config_container import get_config as _get_risk_cfg
         _risk_cfg = _get_risk_cfg()
-        _sl_pct = float(_risk_cfg.get_dotted('risk.dynamic_exit.default.stop_loss', -0.045) or -0.045)
-        _tp_pct = float(_risk_cfg.get_dotted('risk.dynamic_exit.default.take_profit', 0.025) or 0.025)
+        _sl_pct = float(_risk_cfg.get_dotted('dynamic_exit.default.stop_loss', -0.02) or -0.02)
+        _tp_pct = float(_risk_cfg.get_dotted('dynamic_exit.default.take_profit', 0.05) or 0.05)
     except Exception:
-        _sl_pct, _tp_pct = -0.045, 0.025
+        _sl_pct, _tp_pct = -0.02, 0.05
     stop_loss = price * (1 + _sl_pct)
     take_profit_1 = price * (1 + _tp_pct)
 

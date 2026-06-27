@@ -11,9 +11,9 @@ import tempfile
 from datetime import datetime
 from pathlib import Path
 from fastapi import APIRouter, Request
-from fastapi.responses import JSONResponse
 
 from app.web_dashboard.data_service import get_data_service
+from app.web_dashboard.api_response import api_ok, api_error, err_broker_unavailable
 
 logger = logging.getLogger("ftseek_us.routes.battle_plan")
 router = APIRouter()
@@ -287,13 +287,13 @@ def register(app, templates):
     async def get_battle_plan():
         """读取战前计划 + 附加实时价格"""
         if not _PLAN_PATH.exists():
-            return JSONResponse(content={"error": "今日无战前计划"}, status_code=404)
+            return api_error("BATTLE_PLAN_ERROR", "今日无战前计划", 404)
 
         try:
             with open(_PLAN_PATH) as f:
                 plan = json.load(f)
         except Exception as e:
-            return JSONResponse(content={"error": f"读取失败: {e}"}, status_code=500)
+            return api_error("BATTLE_PLAN_ERROR", f"读取失败: {e}", 500)
 
         # ── 判断是否为交易日 (基于 ET 时间, 非服务器本地时间) ──
         from app.web_dashboard.data_service import et_now
@@ -447,7 +447,7 @@ def register(app, templates):
         """从factor_screen_latest.json读取所有股票的因子评分，供watchlist等页面使用"""
         _FACTOR_PATH = Path(__file__).parent.parent.parent.parent / "data" / "factor_screen_latest.json"
         if not _FACTOR_PATH.exists():
-            return JSONResponse(content={})
+            return api_ok({})
         try:
             with open(_FACTOR_PATH) as f:
                 data = json.load(f)
@@ -461,10 +461,10 @@ def register(app, templates):
                 sym = s.get("symbol", "")
                 if sym and sym not in scores:
                     scores[sym] = round(s.get("composite_score", 0), 3)
-            return JSONResponse(content=scores)
+            return api_ok(scores)
         except Exception as e:
             logger.warning(f"[factor-scores] read error: {e}")
-            return JSONResponse(content={})
+            return api_ok({})
 
     @router.put("/api/battle-plan/targets/{symbol:path}")
     async def update_target(symbol: str, request: Request):
@@ -472,10 +472,10 @@ def register(app, templates):
         try:
             body = await request.json()
         except Exception:
-            return JSONResponse(content={"error": "请求无效"}, status_code=400)
+            return api_error("BATTLE_PLAN_ERROR", "请求无效", 400)
 
         if not _PLAN_PATH.exists():
-            return JSONResponse(content={"error": "计划文件不存在"}, status_code=404)
+            return api_error("BATTLE_PLAN_ERROR", "计划文件不存在", 404)
 
         try:
             with open(_PLAN_PATH) as f:
@@ -500,7 +500,7 @@ def register(app, templates):
                     break
 
             if not updated:
-                return JSONResponse(content={"error": f"未找到标的 {symbol}"}, status_code=404)
+                return api_error("BATTLE_PLAN_ERROR", f"未找到标的 {symbol}", 404)
 
             await _atomic_save_plan(plan)
 
@@ -508,13 +508,13 @@ def register(app, templates):
             return {"success": True, "symbol": symbol}
         except Exception as e:
             logger.error(f"[BattlePlan] 更新失败: {e}")
-            return JSONResponse(content={"error": "操作失败，请稍后重试"}, status_code=500)
+            return api_error("BATTLE_PLAN_ERROR", "操作失败，请稍后重试", 500)
 
     @router.post("/api/battle-plan/confirm")
     async def confirm_plan():
         """确认战前计划"""
         if not _PLAN_PATH.exists():
-            return JSONResponse(content={"error": "计划文件不存在"}, status_code=404)
+            return api_error("BATTLE_PLAN_ERROR", "计划文件不存在", 404)
 
         try:
             with open(_PLAN_PATH) as f:
@@ -525,13 +525,13 @@ def register(app, templates):
             logger.info("[BattlePlan] 计划已确认")
             return {"success": True}
         except Exception as e:
-            return JSONResponse(content={"error": "操作失败，请稍后重试"}, status_code=500)
+            return api_error("BATTLE_PLAN_ERROR", "操作失败，请稍后重试", 500)
 
     @router.post("/api/battle-plan/pause")
     async def pause_plan():
         """暂停今日自动交易"""
         if not _PLAN_PATH.exists():
-            return JSONResponse(content={"error": "计划文件不存在"}, status_code=404)
+            return api_error("BATTLE_PLAN_ERROR", "计划文件不存在", 404)
 
         try:
             with open(_PLAN_PATH) as f:
@@ -542,13 +542,13 @@ def register(app, templates):
             logger.info("[BattlePlan] 计划已暂停")
             return {"success": True}
         except Exception as e:
-            return JSONResponse(content={"error": "操作失败，请稍后重试"}, status_code=500)
+            return api_error("BATTLE_PLAN_ERROR", "操作失败，请稍后重试", 500)
 
     @router.post("/api/battle-plan/resume")
     async def resume_plan():
         """取消暂停，恢复自动交易 (2026-06-12 新增)"""
         if not _PLAN_PATH.exists():
-            return JSONResponse(content={"error": "计划文件不存在"}, status_code=404)
+            return api_error("BATTLE_PLAN_ERROR", "计划文件不存在", 404)
 
         try:
             with open(_PLAN_PATH) as f:
@@ -560,7 +560,7 @@ def register(app, templates):
             logger.info("[BattlePlan] 计划已恢复")
             return {"success": True}
         except Exception as e:
-            return JSONResponse(content={"error": "操作失败，请稍后重试"}, status_code=500)
+            return api_error("BATTLE_PLAN_ERROR", "操作失败，请稍后重试", 500)
 
     # ═══════════════════════════════════════════════════════════
     #  Deep Analysis On-Demand API (Task #30)
@@ -570,27 +570,18 @@ def register(app, templates):
     async def generate_deep_analysis_api(request: Request):
         """按需为当前 plan 的所有 targets 生成深度分析并回写 JSON。"""
         if not _PLAN_PATH.exists():
-            return JSONResponse(
-                content={"success": False, "error": "计划文件不存在"},
-                status_code=404,
-            )
+            return api_error("BATTLE_PLAN_ERROR", "计划文件不存在", 404)
 
         try:
             with open(_PLAN_PATH) as f:
                 plan = json.load(f)
         except Exception as e:
             logger.error(f"[DeepAnalysis] 读取 plan 失败: {e}")
-            return JSONResponse(
-                content={"success": False, "error": f"读取计划失败: {e}"},
-                status_code=500,
-            )
+            return api_error("BATTLE_PLAN_ERROR", f"读取计划失败: {e}", 500)
 
         targets = plan.get("targets", []) or []
         if not targets:
-            return JSONResponse(
-                content={"success": False, "error": "当前计划无 targets"},
-                status_code=400,
-            )
+            return api_error("BATTLE_PLAN_ERROR", "当前计划无 targets", 400)
 
         # ── 组装 macro：优先用 plan 已有字段，缺失走默认值 ──
         enrichment = plan.get("_enrichment", {}) or {}
@@ -634,10 +625,7 @@ def register(app, templates):
             )
         except Exception as e:
             logger.exception(f"[DeepAnalysis] 引擎调用失败: {e}")
-            return JSONResponse(
-                content={"success": False, "error": f"生成失败: {e}"},
-                status_code=500,
-            )
+            return api_error("BATTLE_PLAN_ERROR", f"生成失败: {e}", 500)
 
         # ── 回写到对应 target ──
         result_map = {
@@ -661,10 +649,7 @@ def register(app, templates):
             await _atomic_save_plan(plan)
         except Exception as e:
             logger.error(f"[DeepAnalysis] 保存 plan 失败: {e}")
-            return JSONResponse(
-                content={"success": False, "error": f"保存失败: {e}"},
-                status_code=500,
-            )
+            return api_error("BATTLE_PLAN_ERROR", f"保存失败: {e}", 500)
 
         logger.info(
             f"[DeepAnalysis] 完成: 成功 {success_count}, 失败 {fail_count}"
@@ -685,30 +670,22 @@ def register(app, templates):
         """按需为当前 plan 的 top 3 targets 生成 Deep Research 级别分析并回写 JSON。
 
         比 deep-analysis 更深: 4 分析师并行 → 多空辩论 → 综合决策
-        每个 target 约 6 次 LLM 调用，总计 18 次 ≈ 60-90s
+        每个 target 约 9 次 LLM 调用，总计 27 次 ≈ 5-6 分钟。
+        已有有效 deep_research 的 target 自动跳过。
         """
         if not _PLAN_PATH.exists():
-            return JSONResponse(
-                content={"success": False, "error": "计划文件不存在"},
-                status_code=404,
-            )
+            return api_error("BATTLE_PLAN_ERROR", "计划文件不存在", 404)
 
         try:
             with open(_PLAN_PATH) as f:
                 plan = json.load(f)
         except Exception as e:
             logger.error(f"[DeepResearch] 读取 plan 失败: {e}")
-            return JSONResponse(
-                content={"success": False, "error": f"读取计划失败: {e}"},
-                status_code=500,
-            )
+            return api_error("BATTLE_PLAN_ERROR", f"读取计划失败: {e}", 500)
 
         targets = plan.get("targets", []) or []
         if not targets:
-            return JSONResponse(
-                content={"success": False, "error": "当前计划无 targets"},
-                status_code=400,
-            )
+            return api_error("BATTLE_PLAN_ERROR", "当前计划无 targets", 400)
 
         # 获取盘前数据 (如果可用)
         premarket_data = None
@@ -719,7 +696,7 @@ def register(app, templates):
         except Exception:
             pass
 
-        # 调用 Deep Research Pipeline
+        # 调用 Deep Research Pipeline (内部会跳过已有 deep_research 的 target)
         try:
             from app.plan.deep_research_pipeline import run_deep_research_batch
             logger.info(
@@ -732,10 +709,7 @@ def register(app, templates):
             )
         except Exception as e:
             logger.exception(f"[DeepResearch] 引擎调用失败: {e}")
-            return JSONResponse(
-                content={"success": False, "error": f"生成失败: {e}"},
-                status_code=500,
-            )
+            return api_error("BATTLE_PLAN_ERROR", f"生成失败: {e}", 500)
 
         # 回写到对应 target
         result_map = {
@@ -758,10 +732,7 @@ def register(app, templates):
             await _atomic_save_plan(plan)
         except Exception as e:
             logger.error(f"[DeepResearch] 保存 plan 失败: {e}")
-            return JSONResponse(
-                content={"success": False, "error": f"保存失败: {e}"},
-                status_code=500,
-            )
+            return api_error("BATTLE_PLAN_ERROR", f"保存失败: {e}", 500)
 
         logger.info(
             f"[DeepResearch] 完成: {success_count}/{min(len(targets), 3)} targets"
@@ -774,21 +745,19 @@ def register(app, templates):
 
     @router.post("/api/battle-plan/deep-research/{symbol}")
     async def generate_deep_research_single(symbol: str, request: Request):
-        """按需为单个 target 生成 Deep Research 级别分析。"""
+        """按需为单个 target 生成 Deep Research 级别分析。
+
+        如果 target 已有 deep_research 且非降级方案，跳过重新生成（避免重复 LLM 调用）。
+        传入 ?force=true 可强制重新生成。
+        """
         if not _PLAN_PATH.exists():
-            return JSONResponse(
-                content={"success": False, "error": "计划文件不存在"},
-                status_code=404,
-            )
+            return api_error("BATTLE_PLAN_ERROR", "计划文件不存在", 404)
 
         try:
             with open(_PLAN_PATH) as f:
                 plan = json.load(f)
         except Exception as e:
-            return JSONResponse(
-                content={"success": False, "error": f"读取计划失败: {e}"},
-                status_code=500,
-            )
+            return api_error("BATTLE_PLAN_ERROR", f"读取计划失败: {e}", 500)
 
         # 找到对应 target
         target = None
@@ -799,10 +768,24 @@ def register(app, templates):
                 break
 
         if not target:
-            return JSONResponse(
-                content={"success": False, "error": f"未找到 target: {symbol}"},
-                status_code=404,
-            )
+            return api_error("BATTLE_PLAN_ERROR", f"未找到 target: {symbol}", 404)
+
+        # 缓存检查: 已有非降级 deep_research 则跳过
+        force = request.query_params.get("force", "").lower() in ("1", "true", "yes")
+        existing_dr = target.get("deep_research")
+        if existing_dr and isinstance(existing_dr, dict) and not force:
+            is_fallback = existing_dr.get("_meta", {}).get("synthesis_fallback", False)
+            has_verdict = bool(existing_dr.get("verdict", {}).get("action"))
+            if has_verdict and not is_fallback:
+                logger.info(f"[DeepResearch] {sym_full} 已有有效 deep_research, 跳过 (force={force})")
+                return {
+                    "success": True,
+                    "symbol": sym_full,
+                    "cached": True,
+                    "action": existing_dr.get("verdict", {}).get("action", ""),
+                    "conviction": existing_dr.get("verdict", {}).get("conviction", 0),
+                    "summary": existing_dr.get("executive_summary", ""),
+                }
 
         # 获取盘前数据
         premarket_data = None
@@ -815,20 +798,14 @@ def register(app, templates):
 
         try:
             from app.plan.deep_research_pipeline import run_deep_research_for_target
-            logger.info(f"[DeepResearch] 为 {sym_full} 生成 Deep Research")
+            logger.info(f"[DeepResearch] 为 {sym_full} 生成 Deep Research (force={force})")
             dr = await run_deep_research_for_target(target, premarket_data)
         except Exception as e:
             logger.exception(f"[DeepResearch] {sym_full} error: {e}")
-            return JSONResponse(
-                content={"success": False, "error": f"生成失败: {e}"},
-                status_code=500,
-            )
+            return api_error("BATTLE_PLAN_ERROR", f"生成失败: {e}", 500)
 
         if not dr:
-            return JSONResponse(
-                content={"success": False, "error": "生成失败"},
-                status_code=500,
-            )
+            return api_error("BATTLE_PLAN_ERROR", "生成失败", 500)
 
         # 回写
         target["deep_research"] = dr
@@ -843,6 +820,7 @@ def register(app, templates):
         return {
             "success": True,
             "symbol": sym_full,
+            "cached": False,
             "action": dr.get("verdict", {}).get("action", ""),
             "conviction": dr.get("verdict", {}).get("conviction", 0),
             "summary": dr.get("executive_summary", ""),

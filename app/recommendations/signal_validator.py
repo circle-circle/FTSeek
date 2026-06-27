@@ -300,7 +300,7 @@ class SignalValidator:
                 "SELECT COUNT(*), "
                 "ROUND(100.0*SUM(CASE WHEN realized_pnl>0 THEN 1 ELSE 0 END)/COUNT(*),1), "
                 "ROUND(SUM(realized_pnl),2) "
-                "FROM trade_records WHERE realized_pnl IS NOT NULL"
+                "FROM trade_records WHERE realized_pnl IS NOT NULL AND exit_price > 0"
             )
             total, wr, pnl = c.fetchone()
 
@@ -310,7 +310,7 @@ class SignalValidator:
                 "ROUND(100.0*SUM(CASE WHEN realized_pnl>0 THEN 1 ELSE 0 END)/COUNT(*),1), "
                 "ROUND(SUM(realized_pnl),2) "
                 "FROM trade_records WHERE realized_pnl IS NOT NULL "
-                "AND trade_date >= date('now','-7 days')"
+                "AND exit_price > 0 AND trade_date >= date('now','-7 days')"
             )
             w_total, w_wr, w_pnl = c.fetchone()
 

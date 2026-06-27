@@ -81,13 +81,17 @@ def _load_calibration():
 
         overall_wr = total_wins / total_trades if total_trades > 0 else 0.3
 
-        # Per-bucket calibration: factor = min(1.0, bucket_wr / overall_wr)
+        # Per-bucket calibration: factor = bucket_wr / overall_wr
+        #   - factor > 1.0: bucket outperforms overall → BOOST confidence
+        #   - factor < 1.0: bucket underperforms overall → COMPRESS confidence
+        #   - Clamped to [0.2, 5.0] to prevent extreme values from small samples
         # Only apply to buckets with sufficient samples (>= 10)
         for label, bucket_data in buckets.items():
             n = bucket_data.get("total", 0)
             wr = bucket_data.get("win_rate", 0)
             if n >= 10 and overall_wr > 0:
-                factor = min(1.0, wr / overall_wr)
+                factor = wr / overall_wr
+                factor = max(0.2, min(5.0, factor))  # clamp to reasonable range
                 _CALIBRATION_CACHE[label] = round(factor, 3)
 
         logger.info(
@@ -233,13 +237,15 @@ class SignalQualityScorer:
         confidence = max(0.10, min(0.95, raw_confidence))
 
         # P0 修复 (2026-06-19): 历史胜率校准
-        # 对胜率异常低的 confidence 桶施加惩罚因子
-        # 例如: 0.5-0.7 桶胜率仅17.8% (整体35%) → factor=0.51 → confidence 被压缩
+        # 根据该 confidence 桶的历史胜率，对 confidence 进行校准
+        #   - 高胜率桶 (factor > 1.0) → BOOST confidence
+        #   - 低胜率桶 (factor < 1.0) → COMPRESS confidence
+        #   - 校准因子 clamp 到 [0.2, 5.0]，避免极端值
         calibration = _load_calibration()
         bucket_label = _bucket_for_conf(confidence)
         cal_factor = calibration.get(bucket_label, 1.0)
-        if cal_factor < 1.0:
-            confidence = max(0.10, confidence * cal_factor)
+        if cal_factor != 1.0:
+            confidence = max(0.10, min(0.95, confidence * cal_factor))
             logger.debug(
                 f"[Calibration] {bucket_label} factor={cal_factor:.2f} "
                 f"→ conf {raw_confidence:.3f} → {confidence:.3f}"

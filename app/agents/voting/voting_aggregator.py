@@ -182,6 +182,35 @@ class VotingAggregator:
         else:
             final_strength = internal_strength
 
+        # 2026-06-25 修复: 全局方向保护 — 纳入 external_scores.
+        # 原逻辑只保护 qwen/minimax 内部一致方向, 但 LLM 策略 (external) 权重较高时
+        # 可能把 final_strength 翻转到与多数模型相反的方向.
+        # 修复: 计算所有 scores 的加权多数方向, final_strength 不得与多数方向相反.
+        try:
+            _all_dirs = []
+            for _s in scores:
+                # 外部投票模型权重使用 LLM 动态权重
+                _w = weights.get(self._get_model_role(_s.model_id), 0.25)
+                if _s.model_id == "llm_strategy" and external_scores:
+                    _w = llm_weight_used
+                _all_dirs.append((1 if _s.strength >= 50 else -1, _w))
+            _long_weight = sum(_w for _d, _w in _all_dirs if _d > 0)
+            _short_weight = sum(_w for _d, _w in _all_dirs if _d < 0)
+            _majority_dir = "LONG" if _long_weight >= _short_weight else "SHORT"
+
+            _final_dir = "LONG" if final_strength >= 50 else "SHORT"
+            if _final_dir != _majority_dir:
+                if _majority_dir == "LONG":
+                    final_strength = max(final_strength, 51)
+                else:
+                    final_strength = min(final_strength, 49)
+                logger.info(
+                    f"[方向保护·全局] final_strength 钳位 → {final_strength} "
+                    f"(多数方向={_majority_dir}, LONG_w={_long_weight:.2f}, SHORT_w={_short_weight:.2f})"
+                )
+        except Exception as _dir_err:
+            logger.debug(f"[方向保护·全局] 失败 (忽略): {_dir_err}")
+
         # P1-2 修复 (2026-04-21): 方向保护 -- 在 final_strength 上应用，不影响 std_dev
         # 当 qwen 和 minimax 原始方向一致时，final_strength 不应翻转方向
         if direction_protection_needed and qwen_original is not None and minimax_original is not None:

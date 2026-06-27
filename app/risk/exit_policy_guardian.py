@@ -154,6 +154,10 @@ class ExitPolicyGuardian:
                 'required_code': 'PreCloseExitRule or check_adaptive_pre_close_exit',
                 'check': lambda: self._grep_in_daemon('PreCloseExitRule') or self._grep_in_daemon('check_adaptive_pre_close_exit'),
             },
+            'time_exit': {
+                'required_code': '_check_time_exit or holding_hours',
+                'check': lambda: self._grep_in_daemon('_check_time_exit') or self._grep_in_daemon('time_exit'),
+            },
         }
         
         checker = implementation_status.get(rule_name)
@@ -215,7 +219,7 @@ class ExitPolicyGuardian:
         elif profit_atr >= 0.5:
             base_mult = multipliers.get('profit_05atr', 1.8)
         else:
-            base_mult = multipliers.get('initial', 4.0)  # 2026-06-05: 2.0→4.0 SSOT对齐
+            base_mult = multipliers.get('initial', 2.0)  # 2026-06-21: 4.0→2.0 极简退出
 
         # 2. 做空更紧 (取 行业/非线性 与 short_override 的较小值)
         if direction == 'SHORT':
@@ -277,19 +281,19 @@ class ExitPolicyGuardian:
         self._sector_map = sector_map
     
     def _default_policy(self) -> Dict[str, Any]:
-        """策略文件不存在时的降级默认值"""
+        """策略文件不存在时的降级默认值 (2026-06-21 极简4规则对齐)"""
         return {
-            'version': 'fallback-1.0',
+            'version': 'fallback-3.0',
             'exit_rules': {
-                'flash_exit': {'enabled': True, 'flash_multiplier_default': 0.8},
-                'atr_stop': {'enabled': True, 'multiplier_by_profit': {'initial': 4.0}},  # 2026-06-05: 2.5→4.0 SSOT
-                'breakeven': {'enabled': True, 'trigger_profit_atr': 0.4, 'buffer_pct': 0.15},
-                'chandelier_trail': {'enabled': True, 'activation_profit_atr': 0.8},
+                'atr_stop': {'enabled': True, 'multiplier_by_profit': {'initial': 2.0}, 'max_loss_pct': 2.0},
+                'breakeven': {'enabled': True, 'trigger_profit_pct': 1.5, 'buffer_pct': 0.0},
+                'chandelier_trail': {'enabled': False},
                 'scale_out': {'enabled': False},
-                'earnings_guard': {'enabled': False},
+                'time_exit': {'enabled': True, 'holding_hours': 1.0, 'max_profit_pct': 0.3},
+                'earnings_guard': {'enabled': True, 'days_before': 2, 'days_after': 1},
             },
-            'short_overrides': {'atr_multiplier': 2.0, 'max_loss_pct': 10.0},
-            'sector_overrides': {'default': {'atr_multiplier': 3.0}},  # 2026-06-05: 2.5→3.0 与yaml:224对齐
+            'short_overrides': {'atr_multiplier': 2.0, 'max_loss_pct': 2.0},
+            'sector_overrides': {'default': {'atr_multiplier': 2.0}},
         }
 
 

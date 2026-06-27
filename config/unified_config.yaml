@@ -103,7 +103,7 @@ llm_budget:
 # 优化: TTL缩短至5min, 同时适当放宽价格阈值以平衡API成本
 llm_voting:
   cache_ttl_seconds: 300          # 投票缓存有效期（秒），原1800→300
-  price_change_threshold: 0.008   # 行情变动阈值，超过则强制重新投票，原0.003→0.008
+  price_change_threshold: 0.005   # 行情变动阈值，超过则强制重新投票，原0.008→0.005 (T+1 IC负，信号越新鲜越好)
   max_cache_entries: 50           # 最大缓存条目数 (超出后按LRU淘汰)
 
 # llm_models: 已删除 (2026-06-14 + 2026-06-20) — DEPRECATED, 0 代码引用
@@ -546,8 +546,8 @@ watchlist:
     sector: Semiconductors
     enabled: true
     tier: TIER2
-    max_position_ratio: 0.12
-    notes: 晶圆代工 | 半导体双核
+    max_position_ratio: 0.15
+    notes: 晶圆代工 | Playbook+236高触发，加仓 (2026-06-26)
   - code: US.AMD
     name: Advanced Micro Devices
     sector: Semiconductors
@@ -558,10 +558,10 @@ watchlist:
   - code: US.NFLX
     name: Netflix Inc
     sector: Communication Services
-    enabled: true
+    enabled: false
     tier: TIER2
     max_position_ratio: 0.12
-    notes: 流媒体龙头 | 消费科技代表
+    notes: Playbook近30天-345，暂停 (2026-06-26)
   - code: US.BABA
     name: Alibaba Group
     sector: Consumer Cyclical
@@ -574,22 +574,22 @@ watchlist:
     sector: Consumer Cyclical
     enabled: true
     tier: TIER2
-    max_position_ratio: 0.1
-    notes: 跨境电商 | 中概高增长
+    max_position_ratio: 0.12
+    notes: 跨境电商 | Playbook+253 (2026-06-26)
   - code: US.NIO
     name: NIO Inc
     sector: Consumer Cyclical
-    enabled: false
+    enabled: true
     tier: TIER2
     max_position_ratio: 0.08
-    notes: 低胜率标的，暂停 (2026-05-30)
+    notes: 低波动中概新能源车 | OKR优化小仓位试运行 (2026-06-26)
   - code: US.NTES
     name: NetEase Inc
     sector: Communication Services
     enabled: true
     tier: TIER2
-    max_position_ratio: 0.1
-    notes: 中概游戏龙头 | 防御型中概
+    max_position_ratio: 0.12
+    notes: 中概游戏龙头 | Playbook+274 (2026-06-26)
   - code: US.TME
     name: Tencent Music
     sector: Communication Services
@@ -602,36 +602,36 @@ watchlist:
     sector: Technology
     enabled: true
     tier: TIER1
-    max_position_ratio: 0.12
-    notes: 数据库/云 | SaaS双雄 | 中波动 (2026-05-30 调整为TIER1)
+    max_position_ratio: 0.06
+    notes: Playbook近30天-975但MAIN盈利，降仓观察 (2026-06-26)
   - code: US.CRM
     name: Salesforce Inc
     sector: Technology
     enabled: true
     tier: TIER2
-    max_position_ratio: 0.12
-    notes: CRM/SaaS | SaaS双雄
+    max_position_ratio: 0.15
+    notes: CRM/SaaS | Playbook近30天+441 (2026-06-26)
   - code: US.BA
     name: Boeing Co
     sector: Industrials
     enabled: true
     tier: TIER2
-    max_position_ratio: 0.12
-    notes: 航空制造 | 周期弹性好
+    max_position_ratio: 0.15
+    notes: 航空制造 | Playbook近30天最佳+731 (2026-06-26)
   - code: US.LMT
     name: Lockheed Martin
     sector: Industrials
     enabled: true
     tier: TIER2
-    max_position_ratio: 0.12
-    notes: 军工防务 | 与科技低相关
+    max_position_ratio: 0.06
+    notes: 军工防务 | Playbook-600，降仓 (2026-06-26)
   - code: US.UNH
     name: UnitedHealth Group
     sector: Healthcare
     enabled: true
     tier: TIER2
-    max_position_ratio: 0.12
-    notes: 医疗保险 | 防御性配置
+    max_position_ratio: 0.15
+    notes: 医疗保险 | Playbook+313，防御性配置 (2026-06-26)
   - code: US.JPM
     name: JPMorgan Chase
     sector: Financial Services
@@ -645,15 +645,15 @@ watchlist:
     sector: Energy
     enabled: true
     tier: TIER2
-    max_position_ratio: 0.12
-    notes: 能源龙头，低相关防御
+    max_position_ratio: 0.06
+    notes: 能源龙头 | Playbook-822，降仓 (2026-06-26)
   - code: US.PG
     name: Procter & Gamble
     sector: Consumer Defensive
-    enabled: true
+    enabled: false
     tier: TIER2
     max_position_ratio: 0.12
-    notes: 消费必需品，低相关防御
+    notes: Playbook/主线双亏，暂停 (2026-06-26)
   etfs:
   # ADR-006 (2026-06-07): ETF 全部归 ORB 引擎管理，主线专注个股
   # 原因: 主线(15-30min多因子+LLM)和ORB(1min突破+5秒轮询)在ETF上产生冲突
@@ -1341,10 +1341,42 @@ feature_flags:
 #   已退役 = voting_llm / scalping / main_pipeline / playbook_shadow (legacy 投票执行路径, TRADING 禁扫)
 playbook:
   enabled: true                     # 上线闸门: true=进入 playbook 链路 (生成指令+追踪+飞书)
-  execute_mode: futu_simulate       # 2026-06-24: 默认模拟验证态 (simulate=虚拟离线, live=实盘需毕业)
+  # 2026-06-25 OKR 架构决策: Playbook 是唯一的 sim→live 毕业策略.
+  #   futu_simulate = 富途模拟账户真实下单 (OKR 验证阶段)
+  #   live          = 实盘真实下单 (需 graduation gate 通过)
+  # 主线 / ORB 仅作为 sim 研究, 不参与 live.
+  execute_mode: futu_simulate       # 当前阶段: 富途模拟账户真实下单
   auto_execute: true                # 盘中每30分钟自动执行 triggered 指令
   live_trial: true                  # 2026-06-24 Phase 2: LIVE_TRIAL — target_env=real 时仓位×0.5; 验证 sim≈live PnL 后关此项放全量
   enable_weekly: true               # 是否跑周度复盘 (冷启动期可关, 节省 LLM)
+  # 2026-06-26 优化: 以下参数从代码硬编码迁出, 统一治理 sim→live 资金口径与入场退出阈值.
+  risk_parameters:
+    # 资金基准: sim 与 live 统一口径, 避免 sim BP ($313K) 导致仓位虚大
+    risk_base_capital: 82000.0        # 美元
+    # 单笔风险占 risk_base 的比例 (默认 1%)
+    risk_pct: 1.0
+    # 风险回报比 (R:R). 2% 止损 + rr_ratio=1.0 → 2% 止盈
+    rr_ratio: 1.0
+    # 固定止损百分比 (相对入场价). 2026-06-25: 删 ATR 链, 统一用 2% 固定止损
+    fixed_stop_loss_pct: 2.0
+    # 单仓位上限占 risk_base 的比例
+    max_position_pct: 0.08
+    # ATR 乘数 (保留兼容, 当前未使用但可用于未来扩展)
+    atr_multiplier: 2.0
+  execution_parameters:
+    # 盘中触发: 价格突破 MA20 的最小百分比 (方向一致)
+    intraday_breakout_pct: 0.5
+    # 盘中触发: 成交量相对 5 日均量的最小倍数
+    intraday_volume_ratio: 1.5
+    # 自动执行最低 confidence 阈值
+    min_confidence: 65
+    # 购买力 guard 失败时回退到硬编码, 并发告警
+    buying_power_fallback_alert: true
+  # 2026-06-26: Horizon Strategy — 个股阶段驱动的短线/长线决策
+  # 读取独立配置 config/playbook_horizon.yaml
+  horizon_strategy:
+    enabled: true
+    config_path: "config/playbook_horizon.yaml"
 strategy_enhancements:
   pivotal_points:
     enabled: true
@@ -1806,7 +1838,9 @@ strategies:
   # 归因数据: n=338, WR=40.8%, avg_ret=-0.42%, 无strategy_id标记(unknown)
   # 根因: 盘后批量扫描全symbol, confidence/strength固定值, 无差异化判断
   voting_llm:
-    enabled: false  # 2026-06-20: 归因止血 — WR=40.8% 系统性亏损
+    enabled: false  # 2026-06-26: LLM调用9-15s/只太慢拖垮扫描, 先靠technical (LONG已修复)
+    # 2026-06-26: 启用引入LONG信号源 → 导致每只股票9-15s超时, 全部返回None
+    # 需先优化LLM调用速度(异步/缓存/减少model数)再启用
 risk_limits:
   # Task #1 (2026-05-31): 总敞口对齐 — main 0.65 (含子策略) = 0.80
   # 子策略 (trend_first/fast_lane) 走 capital_source: main, 不再单独累加
@@ -1822,6 +1856,7 @@ strategy_budgets:
     max_concurrent_positions: 5
     risk_budget_pct: 0.01
     max_daily_loss_pct: 0.01
+    allow_live: false          # 2026-06-25: 主线仅 sim 研究，Playbook 是唯一 live 毕业策略
   system:
     max_total_daily_loss: 6000
     risk_budget_pct: 0.012
@@ -1868,6 +1903,9 @@ scheduler:
 news_v2:
   enabled: true
   mode: observe
+  # 盘中 (09:30-16:00 ET) 停止定时轮询采集；突发新闻应走主动推送/WebSocket。
+  # 保留盘前/盘后/周末采集用于预热、复盘与地缘风险监控。
+  skip_market_hours: true
   sources:
     rsshub_us:
       enabled: true
@@ -1935,7 +1973,7 @@ pipeline:
   # 切换方式: 修改 master_switch 后重启服务, 无需改代码
   # 安全降级: 新框架异常时自动 fallback 到 legacy
   # ============================================================
-  master_switch: shadow_only    # 当前: shadow_only (安全验证阶段)
+  master_switch: legacy    # 2026-06-26: shadow_only → legacy, 启用真实下单 (futu_simulate)
   overrides:
     signal: null                # null = follow master, or: legacy/factor
     risk: null
@@ -1985,7 +2023,7 @@ pipeline:
 # ────────────────────────────────────────────────────────────────
 orb:
   enabled: true
-  mode: active                    # [2026-06-24] shadow→active: 真实下单富途模拟账户 (AUTO_TRADE_ACCOUNT=sim, target=sim). 原 shadow 仅虚拟跟踪无 broker 调用, 不采集真实成交数据
+  mode: active                    # 2026-06-25: shadow→active. Futu 模拟账户真实下单 (AUTO_TRADE_ACCOUNT=sim), 非实盘, 用于 OKR 数据采集.
   universe:
     # ADR-006 (2026-06-07): ETF 归 ORB，个股归主线，零重叠
     # 宽基 (4): 最高流动性，开盘区间最清晰

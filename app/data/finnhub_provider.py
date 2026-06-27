@@ -494,3 +494,105 @@ class FinnhubProvider:
         self._set_cache(cache_key, news)
         return news
 
+    # ── 扩展接口 (2026-06-21 融合设计) ─────────────────────────────
+
+    def get_earnings_calendar(self, days_ahead: int = 7) -> List[Dict[str, Any]]:
+        """
+        获取未来 N 天的财报日历（消耗 1 call，缓存 6h）。
+        返回所有公司的财报日期，可用于检查 watchlist 标的是否有即将发布的财报。
+        """
+        if not self.enabled:
+            return []
+        cache_key = "fh_earnings_cal"
+        if self._is_cache_valid(cache_key, ttl_override=21600):
+            return self._cache.get(cache_key, [])
+
+        import datetime as _dt
+        today = _dt.date.today()
+        week_later = today + _dt.timedelta(days=days_ahead)
+        data = self._get("calendar/earnings", {
+            "from": today.isoformat(),
+            "to": week_later.isoformat(),
+        })
+        if not data or not isinstance(data, dict):
+            return []
+        earnings = data.get("earningsCalendar", [])
+        self._set_cache(cache_key, earnings)
+        logger.debug(f"[Finnhub] 财报日历: {len(earnings)} 家公司 ({days_ahead}天内)")
+        return earnings
+
+    def get_company_earnings(self, symbol: str, quarters: int = 4) -> List[Dict[str, Any]]:
+        """
+        获取最近 N 季度财报结果（消耗 1 call，缓存 24h）。
+        包含 actual/estimate/surprise 字段。
+        """
+        if not self.enabled:
+            return []
+        cache_key = f"fh_earnings_{symbol}"
+        if self._is_cache_valid(cache_key, ttl_override=86400):
+            return self._cache.get(cache_key, [])
+
+        ticker = self._to_ticker(symbol)
+        data = self._get("stock/earnings", {"symbol": ticker, "limit": quarters})
+        if not data or not isinstance(data, list):
+            return []
+        self._set_cache(cache_key, data)
+        logger.debug(f"[Finnhub] {symbol} 财报: {len(data)} 季度")
+        return data
+
+    def get_recommendation_trends(self, symbol: str) -> List[Dict[str, Any]]:
+        """
+        获取分析师推荐趋势（消耗 1 call，缓存 24h）。
+        返回近几个月的 strongBuy/buy/hold/sell/strongSell 分布。
+        """
+        if not self.enabled:
+            return []
+        cache_key = f"fh_recom_{symbol}"
+        if self._is_cache_valid(cache_key, ttl_override=86400):
+            return self._cache.get(cache_key, [])
+
+        ticker = self._to_ticker(symbol)
+        data = self._get("stock/recommendation", {"symbol": ticker})
+        if not data or not isinstance(data, list):
+            return []
+        self._set_cache(cache_key, data)
+        logger.debug(f"[Finnhub] {symbol} 推荐: {len(data)} 期")
+        return data
+
+    def get_company_peers(self, symbol: str) -> List[str]:
+        """获取同行业公司列表（消耗 1 call，缓存 24h）"""
+        if not self.enabled:
+            return []
+        cache_key = f"fh_peers_{symbol}"
+        if self._is_cache_valid(cache_key, ttl_override=86400):
+            return self._cache.get(cache_key, [])
+
+        ticker = self._to_ticker(symbol)
+        data = self._get("stock/peers", {"symbol": ticker})
+        if not data or not isinstance(data, list):
+            return []
+        self._set_cache(cache_key, data)
+        return data
+
+    def get_basic_financials(self, symbol: str) -> Dict[str, Any]:
+        """
+        获取公司基本面指标（消耗 1 call，缓存 24h）。
+        包含 PE/PB/ROE/EPS/beta/52周高低等 80+ 指标。
+        """
+        if not self.enabled:
+            return {}
+        cache_key = f"fh_bf_{symbol}"
+        if self._is_cache_valid(cache_key, ttl_override=86400):
+            return self._cache.get(cache_key, {})
+
+        ticker = self._to_ticker(symbol)
+        data = self._get("stock/metric", {"symbol": ticker, "metric": "all"})
+        if not data or not isinstance(data, dict):
+            return {}
+        metric = data.get("metric", {})
+        series = data.get("series", {})
+        result = {"metric": metric, "series": series}
+        self._set_cache(cache_key, result)
+        logger.debug(f"[Finnhub] {symbol} 基本面: {len(metric)} 指标")
+        return result
+

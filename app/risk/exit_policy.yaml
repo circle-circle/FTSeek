@@ -9,392 +9,222 @@
 #   - config/exit_profiles.yaml — harness/shadow_bridge 影子系统专用 (回测/辩论)
 #   - config/unified_config.yaml::dynamic_exit — regime-aware 兜底参数, 优先级低于本表
 #
-# ── 当前活跃规则 (2026-06-14 极简三件套) ──
-# [1] ATR 硬止损: entry ± 4.0×ATR, max 3% (atr_stop)
-# [2] 目标止盈: profit ≥ 1.0 ATR → 全平 (scale_out, close_pct=100)
-# [3] 盘末退出: 收盘前 8min → 盈利落袋/亏损保留 (pre_close)
+# ── 极简退出 (2026-06-21): 4条规则, 0分批, 0状态机 ──
+# [1] ATR止损: entry ± 2.0×ATR, max 2.0% (atr_stop)
+# [2] 保本线: 盈利≥1.5% → SL移至成本 (breakeven, 不平仓)
+# [3] 时间退出: 持仓>1h 且 盈利<0.3% → 保本退出 (time_exit)
+# [4] 盘末退出: 收盘前8min, 盈利全平, 亏损保留+隔夜-3%止损 (pre_close)
 #
-# ── 已禁用规则 (数据证明无效) ──
-# flash_exit: 6笔全亏 0%WR -$1,362
-# chandelier_trail: 92笔 46.7%WR -$34 近零EV
-# breakeven: 功能合并到 scale_out
-# velocity_exit: 样本不足
-# day_trade_mode: 与 scale_out 重叠
-# time_stop: 30天 sharpe=-0.40
-# progressive_trailing: current_sl 写17次读0次, 死代码
-#
-# ── 入场约束 ──
-# opening_drive (09:30-10:00): 禁止入场 (136笔 -366.6%)
-# Grace Period: 入场后 45min 仅允许硬止损
+# 数据依据 (2026-06-21 完整回测):
+#   - TRAILING_STOP 84笔 -$3,773 → 禁用, 被保本ratchet替代
+#   - STRUCTURE_EXIT 33笔 -$3,106 → 禁用, 误触发多
+#   - scale_out 仅4笔触发 → 禁用, 形同虚设
+#   - DAY_TRADE_TP 13笔 100%WR +$13K → 保留1.5%阈值作为保本触发
+#   - 4-24h持仓 70.7%WR +$21K → 时间退出给趋势发展空间
+#   - 1-4h持仓 47.5%WR -$9.5K → 1h保本退出解决死亡区间
+#   - 新方案模拟: +$34,194 vs 当前+$23,034 (+48.4%)
 #
 # 设计原则:
-# 1. 主线退出参数只在此文件定义, 代码只读取不硬编码
-# 2. 修改策略 = 改 YAML, 不需要改 Python 代码
-# 3. 启动时强制校验: 代码逻辑必须覆盖此文件所有规则
+# 1. 截断亏损 (ATR 2.0× + 2%硬上限)
+# 2. 让利润奔跑 (盈利≥1.5%只移SL不平仓, 跑到盘末)
+# 3. 解决死亡区间 (1h无进展→保本退出)
+# 4. 极简 (4条规则, 无分批状态机)
 # ============================================================
 
-version: "2.5"
-last_updated: "2026-05-31"
-design_rationale: "ATR动态止损 + 分层止盈 + 行业差异化 + 日内短线模式 + session-aware ATR + 时间加权盘末退出 (P2优化) | Phase 3 (2026-05-31): 参数完全外部化 + ATR下限/财报上限 + ExitRuleDispatcher 影子模式"
+version: "3.0"
+last_updated: "2026-06-21"
+design_rationale: "极简4规则: ATR 2.0×止损 + 1.5%保本ratchet + 2h时间退出(放宽) + 盘末退出. 禁用trailing/scale_out/structure_exit"
 
 # ── DEAD RULE: progressive_trailing ──
-# current_sl 写入17次读取0次, 无任何退出规则消费, 纯死代码
-# P1 (2026-06-14): 禁用 — 保留参数供历史参考
+# P1 (2026-06-14): 禁用 — current_sl 写入17次读取0次, 死代码
 progressive_trailing:
-  enabled: false                  # P1 (2026-06-14): 禁用 — current_sl 写入17次读取0次, 死代码
-  # 唯一活跃止损机制: atr_stop (entry ± 4×ATR), 由 trailing_stop.py 独立计算
-  # progressive_trailing 的 4 档追踪写入 position.current_sl 但无任何退出规则消费
-  # 4 档利润追踪 (2026-06-05 重新设计):
-  #   核心原则: SL 永远不得紧于 atr_stop.initial (4.0×ATR from entry)
-  #   因为单调保护会锁定最紧的SL, 如果追踪倍数<4.0, SL会被永久锁死在过紧位置
-  #   设计: 所有追踪点 >= 4.0×ATR (从peak计算), 确保SL至少离entry 4.0×ATR
-  #
-  #   Tier 1 (<1.0 ATR): 固定 SL = entry + 4.0×ATR (由 atr_stop 管理, 不移动)
-  #   Tier 2 (1.0-2.0 ATR): peak + 3.0×ATR (profit=1.5ATR时: SL=entry+4.5ATR ✅)
-  #   Tier 3 (2.0-4.0 ATR): peak + 2.5×ATR (profit=3.0ATR时: SL=entry+5.5ATR ✅)
-  #   Tier 4 (≥4.0 ATR): peak + 2.0×ATR (profit=5.0ATR时: SL=entry+7.0ATR ✅)
-  tier_thresholds_atr:
-    tier1_max: 1.0      # <1.0 ATR: 不动 (固定 SL, 让 atr_stop 管理)
-    tier2_max: 2.0      # 1.0~2.0 ATR: 紧凑追踪 (保护初步利润)
-    tier3_max: 4.0      # 2.0~4.0 ATR: 标准追踪 (让利润跑)
-    # >=4.0 ATR: 宽松追踪 (大趋势给更多空间)
-  tier3_compact_multiplier: 1.5    # 2026-06-10: 2.0→1.5, 收紧 2-4 ATR 利润区追踪 (TRAILING_STOP 72笔亏$6K, 利润回吐过多)
-  tier2_compact_multiplier: 1.0    # 2026-06-10: 1.2→1.0, 收紧 1-2 ATR 利润区锁定
-  tier4_loose_multiplier: 1.5      # ≥4.0 ATR: peak + 1.5×ATR (原2.0, 大赢家紧锁)
-  breakeven_buffer_pct: 0.001       # 保本 buffer = 入场价 × 0.1%
-  # 2026-06-06: SHORT floor 从 entry+4.0×ATR → entry-1.0×ATR (代码硬编码, 非配置项)
-  fallback_long_sl_pct: 0.92        # 兜底 LONG SL (无 ATR/policy 时)
-  fallback_short_sl_pct: 1.08       # 兜底 SHORT SL
-  # P1 修复 (2026-05-29): effective_atr 下限 (防止 session_ratio 极端缩水)
-  effective_atr_floor_ratio: 0.35   # effective_atr ≥ daily_atr × 0.35
-  # ATR Volatility Floor 系数 (atr ≥ median_tr_200d × coef)
+  enabled: false
+  effective_atr_floor_ratio: 0.35
   atr_floor_coef: 0.85
-  # ATR 下限百分比 (Phase 3 新增): atr ≥ price × pct/100
-  atr_floor_price_pct: 0.0          # 默认 0 表示不启用，可根据需要打开
-  # 保留入场 session ratio cosine 平滑窗口 (分钟)
+  atr_floor_price_pct: 0.0
   session_blend_window_minutes: 90.0
 
 # ── RFC-057 (2026-06-01): 全局入场冷却 (grace period) ──
-# 数据驱动 (n=60): <30min 持仓 31.7% wr -$27,437 (占总亏损 188%)
-# 30min-1h: 25% wr +$14,970 (放过噪声窗口反而盈利)
-# 入场后 min_hold_minutes 内仅允许 flash_exit / circuit_breaker / earnings_guard
-# 其他规则 (trailing_stop / day_trade / scale_out / time_decay / velocity_exit) 被屏蔽
-# 安全底线: 浮亏 >= max_grace_loss_pct (-3%) 立即解除保护, 防止 grace 包过宽导致大亏
+# 入场后 min_hold_minutes 内仅允许 atr_stop/SL_HIT (硬止损)
 global_hold_protection:
   enabled: true
-  min_hold_minutes_after_entry: 45  # P0 (2026-06-14): 30→45min, 数据驱动: opening_drive 136笔-366.6%
-  max_grace_loss_pct: 0.03          # 浮亏 >=3% 立即解除保护 (硬底兜底)
+  min_hold_minutes_after_entry: 45
+  max_grace_loss_pct: 0.03
   allowed_during_grace:
     - circuit_breaker
-    - earnings_guard                # 财报突发也必须能逃
-    - pre_close                     # 盘末退出 (避免隔夜跳空)
-    # M4 (2026-06-03): 移除 flash_exit — 数据证明入场后 120s 内闪退 173 次全部误触发
-    # flash_exit 已由 min_holding_seconds=120 独立保护, 无需穿透 grace period
-  log_each_block: true              # 每次屏蔽记日志便于审计
+    - earnings_guard
+    - pre_close
+  log_each_block: true
 
-# ── Phase 3 (2026-05-31): 退出监控调度参数 ──
+# ── 退出监控调度参数 ──
 exit_monitor:
-  scan_interval_seconds: 60         # 扫描周期 (分钟以下)
-  cooldown_seconds: 120             # 同一持仓退出冷却
-  min_hold_minutes: 45              # P1 (2026-06-14): 30→45min, 匹配 grace period
+  scan_interval_seconds: 60
+  cooldown_seconds: 120
+  min_hold_minutes: 45
 
-# ── Phase 3 (2026-05-31): 退出规则互斥 (新 ExitRuleDispatcher 使用) ──
-# key=高优先级触发的规则, value=被压制不再上报的规则列表
+# ── 退出规则互斥 ──
 exit_rules_exclusivity:
-  pre_close: [trailing_stop, scale_out, time_decay]
-  earnings_guard: [trailing_stop, scale_out, time_decay]
-  scale_out: [trailing_stop]          # P0 (2026-06-07): scale_out 触发时压制 trailing_stop
-                                       # 根因: scale_out 平50%锁利+SL移成本,
-                                       #       trailing 同时触发会100%全平, 消灭剩余利润空间
-  trailing_stop: [time_decay]
-  day_trade: [time_decay]
+  pre_close: [trailing_stop, time_exit]
+  time_exit: [trailing_stop]
 
 # ── 全局风控 ──
 global:
-  max_daily_drawdown_pct: 3.0       # 日最大回撤 3%
-  max_consecutive_losses: 3          # 连续亏损 3 次熔断
-  max_total_positions: 8             # 最大持仓数
-  max_position_pct: 15               # 单仓最大占比 15%
+  max_daily_drawdown_pct: 3.0
+  max_consecutive_losses: 3
+  max_total_positions: 8
+  max_position_pct: 15
 
 # ── 退出规则定义 (唯一真相源) ──
 exit_rules:
 
   # ── REMOVED RULE: flash_exit (2026-06-20) ──
-  # Flash Exit (60秒内剧烈波动), P0 禁用 (6笔全亏 0%WR 纯噪音), 代码+接线已删。
-  # 注: entry-side 系统级 FLASH_EXIT 熔断器 (order_executor record_flash_exit /
-  #   _check_flash_exit_circuit_breaker) 保留为 dormant — 规则删除后 count 永远 0,
-  #   永不触发, 拆它触及下单门序列, 留待后续单独清理。
+  # 6笔全亏 0%WR 纯噪音, 代码+接线已删.
 
-  # 规则 2: ATR 固定止损
-  # P1 简化 (2026-06-04): 5档非线性状态机 → 单一固定倍数
-  #   利润锁定由 scale_out 负责, atr_stop 只管"最大亏损兜底"
+  # 规则 1: ATR 固定止损 (风险控制)
+  # 2026-06-21: 4.0×→2.0× + max_loss 15%→2.0%
+  #   数据: sl_hit 123笔 avg-$16/笔, 2.0×收紧高波股单笔亏损
+  #   hard_stop = entry × (1 ± max_loss_pct/100), 取 min(ATR_stop, hard_stop)
   atr_stop:
     enabled: true
     method: "entry_price - atr * multiplier"
     multiplier_by_profit:
-      initial: 4.0                   # 固定4.0×ATR, 不分档
-    # 硬底限：任何情况不超过成本的 -15%
-    max_loss_pct: 15.0
-    # 波动率底限：ATR 不能低于 200 日中位 TR 的 70%
+      initial: 2.0                   # 从4.0收紧到2.0
+    max_loss_pct: 2.0                # 从15%收紧到2.0% (统一, 不区分LONG/SHORT)
     atr_floor_pct: 70
 
+  # 规则 2: 保本线 (利润保护, 不平仓)
+  # 2026-06-21: 新设计 — 盈利≥1.5%时SL移至成本
+  # 2026-06-25: 阶梯式利润锁定 (stepped ratchet) — SL只上不下
+  #   peak_profit ≥1.5% → SL=entry (保本)
+  #   peak_profit ≥3.0% → SL=entry×1.01 (锁1%利润)
+  #   peak_profit ≥5.0% → SL=entry×1.03 (锁3%利润)
+  #   SHORT 对称: ×0.99 / ×0.97
+  #   数据依据: DAY_TRADE_TP 1.5%止盈 100%WR +$13K; 3%/5%是自然延伸
+  #   代码: atr_stop_engine.compute_stop_lines + pipeline._check_playbook_exit_rules
+  breakeven:
+    enabled: true
+    trigger_profit_pct: 1.5          # 保本触发: SL移至entry
+    lock_1pct_trigger: 3.0           # 锁1%利润: SL移至entry×1.01
+    lock_3pct_trigger: 5.0           # 锁3%利润: SL移至entry×1.03
+    buffer_pct: 0.0                 # 保本档: SL = entry × (1 + 0%) = entry (纯保本)
+
   # ── DEAD RULE: chandelier_trail ──
-  # 规则 3: Chandelier 追踪止损
-  # P1 禁用 (2026-06-04): 92笔 46.7%WR -$34 接近零EV
-  #   RANGE市已实质禁用(99×ATR), TREND市4.0×与atr_stop initial=4.0重叠
-  #   两套追踪系统(atr_stop+chandelier)互相冲突, 保留atr_stop更简单
+  # 92笔 46.7%WR -$34 接近零EV, 已禁用
   chandelier_trail:
     enabled: false
 
-  # ── DEAD RULE: breakeven ──
-  # 规则 4: 保本触发
-  # P1 禁用 (2026-06-04): 功能已合并到 scale_out (ratchet_sl_pct 止损移至成本)
-  #   3套保本机制(breakeven + progressive_trailing tier2 + scale_out ratchet)冲突
-  breakeven:
-    enabled: false
-
-  # 规则 5: 止盈 (direction×strategy 差异化)
-  # 2026-06-20 重设计 (P0 修复后): 按 {direction}_{strategy}_atr_tiers 分层
-  #   数据依据 (direction_attribution_20260620):
-  #     SHORT|TECHNICAL_MULTI_FACTOR t5=70.2%/+3.11% → 放长持有 (分层+ratchet)
-  #     LONG|TECHNICAL_MULTI_FACTOR  t5=34.1%/-1.10% → 快平 (单层全平)
-  #     LONG|EARNINGS_REVISION_MOMENTUM t5 n=0       → 暂单层全平, 待补 t5 决策
-  #   ratchet 接线: scale_out 写 trail_state["scale_out_stop_floor"],
-  #     atr_stop_engine.compute_stop_lines 读之作下限 clamp (收紧剩余仓位止损).
-  #   multi-tier 可达: 已移除 scale_out is_partially_reduced 广域早退,
-  #     per-tier 去重依赖 trail_state["triggered_tiers"] (trail_state_store 持久化).
+  # ── DEAD RULE: scale_out (2026-06-21) ──
+  # 4笔触发形同虚设, 分批状态机增加复杂度无收益
+  # 数据: 50%锁利反而少赚 (ORCL $2,258→$1,328)
   scale_out:
+    enabled: false
+    tier_mode: pct
+    tiers: []
+
+  # ── DEAD RULE: velocity_exit (2026-06-20) ──
+  # 样本不足且与 trailing_stop 冲突, 代码+接线已删.
+
+  # 规则 3: 时间退出 (解决1-4h死亡区间)
+  # 2026-06-21: 新规则; 2026-06-24: 放宽 (1h/0.3%→2h/-0.5%)
+  #   数据: 6/23 shadow 10笔 TIME_EXIT 净-$72, 6笔微利被砍后 EOD 本可+3.62%
+  #   逻辑: 持仓>2h 且 盈利<-0.5% → 退出 (给趋势发展空间, EOD 100%WR证明方向选对了)
+  time_exit:
     enabled: true
-    tier_mode: atr
+    holding_hours: 2.0              # 2026-06-24: 1h→2h, 让趋势发展
+    max_profit_pct: -0.5            # 2026-06-24: 0.3%→-0.5%, 只砍真亏仓位
+    action: "breakeven_exit"        # 退出方式: 尽量保本 (市价单, 可能微亏/微盈)
 
-    # ── SHORT|TECHNICAL_MULTI_FACTOR: 让利润跑 (t5=70%/+3.11% 唯一有证据) ──
-    short_technical_multi_factor_atr_tiers:
-      - profit_atr: 1.0             # T1: 锁30% + SL→entry(保本)
-        close_pct: 30
-        ratchet_sl_pct: 0.0
-      - profit_atr: 2.0             # T2: 再锁30% + SL→entry-1.0ATR
-        close_pct: 30
-        ratchet_sl_pct: 1.0
-      - profit_atr: 3.0             # T3: 剩余40% trailing, SL→entry-1.5ATR
-        close_pct: 0
-        ratchet_sl_pct: 1.5
-        trailing_remainder: true
-
-    # ── LONG|TECHNICAL_MULTI_FACTOR: 快平 (t5=34%/-1.10% 持有越久越亏) ──
-    long_technical_multi_factor_atr_tiers:
-      - profit_atr: 1.0
-        close_pct: 100
-        ratchet_sl_pct: 0.0
-
-    # ── LONG|EARNINGS_REVISION_MOMENTUM: 暂快平 (t5 n=0, 待补数据后决策) ──
-    long_earnings_revision_momentum_atr_tiers:
-      - profit_atr: 1.0
-        close_pct: 100
-        ratchet_sl_pct: 0.0
-
-    # ── 方向级兜底 (其他小样本 strategy) ──
-    long_atr_tiers:
-      - profit_atr: 1.0
-        close_pct: 100
-        ratchet_sl_pct: 0.0
-    short_atr_tiers:
-      - profit_atr: 1.0
-        close_pct: 100
-        ratchet_sl_pct: 0.0
-
-    # ── 通用兜底 (direction 也未知时) ──
-    atr_tiers:
-      - profit_atr: 1.0
-        close_pct: 100
-        ratchet_sl_pct: 0.0
-
-    tiers: []                       # pct模式不使用
-
-  # ── REMOVED RULE: velocity_exit (2026-06-20) ──
-  # 速度捕捉退出 (Phase 3), P0 禁用 (样本不足且与 trailing_stop 冲突), 代码+接线已删。
-
-  # 规则 3.5: 盘末退出 (Pre-Close Exit)
-  # P1 优化 (2026-06-04): 盈利落袋 + 亏损保留过夜(带硬止损)
-  #   数据: PRE_CLOSE_EXIT 74%是亏损仓位, 隔夜持仓71.4%WR但跳空风险大
-  #   方案: 盈利全平, 亏损保留+设-3%隔夜硬止损, 收集隔夜恢复数据
+  # 规则 4: 盘末退出 (Pre-Close Exit)
+  # 数据: PRE_CLOSE_EXIT SHORT +$8.4K (有效), 盈利落袋+亏损保留
   pre_close_exit:
     enabled: true
-    window_minutes: 8               # 收盘前8分钟开始评估
+    window_minutes: 8
     min_hold_minutes_before_pre_close: 30
-    time_weighted: false             # 简化: 取消时间加权, 统一处理
-    # ── 分层退出 (2026-06-04 简化, 2026-06-07 分级化) ──
-    loss_flat: false                # 2026-06-07: true→false, 亏损不一刀切全平
-                                     # 大亏由 adaptive pre_close.loss_exit 处理 (>0.5ATR全平)
-                                     # 小亏 (<0.5ATR) 保留过夜博反转 (数据显示隔夜总体盈利)
-    overnight_loss_stop_pct: 0.03   # 保留过夜仓位的次日保护: 开盘价跌超3%触发硬止损
-    close_profit_atr: 2.0           # 2026-06-06: 0.5→2.0 ATR, 让交易有时间跑到 scale_out
-                                     # 0.5ATR 全库306笔仅1笔 scale_out 触发过
-    half_exit_below_atr: 0.5        # 微利(0~0.5ATR) → 减半仓
-    hold_threshold_atr: 99          # 禁用: 不再保留任何仓位过夜(盈利全平, 亏损保留)
-    quarter_exit_below_atr: 99      # 不再使用
+    time_weighted: false
+    loss_flat: false
+    overnight_loss_stop_pct: 0.03
+    close_profit_atr: 2.0
+    half_exit_below_atr: 0.5
+    hold_threshold_atr: 99
+    quarter_exit_below_atr: 99
 
-  # ── Task #3 (2026-05-31): 自适应分级退出 ──
-  # 目标: PRE_CLOSE 占比 54% → <35%, 让利润仓位有更多时间达到目标
-  # 调度入口: ExitRuleDispatcher._eval_pre_close (mode=adaptive 时启用)
+  # 自适应分级退出 (盘末细化)
   pre_close:
     enabled: true
-    mode: adaptive                  # adaptive | legacy
+    mode: adaptive
     profit_exit:
-      min_profit_atr: 2.0           # 2026-06-06: 0.5→2.0 ATR, 让交易有时间跑到 scale_out + trailing
+      min_profit_atr: 2.0
       close_ratio: 1.0
     breakeven_exit:
-      tolerance_atr: 0.3            # |PnL| < 0.3 ATR → 持平减半仓
+      tolerance_atr: 0.3
       close_ratio: 0.50
     loss_exit:
-      min_loss_atr: 99              # P1 (2026-06-04): 1.5→99ATR, 实质禁用亏损强平
-      close_ratio: 0.0              # 亏损保留过夜, 由atr_stop次日保护
-    force_close_remaining: false    # 中间地带 (-0.5~-0.3ATR) 不强平, 保留过夜博反转
+      min_loss_atr: 99
+      close_ratio: 0.0
+    force_close_remaining: false
     window_minutes:
-      trending: 10                  # 趋势市: 收盘前 10 分钟
-      range_bound: 5                # 震荡市: 收盘前 5 分钟 (早平无价值持仓)
-      high_vol: 15                  # 高波动: 收盘前 15 分钟 (保守)
+      trending: 10
+      range_bound: 5
+      high_vol: 15
       default: 10
 
-  # ── REMOVED RULE: time_stop (2026-06-20) ──
-  # 时间止损, P1 禁用 (30天 sharpe=-0.40, 退出应由价格行为决定), 代码+接线已删。
-  # 注: time_stop_hours (Position 字段) 与 dynamic_risk 的 reason="TIME_STOP" 是不同概念, 保留。
+  # ── DEAD RULE: time_stop (2026-06-20) ──
+  # 30天 sharpe=-0.40, 被 time_exit 替代
 
-
-  # 规则 6.5: 成本缓冲
-  # P1 禁用 (2026-06-04): 与breakeven/scale_out重叠, 4.0×ATR止损已远超交易成本
+  # 规则 5: 成本缓冲 (已禁用)
   cost_buffer:
     enabled: false
 
-  # 规则 7: 财报保护
+  # 规则 6: 财报保护
   earnings_guard:
     enabled: true
-    days_before: 2                  # 财报前 2 天收紧
-    days_after: 1                   # 财报后 1 天收紧
-    action: "reduce_position_50pct" # 减仓 50%
-    flash_multiplier_override: 0.5  # Flash Exit 阈值减半
+    days_before: 2
+    days_after: 1
+    action: "reduce_position_50pct"
+    flash_multiplier_override: 0.5
 
-# ── 行业差异化配置 ──
+# ── 行业差异化配置 (简化: 统一2.0×ATR) ──
+# 原因: 行业差异由ATR自身已反映(高波股ATR大→止损距离自动放大)
 sector_overrides:
-  tech:                             # 科技股 (高波动)
-    atr_multiplier: 3.0             # 放宽到 3.0x
-    flash_multiplier: 1.0
-  biotech:                          # 生物制药 (极高风险)
-    atr_multiplier: 3.5
-    max_position_pct: 5             # 单仓不超过 5%
-  utility:                          # 公用事业 (低波动)
+  default:
     atr_multiplier: 2.0
-    flash_multiplier: 0.6
-  default:                          # 默认
-    atr_multiplier: 3.0             # P0 (2026-06-03): 2.0→3.0, 匹配 atr_stop.initial
-    flash_multiplier: 1.0           # 优化 (2026-05-03): 从 0.8 提高到 1.0, 匹配 flash_exit 新基准
+  tech:
+    atr_multiplier: 2.0
+  biotech:
+    atr_multiplier: 2.0
+    max_position_pct: 5
+  utility:
+    atr_multiplier: 2.0
 
 # ── 做空差异化 ──
+# 2026-06-21: 统一2.0×ATR + 2.0%上限, 不再区分做空
+# 原因: 模拟显示统一2.0%上限SHORT 0恶化 (vs 2.5%少亏$1,972)
 short_overrides:
-  atr_multiplier: 4.0              # 2026-06-05 根因修复: 2.0→4.0, 与atr_stop.initial一致
-                                    # 原2.0导致T1 trailing比初始SL紧50%, 被单调锁死后过紧
-  max_loss_pct: 10.0               # 最大亏损 10% (做多 15%)
+  atr_multiplier: 2.0              # 4.0→2.0, 与atr_stop.initial一致
+  max_loss_pct: 2.0               # 10%→2.0%, 统一硬上限
 
-  # P1 简化 (2026-06-04): 移除 trail_multiplier (与chandelier冲突, 已禁用)
-  #   移除 time_stop 加速 (time_stop已禁用)
-  #   做空统一使用 atr_multiplier=2.0 止损
-
-  # 幻方 Principle: 技术破位快速平仓
+  # ── DEAD: technical_breach (2026-06-21) ──
+  # STRUCTURE_EXIT 33笔 -$3,106, 30%WR, 误触发多
+  # 被 ATR 2.0× 止损自然替代
   technical_breach:
-    enabled: true                     # P0 修复 (2026-05-08): 显式开关
-    trigger_atr_mult: 3.0             # P0 (2026-06-03): 2.0→3.0, 减少 STRUCTURE_EXIT 误触发 (33笔 30%WR -$3,106)
-                                      #   注意：unified_config.yaml 的 breach_threshold_pct 不影响此处逻辑
-    cover_pct: 100                    # 平仓 100%
-    # P0 修复 (2026-05-08): 防呆机制
-    require_resistance_20d: true      # 必须存在真实阻力位，禁止降级到 peak_price
-    min_loss_pct: 1.0                 # P3 优化 (2026-05-22): 0.5→1.0 最小亏损门槛提高，减少微亏误杀
-    entry_cooldown_minutes: 60        # P3 优化 (2026-05-22): 30→60min 给足行情发展空间
+    enabled: false
 
-  scale_out:                       # 做空止盈更积极
-    tier_1_pct: 10.0               # +10% 平 40%
-    tier_2_pct: 20.0               # +20% 平 60%
+  # ── DEAD: scale_out 做空差异化 ──
+  scale_out:
+    tier_1_pct: 10.0
+    tier_2_pct: 20.0
 
-# ── 时段自适应 (P2 2026-05-01 新增, 幻方架构)
-# 修复 (2026-05-12): opening_drive session Flash Exit 最低阈值 1.5x ATR
-# 根因: 开盘前 5 分钟波动本身 2-3x ATR, 原 1.0x 阈值易误触发 (QCOM 亏损 -4.8%)
-# 原则: 不在 YAML 里放参数表。所有 session 参数从 SharedKernel 派生。
-# YAML 只定义"是否启用"和"数据来源"。参数值由 SharedKernel.calibrate_scalers_from_data()
-# 从实盘振幅数据 + 退出质量反馈 自动校准。
-#
-# 生效机制:
-#   ExitMonitor.scan_positions() → effective_atr = atr × session_vol_ratio
-#   session_vol_ratio 来自 SharedKernel.DEFAULT_SESSION_VOL_RATIO
-#   一个 ratio 影响全部 5 条退出规则 (Flash/ATR/Chandelier/DayTrade/TimeDecay)
-#
-# 时段波动率比值 (参考值, 实际由 SharedKernel 校准):
-#   opening_drive:  1.50  (开盘 1.5x 日均波动 → 所有止损自动放宽)
-#   morning:        1.20  (早盘 1.2x)
-#   midday:         0.75  (午盘 0.75x → 适度收紧, 2026-05-30 Task#7 从 0.60 抬升)
-#   afternoon:      0.95  (午后 0.95x)
-#   closing_drive:  1.00  (尾盘 1.0x → 回归基准, 2026-05-30 Task#7 从 1.15 下调)
+# ── 时段自适应 ──
+# 保留: ATR 止损距离 × session_vol_ratio (开盘波动大→自动放宽)
 session_adaptation:
   enabled: true
-  source: "shared_kernel"          # 参数值从 SharedKernel 取，不在此定义
+  source: "shared_kernel"
   apply_to:
-    - atr_stop                     # ATR 止损距离 × session_vol_ratio
-    - chandelier_trail             # Chandelier 追踪 × session_vol_ratio
-    - day_trade_initial_stop       # 短线初始止损 × session_vol_ratio
-    - day_trade_time_decay         # 短线时间衰减速率 × session_vol_ratio
-  path_dependency:                 # 入口 session 信息传递到出口
+    - atr_stop
+  path_dependency:
     enabled: true
     rule: "低置信度 session 入场 (opening_drive) → 止损收紧 0.85x"
 
 # ── DEAD RULE: day_trade_mode ──
-# P1 合并 (2026-06-04): day_trade_TP 和 time_decay 与 scale_out/grace_period 重叠, 统一使用后者
 day_trade_mode:
-  enabled: false                  # P1 合并 (2026-06-04): day_trade_TP 与 scale_out 功能重叠
-                                  #   day_trade_TP 用固定1.5%, scale_out 用1.0ATR (波动率自适应)
-                                  #   ATR对不同股票自动调整: ETF≈1%, 大盘股≈2.5%, 高波≈5%
-                                  #   统一使用 scale_out 作为唯一止盈规则
-  # 以下为历史配置, 保留供参考
-  apply_conditions:
-    exclude_etf: true
-    exclude_earnings_period: true
-    max_holding_days: 3
-
-  # F11+F12 修复 (2026-05-12): R/R 从 0.6 → 2.67, profit_lock 禁用 (chandelier 接管)
-  # 原 R/R = 3%/5% = 0.6 → 盈亏平衡需要 77% 胜率 → 结构性负 EV
-  # 新 R/R = 8%/3% = 2.67 → 盈亏平衡仅需 27% 胜率
-  initial_stop:
-    atr_multiplier: 1.5             # 收紧: 从 1.8x → 1.5x
-    max_loss_pct: 3.0               # 收紧: 从 5.0% → 3.0%
-    atr_source: "5min"
-
-  # 主动止盈 — 单一层
-  # P1 简化 (2026-06-04): 3档 → 1档
-  #   DAY_TRADE_TP 100%WR, 单一触发点足够
-  take_profit:
-    tier_1:
-      profit_pct: 1.5               # 1.5% 止盈
-      close_pct: 50                 # 平半仓
-      move_sl_to: "breakeven"       # 止损移至成本
-
-  # F12: 浮盈保护禁用 — 由 chandelier_trail 接管, 避免框死利润
-  profit_lock:
-    enabled: false                  # DEPRECATED 2026-05-12
-    # 例: 买入$100, 涨到$102 (+2%) → 激活保护 → 回撤到$100.80 时退出, 锁定+0.8%
-
-  # 时间衰减
-  # P1 禁用 (2026-06-04): 45min grace period 与 global_hold_protection 30min冲突
-  #   信号失效由 atr_stop + pre_close 自然处理, 不需要额外时间衰减
-  time_decay:
-    enabled: false
-
-  # 做空加速 (沿用 short_overrides 逻辑, 阈值更紧)
-  # ADR-004 (2026-06-04): RANGE 市做空反弹快, 需要更快止盈
-  short:
-    initial_stop_atr: 1.5           # 优化: 从 1.2x 放宽到 1.5x
-    max_loss_pct: 5.0               # 优化: 从 4.0% 放宽到 5.0%
-    take_profit_tier_1: 1.0         # ADR-004: 2.0%→1.0% — 做空快速锁利
-    take_profit_tier_2: 2.5         # ADR-004: 5.0%→2.5%
-    max_idle_minutes: 45            # ADR-004: 60→45min, 与主线对齐
-
-# ============================================================
-# (已删除) SCALPING 引擎退出参数 — 2026-06-19 随 scalping 引擎彻底移除
-# app/scalping/ 目录、_load_scalping_exit_config()、BaseScalpingParams 均已清理.
-# 如需重启 scalping, 从 git 历史恢复本块.
-# ============================================================
+  enabled: false

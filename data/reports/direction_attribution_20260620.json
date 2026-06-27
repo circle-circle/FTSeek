@@ -1,0 +1,158 @@
+{
+  "timestamp": "2026-06-20T17:12:37.333921",
+  "period_days": 30,
+  "data": {
+    "period": "30 days",
+    "total": 998,
+    "by_direction": {
+      "LONG": {
+        "n": 419,
+        "win_rate": 0.5560859188544153,
+        "avg_ret_t1": 0.5493238399335262,
+        "avg_win": 2.839122834800151,
+        "avg_loss": 2.319080277291871,
+        "pnl_ratio": 1.2242451727956416,
+        "expectancy": 0.5493238399335254
+      },
+      "SHORT": {
+        "n": 579,
+        "win_rate": 0.5043177892918825,
+        "avg_ret_t1": 0.1599405879761489,
+        "avg_win": 2.5317770960430988,
+        "avg_loss": 2.2532171136111248,
+        "pnl_ratio": 1.123627670298287,
+        "expectancy": 0.15994058797615196
+      }
+    }
+  },
+  "by_strategy": {
+    "LONG|EARNINGS_REVISION_MOMENTUM": {
+      "direction": "LONG",
+      "strategy": "EARNINGS_REVISION_MOMENTUM",
+      "n": 275,
+      "win_rate_t1": 0.5563636363636364,
+      "avg_ret_t1": 0.633135126669956,
+      "pnl_ratio": 1.252392304548766,
+      "expectancy": 0.6331351266699532,
+      "avg_win": 3.132277900596607,
+      "avg_loss": 2.5010357291560963,
+      "t5": {
+        "n": 0,
+        "win_rate": null,
+        "avg_ret": null
+      }
+    },
+    "SHORT|TECHNICAL_MULTI_FACTOR": {
+      "direction": "SHORT",
+      "strategy": "TECHNICAL_MULTI_FACTOR",
+      "n": 395,
+      "win_rate_t1": 0.5848101265822785,
+      "avg_ret_t1": 0.5505627783368385,
+      "pnl_ratio": 1.1368271212628578,
+      "expectancy": 0.5505627783368373,
+      "avg_win": 2.507207833710682,
+      "avg_loss": 2.20544336673242,
+      "t5": {
+        "n": 392,
+        "win_rate": 0.701530612244898,
+        "avg_ret": 3.1135251854795705
+      }
+    },
+    "LONG|TECHNICAL_MULTI_FACTOR": {
+      "direction": "LONG",
+      "strategy": "TECHNICAL_MULTI_FACTOR",
+      "n": 89,
+      "win_rate_t1": 0.5393258426966292,
+      "avg_ret_t1": 0.019110810194625707,
+      "pnl_ratio": 0.8699323971734686,
+      "expectancy": 0.019110810194625794,
+      "avg_win": 1.9552364034732441,
+      "avg_loss": 2.2475728112047317,
+      "t5": {
+        "n": 88,
+        "win_rate": 0.3409090909090909,
+        "avg_ret": -1.098399834021988
+      }
+    },
+    "SHORT|orb": {
+      "direction": "SHORT",
+      "strategy": "orb",
+      "n": 1,
+      "win_rate_t1": 0.0,
+      "avg_ret_t1": -1.5183009962068228,
+      "pnl_ratio": 0.0,
+      "expectancy": -1.5183009962068228,
+      "avg_win": 0,
+      "avg_loss": 1.5183009962068228,
+      "t5": {
+        "n": 0,
+        "win_rate": null,
+        "avg_ret": null
+      }
+    },
+    "SHORT|trend_first": {
+      "direction": "SHORT",
+      "strategy": "trend_first",
+      "n": 9,
+      "win_rate_t1": 0.4444444444444444,
+      "avg_ret_t1": 0.24449141002442282,
+      "pnl_ratio": 2.3770265037727842,
+      "expectancy": 0.24449141002442276,
+      "avg_win": 1.1602351490063056,
+      "avg_loss": 0.48810358116108343,
+      "t5": {
+        "n": 6,
+        "win_rate": 0.8333333333333334,
+        "avg_ret": 2.7618103587136567
+      }
+    },
+    "LONG|trend_first": {
+      "direction": "LONG",
+      "strategy": "trend_first",
+      "n": 12,
+      "win_rate_t1": 0.5833333333333334,
+      "avg_ret_t1": 0.22091842604353798,
+      "pnl_ratio": 1.3617165170437764,
+      "expectancy": 0.22091842604353798,
+      "avg_win": 0.7965416581035635,
+      "avg_loss": 0.5849540988404978,
+      "t5": {
+        "n": 10,
+        "win_rate": 0.6,
+        "avg_ret": 0.17816952248242202
+      }
+    },
+    "LONG|unknown": {
+      "direction": "LONG",
+      "strategy": "unknown",
+      "n": 43,
+      "win_rate_t1": 0.5813953488372093,
+      "avg_ret_t1": 1.2023871134433828,
+      "pnl_ratio": 1.915156076935258,
+      "expectancy": 1.2023871134433828,
+      "avg_win": 3.313998509748534,
+      "avg_loss": 1.7304064925359939,
+      "t5": {
+        "n": 43,
+        "win_rate": 0.5813953488372093,
+        "avg_ret": 0.7940167018726314
+      }
+    },
+    "SHORT|unknown": {
+      "direction": "SHORT",
+      "strategy": "unknown",
+      "n": 174,
+      "win_rate_t1": 0.3275862068965517,
+      "avg_ret_t1": -0.7215449350509997,
+      "pnl_ratio": 1.1356013421911053,
+      "expectancy": -0.7215449350509994,
+      "avg_win": 2.7275958221296674,
+      "avg_loss": 2.4018955603441445,
+      "t5": {
+        "n": 174,
+        "win_rate": 0.3390804597701149,
+        "avg_ret": -3.0283383824045442
+      }
+    }
+  }
+}

@@ -82,14 +82,18 @@ def _is_pullback_entry(ctx: SymbolContext, direction: str) -> bool:
     """
     判断是否为回调入场时机 (不追高/不追低)
 
-    LONG 回调入场条件:
-      - RSI 40-55 (从超卖回升, 但不过热)
-      - 价格在布林带中下部 (< 60% 位置)
-      - 或: RSI 从低点反弹 (> 前值)
+    LONG 回调入场条件 (2026-06-26 放宽):
+      - RSI 45-60 (从回调回升, 放宽原40-55)
+      - 价格在布林带中下部 (< 70% 位置, 放宽原60%)
+      - MACD柱非负 (动量未死, 排除下跌中继)
+      - 或: RSI 30-45 + 布林带下部 + 价格在MA50上方 (深度回调)
+      - 或: RSI 55-65 + MACD金叉 + SuperTrend=UP (动量延续, 新增)
 
     SHORT 回调入场条件:
       - RSI 45-60 (从超买回落, 但不超卖)
       - 价格在布林带中上部 (> 40% 位置)
+      - 或: RSI 60-70 + 布林带上部 (深度反弹)
+      - 或: RSI 30-45 + 布林带下部 (趋势延续做空)
     """
     rsi = ctx.rsi
     if rsi <= 0:
@@ -103,20 +107,34 @@ def _is_pullback_entry(ctx: SymbolContext, direction: str) -> bool:
             boll_pos = (ctx.price - ctx.bollinger_lower) / bw
 
     if direction == "LONG":
-        # RSI 40-55: 回调到支撑区但未超卖
-        if 40 <= rsi <= 55 and boll_pos < 0.60:
+        # MACD柱状图 (正=多头动量, 负=空头动量)
+        macd_hist = ctx.macd - ctx.macd_signal if (ctx.macd != 0 and ctx.macd_signal != 0) else 0
+
+        # 路径1: RSI 45-60 + 布林带中下部 (标准回调, 放宽RSI和boll_pos)
+        if 45 <= rsi <= 60 and boll_pos < 0.70:
+            if macd_hist < -0.005:
+                return False
             return True
-        # 或: RSI 30-40 + 布林带下部 (深度回调, 更强信号)
-        if 30 <= rsi < 40 and boll_pos < 0.40:
+        # 路径2: RSI 30-45 + 布林带下部 (深度回调, 放宽RSI上限)
+        if 30 <= rsi < 45 and boll_pos < 0.40:
+            if ctx.ma50 > 0 and ctx.price < ctx.ma50:
+                return False
+            return True
+        # 路径3: RSI 55-65 + MACD金叉 + SuperTrend=UP (动量延续入场, 新增)
+        st_dir = ctx.supertrend_direction.upper() if ctx.supertrend_direction else ""
+        if 55 <= rsi <= 65 and macd_hist > 0 and st_dir == "UP":
             return True
         return False
 
     elif direction == "SHORT":
-        # RSI 45-60: 反弹到阻力区但未超买
+        # RSI 45-60: 反弹到阻力区但未超买 (标准回调做空)
         if 45 <= rsi <= 60 and boll_pos > 0.40:
             return True
         # 或: RSI 60-70 + 布林带上部 (深度反弹)
         if 60 < rsi <= 70 and boll_pos > 0.60:
+            return True
+        # 趋势延续做空: RSI 30-45 + 布林带下部 (下跌趋势中不反弹也入场)
+        if 30 <= rsi < 45 and boll_pos < 0.30:
             return True
         return False
 

@@ -189,20 +189,34 @@ class PlaybookService:
         if inst.get("direction") == "SKIP":
             return {"success": False, "message": "SKIP 指令不可执行"}
 
-        # 读取下单模式: 默认 simulate (shadow 安全); live 需在 unified_config.yaml playbook.execute_mode=live
+        # 2026-06-25: 账户级熔断 guard (OKR)
+        # 若当日亏损 ≥2% 停止新仓, ≥3% 强制全平.
+        try:
+            from app.risk.account_circuit_breaker import check_circuit_breaker
+            from app.risk.capital_safety import get_capital_safety_system
+            _cs = get_capital_safety_system()
+            _equity = float(getattr(_cs._state, 'current_equity', 0) or 0)
+            if _equity > 0:
+                _cb = check_circuit_breaker(_equity)
+                if _cb.action in ("HALT", "LIQUIDATE"):
+                    _msg = f"[OKR熔断] {_cb.reason}, 暂停 Playbook 执行"
+                    logger.warning(_msg)
+                    return {"success": False, "message": _msg}
+        except Exception as _cb_err:
+            logger.warning("[playbook] 熔断检查异常 (放行): %s", _cb_err)
+
+        # 读取下单模式: 统一走 broker 真实下单 (futu_simulate / live), 禁止纯虚拟 shadow.
+        # simulate (shadow) 模式已废弃, 如果配置误设为 simulate, 强制降级为 futu_simulate.
         try:
             from app.core.config_container import get_config
-            _exec_mode = get_config().get_dotted("playbook.execute_mode", "simulate")
+            _exec_mode = get_config().get_dotted("playbook.execute_mode", "futu_simulate")
         except Exception:
-            _exec_mode = "simulate"
+            _exec_mode = "futu_simulate"
 
-        # ── P0 (2026-06-22): simulate 模式创建虚拟仓位 (不调 broker) ──
-        # 原设计: simulate+live_broker 拒绝下单. 但 shadow_only 阶段需要采集数据,
-        # 不应依赖 broker 环境参照. 改为: simulate 模式直接创建虚拟 trade_record,
-        # 不调 ManualOrderService/executor, 与 ORB shadow 模式对齐.
-        #
-        # 安全保证: simulate 路径零 broker 调用, 不可能下到真实账户.
-        # live 模式仍走 ManualOrderService → executor → Futu API.
+        if _exec_mode == "simulate":
+            logger.warning(f"[playbook] execute_mode=simulate 已废弃, {symbol} 强制降级为 futu_simulate (真实模拟下单)")
+            _exec_mode = "futu_simulate"
+
         symbol = inst["symbol"]
         direction = inst["direction"]
         entry_price = custom_params.get("entry_price") if custom_params else inst.get("entry_price", 0)
@@ -237,109 +251,9 @@ class PlaybookService:
             except Exception as _e:
                 logger.debug(f"[playbook] decision_id lookup failed: {_e}")
 
-        if _exec_mode == "simulate":
-            # ── simulate 路径: 创建虚拟仓位, 写 trade_records, 不调 broker ──
-            import uuid as _uuid
-            _shadow_order_id = f"shadow_playbook_{_uuid.uuid4().hex[:8]}"
-            _now_iso = datetime.now().isoformat()
-
-            # 写 trade_records (与 ORB shadow 模式对齐)
-            try:
-                from app.storage.trade_store import TradeStore
-                from app.core.paths import get_trade_records_db
-                import json as _json
-                _ts = TradeStore(str(get_trade_records_db()))
-                _trace_id = f"playbook-{symbol}-{_now_iso[:10]}"
-                _ts.save_trade({
-                    "trace_id": _trace_id,
-                    "trade_date": _now_iso[:10],
-                    "symbol": symbol,
-                    "direction": mos_direction,
-                    "entry_time": _now_iso,
-                    "exit_time": "",
-                    "entry_price": float(entry_price) if entry_price else 0.0,
-                    "exit_price": 0,
-                    "quantity": int(position_size),
-                    "realized_pnl": 0,
-                    "pnl_pct": 0,
-                    "exit_reason": "",
-                    "holding_hours": 0,
-                    "signal_strength": int(inst.get("confidence", 0) * 100) if inst.get("confidence") else 0,
-                    "signal_confidence": float(inst.get("confidence", 0)),
-                    "futu_order_id": _shadow_order_id,
-                    "source_type": "PLAYBOOK_SHADOW",
-                    "entry_reason": "playbook_shadow",
-                    "owner_strategy": "playbook_shadow",
-                    "market_regime": inst.get("market_regime", ""),
-                    "mode": "simulate",
-                    "trade_mode": "simulate",
-                    "signal_id": _trace_id,
-                    "decision_id": _matched_decision_id,
-                    "metadata_json": _json.dumps({
-                        "playbook_instruction_id": instruction_id,
-                        "stop_loss": float(stop_loss) if stop_loss else 0,
-                        "take_profit": float(take_profit) if take_profit else 0,
-                        "atr": _extract_atr_from_instruction(inst),
-                        "thesis": inst.get("thesis", "")[:200],
-                        "peak_price": float(entry_price) if entry_price else 0,  # 初始化peak = entry
-                        # P1 (2026-06-24): 因子归因 (同 dual_broker 路径)
-                        "conditions": _parse_json_field(inst.get("conditions_json"), []),
-                        "data_quality": _parse_json_field(inst.get("data_quality_json"), {}),
-                    }),
-                    "signal_details": _json.dumps({
-                        "source": "playbook_shadow",
-                        "entry_price": float(entry_price) if entry_price else 0,
-                        "stop_loss": float(stop_loss) if stop_loss else 0,
-                        "take_profit": float(take_profit) if take_profit else 0,
-                    }),
-                })
-                logger.info(f"[playbook] shadow trade_record 已写入: {symbol} {mos_direction} @ {entry_price}")
-            except Exception as _tre:
-                logger.warning(f"[playbook] shadow trade_record 写入失败 (不影响执行): {_tre}")
-
-            # 2026-06-24 清理: shadow_trades 表写入已退役.
-            # 原用途 (shadow A/B 对比 + IC 追踪) 已被 playbook_instructions.fwd_return_t1/t3/t5
-            # + ic_tracker.by_source_type 取代. shadow_trades 只被旧 evolution/harness 读,
-            # playbook OKR 链不读 → 写它是 vestigial conflation, 停写以保持逻辑干净.
-
-            # 注册 ManualHoldRegistry (防止 auto-pipeline 干扰)
-            try:
-                from app.coordinator.manual_hold_registry import manual_hold_registry
-                manual_hold_registry.register(
-                    symbol=symbol,
-                    direction=mos_direction,
-                    quantity=int(position_size),
-                    reason=f"Playbook shadow: {inst.get('thesis', '')[:60]}",
-                )
-            except Exception as e:
-                logger.warning(f"ManualHoldRegistry register failed: {e}")
-
-            # 更新 DB
-            self.db.update_instruction_tracking(instruction_id, {
-                "executed": 1,
-                "execution_price": float(entry_price) if entry_price else 0,
-                "execution_time": _now_iso,
-                "outcome": "holding",
-                "decision_id": _matched_decision_id,
-            })
-            self.db.save_user_feedback({
-                "instruction_id": instruction_id,
-                "action": "executed",
-            })
-
-            logger.info(f"Playbook shadow executed: {symbol} {direction} @ ${entry_price} (no broker)")
-            return {
-                "success": True,
-                "message": f"shadow 执行 {symbol} {direction} (虚拟仓位, 不调 broker)",
-                "execution_price": float(entry_price) if entry_price else 0,
-                "mode": "simulate",
-            }
-
         # ── broker 路径 (futu_simulate / live 统一): target_env 由 AUTO_TRADE_ACCOUNT 决定 ──
         # 2026-06-24 修复: 之前 futu_simulate/live 各写死 target_env, 与 switch_mode (写 AUTO_TRADE_ACCOUNT)
         # 不通 → 系统页切实盘时 playbook 仍在 sim. 现统一: target_env = AUTO_TRADE_ACCOUNT (sim|real).
-        # 这样 switch_mode (AUTO_TRADE_ACCOUNT) 真正控制 playbook + 主 pipeline 两个自动路径.
-        # execute_mode=simulate (虚拟离线) 仍走上面的虚拟分支; futu_simulate/live 都走此 broker 路径.
         import os as _os
         _auto_account = _os.getenv("AUTO_TRADE_ACCOUNT", "sim").strip().lower()
 
@@ -465,7 +379,14 @@ class PlaybookService:
             return {"success": False, "message": f"{_mode_label} 下单失败: {_result.get('error')}"}
 
         _futu_id = _result.get("futu_order_id", "")
-        _fill = _result.get("filled_price", 0) or float(entry_price) or 0
+        # 2026-06-27 辩论DEB-20260627: _fill=0时不fallback到entry_price
+        # ponytail: 1次查询, 失败则warning+拒绝(不sleep阻塞批量路径)
+        _fill = _result.get("filled_price", 0) or 0
+        if not _fill or _fill <= 0:
+            _fill = self._query_filled_price_for_order(_futu_id, target_env)
+        if not _fill or _fill <= 0:
+            logger.error(f"[playbook] {_mode_label} {symbol} 订单 {_futu_id} 无法获取成交价, 拒绝记账")
+            return {"success": False, "message": f"{_mode_label} {symbol} 成交价查询失败, 可能未成交"}
         _now_iso = datetime.now().isoformat()
         _order_id = f"{_mode_label}_{_uuid.uuid4().hex[:8]}"
 
@@ -507,6 +428,10 @@ class PlaybookService:
                     "atr": _extract_atr_from_instruction(inst),
                     "thesis": inst.get("thesis", "")[:200],
                     "peak_price": float(_fill),
+                    # 2026-06-26: Horizon 决策写入 metadata
+                    "horizon": inst.get("horizon", "short"),
+                    "horizon_confidence": inst.get("horizon_confidence", 0.0),
+                    "horizon_reasoning": inst.get("horizon_reasoning", {}),
                     # P1 (2026-06-24): 因子归因 — Playbook 路径此前不写 factor 数据 (trade_records.factor_detail 恒 NULL)
                     # 写入触发条件 + 数据质量, 供 OKR 按 source/factor 拆分 (与 MAIN_PIPELINE factor_detail 同用途)
                     "conditions": _parse_json_field(inst.get("conditions_json"), []),
@@ -587,6 +512,24 @@ class PlaybookService:
         }
 
     # ========== 跳过/反馈接口 ==========
+
+    def _query_filled_price_for_order(self, futu_order_id: str, target_env: str) -> float:
+        """查询订单成交均价 (带target_env路由)."""
+        try:
+            from app.execution.dual_broker import get_dual_broker
+            dual = get_dual_broker()
+            ctx, acc_id, trd_env, lock = dual._ctx_and_acc(target_env)
+            with lock:
+                from futu import RET_OK
+                ret, data = ctx.order_list_query(order_id=futu_order_id, trd_env=trd_env)
+            if ret == RET_OK and not data.empty:
+                avg = data.iloc[0].get("avg_price", 0)
+                dealt = data.iloc[0].get("dealt_qty", 0)
+                if avg and float(avg) > 0 and float(dealt or 0) > 0:
+                    return float(avg)
+        except Exception as e:
+            logger.warning(f"[playbook] 查成交价失败 {futu_order_id}: {e}")
+        return 0.0
 
     def skip_instruction(
         self,

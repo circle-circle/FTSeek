@@ -85,7 +85,16 @@ class WeeklyReviewGenerator:
         
         # 逐日对比分析
         daily_comparison = self._get_daily_comparison(week_start, week_end, trades)
-        
+
+        # RFC-061 cohort A/B 退出实验度量 (OKR KR2.1/KR2.2 增量)
+        cohort_ab = {}
+        try:
+            from app.review.cohort_ab import compute_cohort_report
+            cohort_ab = compute_cohort_report(since=week_start)
+        except Exception as e:
+            logger.warning(f"cohort A/B 度量失败 (不影响周复盘): {e}")
+            cohort_ab = {"error": str(e)}
+
         # 生成报告
         report = {
             'report_type': 'weekly',
@@ -104,6 +113,7 @@ class WeeklyReviewGenerator:
             'key_learnings': self._extract_learnings(closed_trades),
             'improvement_plan': self._generate_plan(closed_trades, signal_funnel, rejection_trend),
             'daily_reviews_summary': daily_reviews,
+            'cohort_ab': cohort_ab,
         }
         
         self._save_report(report, week_start, week_end)

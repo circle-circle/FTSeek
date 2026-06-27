@@ -37,9 +37,9 @@ class ORBPosition:
     __slots__ = (
         "symbol", "direction", "entry_price", "quantity", "initial_quantity",
         "entry_time", "orb_high", "orb_low", "orb_mid",
-        "atr_at_entry", "sl_distance", "peak_price", "trough_price",
-        "trail_stop", "order_id",
+        "atr_at_entry", "sl_distance", "order_id",
         # 2026-06-08: 清理分层止盈死字段 (layer1/layer2/breakeven/trail_activated 已删除)
+        # 2026-06-23: 清理 trailing 死字段 (peak_price/trough_price/trail_stop) — trailing 已删, 无消费者
         "r_multiple",                 # 风险单位 (sl_distance)
         # Task #11 (2026-06-02): 全链路归因 ID, 贯穿信号→入场→持仓→退出→trade_records
         "trace_id",
@@ -74,10 +74,6 @@ class ORBPosition:
         self.atr_at_entry = atr_at_entry
         self.sl_distance = sl_distance if sl_distance > 0 else atr_at_entry  # 兜底
 
-        # 追踪状态 (每轮更新)
-        self.peak_price = entry_price     # LONG: 持仓最高
-        self.trough_price = entry_price   # SHORT: 持仓最低
-        self.trail_stop = 0.0             # 追踪止损线 (0 = 未激活)
         self.order_id = order_id
 
         # 2026-06-08: 清理分层止盈死代码 (2R 固定止盈替代)
@@ -119,12 +115,9 @@ class ORBEngine:
         self._notifier = notifier
         self._lock = open_position_lock or threading.RLock()
 
-        # 退出栈
+        # 退出栈 (2026-06-23: trailing/TP 已移除, 仅 FloorStop + EOD; 2R止盈+breakdown 在本引擎判定)
         self._exit_stack = ORBExitStack(
             sl_atr_mult=config.stop_loss_atr_mult,
-            tp_atr_mult=config.take_profit_atr_mult,
-            trail_activation_atr=config.trail_activation_atr,
-            trail_multiplier=config.trail_multiplier,
             eod_time=config.eod_exit_time,
         )
 
@@ -153,13 +146,12 @@ class ORBEngine:
 
         logger.info(
             "[ORB] 引擎构造 | mode=%s | universe=%d只 | "
-            "SL=%.1fATR TP=%.1fATR trail=%.1f×@%.1fATR",
+            "SL=%.1fATR TP=%.1fR (EOD=%s)",
             config.mode,
             len(config.universe),
             config.stop_loss_atr_mult,
-            config.take_profit_atr_mult,
-            config.trail_multiplier,
-            config.trail_activation_atr,
+            config.take_profit_r_mult,
+            config.eod_exit_time,
         )
 
     # ── Futu 订阅 ──
@@ -168,6 +160,7 @@ class ORBEngine:
         """提前订阅 ORB 标的到 Futu (确保 K 线数据就绪)
 
         应在 start() 之前调用，给 Futu 数据管道预热时间。
+        竞态修复 (2026-06-25): subscribe 失败时不标记 _subscribed=True，允许后续重试
         """
         if getattr(self, '_subscribed', False):
             return
@@ -177,10 +170,15 @@ class ORBEngine:
             futu = getattr(self._data, 'futu', None)
             if futu and hasattr(futu, 'subscribe'):
                 orb_futu_symbols = [s.replace('US.', '') for s in self._cfg.universe]
-                futu.subscribe(orb_futu_symbols, sub_types=['QUOTE', 'K_1M', 'K_15M'])
-                logger.info("[ORB] ✅ Futu 订阅完成: %d 只 ETF (%s)",
-                           len(orb_futu_symbols), orb_futu_symbols)
-                self._subscribed = True
+                ok = futu.subscribe(orb_futu_symbols, sub_types=['QUOTE', 'K_1M', 'K_15M'])
+                if ok:
+                    logger.info("[ORB] ✅ Futu 订阅完成: %d 只 ETF (%s)",
+                               len(orb_futu_symbols), orb_futu_symbols)
+                    self._subscribed = True
+                else:
+                    logger.warning("[ORB] ⚠️ Futu subscribe 返回 False, 稍后重试")
+            else:
+                logger.warning("[ORB] ⚠️ Futu provider 不可用, 跳过订阅")
         except Exception as e:
             logger.warning("[ORB] ⚠️ Futu 订阅失败: %s", e)
 
@@ -830,27 +828,15 @@ class ORBEngine:
         logger.info("[ORB] 15:30 后调整隔夜持仓止损")
 
         for symbol, pos in self._positions.items():
-            # 放宽止损距离
+            # 放宽止损距离 (隔夜波动更大)
             original_sl_distance = pos.sl_distance
             pos.sl_distance *= 1.5
 
-            # 放宽追踪止损距离
-            if pos.trail_stop > 0:
-                original_trail_distance = abs(pos.entry_price - pos.trail_stop)
-                new_trail_distance = original_trail_distance * 1.3
-
-                if pos.direction == "LONG":
-                    pos.trail_stop = pos.peak_price - new_trail_distance
-                else:  # SHORT
-                    pos.trail_stop = pos.trough_price + new_trail_distance
-
             logger.info(
-                "[ORB] %s 隔夜止损调整: SL距离 %.2f -> %.2f, Trail %.2f -> %.2f",
+                "[ORB] %s 隔夜止损调整: SL距离 %.2f -> %.2f",
                 symbol,
                 original_sl_distance,
                 pos.sl_distance,
-                abs(pos.entry_price - (pos.trail_stop if pos.trail_stop > 0 else pos.entry_price - original_sl_distance)),
-                abs(pos.entry_price - pos.trail_stop) if pos.trail_stop > 0 else 0
             )
 
         # 标记今天已调整
@@ -1185,6 +1171,32 @@ class ORBEngine:
             except Exception:
                 trace_id = ""
 
+        # 2026-06-25 OKR 架构决策: ORB 不切换实盘, 仅 Playbook 为唯一 sim→live 毕业策略.
+        try:
+            import os as _os
+            _auto_account = _os.getenv("AUTO_TRADE_ACCOUNT", "sim").strip().lower()
+            if _auto_account == "real":
+                logger.warning(
+                    "[ORB] 实盘已被禁用. AUTO_TRADE_ACCOUNT=real 但 ORB 仅用于 sim 研究. 仅 Playbook 可切换 live."
+                )
+                return
+        except Exception as _orb_err:
+            logger.warning("[ORB] live 检查异常 (放行): %s", _orb_err)
+
+        # 2026-06-25: 数据健康度 guard — 盘前/异常行情拒绝入场
+        try:
+            from app.risk.data_health_guard import check_quote_health
+            quote = None
+            if self._data and hasattr(self._data, "get_quote"):
+                quote = self._data.get_quote(symbol)
+            if quote:
+                _healthy, _reason = check_quote_health(quote)
+                if not _healthy:
+                    logger.warning("[ORB] %s 数据健康检查失败: %s, 跳过入场", symbol, _reason)
+                    return
+        except Exception as _dh_err:
+            logger.warning("[ORB] 数据健康检查异常 (放行): %s", _dh_err)
+
         # 自适应止损计算 (RFC-056-DESIGN)
         width_pct = rng.get("width_pct", 0.5)
         sl_distance = self._calculate_adaptive_stop(
@@ -1198,18 +1210,43 @@ class ORBEngine:
             logger.warning("[ORB] %s 止损距离无效: %.4f", symbol, sl_distance)
             return
 
+        # 2026-06-25: 账户级熔断 guard (OKR)
+        try:
+            from app.risk.account_circuit_breaker import check_circuit_breaker
+            _equity = self._get_equity()
+            if _equity > 0:
+                _cb = check_circuit_breaker(_equity)
+                if _cb.action in ("HALT", "LIQUIDATE"):
+                    logger.warning(
+                        "[ORB] %s 新仓被拒: %s", symbol, _cb.reason
+                    )
+                    return
+        except Exception as _cb_err:
+            logger.warning("[ORB] 熔断检查异常 (放行): %s", _cb_err)
+
+        # P0 (2026-06-22): 入场前检查 buying_power 是否足够
+        _available = self._get_equity()
+        _position_value_est = (_available * self._cfg.capital_pct * self._cfg.position_risk_pct * self._get_water_multiplier()) / sl_distance * price
+        if _position_value_est > _available:
+            logger.warning(
+                "[ORB] %s 预估仓位 $%.0f > 可用资金 $%.0f, 跳过 (资金不足)",
+                symbol, _position_value_est, _available,
+            )
+            return
+
         # 仓位大小: 风险金额 / 止损距离
         # P1 (2026-06-06): capital_pct 生效 — ORB 只用分配到的资金比例算风险
-        # 根因: capital_pct 在 unified_config.yaml 定义为 0.20 但从未应用
-        #        ORB 用全账户 $1M 算 risk_amount, 实际应为 $200K
+        # P0 (2026-06-22): _get_equity 优先返回 buying_power 而非 total equity
+        # P0 (2026-06-22): 乘以水位系数 (YELLOW=0.5, ORANGE=0.25), 与 capital_safety 联动
         equity = self._get_equity()
+        water_mult = self._get_water_multiplier()
         orb_capital = equity * self._cfg.capital_pct
-        risk_amount = orb_capital * self._cfg.position_risk_pct
-        logger.debug(
-            "[ORB] 仓位计算: equity=$%.0f × capital_pct=%.2f = orb_capital=$%.0f | "
-            "× risk_pct=%.3f = risk_amount=$%.0f",
+        risk_amount = orb_capital * self._cfg.position_risk_pct * water_mult
+        logger.info(
+            "[ORB] 仓位计算: available=$%.0f × capital_pct=%.2f = orb_capital=$%.0f | "
+            "× risk_pct=%.3f × water=%.2f = risk_amount=$%.0f",
             equity, self._cfg.capital_pct, orb_capital,
-            self._cfg.position_risk_pct, risk_amount,
+            self._cfg.position_risk_pct, water_mult, risk_amount,
         )
 
         # 质量评分调整仓位 (高质量加仓, 低质量减仓)
@@ -1391,43 +1428,36 @@ class ORBEngine:
 
                 # P0 fix (2026-06-07): 运行时 ATR 不得低于入场 ATR (含 floor)
                 # 根因: _get_atr() 返回原始 1min ATR ($0.04), 绕过了入场时的 ATR floor ($0.31)
-                # 后果: FloorStop/TrailingStop/TakeProfit 全部用 $0.04 计算 → 秒被噪音扫出
+                # 后果: FloorStop 全部用 $0.04 计算 → 秒被噪音扫出
                 _raw_atr = self._get_atr(symbol)
                 atr = max(_raw_atr, pos.atr_at_entry) if _raw_atr else pos.atr_at_entry
 
-                # 更新 peak / trough
-                if pos.direction == "LONG":
-                    pos.peak_price = max(pos.peak_price, price)
-                else:
-                    pos.trough_price = min(pos.trough_price, price)
-
-                peak = pos.peak_price if pos.direction == "LONG" else pos.trough_price
-
-                # ── P0 (2026-06-08): 简单 2R 止盈 (替代分层止盈+追踪止损) ──
+                # ── P0 (2026-06-08): 2R 止盈 (单一致盈路径, 2026-06-23 改读 config) ──
                 # 数据驱动: 8 笔 ORB 交易中分层止盈/追踪从未触发 (死代码)
                 # FLOOR_STOP 贡献 99.7% 亏损, 持仓全部 3-17 分钟
-                # 新逻辑: 盈利 >= 2 × sl_distance → 全平, 简单直接
+                # 逻辑: 盈利 >= take_profit_r_mult × sl_distance → 全平 (默认 2.0R = 2:1 R/R)
                 if pos.sl_distance > 0:
                     if pos.direction == "LONG":
                         _profit = price - pos.entry_price
                     else:
                         _profit = pos.entry_price - price
-                    _tp_target = 2.0 * pos.sl_distance
+                    _tp_mult = getattr(self._cfg, 'take_profit_r_mult', 2.0)
+                    _tp_target = _tp_mult * pos.sl_distance
                     if _profit >= _tp_target:
                         from app.orb.exits import ORBExitDecision
                         _tp_decision = ORBExitDecision(
                             reason="ORB_TAKE_PROFIT_2R",
                             close_pct=100.0,
-                            detail=f"2R止盈: profit=${_profit:.2f} >= 2×SL=${_tp_target:.2f} "
+                            detail=f"{_tp_mult:.1f}R止盈: profit=${_profit:.2f} >= {_tp_mult:.1f}×SL=${_tp_target:.2f} "
                                    f"(entry={pos.entry_price:.2f}, price={price:.2f})",
                         )
                         logger.info("[ORB] 🎯 %s %s", symbol, _tp_decision.detail)
                         self._execute_exit(symbol, pos, price, _tp_decision)
                         continue
 
-                # ── P0 (2026-06-07): 突破失败快速退出 (60s grace, 优先于 floor/trailing) ──
+                # ── P0 (2026-06-07): 突破失败快速退出 (60s grace, 优先于 floor) ──
                 # 原理: ORB 突破的反面 = 价格回到区间中点 = 突破论据失效
-                # 在 min_hold_seconds (300s) 的 floor/trailing 保护期内, 这是唯一的安全网
+                # 在 min_hold_seconds (300s) 的 floor 保护期内, 这是唯一的安全网
                 # 60s grace 避免入场瞬间的噪音 (bid/ask spread, 第一个 tick 的异常)
                 _breakdown_grace = 60  # 秒
                 from app.utils.timezone import now_et as _now_et_bd
@@ -1454,24 +1484,21 @@ class ORBEngine:
                         self._execute_exit(symbol, pos, price, _bd_decision)
                         continue
 
-                # 评估传统退出 (止损, 盘末, 固定止盈)
+                # 评估传统退出 (硬止损, 盘末) — 2R止盈/breakdown 已在上方先行判定
                 decision = self._exit_stack.evaluate(
                     direction=pos.direction,
                     entry_price=pos.entry_price,
                     current_price=price,
                     atr=atr,
                     orb_mid=pos.orb_mid,
-                    peak_price=peak,
-                    trail_stop=pos.trail_stop,
                     current_time=current_time,
                 )
 
                 if decision and decision.should_exit:
-                    # P0 (2026-06-07): 噪音过滤扩展 — 持仓 < min_hold_seconds 跳过 FLOOR_STOP 和 TRAILING_STOP
-                    # 旧行为: 只保护 FLOOR_STOP, TRAILING_STOP 在入场后立即激活
-                    # 根因: 旧 ATR 太小($0.04) → trail 在几秒内激活 → 3-8分钟被 TRAILING_STOP 扫出
-                    # ATR floor 修复后 trail 激活需要 $0.47 利润, 但防御纵深仍需时间保护
-                    if (decision.reason in ("ORB_FLOOR_STOP", "ORB_TRAILING_STOP")
+                    # P0 (2026-06-07): 噪音过滤 — 持仓 < min_hold_seconds 跳过 FLOOR_STOP
+                    # 根因: 旧 ATR 太小($0.04) → floor 在几秒内激活 → 3-8分钟被 FLOOR_STOP 扫出
+                    # ATR floor 修复后仍需时间保护, 避免入场瞬间 bid/ask 噪音触发硬止损
+                    if (decision.reason == "ORB_FLOOR_STOP"
                             and getattr(self._cfg, 'min_hold_seconds', 0) > 0):
                         from app.utils.timezone import now_et as _now_et_mh
                         hold_seconds = (_now_et_mh() - pos.entry_time).total_seconds()
@@ -1575,7 +1602,7 @@ class ORBEngine:
             _orb_range = (pos.orb_high - pos.orb_low) if (pos.orb_high and pos.orb_low) else 0
             _orb_atr = pos.atr_at_entry if pos.atr_at_entry else 1.0
             _breakout_quality = int(min(99, max(1, (_orb_range / _orb_atr) * 30))) if _orb_atr > 0 else None
-            _ts.save_trade({
+            _orb_trade_id = _ts.save_trade({
                 "trace_id": pos.trace_id or f"orb-{symbol}-{int(time.time())}",
                 "trade_date": _trade_date,
                 "symbol": symbol,
@@ -1623,7 +1650,7 @@ class ORBEngine:
             })
             logger.info("[ORB] %s 交易记录已写入 trade_records | pnl=$%.2f | strength=%s", symbol, pnl, _breakout_quality)
 
-            # 2026-06-05: ORB 也写 signal_lifecycle
+            # 2026-06-05: ORB 也写 signal_lifecycle (2026-06-22: 用 save_trade 返回的 trade_id, 不再用 SELECT MAX)
             import sqlite3 as _orb_sl
             from app.core.paths import get_trade_records_db as _orb_sl_db
             _orb_sl_conn = _orb_sl.connect(str(_orb_sl_db()))
@@ -1635,16 +1662,16 @@ class ORBEngine:
                     owner_strategy, source_type, trade_date, trade_mode,
                     created_at
                 ) VALUES (
-                    (SELECT MAX(id) FROM trade_records),
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
                 )
             """, (
+                _orb_trade_id,
                 symbol, _breakout_quality, 0.0,
                 pos.direction, pos.direction,
                 pos.entry_price, price,
                 pnl, pnl_pct / 100, decision.reason,
                 _holding_hours, "orb_engine", "ORB_ENGINE",
-                _trade_date, "normal",
+                _trade_date, "simulate",   # 2026-06-24: trade_mode 固定 simulate (AUTO_TRADE_ACCOUNT=sim). signal_lifecycle.trade_mode 与 trade_records.trade_mode 对齐, 不用 self._cfg.mode (那是 'active'/'shadow', 不是 simulate/live)
                 _orb_now_et().isoformat(),
             ))
             _orb_sl_conn.commit()
@@ -1680,7 +1707,11 @@ class ORBEngine:
     # ── 市场数据接口 ──
 
     def _get_current_price(self, symbol: str) -> Optional[float]:
-        """获取当前价格 (优先读 Push 缓存, 避免阻塞 Futu API)"""
+        """获取当前价格 (优先读 Push 缓存, 避免阻塞 Futu API)。
+
+        2026-06-25 修复: 使用 bid/ask 中间价, 避免 last_traded_price 在快市中滞后
+        (与 playbook 价格源 bug 同源)。
+        """
         if not self._data:
             return None
 
@@ -1691,6 +1722,10 @@ class ORBEngine:
                 with futu._push_cache_lock:
                     cached = futu._push_quote_cache.get(symbol)
                     if cached:
+                        bid = float(cached.get("bid", 0) or 0)
+                        ask = float(cached.get("ask", 0) or 0)
+                        if bid > 0 and ask > 0:
+                            return round((bid + ask) / 2.0, 2)
                         _p = float(cached.get("price", 0) or cached.get("last", 0) or 0)
                         if _p > 0:
                             return _p
@@ -1701,6 +1736,10 @@ class ORBEngine:
         try:
             quote = self._data.get_quote(symbol)
             if quote and isinstance(quote, dict):
+                bid = float(quote.get("bid", 0) or 0)
+                ask = float(quote.get("ask", 0) or 0)
+                if bid > 0 and ask > 0:
+                    return round((bid + ask) / 2.0, 2)
                 return float(quote.get("last", 0) or quote.get("price", 0) or 0)
             if hasattr(quote, "last"):
                 return float(quote.last)
@@ -1890,10 +1929,23 @@ class ORBEngine:
         P1 修复 (2026-06-07): 原代码依赖不存在的 ExecutionEngine.get_equity()，
         始终 fallback 到 $100K，导致 ORB 仓位被低估 10 倍。
         修复: 从 capital_safety._state.current_equity 读取，与 pre_trade_gate 对齐。
+
+        P0 修复 (2026-06-22): 优先使用 buying_power 而非 total equity,
+        因为 equity 包含已持仓锁定资金, buying_power 才是实际可动用资金.
+        fallback 链: buying_power > cash > equity.
         """
         try:
             from app.risk.capital_safety import get_capital_safety_system
             capital = get_capital_safety_system()
+            # 优先使用 buying_power (实际可用资金)
+            buying_power = getattr(capital._state, 'buying_power', 0)
+            if buying_power > 0:
+                return float(buying_power)
+            # 其次使用 cash
+            cash = getattr(capital._state, 'cash', 0)
+            if cash > 0:
+                return float(cash)
+            # 最后使用 total equity
             equity = capital._state.current_equity
             if equity > 0:
                 return float(equity)
@@ -1911,6 +1963,24 @@ class ORBEngine:
 
         # 极端情况: 返回模拟盘默认值
         return 1000000.0  # 模拟盘默认 $1M (非 $100K)
+
+    def _get_water_multiplier(self) -> float:
+        """获取 capital_safety 水位系数 (仓位缩放).
+
+        YELLOW=0.5, ORANGE=0.25, RED=0, BLACKOUT=0.
+        使 ORB 仓位计算与 capital_safety 水位联动.
+        """
+        try:
+            from app.risk.capital_safety import get_capital_safety_system
+            capital = get_capital_safety_system()
+            # 仓位系数 (YELLOW→0.5, ORANGE→0.25)
+            pos_mult = capital.get_position_multiplier()
+            # 风险系数 (YELLOW→0.5, ORANGE→0.25)
+            risk_mult = capital.get_risk_multiplier()
+            # 取较小者 (更保守)
+            return min(pos_mult, risk_mult)
+        except Exception:
+            return 1.0  # 降级: 不缩放
 
     # ── 区间质量评估 (RFC-056-DESIGN) ──
 

@@ -51,15 +51,45 @@ class PlaybookDB:
         return get_db(self.db_name).connection()
 
     def ensure_tables(self):
-        """创建所有 playbook 表 (IF NOT EXISTS)"""
+        """创建所有 playbook 表 (IF NOT EXISTS) + 列迁移"""
         conn = self._conn()
         try:
             conn.executescript(_SCHEMA_SQL)
+            # 2026-06-23 修复 (OKR P0): CREATE TABLE IF NOT EXISTS 不会给已存在的表加新列.
+            # fwd_return_t1/t3/t5 在 schema 里定义但旧 DB 未迁移, 导致 ic_tracker 写入
+            # 因列不存在而失败 (被 except 吞 → IC 永远 0). 显式 ALTER 补列.
+            self._migrate_instruction_columns(conn)
             self._tables_created = True
             logger.info("Playbook tables ensured")
         except Exception as e:
             logger.error(f"Failed to create playbook tables: {e}")
             raise
+
+    def _migrate_instruction_columns(self, conn):
+        """为已存在的 playbook_instructions 表补缺失列 (SQLite 无 ADD COLUMN IF NOT EXISTS)."""
+        # name → type, 仅列 schema 定义但可能未迁移的列
+        needed = {
+            "fwd_return_t1": "REAL",
+            "fwd_return_t3": "REAL",
+            "fwd_return_t5": "REAL",
+            "horizon": "TEXT",
+            "horizon_confidence": "REAL",
+            "horizon_reasoning": "TEXT",
+        }
+        try:
+            existing = {row[1] for row in conn.execute("PRAGMA table_info(playbook_instructions)").fetchall()}
+        except Exception as e:
+            logger.warning(f"[playbook] 迁移: 读取 table_info 失败: {e}")
+            return
+        for col, col_type in needed.items():
+            if col not in existing:
+                try:
+                    conn.execute(f"ALTER TABLE playbook_instructions ADD COLUMN {col} {col_type}")
+                    logger.info(f"[playbook] 迁移: 已补列 playbook_instructions.{col} ({col_type})")
+                except Exception as e:
+                    logger.warning(f"[playbook] 迁移: 补列 {col} 失败: {e}")
+        conn.commit()
+
 
     # ========== playbook_instructions ==========
 
@@ -85,9 +115,10 @@ class PlaybookDB:
                 market_regime, vix_at_generation, spy_trend_at_generation,
                 data_quality_json, ok_dimensions,
                 matched_patterns_json, pattern_verdict,
-                raw_instruction_json,
+                raw_instruction_json, decision_id,
+                horizon, horizon_confidence, horizon_reasoning,
                 created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(date, symbol) DO UPDATE SET
                 direction=excluded.direction,
                 skip_reason=excluded.skip_reason,
@@ -107,6 +138,10 @@ class PlaybookDB:
                 data_quality_json=excluded.data_quality_json,
                 ok_dimensions=excluded.ok_dimensions,
                 raw_instruction_json=excluded.raw_instruction_json,
+                decision_id=excluded.decision_id,
+                horizon=excluded.horizon,
+                horizon_confidence=excluded.horizon_confidence,
+                horizon_reasoning=excluded.horizon_reasoning,
                 updated_at=excluded.updated_at
         """, (
             inst.get("date"),
@@ -132,6 +167,10 @@ class PlaybookDB:
             _to_json(inst.get("matched_patterns")),
             inst.get("pattern_verdict"),
             _to_json(inst.get("raw_instruction")),
+            inst.get("decision_id", ""),
+            inst.get("horizon", "short"),
+            inst.get("horizon_confidence"),
+            _to_json(inst.get("horizon_reasoning")),
             inst.get("created_at", now),
             now,
         ))
@@ -405,6 +444,51 @@ class PlaybookDB:
         ).fetchone()
         return _row_to_dict(row)
 
+    def void_instruction(
+        self,
+        instruction_id: int,
+        reason: str,
+        operator: str = "system",
+    ) -> bool:
+        """将指令标记为 void (phantom / manual reconcile 等), 并写入审计日志.
+
+        Returns:
+            True 若成功, False 若指令不存在或已是终态.
+        """
+        from app.playbook.audit import log_reconciliation
+
+        before = self.get_instruction_by_id(instruction_id)
+        if before is None:
+            logger.warning(f"[PlaybookDB] void_instruction({instruction_id}) 不存在")
+            return False
+
+        current_outcome = before.get("outcome")
+        if current_outcome in ("win", "loss"):
+            logger.warning(
+                f"[PlaybookDB] void_instruction({instruction_id}) 已是终态 {current_outcome}, 跳过"
+            )
+            return False
+
+        conn = self._conn()
+        now = datetime.utcnow().isoformat()
+        conn.execute(
+            "UPDATE playbook_instructions SET outcome=?, updated_at=? WHERE id=?",
+            ("void", now, instruction_id),
+        )
+        conn.commit()
+
+        after = self.get_instruction_by_id(instruction_id)
+        log_reconciliation(
+            action="void_instruction",
+            reason=reason,
+            operator=operator,
+            before=before,
+            after=after,
+            metadata={"instruction_id": instruction_id},
+        )
+        logger.info(f"[PlaybookDB] void_instruction({instruction_id}) 已标记: {reason}")
+        return True
+
     # ========== playbook_regime_log ==========
 
     def save_regime_log(self, regime_data: Dict[str, Any]):
@@ -488,6 +572,67 @@ class PlaybookDB:
             "total_pnl": round(total_pnl, 2),
         }
 
+    # ========== Horizon 统计 ==========
+
+    def save_horizon_stat(self, stat: Dict[str, Any]):
+        """写入/更新 horizon 统计"""
+        conn = self._conn()
+        now = datetime.utcnow().isoformat()
+
+        conn.execute("""
+            INSERT INTO playbook_horizon_stats (
+                feature_key, horizon,
+                total_trades, wins, losses, win_rate,
+                avg_return, avg_pnl, profit_factor,
+                bayesian_win_rate, bayesian_lower, bayesian_upper,
+                last_updated
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(feature_key, horizon) DO UPDATE SET
+                total_trades=excluded.total_trades,
+                wins=excluded.wins,
+                losses=excluded.losses,
+                win_rate=excluded.win_rate,
+                avg_return=excluded.avg_return,
+                avg_pnl=excluded.avg_pnl,
+                profit_factor=excluded.profit_factor,
+                bayesian_win_rate=excluded.bayesian_win_rate,
+                bayesian_lower=excluded.bayesian_lower,
+                bayesian_upper=excluded.bayesian_upper,
+                last_updated=excluded.last_updated
+        """, (
+            stat.get("feature_key"),
+            stat.get("horizon"),
+            stat.get("total_trades", 0),
+            stat.get("wins", 0),
+            stat.get("losses", 0),
+            stat.get("win_rate", 0),
+            stat.get("avg_return", 0),
+            stat.get("avg_pnl", 0),
+            stat.get("profit_factor", 0),
+            stat.get("bayesian_win_rate"),
+            stat.get("bayesian_lower"),
+            stat.get("bayesian_upper"),
+            now,
+        ))
+        conn.commit()
+
+    def get_horizon_stats(self, feature_key: str = None, horizon: str = None) -> List[Dict]:
+        """获取 horizon 统计"""
+        conn = self._conn()
+        query = "SELECT * FROM playbook_horizon_stats WHERE 1=1"
+        params = []
+
+        if feature_key:
+            query += " AND feature_key = ?"
+            params.append(feature_key)
+        if horizon:
+            query += " AND horizon = ?"
+            params.append(horizon)
+
+        query += " ORDER BY total_trades DESC"
+        rows = conn.execute(query, params).fetchall()
+        return [_row_to_dict(r) for r in rows]
+
 
 # ========== 辅助函数 ==========
 
@@ -497,8 +642,11 @@ _TRACKING_FIELDS = {
     "pnl", "pnl_pct",
     "max_favorable_excursion", "max_adverse_excursion", "mfe_analysis",
     "outcome", "shadow_pnl", "lesson",
+    "decision_id",
     # Phase 1: IC 追踪
     "fwd_return_t1", "fwd_return_t3", "fwd_return_t5",
+    # Horizon 决策追踪
+    "horizon", "horizon_confidence", "horizon_reasoning",
 }
 
 
@@ -583,6 +731,11 @@ CREATE TABLE IF NOT EXISTS playbook_instructions (
     max_adverse_excursion REAL,
     mfe_analysis TEXT,
 
+    -- Horizon 决策 (2026-06-26)
+    horizon TEXT DEFAULT 'short',
+    horizon_confidence REAL,
+    horizon_reasoning TEXT,
+
     outcome TEXT,
     shadow_pnl REAL,
 
@@ -596,6 +749,9 @@ CREATE TABLE IF NOT EXISTS playbook_instructions (
 
     -- LLM 原始输出
     raw_instruction_json TEXT,
+
+    -- IC 归因 (关联 VotingCoordinator decision_id)
+    decision_id TEXT DEFAULT '',
 
     created_at TEXT NOT NULL,
     updated_at TEXT,
@@ -630,6 +786,29 @@ CREATE TABLE IF NOT EXISTS playbook_factor_stats (
 
     UNIQUE(factor_key, analysis_level)
 );
+
+CREATE TABLE IF NOT EXISTS playbook_horizon_stats (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    feature_key TEXT NOT NULL,
+    horizon TEXT NOT NULL,
+    total_trades INTEGER DEFAULT 0,
+    wins INTEGER DEFAULT 0,
+    losses INTEGER DEFAULT 0,
+    win_rate REAL DEFAULT 0,
+    avg_return REAL DEFAULT 0,
+    avg_pnl REAL DEFAULT 0,
+    profit_factor REAL DEFAULT 0,
+    bayesian_win_rate REAL,
+    bayesian_lower REAL,
+    bayesian_upper REAL,
+    last_updated TEXT,
+    UNIQUE(feature_key, horizon)
+);
+
+CREATE INDEX IF NOT EXISTS idx_playbook_horizon_stats_feature
+    ON playbook_horizon_stats(feature_key);
+CREATE INDEX IF NOT EXISTS idx_playbook_horizon_stats_horizon
+    ON playbook_horizon_stats(horizon);
 
 CREATE TABLE IF NOT EXISTS playbook_patterns (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

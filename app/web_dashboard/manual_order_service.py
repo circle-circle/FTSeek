@@ -103,14 +103,12 @@ class ManualOrderService:
         return self._db_path
 
     def _is_live(self) -> bool:
-        """从 .env.us 实时读取 (无需重启进程)."""
-        env_file = Path(__file__).parent.parent.parent / ".env.us"
-        if env_file.exists():
-            with open(env_file) as f:
-                for line in f:
-                    if line.strip().startswith("TRADE_ENV="):
-                        return line.strip().split("=", 1)[1].strip() == "0"
-        return os.getenv("TRADE_ENV", "1").strip() == "0"
+        """手动交易固定走实盘 (三态共存 Phase 0, 2026-06-24).
+
+        手动交易永远是实盘, 不再受 TRADE_ENV 控制 (TRADE_ENV 现仅控制 DB 路由).
+        实盘账户 REAL_ACCOUNT_ID + 解锁密码.
+        """
+        return True
 
     def _read_env(self, key: str, default: str = "") -> str:
         """从 .env.us 读取环境变量 (无需重启进程)."""
@@ -212,7 +210,10 @@ class ManualOrderService:
     # ── 报价查询 ─────────────────────────────────────────────
 
     def get_quote(self, symbol: str) -> Dict[str, Any]:
-        """获取报价 (snapshot 稳定可靠, 盘中盘后均可用)."""
+        """获取报价 (snapshot 稳定可靠, 盘中盘后均可用).
+
+        P2 (2026-06-21): 扩展返回基本面+资金流字段, 一次snapshot调用替代多次API
+        """
         if not self.connect():
             return {"symbol": symbol, "error": "broker_not_connected"}
 
@@ -238,6 +239,18 @@ class ManualOrderService:
                     "prev_close": _f(row.get("prev_close_price")),
                     "volume": int(_f(row.get("volume"))),
                     "update_time": str(row.get("update_time") or ""),
+                    # P2: 基本面+资金流扩展字段
+                    "pe": _f(row.get("pe_ttm_ratio")) or _f(row.get("pe_ratio")) or None,
+                    "pb": _f(row.get("pb_ratio")) or None,
+                    "eps": _f(row.get("earning_per_share")) or None,
+                    "market_cap": _f(row.get("total_market_val")) or None,
+                    "bid_ask_ratio": _f(row.get("bid_ask_ratio")) or None,
+                    "volume_ratio": _f(row.get("volume_ratio")) or None,
+                    "high_52w": _f(row.get("highest52weeks_price")) or None,
+                    "low_52w": _f(row.get("lowest52weeks_price")) or None,
+                    "turnover_rate": _f(row.get("turnover_rate")) or None,
+                    "after_price": _f(row.get("after_price")) or None,
+                    "pre_price": _f(row.get("pre_price")) or None,
                 }
 
             return {"symbol": symbol, "error": "no_data"}

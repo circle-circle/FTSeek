@@ -7,13 +7,16 @@
 {% block nav_plan_class3 %}class="active"{% endblock %}
 
 {% block head %}
-<link rel="stylesheet" href="/static/css/battle_plan.css?v=20260618b">
+<link rel="stylesheet" href="/static/css/battle_plan.css?v=20260620e">
 {% endblock %}
 
 {% block content %}
-<div class="container" style="max-width:720px">
-    <!-- 昨日执行对照: 已移除，平仓记录归属 Dashboard 主页 -->
-    <!-- 决策仓核心区 — 精简为3行结论式指令 -->
+<div class="container" style="max-width:960px">
+    <!-- 暂停状态条 -->
+    <div id="pauseBar" class="pause-bar" style="display:none;">
+        <span class="pause-icon">⏸</span>
+        <span class="pause-text" id="pauseText">自动交易已暂停</span>
+    </div>
     <!-- Command Bar (简洁单行状态栏) -->
     <div id="cmdBar" class="cmd-bar" style="display:none;">
         <span class="cmd-score" id="cmdScore">--</span>
@@ -29,5 +32,5 @@
 
 {% block scripts %}{% endblock %}
 {% block external_scripts %}
-<script src="/static/js/battle_plan.js?v=20260617h"></script>
+<script src="/static/js/battle_plan.js?v=20260620e"></script>
 {% endblock %}

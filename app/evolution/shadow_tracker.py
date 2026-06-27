@@ -2,7 +2,13 @@
 """
 FTSeek-US 影子策略追踪器 (Shadow Tracker) - 工业级实现
 
-职责：
+⚠️ DEPRECATED (2026-06-21): 此模块已停用
+原因: scheduler_triggers.py Phase 6 已 REMOVED (2026-06-19), proposals.db 0行数据
+      Playbook shadow 模式(app/playbook/shadow_tracker.py)替代了此模块
+保留原因: improvement_pipeline.py 仍引用 PromotionEngine (每周LLM假设写入proposals.db)
+状态: 不删除(避免import断裂), 但 run_daily_eval 永远不会被调用
+
+原始职责：
 1. 管理待测试的提议（Proposals）。
 2. 分层测试：Level 1 (信号), Level 2 (退出), Level 3 (全栈)。
 3. 引入虚拟账户、滑点模型和严格的统计学决策引擎。

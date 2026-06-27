@@ -377,52 +377,83 @@
             var handlers = {};
             var connected = false;
             var enabled = true;
+             var pingTimer = null;
+             var navigating = false;
 
-            function connect() {
-                if (!enabled || ws) return;
-                try {
-                    var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-                    ws = new WebSocket(proto + '//' + location.host + '/ws/events');
+             function connect() {
+                 if (!enabled || ws || navigating) return;
+                 try {
+                     var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+                     ws = new WebSocket(proto + '//' + location.host + '/ws/events');
 
-                    ws.onopen = function() {
-                        connected = true;
-                        reconnectDelay = 1000;
-                        updateIndicator('connected');
-                        // 订阅所有事件
-                        ws.send(JSON.stringify({type: 'subscribe', events: ['*']}));
-                    };
+                     ws.onopen = function() {
+                         connected = true;
+                         reconnectDelay = 3000;
+                         updateIndicator('connected');
+                         // 订阅所有事件
+                         ws.send(JSON.stringify({type: 'subscribe', events: ['*']}));
+                         // 客户端 ping 定时器 — 每 25s 发一次保持连接活跃
+                         clearInterval(pingTimer);
+                         pingTimer = setInterval(function() {
+                             if (ws && ws.readyState === 1) {
+                                 ws.send(JSON.stringify({type: 'ping', ts: Date.now()}));
+                             }
+                         }, 25000);
+                     };
 
-                    ws.onmessage = function(evt) {
-                        try {
-                            var msg = JSON.parse(evt.data);
-                            var type = msg.type;
-                            if (handlers[type]) {
-                                handlers[type].forEach(function(fn) { fn(msg.data, msg); });
-                            }
-                            if (handlers['*']) {
-                                handlers['*'].forEach(function(fn) { fn(msg.data, msg); });
-                            }
-                        } catch(e) {}
-                    };
+                     ws.onmessage = function(evt) {
+                         try {
+                             var msg = JSON.parse(evt.data);
+                             var type = msg.type;
+                             // 忽略心跳和 pong (无需处理)
+                             if (type === 'heartbeat' || type === 'pong' || type === 'connected' || type === 'subscribed') return;
+                             if (handlers[type]) {
+                                 handlers[type].forEach(function(fn) { fn(msg.data, msg); });
+                             }
+                             if (handlers['*']) {
+                                 handlers['*'].forEach(function(fn) { fn(msg.data, msg); });
+                             }
+                         } catch(e) {}
+                     };
 
-                    ws.onclose = function() {
-                        ws = null;
-                        connected = false;
-                        updateIndicator('polling');
-                        // 指数退避重连
-                        setTimeout(function() {
-                            reconnectDelay = Math.min(reconnectDelay * 2, maxReconnectDelay);
-                            connect();
-                        }, reconnectDelay);
-                    };
+                     ws.onclose = function() {
+                         ws = null;
+                         connected = false;
+                         clearInterval(pingTimer);
+                         pingTimer = null;
+                         updateIndicator('polling');
+                         // 页面导航中不重连
+                         if (navigating) return;
+                         // 指数退避重连 (初始 3s)
+                         setTimeout(function() {
+                             reconnectDelay = Math.min(reconnectDelay * 2, maxReconnectDelay);
+                             connect();
+                         }, reconnectDelay);
+                     };
 
-                    ws.onerror = function() {
-                        if (ws) ws.close();
-                    };
-                } catch(e) {
-                    updateIndicator('polling');
-                }
-            }
+                     ws.onerror = function() {
+                         if (ws) ws.close();
+                     };
+                 } catch(e) {
+                     updateIndicator('polling');
+                 }
+             }
+
+             // 页面导航时主动断开, 避免服务端异常 + 避免无意义重连
+             window.addEventListener('beforeunload', function() {
+                 navigating = true;
+                 clearInterval(pingTimer);
+                 if (ws) { ws.close(); ws = null; }
+             });
+             // 拦截 <a> 导航, 标记 navigating 防止 onclose 触发重连
+             document.addEventListener('click', function(e) {
+                 var a = e.target.closest('a');
+                 if (a && a.href && !a.target && a.origin === location.origin) {
+                     navigating = true;
+                     clearInterval(pingTimer);
+                     if (ws) { ws.close(); ws = null; }
+                 }
+             });
 
             function updateIndicator(status) {
                 var dots = document.querySelectorAll('.ws-dot');

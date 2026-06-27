@@ -1,0 +1,12 @@
+{
+  "as_of": "2026-06-25",
+  "suggested_min_signal_confidence": 0.0,
+  "current_baseline": 0.7,
+  "rationale": "近30d 桶 0-0.3 胜率 72.41% (n=29)",
+  "strategy_actions": [],
+  "anomalies": [
+    "confidence 桶胜率非单调递增 — 模型置信度可能与真实胜率脱钩"
+  ],
+  "applied": false,
+  "note": "本建议仅供参考, 不会自动修改 config; 由人工或灰度流程审批后再落地"
+}

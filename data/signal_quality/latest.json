@@ -1,17 +1,17 @@
 {
-  "as_of": "2026-06-18",
-  "generated_at": "2026-06-19T04:35:11",
+  "as_of": "2026-06-26",
+  "generated_at": "2026-06-27T07:51:15",
   "history_days": 90,
-  "total_closed_trades": 343,
+  "total_closed_trades": 385,
   "confidence_winrate_map": {
     "buckets": {
       "0-0.3": {
-        "total": 155,
+        "total": 161,
         "wins": 73,
-        "losses": 82,
-        "win_rate": 0.471,
-        "avg_pnl": 36.4147,
-        "total_pnl": 5644.2773,
+        "losses": 83,
+        "win_rate": 0.4534,
+        "avg_pnl": 34.7323,
+        "total_pnl": 5591.8973,
         "max_loss": -7255.8,
         "max_win": 17882.56
       },
@@ -26,24 +26,24 @@
         "max_win": 584.445
       },
       "0.5-0.7": {
-        "total": 118,
+        "total": 121,
         "wins": 21,
-        "losses": 81,
-        "win_rate": 0.178,
-        "avg_pnl": 24.7978,
-        "total_pnl": 2926.1368,
+        "losses": 82,
+        "win_rate": 0.1736,
+        "avg_pnl": 23.123,
+        "total_pnl": 2797.8888,
         "max_loss": -787.4,
         "max_win": 3165.058
       },
       "0.7-1.0": {
-        "total": 54,
-        "wins": 17,
-        "losses": 34,
-        "win_rate": 0.3148,
-        "avg_pnl": -7.7755,
-        "total_pnl": -419.8783,
-        "max_loss": -172.5,
-        "max_win": 274.08
+        "total": 87,
+        "wins": 32,
+        "losses": 51,
+        "win_rate": 0.3678,
+        "avg_pnl": -26.2133,
+        "total_pnl": -2280.553,
+        "max_loss": -975.59,
+        "max_win": 807.2
       }
     },
     "ordered_labels": [
@@ -53,21 +53,21 @@
       "0.7-1.0"
     ],
     "monotonic": false,
-    "total_samples": 343
+    "total_samples": 385
   },
   "strategy_performance": {
     "all_time": {
       "technical": {
-        "total": 10,
-        "wins": 4,
-        "losses": 6,
-        "win_rate": 0.4,
-        "avg_pnl": -94.9673,
-        "total_pnl": -949.6735,
+        "total": 163,
+        "wins": 31,
+        "losses": 109,
+        "win_rate": 0.1902,
+        "avg_pnl": -16.1987,
+        "total_pnl": -2640.3861,
         "max_loss": -627.8,
         "max_win": 553.8
       },
-      "llm_vote": {
+      "voting_llm": {
         "total": 0,
         "wins": 0,
         "losses": 0,
@@ -97,23 +97,13 @@
         "max_loss": 0.0,
         "max_win": 0.0
       },
-      "scalping": {
-        "total": 150,
-        "wins": 27,
-        "losses": 102,
-        "win_rate": 0.18,
-        "avg_pnl": -10.9222,
-        "total_pnl": -1638.3326,
-        "max_loss": -394.68,
-        "max_win": 274.08
-      },
       "其他": {
-        "total": 183,
-        "wins": 86,
-        "losses": 97,
-        "win_rate": 0.4699,
-        "avg_pnl": 62.3349,
-        "total_pnl": 11407.2784,
+        "total": 222,
+        "wins": 101,
+        "losses": 115,
+        "win_rate": 0.455,
+        "avg_pnl": 42.425,
+        "total_pnl": 9418.3557,
         "max_loss": -7255.8,
         "max_win": 17882.56
       }
@@ -121,16 +111,16 @@
     "rolling": {
       "7d": {
         "technical": {
-          "total": 0,
+          "total": 1,
           "wins": 0,
-          "losses": 0,
+          "losses": 1,
           "win_rate": 0.0,
-          "avg_pnl": 0.0,
-          "total_pnl": 0.0,
-          "max_loss": 0.0,
+          "avg_pnl": -52.38,
+          "total_pnl": -52.38,
+          "max_loss": -52.38,
           "max_win": 0.0
         },
-        "llm_vote": {
+        "voting_llm": {
           "total": 0,
           "wins": 0,
           "losses": 0,
@@ -160,39 +150,29 @@
           "max_loss": 0.0,
           "max_win": 0.0
         },
-        "scalping": {
-          "total": 0,
-          "wins": 0,
-          "losses": 0,
-          "win_rate": 0.0,
-          "avg_pnl": 0.0,
-          "total_pnl": 0.0,
-          "max_loss": 0.0,
-          "max_win": 0.0
-        },
         "其他": {
-          "total": 0,
-          "wins": 0,
-          "losses": 0,
-          "win_rate": 0.0,
-          "avg_pnl": 0.0,
-          "total_pnl": 0.0,
-          "max_loss": 0.0,
-          "max_win": 0.0
+          "total": 39,
+          "wins": 15,
+          "losses": 18,
+          "win_rate": 0.3846,
+          "avg_pnl": -50.998,
+          "total_pnl": -1988.9227,
+          "max_loss": -975.59,
+          "max_win": 807.2
         }
       },
       "30d": {
         "technical": {
-          "total": 10,
+          "total": 11,
           "wins": 4,
-          "losses": 6,
-          "win_rate": 0.4,
-          "avg_pnl": -94.9673,
-          "total_pnl": -949.6735,
+          "losses": 7,
+          "win_rate": 0.3636,
+          "avg_pnl": -91.0958,
+          "total_pnl": -1002.0535,
           "max_loss": -627.8,
           "max_win": 553.8
         },
-        "llm_vote": {
+        "voting_llm": {
           "total": 0,
           "wins": 0,
           "losses": 0,
@@ -222,29 +202,19 @@
           "max_loss": 0.0,
           "max_win": 0.0
         },
-        "scalping": {
-          "total": 13,
-          "wins": 0,
-          "losses": 0,
-          "win_rate": 0.0,
-          "avg_pnl": 0.0,
-          "total_pnl": 0.0,
-          "max_loss": 0.0,
-          "max_win": 0.0
-        },
         "其他": {
-          "total": 48,
-          "wins": 29,
-          "losses": 19,
-          "win_rate": 0.6042,
-          "avg_pnl": -96.0009,
-          "total_pnl": -4608.0425,
+          "total": 77,
+          "wins": 42,
+          "losses": 29,
+          "win_rate": 0.5455,
+          "avg_pnl": 81.603,
+          "total_pnl": 6283.4348,
           "max_loss": -7255.8,
           "max_win": 8849.58
         }
       }
     },
-    "as_of": "2026-06-18"
+    "as_of": "2026-06-26"
   },
   "factor_contribution": {
     "top_combos": [
@@ -260,6 +230,17 @@
         "max_win": 586.527
       },
       {
+        "factors": "playbook_shadow",
+        "total": 24,
+        "wins": 13,
+        "losses": 10,
+        "win_rate": 0.5417,
+        "avg_pnl": 10.0963,
+        "total_pnl": 242.3123,
+        "max_loss": -628.56,
+        "max_win": 375.3599
+      },
+      {
         "factors": "bollinger+rsi+vwap",
         "total": 53,
         "wins": 17,
@@ -272,14 +253,25 @@
       },
       {
         "factors": "orb_breakout",
-        "total": 10,
+        "total": 11,
         "wins": 4,
-        "losses": 6,
-        "win_rate": 0.4,
-        "avg_pnl": -94.9673,
-        "total_pnl": -949.6735,
+        "losses": 7,
+        "win_rate": 0.3636,
+        "avg_pnl": -91.0958,
+        "total_pnl": -1002.0535,
         "max_loss": -627.8,
         "max_win": 553.8
+      },
+      {
+        "factors": "playbook_futu_simulate",
+        "total": 7,
+        "wins": 2,
+        "losses": 5,
+        "win_rate": 0.2857,
+        "avg_pnl": -262.5779,
+        "total_pnl": -1838.045,
+        "max_loss": -975.59,
+        "max_win": 807.2
       },
       {
         "factors": "bollinger+rsi",
@@ -294,11 +286,11 @@
       },
       {
         "factors": "bollinger+vwap",
-        "total": 57,
+        "total": 59,
         "wins": 5,
         "losses": 37,
-        "win_rate": 0.0877,
-        "avg_pnl": -18.7733,
+        "win_rate": 0.0847,
+        "avg_pnl": -18.1369,
         "total_pnl": -1070.0766,
         "max_loss": -394.68,
         "max_win": 13.057
@@ -324,6 +316,17 @@
         "total_pnl": -40.465,
         "max_loss": -24.51,
         "max_win": 0.0
+      },
+      {
+        "factors": "playbook_sim_reconcile",
+        "total": 5,
+        "wins": 0,
+        "losses": 0,
+        "win_rate": 0.0,
+        "avg_pnl": 0.0,
+        "total_pnl": 0.0,
+        "max_loss": 0.0,
+        "max_win": 0.0
       }
     ],
     "top_singles": [
@@ -339,6 +342,17 @@
         "max_win": 586.527
       },
       {
+        "factor": "playbook_shadow",
+        "total": 24,
+        "wins": 13,
+        "losses": 10,
+        "win_rate": 0.5417,
+        "avg_pnl": 10.0963,
+        "total_pnl": 242.3123,
+        "max_loss": -628.56,
+        "max_win": 375.3599
+      },
+      {
         "factor": "rsi",
         "total": 87,
         "wins": 22,
@@ -351,36 +365,47 @@
       },
       {
         "factor": "bollinger",
-        "total": 130,
+        "total": 132,
         "wins": 25,
         "losses": 87,
-        "win_rate": 0.1923,
-        "avg_pnl": -9.8044,
+        "win_rate": 0.1894,
+        "avg_pnl": -9.6558,
         "total_pnl": -1274.5721,
         "max_loss": -394.68,
         "max_win": 274.08
       },
       {
         "factor": "vwap",
-        "total": 124,
+        "total": 126,
         "wins": 24,
         "losses": 81,
-        "win_rate": 0.1935,
-        "avg_pnl": -13.2319,
+        "win_rate": 0.1905,
+        "avg_pnl": -13.0218,
         "total_pnl": -1640.7504,
         "max_loss": -394.68,
         "max_win": 274.08
       },
       {
         "factor": "orb_breakout",
-        "total": 10,
+        "total": 11,
         "wins": 4,
-        "losses": 6,
-        "win_rate": 0.4,
-        "avg_pnl": -94.9673,
-        "total_pnl": -949.6735,
+        "losses": 7,
+        "win_rate": 0.3636,
+        "avg_pnl": -91.0958,
+        "total_pnl": -1002.0535,
         "max_loss": -627.8,
         "max_win": 553.8
+      },
+      {
+        "factor": "playbook_futu_simulate",
+        "total": 7,
+        "wins": 2,
+        "losses": 5,
+        "win_rate": 0.2857,
+        "avg_pnl": -262.5779,
+        "total_pnl": -1838.045,
+        "max_loss": -975.59,
+        "max_win": 807.2
       },
       {
         "factor": "early_rsi_reversal",
@@ -392,26 +417,28 @@
         "total_pnl": -40.465,
         "max_loss": -24.51,
         "max_win": 0.0
+      },
+      {
+        "factor": "playbook_sim_reconcile",
+        "total": 5,
+        "wins": 0,
+        "losses": 0,
+        "win_rate": 0.0,
+        "avg_pnl": 0.0,
+        "total_pnl": 0.0,
+        "max_loss": 0.0,
+        "max_win": 0.0
       }
     ],
-    "combo_count": 8,
-    "single_count": 7
+    "combo_count": 13,
+    "single_count": 12
   },
   "threshold_recommendations": {
-    "as_of": "2026-06-18",
+    "as_of": "2026-06-26",
     "suggested_min_signal_confidence": 0.0,
     "current_baseline": 0.7,
-    "rationale": "近30d 桶 0-0.3 胜率 60.53% (n=38)",
-    "strategy_actions": [
-      {
-        "category": "scalping",
-        "recent_trades": 10,
-        "recent_win_rate": 0.0,
-        "recommendation": "DISABLE_OR_REDUCE_WEIGHT",
-        "severity": "HIGH",
-        "rationale": "近 10 笔胜率 0.00% < 20% 阈值"
-      }
-    ],
+    "rationale": "近30d 桶 0-0.3 胜率 61.76% (n=34)",
+    "strategy_actions": [],
     "anomalies": [
       "confidence 桶胜率非单调递增 — 模型置信度可能与真实胜率脱钩"
     ],

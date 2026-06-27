@@ -438,6 +438,31 @@ def restore_positions_from_db(scheduler):
                         f"正在回写到 DB..."
                     )
                     for sym in real_missing:
+                        # OKR 统一 (2026-06-26): 回写 broker 持仓前, 先查 trade_records 是否有
+                        # PLAYBOOK_SIM/LIVE 未平仓记录. 若有, 必须用 Playbook 的 source/owner,
+                        # 避免 Playbook 仓位被错误归类为 broker_sync 导致双重退出监控.
+                        _playbook_meta = None
+                        _playbook_source_type = None
+                        _playbook_owner = None
+                        try:
+                            _tr_conn = scheduler.trade_store._get_conn()
+                            _tr_row = _tr_conn.execute(
+                                "SELECT source_type, owner_strategy, metadata_json FROM trade_records "
+                                "WHERE symbol = ? AND source_type IN ('PLAYBOOK_SIM', 'PLAYBOOK_LIVE') "
+                                "AND (exit_price = 0 OR exit_price IS NULL OR exit_time = '' OR exit_time IS NULL) "
+                                "LIMIT 1",
+                                (sym,),
+                            ).fetchone()
+                            if _tr_row:
+                                _playbook_source_type = _tr_row[0]
+                                _playbook_owner = _tr_row[1]
+                                try:
+                                    _playbook_meta = json.loads(_tr_row[2] or "{}")
+                                except Exception:
+                                    _playbook_meta = {}
+                        except Exception as _e:
+                            logger.debug(f"[恢复·一致性校验] 查询 {sym} 的 trade_records 失败: {_e}")
+
                         bp = broker_positions_map.get(sym, {})
                         qty = bp.get('qty', 0)
                         cost = bp.get('cost_price', 0)
@@ -447,37 +472,62 @@ def restore_positions_from_db(scheduler):
                                 is_short = (qty < 0) or (str(side).upper() == 'SHORT')
                                 direction = Direction.SHORT if is_short else Direction.LONG
                                 size = abs(qty)
-                                # SHORT 止损在成本上方，LONG 在下方
-                                sl_mult = 1.08 if is_short else 0.92
-                                tp_mult = 0.85 if is_short else 1.15
+
+                                # 若是 Playbook 仓位, 使用 Playbook 的止损/止盈/元数据
+                                if _playbook_source_type:
+                                    _strategy_id = _playbook_owner or "playbook_sim"
+                                    _owner = _playbook_owner or "playbook_sim"
+                                    _source = _playbook_source_type
+                                    _meta = {
+                                        "source": _playbook_source_type,
+                                        "_from_futu_balance": True,
+                                        "sync_origin": "startup_reconcile_playbook",
+                                    }
+                                    # 从 trade_record 元数据恢复 SL/TP
+                                    _initial_sl = 0.0
+                                    _initial_tp = 0.0
+                                    if _playbook_meta:
+                                        _initial_sl = _playbook_meta.get("stop_loss", 0.0)
+                                        _initial_tp = _playbook_meta.get("take_profit", 0.0)
+                                    # 若元数据中没有, 用默认 2% 止损 / 2:1 止盈兜底
+                                    if _initial_sl <= 0:
+                                        _initial_sl = cost * (1.02 if is_short else 0.98)
+                                    if _initial_tp <= 0:
+                                        _initial_tp = cost * (0.96 if is_short else 1.04)
+                                else:
+                                    _strategy_id = "broker_sync"
+                                    _owner = "broker_sync"
+                                    _source = "broker_sync"
+                                    _initial_sl = cost * (1.08 if is_short else 0.92)
+                                    _initial_tp = cost * (0.85 if is_short else 1.15)
+                                    _meta = {
+                                        "source": "broker_sync",
+                                        "_from_futu_balance": True,
+                                        "sync_origin": "startup_reconcile",
+                                    }
+
                                 position = Position(
-                                    strategy_id="broker_sync",
+                                    strategy_id=_strategy_id,
                                     symbol=sym,
                                     direction=direction,
                                     size=size,
                                     avg_entry_price=cost,
-                                    initial_sl=cost * sl_mult,
-                                    current_sl=cost * sl_mult,
-                                    initial_tp=cost * tp_mult,
+                                    initial_sl=_initial_sl,
+                                    current_sl=_initial_sl,
+                                    initial_tp=_initial_tp,
                                     take_profit_levels=[],
                                     time_stop_hours=72,
                                     market_regime=MarketRegime.RANGE,
                                 )
-                                position.owner_strategy = "broker_sync"
-                                # Critical #2 (2026-06-02): 标记 broker 同步仓 → ExitMonitor 跳过
-                                #   防止 broker 自动操作与系统下单冲突 (双重平仓风险)
-                                position.metadata = {
-                                    "source": "broker_sync",
-                                    "_from_futu_balance": True,
-                                    "sync_origin": "startup_reconcile",
-                                }
+                                position.owner_strategy = _owner
+                                position.metadata = _meta
                                 scheduler.position_store.add(sym, position)
                                 scheduler.trade_store.upsert_open_position(
-                                    position, source="broker_sync", action="startup_reconcile"
+                                    position, source=_source, action="startup_reconcile"
                                 )
                                 logger.info(
-                                    f"[恢复·一致性校验] 已同步 Broker 持仓 {sym}: "
-                                    f"{qty}股 @${cost:.2f}"
+                                    f"[恢复·一致性校验] 已同步 {'Playbook' if _playbook_source_type else 'Broker'} 持仓 {sym}: "
+                                    f"{qty}股 @${cost:.2f} (source={_source}, owner={_owner})"
                                 )
                             except Exception as e:
                                 logger.error(f"[恢复·一致性校验] 同步 {sym} 失败: {e}")

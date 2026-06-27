@@ -1,0 +1,234 @@
+{
+  "report_type": "weekly",
+  "period_start": "2026-06-19",
+  "period_end": "2026-06-24",
+  "generated_at": "2026-06-24T23:12:49.725089",
+  "summary": {
+    "total_trades": 35,
+    "closed_trades": 27,
+    "winning_trades": 13,
+    "total_pnl": -521.05,
+    "win_rate": 0.4815,
+    "avg_pnl_per_trade": -19.3
+  },
+  "daily_comparison": {
+    "daily_stats": {
+      "2026-06-22": {
+        "trades": 3,
+        "wins": 0,
+        "pnl": -713.33
+      },
+      "2026-06-23": {
+        "trades": 23,
+        "wins": 13,
+        "pnl": 903.26
+      },
+      "2026-06-24": {
+        "trades": 9,
+        "wins": 0,
+        "pnl": -710.99
+      }
+    },
+    "best_day": "2026-06-23",
+    "worst_day": "2026-06-22",
+    "trading_days": 3
+  },
+  "signal_funnel": {
+    "total_decisions": 113,
+    "by_day": {
+      "2026-06-22": 40,
+      "2026-06-23": 35,
+      "2026-06-24": 38
+    },
+    "by_direction_strength": {
+      "LONG(s=51)": 29,
+      "LONG(s=54)": 4,
+      "LONG(s=56)": 3,
+      "LONG(s=57)": 2,
+      "LONG(s=58)": 6,
+      "LONG(s=59)": 2,
+      "LONG(s=61)": 3,
+      "LONG(s=62)": 2,
+      "LONG(s=63)": 2,
+      "LONG(s=64)": 1,
+      "LONG(s=65)": 2,
+      "LONG(s=66)": 1,
+      "LONG(s=67)": 1,
+      "LONG(s=68)": 3,
+      "LONG(s=70)": 1,
+      "LONG(s=72)": 2,
+      "NEUTRAL(s=51)": 1,
+      "SHORT(s=23)": 1,
+      "SHORT(s=30)": 1,
+      "SHORT(s=32)": 4,
+      "SHORT(s=36)": 1,
+      "SHORT(s=37)": 1,
+      "SHORT(s=39)": 8,
+      "SHORT(s=41)": 1,
+      "SHORT(s=44)": 2,
+      "SHORT(s=45)": 1,
+      "SHORT(s=48)": 1,
+      "SHORT(s=50)": 1,
+      "SHORT(s=52)": 3,
+      "SHORT(s=53)": 2,
+      "SHORT(s=54)": 1,
+      "SHORT(s=55)": 17,
+      "SHORT(s=56)": 1,
+      "SHORT(s=62)": 1,
+      "SHORT(s=65)": 1
+    }
+  },
+  "rejection_trend": {
+    "total": 0,
+    "by_day": {},
+    "by_reason": {},
+    "by_symbol": {},
+    "trend": "stable",
+    "top_rejector": "none"
+  },
+  "capital_curve": {
+    "start_equity": 78742.0,
+    "end_equity": 99930.0,
+    "weekly_pnl": 21188.56,
+    "weekly_return_pct": 26.91,
+    "max_drawdown_pct": -0.04,
+    "daily_points": [
+      {
+        "day": "2026-06-23",
+        "equity": 78742.0,
+        "cash": 91731.0,
+        "drawdown": -0.04
+      },
+      {
+        "day": "2026-06-24",
+        "equity": 99930.0,
+        "cash": -5445.0,
+        "drawdown": -0.15
+      }
+    ]
+  },
+  "strategy_performance": {
+    "strategy_breakdown": {
+      "unknown": {
+        "trades": 27,
+        "wins": 13,
+        "pnl": -521.05,
+        "win_rate": 0.4815
+      }
+    }
+  },
+  "voting_analysis": {
+    "avg_signal_strength": 49.59,
+    "high_strength_trades": 0,
+    "high_strength_win_rate": 0,
+    "medium_strength_trades": 26,
+    "medium_strength_win_rate": 0.5,
+    "low_strength_trades": 1,
+    "low_strength_win_rate": 0.0
+  },
+  "risk_analysis": {
+    "stop_loss_execution_rate": 1.0,
+    "max_drawdown": 0
+  },
+  "consistency_score": {
+    "score": 0.93,
+    "avg_strength": 49.59,
+    "std_strength": 2.08,
+    "interpretation": "high"
+  },
+  "key_learnings": [],
+  "improvement_plan": [
+    {
+      "action": "有 1 笔低信号强度交易，建议提高入场门槛",
+      "priority": "medium"
+    }
+  ],
+  "daily_reviews_summary": {
+    "daily_count": 2,
+    "days_with_trades": 2,
+    "reviews": [
+      {
+        "date": "2026-06-22",
+        "trades": 3,
+        "pnl": 0,
+        "win_rate": 0,
+        "suggestions": [
+          "产生 40 条决策但 0 笔执行，检查门禁/风控是否过严"
+        ]
+      },
+      {
+        "date": "2026-06-23",
+        "trades": 23,
+        "pnl": 903.26,
+        "win_rate": 0.5909,
+        "suggestions": [
+          "今日交易执行正常，继续保持"
+        ]
+      }
+    ]
+  },
+  "cohort_ab": {
+    "db": "/opt/ftseek/FTSeek-US/data/ftseek_us.db",
+    "since": "2026-06-19",
+    "closed_total": 27,
+    "open_total": 6,
+    "cohorts": {
+      "A": {
+        "n": 1,
+        "sum_pnl": -110.07,
+        "avg_pnl_pct": -0.004,
+        "avg_hold_h": 0.34,
+        "win_rate_pct": 0.0,
+        "wins": 0,
+        "losses": 1,
+        "exit_reasons": {
+          "BREAKEVEN_STOP": 1
+        },
+        "hold_buckets": {
+          "<1h": 1
+        }
+      },
+      "B": {
+        "n": 1,
+        "sum_pnl": -600.92,
+        "avg_pnl_pct": -0.02,
+        "avg_hold_h": 0.1,
+        "win_rate_pct": 0.0,
+        "wins": 0,
+        "losses": 1,
+        "exit_reasons": {
+          "SL_ATR_STOP": 1
+        },
+        "hold_buckets": {
+          "<1h": 1
+        }
+      },
+      "PRE_EXPERIMENT": {
+        "n": 25,
+        "sum_pnl": 189.93,
+        "avg_pnl_pct": 0.004,
+        "avg_hold_h": 4.35,
+        "win_rate_pct": 54.2,
+        "wins": 13,
+        "losses": 11,
+        "exit_reasons": {
+          "TIME_EXIT": 12,
+          "EOD_FORCE_CLOSE": 7,
+          "SL_ATR_STOP": 5,
+          "ORB_BREAKDOWN": 1
+        },
+        "hold_buckets": {
+          "1-4h": 10,
+          "4-8h": 7,
+          "<1h": 6,
+          "overnight<1d": 2
+        }
+      }
+    },
+    "open_positions": {
+      "A": 4,
+      "B": 2
+    },
+    "decision_gate": "INCONCLUSIVE (n: A=1, B=1, 需每组≥30; 实验 2026-06-24 启动, 需 ~2 周)"
+  }
+}

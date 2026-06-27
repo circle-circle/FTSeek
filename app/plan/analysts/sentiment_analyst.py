@@ -43,6 +43,9 @@ async def run_sentiment_analysis(
     try:
         tasks = []
 
+        # 0. Fear & Greed Index (free, no key, always works)
+        tasks.append(_fetch_fear_greed())
+
         # 1. StockTwits (并行)
         tasks.append(_fetch_stocktwits(bare))
 
@@ -57,11 +60,17 @@ async def run_sentiment_analysis(
             timeout=30,
         )
 
-        st_data = results[0] if not isinstance(results[0], Exception) else None
-        reddit_data = results[1] if not isinstance(results[1], Exception) else None
-        social_data = results[2] if not isinstance(results[2], Exception) else None
+        fng_data = results[0] if not isinstance(results[0], Exception) else None
+        st_data = results[1] if not isinstance(results[1], Exception) else None
+        reddit_data = results[2] if not isinstance(results[2], Exception) else None
+        social_data = results[3] if not isinstance(results[3], Exception) else None
 
         has_data = False
+
+        # Fear & Greed (market-wide sentiment)
+        if fng_data:
+            result["fear_greed"] = fng_data
+            has_data = True
 
         # StockTwits
         if st_data:
@@ -86,6 +95,20 @@ async def run_sentiment_analysis(
         # 综合判断
         result["crowding"] = _assess_crowding(st_data, reddit_data)
         result["direction"] = _assess_direction(st_data, reddit_data, social_data)
+        if fng_data:
+            # Override direction based on Fear & Greed + VIX combination
+            fng_val = fng_data.get("fear_greed", {}).get("value", 50)
+            vix_val = fng_data.get("vix", {}).get("value", 0)
+            vix_regime = fng_data.get("vix", {}).get("regime", "normal")
+
+            if fng_val <= 25 and vix_regime == "high_vol":
+                result["direction"] = "偏空"  # Extreme Fear + high VIX = bearish
+            elif fng_val >= 75 and vix_regime == "calm":
+                result["direction"] = "偏多"  # Extreme Greed + low VIX = bullish
+            elif fng_val <= 30 or vix_regime == "high_vol":
+                result["direction"] = "偏空"  # Fear or high vol
+            elif fng_val >= 70 or vix_regime == "calm":
+                result["direction"] = "偏多"  # Greed or calm
         result["conclusion"] = _build_conclusion(result, target)
 
     except asyncio.TimeoutError:
@@ -97,6 +120,57 @@ async def run_sentiment_analysis(
         logger.debug(f"[sentiment_analyst] {symbol} error: {e}")
 
     return result
+
+
+async def _fetch_fear_greed() -> Optional[Dict]:
+    """获取 CNN Fear & Greed Index + VIX (市场整体情绪, free, no key)"""
+    try:
+        import requests
+
+        # Fear & Greed Index
+        fng_resp = await asyncio.get_event_loop().run_in_executor(
+            None, lambda: requests.get("https://api.alternative.me/fng/?limit=1", timeout=10)
+        )
+        fng_data = None
+        if fng_resp.status_code == 200:
+            d = fng_resp.json().get("data", [{}])[0]
+            fng_data = {
+                "value": int(d.get("value", 50)),
+                "classification": d.get("value_classification", "Neutral"),
+            }
+
+        # VIX (from Yahoo Finance, free)
+        vix_data = None
+        vix_resp = await asyncio.get_event_loop().run_in_executor(
+            None, lambda: requests.get(
+                "https://query1.finance.yahoo.com/v8/finance/chart/%5EVIX",
+                timeout=10, headers={"User-Agent": "Mozilla/5.0"}
+            )
+        )
+        if vix_resp.status_code == 200:
+            meta = vix_resp.json().get("chart", {}).get("result", [{}])[0].get("meta", {})
+            vix_price = meta.get("regularMarketPrice", 0)
+            vix_52w_high = meta.get("fiftyTwoWeekHigh", 0)
+            vix_52w_low = meta.get("fiftyTwoWeekLow", 0)
+            if vix_price:
+                vix_data = {
+                    "value": vix_price,
+                    "52w_high": vix_52w_high,
+                    "52w_low": vix_52w_low,
+                    "regime": "high_vol" if vix_price >= 25 else "calm" if vix_price <= 15 else "normal",
+                }
+
+        if not fng_data and not vix_data:
+            return None
+
+        return {
+            "fear_greed": fng_data,
+            "vix": vix_data,
+            "source": "alternative.me + yahoo finance",
+        }
+    except Exception as e:
+        logger.debug(f"[sentiment] Fear&Greed/VIX error: {e}")
+        return None
 
 
 async def _fetch_stocktwits(symbol: str) -> Optional[Dict]:

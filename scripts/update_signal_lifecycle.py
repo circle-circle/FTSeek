@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sqlite3
 import sys
 from datetime import datetime
@@ -30,7 +31,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("update_lifecycle")
 
-DB_PATH = PROJECT_ROOT / "data" / "ftseek_us.db"
+DB_PATH = PROJECT_ROOT / "data" / ("ftseek_us_live.db" if os.getenv("TRADE_ENV", "1").strip() == "0" else "ftseek_us.db")
 SNAP_DB = PROJECT_ROOT / "data" / "signal_snapshots.db"
 DEC_DB = PROJECT_ROOT / "data" / "decisions.db"
 

@@ -1,0 +1,44 @@
+# Playbook Horizon Strategy 配置
+# 用于个股阶段驱动的短线/长线决策
+
+horizon_selector:
+  # 2026-06-26 (MADP DEB-20260626-horizon_model): 当前样本不足，
+  # HorizonReturnModel 仅作观测工具，实时决策关闭，所有指令默认 short。
+  enabled: false
+  # 使用历史收益模型所需的最小样本数
+  min_samples_for_model: 5
+  # 选择阈值: long_score > short_score * (1 + margin_threshold) 时才选 long
+  margin_threshold: 0.1
+  # 不确定时的默认 horizon
+  default_horizon: "short"
+  # 历史收益模型更新频率
+  model_update:
+    daily: true
+    weekly_deep_update: true
+  # 风险预算分配 (short vs long)
+  risk_budget:
+    short_pct: 0.5
+    long_pct: 0.5
+    rebalance_weekly: true
+    min_pct: 0.1
+
+# 短线参数
+short_horizon:
+  label: "SHORT_HORIZON"
+  rr_ratio: 1.0
+  fixed_stop_loss_pct: 2.0
+  buy_fixed_stop_loss_pct: 2.5
+  sell_fixed_stop_loss_pct: 2.0
+  max_hold_days: 1
+  skip_pre_close_if_profit: false
+  time_exit_hours: 2.0
+
+# 长线参数
+long_horizon:
+  label: "LONG_HORIZON"
+  rr_ratio: 2.5
+  fixed_stop_loss_pct: 2.0
+  max_hold_days: 5
+  skip_pre_close_if_profit: true
+  overnight_gap_stop_pct: 3.0
+  time_exit_hours: 999

@@ -116,8 +116,12 @@ SYNTHESIS_USER = """## 标的: {symbol} · 当前价: ${current_price}
 ⚠️ action 判定规则（严格遵守）:
 - BUY: 辩论推荐LONG + 确信度HIGH/MEDIUM + 数据≥3维完整 → 做多建仓
 - SELL: 辩论推荐SHORT + 确信度HIGH/MEDIUM + 数据≥3维完整 → 做空
+- CONDITIONAL: 方向有倾向但存在不确定因素（估值偏高/情绪拥挤/技术背离等）→ 小仓试探(1/3仓位)，设紧止损，明确升级/降级条件
 - HOLD: 已有持仓 + 方向不明确但无触发离场条件 → 持有观望
-- AVOID: 辩论方向NEUTRAL 或 确信度LOW 或 数据≤2维完整 或 历史胜率<30% → 不交易
+- WATCH: 数据不足或方向NEUTRAL → 加入观察池，不交易但持续跟踪
+
+注意：历史胜率基于小样本(≤5次)时不具统计显著性，不应单独触发AVOID。应结合基本面/技术面/分析师共识综合判断。
+如果基本面强劲+分析师一致看好+技术面量价确认，即使历史胜率低，也应给CONDITIONAL而非AVOID。
 
 conviction 校准规则:
 - 辩论 HIGH + 数据4/4 + 历史胜率>50% → 70-90
@@ -128,7 +132,7 @@ conviction 校准规则:
 请输出以下JSON结构:
 {{
     "verdict": {{
-        "action": "BUY/HOLD/SELL/AVOID",
+        "action": "BUY/CONDITIONAL/SELL/HOLD/WATCH",
         "action_detail": "具体操作描述(如：分批建仓，事件前不满仓)",
         "conviction": 0-100,
         "data_quality_score": "X/Y (完整维度/总维度)"

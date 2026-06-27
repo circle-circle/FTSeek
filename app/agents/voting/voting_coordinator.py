@@ -630,6 +630,7 @@ VIX > 25 时，最大 Strength 不得超过 50。
                            SUM(CASE WHEN COALESCE(realized_pnl, 0) > 0 THEN 1 ELSE 0 END) AS wins
                     FROM trade_records
                     WHERE symbol LIKE ? AND direction = ?
+                      AND exit_price > 0
                       AND trade_date >= date('now', '-7 days')
                     """,
                     (f"%{ticker}%", direction),

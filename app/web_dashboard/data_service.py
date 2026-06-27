@@ -333,10 +333,10 @@ class DataService:
         return self._fetch_positions_from_db()
 
     def _fetch_positions_from_db(self) -> list:
-        """从 ftseek_us_live.db 读取持仓作为 fallback"""
+        """从主 DB (get_main_db) 读取持仓作为 fallback, 排除已关闭的幽灵记录"""
         import sqlite3
-        import os
-        db_path = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'ftseek_us_live.db')
+        from app.core.db_utils import get_main_db
+        db_path = str(get_main_db())
         if not os.path.exists(db_path):
             return []
         try:
@@ -346,6 +346,9 @@ class DataService:
                 SELECT symbol, direction, size, avg_entry_price
                 FROM open_positions
                 WHERE size > 0
+                  AND (sync_status IS NULL
+                       OR sync_status NOT IN ('closed_by_daemon','closed_by_scheduler','closed_by_sync',
+                                               'closed_emergency','stale_not_in_broker'))
             """)
             rows = cur.fetchall()
             conn.close()
@@ -474,6 +477,23 @@ class DataService:
                         "high_price": round(safe_float(row.get("high_price")), 2),
                         "low_price": round(safe_float(row.get("low_price")), 2),
                         "volume": int(row.get("volume", 0)),
+                        # P2 (2026-06-21): 富途snapshot扩展字段 — 一次调用替代Finnhub+StockTwits
+                        "pe_ratio": round(safe_float(row.get("pe_ratio")), 2) or None,
+                        "pe_ttm": round(safe_float(row.get("pe_ttm_ratio")), 2) or None,
+                        "pb_ratio": round(safe_float(row.get("pb_ratio")), 2) or None,
+                        "eps": round(safe_float(row.get("earning_per_share")), 2) or None,
+                        "market_cap": round(safe_float(row.get("total_market_val")), 0) or None,
+                        "net_asset": round(safe_float(row.get("net_asset")), 0) or None,
+                        "net_profit": round(safe_float(row.get("net_profit")), 0) or None,
+                        "dividend_ttm": round(safe_float(row.get("dividend_ttm")), 2) or None,
+                        "turnover_rate": round(safe_float(row.get("turnover_rate")), 2) or None,
+                        "amplitude": round(safe_float(row.get("amplitude")), 2) or None,
+                        "bid_ask_ratio": round(safe_float(row.get("bid_ask_ratio")), 2) or None,
+                        "volume_ratio": round(safe_float(row.get("volume_ratio")), 2) or None,
+                        "high_52w": round(safe_float(row.get("highest52weeks_price")), 2) or None,
+                        "low_52w": round(safe_float(row.get("lowest52weeks_price")), 2) or None,
+                        "after_price": round(safe_float(row.get("after_price")), 2) or None,
+                        "pre_price": round(safe_float(row.get("pre_price")), 2) or None,
                     }
             return result
         except Exception as e:
@@ -971,11 +991,107 @@ class DataService:
         if kwargs:
             from functools import partial
             return await loop.run_in_executor(self._pool, partial(func, *args, **kwargs))
-        return await loop.run_in_executor(self._pool, func, *args)
+        return await loop.run_in_executor(self._pool, func, *args, **kwargs)
 
     def invalidate_cache(self, key: str = None):
         """清除缓存 (下单/平仓后调用)"""
         self.cache.invalidate(key)
+
+    # ═══════════════════════════════════════════
+    #  领域查询 (2026-06-20: 从路由层下沉)
+    # ═══════════════════════════════════════════
+
+    @staticmethod
+    def _snap_db() -> str:
+        """signal_snapshots.db 路径"""
+        from app.analysis.signal_ic_tracker import _get_db_path
+        return str(_get_db_path())
+
+    async def get_signal_counts(self, today: str) -> dict:
+        """信号快照计数: 总数 + 有效(strength≥30)"""
+        snap_db = self._snap_db()
+        row1 = await self.db_query_one(
+            "SELECT COUNT(*) as cnt FROM signal_snapshots WHERE trade_date = ? "
+            "AND COALESCE(trade_mode, 'simulate') = 'live'",
+            (today,), db_path=snap_db,
+        )
+        row2 = await self.db_query_one(
+            "SELECT COUNT(*) as cnt FROM signal_snapshots WHERE trade_date = ? "
+            "AND strength >= 30 AND confidence > 0 AND COALESCE(trade_mode, 'simulate') = 'live'",
+            (today,), db_path=snap_db,
+        )
+        return {"total": row1["cnt"] if row1 else 0, "qualified": row2["cnt"] if row2 else 0}
+
+    async def get_executed_count(self, today: str) -> int:
+        """当日已平仓交易数 (排除已废弃/禁用策略)"""
+        row = await self.db_query_one(
+            "SELECT COUNT(*) as cnt FROM trade_records "
+            "WHERE trade_date = ? AND exit_price > 0 "
+            "AND source_type NOT IN ('PLAYBOOK_SHADOW','SCALPING')",
+            (today,),
+        )
+        return row["cnt"] if row else 0
+
+    async def get_attribution_score(self, trace_id: str = "", symbol: str = "", trade_date: str = "") -> Optional[dict]:
+        """交易归因评分"""
+        clause = []
+        params = []
+        if trace_id:
+            clause.append("trace_id = ?")
+            params.append(trace_id)
+        if symbol:
+            clause.append("symbol = ?")
+            params.append(symbol)
+        if trade_date:
+            clause.append("trade_date = ?")
+            params.append(trade_date)
+        where = " AND ".join(clause) if clause else "1=1"
+        return await self.db_query_one(
+            f"SELECT overall_score FROM trade_attribution WHERE {where} ORDER BY rowid DESC LIMIT 1",
+            tuple(params),
+        )
+
+    async def get_diagnostic_data(self, key: str) -> Optional[str]:
+        """诊断结果 JSON"""
+        row = await self.db_query_one(
+            "SELECT data FROM diagnostic_results WHERE key = ? ORDER BY rowid DESC LIMIT 1",
+            (key,),
+        )
+        return row["data"] if row else None
+
+    async def get_recent_trades(self, symbol: str = "", limit: int = 20) -> list:
+        """最近交易记录"""
+        if symbol:
+            return await self.db_query(
+                "SELECT * FROM trade_records WHERE symbol=? AND exit_price>0 ORDER BY exit_time DESC LIMIT ?",
+                (symbol, limit),
+            )
+        return await self.db_query(
+            "SELECT * FROM trade_records WHERE exit_price>0 ORDER BY exit_time DESC LIMIT ?",
+            (limit,),
+        )
+
+    async def get_open_position_owners(self) -> list:
+        """持仓归属列表"""
+        return await self.db_query(
+            "SELECT symbol, COALESCE(owner,'auto') as owner, entry_time FROM open_positions"
+        )
+
+    async def get_total_pnl(self, days: int = 0) -> float:
+        """累计已实现盈亏 — 仅计已平仓交易 (exit_price > 0)"""
+        date_filter = f"AND trade_date >= date('now', '-{days} days')" if days > 0 else ""
+        row = await self.db_query_one(
+            f"SELECT COALESCE(SUM(realized_pnl),0) as pnl FROM trade_records "
+            f"WHERE source_type NOT IN ('PLAYBOOK_SHADOW','SCALPING') AND exit_price > 0 {date_filter}"
+        )
+        return float(row["pnl"]) if row else 0.0
+
+    async def get_recent_pnl_ids(self, limit: int = 20) -> list:
+        """最近交易ID和PnL (用于归因匹配)"""
+        return await self.db_query(
+            f"SELECT id, realized_pnl FROM trade_records ORDER BY id DESC LIMIT ?",
+            (limit,),
+        )
 
 
 # ── 全局单例 ──

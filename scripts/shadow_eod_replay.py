@@ -25,6 +25,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import sqlite3
 import sys
 from datetime import datetime, timedelta
@@ -39,7 +40,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 
 
 def _query_unclosed_shadows(days_back: int) -> List[Dict]:
-    db = PROJECT_ROOT / "data" / "ftseek_us.db"
+    db = PROJECT_ROOT / "data" / ("ftseek_us_live.db" if os.getenv("TRADE_ENV", "1").strip() == "0" else "ftseek_us.db")
     conn = sqlite3.connect(str(db))
     cur = conn.cursor()
     cutoff = (datetime.now() - timedelta(days=days_back)).isoformat()
@@ -64,7 +65,7 @@ def _get_real_trade_outcome(real_trace_id: str) -> Optional[Dict]:
 
     KISS: 用 real 的 exit_price 作为终点 (而非拉 intraday 价格序列).
     """
-    db = PROJECT_ROOT / "data" / "ftseek_us.db"
+    db = PROJECT_ROOT / "data" / ("ftseek_us_live.db" if os.getenv("TRADE_ENV", "1").strip() == "0" else "ftseek_us.db")
     conn = sqlite3.connect(str(db))
     cur = conn.cursor()
     cur.execute("""
@@ -199,7 +200,7 @@ def replay_shadows(days_back: int = 1, dry_run: bool = False) -> Dict:
 
     by_variant: Dict[str, Dict] = {}
 
-    db_path = PROJECT_ROOT / "data" / "ftseek_us.db"
+    db_path = PROJECT_ROOT / "data" / ("ftseek_us_live.db" if os.getenv("TRADE_ENV", "1").strip() == "0" else "ftseek_us.db")
     conn = None
     cur = None
     if not dry_run:

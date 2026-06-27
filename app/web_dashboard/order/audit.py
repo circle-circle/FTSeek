@@ -455,15 +455,15 @@ def mark_position_manual(service: "ManualOrderService", symbol: str,
     try:
         conn = service._db()
         cursor = conn.execute(
-            "UPDATE open_positions SET owner='manual' WHERE symbol=?",
+            "UPDATE open_positions SET owner='manual', account_type='real' WHERE symbol=?",
             (symbol,),
         )
         if cursor.rowcount == 0:
             # Row doesn't exist yet — position_sync hasn't run.
             # Insert stub row; position_sync will merge/update on next cycle.
             conn.execute(
-                """INSERT INTO open_positions (symbol, direction, size, avg_entry_price, owner, sync_status, updated_at)
-                   VALUES (?, ?, 0, 0, 'manual', 'pending_sync', ?)""",
+                """INSERT INTO open_positions (symbol, direction, size, avg_entry_price, owner, sync_status, updated_at, account_type)
+                   VALUES (?, ?, 0, 0, 'manual', 'pending_sync', ?, 'real')""",
                 (symbol, direction, datetime.now().isoformat()),
             )
             logger.info(

@@ -60,6 +60,9 @@ def _spearman_rank_correlation(x: List[float], y: List[float]) -> Optional[float
     return max(-1.0, min(1.0, rho))
 
 
+from app.utils.holiday_calendar import nth_trading_day_after
+
+
 def backfill_forward_returns(db, market_data, trade_date: str = None) -> int:
     """
     回填前瞻收益: 对历史指令计算 T+1/T+3/T+5 收益率
@@ -78,10 +81,20 @@ def backfill_forward_returns(db, market_data, trade_date: str = None) -> int:
     today = date.fromisoformat(trade_date)
     updated = 0
 
-    # 查最近 10 天的指令 (T+5 最多需要 5 个交易日 ≈ 7 个自然日)
-    lookback = today - timedelta(days=10)
+    # 查最近 30 天的指令 (T+5 最多需要 5 个交易日 ≈ 7 个自然日，
+    # 但历史数据可能因 10 天窗口被永久截断，扩到 30 天以回填积压数据)
+    lookback = today - timedelta(days=30)
     try:
-        instructions = db.get_recent_instructions(limit=200)
+        # ponytail: 同 compute_playbook_ic, 接受 raw connection
+        if not hasattr(db, 'get_recent_instructions'):
+            rows = db.execute("""
+                SELECT * FROM playbook_instructions
+                WHERE date >= date('now', '-45 days') AND direction != 'SKIP'
+                ORDER BY date DESC LIMIT 1000
+            """).fetchall()
+            instructions = [dict(r) if hasattr(r, 'keys') else r for r in rows]
+        else:
+            instructions = db.get_recent_instructions(limit=1000)
     except Exception as e:
         logger.error(f"Failed to get instructions: {e}")
         return 0
@@ -100,7 +113,9 @@ def backfill_forward_returns(db, market_data, trade_date: str = None) -> int:
             continue
 
         direction = inst.get("direction", "")
-        entry_price = inst.get("entry_price", 0)
+        # Phase 4 (2026-06-24): 优先用真实成交价 execution_price (futu_simulate/live 真实成交),
+        # fallback entry_price (虚拟 shadow / 未执行). OKR 量真实成交更准.
+        entry_price = inst.get("execution_price") or inst.get("entry_price", 0) or 0
         symbol = inst.get("symbol", "")
 
         if direction == "SKIP" or not entry_price or entry_price <= 0 or not symbol:
@@ -110,10 +125,11 @@ def backfill_forward_returns(db, market_data, trade_date: str = None) -> int:
         try:
             bars = market_data.get_daily_bars(symbol, count=10)
         except Exception as e:
-            logger.debug(f"Failed to get bars for {symbol}: {e}")
+            logger.info(f"[PlaybookIC] Failed to get bars for {symbol}: {e}")
             continue
 
         if not bars:
+            logger.info(f"[PlaybookIC] No bars returned for {symbol} (get_daily_bars failed/empty)")
             continue
 
         # 按日期排序
@@ -127,18 +143,16 @@ def backfill_forward_returns(db, market_data, trade_date: str = None) -> int:
         sign = 1 if direction == "BUY" else -1
 
         for horizon, field_name in [(1, "fwd_return_t1"), (3, "fwd_return_t3"), (5, "fwd_return_t5")]:
-            # 找 T+horizon 的收盘价
-            target_date = inst_date + timedelta(days=horizon)
-            # 允许 ±2 天偏移 (周末/假日)
-            for offset in range(0, 3):
-                check_date = target_date + timedelta(days=offset)
-                check_str = check_date.isoformat()
-                if check_str in bars_by_date:
-                    close = bars_by_date[check_str].get("close", 0)
-                    if close > 0:
-                        fwd_return = sign * (close - entry_price) / entry_price
-                        updates[field_name] = round(fwd_return, 6)
-                    break
+            # 找 T+horizon 的收盘价 (使用交易日历, 跨周末/假日自动跳过)
+            target_date = nth_trading_day_after("US", inst_date, horizon)
+            if target_date is None:
+                continue
+            check_str = target_date.isoformat()
+            if check_str in bars_by_date:
+                close = bars_by_date[check_str].get("close", 0)
+                if close > 0:
+                    fwd_return = sign * (close - entry_price) / entry_price
+                    updates[field_name] = round(fwd_return, 6)
 
         if updates:
             try:
@@ -170,13 +184,27 @@ def compute_playbook_ic(db, days: int = 30) -> Dict[str, Any]:
         }
     """
     try:
-        instructions = db.get_recent_instructions(limit=days * 10)
+        # ponytail: 用 raw SQL 替代 db.get_recent_instructions(), 接受 sqlite3.Connection 或 PlaybookDB
+        if hasattr(db, 'execute'):
+            import sqlite3 as _sqlite
+            # 如果是 raw connection (没有 get_recent_instructions 方法)
+            if not hasattr(db, 'get_recent_instructions'):
+                rows = db.execute("""
+                    SELECT * FROM playbook_instructions
+                    WHERE date >= date('now', ?) AND direction != 'SKIP'
+                    ORDER BY date DESC LIMIT ?
+                """, (f'-{days} days', days * 10)).fetchall()
+                instructions = [dict(r) if hasattr(r, 'keys') else r for r in rows]
+            else:
+                instructions = db.get_recent_instructions(limit=days * 10)
+        else:
+            instructions = db.get_recent_instructions(limit=days * 10)
     except Exception as e:
         logger.error(f"Failed to get instructions for IC: {e}")
         return {"overall_ic": None, "sample_count": 0}
 
     # 过滤有前瞻收益的指令
-    valid_t1 = []  # (confidence, fwd_return, conditions, regime)
+    valid_t1 = []  # (confidence, fwd_return, conditions, regime, horizon)
     valid_t3 = []
     valid_t5 = []
 
@@ -199,13 +227,14 @@ def compute_playbook_ic(db, days: int = 30) -> Dict[str, Any]:
             pass
 
         regime = inst.get("market_regime", "UNKNOWN")
+        horizon = inst.get("horizon", "short") or "short"
 
         if fwd_t1 is not None:
-            valid_t1.append((conf, fwd_t1, conditions, regime))
+            valid_t1.append((conf, fwd_t1, conditions, regime, horizon))
         if fwd_t3 is not None:
-            valid_t3.append((conf, fwd_t3, conditions, regime))
+            valid_t3.append((conf, fwd_t3, conditions, regime, horizon))
         if fwd_t5 is not None:
-            valid_t5.append((conf, fwd_t5, conditions, regime))
+            valid_t5.append((conf, fwd_t5, conditions, regime, horizon))
 
     # 计算整体 IC
     overall_t1 = _spearman_rank_correlation(
@@ -224,7 +253,7 @@ def compute_playbook_ic(db, days: int = 30) -> Dict[str, Any]:
     by_factor = {}
     if valid_t3:
         factor_data = defaultdict(lambda: {"confs": [], "returns": []})
-        for conf, ret, conditions, _ in valid_t3:
+        for conf, ret, conditions, _, _ in valid_t3:
             for cond in conditions:
                 factor_data[cond]["confs"].append(conf)
                 factor_data[cond]["returns"].append(ret)
@@ -239,7 +268,7 @@ def compute_playbook_ic(db, days: int = 30) -> Dict[str, Any]:
     by_regime = {}
     if valid_t3:
         regime_data = defaultdict(lambda: {"confs": [], "returns": []})
-        for conf, ret, _, regime in valid_t3:
+        for conf, ret, _, regime, _ in valid_t3:
             regime_data[regime]["confs"].append(conf)
             regime_data[regime]["returns"].append(ret)
 
@@ -248,6 +277,43 @@ def compute_playbook_ic(db, days: int = 30) -> Dict[str, Any]:
                 ic = _spearman_rank_correlation(data["confs"], data["returns"])
                 if ic is not None:
                     by_regime[regime_name] = {"ic": round(ic, 4), "count": len(data["confs"])}
+
+    # 按 source_type 分解 IC (T+3) — Phase 4 (2026-06-24): 区分 SHADOW/SIM/LIVE 数据可信度
+    by_source_type = {}
+    if valid_t3:
+        src_data = defaultdict(lambda: {"confs": [], "returns": []})
+        for inst in instructions:
+            fwd_t3 = inst.get("fwd_return_t3")
+            conf = inst.get("confidence", 0)
+            if fwd_t3 is None or not conf or conf <= 0:
+                continue
+            # 推断 source_type: executed + execution_price>0 → SIM/LIVE (有真实成交), 否则 SHADOW
+            if inst.get("executed") and inst.get("execution_price"):
+                # 区分 sim/live 需读 trade_records; 此处简化为 SIM/LIVE 合并标 "EXECUTED"
+                src = "EXECUTED"
+            else:
+                src = "SHADOW"
+            src_data[src]["confs"].append(conf)
+            src_data[src]["returns"].append(fwd_t3)
+        for src, data in src_data.items():
+            if len(data["confs"]) >= 5:
+                ic = _spearman_rank_correlation(data["confs"], data["returns"])
+                if ic is not None:
+                    by_source_type[src] = {"ic": round(ic, 4), "count": len(data["confs"])}
+
+    # 按 horizon 分解 IC (T+3) — 2026-06-26
+    by_horizon = {}
+    if valid_t3:
+        horizon_data = defaultdict(lambda: {"confs": [], "returns": []})
+        for conf, ret, _, _, horizon in valid_t3:
+            horizon_data[horizon]["confs"].append(conf)
+            horizon_data[horizon]["returns"].append(ret)
+
+        for horizon_name, data in horizon_data.items():
+            if len(data["confs"]) >= 5:
+                ic = _spearman_rank_correlation(data["confs"], data["returns"])
+                if ic is not None:
+                    by_horizon[horizon_name] = {"ic": round(ic, 4), "count": len(data["confs"])}
 
     result = {
         "overall_ic_t1": round(overall_t1, 4) if overall_t1 is not None else None,
@@ -258,6 +324,8 @@ def compute_playbook_ic(db, days: int = 30) -> Dict[str, Any]:
         "sample_t5": len(valid_t5),
         "by_factor": by_factor,
         "by_regime": by_regime,
+        "by_source_type": by_source_type,
+        "by_horizon": by_horizon,
     }
 
     # 毕业门禁判定
@@ -274,9 +342,22 @@ def _check_graduation(ic_report: Dict[str, Any]) -> Dict[str, Any]:
     - Playbook IC (T+3) > 0.05
     - 样本量 ≥ 30
     - 最大回撤 < 5% (由 RiskCircuitBreaker 提供)
+
+    2026-06-26: 优先使用 long-horizon 的 IC(T+3), 因为目标是吃到周级 alpha.
     """
-    ic_t3 = ic_report.get("overall_ic_t3")
-    sample = ic_report.get("sample_t3", 0)
+    # 优先 long-horizon IC
+    by_horizon = ic_report.get("by_horizon", {})
+    long_ic = by_horizon.get("long", {}).get("ic") if by_horizon else None
+    long_sample = by_horizon.get("long", {}).get("count", 0) if by_horizon else 0
+
+    if long_ic is not None and long_sample >= 30:
+        ic_t3 = long_ic
+        sample = long_sample
+        horizon_used = "long"
+    else:
+        ic_t3 = ic_report.get("overall_ic_t3")
+        sample = ic_report.get("sample_t3", 0)
+        horizon_used = "overall"
 
     checks = {
         "ic_positive": ic_t3 is not None and ic_t3 > 0.05,
@@ -290,6 +371,7 @@ def _check_graduation(ic_report: Dict[str, Any]) -> Dict[str, Any]:
         "checks": checks,
         "ic_t3": ic_t3,
         "sample_count": sample,
+        "horizon_used": horizon_used,
         "verdict": "READY" if all_pass else "ACCUMULATING",
     }
 
@@ -323,6 +405,17 @@ def format_ic_report(report: Dict[str, Any]) -> str:
         lines.append("**按因子 IC (T+3):**")
         sorted_factors = sorted(by_factor.items(), key=lambda x: x[1]["ic"], reverse=True)
         for name, data in sorted_factors[:10]:
+            ic = data["ic"]
+            emoji = "✅" if ic > 0.05 else "🟡" if ic > -0.05 else "🔴"
+            lines.append(f"  {emoji} {name}: IC={ic:+.4f} (n={data['count']})")
+        lines.append("")
+
+    # 按 horizon 分解
+    by_horizon = report.get("by_horizon", {})
+    if by_horizon:
+        lines.append("**按 Horizon IC (T+3):**")
+        sorted_horizons = sorted(by_horizon.items(), key=lambda x: x[1]["ic"], reverse=True)
+        for name, data in sorted_horizons:
             ic = data["ic"]
             emoji = "✅" if ic > 0.05 else "🟡" if ic > -0.05 else "🔴"
             lines.append(f"  {emoji} {name}: IC={ic:+.4f} (n={data['count']})")

@@ -303,6 +303,66 @@ class TwelveDataProvider:
             logger.error(f"[TwelveData] 解析报价失败 {symbol}: {e}")
             return None
 
+    def get_daily_bars(self, symbol: str, count: int = 30) -> Optional[List[Dict[str, Any]]]:
+        """获取日K线历史 bar 列表 (供 MarketDataRouter.get_daily_bars 的 Futu fallback).
+
+        与 get_time_series 的区别: 后者返回处理后的指标 dict (含 ma20/atr/rsi), 消耗大;
+        本方法只返回原始 bar 列表 [{time, open, high, low, close, volume}], 升序,
+        time 归一化为 "YYYY-MM-DD" (兼容 ic_tracker 精确匹配 + shadow_tracker [:10]).
+
+        Finnhub /stock/candle 在免费版返回 403, 故 TwelveData 是 Futu 失效时的有效日线 fallback.
+        """
+        if API_LIMIT_MONITOR_ENABLED and not should_use_twelvedata():
+            logger.warning(f"[TwelveData] 已切换到备用数据源，跳过 {symbol}")
+            return None
+        if not self.enabled:
+            return None
+
+        cache_key = f"dailybars_{symbol}"
+        if self._is_cache_valid(cache_key, ttl_override=3600):  # 日线缓存 60min
+            cached = self._cache.get(cache_key)
+            if cached:
+                return cached[-count:] if count < len(cached) else cached
+
+        if not self._limiter.acquire(n=1):
+            return None
+
+        ticker = self._to_ticker(symbol)
+        data = self._get("time_series", {
+            "symbol": ticker,
+            "interval": "1day",
+            "outputsize": max(count, 30),
+            "order": "ASC",
+            "format": "JSON",
+        })
+        if not data or "values" not in data:
+            return None
+        if API_LIMIT_MONITOR_ENABLED:
+            record_twelvedata_call(1)
+
+        try:
+            bars = []
+            for v in data["values"]:
+                t = str(v.get("datetime", ""))
+                if len(t) > 10:
+                    t = t[:10]  # "2026-06-23 00:00:00" → "2026-06-23"
+                bars.append({
+                    "time": t,
+                    "open": float(v.get("open", 0) or 0),
+                    "high": float(v.get("high", 0) or 0),
+                    "low": float(v.get("low", 0) or 0),
+                    "close": float(v.get("close", 0) or 0),
+                    "volume": float(v.get("volume", 0) or 0),
+                })
+            if not bars:
+                return None
+            self._set_cache(cache_key, bars)
+            logger.debug(f"[TwelveData] {symbol} 日线 {len(bars)} bars (fallback)")
+            return bars[-count:] if count < len(bars) else bars
+        except Exception as e:
+            logger.error(f"[TwelveData] 解析日线失败 {symbol}: {e}")
+            return None
+
     def get_batch_quotes(self, symbols: List[str]) -> Dict[str, Dict[str, Any]]:
         """
         批量获取报价（单次 API 调用，消耗 len(symbols) credits）。

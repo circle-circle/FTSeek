@@ -299,7 +299,13 @@ class ExitRuleDispatcher:
         return None
 
     def _eval_earnings_guard(self, cfg, position, market_data, trail_state):
-        """财报期保护 - 临近财报强制退出"""
+        """财报期保护 - 临近财报强制退出
+        
+        P0 修复 (2026-06-21): 此方法在 dispatcher 中从未真正触发
+        原因: market_data 从未注入 near_earnings 键, 且 earnings_calendar 表为空
+        真正的 earnings_guard 由 position_exit_monitor → EarningsRiskGuard 独立执行
+        此方法保留作为 dispatcher shadow 对比路径, 但不再声称覆盖 earnings_guard
+        """
         # 仅当 market_data 显式标记为 near_earnings 才触发, 避免误杀
         if not market_data.get("near_earnings"):
             return None
@@ -309,7 +315,7 @@ class ExitRuleDispatcher:
         return ExitDecision(
             should_exit=True,
             rule_name="earnings_guard",
-            priority=self.RULE_PRIORITIES["earnings_guard"],
+            priority=self.RULE_PRIORITIES.get("earnings_guard", 60),
             exit_price=market_data.get("current_price"),
             reason="Earnings guard: near earnings window, force exit",
             metadata={"days_before": cfg.get("days_before"), "days_after": cfg.get("days_after")},
@@ -396,8 +402,30 @@ class ExitRuleDispatcher:
         return None
 
     def _eval_scale_out(self, cfg, position, market_data, trail_state):
-        """分批止盈 - 基础实现 (仅按总收益百分比触发首层, 后续可扩展)"""
-        tiers = cfg.get("tiers") or []
+        """分批止盈
+        
+        P0 修复 (2026-06-21): 修复 tiers 读取逻辑
+        原因: exit_policy.yaml 配置 tier_mode=atr 且 tiers=[], 真正的止盈档在 *_atr_tiers 键中
+        但原代码只读 cfg["tiers"] → 永远为空 → scale_out 永不触发
+        修复: 按 tier_mode 读取对应的 *_atr_tiers 键
+        注意: 真正的 scale_out 执行由 exit_rules/scale_out.py 独立处理,
+              dispatcher 此方法仅用于 shadow 对比日志
+        """
+        tier_mode = cfg.get("tier_mode", "pct")
+        
+        # 按 tier_mode 读取对应的 tiers 配置
+        if tier_mode == "atr":
+            direction = str(position.get("direction", "LONG")).upper()
+            strategy = str(position.get("strategy", "") or position.get("strategy_id", ""))
+            # 尝试读取 direction+strategy 特定的 tiers
+            tier_key = f"{direction.lower()}_{strategy}_atr_tiers" if strategy else ""
+            tiers = cfg.get(tier_key, []) if tier_key else []
+            # fallback: 通用 tiers
+            if not tiers:
+                tiers = cfg.get("atr_tiers", [])
+        else:
+            tiers = cfg.get("tiers") or []
+        
         if not tiers:
             return None
         entry_price = float(position.get("entry_price", 0))

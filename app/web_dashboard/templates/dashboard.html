@@ -50,6 +50,7 @@
                 <div class="pill pill-sm" id="pillEquity">💰 --</div>
                 <div class="pill pill-sm" id="pillSpy">SPY --</div>
                 <div class="pill pill-sm" id="pillVix">VIX --</div>
+                <div class="pill pill-sm" id="pillSimLive" style="display:none">🟢 -- 🔴 --</div>
                 <div class="pill pill-sm" id="pillMargin">保证金 <span class="v" id="pillMarginVal">--</span></div>
                 <div class="pill pill-sm" id="pillKillSwitch">🛡️ <span id="pillKillVal">--</span></div>
                 <div class="pill pill-sm" id="pillEarnings" style="display:none">⚠️ <span id="pillEarningsVal">--</span></div>
@@ -73,8 +74,21 @@
             <div id="actionList"></div>
         </div>
 
-        <!-- ═══ Positions (核心, 始终展开) ═══ -->
-        <div class="card" id="positionsCard" style="padding:8px 14px">
+        <!-- ═══ OKR Card (盈利目标进度) ═══ -->
+        <div id="okrCard" class="card" style="display:none;margin-top:8px;padding:10px 14px">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+                <div style="display:flex;align-items:center;gap:6px">
+                    <span>🎯</span>
+                    <span style="font-weight:600;color:#e1e4e8;font-size:12px">OKR 进度</span>
+                    <span id="okrOverallScore" style="font-size:11px;color:#8b949e"></span>
+                </div>
+                <span id="okrUpdatedAt" style="font-size:10px;color:#484f58"></span>
+            </div>
+            <div id="okrBars" style="display:flex;gap:10px;flex-wrap:wrap"></div>
+        </div>
+
+        <!-- ═══ Positions (moved to /trade page to avoid duplication) ═══ -->
+        <div class="card" id="positionsCard" style="display:none;padding:8px 14px">
             <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
                 <h2 style="font-size:14px;margin:0">💼 持仓 <span style="font-size:12px;color:#8b949e;font-weight:normal" id="posCount"></span></h2>
                 <div style="display:flex;gap:4px;align-items:center">
@@ -110,9 +124,35 @@
                 <span>📋</span>
                 <span style="font-weight:600;color:#e1e4e8">今日已平</span>
                 <span id="tcCount"></span>
+                <span id="tcWl" style="font-size:11px"></span>
                 <span id="tcPnl" style="margin-left:auto;font-weight:600"></span>
             </div>
             <div id="todayClosedList" style="padding:0 14px 6px"></div>
+        </div>
+
+        <!-- ═══ Graduation (毕业门禁 + sim/live 切换) ═══ -->
+        <div id="graduationCard" class="card" style="margin-top:8px;padding:10px 14px">
+            <div style="display:flex;align-items:center;gap:8px;font-size:12px">
+                <span>🎓</span>
+                <span style="font-weight:600;color:#e1e4e8">毕业门禁</span>
+                <span id="gradVerdict" style="font-size:11px;padding:1px 8px;border-radius:8px"></span>
+                <span style="margin-left:auto;display:flex;align-items:center;gap:6px">
+                    <span style="font-size:11px;color:#8b949e">自动账户</span>
+                    <button id="autoAccountSim" style="font-size:11px;padding:2px 10px;border-radius:4px;cursor:pointer;border:1px solid #30363d">模拟</button>
+                    <button id="autoAccountReal" style="font-size:11px;padding:2px 10px;border-radius:4px;cursor:pointer;border:1px solid #30363d">实盘</button>
+                </span>
+            </div>
+            <div id="gradChecks" style="display:flex;gap:12px;flex-wrap:wrap;margin-top:8px;font-size:11px"></div>
+        </div>
+
+        <!-- ═══ Factor Performance (因子性能, 打磨杠杆) ═══ -->
+        <div id="factorCard" class="card" style="margin-top:8px;padding:10px 14px">
+            <div style="display:flex;align-items:center;gap:6px;font-size:12px;color:#8b949e">
+                <span>🧪</span>
+                <span style="font-weight:600;color:#e1e4e8">因子性能</span>
+                <span id="factorHint" style="font-size:10px;color:#484f58">— 调 playbook_screening.yaml 权重</span>
+            </div>
+            <div id="factorList" style="margin-top:6px"></div>
         </div>
 
         <!-- ═══ Analytics (完整分析) ═══ -->
@@ -213,5 +253,5 @@
 {% endblock %}
 
 {% block external_scripts %}
-<script src="/static/js/dashboard.js?v=dq20260618b"></script>
+<script src="/static/js/dashboard.js?v=dq20260625f"></script>
 {% endblock %}

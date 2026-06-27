@@ -84,47 +84,63 @@ def collect_premarket_data(watchlist_symbols: Optional[List[str]] = None) -> Dic
     if now - _cache_ts < _CACHE_TTL and _cache:
         return _cache
 
-    client = _get_finnhub_client()
-    if not client:
-        logger.warning("[PreMarket] Finnhub API key not configured")
-        return {"error": "Finnhub not configured"}
-
     result = {"collected_at": datetime.utcnow().isoformat() + "Z"}
+
+    # ── 0. Futu Market Snapshot (主数据源 — 板块轮动+异动+基本面) ──
+    futu_data = _collect_futu_market_data(watchlist_symbols)
+    if futu_data:
+        result.update(futu_data)
 
     # ── 1. Sector Rotation ──
     try:
-        result["sector_rotation"] = _collect_sector_rotation(client)
+        client = _get_finnhub_client()
+        if client:
+            result.setdefault("sector_rotation", _collect_sector_rotation(client))
     except Exception as e:
         logger.warning(f"[PreMarket] sector rotation failed: {e}")
-        result["sector_rotation"] = {"error": str(e)}
 
     # ── 2. Pre-Market Movers ──
     try:
-        result["premarket_movers"] = _collect_premarket_movers(client, watchlist_symbols)
+        client = _get_finnhub_client()
+        if client:
+            result.setdefault("premarket_movers", _collect_premarket_movers(client, watchlist_symbols))
     except Exception as e:
         logger.warning(f"[PreMarket] premarket movers failed: {e}")
-        result["premarket_movers"] = {"error": str(e)}
 
-    # ── 3. Analyst Sentiment ──
+    # ── 3. Analyst Sentiment (Finnhub + Futu) ──
     if watchlist_symbols:
         try:
-            result["analyst_sentiment"] = _collect_analyst_sentiment(client, watchlist_symbols)
+            client = _get_finnhub_client()
+            if client:
+                result["analyst_sentiment"] = _collect_analyst_sentiment(client, watchlist_symbols)
         except Exception as e:
             logger.warning(f"[PreMarket] analyst sentiment failed: {e}")
 
+        # 补充: Futu 分析师共识 (目标价 + 评级)
+        try:
+            futu_ac = _collect_futu_analyst_consensus(watchlist_symbols)
+            if futu_ac:
+                result["futu_analyst"] = futu_ac
+        except Exception as e:
+            logger.warning(f"[PreMarket] Futu analyst consensus failed: {e}")
+
     # ── 4. Earnings Calendar ──
     try:
-        result["earnings_calendar"] = _collect_earnings_calendar(client)
+        client = _get_finnhub_client()
+        if client:
+            result.setdefault("earnings_calendar", _collect_earnings_calendar(client))
     except Exception as e:
         logger.warning(f"[PreMarket] earnings calendar failed: {e}")
-        result["earnings_calendar"] = "Unable to fetch"
+        result.setdefault("earnings_calendar", "Unable to fetch")
 
     # ── 5. Market News ──
     try:
-        result["market_news"] = _collect_market_news(client)
+        client = _get_finnhub_client()
+        if client:
+            result.setdefault("market_news", _collect_market_news(client))
     except Exception as e:
         logger.warning(f"[PreMarket] market news failed: {e}")
-        result["market_news"] = []
+        result.setdefault("market_news", [])
 
     # ── 6. Economic Calendar (hardcoded) ──
     result["economic_calendar"] = _get_economic_calendar()
@@ -149,14 +165,92 @@ def collect_premarket_data(watchlist_symbols: Optional[List[str]] = None) -> Dic
     n_sectors = len(sectors.get("ranked", []))
     movers = result.get("premarket_movers", {})
     n_news = len(result.get("market_news", []))
+    n_analysts = len(result.get("futu_analyst", {}))
     logger.info(
         f"[PreMarket] 数据采集完成: {n_sectors} sectors, "
         f"gainers={len(movers.get('gainers', []))}, "
         f"losers={len(movers.get('losers', []))}, "
-        f"news={n_news}"
+        f"news={n_news}, futu_analysts={n_analysts}"
     )
 
     return result
+
+
+def _collect_futu_market_data(watchlist_symbols: Optional[List[str]] = None) -> Optional[Dict[str, Any]]:
+    """从 Futu 获取盘前市场数据 (板块轮动+异动+基本面快照)
+    主数据源 — 不依赖外部API key
+    """
+    try:
+        from app.web_dashboard.manual_order_service import ManualOrderService
+        from futu import RET_OK
+        svc = ManualOrderService()
+        if not svc.connect():
+            logger.warning("[PreMarket] Futu connect failed")
+            return None
+
+        result = {}
+
+        # 1. Sector ETF snapshots (板块轮动)
+        sector_etfs = {
+            "XLK": "Technology", "XLF": "Financials", "XLE": "Energy",
+            "XLV": "Healthcare", "XLI": "Industrials", "XLY": "Consumer Discretionary",
+            "XLP": "Consumer Staples", "XLU": "Utilities", "XLB": "Materials",
+            "XLRE": "Real Estate", "XLC": "Communication",
+        }
+        etf_symbols = [f"US.{etf}" for etf in sector_etfs.keys()]
+        ret, data = svc._quote_ctx.get_market_snapshot(etf_symbols)
+        if ret == RET_OK and not data.empty:
+            ranked = []
+            for _, row in data.iterrows():
+                etf_code = row.get("code", "").replace("US.", "")
+                sector = sector_etfs.get(etf_code, etf_code)
+                prev_close = row.get("prev_close_price", 0)
+                last = row.get("last_price", 0)
+                chg_pct = round((last - prev_close) / prev_close * 100, 2) if prev_close else 0
+                ranked.append({"etf": etf_code, "sector": sector, "change_pct": chg_pct, "price": last})
+            ranked.sort(key=lambda x: x["change_pct"], reverse=True)
+            result["sector_rotation"] = {"ranked": ranked, "summary": f"Top: {ranked[0]['sector']} +{ranked[0]['change_pct']}%" if ranked else "N/A"}
+
+        # 2. Watchlist pre-market movers
+        if watchlist_symbols:
+            movers = []
+            for sym in watchlist_symbols[:20]:
+                if not sym.startswith("US."):
+                    sym = f"US.{sym}"
+                ret, data = svc._quote_ctx.get_market_snapshot([sym])
+                if ret == RET_OK and not data.empty:
+                    row = data.iloc[0].to_dict()
+                    prev_close = row.get("prev_close_price", 0)
+                    last = row.get("last_price", 0)
+                    chg_pct = round((last - prev_close) / prev_close * 100, 2) if prev_close else 0
+                    pre_change = row.get("pre_change_rate", 0)
+                    movers.append({
+                        "symbol": sym, "price": last, "change_pct": chg_pct,
+                        "premarket_change": pre_change, "volume_ratio": row.get("volume_ratio", 1.0),
+                    })
+            movers.sort(key=lambda x: abs(x.get("premarket_change", 0)), reverse=True)
+            result["premarket_movers"] = {"gainers": [m for m in movers if m["premarket_change"] > 0],
+                                           "losers": [m for m in movers if m["premarket_change"] < 0]}
+
+        # 3. SPY/QQQ/DIA market context
+        index_symbols = ["US.SPY", "US.QQQ", "US.DIA"]
+        ret, idx_data = svc._quote_ctx.get_market_snapshot(index_symbols)
+        if ret == RET_OK and not idx_data.empty:
+            indices = {}
+            for _, row in idx_data.iterrows():
+                sym = row.get("code", "").replace("US.", "")
+                prev_close = row.get("prev_close_price", 0)
+                last = row.get("last_price", 0)
+                chg_pct = round((last - prev_close) / prev_close * 100, 2) if prev_close else 0
+                indices[sym] = {"price": last, "change_pct": chg_pct}
+            result["market_indices"] = indices
+
+        svc.disconnect()
+        return result
+
+    except Exception as e:
+        logger.warning(f"[PreMarket] Futu market data error: {e}")
+        return None
 
 
 def _collect_sector_rotation(client) -> Dict[str, Any]:
@@ -373,6 +467,42 @@ def _collect_market_news(client) -> List[Dict]:
         return results
     except Exception:
         return []
+
+
+def _collect_futu_analyst_consensus(watchlist_symbols: List[str]) -> Dict[str, Any]:
+    """
+    Futu 分析师评级共识 — 补充 Finnhub recommendation_trends
+
+    优势：提供目标价 (highest/avg/lowest)，Finnhub 免费计划不提供
+    数据来源：Futu OpenD get_research_analyst_consensus
+    """
+    try:
+        from app.data.providers.futu_extended_provider import FutuExtendedProvider
+        provider = FutuExtendedProvider()
+        results = {}
+        for sym in watchlist_symbols[:10]:
+            code = sym if sym.startswith("US.") else f"US.{sym}"
+            ac = provider.get_analyst_consensus(code)
+            if ac.get("status") == "ok":
+                d = ac.get("data", {})
+                ticker = sym.replace("US.", "")
+                results[ticker] = {
+                    "rating": d.get("rating"),
+                    "rating_label": d.get("rating_label"),
+                    "total_analysts": d.get("total_analysts"),
+                    "target_avg": d.get("target_avg"),
+                    "target_high": d.get("target_high"),
+                    "target_low": d.get("target_low"),
+                    "buy_pct": d.get("buy_pct"),
+                    "hold_pct": d.get("hold_pct"),
+                    "sell_pct": d.get("sell_pct"),
+                    "update_date": d.get("update_date"),
+                }
+        provider.close()
+        return results
+    except Exception as e:
+        logger.warning(f"[PreMarket] Futu analyst consensus error: {e}")
+        return {}
 
 
 def _get_economic_calendar() -> str:

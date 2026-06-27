@@ -59,8 +59,8 @@ def _load_limits(config=None) -> dict:
         limits["long_max_per_direction"] = float(
             config.get_dotted("risk.position.long_max_per_direction", limits["max_per_direction"])
         )
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"[pre_trade_gate] _load_limits config 读取失败, 使用默认值: {e}")
 
     # Scale limits by TradingMode risk_multiplier (2026-06-10)
     try:
@@ -82,8 +82,8 @@ def _load_limits(config=None) -> dict:
             limits["max_total"] = min(limits["max_total"], mode_max_exp)
             limits["max_per_direction"] = min(limits["max_per_direction"], mode_max_exp)
             limits["long_max_per_direction"] = min(limits["long_max_per_direction"], mode_max_exp)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"[pre_trade_gate] TradingMode 缩放失败, 限制未按模式调整: {e}")
 
     return limits
 
@@ -100,20 +100,23 @@ def _get_equity() -> float:
         eq = cap._state.current_equity
         if eq > 0:
             return eq
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"[pre_trade_gate] equity 从 capital_safety 获取失败: {e}")
 
     # 实盘模式: equity 不可用 → fail-close
     try:
         from app.core.trading_mode import TradingMode
         if TradingMode().is_live:
-            import logging
-            logging.getLogger(__name__).critical(
+            logger.critical(
                 "🚫 [pre_trade_gate] 实盘模式但 equity 不可用 — 拒绝所有交易 (fail-close)"
             )
             return 0.0
-    except Exception:
-        pass
+    except Exception as e:
+        # TradingMode 本身不可用 — 保守 fail-close (不能假设是模拟盘)
+        logger.critical(
+            f"🚫 [pre_trade_gate] TradingMode 检查失败 ({e}) — 保守 fail-close, 拒绝交易"
+        )
+        return 0.0
 
     return 100_000.0  # 模拟盘 fallback
 
@@ -148,8 +151,8 @@ def _check_daily_drawdown(equity: float, broker_adapter=None) -> Tuple[bool, str
         cfg = get_config()
         max_daily_dd = float(cfg.get_dotted(
             "risk.account.max_daily_drawdown", 0.03))
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"[pre_trade_gate] max_daily_drawdown config 读取失败, 使用默认 3%: {e}")
 
     if max_daily_dd <= 0:
         return True, ""
@@ -181,6 +184,7 @@ def _check_daily_drawdown(equity: float, broker_adapter=None) -> Tuple[bool, str
                     "SELECT COALESCE(SUM(realized_pnl), 0) "
                     "FROM trade_records "
                     "WHERE exit_time IS NOT NULL "
+                    "AND exit_price > 0 "
                     "AND date(exit_time) = ?",
                     (today,)
                 )
@@ -197,11 +201,9 @@ def _check_daily_drawdown(equity: float, broker_adapter=None) -> Tuple[bool, str
             try:
                 from app.core.degradation_monitor import get_degradation_monitor
                 get_degradation_monitor().record("daily_pnl_query", str(e))
-            except Exception:
-                pass
+            except Exception as e2:
+                logger.warning(f"[pre_trade_gate] degradation_monitor 记录失败: {e2}")
             return False, f"DB_ERROR: daily PnL query failed ({e})"
-
-        # 未实现浮亏 (broker 真实持仓净 unrealized_pnl, 含手动仓)
         unrealized_pnl = 0.0
         if broker_adapter is not None:
             try:
@@ -240,26 +242,34 @@ def _check_daily_drawdown(equity: float, broker_adapter=None) -> Tuple[bool, str
 
 
 def _sum_direction_notional(position_store, short: bool) -> float:
-    """Sum notional of all positions in the given direction."""
+    """Sum notional of all positions in the given direction.
+
+    Fail-close: 返回 float('inf') 让调用方拒绝交易 — 不能在仓位未知时放行。
+    """
     total = 0.0
     try:
         for pos in position_store.all():
             pos_dir = pos.direction.value if hasattr(pos.direction, 'value') else str(pos.direction or "")
             if ("SHORT" in pos_dir.upper()) == short:
                 total += pos.size * pos.avg_entry_price
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"[pre_trade_gate] _sum_direction_notional 查询失败, fail-close (inf): {e}")
+        return float('inf')
     return total
 
 
 def _sum_total_notional(position_store) -> float:
-    """Sum notional of ALL positions regardless of direction."""
+    """Sum notional of ALL positions regardless of direction.
+
+    Fail-close: 返回 float('inf') 让调用方拒绝交易。
+    """
     total = 0.0
     try:
         for pos in position_store.all():
             total += pos.size * pos.avg_entry_price
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"[pre_trade_gate] _sum_total_notional 查询失败, fail-close (inf): {e}")
+        return float('inf')
     return total
 
 
@@ -307,8 +317,8 @@ def pre_trade_safety_check(
             ep = position_store.get(symbol)
             if ep:
                 existing_symbol_notional = ep.size * ep.avg_entry_price
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"[pre_trade_gate] existing position 查询失败 for {symbol}: {e} — 按无持仓处理(保守放行, 后续方向/总敞口检查会兜底)")
 
     max_qty = quantity
     reject_reason = ""

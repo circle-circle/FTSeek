@@ -50,7 +50,7 @@ _DISPATCHER_REASON_MAP: Dict[str, str] = {
 # 退出执行成功后，同一标的在 barrier_seconds 内禁止开仓
 # 解决: flash_exit → 立即 signal_pipeline 再入场 → 再次 flash_exit 的死循环
 _EXIT_BARRIER: Dict[str, float] = {}  # symbol → barrier_until_timestamp
-_EXIT_BARRIER_SECONDS = 600  # 10 分钟冷却 (2026-06-02: 300→600, 数据: XLI 单只 24 次闪退)
+_EXIT_BARRIER_SECONDS = 1800  # 30 分钟冷却 (2026-06-25: 600→1800, 进一步抑制闪退死循环)
 _EXIT_BARRIER_FILE = "/tmp/ftseek_exit_barrier.json"
 # H3 (2026-06-03): 线程安全锁 — 保护 dict 读写 + 文件持久化原子性
 _EXIT_BARRIER_LOCK = threading.Lock()
@@ -1009,13 +1009,7 @@ def _check_positions(scheduler):
     _h2_now = now_et()
     _h2_grace_seconds = 30  # monitor 间隔 30s, 跳过本周期内开仓的 position
     # P0 Karpathy fix (2026-05-13): broker-synced 仓位不执行 exit_monitor 逻辑
-    # Critical #2 增强 (2026-06-02): 原逻辑仅过滤 strategy=='futu_sync', 遗漏了
-    #   - manual_sync (USPositionSync._sync_to_position_store_locked 写入)
-    #   - broker_sync (position_recovery.startup 写入)
-    #   - metadata.source / _from_futu_balance 标记
-    # 现使用 ExitMonitor._is_broker_synced_position 统一识别, 所有 broker 同步仓进入
-    # trail_only 列表 (仅更新追踪, 不执行 exit), 以防·双重平仓·。
-    trail_only_positions = []  # broker-synced: 只更新 trail，不执行 exit
+    # Broker-first (2026-06-03): 不再跳过 broker-synced 仓位
     exit_monitor_for_filter = get_exit_monitor()
     for position in positions:
         meta = getattr(position, "metadata", {}) or {}
@@ -1303,8 +1297,11 @@ def _check_positions(scheduler):
                 # 2026-06-01: 过滤 orb_engine 仓位 — ORBEngine 自管退出 (ORBExitStack)
                 # orb_engine 有独立的4层退出栈 (FloorStop/Trailing/TP/EOD), DEM 不得干预
                 # orb_pipeline 仓位正常由 DEM 管理 (无独立退出栈)
+                # 2026-06-24: 也过滤 playbook_sim/live 仓位 — monitor_playbook_sim_exits 自管退出
                 _orb_owner = getattr(position, "owner_strategy", "") or ""
                 if _orb_owner == "orb_engine":
+                    continue
+                if _orb_owner in ("playbook_sim", "playbook_live", "playbook_shadow"):
                     continue
                 try:
                     cur_price = price_cache.get(position.symbol)
@@ -1421,7 +1418,7 @@ def _check_positions(scheduler):
         if hasattr(scheduler, "trade_store") and scheduler.trade_store:
             import hashlib as _hl
             # 系统仓位: 已有 trail 更新
-            _all_trail = list(monitored_positions) + trail_only_positions
+            _all_trail = list(monitored_positions)
             for pos in _all_trail:
                 if not pos.trail_state: continue
                 _stable = {k: v for k, v in pos.trail_state.items() if k != "prev_scan_price"}

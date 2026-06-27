@@ -438,7 +438,12 @@ def run_llm_strategy_scan(scheduler):
                 )
                 try:
                     quote = scheduler.market_data.get_quote(strategy.symbol)
-                    price = quote.get("price", 0) if quote else 0
+                    if quote:
+                        _bid = float(quote.get("bid", 0) or 0)
+                        _ask = float(quote.get("ask", 0) or 0)
+                        price = round((_bid + _ask) / 2.0, 2) if _bid > 0 and _ask > 0 else float(quote.get("price", 0) or 0)
+                    else:
+                        price = 0
                 except Exception:
                     price = 0
                 router = get_short_strategy_router()
@@ -508,7 +513,12 @@ def run_llm_strategy_scan(scheduler):
                 
                 try:
                     quote = scheduler.market_data.get_quote(strategy.symbol)
-                    price = quote.get("price", 0) if quote else 0
+                    if quote:
+                        _bid = float(quote.get("bid", 0) or 0)
+                        _ask = float(quote.get("ask", 0) or 0)
+                        price = round((_bid + _ask) / 2.0, 2) if _bid > 0 and _ask > 0 else float(quote.get("price", 0) or 0)
+                    else:
+                        price = 0
                 except Exception:
                     price = 0
                 

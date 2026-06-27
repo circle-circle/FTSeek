@@ -1,0 +1,172 @@
+{
+  "date": "2026-06-22",
+  "plan_available": true,
+  "generated_at": "2026-06-23T06:24:56.201600",
+  "targets": [
+    {
+      "symbol": "US.PG",
+      "plan_direction": "LONG",
+      "entry_zone": [
+        148.88,
+        151.28
+      ],
+      "status": "ACTIVE",
+      "traded": true,
+      "entry_zone_hit": true,
+      "direction_match": true,
+      "pnl_contribution": 0.0,
+      "matched_trades": 1,
+      "actual_entry_prices": [
+        150.38
+      ],
+      "actual_directions": [
+        "LONG"
+      ]
+    },
+    {
+      "symbol": "US.QCOM",
+      "plan_direction": "LONG",
+      "entry_zone": [
+        223.85,
+        227.47
+      ],
+      "status": "",
+      "traded": false,
+      "entry_zone_hit": false,
+      "direction_match": false,
+      "pnl_contribution": 0.0,
+      "matched_trades": 0,
+      "actual_entry_prices": [],
+      "actual_directions": []
+    },
+    {
+      "symbol": "US.CVX",
+      "plan_direction": "SHORT",
+      "entry_zone": [
+        172.59,
+        175.37
+      ],
+      "status": "ACTIVE",
+      "traded": false,
+      "entry_zone_hit": false,
+      "direction_match": false,
+      "pnl_contribution": 0.0,
+      "matched_trades": 0,
+      "actual_entry_prices": [],
+      "actual_directions": []
+    },
+    {
+      "symbol": "US.TSM",
+      "plan_direction": "LONG",
+      "entry_zone": [
+        457.5,
+        464.89
+      ],
+      "status": "",
+      "traded": true,
+      "entry_zone_hit": true,
+      "direction_match": true,
+      "pnl_contribution": 0.0,
+      "matched_trades": 1,
+      "actual_entry_prices": [
+        462.12
+      ],
+      "actual_directions": [
+        "LONG"
+      ]
+    },
+    {
+      "symbol": "US.COP",
+      "plan_direction": "SHORT",
+      "entry_zone": [
+        107.09,
+        108.82
+      ],
+      "status": "",
+      "traded": false,
+      "entry_zone_hit": false,
+      "direction_match": false,
+      "pnl_contribution": 0.0,
+      "matched_trades": 0,
+      "actual_entry_prices": [],
+      "actual_directions": []
+    },
+    {
+      "symbol": "US.SNDK",
+      "plan_direction": "LONG",
+      "entry_zone": [
+        2270.84,
+        2316.72
+      ],
+      "status": "",
+      "traded": false,
+      "entry_zone_hit": false,
+      "direction_match": false,
+      "pnl_contribution": 0.0,
+      "matched_trades": 0,
+      "actual_entry_prices": [],
+      "actual_directions": []
+    },
+    {
+      "symbol": "US.MU",
+      "plan_direction": "LONG",
+      "entry_zone": [
+        1181.22,
+        1205.08
+      ],
+      "status": "",
+      "traded": true,
+      "entry_zone_hit": true,
+      "direction_match": false,
+      "pnl_contribution": 0.0,
+      "matched_trades": 1,
+      "actual_entry_prices": [
+        1200.0
+      ],
+      "actual_directions": [
+        "SHORT"
+      ]
+    },
+    {
+      "symbol": "US.RIVN",
+      "plan_direction": "SHORT",
+      "entry_zone": [
+        15.72,
+        16.03
+      ],
+      "status": "",
+      "traded": false,
+      "entry_zone_hit": false,
+      "direction_match": false,
+      "pnl_contribution": 0.0,
+      "matched_trades": 0,
+      "actual_entry_prices": [],
+      "actual_directions": []
+    },
+    {
+      "symbol": "US.NFLX",
+      "plan_direction": "SHORT",
+      "entry_zone": [
+        73.99,
+        75.48
+      ],
+      "status": "",
+      "traded": false,
+      "entry_zone_hit": false,
+      "direction_match": false,
+      "pnl_contribution": 0.0,
+      "matched_trades": 0,
+      "actual_entry_prices": [],
+      "actual_directions": []
+    }
+  ],
+  "hit_rate": 0.3333333333333333,
+  "traded_rate": 0.3333333333333333,
+  "avg_pnl_of_planned": 0.0,
+  "unplanned_trade_count": 0,
+  "planned_count": 9,
+  "total_trades": 3,
+  "plan_date": "2026-06-22",
+  "traded_planned_count": 3,
+  "hit_count": 3
+}

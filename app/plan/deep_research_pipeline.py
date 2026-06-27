@@ -324,24 +324,24 @@ def _fallback_synthesis(target: Dict, debate: Dict, analyst_reports: Dict) -> Di
 
     # 方向盲审: 基于辩论结果判定 action，不依赖 factor_engine 的预设方向
     if verdict_conf == "LOW" or missing >= 2 or debate_dir == "NEUTRAL":
-        action = "AVOID"
-        action_detail = "数据不足或方向不明确，不建议交易"
+        action = "WATCH"
+        action_detail = "数据不足或方向不明确，加入观察池"
         conviction = max(20, 30 - missing * 5)
-        exec_summary = f"⚠️ 不建议交易: 数据不完整({complete}项完整/{missing}项缺失)或辩论方向NEUTRAL，等待更明确信号"
+        exec_summary = f"⚠️ 加入观察池: 数据不完整({complete}项完整/{missing}项缺失)或辩论方向NEUTRAL，等待更明确信号"
     elif verdict_conf == "MEDIUM" and complete < 3:
-        action = "AVOID"
-        action_detail = "数据维度不足，信心不够"
+        action = "WATCH"
+        action_detail = "数据维度不足，持续跟踪"
         conviction = 35
-        exec_summary = f"⚠️ 暂不建议: 仅{complete}维数据完整，需要更多确认信号"
+        exec_summary = f"⚠️ 持续跟踪: 仅{complete}维数据完整，需要更多确认信号"
     else:
         # 数据足够 + 方向明确
         if debate_dir == "LONG":
-            action = "BUY"
+            action = "BUY" if verdict_conf == "HIGH" else "CONDITIONAL"
         elif debate_dir == "SHORT":
-            action = "SELL"
+            action = "SELL" if verdict_conf == "HIGH" else "CONDITIONAL"
         else:
-            action = "AVOID"
-        action_detail = "分批建仓(降级方案，辩论推荐方向)"
+            action = "WATCH"
+        action_detail = "分批建仓(降级方案，辩论推荐方向)" if action in ("BUY", "CONDITIONAL") else "继续观察"
         conviction = 50 if verdict_conf == "MEDIUM" else 70
         exec_summary = f"辩论推荐{'做多' if debate_dir == 'LONG' else '做空'}，但LLM降级为规则方案，建议保守分批操作"
 
@@ -810,6 +810,17 @@ async def run_deep_research_batch(
     results = []
     for target in to_process:
         sym = target.get("symbol", "")
+
+        # 缓存检查: 跳过已有有效 deep_research 的 target
+        existing_dr = target.get("deep_research")
+        if existing_dr and isinstance(existing_dr, dict):
+            is_fallback = existing_dr.get("_meta", {}).get("synthesis_fallback", False)
+            has_verdict = bool(existing_dr.get("verdict", {}).get("action"))
+            if has_verdict and not is_fallback:
+                logger.info(f"[deep_research] {sym} 已有有效 deep_research, 跳过")
+                results.append({"symbol": sym, "deep_research": existing_dr, "cached": True})
+                continue
+
         try:
             dr = await run_deep_research_for_target(target, premarket_data)
             results.append({"symbol": sym, "deep_research": dr})

@@ -459,18 +459,9 @@ def register(app, templates):
             # 信号数
             signal_count = passed_count = 0
             try:
-                from app.analysis.signal_ic_tracker import _get_db_path
-                snap_db = str(_get_db_path())
-                row = await ds.db_query_one(
-                    "SELECT COUNT(*) as cnt FROM signal_snapshots WHERE trade_date = ? AND COALESCE(trade_mode, 'simulate') = 'live'",
-                    (today,), db_path=snap_db,
-                )
-                signal_count = row["cnt"] if row else 0
-                row2 = await ds.db_query_one(
-                    "SELECT COUNT(*) as cnt FROM signal_snapshots WHERE trade_date = ? AND strength >= 30 AND confidence > 0 AND COALESCE(trade_mode, 'simulate') = 'live'",
-                    (today,), db_path=snap_db,
-                )
-                passed_count = row2["cnt"] if row2 else 0
+                counts = await ds.get_signal_counts(today)
+                signal_count = counts["total"]
+                passed_count = counts["qualified"]
             except Exception:
                 pass
 
@@ -478,13 +469,12 @@ def register(app, templates):
             executed_count = 0
             today_trades = []
             try:
-                row3 = await ds.db_query_one(
-                    "SELECT COUNT(*) as cnt FROM trade_records WHERE trade_date = ? AND exit_price > 0", (today,),
-                )
-                executed_count = row3["cnt"] if row3 else 0
+                executed_count = await ds.get_executed_count(today)
                 recent_rows = await ds.db_query(
                     "SELECT symbol, direction, realized_pnl, exit_reason, trade_date "
-                    "FROM trade_records ORDER BY trade_date DESC, id DESC LIMIT 5"
+                    "FROM trade_records "
+                    "WHERE source_type NOT IN ('PLAYBOOK_SHADOW','SCALPING') "
+                    "ORDER BY trade_date DESC, id DESC LIMIT 5"
                 )
                 today_trades = [{
                     "symbol": r["symbol"], "direction": r["direction"],
@@ -525,6 +515,7 @@ def register(app, templates):
             # 诊断依据: TECHNICAL_MULTI_FACTOR SHORT 58.7%WR (真edge); voting_llm 40.8%WR (出血源)
             strategy_quality = {}
             try:
+                _snap_db = ds._snap_db()
                 q_rows = await ds.db_query(
                     "SELECT COALESCE(strategy_id,'(无标签)') sid, direction, "
                     "COUNT(*) n, ROUND(AVG(fwd_ret_t1)*100,2) fwd_pct, "
@@ -532,7 +523,7 @@ def register(app, templates):
                     "FROM signal_snapshots "
                     "WHERE fwd_ret_t1 IS NOT NULL AND ABS(fwd_ret_t1)<0.5 "
                     "GROUP BY strategy_id, direction",
-                    db_path=snap_db,
+                    db_path=_snap_db,
                 )
                 for r in q_rows:
                     key = f"{r['sid']}|{r['direction']}"
@@ -549,13 +540,14 @@ def register(app, templates):
             # 近期候选信号 (带策略信任度, 排序: trust>neutral>caution)
             decision_candidates = []
             try:
+                _snap_db2 = ds._snap_db()
                 cand_rows = await ds.db_query(
                     "SELECT decision_id, symbol, direction, strength, "
                     "COALESCE(strategy_id,'(无标签)') sid, created_at "
                     "FROM signal_snapshots "
                     "WHERE trade_date >= date('now','-3 days') "
                     "ORDER BY created_at DESC LIMIT 25",
-                    db_path=snap_db,
+                    db_path=_snap_db2,
                 )
                 _rank = {"trust": 0, "neutral": 1, "caution": 2}
                 for c in cand_rows:
@@ -607,7 +599,7 @@ def register(app, templates):
                        COALESCE(AVG(CASE WHEN realized_pnl < 0 THEN realized_pnl END), 0) as avg_loss
                 FROM trade_records
                 WHERE (strategy_id = 'manual' OR source_type = 'MANUAL')
-                  AND trade_mode != 'simulate'
+                  AND source_type NOT IN ('PLAYBOOK_SHADOW','SCALPING')
                   AND exit_price > 0
             """)
 
@@ -621,7 +613,7 @@ def register(app, templates):
                 WHERE (strategy_id != 'manual' OR strategy_id IS NULL)
                   AND source_type != 'MANUAL'
                   AND source_type NOT IN ('manual_sync', 'reconciler')
-                  AND trade_mode != 'simulate'
+                  AND source_type NOT IN ('PLAYBOOK_SHADOW','SCALPING')
                   AND exit_price > 0
             """)
 
@@ -632,7 +624,7 @@ def register(app, templates):
                        COALESCE(signal_id, '') as signal_id,
                        COALESCE(trace_id, '') as trace_id
                 FROM trade_records
-                WHERE trade_mode != 'simulate'
+                WHERE source_type NOT IN ('PLAYBOOK_SHADOW','SCALPING')
                   AND exit_price > 0
                 ORDER BY trade_date DESC, id DESC LIMIT 20
             """)
@@ -689,7 +681,7 @@ def register(app, templates):
                 "realized_pnl, pnl_pct, entry_time, exit_time, trade_date, "
                 "metadata_json FROM trade_records "
                 "WHERE trade_date >= date('now', ? || ' days') "
-                "AND trade_mode != 'simulate' "
+                "AND source_type NOT IN ('PLAYBOOK_SHADOW','SCALPING') "
                 "AND exit_time IS NOT NULL "
                 "ORDER BY trade_date DESC",
                 (str(days),),
@@ -802,7 +794,7 @@ def register(app, templates):
                 f"SELECT id, symbol, direction, realized_pnl, pnl_pct, trade_date, "
                 f"entry_price, exit_price, quantity, exit_reason, metadata_json, source_type "
                 f"FROM trade_records "
-                f"WHERE trade_mode != 'simulate' AND exit_price > 0 {date_filter} "
+                f"WHERE source_type NOT IN ('PLAYBOOK_SHADOW','SCALPING') AND exit_price > 0 {date_filter} "
                 f"ORDER BY trade_date DESC, id DESC"
             )
 
@@ -955,7 +947,7 @@ def register(app, templates):
             if days > 0:
                 prev_rows = await ds.db_query(
                     f"SELECT id, realized_pnl FROM trade_records "
-                    f"WHERE trade_mode != 'simulate' AND exit_price > 0 "
+                    f"WHERE source_type NOT IN ('PLAYBOOK_SHADOW','SCALPING') AND exit_price > 0 "
                     f"AND trade_date >= date('now', '-{prev_days} days') "
                     f"AND trade_date < date('now', '-{days} days') "
                     f"ORDER BY trade_date DESC"
@@ -987,13 +979,13 @@ def register(app, templates):
             behavioral = {"available": False}
             try:
                 beh_rows = await ds.db_query(
-                    "SELECT result_json FROM diagnostic_results "
+                    "SELECT data FROM diagnostic_results "
                     "WHERE module_name = 'shadow_account_v2' "
                     "ORDER BY created_at DESC LIMIT 1"
                 )
                 if beh_rows:
                     import json as _json2
-                    beh_data = _json2.loads(beh_rows[0].get("result_json") or "{}")
+                    beh_data = _json2.loads(beh_rows[0].get("data") or "{}")
                     behavioral = {
                         "available": True,
                         "disposition": beh_data.get("disposition", {}),
@@ -1010,29 +1002,38 @@ def register(app, templates):
                 card_rows = await ds.db_query(
                     "SELECT tr.symbol, tr.direction, tr.realized_pnl, tr.pnl_pct, "
                     "tr.entry_price, tr.exit_price, tr.quantity, tr.trade_date, "
-                    "ta.overall_score, ta.grade, ta.dim_direction, ta.dim_entry, "
-                    "ta.dim_exit, ta.dim_duration, ta.dim_efficiency "
+                    "ta.overall_score, ta.direction_score, ta.signal_score, "
+                    "ta.execution_score, ta.timing_score, ta.risk_score "
                     "FROM trade_records tr "
                     "LEFT JOIN trade_attribution ta ON tr.id = ta.trade_id "
-                    "WHERE tr.trade_mode != 'simulate' AND tr.exit_price > 0 "
+                    "WHERE tr.source_type NOT IN ('PLAYBOOK_SHADOW','SCALPING') AND tr.exit_price > 0 "
                     "ORDER BY tr.trade_date DESC, tr.id DESC LIMIT 5"
                 )
-                _dim_labels = {"direction": "方向", "entry": "入场", "exit": "离场",
-                               "duration": "持仓", "efficiency": "效率"}
+                _dim_labels = {"direction": "方向", "signal": "信号",
+                               "execution": "执行", "timing": "时机", "risk": "风控"}
+                _dim_col_map = {"direction": "direction_score", "signal": "signal_score",
+                                "execution": "execution_score", "timing": "timing_score",
+                                "risk": "risk_score"}
                 for cr in card_rows:
                     dims = []
                     for dk, dl in _dim_labels.items():
-                        verdict_raw = cr.get(f"dim_{dk}")
-                        if verdict_raw:
-                            # verdict is stored as JSON or plain text
+                        col = _dim_col_map[dk]
+                        score_val = cr.get(col)
+                        if score_val is not None:
                             try:
-                                vd = _json.loads(verdict_raw) if isinstance(verdict_raw, str) else verdict_raw
-                                verdict = vd.get("verdict", "✅") if isinstance(vd, dict) else str(vd)
-                            except Exception:
-                                verdict = "✅"
+                                s = float(score_val)
+                                verdict = "✅" if s >= 60 else ("⚠️" if s >= 40 else "❌")
+                            except (ValueError, TypeError):
+                                verdict = "—"
                         else:
                             verdict = "—"
                         dims.append({"label": dl, "verdict": verdict})
+                    # Derive grade from overall_score
+                    _score = float(cr.get("overall_score") or 0)
+                    if _score >= 80: _grade = "A"
+                    elif _score >= 60: _grade = "B"
+                    elif _score >= 40: _grade = "C"
+                    else: _grade = "D"
                     attribution_cards.append({
                         "symbol": (cr.get("symbol") or "").replace("US.", ""),
                         "direction": cr.get("direction", ""),
@@ -1042,8 +1043,8 @@ def register(app, templates):
                         "exit_price": round(float(cr.get("exit_price") or 0), 2),
                         "quantity": int(cr.get("quantity") or 0),
                         "date": cr.get("trade_date", ""),
-                        "grade": cr.get("grade") or "—",
-                        "score": round(float(cr.get("overall_score") or 0), 1),
+                        "grade": _grade,
+                        "score": round(_score, 1),
                         "dimensions": dims,
                     })
             except Exception:

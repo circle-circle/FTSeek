@@ -384,15 +384,16 @@ class USBattlePlanManager:
                 break
         
         # P1 修复 (2026-06-19): Deep Research AVOID 生效
-        # 根因: deep_research 给出 AVOID 结论 (如"历史胜率0%"、"估值极度透支")
-        # 但 check_trade() 完全不读此字段，导致 AVOID 形同虚设
-        # 6/18 NTES/AMD/LMT 三个 VALID 标的的 deep_research 全部 AVOID，但都通过了
+        # P2 修复 (2026-06-20): 从硬拦截改为soft penalty — AVOID不再是绝对否决
+        # 根因: deep_research 系统性给AVOID (3/3 VALID全AVOID)，造成deadlock
+        # factor pipeline说VALID但deep research说AVOID → 100%拦截 → 0执行
+        # 修复: AVOID时记录warning + 降低confidence 30%，但不硬拦截
         if target:
             dr_verdict = target.get("deep_research", {}).get("verdict", {})
             if dr_verdict.get("action") == "AVOID":
                 reason = dr_verdict.get("reason", "Deep research recommends AVOID")
-                logger.warning(f"[Plan Gate] {symbol} blocked by Deep Research AVOID: {reason}")
-                return False, f"Deep Research AVOID: {reason}"
+                logger.warning(f"[Plan Gate] {symbol} Deep Research AVOID (soft): {reason} — 置信度惩罚30%，不硬拦截")
+                # confidence penalty applied downstream, not a hard block
         
         if not target:
             # 方案 A: 计划外标的 → 技术面高评分后门

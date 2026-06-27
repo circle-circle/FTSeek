@@ -58,26 +58,26 @@ class PlaybookScreener:
         top_n: Optional[int] = None
     ) -> List[ScreenResult]:
         """
-        筛选 Top N 候选股票
+        筛选候选股票 — 纯过滤器, 不决策方向, 不截断.
+        
+        职责: 质量门槛过滤 (流动性/财报/数据新鲜度) + 因子打分标注.
+        不做 top_n 截断 — 方向决策由 VotingCoordinator 统一完成.
+        top_n 参数保留但忽略, 仅向后兼容调用方签名.
         
         Args:
             watchlist: 候选股票列表
             regime: 当前市场环境
             positions: 当前持仓列表 (每个 dict 需含 'symbol' 和 'industry' 键)
-            top_n: 返回 Top N，默认根据 regime 决定
+            top_n: 已废弃, 保留签名兼容, 不截断
             
         Returns:
-            按分数降序排列的 ScreenResult 列表
+            按分数降序排列的全部通过质量门槛的 ScreenResult 列表
         """
-        # 0. 根据 regime 确定 top_n
-        if top_n is None:
-            top_n = self._get_top_n_by_regime(regime)
-        
-        if top_n == 0:
-            logger.info(f"[SCREENER] Regime {regime.name} → top_n=0, skip screening")
+        if regime == MarketRegime.NO_TRADE:
+            logger.info(f"[SCREENER] Regime NO_TRADE → skip screening")
             return []
         
-        logger.info(f"[SCREENER] Screening {len(watchlist)} symbols, regime={regime.name}, top_n={top_n}")
+        logger.info(f"[SCREENER] Screening {len(watchlist)} symbols, regime={regime.name} (no top_n truncation)")
         
         candidates = []
         held_symbols = {p.get('symbol') for p in positions}
@@ -135,14 +135,11 @@ class PlaybookScreener:
                 data=data
             ))
         
-        # 6. 按分数降序排序
+        # 6. 按分数降序排序 (不截断, 返回全量通过门槛的候选)
         candidates.sort(key=lambda x: x.score, reverse=True)
+        logger.info(f"[SCREENER] {len(candidates)} candidates passed quality filter: {[c.symbol for c in candidates]}")
         
-        # 7. 返回 Top N
-        result = candidates[:top_n]
-        logger.info(f"[SCREENER] Selected {len(result)} candidates: {[c.symbol for c in result]}")
-        
-        return result
+        return candidates
     
     def _get_quality_summary(self, data: PlaybookData) -> Dict[str, Any]:
         """获取数据质量摘要"""
@@ -159,16 +156,6 @@ class PlaybookScreener:
             "ok_count": ok_count,
             "qualities": qualities,
         }
-    
-    def _get_top_n_by_regime(self, regime: MarketRegime) -> int:
-        """根据市场环境确定 top_n"""
-        mapping = {
-            MarketRegime.RISK_ON: 10,
-            MarketRegime.CAUTIOUS: 5,
-            MarketRegime.RISK_OFF: 3,
-            MarketRegime.NO_TRADE: 0,
-        }
-        return mapping.get(regime, 5)
     
     def _should_exclude_earnings(self, symbol: str) -> bool:
         """检查是否应该因为财报日期排除"""

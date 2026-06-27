@@ -292,18 +292,17 @@ def register(app, templates):
         try:
             from app.core.paths import get_trade_records_db
             rows = await ds.db_query(
-                "SELECT symbol, direction, quantity, avg_entry_price, stop_loss, take_profit, current_price "
-                "FROM open_positions WHERE symbol = ? AND status = 'open'",
+                "SELECT symbol, direction, size, avg_entry_price, stop_loss_price, initial_tp "
+                "FROM open_positions WHERE symbol = ? AND size > 0",
                 (symbol,), db_path=str(get_trade_records_db()),
             )
             if rows:
                 r = rows[0]
                 result["position"] = {
-                    "symbol": r["symbol"], "direction": r["direction"], "quantity": r["quantity"],
+                    "symbol": r["symbol"], "direction": r["direction"], "quantity": r["size"],
                     "entry_price": round(float(r.get("avg_entry_price") or 0), 2),
-                    "stop_loss": round(float(r.get("stop_loss") or 0), 2),
-                    "take_profit": round(float(r.get("take_profit") or 0), 2),
-                    "current_price": round(float(r.get("current_price") or 0), 2),
+                    "stop_loss": round(float(r.get("stop_loss_price") or 0), 2),
+                    "take_profit": round(float(r.get("initial_tp") or 0), 2),
                 }
         except Exception:
             pass
@@ -391,18 +390,17 @@ def register(app, templates):
         try:
             from app.core.paths import get_trade_records_db
             rows = await ds.db_query(
-                "SELECT direction, quantity, avg_entry_price, stop_loss, take_profit, current_price "
-                "FROM open_positions WHERE symbol = ? AND status = 'open'",
+                "SELECT direction, size, avg_entry_price, stop_loss_price, initial_tp "
+                "FROM open_positions WHERE symbol = ? AND size > 0",
                 (symbol,), db_path=str(get_trade_records_db()),
             )
             if rows:
                 r = rows[0]
                 data_bundle["engine_position"] = {
-                    "direction": r["direction"], "quantity": r["quantity"],
+                    "direction": r["direction"], "quantity": r["size"],
                     "entry_price": round(float(r.get("avg_entry_price") or 0), 2),
-                    "stop_loss": round(float(r.get("stop_loss") or 0), 2),
-                    "take_profit": round(float(r.get("take_profit") or 0), 2),
-                    "current_price": round(float(r.get("current_price") or 0), 2),
+                    "stop_loss": round(float(r.get("stop_loss_price") or 0), 2),
+                    "take_profit": round(float(r.get("initial_tp") or 0), 2),
                 }
         except Exception:
             pass

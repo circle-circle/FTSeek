@@ -98,7 +98,7 @@ def auto_generate_thesis(service: "ManualOrderService", order: "ManualOrder") ->
             "SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins, "
             "COALESCE(SUM(realized_pnl), 0) as net_pnl "
             "FROM trade_records WHERE symbol = ? "
-            "AND trade_date >= date('now', '-7 days') AND trade_mode != 'simulate'",
+            "AND trade_date >= date('now', '-7 days') AND source_type NOT IN ('PLAYBOOK_SHADOW','SCALPING')",
             (symbol,),
         ).fetchone()
         conn.close()

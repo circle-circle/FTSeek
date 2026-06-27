@@ -55,6 +55,39 @@ CONDITION_TAXONOMY: Dict[str, str] = {
     "earnings_approaching": "财报 < 14 天",
 }
 
+# ========== 方向约束: 条件 → 方向硬约束 ==========
+# ponytail: 35个BUY指令中19个含 insider_net_sell = 直接矛盾.
+# 投票产生的方向如果与条件冲突 → 翻转或 SKIP.
+# 根因: voting_aggregator 用 strength>50 决定方向, 完全无视 conditions 的语义.
+BEARISH_CONDITIONS = frozenset({
+    "insider_net_sell",        # 内部人卖出 = 看空
+    "macd_dead_cross",         # MACD 死叉
+    "ma_dead_cross",           # MA 死叉
+    "news_negative",           # 新闻负面
+    "sentiment_bearish",       # 情绪看空
+    "below_ma20",              # 价格在MA20下方
+    "below_ma50",              # 价格在MA50下方
+    "near_52w_low",            # 接近52周低点
+    "bollinger_lower",         # 触下轨
+    "rsi_overbought",          # 超买(逆向看空)
+})
+
+BULLISH_CONDITIONS = frozenset({
+    "insider_cluster_buy",     # 内部人集群买入
+    "insider_net_buy",         # 内部人净买入
+    "macd_golden_cross",       # MACD 金叉
+    "ma_golden_cross",         # MA 金叉
+    "news_positive",           # 新闻正面
+    "sentiment_bullish",       # 情绪看多
+    "earnings_beat_streak",    # 财报连续超预期
+    "revenue_growth_high",     # 收入高增长
+    "roe_high",                # ROE高
+    "post_earnings_momentum",  # 财报后动量
+    "near_52w_high",           # 接近52周高点
+    "bollinger_upper",         # 触上轨
+    "rsi_oversold",            # RSI 超跌 < 40 (均值回归/反弹)
+})
+
 
 def get_condition_list() -> list:
     """获取所有条件标签列表"""

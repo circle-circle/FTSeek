@@ -42,7 +42,7 @@ def _read_key_from_config(config_path: str, line_num: int) -> str:
         return ""
 
 # Read working key directly from hermes config (line 9 = active model key)
-DASHSCOPE_KEY = _read_key_from_config("/root/.hermes/config.yaml", 9)
+DASHSCOPE_KEY = os.environ.get("DASHSCOPE_API_KEY", "") or _read_key_from_config("/root/.hermes/config.yaml", 5)
 DASHSCOPE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 
 DEEPSEEK_KEY = os.environ.get("DEEPSEEK_API_KEY", "")

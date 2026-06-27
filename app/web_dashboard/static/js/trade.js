@@ -374,6 +374,18 @@
                 }
             });
         })();
+        // ── 统一 API 响应解析 (兼容 api_ok/api_error 和旧 flat 格式) ──
+        function parseApiResult(data) {
+            if (!data) return { ok: false, error: '空响应', data: null };
+            if (data.ok === true) return { ok: true, data: data.data, raw: data };
+            if (data.ok === false) {
+                const err = data.error || {};
+                return { ok: false, error: err.message || err.code || JSON.stringify(err), data: null, raw: data };
+            }
+            // 旧 flat 格式兼容
+            return { ok: data.success, data: data, error: data.error || '未知错误', raw: data };
+        }
+
         async function takeoverPos(symbol) {
             try {
                 const resp = await fetch('/api/positions/takeover', {
@@ -381,13 +393,15 @@
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({symbol: symbol, owner: 'manual'})
                 });
-                const data = await resp.json();
-                if (data.success) {
-                    showMsg('ok', '✅ ' + (data.message || symbol + ' 已纳入管理'));
+                const json = await resp.json();
+                const result = parseApiResult(json);
+                if (result.ok) {
+                    const info = result.data || {};
+                    showMsg('ok', '✅ ' + (info.message || symbol + ' 已纳入管理'));
                     if (typeof refreshAll === 'function') refreshAll();
                     else loadPositions();
                 } else {
-                    showMsg('err', '❌ 失败: ' + (data.error || '未知错误'));
+                    showMsg('err', '❌ 失败: ' + (result.error || '未知错误'));
                 }
             } catch (e) {
                 showMsg('err', '❌ 请求失败: ' + e.message);
@@ -647,6 +661,7 @@
                 }
 
                 // ── 实时限价偏离提示 (P0 2026-06-15) ──
+                // 2026-06-25: 盘前/盘后/休市时 cur_price 为上次收盘价, 不反映盘外报价 → 跳过 (与后端 validator 对齐)
                 const otype = document.getElementById('orderType')?.value;
                 const lpRaw = document.getElementById('limitPrice')?.value;
                 if (otype === 'LIMIT' && lpRaw && parseFloat(lpRaw) > 0 && curQuote.cur_price > 0) {
@@ -655,10 +670,10 @@
                     const dev = Math.abs(lp - cp) / cp * 100;
                     if (dev >= 10) {
                         const existing = estWarning.innerHTML || '';
-                        estWarning.innerHTML = existing + `<div class="est-danger">🛑 限价偏离市价 ${dev.toFixed(1)}% (≥10%)，将被拦截</div>`;
+                        estWarning.innerHTML = existing + `<div class="est-danger">⚠️ 限价偏离市价 ${dev.toFixed(1)}% (≥10%)，提交时需确认</div>`;
                     } else if (dev >= 5) {
                         const existing = estWarning.innerHTML || '';
-                        estWarning.innerHTML = existing + `<div class="est-warn">⚠️ 限价偏离市价 ${dev.toFixed(1)}% (≥5%)，需确认</div>`;
+                        estWarning.innerHTML = existing + `<div class="est-warn">⚠️ 限价偏离市价 ${dev.toFixed(1)}% (≥5%)，提交时需确认</div>`;
                     }
                 }
             } else {
@@ -776,15 +791,36 @@
                     }
 
                     if (isHard) {
-                        // ≥10% 硬拦截 — 禁用确认按钮
+                        // ≥10% 强提醒 — 需勾选确认, 但不阻止提交 (2026-06-24: 原 hard block 改为 strong warn)
+                        const warnId = 'priceWarnHard_' + Date.now();
                         el.innerHTML += `<div style="background:#dc2626;color:#fff;padding:12px;border-radius:8px;margin:12px 0;font-weight:bold;font-size:14px">
                             🛑 价格偏离过大 (${dev.toFixed(1)}%)<br>
-                            <span style="font-weight:normal;font-size:13px">${scenarioMsg}<br>请调整限价至市价 ±10% 范围内</span>
+                            <span style="font-weight:normal;font-size:13px">${scenarioMsg}</span><br>
+                            <label style="font-weight:normal;font-size:13px;margin-top:8px;display:flex;align-items:center;gap:6px;cursor:pointer">
+                                <input type="checkbox" id="${warnId}" style="width:18px;height:18px;cursor:pointer" onchange="
+                                    var btn = document.getElementById('confirmBtn');
+                                    if (this.checked) {
+                                        btn.disabled = false;
+                                        btn.style.opacity = '1';
+                                        btn.style.cursor = 'pointer';
+                                        btn.textContent = '⚠️ 确认提交 (已知晓价格偏离大)';
+                                        window._priceWarnAck = true;
+                                    } else {
+                                        btn.disabled = true;
+                                        btn.style.opacity = '0.5';
+                                        btn.style.cursor = 'not-allowed';
+                                        btn.textContent = '请先确认价格偏离';
+                                        window._priceWarnAck = false;
+                                    }
+                                ">
+                                我已知晓价格偏离 ${dev.toFixed(1)}%，确认继续下单
+                            </label>
                         </div>`;
                         confirmBtn.disabled = true;
-                        confirmBtn.textContent = '⛔ 价格异常，无法提交';
+                        confirmBtn.textContent = '请先确认价格偏离';
                         confirmBtn.style.opacity = '0.5';
                         confirmBtn.style.cursor = 'not-allowed';
+                        window._priceWarnAck = false;
                     } else {
                         // 5-10% 软警告 — 需勾选确认
                         const warnId = 'priceWarnCheck_' + Date.now();
@@ -868,11 +904,13 @@
                 });
                 clearTimeout(timeout);
                 const d = await res.json();
-                if (d.success) {
-                    showMsg('ok', `✅ 订单提交成功! ID: ${d.order?.order_id || '--'}`);
+                const result = parseApiResult(d);
+                if (result.ok) {
+                    const data = result.data || {};
+                    showMsg('ok', `✅ 订单提交成功! ID: ${data.order?.order_id || data.order_id || '--'}`);
                     // 立即将新订单插入本地列表, 不用等下次 snapshot 轮询
-                    var newOrder = d.order || {};
-                    if (newOrder.order_id) {
+                    var newOrder = data.order || data || {};
+                    if (newOrder.order_id || newOrder.order_id === 0) {
                         // ManualOrder dataclass 字段映射到 broker 订单格式
                         _brokerOrders.unshift({
                             order_id: newOrder.order_id,
@@ -894,7 +932,8 @@
                         setTimeout(function() { window.location.href = '/'; }, 2000);
                     }
                 } else {
-                    showMsg('err', `❌ ${d.errors ? d.errors.join(', ') : d.error || '下单失败'}`);
+                    const errData = result.raw || {};
+                    showMsg('err', `❌ ${errData.errors ? errData.errors.join(', ') : (result.error || '下单失败')}`);
                 }
             } catch (e) {
                 clearTimeout(timeout);
@@ -1093,8 +1132,10 @@
                     body: JSON.stringify(body),
                 });
                 const d = await res.json();
+                const result = parseApiResult(d);
                 closeCloseModal();
-                if (d.success) {
+                if (result.ok) {
+                    const data = result.data || {};
                     const isFull = closeQty === 0 || closeQty >= absQty;
                     const priceLabel = limitPrice ? ` @ $${limitPrice.toFixed(2)}` : '';
                     showResult('✅', `${sym} ${isFull ? '全平' : '部分平仓'}成功${priceLabel}!`);
@@ -1102,7 +1143,7 @@
                     // 延迟获取归因 (等后端写入完成)
 
                 } else {
-                    showResult('❌', d.error || '平仓失败');
+                    showResult('❌', result.error || '平仓失败');
                 }
             } catch (e) {
                 closeCloseModal();
@@ -1136,7 +1177,8 @@
                     body: JSON.stringify({ order_id: id }),
                 });
                 const d = await res.json();
-                if (d.success) {
+                const result = parseApiResult(d);
+                if (result.ok) {
                     showMsg('ok', '✅ 已撤销');
                     // 立即更新本地订单状态, 不等 snapshot 轮询
                     for (var i = 0; i < _brokerOrders.length; i++) {
@@ -1147,7 +1189,7 @@
                     }
                     renderUnifiedOrders();
                 } else {
-                    showMsg('err', `❌ ${d.error}`);
+                    showMsg('err', `❌ ${result.error || '撤单失败'}`);
                 }
                 loadOrders();
             } catch (e) { showMsg('err', e.message); }

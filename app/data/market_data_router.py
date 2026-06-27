@@ -153,6 +153,68 @@ class MarketDataRouter:
     
     # ── 报价 ──────────────────────────────────────────────────────
 
+    def get_daily_bars(self, symbol: str, count: int = 30) -> Optional[List[Dict[str, Any]]]:
+        """获取日K线历史 (供 IC 前瞻收益回填 / shadow tracker MFE-MAE 使用).
+
+        Fallback 链: Futu LV3 get_daily_kline (历史K线, 盘后可用) → Finnhub get_kline(D).
+        2026-06-23 修复 (OKR P0): 本方法此前缺失, 导致 ic_tracker.backfill_forward_returns
+        每次 AttributeError 被吞 → 前瞻收益永不回填 → IC 永远=None → 毕业门禁永不通过;
+        同时 shadow_tracker 的 hasattr 检查 False → MFE/MAE 永远 0.
+
+        Returns:
+            List[{time, open, high, low, close, volume, turnover}] 升序; time 归一化为
+            "YYYY-MM-DD" (兼容 ic_tracker 精确匹配 + shadow_tracker [:10]). 失败返回 None.
+        """
+        if not symbol:
+            return None
+
+        # 1. Futu (主): 历史日K, 盘后也可用 (不依赖实时连接)
+        if self.futu:
+            try:
+                bars = self.futu.get_daily_kline(symbol, count=count)
+                bars = self._normalize_bar_times(bars)
+                if bars:
+                    return bars
+            except Exception as e:
+                logger.warning(f"[Router] get_daily_bars {symbol} Futu 失败, 尝试 TwelveData: {e}")
+
+        # 2. TwelveData (fallback): HTTP time_series interval=1day, 免费版可用.
+        #    Finnhub /stock/candle 免费版 403, 不能作日线 fallback.
+        if self.td and self.td.enabled:
+            try:
+                bars = self.td.get_daily_bars(symbol, count=count)
+                if bars:
+                    logger.info(f"[Router] get_daily_bars {symbol} 走 TwelveData fallback: {len(bars)} bars")
+                    return bars
+            except Exception as e:
+                logger.warning(f"[Router] get_daily_bars {symbol} TwelveData fallback 失败: {e}")
+
+        logger.warning(f"[Router] get_daily_bars {symbol}: 所有数据源均失败")
+        return None
+
+    @staticmethod
+    def _normalize_bar_times(bars: Optional[List[Dict]]) -> Optional[List[Dict]]:
+        """把 bar 的 time 归一化为 "YYYY-MM-DD".
+
+        Futu: "2026-06-23 00:00:00" → 截断; Finnhub: "1719100800" (Unix 秒) → 解析.
+        保证 ic_tracker (精确匹配 "YYYY-MM-DD") 与 shadow_tracker ([:10]) 都能用.
+        """
+        if not bars:
+            return None
+        for b in bars:
+            t = str(b.get("time", ""))
+            if not t:
+                continue
+            if t.isdigit():
+                # Unix 秒 → 日期
+                try:
+                    b["time"] = datetime.utcfromtimestamp(int(t)).strftime("%Y-%m-%d")
+                except (ValueError, OSError):
+                    pass
+            elif len(t) > 10:
+                b["time"] = t[:10]
+        return bars
+
     def get_quote(self, symbol: str) -> Optional[Dict[str, Any]]:
         """
         实时报价：Futu LV3 → Finnhub → TwelveData → Alpha Vantage
@@ -355,6 +417,35 @@ class MarketDataRouter:
                             # 合并技术指标 + LV3 报价
                             ts_ctx = tech
                             ts_ctx["data_source"] = "futu_lv3"
+                            
+            # 2026-06-26: 用日K线ATR覆盖1分钟ATR — 技术策略的 atr_pct < 0.5% 门禁
+            # 需要日级别波动率, 1分钟ATR太低 (0.03-0.20%) 导致全部信号被拦截
+            # 2026-06-26 补丁: 当日K线获取失败时, 用 price*2% 兜底 (美股平均日波动率)
+                            try:
+                                daily_bars = self.get_daily_bars(symbol, count=30)
+                                if daily_bars and len(daily_bars) >= 15:
+                                    from app.data.lv3_technical_calculator import LV3TechnicalCalculator as _Calc
+                                    _df = _Calc()._klines_to_dataframe(daily_bars)
+                                    if _df is not None and len(_df) >= 15:
+                                        _h = _df["high"]; _l = _df["low"]; _pc = _df["close"].shift(1)
+                                        _tr = pd.concat([_h - _l, (_h - _pc).abs(), (_l - _pc).abs()], axis=1).max(axis=1)
+                                        _daily_atr = float(_tr.rolling(window=14).mean().iloc[-1])
+                                        if _daily_atr > 0:
+                                            ts_ctx["atr"] = round(_daily_atr, 2)
+                                            _price = ts_ctx.get("price", 0)
+                                            ts_ctx["atr_percent"] = round(_daily_atr / _price * 100, 2) if _price > 0 else 0.0
+                                # 兜底: 如果ATR%仍 < 0.5%, 用 price*2% 作为最小日波动率
+                                _atr_val = float(ts_ctx.get("atr", 0) or 0)
+                                _price_val = float(ts_ctx.get("price", 0) or 0)
+                                if _price_val > 0 and _atr_val > 0:
+                                    _atr_pct_check = _atr_val / _price_val * 100
+                                    if _atr_pct_check < 0.5:
+                                        _floor_atr = _price_val * 0.02  # 2% 日波动率兜底
+                                        ts_ctx["atr"] = round(_floor_atr, 2)
+                                        ts_ctx["atr_percent"] = 2.0
+                                        logger.debug(f"[Router] {symbol} ATR兜底: {_atr_val:.2f}({_atr_pct_check:.2f}%) → {_floor_atr:.2f}(2.0%)")
+                            except Exception as _atr_err:
+                                logger.debug(f"[Router] {symbol} 日ATR覆盖失败 (用1分钟ATR): {_atr_err}")
                             
                             # ★★★ 关键修复: 使用 LV3 实时快照价格覆盖 K 线收盘价
                             # K 线数据可能存在延迟或复权差异，快照价格是最新的真实成交价。

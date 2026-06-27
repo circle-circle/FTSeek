@@ -66,9 +66,13 @@ class DailyReviewGenerator:
         
         logger.info(f"生成每日复盘报告 v2.0：{date}")
         
-        # 从 ftseek_us.db 读取交易记录
+        # 从 ftseek_us.db 读取交易记录 (排除已废弃的虚拟 shadow 和已禁用的 scalping, 保证复盘口径与 OKR/dashboard 一致)
+        # 2026-06-26: 排除 PHANTOM_RECONCILE_VOID (pnl=0 的幽灵对账记录, 不应计入交易统计)
         trades = self._query(
-            "SELECT * FROM trade_records WHERE trade_date = ? ORDER BY created_at",
+            "SELECT * FROM trade_records WHERE trade_date = ? "
+            "AND source_type NOT IN ('PLAYBOOK_SHADOW', 'SCALPING') "
+            "AND exit_reason != 'PHANTOM_RECONCILE_VOID' "
+            "ORDER BY created_at",
             (date,)
         )
         closed_trades = [t for t in trades if t.get('exit_price') and t.get('exit_price') > 0]

@@ -151,7 +151,7 @@ class OpenDConfig:
         return cls(
             host=os.getenv("FUTU_OPEND_HOST", "127.0.0.1"),
             port=port,
-            dir=os.getenv("OPEND_DIR", "/opt/ftseek/Futu_OpenD_9.6.5618_Centos7/Futu_OpenD_9.6.5618_Centos7"),
+            dir=os.getenv("OPEND_DIR", "/opt/ftseek/Futu_OpenD_10.7.6728_Centos7"),
             login_account=os.getenv("FUTU_LOGIN_ACCOUNT", ""),
             login_pwd=os.getenv("FUTU_LOGIN_PWD", ""),
             trade_env=_resolve_trade_mode(),

@@ -36,6 +36,8 @@ class PositionSource(Enum):
             "auto_main": cls.AUTO_MAIN,  # position_sync 新发现的策略仓 (P0 2026-06-11: 补漏)
             "voting_llm": cls.AUTO_MAIN,
             "voting_llm_option": cls.AUTO_MAIN,  # 期权仓位归主线策略管理
+            "playbook_sim": cls.AUTO_MAIN,  # 2026-06-26: SIM自动交易产生的仓位, 归auto
+            "playbook_live": cls.AUTO_MAIN,  # 同上, live环境
             "manual_sync": cls.MANUAL,  # P0-fix (2026-06-15): position_sync 发现的手动仓 → MANUAL (非 AUTO_MAIN)
             "orb": cls.AUTO_ORB, "orb_engine": cls.AUTO_ORB,
             "auto_orb": cls.AUTO_ORB,  # Task #6 (2026-06-15): ORB 来源标记

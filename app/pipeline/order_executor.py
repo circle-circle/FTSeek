@@ -811,6 +811,13 @@ def _get_current_price(scheduler, symbol: str) -> float:
     try:
         quote = scheduler.data_router.get_quote(symbol)
         if quote:
+            # 2026-06-25 修复: 优先使用 bid/ask 中间价, 避免 last_traded_price 在快市中滞后
+            bid = float(quote.get("bid", 0) or 0)
+            ask = float(quote.get("ask", 0) or 0)
+            if bid > 0 and ask > 0:
+                return round((bid + ask) / 2.0, 2)
+            # bid/ask 缺失时的降级路径 (通常只在盘前/盘后或数据源异常时触发)
+            logger.warning(f"[价格获取] {symbol} bid/ask 不可用, 降级使用 last_price")
             price_val = quote.get("price", 0)
             # Defensive: price field could be a dict in edge cases (Push cache corruption)
             if isinstance(price_val, dict):
@@ -1513,24 +1520,8 @@ def _get_order_qty(scheduler, symbol: str, atr: float = 0, direction: str = "LON
 
 
 # ═══════════════════════════════════════════════════════════════════
-#  [DEPRECATED] 期权下单已禁用 (ADR-003, 2026-05-21)
-# ═══════════════════════════════════════════════════════════════════
-# _submit_put_option 函数已删除。做空仅支持正股做空路径。
-
-
-# ═══════════════════════════════════════════════════════════════════
 #  直接做空策略
 # ═══════════════════════════════════════════════════════════════════
-
-def _try_direct_short_only(scheduler, symbol: str, signal: SignalScore, context: Dict[str, Any]):
-    """直接卖空（不尝试期权）"""
-    # 简化实现：复用普通下单逻辑
-    _submit_order(scheduler, symbol, signal, context, None)
-
-
-def _try_direct_short_with_fallback(scheduler, symbol: str, signal: SignalScore, context: Dict[str, Any]):
-    """直接卖空（期权降级路径已移除）"""
-    _submit_order(scheduler, symbol, signal, context, None)
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -1907,14 +1898,15 @@ def _check_gates_and_conflicts(scheduler, symbol: str, signal: SignalScore, cont
     # 检查 position_store 中是否存在反向持仓
     if scheduler.position_store.has(symbol):
         existing_pos = scheduler.position_store.get(symbol)
-        existing_dir = existing_pos.direction
-        if existing_dir != signal.direction:
-            logger.warning(
-                f"[持仓冲突] {symbol} 已有{existing_dir.value}持仓, "
-                f"新信号为{signal.direction.value}, 需先平仓"
-            )
-            _close_position_for_conflict(scheduler, existing_pos)
-            return False
+        if existing_pos is not None:  # 2026-06-26: 竞态保护 — has()与get()之间持仓可能被移除
+            existing_dir = existing_pos.direction
+            if existing_dir != signal.direction:
+                logger.warning(
+                    f"[持仓冲突] {symbol} 已有{existing_dir.value}持仓, "
+                    f"新信号为{signal.direction.value}, 需先平仓"
+                )
+                _close_position_for_conflict(scheduler, existing_pos)
+                return False
 
     # ── P0 修复 (2026-05-02): PRE_CLOSE_EXIT 竞态防护 ──
     # 防止平仓后立即重入 (NVDA #11→#12 竞态: 7秒内同价重复入场)
@@ -3222,6 +3214,23 @@ def _submit_order_inner(scheduler, symbol: str, signal: SignalScore, context: Di
         logger.warning(f"🚨 [AbsoluteCircuitBreaker·fail-close] {symbol} 检查异常, 跳过下单: {_acb_err}")
         return
 
+    # 2026-06-25 OKR 架构决策: 主线 pipeline 不切换实盘.
+    # Playbook 是指定的唯一 sim→live 毕业策略. 主线仅作为 sim 研究/alpha 来源.
+    try:
+        import os as _os
+        _auto_account = _os.getenv("AUTO_TRADE_ACCOUNT", "sim").strip().lower()
+        if _auto_account == "real":
+            from app.core.config_container import get_config as _get_cfg
+            _main_allow_live = bool(_get_cfg().get_dotted("main_pipeline.allow_live", False))
+            if not _main_allow_live:
+                logger.warning(
+                    f"🚫 [MainPipeline] {symbol} 实盘已被禁用. "
+                    f"AUTO_TRADE_ACCOUNT=real 但 main_pipeline.allow_live=false. 仅 Playbook 可切换 live."
+                )
+                return
+    except Exception as _mp_err:
+        logger.warning(f"🚫 [MainPipeline] live 检查异常 (放行): {_mp_err}")
+
     # ── P0: VIX 数据新鲜度 fail-close (Task #1) ──
     # VIX 数据不可用时拒绝新仓 (宁可错过, 不可放错)
     try:
@@ -3270,6 +3279,23 @@ def _submit_order_inner(scheduler, symbol: str, signal: SignalScore, context: Di
         return
 
 
+    # ── 账户级熔断 (2026-06-25 OKR): 单日亏损 ≥2% 停止新仓, ≥3% 强制全平 ──
+    try:
+        from app.risk.account_circuit_breaker import check_circuit_breaker
+        from app.risk.capital_safety import get_capital_safety_system
+        _cs = get_capital_safety_system()
+        _equity = float(getattr(_cs._state, 'current_equity', 0) or 0)
+        if _equity > 0:
+            _cb = check_circuit_breaker(_equity)
+            if _cb.action in ("HALT", "LIQUIDATE"):
+                logger.warning(
+                    f"🚨 [AccountCircuitBreaker] {symbol} 新仓被拒: {_cb.reason}"
+                )
+                return
+    except Exception as _cb_err:
+        logger.warning(f"🚨 [AccountCircuitBreaker·fail-close] {symbol} 检查异常, 跳过下单: {_cb_err}")
+        return
+
     # ── 双链路并行 (Task #3 2026-06-15): 谨慎模式·每日自动交易次数限制 ──
     try:
         from app.coordinator.dual_mode_params import (
@@ -3309,6 +3335,7 @@ def _submit_order_inner(scheduler, symbol: str, signal: SignalScore, context: Di
     # 安全底线: Kill Switch / 仓位限制 / VIX风控 仍然正常拦截 (不受此改动影响)
     _IC_MIN_THRESHOLD = 0.05
     _IC_MIN_SIGNALS = 30
+    _IC_HARD_BLOCK = -0.15  # 2026-06-26: IC < -0.15 = 反预测, 硬拦截; [-0.15, 0.05) = 弱负, warning放行
 
     # 检查是否shadow_only模式
     _is_shadow = False
@@ -3356,18 +3383,25 @@ def _submit_order_inner(scheduler, symbol: str, signal: SignalScore, context: Di
                 _strat_n = _strat_stat.get("n", 0)
                 _strat_pval = _strat_stat.get("pval", 1.0)
                 
-                if _strat_ic is not None and _strat_ic < _IC_MIN_THRESHOLD and _strat_n >= 10:
+                # 2026-06-26: IC门禁分级拦截 — 只硬拦截 IC < -0.10 (反预测)
+                # IC在 [-0.10, 0.05) 区间为"弱负但非反预测", 降级为warning放行
+                if _strat_ic is not None and _strat_ic < _IC_HARD_BLOCK and _strat_n >= 10:
                     logger.warning(
-                        f"🔒 [IC门禁] {symbol} 策略 {_sig_strategy} IC={_strat_ic:.3f} < {_IC_MIN_THRESHOLD} "
-                        f"(n={_strat_n}), 该策略信号无预测能力, 拦截"
+                        f"🔒 [IC门禁] {symbol} 策略 {_sig_strategy} IC={_strat_ic:.3f} < {_IC_HARD_BLOCK} "
+                        f"(n={_strat_n}), 反预测, 硬拦截"
                     )
                     return
-                if _strat_pval is not None and _strat_pval >= 0.05 and _strat_ic is not None and _strat_n >= 10:
-                    logger.warning(
-                        f"🔒 [IC门禁·显著性] {symbol} 策略 {_sig_strategy} IC={_strat_ic:.3f} 但 "
-                        f"p={_strat_pval:.3f}≥0.05 不显著 (n={_strat_n}), 保守拦截"
+                if _strat_ic is not None and _strat_ic < _IC_MIN_THRESHOLD and _strat_ic >= _IC_HARD_BLOCK and _strat_n >= 10:
+                    logger.info(
+                        f"⚠️ [IC门禁·warning] {symbol} 策略 {_sig_strategy} IC={_strat_ic:.3f} "
+                        f"(弱负, 非反预测, 放行积累数据) (n={_strat_n})"
                     )
-                    return
+                if _strat_pval is not None and _strat_pval >= 0.05 and _strat_ic is not None and _strat_ic >= _IC_HARD_BLOCK and _strat_n >= 10:
+                    # 2026-06-26: p-value不显著但IC非反预测 → warning放行 (同IC分级逻辑)
+                    logger.info(
+                        f"⚠️ [IC门禁·显著性·warning] {symbol} 策略 {_sig_strategy} IC={_strat_ic:.3f} 但 "
+                        f"p={_strat_pval:.3f}≥0.05 不显著 (n={_strat_n}), 放行积累数据"
+                    )
             else:
                 _ic_mean = _ic.get("ic_mean", 0.0)
                 if _ic_mean is not None and _ic_mean < -0.10:
@@ -3386,10 +3420,11 @@ def _submit_order_inner(scheduler, symbol: str, signal: SignalScore, context: Di
             if isinstance(_dir_stat, dict):
                 _dir_ic = _dir_stat.get("ic")
                 _dir_n = int(_dir_stat.get("n", 0) or 0)
-                if _dir_ic is not None and _dir_ic < 0 and _dir_n >= 10:
+                # 2026-06-26: 方向IC分级 — 只在 IC < -0.10 时硬拦截 (同策略IC逻辑)
+                if _dir_ic is not None and _dir_ic < _IC_HARD_BLOCK and _dir_n >= 10:
                     logger.warning(
                         f"🔒 [IC门禁·方向] {symbol} 方向 {_sig_dir} 独立IC={_dir_ic:.3f} (n={_dir_n}) "
-                        f"为负 → 该方向信号反向, 拦截此方向下单"
+                        f"反预测, 硬拦截此方向下单"
                     )
                     return
         
@@ -3794,6 +3829,24 @@ def _lookup_decision_id_by_trace(trace_id: str, symbol: str = "") -> str:
     用于平仓时无法从 position.metadata 获取 decision_id 的 fallback。
     Returns: decision_id or empty string.
     """
+    if not trace_id:
+        return ""
+    try:
+        import sqlite3
+        from app.core.paths import get_trade_records_db
+        with sqlite3.connect(str(get_trade_records_db())) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT decision_id FROM trade_attribution "
+                "WHERE trace_id = ? AND decision_id IS NOT NULL AND decision_id != '' "
+                "ORDER BY created_at DESC LIMIT 1",
+                (trace_id,)
+            )
+            row = cursor.fetchone()
+            return str(row[0]) if row and row[0] else ""
+    except Exception as e:
+        logger.debug(f"[归因] _lookup_decision_id_by_trace 查询失败: {e}")
+        return ""
 
 
 def _build_close_metadata_json(meta: dict, position) -> Optional[str]:
@@ -4509,6 +4562,10 @@ def _close_position(scheduler, position: Position, current_price: float, exit_re
                 _clear_close_retry(position.symbol, position.direction)
                 return
 
+        # P0-fix: _record_close_failure 必须在 _blocked 引用前调用
+        fail_count, cooldown_min, _blocked = _record_close_failure(
+            scheduler, position, _err_msg, _is_backoff
+        )
 
         if _blocked:
             meta["_close_blocked"] = True

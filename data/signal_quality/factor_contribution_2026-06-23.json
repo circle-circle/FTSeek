@@ -1,0 +1,173 @@
+{
+  "top_combos": [
+    {
+      "factors": "unknown",
+      "total": 15,
+      "wins": 11,
+      "losses": 4,
+      "win_rate": 0.7333,
+      "avg_pnl": -322.1334,
+      "total_pnl": -4832.0015,
+      "max_loss": -7255.8,
+      "max_win": 586.527
+    },
+    {
+      "factors": "playbook_shadow",
+      "total": 24,
+      "wins": 13,
+      "losses": 10,
+      "win_rate": 0.5417,
+      "avg_pnl": 10.0963,
+      "total_pnl": 242.3123,
+      "max_loss": -628.56,
+      "max_win": 375.3599
+    },
+    {
+      "factors": "bollinger+rsi+vwap",
+      "total": 53,
+      "wins": 17,
+      "losses": 33,
+      "win_rate": 0.3208,
+      "avg_pnl": -4.6675,
+      "total_pnl": -247.3783,
+      "max_loss": -134.145,
+      "max_win": 274.08
+    },
+    {
+      "factors": "orb_breakout",
+      "total": 11,
+      "wins": 4,
+      "losses": 7,
+      "win_rate": 0.3636,
+      "avg_pnl": -91.0958,
+      "total_pnl": -1002.0535,
+      "max_loss": -627.8,
+      "max_win": 553.8
+    },
+    {
+      "factors": "bollinger+rsi",
+      "total": 20,
+      "wins": 3,
+      "losses": 17,
+      "win_rate": 0.15,
+      "avg_pnl": 2.1441,
+      "total_pnl": 42.8828,
+      "max_loss": -112.0925,
+      "max_win": 228.5
+    },
+    {
+      "factors": "bollinger+vwap",
+      "total": 57,
+      "wins": 5,
+      "losses": 37,
+      "win_rate": 0.0877,
+      "avg_pnl": -18.7733,
+      "total_pnl": -1070.0766,
+      "max_loss": -394.68,
+      "max_win": 13.057
+    },
+    {
+      "factors": "rsi+vwap",
+      "total": 14,
+      "wins": 2,
+      "losses": 11,
+      "win_rate": 0.1429,
+      "avg_pnl": -23.0925,
+      "total_pnl": -323.2955,
+      "max_loss": -153.3,
+      "max_win": 43.8933
+    },
+    {
+      "factors": "early_rsi_reversal",
+      "total": 6,
+      "wins": 0,
+      "losses": 4,
+      "win_rate": 0.0,
+      "avg_pnl": -6.7442,
+      "total_pnl": -40.465,
+      "max_loss": -24.51,
+      "max_win": 0.0
+    }
+  ],
+  "top_singles": [
+    {
+      "factor": "unknown",
+      "total": 15,
+      "wins": 11,
+      "losses": 4,
+      "win_rate": 0.7333,
+      "avg_pnl": -322.1334,
+      "total_pnl": -4832.0015,
+      "max_loss": -7255.8,
+      "max_win": 586.527
+    },
+    {
+      "factor": "playbook_shadow",
+      "total": 24,
+      "wins": 13,
+      "losses": 10,
+      "win_rate": 0.5417,
+      "avg_pnl": 10.0963,
+      "total_pnl": 242.3123,
+      "max_loss": -628.56,
+      "max_win": 375.3599
+    },
+    {
+      "factor": "rsi",
+      "total": 87,
+      "wins": 22,
+      "losses": 61,
+      "win_rate": 0.2529,
+      "avg_pnl": -6.0666,
+      "total_pnl": -527.791,
+      "max_loss": -153.3,
+      "max_win": 274.08
+    },
+    {
+      "factor": "bollinger",
+      "total": 130,
+      "wins": 25,
+      "losses": 87,
+      "win_rate": 0.1923,
+      "avg_pnl": -9.8044,
+      "total_pnl": -1274.5721,
+      "max_loss": -394.68,
+      "max_win": 274.08
+    },
+    {
+      "factor": "vwap",
+      "total": 124,
+      "wins": 24,
+      "losses": 81,
+      "win_rate": 0.1935,
+      "avg_pnl": -13.2319,
+      "total_pnl": -1640.7504,
+      "max_loss": -394.68,
+      "max_win": 274.08
+    },
+    {
+      "factor": "orb_breakout",
+      "total": 11,
+      "wins": 4,
+      "losses": 7,
+      "win_rate": 0.3636,
+      "avg_pnl": -91.0958,
+      "total_pnl": -1002.0535,
+      "max_loss": -627.8,
+      "max_win": 553.8
+    },
+    {
+      "factor": "early_rsi_reversal",
+      "total": 6,
+      "wins": 0,
+      "losses": 4,
+      "win_rate": 0.0,
+      "avg_pnl": -6.7442,
+      "total_pnl": -40.465,
+      "max_loss": -24.51,
+      "max_win": 0.0
+    }
+  ],
+  "combo_count": 9,
+  "single_count": 8
+}

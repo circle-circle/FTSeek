@@ -843,7 +843,7 @@ def modify_stop_loss(service: "ManualOrderService", symbol: str,
         return {"success": False, "error": "broker_connection_failed"}
 
     try:
-        from futu import TrdEnv, TrdSide, OrderType as FutuOrderType, RET_OK
+        from futu import TrdEnv, TrdSide, OrderType as FutuOrderType, TimeInForce, RET_OK
 
         trd_env = TrdEnv.REAL if service._is_live() else TrdEnv.SIMULATE
         if service._is_live():
@@ -902,10 +902,14 @@ def modify_stop_loss(service: "ManualOrderService", symbol: str,
             trd_side = TrdSide.SELL if is_long else TrdSide.BUY
             try:
                 ret2, data2 = service._broker_ctx.place_order(
-                    price=new_sl, qty=qty, code=symbol,
+                    price=0,  # STOP 单触发后市价成交
+                    qty=qty, code=symbol,
                     trd_side=trd_side,
                     order_type=FutuOrderType.STOP,
                     trd_env=trd_env, acc_id=acc_id,
+                    time_in_force=TimeInForce.GTC,
+                    aux_price=new_sl,  # 触发价 (Futu STOP 单必须用 aux_price)
+                    trail_spread=0,  # 非追踪止损
                 )
                 if ret2 == RET_OK and not data2.empty:
                     new_oid = str(data2.iloc[0].get("order_id", ""))

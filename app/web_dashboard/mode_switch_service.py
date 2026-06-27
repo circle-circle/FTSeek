@@ -154,20 +154,23 @@ def _backup_env_file():
 
 
 def get_current_mode() -> Dict[str, Any]:
-    """获取当前模式配置"""
+    """获取当前模式配置 (2026-06-24 重构: 从 AUTO_TRADE_ACCOUNT + live_trial 推导,
+    不再读 deprecated 的 TRADE_ENV/FUTU_TRADE_ENV)."""
     env = read_env_file()
 
-    trade_env = env.get("TRADE_ENV", "1")
+    auto_account = (env.get("AUTO_TRADE_ACCOUNT") or "sim").strip().lower()
     allow_real = env.get("ALLOW_REAL_TRADING", "false").lower()
     live_conservative = env.get("LIVE_CONSERVATIVE", "1")
 
-    if trade_env == "0" and allow_real == "true":
-        if live_conservative == "1":
-            mode = "live_conservative"
-            mode_label = "实盘(保守)"
-        else:
+    if auto_account == "real" and allow_real == "true":
+        # real + live_trial=true → 保守(LIVE_TRIAL); live_trial=false → 正常(LIVE_FULL)
+        _live_trial = (env.get("playbook.live_trial") or "true").strip().lower()
+        if _live_trial == "false" or live_conservative == "0":
             mode = "live_normal"
-            mode_label = "实盘(正常)"
+            mode_label = "实盘(正常/LIVE_FULL)"
+        else:
+            mode = "live_conservative"
+            mode_label = "实盘(保守/LIVE_TRIAL)"
     else:
         mode = "simulate"
         mode_label = "模拟盘"
@@ -175,7 +178,8 @@ def get_current_mode() -> Dict[str, Any]:
     return {
         "mode": mode,
         "mode_label": mode_label,
-        "TRADE_ENV": trade_env,
+        "TRADE_ENV": env.get("TRADE_ENV", "1"),  # 仍返回供显示 (DB 路由, 切换不改它)
+        "AUTO_TRADE_ACCOUNT": auto_account,      # 2026-06-24: broker 路由真实状态
         "ALLOW_REAL_TRADING": allow_real,
         "LIVE_CONSERVATIVE": live_conservative,
         "REAL_ACCOUNT_ID": env.get("REAL_ACCOUNT_ID", ""),
@@ -223,6 +227,18 @@ def switch_mode(target_mode: str, confirm: str = "") -> Dict[str, Any]:
             return {"success": False, "message": "REAL_ACCOUNT_ID 未设置，无法切实盘"}
         if not env.get("FUTU_UNLOCK_PWD_MD5"):
             return {"success": False, "message": "FUTU_UNLOCK_PWD_MD5 未设置，无法切实盘"}
+        # Phase 2/3 (2026-06-24): 实盘需 graduation 门禁 (IC>0.05/样本≥30/无5连亏)
+        try:
+            from app.playbook.pipeline import _check_graduation_gate
+            _gate = _check_graduation_gate()
+            if not _gate.get("graduated"):
+                return {
+                    "success": False,
+                    "message": f"未毕业, 无法切实盘: {_gate.get('reason')}",
+                    "graduation": _gate,
+                }
+        except Exception as _ge:
+            return {"success": False, "message": f"graduation 门禁检查异常 (fail-close): {_ge}"}
 
     # 执行切换 (P1-4 2026-06-12: 切换前自动备份)
     bak = _backup_env_file()
@@ -230,28 +246,29 @@ def switch_mode(target_mode: str, confirm: str = "") -> Dict[str, Any]:
         logger.info(f"[模式切换] 已备份 .env.us → {bak.name}")
 
     try:
+        # 2026-06-24 重构 (三态共存): 切换写 AUTO_TRADE_ACCOUNT + live_trial, 不再写
+        # TRADE_ENV/FUTU_TRADE_ENV (deprecated, 写 TRADE_ENV=0 会切 DB 丢 OKR 数据).
+        # broker 路由由 AUTO_TRADE_ACCOUNT 控制 (di_container 读), LIVE_TRIAL 由 live_trial 控制.
+        # TRADE_ENV 保持 1 (DB=ftseek_us.db, OKR 数据不丢). 不再 _clear_live_db.
+        write_env_key("ALLOW_REAL_TRADING", "true" if target_mode.startswith("live_") else "true")
+        # 注: ALLOW_REAL_TRADING 保持 true (手动实盘需要); simulate 不强制 false (手动仍走实盘)
+
         if target_mode == "simulate":
-            write_env_key("TRADE_ENV", "1")
-            write_env_key("FUTU_TRADE_ENV", "1")
-            write_env_key("ALLOW_REAL_TRADING", "false")
-            write_env_key("LIVE_CONSERVATIVE", "1")  # 安全默认值：下次切实盘时默认保守
-            msg = "已切换到模拟盘"
+            write_env_key("AUTO_TRADE_ACCOUNT", "sim")
+            write_env_key("LIVE_CONSERVATIVE", "1")  # 下次切实盘默认保守
+            msg = "已切换到模拟盘 (自动交易→模拟账户)"
 
         elif target_mode == "live_conservative":
-            write_env_key("TRADE_ENV", "0")
-            write_env_key("FUTU_TRADE_ENV", "0")
-            write_env_key("ALLOW_REAL_TRADING", "true")
+            write_env_key("AUTO_TRADE_ACCOUNT", "real")
             write_env_key("LIVE_CONSERVATIVE", "1")
-            msg = "已切换到实盘(保守)模式 — 仓位减半，风控更严"
-            _clear_live_db()
+            write_env_key("playbook.live_trial", "true")  # 仓位×0.5 (LIVE_TRIAL)
+            msg = "已切换到实盘(保守/LIVE_TRIAL) — 仓位×0.5, 需重启生效"
 
         elif target_mode == "live_normal":
-            write_env_key("TRADE_ENV", "0")
-            write_env_key("FUTU_TRADE_ENV", "0")
-            write_env_key("ALLOW_REAL_TRADING", "true")
+            write_env_key("AUTO_TRADE_ACCOUNT", "real")
             write_env_key("LIVE_CONSERVATIVE", "0")
-            msg = "已切换到实盘(正常)模式"
-            _clear_live_db()
+            write_env_key("playbook.live_trial", "false")  # 全量 (LIVE_FULL)
+            msg = "已切换到实盘(正常/LIVE_FULL) — 全量仓位, 需重启生效"
 
         new_mode = get_current_mode()
         logger.warning(f"[模式切换] {current['mode_label']} → {new_mode['mode_label']}")
@@ -486,15 +503,100 @@ class ModeSwitchService:
     def get_mode_status(self) -> dict:
         """获取完整模式状态 (供 Dashboard 展示)."""
         with self._lock:
+            # graduation 状态 (Phase 2): 实盘开关需毕业才可点
+            graduation = None
+            try:
+                from app.playbook.pipeline import _check_graduation_gate
+                graduation = _check_graduation_gate()
+            except Exception as _e:
+                logger.debug(f"[ModeSwitch] graduation 查询失败: {_e}")
             return {
                 "auto_enabled": self._auto_enabled,
                 "auto_level": self._auto_aggression,
-                "manual_enabled": True,  # 手动始终可用
+                "auto_account": self._read_auto_account(),   # sim | real
+                "manual_enabled": True,  # 手动始终可用 (实盘)
+                "manual_account": "real",
+                "graduation": graduation,
                 "last_toggle_time": (
                     self._last_toggle_time.isoformat()
                     if self._last_toggle_time else None
                 ),
             }
+
+    def _read_auto_account(self) -> str:
+        """从 .env.us 读 AUTO_TRADE_ACCOUNT (sim|real)."""
+        import os
+        try:
+            env_file = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), ".env.us")
+            with open(env_file) as f:
+                for line in f:
+                    s = line.strip()
+                    if s.startswith("AUTO_TRADE_ACCOUNT="):
+                        return s.split("=", 1)[1].strip().lower()
+        except Exception:
+            pass
+        return os.getenv("AUTO_TRADE_ACCOUNT", "sim").strip().lower()
+
+    def _write_env_key(self, key: str, value: str) -> bool:
+        """写 .env.us 的一个 key (原地更新)."""
+        import os
+        env_file = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), ".env.us")
+        try:
+            with open(env_file) as f:
+                lines = f.readlines()
+            found = False
+            for i, line in enumerate(lines):
+                if line.strip().startswith(f"{key}="):
+                    lines[i] = f"{key}={value}\n"
+                    found = True
+                    break
+            if not found:
+                lines.append(f"{key}={value}\n")
+            with open(env_file, "w") as f:
+                f.writelines(lines)
+            return True
+        except Exception as _e:
+            logger.error(f"[ModeSwitch] 写 .env.us {key} 失败: {_e}")
+            return False
+
+    def set_auto_account(self, account: str) -> dict:
+        """设置自动交易目标账户: sim | real (Phase 2).
+
+        real 需 graduation 通过 (IC>0.05/样本≥30/无5连亏) + ALLOW_REAL_TRADING.
+        flat-switch 语义: 调用方应确保无未平仓 sim 仓位 (盘后切).
+        """
+        account = (account or "").strip().lower()
+        if account not in ("sim", "real"):
+            return {"success": False, "error": f"invalid account: {account}"}
+
+        if account == "real":
+            # graduation gate
+            try:
+                from app.playbook.pipeline import _check_graduation_gate
+                gate = _check_graduation_gate()
+            except Exception as _e:
+                return {"success": False, "error": f"graduation 检查异常: {_e}"}
+            if not gate.get("graduated"):
+                return {
+                    "success": False,
+                    "error": f"未毕业, 无法切实盘: {gate.get('reason')}",
+                    "graduation": gate,
+                }
+            # ALLOW_REAL_TRADING
+            import os
+            if os.getenv("ALLOW_REAL_TRADING", "false").lower() != "true":
+                return {"success": False, "error": "ALLOW_REAL_TRADING!=true"}
+
+        ok = self._write_env_key("AUTO_TRADE_ACCOUNT", account)
+        if not ok:
+            return {"success": False, "error": "写 .env.us 失败"}
+        logger.warning(f"[ModeSwitch] auto_account → {account} (需重启 ftseek-us 生效)")
+        return {
+            "success": True,
+            "auto_account": account,
+            "restart_required": True,   # di_container 启动时读 AUTO_TRADE_ACCOUNT, 需重启
+            "graduation": self.get_mode_status().get("graduation"),
+        }
 
     def get_toggle_history(self, limit: int = 20) -> list:
         """获取自动交易开关历史 (最近 limit 条)."""

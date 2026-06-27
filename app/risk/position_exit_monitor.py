@@ -228,11 +228,7 @@ class ExitMonitor:
         # Phase 3 (2026-05-31): 从 exit_policy.yaml 读取调度参数 (覆盖类常量, 实现外部化)
         self._reload_exit_monitor_params()
 
-        # Phase 3 (2026-05-31): ExitRuleDispatcher (影子模式) 与 EarningsGuard 注入
-        self._unified_dispatcher = None
-        self._dispatcher_shadow_mode = False
-        self._dispatcher_use_main = False
-        self._dispatcher_log_diff_only = True
+        # Phase 3 (2026-05-31): EarningsGuard 注入 (ExitRuleDispatcher shadow 已删除 2026-06-25, use_unified_dispatcher=false)
         self._earnings_guard_phase3 = None
         self._init_phase3_components()
 
@@ -352,36 +348,7 @@ class ExitMonitor:
             self._min_hold_minutes_cfg = 10.0
 
     def _init_phase3_components(self):
-        """初始化 ExitRuleDispatcher 与 EarningsGuard (Phase 3)"""
-        # 1. 读 feature flag
-        try:
-            from app.core.config_container import get_config
-            cfg = get_config()
-            if cfg is not None:
-                self._dispatcher_use_main = bool(cfg.get_dotted(
-                    "risk.exit_routing.use_unified_dispatcher", False))
-                self._dispatcher_shadow_mode = bool(cfg.get_dotted(
-                    "risk.exit_routing.log_comparison_mode", False))
-                self._dispatcher_log_diff_only = bool(cfg.get_dotted(
-                    "risk.exit_routing.log_diff_only", True))
-        except Exception as e:
-            logger.debug(f"[ExitMonitor] 读取 risk.exit_routing flags 失败: {e}")
-
-        # 2. 初始化 dispatcher (使用 exit_policy 作为配置源)
-        if self._dispatcher_shadow_mode or self._dispatcher_use_main:
-            try:
-                from app.risk.exit_rule_dispatcher import get_exit_rule_dispatcher
-                policy = self._load_exit_policy_dict()
-                self._unified_dispatcher = get_exit_rule_dispatcher(policy)
-                logger.info(
-                    f"✅ [ExitRuleDispatcher] 启用 "
-                    f"shadow={self._dispatcher_shadow_mode}, main={self._dispatcher_use_main}"
-                )
-            except Exception as e:
-                logger.warning(f"[ExitMonitor] ExitRuleDispatcher 初始化失败: {e}")
-                self._unified_dispatcher = None
-
-        # 3. 初始化 EarningsGuard (Phase 3 ATR 数学保护)
+        """初始化 EarningsGuard (Phase 3 ATR 数学保护). ExitRuleDispatcher shadow 已删除."""
         try:
             from app.risk.earnings_guard import get_earnings_guard
             policy = self._load_exit_policy_dict()
@@ -390,69 +357,6 @@ class ExitMonitor:
         except Exception as e:
             logger.debug(f"[ExitMonitor] EarningsGuard (Phase 3) 初始化失败: {e}")
             self._earnings_guard_phase3 = None
-
-    def _shadow_mode_enabled(self) -> bool:
-        """是否开启影子模式评估"""
-        return bool(self._dispatcher_shadow_mode and self._unified_dispatcher is not None)
-
-    def _shadow_evaluate(
-        self,
-        position,
-        current_price: float,
-        effective_atr: float,
-        trail_state: Dict[str, Any],
-        direction: str,
-        now_ts: float,
-        legacy_decision: Optional[Dict[str, Any]],
-    ) -> None:
-        """在影子模式下使用 ExitRuleDispatcher 评估 + 对比旧决策 (仅记录差异)"""
-        if not self._shadow_mode_enabled():
-            return
-        try:
-            # 构造 dispatcher 需要的代理数据
-            entry_price = float(getattr(position, "avg_entry_price", 0) or 0)
-            holding_hours = float(getattr(position, "holding_hours", 0) or 0)
-            pos_dict = {
-                "symbol": getattr(position, "symbol", "?"),
-                "position_id": getattr(position, "position_id", "") or getattr(position, "symbol", "?"),
-                "entry_price": entry_price,
-                "direction": direction,
-                "holding_hours": holding_hours,
-                "owner_strategy": getattr(position, "owner_strategy", "main"),
-            }
-            md_dict = {
-                "current_price": current_price,
-                "atr": effective_atr,
-                "now_ts": now_ts,
-            }
-            new_decision = self._unified_dispatcher.evaluate(pos_dict, md_dict, trail_state or {})
-            self._log_shadow_comparison(position, legacy_decision, new_decision)
-        except Exception as e:
-            logger.debug(f"[ExitMonitor] shadow evaluate 异常: {e}")
-
-    def _log_shadow_comparison(
-        self,
-        position,
-        legacy_decision: Optional[Dict[str, Any]],
-        new_decision,
-    ) -> None:
-        """输出影子模式下两路决策的差异日志"""
-        legacy_reason = None
-        if isinstance(legacy_decision, dict):
-            legacy_reason = legacy_decision.get("reason")
-        new_reason = getattr(new_decision, "rule_name", None) if new_decision else None
-
-        # log_diff_only=True 时不一致才输出
-        if self._dispatcher_log_diff_only and legacy_reason == new_reason:
-            return
-
-        logger.info(
-            "[shadow] symbol=%s legacy=%s new=%s suppressed=%s",
-            getattr(position, "symbol", "?"),
-            legacy_reason or "NONE",
-            new_reason or "NONE",
-            getattr(new_decision, "suppressed_rules", []) if new_decision else [],
-        )
 
     def _has_exit_record(self, symbol: str, exit_reason: str, max_minutes: int = 1440) -> bool:
         """
@@ -476,8 +380,10 @@ class ExitMonitor:
             count = cursor.fetchone()[0]
             conn.close()
             return count > 0
-        except Exception:
-            return False
+        except Exception as e:
+            # P0-fix: DB错误时 fail-safe 返回 True (假设已退出, 跳过本轮避免双重平仓)
+            logger.warning(f"[exit_monitor] _has_exit_record DB查询失败 (fail-safe=True): {e}")
+            return True
 
     def initialize(self, quote_ctx=None):
         """初始化工具"""
@@ -716,12 +622,8 @@ class ExitMonitor:
             return False
         return False
 
-    # Broker-first (2026-06-03): _is_broker_synced_position 已删除
-    # 所有仓位统一进入退出监控，双重平仓防护下沉到 _close_position 的持仓校验
-    @staticmethod
-    def _is_broker_synced_position(position) -> bool:
-        """DEPRECATED: 保留方法签名供外部引用不报错，但永远返回 False。"""
-        return False
+    # Broker-first (2026-06-03): broker-synced 仓位统一进入退出监控
+    # 双重平仓防护下沉到 _close_position 的持仓校验
 
     # ============================================================
     #  核心：扫描所有持仓
@@ -1171,22 +1073,9 @@ class ExitMonitor:
 
                 if selected_decision:
                     trail_state['effective_atr'] = effective_atr  # ATR观察日志需要
-                    # Phase 3 (2026-05-31): 影子模式 — 不干预主路径, 仅记录差异
-                    if self._shadow_mode_enabled():
-                        self._shadow_evaluate(
-                            position, current_price, effective_atr,
-                            trail_state, direction, now_ts, selected_decision,
-                        )
                     self._execute_exit(position, selected_decision, execute_close_fn, trail_state, now_ts)
                     closed.append({"symbol": symbol, "reason": selected_decision["reason"], "pnl_pct": pnl_pct})
                     continue
-
-                # Phase 3: 未触发任何退出时也走一轮 shadow 评估 (记录“应该退”却未退出的场景)
-                if self._shadow_mode_enabled():
-                    self._shadow_evaluate(
-                        position, current_price, effective_atr,
-                        trail_state, direction, now_ts, None,
-                    )
 
                 # 无规则触发 → 更新 trail_state 后跳到下一个持仓
                 self._update_trail_state(

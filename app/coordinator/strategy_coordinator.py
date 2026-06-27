@@ -354,6 +354,10 @@ class StrategyCoordinator:
             self.lock.reconcile_with_positions(by_strat_sym)
 
             # Task #35: 一次性更新 legacy + manual 占比 (原子, 避免 auto_pool 短暂为负)
+            # 2026-06-26: legacy_total_pct 封顶在 max_total, 避免 SIM 仓位 notional > equity
+            # 导致 auto_pool 永久为 0 (SIM 有杠杆, notional 可超过 equity)
+            _max_total = getattr(self.capital, '_max_total', 0.9)
+            legacy_total_pct = min(legacy_total_pct, _max_total * 0.8)  # 留至少20%给auto
             if hasattr(self.capital, "set_owner_pools"):
                 self.capital.set_owner_pools(legacy_total_pct, manual_total_pct)
             elif hasattr(self.capital, "set_manual_reserved"):

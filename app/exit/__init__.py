@@ -1,60 +1,7 @@
 """
-退出模块可插拔框架 (Exit Plug-in Framework)
+退出模块 — 仅保留 option_quick_exit (期权快速退出)。
 
-独立于现有退出管线，用于回测/分析/辩论引擎的退出评估。
-不直接替换 position_exit_monitor.py 中的逻辑 (Overlay 模式)。
-
-核心组件:
-- ExitProfile: 退出配置剖面 (可序列化)
-- ExitDecision: 退出决策 (复用现有结构)
-- BaseExitModule: 退出模块基类
-- ExitModuleRegistry: 退出模块注册中心
-
-退出模块:
-- AtrExitModule: ATR 倍数止损
-- TrailingExitModule: Chandelier 追踪止损
-- ScaleOutExitModule: 分层止盈
-- DynamicRiskExit: 动态风控 (ATR止损+个股风险限制+连续亏损熔断)
-
-成本与仓位:
-- CostModel: 交易成本模型 (佣金+滑点+价差)
-- PositionSizing: ATR仓位控制 (风险定仓+Edge过滤)
+其余可插拔退出框架已于 2026-06-25 审计后删除 (仅被已删除的 harness/ 引用, 1786行死代码)。
+生产退出逻辑由 app/risk/exit_rule_dispatcher.py + app/risk/exit_rules/ 管理。
 """
-from app.exit.base import (
-    ExitProfile,
-    ExitDecision,
-    BaseExitModule,
-)
-from app.exit.registry import ExitModuleRegistry, get_exit_registry
-from app.exit.cost_model import CostModel, CostEstimate
-from app.exit.position_sizing import PositionSizing, SizingResult
-
-
-def _auto_register() -> None:
-    """自动注册所有内置退出模块"""
-    from app.exit.atr_exit import AtrExitModule
-    from app.exit.trailing_exit import TrailingExitModule
-    from app.exit.scale_out_exit import ScaleOutExitModule
-    from app.exit.dynamic_risk import DynamicRiskExit
-
-    registry = get_exit_registry()
-    for mod_cls in [AtrExitModule, TrailingExitModule, ScaleOutExitModule, DynamicRiskExit]:
-        if mod_cls.name not in registry.list_available():
-            registry.register(mod_cls)
-
-
-_auto_register()
-
-
-__all__ = [
-    "ExitProfile",
-    "ExitDecision",
-    "BaseExitModule",
-    "ExitModuleRegistry",
-    "get_exit_registry",
-    "DynamicRiskExit",
-    "CostModel",
-    "CostEstimate",
-    "PositionSizing",
-    "SizingResult",
-]
+from app.exit.option_quick_exit import get_quick_exit_engine

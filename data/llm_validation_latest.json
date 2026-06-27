@@ -1,22 +1,22 @@
 {
-  "timestamp": "2026-06-18T13:16:39.124479+00:00",
+  "timestamp": "2026-06-26T13:03:07.238199+00:00",
   "regime": "NEUTRAL",
   "validated": [
     {
-      "symbol": "US.NTES",
+      "symbol": "US.QCOM",
       "verdict": "VALID",
       "direction": "LONG",
       "confidence": 95,
       "entry_zone": [
-        119.69,
-        121.63
+        162.69,
+        165.32
       ],
-      "stop_loss": 116.55,
-      "take_profit": 128.15,
+      "stop_loss": 158.42,
+      "take_profit": 174.2,
       "risk_reward": 1.7,
       "position_size_pct": 6,
-      "invalidation": "收盘破 116.55 (1.8x ATR)",
-      "trigger_condition": "价格进入 119.69-121.63 区间",
+      "invalidation": "收盘破 158.42 (1.8x ATR)",
+      "trigger_condition": "价格进入 162.69-165.32 区间",
       "execution_rules": {
         "gap_up_over_2pct": "SKIP",
         "gap_down_over_2pct": "SKIP",
@@ -27,30 +27,100 @@
         "relative_strength": "CONFIRMED",
         "ma_alignment": "CONFIRMED",
         "volume_breakout": "CONFIRMED",
-        "rsi_sweet_spot": "CONFIRMED",
-        "insider_signal": "WEAK"
+        "rsi_sweet_spot": "WEAK",
+        "insider_signal": "WEAK",
+        "fundamental_quality": "CONFIRMED",
+        "sentiment_crowding": "WEAK"
+      },
+      "audit_flags": [],
+      "factor_score": 0.764,
+      "model_used": "deterministic_rules"
+    },
+    {
+      "symbol": "US.LLY",
+      "verdict": "VALID",
+      "direction": "LONG",
+      "confidence": 95,
+      "entry_zone": [
+        740.86,
+        752.84
+      ],
+      "stop_loss": 721.41,
+      "take_profit": 793.25,
+      "risk_reward": 1.7,
+      "position_size_pct": 5,
+      "invalidation": "收盘破 721.41 (1.8x ATR)",
+      "trigger_condition": "价格进入 740.86-752.84 区间",
+      "execution_rules": {
+        "gap_up_over_2pct": "SKIP",
+        "gap_down_over_2pct": "SKIP",
+        "hit_zone_then_drop": "WAIT_5MIN_CANDLE_ABOVE"
+      },
+      "factor_validation": {
+        "sector_momentum": "WEAK",
+        "relative_strength": "CONFIRMED",
+        "ma_alignment": "CONFIRMED",
+        "volume_breakout": "CONFIRMED",
+        "rsi_sweet_spot": "WEAK",
+        "insider_signal": "WEAK",
+        "fundamental_quality": "WEAK",
+        "sentiment_crowding": "CONFIRMED"
+      },
+      "audit_flags": [],
+      "factor_score": 0.739,
+      "model_used": "deterministic_rules"
+    },
+    {
+      "symbol": "US.JPM",
+      "verdict": "VALID",
+      "direction": "LONG",
+      "confidence": 95,
+      "entry_zone": [
+        307.16,
+        312.12
+      ],
+      "stop_loss": 299.09,
+      "take_profit": 328.88,
+      "risk_reward": 1.7,
+      "position_size_pct": 5,
+      "invalidation": "收盘破 299.09 (1.8x ATR)",
+      "trigger_condition": "价格进入 307.16-312.12 区间",
+      "execution_rules": {
+        "gap_up_over_2pct": "SKIP",
+        "gap_down_over_2pct": "SKIP",
+        "hit_zone_then_drop": "WAIT_5MIN_CANDLE_ABOVE"
+      },
+      "factor_validation": {
+        "sector_momentum": "WEAK",
+        "relative_strength": "CONFIRMED",
+        "ma_alignment": "CONFIRMED",
+        "volume_breakout": "CONFIRMED",
+        "rsi_sweet_spot": "WEAK",
+        "insider_signal": "WEAK",
+        "fundamental_quality": "CONFIRMED",
+        "sentiment_crowding": "FALSE_POSITIVE"
       },
       "audit_flags": [
-        "历史胜率仅0%"
+        "1个非量因子FALSE_POSITIVE"
       ],
-      "factor_score": 0.825,
+      "factor_score": 0.721,
       "model_used": "deterministic_rules"
     },
     {
-      "symbol": "US.AMD",
+      "symbol": "US.AAPL",
       "verdict": "VALID",
       "direction": "LONG",
       "confidence": 85,
       "entry_zone": [
-        507.36,
-        515.55
+        242.36,
+        246.28
       ],
-      "stop_loss": 494.03,
-      "take_profit": 543.23,
+      "stop_loss": 235.99,
+      "take_profit": 259.5,
       "risk_reward": 1.7,
       "position_size_pct": 5,
-      "invalidation": "收盘破 494.03 (1.8x ATR)",
-      "trigger_condition": "价格进入 507.36-515.55 区间",
+      "invalidation": "收盘破 235.99 (1.8x ATR)",
+      "trigger_condition": "价格进入 242.36-246.28 区间",
       "execution_rules": {
         "gap_up_over_2pct": "SKIP",
         "gap_down_over_2pct": "SKIP",
@@ -60,29 +130,34 @@
         "sector_momentum": "WEAK",
         "relative_strength": "CONFIRMED",
         "ma_alignment": "CONFIRMED",
-        "volume_breakout": "WEAK",
-        "rsi_sweet_spot": "CONFIRMED",
-        "insider_signal": "WEAK"
+        "volume_breakout": "CONFIRMED",
+        "rsi_sweet_spot": "WEAK",
+        "insider_signal": "WEAK",
+        "fundamental_quality": "WEAK",
+        "sentiment_crowding": "FALSE_POSITIVE"
       },
-      "audit_flags": [],
-      "factor_score": 0.711,
+      "audit_flags": [
+        "1个非量因子FALSE_POSITIVE",
+        "历史胜率仅25%"
+      ],
+      "factor_score": 0.691,
       "model_used": "deterministic_rules"
     },
     {
-      "symbol": "US.LMT",
+      "symbol": "US.AMZN",
       "verdict": "VALID",
       "direction": "LONG",
-      "confidence": 85,
+      "confidence": 95,
       "entry_zone": [
-        527.0,
-        535.51
+        229.17,
+        232.87
       ],
-      "stop_loss": 513.16,
-      "take_profit": 564.26,
+      "stop_loss": 223.15,
+      "take_profit": 245.37,
       "risk_reward": 1.7,
       "position_size_pct": 5,
-      "invalidation": "收盘破 513.16 (1.8x ATR)",
-      "trigger_condition": "价格进入 527.00-535.51 区间",
+      "invalidation": "收盘破 223.15 (1.8x ATR)",
+      "trigger_condition": "价格进入 229.17-232.87 区间",
       "execution_rules": {
         "gap_up_over_2pct": "SKIP",
         "gap_down_over_2pct": "SKIP",
@@ -91,30 +166,32 @@
       "factor_validation": {
         "sector_momentum": "WEAK",
         "relative_strength": "CONFIRMED",
-        "ma_alignment": "CONFIRMED",
-        "volume_breakout": "WEAK",
-        "rsi_sweet_spot": "CONFIRMED",
-        "insider_signal": "WEAK"
+        "ma_alignment": "WEAK",
+        "volume_breakout": "CONFIRMED",
+        "rsi_sweet_spot": "WEAK",
+        "insider_signal": "WEAK",
+        "fundamental_quality": "CONFIRMED",
+        "sentiment_crowding": "CONFIRMED"
       },
       "audit_flags": [],
-      "factor_score": 0.684,
+      "factor_score": 0.681,
       "model_used": "deterministic_rules"
     },
     {
-      "symbol": "US.TSM",
-      "verdict": "INVALID",
+      "symbol": "US.MSFT",
+      "verdict": "VALID",
       "direction": "LONG",
-      "confidence": 30,
+      "confidence": 95,
       "entry_zone": [
-        427.83,
-        434.74
+        509.52,
+        517.76
       ],
-      "stop_loss": 416.59,
-      "take_profit": 458.08,
+      "stop_loss": 496.14,
+      "take_profit": 545.55,
       "risk_reward": 1.7,
       "position_size_pct": 5,
-      "invalidation": "收盘破 416.59 (1.8x ATR)",
-      "trigger_condition": "价格进入 427.83-434.74 区间",
+      "invalidation": "收盘破 496.14 (1.8x ATR)",
+      "trigger_condition": "价格进入 509.52-517.76 区间",
       "execution_rules": {
         "gap_up_over_2pct": "SKIP",
         "gap_down_over_2pct": "SKIP",
@@ -124,29 +201,33 @@
         "sector_momentum": "WEAK",
         "relative_strength": "CONFIRMED",
         "ma_alignment": "CONFIRMED",
-        "volume_breakout": "WEAK",
+        "volume_breakout": "CONFIRMED",
         "rsi_sweet_spot": "WEAK",
-        "insider_signal": "WEAK"
+        "insider_signal": "WEAK",
+        "fundamental_quality": "CONFIRMED",
+        "sentiment_crowding": "FALSE_POSITIVE"
       },
-      "audit_flags": [],
-      "factor_score": 0.647,
+      "audit_flags": [
+        "1个非量因子FALSE_POSITIVE"
+      ],
+      "factor_score": 0.677,
       "model_used": "deterministic_rules"
     },
     {
-      "symbol": "US.ARM",
-      "verdict": "INVALID",
+      "symbol": "US.SMCI",
+      "verdict": "VALID",
       "direction": "LONG",
-      "confidence": 30,
+      "confidence": 95,
       "entry_zone": [
-        414.69,
-        421.39
+        45.35,
+        46.08
       ],
-      "stop_loss": 403.8,
-      "take_profit": 444.01,
+      "stop_loss": 44.16,
+      "take_profit": 48.56,
       "risk_reward": 1.7,
       "position_size_pct": 5,
-      "invalidation": "收盘破 403.80 (1.8x ATR)",
-      "trigger_condition": "价格进入 414.69-421.39 区间",
+      "invalidation": "收盘破 44.16 (1.8x ATR)",
+      "trigger_condition": "价格进入 45.35-46.08 区间",
       "execution_rules": {
         "gap_up_over_2pct": "SKIP",
         "gap_down_over_2pct": "SKIP",
@@ -157,28 +238,32 @@
         "relative_strength": "CONFIRMED",
         "ma_alignment": "CONFIRMED",
         "volume_breakout": "WEAK",
-        "rsi_sweet_spot": "WEAK",
-        "insider_signal": "WEAK"
+        "rsi_sweet_spot": "FALSE_POSITIVE",
+        "insider_signal": "WEAK",
+        "fundamental_quality": "CONFIRMED",
+        "sentiment_crowding": "CONFIRMED"
       },
-      "audit_flags": [],
-      "factor_score": 0.645,
+      "audit_flags": [
+        "1个非量因子FALSE_POSITIVE"
+      ],
+      "factor_score": 0.672,
       "model_used": "deterministic_rules"
     },
     {
-      "symbol": "US.MU",
-      "verdict": "INVALID",
+      "symbol": "US.PLTR",
+      "verdict": "VALID",
       "direction": "LONG",
-      "confidence": 30,
+      "confidence": 95,
       "entry_zone": [
-        1032.76,
-        1049.45
+        180.57,
+        183.48
       ],
-      "stop_loss": 1005.64,
-      "take_profit": 1105.78,
+      "stop_loss": 175.82,
+      "take_profit": 193.33,
       "risk_reward": 1.7,
       "position_size_pct": 5,
-      "invalidation": "收盘破 1005.64 (1.8x ATR)",
-      "trigger_condition": "价格进入 1032.76-1049.45 区间",
+      "invalidation": "收盘破 175.82 (1.8x ATR)",
+      "trigger_condition": "价格进入 180.57-183.48 区间",
       "execution_rules": {
         "gap_up_over_2pct": "SKIP",
         "gap_down_over_2pct": "SKIP",
@@ -188,81 +273,21 @@
         "sector_momentum": "WEAK",
         "relative_strength": "CONFIRMED",
         "ma_alignment": "CONFIRMED",
-        "volume_breakout": "WEAK",
-        "rsi_sweet_spot": "WEAK",
-        "insider_signal": "WEAK"
+        "volume_breakout": "CONFIRMED",
+        "rsi_sweet_spot": "FALSE_POSITIVE",
+        "insider_signal": "WEAK",
+        "fundamental_quality": "WEAK",
+        "sentiment_crowding": "CONFIRMED"
       },
-      "audit_flags": [],
-      "factor_score": 0.643,
-      "model_used": "deterministic_rules"
-    },
-    {
-      "symbol": "US.SNDK",
-      "verdict": "INVALID",
-      "direction": "LONG",
-      "confidence": 30,
-      "entry_zone": [
-        1939.21,
-        1970.55
+      "audit_flags": [
+        "1个非量因子FALSE_POSITIVE"
       ],
-      "stop_loss": 1888.28,
-      "take_profit": 2076.33,
-      "risk_reward": 1.7,
-      "position_size_pct": 5,
-      "invalidation": "收盘破 1888.28 (1.8x ATR)",
-      "trigger_condition": "价格进入 1939.21-1970.55 区间",
-      "execution_rules": {
-        "gap_up_over_2pct": "SKIP",
-        "gap_down_over_2pct": "SKIP",
-        "hit_zone_then_drop": "WAIT_5MIN_CANDLE_ABOVE"
-      },
-      "factor_validation": {
-        "sector_momentum": "WEAK",
-        "relative_strength": "CONFIRMED",
-        "ma_alignment": "CONFIRMED",
-        "volume_breakout": "WEAK",
-        "rsi_sweet_spot": "WEAK",
-        "insider_signal": "WEAK"
-      },
-      "audit_flags": [],
-      "factor_score": 0.642,
-      "model_used": "deterministic_rules"
-    },
-    {
-      "symbol": "US.PG",
-      "verdict": "INVALID",
-      "direction": "LONG",
-      "confidence": 30,
-      "entry_zone": [
-        149.05,
-        151.46
-      ],
-      "stop_loss": 145.14,
-      "take_profit": 159.59,
-      "risk_reward": 1.7,
-      "position_size_pct": 5,
-      "invalidation": "收盘破 145.14 (1.8x ATR)",
-      "trigger_condition": "价格进入 149.05-151.46 区间",
-      "execution_rules": {
-        "gap_up_over_2pct": "SKIP",
-        "gap_down_over_2pct": "SKIP",
-        "hit_zone_then_drop": "WAIT_5MIN_CANDLE_ABOVE"
-      },
-      "factor_validation": {
-        "sector_momentum": "WEAK",
-        "relative_strength": "CONFIRMED",
-        "ma_alignment": "CONFIRMED",
-        "volume_breakout": "WEAK",
-        "rsi_sweet_spot": "WEAK",
-        "insider_signal": "WEAK"
-      },
-      "audit_flags": [],
-      "factor_score": 0.639,
+      "factor_score": 0.666,
       "model_used": "deterministic_rules"
     }
   ],
-  "valid_count": 3,
+  "valid_count": 8,
   "conditional_count": 0,
-  "invalid_count": 5,
+  "invalid_count": 0,
   "elapsed_sec": 0.4
 }

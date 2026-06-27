@@ -53,6 +53,118 @@ def is_market_hours() -> bool:
     return 915 <= hour_min <= 1605
 
 
+def get_futu_quote_ctx():
+    """获取 Futu quote context (替代 Finnhub client)"""
+    try:
+        from app.web_dashboard.manual_order_service import ManualOrderService
+        svc = ManualOrderService()
+        if svc.connect():
+            return svc
+        logger.error("[Futu] connect failed")
+        return None
+    except Exception as e:
+        logger.error(f"[Futu] error: {e}")
+        return None
+
+
+def futu_disconnect(svc):
+    """安全断开 Futu 连接"""
+    try:
+        if svc:
+            svc.disconnect()
+    except Exception:
+        pass
+
+
+def scan_price_moves_futu(svc, pool: list) -> dict:
+    """用 Futu get_market_snapshot 批量扫描价格异动 (1次调用扫全部)
+
+    Returns: {symbol: {change_pct, price, prev_close, pre_change_rate, volume_ratio}}
+    """
+    from futu import RET_OK
+    moves = {}
+
+    # 批量查询 (Futu snapshot 支持一次查多只)
+    batch_size = 20
+    for i in range(0, len(pool), batch_size):
+        batch = pool[i:i + batch_size]
+        try:
+            ret, data = svc._quote_ctx.get_market_snapshot(batch)
+            if ret != RET_OK or data.empty:
+                continue
+            for _, row in data.iterrows():
+                code = row.get("code", "")
+                prev_close = row.get("prev_close_price", 0)
+                last = row.get("last_price", 0)
+                if not prev_close or prev_close <= 0 or not last:
+                    continue
+                change = round((last - prev_close) / prev_close * 100, 2)
+                pre_change = row.get("pre_change_rate", 0)
+                if abs(change) >= PRICE_MOVE_THRESHOLD or abs(pre_change) >= PRICE_MOVE_THRESHOLD:
+                    moves[code] = {
+                        "change_pct": change,
+                        "price": last,
+                        "prev_close": prev_close,
+                        "pre_change_rate": pre_change,
+                        "volume_ratio": row.get("volume_ratio", 1.0),
+                    }
+        except Exception as e:
+            logger.debug(f"[PriceScan] batch error: {e}")
+
+    logger.info(f"[PriceScan] Futu snapshot: {len(pool)} stocks scanned, {len(moves)} movers (>={PRICE_MOVE_THRESHOLD}%)")
+    return moves
+
+
+def quick_factor_score_futu(svc, code: str, price_info: dict) -> float:
+    """快速因子评分 (用 Futu snapshot, 无需 Finnhub)
+
+    因子:
+    - 日内动量: 涨跌幅度 vs 前收
+    - 量比: 放量确认
+    - 买卖盘: bid_ask_ratio
+    """
+    from futu import RET_OK
+    scores = []
+
+    change = price_info.get("change_pct", 0)
+    vol_ratio = price_info.get("volume_ratio", 1.0)
+
+    # Factor 1: 日内动量
+    if 2 <= change <= 7:
+        scores.append(0.9)
+    elif 7 < change <= 12:
+        scores.append(0.6)
+    elif change > 12:
+        scores.append(0.2)
+    elif -3 <= change < 2:
+        scores.append(0.5)
+    elif -7 <= change < -3:
+        scores.append(0.4)
+    else:
+        scores.append(0.1)
+
+    # Factor 2: 量比 (放量 = 高关注度)
+    if vol_ratio >= 2.0:
+        scores.append(0.9)
+    elif vol_ratio >= 1.5:
+        scores.append(0.7)
+    elif vol_ratio >= 1.0:
+        scores.append(0.5)
+    else:
+        scores.append(0.3)
+
+    # Factor 3: 盘前异动 (如果有盘前数据)
+    pre_change = price_info.get("pre_change_rate", 0)
+    if abs(pre_change) >= 2:
+        scores.append(0.8)  # 盘前已有异动
+    elif abs(pre_change) >= 1:
+        scores.append(0.6)
+    else:
+        scores.append(0.4)
+
+    return round(sum(scores) / len(scores), 3) if scores else 0.0
+
+
 def get_finnhub_client():
     """获取 Finnhub 客户端"""
     from app.data.premarket_enrichment import _get_finnhub_client
@@ -353,8 +465,141 @@ def push_alert(targets: list):
         logger.warning(f"[Alert] Feishu error: {e}")
 
 
+def check_plan_health(svc) -> list:
+    """方案2: 计划健康检查 — 对每个target检查当前价vs入场区间/止损
+
+    Returns: list of dicts with status changes that need alerting
+    """
+    from futu import RET_OK
+    if not PLAN_PATH.exists():
+        return []
+
+    plan = json.loads(PLAN_PATH.read_text())
+    targets = plan.get("targets", [])
+    if not targets:
+        return []
+
+    symbols = [t.get("symbol", "") for t in targets if t.get("symbol")]
+    if not symbols:
+        return []
+
+    alerts = []
+
+    # Batch snapshot
+    batch_size = 20
+    prices = {}
+    for i in range(0, len(symbols), batch_size):
+        batch = symbols[i:i + batch_size]
+        try:
+            ret, data = svc._quote_ctx.get_market_snapshot(batch)
+            if ret != RET_OK or data.empty:
+                continue
+            for _, row in data.iterrows():
+                code = row.get("code", "")
+                prices[code] = {
+                    "last": row.get("last_price", 0),
+                    "prev_close": row.get("prev_close_price", 0),
+                }
+        except Exception:
+            pass
+
+    for t in targets:
+        sym = t.get("symbol", "")
+        direction = t.get("direction", "LONG")
+        entry = t.get("entry_zone", [0, 0])
+        sl = t.get("stop_loss", 0)
+        tp = t.get("take_profit", 0)
+        cur = prices.get(sym, {}).get("last", 0)
+        old_status = t.get("_intraday_status", "")
+
+        if not cur or not entry or len(entry) < 2:
+            continue
+
+        # Determine status
+        if direction == "LONG":
+            if cur <= sl and sl > 0:
+                new_status = "BREACHED_STOP"
+            elif cur >= tp and tp > 0:
+                new_status = "HIT_TARGET"
+            elif entry[0] <= cur <= entry[1]:
+                new_status = "IN_ENTRY_ZONE"
+            elif cur > entry[1]:
+                new_status = "ABOVE_ENTRY"
+            else:
+                new_status = "BELOW_ENTRY"
+        else:  # SHORT
+            if cur >= sl and sl > 0:
+                new_status = "BREACHED_STOP"
+            elif cur <= tp and tp > 0:
+                new_status = "HIT_TARGET"
+            elif entry[0] <= cur <= entry[1]:
+                new_status = "IN_ENTRY_ZONE"
+            elif cur < entry[0]:
+                new_status = "BELOW_ENTRY"
+            else:
+                new_status = "ABOVE_ENTRY"
+
+        # Status change → alert
+        if new_status != old_status and new_status in ("IN_ENTRY_ZONE", "BREACHED_STOP", "HIT_TARGET"):
+            alerts.append({
+                "symbol": sym,
+                "direction": direction,
+                "status": new_status,
+                "price": cur,
+                "entry_zone": entry,
+                "stop_loss": sl,
+                "take_profit": tp,
+            })
+
+        # Update target status in plan
+        t["_intraday_status"] = new_status
+        t["_intraday_price"] = cur
+        t["_intraday_checked_at"] = datetime.now(timezone.utc).isoformat()
+
+    # Save updated statuses
+    plan["targets"] = targets
+    plan["_last_health_check"] = datetime.now(timezone.utc).isoformat()
+    with open(PLAN_PATH, "w") as f:
+        json.dump(plan, f, ensure_ascii=False, indent=2, default=str)
+
+    return alerts
+
+
+def push_health_alerts(alerts: list):
+    """方案6: 飞书推送计划状态变化"""
+    if not alerts:
+        return
+
+    from app.notifier.feishu import send_text
+
+    lines = ["⚡ 计划状态变化\n"]
+    for a in alerts:
+        sym = a["symbol"].replace("US.", "")
+        status = a["status"]
+        direction = a["direction"]
+        price = a["price"]
+        entry = a["entry_zone"]
+
+        icon = {"IN_ENTRY_ZONE": "🎯", "BREACHED_STOP": "🛑", "HIT_TARGET": "✅"}.get(status, "⚠️")
+        dir_icon = "🔴" if direction == "SHORT" else "🟢"
+
+        if status == "IN_ENTRY_ZONE":
+            lines.append(f"{icon} {dir_icon} {sym} 进入入场区间 ${entry[0]}-{entry[1]} (当前${price:.2f})")
+        elif status == "BREACHED_STOP":
+            lines.append(f"{icon} {dir_icon} {sym} 突破止损 ${a['stop_loss']} (当前${price:.2f})")
+        elif status == "HIT_TARGET":
+            lines.append(f"{icon} {dir_icon} {sym} 触达目标 ${a['take_profit']} (当前${price:.2f})")
+
+    msg = "\n".join(lines)
+    try:
+        send_text(msg)
+        logger.info(f"[HealthAlert] 📢 Pushed {len(alerts)} status changes")
+    except Exception as e:
+        logger.warning(f"[HealthAlert] Feishu error: {e}")
+
+
 def run_scan():
-    """主扫描流程"""
+    """主扫描流程 (Futu主数据源, Finnhub降级)"""
     if not is_market_hours():
         logger.info("[Scan] Outside market hours, skip")
         return
@@ -362,19 +607,29 @@ def run_scan():
     logger.info("[Scan] === Intraday scan start ===")
     t0 = time.time()
 
-    client = get_finnhub_client()
-    if not client:
-        logger.error("[Scan] No Finnhub client")
-        return
+    # 方案1: 优先用 Futu, 降级用 Finnhub
+    use_futu = True
+    svc = get_futu_quote_ctx()
+    if not svc:
+        logger.warning("[Scan] Futu unavailable, falling back to Finnhub")
+        use_futu = False
+        client = get_finnhub_client()
+        if not client:
+            logger.error("[Scan] No data source (Futu + Finnhub both failed)")
+            return
 
     # 1. 获取扫描池 & 已有 targets
     pool = get_scan_pool()
     existing = get_existing_targets()
     logger.info(f"[Scan] Pool: {len(pool)} stocks, existing targets: {len(existing)}")
 
-    # 2. 并行: 价格扫描 + 新闻扫描
-    price_moves = scan_price_moves(client, pool)
-    news_hits = scan_breaking_news(client)
+    # 2. 价格扫描
+    if use_futu:
+        price_moves = scan_price_moves_futu(svc, pool)
+        news_hits = {}  # Futu无新闻API, 降级为空 (等Finnhub key修复)
+    else:
+        price_moves = scan_price_moves(client, pool)
+        news_hits = scan_breaking_news(client)
 
     # 3. 合并: 价格异动 OR 突发新闻 → 候选
     candidates = set()
@@ -383,17 +638,17 @@ def run_scan():
     candidates -= existing  # 去掉已有的
     logger.info(f"[Scan] Candidates: {len(candidates)} (after dedup)")
 
-    if not candidates:
-        logger.info(f"[Scan] No new candidates ({time.time()-t0:.1f}s)")
-        return
-
     # 4. 快速因子评分
     scored = []
     for code in candidates:
-        move_info = price_moves.get(code, {"change_pct": 0, "price": 0, "prev_close": 0})
+        move_info = price_moves.get(code, {"change_pct": 0, "price": 0, "prev_close": 0, "volume_ratio": 1.0, "pre_change_rate": 0})
         news_info = news_hits.get(code, {})
 
-        score = quick_factor_score(client, code, move_info)
+        if use_futu:
+            score = quick_factor_score_futu(svc, code, move_info)
+        else:
+            score = quick_factor_score(client, code, move_info)
+
         if score >= ALERT_THRESHOLD_SCORE:
             target = build_intraday_target(code, score, move_info, news_info)
             scored.append((score, target))
@@ -406,12 +661,20 @@ def run_scan():
         new_targets = [t for _, t in scored[:MAX_INTRADAY_TARGETS]]
         injected = inject_targets(new_targets)
         if injected > 0:
-            # 只推 HIGH urgency
             urgent = [t for t in new_targets if t.get("urgency") == "HIGH"]
             if urgent:
                 push_alert(urgent)
             else:
                 push_alert(new_targets[:3])
+
+    # 6. 方案2: 计划健康检查 (Futu only)
+    if use_futu:
+        alerts = check_plan_health(svc)
+        if alerts:
+            push_health_alerts(alerts)
+
+    if use_futu:
+        futu_disconnect(svc)
 
     elapsed = time.time() - t0
     logger.info(f"[Scan] === Done in {elapsed:.1f}s ===")

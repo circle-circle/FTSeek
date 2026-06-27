@@ -7,7 +7,9 @@ Dashboard 路由 — 指挥中心首页 + 统一 Snapshot 端点
   Futu RPC 从 10+ 次降到 3 次 (accinfo + positions + snapshot_batch)
 """
 import asyncio
+import json
 import logging
+import os
 import sqlite3
 from datetime import datetime
 from fastapi import APIRouter, Request
@@ -16,9 +18,13 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from app.web_dashboard.data_service import (
     get_data_service, safe_float, et_today,
 )
+from app.metrics import SourceTaxonomy
 
 logger = logging.getLogger("ftseek_us.routes.dashboard")
 router = APIRouter()
+
+# 统一口径: 以下 source_type 为已废弃/禁用, 不纳入 Dashboard 统计
+EXCLUDED_SOURCE_TYPES = SourceTaxonomy.EXCLUDED
 
 
 def register(app, templates, dashboard):
@@ -27,60 +33,12 @@ def register(app, templates, dashboard):
     @router.get("/", response_class=HTMLResponse)
     async def dashboard_home(request: Request):
         is_live = _is_live()
-        stats = dashboard.get_stats()
         return templates.TemplateResponse("dashboard.html", {
             "request": request,
             "title": "FTSeek-US Dashboard",
-            "stats": stats,
             "is_live": is_live,
             "current_time": datetime.now().isoformat(),
         })
-
-    @router.get("/api/stats")
-    async def get_stats():
-        ds = get_data_service()
-        cached = ds.cache.get("stats")
-        if cached is not None:
-            return cached
-        result = dashboard.get_stats()
-        ds.cache.set("stats", result, ttl=10)
-        return result
-
-    @router.get("/api/positions")
-    async def get_positions():
-        """DB 优先, 实盘 fallback broker"""
-        db_positions = dashboard.get_positions()
-        if db_positions:
-            return {"positions": db_positions, "source": "db"}
-
-        # Fallback: broker
-        ds = get_data_service()
-        try:
-            raw = await ds.get_positions_raw()
-            if raw:
-                positions = []
-                for row in raw:
-                    qty = float(row.get("qty", 0))
-                    side = str(row.get("position_side", "")).upper()
-                    if qty == 0 and side not in ("LONG", "SHORT"):
-                        continue
-                    is_short = (qty < 0) or (side == "SHORT")
-                    positions.append({
-                        "symbol": str(row.get("code", "")),
-                        "direction": "SHORT" if is_short else "LONG",
-                        "quantity": abs(qty),
-                        "entry_price": float(row.get("cost_price", 0)),
-                        "current_price": float(row.get("cur_price", 0)),
-                        "market_value": float(row.get("market_val", 0)),
-                        "unrealized_pnl": float(row.get("unrealized_pl", 0)),
-                        "owner": "auto",
-                    })
-                if positions:
-                    return {"positions": positions, "source": "broker"}
-        except Exception as e:
-            logger.debug(f"[positions] broker fallback failed: {e}")
-
-        return {"positions": [], "source": "empty"}
 
     @router.get("/api/account")
     async def get_account():
@@ -215,23 +173,40 @@ def register(app, templates, dashboard):
 
         # ── 14. Today's closed trades ──
         today_closed = []
+        today_closed_total = 0
         try:
             _today_et = et_today()
+            _excluded = ", ".join(f"'{s}'" for s in EXCLUDED_SOURCE_TYPES)
+            _cnt_row = await ds.db_query(
+                f"SELECT COUNT(*) AS c FROM trade_records "
+                f"WHERE exit_time IS NOT NULL AND exit_price > 0 AND DATE(exit_time) = ? "
+                f"AND source_type NOT IN ({_excluded})",
+                (_today_et,),
+            )
+            today_closed_total = (_cnt_row[0].get("c", 0) if _cnt_row else 0)
             rows = await ds.db_query(
-                "SELECT symbol, direction, entry_price, exit_price, pnl_pct, realized_pnl, "
-                "exit_reason, exit_time FROM trade_records "
-                "WHERE exit_time IS NOT NULL AND exit_price > 0 AND DATE(exit_time) = ? "
-                "ORDER BY exit_time DESC LIMIT 10",
+                f"SELECT symbol, direction, entry_price, exit_price, pnl_pct, realized_pnl, "
+                f"exit_reason, exit_time, holding_hours, source_type FROM trade_records "
+                f"WHERE exit_time IS NOT NULL AND exit_price > 0 AND DATE(exit_time) = ? "
+                f"AND source_type NOT IN ({_excluded}) "
+                f"ORDER BY exit_time DESC LIMIT 200",
                 (_today_et,),
             )
             for r in rows:
+                _et = r.get("exit_time") or ""
+                # exit_time 形如 "2026-06-23T22:31:49.944242" → 取 HH:MM (旧 [-8:-3] 切到微秒导致乱码)
+                _hhmm = _et[11:16] if len(_et) >= 16 else _et[-5:]
                 today_closed.append({
                     "symbol": (r.get("symbol") or "").replace("US.", ""),
                     "direction": r.get("direction", ""),
                     "pnl_pct": round(float(r.get("pnl_pct", 0) or 0) * 100, 1),
                     "pnl_usd": round(float(r.get("realized_pnl", 0) or 0), 2),
                     "exit_reason": r.get("exit_reason", ""),
-                    "exit_time": (r.get("exit_time") or "")[-8:-3],  # HH:MM
+                    "exit_time": _hhmm,
+                    "holding_hours": round(float(r.get("holding_hours") or 0), 2),
+                    "entry_price": round(float(r.get("entry_price") or 0), 2),
+                    "exit_price": round(float(r.get("exit_price") or 0), 2),
+                    "source_type": r.get("source_type", ""),
                 })
         except Exception:
             pass
@@ -245,11 +220,36 @@ def register(app, templates, dashboard):
         # ── 17. Concentration (行业集中度) ──
         concentration = _calc_concentration(positions, equity)
 
+        # ── 18. OKR 进度摘要 (从 okr_latest.json, okr_baseline 每次跑更新) ──
+        okr_summary = _load_okr_summary(today_closed)
+
+        # ── 19. Graduation 门禁 + 因子性能 + auto_account (Phase 3 打磨循环眼睛) ──
+        graduation = None
+        factor_stats = []
+        auto_account = "sim"
+        try:
+            from app.playbook.pipeline import _check_graduation_gate
+            graduation = _check_graduation_gate()
+        except Exception as _ge:
+            logger.debug(f"[dashboard] graduation 查询失败: {_ge}")
+        try:
+            from app.playbook.playbook_service import get_playbook_service
+            _fs = get_playbook_service().get_factor_stats() or {}
+            factor_stats = _fs.get("single", []) if isinstance(_fs, dict) else (_fs or [])
+        except Exception as _fe:
+            logger.debug(f"[dashboard] factor_stats 查询失败: {_fe}")
+        try:
+            from app.web_dashboard.mode_switch_service import get_mode_switch_service
+            auto_account = get_mode_switch_service().get_mode_status().get("auto_account", "sim")
+        except Exception:
+            pass
+
         return {
             "account": account,
             "positions": positions,
             "today_orders": today_orders,
             "today_closed": today_closed,
+            "today_closed_total": today_closed_total,
             "market": market,
             "margin": margin,
             "exposure": exposure,
@@ -262,6 +262,10 @@ def register(app, templates, dashboard):
             "decision": decision,
             "weekly_pnl": weekly_pnl,
             "concentration": concentration,
+            "okr_summary": okr_summary,
+            "graduation": graduation,
+            "factor_stats": factor_stats,
+            "auto_account": auto_account,
             "mode": mode,
             "is_live": is_live,
             "timestamp": datetime.now().isoformat(),
@@ -534,8 +538,9 @@ async def _parse_positions(ds, pos_raw: list) -> list:
                 continue
             codes.append(code)
 
-    # 批量获取报价
-    price_map = await ds.get_batch_quotes(codes) if codes else {}
+    # 批量获取报价 (含基本面+资金流字段, 一次snapshot调用)
+    detailed_map = await ds.get_batch_quotes_detailed(codes) if codes else {}
+    price_map = {sym: d.get("cur_price", 0) for sym, d in detailed_map.items() if d.get("cur_price", 0) > 0}
 
     # 从 DB 补充 owner + protection 字段
     owner_map = {}
@@ -543,7 +548,7 @@ async def _parse_positions(ds, pos_raw: list) -> list:
     protection_map = {}
     entry_time_map = {}
     try:
-        rows = await ds.db_query("SELECT symbol, COALESCE(owner,'auto') as owner, entry_time FROM open_positions")
+        rows = await ds.get_open_position_owners()
         owner_map = {r["symbol"]: r["owner"] for r in rows}
         db_symbols = set(owner_map.keys())
         entry_time_map = {r["symbol"]: r.get("entry_time") for r in rows}
@@ -608,6 +613,8 @@ async def _parse_positions(ds, pos_raw: list) -> list:
         sector = _SECTOR_MAP.get(code_short, "其他")
 
         prot = protection_map.get(code, {})
+        # P2 (2026-06-21): 从detailed_map注入基本面+资金流字段
+        dq = detailed_map.get(code, {})
         positions.append({
             "code": code,
             "symbol": code,
@@ -630,6 +637,16 @@ async def _parse_positions(ds, pos_raw: list) -> list:
             "trailing_stop_price": prot.get("trailing_stop_price"),
             "stop_loss_triggered": bool(prot.get("stop_loss_triggered")),
             "trailing_stop_triggered": bool(prot.get("trailing_stop_triggered")),
+            # 富途snapshot扩展字段
+            "pe": dq.get("pe_ttm") or dq.get("pe_ratio"),
+            "pb": dq.get("pb_ratio"),
+            "eps": dq.get("eps"),
+            "market_cap": dq.get("market_cap"),
+            "bid_ask_ratio": dq.get("bid_ask_ratio"),
+            "volume_ratio": dq.get("volume_ratio"),
+            "high_52w": dq.get("high_52w"),
+            "low_52w": dq.get("low_52w"),
+            "turnover_rate": dq.get("turnover_rate"),
         })
 
     # 按浮盈绝对值排序
@@ -746,33 +763,58 @@ async def _calc_pnl(ds, positions: list) -> dict:
     pnl = {
         "realized": 0,
         "realized_all": 0,
+        "realized_sim": 0,
+        "realized_live": 0,
         "unrealized": 0,
         "total": 0,
         "today_trades": 0,
+        "today_realized_sim": 0,
+        "today_realized_live": 0,
     }
-    # 今日已实现盈亏 (使用 ET 日期, 非 UTC 的 DATE('now'))
     today_et = et_today()
+
+    # 今日已实现盈亏 (按 trade_mode 拆分模拟/实盘)
     try:
-        row = await ds.db_query_one(
-            "SELECT COALESCE(SUM(realized_pnl),0) as pnl, COUNT(*) as cnt "
-            "FROM trade_records "
-            "WHERE trade_date = ? AND exit_price > 0",
+        _excluded = ", ".join(f"'{s}'" for s in EXCLUDED_SOURCE_TYPES)
+        rows = await ds.db_query(
+            f"SELECT trade_mode, COALESCE(SUM(realized_pnl),0) as pnl, COUNT(*) as cnt "
+            f"FROM trade_records "
+            f"WHERE trade_date = ? AND exit_price > 0 "
+            f"AND source_type NOT IN ({_excluded}) "
+            f"GROUP BY trade_mode",
             (today_et,),
         )
-        if row:
-            pnl["realized"] = float(row.get("pnl", 0))
-            pnl["today_trades"] = int(row.get("cnt", 0))
+        for r in rows or []:
+            mode = str(r.get("trade_mode") or "simulate").lower()
+            pnl_val = float(r.get("pnl", 0) or 0)
+            cnt = int(r.get("cnt", 0) or 0)
+            pnl["realized"] += pnl_val
+            pnl["today_trades"] += cnt
+            if mode == "live":
+                pnl["today_realized_live"] += pnl_val
+            else:
+                pnl["today_realized_sim"] += pnl_val
     except Exception:
         pass
 
-    # 全部已实现盈亏 (all-time)
+    # 全部已实现盈亏 (all-time) 同样按 trade_mode 拆分
     try:
-        row = await ds.db_query_one(
-            "SELECT COALESCE(SUM(realized_pnl),0) as pnl FROM trade_records "
-            "WHERE trade_mode != 'simulate' AND exit_price > 0"
+        _excluded = ", ".join(f"'{s}'" for s in EXCLUDED_SOURCE_TYPES)
+        rows = await ds.db_query(
+            f"SELECT trade_mode, COALESCE(SUM(realized_pnl),0) as pnl "
+            f"FROM trade_records "
+            f"WHERE exit_price > 0 "
+            f"AND source_type NOT IN ({_excluded}) "
+            f"GROUP BY trade_mode"
         )
-        if row:
-            pnl["realized_all"] = float(row.get("pnl", 0))
+        for r in rows or []:
+            mode = str(r.get("trade_mode") or "simulate").lower()
+            pnl_val = float(r.get("pnl", 0) or 0)
+            pnl["realized_all"] += pnl_val
+            if mode == "live":
+                pnl["realized_live"] += pnl_val
+            else:
+                pnl["realized_sim"] += pnl_val
     except Exception:
         pass
 
@@ -910,27 +952,15 @@ async def _calc_signals(ds) -> dict:
 
     # 信号数 (from signal_snapshots)
     try:
-        from app.analysis.signal_ic_tracker import _get_db_path
-        snap_db = str(_get_db_path())
-        row = await ds.db_query_one(
-            "SELECT COUNT(*) as cnt FROM signal_snapshots WHERE trade_date = ? AND COALESCE(trade_mode, 'simulate') = 'live'",
-            (today,), db_path=snap_db,
-        )
-        result["signal_count"] = row["cnt"] if row else 0
-        row2 = await ds.db_query_one(
-            "SELECT COUNT(*) as cnt FROM signal_snapshots WHERE trade_date = ? AND strength >= 30 AND confidence > 0 AND COALESCE(trade_mode, 'simulate') = 'live'",
-            (today,), db_path=snap_db,
-        )
-        result["passed_count"] = row2["cnt"] if row2 else 0
+        counts = await ds.get_signal_counts(today)
+        result["signal_count"] = counts["total"]
+        result["passed_count"] = counts["qualified"]
     except Exception:
         pass
 
     # 执行数
     try:
-        row3 = await ds.db_query_one(
-            "SELECT COUNT(*) as cnt FROM trade_records WHERE trade_date = ? AND exit_price > 0", (today,),
-        )
-        result["executed_count"] = row3["cnt"] if row3 else 0
+        result["executed_count"] = await ds.get_executed_count(today)
     except Exception:
         pass
 
@@ -1108,6 +1138,54 @@ _SECTOR_MAP = {
 }
 
 
+def _load_okr_summary(today_closed: list) -> dict:
+    """读取 data/okr_latest.json 构造 OKR 进度摘要 (4 KR vs 目标).
+
+    okr_baseline 每次跑更新此文件; 同时用今日实时已平数据补充当日胜率/PnL.
+    """
+    targets = {
+        "win_rate": 55,        # KR1 胜率 > 55%
+        "weekly_pnl": 1000,    # KR2 周收益 ≥ $1000
+        "sample": 30,          # KR3 样本 ≥ 30
+        "ic_t3": 0.05,         # KR3 IC(T+3) > 0.05
+    }
+    summary = {"targets": targets, "has_data": False, "today": {}}
+    # 今日实时 (从已平列表算, 比磁盘 json 更新)
+    if today_closed:
+        wins = sum(1 for t in today_closed if t.get("pnl_usd", 0) > 0)
+        losses = sum(1 for t in today_closed if t.get("pnl_usd", 0) < 0)
+        total_pnl = round(sum(t.get("pnl_usd", 0) for t in today_closed), 2)
+        summary["today"] = {
+            "count": len(today_closed),
+            "wins": wins, "losses": losses,
+            "win_rate": round(wins / len(today_closed) * 100, 1) if today_closed else 0,
+            "total_pnl": total_pnl,
+        }
+    # 累计 OKR (磁盘 json)
+    try:
+        _path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), "data", "okr_latest.json")
+        with open(_path, "r", encoding="utf-8") as f:
+            okr = json.load(f)
+        kr = okr.get("kr_scores", {})
+        ic = okr.get("ic", {})
+        pipe = okr.get("pipeline", {})
+        summary["has_data"] = True
+        summary["overall_score"] = okr.get("overall_score", 0)
+        summary["cumulative"] = {
+            "win_rate": round(kr.get("kr1_win_rate", 0), 1),
+            "weekly_pnl": round(kr.get("kr2_weekly_pnl", 0), 2),
+            "sample": round(kr.get("kr3_sample", 0), 0),
+            "ic_t3": ic.get("t3"),
+            "ic_graduation": ic.get("graduation", "ACCUMULATING"),
+            "pipeline_executed": pipe.get("executed", 0),
+            "pipeline_win_rate": pipe.get("win_rate", 0),
+        }
+        summary["updated_at"] = okr.get("timestamp", "")
+    except Exception:
+        pass
+    return summary
+
+
 def _calc_concentration(positions: list, equity: float) -> dict:
     """计算行业集中度 + 方向聚集"""
     if not positions:
@@ -1166,7 +1244,7 @@ async def _calc_weekly_pnl(ds) -> dict:
         row = await ds.db_query_one(
             "SELECT COALESCE(SUM(realized_pnl),0) as pnl, COUNT(*) as cnt, "
             "SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins "
-            "FROM trade_records WHERE trade_date >= ? AND trade_mode != 'simulate' "
+            "FROM trade_records WHERE trade_date >= ? AND source_type NOT IN ('PLAYBOOK_SHADOW','SCALPING') "
             "AND exit_price > 0",
             (monday.isoformat(),),
         )

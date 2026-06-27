@@ -22,11 +22,27 @@ Phase 3 (2026-05-31):
     - trailing_remainder (bool, 最后一档触发后置 true)
 """
 import logging
+import re
 from typing import Optional, Dict, Any, List
 
 from .base import BaseExitRule
 
 logger = logging.getLogger("ftseek.exit_monitor")
+
+
+def _strategy_slug(strategy: str) -> str:
+    """strategy_id/owner_strategy → yaml key slug.
+
+    'TECHNICAL_MULTI_FACTOR' → 'technical_multi_factor'
+    'EARNINGS_REVISION_MOMENTUM' → 'earnings_revision_momentum'
+    非 str (如 MagicMock) → '' (测试安全)
+    """
+    if not isinstance(strategy, str):
+        return ""
+    s = strategy.strip().lower()
+    s = re.sub(r"[^a-z0-9]+", "_", s)
+    s = s.strip("_")
+    return s
 
 
 # Task #62 默认配置 (与 unified_config.yaml: exit_policy.scale_out.tiers 对齐)
@@ -85,12 +101,46 @@ def _load_tiers_from_config() -> List[Dict[str, float]]:
     return out or list(DEFAULT_TIERS)
 
 
-def _load_atr_tiers_from_config() -> List[Dict[str, Any]]:
-    """从 exit_policy.yaml 读取 ATR tiers, 失败退化为 DEFAULT_ATR_TIERS"""
+def _load_atr_tiers_from_config(direction: str = "", strategy: str = "") -> List[Dict[str, Any]]:
+    """从 exit_policy.yaml 读取 ATR tiers, 支持 direction×strategy 差异化.
+
+    2026-06-20 OKR: key 解析优先级:
+      1. {direction}_{strategy_slug}_atr_tiers  (e.g. short_technical_multi_factor_atr_tiers)
+      2. {direction}_atr_tiers                  (方向级, e.g. short_atr_tiers)
+      3. atr_tiers                               (通用兜底)
+      4. DEFAULT_ATR_TIERS
+    数据依据: strategy 比 direction 更有区分度 (见 direction_attribution 归因).
+    失败退化为 DEFAULT_ATR_TIERS.
+    """
     cfg = _load_scale_out_config()
-    raw = cfg.get("atr_tiers") if cfg else None
-    if not raw or not isinstance(raw, list):
+    if not cfg:
         return list(DEFAULT_ATR_TIERS)
+
+    # 1. direction×strategy 专属配置
+    slug = _strategy_slug(strategy)
+    if direction and slug:
+        ds_key = f"{direction.lower()}_{slug}_atr_tiers"
+        raw = cfg.get(ds_key)
+        if raw and isinstance(raw, list) and len(raw) > 0:
+            return _parse_atr_tiers(raw)
+
+    # 2. 方向级配置
+    if direction:
+        dir_key = f"{direction.lower()}_atr_tiers"
+        raw = cfg.get(dir_key)
+        if raw and isinstance(raw, list) and len(raw) > 0:
+            return _parse_atr_tiers(raw)
+
+    # 3. 通用 atr_tiers
+    raw = cfg.get("atr_tiers")
+    if raw and isinstance(raw, list):
+        return _parse_atr_tiers(raw)
+
+    return list(DEFAULT_ATR_TIERS)
+
+
+def _parse_atr_tiers(raw: List) -> List[Dict[str, Any]]:
+    """解析 ATR tiers 列表"""
     out: List[Dict[str, Any]] = []
     for t in raw:
         if not isinstance(t, dict):
@@ -101,7 +151,7 @@ def _load_atr_tiers_from_config() -> List[Dict[str, Any]]:
             rs = float(t.get("ratchet_sl_pct", 0) or 0)
         except (TypeError, ValueError):
             continue
-        if pa <= 0 or cp <= 0:
+        if pa <= 0 or cp < 0:
             continue
         tier: Dict[str, Any] = {"profit_atr": pa, "close_pct": cp, "ratchet_sl_pct": rs}
         if t.get("trailing_remainder"):
@@ -146,18 +196,24 @@ def check_scale_out(position, current_price, trail_state, direction, market_data
 
     Phase 3 (2026-05-31): 支持 ATR-relative 模式, 当 market_data 含 ATR 时
     按 ATR 倍数分档; 否则回退到 pct 百分比模式。
-    
+
     2026-06-06: 根因修复 — 不再依赖 trail_state 追踪已触发 tier
     - 用 position.is_partially_reduced (DB持久化) 判断是否已 scale_out
     - 加 PnL 方向校验: 实际亏损时不触发止盈
+
+    2026-06-20: 移除 is_partially_reduced 广域早退 (它使 multi-tier Tier2/3 不可达).
+    改为依赖 trail_state["triggered_tiers"] per-tier 去重 (trail_state_store 持久化).
+    is_partially_reduced 仍由 _partial_close_position 写入 DB 作信息字段, 但不再硬门禁.
     """
     entry_price = float(getattr(position, "avg_entry_price", 0) or 0)
     if entry_price <= 0 or current_price <= 0:
         return None
 
-    # ── 防护 1: 已部分减仓 → 不再触发 (替代 trail_state["triggered_tiers"]) ──
-    if getattr(position, "is_partially_reduced", False):
-        return None
+    # ── 防护 1 (2026-06-20 重做): is_partially_reduced 不再广域拦截 ──
+    # 旧逻辑: 任何 tier 触发后 is_partially_reduced=True → 下次扫描直接 return None,
+    #         导致 multi-tier Tier2/3 永不可达 (今日 LONG 分层失效的根因).
+    # 新逻辑: per-tier 去重交给 trail_state["triggered_tiers"], 见 _check_scale_out_atr.
+    # trail_state_store 以 JSON 持久化整个 trail_state (含 triggered_tiers), 跨重启不丢.
 
     # ── 防护 2: PnL 方向校验 — 实际亏损时不触发止盈 ──
     # 根因: position_sync 可能把 entry_price 设为 broker avg cost,
@@ -180,10 +236,13 @@ def check_scale_out(position, current_price, trail_state, direction, market_data
         else:
             profit_atr = (current_price - entry_price) / atr
 
+    # 2026-06-20: strategy 来自 market_data (调用方注入 owner_strategy)
+    strategy = md.get("strategy") or getattr(position, "owner_strategy", "") or getattr(position, "strategy_id", "")
+
     mode = _get_tier_mode()
     if mode == "atr" and profit_atr is not None:
         return _check_scale_out_atr(position, current_price, trail_state, direction,
-                                     entry_price, profit_atr, atr)
+                                     entry_price, profit_atr, atr, strategy)
     else:
         return _check_scale_out_pct(position, current_price, trail_state, direction, entry_price)
 
@@ -268,9 +327,9 @@ def _check_scale_out_pct(position, current_price, trail_state, direction, entry_
 
 
 def _check_scale_out_atr(position, current_price, trail_state, direction,
-                          entry_price, profit_atr, atr):
-    """ATR-relative 模式 (Phase 3, 2026-05-31)"""
-    atr_tiers = _load_atr_tiers_from_config()
+                          entry_price, profit_atr, atr, strategy=""):
+    """ATR-relative 模式 (Phase 3, 2026-05-31; 2026-06-20 加 strategy 维度)"""
+    atr_tiers = _load_atr_tiers_from_config(direction, strategy)
     if not atr_tiers:
         return None
 
@@ -284,14 +343,18 @@ def _check_scale_out_atr(position, current_price, trail_state, direction,
         tier_profit_atr = float(tier.get("profit_atr", 0) or 0)
         close_pct = float(tier.get("close_pct", 0) or 0)
         ratchet_sl_pct = float(tier.get("ratchet_sl_pct", 0) or 0)
-        if tier_profit_atr <= 0 or close_pct <= 0:
+        if tier_profit_atr <= 0:
             continue
         if profit_atr < tier_profit_atr:
             break
-        close_ratio = close_pct / 100.0
-        close_qty = max(1, int(original_size * close_ratio))
-        if close_qty <= 0:
-            continue
+
+        # 2026-06-20: close_pct=0 表示不平仓，只移SL+启用trailing
+        if close_pct > 0:
+            close_ratio = close_pct / 100.0
+            close_qty = max(1, int(original_size * close_ratio))
+        else:
+            close_ratio = 0.0
+            close_qty = 0
         if direction == "LONG":
             candidate_stop = entry_price + ratchet_sl_pct * atr
         else:

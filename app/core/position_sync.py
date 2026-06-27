@@ -291,7 +291,10 @@ class USPositionSync:
             return ("CLOSED", 1800)        # 30 分钟
 
     def _get_futu_context(self, opend_host: str, opend_port: int, trade_env, trd_market, security_firm):
-        """获取或复用 Futu 交易上下文 (避免每 30 秒新建/断开连接)"""
+        """获取或复用 Futu 交易上下文 (避免每 30 秒新建/断开连接)
+
+        三态融合 (2026-06-25): 始终解锁 REAL 权限，同一 ctx 可查 SIMULATE + REAL
+        """
         from futu import OpenSecTradeContext, TrdEnv, RET_OK
         
         if self._futu_ctx is None:
@@ -302,23 +305,22 @@ class USPositionSync:
                     port=opend_port,
                     is_encrypt=False,
                 )
-                # 实盘模式需要解锁交易
-                if trade_env == TrdEnv.REAL:
-                    import os
-                    pwd_md5 = os.getenv("FUTU_UNLOCK_PWD_MD5", "")
-                    if pwd_md5:
-                        ret, data = self._futu_ctx.unlock_trade(
-                            password_md5=pwd_md5, is_unlock=True,
-                        )
-                        if ret != RET_OK:
-                            logger.error(f"[US Sync] 实盘解锁失败: {data}")
-                            self._reset_futu_ctx("实盘解锁失败")
-                            return None
-                        logger.info("[US Sync] ✅ 实盘交易已解锁")
-                    else:
-                        logger.error("[US Sync] 实盘模式但 FUTU_UNLOCK_PWD_MD5 未设置")
-                        self._reset_futu_ctx("缺少解锁密码")
+                # 始终解锁实盘交易 (即使 trade_env=SIMULATE，也需要查 REAL 持仓)
+                import os
+                pwd_md5 = os.getenv("FUTU_UNLOCK_PWD_MD5", "")
+                if pwd_md5:
+                    ret, data = self._futu_ctx.unlock_trade(
+                        password_md5=pwd_md5, is_unlock=True,
+                    )
+                    if ret != RET_OK:
+                        logger.error(f"[US Sync] 实盘解锁失败: {data}")
+                        self._reset_futu_ctx("实盘解锁失败")
                         return None
+                    logger.info("[US Sync] ✅ 实盘交易已解锁 (SIMULATE+REAL 双环境查询)")
+                else:
+                    logger.error("[US Sync] FUTU_UNLOCK_PWD_MD5 未设置，无法查询 REAL 持仓")
+                    self._reset_futu_ctx("缺少解锁密码")
+                    return None
             except Exception as e:
                 logger.warning(f"[US Sync] 创建 Futu 连接失败: {e}")
                 return None
@@ -467,21 +469,36 @@ class USPositionSync:
         opend_port = int(os.getenv("FUTU_OPEND_PORT", os.getenv("FUTU_OPEND_PORT", "11111")))
 
         # 1. Get Futu positions (复用连接)
+        # 三态融合 (2026-06-25): 同时查询 SIMULATE + REAL，合并持仓
+        # 根因: 原代码只查一个 trade_env → REAL 账户持仓永远不被同步 → 实盘仓无 SL/无监控
         futu_positions = {}
         ctx = self._get_futu_context(opend_host, opend_port, trade_env, TrdMarket.US, SecurityFirm.FUTUINC)
         if ctx is None:
             return
         try:
-            # P0 修复 (2026-05-27): 使用 refresh_cache=False (默认) — 缓存数据更可靠
-            # Futu SDK 的 refresh_cache=True 可能因服务端延迟返回空结果，
-            # 导致真实持仓被误判为幽灵仓。缓存由 Futu OpenD 维护，数据可靠。
-            # 真正的根因修复: _closed_symbols 过滤已改为 exit_price > 0 (排除假 ghost 记录)
-            ret, data = ctx.position_list_query(trd_env=trade_env)
-            # P0 修复: 查询失败或返回异常 → 重置连接 + 跳过本轮，防止误删持仓
-            if ret != 0:
-                logger.warning(f"[US Sync] Futu 持仓查询失败 (ret={ret})，重置连接，跳过本轮")
+            # 查询两个环境的持仓: SIMULATE + REAL (同一 ctx 可查两个 env)
+            _envs_to_query = [TrdEnv.SIMULATE, TrdEnv.REAL]
+            _combined_data = None
+            _query_failed = False
+            for _env in _envs_to_query:
+                ret, data = ctx.position_list_query(trd_env=_env)
+                if ret != 0:
+                    logger.warning(f"[US Sync] Futu 持仓查询失败 (env={_env}, ret={ret})")
+                    _query_failed = True
+                    break
+                if data is not None and not data.empty:
+                    if _combined_data is None:
+                        _combined_data = data
+                    else:
+                        import pandas as _pd
+                        _combined_data = _pd.concat([_combined_data, data], ignore_index=True)
+
+            if _query_failed:
+                logger.warning(f"[US Sync] 持仓查询失败，重置连接，跳过本轮")
                 self._reset_futu_ctx("position查询失败")
                 return
+
+            data = _combined_data
             # P0 修复 (2026-05-11): 空持仓处理 — 使用连续空查询计数器 + 已知持仓缓存
             # 之前问题: 连接瞬断时返回空持仓列表，导致真实持仓被误删为幽灵仓
             if data is None or data.empty:
@@ -489,9 +506,6 @@ class USPositionSync:
                 if self._consecutive_empty_queries < self._max_consecutive_empty:
                     # 使用上次已知的持仓数据继续同步，不跳过
                     if self._last_known_positions:
-                        # P0 修复 (2026-05-27): 移除 _closed_symbols_cache 过滤器
-                        # 同主路径逻辑: broker 是 SSOT，缓存是 broker 快照，不应按历史交易记录过滤。
-                        # 已平仓的 symbol 不会出现在 broker 持仓中，自然不在缓存里。
                         logger.warning(
                             f"[US Sync] Futu 返回空持仓列表 (连续{self._consecutive_empty_queries}次), "
                             f"使用上次已知持仓({len(self._last_known_positions)}只)继续同步"
@@ -516,11 +530,6 @@ class USPositionSync:
             else:
                 # 非空查询，重置计数器
                 self._consecutive_empty_queries = 0
-                # P0 修复 (2026-05-27): 移除 _closed_symbols 过滤器
-                # 根因: QCOM/SNDK 有真实历史交易 (exit_price>0, TRAILING_STOP/sl_hit)，
-                # 导致被永久排除 → position_sync 看不到 → 误判为幽灵仓 → 死循环。
-                # Broker 是 SSOT (唯一事实源): 如果 broker 当前持有某 symbol，就必须跟踪。
-                # PRICE_FAIL 期权已由独立的 _price_fail_closed 机制保护 (line 463-480)。
                 for _, row in data.iterrows():
                     qty = float(row.get('qty', 0))
                     if qty != 0:
@@ -619,6 +628,11 @@ class USPositionSync:
             cursor.execute(
                 "UPDATE open_positions SET sync_status='closed_by_sync', updated_at=? WHERE symbol=?",
                 (datetime.now().isoformat(), symbol)
+            )
+            # 2026-06-25: 清理 ghost 对应的幻影 trade_records (订单 submit 时写入但未成交)
+            cursor.execute(
+                "DELETE FROM trade_records WHERE symbol=? AND (exit_price=0 OR exit_price IS NULL) AND source_type='MANUAL'",
+                (symbol,)
             )
 
         # 4. Update/Insert Futu positions
@@ -726,6 +740,29 @@ class USPositionSync:
                     )
             else:
                 # P2 修复 (2026-04-30): 插入新持仓时验证仓位占比 + 使用 ATR 动态止损
+                # ponytail (2026-06-25): Playbook SIM 仓位跳过 25% cap — 由 playbook 自管 sizing
+                _is_pb_sim = False
+                try:
+                    _pb_row = cursor.execute(
+                        "SELECT 1 FROM trade_records WHERE symbol=? AND source_type='PLAYBOOK_SIM' "
+                        "AND entry_time >= date('now','start of day','-1 day') AND exit_time IS NULL LIMIT 1",
+                        (symbol,)).fetchone()
+                    _is_pb_sim = _pb_row is not None
+                except Exception:
+                    pass
+                if _is_pb_sim:
+                    logger.debug(f"[US Sync·P0] 跳过 Playbook SIM 仓位 {symbol} 25% cap (由 playbook sizing 管理)")
+                    cursor.execute(
+                        """INSERT INTO open_positions (
+                            symbol, direction, size, avg_entry_price,
+                            initial_sl, current_sl, initial_tp,
+                            entry_time, updated_at, strategy_id, trader_type, owner_strategy,
+                            owner, sync_status
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'synced')""",
+                        (symbol, info['direction'], info['qty'], info['cost'],
+                         0, 0, 0, datetime.now().isoformat(), datetime.now().isoformat(),
+                         'playbook_sim', 'AUTO', 'playbook_sim'))
+                    continue
                 # 1. 仓位占比验证
                 try:
                     from app.risk.capital_safety import get_capital_safety_system
@@ -1032,6 +1069,24 @@ class USPositionSync:
                     f"[US Sync·P3] {symbol} 今日有手动订单，标记为 manual_sync"
                 )
             elif _has_today_order:
+                # P0 fix (2026-06-25): 跳过 Playbook SIM 仓位 — 防止 position_sync 劫持
+                # 根因: Playbook auto_execute → DualBroker 下单 → Futu 有仓 → position_sync
+                # 同步回来标记 auto_main → MAIN_PIPELINE exit_monitor 接管 → 双重平仓
+                # 修复: 如果 trade_records 已有该 symbol 的 PLAYBOOK_SIM 开仓记录 → 跳过
+                _is_playbook = False
+                try:
+                    _pc = safe_sqlite_connect(_get_db_path(), timeout=5)
+                    _row = _pc.execute(
+                        "SELECT 1 FROM trade_records WHERE symbol=? AND source_type='PLAYBOOK_SIM' "
+                        "AND entry_time >= date('now','start of day','-1 day') AND exit_time IS NULL LIMIT 1",
+                        (symbol,)).fetchone()
+                    _pc.close()
+                    _is_playbook = _row is not None
+                except Exception:
+                    pass
+                if _is_playbook:
+                    logger.debug(f"[US Sync·P0] 跳过 Playbook SIM 仓位 {symbol} (由 playbook exit monitor 独占管理)")
+                    continue
                 strategy_id = "auto_main"
                 trader_type = "AUTO"
                 _order_info = _today_orders[symbol]
@@ -1564,28 +1619,28 @@ class USPositionSync:
                 )
 
             # --- 2. 从 Broker 获取实时资金数据 ---
-            # P0 修复 (2026-06-23): 复用 broker_adapter.get_account_info() 取代自开 Futu ctx + accinfo_query.
-            #   旧实现 accinfo_query(trd_env) 未传 acc_id → Futu 返回默认账户 (HKD), 与 broker_adapter
-            #   查询的配置 US 账户不一致, 两条净值轮流灌进 capital_safety, 触发 ">5x 突变检测" 反复重置 peak,
-            #   导致回撤 3% 熔断静默失效. get_account_info() 已用运行时发现的 acc_id + 完成 HKD→USD 转换,
-            #   与 position_monitor / order_executor 同源 SSOT.
-            adapter = self._broker_adapter
+            # ponytail: _futu_ctx 是 position_sync 自己维护的连接, 每30s 都在用, 直接查 accinfo
             broker_data = {}
-            if adapter and getattr(adapter, 'connected', False):
+            if self._futu_ctx is not None:
                 try:
-                    info = adapter.get_account_info()
-                    if info and info.get("total_assets", 0) > 0:
+                    from futu import RET_OK, TrdEnv
+                    from app.core.config_container import get_config
+                    _trade_env = get_config().trade_env_int
+                    trd_env = TrdEnv.SIMULATE if _trade_env == 1 else TrdEnv.REAL
+                    _acc_id = int(os.getenv("SIMULATE_ACCOUNT_ID", "0")) if _trade_env == 1 \
+                        else int(os.getenv("REAL_ACCOUNT_ID", "0"))
+                    ret, data = self._futu_ctx.accinfo_query(trd_env=trd_env, acc_id=_acc_id)
+                    if ret == RET_OK and len(data) > 0:
+                        row = data.iloc[0]
+                        sf = lambda v: float(v) if v and str(v) not in ("N/A", "nan", "None") else 0.0
                         broker_data = {
-                            'cash': info.get("cash", 0),
-                            'market_value': info.get("market_val", 0),
-                            'total_assets': info.get("total_assets", 0),
-                            'buying_power': info.get("buying_power", 0),
+                            'cash': sf(row.get("cash")),
+                            'market_value': sf(row.get("market_val")),
+                            'total_assets': sf(row.get("total_assets")),
+                            'buying_power': sf(row.get("power")),
                         }
                 except Exception as e:
-                    logger.debug("[US Sync Capital] adapter.get_account_info 失败 (%s)，"
-                                 "由 position_monitor 统一更新资金", e)
-            else:
-                logger.debug("[US Sync Capital] broker_adapter 未连接，跳过资金更新 (由 position_monitor 处理)")
+                    logger.debug("[US Sync Capital] accinfo_query 失败: %s", e)
 
             # Fallback: 无资金数据时跳过 (由 position_monitor 统一处理)
             if not broker_data.get('total_assets', 0):
@@ -1879,6 +1934,12 @@ class USPositionSync:
                 if _scan_self_managed and sym in _scan_self_managed:
                     continue
                 if trader_type and str(trader_type).upper() == 'MANUAL':
+                    continue
+                # ponytail (2026-06-25): 跳过 Playbook SIM 仓位 — 由 playbook exit monitor 独占管理
+                # 根因: position_sync 减仓 Playbook 仓位 → trade_records qty 不更新 → close 时 "持仓不足" → ghost
+                _owner = cursor.execute(
+                    "SELECT owner_strategy FROM open_positions WHERE symbol=?", (sym,)).fetchone()
+                if _owner and _owner[0] and 'playbook' in str(_owner[0]).lower():
                     continue
                 if sym in trims_to_execute:
                     continue  # 已在 pending_trims 中

@@ -39,6 +39,8 @@ class FundamentalData:
 class TechnicalData:
     """技术面数据"""
     price: Optional[float] = None
+    bid: Optional[float] = None
+    ask: Optional[float] = None
     ma20: Optional[float] = None
     ma50: Optional[float] = None
     rsi_14: Optional[float] = None
@@ -296,6 +298,8 @@ class PlaybookDataCollector:
                 return TechnicalData(quality="missing")
             
             price = ctx.get("price", 0)
+            bid = ctx.get("lv3_bid") or ctx.get("bid") or price
+            ask = ctx.get("lv3_ask") or ctx.get("ask") or price
             ma20 = ctx.get("ma20")
             ma50 = ctx.get("ma50")
             rsi = ctx.get("rsi")
@@ -389,6 +393,8 @@ class PlaybookDataCollector:
 
             return TechnicalData(
                 price=price,
+                bid=bid,
+                ask=ask,
                 ma20=ma20,
                 ma50=ma50,
                 rsi_14=rsi,

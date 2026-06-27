@@ -167,25 +167,12 @@ def scan_loop(scheduler):
                     time.sleep(1)
                 continue
 
-            # 2026-06-24 清理 (策略不混为一谈): TRADING 阶段新单执行由 playbook futu_simulate 独占
-            # (run_playbook_auto_execute 每30min, 带 ATR SL/TP + IC + OKR 打磨层).
-            # 本 scan_loop 的投票信号执行 (legacy voting_llm 路径, 同一 VotingCoordinator 信号)
-            # 与 playbook 同信号同账户会重复下单 → TRADING 跳过新单扫描, 避免双重执行.
-            # scan_loop 仍负责 PRE_MARKET/AFTER_HOURS 的信号生成/分析 (供 battle_plan, 不执行).
-            if phase == MarketPhase.TRADING:
-                try:
-                    from app.core.config_container import get_config as _get_cfg
-                    _pb_enabled = _get_cfg().get_dotted("playbook.enabled", False)
-                    _pb_exec = _get_cfg().get_dotted("playbook.execute_mode", "simulate")
-                except Exception:
-                    _pb_enabled, _pb_exec = False, "simulate"
-                if _pb_enabled and _pb_exec in ("futu_simulate", "live"):
-                    logger.debug("[扫描] TRADING 阶段 — 新单执行由 playbook 独占, scan_loop 跳过 (避免同信号重复)")
-                    for _ in range(int(scheduler.SCAN_INTERVAL_MINUTES * 60)):
-                        if not scheduler.running:
-                            return
-                        time.sleep(1)
-                    continue
+            # 2026-06-24 清理: TRADING 阶段新单执行由 playbook futu_simulate 独占.
+            # 2026-06-26: scan_loop 在 TRADING 阶段直接执行信号 (不再让 playbook 独占)
+            # 原因: playbook auto_execute 需要 triggered 指令, 但指令从未生成
+            # scan_loop 产生的信号直接走 _submit_order, 经 IC门禁/Plan Gate/风控 后下单
+            _skip_execution_in_trading = False
+            scheduler._skip_execution_in_trading = False
 
             if is_circuit_breaker_open():
                 logger.warning("[熔断] API 熔断器已开启，暂停扫描...")
@@ -603,8 +590,12 @@ def _run_signal_scan_body(scheduler, vix, spy_context, market_news, pool_filter)
                 logger.error(f"[扫描] {symbol} 处理异常：{e}", exc_info=True)
 
         # 组合构建: 评分 → 排序 → 分配 → 执行
+        # 2026-06-26: TRADING + playbook独占时, 跳过下单 (playbook auto_execute负责)
         if candidates:
-            _execute_portfolio_plan(scheduler, candidates, vix)
+            if getattr(scheduler, '_skip_execution_in_trading', False):
+                logger.info(f"[组合构建] {len(candidates)} 候选已生成, 但 TRADING 阶段 playbook 独占执行, 跳过下单")
+            else:
+                _execute_portfolio_plan(scheduler, candidates, vix)
         else:
             logger.info("[组合构建] 本轮无合格候选")
 
@@ -1230,6 +1221,11 @@ def _process_symbol_new_pipeline(scheduler, symbol: str, vix: float,
         logger.error(f"[P0·信号持久化] {symbol} 写入 signals 表失败: {e}")
 
     # ── 委托给现有执行路径 (PDT → Gates → Pyramid → Execute) ──
+    # 2026-06-26: TRADING + playbook独占时, 跳过下单 (同 _execute_portfolio_plan 逻辑)
+    if getattr(scheduler, '_skip_execution_in_trading', False):
+        logger.info(f"[CRA] {symbol} 信号已生成, 但 TRADING 阶段 playbook 独占执行, 跳过下单")
+        return
+
     from app.pipeline.order_executor import _submit_order
     lock = getattr(scheduler, '_open_position_lock', None)
     if lock:
@@ -1352,11 +1348,22 @@ def _passes_pool_filter(scheduler, symbol: str, pool_filter: dict) -> bool:
             if _futu and hasattr(_futu, '_push_quote_cache'):
                 with _futu._push_cache_lock:
                     _cached = _futu._push_quote_cache.get(symbol, {})
-                    price = float(_cached.get("price", 0) or _cached.get("last", 0) or 0)
+                    # 2026-06-25 修复: 优先使用 bid/ask 中间价
+                    _bid = float(_cached.get("bid", 0) or 0)
+                    _ask = float(_cached.get("ask", 0) or 0)
+                    if _bid > 0 and _ask > 0:
+                        price = round((_bid + _ask) / 2.0, 2)
+                    else:
+                        price = float(_cached.get("price", 0) or _cached.get("last", 0) or 0)
             elif scheduler.market_data:
                 quote = scheduler.market_data.get_quote(symbol)
                 if quote:
-                    price = quote.get("price", 0) or quote.get("last_price", 0)
+                    _bid = float(quote.get("bid", 0) or 0)
+                    _ask = float(quote.get("ask", 0) or 0)
+                    if _bid > 0 and _ask > 0:
+                        price = round((_bid + _ask) / 2.0, 2)
+                    else:
+                        price = quote.get("price", 0) or quote.get("last_price", 0)
             else:
                 price = 0
             if price > 0:

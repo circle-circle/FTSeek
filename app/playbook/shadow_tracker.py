@@ -99,6 +99,11 @@ class ShadowTracker:
 
         for inst in instructions:
             try:
+                # 2026-06-26: 记录 horizon 信息到追踪日志
+                _horizon = inst.get("horizon", "short")
+                _horizon_conf = inst.get("horizon_confidence")
+                if _horizon_conf is not None:
+                    logger.debug(f"[shadow_tracker] {inst.get('symbol')} horizon={_horizon} confidence={_horizon_conf}")
                 self._track_instruction(inst, trade_date)
             except Exception as e:
                 logger.error(f"Error tracking {inst.get('symbol')}: {e}")
@@ -109,6 +114,14 @@ class ShadowTracker:
         inst_id = inst["id"]
         symbol = inst["symbol"]
         direction = inst["direction"]
+
+        # 2026-06-24 防御守卫 (OKR): 已终态 outcome (win/loss/skipped/missed) 不再重处理.
+        # 防止 daily_tracking 在 trade_store 不可用 / exit 查询失败时把已终态的 win/loss
+        # 覆盖回 'holding' (曾因 stub 无 trade_store 导致 21 条 win/loss 被误覆盖).
+        # 'holding' 与 NULL 仍需继续追踪直到产生最终 outcome.
+        _existing_outcome = inst.get("outcome")
+        if _existing_outcome in ("win", "loss", "skipped", "missed"):
+            return
 
         if direction == "SKIP":
             # SKIP 指令不计 shadow_pnl
@@ -125,15 +138,26 @@ class ShadowTracker:
 
         updates = {}
 
-        # 1. 检查是否触发 (价格进入入场区间 ±5%)
-        # OKR Week 1: 从 ±2% 放宽到 ±3%，再到 ±5%，提升触发率
+        # 1. 检查是否触发 (突破MA20 + 成交量确认)
+        # 2026-06-25: 从 ±5% 价格区间改为突破确认, 与 _check_intraday_trigger 对齐
+        # shadow_tracker 盘后跑, 用 day_high/day_low 判断当日是否突破 MA20
         entry_price = inst.get("entry_price")
         if entry_price and entry_price > 0:
             day_low = day_data.get("low", 0)
             day_high = day_data.get("high", 0)
-            entry_low = entry_price * 0.95
-            entry_high = entry_price * 1.05
-            updates["triggered"] = 1 if (entry_low <= day_high and day_low <= entry_high) else 0
+            day_close = day_data.get("close", 0)
+            ma20 = day_data.get("ma20", 0)
+            vol_ratio = day_data.get("volume_5d_avg_ratio", 0) or day_data.get("volume_ratio", 0)
+            direction = inst.get("direction", "")
+            is_short = "SHORT" in direction.upper()
+            # 突破: LONG day_high > MA20, SHORT day_low < MA20
+            breakout = (day_low < ma20 < day_high) if ma20 > 0 else False
+            if is_short:
+                breakout = breakout and day_close < ma20
+            else:
+                breakout = breakout and day_close > ma20
+            vol_confirmed = vol_ratio >= 1.5 if vol_ratio else False
+            updates["triggered"] = 1 if (breakout and vol_confirmed) else 0
 
         # 2. 检查是否执行了 (匹配 trade_records)
         executed_trade = self._find_executed_trade(symbol, direction, trade_date)
@@ -159,6 +183,7 @@ class ShadowTracker:
                     exit_price = exit_trade.get("exit_price", 0)
                     position_size = inst.get("position_size", 0)
                     if exit_price > 0 and position_size > 0:
+                        # direction 是 BUY/SELL_SHORT (playbook 指令格式)
                         if direction == "BUY":
                             pnl = (exit_price - exec_price) * position_size
                         else:
@@ -194,13 +219,14 @@ class ShadowTracker:
             updates["shadow_pnl"] = shadow_pnl
             updates["outcome"] = "missed"
         else:
-            # 未触发 → 也计算 shadow pnl
+            # 未触发 → 计算 shadow pnl, 并标记终态 missed (避免 run_playbook_track 幂等失败反复推送)
             shadow_pnl = self._calc_shadow_pnl(
                 symbol, entry_price, direction, trade_date,
                 position_size=inst.get("position_size"),
             )
             if shadow_pnl is not None:
                 updates["shadow_pnl"] = shadow_pnl
+            updates["outcome"] = "missed"
 
         if updates:
             self.db.update_instruction_tracking(inst_id, updates)
@@ -292,19 +318,34 @@ class ShadowTracker:
         return round(mfe, 2), round(mae, 2)
 
     def _get_day_data(self, symbol: str, trade_date: str) -> Optional[Dict]:
-        """获取某日的 OHLC 数据"""
+        """获取某日的 OHLC 数据 + MA20 + volume_ratio"""
         if self.market_data is None:
             return None
 
         try:
             # 尝试 get_daily_bars (日线)
             if hasattr(self.market_data, "get_daily_bars"):
-                bars = self.market_data.get_daily_bars(symbol, count=5)
+                bars = self.market_data.get_daily_bars(symbol, count=30)
                 if bars:
+                    # 找到目标日的 bar
+                    target_bar = None
                     for bar in bars:
                         bar_date = bar.get("time", "")[:10]
                         if bar_date == trade_date:
-                            return bar
+                            target_bar = bar
+                            break
+                    if target_bar:
+                        # 计算 MA20 (最近20天收盘价均值)
+                        closes = [b.get("close", 0) for b in bars[-20:]]
+                        ma20 = sum(closes) / len(closes) if closes else 0
+                        # 计算 volume_ratio (当日量 / 前5日均量)
+                        vols = [b.get("volume", 0) for b in bars[-6:-1]]  # 前5天
+                        avg_vol = sum(vols) / len(vols) if vols else 0
+                        today_vol = target_bar.get("volume", 0)
+                        vol_ratio = today_vol / avg_vol if avg_vol > 0 else 0
+                        target_bar["ma20"] = ma20
+                        target_bar["volume_5d_avg_ratio"] = vol_ratio
+                        return target_bar
 
             # 尝试 get_quote (实时快照, 当日)
             if hasattr(self.market_data, "get_quote"):
@@ -315,6 +356,8 @@ class ShadowTracker:
                         "high": quote.get("high", 0),
                         "low": quote.get("low", 0),
                         "close": quote.get("price", 0),
+                        "ma20": 0,  # 实时快照无法计算 MA20
+                        "volume_5d_avg_ratio": 0,
                     }
         except Exception as e:
             logger.warning(f"Failed to get day data for {symbol}: {e}")
@@ -347,16 +390,24 @@ class ShadowTracker:
     def _find_executed_trade(
         self, symbol: str, direction: str, trade_date: str
     ) -> Optional[Dict]:
-        """在 trade_records 中查找匹配的执行记录"""
+        """在 trade_records 中查找匹配的执行记录
+
+        2026-06-23: 修复方向映射 — playbook_instructions.direction 是 BUY/SELL_SHORT,
+        trade_records.direction 是 LONG/SHORT. 需要归一化比较.
+        """
         if self.trade_store is None:
             return None
+
+        # 方向归一化: BUY→LONG, SELL_SHORT→SHORT
+        _dir_map = {"BUY": "LONG", "SELL_SHORT": "SHORT"}
+        _normalized = _dir_map.get(direction.upper(), direction.upper())
 
         try:
             trades = self.trade_store.query_by_date(trade_date)
             for t in trades:
                 if (t.get("symbol") == symbol and
-                        t.get("source_type") == "MANUAL_PLAYBOOK" and
-                        t.get("direction", "").upper() == direction):
+                        t.get("source_type") in ("MANUAL_PLAYBOOK", "PLAYBOOK_SHADOW", "PLAYBOOK_SIM", "PLAYBOOK_LIVE") and
+                        t.get("direction", "").upper() == _normalized):
                     return t
         except Exception as e:
             logger.warning(f"Failed to find executed trade for {symbol}: {e}")
@@ -364,7 +415,12 @@ class ShadowTracker:
         return None
 
     def _find_exit_trade(self, symbol: str, trade_date: str) -> Optional[Dict]:
-        """查找平仓记录"""
+        """查找平仓记录 — monitor_playbook_shadow_exits 直接更新 trade_records 的 exit 字段
+
+        2026-06-23: 修复 — shadow 退出不是单独的 trade record, 而是同一条 record 的
+        exit_price/exit_reason/exit_time 字段被 UPDATE。查找 source_type='PLAYBOOK_SHADOW'
+        且 exit_price > 0 的记录。
+        """
         if self.trade_store is None:
             return None
 
@@ -372,9 +428,13 @@ class ShadowTracker:
             trades = self.trade_store.query_by_date(trade_date)
             for t in trades:
                 if (t.get("symbol") == symbol and
-                        t.get("action", "").upper() in ("CLOSE", "EXIT", "SELL") and
-                        t.get("source_type") == "MANUAL_PLAYBOOK"):
-                    return t
+                        t.get("source_type") in ("PLAYBOOK_SHADOW", "PLAYBOOK_SIM", "PLAYBOOK_LIVE") and
+                        float(t.get("exit_price", 0) or 0) > 0):
+                    return {
+                        "exit_price": float(t.get("exit_price", 0)),
+                        "exit_time": t.get("exit_time", ""),
+                        "exit_reason": t.get("exit_reason", "unknown"),
+                    }
         except Exception as e:
             logger.warning(f"Failed to find exit trade for {symbol}: {e}")
 

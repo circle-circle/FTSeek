@@ -37,7 +37,7 @@ def check_trailing_stop(monitor, position, current_price, entry_price, atr,
     profit_atr_abs = abs(profit_atr_signed)
     _exit_rules = policy_dict.get("exit_rules", {}) if isinstance(policy_dict, dict) else {}
     _atr_stop_cfg = _exit_rules.get("atr_stop", {})
-    _ssot_mult = float(_atr_stop_cfg.get("multiplier_by_profit", {}).get("initial", 4.0))
+    _ssot_mult = float(_atr_stop_cfg.get("multiplier_by_profit", {}).get("initial", 2.0))
 
     if policy is not None and hasattr(policy, "get_atr_multiplier"):
         try:
@@ -154,6 +154,13 @@ def check_trailing_stop(monitor, position, current_price, entry_price, atr,
             cost_bps = 0.0
 
     # 6. 调用纯函数引擎
+    # 2026-06-20: 传入 scale_out_stop_floor (ratchet 下限), 使部分平仓后剩余仓位
+    # 止损从 entry±4×ATR 收紧到 scale_out 设定的 ratchet 水位 (如保本).
+    _so_floor = 0.0
+    try:
+        _so_floor = float(trail_state.get("scale_out_stop_floor", 0) or 0)
+    except Exception:
+        _so_floor = 0.0
     r = compute_stop_lines(
         direction=direction,
         entry_price=entry_price,
@@ -164,6 +171,7 @@ def check_trailing_stop(monitor, position, current_price, entry_price, atr,
         regime=regime,
         atr_mult=atr_mult,
         cost_bps=cost_bps,
+        scale_out_floor=_so_floor,
     )
 
     # ── SL 契约 (2026-06-06): initial_sl 是绝对地板, 退出永远不能放宽 ──

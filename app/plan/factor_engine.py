@@ -20,6 +20,7 @@ Regime条件权重:
 
 import logging
 import json
+import os
 import time
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
@@ -51,12 +52,14 @@ for _sec, _tickers in _SECTOR_MEMBERS.items():
     for _t in _tickers:
         _TICKER_TO_SECTORS.setdefault(_t, []).append(_sec)
 
-# ── Regime权重矩阵 ──
+# ── Regime权重矩阵 (P2: 2026-06-21 加入基本面+情绪因子) ──
+# 技术面权重 85%→65%, 基本面+情绪 0%→35%
+# insider_signal 保留但降权 (insider本身也是基本面)
 REGIME_WEIGHTS = {
-    "RISK_ON":  {"sector_momentum": 0.25, "relative_strength": 0.20, "ma_alignment": 0.15, "volume_breakout": 0.15, "rsi_sweet_spot": 0.10, "insider_signal": 0.15},
-    "RISK_OFF": {"sector_momentum": 0.10, "relative_strength": 0.10, "ma_alignment": 0.25, "volume_breakout": 0.10, "rsi_sweet_spot": 0.30, "insider_signal": 0.15},
-    "ROTATION": {"sector_momentum": 0.30, "relative_strength": 0.15, "ma_alignment": 0.15, "volume_breakout": 0.10, "rsi_sweet_spot": 0.10, "insider_signal": 0.20},
-    "NEUTRAL":  {"sector_momentum": 0.17, "relative_strength": 0.17, "ma_alignment": 0.17, "volume_breakout": 0.17, "rsi_sweet_spot": 0.17, "insider_signal": 0.15},
+    "RISK_ON":  {"sector_momentum": 0.18, "relative_strength": 0.15, "ma_alignment": 0.12, "volume_breakout": 0.12, "rsi_sweet_spot": 0.08, "insider_signal": 0.12, "fundamental_quality": 0.13, "sentiment_crowding": 0.10},
+    "RISK_OFF": {"sector_momentum": 0.08, "relative_strength": 0.08, "ma_alignment": 0.20, "volume_breakout": 0.08, "rsi_sweet_spot": 0.24, "insider_signal": 0.12, "fundamental_quality": 0.12, "sentiment_crowding": 0.08},
+    "ROTATION": {"sector_momentum": 0.24, "relative_strength": 0.12, "ma_alignment": 0.12, "volume_breakout": 0.08, "rsi_sweet_spot": 0.08, "insider_signal": 0.16, "fundamental_quality": 0.12, "sentiment_crowding": 0.08},
+    "NEUTRAL":  {"sector_momentum": 0.13, "relative_strength": 0.13, "ma_alignment": 0.13, "volume_breakout": 0.13, "rsi_sweet_spot": 0.13, "insider_signal": 0.12, "fundamental_quality": 0.12, "sentiment_crowding": 0.11},
 }
 
 
@@ -353,73 +356,48 @@ def _get_sector_momentum() -> Dict[str, float]:
     return result
 
 
-def _compute_technicals(svc, symbol: str) -> Optional[Dict]:
-    """计算单只股票的技术因子 (复用Futu K线)"""
+def _compute_technicals(data_router, symbol: str) -> Optional[Dict]:
+    """计算单只股票的技术因子 (via MarketDataRouter 日K线 + LV3TechnicalCalculator)"""
     try:
-        from futu import RET_OK, SubType
-        ret_sub, _ = svc._quote_ctx.subscribe([symbol], [SubType.K_DAY])
-        if ret_sub != RET_OK:
-            return None
-        time.sleep(0.15)
-
-        ret, data = svc._quote_ctx.get_cur_kline(symbol, 60, ktype="K_DAY")
-        if ret != RET_OK or data.empty or len(data) < 20:
+        bars = data_router.get_daily_bars(symbol, count=60)
+        if not bars or len(bars) < 20:
             return None
 
-        closes = [float(r["close"]) for _, r in data.iterrows()]
-        volumes = [float(r["volume"]) for _, r in data.iterrows()]
+        from app.data.lv3_technical_calculator import LV3TechnicalCalculator
+        tech = LV3TechnicalCalculator().calculate_from_klines(bars)
+        if not tech:
+            return None
 
-        result = {"symbol": symbol, "cur_price": closes[-1]}
+        result = {"symbol": symbol, "cur_price": tech.get("price", 0)}
 
-        # ── Factor 2: Relative Strength (20d change vs SPY) ──
-        if len(closes) >= 20:
-            result["change_20d"] = round((closes[-1] - closes[-20]) / closes[-20] * 100, 2)
-            result["change_5d"] = round((closes[-1] - closes[-5]) / closes[-5] * 100, 2)
-
-        # ── Factor 3: MA Alignment ──
-        if len(closes) >= 20:
-            ma5 = sum(closes[-5:]) / 5
-            ma10 = sum(closes[-10:]) / 10
-            ma20 = sum(closes[-20:]) / 20
-            result["ma5"] = round(ma5, 2)
-            result["ma10"] = round(ma10, 2)
-            result["ma20"] = round(ma20, 2)
-            if ma5 > ma10 > ma20:
-                result["ma_alignment"] = "BULLISH"
-            elif ma5 < ma10 < ma20:
-                result["ma_alignment"] = "BEARISH"
-            else:
-                result["ma_alignment"] = "MIXED"
-
-        # ── Factor 4: Volume Breakout ──
-        if len(volumes) >= 20:
-            vol_avg_20 = sum(volumes[-20:]) / 20
-            result["vol_ratio"] = round(volumes[-1] / vol_avg_20, 2) if vol_avg_20 > 0 else 1.0
+        # MA alignment from LV3 MA5/MA10/MA20
+        ma5 = tech.get("ma5", 0)
+        ma10 = tech.get("ma10", 0)
+        ma20 = tech.get("ma20", 0)
+        result["ma5"] = round(ma5, 2)
+        result["ma10"] = round(ma10, 2)
+        result["ma20"] = round(ma20, 2)
+        if ma5 > ma10 > ma20:
+            result["ma_alignment"] = "BULLISH"
+        elif ma5 < ma10 < ma20:
+            result["ma_alignment"] = "BEARISH"
         else:
-            result["vol_ratio"] = 1.0
+            result["ma_alignment"] = "MIXED"
 
-        # ── Factor 5: RSI-14 ──
-        if len(closes) >= 15:
-            gains, losses = [], []
-            for i in range(-14, 0):
-                d = closes[i] - closes[i - 1]
-                gains.append(max(d, 0))
-                losses.append(max(-d, 0))
-            avg_gain = sum(gains) / 14
-            avg_loss = sum(losses) / 14
-            if avg_loss > 0:
-                result["rsi14"] = round(100 - (100 / (1 + avg_gain / avg_loss)), 1)
-            else:
-                result["rsi14"] = 100.0
+        # Volume ratio
+        result["vol_ratio"] = tech.get("volume_ratio", 1.0)
 
-        # ── Price range context ──
-        highs = [float(r["high"]) for _, r in data.iterrows()]
-        lows = [float(r["low"]) for _, r in data.iterrows()]
-        if len(highs) >= 20:
-            result["high_20d"] = round(max(highs[-20:]), 2)
-            result["low_20d"] = round(min(lows[-20:]), 2)
-        if len(closes) >= 5:
-            result["change_5d"] = round((closes[-1] - closes[-5]) / closes[-5] * 100, 2)
+        # RSI-14
+        result["rsi14"] = tech.get("rsi", 50.0)
+
+        # Price changes
+        result["change_20d"] = tech.get("change_20d_pct", 0.0)
+        result["change_5d"] = tech.get("change_5d_pct", 0.0)
+
+        # 20d high/low from raw bars
+        if len(bars) >= 20:
+            result["high_20d"] = round(max(float(b["high"]) for b in bars[-20:]), 2)
+            result["low_20d"] = round(min(float(b["low"]) for b in bars[-20:]), 2)
 
         return result
 
@@ -429,27 +407,50 @@ def _compute_technicals(svc, symbol: str) -> Optional[Dict]:
 
 
 def _score_factor(name: str, value: float, direction: str = "LONG") -> float:
-    """将因子原始值转换为0-1标准化得分"""
+    """将因子原始值转换为0-1标准化得分 (方向感知)
+
+    LONG视角: 上涨/多头信号 → 高分
+    SHORT视角: 下跌/空头信号 → 高分 (镜像对称)
+    """
+    is_short = direction == "SHORT"
 
     if name == "sector_momentum":
-        # 板块5日涨幅: -3%→0, 0%→0.5, +3%→1.0
+        # LONG: -3%→0, 0%→0.5, +3%→1.0
+        # SHORT: +3%→0, 0%→0.5, -3%→1.0 (板块跌=做空机会)
+        if is_short:
+            return max(0, min(1, (-value + 3) / 6))
         return max(0, min(1, (value + 3) / 6))
 
     elif name == "relative_strength":
-        # 相对SPY的超额: -5%→0, 0%→0.5, +5%→1.0
+        # LONG: -5%→0, 0%→0.5, +5%→1.0
+        # SHORT: +5%→0, 0%→0.5, -5%→1.0 (跑输=做空机会)
+        if is_short:
+            return max(0, min(1, (-value + 5) / 10))
         return max(0, min(1, (value + 5) / 10))
 
     elif name == "ma_alignment":
-        # BULLISH=1.0, MIXED=0.5, BEARISH=0.0
-        mapping = {"BULLISH": 1.0, "MIXED": 0.5, "BEARISH": 0.0}
-        return mapping.get(value, 0.5)
+        # LONG: BULLISH=1.0, MIXED=0.5, BEARISH=0.0
+        # SHORT: BEARISH=1.0, MIXED=0.5, BULLISH=0.0 (均线空头=做空信号)
+        mapping_long = {"BULLISH": 1.0, "MIXED": 0.5, "BEARISH": 0.0}
+        mapping_short = {"BEARISH": 1.0, "MIXED": 0.5, "BULLISH": 0.0}
+        return (mapping_short if is_short else mapping_long).get(value, 0.5)
 
     elif name == "volume_breakout":
-        # 量比: 0.5→0, 1.0→0.3, 1.5→0.7, 2.0→1.0
+        # 量比方向无关: 放量=高关注度(无论涨跌)
         return max(0, min(1, (value - 0.5) / 1.5))
 
     elif name == "rsi_sweet_spot":
-        # RSI甜区: 30-50最优(1.0), 50-70中等(0.5), <30或>70差(0.2)
+        # LONG: 30-50最优(超卖反弹), 50-70中等, <30差, >70差
+        # SHORT: 70-90最优(超买回落), 50-70中等, <30差, >90极端
+        if is_short:
+            if 70 <= value <= 90:
+                return 1.0
+            elif 50 < value < 70:
+                return 0.6
+            elif 30 <= value <= 50:
+                return 0.4
+            else:
+                return 0.2
         if 30 <= value <= 50:
             return 1.0
         elif 50 < value <= 70:
@@ -460,6 +461,295 @@ def _score_factor(name: str, value: float, direction: str = "LONG") -> float:
             return 0.2  # 极端区域
 
     return 0.5
+
+
+# ════════════════════════════════════════════════════════════════
+#  P2 (2026-06-21): 基本面+情绪因子 — 复用已有数据源, 零新依赖
+# ════════════════════════════════════════════════════════════════
+
+def _fetch_fundamental_score(symbol: str) -> tuple:
+    """获取基本面质量评分
+
+    P2 (2026-06-21): 优先用富途snapshot(实时PE/PB/EPS/净资产/净利润), 降级用Finnhub(5min缓存)
+    原因: 富途数据实时(5s缓存), Finnhub 24h缓存可能过期; 富途无API限频
+    富途snapshot字段: pe_ratio, pe_ttm_ratio, pb_ratio, earning_per_share, net_asset, net_profit
+
+    Returns:
+        (score_0_1, detail_str)
+    """
+    import time
+
+    # 缓存 (5分钟)
+    cache_key = f"_fund_cache_{symbol}"
+    cached = getattr(_fetch_fundamental_score, cache_key, None)
+    if cached:
+        cached_time, cached_result = cached
+        if time.time() - cached_time < 300:
+            return cached_result
+
+    # ── 优先: 富途snapshot (实时, 无限频) ──
+    try:
+        from app.web_dashboard.data_service import get_data_service
+        ds = get_data_service()
+        import asyncio
+        # P0修复: 线程中asyncio.get_event_loop()可能抛RuntimeError
+        # 用asyncio.run()最安全——它会创建新事件循环, 执行完自动关闭
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # 在asyncio事件循环内, 用新线程执行
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as pool:
+                    quotes = pool.submit(
+                        asyncio.run, ds.get_batch_quotes_detailed([symbol])
+                    ).result(timeout=10)
+            else:
+                quotes = loop.run_until_complete(ds.get_batch_quotes_detailed([symbol]))
+        except RuntimeError:
+            # "There is no current event loop" — 在子线程中, 用asyncio.run
+            quotes = asyncio.run(ds.get_batch_quotes_detailed([symbol]))
+
+        q = quotes.get(symbol, {})
+        pe = q.get("pe_ttm") or q.get("pe_ratio") or 0
+        pb = q.get("pb_ratio") or 0
+        eps = q.get("eps") or 0
+        net_asset = q.get("net_asset") or 0
+        net_profit = q.get("net_profit") or 0
+
+        if pe > 0:
+            # PE评分: 5-25 → 1.0, 25-50 → 0.6, >50 → 0.3
+            if pe <= 25:
+                pe_score = 1.0
+            elif pe <= 50:
+                pe_score = 0.6
+            else:
+                pe_score = 0.3
+
+            # ROE = net_profit / net_asset (富途不直接返回ROE, 需计算)
+            roe = (net_profit / net_asset * 100) if net_asset > 0 else 0
+            if roe > 15:
+                roe_score = 1.0
+            elif roe > 5:
+                roe_score = 0.6
+            else:
+                roe_score = 0.3
+
+            # PB评分: <3 → 1.0, 3-10 → 0.6, >10 → 0.3
+            if pb > 0 and pb <= 3:
+                pb_score = 1.0
+            elif pb > 0 and pb <= 10:
+                pb_score = 0.6
+            else:
+                pb_score = 0.3
+
+            score = pe_score * 0.4 + roe_score * 0.3 + pb_score * 0.3
+            detail = f"PE={pe:.0f} ROE={roe:.1f}% PB={pb:.1f} [Futu]"
+            result = (round(score, 3), detail)
+            setattr(_fetch_fundamental_score, cache_key, (time.time(), result))
+            return result
+    except Exception as e:
+        logger.debug(f"[FactorEngine] futu snapshot fundamental failed for {symbol}: {e}")
+
+    # ── 降级: Finnhub REST API (5min缓存) ──
+    try:
+        import os, requests
+        key = os.environ.get("FINNHUB_API_KEY", "")
+        if not key:
+            from pathlib import Path
+            env_path = Path(__file__).parent.parent.parent / ".env.us"
+            if env_path.exists():
+                for line in env_path.read_text().splitlines():
+                    if line.startswith("FINNHUB_API_KEY=") and not line.startswith("#"):
+                        key = line.split("=", 1)[1].strip()
+                        break
+
+        if not key:
+            return 0.5, "no api key"
+
+        bare = symbol.replace("US.", "").replace("US", "")
+        resp = requests.get(
+            f"https://finnhub.io/api/v1/stock/metric",
+            params={"symbol": bare, "metric": "all", "token": key},
+            timeout=8,
+        )
+
+        if resp.status_code != 200:
+            return 0.5, f"api {resp.status_code}"
+
+        m = resp.json().get("metric", {})
+        if not m:
+            return 0.5, "no metric data"
+
+        pe = float(m.get("peNormalizedAnnual", 0) or 0)
+        roe = float(m.get("roeTTM", 0) or 0)
+        revenue_yoy = float(m.get("revenueGrowth5Y", 0) or 0)
+
+        # PE评分: 5-25 → 1.0, 25-50 → 0.6, >50或负 → 0.2
+        if pe <= 0:
+            pe_score = 0.2
+        elif pe <= 25:
+            pe_score = 1.0
+        elif pe <= 50:
+            pe_score = 0.6
+        else:
+            pe_score = 0.3
+
+        # ROE评分: >15% → 1.0, 5-15% → 0.6, <5% → 0.3
+        if roe > 15:
+            roe_score = 1.0
+        elif roe > 5:
+            roe_score = 0.6
+        else:
+            roe_score = 0.3
+
+        # 收入增长: >10% → 1.0, 0-10% → 0.6, <0% → 0.2
+        if revenue_yoy > 10:
+            growth_score = 1.0
+        elif revenue_yoy > 0:
+            growth_score = 0.6
+        else:
+            growth_score = 0.2
+
+        score = pe_score * 0.4 + roe_score * 0.3 + growth_score * 0.3
+        detail = f"PE={pe:.0f} ROE={roe:.1f}% RevYoY={revenue_yoy:.1f}% [Finnhub]"
+        result = (round(score, 3), detail)
+        setattr(_fetch_fundamental_score, cache_key, (time.time(), result))
+        return result
+
+    except Exception as e:
+        logger.debug(f"[FactorEngine] fundamental score error for {symbol}: {e}")
+        try:
+            from app.core.degradation_monitor import get_degradation_monitor
+            get_degradation_monitor().record("factor_fundamental_fetch", str(e))
+        except Exception:
+            pass
+        return 0.5, "error"
+
+
+def _fetch_sentiment_crowding(symbol: str, direction: str) -> tuple:
+    """获取情绪拥挤度评分
+
+    P2 (2026-06-21): 优先用富途snapshot资金流数据(真实钱), 降级用StockTwits(社交媒体)
+    原因: 富途bid_ask_ratio+volume_ratio反映真实买卖盘力量, 比社交媒体情绪更可靠
+          且富途数据实时(5s缓存), StockTwits 10min缓存且限200次/小时
+
+    逻辑: 买盘强(bid_ask_ratio>0) → LONG有利/SHORT危险
+         卖盘强(bid_ask_ratio<0) → SHORT有利/LONG危险
+         量比高 → 趋势确认(放大当前方向)
+
+    Returns:
+        (score_0_1, detail_str) — score越高=对当前方向越有利
+    """
+    import time as _time
+
+    # 缓存5分钟 (富途snapshot是5s缓存, 但因子评分不需要那么频繁)
+    cache_key = f"_sent_cache_{symbol}"
+    cached = getattr(_fetch_sentiment_crowding, cache_key, None)
+    if cached:
+        cached_time, cached_result = cached
+        if _time.time() - cached_time < 300:
+            score = cached_result[0] if direction == "LONG" else cached_result[1]
+            return score, cached_result[2]
+
+    # ── 优先: 富途snapshot bid_ask_ratio + volume_ratio ──
+    try:
+        from app.web_dashboard.data_service import get_data_service
+        ds = get_data_service()
+        import asyncio
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as pool:
+                    quotes = pool.submit(
+                        asyncio.run, ds.get_batch_quotes_detailed([symbol])
+                    ).result(timeout=10)
+            else:
+                quotes = loop.run_until_complete(ds.get_batch_quotes_detailed([symbol]))
+        except RuntimeError:
+            quotes = asyncio.run(ds.get_batch_quotes_detailed([symbol]))
+
+        q = quotes.get(symbol, {})
+        bid_ask_ratio = q.get("bid_ask_ratio")
+        volume_ratio = q.get("volume_ratio")
+
+        if bid_ask_ratio is not None:
+            # bid_ask_ratio: >0 买盘强, <0 卖盘强
+            # 映射到0-1: ratio>20 → 1.0(极强买), ratio<-20 → 0.0(极强卖)
+            bar = float(bid_ask_ratio)
+            bar_score = max(0.0, min(1.0, (bar + 20) / 40))
+
+            # volume_ratio: >1 放量(确认趋势), <1 缩量(趋势弱)
+            vr = float(volume_ratio) if volume_ratio else 1.0
+            vol_confirm = max(0.5, min(1.0, vr / 3))  # vr=3 → 1.0, vr=1 → 0.5
+
+            # LONG: 买盘强 → 高分
+            long_score = max(0.2, min(1.0, bar_score * 0.7 + vol_confirm * 0.3))
+            # SHORT: 卖盘强 → 高分
+            short_score = max(0.2, min(1.0, (1 - bar_score) * 0.7 + vol_confirm * 0.3))
+
+            crowd_label = '强买' if bar > 10 else '强卖' if bar < -10 else '均衡'
+            label = f"B/A={bar:.1f}({crowd_label}) VR={vr:.1f}x [Futu]"
+
+            setattr(_fetch_sentiment_crowding, cache_key, (_time.time(), (long_score, short_score, label)))
+            score = long_score if direction == "LONG" else short_score
+            return round(score, 3), label
+    except Exception as e:
+        logger.debug(f"[FactorEngine] futu snapshot sentiment failed for {symbol}: {e}")
+
+    # ── 降级: StockTwits API (10min缓存, 200次/小时限频) ──
+    try:
+        import requests
+        bare = symbol.replace("US.", "")
+        url = f"https://api.stocktwits.com/api/2/streams/symbol/{bare}.json"
+        resp = requests.get(url, timeout=8, headers={"User-Agent": "FTSeek/1.0"})
+        if resp.status_code == 429:
+            try:
+                from app.core.degradation_monitor import get_degradation_monitor
+                get_degradation_monitor().record("stocktwits_rate_limit", f"429 for {symbol}")
+            except Exception:
+                pass
+            return 0.5, "rate_limited"
+        if resp.status_code != 200:
+            return 0.5, f"api {resp.status_code}"
+
+        data = resp.json()
+        messages = data.get("messages", [])
+        if not messages:
+            return 0.5, "no messages"
+
+        bullish = 0
+        bearish = 0
+        for msg in messages[:30]:
+            sentiment = msg.get("entities", {}).get("sentiment")
+            if isinstance(sentiment, dict):
+                basic = sentiment.get("basic", "")
+                if basic == "Bullish":
+                    bullish += 1
+                elif basic == "Bearish":
+                    bearish += 1
+
+        total = max(bullish + bearish, 1)
+        bull_pct = bullish / total
+
+        long_score = max(0.2, min(1.0, 1.0 - bull_pct))
+        short_score = max(0.2, min(1.0, bull_pct))
+
+        crowd_label = '拥挤' if bull_pct > 0.7 else '中性' if bull_pct > 0.4 else '恐慌'
+        label = f"bull={bull_pct:.0%}({crowd_label})@{bullish}/{bearish} [ST]"
+
+        setattr(_fetch_sentiment_crowding, cache_key, (_time.time(), (long_score, short_score, label)))
+        score = long_score if direction == "LONG" else short_score
+        return round(score, 3), label
+
+    except Exception as e:
+        logger.debug(f"[FactorEngine] sentiment score error for {symbol}: {e}")
+        try:
+            from app.core.degradation_monitor import get_degradation_monitor
+            get_degradation_monitor().record("factor_sentiment_fetch", str(e))
+        except Exception:
+            pass
+        return 0.5, "error"
 
 
 def _detect_regime(sector_data: Dict[str, float], spy_change: float = 0) -> str:
@@ -521,50 +811,48 @@ def run_factor_screen(top_n: int = 8) -> Dict:
     # 2. Get sector momentum
     sector_momentum = _get_sector_momentum()
 
-    # 3. Get SPY 20d change for regime detection
+    # 3. Get SPY 20d change + technicals via MarketDataRouter (eliminates ManualOrderService)
     spy_change_20d = 0
+    technicals = {}
     try:
-        from app.web_dashboard.manual_order_service import ManualOrderService
-        svc = ManualOrderService()
-        if svc.connect():
-            from futu import RET_OK, SubType
-            svc._quote_ctx.subscribe(["US.SPY"], [SubType.K_DAY])
-            time.sleep(0.3)
-            ret, spy_data = svc._quote_ctx.get_cur_kline("US.SPY", 25, ktype="K_DAY")
-            if ret == RET_OK and not spy_data.empty and len(spy_data) >= 20:
-                spy_closes = [float(r["close"]) for _, r in spy_data.iterrows()]
-                spy_change_20d = round((spy_closes[-1] - spy_closes[-20]) / spy_closes[-20] * 100, 2)
+        from app.data.market_data_router import MarketDataRouter
+        data_router = MarketDataRouter(
+            twelvedata_api_key=os.getenv("TWELVEDATA_API_KEY"),
+            finnhub_api_key=os.getenv("FINNHUB_API_KEY"),
+            alphavantage_api_key=os.getenv("ALPHAVANTAGE_API_KEY"),
+        )
 
-            # 4. Compute technicals for all pool stocks
-            technicals = {}
-            for symbol in pool:
-                tech = _compute_technicals(svc, symbol)
-                if tech:
-                    technicals[symbol] = tech
+        # SPY 20d change
+        spy_bars = data_router.get_daily_bars("US.SPY", count=25)
+        if spy_bars and len(spy_bars) >= 20:
+            spy_closes = [float(b["close"]) for b in spy_bars]
+            spy_change_20d = round((spy_closes[-1] - spy_closes[-20]) / spy_closes[-20] * 100, 2)
 
-            svc.disconnect()
+        # Compute technicals for all pool stocks
+        for symbol in pool:
+            tech = _compute_technicals(data_router, symbol)
+            if tech:
+                technicals[symbol] = tech
+
     except Exception as e:
-        logger.error(f"[FactorEngine] broker error: {e}")
+        logger.error(f"[FactorEngine] data_router error: {e}")
         technicals = {}
 
     # 5. Detect regime
     regime = _detect_regime(sector_momentum, spy_change_20d)
     weights = REGIME_WEIGHTS.get(regime, REGIME_WEIGHTS["NEUTRAL"])
 
-    # 6. Score each stock
+    # 6. Score each stock (directional: compute both LONG and SHORT, pick the stronger)
     candidates = []
     for symbol in pool:
         tech = technicals.get(symbol)
         if not tech:
             continue
 
-        short = symbol.replace("US.", "")
-        stock_sectors = _TICKER_TO_SECTORS.get(short, [])
+        ticker = symbol.replace("US.", "")
+        stock_sectors = _TICKER_TO_SECTORS.get(ticker, [])
 
-        # Factor scores
-        factor_results = {}
-
-        # F1: Sector momentum (best sector among memberships)
+        # ── Raw factor inputs (direction-agnostic) ──
         best_sector_chg = 0
         best_sector_name = ""
         for sec in stock_sectors:
@@ -572,51 +860,14 @@ def run_factor_screen(top_n: int = 8) -> Dict:
             if chg > best_sector_chg or not best_sector_name:
                 best_sector_chg = chg
                 best_sector_name = sec
-        factor_results["sector_momentum"] = {
-            "raw": best_sector_chg,
-            "score": _score_factor("sector_momentum", best_sector_chg),
-            "weight": weights["sector_momentum"],
-            "detail": f"{best_sector_name} {best_sector_chg:+.1f}%" if best_sector_name else "N/A",
-        }
 
-        # F2: Relative strength
         rs = tech.get("change_20d", 0) - spy_change_20d
-        factor_results["relative_strength"] = {
-            "raw": round(rs, 2),
-            "score": _score_factor("relative_strength", rs),
-            "weight": weights["relative_strength"],
-            "detail": f"{tech.get('change_20d', 0):+.1f}% vs SPY {spy_change_20d:+.1f}%",
-        }
-
-        # F3: MA alignment
         ma_align = tech.get("ma_alignment", "MIXED")
-        factor_results["ma_alignment"] = {
-            "raw": ma_align,
-            "score": _score_factor("ma_alignment", ma_align),
-            "weight": weights["ma_alignment"],
-            "detail": f"MA5={tech.get('ma5',0):.0f} MA10={tech.get('ma10',0):.0f} MA20={tech.get('ma20',0):.0f}",
-        }
-
-        # F4: Volume breakout
         vol_ratio = tech.get("vol_ratio", 1.0)
-        factor_results["volume_breakout"] = {
-            "raw": vol_ratio,
-            "score": _score_factor("volume_breakout", vol_ratio),
-            "weight": weights["volume_breakout"],
-            "detail": f"{vol_ratio:.1f}x avg",
-        }
-
-        # F5: RSI sweet spot
         rsi = tech.get("rsi14", 50)
-        factor_results["rsi_sweet_spot"] = {
-            "raw": rsi,
-            "score": _score_factor("rsi_sweet_spot", rsi),
-            "weight": weights["rsi_sweet_spot"],
-            "detail": f"RSI={rsi:.0f}",
-        }
 
-        # F6: Insider signal (from enrichment_router)
-        insider_score = 0.5  # 默认中性
+        # F6: Insider signal (shared between directions)
+        insider_score = 0.5
         insider_detail = "no data"
         try:
             from app.data.enrichment_router import get_insider
@@ -627,8 +878,7 @@ def run_factor_screen(top_n: int = 8) -> Dict:
                 sell_count = d.get("sell_count_30d", 0)
                 net_shares = d.get("net_shares_30d", 0)
                 signal = d.get("insider_signal", "neutral")
-                
-                # 评分逻辑：strong_buy=1.0, buy=0.8, neutral=0.5, sell=0.2
+
                 if signal == "strong_buy":
                     insider_score = 1.0
                     insider_detail = f"STRONG BUY: {buy_count} buys, {net_shares:+,} shares"
@@ -643,30 +893,78 @@ def run_factor_screen(top_n: int = 8) -> Dict:
                     insider_detail = f"NEUTRAL: {buy_count}B/{sell_count}S"
         except Exception as e:
             logger.debug(f"[FactorEngine] insider fetch failed for {symbol}: {e}")
-        
-        factor_results["insider_signal"] = {
-            "raw": insider_score,
-            "score": insider_score,
-            "weight": weights.get("insider_signal", 0.15),
-            "detail": insider_detail,
-        }
 
-        # Composite score
-        composite = sum(f["score"] * f["weight"] for f in factor_results.values())
-
-        # Direction hint from factors
-        bullish_signals = sum(1 for f in factor_results.values() if f["score"] >= 0.7)
-        bearish_signals = sum(1 for f in factor_results.values() if f["score"] <= 0.3)
-        if bullish_signals > bearish_signals:
-            direction_hint = "LONG"
-        elif bearish_signals > bullish_signals:
-            direction_hint = "SHORT"
+        # Insider: mirror for SHORT (sell=1.0 for short, buy=0.2)
+        insider_score_long = insider_score
+        if insider_score >= 0.7:
+            insider_score_short = 0.2  # strong buy = bearish for short
+        elif insider_score <= 0.3:
+            insider_score_short = 0.8  # sell = bullish for short
         else:
+            insider_score_short = 0.5
+
+        # P2 (2026-06-21): 基本面质量 — 优先用富途snapshot(实时), 降级用Finnhub(5min缓存)
+        fund_score, fund_detail = _fetch_fundamental_score(symbol)
+        # 基本面对两个方向都是同一评分 (高质量公司做多做空都有价值)
+        fund_score_long = fund_score
+        fund_score_short = 1.0 - fund_score  # 基本面差的公司更适合做空
+
+        # P2 (2026-06-21): 情绪拥挤度 — 优先用富途资金流(真实钱), 降级用StockTwits(社交媒体)
+        sent_score_long, sent_detail_long = _fetch_sentiment_crowding(symbol, "LONG")
+        sent_score_short, sent_detail_short = _fetch_sentiment_crowding(symbol, "SHORT")
+
+        # ── Compute LONG composite ──
+        long_factors = {
+            "sector_momentum": {"raw": best_sector_chg, "score": _score_factor("sector_momentum", best_sector_chg, "LONG"), "weight": weights["sector_momentum"], "detail": f"{best_sector_name} {best_sector_chg:+.1f}%" if best_sector_name else "N/A"},
+            "relative_strength": {"raw": round(rs, 2), "score": _score_factor("relative_strength", rs, "LONG"), "weight": weights["relative_strength"], "detail": f"{tech.get('change_20d', 0):+.1f}% vs SPY {spy_change_20d:+.1f}%"},
+            "ma_alignment": {"raw": ma_align, "score": _score_factor("ma_alignment", ma_align, "LONG"), "weight": weights["ma_alignment"], "detail": f"MA5={tech.get('ma5',0):.0f} MA10={tech.get('ma10',0):.0f} MA20={tech.get('ma20',0):.0f}"},
+            "volume_breakout": {"raw": vol_ratio, "score": _score_factor("volume_breakout", vol_ratio, "LONG"), "weight": weights["volume_breakout"], "detail": f"{vol_ratio:.1f}x avg"},
+            "rsi_sweet_spot": {"raw": rsi, "score": _score_factor("rsi_sweet_spot", rsi, "LONG"), "weight": weights["rsi_sweet_spot"], "detail": f"RSI={rsi:.0f}"},
+            "insider_signal": {"raw": insider_score_long, "score": insider_score_long, "weight": weights.get("insider_signal", 0.12), "detail": insider_detail},
+            "fundamental_quality": {"raw": fund_score_long, "score": fund_score_long, "weight": weights.get("fundamental_quality", 0.13), "detail": fund_detail},
+            "sentiment_crowding": {"raw": sent_score_long, "score": sent_score_long, "weight": weights.get("sentiment_crowding", 0.10), "detail": sent_detail_long},
+        }
+        long_composite = sum(f["score"] * f["weight"] for f in long_factors.values())
+
+        # ── Compute SHORT composite ──
+        short_factors = {
+            "sector_momentum": {"raw": best_sector_chg, "score": _score_factor("sector_momentum", best_sector_chg, "SHORT"), "weight": weights["sector_momentum"], "detail": f"{best_sector_name} {best_sector_chg:+.1f}%" if best_sector_name else "N/A"},
+            "relative_strength": {"raw": round(rs, 2), "score": _score_factor("relative_strength", rs, "SHORT"), "weight": weights["relative_strength"], "detail": f"{tech.get('change_20d', 0):+.1f}% vs SPY {spy_change_20d:+.1f}%"},
+            "ma_alignment": {"raw": ma_align, "score": _score_factor("ma_alignment", ma_align, "SHORT"), "weight": weights["ma_alignment"], "detail": f"MA5={tech.get('ma5',0):.0f} MA10={tech.get('ma10',0):.0f} MA20={tech.get('ma20',0):.0f}"},
+            "volume_breakout": {"raw": vol_ratio, "score": _score_factor("volume_breakout", vol_ratio, "SHORT"), "weight": weights["volume_breakout"], "detail": f"{vol_ratio:.1f}x avg"},
+            "rsi_sweet_spot": {"raw": rsi, "score": _score_factor("rsi_sweet_spot", rsi, "SHORT"), "weight": weights["rsi_sweet_spot"], "detail": f"RSI={rsi:.0f}"},
+            "insider_signal": {"raw": insider_score_short, "score": insider_score_short, "weight": weights.get("insider_signal", 0.12), "detail": insider_detail},
+            "fundamental_quality": {"raw": fund_score_short, "score": fund_score_short, "weight": weights.get("fundamental_quality", 0.13), "detail": fund_detail},
+            "sentiment_crowding": {"raw": sent_score_short, "score": sent_score_short, "weight": weights.get("sentiment_crowding", 0.10), "detail": sent_detail_short},
+        }
+        short_composite = sum(f["score"] * f["weight"] for f in short_factors.values())
+
+        # ── Direction selection with conflict arbitration ──
+        # P0 修复 (2026-06-21): 方向冲突仲裁
+        # 原: long_composite >= short_composite → 直接选LONG (无视差异大小)
+        # 新: 差异 < 0.15 → 方向不明确, 标记NEUTRAL, 不进入推荐
+        # 原理: 强行从两个相近的方向中选一个=猜, 不如不推荐
+        _DIRECTION_DIFF_THRESHOLD = 0.15
+
+        if abs(long_composite - short_composite) < _DIRECTION_DIFF_THRESHOLD:
             direction_hint = "NEUTRAL"
+            composite = max(long_composite, short_composite)
+            factor_results = long_factors if long_composite >= short_composite else short_factors
+        elif long_composite > short_composite:
+            direction_hint = "LONG"
+            composite = long_composite
+            factor_results = long_factors
+        else:
+            direction_hint = "SHORT"
+            composite = short_composite
+            factor_results = short_factors
 
         candidates.append({
             "symbol": symbol,
             "composite_score": round(composite, 3),
+            "composite_score_long": round(long_composite, 3),
+            "composite_score_short": round(short_composite, 3),
+            "direction_diff": round(abs(long_composite - short_composite), 3),
             "factors": factor_results,
             "technicals": {k: v for k, v in tech.items() if k != "symbol"},
             "sectors": stock_sectors,
@@ -693,7 +991,7 @@ def run_factor_screen(top_n: int = 8) -> Dict:
         "spy_change_20d": spy_change_20d,
         "elapsed_sec": round(time.time() - t0, 1),
         # all_scores: lightweight list for watchlist/dashboard (symbol + score only)
-        "all_scores": [{"symbol": c["symbol"], "composite_score": c["composite_score"], "direction_hint": c.get("direction_hint", "")} for c in candidates],
+        "all_scores": [{"symbol": c["symbol"], "composite_score": c["composite_score"], "direction_hint": c.get("direction_hint", ""), "composite_score_long": c.get("composite_score_long", 0), "composite_score_short": c.get("composite_score_short", 0)} for c in candidates],
     }
 
     # 8. Save to file

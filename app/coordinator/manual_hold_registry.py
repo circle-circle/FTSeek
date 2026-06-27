@@ -37,6 +37,7 @@ class ManualHoldInfo:
     direction: str  # "LONG" / "SHORT"
     quantity: int
     reason: str
+    account: str = "real"  # 2026-06-24 Phase 3: 账户维度 (real/sim), 默认 real (手动走实盘)
     registered_at: datetime = field(default_factory=datetime.now)
 
 
@@ -64,18 +65,19 @@ class ManualHoldRegistry:
             self._holdings: Dict[str, ManualHoldInfo] = {}
             self._initialized = True
 
-    def register(self, symbol: str, direction: str, quantity: int, reason: str = ""):
-        """手动开仓/挂单时立即注册"""
+    def register(self, symbol: str, direction: str, quantity: int, reason: str = "", account: str = "real"):
+        """手动开仓/挂单时立即注册. account: real(默认,手动走实盘)/sim."""
         with self._lock:
             self._holdings[symbol] = ManualHoldInfo(
                 symbol=symbol,
                 direction=direction,
                 quantity=quantity,
                 reason=reason,
+                account=account,
             )
             logger.info(
                 f"[ManualHoldRegistry] REGISTERED: {symbol} {direction} "
-                f"qty={quantity} reason={reason}"
+                f"qty={quantity} account={account} reason={reason}"
             )
 
     def unregister(self, symbol: str):
@@ -92,10 +94,19 @@ class ManualHoldRegistry:
                     f"[ManualHoldRegistry] UNREGISTER called but {symbol} not found"
                 )
 
-    def is_manual_held(self, symbol: str) -> bool:
-        """自动交易调用: 该标的是否被手动占用"""
+    def is_manual_held(self, symbol: str, account: Optional[str] = None) -> bool:
+        """自动交易调用: 该标的是否被手动占用.
+
+        account=None (默认): 任意账户持有即 True (向后兼容, pre-check 用此).
+        account='sim'/'real': 仅该账户持有才 True.
+        """
         with self._lock:
-            return symbol in self._holdings
+            info = self._holdings.get(symbol)
+            if info is None:
+                return False
+            if account is None:
+                return True
+            return info.account == account
 
     def get_all_manual_symbols(self) -> Set[str]:
         """获取所有手动占用的标的列表"""

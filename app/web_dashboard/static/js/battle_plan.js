@@ -40,40 +40,116 @@ function daBtnId(symbol) { return 'da-btn-' + String(symbol || '').replace(/\./g
 // Task #30: 缓存当前 plan 的 targets, 供 executeFromAnalysis 查找入场区间/仓位
 var currentPlanTargets = [];
 
-// Task #30: 按需生成深度分析 (v3: 调用 Deep Research endpoint)
+// 2026-06-20: 单个target生成深度研究 (v2: 阶段进度反馈 + 缓存感知)
+var _drStages = [
+    {label: '📡 数据采集', dur: 5000},
+    {label: '🧠 多空辩论', dur: 30000},
+    {label: '⚖ 综合裁决', dur: 30000},
+    {label: '🛡 风险辩论', dur: 30000},
+    {label: '✅ 完成', dur: 1000},
+];
+var _drTimer = null;
+
+async function generateSingleResearch(symbol, btn) {
+    if (btn) { btn.disabled = true; btn.dataset._orig = btn.textContent; }
+
+    // 阶段进度模拟 (真实时间约90-120s)
+    var stageIdx = 0;
+    function updateStage() {
+        if (btn) btn.textContent = _drStages[stageIdx].label + '…';
+        stageIdx++;
+        if (stageIdx < _drStages.length) {
+            _drTimer = setTimeout(updateStage, _drStages[stageIdx - 1].dur);
+        }
+    }
+    updateStage();
+
+    try {
+        var resp = await fetch('/api/battle-plan/deep-research/' + encodeURIComponent(symbol), { method: 'POST' });
+        var data = await resp.json();
+        if (_drTimer) { clearTimeout(_drTimer); _drTimer = null; }
+
+        if (resp.ok && data.success) {
+            if (data.cached) {
+                // 缓存命中 — 无需刷新，直接恢复按钮
+                if (btn) { btn.textContent = '✅ 已有分析'; btn.disabled = false; }
+                setTimeout(function(){ if(btn) btn.textContent = btn.dataset._orig || '🧪 生成深度研究'; }, 2000);
+            } else {
+                if (btn) btn.textContent = '✅ 完成，刷新中…';
+                setTimeout(function(){ location.reload(); }, 500);
+            }
+        } else {
+            var msg = '❌ 失败: ' + (data && (data.error || data.message) || 'HTTP ' + resp.status);
+            if (btn) { btn.textContent = msg; btn.disabled = false; }
+            setTimeout(function(){ if(btn) btn.textContent = btn.dataset._orig || '🧪 生成深度研究'; }, 4000);
+        }
+    } catch(e) {
+        if (_drTimer) { clearTimeout(_drTimer); _drTimer = null; }
+        if (btn) { btn.textContent = '❌ 网络错误: ' + e.message; btn.disabled = false; }
+        setTimeout(function(){ if(btn) btn.textContent = btn.dataset._orig || '🧪 生成深度研究'; }, 4000);
+    }
+}
+
+// Task #30: 按需生成深度分析 (v3: 调用 Deep Research endpoint, v2: 阶段进度)
+var _drBatchTimer = null;
+var _drBatchStages = [
+    {label: '📡 批量数据采集 (3标的)', dur: 8000},
+    {label: '🧠 第1标的: 多空辩论', dur: 30000},
+    {label: '⚖ 第1标的: 综合裁决', dur: 30000},
+    {label: '🛡 第1标的: 风险辩论', dur: 30000},
+    {label: '🧠 第2标的: 多空辩论', dur: 30000},
+    {label: '⚖ 第2标的: 综合裁决', dur: 30000},
+    {label: '🧠 第3标的: 多空辩论', dur: 30000},
+    {label: '⚖ 第3标的: 综合裁决', dur: 30000},
+    {label: '✅ 批量完成', dur: 1000},
+];
 async function generateDeepAnalysis(ev) {
     if (ev) ev.stopPropagation();
     var btn = ev && ev.target;
     if (!btn) return;
     var allBtns = document.querySelectorAll('.da-generate-btn');
-    allBtns.forEach(function(b){ b.disabled = true; b.dataset._orig = b.textContent; b.textContent = '深度研究生成中…'; });
+    allBtns.forEach(function(b){ b.disabled = true; b.dataset._orig = b.textContent; });
+
+    // 阶段进度
+    var sIdx = 0;
+    function tickStage() {
+        allBtns.forEach(function(b){ b.textContent = _drBatchStages[sIdx].label + '…'; });
+        sIdx++;
+        if (sIdx < _drBatchStages.length) {
+            _drBatchTimer = setTimeout(tickStage, _drBatchStages[sIdx - 1].dur);
+        }
+    }
+    tickStage();
+
     try {
-        // 优先调用 v3 Deep Research, 失败降级到 v2 Deep Analysis
         var resp = await fetch('/api/battle-plan/deep-research/generate', { method: 'POST' });
         if (!resp.ok) {
             resp = await fetch('/api/battle-plan/deep-analysis/generate', { method: 'POST' });
         }
         var data = await resp.json();
+        if (_drBatchTimer) { clearTimeout(_drBatchTimer); _drBatchTimer = null; }
         if (resp.ok && data.success) {
-            location.reload();
+            allBtns.forEach(function(b){ b.textContent = '✅ 完成，刷新中…'; });
+            setTimeout(function(){ location.reload(); }, 500);
             return;
         }
-        var msg = '生成失败: ' + (data && (data.error || data.message) || ('HTTP ' + resp.status));
+        var msg = '❌ 失败: ' + (data && (data.error || data.message) || ('HTTP ' + resp.status));
         allBtns.forEach(function(b){ b.textContent = msg; });
         setTimeout(function(){
             allBtns.forEach(function(b){
                 b.textContent = b.dataset._orig || '生成深度研究';
                 b.disabled = false;
             });
-        }, 3500);
+        }, 4000);
     } catch (e) {
-        allBtns.forEach(function(b){ b.textContent = '网络错误'; });
+        if (_drBatchTimer) { clearTimeout(_drBatchTimer); _drBatchTimer = null; }
+        allBtns.forEach(function(b){ b.textContent = '❌ 网络错误'; });
         setTimeout(function(){
             allBtns.forEach(function(b){
                 b.textContent = b.dataset._orig || '生成深度研究';
                 b.disabled = false;
             });
-        }, 3000);
+        }, 4000);
     }
 }
 
@@ -500,12 +576,15 @@ function render(d, actData) {
             composite_rank: t.composite_rank || 0,
             rank_position: t.rank_position || 0,
             is_primary: t.is_primary || false,
+            discovery_time: t.discovery_time || '',
+            model_used: t.model_used || '',
+            execution_rules: t.execution_rules || [],
             why_primary: t.why_primary || '',
             executive_summary: t.executive_summary || '',
             catalyst: t.catalyst || {},
             deep_research: dr,
             deep_analysis: da,
-            discovery_time: t.discovery_time || '',
+            factor_validation: t.factor_validation || {},
         });
     });
 
@@ -526,6 +605,19 @@ function render(d, actData) {
     // ── Render ──
     var html = '';
 
+    // ── Layer -1: Pause Bar (暂停状态条) ──
+    var pauseBar = document.getElementById('pauseBar');
+    var pauseText = document.getElementById('pauseText');
+    if (d._paused && pauseBar) {
+        pauseBar.style.display = 'flex';
+        if (pauseText) {
+            var reason = d._pause_reason || d._paused_reason || '自动交易已暂停';
+            pauseText.textContent = '⏸ 自动交易已暂停 — ' + esc(reason);
+        }
+    } else if (pauseBar) {
+        pauseBar.style.display = 'none';
+    }
+
     // ── Layer 0: Command Bar (替代 Decision Hub + header) ──
     var regimeLabel = {RISK_ON:'偏多',RISK_OFF:'偏空',NEUTRAL:'震荡',ROTATION:'轮动',HIGH_VOL:'高波动',DEGRADED:'数据不足'};
     var cmdBar = document.getElementById('cmdBar');
@@ -544,6 +636,67 @@ function render(d, actData) {
     }
 
     // ── must_do (critical actions) ──
+
+    // ── Portfolio Synthesis (组合级分析) ──
+    var ps = d.portfolio_synthesis;
+    if (ps && ps.action_list) {
+        var agSrc = ps._meta || {};
+        var agTxt = agSrc.agreement === 'HIGH' ? '✅ 两模型一致' : agSrc.agreement === 'MEDIUM' ? '⚠ 部分一致' : agSrc.agreement === 'LOW' ? '⚠ 分歧较大' : '单模型';
+        var riskCls = (ps.risk_level || '').toUpperCase() === 'HIGH' ? 'high' : (ps.risk_level || '').toUpperCase() === 'MEDIUM' ? 'mid' : 'low';
+        html += '<div class="ps-panel">';
+        html += '<div class="ps-header">';
+        html += '<span class="ps-title">🎯 组合分析</span>';
+        html += '<span class="ps-direction">' + esc(ps.recommended_direction || '—') + '</span>';
+        html += '<span class="ps-risk ' + riskCls + '">风险 ' + esc(ps.risk_level || '—') + '</span>';
+        html += '<span class="ps-agreement">' + agTxt + '</span>';
+        html += '</div>';
+        html += '<div class="ps-assessment">' + esc(ps.market_assessment || '') + '</div>';
+        // Action list table
+        html += '<div class="ps-table-wrap"><table class="ps-table"><thead><tr>';
+        html += '<th>#</th><th>标的</th><th>方向</th><th>操作</th><th>确信</th><th>仓位</th><th>入场</th><th>止损</th><th>核心理由</th>';
+        html += '</tr></thead><tbody>';
+        ps.action_list.forEach(function(a) {
+            var sym = (a.symbol || '').replace('US.', '');
+            var action = (a.action || '').toUpperCase();
+            var dir = (a.direction || '').toUpperCase();
+            var conv = a.conviction || 0;
+            var pos = a.position_pct || '—';
+            var entry = a.entry || '—';
+            var sl = a.stop_loss || '—';
+            var reason = a.core_reason || '';
+            var actionCls = {BUY:'buy', SELL:'sell', CONDITIONAL:'cond', WATCH:'watch'}[action] || 'watch';
+            var dirCls = dir === 'LONG' ? 'long' : (dir === 'SHORT' ? 'short' : '');
+            var convCls = conv >= 70 ? 'high' : conv >= 50 ? 'mid' : 'low';
+            html += '<tr>';
+            html += '<td class="ps-rank">' + esc(a.rank || '') + '</td>';
+            html += '<td class="ps-sym">' + esc(sym) + '</td>';
+            html += '<td class="ps-dir ' + dirCls + '">' + dir + '</td>';
+            html += '<td class="ps-action ' + actionCls + '">' + action + '</td>';
+            html += '<td class="ps-conv ' + convCls + '">' + conv + '%</td>';
+            html += '<td class="ps-pos">' + esc(pos) + '</td>';
+            html += '<td class="ps-entry">' + esc(entry) + '</td>';
+            html += '<td class="ps-sl">' + esc(sl) + '</td>';
+            html += '<td class="ps-reason">' + esc(reason) + '</td>';
+            html += '</tr>';
+        });
+        html += '</tbody></table></div>';
+        // Upgrade conditions for CONDITIONAL/WATCH
+        var upgradeItems = ps.action_list.filter(function(a) { return a.upgrade_condition && (a.action === 'CONDITIONAL' || a.action === 'WATCH'); });
+        if (upgradeItems.length) {
+            html += '<div class="ps-upgrade">';
+            html += '<div class="ps-upgrade-hd">📋 升级条件</div>';
+            upgradeItems.forEach(function(a) {
+                html += '<div class="ps-upgrade-item"><span class="ps-upgrade-sym">' + esc((a.symbol||'').replace('US.','')) + '</span> ' + esc(a.upgrade_condition) + '</div>';
+            });
+            html += '</div>';
+        }
+        if (ps.portfolio_summary) {
+            html += '<div class="ps-summary">' + esc(ps.portfolio_summary) + '</div>';
+        }
+        html += '</div>';
+    }
+
+    // must_do (critical actions)
     if (mustDo.length) {
         html += '<div class="ap-must">';
         html += '<div class="ap-must-hd">🚨 必须执行 <span class="cnt">(' + mustDo.length + ')</span></div>';
@@ -614,7 +767,7 @@ function render(d, actData) {
     html += '</div>';
     if (opps.length > 0) {
         html += '<div class="mo-table-wrap"><table class="mo-table"><thead><tr>';
-        html += '<th>#</th><th>Ticker</th><th>方向</th><th>置信度</th><th>催化</th><th>动量</th><th>情绪</th><th>价值</th><th>裁决</th>';
+        html += '<th>#</th><th>Ticker</th><th>方向</th><th>置信度</th><th>催化</th><th>动量</th><th>情绪</th><th>裁决</th>';
         html += '</tr></thead><tbody>';
         opps.forEach(function(o, oi) {
             var catScore = (o.catalyst && o.catalyst.score != null) ? o.catalyst.score : '—';
@@ -628,7 +781,6 @@ function render(d, actData) {
                 else if (sd === 'bearish' || sd === 'negative') { sentCls = 'negative'; sentDir = '看空'; }
                 else { sentCls = 'neutral'; sentDir = '中性'; }
             }
-            var valScore = '—';
             var catCls = (typeof catScore === 'number' && catScore >= 7) ? 'high' : (typeof catScore === 'number' && catScore >= 4) ? 'mid' : 'low';
             var momCls = (typeof o.factor_score === 'number' && o.factor_score >= 0.7) ? 'high' : (typeof o.factor_score === 'number' && o.factor_score >= 0.4) ? 'mid' : 'low';
             var verdict = o.verdict_txt || (o.direction === 'LONG' ? 'BUY' : 'SELL');
@@ -640,7 +792,6 @@ function render(d, actData) {
             html += '<td class="mo-score ' + catCls + '">' + catScore + '</td>';
             html += '<td class="mo-score ' + momCls + '">' + momScore + '</td>';
             html += '<td class="mo-sentiment ' + sentCls + '">' + sentDir + '</td>';
-            html += '<td class="mo-score low">' + valScore + '</td>';
             html += '<td class="mo-verdict ' + verdict + '">' + verdict + '</td>';
             html += '</tr>';
         });
@@ -800,11 +951,10 @@ function render(d, actData) {
         // ── Card Start ──
         html += '<div class="dr-verdict-card action-' + action + (isAvoid ? ' dr-card-muted' : '') + '">';
 
-        // Header: action badge + symbol + price + direction + rank + data quality dots
+        // Header: action badge + symbol(linked) + price + direction + rank
         html += '<div class="dr-header">';
         html += '<span class="dr-action-badge ' + action + '">' + action + '</span>';
-        html += '<span class="dr-symbol">' + esc(sym) + '</span>';
-        html += '<a href="/stock/' + encodeURIComponent(o.symbol) + '" class="dr-detail-link" title="查看详情" onclick="event.stopPropagation()">📊</a>';
+        html += '<a href="/stock/' + encodeURIComponent(o.symbol) + '" class="dr-symbol" title="查看详情" onclick="event.stopPropagation()">' + esc(sym) + '</a>';
         if (o.cur > 0) html += '<span class="dr-price">$' + Number(o.cur).toFixed(2) + '</span>';
         if (o.direction) html += '<span class="ap-dir ' + o.direction + '">' + o.direction + '</span>';
         if (o.is_primary) html += '<span class="dr-rank-badge">★ 主攻 #' + (o.rank_position || 1) + '</span>';
@@ -870,14 +1020,88 @@ function render(d, actData) {
             html += '</div>';
         }
 
-        // Expand button (always visible)
-        html += '<div class="dr-expand-btn" onclick="var r=document.getElementById(\'' + uid + '\');if(r){r.classList.toggle(\'open\');this.classList.toggle(\'open\');}">';
-        html += '<span>📖 完整分析</span>';
-        html += '<span class="arrow">▼</span>';
-        html += '</div>';
+        // Expand button (only if there's deep_research to show)
+        if (dr || da) {
+            html += '<div class="dr-expand-btn" onclick="var r=document.getElementById(\'' + uid + '\');if(r){r.classList.toggle(\'open\');this.classList.toggle(\'open\');}">';
+            html += '<span>📖 完整分析</span>';
+            html += '<span class="arrow">▼</span>';
+            html += '</div>';
+        }
 
         // ── Collapsible research report ──
-        html += '<div class="dr-report" id="' + uid + '">';
+        // CONDITIONAL (no dr/da): default open, no toggle button needed
+        var reportOpen = (!dr && !da) ? ' open' : '';
+        html += '<div class="dr-report' + reportOpen + '" id="' + uid + '">';
+
+        // If no deep_research, show factor summary instead of blank
+        if (!dr && !da) {
+            html += '<div class="dr-no-research">';
+            // Factor breakdown with descriptions
+            html += '<div class="dr-nr-section">';
+            html += '<div class="dr-nr-hd">🔍 因子诊断 <span class="dr-nr-hint">hover查看说明</span></div>';
+            html += '<div class="dr-nr-grid">';
+            html += '<div class="dr-nr-item" title="多因子加权综合评分(0-100)。≥80=强信号, 60-79=中等, <60=弱"><span class="nr-label">综合因子分</span><span class="nr-val ' + (o.factor_score >= 0.8 ? 'high' : o.factor_score >= 0.6 ? 'mid' : 'low') + '">' + (o.factor_score * 100).toFixed(0) + '</span></div>';
+            html += '<div class="dr-nr-item" title="在当日候选池中的排名百分位。越高=越靠前"><span class="nr-label">排名分</span><span class="nr-val">' + (o.composite_rank * 100).toFixed(0) + '</span></div>';
+            html += '<div class="dr-nr-item" title="系统对该信号的置信度。≥70=高确信, 45-69=中等, <45=低"><span class="nr-label">置信度</span><span class="nr-val">' + o.confidence + '%</span></div>';
+            html += '<div class="dr-nr-item" title="信号发现来源: core_pool=盘前核心池, INTRADAY_ALERT=盘中异动扫描"><span class="nr-label">发现来源</span><span class="nr-val">' + esc(o.source || '—') + '</span></div>';
+            html += '<div class="dr-nr-item" title="因子计算模型: deterministic_rules=规则引擎, quick_factor=快速评分"><span class="nr-label">模型</span><span class="nr-val">' + esc(o.model_used || '—') + '</span></div>';
+            html += '<div class="dr-nr-item" title="信号紧急度: HIGH=需立即关注, MEDIUM=观察, LOW=不急"><span class="nr-label">紧急度</span><span class="nr-val ' + (o.urgency === 'HIGH' ? 'high' : '') + '">' + esc(o.urgency || '—') + '</span></div>';
+            html += '</div>';
+
+            // Factor validation status (if available)
+            var fv = o.factor_validation;
+            var fvKeys = Object.keys(fv);
+            if (fvKeys.length) {
+                var fvLabels = {
+                    sector_momentum: '板块动量',
+                    relative_strength: '相对强度',
+                    ma_alignment: '均线排列',
+                    volume_breakout: '量能突破',
+                    rsi_sweet_spot: 'RSI位置',
+                    insider_signal: '内部人信号'
+                };
+                var fvDescs = {
+                    sector_momentum: '所属板块当日涨跌',
+                    relative_strength: '相对SPY的超额收益',
+                    ma_alignment: 'MA5/10/20多空排列',
+                    volume_breakout: '成交量 vs 均量',
+                    rsi_sweet_spot: 'RSI在40-60健康区间',
+                    insider_signal: '内部人买入/卖出'
+                };
+                html += '<div class="dr-fv-grid">';
+                fvKeys.forEach(function(k) {
+                    var val = fv[k] || '—';
+                    var cls = val === 'CONFIRMED' ? 'ok' : (val === 'WEAK' ? 'warn' : 'neutral');
+                    var icon = val === 'CONFIRMED' ? '✅' : (val === 'WEAK' ? '⚠️' : '·');
+                    html += '<span class="dr-fv-item ' + cls + '" title="' + esc(fvDescs[k] || k) + '">' + icon + ' ' + esc(fvLabels[k] || k) + ' <b>' + esc(val) + '</b></span>';
+                });
+                html += '</div>';
+            }
+
+            // Data cited
+            if (o.data_cited && o.data_cited.length) {
+                html += '<div class="dr-nr-cited">';
+                html += '<span class="nr-cited-label">数据依据 (实时):</span>';
+                o.data_cited.forEach(function(d) {
+                    html += '<span class="nr-cited-item">' + esc(d) + '</span>';
+                });
+                html += '</div>';
+            } else {
+                html += '<div class="dr-nr-cited">';
+                html += '<span class="nr-cited-label" style="color:#f87171">⚠ 缺少数据依据 — 此信号仅有异动检测，未经过多因子验证</span>';
+                html += '</div>';
+            }
+            // Rationale
+            if (o.reason) {
+                html += '<div class="dr-nr-rationale">' + esc(o.reason) + '</div>';
+            }
+            // Generate button
+            html += '<button class="dr-generate-btn" onclick="generateSingleResearch(\'' + esc(o.symbol) + '\', this)">🧪 生成深度研究</button>';
+            html += '</div>';
+            html += '</div>'; // close dr-report
+            html += '</div>'; // close dr-verdict-card
+            return;
+        }
 
         // Build plan
         if (buildPlan) {
@@ -929,6 +1153,46 @@ function render(d, actData) {
                 if (item.val && item.val !== 'N/A') {
                     html += '<div><span class="ind-label">' + esc(item.label) + '</span><span class="ind-val">' + esc(item.val) + '</span></div>';
                 }
+            });
+            html += '</div>';
+        }
+
+        // Factor validation (VALID cards) — shows which factors passed/failed
+        var fvValid = o.factor_validation || {};
+        var fvValidKeys = Object.keys(fvValid);
+        if (fvValidKeys.length) {
+            var fvLabels2 = {
+                sector_momentum: '板块动量',
+                relative_strength: '相对强度',
+                ma_alignment: '均线排列',
+                volume_breakout: '量能突破',
+                rsi_sweet_spot: 'RSI位置',
+                insider_signal: '内部人信号'
+            };
+            var fvDescs2 = {
+                sector_momentum: '所属板块当日涨跌',
+                relative_strength: '相对SPY的超额收益',
+                ma_alignment: 'MA5/10/20多空排列',
+                volume_breakout: '成交量 vs 均量',
+                rsi_sweet_spot: 'RSI在40-60健康区间',
+                insider_signal: '内部人买入/卖出'
+            };
+            html += '<div class="dr-fv-grid" style="margin-bottom:8px">';
+            fvValidKeys.forEach(function(k) {
+                var val = fvValid[k] || '—';
+                var cls = val === 'CONFIRMED' ? 'ok' : (val === 'WEAK' ? 'warn' : 'neutral');
+                var icon = val === 'CONFIRMED' ? '✅' : (val === 'WEAK' ? '⚠️' : '·');
+                html += '<span class="dr-fv-item ' + cls + '" title="' + esc(fvDescs2[k] || k) + '">' + icon + ' ' + esc(fvLabels2[k] || k) + ' <b>' + esc(val) + '</b></span>';
+            });
+            html += '</div>';
+        }
+
+        // Data cited (VALID cards)
+        if (o.data_cited && o.data_cited.length) {
+            html += '<div class="dr-nr-cited" style="margin-bottom:8px">';
+            html += '<span class="nr-cited-label">数据依据 (实时):</span>';
+            o.data_cited.forEach(function(d) {
+                html += '<span class="nr-cited-item">' + esc(d) + '</span>';
             });
             html += '</div>';
         }

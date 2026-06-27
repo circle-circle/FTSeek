@@ -1,0 +1,94 @@
+{
+  "timestamp": "2026-06-24T07:00:32.021868",
+  "period_days": 7,
+  "data": {
+    "period": "7 days",
+    "total": 490,
+    "by_direction": {
+      "LONG": {
+        "n": 465,
+        "win_rate": 0.44946236559139785,
+        "avg_ret_t1": -0.6261808425089834,
+        "avg_win": 2.618754025527248,
+        "avg_loss": 3.275365949616687,
+        "pnl_ratio": 0.7995302100010285,
+        "expectancy": -0.6261808425089828
+      },
+      "SHORT": {
+        "n": 25,
+        "win_rate": 0.64,
+        "avg_ret_t1": 0.900304371347291,
+        "avg_win": 2.0897255223680253,
+        "avg_loss": 1.2142221193562355,
+        "pnl_ratio": 1.7210405650293787,
+        "expectancy": 0.9003043713472916
+      }
+    }
+  },
+  "by_strategy": {
+    "SHORT|TECHNICAL_MULTI_FACTOR": {
+      "direction": "SHORT",
+      "strategy": "TECHNICAL_MULTI_FACTOR",
+      "n": 25,
+      "win_rate_t1": 0.64,
+      "avg_ret_t1": 0.900304371347291,
+      "pnl_ratio": 1.7210405650293787,
+      "expectancy": 0.9003043713472916,
+      "avg_win": 2.0897255223680253,
+      "avg_loss": 1.2142221193562355,
+      "t5": {
+        "n": 0,
+        "win_rate": null,
+        "avg_ret": null
+      }
+    },
+    "LONG|BATTLE_PLAN_FAST_PATH": {
+      "direction": "LONG",
+      "strategy": "BATTLE_PLAN_FAST_PATH",
+      "n": 15,
+      "win_rate_t1": 1.0,
+      "avg_ret_t1": 2.153311359243726,
+      "pnl_ratio": 2153.311359243726,
+      "expectancy": 2.1533113592437263,
+      "avg_win": 2.1533113592437263,
+      "avg_loss": 0.001,
+      "t5": {
+        "n": 0,
+        "win_rate": null,
+        "avg_ret": null
+      }
+    },
+    "LONG|TECHNICAL_MULTI_FACTOR": {
+      "direction": "LONG",
+      "strategy": "TECHNICAL_MULTI_FACTOR",
+      "n": 9,
+      "win_rate_t1": 0.2222222222222222,
+      "avg_ret_t1": -4.382727843237736,
+      "pnl_ratio": 0.16486395244861093,
+      "expectancy": -4.382727843237737,
+      "avg_win": 0.9749204260286692,
+      "avg_loss": 5.913484491599567,
+      "t5": {
+        "n": 0,
+        "win_rate": null,
+        "avg_ret": null
+      }
+    },
+    "LONG|EARNINGS_REVISION_MOMENTUM": {
+      "direction": "LONG",
+      "strategy": "EARNINGS_REVISION_MOMENTUM",
+      "n": 441,
+      "win_rate_t1": 0.43537414965986393,
+      "avg_ret_t1": -0.6440571690843394,
+      "pnl_ratio": 0.8347614495256457,
+      "expectancy": -0.6440571690843395,
+      "avg_win": 2.6722400004920916,
+      "avg_loss": 3.201201974540865,
+      "t5": {
+        "n": 0,
+        "win_rate": null,
+        "avg_ret": null
+      }
+    }
+  }
+}

@@ -317,21 +317,55 @@ def compute_stop_lines(
 
     # === 5. Breakeven：仅在"盈利"≥ trigger 时激活 ===
     # P0 修复 (2026-05-29): 激活门槛从 1.5 降至 0.5 ATR (保本触发提前)
-    # Y4 (2026-05-15): bug 修复 — SHORT break-even 应在 entry 之上 (价格反弹回到 entry 附近触发保利)
-    # 旧 bug: SHORT 用 entry × (1 - buffer), 导致 stop_line 低于 entry, 入场即满足触发条件
-    # 真凶: GOOGL SHORT entry $335.99 → breakeven_stop=$335.32 → 入场 0.5h 后异常 +$6K 损失
+    # === 5. Breakeven：盈利曾达到threshold → SL移至成本 (不平仓, 只保护) ===
+    # 2026-06-21: 改为 percentage trigger (trigger_profit_pct), 基于 peak_price 而非 current_price
+    #   旧: trigger_profit_atr (ATR倍数, 0.4 ATR) → ATR小时触发太晚
+    #   新: trigger_profit_pct (百分比, 1.5%) → 统一阈值, 不受ATR波动影响
+    #   关键: 用 peak_price 判断"曾经盈利达到1.5%", 而不是 current_price
+    #   原因: ratchet 是单向的 — 一旦触发, SL永久移至entry, 即使价格回落也保持
     breakeven_stop = 0.0
-    be_trigger = float(be_cfg.get("trigger_profit_atr", 0.4))  # Fix 11: was 0.5, matches YAML 0.4
-    buffer_pct = float(be_cfg.get("buffer_pct", 0.15)) / 100.0  # Fix 11: was 0.2, matches YAML 0.15
-    # fail-safe (2026-06-20): 缺省=禁用，同 chandelier。显式 enabled:true 才启用。
-    if be_cfg.get("enabled", False) and profit_atr_signed >= be_trigger:
-        if direction == "LONG":
-            # LONG: 价格回到 entry 附近 (略高于 entry) 触发保利
-            breakeven_stop = entry_price * (1 + buffer_pct)
+    buffer_pct = float(be_cfg.get("buffer_pct", 0.0)) / 100.0
+    # fail-safe (2026-06-20): 缺省=禁用。显式 enabled:true 才启用。
+    if be_cfg.get("enabled", False):
+        # 优先使用 percentage trigger (2026-06-21 新配置)
+        trigger_profit_pct = be_cfg.get("trigger_profit_pct")
+        if trigger_profit_pct is not None:
+            # 用 peak_price 判断"曾经盈利达到阈值" (ratchet 语义)
+            if entry_price > 0 and peak_price > 0:
+                if direction == "LONG":
+                    peak_profit_pct = (peak_price - entry_price) / entry_price * 100
+                else:
+                    peak_profit_pct = (entry_price - peak_price) / entry_price * 100
+                # ── stepped ratchet: 阶梯式利润锁定 (2026-06-25) ──
+                # ≥5% → SL=entry×1.03 (锁3%), ≥3% → SL=entry×1.01 (锁1%), ≥1.5% → SL=entry (保本)
+                # SHORT 对称: ×0.97 / ×0.99 / ×1.0
+                # SL 只上不下, 一旦触发永久保持
+                _lock_3pct = float(be_cfg.get("lock_3pct_trigger", 5.0))
+                _lock_1pct = float(be_cfg.get("lock_1pct_trigger", 3.0))
+                _be_trigger = float(trigger_profit_pct)
+                if peak_profit_pct >= _lock_3pct:
+                    if direction == "LONG":
+                        breakeven_stop = entry_price * (1 + 0.03)
+                    else:
+                        breakeven_stop = entry_price * (1 - 0.03)
+                elif peak_profit_pct >= _lock_1pct:
+                    if direction == "LONG":
+                        breakeven_stop = entry_price * (1 + 0.01)
+                    else:
+                        breakeven_stop = entry_price * (1 - 0.01)
+                elif peak_profit_pct >= _be_trigger:
+                    if direction == "LONG":
+                        breakeven_stop = entry_price * (1 + buffer_pct)
+                    else:
+                        breakeven_stop = entry_price * (1 - buffer_pct)
         else:
-            # SHORT: 价格反弹到 entry 附近 (略高于 entry) 触发保利
-            # 修复前是 entry × (1 - buffer) = entry 之下, 错误!
-            breakeven_stop = entry_price * (1 + buffer_pct)
+            # 兼容旧配置: trigger_profit_atr (ATR倍数)
+            be_trigger = float(be_cfg.get("trigger_profit_atr", 0.4))
+            if profit_atr_signed >= be_trigger:
+                if direction == "LONG":
+                    breakeven_stop = entry_price * (1 + buffer_pct)
+                else:
+                    breakeven_stop = entry_price * (1 - buffer_pct)
 
     # === 6. 聚合候选止损线 ===
     # 2026-06-20: scale_out_floor (ratchet 下限) 作为候选, 利用 max(LONG)/min(SHORT)

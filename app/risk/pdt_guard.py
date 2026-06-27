@@ -195,20 +195,15 @@ class PDTGuard:
 
     def record_day_trade(self, symbol: str):
         """记录一次日内交易 (写入 pdt_trades 表)
-        
+
         注意: PDT 法规定义 day trade = 同一标的同日开+平 (round trip)。
         应通过 record_close() 在平仓时调用，而非开仓时。
         保留此方法供 record_close() 内部使用。
+
+        2026-06-24 (Phase 3, decision "sim 也守 PDT"): 移除模拟盘 blanket 豫免.
+        sim 日内交易现在也计数, 由 check_trade_permission 的 is_pdt_account (equity≥25k) 判断
+        是否受限 — sim 余额 <25k 时守 PDT (验证策略 PDT 合规), ≥25k 豁免.
         """
-        # 模拟盘不记录 (P0 2026-05-06)
-        try:
-            from app.core.config_container import get_config
-            if get_config().is_simulated:
-                return
-        except Exception:
-            import os
-            if os.getenv("TRADE_ENV", "1") == "1":
-                return
         today = date.today().isoformat()
         try:
             with sqlite3.connect(self._db_path) as conn:
@@ -269,16 +264,9 @@ class PDTGuard:
         Returns:
             (允许交易, 原因, 风险等级)
         """
-        # 模拟盘豁免 PDT 限制 (P0 2026-05-06: 模拟盘无 FINRA 合规风险)
-        try:
-            from app.core.config_container import get_config
-            if get_config().is_simulated:
-                return True, "模拟盘豁免 PDT (无 FINRA 合规风险)", PDTRiskLevel.SAFE
-        except Exception:
-            # 配置未加载时 fallback 到环境变量
-            import os
-            if os.getenv("TRADE_ENV", "1") == "1":
-                return True, "模拟盘豁免 PDT (TRADE_ENV=1)", PDTRiskLevel.SAFE
+        # 2026-06-24 (Phase 3, decision "sim 也守 PDT"): 移除模拟盘 blanket 豫免.
+        # sim/live 统一走 is_pdt_account 判断 — 余额 <25k 守 PDT, ≥25k 豁免.
+        # 这样 sim 验证的是 PDT 合规策略 (避免 sim 达标 live 跑不了的假达标).
 
         # 如果资金 >= $25,000，豁免 PDT 规则
         if self._state.is_pdt_account:

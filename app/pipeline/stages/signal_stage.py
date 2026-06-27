@@ -392,7 +392,7 @@ def process(ctx: SymbolContext,
                         import concurrent.futures
                         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
                             future = executor.submit(voting_coordinator.vote, symbol, ctx)
-                            vote_result = future.result(timeout=5.0)
+                            vote_result = future.result(timeout=15.0)  # 2026-06-26: 5s→15s, LLM需要更多时间
                             if vote_result:
                                 ctx.metadata["vote_result"] = vote_result
                                 candidate = eval_strategy("voting_llm", ctx)

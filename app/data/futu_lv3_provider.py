@@ -25,6 +25,7 @@ Phase 1 实现: 通过 Futu OpenD 获取美股实时行情 (LV3)
 """
 import logging
 import os
+import socket
 import threading
 import time
 from datetime import datetime
@@ -269,6 +270,17 @@ class FutuLV3Provider:
 
                 from futu import OpenQuoteContext, SysConfig, SubType
 
+                # 2026-06-26 修复: 连接 OpenD 前先做端口探测, 不可达时快速失败,
+                # 避免 OpenQuoteContext 在 OpenD 不可达时无限阻塞。
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(2.0)
+                port_result = sock.connect_ex((self.host, self.port))
+                sock.close()
+                if port_result != 0:
+                    logger.warning(f"[FutuLV3] OpenD {self.host}:{self.port} 端口不可达，跳过连接")
+                    self._connected = False
+                    return False
+
                 # 禁用 Futu SDK 日志
                 futu_logger = logging.getLogger("futu")
                 futu_logger.setLevel(logging.CRITICAL)
@@ -357,8 +369,10 @@ class FutuLV3Provider:
                                     "prev_close": row.get("prev_close_price", 0),
                                     "volume": row.get("volume", 0),
                                     "turnover": row.get("turnover", 0),
-                                    "bid": row.get("bid_price", 0),
-                                    "ask": row.get("ask_price", 0),
+                                    # 2026-06-26: StockQuote push 不含 bid/ask, 用 last_price 兜底
+                                    # (与 snapshot 路径 line 743-744 一致, 避免 health check 误拦)
+                                    "bid": float(row.get("bid_price", 0) or 0) or float(row.get("last_price", 0) or 0),
+                                    "ask": float(row.get("ask_price", 0) or 0) or float(row.get("last_price", 0) or 0),
                                     "bid_vol": row.get("bid_vol", 0),
                                     "ask_vol": row.get("ask_vol", 0),
                                     "timestamp": time.time(),
@@ -555,6 +569,12 @@ class FutuLV3Provider:
         if not self._ensure_connected():
             return False
 
+        # 竞态修复 (2026-06-25): 捕获 _quote_ctx 局部引用，防止 watchdog 的 force_reconnect
+        # 在 _ensure_connected() 返回后、subscribe 调用前将 _quote_ctx 置 None → NoneType 报错
+        quote_ctx = self._quote_ctx
+        if quote_ctx is None:
+            return False
+
         futu_symbols = [self._to_futu_symbol(s) for s in symbols]
         new_symbols = [s for s in futu_symbols if s not in self._subscribed_symbols]
 
@@ -586,7 +606,7 @@ class FutuLV3Provider:
                 if sub_type is None:
                     logger.warning(f"[FutuLV3] 未知订阅类型: {st_name}")
                     continue
-                ret, data = self._quote_ctx.subscribe(new_symbols, [sub_type], subscribe_push=True)
+                ret, data = quote_ctx.subscribe(new_symbols, [sub_type], subscribe_push=True)
                 if ret != 0:
                     logger.warning(
                         f"[FutuLV3] 订阅 {st_name} 部分失败: {data}, "
@@ -1086,8 +1106,12 @@ class FutuLV3Provider:
             List of dicts: [{time, open, high, low, close, volume, turnover}, ...]
             按时间升序排列；失败时返回缓存数据或 None
         """
-        if not self._ensure_connected():
-            # 连接断开时降级返回缓存
+        # ponytail: request_history_kline 是API调用, 不需要市场开盘。
+        # _ensure_connected 的时段检查只对实时订阅有意义, 历史K线随时可查。
+        if not self._connected or self._quote_ctx is None or not self._verify_connection_alive():
+            self._connect_for_historical()  # 盘后也能连接
+        if not self._connected or self._quote_ctx is None:
+            # 仍然连不上 → 降级返回缓存
             futu_symbol = self._to_futu_symbol(symbol)
             cached = self._daily_kline_cache.get(futu_symbol)
             if cached:
@@ -1097,12 +1121,28 @@ class FutuLV3Provider:
 
         futu_symbol = self._to_futu_symbol(symbol)
 
-        # 检查缓存 (24hr TTL = 86400s)
+        # 检查缓存 (24hr TTL = 86400s) + 数据新鲜度检查
+        # 2026-06-27 P0修复: 缓存中可能有过期数据(返回2025年bars), 需检查最新bar日期
         cache_ts = self._daily_kline_cache_time.get(futu_symbol, 0)
-        if time.time() - cache_ts < 86400:
-            cached = self._daily_kline_cache.get(futu_symbol)
-            if cached and len(cached) >= min(count, 5):
-                return cached[-count:]
+        cached = self._daily_kline_cache.get(futu_symbol)
+        _cache_valid = False
+        if cached and len(cached) >= min(count, 5) and (time.time() - cache_ts < 86400):
+            # 数据新鲜度: 最新bar日期应在最近10天内(容错周末/假日)
+            try:
+                from datetime import date, timedelta
+                latest_bar_date = str(cached[-1].get("time", ""))[:10]
+                if latest_bar_date:
+                    latest = date.fromisoformat(latest_bar_date)
+                    # 允许10天宽限(覆盖长周末+周末), 超过则缓存失效
+                    if date.today() - latest <= timedelta(days=10):
+                        _cache_valid = True
+                    else:
+                        logger.info(f"[FutuLV3·DailyK] {symbol} 缓存数据过期 (latest={latest_bar_date}), 重新查询")
+            except Exception:
+                _cache_valid = True  # 解析失败时不阻断, 降级用缓存
+
+        if _cache_valid:
+            return cached[-count:]
 
         try:
             from futu import KLType
@@ -1260,6 +1300,33 @@ class FutuLV3Provider:
                 f"累计断线 {self._total_disconnect_count} 次"
             )
         self._last_health_state = healthy
+
+    def _connect_for_historical(self) -> bool:
+        """盘后/非交易时段连接OpenD (仅用于request_history_kline等API调用, 不订阅实时行情)."""
+        if self._connected and self._quote_ctx is not None and self._verify_connection_alive():
+            return True
+        try:
+            # 2026-06-26 修复: OpenQuoteContext 在 OpenD 不可达时会无限阻塞,
+            # 先用 socket 探测端口, 不可达时快速失败。
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(2.0)
+            result = sock.connect_ex((self.host, self.port))
+            sock.close()
+            if result != 0:
+                logger.debug(f"[FutuLV3·历史] OpenD {self.host}:{self.port} 不可达, 跳过连接")
+                return False
+
+            from futu import OpenQuoteContext, SysConfig
+            SysConfig.enable_proto_encrypt(False)
+            self._quote_ctx = OpenQuoteContext(host=self.host, port=self.port)
+            self._connected = True
+            self._last_connect_time = time.time()
+            logger.info(f"[FutuLV3·历史] 盘后连接 OpenD 成功 (历史K线查询)")
+            return True
+        except Exception as e:
+            self._connected = False
+            logger.debug(f"[FutuLV3·历史] 盘后连接失败: {e}")
+            return False
 
     def force_reconnect(self) -> bool:
         """带指数退避的强制重连，重连后会恢复之前的订阅集合。

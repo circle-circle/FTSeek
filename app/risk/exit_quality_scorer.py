@@ -55,6 +55,7 @@ _REASON_TO_RULE = {
     "BREAKEVEN_STOP": "trailing_stop",
     "STOP_LOSS": "trailing_stop",
     "TIME_STOP": "time_stop",
+    "TIME_EXIT": "time_exit",            # 2026-06-21: 时间退出
     "PRE_CLOSE_EXIT": "pre_close",
     "PRE_CLOSE_LOSS_FLAT": "pre_close",
     "PRE_CLOSE_HALF_EXIT": "pre_close",
@@ -178,7 +179,8 @@ class ExitQualityScorer:
                         "DAY_TRADE_TP_TIER2", "DAY_TRADE_TP_TIER3"}
         trail_exits = {"CHANDELIER_TRAIL", "BREAKEVEN_STOP"}
         stop_exits = {"SL_HIT", "ATR_STOP", "STOP_LOSS", "DAY_TRADE_SL", "FLASH_EXIT"}
-        time_exits = {"TIME_STOP", "DAY_TRADE_TIME_DECAY", "DAY_TRADE_TIMEOUT"}
+        time_exits = {"TIME_STOP", "DAY_TRADE_TIME_DECAY", "DAY_TRADE_TIMEOUT",
+                      "TIME_EXIT"}
 
         if reason in profit_exits:
             # 止盈退出 — 完美匹配入场逻辑

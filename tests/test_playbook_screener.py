@@ -165,10 +165,11 @@ class TestPlaybookScreener:
         
         results = screener.screen(
             watchlist=watchlist, regime=MarketRegime.RISK_ON,
-            positions=[], top_n=3
+            positions=[]
         )
         
-        assert len(results) == 3
+        # top_n 不再截断 — 返回全量通过门槛的候选 (4个)
+        assert len(results) == 4
         scores = [r.score for r in results]
         assert scores == sorted(scores, reverse=True)
         
@@ -218,8 +219,8 @@ class TestPlaybookScreener:
         assert "GOOGL" not in symbols
         assert len(results) == 2
     
-    def test_screen_regime_based_top_n(self, screener, mock_data_collector):
-        """测试不同市场环境下的 top_n"""
+    def test_screen_regime_no_truncation(self, screener, mock_data_collector):
+        """测试不同市场环境下: top_n 不再截断, 返回全量通过门槛的候选. NO_TRADE 仍返回空."""
         watchlist = [f"STOCK{i}" for i in range(20)]
         
         def mock_collect(symbol):
@@ -227,16 +228,12 @@ class TestPlaybookScreener:
         
         mock_data_collector.collect.side_effect = mock_collect
         
-        # RISK_ON: top_n=10
-        assert len(screener.screen(watchlist, MarketRegime.RISK_ON, [])) == 10
+        # RISK_ON / CAUTIOUS / RISK_OFF: 全量返回 (20个, 不截断)
+        assert len(screener.screen(watchlist, MarketRegime.RISK_ON, [])) == 20
+        assert len(screener.screen(watchlist, MarketRegime.CAUTIOUS, [])) == 20
+        assert len(screener.screen(watchlist, MarketRegime.RISK_OFF, [])) == 20
         
-        # CAUTIOUS: top_n=5
-        assert len(screener.screen(watchlist, MarketRegime.CAUTIOUS, [])) == 5
-        
-        # RISK_OFF: top_n=3
-        assert len(screener.screen(watchlist, MarketRegime.RISK_OFF, [])) == 3
-        
-        # NO_TRADE: top_n=0
+        # NO_TRADE: 仍然返回空
         assert len(screener.screen(watchlist, MarketRegime.NO_TRADE, [])) == 0
     
     def test_screen_negative_factors(self, screener, mock_data_collector):

@@ -610,9 +610,14 @@ class CapitalSafetySystem:
                 symbol = getattr(pos, "symbol", "")
                 if symbol in manual_symbols:
                     continue
-                # 双重过滤: 排除 source=MANUAL 的仓位
+                # 排除 MANUAL 仓位
                 if get_position_source is not None and PositionSource is not None:
-                    if get_position_source(pos) == PositionSource.MANUAL:
+                    _src = get_position_source(pos)
+                    if _src == PositionSource.MANUAL:
+                        continue
+                    # 2026-06-26: 排除 LEGACY/UNKNOWN 仓位 (SIM broker_sync 恢复的历史仓)
+                    # 这些是 SIM 环境的持仓, 不应占用 REAL 的自动交易预算
+                    if _src in (PositionSource.LEGACY, PositionSource.UNKNOWN):
                         continue
                 qty = abs(float(getattr(pos, "size", 0) or 0))
                 price = float(getattr(pos, "avg_entry_price", 0) or 0)
@@ -855,13 +860,16 @@ class CapitalSafetySystem:
         """保存状态到 DB
         
         P1-1 修复: 保存失败时标记 _save_failed, 后续 can_open_position 将 fail-safe 拦截
+        P0 修复 (2026-06-21): INSERT → INSERT OR REPLACE (UPSERT), 避免无限增长
+        原因: 每次update_account都INSERT新行, 3949行/3个月, 无清理机制
+        修复: 用trade_env作为唯一键UPSERT, 保持1行/env
         """
         self._save_failed = False
         try:
             conn = sqlite3.connect(self._db_path)
             c = conn.cursor()
             c.execute("""
-                INSERT INTO capital_state 
+                INSERT OR REPLACE INTO capital_state 
                 (initial_capital, current_equity, peak_equity, cash, market_value, 
                  buying_power, drawdown_pct, max_drawdown_pct, water_level, 
                  is_locked, lock_reason, last_update, trade_env)

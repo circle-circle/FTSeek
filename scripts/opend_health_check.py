@@ -49,7 +49,7 @@ logger = logging.getLogger("opend_health_check")
 # ============================================================
 # 配置
 # ============================================================
-OPEND_PATH = "/opt/ftseek/Futu_OpenD_10.3.6308_Centos7/Futu_OpenD_10.3.6308_Centos7/FutuOpenD"
+OPEND_PATH = "/opt/ftseek/Futu_OpenD_10.7.6728_Centos7/FutuOpenD"
 FUTU_OPEND_PORT = 11111
 FUTU_OPEND_HOST = "127.0.0.1"
 CHECK_TIMEOUT = 5  # 每次检测超时 (秒)

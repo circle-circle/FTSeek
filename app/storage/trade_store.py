@@ -695,9 +695,10 @@ class TradeStore:
                     record.get("symbol", ""),
                     record.get("direction", ""),
                     record.get("entry_time", ""),
-                    record.get("exit_time", ""),
+                    record.get("exit_time") or None,  # ponytail: NULL not '' — 消灭 exit_time 空字符串/NULL 不一致
                     record.get("entry_price", 0.0),
-                    record.get("exit_price", 0.0),
+                    # ponytail: 开仓时 exit_price=0 → 写 NULL (与 exit_time IS NULL 语义对齐)
+                    record.get("exit_price") if record.get("exit_price") else None,
                     record.get("quantity", 0),
                     record.get("realized_pnl", 0.0),
                     record.get("pnl_pct", 0.0),
@@ -830,6 +831,11 @@ class TradeStore:
             }
         """
         records = self.query_by_date(trade_date, trade_mode=trade_mode)
+        if not records:
+            return {"total_trades": 0, "total_pnl": 0.0}
+
+        # 2026-06-26: 过滤 PHANTOM_RECONCILE_VOID (pnl=0 的幽灵对账记录, 不应计入交易统计)
+        records = [r for r in records if r.get("exit_reason") != "PHANTOM_RECONCILE_VOID"]
         if not records:
             return {"total_trades": 0, "total_pnl": 0.0}
 

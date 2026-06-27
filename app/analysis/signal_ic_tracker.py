@@ -241,7 +241,7 @@ def get_pending_snapshots(trade_date_before: str, limit: int = 500) -> List[Dict
             SELECT * FROM signal_snapshots
             WHERE realized < 3
               AND trade_date < ?
-            ORDER BY trade_date ASC
+            ORDER BY trade_date DESC
             LIMIT ?
         """, (trade_date_before, limit)).fetchall()
         return [dict(r) for r in rows]
@@ -413,7 +413,6 @@ def get_ic_summary(
             FROM signal_snapshots
             WHERE {forward_col} IS NOT NULL
               AND strength IS NOT NULL
-              AND COALESCE(trade_mode, 'simulate') = 'live'
               AND trade_date >= '{_cutoff}'
               {_wv_clause}
             ORDER BY trade_date DESC

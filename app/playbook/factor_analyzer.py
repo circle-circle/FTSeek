@@ -343,20 +343,34 @@ class FactorAnalyzer:
 
         return count
 
+    def update_horizon_stats(self, days_back: int = 90) -> Dict[str, int]:
+        """
+        更新 horizon 收益统计 (供 HorizonSelector 使用)
+
+        Args:
+            days_back: 回溯天数
+
+        Returns:
+            {\"updated\": int}
+        """
+        from app.playbook.horizon_return_model import HorizonReturnModel
+        model = HorizonReturnModel(self.db)
+        return model.update(days_back=days_back)
+
     def generate_factor_report(self) -> Dict[str, Any]:
         """
         生成因子分析报告 (用于周报 + LLM prompt)
 
         Returns:
             {
-                "positive_singles": [...],
-                "negative_singles": [...],
-                "positive_pairs": [...],
-                "negative_pairs": [...],
-                "observing_singles": [...],
-                "active_patterns": [...],
-                "retired_patterns": [...],
-                "summary": {...},
+                \"positive_singles\": [...],
+                \"negative_singles\": [...],
+                \"positive_pairs\": [...],
+                \"negative_pairs\": [...],
+                \"observing_singles\": [...],
+                \"active_patterns\": [...],
+                \"retired_patterns\": [...],
+                \"summary\": {...},
             }
         """
         single_stats = self.db.get_factor_stats(level="single")

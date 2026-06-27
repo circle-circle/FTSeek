@@ -25,6 +25,7 @@ Usage:
 from __future__ import annotations
 
 import logging
+import os
 import sqlite3
 import threading
 from contextlib import contextmanager
@@ -36,9 +37,10 @@ logger = logging.getLogger("ftseek_us.db_pool")
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
-# Default DB paths
+# Default DB paths — ftseek_us respects TRADE_ENV=0 (live isolation)
+_ftseek_us_db = "ftseek_us_live.db" if os.getenv("TRADE_ENV", "1").strip() == "0" else "ftseek_us.db"
 _DB_PATHS: Dict[str, Path] = {
-    "ftseek_us": PROJECT_ROOT / "data" / "ftseek_us.db",
+    "ftseek_us": PROJECT_ROOT / "data" / _ftseek_us_db,
     "llm_audit": PROJECT_ROOT / "data" / "llm_audit.db",
     "rejections": PROJECT_ROOT / "data" / "rejections.db",
     "anomaly": PROJECT_ROOT / "data" / "anomaly_queue.db",

@@ -8,6 +8,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from app.web_dashboard.data_service import get_data_service
+from app.web_dashboard.api_response import api_ok, api_error, err_broker_unavailable
 
 logger = logging.getLogger("ftseek_us.routes.trade")
 router = APIRouter()
@@ -38,17 +39,17 @@ def register(app, templates):
         try:
             body = await request.json()
         except Exception:
-            return JSONResponse(content={"success": False, "error": "请求体无效 (需要 JSON)"}, status_code=400)
+            return api_error("BAD_REQUEST", "请求体无效 (需要 JSON)", 400)
 
         if not body or not isinstance(body, dict):
-            return JSONResponse(content={"success": False, "error": "请求体为空"}, status_code=400)
+            return api_error("BAD_REQUEST", "请求体为空", 400)
 
         svc = get_manual_order_service()
 
         try:
             quantity = int(body.get("quantity", 0))
         except (ValueError, TypeError):
-            return JSONResponse(content={"success": False, "error": "数量必须是整数"}, status_code=400)
+            return api_error("BAD_REQUEST", "数量必须是整数", 400)
 
         try:
             price = float(body["price"]) if body.get("price") else None
@@ -74,19 +75,22 @@ def register(app, templates):
         result = svc.submit_order(order, idempotency_key=body.get("idempotency_key"))
         ds = get_data_service()
         ds.invalidate_cache()
-        return JSONResponse(content=result)
+        if result.get("success"):
+            return api_ok(result)
+        else:
+            return api_error("ORDER_ERROR", result.get("error", "下单失败"), 400)
 
     @router.post("/api/orders/close")
     async def close_position(request: Request):
         try:
             body = await request.json()
         except Exception:
-            return JSONResponse(content={"success": False, "error": "请求无效"}, status_code=400)
+            return api_error("BAD_REQUEST", "请求无效", 400)
         svc = get_manual_order_service()
         close_qty = int(body.get("quantity", 0))
         # P0-2 修复 (2026-06-12): 100K 股已能覆盖任何合理美股持仓, broker 端会做最终校验
         if close_qty < 0 or close_qty > 100_000:
-            return JSONResponse(content={"success": False, "error": "数量无效或超限 (上限 100,000 股)"}, status_code=400)
+            return api_error("BAD_REQUEST", "数量无效或超限 (上限 100,000 股)", 400)
         # 限价平仓 (止损/止盈) — price 为空则市价平仓
         limit_price = body.get("price")
         if limit_price is not None:
@@ -104,7 +108,10 @@ def register(app, templates):
         )
         ds = get_data_service()
         ds.invalidate_cache()
-        return JSONResponse(content=result)
+        if result.get("success"):
+            return api_ok(result)
+        else:
+            return api_error("ORDER_ERROR", result.get("error", "平仓失败"), 400)
 
     @router.get("/api/orders/today")
     async def get_today_orders():
@@ -123,16 +130,18 @@ def register(app, templates):
         try:
             body = await request.json()
         except Exception:
-            return JSONResponse(content={"success": False, "error": "请求无效"}, status_code=400)
+            return api_error("BAD_REQUEST", "请求无效", 400)
         order_id = str(body.get("order_id", "")).strip()
         if not order_id or not order_id.replace(".", "").replace("-", "").isalnum():
-            return JSONResponse(content={"success": False, "error": "order_id 格式无效"}, status_code=400)
+            return api_error("BAD_REQUEST", "order_id 格式无效", 400)
         svc = get_manual_order_service()
         result = svc.cancel_order(order_id=order_id)
         ds = get_data_service()
         ds.invalidate_cache()
-        status_code = 200 if result.get("success") else 400
-        return JSONResponse(content=result, status_code=status_code)
+        if result.get("success"):
+            return api_ok(result)
+        else:
+            return api_error("ORDER_ERROR", result.get("error", "撤单失败"), 400)
 
     @router.post("/api/positions/modify-sl")
     async def modify_stop_loss(request: Request):
@@ -142,21 +151,23 @@ def register(app, templates):
         try:
             body = await request.json()
         except Exception:
-            return JSONResponse(content={"success": False, "error": "请求无效"}, status_code=400)
+            return api_error("BAD_REQUEST", "请求无效", 400)
         symbol = str(body.get("symbol", "")).strip()
         try:
             new_sl = float(body.get("stop_loss", 0))
         except (ValueError, TypeError):
             new_sl = 0.0
         if not symbol or new_sl <= 0:
-            return JSONResponse(content={"success": False, "error": "参数无效"}, status_code=400)
+            return api_error("BAD_REQUEST", "参数无效", 400)
 
         svc = get_manual_order_service()
         result = svc.modify_stop_loss(symbol=symbol, new_sl=new_sl)
         ds = get_data_service()
         ds.invalidate_cache()
-        status_code = 200 if result.get("success") else 400
-        return JSONResponse(content=result, status_code=status_code)
+        if result.get("success"):
+            return api_ok(result)
+        else:
+            return api_error("ORDER_ERROR", result.get("error", "修改止损失败"), 400)
 
     @router.post("/api/positions/takeover")
     async def takeover_position(request: Request):
@@ -164,19 +175,20 @@ def register(app, templates):
         try:
             body = await request.json()
         except Exception:
-            return JSONResponse(content={"success": False, "error": "invalid request"}, status_code=400)
+            return api_error("BAD_REQUEST", "invalid request", 400)
         symbol = str(body.get("symbol", "")).strip()
         owner = str(body.get("owner", "manual")).strip().lower()
         if not symbol or not symbol.startswith("US."):
-            return JSONResponse(content={"success": False, "error": "invalid symbol"}, status_code=400)
+            return api_error("BAD_REQUEST", "invalid symbol", 400)
         if owner not in ("manual", "auto"):
             owner = "manual"
         svc = get_manual_order_service()
         result = svc.takeover_position(symbol=symbol, owner=owner)
         ds = get_data_service()
         ds.invalidate_cache()
-        status_code = 200 if result.get("success") else 400
-        return JSONResponse(content=result, status_code=status_code)
+        if result.get("success"):
+            return api_ok(result)
+        return api_error("TAKEOVER_ERROR", result.get("error", "接管失败"), 400)
 
     @router.get("/api/orders/audit")
     async def get_order_audit(limit: int = 50):
@@ -188,47 +200,31 @@ def register(app, templates):
     @router.get("/api/trade/attribution")
     async def get_trade_attribution(symbol: str = "", limit: int = 10):
         """获取最近已平仓交易的归因分析"""
-        import sqlite3, json
-        from app.core.db_utils import get_main_db
-        db_path = str(get_main_db())
-        conn = sqlite3.connect(db_path, timeout=10)
-        conn.row_factory = sqlite3.Row
-        try:
-            if symbol:
-                rows = conn.execute(
-                    "SELECT * FROM trade_records WHERE symbol=? AND exit_price>0 ORDER BY exit_time DESC LIMIT ?",
-                    (symbol, limit),
-                ).fetchall()
-            else:
-                rows = conn.execute(
-                    "SELECT * FROM trade_records WHERE exit_price>0 ORDER BY exit_time DESC LIMIT ?",
-                    (limit,),
-                ).fetchall()
+        import json
+        ds = get_data_service()
+        rows = await ds.get_recent_trades(symbol=symbol, limit=limit)
 
-            results = []
-            for row in rows:
-                row_dict = dict(row)
-                # 尝试从 metadata_json 读取已缓存的归因
-                meta = {}
-                if row_dict.get("metadata_json"):
-                    try:
-                        meta = json.loads(row_dict["metadata_json"])
-                    except Exception:
-                        pass
-                if "attribution" in meta:
-                    results.append(meta["attribution"])
-                else:
-                    # 实时生成
-                    try:
-                        from app.analysis.trade_attribution import attribute_from_db
-                        attr = attribute_from_db(row_dict)
-                        if attr:
-                            results.append(attr.to_dict())
-                    except Exception:
-                        pass
-            return {"attributions": results}
-        finally:
-            conn.close()
+        results = []
+        for row_dict in rows:
+            # 尝试从 metadata_json 读取已缓存的归因
+            meta = {}
+            if row_dict.get("metadata_json"):
+                try:
+                    meta = json.loads(row_dict["metadata_json"])
+                except Exception:
+                    pass
+            if "attribution" in meta:
+                results.append(meta["attribution"])
+            else:
+                # 实时生成
+                try:
+                    from app.analysis.trade_attribution import attribute_from_db
+                    attr = attribute_from_db(row_dict)
+                    if attr:
+                        results.append(attr.to_dict())
+                except Exception:
+                    pass
+        return {"attributions": results}
 
     @router.post("/api/orders/audit/archive")
     async def archive_audit(request: Request):
@@ -236,7 +232,7 @@ def register(app, templates):
         try:
             body = await request.json()
         except Exception:
-            return JSONResponse(content={"error": "请求无效"}, status_code=400)
+            return api_error("BAD_REQUEST", "请求无效", 400)
         keep_days = int(body.get("keep_days", 30))
         keep_days = min(max(keep_days, 7), 365)
 
@@ -271,10 +267,10 @@ def register(app, templates):
             conn.execute("DELETE FROM manual_order_audit WHERE timestamp < ?", (cutoff,))
             conn.commit()
             logger.info(f"[审计归档] 归档 {moved} 条记录 (早于 {cutoff[:10]})")
-            return {"success": True, "archived": moved, "cutoff_date": cutoff[:10]}
+            return api_ok({"archived": moved, "cutoff_date": cutoff[:10]})
         except Exception as e:
             logger.error(f"[审计归档] 失败: {e}")
-            return JSONResponse(content={"error": "操作失败，请稍后重试"}, status_code=500)
+            return api_error("ARCHIVE_ERROR", "操作失败，请稍后重试", 500, retryable=True)
         finally:
             conn.close()
 
@@ -287,7 +283,7 @@ def register(app, templates):
     async def get_order_capacity(symbol: str):
         svc = get_manual_order_service()
         if not svc.connect():
-            return JSONResponse(content={"error": "broker_not_connected"}, status_code=503)
+            return err_broker_unavailable()
 
         try:
             from futu import TrdEnv, RET_OK
@@ -493,7 +489,7 @@ def register(app, templates):
                        entry_price, exit_price, quantity, exit_reason, entry_time, exit_time,
                        metadata_json, source_type
                 FROM trade_records
-                WHERE trade_mode != 'simulate' AND exit_price > 0
+                WHERE source_type NOT IN ('PLAYBOOK_SHADOW','SCALPING') AND exit_price > 0
                 ORDER BY id DESC LIMIT 20
             """)
 
@@ -704,10 +700,7 @@ def register(app, templates):
         try:
             body = await request.json()
         except Exception:
-            return JSONResponse(
-                content={"success": False, "error": "请求体无效 (需要 JSON)"},
-                status_code=400,
-            )
+            return api_error("BAD_REQUEST", "请求体无效 (需要 JSON)", 400)
         enabled = bool(body.get("enabled", False))
 
         # 1. 内存开关 (控制信号扫描 + 订单提交 Gate)
@@ -721,8 +714,9 @@ def register(app, templates):
             get_data_service().invalidate_cache()
         except Exception:
             pass
-        status_code = 200 if result.get("success") else 400
-        return JSONResponse(content=result, status_code=status_code)
+        if result.get("success"):
+            return api_ok(result)
+        return api_error("AUTO_TRADE_ERROR", result.get("error", "操作失败"), 400)
 
     @router.post("/api/auto-trade/level")
     async def set_auto_level(request: Request):
@@ -730,22 +724,33 @@ def register(app, templates):
         try:
             body = await request.json()
         except Exception:
-            return JSONResponse(
-                content={"success": False, "error": "请求体无效 (需要 JSON)"},
-                status_code=400,
-            )
+            return api_error("BAD_REQUEST", "请求体无效 (需要 JSON)", 400)
         level = str(body.get("level", "conservative")).strip().lower()
         result = get_mode_switch_service().set_auto_aggression(level)
         try:
             get_data_service().invalidate_cache()
         except Exception:
             pass
-        status_code = 200 if result.get("success") else 400
-        return JSONResponse(content=result, status_code=status_code)
+        if result.get("success"):
+            return api_ok(result)
+        return api_error("AUTO_TRADE_ERROR", result.get("error", "操作失败"), 400)
 
     @router.get("/api/auto-trade/status")
     async def get_auto_status():
-        """获取自动交易当前状态 (开关 + 激进程度 + 最近切换时间)."""
+        """获取自动交易当前状态 (开关 + 激进程度 + 账户 + graduation + 最近切换时间)."""
         return get_mode_switch_service().get_mode_status()
+
+    @router.post("/api/auto-trade/auto-account")
+    async def set_auto_account(request: Request):
+        """设置自动交易目标账户 (sim|real). real 需 graduation + ALLOW_REAL_TRADING."""
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        account = (body.get("account") or "").strip().lower()
+        result = get_mode_switch_service().set_auto_account(account)
+        if result.get("success"):
+            return api_ok(result)
+        return api_error("AUTO_ACCOUNT_ERROR", result.get("error", "操作失败"), 400, data={"graduation": result.get("graduation")})
 
     app.include_router(router)

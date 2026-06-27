@@ -1270,7 +1270,17 @@ def _format_weekly_review(report: dict) -> str:
     # 改进计划
     plan_items = report.get('improvement_plan', [])
     plan_text = chr(10).join([f"• {p.get('action', '')} [{p.get('priority', 'low')}]" for p in plan_items]) or '继续执行当前策略'
-    
+
+    # RFC-061 cohort A/B 退出实验 (OKR KR2.1/KR2.2 退出对齐 T+5 alpha 的增量)
+    cohort_text = ""
+    cohort = report.get('cohort_ab') or {}
+    if cohort and not cohort.get('error'):
+        try:
+            from app.review.cohort_ab import format_cohort_text
+            cohort_text = "\n" + format_cohort_text(cohort)
+        except Exception:
+            cohort_text = ""
+
     return f"""📊 FTSeek-US 每周复盘
 
 📅 周期：{period_start} 至 {period_end}
@@ -1289,6 +1299,7 @@ def _format_weekly_review(report: dict) -> str:
 {cons_text}
 {daily_text}
 {strategy_text}
+{cohort_text}
 
 📋 下周计划
 {plan_text}
@@ -1368,16 +1379,12 @@ def check_position_reconcile(scheduler: 'TradingScheduler'):
     scheduler._last_reconcile_date = now_et.date()
 
     try:
-        from app.core.position_sync import get_position_synchronizer
-        sync = get_position_synchronizer()
-        result = sync.daily_reconcile()
-        if result:
-            logger.info(f"[定时对账] 持仓一致性检查通过: {now_et.strftime('%Y-%m-%d %H:%M')} ET")
-        else:
-            logger.warning(
-                f"[定时对账] 发现持仓不一致 (已发送告警): "
-                f"{now_et.strftime('%Y-%m-%d %H:%M')} ET"
-            )
+        from app.core.position_sync import get_us_position_sync
+        sync = get_us_position_sync()
+        if sync:
+            futu_pos = sync.query_broker_positions()
+            sync._verify_and_sync_capital(futu_pos or {})
+            logger.info(f"[定时对账] 持仓一致性检查完成: {now_et.strftime('%Y-%m-%d %H:%M')} ET")
     except Exception as e:
         logger.error(f"[定时对账] 执行异常: {e}", exc_info=True)
         # 不中断主流程

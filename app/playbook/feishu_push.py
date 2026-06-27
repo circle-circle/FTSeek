@@ -86,7 +86,7 @@ class PlaybookPusher:
             return False
 
         message = self._format_evening_message(trade_date, instructions)
-        return self._send(message)
+        return self._send(message, dedup_key=f"playbook:evening:{trade_date}")
 
     # ========== 格式化 ==========
 
@@ -125,11 +125,13 @@ class PlaybookPusher:
             rr = inst.get("risk_reward", 0)
             risk = inst.get("risk_amount", 0)
             conditions = self._parse_conditions(inst.get("conditions_json"))
+            horizon = inst.get("horizon", "short")
+            horizon_emoji = {"short": "⚡", "long": "🌙"}.get(horizon, "❓")
 
             conf_icon = "✅" if (confidence or 0) >= 70 else "⚠️" if (confidence or 0) >= 50 else "❌"
             dir_text = "BUY LONG" if direction == "BUY" else "SELL SHORT"
 
-            lines.append(f"#{idx} {sym} {dir_text} {conf_icon} {confidence}%")
+            lines.append(f"#{idx} {sym} {dir_text} {conf_icon} {confidence}% [{horizon_emoji} {horizon}]")
             if entry:
                 lines.append(f"   入场 ${entry:.2f} → 止损 ${sl:.2f} → 止盈 ${tp:.2f}")
                 lines.append(f"   {pos}股 | R:R {rr:.1f}:1 | 风险 ${risk:.0f}")
@@ -166,9 +168,11 @@ class PlaybookPusher:
             pnl = inst.get("pnl", 0)
             mfe = inst.get("max_favorable_excursion", 0)
             mae = inst.get("max_adverse_excursion", 0)
+            horizon = inst.get("horizon", "short")
+            horizon_emoji = {"short": "⚡", "long": "🌙"}.get(horizon, "❓")
 
             dir_text = "BUY LONG" if direction == "BUY" else "SELL SHORT"
-            lines.append(f"#{idx} {sym} {dir_text}")
+            lines.append(f"#{idx} {sym} {dir_text} [{horizon_emoji} {horizon}]")
 
             if executed:
                 executed_count += 1
@@ -181,7 +185,7 @@ class PlaybookPusher:
                     lines.append(f"   MFE +${mfe:.0f} | MAE ${mae:.0f}")
             else:
                 shadow = inst.get("shadow_pnl") or 0
-                lines.append(f"   ❌ 未执行 | Shadow: {'+' if shadow >= 0 else ''}${shadow:.0f}")
+                lines.append(f"   ❌ 未执行 | 理论盈亏: {'+' if shadow >= 0 else ''}${shadow:.0f}")
             lines.append("")
 
         lines.append(f"今日总结: 执行 {executed_count}/{len(instructions)}, "
@@ -191,7 +195,7 @@ class PlaybookPusher:
 
     # ========== 内部方法 ==========
 
-    def _send(self, message: str) -> bool:
+    def _send(self, message: str, dedup_key: str = None) -> bool:
         """发送飞书消息"""
         try:
             # 优先使用 PushHub
@@ -201,7 +205,7 @@ class PlaybookPusher:
                 body=message,
                 level=Level.NORMAL,
                 category=Category.PLAN_PREMARKET,
-                dedup_key=f"playbook:{date.today().isoformat()}",
+                dedup_key=dedup_key or f"playbook:{date.today().isoformat()}",
             )
             get_push_hub().push(msg)
             logger.info("Playbook push sent via PushHub")

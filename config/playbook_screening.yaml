@@ -1,23 +1,23 @@
 screening_factors:
   insider_cluster_buy:
-    weight: 5
+    weight: 6
     description: Insider cluster buy (SECForm4Provider cluster score > 0.5)
   insider_net_buy:
     weight: 2
     description: Insider net buy (non-cluster)
   rsi_oversold:
-    weight: 2
+    weight: -1
     condition: rsi_14 < 40
     description: RSI oversold pullback
   above_ma20:
-    weight: 2
+    weight: 3
     condition: price > ma20
     description: Price above 20-day MA
   macd_golden_cross:
-    weight: 1
+    weight: 3
     description: MACD golden cross
   news_positive:
-    weight: 1
+    weight: 2
     condition: sentiment_score > 0
     description: Positive news sentiment (last 3 days)
   earnings_beat_streak:
@@ -25,21 +25,21 @@ screening_factors:
     condition: beat_rate > 0.5
     description: Earnings beat rate > 50%
   volume_expansion:
-    weight: 1
+    weight: 0
     condition: volume_5d_avg_ratio > 1.2
     description: Volume expansion
   pe_below_industry:
-    weight: 1
+    weight: 0
     description: PE below industry average
   rsi_overbought:
-    weight: -2
+    weight: -3
     condition: rsi_14 > 70
     description: RSI overbought
   insider_net_sell:
-    weight: -2
+    weight: -3
     description: Insider net sell
   news_negative:
-    weight: -1
+    weight: -2
     condition: sentiment_score < -0.3
     description: Negative news sentiment
   earnings_imminent:

@@ -94,7 +94,8 @@ def _query_today_trades() -> Dict:
             "SELECT COUNT(*), SUM(realized_pnl), "
             "  SUM(CASE WHEN realized_pnl>0 THEN 1 ELSE 0 END) "
             "FROM trade_records "
-            "WHERE trade_date=date('now', '-4 hours') AND realized_pnl IS NOT NULL"
+            "WHERE trade_date=date('now', '-4 hours') AND realized_pnl IS NOT NULL "
+            "AND exit_price > 0"
         )
         n, pnl, wins = cur.fetchone()
         # 持仓

@@ -2,7 +2,13 @@
 """
 FTSeek-US 影子测试推广引擎 (Promotion Engine)
 
-职责：
+⚠️ DEPRECATED (2026-06-21): 此模块已停用
+原因: ShadowTracker(scheduler_triggers.py Phase 6)已REMOVED, proposals.db 0行数据
+      should_promote() 永远不会被调用, _execute_promotion 标注"(模拟)"
+保留原因: evolution/shadow_tracker.py 的 __init__ 仍 import PromotionEngine
+状态: 不删除(避免import断裂), 但功能完全静默
+
+原始职责：
 基于严格的统计学纪律，决定影子策略是否可以转正。
 解决 shadow.md 中提到的：
 1. 样本量不足 (Trap 3)

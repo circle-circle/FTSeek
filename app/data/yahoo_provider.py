@@ -162,15 +162,32 @@ class YahooFinanceProvider:
         # 最大年龄检查 (超时失效)
         return age.total_seconds() < self.cache_ttl.total_seconds()
     
-    def get_vix(self) -> float:
+    def get_vix(self) -> Optional[float]:
         """
         获取 VIX 恐慌指数
+
+        P0 修复 (2026-06-21): 不再硬编码返回20.0
+        原因: 硬编码VIX=20.0会让风控系统误判VIX正常, 极端行情下风控失效
+        方案: 委托给VIXMonitor (FRED→AlphaVantage→Finnhub VIXY降级链), 失败时返回None让调用方降级
         
-        注意：当前网络环境下 yfinance 无法访问 ^VIX，直接返回默认值。
         Returns:
-            20.0（市场历史均值）
+            VIX值 (float) 或 None (无法获取时, 调用方应降级处理)
         """
-        return 20.0
+        try:
+            from app.risk.vix_monitor import VIXMonitor
+            monitor = VIXMonitor()
+            vix = monitor.get_vix()
+            if vix is not None:
+                return vix
+            # VIXMonitor返回None = 缓存硬超时且API失败
+            try:
+                from app.core.degradation_monitor import get_degradation_monitor
+                get_degradation_monitor().record("yahoo_vix_fallback", "VIXMonitor returned None")
+            except Exception:
+                pass
+            return None
+        except Exception:
+            return None
 
     def get_spy_context(self) -> Dict[str, Any]:
         """
@@ -287,6 +304,14 @@ class YahooFinanceProvider:
 
         # VIX
         vix = self.get_vix()
+        # P0 修复: get_vix()现在可能返回None (VIX缓存过期+API失败), 需降级处理
+        if vix is None:
+            vix = 20.0  # 降级为历史均值, 但记录降级
+            try:
+                from app.core.degradation_monitor import get_degradation_monitor
+                get_degradation_monitor().record("yahoo_vix_degraded", "VIX unavailable, using 20.0 fallback")
+            except Exception:
+                pass
 
         # 大盘方向
         spy_ctx = self.get_spy_context()

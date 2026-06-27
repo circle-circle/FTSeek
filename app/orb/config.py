@@ -40,9 +40,13 @@ class ORBConfig:
 
     # ── 止损止盈 (ATR-relative) ──
     stop_loss_atr_mult: float = 1.5      # SL = entry ± 1.5×ATR (2026-06-07: 1.0→1.5, 避免开盘噪声扫损)
-    take_profit_atr_mult: float = 3.0    # TP = entry ± 3.0×ATR (2026-06-07: 2.0→3.0, R/R 2:1)
-    trail_activation_atr: float = 2.5    # 2026-06-07: 1.5→2.5, 盈利2.5 ATR后才追踪 (让赢家跑到2+ATR再锁利)
-    trail_multiplier: float = 1.5        # 2026-06-07: 1.2→1.5, peak - 1.5×ATR (更宽松追踪, 减少噪音扫出)
+    # 2026-06-23: 止盈改为 R-multiple (盈利 × sl_distance 的倍数), 取代死配置 take_profit_atr_mult.
+    #   原因: engine 一直用硬编码 2R 止盈 (profit ≥ 2×sl_distance), 先于 ORBExitStack 触发,
+    #         导致 take_profit_atr_mult (3.0×ATR) 永不到达. 现在 R 倍数可配置, 与实际行为一致.
+    take_profit_r_mult: float = 2.0       # TP = profit ≥ 2.0 × sl_distance (2:1 R/R)
+    # 2026-06-23: 删除 trail_activation_atr / trail_multiplier —
+    #   trailing 未经验证 (SSOT 主线 trailing 84笔 -$3,773), 且 ratchet 字段从不更新,
+    #   与 2R TP 抢优先级. 退出路径收敛为: 2R止盈 + breakdown + FloorStop + EOD.
 
     # ── 风控 ──
     max_positions: int = 2               # 同时最多 2 个 ORB 仓位

@@ -143,25 +143,25 @@ class DIContainer:
             exec_section = {}
         # P0 修复 (2026-05-11): 强制模拟盘确认，禁止自动切换实盘
         # 2026-06-09 更新: 允许 ALLOW_REAL_TRADING=true 时通过实盘
-        _trade_env = int(os.getenv("TRADE_ENV", "1"))
-        _futu_env = int(os.getenv("FUTU_TRADE_ENV", "1"))
+        # 2026-06-24 重构 (三态共存 Phase 0): 主 pipeline broker 路由改由 AUTO_TRADE_ACCOUNT
+        #   控制 (sim|real), 不再读 FUTU_TRADE_ENV (该变量已 deprecated). TRADE_ENV 仍控制
+        #   DB 路由 (db_utils.is_live_mode) 不变, 与 broker 解耦.
+        #   - 手动交易 (manual_order_service) 固定 REAL, 不经此路径
+        #   - 自动交易 (主 pipeline) 默认 SIM, real 需 ALLOW_REAL_TRADING + (Phase2) graduation
+        _auto_account = os.getenv("AUTO_TRADE_ACCOUNT", "sim").strip().lower()
         _allow_real = os.getenv("ALLOW_REAL_TRADING", "false").lower() == "true"
-        if (_trade_env == 0 or _futu_env == 0) and not _allow_real:
+        if _auto_account == "real" and not _allow_real:
             import logging
             _logger = logging.getLogger("ftseek.di_container")
             _logger.critical(
-                "[安全拦截] 检测到实盘配置 (TRADE_ENV=%s, FUTU_TRADE_ENV=%s) "
-                "但 ALLOW_REAL_TRADING!=true，强制切换为模拟盘",
-                _trade_env, _futu_env,
+                "[安全拦截] AUTO_TRADE_ACCOUNT=real 但 ALLOW_REAL_TRADING!=true, 强制降级为模拟盘"
             )
-            _trade_env = 1
-            _futu_env = 1
-        elif _allow_real and (_trade_env == 0 or _futu_env == 0):
+            _auto_account = "sim"
+        _futu_env = 0 if _auto_account == "real" else 1
+        if _auto_account == "real":
             import logging
-            _logger = logging.getLogger("ftseek.di_container")
-            _logger.warning(
-                "[实盘模式] ALLOW_REAL_TRADING=true, TRADE_ENV=%s, FUTU_TRADE_ENV=%s — 实盘已启用",
-                _trade_env, _futu_env,
+            logging.getLogger("ftseek.di_container").warning(
+                "[实盘模式] AUTO_TRADE_ACCOUNT=real, ALLOW_REAL_TRADING=true — 主 pipeline 自动交易走实盘"
             )
 
         exec_config = {

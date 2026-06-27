@@ -193,27 +193,46 @@ def _validate_single_deterministic(candidate: Dict, context: Dict) -> Dict:
             else:
                 factor_validation[fname] = "FALSE_POSITIVE"
         elif fname == "sector_momentum":
-            # 板块动量: 需要板块实际涨跌确认
+            # 板块动量: 需要板块实际涨跌确认 (方向感知)
             sectors = candidate.get("sectors", [])
             sector_momentum = context.get("sector_momentum", {})
             sector_chgs = [sector_momentum.get(s, 0) for s in sectors if s in sector_momentum]
             avg_sector_chg = sum(sector_chgs) / len(sector_chgs) if sector_chgs else 0
-            if score >= 0.6 and avg_sector_chg > 0:
-                factor_validation[fname] = "CONFIRMED"
-            elif score >= 0.3 or avg_sector_chg > -0.5:
-                factor_validation[fname] = "WEAK"
+            if direction_hint == "SHORT":
+                # SHORT: 板块跌 = 做空确认
+                if score >= 0.6 and avg_sector_chg < 0:
+                    factor_validation[fname] = "CONFIRMED"
+                elif score >= 0.3 or avg_sector_chg < 0.5:
+                    factor_validation[fname] = "WEAK"
+                else:
+                    factor_validation[fname] = "FALSE_POSITIVE"
             else:
-                factor_validation[fname] = "FALSE_POSITIVE"
+                if score >= 0.6 and avg_sector_chg > 0:
+                    factor_validation[fname] = "CONFIRMED"
+                elif score >= 0.3 or avg_sector_chg > -0.5:
+                    factor_validation[fname] = "WEAK"
+                else:
+                    factor_validation[fname] = "FALSE_POSITIVE"
         elif fname == "relative_strength":
-            # 相对强度: 与 SPY 对比
+            # 相对强度: 与 SPY 对比 (方向感知)
             spy_chg = context.get("spy_change_20d", 0)
             stock_chg = tech.get("change_20d", 0)
-            if score >= 0.6 and stock_chg > spy_chg:
-                factor_validation[fname] = "CONFIRMED"
-            elif score >= 0.3:
-                factor_validation[fname] = "WEAK"
+            if direction_hint == "SHORT":
+                # SHORT: 跑输SPY = 做空确认
+                if score >= 0.6 and stock_chg < spy_chg:
+                    factor_validation[fname] = "CONFIRMED"
+                elif score >= 0.3:
+                    factor_validation[fname] = "WEAK"
+                else:
+                    factor_validation[fname] = "FALSE_POSITIVE"
             else:
-                factor_validation[fname] = "FALSE_POSITIVE"
+                # LONG: 跑赢SPY = 做多确认
+                if score >= 0.6 and stock_chg > spy_chg:
+                    factor_validation[fname] = "CONFIRMED"
+                elif score >= 0.3:
+                    factor_validation[fname] = "WEAK"
+                else:
+                    factor_validation[fname] = "FALSE_POSITIVE"
         else:
             # 通用规则: ma_alignment, rsi_sweet_spot 等
             if score >= 0.7:
@@ -272,17 +291,32 @@ def _validate_single_deterministic(candidate: Dict, context: Dict) -> Dict:
             if verdict == "VALID":
                 verdict = "CONDITIONAL"
 
-    # ── Step 5: Regime 调整 ──
+    # ── Step 5: Regime 调整 (方向感知) ──
     regime = context.get("regime", "NEUTRAL")
-    if regime in ("RISK_OFF", "HIGH_VOL") and direction_hint == "LONG":
-        confidence = max(10, confidence - 10)
+    if regime in ("RISK_OFF", "HIGH_VOL"):
+        if direction_hint == "LONG":
+            confidence = max(10, confidence - 10)
+        elif direction_hint == "SHORT":
+            confidence = min(95, confidence + 5)  # SHORT在避险市占优
 
-    # ── Step 6: 入场/止损/止盈 (从技术指标计算) ──
+    # ── Step 6: 入场/止损/止盈 (从技术指标计算, 方向感知) ──
     cur_price = tech.get("cur_price", 0)
     atr = tech.get("atr14", cur_price * 0.02 if cur_price > 0 else 1)
-    entry_zone = [round(cur_price - atr * 0.5, 2), round(cur_price + atr * 0.3, 2)] if cur_price > 0 else [0, 0]
-    stop_loss = round(cur_price - atr * 1.8, 2) if cur_price > 0 else 0
-    take_profit = round(cur_price + atr * 3.0, 2) if cur_price > 0 else 0
+    if cur_price > 0:
+        if direction_hint == "SHORT":
+            # SHORT: entry near current, stop above, profit below
+            entry_zone = [round(cur_price - atr * 0.3, 2), round(cur_price + atr * 0.5, 2)]
+            stop_loss = round(cur_price + atr * 1.8, 2)
+            take_profit = round(cur_price - atr * 3.0, 2)
+        else:
+            # LONG: entry near current, stop below, profit above
+            entry_zone = [round(cur_price - atr * 0.5, 2), round(cur_price + atr * 0.3, 2)]
+            stop_loss = round(cur_price - atr * 1.8, 2)
+            take_profit = round(cur_price + atr * 3.0, 2)
+    else:
+        entry_zone = [0, 0]
+        stop_loss = 0
+        take_profit = 0
     risk_reward = round(abs(take_profit - cur_price) / max(abs(stop_loss - cur_price), 0.01), 1)
 
     # ── Step 7: 审计标记 ──
@@ -292,7 +326,10 @@ def _validate_single_deterministic(candidate: Dict, context: Dict) -> Dict:
     if non_vol_fp >= 1:
         audit_flags.append(f"{non_vol_fp}个非量因子FALSE_POSITIVE")
     if regime in ("RISK_OFF", "HIGH_VOL"):
-        audit_flags.append(f"Regime={regime},LONG方向受限")
+        if direction_hint == "LONG":
+            audit_flags.append(f"Regime={regime},LONG方向受限")
+        else:
+            audit_flags.append(f"Regime={regime},SHORT方向占优")
     if hist and hist.get("win_rate", 50) < 30:
         audit_flags.append(f"历史胜率仅{hist['win_rate']:.0f}%")
 
@@ -306,7 +343,7 @@ def _validate_single_deterministic(candidate: Dict, context: Dict) -> Dict:
         "take_profit": take_profit,
         "risk_reward": risk_reward,
         "position_size_pct": min(8, max(3, int(composite * 8))),
-        "invalidation": f"收盘破 {stop_loss:.2f} (1.8x ATR)",
+        "invalidation": f"{'收盘破' if direction_hint == 'LONG' else '收盘上破'} {stop_loss:.2f} (1.8x ATR)",
         "trigger_condition": f"价格进入 {entry_zone[0]:.2f}-{entry_zone[1]:.2f} 区间",
         "execution_rules": {
             "gap_up_over_2pct": "SKIP",

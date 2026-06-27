@@ -34,8 +34,11 @@ class ConfigKeys(str, Enum):
     VOTING_ENABLE_4_ROLES = "voting.enable_4_roles"
     VOTING_MODELS = "voting.models"
 
-    # ── 退出策略 (exit_policy SSOT) ─────────────────────────
-    STOP_LOSS_PCT = "exit_policy.stop_loss_pct"
-    TAKE_PROFIT_PCT = "exit_policy.take_profit_pct"
-    ATR_STOP_ENABLED = "exit_policy.atr_stop_enabled"
-    ATR_MULTIPLIER = "exit_policy.atr_multiplier"
+    # ── 退出策略 SSOT 路径 (2026-06-21 修复: 旧路径均不存在, 永远命中 fallback) ──
+    # 旧路径 'exit_policy.stop_loss_pct' 在 exit_policy.yaml 中不存在 → fallback 0.045
+    # 正确路径: dynamic_exit.default.stop_loss (unified_config top-level)
+    #          或 exit_policy.exit_rules.atr_stop.max_loss_pct (exit_policy.yaml)
+    STOP_LOSS_PCT = "dynamic_exit.default.stop_loss"
+    TAKE_PROFIT_PCT = "dynamic_exit.default.take_profit"
+    ATR_STOP_ENABLED = "exit_policy.exit_rules.atr_stop.enabled"
+    ATR_MULTIPLIER = "exit_policy.exit_rules.atr_stop.multiplier_by_profit.initial"

@@ -42,8 +42,6 @@ from app.pipeline.order_executor import (
     _close_position_for_conflict,
     _close_short_for_long,
     _close_long_for_short,
-    _try_direct_short_only,
-    _try_direct_short_with_fallback,
     _update_trade_attribution,
     _insert_trade_attribution,
     _notify_order,
@@ -81,7 +79,6 @@ __all__ = [
     "_submit_order", "_close_position", "_get_current_price",
     "_get_order_qty",
     "_close_position_for_conflict", "_close_short_for_long", "_close_long_for_short",
-    "_try_direct_short_only", "_try_direct_short_with_fallback",
     "_update_trade_attribution", "_insert_trade_attribution",
     "_notify_order", "_notify_exit",
     # position_monitor

@@ -114,7 +114,11 @@ def _build_target_entry(validated: Dict, factor_data: Dict) -> Dict:
         cur = tech.get("cur_price", 0)
         if cur > 0:
             atr = tech.get("atr14", cur * 0.02)
-            entry_zone = [round(cur - atr * 0.5, 1), round(cur + atr * 0.5, 1)]
+            direction = validated.get("direction", factor_data.get("direction_hint", "LONG"))
+            if direction == "SHORT":
+                entry_zone = [round(cur - atr * 0.3, 1), round(cur + atr * 0.5, 1)]
+            else:
+                entry_zone = [round(cur - atr * 0.5, 1), round(cur + atr * 0.3, 1)]
         else:
             entry_zone = [0, 0]
 
@@ -142,6 +146,8 @@ def _build_target_entry(validated: Dict, factor_data: Dict) -> Dict:
         # Catalyst & discovery (from Stage 1.5 / factor_engine)
         "catalyst": factor_data.get("catalyst", {"type": "NONE", "strength": "NONE", "headline": ""}),
         "discovery_source": factor_data.get("discovery_source", "core_pool"),
+        # 实时价格注入 (2026-06-21 修复: portfolio_synth需要计算目标价空间)
+        "current_price": round(tech.get("cur_price", 0), 2),
     }
     return entry
 
@@ -617,6 +623,23 @@ def _tag_catalysts(candidates: List[Dict]) -> Dict[str, Dict]:
     return result
 
 
+def _fetch_plan_vix() -> float:
+    """获取 plan 生成时刻的 VIX 基准值 (供 ConvictionTracker 计算 VIX 变化)"""
+    try:
+        import requests
+        url = "https://fred.stlouisfed.org/graph/fredgraph.csv?id=VIXCLS"
+        resp = requests.get(url, timeout=10)
+        if resp.status_code == 200:
+            lines = resp.text.strip().split('\n')
+            if len(lines) > 1:
+                parts = lines[-1].split(',')
+                if len(parts) >= 2 and parts[1]:
+                    return float(parts[1])
+    except Exception:
+        pass
+    return 20.0  # fallback
+
+
 def run_pipeline() -> Optional[Dict]:
     """
     执行完整作战计划生成管线。
@@ -660,6 +683,20 @@ def run_pipeline() -> Optional[Dict]:
     validation = validate_candidates(factor_screen)
 
     validated = validation.get("validated", [])
+
+    # P0 修复 (2026-06-21): 过滤掉NEUTRAL方向的candidates
+    # factor_engine方向冲突仲裁会产出direction_hint="NEUTRAL"的candidates
+    # 这些candidates方向不明确, 不应进入LLM验证和后续流程
+    factor_lookup_pre = {c["symbol"]: c for c in candidates}
+    pre_count = len(validated)
+    validated = [
+        v for v in validated
+        if v.get("direction", factor_lookup_pre.get(v.get("symbol", ""), {}).get("direction_hint", "")) != "NEUTRAL"
+    ]
+    neutral_filtered = pre_count - len(validated)
+    if neutral_filtered > 0:
+        logger.info(f"[Pipeline] 过滤 {neutral_filtered} 个 NEUTRAL 方向 candidates (冲突仲裁)")
+
     logger.info(
         f"[Pipeline] Stage 2 ✅ VALID={validation.get('valid_count',0)} "
         f"CONDITIONAL={validation.get('conditional_count',0)} "
@@ -689,8 +726,12 @@ def run_pipeline() -> Optional[Dict]:
         })
 
     # Sort by rank_score descending, take top 5 non-zero
+    # P0 修复 (2026-06-21): 去掉方向强制补充 — 由信号质量决定方向, 不人为偏置
     ranked.sort(key=lambda r: r["rank_score"], reverse=True)
-    top_targets = [r for r in ranked if r["rank_score"] > 0][:5]
+    top_ranked = [r for r in ranked if r["rank_score"] > 0]
+
+    # 取 top 5, 纯按质量排序, 不强制方向多样性
+    top_targets = top_ranked[:5]
 
     # Build target entries
     targets = []
@@ -767,6 +808,25 @@ def run_pipeline() -> Optional[Dict]:
                 if exec_summary and len(exec_summary) > 10:
                     t["executive_summary"] = exec_summary
 
+                # P1 修复 (2026-06-21): deep_research方向冲突回传标注
+                # 不翻转方向(太激进), 但标注冲突让用户知道
+                factor_dir = t.get("direction", "")
+                dr_action = str(dr.get("action", "")).upper()
+                conflict = None
+                if ("BUY" in dr_action or "LONG" in dr_action) and factor_dir == "SHORT":
+                    conflict = "factor_engine推荐SHORT, 但deep_research建议做多"
+                elif ("SELL" in dr_action or "SHORT" in dr_action) and factor_dir == "LONG":
+                    conflict = "factor_engine推荐LONG, 但deep_research建议做空"
+
+                if conflict:
+                    t["conflict_warning"] = conflict
+                    # 降级VALID→CONDITIONAL (不翻转方向, 但提醒风险)
+                    if t.get("verdict") == "VALID":
+                        t["verdict"] = "CONDITIONAL"
+                    logger.info(
+                        f"[Pipeline] ⚠️ 方向冲突 {sym}: {conflict}"
+                    )
+
         success_count = sum(1 for r in deep_research_results if r.get("deep_research"))
         logger.info(
             f"[Pipeline] Stage 4.7 ✅ {success_count}/{len(deep_research_results)} deep research completed"
@@ -782,6 +842,7 @@ def run_pipeline() -> Optional[Dict]:
     plan = {
         "date": today,
         "market_regime": factor_screen.get("regime", "NEUTRAL"),
+        "vix": _fetch_plan_vix(),  # P0 修复 (2026-06-21): ConvictionTracker 需要 plan 时刻 VIX 基准
         "regime_reasoning": narrative.get("regime_reasoning", ""),
         "targets": targets,
         "restricted": restricted,

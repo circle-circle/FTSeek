@@ -10,6 +10,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import RedirectResponse
 
 from app.web_dashboard.data_service import get_data_service, safe_float, et_today, et_days_ago
+from app.web_dashboard.api_response import api_ok, api_error, err_broker_unavailable
 
 logger = logging.getLogger("ftseek_us.routes.risk")
 router = APIRouter()
@@ -73,6 +74,7 @@ def register(app, templates):
             "COUNT(*) as trades, "
             "SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins "
             "FROM trade_records WHERE trade_date >= ? "
+            "AND source_type NOT IN ('PLAYBOOK_SHADOW','SCALPING') "
             "GROUP BY trade_date ORDER BY trade_date",
             (start_date,),
         )
@@ -131,6 +133,7 @@ def register(app, templates):
                    ROUND(AVG(realized_pnl), 2) as avg_pnl
             FROM trade_records
             WHERE trade_date = (SELECT MAX(trade_date) FROM trade_records)
+              AND source_type NOT IN ('PLAYBOOK_SHADOW','SCALPING')
             GROUP BY strategy_id ORDER BY pnl DESC
         """)
         for r in strat_rows:
@@ -152,6 +155,7 @@ def register(app, templates):
                    SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
                    ROUND(SUM(realized_pnl), 2) as pnl
             FROM trade_records WHERE trade_date >= ?
+              AND source_type NOT IN ('PLAYBOOK_SHADOW','SCALPING')
             GROUP BY strategy_id ORDER BY pnl DESC
         """, (et_days_ago(7),))
         result["weekly"] = [{
@@ -280,10 +284,10 @@ def register(app, templates):
             ds = get_data_service()
             ds.invalidate_cache("risk_command")
             logger.warning("[RiskCmd] Kill Switch 已激活 (Dashboard)")
-            return {"success": True, "message": "自动交易已暂停"}
+            return api_ok({"message": "自动交易已暂停"})
         except Exception as e:
             logger.error(f"[RiskCmd] 暂停失败: {e}")
-            return JSONResponse(content={"success": False, "error": "操作失败，请稍后重试"}, status_code=500)
+            return api_error("INTERNAL_ERROR", "操作失败，请稍后重试", 500)
 
     @router.post("/api/risk/resume-trading")
     async def resume_trading():
@@ -294,10 +298,10 @@ def register(app, templates):
             ds = get_data_service()
             ds.invalidate_cache("risk_command")
             logger.info("[RiskCmd] Kill Switch 已解除 (Dashboard)")
-            return {"success": True, "message": "自动交易已恢复"}
+            return api_ok({"message": "自动交易已恢复"})
         except Exception as e:
             logger.error(f"[RiskCmd] 恢复失败: {e}")
-            return JSONResponse(content={"success": False, "error": "操作失败，请稍后重试"}, status_code=500)
+            return api_error("INTERNAL_ERROR", "操作失败，请稍后重试", 500)
 
     @router.post("/api/risk/emergency-close")
     async def emergency_close(request: Request):
@@ -305,10 +309,10 @@ def register(app, templates):
         try:
             body = await request.json()
         except Exception:
-            return JSONResponse(content={"success": False, "error": "请求无效"}, status_code=400)
+            return api_error("BAD_REQUEST", "请求无效", 400)
 
         if body.get("confirm") != "CONFIRM":
-            return JSONResponse(content={"success": False, "error": "需要 CONFIRM 确认"}, status_code=400)
+            return api_error("BAD_REQUEST", "需要 CONFIRM 确认", 400)
 
         # P0-2 修复 (2026-06-12): 二次密钥校验, 防止 CSRF / 误点导致一键全平
         # 在 .env.us 配置 EMERGENCY_CONFIRM_TOKEN=<随机字符串>, 调用方需在 body 中提供 token 字段
@@ -322,22 +326,16 @@ def register(app, templates):
             import hmac as _hmac
             if not user_token or not _hmac.compare_digest(user_token, expected_token):
                 logger.warning("[RiskCmd] 紧急平仓拒绝: EMERGENCY_CONFIRM_TOKEN 校验失败")
-                return JSONResponse(
-                    content={"success": False, "error": "EMERGENCY_CONFIRM_TOKEN 校验失败"},
-                    status_code=403,
-                )
+                return api_error("FORBIDDEN", "EMERGENCY_CONFIRM_TOKEN 校验失败", 403)
         else:
             # P0 2026-06-15: 未配置 token 时拒绝执行, 防止误触/CSRF 一键全平
             logger.error("[RiskCmd] 紧急平仓被拒绝: 未配置 EMERGENCY_CONFIRM_TOKEN")
-            return JSONResponse(
-                content={"success": False, "error": "紧急平仓需要先在 .env.us 配置 EMERGENCY_CONFIRM_TOKEN"},
-                status_code=503,
-            )
+            return api_error("CONFIG_ERROR", "紧急平仓需要先在 .env.us 配置 EMERGENCY_CONFIRM_TOKEN", 503)
 
         ds = get_data_service()
         pos_raw = await ds.get_positions_raw()
         if not pos_raw:
-            return {"success": True, "message": "无持仓需要平仓", "closed": 0}
+            return api_ok({"message": "无持仓需要平仓", "closed": 0})
 
         closed = 0
         errors = []
@@ -361,6 +359,6 @@ def register(app, templates):
         ds.invalidate_cache()
         msg = f"平仓 {closed} 只" + (f", {len(errors)} 只失败" if errors else "")
         logger.warning(f"[RiskCmd] 紧急平仓: {msg}")
-        return {"success": True, "message": msg, "closed": closed, "errors": errors}
+        return api_ok({"message": msg, "closed": closed, "errors": errors})
 
     app.include_router(router)
