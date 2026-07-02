@@ -235,8 +235,11 @@ class PlaybookDataCollector:
             if raw.get("status") != "ok":
                 return FundamentalData(quality="missing")
 
-            # 根因修复 (2026-06-22): Provider 返回 "financials" 不是 "data"
-            fin = raw.get("financials") or raw.get("data") or {}
+            # 根因修复 (2026-06-22): Provider 返回 {"data": {"financials": {...}}}
+            # 2026-06-29 修复: 原代码 raw.get("financials") or raw.get("data") 拿到的是
+            # 外层 wrapper dict (含 financials/analyst/news/catalyst 键), 不是 financials 本身
+            data_wrapper = raw.get("data") or {}
+            fin = data_wrapper.get("financials") or raw.get("financials") or {}
 
             # 字段映射: Provider 用 snake_case, 原代码期望 Finnhub camelCase
             pe = fin.get("pe_ttm") or fin.get("peTTM") or fin.get("pe_ratio") or fin.get("pe")
@@ -356,10 +359,11 @@ class PlaybookDataCollector:
 
             # 根因修复 (2026-06-22): RSI 缺失时用日K线补算
             # 盘后/非交易时段 K_1M 分钟线获取失败 → RSI=None → technical quality=partial
-            # 修复: 从 Futu get_daily_kline 取日K线, 计算 RSI(14)
-            if rsi is None and router and router.futu:
+            # 修复: 从 日K线 计算 RSI(14)
+            # 2026-06-28: 走Router.get_daily_bars()而非直接调futu(富途历史K线可能过期)
+            if rsi is None and router:
                 try:
-                    dklines = router.futu.get_daily_kline(symbol, count=30)
+                    dklines = router.get_daily_bars(symbol, count=30)
                     if dklines and len(dklines) >= 15:
                         closes = [k['close'] for k in dklines]
                         gains = []

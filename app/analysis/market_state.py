@@ -93,9 +93,13 @@ class MarketStateChecker:
                     return None
 
                 # 获取日线计算 MA200
+                # 2026-06-30 根因修复: 加start/end + max_count>=范围交易日数
+                from datetime import date as _d, timedelta as _td
+                _end_spy = _d.today().isoformat()
+                _start_spy = (_d.today() - _td(days=400)).isoformat()
                 ret2, kline, _ = ctx.request_history_kline(
-                    "US.SPY", ktype=KLType.K_DAY, max_count=250
-                    # P1 修复: 移除 autype 参数 (Futu SDK 兼容性)
+                    "US.SPY", ktype=KLType.K_DAY, max_count=320,
+                    start=_start_spy, end=_end_spy
                 )
                 ma200 = None
                 if ret2 == 0 and kline is not None and len(kline) >= 200:

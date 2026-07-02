@@ -109,6 +109,8 @@ class TwelveDataProvider:
             capacity=FREE_CREDITS_PER_MINUTE,
             refill_interval_sec=REFILL_INTERVAL_SEC
         )
+        # 2026-06-30: 429 熔断时间戳
+        self._rate_limited_until: float = 0.0
         
         # 缓存
         self._cache: Dict[str, Dict[str, Any]] = {}
@@ -228,16 +230,28 @@ class TwelveDataProvider:
         if not self.api_key:
             return None
         params["apikey"] = self.api_key
+        # 2026-06-30: 429 熔断 — 收到429后10分钟内不再请求
+        _now = time.monotonic()
+        if hasattr(self, '_rate_limited_until') and _now < self._rate_limited_until:
+            return None
         try:
             resp = requests.get(f"{BASE_URL}/{endpoint}", params=params, timeout=15, verify=False)
             resp.raise_for_status()
             data = resp.json()
             if data.get("status") == "error" or data.get("code") in (400, 401, 429):
-                logger.warning(f"[TwelveData] API错误: {data.get('message', data)}")
+                if data.get("code") == 429 or "429" in str(data.get("message", "")):
+                    self._rate_limited_until = _now + 600  # 10分钟熔断
+                    logger.warning(f"[TwelveData] 429 限流, 熔断10分钟")
+                else:
+                    logger.warning(f"[TwelveData] API错误: {data.get('message', data)}")
                 return None
             return data
         except requests.RequestException as e:
-            logger.error(f"[TwelveData] 请求失败 {endpoint}: {e}")
+            if "429" in str(e) or "Too Many" in str(e):
+                self._rate_limited_until = _now + 600  # 10分钟熔断
+                logger.warning(f"[TwelveData] 429 限流(异常), 熔断10分钟")
+            else:
+                logger.error(f"[TwelveData] 请求失败 {endpoint}: {e}")
             return None
 
     # ── 公开接口 ──────────────────────────────────────────────────

@@ -162,7 +162,11 @@ class PDTGuard:
             logger.debug(f"[PDT] 清理旧记录失败: {e}")
             
     def _load_state(self) -> PDTState:
-        """从 DB 加载状态"""
+        """从 DB 加载状态 — 2026-06-30: 自动从富途接口刷新 equity
+        
+        根因: dashboard 手动下单路径不调 update_equity → equity 停在旧值 → 误判 PDT
+        修复: _load_state 时直接从富途 accinfo_query 查实时净值
+        """
         state = PDTState()
         try:
             with sqlite3.connect(self._db_path) as conn:
@@ -174,9 +178,57 @@ class PDTGuard:
                     state.is_pdt_account = bool(row[1])
         except Exception as e:
             logger.error(f"[PDT] 加载状态失败: {e}")
+        
+        # 2026-06-30: 从富途接口实时查 equity (PDT是合规问题, 不能用缓存)
+        try:
+            _live_equity = self._fetch_broker_equity()
+            if _live_equity and _live_equity > 0:
+                state.account_equity = _live_equity
+                state.is_pdt_account = _live_equity >= self.PDT_EQUITY_THRESHOLD
+                # 同步到 DB
+                with sqlite3.connect(self._db_path) as conn:
+                    conn.execute(
+                        "UPDATE pdt_state SET account_equity = ?, is_pdt_account = ?, last_update = ? WHERE id = 1",
+                        (_live_equity, state.is_pdt_account, datetime.now().isoformat())
+                    )
+                    conn.commit()
+                logger.info(f"[PDT] equity 从富途刷新: ${_live_equity:,.0f} → is_pdt={state.is_pdt_account}")
+        except Exception as e:
+            logger.debug(f"[PDT] 富途equity查询失败 (用DB旧值): {e}")
+        
         # day_trade_count 改为实时计算
         state.day_trade_count = self._get_day_trade_count()
         return state
+    
+    def _fetch_broker_equity(self) -> float:
+        """从富途接口实时查询实盘账户净值 (total_assets)
+        
+        优先用服务进程内已连接的 broker_adapter;
+        降级: 从 capital_state 读最近一次刷新值 (服务内定期更新)
+        """
+        # 优先: 通过 dashboard service 获取已连接的 broker context
+        try:
+            from app.web_dashboard.manual_order_service import get_manual_order_service
+            from futu import TrdEnv, RET_OK
+            _svc = get_manual_order_service()
+            if _svc and _svc._is_live() and _svc._broker_ctx:
+                _acc_id = _svc._acc_id()
+                ret, data = _svc._broker_ctx.accinfo_query(trd_env=TrdEnv.REAL, acc_id=_acc_id, refresh_cache=True)
+                if ret == RET_OK and len(data) > 0:
+                    _equity = float(data.iloc[0].get("total_assets", 0) or 0)
+                    if _equity > 0:
+                        return _equity
+        except Exception:
+            pass
+        # 降级: 从 capital_state 读最近一次刷新值
+        try:
+            with sqlite3.connect(self._db_path) as conn:
+                row = conn.execute("SELECT current_equity FROM capital_state ORDER BY id DESC LIMIT 1").fetchone()
+                if row and row[0] and row[0] > 0:
+                    return float(row[0])
+        except Exception:
+            pass
+        return 0.0
 
     def update_equity(self, equity: float):
         """更新账户资金"""

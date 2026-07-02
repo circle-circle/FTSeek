@@ -22,16 +22,154 @@ horizon_selector:
     rebalance_weekly: true
     min_pct: 0.1
 
+# Phase 3 (2026-06-30): 按因子类型设定退出规则
+# trailing: 利润锁定/跟踪止损
+# time_exit: 持仓时间止损 (仅亏损时触发, 或 always)
+# max_hold_days: 最大持有交易日
+factor_exit_rules:
+  # 默认规则
+  default:
+    trailing_enabled: false
+    breakeven_at_pct: 0.5
+    trailing_step_pct: 2.0
+    time_exit_hours: 2.0
+    time_exit_only_if_loss: true
+    max_hold_days: 1
+
+  # 趋势/动量类: 让利润奔跑, 用 trailing stop 锁定利润
+  insider_cluster_buy:
+    trailing_enabled: true
+    breakeven_at_pct: 0.5
+    trailing_step_pct: 1.5
+    time_exit_hours: 999       # 盈利仓不 time_exit
+    time_exit_only_if_loss: true
+    max_hold_days: 5
+  macd_golden_cross:
+    trailing_enabled: true
+    breakeven_at_pct: 1.0
+    trailing_step_pct: 2.0
+    time_exit_hours: 6
+    time_exit_only_if_loss: true
+    max_hold_days: 3
+  above_ma20:
+    trailing_enabled: true
+    breakeven_at_pct: 1.0
+    trailing_step_pct: 2.0
+    time_exit_hours: 6
+    time_exit_only_if_loss: true
+    max_hold_days: 3
+  news_positive:
+    trailing_enabled: true
+    breakeven_at_pct: 0.5
+    trailing_step_pct: 1.5
+    time_exit_hours: 4
+    time_exit_only_if_loss: true
+    max_hold_days: 2
+
+  # 波动/反转类: 快速证伪, 不恋战
+  volume_expansion:
+    trailing_enabled: false
+    breakeven_at_pct: 0.5
+    trailing_step_pct: 2.0
+    time_exit_hours: 0.5       # 30 分钟内不盈利就砍
+    time_exit_only_if_loss: true
+    max_hold_days: 1
+  rsi_oversold:
+    trailing_enabled: false
+    breakeven_at_pct: 0.5
+    trailing_step_pct: 2.0
+    time_exit_hours: 0.5
+    time_exit_only_if_loss: true
+    max_hold_days: 1
+  pe_below_industry:
+    trailing_enabled: false
+    breakeven_at_pct: 0.5
+    trailing_step_pct: 2.0
+    time_exit_hours: 0.5
+    time_exit_only_if_loss: true
+    max_hold_days: 1
+
+# Phase 4 (2026-06-30): 市场状态叠加 (VIX / regime / SPY 趋势)
+market_state_overlay:
+  enabled: true
+  # VIX 阈值
+  vix_thresholds:
+    low: 20.0
+    medium: 25.0
+    high: 30.0
+  # 仓位乘数 (与 regime_multiplier 相乘)
+  vix_position_mult:
+    low: 1.0
+    medium: 0.8
+    high: 0.5
+    extreme: 0.0
+  # 止损加宽 (percentage points)
+  vix_sl_widen:
+    low: 0.0
+    medium: 0.3
+    high: 0.8
+    extreme: 1.5
+  # 止盈倍率调整 (乘在 tp_multiplier 上)
+  vix_tp_mult:
+    low: 1.0
+    medium: 0.9
+    high: 0.7
+    extreme: 0.5
+  # regime 仓位调整
+  regime_position_mult:
+    RISK_ON: 1.0
+    CAUTIOUS: 1.0
+    RISK_OFF: 1.0
+    NO_TRADE: 0.0
+  # SPY 趋势方向过滤
+  skip_long_if_spy_below_ma20: false
+  skip_short_if_spy_above_ma20: false
+
 # 短线参数
 short_horizon:
   label: "SHORT_HORIZON"
-  rr_ratio: 1.0
   fixed_stop_loss_pct: 2.0
-  buy_fixed_stop_loss_pct: 2.5
+  buy_fixed_stop_loss_pct: 2.5  # 2026-06-30 Phase 1: BUY 止损从 2.0% 恢复 2.5%, 减少开盘噪声扫损
   sell_fixed_stop_loss_pct: 2.0
+  rr_ratio: 999  # 2026-06-30 DEB-20260630: 移除TP, 让EOD捕获利润(100%WR avg+$203). TP=3%从未触发且会截断SHORT EOD avg=5.66%
   max_hold_days: 1
   skip_pre_close_if_profit: false
   time_exit_hours: 2.0
+  # Phase 2 (2026-06-30): 波动率分桶止损/止盈
+  vol_buckets:
+    low:
+      atr_pct_max: 0.015
+      sl_multiplier: 0.8
+      sl_floor_pct: 1.2
+      sl_ceil_pct: 1.8
+      tp_multiplier: 2.0
+      short_widen_pct: 0.2
+      max_hold_hours: 6
+    medium:
+      atr_pct_max: 0.035
+      sl_multiplier: 0.7
+      sl_floor_pct: 1.8
+      sl_ceil_pct: 2.8
+      tp_multiplier: 1.8
+      short_widen_pct: 0.3
+      max_hold_hours: 4
+    high:
+      atr_pct_max: 0.08            # 2026-06-30 DEB: 从999改为0.08, 新增extreme桶
+      sl_multiplier: 0.6
+      sl_floor_pct: 2.5
+      sl_ceil_pct: 5.0
+      tp_multiplier: 1.5
+      short_widen_pct: 0.5
+      max_hold_hours: 2
+    extreme:                       # 2026-06-30 DEB: 新增, ATR%>8%的极端波动股
+      atr_pct_max: 999.0
+      sl_multiplier: 0.5
+      sl_floor_pct: 2.5
+      sl_ceil_pct: 4.0
+      tp_multiplier: 1.5
+      short_widen_pct: 0.8
+      max_hold_hours: 1
+      position_mult: 0.5           # extreme桶降仓50% (信号过滤, 非放宽SL)
 
 # 长线参数
 long_horizon:
@@ -42,3 +180,29 @@ long_horizon:
   skip_pre_close_if_profit: true
   overnight_gap_stop_pct: 3.0
   time_exit_hours: 999
+  # Phase 2 (2026-06-30): 波动率分桶止损/止盈 (长线默认用更宽的止损让利润奔跑)
+  vol_buckets:
+    low:
+      atr_pct_max: 0.015
+      sl_multiplier: 0.8
+      sl_floor_pct: 1.2
+      sl_ceil_pct: 1.8
+      tp_multiplier: 2.5
+      short_widen_pct: 0.2
+      max_hold_hours: 24
+    medium:
+      atr_pct_max: 0.035
+      sl_multiplier: 0.7
+      sl_floor_pct: 1.8
+      sl_ceil_pct: 2.8
+      tp_multiplier: 2.0
+      short_widen_pct: 0.3
+      max_hold_hours: 16
+    high:
+      atr_pct_max: 999.0
+      sl_multiplier: 0.6
+      sl_floor_pct: 2.5
+      sl_ceil_pct: 5.0
+      tp_multiplier: 1.8
+      short_widen_pct: 0.5
+      max_hold_hours: 8

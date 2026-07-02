@@ -75,7 +75,7 @@ class TradeAnalysis:
             'entry_price': self.entry_price,
             'exit_price': self.exit_price,
             'realized_pnl': round(self.realized_pnl, 2),
-            'pnl_pct': round(self.pnl_pct * 100, 2),
+            'pnl_pct': round(self.pnl_pct, 6),  # 保留原始比率, 不×100 (格式化层负责×100)
             'exit_reason': self.exit_reason,
             'holding_hours': round(self.holding_hours, 1),
             'signal_strength': self.signal_strength,
@@ -314,8 +314,20 @@ class TradeAnalyzer:
         
         try:
             entry_dt = datetime.fromisoformat(entry_time)
-            # CST → ET (CST = ET + 13h during DST)
-            et_hour = (entry_dt.hour - 13) % 24
+            # CST → ET: 用 pytz 动态计算 (DST=12h, EST=13h)
+            try:
+                import pytz
+                from datetime import timezone, timedelta
+                et_tz = pytz.timezone('US/Eastern')
+                # 如果 entry_dt 是 naive, 假设为服务器时间 CST(UTC+8)
+                if entry_dt.tzinfo is None:
+                    cst_tz = timezone(timedelta(hours=8))
+                    entry_dt = entry_dt.replace(tzinfo=cst_tz)
+                et_dt = entry_dt.astimezone(et_tz)
+                et_hour = et_dt.hour
+            except ImportError:
+                # fallback: 硬编码 13h (DST期间), EST用14h
+                et_hour = (entry_dt.hour - 13) % 24
             
             if 9 <= et_hour < 16:
                 if et_hour == 9:
@@ -561,7 +573,7 @@ def aggregate_weekly_analyses(analyses: List[Dict]) -> Dict:
             entry_price=a.get('entry_price', 0),
             exit_price=a.get('exit_price', 0),
             realized_pnl=a.get('realized_pnl', 0),
-            pnl_pct=a.get('pnl_pct', 0) / 100,  # Convert back from percentage
+            pnl_pct=a.get('pnl_pct', 0),  # 不再/100, to_dict已保留原始比率
             exit_reason=a.get('exit_reason', ''),
             holding_hours=a.get('holding_hours', 0),
             signal_strength=a.get('signal_strength', 0),

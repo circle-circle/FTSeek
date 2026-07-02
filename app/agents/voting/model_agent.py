@@ -133,15 +133,50 @@ class ModelAgent:
         """根据模型名称路由到对应 API — 2026-05-21 迁移到 UnifiedLLMService
 
         旧: 手动 deepseek/bailian 路由 + requests 直连
-        新: YAML llm.features.model_agent 路由 (primary: deepseek-pro, fallback: qwen-plus)
+        新: 3模型架构 (2026-06-28) — 根据 self.model_name 选择对应 feature,
+           使 qwen3.7-max / glm-5.2 / deepseek-v4-pro 各自走独立路由.
         """
+        # model_name 示例: "bailian/qwen3.7-max" / "bailian/glm-5.2" / "bailian/deepseek-v4-pro"
+        _model = self.model_name
+        if _model and "/" in _model:
+            _model = _model.split("/", 1)[-1]
+
+        # feature → model 路由 (需在 unified_config.yaml 中配置)
+        feature_map = {
+            "qwen3.7-max": "voting_qwen",
+            "glm-5.2": "voting_glm",
+            "deepseek-v4-pro": "voting_deepseek",
+        }
+        feature = feature_map.get(_model, "model_agent")
+
         from app.llm.unified_service import UnifiedLLMService
+        
+        # 2026-06-28 P0修复: json_mode=True对部分模型(如dashscope上的deepseek)偶发400
+        # 策略: 先用json_mode, 失败则不带json_mode重试(prompt已要求返回JSON格式)
+        # 2026-06-29 修复: 传 timeout=85, 与 VotingCoordinator.timeout=90 对齐
+        # 根因: qwen-max model config timeout=300s, 但 VotingCoordinator future.result(timeout=90)
+        # 在90s就超时了, 底层HTTP还在跑 → 投票超时 + 浪费API配额
+        try:
+            result = UnifiedLLMService.call_text(
+                feature, prompt,
+                system=self.system_prompt,
+                temperature=0.3,
+                max_tokens=800,
+                json_mode=True,
+                timeout=85,
+            )
+            if result:
+                return result
+        except Exception:
+            pass
+        
+        # 重试: 不带json_mode (prompt中已要求JSON格式, LLM会自行返回JSON)
         return UnifiedLLMService.call_text(
-            "model_agent", prompt,
+            feature, prompt,
             system=self.system_prompt,
             temperature=0.3,
-            max_tokens=200,
-            json_mode=True,
+            max_tokens=800,
+            timeout=85,
         )
 
     def _call_deepseek(self, prompt: str) -> Optional[str]:
@@ -155,6 +190,37 @@ class ModelAgent:
     # ------------------------------------------------------------------
     # 提示词构建
     # ------------------------------------------------------------------
+
+    def _build_factor_ic_section(self) -> str:
+        """2026-06-30 Phase 4: 构建因子IC上下文注入LLM prompt。
+        
+        让LLM知道哪些因子有预测力，哪些没有。
+        """
+        try:
+            import json
+            from pathlib import Path
+            ic_path = Path("data/factor_ic_latest.json")
+            if not ic_path.exists():
+                return ""
+            with open(ic_path) as f:
+                ic_data = json.load(f)
+            if not ic_data:
+                return ""
+            
+            lines = ["【因子预测力(IC)参考】"]
+            for factor, stats in sorted(ic_data.items(), key=lambda x: -float(x[1].get("ic", 0))):
+                ic = float(stats.get("ic", 0))
+                n = int(stats.get("n", 0))
+                if n < 5:
+                    continue
+                tag = "✅正alpha" if ic > 0.05 else ("❌负alpha" if ic < -0.05 else "⚪中性")
+                lines.append(f"- {factor}: IC={ic:+.2f} (N={n}) {tag}")
+            
+            if len(lines) == 1:
+                return ""
+            return "\n" + "\n".join(lines) + "\n"
+        except Exception:
+            return ""
 
     def _build_prompt(self, data: Dict[str, Any]) -> str:
         """构建结构化提示词 — 注入 LV3 Tick 数据 + 市场差异化指令"""
@@ -251,8 +317,10 @@ class ModelAgent:
 - 标普 500 日涨跌：{spx_chg:.2%}
 - 新闻情绪分：{news_sentiment:.2f}（-1.0 极度悲观 ~ +1.0 极度乐观）
 {news_warning}
+{self._build_factor_ic_section()}
 请基于你的专业角色（{self.role}），综合以上数据给出评分。{market_context}
-返回 JSON: {{"strength": <整数 0-100>, "confidence": <小数 0.0-1.0>, "direction": "<LONG 或 SHORT>", "reasoning": "<简要理由>"}}"""
+返回 JSON: {{"strength": <0-100>, "confidence": <0.0-1.0>, "direction": "LONG/SHORT", "entry_strategy": "breakout/pullback/support_bounce", "key_support": <price>, "key_resistance": <price>, "stop_trigger": "intraday/close", "reasoning": "brief"}}
+可选字段: entry_strategy/key_support/key_resistance/stop_trigger 无法判断时省略."""
 
         return prompt
 
@@ -308,6 +376,16 @@ class ModelAgent:
                 confidence = min(confidence, 0.15)  # 会被下游 min_confidence 过滤
 
         reasoning = str(data.get("reasoning", ""))[:200]
+
+        # 2026-07-02: 采集LLM新字段到reasoning (JSON编码, 不改ModelScore结构)
+        # ponytail: 不加dataclass字段, 把新字段编码到reasoning里供后续分析
+        _extra = {}
+        for _field in ("entry_strategy", "key_support", "key_resistance", "stop_trigger"):
+            _val = data.get(_field)
+            if _val is not None and _val != "":
+                _extra[_field] = _val
+        if _extra:
+            reasoning = f"{reasoning} | {json.dumps(_extra, ensure_ascii=False)}"
 
         return ModelScore(
             model_id=self.role,

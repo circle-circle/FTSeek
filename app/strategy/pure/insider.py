@@ -18,9 +18,21 @@
 """
 
 from typing import Optional, Dict, Any
+from datetime import datetime, timedelta
+import threading
 
 from app.core.pipeline_contracts import SymbolContext, SignalCandidate
 from app.strategy.pure import register
+
+# ── Cluster 去重: 同一 cluster 24h 内只触发一次 ──
+_cluster_dedup: Dict[str, datetime] = {}  # fingerprint -> last_emit_time
+_dedup_lock = threading.Lock()
+_DEDUP_TTL = timedelta(hours=24)
+
+
+def _cluster_fingerprint(cluster, symbol: str) -> str:
+    """用 symbol + 首末买入日期作为 cluster 指纹"""
+    return f"{symbol}:{cluster.first_buy_date}:{cluster.latest_buy_date}"
 
 
 @register("insider")
@@ -30,16 +42,16 @@ def evaluate(ctx: SymbolContext, config: Dict[str, Any]) -> Optional[SignalCandi
 
     config:
         enabled: bool
-        min_buy_amount: int         # 最低单人买入金额 (默认 $50K)
+        min_buy_amount: int         # 最低单人买入金额 (默认 $100K)
         min_buyers: int             # 最低不同内部人数 (默认 2)
-        min_strength: int           # 最低信号强度 (默认 50)
+        min_strength: int           # 最低信号强度 (默认 60)
         window_days: int            # 回溯窗口 (默认 30)
     """
     if not config.get("enabled", True):
         return None
 
     symbol = ctx.symbol
-    min_strength = config.get("min_strength", 50)
+    min_strength = config.get("min_strength", 60)
 
     # 调用 SEC Form 4 数据提供商检测集群买入
     try:
@@ -57,9 +69,22 @@ def evaluate(ctx: SymbolContext, config: Dict[str, Any]) -> Optional[SignalCandi
     if cluster is None:
         return None
 
+    # ── 去重: 同一 cluster 24h 内只触发一次 ──
+    fp = _cluster_fingerprint(cluster, symbol)
+    now = datetime.now()
+    with _dedup_lock:
+        last_emit = _cluster_dedup.get(fp)
+        if last_emit and (now - last_emit) < _DEDUP_TTL:
+            return None
+        _cluster_dedup[fp] = now
+        # 顺带清理过期条目
+        expired = [k for k, v in _cluster_dedup.items() if (now - v) >= _DEDUP_TTL]
+        for k in expired:
+            del _cluster_dedup[k]
+
     # ── 检查最低门槛 ──
     min_buyers = config.get("min_buyers", 2)
-    min_buy_amount = config.get("min_buy_amount", 50_000)
+    min_buy_amount = config.get("min_buy_amount", 100_000)
 
     if cluster.unique_buyers < min_buyers:
         return None

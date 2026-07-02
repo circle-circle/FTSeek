@@ -1,0 +1,2387 @@
+{
+  "report_type": "daily",
+  "report_version": "2.0",
+  "report_date": "2026-06-30",
+  "generated_at": "2026-07-01T07:32:30.140528",
+  "summary": {
+    "total_trades": 4,
+    "closed_trades": 4,
+    "winning_trades": 1,
+    "losing_trades": 3,
+    "total_pnl": -61.99,
+    "win_rate": 0.25,
+    "avg_pnl": -15.5,
+    "avg_holding_period": 0.3
+  },
+  "signal_funnel": {
+    "total_decisions": 32,
+    "by_direction_strength": {
+      "LONG(s=51)": 2,
+      "LONG(s=55)": 1,
+      "LONG(s=59)": 1,
+      "LONG(s=61)": 1,
+      "LONG(s=62)": 2,
+      "LONG(s=63)": 1,
+      "LONG(s=66)": 1,
+      "NEUTRAL(s=45)": 1,
+      "NEUTRAL(s=49)": 2,
+      "NEUTRAL(s=51)": 1,
+      "NEUTRAL(s=54)": 1,
+      "SHORT(s=29)": 1,
+      "SHORT(s=30)": 1,
+      "SHORT(s=32)": 1,
+      "SHORT(s=33)": 1,
+      "SHORT(s=34)": 1,
+      "SHORT(s=35)": 2,
+      "SHORT(s=36)": 1,
+      "SHORT(s=37)": 1,
+      "SHORT(s=43)": 1,
+      "SHORT(s=44)": 3,
+      "SHORT(s=48)": 1,
+      "SHORT(s=49)": 4
+    }
+  },
+  "rejection_analysis": {
+    "total": 0,
+    "by_reason": {},
+    "by_symbol": {},
+    "top_rejector": "none"
+  },
+  "capital_state": {
+    "current_equity": 99168.0,
+    "cash": 74836.0,
+    "buying_power": 160671.0,
+    "drawdown_pct": -2.07,
+    "max_drawdown_pct": -2.51,
+    "water_level": "green"
+  },
+  "attribution_data": {
+    "total_records": 0,
+    "data_available": false,
+    "note": "trade_attribution 无当日数据",
+    "five_factor": {
+      "five_factor_available": true,
+      "lookback_window": "30d",
+      "lookback_note": "五因子归因基于30天回看数据, 非当日",
+      "noise_trades_pnl": 6331.6,
+      "early_exit_pnl": 0.0,
+      "late_exit_pnl": 0.0,
+      "overtrading_pnl": -143.81,
+      "missed_signals_pnl": 37147.9,
+      "behavioral_score": {
+        "score": 88,
+        "grade": "A"
+      },
+      "rules": [
+        {
+          "rule_id": "R1",
+          "human_text": "平均持有 0.2 天，平均盈利 1.7%",
+          "entry_hour_range": [
+            9.0,
+            16.0
+          ],
+          "holding_days_range": [
+            0.1,
+            0.2748409663416884
+          ],
+          "support_count": 32,
+          "coverage_rate": 1.0,
+          "avg_pnl_pct": 0.0172,
+          "weight": 1.0
+        }
+      ],
+      "disposition_effect": {
+        "severity": "low",
+        "avg_hold_winners_days": 0.6,
+        "avg_hold_losers_days": 0.5,
+        "loser_winner_hold_ratio": 0.75,
+        "interpretation": "亏损持仓是盈利的 0.8x — 健康"
+      },
+      "chasing": {
+        "severity": "insufficient_data",
+        "avg_deviation_pct": 0
+      },
+      "anchoring": {
+        "severity": "low",
+        "anchored_ratio": 0.0,
+        "interpretation": "0% 的亏损单超过止损设计 — 止损纪律良好"
+      }
+    },
+    "signal_scores_avg": null,
+    "execution_scores_avg": null,
+    "risk_scores_avg": null,
+    "timing_scores_avg": null,
+    "overall_scores_avg": null
+  },
+  "trade_analyses": [
+    {
+      "trade_id": 963,
+      "symbol": "US.MSFT",
+      "direction": "SHORT",
+      "entry_price": 368.57,
+      "exit_price": 373.28,
+      "realized_pnl": -80.07,
+      "pnl_pct": -0.0128,
+      "exit_reason": "BROKER_GHOST_CLOSE",
+      "holding_hours": 0,
+      "signal_strength": 9000,
+      "signal_confidence": 90.0,
+      "verdict": "不合理",
+      "entry_logic": "入场逻辑正常 (strength=9000, conf=90.00)",
+      "exit_logic": "退出原因: BROKER_GHOST_CLOSE",
+      "pnl_attribution": "亏损退出 (-$80.07, BROKER_GHOST_CLOSE)",
+      "timing_assessment": "⚠️ 盘前时段入场 (ET 6:xx) — 流动性差",
+      "risk_compliance": "风险合规正常",
+      "evidence": {
+        "no_decision_reason": true,
+        "verdict_reason": {
+          "unreasonable_count": 1,
+          "reasonable_count": 0,
+          "issue_count": 1
+        }
+      },
+      "issues": [
+        "盘前入场 — 流动性差，滑点风险高"
+      ],
+      "suggestions": [
+        "高信号强度但亏损 — 需检查信号有效性"
+      ],
+      "needs_debate": true,
+      "debate_reason": "高信号强度 (strength=9000) 但判定不合理 — 需要辩论确认信号有效性"
+    },
+    {
+      "trade_id": 964,
+      "symbol": "US.BIDU",
+      "direction": "LONG",
+      "entry_price": 113.22,
+      "exit_price": 114.39,
+      "realized_pnl": 67.86,
+      "pnl_pct": 0.0103,
+      "exit_reason": "EOD_FORCE_CLOSE",
+      "holding_hours": 0,
+      "signal_strength": 7600,
+      "signal_confidence": 76.0,
+      "verdict": "合理",
+      "entry_logic": "入场逻辑正常 (strength=7600, conf=76.00)",
+      "exit_logic": "退出原因: EOD_FORCE_CLOSE",
+      "pnl_attribution": "盈利退出 (+$67.86, EOD_FORCE_CLOSE)",
+      "timing_assessment": "正常交易时段入场 (ET 10:xx)",
+      "risk_compliance": "风险合规正常",
+      "evidence": {
+        "no_decision_reason": true,
+        "verdict_reason": {
+          "unreasonable_count": 0,
+          "reasonable_count": 2,
+          "issue_count": 0
+        }
+      },
+      "issues": [],
+      "suggestions": [],
+      "needs_debate": false,
+      "debate_reason": ""
+    },
+    {
+      "trade_id": 965,
+      "symbol": "US.ARM",
+      "direction": "SHORT",
+      "entry_price": 332.05,
+      "exit_price": 353.01,
+      "realized_pnl": -20.96,
+      "pnl_pct": -0.063123,
+      "exit_reason": "HARD_STOP",
+      "holding_hours": 0.5,
+      "signal_strength": 46,
+      "signal_confidence": 0.54,
+      "verdict": "不合理",
+      "entry_logic": "存在问题: 信号强度偏低 (strength=46)",
+      "exit_logic": "退出原因: HARD_STOP",
+      "pnl_attribution": "亏损退出 (-$20.96, HARD_STOP)",
+      "timing_assessment": "正常交易时段入场 (ET 10:xx)",
+      "risk_compliance": "风险合规问题: 单笔亏损 -6.3% — 超过 5% 底限",
+      "evidence": {
+        "weak_signal": true,
+        "no_decision_reason": true,
+        "verdict_reason": {
+          "unreasonable_count": 1,
+          "reasonable_count": 0,
+          "issue_count": 2
+        }
+      },
+      "issues": [
+        "信号强度偏低 (strength=46)",
+        "单笔亏损 -6.3% — 超过 5% 底限"
+      ],
+      "suggestions": [],
+      "needs_debate": false,
+      "debate_reason": ""
+    },
+    {
+      "trade_id": 966,
+      "symbol": "US.TSLA",
+      "direction": "SHORT",
+      "entry_price": 385.9,
+      "exit_price": 414.72,
+      "realized_pnl": -28.82,
+      "pnl_pct": -0.074683,
+      "exit_reason": "TRAILING_STOP",
+      "holding_hours": 0.5,
+      "signal_strength": 49,
+      "signal_confidence": 0.58,
+      "verdict": "不合理",
+      "entry_logic": "存在问题: 信号强度偏低 (strength=49)",
+      "exit_logic": "追踪止损亏损退出 (-7.47%) — 正常风控",
+      "pnl_attribution": "亏损退出 (-$28.82, TRAILING_STOP)",
+      "timing_assessment": "正常交易时段入场 (ET 10:xx)",
+      "risk_compliance": "风险合规问题: 单笔亏损 -7.5% — 超过 5% 底限",
+      "evidence": {
+        "weak_signal": true,
+        "no_decision_reason": true,
+        "verdict_reason": {
+          "unreasonable_count": 1,
+          "reasonable_count": 1,
+          "issue_count": 2
+        }
+      },
+      "issues": [
+        "信号强度偏低 (strength=49)",
+        "单笔亏损 -7.5% — 超过 5% 底限"
+      ],
+      "suggestions": [],
+      "needs_debate": false,
+      "debate_reason": ""
+    }
+  ],
+  "dimensions": {
+    "signal_quality": {
+      "score": null,
+      "total_signals": 32,
+      "total_trades": 4,
+      "signal_to_trade_ratio": 0.125,
+      "strength_distribution": {
+        "high": 2,
+        "medium": 0,
+        "low": 2
+      },
+      "avg_signal_strength": 4173.75,
+      "assessment": "mixed"
+    },
+    "voting_consistency": {
+      "score": null,
+      "status": "available",
+      "data_available": true,
+      "avg_signal_strength": 47.5,
+      "high_strength_trades": 0,
+      "medium_strength_trades": 0,
+      "low_strength_trades": 2,
+      "avg_consensus_level": 0.5585
+    },
+    "execution_quality": {
+      "total_trades": 4,
+      "data_available": false,
+      "execution_rate": 1.0,
+      "note": "trade_attribution 执行数据未填充，执行质量分析受限。"
+    },
+    "risk_compliance": {
+      "data_available": true,
+      "current_drawdown_pct": -2.07,
+      "max_drawdown_pct": -2.51,
+      "water_level": "green",
+      "risk_score": 9.0,
+      "max_single_trade_loss": 80.07,
+      "losing_trade_count": 3,
+      "losing_trade_ratio": 0.75
+    },
+    "funnel_diagnosis": {
+      "score": null,
+      "status": "healthy",
+      "total_decisions": 32,
+      "total_trades": 4,
+      "total_rejections": 0,
+      "trade_conversion_rate": 0.125,
+      "rejection_rate": 0.0,
+      "top_rejector": "none",
+      "by_direction_strength": {
+        "LONG(s=51)": 2,
+        "LONG(s=55)": 1,
+        "LONG(s=59)": 1,
+        "LONG(s=61)": 1,
+        "LONG(s=62)": 2,
+        "LONG(s=63)": 1,
+        "LONG(s=66)": 1,
+        "NEUTRAL(s=45)": 1,
+        "NEUTRAL(s=49)": 2,
+        "NEUTRAL(s=51)": 1,
+        "NEUTRAL(s=54)": 1,
+        "SHORT(s=29)": 1,
+        "SHORT(s=30)": 1,
+        "SHORT(s=32)": 1,
+        "SHORT(s=33)": 1,
+        "SHORT(s=34)": 1,
+        "SHORT(s=35)": 2,
+        "SHORT(s=36)": 1,
+        "SHORT(s=37)": 1,
+        "SHORT(s=43)": 1,
+        "SHORT(s=44)": 3,
+        "SHORT(s=48)": 1,
+        "SHORT(s=49)": 4
+      }
+    },
+    "attribution_learning": {
+      "data_available": true,
+      "lessons_count": 1,
+      "five_factor": {
+        "five_factor_available": true,
+        "lookback_window": "30d",
+        "lookback_note": "五因子归因基于30天回看数据, 非当日",
+        "noise_trades_pnl": 6331.6,
+        "early_exit_pnl": 0.0,
+        "late_exit_pnl": 0.0,
+        "overtrading_pnl": -143.81,
+        "missed_signals_pnl": 37147.9,
+        "behavioral_score": {
+          "score": 88,
+          "grade": "A"
+        },
+        "rules": [
+          {
+            "rule_id": "R1",
+            "human_text": "平均持有 0.2 天，平均盈利 1.7%",
+            "entry_hour_range": [
+              9.0,
+              16.0
+            ],
+            "holding_days_range": [
+              0.1,
+              0.2748409663416884
+            ],
+            "support_count": 32,
+            "coverage_rate": 1.0,
+            "avg_pnl_pct": 0.0172,
+            "weight": 1.0
+          }
+        ],
+        "disposition_effect": {
+          "severity": "low",
+          "avg_hold_winners_days": 0.6,
+          "avg_hold_losers_days": 0.5,
+          "loser_winner_hold_ratio": 0.75,
+          "interpretation": "亏损持仓是盈利的 0.8x — 健康"
+        },
+        "chasing": {
+          "severity": "insufficient_data",
+          "avg_deviation_pct": 0
+        },
+        "anchoring": {
+          "severity": "low",
+          "anchored_ratio": 0.0,
+          "interpretation": "0% 的亏损单超过止损设计 — 止损纪律良好"
+        }
+      },
+      "behavioral_score": {
+        "score": 88,
+        "grade": "A"
+      }
+    }
+  },
+  "decision_analysis": {
+    "distribution": {
+      "unknown": 4
+    },
+    "avg_confidence": 41.78
+  },
+  "risk_analysis": {
+    "data_available": true,
+    "current_drawdown_pct": -2.07,
+    "max_drawdown_pct": -2.51,
+    "water_level": "green",
+    "risk_score": 9.0,
+    "max_single_trade_loss": 80.07,
+    "losing_trade_count": 3,
+    "losing_trade_ratio": 0.75
+  },
+  "voting_analysis": {
+    "score": null,
+    "status": "available",
+    "data_available": true,
+    "avg_signal_strength": 47.5,
+    "high_strength_trades": 0,
+    "medium_strength_trades": 0,
+    "low_strength_trades": 2,
+    "avg_consensus_level": 0.5585
+  },
+  "error_patterns": {
+    "detected": false,
+    "patterns": []
+  },
+  "review_score": {
+    "overall_score": 6.0,
+    "max_score": 10.0,
+    "status": "needs_improvement",
+    "breakdown": {
+      "win_rate_score": 3.0,
+      "win_rate": 0.25,
+      "win_rate_weight": 0.25,
+      "signal_quality_score": 10,
+      "avg_signal_strength": 4173.75,
+      "signal_quality_weight": 0.2,
+      "risk_compliance_score": 8.96,
+      "drawdown_pct": -2.07,
+      "risk_compliance_weight": 0.2,
+      "funnel_efficiency_score": 6.25,
+      "conversion_rate": 0.125,
+      "funnel_efficiency_weight": 0.15,
+      "attribution_learning_score": 0,
+      "lessons_count": 0,
+      "attribution_learning_weight": 0.1,
+      "plan_execution_score": 5.0,
+      "plan_execution_weight": 0.1
+    }
+  },
+  "market_regime": {
+    "state": "unknown",
+    "confidence": "low",
+    "indicators": {
+      "drawdown_pct": 2.07
+    }
+  },
+  "plan_vs_actual": {
+    "plan_available": true,
+    "planned_targets": [
+      {
+        "symbol": "US.BIDU",
+        "direction": "SHORT",
+        "entry_zone": [
+          111.51,
+          113.3
+        ],
+        "stop_loss": 116.22,
+        "take_profit": 105.45,
+        "urgency": "HIGH",
+        "rationale": "⚠️ sector_momentum: China_ADR +0.0% | ✅ relative_strength: -17.1% vs SPY -2.1% | ✅ ma_alignment: MA5=108 MA10=110 MA20=118\n验证: sector_momentum=weak, relative_strength=confirmed, ma_alignment=confirmed, volume_breakout=confirmed, rsi_sweet_spot=weak, insider_signal=weak, fundamental_quality=weak, sentiment_crowding=confirmed",
+        "trigger_condition": "价格进入 111.51-113.30 区间",
+        "risk_reward": 1.7,
+        "position_size_pct": 5,
+        "invalidation": "收盘上破 116.22 (1.8x ATR)",
+        "confidence": 95,
+        "factor_score": 0.73,
+        "composite_rank": 0.818,
+        "verdict": "VALID",
+        "execution_rules": {
+          "gap_up_over_2pct": "SKIP",
+          "gap_down_over_2pct": "SKIP",
+          "hit_zone_then_drop": "WAIT_5MIN_CANDLE_ABOVE"
+        },
+        "factor_validation": {
+          "sector_momentum": "WEAK",
+          "relative_strength": "CONFIRMED",
+          "ma_alignment": "CONFIRMED",
+          "volume_breakout": "CONFIRMED",
+          "rsi_sweet_spot": "WEAK",
+          "insider_signal": "WEAK",
+          "fundamental_quality": "WEAK",
+          "sentiment_crowding": "CONFIRMED"
+        },
+        "data_cited": [
+          "-17.1% vs SPY -2.1%",
+          "MA5=108 MA10=110 MA20=118",
+          "1.9x avg",
+          "PE=53 ROE=0.1% RevYoY=3.8% [Finnhub]",
+          "bull=90%(拥挤)@9/1 [ST]"
+        ],
+        "model_used": "deterministic_rules",
+        "catalyst": {
+          "type": "MA",
+          "score": 9.2,
+          "strength": "HIGH",
+          "headline": "Baidu: Deeply Mispriced As The AI Pivot Accelerates",
+          "price_change_pct": 7.6,
+          "source_count": 1,
+          "direction_hint": null
+        },
+        "discovery_source": "core_pool",
+        "current_price": 112.18,
+        "rank_position": 1,
+        "is_primary": true,
+        "why_primary": "综合排名#1 · R:R 1.7:1 · 置信度95%",
+        "deep_research": {
+          "verdict": {
+            "action": "CONDITIONAL",
+            "action_detail": "小仓试探做空，总仓位严格限制在1/3，设置硬止损，等待基本面与新闻数据更新以确认趋势延续性。",
+            "conviction": 40,
+            "data_quality_score": "2/4"
+          },
+          "executive_summary": "技术面空头趋势强劲但基本面与新闻数据缺失且情绪指标存在内部矛盾，建议小仓试探做空并设置严格止损，留弹药待数据确认。",
+          "build_plan": {
+            "batch_1": {
+              "pct": "1/3",
+              "zone": "$111.51-$113.30",
+              "condition": "价格反弹至入场区间且15分钟级别MACD维持负值，无底背离"
+            },
+            "batch_2": {
+              "pct": "0",
+              "zone": "N/A",
+              "condition": "基本面与新闻数据降级状态下暂不加仓，等待数据修复"
+            },
+            "batch_3": {
+              "pct": "0",
+              "zone": "N/A",
+              "condition": "N/A"
+            },
+            "event_buffer": "财报或重大宏观数据发布前平仓或减半，防范情绪反转与流动性冲击"
+          },
+          "risk_tiers": {
+            "aggressive": {
+              "action": "维持做空并放宽止损至$118.13",
+              "trigger": "价格跌破$108.00且ATR维持>4.0",
+              "risk": "情绪反向指标触发导致逼空反弹"
+            },
+            "moderate": {
+              "action": "严格执行$116.22止损平仓",
+              "trigger": "价格反弹突破$116.22且伴随成交量放大",
+              "risk": "技术性反弹演变为趋势反转"
+            },
+            "conservative": {
+              "action": "提前平仓或买入看涨期权对冲",
+              "trigger": "RSI突破50且价格站稳10EMA($110.88)上方",
+              "risk": "基本面突发利好或情绪踩踏结束引发轧空"
+            }
+          },
+          "risk_triggers": [
+            {
+              "condition": "价格突破VWMA($118.13)且伴随放量",
+              "action": "立即止损平仓，空头趋势逻辑破坏"
+            },
+            {
+              "condition": "StockTwits多空比发生逆转（空方比例大幅下降）",
+              "action": "减仓50%，防范情绪反向逼空风险"
+            },
+            {
+              "condition": "ROE或EPS等基本面数据出现超预期上修或公布重大利好催化",
+              "action": "取消后续建仓计划，观望或反手"
+            }
+          ],
+          "key_levels": {
+            "current": 112.18,
+            "hard_stop": 116.22,
+            "resistance_1": 117.54,
+            "resistance_2": 118.13,
+            "support_1": 110.88,
+            "support_2": 100.32,
+            "extreme_down": 84.64
+          },
+          "data_quality": {
+            "technical": "完整",
+            "fundamental": "降级",
+            "news": "降级",
+            "sentiment": "完整",
+            "overall": "2项完整/2项降级/0项缺失",
+            "impact_note": "基本面与新闻数据降级导致缺乏中长期估值锚与催化剂判断，情绪数据内部存在多空比数值与方向结论的矛盾，显著降低做空确信度，需防范情绪反转风险。",
+            "fetched_at": "2026-06-30T13:09:02Z",
+            "data_sources": {
+              "financials": "ok",
+              "analyst": "failed",
+              "news": "failed",
+              "catalyst": "ok"
+            }
+          },
+          "bull_case": [
+            {
+              "thesis": "散户情绪极端偏空且拥挤，常构成反向买入信号，历史显示拥挤偏空后价格容易出现阶段性反弹。",
+              "strength": "MEDIUM",
+              "evidence": "StockTwits方向偏空，拥挤度拥挤，关注人数66289，多空比9:1（2026-06-30）",
+              "source_type": "sentiment"
+            },
+            {
+              "thesis": "价格接近摆动低点支撑$100.32，布林带位置36%接近下轨，RSI 42.2处于中性偏低区域，存在技术性反弹需求。",
+              "strength": "MEDIUM",
+              "evidence": "swing低$100.32，布林位置36%，RSI 42.2（当前价$112.18）",
+              "source_type": "technical"
+            },
+            {
+              "thesis": "VWMA高于现价（$118.13 vs $112.18），虽表明均线压制，但放量过程中可能已消化部分抛压，量价背离暗示卖盘衰竭的可能。",
+              "strength": "LOW",
+              "evidence": "VWMA $118.13，当前价$112.18，量价背离，放量（2026-06-30）",
+              "source_type": "technical"
+            }
+          ],
+          "bear_case": [
+            {
+              "thesis": "技术面完美空头排列，MACD负值，放量下跌，趋势强劲，空头全面控盘。",
+              "strength": "HIGH",
+              "evidence": "完美空头排列，MACD负值，ATR 4.27（约3.8%/日），放量（2026-06-30）",
+              "source_type": "technical"
+            },
+            {
+              "thesis": "基本面疲弱，ROE仅1.49%，EPS TTM仅$1.731，隐含PE约64.8倍，估值缺乏支撑，且无明确催化剂。",
+              "strength": "HIGH",
+              "evidence": "ROE=1.49，EPS=1.731，市值381.7亿，下一催化Unknown（2026-06-30）",
+              "source_type": "fundamental"
+            },
+            {
+              "thesis": "散户情绪偏空且拥挤度极高，极易引发踩踏式抛售，加剧下跌趋势。",
+              "strength": "MEDIUM",
+              "evidence": "StockTwits方向偏空，拥挤度拥挤，关注66289人（2026-06-30）",
+              "source_type": "sentiment"
+            },
+            {
+              "thesis": "VWMA下行压制，量价组合呈经典空头信号，均线系统构成强阻力，反弹空间受限。",
+              "strength": "MEDIUM",
+              "evidence": "VWMA $118.13高于现价，量价背离，空头排列（2026-06-30）",
+              "source_type": "technical"
+            }
+          ],
+          "debate_verdict": {
+            "recommended_direction": "SHORT",
+            "direction_confidence": "HIGH",
+            "key_disagreement": "多头依靠情绪极度偏空的反向指标和支撑位搏反弹，空头则以强劲趋势、极度疲弱的基本面和高拥挤踩踏风险主导，分歧在于短期反弹概率与趋势延续性的权衡。",
+            "adopted_from_bear": "采纳空头关于散户情绪拥挤可能引发踩踏的风险，以及基本面缺乏催化剂、估值无支撑的判断，交易中需设置严格止损，防范加速下跌。",
+            "strongest_bull": "散户情绪极端偏空且拥挤，可能构成反向买入信号（StockTwits偏空，拥挤度拥挤）。",
+            "strongest_bear": "技术面完美空头排列，MACD负值且放量，趋势强劲，空头完全控盘。"
+          },
+          "causal_chain": "基本面疲弱（ROE 1.49%，EPS仅$1.731）→ 市场信心缺失，技术面形成完美空头排列 → 散户情绪偏空且拥挤，放量下跌 → 空头趋势自我强化，缺乏催化扭转预期。",
+          "historical_reference": "2022年Q3，百度同样出现技术面空头排列、RSI徘徊40附近、基本面担忧加剧，股价从$150附近一路跌至$84左右，期间多次反弹均受均线压制，最终深度探底。",
+          "analyst_reports": {
+            "technical": {
+              "status": "complete",
+              "indicators_table": [
+                {
+                  "indicator": "close_10_ema",
+                  "role": "短期趋势/入场节奏",
+                  "reason": "捕捉短线动量节奏",
+                  "value": 110.88,
+                  "interpretation": "110.88，上行，价在其上 → 短期偏多"
+                },
+                {
+                  "indicator": "close_50_sma",
+                  "role": "中期趋势",
+                  "reason": "判断修复/主升行情是否成立",
+                  "value": 126.25,
+                  "interpretation": "126.25，空头趋势"
+                },
+                {
+                  "indicator": "close_200_sma",
+                  "role": "长期趋势基准",
+                  "reason": "界定大级别多空",
+                  "value": 127.91,
+                  "interpretation": "127.91，长期空头未翻转"
+                },
+                {
+                  "indicator": "macd",
+                  "role": "动量交叉/强弱",
+                  "reason": "度量动能持续性",
+                  "value": -5.8942,
+                  "interpretation": "MACD 负值(空头) · RSI 42.2 中性"
+                },
+                {
+                  "indicator": "rsi",
+                  "role": "超买超卖/动量位置",
+                  "reason": "与MACD互补，防追高",
+                  "value": 42.18,
+                  "interpretation": "RSI 42.18，中性，无超买"
+                },
+                {
+                  "indicator": "atr",
+                  "role": "波动/止损尺度",
+                  "reason": "定止损/仓位的真实波幅",
+                  "value": 4.2668,
+                  "interpretation": "ATR 4.2668(≈3.8%/日) · 波动高"
+                },
+                {
+                  "indicator": "boll",
+                  "role": "波动带/突破",
+                  "reason": "动态区间与触轨极端",
+                  "value": "中117.54/上137.1/下97.97",
+                  "interpretation": "布林位置 36%，未触轨"
+                },
+                {
+                  "indicator": "vwma",
+                  "role": "量价趋势确认",
+                  "reason": "用成交量确认趋势真伪",
+                  "value": 118.13,
+                  "interpretation": "VWMA 118.13 · 量价背离 · 放量"
+                }
+              ],
+              "trend": {
+                "long": "空头",
+                "mid": "空头",
+                "short": "偏多",
+                "alignment": "完美空头排列",
+                "golden_cross": false,
+                "death_cross": true,
+                "summary": "完美空头排列 (10EMA><50SMA><200SMA)"
+              },
+              "momentum": {
+                "macd": -5.8942,
+                "macd_signal": -5.1783,
+                "macd_histogram": -0.7159,
+                "macd_positive": false,
+                "macd_above_signal": false,
+                "rsi": 42.18,
+                "rsi_zone": "中性",
+                "summary": "MACD 负值(空头) · RSI 42.2 中性"
+              },
+              "volatility": {
+                "atr": 4.2668,
+                "atr_pct": 3.8,
+                "annualized_hv": 60.4,
+                "boll_upper": 137.1,
+                "boll_mid": 117.54,
+                "boll_lower": 97.97,
+                "boll_position": 0.363,
+                "vol_level": "高",
+                "summary": "ATR 4.27(≈3.8%/日) · 波动高 · 布林位置 36%"
+              },
+              "volume": {
+                "vwma": 118.13,
+                "price_above_vwma": false,
+                "volume_ratio": 1.8016570068813222,
+                "vol_confirm": false,
+                "summary": "VWMA 118.13 · 量价背离 · 放量"
+              },
+              "key_levels": {
+                "current_price": 112.18,
+                "week52_high": 165.3,
+                "week52_low": 84.64,
+                "ytd_change": 30.38,
+                "swing_high_20d": 139.9,
+                "swing_low_20d": 100.32,
+                "high_5d": 112.26,
+                "low_5d": 100.32,
+                "dist_from_52w_high": -32.14
+              },
+              "overall_verdict": {
+                "direction": "偏空",
+                "strength": "强",
+                "bull_signals": 0,
+                "bear_signals": 5,
+                "macd_slowing": false,
+                "rsi_cooling": false,
+                "summary": "技术面偏空(强) — 完美空头排列，中性，高波动，放量"
+              },
+              "conclusion": "技术面偏空(强) — 完美空头排列，中性，高波动，放量"
+            },
+            "fundamental": {
+              "status": "degraded",
+              "financials": {
+                "market_cap": 38169543286.62,
+                "pe_ttm": "N/A",
+                "forward_pe": 0,
+                "pb": "N/A",
+                "roe": 1.49,
+                "eps_ttm": 1.731,
+                "revenue_yoy": 0,
+                "gross_margin": "N/A",
+                "net_margin": "N/A",
+                "beta": 0,
+                "source": "futu/market_snapshot",
+                "fetched_at": "2026-06-30T13:09:02Z"
+              },
+              "valuation": {
+                "pe_ttm": "N/A",
+                "forward_pe": 0,
+                "pb": "N/A",
+                "beta": 0,
+                "dividend_yield": 0.0,
+                "market_cap": 38169543286.62
+              },
+              "analyst_cluster": {},
+              "conclusion": "下一催化: Unknown ()"
+            },
+            "news": {
+              "status": "degraded",
+              "news_timeline": [],
+              "catalysts": [],
+              "macro_calendar": [],
+              "sector_context": "",
+              "conclusion": "近期无重大新闻催化"
+            },
+            "sentiment": {
+              "status": "complete",
+              "stocktwits": {
+                "bullish": 9,
+                "bearish": 1,
+                "neutral": 20,
+                "total_messages": 30,
+                "bull_bear_ratio": 0.9,
+                "watchlist_count": 66289,
+                "direction": "偏多"
+              },
+              "reddit": {},
+              "crowding": "拥挤",
+              "direction": "偏空",
+              "conclusion": "散户情绪偏空 · 拥挤度拥挤 · 多空比 9:1"
+            }
+          },
+          "indicators_summary": {
+            "trend": "完美空头排列",
+            "momentum": "MACD 负值(空头) · RSI 42.2 中性",
+            "volatility": "ATR 4.27(≈3.8%/日) · 波动高 · 布林位置 36%",
+            "volume": "VWMA 118.13 · 量价背离 · 放量"
+          },
+          "_meta": {
+            "symbol": "US.BIDU",
+            "total_time_sec": 117.2,
+            "analyst_statuses": {
+              "technical": "complete",
+              "fundamental": "degraded",
+              "news": "degraded",
+              "sentiment": "complete"
+            },
+            "debate_fallback": false,
+            "synthesis_fallback": false,
+            "risk_debate": {}
+          }
+        },
+        "executive_summary": "技术面空头趋势强劲但基本面与新闻数据缺失且情绪指标存在内部矛盾，建议小仓试探做空并设置严格止损，留弹药待数据确认。",
+        "deep_analysis": {
+          "executive_summary": "基本面疲软且技术面确认弱势，但新闻与分析师数据缺失削弱了高置信度——建议分批建立空头底仓，严控止损以防范未知事件引发的轧空风险。",
+          "data_quality": {
+            "technical": "缺失",
+            "fundamental": "降级",
+            "news": "缺失",
+            "macro": "缺失",
+            "overall_completeness": "0项完整/1项降级/3项缺失",
+            "impact_note": "部分基本面数据缺失(分析师评级); 新闻API失败，无法获取近期催化/风险事件; 宏观数据缺失(VIX/利率/市场状态均无)",
+            "data_sources": {
+              "financials": "ok",
+              "analyst": "none",
+              "news": "none",
+              "catalyst": "ok"
+            },
+            "fetched_at": "2026-06-30T13:09:02Z"
+          },
+          "bull_case": [
+            {
+              "thesis": "股价距52周低点空间有限，存在超跌后的均值回归与技术性反弹需求",
+              "strength": "MEDIUM",
+              "evidence": "当前价格$112.18，52周低点$84.64，52周高点$165.30，距低点仅32%空间，距高点跌幅超32%",
+              "source_type": "fundamental"
+            },
+            {
+              "thesis": "宏观环境平稳且波动率可控，系统性风险较低，有利于资金回流超跌中概股进行博弈",
+              "strength": "LOW",
+              "evidence": "市场状态NEUTRAL，VIX维持在20.0，SPY趋势flat",
+              "source_type": "macro"
+            },
+            {
+              "thesis": "做空情绪过度拥挤，极易在缺乏流动性的情况下引发短期逼空反弹",
+              "strength": "MEDIUM",
+              "evidence": "sentiment_crowding因子状态为CONFIRMED，表明空头头寸或看跌情绪已高度集中",
+              "source_type": "sentiment"
+            }
+          ],
+          "bear_case": [
+            {
+              "thesis": "核心盈利能力极度疲软，资本回报效率低下，基本面质量无法支撑当前估值",
+              "strength": "HIGH",
+              "evidence": "ROE仅为1.49%，EPS(TTM)为1.731，fundamental_quality因子评级为WEAK",
+              "source_type": "fundamental"
+            },
+            {
+              "thesis": "技术面与资金面共振向下，均线排列、相对强度及放量突破均确认空头趋势",
+              "strength": "HIGH",
+              "evidence": "ma_alignment、relative_strength、volume_breakout三大技术因子均为CONFIRMED(空头确认)，sector_momentum为WEAK",
+              "source_type": "technical"
+            },
+            {
+              "thesis": "内部人缺乏增持托底意愿，叠加基本面质量差，下行阻力最小",
+              "strength": "MEDIUM",
+              "evidence": "insider_signal因子评级为WEAK，未见管理层实质性买入信号",
+              "source_type": "fundamental"
+            }
+          ],
+          "verdict": {
+            "direction_confidence": "MEDIUM",
+            "key_disagreement": "空头趋势与低估值/超跌反弹潜力的博弈，以及情绪拥挤度是否已到达临界点",
+            "adopted_from_bear": "采纳空头论点中的核心逻辑：基本面ROE极低且技术面全面确认弱势，作为持仓核心支撑，但需警惕情绪拥挤带来的反扑",
+            "data_adjusted": true
+          },
+          "causal_chain": "宏观中性且VIX平稳(20.0) → 资金偏好高成长或高股息，规避低ROE(1.49%)资产 → 百度基本面质量与板块动量双弱(WEAK) → 技术面均线与放量确认空头趋势(CONFIRMED) → 价格向52周低点(84.64)方向寻底",
+          "historical_reference": "2023年中概股在宏观中性且个股ROE低迷时的走势：基本面弱势叠加技术面破位后，即便估值处于低位，仍会经历长达数月的阴跌，期间反弹幅度不超过10%即遇阻回落，情绪拥挤导致的逼空通常短暂且不可持续。",
+          "fundamental_snapshot": {
+            "revenue_growth": "N/A",
+            "pe_forward": "N/A",
+            "analyst_consensus": "N/A",
+            "next_catalyst": "Unknown"
+          },
+          "risk_tiers": {
+            "aggressive": {
+              "action": "直接建立50%空头仓位",
+              "trigger": "价格跌破$110.00且伴随成交量显著放大",
+              "risk": "突发利好新闻导致逼空，因新闻数据缺失无法预判事件冲击"
+            },
+            "moderate": {
+              "action": "建立30%空头底仓，跌破$108.50加仓至50%",
+              "trigger": "当前价格$112.18直接入场底仓",
+              "risk": "震荡市中止损空间(约3.6%)被日内噪音轻易扫损"
+            },
+            "conservative": {
+              "action": "等待价格反弹至$114-$115区间再建立20%仓位",
+              "trigger": "RSI修复至50上方且遇阻回落，出现明显看跌K线形态",
+              "risk": "错过直接破位下跌的行情，导致踏空"
+            }
+          },
+          "execution_plan": {
+            "steps": [
+              "Step 1: 在$112.18附近建立30%空头底仓，设置硬止损$116.22",
+              "Step 2: 若价格跌破$108.50且volume_breakout维持，加仓30%至总仓位60%",
+              "Step 3: 价格触及$105.45止盈目标位时，平仓50%锁定利润，剩余仓位下移止损至成本价追踪"
+            ],
+            "event_buffer": "因下一催化事件Unknown且新闻缺失，若盘中出现异常放量(>日均2倍)且价格逆势上涨突破$114.00，立即平仓50%以规避未知事件风险",
+            "invalidation": "价格有效突破$116.22止损位并收盘确认，或ROE/基本面质量因子由WEAK转为CONFIRMED(改善)"
+          },
+          "_meta": {
+            "symbol": "US.BIDU",
+            "model_used": "qwen3.7-max",
+            "from_cache": false,
+            "fallback_used": false,
+            "cost_usd": 0.103544,
+            "position_held": false
+          }
+        },
+        "open_check_status": "CANCELLED",
+        "gap_pct": 0.07637689502974485,
+        "cancellation_reason": "Gap too large (7.64% > 3%)"
+      },
+      {
+        "symbol": "US.TSLA",
+        "direction": "SHORT",
+        "entry_zone": [
+          409.37,
+          415.96
+        ],
+        "stop_loss": 426.67,
+        "take_profit": 387.13,
+        "urgency": "MEDIUM",
+        "rationale": "⚠️ sector_momentum: Consumer +0.0% | ✅ relative_strength: -5.5% vs SPY -2.1% | ✅ ma_alignment: MA5=385 MA10=394 MA20=400\n验证: sector_momentum=weak, relative_strength=confirmed, ma_alignment=confirmed, volume_breakout=weak, rsi_sweet_spot=weak, insider_signal=weak, fundamental_quality=confirmed, sentiment_crowding=confirmed",
+        "trigger_condition": "价格进入 409.37-415.96 区间",
+        "risk_reward": 1.7,
+        "position_size_pct": 5,
+        "invalidation": "收盘上破 426.67 (1.8x ATR)",
+        "confidence": 95,
+        "factor_score": 0.686,
+        "composite_rank": 0.792,
+        "verdict": "VALID",
+        "execution_rules": {
+          "gap_up_over_2pct": "SKIP",
+          "gap_down_over_2pct": "SKIP",
+          "hit_zone_then_drop": "WAIT_5MIN_CANDLE_ABOVE"
+        },
+        "factor_validation": {
+          "sector_momentum": "WEAK",
+          "relative_strength": "CONFIRMED",
+          "ma_alignment": "CONFIRMED",
+          "volume_breakout": "WEAK",
+          "rsi_sweet_spot": "WEAK",
+          "insider_signal": "WEAK",
+          "fundamental_quality": "CONFIRMED",
+          "sentiment_crowding": "CONFIRMED"
+        },
+        "data_cited": [
+          "-5.5% vs SPY -2.1%",
+          "MA5=385 MA10=394 MA20=400",
+          "RSI=51",
+          "PE=378 ROE=4.8% PB=18.4 [Futu]",
+          "B/A=-33.3(强卖) VR=1.3x [Futu]"
+        ],
+        "model_used": "deterministic_rules",
+        "catalyst": {
+          "type": "MA",
+          "score": 10,
+          "strength": "HIGH",
+          "headline": "Does Elon Musk's Recent $1 Trillion SpaceX Comment Heavily Hint That a Tesla Merger Is Coming?",
+          "price_change_pct": 8.5,
+          "source_count": 3,
+          "direction_hint": null
+        },
+        "discovery_source": "core_pool",
+        "current_price": 411.84,
+        "rank_position": 2,
+        "is_primary": false,
+        "deep_research": {
+          "verdict": {
+            "action": "CONDITIONAL",
+            "action_detail": "方向倾向做空但基本面与新闻数据缺失且情绪拥挤，建议小仓试探做空1/3，设紧止损，明确跌破关键支撑后再加仓",
+            "conviction": 35,
+            "data_quality_score": "2/4 (完整维度/总维度)"
+          },
+          "executive_summary": "技术面空头排列明确但基本面与新闻数据降级且情绪拥挤，建议小仓试探做空1/3，严守止损防范逼空反弹。",
+          "build_plan": {
+            "batch_1": {
+              "pct": "1/3",
+              "zone": "$409.37-$415.96",
+              "condition": "价格处于入场区间且15分钟级别MACD维持死叉"
+            },
+            "batch_2": {
+              "pct": "1/3",
+              "zone": "$395.00-$400.00",
+              "condition": "有效跌破VWMA(400.28)且成交量放大确认"
+            },
+            "batch_3": {
+              "pct": "1/3",
+              "zone": "$365.00-$368.60",
+              "condition": "跌破关键摆动低点368.6并出现加速下跌"
+            },
+            "event_buffer": "无近期重大事件，保持1/3底仓，跌破关键支撑再加仓"
+          },
+          "risk_tiers": {
+            "aggressive": {
+              "action": "全部平仓",
+              "trigger": "收盘价突破200SMA(418.28)",
+              "risk": "趋势反转引发逼空"
+            },
+            "moderate": {
+              "action": "减仓50%",
+              "trigger": "价格反弹突破50SMA(405.22)且RSI>60",
+              "risk": "短期技术性反弹过强"
+            },
+            "conservative": {
+              "action": "保持观望",
+              "trigger": "价格在400-415区间震荡超3个交易日",
+              "risk": "时间成本损耗与波动率收缩"
+            }
+          },
+          "risk_triggers": [
+            {
+              "condition": "价格突破426.67(硬止损)",
+              "action": "无条件全部平仓"
+            },
+            {
+              "condition": "价格跌破368.6(swing低)",
+              "action": "将止损下移至入场价，锁定利润"
+            },
+            {
+              "condition": "StockTwits多空比突增至8:2以上",
+              "action": "减仓1/3，防范散户情绪反转逼空"
+            }
+          ],
+          "key_levels": {
+            "current": 411.84,
+            "hard_stop": 426.67,
+            "resistance_1": 418.28,
+            "resistance_2": 431.34,
+            "support_1": 400.28,
+            "support_2": 368.6,
+            "extreme_down": 288.77
+          },
+          "data_quality": {
+            "technical": "完整",
+            "fundamental": "降级",
+            "news": "降级",
+            "sentiment": "完整",
+            "overall": "2项完整/2项降级/0项缺失",
+            "impact_note": "基本面与新闻数据降级导致无法评估潜在利好催化，情绪拥挤增加短期逼空风险，迫使策略降级为条件性试探建仓。",
+            "fetched_at": "2026-06-30T13:10:59Z",
+            "data_sources": {
+              "financials": "ok",
+              "analyst": "failed",
+              "news": "failed",
+              "catalyst": "ok"
+            }
+          },
+          "bull_case": [
+            {
+              "thesis": "散户情绪极端偏空可能构成反向买入信号，关注人数超百万，拥挤度拥挤，历史上当多空比接近平衡且散户极度悲观时，往往出现短线反弹。",
+              "strength": "LOW",
+              "evidence": "StockTwits多空比6:6，关注1,055,133人，情绪偏空，拥挤度拥挤（2026-06-30）",
+              "source_type": "sentiment"
+            },
+            {
+              "thesis": "价格仍高于关键摆动低点368.6美元，且RSI 54.0处于中性区，未进入超卖，布林带位置69%表明价格仍有上行空间，未触及上轨。",
+              "strength": "MEDIUM",
+              "evidence": "swing低368.6，当前价411.84，RSI 54.0，布林位置69%，ATR 18.60（2026-06-30）",
+              "source_type": "technical"
+            },
+            {
+              "thesis": "基本面数据未显示进一步恶化，且无重大负面新闻，估值已包含未来增长预期，下跌动能可能衰竭。",
+              "strength": "LOW",
+              "evidence": "ROE=4.82%，EPS(TTM)=1.08，市值1.55万亿，无近期负面催化（2026-06-30）",
+              "source_type": "fundamental"
+            }
+          ],
+          "bear_case": [
+            {
+              "thesis": "技术面呈现完美空头排列，MACD负值，趋势指标明确看跌，短期均线压制，下行通道完好。",
+              "strength": "HIGH",
+              "evidence": "趋势：完美空头排列，MACD负值(空头)，RSI 54.0中性，VWMA 400.28（2026-06-30）",
+              "source_type": "technical"
+            },
+            {
+              "thesis": "基本面估值严重高估，市值1.55万亿对应EPS仅1.08，PE极高，缺乏盈利支撑，性价比极低。",
+              "strength": "HIGH",
+              "evidence": "市值=1,546,757,319,032.64，EPS(TTM)=1.08，ROE=4.82%（2026-06-30）",
+              "source_type": "fundamental"
+            },
+            {
+              "thesis": "散户情绪偏空且拥挤，多空比6:6，空头力量与多头相当，但拥挤的看空情绪容易引发踩踏式下跌。",
+              "strength": "MEDIUM",
+              "evidence": "StockTwits多空比6:6，情绪偏空，拥挤度拥挤（2026-06-30）",
+              "source_type": "sentiment"
+            }
+          ],
+          "debate_verdict": {
+            "recommended_direction": "SHORT",
+            "direction_confidence": "MEDIUM",
+            "key_disagreement": "技术面完美空头排列与散户情绪反向指标的潜在冲突，技术面明确看跌，而情绪极端可能引发反向行情，但情绪指标历史可靠性较低，无法对抗强趋势。",
+            "adopted_from_bear": "高估值叠加完美空头排列，下行风险远大于上行空间，应严格止损，防范价格跌破368.6后加速下跌。",
+            "strongest_bull": "价格仍高于关键摆动低点368.6且RSI中性，未进入超卖，短线存在技术性反弹可能（技术面）。",
+            "strongest_bear": "技术面完美空头排列，MACD负值，明确的下行趋势，无任何反转迹象（技术面）。"
+          },
+          "causal_chain": "完美空头排列确立下行趋势 → 价格承压，散户情绪偏空且拥挤，强化下跌动能 → 基本面高估值无盈利支撑，进一步拉低估值 → 价格可能测试关键摆动低点368.6，若跌破则打开更大下行空间。",
+          "historical_reference": "类似2022年特斯拉股价从400美元区域开始，在完美空头排列形成后持续下跌，最终跌至300美元以下，期间散户情绪持续偏空，多空比接近平衡但趋势压倒一切。",
+          "analyst_reports": {
+            "technical": {
+              "status": "complete",
+              "indicators_table": [
+                {
+                  "indicator": "close_10_ema",
+                  "role": "短期趋势/入场节奏",
+                  "reason": "捕捉短线动量节奏",
+                  "value": 393.68,
+                  "interpretation": "393.68，上行，价在其上 → 短期偏多"
+                },
+                {
+                  "indicator": "close_50_sma",
+                  "role": "中期趋势",
+                  "reason": "判断修复/主升行情是否成立",
+                  "value": 405.22,
+                  "interpretation": "405.22，多头趋势"
+                },
+                {
+                  "indicator": "close_200_sma",
+                  "role": "长期趋势基准",
+                  "reason": "界定大级别多空",
+                  "value": 418.28,
+                  "interpretation": "418.28，长期空头未翻转"
+                },
+                {
+                  "indicator": "macd",
+                  "role": "动量交叉/强弱",
+                  "reason": "度量动能持续性",
+                  "value": -5.7867,
+                  "interpretation": "MACD 负值(空头) · RSI 54.0 中性"
+                },
+                {
+                  "indicator": "rsi",
+                  "role": "超买超卖/动量位置",
+                  "reason": "与MACD互补，防追高",
+                  "value": 54.02,
+                  "interpretation": "RSI 54.02，中性，无超买"
+                },
+                {
+                  "indicator": "atr",
+                  "role": "波动/止损尺度",
+                  "reason": "定止损/仓位的真实波幅",
+                  "value": 18.599,
+                  "interpretation": "ATR 18.599(≈4.52%/日) · 波动高"
+                },
+                {
+                  "indicator": "boll",
+                  "role": "波动带/突破",
+                  "reason": "动态区间与触轨极端",
+                  "value": "中400.36/上431.34/下369.37",
+                  "interpretation": "布林位置 68%，未触轨"
+                },
+                {
+                  "indicator": "vwma",
+                  "role": "量价趋势确认",
+                  "reason": "用成交量确认趋势真伪",
+                  "value": 400.28,
+                  "interpretation": "VWMA 400.28 · 量价确认 · 正常量"
+                }
+              ],
+              "trend": {
+                "long": "空头",
+                "mid": "多头",
+                "short": "偏多",
+                "alignment": "完美空头排列",
+                "golden_cross": false,
+                "death_cross": true,
+                "summary": "完美空头排列 (10EMA><50SMA><200SMA)"
+              },
+              "momentum": {
+                "macd": -5.7867,
+                "macd_signal": -4.6561,
+                "macd_histogram": -1.1306,
+                "macd_positive": false,
+                "macd_above_signal": false,
+                "rsi": 54.02,
+                "rsi_zone": "中性",
+                "summary": "MACD 负值(空头) · RSI 54.0 中性"
+              },
+              "volatility": {
+                "atr": 18.599,
+                "atr_pct": 4.52,
+                "annualized_hv": 71.7,
+                "boll_upper": 431.34,
+                "boll_mid": 400.36,
+                "boll_lower": 369.37,
+                "boll_position": 0.685,
+                "vol_level": "高",
+                "summary": "ATR 18.60(≈4.5%/日) · 波动高 · 布林位置 69%"
+              },
+              "volume": {
+                "vwma": 400.28,
+                "price_above_vwma": true,
+                "volume_ratio": 1.2019865989346812,
+                "vol_confirm": true,
+                "summary": "VWMA 400.28 · 量价确认 · 正常量"
+              },
+              "key_levels": {
+                "current_price": 411.84,
+                "week52_high": 498.83,
+                "week52_low": 288.77,
+                "ytd_change": 36.96,
+                "swing_high_20d": 433.6,
+                "swing_low_20d": 368.6,
+                "high_5d": 413.27,
+                "low_5d": 368.6,
+                "dist_from_52w_high": -17.44
+              },
+              "overall_verdict": {
+                "direction": "中性",
+                "strength": "弱",
+                "bull_signals": 3,
+                "bear_signals": 2,
+                "macd_slowing": false,
+                "rsi_cooling": false,
+                "summary": "技术面中性(弱) — 完美空头排列，中性，高波动，正常量"
+              },
+              "conclusion": "技术面中性(弱) — 完美空头排列，中性，高波动，正常量"
+            },
+            "fundamental": {
+              "status": "degraded",
+              "financials": {
+                "market_cap": 1546757319032.64,
+                "pe_ttm": "N/A",
+                "forward_pe": 0,
+                "pb": "N/A",
+                "roe": 4.82,
+                "eps_ttm": 1.08,
+                "revenue_yoy": 0,
+                "gross_margin": "N/A",
+                "net_margin": "N/A",
+                "beta": 0,
+                "source": "futu/market_snapshot",
+                "fetched_at": "2026-06-30T13:10:59Z"
+              },
+              "valuation": {
+                "pe_ttm": "N/A",
+                "forward_pe": 0,
+                "pb": "N/A",
+                "beta": 0,
+                "dividend_yield": 0.0,
+                "market_cap": 1546757319032.64
+              },
+              "analyst_cluster": {},
+              "conclusion": "下一催化: Unknown ()"
+            },
+            "news": {
+              "status": "degraded",
+              "news_timeline": [],
+              "catalysts": [],
+              "macro_calendar": [],
+              "sector_context": "",
+              "conclusion": "近期无重大新闻催化"
+            },
+            "sentiment": {
+              "status": "complete",
+              "stocktwits": {
+                "bullish": 6,
+                "bearish": 6,
+                "neutral": 18,
+                "total_messages": 30,
+                "bull_bear_ratio": 0.5,
+                "watchlist_count": 1055133,
+                "direction": "中性"
+              },
+              "reddit": {},
+              "crowding": "拥挤",
+              "direction": "偏空",
+              "conclusion": "散户情绪偏空 · 拥挤度拥挤 · 多空比 6:6"
+            }
+          },
+          "indicators_summary": {
+            "trend": "完美空头排列",
+            "momentum": "MACD 负值(空头) · RSI 54.0 中性",
+            "volatility": "ATR 18.60(≈4.5%/日) · 波动高 · 布林位置 69%",
+            "volume": "VWMA 400.28 · 量价确认 · 正常量"
+          },
+          "_meta": {
+            "symbol": "US.TSLA",
+            "total_time_sec": 97.3,
+            "analyst_statuses": {
+              "technical": "complete",
+              "fundamental": "degraded",
+              "news": "degraded",
+              "sentiment": "complete"
+            },
+            "debate_fallback": false,
+            "synthesis_fallback": false,
+            "risk_debate": {}
+          }
+        },
+        "executive_summary": "技术面空头排列明确但基本面与新闻数据降级且情绪拥挤，建议小仓试探做空1/3，严守止损防范逼空反弹。",
+        "deep_analysis": {
+          "executive_summary": "估值极度透支且动能衰竭，但情绪拥挤度高——建议分批减仓多头锁定利润，留底仓并上移止损，待跌破关键支撑后反手做空。",
+          "data_quality": {
+            "technical": "缺失",
+            "fundamental": "降级",
+            "news": "缺失",
+            "macro": "缺失",
+            "overall_completeness": "0项完整/1项降级/3项缺失",
+            "impact_note": "部分基本面数据缺失(分析师评级); 新闻API失败，无法获取近期催化/风险事件; 宏观数据缺失(VIX/利率/市场状态均无)",
+            "data_sources": {
+              "financials": "ok",
+              "analyst": "none",
+              "news": "none",
+              "catalyst": "ok"
+            },
+            "fetched_at": "2026-06-30T13:10:59Z"
+          },
+          "bull_case": [
+            {
+              "thesis": "趋势韧性与均线支撑依然有效",
+              "strength": "MEDIUM",
+              "evidence": "relative_strength与ma_alignment因子均为CONFIRMED，当前价$411.84远高于52周低点$288.77，多头趋势未遭破坏。",
+              "source_type": "technical"
+            },
+            {
+              "thesis": "市场情绪高涨且基本面质量获认可",
+              "strength": "MEDIUM",
+              "evidence": "sentiment_crowding与fundamental_quality因子均为CONFIRMED，市值高达$1.54万亿，表明资金抱团紧密，存在逼空风险。",
+              "source_type": "sentiment"
+            },
+            {
+              "thesis": "宏观低波动环境利于高贝塔资产",
+              "strength": "LOW",
+              "evidence": "VIX维持在20.0的中性水平，SPY趋势flat，系统性恐慌缺失，为高估值成长股提供喘息窗口。",
+              "source_type": "macro"
+            }
+          ],
+          "bear_case": [
+            {
+              "thesis": "估值极度透支且资本回报率平庸",
+              "strength": "HIGH",
+              "evidence": "当前价$411.84对应EPS(TTM)$1.08，静态PE高达381倍，而ROE仅为4.82%，基本面盈利无法支撑$1.54万亿市值。",
+              "source_type": "fundamental"
+            },
+            {
+              "thesis": "上攻动能衰竭与量价背离显著",
+              "strength": "HIGH",
+              "evidence": "sector_momentum、volume_breakout与rsi_sweet_spot因子均为WEAK，缺乏成交量配合的上涨极易形成多头陷阱。",
+              "source_type": "technical"
+            }
+          ],
+          "verdict": {
+            "direction_confidence": "MEDIUM",
+            "key_disagreement": "极高的情绪拥挤度与极度透支的估值之间的博弈，即资金抱团能否继续无视基本面重力。",
+            "adopted_from_bear": "估值透支与量价背离是核心风险，一旦情绪退潮，高PE将导致剧烈的估值杀。",
+            "data_adjusted": true
+          },
+          "causal_chain": "EPS停滞与ROE低下(基本面) → 板块动能减弱与成交量萎缩(技术面) → 股价上攻乏力触发多头获利了结(资金面) → 跌破关键均线引发止损盘与估值杀(价格表现)",
+          "historical_reference": "2021年底TSLA在PE超300倍且宏观流动性预期收紧时，出现量价背离，随后在情绪退潮后半年内回调超40%。当前高PE+弱量能形态与之高度相似。",
+          "fundamental_snapshot": {
+            "revenue_growth": "N/A",
+            "pe_forward": "N/A",
+            "analyst_consensus": "N/A",
+            "next_catalyst": "Unknown"
+          },
+          "risk_tiers": {
+            "aggressive": {
+              "action": "清仓多头并反手建立空头底仓",
+              "trigger": "价格跌破$400整数关口且伴随成交量放大",
+              "risk": "情绪逼空导致短期剧烈反弹"
+            },
+            "moderate": {
+              "action": "减仓50%锁定利润，剩余仓位上移止损",
+              "trigger": "价格滞涨于$415-$420区间且RSI出现顶背离",
+              "risk": "错失后续可能的惯性冲高"
+            },
+            "conservative": {
+              "action": "维持现有仓位，严格设置移动止损",
+              "trigger": "价格触及$426.67初始止损位",
+              "risk": "利润回撤或转为亏损"
+            }
+          },
+          "execution_plan": {
+            "steps": [
+              "Step 1: 鉴于已持有且建议SHORT，立即将止损位上移至$415.00以保护现有利润。",
+              "Step 2: 若价格反弹至$420-$425区间且volume_breakout仍为WEAK，减仓50%多头仓位。",
+              "Step 3: 若价格有效跌破$400支撑位，清仓剩余多头，并尝试建立1/3空头仓位，目标$387.13。"
+            ],
+            "event_buffer": "下一催化事件Unknown，在明确财报或重大产品发布日前，保持总敞口不超过50%，避免事件驱动跳空。",
+            "invalidation": "放量突破$426.67止损位，或sector_momentum与volume_breakout因子转为CONFIRMED，表明新一轮主升浪开启。"
+          },
+          "_meta": {
+            "symbol": "US.TSLA",
+            "model_used": "qwen3.7-max",
+            "from_cache": false,
+            "fallback_used": false,
+            "cost_usd": 0.098104,
+            "position_held": true
+          }
+        },
+        "open_check_status": "CANCELLED",
+        "gap_pct": 0.0846172078691633,
+        "cancellation_reason": "Gap too large (8.46% > 3%)"
+      },
+      {
+        "symbol": "US.MA",
+        "direction": "LONG",
+        "entry_zone": [
+          504.54,
+          512.7
+        ],
+        "stop_loss": 491.29,
+        "take_profit": 540.22,
+        "urgency": "MEDIUM",
+        "rationale": "⚠️ sector_momentum: Financials +0.0% | ✅ relative_strength: +3.2% vs SPY -2.1% | ✅ ma_alignment: MA5=496 MA10=494 MA20=490\n验证: sector_momentum=weak, relative_strength=confirmed, ma_alignment=confirmed, volume_breakout=weak, rsi_sweet_spot=weak, insider_signal=weak, fundamental_quality=weak, sentiment_crowding=confirmed",
+        "trigger_condition": "价格进入 504.54-512.70 区间",
+        "risk_reward": 1.7,
+        "position_size_pct": 5,
+        "invalidation": "收盘破 491.29 (1.8x ATR)",
+        "confidence": 85,
+        "factor_score": 0.671,
+        "composite_rank": 0.743,
+        "verdict": "VALID",
+        "execution_rules": {
+          "gap_up_over_2pct": "SKIP",
+          "gap_down_over_2pct": "SKIP",
+          "hit_zone_then_drop": "WAIT_5MIN_CANDLE_ABOVE"
+        },
+        "factor_validation": {
+          "sector_momentum": "WEAK",
+          "relative_strength": "CONFIRMED",
+          "ma_alignment": "CONFIRMED",
+          "volume_breakout": "WEAK",
+          "rsi_sweet_spot": "WEAK",
+          "insider_signal": "WEAK",
+          "fundamental_quality": "WEAK",
+          "sentiment_crowding": "CONFIRMED"
+        },
+        "data_cited": [
+          "+3.2% vs SPY -2.1%",
+          "MA5=496 MA10=494 MA20=490",
+          "RSI=64",
+          "PE=29 ROE=217.3% PB=67.0 [Futu]",
+          "B/A=99.0(强买) VR=1.0x [Futu]"
+        ],
+        "model_used": "deterministic_rules",
+        "catalyst": {
+          "type": "UPGRADE",
+          "score": 3.4,
+          "strength": "LOW",
+          "headline": "My S&P 500 Prediction On Sector Outperformers And Underperformers For 2H/2026",
+          "price_change_pct": 2.1,
+          "source_count": 1,
+          "direction_hint": "LONG"
+        },
+        "discovery_source": "core_pool",
+        "current_price": 509.64,
+        "rank_position": 3,
+        "is_primary": false,
+        "deep_research": {
+          "verdict": {
+            "action": "WATCH",
+            "action_detail": "加入观察池，不交易但持续跟踪，等待方向选择",
+            "conviction": 35,
+            "data_quality_score": "2/4"
+          },
+          "executive_summary": "中期空头排列与短期超买反弹形成矛盾，方向中性且基本面/新闻数据降级，建议加入观察池等待突破515.45或回踩490确认后再做决策。",
+          "build_plan": {
+            "batch_1": {
+              "pct": "1/3",
+              "zone": "$515.50-$520.00",
+              "condition": "放量突破前高515.45并站稳，转为右侧做多"
+            },
+            "batch_2": {
+              "pct": "1/3",
+              "zone": "$490.00-$495.00",
+              "condition": "缩量回踩50SMA与VWMA共振区企稳，转为左侧做多"
+            },
+            "batch_3": {
+              "pct": "1/3",
+              "zone": "$465.00-$475.00",
+              "condition": "极端下杀至52周低点附近出现长下影线，博弈超跌反弹"
+            },
+            "event_buffer": "当前无重大事件催化，保持空仓观望，不提前押注"
+          },
+          "risk_tiers": {
+            "aggressive": {
+              "action": "右侧试多",
+              "trigger": "日线收盘突破515.45且成交量较20日均量放大20%以上",
+              "risk": "假突破后遭遇200SMA(530.92)强压导致套牢"
+            },
+            "moderate": {
+              "action": "左侧接多",
+              "trigger": "价格回踩490-495区间且RSI跌至30以下出现底背离",
+              "risk": "空头排列下反弹无力，直接破位下行"
+            },
+            "conservative": {
+              "action": "保持观望",
+              "trigger": "价格在495-515区间内缩量震荡，无明确方向",
+              "risk": "资金占用与时间成本损耗"
+            }
+          },
+          "risk_triggers": [
+            {
+              "condition": "价格跌破491.29(硬止损)且日线收盘低于490.44(VWMA)",
+              "action": "取消所有多头观察计划，防范下探464.52"
+            },
+            {
+              "condition": "价格突破515.45但MACD出现明显顶背离或量能萎缩",
+              "action": "警惕诱多陷阱，拒绝追高，等待二次回踩确认"
+            },
+            {
+              "condition": "散户情绪(StockTwits)由极度偏空转为极度偏多且拥挤度上升",
+              "action": "视为反向指标失效或短期见顶信号，停止建仓并考虑获利了结"
+            }
+          ],
+          "key_levels": {
+            "current": 509.64,
+            "hard_stop": 491.29,
+            "resistance_1": 515.45,
+            "resistance_2": 530.92,
+            "support_1": 496.93,
+            "support_2": 490.44,
+            "extreme_down": 464.52
+          },
+          "data_quality": {
+            "technical": "完整",
+            "fundamental": "降级",
+            "news": "降级",
+            "sentiment": "完整",
+            "overall": "2项完整/2项降级/0项缺失",
+            "impact_note": "基本面与新闻数据降级导致缺乏中长期估值锚与催化剂指引，仅能依赖技术面进行短期博弈，显著降低整体确信度与持仓周期预期。",
+            "fetched_at": "2026-06-30T13:12:36Z",
+            "data_sources": {
+              "financials": "ok",
+              "analyst": "failed",
+              "news": "failed",
+              "catalyst": "ok"
+            }
+          },
+          "bull_case": [
+            {
+              "thesis": "MACD 已转为正值，显示短期动能转多，打破空头主导",
+              "strength": "MEDIUM",
+              "evidence": "MACD 正值（多头），截至 2026-06-30 技术面报告",
+              "source_type": "technical"
+            },
+            {
+              "thesis": "价格位于成交均价上方，量价配合确认短期强势",
+              "strength": "MEDIUM",
+              "evidence": "VWMA 490.44，当前价 509.64 高于 VWMA，量价确认，正常量，2026-06-30",
+              "source_type": "technical"
+            },
+            {
+              "thesis": "净资产收益率极高，显示资本效率突出",
+              "strength": "LOW",
+              "evidence": "ROE 217.25%，EPS(TTM) 16.52，市值 4503 亿，数据来源 futu/market_snapshot 2026-06-30",
+              "source_type": "fundamental"
+            },
+            {
+              "thesis": "散户情绪极度偏空且拥挤，可能构成反向指标",
+              "strength": "LOW",
+              "evidence": "StockTwits 多空比 1:0，关注 31706 人，方向偏空，拥挤度拥挤，2026-06-30",
+              "source_type": "sentiment"
+            }
+          ],
+          "bear_case": [
+            {
+              "thesis": "价格处于完美空头排列，均线系统空头主导，中期趋势向下",
+              "strength": "HIGH",
+              "evidence": "综合判断：完美空头排列，2026-06-30 技术面报告",
+              "source_type": "technical"
+            },
+            {
+              "thesis": "价格运行至布林带上轨上方，短期超买，回调风险加大",
+              "strength": "MEDIUM",
+              "evidence": "布林位置 109%，超出上轨，ATR 11.38（≈2.2%/日），2026-06-30",
+              "source_type": "technical"
+            },
+            {
+              "thesis": "价格接近前波峰阻力，且 52 周高远高于当前价，上方抛压显著",
+              "strength": "MEDIUM",
+              "evidence": "swing 高 515.45，当前价 509.64，52 周高 599.05，52 周低 464.52，2026-06-30",
+              "source_type": "technical"
+            },
+            {
+              "thesis": "散户情绪偏空且拥挤，若延续悲观可能引发踩踏式卖出",
+              "strength": "LOW",
+              "evidence": "StockTwits 多空比 1:0，偏空，拥挤度拥挤，2026-06-30",
+              "source_type": "sentiment"
+            }
+          ],
+          "debate_verdict": {
+            "recommended_direction": "NEUTRAL",
+            "direction_confidence": "MEDIUM",
+            "key_disagreement": "完美空头排列（趋势偏空）与 MACD 正值、价格高于 VWMA（动能偏多）形成直接矛盾",
+            "adopted_from_bear": "价格处于布林带上轨上方且紧邻前高阻力，一旦受阻回落可能加速向下，空头排列下追高风险极大",
+            "strongest_bull": "MACD 已转正，且量价确认，短线动能偏多",
+            "strongest_bear": "完美空头排列不改，中期趋势依旧向下，且价格已触及布林带超买区"
+          },
+          "causal_chain": "完美空头排列压制中期趋势 → 价格反弹至布林带上轨与 swing 高阻力区 → MACD 转正吸引短线多头，但散户情绪偏空且拥挤 → 若突破 515.45 失败，空头将重新主导，价格回测 VWMA 甚至 52 周低点",
+          "historical_reference": "类似 2022 年 AAPL 在完美空头排列中 MACD 转正，价格短暂反弹至阻力位后再度回落，最终延续空头趋势并创出新低。",
+          "analyst_reports": {
+            "technical": {
+              "status": "complete",
+              "indicators_table": [
+                {
+                  "indicator": "close_10_ema",
+                  "role": "短期趋势/入场节奏",
+                  "reason": "捕捉短线动量节奏",
+                  "value": 495.07,
+                  "interpretation": "495.07，上行，价在其上 → 短期偏多"
+                },
+                {
+                  "indicator": "close_50_sma",
+                  "role": "中期趋势",
+                  "reason": "判断修复/主升行情是否成立",
+                  "value": 496.93,
+                  "interpretation": "496.93，多头趋势"
+                },
+                {
+                  "indicator": "close_200_sma",
+                  "role": "长期趋势基准",
+                  "reason": "界定大级别多空",
+                  "value": 530.92,
+                  "interpretation": "530.92，长期空头未翻转"
+                },
+                {
+                  "indicator": "macd",
+                  "role": "动量交叉/强弱",
+                  "reason": "度量动能持续性",
+                  "value": 0.7826,
+                  "interpretation": "MACD 正值(多头) · RSI 59.8 中性"
+                },
+                {
+                  "indicator": "rsi",
+                  "role": "超买超卖/动量位置",
+                  "reason": "与MACD互补，防追高",
+                  "value": 59.75,
+                  "interpretation": "RSI 59.75，中性，无超买"
+                },
+                {
+                  "indicator": "atr",
+                  "role": "波动/止损尺度",
+                  "reason": "定止损/仓位的真实波幅",
+                  "value": 11.385,
+                  "interpretation": "ATR 11.385(≈2.23%/日) · 波动中等"
+                },
+                {
+                  "indicator": "boll",
+                  "role": "波动带/突破",
+                  "reason": "动态区间与触轨极端",
+                  "value": "中490.14/上506.75/下473.52",
+                  "interpretation": "布林位置 109%，接近极端"
+                },
+                {
+                  "indicator": "vwma",
+                  "role": "量价趋势确认",
+                  "reason": "用成交量确认趋势真伪",
+                  "value": 490.44,
+                  "interpretation": "VWMA 490.44 · 量价确认 · 正常量"
+                }
+              ],
+              "trend": {
+                "long": "空头",
+                "mid": "多头",
+                "short": "偏多",
+                "alignment": "完美空头排列",
+                "golden_cross": false,
+                "death_cross": true,
+                "summary": "完美空头排列 (10EMA><50SMA><200SMA)"
+              },
+              "momentum": {
+                "macd": 0.7826,
+                "macd_signal": -1.2879,
+                "macd_histogram": 2.0705,
+                "macd_positive": true,
+                "macd_above_signal": true,
+                "rsi": 59.75,
+                "rsi_zone": "中性",
+                "summary": "MACD 正值(多头) · RSI 59.8 中性"
+              },
+              "volatility": {
+                "atr": 11.385,
+                "atr_pct": 2.23,
+                "annualized_hv": 35.5,
+                "boll_upper": 506.75,
+                "boll_mid": 490.14,
+                "boll_lower": 473.52,
+                "boll_position": 1.087,
+                "vol_level": "中等",
+                "summary": "ATR 11.38(≈2.2%/日) · 波动中等 · 布林位置 109%"
+              },
+              "volume": {
+                "vwma": 490.44,
+                "price_above_vwma": true,
+                "volume_ratio": 1.1021385990465047,
+                "vol_confirm": true,
+                "summary": "VWMA 490.44 · 量价确认 · 正常量"
+              },
+              "key_levels": {
+                "current_price": 509.64,
+                "week52_high": 599.05,
+                "week52_low": 464.52,
+                "ytd_change": -9.2,
+                "swing_high_20d": 515.45,
+                "swing_low_20d": 464.52,
+                "high_5d": 515.45,
+                "low_5d": 484.42,
+                "dist_from_52w_high": -14.92
+              },
+              "overall_verdict": {
+                "direction": "偏多",
+                "strength": "中",
+                "bull_signals": 4,
+                "bear_signals": 1,
+                "macd_slowing": false,
+                "rsi_cooling": false,
+                "summary": "技术面偏多(中) — 完美空头排列，中性，中等波动，正常量"
+              },
+              "conclusion": "技术面偏多(中) — 完美空头排列，中性，中等波动，正常量"
+            },
+            "fundamental": {
+              "status": "degraded",
+              "financials": {
+                "market_cap": 450309675862.2,
+                "pe_ttm": "N/A",
+                "forward_pe": 0,
+                "pb": "N/A",
+                "roe": 217.25,
+                "eps_ttm": 16.52,
+                "revenue_yoy": 0,
+                "gross_margin": "N/A",
+                "net_margin": "N/A",
+                "beta": 0,
+                "source": "futu/market_snapshot",
+                "fetched_at": "2026-06-30T13:12:36Z"
+              },
+              "valuation": {
+                "pe_ttm": "N/A",
+                "forward_pe": 0,
+                "pb": "N/A",
+                "beta": 0,
+                "dividend_yield": 0.62,
+                "market_cap": 450309675862.2
+              },
+              "analyst_cluster": {},
+              "conclusion": "下一催化: Unknown ()"
+            },
+            "news": {
+              "status": "degraded",
+              "news_timeline": [],
+              "catalysts": [],
+              "macro_calendar": [],
+              "sector_context": "",
+              "conclusion": "近期无重大新闻催化"
+            },
+            "sentiment": {
+              "status": "complete",
+              "stocktwits": {
+                "bullish": 1,
+                "bearish": 0,
+                "neutral": 29,
+                "total_messages": 30,
+                "bull_bear_ratio": 1.0,
+                "watchlist_count": 31706,
+                "direction": "偏多"
+              },
+              "reddit": {},
+              "crowding": "拥挤",
+              "direction": "偏空",
+              "conclusion": "散户情绪偏空 · 拥挤度拥挤 · 多空比 1:0"
+            }
+          },
+          "indicators_summary": {
+            "trend": "完美空头排列",
+            "momentum": "MACD 正值(多头) · RSI 59.8 中性",
+            "volatility": "ATR 11.38(≈2.2%/日) · 波动中等 · 布林位置 109%",
+            "volume": "VWMA 490.44 · 量价确认 · 正常量"
+          },
+          "_meta": {
+            "symbol": "US.MA",
+            "total_time_sec": 98.8,
+            "analyst_statuses": {
+              "technical": "complete",
+              "fundamental": "degraded",
+              "news": "degraded",
+              "sentiment": "complete"
+            },
+            "debate_fallback": false,
+            "synthesis_fallback": false,
+            "risk_debate": {}
+          }
+        },
+        "executive_summary": "中期空头排列与短期超买反弹形成矛盾，方向中性且基本面/新闻数据降级，建议加入观察池等待突破515.45或回踩490确认后再做决策。",
+        "deep_analysis": {
+          "executive_summary": "高ROE轻资产核心资产具备长线配置价值，但受制于板块动能偏弱与无量上涨，建议分批建仓1/3底仓，留弹药待放量突破或回踩均线确认。",
+          "data_quality": {
+            "technical": "缺失",
+            "fundamental": "降级",
+            "news": "缺失",
+            "macro": "缺失",
+            "overall_completeness": "0项完整/1项降级/3项缺失",
+            "impact_note": "部分基本面数据缺失(分析师评级); 新闻API失败，无法获取近期催化/风险事件; 宏观数据缺失(VIX/利率/市场状态均无)",
+            "data_sources": {
+              "financials": "ok",
+              "analyst": "none",
+              "news": "none",
+              "catalyst": "ok"
+            },
+            "fetched_at": "2026-06-30T13:12:36Z"
+          },
+          "bull_case": [
+            {
+              "thesis": "均线多头排列与相对强度确认，技术形态具备上攻基础",
+              "strength": "HIGH",
+              "evidence": "因子验证显示relative_strength与ma_alignment均为CONFIRMED，当前价$509.64稳站于52周低点$464.52之上，距离52周高点$599.04有17.5%空间",
+              "source_type": "technical"
+            },
+            {
+              "thesis": "极致的轻资产模式带来超高资本回报率，盈利质量构筑估值护城河",
+              "strength": "HIGH",
+              "evidence": "财务数据显示ROE高达217.25%，EPS(TTM)为$16.52，对应TTM PE约30.8倍，在4503亿美元市值体量下依然保持极高的股东回报效率",
+              "source_type": "fundamental"
+            },
+            {
+              "thesis": "机构情绪拥挤度确认，资金抱团效应提供下行保护",
+              "strength": "MEDIUM",
+              "evidence": "因子验证sentiment_crowding为CONFIRMED，表明在当前VIX=20.0的中性市场环境下，大资金持续配置该标的作为核心底仓，筹码锁定良好",
+              "source_type": "sentiment"
+            }
+          ],
+          "bear_case": [
+            {
+              "thesis": "板块动能与基本面质量因子偏弱，估值扩张受限",
+              "strength": "MEDIUM",
+              "evidence": "因子验证sector_momentum与fundamental_quality均为WEAK，暗示支付板块整体缺乏超额收益，且当前30.8倍PE在缺乏营收高增长数据支撑下显得昂贵",
+              "source_type": "fundamental"
+            },
+            {
+              "thesis": "缺乏成交量突破与内部人买入信号，上涨动能存疑",
+              "strength": "HIGH",
+              "evidence": "因子验证volume_breakout与insider_signal均为WEAK，表明当前价格$509.64的维持缺乏增量资金推动，且管理层未在当前价位用真金白银背书，存在高位阴跌风险",
+              "source_type": "technical"
+            }
+          ],
+          "verdict": {
+            "direction_confidence": "MEDIUM",
+            "key_disagreement": "多头看重高ROE与相对强度带来的确定性溢价，空头担忧无量上涨与板块动能缺失导致的估值回调风险",
+            "adopted_from_bear": "采纳空头关于volume_breakout WEAK的警示，放弃一次性重仓，改为严格的右侧放量加仓或左侧深度回踩建仓策略",
+            "data_adjusted": true
+          },
+          "causal_chain": "宏观中性环境(VIX=20)与消费韧性 → 机构资金抱团高ROE(217.25%)轻资产核心资产(sentiment_crowding confirmed) → MA凭借相对强度与均线多头维持溢价，但受制于板块动能弱与无量上涨(volume_breakout weak)，呈现高位缩量震荡蓄势形态",
+          "historical_reference": "2023年Q3至Q4，MA在支付板块整体动能偏弱但自身相对强度确认的背景下，依靠高ROE和回购在均线上方缩量震荡（volume_breakout weak），随后在消费数据超预期后放量突破。当前形态高度类似突破前的缩量蓄势阶段。",
+          "fundamental_snapshot": {
+            "revenue_growth": "N/A",
+            "pe_forward": "N/A",
+            "analyst_consensus": "N/A",
+            "next_catalyst": "Unknown"
+          },
+          "risk_tiers": {
+            "aggressive": {
+              "action": "突破$515且成交量放大1.5倍时加仓",
+              "trigger": "价格>$515 且 volume_breakout因子转为CONFIRMED",
+              "risk": "假突破后回落至止损线，导致追高被套"
+            },
+            "moderate": {
+              "action": "在$500-$505区间企稳时建立底仓",
+              "trigger": "价格回踩$500-$505且ma_alignment保持CONFIRMED",
+              "risk": "阴跌破位，触发止损"
+            },
+            "conservative": {
+              "action": "等待回踩$491.29止损线附近且不破，或等待下一财报催化确认后再入场",
+              "trigger": "价格触及$491-$495区间出现长下影线，或下一催化事件落地",
+              "risk": "踏空主升浪行情"
+            }
+          },
+          "execution_plan": {
+            "steps": [
+              "Step 1: 在$505-$510区间建立30%底仓，设定硬止损$491.29",
+              "Step 2: 若价格放量突破$520（volume_breakout转为CONFIRMED），加仓30%",
+              "Step 3: 若价格回踩$495-$500区间且均线支撑有效，加仓剩余40%"
+            ],
+            "event_buffer": "由于下一催化事件Unknown且新闻缺失，在未知财报或宏观数据发布前，总仓位严格控制在50%以内",
+            "invalidation": "收盘价跌破$491.29，或宏观VIX突破25导致系统性杀估值，或sector_momentum转为显著负值"
+          },
+          "_meta": {
+            "symbol": "US.MA",
+            "model_used": "qwen3.7-max",
+            "from_cache": false,
+            "fallback_used": false,
+            "cost_usd": 0.099008,
+            "position_held": false
+          }
+        },
+        "open_check_status": "VALID",
+        "gap_pct": 0.021281712155825427,
+        "confirmed_entry_price": 509.64,
+        "status": "ACTIVE"
+      },
+      {
+        "symbol": "US.US.MU",
+        "direction": "LONG",
+        "entry_zone": [
+          1133.83,
+          1152.15
+        ],
+        "stop_loss": 1104.05,
+        "take_profit": 1214.0,
+        "urgency": "MEDIUM",
+        "rationale": "⚠️ sector_momentum: Semiconductors +0.0% | ✅ relative_strength: +17.9% vs SPY -2.1% | ✅ ma_alignment: MA5=1118 MA10=1109 MA20=1044\n验证: sector_momentum=weak, relative_strength=confirmed, ma_alignment=confirmed, volume_breakout=weak, rsi_sweet_spot=weak, insider_signal=weak, fundamental_quality=confirmed, sentiment_crowding=weak",
+        "trigger_condition": "价格进入 1133.83-1152.15 区间",
+        "risk_reward": 1.7,
+        "position_size_pct": 5,
+        "invalidation": "收盘破 1104.05 (1.8x ATR)",
+        "confidence": 85,
+        "factor_score": 0.644,
+        "composite_rank": 0.726,
+        "verdict": "VALID",
+        "execution_rules": {
+          "gap_up_over_2pct": "SKIP",
+          "gap_down_over_2pct": "SKIP",
+          "hit_zone_then_drop": "WAIT_5MIN_CANDLE_ABOVE"
+        },
+        "factor_validation": {
+          "sector_momentum": "WEAK",
+          "relative_strength": "CONFIRMED",
+          "ma_alignment": "CONFIRMED",
+          "volume_breakout": "WEAK",
+          "rsi_sweet_spot": "WEAK",
+          "insider_signal": "WEAK",
+          "fundamental_quality": "CONFIRMED",
+          "sentiment_crowding": "WEAK"
+        },
+        "data_cited": [
+          "+17.9% vs SPY -2.1%",
+          "MA5=1118 MA10=1109 MA20=1044",
+          "RSI=60",
+          "PE=144 ROE=70.5% RevYoY=11.8% [Finnhub]"
+        ],
+        "model_used": "deterministic_rules",
+        "catalyst": {
+          "type": "MA",
+          "score": 7.3,
+          "strength": "HIGH",
+          "headline": "ON Semiconductor’s (ON) Synaptics Acquisition Draws Caution From TD Cowen",
+          "price_change_pct": 1.1,
+          "source_count": 2,
+          "direction_hint": null
+        },
+        "discovery_source": "core_pool",
+        "current_price": 1145.28,
+        "rank_position": 4,
+        "is_primary": false,
+        "deep_analysis": {
+          "executive_summary": "基本面极佳但短期动能衰竭且估值透支——建议财报前仅建1/3底仓，留足弹药待9月21日财报确认右侧突破后再加仓。",
+          "data_quality": {
+            "technical": "缺失",
+            "fundamental": "完整",
+            "news": "完整",
+            "macro": "缺失",
+            "overall_completeness": "2项完整/0项降级/2项缺失",
+            "impact_note": "宏观数据缺失(VIX/利率/市场状态均无)",
+            "data_sources": {
+              "financials": "ok",
+              "analyst": "ok",
+              "news": "ok",
+              "catalyst": "ok"
+            },
+            "fetched_at": "2026-06-30T13:14:16Z"
+          },
+          "bull_case": [
+            {
+              "thesis": "基本面质量极佳，盈利能力与资本回报率处于历史极高水平，构筑深厚护城河。",
+              "strength": "HIGH",
+              "evidence": "ROE高达70.55%，净利率55.91%，毛利率72.57%，EPS(TTM)达7.59 (来源: finnhub/stock/metric @ 2026-06-30)",
+              "source_type": "fundamental"
+            },
+            {
+              "thesis": "华尔街分析师共识极度强烈，情绪面呈现一致看多态势。",
+              "strength": "HIGH",
+              "evidence": "55家分析师中92.7%给予买入评级，仅1.8%卖出；近期新闻确认华尔街一致上调至Strong Buy (来源: finnhub/recommendation_trends & Yahoo News @ 2026-06-30)",
+              "source_type": "sentiment"
+            },
+            {
+              "thesis": "长期趋势强劲，相对强度与均线排列得到因子确认，具备长线资金沉淀。",
+              "strength": "MEDIUM",
+              "evidence": "relative_strength与ma_alignment因子均为CONFIRMED，股价自52周低点103.38涨至1145.28，年内涨幅超800% (来源: 因子验证结果 & finnhub/stock/metric @ 2026-06-30)",
+              "source_type": "technical"
+            }
+          ],
+          "bear_case": [
+            {
+              "thesis": "短期上涨动能衰竭，量价配合度差，存在高位滞涨与均值回归风险。",
+              "strength": "HIGH",
+              "evidence": "sector_momentum、volume_breakout、rsi_sweet_spot三大动量因子均为WEAK，表明暴涨后缺乏增量资金接力 (来源: 因子验证结果 @ 2026-06-30)",
+              "source_type": "technical"
+            },
+            {
+              "thesis": "高Beta属性在宏观环境不明朗时极具脆弱性，易受系统性风险冲击。",
+              "strength": "MEDIUM",
+              "evidence": "Beta高达2.164，当前VIX为20.0且宏观状态为NEUTRAL，缺乏10Y国债数据无法评估无风险利率对高估值科技股的压制 (来源: finnhub/stock/metric & 宏观环境 @ 2026-06-30)",
+              "source_type": "macro"
+            }
+          ],
+          "verdict": {
+            "direction_confidence": "MEDIUM",
+            "key_disagreement": "极强的长期基本面与分析师共识 vs 短期技术动量衰竭与高Beta带来的高位回调风险。",
+            "adopted_from_bear": "采纳空头关于短期动能衰竭(成交量与RSI弱势)的警示，放弃一次性重仓，改为分批建仓以规避高位震荡洗盘。",
+            "data_adjusted": true
+          },
+          "causal_chain": "AI算力与HBM需求持续爆发 → 美光毛利率飙升至72.57%且ROE达70.55% → 华尔街55家机构92.7%一致看多并上调至Strong Buy → 股价一年内暴涨800%至1145美元 → 短期获利盘涌出导致成交量与RSI动能因子转弱 → 需等待9月21日财报验证需求持续性以开启第二波主升浪。",
+          "historical_reference": "2023-2024年英伟达(NVDA)与超微电脑(SMCI)在AI浪潮中暴涨数倍后，均出现过短期动能衰竭(成交量萎缩、RSI背离)的高位滞涨期，随后在财报季前后经历20%-30%的宽幅震荡洗盘；若后续财报业绩持续超预期，则消化估值后开启第二波主升浪。",
+          "fundamental_snapshot": {
+            "revenue_growth": "11.76%",
+            "pe_forward": "N/A",
+            "analyst_consensus": "买入92.7% / 持有5.4% / 卖出1.8% (55家)，目标价区间N/A",
+            "next_catalyst": "Q Earnings @ 2026-09-21"
+          },
+          "risk_tiers": {
+            "aggressive": {
+              "action": "当前价格直接建立1/3底仓，博弈财报超预期。",
+              "trigger": "价格站稳1145且日内VIX维持<20。",
+              "risk": "财报不及预期或宏观突变导致高Beta股剧烈回调，触及1104止损。"
+            },
+            "moderate": {
+              "action": "等待回调至关键均线支撑或财报后右侧突破再建仓。",
+              "trigger": "价格缩量回调至1100-1110区间企稳，或财报后放量突破1214止盈位。",
+              "risk": "若直接跳空高开则踏空，或买在财报后的次高点。"
+            },
+            "conservative": {
+              "action": "放弃当前高位，等待深度回调至长期趋势线。",
+              "trigger": "价格跌破1050(前期平台支撑)且出现放量恐慌盘后企稳。",
+              "risk": "基本面持续强劲导致股价拒绝深度回调，完全踏空本轮行情。"
+            }
+          },
+          "execution_plan": {
+            "steps": [
+              "Step 1: 当前价格($1145.28)建立1/3底仓，严格设定硬止损$1104.05，控制单笔最大亏损。",
+              "Step 2: 观察9月21日财报，若业绩超预期且次日放量突破$1214.0，加仓至2/3仓位，止损上移至成本价。",
+              "Step 3: 若宏观利率数据确认下行且板块动量因子(sectormomentum)由WEAK转为CONFIRMED，在回踩确认时打满全仓。"
+            ],
+            "event_buffer": "9月21日财报发布前，总仓位严格限制在1/3以内，绝不提前加仓博弈单边行情，防范财报后的隐含波动率暴跌(IV Crush)和方向误判。",
+            "invalidation": "9月21日财报显示HBM/DRAM需求指引不及预期，或毛利率环比下滑跌破70%，或股价有效跌破$1050关键心理与技术支撑位。"
+          },
+          "_meta": {
+            "symbol": "US.US.MU",
+            "model_used": "qwen3.7-max",
+            "from_cache": false,
+            "fallback_used": false,
+            "cost_usd": 0.095128,
+            "position_held": false
+          }
+        },
+        "open_check_status": "NO_DATA",
+        "gap_pct": 0.0,
+        "confirmed_entry_price": 0.0
+      },
+      {
+        "symbol": "US.JPM",
+        "direction": "LONG",
+        "entry_zone": [
+          326.1,
+          331.37
+        ],
+        "stop_loss": 317.53,
+        "take_profit": 349.15,
+        "urgency": "MEDIUM",
+        "rationale": "⚠️ sector_momentum: Financials +0.0% | ✅ relative_strength: +10.1% vs SPY -2.1% | ✅ ma_alignment: MA5=332 MA10=330 MA20=320\n验证: sector_momentum=weak, relative_strength=confirmed, ma_alignment=confirmed, volume_breakout=false_positive, rsi_sweet_spot=weak, insider_signal=weak, fundamental_quality=confirmed, sentiment_crowding=weak\n风险: 缩量突破,警惕假突破",
+        "trigger_condition": "价格进入 326.10-331.37 区间",
+        "risk_reward": 1.7,
+        "position_size_pct": 5,
+        "invalidation": "收盘破 317.53 (1.8x ATR)",
+        "confidence": 70,
+        "factor_score": 0.652,
+        "composite_rank": 0.671,
+        "verdict": "VALID",
+        "execution_rules": {
+          "gap_up_over_2pct": "SKIP",
+          "gap_down_over_2pct": "SKIP",
+          "hit_zone_then_drop": "WAIT_5MIN_CANDLE_ABOVE"
+        },
+        "factor_validation": {
+          "sector_momentum": "WEAK",
+          "relative_strength": "CONFIRMED",
+          "ma_alignment": "CONFIRMED",
+          "volume_breakout": "FALSE_POSITIVE",
+          "rsi_sweet_spot": "WEAK",
+          "insider_signal": "WEAK",
+          "fundamental_quality": "CONFIRMED",
+          "sentiment_crowding": "WEAK"
+        },
+        "data_cited": [
+          "+10.1% vs SPY -2.1%",
+          "MA5=332 MA10=330 MA20=320",
+          "RSI=66",
+          "PE=16 ROE=14.7% PB=2.4 [Futu]"
+        ],
+        "model_used": "deterministic_rules",
+        "catalyst": {
+          "type": "IPO",
+          "score": 4.2,
+          "strength": "MEDIUM",
+          "headline": "With Over $250B Raised This Year, The IPO Market Is Entering A New Era — A Look At What JPMorgan, Morgan Stanley Bankers",
+          "price_change_pct": 0.1,
+          "source_count": 1,
+          "direction_hint": null
+        },
+        "discovery_source": "core_pool",
+        "current_price": 329.39,
+        "rank_position": 5,
+        "is_primary": false,
+        "deep_analysis": {
+          "executive_summary": "基本面优质但临近前高且动能衰竭——建议中性策略分批建仓1/3底仓，严控追高，留弹药待回踩均线或放量突破确认。",
+          "data_quality": {
+            "technical": "缺失",
+            "fundamental": "降级",
+            "news": "缺失",
+            "macro": "缺失",
+            "overall_completeness": "0项完整/1项降级/3项缺失",
+            "impact_note": "部分基本面数据缺失(分析师评级); 新闻API失败，无法获取近期催化/风险事件; 宏观数据缺失(VIX/利率/市场状态均无)",
+            "data_sources": {
+              "financials": "ok",
+              "analyst": "none",
+              "news": "none",
+              "catalyst": "ok"
+            },
+            "fetched_at": "2026-06-30T13:14:15Z"
+          },
+          "bull_case": [
+            {
+              "thesis": "盈利质量与估值匹配，具备极强盈利确定性",
+              "strength": "HIGH",
+              "evidence": "ROE达14.74%，EPS(TTM)20.02，对应PE约16.4倍，fundamental_quality因子确认(2026-06-30)",
+              "source_type": "fundamental"
+            },
+            {
+              "thesis": "相对强度与趋势确认，个股走势强于大盘",
+              "strength": "MEDIUM",
+              "evidence": "relative_strength与ma_alignment因子均为CONFIRMED，表明处于多头均线排列中(2026-06-30)",
+              "source_type": "technical"
+            },
+            {
+              "thesis": "宏观中性下的避风港属性，大市值具备防御价值",
+              "strength": "MEDIUM",
+              "evidence": "VIX处于20.0中性水平，SPY趋势flat，8826亿市值的JPM作为金融龙头具备资金底仓配置价值(2026-06-30)",
+              "source_type": "macro"
+            }
+          ],
+          "bear_case": [
+            {
+              "thesis": "动能衰竭与假突破风险，缺乏成交量配合",
+              "strength": "HIGH",
+              "evidence": "sector_momentum为WEAK且volume_breakout为FALSE_POSITIVE，表明板块整体动能不足，近期价格上攻存在诱多风险(2026-06-30)",
+              "source_type": "technical"
+            },
+            {
+              "thesis": "临近52周高点且缺乏催化，上方阻力明确",
+              "strength": "MEDIUM",
+              "evidence": "当前价329.39距52周高343.45仅4.3%，且下一催化剂Unknown，新闻数据缺失，无新资金驱动(2026-06-30)",
+              "source_type": "fundamental"
+            },
+            {
+              "thesis": "内部人信号与情绪疲软，缺乏向上共振",
+              "strength": "MEDIUM",
+              "evidence": "insider_signal与sentiment_crowding均为WEAK，显示管理层无积极增持动作，市场看多情绪未形成合力(2026-06-30)",
+              "source_type": "sentiment"
+            }
+          ],
+          "verdict": {
+            "direction_confidence": "MEDIUM",
+            "key_disagreement": "个股相对强度确认与板块动能衰竭及假突破信号之间的矛盾",
+            "adopted_from_bear": "采纳假突破与临近前高的风险，放弃一次性重仓追高，改为逢低分批建仓并严格设置止损",
+            "data_adjusted": true
+          },
+          "causal_chain": "宏观中性环境(VIX=20) → 资金偏好高ROE(14.74%)大盘防御股 → 推动JPM相对强度确认并逼近52周高点(343.45) → 但板块动能减弱与缩量导致假突破风险增加 → 股价在329-343区间面临高位震荡洗盘",
+          "historical_reference": "2023年Q4至2024年Q1，大型银行股在财报真空期多次出现缩量逼近前高（假突破），随后因板块动能走弱回调5%-8%至50日均线附近企稳。当前JPM形态与量能特征高度相似。",
+          "fundamental_snapshot": {
+            "revenue_growth": "N/A",
+            "pe_forward": "N/A (TTM PE约16.45)",
+            "analyst_consensus": "N/A",
+            "next_catalyst": "N/A (Unknown)"
+          },
+          "risk_tiers": {
+            "aggressive": {
+              "action": "突破335且成交量放大时加仓至50%",
+              "trigger": "日内放量突破335并站稳",
+              "risk": "假突破后快速回落导致高位套牢"
+            },
+            "moderate": {
+              "action": "329附近建15%底仓，回踩320加仓至30%",
+              "trigger": "价格回调至320-325区间且缩量企稳",
+              "risk": "阴跌破位导致止损出局"
+            },
+            "conservative": {
+              "action": "放弃当前价位，等待回踩310-315强支撑区",
+              "trigger": "价格跌至315以下且RSI超卖",
+              "risk": "踏空主升浪或基本面反转"
+            }
+          },
+          "execution_plan": {
+            "steps": [
+              "Step 1: 当前价位(329.39)建立15%观察底仓，设定硬止损317.53。",
+              "Step 2: 若价格回调至320-325区间且缩量企稳，加仓15%至总仓位30%。",
+              "Step 3: 若价格放量突破335并站稳，加仓20%至总仓位50%，上移止损至328。"
+            ],
+            "event_buffer": "财报或重大宏观数据公布前，保持仓位不超过30%，避免跳空风险。",
+            "invalidation": "价格有效跌破317.53止损位，或宏观VIX突然飙升至30以上引发系统性金融股抛售。"
+          },
+          "_meta": {
+            "symbol": "US.JPM",
+            "model_used": "qwen3.7-max",
+            "from_cache": false,
+            "fallback_used": false,
+            "cost_usd": 0.107912,
+            "position_held": false
+          }
+        },
+        "open_check_status": "VALID",
+        "gap_pct": 0.0010332776173833003,
+        "confirmed_entry_price": 329.39,
+        "status": "ACTIVE"
+      }
+    ],
+    "executed_targets": [
+      "US.BIDU",
+      "US.TSLA"
+    ],
+    "missed_opportunities": [
+      "US.US.MU",
+      "US.MA",
+      "US.JPM"
+    ],
+    "unplanned_trades": [
+      "US.SNDK",
+      "US.ARM",
+      "US.MSFT"
+    ],
+    "plan_date": "2026-06-30",
+    "execution_rate": 0.4
+  },
+  "key_learnings": [],
+  "improvement_suggestions": [
+    "胜率低于 40%，建议重新评估策略",
+    "有 2 笔低信号强度交易，建议提高入场门槛",
+    "亏损交易占比 75%，建议收紧入场条件"
+  ],
+  "exit_reason_pnl": {
+    "window_days": 30,
+    "total_reasons": 22,
+    "by_reason": {
+      "FLASH_EXIT": {
+        "n": 3,
+        "win_rate": 0.0,
+        "avg_pnl_pct": -0.00444,
+        "sharpe_proxy": -0.789,
+        "recommendation": "🔍 insufficient"
+      },
+      "DAY_TRADE_TP": {
+        "n": 13,
+        "win_rate": 1.0,
+        "avg_pnl_pct": 0.00713,
+        "sharpe_proxy": 0.801,
+        "recommendation": "✅ keep"
+      },
+      "ORB_TRAILING_STOP": {
+        "n": 5,
+        "win_rate": 0.6,
+        "avg_pnl_pct": 4e-05,
+        "sharpe_proxy": 0.181,
+        "recommendation": "⚠ marginal"
+      },
+      "TRAILING_STOP": {
+        "n": 4,
+        "win_rate": 0.0,
+        "avg_pnl_pct": -0.04253,
+        "sharpe_proxy": -2.19,
+        "recommendation": "🔍 insufficient"
+      },
+      "ORB_FLOOR_STOP": {
+        "n": 3,
+        "win_rate": 0.0,
+        "avg_pnl_pct": -0.00201,
+        "sharpe_proxy": -1.131,
+        "recommendation": "🔍 insufficient"
+      },
+      "PRE_CLOSE_EXIT": {
+        "n": 11,
+        "win_rate": 0.727,
+        "avg_pnl_pct": 0.02741,
+        "sharpe_proxy": 0.799,
+        "recommendation": "✅ keep"
+      },
+      "SCALE_OUT": {
+        "n": 4,
+        "win_rate": 1.0,
+        "avg_pnl_pct": 0.02028,
+        "sharpe_proxy": 2.1,
+        "recommendation": "🔍 insufficient"
+      },
+      "TIME_EXIT": {
+        "n": 15,
+        "win_rate": 0.4,
+        "avg_pnl_pct": -0.00588,
+        "sharpe_proxy": -0.451,
+        "recommendation": "🚨 disable"
+      },
+      "EOD_FORCE_CLOSE": {
+        "n": 8,
+        "win_rate": 1.0,
+        "avg_pnl_pct": 0.03295,
+        "sharpe_proxy": 1.497,
+        "recommendation": "✅ keep"
+      },
+      "SL_ATR_STOP": {
+        "n": 8,
+        "win_rate": 0.0,
+        "avg_pnl_pct": -0.02004,
+        "sharpe_proxy": -2.284,
+        "recommendation": "🚨 disable"
+      },
+      "PHANTOM_RECONCILE_VOID": {
+        "n": 5,
+        "win_rate": 0.0,
+        "avg_pnl_pct": 0.0,
+        "sharpe_proxy": 0.0,
+        "recommendation": "⚠ marginal"
+      }
+    }
+  },
+  "coordinator_summary": {
+    "window_date": "2026-06-30",
+    "owner_strategy_distribution": {
+      "main": 2,
+      "playbook_sim": 1
+    },
+    "active_positions_by_owner": {
+      "main": 1
+    },
+    "arbitration": {
+      "total": 0,
+      "multi_candidate": 0,
+      "winners": {}
+    }
+  },
+  "shadow_comparison": {
+    "real": {
+      "n": 3,
+      "total_pnl": -49.78000000000003,
+      "win_rate": 0.0
+    },
+    "shadow_by_variant": []
+  },
+  "pnl_outliers": {
+    "n": 0,
+    "outliers": []
+  },
+  "symbol_loss_guard_triggers": {
+    "total_symbols_tracked": 4,
+    "blocked_count": 0,
+    "blocked": []
+  }
+}

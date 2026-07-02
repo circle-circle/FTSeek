@@ -54,6 +54,7 @@ global_hold_protection:
     - circuit_breaker
     - earnings_guard
     - pre_close
+    - atr_stop
   log_each_block: true
 
 # ── 退出监控调度参数 ──
@@ -81,32 +82,49 @@ exit_rules:
   # 6笔全亏 0%WR 纯噪音, 代码+接线已删.
 
   # 规则 1: ATR 固定止损 (风险控制)
-  # 2026-06-21: 4.0×→2.0× + max_loss 15%→2.0%
-  #   数据: sl_hit 123笔 avg-$16/笔, 2.0×收紧高波股单笔亏损
-  #   hard_stop = entry × (1 ± max_loss_pct/100), 取 min(ATR_stop, hard_stop)
+  # 2026-06-30 DEB: 按波动率桶动态选择 atr_mult 和 max_loss_pct
+  #   桶判定: ATR% = ATR / entry_price, 按 vol_bucket_multipliers 选桶
+  #   滞回区间: ±0.2% 防止边界抖动 (Claude Code建议)
+  #   SL = min(atr_stop(盘中ATR×桶mult), hard_stop(桶max_loss%))
+  #   SL契约: 再与 initial_sl 取更紧的 (floor保护)
   atr_stop:
     enabled: true
     method: "entry_price - atr * multiplier"
     multiplier_by_profit:
-      initial: 2.0                   # 从4.0收紧到2.0
-    max_loss_pct: 2.0                # 从15%收紧到2.0% (统一, 不区分LONG/SHORT)
+      initial: 2.0                   # 默认medium桶(盘中动态覆盖)
+    max_loss_pct: 2.0                # 默认medium桶(盘中动态覆盖)
     atr_floor_pct: 70
+    # 波动率桶覆盖 — 按ATR%动态选择 atr_mult 和 max_loss_pct
+    vol_bucket_multipliers:
+      low:
+        atr_pct_max: 0.015           # ATR% < 1.5%
+        atr_multiplier: 1.5          # 低波动: SL收紧
+        max_loss_pct: 1.5
+      medium:
+        atr_pct_max: 0.035           # 1.5% ≤ ATR% < 3.5%
+        atr_multiplier: 2.0          # 标准
+        max_loss_pct: 2.0
+      high:
+        atr_pct_max: 0.08            # 3.5% ≤ ATR% < 8%
+        atr_multiplier: 2.5          # 高波动: SL放宽防噪声
+        max_loss_pct: 3.0
+      extreme:
+        atr_pct_max: 999.0           # ATR% ≥ 8%
+        atr_multiplier: 3.0          # 极端波动: SL最宽
+        max_loss_pct: 4.0
+    # 滞回区间: 桶切换时需超过边界±0.2%, 防止频繁切换
+    hysteresis_pct: 0.002
 
   # 规则 2: 保本线 (利润保护, 不平仓)
   # 2026-06-21: 新设计 — 盈利≥1.5%时SL移至成本
-  # 2026-06-25: 阶梯式利润锁定 (stepped ratchet) — SL只上不下
-  #   peak_profit ≥1.5% → SL=entry (保本)
-  #   peak_profit ≥3.0% → SL=entry×1.01 (锁1%利润)
-  #   peak_profit ≥5.0% → SL=entry×1.03 (锁3%利润)
-  #   SHORT 对称: ×0.99 / ×0.97
-  #   数据依据: DAY_TRADE_TP 1.5%止盈 100%WR +$13K; 3%/5%是自然延伸
-  #   代码: atr_stop_engine.compute_stop_lines + pipeline._check_playbook_exit_rules
+  # 2026-06-25: 阶梯式利润锁定 (stepped ratchet)
+  # 2026-06-28 (ADR-008): 按辩论结论禁用 — 2% SL 下 ratchet 意义有限, 由 pre_close 替代利润保护
   breakeven:
-    enabled: true
+    enabled: false
     trigger_profit_pct: 1.5          # 保本触发: SL移至entry
     lock_1pct_trigger: 3.0           # 锁1%利润: SL移至entry×1.01
     lock_3pct_trigger: 5.0           # 锁3%利润: SL移至entry×1.03
-    buffer_pct: 0.0                 # 保本档: SL = entry × (1 + 0%) = entry (纯保本)
+    buffer_pct: 0.0                  # 保本档: SL = entry × (1 + 0%) = entry (纯保本)
 
   # ── DEAD RULE: chandelier_trail ──
   # 92笔 46.7%WR -$34 接近零EV, 已禁用
@@ -126,22 +144,24 @@ exit_rules:
 
   # 规则 3: 时间退出 (解决1-4h死亡区间)
   # 2026-06-21: 新规则; 2026-06-24: 放宽 (1h/0.3%→2h/-0.5%)
-  #   数据: 6/23 shadow 10笔 TIME_EXIT 净-$72, 6笔微利被砍后 EOD 本可+3.62%
-  #   逻辑: 持仓>2h 且 盈利<-0.5% → 退出 (给趋势发展空间, EOD 100%WR证明方向选对了)
+  # 2026-06-28 (ADR-008): 按辩论结论禁用 — 亏损仓应交给硬止损, 不需要等2h
   time_exit:
-    enabled: true
+    enabled: false
     holding_hours: 2.0              # 2026-06-24: 1h→2h, 让趋势发展
     max_profit_pct: -0.5            # 2026-06-24: 0.3%→-0.5%, 只砍真亏仓位
     action: "breakeven_exit"        # 退出方式: 尽量保本 (市价单, 可能微亏/微盈)
 
   # 规则 4: 盘末退出 (Pre-Close Exit)
-  # 数据: PRE_CLOSE_EXIT SHORT +$8.4K (有效), 盈利落袋+亏损保留
+  # 2026-06-30 DEB: 改为"仅盈利仓"模式 — 盈利落袋+亏损由SL管理
+  # close_profit_atr=2.0: 浮盈≥2ATR全平(落袋)
+  # loss_flat=true: 亏损仓盘末平掉, 不持亏过夜(CRITIC修正)
+  # half_exit_below_atr=0.5: 微利0~0.5ATR减半仓
   pre_close_exit:
     enabled: true
     window_minutes: 8
     min_hold_minutes_before_pre_close: 30
     time_weighted: false
-    loss_flat: false
+    loss_flat: true
     overnight_loss_stop_pct: 0.03
     close_profit_atr: 2.0
     half_exit_below_atr: 0.5
@@ -149,6 +169,7 @@ exit_rules:
     quarter_exit_below_atr: 99
 
   # 自适应分级退出 (盘末细化)
+  # 2026-06-30 DEB: 同步启用, 仅盈利仓模式
   pre_close:
     enabled: true
     mode: adaptive

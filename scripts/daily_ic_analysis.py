@@ -69,7 +69,11 @@ def load_signals(days=90):
     """Load signal snapshots with forward returns"""
     conn = sqlite3.connect(str(DB_SIGNALS))
     conn.row_factory = sqlite3.Row
-    cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+    try:
+        from app.utils.timezone import now_et as _now_et
+        cutoff = (_now_et() - timedelta(days=days)).strftime("%Y-%m-%d")
+    except Exception:
+        cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
     rows = conn.execute("""
         SELECT * FROM signal_snapshots
         WHERE fwd_ret_t1 IS NOT NULL
@@ -83,11 +87,16 @@ def load_trades(days=90):
     """Load trade records with PnL"""
     conn = sqlite3.connect(str(DB_TRADES))
     conn.row_factory = sqlite3.Row
-    cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+    try:
+        from app.utils.timezone import now_et as _now_et
+        cutoff = (_now_et() - timedelta(days=days)).strftime("%Y-%m-%d")
+    except Exception:
+        cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
     rows = conn.execute("""
         SELECT * FROM trade_records
         WHERE pnl_pct IS NOT NULL
           AND created_at >= ?
+          AND trade_mode != 'live'
     """, (cutoff,)).fetchall()
     conn.close()
     return [dict(r) for r in rows]

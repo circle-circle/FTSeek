@@ -149,6 +149,12 @@ class FundamentalProvider(BaseDataProvider):
                 "after_change_rate": row.get("after_change_rate", 0),
             }
 
+            # 2026-06-29: Futu snapshot 无 industry 字段, 从 Finnhub profile2 补充
+            bare = symbol.replace("US.", "").replace("HK.", "").upper()
+            profile = self._finnhub_get("stock/profile2", {"symbol": bare})
+            if profile and isinstance(profile, dict):
+                financials["industry"] = profile.get("finnhubIndustry") or ""
+
             # Earnings calendar: not available from Futu, mark as unknown
             next_catalyst = {
                 "source": "futu/market_snapshot",
@@ -189,6 +195,7 @@ class FundamentalProvider(BaseDataProvider):
         # 并行获取 4 个维度（串行实现，可优化为 ThreadPoolExecutor）
         metric = self._finnhub_get("stock/metric", {"symbol": bare, "metric": "all"})
         recommendations = self._finnhub_get("stock/recommendation", {"symbol": bare})
+        profile = self._finnhub_get("stock/profile2", {"symbol": bare})
         
         end_d = datetime.utcnow().strftime("%Y-%m-%d")
         start_d = (datetime.utcnow() - timedelta(days=7)).strftime("%Y-%m-%d")
@@ -224,6 +231,10 @@ class FundamentalProvider(BaseDataProvider):
             })
         else:
             return None  # Finnhub 失败
+
+        # 从 profile2 获取行业分类 (finnhubIndustry 字段)
+        if profile and isinstance(profile, dict):
+            financials["industry"] = profile.get("finnhubIndustry") or ""
 
         # 解析分析师评级
         analyst = {"source": "finnhub/recommendation_trends", "fetched_at": now_iso}

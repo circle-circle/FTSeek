@@ -1,49 +1,62 @@
 screening_factors:
   insider_cluster_buy:
-    weight: 6
+    weight: 7
+    enabled: true
     description: Insider cluster buy (SECForm4Provider cluster score > 0.5)
   insider_net_buy:
-    weight: 2
+    weight: 3
+    enabled: true
     description: Insider net buy (non-cluster)
   rsi_oversold:
-    weight: -1
+    weight: -2
+    enabled: false
     condition: rsi_14 < 40
     description: RSI oversold pullback
   above_ma20:
-    weight: 3
+    weight: 4
+    enabled: true
     condition: price > ma20
     description: Price above 20-day MA
   macd_golden_cross:
-    weight: 3
+    weight: 4
+    enabled: true
     description: MACD golden cross
   news_positive:
     weight: 2
+    enabled: true
     condition: sentiment_score > 0
     description: Positive news sentiment (last 3 days)
   earnings_beat_streak:
     weight: 1
+    enabled: true
     condition: beat_rate > 0.5
     description: Earnings beat rate > 50%
   volume_expansion:
-    weight: 0
+    weight: -1
+    enabled: true
     condition: volume_5d_avg_ratio > 1.2
     description: Volume expansion
   pe_below_industry:
-    weight: 0
+    weight: -2
+    enabled: false
     description: PE below industry average
   rsi_overbought:
     weight: -3
+    enabled: true
     condition: rsi_14 > 70
     description: RSI overbought
   insider_net_sell:
-    weight: -3
+    weight: -4
+    enabled: false
     description: Insider net sell
   news_negative:
-    weight: -2
+    weight: -3
+    enabled: false
     condition: sentiment_score < -0.3
     description: Negative news sentiment
   earnings_imminent:
     weight: -3
+    enabled: true
     condition: days_until_earnings < 3
     description: Earnings < 3 days, too volatile
 weight_adjustments:
@@ -51,3 +64,63 @@ weight_adjustments:
   factor: insider_cluster_buy
   delta: 1
   reason: '正收益因子: 贝叶斯胜率72%, CI [55%-85%]'
+- date: '2026-06-28'
+  factor: above_ma20
+  delta: 1
+  reason: 'OKR正收益: WR 61.5%, PF 1.82, PnL +$694'
+- date: '2026-06-28'
+  factor: macd_golden_cross
+  delta: 1
+  reason: 'OKR正收益: PF 4.17, PnL +$1121'
+- date: '2026-06-28'
+  factor: pe_below_industry
+  delta: -2
+  reason: 'OKR负收益: WR 46.4%, PF 0.46, PnL -$1843'
+- date: '2026-06-28'
+  factor: rsi_oversold
+  delta: -1
+  reason: 'OKR负收益: WR 27.3%, PF 0.70'
+- date: '2026-06-28'
+  factor: insider_net_sell
+  delta: -1
+  reason: 'OKR负收益: WR 32%, PF 0.68'
+- date: '2026-06-28'
+  factor: news_negative
+  delta: -1
+  reason: 'OKR负收益: WR 28.6%, PF 0.25'
+- date: '2026-06-28'
+  factor: volume_expansion
+  delta: -1
+  reason: 'OKR负收益: 平均PnL -$61, PF 0.34 despite WR 64%'
+- date: '2026-06-29'
+  factor: pe_below_industry
+  delta: -2
+  reason: 'OKR-062 急救: WR 46.4% / PF 0.46 / PnL -$1843, 继续大比例压降'
+- date: '2026-06-29'
+  factor: volume_expansion
+  delta: -2
+  reason: 'OKR-062 急救: 平均PnL -$61, PF 0.34, 高胜率但大赔小赚, 压降'
+- date: '2026-06-29'
+  factor: news_negative
+  delta: -1
+  reason: 'OKR-062 急救: WR 28.6%, PF 0.25, 继续压降'
+- date: '2026-06-29'
+  factor: rsi_oversold
+  delta: -1
+  reason: 'OKR-062 急救: WR 27.3%, PF 0.70, 继续压降'
+- date: '2026-06-29'
+  factor: insider_net_sell
+  delta: -1
+  reason: 'OKR-062 急救: WR 32%, PF 0.68, 压降至下限 -5'
+- date: '2026-06-29'
+  factor: insider_cluster_buy
+  delta: 1
+  reason: 'OKR-062 急救: WR 75%, 唯一显著正收益因子, 继续提升'
+- date: '2026-06-29'
+  factor: above_ma20
+  delta: 1
+  reason: 'OKR-062 急救: WR 61.5%, PF 1.82, 进一步提升'
+- date: '2026-06-29'
+  factor: macd_golden_cross
+  delta: 1
+  reason: 'OKR-062 急救: PF 4.17, PnL +$1121, 进一步提升'

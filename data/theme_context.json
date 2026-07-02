@@ -1,0 +1,470 @@
+{
+  "date": "2026-07-02",
+  "generated_at": "2026-07-02T09:12:00.346325-04:00",
+  "domains": {
+    "ai": {
+      "domain": "ai",
+      "date": "2026-07-02",
+      "theme_momentum": -0.3,
+      "sentiment_direction": "BEARISH",
+      "breadth": 6,
+      "catalysts": [],
+      "key_narratives": [
+        "AI chip stocks face broad selloff driven by valuation concerns and Meta's strategic pivot away from cloud giants",
+        "Enterprise AI software sees divergent performance with Palantir gaining on sovereign AI deals while Snowflake faces valuation headwinds",
+        "AI infrastructure buildout continues via undersea cables and sovereign partnerships despite near-term equity market pressure"
+      ],
+      "beneficiaries": [
+        "PLTR",
+        "MSFT",
+        "AMD"
+      ],
+      "detractors": [
+        "NVDA",
+        "SNOW",
+        "ORCL"
+      ],
+      "confidence": 0.75
+    },
+    "semiconductor": {
+      "domain": "semiconductor",
+      "date": "2026-07-02",
+      "theme_momentum": -0.4,
+      "sentiment_direction": "BEARISH",
+      "breadth": 5,
+      "catalysts": [],
+      "key_narratives": [
+        "Chip stocks selling off on valuation concerns and Meta's strategic pivot away from cloud giants",
+        "AI chip spending continues to build with TSMC and ASML raising guidance despite broader sector weakness",
+        "Geopolitical risks and export controls creating headwinds for EU chip sector and dividend safety"
+      ],
+      "beneficiaries": [
+        "TSM",
+        "ASML"
+      ],
+      "detractors": [
+        "AMAT",
+        "LRCX",
+        "TXN"
+      ],
+      "confidence": 0.75
+    },
+    "ev": {
+      "domain": "ev",
+      "date": "2026-07-02",
+      "theme_momentum": 0.3,
+      "sentiment_direction": "NEUTRAL",
+      "breadth": 5,
+      "catalysts": [],
+      "key_narratives": [
+        "Divergent delivery trends among Chinese EV makers with NIO and XPeng gaining while Li Auto declines.",
+        "California EV incentives shifting support toward Rivian and Lucid at Tesla's expense.",
+        "Tesla faces mixed signals as regulatory probe closes but new policy headwinds emerge."
+      ],
+      "beneficiaries": [
+        "NIO",
+        "XPEV",
+        "RIVN",
+        "LCID"
+      ],
+      "detractors": [
+        "LI",
+        "TSLA"
+      ],
+      "confidence": 0.6
+    }
+  },
+  "symbols": {
+    "NVDA": {
+      "domains": [
+        {
+          "domain": "ai",
+          "momentum": -0.3,
+          "direction": "BEARISH"
+        }
+      ],
+      "net_momentum": -0.3,
+      "net_wind": -0.3,
+      "narratives": [
+        "AI chip stocks face broad selloff driven by valuation concerns and Meta's strategic pivot away from cloud giants",
+        "Enterprise AI software sees divergent performance with Palantir gaining on sovereign AI deals while Snowflake faces valuation headwinds",
+        "AI infrastructure buildout continues via undersea cables and sovereign partnerships despite near-term equity market pressure"
+      ],
+      "catalysts": []
+    },
+    "AMD": {
+      "domains": [
+        {
+          "domain": "ai",
+          "momentum": -0.3,
+          "direction": "BEARISH"
+        }
+      ],
+      "net_momentum": -0.3,
+      "net_wind": -0.3,
+      "narratives": [
+        "AI chip stocks face broad selloff driven by valuation concerns and Meta's strategic pivot away from cloud giants",
+        "Enterprise AI software sees divergent performance with Palantir gaining on sovereign AI deals while Snowflake faces valuation headwinds",
+        "AI infrastructure buildout continues via undersea cables and sovereign partnerships despite near-term equity market pressure"
+      ],
+      "catalysts": []
+    },
+    "MSFT": {
+      "domains": [
+        {
+          "domain": "ai",
+          "momentum": -0.3,
+          "direction": "BEARISH"
+        }
+      ],
+      "net_momentum": -0.3,
+      "net_wind": -0.3,
+      "narratives": [
+        "AI chip stocks face broad selloff driven by valuation concerns and Meta's strategic pivot away from cloud giants",
+        "Enterprise AI software sees divergent performance with Palantir gaining on sovereign AI deals while Snowflake faces valuation headwinds",
+        "AI infrastructure buildout continues via undersea cables and sovereign partnerships despite near-term equity market pressure"
+      ],
+      "catalysts": []
+    },
+    "GOOGL": {
+      "domains": [
+        {
+          "domain": "ai",
+          "momentum": -0.3,
+          "direction": "BEARISH"
+        }
+      ],
+      "net_momentum": -0.3,
+      "net_wind": -0.3,
+      "narratives": [
+        "AI chip stocks face broad selloff driven by valuation concerns and Meta's strategic pivot away from cloud giants",
+        "Enterprise AI software sees divergent performance with Palantir gaining on sovereign AI deals while Snowflake faces valuation headwinds",
+        "AI infrastructure buildout continues via undersea cables and sovereign partnerships despite near-term equity market pressure"
+      ],
+      "catalysts": []
+    },
+    "CRM": {
+      "domains": [
+        {
+          "domain": "ai",
+          "momentum": -0.3,
+          "direction": "BEARISH"
+        }
+      ],
+      "net_momentum": -0.3,
+      "net_wind": -0.3,
+      "narratives": [
+        "AI chip stocks face broad selloff driven by valuation concerns and Meta's strategic pivot away from cloud giants",
+        "Enterprise AI software sees divergent performance with Palantir gaining on sovereign AI deals while Snowflake faces valuation headwinds",
+        "AI infrastructure buildout continues via undersea cables and sovereign partnerships despite near-term equity market pressure"
+      ],
+      "catalysts": []
+    },
+    "ORCL": {
+      "domains": [
+        {
+          "domain": "ai",
+          "momentum": -0.3,
+          "direction": "BEARISH"
+        }
+      ],
+      "net_momentum": -0.3,
+      "net_wind": -0.3,
+      "narratives": [
+        "AI chip stocks face broad selloff driven by valuation concerns and Meta's strategic pivot away from cloud giants",
+        "Enterprise AI software sees divergent performance with Palantir gaining on sovereign AI deals while Snowflake faces valuation headwinds",
+        "AI infrastructure buildout continues via undersea cables and sovereign partnerships despite near-term equity market pressure"
+      ],
+      "catalysts": []
+    },
+    "PLTR": {
+      "domains": [
+        {
+          "domain": "ai",
+          "momentum": -0.3,
+          "direction": "BEARISH"
+        }
+      ],
+      "net_momentum": -0.3,
+      "net_wind": -0.3,
+      "narratives": [
+        "AI chip stocks face broad selloff driven by valuation concerns and Meta's strategic pivot away from cloud giants",
+        "Enterprise AI software sees divergent performance with Palantir gaining on sovereign AI deals while Snowflake faces valuation headwinds",
+        "AI infrastructure buildout continues via undersea cables and sovereign partnerships despite near-term equity market pressure"
+      ],
+      "catalysts": []
+    },
+    "SNOW": {
+      "domains": [
+        {
+          "domain": "ai",
+          "momentum": -0.3,
+          "direction": "BEARISH"
+        }
+      ],
+      "net_momentum": -0.3,
+      "net_wind": -0.3,
+      "narratives": [
+        "AI chip stocks face broad selloff driven by valuation concerns and Meta's strategic pivot away from cloud giants",
+        "Enterprise AI software sees divergent performance with Palantir gaining on sovereign AI deals while Snowflake faces valuation headwinds",
+        "AI infrastructure buildout continues via undersea cables and sovereign partnerships despite near-term equity market pressure"
+      ],
+      "catalysts": []
+    },
+    "TSM": {
+      "domains": [
+        {
+          "domain": "semiconductor",
+          "momentum": -0.4,
+          "direction": "BEARISH"
+        }
+      ],
+      "net_momentum": -0.4,
+      "net_wind": -0.4,
+      "narratives": [
+        "Chip stocks selling off on valuation concerns and Meta's strategic pivot away from cloud giants",
+        "AI chip spending continues to build with TSMC and ASML raising guidance despite broader sector weakness",
+        "Geopolitical risks and export controls creating headwinds for EU chip sector and dividend safety"
+      ],
+      "catalysts": []
+    },
+    "ASML": {
+      "domains": [
+        {
+          "domain": "semiconductor",
+          "momentum": -0.4,
+          "direction": "BEARISH"
+        }
+      ],
+      "net_momentum": -0.4,
+      "net_wind": -0.4,
+      "narratives": [
+        "Chip stocks selling off on valuation concerns and Meta's strategic pivot away from cloud giants",
+        "AI chip spending continues to build with TSMC and ASML raising guidance despite broader sector weakness",
+        "Geopolitical risks and export controls creating headwinds for EU chip sector and dividend safety"
+      ],
+      "catalysts": []
+    },
+    "AMAT": {
+      "domains": [
+        {
+          "domain": "semiconductor",
+          "momentum": -0.4,
+          "direction": "BEARISH"
+        }
+      ],
+      "net_momentum": -0.4,
+      "net_wind": -0.4,
+      "narratives": [
+        "Chip stocks selling off on valuation concerns and Meta's strategic pivot away from cloud giants",
+        "AI chip spending continues to build with TSMC and ASML raising guidance despite broader sector weakness",
+        "Geopolitical risks and export controls creating headwinds for EU chip sector and dividend safety"
+      ],
+      "catalysts": []
+    },
+    "LRCX": {
+      "domains": [
+        {
+          "domain": "semiconductor",
+          "momentum": -0.4,
+          "direction": "BEARISH"
+        }
+      ],
+      "net_momentum": -0.4,
+      "net_wind": -0.4,
+      "narratives": [
+        "Chip stocks selling off on valuation concerns and Meta's strategic pivot away from cloud giants",
+        "AI chip spending continues to build with TSMC and ASML raising guidance despite broader sector weakness",
+        "Geopolitical risks and export controls creating headwinds for EU chip sector and dividend safety"
+      ],
+      "catalysts": []
+    },
+    "MU": {
+      "domains": [
+        {
+          "domain": "semiconductor",
+          "momentum": -0.4,
+          "direction": "BEARISH"
+        }
+      ],
+      "net_momentum": -0.4,
+      "net_wind": -0.4,
+      "narratives": [
+        "Chip stocks selling off on valuation concerns and Meta's strategic pivot away from cloud giants",
+        "AI chip spending continues to build with TSMC and ASML raising guidance despite broader sector weakness",
+        "Geopolitical risks and export controls creating headwinds for EU chip sector and dividend safety"
+      ],
+      "catalysts": []
+    },
+    "AVGO": {
+      "domains": [
+        {
+          "domain": "semiconductor",
+          "momentum": -0.4,
+          "direction": "BEARISH"
+        }
+      ],
+      "net_momentum": -0.4,
+      "net_wind": -0.4,
+      "narratives": [
+        "Chip stocks selling off on valuation concerns and Meta's strategic pivot away from cloud giants",
+        "AI chip spending continues to build with TSMC and ASML raising guidance despite broader sector weakness",
+        "Geopolitical risks and export controls creating headwinds for EU chip sector and dividend safety"
+      ],
+      "catalysts": []
+    },
+    "QCOM": {
+      "domains": [
+        {
+          "domain": "semiconductor",
+          "momentum": -0.4,
+          "direction": "BEARISH"
+        }
+      ],
+      "net_momentum": -0.4,
+      "net_wind": -0.4,
+      "narratives": [
+        "Chip stocks selling off on valuation concerns and Meta's strategic pivot away from cloud giants",
+        "AI chip spending continues to build with TSMC and ASML raising guidance despite broader sector weakness",
+        "Geopolitical risks and export controls creating headwinds for EU chip sector and dividend safety"
+      ],
+      "catalysts": []
+    },
+    "TXN": {
+      "domains": [
+        {
+          "domain": "semiconductor",
+          "momentum": -0.4,
+          "direction": "BEARISH"
+        }
+      ],
+      "net_momentum": -0.4,
+      "net_wind": -0.4,
+      "narratives": [
+        "Chip stocks selling off on valuation concerns and Meta's strategic pivot away from cloud giants",
+        "AI chip spending continues to build with TSMC and ASML raising guidance despite broader sector weakness",
+        "Geopolitical risks and export controls creating headwinds for EU chip sector and dividend safety"
+      ],
+      "catalysts": []
+    },
+    "TSLA": {
+      "domains": [
+        {
+          "domain": "ev",
+          "momentum": 0.3,
+          "direction": "NEUTRAL"
+        }
+      ],
+      "net_momentum": 0.3,
+      "net_wind": 0.3,
+      "narratives": [
+        "Divergent delivery trends among Chinese EV makers with NIO and XPeng gaining while Li Auto declines.",
+        "California EV incentives shifting support toward Rivian and Lucid at Tesla's expense.",
+        "Tesla faces mixed signals as regulatory probe closes but new policy headwinds emerge."
+      ],
+      "catalysts": []
+    },
+    "LI": {
+      "domains": [
+        {
+          "domain": "ev",
+          "momentum": 0.3,
+          "direction": "NEUTRAL"
+        }
+      ],
+      "net_momentum": 0.3,
+      "net_wind": 0.3,
+      "narratives": [
+        "Divergent delivery trends among Chinese EV makers with NIO and XPeng gaining while Li Auto declines.",
+        "California EV incentives shifting support toward Rivian and Lucid at Tesla's expense.",
+        "Tesla faces mixed signals as regulatory probe closes but new policy headwinds emerge."
+      ],
+      "catalysts": []
+    },
+    "XPEV": {
+      "domains": [
+        {
+          "domain": "ev",
+          "momentum": 0.3,
+          "direction": "NEUTRAL"
+        }
+      ],
+      "net_momentum": 0.3,
+      "net_wind": 0.3,
+      "narratives": [
+        "Divergent delivery trends among Chinese EV makers with NIO and XPeng gaining while Li Auto declines.",
+        "California EV incentives shifting support toward Rivian and Lucid at Tesla's expense.",
+        "Tesla faces mixed signals as regulatory probe closes but new policy headwinds emerge."
+      ],
+      "catalysts": []
+    },
+    "NIO": {
+      "domains": [
+        {
+          "domain": "ev",
+          "momentum": 0.3,
+          "direction": "NEUTRAL"
+        }
+      ],
+      "net_momentum": 0.3,
+      "net_wind": 0.3,
+      "narratives": [
+        "Divergent delivery trends among Chinese EV makers with NIO and XPeng gaining while Li Auto declines.",
+        "California EV incentives shifting support toward Rivian and Lucid at Tesla's expense.",
+        "Tesla faces mixed signals as regulatory probe closes but new policy headwinds emerge."
+      ],
+      "catalysts": []
+    },
+    "RIVN": {
+      "domains": [
+        {
+          "domain": "ev",
+          "momentum": 0.3,
+          "direction": "NEUTRAL"
+        }
+      ],
+      "net_momentum": 0.3,
+      "net_wind": 0.3,
+      "narratives": [
+        "Divergent delivery trends among Chinese EV makers with NIO and XPeng gaining while Li Auto declines.",
+        "California EV incentives shifting support toward Rivian and Lucid at Tesla's expense.",
+        "Tesla faces mixed signals as regulatory probe closes but new policy headwinds emerge."
+      ],
+      "catalysts": []
+    },
+    "LCID": {
+      "domains": [
+        {
+          "domain": "ev",
+          "momentum": 0.3,
+          "direction": "NEUTRAL"
+        }
+      ],
+      "net_momentum": 0.3,
+      "net_wind": 0.3,
+      "narratives": [
+        "Divergent delivery trends among Chinese EV makers with NIO and XPeng gaining while Li Auto declines.",
+        "California EV incentives shifting support toward Rivian and Lucid at Tesla's expense.",
+        "Tesla faces mixed signals as regulatory probe closes but new policy headwinds emerge."
+      ],
+      "catalysts": []
+    },
+    "ALB": {
+      "domains": [
+        {
+          "domain": "ev",
+          "momentum": 0.3,
+          "direction": "NEUTRAL"
+        }
+      ],
+      "net_momentum": 0.3,
+      "net_wind": 0.3,
+      "narratives": [
+        "Divergent delivery trends among Chinese EV makers with NIO and XPeng gaining while Li Auto declines.",
+        "California EV incentives shifting support toward Rivian and Lucid at Tesla's expense.",
+        "Tesla faces mixed signals as regulatory probe closes but new policy headwinds emerge."
+      ],
+      "catalysts": []
+    }
+  }
+}

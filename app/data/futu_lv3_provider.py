@@ -117,6 +117,8 @@ class FutuLV3Provider:
         # Daily K线缓存 (24hr TTL, 日线每天只变一次)
         self._daily_kline_cache: Dict[str, List[Dict]] = {}   # futu_symbol -> kline list
         self._daily_kline_cache_time: Dict[str, float] = {}   # futu_symbol -> cache timestamp
+        # 2026-06-30: 过期K线标记缓存 — 避免反复fallback到TwelveData导致429
+        self._stale_kline_notified: Dict[str, float] = {}  # futu_symbol -> last_notified_ts
 
         # ── 连接健康监控 (2026-06-02 新增, Task #7) ──
         # 跟踪最后一次收到任意 push 的时间，用于检测 OpenD 断线 / 数据陈旧
@@ -1023,10 +1025,16 @@ class FutuLV3Provider:
             _back_days = 3 if _weekday == 0 else (2 if _weekday == 6 else 1)
             prev_trading_day = (_now_et - _td(days=_back_days)).strftime("%Y-%m-%d")
 
+            # 2026-06-30 根因修复: max_count太小 → OpenD返回范围内最旧的N根(2025年)
+            # max_count要 >= 范围内交易日总数, 否则只拿最旧的。320覆盖~1.5年交易日。
+            _end_date = _now_et.strftime("%Y-%m-%d")
+            _start_date = (_now_et - _td(days=400)).strftime("%Y-%m-%d")
             hist_kwargs = {
                 "code": futu_symbol,
                 "ktype": kl_type,
-                "max_count": count,
+                "max_count": max(count + 10, 320) if ktype == "K_DAY" else count,
+                "start": _start_date,
+                "end": _end_date,
             }
             # 日内 K 线: start=T-1 获取前一交易日尾盘 K 线补充缓冲区, end=today 防止未来数据
             if ktype != "K_DAY":
@@ -1146,11 +1154,19 @@ class FutuLV3Provider:
 
         try:
             from futu import KLType
+            from datetime import date as _date, timedelta as _td
+
+            # 2026-06-30 根因修复: max_count太小 → OpenD返回范围内最旧的N根(2025年)
+            # max_count要 >= 范围内交易日总数, 否则只拿最旧的。320覆盖~1.5年交易日。
+            _end = _date.today().isoformat()
+            _start = (_date.today() - _td(days=400)).isoformat()
 
             ret, data, _ = self._quote_ctx.request_history_kline(
                 code=futu_symbol,
                 ktype=KLType.K_DAY,
-                max_count=count,
+                max_count=max(count + 10, 320),
+                start=_start,
+                end=_end,
             )
 
             if ret == 0 and data is not None and len(data) > 0:
@@ -1175,6 +1191,34 @@ class FutuLV3Provider:
                 self._daily_kline_cache_time[futu_symbol] = time.time()
 
                 logger.debug(f"[FutuLV3·DailyK] {symbol} 获取 {len(klines)} 根日K线成功")
+
+                # 2026-06-28 P0修复: 富途OpenD模拟环境的历史K线可能停滞在旧日期
+                # (request_history_kline 返回2025年数据, snapshot正常返回2026年)
+                # 根因: OpenD登录账号无LV2行情权限 → 历史K线不更新
+                # 修复: 检测最新bar日期, 超过10天则丢弃, 让上层Router fallback到TwelveData
+                try:
+                    from datetime import date, timedelta
+                    latest_bar_date = str(klines[-1].get("time", ""))[:10]
+                    if latest_bar_date:
+                        latest = date.fromisoformat(latest_bar_date)
+                        if date.today() - latest > timedelta(days=10):
+                            # 2026-06-30: 10分钟冷却 — 避免每tick都fallback到TwelveData导致429
+                            _now_ts = time.time()
+                            _last_notified = self._stale_kline_notified.get(futu_symbol, 0)
+                            if _now_ts - _last_notified > 600:  # 10分钟
+                                self._stale_kline_notified[futu_symbol] = _now_ts
+                                logger.warning(
+                                    f"[FutuLV3·DailyK] {symbol} 富途历史K线过期 "
+                                    f"(latest={latest_bar_date}, >10天前) → 返回None触发TwelveData fallback"
+                                )
+                            # 不写缓存(避免旧数据被复用), 直接返回None
+                            return None
+                except Exception:
+                    pass  # 日期解析失败不阻断
+
+                # 写入缓存
+                self._daily_kline_cache[futu_symbol] = klines
+                self._daily_kline_cache_time[futu_symbol] = time.time()
                 return klines[-count:]
             else:
                 logger.warning(f"[FutuLV3·DailyK] {symbol} 日K线获取失败: ret={ret}")

@@ -256,18 +256,15 @@ class TradingScheduler:
         # 共识引擎
         # [CLEANUP 2026-06-13] ConsensusEngine removed — zero calls, self-documented as disconnected
 
-        # 2026-04-15: 做空策略路由器 + 快速退出引擎
+        # 做空策略路由器 (2026-07-01: 期权快速退出引擎已删除, 自动交易不做期权)
         try:
             from app.execution.short_strategy import get_short_strategy_router, load_short_config
-            from app.exit.option_quick_exit import get_quick_exit_engine
             cfg = load_short_config()
             self.short_strategy_router = get_short_strategy_router(cfg)
-            self.option_quick_exit = get_quick_exit_engine(cfg.get("options", {}).get("quick_exit", {}))
-            logger.info("[调度器] 做空策略路由器 + 快速退出引擎已初始化")
+            logger.info("[调度器] 做空策略路由器已初始化")
         except Exception as e:
             logger.warning(f"[调度器] 做空策略初始化失败: {e}")
             self.short_strategy_router = None
-            self.option_quick_exit = None
 
         # 持仓管理
         self.position_store = PositionStore()
@@ -528,6 +525,10 @@ class TradingScheduler:
 
             self.news_pipeline_v2.on_news_passed = _on_news_v2_passed
 
+            # P1 (2026-06-30): 突发新闻驱动盘中即时扫描
+            # 只有当新闻 urgency == IMMEDIATE 且通过质量门时才会触发
+            self.news_pipeline_v2.on_immediate = self._on_news_v2_immediate
+
             # P0 (2026-06-26): 盘中停止定时采集；突发新闻应走主动推送，轮询仅在盘前/盘后运行。
             try:
                 from app.core.config_container import get_config as _news_cfg_getter
@@ -536,6 +537,9 @@ class TradingScheduler:
                 )
             except Exception:
                 self._news_v2_skip_market_hours = True
+
+            # P1 (2026-06-30): 突发新闻即时扫描的冷却字典
+            self._news_immediate_cooldowns: Dict[str, float] = {}
 
             logger.info("[NewsV2] 管线已初始化 (observe 模式) | watchlist=%d | skip_market_hours=%s",
                         len(wl_codes), self._news_v2_skip_market_hours)
@@ -1723,7 +1727,7 @@ class TradingScheduler:
     
     def _llm_strategy_loop(self):
         """LLM 策略引擎循环 - 按市场阶段自适应调度"""
-        from app.pipeline.llm_pipeline import run_llm_strategy_scan, run_after_hours_llm_scan, run_premarket_planning, run_open_checker, run_open_price_refresh
+        from app.pipeline.llm_pipeline import run_after_hours_llm_scan, run_premarket_planning, run_open_checker, run_open_price_refresh
         from .scheduler_triggers import get_market_phase, MarketPhase
         import time
 
@@ -1878,34 +1882,184 @@ class TradingScheduler:
         check_position_reconcile(self)
 
 
+    def _extract_symbols_from_news(self, item) -> set:
+        """从新闻条目提取 watchlist 内的相关股票代码 (P1 2026-06-30)
+
+        1. 优先使用 item.related_stocks
+        2. 通过标题+内容关键词匹配常见公司名/股票代码
+        3. 过滤到 self.watchlist
+        """
+        watchlist = set()
+        for stock in self.watchlist:
+            if isinstance(stock, str):
+                watchlist.add(stock)
+            elif isinstance(stock, dict):
+                code = stock.get("code", "")
+                if code:
+                    watchlist.add(code)
+
+        candidates = set()
+
+        # 1. 结构化关联标的
+        for raw in getattr(item, "related_stocks", None) or []:
+            candidates.add(raw if raw.startswith("US.") else f"US.{raw}")
+
+        # 2. 关键词匹配 (公司名/常见简称)
+        text = f"{item.title} {item.content}".lower()
+        company_ticker_map = {
+            "apple": "US.AAPL", "aapl": "US.AAPL", "苹果": "US.AAPL",
+            "microsoft": "US.MSFT", "msft": "US.MSFT", "微软": "US.MSFT",
+            "google": "US.GOOGL", "alphabet": "US.GOOGL", "googl": "US.GOOGL",
+            "amazon": "US.AMZN", "amzn": "US.AMZN", "亚马逊": "US.AMZN",
+            "nvidia": "US.NVDA", "nvda": "US.NVDA", "英伟达": "US.NVDA",
+            "tesla": "US.TSLA", "tsla": "US.TSLA", "特斯拉": "US.TSLA",
+            "meta": "US.META", "facebook": "US.META",
+            "amd": "US.AMD", "超威": "US.AMD",
+            "baba": "US.BABA", "alibaba": "US.BABA", "阿里": "US.BABA",
+            "pdd": "US.PDD", "pinduoduo": "US.PDD", "拼多多": "US.PDD",
+            "jd": "US.JD", "京东": "US.JD",
+            "nio": "US.NIO", "蔚来": "US.NIO",
+            "xpev": "US.XPEV", "xpeng": "US.XPEV", "小鹏": "US.XPEV",
+            "li auto": "US.LI", "理想": "US.LI",
+            "futu": "US.FUTU", "富途": "US.FUTU",
+            "tigr": "US.TIGR", "老虎": "US.TIGR",
+            "netflix": "US.NFLX", "nflx": "US.NFLX",
+            "qualcomm": "US.QCOM", "高通": "US.QCOM",
+            "broadcom": "US.AVGO", "博通": "US.AVGO",
+            "micron": "US.MU", "美光": "US.MU",
+            "arm": "US.ARM",
+        }
+        for name, ticker in company_ticker_map.items():
+            if name in text:
+                candidates.add(ticker)
+
+        # 3. 只保留在 watchlist 里的标的
+        return candidates & watchlist
+
+    def _on_news_v2_immediate(self, item):
+        """突发新闻回调：触发相关标的的即时信号扫描 (P1 2026-06-30)
+
+        链路：突发新闻 → 提取标的 → 风控/时段/冷却检查 → force_poll →
+              现有信号扫描流水线 (因子/LLM/风控/下单)
+        """
+        try:
+            from app.core.config_container import get_config as _get_cfg
+            from app.us_pipeline.risk_state_machine import RiskStateMachine, RiskState
+            from app.core.scheduler_triggers import get_market_phase, MarketPhase
+
+            cfg = _get_cfg().get_dotted("news_v2.immediate_scan", {}) or {}
+            if not cfg.get("enabled", False):
+                return
+
+            # 1. 紧急程度过滤
+            min_urgency = cfg.get("min_urgency", "IMMEDIATE")
+            urgency_order = {"LOW": 0, "NORMAL": 1, "HIGH": 2, "IMMEDIATE": 3}
+            item_urgency = getattr(item, "urgency", "NORMAL") or "NORMAL"
+            if urgency_order.get(item_urgency, 0) < urgency_order.get(min_urgency, 3):
+                return
+
+            # 2. 标题黑名单过滤
+            title_lower = item.title.lower()
+            for bad in cfg.get("title_blacklist", []):
+                if bad.lower() in title_lower:
+                    logger.debug("[NewsV2-Immediate] 命中黑名单跳过: %s | %s", bad, item.title[:60])
+                    return
+
+            # 3. 时段检查
+            phase = get_market_phase()
+            if cfg.get("require_trading_hours", True) and phase != MarketPhase.TRADING:
+                logger.debug("[NewsV2-Immediate] 非盘中时段，跳过: %s | phase=%s", item.title[:60], phase)
+                return
+
+            # 4. 全局风险状态检查 (RISK_OFF / HALT 禁止新开仓)
+            risk_state = RiskStateMachine().get_state()
+            if risk_state in (RiskState.RISK_OFF, RiskState.HALT):
+                logger.warning("[NewsV2-Immediate] 风险状态 %s，禁止新开仓: %s", risk_state, item.title[:60])
+                return
+
+            # 5. 提取 watchlist 内相关标的
+            symbols = self._extract_symbols_from_news(item)
+            if not symbols:
+                logger.debug("[NewsV2-Immediate] 无 watchlist 关联标的: %s", item.title[:60])
+                return
+
+            # 6. 冷却检查 + 触发扫描
+            cooldown_sec = int(cfg.get("cooldown_seconds", 300))
+            now_ts = time.time()
+            cooldowns = getattr(self, "_news_immediate_cooldowns", {})
+            for symbol in symbols:
+                last_triggered = cooldowns.get(symbol, 0)
+                if now_ts - last_triggered < cooldown_sec:
+                    logger.debug("[NewsV2-Immediate] %s 冷却中，跳过", symbol)
+                    continue
+
+                cooldowns[symbol] = now_ts
+                logger.info(
+                    "[NewsV2-Immediate] ⚡ 突发新闻触发即时扫描 | %s | %s | urgency=%s",
+                    symbol, item.title[:60], item_urgency
+                )
+                self.trigger_immediate_scan(symbol, reason=f"breaking_news:{item.source_name}")
+
+            self._news_immediate_cooldowns = cooldowns
+
+        except Exception as e:
+            logger.warning("[NewsV2-Immediate] 处理异常: %s", e)
+
     def _news_v2_loop(self):
         """新闻管线 V2 后台采集循环 (observe 模式，零副作用)
         P0-5 修复 (2026-05-03): 持久化 event loop，不再每 180s 创建/销毁
         P0 (2026-06-26): 盘中 (09:30-16:00 ET) 跳过定时采集，突发新闻走主动推送。
+        P1 (2026-06-30): 按市场阶段动态调整轮询频率，避免 OVERNIGHT 空跑 API。
         """
         import asyncio
         from app.core.scheduler_triggers import (
             get_market_phase, MarketPhase, sleep_if_market_closed, interruptible_sleep
         )
 
-        logger.info("[NewsV2] 管线采集循环已启动 (interval=180s, observe模式, skip_market_hours=%s)",
-                    getattr(self, "_news_v2_skip_market_hours", True))
         self._news_v2_running = True
+        skip_market_hours = getattr(self, "_news_v2_skip_market_hours", True)
+
+        # P1: 阶段化采集频率，避免非交易时段空跑
+        phase_intervals = {
+            MarketPhase.TRADING: (180, "盘中跳过定时采集，突发新闻走主动推送" if skip_market_hours else "盘中正常采集"),
+            MarketPhase.PRE_MARKET: (1800, "盘前降频采集"),
+            MarketPhase.AFTER_HOURS: (1800, "盘后降频采集"),
+            MarketPhase.OVERNIGHT: (900, "深夜休市，新闻管线休眠"),
+            MarketPhase.WEEKEND: (300, "周末/假日，新闻管线休眠"),
+        }
+
+        logger.info("[NewsV2] 管线采集循环已启动 (phase-aware, skip_market_hours=%s)", skip_market_hours)
 
         # P0-5: 创建一次 event loop 并复用
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
             while self._news_v2_running and self.running:
+                phase = get_market_phase()
+                interval, phase_msg = phase_intervals.get(phase, (180, "默认采集"))
+
                 try:
                     # 第二层防线: 服务跨午夜进入假日时，运行时守卫
-                    if sleep_if_market_closed(180, lambda: self._news_v2_running and self.running):
+                    if sleep_if_market_closed(300, lambda: self._news_v2_running and self.running):
+                        continue
+
+                    # P1: 深夜休市直接跳过 API 调用，避免空跑
+                    if phase == MarketPhase.OVERNIGHT:
+                        logger.debug("[NewsV2] %s，跳过本轮 (interval=%ds)", phase_msg, interval)
+                        if interruptible_sleep(interval, lambda: self._news_v2_running and self.running):
+                            return
+                        continue
+
+                    # P1: 周末/假日由 sleep_if_market_closed 守卫，理论上不会到达；保留兜底
+                    if phase == MarketPhase.WEEKEND:
+                        if interruptible_sleep(interval, lambda: self._news_v2_running and self.running):
+                            return
                         continue
 
                     # P0 (2026-06-26): 盘中跳过定时轮询，仅盘前/盘后/周末采集
-                    if self._news_v2_skip_market_hours and get_market_phase() == MarketPhase.TRADING:
-                        logger.info("[NewsV2] 交易时段跳过定时采集，等待下一轮")
-                        if interruptible_sleep(180, lambda: self._news_v2_running and self.running):
+                    if skip_market_hours and phase == MarketPhase.TRADING:
+                        logger.info("[NewsV2] %s，等待下一轮 (interval=%ds)", phase_msg, interval)
+                        if interruptible_sleep(interval, lambda: self._news_v2_running and self.running):
                             return
                         continue
 
@@ -1917,11 +2071,11 @@ class TradingScheduler:
                     logger.warning("[NewsV2] 采集异常: %s", e)
 
                 # 等待 180 秒
-                if interruptible_sleep(180, lambda: self._news_v2_running and self.running):
+                if interruptible_sleep(interval, lambda: self._news_v2_running and self.running):
                     return
         finally:
             loop.close()
-        
+
         logger.info("[NewsV2] 管线采集循环已停止")
 
     def _vix_monitor_loop(self):

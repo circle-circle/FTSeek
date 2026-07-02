@@ -1,2228 +1,2011 @@
-version: 3.0.0
-updated: '2026-04-29'
-description: FTSeek-US 美股模拟交易系统 - 统一配置 v3 (含新闻V2 + 配置治理 + 地缘增强)
-base:
-  project_name: FTSeek-US
-  version: 1.0.0
-  market: US
-  currency: USD
-  timezone: America/New_York
-  trade_env: 1  # 2026-06-23: shadow模拟阶段, 与 .env.us TRADE_ENV=1 对齐
-  simulate_account_id: ''
-
-# 运行模式 (2026-05-14, karpathy MVP):
-# - normal: 标准风控 + 标准频率 (实盘 / 上线候选)
-# - sandbox: 模拟盘加速实验 — 风控放宽 + 频率提升, 仅 universe 内交易
-# 切换: 改 mode.sandbox.enabled 后重启
-# 数据隔离: trade_records.mode 字段标记 (sandbox/normal), 不混淆复盘
-mode:
-  sandbox:
-    # RFC-059 (2026-06-01): 暂停 sandbox 模式
-    # 数据驱动: sandbox 53 笔 13.2% wr -$28,184 vs normal 268 笔 30.6% +$13,607
-    # 重启条件 (满足全部):
-    #   1. voting_predictions 回填率 >= 80% (确认反馈链路真修好)
-    #   2. 连续 7 天 scripts/validate_strategy_health.py 无 BLOCKING
-    #   3. 沙盒 universe 经过数据复核 (移除 0% 胜率标的)
-    enabled: false              # 2026-06-01: P1-D→暂停 (was true 2026-05-15)
-    # O7 (2026-05-16): rebalance — 干掉 AAPL/MSFT/META (5/15 信号 0 笔, ATR 干涸)
-    # 加入 RIVN/LCID/SNDK/ARM/NIO/BWXT/MU (5/15 实际有信号触发的高波动小盘)
-    # 保留 NVDA/TSLA/AMD/SPY/QQQ 作为 anchor + ETF beacon. 总 12 只.
-    universe:                   # 沙盒仅交易这些 symbol (覆盖 watchlist)
-      # ── 高波动小盘 (信号易触发) ──
-      - TSLA                    # EV 龙头, 计划频繁出现
-      - AMD                     # 半导体二线, ATR 中等 (已升级 TIER1)
-      - RIVN                    # ATR%≈0.20%, 5/15 实际有 LONG 触发
-      - SNDK                    # 高波存储芯片, 5/15 SHORT +$195
-      - ARM                     # 5/15 SHORT +$1219 (单日最大盈利)
-      - BWXT                    # 唯一 SHORT 信号高触发的工业股
-      - MU                      # 存储周期股, 波段明确
-      # ── 市场 beacon (大盘+科技基准, Beta 对冲) ──
-      - SPY
-      - QQQ
-      # ── 已移除 (数据驱动) ──
-      # NVDA: 3笔 0%胜率 -$2905, ATR极低, 5/30暂停
-      # LCID: 16%胜率, 黑名单
-      # NIO:  低胜率, 黑名单
-    # 风控放宽 (但不禁)
-    overrides:
-      scheduler.scan_interval_minutes: 5       # ADR-005: 10→5min — 加速数据采集, 配合紧退出保质量
-      scheduler.monitor_interval_minutes: 0.25 # 0.5 → 0.25
-      strategy.signal_cooldown: 30             # 120 → 30
-      # Task #2 (2026-05-31): 沙盒 override 与新默认对齐, 避免 sandbox 模式实际门槛偏低
-      risk.signal_quality.min_confidence: 0.65 # 0.50 → 0.65 与 defaults 对齐
-      strategies.defaults.min_strength: 50     # 20 → 50 与 defaults 对齐
-      MAX_DAILY_DRAWDOWN: 0.05                 # 0.03 → 0.05
-      risk.position.max_per_sector: 0.55       # 0.40 → 0.55
-      symbol_cooldown.reversal_seconds: 60     # F1: 沙盒加速实验 (180 → 60)
-    # 永远不动的硬底线 (即使沙盒也保留)
-    keep_strict:
-      - kill_switch
-      - per_trade_risk_pct                     # 单笔风险 R 不动
-      - max_total_position                     # 总敞口不动
-      - sector_circuit_breaker
-      - critical_alerts
-
-# F18 (2026-05-12): 路径单一真相源 — 所有模块通过 app.core.paths 获取
-paths:
-  data_dir: "data"
-  reviews_dir: "data/daily_reviews"
-  weekly_reviews_dir: "data/weekly_reviews"
-  monthly_reviews_dir: "data/monthly_reviews"
-  improvement_plans_dir: "data/improvement_plans"
-  decisions_db: "data/decisions.db"
-  rejections_db: "data/rejections.db"
-  trade_records_db: "data/ftseek_us.db"
-  trade_records_legacy_db: "data/trade_records.db"
-  trade_records_json: "data/trade_records.json"
-  exit_quality_db: "data/exit_quality.db"
-  review_db: "data/ftseek_us_review.db"
-  battle_plan: "data/daily_battle_plan_us.json"
-  obsidian_vault: "obsidian_vault"
-  vix_cache_dir: "data/vix_cache"
-  news_us_db: "data/rsshub_us/news_us.db"
-  debate_history_db: "data/debate_framework/debate_history.db"
-  watchlist: "config/watchlist_us.json"
-  us_stock_config: "config/us_stock_config.yaml"
-  logs_dir: "logs"
-  config_path: "config/unified_config.yaml"
-  exit_policy: "app/risk/exit_policy.yaml"
-
-# LLM 预算控制 (2026-05-13)
-llm_budget:
-  daily_max_usd: 5.0           # 每日 LLM 总成本上限
-  per_module:
-    attribution: 2.0           # 逐笔归因上限
-    weekly_proposal: 2.0       # 周度假设上限
-    premarket: 1.0             # 盘前上限
-  cost_alerts:
-    warn_pct: 0.7              # 70% 告警
-    halt_pct: 1.0              # 100% 停用
-
-# LLM投票缓存配置（2026-05-31优化：30min→5min提升决策新鲜度）
-# 背景: 原30分钟TTL在行情变动<0.3%时复用, 实测30min内可能走出5%大波动导致决策滑后
-# 优化: TTL缩短至5min, 同时适当放宽价格阈值以平衡API成本
-llm_voting:
-  cache_ttl_seconds: 300          # 投票缓存有效期（秒），原1800→300
-  price_change_threshold: 0.005   # 行情变动阈值，超过则强制重新投票，原0.008→0.005 (T+1 IC负，信号越新鲜越好)
-  max_cache_entries: 50           # 最大缓存条目数 (超出后按LRU淘汰)
-
-# llm_models: 已删除 (2026-06-14 + 2026-06-20) — DEPRECATED, 0 代码引用
-
-# ─── 统一 LLM 路由 (2026-05-17, model_call.py SoT) ───
-# 切换模型只动这里: llm.models.<alias>.model_name
-# 业务 feature → 模型映射: llm.features.<feature>
-llm:
-  # 4 个具体型号 (替代旧 multi_model_client.MODEL_REGISTRY)
-  # flash = 低延迟轻量, pro = 深度推理
-  models:
-    qwen-flash:
-      provider: dashscope
-      api_key_env: DASHSCOPE_API_KEY
-      base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
-      model_name: qwen3.6-flash       # ← 升级模型仅改这里
-      timeout: 8                       # 秒
-      cost_in: 0.0003                  # USD per 1k tokens
-      cost_out: 0.0006
-    qwen-plus:
-      provider: dashscope
-      api_key_env: DASHSCOPE_API_KEY
-      base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
-      model_name: qwen3.6-plus
-      timeout: 30
-      cost_in: 0.004
-      cost_out: 0.012
-    deepseek-flash:
-      provider: deepseek
-      api_key_env: DEEPSEEK_API_KEY
-      base_url: https://api.deepseek.com
-      model_name: deepseek-v4-flash
-      timeout: 8
-      cost_in: 0.0002
-      cost_out: 0.0008
-    deepseek-pro:
-      provider: dashscope
-      api_key_env: DASHSCOPE_API_KEY
-      base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
-      model_name: deepseek-v4-pro
-      timeout: 300
-      cost_in: 0.002
-      cost_out: 0.008
-    # ─── 催化辩论专用强模型 (2026-05-27 RFC-Catalyst) ───
-    qwen-max:
-      provider: dashscope
-      api_key_env: DASHSCOPE_API_KEY
-      base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
-      model_name: qwen3.7-max           # 最强Qwen: 宏观传导推理
-      timeout: 300
-      cost_in: 0.008
-      cost_out: 0.024
-    # ─── GLM-5.2 (2026-06-21): 智谱AI, dashscope hosted, 第3模型 ───
-    glm-5:
-      provider: dashscope
-      api_key_env: DASHSCOPE_API_KEY
-      base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
-      model_name: glm-5.2
-      timeout: 300
-      cost_in: 0.006
-      cost_out: 0.020
-    kimi-k2:
-      provider: dashscope
-      api_key_env: DASHSCOPE_API_KEY
-      base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
-      model_name: kimi-k2.6             # 月之暗面: 长上下文+行业分析
-      timeout: 60
-      cost_in: 0.004
-      cost_out: 0.016
-
-  # Feature → Model 路由
-  # 简单格式: 'feature_name: <alias>' (单模型, 失败 None)
-  # 完整格式: 'feature_name: {primary, fallback, cache_on_fail}'
-  features:
-    # 延迟敏感 (FLASH, 单模型, 失败仅日志)
-    news_classifier:    qwen-flash
-    thesis_inferer:     qwen-max               # 2026-06-14: 升级至最强
-    thesis_challenge:   qwen-max               # 2026-06-14: thesis审视，结构化输出
-    plan_validator:     {primary: qwen-max, fallback: deepseek-pro}  # 2026-06-15: 作战计划候选验证+fallback
-    sentiment:          qwen-flash
-
-    premarket_planner:  {primary: qwen-max,      fallback: deepseek-pro, cache_on_fail: true}
-    daily_review:       {primary: deepseek-pro,  fallback: qwen-max,     cache_on_fail: true}
-    weekly_proposer:    {primary: deepseek-pro,  fallback: qwen-max}
-    daily_auto_tuner:   {primary: deepseek-pro,  fallback: qwen-max}
-    regime_classifier:  {primary: qwen-max,      fallback: deepseek-pro}
-    attribution_engine: {primary: qwen-max,      fallback: deepseek-pro}  # RFC-050: LLM 逐笔归因
-
-    # 关键决策 (PRO + critique 双调, 通过 cross_check 字段控制)
-    # 2026-06-14: 升级至最强模型
-    emergency_review:        {primary: deepseek-pro, fallback: qwen-max}
-
-    # ⭐ NEW 2026-05-19 — 真正影响交易决策的 LLM features
-    # 第一性原则: LLM 只做量化做不到的事 (跨时间模式 + 多源综合 + 因果推理)
-    # 2026-06-14: 升级至最强模型
-    pre_entry_gate:          {primary: deepseek-pro, fallback: qwen-max, cache_on_fail: false}
-    failure_mode_miner:      {primary: deepseek-pro, fallback: qwen-max}
-    adaptive_tuner:          {primary: deepseek-pro, fallback: qwen-max}
-
-    # ⭐ 2026-05-21 统一迁移 — 原散在 _call_llm 模块
-    # 2026-06-14: 全面升级至最强模型, 不限制输出质量
-    llm_strategy_engine:     {primary: qwen-max,      fallback: deepseek-pro}   # json_mode, 策略打分
-    model_agent:             {primary: deepseek-pro,  fallback: qwen-max}      # json_mode, 投票评分
-    debate_engine:           {primary: qwen-max,      fallback: deepseek-pro}   # 核心辩论, 最强模型
-    debate_bull:             {primary: qwen-max,      fallback: deepseek-pro}   # 多头策略师角色
-    debate_bear:             {primary: deepseek-pro,  fallback: qwen-max}       # 空头审计师角色
-    debate_arbiter:          {primary: qwen-max,      fallback: deepseek-pro}   # 仲裁综合角色
-    agent_bridge:            {primary: deepseek-pro,  fallback: qwen-max}      # json_mode, 辩论桥接
-    claude_code:             {primary: deepseek-pro,  fallback: qwen-max}      # 代码生成/审计
-
-    # ⭐ 2026-05-27 催化辩论 — 3视角各用最强模型 (不同家族: 阿里/DeepSeek/月之暗面)
-    # 2026-06-14: fallback 全部升级为 qwen-max
-    catalyst_macro:      {primary: qwen-max,    fallback: deepseek-pro}    # qwen3.7-max: 宏观传导
-    catalyst_risk:       {primary: deepseek-pro, fallback: qwen-max}      # deepseek-v4-pro: 风控质疑
-    catalyst_sentiment:  {primary: kimi-k2,     fallback: qwen-max}      # kimi-k2.6: 行业情绪
-    catalyst_classifier: {primary: qwen-max,    fallback: deepseek-pro}   # 催化分类+中文翻译
-    catalyst_review:     {primary: deepseek-pro, fallback: qwen-max}     # 盘后回看
-    catalyst_breaking:   {primary: qwen-flash,  fallback: qwen-max}      # 盘中快速(低延迟)
-
-    # ⭐ 2026-06-10 个股分析 — Dashboard 个股详情页 LLM 深度分析
-    stock_analyst:       {primary: glm-5,          fallback: qwen-max}    # GLM-5.2: 第3模型视角
-
-    # ⭐ 2026-06-18 Playbook System — 每日交易指令生成 (反幻觉架构)
-    playbook_generator:
-      primary: "qwen-max"
-      fallback: "deepseek-pro"
-      temperature: 0
-      max_tokens: 2048
-      cache_on_fail: true
-
-    # ⭐ 2026-06-16 深度目标分析 — 作战计划每个 target 的多空辩论分析
-    deep_target_analysis:
-      primary: "qwen-max"
-      fallback: "deepseek-pro"
-      temperature: 0.4
-      max_tokens: 3000
-      cache_on_fail: true
-
-    # ⭐ 2026-06-16 Stage 7: 多空辩论 — 对抗性推理 (deepseek-pro 擅长)
-    dr_debate:
-      primary: "deepseek-pro"
-      fallback: "qwen-max"
-      temperature: 0.3
-      max_tokens: 2500
-      cache_on_fail: true
-
-    # ⭐ 2026-06-16 Stage 8.5: 风险辩论 — 三方结构性分析 (deepseek-pro 擅长)
-    dr_risk_debate:
-      primary: "deepseek-pro"
-      fallback: "qwen-max"
-      temperature: 0.4
-      max_tokens: 800
-      cache_on_fail: false
-    web_search_fundamental:
-      primary: "qwen-max"
-      fallback: "deepseek-pro"
-      temperature: 0.2
-      max_tokens: 1500
-      cache_on_fail: true
-
-  # 旧别名兼容映射 (2026-05-21): 原 multi_model_client 的 "qwen"/"deepseek" 等别名
-  # 迁移期使用，后续代码统一改用 feature 路由后可删除
-  legacy_aliases:
-    qwen: qwen-plus
-    deepseek: deepseek-pro
-    minimax: qwen-flash          # MiniMax 已停用，降级用 qwen-flash
-    fallback: qwen-plus
-
-  # 默认值
-  defaults:
-    cache_dir: data/llm_cache
-    divergence_threshold: 0.5     # cross_check 时 critic severity ≥ 此值则拒方案
-
-  # 旧 strategy_engine — 仅 app/strategy/llm_strategy_engine.py 仍读
-  # 2026-05-17 已合并入主 llm 段, 防 yaml 重复 key 覆盖. premarket_planner 已迁 model_call.
-  strategy_engine:
-    enabled: true
-    provider: bailian
-    model: qwen-max
-    base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
-    api_key_env: BAILIAN_API_KEY
-    api_key: ''
-    timeout_seconds: 300
-    thinking_level: high
-
-# LLM 增强 features (L1-L12, 2026-05-14) — 默认全部 disabled, 模拟盘逐项打开验证
-llm_features:
-  # ─── L1 新闻 LLM 解读 ───
-  news_classifier:
-    enabled: true                 # P1-B (2026-05-15): 启用 — 新闻 alpha 缺失修复
-    model: minimax              # 情绪分析便宜
-    timeout_sec: 20
-    daily_max_usd: 0.50         # 单 feature 预算
-  news_signal_gen:              # L9, 依赖 L1
-    enabled: false
-    min_credibility: 0.6
-    min_abs_sentiment: 0.5
-    cooldown_sec: 300
-    max_position_pct: 0.05
-    impacted_min_confidence: 0.7
-  news_multilang:               # L12, 依赖 L1
-    enabled: false              # 中/日/英 prompt 适配
-
-  # ─── L2 LLM 风控 gating ───
-  emergency_review:
-    enabled: false
-    model: qwen
-    timeout_sec: 30
-    cooldown_sec: 3600
-    price_drop_5m_threshold: 0.03
-    vix_spike_5m_threshold: 0.20
-    negative_news_threshold: 0.6
-    daily_max_usd: 0.30
-
-  # ─── L3 entry_thesis 推断 ───
-  thesis_inferer:
-    enabled: true                 # PB-1 (2026-05-15): 启用 — 让退出按入场理由选 policy
-    model: qwen-plus            # 2026-05-21: 改用 dashscope (DEEPSEEK_API_KEY 未配置)
-    timeout_sec: 15
-    daily_max_usd: 0.40
-
-  # ─── L6 场景分类器 — 暂保留 (但不启用) 2026-05-19 ───
-  # 现状: market_data_router 已用 RSI/MACD 规则给出 regime (TREND_UP/DOWN/RANGE),
-  # 5/18 实测 regime 准确率约 70-80%. LLM regime_classifier 30min 一次频率太高 + 成本 ~$1/日.
-  # 替代方案: 改在 weekly_proposer 中由 LLM 给出"本周市场 regime 主基调", 替代 30min 高频
-  regime_classifier:
-    enabled: false              # 暂禁用, 可能在 weekly_proposer 中复用
-    model: qwen
-    interval_minutes: 30
-    timeout_sec: 20
-    daily_max_usd: 0.30
-
-  # ─── L8 日级 AutoTuner — 待重构启用 2026-05-19 ───
-  # 重构方向: 输出 yaml 调参建议写入 auto_tuner_proposals.db, 人工 review 后应用.
-  # 见 scripts/llm_adaptive_tuner.py
-  daily_auto_tuner:
-    enabled: false              # 待 scripts/llm_adaptive_tuner.py 实施
-    model: deepseek
-    timeout_sec: 60
-    daily_max_usd: 0.50
-
-  # ─── L10 复盘对话 CLI ───
-  replay_dialog:
-    enabled: true               # 默认开 (CLI 工具无副作用)
-    daily_max_usd: 1.00
-
-  # ─── L14 ⭐ Pre-Entry Signal Gate — NEW 2026-05-19 ───
-  # 新增: 在 main entry 前用 LLM 拦截"看历史就该拒"的入场信号.
-  # 输入: 候选信号 + 该 symbol+direction 7d 历史 + market_ctx
-  # 输出: {go: bool, reason: str, confidence: float}
-  # 失败降级: go=True (不阻塞主线, 向后兼容)
-  # 价值: 5/12-18 LCID LONG 14 笔 -$694 这种, LLM 看历史立即拦截
-  pre_entry_gate:
-    enabled: false              # 默认 disabled, 等今晚 audit raw 数据观察后启用
-    model: deepseek-pro         # 走 model_call yaml route 实际优先级
-    timeout_sec: 5              # 主线 entry 路径必须快, 5s 超时降级放行
-    min_history_trades: 5       # 该 symbol+direction 至少 5 笔历史才用 LLM (否则数据不足放行)
-    cache_ttl_sec: 300          # 同 symbol+direction 5min 内复用结果, 减成本
-    daily_max_usd: 1.50         # 主线 ~30 entry/天 × $0.05 = ~$1.5
-
-# ── 统一推送 PushHub 配置 (2026-05-16, app/push/) ──
-# 防疲劳 + 聚合 + 多通道 fallback. 旧 app/notifier/* 仍可用 (作为 channel backend).
-push:
-  dedup_ttl_sec: 60               # 同 dedup_key 60s 内去重
-  aggregate_window_sec: 300       # LOW 级别消息 5min 窗口聚合
-  health_check: true              # 每小时 ping 验证通道存活
-  # 渐进迁移 (2026-05-16): 启用 PushHub, 旧 notifier 调用方逐步切
-  enabled: true
-
-trading_hours:
-  market_open: 09:30
-  market_close: '16:00'
-  pre_market_open: 04:00
-  after_market_close: '20:00'
-opend:
-  host: ${FUTU_OPEND_HOST}
-  port: 11111
-  login_account: ${FUTU_LOGIN_ACCOUNT}
-  login_password: ${FUTU_LOGIN_PWD}
-data_sources:
-  twelvedata:
-    api_key: ${TWELVEDATA_API_KEY}
-    rate_limit_per_min: 8
-    refill_interval_sec: 7.5
-    cache_ttl:
-      quote: 300
-      timeseries: 1800
-      vix: 60    # 2026-06-10: 600→60, VIX闪崩时10min缓存导致用崩盘前参数交易
-      spy: 900
-    batch_size: 8
-  finnhub:
-    api_key: ${FINNHUB_API_KEY}
-    rate_limit_per_min: 60
-    refill_interval_sec: 1.0
-    cache_ttl:
-      quote: 60
-      news: 7200
-      sentiment: 3600
-  alphavantage:
-    api_key: ${ALPHAVANTAGE_API_KEY}
-    premium: false
-    rate_limit_per_min: 5
-    rate_limit_per_day: 500
-    cache_ttl:
-      quote: 300
-      timeseries: 1800
-      vix: 60    # 2026-06-10: 600→60, VIX闪崩时10min缓存导致用崩盘前参数交易
-      spy: 900
-  priority:
-    primary: twelvedata+finnhub
-    fallback: alphavantage
-watchlist:
-  us_stocks:
-  # P0 标的池优化 (2026-05-30): 按波动特征对齐 tier/max_position_ratio
-  #   - TIER1 高波 (TSLA/RIVN/ARM/SNDK): 0.08
-  #   - TIER1 中波 (UBER/ORCL/BWXT/LLY/MU): 0.12
-  #   - TIER2 稳定 (MSFT/GOOG/AMZN/META/AAPL): 0.15
-  # 同步禁用归因数据持续亏损标的: QCOM/LCID/TME/NVDA/NIO
-  - code: US.TSLA
-    name: Tesla Inc
-    sector: Consumer Cyclical
-    enabled: true
-    tier: TIER1
-    max_position_ratio: 0.08
-    notes: 新能源车龙头 | ATR%≈0.08% | 高波收紧仓位
-  - code: US.NVDA
-    name: NVIDIA Corp
-    sector: Semiconductors
-    enabled: false
-    tier: TIER1
-    max_position_ratio: 0.15
-    notes: AI芯片核心 | 近期ATR极低0%胜率，暂停 (2026-05-30)
-  - code: US.RIVN
-    name: Rivian Automotive
-    sector: Consumer Cyclical
-    enabled: true
-    tier: TIER1
-    max_position_ratio: 0.08
-    notes: 最高ATR%≈0.20% | 短线回旋空间大 | 高波收紧仓位
-  - code: US.UBER
-    name: Uber Technologies
-    sector: Technology
-    enabled: true
-    tier: TIER1
-    max_position_ratio: 0.12
-    notes: 出行+SaaS | ATR%≈0.12% | 趋势清晰
-  - code: US.LCID
-    name: Lucid Group
-    sector: Consumer Cyclical
-    enabled: false
-    tier: TIER1
-    max_position_ratio: 0.08
-    notes: 黑名单16%胜率，禁止入场 (2026-05-30)
-  - code: US.SNDK
-    name: SanDisk Corp
-    sector: Technology
-    enabled: true
-    tier: TIER1
-    max_position_ratio: 0.08
-    notes: 高波动存储芯片 | ATR%高 | 每日交易标的
-  - code: US.ARM
-    name: Arm Holdings
-    sector: Semiconductors
-    enabled: true
-    tier: TIER1
-    max_position_ratio: 0.08
-    notes: 架构授权 | 波动弹性好 | ATR%≈0.05% | 高波收紧仓位
-  - code: US.MU
-    name: Micron Technology
-    sector: Semiconductors
-    enabled: true
-    tier: TIER1
-    max_position_ratio: 0.12
-    notes: 存储芯片周期股 | 波段明确
-  - code: US.QCOM
-    name: Qualcomm Inc
-    sector: Semiconductors
-    enabled: false
-    tier: TIER1
-    max_position_ratio: 0.15
-    notes: 44笔22.7%胜率持续亏损-$3.8K，暂停 (2026-05-30)
-  - code: US.BWXT
-    name: BWX Technologies
-    sector: Industrials
-    enabled: true
-    tier: TIER1
-    max_position_ratio: 0.12
-    notes: 核能防务 | 唯一SHORT信号触发标的
-  - code: US.LLY
-    name: Eli Lilly
-    sector: Healthcare
-    enabled: true
-    tier: TIER1
-    max_position_ratio: 0.12
-    notes: 减肥药龙头 | 催化剂密集 | ATR%≈0.06%
-  - code: US.AAPL
-    name: Apple Inc
-    sector: Technology
-    enabled: true
-    tier: TIER2
-    max_position_ratio: 0.15
-    notes: 消费电子市值锚定 | 稳定大盘股可放宽仓位
-  - code: US.MSFT
-    name: Microsoft Corp
-    sector: Technology
-    enabled: true
-    tier: TIER2
-    max_position_ratio: 0.15
-    notes: 云计算市值锚定 | 稳定大盘股可放宽仓位
-  - code: US.GOOG
-    name: Alphabet Inc Class C
-    sector: Technology
-    enabled: true
-    tier: TIER2
-    max_position_ratio: 0.15
-    notes: 搜索/AI 市值锚定 | 稳定大盘股可放宽仓位
-  - code: US.AMZN
-    name: Amazon.com Inc
-    sector: Consumer Cyclical
-    enabled: true
-    tier: TIER2
-    max_position_ratio: 0.15
-    notes: 电商/云 市值锚定 | 稳定大盘股可放宽仓位
-  - code: US.META
-    name: Meta Platforms
-    sector: Technology
-    enabled: true
-    tier: TIER2
-    max_position_ratio: 0.15
-    notes: 社交媒体/AI 市值锚定 | 稳定大盘股可放宽仓位
-  - code: US.AVGO
-    name: Broadcom Inc
-    sector: Semiconductors
-    enabled: true
-    tier: TIER2
-    max_position_ratio: 0.12
-    notes: 网络芯片/AI | 半导体双核
-  - code: US.TSM
-    name: TSMC
-    sector: Semiconductors
-    enabled: true
-    tier: TIER2
-    max_position_ratio: 0.15
-    notes: 晶圆代工 | Playbook+236高触发，加仓 (2026-06-26)
-  - code: US.AMD
-    name: Advanced Micro Devices
-    sector: Semiconductors
-    enabled: true
-    tier: TIER1
-    max_position_ratio: 0.12
-    notes: CPU/GPU | 半导体二线弹性
-  - code: US.NFLX
-    name: Netflix Inc
-    sector: Communication Services
-    enabled: false
-    tier: TIER2
-    max_position_ratio: 0.12
-    notes: Playbook近30天-345，暂停 (2026-06-26)
-  - code: US.BABA
-    name: Alibaba Group
-    sector: Consumer Cyclical
-    enabled: true
-    tier: TIER2
-    max_position_ratio: 0.1
-    notes: 中概电商龙头 | 中概锚定
-  - code: US.PDD
-    name: PDD Holdings
-    sector: Consumer Cyclical
-    enabled: true
-    tier: TIER2
-    max_position_ratio: 0.12
-    notes: 跨境电商 | Playbook+253 (2026-06-26)
-  - code: US.NIO
-    name: NIO Inc
-    sector: Consumer Cyclical
-    enabled: true
-    tier: TIER2
-    max_position_ratio: 0.08
-    notes: 低波动中概新能源车 | OKR优化小仓位试运行 (2026-06-26)
-  - code: US.NTES
-    name: NetEase Inc
-    sector: Communication Services
-    enabled: true
-    tier: TIER2
-    max_position_ratio: 0.12
-    notes: 中概游戏龙头 | Playbook+274 (2026-06-26)
-  - code: US.TME
-    name: Tencent Music
-    sector: Communication Services
-    enabled: false
-    tier: TIER2
-    max_position_ratio: 0.08
-    notes: 0%胜率-$913，暂停 (2026-05-30)
-  - code: US.ORCL
-    name: Oracle Corp
-    sector: Technology
-    enabled: true
-    tier: TIER1
-    max_position_ratio: 0.06
-    notes: Playbook近30天-975但MAIN盈利，降仓观察 (2026-06-26)
-  - code: US.CRM
-    name: Salesforce Inc
-    sector: Technology
-    enabled: true
-    tier: TIER2
-    max_position_ratio: 0.15
-    notes: CRM/SaaS | Playbook近30天+441 (2026-06-26)
-  - code: US.BA
-    name: Boeing Co
-    sector: Industrials
-    enabled: true
-    tier: TIER2
-    max_position_ratio: 0.15
-    notes: 航空制造 | Playbook近30天最佳+731 (2026-06-26)
-  - code: US.LMT
-    name: Lockheed Martin
-    sector: Industrials
-    enabled: true
-    tier: TIER2
-    max_position_ratio: 0.06
-    notes: 军工防务 | Playbook-600，降仓 (2026-06-26)
-  - code: US.UNH
-    name: UnitedHealth Group
-    sector: Healthcare
-    enabled: true
-    tier: TIER2
-    max_position_ratio: 0.15
-    notes: 医疗保险 | Playbook+313，防御性配置 (2026-06-26)
-  - code: US.JPM
-    name: JPMorgan Chase
-    sector: Financial Services
-    enabled: true
-    tier: TIER2
-    max_position_ratio: 0.12
-    notes: 金融龙头，低相关防御 (2026-05-30 防御性增配)
-  # P0 防御性扩充 (2026-05-30): 新增低相关防御标的对冲风险敞口
-  - code: US.XOM
-    name: Exxon Mobil
-    sector: Energy
-    enabled: true
-    tier: TIER2
-    max_position_ratio: 0.06
-    notes: 能源龙头 | Playbook-822，降仓 (2026-06-26)
-  - code: US.PG
-    name: Procter & Gamble
-    sector: Consumer Defensive
-    enabled: false
-    tier: TIER2
-    max_position_ratio: 0.12
-    notes: Playbook/主线双亏，暂停 (2026-06-26)
-  etfs:
-  # ADR-006 (2026-06-07): ETF 全部归 ORB 引擎管理，主线专注个股
-  # 原因: 主线(15-30min多因子+LLM)和ORB(1min突破+5秒轮询)在ETF上产生冲突
-  # ORB universe: SPY, QQQ, IWM, DIA, XLE, XLF, XLK, XLV, XLY, XLI
-  # 主线保留 SPY/QQQ 作为市场方向参考数据(spy_context)，不作为交易标的
-  - code: US.SPY
-    name: SPDR S&P 500 ETF
-    enabled: false
-    tier: ETF
-    notes: "→ ORB 管理 | 主线仅用作市场方向参考"
-  - code: US.QQQ
-    name: Invesco QQQ Trust
-    enabled: false
-    tier: ETF
-    notes: "→ ORB 管理 | 主线仅用作市场方向参考"
-  - code: US.XLF
-    name: Financial Select Sector SPDR
-    enabled: false
-    tier: ETF
-    max_position_ratio: 0.15
-    notes: "→ ORB 管理 (ADR-006)"
-  - code: US.XLY
-    name: Consumer Discretionary Select
-    enabled: false
-    tier: ETF
-    max_position_ratio: 0.15
-    notes: "→ ORB 管理 (ADR-006)"
-  - code: US.XLK
-    name: Technology Select Sector
-    enabled: false
-    tier: ETF
-    max_position_ratio: 0.15
-    notes: "→ ORB 管理 (ADR-006)"
-  - code: US.XLI
-    name: Industrial Select Sector
-    enabled: false
-    tier: ETF
-    max_position_ratio: 0.15
-    notes: "→ ORB 管理 (ADR-006)"
-  - code: US.XLE
-    name: Energy Select Sector
-    enabled: false
-    tier: ETF
-    max_position_ratio: 0.15
-    notes: "→ ORB 管理 (ADR-006)"
-  - code: US.IWM
-    name: iShares Russell 2000
-    enabled: false
-    tier: ETF
-    max_position_ratio: 0.15
-    notes: "→ ORB 管理 (ADR-006)"
-decision:
-  signal_thresholds:
-    min_score: 50
-    medium_score: 70
-    high_score: 85
-  position_ratios:
-    low: 0.25
-    medium: 0.5
-    high: 1.0
-  signal_timing:
-    # F3 (2026-05-16): cooldown_seconds 仅被 llm_pipeline.py:187 读 (LLM 策略 risk_cfg)
-    # 主线信号冷却的 SoT 是 `strategy.signal_cooldown` (line 1117), 此处仅 LLM 子系统用
-    cooldown_seconds: 120
-    expire_seconds: 300
-  market_regime:
-    check_interval: 300
-  strategy_weights:
-    price_break: 0.36
-    ma_cross: 0.28
-    rsi_rebound: 0.36
-STRATEGY_ORTHOGONALIZATION:
-  enabled: true
-  strategy_groups:
-    price_break: trend
-    ma_cross: trend
-    macd: trend
-    supertrend: trend
-    rsi_rebound: reversion
-    rsi: reversion
-    bollinger: reversion
-    news: sentiment
-    llm: sentiment
-    sentiment: sentiment
-  group_prior_corr:
-    trend: 0.75
-    reversion: 0.6
-    sentiment: 0.5
-    other: 0.3
-  min_samples: 30
-  window_size: 500
-  group_weight_cap: 0.45
-  persist_path: data/orthogonalizer_state.json
 COST_MODEL:
-  enabled: true
-  default_stock_spread_bps: 3.0
-  impact_coef_bps: 12.0
-  default_adv_shares: 5000000
-  commission_per_share: 0.0
-  fixed_fee_bps: 0.3
-  pre_after_session_mult: 3.0
-  default_borrow_rate: 0.02
   assumed_holding_days: 5.0
+  commission_per_share: 0.0
+  default_adv_shares: 5000000
+  default_borrow_rate: 0.02
+  default_option_spread_bps: 80.0
+  default_stock_spread_bps: 3.0
+  enabled: true
+  fixed_fee_bps: 0.3
+  impact_coef_bps: 12.0
+  max_penalty: -20
+  net_edge_floor_bps: 5.0
+  net_edge_safe_bps: 25.0
   option_commission_per_contract: 0.65
   option_exchange_fee_bps: 1.0
   option_max_spread_pct: 0.05
-  default_option_spread_bps: 80.0
-  net_edge_floor_bps: 5.0
-  net_edge_safe_bps: 25.0
-  max_penalty: -20
+  pre_after_session_mult: 3.0
 OPTION_QUALITY_GATE:
+  dte_enabled: true
   iv_rank_enabled: true
-  max_iv_rank_buyer: 70.0
-  min_iv_rank_seller: 30.0
-  spread_pct_enabled: true
-  max_spread_pct: 0.05
   liquidity_enabled: true
+  max_dte: 45
+  max_iv_rank_buyer: 70.0
+  max_spread_pct: 0.05
+  max_theta_premium_ratio: 0.04
+  min_dte: 5
+  min_iv_rank_seller: 30.0
   min_open_interest: 100
   min_volume: 10
+  spread_pct_enabled: true
   theta_enabled: true
-  max_theta_premium_ratio: 0.04
-  dte_enabled: true
-  min_dte: 5
-  max_dte: 45
-risk:
-  # Task #2 (2026-06-17): VIX 统一4档阈值
-  # <18: 宽松 (relaxed)   | 18-22: 正常 (normal)
-  # 22-28: 收紧 (tightened) | >28: 禁止新仓 (blocked)
-  # <25持续15min: 解封 (unblock hysteresis)
-  vix_thresholds:
-    relaxed: 18        # <18 宽松
-    normal: 22         # 18-22 正常
-    tightened: 28      # 22-28 收紧
-    blocked: 28        # >28 禁止新仓
-    unblock: 25        # <25持续15min 解封
-  # risk_pipeline: 已删除 (2026-06-20) — USRiskPipeline (.run() 从不调用) 已移除,
-  exit_routing:
-    use_unified_dispatcher: false
-    # 注意: 此为 ExitMonitor 内部的对比日志开关，与 exit_rules_controller (Dispatcher 主路径) 是独立的两套系统
-    log_comparison_mode: true    # 原 shadow_mode 重命名，避免与 exit_rules_controller.shadow_mode 混淆
-    log_diff_only: true   # log_comparison_mode 下仅在决策不一致时输出日志
-  # Phase 1 (2026-05-31): 策略隔离开关 — 退出监控按 owner_strategy 严格校验
-  # 关闭时走原 fallback 逻辑 (向后兼容); 开启时 owner_strategy 缺失/未知的仓位将被跳过
-  strategy_enforcement:
-    strict_owner_validation: true
-  # 模拟盘数据采集: 放宽做空门禁
-  pre_trade:
-    short_min_strength: 45          # SHORT门槛降低 (2026-06-20): 60→45, SHORT是唯一alpha源
-    long_min_strength: 60           # 高确信度门槛 (2026-06-13): 35→60
-    battle_plan_bonus_enabled: true
-    battle_plan_bonus: 0.5          # 计划标的再降50%
-    min_effective_strength_floor: 5 # 默认30→5
-  # 模式适配 (Task #6, 2026-05-31)：模拟/实盘共享同一份风控参数易掩盖实盘风险，
-  # 此处按 TradingMode 给出三套阈值，由 app/core/trading_mode.py 在运行时挑选。
-  mode_adaptation:
-    simulate:
-      max_position_pct: 15.0
-      max_daily_loss_pct: 5.0
-      max_total_exposure_pct: 80.0
-      circuit_breaker_loss_pct: 8.0
-    live_conservative:
-      max_position_pct: 8.0       # 仓位减半
-      max_daily_loss_pct: 2.0     # 日亏损更严
-      max_total_exposure_pct: 40.0 # 总敞口减半
-      circuit_breaker_loss_pct: 3.0 # 熔断更敏感
-    live_normal:
-      max_position_pct: 12.0
-      max_daily_loss_pct: 3.0
-      max_total_exposure_pct: 60.0
-      circuit_breaker_loss_pct: 5.0
-  # P0 全局黑名单 (2026-05-30): 跨策略统一拦截亏损标的
-  # 实施在 app/pipeline/stages/risk_stage.py 的入场校验最早期
-  global_blacklist:
-    - US.QCOM     # 44笔 22.7%胜率 -$3.8K (保留)
-    - US.LCID     # 16%胜率 (保留)
-    - US.TME      # 0%胜率 (保留)
-    - HK.00700    # [Phase A 2026-06-13] 跨市场符号，阻断数据/交易管道
-    - US.HK.00700 # [Phase A 2026-06-13] Futu US格式，同上
-    # 模拟盘数据采集: 移除此前添加的额外黑名单项, 允许更多标的交易
-
-  # 实盘隔离 (2026-06-09): 自管持仓 — position_sync/position_recovery 跳过这些标的
-  # 这些标的存在于真实账户但不纳入系统管理，由用户自行操作
-  # 读取者: app/core/position_sync.py (每30s同步时跳过), app/core/position_recovery.py
-  self_managed_symbols:
-    - US.AMD      # 自管做空，系统不介入
-    - US.BABA     # 自管做多，系统不介入
-    - HK.00700    # 腾讯港股，自管做多，系统不介入
-    - US.HK.00700 # Futu US市场返回的腾讯代码格式
-
-    - US.NVDA     # 自管做多，系统不介入 (2026-06-10)
-    - US.AAPL     # 自管做多，系统不介入 (2026-06-10)
-
-  # RFC-056 (2026-06-01): HIGH_VOL 市况 VIX 阈值多档化
-  # 数据驱动 (n=141, 90天): HIGH_VOL regime 14.9% 胜率 -$39,537, 占总亏损 271%
-  # 旧逻辑: VIX>30 才熔断, VIX 22-29 区间放任入场 → 主要亏损源
-  # 新逻辑: 4 档 — VIX<low: 不动; low-mid: 信号×0.85; mid-high: ×0.5; >=critical: 拒绝
-  # 读取者: app/risk/market_regime_filter.py::MarketRegimeFilter._load_vix_levels
-  market_regime_filter:
-    vix_levels:
-      low: 18                  # < 18: 信号 ×1.0 (正常)
-      mid: 22                  # 18-22: 信号 ×0.85 (轻度防御)
-      high: 25                 # 22-25: 信号 ×0.5 (强力削弱)
-      critical: 28             # >= 28: 完全拒绝 (从 30 降至 28)
-    short_exempt_critical: false # SHORT 在 critical 时也拒绝 (默认 false 保守)
-                                  # 数据看 SHORT 33.9% 胜率好, 后续可改 true 仅放过 SHORT
-    long_in_high_zone_strength_mult: 0.5  # mid-high 区间 LONG 削减更狠 (LONG 20.9% wr)
-    short_in_high_zone_strength_mult: 0.85 # SHORT 在 22-25 区间轻削
-  # RFC-058 (2026-06-01): LONG 方向默认削弱 30%, 仅 BULL regime 豁免
-  # 数据驱动 (n=134, 90天): LONG 20.9% wr +$2,644 vs SHORT 174 笔 33.9% +$13,016 (5×差距)
-  # 默认: LONG strength × 0.7 折扣
-  # BULL 豁免条件 (全部满足): SPY > MA50 + SPY > MA200 + VIX < 20 + 连涨 ≥ 2 日
-  # 读取者: app/risk/market_regime_filter.py::MarketRegimeFilter._apply_long_discount
-  #
-  # Phase 1 (2026-06-19): 动态折扣 — 根据 regime 调整
-  # 原固定 0.7 折扣导致 LONG 信号过少 (39% WR vs SHORT 53% WR)
-  # 改进: BULL/STRONG_BULL 不惩罚, CAUTION 15%, BEAR 30%
-  long_direction_filter:
+STRATEGY_ORTHOGONALIZATION:
+  enabled: true
+  group_prior_corr:
+    other: 0.3
+    reversion: 0.6
+    sentiment: 0.5
+    trend: 0.75
+  group_weight_cap: 0.45
+  min_samples: 30
+  persist_path: data/orthogonalizer_state.json
+  strategy_groups:
+    bollinger: reversion
+    llm: sentiment
+    ma_cross: trend
+    macd: trend
+    news: sentiment
+    price_break: trend
+    rsi: reversion
+    rsi_rebound: reversion
+    sentiment: sentiment
+    supertrend: trend
+  window_size: 500
+agents:
+  decision_agent:
+    id: ftseek_us_decision
+    model: deepseek-v4-pro
+    role: signal_generator
+  execution_agent:
+    id: ftseek_us_execution
+    model: bailian/qwen-max
+    role: order_executor
+  main_agent:
+    id: ftseek_us_main
+    model: bailian/qwen-max
+    role: coordinator
+  observability_agent:
+    id: ftseek_us_observability
+    model: bailian/qwen-max
+    role: monitor
+  risk_agent:
+    id: ftseek_us_risk
+    model: bailian/glm-5
+    role: risk_controller
+base:
+  currency: USD
+  market: US
+  project_name: FTSeek-US
+  simulate_account_id: ''
+  timezone: America/New_York
+  trade_env: 1
+  version: 1.0.0
+capital:
+  description: 'Capital mode for adaptive risk. "simulation": uses fixed_amount. "live":
+    reads from broker.'
+  fixed_amount: 82000
+  tiers: &id001
+    inst:
+      max_equity: null
+      max_position_pct: 0.15
+      max_positions: 15
+      min_equity: 1000000
+      min_trade_usd: 10000
+      risk_pct: 0.02
+      total_pct: 0.1
+    large:
+      max_equity: 1000000
+      max_position_pct: 0.2
+      max_positions: 10
+      min_equity: 200000
+      min_trade_usd: 5000
+      risk_pct: 0.025
+      total_pct: 0.15
+    medium:
+      max_equity: 200000
+      max_position_pct: 0.25
+      max_positions: 8
+      min_equity: 50000
+      min_trade_usd: 2000
+      risk_pct: 0.03
+      total_pct: 0.2
+    micro:
+      max_equity: 10000
+      max_position_pct: 0.35
+      max_positions: 3
+      min_equity: 0
+      min_trade_usd: 100
+      risk_pct: 0.05
+      total_pct: 0.3
+    small:
+      max_equity: 50000
+      max_position_pct: 0.3
+      max_positions: 5
+      min_equity: 10000
+      min_trade_usd: 500
+      risk_pct: 0.035
+      total_pct: 0.25
+catalyst:
+  enabled: false
+  postmarket:
     enabled: true
-    default_discount: 0.7        # 兜底折扣 (regime 无法判断时使用)
-    dynamic_discounts:           # Phase 1 新增: regime-aware 动态折扣
-      STRONG_BULL: 1.0           # 不惩罚
-      BULL: 1.0                  # 不惩罚
-      CAUTION: 0.85              # 15% 惩罚
-      BEAR: 0.70                 # 30% 惩罚
-      CRISIS: 0.0                # 禁止 (实际已被 regime_filter 拦截)
-    use_dynamic: true            # Phase 1 开关: true=使用动态折扣, false=回退到固定折扣
-    bull_regime_exempt:          # 满足全部条件不打折 (固定折扣模式的兜底)
-      spy_above_ma50: true
-      spy_above_ma200: true
-      vix_max: 20
-      consecutive_up_days_min: 2
-    log_every_discount: true     # 每次打折记日志便于审计
-  # F10 (2026-05-12): 风险单位 R 配置 — 仓位 = 风险预算 / 止损距离
-  # P0-X (2026-05-15, 基于 14 日 LCID 8 笔 -$634 教训): 标的级日亏损护栏
-  symbol_daily_loss_guard:
-    # 实测调参 (2026-05-15): 历史 7 天 win_rate 5%, 多标的 2 笔全亏即触发场景
-    enabled: true                       # 关键防御, 永远开
-    max_daily_loss_pct: 0.005           # 0.5% 净值 (从 1% 收紧)
-    max_consecutive_losses: 5           # 模拟盘: 2→5, 允许更多连续亏损以收集数据
-    min_trades_for_winrate_check: 3     # 3+ 笔启动胜率检查 (从 5 收紧)
-    max_loss_rate: 0.66                 # 3 中 2 亏即触发 (从 70% 收紧)
-    exempt_symbols: []                  # 手动豁免名单 (慎用)
-
-  # Task #2 (2026-06-17): VIX block 阈值统一为28 (was 30)
-  vix_block_threshold: 28
-  # Task #3 (2026-06-17): 策略IC监控与负IC策略降权
-  # 三级响应: ACTIVE(IC>0且显著) / REDUCED(仓位×0.5) / SUSPENDED(暂停新仓)
-  # 受 deployment.feature_flags.ic_hard_blocking 控制 (false=WARN模式)
-  strategy_health:
+    generate_lessons: false
+  premarket:
+    consensus_threshold: 0.4
+    debate_timeout_seconds: 180
+    min_severity: HIGH
+    scan_news_hours: 12
+  reverse_catalyst:
     enabled: true
-    evaluation_interval_seconds: 3600
-    min_signals_for_ic: 30
-    ic_active_threshold: 0.0
-    ic_recovery_threshold: 0.02
-    ic_suspend_threshold: -0.08
-    win_rate_suspend: 0.30
-    data_accumulation_days: 30  # 前30天仅日志不执行
-  # per_trade_risk_pct: 已统一为 risk.position_sizing.risk_per_trade_pct (2026-06-14 SSOT)
-  max_trade_risk_pct: 0.010    # 极限 1.0% (不再按信号强度加码)
-  # portfolio: 已删除 (2026-06-14) — 死配置, capital_safety水位系统替代
-  capital_safety:
-    water_levels:
-      green:
-        threshold: -0.05
-        risk_mult: 1.0
-        pos_mult: 1.0
-      yellow:
-        threshold: -0.1
-        risk_mult: 0.5
-        pos_mult: 0.5
-      orange:
-        threshold: -0.2
-        risk_mult: 0.25
-        pos_mult: 0.25
-      red:
-        threshold: -0.35
-        risk_mult: 0.0
-        pos_mult: 0.0
-    tiers: &id001
-      micro:
-        min_equity: 0
-        max_equity: 10000
-        risk_pct: 0.05
-        total_pct: 0.3
-        max_positions: 3
-        min_trade_usd: 100
-        max_position_pct: 0.35
-      small:
-        min_equity: 10000
-        max_equity: 50000
-        risk_pct: 0.035
-        total_pct: 0.25
-        max_positions: 5                 # RFC-055: 3→5, SHORT信号频率提升后需要更多并发位
-        min_trade_usd: 500
-        max_position_pct: 0.3
-      medium:
-        min_equity: 50000
-        max_equity: 200000
-        risk_pct: 0.03
-        total_pct: 0.2
-        max_positions: 8
-        min_trade_usd: 2000
-        max_position_pct: 0.25
-      large:
-        min_equity: 200000
-        max_equity: 1000000
-        risk_pct: 0.025
-        total_pct: 0.15
-        max_positions: 10
-        min_trade_usd: 5000
-        max_position_pct: 0.2
-      inst:
-        min_equity: 1000000
-        max_equity: null
-        risk_pct: 0.02
-        total_pct: 0.1
-        max_positions: 15
-        min_trade_usd: 10000
-        max_position_pct: 0.15
-    account_refresh:
+    min_change_pct: 0.03
+    quick_debate_rounds: 1
+    quick_debate_timeout: 60
+  sector_mapping:
+    ai_chip:
+    - NVDA
+    - AMD
+    - AVGO
+    - MU
+    - ARM
+    - QCOM
+    big_tech:
+    - AAPL
+    - MSFT
+    - GOOGL
+    - AMZN
+    - META
+    chinese_adr:
+    - FUTU
+    - BABA
+    - PDD
+    - BIDU
+    - JD
+    - NIO
+    - LI
+    - XPEV
+    chinese_broker:
+    - FUTU
+    - TIGR
+    - HLBZ
+    ev:
+    - TSLA
+    - RIVN
+    - LCID
+    - NIO
+    - XPEV
+    - LI
+  sources:
+    cls_interval_minutes: 2
+    csrc:
+      enabled: false
+      interval_seconds: 300
+    hkex:
+      enabled: false
+      interval_seconds: 120
+data_sources:
+  alphavantage:
+    api_key: ${ALPHAVANTAGE_API_KEY}
+    cache_ttl:
+      quote: 300
+      spy: 900
+      timeseries: 1800
+      vix: 60
+    premium: false
+    rate_limit_per_day: 500
+    rate_limit_per_min: 5
+  finnhub:
+    api_key: ${FINNHUB_API_KEY}
+    cache_ttl:
+      news: 7200
+      quote: 60
+      sentiment: 3600
+    rate_limit_per_min: 60
+    refill_interval_sec: 1.0
+  priority:
+    fallback: alphavantage
+    primary: twelvedata+finnhub
+  twelvedata:
+    api_key: ${TWELVEDATA_API_KEY}
+    batch_size: 8
+    cache_ttl:
+      quote: 300
+      spy: 900
+      timeseries: 1800
+      vix: 60
+    rate_limit_per_min: 8
+    refill_interval_sec: 7.5
+database:
+  backup_enabled: true
+  backup_interval_hours: 24
+  path: data/ftseek_us.db
+  type: sqlite
+debate_mode:
+  enabled: true
+  env_overrides:
+    FTSEEK_DEBATE_FALLBACK_MODEL: qwen-max
+    FTSEEK_DEBATE_MODE: 'false'
+    FTSEEK_DEBATE_TIMEOUT: '300'
+  fallback_model: qwen-max
+  timeout_seconds: 300
+debate_planner:
+  agents:
+    claude_code:
+      model: deepseek-v4-pro
+      provider: bailian
+      timeout_seconds: 180
+    hermes:
+      model: qwen3.6-plus
+      provider: bailian
+      timeout_seconds: 180
+  divergence_threshold: 0.4
+  enabled: true
+  fallback:
+    min_success_rate: 0.5
+    rule_engine_enabled: true
+    single_agent_fallback: hermes
+  max_rounds: 2
+  max_total_timeout: 600
+  memory:
+    archive_enabled: true
+    auto_prune: true
+    max_historical_lessons: 20
+    max_tagged_lessons: 50
+    min_impact_score: 0.3
+  retry:
+    base_delay_seconds: 5
+    max_delay_seconds: 60
+    max_retries: 2
+decision:
+  market_regime:
+    check_interval: 300
+  position_ratios:
+    high: 1.0
+    low: 0.25
+    medium: 0.5
+  signal_thresholds:
+    high_score: 85
+    medium_score: 70
+    min_score: 50
+  signal_timing:
+    cooldown_seconds: 120
+    expire_seconds: 300
+  strategy_weights:
+    ma_cross: 0.28
+    price_break: 0.36
+    rsi_rebound: 0.36
+deployment:
+  feature_flags:
+    event_driven_scan: false
+    ic_feedback_to_screener: false
+    ic_feedback_to_voting: true  # 2026-06-30: 开启IC反馈到投票 (IC=0.16正, 让正alpha信号获权重加成)
+    ic_hard_blocking: true
+    signal_pipeline_lightweight_trading: true
+    unified_backfill: false
+    vix_hard_blocking: true
+    weight_v2_active: true  # 2026-07-01: 配置冻结点v2 (exit_policy v3.0 + vol_bucket + GLM fallback + SL 2%)
+  shadow_mode:
+    compare_with_legacy: true
+    enabled: true
+description: FTSeek-US 美股模拟交易系统 - 统一配置 v3 (含新闻V2 + 配置治理 + 地缘增强)
+diagnostics:
+  description: 非交易路径诊断 Overlay — 零侵入现有交易管线
+  enabled: true
+  geopolitical_reasoner:
+    min_confidence: 0.65
+    mode: rules
+  schedule:
+    on_demand:
       enabled: true
-      cache_ttl_seconds: 30
-      timeout_seconds: 3
-      fallback: last_known
-    safety_guards:
-      max_single_order_pct: 0.05
-      max_daily_turnover_pct: 0.3
-      min_shares: 1
-      max_shares: 10000
-      round_lot: true
-      slippage_check: true
-  account:
-    max_daily_drawdown: 0.03
-    max_total_drawdown: 0.08
-    # max_leverage / min_margin_ratio 已删除 (2026-06-20): 零代码消费
-  position:
-    max_per_symbol: 0.25
-    max_per_direction: 0.65
-    max_total: 0.8
-  trading:
-    max_daily_trades: 500            # 2026-06-16: 恢复 — config_audit CRITICAL_KEY, 全局安全护栏
-    max_order_amount: 120000
-    min_liquidity_ratio: 0.5
-  signal_quality:
-    # P0 (2026-06-03): 0.65→0.55, 降低基线让 direction_bias 控制
-    # 数据: confidence 0.5-0.65 区间是唯一正期望 (+$5,712)
-    # 真正的过滤器是 signal_strength>=60 (阻断 -$18K vlow 区间)
-    min_confidence: 0.70
-    min_consensus: 0.25   # P0 (2026-06-03): 0.20→0.25, 对齐 scheduler
-    min_score: 60         # 2026-06-13: 50→60 对齐所有 min_strength 路径 (pre_trade/strategies/scheduler均为60)
-  # Task #6 (2026-05-30): 仓位计算ATR联动配置
-  # risk_per_trade_pct: 0.005 → 0.008 (单笔风险预算放大), max_position_pct: 0.15 → 0.12 (单标的上限收紧)
-  position_sizing:
-    risk_per_trade_pct: 0.008    # 0.5% → 0.8% 单笔风险
-    max_position_pct: 0.12       # 15% → 12% 单标的最大仓位
-  # P1 Regime Gate (2026-05-24 辩论共识): 方向感知入场过滤
-  # SPY<MA200 仅拦截 LONG (SHORT 仍允许); VWAP 过滤低强度多头
-  p1_regime_gate:
-    enabled: true                    # 总开关
-    vwap_filter_enabled: true        # VWAP 子开关 (LONG + strength<80 + price<VWAP → 拦截)
-    vwap_threshold: -0.001           # VWAP 偏离度阈值 (<此值视为弱势)
-  # stop_loss / take_profit: 已迁移到 dynamic_exit.* (regime-aware profiles)
-  # 历史字段已删除 (2026-06-01) — grep 确认无代码引用. 改动: 服务 OKR PnL ≥ 0
-  circuit_breaker:
-    strategy:
-      consecutive_losses: 3
-      hourly_loss_threshold: -0.02
-      daily_loss_threshold: -0.03
-      pause_duration: 1800
-    # symbol/system: 已删除 (2026-06-14) — 零代码消费, 代码用硬编码默认值
-exit_rules_controller:
-  dispatcher_enabled: true        # 启用 ExitRuleDispatcher 主路径
-  shadow_mode: false              # false=正式执行；true=仅记录决策
-  monitor_comparison: true        # 保留新旧决策对比日志（用于验证）
-  fallback_on_error: true         # dispatcher 异常时回退到旧 PositionExitMonitor
-  log_suppressed_rules: true      # 记录被互斥压制的规则
-options:
-  enabled: false              # 2026-05-21 P0: 紧急禁用 — selector 与 yaml 不一致导致 $5,984 亏损
-  max_holding_hours: 72
-  profit_target_pct: 0.5
-  stop_loss_pct: -0.3
-  time_decay_warning: 0.1
-  min_dte: 7
-  max_dte: 45
-  preferred_dte: 30
-  delta_range:
-  - -0.4
-  - -0.3
-  min_open_interest: 100
-  max_bid_ask_spread_pct: 0.05
-  price_range:
-  - 0.5
-  - 5.0
-  max_cost_pct: 0.005
-  max_cost_per_contract: 2000
-  take_profit_ratio: 2.0
-  stop_loss_ratio: 0.5
-  force_close_dte: 2
-  quick_exit:
-    enabled: true
-    trigger_profit: 0.3
-    trailing_stop: 0.15
-  short_strategy:
-    default_method: options_put
-    simulated_mode_force_options: false  # 2026-05-18: 已验证Futu模拟盘支持正股做空，关闭强制期权
-    market_condition_overrides:
-      high_volatility: options_put
-      low_liquidity: options_put
-      earnings_season: options_put
-      normal: null
-    stock_short:
+      modules:
+      - geopolitical_reasoner
+    post_market:
       enabled: true
-      borrow_cost_gate:
-        enabled: true
-        max_annual_rate: 0.05
-        elevated_conviction_threshold: 85
-        hard_to_borrow_action: fallback_to_put
-      squeeze_detector:
-        enabled: true
-        max_short_float_pct: 20.0
-        high_days_to_cover: 5.0
-        action: block
-      position_sizing:
-        short_to_long_ratio: 0.6
-        max_position_pct: 0.1
-      time_decay:
-        max_holding_days: 5
-        no_catalyst_exit_days: 3
-        catalyst_sources:
-        - news_v2
-        - sec_filing
-        - insider_selling
-      technical_breach:
-        enabled: true
-        resistance_lookback_days: 20
-        breach_threshold_pct: 2.0      # P3 优化 (2026-05-22): 1.0% → 2.0% 减少过早退出
-        entry_cooldown_minutes: 60      # P3 优化 (2026-05-22): 30min → 60min 给足行情发展空间
-        action: market_order_cover
-      pair_preference:
-        enabled: true
-        prefer_sector_pairs: true
-        naked_short_penalty: 0.1
-        sector_etf_map:
-          tech: US.XLK
-          finance: US.XLF
-          energy: US.XLE
-          healthcare: US.XLV
-          industrial: US.XLI
-          consumer: US.XLY
-          utility: US.XLU
-          real_estate: US.XLRE
-      stop_loss_pct: -0.08
-      take_profit_pct: 0.1
-      max_shares: 100
-      borrow_fee_max_pct: 0.05
-      require_borrow_availability: true
+      modules:
+      - shadow_account
+      - statistical_validator
+      time: '20:30'
+  shadow_account:
+    lookback_days: 30
+  statistical_validator:
+    n_simulations: 1000
+    risk_free_rate: 0.05
+dual_mode:
+  aggressive:
+    max_daily_auto_trades: 5
+    max_per_trade_usd: 30000
+    max_position_pct: 0.2
+    max_total_exposure: 0.75
+    min_confidence: 0.45
+    min_signal_strength: 40
+    position_scale_factor: 1.5
+    stop_loss_tighten_factor: 1.2
+  auto_enabled: true
+  conservative:
+    max_daily_auto_trades: 3
+    max_per_trade_usd: 5000
+    max_position_pct: 0.06
+    max_total_exposure: 0.3
+    min_confidence: 0.7
+    min_signal_strength: 70
+    position_scale_factor: 0.5
+    stop_loss_tighten_factor: 0.7
+  default_aggression: conservative
+  exposure_control:
+    global_max_per_direction: 0.4
+    global_max_per_symbol: 0.25
+    global_max_total: 0.8
+  manual_safety_net:
+    force_close_on_red: true
+    loss_alert_threshold: -0.08
+    pre_close_alert_time: '15:50'
+  normal:
+    max_daily_auto_trades: 4
+    max_per_trade_usd: 20000
+    max_position_pct: 0.12
+    max_total_exposure: 0.6
+    min_confidence: 0.55
+    min_signal_strength: 50
+    position_scale_factor: 1.0
+    stop_loss_tighten_factor: 1.0
 dynamic_exit:
-  # P0 修复 (2026-06-21): dynamic_exit.atr_stop.multiplier 是死配置, 0代码引用
-  # 真正的ATR止损倍数由 exit_policy.yaml → exit_policy_guardian.get_atr_multiplier() 管理
-  # dynamic_exit 的 stop_loss/take_profit 仍被 stop_loss_config.py 和 risk_stage.py 读取
-  # 但其中的 atr_stop.multiplier 从未被任何代码消费 — 标注为 DEPRECATED
   default:
-    # RFC-0001 Phase0 止血 (2026-05-21): 止损从 -3% 放宽到 -4.5%, 减少噪声扫单
-    # 归因：115 笔 sl_hit 胜率 16.5% 亏-$2,023, 美股日内 2-3% 波动是常态
-    # 2026-06-21 SSOT对齐: -4.5% → -2.0%, 与 exit_policy.yaml atr_stop.max_loss_pct 一致
-    #   原因: atr_stop_engine hard_stop=2.0% 是实际盘中止损上限,
-    #         initial_sl 也应为 2.0% 以保持一致 (旧值4.5%是历史遗留,从未被读到因路径bug)
-    stop_loss: -0.02
-    # P7 优化 (2026-05-22): 止盈从 5% 降到 2.5%, 数据：TRAILING_STOP 85 笔平均盈利仅 0.03%
-    # 归因：止盈目标过高导致利润回吐，tp_hit 仅 5 笔 (1.9%)
-    # 2026-06-10: 2.5%→5.0%, R/R 从 0.56 修正至 1.11, 配合 P0-3 trailing 收紧减少利润回吐
-    take_profit: 0.05
-    partial_take_profit:
-      enabled: true
-      levels:
-      - trigger: 0.025
-        ratio: 0.5
-      - trigger: 0.05
-        ratio: 0.5
-    trailing_stop:
-      enabled: true
-      # P7 优化：trigger_profit 从 3% 降到 1%，更早开始追踪
-      trigger_profit: 0.01
-      # P7 优化：trail_percent 从 1.5% 降到 0.5%，更紧追踪保护利润
-      trail_percent: 0.005
     atr_stop:
       enabled: true
       multiplier: 2.5
-    time_stop:
-      enabled: true
-      max_holding_days: 10
     breakeven_stop:
       enabled: true
-      trigger_profit: 0.03
       stop_profit: 0.01
+      trigger_profit: 0.03
     intraday_stop:
       enabled: true
       stop_percent: 0.02
-  strong_trend_up:
-    stop_loss: -0.08
-    take_profit: 0.25
     partial_take_profit:
       enabled: true
       levels:
-      - trigger: 0.1
-        ratio: 0.25
-      - trigger: 0.18
-        ratio: 0.25
-      - trigger: 0.25
-        ratio: 0.3
-    trailing_stop:
-      enabled: true
-      trigger_profit: 0.08
-      trail_percent: 0.05
-    atr_stop:
-      enabled: true
-      multiplier: 3.0
-    time_stop:
-      enabled: true
-      max_holding_days: 25
-  range_bound:
-    stop_loss: -0.035
+      - ratio: 0.5
+        trigger: 0.025
+      - ratio: 0.5
+        trigger: 0.05
+    stop_loss: -0.02
     take_profit: 0.05
-    trailing_stop:
-      enabled: true
-      trigger_profit: 0.025
-      trail_percent: 0.018
-    atr_stop:
-      enabled: true
-      multiplier: 1.6
     time_stop:
       enabled: true
-      max_holding_days: 3
-  strong_trend_down:
-    stop_loss: -0.03
-    take_profit: 0.045
+      max_holding_days: 10
     trailing_stop:
       enabled: true
-      trigger_profit: 0.02
-      trail_percent: 0.015
-    atr_stop:
-      enabled: true
-      multiplier: 1.4
-    time_stop:
-      enabled: true
-      max_holding_days: 24
+      trail_percent: 0.005
+      trigger_profit: 0.01
   high_volatility:
-    stop_loss: -0.07
-    take_profit: 0.09
-    trailing_stop:
-      enabled: true
-      trigger_profit: 0.05
-      trail_percent: 0.045
     atr_stop:
       enabled: true
       multiplier: 3.2
+    stop_loss: -0.07
+    take_profit: 0.09
     time_stop:
       enabled: true
       max_holding_days: 96
-symbol_cooldown:
-  # Y3 (2026-05-15): STRUCTURE_EXIT 33 笔 -$3,106 是最大单一亏损源
-  # 收紧: 连续 2 次 (从 3) → cooldown 48h (从 24)
-  structure_exit:
-    consecutive_losses: 3           # 审计建议: 3次/24h (2次过紧，频繁触发冷却)
-    cooldown_hours: 24              # 审计建议: 24h足够覆盖单日连续亏损
-    direction: same_only
-  # F1 (2026-05-16): whipsaw 反向冷却 — 平仓后 N 秒内禁止反向开仓
-  # 实证 5/14-5/15: SNDK 90s / CRM 173s / LCID 127s 反向都亏
-  # 默认 180s (覆盖 3 案例), sandbox 60s 加速实验
-  reversal_seconds: 180
+    trailing_stop:
+      enabled: true
+      trail_percent: 0.045
+      trigger_profit: 0.05
+  range_bound:
+    atr_stop:
+      enabled: true
+      multiplier: 1.6
+    stop_loss: -0.035
+    take_profit: 0.05
+    time_stop:
+      enabled: true
+      max_holding_days: 3
+    trailing_stop:
+      enabled: true
+      trail_percent: 0.018
+      trigger_profit: 0.025
+  strong_trend_down:
+    atr_stop:
+      enabled: true
+      multiplier: 1.4
+    stop_loss: -0.03
+    take_profit: 0.045
+    time_stop:
+      enabled: true
+      max_holding_days: 24
+    trailing_stop:
+      enabled: true
+      trail_percent: 0.015
+      trigger_profit: 0.02
+  strong_trend_up:
+    atr_stop:
+      enabled: true
+      multiplier: 3.0
+    partial_take_profit:
+      enabled: true
+      levels:
+      - ratio: 0.25
+        trigger: 0.1
+      - ratio: 0.25
+        trigger: 0.18
+      - ratio: 0.3
+        trigger: 0.25
+    stop_loss: -0.08
+    take_profit: 0.25
+    time_stop:
+      enabled: true
+      max_holding_days: 25
+    trailing_stop:
+      enabled: true
+      trail_percent: 0.05
+      trigger_profit: 0.08
 execution:
-  simulate_realistic_flow: true
-  simulate_fill_delay_seconds: 0.5
-  simulate_partial_fill: false
-  # P1.1 (RFC-060): 模拟盘方向性滑点 (原 fill_price=order.price 零滑点 → 策略盈利假象)
-  # 读取者: app/execution/engine.py::ExecutionEngine._apply_sim_slippage
-  # BUY 上浮吃 ask / SELL 下浮吃 bid, 幅度 = base + depth_cost (bps)
-  simulate_slippage_bps: 5.0          # 基础滑点 (半边), 默认 5bps
-  simulate_depth_cost_bps: 2.0        # 深度/冲击成本 (半边), 默认 2bps
-  # 注: 设为 0 可禁用滑点 (调试用); 默认 round-trip 成本 ≈ 14bps (2×(5+2))
-  order_type:
-    market_min_score: 80
-    limit_max_score: 60
-    twap_min_value: 100000
-  retry:
-    max_attempts: 3
-    delay_seconds: 5
-  slippage:
-    max_ratio: 0.005
-    check_enabled: true
+  idempotency:
+    window_seconds: 3600
   order_state:
     check_interval: 2
     timeout_seconds: 300
   order_tracking:
     timeout_seconds: 300
-  idempotency:
-    window_seconds: 3600
-service:
-  api:
-    host: 0.0.0.0
-    port: 8901
-    external_url: http://39.97.58.4:8901
-    token: ${FTSEEK_US_API_TOKEN}
-  dingtalk:
-    webhook_url: ${DINGTALK_WEBHOOK_URL_US}
-    secret: ${DINGTALK_SECRET_US}
+  order_type:
+    limit_max_score: 60
+    market_min_score: 80
+    twap_min_value: 100000
+  retry:
+    delay_seconds: 5
+    max_attempts: 3
+  simulate_depth_cost_bps: 2.0
+  simulate_fill_delay_seconds: 0.5
+  simulate_partial_fill: false
+  simulate_realistic_flow: true
+  simulate_slippage_bps: 5.0
+  slippage:
+    check_enabled: true
+    max_ratio: 0.005
+exit_rules_controller:
+  dispatcher_enabled: true
+  fallback_on_error: true
+  log_suppressed_rules: true
+  monitor_comparison: true
+  shadow_mode: false
+feature_flags:
+  auto_trading_enabled: true
+llm:
+  defaults:
+    cache_dir: data/llm_cache
+    divergence_threshold: 0.5
+  features:
+    adaptive_tuner:
+      fallback: qwen-max
+      primary: deepseek-pro
+    agent_bridge:
+      fallback: qwen-max
+      primary: deepseek-pro
+    attribution_engine:
+      fallback: deepseek-pro
+      primary: qwen-max
+    catalyst_breaking:
+      fallback: qwen-max
+      primary: qwen-flash
+    catalyst_classifier:
+      fallback: deepseek-pro
+      primary: qwen-max
+    catalyst_macro:
+      fallback: deepseek-pro
+      primary: qwen-max
+    catalyst_review:
+      fallback: qwen-max
+      primary: deepseek-pro
+    catalyst_risk:
+      fallback: qwen-max
+      primary: deepseek-pro
+    catalyst_sentiment:
+      fallback: qwen-max
+      primary: kimi-k2
+    claude_code:
+      fallback: qwen-max
+      primary: deepseek-pro
+    daily_auto_tuner:
+      fallback: qwen-max
+      primary: deepseek-pro
+    daily_review:
+      cache_on_fail: true
+      fallback: qwen-max
+      primary: deepseek-pro
+    debate_arbiter:
+      fallback: deepseek-pro
+      primary: qwen-max
+    debate_bear:
+      fallback: qwen-max
+      primary: deepseek-pro
+    debate_bull:
+      fallback: deepseek-pro
+      primary: qwen-max
+    debate_engine:
+      fallback: deepseek-pro
+      primary: qwen-max
+    deep_target_analysis:
+      cache_on_fail: true
+      fallback: deepseek-pro
+      max_tokens: 3000
+      primary: qwen-max
+      temperature: 0.4
+    dr_debate:
+      cache_on_fail: true
+      fallback: qwen-max
+      max_tokens: 2500
+      primary: deepseek-pro
+      temperature: 0.3
+    dr_risk_debate:
+      cache_on_fail: false
+      fallback: qwen-max
+      max_tokens: 800
+      primary: deepseek-pro
+      temperature: 0.4
+    emergency_review:
+      fallback: qwen-max
+      primary: deepseek-pro
+    failure_mode_miner:
+      fallback: qwen-max
+      primary: deepseek-pro
+    llm_strategy_engine:
+      fallback: deepseek-pro
+      primary: qwen-max
+    model_agent:
+      fallback: qwen-max
+      primary: deepseek-pro
+    news_classifier: qwen-flash
+    plan_validator:
+      fallback: deepseek-pro
+      primary: qwen-max
+    playbook_generator:
+      cache_on_fail: true
+      fallback: deepseek-pro
+      max_tokens: 2048
+      primary: qwen-max
+      temperature: 0
+    pre_entry_gate:
+      cache_on_fail: false
+      fallback: qwen-max
+      primary: deepseek-pro
+    premarket_planner:
+      cache_on_fail: true
+      fallback: deepseek-pro
+      primary: qwen-max
+    regime_classifier:
+      fallback: deepseek-pro
+      primary: qwen-max
+    sentiment: qwen-flash
+    stock_analyst:
+      fallback: qwen-max
+      primary: glm-5
+    thesis_challenge: qwen-max
+    thesis_inferer: qwen-max
+    voting_deepseek:
+      fallback: qwen-max
+      primary: deepseek-pro
+    voting_glm:
+      fallback: qwen-max
+      primary: glm-5
+    voting_qwen:
+      fallback: deepseek-pro
+      primary: qwen-max
+    web_search_fundamental:
+      cache_on_fail: true
+      fallback: deepseek-pro
+      max_tokens: 1500
+      primary: qwen-max
+      temperature: 0.2
+    weekly_proposer:
+      fallback: qwen-max
+      primary: deepseek-pro
+  legacy_aliases:
+    deepseek: deepseek-pro
+    fallback: qwen-plus
+    minimax: qwen-flash
+    qwen: qwen-plus
+  models:
+    deepseek-flash:
+      api_key_env: DEEPSEEK_API_KEY
+      base_url: https://api.deepseek.com
+      cost_in: 0.0002
+      cost_out: 0.0008
+      model_name: deepseek-v4-flash
+      provider: deepseek
+      timeout: 8
+    deepseek-pro:
+      api_key_env: DASHSCOPE_API_KEY
+      base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+      cost_in: 0.002
+      cost_out: 0.008
+      model_name: deepseek-v4-pro
+      provider: dashscope
+      timeout: 300
+    glm-5:
+      api_key_env: DASHSCOPE_API_KEY
+      base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+      cost_in: 0.006
+      cost_out: 0.02
+      model_name: glm-5.2
+      provider: dashscope
+      timeout: 300
+    kimi-k2:
+      api_key_env: DASHSCOPE_API_KEY
+      base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+      cost_in: 0.004
+      cost_out: 0.016
+      model_name: kimi-k2.6
+      provider: dashscope
+      timeout: 60
+    qwen-flash:
+      api_key_env: DASHSCOPE_API_KEY
+      base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+      cost_in: 0.0003
+      cost_out: 0.0006
+      model_name: qwen3.6-flash
+      provider: dashscope
+      timeout: 8
+    qwen-max:
+      api_key_env: DASHSCOPE_API_KEY
+      base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+      cost_in: 0.008
+      cost_out: 0.024
+      model_name: qwen3.7-max
+      provider: dashscope
+      timeout: 300
+    qwen-plus:
+      api_key_env: DASHSCOPE_API_KEY
+      base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+      cost_in: 0.004
+      cost_out: 0.012
+      model_name: qwen3.6-plus
+      provider: dashscope
+      timeout: 30
+  strategy_engine:
+    api_key: ''
+    api_key_env: BAILIAN_API_KEY
+    base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
     enabled: true
-  feishu:
-    webhook_url: ${FEISHU_WEBHOOK_URL_US}
-    secret: ${FEISHU_APP_SECRET}
+    model: qwen-max
+    provider: bailian
+    thinking_level: high
+    timeout_seconds: 300
+llm_budget:
+  cost_alerts:
+    halt_pct: 1.0
+    warn_pct: 0.7
+  daily_max_usd: 5.0
+  per_module:
+    attribution: 2.0
+    premarket: 1.0
+    weekly_proposal: 2.0
+llm_features:
+  daily_auto_tuner:
+    daily_max_usd: 0.5
+    enabled: false
+    model: deepseek
+    timeout_sec: 60
+  emergency_review:
+    cooldown_sec: 3600
+    daily_max_usd: 0.3
+    enabled: false
+    model: qwen
+    negative_news_threshold: 0.6
+    price_drop_5m_threshold: 0.03
+    timeout_sec: 30
+    vix_spike_5m_threshold: 0.2
+  news_classifier:
+    daily_max_usd: 0.5
     enabled: true
+    model: minimax
+    timeout_sec: 20
+  news_multilang:
+    enabled: false
+  news_signal_gen:
+    cooldown_sec: 300
+    enabled: false
+    impacted_min_confidence: 0.7
+    max_position_pct: 0.05
+    min_abs_sentiment: 0.5
+    min_credibility: 0.6
+  pre_entry_gate:
+    cache_ttl_sec: 300
+    daily_max_usd: 1.5
+    enabled: false
+    min_history_trades: 5
+    model: deepseek-pro
+    timeout_sec: 5
+  regime_classifier:
+    daily_max_usd: 0.3
+    enabled: false
+    interval_minutes: 30
+    model: qwen
+    timeout_sec: 20
+  replay_dialog:
+    daily_max_usd: 1.0
+    enabled: true
+  thesis_inferer:
+    daily_max_usd: 0.4
+    enabled: true
+    model: qwen-plus
+    timeout_sec: 15
+llm_voting:
+  cache_ttl_seconds: 300
+  max_cache_entries: 50
+  price_change_threshold: 0.005
+logging:
+  backup_count: 5
+  file: logs/ftseek_us.log
+  format: '%(asctime)s [%(levelname)s] %(name)s: %(message)s'
+  level: INFO
+  max_size_mb: 10
+  rotation: daily
+mode:
+  sandbox:
+    enabled: false
+    keep_strict:
+    - kill_switch
+    - per_trade_risk_pct
+    - max_total_position
+    - sector_circuit_breaker
+    - critical_alerts
+    overrides:
+      MAX_DAILY_DRAWDOWN: 0.05
+      risk.position.max_per_sector: 0.55
+      risk.signal_quality.min_confidence: 0.65
+      scheduler.monitor_interval_minutes: 0.25
+      scheduler.scan_interval_minutes: 5
+      strategies.defaults.min_strength: 50
+      strategy.signal_cooldown: 30
+      symbol_cooldown.reversal_seconds: 60
+    universe:
+    - TSLA
+    - AMD
+    - RIVN
+    - SNDK
+    - ARM
+    - BWXT
+    - MU
+    - SPY
+    - QQQ
+news_relevance:
+  embedding:
+    enabled: false
+    hf_mirror: https://hf-mirror.com
+    model: moka-ai/m3e-small
+    similarity_threshold: 0.5
+  entities: {}
+  smart_engine:
+    enabled: true
+    relevance_threshold: 0.4
+news_sources:
+  cn:
+    cailianpress:
+      enabled: false
+      interval_sec: 30
+      keywords:
+      - 美股
+      - 纳指
+      - 标普
+      - 道指
+      - 美联储
+      - 鲍威尔
+      - FOMC
+      - 财报
+      - EPS
+      - 营收
+      - 指引
+      - 盘前
+      - 盘后
+      - SEC
+      - 停牌
+      - 拆股
+      - 回购
+      - 并购
+      max_per_fetch: 50
+      proxy: ''
+    eastmoney_us:
+      enabled: false
+      interval_sec: 120
+      max_symbols_per_fetch: 20
+      per_symbol_limit: 5
+      proxy: ''
+    wallstreetcn:
+      channels:
+      - us-stock
+      - fed
+      - global-macro
+      - earnings
+      enabled: false
+      interval_sec: 60
+      max_per_channel: 20
+      proxy: ''
+  rsshub:
+    data_dir: data/rsshub_us
+    enabled: true
+    instances:
+    - priority: 1
+      url: https://rsshub.rssforever.com
+      verify_ssl: false
+    retention_hours: 48
+    sources:
+      us_bloomberg:
+        interval_min: 3
+        path: /wallstreetcn/news
+        priority: 1
+      us_cls:
+        interval_min: 10
+        path: /36kr/newsflashes
+        priority: 3
+      us_cnbc_direct:
+        interval_min: 5
+        path: https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100003114
+        priority: 2
+        type: direct
+      us_seekingalpha_direct:
+        interval_min: 10
+        path: https://seekingalpha.com/feed.xml
+        priority: 3
+        type: direct
+      us_wallstreetcn:
+        interval_min: 5
+        path: /cls/telegraph
+        priority: 2
+news_v2:
+  enabled: true
+  mode: observe
+  observe:
+    data_dir: ~/.hermes/ftseek/data/v2_collection_us/
+    log_passed: true
+    log_rejected: true
+    report_interval: 10
+  quality_gate:
+    dedup:
+      db_path: ~/.hermes/ftseek/data/news_dedup_us_v2.db
+      enabled: true
+      similarity_threshold: 0.85
+      ttl_hours: 48
+    max_age_minutes: 120
+    relevance:
+      force_pass_geo: true
+      force_pass_immediate: true
+      min_score: 0.1
+  skip_market_hours: true
+  # 突发新闻驱动盘中即时扫描 (2026-06-30)
+  immediate_scan:
+    # 总开关: 是否允许突发新闻触发即时信号扫描
+    enabled: true
+    # 同一标的冷却时间 (秒), 防止同一事件反复扫描
+    cooldown_seconds: 300
+    # 是否只在盘中交易时段触发
+    require_trading_hours: true
+    # 最低紧急程度: IMMEDIATE 才触发
+    min_urgency: IMMEDIATE
+    # 是否允许无 related_stocks 的新闻通过关键词匹配触发
+    allow_keyword_match: true
+    # 关键词黑名单: 标题含这些词时跳过, 避免噪音/广告
+    title_blacklist:
+      - "sponsored"
+      - "promoted"
+      - "advertisement"
+      - "earnings preview"
+      - "analyst says"
+  sources:
+    finnhub:
+      enabled: false
+      interval_seconds: 120
+    rsshub_us:
+      enabled: true
+      interval_seconds: 180
+    sec_edgar:
+      enabled: false
+      interval_seconds: 300
 observability:
-  metrics:
-    collect_interval: 10
   alert_thresholds:
-    cpu_critical: 90
-    cpu_warning: 70
-    memory_critical: 90
-    memory_warning: 70
-    disk_critical: 95
-    disk_warning: 80
     api_failure_rate_critical: 50
     api_failure_rate_warning: 20
+    cpu_critical: 90
+    cpu_warning: 70
+    disk_critical: 95
+    disk_warning: 80
+    memory_critical: 90
+    memory_warning: 70
+  audit_log:
+    enabled: true
+    retention_days: 90
+  failure_tracking:
+    enabled: true
+    retention_days: 30
+  metrics:
+    collect_interval: 10
   notification:
     check_interval: 300
     quiet_hours:
       enabled: true
-      start: '22:00'
       end: 08:00
-  failure_tracking:
+      start: '22:00'
+opend:
+  host: ${FUTU_OPEND_HOST}
+  login_account: ${FUTU_LOGIN_ACCOUNT}
+  login_password: ${FUTU_LOGIN_PWD}
+  port: 11111
+options:
+  delta_range:
+  - -0.4
+  - -0.3
+  enabled: false
+  force_close_dte: 2
+  max_bid_ask_spread_pct: 0.05
+  max_cost_pct: 0.005
+  max_cost_per_contract: 2000
+  max_dte: 45
+  max_holding_hours: 72
+  min_dte: 7
+  min_open_interest: 100
+  preferred_dte: 30
+  price_range:
+  - 0.5
+  - 5.0
+  profit_target_pct: 0.5
+  quick_exit:
     enabled: true
-    retention_days: 30
-  audit_log:
+    trailing_stop: 0.15
+    trigger_profit: 0.3
+  short_strategy:
+    default_method: options_put
+    market_condition_overrides:
+      earnings_season: options_put
+      high_volatility: options_put
+      low_liquidity: options_put
+      normal: null
+    simulated_mode_force_options: false
+    stock_short:
+      borrow_cost_gate:
+        elevated_conviction_threshold: 85
+        enabled: true
+        hard_to_borrow_action: fallback_to_put
+        max_annual_rate: 0.05
+      borrow_fee_max_pct: 0.05
+      enabled: true
+      max_shares: 100
+      pair_preference:
+        enabled: true
+        naked_short_penalty: 0.1
+        prefer_sector_pairs: true
+        sector_etf_map:
+          consumer: US.XLY
+          energy: US.XLE
+          finance: US.XLF
+          healthcare: US.XLV
+          industrial: US.XLI
+          real_estate: US.XLRE
+          tech: US.XLK
+          utility: US.XLU
+      position_sizing:
+        max_position_pct: 0.1
+        short_to_long_ratio: 0.6
+      require_borrow_availability: true
+      squeeze_detector:
+        action: block
+        enabled: true
+        high_days_to_cover: 5.0
+        max_short_float_pct: 20.0
+      stop_loss_pct: -0.08
+      take_profit_pct: 0.1
+      technical_breach:
+        action: market_order_cover
+        breach_threshold_pct: 2.0
+        enabled: true
+        entry_cooldown_minutes: 60
+        resistance_lookback_days: 20
+      time_decay:
+        catalyst_sources:
+        - news_v2
+        - sec_filing
+        - insider_selling
+        max_holding_days: 5
+        no_catalyst_exit_days: 3
+  stop_loss_pct: -0.3
+  stop_loss_ratio: 0.5
+  take_profit_ratio: 2.0
+  time_decay_warning: 0.1
+orb:
+  breakout_buffer_pct: 0.1
+  capital_pct: 0.2
+  enabled: true
+  entry_end_et: '10:45'
+  entry_start_et: 09:50
+  eod_exit_time: '15:55'
+  low_vol_short_bias_quality: 0.85
+  max_daily_trades: 5
+  max_positions: 2
+  max_range_width_pct: 2.5
+  min_hold_seconds: 300
+  min_quality_score: 0.75
+  min_range_width_pct: 0.2
+  min_volume_ratio: 1.2
+  mode: active
+  polling_interval_seconds: 5
+  position_risk_pct: 0.01
+  range_minutes: 15
+  regime_long_bias_quality: 0.85
+  regime_short_bias_quality: 0.85
+  same_symbol_loss_cooldown: true
+  stop_loss_atr_mult: 1.5
+  take_profit_r_mult: 2.0
+  universe:
+  - US.SPY
+  - US.QQQ
+  - US.IWM
+  - US.DIA
+  - US.XLE
+  - US.XLF
+  - US.XLK
+  - US.XLV
+  - US.XLY
+  - US.XLI
+paths:
+  battle_plan: data/daily_battle_plan_us.json
+  config_path: config/unified_config.yaml
+  data_dir: data
+  debate_history_db: data/debate_framework/debate_history.db
+  decisions_db: data/decisions.db
+  exit_policy: app/risk/exit_policy.yaml
+  exit_quality_db: data/exit_quality.db
+  improvement_plans_dir: data/improvement_plans
+  logs_dir: logs
+  monthly_reviews_dir: data/monthly_reviews
+  news_us_db: data/rsshub_us/news_us.db
+  obsidian_vault: obsidian_vault
+  rejections_db: data/rejections.db
+  review_db: data/ftseek_us_review.db
+  reviews_dir: data/daily_reviews
+  trade_records_db: data/ftseek_us.db
+  trade_records_json: data/trade_records.json
+  trade_records_legacy_db: data/trade_records.db
+  us_stock_config: config/us_stock_config.yaml
+  vix_cache_dir: data/vix_cache
+  watchlist: config/watchlist_us.json
+  weekly_reviews_dir: data/weekly_reviews
+pipeline:
+  market_context:
+    cache_ttl_minutes: 30
+    capital_safety:
+      alert_drawdown: -0.1
+      circuit_breaker: -0.35
+      danger_drawdown: -0.2
+      enabled: true
+      warning_drawdown: -0.05
     enabled: true
-    retention_days: 90
-logging:
-  level: INFO
-  format: '%(asctime)s [%(levelname)s] %(name)s: %(message)s'
-  file: logs/ftseek_us.log
-  max_size_mb: 10
-  backup_count: 5
-  rotation: daily
-database:
-  type: sqlite
-  path: data/ftseek_us.db
-  backup_enabled: true
-  backup_interval_hours: 24
-agents:
-  main_agent:
-    id: ftseek_us_main
-    model: bailian/qwen-max
-    role: coordinator
-  decision_agent:
-    id: ftseek_us_decision
-    model: deepseek-v4-pro
-    role: signal_generator
-  risk_agent:
-    id: ftseek_us_risk
-    model: bailian/glm-5
-    role: risk_controller
-  execution_agent:
-    id: ftseek_us_execution
-    model: bailian/qwen-max
-    role: order_executor
-  observability_agent:
-    id: ftseek_us_observability
-    model: bailian/qwen-max
-    role: monitor
-feature_flags:
-  # 2026-06-14 SSOT清理: 删除7个死配置(零代码消费)
-  # 仅保留唯一有消费者的flag:
-  auto_trading_enabled: true        # 自动交易总开关 (order_executor._submit_order)
-
-# ⭐ 2026-06-18 Playbook System 总开关
-# enabled=false: pipeline 三个入口(generate/track/weekly)早退, 不调任何 Provider/LLM, 不入库不推送
-# execute_mode=simulate: 虚拟 shadow (不调 broker); =futu_simulate: 真实下单富途模拟账户 (Phase 1); =live: 实盘 (需 graduation, Phase 2)
-# execute_mode 分类法 (2026-06-24 清理, 不混为一谈):
-#   simulate      = 虚拟离线 (不调 broker, 仅写虚拟 trade_record; 用于无 OpenD 时的离线测试, 非验证)
-#   futu_simulate = 模拟验证 (真实下单富途模拟账户, OKR 度量真实成交; 默认验证态)
-#   live          = 实盘自动 (真实下单实盘账户, 需 graduation 门禁 + flat-switch; 毕业后)
-# 策略分类 (source_type):
-#   模拟类 = PLAYBOOK_SIM (playbook 自动模拟验证)
-#   实盘类 = MANUAL (手动) + PLAYBOOK_LIVE (playbook 自动实盘, 毕业后)
-#   独立策略 = ORB_ENGINE (开盘突破, ETF universe, 与 playbook 不重叠)
-#   已退役 = voting_llm / scalping / main_pipeline / playbook_shadow (legacy 投票执行路径, TRADING 禁扫)
+    vix_threshold: 25
+  master_switch: legacy
+  overrides:
+    exit: null
+    risk: null
+    signal: null
+    sizing: null
+  stages:
+  - abort_on_error: false
+    enabled: true
+    name: market_data
+    timeout_sec: 30.0
+  - abort_on_error: false
+    enabled: true
+    name: signal
+    timeout_sec: 30.0
+  - abort_on_error: false
+    enabled: true
+    name: risk
+    timeout_sec: 30.0
+  use_modular_stages: true
 playbook:
-  enabled: true                     # 上线闸门: true=进入 playbook 链路 (生成指令+追踪+飞书)
-  # 2026-06-25 OKR 架构决策: Playbook 是唯一的 sim→live 毕业策略.
-  #   futu_simulate = 富途模拟账户真实下单 (OKR 验证阶段)
-  #   live          = 实盘真实下单 (需 graduation gate 通过)
-  # 主线 / ORB 仅作为 sim 研究, 不参与 live.
-  execute_mode: futu_simulate       # 当前阶段: 富途模拟账户真实下单
-  auto_execute: true                # 盘中每30分钟自动执行 triggered 指令
-  live_trial: true                  # 2026-06-24 Phase 2: LIVE_TRIAL — target_env=real 时仓位×0.5; 验证 sim≈live PnL 后关此项放全量
-  enable_weekly: true               # 是否跑周度复盘 (冷启动期可关, 节省 LLM)
-  # 2026-06-26 优化: 以下参数从代码硬编码迁出, 统一治理 sim→live 资金口径与入场退出阈值.
-  risk_parameters:
-    # 资金基准: sim 与 live 统一口径, 避免 sim BP ($313K) 导致仓位虚大
-    risk_base_capital: 82000.0        # 美元
-    # 单笔风险占 risk_base 的比例 (默认 1%)
-    risk_pct: 1.0
-    # 风险回报比 (R:R). 2% 止损 + rr_ratio=1.0 → 2% 止盈
-    rr_ratio: 1.0
-    # 固定止损百分比 (相对入场价). 2026-06-25: 删 ATR 链, 统一用 2% 固定止损
-    fixed_stop_loss_pct: 2.0
-    # 单仓位上限占 risk_base 的比例
-    max_position_pct: 0.08
-    # ATR 乘数 (保留兼容, 当前未使用但可用于未来扩展)
-    atr_multiplier: 2.0
+  # 2026-06-30 修正: 用户要求通过 sim 在富途 APP 模拟交易可见，恢复自动执行.
+  # 注意: playbook_sim 近 30d 亏损 $1,832.84 (WR 30%), 需继续观察真实成交与 shadow 的差异.
+  auto_execute: true
+  direction_mode: llm_vote
+  enable_weekly: true
+  enabled: true
+  execute_mode: futu_simulate
   execution_parameters:
-    # 盘中触发: 价格突破 MA20 的最小百分比 (方向一致)
-    intraday_breakout_pct: 0.5
-    # 盘中触发: 成交量相对 5 日均量的最小倍数
-    intraday_volume_ratio: 1.5
-    # 自动执行最低 confidence 阈值
-    min_confidence: 65
-    # 购买力 guard 失败时回退到硬编码, 并发告警
+    buy_min_confidence: 85
     buying_power_fallback_alert: true
-  # 2026-06-26: Horizon Strategy — 个股阶段驱动的短线/长线决策
-  # 读取独立配置 config/playbook_horizon.yaml
+    intraday_breakout_pct: 0.5
+    intraday_volume_ratio: 1.5
+    min_confidence: 70
+    sell_short_min_confidence: 70
+  exit_rules:
+    # Phase 3 (2026-06-30): 退出规则已迁移到 playbook_horizon.yaml 的 factor_exit_rules,
+    # 按因子类型分别控制 breakeven / trailing / time_exit. 以下全局开关保留仅作兼容.
+    breakeven_ratchet_enabled: true
+    time_exit_enabled: true
   horizon_strategy:
+    config_path: config/playbook_horizon.yaml
     enabled: true
-    config_path: "config/playbook_horizon.yaml"
+  live_trial: true
+  risk_parameters:
+    atr_multiplier: 2.0
+    fixed_stop_loss_pct: 2.0
+    max_position_pct: 0.08
+    risk_base_capital: 82000.0
+    risk_pct: 1.0
+    rr_ratio: 1.0
+  technical_arbitration:
+    llm_conflict_confidence_threshold: 0.7
+    shadow_log_path: data/shadow/playbook_direction_audit.jsonl
+pre_market_ranker:
+  cache_ttl_seconds: 3600
+  enabled: false
+  sector_etf_lookback: 20
+  top_n: 8
+  weights:
+    momentum: 0.35
+    sector: 0.25
+    volatility: 0.2
+    volume: 0.2
+push:
+  aggregate_window_sec: 300
+  dedup_ttl_sec: 60
+  enabled: true
+  health_check: true
+regime_adaptation:
+  enabled: true
+  high_vol_position_scale: 0.3
+  position_scales:
+    HIGH_VOL: 0.3
+    RANGE: 0.7
+    TREND_DOWN: 0.8
+    TREND_UP: 1.0
+risk:
+  account:
+    max_daily_drawdown: 0.03
+    max_total_drawdown: 0.08
+  capital_safety:
+    account_refresh:
+      cache_ttl_seconds: 30
+      enabled: true
+      fallback: last_known
+      timeout_seconds: 3
+    safety_guards:
+      max_daily_turnover_pct: 0.3
+      max_shares: 10000
+      max_single_order_pct: 0.05
+      min_shares: 1
+      round_lot: true
+      slippage_check: true
+    tiers: *id001
+    water_levels:
+      green:
+        pos_mult: 1.0
+        risk_mult: 1.0
+        threshold: -0.05
+      orange:
+        pos_mult: 0.25
+        risk_mult: 0.25
+        threshold: -0.2
+      red:
+        pos_mult: 0.0
+        risk_mult: 0.0
+        threshold: -0.35
+      yellow:
+        pos_mult: 0.5
+        risk_mult: 0.5
+        threshold: -0.1
+  circuit_breaker:
+    strategy:
+      consecutive_losses: 3
+      daily_loss_threshold: -0.03
+      hourly_loss_threshold: -0.02
+      pause_duration: 1800
+  exit_routing:
+    log_comparison_mode: true
+    log_diff_only: true
+    use_unified_dispatcher: false
+  global_blacklist:
+  - US.QCOM
+  - US.LCID
+  - US.TME
+  - HK.00700
+  - US.HK.00700
+  long_direction_filter:
+    bull_regime_exempt:
+      consecutive_up_days_min: 2
+      spy_above_ma200: true
+      spy_above_ma50: true
+      vix_max: 20
+    default_discount: 0.7
+    dynamic_discounts:
+      BEAR: 0.7
+      BULL: 1.0
+      CAUTION: 0.85
+      CRISIS: 0.0
+      STRONG_BULL: 1.0
+    enabled: true
+    log_every_discount: true
+    use_dynamic: true
+  market_regime_filter:
+    long_in_high_zone_strength_mult: 0.5
+    short_exempt_critical: false
+    short_in_high_zone_strength_mult: 0.85
+    vix_levels:
+      critical: 28
+      high: 25
+      low: 18
+      mid: 22
+  max_trade_risk_pct: 0.01
+  mode_adaptation:
+    live_conservative:
+      circuit_breaker_loss_pct: 3.0
+      max_daily_loss_pct: 2.0
+      max_position_pct: 8.0
+      max_total_exposure_pct: 40.0
+    live_normal:
+      circuit_breaker_loss_pct: 5.0
+      max_daily_loss_pct: 3.0
+      max_position_pct: 12.0
+      max_total_exposure_pct: 60.0
+    simulate:
+      circuit_breaker_loss_pct: 8.0
+      max_daily_loss_pct: 5.0
+      max_position_pct: 15.0
+      max_total_exposure_pct: 80.0
+  p1_regime_gate:
+    enabled: true
+    vwap_filter_enabled: true
+    vwap_threshold: -0.001
+  position:
+    max_per_direction: 0.65
+    max_per_symbol: 0.25
+    max_total: 0.8
+  position_sizing:
+    max_position_pct: 0.12
+    risk_per_trade_pct: 0.008
+  pre_trade:
+    battle_plan_bonus: 0.5
+    battle_plan_bonus_enabled: true
+    long_min_strength: 60
+    min_effective_strength_floor: 5
+    short_min_strength: 45
+  self_managed_symbols:
+  - US.AMD
+  - HK.00700
+  - US.HK.00700
+  signal_quality:
+    min_confidence: 0.7
+    min_consensus: 0.25
+    min_score: 60
+  strategy_enforcement:
+    strict_owner_validation: true
+  strategy_health:
+    data_accumulation_days: 30
+    enabled: true
+    evaluation_interval_seconds: 3600
+    ic_active_threshold: 0.0
+    ic_recovery_threshold: 0.02
+    ic_suspend_threshold: -0.08
+    min_signals_for_ic: 30
+    win_rate_suspend: 0.3
+  symbol_daily_loss_guard:
+    enabled: true
+    exempt_symbols: []
+    max_consecutive_losses: 5
+    max_daily_loss_pct: 0.005
+    max_loss_rate: 0.66
+    min_trades_for_winrate_check: 3
+  trading:
+    max_daily_trades: 500
+    max_order_amount: 120000
+    min_liquidity_ratio: 0.5
+  vix_block_threshold: 28
+  vix_thresholds:
+    blocked: 28
+    normal: 22
+    relaxed: 18
+    tightened: 28
+    unblock: 25
+risk_limits:
+  end_of_day:
+    force_close_loss_at_et: '15:55'
+    min_hold_minutes_before_eod_exit: 0
+    no_new_entry_after_et: '15:50'
+    overnight_threshold_atr: 1.0
+  max_total_position: 0.8
+scheduler:
+  adaptive_scan_enabled: true
+  debate:
+    claude_api_models:
+    - deepseek-v4-pro
+    - qwen-max
+    - minimax-m2.5
+    claude_cli_model: deepseek-v4-pro
+    claude_cli_timeout_seconds: 600
+    claude_max_turns: 12
+    divergence_threshold: 0.4
+    enabled: true
+    hermes_model: qwen3.6-plus
+    max_rounds: 2
+    max_total_timeout_seconds: 600
+  event_day_interval_minutes: 3
+  event_day_symbols: []
+  max_positions: 12
+  min_confidence: 0.7
+  min_consensus_level: 0.25
+  min_signal_strength: 60
+  monitor_interval_minutes: 0.25
+  scan_interval_minutes: 5
+service:
+  api:
+    external_url: http://39.97.58.4:8901
+    host: 0.0.0.0
+    port: 8901
+    token: ${FTSEEK_US_API_TOKEN}
+  dingtalk:
+    enabled: true
+    secret: ${DINGTALK_SECRET_US}
+    webhook_url: ${DINGTALK_WEBHOOK_URL_US}
+  feishu:
+    enabled: true
+    secret: ${FEISHU_APP_SECRET}
+    webhook_url: ${FEISHU_WEBHOOK_URL_US}
+signal_fusion:
+  us:
+    macro_resonance:
+      alignment_bonus: 1.2
+      divergence_penalty: 0.8
+      enabled: true
+      trend_proxy: SPY
+    macro_weight: 0.3
+    policy_weight: 0.0
+    sentiment_weight: 0.2
+    technical_weight: 0.5
+    veto_policy_negative: false
+signal_quality:
+  confluence_bonus:
+    '0': -0.1
+    '1': -0.05
+    '2': 0.0
+    '3': 0.05
+    '4': 0.1
+    '5': 0.15
+  contradiction_penalty: -0.1
+  weights:
+    market_env: 0.15
+    momentum: 0.2
+    order_flow: 0.15
+    trend_quality: 0.25
+    volume: 0.25
+signal_scoring:
+  active_version: v1
+  weights_v2: null
+signal_stage:
+  mode: technical_direction_arbitration
+  technical_arbitration:
+    agreement_boost: 0.05
+    llm_conflict_confidence_threshold: 0.7
+    shadow_log_path: data/shadow/shadow_technical_direction.jsonl
+stop_loss:
+  default_stop_loss_pct: 0.05
+strategies:
+  coordinator:
+    audit_arbitration: true
+    enabled: true
+    max_total_pct: 0.8
+    observe_only: true
+    reconcile_interval_sec: 300
+    unified_dispatcher_enabled: false
+  defaults:
+    degraded_confidence_offset: -0.1
+    degraded_strength_offset: -10
+    direction_bias:
+      LONG:
+        min_confidence: 0.6
+      SHORT:
+        min_confidence: 0.35
+    max_positions: 12
+    min_confidence: 0.7
+    min_strength: 60
+    signal_expire_seconds: 300
+  dynamic_pool:
+    risk_adjustments:
+      blackout:
+        max_symbols: 0
+      danger:
+        max_symbols: 0
+      moderate:
+        max_concurrent_mult: 0.6
+        max_position_mult: 0.65
+        max_price_mult: 0.75
+        max_symbols_mult: 0.6
+        max_volatility_mult: 0.8
+        min_avg_volume_mult: 2.0
+        min_confidence_add: 0.1
+        min_score_add: 5
+        require_catalyst: true
+      warning:
+        allow_short: false
+        max_concurrent_mult: 0.25
+        max_position_mult: 0.35
+        max_price_mult: 0.5
+        max_symbols_mult: 0.3
+        max_volatility_mult: 0.5
+        min_avg_volume_mult: 3.0
+        min_confidence_add: 0.25
+        min_score_add: 15
+        require_catalyst: true
+    tiers:
+      inst:
+        allow_short: true
+        max_concurrent: 12
+        max_position_pct: 0.15
+        max_price: 2000
+        max_symbols: 20
+        max_volatility: 0.06
+        min_avg_volume: 10000000
+        min_confidence: 0.15
+        min_price: 5
+        min_score: 10
+        require_catalyst: false
+      large:
+        allow_short: true
+        max_concurrent: 8
+        max_position_pct: 0.2
+        max_price: 1000
+        max_symbols: 12
+        max_volatility: 0.08
+        min_avg_volume: 5000000
+        min_confidence: 0.15
+        min_price: 5
+        min_score: 10
+        require_catalyst: false
+      medium:
+        allow_short: true
+        max_concurrent: 5
+        max_position_pct: 0.25
+        max_price: 500
+        max_symbols: 8
+        max_volatility: 0.1
+        min_avg_volume: 2000000
+        min_confidence: 0.15
+        min_price: 5
+        min_score: 10
+        require_catalyst: false
+      micro:
+        allow_short: false
+        max_concurrent: 2
+        max_position_pct: 0.35
+        max_price: 100
+        max_symbols: 3
+        max_volatility: 0.15
+        min_avg_volume: 500000
+        min_confidence: 0.15
+        min_price: 5
+        min_score: 10
+        require_catalyst: false
+      small:
+        allow_short: false
+        max_concurrent: 3
+        max_position_pct: 0.3
+        max_price: 200
+        max_symbols: 5
+        max_volatility: 0.12
+        min_avg_volume: 1000000
+        min_confidence: 0.15
+        min_price: 5
+        min_score: 10
+        require_catalyst: false
+  dynamic_position_sizing:
+    consecutive_loss_threshold: 3
+    enabled: true
+    max_drawdown_pause: 0.05
+    position_reduction: 0.5
+    reset_after_win: true
+  earnings_revision:
+    enabled: false
+    min_analysts: 15
+    min_eps_growth: 0.05
+    min_revision_score: 0.15
+    min_strength: 45
+    min_upgrades: 2
+  fast_lane:
+    capital_pct: 0.2
+    capital_pct_of_main: 0.25
+    capital_source: main
+  insider:
+    enabled: true
+    min_buy_amount: 100000
+    min_buyers: 2
+    min_strength: 60
+    window_days: 30
+  llm_plan:
+    capital_pct: 0.0
+    priority: 3
+  llm_vote:
+    enabled: false
+    min_confidence: 0.5
+    min_consensus: 0.3
+  main:
+    capital_pct: 0.8
+    priority: 5
+  orb:
+    breakout_buffer_pct: 0.1
+    enabled: true
+    entry_end_et: '11:00'
+    max_chase_pct: 1.5
+    max_daily_trades: 15
+    max_positions: 5
+    max_range_width_pct: 2.5
+    min_range_width_pct: 0.3
+    min_risk_reward: 1.5
+    min_volume_ratio: 1.3
+    no_entry_after_et: '15:30'
+    observe_only: false
+    stop_loss_atr_mult: 1.5
+  technical:
+    enabled: false
+    indicators:
+    - rsi
+    - macd
+    - bollinger
+    - supertrend
+    min_pullback_quality: 0.5
+    min_score: 10
+    min_signals: 2
+    min_strength: 40
+    require_pullback: true
+    weights:
+      bollinger: 0.25
+      macd: 0.25
+      rsi: 0.3
+      supertrend: 0.2
+  trend_first:
+    breakout_min_volume_ratio: 2.0
+    breakout_stop_loss_atr_mult: 1.0
+    capital_pct_of_main: 0.35
+    capital_source: main
+    enabled: false
+    leader_bonus: 15
+    max_daily_trades: 10
+    max_position_pct: 0.1
+    max_positions: 5
+    min_score: 55
+    min_sector_score: 40
+    min_volume_ratio: 2.0
+    no_entry_after_et: '15:30'
+    observe_only: false
+    opening_delay_minutes: 15
+    overheat_penalty: 0.8
+    overheat_threshold: 80
+    pullback_rsi_long:
+    - 35
+    - 55
+    pullback_rsi_short:
+    - 45
+    - 65
+    require_ma_alignment: false
+    sector_max_age_hours: 2
+    stop_loss_atr_mult: 1.5
+    trail_activation_atr: 1.0
+    trail_atr_mult: 1.5
+  voting_llm:
+    enabled: true
+strategy:
+  consensus_threshold: 0.4
+  consensus_threshold_by_vix:
+    elevated: 0.45
+    extreme: 0.35
+    high: 0.4
+    normal: 0.5
+  signal_cooldown: 60
+strategy_budgets:
+  main_pipeline:
+    allow_live: false
+    max_concurrent_positions: 5
+    max_daily_loss_pct: 0.01
+    risk_budget_pct: 0.01
+  system:
+    max_total_daily_loss: 6000
+    risk_budget_pct: 0.012
 strategy_enhancements:
-  pivotal_points:
-    enabled: true
-    lookback_period: 20
-    volume_ratio_trigger: 1.5
-    breakout_buffer: 0.005
-    atr_period: 14
-    velocity_slope_limit: 2.0
   capital_flow:
     enabled: true
-    min_net_inflow_threshold: 0
     large_order_ratio: 0.3
-    volume_surge_factor: 2.0
+    min_net_inflow_threshold: 0
     pv_correlation_window: 5
+    volume_surge_factor: 2.0
   leader_pool:
     enabled: true
-    refresh_interval_minutes: 60
-    top_n_count: 5
-    min_volume_threshold: 1000000
     exhaustion_ma_days: 5
+    min_volume_threshold: 1000000
+    refresh_interval_minutes: 60
     sectors_to_watch:
     - Technology
     - Semiconductors
     - Consumer Discretionary
     - Automotive
     - Energy
-  smart_execution:
+    top_n_count: 5
+  pivotal_points:
+    atr_period: 14
+    breakout_buffer: 0.005
     enabled: true
-    max_slippage_bps: 50
-    limit_order_buffer_ticks: 2
-    order_book_depth: 5
-    liquidity_min_score: 0.4
-  regime_filter:
-    enabled: true
-    max_vix_threshold: 30
-    spy_trend_ma: 50
-    spy_bear_market_penalty: 0.5
+    lookback_period: 20
+    velocity_slope_limit: 2.0
+    volume_ratio_trigger: 1.5
   quality_gate:
     enabled: true
     min_score_to_trade: 0.6
     weights:
-      regime: 0.15
-      pivotal: 0.3
       capital_flow: 0.2
-      leader: 0.15
       execution: 0.2
-# 智能新闻相关性 (N7-N11, 2026-05-14)
-# 替代纯关键词过滤. 4 层 funnel:
-#   L1 NER + 词典 (上下文消歧)
-#   L2 板块传导 (复用 GEO_TRANSMISSION)
-#   L3 Embedding (可选, 需 sentence-transformers)
-#   L4 LLM 分类器 (已有 L1, 走 llm_features.news_classifier)
-news_relevance:
-  smart_engine:
-    enabled: true                  # L1+L2 默认开 (无新依赖)
-    relevance_threshold: 0.4       # 综合分 < 此值丢
-  embedding:
-    enabled: false                 # L3 默认关 (需 sentence-transformers)
-    model: "moka-ai/m3e-small"     # 国内可达 70MB 模型
-    hf_mirror: "https://hf-mirror.com"
-    similarity_threshold: 0.5
-  # 公司实体词典 — 可在此补充 yaml 静态映射 (启动时合并到 TickerDictionary)
-  entities:
-    # 示例: 如有未在 DEFAULT_ENTITIES 中的 ticker, 在此补充
-    # NEW_TICKER:
-    #   names: ["Company A", "中文名"]
-    #   products: ["product1", "product2"]
-    #   people: ["CEO Name"]
-    #   competitors: ["TICKER1", "TICKER2"]
-    #   sector: "Technology"
-    {}
-
-news_sources:
-  # CN 国产源 (2026-05-14): 国内大陆环境优先, 中文新闻给 L12 多语言 LLM
-  cn:
-    cailianpress:
-      enabled: false              # 模拟盘验证后开启
-      interval_sec: 30            # 30s 一次
-      max_per_fetch: 50
-      proxy: ""                   # 默认无代理 (国内可达)
-      keywords: ["美股", "纳指", "标普", "道指", "美联储", "鲍威尔", "FOMC",
-                 "财报", "EPS", "营收", "指引", "盘前", "盘后",
-                 "SEC", "停牌", "拆股", "回购", "并购"]
-    wallstreetcn:
-      enabled: false
-      interval_sec: 60
-      channels: ["us-stock", "fed", "global-macro", "earnings"]
-      max_per_channel: 20
-      proxy: ""
-    eastmoney_us:
-      enabled: false              # 需 watchlist 配合
-      interval_sec: 120
-      per_symbol_limit: 5
-      max_symbols_per_fetch: 20   # 每轮拉 20 个 symbol (轮转)
-      proxy: ""
-
-  rsshub:
+      leader: 0.15
+      pivotal: 0.3
+      regime: 0.15
+  regime_filter:
     enabled: true
-    instances:
-    - url: https://rsshub.rssforever.com
-      priority: 1
-      verify_ssl: false
-    sources:
-      us_bloomberg:
-        path: /wallstreetcn/news
-        priority: 1
-        interval_min: 3
-      us_wallstreetcn:
-        path: /cls/telegraph
-        priority: 2
-        interval_min: 5
-      us_cls:
-        path: /36kr/newsflashes
-        priority: 3
-        interval_min: 10
-      us_cnbc_direct:
-        path: https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100003114
-        priority: 2
-        interval_min: 5
-        type: direct
-      us_seekingalpha_direct:
-        path: https://seekingalpha.com/feed.xml
-        priority: 3
-        interval_min: 10
-        type: direct
-    data_dir: data/rsshub_us
-    retention_hours: 48
-debate_planner:
-  enabled: true
-  max_rounds: 2
-  divergence_threshold: 0.4
-  max_total_timeout: 600
-  agents:
-    hermes:
-      model: qwen3.6-plus
-      provider: bailian
-      timeout_seconds: 180
-    claude_code:
-      model: deepseek-v4-pro
-      provider: bailian
-      timeout_seconds: 180
-  fallback:
-    min_success_rate: 0.5
-    single_agent_fallback: hermes
-    rule_engine_enabled: true
-  retry:
-    max_retries: 2
-    base_delay_seconds: 5
-    max_delay_seconds: 60
-  memory:
-    max_historical_lessons: 20
-    max_tagged_lessons: 50
-    min_impact_score: 0.3
-    auto_prune: true
-    archive_enabled: true
-debate_mode:
-  enabled: true
-  timeout_seconds: 300
-  fallback_model: qwen-max
-  env_overrides:
-    FTSEEK_DEBATE_MODE: 'false'
-    FTSEEK_DEBATE_TIMEOUT: '300'
-    FTSEEK_DEBATE_FALLBACK_MODEL: qwen-max
-
-# Fix 13 (2026-05-31): 信号质量评分权重 — 外部化配置
-# SSOT for SignalQualityScorer._load_weights()
-signal_quality:
-  weights:
-    trend_quality: 0.25        # 趋势质量 (MA排列+斜率+SPY共振)
-    momentum: 0.20             # 动量 (RSI+MACD+slope)
-    volume: 0.25               # 成交量 (volume_ratio+VWAP+量价一致)
-    order_flow: 0.15           # 资金流 (order_flow+ticker+大单)
-    market_env: 0.15           # 市场环境 (VIX+SPY/MA200+regime)
-  confluence_bonus:
-    "5": 0.15
-    "4": 0.10
-    "3": 0.05
-    "2": 0.0
-    "1": -0.05
-    "0": -0.10
-  contradiction_penalty: -0.10
-
-strategy:
-  # 模拟盘数据采集: 放宽冷却以收集更多信号
-  signal_cooldown: 60
-  # Task #2 (2026-05-31): consensus_threshold 改为 VIX 自适应 (在 app/decision/consensus.py 中实现)
-  # 此处保留 fallback 默认值；运行时按 VIX 动态选择 0.55/0.60/0.70/0.75
-  consensus_threshold: 0.4           # 模拟盘: 0.6→0.4, 放宽共识要求
-  # VIX 自适应共识阈值 (模拟盘数据采集: 全部放宽)
-  consensus_threshold_by_vix:
-    extreme: 0.35      # VIX > 40
-    high:    0.40      # VIX > 30
-    elevated: 0.45     # VIX > 20
-    normal:  0.50      # VIX <= 20
-strategies:
-  # ─── Phase A (2026-05-14): 多策略协调 ───
-  # 灰度: enabled=true → coordinator 生效 (但 observe_only=true 不阻断现有流程)
-  #       enforce 模式 (enabled=true && observe_only=false) 留给 Phase B 切换
-  coordinator:
-    enabled: true              # Phase A 灰度: 开启观察模式 收集数据
-    observe_only: true         # 不阻断, 仅记录 BLOCKED_* 事件用于评估
-    max_total_pct: 0.80    # Task fix: 0.90→0.80 与 risk_limits.max_total_position 对齐
-    audit_arbitration: true    # 写 signal_arbitration 表
-    reconcile_interval_sec: 300  # 每 5 分钟与 PositionRegistry 对账
-    # R4 (2026-05-15): unified_dispatcher 灰度位 (代码尚未启用 — 仅声明)
-    # 当 ExitDispatcher 4 policy 各自稳定 7+ 天后, 切 true 启用统一 ExitDecision 优先级仲裁
-    # 启用前置条件: PositionExitMonitor 与 ExitDispatcher 决策一致率 > 95%
-    unified_dispatcher_enabled: false
-  # ADR-002 (2026-05-31): 资金全部归 main
-  main:
-    capital_pct: 0.80
-    priority: 5
-  # P10 优化 (2026-05-22): 连续亏损后动态降仓
-  # 数据：1 连败后胜率 20%，4 连败后胜率 40%（反转）
-  # 策略：连续 3 次亏损后降仓 50%，避免情绪化交易
-  # 注意：已有 symbol_daily_loss_guard 机制 (max_consecutive_losses=2)，无需重复配置
-  dynamic_position_sizing:
+    max_vix_threshold: 30
+    spy_bear_market_penalty: 0.5
+    spy_trend_ma: 50
+  smart_execution:
     enabled: true
-    consecutive_loss_threshold: 3    # 连续 3 次亏损后触发降仓
-    position_reduction: 0.5          # 降仓 50%
-    reset_after_win: true            # 盈利后重置
-    max_drawdown_pause: 0.05         # 单日最大回撤 5% 暂停新仓
-  fast_lane:
-    # Task #1 (2026-05-31): 子策略从 main 池切分，不独立累加
-    capital_source: main          # 资金来源: main 池
-    capital_pct_of_main: 0.25     # 占 main 池 25% (= 0.65 × 0.25 = 0.1625 全账户)
-    capital_pct: 0.20             # 兼容字段：CapitalAllocator bucket_map 已映射到 main，不双计
-  llm_plan:
-    capital_pct: 0.0           # LLM plan 不直接持仓
-    priority: 3
-
-  # === RFC-054: Trend-First 趋势优先策略 ===
-  # ADR-007 (2026-06-16): 全局禁用 — IC=-0.24, 历史验证有害
-  # 原因: 15 笔信号 IC=-0.24, 越用越亏。复杂度引入噪音/过拟合。
-  # 替代: Regime Filter + TECHNICAL_MULTI_FACTOR 回撤入场
+    limit_order_buffer_ticks: 2
+    liquidity_min_score: 0.4
+    max_slippage_bps: 50
+    order_book_depth: 5
+strategy_registry:
+  BATTLE_PLAN_FAST_PATH:
+    config_name: fast_lane
+    direction_filter:
+      BUY_min_confidence: 70
+      SHORT_min_confidence: 70
+    enabled: true
+    ic_gate:
+      hard_block_threshold: -0.15
+      min_signals: 10
+      warning_threshold: 0.05
+    regime_filter: true
+  EARNINGS_REVISION_MOMENTUM:
+    config_name: earnings_revision
+    direction_filter: {}
+    enabled: false
+    ic_gate:
+      hard_block_threshold: -0.15
+      min_signals: 30
+      warning_threshold: 0.05
+    regime_filter: false
+  TECHNICAL_MULTI_FACTOR:
+    config_name: technical
+    direction_filter:
+      BUY_max_std: 15
+      BUY_min_confidence: 70
+      BUY_min_strength: 50
+      SHORT_min_confidence: 70
+    enabled: false
+    ic_gate:
+      hard_block_threshold: -0.15
+      min_signals: 30
+      warning_threshold: 0.05
+    regime_filter: true
+  technical_intraday:
+    config_name: technical
+    direction_filter:
+      BUY_min_confidence: 70
+      SHORT_min_confidence: 70
+    enabled: true
+    ic_gate:
+      hard_block_threshold: -0.15
+      min_signals: 30
+      warning_threshold: 0.05
+    regime_filter: false
   trend_first:
-    enabled: false                # ADR-007: true→false (IC=-0.24)
-    observe_only: false             # Task #19: 开放模拟交易执行 (从 true → false)
-    min_volume_ratio: 2.0           # Fix 12 (2026-05-31): 显式声明, 与 breakout_min_volume_ratio 对齐
-
-    # 资金分配（从 Main 预算池切分，与 Technical 共享 0.65 总额）
-    # Task #1 (2026-05-31): 显式 capital_pct_of_main, 不再独立累加 capital_pct
-    capital_source: main            # 明确标注资金来源
-    capital_pct_of_main: 0.35       # 占 main 池 35% (= 0.65 × 0.35 = 0.2275 全账户)
-
-    # Layer 2: 选股参数
-    min_sector_score: 40            # 板块热度门槛
-    leader_bonus: 15                # 龙头加分
-    overheat_threshold: 80          # 过热板块阈值
-    overheat_penalty: 0.8           # 过热惩罚系数
-    sector_max_age_hours: 2         # 板块数据最大有效期(小时)
-
-    # Layer 3: 入场参数
-    pullback_rsi_long: [35, 55]     # LONG回调入场RSI区间
-    pullback_rsi_short: [45, 65]    # SHORT回调入场RSI区间
-    require_ma_alignment: false     # 是否要求均线排列（false=仅跟踪，不强制过滤）
-    breakout_min_volume_ratio: 2.0  # BREAKOUT最低放量倍数
-
-    # Layer 4: ATR风控映射
-    stop_loss_atr_mult: 1.5         # PULLBACK止损倍数
-    breakout_stop_loss_atr_mult: 1.0  # BREAKOUT止损倍数（更紧）
-    trail_activation_atr: 1.0       # 追踪激活阈值
-    trail_atr_mult: 1.5             # 追踪止损倍数
-
-    # 信号质量门槛
-    min_score: 55                   # 最低评分（低于此不产出信号）
-
-    # 执行约束（observe_only=false 时生效） —— Task #19
-    max_daily_trades: 10             # 模拟盘: 5→10
-    max_positions: 5                # 模拟盘: 3→5
-    max_position_pct: 0.10          # 单仓最大占比 (0.15 → 0.10 保守调低)
-
-    # 执行保护 —— Task #19
-    opening_delay_minutes: 15       # 开盘后15分钟内不入场（数据需预热）
-    no_entry_after_et: "15:30"      # 15:30后不再新开仓（保证至少30分钟持仓）
-
-  # === ORB: Opening Range Breakout (开盘区间突破) ===
-  # 数据驱动: 10:00-11:00 是盈利主力时段 (+$21K), trailing stop 是唯一赚钱退出方式
-  # ORB 天然匹配: 09:45后入场 + trailing stop 退出, 只有2个核心参数
-  #
-  # 2026-06-01 双系统架构:
-  #   System A (本配置) = 主线Pipeline ORB: 10分钟扫描, regime/MACD/RSI多重确认
-  #     → owner_strategy="orb_pipeline", 退出由DEM管理
-  #   System B (orb:顶级配置) = RFC-056独立引擎: 5秒轮询, 纯突破+量能确认
-  #     → owner_strategy="orb_engine", 退出由ORBExitStack自管
-  #   互斥: 同一ETF不会被两个系统同时开仓 (PositionStore.has检查)
-  #   持仓上限: max_positions 为两系统合计上限
-  orb:
-    enabled: true
-    observe_only: false             # 直接参与模拟交易
-
-    # 开盘区间参数
-    min_range_width_pct: 0.3        # 区间最小宽度% (太窄=假突破风险)
-    max_range_width_pct: 2.5        # 区间最大宽度% (太宽=波动过大)
-    breakout_buffer_pct: 0.1        # 突破缓冲区% (防边界抖动)
-    max_chase_pct: 1.5              # 最大追高% (已远离区间不追)
-
-    # 风控参数
-    stop_loss_atr_mult: 1.5         # ATR止损倍数 (兜底, 与区间中点取较远者)
-    min_risk_reward: 1.5            # 最小盈亏比
-
-    # 量能确认 (可选, 0=不检查)
-    min_volume_ratio: 1.3
-
-    # 时间窗口
-    entry_end_et: "11:00"           # ORB入场截止时间
-    no_entry_after_et: "15:30"      # 收盘前截止
-
-    # 执行约束 (双系统合计上限)
-    max_daily_trades: 15            # 模拟盘: 5→15
-    max_positions: 5                # 模拟盘: 3→5
-
-  defaults:
-    # 2026-06-07: 0.30→0.55, 数据证明 0.65-0.80 置信度区间胜率仅 13% (-$2,317)
-    # 0.55 与 risk.signal_quality.min_confidence 对齐, 过滤弱信号
-    min_confidence: 0.70
-    min_strength: 60
-    max_positions: 12                # 模拟盘: 5→12, 最大化数据采集
-    direction_bias:
-      LONG:
-        min_confidence: 0.60  # 2026-06-10: 0.45→0.60, LONG 26.6% WR 净亏$2.9K, 收紧入场门槛
-      SHORT:
-        min_confidence: 0.35  # ADR-005: 0.45→0.35, SHORT正EV方向, 放宽让更多信号进入
-    # signal_cooldown_seconds 已删除 (2026-06-20): 死键, SoT 是 strategy.signal_cooldown
-    signal_expire_seconds: 300
-    degraded_confidence_offset: -0.1
-    degraded_strength_offset: -10
-  dynamic_pool:
-    tiers:
-      micro:
-        max_symbols: 3
-        min_confidence: 0.15
-        min_score: 10
-        max_price: 100
-        min_price: 5
-        max_volatility: 0.15
-        min_avg_volume: 500000
-        max_position_pct: 0.35
-        max_concurrent: 2
-        allow_short: false
-        require_catalyst: false
-      small:
-        max_symbols: 5
-        min_confidence: 0.15
-        min_score: 10
-        max_price: 200
-        min_price: 5
-        max_volatility: 0.12
-        min_avg_volume: 1000000
-        max_position_pct: 0.3
-        max_concurrent: 3
-        allow_short: false
-        require_catalyst: false
-      medium:
-        max_symbols: 8
-        min_confidence: 0.15
-        min_score: 10
-        max_price: 500
-        min_price: 5
-        max_volatility: 0.1
-        min_avg_volume: 2000000
-        max_position_pct: 0.25
-        max_concurrent: 5
-        allow_short: true
-        require_catalyst: false
-      large:
-        max_symbols: 12
-        min_confidence: 0.15
-        min_score: 10
-        max_price: 1000
-        min_price: 5
-        max_volatility: 0.08
-        min_avg_volume: 5000000
-        max_position_pct: 0.2
-        max_concurrent: 8
-        allow_short: true
-        require_catalyst: false
-      inst:
-        max_symbols: 20
-        min_confidence: 0.15          # 模拟盘: 0.5→0.15
-        min_score: 10                 # 模拟盘: 50→10
-        max_price: 2000
-        min_price: 5
-        max_volatility: 0.06
-        min_avg_volume: 10000000
-        max_position_pct: 0.15
-        max_concurrent: 12
-        allow_short: true
-        require_catalyst: false
-    risk_adjustments:
-      moderate:
-        max_symbols_mult: 0.6
-        min_confidence_add: 0.1
-        min_score_add: 5
-        max_price_mult: 0.75
-        max_volatility_mult: 0.8
-        min_avg_volume_mult: 2.0
-        max_position_mult: 0.65
-        max_concurrent_mult: 0.6
-        require_catalyst: true
-      warning:
-        max_symbols_mult: 0.3
-        min_confidence_add: 0.25
-        min_score_add: 15
-        max_price_mult: 0.5
-        max_volatility_mult: 0.5
-        min_avg_volume_mult: 3.0
-        max_position_mult: 0.35
-        max_concurrent_mult: 0.25
-        allow_short: false
-        require_catalyst: true
-      danger:
-        max_symbols: 0
-      blackout:
-        max_symbols: 0
-  technical:
-    enabled: true   # ADR-007 (2026-06-16): 重新启用 — 唯一正IC策略(+0.23), 已改造为动量+回撤入场
-    # ── ADR-007 新参数 ──
-    require_pullback: true        # 强制回撤入场 (不追高/不追低)
-    min_pullback_quality: 0.5     # 最低回调质量 (0.0-1.0)
-    min_strength: 40              # 最低信号强度
-    # ── 旧参数 (保留兼容, 新版不使用) ──
-    min_signals: 2
-    indicators:
-    - rsi
-    - macd
-    - bollinger
-    - supertrend
-    weights:
-      rsi: 0.3
-      macd: 0.25
-      bollinger: 0.25
-      supertrend: 0.2
-    min_score: 10
-  llm_vote:
-    enabled: false  # 冻结 (2026-06-11): 信号噪声大，LLM 方向默认 LONG 偏见
-    min_consensus: 0.3
-    min_confidence: 0.5
-  # === ADR-007 (2026-06-16): 内部人集群买入信号 ===
-  # SEC Form 4 数据: 30天内 ≥2 位内部人净买入, 每人 > $50K
-  # 学术IC: 0.20-0.35, 低频高质
-  insider:
-    enabled: true
-    min_buy_amount: 50000          # 单人最低买入金额
-    min_buyers: 2                  # 最低不同内部人数
-    min_strength: 50               # 最低信号强度
-    window_days: 30                # 回溯窗口
-  # === ADR-007 (2026-06-16): 分析师修正动量信号 ===
-  # Yahoo Finance earningsTrend + upgradeDowngradeHistory
-  # PEAD效应: 分析师上调 → 机构跟进 → 数周漂移
-  earnings_revision:
-    enabled: false  # 2026-06-19 Phase 0: 禁用 — IC=-0.19, p=0.0014, 275 信号显著反向
-    min_upgrades: 2                # 30天内最低升级数
-    min_revision_score: 0.15       # 最低综合修正分
-    min_analysts: 15               # 最低分析师覆盖
-    min_eps_growth: 0.05           # 最低EPS增长预期 (5%)
-    min_strength: 45               # 最低信号强度
-  # === 2026-06-20: LLM投票信号归因止血 ===
-  # 归因数据: n=338, WR=40.8%, avg_ret=-0.42%, 无strategy_id标记(unknown)
-  # 根因: 盘后批量扫描全symbol, confidence/strength固定值, 无差异化判断
+    config_name: trend_first
+    direction_filter: {}
+    enabled: false
+    ic_gate:
+      hard_block_threshold: -0.15
+      min_signals: 30
+      warning_threshold: 0.05
+    regime_filter: false
   voting_llm:
-    enabled: false  # 2026-06-26: LLM调用9-15s/只太慢拖垮扫描, 先靠technical (LONG已修复)
-    # 2026-06-26: 启用引入LONG信号源 → 导致每只股票9-15s超时, 全部返回None
-    # 需先优化LLM调用速度(异步/缓存/减少model数)再启用
-risk_limits:
-  # Task #1 (2026-05-31): 总敞口对齐 — main 0.65 (含子策略) = 0.80
-  # 子策略 (trend_first/fast_lane) 走 capital_source: main, 不再单独累加
-  max_total_position: 0.80
-  # Capital allocation: main=0.65 (含 trend_first 35% + fast_lane 25%) = 0.80
-  end_of_day:
-    no_new_entry_after_et: "15:50"
-    force_close_loss_at_et: "15:55"
-    overnight_threshold_atr: 1.0
-    min_hold_minutes_before_eod_exit: 0
-strategy_budgets:
-  main_pipeline:
-    max_concurrent_positions: 5
-    risk_budget_pct: 0.01
-    max_daily_loss_pct: 0.01
-    allow_live: false          # 2026-06-25: 主线仅 sim 研究，Playbook 是唯一 live 毕业策略
-  system:
-    max_total_daily_loss: 6000
-    risk_budget_pct: 0.012
-stop_loss:
-  default_stop_loss_pct: 0.05
+    config_name: voting_llm
+    direction_filter:
+      BUY_max_std: 15
+      BUY_min_confidence: 70
+      BUY_min_strength: 50
+      SHORT_min_confidence: 70
+    enabled: true
+    ic_gate:
+      hard_block_threshold: -0.15
+      min_signals: 30
+      warning_threshold: 0.05
+    regime_filter: false
+symbol_cooldown:
+  reversal_seconds: 180
+  structure_exit:
+    consecutive_losses: 3
+    cooldown_hours: 24
+    direction: same_only
 take_profit:
   default_take_profit_pct: 0.1
-signal_fusion:
-  us:
-    technical_weight: 0.5
-    sentiment_weight: 0.2
-    macro_weight: 0.3
-    policy_weight: 0.0
-    veto_policy_negative: false
-    macro_resonance:
-      enabled: true
-      alignment_bonus: 1.2
-      divergence_penalty: 0.8
-      trend_proxy: SPY
-scheduler:
-  scan_interval_minutes: 5               # ADR-005: 10→5min — 加速数据采集
-  monitor_interval_minutes: 0.25
-  max_positions: 12                # 模拟盘: 5→12, 最大化数据采集
-  min_confidence: 0.70             # 2026-06-16: 恢复 — config_audit CRITICAL_KEY, 与 risk.signal_quality.min_confidence 对齐
-  min_signal_strength: 60  # 高确信度门槛 (2026-06-13): 30→60
-  min_consensus_level: 0.25  # P0 (2026-06-03): 0.20→0.25, 轻度收紧 (数据: 0.2-0.5 区间仅11笔)
-  adaptive_scan_enabled: true
-  event_day_interval_minutes: 3
-  event_day_symbols: []
-  debate:
+trading_hours:
+  after_market_close: '20:00'
+  market_close: '16:00'
+  market_open: 09:30
+  pre_market_open: 04:00
+updated: '2026-04-29'
+version: 3.0.0
+watchlist:
+  etfs:
+  - code: US.SPY
+    enabled: false
+    name: SPDR S&P 500 ETF
+    notes: → ORB 管理 | 主线仅用作市场方向参考
+    tier: ETF
+  - code: US.QQQ
+    enabled: false
+    name: Invesco QQQ Trust
+    notes: → ORB 管理 | 主线仅用作市场方向参考
+    tier: ETF
+  - code: US.XLF
+    enabled: false
+    max_position_ratio: 0.15
+    name: Financial Select Sector SPDR
+    notes: → ORB 管理 (ADR-006)
+    tier: ETF
+  - code: US.XLY
+    enabled: false
+    max_position_ratio: 0.15
+    name: Consumer Discretionary Select
+    notes: → ORB 管理 (ADR-006)
+    tier: ETF
+  - code: US.XLK
+    enabled: false
+    max_position_ratio: 0.15
+    name: Technology Select Sector
+    notes: → ORB 管理 (ADR-006)
+    tier: ETF
+  - code: US.XLI
+    enabled: false
+    max_position_ratio: 0.15
+    name: Industrial Select Sector
+    notes: → ORB 管理 (ADR-006)
+    tier: ETF
+  - code: US.XLE
+    enabled: false
+    max_position_ratio: 0.15
+    name: Energy Select Sector
+    notes: → ORB 管理 (ADR-006)
+    tier: ETF
+  - code: US.IWM
+    enabled: false
+    max_position_ratio: 0.15
+    name: iShares Russell 2000
+    notes: → ORB 管理 (ADR-006)
+    tier: ETF
+  us_stocks:
+  - code: US.TSLA
     enabled: true
-    max_rounds: 2
-    max_total_timeout_seconds: 600
-    divergence_threshold: 0.4
-    hermes_model: qwen3.6-plus
-    claude_cli_model: deepseek-v4-pro
-    claude_api_models:
-    - deepseek-v4-pro
-    - qwen-max
-    - minimax-m2.5
-    claude_cli_timeout_seconds: 600
-    claude_max_turns: 12
-# portfolio: 已删除 (2026-06-14) — DEAD CONFIG, 0 代码引用。
-news_v2:
-  enabled: true
-  mode: observe
-  # 盘中 (09:30-16:00 ET) 停止定时轮询采集；突发新闻应走主动推送/WebSocket。
-  # 保留盘前/盘后/周末采集用于预热、复盘与地缘风险监控。
-  skip_market_hours: true
-  sources:
-    rsshub_us:
-      enabled: true
-      interval_seconds: 180
-    finnhub:
-      enabled: false             # [CLEANUP 2026-06-13] NewsV2 Finnhub never produced news
-      interval_seconds: 120
-    sec_edgar:
-      enabled: false             # [CLEANUP 2026-06-13] 53 log lines init-only, zero filings
-      interval_seconds: 300
-  quality_gate:
-    max_age_minutes: 120
-    dedup:
-      enabled: true
-      db_path: ~/.hermes/ftseek/data/news_dedup_us_v2.db
-      ttl_hours: 48
-      similarity_threshold: 0.85
-    relevance:
-      min_score: 0.1
-      force_pass_geo: true
-      force_pass_immediate: true
-  observe:
-    log_passed: true
-    log_rejected: true
-    data_dir: ~/.hermes/ftseek/data/v2_collection_us/
-    report_interval: 10
-capital:
-  # mode: 已删除 (2026-06-14) — 零消费者, 交易模式由.env.us TRADE_ENV控制
-  fixed_amount: 82000  # fallback capital when broker equity unavailable  # 2026-06-14: 实际账户约$82K
-  description: 'Capital mode for adaptive risk. "simulation": uses fixed_amount. "live":
-    reads from broker.'
-  tiers: *id001
-diagnostics:
-  enabled: true
-  description: 非交易路径诊断 Overlay — 零侵入现有交易管线
-  schedule:
-    post_market:
-      enabled: true
-      time: '20:30'
-      modules:
-      - shadow_account
-      - statistical_validator
-    on_demand:
-      enabled: true
-      modules:
-      - geopolitical_reasoner
-  shadow_account:
-    lookback_days: 30
-  statistical_validator:
-    n_simulations: 1000
-    risk_free_rate: 0.05
-  geopolitical_reasoner:
-    mode: rules
-    min_confidence: 0.65
-pipeline:
-  # ============================================================
-  # 策略路由器 (StrategyRouter) — 新旧链路切换 (2026-05-23 辩论收敛)
-  # ============================================================
-  # master_switch 控制全局链路选择:
-  #   legacy      → 完全使用旧系统 (signal_pipeline + risk_engine + exit_monitor)
-  #   factor      → 完全使用新框架 (FactorAssembly + DynamicRisk + DynamicExit)
-  #   hybrid      → 混合模式 (per-module override, 默认: signal=factor, exit=legacy)
-  #   shadow_only → 仅 shadow 对比, 不真实下单 (推荐初始阶段)
-  #
-  # 切换方式: 修改 master_switch 后重启服务, 无需改代码
-  # 安全降级: 新框架异常时自动 fallback 到 legacy
-  # ============================================================
-  master_switch: legacy    # 2026-06-26: shadow_only → legacy, 启用真实下单 (futu_simulate)
-  overrides:
-    signal: null                # null = follow master, or: legacy/factor
-    risk: null
-    exit: null
-    sizing: null
-
-  # 旧管线 stage 配置 (保留)
-  use_modular_stages: true     # CRA 模块化管线 (SSOT, 代码中 use_new_stages 向后兼容)
-  stages:
-  - name: market_data
+    max_position_ratio: 0.08
+    name: Tesla Inc
+    notes: 新能源车龙头 | ATR%≈0.08% | 高波收紧仓位
+    sector: Consumer Cyclical
+    tier: TIER1
+  - code: US.NVDA
+    enabled: false
+    max_position_ratio: 0.15
+    name: NVIDIA Corp
+    notes: AI芯片核心 | 近期ATR极低0%胜率，暂停 (2026-05-30)
+    sector: Semiconductors
+    tier: TIER1
+  - code: US.RIVN
     enabled: true
-    timeout_sec: 30.0
-    abort_on_error: false
-  - name: signal
+    max_position_ratio: 0.08
+    name: Rivian Automotive
+    notes: 最高ATR%≈0.20% | 短线回旋空间大 | 高波收紧仓位
+    sector: Consumer Cyclical
+    tier: TIER1
+  - code: US.UBER
     enabled: true
-    timeout_sec: 30.0
-    abort_on_error: false
-  - name: risk
+    max_position_ratio: 0.12
+    name: Uber Technologies
+    notes: 出行+SaaS | ATR%≈0.12% | 趋势清晰
+    sector: Technology
+    tier: TIER1
+  - code: US.LCID
+    enabled: false
+    max_position_ratio: 0.08
+    name: Lucid Group
+    notes: 黑名单16%胜率，禁止入场 (2026-05-30)
+    sector: Consumer Cyclical
+    tier: TIER1
+  - code: US.SNDK
     enabled: true
-    timeout_sec: 30.0
-    abort_on_error: false
-
-  # 市场上下文门禁 (从旧系统移植, 新旧链路共用)
-  market_context:
+    max_position_ratio: 0.08
+    name: SanDisk Corp
+    notes: 高波动存储芯片 | ATR%高 | 每日交易标的
+    sector: Technology
+    tier: TIER1
+  - code: US.ARM
     enabled: true
-    vix_threshold: 25            # 参考值: pre_trade_check 使用 VIX≥25 硬编码门禁 (此处仅供文档参考)
-    cache_ttl_minutes: 30       # 市场数据缓存时间
-    capital_safety:
-      enabled: true
-      warning_drawdown: -0.05   # -5% 回撤 → 仓位减半
-      alert_drawdown: -0.10     # -10% → 仅25%仓位
-      danger_drawdown: -0.20    # -20% → 不开新仓
-      circuit_breaker: -0.35    # -35% → 全部平仓
-
-# ─── RFC-056 (2026-06-01): 独立 ORB 辅线 ────────────────────────
-# Opening Range Breakout: 5秒轮询, ETF专属标的池, 独立退出栈
-# 与主线零重叠: 标的是 SPY/QQQ/IWM/XLE/XLF 等 ETF
-# 上线策略: observe → shadow → active (渐进)
-# 详见: docs/decisions/RFC-056-orb-auxiliary-pipeline.md
-#
-# 双系统协作:
-#   System B (本配置) = RFC-056独立引擎, 5秒轮询快速捕捉突破
-#   System A (strategies.orb) = 主线Pipeline, 10分钟扫描多重确认
-#   互斥: PositionStore.has() 确保同一ETF不被双开
-#   持仓: max_positions 读取 strategies.orb.max_positions (双系统合计上限)
-#   退出: 本系统自管 (ORBExitStack 4层退出), DEM跳过 orb_engine 仓位
-# ────────────────────────────────────────────────────────────────
-orb:
-  enabled: true
-  mode: active                    # 2026-06-25: shadow→active. Futu 模拟账户真实下单 (AUTO_TRADE_ACCOUNT=sim), 非实盘, 用于 OKR 数据采集.
-  universe:
-    # ADR-006 (2026-06-07): ETF 归 ORB，个股归主线，零重叠
-    # 宽基 (4): 最高流动性，开盘区间最清晰
-    - US.SPY                       # S&P 500 (从主线移入)
-    - US.QQQ                       # Nasdaq 100 (从主线移入)
-    - US.IWM                       # Russell 2000 (高波动, ORB友好)
-    - US.DIA                       # Dow Jones 30
-    # 板块 (6): 板块轮动驱动，成交量充足
-    - US.XLE                       # 能源板块
-    - US.XLF                       # 金融板块
-    - US.XLK                       # 科技板块
-    - US.XLV                       # 医疗板块
-    - US.XLY                       # 可选消费
-    - US.XLI                       # 工业板块
-    # 不加入: XLB/XLU/XLP/XLRE — 成交量低，ORB信号稀疏
-  # 入场参数
-  range_minutes: 15                # 开盘区间长度 (分钟)
-  max_range_width_pct: 2.5         # 最大区间宽度% (太宽=过度波动)
-  breakout_buffer_pct: 0.1         # 突破缓冲%
-  entry_start_et: "09:50"          # [RFC-060] 09:45→09:50: 跳过开盘前5分钟最噪区间
-  # 止损止盈 (ATR-relative, 日内 — 比System A更紧, 适配5秒快速响应)
-  stop_loss_atr_mult: 1.5          # SL = entry ± 1.5×ATR (2026-06-07: 1.0→1.5, 避免开盘噪声扫损)
-  # 2026-06-23: 止盈改为 R-multiple (盈利 × sl_distance). 原 take_profit_atr_mult(3.0×ATR) 为死配置
-  #   (engine 一直用 2R 硬止盈先触发, stack 的 TP 永不到达). 现与实际行为一致且可调.
-  take_profit_r_mult: 2.0          # TP = profit ≥ 2.0 × sl_distance (2:1 R/R)
-  # 2026-06-23: 删除 trail_activation_atr / trail_multiplier —
-  #   trailing 未经验证 (SSOT 主线 trailing -$3,773), ratchet 字段从不更新, 与 2R TP 抢优先级.
-  #   退出路径收敛为: 2R止盈 + breakdown + FloorStop + EOD.
-  # 风控 (持仓上限由 strategies.orb.max_positions 统一控制, 此处仅作fallback)
-  max_positions: 2                 # [RFC-060] 5→2: shadow 同时跟踪2个虚拟仓位足够 (config 默认值)
-  max_daily_trades: 5             # [RFC-060] 15→5: shadow 高质量数据采集, 配合 Q≥0.75+首次突破, 实际有效信号3-5个
-  capital_pct: 0.20                # 模拟盘: 0.10→0.20, 更多资金分配
-  position_risk_pct: 0.010         # P0 (2026-06-03): 统一 1% 固定风险
-  # 退出
-  eod_exit_time: "15:55"           # 盘末强制退出 (不隔夜)
-  polling_interval_seconds: 5      # 轮询间隔 (秒)
-  # 放宽入场条件 (模拟盘数据采集)
-  min_range_width_pct: 0.2         # 模拟盘: 0.3→0.2, 允许更窄区间
-  min_volume_ratio: 1.2            # 2026-06-08: 0.8→1.2, 无量突破=假突破 (研究验证)
-  entry_end_et: "10:45"            # [RFC-060] 14:00→10:45: 精选 morning 高质量窗口, 给 trail 留发展空间
-  min_quality_score: 0.75         # [RFC-060] 新增: shadow 宁缺毋滥, 只做高质量突破 (原 engine.py 硬编码 0.6)
-  # Regime-aware direction bias (2026-06-03): 基于真实数据
-  # ⚠ SHORT在下跌市胜过LONG 10:1 → 上涨市禁SHORT, 下跌市禁LONG
-  regime_short_bias_quality: 0.85    # TREND_DOWN: LONG 突破需要 Q≥0.85
-  regime_long_bias_quality: 0.85     # TREND_UP: SHORT 突破需要 Q≥0.85
-  low_vol_short_bias_quality: 0.85   # LOW_VOL+下行: LONG 突破需要 Q≥0.85
-  min_hold_seconds: 300              # 2026-06-07: 180→300 (5min), FLOOR_STOP 在此时间内跳过
-  same_symbol_loss_cooldown: true    # 当日亏损退出的标的禁止重新入场
-  # P0 (2026-06-08): 简化退出 — 2R止盈替代分层止盈+追踪止损
-  # 数据: 8笔ORB交易, 分层/追踪从未触发(死代码), FLOOR_STOP贡献99.7%亏损
-  # 退出栈: 2R止盈(2×sl_distance) > Breakdown(60s) > FloorStop > EOD(15:55)
-
-# ─── 催化辩论引擎 (2026-05-27 RFC-Catalyst) ───
-# 盘前/盘后新闻催化事件检测 + 多模型辩论
-# 盘中不介入 (避免影响交易延迟)
-catalyst:
-  enabled: false              # [Phase A 2026-06-13] 辩论引擎产出0条action，暂停
-  
-  # 盘前扫描
-  premarket:
-    scan_news_hours: 12          # 扫描过去12小时新闻
-    min_severity: HIGH           # 低于此级别不辩论
-    debate_timeout_seconds: 180  # 辩论总超时
-    consensus_threshold: 0.4     # 分歧度阈值 (低于此值放弃信号)
-  
-  # 盘后回看
-  postmarket:
+    max_position_ratio: 0.08
+    name: Arm Holdings
+    notes: 架构授权 | 波动弹性好 | ATR%≈0.05% | 高波收紧仓位
+    sector: Semiconductors
+    tier: TIER1
+  - code: US.MU
     enabled: true
-    generate_lessons: false      # [Phase A 2026-06-13] lesson_count=0，暂停
-  
-  # 反向催化: 行情先行 → 新闻确认
-  reverse_catalyst:
+    max_position_ratio: 0.12
+    name: Micron Technology
+    notes: 存储芯片周期股 | 波段明确
+    sector: Semiconductors
+    tier: TIER1
+  - code: US.QCOM
+    enabled: false
+    max_position_ratio: 0.15
+    name: Qualcomm Inc
+    notes: 44笔22.7%胜率持续亏损-$3.8K，暂停 (2026-05-30)
+    sector: Semiconductors
+    tier: TIER1
+  - code: US.BWXT
     enabled: true
-    min_change_pct: 0.03         # 3%异动触发反向催化
-    quick_debate_timeout: 60     # 快速辩论60秒
-    quick_debate_rounds: 1       # 快速辩论仅1轮
-  
-  # 一手信息源
-  sources:
-    hkex:
-      enabled: false             # [CLEANUP 2026-06-13] 1280 log lines, all zero results
-      interval_seconds: 120      # 2分钟轮询 (港交所披露易)
-    csrc:
-      enabled: false             # [CLEANUP 2026-06-13] 654 log lines, all zero results
-      interval_seconds: 300      # 5分钟轮询 (证监会官网)
-    cls_interval_minutes: 2      # 财联社从5分钟缩短到2分钟
-  
-  # 标的关联映射 (行业/板块传导)
-  sector_mapping:
-    chinese_adr: ["FUTU", "BABA", "PDD", "BIDU", "JD", "NIO", "LI", "XPEV"]
-    chinese_broker: ["FUTU", "TIGR", "HLBZ"]
-    ai_chip: ["NVDA", "AMD", "AVGO", "MU", "ARM", "QCOM"]
-    ev: ["TSLA", "RIVN", "LCID", "NIO", "XPEV", "LI"]
-    big_tech: ["AAPL", "MSFT", "GOOGL", "AMZN", "META"]
-
-# ─── 截面排名器 (Pre-Market Ranker) ───
-# 每天盘前对 watchlist 做截面排名，只交易 Top N 标的
-# 替代原来逐个评估的方式，选出相对最强的标的
-pre_market_ranker:
-  enabled: false              # P0 (2026-06-04): 禁用, 模拟盘数据采集期全标的进入信号生成
-  top_n: 8                    # (禁用后无效)
-  weights:
-    momentum: 0.35            # 20日动量权重
-    sector: 0.25              # 行业相对强度权重
-    volume: 0.20              # 成交量配合度权重
-    volatility: 0.20          # 波动率合理性权重
-  sector_etf_lookback: 20     # 行业 ETF 回看天数
-  cache_ttl_seconds: 3600     # 排名缓存时间 (1小时)
-
-# ===== 双链路并行模式配置 (Dual Mode) =====
-dual_mode:
-  # 自动交易默认状态
-  auto_enabled: true
-  # 默认激进程度: conservative / normal / aggressive
-  default_aggression: conservative
-
-  # 谨慎模式参数 (conservative)
-  conservative:
-    position_scale_factor: 0.5        # 仓位缩减至标准的50%
-    max_position_pct: 0.06            # 单标最多6% (标准12%)
-    max_total_exposure: 0.30          # 自动总敞口最多30%
-    min_signal_strength: 70           # 信号强度门槛 (标准50)
-    min_confidence: 0.70              # 置信度门槛 (标准0.55)
-    # 临时收紧：IC验证为正后恢复为 5笔/$10K (PM建议 2026-06-17)
-    max_per_trade_usd: 5000           # 单笔最多$5K (原$10K, 标准$20K)
-    max_daily_auto_trades: 3          # 每日最多3笔自动交易
-    stop_loss_tighten_factor: 0.7     # 止损收紧30%
-
-  # 标准模式参数 (normal)
-  normal:
-    position_scale_factor: 1.0
-    max_position_pct: 0.12
-    max_total_exposure: 0.60
-    min_signal_strength: 50
-    min_confidence: 0.55
-    max_per_trade_usd: 20000
-    max_daily_auto_trades: 4
-    stop_loss_tighten_factor: 1.0
-
-  # 激进模式参数 (aggressive) - 仅建议模拟盘使用
-  aggressive:
-    position_scale_factor: 1.5
-    max_position_pct: 0.20
-    max_total_exposure: 0.75
-    min_signal_strength: 40
-    min_confidence: 0.45
-    max_per_trade_usd: 30000
-    max_daily_auto_trades: 5
-    stop_loss_tighten_factor: 1.2
-
-  # 手动持仓安全网
-  manual_safety_net:
-    # 浮亏超过此比例时发送通知
-    loss_alert_threshold: -0.08
-    # 收盘前提醒时间 (ET)
-    pre_close_alert_time: "15:50"
-    # RED水位时是否强平手动持仓
-    force_close_on_red: true
-
-  # 敞口管控
-  exposure_control:
-    # 全局总敞口上限 (auto + manual 合计)
-    global_max_total: 0.80
-    # 单标的上限 (auto + manual 合计)
-    global_max_per_symbol: 0.25
-    # 单方向上限 (auto + manual 合计)
-    global_max_per_direction: 0.40
-
-# ═══════════════════════════════════════════════════════════════
-# 部署控制 (Task #1, 2026-06-17): Feature Flags + Shadow Mode
-# ═══════════════════════════════════════════════════════════════
-# ═══════════════════════════════════════════════════════════════
-# P1.3 (RFC-060): Regime 仓位缩放 (HIGH_VOL 强化)
-# 读取者: app/strategy/regime_adapter.py (RegimeAdapter._load_config)
-# VIX>=25 → HIGH_VOL → 仓位 × high_vol_position_scale
-# 数据依据: PM审计 HIGH_VOL(VIX>25) 141笔 -154K 占总亏71% (原默认 0.5 缩放力度不足)
-# ═══════════════════════════════════════════════════════════════
-regime_adaptation:
-  enabled: true
-  high_vol_position_scale: 0.3     # HIGH_VOL 仓位缩放 (0.5→0.3, P1.3 强化)
-  position_scales:                 # 各 regime 仓位缩放 (与 signal 评分权重正交)
-    TREND_UP: 1.0
-    TREND_DOWN: 0.8
-    RANGE: 0.7
-    HIGH_VOL: 0.3                  # 与 high_vol_position_scale 一致 (双路径覆盖)
-
-deployment:
-  feature_flags:
-    event_driven_scan: false      # Task 1 - 事件驱动扫描
-    weight_v2_active: false       # Task 2 - 新评分权重
-    ic_hard_blocking: true        # Task 3 - IC硬阻断 (2026-06-17 启用: 审查确认SUSPENDED策略应实际拦截)
-    vix_hard_blocking: true       # Task 4 - VIX硬拒 | P1.3 (RFC-060) 启用: 激活 VIXGuard VIX>28 硬阻 (was WARN模式, 仅记日志不拦截)
-  shadow_mode:
-    enabled: true                 # shadow记录所有新逻辑决策但不执行
-    compare_with_legacy: true     # 新旧对比日志
-
-# ═════════════════════════════════════════════════════════════════
-# Task #4 (2026-06-17): 信号评分权重版本管理
-# ═════════════════════════════════════════════════════════════════
-signal_scoring:
-  active_version: "v1"             # 当前激活版本 (由 feature_flags.weight_v2_active 控制)
-  weights_v2: null                 # 审计完成后填入修复权重 (格式同 base_factor_weights)
+    max_position_ratio: 0.12
+    name: BWX Technologies
+    notes: 核能防务 | 唯一SHORT信号触发标的
+    sector: Industrials
+    tier: TIER1
+  - code: US.LLY
+    enabled: true
+    max_position_ratio: 0.12
+    name: Eli Lilly
+    notes: 减肥药龙头 | 催化剂密集 | ATR%≈0.06%
+    sector: Healthcare
+    tier: TIER1
+  - code: US.AAPL
+    enabled: true
+    max_position_ratio: 0.15
+    name: Apple Inc
+    notes: 消费电子市值锚定 | 稳定大盘股可放宽仓位
+    sector: Technology
+    tier: TIER2
+  - code: US.MSFT
+    enabled: true
+    max_position_ratio: 0.15
+    name: Microsoft Corp
+    notes: 云计算市值锚定 | 稳定大盘股可放宽仓位
+    sector: Technology
+    tier: TIER2
+  - code: US.GOOG
+    enabled: true
+    max_position_ratio: 0.15
+    name: Alphabet Inc Class C
+    notes: 搜索/AI 市值锚定 | 稳定大盘股可放宽仓位
+    sector: Technology
+    tier: TIER2
+  - code: US.AMZN
+    enabled: true
+    max_position_ratio: 0.15
+    name: Amazon.com Inc
+    notes: 电商/云 市值锚定 | 稳定大盘股可放宽仓位
+    sector: Consumer Cyclical
+    tier: TIER2
+  - code: US.META
+    enabled: true
+    max_position_ratio: 0.15
+    name: Meta Platforms
+    notes: 社交媒体/AI 市值锚定 | 稳定大盘股可放宽仓位
+    sector: Technology
+    tier: TIER2
+  - code: US.AVGO
+    enabled: true
+    max_position_ratio: 0.12
+    name: Broadcom Inc
+    notes: 网络芯片/AI | 半导体双核
+    sector: Semiconductors
+    tier: TIER2
+  - code: US.TSM
+    enabled: true
+    max_position_ratio: 0.15
+    name: TSMC
+    notes: 晶圆代工 | Playbook+236高触发，加仓 (2026-06-26)
+    sector: Semiconductors
+    tier: TIER2
+  - code: US.AMD
+    enabled: true
+    max_position_ratio: 0.12
+    name: Advanced Micro Devices
+    notes: CPU/GPU | 半导体二线弹性
+    sector: Semiconductors
+    tier: TIER1
+  - code: US.NFLX
+    enabled: false
+    max_position_ratio: 0.12
+    name: Netflix Inc
+    notes: Playbook近30天-345，暂停 (2026-06-26)
+    sector: Communication Services
+    tier: TIER2
+  - code: US.BABA
+    enabled: true
+    max_position_ratio: 0.1
+    name: Alibaba Group
+    notes: 中概电商龙头 | 中概锚定
+    sector: Consumer Cyclical
+    tier: TIER2
+  - code: US.PDD
+    enabled: true
+    max_position_ratio: 0.12
+    name: PDD Holdings
+    notes: 跨境电商 | Playbook+253 (2026-06-26)
+    sector: Consumer Cyclical
+    tier: TIER2
+  - code: US.NIO
+    enabled: true
+    max_position_ratio: 0.08
+    name: NIO Inc
+    notes: 低波动中概新能源车 | OKR优化小仓位试运行 (2026-06-26)
+    sector: Consumer Cyclical
+    tier: TIER2
+  - code: US.NTES
+    enabled: true
+    max_position_ratio: 0.12
+    name: NetEase Inc
+    notes: 中概游戏龙头 | Playbook+274 (2026-06-26)
+    sector: Communication Services
+    tier: TIER2
+  - code: US.TME
+    enabled: false
+    max_position_ratio: 0.08
+    name: Tencent Music
+    notes: 0%胜率-$913，暂停 (2026-05-30)
+    sector: Communication Services
+    tier: TIER2
+  - code: US.ORCL
+    enabled: true
+    max_position_ratio: 0.06
+    name: Oracle Corp
+    notes: Playbook近30天-975但MAIN盈利，降仓观察 (2026-06-26)
+    sector: Technology
+    tier: TIER1
+  - code: US.CRM
+    enabled: true
+    max_position_ratio: 0.15
+    name: Salesforce Inc
+    notes: CRM/SaaS | Playbook近30天+441 (2026-06-26)
+    sector: Technology
+    tier: TIER2
+  - code: US.BA
+    enabled: true
+    max_position_ratio: 0.15
+    name: Boeing Co
+    notes: 航空制造 | Playbook近30天最佳+731 (2026-06-26)
+    sector: Industrials
+    tier: TIER2
+  - code: US.LMT
+    enabled: true
+    max_position_ratio: 0.06
+    name: Lockheed Martin
+    notes: 军工防务 | Playbook-600，降仓 (2026-06-26)
+    sector: Industrials
+    tier: TIER2
+  - code: US.UNH
+    enabled: true
+    max_position_ratio: 0.15
+    name: UnitedHealth Group
+    notes: 医疗保险 | Playbook+313，防御性配置 (2026-06-26)
+    sector: Healthcare
+    tier: TIER2
+  - code: US.JPM
+    enabled: true
+    max_position_ratio: 0.12
+    name: JPMorgan Chase
+    notes: 金融龙头，低相关防御 (2026-05-30 防御性增配)
+    sector: Financial Services
+    tier: TIER2
+  - code: US.XOM
+    enabled: true
+    max_position_ratio: 0.06
+    name: Exxon Mobil
+    notes: 能源龙头 | Playbook-822，降仓 (2026-06-26)
+    sector: Energy
+    tier: TIER2
+  - code: US.PG
+    enabled: false
+    max_position_ratio: 0.12
+    name: Procter & Gamble
+    notes: Playbook/主线双亏，暂停 (2026-06-26)
+    sector: Consumer Defensive
+    tier: TIER2

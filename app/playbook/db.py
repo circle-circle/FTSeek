@@ -117,8 +117,8 @@ class PlaybookDB:
                 matched_patterns_json, pattern_verdict,
                 raw_instruction_json, decision_id,
                 horizon, horizon_confidence, horizon_reasoning,
-                created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                created_at, updated_at, config_version
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'v2')
             ON CONFLICT(date, symbol) DO UPDATE SET
                 direction=excluded.direction,
                 skip_reason=excluded.skip_reason,
@@ -647,6 +647,8 @@ _TRACKING_FIELDS = {
     "fwd_return_t1", "fwd_return_t3", "fwd_return_t5",
     # Horizon 决策追踪
     "horizon", "horizon_confidence", "horizon_reasoning",
+    # 2026-06-29: re-price 审计 — 记录触发时重新定价后的 entry/stop
+    "entry_price", "stop_loss",
 }
 
 

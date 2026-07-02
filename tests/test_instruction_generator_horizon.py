@@ -1,34 +1,26 @@
 """Tests for compute_instruction_values horizon behavior."""
 from dataclasses import dataclass
-from unittest.mock import MagicMock
 
 import pytest
 
+from app.playbook.data_collector import PlaybookData, TechnicalData, SentimentData
 from app.playbook.instruction_generator import compute_instruction_values
 
 
-@dataclass
-class MockTechnical:
-    price: float = 100.0
-    bid: float = 99.5
-    ask: float = 100.5
-    atr: float = 2.0
-    quality: str = "ok"
-
-
-@dataclass
-class MockPlaybookData:
-    technical = None
-
-    def __post_init__(self):
-        self.technical = MockTechnical()
+def _make_data(atr_14: float = 2.0, vix: float = 15.0) -> PlaybookData:
+    return PlaybookData(
+        symbol="US.TSLA",
+        technical=TechnicalData(price=100.0, bid=99.5, ask=100.5, atr_14=atr_14, quality="ok"),
+        sentiment=SentimentData(vix=vix, quality="ok"),
+    )
 
 
 class TestComputeInstructionValuesHorizon:
     """compute_instruction_values 按 horizon 取参数的测试."""
 
-    def test_short_horizon_rr_ratio_1_0(self):
-        data = MockPlaybookData()
+    def test_short_horizon_uses_vol_bucket(self):
+        # atr_pct = 2 / 100.5 ≈ 1.99% → medium bucket → tp_multiplier=1.8, sl≈1.8%
+        data = _make_data(atr_14=2.0)
         decision = {
             "symbol": "US.TSLA",
             "direction": "BUY",
@@ -43,11 +35,13 @@ class TestComputeInstructionValuesHorizon:
 
         sl_distance = entry - stop
         tp_distance = take - entry
-        assert abs(tp_distance / sl_distance - 1.0) < 0.01
+        # medium bucket tp_multiplier is 1.8
+        assert abs(tp_distance / sl_distance - 1.8) < 0.05
         assert values["horizon"] == "short"
 
-    def test_long_horizon_rr_ratio_2_5(self):
-        data = MockPlaybookData()
+    def test_long_horizon_uses_vol_bucket(self):
+        # medium bucket for long horizon → tp_multiplier=2.0
+        data = _make_data(atr_14=2.0)
         decision = {
             "symbol": "US.TSLA",
             "direction": "BUY",
@@ -62,5 +56,5 @@ class TestComputeInstructionValuesHorizon:
 
         sl_distance = entry - stop
         tp_distance = take - entry
-        assert abs(tp_distance / sl_distance - 2.5) < 0.01
+        assert abs(tp_distance / sl_distance - 2.0) < 0.05
         assert values["horizon"] == "long"

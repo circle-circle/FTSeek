@@ -154,6 +154,8 @@ def _http_call(
     text = ""
     if "choices" in data and data["choices"]:
         text = data["choices"][0].get("message", {}).get("content", "") or ""
+        if not text.strip():
+            raise ValueError(f"empty_response_from_{model_name}")
     usage = data.get("usage", {}) or {}
     return {
         "text": text,

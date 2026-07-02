@@ -219,26 +219,7 @@ class TradeStore:
                     except Exception:
                         pass
 
-                # 期权持仓表（SHORT信号 → 买入Put期权，作为做空替代）
-                conn.execute("""
-                    CREATE TABLE IF NOT EXISTS option_positions (
-                        symbol          TEXT NOT NULL,
-                        option_code     TEXT PRIMARY KEY,
-                        direction       TEXT NOT NULL DEFAULT 'SHORT_PROXY',
-                        qty             INTEGER NOT NULL,
-                        entry_price     REAL NOT NULL,
-                        strike_price    REAL,
-                        expiry_date     TEXT,
-                        entry_time      TEXT NOT NULL,
-                        cost_total      REAL,
-                        signal_strength INTEGER,
-                        signal_confidence REAL,
-                        is_simulated    INTEGER DEFAULT 0,
-                        mode            TEXT NOT NULL DEFAULT 'normal',
-                        updated_at      TEXT NOT NULL
-                    )
-                """)
-                conn.execute("CREATE INDEX IF NOT EXISTS idx_opt_symbol ON option_positions(symbol)")
+                # 2026-07-01: option_positions 表已删除 (自动交易不做期权)
 
                 # 未平仓持仓快照表（服务重启后恢复用）
                 # P0-1 升级 (2026-04-21): 统一仓位状态真相源 (Truth Source of Record)
@@ -688,8 +669,8 @@ class TradeStore:
                         owner_strategy, mode, market_regime, trade_mode,
                         signal_id, decision_id, factor_detail,
                         f1_trend, f2_momentum, f3_volume, f4_orderflow, f5_lifecycle,
-                        created_at
-                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                        created_at, config_version
+                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'v2')
                 """, (
                     record.get("trade_date", ""),
                     record.get("symbol", ""),
@@ -872,6 +853,47 @@ class TradeStore:
     # ------------------------------------------------------------------
     # 未平仓持仓快照（重启后恢复用）
     # ------------------------------------------------------------------
+
+    def upsert_position_simple(self, symbol: str, direction: str, size: int,
+                               entry_price: float, owner_strategy: str = 'playbook_sim',
+                               owner: str = 'auto', account_type: str = 'simulate',
+                               source_type: str = '', futu_order_id: str = '',
+                               stop_loss: float = 0, sync_status: str = 'synced') -> None:
+        """简单UPSERT open_positions — 不需要Position对象 (2026-07-02)
+
+        用途: playbook_service下单后立即写open_positions, 使其成为SSOT.
+        position_sync发现DB有记录 → 走UPDATE分支 → 不会误标manual.
+
+        2026-07-02 fix: 移除 futu_order_id/source_type 列引用 (open_positions schema 无此列).
+        futu_order_id 存入 sl_broker_order_id (语义匹配: 入场单的 broker order id).
+        source_type 不存入 open_positions (仅在 trade_records 中保留).
+        """
+        from datetime import datetime as _dt
+        _now = _dt.now().isoformat()
+        conn = self._get_conn()
+        try:
+            conn.execute("""
+                INSERT INTO open_positions
+                (symbol, direction, size, avg_entry_price, initial_sl, current_sl,
+                 entry_time, updated_at, strategy_id, trader_type, owner_strategy,
+                 owner, sync_status, is_filled, mode, account_type, sl_broker_order_id,
+                 stop_loss_price)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)
+                ON CONFLICT(symbol) DO UPDATE SET
+                    direction=excluded.direction, size=excluded.size,
+                    avg_entry_price=excluded.avg_entry_price,
+                    current_sl=excluded.current_sl, updated_at=excluded.updated_at,
+                    owner_strategy=excluded.owner_strategy, owner=excluded.owner,
+                    sync_status=excluded.sync_status, account_type=excluded.account_type,
+                    sl_broker_order_id=excluded.sl_broker_order_id,
+                    stop_loss_price=excluded.stop_loss_price
+            """, (symbol, direction, size, entry_price, stop_loss, stop_loss,
+                  _now, _now, owner_strategy, 'AUTO', owner_strategy,
+                  owner, sync_status, account_type, futu_order_id, stop_loss, stop_loss))
+            conn.commit()
+        finally:
+            if hasattr(conn, 'close'):
+                conn.close()
 
     def upsert_open_position(self, position, source: str = "scheduler", trace_id: str = "",
                               action: str = "", is_filled: bool = True,
@@ -1326,103 +1348,6 @@ class TradeStore:
                     AND datetime(last_sync_at) < datetime('now', '-{max_age_seconds} seconds')
                 """.replace("{max_age_seconds}", str(max_age_seconds))).fetchall()
                 return [r[0] for r in rows]
-            finally:
-                conn.close()
-
-    # ------------------------------------------------------------------
-    # 期权持仓（SHORT 空头代理）
-    # ------------------------------------------------------------------
-
-    def upsert_option_position(self, record: Dict[str, Any]) -> None:
-        """
-        写入 / 更新期权持仓快照。
-
-        record 必填字段：
-            symbol, option_code, qty, entry_price, entry_time
-        可选字段：
-            strike_price, expiry_date, cost_total,
-            signal_strength, signal_confidence, is_simulated
-        """
-        with self._lock:
-            conn = self._get_conn()
-            try:
-                conn.execute("""
-                    INSERT OR REPLACE INTO option_positions (
-                        symbol, option_code, direction, qty,
-                        entry_price, strike_price, expiry_date,
-                        entry_time, cost_total,
-                        signal_strength, signal_confidence,
-                        is_simulated, mode, updated_at
-                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-                """, (
-                    record["symbol"],
-                    record["option_code"],
-                    record.get("direction", "SHORT_PROXY"),
-                    record["qty"],
-                    record["entry_price"],
-                    record.get("strike_price", 0.0),
-                    record.get("expiry_date", ""),
-                    record.get("entry_time", datetime.now().isoformat()),
-                    record.get("cost_total", record["qty"] * record["entry_price"] * 100),
-                    record.get("signal_strength", 0),
-                    record.get("signal_confidence", 0.0),
-                    int(record.get("is_simulated", False)),
-                    _get_runtime_mode(),
-                    datetime.now().isoformat(),
-                ))
-                conn.commit()
-                logger.info(
-                    f"[TradeStore] 期权持仓写入 {record['symbol']} "
-                    f"{record['option_code']} qty={record['qty']} "
-                    f"entry=${record['entry_price']:.2f}"
-                )
-            finally:
-                conn.close()
-
-    def remove_option_position(self, option_code: str) -> None:
-        """平仓后删除期权持仓记录"""
-        with self._lock:
-            conn = self._get_conn()
-            try:
-                conn.execute(
-                    "DELETE FROM option_positions WHERE option_code = ?",
-                    (option_code,)
-                )
-                conn.commit()
-                logger.info(f"[TradeStore] 期权持仓删除 {option_code}")
-            finally:
-                conn.close()
-
-    def load_option_positions(self) -> List[Dict[str, Any]]:
-        """加载所有未平仓期权持仓"""
-        with self._lock:
-            conn = self._get_conn()
-            try:
-                rows = conn.execute("""
-                    SELECT symbol, option_code, direction, qty,
-                           entry_price, strike_price, expiry_date,
-                           entry_time, cost_total,
-                           signal_strength, signal_confidence, is_simulated
-                    FROM option_positions
-                    ORDER BY entry_time ASC
-                """).fetchall()
-                return [
-                    {
-                        "symbol":             r[0],
-                        "option_code":        r[1],
-                        "direction":          r[2],
-                        "qty":                r[3],
-                        "entry_price":        r[4],
-                        "strike_price":       r[5],
-                        "expiry_date":        r[6],
-                        "entry_time":         r[7],
-                        "cost_total":         r[8],
-                        "signal_strength":    r[9],
-                        "signal_confidence":  r[10],
-                        "is_simulated":       bool(r[11]),
-                    }
-                    for r in rows
-                ]
             finally:
                 conn.close()
 

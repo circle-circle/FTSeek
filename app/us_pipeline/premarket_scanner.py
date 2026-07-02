@@ -169,8 +169,10 @@ class USPreMarketScanner:
         # 获取日线K线 (复用 FutuLV3Provider.get_daily_kline)
         full_symbol = f"US.{symbol}" if not symbol.startswith("US.") else symbol
         
+        # 2026-06-28 修复: 走Router.get_daily_bars()而非直接调futu
+        # 原因: 富途模拟环境历史K线停滞在2025年, Router有TwelveData fallback
         try:
-            klines = self.data_router.futu.get_daily_kline(full_symbol, count=60)
+            klines = self.data_router.get_daily_bars(full_symbol, count=60)
         except Exception as e:
             logger.warning(f"获取 {full_symbol} 日线失败: {e}")
             return None

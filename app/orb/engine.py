@@ -1225,12 +1225,45 @@ class ORBEngine:
             logger.warning("[ORB] 熔断检查异常 (放行): %s", _cb_err)
 
         # P0 (2026-06-22): 入场前检查 buying_power 是否足够
+        # 2026-06-29: 改用 capital_safety.get_available_budget_for_auto() 统一预算源
         _available = self._get_equity()
+        _auto_budget = 0.0
+        try:
+            from app.risk.capital_safety import get_capital_safety_system
+            _auto_budget = get_capital_safety_system().get_available_budget_for_auto()
+        except Exception:
+            pass
+        if _auto_budget <= 0:
+            _auto_budget = _available * 0.8  # 降级
         _position_value_est = (_available * self._cfg.capital_pct * self._cfg.position_risk_pct * self._get_water_multiplier()) / sl_distance * price
-        if _position_value_est > _available:
+        if _position_value_est > _auto_budget:
             logger.warning(
-                "[ORB] %s 预估仓位 $%.0f > 可用资金 $%.0f, 跳过 (资金不足)",
-                symbol, _position_value_est, _available,
+                "[ORB] %s 预估仓位 $%.0f > auto预算 $%.0f, 跳过 (预算不足)",
+                symbol, _position_value_est, _auto_budget,
+            )
+            return
+
+        # 2026-06-29: 日总notional检查 — 防止ORB频繁开仓累积过大
+        _daily_cap_pct = getattr(self._cfg, 'daily_notional_cap_pct', 0.10)
+        _daily_notional_limit = _available * _daily_cap_pct
+        _today_orb_notional = 0.0
+        try:
+            import sqlite3 as _sql
+            from app.core.paths import get_trade_records_db as _get_trdb
+            _conn = _sql.connect(str(_get_trdb()), timeout=5)
+            _row = _conn.execute(
+                "SELECT COALESCE(SUM(entry_price * quantity), 0) FROM trade_records "
+                "WHERE source_type='ORB_ENGINE' AND (exit_time IS NULL OR exit_time = '') "
+                "AND entry_time >= date('now','start of day')"
+            ).fetchone()
+            _conn.close()
+            _today_orb_notional = _row[0] if _row else 0.0
+        except Exception:
+            pass
+        if _today_orb_notional + _position_value_est > _daily_notional_limit:
+            logger.warning(
+                "[ORB] %s 日总notional $%.0f + 新$%.0f > 上限$%.0f, 跳过",
+                symbol, _today_orb_notional, _position_value_est, _daily_notional_limit,
             )
             return
 
@@ -1260,8 +1293,8 @@ class ORBEngine:
             quantity = 1
 
         # P0 (2026-06-08): 最大仓位价值上限 — 防止紧SL导致超大仓位
-        # 数据: IWM 1499股×$286=$428K (40% equity), 0.2%回撤就亏$929
-        max_position_pct = getattr(self._cfg, 'max_position_pct', 0.15)
+        # 2026-06-29: 15%→8% 对齐 Playbook
+        max_position_pct = getattr(self._cfg, 'max_position_pct', 0.08)
         max_position_value = equity * max_position_pct
         position_value = quantity * price
         if position_value > max_position_value:
@@ -1459,7 +1492,7 @@ class ORBEngine:
                 # 原理: ORB 突破的反面 = 价格回到区间中点 = 突破论据失效
                 # 在 min_hold_seconds (300s) 的 floor 保护期内, 这是唯一的安全网
                 # 60s grace 避免入场瞬间的噪音 (bid/ask spread, 第一个 tick 的异常)
-                _breakdown_grace = 60  # 秒
+                _breakdown_grace = 180  # 秒 (was 60, 2026-07-02: 给突破更多发展时间)
                 from app.utils.timezone import now_et as _now_et_bd
                 _hold_secs = (_now_et_bd() - pos.entry_time).total_seconds()
                 if _hold_secs >= _breakdown_grace and pos.orb_mid > 0:
@@ -2100,15 +2133,15 @@ class ORBEngine:
           min_sl_distance = price * 0.5%
           max_sl_distance = price * 3.0%
         """
-        # Regime 参数映射
+        # Regime 参数映射 (2026-07-02: 放宽, 原值导致ETF被秒杀)
         regime_params = {
-            "TREND_UP":   (0.5, 1.2),
-            "TREND_DOWN": (0.5, 1.2),
-            "RANGE":      (0.8, 1.5),
-            "HIGH_VOL":   (0.3, 0.8),
-            "LOW_VOL":    (1.0, 2.0),
+            "TREND_UP":   (0.8, 2.0),   # was (0.5, 1.2)
+            "TREND_DOWN": (0.8, 2.0),   # was (0.5, 1.2)
+            "RANGE":      (1.0, 2.0),   # was (0.8, 1.5)
+            "HIGH_VOL":   (0.6, 1.5),   # was (0.3, 0.8) — 原值荒谬,0.8ATR<正常波动
+            "LOW_VOL":    (1.2, 2.5),   # was (1.0, 2.0)
         }
-        sl_width_mult, sl_atr_mult = regime_params.get(regime, (0.8, 1.5))
+        sl_width_mult, sl_atr_mult = regime_params.get(regime, (1.0, 2.0))
 
         # 计算止损距离
         orb_width = price * orb_width_pct / 100.0
@@ -2117,8 +2150,8 @@ class ORBEngine:
 
         sl_distance = max(sl_from_width, sl_from_atr)
 
-        # 兜底限制
-        min_sl = price * 0.005  # 0.5%
+        # 兜底限制 (2026-07-02: min 0.5%→1.0%, ETF开盘波动0.3-0.5%)
+        min_sl = price * 0.01  # 1.0%
         max_sl = price * 0.03   # 3.0%
 
         sl_distance = max(min_sl, min(max_sl, sl_distance))

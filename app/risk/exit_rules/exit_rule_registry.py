@@ -55,6 +55,7 @@ class ExitRuleContext:
         "QUICK_EXIT",
         "PRE_CLOSE", "PRE_CLOSE_EXIT",
         "SL_HIT", "PRICE_FAIL",
+        "HARD_STOP", "ATR_STOP",
     })
 
     def is_in_cooldown(self, symbol: str) -> bool:

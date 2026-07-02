@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/opt/ftseek/FTSeek-US/venv/bin/python3
 """OKR Status Report - 标准化输出，任何 agent 可调用"""
 import sys, json
 from pathlib import Path
@@ -32,7 +32,7 @@ skipped = sum(1 for i in instructions if i.get('outcome') == 'skipped')
 has_outcome = wins + losses
 
 win_rate = wins / has_outcome * 100 if has_outcome > 0 else 0
-# OKR PnL: 只统计 executed 且 outcome 为 win/loss 的指令, 与 OKR 目标一致
+# OKR PnL: 先用 playbook_instructions 作为初始值, 后面 trade_records 段会覆盖.
 total_pnl = sum((i.get('pnl') or 0) for i in instructions if i.get('executed') and i.get('outcome') in ('win', 'loss'))
 
 # Weekly PnL: 按周聚合, 同样只统计 executed + win/loss
@@ -59,6 +59,15 @@ for inst in instructions:
 from app.storage.db_pool import get_db
 conn = get_db("ftseek_us").connection()
 
+# 2026-06-30: 用 ET 日期计算 cutoff (date('now') 是 UTC)
+try:
+    from app.utils.timezone import now_et as _now_et
+    from datetime import timedelta as _td
+    _cutoff_30d = (_now_et() - _td(days=30)).strftime("%Y-%m-%d")
+except Exception:
+    from datetime import datetime as _dt, timedelta as _td
+    _cutoff_30d = (_dt.now() - _td(days=30)).strftime("%Y-%m-%d")
+
 _source_filter = ", ".join(f"'{s}'" for s in PLAYBOOK_SOURCE_TYPES)
 trade_stats = {}
 try:
@@ -68,9 +77,10 @@ try:
                SUM(CASE WHEN realized_pnl < 0 THEN 1 ELSE 0 END) as losses,
                SUM(realized_pnl) as total_pnl
         FROM trade_records
-        WHERE trade_date >= date('now', '-30 days')
+        WHERE trade_date >= ?
           AND source_type IN ({_source_filter})
-    """)
+          AND trade_mode != 'live'
+    """, (_cutoff_30d,))
     row = cursor.fetchone()
     trade_stats = dict(row) if row else {}
 except Exception as e:
@@ -85,42 +95,88 @@ try:
                SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
                SUM(realized_pnl) as total_pnl
         FROM trade_records
-        WHERE trade_date >= date('now', '-30 days')
+        WHERE trade_date >= ?
           AND strategy_id IS NOT NULL
           AND source_type IN ({_source_filter})
+          AND trade_mode != 'live'
         GROUP BY strategy_id
-    """)
+    """, (_cutoff_30d,))
     by_strategy = [dict(r) for r in cursor2.fetchall()]
 except:
     pass
 
-# ─── 3. IC ───
-# P1 (2026-06-24): 主源改 signal_snapshots (1375+ 实测数据), playbook_instructions.fwd_return 基本空 (1 行)
-# 否则 KR4 IC 永远 null. signal_snapshots 无 t3 列, 用 t1/t5 (alpha 在 T+5, 见 docs/ic_report_2026-06-24.md)
-ic_data = {}
+# ─── 2b. 用 trade_records 作为 PnL/WL 的真实来源 (覆盖 playbook_instructions) ───
+# 2026-07-02 修复: playbook_instructions.pnl 会被 ORPHAN_CLEANUP 幽灵交易污染,
+# 且部分真实成交未回写到 pi. trade_records 是成交的唯一真实记录.
 try:
-    from app.analysis.signal_ic_tracker import get_ic_summary
+    _tr_real = conn.execute(f"""
+        SELECT realized_pnl
+        FROM trade_records
+        WHERE trade_date >= ?
+          AND source_type IN ({_source_filter})
+          AND trade_mode != 'live'
+          AND exit_reason IS NOT NULL
+          AND exit_reason != ''
+          AND exit_reason NOT LIKE '%PHANTOM%'
+          AND exit_reason NOT LIKE '%GHOST%'
+          AND exit_reason NOT LIKE '%ORPHAN%'
+    """, (_cutoff_30d,)).fetchall()
+    if _tr_real:
+        _tr_pnl = sum(r[0] or 0 for r in _tr_real)
+        _tr_w = sum(1 for r in _tr_real if (r[0] or 0) > 0)
+        _tr_l = sum(1 for r in _tr_real if (r[0] or 0) < 0)
+        total_pnl = _tr_pnl
+        wins = _tr_w
+        losses = _tr_l
+        has_outcome = _tr_w + _tr_l
+        win_rate = wins / has_outcome * 100 if has_outcome > 0 else 0
+except Exception:
+    pass
+
+# ─── 3. IC ───
+# Phase 0 (2026-06-29): Playbook IC 是 Playbook 策略 end-to-end 的 SSOT；
+# Signal IC 仅作为 VotingCoordinator 模型的诊断参考。
+# 此前把 Signal IC 的 T+5 错误映射为 T+3，已修正。
+ic_data = {
+    "playbook": {
+        "ic_t1": None, "ic_t3": None, "ic_t5": None,
+        "sample_t1": 0, "sample_t3": 0, "sample_t5": 0,
+        "graduation": "UNKNOWN",
+    },
+    "signal": {"ic_t1": None, "ic_t5": None, "sample_t1": 0, "sample_t5": 0},
+}
+
+# Playbook IC (SSOT): 基于实际生成的 Playbook 指令
+from app.playbook.ic_tracker import compute_playbook_ic, _check_graduation
+try:
+    _pb_ic_report = compute_playbook_ic(db, days=30)
+    _pb_grad = _check_graduation(_pb_ic_report)
+    ic_data["playbook"] = {
+        "ic_t1": _pb_ic_report.get("overall_ic_t1"),
+        "ic_t3": _pb_ic_report.get("overall_ic_t3"),
+        "ic_t5": _pb_ic_report.get("overall_ic_t5"),
+        "sample_t1": _pb_ic_report.get("sample_t1", 0),
+        "sample_t3": _pb_ic_report.get("sample_t3", 0),
+        "sample_t5": _pb_ic_report.get("sample_t5", 0),
+        "graduation": _pb_grad.get("verdict", "UNKNOWN"),
+        "graduation_checks": _pb_grad.get("checks", {}),
+    }
+except Exception as e:
+    ic_data["playbook"]["error"] = str(e)
+
+# Signal IC (诊断): 基于所有 VotingCoordinator 信号快照
+from app.analysis.signal_ic_tracker import get_ic_summary
+try:
     _ic_t1 = get_ic_summary(min_signals=20, forward_col="fwd_ret_t1", days_back=60)
     _ic_t5 = get_ic_summary(min_signals=20, forward_col="fwd_ret_t5", days_back=60)
-    ic_data = {
-        "overall_ic_t1": _ic_t1.get("ic_mean") if _ic_t1.get("status") == "ok" else None,
+    ic_data["signal"] = {
+        "ic_t1": _ic_t1.get("ic_mean") if _ic_t1.get("status") == "ok" else None,
         "sample_t1": _ic_t1.get("n_signals", 0),
-        "overall_ic_t5": _ic_t5.get("ic_mean") if _ic_t5.get("status") == "ok" else None,
+        "ic_t5": _ic_t5.get("ic_mean") if _ic_t5.get("status") == "ok" else None,
         "sample_t5": _ic_t5.get("n_signals", 0),
-        "by_strategy_t5": _ic_t5.get("by_strategy", {}),
-        "source": "signal_snapshots",
     }
-    # 兼容旧字段 overall_ic_t3: signal_snapshots 无 t3, 用 t5 代 (alpha 在 T+5)
-    ic_data["overall_ic_t3"] = ic_data.get("overall_ic_t5")
-    ic_data["sample_t3"] = ic_data.get("sample_t5", 0)
 except Exception as e:
-    ic_data = {"error": str(e)}
-    # fallback: 旧 playbook IC (基本空, 仅兜底)
-    try:
-        from app.playbook.ic_tracker import compute_playbook_ic
-        ic_data.update(compute_playbook_ic(db, days=30))
-    except Exception:
-        pass
+    ic_data["signal"]["error"] = str(e)
 
 # ─── 4. Config ───
 config_state = {}
@@ -169,8 +225,8 @@ def calc_okr_score():
     scores["kr2_weekly_pnl"] = max(0, min(100, avg_weekly / OKR_TARGETS["weekly_pnl"] * 100))
     # KR3: Sample size
     scores["kr3_sample"] = min(100, has_outcome / OKR_TARGETS["min_trades"] * 100)
-    # KR4: IC
-    ic_t3 = ic_data.get('overall_ic_t3')
+    # KR4: IC — 使用 Playbook IC(T+3) 作为 SSOT
+    ic_t3 = ic_data["playbook"].get("ic_t3")
     scores["kr4_ic"] = min(100, max(0, ic_t3 / OKR_TARGETS["ic_t3"] * 100)) if ic_t3 else 0
     # KR5: Trigger rate
     trigger_rate = triggered / non_skip * 100 if non_skip > 0 else 0
@@ -207,14 +263,15 @@ if has_outcome > 0:
             s = weekly_pnl[wk]
             print(f"  {wk}: ${s['pnl']:.2f} ({s['wins']}W/{s['losses']}L)")
 
-ic_t3 = ic_data.get('overall_ic_t3')
 print(f"\n📈 IC METRICS")
-print(f"  IC(T+1): {ic_data.get('overall_ic_t1', 'N/A')} (n={ic_data.get('sample_t1', 0)})")
-print(f"  IC(T+3): {ic_t3 or 'N/A'} (n={ic_data.get('sample_t3', 0)})")
-print(f"  IC(T+5): {ic_data.get('overall_ic_t5', 'N/A')} (n={ic_data.get('sample_t5', 0)})")
-
-grad = ic_data.get('graduation_check', {})
-print(f"  Graduation: {grad.get('verdict', 'UNKNOWN')}")
+print(f"  [Playbook SSOT] IC(T+1): {ic_data['playbook'].get('ic_t1', 'N/A')} (n={ic_data['playbook'].get('sample_t1', 0)})")
+print(f"  [Playbook SSOT] IC(T+3): {ic_data['playbook'].get('ic_t3', 'N/A')} (n={ic_data['playbook'].get('sample_t3', 0)})")
+print(f"  [Playbook SSOT] IC(T+5): {ic_data['playbook'].get('ic_t5', 'N/A')} (n={ic_data['playbook'].get('sample_t5', 0)})")
+print(f"  Graduation: {ic_data['playbook'].get('graduation', 'UNKNOWN')}")
+print(f"  [Signal diag] IC(T+1): {ic_data['signal'].get('ic_t1', 'N/A')} (n={ic_data['signal'].get('sample_t1', 0)})")
+print(f"  [Signal diag] IC(T+5): {ic_data['signal'].get('ic_t5', 'N/A')} (n={ic_data['signal'].get('sample_t5', 0)})")
+if ic_data["playbook"].get("sample_t3", 0) < 30:
+    print(f"  ⚠️ Playbook IC(T+3) 样本不足, 毕业门禁暂不可用; 待 backfill 积累")
 
 if factor_stats:
     print(f"\n🔬 FACTORS")
@@ -253,10 +310,8 @@ output = {
         "win_rate": round(win_rate, 1), "total_pnl": round(total_pnl, 2),
     },
     "ic": {
-        "t1": ic_data.get('overall_ic_t1'),
-        "t3": ic_data.get('overall_ic_t3'),
-        "t5": ic_data.get('overall_ic_t5'),
-        "graduation": grad.get('verdict', 'UNKNOWN'),
+        "playbook": ic_data["playbook"],
+        "signal": ic_data["signal"],
     },
     "factors": factor_stats,
     "trade_records": trade_stats,

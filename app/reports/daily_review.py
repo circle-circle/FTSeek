@@ -89,35 +89,6 @@ def _get_new_open_positions(db_path: str, date_str: str) -> List[Dict[str, Any]]
     return result
 
 
-def _format_option_positions(opt_positions: List[Dict[str, Any]]) -> List[str]:
-    """格式化期权持仓段落"""
-    if not opt_positions:
-        return []
-
-    from app.execution.options_selector import days_to_expiry
-
-    lines = ["", "[ Put期权持仓（空头代理） ]"]
-    for op in opt_positions:
-        symbol       = op["symbol"].replace("US.", "")
-        option_code  = op.get("option_code", "")
-        qty          = op.get("qty", 0)
-        entry_price  = op.get("entry_price", 0)
-        strike       = op.get("strike_price", 0)
-        expiry       = op.get("expiry_date", "")
-        cost         = op.get("cost_total", entry_price * qty * 100)
-        is_sim       = op.get("is_simulated", False)
-        sim_tag      = "[模拟]" if is_sim else "[真实]"
-
-        dte = days_to_expiry(expiry) if expiry else "?"
-        lines.append(
-            f"  {symbol:<6} Put {sim_tag}  "
-            f"K={strike:.0f}  到期:{expiry}(DTE={dte})\n"
-            f"         {option_code}\n"
-            f"         {qty}手 @ 入${entry_price:.2f}  总成本≈${cost:.0f}"
-        )
-    return lines
-
-
 def generate_daily_review(review_date: Optional[date] = None) -> str:
     """
     生成指定日期的交易复盘报告文本
@@ -141,9 +112,6 @@ def generate_daily_review(review_date: Optional[date] = None) -> str:
     store = TradeStore(db_path)
     stats = store.stats_by_date(date_str)
 
-    # 期权持仓（未平仓）
-    opt_positions = store.load_option_positions()
-
     sep = "━" * 24
 
     # ── P4 修复 (2026-06-09): 查询今日新开仓（含未平仓），避免报"0 交易"──
@@ -164,9 +132,6 @@ def generate_daily_review(review_date: Optional[date] = None) -> str:
         if assets > 0:
             lines.append(f"账户净值：${assets:,.2f}")
 
-        # 期权持仓段（即使当日无平仓，也展示未平仓期权）
-        lines += _format_option_positions(opt_positions)
-
         lines += [sep, "FTSeek-US 模拟交易系统"]
         return "\n".join(lines)
 
@@ -183,9 +148,8 @@ def generate_daily_review(review_date: Optional[date] = None) -> str:
     exit_dist = stats.get("exit_reason_dist", {})
     records   = stats.get("records", [])
 
-    # 区分普通交易和期权交易
-    stock_records  = [r for r in records if "OPTION" not in r.get("direction", "")]
-    option_records = [r for r in records if "OPTION" in r.get("direction", "")]
+    # 区分普通交易和期权交易 (2026-07-01: 期权已删除, 全部为股票)
+    stock_records  = records
 
     # 盈亏比（仅普通股票）
     win_pnl  = sum(r["realized_pnl"] for r in records if r["realized_pnl"] > 0)
@@ -231,26 +195,6 @@ def generate_daily_review(review_date: Optional[date] = None) -> str:
                 f"{pnl_str}  {r['holding_hours']:.1f}h  [{reason}]"
             )
 
-    # 期权平仓记录
-    if option_records:
-        opt_pnl_total = sum(r["realized_pnl"] for r in option_records)
-        opt_pnl_sign  = "+" if opt_pnl_total >= 0 else ""
-        lines += ["", "[ Put期权平仓记录 ]",
-                  f"  共 {len(option_records)} 笔  合计盈亏：{opt_pnl_sign}${opt_pnl_total:.2f}"]
-        for r in option_records:
-            symbol_short = r["symbol"].replace("US.", "")
-            pnl = r["realized_pnl"]
-            pnl_str = f"+${pnl:.2f}" if pnl >= 0 else f"-${abs(pnl):.2f}"
-            reason = r.get("exit_reason", "")
-            entry_p = r.get("entry_price", 0)
-            exit_p  = r.get("exit_price", 0)
-            qty     = r.get("quantity", 0)
-            lines.append(
-                f"  {symbol_short:<6} Put空  "
-                f"入${entry_p:.2f}→出${exit_p:.2f}  "
-                f"{qty}手  {pnl_str}  [{reason}]"
-            )
-
     # 出场原因分布
     if exit_dist:
         dist_str = "  ".join(f"{k}×{v}" for k, v in sorted(exit_dist.items()))
@@ -262,9 +206,6 @@ def generate_daily_review(review_date: Optional[date] = None) -> str:
         "[ 信号质量 ]",
         f"  均置信度：{avg_conf:.2f}  均信号强度：{avg_str:.0f}",
     ]
-
-    # 未平仓期权持仓段
-    lines += _format_option_positions(opt_positions)
 
     # P4 修复: 今日新开仓（含未平仓）
     if new_open_positions:

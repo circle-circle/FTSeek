@@ -539,10 +539,27 @@
 
                 if (q.cur_price) {
                     curQuote = q;
-                    document.getElementById('quotePrice').textContent = `$${q.cur_price.toFixed(2)}`;
+                    // 价格标签: 按时段显示盘前/盘后/夜盘
+                    const {phase: qPhase} = isExtendedHours();
+                    let priceLabel = '';
+                    let priceColor = '#e1e4e8';
+                    if (qPhase === 'PRE_MARKET' && q.pre_price) {
+                        priceLabel = `盘前 $${q.pre_price.toFixed(2)}`;
+                        priceColor = '#fbbf24';
+                    } else if (qPhase === 'AFTER_HOURS' && q.after_price) {
+                        priceLabel = `盘后 $${q.after_price.toFixed(2)}`;
+                        priceColor = '#fbbf24';
+                    } else if (qPhase === 'CLOSED' || qPhase === 'WEEKEND') {
+                        if (q.overnight_price) { priceLabel = `夜盘 $${q.overnight_price.toFixed(2)}`; priceColor = '#a78bfa'; }
+                        else if (q.after_price) { priceLabel = `盘后 $${q.after_price.toFixed(2)}`; priceColor = '#fbbf24'; }
+                        else if (q.pre_price) { priceLabel = `盘前 $${q.pre_price.toFixed(2)}`; priceColor = '#fbbf24'; }
+                    }
+                    document.getElementById('quotePrice').innerHTML = `$${q.cur_price.toFixed(2)}` + (priceLabel ? ` <span style="font-size:12px;color:${priceColor};margin-left:8px">${priceLabel}</span>` : '');
                     const upd = q.update_time ? q.update_time.substring(11, 19) : '--';
+                    // 买卖盘
+                    const bidAsk = (q.bid_price && q.ask_price) ? ` | 买 ${q.bid_price.toFixed(2)} × ${q.bid_vol||0} / 卖 ${q.ask_price.toFixed(2)} × ${q.ask_vol||0}` : '';
                     document.getElementById('quoteDetail').innerHTML =
-                        `高 $${q.high_price?.toFixed(2)||'--'} | 低 $${q.low_price?.toFixed(2)||'--'} | 昨收 $${q.prev_close?.toFixed(2)||'--'} | ${upd}`;
+                        `高 $${q.high_price?.toFixed(2)||'--'} | 低 $${q.low_price?.toFixed(2)||'--'} | 昨收 $${q.prev_close?.toFixed(2)||'--'} | ${upd}${bidAsk}`;
 
                     // 填充资金信息
                     if (c.cur_price || c.cash != null) {
@@ -1125,8 +1142,11 @@
 
             try {
                 const limitPrice = parseFloat(document.getElementById('closePriceInput').value) || null;
+                const {extended: extClose, phase: phaseClose} = isExtendedHours();
+                const isClosedClose = (phaseClose === 'CLOSED' || phaseClose === 'WEEKEND');
                 const body = { symbol: sym, reason, quantity: closeQty };
                 if (limitPrice && limitPrice > 0) body.price = limitPrice;
+                body.fill_outside_rth = extClose || isClosedClose;
                 const res = await fetch('/api/orders/close', {
                     method: 'POST', headers: {'Content-Type':'application/json'},
                     body: JSON.stringify(body),
@@ -1418,25 +1438,41 @@
         let _fastTimer = null, _slowTimer = null;
         let _isPolling = false;
         let _failCount = 0;
-        const _MAX_FAILS_BEFORE_BANNER = 3;  // 连续失败3次(45s)后显示错误提示
+        const _MAX_FAILS_BEFORE_BANNER = 3;
+        let _tradeWsLastQuote = 0;  // quote_update WS 推送时间戳
+
+        function _getMarketPhase() {
+            // 复用 isExtendedHours() 判断盘中/盘外
+            var info = isExtendedHours();
+            return info.phase;
+        }
+
+        function _getQuoteInterval() {
+            // 盘中(REGULAR): 5s; 盘前盘后/休市: 15s; WS在线时放宽到 safety-net
+            var phase = _getMarketPhase();
+            if (phase === 'REGULAR') return 5000;
+            return 15000;
+        }
 
         function startPolling() {
             if (_isPolling) return;
             _isPolling = true;
             loadTradeSnapshot();
-            // WS 在线: 30s safety net, 离线: 15s (交易页需要更快)
-            var fastInterval = (window.WSManager && WSManager.isConnected()) ? 30000 : 15000;
+            var fastInterval = _getQuoteInterval();
             _fastTimer = setInterval(function() {
-                // 动态调整: WS 状态变化时切换间隔
-                var desired = (window.WSManager && WSManager.isConnected()) ? 30000 : 15000;
+                // 动态调整: 盘中/盘外间隔不同
+                var desired = _getQuoteInterval();
                 if (desired !== fastInterval) {
                     fastInterval = desired;
                     clearInterval(_fastTimer);
                     _fastTimer = setInterval(arguments.callee, desired);
                 }
-                // WS 10s 内推送过 → 跳过 HTTP
-                if (typeof _tradeWsLastPush !== 'undefined' && _tradeWsLastPush && (Date.now() - _tradeWsLastPush < 10000)) return;
+                // WS 5s 内推送过 quote_update → 跳过 HTTP 轮询
+                if (_tradeWsLastQuote && (Date.now() - _tradeWsLastQuote < 5000)) return;
                 loadTradeSnapshot();
+                // 刷新输入框中的标的报价
+                var _curSym = document.getElementById('symbol')?.value?.trim();
+                if (_curSym) fetchQuote();
             }, fastInterval);
         }
 
@@ -1627,6 +1663,13 @@
             WSManager.on('account_update', function() {
                 _tradeWsLastPush = Date.now();
                 loadTradeSnapshot();
+            });
+            // 报价推送 → 立即刷新交易页报价 (不再等轮询)
+            WSManager.on('quote_update', function() {
+                _tradeWsLastPush = Date.now();
+                _tradeWsLastQuote = Date.now();
+                var _curSym = document.getElementById('symbol')?.value?.trim();
+                if (_curSym) fetchQuote();
             });
         }
 

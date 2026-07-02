@@ -62,16 +62,22 @@ class DailyReviewGenerator:
     def generate(self, date: str = None, account_type: str = None) -> Dict[str, Any]:
         """生成每日复盘报告 (v2.0)"""
         if date is None:
-            date = datetime.now().strftime('%Y-%m-%d')
+            try:
+                from app.utils.timezone import now_et as _now_et
+                date = _now_et().strftime('%Y-%m-%d')
+            except Exception:
+                date = datetime.now().strftime('%Y-%m-%d')
         
         logger.info(f"生成每日复盘报告 v2.0：{date}")
         
         # 从 ftseek_us.db 读取交易记录 (排除已废弃的虚拟 shadow 和已禁用的 scalping, 保证复盘口径与 OKR/dashboard 一致)
         # 2026-06-26: 排除 PHANTOM_RECONCILE_VOID (pnl=0 的幽灵对账记录, 不应计入交易统计)
+        # 2026-06-30: 排除 trade_mode='live' (实盘交易不混入 SIM 复盘)
         trades = self._query(
             "SELECT * FROM trade_records WHERE trade_date = ? "
             "AND source_type NOT IN ('PLAYBOOK_SHADOW', 'SCALPING') "
             "AND exit_reason != 'PHANTOM_RECONCILE_VOID' "
+            "AND trade_mode != 'live' "
             "ORDER BY created_at",
             (date,)
         )
@@ -705,6 +711,8 @@ class DailyReviewGenerator:
                 rules = result.data.get("rules", [])
                 return {
                     'five_factor_available': True,
+                    'lookback_window': '30d',
+                    'lookback_note': '五因子归因基于30天回看数据, 非当日',
                     'noise_trades_pnl': attr.get("noise_trades_pnl", 0),
                     'early_exit_pnl': attr.get("early_exit_pnl", 0),
                     'late_exit_pnl': attr.get("late_exit_pnl", 0),

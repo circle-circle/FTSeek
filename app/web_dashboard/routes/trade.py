@@ -105,6 +105,7 @@ def register(app, templates):
             reason=body.get("reason", "手动平仓"),
             close_qty=close_qty,
             price=limit_price,
+            fill_outside_rth=bool(body.get("fill_outside_rth", False)),
         )
         ds = get_data_service()
         ds.invalidate_cache()
@@ -489,7 +490,7 @@ def register(app, templates):
                        entry_price, exit_price, quantity, exit_reason, entry_time, exit_time,
                        metadata_json, source_type
                 FROM trade_records
-                WHERE source_type NOT IN ('PLAYBOOK_SHADOW','SCALPING') AND exit_price > 0
+                WHERE source_type NOT IN ('PLAYBOOK_SHADOW','SCALPING') AND COALESCE(exit_reason,'') NOT IN ('PHANTOM_RECONCILE_VOID','ORPHAN_CLEANUP') AND exit_reason NOT IN ('PHANTOM_RECONCILE_VOID','ORPHAN_CLEANUP') AND exit_price > 0
                 ORDER BY id DESC LIMIT 20
             """)
 

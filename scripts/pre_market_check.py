@@ -85,37 +85,30 @@ def run_premarket_check() -> dict:
         results["checks"].append({"name": "做空策略路由器", "status": "FAIL", "detail": str(e)})
         results["errors"].append(f"做空策略异常: {e}")
 
-    # ── 3. 快速退出引擎检查 ──
+    # ── 3. 退出策略检查 ──
     try:
-        from app.exit.option_quick_exit import get_quick_exit_engine
-        engine = get_quick_exit_engine()
-        status = engine.get_status_report()
+        from app.core.config_container import get_config
+        cfg = get_config()
+
+        # 股票退出配置 (dynamic_exit — 这是实际管仓位的)
+        dyn_exit = cfg.get_section("dynamic_exit", {})
+        default_exit = dyn_exit.get("default", {})
+        sl_pct = default_exit.get("stop_loss", "N/A")
+        tp_pct = default_exit.get("take_profit", "N/A")
+        atr_mult = default_exit.get("atr_stop", {}).get("multiplier", "N/A")
+        trailing = default_exit.get("trailing_stop", {})
 
         results["checks"].append({
-            "name": "快速退出引擎",
+            "name": "股票退出策略",
             "status": "PASS",
-            "detail": f"已启用={status['enabled']} | 跟踪中={status['active_tracking']} | "
-                      f"目标={status['config']['profit_target']} | 止损={status['config']['stop_loss']}"
+            "detail": f"SL={sl_pct} | TP={tp_pct} | ATR×{atr_mult} | "
+                      f"Trailing={'on' if trailing.get('enabled') else 'off'}"
         })
     except Exception as e:
-        results["checks"].append({"name": "快速退出引擎", "status": "FAIL", "detail": str(e)})
-        results["warnings"].append(f"快速退出引擎异常: {e}")
+        results["checks"].append({"name": "退出策略", "status": "FAIL", "detail": str(e)})
+        results["warnings"].append(f"退出策略检查异常: {e}")
 
-    # ── 4. 期权持仓恢复检查 ──
-    try:
-        from app.storage.trade_store import TradeStore
-        db_path = str(BASE_DIR / "data" / "ftseek_us.db")
-        ts = TradeStore(db_path)
-        option_positions = ts.get_open_option_positions() if hasattr(ts, 'get_open_option_positions') else []
-
-        results["checks"].append({
-            "name": "期权持仓恢复",
-            "status": "PASS",
-            "detail": f"未平仓期权={len(option_positions)}"
-        })
-    except Exception as e:
-        results["checks"].append({"name": "期权持仓恢复", "status": "ERROR", "detail": str(e)})
-        results["warnings"].append(f"期权持仓检查异常: {e}")
+    # ── 4. 期权持仓检查 (2026-07-01: 已删除, 自动交易不做期权) ──
 
     # ── 5. 数据源连接检查 ──
     try:
@@ -132,8 +125,8 @@ def run_premarket_check() -> dict:
             finnhub_api_key=os.getenv("FINNHUB_API_KEY"),
             alphavantage_api_key=os.getenv("ALPHAVANTAGE_API_KEY"),
         )
-        # 测试连接
-        test_symbol = "AAPL"
+        # 测试连接 (2026-07-01: symbol 必须带 US. 前缀, 否则 get_quote 第255行直接 return None)
+        test_symbol = "US.AAPL"
         test_data = data_router.get_quote(test_symbol)
         connected = test_data is not None and test_data.get("price", 0) > 0
 

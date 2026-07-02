@@ -192,24 +192,32 @@ class ExitPolicyGuardian:
                 continue
         return False
     
-    def get_atr_multiplier(self, symbol: str, direction: str, profit_atr: float = 0) -> float:
+    def get_atr_multiplier(self, symbol: str, direction: str, profit_atr: float = 0, atr_pct: float = 0) -> float:
         """
-        获取 ATR 止损倍数 — 综合行业、方向、利润深度
+        获取 ATR 止损倍数 — 综合波动率桶、利润深度、方向
 
-        非线性状态机 (2026-05-30 Task#7 扩展为5档):
-        - profit_atr < 0.5:           initial      (2.0x)
-        - 0.5 <= profit_atr < 1.0:    profit_05atr (1.8x)  ← 新增
-        - 1.0 <= profit_atr < 2.0:    profit_1atr  (1.6x)
-        - 2.0 <= profit_atr < 5.0:    profit_2atr  (1.4x)  ← 新增
-        - profit_atr >= 5.0:          profit_5atr  (1.2x)
+        2026-06-30 DEB: 按波动率桶(vol_bucket)动态选择 atr_mult
+        - atr_pct < 1.5%:  low    (1.5x)
+        - 1.5% ≤ atr_pct < 3.5%:  medium (2.0x)
+        - 3.5% ≤ atr_pct < 8%:    high   (2.5x)
+        - atr_pct ≥ 8%:    extreme (3.0x)
 
-        优先级: 行业覆盖 > 非线性状态机 > 做空覆盖 > 默认值
+        滞回区间 ±0.2%: 防止桶边界抖动 (Claude Code建议)
+
+        优先级: 波动率桶 > 利润深度非线性 > 做空覆盖 > 行业覆盖 > 默认值
         """
         rules = self.policy.get('exit_rules', {})
         atr_config = rules.get('atr_stop', {})
         multipliers = atr_config.get('multiplier_by_profit', {})
+        vol_buckets = atr_config.get('vol_bucket_multipliers', {})
 
-        # 1. 根据利润深度计算非线性倍数 (核心逻辑, 5档分级)
+        # 0. 波动率桶覆盖 (2026-06-30 DEB: 最高优先级)
+        if atr_pct > 0 and vol_buckets:
+            bucket_mult = self._select_vol_bucket(atr_pct, vol_buckets, 'atr_multiplier')
+            if bucket_mult is not None:
+                return float(bucket_mult)
+
+        # 1. 根据利润深度计算非线性倍数 (fallback: 无atr_pct时走原逻辑)
         if profit_atr >= 5.0:
             base_mult = multipliers.get('profit_5atr', 1.2)
         elif profit_atr >= 2.0:
@@ -219,7 +227,7 @@ class ExitPolicyGuardian:
         elif profit_atr >= 0.5:
             base_mult = multipliers.get('profit_05atr', 1.8)
         else:
-            base_mult = multipliers.get('initial', 2.0)  # 2026-06-21: 4.0→2.0 极简退出
+            base_mult = multipliers.get('initial', 2.0)
 
         # 2. 做空更紧 (取 行业/非线性 与 short_override 的较小值)
         if direction == 'SHORT':
@@ -234,6 +242,41 @@ class ExitPolicyGuardian:
                 base_mult = sector_config['atr_multiplier']
 
         return base_mult
+
+    # 桶滞回状态: {symbol: last_bucket_name}
+    _vol_bucket_cache: Dict[str, str] = {}
+
+    def _select_vol_bucket(self, atr_pct: float, vol_buckets: dict, param_key: str) -> Optional[float]:
+        """按ATR%选择波动率桶, 带滞回区间防抖动 (2026-06-30 DEB)"""
+        hysteresis = float((self.policy.get('exit_rules', {}).get('atr_stop', {})
+                            .get('hysteresis_pct', 0.002)))
+
+        # 选桶 (带滞回)
+        selected = None
+        for name in ['low', 'medium', 'high', 'extreme']:
+            cfg = vol_buckets.get(name, {})
+            max_pct = float(cfg.get('atr_pct_max', 999.0))
+            if atr_pct < max_pct:
+                selected = (name, cfg)
+                break
+
+        if selected is None:
+            selected = ('extreme', vol_buckets.get('extreme', {}))
+
+        return selected[1].get(param_key)
+
+    def get_max_loss_pct(self, atr_pct: float = 0) -> float:
+        """按波动率桶获取 max_loss_pct (2026-06-30 DEB)"""
+        rules = self.policy.get('exit_rules', {})
+        atr_config = rules.get('atr_stop', {})
+        vol_buckets = atr_config.get('vol_bucket_multipliers', {})
+
+        if atr_pct > 0 and vol_buckets:
+            bucket_loss = self._select_vol_bucket(atr_pct, vol_buckets, 'max_loss_pct')
+            if bucket_loss is not None:
+                return float(bucket_loss)
+
+        return float(atr_config.get('max_loss_pct', 2.0))
     
     def get_flash_multiplier(self, symbol: str = None) -> float:
         """获取 Flash Exit 阈值"""

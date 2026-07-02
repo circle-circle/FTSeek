@@ -123,9 +123,14 @@ class ShadowAccountDiagnostic(BaseDiagnostic):
         try:
             conn = sqlite3.connect(db_path)
             conn.row_factory = sqlite3.Row
-            cutoff = (datetime.now() - timedelta(days=lookback_days)).isoformat()
+            try:
+                from app.utils.timezone import now_et as _now_et
+                cutoff = (_now_et() - timedelta(days=lookback_days)).isoformat()
+            except Exception:
+                cutoff = (datetime.now() - timedelta(days=lookback_days)).isoformat()
 
             # ⚠️ P0 修复: 实际表名是 trade_records (不是 trades)
+            # 2026-06-30: 过滤 trade_mode='live' (实盘不混入SIM归因) + 排除 shadow/scalping
             query = """
                 SELECT symbol, direction, entry_price, exit_price,
                        entry_time, exit_time, realized_pnl as pnl,
@@ -135,6 +140,8 @@ class ShadowAccountDiagnostic(BaseDiagnostic):
                        trace_id, trade_date
                 FROM trade_records
                 WHERE exit_time IS NOT NULL AND exit_time > ?
+                AND trade_mode != 'live'
+                AND source_type NOT IN ('PLAYBOOK_SHADOW', 'SCALPING')
                 ORDER BY exit_time DESC
             """
             rows = conn.execute(query, (cutoff,)).fetchall()

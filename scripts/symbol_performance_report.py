@@ -43,6 +43,7 @@ def analyze_symbols(days=14):
     WHERE trade_date >= ?
       AND source_type IN ('MAIN_PIPELINE', 'ORB_ENGINE')
       AND direction != 'SHORT_PROXY_OPTION'
+      AND trade_mode != 'live'
     GROUP BY symbol, direction
     HAVING COUNT(*) >= 3
     ORDER BY total_pnl ASC

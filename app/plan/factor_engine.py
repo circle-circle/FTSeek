@@ -122,7 +122,8 @@ def _discover_finnhub_movers() -> List[str]:
         if movers and isinstance(movers, dict):
             for entry in movers.get("gainers", []) + movers.get("losers", []):
                 sym = entry.get("symbol", "").upper()
-                if sym and len(sym) <= 5:
+                sym = sym.replace("US.", "")  # 防双重前缀
+                if sym and len(sym) <= 5 and sym.isalpha():
                     code = f"US.{sym}"
                     if code not in _EXCLUDE_SYMBOLS:
                         discovered.add(code)

@@ -799,10 +799,15 @@
         }
         var ic = grad.ic_t3 == null ? 'N/A' : (grad.ic_t3 >= 0 ? '+' : '') + Number(grad.ic_t3).toFixed(3);
         var sample = grad.sample_count || 0;
+        var icT1 = grad.ic_t1 == null ? 'N/A' : (grad.ic_t1 >= 0 ? '+' : '') + Number(grad.ic_t1).toFixed(3);
+        var icT5 = grad.ic_t5 == null ? 'N/A' : (grad.ic_t5 >= 0 ? '+' : '') + Number(grad.ic_t5).toFixed(3);
         checksEl.innerHTML =
             chip('IC(T3)', checks.ic_positive, ic + '/0.05') +
             chip('样本', checks.sample_sufficient, sample + '/30') +
-            chip('无5连亏', checks.no_consecutive_5_losses, checks.no_consecutive_5_losses ? 'OK' : '触发');
+            chip('无5连亏', checks.no_consecutive_5_losses, checks.no_consecutive_5_losses ? 'OK' : '触发') +
+            '<div style="margin-top:4px;padding-top:4px;border-top:1px solid #21262d;font-size:11px;color:#8b949e">' +
+            'IC覆盖: T+1=' + (grad.sample_t1||0) + ' T+3=' + (grad.sample_t3||0) + ' T+5=' + (grad.sample_t5||0) + ' 条' +
+            ' | IC(T1)=' + icT1 + ' IC(T5)=' + icT5 + '</div>';
         // auto_account 按钮 (real 未毕业灰色)
         function setBtn(btn, active, enabled) {
             btn.style.background = active ? '#238636' : '#21262d';

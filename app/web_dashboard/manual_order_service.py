@@ -225,12 +225,32 @@ class ManualOrderService:
             ret, snap = self._quote_ctx.get_market_snapshot([symbol])
             if ret == RET_OK and not snap.empty:
                 row = snap.iloc[0]
-                # 优先 cur_price → last_price → prev_close_price
+                # 按时段选最合适的实时价:
+                # cur_price → 盘中实时价 (休市时为 None)
+                # last_price → 最后成交价 (含盘中/盘前盘后)
+                # pre_price → 盘前最新价
+                # after_price → 盘后最新价
+                # overnight_price → 夜盘价 (富途24h盘)
                 cur = _f(row.get("cur_price"))
+                pre = _f(row.get("pre_price"))
+                after = _f(row.get("after_price"))
+                overnight = _f(row.get("overnight_price"))
+                last = _f(row.get("last_price"))
+
+                # cur_price 为空时, 优先用 last_price (盘中最新成交价)
+                # 注意: overnight/after/pre 是各时段价格, 盘中时它们是旧值不应优先
                 if cur <= 0:
-                    cur = _f(row.get("last_price"))
-                if cur <= 0:
-                    cur = _f(row.get("prev_close_price"))
+                    if last > 0:
+                        cur = last
+                    elif overnight > 0:
+                        cur = overnight
+                    elif after > 0:
+                        cur = after
+                    elif pre > 0:
+                        cur = pre
+                    else:
+                        cur = _f(row.get("prev_close_price"))
+
                 return {
                     "symbol": symbol,
                     "cur_price": cur,
@@ -239,7 +259,22 @@ class ManualOrderService:
                     "prev_close": _f(row.get("prev_close_price")),
                     "volume": int(_f(row.get("volume"))),
                     "update_time": str(row.get("update_time") or ""),
-                    # P2: 基本面+资金流扩展字段
+                    # 盘前/盘后/夜盘实时价
+                    "pre_price": pre or None,
+                    "after_price": after or None,
+                    "overnight_price": overnight or None,
+                    "pre_volume": int(_f(row.get("pre_volume"))) or None,
+                    "after_volume": int(_f(row.get("after_volume"))) or None,
+                    "pre_high": _f(row.get("pre_high_price")) or None,
+                    "pre_low": _f(row.get("pre_low_price")) or None,
+                    "after_high": _f(row.get("after_high_price")) or None,
+                    "after_low": _f(row.get("after_low_price")) or None,
+                    # 买卖盘
+                    "bid_price": _f(row.get("bid_price")) or None,
+                    "ask_price": _f(row.get("ask_price")) or None,
+                    "bid_vol": int(_f(row.get("bid_vol"))) or None,
+                    "ask_vol": int(_f(row.get("ask_vol"))) or None,
+                    # 基本面+资金流
                     "pe": _f(row.get("pe_ttm_ratio")) or _f(row.get("pe_ratio")) or None,
                     "pb": _f(row.get("pb_ratio")) or None,
                     "eps": _f(row.get("earning_per_share")) or None,
@@ -249,8 +284,6 @@ class ManualOrderService:
                     "high_52w": _f(row.get("highest52weeks_price")) or None,
                     "low_52w": _f(row.get("lowest52weeks_price")) or None,
                     "turnover_rate": _f(row.get("turnover_rate")) or None,
-                    "after_price": _f(row.get("after_price")) or None,
-                    "pre_price": _f(row.get("pre_price")) or None,
                 }
 
             return {"symbol": symbol, "error": "no_data"}
@@ -312,10 +345,11 @@ class ManualOrderService:
         return submit_order(self, order, idempotency_key)
 
     def close_position(self, symbol: str, reason: str,
-                       close_qty: int = 0, price: float = None) -> Dict[str, Any]:
+                       close_qty: int = 0, price: float = None,
+                       fill_outside_rth: bool = False) -> Dict[str, Any]:
         """平仓指定持仓 (close_qty=0 全平, 否则部分平仓)."""
         from app.web_dashboard.order.executor import close_position
-        return close_position(self, symbol, reason, close_qty, price)
+        return close_position(self, symbol, reason, close_qty, price, fill_outside_rth)
 
     def get_today_orders(self) -> List[Dict[str, Any]]:
         """查询今日所有订单状态 (按时间倒序)."""

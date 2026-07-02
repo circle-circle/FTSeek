@@ -28,6 +28,15 @@ def analyze_direction(days: int = 7) -> dict:
     conn = sqlite3.connect(str(DB_PATH))
     conn.row_factory = sqlite3.Row
     
+    # 2026-06-30: 用 ET 日期计算 cutoff (date('now') 是 UTC)
+    try:
+        from app.utils.timezone import now_et as _now_et
+        from datetime import timedelta as _td
+        cutoff = (_now_et() - _td(days=days)).strftime("%Y-%m-%d")
+    except Exception:
+        from datetime import datetime as _dt, timedelta as _td
+        cutoff = (_dt.now() - _td(days=days)).strftime("%Y-%m-%d")
+    
     # 获取最近N天有T1回填的信号
     rows = conn.execute(f"""
         SELECT direction, strategy_id, fwd_ret_t1, fwd_ret_t5, strength, confidence,
@@ -35,9 +44,9 @@ def analyze_direction(days: int = 7) -> dict:
         FROM signal_snapshots
         WHERE fwd_ret_t1 IS NOT NULL
           AND direction != 'NEUTRAL'
-          AND trade_date >= date('now', '-{days} days')
+          AND trade_date >= ?
         ORDER BY trade_date DESC
-    """).fetchall()
+    """, (cutoff,)).fetchall()
     
     if not rows:
         conn.close()

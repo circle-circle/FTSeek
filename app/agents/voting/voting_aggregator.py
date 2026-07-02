@@ -36,16 +36,16 @@ class VotingAggregator:
         if not scores:
             return self._empty_result()
         
-        # 动态权重调整：高波动市场降低 DeepSeek 权重，提高 MiniMax 权重
+        # 动态权重调整：高波动市场降低宏观模型(Qwen)权重，提高风控模型(DeepSeek)权重
         weights = self.config.model_weights.copy()
 
         if market_data:
             vix = market_data.get("vix", 20)
             if vix > self.config.VIX_HIGH_THRESHOLD:  # 高波动市场 (>30)
-                # 3模型动态权重: 降低 Qwen(宏观) 权重，提高 MiniMax(情绪) 权重
-                weights[ModelRole.QWEN] = max(0.15, weights[ModelRole.QWEN] - self.config.VIX_WEIGHT_ADJUSTMENT)
-                weights[ModelRole.MINIMAX] = min(0.50, weights[ModelRole.MINIMAX] + self.config.VIX_WEIGHT_ADJUSTMENT)
-                logger.info(f"[动态权重] VIX={vix:.1f} > {self.config.VIX_HIGH_THRESHOLD}, 降低宏观模型权重，提高情绪模型权重")
+                # 3模型动态权重: 降低 Qwen(宏观), 提高 DeepSeek(风控)
+                weights[ModelRole.QWEN] = max(0.20, weights[ModelRole.QWEN] - self.config.VIX_WEIGHT_ADJUSTMENT)
+                weights[ModelRole.DEEPSEEK] = min(0.55, weights[ModelRole.DEEPSEEK] + self.config.VIX_WEIGHT_ADJUSTMENT)
+                logger.info(f"[动态权重] VIX={vix:.1f} > {self.config.VIX_HIGH_THRESHOLD}, 降低宏观模型权重，提高风控模型权重")
 
         # P2.1 (RFC-060): 接通投票准确率闭环 — 按各模型历史方向准确率调整权重
         # 数据源: VotingAccuracyTracker (持久化; 已在 voting_coordinator.record_prediction +
@@ -88,6 +88,26 @@ class VotingAggregator:
         except Exception as _p2_err:
             logger.debug(f"[闭环权重] 准确率调整失败 (用默认权重): {_p2_err}")
 
+        # P1 (2026-06-29): Signal IC 反馈 — 按方向IC调整各模型权重
+        # 逻辑: 如果某模型投LONG, 而LONG方向IC < -0.03 → 该模型权重×0.5
+        #        如果某模型投SHORT, 而SHORT方向IC > 0.08 → 该模型权重×1.5
+        # 乘数范围 [0.0, 1.5], 与 signal_scorer._apply_ic_adaptation 边界一致
+        # FeatureFlag: ic_feedback_to_voting (默认 False)
+        try:
+            from app.core.feature_flags import FeatureFlags
+            if FeatureFlags().is_enabled("ic_feedback_to_voting"):
+                _ic_adj = self._get_direction_ic_adjustment(scores)
+                if _ic_adj:
+                    for _role, _mult in _ic_adj.items():
+                        if _mult != 1.0 and _role in weights:
+                            weights[_role] *= _mult
+                            logger.info(
+                                f"[IC-Adjust] {_role.value if hasattr(_role, 'value') else _role} "
+                                f"×{_mult:.1f} (weight={weights[_role]:.2f})"
+                            )
+        except Exception as _ic_err:
+            logger.debug(f"[IC-Adjust] Signal IC 权重调整失败: {_ic_err}")
+
         # P0 优化 (2026-04-17): 分离内部投票和外部投票 (LLM 策略)
         internal_scores = []
         external_scores = []
@@ -98,12 +118,12 @@ class VotingAggregator:
             else:
                 internal_scores.append(score)
 
-        # P0 修复 (2026-04-17): 模型偏差校正
-        # minimax 系统性偏高 20-34 分, 使用比例缩放更平滑
-        # qwen=58, minimax=85 → minimax校正=85*0.75=64 (接近 qwen)
-        # qwen=65, minimax=62 → minimax校正=62*0.75=47 (仍偏低, 但 std_dev 合理)
+        # P0 修复 (2026-06-28): 3模型偏差校正
+        # DeepSeek 作为风险审查官, 输出可能系统性偏保守, 使用轻微比例放大
+        # 旧方法 (2模型): minimax * 0.75
+        # 新方法 (3模型): deepseek * 1.05
         bias_config = getattr(self.config, 'MODEL_BIAS_CORRECTION', {})
-        scale = bias_config.get("minimax_scale", 1.0)
+        scale = bias_config.get("deepseek_scale", 1.0)
 
         # P1-2 修复 (2026-04-21): 方向一致性保护
         # 问题: 直接修改 score.strength 会导致 std_dev 过大 → consensus=0
@@ -111,32 +131,32 @@ class VotingAggregator:
         # 然后在 final_strength 上做方向保护，不影响 consensus
         direction_protection_needed = False
         qwen_original = None
-        minimax_original = None
-        minimax_corrected = None
+        deepseek_original = None
+        deepseek_corrected = None
 
         for score in internal_scores:
-            if score.model_id == "qwen":
+            if score.model_id == "qwen3.7_max":
                 qwen_original = score.strength
                 break
 
         for score in internal_scores:
-            if score.model_id == "minimax" and scale != 1.0:
+            if score.model_id == "deepseek_v4_pro" and scale != 1.0:
                 original = score.strength
-                minimax_original = original
+                deepseek_original = original
                 corrected = max(0, min(100, round(score.strength * scale)))
-                minimax_corrected = corrected
+                deepseek_corrected = corrected
 
                 # 方向一致性检查：如果校正后方向翻转，标记需要保护
                 if qwen_original is not None:
                     qwen_dir = "LONG" if qwen_original >= 50 else "SHORT"
-                    mini_dir_orig = "LONG" if original >= 50 else "SHORT"
-                    mini_dir_corr = "LONG" if corrected >= 50 else "SHORT"
+                    deep_dir_orig = "LONG" if original >= 50 else "SHORT"
+                    deep_dir_corr = "LONG" if corrected >= 50 else "SHORT"
 
-                    if qwen_dir == mini_dir_orig and qwen_dir != mini_dir_corr:
+                    if qwen_dir == deep_dir_orig and qwen_dir != deep_dir_corr:
                         direction_protection_needed = True
                         logger.info(
                             f"[方向保护] 标记: qwen={qwen_original}{qwen_dir}, "
-                            f"minimax {original}→{corrected} 方向翻转"
+                            f"deepseek {original}→{corrected} 方向翻转"
                         )
 
                 score.strength = corrected
@@ -193,7 +213,12 @@ class VotingAggregator:
                 _w = weights.get(self._get_model_role(_s.model_id), 0.25)
                 if _s.model_id == "llm_strategy" and external_scores:
                     _w = llm_weight_used
-                _all_dirs.append((1 if _s.strength >= 50 else -1, _w))
+                # 2026-06-28 P0修复: 方向用LLM返回的direction字段, 不用strength>=50
+                # 根因: LLM的strength是"信号强度"(0-100), direction是"方向"(LONG/SHORT)
+                # strength=65+direction=SHORT = "强空信号", 不是"强多信号"
+                # 旧逻辑用strength>=50判方向 → 3模型全SHORT但strength>=50的被判LONG → 方向翻转
+                _s_dir = getattr(_s, 'direction', '').upper()
+                _all_dirs.append((1 if _s_dir == "LONG" else (-1 if _s_dir == "SHORT" else 0), _w))
             _long_weight = sum(_w for _d, _w in _all_dirs if _d > 0)
             _short_weight = sum(_w for _d, _w in _all_dirs if _d < 0)
             _majority_dir = "LONG" if _long_weight >= _short_weight else "SHORT"
@@ -212,9 +237,11 @@ class VotingAggregator:
             logger.debug(f"[方向保护·全局] 失败 (忽略): {_dir_err}")
 
         # P1-2 修复 (2026-04-21): 方向保护 -- 在 final_strength 上应用，不影响 std_dev
-        # 当 qwen 和 minimax 原始方向一致时，final_strength 不应翻转方向
-        if direction_protection_needed and qwen_original is not None and minimax_original is not None:
-            qwen_dir = "LONG" if qwen_original >= 50 else "SHORT"
+        # 当 qwen 和 deepseek 原始方向一致时，final_strength 不应翻转方向
+        if direction_protection_needed and qwen_original is not None and deepseek_original is not None:
+            # 2026-06-28 P0修复: 用direction字段判方向, 不用strength>=50
+            _qwen_score = next((s for s in scores if s.model_id == "qwen3.7_max"), None)
+            qwen_dir = getattr(_qwen_score, 'direction', 'LONG').upper() if _qwen_score else "LONG"
             final_dir = "LONG" if final_strength >= 50 else "SHORT"
             if qwen_dir != final_dir:
                 # 翻转了 → 钳位到方向边界
@@ -300,6 +327,56 @@ class VotingAggregator:
             "llm_weight_used": round(llm_weight_used, 3) if external_scores else None,  # 新增
         }
     
+    def _get_direction_ic_adjustment(self, scores: List[ModelScore]) -> Dict[Any, float]:
+        """Signal IC → 方向级权重乘数 (P1 2026-06-29)
+        
+        读取 signal_snapshots 的 by_direction IC, 按各模型投票方向调整权重:
+        - LONG 方向 IC < -0.03 → 投LONG的模型 ×0.5
+        - LONG 方向 IC > 0.08  → 投LONG的模型 ×1.3
+        - SHORT 方向 IC < -0.03 → 投SHORT的模型 ×0.5
+        - SHORT 方向 IC > 0.08  → 投SHORT的模型 ×1.3
+        - NEUTRAL → 不调整
+        
+        缓存: 5min TTL (与 signal_scorer._apply_ic_adaptation 对齐)
+        Returns: {ModelRole: multiplier}
+        """
+        import time as _time
+        _now = _time.time()
+        _cache = getattr(self, '_ic_dir_cache', None)
+        if _cache and (_now - _cache.get('ts', 0)) < 300:
+            _ic_map = _cache.get('ic_map', {})
+        else:
+            try:
+                from app.analysis.signal_ic_tracker import get_ic_summary
+                _summary = get_ic_summary(min_signals=10, days_back=30)
+                _ic_map = _summary.get("by_direction", {}) if _summary.get("status") == "ok" else {}
+                self._ic_dir_cache = {'ts': _now, 'ic_map': _ic_map}
+            except Exception:
+                return {}
+        
+        if not _ic_map:
+            return {}
+        
+        result: Dict[Any, float] = {}
+        for score in scores:
+            role = self._get_model_role(score.model_id)
+            if role in result:
+                continue  # 同角色只算一次
+            _dir = getattr(score, 'direction', '').upper()
+            _dir_key = _dir if _dir in ("LONG", "SHORT") else None
+            if not _dir_key:
+                continue
+            _ic_info = _ic_map.get(_dir_key)
+            if not _ic_info or _ic_info.get("n", 0) < 10:
+                continue
+            _ic = _ic_info.get("ic", 0.0)
+            if _ic < -0.03:
+                result[role] = 0.5
+            elif _ic > 0.08:
+                result[role] = 1.3
+            # IC in [-0.03, 0.08] → 不调整 (1.0)
+        return result
+
     def _compute_dynamic_llm_weight(
         self,
         internal_strength: int,
@@ -355,11 +432,11 @@ class VotingAggregator:
         return weight, " → ".join(reasons)
     
     def _get_model_role(self, model_id: str) -> ModelRole:
-        """获取模型角色 - 2模型架构 2026-04-17"""
+        """获取模型角色 - 3模型架构 2026-06-28"""
         mapping = {
-            "qwen": ModelRole.QWEN,
-            "minimax": ModelRole.MINIMAX,
-            # GLM 已移除 (2026-04-17)，未知模型默认归入 QWEN
+            "qwen3.7_max": ModelRole.QWEN,
+            "glm_5_2": ModelRole.GLM,
+            "deepseek_v4_pro": ModelRole.DEEPSEEK,
         }
         return mapping.get(model_id.lower(), ModelRole.QWEN)
     

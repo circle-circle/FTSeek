@@ -192,6 +192,8 @@ class ExitMonitor:
     # P0 (2026-06-16): FLAT_ALL 锁存 — 触发后 30 分钟内不重复触发
     # 根因: 6/15 实盘 FLAT_ALL 触发 95 次 (21:30~23:00), 因平仓失败后每 tick 重触发
     FLAT_ALL_COOLDOWN_SECONDS = 1800  # 30 分钟
+    WARN_COOLDOWN_SECONDS = 300  # 5 分钟 — 防止 WARN 级别每 tick 重复告警
+    REDUCE_50_COOLDOWN_SECONDS = 300  # 5 分钟 — 防止 REDUCE_50 每 tick 重触发 (与 FLAT_ALL 同构)
 
     def __init__(self):
         self._atr_cache: Dict[str, Dict] = {}  # {symbol: {date, value}}
@@ -202,6 +204,8 @@ class ExitMonitor:
         self._exit_cooldowns: Dict[str, float] = {}  # {symbol: last_exit_timestamp} 类级别冷却，防position对象重建后trail_state丢失
         # P0 (2026-06-16): FLAT_ALL 锁存时间戳
         self._flat_all_last_triggered_ts: float = 0.0
+        self._warn_last_triggered_ts: float = 0.0  # 2026-06-30: WARN 冷却
+        self._reduce_50_last_triggered_ts: float = 0.0  # REDUCE_50 冷却
         # 接近止损预警去重: {symbol: last_alert_ts}
         self._approaching_stop_alerts: Dict[str, float] = {}
         # Task #24 (2026-05-27): 财报退出去重集合，防止同一标的在同一批财报计划下被重复触发
@@ -553,9 +557,14 @@ class ExitMonitor:
             return None
         drawdown = -total_pnl / denominator
 
+        # 2026-07-02: 保存 managed-only drawdown (在 broker override 之前)
+        # 用于 REDUCE_50/WARN — 只看 managed 仓位, 不受 manual 仓位影响
+        _managed_drawdown = drawdown
+
         # P0 (2026-06-14): 账户级回撤补充检查 — 含手动仓的 broker 真实浮亏
         # 原问题: total_pnl 只算 managed 仓位, 手动大仓位亏损不触发 FLAT_ALL
-        # 修复: 额外查 broker unrealized PnL, 如果账户级回撤超限也触发
+        # 修复: 额外查 broker unrealized PnL, 如果账户级回撤超限也触发 FLAT_ALL
+        # 注意: broker_drawdown 仅用于 FLAT_ALL, 不用于 REDUCE_50 (会死循环)
         _broker_drawdown = 0.0
         try:
             from app.risk.capital_safety import get_capital_safety_system
@@ -567,18 +576,18 @@ class ExitMonitor:
                 if _broker_drawdown > drawdown:
                     logger.info(
                         f"[组合止损·账户级] broker_drawdown={_broker_drawdown*100:.2f}% "
-                        f"> managed_drawdown={drawdown*100:.2f}%, 使用账户级回撤"
+                        f"> managed_drawdown={_managed_drawdown*100:.2f}%, FLAT_ALL用账户级"
                     )
-                    drawdown = _broker_drawdown
+                    drawdown = _broker_drawdown  # drawdown 用于 FLAT_ALL 判断
         except Exception as _bd_err:
             logger.debug(f"[组合止损·账户级] 检查跳过: {_bd_err}")
 
         action = None
-        if drawdown >= stop_pct:
+        if drawdown >= stop_pct:  # FLAT_ALL: 用 max(managed, broker)
             action = "FLAT_ALL"
-        elif drawdown >= reduce_pct:
+        elif _managed_drawdown >= reduce_pct:  # REDUCE_50: 只看 managed 仓位
             action = "REDUCE_50"
-        elif drawdown >= warn_pct:
+        elif _managed_drawdown >= warn_pct:  # WARN: 只看 managed 仓位
             action = "WARN"
 
         # P0-3 (2026-05-19): 触发时打印具体浮亏 + 持仓清单, 便于追溯
@@ -721,26 +730,44 @@ class ExitMonitor:
                     logger.error(f"[组合止损] 平仓 {p.symbol} 失败: {_e}")
             return closed
         elif portfolio_action == "REDUCE_50":
-            logger.warning("[组合止损] 触发 REDUCE_50, 每只减仓 50%")
-            for p in managed_positions:
-                try:
-                    close_qty = max(1, getattr(p, 'size', 100) // 2)
-                    _cur = get_price_fn(p.symbol)
-                    _entry = getattr(p, 'avg_entry_price', 0)
-                    _dir = getattr(p, 'direction', None)
-                    _dir_str = _dir.value if hasattr(_dir, 'value') else str(_dir) if _dir else 'LONG'
-                    _pnl = (_cur - _entry) / _entry if _entry > 0 and isinstance(_cur, (int, float)) else 0.0
-                    if _dir_str == 'SHORT': _pnl = -_pnl
-                    execute_close_fn(p, {"reason": "PORTFOLIO_DRAWDOWN_REDUCE", "close_qty": close_qty, "close_ratio": 0.5})
-                    closed.append({"symbol": p.symbol, "reason": "PORTFOLIO_DRAWDOWN_REDUCE", "pnl_pct": _pnl})
-                except Exception as _e:
-                    logger.error(f"[组合止损] 减仓 {p.symbol} 失败: {_e}")
-            # P0 (2026-06-12): REDUCE_50 后必须 return
-            # 根因: 减仓后继续执行 per-position 检查 → 同一标的再触发全平
-            # → 两笔卖单同时到达 broker → 可能产生反向仓位 (SNDK 类事故)
-            return closed
+            # P0 (2026-07-03): REDUCE_50 冷却 — 5 分钟内不重复触发
+            # 根因: 7/2 实盘 REDUCE_50 触发 706 次 (22:35~00:07), 每 15s 重触发但仓位未减完
+            _reduce_elapsed = time.time() - self._reduce_50_last_triggered_ts
+            if self._reduce_50_last_triggered_ts > 0 and _reduce_elapsed < self.REDUCE_50_COOLDOWN_SECONDS:
+                _remaining = int(self.REDUCE_50_COOLDOWN_SECONDS - _reduce_elapsed)
+                logger.warning(
+                    f"[组合止损·锁存] REDUCE_50 已在 {_reduce_elapsed:.0f}s 前触发, "
+                    f"冷却中 (剩余 {_remaining}s), 跳过重复触发"
+                )
+                # 冷却中: 不减仓, 继续执行 per-position 检查 (与 FLAT_ALL 冷却降级一致)
+            else:
+                self._reduce_50_last_triggered_ts = time.time()
+                logger.warning("[组合止损] 触发 REDUCE_50, 每只减仓 50%")
+                for p in managed_positions:
+                    try:
+                        close_qty = max(1, getattr(p, 'size', 100) // 2)
+                        _cur = get_price_fn(p.symbol)
+                        _entry = getattr(p, 'avg_entry_price', 0)
+                        _dir = getattr(p, 'direction', None)
+                        _dir_str = _dir.value if hasattr(_dir, 'value') else str(_dir) if _dir else 'LONG'
+                        _pnl = (_cur - _entry) / _entry if _entry > 0 and isinstance(_cur, (int, float)) else 0.0
+                        if _dir_str == 'SHORT': _pnl = -_pnl
+                        execute_close_fn(p, {"reason": "PORTFOLIO_DRAWDOWN_REDUCE", "close_qty": close_qty, "close_ratio": 0.5})
+                        closed.append({"symbol": p.symbol, "reason": "PORTFOLIO_DRAWDOWN_REDUCE", "pnl_pct": _pnl})
+                    except Exception as _e:
+                        logger.error(f"[组合止损] 减仓 {p.symbol} 失败: {_e}")
+                # P0 (2026-06-12): REDUCE_50 后必须 return
+                # 根因: 减仓后继续执行 per-position 检查 → 同一标的再触发全平
+                # → 两笔卖单同时到达 broker → 可能产生反向仓位 (SNDK 类事故)
+                return closed
         elif portfolio_action == "WARN":
-            logger.warning("[组合止损] 触发 WARN 告警")
+            # 2026-06-30: WARN 冷却 — 5分钟内不重复告警 (根因: 每 tick 都WARN, 171次重复)
+            _warn_elapsed = time.time() - self._warn_last_triggered_ts
+            if self._warn_last_triggered_ts > 0 and _warn_elapsed < self.WARN_COOLDOWN_SECONDS:
+                portfolio_action = None  # 降级为不执行
+            else:
+                self._warn_last_triggered_ts = time.time()
+                logger.warning("[组合止损] 触发 WARN 告警")
 
         # M1 (2026-05-16): 过滤 PROTECTED/FROZEN 仓位 (用户手动仓默认隔离)
         try:
@@ -1628,14 +1655,25 @@ class ExitMonitor:
 
             if not _pt_enabled:
                 # progressive_trailing 禁用 → 仅使用 atr_stop 固定止损, 不移动 SL
-                # SL 由 atr_stop 规则管理 (entry ± 4×ATR), trail_state 只更新 peak
+                # SL 由 atr_stop 规则管理, trail_state 只更新 peak
                 _old_sl = float(getattr(position, "current_sl", 0) or 0)
                 # ── SL 契约 (2026-06-06): initial_sl 是绝对地板, 退出永远不能放宽 ──
                 _floor_sl = float(getattr(position, "initial_sl", 0) or 0)
-                atr_mult_val = float(
-                    (policy_dict.get("exit_rules", {}).get("atr_stop", {}).get(
-                        "multiplier_by_profit", {}).get("initial", 2.0) if policy_dict else 2.0)
-                )
+                # 2026-06-30 DEB: 按波动率桶动态选择 atr_mult
+                atr_mult_val = 2.0  # 默认medium
+                _atr_pct = (atr / entry_price) if entry_price > 0 and atr > 0 else 0
+                vol_buckets = (policy_dict or {}).get("exit_rules", {}).get("atr_stop", {}).get("vol_bucket_multipliers", {})
+                if _atr_pct > 0 and vol_buckets:
+                    for _bname in ['low', 'medium', 'high', 'extreme']:
+                        _bcfg = vol_buckets.get(_bname, {})
+                        if _atr_pct < float(_bcfg.get("atr_pct_max", 999.0)):
+                            atr_mult_val = float(_bcfg.get("atr_multiplier", 2.0))
+                            break
+                else:
+                    atr_mult_val = float(
+                        (policy_dict.get("exit_rules", {}).get("atr_stop", {}).get(
+                            "multiplier_by_profit", {}).get("initial", 2.0) if policy_dict else 2.0)
+                    )
                 if direction == "LONG":
                     _fixed_sl = entry_price - atr * atr_mult_val
                     # SL 契约: 不得低于 initial_sl (入场的精心推理不被一刀切覆盖)
@@ -2074,8 +2112,12 @@ class ExitMonitor:
         try:
             if self._quote_ctx:
                 from futu import KLType, AuType
+                from datetime import date as _d, timedelta as _td
+                _end_v = _d.today().isoformat()
+                _start_v = (_d.today() - _td(days=10)).isoformat()
                 ret, data, _ = self._quote_ctx.request_history_kline(
-                    "US.VIXY", ktype=KLType.K_DAY, max_count=3, autype=AuType.QFQ
+                    "US.VIXY", ktype=KLType.K_DAY, max_count=10,
+                    start=_start_v, end=_end_v
                 )
                 if ret == 0 and data is not None and len(data) > 0:
                     vixy_close = float(data["close"].values[-1])
@@ -2100,8 +2142,12 @@ class ExitMonitor:
 
         try:
             from futu import KLType, AuType
+            from datetime import date as _d, timedelta as _td
+            _end_a = _d.today().isoformat()
+            _start_a = (_d.today() - _td(days=400)).isoformat()
             ret, data, _ = self._quote_ctx.request_history_kline(
-                symbol, ktype=KLType.K_DAY, max_count=30, autype=AuType.QFQ
+                symbol, ktype=KLType.K_DAY, max_count=320,
+                start=_start_a, end=_end_a
             )
 
             if ret == 0 and data is not None and len(data) >= 15:
@@ -2116,7 +2162,8 @@ class ExitMonitor:
                 # Volatility Floor
                 try:
                     ret2, data200, _ = self._quote_ctx.request_history_kline(
-                        symbol, ktype=KLType.K_DAY, max_count=200, autype=AuType.QFQ
+                        symbol, ktype=KLType.K_DAY, max_count=320,
+                        start=_start_a, end=_end_a
                     )
                     if ret2 == 0 and data200 is not None and len(data200) > 2:
                         data200 = data200.copy()

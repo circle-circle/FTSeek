@@ -9,12 +9,12 @@ from datetime import datetime, timezone
 
 os.chdir('/opt/ftseek/FTSeek-US')
 sys.path.insert(0, '.')
-os.environ['TRADE_ENV'] = '1'
 
 import logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger("position_reconcile")
 
+# 2026-06-30: 不再硬编码 TRADE_ENV, 同时对账 SIM 和 LIVE 持仓
 def get_atr(quote_ctx, symbol, period=14):
     """计算 14 日 ATR"""
     try:
@@ -45,32 +45,39 @@ def main():
     quote_ctx = OpenQuoteContext(host='127.0.0.1', port=11111)
     
     try:
-        ret, broker_data = trade_ctx.position_list_query(trd_env=TrdEnv.SIMULATE)
-        if ret != RET_OK:
-            logger.error(f"Broker 查询失败: {broker_data}")
-            return
-        
-        # Broker 持仓
+        # 2026-06-30: 同时对账 SIM 和 LIVE 持仓
         broker_positions = {}
-        for _, row in broker_data.iterrows():
-            qty = float(row.get('qty', 0))
-            if abs(qty) < 0.01:
-                continue
-            symbol = row['code']
-            side = str(row.get('position_side', 'LONG')).upper()
-            is_short = (qty < 0) or (side == 'SHORT')
-            direction = 'SHORT' if is_short else 'LONG'
-            broker_positions[symbol] = {
-                'symbol': symbol, 'direction': direction, 'size': abs(qty),
-                'avg_entry_price': float(row.get('cost_price', 0)),
-                'position_id': str(row.get('position_id', '')),
-                'pnl': float(row.get('pl_val', 0)),
-                'pnl_pct': float(row.get('pl_ratio', 0)),
-            }
+        for _trd_env in [TrdEnv.SIMULATE, TrdEnv.REAL]:
+            try:
+                ret, broker_data = trade_ctx.position_list_query(trd_env=_trd_env, refresh_cache=True)
+                if ret != RET_OK:
+                    logger.debug(f"Broker 查询失败 ({_trd_env}): {broker_data}")
+                    continue
+                _env_label = 'SIM' if _trd_env == TrdEnv.SIMULATE else 'LIVE'
+                for _, row in broker_data.iterrows():
+                    qty = float(row.get('qty', 0))
+                    if abs(qty) < 0.01:
+                        continue
+                    symbol = row['code']
+                    side = str(row.get('position_side', 'LONG')).upper()
+                    is_short = (qty < 0) or (side == 'SHORT')
+                    direction = 'SHORT' if is_short else 'LONG'
+                    broker_positions[f"{symbol}#{_env_label}"] = {
+                        'symbol': symbol, 'direction': direction, 'size': abs(qty),
+                        'avg_entry_price': float(row.get('cost_price', 0)),
+                        'position_id': str(row.get('position_id', '')),
+                        'pnl': float(row.get('pl_val', 0)),
+                        'pnl_pct': float(row.get('pl_ratio', 0)),
+                        'account_type': _env_label.lower(),
+                    }
+                    logger.info(f"  [{_env_label}] {symbol} {direction} qty={abs(qty)}")
+            except Exception as _e:
+                logger.debug(f"对账 {_trd_env} 异常: {_e}")
         
         # DB 持仓
-        conn = sqlite3.connect('data/ftseek_us.db', timeout=30)
+        conn = sqlite3.connect('data/ftseek_us.db', timeout=120)
         conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA busy_timeout=120000")
         db_positions = {}
         rows = conn.execute('SELECT symbol, direction, size, avg_entry_price, current_sl, initial_sl, initial_tp, trail_state_json, take_profit_json FROM open_positions').fetchall()
         for r in rows:

@@ -109,6 +109,15 @@ def _generate_degraded_recommendation(news: list, market_state: dict, positions:
     return "\n".join(lines)
 
 
+def _get_et_time_str(fmt: str = '%Y-%m-%d %H:%M') -> str:
+    """获取 ET 时间字符串 (避免在各函数内重复 import ET)"""
+    try:
+        from app.utils.timezone import now_et
+        return now_et().strftime(fmt)
+    except Exception:
+        return datetime.now().strftime(fmt)
+
+
 def _send_rsshub_alert(scheduler, health_summary: dict):
     """发送 RSSHub 故障告警到钉钉"""
     critical_instances = [
@@ -121,7 +130,7 @@ def _send_rsshub_alert(scheduler, health_summary: dict):
     
     msg = (
         f"🔴 FTSeek-US RSSHub 故障告警\n"
-        f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M')}\n\n"
+        f"⏰ {_get_et_time_str()} ET\n\n"
         f"健康状态:\n"
         f"• 总实例: {health_summary['total_instances']}\n"
         f"• 健康: {health_summary['healthy']} ✅\n"
@@ -488,7 +497,7 @@ def run_llm_strategy_scan(scheduler):
                     strategy.status = "closed_short_proxy"
                     continue
                 
-                trace_id = f"LLM-{datetime.now().strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}"
+                trace_id = f"LLM-{_get_et_time_str('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}"
                 # 根因修复: confidence < 0.30 → strength < 30 → 被 SSOT 门禁拦截
                 # 在源头过滤, 不产生垃圾信号
                 _llm_strength = min(100, max(0, int(strategy.confidence * 100)))
@@ -699,7 +708,7 @@ VIX: {market_state.get('vix', 20):.1f}
 
         phase_emojis = {"pre_market": "🌅", "after_hours": "🌆", "overnight": "🌙"}
         emoji = phase_emojis.get(phase.value, "📊")
-        time_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+        time_str = _get_et_time_str()
 
         msg = f"""{emoji} FTSeek-US {phase_label}推荐
 ⏰ {time_str}
@@ -1652,7 +1661,7 @@ def run_premarket_planning(scheduler):
                         _sent = _trigger.send_final(_recommendations)
                         if _sent:
                             logger.info("[Recommendations] ✅ 盘前推荐已推送")
-                        elif _trigger._already_pushed("final", str(_recommendations.get("date") or datetime.now().strftime("%Y-%m-%d"))):
+                        elif _trigger._already_pushed("final", str(_recommendations.get("date") or _get_et_time_str('%Y-%m-%d'))):
                             logger.info("[Recommendations] 盘前推荐今日已推送 (幂等跳过)")
                         else:
                             logger.warning("[Recommendations] 盘前推荐推送失败")
@@ -1908,7 +1917,7 @@ def _merge_agent_plan_into_battle_plan(agent_plan: Dict):
             "strategy_adjustments": strategy_adjustments,
             "risk_warnings": risk_warnings,
             "agent_notes": agent_plan.get("notes", existing.get("notes", "")),
-            "updated_at": datetime.now().isoformat(),
+            "updated_at": _get_et_time_str('%Y-%m-%dT%H:%M:%S'),
         }
         
         mgr.save(merged_plan)

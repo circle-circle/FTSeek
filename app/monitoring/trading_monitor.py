@@ -172,6 +172,11 @@ class TradingMonitor:
                     time.sleep(self._interval)
                     continue
 
+                # 心跳: 更新 last_update 表示 monitor 线程存活 (2026-07-02 修复)
+                # 根因: 原只在 record_trade 时更新, 无交易时5分钟后误报心跳超时
+                with self._metrics._lock:
+                    self._metrics._last_update = datetime.now()
+
                 self._check_pnl()
                 self._check_pdt_risk()
                 self._check_circuit_breaker()

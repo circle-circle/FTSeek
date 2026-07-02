@@ -252,6 +252,8 @@ class PipelineRunner:
             _rapid = self._shared_state.get("_rapid_regime_override")
             if _rapid and isinstance(context, SymbolContext):
                 context._rapid_regime_override = _rapid
+            # P0 (2026-06-29): TRADING阶段LLM空转修复 — 传递skip标志
+            base["_skip_execution_in_trading"] = self._shared_state.get("_skip_execution_in_trading", False)
 
         elif stage_name == "risk":
             base["candidate"] = context  # SignalCandidate

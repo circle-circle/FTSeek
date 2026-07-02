@@ -24,40 +24,84 @@ import math
 from typing import Dict, List, Optional, Any, Tuple
 from datetime import date, datetime, timedelta
 from collections import defaultdict
+from app.core.scheduler_triggers import ET as _ET
 
 logger = logging.getLogger(__name__)
 
 
-def _spearman_rank_correlation(x: List[float], y: List[float]) -> Optional[float]:
+def _rank(values: List[float]) -> List[float]:
+    """Pure-Python rank (average rank for ties, 1-based)."""
+    indexed = sorted(range(len(values)), key=lambda i: values[i])
+    ranks = [0.0] * len(values)
+    i = 0
+    while i < len(indexed):
+        j = i
+        while j + 1 < len(indexed) and values[indexed[j + 1]] == values[indexed[i]]:
+            j += 1
+        avg_rank = (i + 1 + j + 1) / 2.0
+        for k in range(i, j + 1):
+            ranks[indexed[k]] = avg_rank
+        i = j + 1
+    return ranks
+
+
+def _spearman_rank_correlation(
+    x: List[float], y: List[float]
+) -> Tuple[Optional[float], Optional[float]]:
     """
-    Spearman 秩相关系数
+    Spearman 秩相关系数 (使用 scipy, 自动处理 tie / NaN / Inf)
 
     Args:
         x: 信号强度 (confidence)
         y: 前瞻收益 (forward_return)
 
     Returns:
-        Spearman rho [-1, 1], 或 None (样本不足)
+        (rho, pvalue), 样本不足时返回 (None, None)
     """
-    n = len(x)
+    if not x or not y or len(x) != len(y):
+        return None, None
+
+    # 过滤 NaN / Inf
+    pairs = [(float(a), float(b)) for a, b in zip(x, y)]
+    pairs = [
+        (a, b)
+        for a, b in pairs
+        if not (math.isnan(a) or math.isnan(b) or math.isinf(a) or math.isinf(b))
+    ]
+    n = len(pairs)
     if n < 5:
-        return None
+        return None, None
 
-    def _rank(vals):
-        indexed = sorted(enumerate(vals), key=lambda p: p[1])
-        ranks = [0.0] * n
-        for rank, (idx, _) in enumerate(indexed, 1):
-            ranks[idx] = rank
-        return ranks
+    try:
+        from scipy.stats import spearmanr
 
-    rx = _rank(x)
-    ry = _rank(y)
+        _x = [p[0] for p in pairs]
+        _y = [p[1] for p in pairs]
+        rho, pvalue = spearmanr(_x, _y)
+        if math.isnan(rho) or math.isnan(pvalue):
+            return None, None
+        return float(rho), float(pvalue)
+    except Exception as e:
+        logger.debug(f"Spearman computation failed, using fallback: {e}")
 
-    d_sq_sum = sum((rx[i] - ry[i]) ** 2 for i in range(n))
-    if n <= 1:
-        return None
-    rho = 1 - (6 * d_sq_sum) / (n * (n ** 2 - 1))
-    return max(-1.0, min(1.0, rho))
+    # Fallback: pure-Python Spearman without scipy
+    try:
+        _x = [p[0] for p in pairs]
+        _y = [p[1] for p in pairs]
+        _xr = _rank(_x)
+        _yr = _rank(_y)
+        _n = len(_xr)
+        _mx = sum(_xr) / _n
+        _my = sum(_yr) / _n
+        _cov = sum((a - _mx) * (b - _my) for a, b in zip(_xr, _yr))
+        _vx = sum((a - _mx) ** 2 for a in _xr)
+        _vy = sum((b - _my) ** 2 for b in _yr)
+        if _vx == 0 or _vy == 0:
+            return None, None
+        _rho = _cov / math.sqrt(_vx * _vy)
+        return float(_rho), None
+    except Exception:
+        return None, None
 
 
 from app.utils.holiday_calendar import nth_trading_day_after
@@ -76,7 +120,7 @@ def backfill_forward_returns(db, market_data, trade_date: str = None) -> int:
         更新了多少条指令
     """
     if trade_date is None:
-        trade_date = date.today().isoformat()
+        trade_date = datetime.now(_ET).date().isoformat()
 
     today = date.fromisoformat(trade_date)
     updated = 0
@@ -123,7 +167,7 @@ def backfill_forward_returns(db, market_data, trade_date: str = None) -> int:
 
         # 获取日线数据
         try:
-            bars = market_data.get_daily_bars(symbol, count=10)
+            bars = market_data.get_daily_bars(symbol, count=30)
         except Exception as e:
             logger.info(f"[PlaybookIC] Failed to get bars for {symbol}: {e}")
             continue
@@ -237,17 +281,17 @@ def compute_playbook_ic(db, days: int = 30) -> Dict[str, Any]:
             valid_t5.append((conf, fwd_t5, conditions, regime, horizon))
 
     # 计算整体 IC
-    overall_t1 = _spearman_rank_correlation(
+    overall_t1, overall_t1_p = _spearman_rank_correlation(
         [v[0] for v in valid_t1], [v[1] for v in valid_t1]
-    ) if len(valid_t1) >= 5 else None
+    ) if len(valid_t1) >= 5 else (None, None)
 
-    overall_t3 = _spearman_rank_correlation(
+    overall_t3, overall_t3_p = _spearman_rank_correlation(
         [v[0] for v in valid_t3], [v[1] for v in valid_t3]
-    ) if len(valid_t3) >= 5 else None
+    ) if len(valid_t3) >= 5 else (None, None)
 
-    overall_t5 = _spearman_rank_correlation(
+    overall_t5, overall_t5_p = _spearman_rank_correlation(
         [v[0] for v in valid_t5], [v[1] for v in valid_t5]
-    ) if len(valid_t5) >= 5 else None
+    ) if len(valid_t5) >= 5 else (None, None)
 
     # 按因子分解 IC (T+3)
     by_factor = {}
@@ -260,9 +304,13 @@ def compute_playbook_ic(db, days: int = 30) -> Dict[str, Any]:
 
         for factor_name, data in factor_data.items():
             if len(data["confs"]) >= 5:
-                ic = _spearman_rank_correlation(data["confs"], data["returns"])
+                ic, pvalue = _spearman_rank_correlation(data["confs"], data["returns"])
                 if ic is not None:
-                    by_factor[factor_name] = {"ic": round(ic, 4), "count": len(data["confs"])}
+                    by_factor[factor_name] = {
+                        "ic": round(ic, 4),
+                        "pvalue": round(pvalue, 4) if pvalue is not None else None,
+                        "count": len(data["confs"]),
+                    }
 
     # 按 regime 分解 IC (T+3)
     by_regime = {}
@@ -274,9 +322,13 @@ def compute_playbook_ic(db, days: int = 30) -> Dict[str, Any]:
 
         for regime_name, data in regime_data.items():
             if len(data["confs"]) >= 5:
-                ic = _spearman_rank_correlation(data["confs"], data["returns"])
+                ic, pvalue = _spearman_rank_correlation(data["confs"], data["returns"])
                 if ic is not None:
-                    by_regime[regime_name] = {"ic": round(ic, 4), "count": len(data["confs"])}
+                    by_regime[regime_name] = {
+                        "ic": round(ic, 4),
+                        "pvalue": round(pvalue, 4) if pvalue is not None else None,
+                        "count": len(data["confs"]),
+                    }
 
     # 按 source_type 分解 IC (T+3) — Phase 4 (2026-06-24): 区分 SHADOW/SIM/LIVE 数据可信度
     by_source_type = {}
@@ -297,11 +349,40 @@ def compute_playbook_ic(db, days: int = 30) -> Dict[str, Any]:
             src_data[src]["returns"].append(fwd_t3)
         for src, data in src_data.items():
             if len(data["confs"]) >= 5:
-                ic = _spearman_rank_correlation(data["confs"], data["returns"])
+                ic, pvalue = _spearman_rank_correlation(data["confs"], data["returns"])
                 if ic is not None:
-                    by_source_type[src] = {"ic": round(ic, 4), "count": len(data["confs"])}
+                    by_source_type[src] = {
+                        "ic": round(ic, 4),
+                        "pvalue": round(pvalue, 4) if pvalue is not None else None,
+                        "count": len(data["confs"]),
+                    }
 
-    # 按 horizon 分解 IC (T+3) — 2026-06-26
+    # 按方向分解 IC (T+3) —  2026-06-28
+    # 根因: BUY PF=0.12 vs SHORT PF=4.16 差距极端, 必须分方向看 IC.
+    by_direction = {}
+    if valid_t3:
+        direction_data = defaultdict(lambda: {"confs": [], "returns": []})
+        for conf, ret, _, _, _ in valid_t3:
+            # direction 字段从 instruction 中读取 (BUY/SELL_SHORT)
+            # 这里 conf 是元组第0个, 没有 direction; 需要从 instructions 中关联
+            pass
+        # 重新遍历 instructions 以按方向分组
+        for inst in instructions:
+            _dir = inst.get("direction", "")
+            _conf = inst.get("confidence", 0)
+            _fwd = inst.get("fwd_return_t3")
+            if _dir in ("BUY", "SELL_SHORT") and _conf and _fwd is not None:
+                direction_data[_dir]["confs"].append(_conf)
+                direction_data[_dir]["returns"].append(_fwd)
+        for dir_name, data in direction_data.items():
+            if len(data["confs"]) >= 5:
+                ic, pvalue = _spearman_rank_correlation(data["confs"], data["returns"])
+                if ic is not None:
+                    by_direction[dir_name] = {
+                        "ic": round(ic, 4),
+                        "pvalue": round(pvalue, 4) if pvalue is not None else None,
+                        "count": len(data["confs"]),
+                    }
     by_horizon = {}
     if valid_t3:
         horizon_data = defaultdict(lambda: {"confs": [], "returns": []})
@@ -311,14 +392,21 @@ def compute_playbook_ic(db, days: int = 30) -> Dict[str, Any]:
 
         for horizon_name, data in horizon_data.items():
             if len(data["confs"]) >= 5:
-                ic = _spearman_rank_correlation(data["confs"], data["returns"])
+                ic, pvalue = _spearman_rank_correlation(data["confs"], data["returns"])
                 if ic is not None:
-                    by_horizon[horizon_name] = {"ic": round(ic, 4), "count": len(data["confs"])}
+                    by_horizon[horizon_name] = {
+                        "ic": round(ic, 4),
+                        "pvalue": round(pvalue, 4) if pvalue is not None else None,
+                        "count": len(data["confs"]),
+                    }
 
     result = {
         "overall_ic_t1": round(overall_t1, 4) if overall_t1 is not None else None,
+        "overall_ic_t1_p": round(overall_t1_p, 4) if overall_t1_p is not None else None,
         "overall_ic_t3": round(overall_t3, 4) if overall_t3 is not None else None,
+        "overall_ic_t3_p": round(overall_t3_p, 4) if overall_t3_p is not None else None,
         "overall_ic_t5": round(overall_t5, 4) if overall_t5 is not None else None,
+        "overall_ic_t5_p": round(overall_t5_p, 4) if overall_t5_p is not None else None,
         "sample_t1": len(valid_t1),
         "sample_t3": len(valid_t3),
         "sample_t5": len(valid_t5),
@@ -326,6 +414,7 @@ def compute_playbook_ic(db, days: int = 30) -> Dict[str, Any]:
         "by_regime": by_regime,
         "by_source_type": by_source_type,
         "by_horizon": by_horizon,
+        "by_direction": by_direction,
     }
 
     # 毕业门禁判定

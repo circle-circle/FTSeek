@@ -1,139 +1,145 @@
 {
-  "generated_at": "2026-06-26T20:00:21.784262",
+  "generated_at": "2026-07-02T20:01:24.867036",
   "window_days": 90,
   "data_counts": {
-    "signals": 1409,
-    "trades": 382,
-    "debate_logs": 2
+    "signals": 1955,
+    "trades": 381,
+    "debate_logs": 1
   },
   "ic_by_mode": {
     "live": {
       "n": 569,
       "ic_t1": -0.1296,
       "wr_t1": 0.4534,
-      "ic_t5": -0.3073,
-      "wr_t5": 0.4426,
+      "ic_t5": -0.1719,
+      "wr_t5": 0.4446,
       "avg_ret_t1": -0.0039
     },
     "simulate": {
-      "n": 840,
-      "ic_t1": -0.0455,
-      "wr_t1": 0.5095,
-      "ic_t5": 0.2951,
-      "wr_t5": 0.639,
-      "avg_ret_t1": 0.0011
+      "n": 1386,
+      "ic_t1": -0.0005,
+      "wr_t1": 0.5051,
+      "ic_t5": 0.254,
+      "wr_t5": 0.6109,
+      "avg_ret_t1": 0.0024
     }
   },
   "ic_by_direction": {
     "LONG": {
-      "n": 631,
-      "ic_t1": -0.1081,
-      "wr_t1": 0.4691,
-      "ic_t5": -0.2165,
-      "wr_t5": 0.435,
-      "avg_ret_t1": -0.0039
+      "n": 859,
+      "ic_t1": -0.1459,
+      "wr_t1": 0.4692,
+      "ic_t5": -0.1797,
+      "wr_t5": 0.4578,
+      "avg_ret_t1": 0.0012
     },
     "NEUTRAL": {
-      "n": 3,
-      "ic_t1": null,
-      "wr_t1": null,
+      "n": 36,
+      "ic_t1": 0.019,
+      "wr_t1": 0.5278,
       "ic_t5": null,
       "wr_t5": null,
-      "avg_ret_t1": -0.0116
+      "avg_ret_t1": 0.0243
     },
     "SHORT": {
-      "n": 775,
-      "ic_t1": -0.0369,
-      "wr_t1": 0.5174,
-      "ic_t5": 0.3612,
-      "wr_t5": 0.6815,
-      "avg_ret_t1": 0.0015
+      "n": 1060,
+      "ic_t1": -0.1147,
+      "wr_t1": 0.5,
+      "ic_t5": 0.317,
+      "wr_t5": 0.6688,
+      "avg_ret_t1": -0.0007
     }
   },
   "factor_ic": {
     "signal_strength": {
-      "ic": 0.06,
-      "wr": 0.4319,
-      "n": 382
+      "ic": 0.0562,
+      "wr": 0.4278,
+      "n": 381
     },
     "signal_confidence": {
-      "ic": -0.0171,
-      "wr": 0.4342,
-      "n": 380
+      "ic": 0.0059,
+      "wr": 0.4354,
+      "n": 379
     },
     "consensus_level": {
-      "ic": 0.1293,
-      "wr": 0.5436,
-      "n": 241
+      "ic": 0.0847,
+      "wr": 0.5385,
+      "n": 247
     },
     "f1_trend": {
-      "ic": 0.1115,
-      "wr": 0.6545,
-      "n": 382
+      "ic": 0.1051,
+      "wr": 0.6483,
+      "n": 381
     },
     "f2_momentum": {
-      "ic": 0.1115,
-      "wr": 0.6545,
-      "n": 382
+      "ic": 0.1051,
+      "wr": 0.6483,
+      "n": 381
     },
     "f3_volume": {
-      "ic": 0.1115,
-      "wr": 0.6545,
-      "n": 382
+      "ic": 0.1051,
+      "wr": 0.6483,
+      "n": 381
     },
     "f4_orderflow": {
-      "ic": 0.1115,
-      "wr": 0.6545,
-      "n": 382
+      "ic": 0.1051,
+      "wr": 0.6483,
+      "n": 381
     },
     "f5_lifecycle": {
-      "ic": 0.1115,
-      "wr": 0.6545,
-      "n": 382
+      "ic": 0.1051,
+      "wr": 0.6483,
+      "n": 381
     }
   },
   "llm_feature_ic": {
     "direction_LONG": {
-      "n": 631,
-      "ic_t1": -0.1081,
-      "wr_t1": 0.4691,
-      "avg_ret": -0.0039
+      "n": 859,
+      "ic_t1": -0.1459,
+      "wr_t1": 0.4692,
+      "avg_ret": 0.0012
     },
     "direction_SHORT": {
-      "n": 775,
-      "ic_t1": -0.0369,
-      "wr_t1": 0.5174,
-      "avg_ret": 0.0015
+      "n": 1060,
+      "ic_t1": -0.1147,
+      "wr_t1": 0.5,
+      "avg_ret": -0.0007
     },
     "confidence_low_conf": {
-      "n": 326,
-      "ic_t1": -0.1156,
-      "wr_t1": 0.4479,
-      "avg_ret": 0.0033
+      "n": 408,
+      "ic_t1": 0.0148,
+      "wr_t1": 0.4779,
+      "avg_ret": 0.006
     },
     "confidence_mid_conf": {
-      "n": 823,
-      "ic_t1": -0.104,
-      "wr_t1": 0.5103,
-      "avg_ret": -0.0017
+      "n": 956,
+      "ic_t1": -0.1107,
+      "wr_t1": 0.5021,
+      "avg_ret": -0.0028
     },
     "confidence_high_conf": {
-      "n": 260,
-      "ic_t1": -0.0898,
-      "wr_t1": 0.4962,
-      "avg_ret": -0.0038
+      "n": 591,
+      "ic_t1": -0.0341,
+      "wr_t1": 0.4941,
+      "avg_ret": 0.0024
     },
-    "strategy_TECHNICAL_MULTI_FACTOR": {
-      "n": 518,
-      "ic_t1": -0.0701,
-      "wr_t1": 0.5347,
-      "avg_ret": 0.004
+    "strategy_trend_first": {
+      "n": 21,
+      "ic_t1": -0.0831,
+      "wr_t1": 0.5238,
+      "avg_ret": 0.0023
     },
-    "strategy_unknown": {
-      "n": 383,
-      "ic_t1": -0.0948,
-      "wr_t1": 0.5039,
-      "avg_ret": -0.0024
+    "strategy_BATTLE_PLAN_FAST_PATH": {
+      "n": 21,
+      "ic_t1": 0.5013,
+      "wr_t1": 0.5714,
+      "avg_ret": 0.0174
+    },
+    "strategy_technical_intraday": {
+      "n": 358,
+      "ic_t1": -0.1054,
+      "wr_t1": 0.5056,
+      "avg_ret": -0.0029
     },
     "strategy_EARNINGS_REVISION_MOMENTUM": {
       "n": 441,
@@ -141,23 +147,17 @@
       "wr_t1": 0.4898,
       "avg_ret": -0.0064
     },
-    "strategy_BATTLE_PLAN_FAST_PATH": {
-      "n": 19,
-      "ic_t1": 0.4316,
-      "wr_t1": 0.5789,
-      "avg_ret": 0.0166
-    },
     "strategy_voting_llm": {
-      "n": 26,
-      "ic_t1": -0.1993,
-      "wr_t1": 0.5769,
-      "avg_ret": 0.0015
+      "n": 499,
+      "ic_t1": 0.0979,
+      "wr_t1": 0.499,
+      "avg_ret": 0.0074
     },
-    "strategy_trend_first": {
-      "n": 21,
-      "ic_t1": -0.0831,
-      "wr_t1": 0.5238,
-      "avg_ret": 0.0023
+    "strategy_TECHNICAL_MULTI_FACTOR": {
+      "n": 613,
+      "ic_t1": -0.144,
+      "wr_t1": 0.4878,
+      "avg_ret": 0.0016
     },
     "trade_strategy_reconciler": {
       "n": 1,
@@ -213,29 +213,17 @@
       "avg_pnl": 0.0045,
       "total_pnl": 0.1079
     },
-    "trade_strategy_battle_plan": {
-      "n": 2,
-      "wr": 0.0,
-      "avg_pnl": 0.0,
-      "total_pnl": 0.0
-    },
     "trade_strategy_playbook_sim": {
-      "n": 7,
-      "wr": 0.2857,
-      "avg_pnl": -0.0088,
-      "total_pnl": -0.0616
+      "n": 10,
+      "wr": 0.4,
+      "avg_pnl": -0.0044,
+      "total_pnl": -0.0444
     },
     "trade_strategy_auto_main": {
-      "n": 3,
+      "n": 6,
       "wr": 0.0,
-      "avg_pnl": -0.0052,
-      "total_pnl": -0.0157
-    },
-    "trade_strategy_manual": {
-      "n": 5,
-      "wr": 0.0,
-      "avg_pnl": 0.0,
-      "total_pnl": 0.0
+      "avg_pnl": -0.027,
+      "total_pnl": -0.1621
     },
     "trade_strategy_PLAYBOOK_SIM": {
       "n": 5,
@@ -246,10 +234,10 @@
   },
   "regime_pnl": {
     "RANGE": {
-      "n": 98,
-      "wr": 0.3776,
-      "avg_pnl": 0.0001,
-      "total_pnl": 0.0134
+      "n": 101,
+      "wr": 0.3663,
+      "avg_pnl": -0.0013,
+      "total_pnl": -0.1329
     },
     "HIGH_VOL": {
       "n": 141,
@@ -264,16 +252,16 @@
       "total_pnl": 0.5055
     },
     "UNKNOWN": {
-      "n": 30,
-      "wr": 0.4667,
-      "avg_pnl": 0.0073,
+      "n": 23,
+      "wr": 0.6087,
+      "avg_pnl": 0.0095,
       "total_pnl": 0.219
     },
     "cautious": {
-      "n": 31,
-      "wr": 0.4839,
-      "avg_pnl": 0.0015,
-      "total_pnl": 0.0463
+      "n": 34,
+      "wr": 0.5,
+      "avg_pnl": 0.0019,
+      "total_pnl": 0.0635
     },
     "LOW_VOL": {
       "n": 1,
@@ -283,14 +271,15 @@
     }
   },
   "key_findings": [
-    "direction_LONG: IC=-0.1081 (negative ❌)",
-    "confidence_low_conf: IC=-0.1156 (negative ❌)",
-    "confidence_mid_conf: IC=-0.104 (negative ❌)",
+    "direction_LONG: IC=-0.1459 (negative ❌)",
+    "direction_SHORT: IC=-0.1147 (negative ❌)",
+    "confidence_mid_conf: IC=-0.1107 (negative ❌)",
+    "strategy_BATTLE_PLAN_FAST_PATH: IC=0.5013 (positive ✅)",
+    "strategy_technical_intraday: IC=-0.1054 (negative ❌)",
     "strategy_EARNINGS_REVISION_MOMENTUM: IC=-0.1211 (negative ❌)",
-    "strategy_BATTLE_PLAN_FAST_PATH: IC=0.4316 (positive ✅)",
-    "strategy_voting_llm: IC=-0.1993 (negative ❌)"
+    "strategy_TECHNICAL_MULTI_FACTOR: IC=-0.144 (negative ❌)"
   ],
   "recommendations": [
-    "✅ 高置信度信号 IC 高于低置信度, 信心度校准有效"
+    "❌ SHORT 信号 IC=-0.1147, 做空逻辑需要重构"
   ]
 }

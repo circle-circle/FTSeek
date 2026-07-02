@@ -7,7 +7,12 @@
 from .signal_generator import SignalGenerator
 from .signal_scorer import SignalScorer
 from .market_regime import MarketRegimeIdentifier
-from .signal_dedup import SignalDeduplicator
+
+# signal_dedup lives in app.risk, not app.decision (was phantom import)
+try:
+    from .signal_dedup import SignalDeduplicator
+except ImportError:
+    from app.risk.signal_dedup import SignalDeduplicator
 
 __all__ = [
     "SignalGenerator",

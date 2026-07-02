@@ -1,163 +1,22 @@
 {
-  "timestamp": "2026-06-26T13:03:07.238199+00:00",
+  "timestamp": "2026-07-02T13:13:18.144970+00:00",
   "regime": "NEUTRAL",
   "validated": [
     {
-      "symbol": "US.QCOM",
+      "symbol": "US.META",
       "verdict": "VALID",
       "direction": "LONG",
       "confidence": 95,
       "entry_zone": [
-        162.69,
-        165.32
+        606.78,
+        616.59
       ],
-      "stop_loss": 158.42,
-      "take_profit": 174.2,
-      "risk_reward": 1.7,
-      "position_size_pct": 6,
-      "invalidation": "收盘破 158.42 (1.8x ATR)",
-      "trigger_condition": "价格进入 162.69-165.32 区间",
-      "execution_rules": {
-        "gap_up_over_2pct": "SKIP",
-        "gap_down_over_2pct": "SKIP",
-        "hit_zone_then_drop": "WAIT_5MIN_CANDLE_ABOVE"
-      },
-      "factor_validation": {
-        "sector_momentum": "WEAK",
-        "relative_strength": "CONFIRMED",
-        "ma_alignment": "CONFIRMED",
-        "volume_breakout": "CONFIRMED",
-        "rsi_sweet_spot": "WEAK",
-        "insider_signal": "WEAK",
-        "fundamental_quality": "CONFIRMED",
-        "sentiment_crowding": "WEAK"
-      },
-      "audit_flags": [],
-      "factor_score": 0.764,
-      "model_used": "deterministic_rules"
-    },
-    {
-      "symbol": "US.LLY",
-      "verdict": "VALID",
-      "direction": "LONG",
-      "confidence": 95,
-      "entry_zone": [
-        740.86,
-        752.84
-      ],
-      "stop_loss": 721.41,
-      "take_profit": 793.25,
+      "stop_loss": 590.85,
+      "take_profit": 649.68,
       "risk_reward": 1.7,
       "position_size_pct": 5,
-      "invalidation": "收盘破 721.41 (1.8x ATR)",
-      "trigger_condition": "价格进入 740.86-752.84 区间",
-      "execution_rules": {
-        "gap_up_over_2pct": "SKIP",
-        "gap_down_over_2pct": "SKIP",
-        "hit_zone_then_drop": "WAIT_5MIN_CANDLE_ABOVE"
-      },
-      "factor_validation": {
-        "sector_momentum": "WEAK",
-        "relative_strength": "CONFIRMED",
-        "ma_alignment": "CONFIRMED",
-        "volume_breakout": "CONFIRMED",
-        "rsi_sweet_spot": "WEAK",
-        "insider_signal": "WEAK",
-        "fundamental_quality": "WEAK",
-        "sentiment_crowding": "CONFIRMED"
-      },
-      "audit_flags": [],
-      "factor_score": 0.739,
-      "model_used": "deterministic_rules"
-    },
-    {
-      "symbol": "US.JPM",
-      "verdict": "VALID",
-      "direction": "LONG",
-      "confidence": 95,
-      "entry_zone": [
-        307.16,
-        312.12
-      ],
-      "stop_loss": 299.09,
-      "take_profit": 328.88,
-      "risk_reward": 1.7,
-      "position_size_pct": 5,
-      "invalidation": "收盘破 299.09 (1.8x ATR)",
-      "trigger_condition": "价格进入 307.16-312.12 区间",
-      "execution_rules": {
-        "gap_up_over_2pct": "SKIP",
-        "gap_down_over_2pct": "SKIP",
-        "hit_zone_then_drop": "WAIT_5MIN_CANDLE_ABOVE"
-      },
-      "factor_validation": {
-        "sector_momentum": "WEAK",
-        "relative_strength": "CONFIRMED",
-        "ma_alignment": "CONFIRMED",
-        "volume_breakout": "CONFIRMED",
-        "rsi_sweet_spot": "WEAK",
-        "insider_signal": "WEAK",
-        "fundamental_quality": "CONFIRMED",
-        "sentiment_crowding": "FALSE_POSITIVE"
-      },
-      "audit_flags": [
-        "1个非量因子FALSE_POSITIVE"
-      ],
-      "factor_score": 0.721,
-      "model_used": "deterministic_rules"
-    },
-    {
-      "symbol": "US.AAPL",
-      "verdict": "VALID",
-      "direction": "LONG",
-      "confidence": 85,
-      "entry_zone": [
-        242.36,
-        246.28
-      ],
-      "stop_loss": 235.99,
-      "take_profit": 259.5,
-      "risk_reward": 1.7,
-      "position_size_pct": 5,
-      "invalidation": "收盘破 235.99 (1.8x ATR)",
-      "trigger_condition": "价格进入 242.36-246.28 区间",
-      "execution_rules": {
-        "gap_up_over_2pct": "SKIP",
-        "gap_down_over_2pct": "SKIP",
-        "hit_zone_then_drop": "WAIT_5MIN_CANDLE_ABOVE"
-      },
-      "factor_validation": {
-        "sector_momentum": "WEAK",
-        "relative_strength": "CONFIRMED",
-        "ma_alignment": "CONFIRMED",
-        "volume_breakout": "CONFIRMED",
-        "rsi_sweet_spot": "WEAK",
-        "insider_signal": "WEAK",
-        "fundamental_quality": "WEAK",
-        "sentiment_crowding": "FALSE_POSITIVE"
-      },
-      "audit_flags": [
-        "1个非量因子FALSE_POSITIVE",
-        "历史胜率仅25%"
-      ],
-      "factor_score": 0.691,
-      "model_used": "deterministic_rules"
-    },
-    {
-      "symbol": "US.AMZN",
-      "verdict": "VALID",
-      "direction": "LONG",
-      "confidence": 95,
-      "entry_zone": [
-        229.17,
-        232.87
-      ],
-      "stop_loss": 223.15,
-      "take_profit": 245.37,
-      "risk_reward": 1.7,
-      "position_size_pct": 5,
-      "invalidation": "收盘破 223.15 (1.8x ATR)",
-      "trigger_condition": "价格进入 229.17-232.87 区间",
+      "invalidation": "收盘破 590.85 (1.8x ATR)",
+      "trigger_condition": "价格进入 606.78-616.59 区间",
       "execution_rules": {
         "gap_up_over_2pct": "SKIP",
         "gap_down_over_2pct": "SKIP",
@@ -174,24 +33,24 @@
         "sentiment_crowding": "CONFIRMED"
       },
       "audit_flags": [],
-      "factor_score": 0.681,
+      "factor_score": 0.72,
       "model_used": "deterministic_rules"
     },
     {
-      "symbol": "US.MSFT",
+      "symbol": "US.COIN",
       "verdict": "VALID",
-      "direction": "LONG",
-      "confidence": 95,
+      "direction": "SHORT",
+      "confidence": 85,
       "entry_zone": [
-        509.52,
-        517.76
+        158.28,
+        160.83
       ],
-      "stop_loss": 496.14,
-      "take_profit": 545.55,
+      "stop_loss": 164.97,
+      "take_profit": 149.69,
       "risk_reward": 1.7,
       "position_size_pct": 5,
-      "invalidation": "收盘破 496.14 (1.8x ATR)",
-      "trigger_condition": "价格进入 509.52-517.76 区间",
+      "invalidation": "收盘上破 164.97 (1.8x ATR)",
+      "trigger_condition": "价格进入 158.28-160.83 区间",
       "execution_rules": {
         "gap_up_over_2pct": "SKIP",
         "gap_down_over_2pct": "SKIP",
@@ -201,33 +60,102 @@
         "sector_momentum": "WEAK",
         "relative_strength": "CONFIRMED",
         "ma_alignment": "CONFIRMED",
-        "volume_breakout": "CONFIRMED",
+        "volume_breakout": "WEAK",
         "rsi_sweet_spot": "WEAK",
         "insider_signal": "WEAK",
-        "fundamental_quality": "CONFIRMED",
-        "sentiment_crowding": "FALSE_POSITIVE"
+        "fundamental_quality": "WEAK",
+        "sentiment_crowding": "CONFIRMED"
       },
-      "audit_flags": [
-        "1个非量因子FALSE_POSITIVE"
-      ],
-      "factor_score": 0.677,
+      "audit_flags": [],
+      "factor_score": 0.684,
       "model_used": "deterministic_rules"
     },
     {
-      "symbol": "US.SMCI",
+      "symbol": "US.PG",
       "verdict": "VALID",
       "direction": "LONG",
       "confidence": 95,
       "entry_zone": [
-        45.35,
-        46.08
+        145.96,
+        148.31
       ],
-      "stop_loss": 44.16,
-      "take_profit": 48.56,
+      "stop_loss": 142.12,
+      "take_profit": 156.28,
       "risk_reward": 1.7,
       "position_size_pct": 5,
-      "invalidation": "收盘破 44.16 (1.8x ATR)",
-      "trigger_condition": "价格进入 45.35-46.08 区间",
+      "invalidation": "收盘破 142.12 (1.8x ATR)",
+      "trigger_condition": "价格进入 145.96-148.31 区间",
+      "execution_rules": {
+        "gap_up_over_2pct": "SKIP",
+        "gap_down_over_2pct": "SKIP",
+        "hit_zone_then_drop": "WAIT_5MIN_CANDLE_ABOVE"
+      },
+      "factor_validation": {
+        "sector_momentum": "WEAK",
+        "relative_strength": "CONFIRMED",
+        "ma_alignment": "WEAK",
+        "volume_breakout": "WEAK",
+        "rsi_sweet_spot": "CONFIRMED",
+        "insider_signal": "WEAK",
+        "fundamental_quality": "CONFIRMED",
+        "sentiment_crowding": "CONFIRMED"
+      },
+      "audit_flags": [],
+      "factor_score": 0.679,
+      "model_used": "deterministic_rules"
+    },
+    {
+      "symbol": "US.CAT",
+      "verdict": "VALID",
+      "direction": "LONG",
+      "confidence": 70,
+      "entry_zone": [
+        981.5,
+        997.36
+      ],
+      "stop_loss": 955.72,
+      "take_profit": 1050.89,
+      "risk_reward": 1.7,
+      "position_size_pct": 5,
+      "invalidation": "收盘破 955.72 (1.8x ATR)",
+      "trigger_condition": "价格进入 981.50-997.36 区间",
+      "execution_rules": {
+        "gap_up_over_2pct": "SKIP",
+        "gap_down_over_2pct": "SKIP",
+        "hit_zone_then_drop": "WAIT_5MIN_CANDLE_ABOVE"
+      },
+      "factor_validation": {
+        "sector_momentum": "WEAK",
+        "relative_strength": "CONFIRMED",
+        "ma_alignment": "CONFIRMED",
+        "volume_breakout": "FALSE_POSITIVE",
+        "rsi_sweet_spot": "WEAK",
+        "insider_signal": "WEAK",
+        "fundamental_quality": "WEAK",
+        "sentiment_crowding": "CONFIRMED"
+      },
+      "audit_flags": [
+        "缩量突破,警惕假突破",
+        "历史胜率仅0%"
+      ],
+      "factor_score": 0.648,
+      "model_used": "deterministic_rules"
+    },
+    {
+      "symbol": "US.BAC",
+      "verdict": "VALID",
+      "direction": "LONG",
+      "confidence": 95,
+      "entry_zone": [
+        57.78,
+        58.71
+      ],
+      "stop_loss": 56.26,
+      "take_profit": 61.86,
+      "risk_reward": 1.7,
+      "position_size_pct": 5,
+      "invalidation": "收盘破 56.26 (1.8x ATR)",
+      "trigger_condition": "价格进入 57.78-58.71 区间",
       "execution_rules": {
         "gap_up_over_2pct": "SKIP",
         "gap_down_over_2pct": "SKIP",
@@ -246,24 +174,24 @@
       "audit_flags": [
         "1个非量因子FALSE_POSITIVE"
       ],
-      "factor_score": 0.672,
+      "factor_score": 0.648,
       "model_used": "deterministic_rules"
     },
     {
-      "symbol": "US.PLTR",
+      "symbol": "US.LLY",
       "verdict": "VALID",
       "direction": "LONG",
-      "confidence": 95,
+      "confidence": 70,
       "entry_zone": [
-        180.57,
-        183.48
+        1179.82,
+        1198.89
       ],
-      "stop_loss": 175.82,
-      "take_profit": 193.33,
+      "stop_loss": 1148.84,
+      "take_profit": 1263.24,
       "risk_reward": 1.7,
       "position_size_pct": 5,
-      "invalidation": "收盘破 175.82 (1.8x ATR)",
-      "trigger_condition": "价格进入 180.57-183.48 区间",
+      "invalidation": "收盘破 1148.84 (1.8x ATR)",
+      "trigger_condition": "价格进入 1179.82-1198.89 区间",
       "execution_rules": {
         "gap_up_over_2pct": "SKIP",
         "gap_down_over_2pct": "SKIP",
@@ -273,21 +201,91 @@
         "sector_momentum": "WEAK",
         "relative_strength": "CONFIRMED",
         "ma_alignment": "CONFIRMED",
-        "volume_breakout": "CONFIRMED",
-        "rsi_sweet_spot": "FALSE_POSITIVE",
+        "volume_breakout": "FALSE_POSITIVE",
+        "rsi_sweet_spot": "WEAK",
         "insider_signal": "WEAK",
         "fundamental_quality": "WEAK",
         "sentiment_crowding": "CONFIRMED"
       },
       "audit_flags": [
+        "缩量突破,警惕假突破"
+      ],
+      "factor_score": 0.646,
+      "model_used": "deterministic_rules"
+    },
+    {
+      "symbol": "US.NIO",
+      "verdict": "VALID",
+      "direction": "SHORT",
+      "confidence": 85,
+      "entry_zone": [
+        4.94,
+        5.02
+      ],
+      "stop_loss": 5.15,
+      "take_profit": 4.67,
+      "risk_reward": 1.7,
+      "position_size_pct": 5,
+      "invalidation": "收盘上破 5.15 (1.8x ATR)",
+      "trigger_condition": "价格进入 4.94-5.02 区间",
+      "execution_rules": {
+        "gap_up_over_2pct": "SKIP",
+        "gap_down_over_2pct": "SKIP",
+        "hit_zone_then_drop": "WAIT_5MIN_CANDLE_ABOVE"
+      },
+      "factor_validation": {
+        "sector_momentum": "WEAK",
+        "relative_strength": "CONFIRMED",
+        "ma_alignment": "CONFIRMED",
+        "volume_breakout": "WEAK",
+        "rsi_sweet_spot": "WEAK",
+        "insider_signal": "WEAK",
+        "fundamental_quality": "WEAK",
+        "sentiment_crowding": "CONFIRMED"
+      },
+      "audit_flags": [],
+      "factor_score": 0.638,
+      "model_used": "deterministic_rules"
+    },
+    {
+      "symbol": "US.BIDU",
+      "verdict": "INVALID",
+      "direction": "SHORT",
+      "confidence": 10,
+      "entry_zone": [
+        117.23,
+        119.12
+      ],
+      "stop_loss": 122.19,
+      "take_profit": 110.86,
+      "risk_reward": 1.7,
+      "position_size_pct": 5,
+      "invalidation": "收盘上破 122.19 (1.8x ATR)",
+      "trigger_condition": "价格进入 117.23-119.12 区间",
+      "execution_rules": {
+        "gap_up_over_2pct": "SKIP",
+        "gap_down_over_2pct": "SKIP",
+        "hit_zone_then_drop": "WAIT_5MIN_CANDLE_ABOVE"
+      },
+      "factor_validation": {
+        "sector_momentum": "WEAK",
+        "relative_strength": "CONFIRMED",
+        "ma_alignment": "CONFIRMED",
+        "volume_breakout": "WEAK",
+        "rsi_sweet_spot": "WEAK",
+        "insider_signal": "WEAK",
+        "fundamental_quality": "WEAK",
+        "sentiment_crowding": "FALSE_POSITIVE"
+      },
+      "audit_flags": [
         "1个非量因子FALSE_POSITIVE"
       ],
-      "factor_score": 0.666,
+      "factor_score": 0.637,
       "model_used": "deterministic_rules"
     }
   ],
-  "valid_count": 8,
+  "valid_count": 7,
   "conditional_count": 0,
-  "invalid_count": 0,
+  "invalid_count": 1,
   "elapsed_sec": 0.4
 }

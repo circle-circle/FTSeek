@@ -53,7 +53,8 @@ class FutuExtendedProvider(BaseDataProvider):
         }
 
         result["data"]["short_interest"] = self.get_short_interest(symbol)
-        result["data"]["analyst_consensus"] = self.get_analyst_consensus(symbol)
+        # 2026-06-29: get_research_analyst_consensus 不存在于 futu SDK, 删除调用
+        # result["data"]["analyst_consensus"] = self.get_analyst_consensus(symbol)
         result["data"]["insider_trades"] = self.get_insider_trades(symbol)
 
         # 如果全部子项都失败，标记整体失败
@@ -151,59 +152,11 @@ class FutuExtendedProvider(BaseDataProvider):
         """
         获取分析师评级共识（近3个月）
 
-        Returns:
-            {
-                "status": "ok",
-                "data": {
-                    "rating": 4,  # 1=卖出, 2=跑输, 3=持有, 4=买入, 5=强力推荐
-                    "rating_label": "买入",
-                    "total_analysts": 27,
-                    "target_high": 400.0,
-                    "target_avg": 327.49,
-                    "target_low": 253.0,
-                    "buy_pct": 62.96,
-                    "hold_pct": 33.33,
-                    "sell_pct": 3.70,
-                    "update_date": "2026-06-20",
-                }
-            }
+        2026-07-02: Futu SDK 10.03 无 get_research_analyst_consensus 方法, 删除调用。
+        调用方应检查 status=="ok", 失败时优雅降级。
         """
         now_iso = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
-        cache_key = f"ac_{symbol}"
-        if self._is_cache_valid(cache_key):
-            return self._cache[cache_key]
-
-        ctx = self._get_ctx()
-        if not ctx:
-            return {"status": "failed", "error": "Futu context unavailable", "fetched_at": now_iso}
-
-        try:
-            ret, data_raw = ctx.get_research_analyst_consensus(symbol)
-            if ret != 0:
-                return {"status": "failed", "error": f"analyst_consensus failed: {data_raw}", "fetched_at": now_iso}
-
-            _RATING_LABELS = {1: "卖出", 2: "跑输大盘", 3: "持有", 4: "买入", 5: "强力推荐"}
-            rating = data_raw.get("rating")
-
-            data = {
-                "rating": rating,
-                "rating_label": _RATING_LABELS.get(rating, "未知"),
-                "total_analysts": data_raw.get("total", 0),
-                "target_high": data_raw.get("highest"),
-                "target_avg": data_raw.get("average"),
-                "target_low": data_raw.get("lowest"),
-                "buy_pct": data_raw.get("buy"),
-                "hold_pct": data_raw.get("hold"),
-                "sell_pct": data_raw.get("sell"),
-                "update_date": data_raw.get("update_time_str", ""),
-            }
-            result = {"status": "ok", "data": data, "data_source": "futu_opend", "fetched_at": now_iso}
-            self._set_cache(cache_key, result)
-            logger.debug(f"[FutuExtended] {symbol} analyst: {data['rating_label']} ({data['total_analysts']} analysts, target_avg={data['target_avg']})")
-            return result
-        except Exception as e:
-            logger.warning(f"[FutuExtended] get_analyst_consensus error {symbol}: {e}")
-            return {"status": "failed", "error": str(e), "fetched_at": now_iso}
+        return {"status": "failed", "error": "Futu SDK does not support analyst consensus", "fetched_at": now_iso}
 
     def get_insider_trades(self, symbol: str, num: int = 20) -> Dict[str, Any]:
         """

@@ -21,6 +21,7 @@ Usage:
 import logging
 from typing import Dict, List, Optional, Any
 from datetime import datetime, date
+from app.core.scheduler_triggers import ET as _ET
 
 from app.playbook.db import PlaybookDB
 
@@ -44,7 +45,7 @@ US_MARKET_HOLIDAYS_2026 = {
 def is_trading_day(d: date = None) -> bool:
     """检查是否为交易日 (排除周末和美国公共假日)"""
     if d is None:
-        d = date.today()
+        d = datetime.now(_ET).date()
     if d.weekday() >= 5:  # 周六=5, 周日=6
         return False
     if d.isoformat() in US_MARKET_HOLIDAYS_2026:
@@ -84,7 +85,7 @@ class ShadowTracker:
         4. 写入 DB
         """
         if trade_date is None:
-            trade_date = date.today().isoformat()
+            trade_date = datetime.now(_ET).date().isoformat()
 
         if not is_trading_day(date.fromisoformat(trade_date)):
             logger.info(f"{trade_date} is not a trading day, skipping")
@@ -196,7 +197,12 @@ class ShadowTracker:
                         updates["pnl"] = round(pnl, 2)
                         updates["pnl_pct"] = round(pnl_pct, 2)
                         updates["holding_period_hours"] = self._calc_holding_hours(inst, exit_trade)
-                        updates["outcome"] = "win" if pnl > 0 else "loss"
+                        # 2026-07-02: ORPHAN_CLEANUP等幽灵仓清理不应设outcome=win/loss
+                        _exit_reason = exit_trade.get("exit_reason", "unknown")
+                        if "ORPHAN" in _exit_reason.upper() or "PHANTOM" in _exit_reason.upper() or "GHOST" in _exit_reason.upper():
+                            updates["outcome"] = "void"
+                        else:
+                            updates["outcome"] = "win" if pnl > 0 else "loss"
                         updates["mfe_analysis"] = analyze_mfe_mae(inst, updates)
                 else:
                     # 持仓中: 用收盘价计算浮盈

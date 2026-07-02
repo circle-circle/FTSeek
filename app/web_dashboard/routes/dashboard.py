@@ -1244,7 +1244,7 @@ async def _calc_weekly_pnl(ds) -> dict:
         row = await ds.db_query_one(
             "SELECT COALESCE(SUM(realized_pnl),0) as pnl, COUNT(*) as cnt, "
             "SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins "
-            "FROM trade_records WHERE trade_date >= ? AND source_type NOT IN ('PLAYBOOK_SHADOW','SCALPING') "
+            "FROM trade_records WHERE trade_date >= ? AND source_type NOT IN ('PLAYBOOK_SHADOW','SCALPING') AND COALESCE(exit_reason,'') NOT IN ('PHANTOM_RECONCILE_VOID','ORPHAN_CLEANUP') AND exit_reason NOT IN ('PHANTOM_RECONCILE_VOID','ORPHAN_CLEANUP') "
             "AND exit_price > 0",
             (monday.isoformat(),),
         )

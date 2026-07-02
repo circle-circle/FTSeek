@@ -202,7 +202,7 @@ class MonthlyReviewGenerator:
         cumulative_pnl = 0
         peak = 0
         max_drawdown = 0
-        for t in sorted(trades, key=lambda x: x.get('exit_time', '')):
+        for t in sorted(trades, key=lambda x: x.get('exit_time') or ''):
             cumulative_pnl += t.get('realized_pnl', 0) or 0
             if cumulative_pnl > peak:
                 peak = cumulative_pnl

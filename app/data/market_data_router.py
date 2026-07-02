@@ -35,6 +35,8 @@ import logging
 from typing import Dict, Any, Optional, List
 from datetime import datetime, timedelta
 
+import pandas as pd
+
 from app.data.futu_lv3_provider import FutuLV3Provider
 from app.data.twelvedata_provider import TwelveDataProvider
 from app.data.finnhub_provider import FinnhubProvider
@@ -92,15 +94,19 @@ class MarketDataRouter:
             enable_futu_lv3: 是否启用 LV3 实时行情 (默认启用)
         """
         # 初始化数据提供商
+        # 2026-06-28 修复: twelvedata_api_key可能为None(systemd无env), 
+        # 但TwelveDataProvider内部会load_dotenv(.env.us)自行加载key
+        # 所以始终创建实例, 让Provider自己处理key
         self.td = TwelveDataProvider(
             api_key=twelvedata_api_key,
             cache_ttl_seconds=cache_ttl_seconds,
-        ) if twelvedata_api_key else None
+        )
 
+        # 2026-06-28 修复: 同TwelveData, Finnhub也通过.env.us自行加载key
         self.fh = FinnhubProvider(
             api_key=finnhub_api_key,
             cache_ttl_seconds=min(300, cache_ttl_seconds),
-        ) if finnhub_api_key else None
+        )
 
         # 2026-04-24 修复: AlphaVantage 仅作为 VIX 数据源，
         # 不再用于个股行情轮询（盘前/盘后轮询无意义，且浪费 API 配额）
@@ -147,6 +153,15 @@ class MarketDataRouter:
         self._spy_ma200_cache: Optional[float] = None
         self._spy_ma200_cache_time: Optional[datetime] = None
         self._spy_ma200_cache_ttl = timedelta(minutes=30)
+        # P0 (2026-07-03): MA20/MA50 缓存 (与 MA200 同步, 避免依赖 AlphaVantage)
+        self._spy_ma20_cache: Optional[float] = None
+        self._spy_ma50_cache: Optional[float] = None
+
+        # ── 日K线共享缓存 (2026-06-29: 消除双backfill重复API调用) ──
+        # key = f"{symbol}:{date_str}", TTL=当日有效 (跨日自动miss)
+        # ic_tracker.backfill 和 scripts/backfill_forward_returns 共享此缓存
+        self._daily_bars_cache: Dict[str, tuple] = {}
+        self._daily_bars_cache_ttl = 300  # 5 分钟 (与 TwelveData provider 对齐)
 
         if not enabled_sources:
             logger.error("[MarketDataRouter] ⚠️ 未配置任何数据源，服务将不可用!")
@@ -161,6 +176,9 @@ class MarketDataRouter:
         每次 AttributeError 被吞 → 前瞻收益永不回填 → IC 永远=None → 毕业门禁永不通过;
         同时 shadow_tracker 的 hasattr 检查 False → MFE/MAE 永远 0.
 
+        2026-06-29: 新增 _daily_bars_cache, 消除双backfill重复API调用.
+        ic_tracker 和 scripts/backfill_forward_returns 共享同一router实例的缓存.
+
         Returns:
             List[{time, open, high, low, close, volume, turnover}] 升序; time 归一化为
             "YYYY-MM-DD" (兼容 ic_tracker 精确匹配 + shadow_tracker [:10]). 失败返回 None.
@@ -168,12 +186,22 @@ class MarketDataRouter:
         if not symbol:
             return None
 
+        # P1 (2026-06-29): 日K线共享缓存 — 同标的5分钟内不重复调API
+        import time as _time
+        cache_key = f"{symbol}:{count}"
+        cached = self._daily_bars_cache.get(cache_key)
+        if cached:
+            bars, ts = cached
+            if (_time.time() - ts) < self._daily_bars_cache_ttl:
+                return bars
+
         # 1. Futu (主): 历史日K, 盘后也可用 (不依赖实时连接)
         if self.futu:
             try:
                 bars = self.futu.get_daily_kline(symbol, count=count)
                 bars = self._normalize_bar_times(bars)
                 if bars:
+                    self._daily_bars_cache[cache_key] = (bars, _time.time())
                     return bars
             except Exception as e:
                 logger.warning(f"[Router] get_daily_bars {symbol} Futu 失败, 尝试 TwelveData: {e}")
@@ -185,6 +213,7 @@ class MarketDataRouter:
                 bars = self.td.get_daily_bars(symbol, count=count)
                 if bars:
                     logger.info(f"[Router] get_daily_bars {symbol} 走 TwelveData fallback: {len(bars)} bars")
+                    self._daily_bars_cache[cache_key] = (bars, _time.time())
                     return bars
             except Exception as e:
                 logger.warning(f"[Router] get_daily_bars {symbol} TwelveData fallback 失败: {e}")
@@ -800,15 +829,25 @@ class MarketDataRouter:
         )
         if cache_valid:
             result["spy_ma200"] = self._spy_ma200_cache
+            # P0 (2026-07-03): 缓存命中时也返回 MA20/MA50
+            if self._spy_ma20_cache is not None:
+                result["spy_ma20"] = self._spy_ma20_cache
+            if self._spy_ma50_cache is not None:
+                result["spy_ma50"] = self._spy_ma50_cache
             logger.debug(f"[Router] SPY MA200 使用缓存: {self._spy_ma200_cache:.2f}")
         elif self.futu:
             try:
                 # 2026-06-16 修复: get_kline() 对 K_DAY 过滤到仅当日, 只剩 1 根
-                # 改用 Futu request_history_kline 直接拉取 250 根完整日 K
+                # 改用 Futu request_history_kline 直接拉取完整日 K
+                # 2026-06-30 根因修复: 加start/end + max_count>=范围交易日数
                 from futu import KLType
+                from datetime import date as _d, timedelta as _td
+                _end = _d.today().isoformat()
+                _start = (_d.today() - _td(days=400)).isoformat()
                 if self.futu._ensure_connected() and self.futu._quote_ctx:
                     ret, data, _ = self.futu._quote_ctx.request_history_kline(
-                        code="US.SPY", ktype=KLType.K_DAY, max_count=250
+                        code="US.SPY", ktype=KLType.K_DAY, max_count=320,
+                        start=_start, end=_end
                     )
                     if ret == 0 and data is not None and len(data) >= 50:
                         closes = [float(row["close"]) for _, row in data.iterrows() if float(row["close"]) > 0]
@@ -818,6 +857,15 @@ class MarketDataRouter:
                             self._spy_ma200_cache = ma200
                             self._spy_ma200_cache_time = now
                             result["spy_ma200"] = ma200
+                            # P0 (2026-07-03): 顺带计算 MA20/MA50, 避免依赖 AlphaVantage (免费 API 25次/天限流)
+                            if len(closes) >= 20:
+                                ma20 = sum(closes[-20:]) / 20
+                                self._spy_ma20_cache = ma20
+                                result["spy_ma20"] = ma20
+                            if len(closes) >= 50:
+                                ma50 = sum(closes[-50:]) / 50
+                                self._spy_ma50_cache = ma50
+                                result["spy_ma50"] = ma50
                             logger.info(
                                 f"[Router] SPY MA200 已计算: {ma200:.2f} "
                                 f"(从 {len(closes)} 根日 K, 缓存 30min)"

@@ -22,6 +22,7 @@ from typing import Dict, List, Optional, Any
 from datetime import datetime, date
 
 from app.playbook.db import PlaybookDB
+from app.utils.timezone import now_et
 
 logger = logging.getLogger(__name__)
 
@@ -308,6 +309,21 @@ class PlaybookService:
 
         _is_live = (target_env == "real")
 
+        # 2026-06-28 fail-closed guard: 任何路径请求 live 都必须先通过毕业门禁.
+        # 如果未毕业(包括异常), 强制降级 sim, 避免误下实盘单.
+        if _is_live:
+            try:
+                from app.playbook.pipeline import _check_graduation_gate
+                _gate = _check_graduation_gate()
+                if not _gate.get("graduated"):
+                    logger.warning(f"[playbook] target_env=real 但未毕业, 强制降级 sim: {_gate.get('reason')}")
+                    target_env = "sim"
+                    _is_live = False
+            except Exception as _ge:
+                logger.error(f"[playbook] 毕业门禁异常, 强制降级 sim: {_ge}")
+                target_env = "sim"
+                _is_live = False
+
         # LIVE_TRIAL 试运行 (Phase 2): target_env=real 且 live_trial 开启时仓位×0.5,
         # 对冲 sim→live 不可见的滑点 gap. 验证 sim PnL≈live PnL (10-20笔) 后用户关 live_trial 放全量.
         if _is_live:
@@ -385,9 +401,24 @@ class PlaybookService:
         if not _fill or _fill <= 0:
             _fill = self._query_filled_price_for_order(_futu_id, target_env)
         if not _fill or _fill <= 0:
+            # 2026-06-29: 最后兜底 — broker确认FILLED_ALL但avg_price=0时, 用实时报价记账
+            # 根因: sim账户偶发 avg_price=0 但订单已成交 → 拒绝记账 → 孤儿仓 → position_sync用8%覆盖SL
+            try:
+                from app.data.market_data_router import MarketDataRouter
+                _dr = MarketDataRouter()
+                _ctx = _dr.get_quote(symbol)
+                if _ctx and _ctx.get("price", 0) > 0:
+                    _fill = float(_ctx["price"])
+                    logger.warning(
+                        f"[playbook] {_mode_label} {symbol} 成交价=0, 用实时报价${_fill:.2f}兜底记账 "
+                        f"(订单 {_futu_id} 已确认成交)"
+                    )
+            except Exception:
+                pass
+        if not _fill or _fill <= 0:
             logger.error(f"[playbook] {_mode_label} {symbol} 订单 {_futu_id} 无法获取成交价, 拒绝记账")
             return {"success": False, "message": f"{_mode_label} {symbol} 成交价查询失败, 可能未成交"}
-        _now_iso = datetime.now().isoformat()
+        _now_iso = now_et().isoformat()
         _order_id = f"{_mode_label}_{_uuid.uuid4().hex[:8]}"
 
         # 写 trade_records (真实成交价, source_type 按 target_env 区分)
@@ -446,6 +477,28 @@ class PlaybookService:
                 }),
             })
             logger.info(f"[playbook] {_mode_label} trade_record 已写入: {symbol} @ {_fill} futu_id={_futu_id}")
+
+            # 2026-07-02: open_positions SSOT — playbook下单后立即写open_positions
+            # 根因: playbook只写trade_records不写open_positions → position_sync
+            # 无法区分系统仓和人工仓 → 人工仓被误标auto → 被自动平仓
+            # 修复: 下单后立即UPSERT open_positions, owner='auto', source_type标记来源
+            try:
+                _ts.upsert_position_simple(
+                    symbol=symbol,
+                    direction=mos_direction,
+                    size=int(position_size),
+                    entry_price=float(_fill),
+                    owner_strategy=_owner,
+                    owner='auto',
+                    account_type=_trade_mode,
+                    source_type=_source_type,
+                    futu_order_id=_futu_id or _order_id,
+                    stop_loss=float(stop_loss) if stop_loss else 0,
+                    sync_status='synced',
+                )
+                logger.info(f"[playbook] {_mode_label} open_position 已写入: {symbol}")
+            except Exception as _ope:
+                logger.warning(f"[playbook] open_position 写入失败 (不影响主流程, position_sync会补): {_ope}")
         except Exception as _tre:
             # P0 (2026-06-24): broker 已下单但 trade_record 写失败 → 反向平仓回滚, 防孤儿仓
             # (否则 monitor 查不到该仓位, 永不被自动平仓). 首跑 sim 最高危断点.

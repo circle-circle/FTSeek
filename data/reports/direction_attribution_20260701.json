@@ -1,0 +1,126 @@
+{
+  "timestamp": "2026-07-01T07:00:03.718639",
+  "period_days": 7,
+  "data": {
+    "period": "7 days",
+    "total": 519,
+    "by_direction": {
+      "LONG": {
+        "n": 242,
+        "win_rate": 0.5289256198347108,
+        "avg_ret_t1": 1.467569799800263,
+        "avg_win": 4.077370399671429,
+        "avg_loss": 1.462732628125252,
+        "pnl_ratio": 2.7875021868468832,
+        "expectancy": 1.4675697998002653
+      },
+      "SHORT": {
+        "n": 277,
+        "win_rate": 0.48736462093862815,
+        "avg_ret_t1": -0.5315202917786516,
+        "avg_win": 1.802877322790415,
+        "avg_loss": 2.7508419676013554,
+        "pnl_ratio": 0.655391092626984,
+        "expectancy": -0.5315202917786515
+      }
+    }
+  },
+  "by_strategy": {
+    "LONG|TECHNICAL_MULTI_FACTOR": {
+      "direction": "LONG",
+      "strategy": "TECHNICAL_MULTI_FACTOR",
+      "n": 5,
+      "win_rate_t1": 0.6,
+      "avg_ret_t1": 1.5559302888923199,
+      "pnl_ratio": 1.2593036248550407,
+      "expectancy": 1.5559302888923199,
+      "avg_win": 5.510368041657647,
+      "avg_loss": 4.37572634025567,
+      "t5": {
+        "n": 0,
+        "win_rate": null,
+        "avg_ret": null
+      }
+    },
+    "SHORT|TECHNICAL_MULTI_FACTOR": {
+      "direction": "SHORT",
+      "strategy": "TECHNICAL_MULTI_FACTOR",
+      "n": 94,
+      "win_rate_t1": 0.43617021276595747,
+      "avg_ret_t1": -1.2214301587596361,
+      "pnl_ratio": 0.4252373744820669,
+      "expectancy": -1.2214301587596363,
+      "avg_win": 1.37278283254082,
+      "avg_loss": 3.228274170897725,
+      "t5": {
+        "n": 4,
+        "win_rate": 0.5,
+        "avg_ret": 0.6327211256702936
+      }
+    },
+    "SHORT|voting_llm": {
+      "direction": "SHORT",
+      "strategy": "voting_llm",
+      "n": 182,
+      "win_rate_t1": 0.5164835164835165,
+      "avg_ret_t1": -0.1635565157995566,
+      "pnl_ratio": 0.8076737074015884,
+      "expectancy": -0.1635565157995562,
+      "avg_win": 1.9904717281120454,
+      "avg_loss": 2.4644503217960403,
+      "t5": {
+        "n": 6,
+        "win_rate": 0.5,
+        "avg_ret": 0.13833241077452024
+      }
+    },
+    "LONG|voting_llm": {
+      "direction": "LONG",
+      "strategy": "voting_llm",
+      "n": 231,
+      "win_rate_t1": 0.5324675324675324,
+      "avg_ret_t1": 1.4856885556143824,
+      "pnl_ratio": 2.7952933400119,
+      "expectancy": 1.485688555614383,
+      "avg_win": 4.068033513782905,
+      "avg_loss": 1.4553154245219884,
+      "t5": {
+        "n": 20,
+        "win_rate": 0.55,
+        "avg_ret": 2.6651143225564935
+      }
+    },
+    "LONG|BATTLE_PLAN_FAST_PATH": {
+      "direction": "LONG",
+      "strategy": "BATTLE_PLAN_FAST_PATH",
+      "n": 6,
+      "win_rate_t1": 0.3333333333333333,
+      "avg_ret_t1": 0.6963639600466125,
+      "pnl_ratio": 12.116654504781621,
+      "expectancy": 0.6963639600466124,
+      "avg_win": 2.502092418836188,
+      "avg_loss": 0.20650026934817545,
+      "t5": {
+        "n": 4,
+        "win_rate": 0.0,
+        "avg_ret": -2.0380678757407122
+      }
+    },
+    "SHORT|orb": {
+      "direction": "SHORT",
+      "strategy": "orb",
+      "n": 1,
+      "win_rate_t1": 0.0,
+      "avg_ret_t1": -2.649400023761439,
+      "pnl_ratio": 0.0,
+      "expectancy": -2.649400023761439,
+      "avg_win": 0,
+      "avg_loss": 2.649400023761439,
+      "t5": {
+        "n": 0,
+        "win_rate": null,
+        "avg_ret": null
+      }
+    }
+  }
+}

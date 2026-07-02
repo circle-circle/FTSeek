@@ -19,10 +19,40 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from datetime import date, datetime
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
+
+# ── ADR-008 (2026-06-28): Playbook 方向审计日志 ────────────────────────
+
+def _log_playbook_direction_audit(symbol: str, llm_direction: str, technical_direction: Optional[str], vote_result: Dict[str, Any]):
+    """记录 Playbook 方向决策审计日志 (JSONL)"""
+    try:
+        import os
+        from datetime import datetime
+        from app.core.config_container import get_config
+        _cfg = get_config()
+        log_path = str(_cfg.get_dotted("playbook.technical_arbitration.shadow_log_path", "data/shadow/playbook_direction_audit.jsonl"))
+        try:
+            os.makedirs(os.path.dirname(log_path), exist_ok=True)
+        except Exception:
+            pass
+        record = {
+            "timestamp": datetime.now().isoformat(),
+            "symbol": symbol,
+            "llm_direction": llm_direction,
+            "technical_direction": technical_direction or "",
+            "llm_strength": int(vote_result.get("final_strength", 50) or 50),
+            "llm_confidence": float(vote_result.get("final_confidence", 0) or 0),
+            "llm_std": float(vote_result.get("std_dev", 0) or 0),
+        }
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except Exception as e:
+        logger.debug(f"[playbook] 方向审计日志失败: {e}")
+
 
 # ── 模块级单例: 避免每只候选股票都新建 DB 连接 ─────────────────────────
 _horizon_selector: Optional[Any] = None
@@ -162,8 +192,43 @@ def _build_data_collector():
 
 
 def _get_watchlist(scheduler) -> List[str]:
-    """从 scheduler.watchlist 取候选 (与 llm_pipeline 一致, 纯字符串列表)"""
+    """从 scheduler.watchlist 取候选 + 合并 factor_engine 动态池.
+    
+    动态池来源 (DEB-20260629):
+      - daily_active_pool.json (持仓 + 手动添加)
+      - dragonhead_pool (行业龙头, 按 regime 切换)  
+      - Finnhub 异动扫描 (盘前 >2% 涨跌幅)
+      - factor_engine 质量门禁 (过滤低流动性)
+    
+    纯加法: 静态 watchlist 保留不变, 动态池只增不减.
+    若 factor_engine 不可用, fallback 到纯静态 watchlist.
+    """
     wl = list(getattr(scheduler, "watchlist", []) or [])
+    
+    # 2026-07-02: 修复 US.US.X 双重前缀 (factor_engine对已含US.前缀的symbol重复添加)
+    wl = [s[3:] if s.startswith("US.US.") else s for s in wl]
+    
+    # 2026-06-30: 过滤 #SIM 后缀 (SIM账户持仓不进入pipeline)
+    wl = [s for s in wl if '#' not in s]
+    
+    try:
+        from app.plan.factor_engine import _get_stock_pool
+        dynamic_pool, meta = _get_stock_pool()
+        if dynamic_pool:
+            merged = list(set(wl) | set(dynamic_pool))
+            # 双保险: 合并后也过滤#SIM + 修复US.US.双前缀
+            merged = [s[3:] if s.startswith("US.US.") else s for s in merged]
+            merged = [s for s in merged if '#' not in s]
+            logger.info(
+                f"[playbook] watchlist 合并动态池: "
+                f"static={len(wl)} + dynamic={len(dynamic_pool)} "
+                f"(overlap={len(set(wl) & set(dynamic_pool))}) → merged={len(merged)} | "
+                f"dynamic_meta={meta.get('final_pool_size', '?')}"
+            )
+            return sorted(merged)
+    except Exception as e:
+        logger.debug(f"[playbook] 动态池合并失败, 使用静态 watchlist: {e}")
+    
     return wl
 
 
@@ -268,6 +333,15 @@ def _build_vote_market_data(symbol: str, data, regime_context, data_router):
     return ctx
 
 
+from app.playbook.instruction_generator import (
+    Instruction,
+    compute_instruction_values,
+    compute_confidence,
+    build_thesis,
+    _compute_volatility_based_sl_tp,
+)
+
+
 def _build_instructions_from_votes(
     screen_results,
     voting_coordinator,
@@ -283,13 +357,6 @@ def _build_instructions_from_votes(
       → compute_instruction_values 确定性计算数值
       → Instruction
     """
-    from app.playbook.instruction_generator import (
-        Instruction,
-        compute_instruction_values,
-        compute_confidence,
-        build_thesis,
-    )
-
     if voting_coordinator is None:
         logger.warning("[playbook] VotingCoordinator 不可用, 全部候选 SKIP")
         return [
@@ -301,9 +368,27 @@ def _build_instructions_from_votes(
     # §2.7 修复: 统一用 _normalize_regime_str, 与 regime_mults 键空间对齐 (原 str(enum) 恒命中默认 0.5)
     regime_str = _normalize_regime_str(regime_context)
 
-    # Regime 仓位乘数 (与 InstructionGenerator.REGIME_MULTIPLIERS 对齐)
+    # Regime 仓位乘数
     regime_mults = {"RISK_ON": 1.0, "CAUTIOUS": 0.5, "RISK_OFF": 0.3, "NO_TRADE": 0.0}
     regime_mult = regime_mults.get(regime_str, 0.5)
+
+    # ── 过滤审计计数器 (DEB-20260628) ──
+    # 记录每层过滤干掉了几个candidates, 函数末尾统一输出
+    _filter_audit = {
+        "total_input": len(screen_results),
+        "market_data_none": 0,
+        "vote_failed": 0,
+        "vote_neutral": 0,
+        "buy_macd_ma50_disabled": 0,  # 已禁用, 计数用
+        "buy_low_strength_skip": 0,
+        "buy_high_std_skip": 0,
+        "low_confidence_skip": 0,
+        "direction_flip": 0,
+        "direction_conflict_skip": 0,
+        "price_gap_skip": 0,
+        "no_entry_price": 0,
+        "final_instructions": 0,
+    }
 
     for sr in screen_results:
         symbol = sr.symbol
@@ -313,6 +398,7 @@ def _build_instructions_from_votes(
         # 构造 market_data 并调 VotingCoordinator (新路径走 SymbolContext, legacy 走 10 字段 dict)
         market_data = _build_vote_market_data(symbol, data, regime_context, data_router)
         if market_data is None:
+            _filter_audit["market_data_none"] += 1
             instructions.append(Instruction(
                 symbol=symbol, direction="SKIP", skip_reason="行情不可用 (router 无数据)"
             ))
@@ -321,6 +407,7 @@ def _build_instructions_from_votes(
         try:
             vote_result = voting_coordinator.vote(symbol, market_data)
         except Exception as e:
+            _filter_audit["vote_failed"] += 1
             logger.warning(f"[playbook] {symbol} 投票失败: {e}, SKIP")
             instructions.append(Instruction(
                 symbol=symbol, direction="SKIP", skip_reason=f"投票异常: {e}"
@@ -336,55 +423,161 @@ def _build_instructions_from_votes(
         # 方向映射: VotingCoordinator 输出 LONG/SHORT/NEUTRAL → Instruction BUY/SELL_SHORT/SKIP
         vote_direction = str(vote_result.get("direction", "NEUTRAL")).upper()
         is_neutral = vote_result.get("is_neutral", False) or vote_direction == "NEUTRAL"
-        
+
+        # 2026-06-30 Phase 1: 在过滤前记录信号快照（消除选择性偏差）
+        # 所有信号（包括后续被SKIP的）都记录因子，这样IC能学习"被过滤的信号对不对"
+        _snap_decision_id = vote_result.get("decision_id", "") or f"SNAP-{symbol}-{int(time.time()*1000)}"
+        try:
+            from app.analysis.signal_ic_tracker import record_signal_snapshot
+            record_signal_snapshot(
+                decision_id=_snap_decision_id,
+                symbol=symbol,
+                direction=vote_direction,
+                strength=int(vote_result.get("final_strength", 50) or 50),
+                confidence=float(vote_result.get("consensus_level", 0) or 0),
+                consensus_level=float(vote_result.get("consensus_level", 0) or 0),
+                strategy_id=vote_result.get("strategy_id", ""),
+                factors=list(factors.keys()) if factors else [],
+            )
+        except Exception:
+            pass  # 非关键路径
+
         if is_neutral:
+            _filter_audit["vote_neutral"] += 1
             instructions.append(Instruction(
                 symbol=symbol, direction="SKIP", skip_reason="投票中性, 无方向信号"
             ))
             continue
-        
+
+        # ── ADR-008 (2026-06-28): 盘中技术方向仲裁 ──
+        # 读取配置
+        _direction_mode = "llm_vote"
+        _llm_conflict_threshold = 0.70
+        try:
+            from app.core.config_container import get_config
+            _cfg = get_config()
+            _direction_mode = str(_cfg.get_dotted("playbook.direction_mode", "llm_vote")).lower()
+            _llm_conflict_threshold = float(_cfg.get_dotted("playbook.technical_arbitration.llm_conflict_confidence_threshold", 0.70))
+        except Exception:
+            pass
+
+        # 计算技术方向 (best-effort, 用于影子日志与技术仲裁)
+        technical_candidate = None
+        technical_direction = None
+        try:
+            from app.strategy.pure import evaluate as eval_strategy
+            technical_candidate = eval_strategy("technical", market_data)
+            if technical_candidate is not None:
+                technical_direction = str(technical_candidate.direction).upper()
+        except Exception as e:
+            logger.debug(f"[playbook] {symbol} 技术信号评估异常: {e}")
+
+        # 记录方向审计日志 (无论模式)
+        _log_playbook_direction_audit(symbol, vote_direction, technical_direction, vote_result)
+
+        # 技术仲裁模式: 无技术方向则 SKIP; LLM 强反向冲突则 SKIP; 否则 technical 获胜
+        if _direction_mode == "technical_arbitration":
+            if not technical_direction:
+                _filter_audit["technical_no_signal"] = _filter_audit.get("technical_no_signal", 0) + 1
+                instructions.append(Instruction(
+                    symbol=symbol, direction="SKIP", skip_reason="无技术方向信号"
+                ))
+                continue
+
+            if vote_direction != technical_direction:
+                _llm_conf = float(vote_result.get("final_confidence", 0) or 0)
+                if _llm_conf >= _llm_conflict_threshold:
+                    _filter_audit["direction_conflict_skip"] = _filter_audit.get("direction_conflict_skip", 0) + 1
+                    logger.info(
+                        f"[playbook] {symbol} 方向冲突 SKIP: "
+                        f"LLM={vote_direction}(conf={_llm_conf:.2f}) vs technical={technical_direction}"
+                    )
+                    instructions.append(Instruction(
+                        symbol=symbol, direction="SKIP",
+                        skip_reason=f"方向冲突: LLM={vote_direction} vs technical={technical_direction}"
+                    ))
+                    continue
+                # LLM 反向不强, technical 获胜
+                vote_direction = technical_direction
+                logger.info(f"[playbook] {symbol} 技术方向覆盖 LLM: {technical_direction}")
+            # 同向: 使用 vote_direction (与 technical 一致)
+
         direction = "BUY" if vote_direction == "LONG" else "SELL_SHORT"
         decision_id = vote_result.get("decision_id", "")
 
-        # §2026-06-26: BUY 入场质量过滤 — MACD 柱确认 + MA50 方向过滤.
-        # 背景: MADP 辩论 (DEB-20260626-horizon_model) 结论 — BUY 的问题是入场质量,
-        # 不是持仓时间. T+1 数据显示 BUY 赢家 alpha 仅 +0.36%, 亏损仓持有更久更差.
-        # 实现:
-        #   - MACD 柱 = macd - macd_signal, 要求 > 0 (多头动量确认)
-        #   - 价格 > MA50, 作为 MA50 方向/位置过滤的代理
-        # 注意: 这里只过滤 BUY, SHORT 保持当前高胜率路径不变.
+        # 2026-06-28 (DEB-20260628): 方向差异化信号强度门槛.
+        # BUY 方向历史胜率低(38%), 需要比 SHORT 更强的投票强度.
+        # SHORT 方向历史胜率高(91%), 保持默认阈值.
+        _final_strength = int(vote_result.get("final_strength", 50) or 50)
+        _vote_std = float(vote_result.get("std_dev", 0) or 0)
+        _vote_consensus = float(vote_result.get("consensus_level", 0) or 0)
         if direction == "BUY":
-            macd_hist = market_data.macd - market_data.macd_signal
-            if macd_hist <= 0:
-                logger.warning(
-                    f"[playbook] {symbol} BUY 入场过滤: MACD 柱非正 "
-                    f"(macd={market_data.macd:.4f}, signal={market_data.macd_signal:.4f}, hist={macd_hist:.4f}) → SKIP"
+            # 2026-06-30: 门槛从 strategy_registry 读取（原硬编码 60/12）
+            _vote_sid = vote_result.get("strategy_id", "") or ""
+            try:
+                from app.core.strategy_registry import get_strategy_config
+                _strat_cfg = get_strategy_config(_vote_sid)
+                _buy_min_str = int(_strat_cfg["direction_filter"].get("BUY_min_strength", 50))
+                _buy_max_std = float(_strat_cfg["direction_filter"].get("BUY_max_std", 15))
+            except Exception:
+                _buy_min_str, _buy_max_std = 50, 20
+            if _final_strength < _buy_min_str:
+                _filter_audit["buy_low_strength_skip"] = _filter_audit.get("buy_low_strength_skip", 0) + 1
+                logger.info(
+                    f"[playbook] {symbol} BUY 投票强度={_final_strength} < {_buy_min_str} → SKIP"
                 )
                 instructions.append(Instruction(
-                    symbol=symbol,
-                    direction="SKIP",
-                    skip_reason=f"MACD 柱非正 ({macd_hist:.4f}), BUY 入场过滤",
+                    symbol=symbol, direction="SKIP", skip_reason=f"BUY 投票强度 < {_buy_min_str}"
                 ))
                 continue
-            if market_data.ma50 > 0 and market_data.price > 0 and market_data.price <= market_data.ma50:
-                logger.warning(
-                    f"[playbook] {symbol} BUY 入场过滤: 价格 {market_data.price:.2f} "
-                    f"<= MA50 {market_data.ma50:.2f} → SKIP"
+            # 模型一致性: BUY 要求分歧更小
+            if _vote_std > _buy_max_std:
+                _filter_audit["buy_high_std_skip"] = _filter_audit.get("buy_high_std_skip", 0) + 1
+                logger.info(
+                    f"[playbook] {symbol} BUY 模型分歧 std={_vote_std:.1f} > {_buy_max_std} → SKIP"
                 )
                 instructions.append(Instruction(
-                    symbol=symbol,
-                    direction="SKIP",
-                    skip_reason=f"价格低于 MA50 ({market_data.price:.2f} <= {market_data.ma50:.2f}), BUY 入场过滤",
+                    symbol=symbol, direction="SKIP", skip_reason="BUY 模型分歧过大"
                 ))
                 continue
 
-        # ponytail: 方向约束 — 条件与方向矛盾时翻转/跳过.
-        # 根因: voting_aggregator 用 strength>50 决方向, 无视 conditions 语义.
-        # 数据: 35个BUY中19个含 insider_net_sell = 直接矛盾, LONG -$1624, SHORT +$926.
-        # 修法:
-        #   - 看空条件数 > 看多条件数 且 direction==BUY   → 翻转为 SELL_SHORT
-        #   - 看多条件数 > 看空条件数 且 direction==SELL_SHORT → 翻转为 BUY
-        #   - 双方条件数相等且均非空 → 因子冲突, SKIP
+        # ── 过滤审计日志 (DEB-20260628) ──────────────────────────────
+        # 目标: 记录每层过滤干掉了几个candidates, 为调优提供数据
+        # 审计计数器在函数末尾统一输出
+        # ──────────────────────────────────────────────────────────────
+
+        # §2026-06-26: BUY 入场质量过滤 — MACD 柱确认 + MA50 方向过滤.
+        # ⚠️ DEB-20260628: 暂时禁用 (6/26新增, 导致6/25从19→1的断崖式下降)
+        # 根因: 弱势市场中MACD柱≤0 + 价格≤MA50 会批量SKIP所有BUY方向候选
+        # 恢复条件: IC数据达标(≥30笔)后, 用数据验证是否重新启用
+        # if direction == "BUY":
+        #     macd_hist = market_data.macd - market_data.macd_signal
+        #     if macd_hist <= 0:
+        #         ...SKIP
+        #     if market_data.ma50 > 0 and market_data.price > 0 and market_data.price <= market_data.ma50:
+        #         ...SKIP
+        #
+        # 审计: 记录本会被这两层过滤干掉的 BUY 候选数(禁用期间只计数, 不 SKIP)
+        if direction == "BUY":
+            _macd_hist = market_data.macd - market_data.macd_signal
+            _would_skip_macd = _macd_hist <= 0
+            _would_skip_ma50 = (
+                market_data.ma50 > 0
+                and market_data.price > 0
+                and market_data.price <= market_data.ma50
+            )
+            if _would_skip_macd or _would_skip_ma50:
+                _filter_audit["buy_macd_ma50_disabled"] += 1
+                logger.debug(
+                    f"[playbook] {symbol} BUY 原 MACD/MA50 过滤命中 "
+                    f"(macd_hist={_macd_hist:.4f}, price={market_data.price:.2f}, ma50={market_data.ma50:.2f})"
+                )
+
+        # 2026-06-30: 方向冲突检查 — 从硬编码翻转改为IC加权+记录不拦截
+        # 原逻辑: 看空条件数>看多 → 翻转方向; 相等 → SKIP
+        # 问题1: BEARISH/BULLISH列表方向和真实IC相反(above_ma20被当bullish但IC=-0.553)
+        # 问题2: 因子冲突SKIP杀掉8只大市值(GOOG/META/ORCL) — 信号不可见
+        # 新逻辑: 用因子IC加权判断净方向; 冲突时记录但放行(让IC gate+退出策略管理风险)
         from app.playbook.condition_taxonomy import BEARISH_CONDITIONS, BULLISH_CONDITIONS
         _conditions = list(factors.keys()) if factors else []
         _bearish_hits = [c for c in _conditions if c in BEARISH_CONDITIONS]
@@ -392,24 +585,45 @@ def _build_instructions_from_votes(
         _bear_count = len(_bearish_hits)
         _bull_count = len(_bullish_hits)
 
-        if direction == "BUY" and _bear_count > _bull_count:
-            logger.warning(
-                f"[playbook] {symbol} 方向矛盾: BUY 含{_bear_count}个看空/仅{_bull_count}个看多条件 {_bearish_hits} → 翻转为 SELL_SHORT"
-            )
-            direction = "SELL_SHORT"
-        elif direction == "SELL_SHORT" and _bull_count > _bear_count:
-            logger.warning(
-                f"[playbook] {symbol} 方向矛盾: SELL_SHORT 含{_bull_count}个看多/仅{_bear_count}个看空条件 {_bullish_hits} → 翻转为 BUY"
-            )
-            direction = "BUY"
-        elif _bear_count == _bull_count and _bear_count > 0:
-            logger.warning(
-                f"[playbook] {symbol} 因子方向冲突数持平 ({_bear_count} vs {_bull_count}): {_bearish_hits} vs {_bullish_hits} → SKIP"
-            )
-            instructions.append(Instruction(
-                symbol=symbol, direction="SKIP", skip_reason="因子方向冲突, 无法判定方向"
-            ))
-            continue
+        if _bear_count > 0 or _bull_count > 0:
+            # 用因子IC加权判断净方向（如果有IC数据）
+            try:
+                import json as _json
+                from pathlib import Path as _Path
+                _ic_path = _Path("data/factor_ic_latest.json")
+                _factor_ic = {}
+                if _ic_path.exists():
+                    with open(_ic_path) as _f:
+                        _factor_ic = _json.load(_f)
+            except Exception:
+                _factor_ic = {}
+
+            # 计算因子IC加权的净方向分
+            _net_score = 0.0
+            for c in _bullish_hits:
+                _ic_val = float(_factor_ic.get(c, {}).get("ic", 0))
+                _n_val = int(_factor_ic.get(c, {}).get("n", 0))
+                if _n_val >= 30:  # 只有统计显著的因子才参与
+                    _net_score += _ic_val
+            for c in _bearish_hits:
+                _ic_val = float(_factor_ic.get(c, {}).get("ic", 0))
+                _n_val = int(_factor_ic.get(c, {}).get("n", 0))
+                if _n_val >= 30:
+                    _net_score -= _ic_val
+
+            # IC加权方向与LLM方向冲突时：记录但放行（不再SKIP/翻转）
+            if _net_score > 0.05 and direction == "SELL_SHORT":
+                _filter_audit["direction_flip"] += 1
+                logger.info(
+                    f"[playbook] {symbol} IC加权方向(LONG)与LLM方向(SELL_SHORT)冲突 "
+                    f"(net_ic={_net_score:+.2f}) → 记录但放行, IC gate+SL管理风险"
+                )
+            elif _net_score < -0.05 and direction == "BUY":
+                _filter_audit["direction_flip"] += 1
+                logger.info(
+                    f"[playbook] {symbol} IC加权方向(SHORT)与LLM方向(BUY)冲突 "
+                    f"(net_ic={_net_score:+.2f}) → 记录但放行, IC gate+SL管理风险"
+                )
         
         # 2026-06-26: Horizon 选择 — 基于个股阶段特征选择 short/long
         try:
@@ -439,9 +653,11 @@ def _build_instructions_from_votes(
             risk_pct=1.0,
             regime_multiplier=regime_mult,
             horizon=_horizon,
+            regime_context=regime_context,
         )
 
         if not values or not values.get("entry_price"):
+            _filter_audit["no_entry_price"] += 1
             instructions.append(Instruction(
                 symbol=symbol, direction="SKIP", skip_reason="价格缺失, 无法计算数值"
             ))
@@ -455,6 +671,7 @@ def _build_instructions_from_votes(
         if _last_price > 0 and _entry > 0:
             _price_gap = abs(_entry - _last_price) / _last_price
             if _price_gap > 0.02:
+                _filter_audit["price_gap_skip"] += 1
                 logger.warning(
                     f"[playbook] {symbol} 价格偏离过大: last_price={_last_price:.2f} "
                     f"entry={_entry:.2f} 偏离={_price_gap:.2%} → SKIP"
@@ -467,6 +684,67 @@ def _build_instructions_from_votes(
                 continue
         
         confidence = compute_confidence(data, decision["selected_conditions"], factors)
+
+        # 2026-07-02: 跨日方向翻转检查 — 同标的24h内方向翻转需更高confidence
+        # 根因: LLM方向翻转率34%, ORCL 6/23 SHORT赚→6/24 LONG亏(conf=90但方向错)
+        # 方案: 查前一天同标的方向, 翻转时confidence门槛+15
+        try:
+            from datetime import timedelta as _td, datetime as _dt
+            _today_date = _today_et_str()
+            _prev_date = (_dt.now(_now_et()) - _td(days=1)).date().isoformat()
+            # 跳过周末
+            while _prev_date < _today_date:
+                _prev_dt = _dt.strptime(_prev_date, "%Y-%m-%d")
+                if _prev_dt.weekday() < 5:
+                    break
+                _prev_date = (_prev_dt - _td(days=1)).date().isoformat()
+            from app.playbook.db import PlaybookDB as _PDB
+            _pdb = _PDB()
+            _prev_inst = _pdb.get_instruction(_prev_date, symbol)
+            if _prev_inst and _prev_inst.get("direction") in ("BUY", "SELL_SHORT"):
+                _prev_dir = _prev_inst["direction"]
+                if _prev_dir != direction:
+                    # 方向翻转 — 标记, 在confidence门槛检查中提高门槛
+                    _filter_audit["direction_flip"] += 1
+                    logger.info(
+                        f"[playbook] {symbol} 跨日方向翻转: {_prev_dir}→{direction} "
+                        f"(prev={_prev_date}), confidence门槛+15"
+                    )
+                    _direction_flipped = True
+                else:
+                    _direction_flipped = False
+            else:
+                _direction_flipped = False
+        except Exception as _flip_err:
+            logger.debug(f"[playbook] {symbol} 方向翻转检查失败(忽略): {_flip_err}")
+            _direction_flipped = False
+
+        # 2026-06-30: confidence门槛从strategy_registry读取（原从playbook config读）
+        # 数据修复后: LONG IC=+0.238(强), SHORT IC=-0.051(弱) → 不再需要方向不对称门槛
+        # 默认 BUY=70, SHORT=70 (对称), 可在registry的direction_filter中覆盖
+        try:
+            from app.core.strategy_registry import get_strategy_config
+            _sr_cfg = get_strategy_config(vote_result.get("strategy_id", ""))
+            _buy_min_conf = int(_sr_cfg["direction_filter"].get("BUY_min_confidence", 70))
+            _short_min_conf = int(_sr_cfg["direction_filter"].get("SHORT_min_confidence", 70))
+        except Exception:
+            _buy_min_conf = 70
+            _short_min_conf = 70
+
+        _dir_conf_map = {"BUY": _buy_min_conf, "SELL_SHORT": _short_min_conf}
+        _min_conf_for_dir = _dir_conf_map.get(direction, 65)
+
+        if confidence < _min_conf_for_dir:
+            _filter_audit.setdefault("low_confidence_skip", 0)
+            _filter_audit["low_confidence_skip"] += 1
+            logger.info(
+                f"[playbook] {symbol} {direction} confidence={confidence:.0f} "
+                f"< 门槛={_min_conf_for_dir} → SKIP"
+            )
+            instructions.append(Instruction(
+                symbol=symbol, direction="SKIP", skip_reason=f"{direction} confidence {confidence:.0f} < {_min_conf_for_dir}"
+            ))
+            continue
         
         data_quality = {
             "fundamental": data.fundamental.quality,
@@ -510,13 +788,38 @@ def _build_instructions_from_votes(
             horizon_confidence=_horizon_confidence,
             horizon_reasoning=_horizon_reasoning,
         )
+        # 方向翻转时降仓50% — 同guardrail方式, 不SKIP信号只降风险敞口
+        if _direction_flipped:
+            _orig_size = inst.position_size or 0
+            if _orig_size > 0:
+                inst.position_size = max(1, int(_orig_size * 0.5))
+                inst.skip_reason = f"跨日方向翻转 降仓50% (原{_orig_size}→{inst.position_size})"
         instructions.append(inst)
+        
         logger.info(
             f"[playbook] {symbol} vote→instruction: {vote_direction}→{direction} "
             f"strength={vote_result.get('final_strength', '?')} "
             f"consensus={vote_result.get('consensus_level', '?')} "
             f"decision_id={decision_id}"
         )
+
+    # ── 过滤审计日志输出 (DEB-20260628) ──
+    _filter_audit["final_instructions"] = sum(1 for i in instructions if i.direction != "SKIP")
+    _skip_count = _filter_audit["total_input"] - _filter_audit["final_instructions"]
+    logger.info(
+        f"[playbook] 过滤审计: input={_filter_audit['total_input']} → "
+        f"instructions={_filter_audit['final_instructions']} skips={_skip_count} | "
+        f"breakdown: mkt_data_none={_filter_audit['market_data_none']} "
+        f"vote_fail={_filter_audit['vote_failed']} neutral={_filter_audit['vote_neutral']} "
+        f"buy_str_skip={_filter_audit['buy_low_strength_skip']} "
+        f"buy_std_skip={_filter_audit['buy_high_std_skip']} "
+        f"low_conf_skip={_filter_audit['low_confidence_skip']} "
+        f"buy_filter_disabled={_filter_audit['buy_macd_ma50_disabled']} "
+        f"dir_flip={_filter_audit['direction_flip']} "
+        f"dir_conflict={_filter_audit['direction_conflict_skip']} "
+        f"price_gap={_filter_audit['price_gap_skip']} "
+        f"no_entry={_filter_audit['no_entry_price']}"
+    )
 
     # 组合级 guardrail: 方向偏斜 / sector 集中度 / 最低 R:R
     instructions = _apply_portfolio_guardrails(instructions)
@@ -545,10 +848,16 @@ def _apply_portfolio_guardrails(
     instructions: List[Any],
     *,
     max_sector_pct: float = 0.40,
-    max_direction_skew: float = 0.65,
-    min_rr: float = 1.5,
+    max_direction_skew: float = 0.80,  # 2026-06-30: 0.65→0.80, 允许cautious regime偏SHORT
+    min_rr: float = 0.8,  # 2026-06-30: 1.5→0.8, 与config rr_ratio=1.0对齐
 ) -> List[Any]:
-    """组合级风险 guardrail (2026-06-25)."""
+    """组合级风险 guardrail (2026-06-25).
+
+    2026-06-30: 放宽 max_direction_skew 和 min_rr.
+    根因: cautious regime 下 3 模型一致看空 → 86% SHORT 被截杀;
+          rr_ratio=1.0 < min_rr=1.5 → 全部指令被杀.
+    原则: guardrail 是安全网, 不是信号杀手. 真正的方向风险由仓位管理控制.
+    """
     from collections import Counter
 
     # 先过滤掉 SKIP / 无方向 / R:R 不达标的
@@ -599,23 +908,22 @@ def _apply_portfolio_guardrails(
 
 
 def _trim_majority_direction(valid: List[Any], majority_dir: str, target_skew: float) -> int:
-    """将多数方 confidence 最低的信号降级, 直到偏斜 ≤ target_skew."""
+    """多数方信号降仓, 控制方向风险.
+    
+    2026-06-30 根因修复: SKIP → position_size *= 0.5
+    原则: guardrail 是安全网, 不是信号杀手. 方向风险由仓位管理控制.
+    多数方信号全部降仓50%, 保留信号产出率.
+    """
+    majority = [i for i in valid if i.direction == majority_dir]
+    if not majority:
+        return 0
     trimmed = 0
-    while True:
-        total = len([i for i in valid if i.direction in ("BUY", "SELL_SHORT")])
-        buy_count = sum(1 for i in valid if i.direction == "BUY")
-        short_count = total - buy_count
-        majority_pct = max(buy_count, short_count) / total if total > 0 else 0
-        if majority_pct <= target_skew:
-            break
-        candidates = [i for i in valid if i.direction == majority_dir and i.direction != "SKIP"]
-        if not candidates:
-            break
-        # 按 confidence 升序, 把最低的降级
-        candidates.sort(key=lambda x: getattr(x, "confidence", 0) or 0)
-        candidates[0].direction = "SKIP"
-        candidates[0].skip_reason = "方向偏斜 guardrail 降级"
-        trimmed += 1
+    for inst in majority:
+        _orig = getattr(inst, "position_size", 0) or 0
+        if _orig > 0:
+            inst.position_size = max(1, int(_orig * 0.5))
+            inst.skip_reason = f"方向偏斜 guardrail 降仓50% (原{_orig}→{inst.position_size})"
+            trimmed += 1
     return trimmed
 
 
@@ -723,7 +1031,7 @@ def run_playbook_generate(scheduler, *, force: bool = False) -> Optional[Dict[st
             scheduler._playbook_generated_date = today
             return {"date": today, "instructions": 0, "reason": "no_candidates_passed_filter"}
 
-        # Layer 2: VotingCoordinator 统一方向决策 (替代独立 LLM InstructionGenerator)
+        # Layer 2: VotingCoordinator 统一方向决策
         # 信号源唯一化: Playbook 消费 VotingCoordinator 的多模型投票结果,
         # 不再跑独立 LLM — 消除平行管线, 方向决策统一归因.
         voting_coordinator = _get_voting_coordinator(scheduler)
@@ -946,6 +1254,17 @@ def run_playbook_track(scheduler, *, force: bool = False) -> Optional[Dict[str, 
         except Exception as e:
             logger.debug(f"[playbook] IC 追踪失败 (不影响主流程): {e}")
 
+        # P2 (2026-06-29): Signal IC 统一回填 — 与 Playbook IC 共享 router 缓存
+        try:
+            from app.core.feature_flags import FeatureFlags
+            if FeatureFlags().is_enabled("unified_backfill"):
+                from app.analysis.signal_ic_tracker import run_signal_ic_backfill
+                signal_stats = run_signal_ic_backfill(dry_run=False)
+                total_signal = sum(signal_stats.values())
+                logger.info(f"[playbook] Signal IC 统一回填: {total_signal} 条, {len(signal_stats)} 只股票")
+        except Exception as e:
+            logger.debug(f"[playbook] Signal IC 统一回填失败 (不影响主流程): {e}")
+
         try:
             PlaybookPusher(db).push_evening_tracking(today)
         except Exception as e:
@@ -1125,6 +1444,11 @@ def _check_graduation_gate() -> Dict[str, Any]:
             "checks": checks,
             "ic_t3": grad.get("ic_t3"),
             "sample_count": grad.get("sample_count"),
+            "ic_t1": ic_report.get("overall_ic_t1"),
+            "ic_t5": ic_report.get("overall_ic_t5"),
+            "sample_t1": ic_report.get("sample_t1", 0),
+            "sample_t3": ic_report.get("sample_t3", 0),
+            "sample_t5": ic_report.get("sample_t5", 0),
             "reason": "" if graduated else f"未毕业: {failed}",
         }
     except Exception as e:
@@ -1150,12 +1474,12 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
 
         # 1. 检查配置开关
         if not _playbook_cfg("auto_execute", False):
-            logger.debug("[playbook] auto_execute=false, 跳过自动执行")
+            logger.info("[playbook] auto_execute=false, 跳过自动执行")
             return None
 
         today = _today_et_str()
         if not force and not _is_trading_day_today():
-            logger.debug(f"[playbook] {today} 非交易日, 跳过自动执行")
+            logger.info(f"[playbook] {today} 非交易日, 跳过自动执行")
             return None
 
         # 2026-06-24: 开盘后5分钟内不执行 — 避开开盘最大噪声 (gap fill + 做市商调仓)
@@ -1167,15 +1491,36 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
         _market_open_min = 9 * 60 + 30  # 9:30 ET
         _now_min = _now_et_dt.hour * 60 + _now_et_dt.minute
         if not force and _now_min < _market_open_min + 5:
-            logger.debug(f"[playbook] 开盘5分钟内不执行 (now={_now_et_dt.strftime('%H:%M')} ET)")
+            logger.info(f"[playbook] 开盘5分钟内不执行 (now={_now_et_dt.strftime('%H:%M')} ET)")
             return None
+
+        # 2026-06-30: 全局风险/市场环境检查 — 极端 regime 或风险状态禁止新开仓
+        try:
+            from app.playbook.market_regime import MarketRegime, MarketRegimeGate
+            from app.us_pipeline.risk_state_machine import RiskStateMachine, RiskState
+            regime_ctx = MarketRegimeGate().assess()
+            if regime_ctx.regime == MarketRegime.NO_TRADE:
+                logger.warning(
+                    f"[playbook] 当前 regime=NO_TRADE (VIX={regime_ctx.vix:.2f}), 跳过 auto_execute"
+                )
+                return {"date": today, "executed": 0, "skipped": 0, "reason": "regime_no_trade"}
+            risk_state = RiskStateMachine().get_state()
+            if risk_state in (RiskState.RISK_OFF, RiskState.HALT):
+                logger.warning(
+                    f"[playbook] 当前 risk_state={risk_state}, 跳过 auto_execute"
+                )
+                return {"date": today, "executed": 0, "skipped": 0, "reason": f"risk_state_{risk_state}"}
+        except Exception as e:
+            logger.warning(f"[playbook] 风险状态检查异常 (放行): {e}")
 
         db = PlaybookDB()
         service = PlaybookService(db)
         instructions = db.get_instructions_by_date(today)
 
+        logger.info(f"[playbook] auto_execute 开始: {len(instructions)} 条指令 (now={_now_et_dt.strftime('%H:%M')} ET)")
+
         if not instructions:
-            logger.debug(f"[playbook] {today} 无指令, 跳过自动执行")
+            logger.info(f"[playbook] {today} 无指令, 跳过自动执行")
             return {"date": today, "executed": 0, "skipped": 0}
 
         executed_count = 0
@@ -1184,7 +1529,7 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
 
         # P0 fix (2026-06-25): 开仓前 buying_power 总量检查
         # 根因: 批量同时触发 (6笔/2秒), 每笔独立算仓位 → $388K on $82K 账户
-        # 修复: 累计已开 PLAYBOOK_SIM notional, 超过 buying_power × 0.8 则跳过后续
+        # 修复: 累计已开 PLAYBOOK_SIM notional, 超过预算上限则跳过后续
         _max_deploy = 0.0
         try:
             from app.core.db_utils import safe_sqlite_connect
@@ -1203,24 +1548,46 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
         from app.playbook.config import get_playbook_config
         pb_cfg = get_playbook_config()
 
-        # 获取 buying_power — 从 capital_safety 读取富途接口返回的真实购买力
-        # 2026-06-27 修复: 不用硬编码$82K, 改读 capital_safety._state.buying_power
-        #   capital_safety 由 position_sync 每30s从富途 accinfo_query 更新, 是动态真实值
-        #   单笔仓位仍用 risk_base_capital=$82K (sim→live统一口径), 总量上限用真实BP
+        # 2026-06-29: 统一从 capital_safety.get_available_budget_for_auto() 取预算
+        # 替代旧的 buying_power × 0.8 — 该方法已扣除 manual+auto 已用敞口,
+        # 且受 conservative/normal/aggressive 模式约束, Playbook 与 ORB 共享同一预算源
         from app.risk.capital_safety import get_capital_safety_system
-        _buying_power = float(pb_cfg.get("risk_base_capital", 82000.0))
-        _bp_source = "HARDCODED_82000"
+        _bp_limit = 0.0
+        _bp_source = "unavailable"
         try:
             _cs = get_capital_safety_system()
-            _real_bp = float(getattr(_cs._state, 'buying_power', 0) or 0)
-            if _real_bp > 0:
-                _buying_power = _real_bp
-                _bp_source = f"capital_safety_{_real_bp:.0f}"
+            _bp_limit = _cs.get_available_budget_for_auto()
+            _bp_source = f"capital_safety_auto_budget"
         except Exception as e:
-            logger.warning(f"[playbook] capital_safety buying_power 读取失败, 回退到 $82K: {e}")
-        _bp_limit = _buying_power * 0.8  # 真实购买力的80%作为总量部署上限
-        _fallback_alert = bool(pb_cfg.get("buying_power_fallback_alert", True))
-        logger.info(f"[playbook] buying_power={_buying_power:,.0f} limit={_bp_limit:,.0f} source={_bp_source}")
+            logger.warning(f"[playbook] capital_safety auto_budget 读取失败: {e}")
+        # 降级: 用 risk_base_capital × 80% 兜底
+        if _bp_limit <= 0:
+            _risk_base = float(pb_cfg.get("risk_base_capital", 82000.0))
+            _bp_limit = _risk_base * 0.8
+            _bp_source = f"fallback_{_risk_base:.0f}×80%"
+        logger.info(f"[playbook] 预算上限: ${_bp_limit:,.0f} (来源={_bp_source}), 已部署=${_max_deploy:,.0f}")
+
+        # 2026-06-28: 单日交易 guardrail — 防止恢复BUY过滤后市场过冷/过热时爆量
+        # 2026-07-02: risk_base 从硬编码 $82K 改为实时 equity (via _get_total_equity)
+        # 原因: 实际 equity=$176K, 硬编码 $82K 导致 cap=$16.4K 过低, 3单就满
+        _risk_base_capital = _get_total_equity(scheduler)
+        if _risk_base_capital <= 0:
+            _risk_base_capital = float(pb_cfg.get("risk_base_capital", 82000.0))
+        _daily_notional_cap_pct = float(pb_cfg.get("daily_notional_cap_pct", 0.20))
+        _daily_notional_cap = _risk_base_capital * _daily_notional_cap_pct
+        _max_daily_positions = int(pb_cfg.get("max_daily_positions", 5))
+        _today_opened_notional = 0.0
+        _today_opened_count = 0
+
+        logger.info(
+            f"[playbook] 单日 guardrail: notional_cap=${_daily_notional_cap:,.0f} "
+            f"({_daily_notional_cap_pct*100:.0f}% of ${_risk_base_capital:,.0f}), "
+            f"max_daily_positions={_max_daily_positions}"
+        )
+
+        # 按confidence降序排序 — 购买力优先分配给最强信号 (DEB-20260629)
+        # 漏斗最后一层: 7层过滤后剩N只, BP只够开2-3笔 → 先执行最强的
+        instructions.sort(key=lambda x: x.get("confidence", 0) or 0, reverse=True)
 
         for inst in instructions:
             # 跳过已执行、SKIP 方向的指令
@@ -1228,6 +1595,25 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
                 continue
             if inst.get("direction") == "SKIP":
                 continue
+
+            # 2026-06-29 P0: 执行前查broker持仓 — 有仓则跳过，防重复下单+孤儿仓循环
+            # 根因: fill=0时playbook拒绝记账但broker已成交, 下次auto_execute又下单 → 仓位叠加
+            _symbol = inst.get("symbol", "")
+            try:
+                from app.execution.dual_broker import get_dual_broker
+                _dual = get_dual_broker()
+                _broker_positions = _dual.get_positions(target_env="sim")
+                _already_held = any(
+                    p.get("code") == _symbol and abs(float(p.get("qty", 0) or 0)) > 0
+                    for p in (_broker_positions or [])
+                )
+                if _already_held:
+                    logger.info(f"[playbook] {_symbol} broker已有持仓, 跳过 (防重复下单)")
+                    db.update_instruction_tracking(inst["id"], {"executed": 1, "execution_price": 0, "execution_time": datetime.now().isoformat(), "outcome": "already_held"})
+                    skipped_count += 1
+                    continue
+            except Exception as _bh_err:
+                logger.debug(f"[playbook] broker持仓检查失败 (放行): {_bh_err}")
 
             # 盘中实时触发检查: 价格是否进入入场区间 ±5%
             # shadow_tracker 只在盘后跑, 盘中 triggered=0 是正常的
@@ -1239,6 +1625,85 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
                 # 触发了 → 先更新 DB
                 db.update_instruction_tracking(inst["id"], {"triggered": 1})
                 logger.info(f"[playbook] 盘中触发: {inst['symbol']} {inst['direction']}")
+
+            # ── 2026-06-29: 触发后重新定价 (re-price at trigger) ──
+            # 根因: 盘前生成的 entry_price 用的是盘前 bid/ask, 开盘后 gap 导致 entry/stop 失准
+            # 修复: 触发瞬间取实时 bid/ask, 重算 entry_price + stop_loss, 传 custom_params 给 executor
+            # DB 原值保留不动 (审计可追溯盘前价), custom_params 覆盖执行价
+            _reprice_params = None
+            try:
+                _dr = getattr(scheduler, "data_router", None) or getattr(scheduler, "market_data", None)
+                if _dr:
+                    _ctx = _dr.get_full_market_context(inst["symbol"])
+                    if _ctx and _ctx.get("price", 0) > 0:
+                        _cur = float(_ctx["price"])
+                        _bid = float(_ctx.get("lv3_bid") or _ctx.get("bid") or _cur)
+                        _ask = float(_ctx.get("lv3_ask") or _ctx.get("ask") or _cur)
+                        _dir = inst.get("direction", "")
+                        _hp = pb_cfg.get_horizon_params(inst.get("horizon", "short"))
+
+                        # Phase 2/4 (2026-06-30): re-price 必须复用波动率分桶逻辑, 否则固定 SL/TP 会覆盖盘前生成的动态值
+                        if _dir == "BUY":
+                            _new_entry = _ask
+                        else:
+                            _new_entry = _bid
+
+                        # 优先用真实 ATR 计算 atr_pct, 未取到则回退到 ctx 中的 atr_percent
+                        _atr = float(_ctx.get("atr") or _ctx.get("atr_14") or 0)
+                        atr_pct = 0.0
+                        if _new_entry > 0 and _atr > 0:
+                            atr_pct = _atr / _new_entry
+                        if atr_pct <= 0:
+                            atr_pct = (float(_ctx.get("atr_percent") or 0)) / 100.0
+
+                        _vol_info = _compute_volatility_based_sl_tp(atr_pct, _dir, _hp, pb_cfg)
+                        if _vol_info:
+                            _sl_pct = _vol_info["sl_pct"]
+                            _tp_mult = _vol_info["tp_multiplier"]
+                        else:
+                            # 未配置 vol_buckets 时回退固定百分比
+                            if _dir == "BUY":
+                                _sl_pct = float(_hp.get("buy_fixed_stop_loss_pct", 2.5))
+                            else:
+                                _sl_pct = float(_hp.get("sell_fixed_stop_loss_pct", 2.0))
+                            _tp_mult = float(_hp.get("rr_ratio", 1.5))
+
+                        # 计算新 stop_loss
+                        if _dir == "BUY":
+                            _new_sl = round(_new_entry * (1 - _sl_pct / 100), 2)
+                        else:
+                            _new_sl = round(_new_entry * (1 + _sl_pct / 100), 2)
+
+                        # 处理 rr_ratio:999 哨兵 (禁用止盈); 否则基于波动率分桶的 tp_multiplier
+                        if _tp_mult and _tp_mult < 100:
+                            if _dir == "BUY":
+                                _new_tp = round(_new_entry * (1 + _sl_pct * _tp_mult / 100), 2)
+                            else:
+                                _new_tp = round(_new_entry * (1 - _sl_pct * _tp_mult / 100), 2)
+                        else:
+                            _new_tp = 0.0
+
+                        _reprice_params = {
+                            "entry_price": round(_new_entry, 2),
+                            "stop_loss": _new_sl,
+                            "take_profit": _new_tp,
+                            # 2026-06-29: 必须传 position_size, 否则 execute_instruction
+                            # 走 custom_params 分支但取不到 position_size → None → 降为1股
+                            "position_size": inst.get("position_size", 1),
+                            # 2026-06-29: 审计字段 — 记录 re-price 来源
+                            "reprice_from": round(float(inst.get("entry_price", 0) or 0), 2),
+                            "reprice_to": round(_new_entry, 2),
+                            "reprice_original_sl": round(float(inst.get("stop_loss", 0) or 0), 2),
+                        }
+                        # 更新 DB 记录 re-priced 值 (审计可追溯)
+                        db.update_instruction_tracking(inst["id"], _reprice_params)
+                        logger.info(
+                            f"[playbook] re-price: {inst['symbol']} {_dir} "
+                            f"盘前=${inst.get('entry_price', 0):.2f} → 实时=${_new_entry:.2f} "
+                            f"SL={_new_sl:.2f} ({_sl_pct:.2f}%) TP={_new_tp:.2f}"
+                        )
+            except Exception as _rp_err:
+                logger.debug(f"[playbook] re-price 失败, 用DB原值: {_rp_err}")
 
             # 质量门禁 (2026-06-24): 低 confidence 指令跳过, 避免垃圾信号批量执行
             # 阈值从配置读取, 默认 65
@@ -1261,15 +1726,35 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
                 skipped_count += 1
                 continue
 
+            # 2026-06-28: 单日 notional/数量 guardrail
+            if _today_opened_notional + _new_notional > _daily_notional_cap:
+                logger.info(
+                    f"[playbook] {inst['symbol']} 跳过 — 单日notional上限 "
+                    f"(已用=${_today_opened_notional:,.0f} + 新=${_new_notional:,.0f} > 限=${_daily_notional_cap:,.0f})"
+                )
+                skipped_count += 1
+                continue
+
+            if _today_opened_count >= _max_daily_positions:
+                logger.info(
+                    f"[playbook] {inst['symbol']} 跳过 — 单日开仓数上限 "
+                    f"(已达到 {_max_daily_positions} 笔)"
+                )
+                skipped_count += 1
+                continue
+
             # 自动执行
             try:
                 result = service.execute_instruction(
                     instruction_id=inst["id"],
                     acknowledge_risk=True,  # Paper Trade 自动确认风险
+                    custom_params=_reprice_params,  # 2026-06-29: 重新定价后的 entry/stop
                 )
                 if result.get("success"):
                     executed_count += 1
                     _max_deploy += _new_notional  # 累加已用额度
+                    _today_opened_notional += _new_notional
+                    _today_opened_count += 1
                     logger.info(f"[playbook] ✅ 自动执行: {inst['symbol']} {inst['direction']}")
                 else:
                     skipped_count += 1
@@ -1293,12 +1778,12 @@ def run_playbook_auto_execute(scheduler, *, force: bool = False) -> Optional[Dic
 
 
 def _check_intraday_trigger(scheduler, inst: Dict[str, Any]) -> bool:
-    """盘中实时检查指令是否触发 (突破MA20 + 成交量确认).
+    """盘中实时检查指令是否触发 (突破当日高低点).
 
-    2026-06-25: 从 ±5% 价格区间触发改为突破确认触发.
-    根因: ±5% 区间 = 开盘后几乎所有股票都在昨收附近 → 全部同时触发 → 开盘噪声接盘.
-    修复: 只在价格突破 MA20 (方向一致) 且成交量 > 5日均量×1.5 时触发.
-    效果: 自然错开入场时间, 只有真正有动量的股票才触发.
+    2026-06-29: 从MA20突破改为当日高低点突破.
+    根因: MA20突破在BULL regime下SHORT几乎不可能触发(需跌破MA20).
+    修复: BUY触发=突破当日高点; SHORT触发=跌破当日低点. 不依赖MA20方向.
+    成交量确认保留 (防止低流动性假突破).
     """
     entry_price = inst.get("entry_price")
     if not entry_price or entry_price <= 0:
@@ -1315,15 +1800,17 @@ def _check_intraday_trigger(scheduler, inst: Dict[str, Any]) -> bool:
     if not data_router:
         return False
 
-    # 获取 SymbolContext (100+字段, 含 ma20/price/volume_ratio)
+    # 获取实时行情 (含 day_high/day_low)
     current_price = None
-    ma20 = None
+    day_high = None
+    day_low = None
     vol_ratio = None
     try:
         ctx = data_router.get_full_market_context(symbol)
         if ctx and isinstance(ctx, dict):
             current_price = float(ctx.get("price", 0) or 0)
-            ma20 = float(ctx.get("ma20", 0) or 0)
+            day_high = float(ctx.get("day_high", 0) or ctx.get("high_price", 0) or 0)
+            day_low = float(ctx.get("day_low", 0) or ctx.get("low_price", 0) or 0)
             vol_ratio = float(ctx.get("volume_5d_avg_ratio", 0) or ctx.get("volume_ratio", 0) or 0)
     except Exception:
         pass
@@ -1339,58 +1826,52 @@ def _check_intraday_trigger(scheduler, inst: Dict[str, Any]) -> bool:
 
     if not current_price or current_price <= 0:
         return False
-    if not ma20 or ma20 <= 0:
-        return False
 
-    # ── 突破条件: 价格突破 MA20 (方向一致, 最小百分比从配置读取) ──
-    # 2026-06-26: 0.2%→0.5% — 0.2%是bid-ask噪声, 秒杀根因. 0.5%过滤开盘噪声.
+    # 如果没有日内高低点 (开盘第一根K线), 用 entry_price 作为基准
+    if day_high is None or day_high <= 0:
+        day_high = entry_price
+    if day_low is None or day_low <= 0:
+        day_low = entry_price
+
+    # ── 触发条件: 方向穿越触发 (2026-07-02: 从±0.5%改为方向穿越) ──
+    # 根因: ±0.5% touch zone导致0%触发率(17/17 miss).
+    # 修复: 限价单逻辑 — 价格从entry_price的盈利方向穿越即触发.
+    #   BUY:  当前价 ≤ entry_price × 1.01 (回落到入场价或更低 → 买)
+    #   SHORT: 当前价 ≥ entry_price × 0.99 (反弹到入场价或更高 → 做空)
+    # SL控制风险: 触发后仍检查是否已越过stop_loss.
     from app.playbook.config import get_playbook_config
     pb_cfg = get_playbook_config()
-    _breakout_threshold = float(pb_cfg.get("intraday_breakout_pct", 0.5))
-    _breakout_pct = (current_price - ma20) / ma20 * 100 if ma20 > 0 else 0
+
+    _touch_zone = 0.01  # ±1% 容差
     if is_short:
-        breakout = current_price < ma20 and _breakout_pct <= -_breakout_threshold
+        # SHORT: 价格在 entry_price ±1% 上方 → 等待反弹做空
+        _trigger_lower = entry_price * (1 - _touch_zone)
+        triggered = current_price >= _trigger_lower
     else:
-        breakout = current_price > ma20 and _breakout_pct >= _breakout_threshold
+        # BUY: 价格在 entry_price ±1% 下方 → 等待回落买入
+        _trigger_upper = entry_price * (1 + _touch_zone)
+        triggered = current_price <= _trigger_upper
 
-    # ── 成交量确认: volume_ratio >= 配置阈值 (5日均量×阈值=放量) ──
-    # fail-closed: vol_ratio=0或None时 NOT confirmed (不默认1.0)
-    _volume_threshold = float(pb_cfg.get("intraday_volume_ratio", 1.5))
-    vol_confirmed = vol_ratio is not None and vol_ratio >= _volume_threshold
-
-    # ── fallback 触发已删除 (2026-06-26) ──
-    # 原±3% fallback让所有confidence>=65的指令在入场价附近触发, 等于无突破过滤.
-    # 删除后: 只有真正突破MA20+放量才触发, 消灭开盘批量触发.
-    _entry_zone_triggered = False
-
-    triggered = (breakout and vol_confirmed) or _entry_zone_triggered
-
-    # 入场前止损检查: 如果当前价格已越过 stop_loss, 不入场 (避免秒退)
+    # 入场前止损检查: 如果当前价格已越过 stop_loss, 不入场
     if triggered:
         stop_loss = float(inst.get("stop_loss", 0) or 0)
         if stop_loss > 0:
             if is_short and current_price >= stop_loss:
-                logger.warning(
-                    f"[playbook] ⚔️ 入场拦截: {symbol} current=${current_price:.2f} "
-                    f"已越过 SHORT stop_loss=${stop_loss:.2f}, 跳过 (避免入场即止损)"
-                )
+                logger.warning(f"[playbook] ⚔️ {symbol} current=${current_price:.2f} 已越过 SHORT SL=${stop_loss:.2f}")
                 return False
             if not is_short and current_price <= stop_loss:
-                logger.warning(
-                    f"[playbook] ⚔️ 入场拦截: {symbol} current=${current_price:.2f} "
-                    f"已越过 LONG stop_loss=${stop_loss:.2f}, 跳过 (避免入场即止损)"
-                )
+                logger.warning(f"[playbook] ⚔️ {symbol} current=${current_price:.2f} 已越过 LONG SL=${stop_loss:.2f}")
                 return False
 
     if triggered:
         logger.info(
-            f"[playbook] 盘中触发: {symbol} price=${current_price:.2f} "
-            f"ma20=${ma20:.2f} vol_ratio={vol_ratio:.2f} ({'突破' if breakout else '未突破'} + {'放量' if vol_confirmed else '缩量'})"
+            f"[playbook] 方向穿越触发: {symbol} price=${current_price:.2f} "
+            f"entry=${entry_price:.2f} dir={'SHORT' if is_short else 'BUY'}"
         )
     else:
         logger.debug(
-            f"[playbook] 未触发: {symbol} price=${current_price:.2f} ma20=${ma20:.2f} "
-            f"vol={vol_ratio:.2f} breakout={breakout} vol_ok={vol_confirmed}"
+            f"[playbook] 未触发: {symbol} price=${current_price:.2f} "
+            f"entry=${entry_price:.2f} dir={'SHORT' if is_short else 'BUY'}"
         )
 
     return triggered
@@ -1398,11 +1879,12 @@ def _check_intraday_trigger(scheduler, inst: Dict[str, Any]) -> bool:
 
 def _close_trade_record(conn, trade_id: int, exit_price: float, exit_reason: str,
                         pnl: float, pnl_pct: float, holding_hours: float,
-                        inst_id = None) -> None:
-    """ponytail: 统一平仓写入 — 4处UPDATE合并为1个函数, 消灭状态不一致.
+                        inst_id = None, symbol: str = None) -> None:
+    """统一平仓写入 — 原子更新 trade_records + playbook_instructions + open_positions.
 
-    之前: shadow/sim/EOD/orphan 各自写 UPDATE, 字段集不一致, 有时忘同步 instruction.
-    现在: 一个入口, 原子更新 trade_records + playbook_instructions.
+    根因修复 (2026-07-01): 之前只更新 trade_records + instructions,
+    不碰 open_positions → position_sync 从 DB 重建幽灵仓 → 开盘后异常平仓.
+    现在同时 soft-delete open_positions, 从源头消灭状态分裂.
     """
     now_iso = datetime.now().isoformat()
     conn.execute("""
@@ -1411,13 +1893,88 @@ def _close_trade_record(conn, trade_id: int, exit_price: float, exit_reason: str
         WHERE id=?
     """, (exit_price, now_iso, exit_reason, round(pnl, 2), round(pnl_pct, 4), round(holding_hours, 1), trade_id))
     if inst_id:
+        _is_ghost = "ORPHAN" in exit_reason.upper() or "PHANTOM" in exit_reason.upper() or "GHOST" in exit_reason.upper()
+        _outcome = "void" if _is_ghost else ("win" if pnl > 0 else "loss")
         conn.execute(
             "UPDATE playbook_instructions SET outcome=?, exit_price=?, exit_reason=?, pnl=?, pnl_pct=?, "
             "holding_period_hours=? WHERE id=? AND outcome NOT IN ('win','loss')",
-            ("win" if pnl > 0 else "loss", exit_price, exit_reason, round(pnl, 2),
+            (_outcome, exit_price, exit_reason, round(pnl, 2),
              round(pnl_pct, 4), round(holding_hours, 1), inst_id),
         )
+    # 根因修复: 同时关闭 open_positions, 消灭幽灵仓源头
+    if symbol:
+        conn.execute(
+            "UPDATE open_positions SET sync_status='closed_by_scheduler', updated_at=? WHERE symbol=? "
+            "AND sync_status NOT IN ('closed_by_daemon','closed_by_scheduler','closed_by_sync','closed_emergency','stale_not_in_broker')",
+            (now_iso, symbol),
+        )
     conn.commit()
+
+
+def _get_factor_exit_config(conditions: list, factor_rules: dict) -> dict:
+    """根据触发因子选择对应的退出规则配置 (Phase 3 2026-06-30).
+
+    Args:
+        conditions: 触发条件列表 (e.g. ['insider_cluster_buy', 'above_ma20'])
+        factor_rules: playbook_horizon.yaml 顶层 factor_exit_rules 字典
+
+    Returns:
+        匹配到的因子退出规则, 未命中返回 default
+    """
+    default = factor_rules.get("default", {})
+    if not conditions:
+        return default
+
+    # 按优先级匹配: 第一个在 factor_exit_rules 中出现的条件
+    for cond in conditions:
+        if cond in factor_rules:
+            return factor_rules[cond]
+    return default
+
+
+def _compute_dynamic_effective_sl(
+    direction: str,
+    entry_price: float,
+    initial_sl: float,
+    peak_profit_pct: float,
+    exit_cfg: dict,
+) -> float:
+    """根据因子退出规则计算动态 effective stop loss.
+
+    逻辑:
+    - breakeven_at_pct: 浮盈达到该阈值, SL 提到 entry (保本)
+    - trailing_step_pct: 浮盈每超过一步, 锁定 50% 利润 (最多 3 步)
+    """
+    breakeven_pct = float(exit_cfg.get("breakeven_at_pct", 0.5))
+    trailing_step = float(exit_cfg.get("trailing_step_pct", 2.0))
+    effective_sl = initial_sl
+
+    if peak_profit_pct < breakeven_pct:
+        return effective_sl
+
+    # 浮盈超过 breakeven: 先保本
+    if direction == "LONG":
+        effective_sl = max(effective_sl, entry_price)
+    else:
+        effective_sl = min(effective_sl if effective_sl > 0 else entry_price, entry_price)
+
+    if not exit_cfg.get("trailing_enabled", False):
+        return effective_sl
+
+    # Trailing: 每超过一个 step, 锁定 50% 利润
+    if trailing_step > 0:
+        for step in range(1, 4):  # 最多 3 步
+            threshold = breakeven_pct + trailing_step * step
+            if peak_profit_pct < threshold:
+                break
+            locked_pct = breakeven_pct + trailing_step * (step - 1) + trailing_step * 0.5
+            if direction == "LONG":
+                effective_sl = max(effective_sl, entry_price * (1 + locked_pct / 100))
+            else:
+                effective_sl = min(effective_sl if effective_sl > 0 else entry_price,
+                                 entry_price * (1 - locked_pct / 100))
+
+    return effective_sl
 
 
 def _check_playbook_exit_rules(direction, entry_price, current_price, initial_sl,
@@ -1425,12 +1982,12 @@ def _check_playbook_exit_rules(direction, entry_price, current_price, initial_sl
                                minutes_from_open, entry_time_str):
     """共用退出规则判断 — 被 monitor_playbook_shadow_exits / monitor_playbook_sim_exits 调用.
 
-    计算盈利百分比 → peak tracking → breakeven ratchet → 5 条退出规则.
+    计算盈利百分比 → peak tracking → breakeven ratchet / trailing stop (factor-specific) → 5 条退出规则.
     退出规则 (按优先级):
-      [1] SL_ATR_STOP: effective_sl 触及 (含 breakeven ratchet)
+      [1] SL_FIXED_PCT: effective_sl 触及 (含 breakeven ratchet + trailing stop)
       [2] OVERNIGHT_GAP_STOP: cohort B 隔夜仓跳空 >3%
       [3] PRE_CLOSE_EXIT: 收盘前 8min (cohort B 盈利可跳过)
-      [4] TIME_EXIT: 持仓>2h 且 盈利<-0.5%
+      [4] TIME_EXIT: 持仓 > factor_time_exit_hours 且 盈利<0 (factor-specific)
       [5] MAX_HOLD_T5: cohort B 持仓≥5 交易日
 
     Args:
@@ -1439,7 +1996,7 @@ def _check_playbook_exit_rules(direction, entry_price, current_price, initial_sl
         current_price: 当前报价
         initial_sl: 初始 stop_loss (meta["stop_loss"])
         peak_price: 历史峰值价 (从 meta 恢复, 函数内更新后返回)
-        meta: metadata dict (读取 cohort/_skip_allowed/_log_tag/_symbol)
+        meta: metadata dict (读取 cohort/_skip_allowed/_log_tag/_symbol/conditions)
         held_minutes: 持仓分钟数
         minutes_to_close: 距收盘剩余分钟 (ET)
         minutes_from_open: 开盘后分钟数 (ET)
@@ -1473,89 +2030,101 @@ def _check_playbook_exit_rules(direction, entry_price, current_price, initial_sl
     else:
         peak_profit_pct = 0
 
-    # ── effective SL (stepped ratchet: 阶梯式利润锁定) ──
-    # peak_profit 只上不下: SL 随峰值阶梯上移, 永不倒退
-    # 2026-06-25: 阈值 1.5%→0.5% — 数据: 77% trades 从未达 1.5% peak, breakeven 形同虚设
-    #   ≥0.5% → SL=entry (保本)
-    #   ≥1.5% → SL=entry×1.005 (锁0.5%利润)
-    #   ≥3.0% → SL=entry×1.02 (锁2%利润)
-    effective_sl = initial_sl
-    breakeven_triggered = peak_profit_pct >= 0.5
-    if direction == "LONG":
-        if peak_profit_pct >= 3.0:
-            effective_sl = max(effective_sl, entry_price * 1.02)
-        elif peak_profit_pct >= 1.5:
-            effective_sl = max(effective_sl, entry_price * 1.005)
-        elif breakeven_triggered:
-            effective_sl = max(effective_sl, entry_price)
-    else:  # SHORT: 对称
-        if peak_profit_pct >= 3.0:
-            effective_sl = min(effective_sl if effective_sl > 0 else entry_price, entry_price * 0.98)
-        elif peak_profit_pct >= 1.5:
-            effective_sl = min(effective_sl if effective_sl > 0 else entry_price, entry_price * 0.995)
-        elif breakeven_triggered:
-            effective_sl = min(effective_sl if effective_sl > 0 else entry_price, entry_price)
-
-    # ── 退出判断 (按优先级, if/elif/elif 链) ──
-    # 优先级: ATR止损 > 盘末退出 > 时间退出
+    # ── 读取 horizon 配置 + 因子退出规则 (Phase 3 2026-06-30) ──
     _cohort = meta.get("cohort", "A")
     _horizon = meta.get("horizon", "short")
     # _skip_allowed: 盈利仓跳过 EOD 的条件
-    #   - cohort B (RFC-061 实验组)
-    #   - 或 horizon == "long" (2026-06-26: 个股阶段驱动的长线策略)
     _skip_allowed = meta.get("_skip_allowed", _cohort == "B" or _horizon == "long")
-
-    # 读取 horizon 配置 (用于 overnight_gap_stop_pct / max_hold_days)
     _horizon_cfg = _load_horizon_config(_horizon)
     _overnight_gap_stop_pct = _horizon_cfg.get("overnight_gap_stop_pct", 3.0)
-    _max_hold_days = _horizon_cfg.get("max_hold_days", 5 if _horizon == "long" else 1)
 
+    from app.playbook.config import get_playbook_config
+    _pb_cfg = get_playbook_config()
+    _factor_exit_rules = _pb_cfg.get_horizon_top("factor_exit_rules", {})
+    _default_exit_cfg = _factor_exit_rules.get("default", {})
+
+    # 根据触发因子选择退出规则
+    _conditions = meta.get("conditions", [])
+    _exit_cfg = _get_factor_exit_config(_conditions, _factor_exit_rules)
+
+    # 最大持有天数: 优先因子级, 其次 horizon 级
+    _max_hold_days = int(
+        _exit_cfg.get(
+            "max_hold_days",
+            _horizon_cfg.get("max_hold_days", 5 if _horizon == "long" else 1),
+        )
+    )
+
+    # ── effective SL (factor-specific breakeven ratchet + trailing stop) ──
+    # Phase 3 (2026-06-30): 按因子类型动态调整利润锁定/跟踪止损
+    effective_sl = _compute_dynamic_effective_sl(
+        direction, entry_price, initial_sl, peak_profit_pct, _exit_cfg
+    )
+    breakeven_triggered = peak_profit_pct >= float(_exit_cfg.get("breakeven_at_pct", 0.5))
+
+    # ── 退出判断 (按优先级, if/elif/elif 链) ──
+    # 优先级: SL > TAKE_PROFIT > OVERNIGHT_GAP > PRE_CLOSE > TIME_EXIT > MAX_HOLD
     exit_reason = ""
     exit_price = current_price
 
-    # 规则1: ATR止损 (最高优先级 — 亏损仓位必须先检查止损)
-    if effective_sl > 0:
-        if direction == "LONG" and current_price <= effective_sl:
-            exit_reason = "SL_ATR_STOP"
-            exit_price = effective_sl
-        elif direction == "SHORT" and current_price >= effective_sl:
-            exit_reason = "SL_ATR_STOP"
-            exit_price = effective_sl
+    # 规则0: 开盘冷却期 — 前15分钟SL放宽到4% (不改SL参数本身, 只加时间窗口保护)
+    # 原因: 3/5笔在0-6min秒杀, MFE=0%, 价格从未浮盈. 开盘噪声大, 2%SL被瞬间打掉.
+    # 诊断: 修后MFE>0%=时机问题, MFE仍=0%=信号问题
+    _cooldown_pct = 4.0
+    _cooldown_sl = entry_price * (1 - _cooldown_pct / 100.0) if direction == "LONG" else entry_price * (1 + _cooldown_pct / 100.0)
+    _in_cooldown = minutes_from_open is not None and minutes_from_open < 15
+    if _in_cooldown:
+        _active_sl = min(effective_sl, _cooldown_sl) if direction == "LONG" else max(effective_sl, _cooldown_sl)
+    else:
+        _active_sl = effective_sl
 
-    # 规则2 (RFC-061 #6): 隔夜跳空止损 — long horizon 持夜仓, 次日跳空亏损超过阈值 → 快平
-    if not exit_reason and _skip_allowed and _is_overnight_position(entry_time_str) and profit_pct <= -_overnight_gap_stop_pct:
-        exit_reason = "OVERNIGHT_GAP_STOP"
-        exit_price = current_price
-        logger.warning(
-            f"[{_log_tag}] {_symbol} horizon={_horizon} 隔夜跳空 profit={profit_pct:.2f}% ≤ -{_overnight_gap_stop_pct:.1f}% → OVERNIGHT_GAP_STOP"
-        )
+    # 规则1: SL止损 (最高优先级 — 亏损仓位必须先检查止损)
+    if _active_sl > 0:
+        if direction == "LONG" and current_price <= _active_sl:
+            exit_reason = "SL_FIXED_PCT"
+            exit_price = _active_sl
+        elif direction == "SHORT" and current_price >= _active_sl:
+            exit_reason = "SL_FIXED_PCT"
+            exit_price = _active_sl
 
-    # 规则4: 盘末退出 (收盘前8min)
-    # RFC-061 / Horizon Strategy: long horizon 盈利仓跳过 EOD 强平, 持有过夜到 ~T+5 (capture 周级 alpha)
-    if not exit_reason and 0 <= minutes_to_close <= 8 and minutes_from_open > 0:
-        if _skip_allowed and profit_pct > 0:
-            logger.info(
-                f"[{_log_tag}] {_symbol} horizon={_horizon} profit={profit_pct:.2f}% → 跳过 PRE_CLOSE 持有过夜"
-            )
-        else:
-            exit_reason = "PRE_CLOSE_EXIT"
-            exit_price = current_price
+    # 规则1.5 (2026-06-28): 止盈退出 — 价格触及 take_profit 时主动锁定利润.
+    # 2026-06-30 DEB: 禁用 — rr_ratio=999(TP=0), ExitMonitor的pre_close(close_profit_atr=2.0)负责盈利落袋
+    # _take_profit = meta.get("take_profit", 0)
+    # if not exit_reason and _take_profit > 0:
+    #     if direction == "LONG" and current_price >= _take_profit:
+    #         exit_reason = "TAKE_PROFIT"
+    #         exit_price = _take_profit
+    #     elif direction == "SHORT" and current_price <= _take_profit:
+    #         exit_reason = "TAKE_PROFIT"
+    #         exit_price = _take_profit
 
-    # 规则3: 时间退出 (2026-06-25: 只砍亏损, 不砍盈利 — 赢家跑到EOD)
-    # 数据: TIME_EXIT 赢家6笔均+0.1-0.3%被砍 → 跑到EOD可+2%; 输家9笔均-1.13%应砍
-    # 修法: profit_pct < 0 才触发 (原 -0.5% → 0%, 盈利仓不退)
-    if not exit_reason and held_minutes > 120 and profit_pct < 0:
-        exit_reason = "TIME_EXIT"
-        exit_price = current_price  # 市价退出
+    # 规则2 (RFC-061 #6): 隔夜跳空止损 — 2026-06-30 DEB: 禁用, ExitMonitor的atr_stop管理隔夜
+    # if not exit_reason and _skip_allowed and _is_overnight_position(entry_time_str) and profit_pct <= -_overnight_gap_stop_pct:
+    #     exit_reason = "OVERNIGHT_GAP_STOP"
+    #     exit_price = current_price
 
-    # 规则5: long horizon 硬上限 — 持仓 ≥ max_hold_days 交易日强制了结
-    if not exit_reason and _skip_allowed and held_minutes > 0:
-        if _horizon_max_hold_hit(entry_time_str, _max_hold_days):
-            exit_reason = "MAX_HOLD"
-            exit_price = current_price
-            logger.info(
-                f"[{_log_tag}] {_symbol} horizon={_horizon} → MAX_HOLD 强平 ({_max_hold_days} 交易日)"
-            )
+    # 规则4: 盘末退出 — 2026-06-30 DEB: 禁用, ExitMonitor的pre_close(loss_flat=true)统一管理
+    # if not exit_reason and 0 <= minutes_to_close <= 8 and minutes_from_open > 0:
+    #     if _skip_allowed and profit_pct > 0:
+    #         pass
+    #     else:
+    #         exit_reason = "PRE_CLOSE_EXIT"
+    #         exit_price = current_price
+
+    # 规则3: 时间退出 — 2026-06-30 DEB: 禁用, exit_policy.yaml time_exit=disabled
+    # _time_exit_enabled = False
+    # _time_exit_hours = float(_exit_cfg.get("time_exit_hours", 2.0))
+    # _time_exit_only_if_loss = bool(_exit_cfg.get("time_exit_only_if_loss", True))
+    # if _time_exit_enabled and not exit_reason and held_minutes > (_time_exit_hours * 60):
+    #     if not _time_exit_only_if_loss or profit_pct < 0:
+    #         exit_reason = "TIME_EXIT"
+    #         exit_price = current_price
+
+    # 规则5: MAX_HOLD — 2026-06-30 DEB: 禁用, short horizon不持夜
+    # if not exit_reason and _skip_allowed and held_minutes > 0:
+    #     if _horizon_max_hold_hit(entry_time_str, _max_hold_days):
+    #         exit_reason = "MAX_HOLD"
+    #         exit_price = current_price
 
     return exit_reason, exit_price, peak_price, breakeven_triggered
 
@@ -1623,7 +2192,7 @@ def monitor_playbook_sim_exits(scheduler) -> int:
     而非仅更新 trade_records 字段.
 
     退出规则 (与 shadow 对齐, 复用 exit_policy 阈值):
-      [1] SL_ATR_STOP: 当前价触及 stop_loss
+      [1] SL_FIXED_PCT: 当前价触及 stop_loss
       [2] TIME_EXIT: 持仓>2h 且 盈利<-0.5% → 退出 (2026-06-24放宽)
       [3] PRE_CLOSE_EXIT: 收盘前 8min → 全平
 
@@ -1633,7 +2202,8 @@ def monitor_playbook_sim_exits(scheduler) -> int:
         import sqlite3
         import json as _json
         from app.core.paths import get_trade_records_db
-        from datetime import datetime, timezone, timedelta
+        from datetime import datetime
+        from app.core.scheduler_triggers import ET as _et
 
         db_path = str(get_trade_records_db())
         conn = sqlite3.connect(db_path)
@@ -1659,9 +2229,8 @@ def monitor_playbook_sim_exits(scheduler) -> int:
             conn.close()
             return 0
 
-        # 市场时段 (ET)
-        ET = timezone(timedelta(hours=-4))
-        now_et = datetime.now(ET)
+        # 市场时段 (ET) — 复用 scheduler_triggers.ET (pytz, 处理夏令时)
+        now_et = datetime.now(_et)
         now_minutes = now_et.hour * 60 + now_et.minute
         minutes_to_close = 16 * 60 - now_minutes
         market_open_minutes = 9 * 60 + 30
@@ -1703,10 +2272,12 @@ def monitor_playbook_sim_exits(scheduler) -> int:
                 pass
 
             # OKR 优化 (2026-06-26): 入场后 30 分钟冷却期.
-            # 根因: PLAYBOOK_SIM 最近 7 笔闭环交易中, 3 笔在 1-5 分钟内被 SL_ATR_STOP 扫出,
+            # 根因: PLAYBOOK_SIM 最近 7 笔闭环交易中, 3 笔在 1-5 分钟内被 SL_FIXED_PCT 扫出,
             #       属开盘噪声/假突破, 不是信号本身失效. 冷却期内跳过 SL/TIME_EXIT,
             #       仅保留 PRE_CLOSE_EXIT 兜底 (收盘前 8min 必须平).
-            _GRACE_MINUTES = 30
+            # 2026-07-02: grace期从30min降到5min — 30min让SL形同虚设
+            # 原因: 开盘噪声在5min内消退, 30min内若暴跌SL不触发=无保护
+            _GRACE_MINUTES = 5
             if held_minutes < _GRACE_MINUTES and minutes_to_close > 8:
                 logger.debug(
                     f"[playbook sim] {symbol} 处于冷却期 "
@@ -1733,20 +2304,32 @@ def monitor_playbook_sim_exits(scheduler) -> int:
                         logger.error(f"[playbook dual] 止损兜底平仓异常 {symbol} ({_row_target}): {_e}")
                         continue
                     if not close_res.get("success"):
-                        logger.warning(f"[playbook dual] 止损兜底平仓失败 {symbol}: {close_res.get('error')}")
+                        _sl_err = close_res.get("error", "")
+                        if "持仓不足" in _sl_err or "insufficient" in _sl_err.lower():
+                            # 2026-06-30 fix: broker 无此持仓 → DB-only 平仓
+                            logger.warning(f"[playbook dual] {symbol} 止损兜底: broker持仓不足, DB-only平仓")
+                            _db_exit = current_price
+                            _db_pnl = (_db_exit - entry_price) * qty if direction == "LONG" else (entry_price - _db_exit) * qty
+                            _db_pct = (_db_exit - entry_price) / entry_price * 100 if direction == "LONG" else (entry_price - _db_exit) / entry_price * 100
+                            _close_trade_record(conn, r["id"], _db_exit, "BROKER_GHOST_CLOSE",
+                                                _db_pnl, _db_pct / 100, round(held_minutes / 60, 1), inst_id=inst_id, symbol=symbol)
+                            exited += 1
+                            logger.info(f"[playbook sim] 🔧 {symbol} SL DB-only平仓: exit=${_db_exit:.2f}")
+                            continue
+                        logger.warning(f"[playbook dual] 止损兜底平仓失败 {symbol}: {_sl_err}")
                         continue
                     _exit_price = close_res.get("filled_price", 0) or current_price
                     _pnl = (_exit_price - entry_price) * qty if direction == "LONG" else (entry_price - _exit_price) * qty
                     _pnl_pct = (_exit_price - entry_price) / entry_price * 100 if direction == "LONG" else (entry_price - _exit_price) / entry_price * 100
                     _hh = round(held_minutes / 60, 1)
-                    _close_trade_record(conn, r["id"], _exit_price, "SL_ATR_STOP",
-                                        _pnl, _pnl_pct / 100, _hh, inst_id=inst_id)
+                    _close_trade_record(conn, r["id"], _exit_price, "SL_FIXED_PCT",
+                                        _pnl, _pnl_pct / 100, _hh, inst_id=inst_id, symbol=symbol)
                     exited += 1
-                    logger.info(f"[playbook sim] ✅ {symbol} SL_ATR_STOP 兜底: exit=${_exit_price:.2f} pnl=${_pnl:.2f}")
+                    logger.info(f"[playbook sim] ✅ {symbol} SL_FIXED_PCT 兜底: exit=${_exit_price:.2f} pnl=${_pnl:.2f}")
                     continue
 
-            if abs(current_price - entry_price) / entry_price > 0.5:
-                continue  # 价格异常跳过
+            if abs(current_price - entry_price) / entry_price > 0.15:
+                continue  # 价格异常跳过 (2026-07-02: 50%→15%, 50%让巨亏/巨盈仓位失保护)
 
             # cohort B skip 判定 (sim 特有: LIVE 需显式开 overnight)
             _cohort = meta.get("cohort", "A")
@@ -1794,16 +2377,65 @@ def monitor_playbook_sim_exits(scheduler) -> int:
                 continue
 
             if not close_res.get("success"):
-                logger.warning(f"[playbook dual] 平仓失败 {symbol} ({_row_target}): {close_res.get('error')}")
+                _err = close_res.get("error", "")
+                # 2026-06-30 fix: "持仓不足" = broker 无此持仓 (永久错误, 不重试)
+                # 查询 broker 实际持仓, 若为 0 则 DB-only 平仓 (用当前报价)
+                if "持仓不足" in _err or "insufficient" in _err.lower():
+                    logger.warning(
+                        f"[playbook dual] {symbol} ({_row_target}) broker 持仓不足, "
+                        f"检查实际持仓并 DB-only 平仓"
+                    )
+                    _broker_qty = 0.0
+                    try:
+                        broker_positions = dual.get_positions(target_env=_row_target)
+                        for _bp in broker_positions:
+                            _bp_code = _bp.get("code", _bp.get("symbol", ""))
+                            if _bp_code == symbol:
+                                _broker_qty = float(_bp.get("qty", 0) or 0)
+                                break
+                    except Exception as _be:
+                        logger.warning(f"[playbook dual] 查询 broker 持仓异常 {symbol}: {_be}")
+                    if _broker_qty <= 0:
+                        # Broker 无此持仓 → DB-only 平仓 (ghost position)
+                        _db_exit_price = current_price if current_price and current_price > 0 else entry_price
+                        _db_pnl = (_db_exit_price - entry_price) * qty if direction == "LONG" else (entry_price - _db_exit_price) * qty
+                        _db_pnl_pct = (_db_exit_price - entry_price) / entry_price * 100 if direction == "LONG" else (entry_price - _db_exit_price) / entry_price * 100
+                        _db_hh = round(held_minutes / 60, 1)
+                        _close_trade_record(conn, r["id"], _db_exit_price, "BROKER_GHOST_CLOSE",
+                                            _db_pnl, _db_pnl_pct / 100, _db_hh, inst_id=inst_id, symbol=symbol)
+                        exited += 1
+                        logger.info(
+                            f"[playbook sim] 🔧 {symbol} DB-only 平仓 (broker无持仓): "
+                            f"exit=${_db_exit_price:.2f} pnl=${_db_pnl:.2f} reason={exit_reason}"
+                        )
+                        continue
+                    elif _broker_qty < qty:
+                        # Broker 有部分持仓 → 用实际数量平仓
+                        logger.info(f"[playbook dual] {symbol} broker实际qty={_broker_qty} < DB qty={qty}, 用broker数量平仓")
+                        try:
+                            close_res2 = dual.close_position(symbol, _broker_qty, direction, target_env=_row_target)
+                            if close_res2.get("success"):
+                                _fill = close_res2.get("filled_price", 0) or current_price
+                                _pnl2 = (_fill - entry_price) * _broker_qty if direction == "LONG" else (entry_price - _fill) * _broker_qty
+                                _pnl_pct2 = (_fill - entry_price) / entry_price * 100 if direction == "LONG" else (entry_price - _fill) / entry_price * 100
+                                _hh2 = round(held_minutes / 60, 1)
+                                _close_trade_record(conn, r["id"], _fill, exit_reason,
+                                                    _pnl2, _pnl_pct2 / 100, _hh2, inst_id=inst_id, symbol=symbol)
+                                exited += 1
+                                logger.info(f"[playbook sim] ✅ {symbol} 部分平仓: qty={_broker_qty} exit=${_fill:.2f}")
+                                continue
+                        except Exception as _e2:
+                            logger.error(f"[playbook dual] 部分平仓异常 {symbol}: {_e2}")
+                logger.warning(f"[playbook dual] 平仓失败 {symbol} ({_row_target}): {_err}")
                 continue
 
             exit_price = close_res.get("filled_price", 0) or current_price
             pnl = (exit_price - entry_price) * qty if direction == "LONG" else (entry_price - exit_price) * qty
-            pnl_pct = (exit_price - entry_price) / entry_price * 100 if direction == "LONG" else (entry_price - exit_price) / entry_price * 100
+            pnl_pct = (exit_price - entry_price) / entry_price * 100 if direction == "LONG" else (exit_price - entry_price) / entry_price * 100
             holding_hours = round(held_minutes / 60, 1)
 
             _close_trade_record(conn, r["id"], exit_price, exit_reason,
-                                pnl, pnl_pct / 100, holding_hours, inst_id=inst_id)
+                                pnl, pnl_pct / 100, holding_hours, inst_id=inst_id, symbol=symbol)
             exited += 1
             logger.info(
                 f"[playbook sim] 平仓: {symbol} {direction} reason={exit_reason} "
@@ -1917,17 +2549,79 @@ def _force_close_orphaned_sim_positions(scheduler) -> int:
                 conn.commit()
                 continue
             if not close_res.get("success"):
+                _eod_err = close_res.get("error", "")
+                # 2026-06-30 fix: "持仓不足" = 永久错误, 查 broker 实际持仓决定 DB-only 平仓
+                if "持仓不足" in _eod_err or "insufficient" in _eod_err.lower():
+                    _broker_qty = 0.0
+                    try:
+                        _bpos = dual.get_positions(target_env=_row_target)
+                        for _bp in _bpos:
+                            if _bp.get("code", _bp.get("symbol", "")) == symbol:
+                                _broker_qty = float(_bp.get("qty", 0) or 0)
+                                break
+                    except Exception:
+                        pass
+                    if _broker_qty <= 0:
+                        # Broker 无此持仓 → DB-only 平仓 (ghost)
+                        _eod_price = 0.0
+                        try:
+                            _q = data_router.get_quote(symbol)
+                            if _q and isinstance(_q, dict):
+                                _eod_price = float(_q.get("last", 0) or _q.get("price", 0) or 0)
+                        except Exception:
+                            pass
+                        if _eod_price <= 0:
+                            _eod_price = entry_price  # 无报价用入场价
+                        _eod_pnl = (_eod_price - entry_price) * qty if direction == "LONG" else (entry_price - _eod_price) * qty
+                        _eod_pct = (_eod_price - entry_price) / entry_price * 100 if direction == "LONG" else (entry_price - _eod_price) / entry_price * 100
+                        _eod_hh = 0.0
+                        try:
+                            _eod_hh = (datetime.now() - datetime.fromisoformat(r["entry_time"])).total_seconds() / 3600
+                        except Exception:
+                            pass
+                        _close_trade_record(conn, r["id"], _eod_price, "BROKER_GHOST_CLOSE",
+                                            _eod_pnl, _eod_pct / 100, _eod_hh,
+                                            inst_id=_meta.get("playbook_instruction_id"), symbol=symbol)
+                        closed += 1
+                        logger.info(f"[playbook sim] 🔧 EOD {symbol} DB-only平仓 (broker无持仓): exit=${_eod_price:.2f} pnl=${_eod_pnl:.2f}")
+                        continue
                 _fail_count += 1
                 _meta["eod_close_fail_count"] = _fail_count
                 conn.execute("UPDATE trade_records SET metadata_json=? WHERE id=?",
                              (_json.dumps(_meta), r["id"]))
                 conn.commit()
-                logger.warning(f"[playbook dual] EOD 兜底 {symbol} ({_row_target}) 无报价/平仓失败 (第{_fail_count}次): {close_res.get('error')}")
+                logger.warning(f"[playbook dual] EOD 兜底 {symbol} ({_row_target}) 无报价/平仓失败 (第{_fail_count}次): {_eod_err}")
                 continue
 
             exit_price = close_res.get("filled_price", 0) or 0
             if exit_price <= 0:
-                # fallback 用当前报价
+                # 根因修复 (2026-07-01): fill=0 时验证 broker 实际持仓
+                # 之前: fill=0 直接 fallback 用 get_quote → 假平仓 (broker 仍有仓, trade_records 说平了)
+                # 现在: 查 broker 实际持仓, 确认是否真的平了
+                _broker_qty_after = 0.0
+                try:
+                    _bpos_after = dual.get_positions(target_env=_row_target)
+                    for _bp in _bpos_after:
+                        _bcode = _bp.get("code", _bp.get("symbol", ""))
+                        if _bcode == symbol:
+                            _broker_qty_after = abs(float(_bp.get("qty", 0) or 0))
+                            break
+                except Exception:
+                    pass
+                if _broker_qty_after > 0.1:
+                    # broker 仍有仓位 → 平仓未成交, 不写 trade_records
+                    _fail_count += 1
+                    _meta["eod_close_fail_count"] = _fail_count
+                    conn.execute("UPDATE trade_records SET metadata_json=? WHERE id=?",
+                                 (_json.dumps(_meta), r["id"]))
+                    conn.commit()
+                    logger.warning(
+                        f"[playbook dual] EOD {symbol} fill=0 且 broker 仍有 {_broker_qty_after} 股, "
+                        f"平仓未成交 (第{_fail_count}次), 不写 trade_records"
+                    )
+                    continue
+                # broker 无仓位 → 平仓成功但价格查询失败, 用当前报价
+                logger.info(f"[playbook dual] EOD {symbol} fill=0 但 broker 已无仓, 用报价记账")
                 try:
                     q = data_router.get_quote(symbol)
                     exit_price = float(q.get("last", 0) or q.get("price", 0) or 0) if q else 0
@@ -1946,7 +2640,7 @@ def _force_close_orphaned_sim_positions(scheduler) -> int:
 
             _close_trade_record(conn, r["id"], exit_price, _eod_reason,
                                 pnl, pnl_pct / 100, holding_hours,
-                                inst_id=_meta.get("playbook_instruction_id"))
+                                inst_id=_meta.get("playbook_instruction_id"), symbol=symbol)
             closed += 1
             logger.info(f"[playbook sim] EOD 兜底平仓: {symbol} reason={_eod_reason} exit={exit_price} pnl=${pnl:.2f}")
 

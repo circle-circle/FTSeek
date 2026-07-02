@@ -20,7 +20,11 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 BASE = Path(__file__).parent.parent
-TODAY = datetime.now().strftime("%Y-%m-%d")
+try:
+    from app.utils.timezone import now_et as _now_et
+    TODAY = _now_et().strftime("%Y-%m-%d")
+except Exception:
+    TODAY = datetime.now().strftime("%Y-%m-%d")
 
 def get_ic_summary():
     """IC汇总"""

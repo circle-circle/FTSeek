@@ -37,6 +37,10 @@ def check_pre_close_exit(position, current_price, atr, trail_state, direction, p
         if policy_guardian is not None and hasattr(policy_guardian, "policy"):
             pc_cfg = policy_guardian.policy.get("exit_rules", {}).get("pre_close_exit", {})
 
+        # 2026-06-30: 检查enabled - 如果exit_policy.yaml中pre_close_exit.enabled=false, 直接返回
+        if pc_cfg.get("enabled", True) is False:
+            return None
+
         # C4 修复 (2026-05-13): 全局 EOD 配置优先
         eod_cfg = load_eod_config()
 

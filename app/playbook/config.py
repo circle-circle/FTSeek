@@ -32,7 +32,13 @@ class PlaybookConfig:
         "intraday_breakout_pct": 0.5,
         "intraday_volume_ratio": 1.5,
         "min_confidence": 65,
+        # 2026-06-28: 方向差异化 confidence 门槛 (BUY 要求更高, SHORT 维持默认)
+        "buy_min_confidence": 80,
+        "sell_short_min_confidence": 65,
         "buying_power_fallback_alert": True,
+        # 2026-06-28: 单日 guardrail (仅 auto_execute 阶段生效)
+        "daily_notional_cap_pct": 0.20,
+        "max_daily_positions": 5,
         # horizon defaults
         "short_rr_ratio": 1.0,
         "long_rr_ratio": 2.5,
@@ -86,6 +92,10 @@ class PlaybookConfig:
     def get_horizon_params(self, horizon: str) -> Dict[str, Any]:
         """读取指定 horizon 的参数"""
         return self._horizon_config.get(f"{horizon}_horizon", {})
+
+    def get_horizon_top(self, key: str, default: Any = None) -> Any:
+        """读取 playbook_horizon.yaml 顶层键 (如 factor_exit_rules, market_state_overlay)."""
+        return self._horizon_config.get(key, default)
 
     def __getattr__(self, key: str) -> Any:
         return self.get(key)

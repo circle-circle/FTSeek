@@ -223,7 +223,8 @@ def submit_order(service: "ManualOrderService", order: "ManualOrder",
 # ─────────────────────────────────────────────────────────────
 
 def close_position(service: "ManualOrderService", symbol: str, reason: str,
-                   close_qty: int = 0, price: float = None) -> Dict[str, Any]:
+                   close_qty: int = 0, price: float = None,
+                   fill_outside_rth: bool = False) -> Dict[str, Any]:
     """平仓指定持仓.
 
     Args:
@@ -231,6 +232,7 @@ def close_position(service: "ManualOrderService", symbol: str, reason: str,
         reason: 平仓理由
         close_qty: 平仓数量 (0=全平, >0=部分平仓)
         price: 限价 (None=市价平仓, >0=限价平仓用于止损/止盈)
+        fill_outside_rth: 是否允许盘前/盘后成交 (夜盘平仓必需)
     """
     from app.web_dashboard.manual_order_service import ManualOrder
 
@@ -352,12 +354,13 @@ def close_position(service: "ManualOrderService", symbol: str, reason: str,
                 order_type=futu_order_type,
                 trd_env=trd_env,
                 acc_id=acc_id,
+                fill_outside_rth=fill_outside_rth,
             )
 
             if ret == RET_OK:
                 order.order_id = str(data.iloc[0]["order_id"]) if not data.empty else ""
                 order.status = "submitted"
-                logger.info(f"[手动平仓] ✅ {symbol} 平仓成功: {int(qty)}股")
+                logger.info(f"[手动平仓] ✅ {symbol} 平仓成功: {int(qty)}股 RTH外={'是' if fill_outside_rth else '否'}")
                 service._mark_position_manual(symbol, position_dir)
 
                 # Task #11: WebSocket 实时推送 — 平仓 order_update + position_update

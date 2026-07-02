@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-06-26T13:03:01.230580+00:00",
+  "timestamp": "2026-07-02T13:13:12.114816+00:00",
   "regime": "NEUTRAL",
   "regime_weights": {
     "sector_momentum": 0.13,
@@ -13,236 +13,11 @@
   },
   "candidates": [
     {
-      "symbol": "US.QCOM",
-      "composite_score": 0.764,
-      "composite_score_long": 0.764,
-      "composite_score_short": 0.385,
-      "direction_diff": 0.378,
-      "factors": {
-        "sector_momentum": {
-          "raw": 0,
-          "score": 0.5,
-          "weight": 0.13,
-          "detail": "Semiconductors +0.0%"
-        },
-        "relative_strength": {
-          "raw": 7.79,
-          "score": 1,
-          "weight": 0.13,
-          "detail": "+8.9% vs SPY +1.1%"
-        },
-        "ma_alignment": {
-          "raw": "BULLISH",
-          "score": 1.0,
-          "weight": 0.13,
-          "detail": "MA5=163 MA10=160 MA20=158"
-        },
-        "volume_breakout": {
-          "raw": 1.96,
-          "score": 0.9733333333333333,
-          "weight": 0.13,
-          "detail": "2.0x avg"
-        },
-        "rsi_sweet_spot": {
-          "raw": 66.87,
-          "score": 0.6,
-          "weight": 0.13,
-          "detail": "RSI=67"
-        },
-        "insider_signal": {
-          "raw": 0.5,
-          "score": 0.5,
-          "weight": 0.12,
-          "detail": "NEUTRAL: 0B/0S"
-        },
-        "fundamental_quality": {
-          "raw": 0.88,
-          "score": 0.88,
-          "weight": 0.12,
-          "detail": "PE=22 ROE=19.4% PB=7.9 [Futu]"
-        },
-        "sentiment_crowding": {
-          "raw": 0.622,
-          "score": 0.622,
-          "weight": 0.11,
-          "detail": "B/A=7.0(均衡) VR=1.3x [Futu]"
-        }
-      },
-      "technicals": {
-        "cur_price": 164.335818772,
-        "ma5": 162.63,
-        "ma10": 160.23,
-        "ma20": 158.09,
-        "ma_alignment": "BULLISH",
-        "vol_ratio": 1.96,
-        "rsi14": 66.87,
-        "change_20d": 8.87,
-        "change_5d": 3.1,
-        "high_20d": 167.02,
-        "low_20d": 151.37
-      },
-      "sectors": [
-        "Semiconductors"
-      ],
-      "direction_hint": "LONG",
-      "discovery_source": "core_pool"
-    },
-    {
-      "symbol": "US.LLY",
-      "composite_score": 0.739,
-      "composite_score_long": 0.739,
-      "composite_score_short": 0.38,
-      "direction_diff": 0.359,
-      "factors": {
-        "sector_momentum": {
-          "raw": 0,
-          "score": 0.5,
-          "weight": 0.13,
-          "detail": "Healthcare +0.0%"
-        },
-        "relative_strength": {
-          "raw": 4.86,
-          "score": 0.986,
-          "weight": 0.13,
-          "detail": "+5.9% vs SPY +1.1%"
-        },
-        "ma_alignment": {
-          "raw": "BULLISH",
-          "score": 1.0,
-          "weight": 0.13,
-          "detail": "MA5=754 MA10=751 MA20=738"
-        },
-        "volume_breakout": {
-          "raw": 1.75,
-          "score": 0.8333333333333334,
-          "weight": 0.13,
-          "detail": "1.8x avg"
-        },
-        "rsi_sweet_spot": {
-          "raw": 59.9,
-          "score": 0.6,
-          "weight": 0.13,
-          "detail": "RSI=60"
-        },
-        "insider_signal": {
-          "raw": 0.5,
-          "score": 0.5,
-          "weight": 0.12,
-          "detail": "NEUTRAL: 0B/0S"
-        },
-        "fundamental_quality": {
-          "raw": 0.63,
-          "score": 0.63,
-          "weight": 0.12,
-          "detail": "PE=40 ROE=69.3% PB=34.0 [Futu]"
-        },
-        "sentiment_crowding": {
-          "raw": 0.85,
-          "score": 0.85,
-          "weight": 0.11,
-          "detail": "B/A=33.3(强买) VR=0.8x [Futu]"
-        }
-      },
-      "technicals": {
-        "cur_price": 748.347840209,
-        "ma5": 753.92,
-        "ma10": 750.7,
-        "ma20": 737.83,
-        "ma_alignment": "BULLISH",
-        "vol_ratio": 1.75,
-        "rsi14": 59.9,
-        "change_20d": 5.94,
-        "change_5d": -0.45,
-        "high_20d": 773.2,
-        "low_20d": 690.87
-      },
-      "sectors": [
-        "Healthcare"
-      ],
-      "direction_hint": "LONG",
-      "discovery_source": "core_pool"
-    },
-    {
-      "symbol": "US.JPM",
-      "composite_score": 0.721,
-      "composite_score_long": 0.721,
-      "composite_score_short": 0.441,
-      "direction_diff": 0.28,
-      "factors": {
-        "sector_momentum": {
-          "raw": 0,
-          "score": 0.5,
-          "weight": 0.13,
-          "detail": "Financials +0.0%"
-        },
-        "relative_strength": {
-          "raw": 6.92,
-          "score": 1,
-          "weight": 0.13,
-          "detail": "+8.0% vs SPY +1.1%"
-        },
-        "ma_alignment": {
-          "raw": "BULLISH",
-          "score": 1.0,
-          "weight": 0.13,
-          "detail": "MA5=307 MA10=302 MA20=298"
-        },
-        "volume_breakout": {
-          "raw": 2.03,
-          "score": 1,
-          "weight": 0.13,
-          "detail": "2.0x avg"
-        },
-        "rsi_sweet_spot": {
-          "raw": 67.13,
-          "score": 0.6,
-          "weight": 0.13,
-          "detail": "RSI=67"
-        },
-        "insider_signal": {
-          "raw": 0.5,
-          "score": 0.5,
-          "weight": 0.12,
-          "detail": "NEUTRAL: 0B/0S"
-        },
-        "fundamental_quality": {
-          "raw": 0.88,
-          "score": 0.88,
-          "weight": 0.12,
-          "detail": "PE=16 ROE=14.7% PB=2.5 [Futu]"
-        },
-        "sentiment_crowding": {
-          "raw": 0.2,
-          "score": 0.2,
-          "weight": 0.11,
-          "detail": "B/A=-71.4(强卖) VR=0.9x [Futu]"
-        }
-      },
-      "technicals": {
-        "cur_price": 310.262510691,
-        "ma5": 307.1,
-        "ma10": 301.77,
-        "ma20": 298.18,
-        "ma_alignment": "BULLISH",
-        "vol_ratio": 2.03,
-        "rsi14": 67.13,
-        "change_20d": 8.0,
-        "change_5d": 2.56,
-        "high_20d": 311.27,
-        "low_20d": 285.97
-      },
-      "sectors": [
-        "Financials"
-      ],
-      "direction_hint": "LONG",
-      "discovery_source": "core_pool"
-    },
-    {
-      "symbol": "US.AAPL",
-      "composite_score": 0.691,
-      "composite_score_long": 0.691,
-      "composite_score_short": 0.475,
-      "direction_diff": 0.215,
+      "symbol": "US.META",
+      "composite_score": 0.72,
+      "composite_score_long": 0.72,
+      "composite_score_short": 0.461,
+      "direction_diff": 0.26,
       "factors": {
         "sector_momentum": {
           "raw": 0,
@@ -251,25 +26,322 @@
           "detail": "Technology +0.0%"
         },
         "relative_strength": {
-          "raw": 8.08,
+          "raw": 3.52,
+          "score": 0.852,
+          "weight": 0.13,
+          "detail": "+2.6% vs SPY -0.9%"
+        },
+        "ma_alignment": {
+          "raw": "MIXED",
+          "score": 0.5,
+          "weight": 0.13,
+          "detail": "MA5=566 MA10=566 MA20=578"
+        },
+        "volume_breakout": {
+          "raw": 1.99,
+          "score": 0.9933333333333333,
+          "weight": 0.13,
+          "detail": "2.0x avg"
+        },
+        "rsi_sweet_spot": {
+          "raw": 61.51,
+          "score": 0.6,
+          "weight": 0.13,
+          "detail": "RSI=62"
+        },
+        "insider_signal": {
+          "raw": 0.5,
+          "score": 0.5,
+          "weight": 0.12,
+          "detail": "NEUTRAL: 0B/0S"
+        },
+        "fundamental_quality": {
+          "raw": 0.88,
+          "score": 0.88,
+          "weight": 0.12,
+          "detail": "PE=22 ROE=24.5% PB=6.4 [Futu]"
+        },
+        "sentiment_crowding": {
+          "raw": 0.972,
+          "score": 0.972,
+          "weight": 0.11,
+          "detail": "B/A=20.0(强买) VR=2.7x [Futu]"
+        }
+      },
+      "technicals": {
+        "cur_price": 612.91,
+        "ma5": 566.38,
+        "ma10": 566.04,
+        "ma20": 578.48,
+        "ma_alignment": "MIXED",
+        "vol_ratio": 1.99,
+        "rsi14": 61.51,
+        "change_20d": 2.65,
+        "change_5d": 9.91,
+        "high_20d": 641.81,
+        "low_20d": 540.18
+      },
+      "sectors": [
+        "Technology",
+        "Communication"
+      ],
+      "direction_hint": "LONG",
+      "discovery_source": "core_pool"
+    },
+    {
+      "symbol": "US.COIN",
+      "composite_score": 0.684,
+      "composite_score_long": 0.352,
+      "composite_score_short": 0.684,
+      "direction_diff": 0.332,
+      "factors": {
+        "sector_momentum": {
+          "raw": 0,
+          "score": 0.5,
+          "weight": 0.13,
+          "detail": "N/A"
+        },
+        "relative_strength": {
+          "raw": -7.61,
           "score": 1,
           "weight": 0.13,
-          "detail": "+9.2% vs SPY +1.1%"
+          "detail": "-8.5% vs SPY -0.9%"
+        },
+        "ma_alignment": {
+          "raw": "BEARISH",
+          "score": 1.0,
+          "weight": 0.13,
+          "detail": "MA5=150 MA10=155 MA20=158"
+        },
+        "volume_breakout": {
+          "raw": 1.3,
+          "score": 0.5333333333333333,
+          "weight": 0.13,
+          "detail": "1.3x avg"
+        },
+        "rsi_sweet_spot": {
+          "raw": 53.52,
+          "score": 0.6,
+          "weight": 0.13,
+          "detail": "RSI=54"
+        },
+        "insider_signal": {
+          "raw": 0.5,
+          "score": 0.5,
+          "weight": 0.12,
+          "detail": "NEUTRAL: 0B/0S"
+        },
+        "fundamental_quality": {
+          "raw": 0.52,
+          "score": 0.52,
+          "weight": 0.12,
+          "detail": "PE=59 ROE=8.7% PB=3.1 [Futu]"
+        },
+        "sentiment_crowding": {
+          "raw": 0.8125,
+          "score": 0.8125,
+          "weight": 0.11,
+          "detail": "bull=81%(拥挤)@13/3 [ST]"
+        }
+      },
+      "technicals": {
+        "cur_price": 159.24,
+        "ma5": 149.73,
+        "ma10": 155.0,
+        "ma20": 158.02,
+        "ma_alignment": "BEARISH",
+        "vol_ratio": 1.3,
+        "rsi14": 53.52,
+        "change_20d": -8.48,
+        "change_5d": 6.08,
+        "high_20d": 176.48,
+        "low_20d": 139.18
+      },
+      "sectors": [],
+      "direction_hint": "SHORT",
+      "discovery_source": "core_pool"
+    },
+    {
+      "symbol": "US.PG",
+      "composite_score": 0.679,
+      "composite_score_long": 0.679,
+      "composite_score_short": 0.308,
+      "direction_diff": 0.371,
+      "factors": {
+        "sector_momentum": {
+          "raw": 0,
+          "score": 0.5,
+          "weight": 0.13,
+          "detail": "N/A"
+        },
+        "relative_strength": {
+          "raw": 5.56,
+          "score": 1,
+          "weight": 0.13,
+          "detail": "+4.7% vs SPY -0.9%"
+        },
+        "ma_alignment": {
+          "raw": "MIXED",
+          "score": 0.5,
+          "weight": 0.13,
+          "detail": "MA5=148 MA10=149 MA20=148"
+        },
+        "volume_breakout": {
+          "raw": 0.84,
+          "score": 0.22666666666666666,
+          "weight": 0.13,
+          "detail": "0.8x avg"
+        },
+        "rsi_sweet_spot": {
+          "raw": 46.19,
+          "score": 1.0,
+          "weight": 0.13,
+          "detail": "RSI=46"
+        },
+        "insider_signal": {
+          "raw": 0.5,
+          "score": 0.5,
+          "weight": 0.12,
+          "detail": "NEUTRAL: 0B/0S"
+        },
+        "fundamental_quality": {
+          "raw": 0.88,
+          "score": 0.88,
+          "weight": 0.12,
+          "detail": "PE=22 ROE=28.2% PB=6.4 [Futu]"
+        },
+        "sentiment_crowding": {
+          "raw": 0.85,
+          "score": 0.85,
+          "weight": 0.11,
+          "detail": "B/A=60.0(强买) VR=0.8x [Futu]"
+        }
+      },
+      "technicals": {
+        "cur_price": 147.43,
+        "ma5": 148.01,
+        "ma10": 149.16,
+        "ma20": 148.14,
+        "ma_alignment": "MIXED",
+        "vol_ratio": 0.84,
+        "rsi14": 46.19,
+        "change_20d": 4.69,
+        "change_5d": -3.03,
+        "high_20d": 153.35,
+        "low_20d": 139.89
+      },
+      "sectors": [],
+      "direction_hint": "LONG",
+      "discovery_source": "core_pool"
+    },
+    {
+      "symbol": "US.BAC",
+      "composite_score": 0.648,
+      "composite_score_long": 0.648,
+      "composite_score_short": 0.33,
+      "direction_diff": 0.319,
+      "factors": {
+        "sector_momentum": {
+          "raw": 0,
+          "score": 0.5,
+          "weight": 0.13,
+          "detail": "Financials +0.0%"
+        },
+        "relative_strength": {
+          "raw": 12.65,
+          "score": 1,
+          "weight": 0.13,
+          "detail": "+11.8% vs SPY -0.9%"
         },
         "ma_alignment": {
           "raw": "BULLISH",
           "score": 1.0,
           "weight": 0.13,
-          "detail": "MA5=239 MA10=235 MA20=234"
+          "detail": "MA5=58 MA10=58 MA20=56"
         },
         "volume_breakout": {
-          "raw": 2.27,
-          "score": 1,
+          "raw": 0.94,
+          "score": 0.2933333333333333,
           "weight": 0.13,
-          "detail": "2.3x avg"
+          "detail": "0.9x avg"
         },
         "rsi_sweet_spot": {
-          "raw": 64.4,
+          "raw": 73.35,
+          "score": 0.2,
+          "weight": 0.13,
+          "detail": "RSI=73"
+        },
+        "insider_signal": {
+          "raw": 0.5,
+          "score": 0.5,
+          "weight": 0.12,
+          "detail": "NEUTRAL: 0B/0S"
+        },
+        "fundamental_quality": {
+          "raw": 0.88,
+          "score": 0.88,
+          "weight": 0.12,
+          "detail": "PE=14 ROE=9.8% PB=1.5 [Futu]"
+        },
+        "sentiment_crowding": {
+          "raw": 0.85,
+          "score": 0.85,
+          "weight": 0.11,
+          "detail": "B/A=96.2(强买) VR=0.9x [Futu]"
+        }
+      },
+      "technicals": {
+        "cur_price": 58.36,
+        "ma5": 57.86,
+        "ma10": 57.5,
+        "ma20": 56.07,
+        "ma_alignment": "BULLISH",
+        "vol_ratio": 0.94,
+        "rsi14": 73.35,
+        "change_20d": 11.78,
+        "change_5d": 1.09,
+        "high_20d": 59.2,
+        "low_20d": 50.95
+      },
+      "sectors": [
+        "Financials"
+      ],
+      "direction_hint": "LONG",
+      "discovery_source": "event_discovery"
+    },
+    {
+      "symbol": "US.CAT",
+      "composite_score": 0.648,
+      "composite_score_long": 0.648,
+      "composite_score_short": 0.285,
+      "direction_diff": 0.363,
+      "factors": {
+        "sector_momentum": {
+          "raw": 0,
+          "score": 0.5,
+          "weight": 0.13,
+          "detail": "N/A"
+        },
+        "relative_strength": {
+          "raw": 9.84,
+          "score": 1,
+          "weight": 0.13,
+          "detail": "+9.0% vs SPY -0.9%"
+        },
+        "ma_alignment": {
+          "raw": "BULLISH",
+          "score": 1.0,
+          "weight": 0.13,
+          "detail": "MA5=1029 MA10=1009 MA20=962"
+        },
+        "volume_breakout": {
+          "raw": 0.68,
+          "score": 0.12000000000000004,
+          "weight": 0.13,
+          "detail": "0.7x avg"
+        },
+        "rsi_sweet_spot": {
+          "raw": 64.17,
           "score": 0.6,
           "weight": 0.13,
           "detail": "RSI=64"
@@ -284,572 +356,557 @@
           "raw": 0.63,
           "score": 0.63,
           "weight": 0.12,
-          "detail": "PE=33 ROE=102.9% PB=38.0 [Futu]"
-        },
-        "sentiment_crowding": {
-          "raw": 0.2,
-          "score": 0.2,
-          "weight": 0.11,
-          "detail": "B/A=-28.9(强卖) VR=1.9x [Futu]"
-        }
-      },
-      "technicals": {
-        "cur_price": 244.807409884,
-        "ma5": 238.77,
-        "ma10": 235.37,
-        "ma20": 233.71,
-        "ma_alignment": "BULLISH",
-        "vol_ratio": 2.27,
-        "rsi14": 64.4,
-        "change_20d": 9.16,
-        "change_5d": 4.88,
-        "high_20d": 245.61,
-        "low_20d": 224.06
-      },
-      "sectors": [
-        "Technology"
-      ],
-      "direction_hint": "LONG",
-      "discovery_source": "core_pool"
-    },
-    {
-      "symbol": "US.AMZN",
-      "composite_score": 0.681,
-      "composite_score_long": 0.681,
-      "composite_score_short": 0.473,
-      "direction_diff": 0.208,
-      "factors": {
-        "sector_momentum": {
-          "raw": 0,
-          "score": 0.5,
-          "weight": 0.13,
-          "detail": "Consumer +0.0%"
-        },
-        "relative_strength": {
-          "raw": 3.21,
-          "score": 0.8210000000000001,
-          "weight": 0.13,
-          "detail": "+4.3% vs SPY +1.1%"
-        },
-        "ma_alignment": {
-          "raw": "MIXED",
-          "score": 0.5,
-          "weight": 0.13,
-          "detail": "MA5=232 MA10=232 MA20=231"
-        },
-        "volume_breakout": {
-          "raw": 1.96,
-          "score": 0.9733333333333333,
-          "weight": 0.13,
-          "detail": "2.0x avg"
-        },
-        "rsi_sweet_spot": {
-          "raw": 52.93,
-          "score": 0.6,
-          "weight": 0.13,
-          "detail": "RSI=53"
-        },
-        "insider_signal": {
-          "raw": 0.5,
-          "score": 0.5,
-          "weight": 0.12,
-          "detail": "NEUTRAL: 0B/0S"
-        },
-        "fundamental_quality": {
-          "raw": 0.72,
-          "score": 0.72,
-          "weight": 0.12,
-          "detail": "PE=27 ROE=17.5% PB=5.5 [Futu]"
+          "detail": "PE=49 ROE=46.4% PB=24.5 [Futu]"
         },
         "sentiment_crowding": {
           "raw": 0.85,
           "score": 0.85,
           "weight": 0.11,
-          "detail": "B/A=68.3(强买) VR=1.2x [Futu]"
+          "detail": "B/A=65.2(强买) VR=0.7x [Futu]"
         }
       },
       "technicals": {
-        "cur_price": 231.48,
-        "ma5": 231.96,
-        "ma10": 232.23,
-        "ma20": 230.84,
-        "ma_alignment": "MIXED",
-        "vol_ratio": 1.96,
-        "rsi14": 52.93,
-        "change_20d": 4.29,
-        "change_5d": 1.46,
-        "high_20d": 238.85,
-        "low_20d": 220.82
-      },
-      "sectors": [
-        "Consumer"
-      ],
-      "direction_hint": "LONG",
-      "discovery_source": "core_pool"
-    },
-    {
-      "symbol": "US.MSFT",
-      "composite_score": 0.677,
-      "composite_score_long": 0.677,
-      "composite_score_short": 0.485,
-      "direction_diff": 0.192,
-      "factors": {
-        "sector_momentum": {
-          "raw": 0,
-          "score": 0.5,
-          "weight": 0.13,
-          "detail": "Technology +0.0%"
-        },
-        "relative_strength": {
-          "raw": 1.63,
-          "score": 0.663,
-          "weight": 0.13,
-          "detail": "+2.7% vs SPY +1.1%"
-        },
-        "ma_alignment": {
-          "raw": "BULLISH",
-          "score": 1.0,
-          "weight": 0.13,
-          "detail": "MA5=509 MA10=504 MA20=503"
-        },
-        "volume_breakout": {
-          "raw": 2.11,
-          "score": 1,
-          "weight": 0.13,
-          "detail": "2.1x avg"
-        },
-        "rsi_sweet_spot": {
-          "raw": 60.02,
-          "score": 0.6,
-          "weight": 0.13,
-          "detail": "RSI=60"
-        },
-        "insider_signal": {
-          "raw": 0.5,
-          "score": 0.5,
-          "weight": 0.12,
-          "detail": "NEUTRAL: 0B/0S"
-        },
-        "fundamental_quality": {
-          "raw": 0.88,
-          "score": 0.88,
-          "weight": 0.12,
-          "detail": "PE=21 ROE=24.5% PB=6.3 [Futu]"
-        },
-        "sentiment_crowding": {
-          "raw": 0.2,
-          "score": 0.2,
-          "weight": 0.11,
-          "detail": "B/A=-98.0(强卖) VR=1.4x [Futu]"
-        }
-      },
-      "technicals": {
-        "cur_price": 514.670454158,
-        "ma5": 508.94,
-        "ma10": 503.68,
-        "ma20": 502.75,
+        "cur_price": 991.41,
+        "ma5": 1028.8,
+        "ma10": 1008.67,
+        "ma20": 961.59,
         "ma_alignment": "BULLISH",
-        "vol_ratio": 2.11,
-        "rsi14": 60.02,
-        "change_20d": 2.71,
-        "change_5d": 1.57,
-        "high_20d": 516.03,
-        "low_20d": 489.27
-      },
-      "sectors": [
-        "Technology"
-      ],
-      "direction_hint": "LONG",
-      "discovery_source": "core_pool"
-    },
-    {
-      "symbol": "US.SMCI",
-      "composite_score": 0.672,
-      "composite_score_long": 0.672,
-      "composite_score_short": 0.353,
-      "direction_diff": 0.319,
-      "factors": {
-        "sector_momentum": {
-          "raw": 0,
-          "score": 0.5,
-          "weight": 0.13,
-          "detail": "N/A"
-        },
-        "relative_strength": {
-          "raw": 7.19,
-          "score": 1,
-          "weight": 0.13,
-          "detail": "+8.3% vs SPY +1.1%"
-        },
-        "ma_alignment": {
-          "raw": "BULLISH",
-          "score": 1.0,
-          "weight": 0.13,
-          "detail": "MA5=45 MA10=44 MA20=43"
-        },
-        "volume_breakout": {
-          "raw": 1.21,
-          "score": 0.47333333333333333,
-          "weight": 0.13,
-          "detail": "1.2x avg"
-        },
-        "rsi_sweet_spot": {
-          "raw": 72.03,
-          "score": 0.2,
-          "weight": 0.13,
-          "detail": "RSI=72"
-        },
-        "insider_signal": {
-          "raw": 0.5,
-          "score": 0.5,
-          "weight": 0.12,
-          "detail": "NEUTRAL: 0B/0S"
-        },
-        "fundamental_quality": {
-          "raw": 0.88,
-          "score": 0.88,
-          "weight": 0.12,
-          "detail": "PE=17 ROE=14.3% PB=2.7 [Futu]"
-        },
-        "sentiment_crowding": {
-          "raw": 0.85,
-          "score": 0.85,
-          "weight": 0.11,
-          "detail": "B/A=85.9(强买) VR=0.6x [Futu]"
-        }
-      },
-      "technicals": {
-        "cur_price": 45.81,
-        "ma5": 45.39,
-        "ma10": 44.28,
-        "ma20": 43.37,
-        "ma_alignment": "BULLISH",
-        "vol_ratio": 1.21,
-        "rsi14": 72.03,
-        "change_20d": 8.27,
-        "change_5d": 1.8,
-        "high_20d": 47.0,
-        "low_20d": 39.56
+        "vol_ratio": 0.68,
+        "rsi14": 64.17,
+        "change_20d": 8.97,
+        "change_5d": -0.31,
+        "high_20d": 1073.46,
+        "low_20d": 854.73
       },
       "sectors": [],
       "direction_hint": "LONG",
       "discovery_source": "core_pool"
-    },
-    {
-      "symbol": "US.PLTR",
-      "composite_score": 0.666,
-      "composite_score_long": 0.666,
-      "composite_score_short": 0.436,
-      "direction_diff": 0.23,
-      "factors": {
-        "sector_momentum": {
-          "raw": 0,
-          "score": 0.5,
-          "weight": 0.13,
-          "detail": "N/A"
-        },
-        "relative_strength": {
-          "raw": 15.7,
-          "score": 1,
-          "weight": 0.13,
-          "detail": "+16.8% vs SPY +1.1%"
-        },
-        "ma_alignment": {
-          "raw": "BULLISH",
-          "score": 1.0,
-          "weight": 0.13,
-          "detail": "MA5=174 MA10=169 MA20=163"
-        },
-        "volume_breakout": {
-          "raw": 1.66,
-          "score": 0.7733333333333333,
-          "weight": 0.13,
-          "detail": "1.7x avg"
-        },
-        "rsi_sweet_spot": {
-          "raw": 77.27,
-          "score": 0.2,
-          "weight": 0.13,
-          "detail": "RSI=77"
-        },
-        "insider_signal": {
-          "raw": 0.5,
-          "score": 0.5,
-          "weight": 0.12,
-          "detail": "NEUTRAL: 0B/0S"
-        },
-        "fundamental_quality": {
-          "raw": 0.51,
-          "score": 0.51,
-          "weight": 0.12,
-          "detail": "PE=121 ROE=17.9% PB=30.4 [Futu]"
-        },
-        "sentiment_crowding": {
-          "raw": 0.85,
-          "score": 0.85,
-          "weight": 0.11,
-          "detail": "B/A=52.4(强买) VR=1.3x [Futu]"
-        }
-      },
-      "technicals": {
-        "cur_price": 182.39,
-        "ma5": 173.83,
-        "ma10": 169.02,
-        "ma20": 162.99,
-        "ma_alignment": "BULLISH",
-        "vol_ratio": 1.66,
-        "rsi14": 77.27,
-        "change_20d": 16.78,
-        "change_5d": 6.39,
-        "high_20d": 184.42,
-        "low_20d": 148.04
-      },
-      "sectors": [],
-      "direction_hint": "LONG",
-      "discovery_source": "event_discovery"
-    }
-  ],
-  "pool_size": 30,
-  "pool_meta": {
-    "core_pool_size": 28,
-    "event_discovered": 11,
-    "event_symbols": [
-      "US.PLTR",
-      "US.US.BA"
-    ],
-    "quality_gate_removed": 0,
-    "final_pool_size": 30,
-    "position_symbols": [
-      "US.MSFT",
-      "US.META",
-      "US.TSLA",
-      "US.CRM",
-      "US.GOOGL",
-      "US.JPM",
-      "US.AAPL",
-      "US.CAT",
-      "US.PG",
-      "US.PDD",
-      "US.NTES",
-      "US.MU",
-      "US.NFLX",
-      "US.AMZN"
-    ]
-  },
-  "scored_count": 30,
-  "sector_momentum": {},
-  "spy_change_20d": 1.08,
-  "elapsed_sec": 40.9,
-  "all_scores": [
-    {
-      "symbol": "US.QCOM",
-      "composite_score": 0.764,
-      "direction_hint": "LONG",
-      "composite_score_long": 0.764,
-      "composite_score_short": 0.385
     },
     {
       "symbol": "US.LLY",
-      "composite_score": 0.739,
+      "composite_score": 0.646,
+      "composite_score_long": 0.646,
+      "composite_score_short": 0.283,
+      "direction_diff": 0.363,
+      "factors": {
+        "sector_momentum": {
+          "raw": 0,
+          "score": 0.5,
+          "weight": 0.13,
+          "detail": "Healthcare +0.0%"
+        },
+        "relative_strength": {
+          "raw": 12.86,
+          "score": 1,
+          "weight": 0.13,
+          "detail": "+12.0% vs SPY -0.9%"
+        },
+        "ma_alignment": {
+          "raw": "BULLISH",
+          "score": 1.0,
+          "weight": 0.13,
+          "detail": "MA5=1191 MA10=1149 MA20=1140"
+        },
+        "volume_breakout": {
+          "raw": 0.66,
+          "score": 0.10666666666666669,
+          "weight": 0.13,
+          "detail": "0.7x avg"
+        },
+        "rsi_sweet_spot": {
+          "raw": 60.79,
+          "score": 0.6,
+          "weight": 0.13,
+          "detail": "RSI=61"
+        },
+        "insider_signal": {
+          "raw": 0.5,
+          "score": 0.5,
+          "weight": 0.12,
+          "detail": "NEUTRAL: 0B/0S"
+        },
+        "fundamental_quality": {
+          "raw": 0.63,
+          "score": 0.63,
+          "weight": 0.12,
+          "detail": "PE=42 ROE=69.3% PB=36.0 [Futu]"
+        },
+        "sentiment_crowding": {
+          "raw": 0.85,
+          "score": 0.85,
+          "weight": 0.11,
+          "detail": "B/A=53.9(强买) VR=0.6x [Futu]"
+        }
+      },
+      "technicals": {
+        "cur_price": 1191.74,
+        "ma5": 1191.38,
+        "ma10": 1149.39,
+        "ma20": 1140.27,
+        "ma_alignment": "BULLISH",
+        "vol_ratio": 0.66,
+        "rsi14": 60.79,
+        "change_20d": 11.99,
+        "change_5d": 6.67,
+        "high_20d": 1238.0,
+        "low_20d": 1053.51
+      },
+      "sectors": [
+        "Healthcare"
+      ],
       "direction_hint": "LONG",
-      "composite_score_long": 0.739,
-      "composite_score_short": 0.38
-    },
-    {
-      "symbol": "US.JPM",
-      "composite_score": 0.721,
-      "direction_hint": "LONG",
-      "composite_score_long": 0.721,
-      "composite_score_short": 0.441
-    },
-    {
-      "symbol": "US.AAPL",
-      "composite_score": 0.691,
-      "direction_hint": "LONG",
-      "composite_score_long": 0.691,
-      "composite_score_short": 0.475
-    },
-    {
-      "symbol": "US.AMZN",
-      "composite_score": 0.681,
-      "direction_hint": "LONG",
-      "composite_score_long": 0.681,
-      "composite_score_short": 0.473
-    },
-    {
-      "symbol": "US.MSFT",
-      "composite_score": 0.677,
-      "direction_hint": "LONG",
-      "composite_score_long": 0.677,
-      "composite_score_short": 0.485
-    },
-    {
-      "symbol": "US.SMCI",
-      "composite_score": 0.672,
-      "direction_hint": "LONG",
-      "composite_score_long": 0.672,
-      "composite_score_short": 0.353
-    },
-    {
-      "symbol": "US.PLTR",
-      "composite_score": 0.666,
-      "direction_hint": "LONG",
-      "composite_score_long": 0.666,
-      "composite_score_short": 0.436
-    },
-    {
-      "symbol": "US.JD",
-      "composite_score": 0.66,
-      "direction_hint": "LONG",
-      "composite_score_long": 0.66,
-      "composite_score_short": 0.342
-    },
-    {
-      "symbol": "US.WMT",
-      "composite_score": 0.657,
-      "direction_hint": "LONG",
-      "composite_score_long": 0.657,
-      "composite_score_short": 0.458
-    },
-    {
-      "symbol": "US.LMT",
-      "composite_score": 0.653,
-      "direction_hint": "LONG",
-      "composite_score_long": 0.653,
-      "composite_score_short": 0.499
-    },
-    {
-      "symbol": "US.PDD",
-      "composite_score": 0.652,
-      "direction_hint": "LONG",
-      "composite_score_long": 0.652,
-      "composite_score_short": 0.368
+      "discovery_source": "core_pool"
     },
     {
       "symbol": "US.NIO",
-      "composite_score": 0.642,
-      "direction_hint": "LONG",
-      "composite_score_long": 0.642,
-      "composite_score_short": 0.317
-    },
-    {
-      "symbol": "US.CAT",
-      "composite_score": 0.641,
-      "direction_hint": "LONG",
-      "composite_score_long": 0.641,
-      "composite_score_short": 0.411
-    },
-    {
-      "symbol": "US.META",
-      "composite_score": 0.64,
-      "direction_hint": "LONG",
-      "composite_score_long": 0.64,
-      "composite_score_short": 0.485
-    },
-    {
-      "symbol": "US.AVGO",
-      "composite_score": 0.626,
-      "direction_hint": "LONG",
-      "composite_score_long": 0.626,
-      "composite_score_short": 0.422
-    },
-    {
-      "symbol": "US.ARM",
-      "composite_score": 0.622,
-      "direction_hint": "LONG",
-      "composite_score_long": 0.622,
-      "composite_score_short": 0.455
-    },
-    {
-      "symbol": "US.GOOG",
-      "composite_score": 0.607,
-      "direction_hint": "LONG",
-      "composite_score_long": 0.607,
-      "composite_score_short": 0.366
-    },
-    {
-      "symbol": "US.PG",
-      "composite_score": 0.602,
-      "direction_hint": "NEUTRAL",
-      "composite_score_long": 0.602,
-      "composite_score_short": 0.577
-    },
-    {
-      "symbol": "US.GOOGL",
-      "composite_score": 0.589,
-      "direction_hint": "LONG",
-      "composite_score_long": 0.589,
-      "composite_score_short": 0.347
-    },
-    {
-      "symbol": "US.TSM",
-      "composite_score": 0.586,
-      "direction_hint": "NEUTRAL",
-      "composite_score_long": 0.586,
-      "composite_score_short": 0.47
-    },
-    {
-      "symbol": "US.MU",
-      "composite_score": 0.584,
-      "direction_hint": "NEUTRAL",
-      "composite_score_long": 0.584,
-      "composite_score_short": 0.497
-    },
-    {
-      "symbol": "US.NTES",
-      "composite_score": 0.583,
-      "direction_hint": "LONG",
-      "composite_score_long": 0.583,
-      "composite_score_short": 0.407
-    },
-    {
-      "symbol": "US.CRM",
-      "composite_score": 0.579,
-      "direction_hint": "NEUTRAL",
-      "composite_score_long": 0.579,
-      "composite_score_short": 0.478
-    },
-    {
-      "symbol": "US.TSLA",
-      "composite_score": 0.569,
-      "direction_hint": "LONG",
-      "composite_score_long": 0.569,
-      "composite_score_short": 0.39
-    },
-    {
-      "symbol": "US.US.BA",
-      "composite_score": 0.562,
+      "composite_score": 0.638,
+      "composite_score_long": 0.378,
+      "composite_score_short": 0.638,
+      "direction_diff": 0.261,
+      "factors": {
+        "sector_momentum": {
+          "raw": 0,
+          "score": 0.5,
+          "weight": 0.13,
+          "detail": "China_ADR +0.0%"
+        },
+        "relative_strength": {
+          "raw": -16.43,
+          "score": 1,
+          "weight": 0.13,
+          "detail": "-17.3% vs SPY -0.9%"
+        },
+        "ma_alignment": {
+          "raw": "BEARISH",
+          "score": 1.0,
+          "weight": 0.13,
+          "detail": "MA5=5 MA10=5 MA20=5"
+        },
+        "volume_breakout": {
+          "raw": 1.01,
+          "score": 0.34,
+          "weight": 0.13,
+          "detail": "1.0x avg"
+        },
+        "rsi_sweet_spot": {
+          "raw": 41.18,
+          "score": 0.4,
+          "weight": 0.13,
+          "detail": "RSI=41"
+        },
+        "insider_signal": {
+          "raw": 0.5,
+          "score": 0.5,
+          "weight": 0.12,
+          "detail": "NEUTRAL: 0B/0S"
+        },
+        "fundamental_quality": {
+          "raw": 0.53,
+          "score": 0.53,
+          "weight": 0.12,
+          "detail": "PE=0 ROE=-99.5% RevYoY=40.0% [Finnhub]"
+        },
+        "sentiment_crowding": {
+          "raw": 0.85,
+          "score": 0.85,
+          "weight": 0.11,
+          "detail": "B/A=-20.0(强卖) VR=1.0x [Futu]"
+        }
+      },
+      "technicals": {
+        "cur_price": 4.97,
+        "ma5": 4.91,
+        "ma10": 4.97,
+        "ma20": 5.15,
+        "ma_alignment": "BEARISH",
+        "vol_ratio": 1.01,
+        "rsi14": 41.18,
+        "change_20d": -17.3,
+        "change_5d": 1.43,
+        "high_20d": 5.91,
+        "low_20d": 4.66
+      },
+      "sectors": [
+        "China_ADR"
+      ],
       "direction_hint": "SHORT",
-      "composite_score_long": 0.41,
-      "composite_score_short": 0.562
-    },
-    {
-      "symbol": "US.ORCL",
-      "composite_score": 0.561,
-      "direction_hint": "NEUTRAL",
-      "composite_score_long": 0.561,
-      "composite_score_short": 0.445
-    },
-    {
-      "symbol": "US.NFLX",
-      "composite_score": 0.559,
-      "direction_hint": "NEUTRAL",
-      "composite_score_long": 0.559,
-      "composite_score_short": 0.509
-    },
-    {
-      "symbol": "US.AMD",
-      "composite_score": 0.52,
-      "direction_hint": "NEUTRAL",
-      "composite_score_long": 0.515,
-      "composite_score_short": 0.52
+      "discovery_source": "core_pool"
     },
     {
       "symbol": "US.BIDU",
-      "composite_score": 0.499,
+      "composite_score": 0.637,
+      "composite_score_long": 0.425,
+      "composite_score_short": 0.637,
+      "direction_diff": 0.212,
+      "factors": {
+        "sector_momentum": {
+          "raw": 0,
+          "score": 0.5,
+          "weight": 0.13,
+          "detail": "China_ADR +0.0%"
+        },
+        "relative_strength": {
+          "raw": -12.87,
+          "score": 1,
+          "weight": 0.13,
+          "detail": "-13.7% vs SPY -0.9%"
+        },
+        "ma_alignment": {
+          "raw": "BEARISH",
+          "score": 1.0,
+          "weight": 0.13,
+          "detail": "MA5=111 MA10=111 MA20=116"
+        },
+        "volume_breakout": {
+          "raw": 1.41,
+          "score": 0.6066666666666666,
+          "weight": 0.13,
+          "detail": "1.4x avg"
+        },
+        "rsi_sweet_spot": {
+          "raw": 50.77,
+          "score": 0.6,
+          "weight": 0.13,
+          "detail": "RSI=51"
+        },
+        "insider_signal": {
+          "raw": 0.5,
+          "score": 0.5,
+          "weight": 0.12,
+          "detail": "NEUTRAL: 0B/0S"
+        },
+        "fundamental_quality": {
+          "raw": 0.61,
+          "score": 0.61,
+          "weight": 0.12,
+          "detail": "PE=56 ROE=0.1% RevYoY=3.8% [Finnhub]"
+        },
+        "sentiment_crowding": {
+          "raw": 0.2,
+          "score": 0.2,
+          "weight": 0.11,
+          "detail": "B/A=94.4(强买) VR=1.7x [Futu]"
+        }
+      },
+      "technicals": {
+        "cur_price": 117.94,
+        "ma5": 110.52,
+        "ma10": 110.57,
+        "ma20": 115.69,
+        "ma_alignment": "BEARISH",
+        "vol_ratio": 1.41,
+        "rsi14": 50.77,
+        "change_20d": -13.74,
+        "change_5d": 9.39,
+        "high_20d": 136.96,
+        "low_20d": 100.32
+      },
+      "sectors": [
+        "China_ADR"
+      ],
+      "direction_hint": "SHORT",
+      "discovery_source": "core_pool"
+    }
+  ],
+  "pool_size": 37,
+  "pool_meta": {
+    "core_pool_size": 28,
+    "event_discovered": 23,
+    "event_symbols": [
+      "US.BA",
+      "US.V",
+      "US.RIVN",
+      "US.UBER",
+      "US.BWXT",
+      "US.BAC",
+      "US.LMT",
+      "US.MSTR",
+      "US.ARM"
+    ],
+    "quality_gate_removed": 0,
+    "final_pool_size": 37,
+    "position_symbols": [
+      "US.BABA",
+      "US.AMZN",
+      "US.NTES",
+      "US.CAT",
+      "US.NVDA",
+      "US.TSLA",
+      "US.CRM",
+      "US.PG",
+      "US.MSFT",
+      "US.META",
+      "US.GOOGL",
+      "US.MU",
+      "US.SNDK",
+      "US.PDD",
+      "US.NFLX",
+      "US.AAPL"
+    ]
+  },
+  "scored_count": 37,
+  "sector_momentum": {},
+  "spy_change_20d": -0.87,
+  "elapsed_sec": 79.4,
+  "all_scores": [
+    {
+      "symbol": "US.META",
+      "composite_score": 0.72,
       "direction_hint": "LONG",
-      "composite_score_long": 0.499,
-      "composite_score_short": 0.331
+      "composite_score_long": 0.72,
+      "composite_score_short": 0.461
+    },
+    {
+      "symbol": "US.COIN",
+      "composite_score": 0.684,
+      "direction_hint": "SHORT",
+      "composite_score_long": 0.352,
+      "composite_score_short": 0.684
+    },
+    {
+      "symbol": "US.PG",
+      "composite_score": 0.679,
+      "direction_hint": "LONG",
+      "composite_score_long": 0.679,
+      "composite_score_short": 0.308
+    },
+    {
+      "symbol": "US.BAC",
+      "composite_score": 0.648,
+      "direction_hint": "LONG",
+      "composite_score_long": 0.648,
+      "composite_score_short": 0.33
+    },
+    {
+      "symbol": "US.CAT",
+      "composite_score": 0.648,
+      "direction_hint": "LONG",
+      "composite_score_long": 0.648,
+      "composite_score_short": 0.285
+    },
+    {
+      "symbol": "US.LLY",
+      "composite_score": 0.646,
+      "direction_hint": "LONG",
+      "composite_score_long": 0.646,
+      "composite_score_short": 0.283
+    },
+    {
+      "symbol": "US.NIO",
+      "composite_score": 0.638,
+      "direction_hint": "SHORT",
+      "composite_score_long": 0.378,
+      "composite_score_short": 0.638
+    },
+    {
+      "symbol": "US.BIDU",
+      "composite_score": 0.637,
+      "direction_hint": "SHORT",
+      "composite_score_long": 0.425,
+      "composite_score_short": 0.637
+    },
+    {
+      "symbol": "US.TSM",
+      "composite_score": 0.628,
+      "direction_hint": "LONG",
+      "composite_score_long": 0.628,
+      "composite_score_short": 0.383
+    },
+    {
+      "symbol": "US.AMD",
+      "composite_score": 0.627,
+      "direction_hint": "LONG",
+      "composite_score_long": 0.627,
+      "composite_score_short": 0.333
+    },
+    {
+      "symbol": "US.UBER",
+      "composite_score": 0.627,
+      "direction_hint": "LONG",
+      "composite_score_long": 0.627,
+      "composite_score_short": 0.274
+    },
+    {
+      "symbol": "US.SNDK",
+      "composite_score": 0.622,
+      "direction_hint": "LONG",
+      "composite_score_long": 0.622,
+      "composite_score_short": 0.338
+    },
+    {
+      "symbol": "US.JPM",
+      "composite_score": 0.611,
+      "direction_hint": "LONG",
+      "composite_score_long": 0.611,
+      "composite_score_short": 0.425
+    },
+    {
+      "symbol": "US.NVDA",
+      "composite_score": 0.611,
+      "direction_hint": "SHORT",
+      "composite_score_long": 0.389,
+      "composite_score_short": 0.611
+    },
+    {
+      "symbol": "US.AAPL",
+      "composite_score": 0.601,
+      "direction_hint": "SHORT",
+      "composite_score_long": 0.301,
+      "composite_score_short": 0.601
+    },
+    {
+      "symbol": "US.WMT",
+      "composite_score": 0.593,
+      "direction_hint": "SHORT",
+      "composite_score_long": 0.368,
+      "composite_score_short": 0.593
+    },
+    {
+      "symbol": "US.AMZN",
+      "composite_score": 0.59,
+      "direction_hint": "SHORT",
+      "composite_score_long": 0.313,
+      "composite_score_short": 0.59
+    },
+    {
+      "symbol": "US.NFLX",
+      "composite_score": 0.587,
+      "direction_hint": "SHORT",
+      "composite_score_long": 0.403,
+      "composite_score_short": 0.587
+    },
+    {
+      "symbol": "US.UNH",
+      "composite_score": 0.58,
+      "direction_hint": "LONG",
+      "composite_score_long": 0.58,
+      "composite_score_short": 0.368
+    },
+    {
+      "symbol": "US.JD",
+      "composite_score": 0.575,
+      "direction_hint": "SHORT",
+      "composite_score_long": 0.413,
+      "composite_score_short": 0.575
+    },
+    {
+      "symbol": "US.MU",
+      "composite_score": 0.569,
+      "direction_hint": "LONG",
+      "composite_score_long": 0.569,
+      "composite_score_short": 0.382
+    },
+    {
+      "symbol": "US.V",
+      "composite_score": 0.565,
+      "direction_hint": "NEUTRAL",
+      "composite_score_long": 0.565,
+      "composite_score_short": 0.449
+    },
+    {
+      "symbol": "US.CRM",
+      "composite_score": 0.56,
+      "direction_hint": "NEUTRAL",
+      "composite_score_long": 0.56,
+      "composite_score_short": 0.449
+    },
+    {
+      "symbol": "US.NTES",
+      "composite_score": 0.559,
+      "direction_hint": "NEUTRAL",
+      "composite_score_long": 0.559,
+      "composite_score_short": 0.409
+    },
+    {
+      "symbol": "US.AVGO",
+      "composite_score": 0.554,
+      "direction_hint": "NEUTRAL",
+      "composite_score_long": 0.434,
+      "composite_score_short": 0.554
+    },
+    {
+      "symbol": "US.MSFT",
+      "composite_score": 0.554,
+      "direction_hint": "SHORT",
+      "composite_score_long": 0.392,
+      "composite_score_short": 0.554
+    },
+    {
+      "symbol": "US.MSTR",
+      "composite_score": 0.548,
+      "direction_hint": "NEUTRAL",
+      "composite_score_long": 0.438,
+      "composite_score_short": 0.548
+    },
+    {
+      "symbol": "US.RIVN",
+      "composite_score": 0.543,
+      "direction_hint": "NEUTRAL",
+      "composite_score_long": 0.412,
+      "composite_score_short": 0.543
+    },
+    {
+      "symbol": "US.BWXT",
+      "composite_score": 0.537,
+      "direction_hint": "LONG",
+      "composite_score_long": 0.537,
+      "composite_score_short": 0.385
+    },
+    {
+      "symbol": "US.LMT",
+      "composite_score": 0.537,
+      "direction_hint": "NEUTRAL",
+      "composite_score_long": 0.537,
+      "composite_score_short": 0.441
+    },
+    {
+      "symbol": "US.PDD",
+      "composite_score": 0.531,
+      "direction_hint": "NEUTRAL",
+      "composite_score_long": 0.462,
+      "composite_score_short": 0.531
+    },
+    {
+      "symbol": "US.TSLA",
+      "composite_score": 0.528,
+      "direction_hint": "NEUTRAL",
+      "composite_score_long": 0.441,
+      "composite_score_short": 0.528
+    },
+    {
+      "symbol": "US.ARM",
+      "composite_score": 0.526,
+      "direction_hint": "NEUTRAL",
+      "composite_score_long": 0.406,
+      "composite_score_short": 0.526
+    },
+    {
+      "symbol": "US.GOOG",
+      "composite_score": 0.519,
+      "direction_hint": "NEUTRAL",
+      "composite_score_long": 0.391,
+      "composite_score_short": 0.519
+    },
+    {
+      "symbol": "US.BA",
+      "composite_score": 0.515,
+      "direction_hint": "NEUTRAL",
+      "composite_score_long": 0.515,
+      "composite_score_short": 0.409
+    },
+    {
+      "symbol": "US.BABA",
+      "composite_score": 0.466,
+      "direction_hint": "NEUTRAL",
+      "composite_score_long": 0.362,
+      "composite_score_short": 0.466
+    },
+    {
+      "symbol": "US.GOOGL",
+      "composite_score": 0.459,
+      "direction_hint": "NEUTRAL",
+      "composite_score_long": 0.459,
+      "composite_score_short": 0.446
     }
   ]
 }

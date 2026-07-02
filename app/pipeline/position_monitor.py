@@ -705,7 +705,17 @@ def restore_positions_from_db(scheduler):
                 else:
                     position.entry_time = now_et()
                 position.trail_state = row.get("trail_state", {}) or {}
+                # P0 (2026-07-02): 恢复 DB metadata 中的 protection 字段, 防止
+                # owner=manual 但 source=auto_main 的持仓被 managed() 错误纳入
+                # (metadata={} 丢失 protection → fallback MANAGED → exit_monitor 扫描 → DB拒绝 → 无限循环)
                 position.metadata = {}
+                try:
+                    _raw_meta = row.get("metadata_json")
+                    if _raw_meta:
+                        import json as _json_meta
+                        position.metadata = _json_meta.loads(_raw_meta) if isinstance(_raw_meta, str) else dict(_raw_meta)
+                except Exception:
+                    pass
 
                 # P0 (2026-06-14): 从 trail_state_store 恢复 current_sl + peak
                 try:
@@ -782,67 +792,7 @@ def restore_positions_from_db(scheduler):
                 logger.warning(f"[持仓恢复] 恢复单条记录失败: {e}")
         logger.info(f"[持仓恢复] 完成：{restored}/{len(positions)} 条记录恢复")
 
-        # P0-2 修复 (2026-05-22): 从 option_positions 表恢复期权持仓
-        try:
-            import sqlite3
-            from app.core.db_utils import get_main_db, safe_sqlite_connect
-            db_path = str(get_main_db())
-            conn = safe_sqlite_connect(db_path)
-            cursor = conn.cursor()
-            cursor.execute("SELECT option_code, qty, entry_price, strike_price, expiry_date, entry_time FROM option_positions")
-            option_rows = cursor.fetchall()
-            conn.close()
-
-            for row in option_rows:
-                option_code, qty, entry_price, strike_price, expiry_date, entry_time = row
-                if not option_code:
-                    continue
-                # 跳过 PRICE_FAIL 已关闭的期权
-                if option_code in _pf_closed:
-                    logger.warning(f"[持仓恢复] 跳过 PRICE_FAIL 已关闭期权：{option_code}")
-                    continue
-                # 检查内存中是否已存在
-                if scheduler.position_store.has(option_code):
-                    continue
-                # 创建 Position 对象
-                position = Position(
-                    strategy_id="voting_llm_option",
-                    signal_id="",
-                    trace_id="",
-                    symbol=option_code,
-                    direction=Direction.LONG,  # 期权买入方向默认为 LONG
-                    size=float(qty),
-                    avg_entry_price=float(entry_price),
-                    initial_sl=0.0,
-                    initial_tp=0.0,
-                    current_sl=0.0,
-                    take_profit_levels=[],
-                    time_stop_hours=72,
-                    market_regime=MarketRegime.RANGE,
-                )
-                # 解析 entry_time
-                if entry_time and isinstance(entry_time, str):
-                    try:
-                        position.entry_time = datetime.fromisoformat(entry_time)
-                    except Exception:
-                        position.entry_time = now_et()
-                else:
-                    position.entry_time = now_et()
-                # 设置 metadata
-                position.metadata = {
-                    "source": "voting_llm_option",
-                    "protection": "managed",  # P1 修复：期权仓位归主线策略管理
-                    "is_option": True,
-                    "option_code": option_code,
-                    "strike_price": float(strike_price) if strike_price else 0.0,
-                    "expiry_date": expiry_date or "",
-                    "entry_time": entry_time or "",
-                }
-                scheduler.position_store.add(option_code, position)
-                restored += 1
-                logger.info(f"[持仓恢复] 期权 {option_code} LONG {qty}股 @${entry_price:.2f}")
-        except Exception as e:
-            logger.warning(f"[持仓恢复] 期权持仓恢复失败：{e}")
+        # 2026-07-01: 期权持仓恢复已删除 (自动交易不做期权)
 
         return restored
     except Exception as e:
@@ -1154,7 +1104,11 @@ def _check_positions(scheduler):
                 _conn = _sql3.connect(str(get_main_db()), timeout=3)
 
                 # 检查 1: manual_order_audit 今日是否有手动订单
-                _today = datetime.now().strftime("%Y-%m-%d")
+                try:
+                    from app.utils.timezone import now_et as _now_et_pm
+                    _today = _now_et_pm().strftime("%Y-%m-%d")
+                except Exception:
+                    _today = datetime.now().strftime("%Y-%m-%d")
                 _manual_cnt = _conn.execute(
                     "SELECT COUNT(*) FROM manual_order_audit WHERE symbol=? AND timestamp LIKE ?",
                     (_sym, f"{_today}%")
@@ -1169,19 +1123,33 @@ def _check_positions(scheduler):
                 _conn.close()
 
                 if _manual_cnt > 0 or _db_owner == 'manual':
-                    # 同时修正 DB owner (防止 INSERT OR REPLACE 腐蚀)
-                    if _db_owner != 'manual' and _manual_cnt > 0:
-                        try:
-                            _fix_conn = _sql3.connect(str(get_main_db()), timeout=3)
-                            _fix_conn.execute(
-                                "UPDATE open_positions SET owner='manual' WHERE symbol=?",
-                                (_sym,)
-                            )
-                            _fix_conn.commit()
-                            _fix_conn.close()
-                            logger.warning(f"[退出防护] {pos.symbol} DB owner 已修正为 'manual'")
-                        except Exception as e:
-                            logger.debug(f"[退出防护] DB owner 修正失败 {pos.symbol}: {e}")
+                    # 同步修正 DB owner + metadata.protection (根因修复 2026-07-02)
+                    # 根因: guard 只修 owner='manual' 但 metadata.protection 仍为 'managed'
+                    # → is_strategy_managed() 仍返回True → 退出检查持续触发 → 每轮HARD_STOP被拒绝
+                    # 一条规则消灭: owner=manual 时同步 protection=protected, 从源头过滤
+                    try:
+                        import json as _json
+                        _fix_conn = _sql3.connect(str(get_main_db()), timeout=3)
+                        _row = _fix_conn.execute(
+                            "SELECT metadata_json FROM open_positions WHERE symbol=?", (_sym,)
+                        ).fetchone()
+                        _meta = _json.loads(_row[0]) if _row and _row[0] else {}
+                        _meta['protection'] = 'protected'
+                        _fix_conn.execute(
+                            "UPDATE open_positions SET owner='manual', metadata_json=? WHERE symbol=?",
+                            (_json.dumps(_meta), _sym)
+                        )
+                        _fix_conn.commit()
+                        _fix_conn.close()
+                        # 同步更新内存 Position 对象 (本轮立即生效)
+                        if hasattr(pos, 'metadata') and isinstance(pos.metadata, dict):
+                            pos.metadata['protection'] = 'protected'
+                        logger.warning(
+                            f"[退出防护] {pos.symbol} owner→manual, protection→protected "
+                            f"(手动审计={_manual_cnt}笔)"
+                        )
+                    except Exception as e:
+                        logger.debug(f"[退出防护] DB 修正失败 {pos.symbol}: {e}")
                     logger.warning(
                         f"[退出防护] {pos.symbol} 拒绝自动平仓: "
                         f"手动审计={_manual_cnt}笔, DB owner={_db_owner}"
@@ -1492,7 +1460,11 @@ def _is_manual_position_for_reconcile(symbol: str) -> bool:
             import sqlite3 as _sql3
             from datetime import datetime as _dt
             _conn = _sql3.connect(str(get_main_db()), timeout=5)
-            _today = _dt.now().strftime("%Y-%m-%d")
+            try:
+                from app.utils.timezone import now_et as _now_et_pm2
+                _today = _now_et_pm2().strftime("%Y-%m-%d")
+            except Exception:
+                _today = _dt.now().strftime("%Y-%m-%d")
             _cnt = _conn.execute(
                 "SELECT COUNT(*) FROM manual_order_audit WHERE symbol=? AND timestamp LIKE ?",
                 (symbol, f"{_today}%")

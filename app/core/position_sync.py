@@ -374,10 +374,9 @@ class USPositionSync:
                 if qty != 0:
                     code = str(row['code'])
                     # 2026-06-11: 跳过非美股标的 (如 HK.00700)
-                    if not code.startswith('US.') or code.count('.') > 1:
+                    # 2026-06-30: 跳过 #SIM 后缀 (Futu SIM账户持仓, 不进入pipeline)
+                    if not code.startswith('US.') or code.count('.') > 1 or '#' in code:
                         continue
-                    if not code.startswith('US.'):
-                        code = 'US.' + code
                     side = str(row.get('position_side', ''))
                     is_short = (qty < 0) or (side == 'SHORT')
                     positions[code] = {
@@ -409,7 +408,11 @@ class USPositionSync:
         if self._futu_ctx is None:
             return {}
         
-        today_str = datetime.now().strftime('%Y-%m-%d')
+        try:
+            from app.utils.timezone import now_et as _now_et_sync
+            today_str = _now_et_sync().strftime('%Y-%m-%d')
+        except Exception:
+            today_str = datetime.now().strftime('%Y-%m-%d')
         result = {}
         
         try:
@@ -476,8 +479,10 @@ class USPositionSync:
         if ctx is None:
             return
         try:
-            # 查询两个环境的持仓: SIMULATE + REAL (同一 ctx 可查两个 env)
-            _envs_to_query = [TrdEnv.SIMULATE, TrdEnv.REAL]
+            # 2026-06-30: 只查 SIMULATE 环境, 不查 REAL
+            # 原因: AUTO_TRADE_ACCOUNT=sim, 自动交易只在模拟环境
+            # REAL 环境的持仓是用户手动开的实盘仓, 系统不碰
+            _envs_to_query = [TrdEnv.SIMULATE]
             _combined_data = None
             _query_failed = False
             for _env in _envs_to_query:
@@ -535,7 +540,8 @@ class USPositionSync:
                     if qty != 0:
                         code = str(row['code'])
                         # 2026-06-11: 跳过非美股标的 (如 HK.00700)
-                        if not code.startswith('US.') or code.count('.') > 1:
+                        # 2026-06-30: 跳过 #SIM 后缀 (Futu SIM账户持仓, 不进入pipeline)
+                        if not code.startswith('US.') or code.count('.') > 1 or '#' in code:
                             continue
                         if not code.startswith('US.'):
                             code = 'US.' + code
@@ -625,8 +631,9 @@ class USPositionSync:
             else:
                 logger.warning("[US Sync] Ghost position: %s (DB only, closing)", symbol)
             # M10 (2026-06-03): 软删除保留审计记录, 替代硬 DELETE
+            # 2026-07-02: 同时清零 size, 防止幽灵仓触发 SL danger 误报
             cursor.execute(
-                "UPDATE open_positions SET sync_status='closed_by_sync', updated_at=? WHERE symbol=?",
+                "UPDATE open_positions SET sync_status='closed_by_sync', size=0, updated_at=? WHERE symbol=?",
                 (datetime.now().isoformat(), symbol)
             )
             # 2026-06-25: 清理 ghost 对应的幻影 trade_records (订单 submit 时写入但未成交)
@@ -743,10 +750,12 @@ class USPositionSync:
                 # ponytail (2026-06-25): Playbook SIM 仓位跳过 25% cap — 由 playbook 自管 sizing
                 _is_pb_sim = False
                 try:
+                    from app.core.scheduler_triggers import ET as _et
+                    _et_yesterday = (datetime.now(_et).date() - timedelta(days=1)).isoformat()
                     _pb_row = cursor.execute(
                         "SELECT 1 FROM trade_records WHERE symbol=? AND source_type='PLAYBOOK_SIM' "
-                        "AND entry_time >= date('now','start of day','-1 day') AND exit_time IS NULL LIMIT 1",
-                        (symbol,)).fetchone()
+                        "AND entry_time >= ? AND exit_time IS NULL LIMIT 1",
+                        (symbol, _et_yesterday)).fetchone()
                     _is_pb_sim = _pb_row is not None
                 except Exception:
                     pass
@@ -758,10 +767,14 @@ class USPositionSync:
                             initial_sl, current_sl, initial_tp,
                             entry_time, updated_at, strategy_id, trader_type, owner_strategy,
                             owner, sync_status
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'synced')""",
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'synced')
+                        ON CONFLICT(symbol) DO UPDATE SET
+                            direction=excluded.direction, size=excluded.size,
+                            avg_entry_price=excluded.avg_entry_price, updated_at=excluded.updated_at,
+                            sync_status='synced'""",
                         (symbol, info['direction'], info['qty'], info['cost'],
                          0, 0, 0, datetime.now().isoformat(), datetime.now().isoformat(),
-                         'playbook_sim', 'AUTO', 'playbook_sim'))
+                         'playbook_sim', 'AUTO', 'playbook_sim', 'auto'))
                     continue
                 # 1. 仓位占比验证
                 try:
@@ -863,7 +876,10 @@ class USPositionSync:
                         initial_tp = info['cost'] * (1 - _fb_tp)
 
                 logger.info("[US Sync] New position: %s %s %s @ %s", symbol, info['direction'], info['qty'], info['cost'])
-                # P3 修复 (2026-06-12): 三层手动判断: DB已有manual > 今日手动审计 > 富途委托
+                # 2026-07-02: 安全默认MANUAL — 无法证明是系统开的就标manual
+                # 根因: 原else=AUTO, 人工在App开的仓会被误标auto → 被自动平仓
+                # 修复: 只有当日系统委托(_today_orders)有记录才标AUTO, 否则MANUAL
+                # open_positions已是SSOT (playbook下单时也写open_positions), DB无记录=人工
                 _db_already_manual = symbol in getattr(self, '_db_manual_symbols', set())
                 if _db_already_manual:
                     _db_trader_type = "MANUAL"
@@ -872,7 +888,7 @@ class USPositionSync:
                 elif symbol in _today_orders:
                     _db_trader_type = "AUTO"
                 else:
-                    _db_trader_type = "MANUAL"
+                    _db_trader_type = "MANUAL"  # was AUTO (2026-07-02: 安全默认)
                 _db_strategy_id = "auto_main" if _db_trader_type == "AUTO" else "futu_sync"
                 # P0-4 修复 (2026-06-12): UPSERT — 防止与 stub 行/隔离自管行 UNIQUE 冲突
                 # 根因: 之前裸 INSERT 触发 "UNIQUE constraint failed: open_positions.symbol" 持续刷屏
@@ -894,6 +910,7 @@ class USPositionSync:
                         strategy_id=COALESCE(open_positions.strategy_id, excluded.strategy_id),
                         trader_type=COALESCE(open_positions.trader_type, excluded.trader_type),
                         owner_strategy=COALESCE(open_positions.owner_strategy, excluded.owner_strategy),
+                        sync_status='synced',
                         owner=CASE
                             WHEN open_positions.owner='manual' THEN 'manual'
                             ELSE excluded.owner
@@ -1023,8 +1040,17 @@ class USPositionSync:
                     sl_price = cost + atr * atr_mult
                     tp_price = cost - atr * atr_mult * 2.0
                 
-                # 硬底限保护
-                hard_stop = cost * 0.85 if info['direction'] == 'LONG' else cost * 1.15
+                # 硬底限保护: 读 exit_policy.yaml SSOT (与 line 841-851 对齐)
+                try:
+                    from app.risk.exit_policy_guardian import ExitPolicyGuardian
+                    _ep = ExitPolicyGuardian()
+                    _policy = _ep._load_exit_policy_dict()
+                    _ml = float(_policy.get("exit_rules", {}).get(
+                        "atr_stop", {}).get("max_loss_pct", 2.0))
+                    _max_loss_pct = _ml / 100.0
+                except Exception:
+                    _max_loss_pct = 0.02  # fallback 2%
+                hard_stop = cost * (1 - _max_loss_pct) if info['direction'] == 'LONG' else cost * (1 + _max_loss_pct)
                 if info['direction'] == 'LONG':
                     sl_price = max(sl_price, hard_stop)
                 else:
@@ -1045,18 +1071,11 @@ class USPositionSync:
                 logger.error(f"[SL校验·修复] {symbol} LONG SL=${sl_price:.2f} > entry=${cost:.2f}, 重算")
                 sl_price = cost * 0.92  # fallback 8%
 
-            # P0 修复 (2026-05-20): 期权仓位归主线策略管理，避免误标为手动仓
-            # 期权代码格式：US.XXX26XXXXP/C (含年月 + Put/Call)
-            is_option = any(x in symbol for x in ['26', '27', '28']) and any(x in symbol for x in ['P', 'C'])
-            
             # P3 修复 (2026-06-12): 三层手动判断优先级: DB已有manual > 今日手动审计 > 富途委托
             _is_db_manual = symbol in getattr(self, '_db_manual_symbols', set())
             _is_manual_today = symbol in getattr(self, '_manual_today', set())
             _has_today_order = symbol in _today_orders and not _is_manual_today and not _is_db_manual
-            if is_option:
-                strategy_id = "voting_llm_option"
-                trader_type = "OPTION"
-            elif _is_db_manual:
+            if _is_db_manual:
                 strategy_id = "manual_sync"
                 trader_type = "MANUAL"
                 logger.info(
@@ -1072,14 +1091,19 @@ class USPositionSync:
                 # P0 fix (2026-06-25): 跳过 Playbook SIM 仓位 — 防止 position_sync 劫持
                 # 根因: Playbook auto_execute → DualBroker 下单 → Futu 有仓 → position_sync
                 # 同步回来标记 auto_main → MAIN_PIPELINE exit_monitor 接管 → 双重平仓
-                # 修复: 如果 trade_records 已有该 symbol 的 PLAYBOOK_SIM 开仓记录 → 跳过
+                # 修复 (2026-07-01): 原查询条件 exit_time IS NULL 在 EOD close 后失效
+                # → trade_records 有 exit_time → _is_playbook=False → 不跳过 → 覆盖 owner_strategy
+                # 现在: 只要有 PLAYBOOK_SIM 开仓记录就跳过 (不管是否已平仓)
+                # 因为 open_positions.sync_status 已由 _close_trade_record 管理
                 _is_playbook = False
                 try:
+                    from app.core.scheduler_triggers import ET as _et
+                    _et_yesterday = (datetime.now(_et).date() - timedelta(days=1)).isoformat()
                     _pc = safe_sqlite_connect(_get_db_path(), timeout=5)
                     _row = _pc.execute(
                         "SELECT 1 FROM trade_records WHERE symbol=? AND source_type='PLAYBOOK_SIM' "
-                        "AND entry_time >= date('now','start of day','-1 day') AND exit_time IS NULL LIMIT 1",
-                        (symbol,)).fetchone()
+                        "AND entry_time >= ? LIMIT 1",
+                        (symbol, _et_yesterday)).fetchone()
                     _pc.close()
                     _is_playbook = _row is not None
                 except Exception:
@@ -1121,15 +1145,7 @@ class USPositionSync:
             # P1 归因修复 (2026-06-06): 补充 trace_id + entry_reason，防止 metadata 全空
             import uuid as _sync_uuid
             _sync_trace = f"sync-{symbol}-{int(time.time())}-{_sync_uuid.uuid4().hex[:4]}"
-            if is_option:
-                position.metadata = {
-                    "source": "voting_llm_option",
-                    "is_option": True,
-                    "trace_id": _sync_trace,
-                    "entry_reason": "option_discovery",
-                    "strategy_id": strategy_id,
-                }
-            elif _has_today_order:
+            if _has_today_order:
                 # P3: 策略开仓恢复 — 标记为 auto_main 恢复
                 _order_info = _today_orders[symbol]
                 position.metadata = {
@@ -1411,20 +1427,22 @@ class USPositionSync:
                 existing.direction = broker_dir
                 existing.avg_entry_price = info['cost']
                 existing.size = info['qty']
-                # 重算 SL/TP (方向翻转后旧 SL 方向错误)
-                try:
-                    atr = self._get_symbol_atr(symbol, info['cost'])
-                    atr_mult = self._get_atr_stop_mult()  # P1: SSOT 替代硬编码 2.5
-                    if info['direction'] == 'LONG':
-                        existing.initial_sl = info['cost'] - atr * atr_mult
+                # 2026-06-30: 只在initial_sl=0/NULL时才重算SL, 不覆盖已有的vol_buckets SL
+                _need_sl_recalc = not existing.initial_sl or existing.initial_sl == 0
+                if _need_sl_recalc:
+                    try:
+                        atr = self._get_symbol_atr(symbol, info['cost'])
+                        atr_mult = self._get_atr_stop_mult()  # P1: SSOT 替代硬编码 2.5
+                        if info['direction'] == 'LONG':
+                            existing.initial_sl = info['cost'] - atr * atr_mult
+                            existing.current_sl = existing.initial_sl
+                        else:
+                            existing.initial_sl = info['cost'] + atr * atr_mult
+                            existing.current_sl = existing.initial_sl
+                    except Exception:
+                        sl_mult = 1.08 if info['direction'] == 'SHORT' else 0.92
+                        existing.initial_sl = info['cost'] * sl_mult
                         existing.current_sl = existing.initial_sl
-                    else:
-                        existing.initial_sl = info['cost'] + atr * atr_mult
-                        existing.current_sl = existing.initial_sl
-                except Exception:
-                    sl_mult = 1.08 if info['direction'] == 'SHORT' else 0.92
-                    existing.initial_sl = info['cost'] * sl_mult
-                    existing.current_sl = existing.initial_sl
                 # P0 修复 (2026-06-04): 清理旧方向 trail_state
                 # 旧 peak/highest/lowest 基于反方向计算, 方向翻转后全部失效
                 # 不清理会导 trailing stop 方向错误 (SHORT 按 LONG peak 回撤)
@@ -1696,38 +1714,8 @@ class USPositionSync:
             return 1
 
     def _get_option_position_symbols(self) -> Optional[set]:
-        """从 option_positions DB 表读取期权持仓标的 (2026-04-28)
-        P0-4c 修复 (2026-05-03): 返回 None 表示查询失败，而非空集
-        空集 = 无期权持仓；None = 查询出错，应跳过清理
-
-        期权持仓不在 broker 中 (模拟/真实期权)，不应被误判为幽灵仓。
-
-        2026-05-20 修复: 使用 option_code 列 (合约代码) 而非 symbol 列 (标的).
-        open_positions 中存的是合约代码 (如 US.QQQ260602P710000).
-
-        2026-05-20 补充: 额外扫描 open_positions 中的期权合约代码 (启发式匹配).
-        捕获 option_positions 表中遗漏的期权 (如 SPY260602P730000).
-        """
-        try:
-            conn = safe_sqlite_connect(_get_db_path(), timeout=10)
-            conn.execute("PRAGMA busy_timeout=5000")
-            cursor = conn.cursor()
-            cursor.execute("SELECT DISTINCT option_code FROM option_positions")
-            symbols = {row[0] for row in cursor.fetchall()}
-
-            # 补充: 扫描 open_positions 中的期权合约代码 (启发式匹配)
-            import re
-            cursor.execute("SELECT symbol FROM open_positions")
-            for row in cursor.fetchall():
-                sym = row[0]
-                if re.match(r'^US\.[A-Z]+\d{6}[PC]\d+$', sym):
-                    symbols.add(sym)
-
-            conn.close()
-            return symbols
-        except Exception as e:
-            logger.warning(f"[US Sync] 读取期权持仓失败: {e}")
-            return None  # P0-4c: None 表示错误，调用方应跳过清理
+        """2026-07-01: 期权已删除, 返回空集"""
+        return set()
 
     def _get_db_positions(self) -> Dict[str, dict]:
         """从 DB 读取当前持仓 (用于判断是否为已存在仓位)"""

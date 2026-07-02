@@ -29,6 +29,14 @@ from typing import Any, Dict, List, Optional
 
 from app.push import Category, Level, PushMessage, get_push_hub
 
+# 2026-06-30: 统一用 ET 日期做幂等键
+def _et_date_str() -> str:
+    try:
+        from app.utils.timezone import now_et
+        return now_et().strftime("%Y-%m-%d")
+    except Exception:
+        return datetime.now().strftime("%Y-%m-%d")
+
 logger = logging.getLogger(__name__)
 
 
@@ -227,7 +235,7 @@ class PremarketPushTrigger:
             if not isinstance(recommendations, dict) or not recommendations:
                 logger.warning("[PushTrigger] send_final: recommendations 为空, 跳过")
                 return False
-            date_str = str(recommendations.get("date") or datetime.now().strftime("%Y-%m-%d"))
+            date_str = str(recommendations.get("date") or _et_date_str())
             if self._already_pushed("final", date_str):
                 logger.info(f"[PushTrigger] {date_str} final 推荐今日已推送, 幂等跳过")
                 return False
@@ -279,7 +287,7 @@ class PremarketPushTrigger:
 
     def _format_actions_only(self, recommendations: Dict[str, Any]) -> str:
         """简短卡片: 只有持仓操作指令，无新开仓推荐。"""
-        date_str = recommendations.get("date") or datetime.now().strftime("%Y-%m-%d")
+        date_str = recommendations.get("date") or _et_date_str()
         conviction = recommendations.get("system_conviction")
         debate_summary = recommendations.get("debate_summary") or ""
         position_actions = recommendations.get("position_actions") or []
@@ -326,7 +334,7 @@ class PremarketPushTrigger:
             if not isinstance(accuracy_report, dict) or not accuracy_report:
                 logger.warning("[PushTrigger] send_accuracy_report: 空报告, 跳过")
                 return False
-            date_str = str(accuracy_report.get("date") or datetime.now().strftime("%Y-%m-%d"))
+            date_str = str(accuracy_report.get("date") or _et_date_str())
             if self._already_pushed("accuracy", date_str):
                 logger.info(f"[PushTrigger] {date_str} accuracy 报告今日已推送, 幂等跳过")
                 return False
@@ -349,7 +357,7 @@ class PremarketPushTrigger:
 
     # ─── 格式化: 推荐卡片 (交易员决策格式) ────────────────────
     def format_recommendation_card(self, recommendations: Dict[str, Any]) -> str:
-        date_str = recommendations.get("date") or datetime.now().strftime("%Y-%m-%d")
+        date_str = recommendations.get("date") or _et_date_str()
         market_tone = (
             recommendations.get("market_regime")
             or recommendations.get("market_tone")
@@ -659,7 +667,7 @@ class PremarketPushTrigger:
 
     # ─── 格式化: 准确率卡片 ──────────────────────────────────────
     def format_accuracy_card(self, accuracy_report: Dict[str, Any]) -> str:
-        date_str = accuracy_report.get("date") or datetime.now().strftime("%Y-%m-%d")
+        date_str = accuracy_report.get("date") or _et_date_str()
 
         today_correct = accuracy_report.get("today_correct")
         today_total = accuracy_report.get("today_total")

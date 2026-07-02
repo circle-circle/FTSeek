@@ -167,12 +167,10 @@ def scan_loop(scheduler):
                     time.sleep(1)
                 continue
 
-            # 2026-06-24 清理: TRADING 阶段新单执行由 playbook futu_simulate 独占.
-            # 2026-06-26: scan_loop 在 TRADING 阶段直接执行信号 (不再让 playbook 独占)
-            # 原因: playbook auto_execute 需要 triggered 指令, 但指令从未生成
-            # scan_loop 产生的信号直接走 _submit_order, 经 IC门禁/Plan Gate/风控 后下单
-            _skip_execution_in_trading = False
-            scheduler._skip_execution_in_trading = False
+            # 2026-06-28: TRADING 阶段新单执行由 playbook futu_simulate 独占.
+            # scan_loop 仅做信号研究与 IC 数据采集, 不再下单, 避免与 Playbook 路径冲突.
+            _skip_execution_in_trading = True
+            scheduler._skip_execution_in_trading = True
 
             if is_circuit_breaker_open():
                 logger.warning("[熔断] API 熔断器已开启，暂停扫描...")
@@ -760,6 +758,9 @@ def _generate_technical_signal(scheduler, context: Dict[str, Any]) -> Dict[str, 
     signal = scorer.score(context)
     result = signal.to_vote_result()
 
+    # P0 (2026-06-29): 标记 strategy_id, 防止被 _record_decision_to_db 误标为 voting_llm
+    result["strategy_id"] = "technical_intraday"
+
     result["position_suggestion"].update({
         "stop_loss_pct": signal.stop_loss_pct,
         "atr_used": context.get("atr", 0),
@@ -1031,6 +1032,8 @@ def _process_symbol_new_pipeline(scheduler, symbol: str, vix: float,
         "news_provider": getattr(scheduler, 'news_provider', None),
         # P0 (2026-06-17): 快速 Regime 切换覆盖 — 由 scan_loop 检测注入
         "_rapid_regime_override": getattr(scheduler, '_rapid_regime_override', None),
+        # P0 (2026-06-29): TRADING阶段LLM空转修复 — Playbook独占时跳过LLM投票
+        "_skip_execution_in_trading": getattr(scheduler, '_skip_execution_in_trading', False),
     }
 
     # ── 执行管线 ──
@@ -1197,6 +1200,11 @@ def _process_symbol_new_pipeline(scheduler, symbol: str, vix: float,
         from datetime import datetime as _dt
         from app.core.db_utils import db_connect
         from app.core.paths import get_trade_records_db
+        try:
+            from app.utils.timezone import now_et as _now_et
+            _signal_date = _now_et().strftime("%Y-%m-%d")
+        except Exception:
+            _signal_date = _dt.now().strftime("%Y-%m-%d")
         with db_connect(get_trade_records_db()) as conn:
             conn.execute(
                 "INSERT INTO signals "
@@ -1204,7 +1212,7 @@ def _process_symbol_new_pipeline(scheduler, symbol: str, vix: float,
                 " entry_price, stop_loss, take_profit, strategy, status) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
-                    _dt.now().strftime("%Y-%m-%d"),
+                    _signal_date,
                     symbol,
                     str(signal.direction),
                     signal.strength,

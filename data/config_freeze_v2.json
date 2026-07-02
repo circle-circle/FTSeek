@@ -1,0 +1,23 @@
+{
+  "freeze_date": "2026-07-01",
+  "config_version": "v2",
+  "description": "OKR期间第5阶段冻结: exit_policy v3.0 + vol_bucket + pre_close盈利模式 + GLM fallback修复 + SL 2%修复",
+  "files": {
+    "exit_policy": {
+      "path": "app/risk/exit_policy.yaml",
+      "md5": "5d59a1261707c12dbe9c0a55fe2725da",
+      "size": 9068
+    },
+    "unified_config": {
+      "path": "config/unified_config.yaml",
+      "md5": "f1e22e5d3f3accce82e9a7662805966c",
+      "size": 48496
+    },
+    "screening": {
+      "path": "config/playbook_screening.yaml",
+      "md5": "76749928a353d9d894b5b2d44f42be5b",
+      "size": 3460
+    }
+  },
+  "notes": "unified_config md5 updated: weight_v2_active false→true (freeze marker)"
+}

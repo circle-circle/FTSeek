@@ -23,11 +23,48 @@ Signal IC Tracker — 信号预测力追踪系统 (Phase 1)
 from __future__ import annotations
 
 import sqlite3
+import json
 import logging
 import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Dict, Any, List
+import math
+
+
+def _rank_values(values: List[float]) -> List[float]:
+    """Pure-Python rank (average rank for ties, 1-based)."""
+    indexed = sorted(range(len(values)), key=lambda i: values[i])
+    ranks = [0.0] * len(values)
+    i = 0
+    while i < len(indexed):
+        j = i
+        while j + 1 < len(indexed) and values[indexed[j + 1]] == values[indexed[i]]:
+            j += 1
+        avg_rank = (i + 1 + j + 1) / 2.0
+        for k in range(i, j + 1):
+            ranks[indexed[k]] = avg_rank
+        i = j + 1
+    return ranks
+
+
+def _spearman_fallback(x: List[float], y: List[float]) -> tuple:
+    """Pure-Python Spearman without scipy (no p-value).
+    Uses Pearson correlation on ranks (tie-corrected, matches scipy)."""
+    if not x or len(x) != len(y) or len(x) < 2:
+        return None, None
+    xr = _rank_values(x)
+    yr = _rank_values(y)
+    n = len(xr)
+    mx = sum(xr) / n
+    my = sum(yr) / n
+    cov = sum((a - mx) * (b - my) for a, b in zip(xr, yr))
+    vx = sum((a - mx) ** 2 for a in xr)
+    vy = sum((b - my) ** 2 for b in yr)
+    if vx == 0 or vy == 0:
+        return None, None
+    rho = cov / math.sqrt(vx * vy)
+    return float(rho), None
 
 logger = logging.getLogger("ftseek_us.signal_ic_tracker")
 
@@ -56,6 +93,22 @@ def _conn() -> sqlite3.Connection:
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA synchronous=NORMAL")
     return conn
+
+
+# 2026-06-30: Strategy Registry 替换硬编码 mapping
+# 从 app.core.strategy_registry 读取 disabled 策略列表，不再手动维护 cfg_to_sid 映射
+
+def _get_disabled_strategy_ids() -> List[str]:
+    """从 strategy_registry 获取所有 disabled 策略的 strategy_id。
+    
+    自动适配：新增/禁用策略只需改 unified_config.yaml 的 strategy_registry 段。
+    """
+    try:
+        from app.core.strategy_registry import get_disabled_strategy_ids as _get
+        return _get()
+    except Exception as e:
+        logger.warning(f"[SignalIC] strategy_registry 不可用, 返回空列表: {e}")
+        return []
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -127,6 +180,13 @@ def _ensure_table():
                 logger.info("[SignalIC] 已添加 weight_version 列")
             except Exception:
                 pass  # 列已存在
+            # 2026-06-30 Phase 1: 因子级IC基础设施 — 记录信号生成时命中的因子
+            try:
+                conn.execute("ALTER TABLE signal_snapshots ADD COLUMN factors_json TEXT")
+                logger.info("[SignalIC] 已添加 factors_json 列")
+            except Exception:
+                pass  # 列已存在
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_snap_factors ON signal_snapshots(factors_json)")
             conn.commit()
             _INITIALIZED = True
             logger.info(f"[SignalIC] 表初始化完成: {_get_db_path()}")
@@ -150,6 +210,7 @@ def record_signal_snapshot(
     strategy_id: Optional[str] = None,
     created_at: Optional[str] = None,
     trade_date: Optional[str] = None,
+    factors: Optional[list] = None,  # 2026-06-30 Phase 1: 命中的因子列表 ["insider_cluster_buy", "above_ma20", ...]
 ):
     """
     记录信号快照 — 由 decision_recorder.record_decision() 调用
@@ -166,9 +227,14 @@ def record_signal_snapshot(
         consensus_level: 0.0-1.0
         strategy_id: 策略标识
         created_at: ISO 格式时间戳
+        factors: 信号生成时命中的因子列表 (用于因子级IC计算)
     """
     try:
         _ensure_table()
+        
+        # P0 (2026-06-29): 防再生 — strategy_id 为空时标记 "unknown"
+        if not strategy_id:
+            strategy_id = "unknown"
         
         if created_at is None:
             created_at = datetime.now().isoformat()
@@ -199,16 +265,20 @@ def record_signal_snapshot(
         
         conn = _conn()
         try:
+            _factors_json = json.dumps(factors) if factors else None
+            # UPSERT: 若 decision_recorder 先写入(无factors), 后续 pipeline 带 factors 时更新
             conn.execute("""
-                INSERT OR IGNORE INTO signal_snapshots
+                INSERT INTO signal_snapshots
                 (decision_id, symbol, direction, strength, confidence,
                  consensus_level, strategy_id, created_at, trade_date,
-                 created_at_snap, trade_mode, weight_version)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 created_at_snap, trade_mode, weight_version, factors_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(decision_id) DO UPDATE SET
+                    factors_json = COALESCE(excluded.factors_json, signal_snapshots.factors_json)
             """, (
                 decision_id, symbol, direction, strength, confidence,
                 consensus_level, strategy_id, created_at, trade_date,
-                now_snap, _trade_mode, _weight_version,
+                now_snap, _trade_mode, _weight_version, _factors_json,
             ))
             conn.commit()
         finally:
@@ -396,18 +466,27 @@ def get_ic_summary(
     try:
         from scipy.stats import spearmanr
     except ImportError:
-        return {"status": "error", "message": "scipy not installed"}
+        spearmanr = None
     
     conn = _conn()
     try:
         # 获取已回填的信号
         # 2026-06-16 修复: days_back 参数原来被声明但从未注入 WHERE 子句
+        # 2026-06-30 修复: 排除已disabled策略的信号，防止死策略污染IC
         from datetime import datetime as _dt, timedelta as _td
         _cutoff = (_dt.now() - _td(days=days_back)).strftime("%Y-%m-%d")
         # Task #4: 支持按 weight_version 过滤
         _wv_clause = ""
         if weight_version:
             _wv_clause = f" AND COALESCE(weight_version, 'v1') = '{weight_version}'"
+        
+        # 2026-06-30: 从config读取disabled策略，排除其历史信号
+        _disabled_strats = _get_disabled_strategy_ids()
+        _excl_clause = ""
+        if _disabled_strats:
+            _placeholders = ",".join(f"'{s}'" for s in _disabled_strats)
+            _excl_clause = f" AND strategy_id NOT IN ({_placeholders})"
+        
         rows = conn.execute(f"""
             SELECT strength, {forward_col}, strategy_id, direction, trade_date
             FROM signal_snapshots
@@ -415,6 +494,7 @@ def get_ic_summary(
               AND strength IS NOT NULL
               AND trade_date >= '{_cutoff}'
               {_wv_clause}
+              {_excl_clause}
             ORDER BY trade_date DESC
         """).fetchall()
         
@@ -449,9 +529,26 @@ def get_ic_summary(
         rows = _clean_rows
 
         # 全局 IC
-        strengths = [r["strength"] for r in rows]
-        fwd_rets = [r[forward_col] for r in rows]
-        ic, pval = spearmanr(strengths, fwd_rets)
+        # 2026-06-30 修复: 使用signed strength (LONG=+s, SHORT=-s)
+        # 之前用raw strength，LONG和SHORT同值互相抵消，IC无法区分方向
+        signed_strengths = []
+        fwd_rets_list = []
+        for r in rows:
+            s = r["strength"]
+            d = r["direction"]
+            fr = r[forward_col]
+            if d == "LONG":
+                signed_strengths.append(float(s))
+            elif d == "SHORT":
+                signed_strengths.append(-float(s))
+            else:
+                continue  # NEUTRAL skip
+            fwd_rets_list.append(float(fr))
+        
+        if spearmanr is not None:
+            ic, pval = spearmanr(signed_strengths, fwd_rets_list)
+        else:
+            ic, pval = _spearman_fallback(signed_strengths, fwd_rets_list)
         
         # 按日计算 IC (用于 IC positive rate)
         from collections import defaultdict
@@ -463,16 +560,30 @@ def get_ic_summary(
         for date, day_rows in by_date.items():
             if len(day_rows) < 3:
                 continue
-            s = [r["strength"] for r in day_rows]
-            f = [r[forward_col] for r in day_rows]
+            # 2026-06-30: signed strength for daily IC too
+            d_signed = []
+            d_rets = []
+            for r in day_rows:
+                if r["direction"] == "LONG":
+                    d_signed.append(float(r["strength"]))
+                elif r["direction"] == "SHORT":
+                    d_signed.append(-float(r["strength"]))
+                else:
+                    continue
+                d_rets.append(float(r[forward_col]))
+            if len(d_signed) < 3:
+                continue
             try:
-                d_ic, _ = spearmanr(s, f)
+                if spearmanr is not None:
+                    d_ic, _ = spearmanr(d_signed, d_rets)
+                else:
+                    d_ic, _ = _spearman_fallback(d_signed, d_rets)
                 daily_ic[date] = d_ic
             except Exception:
                 pass
         
         ic_positive_rate = (
-            sum(1 for v in daily_ic.values() if v > 0) / len(daily_ic)
+            sum(1 for v in daily_ic.values() if v is not None and v > 0) / len(daily_ic)
             if daily_ic else 0.0
         )
         
@@ -485,15 +596,29 @@ def get_ic_summary(
         for sid, group in strat_groups.items():
             if len(group) < 5:
                 continue
-            s = [r["strength"] for r in group]
-            f = [r[forward_col] for r in group]
+            # 2026-06-30: signed strength
+            g_signed = []
+            g_rets = []
+            for r in group:
+                if r["direction"] == "LONG":
+                    g_signed.append(float(r["strength"]))
+                elif r["direction"] == "SHORT":
+                    g_signed.append(-float(r["strength"]))
+                else:
+                    continue
+                g_rets.append(float(r[forward_col]))
+            if len(g_signed) < 5:
+                continue
             try:
-                g_ic, g_pval = spearmanr(s, f)
+                if spearmanr is not None:
+                    g_ic, g_pval = spearmanr(g_signed, g_rets)
+                else:
+                    g_ic, g_pval = _spearman_fallback(g_signed, g_rets)
                 import math
                 by_strategy[sid] = {
-                    "ic": round(g_ic, 4) if not math.isnan(g_ic) else 0.0,
-                    "pval": round(g_pval, 4) if not math.isnan(g_pval) else 1.0,
-                    "n": len(group),
+                    "ic": round(g_ic, 4) if g_ic is not None and not math.isnan(g_ic) else 0.0,
+                    "pval": round(g_pval, 4) if g_pval is not None and not math.isnan(g_pval) else 1.0,
+                    "n": len(g_signed),
                 }
             except Exception:
                 pass
@@ -509,16 +634,19 @@ def get_ic_summary(
             s = [r["strength"] for r in group]
             f = [r[forward_col] for r in group]
             try:
-                g_ic, _ = spearmanr(s, f)
+                if spearmanr is not None:
+                    g_ic, _ = spearmanr(s, f)
+                else:
+                    g_ic, _ = _spearman_fallback(s, f)
                 import math
-                by_direction[d] = {"ic": round(g_ic, 4) if not math.isnan(g_ic) else 0.0, "n": len(group)}
+                by_direction[d] = {"ic": round(g_ic, 4) if g_ic is not None and not math.isnan(g_ic) else 0.0, "n": len(group)}
             except Exception:
                 pass
         
         return {
             "status": "ok",
-            "ic_mean": round(float(ic), 4) if ic == ic else None,
-            "ic_p_value": round(float(pval), 4) if pval == pval else None,
+            "ic_mean": round(float(ic), 4) if ic is not None and ic == ic else None,
+            "ic_p_value": round(float(pval), 4) if pval is not None and pval == pval else None,
             "ic_positive_rate": round(ic_positive_rate, 3),
             "n_signals": len(rows),
             "n_days": len(by_date),
@@ -557,3 +685,120 @@ def get_stats() -> Dict[str, Any]:
         }
     finally:
         conn.close()
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  App 级 backfill 入口 (P2 2026-06-29: 从 scripts/ 提到 app/analysis/ 层)
+# ═══════════════════════════════════════════════════════════════════
+
+def run_signal_ic_backfill(dry_run: bool = False) -> Dict[str, int]:
+    """App 级 Signal IC 前瞻收益回填入口.
+
+    供 run_playbook_track 统一调度, 替代 scripts/backfill_forward_returns.py 的 cron 独立触发.
+    逻辑与 scripts 版本一致: 拉 pending → 按symbol分组 → 获取日K → 回填 T1/T5/T20.
+
+    Args:
+        dry_run: 试运行 (不写DB)
+
+    Returns:
+        {symbol: count_filled}
+    """
+    from datetime import datetime as _dt, timedelta as _td
+    import logging as _logging
+    _bl = _logging.getLogger("ftseek_us.signal_ic_backfill")
+
+    today_str = _dt.now().strftime("%Y-%m-%d")
+    pending = get_pending_snapshots(trade_date_before=today_str, limit=5000)
+
+    if not pending:
+        _bl.info("[SignalIC-Backfill] 无待回填快照")
+        return {}
+
+    _bl.info(f"[SignalIC-Backfill] 待回填: {len(pending)} 条")
+
+    # 按 symbol 分组
+    by_symbol: Dict[str, List[Dict]] = {}
+    for snap in pending:
+        sym = snap["symbol"]
+        by_symbol.setdefault(sym, []).append(snap)
+
+    _bl.info(f"[SignalIC-Backfill] 涉及 {len(by_symbol)} 只股票")
+
+    # 获取 router (复用 scripts 的 _get_data_router 逻辑)
+    try:
+        from app.data.market_data_router import MarketDataRouter
+        import os as _os
+        router = MarketDataRouter(
+            twelvedata_api_key=_os.environ.get("TWELVEDATA_API_KEY"),
+            finnhub_api_key=_os.environ.get("FINNHUB_API_KEY"),
+            alphavantage_api_key=_os.environ.get("ALPHAVANTAGE_API_KEY"),
+            cache_ttl_seconds=900,
+            futu_opend_host=_os.environ.get("FUTU_OPEND_HOST", "127.0.0.1"),
+            futu_opend_port=int(_os.environ.get("FUTU_OPEND_PORT", "11111")),
+            enable_futu_lv3=_os.environ.get("ENABLE_FUTU_LV3", "true").lower() in ("true", "1", "yes"),
+        )
+    except Exception as e:
+        _bl.error(f"[SignalIC-Backfill] Router 初始化失败: {e}")
+        return {}
+
+    stats: Dict[str, int] = {}
+
+    for symbol, snaps in by_symbol.items():
+        # 获取日K (复用 router 的 _daily_bars_cache)
+        bars = router.get_daily_bars(symbol, count=50)
+        if not bars:
+            _bl.warning(f"[SignalIC-Backfill] {symbol}: 无法获取日K, 跳过")
+            continue
+
+        # 构建 date→close 映射
+        date_to_close: Dict[str, float] = {}
+        sorted_dates = []
+        for bar in bars:
+            t = str(bar.get("time", ""))[:10]
+            c = bar.get("close")
+            if t and c:
+                try:
+                    date_to_close[t] = float(c)
+                    sorted_dates.append(t)
+                except (TypeError, ValueError):
+                    continue
+        sorted_dates.sort()
+        date_to_idx = {d: i for i, d in enumerate(sorted_dates)}
+
+        filled = 0
+        for snap in snaps:
+            trade_date = snap["trade_date"]
+            # 允许 ±1 天容差 (时区差异)
+            snap_idx = None
+            trade_date_actual = None
+            for offset in [0, 1, -1]:
+                check_date = (_dt.strptime(trade_date, "%Y-%m-%d") + _td(days=offset)).strftime("%Y-%m-%d")
+                if check_date in date_to_idx:
+                    snap_idx = date_to_idx[check_date]
+                    trade_date_actual = check_date
+                    break
+
+            if snap_idx is None or trade_date_actual is None:
+                continue
+
+            close_t0 = date_to_close.get(trade_date_actual)
+            close_t1 = date_to_close.get(sorted_dates[snap_idx + 1]) if snap_idx + 1 < len(sorted_dates) else None
+            close_t5 = date_to_close.get(sorted_dates[snap_idx + 5]) if snap_idx + 5 < len(sorted_dates) else None
+            close_t20 = date_to_close.get(sorted_dates[snap_idx + 20]) if snap_idx + 20 < len(sorted_dates) else None
+
+            if not dry_run:
+                update_forward_returns(
+                    decision_id=snap["decision_id"],
+                    close_t0=close_t0,
+                    close_t1=close_t1,
+                    close_t5=close_t5,
+                    close_t20=close_t20,
+                )
+            filled += 1
+
+        stats[symbol] = filled
+        _bl.info(f"[SignalIC-Backfill] {symbol}: {filled}/{len(snaps)} 条")
+
+    total = sum(stats.values())
+    _bl.info(f"[SignalIC-Backfill] 完成: {total} 条回填, {len(stats)} 只股票")
+    return stats

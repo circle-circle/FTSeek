@@ -111,7 +111,12 @@ class USBattlePlanManager:
             from datetime import datetime
             import os
             # P0 修复: 强制使用今天日期，防止 LLM 返回 2024 等过期日期
-            plan["date"] = datetime.now().strftime("%Y-%m-%d")
+            # 2026-06-30: 用 ET 日期 (服务器UTC+8会导致盘前20:00=ET当日, 但date()可能跨日)
+            try:
+                from app.utils.timezone import now_et as _now_et
+                plan["date"] = _now_et().strftime("%Y-%m-%d")
+            except Exception:
+                plan["date"] = datetime.now().strftime("%Y-%m-%d")
             # P1 修复: 保存前清理 targets/restricted 冲突 (targets 优先)
             target_symbols = {t.get("symbol") for t in plan.get("targets", [])}
             restricted = set(plan.get("restricted", []))
@@ -161,7 +166,12 @@ class USBattlePlanManager:
             if self._plan and "targets" in self._plan:
                 self._plan["targets"].extend(new_targets)
             else:
-                self._plan = {"date": datetime.now().strftime("%Y-%m-%d"), "targets": new_targets, "restricted": []}
+                try:
+                    from app.utils.timezone import now_et as _net
+                    _plan_date = _net().strftime("%Y-%m-%d")
+                except Exception:
+                    _plan_date = datetime.now().strftime("%Y-%m-%d")
+                self._plan = {"date": _plan_date, "targets": new_targets, "restricted": []}
             
             logger.info(f"[计划降级] 已激活 {len(new_targets)} 只 watchlist 标的 (计划过期)")
         except ImportError:

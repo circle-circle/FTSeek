@@ -1102,8 +1102,10 @@ def _format_daily_review(report: dict) -> str:
     five_factor = attribution_data.get('five_factor', {})
     five_factor_text = ""
     if five_factor.get('five_factor_available'):
+        _lookback = five_factor.get('lookback_window', '')
+        _lookback_label = f" ({_lookback}回看)" if _lookback else ""
         ff_lines = [
-            "\n🔬 五因子归因分解",
+            f"\n🔬 五因子归因分解{_lookback_label}",
             f"• 噪声交易: ${five_factor['noise_trades_pnl']:+,.0f}  (规则外交易造成的损失)",
             f"• 过早止盈: ${five_factor['early_exit_pnl']:+,.0f}  (提前平仓少赚的钱)",
             f"• 延迟止损: ${five_factor['late_exit_pnl']:+,.0f}  (死扛造成的额外亏损)",

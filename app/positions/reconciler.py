@@ -221,13 +221,8 @@ class StartupReconciler:
                 pass
 
         # 3. local_only — 本地有 + broker 无 → 幽灵, 标记保留 (用户决定清理)
-        # 2026-05-20 修复: 期权持仓不在 broker 中 (模拟期权), 跳过 ghost 检测
-        option_symbols = self._get_option_symbols()
+        # 2026-07-01: 期权检测已删除 (自动交易不做期权)
         for sym in (local_syms - broker_syms):
-            # 双重过滤: DB 记录 + 启发式模式匹配 (捕获遗漏的期权)
-            if sym in option_symbols or self._is_option_symbol(sym):
-                logger.info(f"[Reconciler] 跳过期权仓 {sym} (模拟期权, 不在 broker 中)")
-                continue
             try:
                 pos = local_positions[sym]
                 self._mark_ghost(pos)
@@ -237,41 +232,6 @@ class StartupReconciler:
                 result.errors += 1
 
         return result
-
-    def _get_option_symbols(self) -> set:
-        """从 option_positions DB 表读取期权持仓标的 (2026-05-20 修复)
-
-        期权持仓不在 broker 中 (模拟期权), 不应被误判为 ghost.
-        与 position_sync._get_option_position_symbols() 保持一致.
-
-        注意: option_positions 表有 symbol (标的) 和 option_code (合约代码) 两列.
-        ghost 检测用的是 option_code (如 US.QQQ260602P710000), 不是 symbol.
-
-        Returns:
-            期权合约代码集合; 查询失败返回空集 (保守策略: 跳过过滤)
-        """
-        try:
-            conn = sqlite3.connect(self._db_path)
-            symbols = {row[0] for row in conn.execute(
-                "SELECT DISTINCT option_code FROM option_positions"
-            )}
-            conn.close()
-            if symbols:
-                logger.debug(f"[Reconciler] 期权持仓: {symbols} (跳过 ghost 检测)")
-            return symbols
-        except Exception as e:
-            logger.debug(f"[Reconciler·_get_option_symbols] {e}")
-            return set()
-
-    def _is_option_symbol(self, symbol: str) -> bool:
-        """启发式检测是否为期权合约代码 (2026-05-20 补充)
-
-        格式: US.QQQ260602P710000 (标的 + 日期YYMMDD + P/C + 行权价)
-        用于捕获 option_positions 表中遗漏的期权 (如 SPY260602P730000).
-        """
-        import re
-        # 匹配: US.<标的><6位日期><P或C><数字>
-        return bool(re.match(r'^US\.[A-Z]+\d{6}[PC]\d+$', symbol))
 
     def _infer_source(self, symbol: str, position: Any) -> Tuple[PositionSource, ProtectionState]:
         """M1.1 (2026-05-16): 多线索推断仓位 source.

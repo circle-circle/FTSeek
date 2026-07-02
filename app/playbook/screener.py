@@ -168,6 +168,55 @@ class PlaybookScreener:
         # 兼容 'sector' 和 'industry' 两种字段名
         return position.get('sector') or position.get('industry')
     
+    # 2026-06-30 Phase 3: 因子IC动态权重调整
+    _ic_adj_cache: Dict[str, float] = None  # type: ignore
+    _ic_adj_cache_ts: float = 0.0
+    
+    def _load_factor_ic_adjustments(self) -> Dict[str, float]:
+        """加载因子IC调整系数。返回 {factor_name: adjustment_delta}。
+        
+        IC > 0.05 → delta = +1 (强化正alpha因子)
+        IC < -0.05 → delta = -1 (弱化负alpha因子)
+        |IC| <= 0.05 or N < 10 → delta = 0 (不调整)
+        """
+        import time as _time
+        if self._ic_adj_cache is not None and (_time.time() - self._ic_adj_cache_ts) < 300:
+            return self._ic_adj_cache
+        
+        try:
+            import json
+            from pathlib import Path
+            ic_path = Path("data/factor_ic_latest.json")
+            if not ic_path.exists():
+                self._ic_adj_cache = {}
+                self._ic_adj_cache_ts = _time.time()
+                return {}
+            
+            with open(ic_path) as f:
+                ic_data = json.load(f)
+            
+            adjustments = {}
+            for factor, stats in ic_data.items():
+                ic = float(stats.get("ic", 0))
+                n = int(stats.get("n", 0))
+                if n < 30:
+                    continue  # 样本不足，不调整（2026-06-30: 从10提到30, 确保统计显著性）
+                if ic > 0.05:
+                    adjustments[factor] = 1  # 正alpha → +1
+                elif ic < -0.05:
+                    adjustments[factor] = -1  # 负alpha → -1
+            
+            self._ic_adj_cache = adjustments
+            self._ic_adj_cache_ts = _time.time()
+            if adjustments:
+                logger.info(f"[SCREENER] 因子IC调整: {adjustments}")
+            return adjustments
+        except Exception as e:
+            logger.debug(f"[SCREENER] 因子IC加载失败: {e}")
+            self._ic_adj_cache = {}
+            self._ic_adj_cache_ts = _time.time()
+            return {}
+    
     def _calculate_score(
         self,
         data: PlaybookData,
@@ -184,50 +233,67 @@ class PlaybookScreener:
         
         factors_config = self.config.get('screening_factors', {})
         
+        # 2026-06-30 Phase 3: 加载因子IC动态调整
+        # 因子IC为正 → weight加成（强化正alpha因子）
+        # 因子IC为负 → weight衰减（弱化负alpha因子）
+        # 样本不足(<10) → 不调整（冷启动安全）
+        _ic_adjustments = self._load_factor_ic_adjustments()
+        
         # 先评估 insider 相关因子（互斥逻辑）
         cluster_score = data.get_insider_cluster_score()
         net_buy = data.get_insider_net_buy()
-        
+
         insider_triggered = False
         if cluster_score > 0.5 and 'insider_cluster_buy' in factors_config:
-            weight = factors_config['insider_cluster_buy'].get('weight', 0)
-            score += weight
-            triggered_factors['insider_cluster_buy'] = {
-                'weight': weight,
-                'description': factors_config['insider_cluster_buy'].get('description', ''),
-                'value': cluster_score
-            }
-            insider_triggered = True
-        
+            if factors_config['insider_cluster_buy'].get('enabled', True):
+                weight = factors_config['insider_cluster_buy'].get('weight', 0)
+                weight += _ic_adjustments.get('insider_cluster_buy', 0)  # Phase 3: IC调整
+                score += weight
+                triggered_factors['insider_cluster_buy'] = {
+                    'weight': weight,
+                    'description': factors_config['insider_cluster_buy'].get('description', ''),
+                    'value': cluster_score
+                }
+                insider_triggered = True
+
         if not insider_triggered and net_buy > 0 and 'insider_net_buy' in factors_config:
-            weight = factors_config['insider_net_buy'].get('weight', 0)
-            score += weight
-            triggered_factors['insider_net_buy'] = {
-                'weight': weight,
-                'description': factors_config['insider_net_buy'].get('description', ''),
-                'value': net_buy
-            }
-        
+            if factors_config['insider_net_buy'].get('enabled', True):
+                weight = factors_config['insider_net_buy'].get('weight', 0)
+                weight += _ic_adjustments.get('insider_net_buy', 0)  # Phase 3: IC调整
+                score += weight
+                triggered_factors['insider_net_buy'] = {
+                    'weight': weight,
+                    'description': factors_config['insider_net_buy'].get('description', ''),
+                    'value': net_buy
+                }
+
         if net_buy < 0 and 'insider_net_sell' in factors_config:
-            weight = factors_config['insider_net_sell'].get('weight', 0)
-            score += weight
-            triggered_factors['insider_net_sell'] = {
-                'weight': weight,
-                'description': factors_config['insider_net_sell'].get('description', ''),
-                'value': net_buy
-            }
+            if factors_config['insider_net_sell'].get('enabled', True):
+                weight = factors_config['insider_net_sell'].get('weight', 0)
+                weight += _ic_adjustments.get('insider_net_sell', 0)  # Phase 3: IC调整
+                score += weight
+                triggered_factors['insider_net_sell'] = {
+                    'weight': weight,
+                    'description': factors_config['insider_net_sell'].get('description', ''),
+                    'value': net_buy
+                }
         
         # 评估其他因子（跳过已处理的 insider 因子）
         for factor_name, factor_cfg in factors_config.items():
             if factor_name in ('insider_cluster_buy', 'insider_net_buy', 'insider_net_sell'):
                 continue  # 已处理
-            
+
+            # 2026-06-30 Phase 1: 支持因子显式禁用，黑名单因子直接跳过
+            if not factor_cfg.get('enabled', True):
+                continue
+
             weight = factor_cfg.get('weight', 0)
+            weight += _ic_adjustments.get(factor_name, 0)  # Phase 3: IC调整
             condition = factor_cfg.get('condition')
-            
+
             # 评估因子是否触发
             triggered = self._evaluate_factor(factor_name, data, condition)
-            
+
             if triggered:
                 score += weight
                 triggered_factors[factor_name] = {
@@ -235,7 +301,7 @@ class PlaybookScreener:
                     'description': factor_cfg.get('description', ''),
                     'value': triggered  # 实际值
                 }
-        
+
         # 应用权重调整历史
         adjustments = self.config.get('weight_adjustments', [])
         for adj in adjustments:
@@ -244,7 +310,21 @@ class PlaybookScreener:
             if factor in triggered_factors:
                 score += delta
                 triggered_factors[factor]['adjustment'] = delta
-        
+
+        # P2 (2026-06-29): Signal IC 策略级加减分
+        # 逻辑: 读取 by_strategy IC, IC强的策略加分, IC弱/负的减分
+        # min_samples=30 (strategy级), 不足不调整
+        # FeatureFlag: ic_feedback_to_screener (默认 False)
+        try:
+            from app.core.feature_flags import FeatureFlags
+            if FeatureFlags().is_enabled("ic_feedback_to_screener"):
+                ic_bonus = self._get_strategy_ic_bonus(data)
+                if ic_bonus != 0:
+                    score += ic_bonus
+                    triggered_factors['signal_ic_bonus'] = {'value': ic_bonus}
+        except Exception:
+            pass
+
         return score, triggered_factors
     
     def _evaluate_factor(
@@ -353,3 +433,50 @@ class PlaybookScreener:
                 return None
         
         return None
+
+    def _get_strategy_ic_bonus(self, data: PlaybookData) -> int:
+        """Signal IC 策略级加减分 (P2 2026-06-29)
+
+        读取 signal_snapshots 的 by_strategy IC, 综合评估该标的的策略IC表现:
+        - 全部策略 IC > 0.05 → +2 (信号一致有效)
+        - 存在策略 IC < -0.03 且样本≥30 → -3 (反预测策略)
+        - 其他 → 0
+
+        缓存: 5min TTL (实例属性, 与 voting_aggregator 模式一致)
+        """
+        import time as _time
+        _now = _time.time()
+        _cache = getattr(self, '_ic_strat_cache', None)
+        if _cache and (_now - _cache.get('ts', 0)) < 300:
+            _by_strategy = _cache.get('by_strategy', {})
+        else:
+            try:
+                from app.analysis.signal_ic_tracker import get_ic_summary
+                _summary = get_ic_summary(min_signals=10, days_back=30)
+                _by_strategy = _summary.get("by_strategy", {}) if _summary.get("status") == "ok" else {}
+                self._ic_strat_cache = {'ts': _now, 'by_strategy': _by_strategy}
+            except Exception:
+                return 0
+
+        if not _by_strategy:
+            return 0
+
+        _MIN_SAMPLES = 30
+        _positive_count = 0
+        _negative_count = 0
+
+        for _sid, _info in _by_strategy.items():
+            _ic = _info.get("ic", 0.0)
+            _n = _info.get("n", 0)
+            if _n < _MIN_SAMPLES:
+                continue
+            if _ic > 0.05:
+                _positive_count += 1
+            elif _ic < -0.03:
+                _negative_count += 1
+
+        if _negative_count > 0:
+            return -3
+        if _positive_count >= 2:
+            return 2
+        return 0

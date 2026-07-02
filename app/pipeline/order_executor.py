@@ -55,122 +55,14 @@ DEFAULT_ORDER_QTY = 50  # 默认下单股数 (watchlist_us.json 可覆盖)
 # (symbol, direction) → {fail_count, cooldown_until, last_reason, last_failed_at, blocked}
 _close_retry_state: Dict[Tuple[str, str], Dict[str, Any]] = {}
 
-# ─────────────────────────────────────────────────────────────────────
-# P1-追加 (2026-06-16): _close_retry_state SQLite 持久化
-# 根因: 退避状态仅存内存, 进程重启 (OOM/crash/deploy) 后归零,
-#       导致距永久阻塞仅 1 次的股票重启后重新进入失败循环.
-# 方案: 每次 record_failure / clear_retry 时持久化到 close_retry_state 表,
-#       模块加载时自动恢复.
-# ─────────────────────────────────────────────────────────────────────
-_CLOSE_RETRY_TABLE = "close_retry_state"
-_CLOSE_RETRY_LOADED = False  # 延迟加载标记 (首次访问时从 DB 恢复)
+# 2026-06-29: 删除 SQLite 持久化 (_CLOSE_RETRY_TABLE / _get_retry_db_path / _ensure_retry_table /
+# _load_close_retry_state / _persist_close_retry_state) — 进程内dict足够,
+# 重启后position_sync重新同步仓位, 退避计数重置为0是合理行为.
 
 # IC 门禁缓存 — 同一进程周期内 get_ic_summary() 只算一次 (避免 N symbols × SQL 查询)
 _ic_summary_cache: Dict[str, Any] = {}
 _ic_summary_cache_ts: float = 0.0
 _IC_CACHE_TTL_SEC = 300.0  # 5 分钟
-
-
-def _get_retry_db_path() -> str:
-    """获取持久化 DB 路径 (复用主库)"""
-    try:
-        from app.core.paths import get_main_db
-        return str(get_main_db())
-    except Exception:
-        return str(Path(__file__).resolve().parent.parent.parent / "data" / "ftseek_us.db")
-
-
-def _ensure_retry_table(conn) -> None:
-    """确保 close_retry_state 表存在"""
-    conn.execute(f"""
-        CREATE TABLE IF NOT EXISTS {_CLOSE_RETRY_TABLE} (
-            symbol TEXT NOT NULL,
-            direction TEXT NOT NULL,
-            fail_count INTEGER NOT NULL DEFAULT 0,
-            cooldown_until TEXT,
-            last_reason TEXT,
-            last_failed_at TEXT,
-            blocked INTEGER NOT NULL DEFAULT 0,
-            updated_at TEXT NOT NULL,
-            PRIMARY KEY (symbol, direction)
-        )
-    """)
-
-
-def _load_close_retry_state() -> None:
-    """从 SQLite 恢复退避状态 (首次访问时调用, 幂等)"""
-    global _CLOSE_RETRY_LOADED
-    if _CLOSE_RETRY_LOADED:
-        return
-    _CLOSE_RETRY_LOADED = True
-    try:
-        import sqlite3
-        db_path = _get_retry_db_path()
-        with sqlite3.connect(db_path, timeout=5) as conn:
-            _ensure_retry_table(conn)
-            rows = conn.execute(
-                f"SELECT symbol, direction, fail_count, cooldown_until, "
-                f"last_reason, last_failed_at, blocked FROM {_CLOSE_RETRY_TABLE}"
-            ).fetchall()
-        for row in rows:
-            _sym, _dir, _fc, _cd_str, _reason, _lfa_str, _blocked = row
-            _state = {
-                "fail_count": _fc,
-                "cooldown_until": None,
-                "last_reason": _reason or "",
-                "last_failed_at": None,
-                "blocked": bool(_blocked),
-            }
-            if _cd_str:
-                try:
-                    _state["cooldown_until"] = datetime.fromisoformat(_cd_str)
-                except Exception:
-                    pass
-            if _lfa_str:
-                try:
-                    _state["last_failed_at"] = datetime.fromisoformat(_lfa_str)
-                except Exception:
-                    pass
-            _close_retry_state[(_sym, _dir)] = _state
-        if rows:
-            logger.info(
-                f"[平仓·退避·持久化] 从 DB 恢复 {len(rows)} 条退避状态 "
-                f"(blocked={sum(1 for r in rows if r[6])})"
-            )
-    except Exception as _e:
-        logger.debug(f"[平仓·退避·持久化] 加载失败 (降级为内存模式): {_e}")
-
-
-def _persist_close_retry_state() -> None:
-    """将当前 _close_retry_state 全量持久化到 SQLite"""
-    try:
-        import sqlite3
-        db_path = _get_retry_db_path()
-        with sqlite3.connect(db_path, timeout=5) as conn:
-            _ensure_retry_table(conn)
-            # 全量覆盖: 先删除再插入 (简单可靠, 条目数 <100)
-            conn.execute(f"DELETE FROM {_CLOSE_RETRY_TABLE}")
-            _now_iso = now_et().isoformat()
-            for (_sym, _dir), _state in _close_retry_state.items():
-                _cd = _state.get("cooldown_until")
-                _lfa = _state.get("last_failed_at")
-                conn.execute(
-                    f"INSERT INTO {_CLOSE_RETRY_TABLE} "
-                    f"(symbol, direction, fail_count, cooldown_until, last_reason, "
-                    f"last_failed_at, blocked, updated_at) VALUES (?,?,?,?,?,?,?,?)",
-                    (
-                        _sym, _dir,
-                        _state.get("fail_count", 0),
-                        _cd.isoformat() if _cd else None,
-                        _state.get("last_reason", ""),
-                        _lfa.isoformat() if _lfa else None,
-                        1 if _state.get("blocked") else 0,
-                        _now_iso,
-                    )
-                )
-            conn.commit()
-    except Exception as _e:
-        logger.debug(f"[平仓·退避·持久化] 保存失败 (不影响运行): {_e}")
 
 # 触发退避的错误关键字
 _CLOSE_BACKOFF_ERR_PATTERNS = (
@@ -209,7 +101,7 @@ def _is_backoff_error(err_msg: str) -> bool:
 
 def _check_close_cooldown(symbol: str, direction) -> Optional[str]:
     """检查 (symbol, direction) 当前是否在冷却中, 返回剩余原因字符串或 None"""
-    _load_close_retry_state()  # 首次调用时从 DB 恢复
+
     _key = _close_retry_key(symbol, direction)
     _state = _close_retry_state.get(_key)
     if not _state:
@@ -240,7 +132,7 @@ def _record_close_failure(
     Returns:
         (fail_count, cooldown_minutes_or_none, is_blocked)
     """
-    _load_close_retry_state()  # 首次调用时从 DB 恢复
+
     _key = _close_retry_key(position.symbol, position.direction)
     _state = _close_retry_state.setdefault(_key, {
         "fail_count": 0, "cooldown_until": None,
@@ -274,13 +166,13 @@ def _record_close_failure(
             f"({_start.isoformat()} → {_state['cooldown_until'].isoformat()}) reason={str(err_msg)[:120]!r}"
         )
 
-    _persist_close_retry_state()  # P1-追加: 持久化到 SQLite
+
     return fail_count, cooldown_min, blocked
 
 
 def _clear_close_retry(symbol: str, direction) -> None:
     """平仓成功后清零 (symbol, direction) 退避计数"""
-    _load_close_retry_state()
+
     _key = _close_retry_key(symbol, direction)
     if _key in _close_retry_state:
         _state = _close_retry_state.pop(_key)
@@ -289,7 +181,7 @@ def _clear_close_retry(symbol: str, direction) -> None:
                 f"[平仓·退避] {symbol} {_key[1]} 平仓成功 → 清零退避计数 "
                 f"(累计 fails={_state.get('fail_count', 0)})"
             )
-        _persist_close_retry_state()  # P1-追加: 持久化清零
+    
 
 
 def _refresh_broker_position_qty(scheduler, symbol: str) -> Optional[float]:
@@ -542,7 +434,7 @@ def manual_unblock(
     }
 
     # 1. 清除退避状态
-    _load_close_retry_state()
+
     _dirs = [direction.upper()] if direction else ["LONG", "SHORT"]
     for _d in _dirs:
         _key = (str(symbol), _d)
@@ -550,9 +442,7 @@ def manual_unblock(
             _close_retry_state.pop(_key, None)
             _result["cleared_keys"].append(_key)
     if _result["cleared_keys"]:
-        _persist_close_retry_state()  # P1-追加: 持久化解锁
-
-    # 2. 清除 position.metadata 上的阻塞标记
+        pass  # 退避状态已清除
     try:
         _ps = getattr(scheduler, "position_store", None)
         if _ps and _ps.has(symbol):
@@ -2635,7 +2525,7 @@ def _execute_long(scheduler, symbol: str, signal: SignalScore, context: Dict[str
             getattr(signal, 'strength', 0),
             getattr(signal, 'confidence', 0.0),
             _owner,
-            _dt.now().isoformat(),
+            now_et().isoformat(),
             float(price) if price else 0.0,
         ))
         _conn.commit()
@@ -3170,7 +3060,22 @@ def _update_symbol_daily_loss(symbol: str, pnl: float):
 
 
 def _submit_order(scheduler, symbol: str, signal: SignalScore, context: Dict[str, Any], voting_result: Dict = None):
-    """构建订单并通过执行引擎下单 (Refactored 2026-04-29)"""
+    """构建订单并通过执行引擎下单 (Refactored 2026-04-29)
+
+    2026-07-02: 冻结观察期统一执行链路 — MAIN_PIPELINE 路径禁止新开仓。
+    所有新仓必须走 PLAYBOOK_SIM 路径 (playbook_service._execute_via_dual_broker)。
+    此开关确保即使 _skip_execution_in_trading 未覆盖的路径 (如盘前信号) 也无法通过 main 路径下单。
+    平仓操作不受此限制 (通过 close_position 路径, 不经过 _submit_order)。
+    """
+    # ── 硬开关: MAIN_PIPELINE 禁止新开仓 (2026-07-02 冻结期) ──
+    _source = (voting_result or {}).get('source_type', '')
+    if not _source:
+        _meta = getattr(signal, 'metadata', None) or {}
+        _source = _meta.get('source_type', '')
+    if _source != 'PLAYBOOK_SIM' and _source != 'PLAYBOOK_LIVE' and _source != 'ORB_ENGINE':
+        logger.info(f"[链路统一] {symbol} 非playbook路径下单被拦截 (source_type={_source or 'MAIN_PIPELINE'}), "
+                    f"冻结期仅允许 PLAYBOOK_SIM 执行新仓")
+        return None
 
     # ── P0 (2026-06-20): pending 防重锁 — 防止 broker_sync 5s 窗口期重复开仓 ──
     # 立即标记 pending, 订单完成/失败后清除. 纯内存操作, 零 IO 开销.
@@ -3333,9 +3238,18 @@ def _submit_order_inner(scheduler, symbol: str, signal: SignalScore, context: Di
     # 原因: OKR Week 1 目标是积累≥30笔交易数据验证IC, 但IC门禁在shadow模式下拦截所有信号
     #       → 零成交 → 零outcome → IC无法改善 → 自我锁死
     # 安全底线: Kill Switch / 仓位限制 / VIX风控 仍然正常拦截 (不受此改动影响)
-    _IC_MIN_THRESHOLD = 0.05
-    _IC_MIN_SIGNALS = 30
-    _IC_HARD_BLOCK = -0.15  # 2026-06-26: IC < -0.15 = 反预测, 硬拦截; [-0.15, 0.05) = 弱负, warning放行
+    # 2026-06-30: IC gate 门槛从 strategy_registry 读取（原硬编码）
+    _sig_strategy_id = getattr(signal, "strategy_id", None) or "unknown"
+    try:
+        from app.core.strategy_registry import get_strategy_config
+        _sr_cfg = get_strategy_config(_sig_strategy_id)
+        _IC_HARD_BLOCK = float(_sr_cfg["ic_gate"]["hard_block_threshold"])
+        _IC_MIN_THRESHOLD = float(_sr_cfg["ic_gate"]["warning_threshold"])
+        _IC_MIN_SIGNALS = int(_sr_cfg["ic_gate"]["min_signals"])
+    except Exception:
+        _IC_MIN_THRESHOLD = 0.05
+        _IC_MIN_SIGNALS = 30
+        _IC_HARD_BLOCK = -0.15
 
     # 检查是否shadow_only模式
     _is_shadow = False
@@ -4082,17 +3996,22 @@ def _insert_trade_attribution(
         fv = (fd.get("volume") or {}).get("raw")
         fo = (fd.get("orderflow") or {}).get("raw")
         fl = (fd.get("lifecycle") or {}).get("raw")
+        # 2026-06-30: trade_date 用 ET 日期 (date('now') 是 UTC, 与 trade_records.trade_date 不一致)
+        try:
+            from app.utils.timezone import _et_trade_date, now_et as _now_et
+            _attr_trade_date = _et_trade_date(_now_et())
+        except Exception:
+            _attr_trade_date = None
         cursor.execute('''
             INSERT INTO trade_attribution
             (trace_id, trade_date, symbol, direction,
              signal_strength, signal_confidence,
              entry_time, entry_price, quantity,
              owner_strategy, regime, session, vix_at_entry, signal_tags,
-             factor_trend, factor_momentum, factor_volume, factor_orderflow, factor_lifecycle,
-             created_at)
-            VALUES (?, date('now'), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+             factor_trend, factor_momentum, factor_volume, factor_orderflow, factor_lifecycle)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
-            trace_id, symbol, direction or "LONG",
+            trace_id, _attr_trade_date or '', symbol, direction or "LONG",
             int(strength or 0), float(confidence or 0.0),
             entry_time, float(entry_price or 0.0), int(quantity or 0),
             owner_strategy, regime, session, float(vix_at_entry or 0.0), signal_tags,
@@ -4228,15 +4147,21 @@ def _update_trade_attribution(
                 ).fetchone()
                 if row:
                     _direction, _trade_date = row[0], row[1]
+                    # 归一化方向: SHORT_PROXY_OPTION / SHORT_PROXY 等 → SHORT
+                    _direction_clean = str(_direction).upper()
+                    if _direction_clean.startswith("SHORT"):
+                        _direction_clean = "SHORT"
+                    elif _direction_clean.startswith("LONG"):
+                        _direction_clean = "LONG"
                     from app.analysis.voting_accuracy_tracker import get_voting_accuracy_tracker
                     _tracker = get_voting_accuracy_tracker()
                     _tracker.update_outcome(
                         symbol=symbol,
                         actual_pnl=float(pnl),
-                        actual_direction=str(_direction),
+                        actual_direction=_direction_clean,
                         trade_date=str(_trade_date),
                     )
-                    logger.debug(f"[VotingAccuracy] 回填 {symbol} direction={_direction} pnl={pnl:.2f}")
+                    logger.debug(f"[VotingAccuracy] 回填 {symbol} direction={_direction_clean} pnl={pnl:.2f}")
             except Exception as _e_voting:
                 logger.debug(f"[VotingAccuracy] 回填失败 (不影响主流程): {_e_voting}")
 
@@ -5158,7 +5083,7 @@ def _close_position(scheduler, position: Position, current_price: float, exit_re
                 _mode,
                 float(_consensus_level or 0.0),
                 int(_final_strength or 0),
-                datetime.now().isoformat(),
+                now_et().isoformat(),
             ))
             _sl_conn.commit()
             _sl_conn.close()

@@ -239,18 +239,31 @@ class DualBrokerAdapter:
             return {"success": False, "error": str(e)}
 
     def _query_filled_price(self, ctx, futu_order_id: str, trd_env, lock) -> float:
-        """查订单成交均价 (市价单通常立即成交)."""
-        try:
-            from futu import RET_OK
-            with lock:
-                ret, data = ctx.order_list_query(order_id=futu_order_id, trd_env=trd_env)
-            if ret == RET_OK and not data.empty:
-                avg = data.iloc[0].get("avg_price", 0)
-                dealt = data.iloc[0].get("dealt_qty", 0)
-                if avg and float(avg) > 0 and float(dealt or 0) > 0:
-                    return float(avg)
-        except Exception as e:
-            logger.warning(f"[DualBroker] 查成交价失败 {futu_order_id}: {e}")
+        """查订单成交均价 (市价单通常立即成交, 但 sim 可能有延迟).
+
+        2026-06-29: 加重试 — sim 账户成交回报可能延迟1-2s, 单次查询返回 fill=0
+        会导致 playbook_service 拒绝记账 → 孤儿仓 → position_sync 用默认8% SL覆盖.
+        """
+        from futu import RET_OK
+        import time
+        for _attempt in range(3):
+            try:
+                with lock:
+                    ret, data = ctx.order_list_query(order_id=futu_order_id, trd_env=trd_env)
+                if ret == RET_OK and not data.empty:
+                    avg = data.iloc[0].get("avg_price", 0)
+                    dealt = data.iloc[0].get("dealt_qty", 0)
+                    status = str(data.iloc[0].get("order_status", ""))
+                    if avg and float(avg) > 0 and float(dealt or 0) > 0:
+                        return float(avg)
+                    # 已成交但 avg_price 为0 — Futu sim 偶发, 等一下重试
+                    if "FILLED" in status.upper():
+                        logger.debug(f"[DualBroker] {futu_order_id} FILLED但avg=0, 重试 {_attempt+1}/3")
+                        time.sleep(0.5)
+                        continue
+            except Exception as e:
+                logger.warning(f"[DualBroker] 查成交价失败 {futu_order_id}: {e}")
+            time.sleep(0.3)
         return 0.0
 
     def get_positions(self, target_env: str = "sim") -> list:

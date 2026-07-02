@@ -538,132 +538,37 @@ class CapitalSafetySystem:
             logger.debug(f"[DualMode] PositionStore 不可用: {e}")
             return None
 
-    def _calculate_manual_exposure(self) -> float:
-        """计算当前手动交易总敞口金额 (USD).
-
-        优先级:
-          1. PositionStore 有该 symbol → 用 size × avg_entry_price (成本基)
-          2. 否则用 manual_hold_registry 中记录的 quantity × avg_entry_price (若可得)
-          3. 兜底 0
-        """
-        try:
-            from app.coordinator.manual_hold_registry import manual_hold_registry
-        except Exception:
-            return 0.0
-
-        store = self._get_position_store()
-        total = 0.0
-        try:
-            holdings = manual_hold_registry.get_all_holdings()
-        except Exception:
-            holdings = {}
-
-        for symbol, info in holdings.items():
-            try:
-                # 优先从 PositionStore 取真实持仓 (size × cost)
-                pos = store.get(symbol) if store else None
-                if pos is not None and getattr(pos, "avg_entry_price", 0) > 0:
-                    qty = abs(float(getattr(pos, "size", 0) or 0))
-                    price = float(pos.avg_entry_price)
-                    total += qty * price
-                else:
-                    # 兜底: registry 自带的 quantity (无价格 → 跳过)
-                    qty = abs(float(getattr(info, "quantity", 0) or 0))
-                    if qty > 0 and pos is not None:
-                        price = float(getattr(pos, "avg_entry_price", 0) or 0)
-                        total += qty * price
-            except Exception:
-                continue
-        return total
-
-    def _calculate_auto_exposure(self) -> float:
-        """计算当前自动交易总敞口金额 (USD).
-
-        从 PositionStore 中筛选非手动持仓 (排除 manual_hold_registry 中的 symbol
-        以及 source=MANUAL 的 Position), 用 size × avg_entry_price 求和.
-        """
-        store = self._get_position_store()
-        if store is None:
-            return 0.0
-
-        manual_symbols = set()
-        try:
-            from app.coordinator.manual_hold_registry import manual_hold_registry
-            manual_symbols = manual_hold_registry.get_all_manual_symbols()
-        except Exception:
-            pass
-
-        try:
-            from app.positions import get_position_source, PositionSource
-        except Exception:
-            get_position_source = None
-            PositionSource = None
-
-        total = 0.0
-        try:
-            positions = store.all()
-        except Exception:
-            positions = []
-
-        for pos in positions:
-            try:
-                symbol = getattr(pos, "symbol", "")
-                if symbol in manual_symbols:
-                    continue
-                # 排除 MANUAL 仓位
-                if get_position_source is not None and PositionSource is not None:
-                    _src = get_position_source(pos)
-                    if _src == PositionSource.MANUAL:
-                        continue
-                    # 2026-06-26: 排除 LEGACY/UNKNOWN 仓位 (SIM broker_sync 恢复的历史仓)
-                    # 这些是 SIM 环境的持仓, 不应占用 REAL 的自动交易预算
-                    if _src in (PositionSource.LEGACY, PositionSource.UNKNOWN):
-                        continue
-                qty = abs(float(getattr(pos, "size", 0) or 0))
-                price = float(getattr(pos, "avg_entry_price", 0) or 0)
-                if qty > 0 and price > 0:
-                    total += qty * price
-            except Exception:
-                continue
-        return total
-
     def get_available_budget_for_auto(self) -> float:
         """计算自动交易可用预算 (USD).
 
+        2026-06-29 简化: 直接用富途 buying_power (已扣除全部持仓占用),
+        再乘以 conservative/normal/aggressive 比例.
+        不再本地算 manual_exposure/auto_exposure — 富途 power 已反映真实剩余.
+
         规则:
-          1. 全局上限 (默认 80%) 是硬约束 (auto + manual 合计不可超)
-          2. 自动交易额外受激进度上限约束 (conservative=30% / normal=60% / aggressive=75%)
-          3. 返回 max(0, min(global_remaining, auto_remaining))
+          1. buying_power (富途 accinfo_query, 30s刷新) 是真实可用资金
+          2. auto 按激进度比例分配: conservative=30% / normal=60% / aggressive=75%
         """
         try:
-            equity = float(self._state.current_equity or 0)
-            if equity <= 0:
-                return 0.0
+            bp = float(self._state.buying_power or 0)
+            if bp <= 0:
+                # 降级: 用 equity × 80% 兜底
+                equity = float(self._state.current_equity or 0)
+                if equity <= 0:
+                    return 0.0
+                bp = equity * 0.80
 
-            manual_exposure = self._calculate_manual_exposure()
-            auto_exposure = self._calculate_auto_exposure()
-
-            # 全局剩余 = equity × 80% - 已用 (auto + manual)
-            global_cap_pct = self._get_global_exposure_cap()
-            global_max = equity * global_cap_pct
-            global_remaining = global_max - manual_exposure - auto_exposure
-
-            # 自动交易自身上限 (按激进度)
             try:
                 from app.web_dashboard.mode_switch_service import get_mode_switch_service
                 level = get_mode_switch_service().get_auto_aggression()
             except Exception:
                 level = "conservative"
             auto_cap_pct = self._AUTO_LEVEL_CAPS.get(level, 0.30)
-            auto_cap = equity * auto_cap_pct
-            auto_remaining = auto_cap - auto_exposure
+            available = bp * auto_cap_pct
 
-            available = max(0.0, min(global_remaining, auto_remaining))
-            logger.debug(
-                f"[DualMode] auto_budget: equity=${equity:,.0f} | "
-                f"manual=${manual_exposure:,.0f} | auto=${auto_exposure:,.0f} | "
-                f"global_remain=${global_remaining:,.0f} | "
-                f"auto_cap({level})=${auto_cap:,.0f} | available=${available:,.0f}"
+            logger.info(
+                f"[DualMode] auto_budget: buying_power=${bp:,.0f} × {level}({auto_cap_pct*100:.0f}%) "
+                f"= ${available:,.0f}"
             )
             return available
         except Exception as e:
@@ -673,27 +578,21 @@ class CapitalSafetySystem:
     def get_available_budget_for_manual(self) -> float:
         """计算手动交易可用预算 (USD).
 
-        规则:
-          1. 手动不受 auto 的 cap 限制
-          2. 仅受全局上限 (默认 80%) 约束
+        2026-06-29 简化: 直接用富途 buying_power.
+        手动交易不受 auto cap 限制, 可用全部购买力.
         """
         try:
-            equity = float(self._state.current_equity or 0)
-            if equity <= 0:
-                return 0.0
+            bp = float(self._state.buying_power or 0)
+            if bp <= 0:
+                equity = float(self._state.current_equity or 0)
+                if equity <= 0:
+                    return 0.0
+                bp = equity * 0.80
 
-            auto_exposure = self._calculate_auto_exposure()
-            manual_exposure = self._calculate_manual_exposure()
-
-            global_cap_pct = self._get_global_exposure_cap()
-            global_max = equity * global_cap_pct
-            available = max(0.0, global_max - auto_exposure - manual_exposure)
-            logger.debug(
-                f"[DualMode] manual_budget: equity=${equity:,.0f} | "
-                f"auto=${auto_exposure:,.0f} | manual=${manual_exposure:,.0f} | "
-                f"global_max=${global_max:,.0f} | available=${available:,.0f}"
+            logger.info(
+                f"[DualMode] manual_budget: buying_power=${bp:,.0f}"
             )
-            return available
+            return bp
         except Exception as e:
             logger.warning(f"[DualMode] Failed to calculate manual budget: {e}")
             return 0.0

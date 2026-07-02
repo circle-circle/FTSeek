@@ -119,6 +119,155 @@ class _SignalCounter:
 _signal_counter = _SignalCounter()
 
 
+# ═══════════════════════════════════════════════════════════════════
+#  ADR-008 (2026-06-28): 技术定方向仲裁 — LLM 退化为确认/冲突标记
+#  当前模式开关读取自 unified_config.yaml::signal_stage.mode
+#  "technical_direction_arbitration": technical 拥有方向否决权
+#  "legacy_collect_all"(默认): 保持原 collect-all 候选融合逻辑
+# ═══════════════════════════════════════════════════════════════════
+
+# 策略 ID 常量，用于区分技术信号与 LLM 投票来源
+_TECHNICAL_STRATEGY_ID = "TECHNICAL_MULTI_FACTOR"
+_LLM_STRATEGY_ID = "voting_llm"
+
+
+def _get_signal_stage_mode() -> str:
+    """读取 signal_stage 运行模式"""
+    try:
+        from app.core.config_container import get_config
+        _cfg = get_config()
+        return str(_cfg.get_dotted("signal_stage.mode", "legacy_collect_all")).lower()
+    except Exception:
+        return "legacy_collect_all"
+
+
+def _get_agreement_boost() -> float:
+    """读取 LLM 同向确认时的置信度加成"""
+    try:
+        from app.core.config_container import get_config
+        _cfg = get_config()
+        return float(_cfg.get_dotted("signal_stage.technical_arbitration.agreement_boost", 0.05))
+    except Exception:
+        return 0.05
+
+
+def _get_llm_conflict_threshold() -> float:
+    """读取 LLM 反向冲突拦截阈值"""
+    try:
+        from app.core.config_container import get_config
+        _cfg = get_config()
+        return float(_cfg.get_dotted("signal_stage.technical_arbitration.llm_conflict_confidence_threshold", 0.70))
+    except Exception:
+        return 0.70
+
+
+def _get_shadow_log_path() -> str:
+    """技术方向影子日志路径"""
+    try:
+        from app.core.config_container import get_config
+        _cfg = get_config()
+        return str(_cfg.get_dotted("signal_stage.technical_arbitration.shadow_log_path", "data/shadow_technical_direction.jsonl"))
+    except Exception:
+        return "data/shadow_technical_direction.jsonl"
+
+
+def _normalize_direction(c) -> str:
+    """将 SignalCandidate 的方向统一转成字符串"""
+    d = c.direction if isinstance(c.direction, str) else (
+        c.direction.value if hasattr(c.direction, 'value') else str(c.direction)
+    )
+    return str(d).upper()
+
+
+def _log_shadow_decision(symbol: str, technical_dir: str, llm_dir: Optional[str],
+                          llm_conf: float, technical_strength: int, outcome: str):
+    """记录技术定方向影子日志 (JSONL)"""
+    import json
+    import os
+    from datetime import datetime
+
+    log_path = _get_shadow_log_path()
+    try:
+        os.makedirs(os.path.dirname(log_path), exist_ok=True)
+    except Exception:
+        pass
+    try:
+        record = {
+            "timestamp": datetime.now().isoformat(),
+            "symbol": symbol,
+            "technical_direction": technical_dir,
+            "llm_direction": llm_dir,
+            "llm_confidence": llm_conf,
+            "technical_strength": technical_strength,
+            "outcome": outcome,
+        }
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except Exception as e:
+        logger.debug(f"[TechnicalArbitration] shadow log failed: {e}")
+
+
+def _apply_technical_direction_arbitration(candidates: list[SignalCandidate], symbol: str) -> Optional[SignalCandidate]:
+    """
+    技术定方向仲裁:
+      - technical 候选存在时, 以 technical 方向为准
+      - LLM 同向 → 置信度加成
+      - LLM 强反向 (confidence >= 阈值) → 拦截, 不交易
+      - 无 technical 候选 → 无论 LLM 说什么都不交易
+    """
+    technical_candidates = [c for c in candidates if getattr(c, "strategy_id", "") == _TECHNICAL_STRATEGY_ID]
+    llm_candidates = [c for c in candidates if getattr(c, "strategy_id", "") == _LLM_STRATEGY_ID]
+
+    if not technical_candidates:
+        if llm_candidates:
+            logger.info(
+                f"[TechnicalArbitration] {symbol} LLM-only signal rejected "
+                f"(no technical direction)"
+            )
+            _log_shadow_decision(symbol, "", llm_candidates[0].direction, llm_candidates[0].confidence, 0, "llm_only_rejected")
+        return None
+
+    best = max(technical_candidates, key=lambda c: c.confidence)
+    tech_direction = _normalize_direction(best)
+
+    # 检查 LLM 强反向冲突
+    conflict_threshold = _get_llm_conflict_threshold()
+    for llm in llm_candidates:
+        llm_dir = _normalize_direction(llm)
+        if llm_dir != tech_direction and llm.confidence >= conflict_threshold:
+            logger.info(
+                f"[TechnicalArbitration] {symbol} blocked: "
+                f"technical={tech_direction} vs LLM={llm_dir}(conf={llm.confidence:.2f})"
+            )
+            _log_shadow_decision(symbol, tech_direction, llm_dir, llm.confidence, best.strength, "blocked_conflict")
+            return None
+
+    # LLM 同向确认加成
+    agreement_boost = _get_agreement_boost()
+    for llm in llm_candidates:
+        if _normalize_direction(llm) == tech_direction:
+            best.confidence = min(0.95, best.confidence + agreement_boost)
+            best.rationale += " | LLM confirms"
+            if isinstance(getattr(best, "metadata", None), dict):
+                best.metadata["llm_confirmed"] = True
+            break
+
+    # 确保 owner_strategy 写入 metadata
+    if isinstance(getattr(best, "metadata", None), dict):
+        if not best.metadata.get("owner_strategy"):
+            best.metadata["owner_strategy"] = getattr(best, "strategy_id", "")
+
+    logger.info(
+        f"[TechnicalArbitration] {symbol} {tech_direction} "
+        f"technical_wins (strength={best.strength}, conf={best.confidence:.3f})"
+    )
+    _log_shadow_decision(symbol, tech_direction,
+                         llm_candidates[0].direction if llm_candidates else "",
+                         llm_candidates[0].confidence if llm_candidates else 0.0,
+                         best.strength, "traded")
+    return best
+
+
 def _get_regime_verdict(ctx: SymbolContext):
     """从 SymbolContext 中提取数据, 调用 Regime Filter 评估当前环境
 
@@ -216,7 +365,8 @@ def _apply_quality_scoring(ctx: SymbolContext, candidate: SignalCandidate) -> No
 def process(ctx: SymbolContext,
             position_store=None,
             battle_plan_manager=None,
-            voting_coordinator=None) -> Optional[SignalCandidate]:
+            voting_coordinator=None,
+            _skip_execution_in_trading: bool = False) -> Optional[SignalCandidate]:
     """
     策略编排: Regime Filter → collect-all → 质量评分 → 信号融合.
 
@@ -382,7 +532,10 @@ def process(ctx: SymbolContext,
         _llm_regime_ok = False
     if _voting_llm_enabled and _llm_regime_ok and not _non_trading_block_auto:
         try:
-            if voting_coordinator and not has_position:
+            # P0 (2026-06-29): TRADING阶段Playbook独占时跳过LLM投票, 消灭空转省$2.7/天
+            if _skip_execution_in_trading:
+                logger.debug(f"[SignalStage] {symbol} _skip_execution_in_trading=True, 跳过LLM投票")
+            elif voting_coordinator and not has_position:
                 # Skip LLM vote if we already have high-confidence candidates
                 if candidates and any(c.confidence >= 0.70 for c in candidates):
                     logger.info(f"[SignalStage] Skipping LLM vote for {symbol} - already have high-confidence candidates")
@@ -525,6 +678,19 @@ def process(ctx: SymbolContext,
             _short_filtered.append(c)
         if _short_filtered:
             candidates = _short_filtered
+
+    # ── ADR-008: 技术定方向仲裁 (2026-06-28) ──
+    # 当配置 mode=technical_direction_arbitration 时, technical 拥有方向否决权:
+    #   - LLM 同向 → 加成
+    #   - LLM 强反向 → 拦截
+    #   - 无 technical 候选 → 不交易
+    if _get_signal_stage_mode() == "technical_direction_arbitration":
+        _arb_result = _apply_technical_direction_arbitration(candidates, symbol)
+        if _arb_result is not None:
+            _signal_counter.record_generated()
+            _signal_counter.check_warning()
+            return _arb_result
+        return None
 
     # ── 单候选 → 直接返回 (已施加质量评分) ──
     if len(candidates) == 1:

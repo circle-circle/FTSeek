@@ -66,7 +66,8 @@ class ORBConfig:
                                             # 数据: 旧参数下3-8min交易全部被噪音扫出
                                             # ATR floor修复后trail激活需$0.47+, 给足时间
     same_symbol_loss_cooldown: bool = True   # 当日亏损退出的标的禁止重新入场
-    max_position_pct: float = 0.15          # P0 (2026-06-08): 单仓位最大占总权益比例
+    max_position_pct: float = 0.08          # 2026-06-29: 15%→8% 对齐Playbook, 防止单仓过大
+    daily_notional_cap_pct: float = 0.10   # 2026-06-29: 日总notional上限 (占equity), 10%=$9.9K
 
     @classmethod
     def from_dict(cls, raw: Dict[str, Any]) -> "ORBConfig":
