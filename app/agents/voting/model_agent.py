@@ -37,6 +37,8 @@ class ModelScore:
     reasoning: str = ""
     timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
     score_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    degraded_vote: bool = False      # True=LLM失败后的技术指标降级票
+    failure_reason: str = ""         # 失败原因 (timeout/api_error/rate_limit)
 
     def to_dict(self) -> Dict[str, Any]:
         """序列化为字典"""
@@ -48,39 +50,28 @@ class ModelScore:
             "direction": self.direction,
             "reasoning": self.reasoning,
             "timestamp": self.timestamp,
+            "degraded_vote": self.degraded_vote,
+            "failure_reason": self.failure_reason,
         }
 
 
 class ModelAgent:
     """单模型评分 Agent（支持真实 LLM API 调用）"""
 
-    # API 请求超时（秒）- 2026-03-27 更新：统一为 90 秒，与 coordinator 保持一致
-    API_TIMEOUT = 90  # 与 VotingCoordinator.timeout_seconds 保持一致
+    # API 请求超时（秒）
+    # 2026-07-06: 60s. 并行超时后 _collect_scores_parallel 用 as_completed + 共享 deadline,
+    # 总等待 = timeout (非 3×timeout). 60s 足够 DashScope 响应; 超时走降级.
+    API_TIMEOUT = 60
 
     def __init__(self, role: str, model_name: str, system_prompt: str = ""):
         self.role = role
         self.model_name = model_name
         self.system_prompt = system_prompt or self._default_prompt()
 
-        # API 配置（从环境变量读取）
-        self.deepseek_api_key = os.getenv("DEEPSEEK_API_KEY", "")
-        self.deepseek_base_url = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
-        self.deepseek_model = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
-
-        self.bailian_api_key = os.getenv("BAILIAN_API_KEY", "")
-        # P1-3 修复 (2026-04-17): 如果 env var 被 systemd 截断, 从 config 模块读取
-        if not self.bailian_api_key or self.bailian_api_key.startswith("***") or len(self.bailian_api_key) < 10:
-            try:
-                import config as _us_config
-                key_from_config = getattr(_us_config, "BAILIAN_API_KEY", "")
-                if key_from_config and not key_from_config.startswith("***"):
-                    self.bailian_api_key = key_from_config
-            except Exception:
-                pass
-        self.bailian_base_url = os.getenv(
-            "BAILIAN_BASE_URL",
-            "https://dashscope.aliyuncs.com/compatible-mode/v1"
-        )
+        # 2026-07-06: API key / base_url 统一走 UnifiedLLMService → model_call.py →
+        # unified_config.yaml (api_key_env / base_url), 此处不再自行读取环境变量.
+        # 保留 __init__ 签名, 移除已废弃的实例属性, 避免 SSOT 分散.
+        pass
 
     def _default_prompt(self) -> str:
         """默认提示词"""
@@ -154,9 +145,9 @@ class ModelAgent:
         
         # 2026-06-28 P0修复: json_mode=True对部分模型(如dashscope上的deepseek)偶发400
         # 策略: 先用json_mode, 失败则不带json_mode重试(prompt已要求返回JSON格式)
-        # 2026-06-29 修复: 传 timeout=85, 与 VotingCoordinator.timeout=90 对齐
+        # 2026-07-06 P0修复: timeout=40s, 让底层重试+fallback能在coordinator 90s内完成
         # 根因: qwen-max model config timeout=300s, 但 VotingCoordinator future.result(timeout=90)
-        # 在90s就超时了, 底层HTTP还在跑 → 投票超时 + 浪费API配额
+        # 在90s就超时了, 底层HTTP还在跑 → 投票超时 + fallback链无法触发 + 浪费API配额
         try:
             result = UnifiedLLMService.call_text(
                 feature, prompt,
@@ -164,7 +155,7 @@ class ModelAgent:
                 temperature=0.3,
                 max_tokens=800,
                 json_mode=True,
-                timeout=85,
+                timeout=self.API_TIMEOUT,
             )
             if result:
                 return result
@@ -177,7 +168,7 @@ class ModelAgent:
             system=self.system_prompt,
             temperature=0.3,
             max_tokens=800,
-            timeout=85,
+            timeout=self.API_TIMEOUT,
         )
 
     def _call_deepseek(self, prompt: str) -> Optional[str]:

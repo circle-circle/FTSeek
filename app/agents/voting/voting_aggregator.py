@@ -165,12 +165,16 @@ class VotingAggregator:
                 )
 
         # 计算内部投票的加权平均
+        # 2026-07-06 P0修复: 降级票权重降至30%, 与告警文案一致
         internal_weighted_sum = 0
         internal_total_weight = 0
 
         for score in internal_scores:
             role = self._get_model_role(score.model_id)
             weight = weights.get(role, 0.25)
+            if getattr(score, "degraded_vote", False):
+                weight *= 0.30
+                logger.info(f"[降级权重] {score.model_id}: 原权重 {weights.get(role, 0.25):.2f} → {weight:.2f} (degraded_vote)")
             internal_weighted_sum += score.strength * weight
             internal_total_weight += weight
 
@@ -259,25 +263,29 @@ class VotingAggregator:
         avg_confidence = sum(s.confidence for s in scores) / len(scores)
 
         # 3. 一致性计算 - P0 修复 (2026-04-17): 2模型架构
-        # 使用方向一致性 + 分数接近度综合计算
-        # 旧方法: consensus = 1 - std_dev/MAX_STD_DEV (2模型下 std_dev 天然更大)
-        strengths = [s.strength for s in scores]
-        std_dev = statistics.stdev(strengths) if len(strengths) > 1 else 0
-
-        direction_votes = [s.direction for s in scores]
-        short_votes = direction_votes.count("SHORT")
-        long_votes = direction_votes.count("LONG")
-        direction_agreed = (short_votes == len(scores)) or (long_votes == len(scores))
-
-        # P0 修复: 方向一致性优先, 分数接近度辅助
-        if direction_agreed:
-            # 所有模型同向 → 高一致性
-            # 2模型下 std_dev=0 → consensus=1.0, std_dev=14 → consensus=0.3
-            # 放宽 std_dev 的影响
-            consensus_level = max(0.30, 1.0 - (std_dev / 40.0))  # 分母从20→40, 最低0.30
+        # 2026-07-06 P0修复: 降级票(degraded_vote)不参与 consensus/std_dev 计算
+        # 根因: 3模型全部超时 → 3个相同技术分 → std_dev=0 → consensus=1.0 (虚假共识)
+        # 修复: 只用真实LLM投票计算 consensus; 降级票仅参与 final_strength 加权
+        real_scores = [s for s in scores if not getattr(s, "degraded_vote", False)]
+        if not real_scores:
+            # 全部降级 → consensus=0, 不假装有共识
+            std_dev = 0.0
+            consensus_level = 0.0
+            direction_agreed = False
         else:
-            # 模型分歧 → 低一致性
-            consensus_level = max(0.0, 0.30 - (std_dev / 40.0))
+            strengths = [s.strength for s in real_scores]
+            std_dev = statistics.stdev(strengths) if len(strengths) > 1 else 0
+
+            direction_votes = [s.direction for s in real_scores]
+            short_votes = direction_votes.count("SHORT")
+            long_votes = direction_votes.count("LONG")
+            direction_agreed = (short_votes == len(real_scores)) or (long_votes == len(real_scores))
+
+            # P0 修复: 方向一致性优先, 分数接近度辅助
+            if direction_agreed:
+                consensus_level = max(0.30, 1.0 - (std_dev / 40.0))
+            else:
+                consensus_level = max(0.0, 0.30 - (std_dev / 40.0))
 
         # 4. 中性信号检测：评分在中性区间且模型分歧小 → 无交易信号
         # 2026-04-16 修复: 如果所有模型方向一致(都SHORT或都LONG), 即使strength在中性区也不应跳过

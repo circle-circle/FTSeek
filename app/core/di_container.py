@@ -123,9 +123,15 @@ class DIContainer:
         """多模型投票协调器"""
         from app.agents.voting.voting_coordinator import VotingCoordinator
         from app.agents.voting.voting_config import VotingConfig
+        # 2026-07-06: 超时从 YAML llm.defaults.voting_timeout_seconds 读取, 默认60s.
+        try:
+            from app.core.config_container import get_config as _gc_vc
+            _voting_timeout = int(_gc_vc().get_dotted("llm.defaults.voting_timeout_seconds", 60))
+        except Exception:
+            _voting_timeout = 60
         return self._get_or_create("voting_coordinator", lambda: VotingCoordinator(
             config=VotingConfig.get_default_config(),
-            timeout_seconds=25,
+            timeout_seconds=_voting_timeout,
         ))
 
     # [CLEANUP 2026-06-13] consensus_engine removed — zero calls, self-documented as disconnected

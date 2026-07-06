@@ -219,10 +219,10 @@ class VotingCache:
 class VotingCoordinator:
     """投票协调器 - 3模型架构 2026-06-28
 
-    3 模型分工:
-    - qwen3.7-max (50%): 综合策略师, 宏观+技术综合判断
+    3 模型分工 (权重见 VotingConfig.get_default_config):
+    - qwen3.7-max (35%): 综合策略师, 宏观+技术综合判断
     - glm-5.2 (30%): 纯技术分析师, K线/指标/量价
-    - deepseek-v4-pro (20%): 风险/反向审查官, 魔鬼代言人
+    - deepseek-v4-pro (35%): 风险/反向审查官, 魔鬼代言人
     """
 
     # 3模型差异化提示词 (2026-06-28)
@@ -304,7 +304,7 @@ class VotingCoordinator:
     def __init__(
         self,
         config: Optional[VotingConfig] = None,
-        timeout_seconds: int = 90,
+        timeout_seconds: int = 60,
         enable_debate: bool = True,
         enable_cache: bool = True,
     ):
@@ -1119,38 +1119,71 @@ class VotingCoordinator:
         failed_models = []  # (model_name, failure_reason)
         total_models = len(self.model_agents)
 
+        # 2026-07-06 P0修复: 串行 future.result → as_completed 并行
+        # 旧: for future in futures: future.result(timeout=T) → 串行阻塞 3×T
+        # 新: as_completed + 共享 deadline → 并行等待, 总时间 = T (非 3×T)
+        import time as _time
+        _deadline = _time.time() + self.timeout
+
         with ThreadPoolExecutor(max_workers=6) as executor:
             futures = {
                 executor.submit(agent.generate_score, market_data): role
                 for role, agent in self.model_agents.items()
             }
 
-            for future in futures:
-                role = futures[future]
-                try:
-                    score = future.result(timeout=self.timeout)
-                    scores.append(score)
-                except FuturesTimeoutError:
-                    failed_models.append((role.value, "timeout"))
-                    logger.error(f"[投票] {role.value} 模型评分超时")
-                except Exception as e:
-                    # 区分 rate_limit 和其他 API 错误
-                    err_str = str(e).lower()
-                    if "rate" in err_str or "429" in err_str or "limit" in err_str:
-                        reason = "rate_limit"
-                    else:
-                        reason = "api_error"
-                    failed_models.append((role.value, reason))
-                    logger.error(f"[投票] {role.value} 模型评分失败：{e}")
+            from concurrent.futures import wait as _futures_wait, FIRST_COMPLETED
+            _pending = set(futures.keys())
+
+            while _pending:
+                _remaining = _deadline - _time.time()
+                if _remaining <= 0:
+                    # 超时: 所有未完成的 future 标记 timeout
+                    for _f in _pending:
+                        role = futures[_f]
+                        failed_models.append((role.value, "timeout"))
+                        logger.error(f"[投票] {role.value} 模型评分超时")
+                        _f.cancel()
+                    break
+
+                _done, _pending = _futures_wait(
+                    _pending, timeout=_remaining, return_when=FIRST_COMPLETED
+                )
+                if not _done:
+                    # as_completed 没有返回任何结果且没超时 → 继续等
+                    continue
+
+                for future in _done:
+                    role = futures[future]
+                    try:
+                        score = future.result(timeout=0.1)
+                        scores.append(score)
+                    except FuturesTimeoutError:
+                        failed_models.append((role.value, "timeout"))
+                        logger.error(f"[投票] {role.value} 模型评分超时")
+                    except Exception as e:
+                        err_str = str(e).lower()
+                        if "rate" in err_str or "429" in err_str or "limit" in err_str:
+                            reason = "rate_limit"
+                        else:
+                            reason = "api_error"
+                        failed_models.append((role.value, reason))
+                        logger.error(f"[投票] {role.value} 模型评分失败：{e}")
 
         # 为每个失败模型生成降级投票 (degraded_vote=True)
+        # 2026-07-06 P0修复: 多个模型失败时复用同一个技术指标分数, 避免完全相同的分数
+        # 被当成多个独立意见加权, 造成虚假共识膨胀.
+        _shared_fallback = None
+        if failed_models:
+            _shared_fallback = self._generate_technical_fallback(market_data)
         for model_name, failure_reason in failed_models:
-            degraded_score = self._generate_technical_fallback(market_data)
-            degraded_score.model_id = model_name
-            degraded_score.degraded_vote = True
-            degraded_score.failure_reason = failure_reason
-            degraded_score.reasoning = (
-                f"[降级] {failure_reason} | {degraded_score.reasoning}"
+            degraded_score = ModelScore(
+                model_id=model_name,
+                strength=_shared_fallback.strength,
+                confidence=_shared_fallback.confidence,
+                direction=_shared_fallback.direction,
+                reasoning=f"[降级] {failure_reason} | {_shared_fallback.reasoning}",
+                degraded_vote=True,
+                failure_reason=failure_reason,
             )
             scores.append(degraded_score)
 

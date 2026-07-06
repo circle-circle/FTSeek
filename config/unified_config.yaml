@@ -471,6 +471,7 @@ llm:
   defaults:
     cache_dir: data/llm_cache
     divergence_threshold: 0.5
+    voting_timeout_seconds: 60  # 投票并行总超时 (as_completed+共享deadline, 非 3×T)
   features:
     adaptive_tuner:
       fallback: qwen-max
@@ -539,6 +540,9 @@ llm:
       max_tokens: 800
       primary: deepseek-pro
       temperature: 0.4
+    emergency_interceptor:
+      fallback: qwen-max
+      primary: qwen-flash
     emergency_review:
       fallback: qwen-max
       primary: deepseek-pro
@@ -585,7 +589,7 @@ llm:
       fallback: qwen-max
       primary: glm-5
     voting_qwen:
-      fallback: deepseek-pro
+      fallback: deepseek-flash
       primary: qwen-max
     web_search_fundamental:
       cache_on_fail: true

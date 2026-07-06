@@ -239,9 +239,15 @@ class TradingScheduler:
         self.news = self.news_provider
 
         # 多模型投票
+        # 2026-07-06: 超时从 YAML llm.defaults.voting_timeout_seconds 读取, 默认60s.
+        try:
+            from app.core.config import get_config as _gc_vc
+            _voting_timeout = int(_gc_vc().get_dotted("llm.defaults.voting_timeout_seconds", 60))
+        except Exception:
+            _voting_timeout = 60
         self.voting_coordinator = VotingCoordinator(
             config=VotingConfig.get_default_config(),
-            timeout_seconds=25,
+            timeout_seconds=_voting_timeout,
         )
         
         # P0 清理 2026-04-25: 移除已废弃的 ai_trading_integration
