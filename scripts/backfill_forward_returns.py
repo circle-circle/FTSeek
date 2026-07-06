@@ -420,6 +420,8 @@ def backfill_forward_returns(dry_run: bool = False) -> Dict[str, int]:
 # ═══════════════════════════════════════════════════════════════════
 
 def main():
+    from scripts.utils.market_guard import exit_if_not_trading_day
+    exit_if_not_trading_day()
     parser = argparse.ArgumentParser(description="Signal IC 前瞻收益回填")
     parser.add_argument("--mirror", action="store_true", help="仅镜像历史决策 (不拉行情)")
     parser.add_argument("--forward", action="store_true", help="仅回填前瞻收益 (不镜像)")

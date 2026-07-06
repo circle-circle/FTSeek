@@ -272,6 +272,8 @@ def replay_shadows(days_back: int = 1, dry_run: bool = False) -> Dict:
 
 
 if __name__ == "__main__":
+    from scripts.utils.market_guard import exit_if_not_trading_day
+    exit_if_not_trading_day()
     parser = argparse.ArgumentParser(description="Shadow Mirror EOD Replay")
     parser.add_argument("--days", type=int, default=1, help="回放过去 N 天 (默认 1)")
     parser.add_argument("--dry-run", action="store_true", help="不写 DB")

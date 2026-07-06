@@ -227,4 +227,6 @@ def backfill_voting_outcomes():
 
 
 if __name__ == "__main__":
+    from scripts.utils.market_guard import exit_if_not_trading_day
+    exit_if_not_trading_day()
     backfill_voting_outcomes()

@@ -117,6 +117,8 @@ def generate_report(results):
 
 
 def main():
+    from scripts.utils.market_guard import exit_if_not_trading_day
+    exit_if_not_trading_day()
     if not os.path.exists(DB_PATH):
         print(f"DB not found: {DB_PATH}")
         sys.exit(1)

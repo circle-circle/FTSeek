@@ -36,20 +36,17 @@ def main():
     
     # 美股交易日检查
     try:
-        from app.utils.timezone import is_market_open, now_et
-        if is_market_open():
-            print("TRADING_DAY")
-            sys.exit(0)
-        else:
-            # 非交易时段也可能是交易日（盘前/盘后）
-            # 检查是否是工作日
-            et_now = now_et()
-            if et_now.weekday() >= 5:  # 周六日
-                print("NON_TRADING_DAY")
-                sys.exit(1)
-            # TODO: 节假日检查需要市场日历
-            print("TRADING_DAY")
-            sys.exit(0)
+        from app.utils.timezone import now_et
+        from app.utils.holiday_calendar import US_HOLIDAYS
+        et_now = now_et()
+        if et_now.weekday() >= 5:  # 周六日
+            print("NON_TRADING_DAY")
+            sys.exit(1)
+        if et_now.date() in US_HOLIDAYS:
+            print("NON_TRADING_DAY")
+            sys.exit(1)
+        print("TRADING_DAY")
+        sys.exit(0)
     except Exception as e:
         # fallback: 只检查工作日
         from datetime import datetime, timezone, timedelta
