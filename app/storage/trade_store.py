@@ -67,17 +67,17 @@ def _get_runtime_mode() -> str:
 
 
 def _get_trade_mode() -> str:
-    """Phase 1 (2026-05-31): 根据 TRADE_ENV 环境变量返回 simulate/live.
+    """2026-07-03: 根据 AUTO_TRADE_ACCOUNT 环境变量返回 simulate/live.
 
     约定:
-      - TRADE_ENV=1 (默认) -> 'simulate'
-      - TRADE_ENV=0           -> 'live'
-      - 解析异常              -> 'simulate' (最安全兑底)
+      - AUTO_TRADE_ACCOUNT=sim (默认) -> 'simulate'
+      - AUTO_TRADE_ACCOUNT=real       -> 'live'
+      - 解析异常                      -> 'simulate' (最安全兑底)
     """
     try:
         import os as _os
-        raw = _os.getenv("TRADE_ENV", "1").strip()
-        return "live" if raw == "0" else "simulate"
+        _auto_acc = _os.getenv("AUTO_TRADE_ACCOUNT", "sim").strip().lower()
+        return "live" if _auto_acc == "real" else "simulate"
     except Exception:
         return "simulate"
 
@@ -601,6 +601,30 @@ class TradeStore:
                 f"trade_records.exit_price 不可为 0 (symbol={_symbol}); "
                 f"必须从 Broker 成交回报或订单限价获取实际成交价."
             )
+
+        # 幽灵记录守卫 (2026-07-03): entry_price=exit_price AND realized_pnl=0 → 拒绝写入
+        # 根因: position_monitor 在平仓确认时未取到真实市场价, 用 entry_price 填充 exit_price,
+        # 产生 pnl=0 的虚假交易记录, 污染 dashboard/review 统计.
+        # 已有 exit_price≤0 守卫在此之上, 此处拦截 exit_price>0 但 entry=exit 的幽灵记录.
+        _entry_px_check = record.get("entry_price")
+        _pnl_check = record.get("realized_pnl", 0)
+        if (
+            _exit_px is not None
+            and _entry_px_check is not None
+            and float(_exit_px) > 0
+            and float(_exit_px) == float(_entry_px_check)
+            and float(_pnl_check or 0) == 0
+            and not _is_open_only
+        ):
+            _logger.error(
+                f"[幽灵记录守卫] {_symbol} 拒绝写入: entry_price=exit_price={_entry_px_check} "
+                f"AND realized_pnl=0 | exit_reason={_exit_reason} | source_type={_src_type} | "
+                f"close_futu_order_id={record.get('close_futu_order_id', 'NONE')}"
+            )
+            raise ValueError(
+                f"幽灵交易记录拒绝写入 (symbol={_symbol}): entry_price=exit_price={_entry_px_check} "
+                f"且 realized_pnl=0; position_monitor 应传入真实 exit_price 而非 entry_price."
+            )
         
         with self._lock:
             conn = self._get_conn()
@@ -886,10 +910,12 @@ class TradeStore:
                     owner_strategy=excluded.owner_strategy, owner=excluded.owner,
                     sync_status=excluded.sync_status, account_type=excluded.account_type,
                     sl_broker_order_id=excluded.sl_broker_order_id,
-                    stop_loss_price=excluded.stop_loss_price
+                    stop_loss_price=excluded.stop_loss_price,
+                    trader_type=excluded.trader_type,
+                    strategy_id=excluded.strategy_id
             """, (symbol, direction, size, entry_price, stop_loss, stop_loss,
                   _now, _now, owner_strategy, 'AUTO', owner_strategy,
-                  owner, sync_status, account_type, futu_order_id, stop_loss, stop_loss))
+                  owner, sync_status, 'normal', account_type, futu_order_id, stop_loss))
             conn.commit()
         finally:
             if hasattr(conn, 'close'):

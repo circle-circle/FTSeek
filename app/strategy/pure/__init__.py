@@ -155,7 +155,7 @@ _BUILTIN_DEFAULTS = {
         "enabled": True,
         "require_pullback": True,
         "min_pullback_quality": 0.5,
-        "min_strength": 40,
+        "min_strength": 35,
         # 旧参数兼容
         "min_signals": 2,
         "indicators": ["rsi", "macd", "bollinger", "supertrend"],

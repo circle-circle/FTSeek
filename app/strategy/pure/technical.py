@@ -195,7 +195,7 @@ def evaluate(ctx: SymbolContext, config: Dict[str, Any]) -> Optional[SignalCandi
     """
     min_pullback_quality = config.get("min_pullback_quality", 0.5)
     require_pullback = config.get("require_pullback", True)
-    min_strength = config.get("min_strength", 40)
+    min_strength = config.get("min_strength", 35)
 
     # ── Step 1: 判断动量方向 ──
     direction = _momentum_direction(ctx)
@@ -213,12 +213,12 @@ def evaluate(ctx: SymbolContext, config: Dict[str, Any]) -> Optional[SignalCandi
 
     # ── Step 3: 综合评分 ──
     # 基础分: 动量方向确认度 (SuperTrend + MACD + MA)
-    base_score = 50  # 有方向 = 50 分起
+    base_score = 30  # 2026-06-30 DEB: 从50降到30, 降低基线让bonus更有区分力
 
     # 回调质量加成 (0-25 分)
     pullback_bonus = int(pullback_q * 25)
 
-    # SuperTrend 确认加成 (0-10 分)
+    # SuperTrend 确认加成 (0-10 分) + 趋势一致性惩罚
     st_dir = ctx.supertrend_direction.upper()
     st_confirmed = (st_dir == "UP" and direction == "LONG") or \
                    (st_dir == "DOWN" and direction == "SHORT")
@@ -249,6 +249,9 @@ def evaluate(ctx: SymbolContext, config: Dict[str, Any]) -> Optional[SignalCandi
             return None  # 波动太低, 不值得交易
 
     strength = min(100, base_score + pullback_bonus + st_bonus + macd_bonus + vol_bonus)
+    # 2026-06-30 DEB: 趋势一致性惩罚 — SuperTrend方向与信号方向不一致时扣分
+    if not st_confirmed:
+        strength = max(0, strength - 15)
     if strength < min_strength:
         return None
 

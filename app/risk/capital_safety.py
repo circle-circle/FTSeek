@@ -9,7 +9,7 @@ FTSeek-US 资本安全水位系统 (Capital Safety Water Levels)
 ├──────────┼────────────┼────────┼───────────────────────────────┤
 │ 🟢 安全  │ 0% ~ -5%   │ 正常   │ 全额仓位, 正常风险/笔          │
 │ 🟡 警戒  │ -5% ~ -10% │ 谨慎   │ 仓位减半, 风险/笔减半          │
-│ 🟠 警告  │ -10% ~ -20%│ 防御   │ 仅 25% 仓位, 不开新仓          │
+│ 🟠 警告  │ -10% ~ -20%│ 防御   │ 仅 25% 仓位, 允许替换仓, 不建议净增仓 │
 │ 🔴 危险  │ -20% ~ -35%│ 紧急   │ 停止开仓, 逐步减仓             │
 │ ⚫ 熔断  │ > -35%     │ 破产线 │ 全部平仓, 系统锁定, 人工介入   │
 └─────────────────────────────────────────────────────────────────┘
@@ -288,7 +288,8 @@ class CapitalSafetySystem:
         elif wl == WaterLevel.ORANGE:
             logger.warning(
                 f"[资本安全·警告] ORANGE 水位 (回撤 {self._state.drawdown_pct*100:.1f}%) | "
-                f"允许开仓但仓位缩放至 25% (risk_mult=0.25, pos_mult=0.25)"
+                f"仅允许替换仓/减仓, 仓位缩放至 25% (risk_mult=0.25, pos_mult=0.25); "
+                f"不建议净增仓"
             )
         
         # P1 修复 (2026-04-21): 模拟盘放宽现金检查
@@ -841,13 +842,10 @@ def get_capital_safety_system(initial_capital: Optional[float] = None,
     """
     global _capital_instance
     if _capital_instance is None:
-        # 自动检测交易环境：优先使用参数，其次从 ConfigContainer 读取
+        # 2026-07-03: 跟随 AUTO_TRADE_ACCOUNT (TRADE_ENV 仅控制 DB 路由, 不反映 broker 账户)
         if trade_env is None:
-            try:
-                from app.core.config_container import get_config
-                trade_env = get_config().trade_env_int
-            except Exception:
-                trade_env = int(os.getenv("TRADE_ENV", "1"))
+            _auto_acc = os.getenv("AUTO_TRADE_ACCOUNT", "sim").strip().lower()
+            trade_env = 1 if _auto_acc == "sim" else 0
         
         _capital_instance = CapitalSafetySystem(
             initial_capital=initial_capital,

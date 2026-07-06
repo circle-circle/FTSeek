@@ -139,9 +139,12 @@ class FutuLV3Provider:
     def _is_us_market_open(self) -> bool:
         """判断当前是否为美股交易时段 (使用美东时间)
 
-        美股交易: 美东 09:30-16:00，周一至周五
+        美股交易: 美东 09:30-16:00，周一至周五（不含节假日）
         修复 (2026-05-09): 原用北京时间判断，周六凌晨 0-4 点被错误拦截，
         但此时对应美东周五下午，仍在交易时段内。
+        修复 (2026-07-03): 接入 holiday_calendar SSOT，节假日返回 False。
+        根因: 7/3 独立日补休，_is_us_market_open() 仍返回 True →
+        watchdog 每 30s 判定不健康（无推送）→ 重连风暴 287 次。
         """
         import pytz
         from datetime import datetime
@@ -154,6 +157,11 @@ class FutuLV3Provider:
 
         # 周一至周五
         if weekday >= 5:
+            return False
+
+        # 节假日 (SSOT: holiday_calendar)
+        from app.utils.holiday_calendar import get_holiday_calendar
+        if get_holiday_calendar().is_us_holiday(now_et.date()):
             return False
 
         # 美东 09:30-16:00 (570-960 分钟)
@@ -1186,10 +1194,6 @@ class FutuLV3Provider:
                     logger.warning(f"[FutuLV3·DailyK] {symbol} 日K线解析为空, 返回 None")
                     return None
 
-                # 写入缓存
-                self._daily_kline_cache[futu_symbol] = klines
-                self._daily_kline_cache_time[futu_symbol] = time.time()
-
                 logger.debug(f"[FutuLV3·DailyK] {symbol} 获取 {len(klines)} 根日K线成功")
 
                 # 2026-06-28 P0修复: 富途OpenD模拟环境的历史K线可能停滞在旧日期
@@ -1211,12 +1215,12 @@ class FutuLV3Provider:
                                     f"[FutuLV3·DailyK] {symbol} 富途历史K线过期 "
                                     f"(latest={latest_bar_date}, >10天前) → 返回None触发TwelveData fallback"
                                 )
-                            # 不写缓存(避免旧数据被复用), 直接返回None
+                            # 不缓存过期数据, 直接返回None
                             return None
                 except Exception:
                     pass  # 日期解析失败不阻断
 
-                # 写入缓存
+                # 写入缓存 (只在数据新鲜时写入)
                 self._daily_kline_cache[futu_symbol] = klines
                 self._daily_kline_cache_time[futu_symbol] = time.time()
                 return klines[-count:]

@@ -206,6 +206,7 @@ class VotingAggregator:
         # 原逻辑只保护 qwen/minimax 内部一致方向, 但 LLM 策略 (external) 权重较高时
         # 可能把 final_strength 翻转到与多数模型相反的方向.
         # 修复: 计算所有 scores 的加权多数方向, final_strength 不得与多数方向相反.
+        _majority_dir = None
         try:
             _all_dirs = []
             for _s in scores:
@@ -286,9 +287,11 @@ class VotingAggregator:
             and not direction_agreed  # 新增: 全同向时不判定为中性
         )
         
-        # 5. 确定方向
+        # 5. 确定方向 (2026-07-06: 优先使用加权多数方向, 避免 final_strength 与模型方向背离)
         if is_neutral:
             direction = "NEUTRAL"
+        elif _majority_dir in ("LONG", "SHORT"):
+            direction = _majority_dir
         else:
             direction = "LONG" if final_strength > 50 else "SHORT"
         

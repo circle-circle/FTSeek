@@ -1,6 +1,6 @@
 """Tests for app.playbook.ic_tracker — 幂等性保障."""
 import sqlite3
-from datetime import date
+from datetime import date, timedelta
 from unittest.mock import MagicMock
 
 import pytest
@@ -25,11 +25,11 @@ class TestBackfillForwardReturns:
         """构造返回固定日线的 mock market_data."""
         md = MagicMock()
 
-        def _get_daily_bars(symbol, count=10):
-            # 生成从 T-1 到 T-10 的日线
+        def _get_daily_bars(symbol, count=30):
+            # 生成从 today-count 到 today-1 的日线 (默认覆盖 30 天, 与 ic_tracker 一致)
             bars = []
             for i in range(count, 0, -1):
-                d = date(2026, 6, 26 - i)
+                d = date(2026, 6, 27) - timedelta(days=i)
                 bars.append({
                     "time": d.isoformat(),
                     "close": close_price,

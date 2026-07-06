@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Dict, Any, Optional
 import uuid
+import time
 
 import requests
 from dotenv import load_dotenv
@@ -300,6 +301,52 @@ class ModelAgent:
         except Exception:
             pass  # 静默失败，不影响主流程
 
+        # 2026-07-03: 注入 PlaybookData 6 维度 (insider/earnings/fundamental)
+        # 从 market_data dict 中提取 (由 _merge_playbook_data 注入)
+        insider_section = ""
+        _insider_signal = data.get("insider_signal", "")
+        _insider_score = data.get("insider_cluster_score", 0) or 0
+        _insider_net = data.get("insider_net_shares", 0) or 0
+        if _insider_signal and _insider_signal != "neutral":
+            _net_desc = f"净买入{_insider_net:+,}股" if _insider_net != 0 else "无净变化"
+            insider_section = f"""
+【内部人交易信号】(来源: SEC EDGAR Form4, 天然延迟2-4天)
+|- 信号: {_insider_signal} (集群分数: {_insider_score:.2f})
+|- {_net_desc}
+|- 提示: 内部人数据天然滞后, 反映的是2-4天前的交易行为
+"""
+
+        earnings_section = ""
+        _days_until = data.get("earnings_days_until", None)
+        _beat_rate = data.get("earnings_beat_rate", 0) or 0
+        if _days_until is not None and _days_until <= 30:
+            earnings_section = f"""
+【财报临近提醒】
+|- 距下次财报: {_days_until}天
+|- 历史超预期率: {_beat_rate:.0%}
+|- ⚠️ 财报前后波动率显著上升, 请评估是否需要降低仓位或回避
+"""
+
+        fundamental_section = ""
+        _pe = data.get("pe", None)
+        _roe = data.get("roe", None)
+        _rev_growth = data.get("revenue_growth_yoy", None)
+        _industry = data.get("industry", None)
+        if _pe is not None or _roe is not None or _rev_growth is not None:
+            _parts = []
+            if _pe is not None:
+                _parts.append(f"PE={_pe:.1f}")
+            if _roe is not None:
+                _parts.append(f"ROE={_roe:.1%}")
+            if _rev_growth is not None:
+                _parts.append(f"营收增速={_rev_growth:+.1%}")
+            if _industry:
+                _parts.append(f"行业={_industry}")
+            fundamental_section = f"""
+【基本面快照】(来源: Finnhub, 可能缓存)
+|- {' | '.join(_parts)}
+"""
+
         prompt = f"""请对以下美股进行分析并评分：
 
 【股票信息】
@@ -316,11 +363,18 @@ class ModelAgent:
 - VIX 恐慌指数：{vix:.1f}
 - 标普 500 日涨跌：{spx_chg:.2%}
 - 新闻情绪分：{news_sentiment:.2f}（-1.0 极度悲观 ~ +1.0 极度乐观）
-{news_warning}
+{news_warning}{insider_section}{earnings_section}{fundamental_section}
 {self._build_factor_ic_section()}
 请基于你的专业角色（{self.role}），综合以上数据给出评分。{market_context}
-返回 JSON: {{"strength": <0-100>, "confidence": <0.0-1.0>, "direction": "LONG/SHORT", "entry_strategy": "breakout/pullback/support_bounce", "key_support": <price>, "key_resistance": <price>, "stop_trigger": "intraday/close", "reasoning": "brief"}}
-可选字段: entry_strategy/key_support/key_resistance/stop_trigger 无法判断时省略."""
+
+【防幻觉规则】
+1. brief_reasons只能引用上方【】中提供的数据字段, 不引用外部知识, 不编造未提供的数字
+2. 如果数据标注为"滞后"或"缓存", 在brief中明确指出数据局限性
+3. key_support/key_resistance必须来自上方提供的价格数据(52w/MA), 不编造
+4. 数据缺失的维度, 在brief中标注"数据缺失"而非猜测
+
+返回 JSON: {{"strength": <0-100>, "confidence": <0.0-1.0>, "direction": "LONG/SHORT", "entry_strategy": "breakout/pullback/support_bounce", "key_support": <price>, "key_resistance": <price>, "stop_trigger": "intraday/close", "reasoning": "brief", "brief_conclusion": "一句话结论20字内", "brief_reasons": ["理由1(强/中/弱)", "理由2(强/中/弱)", "理由3"], "brief_risks": ["风险场景→行动"]}}
+可选字段: entry_strategy/key_support/key_resistance/stop_trigger/brief_* 无法判断时省略. brief_reasons每条标注数据支撑强度(强/中/弱)."""
 
         return prompt
 
@@ -379,8 +433,10 @@ class ModelAgent:
 
         # 2026-07-02: 采集LLM新字段到reasoning (JSON编码, 不改ModelScore结构)
         # ponytail: 不加dataclass字段, 把新字段编码到reasoning里供后续分析
+        # 2026-07-04: +brief_conclusion/brief_reasons/brief_risks 供dashboard策略简报
         _extra = {}
-        for _field in ("entry_strategy", "key_support", "key_resistance", "stop_trigger"):
+        for _field in ("entry_strategy", "key_support", "key_resistance", "stop_trigger",
+                        "brief_conclusion", "brief_reasons", "brief_risks"):
             _val = data.get(_field)
             if _val is not None and _val != "":
                 _extra[_field] = _val

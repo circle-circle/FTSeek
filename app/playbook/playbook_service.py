@@ -153,6 +153,433 @@ class PlaybookService:
         """获取 patterns"""
         return self.db.get_patterns(status=status)
 
+    # ========== Pipeline 可视化 ==========
+
+    def get_pipeline_view(self, trade_date: str = None) -> Dict[str, Any]:
+        """聚合管道各阶段数据, 供 Dashboard 可视化.
+
+        数据流: 候选池(factor_screen) → 投票(signal_snapshots) → 指令(playbook_instructions)
+        附: 因子IC(factor_ic_latest) + 方向审计(playbook_direction_audit.jsonl)
+
+        Returns:
+            {date, regime, funnel, factor_ic, items: [{symbol, direction, ...vote, ...factor_scores}]}
+        """
+        if trade_date is None:
+            trade_date = self._et_today()
+
+        # ① playbook_instructions — 最终指令
+        instructions = self.db.get_instructions_by_date(trade_date)
+
+        # 2026-07-04: 默认日期无指令时(假日/盘前), 自动回退到最近有数据的交易日
+        if not instructions:
+            recent = self.db.get_recent_instructions(limit=1)
+            if recent:
+                trade_date = recent[0].get("date", trade_date)
+                instructions = self.db.get_instructions_by_date(trade_date)
+
+        # ② signal_snapshots — 投票结果 (按 symbol 索引)
+        vote_map = self._get_vote_map(trade_date)
+
+        # ③ factor_screen_latest.json — 候选池 + 因子评分
+        screen_data = self._load_json_file("data/factor_screen_latest.json")
+        screen_map = {}
+        if screen_data and screen_data.get("candidates"):
+            for c in screen_data["candidates"]:
+                sym = c.get("symbol", "")
+                if sym:
+                    screen_map[sym] = c
+
+        # ④ factor_ic_latest.json — 因子 IC
+        factor_ic = self._load_json_file("data/factor_ic_latest.json") or {}
+
+        # ⑤ direction_audit.jsonl — LLM vs 技术方向
+        audit_map = self._get_audit_map(trade_date)
+
+        # ⑥ signal_context — 信息层 (新闻/内部人/财报/基本面/主题雷达/LLM reasoning)
+        context_map = {}
+        try:
+            contexts = self.db.get_signal_contexts_by_date(trade_date)
+            context_map = {c.get("symbol", ""): c for c in contexts if c}
+        except Exception as e:
+            logger.debug(f"[playbook] signal_context 查询失败: {e}")
+
+        # 组装 items
+        items = []
+        for inst in instructions:
+            sym = inst.get("symbol", "")
+            vote = vote_map.get(sym, {})
+            screen = screen_map.get(sym, {})
+            audit = audit_map.get(sym, {})
+
+            # 解析 conditions
+            conditions = inst.get("conditions_json")
+            if isinstance(conditions, str):
+                import json as _json
+                try:
+                    conditions = _json.loads(conditions)
+                except Exception:
+                    conditions = []
+            if not isinstance(conditions, list):
+                conditions = conditions or []
+
+            # 解析 data_quality
+            dq = inst.get("data_quality_json")
+            if isinstance(dq, str):
+                import json as _json
+                try:
+                    dq = _json.loads(dq)
+                except Exception:
+                    dq = {}
+            if not isinstance(dq, dict):
+                dq = dq or {}
+
+            # 解析 raw_instruction_json
+            raw = inst.get("raw_instruction_json")
+            if isinstance(raw, str):
+                import json as _json
+                try:
+                    raw = _json.loads(raw)
+                except Exception:
+                    raw = {}
+            if not isinstance(raw, dict):
+                raw = raw or {}
+
+            # 该标的触发的因子 IC
+            trigger_factors = conditions or (vote.get("factors_json") or [])
+            if isinstance(trigger_factors, str):
+                import json as _json
+                try:
+                    trigger_factors = _json.loads(trigger_factors)
+                except Exception:
+                    trigger_factors = []
+            factor_ic_for_symbol = {}
+            for f in trigger_factors:
+                # factors 可能是 "theme_momentum:+0.20" 格式, 取冒号前
+                f_key = f.split(":")[0] if isinstance(f, str) else str(f)
+                if f_key in factor_ic:
+                    factor_ic_for_symbol[f_key] = factor_ic[f_key]
+
+            items.append({
+                "symbol": sym,
+                "direction": inst.get("direction", ""),
+                "confidence": inst.get("confidence", 0),
+                "sector": inst.get("sector", ""),
+                "thesis": inst.get("thesis", ""),
+                "entry_price": inst.get("entry_price", 0),
+                "stop_loss": inst.get("stop_loss", 0),
+                "take_profit": inst.get("take_profit", 0),
+                "position_size": inst.get("position_size", 0),
+                "risk_reward": inst.get("risk_reward", 0),
+                "conditions": conditions,
+                "data_quality": dq,
+                "ok_dimensions": inst.get("ok_dimensions", 0),
+                "market_regime": inst.get("market_regime", ""),
+                "vix_at_generation": inst.get("vix_at_generation", 0),
+                "skip_reason": inst.get("skip_reason", ""),
+                "executed": bool(inst.get("executed", 0)),
+                "outcome": inst.get("outcome", ""),
+                "atr_source": raw.get("atr_source", ""),
+                "vote": {
+                    "direction": vote.get("direction", ""),
+                    "strength": vote.get("strength", 0),
+                    "confidence": vote.get("confidence", 0),
+                    "consensus_level": vote.get("consensus_level", 0),
+                    "decision_id": vote.get("decision_id", ""),
+                    "factors": trigger_factors,
+                } if vote else None,
+                "audit": {
+                    "llm_direction": audit.get("llm_direction", ""),
+                    "technical_direction": audit.get("technical_direction", ""),
+                    "llm_strength": audit.get("llm_strength", 0),
+                    "llm_confidence": audit.get("llm_confidence", 0),
+                    "llm_std": audit.get("llm_std", 0),
+                } if audit else None,
+                "factor_scores": screen.get("factors", {}),
+                "composite_score": screen.get("composite_score", 0),
+                "composite_score_long": screen.get("composite_score_long", 0),
+                "composite_score_short": screen.get("composite_score_short", 0),
+                "factor_ic": factor_ic_for_symbol,
+                # 信息层上下文 (brief缺失时用fallback)
+                "signal_context": self._get_signal_context_or_fallback(context_map.get(sym, {}), inst),
+            })
+
+        # 漏斗统计
+        vote_directions = [v.get("direction", "") for v in vote_map.values()]
+        inst_directions = [i.get("direction", "") for i in instructions]
+        funnel = {
+            "candidates": len(screen_map),
+            "voted": len(vote_map),
+            "vote_long": sum(1 for d in vote_directions if d == "LONG"),
+            "vote_short": sum(1 for d in vote_directions if d == "SHORT"),
+            "vote_neutral": sum(1 for d in vote_directions if d == "NEUTRAL"),
+            "buy": sum(1 for d in inst_directions if d == "BUY"),
+            "sell_short": sum(1 for d in inst_directions if d == "SELL_SHORT"),
+            "skip": sum(1 for d in inst_directions if d == "SKIP"),
+        }
+
+        # regime
+        regime_log = self.db.get_regime_log(days=1)
+        regime = regime_log[0] if regime_log else {}
+        if not regime:
+            # fallback: 从 instructions 取
+            for inst in instructions:
+                if inst.get("market_regime"):
+                    regime = {
+                        "regime": inst.get("market_regime", ""),
+                        "vix": inst.get("vix_at_generation", 0),
+                    }
+                    break
+
+        return {
+            "date": trade_date,
+            "regime": regime,
+            "funnel": funnel,
+            "factor_ic": factor_ic,
+            "items": items,
+            # Deepulse 主题雷达 (全局, 非per-symbol)
+            "theme_radar": self._load_theme_radar(),
+        }
+
+    def _get_signal_context_or_fallback(self, ctx_row: Dict, inst: Dict) -> Optional[Dict]:
+        """signal_context有brief就用, 否则从instruction构造fallback brief."""
+        ctx = self._format_signal_context(ctx_row)
+        if ctx and ctx.get("brief"):
+            return ctx
+        # brief缺失 → fallback
+        fallback = self._build_fallback_brief(inst, inst.get("symbol", ""))
+        if fallback:
+            # 合并: 保留ctx中已有的信息层字段 + 注入fallback brief
+            if ctx:
+                ctx["brief"] = fallback["brief"]
+                return ctx
+            return fallback
+        return ctx
+
+    @staticmethod
+    def _build_fallback_brief(inst: Dict, symbol: str) -> Optional[Dict]:
+        """signal_context 缺失时, 从 instruction 自身字段构造 fallback brief.
+
+        不含LLM分析, 只展示已有的entry/SL/TP/conditions/data_quality.
+        让前端卡片在任何情况下都能展示策略参数.
+        """
+        if not inst:
+            return None
+        entry = inst.get("entry_price") or 0
+        sl = inst.get("stop_loss") or 0
+        tp = inst.get("take_profit") or 0
+        direction = inst.get("direction", "")
+        thesis = inst.get("thesis", "")
+
+        # 关键位: entry/SL/TP → 支撑/阻力
+        key_levels = {}
+        if direction == "BUY":
+            if sl > 0:
+                key_levels["support"] = [round(sl, 2)]
+            if tp > 0:
+                key_levels["resistance"] = [round(tp, 2)]
+        elif direction == "SELL_SHORT":
+            if tp > 0:
+                key_levels["support"] = [round(tp, 2)]
+            if sl > 0:
+                key_levels["resistance"] = [round(sl, 2)]
+
+        # 入场策略: 从direction + conditions推导
+        conditions = inst.get("conditions") or []
+        cond_str = ", ".join(conditions[:3]) if conditions else ""
+        if direction == "BUY":
+            entry_strategy = f"BUY @{entry:.2f}" if entry > 0 else "BUY"
+            if cond_str:
+                entry_strategy += f" ({cond_str})"
+        elif direction == "SELL_SHORT":
+            entry_strategy = f"SHORT @{entry:.2f}" if entry > 0 else "SHORT"
+            if cond_str:
+                entry_strategy += f" ({cond_str})"
+        else:
+            entry_strategy = None
+
+        # 数据完整度: fallback时标注缺失
+        dq_list = []
+        if not inst.get("thesis"):
+            dq_list.append("thesis:missing")
+        # signal_context的6维度数据在fallback时不可用
+        dq_list.append("LLM brief:待7/7盘前生成")
+
+        brief = {
+            "conclusion": thesis[:80] if thesis else f"{direction} @{entry:.2f}" if entry > 0 else direction,
+            "reasons": conditions[:3] if conditions else [],
+            "risks": [],
+            "entry_strategy": entry_strategy,
+            "key_support": round(sl, 2) if sl > 0 else None,
+            "key_resistance": round(tp, 2) if tp > 0 else None,
+            "stop_trigger": f"SL @{sl:.2f}" if sl > 0 else None,
+            "key_levels": key_levels,
+            "data_quality": dq_list,
+        }
+        return {"brief": brief}
+
+    @staticmethod
+    def _format_signal_context(ctx: Dict) -> Optional[Dict]:
+        """格式化 signal_context DB 行 → 前端友好的 dict."""
+        if not ctx:
+            return None
+        import json as _json
+
+        def _parse(val):
+            if val is None:
+                return None
+            if isinstance(val, (list, dict)):
+                return val
+            try:
+                return _json.loads(val)
+            except Exception:
+                return None
+
+        # 2026-07-04: 策略简报字段 (从raw_data_json提取, 不加DB新列)
+        _raw_parsed = _parse(ctx.get("raw_data_json"))
+        _raw_data = _raw_parsed if isinstance(_raw_parsed, dict) else {}
+        # 2026-07-04: 数据完整度 (从各维度quality字段提取)
+        _dq_summary = []
+        for _dim, _key in [("fundamental", "fundamental"), ("technical", "technical"),
+                           ("insider", "insider"), ("news", "news"),
+                           ("earnings", "earnings"), ("sentiment", "sentiment")]:
+            _dim_data = _raw_data.get(_dim, {})
+            if isinstance(_dim_data, dict):
+                _q = _dim_data.get("quality", "missing")
+                _src = _dim_data.get("source", "")
+                _dq_summary.append(f"{_dim}:{_q}" + (f"/{_src}" if _src else ""))
+        _brief = None
+        if _raw_data.get("brief_conclusion") or _raw_data.get("key_levels"):
+            _brief = {
+                "conclusion": _raw_data.get("brief_conclusion"),
+                "reasons": _raw_data.get("brief_reasons") or [],
+                "risks": _raw_data.get("brief_risks") or [],
+                "entry_strategy": _raw_data.get("entry_strategy"),
+                "key_support": _raw_data.get("key_support"),
+                "key_resistance": _raw_data.get("key_resistance"),
+                "stop_trigger": _raw_data.get("stop_trigger"),
+                "key_levels": _raw_data.get("key_levels") or {},
+                "data_quality": _dq_summary,
+            }
+
+        return {
+            "news_headlines": _parse(ctx.get("news_headlines_json")) or [],
+            "news_sentiment": ctx.get("news_sentiment"),
+            "insider": {
+                "signal": ctx.get("insider_signal"),
+                "cluster_score": ctx.get("insider_cluster_score"),
+                "net_shares": ctx.get("insider_net_shares"),
+                "cluster_buyers": _parse(ctx.get("insider_cluster_buyers_json")) or [],
+            } if ctx.get("insider_signal") else None,
+            "earnings": {
+                "next_date": ctx.get("earnings_next_date"),
+                "days_until": ctx.get("earnings_days_until"),
+                "beat_rate": ctx.get("earnings_beat_rate"),
+            } if ctx.get("earnings_next_date") else None,
+            "fundamental": {
+                "pe": ctx.get("pe"),
+                "market_cap": ctx.get("market_cap"),
+                "industry": ctx.get("industry"),
+                "revenue_growth_yoy": ctx.get("revenue_growth_yoy"),
+                "roe": ctx.get("roe"),
+                "debt_to_equity": ctx.get("debt_to_equity"),
+                "high_52w": ctx.get("high_52w"),
+                "low_52w": ctx.get("low_52w"),
+            } if ctx.get("pe") else None,
+            "theme": {
+                "momentum": ctx.get("theme_momentum"),
+                "wind": ctx.get("theme_wind"),
+                "narratives": _parse(ctx.get("theme_narratives_json")) or [],
+            } if ctx.get("theme_momentum") is not None else None,
+            "llm_reasoning": _parse(ctx.get("llm_reasoning_json")) or [],
+            "brief": _brief,
+        }
+
+    @staticmethod
+    def _load_theme_radar() -> Optional[Dict]:
+        """加载 Deepulse 主题雷达 (theme_context.json)."""
+        data = PlaybookService._load_json_file("data/theme_context.json")
+        if not data:
+            return None
+        domains = data.get("domains") or {}
+        result = {}
+        for name, d in domains.items():
+            result[name] = {
+                "momentum": d.get("theme_momentum"),
+                "sentiment": d.get("sentiment_direction"),
+                "breadth": d.get("breadth"),
+                "narratives": d.get("key_narratives", [])[:3],
+                "beneficiaries": d.get("beneficiaries", [])[:5],
+                "detractors": d.get("detractors", [])[:5],
+                "confidence": d.get("confidence"),
+            }
+        return {"date": data.get("date"), "domains": result}
+
+    @staticmethod
+    def _load_json_file(rel_path: str) -> Optional[Dict]:
+        """安全加载 JSON 文件 (相对于项目根目录)."""
+        try:
+            from pathlib import Path
+            root = Path(__file__).resolve().parent.parent.parent
+            with open(root / rel_path, encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            logger.debug(f"[playbook] 加载 {rel_path} 失败: {e}")
+            return None
+
+    @staticmethod
+    def _get_vote_map(trade_date: str) -> Dict[str, Dict]:
+        """从 signal_snapshots.db 读取某日投票结果, 按 symbol 索引."""
+        try:
+            from app.analysis.signal_ic_tracker import _get_db_path as _get_snap_path
+            import sqlite3 as _sqlite3
+            conn = _sqlite3.connect(str(_get_snap_path()))
+            conn.row_factory = _sqlite3.Row
+            rows = conn.execute(
+                "SELECT decision_id, symbol, direction, strength, confidence, "
+                "consensus_level, strategy_id, factors_json "
+                "FROM signal_snapshots WHERE date(trade_date) = ? "
+                "ORDER BY strength DESC",
+                (trade_date,),
+            ).fetchall()
+            conn.close()
+            result = {}
+            for r in rows:
+                d = dict(r)
+                sym = d.get("symbol", "")
+                # 去重: 同一 symbol 取 strength 最高的 (ORDER BY 已保证)
+                if sym and sym not in result:
+                    result[sym] = d
+            return result
+        except Exception as e:
+            logger.warning(f"[playbook] signal_snapshots 查询失败: {e}")
+            return {}
+
+    @staticmethod
+    def _get_audit_map(trade_date: str) -> Dict[str, Dict]:
+        """从 playbook_direction_audit.jsonl 读取方向审计, 按 symbol 索引."""
+        try:
+            from pathlib import Path
+            root = Path(__file__).resolve().parent.parent.parent
+            log_path = root / "data" / "shadow" / "playbook_direction_audit.jsonl"
+            if not log_path.exists():
+                return {}
+            result = {}
+            with open(log_path, encoding="utf-8") as f:
+                for line in f:
+                    try:
+                        rec = json.loads(line)
+                        ts = rec.get("timestamp", "")
+                        if trade_date in ts:
+                            sym = rec.get("symbol", "")
+                            if sym:
+                                result[sym] = rec
+                    except (json.JSONDecodeError, TypeError):
+                        continue
+            return result
+        except Exception as e:
+            logger.debug(f"[playbook] 方向审计加载失败: {e}")
+            return {}
+
     # ========== 执行接口 ==========
 
     def execute_instruction(
@@ -214,12 +641,13 @@ class PlaybookService:
         except Exception:
             _exec_mode = "futu_simulate"
 
+        symbol = inst["symbol"]
+        direction = inst["direction"]
+
         if _exec_mode == "simulate":
             logger.warning(f"[playbook] execute_mode=simulate 已废弃, {symbol} 强制降级为 futu_simulate (真实模拟下单)")
             _exec_mode = "futu_simulate"
 
-        symbol = inst["symbol"]
-        direction = inst["direction"]
         entry_price = custom_params.get("entry_price") if custom_params else inst.get("entry_price", 0)
         stop_loss = custom_params.get("stop_loss") if custom_params else inst.get("stop_loss", 0)
         take_profit = custom_params.get("take_profit") if custom_params else inst.get("take_profit", 0)
@@ -346,8 +774,8 @@ class PlaybookService:
         # 这是 flat-switch 下最安全的同账户隔离方式, 无需深改 open_positions 主键.
         try:
             from app.coordinator.manual_hold_registry import manual_hold_registry
-            if manual_hold_registry.is_manual_held(symbol):
-                logger.info(f"[playbook] {symbol} 被手动持有, 跳过 {_mode_label} 执行 (避免同 symbol 冲突)")
+            if manual_hold_registry.is_auto_blocked(symbol):
+                logger.info(f"[playbook] {symbol} 被手动持有(同账户), 跳过 {_mode_label} 执行 (避免同 symbol 冲突)")
                 return {
                     "success": False,
                     "message": f"{symbol} 被手动持有, 跳过 (避免与实盘手动仓位冲突)",
@@ -398,8 +826,11 @@ class PlaybookService:
         # 2026-06-27 辩论DEB-20260627: _fill=0时不fallback到entry_price
         # ponytail: 1次查询, 失败则warning+拒绝(不sleep阻塞批量路径)
         _fill = _result.get("filled_price", 0) or 0
+        _entry_price_source = "broker_deal" if _fill > 0 else "unknown"
         if not _fill or _fill <= 0:
             _fill = self._query_filled_price_for_order(_futu_id, target_env)
+            if _fill > 0:
+                _entry_price_source = "broker_deal_retry"
         if not _fill or _fill <= 0:
             # 2026-06-29: 最后兜底 — broker确认FILLED_ALL但avg_price=0时, 用实时报价记账
             # 根因: sim账户偶发 avg_price=0 但订单已成交 → 拒绝记账 → 孤儿仓 → position_sync用8%覆盖SL
@@ -409,9 +840,10 @@ class PlaybookService:
                 _ctx = _dr.get_quote(symbol)
                 if _ctx and _ctx.get("price", 0) > 0:
                     _fill = float(_ctx["price"])
+                    _entry_price_source = "quote_fallback"
                     logger.warning(
                         f"[playbook] {_mode_label} {symbol} 成交价=0, 用实时报价${_fill:.2f}兜底记账 "
-                        f"(订单 {_futu_id} 已确认成交)"
+                        f"(订单 {_futu_id} 已确认成交) src=quote_fallback"
                     )
             except Exception:
                 pass
@@ -427,6 +859,37 @@ class PlaybookService:
             from app.core.paths import get_trade_records_db
             _ts = TradeStore(str(get_trade_records_db()))
             _trace_id = f"playbook-{_mode_label}-{symbol}-{_now_iso[:10]}"
+
+            # 2026-07-03 fix: 从 voting_predictions 表查投票数据, 写入 trade_records
+            # 根因: save_trade 未传 voting_result/model_scores/consensus_level/final_strength
+            _voting_data = None
+            if matched_decision_id:
+                _vp_conn = None
+                try:
+                    import sqlite3 as _sqlite3
+                    _vp_db = str(get_trade_records_db())
+                    _vp_conn = _sqlite3.connect(_vp_db)
+                    _vp_conn.row_factory = _sqlite3.Row
+                    _vp_row = _vp_conn.execute(
+                        "SELECT model_votes, predicted_strength, predicted_confidence "
+                        "FROM voting_predictions WHERE decision_id = ? LIMIT 1",
+                        (matched_decision_id,)
+                    ).fetchone()
+                    if _vp_row:
+                        import json as _vp_json
+                        _model_votes = _vp_json.loads(_vp_row["model_votes"]) if _vp_row["model_votes"] else {}
+                        _voting_data = {
+                            "voting_result": _model_votes,
+                            "model_scores": list(_model_votes.values()) if _model_votes else [],
+                            "consensus_level": float(_vp_row["predicted_confidence"] or 0),
+                            "final_strength": int(_vp_row["predicted_strength"] or 0),
+                        }
+                except Exception as _ve:
+                    logger.debug(f"[playbook] voting_data 查询失败 {symbol}: {_ve}")
+                finally:
+                    if _vp_conn is not None:
+                        _vp_conn.close()
+
             _ts.save_trade({
                 "trace_id": _trace_id,
                 "trade_date": _now_iso[:10],
@@ -459,6 +922,7 @@ class PlaybookService:
                     "atr": _extract_atr_from_instruction(inst),
                     "thesis": inst.get("thesis", "")[:200],
                     "peak_price": float(_fill),
+                    "entry_price_source": _entry_price_source,  # 2026-07-03: 追踪 entry_price 来源
                     # 2026-06-26: Horizon 决策写入 metadata
                     "horizon": inst.get("horizon", "short"),
                     "horizon_confidence": inst.get("horizon_confidence", 0.0),
@@ -475,7 +939,7 @@ class PlaybookService:
                     "take_profit": float(take_profit) if take_profit else 0,
                     "futu_order_id": _futu_id,
                 }),
-            })
+            }, voting_data=_voting_data)
             logger.info(f"[playbook] {_mode_label} trade_record 已写入: {symbol} @ {_fill} futu_id={_futu_id}")
 
             # 2026-07-02: open_positions SSOT — playbook下单后立即写open_positions
@@ -524,11 +988,14 @@ class PlaybookService:
             return {"success": False, "message": f"{_mode_label} trade_record 写入失败已回滚平仓: {_tre}"}
 
         # 注册 ManualHoldRegistry (防 auto pipeline 干扰)
+        # 2026-07-03 fix: account 应与 target_env 一致 (sim→sim, real→real)
+        # 之前默认 account="real" → sim 仓位被注册为 real → Reconciler 误判为 MANUAL
         try:
             from app.coordinator.manual_hold_registry import manual_hold_registry
             manual_hold_registry.register(
                 symbol=symbol, direction=mos_direction, quantity=int(position_size),
                 reason=f"Playbook {_mode_label}: {inst.get('thesis', '')[:60]}",
+                account=("real" if _trade_mode == "live" else "sim"),
             )
         except Exception as _e:
             logger.warning(f"ManualHoldRegistry register failed: {_e}")
@@ -567,19 +1034,16 @@ class PlaybookService:
     # ========== 跳过/反馈接口 ==========
 
     def _query_filled_price_for_order(self, futu_order_id: str, target_env: str) -> float:
-        """查询订单成交均价 (带target_env路由)."""
+        """查询订单成交均价 (带target_env路由).
+
+        2026-07-03: 委托给 dual_broker._query_filled_price (已改用 history_deal_list_query).
+        之前这里有自己的 order_list_query 副本, SIM 环境系统性返回0.
+        """
         try:
             from app.execution.dual_broker import get_dual_broker
             dual = get_dual_broker()
             ctx, acc_id, trd_env, lock = dual._ctx_and_acc(target_env)
-            with lock:
-                from futu import RET_OK
-                ret, data = ctx.order_list_query(order_id=futu_order_id, trd_env=trd_env)
-            if ret == RET_OK and not data.empty:
-                avg = data.iloc[0].get("avg_price", 0)
-                dealt = data.iloc[0].get("dealt_qty", 0)
-                if avg and float(avg) > 0 and float(dealt or 0) > 0:
-                    return float(avg)
+            return dual._query_filled_price(ctx, futu_order_id, trd_env, lock)
         except Exception as e:
             logger.warning(f"[playbook] 查成交价失败 {futu_order_id}: {e}")
         return 0.0

@@ -157,12 +157,17 @@ class PlaybookData:
         return self.earnings.days_until
     
     def get_pe_below_industry(self) -> Optional[bool]:
-        """检查 PE 是否低于行业平均 (简化实现：检查 PE 是否存在且 < 30)"""
+        """检查 PE 是否低于行业平均.
+
+        当前 Fallback: 由于尚未接入行业平均 PE 数据源, 使用绝对阈值 30
+        作为简化判断 (pe 存在且 < 30 视为相对低估).
+        TODO (P2): 接入行业/sector 平均 PE 后, 改用 个股PE < 行业平均PE 判断.
+        """
         pe = self.fundamental.pe
         if pe is None:
             return None
-        # TODO: 需要行业平均 PE 数据，这里简化处理
-        return pe < 30 if pe else None
+        # Fallback: 绝对阈值, 因行业平均 PE 数据暂未接入
+        return pe < 30 if pe > 0 else None
 
 
 class PlaybookDataCollector:
@@ -441,6 +446,27 @@ class PlaybookDataCollector:
             PlaybookDataCollector._router_init_failed = True
             return None
 
+    def _check_news_freshness(self, news_list: List[Dict]) -> str:
+        """检查新闻新鲜度: 最新一条距今>6h → stale, 否则 ok."""
+        try:
+            if not news_list:
+                return "missing"
+            # Finnhub news 有 timestamp (Unix秒, UTC epoch)
+            import time as _time
+            latest_ts = 0
+            for n in news_list:
+                ts = n.get("timestamp") or n.get("time") or 0
+                if isinstance(ts, (int, float)) and ts > latest_ts:
+                    latest_ts = ts
+            if latest_ts == 0:
+                return "ok"  # 无法判断, 不降级
+            age_hours = (_time.time() - latest_ts) / 3600
+            if age_hours > 6:
+                return "stale"
+            return "ok"
+        except Exception:
+            return "ok"
+
     def _collect_insider(self, symbol: str) -> InsiderData:
         """
         委托 SECForm4Provider: fetch_company_form4s + detect_cluster_buys
@@ -545,7 +571,7 @@ class PlaybookDataCollector:
                 sentiment_score=sentiment_score,
                 source="finnhub",
                 fetched_at=datetime.utcnow().isoformat(),
-                quality="ok",
+                quality=self._check_news_freshness(news_list),
             )
         except Exception as e:
             logger.warning(f"Failed to collect news for {symbol}: {e}")

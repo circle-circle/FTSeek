@@ -113,42 +113,54 @@ class TestCloseTradeRecord:
 
 
 class TestCheckIntradayTrigger:
-    """_check_intraday_trigger 触发条件边界测试."""
+    """_check_intraday_trigger 触发条件边界测试 (2026-06-29 后改为方向穿越触发)."""
 
-    def _make_scheduler(self, price, ma20, volume_ratio):
+    def _make_scheduler(self, price, day_high, day_low):
         """构造一个返回固定 SymbolContext 的 mock scheduler."""
         scheduler = MagicMock()
         scheduler.data_router.get_full_market_context.return_value = {
             "price": price,
-            "ma20": ma20,
-            "volume_5d_avg_ratio": volume_ratio,
+            "day_high": day_high,
+            "day_low": day_low,
+            "volume_5d_avg_ratio": 2.0,
         }
         return scheduler
 
-    def test_long_breakout_and_volume_trigger(self):
-        scheduler = self._make_scheduler(price=101.0, ma20=100.0, volume_ratio=2.0)
+    def test_long_price_at_upper_band_trigger(self):
+        # entry=100, upper=101, price=101 → 触发 (<=101)
+        scheduler = self._make_scheduler(price=101.0, day_high=102.0, day_low=99.0)
         inst = {"symbol": "US.TEST", "direction": "BUY", "entry_price": 100.0}
         assert _check_intraday_trigger(scheduler, inst) is True
 
-    def test_long_breakout_without_volume_no_trigger(self):
-        scheduler = self._make_scheduler(price=101.0, ma20=100.0, volume_ratio=1.0)
+    def test_long_price_above_upper_band_no_trigger(self):
+        # entry=100, upper=101, price=102 → 未触发 (>101)
+        scheduler = self._make_scheduler(price=102.0, day_high=103.0, day_low=99.0)
         inst = {"symbol": "US.TEST", "direction": "BUY", "entry_price": 100.0}
         assert _check_intraday_trigger(scheduler, inst) is False
 
-    def test_long_volume_without_breakout_no_trigger(self):
-        scheduler = self._make_scheduler(price=100.2, ma20=100.0, volume_ratio=2.0)
+    def test_long_price_below_upper_band_trigger(self):
+        # entry=100, upper=101, price=99 → 触发 (<=101)
+        scheduler = self._make_scheduler(price=99.0, day_high=101.0, day_low=98.0)
         inst = {"symbol": "US.TEST", "direction": "BUY", "entry_price": 100.0}
-        assert _check_intraday_trigger(scheduler, inst) is False
+        assert _check_intraday_trigger(scheduler, inst) is True
 
-    def test_short_breakout_and_volume_trigger(self):
-        scheduler = self._make_scheduler(price=99.0, ma20=100.0, volume_ratio=2.0)
+    def test_short_price_at_lower_band_trigger(self):
+        # entry=100, lower=99, price=99 → 触发 (>=99)
+        scheduler = self._make_scheduler(price=99.0, day_high=101.0, day_low=98.0)
         inst = {"symbol": "US.TEST", "direction": "SELL_SHORT", "entry_price": 100.0}
         assert _check_intraday_trigger(scheduler, inst) is True
 
-    def test_short_breakout_without_volume_no_trigger(self):
-        scheduler = self._make_scheduler(price=99.0, ma20=100.0, volume_ratio=1.0)
+    def test_short_price_below_lower_band_no_trigger(self):
+        # entry=100, lower=99, price=98 → 未触发 (<99)
+        scheduler = self._make_scheduler(price=98.0, day_high=101.0, day_low=97.0)
         inst = {"symbol": "US.TEST", "direction": "SELL_SHORT", "entry_price": 100.0}
         assert _check_intraday_trigger(scheduler, inst) is False
+
+    def test_short_price_above_lower_band_trigger(self):
+        # entry=100, lower=99, price=100 → 触发 (>=99)
+        scheduler = self._make_scheduler(price=100.0, day_high=102.0, day_low=99.0)
+        inst = {"symbol": "US.TEST", "direction": "SELL_SHORT", "entry_price": 100.0}
+        assert _check_intraday_trigger(scheduler, inst) is True
 
     def test_missing_data_is_fail_closed(self):
         scheduler = MagicMock()
@@ -158,7 +170,7 @@ class TestCheckIntradayTrigger:
 
     def test_entry_stop_immediately_intercepts(self):
         """触发后若价格已越过止损, 应返回 False 避免入场即止损."""
-        scheduler = self._make_scheduler(price=101.0, ma20=100.0, volume_ratio=2.0)
+        scheduler = self._make_scheduler(price=101.0, day_high=102.0, day_low=100.0)
         inst = {
             "symbol": "US.TEST",
             "direction": "BUY",
