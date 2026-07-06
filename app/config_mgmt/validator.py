@@ -49,12 +49,13 @@ REQUIRED_KEYS = {
 }
 
 # 推荐但非必需的配置键 (缺失仅警告)
+# 注意: 路径必须与 unified_config.yaml 实际结构匹配
 RECOMMENDED_KEYS = [
     "data_sources.finnhub.api_key",
     "data_sources.twelvedata.api_key",
     "news_v2.enabled",
-    "exit.us.atr_multiplier",
-    "strategy.consensus.threshold",
+    "playbook.risk_parameters.atr_multiplier",  # was exit.us.atr_multiplier
+    "strategy.consensus_threshold",  # was strategy.consensus.threshold
 ]
 
 # 跨键一致性规则

@@ -1746,7 +1746,7 @@ class TradingScheduler:
                         from app.playbook.pipeline import run_playbook_generate
                         run_playbook_generate(self)
                     except Exception as _e:
-                        logger.debug(f"[playbook] TRADING catch-up生成异常 (已隔离): {_e}")
+                        logger.warning(f"[playbook] TRADING catch-up生成异常 (已隔离): {_e}")
 
                     # Playbook: 盘中自动执行 triggered 指令 (OKR Week 1: 数据积累)
                     # 每30分钟检查一次是否有新的 triggered 指令需要自动执行
@@ -1760,14 +1760,14 @@ class TradingScheduler:
                             run_playbook_auto_execute(self)
                             self._playbook_auto_execute_last_run = now
                         except Exception as _e:
-                            logger.debug(f"[Playbook] 盘中自动执行异常 (已隔离): {_e}")
+                            logger.warning(f"[Playbook] 盘中自动执行异常 (已隔离): {_e}")
 
                     # Phase 1 (2026-06-24): futu_simulate 真实模拟仓位退出监控 (broker 平仓)
                     try:
                         from app.playbook.pipeline import monitor_playbook_sim_exits
                         monitor_playbook_sim_exits(self)
                     except Exception as _e:
-                        logger.debug(f"[Playbook] sim exit monitor 异常 (已隔离): {_e}")
+                        logger.warning(f"[Playbook] sim exit monitor 异常 (已隔离): {_e}")
 
                     # 🚨 盘中休眠：禁止主动扫描，LLM 进入待机状态
                     # LLM 仅作为异步风控员响应触发请求
@@ -1821,7 +1821,8 @@ class TradingScheduler:
                         from app.playbook.pipeline import run_playbook_generate
                         run_playbook_generate(self)
                     except Exception as _e:
-                        logger.debug(f"[LLM策略] playbook 盘前生成异常 (已隔离): {_e}")
+                        # 2026-07-04: debug→warning — 盘前生成失败会导致当日无作战计划, 必须可见
+                        logger.warning(f"[LLM策略] playbook 盘前生成异常 (已隔离): {_e}")
 
                 elif phase == MarketPhase.AFTER_HOURS:
                     # 盘后: 处理盘中排队的 LLM 审计
@@ -1839,7 +1840,9 @@ class TradingScheduler:
                         run_playbook_track(self)
                         run_playbook_weekly(self)  # 周级幂等, 仅周五实际出周报
                     except Exception as _e:
-                        logger.debug(f"[LLM策略] playbook 盘后追踪异常 (已隔离): {_e}")
+                        # 2026-07-04: debug→warning — 原debug级别在INFO日志中不可见,
+                        # 导致盘后追踪静默失败(AMD/BABA holding仓位未被EOD平仓)
+                        logger.warning(f"[LLM策略] playbook 盘后追踪异常 (已隔离): {_e}")
 
                 elif phase == MarketPhase.OVERNIGHT:
                     # 深夜: 每6小时采集新闻 + LLM 推荐 (最低频率)

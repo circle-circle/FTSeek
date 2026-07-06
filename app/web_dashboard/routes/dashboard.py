@@ -179,7 +179,7 @@ def register(app, templates, dashboard):
             _excluded = ", ".join(f"'{s}'" for s in EXCLUDED_SOURCE_TYPES)
             _cnt_row = await ds.db_query(
                 f"SELECT COUNT(*) AS c FROM trade_records "
-                f"WHERE exit_time IS NOT NULL AND exit_price > 0 AND DATE(exit_time) = ? "
+                f"WHERE exit_time IS NOT NULL AND exit_price > 0 AND trade_date = ? "
                 f"AND source_type NOT IN ({_excluded})",
                 (_today_et,),
             )
@@ -187,7 +187,7 @@ def register(app, templates, dashboard):
             rows = await ds.db_query(
                 f"SELECT symbol, direction, entry_price, exit_price, pnl_pct, realized_pnl, "
                 f"exit_reason, exit_time, holding_hours, source_type FROM trade_records "
-                f"WHERE exit_time IS NOT NULL AND exit_price > 0 AND DATE(exit_time) = ? "
+                f"WHERE exit_time IS NOT NULL AND exit_price > 0 AND trade_date = ? "
                 f"AND source_type NOT IN ({_excluded}) "
                 f"ORDER BY exit_time DESC LIMIT 200",
                 (_today_et,),

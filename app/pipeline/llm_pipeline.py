@@ -1032,25 +1032,19 @@ def _build_watchlist_fallback(plan: dict, scheduler) -> dict:
 def run_premarket_planning(scheduler):
     """
     美股盘前作战计划生成 (每日一次, PRE_MARKET 阶段)
-    
-    ★ 2026-05-01 更新: 双 Agent 辩论为主线 (Hermes ↔ Claude Code)
-    降级: 单 Hermes Agent → USPreMarketPlanner (现有单 LLM) → 规则引擎
-    """
-    if getattr(scheduler, '_premarket_plan_executed_today', False):
-        return
 
+    ★ 2026-07-03: Battle Plan 生成已废弃。实际交易决策由 Playbook Pipeline
+    (run_playbook_generate) 独立完成。此函数保留签名但不生成 daily_battle_plan_us.json,
+    避免破坏 scheduler 调用链。plan_effectiveness 已改为衡量 Playbook 指令命中率。
+    """
+    # 标记已执行, 避免 scheduler 重复调用
     from app.core.scheduler_triggers import ET
     now_et = datetime.now(ET)
     today_et = now_et.date()
-    
-    if now_et.hour < 8 or (now_et.hour == 8 and now_et.minute < 30) or (now_et.hour >= 9 and now_et.minute > 25):
-        return
-    
-    if getattr(scheduler, '_premarket_plan_date', None) == today_et:
-        scheduler._premarket_plan_executed_today = True
-        return
-
-    logger.info("[盘前计划] 🚀 开始生成美股盘前作战计划 (双 Agent 辩论)...")
+    scheduler._premarket_plan_executed_today = True
+    scheduler._premarket_plan_date = today_et
+    logger.info("[盘前计划] Battle Plan 已废弃 (交易决策由 Playbook Pipeline 接管)")
+    return
 
     # ── 数据收集 (与原有逻辑相同) ──
     try:

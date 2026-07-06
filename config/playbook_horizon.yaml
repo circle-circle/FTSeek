@@ -23,9 +23,14 @@ horizon_selector:
     min_pct: 0.1
 
 # Phase 3 (2026-06-30): 按因子类型设定退出规则
+# ── 7/7 统一: Pipeline退出引擎唯一配置源 ──
+# ExitMonitor (exit_policy.yaml) 因 7/3 fix 不再管 PLAYBOOK_SIM/LIVE 仓位 (reconciler 拦截→PROTECTED)。
+# Pipeline 自管全部 PLAYBOOK 退出: SL + breakeven + trailing + PRE_CLOSE_EXIT + TIME_EXIT + EOD兜底。
+# 退出规则优先级: SL_FIXED_PCT > PRE_CLOSE_EXIT > TIME_EXIT (盘中) + EOD_FORCE_CLOSE/MAX_HOLD_T5 (盘后)
+#
 # trailing: 利润锁定/跟踪止损
 # time_exit: 持仓时间止损 (仅亏损时触发, 或 always)
-# max_hold_days: 最大持有交易日
+# max_hold_days: 最大持有交易日 (由 EOD 兜底的 MAX_HOLD_T5 执行, 盘中不检查)
 factor_exit_rules:
   # 默认规则
   default:
@@ -86,6 +91,195 @@ factor_exit_rules:
     breakeven_at_pct: 0.5
     trailing_step_pct: 2.0
     time_exit_hours: 0.5
+    time_exit_only_if_loss: true
+    max_hold_days: 1
+
+  # ── 7/7 补齐: 25个缺失条件的退出规则 ──
+
+  # 趋势/动量类 (与 above_ma20/macd_golden_cross 同组, 让利润奔跑)
+  above_ma50:
+    trailing_enabled: true
+    breakeven_at_pct: 1.0
+    trailing_step_pct: 2.0
+    time_exit_hours: 6
+    time_exit_only_if_loss: true
+    max_hold_days: 3
+  ma_golden_cross:
+    trailing_enabled: true
+    breakeven_at_pct: 1.0
+    trailing_step_pct: 2.0
+    time_exit_hours: 6
+    time_exit_only_if_loss: true
+    max_hold_days: 3
+  bollinger_upper:
+    trailing_enabled: true
+    breakeven_at_pct: 1.0
+    trailing_step_pct: 2.0
+    time_exit_hours: 4
+    time_exit_only_if_loss: true
+    max_hold_days: 2
+  bollinger_squeeze:
+    trailing_enabled: true
+    breakeven_at_pct: 1.0
+    trailing_step_pct: 2.0
+    time_exit_hours: 6
+    time_exit_only_if_loss: true
+    max_hold_days: 3
+  near_52w_high:
+    trailing_enabled: true
+    breakeven_at_pct: 1.0
+    trailing_step_pct: 2.0
+    time_exit_hours: 4
+    time_exit_only_if_loss: true
+    max_hold_days: 2
+
+  # 基本面/内部人类 (中长期持有, trailing 锁利)
+  insider_net_buy:
+    trailing_enabled: true
+    breakeven_at_pct: 0.5
+    trailing_step_pct: 1.5
+    time_exit_hours: 999
+    time_exit_only_if_loss: true
+    max_hold_days: 5
+  revenue_growth_high:
+    trailing_enabled: true
+    breakeven_at_pct: 0.5
+    trailing_step_pct: 1.5
+    time_exit_hours: 999
+    time_exit_only_if_loss: true
+    max_hold_days: 5
+  roe_high:
+    trailing_enabled: true
+    breakeven_at_pct: 0.5
+    trailing_step_pct: 1.5
+    time_exit_hours: 999
+    time_exit_only_if_loss: true
+    max_hold_days: 5
+  earnings_beat_streak:
+    trailing_enabled: true
+    breakeven_at_pct: 0.5
+    trailing_step_pct: 1.5
+    time_exit_hours: 8
+    time_exit_only_if_loss: true
+    max_hold_days: 3
+  post_earnings_momentum:
+    trailing_enabled: true
+    breakeven_at_pct: 0.5
+    trailing_step_pct: 1.5
+    time_exit_hours: 8
+    time_exit_only_if_loss: true
+    max_hold_days: 3
+
+  # 情绪/新闻类 (中短期, trailing 锁利)
+  sentiment_bullish:
+    trailing_enabled: true
+    breakeven_at_pct: 0.5
+    trailing_step_pct: 1.5
+    time_exit_hours: 4
+    time_exit_only_if_loss: true
+    max_hold_days: 2
+
+  # 做空/看跌类 (快速证伪, 不恋战)
+  below_ma20:
+    trailing_enabled: false
+    breakeven_at_pct: 0.5
+    trailing_step_pct: 2.0
+    time_exit_hours: 1.0
+    time_exit_only_if_loss: true
+    max_hold_days: 1
+  below_ma50:
+    trailing_enabled: false
+    breakeven_at_pct: 0.5
+    trailing_step_pct: 2.0
+    time_exit_hours: 1.0
+    time_exit_only_if_loss: true
+    max_hold_days: 1
+  ma_dead_cross:
+    trailing_enabled: false
+    breakeven_at_pct: 0.5
+    trailing_step_pct: 2.0
+    time_exit_hours: 1.0
+    time_exit_only_if_loss: true
+    max_hold_days: 1
+  macd_dead_cross:
+    trailing_enabled: false
+    breakeven_at_pct: 0.5
+    trailing_step_pct: 2.0
+    time_exit_hours: 1.0
+    time_exit_only_if_loss: true
+    max_hold_days: 1
+  bollinger_lower:
+    trailing_enabled: false
+    breakeven_at_pct: 0.5
+    trailing_step_pct: 2.0
+    time_exit_hours: 0.5
+    time_exit_only_if_loss: true
+    max_hold_days: 1
+  near_52w_low:
+    trailing_enabled: false
+    breakeven_at_pct: 0.5
+    trailing_step_pct: 2.0
+    time_exit_hours: 0.5
+    time_exit_only_if_loss: true
+    max_hold_days: 1
+  rsi_overbought:
+    trailing_enabled: false
+    breakeven_at_pct: 0.5
+    trailing_step_pct: 2.0
+    time_exit_hours: 0.5
+    time_exit_only_if_loss: true
+    max_hold_days: 1
+  rsi_neutral_low:
+    trailing_enabled: false
+    breakeven_at_pct: 0.5
+    trailing_step_pct: 2.0
+    time_exit_hours: 1.0
+    time_exit_only_if_loss: true
+    max_hold_days: 1
+
+  # 看跌情绪/新闻/内部人 (快速证伪)
+  news_negative:
+    trailing_enabled: false
+    breakeven_at_pct: 0.5
+    trailing_step_pct: 2.0
+    time_exit_hours: 0.5
+    time_exit_only_if_loss: true
+    max_hold_days: 1
+  sentiment_bearish:
+    trailing_enabled: false
+    breakeven_at_pct: 0.5
+    trailing_step_pct: 2.0
+    time_exit_hours: 0.5
+    time_exit_only_if_loss: true
+    max_hold_days: 1
+  insider_net_sell:
+    trailing_enabled: false
+    breakeven_at_pct: 0.5
+    trailing_step_pct: 2.0
+    time_exit_hours: 1.0
+    time_exit_only_if_loss: true
+    max_hold_days: 1
+
+  # 价值/其他 (保守, 快速证伪)
+  pe_above_industry:
+    trailing_enabled: false
+    breakeven_at_pct: 0.5
+    trailing_step_pct: 2.0
+    time_exit_hours: 1.0
+    time_exit_only_if_loss: true
+    max_hold_days: 1
+  volume_contraction:
+    trailing_enabled: false
+    breakeven_at_pct: 0.5
+    trailing_step_pct: 2.0
+    time_exit_hours: 1.0
+    time_exit_only_if_loss: true
+    max_hold_days: 1
+  earnings_approaching:
+    trailing_enabled: false
+    breakeven_at_pct: 0.5
+    trailing_step_pct: 2.0
+    time_exit_hours: 1.0
     time_exit_only_if_loss: true
     max_hold_days: 1
 
@@ -174,7 +368,7 @@ short_horizon:
 # 长线参数
 long_horizon:
   label: "LONG_HORIZON"
-  rr_ratio: 2.5
+  rr_ratio: 999  # 2026-06-30 DEB-20260630: 移除TP, 让EOD捕获利润, 与short_horizon保持一致
   fixed_stop_loss_pct: 2.0
   max_hold_days: 5
   skip_pre_close_if_profit: true

@@ -1263,7 +1263,6 @@ risk:
     min_effective_strength_floor: 5
     short_min_strength: 45
   self_managed_symbols:
-  - US.AMD
   - HK.00700
   - US.HK.00700
   signal_quality:
@@ -1324,7 +1323,6 @@ scheduler:
   event_day_interval_minutes: 3
   event_day_symbols: []
   max_positions: 12
-  min_confidence: 0.7
   min_consensus_level: 0.25
   min_signal_strength: 60
   monitor_interval_minutes: 0.25

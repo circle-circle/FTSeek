@@ -1,14 +1,16 @@
 """
 盘前计划命中率追踪器 (Plan Effectiveness Tracker)
 
-每日收盘后对标当日盘前作战计划 vs 实际交易，生成命中率/执行率报告。
+每日收盘后对标当日 Playbook 指令 vs 实际交易，生成命中率/执行率报告。
 
 核心指标:
-- entry_zone_hit: 实际入场价是否落在 plan.entry_zone 范围内
-- direction_match: 实际方向是否与 plan.direction 一致
+- entry_zone_hit: 实际入场价是否落在 instruction.entry_price 附近 (±0.5%)
+- direction_match: 实际方向是否与 instruction.direction 一致
 - traded: 是否真的下单了
 - pnl_contribution: 该目标贡献的实际收益
 - hit_rate / traded_rate / avg_pnl_of_planned / unplanned_trade_count
+
+数据源: playbook_instructions 表 (非 SKIP 指令) vs trade_records 表
 
 输出: data/plan_effectiveness/daily_YYYY-MM-DD.json
 """
@@ -190,60 +192,53 @@ class PlanEffectivenessTracker:
     # 内部方法
     # ────────────────────────────────────────────────────────────
     def _load_battle_plan(self, date: str) -> Optional[Dict[str, Any]]:
-        """从 USBattlePlanManager 加载指定日期的 battle plan。
+        """从 playbook_instructions 表加载指定日期的非 SKIP 指令。
 
-        优先使用 manager.get_plan(); 若日期不匹配, 退回直读历史 JSON 快照(若存在)。
+        Returns: 兼容旧 battle_plan 格式的 dict: {"date": ..., "targets": [...]}
         """
+        if not self.db_path.exists():
+            logger.debug(f"[PlanEffectiveness] DB 不存在: {self.db_path}")
+            return None
+
         try:
-            from app.us_pipeline.battle_plan_manager import USBattlePlanManager
-            mgr = USBattlePlanManager()
-            # 若未加载, 尝试加载默认路径
-            if not getattr(mgr, "_loaded", False):
-                try:
-                    mgr.load(mgr.plan_path)
-                except Exception as e:
-                    logger.debug(f"[PlanEffectiveness] BattlePlanManager.load 失败: {e}")
+            conn = sqlite3.connect(str(self.db_path))
+            conn.row_factory = sqlite3.Row
+            try:
+                rows = conn.execute(
+                    "SELECT symbol, direction, entry_price, stop_loss, take_profit, "
+                    "confidence, triggered, executed "
+                    "FROM playbook_instructions "
+                    "WHERE date = ? AND direction != 'SKIP'",
+                    (date,),
+                ).fetchall()
+            finally:
+                conn.close()
+        except sqlite3.Error as e:
+            logger.warning(f"[PlanEffectiveness] 查询 playbook_instructions 失败: {e}")
+            return None
 
-            plan = mgr.get_plan() or {}
-            plan_date = str(plan.get("date", "")).strip()
-            if plan_date == date:
-                return plan
-            # 日期不一致 → 不使用内存中的计划
-            logger.debug(
-                f"[PlanEffectiveness] 内存计划日期 {plan_date} != 目标 {date}, 尝试历史快照"
-            )
-        except Exception as e:
-            logger.debug(f"[PlanEffectiveness] 通过 manager 加载失败: {e}")
+        if not rows:
+            return None
 
-        # 历史快照 fallback (常见命名: data/battle_plans/YYYY-MM-DD.json 或当前文件)
-        try:
-            project_root = Path(__file__).resolve().parent.parent.parent
-            candidates = [
-                project_root / "data" / "battle_plans" / f"{date}.json",
-                project_root / "data" / f"daily_battle_plan_us_{date}.json",
-            ]
-            for path in candidates:
-                if path.exists():
-                    with open(path, "r", encoding="utf-8") as f:
-                        plan = json.load(f)
-                    if plan:
-                        return plan
-        except Exception as e:
-            logger.debug(f"[PlanEffectiveness] 历史快照加载失败: {e}")
+        targets = []
+        for r in rows:
+            entry_price = float(r["entry_price"] or 0)
+            # 用 entry_price ±0.5% 构造入场区间 (兼容 _evaluate_target 的 zone 逻辑)
+            if entry_price > 0:
+                zone = [entry_price * 0.995, entry_price * 1.005]
+            else:
+                zone = []
+            # 方向归一化: SELL_SHORT→SHORT, BUY→LONG
+            raw_dir = str(r["direction"] or "").upper()
+            direction = "SHORT" if "SHORT" in raw_dir or "SELL" in raw_dir else ("LONG" if "BUY" in raw_dir else raw_dir)
+            targets.append({
+                "symbol": r["symbol"],
+                "direction": direction,
+                "entry_zone": zone,
+                "status": "triggered" if r["triggered"] else ("executed" if r["executed"] else ""),
+            })
 
-        # 最后回退: 直读默认 plan 文件 (不强制日期匹配)
-        try:
-            project_root = Path(__file__).resolve().parent.parent.parent
-            default_plan = project_root / "data" / "daily_battle_plan_us.json"
-            if default_plan.exists():
-                with open(default_plan, "r", encoding="utf-8") as f:
-                    plan = json.load(f)
-                if plan and str(plan.get("date", "")).strip() == date:
-                    return plan
-        except Exception as e:
-            logger.debug(f"[PlanEffectiveness] 默认文件加载失败: {e}")
-
-        return None
+        return {"date": date, "targets": targets}
 
     def _get_trades_for_date(self, date: str) -> List[Dict[str, Any]]:
         """从 trade_records 表获取当日交易。"""

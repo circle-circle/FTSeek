@@ -1,36 +1,578 @@
 {% extends "base.html" %}
 
-{% block title %}作战计划 — FTSeek-US{% endblock %}
+{% block title %}Pipeline — FTSeek-US{% endblock %}
 
 {% block nav_plan_class %}class="active"{% endblock %}
 {% block nav_plan_class2 %}class="active"{% endblock %}
 {% block nav_plan_class3 %}class="active"{% endblock %}
 
 {% block head %}
-<link rel="stylesheet" href="/static/css/battle_plan.css?v=20260620e">
+<style>
+    .pl-container { max-width: 960px; margin: 0 auto; padding: 12px; }
+
+    /* ── 漏斗 ── */
+    .pl-funnel { display: flex; align-items: center; justify-content: center; gap: 0; margin: 16px 0; flex-wrap: wrap; }
+    .pl-funnel-stage { text-align: center; padding: 10px 16px; border-radius: 8px; background: #161b22; border: 1px solid #30363d; min-width: 100px; }
+    .pl-funnel-stage.active { border-color: #58a6ff; }
+    .pl-funnel-num { font-size: 22px; font-weight: 700; color: #58a6ff; }
+    .pl-funnel-label { font-size: 11px; color: #8b949e; margin-top: 2px; }
+    .pl-funnel-detail { font-size: 10px; color: #8b949e; margin-top: 4px; line-height: 1.4; }
+    .pl-funnel-arrow { color: #484f58; font-size: 18px; margin: 0 4px; }
+
+    /* ── Regime Bar ── */
+    .pl-regime-bar { display: flex; justify-content: space-between; align-items: center; padding: 10px 16px; background: #161b22; border-radius: 8px; margin-bottom: 12px; }
+    .pl-regime-badge { padding: 3px 10px; border-radius: 12px; font-size: 12px; font-weight: 600; }
+    .pl-regime-RISK_ON, .pl-regime-risk_on { background: #16a34a22; color: #4ade80; border: 1px solid #16a34a; }
+    .pl-regime-CAUTIOUS, .pl-regime-cautious, .pl-regime-NEUTRAL, .pl-regime-neutral { background: #eab30822; color: #facc15; border: 1px solid #eab308; }
+    .pl-regime-RISK_OFF, .pl-regime-risk_off { background: #ef444422; color: #f87171; border: 1px solid #ef4444; }
+    .pl-regime-NO_TRADE, .pl-regime-no_trade { background: #6b728022; color: #9ca3af; border: 1px solid #6b7280; }
+
+    /* ── 筛选 ── */
+    .pl-filter-bar { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; align-items: center; }
+    .pl-filter-btn { padding: 4px 12px; border: 1px solid #30363d; border-radius: 4px; background: #0d1117; color: #c9d1d9; font-size: 12px; cursor: pointer; }
+    .pl-filter-btn.active { border-color: #58a6ff; background: #1f6feb22; color: #58a6ff; }
+    .pl-filter-btn:hover { border-color: #58a6ff; }
+    .pl-date-input { padding: 4px 10px; background: #0d1117; border: 1px solid #30363d; border-radius: 4px; color: #c9d1d9; font-size: 12px; }
+    .pl-refresh-btn { padding: 4px 12px; background: #30363d; border: none; border-radius: 4px; color: #c9d1d9; cursor: pointer; font-size: 12px; }
+    .pl-refresh-btn:hover { background: #3d444d; }
+
+    /* ── 标的卡片 ── */
+    .pl-card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; margin-bottom: 8px; transition: border-color 0.2s; }
+    .pl-card:hover { border-color: #388bfd55; }
+    .pl-card-header { display: flex; justify-content: space-between; align-items: center; padding: 10px 16px; cursor: pointer; }
+    .pl-card-left { display: flex; align-items: center; gap: 10px; }
+    .pl-symbol { font-size: 15px; font-weight: 700; color: #e1e4e8; }
+    .pl-direction { padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+    .pl-dir-BUY { background: #16a34a33; color: #4ade80; }
+    .pl-dir-SELL_SHORT { background: #ef444433; color: #f87171; }
+    .pl-dir-SKIP { background: #6b728033; color: #9ca3af; }
+    .pl-sector { font-size: 11px; color: #8b949e; }
+    .pl-card-right { display: flex; align-items: center; gap: 12px; font-size: 12px; color: #8b949e; }
+    .pl-conf-badge { padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+    .pl-conf-high { background: #16a34a22; color: #4ade80; }
+    .pl-conf-mid { background: #eab30822; color: #facc15; }
+    .pl-conf-low { background: #ef444422; color: #f87171; }
+
+    /* ── 展开区 ── */
+    .pl-card-body { display: none; padding: 12px 16px; border-top: 1px solid #21262d; }
+    .pl-card-body.show { display: block; }
+
+    .pl-section { margin-bottom: 12px; }
+    .pl-section-title { font-size: 11px; color: #58a6ff; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
+
+    /* 投票 */
+    .pl-vote-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); gap: 6px; }
+    .pl-vote-item { background: #0d1117; padding: 6px 10px; border-radius: 4px; }
+    .pl-vote-label { font-size: 10px; color: #8b949e; }
+    .pl-vote-value { font-size: 13px; font-weight: 600; color: #e1e4e8; margin-top: 1px; }
+
+    /* 因子评分 */
+    .pl-factor-row { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+    .pl-factor-name { width: 140px; font-size: 11px; color: #8b949e; text-transform: capitalize; }
+    .pl-factor-bar { flex: 1; height: 6px; background: #21262d; border-radius: 3px; overflow: hidden; }
+    .pl-factor-fill { height: 100%; border-radius: 3px; }
+    .pl-factor-score { width: 36px; text-align: right; font-size: 11px; color: #c9d1d9; }
+    .pl-factor-ic { width: 70px; font-size: 10px; color: #8b949e; }
+
+    /* 指令参数 */
+    .pl-params { display: grid; grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); gap: 6px; }
+    .pl-param { background: #0d1117; padding: 6px 10px; border-radius: 4px; }
+    .pl-param-label { font-size: 10px; color: #8b949e; text-transform: uppercase; }
+    .pl-param-value { font-size: 13px; font-weight: 600; color: #e1e4e8; margin-top: 1px; }
+
+    /* 条件标签 */
+    .pl-tags { display: flex; flex-wrap: wrap; gap: 4px; }
+    .pl-tag { padding: 2px 8px; background: #1f6feb22; color: #79c0ff; border-radius: 4px; font-size: 11px; }
+
+    /* thesis */
+    .pl-thesis { font-size: 12px; color: #c9d1d9; line-height: 1.5; }
+    .pl-skip-reason { font-size: 11px; color: #f0883e; }
+
+    /* data quality */
+    .pl-dq-row { display: flex; gap: 6px; flex-wrap: wrap; }
+    .pl-dq-item { font-size: 10px; padding: 1px 6px; border-radius: 3px; }
+    .pl-dq-ok { background: #16a34a22; color: #4ade80; }
+    .pl-dq-bad { background: #ef444422; color: #f87171; }
+
+    .pl-empty { text-align: center; padding: 40px; color: #8b949e; }
+    .pl-loading { text-align: center; padding: 40px; color: #58a6ff; }
+    .pl-toggle { font-size: 12px; color: #58a6ff; cursor: pointer; }
+
+    /* ── Theme Radar ── */
+    .pl-theme-bar { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+    .pl-theme-card { flex: 1; min-width: 180px; background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 10px 14px; }
+    .pl-theme-card-title { font-size: 12px; font-weight: 700; color: #e1e4e8; margin-bottom: 6px; text-transform: capitalize; }
+    .pl-theme-momentum { font-size: 18px; font-weight: 700; }
+    .pl-theme-pos { color: #4ade80; }
+    .pl-theme-neg { color: #f87171; }
+    .pl-theme-neu { color: #facc15; }
+    .pl-theme-narrative { font-size: 10px; color: #8b949e; margin-top: 4px; line-height: 1.4; }
+    .pl-theme-stocks { font-size: 10px; margin-top: 4px; }
+    .pl-theme-bene { color: #4ade80; }
+    .pl-theme-detr { color: #f87171; }
+
+    /* ── Signal Context (信息层) ── */
+    .pl-ctx-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .pl-ctx-card { background: #0d1117; padding: 8px 10px; border-radius: 4px; }
+    .pl-ctx-title { font-size: 10px; color: #58a6ff; text-transform: uppercase; margin-bottom: 4px; }
+    .pl-ctx-row { font-size: 11px; color: #c9d1d9; margin-bottom: 2px; }
+    .pl-ctx-val { font-weight: 600; }
+    .pl-news-item { font-size: 11px; color: #c9d1d9; margin-bottom: 3px; line-height: 1.3; }
+    .pl-llm-model { font-size: 11px; font-weight: 600; color: #58a6ff; margin-top: 4px; }
+    .pl-llm-reasoning { font-size: 11px; color: #c9d1d9; margin-bottom: 6px; line-height: 1.4; }
+    .pl-sentiment-bar { display: inline-block; width: 60px; height: 4px; background: #21262d; border-radius: 2px; margin-left: 4px; position: relative; }
+    .pl-sentiment-fill { position: absolute; top: 0; height: 100%; border-radius: 2px; }
+
+    /* ── 策略简报 (brief) ── */
+    .pl-brief { background: #0d111733; border-radius: 6px; padding: 10px 12px; }
+    .pl-brief-conclusion { font-size: 13px; font-weight: 600; color: #e1e4e8; margin-bottom: 6px; line-height: 1.4; }
+    .pl-brief-reason { font-size: 11px; color: #c9d1d9; margin-bottom: 3px; line-height: 1.4; }
+    .pl-brief-levels { font-size: 11px; color: #8b949e; margin: 4px 0; }
+    .pl-brief-val { font-weight: 600; color: #e1e4e8; }
+    .pl-brief-entry { font-size: 11px; color: #8b949e; margin: 4px 0; }
+    .pl-brief-risk { font-size: 11px; color: #f0883e; margin-bottom: 3px; line-height: 1.4; }
+    .pl-brief-dq { font-size: 10px; color: #8b949e; margin-top: 6px; padding-top: 4px; border-top: 1px solid #21262d; line-height: 1.5; }
+</style>
 {% endblock %}
 
 {% block content %}
-<div class="container" style="max-width:960px">
-    <!-- 暂停状态条 -->
-    <div id="pauseBar" class="pause-bar" style="display:none;">
-        <span class="pause-icon">⏸</span>
-        <span class="pause-text" id="pauseText">自动交易已暂停</span>
+<div class="pl-container">
+    <!-- Filter Bar -->
+    <div class="pl-filter-bar">
+        <input type="date" id="plDate" class="pl-date-input" value="">
+        <button class="pl-refresh-btn" onclick="loadPipeline()">🔄 刷新</button>
+        <span style="flex:1"></span>
+        <button class="pl-filter-btn active" data-filter="all" onclick="setFilter('all')">全部</button>
+        <button class="pl-filter-btn" data-filter="BUY" onclick="setFilter('BUY')">BUY</button>
+        <button class="pl-filter-btn" data-filter="SELL_SHORT" onclick="setFilter('SELL_SHORT')">SHORT</button>
+        <button class="pl-filter-btn" data-filter="SKIP" onclick="setFilter('SKIP')">SKIP</button>
     </div>
-    <!-- Command Bar (简洁单行状态栏) -->
-    <div id="cmdBar" class="cmd-bar" style="display:none;">
-        <span class="cmd-score" id="cmdScore">--</span>
-        <span class="cmd-label" id="cmdLabel">加载中</span>
-        <span class="cmd-divider">|</span>
-        <span class="cmd-budget" id="cmdBudget">风险预算 --</span>
-        <span class="cmd-divider">|</span>
-        <span class="cmd-positions" id="cmdPositions">0仓位</span>
+
+    <!-- Regime -->
+    <div class="pl-regime-bar" id="regimeBar" style="display:none;">
+        <span style="font-size:14px; color:#e1e4e8; font-weight:600;">📋 Pipeline</span>
+        <span id="regimeBadge" class="pl-regime-badge">--</span>
     </div>
-    <div id="plan"><div class="loading">加载作战计划...</div></div>
+
+    <!-- Funnel -->
+    <div class="pl-funnel" id="funnel" style="display:none;">
+        <div class="pl-funnel-stage">
+            <div class="pl-funnel-num" id="fnCandidates">-</div>
+            <div class="pl-funnel-label">候选池</div>
+        </div>
+        <span class="pl-funnel-arrow">→</span>
+        <div class="pl-funnel-stage">
+            <div class="pl-funnel-num" id="fnVoted">-</div>
+            <div class="pl-funnel-label">投票</div>
+            <div class="pl-funnel-detail" id="fnVoteDetail"></div>
+        </div>
+        <span class="pl-funnel-arrow">→</span>
+        <div class="pl-funnel-stage active">
+            <div class="pl-funnel-num" id="fnInstructions">-</div>
+            <div class="pl-funnel-label">指令</div>
+            <div class="pl-funnel-detail" id="fnInstDetail"></div>
+        </div>
+    </div>
+
+    <!-- Theme Radar (Deepulse) -->
+    <div id="themeRadar" style="display:none; margin-bottom:12px;">
+        <div class="pl-section-title" style="margin-bottom:6px;">📡 Deepulse 主题雷达</div>
+        <div class="pl-theme-bar" id="themeBar"></div>
+    </div>
+
+    <!-- Items -->
+    <div id="pipelineItems">
+        <div class="pl-loading">加载管道数据...</div>
+    </div>
 </div>
 {% endblock %}
 
-{% block scripts %}{% endblock %}
-{% block external_scripts %}
-<script src="/static/js/battle_plan.js?v=20260620e"></script>
+{% block scripts %}
+    let _pipelineData = null;
+    let _filter = 'all';
+
+    function setFilter(f) {
+        _filter = f;
+        document.querySelectorAll('.pl-filter-btn').forEach(b => b.classList.remove('active'));
+        document.querySelector(`.pl-filter-btn[data-filter="${f}"]`).classList.add('active');
+        renderItems();
+    }
+
+    async function loadPipeline() {
+        const dateInput = document.getElementById('plDate');
+        let url = '/api/playbook/pipeline';
+        if (dateInput.value) url += `?date=${dateInput.value}`;
+
+        try {
+            const resp = await fetch(url);
+            const data = await resp.json();
+            if (data.success) {
+                _pipelineData = data.data;
+                // 回填日期输入框 (后端返回的 ET 日期)
+                if (data.data.date) document.getElementById('plDate').value = data.data.date;
+                render();
+            } else {
+                document.getElementById('pipelineItems').innerHTML = '<div class="pl-empty">加载失败</div>';
+            }
+        } catch (e) {
+            document.getElementById('pipelineItems').innerHTML = `<div class="pl-empty">请求异常: ${e}</div>`;
+        }
+    }
+
+    function render() {
+        const d = _pipelineData;
+        if (!d) return;
+
+        // Regime
+        const regime = d.regime || {};
+        const regimeStr = (regime.regime || '').toUpperCase();
+        const bar = document.getElementById('regimeBar');
+        bar.style.display = 'flex';
+        const badge = document.getElementById('regimeBadge');
+        badge.textContent = regimeStr || '--';
+        badge.className = `pl-regime-badge pl-regime-${regimeStr}`;
+
+        // Funnel
+        const f = d.funnel || {};
+        const fn = document.getElementById('funnel');
+        fn.style.display = 'flex';
+        document.getElementById('fnCandidates').textContent = f.candidates ?? '-';
+        document.getElementById('fnVoted').textContent = f.voted ?? '-';
+        document.getElementById('fnVoteDetail').innerHTML =
+            `<span style="color:#4ade80">L${f.vote_long||0}</span> / <span style="color:#f87171">S${f.vote_short||0}</span> / <span style="color:#9ca3af">N${f.vote_neutral||0}</span>`;
+        document.getElementById('fnInstructions').textContent = (d.items||[]).length;
+        document.getElementById('fnInstDetail').innerHTML =
+            `<span style="color:#4ade80">B${f.buy||0}</span> / <span style="color:#f87171">S${f.sell_short||0}</span> / <span style="color:#9ca3af">K${f.skip||0}</span>`;
+
+        // Theme Radar
+        renderThemeRadar(d.theme_radar);
+
+        renderItems();
+    }
+
+    function renderThemeRadar(tr) {
+        const el = document.getElementById('themeRadar');
+        const bar = document.getElementById('themeBar');
+        if (!tr || !tr.domains) { el.style.display = 'none'; return; }
+
+        const domains = Object.entries(tr.domains);
+        if (domains.length === 0) { el.style.display = 'none'; return; }
+
+        el.style.display = 'block';
+        bar.innerHTML = domains.map(([name, d]) => {
+            const mom = d.momentum ?? 0;
+            const cls = mom > 0.1 ? 'pl-theme-pos' : mom < -0.1 ? 'pl-theme-neg' : 'pl-theme-neu';
+            const sign = mom > 0 ? '+' : '';
+            const narratives = (d.narratives || []).slice(0, 2)
+                .map(n => `<div class="pl-theme-narrative">• ${n.substring(0, 80)}</div>`).join('');
+            const bene = (d.beneficiaries || []).map(s => `<span class="pl-theme-bene">${s}</span>`).join(' ');
+            const detr = (d.detractors || []).map(s => `<span class="pl-theme-detr">${s}</span>`).join(' ');
+            return `
+                <div class="pl-theme-card">
+                    <div class="pl-theme-card-title">${name}</div>
+                    <div><span class="pl-theme-momentum ${cls}">${sign}${mom.toFixed(2)}</span>
+                         <span style="font-size:10px;color:#8b949e"> ${d.sentiment || ''} (n=${d.breadth||0})</span></div>
+                    ${narratives}
+                    <div class="pl-theme-stocks">✓ ${bene} ✗ ${detr}</div>
+                </div>`;
+        }).join('');
+    }
+
+    function renderItems() {
+        const items = (_pipelineData?.items) || [];
+        const filtered = _filter === 'all' ? items : items.filter(i => i.direction === _filter);
+
+        if (filtered.length === 0) {
+            document.getElementById('pipelineItems').innerHTML = '<div class="pl-empty">无数据</div>';
+            return;
+        }
+
+        // 排序: 非SKIP优先 → confidence 降序
+        filtered.sort((a, b) => {
+            if (a.direction === 'SKIP' && b.direction !== 'SKIP') return 1;
+            if (a.direction !== 'SKIP' && b.direction === 'SKIP') return -1;
+            return (b.confidence || 0) - (a.confidence || 0);
+        });
+
+        const html = filtered.map((item, idx) => renderItemCard(item, idx)).join('');
+        document.getElementById('pipelineItems').innerHTML = html;
+        // 2026-07-04: 非SKIP卡片默认展开 (展示策略简报)
+        filtered.forEach((item, idx) => {
+            if (item.direction !== 'SKIP') {
+                const body = document.getElementById('body' + idx);
+                const toggle = document.getElementById('toggle' + idx);
+                if (body) { body.classList.add('show'); }
+                if (toggle) { toggle.textContent = '▲'; }
+            }
+        });
+    }
+
+    function renderItemCard(item, idx) {
+        const dir = item.direction || '';
+        const dirClass = `pl-dir-${dir || 'SKIP'}`;
+        const conf = item.confidence || 0;
+        const confClass = conf >= 80 ? 'pl-conf-high' : conf >= 60 ? 'pl-conf-mid' : 'pl-conf-low';
+
+        // 信息层上下文
+        const ctx = item.signal_context;
+        let ctxHtml = '';
+        if (ctx) {
+            // 新闻
+            let newsHtml = '';
+            if (ctx.news_headlines && ctx.news_headlines.length > 0) {
+                const headlines = ctx.news_headlines.map(h => `<div class="pl-news-item">• ${h.substring(0,100)}</div>`).join('');
+                const sent = ctx.news_sentiment ?? 0;
+                const sentPct = Math.abs(sent) * 50;
+                const sentColor = sent > 0 ? '#4ade80' : sent < 0 ? '#f87171' : '#8b949e';
+                const sentLabel = sent > 0 ? '正面' : sent < 0 ? '负面' : '中性';
+                newsHtml = `
+                    <div class="pl-ctx-card">
+                        <div class="pl-ctx-title">📰 新闻 (${sentLabel} ${sent.toFixed(2)})</div>
+                        ${headlines}
+                    </div>`;
+            }
+            // 内部人交易
+            let insHtml = '';
+            if (ctx.insider) {
+                const ins = ctx.insider;
+                const sigColor = ins.signal === 'strong_buy' ? '#4ade80' : ins.signal === 'buy' ? '#4ade80' : ins.signal === 'sell' ? '#f87171' : '#8b949e';
+                insHtml = `
+                    <div class="pl-ctx-card">
+                        <div class="pl-ctx-title">🏢 内部人交易</div>
+                        <div class="pl-ctx-row">信号: <span class="pl-ctx-val" style="color:${sigColor}">${ins.signal || '-'}</span></div>
+                        <div class="pl-ctx-row">集群分: <span class="pl-ctx-val">${(ins.cluster_score*100).toFixed(0)}%</span> 净买: <span class="pl-ctx-val">${ins.net_shares?.toLocaleString() || 0}</span></div>
+                        ${ins.cluster_buyers && ins.cluster_buyers.length > 0 ? `<div class="pl-ctx-row">买家: ${ins.cluster_buyers.join(', ')}</div>` : ''}
+                    </div>`;
+            }
+            // 财报
+            let ernHtml = '';
+            if (ctx.earnings) {
+                const ern = ctx.earnings;
+                ernHtml = `
+                    <div class="pl-ctx-card">
+                        <div class="pl-ctx-title">📊 财报</div>
+                        <div class="pl-ctx-row">下次: <span class="pl-ctx-val">${ern.next_date || '-'}</span> (${ern.days_until ?? '-'}天后)</div>
+                        <div class="pl-ctx-row">超预期率: <span class="pl-ctx-val">${(ern.beat_rate*100).toFixed(0)}%</span></div>
+                    </div>`;
+            }
+            // 基本面
+            let fundHtml = '';
+            if (ctx.fundamental) {
+                const f = ctx.fundamental;
+                fundHtml = `
+                    <div class="pl-ctx-card">
+                        <div class="pl-ctx-title">💰 基本面</div>
+                        <div class="pl-ctx-row">PE: <span class="pl-ctx-val">${f.pe?.toFixed(1) ?? '-'}</span> ROE: <span class="pl-ctx-val">${f.roe ? (f.roe*100).toFixed(1)+'%' : '-'}</span></div>
+                        <div class="pl-ctx-row">营收增长: <span class="pl-ctx-val">${f.revenue_growth_yoy ? (f.revenue_growth_yoy*100).toFixed(1)+'%' : '-'}</span> D/E: <span class="pl-ctx-val">${f.debt_to_equity?.toFixed(2) ?? '-'}</span></div>
+                        <div class="pl-ctx-row">52w: <span class="pl-ctx-val">$${f.low_52w?.toFixed(0) ?? '-'} ~ $${f.high_52w?.toFixed(0) ?? '-'}</span></div>
+                    </div>`;
+            }
+            // Deepulse 主题 (per-symbol)
+            let themeHtml = '';
+            if (ctx.theme) {
+                const t = ctx.theme;
+                const mom = t.momentum ?? 0;
+                const cls = mom > 0.1 ? 'pl-theme-pos' : mom < -0.1 ? 'pl-theme-neg' : 'pl-theme-neu';
+                const narratives = (t.narratives || []).slice(0, 2).map(n => `<div class="pl-ctx-row" style="color:#8b949e">• ${n.substring(0,80)}</div>`).join('');
+                themeHtml = `
+                    <div class="pl-ctx-card">
+                        <div class="pl-ctx-title">📡 主题雷达</div>
+                        <div class="pl-ctx-row">动量: <span class="pl-ctx-val ${cls}">${mom > 0 ? '+' : ''}${mom.toFixed(2)}</span> 风: <span class="pl-ctx-val">${t.wind > 0 ? '+' : ''}${(t.wind ?? 0).toFixed(2)}</span></div>
+                        ${narratives}
+                    </div>`;
+            }
+            // LLM reasoning
+            let llmHtml = '';
+            if (ctx.llm_reasoning && ctx.llm_reasoning.length > 0) {
+                const votes = ctx.llm_reasoning.map(v => {
+                    const dirColor = v.direction === 'LONG' ? '#4ade80' : v.direction === 'SHORT' ? '#f87171' : '#8b949e';
+                    return `<div class="pl-llm-model">${v.model_id}: <span style="color:${dirColor}">${v.direction}</span> str=${v.strength} conf=${(v.confidence*100).toFixed(0)}%</div>
+                             <div class="pl-llm-reasoning">${v.reasoning || '(无reasoning)'}</div>`;
+                }).join('');
+                llmHtml = `
+                    <div class="pl-ctx-card" style="grid-column:1/-1">
+                        <div class="pl-ctx-title">🧠 LLM 多模型推理</div>
+                        ${votes}
+                    </div>`;
+            }
+            if (newsHtml || insHtml || ernHtml || fundHtml || themeHtml || llmHtml) {
+                ctxHtml = `
+                    <div class="pl-section">
+                        <div class="pl-section-title">信息层 (新闻·内部人·财报·基本面·主题·LLM)</div>
+                        <div class="pl-ctx-grid">
+                            ${newsHtml}${insHtml}${ernHtml}${fundHtml}${themeHtml}${llmHtml}
+                        </div>
+                    </div>`;
+            }
+        }
+
+        // 投票区
+        const vote = item.vote;
+        let voteHtml = '<div class="pl-section-title">投票信号</div><div style="font-size:12px;color:#8b949e">无投票数据</div>';
+        if (vote) {
+            const factors = (vote.factors || []).map(f => `<span class="pl-tag">${f}</span>`).join('');
+            voteHtml = `
+                <div class="pl-section">
+                    <div class="pl-section-title">投票信号 (signal_snapshots)</div>
+                    <div class="pl-vote-grid">
+                        <div class="pl-vote-item"><div class="pl-vote-label">方向</div><div class="pl-vote-value">${vote.direction || '-'}</div></div>
+                        <div class="pl-vote-item"><div class="pl-vote-label">Strength</div><div class="pl-vote-value">${vote.strength ?? '-'}</div></div>
+                        <div class="pl-vote-item"><div class="pl-vote-label">Confidence</div><div class="pl-vote-value">${(vote.confidence*100).toFixed(0)}%</div></div>
+                        <div class="pl-vote-item"><div class="pl-vote-label">Consensus</div><div class="pl-vote-value">${(vote.consensus_level*100).toFixed(0)}%</div></div>
+                    </div>
+                    ${factors ? `<div class="pl-tags" style="margin-top:6px">${factors}</div>` : ''}
+                </div>`;
+        }
+
+        // 方向审计
+        const audit = item.audit;
+        let auditHtml = '';
+        if (audit && audit.llm_direction) {
+            const techDir = audit.technical_direction || '无';
+            const conflict = audit.technical_direction && audit.llm_direction !== audit.technical_direction;
+            auditHtml = `
+                <div class="pl-section">
+                    <div class="pl-section-title">方向审计 (LLM vs 技术)</div>
+                    <div class="pl-vote-grid">
+                        <div class="pl-vote-item"><div class="pl-vote-label">LLM方向</div><div class="pl-vote-value">${audit.llm_direction}</div></div>
+                        <div class="pl-vote-item"><div class="pl-vote-label">技术方向</div><div class="pl-vote-value" style="${conflict?'color:#f87171':''}">${techDir}</div></div>
+                        <div class="pl-vote-item"><div class="pl-vote-label">Std Dev</div><div class="pl-vote-value">${audit.llm_std?.toFixed(1) ?? '-'}</div></div>
+                    </div>
+                </div>`;
+        }
+
+        // 因子评分
+        const fs = item.factor_scores || {};
+        const factorIc = item.factor_ic || {};
+        let factorHtml = '';
+        const factorEntries = Object.entries(fs);
+        if (factorEntries.length > 0) {
+            const rows = factorEntries.map(([name, info]) => {
+                const score = info.score ?? 0;
+                const pct = Math.round(score * 100);
+                const color = score >= 0.7 ? '#4ade80' : score >= 0.4 ? '#facc15' : '#f87171';
+                const ic = factorIc[name];
+                const icStr = ic ? `IC=${ic.ic?.toFixed(2)} (n=${ic.n}, WR=${(ic.wr*100).toFixed(0)}%)` : '';
+                return `
+                    <div class="pl-factor-row">
+                        <span class="pl-factor-name">${name.replace(/_/g,' ')}</span>
+                        <div class="pl-factor-bar"><div class="pl-factor-fill" style="width:${pct}%;background:${color}"></div></div>
+                        <span class="pl-factor-score">${pct}</span>
+                        <span class="pl-factor-ic">${icStr}</span>
+                    </div>`;
+            }).join('');
+            factorHtml = `
+                <div class="pl-section">
+                    <div class="pl-section-title">因子评分 (composite=${item.composite_score?.toFixed(2) ?? '-'})</div>
+                    ${rows}
+                </div>`;
+        }
+
+        // 指令参数
+        const conditions = (item.conditions || []).map(c => `<span class="pl-tag">${c}</span>`).join('');
+        const dq = item.data_quality || {};
+        const dqHtml = Object.entries(dq).map(([k,v]) => `<span class="pl-dq-item ${v==='ok'?'pl-dq-ok':'pl-dq-bad'}">${k}:${v}</span>`).join('');
+        const paramsHtml = `
+            <div class="pl-section">
+                <div class="pl-section-title">指令参数</div>
+                <div class="pl-params">
+                    <div class="pl-param"><div class="pl-param-label">Entry</div><div class="pl-param-value">${item.entry_price ? '$'+item.entry_price.toFixed(2) : '-'}</div></div>
+                    <div class="pl-param"><div class="pl-param-label">Stop Loss</div><div class="pl-param-value" style="color:#f87171">${item.stop_loss ? '$'+item.stop_loss.toFixed(2) : '-'}</div></div>
+                    <div class="pl-param"><div class="pl-param-label">Take Profit</div><div class="pl-param-value" style="color:#4ade80">${item.take_profit ? '$'+item.take_profit.toFixed(2) : '-'}</div></div>
+                    <div class="pl-param"><div class="pl-param-label">Size</div><div class="pl-param-value">${item.position_size || '-'}</div></div>
+                    <div class="pl-param"><div class="pl-param-label">R/R</div><div class="pl-param-value">${item.risk_reward?.toFixed(2) ?? '-'}</div></div>
+                    <div class="pl-param"><div class="pl-param-label">OK Dims</div><div class="pl-param-value">${item.ok_dimensions ?? '-'}/6</div></div>
+                </div>
+                ${conditions ? `<div class="pl-tags" style="margin-top:8px">${conditions}</div>` : ''}
+                ${dqHtml ? `<div class="pl-dq-row" style="margin-top:6px">${dqHtml}</div>` : ''}
+                ${item.atr_source ? `<div style="font-size:10px;color:#8b949e;margin-top:4px">${item.atr_source}</div>` : ''}
+            </div>`;
+
+        // thesis + skip reason
+        const thesisHtml = item.thesis ? `<div class="pl-section"><div class="pl-section-title">Thesis</div><div class="pl-thesis">${item.thesis}</div></div>` : '';
+        const skipHtml = item.skip_reason ? `<div class="pl-skip-reason">⚠ ${item.skip_reason}</div>` : '';
+
+        // 2026-07-04: 策略简报 (brief) — 卡片头部展示
+        const brief = ctx?.brief;
+        let briefHtml = '';
+        if (brief) {
+            // 结论
+            const conclusionHtml = brief.conclusion ? `<div class="pl-brief-conclusion">${brief.conclusion}</div>` : '';
+            // 核心理由
+            let reasonsHtml = '';
+            if (brief.reasons && brief.reasons.length > 0) {
+                const reasons = brief.reasons.map(r => `<div class="pl-brief-reason">• ${r}</div>`).join('');
+                reasonsHtml = `<div class="pl-section-title">核心理由</div><div>${reasons}</div>`;
+            }
+            // 关键位
+            let levelsHtml = '';
+            const kl = brief.key_levels || {};
+            const supports = (kl.support || []).map(s => `$${s}`).join(' / ');
+            const resistances = (kl.resistance || []).map(r => `$${r}`).join(' / ');
+            if (supports || resistances || brief.key_support || brief.key_resistance) {
+                levelsHtml = `<div class="pl-brief-levels">支撑: <span class="pl-brief-val">${brief.key_support ? '$'+brief.key_support : supports || '-'}</span> | 阻力: <span class="pl-brief-val">${brief.key_resistance ? '$'+brief.key_resistance : resistances || '-'}</span></div>`;
+            }
+            // 入场策略
+            const entryHtml = brief.entry_strategy ? `<div class="pl-brief-entry">入场策略: <span class="pl-brief-val">${brief.entry_strategy}</span>${brief.stop_trigger ? ' | 止损触发: '+brief.stop_trigger : ''}</div>` : '';
+            // 风险场景
+            let risksHtml = '';
+            if (brief.risks && brief.risks.length > 0) {
+                const risks = brief.risks.map(r => `<div class="pl-brief-risk">⚠ ${r}</div>`).join('');
+                risksHtml = `<div class="pl-section-title">风险场景</div><div>${risks}</div>`;
+            }
+            briefHtml = (conclusionHtml || reasonsHtml || levelsHtml || entryHtml || risksHtml) ? `
+                <div class="pl-section pl-brief">
+                    <div class="pl-section-title">🎯 策略简报</div>
+                    ${conclusionHtml}
+                    ${reasonsHtml}
+                    ${levelsHtml}
+                    ${entryHtml}
+                    ${risksHtml}
+                    ${brief.data_quality && brief.data_quality.length > 0 ? `<div class="pl-brief-dq">📊 ${brief.data_quality.join(' | ')}</div>` : ''}
+                </div>` : '';
+        }
+
+        return `
+            <div class="pl-card">
+                <div class="pl-card-header" onclick="toggleCard(${idx})">
+                    <div class="pl-card-left">
+                        <span class="pl-symbol">${item.symbol}</span>
+                        <span class="pl-direction ${dirClass}">${dir}</span>
+                        <span class="pl-sector">${item.sector || ''}</span>
+                    </div>
+                    <div class="pl-card-right">
+                        ${dir !== 'SKIP' ? `<span class="pl-conf-badge ${confClass}">conf ${conf}</span>` : ''}
+                        ${item.executed ? '<span style="color:#4ade80">✓ executed</span>' : ''}
+                        <span class="pl-toggle" id="toggle${idx}">▼</span>
+                    </div>
+                </div>
+                <div class="pl-card-body" id="body${idx}">
+                    ${briefHtml}
+                    ${ctxHtml}
+                    ${voteHtml}
+                    ${auditHtml}
+                    ${factorHtml}
+                    ${paramsHtml}
+                    ${thesisHtml}
+                    ${skipHtml}
+                </div>
+            </div>`;
+    }
+
+    function toggleCard(idx) {
+        const body = document.getElementById('body' + idx);
+        const toggle = document.getElementById('toggle' + idx);
+        if (body.classList.contains('show')) {
+            body.classList.remove('show');
+            toggle.textContent = '▼';
+        } else {
+            body.classList.add('show');
+            toggle.textContent = '▲';
+        }
+    }
+
+    // 初始化: 不传 date → 后端用 ET 今日
+    (function() {
+        loadPipeline();
+    })();
 {% endblock %}

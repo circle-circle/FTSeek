@@ -108,6 +108,20 @@ class ManualHoldRegistry:
                 return True
             return info.account == account
 
+    def is_auto_blocked(self, symbol: str) -> bool:
+        """自动交易闸门: 该标的是否在 *当前自动交易账户* 中被手动占用.
+
+        根据 AUTO_TRADE_ACCOUNT 环境变量决定查 sim 还是 real:
+        - AUTO_TRADE_ACCOUNT=sim → 仅当 sim 账户有 manual 持仓时 block
+        - AUTO_TRADE_ACCOUNT=real → 仅当 real 账户有 manual 持仓时 block
+
+        解决: 同标的在 SIM(auto) + REAL(manual) 共存时,
+        REAL 的 manual 不应阻止 SIM 的 auto 交易.
+        """
+        import os as _os
+        _auto_acc = _os.getenv("AUTO_TRADE_ACCOUNT", "sim").strip().lower()
+        return self.is_manual_held(symbol, account=_auto_acc)
+
     def get_all_manual_symbols(self) -> Set[str]:
         """获取所有手动占用的标的列表"""
         with self._lock:
@@ -156,13 +170,23 @@ class ManualHoldRegistry:
                 )
                 return
 
-            try:
+            # P1: 确保 position_sync 已完成至少一次对账 (启动时 _sync_once 是同步的,
+            # 但如果因网络/权限延迟, 这里短暂等待 + 最多一次主动触发).
+            _waited = 0
+            while _waited < 5:
                 positions = pos_sync.position_store.all()
-            except Exception as _ae:
-                logger.warning(
-                    f"[ManualHoldRegistry] position_store.all() failed: {_ae}"
-                )
-                return
+                if positions:
+                    break
+                import time as _time
+                _time.sleep(1)
+                _waited += 1
+            else:
+                # 5s 后仍为空, 主动触发一次同步
+                try:
+                    pos_sync._sync_once()
+                except Exception as _se:
+                    logger.warning(f"[ManualHoldRegistry] 主动触发 _sync_once 失败: {_se}")
+                positions = pos_sync.position_store.all()
 
             # 兜底: 从 DB open_positions 读取 owner='manual' 的标的
             db_manual_symbols: Set[str] = set()

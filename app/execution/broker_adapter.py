@@ -412,7 +412,9 @@ class FutuBrokerAdapter:
         # 2. 提交订单
         if not self.is_connected():
             # P0: 实盘模式下 Broker 断连时拒绝订单，不允许模拟成交
-            if os.environ.get("TRADE_ENV", "1") == "0":
+            # 2026-07-03: 跟随 AUTO_TRADE_ACCOUNT (TRADE_ENV 仅控制 DB 路由)
+            _auto_acc_disc = os.environ.get("AUTO_TRADE_ACCOUNT", "sim").strip().lower()
+            if _auto_acc_disc == "real":
                 raise RuntimeError(
                     f"[实盘安全] Broker 未连接, 拒绝提交 {order.symbol} 订单 — "
                     f"请勿在断连状态下交易"
@@ -501,7 +503,9 @@ class FutuBrokerAdapter:
                 raise RuntimeError(f"下单失败: {data}")
 
         except ImportError:
-            if os.environ.get("TRADE_ENV", "1") == "0":
+            # 2026-07-03: 跟随 AUTO_TRADE_ACCOUNT
+            _auto_acc_imp = os.environ.get("AUTO_TRADE_ACCOUNT", "sim").strip().lower()
+            if _auto_acc_imp == "real":
                 raise RuntimeError(
                     f"[实盘安全] futu-api 未安装, 拒绝提交 {order.symbol} 订单"
                 )

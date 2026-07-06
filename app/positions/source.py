@@ -38,6 +38,9 @@ class PositionSource(Enum):
             "voting_llm_option": cls.AUTO_MAIN,  # 期权仓位归主线策略管理
             "playbook_sim": cls.AUTO_MAIN,  # 2026-06-26: SIM自动交易产生的仓位, 归auto
             "playbook_live": cls.AUTO_MAIN,  # 同上, live环境
+            # 2026-07-03 fix: PLAYBOOK_SIM/LIVE 仓位不应被 ExitMonitor 组合止损干涉
+            # Reconciler 把 playbook_sim → AUTO_MAIN + MANAGED → ExitMonitor 收养 → 分批平仓
+            # 修复: 在 _lookup_trade_records_source 中拦截 PLAYBOOK_SIM/LIVE, 不走 from_str
             "manual_sync": cls.MANUAL,  # P0-fix (2026-06-15): position_sync 发现的手动仓 → MANUAL (非 AUTO_MAIN)
             "orb": cls.AUTO_ORB, "orb_engine": cls.AUTO_ORB,
             "auto_orb": cls.AUTO_ORB,  # Task #6 (2026-06-15): ORB 来源标记
@@ -210,7 +213,7 @@ def classify_owner(position: Any) -> str:
         try:
             from app.coordinator.manual_hold_registry import manual_hold_registry
             sym = getattr(position, "symbol", None)
-            if sym and manual_hold_registry.is_manual_held(sym):
+            if sym and manual_hold_registry.is_auto_blocked(sym):
                 return OWNER_MANUAL
             return OWNER_MANUAL_ORPHAN
         except Exception:

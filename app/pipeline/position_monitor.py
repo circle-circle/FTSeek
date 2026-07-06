@@ -1338,13 +1338,15 @@ def _check_positions(scheduler):
                         # Check if this was a partial close (position still exists)
                         _is_partial_close = reason_dict.get("close_qty", 0) > 0
                         if _is_partial_close:
-                            # Partial close: set cooldown to prevent re-fire, but don't
-                            # add to dispatcher_closed_symbols (position still exists)
+                            # Partial close: set cooldown to prevent re-fire in legacy monitor this tick.
+                            # The position still exists, so we add it to dispatcher_closed_symbols
+                            # only for the current tick; the next tick it will be rescanned normally.
                             if hasattr(exit_monitor, '_exit_cooldowns'):
                                 exit_monitor._exit_cooldowns[position.symbol] = time.time()
                             # Update trail state with trigger time to prevent legacy re-fire
                             if isinstance(trail_state, dict):
                                 trail_state["last_trigger_time"] = time.time()
+                            dispatcher_closed_symbols.add(position.symbol)
                         else:
                             dispatcher_closed_symbols.add(position.symbol)
                         logger.warning(
@@ -1424,7 +1426,7 @@ def _is_manual_position_for_reconcile(symbol: str) -> bool:
     # 1. ManualHoldRegistry (内存)
     try:
         from app.coordinator.manual_hold_registry import manual_hold_registry
-        if manual_hold_registry.is_manual_held(symbol):
+        if manual_hold_registry.is_auto_blocked(symbol):
             result = True
     except Exception:
         pass

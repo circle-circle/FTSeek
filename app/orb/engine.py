@@ -596,8 +596,8 @@ class ORBEngine:
 
         built_count = 0
         for symbol in self._cfg.universe:
-            # ManualHold 闸门: 手动占用标的, 不浪费配额构建 ORB 区间
-            if manual_hold_registry.is_manual_held(symbol):
+            # ManualHold 闸门: 同账户手动占用标的, 不浪费配额构建 ORB 区间
+            if manual_hold_registry.is_auto_blocked(symbol):
                 continue
             # 跳过已有持仓的标的
             if symbol in self._positions:
@@ -866,8 +866,8 @@ class ORBEngine:
         for symbol, rng in list(self._ranges.items()):
             if not rng.get("ready"):
                 continue
-            # ManualHold 闸门: 手动占用标的, ORB 引擎跳过
-            if manual_hold_registry.is_manual_held(symbol):
+            # ManualHold 闸门: 同账户手动占用标的, ORB 引擎跳过
+            if manual_hold_registry.is_auto_blocked(symbol):
                 logger.debug("[ORB] %s 跳过: 手动持仓已占用 (ManualHoldRegistry)", symbol)
                 continue
             # 已有仓位 → 跳过 (本引擎内部)

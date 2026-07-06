@@ -26,12 +26,12 @@ def _check_external_close(symbol: str, direction: str, broker_positions_map: dic
     """
     try:
         from futu import OpenSecTradeContext, TrdEnv, TrdMarket, SecurityFirm, RET_OK
-        from app.core.config_container import get_config
         import os
         from datetime import timedelta
-        
-        _trade_env = get_config().trade_env_int
-        trade_env = TrdEnv.SIMULATE if _trade_env == 1 else TrdEnv.REAL
+
+        # 2026-07-03: 跟随 AUTO_TRADE_ACCOUNT
+        _auto_acc = os.getenv("AUTO_TRADE_ACCOUNT", "sim").strip().lower()
+        trade_env = TrdEnv.SIMULATE if _auto_acc == "sim" else TrdEnv.REAL
         host = os.getenv("FUTU_OPEND_HOST", "127.0.0.1")
         port = int(os.getenv("FUTU_OPEND_PORT", "11111"))
         
@@ -106,15 +106,14 @@ def restore_positions_from_db(scheduler):
         from futu import OpenSecTradeContext, RET_OK, TrdEnv, TrdMarket, SecurityFirm
         import os as _os
 
-        from app.core.config_container import get_config
-        _trade_env = get_config().trade_env_int
-        # 实盘用 REAL_ACCOUNT_ID，模拟盘用 SIMULATE_ACCOUNT_ID
-        if _trade_env == 1:
+        # 2026-07-03: 跟随 AUTO_TRADE_ACCOUNT
+        _auto_acc = _os.getenv("AUTO_TRADE_ACCOUNT", "sim").strip().lower()
+        if _auto_acc == "sim":
             _acc_id_str = _os.getenv("SIMULATE_ACCOUNT_ID", "")
         else:
             _acc_id_str = _os.getenv("REAL_ACCOUNT_ID", _os.getenv("SIMULATE_ACCOUNT_ID", ""))
         _acc_id = int(_acc_id_str) if _acc_id_str else 0
-        trade_env = TrdEnv.SIMULATE if _trade_env == 1 else TrdEnv.REAL
+        trade_env = TrdEnv.SIMULATE if _auto_acc == "sim" else TrdEnv.REAL
         trade_ctx = OpenSecTradeContext(
             filter_trdmarket=TrdMarket.US,
             host=_os.getenv("FUTU_OPEND_HOST", "127.0.0.1"),
@@ -278,19 +277,22 @@ def restore_positions_from_db(scheduler):
                         try:
                             from datetime import timezone, timedelta
                             _et_now = datetime.now(timezone(timedelta(hours=-4)))
-                            scheduler.trade_store._get_conn().execute(
-                                "INSERT INTO trade_records "
-                                "(trade_date, symbol, direction, entry_time, exit_time, "
-                                "entry_price, exit_price, quantity, realized_pnl, pnl_pct, "
-                                "exit_reason, source_type, mode, created_at) "
-                                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                                (_et_now.strftime('%Y-%m-%d'), sym, _dir_str,
-                                 _snap_entry_time, _exit_time or _et_now.isoformat(),
-                                 _entry_p, _exit_p, int(_size),
-                                 _pnl, _pnl_pct,
-                                 'external_close', 'RECOVERY', 'manual',
-                                 _et_now.isoformat())
-                            ).connection.commit()
+                            _record = {
+                                "trade_date": _et_now.strftime('%Y-%m-%d'),
+                                "symbol": sym,
+                                "direction": _dir_str,
+                                "entry_time": _snap_entry_time,
+                                "exit_time": _exit_time or _et_now.isoformat(),
+                                "entry_price": _entry_p,
+                                "exit_price": _exit_p,
+                                "quantity": int(_size),
+                                "realized_pnl": _pnl,
+                                "pnl_pct": _pnl_pct,
+                                "exit_reason": "external_close",
+                                "source_type": "RECOVERY",
+                                "mode": "manual",
+                            }
+                            scheduler.trade_store.save_trade(_record)
                         except Exception as _e:
                             logger.warning(f"[恢复·外部平仓] {sym} trade_record 写入失败: {_e}")
                     
@@ -578,9 +580,9 @@ def restore_positions_from_db(scheduler):
             from futu import OpenSecTradeContext, RET_OK, TrdEnv, TrdMarket, SecurityFirm
             import os as _os
 
-            from app.core.config_container import get_config
-            _trade_env = get_config().trade_env_int
-            trade_env = TrdEnv.SIMULATE if _trade_env == 1 else TrdEnv.REAL
+            # 2026-07-03: 跟随 AUTO_TRADE_ACCOUNT
+            _auto_acc = _os.getenv("AUTO_TRADE_ACCOUNT", "sim").strip().lower()
+            trade_env = TrdEnv.SIMULATE if _auto_acc == "sim" else TrdEnv.REAL
             trade_ctx = OpenSecTradeContext(
                 filter_trdmarket=TrdMarket.US,
                 host=_os.getenv("FUTU_OPEND_HOST", "127.0.0.1"),

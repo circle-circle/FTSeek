@@ -37,6 +37,26 @@ logger = logging.getLogger(__name__)
 DEFAULT_ORDER_QTY = 50  # 默认下单股数 (watchlist_us.json 可覆盖)
 
 
+def _with_symbol_lock_release(func):
+    """装饰器: 保证 _close_position 任何 early return/异常都释放 SymbolLock."""
+    from functools import wraps
+
+    @wraps(func)
+    def wrapper(scheduler, position, *args, **kwargs):
+        try:
+            return func(scheduler, position, *args, **kwargs)
+        finally:
+            try:
+                from app.execution.symbol_lock_manager import get_symbol_lock_manager
+                _dir_str = position.direction.value if hasattr(position.direction, "value") else str(position.direction)
+                _owner = getattr(position, "owner_strategy", None) or "main"
+                get_symbol_lock_manager().release(position.symbol, _dir_str, _owner)
+            except Exception as _sre:
+                logger.debug(f"[SymbolLock·symdir·close] finally 释放异常: {_sre}")
+
+    return wrapper
+
+
 # ══════════════════════════════════════════════════════════════════
 #  Task #34 (P0, 2026-06-16): 平仓重入与持仓不足级联失败修复
 # ──────────────────────────────────────────────────────────────────
@@ -601,8 +621,9 @@ def _submit_order_optimized(
                 order.state = OrderState.PARTIALLY_FILLED
         else:
             # 🔴 P0 (2026-06-13): 无执行引擎时, 实盘必须拒绝
-            _env = int(scheduler.config_loader.get_dotted("TRADE_ENV", 1) if hasattr(scheduler, "config_loader") else 1)
-            if _env == 0:
+            # 2026-07-03: 跟随 AUTO_TRADE_ACCOUNT (TRADE_ENV 仅控制 DB 路由)
+            _auto_acc_noengine = os.getenv("AUTO_TRADE_ACCOUNT", "sim").strip().lower()
+            if _auto_acc_noengine == "real":
                 order.state = OrderState.REJECTED
                 order.failure_reason = "实盘模式下无执行引擎, 拒绝下单"
                 logger.error(f"[OrderExecutor] 🔴 REJECTED: {order.symbol} — execution_engine 不存在, 实盘拒绝模拟成交")
@@ -3522,25 +3543,19 @@ def _submit_order_inner(scheduler, symbol: str, signal: SignalScore, context: Di
         logger.debug(f"[广度] 检查异常 (不影响入场): {_bre}")
 
     # 0. PDT 保护门禁 (P0-fix 2026-05-02: 集成到执行路径)
-    # 模拟盘不受 FINRA 约束，但为实盘做准备保留此检查
+    # 模拟盘也守 PDT (2026-06-24): sim 验证 PDT 合规策略, 避免 sim 达标 live 跑不了的假达标
     try:
-        trade_env = getattr(context, "get", lambda k, d=None: context.get(k, d)) if isinstance(context, dict) else lambda k, d=None: d
-        env_val = trade_env("trade_env", None)
-        if env_val is None:
-            try:
-                from app.core.config import get_config
-                env_val = get_config().get("TRADE_ENV", 1)
-            except Exception:
-                env_val = 1  # 默认模拟盘
-        # 仅实盘 (TRADE_ENV=0) 启用 PDT 拦截
-        if int(env_val) == 0:
-            from app.risk.pdt_guard import PDTGuard
-            pdt = PDTGuard()
-            is_overnight = signal.direction in (Direction.LONG,)  # SHORT 总是日内
-            allowed, reason, _level = pdt.check_trade_permission(is_overnight=is_overnight)
-            if not allowed:
-                logger.warning(f"🚫 [PDT 拦截] {symbol}: {reason}")
-                return
+        # 2026-07-03: 跟随 AUTO_TRADE_ACCOUNT (TRADE_ENV 仅控制 DB 路由)
+        _auto_acc_pdt = os.getenv("AUTO_TRADE_ACCOUNT", "sim").strip().lower()
+        _is_real_account = (_auto_acc_pdt == "real")
+        # sim/live 统一查 PDT (is_pdt_account: equity≥25k 豁免, <25k 守 ≤3/5日)
+        from app.risk.pdt_guard import PDTGuard
+        pdt = PDTGuard()
+        is_overnight = signal.direction in (Direction.LONG,)  # SHORT 总是日内
+        allowed, reason, _level = pdt.check_trade_permission(is_overnight=is_overnight)
+        if not allowed:
+            logger.warning(f"🚫 [PDT 拦截] {symbol}: {reason}")
+            return
     except Exception as e:
         logger.debug(f"[PDT] 检查异常 (放行): {e}")
     
@@ -4235,6 +4250,7 @@ def _verify_position_still_held(scheduler, position: Position) -> bool:
         return True
 
 
+@_with_symbol_lock_release
 def _close_position(scheduler, position: Position, current_price: float, exit_reason: ExitReason):
     """平仓 — 触及即全平，简洁优先"""
     # C1 (2026-06-03): 并发重入保护 — 防止 8s 确认窗口内双重平仓
@@ -4778,15 +4794,6 @@ def _close_position(scheduler, position: Position, current_price: float, exit_re
             )
     except Exception as _ce:
         logger.debug(f"[Coordinator] on_position_closed 失败: {_ce}")
-
-    # Task #50 (2026-05-28): 释放 symbol+direction 级互斥锁
-    try:
-        from app.execution.symbol_lock_manager import get_symbol_lock_manager
-        _dir_str = position.direction.value if hasattr(position.direction, "value") else str(position.direction)
-        _owner = getattr(position, "owner_strategy", None) or "main"
-        get_symbol_lock_manager().release(position.symbol, _dir_str, _owner)
-    except Exception as _sre:
-        logger.debug(f"[SymbolLock·symdir·close] 释放异常: {_sre}")
 
     # 写入持久化交易记录
     try:

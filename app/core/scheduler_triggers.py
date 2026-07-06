@@ -613,8 +613,8 @@ def check_daily_review(scheduler: 'TradingScheduler'):
                     logger.debug(f"[SignalQuality] 每日反馈失败 (不影响主流程): {sqe}")
                 # ── 信号质量追踪结束 ──
 
-                # ── Task #22 (2026-05-27): 盘前计划命中率追踪 ──
-                # 对标当日盘前作战计划 vs 实际交易, 输出 hit_rate / traded_rate / unplanned_count
+                # ── Playbook 指令命中率追踪 ──
+                # 对标当日 Playbook 指令 vs 实际交易, 输出 hit_rate / traded_rate / unplanned_count
                 try:
                     from app.analysis.plan_effectiveness import PlanEffectivenessTracker
                     tracker = PlanEffectivenessTracker()
@@ -623,7 +623,7 @@ def check_daily_review(scheduler: 'TradingScheduler'):
                         hit_rate = plan_report.get("hit_rate", 0) or 0
                         traded_rate = plan_report.get("traded_rate", 0) or 0
                         msg = (
-                            f"📊 盘前计划效果: 命中率 {hit_rate:.0%}, 执行率 {traded_rate:.0%}"
+                            f"📊 Playbook 指令效果: 命中率 {hit_rate:.0%}, 执行率 {traded_rate:.0%}"
                         )
                         try:
                             scheduler.notifier.send_text(msg)

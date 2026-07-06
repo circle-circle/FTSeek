@@ -72,7 +72,7 @@ class TradeRecorder:
                     futu_order_id TEXT,
                     
                     -- 账户类型
-                    account_type TEXT DEFAULT 'real',
+                    account_type TEXT DEFAULT 'simulate',
                     
                     -- 多 Agent 协作字段
                     analyst_score REAL DEFAULT 0,
@@ -210,7 +210,7 @@ class TradeRecorder:
                 price,
                 quantity,
                 kwargs.get('signal_confidence', decision_confidence / 10.0),
-                kwargs.get('account_type', 'real'),
+                kwargs.get('account_type', 'simulate'),
                 decision_reason,
                 decision_confidence,
                 strategy_type,

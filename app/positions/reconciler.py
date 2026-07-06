@@ -314,6 +314,12 @@ class StartupReconciler:
             if row is None:
                 return PositionSource.UNKNOWN
             owner, src_type, strat_id = row
+            # 2026-07-03 fix: PLAYBOOK_SIM/LIVE 仓位有独立的 EOD 退出逻辑 (cohort B 持夜等),
+            # 不应被 ExitMonitor 组合止损干涉. 返回 UNKNOWN → PROTECTED, 旧系统不碰.
+            # 根因: from_str("playbook_sim") → AUTO_MAIN → MANAGED → ExitMonitor 收养 → 分批平仓
+            for _val in (src_type, owner, strat_id):
+                if _val and _val.lower() in ("playbook_sim", "playbook_live"):
+                    return PositionSource.UNKNOWN
             for cand in (owner, src_type, strat_id):
                 if not cand:
                     continue

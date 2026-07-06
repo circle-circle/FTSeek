@@ -95,6 +95,7 @@ def compute_attribution(
     exit_time: str,
     high_prices: Optional[List[float]] = None,
     low_prices: Optional[List[float]] = None,
+    peak_price: Optional[float] = None,
 ) -> AttributionResult:
     """
     计算交易归因
@@ -102,7 +103,9 @@ def compute_attribution(
     Args:
         high_prices: 持仓期间每根 K 线的最高价列表
         low_prices: 持仓期间每根 K 线的最低价列表
-        如果为 None, 则用 entry/exit 价格近似
+        peak_price: 持仓期间峰值价 (来自 metadata.peak_price, Pipeline 实时跟踪).
+                    如果提供, 用于补充 high_prices/low_prices 缺失时的 MFE 计算.
+                    如果为 None, 则用 entry/exit 价格近似
     """
     # 基础计算
     if direction == "LONG":
@@ -111,11 +114,16 @@ def compute_attribution(
         pnl = (entry_price - exit_price) * quantity
     pnl_pct = (pnl / (entry_price * quantity)) if entry_price > 0 and quantity > 0 else 0
 
-    # 持仓时间
+    # 持仓时间 — 7/7 fix: 统一时区, 防止 aware-naive 相减 TypeError
     holding_minutes = 0
     try:
         t1 = datetime.fromisoformat(entry_time)
         t2 = datetime.fromisoformat(exit_time)
+        # 如果一方有时区另一方没有, 统一去掉时区再相减
+        if t1.tzinfo is not None and t2.tzinfo is None:
+            t1 = t1.replace(tzinfo=None)
+        elif t1.tzinfo is None and t2.tzinfo is not None:
+            t2 = t2.replace(tzinfo=None)
         holding_minutes = (t2 - t1).total_seconds() / 60
     except Exception:
         pass
@@ -133,9 +141,12 @@ def compute_attribution(
         holding_minutes=holding_minutes,
     )
 
-    # 价格范围
+    # 价格范围 — 7/7 增强: 用 peak_price 补充 MFE 计算
     all_highs = high_prices or [max(entry_price, exit_price)]
     all_lows = low_prices or [min(entry_price, exit_price)]
+    # 如果有 peak_price, 用它补充价格范围 (Pipeline 的 peak tracking 比无数据好)
+    if peak_price is not None and peak_price > 0:
+        all_highs.append(peak_price)
     period_high = max(all_highs)
     period_low = min(all_lows)
 

@@ -277,11 +277,17 @@ def register(app, templates):
     async def battle_plan_page(request: Request):
         """作战计划独立页面"""
         import os
-        is_live = os.getenv("TRADE_ENV", "1").strip() == "0"
-        return templates.TemplateResponse("battle_plan.html", {
+        from fastapi.responses import Response
+        is_live = os.getenv("AUTO_TRADE_ACCOUNT", "sim").strip().lower() == "real"
+        html = templates.TemplateResponse("battle_plan.html", {
             "request": request,
             "is_live": is_live,
         })
+        # 2026-07-04: 禁止浏览器缓存HTML (模板频繁更新)
+        html.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        html.headers["Pragma"] = "no-cache"
+        html.headers["Expires"] = "0"
+        return html
 
     @router.get("/api/battle-plan")
     async def get_battle_plan():
@@ -310,7 +316,7 @@ def register(app, templates):
             plan["_stale"] = _is_stale
             plan["_confirmed"] = plan.get("_confirmed", False)
             plan["_paused"] = plan.get("_paused", False)
-            plan["_is_live"] = __import__("os").getenv("TRADE_ENV", "1").strip() == "0"
+            plan["_is_live"] = __import__("os").getenv("AUTO_TRADE_ACCOUNT", "sim").strip().lower() == "real"
             try:
                 await _refresh_position_actions(plan)
             except Exception as e:
@@ -437,7 +443,7 @@ def register(app, templates):
 
         # Mark live mode for frontend modeTag sync
         import os as _os
-        plan["_is_live"] = _os.getenv("TRADE_ENV", "1").strip() == "0"
+        plan["_is_live"] = _os.getenv("AUTO_TRADE_ACCOUNT", "sim").strip().lower() == "real"
         plan["_is_trading_day"] = True
 
         return plan
@@ -1702,9 +1708,9 @@ async def get_ai_suggestion(symbol: str):
     # 手动持仓检查
     try:
         from app.coordinator.manual_hold_registry import manual_hold_registry
-        if manual_hold_registry.is_manual_held(symbol):
+        if manual_hold_registry.is_auto_blocked(symbol):
             hold_info = manual_hold_registry.get_hold_info(symbol)
-            result["risk_warnings"].append("该标的当前为手动持仓中")
+            result["risk_warnings"].append("该标的当前为手动持仓中(同账户)")
             if hold_info:
                 tech_parts.append("手动持仓: %s %d股" % (
                     hold_info.get("direction", "?"),

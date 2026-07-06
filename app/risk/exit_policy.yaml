@@ -46,6 +46,9 @@ progressive_trailing:
 
 # ── RFC-057 (2026-06-01): 全局入场冷却 (grace period) ──
 # 入场后 min_hold_minutes 内仅允许 atr_stop/SL_HIT (硬止损)
+# 2026-07-07 说明: 本配置仅用于 ExitMonitor 管理的主线/ORB 仓位.
+#   PLAYBOOK_SIM/LIVE 仓位由 app/playbook/pipeline.py 独立管理, 其开盘冷却期
+#   为前 15 分钟且 SL 放宽到 4% (参见 pipeline.py _check_playbook_exit_rules).
 global_hold_protection:
   enabled: true
   min_hold_minutes_after_entry: 45
@@ -94,24 +97,40 @@ exit_rules:
       initial: 2.0                   # 默认medium桶(盘中动态覆盖)
     max_loss_pct: 2.0                # 默认medium桶(盘中动态覆盖)
     atr_floor_pct: 70
-    # 波动率桶覆盖 — 按ATR%动态选择 atr_mult 和 max_loss_pct
+    # 波动率桶覆盖 — 按ATR%动态选择 atr_mult, max_loss_pct, take_profit_pct
+    # 2026-07-05: 分桶×分方向 SL/TP (374笔真实数据推导)
+    #   亏损中位数→SL, 盈利中位数→TP, 按桶×方向差异化
+    #   direction_override: 7/24后 guardian代码消费; 当前yaml预配置
     vol_bucket_multipliers:
       low:
         atr_pct_max: 0.015           # ATR% < 1.5%
         atr_multiplier: 1.5          # 低波动: SL收紧
-        max_loss_pct: 1.5
+        max_loss_pct: 1.5            # 全局fallback(方向无override时用)
+        take_profit_pct: 0.4         # 盘中TP: 盈利0.4%部分止盈
+        direction_override:          # 分方向SL/TP (374笔数据: low桶亏损中位数0.24%/0.31%)
+          LONG:  {max_loss_pct: 0.3, take_profit_pct: 0.4}   # 129笔LONG: 亏损中位0.24%×1.25=0.3%
+          SHORT: {max_loss_pct: 0.4, take_profit_pct: 0.4}   # 157笔SHORT: 亏损中位0.31%×1.3=0.4%
       medium:
         atr_pct_max: 0.035           # 1.5% ≤ ATR% < 3.5%
         atr_multiplier: 2.0          # 标准
         max_loss_pct: 2.0
+        take_profit_pct: 3.0         # 盘中TP: 盈利3%部分止盈
+        direction_override:          # 16笔LONG+25笔SHORT
+          LONG:  {max_loss_pct: 2.7, take_profit_pct: 3.0}   # 亏损中位2.25%×1.2=2.7%
+          SHORT: {max_loss_pct: 2.7, take_profit_pct: 2.8}   # 亏损中位2.26%×1.2=2.7%, 盈利中位1.88%×1.5=2.8%
       high:
         atr_pct_max: 0.08            # 3.5% ≤ ATR% < 8%
         atr_multiplier: 2.5          # 高波动: SL放宽防噪声
-        max_loss_pct: 3.0
+        max_loss_pct: 5.0            # 从3.0→5.0 (数据: 亏损中位4.27%/7.47%)
+        take_profit_pct: 9.0         # 盘中TP: 盈利9%部分止盈
+        direction_override:          # 12笔LONG+16笔SHORT (样本偏少, 置信度中低)
+          LONG:  {max_loss_pct: 5.1, take_profit_pct: 9.0}   # 亏损中位4.27%×1.2=5.1%, 盈利中位6.17%×1.5=9.3%
+          SHORT: {max_loss_pct: 9.0, take_profit_pct: 8.9}   # 亏损中位7.47%×1.2=9.0%, 盈利中位5.93%×1.5=8.9%
       extreme:
         atr_pct_max: 999.0           # ATR% ≥ 8%
         atr_multiplier: 3.0          # 极端波动: SL最宽
-        max_loss_pct: 4.0
+        max_loss_pct: 4.0            # 样本不足, 维持现状
+        # extreme无direction_override: 样本<3笔, 数据不足以推导
     # 滞回区间: 桶切换时需超过边界±0.2%, 防止频繁切换
     hysteresis_pct: 0.002
 
@@ -119,6 +138,9 @@ exit_rules:
   # 2026-06-21: 新设计 — 盈利≥1.5%时SL移至成本
   # 2026-06-25: 阶梯式利润锁定 (stepped ratchet)
   # 2026-06-28 (ADR-008): 按辩论结论禁用 — 2% SL 下 ratchet 意义有限, 由 pre_close 替代利润保护
+  # 2026-07-07 说明: 本文件规则仅适用于 ExitMonitor 管理的主线/ORB 仓位.
+  #   PLAYBOOK_SIM/LIVE 仓位由 app/playbook/pipeline.py 的 factor_exit_rules 独立管理,
+  #   其中 breakeven 默认启用 (breakeven_at_pct=0.5), 二者 SSOT 分离.
   breakeven:
     enabled: false
     trigger_profit_pct: 1.5          # 保本触发: SL移至entry
@@ -145,6 +167,9 @@ exit_rules:
   # 规则 3: 时间退出 (解决1-4h死亡区间)
   # 2026-06-21: 新规则; 2026-06-24: 放宽 (1h/0.3%→2h/-0.5%)
   # 2026-06-28 (ADR-008): 按辩论结论禁用 — 亏损仓应交给硬止损, 不需要等2h
+  # 2026-07-07 说明: 本文件规则仅适用于 ExitMonitor 管理的主线/ORB 仓位.
+  #   因 7/3 起 ExitMonitor 不再管理 PLAYBOOK_SIM/LIVE 仓位, pipeline 于 7/7 重新启用
+  #   TIME_EXIT (由 factor_exit_rules.time_exit_hours 驱动), 二者 SSOT 分离.
   time_exit:
     enabled: false
     holding_hours: 2.0              # 2026-06-24: 1h→2h, 让趋势发展
@@ -153,15 +178,16 @@ exit_rules:
 
   # 规则 4: 盘末退出 (Pre-Close Exit)
   # 2026-06-30 DEB: 改为"仅盈利仓"模式 — 盈利落袋+亏损由SL管理
+  # 2026-07-05: loss_flat改false — 374笔数据: 亏损仓盘末退均亏$500 vs 硬止损均亏$27, 差18倍
   # close_profit_atr=2.0: 浮盈≥2ATR全平(落袋)
-  # loss_flat=true: 亏损仓盘末平掉, 不持亏过夜(CRITIC修正)
+  # loss_flat=false: 亏损仓不等盘末, 由atr_stop硬止损管理(数据支撑: 均亏$27 vs $500)
   # half_exit_below_atr=0.5: 微利0~0.5ATR减半仓
   pre_close_exit:
     enabled: true
     window_minutes: 8
     min_hold_minutes_before_pre_close: 30
     time_weighted: false
-    loss_flat: true
+    loss_flat: false               # true→false: 亏损仓不等到盘末, 由硬止损管理
     overnight_loss_stop_pct: 0.03
     close_profit_atr: 2.0
     half_exit_below_atr: 0.5

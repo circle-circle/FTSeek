@@ -77,6 +77,14 @@ def register(app, templates):
             )
         return {"success": True, "data": inst}
 
+    @router.get("/api/playbook/pipeline")
+    async def get_pipeline(date: str = None):
+        """管道可视化 — 候选池→投票→指令 全链路"""
+        from app.playbook.playbook_service import get_playbook_service
+        svc = get_playbook_service()
+        view = svc.get_pipeline_view(trade_date=date)
+        return {"success": True, "data": view}
+
     @router.get("/api/playbook/factor-stats")
     async def get_factor_stats():
         """获取因子统计"""
