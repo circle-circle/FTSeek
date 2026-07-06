@@ -50,13 +50,13 @@ def test_market_state_overlay():
         dec, _data(150, 3.0, 18), total_equity=82000, risk_pct=1.0,
         horizon="short", regime_context=_regime(MarketRegime.RISK_ON, 18)
     )
-    print(f"RISK_ON VIX=18: entry={base['entry_price']} SL={base['stop_loss']} TP={base['take_profit']} size={base['position_size']} | {base['atr_source']}")
+    print(f"RISK_ON VIX=18: entry={base['entry_price']} SL={base['stop_loss']} TP={base.get('take_profit')} size={base['position_size']} | {base['atr_source']}")
 
     high = compute_instruction_values(
         dec, _data(150, 3.0, 27), total_equity=82000, risk_pct=1.0,
         horizon="short", regime_context=_regime(MarketRegime.CAUTIOUS, 27)
     )
-    print(f"CAUTIOUS VIX=27: entry={high['entry_price']} SL={high['stop_loss']} TP={high['take_profit']} size={high['position_size']} | {high['atr_source']}")
+    print(f"CAUTIOUS VIX=27: entry={high['entry_price']} SL={high['stop_loss']} TP={high.get('take_profit')} size={high['position_size']} | {high['atr_source']}")
 
     no_trade = compute_instruction_values(
         dec, _data(150, 3.0, 32), total_equity=82000, risk_pct=1.0,

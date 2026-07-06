@@ -340,8 +340,9 @@ class USPositionSync:
         import os
         from app.core.config_container import get_config
         
-        _trade_env = get_config().trade_env_int
-        trade_env = TrdEnv.SIMULATE if _trade_env == 1 else TrdEnv.REAL
+        # 2026-07-03: trade_env 跟随 AUTO_TRADE_ACCOUNT (与 _envs_to_query 对齐)
+        _auto_acc = os.getenv("AUTO_TRADE_ACCOUNT", "sim").strip().lower()
+        trade_env = TrdEnv.SIMULATE if _auto_acc == "sim" else TrdEnv.REAL
         
         # 优先复用 broker_adapter 的已解锁连接
         ctx = None
@@ -398,12 +399,14 @@ class USPositionSync:
             {symbol: {'order_id': str, 'price': float, 'qty': float, 'direction': str, 'time': str}}
         """
         from futu import RET_OK, TrdEnv
-        from app.core.config_container import get_config
         import os
-        
-        _trade_env = get_config().trade_env_int
-        trade_env = TrdEnv.SIMULATE if _trade_env == 1 else TrdEnv.REAL
-        
+
+        # 2026-07-03: 跟随 AUTO_TRADE_ACCOUNT (与 _sync_once 的 _envs_to_query 对齐)
+        # 根因: 原读 TRADE_ENV (仅控制 DB 路由), 切 real 后查 SIMULATE 订单 →
+        # 找不到系统委托 → 仓位被误标 MANUAL → 被退出监控跳过
+        _auto_acc = os.getenv("AUTO_TRADE_ACCOUNT", "sim").strip().lower()
+        trade_env = TrdEnv.SIMULATE if _auto_acc == "sim" else TrdEnv.REAL
+
         # 复用已有的 _futu_ctx（不新建连接）
         if self._futu_ctx is None:
             return {}
@@ -464,10 +467,10 @@ class USPositionSync:
         from futu import RET_OK, TrdEnv, TrdMarket, SecurityFirm
         import os
 
-        # P0 修复 2026-04-25: 使用环境变量而非硬编码
-        from app.core.config_container import get_config
-        _trade_env = get_config().trade_env_int
-        trade_env = TrdEnv.SIMULATE if _trade_env == 1 else TrdEnv.REAL
+        # 2026-07-03: 跟随 AUTO_TRADE_ACCOUNT (与 _envs_to_query 对齐)
+        # trade_env 仅用于 _get_futu_context 创建/复用连接, 实际查询用 _envs_to_query
+        _auto_acc_sync = os.getenv("AUTO_TRADE_ACCOUNT", "sim").strip().lower()
+        trade_env = TrdEnv.SIMULATE if _auto_acc_sync == "sim" else TrdEnv.REAL
         opend_host = os.getenv("FUTU_OPEND_HOST", os.getenv("FUTU_OPEND_HOST", "127.0.0.1"))
         opend_port = int(os.getenv("FUTU_OPEND_PORT", os.getenv("FUTU_OPEND_PORT", "11111")))
 
@@ -479,10 +482,11 @@ class USPositionSync:
         if ctx is None:
             return
         try:
-            # 2026-06-30: 只查 SIMULATE 环境, 不查 REAL
-            # 原因: AUTO_TRADE_ACCOUNT=sim, 自动交易只在模拟环境
-            # REAL 环境的持仓是用户手动开的实盘仓, 系统不碰
-            _envs_to_query = [TrdEnv.SIMULATE]
+            # 2026-07-03: _envs_to_query 跟随 AUTO_TRADE_ACCOUNT
+            # sim → 只查 SIMULATE (自动交易在模拟环境)
+            # real → 只查 REAL (未来切实盘后, 自动交易在实盘环境)
+            _auto_acc = os.getenv("AUTO_TRADE_ACCOUNT", "sim").strip().lower()
+            _envs_to_query = [TrdEnv.SIMULATE if _auto_acc == "sim" else TrdEnv.REAL]
             _combined_data = None
             _query_failed = False
             for _env in _envs_to_query:
@@ -598,6 +602,28 @@ class USPositionSync:
         # P0 修复 (2026-05-04): 新创建不足60秒的持仓跳过清理，等待 Futu 确认成交
         _now = datetime.now()
         for symbol in db_symbols - futu_symbols:
+            # P0 修复 2026-07-06: Playbook SIM 仓位由 playbook exit monitor 独占管理,
+            # position_sync 不应将其标记为 ghost. 根因: sim 账户持仓查询延迟/缺失,
+            # playbook 刚写入的 open_positions 被 sync 清零 size → 孤儿仓/重复下单.
+            # 判断: open_positions.owner_strategy='playbook_sim' 或 trade_records 有未平仓 PLAYBOOK_SIM.
+            _is_playbook_managed = False
+            try:
+                _op_owner = db_positions.get(symbol, {}).get('owner') or db_positions.get(symbol, {}).get('owner_strategy')
+                if _op_owner == 'playbook_sim':
+                    _is_playbook_managed = True
+                else:
+                    cursor.execute(
+                        "SELECT 1 FROM trade_records WHERE symbol=? AND source_type='PLAYBOOK_SIM' "
+                        "AND (exit_price=0 OR exit_price IS NULL OR exit_time='' OR exit_time IS NULL) LIMIT 1",
+                        (symbol,)
+                    )
+                    _is_playbook_managed = cursor.fetchone() is not None
+            except Exception:
+                pass
+            if _is_playbook_managed:
+                logger.info(f"[US Sync] 跳过 Playbook SIM 仓位 ghost 清理: {symbol} (由 playbook exit monitor 管理)")
+                continue
+
             # P0 修复 2026-04-25: 检查是否为 pending_close 标记 (通过 action_log)
             cursor.execute("SELECT action_log_json, entry_time FROM open_positions WHERE symbol=?", (symbol,))
             row = cursor.fetchone()
@@ -1299,7 +1325,7 @@ class USPositionSync:
                     # 写入 trade_records (使用真实数据)
                     try:
                         import sqlite3 as _sqlite3
-                        _db_path = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'ftseek_us_live.db')
+                        _db_path = _get_db_path()
                         _conn = _sqlite3.connect(_db_path)
                         _et_now = datetime.now(timezone(timedelta(hours=-4)))
                         _entry_time = getattr(existing_pos, 'entry_time', None) or _et_now
@@ -1356,7 +1382,7 @@ class USPositionSync:
                     
                     # 从 open_positions DB 移除
                     try:
-                        _db_path = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'ftseek_us_live.db')
+                        _db_path = _get_db_path()
                         import sqlite3 as _sqlite3
                         _conn = _sqlite3.connect(_db_path)
                         _conn.execute("DELETE FROM open_positions WHERE symbol=?", (symbol,))
@@ -1388,7 +1414,7 @@ class USPositionSync:
                     logger.info(f"🧹 [US Sync] 清理真幽灵仓 {symbol} (broker 无持仓且无今日成交记录)")
                     # 从 open_positions DB 移除
                     try:
-                        _db_path = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'ftseek_us_live.db')
+                        _db_path = _get_db_path()
                         import sqlite3 as _sqlite3
                         _conn = _sqlite3.connect(_db_path)
                         _conn.execute("DELETE FROM open_positions WHERE symbol=?", (symbol,))
@@ -1637,16 +1663,32 @@ class USPositionSync:
                 )
 
             # --- 2. 从 Broker 获取实时资金数据 ---
-            # ponytail: _futu_ctx 是 position_sync 自己维护的连接, 每30s 都在用, 直接查 accinfo
+            # 优先复用 broker_adapter 的 get_account_info (已含 HKD→USD 等 FX 转换),
+            # 避免直接用原始 power 字段覆盖 capital_safety._state.buying_power.
             broker_data = {}
-            if self._futu_ctx is not None:
+            if self._broker_adapter is not None and hasattr(self._broker_adapter, 'get_account_info'):
+                try:
+                    _acc_info = self._broker_adapter.get_account_info()
+                    if _acc_info:
+                        broker_data = {
+                            'cash': _acc_info.get('cash', 0),
+                            'market_value': _acc_info.get('market_val', 0),
+                            'total_assets': _acc_info.get('total_assets', 0),
+                            'buying_power': _acc_info.get('buying_power', 0),
+                        }
+                except Exception as e:
+                    logger.debug("[US Sync Capital] broker_adapter.get_account_info 失败: %s", e)
+
+            # Fallback: 若 broker_adapter 不可用, 用 position_sync 自己的 futu_ctx 查询
+            if not broker_data.get('total_assets', 0) and self._futu_ctx is not None:
                 try:
                     from futu import RET_OK, TrdEnv
-                    from app.core.config_container import get_config
-                    _trade_env = get_config().trade_env_int
-                    trd_env = TrdEnv.SIMULATE if _trade_env == 1 else TrdEnv.REAL
-                    _acc_id = int(os.getenv("SIMULATE_ACCOUNT_ID", "0")) if _trade_env == 1 \
-                        else int(os.getenv("REAL_ACCOUNT_ID", "0"))
+                    import os as _os_acc
+                    # 2026-07-03: 跟随 AUTO_TRADE_ACCOUNT
+                    _auto_acc_ai = _os_acc.getenv("AUTO_TRADE_ACCOUNT", "sim").strip().lower()
+                    trd_env = TrdEnv.SIMULATE if _auto_acc_ai == "sim" else TrdEnv.REAL
+                    _acc_id = int(_os_acc.getenv("SIMULATE_ACCOUNT_ID", "0")) if _auto_acc_ai == "sim" \
+                        else int(_os_acc.getenv("REAL_ACCOUNT_ID", "0"))
                     ret, data = self._futu_ctx.accinfo_query(trd_env=trd_env, acc_id=_acc_id)
                     if ret == RET_OK and len(data) > 0:
                         row = data.iloc[0]
@@ -1706,12 +1748,10 @@ class USPositionSync:
             logger.debug(f"[US Sync Consistency] 校验异常 (已忽略): {e}")
 
     def _get_trade_env(self) -> int:
-        """获取当前交易环境 (0=实盘, 1=模拟)"""
-        try:
-            from app.core.config_container import get_config
-            return get_config().trade_env_int
-        except Exception:
-            return 1
+        """获取当前交易环境 (0=实盘, 1=模拟) — 跟随 AUTO_TRADE_ACCOUNT"""
+        import os as _os_te
+        _auto_acc = _os_te.getenv("AUTO_TRADE_ACCOUNT", "sim").strip().lower()
+        return 1 if _auto_acc == "sim" else 0
 
     def _get_option_position_symbols(self) -> Optional[set]:
         """2026-07-01: 期权已删除, 返回空集"""
@@ -1967,9 +2007,10 @@ class USPositionSync:
         # 准备 Futu 交易上下文
         try:
             from futu import TrdEnv, TrdMarket, SecurityFirm, OrderType as FutuOrderType, TrdSide
-            from app.core.config_container import get_config as _te_cfg
-            _trade_env_int = int(_te_cfg().get_dotted("trade_env", 1))
-            trade_env = TrdEnv.SIMULATE if _trade_env_int == 1 else TrdEnv.REAL
+            import os as _os_trim
+            # 2026-07-03: 跟随 AUTO_TRADE_ACCOUNT
+            _auto_acc_trim = _os_trim.getenv("AUTO_TRADE_ACCOUNT", "sim").strip().lower()
+            trade_env = TrdEnv.SIMULATE if _auto_acc_trim == "sim" else TrdEnv.REAL
         except Exception as e:
             logger.error(f"[减仓] Futu 初始化失败: {e}")
             return

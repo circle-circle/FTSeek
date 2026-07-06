@@ -341,16 +341,18 @@ class ShadowTracker:
                             target_bar = bar
                             break
                     if target_bar:
-                        # 计算 MA20 (最近20天收盘价均值)
-                        closes = [b.get("close", 0) for b in bars[-20:]]
-                        ma20 = sum(closes) / len(closes) if closes else 0
-                        # 计算 volume_ratio (当日量 / 前5日均量)
-                        vols = [b.get("volume", 0) for b in bars[-6:-1]]  # 前5天
-                        avg_vol = sum(vols) / len(vols) if vols else 0
-                        today_vol = target_bar.get("volume", 0)
-                        vol_ratio = today_vol / avg_vol if avg_vol > 0 else 0
-                        target_bar["ma20"] = ma20
-                        target_bar["volume_5d_avg_ratio"] = vol_ratio
+                        # 计算 MA20 (最近20天收盘价均值) — 仅当 mock/上游未提供时
+                        if "ma20" not in target_bar:
+                            closes = [b.get("close", 0) for b in bars[-20:]]
+                            ma20 = sum(closes) / len(closes) if closes else 0
+                            target_bar["ma20"] = ma20
+                        # 计算 volume_ratio (当日量 / 前5日均量) — 仅当 mock/上游未提供时
+                        if "volume_5d_avg_ratio" not in target_bar and "volume_ratio" not in target_bar:
+                            vols = [b.get("volume", 0) for b in bars[-6:-1]]  # 前5天
+                            avg_vol = sum(vols) / len(vols) if vols else 0
+                            today_vol = target_bar.get("volume", 0)
+                            vol_ratio = today_vol / avg_vol if avg_vol > 0 else 0
+                            target_bar["volume_5d_avg_ratio"] = vol_ratio
                         return target_bar
 
             # 尝试 get_quote (实时快照, 当日)
@@ -373,23 +375,39 @@ class ShadowTracker:
     def _get_daily_bars_since_entry(
         self, symbol: str, entry_time: str, current_date: str
     ) -> List[Dict]:
-        """获取从入场到现在的日线 bars"""
+        """获取从入场到现在的日线 bars
+
+        2026-07-04: 加fallback — get_daily_bars失败时用get_quote获取当日high/low
+        """
         if self.market_data is None:
             return []
 
+        # 路径1: get_daily_bars (首选, 有完整OHLC)
         try:
             if hasattr(self.market_data, "get_daily_bars"):
                 bars = self.market_data.get_daily_bars(symbol, count=30)
-                if not bars:
-                    return []
-
-                entry_date = entry_time[:10] if entry_time else current_date
-                return [
-                    bar for bar in bars
-                    if bar.get("time", "")[:10] >= entry_date
-                ]
+                if bars:
+                    entry_date = entry_time[:10] if entry_time else current_date
+                    filtered = [
+                        bar for bar in bars
+                        if bar.get("time", "")[:10] >= entry_date
+                    ]
+                    if filtered:
+                        return filtered
         except Exception as e:
-            logger.warning(f"Failed to get daily bars for {symbol}: {e}")
+            logger.debug(f"[shadow] get_daily_bars failed for {symbol}: {e}")
+
+        # 路径2: fallback — get_quote获取当日high/low (精度低但不返回空)
+        try:
+            if hasattr(self.market_data, "get_quote"):
+                quote = self.market_data.get_quote(symbol)
+                if quote and isinstance(quote, dict):
+                    high = quote.get("high", 0) or quote.get("last", 0) or 0
+                    low = quote.get("low", 0) or quote.get("last", 0) or 0
+                    if high > 0 or low > 0:
+                        return [{"high": high, "low": low, "close": quote.get("last", 0), "time": current_date}]
+        except Exception as e:
+            logger.debug(f"[shadow] get_quote fallback failed for {symbol}: {e}")
 
         return []
 
@@ -434,7 +452,7 @@ class ShadowTracker:
             trades = self.trade_store.query_by_date(trade_date)
             for t in trades:
                 if (t.get("symbol") == symbol and
-                        t.get("source_type") in ("PLAYBOOK_SHADOW", "PLAYBOOK_SIM", "PLAYBOOK_LIVE") and
+                        t.get("source_type") in ("MANUAL_PLAYBOOK", "PLAYBOOK_SHADOW", "PLAYBOOK_SIM", "PLAYBOOK_LIVE") and
                         float(t.get("exit_price", 0) or 0) > 0):
                     return {
                         "exit_price": float(t.get("exit_price", 0)),

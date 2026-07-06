@@ -55,6 +55,7 @@ class PlaybookDB:
         conn = self._conn()
         try:
             conn.executescript(_SCHEMA_SQL)
+            conn.executescript(_CREATE_SIGNAL_CONTEXT_SQL)
             # 2026-06-23 修复 (OKR P0): CREATE TABLE IF NOT EXISTS 不会给已存在的表加新列.
             # fwd_return_t1/t3/t5 在 schema 里定义但旧 DB 未迁移, 导致 ic_tracker 写入
             # 因列不存在而失败 (被 except 吞 → IC 永远 0). 显式 ALTER 补列.
@@ -75,6 +76,7 @@ class PlaybookDB:
             "horizon": "TEXT",
             "horizon_confidence": "REAL",
             "horizon_reasoning": "TEXT",
+            "config_version": "TEXT",
         }
         try:
             existing = {row[1] for row in conn.execute("PRAGMA table_info(playbook_instructions)").fetchall()}
@@ -489,6 +491,76 @@ class PlaybookDB:
         logger.info(f"[PlaybookDB] void_instruction({instruction_id}) 已标记: {reason}")
         return True
 
+    # ========== playbook_signal_context ==========
+
+    def save_signal_context(self, ctx: Dict[str, Any]) -> None:
+        """UPSERT 信号上下文 (信息层数据)."""
+        conn = self._conn()
+        now = datetime.utcnow().isoformat()
+        conn.execute("""
+            INSERT INTO playbook_signal_context (
+                date, symbol,
+                news_headlines_json, news_sentiment,
+                insider_signal, insider_cluster_score, insider_net_shares, insider_cluster_buyers_json,
+                earnings_next_date, earnings_days_until, earnings_beat_rate,
+                pe, market_cap, industry, revenue_growth_yoy, roe, debt_to_equity, high_52w, low_52w,
+                theme_momentum, theme_wind, theme_narratives_json,
+                llm_reasoning_json, raw_data_json,
+                created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(date, symbol) DO UPDATE SET
+                news_headlines_json=excluded.news_headlines_json,
+                news_sentiment=excluded.news_sentiment,
+                insider_signal=excluded.insider_signal,
+                insider_cluster_score=excluded.insider_cluster_score,
+                insider_net_shares=excluded.insider_net_shares,
+                insider_cluster_buyers_json=excluded.insider_cluster_buyers_json,
+                earnings_next_date=excluded.earnings_next_date,
+                earnings_days_until=excluded.earnings_days_until,
+                earnings_beat_rate=excluded.earnings_beat_rate,
+                pe=excluded.pe, market_cap=excluded.market_cap, industry=excluded.industry,
+                revenue_growth_yoy=excluded.revenue_growth_yoy, roe=excluded.roe,
+                debt_to_equity=excluded.debt_to_equity, high_52w=excluded.high_52w, low_52w=excluded.low_52w,
+                theme_momentum=excluded.theme_momentum, theme_wind=excluded.theme_wind,
+                theme_narratives_json=excluded.theme_narratives_json,
+                llm_reasoning_json=excluded.llm_reasoning_json,
+                raw_data_json=excluded.raw_data_json
+        """, (
+            ctx.get("date"), ctx.get("symbol"),
+            _to_json(ctx.get("news_headlines")), ctx.get("news_sentiment"),
+            ctx.get("insider_signal"), ctx.get("insider_cluster_score"),
+            ctx.get("insider_net_shares"), _to_json(ctx.get("insider_cluster_buyers")),
+            ctx.get("earnings_next_date"), ctx.get("earnings_days_until"),
+            ctx.get("earnings_beat_rate"),
+            ctx.get("pe"), ctx.get("market_cap"), ctx.get("industry"),
+            ctx.get("revenue_growth_yoy"), ctx.get("roe"), ctx.get("debt_to_equity"),
+            ctx.get("high_52w"), ctx.get("low_52w"),
+            ctx.get("theme_momentum"), ctx.get("theme_wind"),
+            _to_json(ctx.get("theme_narratives")),
+            _to_json(ctx.get("llm_reasoning")),
+            _to_json(ctx.get("raw_data")),
+            now,
+        ))
+        conn.commit()
+
+    def get_signal_context(self, date: str, symbol: str) -> Optional[Dict]:
+        """获取某日某标的的信号上下文."""
+        conn = self._conn()
+        row = conn.execute(
+            "SELECT * FROM playbook_signal_context WHERE date = ? AND symbol = ?",
+            (date, symbol),
+        ).fetchone()
+        return _row_to_dict(row) if row else None
+
+    def get_signal_contexts_by_date(self, date: str) -> List[Dict]:
+        """获取某日所有信号上下文."""
+        conn = self._conn()
+        rows = conn.execute(
+            "SELECT * FROM playbook_signal_context WHERE date = ? ORDER BY symbol",
+            (date,),
+        ).fetchall()
+        return [d for r in rows if (d := _row_to_dict(r)) is not None]
+
     # ========== playbook_regime_log ==========
 
     def save_regime_log(self, regime_data: Dict[str, Any]):
@@ -679,6 +751,46 @@ def _row_to_dict(row) -> Optional[Dict]:
 
 
 # ========== Schema SQL ==========
+
+_CREATE_SIGNAL_CONTEXT_SQL = """
+CREATE TABLE IF NOT EXISTS playbook_signal_context (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    date TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    -- 新闻
+    news_headlines_json TEXT,       -- top5 标题列表
+    news_sentiment REAL,            -- -1.0 ~ 1.0
+    -- 内部人交易
+    insider_signal TEXT,            -- strong_buy/buy/neutral/sell
+    insider_cluster_score REAL,     -- 0-1
+    insider_net_shares INTEGER,     -- 30日净买入
+    insider_cluster_buyers_json TEXT,  -- 集群买入人列表
+    -- 财报
+    earnings_next_date TEXT,
+    earnings_days_until INTEGER,
+    earnings_beat_rate REAL,
+    -- 基本面
+    pe REAL,
+    market_cap REAL,
+    industry TEXT,
+    revenue_growth_yoy REAL,
+    roe REAL,
+    debt_to_equity REAL,
+    high_52w REAL,
+    low_52w REAL,
+    -- Deepulse 主题雷达 (per-symbol)
+    theme_momentum REAL,            -- -1.0 ~ 1.0
+    theme_wind REAL,                -- -1.0 ~ 1.0
+    theme_narratives_json TEXT,     -- 关键叙事列表
+    -- LLM 投票 reasoning (从 decisions.db 关联, 可能没命中)
+    llm_reasoning_json TEXT,        -- [{model_id, direction, strength, confidence, reasoning}]
+    -- 原始数据完整快照
+    raw_data_json TEXT,
+    created_at TEXT NOT NULL,
+    UNIQUE(date, symbol)
+);
+CREATE INDEX IF NOT EXISTS idx_signal_context_date ON playbook_signal_context(date);
+"""
 
 _SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS playbook_instructions (

@@ -170,12 +170,12 @@ class TestTriggerDetection:
     """入场触发检测"""
 
     def test_triggered_when_price_in_range(self, tracker, db, mock_market_data, mock_trade_store):
-        """价格进入入场区间 ±2% → triggered=1"""
+        """价格进入入场区间 → triggered=1"""
         _save_instruction(db, entry_price=100.0)
 
-        # Day range: 97-103, entry ±2% = 98-102 → overlap
+        # 触发: 当日穿过 MA20 且放量
         mock_market_data.get_daily_bars.return_value = [
-            {"time": "2026-06-18", "open": 98, "high": 103, "low": 97, "close": 101}
+            {"time": "2026-06-18", "open": 98, "high": 103, "low": 97, "close": 101, "ma20": 100, "volume_ratio": 2.0}
         ]
         mock_trade_store.query_by_date.return_value = []
 
@@ -188,9 +188,9 @@ class TestTriggerDetection:
         """价格不在入场区间 → triggered=0"""
         _save_instruction(db, entry_price=100.0)
 
-        # Day range: 105-110, entry ±2% = 98-102 → no overlap
+        # 未触发: 收盘未站上 MA20
         mock_market_data.get_daily_bars.return_value = [
-            {"time": "2026-06-18", "open": 105, "high": 110, "low": 105, "close": 108}
+            {"time": "2026-06-18", "open": 105, "high": 110, "low": 105, "close": 108, "ma20": 110, "volume_ratio": 2.0}
         ]
         mock_trade_store.query_by_date.return_value = []
 
@@ -204,7 +204,7 @@ class TestTriggerDetection:
         _save_instruction(db, entry_price=100.0)
 
         mock_market_data.get_daily_bars.return_value = [
-            {"time": "2026-06-18", "open": 99, "high": 102, "low": 98, "close": 105}
+            {"time": "2026-06-18", "open": 99, "high": 102, "low": 98, "close": 105, "ma20": 100, "volume_ratio": 2.0}
         ]
         mock_trade_store.query_by_date.return_value = []  # 无匹配交易
 
@@ -225,12 +225,12 @@ class TestExecutionMatching:
         _save_instruction(db, entry_price=100.0, position_size=50)
 
         mock_market_data.get_daily_bars.return_value = [
-            {"time": "2026-06-18", "open": 100, "high": 108, "low": 99, "close": 106}
+            {"time": "2026-06-18", "open": 100, "high": 108, "low": 99, "close": 106, "ma20": 100, "volume_ratio": 2.0}
         ]
         mock_trade_store.query_by_date.return_value = [
             {
                 "symbol": "US.NTES",
-                "direction": "BUY",
+                "direction": "LONG",  # trade_records 存储格式
                 "source_type": "MANUAL_PLAYBOOK",
                 "entry_price": 100.5,
                 "entry_time": "2026-06-18T09:35:00",
