@@ -138,6 +138,7 @@ class ModelAgent:
             "qwen3.7-max": "voting_qwen",
             "glm-5.2": "voting_glm",
             "deepseek-v4-pro": "voting_deepseek",
+            "kimi-k2.6": "voting_deepseek",  # 2026-07-06: deepseek→kimi-k2 替换
         }
         feature = feature_map.get(_model, "model_agent")
 

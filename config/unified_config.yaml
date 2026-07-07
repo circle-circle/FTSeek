@@ -584,7 +584,7 @@ llm:
     thesis_inferer: qwen-max
     voting_deepseek:
       fallback: qwen-max
-      primary: deepseek-pro
+      primary: kimi-k2
     voting_glm:
       fallback: qwen-max
       primary: glm-5
@@ -1327,6 +1327,7 @@ scheduler:
   event_day_interval_minutes: 3
   event_day_symbols: []
   max_positions: 12
+  min_confidence: 0.7
   min_consensus_level: 0.25
   min_signal_strength: 60
   monitor_interval_minutes: 0.25

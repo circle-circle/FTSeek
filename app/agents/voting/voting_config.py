@@ -104,7 +104,7 @@ class VotingConfig:
             model_mapping={
                 ModelRole.QWEN: "bailian/qwen3.7-max",        # 综合策略
                 ModelRole.GLM: "bailian/glm-5.2",               # 技术分析
-                ModelRole.DEEPSEEK: "bailian/deepseek-v4-pro",  # 风险反向
+                ModelRole.DEEPSEEK: "bailian/kimi-k2.6",  # 风险反向 (2026-07-06: deepseek→kimi-k2, DashScope兼容性)
             },
             model_descriptions={
                 ModelRole.QWEN: "综合策略师 (Qwen 3.7 Max)",
