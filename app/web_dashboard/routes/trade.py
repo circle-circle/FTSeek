@@ -451,6 +451,9 @@ def register(app, templates):
             "stop_distances": stop_distances,
             "pnl": pnl_data,
             "audit": {"orders": audit_orders},
+            # Phase A (2026-07-12): 快照级新鲜度 — 前端据此切换圆点颜色与 "--" 展示
+            "stale": bool(any(p.get("stale") for p in positions)),
+            "as_of": datetime.now().isoformat(timespec="seconds"),
         }
         # Debug: 记录返回数据量
         import json

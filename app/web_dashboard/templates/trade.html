@@ -24,7 +24,7 @@
         /* ── Loading overlay spinner animation ── */
         @keyframes _orderSpin { to { transform: rotate(360deg); } }
         /* ── Trade Summary Strip ── */
-        .trade-summary { display: flex; flex-direction: column; gap: 6px; padding: 10px 14px; background: #161b22; border: 1px solid #30363d; border-radius: 10px; margin-bottom: 12px; }
+        .trade-summary { display: flex; flex-direction: column; gap: 6px; padding: 10px 14px; background: #161b22; border: 1px solid #30363d; border-radius: 10px; margin-bottom: 12px; position: sticky; top: 0; z-index: 50; }
         .ts-row-primary { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
         .ts-row-secondary { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding-top: 6px; border-top: 1px solid #21262d; font-size: 11px; color: #8b949e; }
         .ts-row-secondary b { color: #e1e4e8; font-weight: 600; margin-left: 4px; }
@@ -40,6 +40,9 @@
         .ts-live { margin-left: auto; display: flex; align-items: center; }
         .ts-dot { width: 7px; height: 7px; border-radius: 50%; background: #4ade80; box-shadow: 0 0 4px #4ade80; animation: tsPulse 2s infinite; }
         .ts-dot.stale { background: #8b949e; box-shadow: none; animation: none; }
+        .ts-dot.degraded { background: #d29922; box-shadow: 0 0 4px #d29922; animation: none; }
+        .ts-fresh-text { font-size: 10px; color: #8b949e; margin-left: 5px; vertical-align: middle; }
+        .pb-badge { font-size: 9px; padding: 0 4px; margin-left: 4px; border-radius: 3px; background: #3d2f00; color: #fbbf24; border: 1px solid #7a5c00; vertical-align: middle; }
         @keyframes tsPulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
         .audit-period { padding: 4px 10px; font-size: 11px; min-height: 28px; }
         .audit-period.active { border-color: #58a6ff; color: #58a6ff; }
@@ -318,7 +321,7 @@
                 <div class="ts-item"><span class="ts-label">持仓盈亏</span><span class="ts-val" id="tsPosPnl">--</span><span class="ts-sub" id="tsPosPnlPct">--</span></div>
                 <div class="ts-item"><span class="ts-label">今日盈亏</span><span class="ts-val" id="tsPnl">--</span><span class="ts-sub" id="tsPnlPct">--</span></div>
                 <div class="ts-item"><span class="ts-label">购买力</span><span class="ts-val" id="tsPower">--</span></div>
-                <div class="ts-live" id="tsLive" title="数据刷新状态"><span class="ts-dot"></span></div>
+                <div class="ts-live" id="tsLive" title="数据刷新状态"><span class="ts-dot"></span><span class="ts-fresh-text" id="tsFreshText"></span></div>
             </div>
             <div class="ts-row-secondary">
                 <span class="ts-sec-item">证券市值 <b id="tsMarketVal">--</b></span>

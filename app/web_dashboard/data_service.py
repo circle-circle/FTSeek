@@ -343,9 +343,10 @@ class DataService:
             conn = sqlite3.connect(db_path)
             cur = conn.cursor()
             cur.execute("""
-                SELECT symbol, direction, size, avg_entry_price
+                SELECT symbol, direction, size, avg_entry_price, account_type, owner
                 FROM open_positions
                 WHERE size > 0
+                  AND LOWER(COALESCE(account_type,'')) != 'simulate'
                   AND (sync_status IS NULL
                        OR sync_status NOT IN ('closed_by_daemon','closed_by_scheduler','closed_by_sync',
                                                'closed_emergency','stale_not_in_broker'))
@@ -354,7 +355,7 @@ class DataService:
             conn.close()
             # 转换为 Futu API 格式
             positions = []
-            for symbol, direction, size, avg_entry_price in rows:
+            for symbol, direction, size, avg_entry_price, account_type, owner in rows:
                 code = f"US.{symbol}" if not symbol.startswith("US.") else symbol
                 qty = size if direction == "LONG" else -size
                 cost = avg_entry_price or 0
@@ -368,6 +369,12 @@ class DataService:
                     "pl_val": 0,
                     "unrealized_pl": 0,
                     "today_pl_val": 0,
+                    # Phase A (2026-07-12): 标记数据来源, 供前端如实展示 (现价=成本占位, 盈亏不可知)
+                    # 券商实时不可用时的降级数据, 绝不能让前端把 $0 浮盈当作真实持平
+                    "data_source": "db_fallback",
+                    # Phase B (2026-07-12): 携带账户归属, 供 _parse_positions 防御性过滤 (实盘页不渲染 sim 仓)
+                    "account_type": account_type,
+                    "owner": owner,
                 })
             if positions:
                 logger.info(f"[DataService] positions fallback from DB: {len(positions)} positions")

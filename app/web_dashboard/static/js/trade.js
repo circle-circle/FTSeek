@@ -1288,6 +1288,9 @@
                 const positions = (d.positions || []).filter(p => p.qty !== 0);
                 document.getElementById('posCount').textContent = `(${positions.length})`;
 
+                // Phase A (2026-07-12): 数据新鲜度 — 任一持仓现价非实时即视为降级
+                const degraded = !!d.stale || positions.some(p => p.stale);
+
                 // ── 更新顶部摘要条 ──
                 const acc = d.account || {};
                 const totalAssets = acc.total_assets || acc.nav || 0;
@@ -1299,25 +1302,38 @@
                 const displayPnlPct = totalAssets > 0 ? (displayPnl / totalAssets * 100) : 0;
 
                 document.getElementById('tsAssets').textContent = '$' + (totalAssets >= 1000 ? (totalAssets/1000).toFixed(1) + 'K' : totalAssets.toFixed(0));
-                document.getElementById('tsPower').textContent = '$' + (power >= 1000 ? (power/1000).toFixed(1) + 'K' : power.toFixed(0));
+                // Phase A: 购买力若走汇率估算路径, 追加 "≈" 标记并提示 (不伪装成精确值)
+                const _powerEl = document.getElementById('tsPower');
+                _powerEl.textContent = '$' + (power >= 1000 ? (power/1000).toFixed(1) + 'K' : power.toFixed(0)) + (acc.fx_estimated ? '≈' : '');
+                _powerEl.title = acc.fx_estimated ? '购买力为汇率估算值 (券商未返回官方 USD 字段)' : '';
                 // 同步账户净值到智能建议引擎
                 if (totalAssets > 0) setEquityCache(totalAssets);
 
-                // 持仓盈亏
+                // 持仓盈亏 (Phase A: 降级时聚合浮盈不可信 → 显示 "--")
                 const posPnlEl = document.getElementById('tsPosPnl');
                 const posPnlPctEl = document.getElementById('tsPosPnlPct');
-                posPnlEl.textContent = (unrealPnl >= 0 ? '+$' : '-$') + Math.abs(unrealPnl).toFixed(0);
-                posPnlEl.className = 'ts-val ' + (unrealPnl >= 0 ? 'green' : 'red');
-                posPnlPctEl.textContent = (unrealPnl >= 0 ? '+' : '') + (totalAssets > 0 ? (unrealPnl / totalAssets * 100).toFixed(1) : '0') + '%';
-                posPnlPctEl.className = 'ts-sub ' + (unrealPnl >= 0 ? 'green' : 'red');
+                if (degraded) {
+                    posPnlEl.textContent = '--'; posPnlEl.className = 'ts-val yellow';
+                    posPnlPctEl.textContent = ''; posPnlPctEl.className = 'ts-sub';
+                } else {
+                    posPnlEl.textContent = (unrealPnl >= 0 ? '+$' : '-$') + Math.abs(unrealPnl).toFixed(0);
+                    posPnlEl.className = 'ts-val ' + (unrealPnl >= 0 ? 'green' : 'red');
+                    posPnlPctEl.textContent = (unrealPnl >= 0 ? '+' : '') + (totalAssets > 0 ? (unrealPnl / totalAssets * 100).toFixed(1) : '0') + '%';
+                    posPnlPctEl.className = 'ts-sub ' + (unrealPnl >= 0 ? 'green' : 'red');
+                }
 
-                // 今日盈亏
+                // 今日盈亏 (Phase A: 降级时显示 "--")
                 const pnlEl = document.getElementById('tsPnl');
                 const pnlPctEl = document.getElementById('tsPnlPct');
-                pnlEl.textContent = (displayPnl >= 0 ? '+$' : '-$') + Math.abs(displayPnl).toFixed(0);
-                pnlEl.className = 'ts-val ' + (displayPnl >= 0 ? 'green' : 'red');
-                pnlPctEl.textContent = (displayPnl >= 0 ? '+' : '') + displayPnlPct.toFixed(1) + '%';
-                pnlPctEl.className = 'ts-sub ' + (displayPnl >= 0 ? 'green' : 'red');
+                if (degraded) {
+                    pnlEl.textContent = '--'; pnlEl.className = 'ts-val yellow';
+                    pnlPctEl.textContent = ''; pnlPctEl.className = 'ts-sub';
+                } else {
+                    pnlEl.textContent = (displayPnl >= 0 ? '+$' : '-$') + Math.abs(displayPnl).toFixed(0);
+                    pnlEl.className = 'ts-val ' + (displayPnl >= 0 ? 'green' : 'red');
+                    pnlPctEl.textContent = (displayPnl >= 0 ? '+' : '') + displayPnlPct.toFixed(1) + '%';
+                    pnlPctEl.className = 'ts-sub ' + (displayPnl >= 0 ? 'green' : 'red');
+                }
 
                 // 次要指标
                 const marketVal = (d.account || {}).market_val || 0;
@@ -1328,9 +1344,18 @@
                 document.getElementById('tsFrozen').textContent = '$' + frozen.toFixed(0);
                 document.getElementById('tsMarginUsage').textContent = marginPct.toFixed(1) + '%';
 
-                // 数据新鲜度
+                // 数据新鲜度 (Phase A: 三态 — 绿=实时券商 / 黄=降级(成本价) / 灰=离线)
                 const dot = document.querySelector('.ts-dot');
-                if (dot) { dot.classList.remove('stale'); }
+                if (dot) {
+                    dot.classList.remove('stale');
+                    dot.classList.toggle('degraded', degraded);
+                }
+                const freshEl = document.getElementById('tsFreshText');
+                if (freshEl) {
+                    freshEl.textContent = degraded ? '降级·成本价' : '实时';
+                    freshEl.style.color = degraded ? '#d29922' : '#8b949e';
+                    freshEl.title = degraded ? '券商实时数据不可用, 现价用成本价占位, 浮盈/今日盈亏暂不可知' : ('数据时间 ' + (d.as_of || ''));
+                }
                 _failCount = 0;
                 // 清除之前的错误提示
                 const errRow = document.querySelector('.api-error-row');
@@ -1355,6 +1380,11 @@
                         const tPnl = p.today_pl || 0;
                         const uPnl = p.unrealized_pl || p.unrealized_pnl || 0;
                         const uPnlPct = cost > 0 ? ((cur - cost) / cost * 100 * (isLong ? 1 : -1)) : 0;
+                        // Phase A: 现价非实时 → 浮盈/今日盈亏显示 "--"; 价格来源加徽标
+                        const stale = !!p.stale;
+                        const pbBadge = (p.price_basis && p.price_basis !== 'live')
+                            ? '<span class="pb-badge" title="现价非实时行情">' + ({cost:'成本', delayed:'延迟', none:'无价'}[p.price_basis] || '非实时') + '</span>'
+                            : '';
                         const tPnlPct = cost > 0 ? (tPnl / (qty * cost) * 100) : 0;
                         const concPct = totalMv > 0 ? (mv / totalMv * 100) : 0;
                         const concColor = concPct > 30 ? '#f87171' : concPct > 15 ? '#fbbf24' : '#58a6ff';
@@ -1392,16 +1422,16 @@
                                 <div style="font-size:11px;color:${qtyColor}">${qtyStr}</div>
                             </td>
                             <td style="text-align:right;white-space:nowrap">
-                                <div style="font-weight:600">${cur > 0 ? '$'+cur.toFixed(2) : '--'}</div>
+                                <div style="font-weight:600">${cur > 0 ? '$'+cur.toFixed(2) : '--'}${pbBadge}</div>
                                 <div style="font-size:11px;color:#8b949e">/$${cost.toFixed(2)}</div>
                             </td>
-                            <td style="text-align:right;white-space:nowrap" class="${tCls}">
-                                <div>${tPnl ? (tPnl>=0?'+$':'-$')+Math.abs(tPnl).toFixed(2) : '--'}</div>
-                                <div style="font-size:11px">${tPnl ? (tPnl>=0?'+':'')+tPnlPct.toFixed(1)+'%' : ''}</div>
+                            <td style="text-align:right;white-space:nowrap" class="${stale ? '' : tCls}">
+                                <div>${stale ? '<span style="color:#8b949e">--</span>' : (tPnl ? (tPnl>=0?'+$':'-$')+Math.abs(tPnl).toFixed(2) : '--')}</div>
+                                <div style="font-size:11px">${stale ? '' : (tPnl ? (tPnl>=0?'+':'')+tPnlPct.toFixed(1)+'%' : '')}</div>
                             </td>
-                            <td style="text-align:right;white-space:nowrap" class="${uCls}">
-                                <div>${uPnl>=0?'+$':'-$'}${Math.abs(uPnl).toFixed(2)}${trendIcon}</div>
-                                <div style="font-size:11px">${(uPnl>=0?'+':'')+uPnlPct.toFixed(1)}%</div>
+                            <td style="text-align:right;white-space:nowrap" class="${stale ? '' : uCls}">
+                                <div>${stale ? '<span style="color:#8b949e">--</span>' : (uPnl>=0?'+$':'-$')+Math.abs(uPnl).toFixed(2)+trendIcon}</div>
+                                <div style="font-size:11px">${stale ? '' : (uPnl>=0?'+':'')+uPnlPct.toFixed(1)+'%'}</div>
                             </td>
                             <td style="text-align:center;white-space:nowrap">
                                 <div style="font-size:12px;font-weight:600">${concPct.toFixed(1)}%</div>
@@ -1422,7 +1452,9 @@
                 console.error('Trade snapshot error:', e);
                 _failCount++;
                 const dot = document.querySelector('.ts-dot');
-                if (dot) dot.classList.add('stale');
+                if (dot) { dot.classList.add('stale'); dot.classList.remove('degraded'); }
+                const freshErr = document.getElementById('tsFreshText');
+                if (freshErr) { freshErr.textContent = '离线'; freshErr.style.color = '#8b949e'; freshErr.title = '数据加载失败'; }
                 if (_failCount >= _MAX_FAILS_BEFORE_BANNER) {
                     const posBody = document.getElementById('posBody');
                     if (posBody && !posBody.querySelector('.api-error-row')) {

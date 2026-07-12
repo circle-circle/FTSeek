@@ -459,17 +459,23 @@ def _parse_account(raw: dict) -> dict:
     is_hkd = currency == "HKD"
 
     # 使用 Futu 官方 USD 字段计算实际汇率 (而非硬编码 7.8)
+    fx_estimated = False  # Phase A (2026-07-12): 标记购买力是否走了汇率估算路径
     if is_hkd:
         hkd_assets = safe_float(raw.get("total_assets"))
         usd_assets_raw = safe_float(raw.get("usd_assets"))
-        fx = hkd_assets / usd_assets_raw if usd_assets_raw > 0 else 7.8
+        if usd_assets_raw > 0:
+            fx = hkd_assets / usd_assets_raw
+        else:
+            fx = 7.8              # 官方 USD 资产字段缺失 → 硬编码汇率估算
+            fx_estimated = True
         usd_assets = usd_assets_raw
         usd_cash = safe_float(raw.get("us_avl_withdrawal_cash"))
         if usd_cash <= 0:
             usd_cash = safe_float(raw.get("us_cash"))  # fallback
         usd_power = safe_float(raw.get("usd_net_cash_power"))
         if usd_power <= 0:
-            usd_power = safe_float(raw.get("power")) / fx
+            usd_power = safe_float(raw.get("power")) / fx   # 官方 USD 购买力缺失 → 汇率折算
+            fx_estimated = True
     else:
         fx = 1.0
         usd_assets = safe_float(raw.get("total_assets"))
@@ -504,6 +510,8 @@ def _parse_account(raw: dict) -> dict:
         "interest_charged": round(safe_float(raw.get("interest_charged_amount")) / fx, 2),
         "currency": "USD",
         "raw_currency": currency,
+        # Phase A (2026-07-12): True 表示购买力等 USD 数字走了汇率估算 (官方字段缺失), 前端加"估算"标记
+        "fx_estimated": fx_estimated,
     }
 
 
@@ -574,11 +582,26 @@ async def _parse_positions(ds, pos_raw: list) -> list:
         bare = code[3:]
         if any(c.isdigit() for c in bare):
             continue
+        # Phase B (2026-07-12): 实盘页防御性过滤 — 绝不渲染模拟账户持仓 (DB 兜底若漏过 sim 仓)
+        if str(p.get("account_type", "")).lower() == "simulate":
+            continue
 
         cost = safe_float(p.get("cost_price", 0))
+        # Phase A (2026-07-12): 追踪现价来源, 供前端如实标注 (实时/成本占位/延迟)
+        _is_db_fallback = str(p.get("data_source", "")) == "db_fallback"
         cur = price_map.get(code, safe_float(p.get("cur_price", 0)))
+        if code in price_map and price_map[code] > 0:
+            price_basis = "live"          # 来自实时 snapshot
+        elif _is_db_fallback:
+            price_basis = "cost"          # 券商不可用, 用成本价占位
+        elif cur > 0:
+            price_basis = "delayed"       # Futu 行内价 (可能昨收/盘后)
+        else:
+            price_basis = "none"
         if cur <= 0:
             cur = safe_float(p.get("val_price", 0)) / abs(qty) if qty != 0 else 0
+        # stale: 现价非实时 → 浮盈/今日盈亏不可信, 前端应显示 "--" 而非伪造 $0
+        stale = _is_db_fallback or price_basis in ("cost", "none")
 
         side = str(p.get("position_side", "")).upper()
         is_short = (qty < 0) or (side == "SHORT")
@@ -628,6 +651,9 @@ async def _parse_positions(ds, pos_raw: list) -> list:
             "unrealized_pnl": round(unrealized, 2),
             "pnl_pct": round(pnl_pct, 2),
             "today_pl": round(today_pl, 2),
+            # Phase A (2026-07-12): 数据来源/新鲜度 — 前端据此显示 "--" 与时段徽标
+            "price_basis": price_basis,
+            "stale": stale,
             "name_cn": name_cn,
             "sector": sector,
             "owner": owner_map.get(code, "legacy"),
@@ -820,6 +846,8 @@ async def _calc_pnl(ds, positions: list) -> dict:
 
     # 持仓浮盈
     pnl["unrealized"] = round(sum(p.get("unrealized_pnl", 0) for p in positions), 2)
+    # Phase A (2026-07-12): 任一持仓现价非实时 → 浮盈/总盈亏聚合不可信, 前端应显示 "--"
+    pnl["positions_stale"] = any(p.get("stale") for p in positions)
     # 总盈亏 = 全部已实现 + 浮盈
     pnl["total"] = round(pnl["realized_all"] + pnl["unrealized"], 2)
 
